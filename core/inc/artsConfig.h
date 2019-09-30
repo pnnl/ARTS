@@ -105,10 +105,23 @@ struct artsConfig
     unsigned int tableLength;
     unsigned int tMT;  // @awmm temporal MT; # of MT aliases per core thread; 0 if disabled
     unsigned int coresPerNetworkThread;
+    unsigned int gpu;
+    unsigned int gpuLocality;
+    unsigned int gpuFit;
+    unsigned int gpuMaxEdts;
+    size_t gpuMaxMemory;
+    bool gpuP2P;
+    bool gpuBuffOn;
+    unsigned int gpuRouteTableSize;
+    unsigned int gpuRouteTableEntries;
+    bool freeDbAfterGpuRun;
+    bool runGpuGcPreEdt;
+    bool runGpuGcIdle;
+    bool deleteZerosGpuGc;
     struct artsConfigTable * table;
 };
 
-struct artsConfig * artsConfigLoad( int argc, char ** argv, char * location );
+struct artsConfig * artsConfigLoad();
 void artsConfigDestroy( void * config );
 unsigned int artsConfigGetNumberOfThreads(char * location);
 #ifdef __cplusplus

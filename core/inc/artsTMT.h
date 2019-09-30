@@ -62,6 +62,7 @@
 #include "artsRuntime.h"
 #include "artsGlobals.h"
 
+#define MAX_TOTAL_THREADS_PER_MAX 65536
 #define MAX_THREADS_PER_MASTER 64
 
 typedef uint64_t accst_t;  // accessor state
@@ -78,24 +79,35 @@ typedef union
     } fields;
 } artsTicket;
 
-typedef struct
+
+typedef struct internalMsi
 {
-    pthread_t *               aliasThreads;                           //Actual pthreads
-    sem_t *                   sem;                                    //Semaphores used to wake/sleep
+    pthread_t               * aliasThreads;
+    sem_t                   * sem;
+    volatile bool          ** alive;
     volatile unsigned int     ticket_counter[MAX_THREADS_PER_MASTER]; //Fixed counters used to keep track of outstanding promises (we can only wait on one context at a time)
-    volatile accst_t *        alias_running; // FIXME: right data structure?
-    volatile accst_t *        alias_avail;
-    volatile unsigned int     wakeUpNext;
-    artsQueue *               wakeQueue;
+    volatile accst_t          alias_running; // FIXME: right data structure?
+    volatile accst_t          alias_avail;
     volatile unsigned int     startUpCount;
     volatile unsigned int     shutDownCount;
+    struct internalMsi *           next;
+} internalMsi_t;
+
+typedef struct msi
+{
+    internalMsi_t *           head;
+    volatile unsigned int     blocked;
+    volatile unsigned int     total;
+    volatile unsigned int     wakeUpNext;
+    artsQueue *               wakeQueue;
 } msi_t __attribute__ ((aligned (64)));                        // master shared info
 
 typedef struct
 {
   uint32_t                    aliasId;  // alias id
-  struct threadMask *         unit;     // alias shared pool info
   struct artsRuntimePrivate * tlToCopy; // we copy the master thread's TL
+  internalMsi_t             * localInternal;
+  sem_t                     * startUpSem;
 } tmask_t; // per alias thread info
 
 // RTS internal interface
@@ -107,7 +119,5 @@ void artsTMTRuntimeStop();
 bool artsAvailContext();
 void artsNextContext();
 void artsWakeUpContext();
-
-
 
 #endif /* CORE_INC_ARTS_TMT_H_ */

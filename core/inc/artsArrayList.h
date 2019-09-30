@@ -67,6 +67,7 @@ typedef struct {
     uint64_t last;
     size_t elementSize;
     size_t arrayLength;
+    artsArrayListElement * head;
     artsArrayListElement * current;
 } artsArrayListIterator;
 

@@ -42,6 +42,7 @@ add_subdirectory(introspection)
 add_subdirectory(network)
 add_subdirectory(system)
 add_subdirectory(runtime)
+add_subdirectory(gpu)
 
 set(main_inc
     ${CORE_INCLUDE_DIR}/artsRT.h
@@ -57,6 +58,26 @@ set(main_src
     artsUtil.c
 )
 
-add_library(arts STATIC ${main_inc} ${main_src} $<TARGET_OBJECTS:gas> $<TARGET_OBJECTS:network> $<TARGET_OBJECTS:introspection> $<TARGET_OBJECTS:runtime> $<TARGET_OBJECTS:system> $<TARGET_OBJECTS:common>)
+if(CUDA_FOUND)
+    add_library(arts STATIC ${main_inc} ${main_src} 
+                    $<TARGET_OBJECTS:gas> 
+                    $<TARGET_OBJECTS:network> 
+                    $<TARGET_OBJECTS:introspection> 
+                    $<TARGET_OBJECTS:runtime> 
+                    $<TARGET_OBJECTS:system> 
+                    $<TARGET_OBJECTS:common>
+                    $<TARGET_OBJECTS:gpu>
+                )    
+else()
+    add_library(arts STATIC ${main_inc} ${main_src} 
+                    $<TARGET_OBJECTS:gas> 
+                    $<TARGET_OBJECTS:network> 
+                    $<TARGET_OBJECTS:introspection> 
+                    $<TARGET_OBJECTS:runtime> 
+                    $<TARGET_OBJECTS:system> 
+                    $<TARGET_OBJECTS:common>
+                )
+endif()
+
 install(FILES ${main_inc} DESTINATION include)
 install(TARGETS arts ARCHIVE DESTINATION lib)

@@ -242,7 +242,7 @@ void artsRemoteHandleUpdateDb(void * ptr)
     {
         struct artsDb ** dataPtr;
         bool write = packet->header.size > sizeof(struct artsRemoteUpdateDbPacket);
-        itemState state = artsRouteTableLookupItemWithState(packet->guid, (void***)&dataPtr, allocatedKey, write);
+        itemState_t state = artsRouteTableLookupItemWithState(packet->guid, (void***)&dataPtr, allocatedKey, write);
         struct artsDb * db = (dataPtr) ? *dataPtr : NULL;
 //        PRINTF("DB: %p %lu %u %u %d\n", db, packet->guid, packet->header.size, sizeof(struct artsRemoteUpdateDbPacket), state);
         if(write)
@@ -251,7 +251,7 @@ void artsRemoteHandleUpdateDb(void * ptr)
             memcpy(ptr, packetDb, db->header.size - sizeof(struct artsDb));
             artsRouteTableSetRank(packet->guid, artsGlobalRankId);
             artsProgressFrontier(db, artsGlobalRankId);
-            artsRouteTableDecItem(packet->guid, dataPtr);
+            // artsRouteTableDecItem(packet->guid, dataPtr);
         }
         else
         {
@@ -372,7 +372,8 @@ void artsRemoteEventSatisfySlot(artsGuid_t eventGuid, artsGuid_t dataGuid, uint3
 
 void artsDbRequestCallback(struct artsEdt *edt, unsigned int slot, struct artsDb * dbRes)
 { 
-    artsEdtDep_t * depv = (artsEdtDep_t *)(((uint64_t *)(edt + 1)) + edt->paramc);
+    artsEdtDep_t * depv = artsGetDepv(edt);
+    
     depv[slot].ptr = dbRes + 1;
     unsigned int temp = artsAtomicSub(&edt->depcNeeded, 1U);
     if(temp == 0)
@@ -456,7 +457,7 @@ void artsRemoteHandleDbRecieved(struct artsRemoteDbSendPacket * packet)
     struct artsDb * packetDb = (struct artsDb *)(packet+1);    
     struct artsDb * dbRes = NULL;
     struct artsDb ** dataPtr = NULL;
-    itemState state = artsRouteTableLookupItemWithState(packetDb->guid, (void***)&dataPtr, allocatedKey, true);
+    itemState_t state = artsRouteTableLookupItemWithState(packetDb->guid, (void***)&dataPtr, allocatedKey, true);
     
     struct artsDb * tPtr = (dataPtr) ? *dataPtr : NULL;
     struct artsDbList * dbList = NULL;
@@ -493,7 +494,7 @@ void artsRemoteHandleDbRecieved(struct artsRemoteDbSendPacket * packet)
             
         default:
             PRINTF("Got a DB but current key state is %d looking again\n", state);
-            itemState state = artsRouteTableLookupItemWithState(packetDb->guid, (void*)&tPtr, anyKey, false);
+            itemState_t state = artsRouteTableLookupItemWithState(packetDb->guid, (void*)&tPtr, anyKey, false);
             PRINTF("The current state after re-checking is %d\n", state);
             break;
     }
@@ -502,7 +503,7 @@ void artsRemoteHandleDbRecieved(struct artsRemoteDbSendPacket * packet)
         artsRouteTableFireOO(packetDb->guid, artsOutOfOrderHandler);
     }
     
-    artsRouteTableDecItem(packetDb->guid, dataPtr);
+    // artsRouteTableDecItem(packetDb->guid, dataPtr);
 }
 
 void artsRemoteDbFullRequest(artsGuid_t dataGuid, int rank, struct artsEdt * edt, int pos, artsType_t mode)
@@ -575,7 +576,7 @@ void artsRemoteDbFullSend(struct artsRemoteDbFullRequestPacket * pack)
 void artsRemoteHandleDbFullRecieved(struct artsRemoteDbFullSendPacket * packet)
 {
     bool dec;
-    itemState state;
+    itemState_t state;
     struct artsDb * packetDb = (struct artsDb *)(packet+1);    
     void ** dataPtr = artsRouteTableReserve(packetDb->guid, &dec, &state);
     struct artsDb * dbRes = (dataPtr) ? *dataPtr : NULL;    
@@ -606,8 +607,8 @@ void artsRemoteHandleDbFullRecieved(struct artsRemoteDbFullSendPacket * packet)
     if(artsRouteTableUpdateItem(packetDb->guid, (void*)dbRes, artsGlobalRankId, state))
         artsRouteTableFireOO(packetDb->guid, artsOutOfOrderHandler);
     artsDbRequestCallback(packet->edt, packet->slot, dbRes);
-    if(dec)
-        artsRouteTableDecItem(packetDb->guid, dataPtr);
+    // if(dec)
+    //     artsRouteTableDecItem(packetDb->guid, dataPtr);
 }
 
 void artsRemoteSendAlreadyLocal(int rank, artsGuid_t guid, struct artsEdt * edt, unsigned int slot, artsType_t mode)

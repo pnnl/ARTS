@@ -49,7 +49,7 @@ extern "C" {
 #include <string.h>
 #include <stdint.h>
 #include <inttypes.h>
-    
+ 
 /* boolean support in C */
 #ifdef __cplusplus
 #define TRUE true
@@ -72,6 +72,7 @@ typedef enum
 {
     ARTS_NULL = 0,
     ARTS_EDT,
+    ARTS_GPU_EDT,
     ARTS_EVENT,
     ARTS_EPOCH,
     ARTS_CALLBACK,
@@ -100,6 +101,9 @@ typedef enum
 //ARTS_DB_ONCE: This mode is the same as ARTS_DB_ONCE except we are guarenteing
 //That the DB is local to the EDT accessing it (i.e. edtGuid and dbGuid have the same route).
     ARTS_DB_ONCE_LOCAL,
+
+    ARTS_DB_GPU_READ,
+    ARTS_DB_GPU_WRITE,
             
 //End DB modes
     ARTS_LAST_TYPE,
@@ -115,6 +119,7 @@ typedef struct
 } artsEdtDep_t;
 
 //Signature of an EDT
+//Also signature of an GPU task
 typedef void (*artsEdt_t) (uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t depv[]);
 
 //Signature of an event callback.  The data parameter is the value of the dataGuid used to satisfy the event.
@@ -224,6 +229,15 @@ typedef struct {
     volatile unsigned int * waitPtr;
     volatile uint64_t ticket;
 } artsEpoch_t;
+
+
+typedef struct {
+    void * buffer;
+    uint32_t * sizeToWrite;
+    unsigned int size;
+    artsGuid_t epochGuid;
+    volatile unsigned int uses;
+} artsBuffer_t;
 
 void PRINTF( const char* format, ... );
 

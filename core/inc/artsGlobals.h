@@ -64,10 +64,11 @@ struct artsRuntimeShared
     bool (*scheduler)();
     struct artsDeque ** deque;
     struct artsDeque ** receiverDeque;
+    struct artsDeque ** gpuDeque;
     struct artsRouteTable ** routeTable;
+    struct artsRouteTable ** gpuRouteTable;
     struct artsRouteTable * remoteRouteTable;
     volatile bool ** localSpin;
-    volatile bool ** tMTLocalSpin;
     unsigned int ** memoryMoves;
     struct atomicCreateBarrierInfo ** atomicWaits;
     unsigned int workerThreadCount;
@@ -91,6 +92,20 @@ struct artsRuntimeShared
     artsGuid_t shutdownEpoch;
     unsigned int shadLoopStride;
     bool tMT;
+    unsigned int gpu;
+    unsigned int gpuLocality;
+    unsigned int gpuFit;
+    unsigned int gpuMaxEdts;
+    unsigned int gpuP2P;
+    unsigned int gpuRouteTableSize;
+    unsigned int gpuRouteTableEntries;
+    size_t gpuMaxMemory;
+    bool freeDbAfterGpuRun;
+    bool runGpuGcIdle;
+    bool runGpuGcPreEdt;
+    bool deleteZerosGpuGc;
+    bool gpuBuffOn;
+    unsigned int pinThreads;
     uint64_t ** keys;
     uint64_t * globalGuidThreadId;
 }__attribute__ ((aligned(64)));
@@ -99,6 +114,7 @@ struct artsRuntimePrivate
 {
     struct artsDeque * myDeque;
     struct artsDeque * myNodeDeque;
+    struct artsDeque * myGpuDeque;
     unsigned int coreId;
     unsigned int threadId;
     unsigned int groupId;
@@ -137,6 +153,7 @@ extern uint64_t artsGuidMax;
 #define artsTypeName const char * const _artsTypeName[] = { \
 "ARTS_NULL", \
 "ARTS_EDT", \
+"ARTS_GPU_EDT", \
 "ARTS_EVENT", \
 "ARTS_EPOCH", \
 "ARTS_CALLBACK", \
@@ -146,6 +163,8 @@ extern uint64_t artsGuidMax;
 "ARTS_DB_PIN", \
 "ARTS_DB_ONCE", \
 "ARTS_DB_ONCE_LOCAL", \
+"ARTS_DB_GPU_READ", \
+"ARTS_DB_GPU_WRITE", \
 "ARTS_LAST_TYPE", \
 "ARTS_SINGLE_VALUE", \
 "ARTS_PTR" }

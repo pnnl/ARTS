@@ -43,14 +43,14 @@ extern "C" {
 #endif
     
 #include "artsOutOfOrderList.h"
-void artsOutOfOrderSignalEdt ( artsGuid_t waitOn, artsGuid_t edtPacket, artsGuid_t dataGuid, uint32_t slot, artsType_t mode);
+void artsOutOfOrderSignalEdt ( artsGuid_t waitOn, artsGuid_t edtPacket, artsGuid_t dataGuid, uint32_t slot, artsType_t mode, bool force);
 void artsOutOfOrderEventSatisfy( artsGuid_t waitOn, artsGuid_t eventGuid, artsGuid_t dataGuid );
-void artsOutOfOrderEventSatisfySlot( artsGuid_t waitOn, artsGuid_t eventGuid, artsGuid_t dataGuid, uint32_t slot );
+void artsOutOfOrderEventSatisfySlot( artsGuid_t waitOn, artsGuid_t eventGuid, artsGuid_t dataGuid, uint32_t slot, bool force);
 void artsOutOfOrderAddDependence(artsGuid_t source, artsGuid_t destination, uint32_t slot, artsType_t mode, artsGuid_t waitOn);
 void artsOutOfOrderHandleReadyEdt(artsGuid_t triggerGuid, struct artsEdt *edt);
 void artsOutOfOrderHandleRemoteDbSend(int rank, artsGuid_t dbGuid, artsType_t mode);
 void artsOutOfOrderHandleDbRequestWithOOList(struct artsOutOfOrderList * addToMe, void ** data, struct artsEdt *edt, unsigned int slot);
-void artsOutOfOrderHandleDbRequest(artsGuid_t dbGuid, struct artsEdt *edt, unsigned int slot);
+void artsOutOfOrderHandleDbRequest(artsGuid_t dbGuid, struct artsEdt *edt, unsigned int slot, bool inc);
 void artsOutOfOrderHandleRemoteDbExclusiveRequest(artsGuid_t dbGuid, int rank, struct artsEdt * edt, unsigned int slot, artsType_t mode);
 void artsOutOfOrderHandleRemoteDbFullSend(artsGuid_t dbGuid, int rank, struct artsEdt * edt, unsigned int slot, artsType_t mode);
 void artsOutOfOrderGetFromDb(artsGuid_t edtGuid, artsGuid_t dbGuid, unsigned int slot, unsigned int offset, unsigned int size);

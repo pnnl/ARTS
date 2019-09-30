@@ -59,7 +59,7 @@ int artsRT(int argc, char **argv)
     mainArgc = argc;
     mainArgv = argv;
     artsRemoteTryToBecomePrinter();
-    config = artsConfigLoad(0, NULL, NULL);
+    config = artsConfigLoad();
 
     if(config->coreDump)
         artsTurnOnCoreDumps();

@@ -189,7 +189,7 @@ void artsOutOfOrderListFireCallback(struct artsOutOfOrderList * fireMe, void * l
 {
     if(writerTryOOLock(fireMe, fireLock))
     {
-        DPRINTF("FIRING OO LIST %u\n", fireMe->count);
+       DPRINTF("FIRING OO LIST %u\n", fireMe->count);
         fireMe->isFired = true;
         unsigned int pos = fireMe->count;
         unsigned int j = 0;

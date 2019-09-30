@@ -149,6 +149,15 @@ Some configurations:
 The configuration file (arts.cfg) has many options which are set to reasonable defaults.  Three options will be changed by the user, launcher, threads, and gpus.  The launcher has already been discussed.  For threads and gpus, these should be set to a the number of resources you want to use per node.
   
 Please refer to arts.h and artsRT.h for documentation.  
+  
+To run our GPU matrix multiply please go to build/examples/mm.  Set your configuration file, and run:
+```
+./mmTile [matrix size] [tile size]
+```
+Or for the cuBLAS version:
+```
+./mmTileBlas [matrix size] [tile size]
+```
 
 Contributors
 ============

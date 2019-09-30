@@ -43,6 +43,7 @@
 #include "artsRouteTable.h"
 #include "artsOutOfOrder.h"
 #include "artsRuntime.h"
+#include "artsEdtFunctions.h"
 
 #define writeSet     0x80000000
 #define exclusiveSet 0x40000000
@@ -271,7 +272,7 @@ void artsPushDelayedEdt(struct artsLocalDelayedEdt * head, unsigned int position
     for(unsigned int i=0; i<numElements; i++)
     {
         if(!current->next)
-            current->next = artsMalloc(sizeof(struct artsLocalDelayedEdt));
+            current->next = artsCalloc(sizeof(struct artsLocalDelayedEdt));
         current=current->next;
     }
     current->edt[elementPos] = edt;
@@ -506,7 +507,7 @@ void artsSignalFrontierLocal(struct artsDbFrontier * frontier, struct artsDb * d
         if(frontier->exNode == artsGlobalRankId)
         {
             struct artsEdt * edt = frontier->exEdt;
-            artsEdtDep_t * depv = (artsEdtDep_t *)(((uint64_t *)(edt + 1)) + edt->paramc);
+            artsEdtDep_t * depv = artsGetDepv(edt);
             depv[frontier->exSlot].ptr = db+1;
             if(artsAtomicSub(&edt->depcNeeded,1U) == 0)
                 artsHandleRemoteStolenEdt(edt);
@@ -537,7 +538,8 @@ void artsSignalFrontierLocal(struct artsDbFrontier * frontier, struct artsDb * d
         {
             unsigned int pos = i % DBSPERELEMENT;
             struct artsEdt * edt = current->edt[pos];
-            artsEdtDep_t * depv = (artsEdtDep_t *)(((uint64_t *)(edt + 1)) + edt->paramc);
+            //This is prob wrong now with GPUs
+            artsEdtDep_t * depv = artsGetDepv(edt);
             depv[current->slot[pos]].ptr = db+1;
 
             if(artsAtomicSub(&edt->depcNeeded,1U) == 0)
@@ -589,7 +591,7 @@ struct artsDbFrontierIterator * artsProgressAndGetFrontier(struct artsDbList * d
 
 unsigned int * makeCopy(struct artsDbFrontier * frontier)
 {
-    unsigned int * array = artsMalloc(sizeof(unsigned int) * frontier->position);
+    unsigned int * array = artsCalloc(sizeof(unsigned int) * frontier->position);
     unsigned int numElements = frontier->position / DBSPERELEMENT;
     unsigned int lastPos = frontier->position % DBSPERELEMENT;
     struct artsDbElement * current = &frontier->list;

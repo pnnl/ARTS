@@ -61,7 +61,8 @@ void artsRemoteLauncherSSHStartupProcesses( struct artsRemoteLauncher * launcher
     
     char cwd[1024];
     int cwdLength;
-    getcwd(cwd, sizeof(cwd));
+    if (getcwd(cwd, sizeof(cwd)) == NULL)
+      PRINTF("Getcwd Error.");
     cwdLength = strlen(cwd);
     
     sshExecutions = artsMalloc( sizeof( FILE *  ) * config->tableLength-1 );

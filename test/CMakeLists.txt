@@ -37,13 +37,16 @@
 ## License for the specific language governing permissions and limitations
 ###############################################################################
 
-set(LIBS arts ${RT_LIB} ${PTHREAD_LIB} ${RDMACM_LIB} ${HWLOC_LIB})
+set(LIBS arts ${RT_LIB} ${PTHREAD_LIB} ${RDMACM_LIB} ${HWLOC_LIB} ${CUDA_LIBRARIES} ${CUBLAS_LIBRARIES})
 
 add_executable(testMain testMain.c)
 target_link_libraries(testMain ${LIBS})
 
 add_executable(testRouteTable testRouteTable.c)
 target_link_libraries(testRouteTable ${LIBS})
+
+add_executable(testRouteTable2 testRouteTable2.c)
+target_link_libraries(testRouteTable2 ${LIBS})
 
 add_executable(testCDAG testCDAG.c)
 target_link_libraries(testCDAG ${LIBS})
@@ -119,3 +122,23 @@ target_link_libraries(testBuffer ${LIBS})
 
 add_executable(testEvent testEvent.c)
 target_link_libraries(testEvent ${LIBS})
+
+if(CUDA_FOUND)
+    set_source_files_properties(testGpuStream.c PROPERTIES LANGUAGE CUDA)
+    add_executable(testGpuStream testGpuStream.c)
+    target_link_libraries(testGpuStream ${LIBS})
+    if(CUBLAS_FOUND)
+        set_source_files_properties(testGpuLib.c PROPERTIES LANGUAGE CUDA)
+        add_executable(testGpuLib testGpuLib.cu)
+        target_link_libraries(testGpuLib ${LIBS})
+    endif()
+endif()
+
+add_executable(testOOBug testOOBug.c)
+target_link_libraries(testOOBug ${LIBS})
+
+add_executable(testRouteTableIter testRouteTableIter.c)
+target_link_libraries(testRouteTableIter ${LIBS})
+
+add_executable(testRouteTableIter2 testRouteTableIter2.c)
+target_link_libraries(testRouteTableIter2 ${LIBS})

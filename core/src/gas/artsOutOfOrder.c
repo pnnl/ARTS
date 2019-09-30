@@ -86,6 +86,7 @@ struct ooDbRequestSatisfy
     enum artsOutOfOrderType type;
     struct artsEdt * edt;
     uint32_t slot;
+    bool inc;
 };
 
 struct ooAddDependence
@@ -240,6 +241,7 @@ inline void artsOutOfOrderHandler(void * handleMe, void * memoryPtr)
         case ooDbRequestSatisfy:
         {
             struct ooDbRequestSatisfy * req = handleMe;
+            DPRINTF("FILL %lu %u %p\n", req->edt, req->slot, memoryPtr);
             artsDbRequestCallback(req->edt, req->slot, (struct artsDb *)memoryPtr);
             break;
         }
@@ -321,7 +323,7 @@ inline void artsOutOfOrderHandler(void * handleMe, void * memoryPtr)
 
 }
 
-void artsOutOfOrderSignalEdt (artsGuid_t waitOn, artsGuid_t edtPacket, artsGuid_t dataGuid, uint32_t slot, artsType_t mode)
+void artsOutOfOrderSignalEdt (artsGuid_t waitOn, artsGuid_t edtPacket, artsGuid_t dataGuid, uint32_t slot, artsType_t mode, bool force)
 {
     struct ooSignalEdt * edt = artsMalloc(sizeof(struct ooSignalEdt));
     edt->type = ooSignalEdt;
@@ -329,26 +331,37 @@ void artsOutOfOrderSignalEdt (artsGuid_t waitOn, artsGuid_t edtPacket, artsGuid_
     edt->dataGuid = dataGuid;
     edt->slot = slot;
     edt->mode = mode;
-    bool res =  artsRouteTableAddOO(waitOn, edt);
-    if(!res)
+    if(force)
+        artsRouteTableAddOOExisting(waitOn, edt, false);
+    else
     {
-        internalSignalEdt(edtPacket, slot, dataGuid, mode, NULL, 0);
-        artsFree(edt);
-    }   
+        bool res =  artsRouteTableAddOO(waitOn, edt, false);
+        if(!res)
+        {
+            internalSignalEdt(edtPacket, slot, dataGuid, mode, NULL, 0);
+            artsFree(edt);
+        }
+    } 
 }
 
-void artsOutOfOrderEventSatisfySlot(artsGuid_t waitOn, artsGuid_t eventGuid, artsGuid_t dataGuid, uint32_t slot )
+void artsOutOfOrderEventSatisfySlot(artsGuid_t waitOn, artsGuid_t eventGuid, artsGuid_t dataGuid, uint32_t slot, bool force)
 {
     struct ooEventSatisfySlot * event = artsMalloc( sizeof(struct ooEventSatisfySlot) );
     event->type = ooEventSatisfySlot;
     event->eventGuid = eventGuid;
     event->dataGuid = dataGuid;
     event->slot = slot;
-    bool res =  artsRouteTableAddOO(waitOn, event);
-    if(!res)
+    bool res;
+    if(force)
+        artsRouteTableAddOOExisting(waitOn, event, false);
+    else
     {
-        artsEventSatisfySlot(eventGuid, dataGuid, slot);
-        artsFree(event);
+        bool res = artsRouteTableAddOO(waitOn, event, false);
+        if(!res)
+        {
+            artsEventSatisfySlot(eventGuid, dataGuid, slot);
+            artsFree(event);
+        }
     }
 }
 
@@ -360,7 +373,7 @@ void artsOutOfOrderAddDependence(artsGuid_t source, artsGuid_t destination, uint
     dep->destination = destination;
     dep->slot = slot;
     dep->mode = mode;
-    bool res = artsRouteTableAddOO(waitOn, dep);
+    bool res = artsRouteTableAddOO(waitOn, dep, false);
     if(!res)
     {
         artsAddDependence(source, destination, slot);
@@ -373,7 +386,7 @@ void artsOutOfOrderHandleReadyEdt(artsGuid_t triggerGuid, struct artsEdt *edt)
     struct ooHandleReadyEdt * readyEdt = artsMalloc(sizeof(struct ooHandleReadyEdt));
     readyEdt->type = ooHandleReadyEdt;
     readyEdt->edt = edt;
-    bool res = artsRouteTableAddOO(triggerGuid, readyEdt);
+    bool res = artsRouteTableAddOO(triggerGuid, readyEdt, false);
     if(!res)
     {
         artsHandleReadyEdt(edt);
@@ -388,7 +401,7 @@ void artsOutOfOrderHandleRemoteDbSend(int rank, artsGuid_t dbGuid, artsType_t mo
     readySend->rank = rank;
     readySend->dataGuid = dbGuid;
     readySend->mode = mode;
-    bool res = artsRouteTableAddOO(dbGuid, readySend);
+    bool res = artsRouteTableAddOO(dbGuid, readySend, false);
     if(!res)
     {
         struct artsDb * db = artsRouteTableLookupItem(dbGuid);
@@ -397,13 +410,13 @@ void artsOutOfOrderHandleRemoteDbSend(int rank, artsGuid_t dbGuid, artsType_t mo
     }
 }
 
-void artsOutOfOrderHandleDbRequest(artsGuid_t dbGuid, struct artsEdt *edt, unsigned int slot)
+void artsOutOfOrderHandleDbRequest(artsGuid_t dbGuid, struct artsEdt *edt, unsigned int slot, bool inc)
 {
     struct ooDbRequestSatisfy * req = artsMalloc(sizeof(struct ooDbRequestSatisfy));
     req->type = ooDbRequestSatisfy;
     req->edt = edt;
     req->slot = slot;
-    bool res = artsRouteTableAddOO(dbGuid, req);
+    bool res = artsRouteTableAddOO(dbGuid, req, inc);
     if(!res)
     {
         struct artsDb * db = artsRouteTableLookupItem(dbGuid);
@@ -435,7 +448,7 @@ void artsOutOfOrderHandleRemoteDbFullSend(artsGuid_t dbGuid, int rank, struct ar
     dbSend->edt = edt;
     dbSend->slot = slot;
     dbSend->mode = mode;
-    bool res = artsRouteTableAddOO(dbGuid, dbSend);
+    bool res = artsRouteTableAddOO(dbGuid, dbSend, false);
     if(!res)
     {
         struct artsDb * db = artsRouteTableLookupItem(dbGuid);
@@ -453,7 +466,7 @@ void artsOutOfOrderGetFromDb(artsGuid_t edtGuid, artsGuid_t dbGuid, unsigned int
     req->slot = slot;
     req->offset = offset;
     req->size = size;
-    bool res = artsRouteTableAddOO(dbGuid, req);
+    bool res = artsRouteTableAddOO(dbGuid, req, false);
     if(!res)
     {
         artsGetFromDbAt(req->edtGuid, req->dbGuid, req->slot, req->offset, req->size, artsGlobalRankId);
@@ -470,7 +483,7 @@ void artsOutOfOrderSignalEdtWithPtr(artsGuid_t edtGuid, artsGuid_t dbGuid, void 
     req->size = size;
     req->slot = slot;
     req->ptr = ptr;
-    bool res = artsRouteTableAddOO(edtGuid, req);
+    bool res = artsRouteTableAddOO(edtGuid, req, false);
     if(!res)
     {
         artsSignalEdtPtr(req->edtGuid, req->slot, req->ptr, req->size);
@@ -489,7 +502,7 @@ void artsOutOfOrderPutInDb(void * ptr, artsGuid_t edtGuid, artsGuid_t dbGuid, un
     req->offset = offset;
     req->size = size;
     req->epochGuid = epochGuid;
-    bool res = artsRouteTableAddOO(dbGuid, req);
+    bool res = artsRouteTableAddOO(dbGuid, req, false);
     if(!res)
     {
         internalPutInDb(req->ptr, req->edtGuid, req->dbGuid, req->slot, req->offset, req->size, req->epochGuid, artsGlobalRankId);
@@ -503,7 +516,7 @@ void artsOutOfOrderIncActiveEpoch(artsGuid_t epochGuid)
     struct ooEpoch * req = artsMalloc(sizeof(struct ooEpoch));
     req->type = ooEpochActive;
     req->guid = epochGuid;
-    bool res =  artsRouteTableAddOO(epochGuid, req);
+    bool res =  artsRouteTableAddOO(epochGuid, req, false);
     if(!res)
     {
         incrementActiveEpoch(epochGuid);
@@ -516,7 +529,7 @@ void artsOutOfOrderIncFinishedEpoch(artsGuid_t epochGuid)
     struct ooEpoch * req = artsMalloc(sizeof(struct ooEpoch));
     req->type = ooEpochFinish;
     req->guid = epochGuid;
-    bool res =  artsRouteTableAddOO(epochGuid, req);
+    bool res =  artsRouteTableAddOO(epochGuid, req, false);
     if(!res)
     {
         incrementFinishedEpoch(epochGuid);
@@ -530,7 +543,7 @@ void artsOutOfOrderSendEpoch(artsGuid_t epochGuid, unsigned int source, unsigned
     req->type = ooEpochSend;
     req->source = source;
     req->dest = dest;
-    bool res = artsRouteTableAddOO(epochGuid, req);
+    bool res = artsRouteTableAddOO(epochGuid, req, false);
     if(!res)
     {
         sendEpoch(epochGuid, source, dest);
@@ -543,7 +556,7 @@ void artsOutOfOrderIncQueueEpoch(artsGuid_t epochGuid)
     struct ooEpoch * req = artsMalloc(sizeof(struct ooEpoch));
     req->type = ooEpochIncQueue;
     req->guid = epochGuid;
-    bool res =  artsRouteTableAddOO(epochGuid, req);
+    bool res =  artsRouteTableAddOO(epochGuid, req, false);
     if(!res)
     {
         incrementQueueEpoch(epochGuid);
@@ -561,7 +574,7 @@ void artsOutOfOrderAtomicAddInArrayDb(artsGuid_t dbGuid,  unsigned int index, un
     req->slot = slot;
     req->index = index;
     req->toAdd = toAdd;
-    bool res = artsRouteTableAddOO(dbGuid, req);
+    bool res = artsRouteTableAddOO(dbGuid, req, false);
     if(!res)
     {
         PRINTF("edtGuid OO2: %lu\n", req->edtGuid);
@@ -581,7 +594,7 @@ void artsOutOfOrderAtomicCompareAndSwapInArrayDb(artsGuid_t dbGuid,  unsigned in
     req->index = index;
     req->oldValue = oldValue;
     req->newValue = newValue;
-    bool res = artsRouteTableAddOO(dbGuid, req);
+    bool res = artsRouteTableAddOO(dbGuid, req, false);
     if(!res)
     {
         PRINTF("edtGuid OO2: %lu\n", req->edtGuid);
@@ -596,7 +609,7 @@ void artsOutOfOrderDbMove(artsGuid_t dataGuid, unsigned int rank)
     req->type = ooDbMove;
     req->dataGuid = dataGuid;
     req->rank = rank;
-    bool res =  artsRouteTableAddOO(dataGuid, req);
+    bool res =  artsRouteTableAddOO(dataGuid, req, false);
     if(!res)
     {
         artsDbMove(dataGuid, rank);

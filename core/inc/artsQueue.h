@@ -72,7 +72,7 @@
 
 #include "arts.h"
 
-#define Object          unsigned int
+#define Object          uint64_t
 #define RING_POW        (6)
 #define RING_SIZE       (1ull << RING_POW)
 #define ALIGNMENT       8

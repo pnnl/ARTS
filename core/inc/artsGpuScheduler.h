@@ -36,68 +36,27 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include <stdio.h>
-#include <stdlib.h>
-#include "arts.h"
 
-uint64_t start = 0;
+/*
 
-void fibJoin(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t depv[])
-{
-    unsigned int x = depv[0].guid;
-    unsigned int y = depv[1].guid;
-    artsSignalEdtValue(paramv[0], paramv[1], x+y);
-}
+GPU Scheduling policies
+-----------------------
 
-void fibFork(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t depv[])
-{
-    unsigned int next = (artsGetCurrentNode() + 1) % artsGetTotalNodes();
-//    PRINTF("NODE: %u WORKER: %u NEXT: %u\n", artsGetCurrentNode(), artsGetCurrentWorker(), next);
-    
-    artsGuid_t guid = paramv[0];
-    unsigned int slot = paramv[1];
-    unsigned int num = paramv[2];
-    if(num < 2)
-        artsSignalEdtValue(guid, slot, num);
-    else
-    {
-        artsGuid_t joinGuid = artsEdtCreate(fibJoin, artsGetCurrentNode(), paramc-1, paramv, 2);
-        
-        uint64_t args[3] = {joinGuid, 0, num-1};
-        artsEdtCreate(fibFork, next, 3, args, 0);
-        
-        args[1] = 1;
-        args[2] = num-2;
-        artsEdtCreate(fibFork, next, 3, args, 0);
-    }
-}
-
-void fibDone(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t depv[])
-{
-    uint64_t time = artsGetTimeStamp() - start;
-    PRINTF("Fib %u: %u time: %lu nodes: %u workers: %u\n", paramv[0], depv[0].guid, time, artsGetTotalNodes(), artsGetTotalWorkers());
-    artsShutdown();
-}
-
-void initPerNode(unsigned int nodeId, int argc, char** argv)
-{
-
-}
-
-void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc, char** argv)
-{   
-    if(!nodeId && !workerId)
-    {
-        unsigned int num = atoi(argv[1]);
-        artsGuid_t doneGuid = artsEdtCreate(fibDone, 0, 1, (uint64_t*)&num, 1);
-        uint64_t args[3] = {doneGuid, 0, num};
-        start = artsGetTimeStamp();
-        artsGuid_t guid = artsEdtCreate(fibFork, 0, 3, args, 0);
-    }
-}
-
-int main(int argc, char** argv)
-{
-    artsRT(argc, argv);
-    return 0;
-}
+1. Fitting based (MU) : Find the best fit with respect to available memory in a GPU.
+2. Locality based
+    a. All Hits (AND) : if (Find the GPU with all the required data blocks) else (random policy).
+    b. At least one hit (OR) : if (Find the GPU with at least one of the required data blocks) else (random policy).
+    c. AND-MU : if (Find the GPU with all the required data blocks) else if (MU) else (random policy).
+    d. OR-MU : if (Find the GPU with at least one of the required data blocks) else if (MU) else (random policy).
+3. Inter-device Fetching
+    a. D2D Memcpy : if (data block is a hit in one GPU and Edt is scheduled in another) Move data block DeviceToDevice instead of HostToDevice.
+    b. D2D Load-Store : if (data block is a hit in one GPU and Edt is scheduled in another) Access data blocks using P2P L/S.
+    c. Prefetch : Move data on to the device for future Edts peeking up the stack.
+4. Random : 
+    a. LRU
+    b. Round Robin
+    c. Time-bomb
+    d. Greedy than oldest
+    e. FIFO
+    f. Prediction : Evict a data block based on static analysis or compile-time percolated knowledge.
+*/

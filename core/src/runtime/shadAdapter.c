@@ -59,7 +59,7 @@ artsGuid_t artsEdtCreateShad(artsEdt_t funcPtr, unsigned int route, uint32_t par
     ARTSEDTCOUNTERTIMERSTART(edtCreateCounter);
     unsigned int edtSpace = sizeof(struct artsEdt) + paramc * sizeof(uint64_t) + sizeof(artsGuid_t);
     artsGuid_t guid = NULL_GUID;
-    artsEdtCreateInternal(&guid, route, artsThreadInfo.clusterId, edtSpace, NULL_GUID, funcPtr, paramc, paramv, 0, false, NULL_GUID, true);
+    artsEdtCreateInternal(NULL, ARTS_EDT, &guid, route, artsThreadInfo.clusterId, edtSpace, NULL_GUID, funcPtr, paramc, paramv, 0, false, NULL_GUID, true);
     ARTSEDTCOUNTERTIMERENDINCREMENT(edtCreateCounter);
     return guid;
 }
@@ -109,7 +109,7 @@ artsGuid_t artsActiveMessageShad(artsEdt_t funcPtr, unsigned int route, uint32_t
     if(size) {
         unsigned int depSpace = sizeof(artsEdtDep_t);
         unsigned int edtSpace = sizeof(struct artsEdt) + paramc * sizeof(uint64_t) + depSpace;
-        artsEdtCreateInternal(&guid, rank, cluster, edtSpace, NULL_GUID, funcPtr, paramc, paramv, 1, useEpoch, epochGuid, true);
+        artsEdtCreateInternal(NULL, ARTS_EDT, &guid, rank, cluster, edtSpace, NULL_GUID, funcPtr, paramc, paramv, 1, useEpoch, epochGuid, true);
         
 //        PRINTF("MEMCPY: %u\n", size);
         void * ptr = artsMalloc(size);
@@ -119,7 +119,7 @@ artsGuid_t artsActiveMessageShad(artsEdt_t funcPtr, unsigned int route, uint32_t
     else
     {
         unsigned int edtSpace = sizeof(struct artsEdt) + paramc * sizeof(uint64_t);
-        artsEdtCreateInternal(&guid, rank, cluster, edtSpace, NULL_GUID, funcPtr, paramc, paramv, 0, useEpoch, epochGuid, false);
+        artsEdtCreateInternal(NULL, ARTS_EDT, &guid, rank, cluster, edtSpace, NULL_GUID, funcPtr, paramc, paramv, 0, useEpoch, epochGuid, false);
     }
     return guid;
 }
@@ -136,7 +136,7 @@ void artsSynchronousActiveMessageShad(artsEdt_t funcPtr, unsigned int route, uin
     if(size) {
         unsigned int depSpace = sizeof(artsEdtDep_t);
         unsigned int edtSpace = sizeof(struct artsEdt) + paramc * sizeof(uint64_t) + depSpace;
-        artsEdtCreateInternal(&guid, rank, cluster, edtSpace, waitGuid, funcPtr, paramc, paramv, 1, false, NULL_GUID, true);
+        artsEdtCreateInternal(NULL, ARTS_EDT, &guid, rank, cluster, edtSpace, waitGuid, funcPtr, paramc, paramv, 1, false, NULL_GUID, true);
 
         void * ptr = artsMalloc(size);
         memcpy(ptr, data, size);
@@ -145,7 +145,7 @@ void artsSynchronousActiveMessageShad(artsEdt_t funcPtr, unsigned int route, uin
     else
     {
         unsigned int edtSpace = sizeof(struct artsEdt) + paramc * sizeof(uint64_t);
-        artsEdtCreateInternal(&guid, rank, cluster, edtSpace, waitGuid, funcPtr, paramc, paramv, 0, false, NULL_GUID, false);
+        artsEdtCreateInternal(NULL, ARTS_EDT, &guid, rank, cluster, edtSpace, waitGuid, funcPtr, paramc, paramv, 0, false, NULL_GUID, false);
     }
     
     while(waitFlag) {

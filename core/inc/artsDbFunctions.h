@@ -50,6 +50,9 @@ bool artsAddDbDuplicate(struct artsDb * db, unsigned int rank, struct artsEdt * 
 void prepDbs(unsigned int depc, artsEdtDep_t * depv);
 void internalPutInDb(void * ptr, artsGuid_t edtGuid, artsGuid_t dbGuid, unsigned int slot, unsigned int offset, unsigned int size, artsGuid_t epochGuid, unsigned int rank);
 
+void * artsDbMalloc(artsType_t mode, unsigned int size);
+void artsDbFree(void * ptr);
+
 #ifdef __cplusplus
 }
 #endif

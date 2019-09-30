@@ -135,45 +135,46 @@ void * artsGetFromArrayList(artsArrayList * aList, uint64_t index)
     return NULL;
 }
 
-    artsArrayListIterator * artsNewArrayListIterator(artsArrayList * aList)
-    {
-        artsArrayListIterator * iter = artsMalloc(sizeof(artsArrayListIterator));
-        iter->index = 0;
-        iter->last = aList->index;
-        iter->elementSize = aList->elementSize;
-        iter->arrayLength = aList->arrayLength;
-        iter->current = aList->head;
+artsArrayListIterator * artsNewArrayListIterator(artsArrayList * aList)
+{
+    artsArrayListIterator * iter = artsMalloc(sizeof(artsArrayListIterator));
+    iter->index = 0;
+    iter->last = aList->index;
+    iter->elementSize = aList->elementSize;
+    iter->arrayLength = aList->arrayLength;
+    iter->current = aList->head;
+    iter->head = aList->head;
 
-        return iter;
-    }
-    
-    void * artsArrayListNext(artsArrayListIterator * iter)
+    return iter;
+}
+
+void * artsArrayListNext(artsArrayListIterator * iter)
+{
+    void * ret = NULL;
+    if(iter)
     {
-        void * ret = NULL;
-        if(iter)
+        if(iter->index < iter->last)
         {
-            if(iter->index < iter->last)
+            if(!(iter->index % iter->arrayLength) && iter->index)
             {
-                if(!(iter->index % iter->arrayLength) && iter->index)
-                {
-                    iter->current = iter->current->next;
-                }
-                if(iter->current)
-                {
-                    ret = (void*) ((char*)iter->current->array + (iter->index - iter->current->start) * iter->elementSize);
-                    iter->index++;
-                }
+                iter->current = iter->current->next;
+            }
+            if(iter->current)
+            {
+                ret = (void*) ((char*)iter->current->array + (iter->index - iter->current->start) * iter->elementSize);
+                iter->index++;
             }
         }
-        return ret;
     }
-    
-    bool artsArrayListHasNext(artsArrayListIterator * iter)
-    {
-        return (iter->index < iter->last);
-    }
-    
-    void artsDeleteArrayListIterator(artsArrayListIterator * iter)
-    {
-        artsFree(iter);
-    }
+    return ret;
+}
+
+bool artsArrayListHasNext(artsArrayListIterator * iter)
+{
+    return (iter->index < iter->last);
+}
+
+void artsDeleteArrayListIterator(artsArrayListIterator * iter)
+{
+    artsFree(iter);
+}

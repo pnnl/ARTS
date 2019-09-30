@@ -51,6 +51,10 @@
 #include "artsCounter.h"
 #include "artsIntrospection.h"
 
+#ifdef USE_GPU
+#include "artsGpuRuntime.h"
+#endif
+
 #define DPRINTF( ... )
 
 #define maxEpochArrayList 32
@@ -181,12 +185,12 @@ void artsUnsetThreadLocalEdtInfo()
     currentEdt = NULL;
 }
 
-bool artsEdtCreateInternal(artsGuid_t * guid, unsigned int route, unsigned int cluster, unsigned int edtSpace, artsGuid_t outputBuffer, artsEdt_t funcPtr, uint32_t paramc, uint64_t * paramv, uint32_t depc, bool useEpoch, artsGuid_t epochGuid, bool hasDepv)
+bool artsEdtCreateInternal(struct artsEdt * edt, artsType_t mode, artsGuid_t * guid, unsigned int route, unsigned int cluster, unsigned int edtSpace, artsGuid_t outputBuffer, artsEdt_t funcPtr, uint32_t paramc, uint64_t * paramv, uint32_t depc, bool useEpoch, artsGuid_t epochGuid, bool hasDepv)
 {
-    struct artsEdt *edt;
     ARTSSETMEMSHOTTYPE(artsEdtMemorySize);
-    edt = (struct artsEdt*)artsCalloc(edtSpace);
-    edt->header.type = ARTS_EDT;
+    if(!edt)
+        edt = (struct artsEdt*)artsCalloc(edtSpace);
+    edt->header.type = mode;
     edt->header.size = edtSpace;
     ARTSSETMEMSHOTTYPE(artsDefaultMemorySize);
     if(edt)
@@ -195,7 +199,7 @@ bool artsEdtCreateInternal(artsGuid_t * guid, unsigned int route, unsigned int c
         if(*guid == NULL_GUID)
         {
             createdGuid = true;
-            edt->currentEdt = *guid = artsGuidCreateForRank(route, ARTS_EDT);
+            edt->currentEdt = *guid = artsGuidCreateForRank(route, mode);
         }
         else
             edt->currentEdt = *guid;
@@ -225,7 +229,12 @@ bool artsEdtCreateInternal(artsGuid_t * guid, unsigned int route, unsigned int c
         globalShutdownGuidIncActive();
         
         if(paramc)
-            memcpy((uint64_t*) (edt+1), paramv, sizeof(uint64_t) * paramc);
+        {
+            unsigned int offset = edtSpace - (depc * sizeof(artsEdtDep_t) + paramc * sizeof(uint64_t));
+            char * tmp = (char*)edt + offset;
+//            PRINTF("CHECKING %p vs %p\n", tmp, (edt+1));
+            memcpy(tmp, paramv, sizeof(uint64_t) * paramc);
+        }
 
         if(route != artsGlobalRankId)
             artsRemoteMemoryMove(route, *guid, (void*)edt, (unsigned int)edt->header.size, ARTS_REMOTE_EDT_MOVE_MSG, artsFree);
@@ -263,7 +272,7 @@ artsGuid_t artsEdtCreateDep(artsEdt_t funcPtr, unsigned int route, uint32_t para
     unsigned int edtSpace = sizeof(struct artsEdt) + paramc * sizeof(uint64_t) + depSpace;
     artsGuid_t guid = NULL_GUID;
     artsGuid_t * guidPtr = &guid; 
-    artsEdtCreateInternal(guidPtr, route, artsThreadInfo.clusterId, edtSpace, NULL_GUID, funcPtr, paramc, paramv, depc, true, NULL_GUID, hasDepv);
+    artsEdtCreateInternal(NULL, ARTS_EDT, guidPtr, route, artsThreadInfo.clusterId, edtSpace, NULL_GUID, funcPtr, paramc, paramv, depc, true, NULL_GUID, hasDepv);
     ARTSEDTCOUNTERTIMERENDINCREMENT(edtCreateCounter);
     return guid;
 }
@@ -274,7 +283,7 @@ artsGuid_t artsEdtCreateWithGuidDep(artsEdt_t funcPtr, artsGuid_t guid, uint32_t
     unsigned int route = artsGuidGetRank(guid);
     unsigned int depSpace = (hasDepv) ? depc * sizeof(artsEdtDep_t) : 0;
     unsigned int edtSpace = sizeof(struct artsEdt) + paramc * sizeof(uint64_t) + depSpace;
-    bool ret = artsEdtCreateInternal(&guid, route, artsThreadInfo.clusterId, edtSpace, NULL_GUID, funcPtr, paramc, paramv, depc, true, NULL_GUID, hasDepv);
+    bool ret = artsEdtCreateInternal(NULL, ARTS_EDT, &guid, route, artsThreadInfo.clusterId, edtSpace, NULL_GUID, funcPtr, paramc, paramv, depc, true, NULL_GUID, hasDepv);
     ARTSEDTCOUNTERTIMERENDINCREMENT(edtCreateCounter);
     return (ret) ? guid : NULL_GUID;
 }
@@ -285,7 +294,7 @@ artsGuid_t artsEdtCreateWithEpochDep(artsEdt_t funcPtr, unsigned int route, uint
     unsigned int depSpace = (hasDepv) ? depc * sizeof(artsEdtDep_t) : 0;
     unsigned int edtSpace = sizeof(struct artsEdt) + paramc * sizeof(uint64_t) + depSpace;
     artsGuid_t guid = NULL_GUID;
-    artsEdtCreateInternal(&guid, route, artsThreadInfo.clusterId, edtSpace, NULL_GUID, funcPtr, paramc, paramv, depc, true, epochGuid, hasDepv);
+    artsEdtCreateInternal(NULL, ARTS_EDT, &guid, route, artsThreadInfo.clusterId, edtSpace, NULL_GUID, funcPtr, paramc, paramv, depc, true, epochGuid, hasDepv);
     ARTSEDTCOUNTERTIMERENDINCREMENT(edtCreateCounter);
     return guid;
 }
@@ -329,6 +338,25 @@ void artsEdtDestroy(artsGuid_t guid)
     artsEdtFree(edt);
 }
 
+void * artsGetDepv(void * edtPtr)
+{
+    struct artsEdt * edt = (struct artsEdt *) edtPtr;
+    unsigned int paramc = edt->paramc;
+    if(edt->header.type == ARTS_EDT)
+    {
+        struct artsEdt * edt = (struct artsEdt *) edtPtr;
+        return (void*)((uint64_t*)(edt+1) + paramc);
+    }
+#ifdef USE_GPU
+    if(edt->header.type == ARTS_GPU_EDT)
+    {
+        artsGpuEdt_t * edtGpu = (artsGpuEdt_t *) edtPtr;
+        return (void*)((uint64_t*)(edtGpu+1) + paramc);
+    }
+#endif
+    return NULL;
+}
+
 void internalSignalEdt(artsGuid_t edtPacket, uint32_t slot, artsGuid_t dataGuid, artsType_t mode, void * ptr, unsigned int size)
 {
     ARTSEDTCOUNTERTIMERSTART(signalEdtCounter);  
@@ -338,7 +366,7 @@ void internalSignalEdt(artsGuid_t edtPacket, uint32_t slot, artsGuid_t dataGuid,
         if(mode == ARTS_PTR)
             artsOutOfOrderSignalEdtWithPtr(edtPacket, dataGuid, ptr, size, slot);
         else
-            artsOutOfOrderSignalEdt(currentEdt->currentEdt, edtPacket, dataGuid, slot, mode);
+            artsOutOfOrderSignalEdt(currentEdt->currentEdt, edtPacket, dataGuid, slot, mode, true);
     }
     else
     {
@@ -348,7 +376,7 @@ void internalSignalEdt(artsGuid_t edtPacket, uint32_t slot, artsGuid_t dataGuid,
             struct artsEdt * edt = artsRouteTableLookupItem(edtPacket);
             if(edt)
             {
-                artsEdtDep_t *edtDep = (artsEdtDep_t *)((uint64_t *)(edt + 1) + edt->paramc);
+                artsEdtDep_t *edtDep = (artsEdtDep_t *)artsGetDepv(edt);
                 if(slot < edt->depc)
                 {
                     edtDep[slot].guid = dataGuid;
@@ -365,7 +393,7 @@ void internalSignalEdt(artsGuid_t edtPacket, uint32_t slot, artsGuid_t dataGuid,
                 if(mode == ARTS_PTR)
                     artsOutOfOrderSignalEdtWithPtr(edtPacket, dataGuid, ptr, size, slot);
                 else
-                    artsOutOfOrderSignalEdt(edtPacket, edtPacket, dataGuid, slot, mode);
+                    artsOutOfOrderSignalEdt(edtPacket, edtPacket, dataGuid, slot, mode, false);
             }
         }
         else
@@ -446,7 +474,7 @@ artsGuid_t artsAllocateLocalBuffer(void ** buffer, unsigned int size, unsigned i
     }
     
     artsBuffer_t * stub = artsMalloc(sizeof(artsBuffer_t));
-    stub->buffer = *buffer;
+    stub->buffer = (buffer) ? *buffer : NULL;
     stub->sizeToWrite = NULL;
     stub->size = size;
     stub->uses = uses;
@@ -489,10 +517,16 @@ void * artsSetBuffer(artsGuid_t bufferGuid, void * buffer, unsigned int size)
             
             if(stub->sizeToWrite)
                 *stub->sizeToWrite = (uint32_t)size;
-            
-            memcpy(stub->buffer, buffer, stub->size);
-//            PRINTF("Set buffer %p %u %u\n", stub->buffer, *((unsigned int*)stub->buffer), stub->size);
-            ret = stub->buffer;
+
+            if(stub->buffer)
+            {
+                memcpy(stub->buffer, buffer, stub->size);
+                DPRINTF("Set buffer %p %u %u\n", stub->buffer, *((unsigned int*)stub->buffer), stub->size);
+                ret = stub->buffer;
+            }
+            else
+                ret = NULL;
+
             if(!artsAtomicSub(&stub->uses, 1))
             {
                 artsRouteTableRemoveItem(bufferGuid);
@@ -521,6 +555,27 @@ void * artsGetBuffer(artsGuid_t bufferGuid)
     if(artsIsGuidLocal(bufferGuid))
     {
         artsBuffer_t * stub = artsRouteTableLookupItem(bufferGuid);
+        buffer = stub->buffer;
+        if(!artsAtomicSub(&stub->uses, 1))
+        {
+            artsRouteTableRemoveItem(bufferGuid);
+            artsFree(stub);
+        }
+    }
+    return buffer;
+}
+
+void * artsBlockForBuffer(artsGuid_t bufferGuid)
+{
+    void * buffer = NULL;
+    if(artsIsGuidLocal(bufferGuid))
+    {
+        artsBuffer_t * stub = artsRouteTableLookupItem(bufferGuid);
+        while(stub->uses > 1)
+        {
+            DPRINTF("Yeild: %u\n", stub->uses);
+            artsYield();
+        }
         buffer = stub->buffer;
         if(!artsAtomicSub(&stub->uses, 1))
         {

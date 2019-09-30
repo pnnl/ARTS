@@ -1,20 +1,20 @@
 ###############################################################################
-## This material was prepared as an account of work sponsored by an agency 
-## of the United States Government.  Neither the United States Government 
-## nor the United States Department of Energy, nor Battelle, nor any of 
-## their employees, nor any jurisdiction or organization that has cooperated 
-## in the development of these materials, makes any warranty, express or 
-## implied, or assumes any legal liability or responsibility for the accuracy, 
-## completeness, or usefulness or any information, apparatus, product, 
-## software, or process disclosed, or represents that its use would not 
+## This material was prepared as an account of work sponsored by an agency
+## of the United States Government.  Neither the United States Government
+## nor the United States Department of Energy, nor Battelle, nor any of
+## their employees, nor any jurisdiction or organization that has cooperated
+## in the development of these materials, makes any warranty, express or
+## implied, or assumes any legal liability or responsibility for the accuracy,
+## completeness, or usefulness or any information, apparatus, product,
+## software, or process disclosed, or represents that its use would not
 ## infringe privately owned rights.
 ##
-## Reference herein to any specific commercial product, process, or service 
-## by trade name, trademark, manufacturer, or otherwise does not necessarily 
-## constitute or imply its endorsement, recommendation, or favoring by the 
-## United States Government or any agency thereof, or Battelle Memorial 
-## Institute. The views and opinions of authors expressed herein do not 
-## necessarily state or reflect those of the United States Government or 
+## Reference herein to any specific commercial product, process, or service
+## by trade name, trademark, manufacturer, or otherwise does not necessarily
+## constitute or imply its endorsement, recommendation, or favoring by the
+## United States Government or any agency thereof, or Battelle Memorial
+## Institute. The views and opinions of authors expressed herein do not
+## necessarily state or reflect those of the United States Government or
 ## any agency thereof.
 ##
 ##                      PACIFIC NORTHWEST NATIONAL LABORATORY
@@ -29,7 +29,7 @@
 ## you may not use this file except in compliance with the License.
 ## You may obtain a copy of the License at
 ##
-##    https://www.apache.org/licenses/LICENSE-2.0 
+##    https://www.apache.org/licenses/LICENSE-2.0
 ##
 ## Unless required by applicable law or agreed to in writing, software
 ## distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
@@ -37,8 +37,8 @@
 ## License for the specific language governing permissions and limitations
 ###############################################################################
 
-cmake_minimum_required(VERSION 2.6)
-project (arts)
+cmake_minimum_required(VERSION 3.8)
+project (arts LANGUAGES C CXX)
 
 #CMake Configuration
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${PROJECT_SOURCE_DIR}/cmake")
@@ -68,7 +68,8 @@ if(CMAKE_COMPILER_IS_GNUCC OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "Intel")
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
         message("Debug Build")
         if (CMAKE_C_COMPILER_VERSION VERSION_GREATER 7.0)
-          set(CMAKE_C_FLAGS "-Werror -std=gnu99 -O0 -g -DCNC_DEBUG_TRACE -fsanitize=address -fsanitize=signed-integer-overflow -fPIC")
+          #set(CMAKE_C_FLAGS "-Werror -std=gnu99 -O0 -g -DCNC_DEBUG_TRACE -fsanitize=address -fsanitize=signed-integer-overflow -fPIC")
+          set(CMAKE_C_FLAGS "-Werror -std=gnu99 -O0 -g -DCNC_DEBUG_TRACE -fPIC")
         else()
           #set(CMAKE_C_FLAGS "-Werror -std=gnu99 -O0 -g -DCNC_DEBUG_TRACE -fsanitize=address")
           set(CMAKE_C_FLAGS "-Werror -std=gnu99 -O0 -g -DCNC_DEBUG_TRACE -fPIC")
@@ -88,8 +89,44 @@ if(CMAKE_COMPILER_IS_GNUCC OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "Intel")
 
 endif()
 
+include(CheckLanguage)
+check_language(CUDA)
+if(CMAKE_CUDA_COMPILER)
+  SET(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
+    enable_language(CUDA)
+    find_package(CUDA REQUIRED)
+    # find_package(CUDA 9)
+    if(CUDA_FOUND)
+        include_directories("${CUDA_INCLUDE_DIRS}")
+        add_definitions(-DUSE_GPU)
+        message("Using CUDA")
+        find_package(cuBlas)
+        if(CUBLAS_FOUND)
+            include_directories(${CUBLAS_INCLUDE_DIRS})
+            add_definitions(-DUSE_CUBLAS)
+            message("Using CUBLAS")
+        else()
+            set(CUBLAS_LIBRARIES "")
+        endif()
+        if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+          message("CUDA Debug Build")
+          set(CMAKE_CUDA_FLAGS "-O0 -G")
+        else()
+            message("CUDA Release Build")
+          set(CMAKE_CUDA_FLAGS "-O3")
+        endif()
+    else()
+        set(CUDA_LIBRARIES "")
+    endif()
+else()
+    message(STATUS "No CUDA support")
+endif()
+
+
+
 #Find Required Libs-------------------------->
 
+find_package(Threads)
 find_library(PTHREAD_LIB pthread)
 
 if(CONNECTION MATCHES "TCP")
@@ -167,14 +204,8 @@ set(CORE_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/core/inc)
 
 include_directories(core/inc)
 include_directories(graph/inc)
+add_subdirectory(sampleConfigs)
 add_subdirectory(core)
 add_subdirectory(graph)
 add_subdirectory(test)
 add_subdirectory(example)
-
-configure_file(sampleConfigs/arts.cfg example/arts.cfg COPYONLY)
-configure_file(sampleConfigs/arts.insp example/arts.insp COPYONLY)
-configure_file(sampleConfigs/arts.cfg test/arts.cfg COPYONLY)
-configure_file(sampleConfigs/arts.insp test/arts.insp COPYONLY)
-install(FILES sampleConfigs/arts.cfg DESTINATION config)
-install(FILES sampleConfigs/arts.insp DESTINATION config)

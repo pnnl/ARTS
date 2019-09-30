@@ -46,28 +46,30 @@ extern "C" {
 #define HW_MEMORY_FENCE() __sync_synchronize() 
 #define COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT() __asm__ volatile("": : :"memory")
 
-volatile unsigned int artsAtomicSwap(volatile unsigned int *destination, unsigned int swapIn);
-volatile uint64_t artsAtomicSwapU64(volatile uint64_t *destination, uint64_t swapIn);
+unsigned int artsAtomicSwap(volatile unsigned int *destination, unsigned int swapIn);
+uint64_t artsAtomicSwapU64(volatile uint64_t *destination, uint64_t swapIn);
 volatile void * artsAtomicSwapPtr(volatile void **destination, void * swapIn);
-volatile unsigned int artsAtomicSub(volatile unsigned int *destination, unsigned int subVal);
-volatile unsigned int artsAtomicAdd(volatile unsigned int *destination, unsigned int addVal);
-volatile unsigned int artsAtomicFetchAdd(volatile unsigned int *destination, unsigned int addVal);
-volatile unsigned int artsAtomicCswap(volatile unsigned int *destination, unsigned int oldVal, unsigned int swapIn);
-volatile uint64_t artsAtomicCswapU64(volatile uint64_t *destination, uint64_t oldVal, uint64_t swapIn);
+unsigned int artsAtomicSub(volatile unsigned int *destination, unsigned int subVal);
+unsigned int artsAtomicAdd(volatile unsigned int *destination, unsigned int addVal);
+unsigned int artsAtomicFetchAdd(volatile unsigned int *destination, unsigned int addVal);
+unsigned int artsAtomicCswap(volatile unsigned int *destination, unsigned int oldVal, unsigned int swapIn);
+uint64_t artsAtomicCswapU64(volatile uint64_t *destination, uint64_t oldVal, uint64_t swapIn);
 volatile void * artsAtomicCswapPtr(volatile void **destination, void * oldVal, void * swapIn);
-volatile bool artsAtomicSwapBool(volatile bool *destination, bool value);
-volatile uint64_t artsAtomicFetchAddU64(volatile uint64_t *destination, uint64_t addVal);
-volatile uint64_t artsAtomicFetchSubU64(volatile uint64_t *destination, uint64_t subVal);
-volatile uint64_t artsAtomicAddU64(volatile uint64_t *destination, uint64_t addVal);
-volatile uint64_t artsAtomicSubU64(volatile uint64_t *destination, uint64_t subVal);
+bool artsAtomicSwapBool(volatile bool *destination, bool value);
+uint64_t artsAtomicFetchAddU64(volatile uint64_t *destination, uint64_t addVal);
+uint64_t artsAtomicFetchSubU64(volatile uint64_t *destination, uint64_t subVal);
+uint64_t artsAtomicAddU64(volatile uint64_t *destination, uint64_t addVal);
+uint64_t artsAtomicSubU64(volatile uint64_t *destination, uint64_t subVal);
 bool artsLock( volatile unsigned int * lock);
 void artsUnlock( volatile unsigned int * lock);
 bool artsTryLock( volatile unsigned int * lock);
-volatile uint64_t artsAtomicFetchAndU64(volatile uint64_t * destination, uint64_t addVal);
-volatile uint64_t artsAtomicFetchOrU64(volatile uint64_t * destination, uint64_t addVal);
-volatile uint64_t artsAtomicFetchXOrU64(volatile uint64_t * destination, uint64_t addVal); //@awmm
-volatile unsigned int artsAtomicFetchOr(volatile unsigned int * destination, unsigned int addVal);
-volatile unsigned int artsAtomicFetchAnd(volatile unsigned int * destination, unsigned int addVal);
+uint64_t artsAtomicFetchAndU64(volatile uint64_t * destination, uint64_t addVal);
+uint64_t artsAtomicFetchOrU64(volatile uint64_t * destination, uint64_t addVal);
+uint64_t artsAtomicFetchXOrU64(volatile uint64_t * destination, uint64_t addVal); //@awmm
+unsigned int artsAtomicFetchOr(volatile unsigned int * destination, unsigned int addVal);
+unsigned int artsAtomicFetchAnd(volatile unsigned int * destination, unsigned int addVal);
+bool artsAtomicCswapSizet(volatile size_t * destination, size_t old, size_t newVal);
+size_t artsAtomicAddSizet(volatile size_t *destination, size_t addVal);
 #ifdef __cplusplus
 }
 #endif

@@ -120,7 +120,7 @@ void artsEventDestroy(artsGuid_t guid) {
 void artsEventSatisfySlot(artsGuid_t eventGuid, artsGuid_t dataGuid, uint32_t slot) {
     ARTSEDTCOUNTERTIMERSTART(signalEventCounter);
     if (currentEdt && currentEdt->invalidateCount > 0) {
-        artsOutOfOrderEventSatisfySlot(currentEdt->currentEdt, eventGuid, dataGuid, slot);
+        artsOutOfOrderEventSatisfySlot(currentEdt->currentEdt, eventGuid, dataGuid, slot, true);
         return;
     }
 
@@ -130,7 +130,7 @@ void artsEventSatisfySlot(artsGuid_t eventGuid, artsGuid_t dataGuid, uint32_t sl
         if (rank != artsGlobalRankId) {
             artsRemoteEventSatisfySlot(eventGuid, dataGuid, slot);
         } else {
-            artsOutOfOrderEventSatisfySlot(eventGuid, eventGuid, dataGuid, slot);
+            artsOutOfOrderEventSatisfySlot(eventGuid, eventGuid, dataGuid, slot, false);
         }
     } 
     else {

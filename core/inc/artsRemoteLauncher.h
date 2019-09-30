@@ -60,7 +60,7 @@ void artsRemoteLauncherSSHCleanupProcesses( struct artsRemoteLauncher * launcher
 
 static inline struct artsRemoteLauncher * artsRemoteLauncherCreate( unsigned int argc, char ** argv, struct artsConfig * config, unsigned int killMode, void (*launchProcesses)( struct artsRemoteLauncher * ),  void (*cleanupProcesses)( struct artsRemoteLauncher * ) )  
 {
-    struct artsRemoteLauncher * launcher = artsMalloc( sizeof(struct artsRemoteLauncher) );
+    struct artsRemoteLauncher * launcher = (struct artsRemoteLauncher *) artsMalloc( sizeof(struct artsRemoteLauncher) );
 
     launcher->argc = argc;
     launcher->argv = argv;

@@ -134,6 +134,7 @@ void artsGuidKeyGeneratorInit()
 //        keys[i] = 1;
 }
 
+//I think this might be a problem.  If all keys start at 1 then when we cast type, it can override a legitimate guid of another type
 artsGuid_t artsGuidCast(artsGuid_t guid, artsType_t type)
 {
     artsGuid addressInfo = (artsGuid) guid;
@@ -224,7 +225,7 @@ artsGuid_t artsGuidRangeNext(artsGuidRange * range)
     if(range)
     {
         if(range->index < range->size)
-            ret = artsGetGuid(range, range->index);
+            ret = artsGetGuid(range, range->index++);
     }
     return ret;
 }

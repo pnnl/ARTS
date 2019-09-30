@@ -633,7 +633,7 @@ unsigned int artsConfigGetNumberOfThreads(char * location)
     return artsConfigGetVariable( configFile, "threads");
 }
 
-struct artsConfig * artsConfigLoad( int argc, char ** argv, char * location )
+struct artsConfig * artsConfigLoad()
 {
     FILE * configFile = NULL;
     struct artsConfig * config;
@@ -645,16 +645,11 @@ struct artsConfig * artsConfigLoad( int argc, char ** argv, char * location )
 
     config = artsMalloc( sizeof( struct artsConfig ) );
 
-    if(location == NULL)
-    {
-        location = getenv("artsConfig");
-        if(location)
-            configFile = fopen( location, "r" );
-        else    
-            configFile = fopen( "arts.cfg", "r" );
-    }
-    else
+    char * location = getenv("artsConfig");
+    if(location)
         configFile = fopen( location, "r" );
+    else    
+        configFile = fopen( "arts.cfg", "r" );
 
     if(configFile == NULL)
     {
@@ -886,6 +881,66 @@ struct artsConfig * artsConfigLoad( int argc, char ** argv, char * location )
     else
         config->coreCount = 0;
     
+    if( (foundVariable = artsConfigFindVariable(&configVariables,"gpu")) != NULL)
+        config->gpu = strtol( foundVariable->value, &end , 10);
+    else
+        config->gpu = 0;
+    
+    if( (foundVariable = artsConfigFindVariable(&configVariables,"gpuLocality")) != NULL)
+        config->gpuLocality = strtol( foundVariable->value, &end , 10);
+    else
+        config->gpuLocality = 0;
+
+    if( (foundVariable = artsConfigFindVariable(&configVariables,"gpuFit")) != NULL)
+        config->gpuFit = strtol( foundVariable->value, &end , 10);
+    else
+        config->gpuFit = 0;
+
+    if( (foundVariable = artsConfigFindVariable(&configVariables,"gpuMaxEdts")) != NULL)
+        config->gpuMaxEdts = strtol( foundVariable->value, &end , 10);
+    else
+        config->gpuMaxEdts = (unsigned int)-1;
+
+    if( (foundVariable = artsConfigFindVariable(&configVariables,"gpuMaxMemory")) != NULL)
+        config->gpuMaxMemory = (size_t)strtol( foundVariable->value, &end , 10);
+    else
+        config->gpuMaxMemory = (size_t)-1;
+
+    if( (foundVariable = artsConfigFindVariable(&configVariables,"gpuP2P")) != NULL)
+        config->gpuP2P = strtol( foundVariable->value, &end , 10) > 0;
+    else
+        config->gpuP2P = false;
+
+    if( (foundVariable = artsConfigFindVariable(&configVariables,"gpuRouteTableSize")) != NULL)
+        config->gpuRouteTableSize = strtol( foundVariable->value, &end , 10);
+    else
+        config->gpuRouteTableSize = 12; //2^12
+    
+    if( (foundVariable = artsConfigFindVariable(&configVariables,"freeDbAfterGpuRun")) != NULL)
+        config->freeDbAfterGpuRun = strtol( foundVariable->value, &end , 10) > 0;
+    else
+        config->freeDbAfterGpuRun = false;
+
+    if( (foundVariable = artsConfigFindVariable(&configVariables,"runGpuGcIdle")) != NULL)
+        config->runGpuGcIdle = strtol( foundVariable->value, &end , 10) > 0;
+    else
+        config->runGpuGcIdle = true;
+
+    if( (foundVariable = artsConfigFindVariable(&configVariables,"runGpuGcPreEdt")) != NULL)
+        config->runGpuGcPreEdt = strtol( foundVariable->value, &end , 10) > 0;
+    else
+        config->runGpuGcPreEdt = false;
+
+    if( (foundVariable = artsConfigFindVariable(&configVariables,"deleteZerosGpuGc")) != NULL)
+        config->deleteZerosGpuGc = strtol( foundVariable->value, &end , 10) > 0;
+    else
+        config->deleteZerosGpuGc = true;
+
+    if( (foundVariable = artsConfigFindVariable(&configVariables,"gpuBuffOn")) != NULL)
+        config->gpuBuffOn = strtol( foundVariable->value, &end , 10) > 0;
+    else
+        config->gpuBuffOn = false;
+
     //WARNING: Slurm Launcher Set!  
     if (strncmp(config->launcher, "slurm", 5) == 0) 
     {
@@ -946,7 +1001,7 @@ struct artsConfig * artsConfigLoad( int argc, char ** argv, char * location )
     else if (strncmp(config->launcher, "ssh", 5) == 0) 
     {
         config->launcherData =
-                artsRemoteLauncherCreate(argc, argv, config, config->killMode,
+                artsRemoteLauncherCreate(0, NULL, config, config->killMode,
                 artsRemoteLauncherSSHStartupProcesses,
                 artsRemoteLauncherSSHCleanupProcesses);
         config->masterBoot = true;
@@ -1046,14 +1101,15 @@ struct artsConfig * artsConfigLoad( int argc, char ** argv, char * location )
     }
 
     int routeTableEntries = 1;
-
-    if (config->launcher != NULL) { //&&
-        //(strncmp(config->launcher, "local", 5) != 0)) {
-      for (int i = 0; i < config->routeTableSize; i++)
+    for (int i = 0; i < config->routeTableSize; i++)
         routeTableEntries *= 2;
-      config->routeTableEntries = routeTableEntries;
-    }
+    config->routeTableEntries = routeTableEntries;
     
+    int gpuRouteTableEntries = 1;
+    for (int i = 0; i < config->gpuRouteTableSize; i++)
+        gpuRouteTableEntries *= 2;
+    config->gpuRouteTableEntries = gpuRouteTableEntries;
+
     if( (foundVariable = artsConfigFindVariable(&configVariables,"pin")) != NULL)
         config->pinThreads = strtol( foundVariable->value, &end , 10);
     else

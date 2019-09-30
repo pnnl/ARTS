@@ -61,9 +61,8 @@ pthread_t * nodeThreadList;
 void * artsThreadLoop(void * data)
 {
     struct threadMask * unit = (struct threadMask*) data;
-    if(unit->pin) {
+    if(unit->pin)
         artsAbstractMachineModelPinThread(unit->coreInfo);
-    }
     artsRuntimePrivateInit(unit, gConfig);
     artsRuntimeLoop();
     artsRuntimePrivateCleanup();

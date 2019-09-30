@@ -372,7 +372,8 @@ static inline bool artsRemoteConnect( int rank, unsigned int port )
     return true;
 }
 
-inline int artsActualSend(char * message, unsigned int length, int rank, int port)
+// inline int artsActualSend(char * message, unsigned int length, int rank, int port)
+int artsActualSend(char * message, unsigned int length, int rank, int port)
 {
     int res = 0;
     int total = 0;

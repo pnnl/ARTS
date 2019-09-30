@@ -198,6 +198,8 @@ void * artsSetBuffer(artsGuid_t bufferGuid, void * buffer, unsigned int size);
 //The buffer is only available on a the node it was allocated.
 void * artsGetBuffer(artsGuid_t bufferGuid);
 
+void * artsBlockForBuffer(artsGuid_t bufferGuid);
+
 /*Event************************************************************************/
 
 //Creates a latch event on node route and returns the new guid to signal.  A latch event has a counter that can be incremented and decremented via its slots (artsLatchEventSlot_t).  When the counter reaches zero the
