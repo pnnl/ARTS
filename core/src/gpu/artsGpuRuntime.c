@@ -197,9 +197,9 @@ void artsRunGpu(void *edtPacket, artsGpu_t * artsGpu)
     if(artsNodeInfo.runGpuGcPreEdt)
     {
         DPRINTF("Running Pre Edt GPU GC: %u\n", artsGpu->device);
-        unsigned int freeMemSize = artsGpuCleanUpRouteTable((unsigned int) -1, artsNodeInfo.deleteZerosGpuGc, (unsigned int) artsGpu->device);
-        artsAtomicAddSizet(&artsGpu->availGlobalMem, freeMemSize);
-        artsAtomicAdd(&freeBytes, freeMemSize);
+        uint64_t freeMemSize = artsGpuCleanUpRouteTable((unsigned int) -1, artsNodeInfo.deleteZerosGpuGc, (unsigned int) artsGpu->device);
+        artsAtomicAddU64(&artsGpu->availGlobalMem, freeMemSize);
+        artsAtomicAddU64(&freeBytes, freeMemSize);
     }
 
     artsAtomicAdd(&artsGpu->runningEdts, 1U);
@@ -217,14 +217,14 @@ void artsGpuHostWrapUp(void *edtPacket, artsGuid_t toSignal, uint32_t slot, arts
     uint32_t       depc   = edt->wrapperEdt.depc;
     uint64_t     * paramv = (uint64_t *)(edt + 1);
     artsEdtDep_t * depv   = (artsEdtDep_t *)(paramv + paramc);
-    
+
     if(edt->lib)
     {
         edt->wrapperEdt.invalidateCount = 0;
         artsRouteTableFireOO(edt->wrapperEdt.currentEdt, artsOutOfOrderHandler);
     }
 
-    DPRINTF("TO SIGNAL: %lu -> %lu\n", toSignal, dataGuid);
+    DPRINTF("TO SIGNAL: %lu -> %lu slot: %u\n", toSignal, dataGuid, slot);
     //Signal next
     if(toSignal)
     {
@@ -302,9 +302,9 @@ bool artsGpuSchedulerLoop()
         cudaGetDevice(&savedDevice);
         CHECKCORRECT(cudaSetDevice(artsGpu->device));
 
-        unsigned int freeMemSize = artsGpuCleanUpRouteTable((unsigned int) -1, artsNodeInfo.deleteZerosGpuGc, (unsigned int) artsGpu->device);
-        artsAtomicAddSizet(&artsGpu->availGlobalMem, freeMemSize);
-        artsAtomicAdd(&freeBytes, freeMemSize);
+        uint64_t freeMemSize = artsGpuCleanUpRouteTable((unsigned int) -1, artsNodeInfo.deleteZerosGpuGc, (unsigned int) artsGpu->device);
+        artsAtomicAddU64(&artsGpu->availGlobalMem, freeMemSize);
+        artsAtomicAddU64(&freeBytes, freeMemSize);
 
         CHECKCORRECT(cudaSetDevice(savedDevice));
     }
@@ -323,7 +323,7 @@ void artsPutInDbFromGpu(void * ptr, artsGuid_t dbGuid, unsigned int offset, unsi
             void * data = (void*)(((char*) (db+1)) + offset);
             // memcpy(data, ptr, size);
             CHECKCORRECT(cudaMemcpyAsync(data, ptr, size, cudaMemcpyDeviceToHost, *artsLocalStream));
-            
+
         }
         else
         {

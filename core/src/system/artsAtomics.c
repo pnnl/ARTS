@@ -151,13 +151,3 @@ unsigned int artsAtomicFetchAnd(volatile unsigned int * destination, unsigned in
 {
     return __sync_fetch_and_and(destination, addVal);
 }
-
-bool artsAtomicCswapSizet(volatile size_t * destination, size_t old, size_t newVal)
-{
-    return __sync_bool_compare_and_swap(destination, old, newVal);
-}
-
-size_t artsAtomicAddSizet(volatile size_t *destination, size_t addVal)
-{
-    return __sync_add_and_fetch(destination, addVal);
-}

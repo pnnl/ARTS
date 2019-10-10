@@ -68,8 +68,6 @@ uint64_t artsAtomicFetchOrU64(volatile uint64_t * destination, uint64_t addVal);
 uint64_t artsAtomicFetchXOrU64(volatile uint64_t * destination, uint64_t addVal); //@awmm
 unsigned int artsAtomicFetchOr(volatile unsigned int * destination, unsigned int addVal);
 unsigned int artsAtomicFetchAnd(volatile unsigned int * destination, unsigned int addVal);
-bool artsAtomicCswapSizet(volatile size_t * destination, size_t old, size_t newVal);
-size_t artsAtomicAddSizet(volatile size_t *destination, size_t addVal);
 #ifdef __cplusplus
 }
 #endif

@@ -128,6 +128,7 @@ artsRouteItem_t * internalRouteTableAddDeletedItemRace(artsRouteTable_t * routeT
 
 void * artsRouteTableLookupItem(artsGuid_t key);
 int artsRouteTableLookupRank(artsGuid_t key);
+bool internalRouteTableRemoveItem(artsRouteTable_t * routeTable, artsGuid_t key);
 bool artsRouteTableRemoveItem(artsGuid_t key);
 bool artsRouteTableInvalidateItem(artsGuid_t key);
 

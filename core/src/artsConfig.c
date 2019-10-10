@@ -902,7 +902,7 @@ struct artsConfig * artsConfigLoad()
         config->gpuMaxEdts = (unsigned int)-1;
 
     if( (foundVariable = artsConfigFindVariable(&configVariables,"gpuMaxMemory")) != NULL)
-        config->gpuMaxMemory = (size_t)strtol( foundVariable->value, &end , 10);
+        config->gpuMaxMemory = strtol( foundVariable->value, &end , 10);
     else
         config->gpuMaxMemory = (size_t)-1;
 

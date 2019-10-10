@@ -51,6 +51,8 @@ if(CUDA_FOUND)
     add_executable(mmTile mmTile.cu)
     target_link_libraries(mmTile mmUtil ${LIBS})
 
+    
+
     if(CUBLAS_FOUND)
         set_source_files_properties(mmTileBlas.cu PROPERTIES LANGUAGE CUDA)
         add_executable(mmTileBlas mmTileBlas.cu)
@@ -59,5 +61,13 @@ if(CUDA_FOUND)
         set_source_files_properties(mmThrust.cu PROPERTIES LANGUAGE CUDA)
         add_executable(mmThrust mmThrust.cu)
         target_link_libraries(mmThrust mmUtil ${LIBS})
+
+        set_source_files_properties(mmTileRed.cu PROPERTIES LANGUAGE CUDA)
+        add_executable(mmTileRed mmTileRed.cu)
+        target_link_libraries(mmTileRed mmUtil ${LIBS})
+
+        set_source_files_properties(mmTileRedBig.cu PROPERTIES LANGUAGE CUDA)
+        add_executable(mmTileRedBig mmTileRedBig.cu)
+        target_link_libraries(mmTileRedBig mmUtil ${LIBS})
     endif()
 endif()

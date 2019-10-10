@@ -485,9 +485,8 @@ void * artsRouteTableAddItem(void* item, artsGuid_t key, unsigned int rank, bool
     return internalRouteTableAddItem(routeTable, item, key, rank, used);
 }
 
-bool artsRouteTableRemoveItem(artsGuid_t key)
+bool internalRouteTableRemoveItem(artsRouteTable_t * routeTable, artsGuid_t key)
 {
-    artsRouteTable_t * routeTable = artsGetRouteTable(key);
     artsRouteItem_t * item = artsRouteTableSearchForKey(routeTable, key, availableKey);
     if(item)
     {
@@ -497,6 +496,12 @@ bool artsRouteTableRemoveItem(artsGuid_t key)
         }
     }
     return 0;
+}
+
+bool artsRouteTableRemoveItem(artsGuid_t key)
+{
+    artsRouteTable_t * routeTable = artsGetRouteTable(key);
+    return internalRouteTableRemoveItem(routeTable, key);
 }
 
 //This locks the guid so it is useful when multiple people have the guid ahead of time

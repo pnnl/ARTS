@@ -51,11 +51,11 @@
 //#define DPRINTF(...) PRINTF(__VA_ARGS__)
 
 //Must be thread local
-__thread unsigned int gpuItemSizeBypass = 0;
+__thread uint64_t gpuItemSizeBypass = 0;
 
 void setGpuItem(artsRouteItem_t * item, void * data)
 {
-    DPRINTF("gpuItemSizeBypass: %u\n", gpuItemSizeBypass);
+    DPRINTF("gpuItemSizeBypass: %lu\n", gpuItemSizeBypass);
     artsItemWrapper_t * wrapper = (artsItemWrapper_t*) item->data;
     wrapper->realData = data;
     wrapper->size = gpuItemSizeBypass;
@@ -93,7 +93,7 @@ uint64_t artsGpuLookupDb(artsGuid_t key)
     return ret;
 }
 
-void * artsGpuRouteTableAddItemRace(void * item, unsigned int size, artsGuid_t key, unsigned int gpuId)
+void * artsGpuRouteTableAddItemRace(void * item, uint64_t size, artsGuid_t key, unsigned int gpuId)
 {
     //This is a bypass thread local variable to make the api nice...
     gpuItemSizeBypass = size;
@@ -104,7 +104,7 @@ void * artsGpuRouteTableAddItemRace(void * item, unsigned int size, artsGuid_t k
     return (void *)wrapper->realData;
 }
 
-artsItemWrapper_t * artsGpuRouteTableReserveItemRace(bool * added, unsigned int size, artsGuid_t key, unsigned int gpuId)
+artsItemWrapper_t * artsGpuRouteTableReserveItemRace(bool * added, uint64_t size, artsGuid_t key, unsigned int gpuId)
 {
     //This is a bypass thread local variable to make the api nice...
     gpuItemSizeBypass = size;
@@ -114,7 +114,7 @@ artsItemWrapper_t * artsGpuRouteTableReserveItemRace(bool * added, unsigned int 
     return wrapper;
 }
 
-void * artsGpuRouteTableAddItemToDeleteRace(void * item, unsigned int size, artsGuid_t key, unsigned int gpuId)
+void * artsGpuRouteTableAddItemToDeleteRace(void * item, uint64_t size, artsGuid_t key, unsigned int gpuId)
 {
     //This is a bypass thread local variable to make the api nice...
     gpuItemSizeBypass = size;
@@ -138,6 +138,17 @@ bool artsGpuRouteTableReturnDb(artsGuid_t key, bool markToDelete, unsigned int g
     return internalRouteTableReturnDb(routeTable, key, markToDelete, false);
 }
 
+bool artsGpuInvalidateRouteTables(artsGuid_t key, unsigned int keepOnThisGpu)
+{
+    bool ret = 0;
+    for(unsigned int i=0; i<artsNodeInfo.gpu; i++)
+    {
+        if(i != keepOnThisGpu)
+            ret |= internalRouteTableRemoveItem(artsNodeInfo.gpuRouteTable[i], key);
+    }
+    return ret;
+}
+
 /*This takes three parameters to regulate what is deleted.  This will only clean up DBs!
 1.  sizeToClean - this is the desired space to clean up.  The gc will continue untill it
     it reaches this size or it has made a full pass across the RT.  Passing -1 will make the gc
@@ -148,9 +159,9 @@ bool artsGpuRouteTableReturnDb(artsGuid_t key, bool markToDelete, unsigned int g
     Pass -1 for a host RT.
 Returns the size of the memory freed!
 */
-unsigned int artsGpuCleanUpRouteTable(unsigned int sizeToClean, bool cleanZeros, unsigned int gpuId)
+uint64_t artsGpuCleanUpRouteTable(unsigned int sizeToClean, bool cleanZeros, unsigned int gpuId)
 {
-    unsigned int freedSize = 0;
+    uint64_t freedSize = 0;
     artsRouteTable_t * routeTable = artsNodeInfo.gpuRouteTable[gpuId];
     artsGpuRouteTable_t * gpuRouteTable = (artsGpuRouteTable_t*) routeTable;
     //Only one person can be running the gc at a time...
@@ -164,7 +175,7 @@ unsigned int artsGpuCleanUpRouteTable(unsigned int sizeToClean, bool cleanZeros,
         {
             // artsPrintItem(item);
             artsItemWrapper_t * wrapper = (artsItemWrapper_t *) item->data;
-            unsigned int size = wrapper->size;
+            uint64_t size = wrapper->size;
             DPRINTF("size %u\n", size);
             if(isDel(item->lock))
             {
@@ -189,9 +200,9 @@ unsigned int artsGpuCleanUpRouteTable(unsigned int sizeToClean, bool cleanZeros,
     return freedSize;
 }
 
-unsigned int artsGpuFreeAll(unsigned int gpuId)
+uint64_t artsGpuFreeAll(unsigned int gpuId)
 {
-    unsigned int freedSize = 0;
+    uint64_t freedSize = 0;
     artsRouteTable_t * routeTable = artsNodeInfo.gpuRouteTable[gpuId];
 
     artsRouteTableIterator iter;

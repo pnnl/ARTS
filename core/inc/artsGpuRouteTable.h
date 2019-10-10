@@ -46,7 +46,7 @@ extern "C" {
 
 typedef struct 
 {
-    unsigned int size;
+    uint64_t size;
     uint64_t timestamp;
     volatile void * realData;
 } artsItemWrapper_t;
@@ -61,13 +61,14 @@ typedef struct
 artsRouteTable_t * artsGpuNewRouteTable(unsigned int routeTableSize, unsigned int shift);
 
 uint64_t artsGpuLookupDb(artsGuid_t key);
-void * artsGpuRouteTableAddItemRace(void * item, unsigned int size, artsGuid_t key, unsigned int gpuId);
-artsItemWrapper_t * artsGpuRouteTableReserveItemRace(bool * added, unsigned int size, artsGuid_t key, unsigned int gpuId);
-void * artsGpuRouteTableAddItemToDeleteRace(void * item, unsigned int size, artsGuid_t key, unsigned int gpuId);
+void * artsGpuRouteTableAddItemRace(void * item, uint64_t size, artsGuid_t key, unsigned int gpuId);
+artsItemWrapper_t * artsGpuRouteTableReserveItemRace(bool * added, uint64_t size, artsGuid_t key, unsigned int gpuId);
+void * artsGpuRouteTableAddItemToDeleteRace(void * item, uint64_t size, artsGuid_t key, unsigned int gpuId);
 void * artsGpuRouteTableLookupDb(artsGuid_t key, int gpuId);
 bool artsGpuRouteTableReturnDb(artsGuid_t key, bool markToDelete, unsigned int gpuId);
-unsigned int artsGpuCleanUpRouteTable(unsigned int sizeToClean, bool cleanZeros, unsigned int gpuId);
-unsigned int artsGpuFreeAll(unsigned int gpuId);
+bool artsGpuInvalidateRouteTables(artsGuid_t key, unsigned int keepOnThisGpu);
+uint64_t artsGpuCleanUpRouteTable(unsigned int sizeToClean, bool cleanZeros, unsigned int gpuId);
+uint64_t artsGpuFreeAll(unsigned int gpuId);
 #ifdef __cplusplus
 }
 #endif

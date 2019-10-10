@@ -48,11 +48,15 @@ extern "C" {
 #include "artsAtomics.h"
 #include "artsArrayList.h"
 #include "artsGpuRouteTable.h"
+#include "artsDebug.h"
 
 #define CHECKCORRECT(x) {                                   \
   cudaError_t err;                                          \
   if( (err = (x)) != cudaSuccess )                          \
+  {                                                         \
     PRINTF("FAILED %s: %s\n", #x, cudaGetErrorString(err)); \
+    artsDebugGenerateSegFault();                            \
+  }                                                         \
 }
 
 typedef struct
@@ -67,8 +71,8 @@ typedef struct
 typedef struct 
 {
     int device;
-    volatile size_t availGlobalMem;
-    volatile size_t totalGlobalMem;
+    volatile uint64_t availGlobalMem;
+    volatile uint64_t totalGlobalMem;
     struct cudaDeviceProp prop;
     volatile float occupancy;
     volatile unsigned int deviceLock;
@@ -105,7 +109,7 @@ extern artsGpu_t * artsGpus;
 
 extern volatile unsigned int hits;
 extern volatile unsigned int misses;
-extern volatile unsigned int freeBytes;
+extern volatile uint64_t freeBytes;
 
 #ifdef __cplusplus
 }
