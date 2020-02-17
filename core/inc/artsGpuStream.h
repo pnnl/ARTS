@@ -79,6 +79,7 @@ typedef struct
     volatile unsigned int totalEdts;
     volatile unsigned int availableEdtSlots;
     volatile unsigned int runningEdts;
+    volatile unsigned int availableThreads;
     cudaStream_t stream;
 } artsGpu_t;
 
@@ -87,6 +88,7 @@ extern artsGpu_t * artsGpus;
 void artsNodeInitGpus();
 artsGpu_t * artsFindGpu(void * data);
 
+void artsInitPerGpuWrapper(int argc, char ** argv);
 void artsWorkerInitGpus();
 void artsCleanupGpus();
 void artsScheduleToGpuInternal(artsEdt_t fnPtr, uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t * depv, dim3 grid, dim3 block, void * edtPtr, artsGpu_t * artsGpu);

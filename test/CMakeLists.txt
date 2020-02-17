@@ -127,11 +127,30 @@ if(CUDA_FOUND)
     set_source_files_properties(testGpuStream.c PROPERTIES LANGUAGE CUDA)
     add_executable(testGpuStream testGpuStream.c)
     target_link_libraries(testGpuStream ${LIBS})
+
     if(CUBLAS_FOUND)
         set_source_files_properties(testGpuLib.c PROPERTIES LANGUAGE CUDA)
         add_executable(testGpuLib testGpuLib.cu)
         target_link_libraries(testGpuLib ${LIBS})
     endif()
+    
+    set_source_files_properties(testGpuForAll.c PROPERTIES LANGUAGE CUDA)
+    add_executable(testGpuForAll testGpuForAll.c)
+    set_target_properties(testGpuForAll PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+    target_link_libraries(testGpuForAll ${LIBS})
+
+    set_source_files_properties(testLCSync.c PROPERTIES LANGUAGE CUDA)
+    add_executable(testLCSync testLCSync.c)
+    set_target_properties(testLCSync PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+    target_link_libraries(testLCSync ${LIBS})
+
+    set_source_files_properties(testGpuRing.c PROPERTIES LANGUAGE CUDA)
+    add_executable(testGpuRing testGpuRing.c)
+    target_link_libraries(testGpuRing ${LIBS})
+
+    set_source_files_properties(testGpuLCRed.c PROPERTIES LANGUAGE CUDA)
+    add_executable(testGpuLCRed testGpuLCRed.c)
+    target_link_libraries(testGpuLCRed ${LIBS})
 endif()
 
 add_executable(testOOBug testOOBug.c)

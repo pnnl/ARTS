@@ -72,7 +72,7 @@ void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc, char** 
     printRT("After DB Init");
 
     for(uint64_t i=0; i<MYSIZE; i++)
-        artsRouteTableLookupDb(artsGetGuid(range, i), &dummyRank);
+        artsRouteTableLookupDb(artsGetGuid(range, i), &dummyRank, true);
     printRT("After DB Lookup");
     
     for(uint64_t i=0; i<MYSIZE; i++)

@@ -49,8 +49,8 @@
 
 unsigned int introStart = 5;
 
-arts_block_dist_t distribution;
-csr_graph graph;
+arts_block_dist_t * distribution;
+csr_graph_t * graph;
 char* _file = NULL;
 char* _id_file = NULL;
 artsGuid_t vertexPropertyMapGuid = NULL_GUID;
@@ -66,21 +66,21 @@ int num_steps = 1500;
 int fixedSeed = -1;
 
 typedef struct {
-    vertex v;
+    vertex_t v;
     double propertyVal;
 } vertexProperty;
 
 typedef struct {
-    vertex v;
-    vertex id;
+    vertex_t v;
+    vertex_t id;
 } vertexID;
 
 typedef struct {
-    vertex source;
+    vertex_t source;
     unsigned int step;
     unsigned int numNeighbors;
-    vertex seed;
-    // vertex neighbors[];
+    vertex_t seed;
+    // vertex_t neighbors[];
 } sourceInfo;
 
 void visitSource(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t depv[]);
@@ -111,8 +111,8 @@ void GatherNeighborPropertyVal(uint32_t paramc, uint64_t * paramv,
 
   /*spawn next step*/
   if (srcInfo->step > 0) {
-    vertex source = maxWeightedNeighbor->v;
-    node_t rank = getOwner(source, &distribution);
+    vertex_t source = maxWeightedNeighbor->v;
+    partition_t rank = getOwnerDistr(source, distribution);
     /*Spawn an edt at rank that is the owner of current seed vertex*/
     uint64_t packed_values[3] = {source, srcInfo->step - 1, srcInfo->seed};
     artsGuid_t visitSourceGuid = artsEdtCreate(visitSource, rank, 3, (uint64_t*) & packed_values, 2);
@@ -124,16 +124,16 @@ void GatherNeighborPropertyVal(uint32_t paramc, uint64_t * paramv,
 
 void visitSource(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t depv[]) { 
 //  artsStartIntroShad(introStart);
-  vertex* neighbors = NULL;
+  vertex_t* neighbors = NULL;
   uint64_t neighbor_cnt = 0;    
-  vertex source = (vertex) paramv[0];
+  vertex_t source = (vertex_t) paramv[0];
   int nSteps = (int) paramv[1];
-  vertex seed = (vertex) paramv[2];
+  vertex_t seed = (vertex_t) paramv[2];
   //    PRINTF("Current Source  %" PRIu64 "\n", source);
 
-  getNeighbors(&graph, source, &neighbors, &neighbor_cnt);
+  getNeighbors(graph, source, &neighbors, &neighbor_cnt);
   if (neighbor_cnt) {
-    unsigned int dbSize = sizeof (sourceInfo); // + neighbor_cnt * sizeof(vertex);
+    unsigned int dbSize = sizeof (sourceInfo); // + neighbor_cnt * sizeof(vertex_t);
     void * ptr = NULL;
     artsGuid_t dbGuid = artsDbCreate(&ptr, dbSize, ARTS_DB_ONCE_LOCAL);
     sourceInfo * srcInfo = ptr;
@@ -142,7 +142,7 @@ void visitSource(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t
     srcInfo->seed = seed;
     srcInfo->numNeighbors = neighbor_cnt;
     // PRINTF("Exploring from Source  %" PRIu64 " steps: %d with neighbors %d\n", source, num_steps + 1 - nSteps, neighbor_cnt);
-    // memcpy(&(srcInfo->neighbors), &neighbors, neighbor_cnt * sizeof(vertex));
+    // memcpy(&(srcInfo->neighbors), &neighbors, neighbor_cnt * sizeof(vertex_t));
     /* //... keep filling in */
     artsGuid_t GatherNeighborPropertyValGuid = artsEdtCreate(
 						      GatherNeighborPropertyVal,
@@ -153,14 +153,14 @@ void visitSource(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t
         
     artsArrayDb_t * vertexPropertyMap = depv[0].ptr;
     for (unsigned int i = 0; i < neighbor_cnt; i++) {
-      vertex neib = neighbors[i];
+      vertex_t neib = neighbors[i];
       artsGetFromArrayDb(GatherNeighborPropertyValGuid, i, vertexPropertyMap,
 			 neib);
     }
 
     artsArrayDb_t * vertexIDMap = depv[1].ptr;
     for (unsigned int i = 0; i < neighbor_cnt; i++) {
-      vertex neib = neighbors[i];
+      vertex_t neib = neighbors[i];
       // PRINTF("Vertex=%llu indexing at %u \n", neib, neighbor_cnt + i);
       artsGetFromArrayDb(GatherNeighborPropertyValGuid, neighbor_cnt + i,
     			 vertexIDMap, neib);
@@ -197,7 +197,7 @@ void endVertexIDMapRead(uint32_t paramc, uint64_t * paramv,
   else
     {
       for (int i = 0; i < num_seeds; i++) {
-	seeds[i] = rand() % distribution.num_vertices;
+	seeds[i] = rand() % distribution->num_vertices;
 //	PRINTF("Seed chosen %d,\n", seeds[i]);
       }
     }
@@ -205,8 +205,8 @@ void endVertexIDMapRead(uint32_t paramc, uint64_t * paramv,
   startTime = artsGetTimeStamp();
   /*Start walk from each seed in parallel*/
   for (int i = 0; i < num_seeds; i++) {
-    vertex source = seeds[i];
-    node_t rank = getOwner(source, &distribution);
+    vertex_t source = seeds[i];
+    partition_t rank = getOwnerDistr(source, distribution);
     // PRINTF("Source is located on rank %d\n", rank);
     /*Spawn an edt at rank that is the owner of current seed vertex*/
     uint64_t packed_values[3] = {source, num_steps, source};
@@ -237,7 +237,7 @@ void endVertexPropertyRead(uint32_t paramc, uint64_t * paramv,
   // Allocate vertex ID map and populate it from node 0
   artsArrayDb_t * vertexIDMap = artsNewArrayDbWithGuid(vertexIDMapGuid,
 						       sizeof (vertexID), 
-						       distribution.num_vertices);
+						       distribution->num_vertices);
 
   //Read in property file
   PRINTF("[INFO] Reading in and constructing the vertex id map ...\n");
@@ -284,14 +284,10 @@ void initPerNode(unsigned int nodeId, int argc, char** argv) {
   vertexIDMapGuid = artsReserveGuidRoute(ARTS_DB_PIN, 0);
 
   // distribution must be initialized in initPerNode
-  initBlockDistributionWithCmdLineArgs(&distribution,
-				       argc, argv);
+  distribution = initBlockDistributionWithCmdLineArgs(argc, argv);
   // read the edgelist and construct the graph
-  loadGraphUsingCmdLineArgs(&graph,
-			    &distribution,
-			    argc,
-			    argv);
-
+  loadGraphUsingCmdLineArgs(distribution, argc, argv);
+  graph = getGraphFromPartition(nodeId, distribution);
 }
 
 void initPerWorker(unsigned int nodeId, unsigned int workerId,
@@ -345,7 +341,7 @@ void initPerWorker(unsigned int nodeId, unsigned int workerId,
     artsArrayDb_t * vertexPropertyMap = artsNewArrayDbWithGuid(
 					       vertexPropertyMapGuid,
 					       sizeof (vertexProperty), 
-					       distribution.num_vertices);
+					       distribution->num_vertices);
 
     //Read in property file
     PRINTF("[INFO] Reading in and constructing the vertex property map ...\n");

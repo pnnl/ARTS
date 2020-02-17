@@ -75,14 +75,14 @@ void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc, char** 
 
     int rank;
     artsGuid_t guid = artsGetGuid(range, 0);
-    artsRouteTableLookupDb(guid, &rank);
+    artsRouteTableLookupDb(guid, &rank, true);
     artsRouteTableReturnDb(guid, true);
 
     void * ptr = artsRouteTableLookupItem(guid);
     PRINTF("Lookup %lu %p\n", guid, ptr);
     artsPrintItem(getItemFromData(guid, ptr));
 
-    ptr = artsRouteTableLookupDb(guid, &rank);
+    ptr = artsRouteTableLookupDb(guid, &rank, true);
     PRINTF("DB Lookup %lu %p\n", guid, ptr);
     artsPrintItem(getItemFromData(guid, ptr));
 
@@ -93,7 +93,7 @@ void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc, char** 
     PRINTF("Lookup2 %lu %p\n", guid, ptr);
     artsPrintItem(getItemFromData(guid, ptr));
 
-    ptr = artsRouteTableLookupDb(guid, &rank);
+    ptr = artsRouteTableLookupDb(guid, &rank, true);
     PRINTF("DB Lookup2 %lu %p\n", guid, ptr);
     artsPrintItem(getItemFromData(guid, ptr));
 

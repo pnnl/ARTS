@@ -84,7 +84,9 @@ scheduler_t schedulerLoop[] =
         artsDefaultSchedulerLoop, 
         artsNetworkBeforeStealSchedulerLoop, 
         artsNetworkFirstSchedulerLoop, 
-        artsGpuSchedulerLoop
+        artsGpuSchedulerLoop,
+        artsGpuSchedulerBackoffLoop,
+        artsGpuSchedulerDemandLoop
     };
 #else
 scheduler_t schedulerLoop[] = 
@@ -139,6 +141,7 @@ void artsRuntimeNodeInit(unsigned int workerThreads, unsigned int receivingThrea
     artsNodeInfo.gpuRouteTableEntries = config->gpuRouteTableEntries;
     artsNodeInfo.gpuLocality = config->gpuLocality;
     artsNodeInfo.gpuFit = config->gpuFit;
+    artsNodeInfo.gpuLCSync = config->gpuLCSync;
     artsNodeInfo.gpuMaxEdts = config->gpuMaxEdts;
     artsNodeInfo.gpuMaxMemory = config->gpuMaxMemory;
     artsNodeInfo.gpuP2P = config->gpuP2P;
@@ -182,6 +185,10 @@ void artsThreadZeroNodeStart()
 
     if(initPerNode)
         initPerNode(artsGlobalRankId, mainArgc, mainArgv);
+
+#ifdef USE_GPU
+    artsInitPerGpuWrapper(mainArgc, mainArgv);
+#endif
     setGuidGeneratorAfterParallelStart();
 
     artsStartInspector(2);
@@ -390,7 +397,7 @@ static inline void artsRunEdt(void *edtPacket)
     uint32_t paramc = edt->paramc;
     uint64_t *paramv = (uint64_t *)(edt + 1);
 
-    prepDbs(depc, depv);
+    prepDbs(depc, depv, false);
 
     artsSetThreadLocalEdtInfo(edt);
     ARTSCOUNTERTIMERSTART(edtCounter);
@@ -405,7 +412,7 @@ static inline void artsRunEdt(void *edtPacket)
     if(edt->outputBuffer != NULL_GUID) //This is for a synchronous path
         artsSetBuffer(edt->outputBuffer, artsCalloc(sizeof(unsigned int)), sizeof(unsigned int));
 
-    releaseDbs(depc, depv);
+    releaseDbs(depc, depv, false);
     artsEdtDelete(edtPacket);
     decOustandingEdts(1); //This is for debugging purposes
 }

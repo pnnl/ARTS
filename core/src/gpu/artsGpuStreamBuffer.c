@@ -50,6 +50,7 @@
 #include "artsDebug.h"
 #include "artsEdtFunctions.h"
 #include "artsGpuStreamBuffer.h"
+#include "artsIntrospection.h"
 
 #define DPRINTF( ... )
 // #define DPRINTF( ... ) PRINTF( __VA_ARGS__ )
@@ -71,6 +72,21 @@ artsBufferKernel_t kernelToDevBuff[MAXSTREAM][MAXBUFFER];
 artsBufferMemMove_t devToHostBuff[MAXSTREAM][MAXBUFFER];
 void * wrapUpBuff[MAXSTREAM][MAXBUFFER];
 
+void checkOccupancy(artsEdt_t fnPtr, unsigned int gpuId, dim3 block)
+{
+    int maxActiveBlocks;
+    int blockSize = (int) block.x * block.y * block.z;
+    struct cudaDeviceProp prop = artsGpus[gpuId].prop;
+    
+    CHECKCORRECT(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocks, (const void*) fnPtr, (int) blockSize, 0));
+    float occupancy = (maxActiveBlocks * blockSize / prop.warpSize) / (float) (prop.maxThreadsPerMultiProcessor / prop.warpSize);
+
+    // Moving average of occupancy
+    artsLock(&artsGpus[gpuId].deviceLock);
+    artsGpus[gpuId].occupancy = (occupancy + (artsGpus[gpuId].totalEdts-1) * artsGpus[gpuId].occupancy) / (++artsGpus[gpuId].totalEdts);
+    artsUnlock(&artsGpus[gpuId].deviceLock);
+}
+
 bool pushDataToStream(unsigned int gpuId, void * dst, void * src, size_t count, bool buff)
 {
     if(buff)
@@ -87,7 +103,14 @@ bool pushDataToStream(unsigned int gpuId, void * dst, void * src, size_t count, 
         artsUnlock(&buffLock[gpuId]);
         return ret;
     }
-    CHECKCORRECT(cudaMemcpyAsync(dst, src, count, cudaMemcpyHostToDevice, artsGpus[gpuId].stream));
+
+    if(src)
+    {
+        CHECKCORRECT(cudaMemcpyAsync(dst, src, count, cudaMemcpyHostToDevice, artsGpus[gpuId].stream));
+        artsUpdatePerformanceMetric(artsGpuBWPush, artsThread, count, false);
+    }
+    else
+        CHECKCORRECT(cudaMemsetAsync(dst, 0, count, artsGpus[gpuId].stream));
     return true;
 }
 
@@ -108,6 +131,7 @@ bool getDataFromStream(unsigned int gpuId, void * dst, void * src, size_t count,
         return ret;
     }
     CHECKCORRECT(cudaMemcpyAsync(dst, src, count, cudaMemcpyDeviceToHost, artsGpus[gpuId].stream));
+    artsUpdatePerformanceMetric(artsGpuBWPull, artsThread, count, false);
     return true;
 }
 
@@ -128,7 +152,7 @@ bool pushKernelToStream(unsigned int gpuId, uint32_t paramc, uint64_t * paramv, 
         kernelToDevBuff[gpuId][kernelToDevCount[gpuId]].block[1] = block.y;
         kernelToDevBuff[gpuId][kernelToDevCount[gpuId]].block[2] = block.z;
         kernelToDevCount[gpuId]++;
-        
+
         bool ret = false;
         if(kernelToDevCount[gpuId] == MAXBUFFER)
             ret = flushStream(gpuId);
@@ -137,20 +161,9 @@ bool pushKernelToStream(unsigned int gpuId, uint32_t paramc, uint64_t * paramv, 
     }
 
     void * kernelArgs[] = { &paramc, &paramv, &depc, &depv };
-    int maxActiveBlocks, blockSize;
-    float occupancy;
-    blockSize = (int) block.x * block.y * block.z;
-    struct cudaDeviceProp prop = artsGpus[gpuId].prop;
-    // TODO: Shared Memory should be unset from 0 when supported
-    CHECKCORRECT(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocks, (const void*) fnPtr, (int) blockSize, 0));
-    occupancy = (maxActiveBlocks * blockSize / prop.warpSize) / (float) (prop.maxThreadsPerMultiProcessor / prop.warpSize);
-
-    // Moving average of occupancy
-    artsLock(&artsGpus[gpuId].deviceLock);
-    artsGpus[gpuId].occupancy = (occupancy + (artsGpus[gpuId].totalEdts-1) * artsGpus[gpuId].occupancy) / (++artsGpus[gpuId].totalEdts);
-    artsUnlock(&artsGpus[gpuId].deviceLock);
-
     CHECKCORRECT(cudaLaunchKernel((const void *)fnPtr, grid, block, (void**)kernelArgs, (size_t)0, artsGpus[gpuId].stream));
+    checkOccupancy(fnPtr, gpuId, block);
+    artsUpdatePerformanceMetric(artsGpuEdt, artsThread, 1, false);
     return true;
 }
 
@@ -180,31 +193,54 @@ bool pushWrapUpToStream(unsigned int gpuId, void * hostClosure, bool buff)
 bool flushMemStream(unsigned int gpuId, unsigned int * count, artsBufferMemMove_t * buff, enum cudaMemcpyKind kind)
 {
     unsigned int max = *count;
-    bool ret = (max > 0);
-    for(unsigned int i=0; i<max; i++)
+    if(max > 0)
     {
-        // PRINTF("i: %u %p %p %u %p\n", i, buff[i].dst, buff[i].src, buff[i].count,  &artsGpus[gpuId].stream);
-        CHECKCORRECT(cudaMemcpyAsync(buff[i].dst, buff[i].src, buff[i].count, kind, artsGpus[gpuId].stream));
+        uint64_t dataSize = 0;
+        for(unsigned int i=0; i<max; i++)
+        {
+            if(buff[i].src)
+            {
+                // PRINTF("i: %u %p %p %u %p\n", i, buff[i].dst, buff[i].src, buff[i].count,  &artsGpus[gpuId].stream);
+                CHECKCORRECT(cudaMemcpyAsync(buff[i].dst, buff[i].src, buff[i].count, kind, artsGpus[gpuId].stream));
+                dataSize+=buff[i].count;
+            }
+            else
+                CHECKCORRECT(cudaMemsetAsync(buff[i].dst, 0, buff[i].count, artsGpus[gpuId].stream));
+        }
+        *count = 0;
+        if(kind == cudaMemcpyHostToDevice)
+        {
+            artsUpdatePerformanceMetric(artsGpuBWPush, artsThread, dataSize, false);
+        }
+        else
+        {
+            artsUpdatePerformanceMetric(artsGpuBWPull, artsThread, dataSize, false);
+        }
+        return true;
     }
-    *count = 0;
-    return ret;
+    return false;
 }
 
 bool flushKernelStream(unsigned int gpuId)
 {
     bool ret = (kernelToDevCount > 0);
-    for(unsigned int i=0; i<kernelToDevCount[gpuId]; i++)
+    if(ret)
     {
-        void * kernelArgs[] = { 
-            &kernelToDevBuff[gpuId][i].paramc, 
-            &kernelToDevBuff[gpuId][i].paramv, 
-            &kernelToDevBuff[gpuId][i].depc, 
-            &kernelToDevBuff[gpuId][i].depv };
-        dim3 grid(kernelToDevBuff[gpuId][i].grid[0], kernelToDevBuff[gpuId][i].grid[1], kernelToDevBuff[gpuId][i].grid[2]);
-        dim3 block(kernelToDevBuff[gpuId][i].block[0], kernelToDevBuff[gpuId][i].block[1], kernelToDevBuff[gpuId][i].block[2]);
-        CHECKCORRECT(cudaLaunchKernel((const void *)kernelToDevBuff[gpuId][i].fnPtr, grid, block, (void**)kernelArgs, (size_t)0, artsGpus[gpuId].stream));
+        for(unsigned int i=0; i<kernelToDevCount[gpuId]; i++)
+        {
+            void * kernelArgs[] = { 
+                &kernelToDevBuff[gpuId][i].paramc, 
+                &kernelToDevBuff[gpuId][i].paramv, 
+                &kernelToDevBuff[gpuId][i].depc, 
+                &kernelToDevBuff[gpuId][i].depv };
+            dim3 grid(kernelToDevBuff[gpuId][i].grid[0], kernelToDevBuff[gpuId][i].grid[1], kernelToDevBuff[gpuId][i].grid[2]);
+            dim3 block(kernelToDevBuff[gpuId][i].block[0], kernelToDevBuff[gpuId][i].block[1], kernelToDevBuff[gpuId][i].block[2]);
+            CHECKCORRECT(cudaLaunchKernel((const void *)kernelToDevBuff[gpuId][i].fnPtr, grid, block, (void**)kernelArgs, (size_t)0, artsGpus[gpuId].stream));
+            checkOccupancy(kernelToDevBuff[gpuId][i].fnPtr, gpuId, block);
+        }
+        artsUpdatePerformanceMetric(artsGpuEdt, artsThread, kernelToDevCount[gpuId], false);
+        kernelToDevCount[gpuId] = 0;
     }
-    kernelToDevCount[gpuId] = 0;
     return ret;
 }
 
@@ -228,19 +264,138 @@ bool flushStream(unsigned int gpuId)
     DPRINTF("%u %u %u %u\n", hostToDevCount[gpuId], kernelToDevCount[gpuId], devToHostCount[gpuId], wrapUpCount[gpuId]);
     if(hostToDevCount[gpuId] || kernelToDevCount[gpuId] || devToHostCount[gpuId] || wrapUpCount[gpuId])
     {
-        int savedDevice;
-        CHECKCORRECT(cudaGetDevice(&savedDevice));
-        CHECKCORRECT(cudaSetDevice(gpuId));
+        artsCudaSetDevice(gpuId, true);
 
         flushMemStream(gpuId, &hostToDevCount[gpuId], hostToDevBuff[gpuId], cudaMemcpyHostToDevice);
         flushKernelStream(gpuId);
         flushMemStream(gpuId, &devToHostCount[gpuId], devToHostBuff[gpuId], cudaMemcpyDeviceToHost);
         flushWrapUpStream(gpuId);
 
-        CHECKCORRECT(cudaSetDevice(savedDevice));
+        artsCudaRestoreDevice();
+        artsUpdatePerformanceMetric(artsGpuBufferFlush, artsThread, 1, false);
         return true;
     }
     return false;
+}
+
+void copyGputoGpu(void * dst, unsigned int dstGpuId, void * src, unsigned int srcGpuId, unsigned int size)
+{
+    //We need to lock in a fixed order, so smallest first
+    unsigned int first = (dstGpuId < srcGpuId) ? dstGpuId : srcGpuId;
+    unsigned int second = (dstGpuId == first) ? srcGpuId : dstGpuId;
+    artsLock(&buffLock[first]);
+    artsLock(&buffLock[second]);
+    
+    //Flush the streams to make sure everything is done
+    flushStream(dstGpuId);
+    flushStream(srcGpuId);
+    CHECKCORRECT(cudaStreamSynchronize(artsGpus[srcGpuId].stream));
+
+    //Next lets move the data
+    CHECKCORRECT(cudaMemcpyPeerAsync(dst, dstGpuId, src, srcGpuId, size, artsGpus[dstGpuId].stream));
+    
+    artsCudaRestoreDevice();
+
+    //Unlock in the correct order
+    artsUnlock(&buffLock[second]);
+    artsUnlock(&buffLock[first]);
+}
+
+void doReductionNow(unsigned int gpuId, void * sink, void * src, artsLCSyncFunctionGpu_t fnPtr, unsigned int elementSize, unsigned int size)
+{
+    artsLock(&buffLock[gpuId]);
+    flushStream(gpuId);
+    
+    artsCudaSetDevice(gpuId, true);
+    size-=sizeof(struct artsDb);
+
+    //Next lets run the reduce function on the dbData and the shadow copy (dst)
+    unsigned int tileSize = size/elementSize;
+    PRINTF("TileSize: %u\n", tileSize);
+    if(tileSize < 32)
+    {
+        dim3 block (tileSize, 1, 1); //For volta...
+        dim3 grid(1, 1, 1);
+        void * kernelArgs[] = {&sink, &src};
+        PRINTF("SRC: %p DST: %p\n", sink, src);
+        CHECKCORRECT(cudaLaunchKernel((const void *)fnPtr, grid, block, (void**)kernelArgs, (size_t)0, artsGpus[gpuId].stream));
+    }
+    else
+    {
+        dim3 block (32, 1, 1); //For volta...
+        dim3 grid((tileSize+32-1)/32, 1, 1);
+        void * kernelArgs[] = {&sink, &src};
+        CHECKCORRECT(cudaLaunchKernel((const void *)fnPtr, grid, block, (void**)kernelArgs, (size_t)0, artsGpus[gpuId].stream))
+    }
+    
+    artsCudaRestoreDevice();
+    artsUnlock(&buffLock[gpuId]);
+}
+
+void reduceDatafromGpus(void * dst, unsigned int dstGpuId, void * src, unsigned int srcGpuId, unsigned int size, artsLCSyncFunctionGpu_t fnPtr, unsigned int elementSize, void * dbData)
+{
+    DPRINTF("ELEMENT SIZE: %lu\n", elementSize);
+    //We need to lock in a fixed order, so smallest first
+    unsigned int first = (dstGpuId < srcGpuId) ? dstGpuId : srcGpuId;
+    unsigned int second = (dstGpuId == first) ? srcGpuId : dstGpuId;
+    artsLock(&buffLock[first]);
+    artsLock(&buffLock[second]);
+    
+    //Flush the streams to make sure everything is done
+    flushStream(dstGpuId);
+    flushStream(srcGpuId);
+    CHECKCORRECT(cudaStreamSynchronize(artsGpus[srcGpuId].stream));
+    //I think we don't need to synchronize the destination stream since we are just adding to it...
+    // CHECKCORRECT(cudaStreamSynchronize(artsGpus[dstGpuId].stream));
+
+    //Next lets move the data
+    CHECKCORRECT(cudaMemcpyPeerAsync(dst, dstGpuId, src, srcGpuId, size, artsGpus[dstGpuId].stream));
+    
+    artsCudaSetDevice(dstGpuId, true);
+
+    //Lets remove the db header part
+    size-=sizeof(struct artsDb);
+
+    //Next lets run the reduce function on the dbData and the shadow copy (dst)
+    unsigned int tileSize = size/elementSize;
+    DPRINTF("TileSize: %u\n", tileSize);
+    if(tileSize < 32)
+    {
+        dim3 block (tileSize, 1, 1); //For volta...
+        dim3 grid(1, 1, 1);
+        void * kernelArgs[] = {&dbData, &dst};
+        DPRINTF("SRC: %p DST: %p\n", dbData, dst);
+        CHECKCORRECT(cudaLaunchKernel((const void *)fnPtr, grid, block, (void**)kernelArgs, (size_t)0, artsGpus[dstGpuId].stream));
+    }
+    else
+    {
+        dim3 block (32, 1, 1); //For volta...
+        dim3 grid((tileSize+32-1)/32, 1, 1);
+        void * kernelArgs[] = {&dbData, &dst};
+        DPRINTF("SRC: %p DST: %p\n", dbData, dst);
+        CHECKCORRECT(cudaLaunchKernel((const void *)fnPtr, grid, block, (void**)kernelArgs, (size_t)0, artsGpus[dstGpuId].stream))
+    }
+    
+    // CHECKCORRECT(cudaStreamSynchronize(artsGpus[srcGpuId].stream));
+    // CHECKCORRECT(cudaStreamSynchronize(artsGpus[dstGpuId].stream));
+    artsCudaRestoreDevice();
+
+    //Unlock in the correct order
+    artsUnlock(&buffLock[second]);
+    artsUnlock(&buffLock[first]);
+}
+
+void getDataFromStreamNow(unsigned int gpuId, void * dst, void * src, size_t count, bool buff)
+{
+    if(buff)
+    {
+        artsLock(&buffLock[gpuId]);
+        flushStream(gpuId);
+        artsUnlock(&buffLock[gpuId]);
+    }
+    DPRINTF("GETTING[%u]: %p %p size: %u\n", gpuId, dst, src, count);
+    CHECKCORRECT(cudaMemcpyAsync(dst, src, count, cudaMemcpyDeviceToHost, artsGpus[gpuId].stream));
+    CHECKCORRECT(cudaStreamSynchronize(artsGpus[gpuId].stream));
 }
 
 bool checkStreams(bool buffOn)

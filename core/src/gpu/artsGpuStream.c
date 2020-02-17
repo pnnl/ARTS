@@ -50,6 +50,10 @@
 #include "artsGpuRouteTable.h"
 #include "artsDebug.h"
 #include "artsEdtFunctions.h"
+#include "artsEventFunctions.h"
+#include "artsGpuLCSyncFunctions.h"
+#include "artsGuid.h"
+#include "artsIntrospection.h"
 
 #define DPRINTF( ... )
 // #define DPRINTF( ... ) PRINTF( __VA_ARGS__ )
@@ -57,11 +61,13 @@
 int random(void * edtPacket);
 int allOrNothing(void * edtPacket);
 int atleastOne(void * edtPacket);
-int firstFit(uint64_t mask, uint64_t size);
-int bestFit(uint64_t mask, uint64_t size);
-int worstFit(uint64_t mask, uint64_t size);
-int roundRobinFit(uint64_t mask, uint64_t size);
-bool tryReserve(int gpu, uint64_t size);
+int hashOnDBZero(void * edtPacket);
+int hashLargest(void * edtPacket);
+int firstFit(uint64_t mask, uint64_t size, unsigned int totalThreads);
+int bestFit(uint64_t mask, uint64_t size, unsigned int totalThreads);
+int worstFit(uint64_t mask, uint64_t size, unsigned int totalThreads);
+int roundRobinFit(uint64_t mask, uint64_t size, unsigned int totalThreads);
+bool tryReserve(int gpu, uint64_t size, unsigned int threads);
 
 volatile unsigned int hits = 0;
 volatile unsigned int misses = 0;
@@ -74,12 +80,14 @@ typedef int (*locality_t) (void * edt);
 locality_t localityScheme[] = {
     random,
     allOrNothing,
-    atleastOne
+    atleastOne,
+    hashOnDBZero,
+    hashLargest
 };
 
 locality_t locality; // Locality function ptr
 
-typedef int (*fit_t) (uint64_t mask, uint64_t size);
+typedef int (*fit_t) (uint64_t mask, uint64_t size, unsigned int totalThreads);
 
 fit_t fitScheme[] = {
     firstFit,
@@ -89,8 +97,6 @@ fit_t fitScheme[] = {
 };
 
 fit_t fit; // Fit function ptr
-
-bool P2P; // Enable DB access across devices
 
 __thread volatile unsigned int * newEdtLock = 0;
 __thread artsArrayList * newEdts = NULL;
@@ -108,18 +114,55 @@ __thread int artsLocalGpuId;
 extern "C" 
 {
 #endif
-    extern void initPerGpu(int devId, cudaStream_t * stream) __attribute__((weak));
-    extern void cleanPerGpu(int devId, cudaStream_t * stream) __attribute__((weak));
+    extern void initPerGpu(unsigned int nodeId, int devId, cudaStream_t * stream, int argc, char ** argv) __attribute__((weak));
+    extern void cleanPerGpu(unsigned int nodeId, int devId, cudaStream_t * stream) __attribute__((weak));
 #ifdef __cplusplus
 }
 #endif
+
+bool ** gpuAdjList = NULL;
+void artsFullyConnectGpus(bool p2p, bool disconnectP2P)
+{
+    if(!gpuAdjList)
+    {
+        gpuAdjList = (bool**) artsCalloc(sizeof(bool*)*artsNodeInfo.gpu);
+        for(unsigned int i=0; i<artsNodeInfo.gpu; i++)
+            gpuAdjList[i] = (bool*) artsCalloc(sizeof(bool)*artsNodeInfo.gpu);
+    }
+    if(p2p)
+    { 
+        for (int src=0; src<artsNodeInfo.gpu; src++)
+        {
+            artsCudaSetDevice(src, false);
+            for (int dst=0; dst<artsNodeInfo.gpu; dst++)
+            {
+                if(src != dst)
+                {
+                    int hasAccess = 0;
+                    CHECKCORRECT(cudaDeviceCanAccessPeer(&hasAccess, src, dst));
+                    if(hasAccess)
+                    {
+                        if(disconnectP2P)
+                        {
+                            CHECKCORRECT(cudaDeviceDisablePeerAccess(dst));
+                        }
+                        else
+                        {
+                            gpuAdjList[src][dst] = 1;
+                            CHECKCORRECT(cudaDeviceEnablePeerAccess(dst, 0));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 void artsNodeInitGpus()
 {
     int numAvailGpus = 0;
     locality = localityScheme[artsNodeInfo.gpuLocality];
     fit = fitScheme[artsNodeInfo.gpuFit];
-    P2P = artsNodeInfo.gpuP2P;
     CHECKCORRECT(cudaGetDeviceCount(&numAvailGpus));
     if(numAvailGpus < artsNodeInfo.gpu)
     {
@@ -135,15 +178,14 @@ void artsNodeInitGpus()
     DPRINTF("NUM DEV: %d\n", artsNodeInfo.gpu);
     artsGpus = (artsGpu_t *) artsCalloc(sizeof(artsGpu_t) * artsNodeInfo.gpu);
 
-    int savedDevice;
-    CHECKCORRECT(cudaGetDevice(&savedDevice));
+    artsCudaSetDevice(-1, true);
 
     // Initialize artsGpu with 1 stream/GPU
     for (int i=0; i<artsNodeInfo.gpu; ++i)
     {
         artsGpus[i].device = i;
         DPRINTF("Setting %d\n", i);
-        CHECKCORRECT(cudaSetDevice(i));
+        artsCudaSetDevice(i, false);
         CHECKCORRECT(cudaStreamCreate(&artsGpus[i].stream)); // Make it scalable
         artsNodeInfo.gpuRouteTable[i] = artsGpuNewRouteTable(artsNodeInfo.gpuRouteTableEntries, artsNodeInfo.gpuRouteTableSize);
         size_t tempFreeMem = 0;
@@ -155,10 +197,26 @@ void artsNodeInitGpus()
         if (artsGpus[i].availGlobalMem > artsNodeInfo.gpuMaxMemory)
             artsGpus[i].availGlobalMem = artsNodeInfo.gpuMaxMemory;
         DPRINTF("to Start: %lu\n", artsGpus[i].availGlobalMem);
-        if(initPerGpu)
-            initPerGpu(i, &artsGpus[i].stream);
     }
-    CHECKCORRECT(cudaSetDevice(savedDevice));
+
+    artsFullyConnectGpus(artsNodeInfo.gpuP2P, false);
+
+    artsCudaRestoreDevice();
+}
+
+void artsInitPerGpuWrapper(int argc, char ** argv)
+{
+    if(initPerGpu)
+    {
+        artsCudaSetDevice(-1, true);
+        for (int i=0; i<artsNodeInfo.gpu; ++i)
+        {
+            DPRINTF("Set device: %u\n", i);
+            artsCudaSetDevice(i, false);
+            initPerGpu(artsGlobalRankId, i, &artsGpus[i].stream, argc, argv);
+        }
+        artsCudaRestoreDevice();
+    }
 }
 
 void artsWorkerInitGpus()
@@ -196,18 +254,20 @@ void artsHandleNewEdts()
 void artsCleanupGpus()
 {
     uint64_t freedSize = 0;
-    int savedDevice;
-    cudaGetDevice(&savedDevice);
+    artsCudaSetDevice(-1, false);
+
+    artsFullyConnectGpus(artsNodeInfo.gpuP2P, true);
+
     for (int i=0; i<artsNodeInfo.gpu; i++)
     {
-        CHECKCORRECT(cudaSetDevice(artsGpus[i].device));
+        artsCudaSetDevice(artsGpus[i].device, false);
         if(cleanPerGpu)
-            cleanPerGpu(i, &artsGpus[i].stream);
+            cleanPerGpu(artsGlobalRankId, i, &artsGpus[i].stream);
         freedSize += artsGpuFreeAll(artsGpus[i].device);
         CHECKCORRECT(cudaStreamSynchronize(artsGpus[i].stream));
         CHECKCORRECT(cudaStreamDestroy(artsGpus[i].stream));
     }
-    CHECKCORRECT(cudaSetDevice(savedDevice));
+    artsCudaRestoreDevice();
     PRINTF("Occupancy :\n");
     for (int i=0; i<artsGetNumGpus(); ++i)
         PRINTF("\tGPU[%d] = %f\n", i, artsGpus[i].occupancy);
@@ -217,6 +277,8 @@ void artsCleanupGpus()
 
 void CUDART_CB artsWrapUp(cudaStream_t stream, cudaError_t status, void * data)
 {
+    artsToggleThreadInspection();
+
     artsGpuCleanUp_t * gc = (artsGpuCleanUp_t*) data;
     
     artsGpu_t * artsGpu = &artsGpus[gc->gpuId];
@@ -230,6 +292,9 @@ void CUDART_CB artsWrapUp(cudaStream_t stream, cudaError_t status, void * data)
     uint64_t     * paramv   = (uint64_t *)(edt + 1);
     artsEdtDep_t * depv     = (artsEdtDep_t *)(paramv + paramc);
 
+    unsigned int totalThreads = edt->grid.x * edt->block.x + edt->grid.y * edt->block.y + edt->grid.z * edt->block.z;
+    artsAtomicSub(&artsGpu->availableThreads, totalThreads);
+
     for(unsigned int i=0; i<depc; i++)
     {
         if(depv[i].ptr)
@@ -239,8 +304,11 @@ void CUDART_CB artsWrapUp(cudaStream_t stream, cudaError_t status, void * data)
                 artsGpuInvalidateRouteTables(depv[i].guid, gc->gpuId);
             }
             //True says to mark it for deletion... Change this to false to further delay delete!
-            artsGpuRouteTableReturnDb(depv[i].guid, artsNodeInfo.freeDbAfterGpuRun, gc->gpuId);
-            DPRINTF("Returning Db: %lu id: %d\n", depv[i].guid, gc->gpuId);
+            // bool markDelete = (artsGuidGetType(depv[i].guid) != ARTS_DB_GPU_WRITE) && artsNodeInfo.freeDbAfterGpuRun;
+            bool markDelete = artsNodeInfo.freeDbAfterGpuRun;
+            bool res = artsGpuRouteTableReturnDb(depv[i].guid, markDelete, gc->gpuId);
+            // artsGpuRouteTableReturnDb(depv[i].guid, artsNodeInfo.freeDbAfterGpuRun, gc->gpuId);
+            DPRINTF("Returning Db: %lu id: %d res: %u\n", depv[i].guid, gc->gpuId, res);
         }
     }
 
@@ -250,6 +318,7 @@ void CUDART_CB artsWrapUp(cudaStream_t stream, cudaError_t status, void * data)
     newEdts    = gc->newEdts;
     artsGpuHostWrapUp(gc->edt, edt->endGuid, edt->slot, edt->dataGuid);
     DPRINTF("FINISHED GPU CALLS %s\n", cudaGetErrorString(status));
+    artsToggleThreadInspection();
 }
 
 void artsScheduleToGpuInternal(artsEdt_t fnPtr, uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t * depv, dim3 grid, dim3 block, void * edtPtr, artsGpu_t * artsGpu)
@@ -265,17 +334,19 @@ void artsScheduleToGpuInternal(artsEdt_t fnPtr, uint32_t paramc, uint64_t * para
     void * devClosure  = NULL;
     void * hostClosure = NULL;
 
+    uint64_t         * devGpuId   = NULL;
     uint64_t         * devParamv  = NULL;
     artsEdtDep_t     * devDepv    = NULL;
 
     artsGpuCleanUp_t * hostGCPtr = NULL;
+    uint64_t         * hostGpuId = NULL;
     uint64_t         * hostParamv = NULL;
     artsEdtDep_t     * hostDepv   = NULL;
 
     DPRINTF("Paramc: %u Depc: %u edt: %p\n", paramc, depc, edtPtr);
 
     //Get size of closure
-    uint64_t devClosureSize = sizeof(uint64_t) * paramc + sizeof(artsEdtDep_t) * depc;
+    uint64_t devClosureSize = sizeof(uint64_t) * (paramc+1) + sizeof(artsEdtDep_t) * depc;
     uint64_t hostClosureSize = devClosureSize + sizeof(artsGpuCleanUp_t);
     DPRINTF("devClosureSize: %u hostClosureSize: %u\n", devClosureSize, hostClosureSize);
 
@@ -283,7 +354,8 @@ void artsScheduleToGpuInternal(artsEdt_t fnPtr, uint32_t paramc, uint64_t * para
     if(devClosureSize)
     {
         devClosure = artsCudaMalloc(devClosureSize);
-        devParamv = (uint64_t*) devClosure;
+        devGpuId = (uint64_t*) devClosure;
+        devParamv = devGpuId + 1;
         devDepv = (artsEdtDep_t *)(devParamv + paramc);
         DPRINTF("Allocated dev closure\n");
     }
@@ -293,7 +365,8 @@ void artsScheduleToGpuInternal(artsEdt_t fnPtr, uint32_t paramc, uint64_t * para
         //Allocate closure for host
         hostClosure = artsCudaMallocHost(hostClosureSize);
         hostGCPtr = (artsGpuCleanUp_t *) hostClosure;
-        hostParamv = (uint64_t*)(hostGCPtr + 1);
+        hostGpuId = (uint64_t*)(hostGCPtr + 1);
+        hostParamv = hostGpuId+1;
         hostDepv = (artsEdtDep_t *)(hostParamv + paramc);
         DPRINTF("Allocated host closure\n");
 
@@ -303,6 +376,7 @@ void artsScheduleToGpuInternal(artsEdt_t fnPtr, uint32_t paramc, uint64_t * para
         hostGCPtr->newEdts = newEdts;
         hostGCPtr->devClosure = devClosure;
         hostGCPtr->edt = (struct artsEdt*)edtPtr;
+        *hostGpuId = (uint64_t) artsGpu->device;
         for(unsigned int i=0; i<paramc; i++)
             hostParamv[i] = paramv[i];
         DPRINTF("Filled host closure\n");
@@ -320,38 +394,52 @@ void artsScheduleToGpuInternal(artsEdt_t fnPtr, uint32_t paramc, uint64_t * para
     {
         if(depv[i].ptr)
         {
-            void * dataPtr = artsGpuRouteTableLookupDb(depv[i].guid, artsGpu->device);
+            artsType_t mode = artsGuidGetType(depv[i].guid); //use this mode since it is the type of DB depv[i].mode is access type
+            unsigned int gpuVersion, timeStamp;
+            void * dataPtr = artsGpuRouteTableLookupDb(depv[i].guid, artsGpu->device, &gpuVersion, &timeStamp);
             struct artsDb * db = (struct artsDb *) depv[i].ptr - 1;
-            uint64_t size = db->header.size - sizeof(struct artsDb);
+            uint64_t size = db->header.size;
+            uint64_t allocSize = (mode == ARTS_DB_LC) ? size*2 : size;
             if (!dataPtr)
             {
                 bool successfulAdd = false;
-                artsItemWrapper_t * wrapper = artsGpuRouteTableReserveItemRace(&successfulAdd, size, depv[i].guid, artsGpu->device);
+                DPRINTF("WRAPPER SIZE: %lu\n", allocSize);
+                artsItemWrapper_t * wrapper = artsGpuRouteTableReserveItemRace(&successfulAdd, allocSize, depv[i].guid, artsGpu->device, false); //(mode == ARTS_DB_LC));
                 
                 if(successfulAdd) //We won, so allocate and move data
                 {
-                    DPRINTF("Adding %lu %u id: %d\n", depv[i].guid, size, artsGpu->device);
-                    dataPtr = artsCudaMalloc(size);
-                    pushDataToStream(artsGpu->device, dataPtr, depv[i].ptr, size, artsNodeInfo.gpuBuffOn && !gpuEdt->lib);
+                    DPRINTF("Adding %lu %u id: %d mode: %s\n", depv[i].guid, allocSize, artsGpu->device, _artsTypeName[depv[i].mode]);
+                    dataPtr = artsCudaMalloc(allocSize);
+                    void * src = (void*)db;
+                    if(mode == ARTS_DB_LC) 
+                        src = makeLCShadowCopy(db);
+                    if(depv[i].mode == ARTS_DB_LC_NO_COPY || depv[i].mode == ARTS_DB_GPU_MEMSET)
+                        src = NULL;
+                    pushDataToStream(artsGpu->device, dataPtr, src, size, artsNodeInfo.gpuBuffOn && !gpuEdt->lib);
                     //Must have already launched the memcpy before setting realData or races will ensue
                     wrapper->realData = dataPtr;
+                    DPRINTF("Malloc[%d]: %p %p\n", artsGpu->device, wrapper, dataPtr);
                     artsAtomicAdd(&misses, 1U);
                 }
                 else //Someone beat us to creating the data... So we must free
                 {
                     while(!artsAtomicFetchAddU64((uint64_t*)&wrapper->realData, 0)); //Spin till the data memcpy is launched
                     dataPtr = (void*) wrapper->realData;
-                    artsAtomicAddU64(&artsGpu->availGlobalMem, size);
+                    if(mode == ARTS_DB_GPU_WRITE && depv[i].mode == ARTS_DB_GPU_MEMSET)
+                    {
+                        pushDataToStream(artsGpu->device, dataPtr, NULL, size, artsNodeInfo.gpuBuffOn && !gpuEdt->lib);
+                    }
+                    artsAtomicAddU64(&artsGpu->availGlobalMem, allocSize);
                     artsAtomicAdd(&hits, 1U);
                 }
             }
             else
             {
-                artsAtomicAddU64(&artsGpu->availGlobalMem, size);
+                artsAtomicAddU64(&artsGpu->availGlobalMem, allocSize);
                 artsAtomicAdd(&hits, 1U);
             }
-            
-            hostDepv[i].ptr = dataPtr;
+            struct artsDb * newDb = (struct artsDb*) dataPtr;
+            hostDepv[i].ptr = (void*)(newDb + 1);
         }
         else
         {
@@ -364,7 +452,7 @@ void artsScheduleToGpuInternal(artsEdt_t fnPtr, uint32_t paramc, uint64_t * para
     }
     DPRINTF("Allocated, added, and moved dbs\n");
     
-    pushDataToStream(artsGpu->device, devClosure, (void*)hostParamv, devClosureSize, artsNodeInfo.gpuBuffOn && !gpuEdt->lib);
+    pushDataToStream(artsGpu->device, devClosure, (void*)hostGpuId, devClosureSize, artsNodeInfo.gpuBuffOn && !gpuEdt->lib);
     DPRINTF("Filled GPU Closure\n");
 
     if(gpuEdt->lib)
@@ -377,6 +465,7 @@ void artsScheduleToGpuInternal(artsEdt_t fnPtr, uint32_t paramc, uint64_t * para
         artsRouteTableResetOO(hostGCPtr->edt->currentEdt);
 
         hostGCPtr->edt->funcPtr(paramc, hostParamv, depc, hostDepv);
+        artsUpdatePerformanceMetric(artsGpuEdt, artsThread, 1, false);
 
         artsUnsetThreadLocalEdtInfo();
     }
@@ -388,7 +477,8 @@ void artsScheduleToGpuInternal(artsEdt_t fnPtr, uint32_t paramc, uint64_t * para
     //Move data back
     for(unsigned int i=0; i<depc; i++)
     {
-        if(depv[i].ptr && depv[i].mode == ARTS_DB_GPU_WRITE)
+        artsType_t mode = artsGuidGetType(depv[i].guid);
+        if(depv[i].ptr && mode == ARTS_DB_GPU_WRITE)
         {
             struct artsDb * db = (struct artsDb *) depv[i].ptr - 1;
             size_t size = (size_t) (db->header.size - sizeof(struct artsDb));
@@ -428,35 +518,94 @@ void freeGpuItem(artsRouteItem_t * item)
         DPRINTF("FREEING HOST PTR: %p\n", hostGCPtr);
         artsCudaFreeHost(hostGCPtr);
     }
+    else if(type == ARTS_DB_LC)
+    {
+        int validRank = -1;
+        struct artsDb * db = (struct artsDb *) artsRouteTableLookupDb(item->key, &validRank, false);
+        if(db)
+        {
+            unsigned int size = db->header.size;
+            struct artsDb * tempSpace = (struct artsDb *)artsMalloc(size);
+            
+            artsLCMeta_t host;
+            host.guid = item->key;
+            host.data = (void*) (db+1);
+            host.dataSize = db->header.size - sizeof(struct artsDb);
+            host.hostVersion = &db->version;
+            host.hostTimeStamp = &db->timeStamp;
+            host.gpuVersion = 0;
+            host.gpuTimeStamp = 0;
+            host.gpu = -1;
+            host.readLock = &db->reader;
+            host.writeLock = &db->writer;
+        
+            // artsCudaMemCpyFromDev(tempSpace, (void*) wrapper->realData, size);
+            getDataFromStreamNow(artsGetCurrentGpu(), tempSpace, (void*) wrapper->realData, size, false);
+
+            artsLCMeta_t dev;
+            dev.guid = item->key;
+            dev.data = (void*) (tempSpace+1);
+            dev.dataSize = tempSpace->header.size - sizeof(struct artsDb);
+            dev.hostVersion = &tempSpace->version;
+            dev.hostTimeStamp = &tempSpace->timeStamp;
+            dev.gpuVersion = item->touched;
+            dev.gpuTimeStamp = wrapper->timeStamp;
+            dev.gpu = -1;
+            dev.readLock = NULL;
+            dev.writeLock = NULL;
+
+            lcSyncFunction[artsNodeInfo.gpuLCSync](&host, &dev);
+            
+            artsRouteTableReturnDb(item->key, false);
+            artsFree(tempSpace);
+            artsCudaFree((void*)wrapper->realData);
+
+            artsUpdatePerformanceMetric(artsGpuSyncDelete, artsThread, 1, false);
+        }
+        else
+            PRINTF("Trying to delete an LC but there is no DB to back up to\n");
+    }
     else if(type > ARTS_BUFFER && type < ARTS_LAST_TYPE)  //DBs
         artsCudaFree((void*)wrapper->realData);
 
     wrapper->realData = NULL;
-    wrapper->timestamp = 0;
+    wrapper->timeStamp = 0;
     item->key = 0;
     item->lock = 0;
+    item->touched = 0;
 }
 
-bool tryReserve(int gpu, uint64_t size)
+__thread unsigned int runGCFlag = 0;
+
+bool tryReserve(int gpu, uint64_t size, unsigned int threads)
 {
     artsGpu_t * artsGpu = &artsGpus[gpu];
     DPRINTF("Trying to reserve %lu of available %lu on GPU[%d]\n", size, artsGpu->availGlobalMem, artsGpu->device);
-    if (artsAtomicFetchAdd(&artsGpu->availableEdtSlots, 1U) < artsNodeInfo.gpuMaxEdts)
+    // if(artsAtomicFetchAdd(&artsGpu->availableThreads, threads) < 1024)
     {
-        volatile uint64_t availSize = artsGpu->availGlobalMem;
-        while (availSize >= size)
+        if (artsAtomicFetchAdd(&artsGpu->availableEdtSlots, 1U) < artsNodeInfo.gpuMaxEdts)
         {
-            if (artsAtomicCswapU64(&artsGpu->availGlobalMem, availSize, availSize-size))
-                return true;
-            availSize = artsGpu->availGlobalMem;
+            volatile uint64_t availSize = artsGpu->availGlobalMem;
+            while(availSize >= size)
+            {
+                if(artsAtomicCswapU64(&artsGpu->availGlobalMem, availSize, availSize-size))
+                {
+                    runGCFlag = 0;
+                    return true;
+                }
+                availSize = artsGpu->availGlobalMem;
+            }
+            runGCFlag = gpu+1;
         }
+        artsAtomicSub(&artsGpu->availableEdtSlots, 1U);
     }
-    artsAtomicSub(&artsGpu->availableEdtSlots, 1U);
+    // artsAtomicSub(&artsGpu->availableThreads, threads);
+    DPRINTF("Failed Avail threads: %u + %u\n", artsGpu->availableThreads, threads);
     DPRINTF("Failed to reserve %lu of available %lu on GPU[%d]\n", size, artsGpu->availGlobalMem, artsGpu->device);
     return false;
 }
 
-int firstFit(uint64_t mask, uint64_t size)
+int firstFit(uint64_t mask, uint64_t size, unsigned int totalThreads)
 {
     int random = jrand48(artsThreadInfo.drand_buf);
     for (int i = 0; i < artsNodeInfo.gpu; i++)
@@ -464,7 +613,7 @@ int firstFit(uint64_t mask, uint64_t size)
         int index = (i+random) % artsNodeInfo.gpu;
         uint64_t checkMask = 1 << index;
         if (mask && checkMask)
-            if (tryReserve(index, size))
+            if (tryReserve(index, size, totalThreads))
             {
                 DPRINTF("Reserved Successfully on %u\n", index);
                 return index;
@@ -473,7 +622,7 @@ int firstFit(uint64_t mask, uint64_t size)
     return -1;
 }
 
-int roundRobinFit(uint64_t mask, uint64_t size)
+int roundRobinFit(uint64_t mask, uint64_t size, unsigned int totalThreads)
 {
     static volatile unsigned int next = 0;
     unsigned int start = artsAtomicFetchAdd(&next, 1U);
@@ -482,7 +631,7 @@ int roundRobinFit(uint64_t mask, uint64_t size)
         int index = (i+start) % artsNodeInfo.gpu;
         uint64_t checkMask = 1 << index;
         if (mask && checkMask)
-            if (tryReserve(index, size))
+            if (tryReserve(index, size, totalThreads))
             {
                 DPRINTF("Reserved Successfully on %u\n", index);
                 return index;
@@ -491,7 +640,7 @@ int roundRobinFit(uint64_t mask, uint64_t size)
     return -1;
 }
 
-int bestFit(uint64_t mask, uint64_t size)
+int bestFit(uint64_t mask, uint64_t size, unsigned int totalThreads)
 {
     int selectedGpu = -1;
     uint64_t selectedGpuAvailSize;
@@ -507,7 +656,7 @@ int bestFit(uint64_t mask, uint64_t size)
                 if (artsGpus[index].availGlobalMem-size > selectedGpuAvailSize)
                     continue;
             }
-            if (tryReserve(index, size))
+            if (tryReserve(index, size, totalThreads))
             {
                 // If successful relinquish previous allocation.
                 artsAtomicAddU64(&artsGpus[selectedGpu].availGlobalMem, size);
@@ -519,7 +668,7 @@ int bestFit(uint64_t mask, uint64_t size)
     return selectedGpu;
 }
 
-int worstFit(uint64_t mask, uint64_t size)
+int worstFit(uint64_t mask, uint64_t size, unsigned int totalThreads)
 {
     int selectedGpu = -1;
     uint64_t selectedGpuAvailSize;
@@ -535,7 +684,7 @@ int worstFit(uint64_t mask, uint64_t size)
                 if (artsGpus[index].availGlobalMem-size < selectedGpuAvailSize)
                     continue;
             }
-            if (tryReserve(index, size))
+            if (tryReserve(index, size, totalThreads))
             {
                 // If successful relinquish previous allocation.
                 artsAtomicAddU64(&artsGpus[selectedGpu].availGlobalMem, size);
@@ -547,6 +696,22 @@ int worstFit(uint64_t mask, uint64_t size)
     return selectedGpu;
 }
 
+uint64_t getDbSizeNeeded(uint32_t depc, artsEdtDep_t * depv)
+{
+    uint64_t size = 0;
+    for (unsigned int i = 0; i < depc; i++)
+    {
+        if(depv[i].ptr)
+        {
+            struct artsDb * db = (struct artsDb *) depv[i].ptr - 1;
+            size += db->header.size;
+            if(artsGuidGetType(depv[i].guid) == ARTS_DB_LC)
+                size += db->header.size;
+        }
+    }
+    return size;
+}
+
 int random(void * edtPacket)
 {
     artsGpuEdt_t * edt = (artsGpuEdt_t *) edtPacket;
@@ -554,17 +719,12 @@ int random(void * edtPacket)
     uint32_t       depc   = edt->wrapperEdt.depc;
     uint64_t     * paramv = (uint64_t *)(edt + 1);
     artsEdtDep_t * depv   = (artsEdtDep_t *)(paramv + paramc);
+    unsigned int totalThreads = edt->grid.x * edt->block.x + edt->grid.y * edt->block.y + edt->grid.z * edt->block.z;
 
     // Size to be allocated on the GPU
-    uint64_t size = sizeof(uint64_t) * paramc + sizeof(artsEdtDep_t) * depc;
-    for (unsigned int i = 0; i < depc; i++)
-    {
-        struct artsDb * db = (struct artsDb *) depv[i].ptr - 1;
-        size += db->header.size - sizeof(struct artsDb);
-    }
-    // size = size + db size;
+    uint64_t size = sizeof(uint64_t) * paramc + sizeof(artsEdtDep_t) * depc + getDbSizeNeeded(depc, depv);
     uint64_t mask = ~0;
-    return fit(mask, size);
+    return fit(mask, size, totalThreads);
 }
 
 int allOrNothing(void * edtPacket)
@@ -574,15 +734,10 @@ int allOrNothing(void * edtPacket)
     uint32_t       depc   = edt->wrapperEdt.depc;
     uint64_t     * paramv = (uint64_t *)(edt + 1);
     artsEdtDep_t * depv   = (artsEdtDep_t *)(paramv + paramc);
+    unsigned int totalThreads = edt->grid.x * edt->block.x + edt->grid.y * edt->block.y + edt->grid.z * edt->block.z;
 
     // Size to be allocated on the GPU
-    uint64_t size = sizeof(uint64_t) * paramc + sizeof(artsEdtDep_t) * depc;
-    for (unsigned int i = 0; i < depc; i++)
-    {
-        struct artsDb * db = (struct artsDb *) depv[i].ptr - 1;
-        size += db->header.size - sizeof(struct artsDb);
-    }
-
+    uint64_t size = sizeof(uint64_t) * paramc + sizeof(artsEdtDep_t) * depc + getDbSizeNeeded(depc, depv);
     uint64_t mask=0;
     for (unsigned int i=0; i<depc; ++i)
         mask &= artsGpuLookupDb(depv[i].guid);
@@ -590,7 +745,7 @@ int allOrNothing(void * edtPacket)
     DPRINTF("Mask: %p\n", mask);
 
     if (mask) // All DBs in GPU
-        return fit(mask, size); // No need to fit since all Dbs are in a GPU
+        return fit(mask, size, totalThreads); // No need to fit since all Dbs are in a GPU
     else
         return random(edtPacket);
 }
@@ -602,15 +757,10 @@ int atleastOne(void * edtPacket)
     uint32_t       depc   = edt->wrapperEdt.depc;
     uint64_t     * paramv = (uint64_t *)(edt + 1);
     artsEdtDep_t * depv   = (artsEdtDep_t *)(paramv + paramc);
+    unsigned int totalThreads = edt->grid.x * edt->block.x + edt->grid.y * edt->block.y + edt->grid.z * edt->block.z;
 
     // Size to be allocated on the GPU
-    uint64_t size = sizeof(uint64_t) * paramc + sizeof(artsEdtDep_t) * depc;
-    for (unsigned int i = 0; i < depc; i++)
-    {
-        struct artsDb * db = (struct artsDb *) depv[i].ptr - 1;
-        size += db->header.size - sizeof(struct artsDb);
-    }
-
+    uint64_t size = sizeof(uint64_t) * paramc + sizeof(artsEdtDep_t) * depc + getDbSizeNeeded(depc, depv);
     uint64_t mask=0;
     for (unsigned int i=0; i<depc; ++i)
         mask |= artsGpuLookupDb(depv[i].guid);
@@ -618,17 +768,93 @@ int atleastOne(void * edtPacket)
     DPRINTF("Mask: %p\n", mask);
 
     if (mask) // At least one DB in GPU
-        return fit(mask, size);
+        return fit(mask, size, totalThreads);
     else
         return random(edtPacket);
+}
+
+int hashOnDBZero(void * edtPacket)
+{
+    artsGpuEdt_t * edt = (artsGpuEdt_t *) edtPacket;
+    uint32_t       paramc = edt->wrapperEdt.paramc;
+    uint32_t       depc   = edt->wrapperEdt.depc;
+    uint64_t     * paramv = (uint64_t *)(edt + 1);
+    artsEdtDep_t * depv   = (artsEdtDep_t *)(paramv + paramc);
+    unsigned int totalThreads = edt->grid.x * edt->block.x + edt->grid.y * edt->block.y + edt->grid.z * edt->block.z;
+
+    // Size to be allocated on the GPU
+    uint64_t size = sizeof(uint64_t) * paramc + sizeof(artsEdtDep_t) * depc + getDbSizeNeeded(depc, depv);
+    uint64_t key = (depv[0].guid) ? artsGetGuidKey(depv[0].guid) : 0;
+    uint64_t index = key % (uint64_t)artsNodeInfo.gpu;
+    if(index > artsNodeInfo.gpu)
+    {
+        PRINTF("WHATS WRONG WITH THE HASH %u\n", index);
+        artsDebugGenerateSegFault();
+    }
+    DPRINTF("HASH: %lu %u\n", depv[0].guid, index);
+    if(tryReserve(index, size, totalThreads))
+        return index;
+    return -1;
+}
+
+int hashLargest(void * edtPacket)
+{
+    artsGpuEdt_t * edt = (artsGpuEdt_t *) edtPacket;
+    uint32_t       paramc = edt->wrapperEdt.paramc;
+    uint32_t       depc   = edt->wrapperEdt.depc;
+    uint64_t     * paramv = (uint64_t *)(edt + 1);
+    artsEdtDep_t * depv   = (artsEdtDep_t *)(paramv + paramc);
+    unsigned int totalThreads = edt->grid.x * edt->block.x + edt->grid.y * edt->block.y + edt->grid.z * edt->block.z;
+
+    // Size to be allocated on the GPU
+    uint64_t size = sizeof(uint64_t) * paramc + sizeof(artsEdtDep_t) * depc + getDbSizeNeeded(depc, depv);
+    uint64_t mask=0;
+    uint64_t largest = 0;
+    for (unsigned int i=0; i<depc; ++i)
+    {
+        uint64_t key = (depv[i].guid) ? artsGetGuidKey(depv[i].guid) : 0;
+        largest = (key > largest) ? key : largest;
+    }
+
+    uint64_t index = largest % (uint64_t)artsNodeInfo.gpu;
+    if(tryReserve(index, size, totalThreads))
+    {
+        DPRINTF("Index: %u\n", index);
+        return index;
+    }
+    return -1;
+}
+
+int artsReserveEdtRequiredGpu(int * gpu, void * edtPacket)
+{
+    bool ret = false;
+    *gpu = -1;
+    artsGpuEdt_t * edt = (artsGpuEdt_t *) edtPacket;
+    uint32_t       paramc = edt->wrapperEdt.paramc;
+    uint32_t       depc   = edt->wrapperEdt.depc;
+    uint64_t     * paramv = (uint64_t *)(edt + 1);
+    artsEdtDep_t * depv   = (artsEdtDep_t *)(paramv + paramc);
+    unsigned int totalThreads = edt->grid.x * edt->block.x + edt->grid.y * edt->block.y + edt->grid.z * edt->block.z;
+
+    if(edt->gpuToRunOn > -1)
+    {
+        // Size to be allocated on the GPU
+        uint64_t size = sizeof(uint64_t) * paramc + sizeof(artsEdtDep_t) * depc + getDbSizeNeeded(depc, depv);
+        if(tryReserve(edt->gpuToRunOn, size, totalThreads))
+        {
+            *gpu = edt->gpuToRunOn;
+            ret = true;
+        }
+    }
+    return ret;
 }
 
 artsGpu_t * artsFindGpu(void * data)
 {
     artsGpu_t * ret = NULL;
-    int gpu = -1;
-
-    gpu = locality(data);
+    int gpu;
+    if(!artsReserveEdtRequiredGpu(&gpu, data))
+        gpu = locality(data);
     DPRINTF("Choosing gpu: %d\n", gpu);
     if(gpu > -1 && gpu < artsNodeInfo.gpu)
         ret = &artsGpus[gpu];

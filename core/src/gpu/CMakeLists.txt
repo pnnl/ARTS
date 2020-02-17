@@ -42,6 +42,7 @@ if(CUDA_FOUND)
         ${CORE_INCLUDE_DIR}/artsGpuStreamBuffer.h
         ${CORE_INCLUDE_DIR}/artsGpuRuntime.h
         ${CORE_INCLUDE_DIR}/artsGpuRouteTable.h
+        ${CORE_INCLUDE_DIR}/artsGpuLCSyncFunctions.h
         )
 
     set(gpu_src
@@ -49,6 +50,7 @@ if(CUDA_FOUND)
         artsGpuStreamBuffer.c
         artsGpuRuntime.c
         artsGpuRouteTable.c
+        artsGpuLCSyncFunctions.c
         )
 
     set_source_files_properties(${gpu_src} PROPERTIES LANGUAGE CUDA)

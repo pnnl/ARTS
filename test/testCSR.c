@@ -43,27 +43,24 @@
 #include "arts.h"
 #include "artsGraph.h"
 
-void initPerNode(unsigned int nodeId, int argc, char** argv) {
-  // Simple Graph, vertices = 8, edges = 11
-  /**
+void initPerNode(unsigned int nodeId, int argc, char** argv) 
+{
+    // Simple Graph, vertices = 8, edges = 11
+    /**
      0 6
-     1 2
-     2 5
-     2 3
-     2 4
-     1 6
-     1 3
-     1 7
-     1 4
-     3 5
-     1 5
-  **/
+    1 2
+    2 5
+    2 3
+    2 4
+    1 6
+    1 3
+    1 7
+    1 4
+    3 5
+    1 5
+    **/
 
-  // Question : Should the following code go inside init node or
-  // should it go in initWorker with "if (!nodeid && !workerid) {...} ?
-  // Clarify with Josh.
-
-  int edge_arr[] = {
+    int edge_arr[] = {
     5,  6,
     1,  2,
     2,  5,
@@ -75,82 +72,66 @@ void initPerNode(unsigned int nodeId, int argc, char** argv) {
     1,  4,
     3,  5,
     1, 5
-  };
+    };
 
 
-  // Create a block distribution
-  arts_block_dist_t dist;
-  initBlockDistribution(&dist, 
-                        8, /*global vertices*/ 
-                        11); /*global edges*/
+    // Create a block distribution
+    arts_block_dist_t * dist = initBlockDistributionBlock(  8, //global vertices 
+                                                            11, //global edges
+                                                            1, //partitions
+                                                            ARTS_DB_PIN); 
 
+    // Create a list of edges, use artsEdgeVector
+    artsEdgeVector vec;
+    initEdgeVector(&vec, 100);
+    for(int i=0; i < 11; ++i)
+        pushBackEdge(&vec, edge_arr[i*2], edge_arr[(i*2)+1], 0);
+    sortBySourceAndTarget(&vec);
 
-  // Create a list of edges, use artsEdgeVector
-  artsEdgeVector vec;
-  initEdgeVector(&vec, 100);
-  for(int i=0; i < 11; ++i) {
-    pushBackEdge(&vec, edge_arr[i*2], edge_arr[(i*2)+1], 0);
-  }
+    // Create the CSR graph, graphGuid is used to allocate
+    // row indices and column array
+    csr_graph_t * graph = initCSR(  0,
+                                    8, // number of "local" vertices
+                                    11, // number of "local" edges
+                                    dist, // distribution
+                                    &vec, // edges
+                                    true, /*are edges sorted ?*/ 
+                                    getGuidForPartitionDistr(dist, 0));
 
-  // Create the CSR graph, graphGuid is used to allocate
-  // row indices and column array
-  csr_graph graph;
-  initCSR(&graph, // graph structure
-          8, // number of "local" vertices
-          11, // number of "local" edges
-          &dist, // distribution
-          &vec, // edges
-          false /*are edges sorted ?*/);
+    // Edge list not needed after creating the CSR
+    freeEdgeVector(&vec);
 
-  // Edge list not needed after creating the CSR
-  freeEdgeVector(&vec);
+    printCSR(graph);
 
-  printLocalCSR(&graph);
+    vertex_t* neighbors = NULL;
+    graph_sz_t nbrcnt = 0;
+    getNeighbors(graph, (vertex_t)1, &neighbors, &nbrcnt);
+    assert(nbrcnt == 6);
 
-  vertex* neighbors = NULL;
-  graph_sz_t nbrcnt = 0;
-  getNeighbors(&graph, (vertex)1, &neighbors, &nbrcnt);
-  assert(nbrcnt == 6);
+    PRINTF("Neighbors of 1 : {"); 
+    for (graph_sz_t i =0; i < nbrcnt; ++i) {
+        printf("%" PRIu64 ", ", neighbors[i]);
+    }
+    printf("}\n"); 
+    freeCSR(graph);
 
-  PRINTF("Neighbors of 1 : {"); 
-  for (graph_sz_t i =0; i < nbrcnt; ++i) {
-    PRINTF("%" PRIu64 ", ", neighbors[i]);
-  }
-  PRINTF("}"); 
-  
+    // Testing -- reading from commandline
+    // e.g., srun -N 1 ./testCSR --file /Users/kane972/Downloads/ca-HepTh.tsv --num-vertices 9877 --num-edges 51946 --keep-self-loops
 
-  freeCSR(&graph);
-
-  // Testing -- reading from commandline
-  // e.g., mpirun -np 1 ./testCSR --file /Users/kane972/Downloads/ca-HepTh.tsv --num-vertices 9877 --num-edges 51946 --keep-self-loops
-
-  arts_block_dist_t distCmd;
-  initBlockDistributionWithCmdLineArgs(&distCmd, 
-                                       argc, argv);
-
-  csr_graph graphCmd;
-  loadGraphUsingCmdLineArgs(&graphCmd,
-                            &distCmd,
-                            argc,
-                            argv);
-
-  printLocalCSR(&graphCmd);
-
-
-  freeCSR(&graphCmd);
-  //  const char* fname = "/Users/kane972/Downloads/wiki-Vote.txt";
-  //loadGraphNoWeight(fname, &graphGuid, &graph, &dist);
-
-  //  PRINTF("Initilization per node\n");
+    // arts_block_dist_t * distCmd = initBlockDistributionWithCmdLineArgs(argc, argv);
+    // loadGraphUsingCmdLineArgs(&graphCmd, &distCmd, argc, argv);
+    // printLocalCSR(artsGetCurrentNode(), &graphCmd);
+    // freeCSR(artsGetCurrentNode(), &graphCmd);
 }
 
 void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc, char** argv)
 {   
-
+    if(!nodeId && !workerId)
+        artsShutdown();
 }
 
 int main(int argc, char** argv)
 {
-  artsRT(argc, argv);
-  return 0;
+    artsRT(argc, argv);
+    return 0;
 }

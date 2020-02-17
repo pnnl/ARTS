@@ -46,6 +46,7 @@ extern "C" {
 # include <float.h>
 # include <limits.h>
 # include <sys/time.h>
+# include "artsGlobals.h"
 
 # define N	2000000
 # define NTIMES	10

@@ -61,6 +61,14 @@ artsInspectorStats * stats = NULL;
 artsInspectorShots * inspectorShots = NULL;
 artsPacketInspector * packetInspector = NULL;
 
+__thread bool inspectorIgnore = 0;
+
+void artsInternalToggleThread(void)
+{
+    inspectorIgnore = !inspectorIgnore;
+    DPRINTF("II: %u\n", inspectorIgnore);
+}
+
 uint64_t artsGetInspectorTime(void)
 {
     return inspector->startTimeStamp;
@@ -743,6 +751,8 @@ void artsInternalSetThreadPerformanceMetric(artsMetricType type, uint64_t value)
 
 artsMetricLevel artsInternalUpdatePerformanceMetric(artsMetricType type, artsMetricLevel level, uint64_t toAdd, bool sub)
 {
+    if(inspectorIgnore && type == artsThread)
+        return artsInternalUpdatePerformanceCoreMetric(0, artsNode, level, toAdd, sub);
     return artsInternalUpdatePerformanceCoreMetric(artsThreadInfo.threadId, type, level, toAdd, sub);
 }
 

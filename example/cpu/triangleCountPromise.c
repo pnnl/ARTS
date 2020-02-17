@@ -48,7 +48,7 @@
 #include "artsAtomics.h"
 
 arts_block_dist_t distribution;
-csr_graph graph;
+csr_graph_t graph;
 
 artsGuid_t epochGuid       = NULL_GUID;
 artsGuid_t startReduceGuid = NULL_GUID;

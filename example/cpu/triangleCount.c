@@ -47,14 +47,14 @@
 #include "artsAtomics.h"
 
 arts_block_dist_t distribution;
-csr_graph graph;
+csr_graph_t graph;
 
 artsGuid_t epochGuid       = NULL_GUID;
 artsGuid_t startReduceGuid = NULL_GUID;
 artsGuid_t finalReduceGuid = NULL_GUID;
 
-vertex distStart = 0;
-vertex distEnd   = 0;
+vertex_t distStart = 0;
+vertex_t distEnd   = 0;
 uint64_t blockSize    = 0;
 uint64_t overSub      = 16;
 
@@ -102,19 +102,19 @@ void startReduce(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t
     }
 }
 
-inline uint64_t lowerBound(vertex value, uint64_t start, uint64_t end, vertex * edges) {
+inline uint64_t lowerBound(vertex_t value, uint64_t start, uint64_t end, vertex_t * edges) {
     while ((start < end) && (edges[start] < value))
         start++;
     return start;
 }
 
-inline uint64_t upperBound(vertex value, uint64_t start, uint64_t end, vertex * edges) {
+inline uint64_t upperBound(vertex_t value, uint64_t start, uint64_t end, vertex_t * edges) {
     while ((start < end) && (value < edges[end - 1]))
         end--;
     return end;
 }
 
-inline uint64_t countTriangles(vertex * a, uint64_t a_start, uint64_t a_end, vertex * b, uint64_t b_start, uint64_t b_end) {
+inline uint64_t countTriangles(vertex_t * a, uint64_t a_start, uint64_t a_end, vertex_t * b, uint64_t b_start, uint64_t b_end) {
     uint64_t count = 0;
     while ((a_start < a_end) && (b_start < b_end)) {
         if (a[a_start] < b[b_start])
@@ -130,17 +130,17 @@ inline uint64_t countTriangles(vertex * a, uint64_t a_start, uint64_t a_end, ver
     return count;
 }
 
-inline uint64_t processVertex(vertex i, vertex * neighbors, uint64_t neighborCount, uint64_t * visitMask, uint64_t * procLocal, uint64_t * procRemote) {
+inline uint64_t processVertex(vertex_t i, vertex_t * neighbors, uint64_t neighborCount, uint64_t * visitMask, uint64_t * procLocal, uint64_t * procRemote) {
     uint64_t localCount = 0;
     
     uint64_t firstPred = lowerBound(i, 0, neighborCount, neighbors);
     uint64_t lastPred = neighborCount;
 //    PRINTF("%lu = %lu %lu\n", i, firstPred, lastPred);
     for (uint64_t nextPred = firstPred + 1; nextPred < lastPred; nextPred++) {
-        vertex j = neighbors[nextPred];
+        vertex_t j = neighbors[nextPred];
         unsigned int owner = getOwner(j, &distribution);
         if (getOwner(j, &distribution) == artsGetCurrentNode()) {
-            vertex * jNeighbors = NULL;
+            vertex_t * jNeighbors = NULL;
             uint64_t jNeighborCount = 0;
             getNeighbors(&graph, j, &jNeighbors, &jNeighborCount);
             uint64_t firstSucc = lowerBound(i, 0, jNeighborCount, jNeighbors);
@@ -156,7 +156,7 @@ inline uint64_t processVertex(vertex i, vertex * neighbors, uint64_t neighborCou
             args[1] = i;
             args[2] = neighborCount;
             artsGuid_t guid = artsEdtCreate(visitVertex, owner, 3, args, 1);
-            artsSignalEdtPtr(guid, 0, neighbors, sizeof(vertex) * neighborCount);
+            artsSignalEdtPtr(guid, 0, neighbors, sizeof(vertex_t) * neighborCount);
             (*procRemote)++;
         }
     }
@@ -166,10 +166,10 @@ inline uint64_t processVertex(vertex i, vertex * neighbors, uint64_t neighborCou
 void visitVertex(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t depv[]) {
     uint64_t localCount = 0;
     
-    vertex start = paramv[0];
-    vertex end   = paramv[1];
+    vertex_t start = paramv[0];
+    vertex_t end   = paramv[1];
     
-    vertex * neighbors = NULL;
+    vertex_t * neighbors = NULL;
     uint64_t neighborCount = 0;
     
     uint64_t procLocal = 0;
@@ -185,7 +185,7 @@ void visitVertex(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t
         artsAtomicAddU64(&incoming, procIncoming);
     }
     else {
-        for(vertex i=start; i<end; i++) {
+        for(vertex_t i=start; i<end; i++) {
             uint64_t visitMask = 0;
             getNeighbors(&graph, i, &neighbors, &neighborCount);
 //            PRINTF("Neighbors: %lu %lu\n", i, neighborCount);
@@ -225,7 +225,7 @@ void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc, char** 
     
     uint64_t args[2];
     uint64_t workerIndex = 0;
-    for (vertex i = distStart; i <=distEnd; i+=blockSize) {
+    for (vertex_t i = distStart; i <=distEnd; i+=blockSize) {
         if(workerIndex % artsGetTotalWorkers() == workerId) {
             args[0] = i;
             args[1] = (i+blockSize < distEnd) ? i+blockSize : distEnd;

@@ -79,7 +79,8 @@ enum artsServerMessageType
     ARTS_ATOMIC_ADD_ARRAYDB_MSG,
     ARTS_ATOMIC_CAS_ARRAYDB_MSG,
     ARTS_REMOTE_BUFFER_SEND_MSG,
-    ARTS_REMOTE_CONTEXT_SIG_MSG
+    ARTS_REMOTE_CONTEXT_SIG_MSG,
+    ARTS_REMOTE_DB_RENAME_MSG
 };
 
 //Header
@@ -280,6 +281,13 @@ struct __attribute__ ((__packed__)) artsRemoteSignalContextPacket
 {
     struct artsRemotePacket header;
     uint64_t ticket;
+};
+
+struct __attribute__ ((__packed__)) artsRemoteDbRename
+{
+    struct artsRemotePacket header;
+    artsGuid_t oldGuid;
+    artsGuid_t newGuid;
 };
 
 void outInit( unsigned int size );

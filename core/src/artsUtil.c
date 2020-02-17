@@ -114,10 +114,15 @@ void artsStopLocalNode()
     artsRuntimeStop();
 }
 
-uint64_t threadSafeRandom()
+uint64_t artsThreadSafeRandom()
 {
     long int temp = jrand48(artsThreadInfo.drand_buf);
     return (uint64_t) temp;
+}
+
+unsigned int artsGetTotalGpus()
+{
+    return artsNodeInfo.gpu;
 }
 
 //char * artsParallelCreateMMAP( char * pathToFile)

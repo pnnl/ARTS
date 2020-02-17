@@ -45,4 +45,6 @@ target_link_libraries(fibGpu ${LIBS})
 
 add_subdirectory(mm)
 add_subdirectory(stream)
-
+add_subdirectory(randomAccess)
+add_subdirectory(bfs)
+add_subdirectory(histogram)

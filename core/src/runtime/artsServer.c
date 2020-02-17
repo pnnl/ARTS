@@ -296,6 +296,11 @@ void artsServerProcessPacket(struct artsRemotePacket * packet)
             artsDbMoveRequestHandle(packet);
             break;
         }
+        case ARTS_REMOTE_DB_RENAME_MSG:
+        {
+            artsRemoteHandleDbRename(packet);
+            break;
+        }
         default:
         {
             PRINTF("Unknown Packet %d %d %d\n", packet->messageType, packet->size, packet->rank);

@@ -68,6 +68,12 @@ uint64_t artsAtomicFetchOrU64(volatile uint64_t * destination, uint64_t addVal);
 uint64_t artsAtomicFetchXOrU64(volatile uint64_t * destination, uint64_t addVal); //@awmm
 unsigned int artsAtomicFetchOr(volatile unsigned int * destination, unsigned int addVal);
 unsigned int artsAtomicFetchAnd(volatile unsigned int * destination, unsigned int addVal);
+
+void artsReaderLock(volatile unsigned int * readLock, volatile unsigned int * writeLock);
+void artsReaderUnlock(volatile unsigned int * readLock);
+void artsWriterLock(volatile unsigned int * readLock, volatile unsigned int * writeLock);
+bool artsWriterTryLock(volatile unsigned int * readLock, volatile unsigned int * writeLock);
+void artsWriterUnlock(volatile unsigned int * writeLock);
 #ifdef __cplusplus
 }
 #endif

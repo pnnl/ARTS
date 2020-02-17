@@ -52,8 +52,8 @@
 #include <string.h>
 #include <vector>
 
-arts_block_dist_t distribution;
-csr_graph         graph;
+arts_block_dist_t * distribution;
+csr_graph_t       * graph;
 char*             _file          = NULL;
 artsGuid_t        maxReducerGuid = NULL_GUID;
 
@@ -62,13 +62,13 @@ uint64_t endTime;
 
 typedef struct {
   artsGuid_t   findIntersectionGuid;
-  vertex       source;
+  vertex_t       source;
   unsigned int numNeighbors;
-  vertex       neighbors[];
+  vertex_t       neighbors[];
 } sourceInfo;
 
 typedef struct {
-  vertex   source;
+  vertex_t   source;
   uint64_t scanStat;
 } perVertexScanStat;
 
@@ -87,7 +87,7 @@ typedef struct {
 void maxReducer(uint32_t paramc, uint64_t* paramv, uint32_t depc, artsEdtDep_t depv[]) {
   // std::cout << "In max reducer" << std::endl;
   uint32_t maxScanStat = 0;
-  vertex   maxVertex   = 0;
+  vertex_t   maxVertex   = 0;
   for (uint32_t v = 0; v < depc; v++) {
     perVertexScanStat* vertexScanStat = (perVertexScanStat*)depv[v].ptr;
     // std::cout << "Vertex: " << vertexScanStat->source << " scan_stat: " << vertexScanStat->scanStat << std::endl;
@@ -96,7 +96,7 @@ void maxReducer(uint32_t paramc, uint64_t* paramv, uint32_t depc, artsEdtDep_t d
       maxVertex   = vertexScanStat->source;
     }
   }
-  std::cout << "Max vertex: " << maxVertex << " scanStat: " << maxScanStat << std::endl;
+  std::cout << "Max vertex_t: " << maxVertex << " scanStat: " << maxScanStat << std::endl;
   endTime = artsGetTimeStamp();
   printf("Total execution time: %f s \n", (double)(endTime - startTime) / 1000000000.0);
   artsStopIntroShad();
@@ -106,7 +106,7 @@ void maxReducer(uint32_t paramc, uint64_t* paramv, uint32_t depc, artsEdtDep_t d
 void findIntersection(uint32_t paramc, uint64_t* paramv, uint32_t depc, artsEdtDep_t depv[]) {
   uint64_t           sum               = 0;
   perVertexScanStat* localIntersection = (perVertexScanStat*)depv[0].ptr;
-  vertex             source            = (vertex)localIntersection->source;
+  vertex_t             source            = (vertex_t)localIntersection->source;
 
   for (uint64_t rank = 0; rank < depc; rank++) {
     perVertexScanStat* localIntersection = (perVertexScanStat*)depv[rank].ptr;
@@ -114,9 +114,9 @@ void findIntersection(uint32_t paramc, uint64_t* paramv, uint32_t depc, artsEdtD
     sum += localIntersection->scanStat;
   }
 
-  vertex*  neighbors    = NULL;
+  vertex_t*  neighbors    = NULL;
   uint64_t neighbor_cnt = 0;
-  getNeighbors(&graph, source, &neighbors, &neighbor_cnt);
+  getNeighbors(graph, source, &neighbors, &neighbor_cnt);
 
   sum += neighbor_cnt;
 
@@ -132,16 +132,16 @@ void findIntersection(uint32_t paramc, uint64_t* paramv, uint32_t depc, artsEdtD
 
 void visitOneHopNeighborOnRank(uint32_t paramc, uint64_t* paramv, uint32_t depc, artsEdtDep_t depv[]) {
   sourceInfo*         srcInfo = (sourceInfo*)depv[0].ptr;
-  vertex*             oneHopNeighbor;
-  vertex*             immediateNeighbors = srcInfo->neighbors;
-  std::vector<vertex> localIntersection;
+  vertex_t*             oneHopNeighbor;
+  vertex_t*             immediateNeighbors = srcInfo->neighbors;
+  std::vector<vertex_t> localIntersection;
   for (unsigned int i = 0; i < srcInfo->numNeighbors; i++) {
-    vertex current_neighbor = (vertex)srcInfo->neighbors[i];
-    if (getOwner(current_neighbor, &distribution) == artsGetCurrentNode()) {
+    vertex_t current_neighbor = (vertex_t)srcInfo->neighbors[i];
+    if (getOwnerDistr(current_neighbor, distribution) == artsGetCurrentNode()) {
       // std::cout << "Source " << srcInfo->source << " Current_neighbor: " << current_neighbor << std::endl;
-      vertex*  oneHopNeighbors = NULL;
+      vertex_t*  oneHopNeighbors = NULL;
       uint64_t neighbor_cnt    = 0;
-      getNeighbors(&graph, current_neighbor, &oneHopNeighbors, &neighbor_cnt);
+      getNeighbors(graph, current_neighbor, &oneHopNeighbors, &neighbor_cnt);
       for (unsigned int j = 0; j < neighbor_cnt; j++) {
         // std::cout << "One-hop neighbor for " <<  srcInfo->source << " is: " << oneHopNeighbors[j] << std::endl;
       }
@@ -161,24 +161,24 @@ void visitOneHopNeighborOnRank(uint32_t paramc, uint64_t* paramv, uint32_t depc,
 }
 
 void visitSource(uint32_t paramc, uint64_t* paramv, uint32_t depc, artsEdtDep_t depv[]) {
-  vertex*  neighbors    = NULL;
+  vertex_t*  neighbors    = NULL;
   uint64_t neighbor_cnt = 0;
-  vertex   source       = (vertex)paramv[0];
+  vertex_t   source       = (vertex_t)paramv[0];
   // std::cout << "Visiting source: " << source <<std::endl;
-  getNeighbors(&graph, source, &neighbors, &neighbor_cnt);
+  getNeighbors(graph, source, &neighbors, &neighbor_cnt);
   if (neighbor_cnt) {
     /*Now spawn an edt that will wait to get oneHopneighbors from all the ranks in slots and calculate the grand count */
     artsGuid_t findIntersectionGuid = artsEdtCreate(findIntersection, artsGetCurrentNode(), 0, NULL, artsGetTotalNodes());
     /*For each rank, now spawn an edt that will perform an intersection*/
     for (unsigned int i = 0; i < artsGetTotalNodes(); i++) {
-      unsigned int dbSize           = sizeof(sourceInfo) + (sizeof(vertex) * neighbor_cnt);
+      unsigned int dbSize           = sizeof(sourceInfo) + (sizeof(vertex_t) * neighbor_cnt);
       void*        ptr              = NULL;
       artsGuid_t   dbGuid           = artsDbCreate(&ptr, dbSize, ARTS_DB_READ);
       sourceInfo*  srcInfo          = (sourceInfo*)ptr;
       srcInfo->findIntersectionGuid = findIntersectionGuid;
       srcInfo->source               = source;
       srcInfo->numNeighbors         = neighbor_cnt;
-      memcpy(&(srcInfo->neighbors), neighbors, sizeof(vertex) * neighbor_cnt);
+      memcpy(&(srcInfo->neighbors), neighbors, sizeof(vertex_t) * neighbor_cnt);
       /*create the edt to find # one-hop neighbors*/
       artsGuid_t visitOneHopNeighborGuid = artsEdtCreate(visitOneHopNeighborOnRank, i, 0, NULL, 1);
       artsSignalEdt(visitOneHopNeighborGuid, 0, dbGuid);
@@ -199,25 +199,26 @@ void visitSource(uint32_t paramc, uint64_t* paramv, uint32_t depc, artsEdtDep_t 
 extern "C" void initPerNode(unsigned int nodeId, int argc, char** argv) {
   // distribution must be initialized in initPerNode
   printf("Node %u argc %u\n", nodeId, argc);
-  initBlockDistributionWithCmdLineArgs(&distribution, argc, argv);
+  distribution = initBlockDistributionWithCmdLineArgs(argc, argv);
+  graph = getGraphFromPartition(nodeId, distribution);
   // read the edgelist and construct the graph
-  loadGraphUsingCmdLineArgs(&graph, &distribution, argc, argv);
+  loadGraphUsingCmdLineArgs(distribution, argc, argv);
   maxReducerGuid = artsReserveGuidRoute(ARTS_EDT, 0);
 }
 
-/*TODO: How to start parallel vertex scan stat calculation? How to do an efficient max reduction?*/
+/*TODO: How to start parallel vertex_t scan stat calculation? How to do an efficient max reduction?*/
 extern "C" void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc, char** argv) {
   printf("Node %u argc %u\n", nodeId, argc);
   if (!nodeId && !workerId) {
-    /*This edt will calculate which vertex has the maximally induced subgraph.*/
-    artsEdtCreateWithGuid(maxReducer, maxReducerGuid, 0, NULL, distribution.num_vertices);
+    /*This edt will calculate which vertex_t has the maximally induced subgraph.*/
+    artsEdtCreateWithGuid(maxReducer, maxReducerGuid, 0, NULL, distribution->num_vertices);
     // artsGuid_t exitGuid = artsEdtCreate(exitProgram, 0, 0, NULL, 1);
     // artsInitializeAndStartEpoch(exitGuid, 0);
     artsStartIntroShad(5);
     startTime = artsGetTimeStamp();
-    for (uint64_t i = 0; i < distribution.num_vertices; ++i) {
+    for (uint64_t i = 0; i < distribution->num_vertices; ++i) {
       uint64_t   source           = i;
-      node_t     rank             = getOwner(source, &distribution);
+      partition_t     rank             = getOwnerDistr(source, distribution);
       uint64_t   packed_values[1] = {source};
       artsGuid_t visitSourceGuid  = artsEdtCreate(visitSource, rank, 1, (uint64_t*)&packed_values, 1);
       artsSignalEdtValue(visitSourceGuid, -1, 0);

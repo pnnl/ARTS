@@ -151,3 +151,48 @@ unsigned int artsAtomicFetchAnd(volatile unsigned int * destination, unsigned in
 {
     return __sync_fetch_and_and(destination, addVal);
 }
+
+void artsReaderLock(volatile unsigned int * readLock, volatile unsigned int * writeLock)
+{
+    while(1)
+    {
+        while((*writeLock));
+        artsAtomicFetchAdd(readLock, 1U);
+        if((*writeLock) == 0)
+            break;
+        artsAtomicSub(readLock, 1U);
+    }
+}
+
+void artsReaderUnlock(volatile unsigned int * readLock)
+{
+    artsAtomicSub(readLock, 1U);
+}
+
+void artsWriterLock(volatile unsigned int * readLock, volatile unsigned int * writeLock)
+{
+    while(artsAtomicCswap(writeLock, 0U, 1U) == 0U);
+    while((*readLock));
+    return;
+}
+
+bool artsWriterTryLock(volatile unsigned int * readLock, volatile unsigned int * writeLock)
+{
+    while(1)
+    {
+        unsigned int temp = artsAtomicCswap(writeLock, 0U, 1U);
+        if(temp == 0U)
+        {
+            while(readLock);
+            break;
+        }
+        if(temp == 1U)
+            return false;
+    }
+    return true;
+}
+
+void artsWriterUnlock(volatile unsigned int * writeLock)
+{
+    artsAtomicSwap(writeLock, 0U);
+}

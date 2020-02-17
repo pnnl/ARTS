@@ -41,120 +41,139 @@
 #include <assert.h>
 #include <inttypes.h>
 
-graph_sz_t getBlockSize(const arts_block_dist_t* _dist) {
-  graph_sz_t rem = _dist->num_vertices % artsGetTotalNodes();
-  if (!rem)
-    return (_dist->num_vertices /  artsGetTotalNodes());
-  else
-    return ((graph_sz_t)(_dist->num_vertices /  artsGetTotalNodes()) + 1);
+void internalInitBlockDistribution(arts_block_dist_t* _dist, graph_sz_t _n, graph_sz_t _m, unsigned int numBlocks)
+{
+    _dist->num_vertices = _n;
+    _dist->num_edges = _m;
+    _dist->num_blocks = numBlocks;
+    _dist->block_sz = _n / numBlocks;
 }
 
-
-void initBlockDistribution(arts_block_dist_t* _dist,
-                           graph_sz_t _n,
-                           graph_sz_t _m) {
-  _dist->num_vertices = _n;
-  _dist->num_edges = _m;
-  _dist->block_sz = getBlockSize(_dist);
-
-  // copied from ssspStart.c
-  _dist->graphGuid = artsMalloc(sizeof(artsGuid_t)*artsGetTotalNodes());
-  for(unsigned int i=0; i<artsGetTotalNodes(); i++) {
-    _dist->graphGuid[i] = artsReserveGuidRoute(ARTS_DB_PIN, i % artsGetTotalNodes());
-  }
-}
-
-void initBlockDistributionWithCmdLineArgs(arts_block_dist_t* _dist,
-                                          int argc, 
-                                          char** argv) {
-  uint64_t n = 0;
-  uint64_t m = 0;
-
-  for (int i=0; i < argc; ++i) {
-    if (strcmp("--num-vertices", argv[i]) == 0) {
-      sscanf(argv[i+1], "%" SCNu64, &n);
+arts_block_dist_t * initBlockDistributionBlock(graph_sz_t n, graph_sz_t m, unsigned int numBlocks, artsType_t dbType)
+{
+    arts_block_dist_t * dist = artsMalloc(sizeof(arts_block_dist_t) + sizeof(artsGuid_t)*numBlocks);
+    unsigned int blocksPerNode = numBlocks / artsGetTotalNodes();
+    unsigned int mod = numBlocks % artsGetTotalNodes();
+    unsigned int current = 0;
+    for(unsigned int i=0; i<artsGetTotalNodes(); i++) 
+    {
+        for(unsigned int j=0; j<blocksPerNode; j++) 
+        {
+            dist->graphGuid[current++] = artsReserveGuidRoute(dbType, i);
+        }
+        if(mod) 
+        {
+            dist->graphGuid[current++] = artsReserveGuidRoute(dbType, i);
+            mod--;
+        }
     }
 
-    if (strcmp("--num-edges", argv[i]) == 0) {
-      sscanf(argv[i+1], "%" SCNu64, &m);
+    internalInitBlockDistribution(dist, n, m, numBlocks);
+    return dist;
+}
+
+arts_block_dist_t * initBlockDistribution(graph_sz_t n, graph_sz_t m)
+{
+    unsigned int numBlocks = artsGetTotalNodes();
+    arts_block_dist_t * dist = artsMalloc(sizeof(arts_block_dist_t) + sizeof(artsGuid_t) * numBlocks);
+    for(unsigned int i=0; i<numBlocks; i++) 
+        dist->graphGuid[i] = artsReserveGuidRoute(ARTS_DB_PIN, i);
+    internalInitBlockDistribution(dist, n, m, numBlocks);
+    return dist;
+}
+
+arts_block_dist_t * initBlockDistributionWithCmdLineArgs(int argc, char** argv)
+{
+    uint64_t n = 0;
+    uint64_t m = 0;
+    for (int i=0; i < argc; ++i) 
+    {
+        if (strcmp("--num-vertices", argv[i]) == 0) 
+            sscanf(argv[i+1], "%" SCNu64, &n);
+        if (strcmp("--num-edges", argv[i]) == 0)
+            sscanf(argv[i+1], "%" SCNu64, &m);
     }
-  }
 
-  if(n && m)
-  {
-    PRINTF("[INFO] Initializing Block Distribution with following parameters ...\n");
-    PRINTF("[INFO] Vertices : %" PRIu64 "\n", n);
-    PRINTF("[INFO] Edges : %" PRIu64 "\n", m);
-
-    _dist->num_vertices = n;
-    _dist->num_edges = m;
-    _dist->block_sz = getBlockSize(_dist);
-
-    // copied from ssspStart.c
-    _dist->graphGuid = artsMalloc(sizeof(artsGuid_t)*artsGetTotalNodes());
-    for(unsigned int i=0; i<artsGetTotalNodes(); i++) {
-      _dist->graphGuid[i] = artsReserveGuidRoute(ARTS_DB_PIN, i % artsGetTotalNodes());
+    if(n && m) 
+    {
+        unsigned int numBlocks = artsGetTotalNodes();
+        arts_block_dist_t * dist = artsMalloc(sizeof(arts_block_dist_t) + sizeof(artsGuid_t) * numBlocks);
+        for(unsigned int i=0; i<numBlocks; i++) 
+            dist->graphGuid[i] = artsReserveGuidRoute(ARTS_DB_PIN, i);
+        internalInitBlockDistribution(dist, n, m, numBlocks);
+        return dist;
     }
-  }
-  else
-      PRINTF("Must set --num-vertices and --num-edges\n");
+    else
+        PRINTF("Must set --num-vertices and --num-edges\n");
+    return NULL;
 }
 
-void freeDistribution(arts_block_dist_t* _dist) {
-  artsFree(_dist->graphGuid);
-  _dist->graphGuid = NULL;
-
-  _dist->num_vertices = 0;
-  _dist->num_edges = 0;
-  _dist->block_sz = 0;
+void freeDistribution(arts_block_dist_t * dist)
+{
+    artsFree(dist);
 }
 
-artsGuid_t* getGuidForVertex(vertex v,
-                             const arts_block_dist_t* const _dist) {
-  node_t owner = getOwner(v, _dist);
-  assert(owner < artsGetTotalNodes());
-  return &(_dist->graphGuid[owner]);
+unsigned int getNumLocalBlocks(arts_block_dist_t* _dist)
+{
+    unsigned int numLocalParts = 0;
+    for(unsigned int i=0; i<_dist->num_blocks; i++) 
+    {
+        if(artsIsGuidLocal(getGuidForVertexDistr(i, _dist))) 
+            numLocalParts++;
+    }
+    return numLocalParts;
 }
 
-artsGuid_t* getGuidForCurrentNode(const arts_block_dist_t* const _dist) {
-  return &(_dist->graphGuid[artsGetCurrentNode()]);
+graph_sz_t getBlockSizeForPartition(unsigned int index, const arts_block_dist_t* const _dist)
+{
+    // is this the last node
+    if (index == (_dist->num_blocks-1))
+        return (_dist->num_vertices - ((_dist->num_blocks-1)*_dist->block_sz));
+    else
+        return _dist->block_sz;
 }
 
-node_t getOwner(vertex v, const arts_block_dist_t* const _dist) {
-  return (node_t)(v / _dist->block_sz);
+unsigned int getOwnerDistr(vertex_t v, const arts_block_dist_t* const _dist)
+{
+    return (unsigned int)(v / _dist->block_sz);
 }
 
-vertex nodeStart(node_t n, const arts_block_dist_t* const _dist) {
-  return (vertex)((_dist->block_sz) * n);
+vertex_t partitionStartDistr(partition_t index, const arts_block_dist_t* const _dist)
+{
+    return (vertex_t)((_dist->block_sz) * index);
 }
 
-vertex nodeEnd(node_t n, const arts_block_dist_t* const _dist) {
-  // is this the last node ?
-  if (n == (artsGetTotalNodes()-1)) {
-    return (vertex)(_dist->num_vertices - 1);
-  } else {
-    return (nodeStart(n, _dist) + (_dist->block_sz-1));
-  }
+vertex_t partitionEndDistr(partition_t index, const arts_block_dist_t* const _dist)
+{
+    // is this the last node ?
+    if (index == (_dist->num_blocks-1))
+        return (vertex_t)(_dist->num_vertices - 1);
+    else
+        return (partitionStartDistr(index, _dist) + (_dist->block_sz-1));
 }
 
-graph_sz_t getNodeBlockSize(node_t n, const arts_block_dist_t* const _dist) {
-  // is this the last node
-  if (n == (artsGetTotalNodes()-1)) {
-    return (_dist->num_vertices - ((artsGetTotalNodes()-1)*_dist->block_sz));
-  } else
-    return _dist->block_sz;
+vertex_t getVertexFromLocalDistr(unsigned int local, local_index_t u, const arts_block_dist_t* const _dist)
+{
+    vertex_t v = partitionStartDistr(local, _dist);
+    return (v+u);
 }
 
-local_index_t getLocalIndex(vertex v, 
-                            const arts_block_dist_t* const _dist) {
-  node_t n = getOwner(v, _dist);
-  vertex base = nodeStart(n, _dist);
-  assert(base <= v);
-  return (v - base);
+local_index_t getLocalIndexDistr(vertex_t v, const arts_block_dist_t* const _dist)
+{
+    unsigned int n = getOwnerDistr(v, _dist);
+    vertex_t base = partitionStartDistr(n, _dist);
+    assert(base <= v);
+    return (v - base);
 }
 
-vertex getVertexId(node_t local_rank,
-                   local_index_t u, const arts_block_dist_t* const _dist) {
-  vertex v = nodeStart(local_rank, _dist);
-  return (v+u);
+artsGuid_t getGuidForVertexDistr(vertex_t v, const arts_block_dist_t* const _dist)
+{
+    unsigned int owner = getOwnerDistr(v, _dist);
+    assert(owner < _dist->num_blocks);
+    return _dist->graphGuid[owner];
+}
+
+artsGuid_t getGuidForPartitionDistr(const arts_block_dist_t* const _dist, partition_t index)
+{
+    return _dist->graphGuid[index];
 }

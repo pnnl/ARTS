@@ -384,7 +384,7 @@ void internalSignalEdt(artsGuid_t edtPacket, uint32_t slot, artsGuid_t dataGuid,
                     edtDep[slot].ptr = ptr;
                 }
                 unsigned int res = artsAtomicSub(&edt->depcNeeded, 1U);
-                DPRINTF("SIG: %lu %lu %u %p %d res: %u %s\n", edtPacket, dataGuid, slot, ptr, mode, res, getTypeName(edtDep[slot].mode));
+                DPRINTF("SIG: %lu %lu %u %p %d res: %u %s\n", edtPacket, dataGuid, slot, ptr, mode, res, getTypeName((slot < edt->depc) ? edtDep[slot].mode : ARTS_NULL));
                 if(res == 0)
                     artsHandleReadyEdt(edt);
             }
@@ -595,4 +595,22 @@ void checkOutEdts(uint64_t threashold)
         fprintf(stderr, "Node: %u has no edts threashold: %lu\n", artsGlobalRankId, threashold);
         artsAtomicFetchSubU64(&count, threashold);
     }
+}
+
+void artsLCSync(artsGuid_t edtGuid, uint32_t slot, artsGuid_t dataGuid)
+{
+    artsType_t mode = artsGuidGetType(dataGuid);
+    if(mode == ARTS_DB_LC)
+        mode = ARTS_DB_LC_SYNC;
+    internalSignalEdt(edtGuid, slot, dataGuid, ARTS_DB_LC_SYNC, NULL, 0);
+}
+
+void artsGpuSignalEdtMemset(artsGuid_t edtGuid, uint32_t slot, artsGuid_t dataGuid)
+{
+    artsType_t mode = artsGuidGetType(dataGuid);
+    if(mode == ARTS_DB_GPU_WRITE)
+        mode = ARTS_DB_GPU_MEMSET;
+    else if(mode == ARTS_DB_LC)
+        mode = ARTS_DB_LC_NO_COPY;
+    internalSignalEdt(edtGuid, slot, dataGuid, mode, NULL, 0);
 }

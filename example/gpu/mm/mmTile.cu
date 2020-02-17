@@ -44,8 +44,8 @@
 
 #define GPUMM 1
 #define MATSIZE 1024
-#define TILESIZE 16
-#define VERIFY 1
+#define TILESIZE 32
+// #define VERIFY 1
 #define SMTILE 32 // Hardcoded for Volta
 
 uint64_t start = 0;

@@ -80,6 +80,9 @@ bool artsNetworkFirstSchedulerLoop();
 bool artsNetworkBeforeStealSchedulerLoop();
 bool artsDefaultSchedulerLoop();
 bool artsGpuSchedulerLoop();
+bool artsGpuSchedulerBackoffLoop();
+bool artsGpuSchedulerDemandLoop();
+
 #ifdef __cplusplus
 }
 #endif

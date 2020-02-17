@@ -293,14 +293,28 @@ artsGuid_t artsInitializeAndStartEpoch(artsGuid_t finishEdtGuid, unsigned int sl
 
 artsGuid_t artsInitializeEpoch(unsigned int rank, artsGuid_t finishEdtGuid, unsigned int slot)
 {
-    artsGuid_t guid = artsGuidCreateForRank(rank, ARTS_EDT);
-    createEpoch(&guid, finishEdtGuid, slot);
-    if(!artsNodeInfo.readyToExecute) {
-        for(unsigned int i=0; i<artsGlobalRankCount; i++)
+    artsGuid_t guid = NULL_GUID;
+    //I think the idea is this is that during parallel start (artsNodeInfo.readyToExecute > 0)
+    //This means that the epoch will be created on all nodes
+    //assuming that each node goes through the initializeEpoch code path.
+    //Pool assume the current host...
+    if(!artsNodeInfo.readyToExecute || rank != artsGlobalRankId)
+    {
+        guid = artsGuidCreateForRank(rank, ARTS_EDT);
+        createEpoch(&guid, finishEdtGuid, slot);
+        if(!artsNodeInfo.readyToExecute)
         {
-            if(i != artsGlobalRankId)
-                artsRemoteEpochInitSend(i, guid, finishEdtGuid, slot);
+            for(unsigned int i=0; i<artsGlobalRankCount; i++)
+            {
+                if(i != artsGlobalRankId)
+                    artsRemoteEpochInitSend(i, guid, finishEdtGuid, slot);
+            }
         }
+    }
+    else //Lets get it from the pool...
+    {
+        artsEpoch_t * epoch = getPoolEpoch(finishEdtGuid, slot);
+        guid = epoch->guid;
     }
     return guid;
 }

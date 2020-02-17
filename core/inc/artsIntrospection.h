@@ -67,50 +67,51 @@ extern "C" {
 "artsNetworkQueuePush", \
 "artsNetworkQueuePop", \
 "artsYield", \
+"artsGpuEdt", \
+"artsGpuGC", \
+"artsGpuGCBW", \
+"artsGpuBWPush", \
+"artsGpuBWPull", \
+"artsGpuBufferFlush", \
+"artsGpuSync", \
+"artsGpuSyncDelete", \
 "artsMallocBW", \
 "artsFreeBW", \
 "artsRemoteShutdownMsg", \
-"artsRemoteEdtStealMsg", \
-"artsRemoteEdtRecvMsg", \
-"artsRemoteEdtFailMsg", \
 "artsRemoteEdtSignalMsg", \
-"artsRemoteEventSatisfyMsg", \
+"artsRemoteSignalEdtWithPtrMsg", \
 "artsRemoteEventSatisfySlotMsg", \
-"artsRemoteDbRequestMsg", \
-"artsRemoteDbsendMsg", \
-"artsRemoteEdtMoveMsg", \
-"artsRemoteGuidRouteMsg", \
-"artsRemoteEventMoveMsg", \
 "artsRemoteAddDependenceMsg", \
+"artsRemoteDbRequestMsg", \
+"artsRemoteDbSendMsg", \
 "artsRemoteInvalidateDbMsg", \
-"artsRemoteDbMoveMsg", \
 "artsRemoteDbUpdateGuidMsg", \
 "artsRemoteDbUpdateMsg", \
 "artsRemoteDbDestroyMsg", \
 "artsRemoteDbDestroyForwardMsg", \
 "artsRemoteDbCleanForwardMsg", \
-"artsRemotePingPongTestMsg", \
-"artsDbLockMsg", \
-"artsDbUnlockMsg", \
-"artsDbLockAllDbsMsg", \
+"artsRemoteDbMoveReqMsg", \
+"artsRemoteEdtMoveMsg", \
+"artsRemoteEventMoveMsg", \
+"artsRemoteDbMoveMsg", \
+"artsRemotePingpong_testMsg", \
 "artsRemoteMetricUpdateMsg", \
-"artsActiveMessageMsg", \
 "artsRemoteDbFullRequestMsg", \
 "artsRemoteDbFullSendMsg", \
-"artsRemoteDbFullSendAlreadyLocalMsg", \
+"artsRemoteDbFullSendAlready_localMsg", \
 "artsRemoteGetFromDbMsg", \
 "artsRemotePutInDbMsg", \
-"artsRemoteSignalEdtWithPtrMsg", \
 "artsRemoteSendMsg", \
 "artsEpochInitMsg", \
 "artsEpochInitPoolMsg", \
 "artsEpochReqMsg", \
 "artsEpochSendMsg", \
 "artsEpochDeleteMsg", \
-"artsAtomicAddArrayDbMsg", \
-"artsAtomicCasArrayDbMsg", \
-"artsRemoteBufferSendMsg", \
-"artsRemoteDbMoveReqMsg", \
+"artsAtomicAddArraydbMsg", \
+"artsAtomicCasArraydbMsg", \
+"artsRemote_bufferSendMsg", \
+"artsRemoteContextSigMsg", \
+"artsRemoteDbRenameMsg", \
 "artsDefaultMemorySize", \
 "artsEdtMemorySize", \
 "artsEventMemorySize", \
@@ -135,50 +136,51 @@ typedef enum artsMetricType
     artsNetworkQueuePush,
     artsNetworkQueuePop,
     artsYieldBW,
+    artsGpuEdt,
+    artsGpuGC,
+    artsGpuGCBW,
+    artsGpuBWPush,
+    artsGpuBWPull,
+    artsGpuBufferFlush,
+    artsGpuSync,
+    artsGpuSyncDelete,
     artsMallocBW,
     artsFreeBW,
     artsRemoteShutdownMsg,
-    artsRemoteEdtStealMsg,
-    artsRemoteEdtRecvMsg,
-    artsRemoteEdtFailMsg,
     artsRemoteEdtSignalMsg,
-    artsRemoteEventSatisfyMsg,
+    artsRemoteSignalEdtWithPtrMsg,
     artsRemoteEventSatisfySlotMsg,
-    artsRemoteDbRequestMsg,
-    artsRemoteDbsendMsg,
-    artsRemoteEdtMoveMsg,
-    artsRemoteGuidRouteMsg,
-    artsRemoteEventMoveMsg,
     artsRemoteAddDependenceMsg,
+    artsRemoteDbRequestMsg,
+    artsRemoteDbSendMsg,
     artsRemoteInvalidateDbMsg,
-    artsRemoteDbMoveMsg,
     artsRemoteDbUpdateGuidMsg,
     artsRemoteDbUpdateMsg,
     artsRemoteDbDestroyMsg,
     artsRemoteDbDestroyForwardMsg,
     artsRemoteDbCleanForwardMsg,
-    artsRemotePingPongTestMsg,
-    artsDbLockMsg,
-    artsDbUnlockMsg,
-    artsDbLockAllDbsMsg,
+    artsRemoteDbMoveReqMsg, 
+    artsRemoteEdtMoveMsg,
+    artsRemoteEventMoveMsg,
+    artsRemoteDbMoveMsg,
+    artsRemotePingpong_testMsg,
     artsRemoteMetricUpdateMsg,
-    artsActiveMessageMsg,
     artsRemoteDbFullRequestMsg,
     artsRemoteDbFullSendMsg,
-    artsRemoteDbFullSendAlreadyLocalMsg,
+    artsRemoteDbFullSendAlready_localMsg,
     artsRemoteGetFromDbMsg,
     artsRemotePutInDbMsg,
-    artsRemoteSignalEdtWithPtrMsg,
-    artsRemoteSendMsg, 
+    artsRemoteSendMsg,
     artsEpochInitMsg,
     artsEpochInitPoolMsg,
     artsEpochReqMsg, 
     artsEpochSendMsg,
     artsEpochDeleteMsg,
-    artsAtomicAddArrayDbMsg,
-    artsAtomicCasArrayDbMsg,
-    artsRemoteBufferSendMsg,
-    artsRemoteDbMoveReqMsg,
+    artsAtomicAddArraydbMsg,
+    artsAtomicCasArraydbMsg,
+    artsRemote_bufferSendMsg,
+    artsRemoteContextSigMsg,
+    artsRemoteDbRenameMsg,
     artsDefaultMemorySize,
     artsEdtMemorySize,
     artsEventMemorySize,
@@ -302,6 +304,7 @@ void artsInternalSetThreadPerformanceMetric(artsMetricType type, uint64_t value)
 uint64_t artsGetInspectorTime(void);
 double artsInternalGetPerformanceMetricTotalRate(artsMetricType type, artsMetricLevel level);
 double artsMetricTest(artsMetricType type, artsMetricLevel level, uint64_t num);
+void artsInternalToggleThread(void);
 
 #ifdef INSPECTOR
 
@@ -326,7 +329,7 @@ double artsMetricTest(artsMetricType type, artsMetricLevel level, uint64_t num);
 #define artsPacketStats(totalBytes, totalPackets, minPacket, maxPacket) artsInternalPacketStats(totalBytes, totalPackets, minPacket, maxPacket)
 #define artsIntervalPacketStats(totalBytes, totalPackets, minPacket, maxPacket) artsInternalIntervalPacketStats(totalBytes, totalPackets, minPacket, maxPacket)
 #define artsSetThreadPerformanceMetric(type, value) artsInternalSetThreadPerformanceMetric(type, value)
-
+#define artsToggleThreadInspection() artsInternalToggleThread()
 #else
 
 #define artsReadInspectorConfigFile(filename)
@@ -350,6 +353,7 @@ double artsMetricTest(artsMetricType type, artsMetricLevel level, uint64_t num);
 #define artsPacketStats(totalBytes, totalPackets, minPacket, maxPacket)
 #define artsIntervalPacketStats(totalBytes, totalPackets, minPacket, maxPacket)
 #define artsSetThreadPerformanceMetric(type, value)
+#define artsToggleThreadInspection()
 
 #endif
 #ifdef __cplusplus

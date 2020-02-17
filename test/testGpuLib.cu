@@ -195,7 +195,7 @@ void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc, char** 
 }
 
 extern "C"
-void initPerGpu(int devId, cudaStream_t * stream)
+void initPerGpu(unsigned int nodeId, int devId, cudaStream_t * stream, int argc, char * argv)
 {
     PRINTF("DevId: %d\n", devId);
     if(!devId)
@@ -207,7 +207,7 @@ void initPerGpu(int devId, cudaStream_t * stream)
 }
 
 extern "C"
-void cleanPerGpu(int devId, cudaStream_t * stream)
+void cleanPerGpu(unsigned int nodeId, int devId, cudaStream_t * stream)
 {
     PRINTF("DevId: %d\n", devId);
     cublasStatus_t stat = cublasDestroy(handle[devId]);

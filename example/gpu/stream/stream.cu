@@ -84,9 +84,12 @@
 #include <stdlib.h>
 #include "arts.h"
 #include "artsGpuRuntime.h"
+#include "artsGuid.h"
 #include "cublas_v2.h"
 #include <cuda_runtime.h>
 #include "streamUtil.h"
+
+// #define SAFE 1
 
 static double avgtime[4] = {0};
 static double maxtime[4] = {0};
@@ -107,7 +110,7 @@ static double bytes[4] = {
 
 int quantum;
 
-unsigned int tileSize = 1024;
+unsigned int tileSize = 1024*1024;
 unsigned int numTiles;
 
 artsGuidRange * aTileGuids = NULL;
@@ -227,12 +230,31 @@ void initPerNode(unsigned int nodeId, int argc, char** argv)
     if(N % tileSize)
         numTiles++;
     
-    PRINTF("N: %u tileSize: %u numTiles: %u\n", N, tileSize, numTiles);
+    PRINTF("N: %u tileSize: %u numTiles: %u Gpus: %u\n", N, tileSize, numTiles, artsGetTotalGpus());
 
-    aTileGuids = artsNewGuidRangeNode(ARTS_DB_GPU_WRITE, numTiles, 0);
-    bTileGuids = artsNewGuidRangeNode(ARTS_DB_GPU_WRITE, numTiles, 0);
-    cTileGuids = artsNewGuidRangeNode(ARTS_DB_GPU_WRITE, numTiles, 0);
-    
+    aTileGuids = artsNewGuidRangeNodeHash(ARTS_DB_GPU_WRITE, numTiles, 0, artsGetTotalGpus());
+    bTileGuids = artsNewGuidRangeNodeHash(ARTS_DB_GPU_WRITE, numTiles, 0, artsGetTotalGpus());
+    cTileGuids = artsNewGuidRangeNodeHash(ARTS_DB_GPU_WRITE, numTiles, 0, artsGetTotalGpus());
+
+    uint64_t aHash = artsHashGuidKey(artsGetGuid(aTileGuids, 0));
+    uint64_t bHash = artsHashGuidKey(artsGetGuid(bTileGuids, 0));
+    uint64_t cHash = artsHashGuidKey(artsGetGuid(cTileGuids, 0));
+
+    #ifdef SAFE
+    if(artsGetNumGpus() > 1)
+    {
+        if(!(artsLookUpConfig(freeDbAfterGpuRun) && artsLookUpConfig(runGpuGcPreEdt)))
+        {
+            if(artsLookUpConfig(gpuLocality) != 3 || aHash != bHash || aHash != cHash)
+            {
+                PRINTF("For more than 1 GPU Stream requires gpuLocality to be set to 3.\n");
+                PRINTF("aHash: %lu bHash: %lu cHash: %lu\n", aHash, bHash, cHash);
+                artsShutdown();
+            }
+        }
+    }
+    #endif
+
     if(!nodeId)
     {
         aTile = (double**)artsCalloc(sizeof(double*)*numTiles);

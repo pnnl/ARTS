@@ -49,7 +49,7 @@
 #include "artsAtomics.h"
 
 arts_block_dist_t distribution;
-csr_graph graph;
+csr_graph_t graph;
 
 artsGuid_t epochGuid    = NULL_GUID;
 artsGuid_t startReduceGuid = NULL_GUID;
@@ -93,19 +93,19 @@ void startReduce(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t
     }
 }
 
-uint64_t lowerBound(vertex value, uint64_t start, uint64_t end, vertex * edges) {
+uint64_t lowerBound(vertex_t value, uint64_t start, uint64_t end, vertex_t * edges) {
     while ((start < end) && (edges[start] < value))
         start++;
     return start;
 }
 
-uint64_t upperBound(vertex value, uint64_t start, uint64_t end, vertex * edges) {
+uint64_t upperBound(vertex_t value, uint64_t start, uint64_t end, vertex_t * edges) {
     while ((start < end) && (value < edges[end - 1]))
         end--;
     return end;
 }
 
-uint64_t count_triangles(vertex * a, uint64_t a_start, uint64_t a_end, vertex * b, uint64_t b_start, uint64_t b_end) {
+uint64_t count_triangles(vertex_t * a, uint64_t a_start, uint64_t a_end, vertex_t * b, uint64_t b_start, uint64_t b_end) {
     uint64_t count = 0;
     while ((a_start < a_end) && (b_start < b_end)) {
         if (a[a_start] < b[b_start])
@@ -122,14 +122,14 @@ uint64_t count_triangles(vertex * a, uint64_t a_start, uint64_t a_end, vertex * 
 }
 
 uint64_t processBlock(uint64_t index) {
-    vertex * neighbors = NULL;
+    vertex_t * neighbors = NULL;
     uint64_t neighborCount = 0;
     uint64_t localCount = 0;
     
     uint64_t iStart = index*blockSize;
     uint64_t iEnd   = (index+1 == numBlocks) ? nodeEnd(artsGetCurrentNode(), &distribution) : iStart + blockSize;
     
-    for (vertex i=iStart; i<iEnd; i++) {
+    for (vertex_t i=iStart; i<iEnd; i++) {
         
         getNeighbors(&graph, i, &neighbors, &neighborCount);
         
@@ -137,10 +137,10 @@ uint64_t processBlock(uint64_t index) {
         uint64_t lastPred = neighborCount;
         
         for (uint64_t nextPred = firstPred + 1; nextPred < lastPred; nextPred++) {
-            vertex j = neighbors[nextPred];
+            vertex_t j = neighbors[nextPred];
             unsigned int owner = getOwner(j, &distribution);
             if (getOwner(j, &distribution) == artsGetCurrentNode()) {
-                vertex * jNeighbors = NULL;
+                vertex_t * jNeighbors = NULL;
                 uint64_t jNeighborCount = 0;
                 getNeighbors(&graph, j, &jNeighbors, &jNeighborCount);
                 uint64_t firstSucc = lowerBound(i, 0, jNeighborCount, jNeighbors);
@@ -181,8 +181,8 @@ void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc, char** 
     }
     
     artsStartEpoch(epochGuid);
-    vertex start = nodeStart(nodeId, &distribution);
-    vertex end   = nodeEnd(nodeId, &distribution);
+    vertex_t start = nodeStart(nodeId, &distribution);
+    vertex_t end   = nodeEnd(nodeId, &distribution);
     
     uint64_t size = end - start;
     blockSize = size / (artsGetTotalWorkers() * 32 * 2);

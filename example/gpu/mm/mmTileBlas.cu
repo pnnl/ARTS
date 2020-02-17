@@ -46,8 +46,8 @@
 #include <cuda_runtime.h>
 
 #define MATSIZE 1024
-#define TILESIZE 16
-#define VERIFY 1
+#define TILESIZE 32
+// #define VERIFY 1
 #define SMTILE 32
 
 uint64_t start = 0;
@@ -255,7 +255,7 @@ void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc, char** 
 }
 
 extern "C"
-void initPerGpu(int devId, cudaStream_t * stream)
+void initPerGpu(unsigned int nodeId, int devId, cudaStream_t * stream, int argc, char * argv)
 {
     if(!devId)
         handle = (cublasHandle_t*) artsCalloc(sizeof(cublasHandle_t) * artsGetNumGpus());
@@ -263,7 +263,7 @@ void initPerGpu(int devId, cudaStream_t * stream)
 }
 
 extern "C"
-void cleanPerGpu(int devId, cudaStream_t * stream)
+void cleanPerGpu(unsigned int nodeId, int devId, cudaStream_t * stream)
 {
     cublasStatus_t stat = cublasDestroy(handle[devId]);
 }

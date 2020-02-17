@@ -44,19 +44,19 @@ extern "C" {
 #endif
 
 #include "arts.h"
-#include "artsGlobals.h"
 
-typedef uint64_t vertex;
+typedef uint64_t vertex_t;
 typedef uint64_t graph_sz_t;
-typedef unsigned int node_t;
+typedef unsigned int partition_t;
 typedef uint32_t edge_data_t;
 typedef uint64_t local_index_t;
 
 typedef struct {
-  vertex source;
-  vertex target;
+  vertex_t source;
+  vertex_t target;
   edge_data_t data;
-} edge;
+} edge_t;
+
 #ifdef __cplusplus
 }
 #endif

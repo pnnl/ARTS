@@ -104,6 +104,9 @@ void artsRemoteHandleBufferSend(void * pack);
 void artsRemoteHandleDbDestroy(void * ptr);
 void artsRemoteSignalContext(unsigned int rank, uint64_t ticket);
 void artsRemoteHandleSignalContext(void * pack);
+void artsRemoteDbRename(artsGuid_t newGuid, artsGuid_t oldGuid);
+void artsRemoteHandleDbRename(void * pack);
+
 #ifdef __cplusplus
 }
 #endif

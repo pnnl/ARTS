@@ -47,15 +47,13 @@ extern "C" {
 #define EDGE_VEC_SZ 10000
 
 typedef struct {
-  edge *edge_array;
-  graph_sz_t used;
-  graph_sz_t size;
+    edge_t * edge_array;
+    graph_sz_t used;
+    graph_sz_t size;
 } artsEdgeVector;
 
 void initEdgeVector(artsEdgeVector *v, graph_sz_t initialSize);
-void pushBackEdge(artsEdgeVector *v, vertex s, 
-                        vertex t,
-                        edge_data_t d);
+void pushBackEdge(artsEdgeVector *v, vertex_t s, vertex_t t, edge_data_t d);
 void freeEdgeVector(artsEdgeVector *v);
 void sortBySource(artsEdgeVector *v);
 void sortBySourceAndTarget(artsEdgeVector *v);

@@ -626,7 +626,7 @@ void artsRemoteHandleSendAlreadyLocal(void * pack)
 {
     struct artsRemoteDbFullRequestPacket * packet = pack;
     int rank;
-    struct artsDb * dbRes = artsRouteTableLookupDb(packet->dbGuid, &rank);
+    struct artsDb * dbRes = artsRouteTableLookupDb(packet->dbGuid, &rank, true);
     artsDbRequestCallback(packet->edt, packet->slot, dbRes);
 }
 
@@ -896,4 +896,22 @@ void artsRemoteHandleSignalContext(void * pack)
 {
     struct artsRemoteSignalContextPacket * packet = pack;
     artsSignalContext(packet->ticket);
+}
+
+void artsRemoteDbRename(artsGuid_t newGuid, artsGuid_t oldGuid)
+{
+    unsigned int destRank = artsGuidGetRank(oldGuid);
+    struct artsRemoteDbRename packet;
+    packet.oldGuid = oldGuid;
+    packet.newGuid = newGuid;
+    packet.header.size = sizeof(packet);
+    packet.header.messageType = ARTS_REMOTE_DB_RENAME_MSG;
+    packet.header.rank = destRank;
+    artsRemoteSendRequestAsync(destRank, (char *)&packet, sizeof(packet));
+}
+
+void artsRemoteHandleDbRename(void * pack)
+{
+    struct artsRemoteDbRename * packet = pack;
+    artsDbRenameWithGuid(packet->newGuid, packet->oldGuid);
 }

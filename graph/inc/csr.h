@@ -43,52 +43,33 @@
 extern "C" {
 #endif
 
+#include "arts.h"
 #include "graphDefs.h"
 #include "blockDistribution.h"
 #include "artsEdgeVector.h"
 
-#define MAXCHAR 4096
+#define MAXCHAR 1024*1024
 
 typedef struct {
-  graph_sz_t num_local_vertices;
-  graph_sz_t num_local_edges;
-  vertex* row_indices;
-  vertex* columns;
-  arts_block_dist_t* distribution;
-  void* data;
-} csr_graph;
+    artsGuid_t partGuid;
+    graph_sz_t num_local_vertices;
+    graph_sz_t num_local_edges;
+    graph_sz_t block_sz;
+    partition_t index;
+    unsigned int num_blocks;
+} csr_graph_t;
 
 
-void initCSR(csr_graph* _csr, 
-             graph_sz_t _localv,
-             graph_sz_t _locale,
-             arts_block_dist_t* _dist,
-             artsEdgeVector* _edges,
-             bool _sorted_by_src);
-
-int loadGraphNoWeight(const char* _file,
-                      csr_graph* _graph,
-                      arts_block_dist_t* _dist,
-                      bool _flip,
-                      bool _ignore_self_loops);
-
-int loadGraphNoWeightCsr(const char* _file,
-                        csr_graph* _graph,
-                        arts_block_dist_t* _dist,
-                        bool _flip,
-                        bool _ignore_self_loops);
-
-void printLocalCSR(const csr_graph* _csr);
-
-int loadGraphUsingCmdLineArgs(csr_graph* _graph,
-                              arts_block_dist_t* _dist,
-                              int argc, char** argv);
-void freeCSR(csr_graph* _csr);
-
-void getNeighbors(csr_graph* _csr,
-                  vertex v,
-                  vertex** _out,
-                  graph_sz_t* _neighborcount);
+csr_graph_t * initCSR(partition_t partIndex, graph_sz_t _localv, graph_sz_t _locale, arts_block_dist_t* _dist, artsEdgeVector* _edges, bool _sorted_by_src, artsGuid_t blockGuid);
+int loadGraphNoWeight(const char* _file, arts_block_dist_t* _dist, bool _flip, bool _ignore_self_loops);
+int loadGraphNoWeightCsr(const char* _file, arts_block_dist_t* _dist, bool _flip, bool _ignore_self_loops);
+int loadGraphUsingCmdLineArgs(arts_block_dist_t* _dist, int argc, char** argv);
+void freeCSR(csr_graph_t* _csr);
+void printCSR(csr_graph_t* _csr);
+void getNeighbors(csr_graph_t* _csr, vertex_t v, vertex_t ** _out, graph_sz_t* _neighborcount);
+csr_graph_t * getGraphFromGuid(artsGuid_t guid);
+csr_graph_t * getGraphFromPartition(partition_t partIndex, arts_block_dist_t * dist);
+local_index_t getLocalIndexCSR(vertex_t v, const csr_graph_t * const part);
 #ifdef __cplusplus
 }
 #endif

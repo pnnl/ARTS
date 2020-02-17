@@ -110,6 +110,8 @@ bool artsGuidRangeHasNext(artsGuidRange * range);
 //Resets the iterator in guid ranges.  Guid Ranges are not thread-safe.
 void artsGuidRangeResetIter(artsGuidRange * range);
 
+artsGuid_t * artsReserveGuidsRoundRobin(unsigned int size, artsType_t type);
+
 /*EDT**************************************************************************/
 
 //Creates an Event Driven Task (EDT) to run on node route.
@@ -278,6 +280,12 @@ void artsGetFromDb(artsGuid_t edtGuid, artsGuid_t dbGuid, unsigned int slot, uns
 //Data is copied from the DB found on node rank.
 void artsGetFromDbAt(artsGuid_t edtGuid, artsGuid_t dbGuid, unsigned int slot, unsigned int offset, unsigned int size, unsigned int rank);
 
+artsGuid_t artsDbRename(artsGuid_t guid);
+
+bool artsDbRenameWithGuid(artsGuid_t newGuid, artsGuid_t oldGuid);
+
+artsGuid_t artsDbCopyToNewType(artsGuid_t oldGuid, artsType_t newType);
+
 /*Epoch************************************************************************/
 
 //Returns the current round of termination detection.
@@ -371,8 +379,14 @@ unsigned int artsGetCurrentCluster();
 //Gets the total number of numa domains.  Requires HWLOC.
 unsigned int artsGetTotalClusters();
 
+//Gets the total number of GPUs per node.
+unsigned int artsGetTotalGpus();
+
 //Arts timer in nanoseconds.
 uint64_t artsGetTimeStamp();
+
+//Gives a threadsafe random number
+uint64_t artsThreadSafeRandom();
 
 //This is a way to send operations to a specific rank.  If the rank is the current node, the function is executed immediately.
 //If the rank is remote, the arguments will be packaged, and sent to the appropriate node.  In this case

@@ -159,6 +159,12 @@ bool artsIsGuidLocal(artsGuid_t guid)
     return (artsGlobalRankId == artsGuidGetRank(guid));
 }
 
+uint64_t artsGetGuidKey(artsGuid_t guid)
+{
+    artsGuid addressInfo = (artsGuid) guid;
+    return addressInfo.fields.key;
+}
+
 artsGuid_t artsReserveGuidRoute(artsType_t type, unsigned int route)
 {
     artsGuid_t guid = NULL_GUID;
@@ -175,15 +181,17 @@ artsGuid_t * artsReserveGuidsRoundRobin(unsigned int size, artsType_t type)
     artsGuid_t * guids = NULL;
     if(type > ARTS_NULL && type < ARTS_LAST_TYPE)
     {
-        artsGuid_t * guids = (artsGuid_t*) artsMalloc(size*sizeof(artsGuid_t));
+        guids = (artsGuid_t*) artsMalloc(size*sizeof(artsGuid_t));
         for(unsigned int i=0; i<size; i++)
         {
             unsigned int route = i%artsGlobalRankCount;
             guids[i] = artsGuidCreateForRank(route, (unsigned int)type);
+            DPRINTF("GUID[%u]: %lu %p\n", i, guids[i]);
     //        if(route == artsGlobalRankId)
     //            artsRouteTableAddItem(NULL, guids[i], artsGlobalRankId, false);
         }
     }
+    DPRINTF("guids: %p\n", guids);
     return guids;
 }
 
@@ -204,6 +212,28 @@ artsGuidRange * artsNewGuidRangeNode(artsType_t type, unsigned int size, unsigne
 //                temp.fields.key++;
 //            }
 //        }
+    }
+    return range;
+}
+
+artsGuidRange * artsNewGuidRangeNodeHash(artsType_t type, unsigned int size, unsigned int route, unsigned int hashSize)
+{
+    artsGuidRange * range = NULL;
+    if(size && type > ARTS_NULL && type < ARTS_LAST_TYPE)
+    {
+        range = artsCalloc(sizeof(artsGuidRange));
+        range->size = size;
+        range->startGuid = artsGuidCreateForRankInternal(route, (unsigned int)type, size + hashSize);
+        artsGuid temp = (artsGuid) range->startGuid;
+        for(unsigned int i=0; i<hashSize; i++)
+        {
+            if(temp.fields.key % hashSize == 0)
+            {
+                range->startGuid = (artsGuid_t) temp.bits;
+                break;
+            }
+            temp.fields.key++;
+        }
     }
     return range;
 }
@@ -258,4 +288,10 @@ bool artsIsInGuidRange(artsGuidRange * range, artsGuid_t guid)
         return true;
     
     return false;
+}
+
+uint64_t artsHashGuidKey(artsGuid_t guid)
+{
+    uint64_t key = artsGetGuidKey(guid);
+    return key % (uint64_t)artsNodeInfo.gpu;
 }

@@ -45,6 +45,7 @@ extern "C" {
 
 #include <cuda_runtime.h>    
 #include "artsRT.h"
+#include "artsGpuLCSyncFunctions.h"
 
 typedef struct 
 {
@@ -52,7 +53,6 @@ typedef struct
     void * src;
     size_t count;
 } artsBufferMemMove_t;
-
 
 typedef struct
 {
@@ -86,6 +86,11 @@ bool flushWrapUpStream(unsigned int gpuId);
 
 bool flushStream(unsigned int gpuId);
 bool checkStreams(bool buffOn);
+
+void reduceDatafromGpus(void * dst, unsigned int dstGpuId, void * src, unsigned int srcGpuId, unsigned int size, artsLCSyncFunctionGpu_t fnPtr, unsigned int elementSize, void * dbData);
+void getDataFromStreamNow(unsigned int gpuId, void * dst, void * src, size_t count, bool buff);
+void copyGputoGpu(void * dst, unsigned int dstGpuId, void * src, unsigned int srcGpuId, unsigned int size);
+void doReductionNow(unsigned int gpuId, void * sink, void * src, artsLCSyncFunctionGpu_t fnPtr, unsigned int elementSize, unsigned int size);
 
 #ifdef __cplusplus
 }

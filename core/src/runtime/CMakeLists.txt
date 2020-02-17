@@ -42,6 +42,7 @@ set(runtime_inc
     ${CORE_INCLUDE_DIR}/artsServer.h
     ${CORE_INCLUDE_DIR}/artsRemoteFunctions.h
     ${CORE_INCLUDE_DIR}/artsEdtFunctions.h
+    ${CORE_INCLUDE_DIR}/artsEventFunctions.h
     ${CORE_INCLUDE_DIR}/artsDbFunctions.h
     ${CORE_INCLUDE_DIR}/artsDbList.h
     ${CORE_INCLUDE_DIR}/artsArrayDb.h

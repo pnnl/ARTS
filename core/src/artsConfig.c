@@ -896,6 +896,11 @@ struct artsConfig * artsConfigLoad()
     else
         config->gpuFit = 0;
 
+    if( (foundVariable = artsConfigFindVariable(&configVariables,"gpuLCSync")) != NULL)
+        config->gpuLCSync = strtol( foundVariable->value, &end , 10);
+    else
+        config->gpuLCSync = 0;
+
     if( (foundVariable = artsConfigFindVariable(&configVariables,"gpuMaxEdts")) != NULL)
         config->gpuMaxEdts = strtol( foundVariable->value, &end , 10);
     else
@@ -904,7 +909,7 @@ struct artsConfig * artsConfigLoad()
     if( (foundVariable = artsConfigFindVariable(&configVariables,"gpuMaxMemory")) != NULL)
         config->gpuMaxMemory = strtol( foundVariable->value, &end , 10);
     else
-        config->gpuMaxMemory = (size_t)-1;
+        config->gpuMaxMemory = (uint64_t)-1;
 
     if( (foundVariable = artsConfigFindVariable(&configVariables,"gpuP2P")) != NULL)
         config->gpuP2P = strtol( foundVariable->value, &end , 10) > 0;
@@ -920,6 +925,9 @@ struct artsConfig * artsConfigLoad()
         config->freeDbAfterGpuRun = strtol( foundVariable->value, &end , 10) > 0;
     else
         config->freeDbAfterGpuRun = false;
+    
+    if(config->freeDbAfterGpuRun)
+        PRINTF("FreeDbAfterGpuRun is turned on... This mode is intended for testing not performance.\n");
 
     if( (foundVariable = artsConfigFindVariable(&configVariables,"runGpuGcIdle")) != NULL)
         config->runGpuGcIdle = strtol( foundVariable->value, &end , 10) > 0;
@@ -930,6 +938,8 @@ struct artsConfig * artsConfigLoad()
         config->runGpuGcPreEdt = strtol( foundVariable->value, &end , 10) > 0;
     else
         config->runGpuGcPreEdt = false;
+    if(config->runGpuGcPreEdt)
+        PRINTF("RunGpuGcPreEdt is turned on... This mode is intended for testing not performance.\n");
 
     if( (foundVariable = artsConfigFindVariable(&configVariables,"deleteZerosGpuGc")) != NULL)
         config->deleteZerosGpuGc = strtol( foundVariable->value, &end , 10) > 0;

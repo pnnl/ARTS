@@ -44,21 +44,54 @@
 #include "artsGpuRuntime.h"
 #include "artsGpuStream.h"
 #include "artsGpuStreamBuffer.h"
+#include "artsGpuRouteTable.h"
 #include "artsEdtFunctions.h"
+#include "artsEventFunctions.h"
 #include "artsDbFunctions.h"
 #include "artsRuntime.h"
 #include "artsGlobals.h"
 #include "artsDeque.h"
 #include "artsOutOfOrder.h"
 #include "artsDebug.h"
+#include "artsGpuLCSyncFunctions.h"
+#include "artsTerminationDetection.h"
+#include "artsIntrospection.h"
 
 #define DPRINTF(...)
 // #define DPRINTF(...) PRINTF(__VA_ARGS__)
 
-#define CHECKCORRECT(x) {                                   \
-  cudaError_t err;                                          \
-  if( (err = (x)) != cudaSuccess )                          \
-    PRINTF("FAILED %s: %s\n", #x, cudaGetErrorString(err)); \
+__thread int artsSavedDeviceId = -1;
+__thread int artsCurrentDeviceId = -1;
+
+int artsGetCurrentGpu()
+{
+    if(artsCurrentDeviceId == -1)
+        CHECKCORRECT(cudaGetDevice(&artsCurrentDeviceId));
+
+    return artsCurrentDeviceId;
+}
+
+bool artsCudaSetDevice(int id, bool save)
+{
+    if(artsCurrentDeviceId == -1)
+        CHECKCORRECT(cudaGetDevice(&artsCurrentDeviceId));
+    
+    if(save)
+        artsSavedDeviceId = artsCurrentDeviceId;
+
+    if(id > -1 && id < artsNodeInfo.gpu && id != artsCurrentDeviceId)
+    {
+        CHECKCORRECT(cudaSetDevice(id));
+        artsCurrentDeviceId = id;
+        return true;
+    }
+
+    return false;
+}
+
+bool artsCudaRestoreDevice()
+{
+    return artsCudaSetDevice(artsSavedDeviceId, false);
 }
 
 void * artsCudaMallocHost(unsigned int size)
@@ -68,7 +101,6 @@ void * artsCudaMallocHost(unsigned int size)
     // ptr = artsCalloc(size);
     if(!ptr)
     {
-        PRINTF("artsCudaMallocHost failed\n");
         artsDebugPrintStack();
         exit(1);
     }
@@ -88,7 +120,7 @@ void * artsCudaMalloc(unsigned int size)
     CHECKCORRECT(cudaMalloc(&ptr, size));
     if(!ptr)
     {
-        PRINTF("artsCudaMalloc failed\n");
+        PRINTF("artsCudaMalloc failed %lu\n", artsGpus[artsCurrentDeviceId].availGlobalMem);
         artsDebugPrintStack();
         exit(1);
     }
@@ -99,6 +131,16 @@ void artsCudaFree(void * ptr)
 {
     if(ptr)
         CHECKCORRECT(cudaFree(ptr));
+}
+
+void artsCudaMemCpyFromDev(void * dst, void * src, size_t count)
+{
+    CHECKCORRECT(cudaMemcpy(dst, src, count, cudaMemcpyDeviceToHost));
+}
+
+void artsCudaMemCpyToDev(void * dst, void * src, size_t count)
+{
+    CHECKCORRECT(cudaMemcpy(dst, src, count, cudaMemcpyHostToDevice));
 }
 
 dim3 * artsGetGpuGrid()
@@ -127,16 +169,17 @@ unsigned int artsGetNumGpus()
 }
 
 artsGuid_t internalEdtCreateGpu(artsEdt_t funcPtr, artsGuid_t * guid, unsigned int route, uint32_t paramc, uint64_t * paramv, uint32_t depc, dim3 grid, dim3 block, 
-    artsGuid_t endGuid, uint32_t slot, artsGuid_t dataGuid, bool hasDepv, bool passThrough, bool lib)
+    artsGuid_t endGuid, uint32_t slot, artsGuid_t dataGuid, bool hasDepv, bool passThrough, bool lib, int gpuToRunOn)
 {
 //    ARTSEDTCOUNTERTIMERSTART(edtCreateCounter);
     unsigned int depSpace = (hasDepv) ? depc * sizeof(artsEdtDep_t) : 0;
     unsigned int edtSpace = sizeof(artsGpuEdt_t) + paramc * sizeof(uint64_t) + depSpace;
 
-    artsGpuEdt_t * edt = (artsGpuEdt_t *) artsMalloc(edtSpace);
+    artsGpuEdt_t * edt = (artsGpuEdt_t *) artsCalloc(edtSpace);
     edt->wrapperEdt.invalidateCount = 1;
     edt->grid = grid;
     edt->block = block;
+    edt->gpuToRunOn = gpuToRunOn;
     edt->endGuid = endGuid;
     edt->slot = slot;
     edt->dataGuid = dataGuid;
@@ -151,18 +194,23 @@ artsGuid_t internalEdtCreateGpu(artsEdt_t funcPtr, artsGuid_t * guid, unsigned i
 artsGuid_t artsEdtCreateGpuDep(artsEdt_t funcPtr, unsigned int route, uint32_t paramc, uint64_t * paramv, uint32_t depc, dim3 grid, dim3 block, artsGuid_t endGuid, uint32_t slot, artsGuid_t dataGuid, bool hasDepv)
 {
     artsGuid_t guid = NULL_GUID;
-    return internalEdtCreateGpu(funcPtr, &guid, route, paramc, paramv, depc, grid, block, endGuid, slot, dataGuid, hasDepv, false, false);
+    return internalEdtCreateGpu(funcPtr, &guid, route, paramc, paramv, depc, grid, block, endGuid, slot, dataGuid, hasDepv, false, false, -1);
 }
 
 artsGuid_t artsEdtCreateGpuPTDep(artsEdt_t funcPtr, unsigned int route, uint32_t paramc, uint64_t * paramv, uint32_t depc, dim3 grid, dim3 block, artsGuid_t endGuid, uint32_t slot, unsigned int passSlot, bool hasDepv)
 {
     artsGuid_t guid = NULL_GUID;
-    return internalEdtCreateGpu(funcPtr, &guid, route, paramc, paramv, depc, grid, block, endGuid, slot, (artsGuid_t) passSlot, hasDepv, true, false);
+    return internalEdtCreateGpu(funcPtr, &guid, route, paramc, paramv, depc, grid, block, endGuid, slot, (artsGuid_t) passSlot, hasDepv, true, false, -1);
 }
 
 artsGuid_t artsEdtCreateGpu(artsEdt_t funcPtr, unsigned int route, uint32_t paramc, uint64_t * paramv, uint32_t depc, dim3 grid, dim3 block, artsGuid_t endGuid, uint32_t slot, artsGuid_t dataGuid)
 {
     return artsEdtCreateGpuDep(funcPtr, route, paramc, paramv, depc, grid, block, endGuid, slot, dataGuid, true);
+}
+
+artsGuid_t artsEdtCreateGpuWithGuid(artsEdt_t funcPtr, artsGuid_t guid, uint32_t paramc, uint64_t * paramv, uint32_t depc, dim3 grid, dim3 block, artsGuid_t endGuid, uint32_t slot, artsGuid_t dataGuid)
+{
+    return internalEdtCreateGpu(funcPtr, &guid, artsGuidGetRank(guid), paramc, paramv, depc, grid, block, endGuid, slot, dataGuid, true, false, false, -1);
 }
 
 artsGuid_t artsEdtCreateGpuPT(artsEdt_t funcPtr, unsigned int route, uint32_t paramc, uint64_t * paramv, uint32_t depc, dim3 grid, dim3 block, artsGuid_t endGuid, uint32_t slot, unsigned int passSlot)
@@ -172,13 +220,30 @@ artsGuid_t artsEdtCreateGpuPT(artsEdt_t funcPtr, unsigned int route, uint32_t pa
 
 artsGuid_t artsEdtCreateGpuPTWithGuid(artsEdt_t funcPtr, artsGuid_t guid, uint32_t paramc, uint64_t * paramv, uint32_t depc, dim3 grid, dim3 block, artsGuid_t endGuid, uint32_t slot, unsigned int passSlot)
 {
-    return internalEdtCreateGpu(funcPtr, &guid, artsGuidGetRank(guid), paramc, paramv, depc, grid, block, endGuid, slot, (artsGuid_t) passSlot, true, true, false);
+    return internalEdtCreateGpu(funcPtr, &guid, artsGuidGetRank(guid), paramc, paramv, depc, grid, block, endGuid, slot, (artsGuid_t) passSlot, true, true, false, -1);
 }
 
 artsGuid_t artsEdtCreateGpuLib(artsEdt_t funcPtr, unsigned int route, uint32_t paramc, uint64_t * paramv, uint32_t depc, dim3 grid, dim3 block)
 {
     artsGuid_t guid = NULL_GUID;
-    return internalEdtCreateGpu(funcPtr, &guid, route, paramc, paramv, depc, grid, block, NULL_GUID, 0, NULL_GUID, true, false, true);
+    return internalEdtCreateGpu(funcPtr, &guid, route, paramc, paramv, depc, grid, block, NULL_GUID, 0, NULL_GUID, true, false, true, -1);
+}
+
+artsGuid_t artsEdtCreateGpuLibWithGuid(artsEdt_t funcPtr, artsGuid_t guid, uint32_t paramc, uint64_t * paramv, uint32_t depc, dim3 grid, dim3 block)
+{
+    return internalEdtCreateGpu(funcPtr, &guid, artsGuidGetRank(guid), paramc, paramv, depc, grid, block, NULL_GUID, 0, NULL_GUID, true, false, true, -1);
+}
+
+artsGuid_t artsEdtCreateGpuDirect(artsEdt_t funcPtr, unsigned int route, unsigned int gpu, uint32_t paramc, uint64_t * paramv, uint32_t depc, dim3 grid, dim3 block, artsGuid_t endGuid, uint32_t slot, artsGuid_t dataGuid, bool hasDepv)
+{
+    artsGuid_t guid = NULL_GUID;
+    return internalEdtCreateGpu(funcPtr, &guid, route, paramc, paramv, depc, grid, block, endGuid, slot, dataGuid, hasDepv, false, false, gpu);
+}
+
+artsGuid_t artsEdtCreateGpuLibDirect(artsEdt_t funcPtr, unsigned int route, unsigned int gpu, uint32_t paramc, uint64_t * paramv, uint32_t depc, dim3 grid, dim3 block)
+{
+    artsGuid_t guid = NULL_GUID;
+    return internalEdtCreateGpu(funcPtr, &guid, route, paramc, paramv, depc, grid, block, NULL_GUID, 0, NULL_GUID, true, false, true, gpu);
 }
 
 void artsRunGpu(void *edtPacket, artsGpu_t * artsGpu)
@@ -190,13 +255,11 @@ void artsRunGpu(void *edtPacket, artsGpu_t * artsGpu)
     uint64_t     * paramv = (uint64_t *)(edt + 1);
     artsEdtDep_t * depv   = (artsEdtDep_t *)(paramv + paramc);
 
-    int savedDevice;
-    cudaGetDevice(&savedDevice);
-    CHECKCORRECT(cudaSetDevice(artsGpu->device));
+    artsCudaSetDevice(artsGpu->device, true);
 
     if(artsNodeInfo.runGpuGcPreEdt)
     {
-        DPRINTF("Running Pre Edt GPU GC: %u\n", artsGpu->device);
+        // PRINTF("Running Pre Edt GPU GC: %u\n", artsGpu->device);
         uint64_t freeMemSize = artsGpuCleanUpRouteTable((unsigned int) -1, artsNodeInfo.deleteZerosGpuGc, (unsigned int) artsGpu->device);
         artsAtomicAddU64(&artsGpu->availGlobalMem, freeMemSize);
         artsAtomicAddU64(&freeBytes, freeMemSize);
@@ -204,10 +267,10 @@ void artsRunGpu(void *edtPacket, artsGpu_t * artsGpu)
 
     artsAtomicAdd(&artsGpu->runningEdts, 1U);
 
-    prepDbs(depc, depv);
+    prepDbs(depc, depv, true);
     artsScheduleToGpu(func, paramc, paramv, depc, depv, edtPacket, artsGpu);
 
-    CHECKCORRECT(cudaSetDevice(savedDevice));
+    artsCudaRestoreDevice();
 }
 
 void artsGpuHostWrapUp(void *edtPacket, artsGuid_t toSignal, uint32_t slot, artsGuid_t dataGuid)
@@ -218,10 +281,16 @@ void artsGpuHostWrapUp(void *edtPacket, artsGuid_t toSignal, uint32_t slot, arts
     uint64_t     * paramv = (uint64_t *)(edt + 1);
     artsEdtDep_t * depv   = (artsEdtDep_t *)(paramv + paramc);
 
+    releaseDbs(depc, depv, true);
+
     if(edt->lib)
     {
         edt->wrapperEdt.invalidateCount = 0;
         artsRouteTableFireOO(edt->wrapperEdt.currentEdt, artsOutOfOrderHandler);
+    }
+    else if(edt->wrapperEdt.epochGuid)
+    {
+        incrementFinishedEpoch(edt->wrapperEdt.epochGuid);
     }
 
     DPRINTF("TO SIGNAL: %lu -> %lu slot: %u\n", toSignal, dataGuid, slot);
@@ -241,10 +310,7 @@ void artsGpuHostWrapUp(void *edtPacket, artsGuid_t toSignal, uint32_t slot, arts
                 artsSetBuffer(toSignal, 0, 0);
         }
     }
-
-    releaseDbs(depc, depv);
     artsEdtDelete((struct artsEdt *)edtPacket);
-
 }
 
 struct artsEdt * artsRuntimeStealGpuTask()
@@ -298,15 +364,132 @@ bool artsGpuSchedulerLoop()
         gpuId = gpuId % artsNodeInfo.gpu;
         artsGpu = &artsGpus[gpuId];
         DPRINTF("Running Idle GPU GC: %u\n", gpuId);
-        int savedDevice;
-        cudaGetDevice(&savedDevice);
-        CHECKCORRECT(cudaSetDevice(artsGpu->device));
+        artsCudaSetDevice(artsGpu->device, true);
 
         uint64_t freeMemSize = artsGpuCleanUpRouteTable((unsigned int) -1, artsNodeInfo.deleteZerosGpuGc, (unsigned int) artsGpu->device);
         artsAtomicAddU64(&artsGpu->availGlobalMem, freeMemSize);
         artsAtomicAddU64(&freeBytes, freeMemSize);
 
-        CHECKCORRECT(cudaSetDevice(savedDevice));
+        artsCudaRestoreDevice();
+    }
+
+    return ranCpuEdt;
+}
+
+#define GCHARDLIMIT 2000000000000
+__thread unsigned int backoff = 1;
+__thread unsigned int gcCounter = 0;
+
+bool artsGpuSchedulerBackoffLoop()
+{
+    artsGpu_t * artsGpu = NULL;
+    artsHandleNewEdts();
+
+    struct artsEdt * edtFound = (struct artsEdt *) NULL;
+    if(!(edtFound = (struct artsEdt *)artsDequePopFront(artsThreadInfo.myGpuDeque)))
+    {
+        if(!edtFound)
+            edtFound = artsRuntimeStealGpuTask();
+    }
+
+    bool ranGpuEdt = false;
+    if(edtFound)
+    {
+        artsGpu = artsFindGpu(edtFound);
+        if (artsGpu)
+        {
+            artsRunGpu(edtFound, artsGpu);
+            ranGpuEdt = true;
+        }
+        else
+            artsDequePushFront(artsThreadInfo.myGpuDeque, edtFound, 0);
+    }
+
+    if(!ranGpuEdt)
+        checkStreams(artsNodeInfo.gpuBuffOn);
+
+    bool ranCpuEdt = artsDefaultSchedulerLoop();
+
+    if(ranCpuEdt || ranGpuEdt)
+        backoff = 1;
+
+    if(!ranGpuEdt && !ranCpuEdt)
+    {
+        if(artsNodeInfo.runGpuGcIdle && gcCounter % backoff == 0)
+        {
+            long unsigned int gpuId = jrand48(artsThreadInfo.drand_buf);
+            gpuId = gpuId % artsNodeInfo.gpu;
+            artsGpu = &artsGpus[gpuId];
+            DPRINTF("Running Idle GPU GC: %u\n", gpuId);
+            artsCudaSetDevice(artsGpu->device, true);
+
+            uint64_t freeMemSize = artsGpuCleanUpRouteTable((unsigned int) -1, artsNodeInfo.deleteZerosGpuGc, (unsigned int) artsGpu->device);
+            artsAtomicAddU64(&artsGpu->availGlobalMem, freeMemSize);
+            artsAtomicAddU64(&freeBytes, freeMemSize);
+
+            artsCudaRestoreDevice();
+
+            if(backoff < GCHARDLIMIT)
+                backoff*=32;
+            if(!backoff)
+                backoff = 1;
+            DPRINTF("Backoff: %u\n", backoff);
+        }
+        gcCounter++;
+    }
+
+    return ranCpuEdt;
+}
+
+extern __thread unsigned int runGCFlag;
+
+bool artsGpuSchedulerDemandLoop()
+{
+    artsGpu_t * artsGpu = NULL;
+    artsHandleNewEdts();
+
+    struct artsEdt * edtFound = (struct artsEdt *) NULL;
+    if(!(edtFound = (struct artsEdt *)artsDequePopFront(artsThreadInfo.myGpuDeque)))
+    {
+        if(!edtFound)
+            edtFound = artsRuntimeStealGpuTask();
+    }
+
+    bool ranGpuEdt = false;
+    if(edtFound)
+    {
+        artsGpu = artsFindGpu(edtFound);
+        if (artsGpu)
+        {
+            artsRunGpu(edtFound, artsGpu);
+            ranGpuEdt = true;
+        }
+        else
+            artsDequePushFront(artsThreadInfo.myGpuDeque, edtFound, 0);
+    }
+
+    if(!ranGpuEdt)
+        checkStreams(artsNodeInfo.gpuBuffOn);
+
+    bool ranCpuEdt = artsDefaultSchedulerLoop();
+
+    if(!ranGpuEdt && !ranCpuEdt)
+    {
+        if(artsNodeInfo.runGpuGcIdle && runGCFlag)
+        {
+            long unsigned int gpuId = runGCFlag -1;
+            runGCFlag = 0;
+            
+            artsGpu = &artsGpus[gpuId];
+            DPRINTF("Running Idle GPU GC: %u\n", gpuId);
+            artsCudaSetDevice(artsGpu->device, true);
+
+            uint64_t freeMemSize = artsGpuCleanUpRouteTable((unsigned int) -1, artsNodeInfo.deleteZerosGpuGc, (unsigned int) artsGpu->device);
+            artsAtomicAddU64(&artsGpu->availGlobalMem, freeMemSize);
+            artsAtomicAddU64(&freeBytes, freeMemSize);
+
+            artsCudaRestoreDevice();
+        }
     }
 
     return ranCpuEdt;
@@ -334,5 +517,179 @@ void artsPutInDbFromGpu(void * ptr, artsGuid_t dbGuid, unsigned int offset, unsi
         }
         if(freeData)
             artsGpuRouteTableAddItemToDeleteRace(ptr, 0, dbGuid, artsLocalGpuId);
+    }
+}
+
+__device__ uint64_t internalGetGpuIndex(uint64_t * paramv)
+{
+    return *(paramv - 1);
+}
+
+artsLCSyncFunction_t lcSyncFunction[] = {
+    artsMemcpyGpuDb,
+    artsGetLatestGpuDb,
+    artsGetRandomGpuDb,
+    artsGetNonZerosUnsignedInt,
+    artsGetMinDbUnsignedInt,
+    artsAddDbUnsignedInt,
+    artsXorDbUint64
+};
+
+artsLCSyncFunctionGpu_t lcSyncFunctionGpu[] = {
+    artsCopyGpuDb,
+    artsCopyGpuDb,
+    artsCopyGpuDb,
+    artsNonZeroGpuDbUnsignedInt,
+    artsMinGpuDbUnsignedInt,
+    artsAddGpuDbUnsignedInt,
+    artsXorGpuDbUint64
+};
+
+unsigned int lcSyncElementSize[] = {
+    sizeof(unsigned int),
+    sizeof(unsigned int),
+    sizeof(unsigned int),
+    sizeof(unsigned int),
+    sizeof(unsigned int),
+    sizeof(unsigned int),
+    sizeof(uint64_t)
+};
+
+void internalLCSyncGPU(artsGuid_t acqGuid, struct artsDb * db)
+{
+    if(db)
+    {
+        artsLCMeta_t host;
+        artsLCMeta_t dev;
+        host.guid = acqGuid;
+        host.data = (void*) (db+1);
+        host.dataSize = db->header.size - sizeof(struct artsDb);
+        host.hostVersion = &db->version;
+        host.hostTimeStamp = &db->timeStamp;
+        host.gpuVersion = 0;
+        host.gpuTimeStamp = 0;
+        host.gpu = -1;
+        host.readLock = &db->reader;
+        host.writeLock = &db->writer;
+
+        artsCudaSetDevice(-1, true);
+
+        bool copyOnly = false;
+        unsigned int size = db->header.size;
+        struct artsDb * tempSpace = (struct artsDb *)artsMalloc(size);
+
+        gpuGCWriteLock(); //Don't let the gc take our copies...
+        DPRINTF("FUNCTION: %u\n", artsNodeInfo.gpuLCSync);
+        unsigned int remMask = gpuLCReduce(acqGuid, db, lcSyncFunctionGpu[artsNodeInfo.gpuLCSync], &copyOnly);
+        DPRINTF("RemMask: %u\n", remMask);
+        for(int i=0; i<artsNodeInfo.gpu; i++)
+        {
+            if(remMask & (1 << i))
+            {
+                DPRINTF("Merging: %u\n", i);
+                unsigned int gpuVersion;
+                unsigned int timeStamp;
+                void * dataPtr = artsGpuRouteTableLookupDbRes(acqGuid, i, &gpuVersion, &timeStamp, false);
+                if(dataPtr)
+                {
+                    if(!copyOnly)
+                        artsGpuInvalidateOnRouteTable(acqGuid, i);
+
+                    artsCudaSetDevice(i, false);
+                    getDataFromStreamNow(i, tempSpace, dataPtr, size, false);
+                    artsGpuRouteTableReturnDb(acqGuid, !copyOnly, i);
+
+                    dev.guid = acqGuid;
+                    dev.data = (void*) (tempSpace+1);
+                    dev.dataSize = tempSpace->header.size - sizeof(struct artsDb);
+                    dev.hostVersion = &tempSpace->version;
+                    dev.hostTimeStamp = &tempSpace->timeStamp;
+                    dev.gpuVersion = gpuVersion;
+                    dev.gpuTimeStamp = timeStamp;
+                    dev.gpu = i;
+                    dev.readLock = NULL;
+                    dev.writeLock = NULL;
+                    if(copyOnly)
+                        lcSyncFunction[0](&host, &dev);
+                    else
+                        lcSyncFunction[artsNodeInfo.gpuLCSync](&host, &dev);
+
+                    artsUpdatePerformanceMetric(artsGpuSync, artsThread, 1, false);
+                }
+            }
+            else
+            {
+                DPRINTF("NO DB COPY ON GPU %d\n", i);
+            }
+        }
+        gpuGCWriteUnlock();
+        artsFree(tempSpace);
+        artsCudaRestoreDevice();
+    }
+}
+
+void internalLCSyncCPU(artsGuid_t acqGuid, struct artsDb * db)
+{
+//     unsigned int rank = artsGuidGetRank(acqGuid);
+//     if(rank==artsGlobalRankId)
+    {
+        // struct artsDb * db = (struct artsDb*) artsRouteTableLookupItem(acqGuid);
+        if(db)
+        {
+            artsLCMeta_t host;
+            artsLCMeta_t dev;
+            host.guid = acqGuid;
+            host.data = (void*) (db+1);
+            host.dataSize = db->header.size - sizeof(struct artsDb);
+            host.hostVersion = &db->version;
+            host.hostTimeStamp = &db->timeStamp;
+            host.gpuVersion = 0;
+            host.gpuTimeStamp = 0;
+            host.gpu = -1;
+            host.readLock = &db->reader;
+            host.writeLock = &db->writer;
+
+            // artsCudaSetDevice(-1, true);
+
+            unsigned int size = db->header.size;
+            struct artsDb * tempSpace = (struct artsDb *)artsMalloc(size);
+            gpuGCWriteLock(); //Don't let the gc take our copies...
+            for(int i=0; i<artsNodeInfo.gpu; i++)
+            {
+                unsigned int gpuVersion;
+                unsigned int timeStamp;
+                DPRINTF("acqGuid: %lu type: %u i: %u\n", acqGuid, artsGuidGetType(acqGuid), i);
+                void * dataPtr = artsGpuRouteTableLookupDb(acqGuid, i, &gpuVersion, &timeStamp);
+                if(dataPtr)
+                {
+                    DPRINTF("i: %u %lu\n", i, acqGuid);
+                    artsGpuInvalidateOnRouteTable(acqGuid, i);
+                    // artsCudaSetDevice(i, false);
+                    
+                    // artsCudaMemCpyFromDev(tempSpace, dataPtr, size);
+                    getDataFromStreamNow(i, tempSpace, dataPtr, size, false);
+                    artsGpuRouteTableReturnDb(acqGuid, true, i);
+                    
+                    dev.guid = acqGuid;
+                    dev.data = (void*) (tempSpace+1);
+                    dev.dataSize = tempSpace->header.size - sizeof(struct artsDb);
+                    dev.hostVersion = &tempSpace->version;
+                    dev.hostTimeStamp = &tempSpace->timeStamp;
+                    dev.gpuVersion = gpuVersion;
+                    dev.gpuTimeStamp = timeStamp;
+                    dev.gpu = i;
+                    dev.readLock = NULL;
+                    dev.writeLock = NULL;
+                    lcSyncFunction[artsNodeInfo.gpuLCSync](&host, &dev);
+                }
+                else
+                {
+                    DPRINTF("NO DB COPY ON GPU %d\n", i);
+                }
+            }
+            gpuGCWriteUnlock();
+            artsFree(tempSpace);
+            // artsCudaRestoreDevice();
+        }
     }
 }

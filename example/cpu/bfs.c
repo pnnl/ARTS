@@ -49,14 +49,14 @@
 #define DPRINTF(...)
 //#define DPRINTF(...) PRINTF(__VA_ARGS__)
 
-arts_block_dist_t distribution;
-csr_graph graph;
+arts_block_dist_t * distribution;
+csr_graph_t * graph;
 uint64_t* level;
 
 void bfs_output() {
     DPRINTF("Printing vertex levels....\n");
     uint64_t i;
-    for (i = 0; i < graph.num_local_vertices; ++i) {
+    for (i = 0; i < graph->num_local_vertices; ++i) {
         DPRINTF("Local vertex : %" PRIu64 ", Level : %" PRIu64 "\n", i, level[i]);
     }
 }
@@ -66,16 +66,16 @@ void exitProgram(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t
     artsShutdown();
 }
 
-void bfs_send(vertex u, uint64_t ulevel);
+void bfs_send(vertex_t u, uint64_t ulevel);
 
 void relax(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t depv[]) {
     DPRINTF("calling relax\n");
     assert(paramc == 2);
-    vertex v = (vertex) paramv[0];
+    vertex_t v = (vertex_t) paramv[0];
     uint64_t vlevel = paramv[1];
 
-    local_index_t indexv = getLocalIndex(v, &distribution);
-    assert(indexv < graph.num_local_vertices);
+    local_index_t indexv = getLocalIndexDistr(v, distribution);
+    assert(indexv < graph->num_local_vertices);
 
     uint64_t oldlevel = level[indexv];
     bool success = false;
@@ -93,16 +93,16 @@ void relax(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t depv[
     if (success) {
         // notify neighbors
         // get neighbors
-        vertex* neighbors = NULL;
+        vertex_t* neighbors = NULL;
         uint64_t neighbor_cnt = 0;
-        getNeighbors(&graph, v,
+        getNeighbors(graph, v,
                 &neighbors,
                 &neighbor_cnt);
 
         // iterate over neighbors
         uint64_t neigbrlevel = level[indexv] + 1;
         for (uint64_t i = 0; i < neighbor_cnt; ++i) {
-            vertex u = neighbors[i];
+            vertex_t u = neighbors[i];
 
             // route message
             DPRINTF("sending u=%" PRIu64 ", level= %" PRIu64 "\n", u, neigbrlevel);
@@ -111,8 +111,8 @@ void relax(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t depv[
     }
 }
 
-void bfs_send(vertex u, uint64_t ulevel) {
-    artsGuid_t* neighbDbguid = getGuidForVertex(u, &distribution);
+void bfs_send(vertex_t u, uint64_t ulevel) {
+    artsGuid_t neighbDbguid = getGuidForVertexDistr(u, distribution);
     uint64_t send[2];
     send[0] = u;
     send[1] = ulevel;
@@ -120,12 +120,12 @@ void bfs_send(vertex u, uint64_t ulevel) {
             2, // number of parameters
             send, // parameters
             0, // additional deps
-            (*neighbDbguid)); // this is the guid to co-locate task with
+            neighbDbguid); // this is the guid to co-locate task with
 }
 
 void kickoffTermination(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t depv[]) {
     PRINTF("Kick off\n");
-    vertex source = (vertex) paramv[0];
+    vertex_t source = (vertex_t) paramv[0];
     bfs_send(source, 0);
 }
 
@@ -168,19 +168,16 @@ void initPerNode(unsigned int nodeId, int argc, char** argv) {
     
     
     
-  // distribution must be initialized in initPerNode
-  initBlockDistributionWithCmdLineArgs(&distribution, 
-                                       argc, argv);
-  // set-up the graph
-  loadGraphUsingCmdLineArgs(&graph,
-			    &distribution,
-			    argc,
-			    argv);
+    // distribution must be initialized in initPerNode
+    distribution = initBlockDistributionWithCmdLineArgs(argc, argv);
+    // set-up the graph
+    loadGraphUsingCmdLineArgs(distribution, argc, argv);
+    graph = getGraphFromPartition(nodeId, distribution);
 
     // should probably encapsulate into something
-    level = (uint64_t *) artsMalloc(graph.num_local_vertices * sizeof (uint64_t));
+    level = (uint64_t *) artsMalloc(graph->num_local_vertices * sizeof (uint64_t));
     // initialize the level array
-    for (uint64_t i = 0; i < graph.num_local_vertices; ++i) {
+    for (uint64_t i = 0; i < graph->num_local_vertices; ++i) {
         level[i] = UINT64_MAX;
     }
 }
@@ -188,15 +185,15 @@ void initPerNode(unsigned int nodeId, int argc, char** argv) {
 void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc, char** argv) {
 
     if (!workerId) {
-        // find the source vertex
-        vertex source;
+        // find the source vertex_t
+        vertex_t source;
         for (int i = 0; i < argc; ++i) {
             if (strcmp("--source", argv[i]) == 0) {
                 sscanf(argv[i + 1], "%" SCNu64, &source);
             }
         }
 
-        assert(source < distribution.num_vertices);
+        assert(source < distribution->num_vertices);
 
         if (!nodeId) {
             artsGuid_t exitGuid = artsEdtCreate(exitProgram, 0, 0, NULL, 1);
