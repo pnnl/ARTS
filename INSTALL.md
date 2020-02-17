@@ -157,9 +157,9 @@ Next run histo
 [0] HIT RATIO: 0.000000
 ```
 
-For slurm:
+For slurm using 8 nodes and 20 threads:
 ```
-srun -N 1 -n 1 -c 20 ./gpuHisto
+srun -N 8 -n 8 -c 20 ./gpuHisto
 ```
 
 To run the Random Access example, go to the random access directory under /build-path/examples/gpu/randomAccess.
@@ -186,9 +186,9 @@ Next run:
 [0] HIT RATIO: 0.408784
 ```
 
-For slurm:
+For slurm using 1 node and 20 threads:
 ```
-srun -N 8 -n 8 -c 20 ./randomAccess
+srun -N 1 -n 1 -c 20 ./randomAccess
 ```
 
 To run the Stream example, go to the random access directory under /build-path/examples/gpu/stream.
@@ -237,7 +237,7 @@ Solution Validates
 [0] HIT RATIO: 0.120000
 ```
 
-For slurm: 
+For slurm using 1 node and 20 threads: 
 ```
 srun -N 1 -n 1 -c 20 ./stream
 ```
