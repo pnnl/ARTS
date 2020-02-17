@@ -138,7 +138,7 @@ The example above uses 8 nodes each with 20 threads.
 
 To run the histogram example, go to the histogram directory under /build-path/examples/gpu/histogram.
 Next run histo
-
+```
 ./gpuHist
 [0] ArraySize = 1048576 | tileSize = 128 | numBlocks: 8192 | numGpus: 8
 [0] Starting...
@@ -155,14 +155,17 @@ Next run histo
 [0]     GPU[7] = 0.250000
 [0] HITS: 0 MISSES: 24577 FREED BYTES: 7058192 BYTES FREED ON EXIT 150904
 [0] HIT RATIO: 0.000000
+```
 
 For slurm:
+```
 srun -N 1 -n 1 -c 20 ./gpuHisto
+```
 
 To run the Random Access example, go to the random access directory under /build-path/examples/gpu/randomAccess.
 Set gpuLCSync=6 and make sure the number of GPU is correct in the arts.cfg file.
 Next run: 
-
+```
 ./randomAccess
 [0] Random Access Table Size: 167772160 Tile Size: 20971520 Number of Tiles: 8
 [0] NumGpus: 8 numUpdatesPerGpu: 335544320
@@ -181,14 +184,17 @@ Next run:
 [0]     GPU[7] = 0.250000
 [0] HITS: 121 MISSES: 175 FREED BYTES: 0 BYTES FREED ON EXIT 106703134272
 [0] HIT RATIO: 0.408784
+```
 
 For slurm:
+```
 srun -N 8 -n 8 -c 20 ./randomAccess
+```
 
 To run the Stream example, go to the random access directory under /build-path/examples/gpu/stream.
 Set make sure the number of GPU is correct in the arts.cfg file.
 Next run:
-
+```
 ./stream 
 [0] N: 2000000 tileSize: 1048576 numTiles: 2 Gpus: 8
 -------------------------------------------------------------
@@ -229,9 +235,12 @@ Solution Validates
 [0]     GPU[7] = 0.007812
 [0] HITS: 24 MISSES: 176 FREED BYTES: 0 BYTES FREED ON EXIT 1476412672
 [0] HIT RATIO: 0.120000
+```
 
 For slurm: 
+```
 srun -N 1 -n 1 -c 20 ./stream
+```
 
 User Guide
 ==========
