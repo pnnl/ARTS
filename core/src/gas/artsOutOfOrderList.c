@@ -80,7 +80,7 @@ void readerOOUnlock(struct artsOutOfOrderList *  list)
 
 void writerOOLock(struct artsOutOfOrderList *  list, unsigned int lockType)
 {
-    while(artsAtomicCswap(&list->writerLock, 0U, lockType) == 0U);
+    while(artsAtomicCswap(&list->writerLock, 0U, lockType) != 0U);
     while(list->readerLock);
     return;
 }

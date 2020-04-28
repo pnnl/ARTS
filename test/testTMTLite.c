@@ -36,56 +36,73 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef ARTSARRAYLIST_H
-#define	ARTSARRAYLIST_H
-#ifdef __cplusplus
-extern "C" {
-#endif
-
+#include <stdio.h>
+#include <stdlib.h>
 #include "arts.h"
-    
-typedef struct artsArrayListElement artsArrayListElement;
+#include "shadAdapter.h"
+#include "artsTMTLite.h"
+#include "artsAtomics.h"
+#include "pthread.h"
 
-struct artsArrayListElement {
-    uint64_t start;
-    artsArrayListElement * next;
-    void * array;
-};
+#define EDTCOUNT 2
+volatile uint64_t ulock = 0x8000000000000000ULL;
+volatile unsigned int lock = 0;
+unsigned int count = 0;
 
-typedef struct {
-    size_t elementSize;
-    size_t arrayLength;
-    artsArrayListElement * head;
-    artsArrayListElement * current;
-    uint64_t index;
-    uint64_t lastRequest;
-    void * lastRequestPtr;
-} artsArrayList;
-
-typedef struct {
-    uint64_t index;
-    uint64_t last;
-    size_t elementSize;
-    size_t arrayLength;
-    artsArrayListElement * current;
-} artsArrayListIterator;
-
-artsArrayListElement * artsNewArrayListElement(uint64_t start, size_t elementSize, size_t arrayLength);
-artsArrayList * artsNewArrayList(size_t elementSize, size_t arrayLength);
-void artsDeleteArrayList(artsArrayList * aList);
-uint64_t artsPushToArrayList(artsArrayList * aList, void * element);
-void * artsNextFreeFromArrayList(artsArrayList * aList);
-void artsResetArrayList(artsArrayList * aList);
-uint64_t artsLengthArrayList(artsArrayList * aList);
-void * artsGetFromArrayList(artsArrayList * aList, uint64_t index);
-artsArrayListIterator * artsNewArrayListIterator(artsArrayList * aList);
-void * artsArrayListNext(artsArrayListIterator * iter);
-bool artsArrayListHasNext(artsArrayListIterator * iter);
-void artsDeleteArrayListIterator(artsArrayListIterator * iter);
-
-#ifdef __cplusplus
+void locker(volatile unsigned int * lock)
+{
+    // if(!artsTryLock(lock))
+    // {
+    //     artsCreateLiteContexts(lock);
+    //     while(!artsTryLock(lock)) 
+    //     { 
+    //         artsResumeLiteContext(); 
+    //     }
+    // }
+    // artsResumeLiteContext();
+    // if(!artsTryLock(lock))
+    // {
+    //     artsCreateLiteContexts();
+    //     while(!artsTryLock(lock)) { pthread_yield(); }
+    // }
+    // artsResumeLiteContext();
 }
-#endif
 
-#endif	/* LIST_H */
+void tester(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t depv[])
+{
+    // locker(&lock);
+    artsShadTMTLock(&ulock);
+    unsigned int local = ++count;
+    PRINTF("Done  %u:%u Local: %u\n", artsGetCurrentWorker(), artsTMTLiteGetAlias(), local);
+    // if(!artsGetCurrentWorker() && !artsTMTLiteGetAlias())
+        // sleep(5);
+    artsTMTLiteGetAlias();
+    artsShadTMTUnlock(&ulock);
+    // artsUnlock(&lock);
+    
+    if(local == EDTCOUNT)
+    {
+        PRINTF("SHUTTING DOWN %u\n", count);
+        artsShutdown();
+    }
+}
 
+void initPerNode(unsigned int nodeId, unsigned int workerId, int argc, char** argv)
+{
+    PRINTF("%u -- %u\n", artsGetTotalWorkers(), artsGetCurrentWorker());
+}
+
+void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc, char** argv)
+{   
+    for(unsigned int i=0; i<EDTCOUNT; i++)
+    {
+        if(i % artsGetTotalWorkers() == workerId)
+            artsEdtCreate(tester, 0, 0, NULL, 0);
+    }
+}
+
+int main(int argc, char** argv)
+{
+    artsRT(argc, argv);
+    return 0;
+}

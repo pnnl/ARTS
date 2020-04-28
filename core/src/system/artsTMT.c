@@ -71,7 +71,7 @@
 #include "artsEdtFunctions.h"
 #include "artsRemoteFunctions.h"
 #include "artsThreads.h"
-
+#include "artsDebug.h"
 #include "artsTMT.h"
 
 #define DPRINTF( ... )
@@ -83,6 +83,7 @@ msi_t * _arts_tMT_msi = NULL; // tMT shared data structure
 __thread unsigned int aliasId = 0;
 __thread msi_t * localPool = NULL;
 __thread internalMsi_t * localInternal = NULL;
+__thread bool tmtShutdownFlag = false;
 
 static inline internalMsi_t * artsGetMsiOffsetPtr(internalMsi_t * head, unsigned int thread)
 {
@@ -177,12 +178,12 @@ static void* artsAliasThreadLoop(void* arg)
     localPool = &_arts_tMT_msi[artsThreadInfo.groupId];
     localInternal = tArgs->localInternal;
     localInternal->alive[(aliasId % numAT)] = &artsThreadInfo.alive;
+    localInternal->initShutdown[(aliasId % numAT)] = &tmtShutdownFlag;
     if(artsNodeInfo.pinThreads)
     {
         DPRINTF("PINNING to %u:%u\n", artsThreadInfo.groupId, aliasId);
-        artsPthreadAffinity(artsThreadInfo.coreId);
+        artsPthreadAffinity(artsThreadInfo.coreId, true);
 //        artsAbstractMachineModelPinThread(artsThreadInfo.coreId);
-        
     }
 
     artsAccessorState(&localInternal->alias_running, aliasId % numAT, true);
@@ -194,13 +195,10 @@ static void* artsAliasThreadLoop(void* arg)
     }
     
     artsAtomicSub(&localInternal->startUpCount, 1);
-
     artsPutToSleep(artsGlobalRankId, localInternal, aliasId % numAT, true); //Toggle availability
     ONLY_ONE_THREAD;
     
     artsRuntimeLoop();
-    
-    sem_post(&localInternal->sem[0]);
     artsAtomicSub(&localInternal->shutDownCount, 1);
 }
 
@@ -255,13 +253,7 @@ static inline void artsCreateContexts(struct artsRuntimePrivate * semiPrivate, i
 static inline void artsDestroyContexts(internalMsi_t * ptr, bool head) {
 #ifdef PT_CONTEXTS
     unsigned int numAT = artsNodeInfo.tMT;
-    unsigned int start = (head) ? 1 : 0;
     unsigned int end = (head) ? numAT-1 : numAT;
-    DPRINTF("SHUTDOWN ALIAS %u: %u\n", artsThreadInfo.groupId, ptr->shutDownCount);
-    while(ptr->shutDownCount) {
-        for(unsigned int i=start; i<numAT; i++)
-            sem_post(&ptr->sem[i]);
-    }
     
     DPRINTF("ALIAS JOIN: %u\n", artsThreadInfo.groupId);
     for(unsigned int i=0; i<end; i++)
@@ -315,7 +307,11 @@ void artsTMTConstructNewInternalMsi(msi_t * root, unsigned int numAT, struct art
     ptr->aliasThreads = (pthread_t*) artsMalloc(sizeof (pthread_t) * (total));
     ptr->sem = (sem_t*) artsMalloc(sizeof (sem_t) * (numAT));
     ptr->alive = (volatile bool**) artsCalloc(sizeof(bool*) * numAT);
+    ptr->initShutdown = (volatile bool**) artsCalloc(sizeof(bool*) * numAT);
     ptr->alias_running = (offset) ? 0UL : 1U; // MT is running on thread 0
+    
+    if(!offset)
+        ptr->initShutdown[0] = &tmtShutdownFlag;
     
     //More clever ways break for 64 alias
     //Start at 1 since MT is bit 0 and is running
@@ -343,26 +339,70 @@ void artsTMTRuntimePrivateInit(struct threadMask* unit, struct artsRuntimePrivat
     artsTMTConstructNewInternalMsi(localPool, artsNodeInfo.tMT, semiPrivate);
 }
 
-void artsTMTRuntimeStop()
+//Shutdown is painful...  We use a two phased approach.
+//1. Indicate we need to shut down using initShutdown
+//2. Whatever thread wakes up next will see it is time to close and switch to 
+//   thread aliasId = 0 and then turn off alive flag for the rest of the alias 
+//   threads.  Next we wait of a single threads aliases to exit then we turn off
+//   our local spin flag, and the thread will go into rt cleanup mode.
+bool artsTMTRuntimeStop()
 {
     if(artsNodeInfo.tMT)
     {
+        DPRINTF("SETTING STOP FLAG: %u %u\n", artsThreadInfo.groupId, aliasId);
         for(unsigned int j=0; j<artsNodeInfo.workerThreadCount; j++)
         {
             for(internalMsi_t * ptr = _arts_tMT_msi[j].head; ptr!=NULL; ptr=ptr->next)
             {
                 for(unsigned int i=0; i<artsNodeInfo.tMT; i++)
                 {
-                    if(ptr->alive[i])
-                        *ptr->alive[i] = false;
+                    *(ptr->initShutdown[i]) = true;
                 }
             }
         }
+        return false;
     }
+    return true;
+}
+
+bool artsTMTCheckShutdown()
+{
+    if(tmtShutdownFlag)
+    {
+        if(aliasId)
+        {
+            artsPutToWork(artsGlobalRankId, localPool->head, 0, true); //available so flip
+            artsPutToSleep(artsGlobalRankId, localInternal, aliasId % artsNodeInfo.tMT, true);
+        }
+        else
+        {
+            DPRINTF("THE STOP %u %u\n", artsThreadInfo.groupId, aliasId);
+            for(internalMsi_t * ptr = localPool->head; ptr!=NULL; ptr=ptr->next)
+            {
+                for(unsigned int i=0; i<artsNodeInfo.tMT; i++)
+                {
+                    if(ptr->alive[i])
+                        *ptr->alive[i] = false;
+                }
+                
+                while(ptr->shutDownCount) {
+                    for(unsigned int i=0; i<artsNodeInfo.tMT; i++)
+                        sem_post(&ptr->sem[i]);
+                }
+            }
+            
+            while(!artsNodeInfo.localSpin[artsThreadInfo.groupId]);
+            (*artsNodeInfo.localSpin[artsThreadInfo.groupId]) = false;
+            
+            return true;
+        }
+    }
+    return false;
 }
 
 void artsTMTRuntimePrivateCleanup()
 {
+    DPRINTF("TMT CLEANUP\n");
     if(artsNodeInfo.tMT)
     {
         bool head = true;
@@ -392,19 +432,19 @@ void artsNextContext()
         }
         else
         {
-            if(aliasId && (aliasId + 1) % artsNodeInfo.tMT == 0 && localInternal->next)
+            cand = (aliasId + 1) % artsNodeInfo.tMT;
+            internalMsi_t * ptr = localInternal;
+            if(!cand)
             {
-                artsPutToWork(artsGlobalRankId, localInternal->next, 0, true); //available so flip
+                ptr = (localInternal->next) ? localInternal->next : localPool->head;
             }
-            else
-            {
-                cand = (aliasId + 1) % artsNodeInfo.tMT;
-                artsPutToWork(artsGlobalRankId, localInternal, cand, true);  //available so flip
-            }
+            DPRINTF("%u link NEXT: %u total: %u %p %u next: %p head: %p\n", artsThreadInfo.groupId, aliasId, localPool->total, ptr, cand, localInternal->next, localPool->head);
+            artsPutToWork(artsGlobalRankId, ptr, cand, true); //available so flip
         }
-
+        
         artsPutToSleep(artsGlobalRankId, localInternal, aliasId % artsNodeInfo.tMT, true);
         ONLY_ONE_THREAD;
+        artsTMTCheckShutdown();
     }
 }
 
@@ -421,63 +461,85 @@ void artsWakeUpContext()
             artsPutToWork( artsGlobalRankId, artsGetMsiOffsetPtr(localPool->head, cand),    cand % artsNodeInfo.tMT, false);
             artsPutToSleep(artsGlobalRankId,                              localInternal, aliasId % artsNodeInfo.tMT, true);
             ONLY_ONE_THREAD;
+            artsTMTCheckShutdown();
         }
     }
 }
 // End of RT visible functions
+
+void artsContextSwitchInternal()
+{
+    unsigned int cand = artsAtomicSwap(&localPool->wakeUpNext, 0);
+    if(!cand)
+        cand = dequeue(localPool->wakeQueue);
+    if(!cand)
+        cand = artsNextCandidate(&localInternal->alias_avail);
+    if(cand)
+    {
+        cand--;
+        artsPutToWork( artsGlobalRankId, localInternal,    cand % artsNodeInfo.tMT, true);
+        artsPutToSleep(artsGlobalRankId, localInternal, aliasId % artsNodeInfo.tMT, false); // do not change availability      
+    }
+    else {
+        internalMsi_t * last = NULL;
+        for(internalMsi_t * ptr = localPool->head; ptr!=NULL; ptr=ptr->next)
+        {
+            if((cand = artsNextCandidate(&ptr->alias_avail)))
+            {
+                cand--;
+                artsPutToWork( artsGlobalRankId,           ptr,    cand % artsNodeInfo.tMT, true);
+                artsPutToSleep(artsGlobalRankId, localInternal, aliasId % artsNodeInfo.tMT, false); // do not change availability
+                return;
+            }
+
+            if(!ptr->next)
+                last = ptr;
+        }
+
+        artsTMTConstructNewInternalMsi(localPool, artsNodeInfo.tMT, &artsThreadInfo);
+        artsPutToWork( artsGlobalRankId, last->next,    0, true);
+        artsPutToSleep(artsGlobalRankId, localInternal, aliasId % artsNodeInfo.tMT, false);
+    }
+    ONLY_ONE_THREAD;
+    artsTMTCheckShutdown();
+}
 
 bool artsContextSwitch(unsigned int waitCount) 
 {
     DPRINTF("CONTEXT SWITCH\n");
     if(artsNodeInfo.tMT && artsThreadInfo.alive)
     {
+        bool firstFlag = true;
         if(waitCount)
             artsAtomicAdd(&localPool->blocked, 1);
         volatile unsigned int * waitFlag = &localInternal->ticket_counter[aliasId % artsNodeInfo.tMT];
         artsAtomicAdd(waitFlag, waitCount);
-        while(*waitFlag)
+        while(*waitFlag && artsThreadInfo.alive)
         {
-            unsigned int cand = artsAtomicSwap(&localPool->wakeUpNext, 0);
-            if(!cand)
-                cand = dequeue(localPool->wakeQueue);
-            if(!cand)
-                cand = artsNextCandidate(&localInternal->alias_avail);
-            if(cand)
+            if(firstFlag)
             {
-                cand--;
-                artsPutToWork( artsGlobalRankId, localInternal,    cand % artsNodeInfo.tMT, true);
-                artsPutToSleep(artsGlobalRankId, localInternal, aliasId % artsNodeInfo.tMT, false); // do not change availability
-                ONLY_ONE_THREAD;
+                artsContextSwitchInternal();
+                firstFlag = false;
             }
-            else {
-                internalMsi_t * last = NULL;
-                for(internalMsi_t * ptr = localPool->head; ptr!=NULL; ptr=ptr->next)
-                {
-                    if((cand = artsNextCandidate(&ptr->alias_avail)))
-                    {
-                        cand--;
-                        artsPutToWork( artsGlobalRankId,           ptr,    cand % artsNodeInfo.tMT, true);
-                        artsPutToSleep(artsGlobalRankId, localInternal, aliasId % artsNodeInfo.tMT, false); // do not change availability
-                        return true;
-                    }
-                    
-                    if(!ptr->next)
-                        last = ptr;
-                }
-
-                artsTMTConstructNewInternalMsi(localPool, artsNodeInfo.tMT, &artsThreadInfo);
-                artsPutToWork( artsGlobalRankId, last->next,    0, true);
-                artsPutToSleep(artsGlobalRankId, localInternal, aliasId % artsNodeInfo.tMT, false);
-            }
+            else
+                artsNextContext();
         }
         return true;
     }
     return false;
 }
 
+void artsOpenContextSwitch()
+{
+    if(artsNodeInfo.tMT && artsThreadInfo.alive)
+    {
+        artsContextSwitchInternal();
+    }
+}
+
 bool artsSignalContext(artsTicket_t waitTicket)
 {
-    DPRINTF("SIGNAL CONTEXT\n");
+    DPRINTF("SIGNAL CONTEXT %u\n", artsNodeInfo.tMT);
     artsTicket ticket = (artsTicket) waitTicket;
     unsigned int rank   = (unsigned int)ticket.fields.rank;
     unsigned int unit   = (unsigned int)ticket.fields.unit;
@@ -516,10 +578,14 @@ bool artsAvailContext()
 artsTicket_t artsGetContextTicket()
 {
     artsTicket ticket;
-    if(artsAvailContext())
+    ticket.bits = 0;
+   if(artsNodeInfo.tMT)
         ticket = GenTicket();
-    else
-        ticket.bits = 0;
-    DPRINTF("r: %u u: %u t: %u v: %u\n", (unsigned int)ticket.fields.rank, (unsigned int)ticket.fields.unit, (unsigned int)ticket.fields.thread, (unsigned int)ticket.fields.valid);
+    DPRINTF("%u r: %u u: %u t: %u v: %u\n", artsNodeInfo.tMT, (unsigned int)ticket.fields.rank, (unsigned int)ticket.fields.unit, (unsigned int)ticket.fields.thread, (unsigned int)ticket.fields.valid);
     return (artsTicket_t)ticket.bits;
+}
+
+unsigned int artsGetContextId()
+{
+    return aliasId;
 }

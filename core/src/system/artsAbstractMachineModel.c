@@ -393,7 +393,7 @@ struct artsCoreInfo
 
 void artsAbstractMachineModelPinThread(struct artsCoreInfo * coreInfo )
 {
-    artsPthreadAffinity(coreInfo->cpuId);
+    artsPthreadAffinity(coreInfo->cpuId, true);
 }
 
 int artsAffinityFromPthreadValid(unsigned int i, int * validCpus, unsigned int validCpuCount, unsigned int numCores, unsigned int stride)

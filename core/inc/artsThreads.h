@@ -48,7 +48,7 @@ extern "C" {
 void artsThreadInit(struct artsConfig * config);
 void artsThreadMainJoin();
 void artsThreadSetOsThreadCount(unsigned int threads);
-void artsPthreadAffinity(unsigned int cpuCoreId);
+void artsPthreadAffinity(unsigned int cpuCoreId, bool verbose);
 void artsPthreadCheckAffinity(unsigned int threadId, unsigned int cpuCoreId);
 int artsCheckAffinity();
 int * artsValidPthreadAffinity(unsigned int * size);

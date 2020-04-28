@@ -88,6 +88,21 @@ uint64_t artsPushToArrayList(artsArrayList * aList, void * element)
     return index;
 }
 
+void * artsNextFreeFromArrayList(artsArrayList * aList)
+{
+    uint64_t index = aList->index;
+    if(!(aList->index % aList->arrayLength) && aList->index)
+    {
+        if(!aList->current->next)
+            aList->current->next = artsNewArrayListElement(aList->current->start+aList->arrayLength, aList->elementSize, aList->arrayLength);
+        aList->current = aList->current->next;
+    }
+    uint64_t offset =  aList->index - aList->current->start;
+    void * ptr = (void*)((char*)aList->current->array + offset*aList->elementSize);
+    aList->index++;
+    return ptr;
+}
+
 void artsResetArrayList(artsArrayList * aList)
 {
     aList->current = aList->head;
@@ -143,8 +158,6 @@ artsArrayListIterator * artsNewArrayListIterator(artsArrayList * aList)
     iter->elementSize = aList->elementSize;
     iter->arrayLength = aList->arrayLength;
     iter->current = aList->head;
-    iter->head = aList->head;
-
     return iter;
 }
 

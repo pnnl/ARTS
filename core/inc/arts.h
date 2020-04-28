@@ -320,6 +320,13 @@ artsTicket_t artsGetContextTicket();
 //Before we can wake this context up.  This must have tMT set in the config file.
 bool artsContextSwitch(unsigned int waitCount);
 
+//Context switch between threads, but does not block the current context.
+void artsOpenContextSwitch();
+
+void artsNextContext();
+
+unsigned int artsGetContextId();
+
 //Used to wake up a context asleep from a context switch
 bool artsSignalContext(artsTicket_t ticket);
 

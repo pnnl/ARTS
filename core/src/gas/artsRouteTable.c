@@ -269,45 +269,6 @@ bool decItem(artsRouteTable_t * routeTable, artsRouteItem_t * item)
     return false;
 }
 
-void readerTableLock(artsRouteTable_t *  table)
-{
-    while(1)
-    {
-        while(table->writerLock);
-        artsAtomicFetchAdd(&table->readerLock, 1U);
-        if(table->writerLock==0)
-            break;
-        artsAtomicSub(&table->readerLock, 1U);
-    }
-}
-
-void readerTableUnlock(artsRouteTable_t *  table)
-{
-    artsAtomicSub(&table->readerLock, 1U);
-}
-
-inline void writerTableLock(artsRouteTable_t *  table)
-{
-    while(artsAtomicCswap(&table->writerLock, 0U, 1U) == 0U);
-    while(table->readerLock);
-    return;
-}
-
-bool writerTryTableLock(artsRouteTable_t *  table)
-{
-    if(artsAtomicCswap(&table->writerLock, 0U, 1U) == 0U)
-    {
-        while(table->readerLock);
-        return true;
-    }
-    return false;
-}
-
-void writeTableUnlock(artsRouteTable_t *  table)
-{
-    artsAtomicSwap(&table->writerLock, 0U);
-}
-
 uint64_t urand64()
 {
     uint64_t hi = lrand48();
@@ -418,9 +379,9 @@ artsRouteItem_t * artsRouteTableSearchForKey(artsRouteTable_t *routeTable, artsG
             }
             keyVal++;
         }
-        readerTableLock(current);
+        artsReaderLock(&current->readerLock, &current->writerLock);
         next = current->next;
-        readerTableUnlock(current);
+        artsReaderUnlock(&current->readerLock);
         current = next;
     }
     return NULL;
@@ -448,23 +409,23 @@ artsRouteItem_t * artsRouteTableSearchForEmpty(artsRouteTable_t * routeTable, ar
             keyVal++;
         }
 
-        readerTableLock(current);
+        artsReaderLock(&current->readerLock, &current->writerLock);
         next = current->next;
-        readerTableUnlock(current);
+        artsReaderUnlock(&current->readerLock);
 
         if(!next)
         {
-            if(writerTryTableLock(current))
+            if(artsWriterTryLock(&current->readerLock, &current->writerLock))
             {
                 DPRINTF("LS Resize %d %d %p %p %d %ld\n", keyVal, 2*current->size, current, routeTable);
                 next = current->next = current->newFunc(2*current->size, current->shift+1);
-                writeTableUnlock(current);
+                artsWriterUnlock(&current->writerLock);
             }
             else
             {
-                readerTableLock(current);
+                artsReaderLock(&current->readerLock, &current->writerLock);
                 next = current->next;
-                readerTableUnlock(current);
+                artsReaderUnlock(&current->readerLock);
             }
 
         }
@@ -918,9 +879,9 @@ artsRouteItem_t * artsRouteTableIterate(artsRouteTableIterator * iter)
             }
         }
         iter->index = 0;
-        readerTableLock(current);
+        artsReaderLock(&current->readerLock, &current->writerLock);
         next = current->next;
-        readerTableUnlock(current);
+        artsReaderUnlock(&current->readerLock);
         current = next;
     }
     return NULL;

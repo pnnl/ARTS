@@ -36,56 +36,64 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef ARTSARRAYLIST_H
-#define	ARTSARRAYLIST_H
-#ifdef __cplusplus
-extern "C" {
-#endif
-
+#include <stdio.h>
+#include <stdlib.h>
 #include "arts.h"
-    
-typedef struct artsArrayListElement artsArrayListElement;
+#include "shadAdapter.h"
 
-struct artsArrayListElement {
-    uint64_t start;
-    artsArrayListElement * next;
-    void * array;
-};
+uint64_t numDummy = 0;
 
-typedef struct {
-    size_t elementSize;
-    size_t arrayLength;
-    artsArrayListElement * head;
-    artsArrayListElement * current;
-    uint64_t index;
-    uint64_t lastRequest;
-    void * lastRequestPtr;
-} artsArrayList;
-
-typedef struct {
-    uint64_t index;
-    uint64_t last;
-    size_t elementSize;
-    size_t arrayLength;
-    artsArrayListElement * current;
-} artsArrayListIterator;
-
-artsArrayListElement * artsNewArrayListElement(uint64_t start, size_t elementSize, size_t arrayLength);
-artsArrayList * artsNewArrayList(size_t elementSize, size_t arrayLength);
-void artsDeleteArrayList(artsArrayList * aList);
-uint64_t artsPushToArrayList(artsArrayList * aList, void * element);
-void * artsNextFreeFromArrayList(artsArrayList * aList);
-void artsResetArrayList(artsArrayList * aList);
-uint64_t artsLengthArrayList(artsArrayList * aList);
-void * artsGetFromArrayList(artsArrayList * aList, uint64_t index);
-artsArrayListIterator * artsNewArrayListIterator(artsArrayList * aList);
-void * artsArrayListNext(artsArrayListIterator * iter);
-bool artsArrayListHasNext(artsArrayListIterator * iter);
-void artsDeleteArrayListIterator(artsArrayListIterator * iter);
-
-#ifdef __cplusplus
+void dummytask(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t depv[]) 
+{
+    uint64_t index = paramv[0];
+    uint64_t dep = paramv[1];
+    PRINTF("Dep: %lu ID: %lu Current Node: %u Current Worker: %u\n", dep, index, artsGetCurrentNode(), artsGetCurrentWorker());
 }
-#endif
 
-#endif	/* LIST_H */
+void rootTask(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t depv[]) 
+{
+    uint64_t dep = paramv[0];
+    PRINTF("Root: %lu\n", dep);
+    if(dep)
+    {
+        artsGuid_t poolGuid = artsInitializeAndStartEpoch(NULL_GUID, 0);
+        dep--;
+        artsEdtCreateDep(rootTask, (artsGetCurrentNode()+1) % artsGetTotalNodes(), 1, &dep, 0, false);
+        
+//        uint64_t args[2];
+//        args[0] = dep;
+//        
+//        for(uint64_t i=0; i<numDummy; i++)
+//        {
+//            args[1] = i;
+//            artsEdtCreateDep(dummytask, i%numNodes, 2, args, 0, false);
+//        }
 
+        PRINTF("Waiting on %lu\n", poolGuid);
+        if(artsWaitOnHandle(poolGuid))
+            PRINTF("Done waiting on %lu dep: %lu\n", poolGuid, dep);
+    }
+    PRINTF("HERE %lu\n", numDummy);
+    if(dep+1 == numDummy)
+        artsShutdown();
+}
+
+void initPerNode(unsigned int nodeId, int argc, char** argv) 
+{
+    numDummy = (uint64_t) atoi(argv[1]);
+}
+
+void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc, char** argv) 
+{
+    if(!nodeId && !workerId)
+    {
+        PRINTF("Starting\n");
+        artsActiveMessageShad(rootTask, 0, 1, &numDummy, NULL, 0, NULL_GUID);
+    }
+}
+
+int main(int argc, char** argv) 
+{
+    artsRT(argc, argv);
+    return 0;
+}

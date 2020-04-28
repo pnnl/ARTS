@@ -117,12 +117,17 @@ target_link_libraries(testRecEpoch ${LIBS})
 add_executable(testEpochPool testEpochPool.c)
 target_link_libraries(testEpochPool ${LIBS})
 
+add_executable(testEpochForShad testEpochForShad.c)
+target_link_libraries(testEpochForShad ${LIBS})
+
 add_executable(testBuffer testBuffer.c)
 target_link_libraries(testBuffer ${LIBS})
 
 add_executable(testEvent testEvent.c)
 target_link_libraries(testEvent ${LIBS})
 
+add_executable(testShadLock testShadLock.c)
+target_link_libraries(testShadLock ${LIBS})
 if(CUDA_FOUND)
     set_source_files_properties(testGpuStream.c PROPERTIES LANGUAGE CUDA)
     add_executable(testGpuStream testGpuStream.c)
@@ -161,3 +166,6 @@ target_link_libraries(testRouteTableIter ${LIBS})
 
 add_executable(testRouteTableIter2 testRouteTableIter2.c)
 target_link_libraries(testRouteTableIter2 ${LIBS})
+
+add_executable(testTMTLite testTMTLite.c)
+target_link_libraries(testTMTLite ${LIBS})

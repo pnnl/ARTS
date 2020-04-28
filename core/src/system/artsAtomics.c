@@ -171,25 +171,19 @@ void artsReaderUnlock(volatile unsigned int * readLock)
 
 void artsWriterLock(volatile unsigned int * readLock, volatile unsigned int * writeLock)
 {
-    while(artsAtomicCswap(writeLock, 0U, 1U) == 0U);
+    while(artsAtomicCswap(writeLock, 0U, 1U) != 0U);
     while((*readLock));
     return;
 }
 
 bool artsWriterTryLock(volatile unsigned int * readLock, volatile unsigned int * writeLock)
 {
-    while(1)
+    if(artsAtomicCswap(writeLock, 0U, 1U) != 0U)
     {
-        unsigned int temp = artsAtomicCswap(writeLock, 0U, 1U);
-        if(temp == 0U)
-        {
-            while(readLock);
-            break;
-        }
-        if(temp == 1U)
-            return false;
+        while(*readLock);
+        return true;
     }
-    return true;
+    return false;
 }
 
 void artsWriterUnlock(volatile unsigned int * writeLock)

@@ -141,48 +141,6 @@ bool frontierAddExclusiveLock(volatile unsigned int * lock)
     }
 }
 
-void readerLock(volatile unsigned int * reader, volatile unsigned int * writer)
-{
-    while(1)
-    {
-        while(*writer);
-        artsAtomicFetchAdd(reader, 1U);
-        if(*writer==0)
-            break;
-        artsAtomicSub(reader, 1U);
-    }
-}
-
-void readerUnlock(volatile unsigned int * reader)
-{
-    artsAtomicSub(reader, 1U);
-}
-
-void writerLock(volatile unsigned int * reader, volatile unsigned int * writer)
-{
-    while(artsAtomicCswap(writer, 0U, 1U) == 0U);
-    while(*reader);
-    return;
-}
-
-bool nonBlockingWriteLock(volatile unsigned int * reader, volatile unsigned int * writer)
-{
-    if(artsAtomicCswap(writer, 0U, 1U) == 0U)
-    {
-        while(*reader);
-        return true;
-    }
-    else
-    {
-        return false;
-    }
-}
-
-void writerUnlock(volatile unsigned int * writer)
-{
-    artsAtomicSwap(writer, 0U);
-}
-
 struct artsDbElement * artsNewDbElement()
 {
     struct artsDbElement * ret = (struct artsDbElement*) artsCalloc(sizeof(struct artsDbElement));
@@ -342,13 +300,13 @@ bool artsPushDbToList(struct artsDbList * dbList, unsigned int data, bool write,
 {
     if(!dbList->head)
     {
-        if(nonBlockingWriteLock(&dbList->reader, &dbList->writer))
+        if(artsWriterTryLock(&dbList->reader, &dbList->writer))
         {
             dbList->head = dbList->tail = artsNewDbFrontier();
-            writerUnlock(&dbList->writer);
+            artsWriterUnlock(&dbList->writer);
         }
     }
-    readerLock(&dbList->reader, &dbList->writer);
+    artsReaderLock(&dbList->reader, &dbList->writer);
     struct artsDbFrontier * frontier = dbList->head;
     bool ret = true;
     for(struct artsDbFrontier * frontier = dbList->head; frontier; frontier=frontier->next)
@@ -370,21 +328,21 @@ bool artsPushDbToList(struct artsDbList * dbList, unsigned int data, bool write,
         }
         ret = false;
     }
-    readerUnlock(&dbList->reader);
+    artsReaderUnlock(&dbList->reader);
     return ret;
 }
 
 unsigned int artsCurrentFrontierSize(struct artsDbList * dbList)
 {
     unsigned int size;
-    readerLock(&dbList->reader, &dbList->writer);
+    artsReaderLock(&dbList->reader, &dbList->writer);
     if(dbList->head)
     {
         frontierLock(&dbList->head->lock);
         size = dbList->head->position;
         frontierUnlock(&dbList->head->lock);
     }
-    readerUnlock(&dbList->head->lock);
+    artsReaderUnlock(&dbList->head->lock);
     return size;
 }
 
@@ -434,7 +392,7 @@ void artsDbFrontierIterDelete(struct artsDbFrontierIterator * iter)
 struct artsDbFrontierIterator * artsCloseFrontier(struct artsDbList * dbList)
 {
     struct artsDbFrontierIterator * iter = NULL;
-    readerLock(&dbList->reader, &dbList->writer);
+    artsReaderLock(&dbList->reader, &dbList->writer);
     struct artsDbFrontier * frontier = dbList->head;
     if(frontier)
     {
@@ -445,7 +403,7 @@ struct artsDbFrontierIterator * artsCloseFrontier(struct artsDbList * dbList)
 
         frontierUnlock(&frontier->lock);
     }
-    readerUnlock(&dbList->reader);
+    artsReaderUnlock(&dbList->reader);
     return iter;
 
 }
@@ -557,7 +515,7 @@ void artsSignalFrontierLocal(struct artsDbFrontier * frontier, struct artsDb * d
 void artsProgressFrontier(struct artsDb * db, unsigned int rank)
 {
     struct artsDbList * dbList = db->dbList;
-    writerLock(&dbList->reader, &dbList->writer);
+    artsWriterLock(&dbList->reader, &dbList->writer);
     struct artsDbFrontier * tail = dbList->head;
     if(dbList->head)
     {
@@ -571,7 +529,7 @@ void artsProgressFrontier(struct artsDb * db, unsigned int rank)
                 artsSignalFrontierRemote(dbList->head, db, rank);
         }
     }
-    writerUnlock(&dbList->writer);
+    artsWriterUnlock(&dbList->writer);
     //This should be safe since the writer lock ensures all readers are done
     if(tail)
         artsDeleteDbFrontier(tail);
@@ -579,10 +537,10 @@ void artsProgressFrontier(struct artsDb * db, unsigned int rank)
 
 struct artsDbFrontierIterator * artsProgressAndGetFrontier(struct artsDbList * dbList)
 {
-    writerLock(&dbList->reader, &dbList->writer);
+    artsWriterLock(&dbList->reader, &dbList->writer);
     struct artsDbFrontier * tail = dbList->head;
     dbList->head = (struct artsDbFrontier *) dbList->head->next;
-    writerUnlock(&dbList->writer);
+    artsWriterUnlock(&dbList->writer);
     //This should be safe since the writer lock ensures all readers are done
     return artsDbFrontierIterCreate(tail);
 }

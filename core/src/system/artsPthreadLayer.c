@@ -127,13 +127,13 @@ void artsThreadSetOsThreadCount(unsigned int threads)
     pthread_setconcurrency(threads);
 }
 
-void artsPthreadAffinity(unsigned int cpuCoreId) {
+void artsPthreadAffinity(unsigned int cpuCoreId, bool verbose) {
     cpu_set_t cpuset;
     pthread_t thread;
     thread = pthread_self();
     CPU_ZERO(&cpuset);
     CPU_SET(cpuCoreId, &cpuset);
-    if(pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset))
+    if(pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset) && verbose)
         PRINTF("Failed to set affinity %u\n", cpuCoreId);  
 }
 

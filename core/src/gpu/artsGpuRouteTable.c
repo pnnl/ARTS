@@ -244,7 +244,7 @@ void gpuGCReadUnlock()
 
 void gpuGCWriteLock()
 {
-    while(artsAtomicCswap(&gpuWriter, 0U, 1U) == 0U);
+    while(artsAtomicCswap(&gpuWriter, 0U, 1U) != 0U);
     while(gpuReader);
     // PRINTF("WRITE LOCK\n");
 }

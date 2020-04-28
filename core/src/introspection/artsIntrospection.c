@@ -1009,36 +1009,6 @@ void printModelTotalMetrics(artsMetricLevel level)
     }
 }
 
-static inline void readerLock(volatile unsigned int * reader, volatile unsigned int * writer)
-{
-    while(1)
-    {
-        while(*writer);
-        artsAtomicFetchAdd(reader, 1U);
-        if(*writer==0)
-            break;
-        artsAtomicSub(reader, 1U);
-    }
-}
-
-static inline void readerUnlock(volatile unsigned int * reader)
-{
-    artsAtomicSub(reader, 1U);
-}
-
-static inline void writerLock(volatile unsigned int * reader, volatile unsigned int * writer)
-{
-    while(artsAtomicCswap(writer, 0U, 1U) == 0U);
-    while(*reader);
-    return;
-}
-
-static inline void writeUnlock(volatile unsigned int * writer)
-{
-    artsAtomicSwap(writer, 0U);
-}
-
-
 static inline void updatePacketExtreme(uint64_t val, volatile uint64_t * old, bool min)
 {
     uint64_t local = *old;
@@ -1071,19 +1041,19 @@ void artsInternalUpdatePacketInfo(uint64_t bytes)
 {
     if(packetInspector)
     {
-        readerLock(&packetInspector->reader, &packetInspector->writer);
+        artsReaderLock(&packetInspector->reader, &packetInspector->writer);
         artsAtomicAddU64(&packetInspector->totalBytes, bytes);
         artsAtomicAddU64(&packetInspector->totalPackets, 1U);
         updatePacketExtreme(bytes, &packetInspector->maxPacket, false);
         updatePacketExtreme(bytes, &packetInspector->minPacket, true);
-        readerUnlock(&packetInspector->reader);
+        artsReaderUnlock(&packetInspector->reader);
 
-        readerLock(&packetInspector->intervalReader, &packetInspector->intervalWriter);
+        artsReaderLock(&packetInspector->intervalReader, &packetInspector->intervalWriter);
         artsAtomicAddU64(&packetInspector->intervalBytes, bytes);
         artsAtomicAddU64(&packetInspector->intervalPackets, 1U);
         updatePacketExtreme(bytes, &packetInspector->intervalMax, false);
         updatePacketExtreme(bytes, &packetInspector->intervalMin, true);
-        readerUnlock(&packetInspector->intervalReader);
+        artsReaderUnlock(&packetInspector->intervalReader);
     }
 }
 
@@ -1091,12 +1061,12 @@ void artsInternalPacketStats(uint64_t * totalBytes, uint64_t * totalPackets, uin
 {
     if(packetInspector)
     {
-        writerLock(&packetInspector->reader, &packetInspector->writer);
+        artsWriterLock(&packetInspector->reader, &packetInspector->writer);
         (*totalBytes) = packetInspector->totalBytes;
         (*totalPackets) = packetInspector->totalPackets;
         (*minPacket) = packetInspector->minPacket;
         (*maxPacket) = packetInspector->maxPacket;
-        writeUnlock(&packetInspector->writer);
+        artsWriterUnlock(&packetInspector->writer);
     }
 }
 
@@ -1104,11 +1074,11 @@ void artsInternalIntervalPacketStats(uint64_t * totalBytes, uint64_t * totalPack
 {
     if(packetInspector)
     {
-        writerLock(&packetInspector->intervalReader, &packetInspector->intervalWriter);
+        artsWriterLock(&packetInspector->intervalReader, &packetInspector->intervalWriter);
         (*totalBytes) = artsAtomicSwapU64(&packetInspector->totalBytes, 0);
         (*totalPackets) = artsAtomicSwapU64(&packetInspector->totalPackets, 0);
         (*minPacket) = artsAtomicSwapU64(&packetInspector->minPacket, 0);
         (*maxPacket) = artsAtomicSwapU64(&packetInspector->maxPacket, 0);
-        writeUnlock(&packetInspector->intervalWriter);
+        artsWriterUnlock(&packetInspector->intervalWriter);
     }
 }

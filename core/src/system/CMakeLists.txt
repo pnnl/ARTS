@@ -42,6 +42,7 @@ set(system_inc
     ${CORE_INCLUDE_DIR}/artsAtomics.h
     ${CORE_INCLUDE_DIR}/artsDebug.h
     ${CORE_INCLUDE_DIR}/artsThreads.h
+    ${CORE_INCLUDE_DIR}/artsTMTLite.h
 )
 
 set(system_src
@@ -53,6 +54,7 @@ set(system_src
     artsTimer.c
     artsPthreadLayer.c
     artsTMT.c
+    artsTMTLite.c
 )
 
 add_library(system OBJECT ${system_src} )

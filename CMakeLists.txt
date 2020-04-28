@@ -57,37 +57,16 @@ else()
 endif()
 
 ## Compiler flags
-if(CMAKE_COMPILER_IS_GNUCC OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "Intel")
-
-    if(CMAKE_COMPILER_IS_GNUCC)
-        message("Using GCC")
-    elseif("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Intel")
-        message("Using ICC")
-    endif()
-
-    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-        message("Debug Build")
-        if (CMAKE_C_COMPILER_VERSION VERSION_GREATER 7.0)
-          #set(CMAKE_C_FLAGS "-Werror -std=gnu99 -O0 -g -DCNC_DEBUG_TRACE -fsanitize=address -fsanitize=signed-integer-overflow -fPIC")
-          set(CMAKE_C_FLAGS "-Werror -std=gnu99 -O0 -g -DCNC_DEBUG_TRACE -fPIC")
-        else()
-          #set(CMAKE_C_FLAGS "-Werror -std=gnu99 -O0 -g -DCNC_DEBUG_TRACE -fsanitize=address")
-          set(CMAKE_C_FLAGS "-Werror -std=gnu99 -O0 -g -DCNC_DEBUG_TRACE -fPIC")
-        endif()
-
-        if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Intel")
-            set(CMAKE_C_FLAGS "-std=gnu99 -O0 -g -DCNC_DEBUG_TRACE")
-        endif()
-    else()
-        message("Release Build")
-        set(CMAKE_C_FLAGS "-Werror -std=gnu99 -O3 -g -ftree-vectorize -mtune=native -fPIC")
-
-        if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Intel")
-            set(CMAKE_C_FLAGS "-std=gnu99 -O3 -g -mtune=native")
-        endif()
-    endif()
-
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    message("Debug Build")
+    set(CMAKE_C_FLAGS   "-Werror -O0 -g -fsanitize=address -fsanitize=signed-integer-overflow -fPIC -Wno-error=no-stringop-overflow")
+    set(CMAKE_CXX_FLAGS "-Werror -O0 -g -fsanitize=address -fsanitize=signed-integer-overflow -fPIC -Wno-error=no-stringop-overflow")
+else()
+    message("Release Build")
+    set(CMAKE_C_FLAGS   "-std=gnu99 -O3 -g -ftree-vectorize -mtune=native -fPIC")
+    set(CMAKE_CXX_FLAGS "-std=gnu99 -O3 -g -ftree-vectorize -mtune=native -fPIC")
 endif()
+
 
 include(CheckLanguage)
 check_language(CUDA)
@@ -120,8 +99,6 @@ if(CMAKE_CUDA_COMPILER)
 else()
     message(STATUS "No CUDA support")
 endif()
-
-
 
 #Find Required Libs-------------------------->
 

@@ -85,6 +85,7 @@ typedef struct internalMsi
     pthread_t               * aliasThreads;
     sem_t                   * sem;
     volatile bool          ** alive;
+    volatile bool          ** initShutdown;
     volatile unsigned int     ticket_counter[MAX_THREADS_PER_MASTER]; //Fixed counters used to keep track of outstanding promises (we can only wait on one context at a time)
     volatile accst_t          alias_running; // FIXME: right data structure?
     volatile accst_t          alias_avail;
@@ -114,7 +115,7 @@ typedef struct
 void artsTMTNodeInit(unsigned int numThreads);
 void artsTMTRuntimePrivateInit(struct threadMask* unit, struct artsRuntimePrivate * semiPrivate);
 void artsTMTRuntimePrivateCleanup();
-void artsTMTRuntimeStop();
+bool artsTMTRuntimeStop();
 
 bool artsAvailContext();
 void artsNextContext();

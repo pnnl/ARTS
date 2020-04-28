@@ -36,56 +36,34 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef ARTSARRAYLIST_H
-#define	ARTSARRAYLIST_H
-#ifdef __cplusplus
-extern "C" {
-#endif
 
-#include "arts.h"
-    
-typedef struct artsArrayListElement artsArrayListElement;
+/*
+ * artsTMT
+ *
+ *  Created on: March 30, 2018
+ *      Author: Andres Marquez (@awmm)
+ *
+ *
+ * This file is subject to the license agreement located in the file LICENSE
+ * and cannot be distributed without it. This notice cannot be
+ * removed or modified.
+ *
+ *
+ *
+ */
 
-struct artsArrayListElement {
-    uint64_t start;
-    artsArrayListElement * next;
-    void * array;
-};
+#ifndef ARTSTMTLITE_H_
+#define ARTSTMTLITE_H_
 
-typedef struct {
-    size_t elementSize;
-    size_t arrayLength;
-    artsArrayListElement * head;
-    artsArrayListElement * current;
-    uint64_t index;
-    uint64_t lastRequest;
-    void * lastRequestPtr;
-} artsArrayList;
+void artsInitTMTLitePerNode(unsigned int numWorkers);
+void artsInitTMTLitePerWorker(unsigned int id);
+void artsTMTLiteShutdown();
+void artsTMTLitePrivateCleanUp(unsigned int id);
+void artsCreateLiteContexts(volatile uint64_t * toDec);
+void artsYieldLiteContext();
+void artsResumeLiteContext();
+unsigned int artsTMTLiteGetAlias();
+void artsCreateLiteContexts2(volatile uint64_t * toDec, struct artsEdt * edt);
+void artsTMTSchedulerYield();
 
-typedef struct {
-    uint64_t index;
-    uint64_t last;
-    size_t elementSize;
-    size_t arrayLength;
-    artsArrayListElement * current;
-} artsArrayListIterator;
-
-artsArrayListElement * artsNewArrayListElement(uint64_t start, size_t elementSize, size_t arrayLength);
-artsArrayList * artsNewArrayList(size_t elementSize, size_t arrayLength);
-void artsDeleteArrayList(artsArrayList * aList);
-uint64_t artsPushToArrayList(artsArrayList * aList, void * element);
-void * artsNextFreeFromArrayList(artsArrayList * aList);
-void artsResetArrayList(artsArrayList * aList);
-uint64_t artsLengthArrayList(artsArrayList * aList);
-void * artsGetFromArrayList(artsArrayList * aList, uint64_t index);
-artsArrayListIterator * artsNewArrayListIterator(artsArrayList * aList);
-void * artsArrayListNext(artsArrayListIterator * iter);
-bool artsArrayListHasNext(artsArrayListIterator * iter);
-void artsDeleteArrayListIterator(artsArrayListIterator * iter);
-
-#ifdef __cplusplus
-}
-#endif
-
-#endif	/* LIST_H */
-
+#endif /* ARTSTMTLITE_H_ */

@@ -165,6 +165,7 @@ struct artsEdt
     artsGuid_t outputBuffer;
     artsGuid_t epochGuid;
     unsigned int cluster;
+    unsigned int node;
     volatile unsigned int depcNeeded;
     volatile unsigned int invalidateCount;
 } __attribute__ ((aligned));

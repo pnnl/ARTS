@@ -56,6 +56,7 @@
 #include "artsCounter.h"
 #include "artsIntrospection.h"
 #include "artsTMT.h"
+#include "artsTMTLite.h"
 
 #ifdef USE_GPU
 #include "artsGpuRuntime.h"
@@ -154,6 +155,7 @@ void artsRuntimeNodeInit(unsigned int workerThreads, unsigned int receivingThrea
     artsNodeInfo.keys = artsCalloc(sizeof(uint64_t*) * totalThreads);
     artsNodeInfo.globalGuidThreadId = artsCalloc(sizeof(uint64_t) * totalThreads);
     artsTMTNodeInit(workerThreads);
+    artsInitTMTLitePerNode(workerThreads);
     artsInitIntrospector(config);
 #ifdef USE_GPU
     if(artsNodeInfo.gpu) // TODO: Multi-Node init
@@ -285,10 +287,14 @@ void artsRuntimePrivateInit(struct threadMask * unit, struct artsConfig  * confi
     artsGuidKeyGeneratorInit();
     INITCOUNTERLIST(unit->id, artsGlobalRankId, config->counterFolder, config->counterStartPoint);
 
-    if (artsNodeInfo.tMT) // @awmm
+    if(artsThreadInfo.worker)
     {
-        DPRINTF("tMT: PthreadLayer: preparing aliasing for master thread %d\n", unit->id);
-        artsTMTRuntimePrivateInit(unit, &artsThreadInfo);
+        if (artsNodeInfo.tMT && artsThreadInfo.worker) // @awmm
+        {
+            DPRINTF("tMT: PthreadLayer: preparing aliasing for master thread %d\n", unit->id);
+            artsTMTRuntimePrivateInit(unit, &artsThreadInfo);
+        }
+        artsInitTMTLitePerWorker(artsThreadInfo.groupId);
     }
 
     artsAtomicSub(&artsNodeInfo.readyToPush, 1U);
@@ -317,7 +323,11 @@ void artsRuntimePrivateInit(struct threadMask * unit, struct artsConfig  * confi
 
 void artsRuntimePrivateCleanup()
 {
-    artsTMTRuntimePrivateCleanup();
+    if(artsThreadInfo.worker)
+    {
+        artsTMTRuntimePrivateCleanup();
+        artsTMTLitePrivateCleanUp(artsThreadInfo.groupId);
+    }
     artsAtomicSub(&artsNodeInfo.readyToClean, 1U);
     while(artsNodeInfo.readyToClean){ };
     if(artsThreadInfo.myDeque)
@@ -341,6 +351,7 @@ void artsRuntimeStop()
         (*artsNodeInfo.localSpin[i]) = false;
     }
     artsTMTRuntimeStop();
+    artsTMTLiteShutdown();
     artsStopInspector();
 }
 
@@ -387,7 +398,7 @@ void artsHandleReadyEdt(struct artsEdt * edt)
     }
 }
 
-static inline void artsRunEdt(void *edtPacket)
+void artsRunEdt(void *edtPacket)
 {
     struct artsEdt *edt = edtPacket;
     uint32_t depc = edt->depc;
@@ -488,6 +499,21 @@ bool artsNetworkBeforeStealSchedulerLoop()
     return false;
 }
 
+struct artsEdt * artsFindEdt()
+{
+    struct artsEdt * edtFound = NULL;
+    if(!(edtFound = artsDequePopFront(artsThreadInfo.myDeque)))
+    {
+        if(!edtFound)
+            if(!(edtFound = artsRuntimeStealFromWorker()))
+                edtFound = artsRuntimeStealFromNetwork();
+
+        if(edtFound)
+            artsUpdatePerformanceMetric(artsEdtSteal, artsThread, 1, false);
+    }
+    return edtFound;
+}
+
 bool artsDefaultSchedulerLoop()
 {
     struct artsEdt * edtFound = NULL;
@@ -504,13 +530,14 @@ bool artsDefaultSchedulerLoop()
     if(edtFound)
     {
         artsRunEdt(edtFound);
-        artsWakeUpContext();
+        // artsWakeUpContext();
         return true;
     }
     else
     {
         checkOutstandingEdts(10000000);
         artsNextContext();
+        artsTMTSchedulerYield();
 //        usleep(1);
     }
     return false;
