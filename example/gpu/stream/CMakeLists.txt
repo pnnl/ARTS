@@ -45,4 +45,12 @@ if(CUDA_FOUND)
     set_source_files_properties(stream.cu PROPERTIES LANGUAGE CUDA)
     add_executable(stream stream.cu)
     target_link_libraries(stream streamUtil ${LIBS})
+
+    if(DEFINED STREAMN)
+        add_compile_definitions(STREAMN=${STREAMN})
+    endif()
+
+    set_source_files_properties(streamShared.cu PROPERTIES LANGUAGE CUDA)
+    add_executable(streamShared streamShared.cu)
+    target_link_libraries(streamShared ${LIBS})
 endif()

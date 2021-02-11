@@ -275,7 +275,8 @@ void artsCleanupGpus()
     PRINTF("HIT RATIO: %lf\n", (double)hits/(double)(hits+misses));
 }
 
-void CUDART_CB artsWrapUp(cudaStream_t stream, cudaError_t status, void * data)
+// void CUDART_CB artsWrapUp(cudaStream_t stream, cudaError_t status, void * data)
+void CUDART_CB artsWrapUp(void * data)
 {
     artsToggleThreadInspection();
 

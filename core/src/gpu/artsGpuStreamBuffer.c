@@ -182,11 +182,11 @@ bool pushWrapUpToStream(unsigned int gpuId, void * hostClosure, bool buff)
         return ret;
     }
 
-    #if CUDART_VERSION >= 10000
+    // #if CUDART_VERSION >= 10000
         CHECKCORRECT(cudaLaunchHostFunc(artsGpus[gpuId].stream, artsWrapUp, hostClosure));
-    #else
-        CHECKCORRECT(cudaStreamAddCallback(artsGpus[gpuId].stream, artsWrapUp, hostClosure, 0));
-    #endif
+    // #else
+    //     CHECKCORRECT(cudaStreamAddCallback(artsGpus[gpuId].stream, artsWrapUp, hostClosure, 0));
+    // #endif
     return true;
 }
 

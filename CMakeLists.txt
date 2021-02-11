@@ -80,6 +80,8 @@ if(CMAKE_CUDA_COMPILER)
     if(CUDA_FOUND)
         include_directories("${CUDA_INCLUDE_DIRS}")
         add_definitions(-DUSE_GPU)
+        set(CMAKE_CUDA_FLAGS "-arch=sm_80")
+        
         message("Using CUDA")
         find_package(cuBlas)
         if(CUBLAS_FOUND)

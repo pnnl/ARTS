@@ -156,9 +156,9 @@ void artsReaderLock(volatile unsigned int * readLock, volatile unsigned int * wr
 {
     while(1)
     {
-        while((*writeLock));
+        while(*writeLock);
         artsAtomicFetchAdd(readLock, 1U);
-        if((*writeLock) == 0)
+        if(*writeLock == 0)
             break;
         artsAtomicSub(readLock, 1U);
     }
@@ -178,7 +178,7 @@ void artsWriterLock(volatile unsigned int * readLock, volatile unsigned int * wr
 
 bool artsWriterTryLock(volatile unsigned int * readLock, volatile unsigned int * writeLock)
 {
-    if(artsAtomicCswap(writeLock, 0U, 1U) != 0U)
+    if(artsAtomicCswap(writeLock, 0U, 1U) == 0U)
     {
         while(*readLock);
         return true;

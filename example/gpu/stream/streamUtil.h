@@ -48,8 +48,13 @@ extern "C" {
 # include <sys/time.h>
 # include "artsGlobals.h"
 
-# define N	2000000
-# define NTIMES	10
+#ifdef STREAMN
+#define N STREAMN
+#else
+#define N 134217728
+#endif
+
+# define NTIMES	100
 # define OFFSET	0
 
 #define M 20

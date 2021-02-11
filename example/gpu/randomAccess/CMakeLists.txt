@@ -45,4 +45,8 @@ if(CUDA_FOUND)
     set_source_files_properties(randomAccess.cu PROPERTIES LANGUAGE CUDA)
     add_executable(randomAccess randomAccess.cu)
     target_link_libraries(randomAccess ${LIBS})
+ 
+    set_source_files_properties(RandomAccessShared.cu PROPERTIES LANGUAGE CUDA)
+    add_executable(RandomAccessShared RandomAccessShared.cu)
+    target_link_libraries(RandomAccessShared ${LIBS})
 endif()
