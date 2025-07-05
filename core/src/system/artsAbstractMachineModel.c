@@ -177,14 +177,16 @@ struct nodeMask * initTopology()
 
     struct nodeMask * node = (struct nodeMask*) artsMalloc(sizeof(struct nodeMask));
     numNumaDomains = node->numClusters = hwloc_get_nbobjs_by_type(topology, HWLOC_OBJ_NODE);
+    bool isUMA = (numNumaDomains == 0);  // true only when HWLOC_V1 and UMA system, false even through UMA when HWLOC_V2
+    if (isUMA) numNumaDomains = node->numClusters = 1;
     node->cluster = (struct clusterMask*) artsMalloc(sizeof(struct clusterMask)*node->numClusters);
     unsigned int clusterIndex = 0;
     unsigned int coreIndex = 0;
-    hwloc_obj_t cluster = NULL;
+    hwloc_obj_t cluster = isUMA ? hwloc_get_root_obj(topology) : NULL;
     hwloc_obj_t core = NULL;
     for(clusterIndex = 0; clusterIndex<node->numClusters; clusterIndex++)
     {
-        cluster = hwloc_get_next_obj_by_type(topology, HWLOC_OBJ_NODE, cluster);
+        if (!isUMA) cluster = hwloc_get_next_obj_by_type(topology, HWLOC_OBJ_NODE, cluster);
         node->cluster[clusterIndex].numCores = getNumberOfType(topology, cluster, HWLOC_OBJ_CORE);
         node->cluster[clusterIndex].core = (struct coreMask*) artsMalloc(sizeof(struct coreMask)*node->cluster[clusterIndex].numCores);
         for(coreIndex=0; coreIndex<node->cluster[clusterIndex].numCores; coreIndex++)
