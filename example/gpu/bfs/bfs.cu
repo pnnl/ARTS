@@ -51,10 +51,11 @@
 #include "cublas_api.h"
 #include <cuda_runtime.h>
 
+#include <iostream>
+#include <thrust/binary_search.h>
 #include <thrust/device_ptr.h>
 #include <thrust/sort.h>
-#include <thrust/binary_search.h>
-#include <iostream>
+#include <thrust/unique.h>
 
 #include "graphUtil.h"
 #include "bins.h"
