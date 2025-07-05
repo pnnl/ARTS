@@ -183,7 +183,7 @@ bool pushWrapUpToStream(unsigned int gpuId, void * hostClosure, bool buff)
     }
 
     #if CUDART_VERSION >= 10000
-        CHECKCORRECT(cudaLaunchHostFunc(artsGpus[gpuId].stream, artsWrapUp, hostClosure));
+    CHECKCORRECT(cudaLaunchHostFunc(artsGpus[gpuId].stream, artsWrapUpHostFunc, hostClosure));
     #else
         CHECKCORRECT(cudaStreamAddCallback(artsGpus[gpuId].stream, artsWrapUp, hostClosure, 0));
     #endif
@@ -250,7 +250,7 @@ bool flushWrapUpStream(unsigned int gpuId)
     for(unsigned int i=0; i<wrapUpCount[gpuId]; i++)
     {
         #if CUDART_VERSION >= 10000
-            CHECKCORRECT(cudaLaunchHostFunc(artsGpus[gpuId].stream, artsWrapUp, wrapUpBuff[gpuId][i]));
+            CHECKCORRECT(cudaLaunchHostFunc(artsGpus[gpuId].stream, artsWrapUpHostFunc, wrapUpBuff[gpuId][i]));
         #else
             CHECKCORRECT(cudaStreamAddCallback(artsGpus[gpuId].stream, artsWrapUp, wrapUpBuff[gpuId][i], 0));
         #endif

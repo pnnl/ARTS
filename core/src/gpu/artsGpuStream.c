@@ -321,6 +321,10 @@ void CUDART_CB artsWrapUp(cudaStream_t stream, cudaError_t status, void * data)
     artsToggleThreadInspection();
 }
 
+void CUDART_CB artsWrapUpHostFunc(void *data) {
+  artsWrapUp(NULL, cudaSuccess, data);
+}
+
 void artsScheduleToGpuInternal(artsEdt_t fnPtr, uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t * depv, dim3 grid, dim3 block, void * edtPtr, artsGpu_t * artsGpu)
 {
 //    For now this should push the following into the stream:
