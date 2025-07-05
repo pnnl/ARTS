@@ -187,7 +187,11 @@ struct nodeMask * initTopology()
     for(clusterIndex = 0; clusterIndex<node->numClusters; clusterIndex++)
     {
         if (!isUMA) cluster = hwloc_get_next_obj_by_type(topology, HWLOC_OBJ_NODE, cluster);
+#ifdef HWLOC_V2
+        node->cluster[clusterIndex].numCores = hwloc_get_nbobjs_inside_cpuset_by_type(topology, cluster->cpuset, HWLOC_OBJ_CORE);
+#else  // HWLOC_V1
         node->cluster[clusterIndex].numCores = getNumberOfType(topology, cluster, HWLOC_OBJ_CORE);
+#endif
         node->cluster[clusterIndex].core = (struct coreMask*) artsMalloc(sizeof(struct coreMask)*node->cluster[clusterIndex].numCores);
         for(coreIndex=0; coreIndex<node->cluster[clusterIndex].numCores; coreIndex++)
         {
