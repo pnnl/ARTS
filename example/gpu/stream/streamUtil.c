@@ -150,10 +150,9 @@ int checktick()
 double mysecond()
 {
     struct timeval tp;
-    struct timezone tzp;
     int i;
 
-    i = gettimeofday(&tp,&tzp);
+    i = gettimeofday(&tp, NULL);
     return ( (double) tp.tv_sec + (double) tp.tv_usec * 1.e-6 );
 }
 void checkSTREAMresults(unsigned int tileSize, unsigned int totalSize, double **aTile, double **bTile, double **cTile)

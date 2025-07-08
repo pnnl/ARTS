@@ -200,6 +200,8 @@ static void* artsAliasThreadLoop(void* arg)
     
     artsRuntimeLoop();
     artsAtomicSub(&localInternal->shutDownCount, 1);
+
+    return NULL;
 }
 
 static inline void artsCreateContexts(struct artsRuntimePrivate * semiPrivate, internalMsi_t * ptr, unsigned int offset) 

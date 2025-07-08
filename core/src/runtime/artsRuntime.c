@@ -398,9 +398,8 @@ void artsHandleReadyEdt(struct artsEdt * edt)
     }
 }
 
-void artsRunEdt(void *edtPacket)
+void artsRunEdt(struct artsEdt *edt)
 {
-    struct artsEdt *edt = edtPacket;
     uint32_t depc = edt->depc;
     artsEdtDep_t * depv = (artsEdtDep_t *)(((uint64_t *)(edt + 1)) + edt->paramc);
 
@@ -424,7 +423,7 @@ void artsRunEdt(void *edtPacket)
         artsSetBuffer(edt->outputBuffer, artsCalloc(sizeof(unsigned int)), sizeof(unsigned int));
 
     releaseDbs(depc, depv, false);
-    artsEdtDelete(edtPacket);
+    artsEdtDelete(edt);
     decOustandingEdts(1); //This is for debugging purposes
 }
 
@@ -437,7 +436,7 @@ inline struct artsEdt * artsRuntimeStealFromNetwork()
         for (unsigned int i=0; i<artsNodeInfo.receiverThreadCount; i++)
         {
             index = (index + 1) % artsNodeInfo.receiverThreadCount;
-            if(edt = artsDequePopBack(artsNodeInfo.receiverDeque[index]))
+            if((edt = artsDequePopBack(artsNodeInfo.receiverDeque[index])) != NULL)
                 break;
         }
     }

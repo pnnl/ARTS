@@ -496,5 +496,5 @@ csr_graph_t * getGraphFromGuid(artsGuid_t guid)
 
 csr_graph_t * getGraphFromPartition(partition_t partIndex, arts_block_dist_t * dist)
 {
-    getGraphFromGuid(dist->graphGuid[partIndex]);
+    return getGraphFromGuid(dist->graphGuid[partIndex]);
 }

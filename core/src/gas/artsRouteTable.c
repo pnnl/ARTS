@@ -800,6 +800,7 @@ void ** artsRouteTableGetOOList(artsGuid_t key, struct artsOutOfOrderList ** lis
         *list = &item->ooList;
         return &item->data;
     }
+    return NULL;
 }
 
 //This is just a wrapper for outside consumption...

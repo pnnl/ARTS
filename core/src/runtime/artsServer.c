@@ -94,7 +94,7 @@ void artsServerSetup( struct artsConfig * config)
 
 void artsServerProcessPacket(struct artsRemotePacket * packet)
 {
-    if(packet->messageType!=ARTS_REMOTE_METRIC_UPDATE_MSG ||
+    if(packet->messageType!=ARTS_REMOTE_METRIC_UPDATE_MSG &&
        packet->messageType!=ARTS_REMOTE_SHUTDOWN_MSG)
     {
         artsUpdatePerformanceMetric(artsNetworkRecieveBW, artsThread, packet->size, false);

@@ -96,7 +96,7 @@ void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc, char** 
         //The end will get all the updates and a signal from the gather
         artsGuid_t endGuid = artsEdtCreate(end, 0, 0, NULL, numAdd*elementsPerBlock*blocks + 1);
 
-        artsGuid_t endEpochGuid = artsEdtCreate(epochEnd, 0, 1, &endGuid, 1);
+        artsGuid_t endEpochGuid = artsEdtCreate(epochEnd, 0, 1, (uint64_t *)&endGuid, 1);
         artsInitializeAndStartEpoch(endEpochGuid, 0);
 
         array = artsNewArrayDbWithGuid(arrayGuid, sizeof(unsigned int), elementsPerBlock * blocks);

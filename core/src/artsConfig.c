@@ -38,6 +38,7 @@
 ******************************************************************************/
 #include "arts.h"
 #include "artsConfig.h"
+#include "artsDebug.h"
 #include "artsGlobals.h"
 #include "artsRemoteLauncher.h"
 #include "unistd.h"
@@ -238,44 +239,47 @@ char * artsConfigMakeNewVar(char * var)
     strncpy(newVar, var, size);
     newVar[size] = '\0';
     DPRINTF("%s l\n", newVar);
-    return var;
+    return newVar;
 }
 
 unsigned int artsConfigGetValue(char * start, char * stop)
 {
-    int value, size = stop - start;
-    for(int i=0; i<size; i++)
-    {
+    int i, value, size = stop - start;
+    for (i = 0; i < size; i++) {
         if(isdigit(start[i]))
-        {
-            if(*stop==':')
-            {
-                *stop='\0';
-                value = strtol(start+i,NULL, 10);
-                *stop = ':';
-            }
-            else
-                value = strtol(start+i,NULL, 10);
             break;
-        }
+    }
+    if (i == size) {
+        // No digits found, raise an error
+        PRINTF("artsConfigGetValue: No digits found in %s\n", start);
+        artsDebugGenerateSegFault();
+    }
+    if(*stop==':') {
+        *stop='\0';
+        value = strtol(start + i, NULL, 10);
+        *stop = ':';
+    } else {
+        value = strtol(start + i, NULL, 10);
     }
     return value;
 }
 
-char * artsConfigGetNodeName(char * start, char * stop)
+char *artsConfigGetNodeName(char *start, char *stop)
 {
-    int value, size = stop - start;
-    char * name;
+    int i, value, size = stop - start;
+    char *name;
 
-    for(int i=0; i<size; i++)
-    {
+    for(i = 0; i < size; i++) {
         if(isdigit(start[i]))
-        {
-            name = artsMalloc( (stop-start) );
-            strncpy(name, start, stop-start);
             break;
-        }
     }
+    if (i == size) {
+        // No digits found, return the original string
+        PRINTF("artsConfigGetNodeName: No digits found in %s\n", start);
+        artsDebugGenerateSegFault();
+    }
+    name = artsMalloc(size);
+    strncpy(name, start, size);
     return name;
 }
 char * artsConfigGetHostname( char * name, unsigned int value )

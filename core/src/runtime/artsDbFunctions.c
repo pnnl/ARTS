@@ -127,6 +127,7 @@ artsGuid_t artsDbCreateRemote(unsigned int route, uint64_t size, artsType_t mode
 //    artsRemoteMemoryMove(route, guid, ptr, sizeof(struct artsDb), ARTS_REMOTE_DB_SEND_MSG, artsFree);
     artsRemoteMemoryMove(route, guid, ptr, sizeof(struct artsDb), ARTS_REMOTE_DB_SEND_MSG, artsDbFree);
     ARTSEDTCOUNTERTIMERENDINCREMENT(dbCreateCounter);
+    return guid;
 }
 
 //Creates a local DB only

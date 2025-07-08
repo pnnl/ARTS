@@ -59,6 +59,7 @@ void artsRuntimePrivateCleanup();
 void artsRuntimeStop();
 void artsHandleReadyEdt(struct artsEdt *edt);
 void artsRehandleReadyEdt(struct artsEdt *edt);
+void artsRunEdt(struct artsEdt *edt);
 void artsHandleRemoteStolenEdt(struct artsEdt *edt);
 bool artsRuntimeSchedulerLoop();
 void artsThreadZeroNodeStart();

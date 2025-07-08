@@ -164,7 +164,7 @@ struct artsDbList * artsNewDbList()
 void artsDeleteDbElement(struct artsDbElement * head)
 {
     struct artsDbElement * trail;
-    struct artsDbElement * current;
+    struct artsDbElement * current = head;
     while(current)
     {
         trail = current;
@@ -176,7 +176,7 @@ void artsDeleteDbElement(struct artsDbElement * head)
 void artsDeleteLocalDelayedEdt(struct artsLocalDelayedEdt * head)
 {
     struct artsLocalDelayedEdt * trail;
-    struct artsLocalDelayedEdt * current;
+    struct artsLocalDelayedEdt * current = head;
     while(current)
     {
         trail = current;
@@ -334,7 +334,7 @@ bool artsPushDbToList(struct artsDbList * dbList, unsigned int data, bool write,
 
 unsigned int artsCurrentFrontierSize(struct artsDbList * dbList)
 {
-    unsigned int size;
+    unsigned int size = 0U;
     artsReaderLock(&dbList->reader, &dbList->writer);
     if(dbList->head)
     {

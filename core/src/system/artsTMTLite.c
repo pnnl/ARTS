@@ -138,7 +138,7 @@ typedef struct
   uint32_t aliasId;  // alias id
   uint32_t sourceId;
   struct artsEdt * edtToRun;
-  volatile unsigned int * toDec;
+  volatile uint64_t * toDec;
   struct artsRuntimePrivate * tlToCopy; // we copy the master thread's TL
 } liteArgs_t;
 
@@ -161,9 +161,10 @@ void * artsAliasLiteThreadLoop(void * arg)
     if(artsThreadInfo.alive)
         artsNodeInfo.scheduler();
     artsWriterUnlock(&threadWriterLock[sourceId]);
-    uint64_t tempRes = artsAtomicSub(tArgs->toDec, 1);
+    uint64_t tempRes = artsAtomicSubU64(tArgs->toDec, 1);
     artsAtomicAdd(&doneThreads, 1);
     artsFree(tArgs);
+    return NULL;
 }
 
 void artsCreateLiteContexts(volatile uint64_t * toDec) 
@@ -215,10 +216,11 @@ void * artsAliasLiteThreadLoop2(void * arg)
     
     artsWriterUnlock(&threadWriterLock[sourceId]);
     
-    artsAtomicSub(tArgs->toDec, 1);
+    artsAtomicSubU64(tArgs->toDec, 1);
     artsAtomicSubU64(&outstanding[sourceId], 1);
     artsAtomicAdd(&doneThreads, 1);
     artsFree(tArgs);
+    return NULL;
 }
 
 void artsCreateLiteContexts2(volatile uint64_t * toDec, struct artsEdt * edt)

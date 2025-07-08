@@ -139,7 +139,7 @@ void artsEventSatisfySlot(artsGuid_t eventGuid, artsGuid_t dataGuid, uint32_t sl
             artsDebugGenerateSegFault();
         }
 
-        unsigned int res;
+        unsigned int res = 0U;
         if (slot == ARTS_EVENT_LATCH_INCR_SLOT) {
             res = artsAtomicAdd(&event->latchCount, 1U);
         } else if (slot == ARTS_EVENT_LATCH_DECR_SLOT) {

@@ -48,7 +48,7 @@ void tester(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t depv
 {
     unsigned int local;
     while(!artsShadAliasTryLock(&lock)) artsYield();
-    PRINTF("Yield %u Local: %u Lock: %lu\n", artsGetCurrentWorker(), local, lock);
+    PRINTF("Yield %u Lock: %lu\n", artsGetCurrentWorker(), lock);
     artsYield();
     local = ++count;
     PRINTF("Done  %u Local: %u Lock: %lu\n", artsGetCurrentWorker(), local, lock);

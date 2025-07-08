@@ -84,7 +84,7 @@ void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc, char** 
     {
         artsGuid_t checkGuid = artsEdtCreate(check, 0, 0, NULL, elemsPerNode * artsGetTotalNodes());
         artsGuid_t guid = artsNewArrayDb(&array, sizeof(unsigned int), elemsPerNode * artsGetTotalNodes());
-        artsForEachInArrayDbAtData(array, 1, edtFunc, 1, &checkGuid);
+        artsForEachInArrayDbAtData(array, 1, edtFunc, 1, (uint64_t *)&checkGuid);
 //        artsForEachInArrayDb(array, edtFunc, 1, &checkGuid);
     }
 }

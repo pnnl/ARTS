@@ -751,8 +751,8 @@ void artsInternalSetThreadPerformanceMetric(artsMetricType type, uint64_t value)
 
 artsMetricLevel artsInternalUpdatePerformanceMetric(artsMetricType type, artsMetricLevel level, uint64_t toAdd, bool sub)
 {
-    if(inspectorIgnore && type == artsThread)
-        return artsInternalUpdatePerformanceCoreMetric(0, artsNode, level, toAdd, sub);
+    if(inspectorIgnore && level == artsThread)
+        return artsInternalUpdatePerformanceCoreMetric(0, type, artsNode, toAdd, sub);
     return artsInternalUpdatePerformanceCoreMetric(artsThreadInfo.threadId, type, level, toAdd, sub);
 }
 

@@ -44,7 +44,7 @@ volatile unsigned int currentBuffer = 0;
 unsigned int *** gpuBufferPtr = NULL; //NUMBUFFERS per GPU (Many)
 unsigned int **  cpuBufferPtr = NULL; //NUMBUFFERS per Node (One)
 
-artsGuid_t * masterBufferGuids = NULL_GUID;
+artsGuid_t * masterBufferGuids = NULL;
 artsGuid_t * bufferGuids = NULL;
 unsigned int *** bufferPtr = NULL;
 
