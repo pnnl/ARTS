@@ -41,7 +41,7 @@
 #include "arts/arts.h"
 #include "arts/gas/OutOfOrder.h"
 #include "arts/gas/RouteTable.h"
-#include "arts/introspection/Introspection.h"
+#include "arts/introspection/Metrics.h"
 #include "arts/network/RemoteProtocol.h"
 #include "arts/runtime/Globals.h"
 #include "arts/runtime/Runtime.h"
@@ -263,14 +263,14 @@ void artsRemoteHandleUpdateDb(void *ptr) {
 void artsRemoteMemoryMove(unsigned int route, artsGuid_t guid, void *ptr,
                           unsigned int memSize, unsigned messageType,
                           void (*freeMethod)(void *)) {
-  artsCounterTriggerTimerEvent(remoteMemoryMove, true);
+  REMOTE_MEMORY_MOVE_START();
   struct artsRemoteGuidOnlyPacket packet;
   artsFillPacketHeader(&packet.header, sizeof(packet) + memSize, messageType);
   packet.guid = guid;
   artsRemoteSendRequestPayloadAsyncFree(route, (char *)&packet, sizeof(packet),
                                         (char *)ptr, 0, memSize, freeMethod);
   artsRouteTableRemoveItem(guid);
-  artsCounterTriggerTimerEvent(remoteMemoryMove, false);
+  REMOTE_MEMORY_MOVE_STOP();
 }
 
 void artsRemoteMemoryMoveNoFree(unsigned int route, artsGuid_t guid, void *ptr,

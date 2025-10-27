@@ -42,7 +42,6 @@
 #include "arts/gas/Guid.h"
 #include "arts/gas/OutOfOrder.h"
 #include "arts/gas/RouteTable.h"
-#include "arts/introspection/Introspection.h"
 #include "arts/runtime/Globals.h"
 #include "arts/runtime/RT.h"
 #include "arts/runtime/compute/EdtFunctions.h"
@@ -491,7 +490,7 @@ artsEpoch_t *getPoolEpoch(artsGuid_t edtGuid, unsigned int slot) {
 }
 
 void artsYield() {
-  artsCounterTriggerEvent(yield, 1);
+  INCREMENT_YIELD_BY(1);
   threadLocal_t tl;
   artsSaveThreadLocal(&tl);
   artsNodeInfo.scheduler();
@@ -519,7 +518,7 @@ bool artsWaitOnHandle(artsGuid_t epochGuid) {
       incrementFinishedEpoch(local);
       //        globalShutdownGuidIncFinished();
 
-      artsCounterTriggerEvent(yield, 1);
+      INCREMENT_YIELD_BY(1);
       threadLocal_t tl;
       artsSaveThreadLocal(&tl);
       while (flag)

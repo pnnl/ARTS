@@ -41,7 +41,7 @@
 #include <unistd.h>
 
 #include "arts/arts.h"
-#include "arts/introspection/Introspection.h"
+#include "arts/introspection/Metrics.h"
 #include "arts/network/Remote.h"
 #include "arts/network/RemoteProtocol.h"
 #include "arts/runtime/Globals.h"

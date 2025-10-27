@@ -40,7 +40,8 @@
 
 #include "arts/gas/Guid.h"
 #include "arts/gas/RouteTable.h"
-#include "arts/introspection/Introspection.h"
+#include "arts/introspection/Counter.h"
+#include "arts/introspection/Metrics.h"
 #include "arts/network/Remote.h"
 #include "arts/network/RemoteProtocol.h"
 #include "arts/runtime/Globals.h"
@@ -52,6 +53,7 @@
 #include "arts/system/TMT.h"
 #include "arts/system/TMTLite.h"
 #include "arts/system/Threads.h"
+#include "arts/utils/ArrayList.h"
 #include "arts/utils/Atomics.h"
 #include "arts/utils/Deque.h"
 
@@ -123,14 +125,18 @@ void artsRuntimeNodeInit(unsigned int workerThreads,
   artsNodeInfo.scheduler = schedulerLoop[config->scheduler];
   artsNodeInfo.deque = (struct artsDeque **)artsMalloc(
       sizeof(struct artsDeque *) * totalThreads);
-  artsNodeInfo.receiverDeque = (struct artsDeque **)artsMalloc(
-      sizeof(struct artsDeque *) * receiverThreads);
+  artsNodeInfo.receiverDeque =
+      receiverThreads ? (struct artsDeque **)artsMalloc(
+                            sizeof(struct artsDeque *) * receiverThreads)
+                      : NULL;
   artsNodeInfo.gpuDeque = (struct artsDeque **)artsMalloc(
       sizeof(struct artsDeque *) * totalThreads);
   artsNodeInfo.routeTable =
       (artsRouteTable_t **)artsCalloc(totalThreads, sizeof(artsRouteTable_t *));
   artsNodeInfo.gpuRouteTable =
-      (artsRouteTable_t **)artsCalloc(config->gpu, sizeof(artsRouteTable_t *));
+      config->gpu ? (artsRouteTable_t **)artsCalloc(config->gpu,
+                                                    sizeof(artsRouteTable_t *))
+                  : NULL;
   artsNodeInfo.remoteRouteTable =
       artsNewRouteTable(config->routeTableEntries, config->routeTableSize);
   artsNodeInfo.localSpin =
@@ -178,9 +184,27 @@ void artsRuntimeNodeInit(unsigned int workerThreads,
   artsNodeInfo.keys = (uint64_t **)artsCalloc(totalThreads, sizeof(uint64_t *));
   artsNodeInfo.globalGuidThreadId =
       (uint64_t *)artsCalloc(totalThreads, sizeof(uint64_t));
+  artsNodeInfo.counterFolder = config->counterFolder;
+  artsNodeInfo.counterStartPoint = config->counterStartPoint;
+  artsNodeInfo.counterCaptures = (artsCounterCaptures *)artsCalloc(
+      totalThreads, sizeof(artsCounterCaptures));
+  for (unsigned int t = 0; t < totalThreads; t++) {
+    for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
+      if (artsCounterMode[i] == artsCounterModeThread ||
+          artsCounterMode[i] == artsCounterModeNode) {
+        artsNodeInfo.counterCaptures[t].captures[i] =
+            artsNewArrayList(sizeof(uint64_t), 16);
+      }
+    }
+  }
+  artsNodeInfo.counterCaptureInterval = config->counterCaptureInterval;
+  for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
+    if (artsCounterMode[i] == artsCounterModeNode) {
+      artsNodeInfo.counterReduces[i] = artsNewArrayList(sizeof(uint64_t), 16);
+    }
+  }
   artsTMTNodeInit(workerThreads);
   artsInitTMTLitePerNode(workerThreads);
-  artsIntrospectionInit(config->introspectiveConf);
 #ifdef USE_GPU
   if (artsNodeInfo.gpu) // TODO: Multi-Node init
     artsNodeInitGpus();
@@ -188,7 +212,11 @@ void artsRuntimeNodeInit(unsigned int workerThreads,
 }
 
 void artsRuntimeGlobalCleanup() {
-  artsIntrospectionStop();
+  artsCounterStop();
+  artsCounterWriteNode(artsNodeInfo.counterFolder, artsGlobalRankId);
+  for (unsigned int t = 0; t < artsNodeInfo.totalThreadCount; t++) {
+    artsCounterWriteThread(artsNodeInfo.counterFolder, artsGlobalRankId, t);
+  }
   artsCleanUpDbs();
   artsFree(artsNodeInfo.deque);
   artsFree(artsNodeInfo.receiverDeque);
@@ -207,7 +235,7 @@ void artsRuntimeGlobalCleanup() {
 }
 
 void artsThreadZeroNodeStart() {
-  artsIntrospectionStart(1);
+  artsCounterStart(1);
 
   setGlobalGuidOn();
   createShutdownEpoch();
@@ -220,7 +248,7 @@ void artsThreadZeroNodeStart() {
 #endif
   setGuidGeneratorAfterParallelStart();
 
-  artsIntrospectionStart(2);
+  artsCounterStart(2);
   artsAtomicSub(&artsNodeInfo.readyToParallelStart, 1U);
   while (artsNodeInfo.readyToParallelStart) {
   }
@@ -235,7 +263,7 @@ void artsThreadZeroNodeStart() {
   artsAtomicSub(&artsNodeInfo.readyToInspect, 1U);
   while (artsNodeInfo.readyToInspect) {
   }
-  artsIntrospectionStart(3);
+  artsCounterStart(3);
   artsAtomicSub(&artsNodeInfo.readyToExecute, 1U);
   while (artsNodeInfo.readyToExecute) {
   }
@@ -309,10 +337,8 @@ void artsRuntimePrivateInit(struct threadMask *unit,
   artsThreadInfo.mallocTrace = 1;
   artsThreadInfo.localCounting = 1;
   artsThreadInfo.shadLock = 0;
+  artsThreadInfo.artsCounters = artsNodeInfo.counterCaptures[unit->id].counters;
   artsGuidKeyGeneratorInit();
-#ifdef USE_COUNTERS
-  artsCounterInitList(unit->id, artsGlobalRankId);
-#endif
 
   if (artsThreadInfo.worker) {
     if (artsNodeInfo.tMT && artsThreadInfo.worker) // @awmm
@@ -403,6 +429,7 @@ void artsHandleReadyEdt(struct artsEdt *edt) {
   ARTS_INFO("EDT [Guid: %lu] is ready", edt->currentEdt);
   acquireDbs(edt);
   if (artsAtomicSub(&edt->depcNeeded, 1U) == 0) {
+    INCREMENT_NUM_EDTS_ACQUIRED_BY(1);
     incrementQueueEpoch(edt->epochGuid);
     globalShutdownGuidIncQueue();
 #ifdef USE_GPU
@@ -417,7 +444,6 @@ void artsHandleReadyEdt(struct artsEdt *edt) {
       else if (edt->header.type == ARTS_GPU_EDT)
         artsDequePushFront(artsThreadInfo.myGpuDeque, edt, 0);
     }
-
     artsMetricsTriggerEvent(artsEdtQueue, artsThread, 1);
   }
 }
@@ -434,7 +460,13 @@ void artsRunEdt(struct artsEdt *edt) {
 
   artsSetThreadLocalEdtInfo(edt);
   ARTS_INFO("Running EDT [Guid: %lu]", edt->currentEdt);
+
+  EDT_IDLE_TIME_STOP();
+  EDT_RUNNING_TIME_START();
   func(paramc, paramv, depc, depv);
+  EDT_RUNNING_TIME_STOP();
+  INCREMENT_NUM_EDTS_FINISHED_BY(1);
+  EDT_IDLE_TIME_START();
 
   artsMetricsTriggerEvent(artsEdtThroughput, artsThread, 1);
 
@@ -553,7 +585,8 @@ bool artsDefaultSchedulerLoop() {
 }
 
 int artsRuntimeLoop() {
-  artsCounterTriggerTimerEvent(totalCounter, true);
+  TOTAL_COUNTER_START();
+  EDT_IDLE_TIME_START();
   if (artsThreadInfo.networkReceive) {
     while (artsThreadInfo.alive) {
       artsServerTryToReceive(&artsNodeInfo.buf, &artsNodeInfo.packetSize,
@@ -572,6 +605,7 @@ int artsRuntimeLoop() {
       artsNodeInfo.scheduler();
     }
   }
-  artsCounterTriggerTimerEvent(totalCounter, false);
+  EDT_IDLE_TIME_STOP();
+  TOTAL_COUNTER_STOP();
   return 0;
 }

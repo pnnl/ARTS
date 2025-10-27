@@ -42,7 +42,7 @@
 #include "arts/gas/Guid.h"
 #include "arts/gas/OutOfOrder.h"
 #include "arts/gas/RouteTable.h"
-#include "arts/introspection/Introspection.h"
+#include "arts/introspection/Metrics.h"
 #include "arts/runtime/Globals.h"
 #include "arts/runtime/network/RemoteFunctions.h"
 #include "arts/system/ArtsPrint.h"
@@ -91,22 +91,22 @@ bool artsEventCreateInternal(artsGuid_t *guid, unsigned int route,
 }
 
 artsGuid_t artsEventCreate(unsigned int route, unsigned int latchCount) {
-  artsCounterTriggerTimerEvent(eventCreateCounter, true);
+  EVENT_CREATE_COUNTER_START();
   if (route == -1)
     route = artsGlobalRankId;
   artsGuid_t guid = NULL_GUID;
   artsEventCreateInternal(&guid, route, INITIAL_DEPENDENT_SIZE, latchCount,
                           false, NULL_GUID);
-  artsCounterTriggerTimerEvent(eventCreateCounter, false);
+  EVENT_CREATE_COUNTER_STOP();
   return guid;
 }
 
 artsGuid_t artsEventCreateWithGuid(artsGuid_t guid, unsigned int latchCount) {
-  artsCounterTriggerTimerEvent(eventCreateCounter, true);
+  EVENT_CREATE_COUNTER_START();
   unsigned int route = artsGuidGetRank(guid);
   bool ret = artsEventCreateInternal(&guid, route, INITIAL_DEPENDENT_SIZE,
                                      latchCount, false, NULL_GUID);
-  artsCounterTriggerTimerEvent(eventCreateCounter, false);
+  EVENT_CREATE_COUNTER_STOP();
   return (ret) ? guid : NULL_GUID;
 }
 
@@ -130,7 +130,7 @@ void artsEventDestroy(artsGuid_t guid) {
 
 void artsEventSatisfySlot(artsGuid_t eventGuid, artsGuid_t dataGuid,
                           uint32_t slot) {
-  artsCounterTriggerTimerEvent(signalEventCounter, true);
+  SIGNAL_EVENT_COUNTER_START();
   if (currentEdt && currentEdt->invalidateCount > 0) {
     artsOutOfOrderEventSatisfySlot(currentEdt->currentEdt, eventGuid, dataGuid,
                                    slot, true);
@@ -193,10 +193,10 @@ void artsEventSatisfySlot(artsGuid_t eventGuid, artsGuid_t dataGuid,
             if (dependent[j].type == ARTS_EDT) {
               artsSignalEdt(dependent[j].addr, dependent[j].slot, event->data);
             } else if (dependent[j].type == ARTS_EVENT) {
-              artsCounterTriggerTimerEvent(signalEventCounter, true);
+              SIGNAL_EVENT_COUNTER_STOP();
               artsEventSatisfySlot(dependent[j].addr, event->data,
                                    dependent[j].slot);
-              artsCounterTriggerTimerEvent(signalEventCounter, false);
+              SIGNAL_EVENT_COUNTER_START();
             } else if (dependent[j].type == ARTS_CALLBACK) {
               artsEdtDep_t arg;
               arg.guid = event->data;
@@ -221,7 +221,7 @@ void artsEventSatisfySlot(artsGuid_t eventGuid, artsGuid_t dataGuid,
     }
   }
   artsMetricsTriggerEvent(artsEventSignalThroughput, artsThread, 1);
-  artsCounterTriggerTimerEvent(signalEventCounter, false);
+  SIGNAL_EVENT_COUNTER_STOP();
 }
 
 struct artsDependent *artsDependentGet(struct artsDependentList *head,
@@ -502,12 +502,12 @@ bool artsPersistentEventFreeVersion(struct artsPersistentEvent *event) {
 artsGuid_t artsPersistentEventCreate(unsigned int route,
                                      unsigned int latchCount,
                                      artsGuid_t dataGuid) {
-  artsCounterTriggerTimerEvent(persistentEventCreateCounter, true);
+  PERSISTENT_EVENT_CREATE_COUNTER_START();
   if (route == -1)
     route = artsGlobalRankId;
   artsGuid_t guid = NULL_GUID;
   artsPersistentEventCreateInternal(&guid, route, dataGuid);
-  artsCounterTriggerTimerEvent(persistentEventCreateCounter, false);
+  PERSISTENT_EVENT_CREATE_COUNTER_STOP();
   return guid;
 }
 
@@ -526,7 +526,7 @@ void artsPersistentEventDestroy(artsGuid_t guid) {
 
 void artsPersistentEventSatisfy(artsGuid_t eventGuid, uint32_t action,
                                 bool lock) {
-  artsCounterTriggerTimerEvent(signalPersistentEventCounter, true);
+  SIGNAL_PERSISTENT_EVENT_COUNTER_START();
   if (currentEdt && currentEdt->invalidateCount > 0) {
     artsOutOfOrderPersistentEventSatisfySlot(currentEdt->currentEdt, eventGuid,
                                              action, true);
@@ -609,10 +609,10 @@ void artsPersistentEventSatisfy(artsGuid_t eventGuid, uint32_t action,
               ARTS_DEBUG("Event data is NULL_GUID for event %u", eventGuid);
             }
           } else if (dependent[j].type == ARTS_EVENT) {
-            artsCounterTriggerTimerEvent(signalEventCounter, true);
+            SIGNAL_PERSISTENT_EVENT_COUNTER_STOP();
             artsPersistentEventSatisfy(dependent[j].addr, dependent[j].slot,
                                        false);
-            artsCounterTriggerTimerEvent(signalEventCounter, false);
+            SIGNAL_PERSISTENT_EVENT_COUNTER_START();
           } else if (dependent[j].type == ARTS_CALLBACK) {
             artsEdtDep_t arg;
             arg.guid = event->data;
@@ -637,7 +637,7 @@ void artsPersistentEventSatisfy(artsGuid_t eventGuid, uint32_t action,
       artsUnlock(&event->lock);
   }
   artsMetricsTriggerEvent(artsPersistentEventSignalThroughput, artsThread, 1);
-  artsCounterTriggerTimerEvent(signalPersistentEventCounter, false);
+  SIGNAL_PERSISTENT_EVENT_COUNTER_STOP();
 }
 
 void artsPersistentEventIncrementLatch(artsGuid_t eventGuid) {

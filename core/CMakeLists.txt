@@ -40,4 +40,9 @@
 set(ARTS_CORE_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/inc")
 set(ARTS_CORE_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/inc" PARENT_SCOPE)
 
+# Add build directory for generated Config.h
+set(ARTS_CORE_BUILD_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/inc")
+set(ARTS_CORE_BUILD_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/inc" PARENT_SCOPE)
+
 add_subdirectory(src)
+add_subdirectory(inc/arts/introspection)

@@ -47,7 +47,6 @@
 #include <pthread.h>
 #include <unistd.h>
 
-#include "arts/introspection/Introspection.h"
 #include "arts/runtime/Globals.h"
 #include "arts/runtime/Runtime.h"
 #include "arts/system/ArtsPrint.h"
@@ -77,11 +76,11 @@ void artsWriterLockYield(volatile unsigned int *readLock,
                          volatile unsigned int *writeLock) {
   unsigned int toSwap = tmtLiteAliasId + 1;
   while (artsAtomicCswap(writeLock, 0U, toSwap) != 0U) {
-    artsCounterTriggerEvent(sleepCounter, 1);
+    INCREMENT_SLEEP_COUNTER_BY(1);
     sched_yield();
   }
   while ((*readLock)) {
-    artsCounterTriggerEvent(sleepCounter, 1);
+    INCREMENT_SLEEP_COUNTER_BY(1);
     sched_yield();
   }
   return;
@@ -114,7 +113,7 @@ void artsTMTLiteShutdown() {
 
 void artsTMTLitePrivateCleanUp(unsigned int id) {
   while (toCreateThreads != doneThreads) {
-    artsCounterTriggerEvent(sleepCounter, 1);
+    INCREMENT_SLEEP_COUNTER_BY(1);
     sched_yield();
   }
   uint64_t outstanding = artsLengthArrayList(threadToJoin[id]);
@@ -225,7 +224,7 @@ void artsCreateLiteContexts2(volatile uint64_t *toDec, struct artsEdt *edt) {
 void artsYieldLiteContext() {
   unsigned int sourceId = artsThreadInfo.groupId;
   artsWriterUnlock(&threadWriterLock[sourceId]);
-  artsCounterTriggerEvent(sleepCounter, 1);
+  INCREMENT_SLEEP_COUNTER_BY(1);
   sched_yield();
 }
 

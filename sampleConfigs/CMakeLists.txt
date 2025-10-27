@@ -40,7 +40,6 @@
 # Define configuration files and scripts to install
 set(CONFIG_FILES
     arts.cfg
-    arts.insp
     artsGpu.cfg
 )
 
@@ -64,7 +63,6 @@ endfunction()
 
 # Copy configuration files to example directories
 copy_config_to_target(arts.cfg example/cpu arts.cfg)
-copy_config_to_target(arts.insp example/cpu arts.insp)
 
 # Copy GPU configuration files to example GPU directories if they exist
 if(BUILD_CUDA_LIBRARY)
@@ -80,13 +78,10 @@ if(BUILD_CUDA_LIBRARY)
     foreach(gpu_dir ${GPU_EXAMPLE_DIRS})
         copy_config_to_target(artsGpu.cfg ${gpu_dir} arts.cfg)
     endforeach()
-    
-    copy_config_to_target(arts.insp example/gpu arts.insp)
 endif()
 
 # Copy configuration files to test directory
 copy_config_to_target(arts.cfg test arts.cfg)
-copy_config_to_target(arts.insp test arts.insp)
 if(BUILD_CUDA_LIBRARY)
     copy_config_to_target(artsGpu.cfg test artsGpu.cfg)
 endif()

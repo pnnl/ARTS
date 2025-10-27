@@ -47,4 +47,5 @@ add_library(distribution OBJECT ${DISTRIBUTION_SOURCES})
 target_include_directories(distribution PRIVATE
     ${ARTS_GRAPH_INCLUDE_DIR}
     ${ARTS_CORE_INCLUDE_DIR}
+    ${ARTS_CORE_BUILD_INCLUDE_DIR}
 )

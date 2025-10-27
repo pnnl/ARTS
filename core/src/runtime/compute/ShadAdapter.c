@@ -42,7 +42,7 @@
 #include "arts/arts.h"
 #include "arts/gas/Guid.h"
 #include "arts/gas/RouteTable.h"
-#include "arts/introspection/Introspection.h"
+#include "arts/introspection/Counter.h"
 #include "arts/runtime/Globals.h"
 #include "arts/runtime/Runtime.h"
 #include "arts/runtime/compute/EdtFunctions.h"
@@ -138,9 +138,9 @@ void artsCheckLockShad() {
   }
 }
 
-void artsStartIntroShad(unsigned int start) { artsIntrospectionStart(start); }
+void artsStartIntroShad(unsigned int start) { artsCounterStart(start); }
 
-void artsStopIntroShad() { artsIntrospectionStop(); }
+void artsStopIntroShad() { artsCounterStop(); }
 
 unsigned int artsGetShadLoopStride() { return artsNodeInfo.shadLoopStride; }
 

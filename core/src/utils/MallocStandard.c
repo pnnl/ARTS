@@ -41,9 +41,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "arts/introspection/Introspection.h"
+#include "arts/introspection/Metrics.h"
 #include "arts/runtime/Globals.h"
-#include "arts/system/ArtsPrint.h"
 #include "arts/system/Debug.h"
 #include "arts/utils/Queue.h"
 
@@ -60,39 +59,46 @@ static inline void *alignPointer(void *ptr, size_t align) {
 }
 
 void *artsMalloc(size_t size) {
-  artsCounterTriggerTimerEvent(mallocMemory, true);
+  MALLOC_MEMORY_START();
 
   if (!size) {
-    return NULL;
+    MALLOC_MEMORY_STOP();
+    artsDebugGenerateSegFault();
   }
 
   header_t *base = (header_t *)malloc(size + sizeof(header_t));
   if (!base) {
-    return NULL;
+    MALLOC_MEMORY_STOP();
+    artsDebugGenerateSegFault();
   }
+  INCREMENT_MEMORY_FOOTPRINT_BY(size);
 
   base->size = size;
   base->align = 0;
   base->base = base;
 
-  if (artsThreadInfo.mallocTrace)
+  if (artsThreadInfo.mallocTrace) {
     artsMetricsTriggerEvent(artsMallocBW, artsThread, size);
-  artsCounterTriggerTimerEvent(mallocMemory, false);
+  }
+  MALLOC_MEMORY_STOP();
 
   return base + 1;
 }
 
 void *artsMallocAlign(size_t size, size_t align) {
-  artsCounterTriggerTimerEvent(mallocMemory, true);
+  MALLOC_MEMORY_START();
 
   if (!size || align < ALIGNMENT || !IS_POWER_OF_TWO(align)) {
-    return NULL;
+    MALLOC_MEMORY_STOP();
+    artsDebugGenerateSegFault();
   }
 
   void *base = malloc(size + align - 1 + sizeof(header_t));
   if (!base) {
-    return NULL;
+    MALLOC_MEMORY_STOP();
+    artsDebugGenerateSegFault();
   }
+  INCREMENT_MEMORY_FOOTPRINT_BY(size);
 
   void *aligned = alignPointer((char *)base + sizeof(header_t), align);
   header_t *hdr = (header_t *)aligned - 1;
@@ -101,53 +107,59 @@ void *artsMallocAlign(size_t size, size_t align) {
   hdr->align = align;
   hdr->base = base;
 
-  if (artsThreadInfo.mallocTrace)
+  if (artsThreadInfo.mallocTrace) {
     artsMetricsTriggerEvent(artsMallocBW, artsThread, size);
-  artsCounterTriggerTimerEvent(mallocMemory, false);
+  }
+  MALLOC_MEMORY_STOP();
 
   return aligned;
 }
 
 void *artsCalloc(size_t nmemb, size_t size) {
-  artsCounterTriggerTimerEvent(callocMemory, true);
+  CALLOC_MEMORY_START();
 
   if (!nmemb || !size || size > SIZE_MAX / nmemb) {
-    return NULL;
+    CALLOC_MEMORY_STOP();
+    artsDebugGenerateSegFault();
   }
 
   size_t totalSize = nmemb * size;
   void *ptr = artsMalloc(totalSize);
   memset(ptr, 0, totalSize);
 
-  if (artsThreadInfo.mallocTrace)
+  if (artsThreadInfo.mallocTrace) {
     artsMetricsTriggerEvent(artsMallocBW, artsThread, size);
-  artsCounterTriggerTimerEvent(callocMemory, false);
+  }
+  CALLOC_MEMORY_STOP();
 
   return ptr;
 }
 
 void *artsCallocAlign(size_t nmemb, size_t size, size_t align) {
-  artsCounterTriggerTimerEvent(callocMemory, true);
+  CALLOC_MEMORY_START();
 
   if (!nmemb || !size || size > SIZE_MAX / nmemb || align < ALIGNMENT ||
       !IS_POWER_OF_TWO(align)) {
-    return NULL;
+    CALLOC_MEMORY_STOP();
+    artsDebugGenerateSegFault();
   }
 
   size_t totalSize = nmemb * size;
   void *ptr = artsMallocAlign(totalSize, align);
   memset(ptr, 0, totalSize);
 
-  if (artsThreadInfo.mallocTrace)
+  if (artsThreadInfo.mallocTrace) {
     artsMetricsTriggerEvent(artsMallocBW, artsThread, size);
-  artsCounterTriggerTimerEvent(callocMemory, false);
+  }
+  CALLOC_MEMORY_STOP();
 
   return ptr;
 }
 
 void *artsRealloc(void *ptr, size_t size) {
-  if (!ptr)
+  if (!ptr) {
     return artsMalloc(size);
+  }
   if (!size) {
     artsFree(ptr);
     return NULL;
@@ -163,22 +175,25 @@ void *artsRealloc(void *ptr, size_t size) {
   size_t align = old_hdr->align;
 
   void *new_ptr = align ? artsMallocAlign(size, align) : artsMalloc(size);
-  if (!new_ptr)
-    return NULL;
   memcpy(new_ptr, ptr, old_size);
   artsFree(ptr);
   return new_ptr;
 }
 
 void artsFree(void *ptr) {
-  artsCounterTriggerTimerEvent(freeMemory, true);
+  FREE_MEMORY_START();
 
-  if (!ptr)
+  if (!ptr) {
+    FREE_MEMORY_STOP();
     return;
+  }
   header_t *hdr = (header_t *)ptr - 1;
+  size_t size = hdr->size;
   free(hdr->base);
+  DECREMENT_MEMORY_FOOTPRINT_BY(size);
 
-  if (artsThreadInfo.mallocTrace)
-    artsMetricsTriggerEvent(artsFreeBW, artsThread, hdr->size);
-  artsCounterTriggerTimerEvent(freeMemory, false);
+  if (artsThreadInfo.mallocTrace) {
+    artsMetricsTriggerEvent(artsFreeBW, artsThread, size);
+  }
+  FREE_MEMORY_STOP();
 }

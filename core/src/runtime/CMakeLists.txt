@@ -42,7 +42,7 @@ file(GLOB RUNTIME_MAIN_SOURCES "*.c")
 
 # CPU-only object library
 add_library(arts_runtime OBJECT ${RUNTIME_MAIN_SOURCES})
-target_include_directories(arts_runtime PRIVATE ${ARTS_CORE_INCLUDE_DIR})
+target_include_directories(arts_runtime PRIVATE ${ARTS_CORE_INCLUDE_DIR} ${ARTS_CORE_BUILD_INCLUDE_DIR})
 
 # Add hwloc include directories if available
 if(HWLOC_INCLUDE_DIRS)
@@ -62,7 +62,7 @@ if(BUILD_CUDA_LIBRARY)
     list(APPEND RUNTIME_GPU_SOURCES ${RUNTIME_WRAPPER})
 
     add_library(arts_runtime_gpu OBJECT ${RUNTIME_GPU_SOURCES})
-    target_include_directories(arts_runtime_gpu PRIVATE ${ARTS_CORE_INCLUDE_DIR})
+    target_include_directories(arts_runtime_gpu PRIVATE ${ARTS_CORE_INCLUDE_DIR} ${ARTS_CORE_BUILD_INCLUDE_DIR})
     target_compile_definitions(arts_runtime_gpu PRIVATE USE_GPU)
 
     # Add hwloc include directories if available

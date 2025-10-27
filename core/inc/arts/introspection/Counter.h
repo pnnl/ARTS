@@ -42,28 +42,13 @@
 extern "C" {
 #endif
 
-#ifdef USE_COUNTERS
-
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "arts/arts.h"
+#include "arts/introspection/Preamble.h"
+#include "arts/utils/ArrayList.h"
 
-extern const char *const artsCounterNames[];
-extern uint64_t countersOn;
-
-void artsCounterConfigSetDefaultEnabled(bool enabled);
-void artsCounterConfigSetEnabled(const char *name, bool enabled);
-
-#define ARTS_COUNTERS_IS_ACTIVE() (countersOn && artsThreadInfo.localCounting)
-#define COUNTERTIMESTAMP artsGetTimeStamp()
-#define GETCOUNTERNAME(x) artsCounterNames[x]
-#define COUNTERARRAYBLOCKSIZE 128
-#define COUNTERPREFIXSIZE 1024
-#define FIRSTCOUNTER edtCounter
-#define LASTCOUNTER lastCounter
-
-enum artsCounterType {
+typedef enum artsCounterType {
   edtCounter = 0,
   sleepCounter,
   totalCounter,
@@ -85,47 +70,125 @@ enum artsCounterType {
   contextSwitch,
   yield,
   remoteMemoryMove,
-  lastCounter
-};
-typedef enum artsCounterType artsCounterType;
+  memoryFootprint,
+  edtRunningTime,
+  edtIdleTime,
+  numEdtsCreated,
+  numEdtsAcquired,
+  numEdtsFinished,
+  remoteBytesSent,
+  remoteBytesReceived,
+  numDbsCreated,
+  NUM_COUNTER_TYPES,
+} artsCounterType;
+
+typedef enum artsCounterReduceType {
+  artsCounterSum = 0,
+  artsCounterMax,
+  artsCounterMin,
+} artsCounterReduceType;
+
+typedef enum artsCounterCaptureMode {
+  artsCounterModeOff = 0,
+  artsCounterModeOnce = 1,   // Print at the end (single output)
+  artsCounterModeThread = 2, // Capture per thread without reduction
+  artsCounterModeNode = 3,   // Capture and reduce per node
+} artsCounterCaptureMode;
 
 typedef struct {
-  unsigned int threadId;
-  unsigned int nodeId;
-  const char *name;
-  bool enabled;
   uint64_t count;
-  uint64_t totalTime;
-  uint64_t startTime;
-  uint64_t endTime;
+  uint64_t start;
 } artsCounter;
 
-/// Private methods
-void artsCounterInitList(unsigned int threadId, unsigned int nodeId);
+typedef struct {
+  artsCounter counters[NUM_COUNTER_TYPES];
+  artsArrayList *captures[NUM_COUNTER_TYPES]; // Per-thread captures
+} artsCounterCaptures;
+
+// Node-level captures
+typedef artsArrayList *artsCounterReduces[NUM_COUNTER_TYPES];
+
+// We do not implement system-wide counters due to the overhead of
+// synchronization and network communication
+// Also, we exclude most of the calculation part to reduce the impact on
+// performance
+
 void artsCounterStart(unsigned int startPoint);
 void artsCounterStop();
-inline unsigned int artsCounterIsActive() { return countersOn; }
-artsCounter *artsCounterCreate(unsigned int threadId, unsigned int nodeId,
-                               const char *counterName);
-artsCounter *artsCounterGet(artsCounterType counter);
-artsCounter *artsCounterGetUser(unsigned int index, char *name);
 void artsCounterReset(artsCounter *counter);
-void artsCounterIncrement(artsCounter *counter);
 void artsCounterIncrementBy(artsCounter *counter, uint64_t num);
+void artsCounterDecrementBy(artsCounter *counter, uint64_t num);
 void artsCounterTimerStart(artsCounter *counter);
-void artsCounterTimerEndIncrement(artsCounter *counter);
-void artsCounterTimerEndIncrementBy(artsCounter *counter, uint64_t num);
-void artsCounterTimerEndOverwrite(artsCounter *counter);
-void artsCounterSetStartTime(artsCounter *counter, uint64_t start);
-void artsCounterSetEndTime(artsCounter *counter, uint64_t end);
-void artsCounterAddEndTime(artsCounter *counter);
-void artsCounterNonEmtpy(artsCounter *counter);
-uint64_t artsCounterGetStartTime(artsCounter *counter);
-uint64_t artsCounterGetEndTime(artsCounter *counter);
-void artsCounterAddTime(artsCounter *counter, uint64_t time);
-#endif
+void artsCounterTimerEnd(artsCounter *counter);
+void artsCounterWriteThread(const char *outputFolder, unsigned int nodeId,
+                            unsigned int threadId);
+void artsCounterWriteNode(const char *outputFolder, unsigned int nodeId);
+
+static const char *const artsCounterNames[] = {"edtCounter",
+                                               "sleepCounter",
+                                               "totalCounter",
+                                               "signalEventCounter",
+                                               "signalPersistentEventCounter",
+                                               "signalEdtCounter",
+                                               "edtCreateCounter",
+                                               "eventCreateCounter",
+                                               "persistentEventCreateCounter",
+                                               "dbCreateCounter",
+                                               "smartDbCreateCounter",
+                                               "mallocMemory",
+                                               "callocMemory",
+                                               "freeMemory",
+                                               "guidAllocCounter",
+                                               "guidLookupCounter",
+                                               "getDbCounter",
+                                               "putDbCounter",
+                                               "contextSwitch",
+                                               "yield",
+                                               "remoteMemoryMove",
+                                               "memoryFootprint",
+                                               "edtRunningTime",
+                                               "edtIdleTime",
+                                               "numEdtsCreated",
+                                               "numEdtsAcquired",
+                                               "numEdtsFinished",
+                                               "remoteBytesSent",
+                                               "remoteBytesReceived",
+                                               "numDbsCreated"};
+
+static const unsigned int artsCounterReduceTypes[] = {
+    artsCounterSum, // edtCounter
+    artsCounterSum, // sleepCounter
+    artsCounterSum, // totalCounter
+    artsCounterSum, // signalEventCounter
+    artsCounterSum, // signalPersistentEventCounter
+    artsCounterSum, // signalEdtCounter
+    artsCounterSum, // edtCreateCounter
+    artsCounterSum, // eventCreateCounter
+    artsCounterSum, // persistentEventCreateCounter
+    artsCounterSum, // dbCreateCounter
+    artsCounterSum, // smartDbCreateCounter
+    artsCounterSum, // mallocMemory
+    artsCounterSum, // callocMemory
+    artsCounterSum, // freeMemory
+    artsCounterSum, // guidAllocCounter
+    artsCounterSum, // guidLookupCounter
+    artsCounterSum, // getDbCounter
+    artsCounterSum, // putDbCounter
+    artsCounterSum, // contextSwitch
+    artsCounterSum, // yield
+    artsCounterSum, // remoteMemoryMove
+    artsCounterSum, // memoryFootprint
+    artsCounterSum, // edtRunningTime
+    artsCounterSum, // edtIdleTime
+    artsCounterSum, // numEdtsCreated
+    artsCounterSum, // numEdtsAcquired
+    artsCounterSum, // numEdtsFinished
+    artsCounterSum, // remoteBytesSent
+    artsCounterSum, // remoteBytesReceived
+    artsCounterSum  // numDbsCreated
+};
 
 #ifdef __cplusplus
 }
 #endif
-#endif /* ARTSCOUNTER_H */
+#endif /* ARTS_COUNTER_COUNTER_H */

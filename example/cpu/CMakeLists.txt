@@ -64,7 +64,7 @@ function(add_cpu_example example_name)
     add_executable(${example_name} ${example_name}.c)
     
     # Set include directories
-    target_include_directories(${example_name} PRIVATE ${ARTS_CORE_INCLUDE_DIR})
+    target_include_directories(${example_name} PRIVATE ${ARTS_CORE_INCLUDE_DIR} ${ARTS_CORE_BUILD_INCLUDE_DIR})
     
     # Use the appropriate ARTS library based on availability
     if(TARGET arts_shared)
@@ -83,7 +83,7 @@ function(add_cpu_graph_example example_name)
     add_executable(${example_name} ${example_name}.c)
     
     # Set include directories
-    target_include_directories(${example_name} PRIVATE ${ARTS_CORE_INCLUDE_DIR} ${ARTS_GRAPH_INCLUDE_DIR})
+    target_include_directories(${example_name} PRIVATE ${ARTS_CORE_INCLUDE_DIR} ${ARTS_CORE_BUILD_INCLUDE_DIR} ${ARTS_GRAPH_INCLUDE_DIR})
     
     # Link with arts_graph, main ARTS library, and runtime libraries
     target_link_libraries(${example_name} PRIVATE arts_graph Threads::Threads ${RT_LIBRARY} ${M_LIBRARY} ${ANL_LIBRARY})
@@ -101,7 +101,7 @@ function(add_cpu_cxx_graph_example example_name)
     add_executable(${example_name} ${example_name}.cpp)
     
     # Set include directories
-    target_include_directories(${example_name} PRIVATE ${ARTS_CORE_INCLUDE_DIR} ${ARTS_GRAPH_INCLUDE_DIR})
+    target_include_directories(${example_name} PRIVATE ${ARTS_CORE_INCLUDE_DIR} ${ARTS_CORE_BUILD_INCLUDE_DIR} ${ARTS_GRAPH_INCLUDE_DIR})
     
     # Link with arts_graph, main ARTS library, and runtime libraries
     target_link_libraries(${example_name} PRIVATE arts_graph Threads::Threads ${RT_LIBRARY} ${M_LIBRARY} ${ANL_LIBRARY})

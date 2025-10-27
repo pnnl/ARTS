@@ -1,7 +1,7 @@
 CC = gcc
 CFLAGS = -fopenmp -O3 -Wall -std=c99
 
-all: nqueen_arts_local nqueen_arts_random
+all: nqueen_arts_local nqueen_arts_random nqueen_arts_explicit
 # nqueen_seq nqueen_omp nqueen_omp_opt nqueen_arts_seq nqueen_carts
 
 # nqueen_seq: nqueen_seq.c
@@ -25,7 +25,10 @@ nqueen_arts_local: nqueen_arts_local.c
 nqueen_arts_random: nqueen_arts_random.c
 	$(CC) $(CFLAGS) -o $@ $< -I../../.install/include -L../../.install/lib -L../../.install/lib64 -larts -lhwloc
 
-clean:
-	rm -f nqueen_arts_local nqueen_arts_random
+nqueen_arts_explicit: nqueen_arts_explicit.c
+	$(CC) $(CFLAGS) -o $@ $< -I../../.install/include -L../../.install/lib -L../../.install/lib64 -larts -lhwloc
 
+clean:
+	rm -f nqueen_arts_local nqueen_arts_random nqueen_arts_explicit
+ 
 .PHONY: all clean

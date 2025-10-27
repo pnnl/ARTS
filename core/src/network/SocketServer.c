@@ -53,7 +53,7 @@
 #include <unistd.h>
 
 #include "arts/arts.h"
-#include "arts/introspection/Introspection.h"
+#include "arts/introspection/Metrics.h"
 #include "arts/network/Connection.h"
 #include "arts/network/Remote.h"
 #include "arts/network/RemoteProtocol.h"
@@ -357,7 +357,7 @@ static inline bool artsRemoteConnect(int rank, unsigned int port) {
         (struct sockaddr *)(remoteServerSendList + rank * ports + port),
         sizeof(struct sockaddr_in));
     if (res < 0) {
-      void *ptrCrap;
+      void *ptrCrap = NULL;
 
       remoteConnectionAlive[rank] = false;
 
@@ -408,6 +408,7 @@ int artsActualSend(char *message, unsigned int length, int rank, int port) {
       return -1;
     }
   }
+  INCREMENT_REMOTE_BYTES_SENT_BY(total);
   return length;
 }
 
@@ -415,11 +416,6 @@ unsigned int artsRemoteSendRequest(int rank, unsigned int queue, char *message,
                                    unsigned int length) {
   int port = queue % ports;
   if (artsRemoteConnect(rank, port)) {
-#ifdef USE_COUNTERS
-    // struct artsRemotePacket * pk = (void *)message;
-    // if(!pk->timeStamp)
-    //     pk->timeStamp = artsExtGetTimeStamp();
-#endif
     return artsActualSend(message, length, rank, port);
   }
   return length;
@@ -430,11 +426,6 @@ unsigned int artsRemoteSendPayloadRequest(int rank, unsigned int queue,
                                           char *payload, int length2) {
   int port = queue % ports;
   if (artsRemoteConnect(rank, port)) {
-#ifdef USE_COUNTERS
-    // struct artsRemotePacket * pk = (void *)message;
-    // if(!pk->timeStamp)
-    //     pk->timeStamp = artsExtGetTimeStamp();
-#endif
     int tempLength = artsActualSend(message, length, rank, port);
     if (tempLength)
       return tempLength + length2;
@@ -709,6 +700,9 @@ bool artsServerTryToReceive(char **inBuffer, int *inPacketSize,
             packet = (struct artsRemotePacket *)bypassBuf[pos];
             res = rrecv(remoteSocketRecieveList[i], bypassBuf[pos],
                         bypassPacketSize[pos], MSG_DONTWAIT);
+            if (res > 0) {
+              INCREMENT_REMOTE_BYTES_RECEIVED_BY(res);
+            }
           } else {
             // packet = reRecievePacket[pos];
             packet = (struct artsRemotePacket *)bypassBuf[pos];
@@ -725,6 +719,9 @@ bool artsServerTryToReceive(char **inBuffer, int *inPacketSize,
                 }
                 res2 = rrecv(remoteSocketRecieveList[i], bypassBuf[pos] + res,
                              bypassPacketSize[pos] - res, MSG_DONTWAIT);
+                if (res2 > 0) {
+                  INCREMENT_REMOTE_BYTES_RECEIVED_BY(res);
+                }
 
                 if (res2 < 0) {
                   if (errno != EAGAIN) {
@@ -769,6 +766,9 @@ bool artsServerTryToReceive(char **inBuffer, int *inPacketSize,
                 }
                 res2 = rrecv(remoteSocketRecieveList[i], bypassBuf[pos] + res,
                              bypassPacketSize[pos] - res, MSG_DONTWAIT);
+                if (res2 > 0) {
+                  INCREMENT_REMOTE_BYTES_RECEIVED_BY(res2);
+                }
                 if (res2 < 0) {
                   if (errno != EAGAIN) {
                     ARTS_INFO("Error on recv return 0 %d %d", errno, EAGAIN);
@@ -784,7 +784,6 @@ bool artsServerTryToReceive(char **inBuffer, int *inPacketSize,
               }
               if (gotoNext)
                 break;
-
               artsServerProcessPacket(packet);
 
               res -= packet->size;

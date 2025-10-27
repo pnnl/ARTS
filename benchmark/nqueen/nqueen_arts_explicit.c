@@ -62,9 +62,9 @@ void forkNqueens(uint32_t paramc, uint64_t *paramv, uint32_t depc,
   }
 
   unsigned int numNodes = artsGetTotalNodes();
-  srand(time(NULL) + artsGetCurrentNode());
-  unsigned int route = rand() % numNodes;
-  artsGuid_t joinGuid = artsEdtCreate(joinNqueens, route, 2, paramv, count);
+  unsigned int currentNode = artsGetCurrentNode();
+  artsGuid_t joinGuid =
+      artsEdtCreate(joinNqueens, currentNode, 2, paramv, count);
   for (int i = 0; i < count; i++) {
     nqueen_data_t *nextData;
     artsGuid_t dbGuid =
@@ -75,8 +75,9 @@ void forkNqueens(uint32_t paramc, uint64_t *paramv, uint32_t depc,
     nextData->n = currentData->n;
 
     uint64_t newParamv[2] = {(uint64_t)joinGuid, i};
-    artsGuid_t forkGuid =
-        artsEdtCreate(forkNqueens, rand() % numNodes, 2, newParamv, 1);
+    unsigned int route =
+        nextData->row <= 2 ? (currentNode + i) % numNodes : currentNode;
+    artsGuid_t forkGuid = artsEdtCreate(forkNqueens, route, 2, newParamv, 1);
 
     artsSignalEdt(forkGuid, 0, dbGuid);
   }
@@ -132,15 +133,10 @@ void artsMain(int argc, char **argv) {
   clock_gettime(CLOCK_REALTIME, &start);
   double startTime = start.tv_sec + start.tv_nsec / 1e9;
 
-  unsigned int numNodes = artsGetTotalNodes();
-  srand(time(NULL) + artsGetCurrentNode());
-
   uint64_t finalParamv[2] = {(uint64_t)startTime, (uint64_t)n};
-  unsigned int route = rand() % numNodes;
-  artsGuid_t finalGuid = artsEdtCreate(finalNqueens, route, 2, finalParamv, 1);
+  artsGuid_t finalGuid = artsEdtCreate(finalNqueens, 0, 2, finalParamv, 1);
   uint64_t forkParamv[2] = {finalGuid, 0};
-  route = rand() % numNodes;
-  artsGuid_t forkGuid = artsEdtCreate(forkNqueens, route, 2, forkParamv, 1);
+  artsGuid_t forkGuid = artsEdtCreate(forkNqueens, 0, 2, forkParamv, 1);
   nqueen_data_t *forkData;
   artsGuid_t dbGuid =
       artsDbCreate((void **)&forkData, sizeof(nqueen_data_t), ARTS_DB_READ);

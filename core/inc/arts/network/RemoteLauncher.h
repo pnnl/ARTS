@@ -52,7 +52,7 @@ struct artsRemoteLauncher {
   unsigned int killStuckProcesses;
   void (*launchProcesses)(struct artsRemoteLauncher *);
   void (*cleanupProcesses)(struct artsRemoteLauncher *);
-  void *launcherMemory;
+  // void *launcherMemory;
 };
 
 // Add your launcher prototypes here
@@ -70,7 +70,7 @@ static inline struct artsRemoteLauncher *artsRemoteLauncherCreate(
   launcher->argv = argv;
   launcher->config = config;
   launcher->killStuckProcesses = killMode;
-  launcher->launcherMemory = NULL;
+  // launcher->launcherMemory = NULL;
   launcher->launchProcesses = launchProcesses;
   launcher->cleanupProcesses = cleanupProcesses;
 

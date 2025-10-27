@@ -45,7 +45,7 @@
 #include "arts/gpu/GpuStreamBuffer.h"
 
 #include "arts/gpu/GpuRuntime.cuh"
-#include "arts/introspection/Introspection.h"
+#include "arts/introspection/Metrics.h"
 #include "arts/runtime/Globals.h"
 #include "arts/system/ArtsPrint.h"
 #include "arts/utils/Atomics.h"

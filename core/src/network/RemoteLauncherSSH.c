@@ -45,7 +45,6 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "arts/arts.h"
 #include "arts/system/Config.h"
 
 static int artsShellQuote(const char *input, char *output, size_t outputSize) {
@@ -121,13 +120,17 @@ void artsRemoteLauncherSSHStartupProcesses(
     basePtr = slashPtr + 1;
   }
   if (basePtr && basePtr[0] != '\0') {
-    snprintf(binaryName, sizeof(binaryName), "%s", basePtr);
+    size_t baseLen = strlen(basePtr);
+    size_t copyLen =
+        (baseLen < sizeof(binaryName) - 1) ? baseLen : sizeof(binaryName) - 1;
+    memcpy(binaryName, basePtr, copyLen);
+    binaryName[copyLen] = '\0';
   }
 
   // Allocate for all non-master nodes
-  sshExecutions =
-      (FILE **)artsMalloc(sizeof(FILE *) * (config->tableLength - 1));
-  launcher->launcherMemory = sshExecutions;
+  // sshExecutions =
+  //     (FILE **)artsMalloc(sizeof(FILE *) * (config->tableLength - 1));
+  // launcher->launcherMemory = sshExecutions;
 
   char command[4096];
   char quotedCommand[(sizeof(command) * 6) + 8];
@@ -241,8 +244,8 @@ void artsRemoteLauncherSSHStartupProcesses(
 
 void artsRemoteLauncherSSHCleanupProcesses(
     struct artsRemoteLauncher *launcher) {
-  if (launcher && launcher->launcherMemory) {
-    artsFree(launcher->launcherMemory);
-    launcher->launcherMemory = NULL;
-  }
+  // if (launcher && launcher->launcherMemory) {
+  //   artsFree(launcher->launcherMemory);
+  //   launcher->launcherMemory = NULL;
+  // }
 }

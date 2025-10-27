@@ -41,6 +41,7 @@
 add_library(arts_interface INTERFACE)
 target_include_directories(arts_interface INTERFACE
     $<BUILD_INTERFACE:${ARTS_CORE_INCLUDE_DIR}>
+    $<BUILD_INTERFACE:${ARTS_CORE_BUILD_INCLUDE_DIR}>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 

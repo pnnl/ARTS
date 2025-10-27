@@ -228,15 +228,12 @@ bool incItem(artsRouteItem_t *item, unsigned int count, artsGuid_t key,
 }
 
 bool decItem(artsRouteTable_t *routeTable, artsRouteItem_t *item) {
-  uint64_t local = item->lock;
+  uint64_t local = artsAtomicSubU64(&item->lock, 1);
   if (getCount(local) == 0) {
-    printState(item);
-    artsDebugGenerateSegFault();
-  }
-  local = artsAtomicSubU64(&item->lock, 1);
-  if (shouldDelete(local)) {
-    routeTable->freeFunc(item);
-    return true;
+    if (shouldDelete(local)) {
+      routeTable->freeFunc(item);
+      return true;
+    }
   }
   return false;
 }
@@ -558,9 +555,10 @@ bool artsRouteTableAddSent(artsGuid_t key, void *edt, unsigned int slot,
     sendReq = markRequested(item);
   } else {
     sendReq = artsRouteTableReserveItemRace(key, &item, true);
-    if (!sendReq && !incItem(item, 1, item->key, routeTable))
+    if (!sendReq && !incItem(item, 1, item->key, routeTable)) {
       ARTS_INFO("Item marked for deletion before it has arrived %u...",
                 sendReq);
+    }
   }
   artsOutOfOrderHandleDbRequestWithOOList(&item->ooList, &item->data,
                                           (struct artsEdt *)edt, slot);

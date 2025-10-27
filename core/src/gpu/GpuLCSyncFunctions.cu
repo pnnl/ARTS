@@ -154,6 +154,7 @@ void artsGetMinDbUnsignedInt(artsLCMeta_t *host, artsLCMeta_t *dev) {
 }
 
 void artsAddDbUnsignedInt(artsLCMeta_t *host, artsLCMeta_t *dev) {
+  unsigned int count = 0;
   unsigned int numElem = host->dataSize / sizeof(unsigned int);
   unsigned int *dst = (unsigned int *)host->data;
   unsigned int *src = (unsigned int *)dev->data;
@@ -161,11 +162,12 @@ void artsAddDbUnsignedInt(artsLCMeta_t *host, artsLCMeta_t *dev) {
   for (unsigned int i = 0; i < numElem; i++) {
     dst[i] += src[i];
   }
-  ARTS_DEBUG("%lu %u %u", host->guid, count, count2);
+  ARTS_DEBUG("%lu %u", host->guid, count);
   versionUnlock(host);
 }
 
 void artsXorDbUint64(artsLCMeta_t *host, artsLCMeta_t *dev) {
+  unsigned int count = 0;
   unsigned int numElem = host->dataSize / sizeof(uint64_t);
   uint64_t *dst = (uint64_t *)host->data;
   uint64_t *src = (uint64_t *)dev->data;
@@ -173,8 +175,9 @@ void artsXorDbUint64(artsLCMeta_t *host, artsLCMeta_t *dev) {
   for (unsigned int i = 0; i < numElem; i++) {
     ARTS_DEBUG("xor[%u]: %lu -- %lu = %lu", i, dst[i], src[i], dst[i] ^ src[i]);
     dst[i] ^= src[i];
+    count++;
   }
-  ARTS_DEBUG("%lu %u %u", host->guid, count, count2);
+  ARTS_DEBUG("%lu %u", host->guid, count);
   versionUnlock(host);
 }
 
@@ -282,7 +285,7 @@ void gpuCopyLaunch(int root, int a, int b, bool srcShadow, bool dstShadow,
   void *dst = artsGpuRouteTableLookupDbRes(guid, root, NULL, NULL, false);
   if (dstShadow)
     dst = (void *)(((char *)dst) + size);
-  ARTS_DEBUG("%d %p %p", root, dbData, dst);
+  ARTS_DEBUG("%d %p", root, dst);
 
   void *src = artsGpuRouteTableLookupDbRes(guid, toRemove, NULL, NULL, false);
   if (srcShadow)

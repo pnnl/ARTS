@@ -84,7 +84,7 @@ function(add_arts_test test_name)
     add_executable(${test_name} ${test_name}.c)
     
     # Set include directories
-    target_include_directories(${test_name} PRIVATE ${ARTS_CORE_INCLUDE_DIR})
+    target_include_directories(${test_name} PRIVATE ${ARTS_CORE_INCLUDE_DIR} ${ARTS_CORE_BUILD_INCLUDE_DIR})
     
     # Link with runtime libraries
     target_link_libraries(${test_name} PRIVATE Threads::Threads ${RT_LIBRARY} ${M_LIBRARY} ${ANL_LIBRARY})
@@ -109,7 +109,7 @@ function(add_arts_graph_test test_name)
     add_executable(${test_name} ${test_name}.c)
     
     # Set include directories
-    target_include_directories(${test_name} PRIVATE ${ARTS_CORE_INCLUDE_DIR} ${ARTS_GRAPH_INCLUDE_DIR})
+    target_include_directories(${test_name} PRIVATE ${ARTS_CORE_INCLUDE_DIR} ${ARTS_CORE_BUILD_INCLUDE_DIR} ${ARTS_GRAPH_INCLUDE_DIR})
     
     # Link with arts_graph and runtime libraries
     target_link_libraries(${test_name} PRIVATE arts_graph Threads::Threads ${RT_LIBRARY} ${M_LIBRARY} ${ANL_LIBRARY})
@@ -145,7 +145,7 @@ if(BUILD_CUDA_LIBRARY)
         add_executable(${test_name} ${test_name}.cu)
         
         # Set include directories
-        target_include_directories(${test_name} PRIVATE ${ARTS_CORE_INCLUDE_DIR})
+        target_include_directories(${test_name} PRIVATE ${ARTS_CORE_INCLUDE_DIR} ${ARTS_CORE_BUILD_INCLUDE_DIR} ${CUDA_INCLUDE_DIRS})
         
         # Link with CUDA libraries
         target_link_libraries(${test_name} PRIVATE 

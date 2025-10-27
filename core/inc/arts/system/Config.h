@@ -59,9 +59,7 @@ struct artsConfigVariable {
 struct artsConfig {
   unsigned int myRank;
   char *masterNode;
-  char *myIPAddress;
   char *netInterface;
-  char *protocol;
   char *launcher;
   unsigned int ports;
   unsigned int osThreadCount;
@@ -69,7 +67,6 @@ struct artsConfig {
   unsigned int coreCount;
   unsigned int recieverCount;
   unsigned int senderCount;
-  unsigned int socketCount;
   unsigned int nodes;
   unsigned int masterRank;
   unsigned int port;
@@ -77,8 +74,9 @@ struct artsConfig {
   unsigned int routeTableSize;
   unsigned int routeTableEntries;
   unsigned int dequeSize;
-  unsigned int introspectiveTraceLevel;
-  unsigned int introspectiveStartPoint;
+  char *counterFolder;
+  unsigned int counterStartPoint;
+  unsigned int counterCaptureInterval;
   unsigned int printNodeStats;
   unsigned int scheduler;
   unsigned int shutdownEpoch;
@@ -90,11 +88,9 @@ struct artsConfig {
   unsigned int pinStride;
   bool printTopology;
   bool pinThreads;
-  unsigned int firstEdt;
   unsigned int shadLoopStride;
   uint64_t stackSize;
   struct artsRemoteLauncher *launcherData;
-  char *introspectiveConf;
   unsigned int tableLength;
   unsigned int
       tMT; // @awmm temporal MT; # of MT aliases per core thread; 0 if disabled

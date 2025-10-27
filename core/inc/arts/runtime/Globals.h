@@ -42,8 +42,8 @@
 extern "C" {
 #endif
 
+#include "arts/introspection/Counter.h"
 #include "arts/runtime/RT.h"
-#include "arts/utils/ArrayList.h"
 
 struct atomicCreateBarrierInfo {
   volatile unsigned int wait;
@@ -105,6 +105,11 @@ struct artsRuntimeShared {
   unsigned int pinThreads;
   uint64_t **keys;
   uint64_t *globalGuidThreadId;
+  const char *counterFolder;
+  unsigned int counterStartPoint;
+  artsCounterCaptures *counterCaptures;
+  uint64_t counterCaptureInterval;
+  artsCounterReduces counterReduces;
 } __attribute__((aligned(64)));
 
 struct artsRuntimePrivate {
@@ -129,7 +134,7 @@ struct artsRuntimePrivate {
   int edtFree;
   int localCounting;
   unsigned int shadLock;
-  artsArrayList *counterList;
+  artsCounter *artsCounters;
   unsigned short drand_buf[3];
 };
 

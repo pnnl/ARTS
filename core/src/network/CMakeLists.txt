@@ -45,7 +45,7 @@ add_library(arts_network OBJECT ${NETWORK_SOURCES})
 
 # Include directories
 target_include_directories(arts_network PRIVATE
-    ${ARTS_CORE_INCLUDE_DIR}
+    ${ARTS_CORE_INCLUDE_DIR} ${ARTS_CORE_BUILD_INCLUDE_DIR}
 )
 
 # Add RDMA include directories if available

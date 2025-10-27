@@ -43,6 +43,7 @@ add_executable(stream stream.cu streamUtil.c)
 # Set include directories
 target_include_directories(stream PRIVATE
     ${ARTS_CORE_INCLUDE_DIR}
+    ${ARTS_CORE_BUILD_INCLUDE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 

@@ -54,7 +54,7 @@ add_library(arts_utils OBJECT ${UTILS_SOURCES})
 
 # Include directories
 target_include_directories(arts_utils PRIVATE
-    ${ARTS_CORE_INCLUDE_DIR}
+    ${ARTS_CORE_INCLUDE_DIR} ${ARTS_CORE_BUILD_INCLUDE_DIR}
 )
 
 # Add hwloc include directories if available

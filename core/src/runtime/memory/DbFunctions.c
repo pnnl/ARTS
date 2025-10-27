@@ -46,7 +46,7 @@
 #include "arts/gas/Guid.h"
 #include "arts/gas/OutOfOrder.h"
 #include "arts/gas/RouteTable.h"
-#include "arts/introspection/Introspection.h"
+#include "arts/introspection/Metrics.h"
 #include "arts/runtime/Globals.h"
 #include "arts/runtime/RT.h"
 #include "arts/runtime/compute/EdtFunctions.h"
@@ -114,11 +114,12 @@ void artsDbCreateInternal(artsGuid_t guid, void *addr, uint64_t size,
 #ifdef USE_SMART_DB
   dbRes->eventGuid = artsPersistentEventCreate(artsGuidGetRank(guid), 0, guid);
 #endif
+  INCREMENT_NUM_DBS_CREATED_BY(1);
 }
 
 artsGuid_t artsDbCreateRemote(unsigned int route, uint64_t size,
                               artsType_t mode) {
-  artsCounterTriggerTimerEvent(dbCreateCounter, true);
+  DB_CREATE_COUNTER_START();
   if (route == -1)
     route = artsGlobalRankId;
   artsGuid_t guid = artsGuidCreateForRank(route, mode);
@@ -129,13 +130,13 @@ artsGuid_t artsDbCreateRemote(unsigned int route, uint64_t size,
 
   artsRemoteMemoryMove(route, guid, ptr, sizeof(struct artsDb),
                        ARTS_REMOTE_DB_SEND_MSG, artsDbFree);
-  artsCounterTriggerTimerEvent(dbCreateCounter, false);
+  DB_CREATE_COUNTER_STOP();
   return guid;
 }
 
 // Creates a local DB only
 artsGuid_t artsDbCreate(void **addr, uint64_t size, artsType_t mode) {
-  artsCounterTriggerTimerEvent(dbCreateCounter, true);
+  DB_CREATE_COUNTER_START();
   artsGuid_t guid = NULL_GUID;
   unsigned int dbSize = size + sizeof(struct artsDb);
 
@@ -147,12 +148,12 @@ artsGuid_t artsDbCreate(void **addr, uint64_t size, artsType_t mode) {
     artsRouteTableAddItem(ptr, guid, artsGlobalRankId, false);
     *addr = (void *)((struct artsDb *)ptr + 1);
   }
-  artsCounterTriggerTimerEvent(dbCreateCounter, false);
+  DB_CREATE_COUNTER_STOP();
   return guid;
 }
 
 artsGuid_t artsDbCreatePtr(artsPtr_t *addr, uint64_t size, artsType_t mode) {
-  artsCounterTriggerTimerEvent(dbCreateCounter, true);
+  DB_CREATE_COUNTER_START();
   artsGuid_t guid = NULL_GUID;
   unsigned int dbSize = size + sizeof(struct artsDb);
 
@@ -164,13 +165,13 @@ artsGuid_t artsDbCreatePtr(artsPtr_t *addr, uint64_t size, artsType_t mode) {
     artsRouteTableAddItem(ptr, guid, artsGlobalRankId, false);
     *addr = (artsPtr_t)((struct artsDb *)ptr + 1);
   }
-  artsCounterTriggerTimerEvent(dbCreateCounter, false);
+  DB_CREATE_COUNTER_STOP();
   return guid;
 }
 
 // Guid must be for a local DB only
 void *artsDbCreateWithGuid(artsGuid_t guid, uint64_t size) {
-  artsCounterTriggerTimerEvent(dbCreateCounter, true);
+  DB_CREATE_COUNTER_START();
   artsType_t mode = artsGuidGetType(guid);
 
   void *ptr = NULL;
@@ -188,12 +189,12 @@ void *artsDbCreateWithGuid(artsGuid_t guid, uint64_t size) {
   }
   ARTS_INFO("Creating DB [Guid: %lu] [Mode: %s] [Ptr: %p] [Route: %d]", guid,
             getTypeName(mode), ptr, artsGuidGetRank(guid));
-  artsCounterTriggerTimerEvent(dbCreateCounter, false);
+  DB_CREATE_COUNTER_STOP();
   return ptr;
 }
 
 void *artsDbCreateWithGuidAndData(artsGuid_t guid, void *data, uint64_t size) {
-  artsCounterTriggerTimerEvent(dbCreateCounter, true);
+  DB_CREATE_COUNTER_START();
   artsType_t mode = artsGuidGetType(guid);
   void *ptr = NULL;
   if (artsIsGuidLocal(guid)) {
@@ -210,7 +211,7 @@ void *artsDbCreateWithGuidAndData(artsGuid_t guid, void *data, uint64_t size) {
       ptr = dbData;
     }
   }
-  artsCounterTriggerTimerEvent(dbCreateCounter, false);
+  DB_CREATE_COUNTER_STOP();
   return ptr;
 }
 
@@ -615,18 +616,18 @@ void internalGetFromDb(artsGuid_t edtGuid, artsGuid_t dbGuid, unsigned int slot,
 
 void artsGetFromDb(artsGuid_t edtGuid, artsGuid_t dbGuid, unsigned int slot,
                    unsigned int offset, unsigned int size) {
-  artsCounterTriggerTimerEvent(getDbCounter, true);
+  GET_DB_COUNTER_START();
   unsigned int rank = artsGuidGetRank(dbGuid);
   internalGetFromDb(edtGuid, dbGuid, slot, offset, size, rank);
-  artsCounterTriggerTimerEvent(getDbCounter, false);
+  GET_DB_COUNTER_STOP();
 }
 
 void artsGetFromDbAt(artsGuid_t edtGuid, artsGuid_t dbGuid, unsigned int slot,
                      unsigned int offset, unsigned int size,
                      unsigned int rank) {
-  artsCounterTriggerTimerEvent(getDbCounter, true);
+  GET_DB_COUNTER_START();
   internalGetFromDb(edtGuid, dbGuid, slot, offset, size, rank);
-  artsCounterTriggerTimerEvent(getDbCounter, false);
+  GET_DB_COUNTER_STOP();
 }
 
 void internalPutInDb(void *ptr, artsGuid_t edtGuid, artsGuid_t dbGuid,
@@ -662,33 +663,33 @@ void internalPutInDb(void *ptr, artsGuid_t edtGuid, artsGuid_t dbGuid,
 void artsPutInDbAt(void *ptr, artsGuid_t edtGuid, artsGuid_t dbGuid,
                    unsigned int slot, unsigned int offset, unsigned int size,
                    unsigned int rank) {
-  artsCounterTriggerTimerEvent(putDbCounter, true);
+  PUT_DB_COUNTER_START();
   artsGuid_t epochGuid = artsGetCurrentEpochGuid();
   ARTS_DEBUG("Epoch [Guid: %lu]", epochGuid);
   incrementActiveEpoch(epochGuid);
   globalShutdownGuidIncActive();
   internalPutInDb(ptr, edtGuid, dbGuid, slot, offset, size, epochGuid, rank);
-  artsCounterTriggerTimerEvent(putDbCounter, false);
+  PUT_DB_COUNTER_STOP();
 }
 
 void artsPutInDb(void *ptr, artsGuid_t edtGuid, artsGuid_t dbGuid,
                  unsigned int slot, unsigned int offset, unsigned int size) {
-  artsCounterTriggerTimerEvent(putDbCounter, true);
+  PUT_DB_COUNTER_START();
   unsigned int rank = artsGuidGetRank(dbGuid);
   artsGuid_t epochGuid = artsGetCurrentEpochGuid();
   ARTS_DEBUG("Epoch [Guid: %lu]", epochGuid);
   incrementActiveEpoch(epochGuid);
   globalShutdownGuidIncActive();
   internalPutInDb(ptr, edtGuid, dbGuid, slot, offset, size, epochGuid, rank);
-  artsCounterTriggerTimerEvent(putDbCounter, false);
+  PUT_DB_COUNTER_STOP();
 }
 
 void artsPutInDbEpoch(void *ptr, artsGuid_t epochGuid, artsGuid_t dbGuid,
                       unsigned int offset, unsigned int size) {
-  artsCounterTriggerTimerEvent(putDbCounter, true);
+  PUT_DB_COUNTER_START();
   unsigned int rank = artsGuidGetRank(dbGuid);
   incrementActiveEpoch(epochGuid);
   globalShutdownGuidIncActive();
   internalPutInDb(ptr, NULL_GUID, dbGuid, 0, offset, size, epochGuid, rank);
-  artsCounterTriggerTimerEvent(putDbCounter, false);
+  PUT_DB_COUNTER_STOP();
 }

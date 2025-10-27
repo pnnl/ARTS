@@ -37,25 +37,14 @@
 ## License for the specific language governing permissions and limitations
 ###############################################################################
 
-# Conditionally add introspection source files
-set(introspection_src "IntrospectionStub.c")
-
-if(USE_COUNTERS OR USE_METRICS)
-    list(APPEND introspection_src "Introspection.c" "JsonWriter.c")
-endif()
-
-if(USE_COUNTERS)
-    list(APPEND introspection_src "Counter.c")
-endif()
-
-if(USE_METRICS)
-    list(APPEND introspection_src "Metrics.c")
-endif()
+# Collect all source files
+file(GLOB INTROSPECTION_SOURCES "*.c")
 
 # Create object library for the introspection module
-add_library(arts_introspection OBJECT ${introspection_src})
+add_library(arts_introspection OBJECT ${INTROSPECTION_SOURCES})
 
 # Include directories
 target_include_directories(arts_introspection PRIVATE
     ${ARTS_CORE_INCLUDE_DIR}
+    ${ARTS_CORE_BUILD_INCLUDE_DIR}
 )

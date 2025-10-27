@@ -41,7 +41,7 @@
 add_executable(randomAccess randomAccess.cu)
 
 # Set include directories
-target_include_directories(randomAccess PRIVATE ${ARTS_CORE_INCLUDE_DIR})
+target_include_directories(randomAccess PRIVATE ${ARTS_CORE_INCLUDE_DIR} ${ARTS_CORE_BUILD_INCLUDE_DIR})
 
 # Link with CUDA libraries
 target_link_libraries(randomAccess PRIVATE 

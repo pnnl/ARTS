@@ -39,7 +39,6 @@
 #include "arts/gas/Guid.h"
 
 #include "arts/arts.h"
-#include "arts/introspection/Introspection.h"
 #include "arts/runtime/Globals.h"
 #include "arts/system/ArtsPrint.h"
 #include "arts/system/Debug.h"
@@ -84,7 +83,7 @@ artsGuid_t artsGuidCreateForRankInternal(unsigned int route, unsigned int type,
   }
   guid.fields.type = type;
   guid.fields.rank = route;
-  artsCounterTriggerEvent(guidAllocCounter, guidCount);
+  INCREMENT_GUID_ALLOC_COUNTER_BY(guidCount);
   return (artsGuid_t)guid.bits;
 }
 
@@ -131,13 +130,13 @@ artsGuid_t artsGuidCast(artsGuid_t guid, artsType_t type) {
 }
 
 artsType_t artsGuidGetType(artsGuid_t guid) {
-  artsCounterTriggerEvent(guidLookupCounter, 1);
+  INCREMENT_GUID_LOOKUP_COUNTER_BY(1);
   artsGuid addressInfo = (artsGuid){.bits = guid};
   return (artsType_t)addressInfo.fields.type;
 }
 
 unsigned int artsGuidGetRank(artsGuid_t guid) {
-  artsCounterTriggerEvent(guidLookupCounter, 1);
+  INCREMENT_GUID_LOOKUP_COUNTER_BY(1);
   artsGuid addressInfo = (artsGuid){.bits = guid};
   return addressInfo.fields.rank;
 }

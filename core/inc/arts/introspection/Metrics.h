@@ -48,45 +48,51 @@ extern "C" {
 #define artsMETRICLEVELS 3
 #define artsMAXMETRICNAME 64
 
-#define artsMallocWithType(size, type)                                         \
-  ({                                                                           \
-    if (artsMetricsIsActive())                                                 \
-      artsThreadInfo.mallocType = type;                                        \
-    void *__ptr = artsMalloc(size);                                            \
-    if (artsMetricsIsActive())                                                 \
-      artsThreadInfo.mallocType = artsDefaultMemorySize;                       \
-    __ptr;                                                                     \
-  })
+/* #define artsMallocWithType(size, type) \
+  ({ \
+    if (artsMetricsIsActive()) \
+      artsThreadInfo.mallocType = type; \
+    void *__ptr = artsMalloc(size); \
+    if (artsMetricsIsActive()) \
+      artsThreadInfo.mallocType = artsDefaultMemorySize; \
+    __ptr; \
+  }) */
 
-#define artsMallocAlignWithType(size, align, type)                             \
-  ({                                                                           \
-    if (artsMetricsIsActive())                                                 \
-      artsThreadInfo.mallocType = type;                                        \
-    void *__ptr = artsMallocAlign(size, align);                                \
-    if (artsMetricsIsActive())                                                 \
-      artsThreadInfo.mallocType = artsDefaultMemorySize;                       \
-    __ptr;                                                                     \
-  })
+/* #define artsMallocAlignWithType(size, align, type) \
+  ({ \
+    if (artsMetricsIsActive()) \
+      artsThreadInfo.mallocType = type; \
+    void *__ptr = artsMallocAlign(size, align); \
+    if (artsMetricsIsActive()) \
+      artsThreadInfo.mallocType = artsDefaultMemorySize; \
+    __ptr; \
+  }) */
 
-#define artsCallocWithType(nmemb, size, type)                                  \
-  ({                                                                           \
-    if (artsMetricsIsActive())                                                 \
-      artsThreadInfo.mallocType = type;                                        \
-    void *__ptr = artsCalloc(nmemb, size);                                     \
-    if (artsMetricsIsActive())                                                 \
-      artsThreadInfo.mallocType = artsDefaultMemorySize;                       \
-    __ptr;                                                                     \
-  })
+/* #define artsCallocWithType(nmemb, size, type) \
+  ({ \
+    if (artsMetricsIsActive()) \
+      artsThreadInfo.mallocType = type; \
+    void *__ptr = artsCalloc(nmemb, size); \
+    if (artsMetricsIsActive()) \
+      artsThreadInfo.mallocType = artsDefaultMemorySize; \
+    __ptr; \
+  }) */
 
+/* #define artsCallocAlignWithType(nmemb, size, align, type) \
+  ({ \
+    if (artsMetricsIsActive()) \
+      artsThreadInfo.mallocType = type; \
+    void *__ptr = artsCallocAlign(nmemb, size, align); \
+    if (artsMetricsIsActive()) \
+      artsThreadInfo.mallocType = artsDefaultMemorySize; \
+    __ptr; \
+  }) */
+
+#define artsMallocWithType(size, type) artsMalloc(size)
+#define artsMallocAlignWithType(size, align, type) artsMallocAlign(size, align)
+#define artsCallocWithType(nmemb, size, type) artsCalloc(nmemb, size)
 #define artsCallocAlignWithType(nmemb, size, align, type)                      \
-  ({                                                                           \
-    if (artsMetricsIsActive())                                                 \
-      artsThreadInfo.mallocType = type;                                        \
-    void *__ptr = artsCallocAlign(nmemb, size, align);                         \
-    if (artsMetricsIsActive())                                                 \
-      artsThreadInfo.mallocType = artsDefaultMemorySize;                       \
-    __ptr;                                                                     \
-  })
+  artsCallocAlign(nmemb, size, align)
 
 extern const char *const artsMetricName[];
 
@@ -149,7 +155,7 @@ typedef enum artsMetricType {
   artsEpochDeleteMsg,
   artsAtomicAddArraydbMsg,
   artsAtomicCasArraydbMsg,
-  artsRemote_bufferSendMsg,
+  artsRemoteBufferSendMsg,
   artsRemoteContextSigMsg,
   artsRemoteDbRenameMsg,
   artsDefaultMemorySize,
@@ -243,63 +249,71 @@ typedef struct {
   char *prefix;
 } artsInspectorShots;
 
-#ifdef USE_METRICS
+// void artsMetricsConfigSetDefaultEnabled(bool enabled);
+// void artsMetricsConfigSetEnabled(const char *name, bool enabled);
+// void artsMetricsTriggerEvent(artsMetricType metricType, artsMetricLevel
+// level,
+//                              uint64_t value);
+// void artsMetricsTriggerTimerEvent(artsMetricType metricType,
+//                                   artsMetricLevel level, bool start);
+// void artsMetricsToggleThread();
+// uint64_t artsMetricsGetInspectorTime();
+// bool artsMetricsIsActive();
+// void artsMetricsStart(unsigned int startPoint);
+// void artsMetricsStop();
+// void artsMetricsInitIntrospector(unsigned int startPoint);
+// uint64_t artsMetricsGetTotal(artsMetricType type, artsMetricLevel level);
+// double artsMetricsGetRate(artsMetricType type, artsMetricLevel level,
+//                           bool last);
+// double artsMetricsGetTotalRate(artsMetricType type, artsMetricLevel level);
+// double artsMetricsTest(artsMetricType type, artsMetricLevel level,
+//                        uint64_t num);
+// uint64_t artsMetricsGetRateU64(artsMetricType type, artsMetricLevel level,
+//                                bool last);
+// uint64_t artsMetricsGetRateU64Diff(artsMetricType type, artsMetricLevel
+// level,
+//                                    uint64_t *diff);
+// uint64_t artsMetricsGetTotalRateU64(artsMetricType type, artsMetricLevel
+// level,
+//                                     uint64_t *total, uint64_t *timeStamp);
+// void artsMetricsHandleRemoteUpdate(artsMetricType type, artsMetricLevel
+// level,
+//                                    uint64_t toAdd, bool sub);
+// void artsMetricsPrintInspectorTime();
+// void artsMetricsPrintInspectorStats();
+// void artsMetricsPrintModelTotalMetrics(artsMetricLevel level);
+// void artsMetricsUpdatePacketInfo(uint64_t bytes);
+// void artsMetricsPacketStats(uint64_t *totalBytes, uint64_t *totalPackets,
+//                             uint64_t *minPacket, uint64_t *maxPacket);
+// void artsMetricsIntervalPacketStats(uint64_t *totalBytes,
+//                                     uint64_t *totalPackets, uint64_t
+//                                     *minPacket, uint64_t *maxPacket);
 
-void artsMetricsInitIntrospector(unsigned int startPoint);
-void artsMetricsStart(unsigned int startPoint);
-void artsMetricsStop(void);
-bool artsMetricsIsActive(void);
-uint64_t artsMetricsGetInspectorTime(void);
-void artsMetricsToggleThread(void);
-void artsMetricsUpdatePacketInfo(uint64_t bytes);
-void artsMetricsPacketStats(uint64_t *totalBytes, uint64_t *totalPackets,
-                            uint64_t *minPacket, uint64_t *maxPacket);
-void artsMetricsIntervalPacketStats(uint64_t *totalBytes,
-                                    uint64_t *totalPackets, uint64_t *minPacket,
-                                    uint64_t *maxPacket);
-void artsMetricsPrintInspectorStats(void);
-void artsMetricsPrintInspectorTime(void);
-void artsMetricsPrintModelTotalMetrics(artsMetricLevel level);
-void artsMetricsHandleRemoteUpdate(artsMetricType type, artsMetricLevel level,
-                                   uint64_t toAdd, bool sub);
-uint64_t artsMetricsGetTotal(artsMetricType type, artsMetricLevel level);
-uint64_t artsMetricsGetRateU64(artsMetricType type, artsMetricLevel level,
-                               bool last);
-uint64_t artsMetricsGetRateU64Diff(artsMetricType type, artsMetricLevel level,
-                                   uint64_t *diff);
-uint64_t artsMetricsGetTotalRateU64(artsMetricType type, artsMetricLevel level,
-                                    uint64_t *total, uint64_t *timeStamp);
-double artsMetricsGetRate(artsMetricType type, artsMetricLevel level,
-                          bool last);
-double artsMetricsGetTotalRate(artsMetricType type, artsMetricLevel level);
-double artsMetricsTest(artsMetricType type, artsMetricLevel level,
-                       uint64_t num);
-
-#else
-
-#define artsMetricsInitIntrospector(startPoint)
+#define artsMetricsConfigSetDefaultEnabled(enabled) ((void)0)
+#define artsMetricsConfigSetEnabled(name, enabled) ((void)0)
+#define artsMetricsTriggerEvent(metricType, level, value) ((void)0)
+#define artsMetricsTriggerTimerEvent(metricType, level, start) ((void)0)
+#define artsMetricsToggleThread()
+#define artsMetricsGetInspectorTime() 0
+#define artsMetricsIsActive() 0
 #define artsMetricsStart(startPoint)
 #define artsMetricsStop()
-#define artsMetricsIsActive() 0
-#define artsMetricsGetInspectorTime() 0
-#define artsMetricsToggleThread()
+#define artsMetricsInitIntrospector(startPoint)
+#define artsMetricsGetTotal(type, level) 0
+#define artsMetricsGetRate(type, level, last) 0
+#define artsMetricsGetTotalRate(type, level) 0
+#define artsMetricsTest(type, level, num) 0
+#define artsMetricsGetRateU64(type, level, last) 0
+#define artsMetricsGetRateU64Diff(type, level, diff) 0
+#define artsMetricsGetTotalRateU64(type, level, total, timeStamp) 0
+#define artsMetricsHandleRemoteUpdate(type, level, toAdd, sub) 0
+#define artsMetricsPrintInspectorTime()
+#define artsMetricsPrintInspectorStats()
+#define artsMetricsPrintModelTotalMetrics(level)
 #define artsMetricsUpdatePacketInfo(bytes)
 #define artsMetricsPacketStats(totalBytes, totalPackets, minPacket, maxPacket)
 #define artsMetricsIntervalPacketStats(totalBytes, totalPackets, minPacket,    \
                                        maxPacket)
-#define artsMetricsPrintInspectorStats()
-#define artsMetricsPrintInspectorTime()
-#define artsMetricsPrintModelTotalMetrics(level)
-#define artsMetricsGetTotal(type, level) 0
-#define artsMetricsGetRate(type, level, last) 0
-#define artsMetricsGetTotalRate(type, level) 0
-#define artsMetricsGetRateU64(type, level, last) 0
-#define artsMetricsGetRateU64Diff(type, level, diff) 0
-#define artsMetricsGetTotalRateU64(type, level, total, timeStamp) 0
-#define artsMetricsTest(type, level, num) 0
-#define artsMetricsHandleRemoteUpdate(type, level, toAdd, sub) 0
-
-#endif
 
 #ifdef __cplusplus
 }

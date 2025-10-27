@@ -54,6 +54,7 @@ function(add_mm_cuda_example example_name)
     # Set include directories
     target_include_directories(${example_name} PRIVATE
         ${ARTS_CORE_INCLUDE_DIR}
+        ${ARTS_CORE_BUILD_INCLUDE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}
     )
     

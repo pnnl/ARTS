@@ -61,7 +61,7 @@ char *extractNodelistLsf(const char *envr, int stride, unsigned int *cnt) {
   if (stride <= 0)
     stride = 1;
   unsigned int nodesStrLen = strlen(lsfNodes) + 1;
-  char *nodeList = (char *)malloc(sizeof(char) * nodesStrLen);
+  char *nodeList = (char *)artsMalloc(sizeof(char) * nodesStrLen);
   unsigned int count = 0;
   unsigned int listStrLength = 0;
   last = resString = strtok(lsfNodes, " ");
@@ -703,13 +703,6 @@ struct artsConfig *artsConfigLoad() {
     config->recieverCount = 1;
   }
 
-  if ((foundVariable = artsConfigFindVariable(&configVariables, "sockets")) !=
-      NULL)
-    config->socketCount = strtol(foundVariable->value, &end, 10);
-  else {
-    config->socketCount = 1;
-  }
-
   if ((foundVariable =
            artsConfigFindVariable(&configVariables, "netInterface")) != NULL) {
     config->netInterface = artsConfigMakeNewVar(foundVariable->value);
@@ -721,13 +714,6 @@ struct artsConfig *artsConfigLoad() {
   } else {
     config->netInterface = NULL;
     config->ibNames = false;
-  }
-
-  if ((foundVariable = artsConfigFindVariable(&configVariables, "protocol")) !=
-      NULL)
-    config->protocol = artsConfigMakeNewVar(foundVariable->value);
-  else {
-    config->protocol = artsConfigMakeNewVar("tcp");
   }
 
   if ((foundVariable =
@@ -752,23 +738,25 @@ struct artsConfig *artsConfigLoad() {
   else
     config->suffix = NULL;
 
-  if ((foundVariable = artsConfigFindVariable(&configVariables,
-                                              "introspectiveConf")) != NULL)
-    config->introspectiveConf = artsConfigMakeNewVar(foundVariable->value);
+  if ((foundVariable =
+           artsConfigFindVariable(&configVariables, "counterFolder")) != NULL)
+    config->counterFolder = artsConfigMakeNewVar(foundVariable->value);
   else
-    config->introspectiveConf = NULL;
+    config->counterFolder = artsConfigMakeNewVar("./counter");
 
   if ((foundVariableChar = artsConfigFindVariableChar(
-           configVariables, "introspectiveTraceLevel")) != NULL)
-    config->introspectiveTraceLevel = strtol(foundVariableChar, &end, 10);
+           configVariables, "counterStartPoint")) != NULL)
+    config->counterStartPoint = strtol(foundVariableChar, &end, 10);
   else
-    config->introspectiveTraceLevel = 1;
+    config->counterStartPoint = 1;
 
-  if ((foundVariableChar = artsConfigFindVariableChar(
-           configVariables, "introspectiveStartPoint")) != NULL)
-    config->introspectiveStartPoint = strtol(foundVariableChar, &end, 10);
-  else
-    config->introspectiveStartPoint = 1;
+  if ((foundVariable = artsConfigFindVariable(
+           &configVariables, "counterCaptureInterval")) != NULL)
+    config->counterCaptureInterval = strtol(foundVariable->value, &end, 10);
+  else {
+    ARTS_DEBUG_ONCE("Defaulting the counter capture interval to 1000 ms");
+    config->counterCaptureInterval = 1000;
+  }
 
   if ((foundVariableChar = artsConfigFindVariableChar(
            configVariables, "printNodeStats")) != NULL)
@@ -1068,6 +1056,5 @@ void artsConfigDestroy(struct artsConfig *config) {
   if (config->masterNode) {
     artsFree(config->masterNode);
   }
-  artsFree(config->protocol);
   artsFree(config);
 }
