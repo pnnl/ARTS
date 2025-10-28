@@ -490,14 +490,17 @@ artsEpoch_t *getPoolEpoch(artsGuid_t edtGuid, unsigned int slot) {
 }
 
 void artsYield() {
+  EDT_RUNNING_TIME_STOP();
   INCREMENT_YIELD_BY(1);
   threadLocal_t tl;
   artsSaveThreadLocal(&tl);
   artsNodeInfo.scheduler();
   artsRestoreThreadLocal(&tl);
+  EDT_RUNNING_TIME_START();
 }
 
 bool artsWaitOnHandle(artsGuid_t epochGuid) {
+  EDT_RUNNING_TIME_STOP();
   artsGuid_t *guid = artsCheckEpochIsRoot(epochGuid);
   ARTS_DEBUG("Waiting on epoch [Guid: %lu]", epochGuid);
   // For now lets leave this rule here
@@ -511,6 +514,7 @@ bool artsWaitOnHandle(artsGuid_t epochGuid) {
       incrementFinishedEpoch(local);
       artsContextSwitch(1);
       cleanEpochPool();
+      EDT_RUNNING_TIME_START();
       return true;
     }
     if (!epoch->ticket) {
@@ -527,8 +531,10 @@ bool artsWaitOnHandle(artsGuid_t epochGuid) {
 
       cleanEpochPool();
 
+      EDT_RUNNING_TIME_START();
       return true;
     }
   }
+  EDT_RUNNING_TIME_START();
   return false;
 }

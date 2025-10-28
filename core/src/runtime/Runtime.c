@@ -461,12 +461,10 @@ void artsRunEdt(struct artsEdt *edt) {
   artsSetThreadLocalEdtInfo(edt);
   ARTS_INFO("Running EDT [Guid: %lu]", edt->currentEdt);
 
-  EDT_IDLE_TIME_STOP();
   EDT_RUNNING_TIME_START();
   func(paramc, paramv, depc, depv);
   EDT_RUNNING_TIME_STOP();
   INCREMENT_NUM_EDTS_FINISHED_BY(1);
-  EDT_IDLE_TIME_START();
 
   artsMetricsTriggerEvent(artsEdtThroughput, artsThread, 1);
 
@@ -586,7 +584,6 @@ bool artsDefaultSchedulerLoop() {
 
 int artsRuntimeLoop() {
   TOTAL_COUNTER_START();
-  EDT_IDLE_TIME_START();
   if (artsThreadInfo.networkReceive) {
     while (artsThreadInfo.alive) {
       artsServerTryToReceive(&artsNodeInfo.buf, &artsNodeInfo.packetSize,
@@ -605,7 +602,6 @@ int artsRuntimeLoop() {
       artsNodeInfo.scheduler();
     }
   }
-  EDT_IDLE_TIME_STOP();
   TOTAL_COUNTER_STOP();
   return 0;
 }

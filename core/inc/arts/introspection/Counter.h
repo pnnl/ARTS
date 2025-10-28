@@ -72,7 +72,6 @@ typedef enum artsCounterType {
   remoteMemoryMove,
   memoryFootprint,
   edtRunningTime,
-  edtIdleTime,
   numEdtsCreated,
   numEdtsAcquired,
   numEdtsFinished,
@@ -147,7 +146,6 @@ static const char *const artsCounterNames[] = {"edtCounter",
                                                "remoteMemoryMove",
                                                "memoryFootprint",
                                                "edtRunningTime",
-                                               "edtIdleTime",
                                                "numEdtsCreated",
                                                "numEdtsAcquired",
                                                "numEdtsFinished",
@@ -179,7 +177,6 @@ static const unsigned int artsCounterReduceTypes[] = {
     artsCounterSum, // remoteMemoryMove
     artsCounterSum, // memoryFootprint
     artsCounterSum, // edtRunningTime
-    artsCounterSum, // edtIdleTime
     artsCounterSum, // numEdtsCreated
     artsCounterSum, // numEdtsAcquired
     artsCounterSum, // numEdtsFinished
