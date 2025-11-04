@@ -117,6 +117,8 @@ void artsShutdown() {
 
   if (artsGlobalRankCount == 1)
     artsRuntimeStop();
+
+  fflush(stdout);
 }
 
 void artsThreadSetOsThreadCount(unsigned int threads) {
@@ -125,7 +127,6 @@ void artsThreadSetOsThreadCount(unsigned int threads) {
 
 void artsPthreadAffinity(unsigned int cpuCoreId, bool verbose) {
 #ifdef __APPLE__
-  // macOS doesn't support CPU affinity, so we just return
   (void)cpuCoreId;
   (void)verbose;
   return;

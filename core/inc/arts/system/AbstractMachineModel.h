@@ -50,9 +50,12 @@ extern "C" {
 
 #ifdef USE_HWLOC
 #include <hwloc.h>
+#include <sched.h>
 struct artsCoreInfo {
-  hwloc_cpuset_t cpuset;
-  hwloc_topology_t topology;
+  hwloc_bitmap_t cpuset;
+#ifndef __APPLE__
+  cpu_set_t linuxCpuSet;
+#endif
 };
 #else
 struct artsCoreInfo {

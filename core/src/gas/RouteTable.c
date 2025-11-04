@@ -833,6 +833,7 @@ uint64_t artsCleanUpRouteTable(artsRouteTable_t *routeTable) {
       if (db) {
         if (!artsAtomicSub(&db->copyCount, 1)) {
           freeSize += db->header.size;
+          ARTS_DEBUG("Freeing DB [Guid: %lu] [Size: %lu]", item->key, db->header.size);
           artsDbFree(db);
           freeItem(item);
         }

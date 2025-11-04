@@ -203,7 +203,7 @@ inline void artsOutOfOrderHandler(void *handleMe, void *memoryPtr) {
   }
   case ooPersistentEventSatisfySlot: {
     struct ooEventSatisfySlot *event = (struct ooEventSatisfySlot *)handleMe;
-    artsPersistentEventSatisfy(event->eventGuid, event->slot, false);
+    artsPersistentEventSatisfy(event->eventGuid, event->slot, true);
     break;
   }
   case ooAddDependence: {
@@ -355,7 +355,7 @@ void artsOutOfOrderPersistentEventSatisfySlot(artsGuid_t waitOn,
   else {
     bool res = artsRouteTableAddOO(waitOn, event, false);
     if (!res) {
-      artsPersistentEventSatisfy(eventGuid, slot, false);
+      artsPersistentEventSatisfy(eventGuid, slot, true);
       artsFree(event);
     }
   }

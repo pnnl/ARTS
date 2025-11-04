@@ -544,7 +544,8 @@ void prepDbs(unsigned int depc, artsEdtDep_t *depv, bool gpu) {
 
 void releaseDbs(unsigned int depc, artsEdtDep_t *depv, bool gpu) {
   for (int i = 0; i < depc; i++) {
-    ARTS_DEBUG("Releasing DB [Guid: %lu]", depv[i].guid);
+    ARTS_DEBUG("Releasing DB [Guid: %lu] [Mode: %s]", depv[i].guid,
+               getTypeName(depv[i].mode));
     unsigned int owner = artsGuidGetRank(depv[i].guid);
     if (depv[i].guid != NULL_GUID && depv[i].mode == ARTS_DB_WRITE) {
       if (owner == artsGlobalRankId) {
@@ -554,11 +555,10 @@ void releaseDbs(unsigned int depc, artsEdtDep_t *depv, bool gpu) {
         artsDbDecrementLatch(depv[i].guid);
 #endif
       } else {
-        ARTS_DEBUG("Remote write release for DB [Guid: %lu]; sending update to "
-                   "owner %u",
-                   depv[i].guid, owner);
         artsRemoteUpdateDb(depv[i].guid, true);
       }
+    } else if (depv[i].guid != NULL_GUID && depv[i].mode == ARTS_DB_READ) {
+      artsDbDecrementLatch(depv[i].guid);
     } else if (depv[i].mode == ARTS_DB_PIN) {
 #ifdef USE_SMART_DB
       artsDbDecrementLatch(depv[i].guid);

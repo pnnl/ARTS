@@ -484,6 +484,7 @@ bool artsPersistentEventFreeVersion(struct artsPersistentEvent *event) {
     current = current->next;
     artsFree(trail);
   }
+  version->dependent.next = NULL;
 
   /// Free the version
   if (last) {
@@ -611,7 +612,7 @@ void artsPersistentEventSatisfy(artsGuid_t eventGuid, uint32_t action,
           } else if (dependent[j].type == ARTS_EVENT) {
             SIGNAL_PERSISTENT_EVENT_COUNTER_STOP();
             artsPersistentEventSatisfy(dependent[j].addr, dependent[j].slot,
-                                       false);
+                                       true);
             SIGNAL_PERSISTENT_EVENT_COUNTER_START();
           } else if (dependent[j].type == ARTS_CALLBACK) {
             artsEdtDep_t arg;
@@ -680,6 +681,7 @@ void artsAddDependenceToPersistentEvent(artsGuid_t eventSource,
   struct artsPersistentEventVersion *version =
       artsGetLastPersistentEventVersion(event);
   assert(version != NULL);
+  bool needsUpdate = false;
   if (mode == ARTS_EDT) {
     struct artsDependentList *dependentList = &version->dependent;
     unsigned int position = artsAtomicFetchAdd(&version->dependentCount, 1U);
@@ -692,9 +694,8 @@ void artsAddDependenceToPersistentEvent(artsGuid_t eventSource,
     dependent->doneWriting = true;
 
     unsigned int res = artsAtomicFetchAdd(&version->latchCount, 0U);
-    if (res == 0) {
-      artsPersistentEventSatisfy(eventSource, ARTS_EVENT_UPDATE, false);
-    }
+    if (res == 0)
+      needsUpdate = true;
   } else if (mode == ARTS_EVENT) {
     struct artsDependentList *dependentList = &version->dependent;
     unsigned int position = artsAtomicFetchAdd(&version->dependentCount, 1U);
@@ -705,10 +706,11 @@ void artsAddDependenceToPersistentEvent(artsGuid_t eventSource,
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
     dependent->doneWriting = true;
 
-    if (artsAtomicFetchAdd(&version->latchCount, 0U) == 0) {
-      artsPersistentEventSatisfy(eventSource, ARTS_EVENT_UPDATE, false);
-    }
+    if (artsAtomicFetchAdd(&version->latchCount, 0U) == 0)
+      needsUpdate = true;
   }
   artsUnlock(&event->lock);
+  if (needsUpdate)
+    artsPersistentEventSatisfy(eventSource, ARTS_EVENT_UPDATE, true);
   return;
 }

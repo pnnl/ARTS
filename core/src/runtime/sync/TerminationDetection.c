@@ -513,6 +513,9 @@ bool artsWaitOnHandle(artsGuid_t epochGuid) {
     if (artsNodeInfo.tMT && epoch->ticket) {
       incrementFinishedEpoch(local);
       artsContextSwitch(1);
+      // Drain any work enqueued during the context switch so DB releases finish
+      while (artsNodeInfo.scheduler())
+        ;
       cleanEpochPool();
       EDT_RUNNING_TIME_START();
       return true;
@@ -527,6 +530,9 @@ bool artsWaitOnHandle(artsGuid_t epochGuid) {
       artsSaveThreadLocal(&tl);
       while (flag)
         artsNodeInfo.scheduler();
+      // Continue running until the scheduler reports no more ready work
+      while (artsNodeInfo.scheduler())
+        ;
       artsRestoreThreadLocal(&tl);
 
       cleanEpochPool();

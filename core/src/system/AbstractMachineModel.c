@@ -42,6 +42,11 @@
 #include "arts/runtime/Runtime.h"
 #include "arts/system/ArtsPrint.h"
 
+#ifdef USE_HWLOC
+#include <pthread.h>
+#include <sched.h>
+#endif
+
 unsigned int numNumaDomains = 1;
 
 enum abstractGroupId {
@@ -57,7 +62,12 @@ void setThreadMask(struct threadMask *threadMask, struct unitMask *unitMask,
   threadMask->coreId = unitMask->coreId;
   threadMask->unitId = unitMask->unitId;
   threadMask->on = unitMask->on;
+#ifdef USE_HWLOC
   threadMask->coreInfo = unitMask->coreInfo;
+  unitMask->coreInfo.cpuset = NULL;
+#else
+  threadMask->coreInfo = unitMask->coreInfo;
+#endif
 
   threadMask->id = unitThread->id;
   threadMask->groupId = unitThread->groupId;
@@ -67,6 +77,20 @@ void setThreadMask(struct threadMask *threadMask, struct unitMask *unitMask,
   threadMask->networkReceive = unitThread->networkReceive;
   threadMask->pin = unitThread->pin;
 }
+
+#ifdef USE_HWLOC
+#ifndef __APPLE__
+static void fillLinuxCpuSet(hwloc_bitmap_t hwlocSet, cpu_set_t *linuxSet) {
+  CPU_ZERO(linuxSet);
+  int cpu = hwloc_bitmap_first(hwlocSet);
+  while (cpu != -1) {
+    if (cpu < CPU_SETSIZE)
+      CPU_SET(cpu, linuxSet);
+    cpu = hwloc_bitmap_next(hwlocSet, cpu);
+  }
+}
+#endif
+#endif
 
 void addAThread(struct unitMask *mask, bool workOn, bool networkOutOn,
                 bool networkInOn, unsigned int groupId, unsigned int groupPos,
@@ -120,8 +144,12 @@ unsigned int getNumberOfType(hwloc_topology_t topology, hwloc_obj_t obj,
 }
 
 void artsAbstractMachineModelPinThread(struct artsCoreInfo *coreInfo) {
-  //    ARTS_INFO("BINDING");
-  hwloc_set_cpubind(coreInfo->topology, coreInfo->cpuset, HWLOC_CPUBIND_THREAD);
+  if (!coreInfo)
+    return;
+#ifndef __APPLE__
+  pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t),
+                         &coreInfo->linuxCpuSet);
+#endif
 }
 
 void initClusterUnits(hwloc_topology_t topology, hwloc_obj_t obj,
@@ -143,8 +171,11 @@ void initClusterUnits(hwloc_topology_t topology, hwloc_obj_t obj,
 
     units[*unitIndex].listHead = NULL;
     units[*unitIndex].threads = 0;
-    units[*unitIndex].coreInfo.topology = topology;
-    units[*unitIndex].coreInfo.cpuset = obj->cpuset;
+    units[*unitIndex].coreInfo.cpuset = hwloc_bitmap_dup(obj->cpuset);
+#ifndef __APPLE__
+    fillLinuxCpuSet(units[*unitIndex].coreInfo.cpuset,
+                    &units[*unitIndex].coreInfo.linuxCpuSet);
+#endif
     *unitIndex = (*unitIndex) + 1;
   } else {
     //        ARTS_INFO("ARITY: %u", obj->arity);
@@ -312,6 +343,12 @@ unsigned int flattenMask(struct artsConfig *config, struct nodeMask *node,
   artsFree(groupCount);
   for (i = 0; i < node->numClusters; i++) {
     for (j = 0; j < node->cluster[i].numCores; j++) {
+#ifdef USE_HWLOC
+      for (k = 0; k < node->cluster[i].core[j].numUnits; k++) {
+        if (node->cluster[i].core[j].unit[k].coreInfo.cpuset)
+          hwloc_bitmap_free(node->cluster[i].core[j].unit[k].coreInfo.cpuset);
+      }
+#endif
       artsFree(node->cluster[i].core[j].unit);
     }
     artsFree(node->cluster[i].core);
@@ -348,7 +385,16 @@ struct threadMask *getThreadMask(struct artsConfig *config) {
 }
 
 void destroyThreadMask(struct threadMask *mask) {
-  hwloc_topology_destroy(topology);
+#ifdef USE_HWLOC
+  for (unsigned int i = 0; i < artsNodeInfo.totalThreadCount; i++) {
+    if (mask[i].coreInfo.cpuset)
+      hwloc_bitmap_free(mask[i].coreInfo.cpuset);
+  }
+  if (topology) {
+    hwloc_topology_destroy(topology);
+    topology = NULL;
+  }
+#endif
   artsFree(mask);
 }
 
@@ -523,6 +569,12 @@ unsigned int flattenMask(struct artsConfig *config, unsigned int numCores,
     }
   }
   artsFree(groupCount);
+#ifdef USE_HWLOC
+  for (int i = 0; i < numCores; i++) {
+    if (unit[i].coreInfo.cpuset)
+      hwloc_bitmap_free(unit[i].coreInfo.cpuset);
+  }
+#endif
   artsFree(unit);
 
   return count;
