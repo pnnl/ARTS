@@ -36,6 +36,7 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
+#define _GNU_SOURCE
 #include "arts/system/AbstractMachineModel.h"
 
 #include "arts/runtime/Globals.h"
