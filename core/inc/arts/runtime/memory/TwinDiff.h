@@ -36,45 +36,56 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef ARTS_RUNTIME_COMPUTE_EDTFUNCTIONS_H
-#define ARTS_RUNTIME_COMPUTE_EDTFUNCTIONS_H
+#ifndef ARTS_RUNTIME_MEMORY_TWINDIFF_H
+#define ARTS_RUNTIME_MEMORY_TWINDIFF_H
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#include "arts/runtime/RT.h"
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
-bool artsEdtCreateInternal(struct artsEdt *edt, artsType_t mode,
-                           artsGuid_t *guid, unsigned int route,
-                           unsigned int cluster, unsigned int edtSpace,
-                           artsGuid_t outputBuffer, artsEdt_t funcPtr,
-                           uint32_t paramc, uint64_t *paramv, uint32_t depc,
-                           bool useEpoch, artsGuid_t epochGuid, bool hasDepv);
-void artsEdtDelete(struct artsEdt *edt);
-void internalSignalEdt(artsGuid_t edtPacket, uint32_t slot, artsGuid_t dataGuid,
-                       artsType_t mode, void *ptr, unsigned int size);
-void internalSignalEdtWithMode(artsGuid_t edtPacket, uint32_t slot,
-                               artsGuid_t dataGuid, artsType_t mode,
-                               artsType_t acquireMode, bool useTwinDiff);
+// Twin-Diff flags for struct artsDb
+#define ARTS_DB_HAS_TWIN 0x00000001
 
-typedef struct {
-  artsGuid_t currentEdtGuid;
-  struct artsEdt *currentEdt;
-  void *epochList;
-} threadLocal_t;
+// Merge threshold for run-length encoding (bytes)
+#define ARTS_DIFF_MERGE_THRESHOLD 128
 
-void artsSetThreadLocalEdtInfo(struct artsEdt *edt);
-void artsUnsetThreadLocalEdtInfo();
-void artsSaveThreadLocal(threadLocal_t *tl);
-void artsRestoreThreadLocal(threadLocal_t *tl);
+// Dirty ratio threshold for fallback to full DB send
+#define ARTS_DIFF_DIRTY_THRESHOLD 0.75
 
-bool artsSetCurrentEpochGuid(artsGuid_t epochGuid);
-artsGuid_t *artsCheckEpochIsRoot(artsGuid_t toCheck);
-void artsIncrementFinishedEpochList();
+// Diff region descriptor
+struct artsDiffRegion {
+  uint32_t offset;
+  uint32_t length;
+  struct artsDiffRegion *next;
+};
 
-void *artsGetDepv(void *edtPtr);
+// Diff list metadata
+struct artsDiffList {
+  uint32_t regionCount;
+  uint32_t totalBytes;
+  float dirtyRatio;
+  struct artsDiffRegion *head;
+  struct artsDiffRegion *tail;
+};
+
+// Forward declaration
+struct artsDb;
+
+// Twin allocation/deallocation
+void *artsDbAllocateTwin(struct artsDb *db);
+void artsDbFreeTwin(struct artsDb *db);
+
+// Diff computation
+struct artsDiffList *artsComputeDiffs(void *working, void *twin, size_t size);
+void artsFreeDiffList(struct artsDiffList *diffs);
+
+// Dirty ratio estimation (fast scan before full diff)
+float artsEstimateDirtyRatio(void *working, void *twin, size_t size);
+
 #ifdef __cplusplus
 }
 #endif
-
-#endif
+#endif /* ARTS_RUNTIME_MEMORY_TWINDIFF_H */

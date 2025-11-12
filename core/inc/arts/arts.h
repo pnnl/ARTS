@@ -331,6 +331,19 @@ void artsPersistentEventDecrementLatch(artsGuid_t eventGuid);
 void artsAddDependenceToPersistentEvent(artsGuid_t eventSource,
                                         artsGuid_t edtDest, uint32_t edtSlot);
 
+// Adds a dependence with compiler-inferred acquire mode override
+void artsAddDependenceToPersistentEventWithMode(artsGuid_t eventSource,
+                                                artsGuid_t edtDest,
+                                                uint32_t edtSlot,
+                                                artsType_t acquireMode);
+
+// Adds a dependence with compiler-inferred acquire mode and twin-diff hint
+void artsAddDependenceToPersistentEventWithModeAndDiff(artsGuid_t eventSource,
+                                                       artsGuid_t edtDest,
+                                                       uint32_t edtSlot,
+                                                       artsType_t acquireMode,
+                                                       bool useTwinDiff);
+
 /*DB***************************************************************************/
 
 // A DataBlock (DB) is the main memory abstraction used in ARTS to share data
@@ -421,6 +434,21 @@ void artsDbDecrementLatch(artsGuid_t guid);
 // EDT slot.
 void artsDbAddDependence(artsGuid_t dbSrc, artsGuid_t edtDest,
                          uint32_t edtSlot);
+
+// Adds a dependence with compiler-inferred acquire mode override
+void artsDbAddDependenceWithMode(artsGuid_t dbSrc, artsGuid_t edtDest,
+                                 uint32_t edtSlot, artsType_t acquireMode);
+
+// Adds a dependence with compiler-inferred acquire mode and twin-diff hint
+void artsDbAddDependenceWithModeAndDiff(artsGuid_t dbSrc, artsGuid_t edtDest,
+                                        uint32_t edtSlot,
+                                        artsType_t acquireMode,
+                                        bool useTwinDiff);
+
+// Records a dependency and automatically increments latch when acquireMode is
+// ARTS_DB_WRITE
+void artsRecordDep(artsGuid_t dbSrc, artsGuid_t edtDest, uint32_t edtSlot,
+                   artsType_t acquireMode, bool useTwinDiff);
 #endif
 
 /*Epoch************************************************************************/

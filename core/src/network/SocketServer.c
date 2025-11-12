@@ -740,9 +740,6 @@ bool artsServerTryToReceive(char **inBuffer, int *inPacketSize,
               if (gotoNext)
                 break;
 
-              ARTS_DEBUG("gg2 %d %d %d %d", res, packet->rank, packet->size,
-                         packet->messageType);
-
               if (bypassPacketSize[pos] < packet->size) {
                 // ARTS_INFO("Here5");
                 char *nextBuf = (char *)artsMalloc(packet->size * 4);

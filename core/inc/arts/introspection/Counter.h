@@ -78,6 +78,16 @@ typedef enum artsCounterType {
   remoteBytesSent,
   remoteBytesReceived,
   numDbsCreated,
+  // Twin-Diff counters
+  twinDiffUsed,
+  twinDiffSkipped,
+  twinDiffBytesSaved,
+  twinDiffComputeTime,
+  // Acquire-Mode counters
+  acquireReadMode,
+  acquireWriteMode,
+  ownerUpdatesSaved,
+  ownerUpdatesPerformed,
   NUM_COUNTER_TYPES,
 } artsCounterType;
 
@@ -151,7 +161,15 @@ static const char *const artsCounterNames[] = {"edtCounter",
                                                "numEdtsFinished",
                                                "remoteBytesSent",
                                                "remoteBytesReceived",
-                                               "numDbsCreated"};
+                                               "numDbsCreated",
+                                               "twinDiffUsed",
+                                               "twinDiffSkipped",
+                                               "twinDiffBytesSaved",
+                                               "twinDiffComputeTime",
+                                               "acquireReadMode",
+                                               "acquireWriteMode",
+                                               "ownerUpdatesSaved",
+                                               "ownerUpdatesPerformed"};
 
 static const unsigned int artsCounterReduceTypes[] = {
     artsCounterSum, // edtCounter
@@ -182,7 +200,15 @@ static const unsigned int artsCounterReduceTypes[] = {
     artsCounterSum, // numEdtsFinished
     artsCounterSum, // remoteBytesSent
     artsCounterSum, // remoteBytesReceived
-    artsCounterSum  // numDbsCreated
+    artsCounterSum, // numDbsCreated
+    artsCounterSum, // twinDiffUsed
+    artsCounterSum, // twinDiffSkipped
+    artsCounterSum, // twinDiffBytesSaved
+    artsCounterSum, // twinDiffComputeTime
+    artsCounterSum, // acquireReadMode
+    artsCounterSum, // acquireWriteMode
+    artsCounterSum, // ownerUpdatesSaved
+    artsCounterSum  // ownerUpdatesPerformed
 };
 
 #ifdef __cplusplus

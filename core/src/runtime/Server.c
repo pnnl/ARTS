@@ -47,7 +47,9 @@
 #include "arts/runtime/Globals.h"
 #include "arts/runtime/Runtime.h"
 #include "arts/runtime/compute/EdtFunctions.h"
+#include "arts/runtime/memory/DbFunctions.h"
 #include "arts/runtime/network/RemoteFunctions.h"
+#include "arts/runtime/sync/EventFunctions.h"
 #include "arts/system/ArtsPrint.h"
 
 #define EDT_MUG_SIZE 32
@@ -113,7 +115,8 @@ void artsServerProcessPacket(struct artsRemotePacket *packet) {
   case ARTS_REMOTE_EDT_SIGNAL_MSG: {
     struct artsRemoteEdtSignalPacket *pack =
         (struct artsRemoteEdtSignalPacket *)(packet);
-    internalSignalEdt(pack->edt, pack->slot, pack->db, pack->mode, NULL, 0);
+    internalSignalEdtWithMode(pack->edt, pack->slot, pack->db, pack->mode,
+                              pack->acquireMode, pack->useTwinDiff);
     break;
   }
   case ARTS_REMOTE_EVENT_SATISFY_SLOT_MSG: {
@@ -145,7 +148,9 @@ void artsServerProcessPacket(struct artsRemotePacket *packet) {
   case ARTS_REMOTE_DB_ADD_DEPENDENCE_MSG: {
     struct artsRemoteDbAddDependencePacket *pack =
         (struct artsRemoteDbAddDependencePacket *)(packet);
-    artsDbAddDependence(pack->dbSrc, pack->edtDest, pack->edtSlot);
+    artsDbAddDependenceWithModeAndDiff(pack->dbSrc, pack->edtDest,
+                                       pack->edtSlot, pack->acquireMode,
+                                       pack->useTwinDiff);
     break;
   }
 #endif
@@ -159,29 +164,30 @@ void artsServerProcessPacket(struct artsRemotePacket *packet) {
     break;
   }
   case ARTS_REMOTE_DB_SEND_MSG: {
-    ARTS_DEBUG("Remote Db Recieved");
+    ARTS_DEBUG("Remote Db Received");
     struct artsRemoteDbSendPacket *pack =
         (struct artsRemoteDbSendPacket *)(packet);
     artsRemoteHandleDbReceived(pack);
     break;
   }
   case ARTS_REMOTE_ADD_DEPENDENCE_MSG: {
-    ARTS_DEBUG("Dependence Recieved");
+    ARTS_DEBUG("Dependence Received");
     struct artsRemoteAddDependencePacket *pack =
         (struct artsRemoteAddDependencePacket *)(packet);
     artsAddDependence(pack->source, pack->destination, pack->slot);
     break;
   }
   case ARTS_REMOTE_ADD_DEPENDENCE_TO_PERSISTENT_EVENT_MSG: {
-    ARTS_DEBUG("Persistent Dependence Recieved");
+    ARTS_DEBUG("Persistent Dependence Received");
     struct artsRemoteAddDependencePacket *pack =
         (struct artsRemoteAddDependencePacket *)(packet);
-    artsAddDependenceToPersistentEvent(pack->source, pack->destination,
-                                       pack->slot);
+    artsAddDependenceToPersistentEventWithModeAndDiff(
+        pack->source, pack->destination, pack->slot, pack->acquireMode,
+        pack->useTwinDiff);
     break;
   }
   case ARTS_REMOTE_INVALIDATE_DB_MSG: {
-    ARTS_DEBUG("DB Invalidate Recieved");
+    ARTS_DEBUG("DB Invalidate Received");
     artsRemoteHandleInvalidateDb(packet);
     break;
   }
@@ -192,54 +198,64 @@ void artsServerProcessPacket(struct artsRemotePacket *packet) {
     break;
   }
   case ARTS_REMOTE_DB_FULL_SEND_MSG: {
+    ARTS_DEBUG("DB Full Send Received");
     struct artsRemoteDbFullSendPacket *pack =
         (struct artsRemoteDbFullSendPacket *)(packet);
     artsRemoteHandleDbFullRecieved(pack);
     break;
   }
   case ARTS_REMOTE_DB_FULL_SEND_ALREADY_LOCAL_MSG: {
+    ARTS_DEBUG("DB Full Send Already Local Received");
     artsRemoteHandleSendAlreadyLocal(packet);
     break;
   }
   case ARTS_REMOTE_DB_DESTROY_MSG: {
-    ARTS_DEBUG("DB Destroy Recieved");
+    ARTS_DEBUG("DB Destroy Received");
     artsRemoteHandleDbDestroy(packet);
     break;
   }
   case ARTS_REMOTE_DB_DESTROY_FORWARD_MSG: {
-    ARTS_DEBUG("DB Destroy Forward Recieved");
+    ARTS_DEBUG("DB Destroy Forward Received");
     artsRemoteHandleDbDestroyForward(packet);
     break;
   }
   case ARTS_REMOTE_DB_CLEAN_FORWARD_MSG: {
-    ARTS_DEBUG("DB Clean Forward Recieved");
+    ARTS_DEBUG("DB Clean Forward Received");
     artsRemoteHandleDbCleanForward(packet);
     break;
   }
   case ARTS_REMOTE_DB_UPDATE_GUID_MSG: {
-    ARTS_DEBUG("DB Guid Update Recieved");
+    ARTS_DEBUG("DB Guid Update Received");
     artsRemoteHandleUpdateDbGuid(packet);
     break;
   }
   case ARTS_REMOTE_EDT_MOVE_MSG: {
-    ARTS_DEBUG("EDT Move Recieved");
+    ARTS_DEBUG("EDT Move Received");
     artsRemoteHandleEdtMove(packet);
     break;
   }
   case ARTS_REMOTE_DB_MOVE_MSG: {
-    ARTS_DEBUG("DB Move Recieved");
+    ARTS_DEBUG("DB Move Received");
     artsRemoteHandleDbMove(packet);
     break;
   }
   case ARTS_REMOTE_DB_UPDATE_MSG: {
+    ARTS_DEBUG("DB Update Received");
     artsRemoteHandleUpdateDb(packet);
     break;
   }
+  case ARTS_REMOTE_DB_PARTIAL_UPDATE_MSG: {
+    ARTS_DEBUG("DB Partial Update Received");
+    artsRemoteHandlePartialUpdate(packet);
+    break;
+  }
   case ARTS_REMOTE_EVENT_MOVE_MSG: {
+    ARTS_DEBUG("Event Move Received");
     artsRemoteHandleEventMove(packet);
     break;
   }
   case ARTS_REMOTE_PERSISTENT_EVENT_MOVE_MSG: {
+    ARTS_DEBUG("Persistent Event Move Received");
     artsRemoteHandlePersistentEventMove(packet);
     break;
   }
@@ -247,65 +263,79 @@ void artsServerProcessPacket(struct artsRemotePacket *packet) {
 
     struct artsRemoteMetricUpdate *pack =
         (struct artsRemoteMetricUpdate *)(packet);
-    ARTS_DEBUG("Metric update Recieved %u -> %d %ld", artsGlobalRankId,
+    ARTS_DEBUG("Metric update Received %u -> %d %ld", artsGlobalRankId,
                pack->type, pack->toAdd);
     artsMetricsHandleRemoteUpdate(pack->type, artsSystem, pack->toAdd,
                                   pack->sub);
     break;
   }
   case ARTS_REMOTE_GET_FROM_DB_MSG: {
+    ARTS_DEBUG("Get From DB Received");
     artsRemoteHandleGetFromDb(packet);
     break;
   }
   case ARTS_REMOTE_PUT_IN_DB_MSG: {
+    ARTS_DEBUG("Put In DB Received");
     artsRemoteHandlePutInDb(packet);
     break;
   }
   case ARTS_REMOTE_SIGNAL_EDT_WITH_PTR_MSG: {
+    ARTS_DEBUG("Signal EDT With Ptr Received");
     artsRemoteHandleSignalEdtWithPtr(packet);
     break;
   }
   case ARTS_REMOTE_SEND_MSG: {
+    ARTS_DEBUG("Send Received");
     artsRemoteHandleSend(packet);
     break;
   }
   case ARTS_EPOCH_INIT_MSG: {
+    ARTS_DEBUG("Epoch Init Received");
     artsRemoteHandleEpochInitSend(packet);
     break;
   }
   case ARTS_EPOCH_REQ_MSG: {
+    ARTS_DEBUG("Epoch Req Received");
     artsRemoteHandleEpochReq(packet);
     break;
   }
   case ARTS_EPOCH_SEND_MSG: {
+    ARTS_DEBUG("Epoch Send Received");
     artsRemoteHandleEpochSend(packet);
     break;
   }
   case ARTS_ATOMIC_ADD_ARRAYDB_MSG: {
+    ARTS_DEBUG("Atomic Add ArrayDB Received");
     artsRemoteHandleAtomicAddInArrayDb(packet);
     break;
   }
   case ARTS_ATOMIC_CAS_ARRAYDB_MSG: {
+    ARTS_DEBUG("Atomic Compare And Swap ArrayDB Received");
     artsRemoteHandleAtomicCompareAndSwapInArrayDb(packet);
     break;
   }
   case ARTS_EPOCH_INIT_POOL_MSG: {
+    ARTS_DEBUG("Epoch Init Pool Received");
     artsRemoteHandleEpochInitPoolSend(packet);
     break;
   }
   case ARTS_EPOCH_DELETE_MSG: {
+    ARTS_DEBUG("Epoch Delete Received");
     artsRemoteHandleEpochDelete(packet);
     break;
   }
   case ARTS_REMOTE_BUFFER_SEND_MSG: {
+    ARTS_DEBUG("Buffer Send Received");
     artsRemoteHandleBufferSend(packet);
     break;
   }
   case ARTS_REMOTE_DB_MOVE_REQ_MSG: {
+    ARTS_DEBUG("DB Move Request Received");
     artsDbMoveRequestHandle(packet);
     break;
   }
   case ARTS_REMOTE_DB_RENAME_MSG: {
+    ARTS_DEBUG("DB Rename Received");
     artsRemoteHandleDbRename(packet);
     break;
   }

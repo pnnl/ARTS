@@ -44,6 +44,7 @@
 #include "arts/gas/RouteTable.h"
 #include "arts/introspection/Metrics.h"
 #include "arts/runtime/Globals.h"
+#include "arts/runtime/compute/EdtFunctions.h"
 #include "arts/runtime/network/RemoteFunctions.h"
 #include "arts/system/ArtsPrint.h"
 #include "arts/system/Debug.h"
@@ -264,7 +265,7 @@ void artsAddDependence(artsGuid_t source, artsGuid_t destination,
   if (sourceHeader == NULL) {
     unsigned int rank = artsGuidGetRank(source);
     if (rank != artsGlobalRankId) {
-      artsRemoteAddDependence(source, destination, slot, mode, rank);
+      artsRemoteAddDependence(source, destination, slot, rank);
     } else {
       artsOutOfOrderAddDependence(source, destination, slot, mode, source);
     }
@@ -553,8 +554,6 @@ void artsPersistentEventSatisfy(artsGuid_t eventGuid, uint32_t action,
     unsigned int res = -1;
     struct artsPersistentEventVersion *version =
         artsGetFrontPersistentEventVersion(event);
-    ARTS_DEBUG("Satisfying Event [Guid: %lu, Version: %u]", eventGuid,
-               version->version);
     assert(version != NULL);
     if (action == ARTS_EVENT_LATCH_INCR_SLOT) {
       res = artsAtomicFetchAdd(&version->latchCount, 0U);
@@ -605,7 +604,15 @@ void artsPersistentEventSatisfy(artsGuid_t eventGuid, uint32_t action,
             ;
           if (dependent[j].type == ARTS_EDT) {
             if (event->data != NULL_GUID) {
-              artsSignalEdt(dependent[j].addr, dependent[j].slot, event->data);
+              if (dependent[j].acquireMode != ARTS_NULL) {
+                artsType_t mode = artsGuidGetType(event->data);
+                internalSignalEdtWithMode(
+                    dependent[j].addr, dependent[j].slot, event->data, mode,
+                    dependent[j].acquireMode, dependent[j].useTwinDiff);
+              } else {
+                artsSignalEdt(dependent[j].addr, dependent[j].slot,
+                              event->data);
+              }
             } else {
               ARTS_DEBUG("Event data is NULL_GUID for event %u", eventGuid);
             }
@@ -664,7 +671,7 @@ void artsAddDependenceToPersistentEvent(artsGuid_t eventSource,
     unsigned int rank = artsGuidGetRank(eventSource);
     if (rank != artsGlobalRankId) {
       artsRemoteAddDependenceToPersistentEvent(eventSource, edtDest, edtSlot,
-                                               mode, rank);
+                                               rank);
     } else {
       artsOutOfOrderAddDependenceToPersistentEvent(eventSource, edtDest,
                                                    edtSlot, mode, eventSource);
@@ -690,6 +697,8 @@ void artsAddDependenceToPersistentEvent(artsGuid_t eventSource,
     dependent->type = ARTS_EDT;
     dependent->addr = edtDest;
     dependent->slot = edtSlot;
+    dependent->acquireMode = ARTS_NULL;
+    dependent->useTwinDiff = true;
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
     dependent->doneWriting = true;
 
@@ -703,6 +712,92 @@ void artsAddDependenceToPersistentEvent(artsGuid_t eventSource,
     dependent->type = ARTS_EVENT;
     dependent->addr = edtDest;
     dependent->slot = edtSlot;
+    dependent->acquireMode = ARTS_NULL;
+    dependent->useTwinDiff = true;
+    COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
+    dependent->doneWriting = true;
+
+    if (artsAtomicFetchAdd(&version->latchCount, 0U) == 0)
+      needsUpdate = true;
+  }
+  artsUnlock(&event->lock);
+  if (needsUpdate)
+    artsPersistentEventSatisfy(eventSource, ARTS_EVENT_UPDATE, true);
+  return;
+}
+
+void artsAddDependenceToPersistentEventWithMode(artsGuid_t eventSource,
+                                                artsGuid_t edtDest,
+                                                uint32_t edtSlot,
+                                                artsType_t acquireMode) {
+  artsAddDependenceToPersistentEventWithModeAndDiff(eventSource, edtDest,
+                                                    edtSlot, acquireMode, true);
+}
+
+void artsAddDependenceToPersistentEventWithModeAndDiff(artsGuid_t eventSource,
+                                                       artsGuid_t edtDest,
+                                                       uint32_t edtSlot,
+                                                       artsType_t acquireMode,
+                                                       bool useTwinDiff) {
+  /// Check that the eventSource is a persistent event
+  if (artsGuidGetType(eventSource) != ARTS_PERSISTENT_EVENT) {
+    ARTS_DEBUG("Event source %lu is not a persistent event", eventSource);
+    artsDebugGenerateSegFault();
+    return;
+  }
+  artsType_t mode = artsGuidGetType(edtDest);
+  struct artsHeader *sourceHeader =
+      (struct artsHeader *)artsRouteTableLookupItem(eventSource);
+  if (sourceHeader == NULL) {
+    unsigned int rank = artsGuidGetRank(eventSource);
+    if (rank != artsGlobalRankId) {
+      // TODO: Extend remote protocol to pass acquireMode
+      artsRemoteAddDependenceToPersistentEventWithHints(
+          eventSource, edtDest, edtSlot, rank, acquireMode, useTwinDiff);
+    } else {
+      // TODO: Extend out-of-order handling to pass acquireMode
+      // For now, fallback to standard out-of-order add dependence
+      artsOutOfOrderAddDependenceToPersistentEvent(eventSource, edtDest,
+                                                   edtSlot, mode, eventSource);
+    }
+    return;
+  }
+
+  ARTS_DEBUG("Add Dep from Persistent Event [Guid: %lu] to EDT [Guid: "
+             "%lu, Slot: %u, AcquireMode: %s]",
+             eventSource, edtDest, edtSlot, getTypeName(acquireMode));
+  struct artsPersistentEvent *event =
+      (struct artsPersistentEvent *)sourceHeader;
+  artsLock(&event->lock);
+  struct artsPersistentEventVersion *version =
+      artsGetLastPersistentEventVersion(event);
+  assert(version != NULL);
+  bool needsUpdate = false;
+  if (mode == ARTS_EDT) {
+    struct artsDependentList *dependentList = &version->dependent;
+    unsigned int position = artsAtomicFetchAdd(&version->dependentCount, 1U);
+    struct artsDependent *dependent = artsDependentGet(dependentList, position);
+    assert(dependent != NULL);
+    dependent->type = ARTS_EDT;
+    dependent->addr = edtDest;
+    dependent->slot = edtSlot;
+    dependent->acquireMode = acquireMode;
+    dependent->useTwinDiff = useTwinDiff;
+    COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
+    dependent->doneWriting = true;
+
+    unsigned int res = artsAtomicFetchAdd(&version->latchCount, 0U);
+    if (res == 0)
+      needsUpdate = true;
+  } else if (mode == ARTS_EVENT) {
+    struct artsDependentList *dependentList = &version->dependent;
+    unsigned int position = artsAtomicFetchAdd(&version->dependentCount, 1U);
+    struct artsDependent *dependent = artsDependentGet(dependentList, position);
+    dependent->type = ARTS_EVENT;
+    dependent->addr = edtDest;
+    dependent->slot = edtSlot;
+    dependent->acquireMode = acquireMode;
+    dependent->useTwinDiff = useTwinDiff;
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
     dependent->doneWriting = true;
 

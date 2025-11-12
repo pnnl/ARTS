@@ -373,6 +373,8 @@ void internalSignalEdt(artsGuid_t edtPacket, uint32_t slot, artsGuid_t dataGuid,
         if (slot < edt->depc) {
           edtDep[slot].guid = dataGuid;
           edtDep[slot].mode = mode;
+          edtDep[slot].acquireMode = ARTS_NULL;
+          edtDep[slot].useTwinDiff = false;
           edtDep[slot].ptr = ptr;
         }
         unsigned int res = artsAtomicSub(&edt->depcNeeded, 1U);
@@ -403,6 +405,58 @@ void artsSignalEdt(artsGuid_t edtGuid, uint32_t slot, artsGuid_t dataGuid) {
   artsGuid_t acqGuid = dataGuid;
   artsType_t mode = artsGuidGetType(dataGuid);
   internalSignalEdt(edtGuid, slot, acqGuid, mode, NULL, 0);
+}
+
+// Internal function to signal EDT with acquireMode override and diff hint
+void internalSignalEdtWithMode(artsGuid_t edtPacket, uint32_t slot,
+                               artsGuid_t dataGuid, artsType_t mode,
+                               artsType_t acquireMode, bool useTwinDiff) {
+  SIGNAL_EDT_COUNTER_START();
+  // This is old CDAG code...
+  if (currentEdt && currentEdt->invalidateCount > 0) {
+    if (mode == ARTS_PTR)
+      artsOutOfOrderSignalEdtWithPtr(edtPacket, dataGuid, NULL, 0, slot);
+    else
+      artsOutOfOrderSignalEdt(currentEdt->currentEdt, edtPacket, dataGuid, slot,
+                              mode, true);
+  } else {
+    unsigned int rank = artsGuidGetRank(edtPacket);
+    if (rank == artsGlobalRankId) {
+      struct artsEdt *edt =
+          (struct artsEdt *)artsRouteTableLookupItem(edtPacket);
+      if (edt) {
+        artsEdtDep_t *edtDep = (artsEdtDep_t *)artsGetDepv(edt);
+        if (slot < edt->depc) {
+          edtDep[slot].guid = dataGuid;
+          edtDep[slot].mode = mode;
+          edtDep[slot].acquireMode = acquireMode;
+          edtDep[slot].useTwinDiff = useTwinDiff;
+          edtDep[slot].ptr = NULL;
+        }
+        unsigned int res = artsAtomicSub(&edt->depcNeeded, 1U);
+        ARTS_INFO("Signal DB [Guid: %lu] to EDT [Guid: %lu, Slot: %u, "
+                  "DepCount: %d, AcquireMode: %s, UseTwinDiff: %d]",
+                  dataGuid, edt->currentEdt, slot, res,
+                  getTypeName(acquireMode), useTwinDiff);
+        if (res == 0)
+          artsHandleReadyEdt(edt);
+      } else {
+        if (mode == ARTS_PTR)
+          artsOutOfOrderSignalEdtWithPtr(edtPacket, dataGuid, NULL, 0, slot);
+        else
+          artsOutOfOrderSignalEdt(edtPacket, edtPacket, dataGuid, slot, mode,
+                                  false);
+      }
+    } else {
+      if (mode == ARTS_PTR)
+        artsRemoteSignalEdtWithPtr(edtPacket, dataGuid, NULL, 0, slot);
+      else
+        artsRemoteSignalEdtWithHints(edtPacket, dataGuid, slot, mode,
+                                     acquireMode, useTwinDiff);
+    }
+  }
+  artsMetricsTriggerEvent(artsEdtSignalThroughput, artsThread, 1);
+  SIGNAL_EDT_COUNTER_STOP();
 }
 
 void artsSignalEdtValue(artsGuid_t edtGuid, uint32_t slot, uint64_t value) {

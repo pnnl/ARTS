@@ -87,7 +87,8 @@ enum artsServerMessageType {
   ARTS_ATOMIC_CAS_ARRAYDB_MSG,
   ARTS_REMOTE_BUFFER_SEND_MSG,
   ARTS_REMOTE_CONTEXT_SIG_MSG,
-  ARTS_REMOTE_DB_RENAME_MSG
+  ARTS_REMOTE_DB_RENAME_MSG,
+  ARTS_REMOTE_DB_PARTIAL_UPDATE_MSG,
 };
 
 // Header
@@ -113,6 +114,9 @@ struct __attribute__((__packed__)) artsRemoteAddDependencePacket {
   artsGuid_t source;
   artsGuid_t destination;
   uint32_t slot;
+  artsType_t acquireMode;
+  uint8_t useTwinDiff;
+  uint8_t reserved[3];
 };
 
 struct __attribute__((__packed__)) artsRemoteEdtSignalPacket {
@@ -122,6 +126,9 @@ struct __attribute__((__packed__)) artsRemoteEdtSignalPacket {
   uint32_t slot;
   artsType_t mode;
   unsigned int dbRoute;
+  artsType_t acquireMode;
+  uint8_t useTwinDiff;
+  uint8_t signalReserved[3];
 };
 
 struct __attribute__((__packed__)) artsRemoteEventSatisfySlotPacket {
@@ -144,12 +151,18 @@ struct __attribute__((__packed__)) artsRemoteDbAddDependencePacket {
   artsGuid_t dbSrc;
   artsGuid_t edtDest;
   uint32_t edtSlot;
+  artsType_t acquireMode;
+  uint8_t useTwinDiff;
+  uint8_t reserved[3];
 };
 #endif
 struct __attribute__((__packed__)) artsRemoteDbRequestPacket {
   struct artsRemotePacket header;
   artsGuid_t dbGuid;
   artsType_t mode;
+  artsType_t acquireMode;
+  uint8_t useTwinDiff;
+  uint8_t reserved[3];
 };
 
 struct __attribute__((__packed__)) artsRemoteDbSendPacket {
@@ -233,8 +246,8 @@ struct __attribute__((__packed__)) artsRemoteAtomicAddInArrayDbPacket {
   unsigned int toAdd;
 };
 
-struct __attribute__((
-    __packed__)) artsRemoteAtomicCompareAndSwapInArrayDbPacket {
+struct __attribute__((__packed__))
+artsRemoteAtomicCompareAndSwapInArrayDbPacket {
   struct artsRemotePacket header;
   artsGuid_t dbGuid;
   artsGuid_t edtGuid;
@@ -254,6 +267,22 @@ struct __attribute__((__packed__)) artsRemoteDbRename {
   struct artsRemotePacket header;
   artsGuid_t oldGuid;
   artsGuid_t newGuid;
+};
+
+// Diff region descriptor
+struct __attribute__((__packed__)) artsRemoteDiffRegion {
+  uint32_t offset;
+  uint32_t length;
+};
+
+// Partial update packet header
+struct __attribute__((__packed__)) artsRemotePartialUpdatePacket {
+  struct artsRemotePacket header;
+  artsGuid_t guid;
+  uint32_t regionCount;
+  uint32_t dataBytes;
+  uint32_t flags;
+  uint32_t reserved;
 };
 
 void outInit(unsigned int size);

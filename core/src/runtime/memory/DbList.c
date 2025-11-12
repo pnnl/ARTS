@@ -239,15 +239,18 @@ bool artsPushDbToFrontier(struct artsDbFrontier *frontier, unsigned int data,
     return false;
   }
 
-  if (artsPushDbToElement(&frontier->list, frontier->position, data))
+  bool inserted =
+      artsPushDbToElement(&frontier->list, frontier->position, data);
+  if (inserted)
     frontier->position++;
+  *unique = inserted;
 
-  if (exclusive || (write && !local)) {
+  if (inserted && (exclusive || (write && !local))) {
     frontier->exNode = data;
     frontier->exEdt = edt;
     frontier->exSlot = slot;
     frontier->exMode = mode;
-  } else if (local) {
+  } else if (inserted && local) {
     artsPushDelayedEdt(&frontier->localDelayed, frontier->localPosition++, edt,
                        slot, mode);
   }
@@ -272,12 +275,13 @@ bool artsPushDbToList(struct artsDbList *dbList, unsigned int data, bool write,
     }
   }
   artsReaderLock(&dbList->reader, &dbList->writer);
-  struct artsDbFrontier *frontier = dbList->head;
-  bool ret = true;
+  bool inserted = false;
+  bool unique = true;
   for (struct artsDbFrontier *frontier = dbList->head; frontier;
        frontier = frontier->next) {
     if (artsPushDbToFrontier(frontier, data, write, exclusive, local, bypass,
-                             edt, slot, mode, &ret)) {
+                             edt, slot, mode, &unique)) {
+      inserted = true;
       break;
     }
     if (!frontier->next) {
@@ -289,10 +293,9 @@ bool artsPushDbToList(struct artsDbList *dbList, unsigned int data, bool write,
           ;
       }
     }
-    ret = false;
   }
   artsReaderUnlock(&dbList->reader);
-  return ret;
+  return inserted && unique;
 }
 
 unsigned int artsCurrentFrontierSize(struct artsDbList *dbList) {
@@ -400,7 +403,8 @@ void artsSignalFrontierRemote(struct artsDbFrontier *frontier,
       struct artsEdt *edt = current->edt[pos];
       unsigned int slot = current->slot[pos];
       // send through aggregation
-      artsRemoteDbRequest(db->guid, getFrom, edt, slot, ARTS_DB_READ, true);
+      artsRemoteDbRequest(db->guid, getFrom, edt, slot, ARTS_DB_READ, true,
+                          ARTS_NULL, false);
       if (pos + 1 == DBSPERELEMENT)
         current = current->next;
     }

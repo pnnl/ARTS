@@ -46,11 +46,16 @@ extern "C" {
 #include "arts/runtime/RT.h"
 
 void artsRemoteAddDependence(artsGuid_t source, artsGuid_t destination,
-                             uint32_t slot, artsType_t mode, unsigned int rank);
+                             uint32_t slot, unsigned int rank);
+void artsRemoteAddDependenceWithHints(artsGuid_t source, artsGuid_t destination,
+                                      uint32_t slot, unsigned int rank,
+                                      artsType_t acquireMode, bool useTwinDiff);
 void artsRemoteAddDependenceToPersistentEvent(artsGuid_t source,
                                               artsGuid_t destination,
-                                              uint32_t slot, artsType_t mode,
-                                              unsigned int rank);
+                                              uint32_t slot, unsigned int rank);
+void artsRemoteAddDependenceToPersistentEventWithHints(
+    artsGuid_t source, artsGuid_t destination, uint32_t slot, unsigned int rank,
+    artsType_t acquireMode, bool useTwinDiff);
 void artsRemoteUpdateRouteTable(artsGuid_t guid, unsigned int rank);
 void artsRemoteHandleUpdateDbGuid(void *ptr);
 void artsRemoteHandleInvalidateDb(void *ptr);
@@ -60,6 +65,13 @@ void artsRemoteHandleDbCleanForward(void *ptr);
 void artsRemoteHandleDbDestroy(void *ptr);
 void artsRemoteUpdateDb(artsGuid_t guid, bool sendDb);
 void artsRemoteHandleUpdateDb(void *ptr);
+
+
+struct artsDiffList;
+void artsRemotePartialUpdateDb(artsGuid_t guid, struct artsDiffList *diffs,
+                               void *working);
+void artsRemoteHandlePartialUpdate(void *ptr);
+
 void artsRemoteMemoryMove(unsigned int route, artsGuid_t guid, void *ptr,
                           unsigned int memSize, unsigned messageType,
                           void (*freeMethod)(void *));
@@ -71,18 +83,26 @@ void artsRemoteHandleEventMove(void *ptr);
 void artsRemoteHandlePersistentEventMove(void *ptr);
 void artsRemoteSignalEdt(artsGuid_t edt, artsGuid_t db, uint32_t slot,
                          artsType_t mode);
+void artsRemoteSignalEdtWithHints(artsGuid_t edt, artsGuid_t db, uint32_t slot,
+                                  artsType_t mode, artsType_t acquireMode,
+                                  bool useTwinDiff);
 void artsRemoteEventSatisfySlot(artsGuid_t eventGuid, artsGuid_t dataGuid,
                                 uint32_t slot);
 void artsRemotePersistentEventSatisfySlot(artsGuid_t eventGuid, uint32_t action,
                                           bool lock);
 void artsRemoteDbAddDependence(artsGuid_t dbSrc, artsGuid_t edtDest,
                                uint32_t edtSlot);
+void artsRemoteDbAddDependenceWithHints(artsGuid_t dbSrc, artsGuid_t edtDest,
+                                        uint32_t edtSlot,
+                                        artsType_t acquireMode,
+                                        bool useTwinDiff);
 void artsRemoteDbIncrementLatch(artsGuid_t db);
 void artsRemoteDbDecrementLatch(artsGuid_t db);
 void artsDbRequestCallback(struct artsEdt *edt, unsigned int slot,
                            struct artsDb *dbRes);
 bool artsRemoteDbRequest(artsGuid_t dataGuid, int rank, struct artsEdt *edt,
-                         int pos, artsType_t mode, bool aggRequest);
+                         int pos, artsType_t mode, bool aggRequest,
+                         artsType_t acquireMode, bool useTwinDiff);
 void artsRemoteDbForward(int destRank, int sourceRank, artsGuid_t dataGuid,
                          artsType_t mode);
 void artsRemoteDbSendNow(int rank, struct artsDb *db);

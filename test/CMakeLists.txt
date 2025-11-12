@@ -71,6 +71,8 @@ set(TEST_PROGRAMS
     testRouteTableIter
     testRouteTableIter2
     testTMTLite
+    testTwinDiff
+    testAcquireMode
 )
 
 # Programs that require arts_graph library
@@ -85,6 +87,12 @@ function(add_arts_test test_name)
     
     # Set include directories
     target_include_directories(${test_name} PRIVATE ${ARTS_CORE_INCLUDE_DIR} ${ARTS_CORE_BUILD_INCLUDE_DIR})
+
+    # Match CARTS launcher expectations: non-PIE binaries avoid pointer-auth
+    # failures when passing raw function pointers across nodes.
+    set_property(TARGET ${test_name} PROPERTY POSITION_INDEPENDENT_CODE OFF)
+    target_compile_options(${test_name} PRIVATE -fno-pie -fno-PIE)
+    target_link_options(${test_name} PRIVATE -no-pie -fno-pie -fno-PIE)
     
     # Link with runtime libraries
     target_link_libraries(${test_name} PRIVATE Threads::Threads ${RT_LIBRARY} ${M_LIBRARY} ${ANL_LIBRARY})
@@ -110,6 +118,10 @@ function(add_arts_graph_test test_name)
     
     # Set include directories
     target_include_directories(${test_name} PRIVATE ${ARTS_CORE_INCLUDE_DIR} ${ARTS_CORE_BUILD_INCLUDE_DIR} ${ARTS_GRAPH_INCLUDE_DIR})
+
+    set_property(TARGET ${test_name} PROPERTY POSITION_INDEPENDENT_CODE OFF)
+    target_compile_options(${test_name} PRIVATE -fno-pie -fno-PIE)
+    target_link_options(${test_name} PRIVATE -no-pie -fno-pie -fno-PIE)
     
     # Link with arts_graph and runtime libraries
     target_link_libraries(${test_name} PRIVATE arts_graph Threads::Threads ${RT_LIBRARY} ${M_LIBRARY} ${ANL_LIBRARY})
@@ -146,6 +158,10 @@ if(BUILD_CUDA_LIBRARY)
         
         # Set include directories
         target_include_directories(${test_name} PRIVATE ${ARTS_CORE_INCLUDE_DIR} ${ARTS_CORE_BUILD_INCLUDE_DIR} ${CUDA_INCLUDE_DIRS})
+
+        set_property(TARGET ${test_name} PROPERTY POSITION_INDEPENDENT_CODE OFF)
+        target_compile_options(${test_name} PRIVATE -fno-pie -fno-PIE)
+        target_link_options(${test_name} PRIVATE -no-pie -fno-pie -fno-PIE)
         
         # Link with CUDA libraries
         target_link_libraries(${test_name} PRIVATE 

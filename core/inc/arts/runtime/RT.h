@@ -110,6 +110,8 @@ typedef enum {
 typedef struct {
   artsGuid_t guid;
   artsType_t mode;
+  artsType_t acquireMode;
+  bool useTwinDiff;
   void *ptr;
 } artsEdtDep_t;
 
@@ -148,6 +150,9 @@ struct artsDb {
   volatile unsigned int version;
   unsigned int timeStamp;
   void *dbList;
+  void *twin;
+  uint32_t twinFlags;
+  uint32_t twinSize;
 } __attribute__((aligned));
 
 struct artsEdt {
@@ -170,6 +175,8 @@ struct artsDependent {
   volatile artsGuid_t addr;
   volatile eventCallback_t callback;
   volatile bool doneWriting;
+  artsType_t acquireMode;
+  bool useTwinDiff;
 };
 
 struct artsDependentList {
