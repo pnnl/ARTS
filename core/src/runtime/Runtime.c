@@ -40,6 +40,7 @@
 
 #include "arts/gas/Guid.h"
 #include "arts/gas/RouteTable.h"
+#include "arts/introspection/ArtsIdCounter.h"
 #include "arts/introspection/Counter.h"
 #include "arts/introspection/Metrics.h"
 #include "arts/network/Remote.h"
@@ -189,6 +190,7 @@ void artsRuntimeNodeInit(unsigned int workerThreads,
   artsNodeInfo.counterCaptures = (artsCounterCaptures *)artsCalloc(
       totalThreads, sizeof(artsCounterCaptures));
   for (unsigned int t = 0; t < totalThreads; t++) {
+    // Initialize standard counter captures
     for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
       if (artsCounterMode[i] == artsCounterModeThread ||
           artsCounterMode[i] == artsCounterModeNode) {
@@ -196,13 +198,50 @@ void artsRuntimeNodeInit(unsigned int workerThreads,
             artsNewArrayList(sizeof(uint64_t), 16);
       }
     }
+
+// Initialize arts_id tracking (integrated with counter infrastructure)
+#if ENABLE_artsIdEdtMetrics || ENABLE_artsIdDbMetrics
+    artsIdInitHashTable(&artsNodeInfo.counterCaptures[t].artsIdMetricsTable);
+#endif
+#if ENABLE_artsIdEdtCaptures
+    artsNodeInfo.counterCaptures[t].artsIdEdtCaptureList =
+        artsNewArrayList(sizeof(artsIdEdtCapture), 1024);
+#endif
+#if ENABLE_artsIdDbCaptures
+    artsNodeInfo.counterCaptures[t].artsIdDbCaptureList =
+        artsNewArrayList(sizeof(artsIdDbCapture), 1024);
+#endif
   }
   artsNodeInfo.counterCaptureInterval = config->counterCaptureInterval;
+
+  // Initialize node-level counter reduces
   for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
     if (artsCounterMode[i] == artsCounterModeNode) {
-      artsNodeInfo.counterReduces[i] = artsNewArrayList(sizeof(uint64_t), 16);
+      artsNodeInfo.counterReduces.counterCaptures[i] =
+          artsNewArrayList(sizeof(uint64_t), 16);
     }
   }
+
+// Initialize node-level arts_id reduces (for NODE mode)
+#if ENABLE_artsIdEdtMetrics || ENABLE_artsIdDbMetrics
+  if (artsCounterMode[artsIdEdtMetrics] == artsCounterModeNode ||
+      artsCounterMode[artsIdDbMetrics] == artsCounterModeNode) {
+    artsIdInitHashTable(&artsNodeInfo.counterReduces.artsIdMetricsTable);
+  }
+#endif
+#if ENABLE_artsIdEdtCaptures
+  if (artsCounterMode[artsIdEdtCaptures] == artsCounterModeNode) {
+    artsNodeInfo.counterReduces.artsIdEdtCaptureList =
+        artsNewArrayList(sizeof(artsIdEdtCapture), 1024);
+  }
+#endif
+#if ENABLE_artsIdDbCaptures
+  if (artsCounterMode[artsIdDbCaptures] == artsCounterModeNode) {
+    artsNodeInfo.counterReduces.artsIdDbCaptureList =
+        artsNewArrayList(sizeof(artsIdDbCapture), 1024);
+  }
+#endif
+
   artsTMTNodeInit(workerThreads);
   artsInitTMTLitePerNode(workerThreads);
 #ifdef USE_GPU
@@ -338,6 +377,7 @@ void artsRuntimePrivateInit(struct threadMask *unit,
   artsThreadInfo.localCounting = 1;
   artsThreadInfo.shadLock = 0;
   artsThreadInfo.artsCounters = artsNodeInfo.counterCaptures[unit->id].counters;
+
   artsGuidKeyGeneratorInit();
 
   if (artsThreadInfo.worker) {
@@ -463,8 +503,17 @@ void artsRunEdt(struct artsEdt *edt) {
   artsSetThreadLocalEdtInfo(edt);
 
   EDT_RUNNING_TIME_START();
+  struct timespec start_time, end_time;
+  clock_gettime(CLOCK_MONOTONIC, &start_time);
   func(paramc, paramv, depc, depv);
+  clock_gettime(CLOCK_MONOTONIC, &end_time);
   EDT_RUNNING_TIME_STOP();
+
+  // Record arts_id metrics via counter infrastructure
+  uint64_t exec_ns = (end_time.tv_sec - start_time.tv_sec) * 1000000000ULL +
+                     (end_time.tv_nsec - start_time.tv_nsec);
+  artsCounterRecordArtsIdEdt(edt->arts_id, exec_ns, 0);
+
   INCREMENT_NUM_EDTS_FINISHED_BY(1);
 
   artsMetricsTriggerEvent(artsEdtThroughput, artsThread, 1);

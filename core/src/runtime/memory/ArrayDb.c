@@ -87,7 +87,7 @@ artsArrayDb_t *artsNewArrayDbWithGuid(artsGuid_t guid, unsigned int elementSize,
     // it...
     unsigned int dbSize = sizeof(struct artsDb) + allocSize;
     struct artsDb *toSend = (struct artsDb *)artsCallocAlign(1, dbSize, 16);
-    artsDbCreateInternal(guid, toSend, allocSize, dbSize, ARTS_DB_PIN);
+    artsDbCreateInternal(guid, toSend, allocSize, dbSize, ARTS_DB_PIN, 0);
 
     block = (artsArrayDb_t *)(toSend + 1);
     block->elementSize = elementSize;
@@ -123,7 +123,7 @@ artsArrayDb_t *artsNewLocalArrayDbWithGuid(artsGuid_t guid,
   unsigned int dbSize = sizeof(struct artsDb) + allocSize;
   // struct artsDb *local = artsCalloc(1, dbSize);
   struct artsDb *local = (struct artsDb *)artsMallocAlign(dbSize, 16);
-  artsDbCreateInternal(guid, local, allocSize, dbSize, ARTS_DB_PIN);
+  artsDbCreateInternal(guid, local, allocSize, dbSize, ARTS_DB_PIN, 0);
 
   block = (artsArrayDb_t *)(local + 1);
   block->elementSize = elementSize;

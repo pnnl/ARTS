@@ -36,31 +36,6 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef ARTS_RUNTIME_MEMORY_DBFUNCTIONS_H
-#define ARTS_RUNTIME_MEMORY_DBFUNCTIONS_H
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-#include "arts/runtime/RT.h"
-
-void artsDbCreateInternal(artsGuid_t guid, void *addr, uint64_t size,
-                          uint64_t packetSize, artsType_t mode,
-                          uint64_t arts_id);
-void acquireDbs(struct artsEdt *edt);
-void releaseDbs(unsigned int depc, artsEdtDep_t *depv, bool gpu);
-bool artsAddDbDuplicate(struct artsDb *db, unsigned int rank,
-                        struct artsEdt *edt, unsigned int slot,
-                        artsType_t mode);
-void prepDbs(unsigned int depc, artsEdtDep_t *depv, bool gpu);
-void internalPutInDb(void *ptr, artsGuid_t edtGuid, artsGuid_t dbGuid,
-                     unsigned int slot, unsigned int offset, unsigned int size,
-                     artsGuid_t epochGuid, unsigned int rank);
-
-void *artsDbMalloc(artsType_t mode, unsigned int size);
-void artsDbFree(void *ptr);
-
-#ifdef __cplusplus
-}
-#endif
-#endif /* artsDBFUNCTIONS_H */
+// This file previously contained artsIdExportCounters() which has been removed.
+// Export functionality is now fully integrated into Counter.c via artsCounterWriteThread().
+// This file is retained for build system compatibility but contains no active code.

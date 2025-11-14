@@ -137,6 +137,13 @@ artsGuid_t *artsReserveGuidsRoundRobin(unsigned int size, artsType_t type);
 artsGuid_t artsEdtCreate(artsEdt_t funcPtr, unsigned int route, uint32_t paramc,
                          uint64_t *paramv, uint32_t depc);
 
+// Creates an EDT with arts_id tracking (for ArtsMate integration).
+// Same as artsEdtCreate, but also stores the compiler-assigned arts_id
+// in the EDT structure for runtime performance tracking.
+artsGuid_t artsEdtCreateWithArtsId(artsEdt_t funcPtr, unsigned int route,
+                                   uint32_t paramc, uint64_t *paramv,
+                                   uint32_t depc, uint64_t arts_id);
+
 /// Creates a parallel EDT to run on all the workers on the node. It then waits
 /// for all the EDTs to finish before continuing.
 // ! Not implemented
@@ -356,6 +363,12 @@ void artsAddDependenceToPersistentEventWithModeAndDiff(artsGuid_t eventSource,
 // the calling node.
 artsGuid_t artsDbCreate(void **addr, uint64_t size, artsType_t mode);
 artsGuid_t artsDbCreatePtr(artsPtr_t *addr, uint64_t size, artsType_t mode);
+
+// Creates a DB with arts_id tracking (for ArtsMate integration).
+// Same as artsDbCreate, but also stores the compiler-assigned arts_id
+// in the DB structure for runtime performance tracking.
+artsGuid_t artsDbCreateWithArtsId(void **addr, uint64_t size, artsType_t mode,
+                                  uint64_t arts_id);
 
 // Creates a DB with a fixed guid of size bytes if the guid is local.  The type
 // and route is already fixed by the provided guid, and the pointer to the raw

@@ -46,6 +46,7 @@
 #include "arts/gas/Guid.h"
 #include "arts/gas/OutOfOrder.h"
 #include "arts/gas/RouteTable.h"
+#include "arts/introspection/ArtsIdCounter.h"
 #include "arts/introspection/Counter.h"
 #include "arts/introspection/Metrics.h"
 #include "arts/introspection/Preamble.h"
@@ -99,12 +100,14 @@ void artsDbFree(void *ptr) {
 }
 
 void artsDbCreateInternal(artsGuid_t guid, void *addr, uint64_t size,
-                          uint64_t packetSize, artsType_t mode) {
+                          uint64_t packetSize, artsType_t mode,
+                          uint64_t arts_id) {
   struct artsHeader *header = (struct artsHeader *)addr;
   header->type = mode;
   header->size = packetSize;
 
   struct artsDb *dbRes = (struct artsDb *)header;
+  dbRes->arts_id = arts_id; // Set compiler-assigned arts_id (0 if not set)
   dbRes->guid = guid;
   dbRes->version = 0;
   dbRes->reader = 0;
@@ -123,6 +126,8 @@ void artsDbCreateInternal(artsGuid_t guid, void *addr, uint64_t size,
 #ifdef USE_SMART_DB
   dbRes->eventGuid = artsPersistentEventCreate(artsGuidGetRank(guid), 0, guid);
 #endif
+  // Record arts_id metrics via counter infrastructure
+  artsCounterRecordArtsIdDb(arts_id, packetSize, 0, 0);
   INCREMENT_NUM_DBS_CREATED_BY(1);
 }
 
@@ -152,7 +157,7 @@ artsGuid_t artsDbCreate(void **addr, uint64_t size, artsType_t mode) {
   void *ptr = artsMallocWithType(dbSize, artsDbMemorySize);
   if (ptr) {
     guid = artsGuidCreateForRank(artsGlobalRankId, mode);
-    artsDbCreateInternal(guid, ptr, size, dbSize, mode);
+    artsDbCreateInternal(guid, ptr, size, dbSize, mode, 0);
     // change false to true to force a manual DB delete
     artsRouteTableAddItem(ptr, guid, artsGlobalRankId, false);
     *addr = (void *)((struct artsDb *)ptr + 1);
@@ -169,10 +174,28 @@ artsGuid_t artsDbCreatePtr(artsPtr_t *addr, uint64_t size, artsType_t mode) {
   void *ptr = artsMallocWithType(dbSize, artsDbMemorySize);
   if (ptr) {
     guid = artsGuidCreateForRank(artsGlobalRankId, mode);
-    artsDbCreateInternal(guid, ptr, size, dbSize, mode);
+    artsDbCreateInternal(guid, ptr, size, dbSize, mode, 0);
     // change false to true to force a manual DB delete
     artsRouteTableAddItem(ptr, guid, artsGlobalRankId, false);
     *addr = (artsPtr_t)((struct artsDb *)ptr + 1);
+  }
+  DB_CREATE_COUNTER_STOP();
+  return guid;
+}
+
+artsGuid_t artsDbCreateWithArtsId(void **addr, uint64_t size, artsType_t mode,
+                                  uint64_t arts_id) {
+  DB_CREATE_COUNTER_START();
+  artsGuid_t guid = NULL_GUID;
+  unsigned int dbSize = size + sizeof(struct artsDb);
+
+  void *ptr = artsMallocWithType(dbSize, artsDbMemorySize);
+  if (ptr) {
+    guid = artsGuidCreateForRank(artsGlobalRankId, mode);
+    artsDbCreateInternal(guid, ptr, size, dbSize, mode, arts_id);
+    // change false to true to force a manual DB delete
+    artsRouteTableAddItem(ptr, guid, artsGlobalRankId, false);
+    *addr = (void *)((struct artsDb *)ptr + 1);
   }
   DB_CREATE_COUNTER_STOP();
   return guid;
@@ -189,7 +212,7 @@ void *artsDbCreateWithGuid(artsGuid_t guid, uint64_t size) {
 
     ptr = artsMallocWithType(dbSize, artsDbMemorySize);
     if (ptr) {
-      artsDbCreateInternal(guid, ptr, size, dbSize, mode);
+      artsDbCreateInternal(guid, ptr, size, dbSize, mode, 0);
       if (artsRouteTableAddItemRace(ptr, guid, artsGlobalRankId, false)) {
         artsRouteTableFireOO(guid, artsOutOfOrderHandler);
       }
@@ -212,7 +235,7 @@ void *artsDbCreateWithGuidAndData(artsGuid_t guid, void *data, uint64_t size) {
     ptr = artsMallocWithType(dbSize, artsDbMemorySize);
 
     if (ptr) {
-      artsDbCreateInternal(guid, ptr, size, dbSize, mode);
+      artsDbCreateInternal(guid, ptr, size, dbSize, mode, 0);
       void *dbData = (void *)((struct artsDb *)ptr + 1);
       memcpy(dbData, data, size);
       if (artsRouteTableAddItemRace(ptr, guid, artsGlobalRankId, false))

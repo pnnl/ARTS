@@ -42,6 +42,7 @@
 extern "C" {
 #endif
 
+#include "arts/introspection/ArtsIdCounter.h"
 #include "arts/introspection/Counter.h"
 #include "arts/runtime/RT.h"
 
@@ -110,6 +111,7 @@ struct artsRuntimeShared {
   artsCounterCaptures *counterCaptures;
   uint64_t counterCaptureInterval;
   artsCounterReduces counterReduces;
+  // arts_id tracking now integrated in counterCaptures and counterReduces
 } __attribute__((aligned(64)));
 
 struct artsRuntimePrivate {
@@ -136,6 +138,7 @@ struct artsRuntimePrivate {
   unsigned int shadLock;
   artsCounter *artsCounters;
   unsigned short drand_buf[3];
+  // arts_id tracking now accessed via counterCaptures[threadId]
 };
 
 extern struct artsRuntimeShared artsNodeInfo;

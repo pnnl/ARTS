@@ -171,12 +171,14 @@ bool artsEdtCreateInternal(struct artsEdt *edt, artsType_t mode,
                            unsigned int cluster, unsigned int edtSpace,
                            artsGuid_t outputBuffer, artsEdt_t funcPtr,
                            uint32_t paramc, uint64_t *paramv, uint32_t depc,
-                           bool useEpoch, artsGuid_t epochGuid, bool hasDepv) {
+                           bool useEpoch, artsGuid_t epochGuid, bool hasDepv,
+                           uint64_t arts_id) {
   if (!edt)
     edt = (struct artsEdt *)artsCallocAlignWithType(1, edtSpace, 16,
                                                     artsEdtMemorySize);
   edt->header.type = mode;
   edt->header.size = edtSpace;
+  edt->arts_id = arts_id;  // Set compiler-assigned arts_id (0 if not set)
   if (edt) {
     bool createdGuid = false;
     if (*guid == NULL_GUID) {
@@ -260,7 +262,7 @@ artsGuid_t artsEdtCreateDep(artsEdt_t funcPtr, unsigned int route,
   artsGuid_t *guidPtr = &guid;
   bool created = artsEdtCreateInternal(
       NULL, ARTS_EDT, guidPtr, route, artsThreadInfo.clusterId, edtSpace,
-      NULL_GUID, funcPtr, paramc, paramv, depc, true, NULL_GUID, hasDepv);
+      NULL_GUID, funcPtr, paramc, paramv, depc, true, NULL_GUID, hasDepv, 0);
   EDT_CREATE_COUNTER_STOP();
   return guid;
 }
@@ -275,7 +277,7 @@ artsGuid_t artsEdtCreateWithGuidDep(artsEdt_t funcPtr, artsGuid_t guid,
       sizeof(struct artsEdt) + paramc * sizeof(uint64_t) + depSpace;
   bool ret = artsEdtCreateInternal(
       NULL, ARTS_EDT, &guid, route, artsThreadInfo.clusterId, edtSpace,
-      NULL_GUID, funcPtr, paramc, paramv, depc, true, NULL_GUID, hasDepv);
+      NULL_GUID, funcPtr, paramc, paramv, depc, true, NULL_GUID, hasDepv, 0);
   EDT_CREATE_COUNTER_STOP();
   return (ret) ? guid : NULL_GUID;
 }
@@ -293,7 +295,7 @@ artsGuid_t artsEdtCreateWithEpochDep(artsEdt_t funcPtr, unsigned int route,
   artsGuid_t guid = NULL_GUID;
   bool created = artsEdtCreateInternal(
       NULL, ARTS_EDT, &guid, route, artsThreadInfo.clusterId, edtSpace,
-      NULL_GUID, funcPtr, paramc, paramv, depc, true, epochGuid, hasDepv);
+      NULL_GUID, funcPtr, paramc, paramv, depc, true, epochGuid, hasDepv, 0);
   EDT_CREATE_COUNTER_STOP();
   return guid;
 }
@@ -318,6 +320,24 @@ artsGuid_t artsEdtCreateWithEpoch(artsEdt_t funcPtr, unsigned int route,
     route = artsGlobalRankId;
   return artsEdtCreateWithEpochDep(funcPtr, route, paramc, paramv, depc,
                                    epochGuid, true);
+}
+
+artsGuid_t artsEdtCreateWithArtsId(artsEdt_t funcPtr, unsigned int route,
+                                   uint32_t paramc, uint64_t *paramv,
+                                   uint32_t depc, uint64_t arts_id) {
+  EDT_CREATE_COUNTER_START();
+  if (route == -1)
+    route = artsGlobalRankId;
+  unsigned int depSpace = depc * sizeof(artsEdtDep_t);
+  unsigned int edtSpace =
+      sizeof(struct artsEdt) + paramc * sizeof(uint64_t) + depSpace;
+  artsGuid_t guid = NULL_GUID;
+  artsGuid_t *guidPtr = &guid;
+  bool created = artsEdtCreateInternal(
+      NULL, ARTS_EDT, guidPtr, route, artsThreadInfo.clusterId, edtSpace,
+      NULL_GUID, funcPtr, paramc, paramv, depc, true, NULL_GUID, true, arts_id);
+  EDT_CREATE_COUNTER_STOP();
+  return guid;
 }
 
 void artsEdtFree(struct artsEdt *edt) {

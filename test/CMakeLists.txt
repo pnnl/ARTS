@@ -73,6 +73,7 @@ set(TEST_PROGRAMS
     testTMTLite
     testTwinDiff
     testAcquireMode
+    testArtsId
 )
 
 # Programs that require arts_graph library

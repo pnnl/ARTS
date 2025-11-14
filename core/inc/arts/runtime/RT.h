@@ -140,6 +140,7 @@ struct artsHeader {
 
 struct artsDb {
   struct artsHeader header;
+  uint64_t arts_id;           // Unique identifier from compiler (0 if not set)
   artsGuid_t guid;
 #ifdef USE_SMART_DB
   artsGuid_t eventGuid;
@@ -157,6 +158,7 @@ struct artsDb {
 
 struct artsEdt {
   struct artsHeader header;
+  uint64_t arts_id;           // Unique identifier from compiler (0 if not set)
   artsEdt_t funcPtr;
   uint32_t paramc;
   uint32_t depc;

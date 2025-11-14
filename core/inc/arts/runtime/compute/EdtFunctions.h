@@ -49,7 +49,8 @@ bool artsEdtCreateInternal(struct artsEdt *edt, artsType_t mode,
                            unsigned int cluster, unsigned int edtSpace,
                            artsGuid_t outputBuffer, artsEdt_t funcPtr,
                            uint32_t paramc, uint64_t *paramv, uint32_t depc,
-                           bool useEpoch, artsGuid_t epochGuid, bool hasDepv);
+                           bool useEpoch, artsGuid_t epochGuid, bool hasDepv,
+                           uint64_t arts_id);
 void artsEdtDelete(struct artsEdt *edt);
 void internalSignalEdt(artsGuid_t edtPacket, uint32_t slot, artsGuid_t dataGuid,
                        artsType_t mode, void *ptr, unsigned int size);

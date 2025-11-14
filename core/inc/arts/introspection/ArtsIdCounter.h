@@ -36,31 +36,85 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef ARTS_RUNTIME_MEMORY_DBFUNCTIONS_H
-#define ARTS_RUNTIME_MEMORY_DBFUNCTIONS_H
+#ifndef ARTS_ID_COUNTER_H
+#define ARTS_ID_COUNTER_H
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#include "arts/runtime/RT.h"
+#include "arts/utils/ArrayList.h"
+#include <stdbool.h>
+#include <stdint.h>
 
-void artsDbCreateInternal(artsGuid_t guid, void *addr, uint64_t size,
-                          uint64_t packetSize, artsType_t mode,
-                          uint64_t arts_id);
-void acquireDbs(struct artsEdt *edt);
-void releaseDbs(unsigned int depc, artsEdtDep_t *depv, bool gpu);
-bool artsAddDbDuplicate(struct artsDb *db, unsigned int rank,
-                        struct artsEdt *edt, unsigned int slot,
-                        artsType_t mode);
-void prepDbs(unsigned int depc, artsEdtDep_t *depv, bool gpu);
-void internalPutInDb(void *ptr, artsGuid_t edtGuid, artsGuid_t dbGuid,
-                     unsigned int slot, unsigned int offset, unsigned int size,
-                     artsGuid_t epochGuid, unsigned int rank);
+// Forward declaration
+struct artsRuntimePrivate;
 
-void *artsDbMalloc(artsType_t mode, unsigned int size);
-void artsDbFree(void *ptr);
+// Hash table size (must be power of 2 for fast modulo)
+#ifndef ARTS_ID_HASH_SIZE
+#define ARTS_ID_HASH_SIZE 256
+#endif
+
+// Per-arts_id aggregate metrics
+typedef struct {
+  uint64_t arts_id;        // Key
+  uint64_t invocations;    // Number of invocations
+  uint64_t total_exec_ns;  // Total execution time (nanoseconds)
+  uint64_t total_stall_ns; // Total stall time (nanoseconds)
+  uint64_t bytes_local;    // For DBs: local bytes accessed
+  uint64_t bytes_remote;   // For DBs: remote bytes accessed
+  uint64_t cache_misses;   // For DBs: cache misses
+  bool valid;              // Slot occupied
+} artsIdMetrics;
+
+// Per-thread hash table for aggregate metrics
+typedef struct {
+  artsIdMetrics edt_metrics[ARTS_ID_HASH_SIZE]; // EDT metrics by arts_id
+  artsIdMetrics db_metrics[ARTS_ID_HASH_SIZE];  // DB metrics by arts_id
+  uint64_t edt_collisions; // Stats: hash collisions for EDTs
+  uint64_t db_collisions;  // Stats: hash collisions for DBs
+} artsIdHashTable;
+
+// Per-invocation capture structure for detailed EDT tracking
+typedef struct {
+  uint64_t arts_id;      // Which arts_id
+  uint64_t timestamp_ns; // When it executed
+  uint64_t exec_ns;      // Execution time
+  uint64_t stall_ns;     // Stall time
+  uint32_t node;         // Which node
+  uint32_t thread;       // Which thread
+} artsIdEdtCapture;
+
+// Per-invocation capture structure for detailed DB tracking
+typedef struct {
+  uint64_t arts_id;        // Which arts_id
+  uint64_t timestamp_ns;   // When accessed
+  uint64_t bytes_accessed; // How much data
+  uint32_t node;           // Which node
+  uint8_t access_type;     // READ (0) or WRITE (1)
+} artsIdDbCapture;
+
+// Function declarations
+
+// Aggregate metrics recording (hash table based)
+void artsIdRecordEdtMetrics(uint64_t arts_id, uint64_t exec_ns,
+                            uint64_t stall_ns, artsIdHashTable *hash_table);
+void artsIdRecordDbMetrics(uint64_t arts_id, uint64_t bytes_local,
+                           uint64_t bytes_remote, uint64_t cache_misses,
+                           artsIdHashTable *hash_table);
+
+// Detailed per-invocation captures (ArrayList based)
+void artsIdCaptureEdtExecution(uint64_t arts_id, uint64_t exec_ns,
+                               uint64_t stall_ns, artsArrayList *captures);
+void artsIdCaptureDbAccess(uint64_t arts_id, uint64_t bytes_accessed,
+                           uint8_t access_type, artsArrayList *captures);
+
+// Reduction functions for NODE mode (merge multiple hash tables)
+void artsIdReduceHashTables(artsIdHashTable *dest, const artsIdHashTable *src);
+void artsIdInitHashTable(artsIdHashTable *table);
 
 #ifdef __cplusplus
 }
 #endif
-#endif /* artsDBFUNCTIONS_H */
+
+#endif // ARTS_ID_COUNTER_H

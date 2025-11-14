@@ -45,6 +45,7 @@ extern "C" {
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "arts/introspection/ArtsIdCounter.h"
 #include "arts/introspection/Preamble.h"
 #include "arts/utils/ArrayList.h"
 
@@ -88,6 +89,11 @@ typedef enum artsCounterType {
   acquireWriteMode,
   ownerUpdatesSaved,
   ownerUpdatesPerformed,
+  // arts_id tracking counters
+  artsIdEdtMetrics,
+  artsIdDbMetrics,
+  artsIdEdtCaptures,
+  artsIdDbCaptures,
   NUM_COUNTER_TYPES,
 } artsCounterType;
 
@@ -112,10 +118,29 @@ typedef struct {
 typedef struct {
   artsCounter counters[NUM_COUNTER_TYPES];
   artsArrayList *captures[NUM_COUNTER_TYPES]; // Per-thread captures
+// arts_id tracking (compile-time conditional)
+#if ENABLE_artsIdEdtMetrics || ENABLE_artsIdDbMetrics
+  artsIdHashTable
+      artsIdMetricsTable; // Hash table for per-arts_id aggregate metrics
+#endif
+#if ENABLE_artsIdEdtCaptures || ENABLE_artsIdDbCaptures
+  artsArrayList *artsIdEdtCaptureList; // Per-invocation EDT captures
+  artsArrayList *artsIdDbCaptureList;  // Per-invocation DB captures
+#endif
 } artsCounterCaptures;
 
 // Node-level captures
-typedef artsArrayList *artsCounterReduces[NUM_COUNTER_TYPES];
+typedef struct {
+  artsArrayList *counterCaptures[NUM_COUNTER_TYPES];
+// arts_id tracking (compile-time conditional)
+#if ENABLE_artsIdEdtMetrics || ENABLE_artsIdDbMetrics
+  artsIdHashTable artsIdMetricsTable; // Reduced hash table for NODE mode
+#endif
+#if ENABLE_artsIdEdtCaptures || ENABLE_artsIdDbCaptures
+  artsArrayList *artsIdEdtCaptureList; // Reduced EDT captures for NODE mode
+  artsArrayList *artsIdDbCaptureList;  // Reduced DB captures for NODE mode
+#endif
+} artsCounterReduces;
 
 // We do not implement system-wide counters due to the overhead of
 // synchronization and network communication
@@ -132,6 +157,16 @@ void artsCounterTimerEnd(artsCounter *counter);
 void artsCounterWriteThread(const char *outputFolder, unsigned int nodeId,
                             unsigned int threadId);
 void artsCounterWriteNode(const char *outputFolder, unsigned int nodeId);
+
+// arts_id tracking wrapper functions (integrated with counter infrastructure)
+void artsCounterRecordArtsIdEdt(uint64_t arts_id, uint64_t exec_ns,
+                                uint64_t stall_ns);
+void artsCounterRecordArtsIdDb(uint64_t arts_id, uint64_t bytes_local,
+                               uint64_t bytes_remote, uint64_t cache_misses);
+void artsCounterCaptureArtsIdEdt(uint64_t arts_id, uint64_t exec_ns,
+                                 uint64_t stall_ns);
+void artsCounterCaptureArtsIdDb(uint64_t arts_id, uint64_t bytes_accessed,
+                                uint8_t access_type);
 
 static const char *const artsCounterNames[] = {"edtCounter",
                                                "sleepCounter",
@@ -169,7 +204,11 @@ static const char *const artsCounterNames[] = {"edtCounter",
                                                "acquireReadMode",
                                                "acquireWriteMode",
                                                "ownerUpdatesSaved",
-                                               "ownerUpdatesPerformed"};
+                                               "ownerUpdatesPerformed",
+                                               "artsIdEdtMetrics",
+                                               "artsIdDbMetrics",
+                                               "artsIdEdtCaptures",
+                                               "artsIdDbCaptures"};
 
 static const unsigned int artsCounterReduceTypes[] = {
     artsCounterSum, // edtCounter
@@ -208,7 +247,11 @@ static const unsigned int artsCounterReduceTypes[] = {
     artsCounterSum, // acquireReadMode
     artsCounterSum, // acquireWriteMode
     artsCounterSum, // ownerUpdatesSaved
-    artsCounterSum  // ownerUpdatesPerformed
+    artsCounterSum, // ownerUpdatesPerformed
+    artsCounterSum, // artsIdEdtMetrics
+    artsCounterSum, // artsIdDbMetrics
+    artsCounterSum, // artsIdEdtCaptures
+    artsCounterSum  // artsIdDbCaptures
 };
 
 #ifdef __cplusplus

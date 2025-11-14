@@ -44,6 +44,7 @@
 #include <unistd.h>
 
 #include "arts/arts.h"
+#include "arts/introspection/ArtsIdCounter.h"
 #include "arts/introspection/JsonWriter.h"
 #include "arts/system/ArtsPrint.h"
 #include "arts/system/Debug.h"
@@ -102,7 +103,7 @@ static void *artsCounterCaptureThread(void *args) {
         uint64_t *capture = NULL;
         if (artsCounterMode[i] == artsCounterModeNode) {
           capture = (uint64_t *)artsNextFreeFromArrayList(
-              artsNodeInfo.counterReduces[i]);
+              artsNodeInfo.counterReduces.counterCaptures[i]);
           if (artsCounterReduceTypes[i] == artsCounterSum) {
             *capture = 0;
           } else if (artsCounterReduceTypes[i] == artsCounterMax) {
@@ -133,6 +134,18 @@ static void *artsCounterCaptureThread(void *args) {
         }
       }
     }
+
+    // Reduce arts_id hash tables for NODE mode
+    #if ENABLE_artsIdEdtMetrics || ENABLE_artsIdDbMetrics
+    if (artsCounterMode[artsIdEdtMetrics] == artsCounterModeNode ||
+        artsCounterMode[artsIdDbMetrics] == artsCounterModeNode) {
+      // Reduce all thread hash tables into node-level hash table
+      for (unsigned int t = 0; t < artsNodeInfo.totalThreadCount; t++) {
+        artsIdReduceHashTables(&artsNodeInfo.counterReduces.artsIdMetricsTable,
+                               &artsNodeInfo.counterCaptures[t].artsIdMetricsTable);
+      }
+    }
+    #endif
   }
   return NULL;
 }
@@ -328,6 +341,52 @@ void artsCounterWriteThread(const char *outputFolder, unsigned int nodeId,
   }
   artsJsonWriterEndObject(&writer);
 
+  // Write arts_id metrics (THREAD mode)
+  #if ENABLE_artsIdEdtMetrics || ENABLE_artsIdDbMetrics
+  if (artsCounterMode[artsIdEdtMetrics] == artsCounterModeThread ||
+      artsCounterMode[artsIdDbMetrics] == artsCounterModeThread) {
+    artsJsonWriterBeginObject(&writer, "artsIdMetrics");
+    artsIdHashTable *table = &artsNodeInfo.counterCaptures[threadId].artsIdMetricsTable;
+
+    // Export EDT metrics
+    if (artsCounterMode[artsIdEdtMetrics] == artsCounterModeThread) {
+      artsJsonWriterBeginArray(&writer, "edts");
+      for (uint32_t i = 0; i < ARTS_ID_HASH_SIZE; i++) {
+        if (table->edt_metrics[i].valid) {
+          artsJsonWriterBeginObject(&writer, NULL);
+          artsJsonWriterWriteUInt64(&writer, "arts_id", table->edt_metrics[i].arts_id);
+          artsJsonWriterWriteUInt64(&writer, "invocations", table->edt_metrics[i].invocations);
+          artsJsonWriterWriteUInt64(&writer, "total_exec_ns", table->edt_metrics[i].total_exec_ns);
+          artsJsonWriterWriteUInt64(&writer, "total_stall_ns", table->edt_metrics[i].total_stall_ns);
+          artsJsonWriterEndObject(&writer);
+        }
+      }
+      artsJsonWriterEndArray(&writer);
+      artsJsonWriterWriteUInt64(&writer, "edt_collisions", table->edt_collisions);
+    }
+
+    // Export DB metrics
+    if (artsCounterMode[artsIdDbMetrics] == artsCounterModeThread) {
+      artsJsonWriterBeginArray(&writer, "dbs");
+      for (uint32_t i = 0; i < ARTS_ID_HASH_SIZE; i++) {
+        if (table->db_metrics[i].valid) {
+          artsJsonWriterBeginObject(&writer, NULL);
+          artsJsonWriterWriteUInt64(&writer, "arts_id", table->db_metrics[i].arts_id);
+          artsJsonWriterWriteUInt64(&writer, "invocations", table->db_metrics[i].invocations);
+          artsJsonWriterWriteUInt64(&writer, "bytes_local", table->db_metrics[i].bytes_local);
+          artsJsonWriterWriteUInt64(&writer, "bytes_remote", table->db_metrics[i].bytes_remote);
+          artsJsonWriterWriteUInt64(&writer, "cache_misses", table->db_metrics[i].cache_misses);
+          artsJsonWriterEndObject(&writer);
+        }
+      }
+      artsJsonWriterEndArray(&writer);
+      artsJsonWriterWriteUInt64(&writer, "db_collisions", table->db_collisions);
+    }
+
+    artsJsonWriterEndObject(&writer);
+  }
+  #endif
+
   artsJsonWriterEndObject(&writer);
   artsJsonWriterFinish(&writer);
   fputc('\n', fp);
@@ -427,7 +486,7 @@ void artsCounterWriteNode(const char *outputFolder, unsigned int nodeId) {
       artsJsonWriterWriteUInt64(&writer, "finalValue", finalValue);
 
       // Write reduced capture history
-      artsArrayList *reduceList = artsNodeInfo.counterReduces[i];
+      artsArrayList *reduceList = artsNodeInfo.counterReduces.counterCaptures[i];
       if (reduceList && reduceList->index > 0) {
         artsJsonWriterWriteUInt64(&writer, "captureCount", reduceList->index);
         artsJsonWriterBeginArray(&writer, "captureHistory");
@@ -447,8 +506,116 @@ void artsCounterWriteNode(const char *outputFolder, unsigned int nodeId) {
   }
   artsJsonWriterEndObject(&writer);
 
+  // Write arts_id metrics (NODE mode - reduced across all threads)
+  #if ENABLE_artsIdEdtMetrics || ENABLE_artsIdDbMetrics
+  if (artsCounterMode[artsIdEdtMetrics] == artsCounterModeNode ||
+      artsCounterMode[artsIdDbMetrics] == artsCounterModeNode) {
+    artsJsonWriterBeginObject(&writer, "artsIdMetrics");
+    artsIdHashTable *table = &artsNodeInfo.counterReduces.artsIdMetricsTable;
+
+    // Export reduced EDT metrics
+    if (artsCounterMode[artsIdEdtMetrics] == artsCounterModeNode) {
+      artsJsonWriterBeginArray(&writer, "edts");
+      for (uint32_t i = 0; i < ARTS_ID_HASH_SIZE; i++) {
+        if (table->edt_metrics[i].valid) {
+          artsJsonWriterBeginObject(&writer, NULL);
+          artsJsonWriterWriteUInt64(&writer, "arts_id", table->edt_metrics[i].arts_id);
+          artsJsonWriterWriteUInt64(&writer, "invocations", table->edt_metrics[i].invocations);
+          artsJsonWriterWriteUInt64(&writer, "total_exec_ns", table->edt_metrics[i].total_exec_ns);
+          artsJsonWriterWriteUInt64(&writer, "total_stall_ns", table->edt_metrics[i].total_stall_ns);
+          artsJsonWriterEndObject(&writer);
+        }
+      }
+      artsJsonWriterEndArray(&writer);
+      artsJsonWriterWriteUInt64(&writer, "edt_collisions", table->edt_collisions);
+    }
+
+    // Export reduced DB metrics
+    if (artsCounterMode[artsIdDbMetrics] == artsCounterModeNode) {
+      artsJsonWriterBeginArray(&writer, "dbs");
+      for (uint32_t i = 0; i < ARTS_ID_HASH_SIZE; i++) {
+        if (table->db_metrics[i].valid) {
+          artsJsonWriterBeginObject(&writer, NULL);
+          artsJsonWriterWriteUInt64(&writer, "arts_id", table->db_metrics[i].arts_id);
+          artsJsonWriterWriteUInt64(&writer, "invocations", table->db_metrics[i].invocations);
+          artsJsonWriterWriteUInt64(&writer, "bytes_local", table->db_metrics[i].bytes_local);
+          artsJsonWriterWriteUInt64(&writer, "bytes_remote", table->db_metrics[i].bytes_remote);
+          artsJsonWriterWriteUInt64(&writer, "cache_misses", table->db_metrics[i].cache_misses);
+          artsJsonWriterEndObject(&writer);
+        }
+      }
+      artsJsonWriterEndArray(&writer);
+      artsJsonWriterWriteUInt64(&writer, "db_collisions", table->db_collisions);
+    }
+
+    artsJsonWriterEndObject(&writer);
+  }
+  #endif
+
   artsJsonWriterEndObject(&writer);
   artsJsonWriterFinish(&writer);
   fputc('\n', fp);
   fclose(fp);
+}
+
+// ============================================================================
+// arts_id tracking wrapper functions (integrated with counter infrastructure)
+// ============================================================================
+
+void artsCounterRecordArtsIdEdt(uint64_t arts_id, uint64_t exec_ns, uint64_t stall_ns) {
+  #if ENABLE_artsIdEdtMetrics
+  if (countersOn && artsCounterMode[artsIdEdtMetrics] != artsCounterModeOff) {
+    unsigned int threadId = artsThreadInfo.threadId;
+    artsIdHashTable *hash_table = &artsNodeInfo.counterCaptures[threadId].artsIdMetricsTable;
+    artsIdRecordEdtMetrics(arts_id, exec_ns, stall_ns, hash_table);
+  }
+  #else
+  (void)arts_id;
+  (void)exec_ns;
+  (void)stall_ns;
+  #endif
+}
+
+void artsCounterRecordArtsIdDb(uint64_t arts_id, uint64_t bytes_local,
+                               uint64_t bytes_remote, uint64_t cache_misses) {
+  #if ENABLE_artsIdDbMetrics
+  if (countersOn && artsCounterMode[artsIdDbMetrics] != artsCounterModeOff) {
+    unsigned int threadId = artsThreadInfo.threadId;
+    artsIdHashTable *hash_table = &artsNodeInfo.counterCaptures[threadId].artsIdMetricsTable;
+    artsIdRecordDbMetrics(arts_id, bytes_local, bytes_remote, cache_misses, hash_table);
+  }
+  #else
+  (void)arts_id;
+  (void)bytes_local;
+  (void)bytes_remote;
+  (void)cache_misses;
+  #endif
+}
+
+void artsCounterCaptureArtsIdEdt(uint64_t arts_id, uint64_t exec_ns, uint64_t stall_ns) {
+  #if ENABLE_artsIdEdtCaptures
+  if (countersOn && artsCounterMode[artsIdEdtCaptures] != artsCounterModeOff) {
+    unsigned int threadId = artsThreadInfo.threadId;
+    artsArrayList *captures = artsNodeInfo.counterCaptures[threadId].artsIdEdtCaptureList;
+    artsIdCaptureEdtExecution(arts_id, exec_ns, stall_ns, captures);
+  }
+  #else
+  (void)arts_id;
+  (void)exec_ns;
+  (void)stall_ns;
+  #endif
+}
+
+void artsCounterCaptureArtsIdDb(uint64_t arts_id, uint64_t bytes_accessed, uint8_t access_type) {
+  #if ENABLE_artsIdDbCaptures
+  if (countersOn && artsCounterMode[artsIdDbCaptures] != artsCounterModeOff) {
+    unsigned int threadId = artsThreadInfo.threadId;
+    artsArrayList *captures = artsNodeInfo.counterCaptures[threadId].artsIdDbCaptureList;
+    artsIdCaptureDbAccess(arts_id, bytes_accessed, access_type, captures);
+  }
+  #else
+  (void)arts_id;
+  (void)bytes_accessed;
+  (void)access_type;
+  #endif
 }
