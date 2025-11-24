@@ -110,9 +110,9 @@ typedef enum {
 typedef struct {
   artsGuid_t guid;
   artsType_t mode;
+  void *ptr;
   artsType_t acquireMode;
   bool useTwinDiff;
-  void *ptr;
 } artsEdtDep_t;
 
 // Signature of an EDT

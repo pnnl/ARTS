@@ -554,7 +554,7 @@ void acquireDbs(struct artsEdt *edt) {
           if (depv[i].mode == ARTS_DB_WRITE) {
             // Check if twin-diff is enabled for this WRITE acquire
             if (depv[i].useTwinDiff && depv[i].acquireMode == ARTS_DB_WRITE) {
-              // Twin-diff enabled: use aggregated request 
+              // Twin-diff enabled: use aggregated request
               // (will receive diffs, not full DB)
               ARTS_INFO(
                   "  WRITE mode with twin-diff - sending aggregated request "
@@ -610,7 +610,8 @@ void prepDbs(unsigned int depc, artsEdtDep_t *depv, bool gpu) {
     }
 
     if (depv[i].guid != NULL_GUID && effectiveMode == ARTS_DB_WRITE) {
-      artsRemoteUpdateRouteTable(depv[i].guid, -1);
+      if (depv[i].mode != ARTS_DB_PIN)
+        artsRemoteUpdateRouteTable(depv[i].guid, -1);
       struct artsDb *db = ((struct artsDb *)depv[i].ptr) - 1;
       ARTS_DEBUG("[prepDbs] DB [Guid: %lu] ptr=%p, db=%p, useTwinDiff=%d",
                  depv[i].guid, depv[i].ptr, db, depv[i].useTwinDiff);
@@ -741,7 +742,12 @@ void releaseDbs(unsigned int depc, artsEdtDep_t *depv, bool gpu) {
     artsType_t effectiveMode = artsGetEffectiveMode(&depv[i]);
 
     if (depv[i].guid != NULL_GUID && effectiveMode == ARTS_DB_WRITE) {
-      if (depv[i].useTwinDiff) {
+      if (depv[i].mode == ARTS_DB_PIN) {
+        ARTS_DEBUG("Pinned DB write release (no frontier update)");
+#ifdef USE_SMART_DB
+        artsDbDecrementLatch(depv[i].guid);
+#endif
+      } else if (depv[i].useTwinDiff) {
         artsTryReleaseTwinDiff(depv[i].guid, &depv[i]);
       } else if (owner == artsGlobalRankId) {
         struct artsDb *db = ((struct artsDb *)depv[i].ptr - 1);

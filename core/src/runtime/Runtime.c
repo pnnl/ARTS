@@ -456,6 +456,8 @@ void artsRunEdt(struct artsEdt *edt) {
   uint32_t paramc = edt->paramc;
   uint64_t *paramv = (uint64_t *)(edt + 1);
 
+  ARTS_INFO("[RunEdt] EDT [Guid: %lu, depc: %u, paramc: %u, depv: %p]",
+            edt->currentEdt, depc, paramc, depv);
   prepDbs(depc, depv, false);
 
   artsSetThreadLocalEdtInfo(edt);
