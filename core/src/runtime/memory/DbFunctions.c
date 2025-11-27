@@ -219,10 +219,9 @@ void *artsDbCreateWithGuidAndArtsId(artsGuid_t guid, uint64_t size,
       ptr = (void *)((struct artsDb *)ptr + 1);
     }
   }
-  ARTS_INFO("Creating DB[Guid:%lu, Mode:%s, Ptr:%p, Route:%d, Size:%lu, "
-            "arts_id:%lu]",
-            guid, getTypeName(mode), ptr, artsGuidGetRank(guid), size,
-            arts_id);
+  ARTS_INFO("Creating DB[Id:%lu, Guid:%lu, Mode:%s, Ptr:%p, Route:%d, "
+            "Size:%lu]",
+            arts_id, guid, getTypeName(mode), ptr, artsGuidGetRank(guid), size);
   DB_CREATE_COUNTER_STOP();
   return ptr;
 }
@@ -233,20 +232,24 @@ void *artsDbCreateWithGuid(artsGuid_t guid, uint64_t size) {
   artsType_t mode = artsGuidGetType(guid);
 
   void *ptr = NULL;
+  uint64_t arts_id = 0;
   if (artsIsGuidLocal(guid)) {
     unsigned int dbSize = size + sizeof(struct artsDb);
 
     ptr = artsMallocWithType(dbSize, artsDbMemorySize);
     if (ptr) {
-      artsDbCreateInternal(guid, ptr, size, dbSize, mode, 0);
-      if (artsRouteTableAddItemRace(ptr, guid, artsGlobalRankId, false)) {
+      struct artsDb *dbHeader = (struct artsDb *)ptr;
+      artsDbCreateInternal(guid, dbHeader, size, dbSize, mode, 0);
+      arts_id = dbHeader->arts_id;
+      if (artsRouteTableAddItemRace(dbHeader, guid, artsGlobalRankId, false)) {
         artsRouteTableFireOO(guid, artsOutOfOrderHandler);
       }
-      ptr = (void *)((struct artsDb *)ptr + 1);
+      ptr = (void *)(dbHeader + 1);
     }
   }
-  ARTS_INFO("Creating DB[Guid:%lu, Mode:%s, Ptr:%p, Route:%d, Size:%lu]",
-            guid, getTypeName(mode), ptr, artsGuidGetRank(guid), size);
+  ARTS_INFO("Creating DB[Id:%lu, Guid:%lu, Mode:%s, Ptr:%p, Route:%d, "
+            "Size:%lu]",
+            arts_id, guid, getTypeName(mode), ptr, artsGuidGetRank(guid), size);
   DB_CREATE_COUNTER_STOP();
   return ptr;
 }
@@ -255,20 +258,26 @@ void *artsDbCreateWithGuidAndData(artsGuid_t guid, void *data, uint64_t size) {
   DB_CREATE_COUNTER_START();
   artsType_t mode = artsGuidGetType(guid);
   void *ptr = NULL;
+  uint64_t arts_id = 0;
   if (artsIsGuidLocal(guid)) {
     unsigned int dbSize = size + sizeof(struct artsDb);
 
     ptr = artsMallocWithType(dbSize, artsDbMemorySize);
 
     if (ptr) {
-      artsDbCreateInternal(guid, ptr, size, dbSize, mode, 0);
-      void *dbData = (void *)((struct artsDb *)ptr + 1);
+      struct artsDb *dbHeader = (struct artsDb *)ptr;
+      artsDbCreateInternal(guid, dbHeader, size, dbSize, mode, 0);
+      arts_id = dbHeader->arts_id;
+      void *dbData = (void *)(dbHeader + 1);
       memcpy(dbData, data, size);
-      if (artsRouteTableAddItemRace(ptr, guid, artsGlobalRankId, false))
+      if (artsRouteTableAddItemRace(dbHeader, guid, artsGlobalRankId, false))
         artsRouteTableFireOO(guid, artsOutOfOrderHandler);
       ptr = dbData;
     }
   }
+  ARTS_INFO("Creating DB[Id:%lu, Guid:%lu, Mode:%s, Ptr:%p, Route:%d, "
+            "Size:%lu]",
+            arts_id, guid, getTypeName(mode), ptr, artsGuidGetRank(guid), size);
   DB_CREATE_COUNTER_STOP();
   return ptr;
 }
@@ -449,9 +458,9 @@ void artsRecordDep(artsGuid_t dbSrc, artsGuid_t edtDest, uint32_t edtSlot,
 void acquireDbs(struct artsEdt *edt) {
   artsEdtDep_t *depv = (artsEdtDep_t *)artsGetDepv(edt);
   edt->depcNeeded = edt->depc + 1;
-  ARTS_INFO(
-      "Acquiring %u DBs for EDT[Guid:%lu], depcNeeded initialized to %u",
-      edt->depc, edt->currentEdt, edt->depcNeeded);
+  ARTS_INFO("Acquiring %u DBs for EDT[Id:%lu, Guid:%lu], depcNeeded "
+            "initialized to %u",
+            edt->depc, edt->arts_id, edt->currentEdt, edt->depcNeeded);
   for (int i = 0; i < edt->depc; i++) {
     if (depv[i].guid && depv[i].ptr == NULL) {
       struct artsDb *dbFound = NULL;
@@ -476,10 +485,10 @@ void acquireDbs(struct artsEdt *edt) {
               &artsThreadInfo.artsCounters[ownerUpdatesPerformed], 1);
       }
 
-      ARTS_INFO("Acquiring DB[Guid:%lu, Mode:%u, Owner:%d, Rank:"
-                "%u] in EDT[Guid:%lu, Slot:%u]",
+      ARTS_INFO("Acquiring DB[Guid:%lu, Mode:%u, Owner:%d, Rank:%u] "
+                "in EDT[Id:%lu, Guid:%lu, Slot:%u]",
                 depv[i].guid, depv[i].mode, owner, artsGlobalRankId,
-                edt->currentEdt, i);
+                edt->arts_id, edt->currentEdt, i);
       switch (depv[i].mode) {
       // This case assumes that the guid exists only on the owner
       case ARTS_DB_ONCE: {
@@ -647,7 +656,8 @@ void acquireDbs(struct artsEdt *edt) {
       artsAtomicSub(&edt->depcNeeded, 1U);
     }
   }
-  ARTS_INFO("EDT[Guid:%lu] has finished acquiring DBs", edt->currentEdt);
+  ARTS_INFO("EDT[Id:%lu, Guid:%lu] has finished acquiring DBs", edt->arts_id,
+            edt->currentEdt);
 }
 
 void prepDbs(unsigned int depc, artsEdtDep_t *depv, bool gpu) {
@@ -664,15 +674,17 @@ void prepDbs(unsigned int depc, artsEdtDep_t *depv, bool gpu) {
       if (depv[i].mode != ARTS_DB_PIN)
         artsRemoteUpdateRouteTable(depv[i].guid, -1);
       struct artsDb *db = ((struct artsDb *)depv[i].ptr) - 1;
-      ARTS_DEBUG("[prepDbs] DB[Guid:%lu] ptr=%p, db=%p, useTwinDiff=%d",
-                 depv[i].guid, depv[i].ptr, db, depv[i].useTwinDiff);
+      ARTS_DEBUG("[prepDbs] DB[Id:%lu, Guid:%lu] ptr=%p, db=%p, "
+                 "useTwinDiff=%d",
+                 db->arts_id, depv[i].guid, depv[i].ptr, db,
+                 depv[i].useTwinDiff);
       // Allocate twin
       if (depv[i].useTwinDiff && !(db->twinFlags & ARTS_DB_HAS_TWIN)) {
         artsDbAllocateTwin(db);
         size_t dbSize = db->header.size - sizeof(struct artsDb);
-        ARTS_DEBUG(
-            "Allocated twin for DB[Guid:%lu, size: %zu] (compiler hint)",
-            depv[i].guid, dbSize);
+        ARTS_DEBUG("Allocated twin for DB[Id:%lu, Guid:%lu, size: %zu] "
+                   "(compiler hint)",
+                   db->arts_id, depv[i].guid, dbSize);
       }
     }
 #ifdef USE_GPU
@@ -709,14 +721,15 @@ static inline bool artsTryReleaseTwinDiff(artsGuid_t guid, artsEdtDep_t *dep) {
     // Quick estimate of dirty ratio
     float dirtyRatio = artsEstimateDirtyRatio(working, twin, dbSize);
 
-    ARTS_DEBUG("DB[Guid:%lu] estimated dirty ratio: %.2f%% (isOwner=%d)",
-               guid, dirtyRatio * 100.0, isOwner);
+    ARTS_DEBUG("DB[Id:%lu, Guid:%lu] estimated dirty ratio: %.2f%% "
+               "(isOwner=%d)",
+               db->arts_id, guid, dirtyRatio * 100.0, isOwner);
 
     // If dirty ratio is too high, fall back to full DB send (non-owner only)
     if (dirtyRatio > ARTS_DIFF_DIRTY_THRESHOLD && !isOwner) {
-      ARTS_INFO("DB[Guid:%lu] dirty ratio %.2f%% exceeds threshold, "
+      ARTS_INFO("DB[Id:%lu, Guid:%lu] dirty ratio %.2f%% exceeds threshold, "
                 "using full DB send",
-                guid, dirtyRatio * 100.0);
+                db->arts_id, guid, dirtyRatio * 100.0);
       artsRemoteUpdateDb(guid, true);
       INCREMENT_OWNER_UPDATES_PERFORMED_BY(1);
       INCREMENT_TWIN_DIFF_SKIPPED_BY(1);
@@ -725,9 +738,9 @@ static inline bool artsTryReleaseTwinDiff(artsGuid_t guid, artsEdtDep_t *dep) {
       // progress (owner)
       struct artsDiffList *diffs = artsComputeDiffs(working, twin, dbSize);
       if (diffs && diffs->regionCount > 0) {
-        ARTS_INFO("DB[Guid:%lu] using twin-diff: %u regions, %u bytes "
-                  "(%.2f%% of %zu)",
-                  guid, diffs->regionCount, diffs->totalBytes,
+        ARTS_INFO("DB[Id:%lu, Guid:%lu] using twin-diff: %u regions, "
+                  "%u bytes (%.2f%% of %zu)",
+                  db->arts_id, guid, diffs->regionCount, diffs->totalBytes,
                   diffs->dirtyRatio * 100.0, dbSize);
 
         if (!isOwner) {
@@ -745,7 +758,7 @@ static inline bool artsTryReleaseTwinDiff(artsGuid_t guid, artsEdtDep_t *dep) {
       } else {
         // No diffs - either signal owner (non-owner) or just update progress
         // (owner)
-        ARTS_DEBUG("DB[Guid:%lu] no diffs detected", guid);
+        ARTS_DEBUG("DB[Id:%lu, Guid:%lu] no diffs detected", db->arts_id, guid);
         if (!isOwner)
           artsRemoteUpdateDb(guid, false);
         else

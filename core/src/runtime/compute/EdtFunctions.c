@@ -145,8 +145,9 @@ void artsIncrementFinishedEpochList() {
     unsigned int epochArrayLength = artsLengthArrayList(epochList);
     for (unsigned int i = 0; i < epochArrayLength; i++) {
       artsGuid_t *guid = (artsGuid_t *)artsGetFromArrayList(epochList, i);
-      ARTS_INFO("Current EDT[Guid:%lu] -  Unsetting Epoch [Guid:%lu]",
-                artsThreadInfo.currentEdtGuid, *guid);
+      uint64_t currentId = currentEdt ? currentEdt->arts_id : 0;
+      ARTS_INFO("Current EDT[Id:%lu, Guid:%lu] - Unsetting Epoch [Guid:%lu]",
+                currentId, artsThreadInfo.currentEdtGuid, *guid);
       if (*guid)
         incrementFinishedEpoch(*guid);
     }
@@ -178,7 +179,7 @@ bool artsEdtCreateInternal(struct artsEdt *edt, artsType_t mode,
                                                     artsEdtMemorySize);
   edt->header.type = mode;
   edt->header.size = edtSpace;
-  edt->arts_id = arts_id;  // Set compiler-assigned arts_id (0 if not set)
+  edt->arts_id = arts_id; // Set compiler-assigned arts_id (0 if not set)
   if (edt) {
     bool createdGuid = false;
     if (*guid == NULL_GUID) {
@@ -218,10 +219,11 @@ bool artsEdtCreateInternal(struct artsEdt *edt, artsType_t mode,
 
     /// DEBUG
     if (useEpoch) {
-      ARTS_INFO("Creating EDT[Guid:%lu, Epoch:%lu, Deps:%u, Route:%d]",
-                *guid, edt->epochGuid, edt->depc, route);
+      ARTS_INFO("Creating EDT[Id:%lu, Guid:%lu, Epoch:%lu, Deps:%u, Route:%d]",
+                edt->arts_id, *guid, edt->epochGuid, edt->depc, route);
     } else {
-      ARTS_INFO("Created EDT[Guid:%lu, Route:%d]", *guid, route);
+      ARTS_INFO("Created EDT[Id:%lu, Guid:%lu, Route:%d]", edt->arts_id, *guid,
+                route);
     }
 
     if (route != artsGlobalRankId) {
@@ -351,10 +353,9 @@ artsGuid_t artsEdtCreateWithEpochArtsId(artsEdt_t funcPtr, unsigned int route,
   unsigned int edtSpace =
       sizeof(struct artsEdt) + paramc * sizeof(uint64_t) + depSpace;
   artsGuid_t guid = NULL_GUID;
-  bool created = artsEdtCreateInternal(NULL, ARTS_EDT, &guid, route,
-                                       artsThreadInfo.clusterId, edtSpace,
-                                       NULL_GUID, funcPtr, paramc, paramv, depc,
-                                       true, epochGuid, true, arts_id);
+  bool created = artsEdtCreateInternal(
+      NULL, ARTS_EDT, &guid, route, artsThreadInfo.clusterId, edtSpace,
+      NULL_GUID, funcPtr, paramc, paramv, depc, true, epochGuid, true, arts_id);
   EDT_CREATE_COUNTER_STOP();
   return (created) ? guid : NULL_GUID;
 }

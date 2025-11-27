@@ -447,8 +447,8 @@ void artsRuntimeStop() {
 }
 
 void artsHandleRemoteStolenEdt(struct artsEdt *edt) {
-  ARTS_DEBUG("Processing stolen EDT[Guid:%lu] on core %d", edt->currentEdt,
-             artsThreadInfo.coreId);
+  ARTS_DEBUG("Processing stolen EDT[Id:%lu, Guid:%lu] on core %d", edt->arts_id,
+             edt->currentEdt, artsThreadInfo.coreId);
   incrementQueueEpoch(edt->epochGuid);
   globalShutdownGuidIncQueue();
 #ifdef USE_GPU
@@ -466,7 +466,7 @@ void artsHandleRemoteStolenEdt(struct artsEdt *edt) {
 }
 
 void artsHandleReadyEdt(struct artsEdt *edt) {
-  ARTS_INFO("EDT[Guid:%lu] is ready", edt->currentEdt);
+  ARTS_INFO("EDT[Id:%lu, Guid:%lu] is ready", edt->arts_id, edt->currentEdt);
   acquireDbs(edt);
   if (artsAtomicSub(&edt->depcNeeded, 1U) == 0) {
     INCREMENT_NUM_EDTS_ACQUIRED_BY(1);
@@ -496,8 +496,9 @@ void artsRunEdt(struct artsEdt *edt) {
   uint32_t paramc = edt->paramc;
   uint64_t *paramv = (uint64_t *)(edt + 1);
 
-  ARTS_INFO("Running EDT[Guid:%lu, Deps: %u, Params: %u, DepvPtr: %p]",
-            edt->currentEdt, depc, paramc, depv);
+  ARTS_INFO("Running EDT[Id:%lu, Guid:%lu, Deps: %u, Params: %u, "
+            "DepvPtr: %p]",
+            edt->arts_id, edt->currentEdt, depc, paramc, depv);
   prepDbs(depc, depv, false);
 
   artsSetThreadLocalEdtInfo(edt);
@@ -525,7 +526,7 @@ void artsRunEdt(struct artsEdt *edt) {
     artsSetBuffer(edt->outputBuffer, artsCalloc(1, sizeof(unsigned int)),
                   sizeof(unsigned int));
 
-  ARTS_INFO("EDT[Guid:%lu] Finished", edt->currentEdt);
+  ARTS_INFO("EDT[Id:%lu, Guid:%lu] Finished", edt->arts_id, edt->currentEdt);
   releaseDbs(depc, depv, false);
   artsEdtDelete(edt);
   // This is for debugging purposes

@@ -237,37 +237,6 @@ artsGuid_t artsInitializeEpoch(unsigned int rank, artsGuid_t finishEdtGuid,
   return guid;
 }
 
-artsGuid_t artsInitializeAndStartEpochWithCount(unsigned int rank,
-                                                artsGuid_t finishEdtGuid,
-                                                unsigned int slot,
-                                                unsigned int initialCount) {
-  artsGuid_t guid = NULL_GUID;
-  // Similar to artsInitializeEpoch but pre-initializes activeCount and queued
-  // with initialCount to prevent early termination in parallel regions
-  if (!artsNodeInfo.readyToExecute || rank != artsGlobalRankId) {
-    guid = artsGuidCreateForRank(rank, ARTS_EDT);
-    artsEpoch_t *epoch = createEpoch(&guid, finishEdtGuid, slot);
-    artsSetCurrentEpochGuid(epoch->guid);
-    artsAtomicAdd(&epoch->activeCount, initialCount);
-    artsAtomicAddU64(&epoch->queued, 1);
-    if (!artsNodeInfo.readyToExecute) {
-      for (unsigned int i = 0; i < artsGlobalRankCount; i++) {
-        if (i != artsGlobalRankId)
-          artsRemoteEpochInitSend(i, guid, finishEdtGuid, slot);
-      }
-    }
-  } else {
-    artsEpoch_t *epoch = getPoolEpoch(finishEdtGuid, slot);
-    artsSetCurrentEpochGuid(epoch->guid);
-    guid = epoch->guid;
-    artsAtomicAdd(&epoch->activeCount, initialCount);
-    artsAtomicAddU64(&epoch->queued, 1);
-  }
-  ARTS_INFO("Creating Epoch with Count [Guid:%lu, InitialCount:%u]", guid,
-            initialCount);
-  return guid;
-}
-
 void artsStartEpoch(artsGuid_t epochGuid) {
   artsEpoch_t *epoch = (artsEpoch_t *)artsRouteTableLookupItem(epochGuid);
   if (epoch) {
@@ -276,18 +245,6 @@ void artsStartEpoch(artsGuid_t epochGuid) {
     artsAtomicAddU64(&epoch->queued, 1);
   } else {
     ARTS_ERROR("Epoch [Guid:%lu] doesn't exist in the Route table", epochGuid);
-  }
-}
-
-void artsJoinEpoch(artsGuid_t epochGuid) {
-  artsEpoch_t *epoch = (artsEpoch_t *)artsRouteTableLookupItem(epochGuid);
-  if (epoch) {
-    // Add epoch to worker's epochList so incrementFinishedEpoch is called on
-    // finish
-    artsSetCurrentEpochGuid(epoch->guid);
-  } else {
-    ARTS_ERROR("Epoch [Guid:%lu] doesn't exist in the Route table (join)",
-               epochGuid);
   }
 }
 
