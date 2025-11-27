@@ -167,7 +167,7 @@ Set gpuLCSync=6 and make sure the number of GPU is correct in the arts.cfg file.
 Next run: 
 ```
 ./randomAccess
-[0] Random Access Table Size: 167772160 Tile Size: 20971520 Number of Tiles: 8
+[0] Random Access Table Size:167772160 Tile Size:20971520 Number of Tiles: 8
 [0] NumGpus: 8 numUpdatesPerGpu: 335544320
 [0] Time 10938636447
 [0] Verified!

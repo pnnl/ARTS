@@ -145,8 +145,8 @@ void artsIncrementFinishedEpochList() {
     unsigned int epochArrayLength = artsLengthArrayList(epochList);
     for (unsigned int i = 0; i < epochArrayLength; i++) {
       artsGuid_t *guid = (artsGuid_t *)artsGetFromArrayList(epochList, i);
-      ARTS_DEBUG("Current EDT [Guid: %lu] -  Unsetting Epoch [Guid: %lu]",
-                 artsThreadInfo.currentEdtGuid, *guid);
+      ARTS_INFO("Current EDT[Guid:%lu] -  Unsetting Epoch [Guid:%lu]",
+                artsThreadInfo.currentEdtGuid, *guid);
       if (*guid)
         incrementFinishedEpoch(*guid);
     }
@@ -216,10 +216,10 @@ bool artsEdtCreateInternal(struct artsEdt *edt, artsType_t mode,
 
     /// DEBUG
     if (useEpoch) {
-      ARTS_INFO("Creating EDT [Guid: %lu] [Epoch: %lu] [Deps: %u] [Route: %d]",
+      ARTS_INFO("Creating EDT[Guid:%lu, Epoch:%lu, Deps:%u, Route:%d]",
                 *guid, edt->epochGuid, edt->depc, route);
     } else {
-      ARTS_INFO("Created EDT [Guid: %lu] [Route: %d]", *guid, route);
+      ARTS_INFO("Created EDT[Guid:%lu, Route:%d]", *guid, route);
     }
 
     if (route != artsGlobalRankId) {
@@ -378,8 +378,8 @@ void internalSignalEdt(artsGuid_t edtPacket, uint32_t slot, artsGuid_t dataGuid,
           edtDep[slot].ptr = ptr;
         }
         unsigned int res = artsAtomicSub(&edt->depcNeeded, 1U);
-        ARTS_INFO("Signal DB [Guid: %lu] to EDT [Guid: %lu, Slot: %u, "
-                  "DepCount: %d]",
+        ARTS_INFO("Signal DB[Guid:%lu] to EDT[Guid:%lu, Slot:%u, "
+                  "DepCount:%d]",
                   dataGuid, edt->currentEdt, slot, res);
         if (res == 0)
           artsHandleReadyEdt(edt);
@@ -434,8 +434,8 @@ void internalSignalEdtWithMode(artsGuid_t edtPacket, uint32_t slot,
           edtDep[slot].ptr = NULL;
         }
         unsigned int res = artsAtomicSub(&edt->depcNeeded, 1U);
-        ARTS_INFO("Signal DB [Guid: %lu] to EDT [Guid: %lu, Slot: %u, "
-                  "DepCount: %d, AcquireMode: %s, UseTwinDiff: %d]",
+        ARTS_INFO("Signal DB[Guid:%lu] to EDT[Guid:%lu, Slot:%u, "
+                  "DepCount:%d, AcquireMode:%s, UseTwinDiff: %d]",
                   dataGuid, edt->currentEdt, slot, res,
                   getTypeName(acquireMode), useTwinDiff);
         if (res == 0)
@@ -552,7 +552,7 @@ void *artsSetBuffer(artsGuid_t bufferGuid, void *buffer, unsigned int size) {
 
       if (stub->buffer) {
         memcpy(stub->buffer, buffer, stub->size);
-        ARTS_DEBUG("Set buffer [Ptr: %p, Size: %u, Uses: %u]", stub->buffer,
+        ARTS_DEBUG("Set buffer [Ptr:%p, Size:%u, Uses: %u]", stub->buffer,
                    *((unsigned int *)stub->buffer), stub->size);
         ret = stub->buffer;
       } else

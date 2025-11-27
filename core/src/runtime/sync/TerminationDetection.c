@@ -145,7 +145,7 @@ void incrementFinishedEpoch(artsGuid_t epochGuid) {
 void sendEpoch(artsGuid_t epochGuid, unsigned int source, unsigned int dest) {
   artsEpoch_t *epoch = (artsEpoch_t *)artsRouteTableLookupItem(epochGuid);
   if (epoch) {
-    ARTS_DEBUG("Sending epoch [Guid: %lu] to rank %u", epochGuid, dest);
+    ARTS_DEBUG("Sending epoch [Guid:%lu] to rank %u", epochGuid, dest);
     artsAtomicFetchAndU64(&epoch->queued, EpochMask);
     if (!artsAtomicCswapU64(&epoch->queued, 0, EpochBit)) {
       artsRemoteEpochSend(dest, epochGuid, epoch->activeCount,
@@ -169,7 +169,6 @@ artsEpoch_t *createEpoch(artsGuid_t *guid, artsGuid_t edtGuid,
   epoch->queued = (artsIsGuidLocal(*guid)) ? 0 : EpochBit;
   artsRouteTableAddItemRace(epoch, *guid, artsGlobalRankId, false);
   artsRouteTableFireOO(*guid, artsOutOfOrderHandler);
-  //    ARTS_INFO("Create %lu %p", *guid, epoch);
   return epoch;
 }
 
@@ -210,6 +209,7 @@ artsGuid_t artsInitializeAndStartEpoch(artsGuid_t finishEdtGuid,
   artsSetCurrentEpochGuid(epoch->guid);
   artsAtomicAdd(&epoch->activeCount, 1);
   artsAtomicAddU64(&epoch->queued, 1);
+  ARTS_INFO("Creating and Initializing Epoch [Guid:%lu]", epoch->guid);
   return epoch->guid;
 }
 
@@ -237,22 +237,67 @@ artsGuid_t artsInitializeEpoch(unsigned int rank, artsGuid_t finishEdtGuid,
   return guid;
 }
 
+artsGuid_t artsInitializeAndStartEpochWithCount(unsigned int rank,
+                                                artsGuid_t finishEdtGuid,
+                                                unsigned int slot,
+                                                unsigned int initialCount) {
+  artsGuid_t guid = NULL_GUID;
+  // Similar to artsInitializeEpoch but pre-initializes activeCount and queued
+  // with initialCount to prevent early termination in parallel regions
+  if (!artsNodeInfo.readyToExecute || rank != artsGlobalRankId) {
+    guid = artsGuidCreateForRank(rank, ARTS_EDT);
+    artsEpoch_t *epoch = createEpoch(&guid, finishEdtGuid, slot);
+    artsSetCurrentEpochGuid(epoch->guid);
+    artsAtomicAdd(&epoch->activeCount, initialCount);
+    artsAtomicAddU64(&epoch->queued, 1);
+    if (!artsNodeInfo.readyToExecute) {
+      for (unsigned int i = 0; i < artsGlobalRankCount; i++) {
+        if (i != artsGlobalRankId)
+          artsRemoteEpochInitSend(i, guid, finishEdtGuid, slot);
+      }
+    }
+  } else {
+    artsEpoch_t *epoch = getPoolEpoch(finishEdtGuid, slot);
+    artsSetCurrentEpochGuid(epoch->guid);
+    guid = epoch->guid;
+    artsAtomicAdd(&epoch->activeCount, initialCount);
+    artsAtomicAddU64(&epoch->queued, 1);
+  }
+  ARTS_INFO("Creating Epoch with Count [Guid:%lu, InitialCount:%u]", guid,
+            initialCount);
+  return guid;
+}
+
 void artsStartEpoch(artsGuid_t epochGuid) {
   artsEpoch_t *epoch = (artsEpoch_t *)artsRouteTableLookupItem(epochGuid);
   if (epoch) {
     artsSetCurrentEpochGuid(epoch->guid);
     artsAtomicAdd(&epoch->activeCount, 1);
     artsAtomicAddU64(&epoch->queued, 1);
+  } else {
+    ARTS_ERROR("Epoch [Guid:%lu] doesn't exist in the Route table", epochGuid);
+  }
+}
+
+void artsJoinEpoch(artsGuid_t epochGuid) {
+  artsEpoch_t *epoch = (artsEpoch_t *)artsRouteTableLookupItem(epochGuid);
+  if (epoch) {
+    // Add epoch to worker's epochList so incrementFinishedEpoch is called on
+    // finish
+    artsSetCurrentEpochGuid(epoch->guid);
+  } else {
+    ARTS_ERROR("Epoch [Guid:%lu] doesn't exist in the Route table (join)",
+               epochGuid);
   }
 }
 
 bool checkEpoch(artsEpoch_t *epoch, unsigned int totalActive,
                 unsigned int totalFinish) {
   unsigned int diff = totalActive - totalFinish;
-  ARTS_DEBUG("checkEpoch: totalActive=%u, totalFinish=%u, diff=%u, phase=%u, "
-             "lastActive=%u, lastFinished=%u",
-             totalActive, totalFinish, diff, epoch->phase,
-             epoch->lastActiveCount, epoch->lastFinishedCount);
+  ARTS_INFO("Checking Epoch [Guid:%lu, TotalActive:%u, TotalFinish:%u, "
+            "Diff:%u, Phase:%u, LastActive:%u, LastFinished:%u]",
+            epoch->guid, totalActive, totalFinish, diff, epoch->phase,
+            epoch->lastActiveCount, epoch->lastFinishedCount);
   // We have a zero
   if (totalFinish && !diff) {
     // Lets check the phase and if we have the same counts as before
@@ -310,7 +355,7 @@ void reduceEpoch(artsGuid_t epochGuid, unsigned int active,
       totalActive += epoch->activeCount;
       totalFinish += epoch->finishedCount;
 
-      ARTS_DEBUG("reduceEpoch [Guid: %lu]: totalActive=%u, totalFinish=%u, "
+      ARTS_DEBUG("reduceEpoch [Guid:%lu]: totalActive=%u, totalFinish=%u, "
                  "phase=%u, outstanding_before=%lu, queued=%lu",
                  epochGuid, totalActive, totalFinish, epoch->phase,
                  outstanding_before, epoch->queued);
@@ -335,12 +380,12 @@ void reduceEpoch(artsGuid_t epochGuid, unsigned int active,
       }
 
       if (epoch->phase == PHASE_3) {
-        ARTS_DEBUG("  Deleting epoch [Guid: %lu] - termination complete",
+        ARTS_DEBUG("  Deleting epoch [Guid:%lu] - termination complete",
                    epochGuid);
         deleteEpoch(epochGuid, epoch);
       }
     } else {
-      ARTS_DEBUG("reduceEpoch [Guid: %lu]: outstanding=%lu (still waiting for "
+      ARTS_DEBUG("reduceEpoch [Guid:%lu]: outstanding=%lu (still waiting for "
                  "more responses)",
                  epochGuid, outstanding_before - 1);
     }
@@ -502,7 +547,7 @@ void artsYield() {
 bool artsWaitOnHandle(artsGuid_t epochGuid) {
   EDT_RUNNING_TIME_STOP();
   artsGuid_t *guid = artsCheckEpochIsRoot(epochGuid);
-  ARTS_DEBUG("Waiting on epoch [Guid: %lu]", epochGuid);
+  ARTS_DEBUG("Waiting on epoch [Guid:%lu]", epochGuid);
   // For now lets leave this rule here
   if (guid) {
     artsGuid_t local = *guid;

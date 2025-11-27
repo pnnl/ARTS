@@ -519,7 +519,7 @@ bool gpuRingReduction(unsigned int mask, unsigned int guid, unsigned int dbSize,
   unsigned int *cycle = gpuDepthFirst(mask, &cycleSize);
   if (cycle && cycleSize > 1) {
     unsigned int numGpus = cycleSize - 1;
-    ARTS_INFO("Cycle Size: %u", cycleSize);
+    ARTS_INFO("Cycle Size:%u", cycleSize);
     for (unsigned int i = 0; i < 1; i++) {
       for (unsigned int j = 1; j < cycleSize; j++)
         gpuCopyLaunch(cycle[j], cycle[j - 1], cycle[j], (i == 0) ? false : true,

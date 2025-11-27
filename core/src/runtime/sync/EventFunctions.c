@@ -559,31 +559,31 @@ void artsPersistentEventSatisfy(artsGuid_t eventGuid, uint32_t action,
       res = artsAtomicFetchAdd(&version->latchCount, 0U);
       if (res == 1) {
         ARTS_DEBUG(
-            "Latch count is 1 for Event [Guid: %lu], creating new version",
+            "Latch count is 1 for Event [Guid:%lu], creating new version",
             eventGuid);
         version = artsPushPersistentEventVersion(event);
-        ARTS_DEBUG("Created Event [Guid: %lu, Version: %u]", version->version,
+        ARTS_DEBUG("Created Event [Guid:%lu, Version: %u]", version->version,
                    eventGuid);
       }
       res = artsAtomicAdd(&version->latchCount, 1U);
-      ARTS_DEBUG("Increment Event [Guid: %lu, Latch Count: %d]", eventGuid,
+      ARTS_DEBUG("Increment Event [Guid:%lu, Latch Count: %d]", eventGuid,
                  res);
     } else if (action == ARTS_EVENT_LATCH_DECR_SLOT) {
       res = artsAtomicFetchAdd(&version->latchCount, 0U);
       if (res == (unsigned int)-1) {
         ARTS_DEBUG(
-            "Latch count is -1 for Event [Guid: %lu], creating new version",
+            "Latch count is -1 for Event [Guid:%lu], creating new version",
             eventGuid);
         version = artsPushPersistentEventVersion(event);
-        ARTS_DEBUG("Created version %u for Event [Guid: %lu, Version: %u]",
+        ARTS_DEBUG("Created version %u for Event [Guid:%lu, Version: %u]",
                    version->version, eventGuid);
       }
       res = artsAtomicSub(&version->latchCount, 1U);
-      ARTS_DEBUG("Decrement Event [Guid: %lu, Latch Count: %d] ", eventGuid,
+      ARTS_DEBUG("Decrement Event [Guid:%lu, Latch Count: %d] ", eventGuid,
                  res);
     } else if (action == ARTS_EVENT_UPDATE) {
       res = artsAtomicFetchAdd(&version->latchCount, 0U);
-      ARTS_DEBUG("Update Event [Guid: %lu, Latch Count: %d] ", eventGuid, res);
+      ARTS_DEBUG("Update Event [Guid:%lu, Latch Count: %d] ", eventGuid, res);
     } else {
       ARTS_DEBUG("Bad latch slot %u", action);
       artsDebugGenerateSegFault();
@@ -679,8 +679,8 @@ void artsAddDependenceToPersistentEvent(artsGuid_t eventSource,
     return;
   }
 
-  ARTS_DEBUG("Add Dep from Persistent Event [Guid: %lu] to EDT [Guid: "
-             "%lu, Slot: %u]",
+  ARTS_DEBUG("Add Dep from Persistent Event [Guid:%lu] to EDT[Guid:"
+             "%lu, Slot:%u]",
              eventSource, edtDest, edtSlot);
   struct artsPersistentEvent *event =
       (struct artsPersistentEvent *)sourceHeader;
@@ -763,8 +763,8 @@ void artsAddDependenceToPersistentEventWithModeAndDiff(artsGuid_t eventSource,
     return;
   }
 
-  ARTS_DEBUG("Add Dep from Persistent Event [Guid: %lu] to EDT [Guid: "
-             "%lu, Slot: %u, AcquireMode: %s]",
+  ARTS_DEBUG("Add Dep from Persistent Event [Guid:%lu] to EDT[Guid:"
+             "%lu, Slot:%u, AcquireMode:%s]",
              eventSource, edtDest, edtSlot, getTypeName(acquireMode));
   struct artsPersistentEvent *event =
       (struct artsPersistentEvent *)sourceHeader;

@@ -76,7 +76,7 @@ artsArrayDb_t *artsNewArrayDbWithGuid(artsGuid_t guid, unsigned int elementSize,
     numElements = elementsPerBlock * numBlocks;
   }
 
-  ARTS_INFO("Elements: %u Blocks: %u Element Size: %u", numElements, numBlocks,
+  ARTS_INFO("Elements: %u Blocks: %u Element Size:%u", numElements, numBlocks,
             elementSize);
 
   unsigned int allocSize =
@@ -114,7 +114,7 @@ artsArrayDb_t *artsNewLocalArrayDbWithGuid(artsGuid_t guid,
   unsigned int numBlocks = 1;
   unsigned int elementsPerBlock = numElements;
 
-  ARTS_INFO("Elements: %u Blocks: %u Element Size: %u", numElements, numBlocks,
+  ARTS_INFO("Elements: %u Blocks: %u Element Size:%u", numElements, numBlocks,
             elementSize);
   unsigned int allocSize =
       sizeof(artsArrayDb_t) + elementSize * elementsPerBlock;
@@ -177,7 +177,7 @@ void artsGetFromArrayDb(artsGuid_t edtGuid, unsigned int slot,
     //        offset);
     artsGetFromDbAt(edtGuid, guid, slot, offset, array->elementSize, rank);
   } else {
-    ARTS_INFO("Index >= Array Size: %u >= %u * %u", index,
+    ARTS_INFO("Index >= Array Size:%u >= %u * %u", index,
               array->elementsPerBlock, array->numBlocks);
     artsDebugGenerateSegFault();
   }

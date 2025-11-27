@@ -71,7 +71,7 @@ void *artsDbAllocateTwin(struct artsDb *db) {
   db->twinFlags |= ARTS_DB_HAS_TWIN;
   db->twinSize = dbDataSize;
 
-  ARTS_DEBUG("Allocated twin for DB [Guid: %lu, size: %zu]", db->guid,
+  ARTS_DEBUG("Allocated twin for DB[Guid:%lu, size: %zu]", db->guid,
              dbDataSize);
   return twin;
 }
@@ -87,7 +87,7 @@ void artsDbFreeTwin(struct artsDb *db) {
   db->twinFlags &= ~ARTS_DB_HAS_TWIN;
   db->twinSize = 0;
 
-  ARTS_DEBUG("Freed twin for DB [Guid: %lu]", db->guid);
+  ARTS_DEBUG("Freed twin for DB[Guid:%lu]", db->guid);
 }
 
 // Helper: Get current time in microseconds (for metrics)

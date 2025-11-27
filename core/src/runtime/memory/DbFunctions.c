@@ -196,8 +196,8 @@ void *artsDbCreateWithGuid(artsGuid_t guid, uint64_t size) {
       ptr = (void *)((struct artsDb *)ptr + 1);
     }
   }
-  ARTS_INFO("Creating DB [Guid: %lu] [Mode: %s] [Ptr: %p] [Route: %d]", guid,
-            getTypeName(mode), ptr, artsGuidGetRank(guid));
+  ARTS_INFO("Creating DB[Guid:%lu, Mode:%s, Ptr:%p, Route:%d, Size:%lu]",
+            guid, getTypeName(mode), ptr, artsGuidGetRank(guid), size);
   DB_CREATE_COUNTER_STOP();
   return ptr;
 }
@@ -401,7 +401,7 @@ void acquireDbs(struct artsEdt *edt) {
   artsEdtDep_t *depv = (artsEdtDep_t *)artsGetDepv(edt);
   edt->depcNeeded = edt->depc + 1;
   ARTS_INFO(
-      "Acquiring %u DBs for EDT [Guid: %lu], depcNeeded initialized to %u",
+      "Acquiring %u DBs for EDT[Guid:%lu], depcNeeded initialized to %u",
       edt->depc, edt->currentEdt, edt->depcNeeded);
   for (int i = 0; i < edt->depc; i++) {
     if (depv[i].guid && depv[i].ptr == NULL) {
@@ -427,8 +427,10 @@ void acquireDbs(struct artsEdt *edt) {
               &artsThreadInfo.artsCounters[ownerUpdatesPerformed], 1);
       }
 
-      ARTS_INFO("Slot %d: DB [Guid: %lu, mode=%u, owner=%d, currentRank=%u]", i,
-                depv[i].guid, depv[i].mode, owner, artsGlobalRankId);
+      ARTS_INFO("Acquiring DB[Guid:%lu, Mode:%u, Owner:%d, Rank:"
+                "%u] in EDT[Guid:%lu, Slot:%u]",
+                depv[i].guid, depv[i].mode, owner, artsGlobalRankId,
+                edt->currentEdt, i);
       switch (depv[i].mode) {
       // This case assumes that the guid exists only on the owner
       case ARTS_DB_ONCE: {
@@ -476,7 +478,7 @@ void acquireDbs(struct artsEdt *edt) {
           // The Db hasn't been created yet
           else {
             // TODO: Create an out-of-order sync
-            ARTS_DEBUG("DB [Guid: %lu] out of order request for LC_SYNC not "
+            ARTS_DEBUG("DB[Guid:%lu] out of order request for LC_SYNC not "
                        "supported yet",
                        depv[i].guid);
             // artsOutOfOrderHandleDbRequest(depv[i].guid, edt, i, true);
@@ -501,10 +503,10 @@ void acquireDbs(struct artsEdt *edt) {
             bool duplicateAdded = artsAddDbDuplicate(dbTemp, artsGlobalRankId,
                                                      edt, i, effectiveMode);
             if (duplicateAdded)
-              ARTS_DEBUG("Adding duplicate DB [Guid: %lu]", depv[i].guid);
+              ARTS_DEBUG("Adding duplicate DB[Guid:%lu]", depv[i].guid);
             else
               ARTS_DEBUG(
-                  "Duplicate not added DB [Guid: %lu] (rank already tracked)",
+                  "Duplicate not added DB[Guid:%lu] (rank already tracked)",
                   depv[i].guid);
 
             // If the owner (this rank) still has the valid copy, hand it out
@@ -532,7 +534,7 @@ void acquireDbs(struct artsEdt *edt) {
           }
           // The Db hasn't been created yet
           else {
-            ARTS_DEBUG("DB [Guid: %lu] out of order request slot %u",
+            ARTS_DEBUG("DB[Guid:%lu] out of order request slot %u",
                        depv[i].guid, i);
             artsOutOfOrderHandleDbRequest(depv[i].guid, edt, i, true);
           }
@@ -541,8 +543,8 @@ void acquireDbs(struct artsEdt *edt) {
           struct artsDb *dbTemp = (struct artsDb *)artsRouteTableLookupDb(
               depv[i].guid, &validRank, true);
           // We have found an entry
-          ARTS_INFO("acquireDbs: Non-owner case for DB [Guid: %lu, mode=%u, "
-                    "owner=%d, validRank=%d, dbTemp=%p]",
+          ARTS_INFO("[AcquireDbs] Non-owner case for DB[Guid:%lu, Mode:%u, "
+                    "Owner:%d, ValidRank: %d, DbTemp: %p]",
                     depv[i].guid, depv[i].mode, owner, validRank,
                     (void *)dbTemp);
           if (dbTemp) {
@@ -558,7 +560,7 @@ void acquireDbs(struct artsEdt *edt) {
               // (will receive diffs, not full DB)
               ARTS_INFO(
                   "  WRITE mode with twin-diff - sending aggregated request "
-                  "to rank %d (acquireMode=%u, useTwinDiff=%d)",
+                  "to rank %d (AcquireMode:%u, UseTwinDiff: %d)",
                   owner, depv[i].acquireMode, depv[i].useTwinDiff);
               artsRemoteDbRequest(depv[i].guid, owner, edt, i,
                                   depv[i].acquireMode, true,
@@ -591,12 +593,12 @@ void acquireDbs(struct artsEdt *edt) {
 
       if (dbFound)
         depv[i].ptr = dbFound + 1;
-      ARTS_DEBUG("DB [Guid: %lu, Ptr: %p] acquired", depv[i].guid, depv[i].ptr);
+      ARTS_DEBUG("DB[Guid:%lu, Ptr:%p] acquired", depv[i].guid, depv[i].ptr);
     } else {
       artsAtomicSub(&edt->depcNeeded, 1U);
     }
   }
-  ARTS_INFO("EDT [Guid: %lu] has finished acquiring DBs", edt->currentEdt);
+  ARTS_INFO("EDT[Guid:%lu] has finished acquiring DBs", edt->currentEdt);
 }
 
 void prepDbs(unsigned int depc, artsEdtDep_t *depv, bool gpu) {
@@ -613,14 +615,14 @@ void prepDbs(unsigned int depc, artsEdtDep_t *depv, bool gpu) {
       if (depv[i].mode != ARTS_DB_PIN)
         artsRemoteUpdateRouteTable(depv[i].guid, -1);
       struct artsDb *db = ((struct artsDb *)depv[i].ptr) - 1;
-      ARTS_DEBUG("[prepDbs] DB [Guid: %lu] ptr=%p, db=%p, useTwinDiff=%d",
+      ARTS_DEBUG("[prepDbs] DB[Guid:%lu] ptr=%p, db=%p, useTwinDiff=%d",
                  depv[i].guid, depv[i].ptr, db, depv[i].useTwinDiff);
       // Allocate twin
       if (depv[i].useTwinDiff && !(db->twinFlags & ARTS_DB_HAS_TWIN)) {
         artsDbAllocateTwin(db);
         size_t dbSize = db->header.size - sizeof(struct artsDb);
         ARTS_DEBUG(
-            "Allocated twin for DB [Guid: %lu, size: %zu] (compiler hint)",
+            "Allocated twin for DB[Guid:%lu, size: %zu] (compiler hint)",
             depv[i].guid, dbSize);
       }
     }
@@ -658,12 +660,12 @@ static inline bool artsTryReleaseTwinDiff(artsGuid_t guid, artsEdtDep_t *dep) {
     // Quick estimate of dirty ratio
     float dirtyRatio = artsEstimateDirtyRatio(working, twin, dbSize);
 
-    ARTS_DEBUG("DB [Guid: %lu] estimated dirty ratio: %.2f%% (isOwner=%d)",
+    ARTS_DEBUG("DB[Guid:%lu] estimated dirty ratio: %.2f%% (isOwner=%d)",
                guid, dirtyRatio * 100.0, isOwner);
 
     // If dirty ratio is too high, fall back to full DB send (non-owner only)
     if (dirtyRatio > ARTS_DIFF_DIRTY_THRESHOLD && !isOwner) {
-      ARTS_INFO("DB [Guid: %lu] dirty ratio %.2f%% exceeds threshold, "
+      ARTS_INFO("DB[Guid:%lu] dirty ratio %.2f%% exceeds threshold, "
                 "using full DB send",
                 guid, dirtyRatio * 100.0);
       artsRemoteUpdateDb(guid, true);
@@ -674,7 +676,7 @@ static inline bool artsTryReleaseTwinDiff(artsGuid_t guid, artsEdtDep_t *dep) {
       // progress (owner)
       struct artsDiffList *diffs = artsComputeDiffs(working, twin, dbSize);
       if (diffs && diffs->regionCount > 0) {
-        ARTS_INFO("DB [Guid: %lu] using twin-diff: %u regions, %u bytes "
+        ARTS_INFO("DB[Guid:%lu] using twin-diff: %u regions, %u bytes "
                   "(%.2f%% of %zu)",
                   guid, diffs->regionCount, diffs->totalBytes,
                   diffs->dirtyRatio * 100.0, dbSize);
@@ -684,7 +686,7 @@ static inline bool artsTryReleaseTwinDiff(artsGuid_t guid, artsEdtDep_t *dep) {
           artsRemotePartialUpdateDb(guid, diffs, working);
           artsFreeDiffList(diffs);
         } else {
-          // Owner: Just update progress frontier (canonical DB already has
+          // Owner:Just update progress frontier (canonical DB already has
           // changes)
           artsProgressFrontier(db, artsGlobalRankId);
           artsFreeDiffList(diffs);
@@ -694,7 +696,7 @@ static inline bool artsTryReleaseTwinDiff(artsGuid_t guid, artsEdtDep_t *dep) {
       } else {
         // No diffs - either signal owner (non-owner) or just update progress
         // (owner)
-        ARTS_DEBUG("DB [Guid: %lu] no diffs detected", guid);
+        ARTS_DEBUG("DB[Guid:%lu] no diffs detected", guid);
         if (!isOwner)
           artsRemoteUpdateDb(guid, false);
         else
@@ -733,7 +735,7 @@ static inline bool artsTryReleaseTwinDiff(artsGuid_t guid, artsEdtDep_t *dep) {
 
 void releaseDbs(unsigned int depc, artsEdtDep_t *depv, bool gpu) {
   for (int i = 0; i < depc; i++) {
-    ARTS_DEBUG("Releasing DB [Guid: %lu] [Mode: %s]", depv[i].guid,
+    ARTS_DEBUG("Releasing DB[Guid:%lu] [Mode:%s]", depv[i].guid,
                getTypeName(depv[i].mode));
     unsigned int owner = artsGuidGetRank(depv[i].guid);
 
@@ -762,7 +764,7 @@ void releaseDbs(unsigned int depc, artsEdtDep_t *depv, bool gpu) {
       }
     } else if (depv[i].guid != NULL_GUID && effectiveMode == ARTS_DB_READ) {
       // READ mode: NO latch decrement, NO owner update
-      ARTS_DEBUG("DB [Guid: %lu] released in READ mode (no owner update, no "
+      ARTS_DEBUG("DB[Guid:%lu] released in READ mode (no owner update, no "
                  "latch decrement)",
                  depv[i].guid);
       INCREMENT_OWNER_UPDATES_SAVED_BY(1);
@@ -780,7 +782,7 @@ void releaseDbs(unsigned int depc, artsEdtDep_t *depv, bool gpu) {
       artsReaderUnlock(&db->reader);
     } else {
       if (artsRouteTableReturnDb(depv[i].guid, depv[i].mode != ARTS_DB_PIN)) {
-        ARTS_DEBUG("FREED A COPY - DB [Guid: %lu]", depv[i].guid);
+        ARTS_DEBUG("FREED A COPY - DB[Guid:%lu]", depv[i].guid);
       }
     }
   }
@@ -805,17 +807,17 @@ void internalGetFromDb(artsGuid_t edtGuid, artsGuid_t dbGuid, unsigned int slot,
       void *data = (void *)(((char *)(db + 1)) + offset);
       void *ptr = artsMalloc(size);
       memcpy(ptr, data, size);
-      ARTS_INFO("Getting DB [Guid: %lu] From: %p", dbGuid, data);
+      ARTS_INFO("Getting DB[Guid:%lu] From: %p", dbGuid, data);
       if (edtGuid != NULL_GUID)
         artsSignalEdtPtr(edtGuid, slot, ptr, size);
       artsMetricsTriggerEvent(artsGetBW, artsThread, size);
     } else {
       assert(edtGuid != NULL_GUID && "DB not found and no EDT to signal");
-      ARTS_INFO("Getting OO-DB [Guid: %lu] From: %p", dbGuid, NULL);
+      ARTS_INFO("Getting OO-DB[Guid:%lu] From: %p", dbGuid, NULL);
       artsOutOfOrderGetFromDb(edtGuid, dbGuid, slot, offset, size);
     }
   } else {
-    ARTS_DEBUG("Sending DB [Guid: %lu] to Rank %u", dbGuid, rank);
+    ARTS_DEBUG("Sending DB[Guid:%lu] to Rank %u", dbGuid, rank);
     assert(edtGuid != NULL_GUID && "DB not found and no EDT to signal");
     artsRemoteGetFromDb(edtGuid, dbGuid, slot, offset, size, rank);
   }
@@ -872,7 +874,7 @@ void artsPutInDbAt(void *ptr, artsGuid_t edtGuid, artsGuid_t dbGuid,
                    unsigned int rank) {
   PUT_DB_COUNTER_START();
   artsGuid_t epochGuid = artsGetCurrentEpochGuid();
-  ARTS_DEBUG("Epoch [Guid: %lu]", epochGuid);
+  ARTS_DEBUG("Epoch [Guid:%lu]", epochGuid);
   incrementActiveEpoch(epochGuid);
   globalShutdownGuidIncActive();
   internalPutInDb(ptr, edtGuid, dbGuid, slot, offset, size, epochGuid, rank);
@@ -884,7 +886,7 @@ void artsPutInDb(void *ptr, artsGuid_t edtGuid, artsGuid_t dbGuid,
   PUT_DB_COUNTER_START();
   unsigned int rank = artsGuidGetRank(dbGuid);
   artsGuid_t epochGuid = artsGetCurrentEpochGuid();
-  ARTS_DEBUG("Epoch [Guid: %lu]", epochGuid);
+  ARTS_DEBUG("Epoch [Guid:%lu]", epochGuid);
   incrementActiveEpoch(epochGuid);
   globalShutdownGuidIncActive();
   internalPutInDb(ptr, edtGuid, dbGuid, slot, offset, size, epochGuid, rank);

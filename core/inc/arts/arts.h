@@ -476,8 +476,20 @@ artsGuid_t artsInitializeAndStartEpoch(artsGuid_t finishEdtGuid,
 artsGuid_t artsInitializeEpoch(unsigned int rank, artsGuid_t finishEdtGuid,
                                unsigned int slot);
 
+// Creates a new epoch like artsInitializeEpoch, but pre-initializes the
+// activeCount and queued counters with initialCount. This is used for barrier
+// epochs in parallel regions where all workers must check in before the epoch
+// can terminate.
+artsGuid_t artsInitializeAndStartEpochWithCount(unsigned int rank,
+                                                artsGuid_t finishEdtGuid,
+                                                unsigned int slot,
+                                                unsigned int initialCount);
+
 // Starts an epoch created with artsInitializeEpoch.
 void artsStartEpoch(artsGuid_t epochGuid);
+
+// Joins an epoch without incrementing the count (for pre-initialized epochs).
+void artsJoinEpoch(artsGuid_t epochGuid);
 
 // Blocks waiting for epoch to finish.  Only works from an EDT that created the
 // epoch.  The current executing thread calls another round of scheduling until

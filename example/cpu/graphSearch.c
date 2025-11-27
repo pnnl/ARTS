@@ -125,7 +125,7 @@ void gatherNeighborPropertyVal(uint32_t paramc, uint64_t *paramv, uint32_t depc,
     uint64_t packed_values[3] = {source, srcInfo->step - 1, srcInfo->seed};
     artsGuid_t visitSourceGuid =
         artsEdtCreate(visitSource, rank, 3, (uint64_t *)&packed_values, 2);
-    //        PRINTF("New Edt: %lu Source is located on rank %d Guid: %lu\n",
+    //        PRINTF("New Edt: %lu Source is located on rank %d Guid:%lu\n",
     //        visitSourceGuid, rank, vertexPropertyMapGuid);
     artsSignalEdt(visitSourceGuid, 0, vertexPropertyMapGuid);
     artsSignalEdt(visitSourceGuid, 1, vertexIDMapGuid);

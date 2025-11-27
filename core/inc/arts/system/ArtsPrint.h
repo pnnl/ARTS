@@ -67,59 +67,69 @@ static inline void artsAtomicPrint(const char *format, ...) {
 
 /// ARTS debug stream accessor
 #define artsStream(format, ...)                                                \
-  artsAtomicPrint("[%u] " format, artsGlobalRankId, ##__VA_ARGS__)
+  artsAtomicPrint("[%u:%u] " format, artsGlobalRankId, artsThreadInfo.groupId, \
+                  ##__VA_ARGS__)
 
 /// ARTS print stream accessor
 #define artsPrintStream(format, ...)                                           \
-  artsAtomicPrint("[%u] " format, artsGlobalRankId, ##__VA_ARGS__)
+  artsAtomicPrint("[%u:%u] " format, artsGlobalRankId, artsThreadInfo.groupId, \
+                  ##__VA_ARGS__)
 
 /// ARTS formatted print stream with rank
 #define ARTS_PRINT_FORMATTED(format, ...)                                      \
-  artsAtomicPrint("[%u] " format "\n", artsGlobalRankId, ##__VA_ARGS__)
+  artsAtomicPrint("[%u:%u] " format "\n", artsGlobalRankId,                    \
+                  artsThreadInfo.groupId, ##__VA_ARGS__)
 
 #define ARTS_PRINT_TYPE(format, ...)                                           \
-  artsAtomicPrint("[%u] " format "\n", artsGlobalRankId, ##__VA_ARGS__)
+  artsAtomicPrint("[%u:%u] " format "\n", artsGlobalRankId,                    \
+                  artsThreadInfo.groupId, ##__VA_ARGS__)
 
 #define ARTS_PRINT_ONCE(format, ...)                                           \
   if (artsGlobalIWillPrint) {                                                  \
-    artsAtomicPrint("[%u] " format "\n", artsGlobalRankId, ##__VA_ARGS__);     \
+    artsAtomicPrint("[%u:%u] " format "\n", artsGlobalRankId,                  \
+                    artsThreadInfo.groupId, ##__VA_ARGS__);                    \
   }
 
 #define ARTS_PRINT_MASTER(format, ...)                                         \
   if (artsGlobalRankId == artsGlobalMasterRankId) {                            \
-    artsAtomicPrint("[%u] " format "\n", artsGlobalRankId, ##__VA_ARGS__);     \
+    artsAtomicPrint("[%u:%u] " format "\n", artsGlobalRankId,                  \
+                    artsThreadInfo.groupId, ##__VA_ARGS__);                    \
   }
 
 /// ARTS print
 #define ARTS_PRINT(format, ...)                                                \
-  artsAtomicPrint("[%u] " format "\n", artsGlobalRankId, ##__VA_ARGS__)
+  artsAtomicPrint("[%u:%u] " format "\n", artsGlobalRankId,                    \
+                  artsThreadInfo.groupId, ##__VA_ARGS__)
 
 /// ARTS print that outputs only once per rank
 #define ARTS_PRINT_ONCE(format, ...)                                           \
   if (artsGlobalIWillPrint) {                                                  \
-    artsAtomicPrint("[%u] " format "\n", artsGlobalRankId, ##__VA_ARGS__);     \
+    artsAtomicPrint("[%u:%u] " format "\n", artsGlobalRankId,                  \
+                    artsThreadInfo.groupId, ##__VA_ARGS__);                    \
   }
 
 /// ARTS print that forces output from master thread only
 #define ARTS_PRINT_MASTER(format, ...)                                         \
   if (artsGlobalRankId == artsGlobalMasterRankId) {                            \
-    artsAtomicPrint("[%u] " format "\n", artsGlobalRankId, ##__VA_ARGS__);     \
+    artsAtomicPrint("[%u:%u] " format "\n", artsGlobalRankId,                  \
+                    artsThreadInfo.groupId, ##__VA_ARGS__);                    \
   }
 
 /// ARTS debug
 #ifdef ARTS_DEBUG_ENABLED
 #define ARTS_DEBUG(format, ...)                                                \
-  artsAtomicPrint("[%u] [DEBUG] " format "\n", artsGlobalRankId, ##__VA_ARGS__)
+  artsAtomicPrint("[%u:%u] [DEBUG] " format "\n", artsGlobalRankId,            \
+                  artsThreadInfo.groupId, ##__VA_ARGS__)
 #define ARTS_DEBUG_ONCE(format, ...)                                           \
   if (artsGlobalIWillPrint) {                                                  \
-    artsAtomicPrint("[%u] [DEBUG] " format "\n", artsGlobalRankId,             \
-                    ##__VA_ARGS__);                                            \
+    artsAtomicPrint("[%u:%u] [DEBUG] " format "\n", artsGlobalRankId,          \
+                    artsThreadInfo.groupId, ##__VA_ARGS__);                    \
   }
 
 #define ARTS_DEBUG_MASTER(format, ...)                                         \
   if (artsGlobalRankId == artsGlobalMasterRankId) {                            \
-    artsAtomicPrint("[%u] [DEBUG] " format "\n", artsGlobalRankId,             \
-                    ##__VA_ARGS__);                                            \
+    artsAtomicPrint("[%u:%u] [DEBUG] " format "\n", artsGlobalRankId,          \
+                    artsThreadInfo.groupId, ##__VA_ARGS__);                    \
   }
 #else
 #define ARTS_DEBUG(...)
@@ -130,22 +140,25 @@ static inline void artsAtomicPrint(const char *format, ...) {
 /// ARTS info
 #ifdef ARTS_INFO_ENABLED
 #define ARTS_INFO(format, ...)                                                 \
-  artsAtomicPrint("[%u] [INFO] " format "\n", artsGlobalRankId, ##__VA_ARGS__)
+  artsAtomicPrint("[%u:%u] [INFO] " format "\n", artsGlobalRankId,             \
+                  artsThreadInfo.groupId, ##__VA_ARGS__)
 #define ARTS_INFO_ONCE(format, ...)                                            \
   if (artsGlobalIWillPrint) {                                                  \
-    artsAtomicPrint("[%u] [INFO] " format "\n", artsGlobalRankId,              \
-                    ##__VA_ARGS__);                                            \
+    artsAtomicPrint("[%u:%u] [INFO] " format "\n", artsGlobalRankId,           \
+                    artsThreadInfo.groupId, ##__VA_ARGS__);                    \
   }
 
 #define ARTS_INFO_MASTER(format, ...)                                          \
   if (artsGlobalRankId == artsGlobalMasterRankId) {                            \
-    artsAtomicPrint("[%u] [INFO] " format "\n", artsGlobalRankId,              \
-                    ##__VA_ARGS__);                                            \
+    artsAtomicPrint("[%u:%u] [INFO] " format "\n", artsGlobalRankId,           \
+                    artsThreadInfo.groupId, ##__VA_ARGS__);                    \
   }
 #define ARTS_WARN(format, ...)                                                 \
-  artsAtomicPrint("[%u] [WARN] " format "\n", artsGlobalRankId, ##__VA_ARGS__)
+  artsAtomicPrint("[%u:%u] [WARN] " format "\n", artsGlobalRankId,             \
+                  artsThreadInfo.groupId, ##__VA_ARGS__)
 #define ARTS_ERROR(format, ...)                                                \
-  artsAtomicPrint("[%u] [ERROR] " format "\n", artsGlobalRankId, ##__VA_ARGS__)
+  artsAtomicPrint("[%u:%u] [ERROR] " format "\n", artsGlobalRankId,            \
+                  artsThreadInfo.groupId, ##__VA_ARGS__)
 
 #else
 #define ARTS_INFO(format, ...)

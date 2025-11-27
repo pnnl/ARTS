@@ -101,7 +101,7 @@ void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc,
 
     for (unsigned int j = 0; j < numAdd; j++) {
       for (unsigned int i = 0; i < elementsPerBlock * blocks; i++) {
-        PRINTF("i: %u Slot: %u edt: %lu\n", i,
+        PRINTF("i: %u Slot:%u edt: %lu\n", i,
                j * elementsPerBlock * blocks + i, endGuid);
         artsAtomicAddInArrayDb(array, i, 1, endGuid,
                                j * elementsPerBlock * blocks + i);
