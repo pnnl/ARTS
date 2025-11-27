@@ -201,6 +201,32 @@ artsGuid_t artsDbCreateWithArtsId(void **addr, uint64_t size, artsType_t mode,
   return guid;
 }
 
+void *artsDbCreateWithGuidAndArtsId(artsGuid_t guid, uint64_t size,
+                                    uint64_t arts_id) {
+  DB_CREATE_COUNTER_START();
+  artsType_t mode = artsGuidGetType(guid);
+
+  void *ptr = NULL;
+  if (artsIsGuidLocal(guid)) {
+    unsigned int dbSize = size + sizeof(struct artsDb);
+
+    ptr = artsMallocWithType(dbSize, artsDbMemorySize);
+    if (ptr) {
+      artsDbCreateInternal(guid, ptr, size, dbSize, mode, arts_id);
+      if (artsRouteTableAddItemRace(ptr, guid, artsGlobalRankId, false)) {
+        artsRouteTableFireOO(guid, artsOutOfOrderHandler);
+      }
+      ptr = (void *)((struct artsDb *)ptr + 1);
+    }
+  }
+  ARTS_INFO("Creating DB[Guid:%lu, Mode:%s, Ptr:%p, Route:%d, Size:%lu, "
+            "arts_id:%lu]",
+            guid, getTypeName(mode), ptr, artsGuidGetRank(guid), size,
+            arts_id);
+  DB_CREATE_COUNTER_STOP();
+  return ptr;
+}
+
 // Guid must be for a local DB only
 void *artsDbCreateWithGuid(artsGuid_t guid, uint64_t size) {
   DB_CREATE_COUNTER_START();

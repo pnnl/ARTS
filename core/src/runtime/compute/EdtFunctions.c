@@ -340,6 +340,25 @@ artsGuid_t artsEdtCreateWithArtsId(artsEdt_t funcPtr, unsigned int route,
   return guid;
 }
 
+artsGuid_t artsEdtCreateWithEpochArtsId(artsEdt_t funcPtr, unsigned int route,
+                                        uint32_t paramc, uint64_t *paramv,
+                                        uint32_t depc, artsGuid_t epochGuid,
+                                        uint64_t arts_id) {
+  EDT_CREATE_COUNTER_START();
+  if (route == -1)
+    route = artsGlobalRankId;
+  unsigned int depSpace = depc * sizeof(artsEdtDep_t);
+  unsigned int edtSpace =
+      sizeof(struct artsEdt) + paramc * sizeof(uint64_t) + depSpace;
+  artsGuid_t guid = NULL_GUID;
+  bool created = artsEdtCreateInternal(NULL, ARTS_EDT, &guid, route,
+                                       artsThreadInfo.clusterId, edtSpace,
+                                       NULL_GUID, funcPtr, paramc, paramv, depc,
+                                       true, epochGuid, true, arts_id);
+  EDT_CREATE_COUNTER_STOP();
+  return (created) ? guid : NULL_GUID;
+}
+
 void artsEdtFree(struct artsEdt *edt) {
   artsThreadInfo.edtFree = 1;
   artsFree(edt);

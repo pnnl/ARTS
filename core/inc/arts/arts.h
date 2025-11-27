@@ -144,6 +144,14 @@ artsGuid_t artsEdtCreateWithArtsId(artsEdt_t funcPtr, unsigned int route,
                                    uint32_t paramc, uint64_t *paramv,
                                    uint32_t depc, uint64_t arts_id);
 
+// Creates an EDT associated with a specific epoch and arts_id.
+// Mirrors artsEdtCreateWithEpoch but preserves the compiler-assigned arts_id
+// for runtime introspection.
+artsGuid_t artsEdtCreateWithEpochArtsId(artsEdt_t funcPtr, unsigned int route,
+                                        uint32_t paramc, uint64_t *paramv,
+                                        uint32_t depc, artsGuid_t epochGuid,
+                                        uint64_t arts_id);
+
 /// Creates a parallel EDT to run on all the workers on the node. It then waits
 /// for all the EDTs to finish before continuing.
 // ! Not implemented
@@ -369,6 +377,11 @@ artsGuid_t artsDbCreatePtr(artsPtr_t *addr, uint64_t size, artsType_t mode);
 // in the DB structure for runtime performance tracking.
 artsGuid_t artsDbCreateWithArtsId(void **addr, uint64_t size, artsType_t mode,
                                   uint64_t arts_id);
+
+// Creates a DB using a pre-reserved GUID and assigns the compiler arts_id.
+// Keeps existing routing semantics while enabling arts_id tracking.
+void *artsDbCreateWithGuidAndArtsId(artsGuid_t guid, uint64_t size,
+                                    uint64_t arts_id);
 
 // Creates a DB with a fixed guid of size bytes if the guid is local.  The type
 // and route is already fixed by the provided guid, and the pointer to the raw
