@@ -52,7 +52,7 @@ struct artsRuntimePrivate;
 
 // Hash table size (must be power of 2 for fast modulo)
 #ifndef ARTS_ID_HASH_SIZE
-#define ARTS_ID_HASH_SIZE 256
+#define ARTS_ID_HASH_SIZE 1024
 #endif
 
 // Per-arts_id aggregate metrics

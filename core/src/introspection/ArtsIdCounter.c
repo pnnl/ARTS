@@ -149,7 +149,7 @@ void artsIdCaptureEdtExecution(uint64_t arts_id, uint64_t exec_ns,
 // Capture individual DB access (detailed mode)
 void artsIdCaptureDbAccess(uint64_t arts_id, uint64_t bytes_accessed,
                            uint8_t access_type, artsArrayList *captures) {
-  
+
   // Skip if no arts_id set
   if (arts_id == 0)
     return;
