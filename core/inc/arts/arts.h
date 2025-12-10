@@ -234,6 +234,11 @@ void artsSignalEdtValue(artsGuid_t edtGuid, uint32_t slot, uint64_t data);
 void artsSignalEdtPtr(artsGuid_t edtGuid, uint32_t slot, void *ptr,
                       unsigned int size);
 
+// Signals an EDT slot as satisfied without any data. Used for boundary
+// conditions where a dependency should be skipped (e.g., stencil edges).
+// The slot is marked satisfied with ARTS_NULL mode - no data is provided.
+void artsSignalEdtNull(artsGuid_t edtGuid, uint32_t slot);
+
 // Creates an EDT to run where the dbGuid is located.  This is a wrapper around
 // EDT create and signal.
 artsGuid_t artsActiveMessageWithDb(artsEdt_t funcPtr, uint32_t paramc,
