@@ -301,7 +301,10 @@ if(ARTS_DEBUG_ENABLED)
     message(STATUS "Debug logging: Enabled - ARTS_DEBUG_ENABLED defined")
 endif()
 
-set(COUNTER_CONFIG_PATH "${CMAKE_CURRENT_SOURCE_DIR}/counter.cfg")
+set(COUNTER_CONFIG_PATH
+    "${CMAKE_CURRENT_SOURCE_DIR}/counter.cfg"
+    CACHE FILEPATH "ARTS counter configuration file (parsed to generate introspection macros)")
+set(COUNTER_CONFIG_FILE "${COUNTER_CONFIG_PATH}")
 
 # Create the main ARTS library target
 add_subdirectory(core)
