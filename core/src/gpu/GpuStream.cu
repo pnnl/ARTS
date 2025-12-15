@@ -50,6 +50,7 @@
 #include "arts/gpu/GpuRouteTable.h"
 #include "arts/gpu/GpuRuntime.cuh"
 #include "arts/gpu/GpuStreamBuffer.h"
+#include "arts/introspection/Metrics.h"
 #include "arts/runtime/Globals.h"
 #include "arts/runtime/compute/EdtFunctions.h"
 #include "arts/system/ArtsPrint.h"
