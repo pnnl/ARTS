@@ -165,10 +165,10 @@ artsGuid_t internalEdtCreateGpu(artsEdt_t funcPtr, artsGuid_t *guid,
   edt->lib = lib;
 
   // artsIntrospectionEdtCreateBegin();
-  bool created = artsEdtCreateInternal((struct artsEdt *)edt, ARTS_GPU_EDT,
-                                       guid, route, artsThreadInfo.clusterId,
-                                       edtSpace, NULL_GUID, funcPtr, paramc,
-                                       paramv, depc, true, NULL_GUID, hasDepv);
+  bool created = artsEdtCreateInternal(
+      (struct artsEdt *)edt, ARTS_GPU_EDT, guid, route,
+      artsThreadInfo.clusterId, edtSpace, NULL_GUID, funcPtr, paramc, paramv,
+      depc, true, NULL_GUID, hasDepv, 0);
   // artsIntrospectionEdtCreateFinish(created);
   //    ARTSEDTCOUNTERTIMERENDINCREMENT(edtCreateCounter);
   return *guid;

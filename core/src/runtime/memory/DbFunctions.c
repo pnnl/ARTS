@@ -123,9 +123,7 @@ void artsDbCreateInternal(artsGuid_t guid, void *addr, uint64_t size,
     void *shadowCopy = (void *)(((char *)addr) + packetSize);
     memcpy(shadowCopy, addr, sizeof(struct artsDb));
   }
-#ifdef USE_SMART_DB
   dbRes->eventGuid = artsPersistentEventCreate(artsGuidGetRank(guid), 0, guid);
-#endif
   // Record arts_id metrics via counter infrastructure
   artsCounterRecordArtsIdDb(arts_id, packetSize, 0, 0);
   INCREMENT_NUM_DBS_CREATED_BY(1);
@@ -395,7 +393,6 @@ void artsDbDestroySafe(artsGuid_t guid, bool remote) {
     artsRemoteDbDestroy(guid, artsGlobalRankId, 0);
 }
 
-#ifdef USE_SMART_DB
 void artsDbIncrementLatch(artsGuid_t guid) {
   struct artsDb *dbRes = (struct artsDb *)artsRouteTableLookupItem(guid);
   if (dbRes != NULL)
@@ -449,7 +446,6 @@ void artsRecordDep(artsGuid_t dbSrc, artsGuid_t edtDest, uint32_t edtSlot,
   if (acquireMode == ARTS_DB_WRITE)
     artsDbIncrementLatch(dbSrc);
 }
-#endif
 
 /**********************DB MEMORY MODEL*************************************/
 // Side Effects: edt depcNeeded will be incremented, ptr will be updated,
@@ -772,10 +768,8 @@ static inline bool artsTryReleaseTwinDiff(artsGuid_t guid, artsEdtDep_t *dep) {
     // defer latch decrement until the controller applies their update.
     artsDbFreeTwin(db);
 
-#ifdef USE_SMART_DB
     if (isOwner)
       artsDbDecrementLatch(guid);
-#endif
     return true;
   }
 
@@ -783,9 +777,7 @@ static inline bool artsTryReleaseTwinDiff(artsGuid_t guid, artsEdtDep_t *dep) {
   if (isOwner) {
     // Owner without twin: traditional release
     artsProgressFrontier(db, artsGlobalRankId);
-#ifdef USE_SMART_DB
     artsDbDecrementLatch(guid);
-#endif
   } else {
     // Non-owner without twin: full DB send
     artsRemoteUpdateDb(guid, true);
@@ -808,17 +800,13 @@ void releaseDbs(unsigned int depc, artsEdtDep_t *depv, bool gpu) {
     if (depv[i].guid != NULL_GUID && effectiveMode == ARTS_DB_WRITE) {
       if (depv[i].mode == ARTS_DB_PIN) {
         ARTS_DEBUG("Pinned DB write release (no frontier update)");
-#ifdef USE_SMART_DB
         artsDbDecrementLatch(depv[i].guid);
-#endif
       } else if (depv[i].useTwinDiff) {
         artsTryReleaseTwinDiff(depv[i].guid, &depv[i]);
       } else if (owner == artsGlobalRankId) {
         struct artsDb *db = ((struct artsDb *)depv[i].ptr - 1);
         artsProgressFrontier(db, artsGlobalRankId);
-#ifdef USE_SMART_DB
         artsDbDecrementLatch(depv[i].guid);
-#endif
       } else {
         artsRemoteUpdateDb(depv[i].guid, true);
         INCREMENT_OWNER_UPDATES_PERFORMED_BY(1);
@@ -831,9 +819,7 @@ void releaseDbs(unsigned int depc, artsEdtDep_t *depv, bool gpu) {
                  depv[i].guid);
       INCREMENT_OWNER_UPDATES_SAVED_BY(1);
     } else if (depv[i].mode == ARTS_DB_PIN) {
-#ifdef USE_SMART_DB
       artsDbDecrementLatch(depv[i].guid);
-#endif
     } else if (depv[i].mode == ARTS_DB_ONCE_LOCAL ||
                depv[i].mode == ARTS_DB_ONCE) {
       artsRouteTableInvalidateItem(depv[i].guid);

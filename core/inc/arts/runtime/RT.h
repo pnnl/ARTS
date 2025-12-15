@@ -142,9 +142,7 @@ struct artsDb {
   struct artsHeader header;
   uint64_t arts_id;           // Unique identifier from compiler (0 if not set)
   artsGuid_t guid;
-#ifdef USE_SMART_DB
   artsGuid_t eventGuid;
-#endif
   volatile unsigned int copyCount;
   volatile unsigned int reader;
   volatile unsigned int writer;
