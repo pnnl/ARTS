@@ -284,9 +284,7 @@ void artsRemoteHandleUpdateDb(void *ptr) {
     } else {
       artsProgressFrontier(db, packet->header.rank);
     }
-#ifdef USE_SMART_DB
     artsDbDecrementLatch(packet->guid);
-#endif
   }
 }
 
@@ -401,9 +399,7 @@ void artsRemoteHandlePartialUpdate(void *ptr) {
   artsRouteTableSetRank(packet->guid, artsGlobalRankId);
   artsProgressFrontier(db, artsGlobalRankId);
 
-#ifdef USE_SMART_DB
   artsDbDecrementLatch(packet->guid);
-#endif
 
   ARTS_DEBUG("Partial update applied successfully for DB[Guid:%lu]",
              packet->guid);
@@ -577,7 +573,6 @@ void artsRemotePersistentEventSatisfySlot(artsGuid_t eventGuid, uint32_t action,
                              sizeof(packet));
 }
 
-#ifdef USE_SMART_DB
 static void sendRemoteDbAddDependencePacket(artsGuid_t dbSrc,
                                             artsGuid_t edtDest,
                                             uint32_t edtSlot,
@@ -626,7 +621,6 @@ void artsRemoteDbDecrementLatch(artsGuid_t db) {
   artsRemoteSendRequestAsync(artsGuidGetRank(db), (char *)&packet,
                              sizeof(packet));
 }
-#endif
 
 void artsDbRequestCallback(struct artsEdt *edt, unsigned int slot,
                            struct artsDb *dbRes) {

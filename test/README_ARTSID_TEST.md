@@ -301,7 +301,6 @@ artsIdEdtMetrics=THREAD
 **Cause**: Possible EDT dependency issue
 
 **Solution**: Check ARTS configuration:
-- Ensure `USE_SMART_DB` is defined if using smart DBs
 - Verify epoch handling is correct
 - Check MPI configuration for multi-node runs
 

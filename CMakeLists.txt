@@ -88,7 +88,6 @@ option(USE_RDMA "Use RDMA RSockets networking (default: ON, use TCP when OFF)" O
 option(USE_HWLOC "Use hwloc for hardware topology (default: ON, disable when OFF)" ON)
 option(USE_GPU "Enable GPU support (default: ON, disable when OFF)" ON)
 option(USE_SIMPLE_ARCH "Use simple architecture implementations" OFF)
-option(USE_SMART_DB "Enable smart database features (currently not supported)" OFF)
 option(ARTS_INFO_ENABLED "Enable info-level logging" OFF)
 option(ARTS_DEBUG_ENABLED "Enable debug-level logging" OFF)
 option(USE_PRIORITY_DEQUE "Use priority Chase-Lev deque implementation" OFF)
@@ -283,12 +282,6 @@ endif()
 if(USE_SIMPLE_ARCH)
     add_compile_definitions(USE_SIMPLE_ARCH)
     message(STATUS "Architecture: Simple CAS2 and BIT_TEST_AND_SET enabled - USE_SIMPLE_ARCH defined")
-endif()
-
-# Smart database flags
-if(USE_SMART_DB)
-    add_compile_definitions(USE_SMART_DB)
-    message(STATUS "Smart database: Using smart database - USE_SMART_DB defined")
 endif()
 
 if(ARTS_INFO_ENABLED)

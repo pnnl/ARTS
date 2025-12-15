@@ -454,7 +454,6 @@ bool artsDbRenameWithGuid(artsGuid_t newGuid, artsGuid_t oldGuid);
 
 artsGuid_t artsDbCopyToNewType(artsGuid_t oldGuid, artsType_t newType);
 
-#ifdef USE_SMART_DB
 // Increment the latch count associated with the persistent event of the DB
 void artsDbIncrementLatch(artsGuid_t guid);
 
@@ -480,7 +479,6 @@ void artsDbAddDependenceWithModeAndDiff(artsGuid_t dbSrc, artsGuid_t edtDest,
 // ARTS_DB_WRITE
 void artsRecordDep(artsGuid_t dbSrc, artsGuid_t edtDest, uint32_t edtSlot,
                    artsType_t acquireMode, bool useTwinDiff);
-#endif
 
 /*Epoch************************************************************************/
 

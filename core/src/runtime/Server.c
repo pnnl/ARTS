@@ -132,7 +132,6 @@ void artsServerProcessPacket(struct artsRemotePacket *packet) {
     artsPersistentEventSatisfy(pack->event, pack->action, pack->lock);
     break;
   }
-#ifdef USE_SMART_DB
   case ARTS_REMOTE_DB_INCREMENT_LATCH_MSG: {
     struct artsRemoteGuidOnlyPacket *pack =
         (struct artsRemoteGuidOnlyPacket *)(packet);
@@ -153,7 +152,6 @@ void artsServerProcessPacket(struct artsRemotePacket *packet) {
                                        pack->useTwinDiff);
     break;
   }
-#endif
   case ARTS_REMOTE_DB_REQUEST_MSG: {
     struct artsRemoteDbRequestPacket *pack =
         (struct artsRemoteDbRequestPacket *)(packet);
