@@ -39,6 +39,9 @@
 #define _GNU_SOURCE
 #define _FILE_OFFSET_BITS 64
 #include "arts/arts.h"
+#include <stdint.h>
+#include <stdlib.h>
+#include <time.h>
 
 #include "arts/network/Remote.h"
 #include "arts/network/RemoteLauncher.h"
@@ -54,7 +57,22 @@ extern struct artsConfig *config;
 int mainArgc = 0;
 char **mainArgv = NULL;
 
+static inline uint64_t carts_benchmarks_now_ns(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (uint64_t)ts.tv_sec * (uint64_t)1000000000ULL + (uint64_t)ts.tv_nsec;
+}
+
+static inline int carts_benchmarks_should_report_init_runtime(void) {
+  const char *v = getenv("CARTS_BENCHMARKS_REPORT_INIT_RUNTIME");
+  if (!v || !*v)
+    return 0;
+  return !(v[0] == '0' && v[1] == '\0');
+}
+
 int artsRT(int argc, char **argv) {
+  uint64_t init_start_ns = carts_benchmarks_now_ns();
+
   mainArgc = argc;
   mainArgv = argv;
   artsRemoteTryToBecomePrinter();
@@ -79,6 +97,13 @@ int artsRT(int argc, char **argv) {
 
   artsThreadInit(config);
   artsThreadZeroNodeStart();
+
+  if (artsGlobalRankId == 0 && carts_benchmarks_should_report_init_runtime()) {
+    uint64_t init_end_ns = carts_benchmarks_now_ns();
+    double elapsed_sec = (double)(init_end_ns - init_start_ns) * 1e-9;
+    printf("init.arts_runtime: %.9fs\n", elapsed_sec);
+    fflush(stdout);
+  }
 
   artsThreadMainJoin();
 
