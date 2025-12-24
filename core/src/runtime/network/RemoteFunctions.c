@@ -830,12 +830,12 @@ void artsRemoteDbFullSend(struct artsRemoteDbFullRequestPacket *pack) {
   }
 }
 
-void artsRemoteHandleDbFullRecieved(struct artsRemoteDbFullSendPacket *packet) {
-  ARTS_DEBUG("Handle Full DB Received [Guid:%lu, Slot:%u, Mode:%u]",
-             packetDb->guid, packet->slot, packet->mode);
+void artsRemoteHandleDbFullReceived(struct artsRemoteDbFullSendPacket *packet) {
   bool dec;
   itemState_t state;
   struct artsDb *packetDb = (struct artsDb *)(packet + 1);
+  ARTS_DEBUG("Handle Full DB Received [Guid:%lu, Slot:%u, Mode:%u]",
+             packetDb->guid, packet->slot, packet->mode);
   void **dataPtr = artsRouteTableReserve(packetDb->guid, &dec, &state);
   struct artsDb *dbRes = (dataPtr) ? (struct artsDb *)*dataPtr : NULL;
   if (dbRes) {

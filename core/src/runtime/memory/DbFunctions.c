@@ -607,7 +607,8 @@ void acquireDbs(struct artsEdt *edt) {
             ARTS_INFO("  Found local copy, decremented depcNeeded");
           }
 
-          if (depv[i].mode == ARTS_DB_WRITE) {
+          artsType_t effectiveMode = artsGetEffectiveMode(&depv[i]);
+          if (effectiveMode == ARTS_DB_WRITE) {
             // Check if twin-diff is enabled for this WRITE acquire
             if (depv[i].useTwinDiff && depv[i].acquireMode == ARTS_DB_WRITE) {
               // Twin-diff enabled: use aggregated request
@@ -624,7 +625,7 @@ void acquireDbs(struct artsEdt *edt) {
               ARTS_INFO("  WRITE mode - sending full DB request to rank %d",
                         owner);
               artsRemoteDbFullRequest(depv[i].guid, owner, edt, i,
-                                      depv[i].mode);
+                                      effectiveMode);
             }
           } else if (!dbTemp) {
             // We can aggregate read requests for reads
