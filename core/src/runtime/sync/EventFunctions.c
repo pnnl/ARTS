@@ -76,8 +76,17 @@ bool artsEventCreateInternal(artsGuid_t *guid, unsigned int route,
 
     if (route == artsGlobalRankId) {
       if (*guid) {
-        artsRouteTableAddItem(eventPacket, *guid, artsGlobalRankId, false);
-        artsRouteTableFireOO(*guid, artsOutOfOrderHandler);
+        /* For labeled GUIDs, use race-safe addition since multiple threads/ranks
+         * may try to create the same labeled event concurrently. This matches
+         * the behavior in artsRemoteHandleEventMove which also uses
+         * artsRouteTableAddItemRace for consistency. */
+        if (artsRouteTableAddItemRace(eventPacket, *guid, artsGlobalRankId, false)) {
+          artsRouteTableFireOO(*guid, artsOutOfOrderHandler);
+        } else {
+          /* Event already exists - free the allocated memory */
+          artsFree(eventPacket);
+          return false;
+        }
       } else {
         *guid = artsGuidCreateForRank(route, ARTS_EVENT);
         artsRouteTableAddItem(eventPacket, *guid, artsGlobalRankId, false);
