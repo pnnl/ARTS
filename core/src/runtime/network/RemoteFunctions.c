@@ -830,7 +830,7 @@ void artsRemoteDbFullSend(struct artsRemoteDbFullRequestPacket *pack) {
   }
 }
 
-void artsRemoteHandleDbFullReceived(struct artsRemoteDbFullSendPacket *packet) {
+void artsRemoteHandleDbFullRecieved(struct artsRemoteDbFullSendPacket *packet) {
   bool dec;
   itemState_t state;
   struct artsDb *packetDb = (struct artsDb *)(packet + 1);
