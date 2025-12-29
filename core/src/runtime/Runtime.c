@@ -190,10 +190,9 @@ void artsRuntimeNodeInit(unsigned int workerThreads,
   artsNodeInfo.counterCaptures = (artsCounterCaptures *)artsCalloc(
       totalThreads, sizeof(artsCounterCaptures));
   for (unsigned int t = 0; t < totalThreads; t++) {
-    // Initialize standard counter captures
+    // Initialize standard counter captures for PERIODIC mode counters
     for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
-      if (artsCounterMode[i] == artsCounterModeThread ||
-          artsCounterMode[i] == artsCounterModeNode) {
+      if (artsCaptureModeArray[i] == artsCaptureModesPeriodic) {
         artsNodeInfo.counterCaptures[t].captures[i] =
             artsNewArrayList(sizeof(uint64_t), 16);
       }
@@ -214,29 +213,34 @@ void artsRuntimeNodeInit(unsigned int workerThreads,
   }
   artsNodeInfo.counterCaptureInterval = config->counterCaptureInterval;
 
-  // Initialize node-level counter reduces
+  // Initialize node-level counter reduces for PERIODIC + NODE level counters
   for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
-    if (artsCounterMode[i] == artsCounterModeNode) {
+    if (artsCaptureModeArray[i] == artsCaptureModesPeriodic &&
+        artsCaptureLevelArray[i] == artsCaptureLevelNode) {
       artsNodeInfo.counterReduces.counterCaptures[i] =
           artsNewArrayList(sizeof(uint64_t), 16);
     }
   }
 
-// Initialize node-level arts_id reduces (for NODE mode)
+// Initialize node-level arts_id reduces (for NODE level)
 #if ENABLE_artsIdEdtMetrics || ENABLE_artsIdDbMetrics
-  if (artsCounterMode[artsIdEdtMetrics] == artsCounterModeNode ||
-      artsCounterMode[artsIdDbMetrics] == artsCounterModeNode) {
+  if ((artsCaptureModeArray[artsIdEdtMetrics] != artsCaptureModeOff &&
+       artsCaptureLevelArray[artsIdEdtMetrics] == artsCaptureLevelNode) ||
+      (artsCaptureModeArray[artsIdDbMetrics] != artsCaptureModeOff &&
+       artsCaptureLevelArray[artsIdDbMetrics] == artsCaptureLevelNode)) {
     artsIdInitHashTable(&artsNodeInfo.counterReduces.artsIdMetricsTable);
   }
 #endif
 #if ENABLE_artsIdEdtCaptures
-  if (artsCounterMode[artsIdEdtCaptures] == artsCounterModeNode) {
+  if (artsCaptureModeArray[artsIdEdtCaptures] != artsCaptureModeOff &&
+      artsCaptureLevelArray[artsIdEdtCaptures] == artsCaptureLevelNode) {
     artsNodeInfo.counterReduces.artsIdEdtCaptureList =
         artsNewArrayList(sizeof(artsIdEdtCapture), 1024);
   }
 #endif
 #if ENABLE_artsIdDbCaptures
-  if (artsCounterMode[artsIdDbCaptures] == artsCounterModeNode) {
+  if (artsCaptureModeArray[artsIdDbCaptures] != artsCaptureModeOff &&
+      artsCaptureLevelArray[artsIdDbCaptures] == artsCaptureLevelNode) {
     artsNodeInfo.counterReduces.artsIdDbCaptureList =
         artsNewArrayList(sizeof(artsIdDbCapture), 1024);
   }
@@ -251,6 +255,14 @@ void artsRuntimeNodeInit(unsigned int workerThreads,
 }
 
 void artsRuntimeGlobalCleanup() {
+  // Stop end-to-end timer (main execution complete)
+  END_TO_END_TIME_STOP();
+  // Start finalization timer
+  FINALIZATION_TIME_START();
+
+  // Stop finalization timer before stopping counters
+  FINALIZATION_TIME_STOP();
+
   artsCounterStop();
   artsCounterWriteNode(artsNodeInfo.counterFolder, artsGlobalRankId);
   for (unsigned int t = 0; t < artsNodeInfo.totalThreadCount; t++) {
@@ -275,6 +287,10 @@ void artsRuntimeGlobalCleanup() {
 
 void artsThreadZeroNodeStart() {
   artsCounterStart(1);
+
+  // Start timing counters (after counters are enabled)
+  INITIALIZATION_TIME_START();
+  END_TO_END_TIME_START();
 
   setGlobalGuidOn();
   createShutdownEpoch();
@@ -306,6 +322,9 @@ void artsThreadZeroNodeStart() {
   artsAtomicSub(&artsNodeInfo.readyToExecute, 1U);
   while (artsNodeInfo.readyToExecute) {
   }
+
+  // Stop initialization timer (initialization phase complete)
+  INITIALIZATION_TIME_STOP();
 }
 
 void artsRuntimePrivateInit(struct threadMask *unit,

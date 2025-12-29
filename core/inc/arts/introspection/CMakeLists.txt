@@ -85,32 +85,48 @@ file(STRINGS "${COUNTER_CONFIG_PATH}" COUNTER_CONFIG_LINES)
 set(ENABLED_COUNT 0)
 set(DISABLED_COUNT 0)
 
-# Counter mode values: 0=OFF, 1=ONCE, 2=THREAD, 3=NODE
+# Counter capture mode values: 0=OFF, 1=ONCE, 2=PERIODIC
+# Counter capture level values: 0=THREAD, 1=NODE
+# Format: COUNTER=captureMode[,captureLevel]
+# Default captureLevel is NODE (1)
 foreach(LINE ${COUNTER_CONFIG_LINES})
     if(LINE MATCHES "^[ \\t]*#" OR LINE MATCHES "^[ \\t]*$")
         continue()
     endif()
-    if(LINE MATCHES "^([A-Za-z0-9_]+)[ \\t]*=[ \\t]*(OFF|ONCE|THREAD|NODE)")
+    # Match: COUNTER=MODE or COUNTER=MODE,LEVEL
+    if(LINE MATCHES "^([A-Za-z0-9_]+)[ \\t]*=[ \\t]*(OFF|ONCE|PERIODIC)(,[ \\t]*(THREAD|NODE))?")
         set(KEY ${CMAKE_MATCH_1})
-        set(VALUE ${CMAKE_MATCH_2})
+        set(CAPTURE_MODE ${CMAKE_MATCH_2})
+        set(CAPTURE_LEVEL ${CMAKE_MATCH_4})
+        
+        # Default captureLevel to NODE if not specified
+        if(NOT CAPTURE_LEVEL)
+            set(CAPTURE_LEVEL "NODE")
+        endif()
 
-        # Set CMake variable for this counter mode
-        if(VALUE STREQUAL "OFF")
+        # Set CMake variables for this counter
+        if(CAPTURE_MODE STREQUAL "OFF")
             set(ENABLE_${KEY} 0)
-            set(MODE_${KEY} 0)
+            set(CAPTURE_MODE_${KEY} 0)  # artsCaptureModeOff
+            set(CAPTURE_LEVEL_${KEY} 1) # default to NODE
             math(EXPR DISABLED_COUNT "${DISABLED_COUNT} + 1")
-        elseif(VALUE STREQUAL "ONCE")
+        else()
             set(ENABLE_${KEY} 1)
-            set(MODE_${KEY} 1)
             math(EXPR ENABLED_COUNT "${ENABLED_COUNT} + 1")
-        elseif(VALUE STREQUAL "THREAD")
-            set(ENABLE_${KEY} 1)
-            set(MODE_${KEY} 2)
-            math(EXPR ENABLED_COUNT "${ENABLED_COUNT} + 1")
-        elseif(VALUE STREQUAL "NODE")
-            set(ENABLE_${KEY} 1)
-            set(MODE_${KEY} 3)
-            math(EXPR ENABLED_COUNT "${ENABLED_COUNT} + 1")
+            
+            # Set capture mode
+            if(CAPTURE_MODE STREQUAL "ONCE")
+                set(CAPTURE_MODE_${KEY} 1)  # artsCaptureModeOnce
+            elseif(CAPTURE_MODE STREQUAL "PERIODIC")
+                set(CAPTURE_MODE_${KEY} 2)  # artsCaptureModesPeriodic
+            endif()
+            
+            # Set capture level
+            if(CAPTURE_LEVEL STREQUAL "THREAD")
+                set(CAPTURE_LEVEL_${KEY} 0)  # artsCaptureLevelThread
+            elseif(CAPTURE_LEVEL STREQUAL "NODE")
+                set(CAPTURE_LEVEL_${KEY} 1)  # artsCaptureLevelNode
+            endif()
         endif()
     endif()
 endforeach()
@@ -157,13 +173,22 @@ foreach(COUNTER ${COUNTER_TYPES})
     file(APPEND ${GENERATED_HEADER} "#define ENABLE_${COUNTER} ${ENABLE_${COUNTER}}\n")
 endforeach()
 
-# Generate mode flags for counters
-file(APPEND ${GENERATED_HEADER} "\n/* Counter Mode Flags (0=OFF, 1=ONCE, 2=THREAD, 3=NODE) */\n")
+# Generate capture mode flags for counters
+file(APPEND ${GENERATED_HEADER} "\n/* Counter Capture Mode Flags (0=OFF, 1=ONCE, 2=PERIODIC) */\n")
 foreach(COUNTER ${COUNTER_TYPES})
-    if(NOT DEFINED MODE_${COUNTER})
-        set(MODE_${COUNTER} 0)
+    if(NOT DEFINED CAPTURE_MODE_${COUNTER})
+        set(CAPTURE_MODE_${COUNTER} 0)
     endif()
-    file(APPEND ${GENERATED_HEADER} "#define MODE_${COUNTER} ${MODE_${COUNTER}}\n")
+    file(APPEND ${GENERATED_HEADER} "#define CAPTURE_MODE_${COUNTER} ${CAPTURE_MODE_${COUNTER}}\n")
+endforeach()
+
+# Generate capture level flags for counters
+file(APPEND ${GENERATED_HEADER} "\n/* Counter Capture Level Flags (0=THREAD, 1=NODE) */\n")
+foreach(COUNTER ${COUNTER_TYPES})
+    if(NOT DEFINED CAPTURE_LEVEL_${COUNTER})
+        set(CAPTURE_LEVEL_${COUNTER} 1)  # Default to NODE
+    endif()
+    file(APPEND ${GENERATED_HEADER} "#define CAPTURE_LEVEL_${COUNTER} ${CAPTURE_LEVEL_${COUNTER}}\n")
 endforeach()
 
 # Generate counter macros automatically
@@ -209,17 +234,32 @@ file(APPEND ${GENERATED_HEADER} "
 
 ")
 
-# Generate counter mode array
+# Generate counter capture mode array
 file(APPEND ${GENERATED_HEADER} "
-/* Counter mode array (0=OFF, 1=ONCE, 2=THREAD, 3=NODE) */
-static const unsigned int artsCounterMode[] = {
+/* Counter capture mode array (0=OFF, 1=ONCE, 2=PERIODIC) */
+static const unsigned int artsCaptureModeArray[] = {
 ")
 
 foreach(COUNTER ${COUNTER_TYPES})
-    if(NOT DEFINED MODE_${COUNTER})
-        set(MODE_${COUNTER} 0)
+    if(NOT DEFINED CAPTURE_MODE_${COUNTER})
+        set(CAPTURE_MODE_${COUNTER} 0)
     endif()
-    file(APPEND ${GENERATED_HEADER} "    ${MODE_${COUNTER}},  /* ${COUNTER} */\n")
+    file(APPEND ${GENERATED_HEADER} "    ${CAPTURE_MODE_${COUNTER}},  /* ${COUNTER} */\n")
+endforeach()
+
+file(APPEND ${GENERATED_HEADER} "};\n\n")
+
+# Generate counter capture level array
+file(APPEND ${GENERATED_HEADER} "
+/* Counter capture level array (0=THREAD, 1=NODE) */
+static const unsigned int artsCaptureLevelArray[] = {
+")
+
+foreach(COUNTER ${COUNTER_TYPES})
+    if(NOT DEFINED CAPTURE_LEVEL_${COUNTER})
+        set(CAPTURE_LEVEL_${COUNTER} 1)  # Default to NODE
+    endif()
+    file(APPEND ${GENERATED_HEADER} "    ${CAPTURE_LEVEL_${COUNTER}},  /* ${COUNTER} */\n")
 endforeach()
 
 file(APPEND ${GENERATED_HEADER} "};\n\n")

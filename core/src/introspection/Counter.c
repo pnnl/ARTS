@@ -50,7 +50,7 @@
 #include "arts/system/Debug.h"
 #include "arts/utils/Atomics.h"
 
-extern const unsigned int artsCounterMode[];
+// Arrays are defined as static const in Preamble.h (included via arts.h)
 
 static uint64_t countersOn = 0;
 static pthread_t captureThread;
@@ -95,13 +95,12 @@ static void *artsCounterCaptureThread(void *args) {
                 NULL);
       continue;
     }
-    // Capture counters
+    // Capture counters - only for PERIODIC mode counters
     for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
-      if (artsCounterMode[i] == artsCounterModeThread ||
-          artsCounterMode[i] == artsCounterModeNode) {
+      if (artsCaptureModeArray[i] == artsCaptureModesPeriodic) {
         // Only this thread accesses node captures so no atomic needed
         uint64_t *capture = NULL;
-        if (artsCounterMode[i] == artsCounterModeNode) {
+        if (artsCaptureLevelArray[i] == artsCaptureLevelNode) {
           capture = (uint64_t *)artsNextFreeFromArrayList(
               artsNodeInfo.counterReduces.counterCaptures[i]);
           if (artsCounterReduceTypes[i] == artsCounterSum) {
@@ -135,10 +134,12 @@ static void *artsCounterCaptureThread(void *args) {
       }
     }
 
-// Reduce arts_id hash tables for NODE mode
+// Reduce arts_id hash tables for NODE level with PERIODIC mode
 #if ENABLE_artsIdEdtMetrics || ENABLE_artsIdDbMetrics
-    if (artsCounterMode[artsIdEdtMetrics] == artsCounterModeNode ||
-        artsCounterMode[artsIdDbMetrics] == artsCounterModeNode) {
+    if ((artsCaptureModeArray[artsIdEdtMetrics] == artsCaptureModesPeriodic &&
+         artsCaptureLevelArray[artsIdEdtMetrics] == artsCaptureLevelNode) ||
+        (artsCaptureModeArray[artsIdDbMetrics] == artsCaptureModesPeriodic &&
+         artsCaptureLevelArray[artsIdDbMetrics] == artsCaptureLevelNode)) {
       // Reduce all thread hash tables into node-level hash table
       for (unsigned int t = 0; t < artsNodeInfo.totalThreadCount; t++) {
         artsIdReduceHashTables(
@@ -161,14 +162,14 @@ void artsCounterStart(unsigned int startPoint) {
     countersOn = artsGetTimeStamp();
 
     bool needCaptureThread = false;
-    bool hasNodeMode = false;
+    bool hasNodeLevel = false;
 
     for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
-      if (artsCounterMode[i] == artsCounterModeThread ||
-          artsCounterMode[i] == artsCounterModeNode) {
+      // Need capture thread for PERIODIC mode counters
+      if (artsCaptureModeArray[i] == artsCaptureModesPeriodic) {
         needCaptureThread = true;
-        if (artsCounterMode[i] == artsCounterModeNode) {
-          hasNodeMode = true;
+        if (artsCaptureLevelArray[i] == artsCaptureLevelNode) {
+          hasNodeLevel = true;
         }
       }
     }
@@ -183,7 +184,8 @@ void artsCounterStart(unsigned int startPoint) {
         captureThreadRunning = false;
       } else {
         ARTS_INFO("Counter capture thread started (THREAD=%s, NODE=%s)",
-                  needCaptureThread ? "yes" : "no", hasNodeMode ? "yes" : "no");
+                  needCaptureThread ? "yes" : "no",
+                  hasNodeLevel ? "yes" : "no");
       }
     }
   }
@@ -254,14 +256,16 @@ void artsCounterWriteThread(const char *outputFolder, unsigned int nodeId,
     return;
   }
 
-  bool hasThreadMode = false;
+  // Check if any counters have THREAD level output
+  bool hasThreadLevel = false;
   for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
-    if (artsCounterMode[i] == artsCounterModeThread) {
-      hasThreadMode = true;
+    if (artsCaptureModeArray[i] != artsCaptureModeOff &&
+        artsCaptureLevelArray[i] == artsCaptureLevelThread) {
+      hasThreadLevel = true;
       break;
     }
   }
-  if (!hasThreadMode) {
+  if (!hasThreadLevel) {
     return;
   }
 
@@ -300,41 +304,45 @@ void artsCounterWriteThread(const char *outputFolder, unsigned int nodeId,
   artsJsonWriterBeginObject(&writer, "counters");
   artsCounterCaptures *threadCounters = &artsNodeInfo.counterCaptures[threadId];
   for (uint64_t i = 0; i < NUM_COUNTER_TYPES; i++) {
-    if (artsCounterMode[i] == artsCounterModeThread) {
+    // Write counters with THREAD level (both ONCE and PERIODIC modes)
+    if (artsCaptureModeArray[i] != artsCaptureModeOff &&
+        artsCaptureLevelArray[i] == artsCaptureLevelThread) {
       artsCounter *counter = &threadCounters->counters[i];
       artsJsonWriterBeginObject(&writer, artsCounterNames[i]);
       artsJsonWriterWriteUInt64(&writer, "count", counter->count);
 
-      // Write mode information
-      const char *modeStr = "OFF";
-      switch (artsCounterMode[i]) {
-      case artsCounterModeOnce:
-        modeStr = "ONCE";
+      // Write capture mode and level information
+      const char *captureModeStr = "OFF";
+      switch (artsCaptureModeArray[i]) {
+      case artsCaptureModeOnce:
+        captureModeStr = "ONCE";
         break;
-      case artsCounterModeThread:
-        modeStr = "THREAD";
-        break;
-      case artsCounterModeNode:
-        modeStr = "NODE";
+      case artsCaptureModesPeriodic:
+        captureModeStr = "PERIODIC";
         break;
       default:
         break;
       }
-      artsJsonWriterWriteString(&writer, "mode", modeStr);
+      artsJsonWriterWriteString(&writer, "captureMode", captureModeStr);
+      artsJsonWriterWriteString(&writer, "captureLevel", "THREAD");
 
-      artsArrayList *captureList = threadCounters->captures[i];
-      if (captureList && captureList->index > 0) {
-        artsJsonWriterWriteUInt64(&writer, "captureCount", captureList->index);
-        artsJsonWriterBeginArray(&writer, "captureHistory");
-        artsArrayListIterator *iter = artsNewArrayListIterator(captureList);
-        while (artsArrayListHasNext(iter)) {
-          uint64_t *value = (uint64_t *)artsArrayListNext(iter);
-          if (value) {
-            artsJsonWriterWriteUInt64(&writer, NULL, *value);
+      // Write capture history only for PERIODIC mode
+      if (artsCaptureModeArray[i] == artsCaptureModesPeriodic) {
+        artsArrayList *captureList = threadCounters->captures[i];
+        if (captureList && captureList->index > 0) {
+          artsJsonWriterWriteUInt64(&writer, "captureCount",
+                                    captureList->index);
+          artsJsonWriterBeginArray(&writer, "captureHistory");
+          artsArrayListIterator *iter = artsNewArrayListIterator(captureList);
+          while (artsArrayListHasNext(iter)) {
+            uint64_t *value = (uint64_t *)artsArrayListNext(iter);
+            if (value) {
+              artsJsonWriterWriteUInt64(&writer, NULL, *value);
+            }
           }
+          artsDeleteArrayListIterator(iter);
+          artsJsonWriterEndArray(&writer);
         }
-        artsDeleteArrayListIterator(iter);
-        artsJsonWriterEndArray(&writer);
       }
 
       artsJsonWriterEndObject(&writer);
@@ -342,10 +350,12 @@ void artsCounterWriteThread(const char *outputFolder, unsigned int nodeId,
   }
   artsJsonWriterEndObject(&writer);
 
-// Write arts_id metrics (THREAD mode)
+// Write arts_id metrics (THREAD level)
 #if ENABLE_artsIdEdtMetrics || ENABLE_artsIdDbMetrics
-  if (artsCounterMode[artsIdEdtMetrics] == artsCounterModeThread ||
-      artsCounterMode[artsIdDbMetrics] == artsCounterModeThread) {
+  if ((artsCaptureModeArray[artsIdEdtMetrics] != artsCaptureModeOff &&
+       artsCaptureLevelArray[artsIdEdtMetrics] == artsCaptureLevelThread) ||
+      (artsCaptureModeArray[artsIdDbMetrics] != artsCaptureModeOff &&
+       artsCaptureLevelArray[artsIdDbMetrics] == artsCaptureLevelThread)) {
     artsJsonWriterBeginObject(&writer, "artsIdMetrics");
     artsIdHashTable *table =
         &artsNodeInfo.counterCaptures[threadId].artsIdMetricsTable;
@@ -410,14 +420,16 @@ void artsCounterWriteNode(const char *outputFolder, unsigned int nodeId) {
     return;
   }
 
-  bool hasNodeMode = false;
+  // Check if any counters have NODE level output
+  bool hasNodeLevel = false;
   for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
-    if (artsCounterMode[i] == artsCounterModeNode) {
-      hasNodeMode = true;
+    if (artsCaptureModeArray[i] != artsCaptureModeOff &&
+        artsCaptureLevelArray[i] == artsCaptureLevelNode) {
+      hasNodeLevel = true;
       break;
     }
   }
-  if (!hasNodeMode) {
+  if (!hasNodeLevel) {
     return;
   }
 
@@ -455,10 +467,19 @@ void artsCounterWriteNode(const char *outputFolder, unsigned int nodeId) {
 
   artsJsonWriterBeginObject(&writer, "counters");
   for (uint64_t i = 0; i < NUM_COUNTER_TYPES; i++) {
-    // Only write NODE mode counters in the node output
-    if (artsCounterMode[i] == artsCounterModeNode) {
+    // Write NODE level counters (both ONCE and PERIODIC modes)
+    if (artsCaptureModeArray[i] != artsCaptureModeOff &&
+        artsCaptureLevelArray[i] == artsCaptureLevelNode) {
+
       artsJsonWriterBeginObject(&writer, artsCounterNames[i]);
-      artsJsonWriterWriteString(&writer, "mode", "NODE");
+
+      // Write capture mode and level
+      const char *captureModeStr = "ONCE";
+      if (artsCaptureModeArray[i] == artsCaptureModesPeriodic) {
+        captureModeStr = "PERIODIC";
+      }
+      artsJsonWriterWriteString(&writer, "captureMode", captureModeStr);
+      artsJsonWriterWriteString(&writer, "captureLevel", "NODE");
 
       // Write reduction type
       const char *reduceTypeStr = "SUM";
@@ -495,23 +516,28 @@ void artsCounterWriteNode(const char *outputFolder, unsigned int nodeId) {
           break;
         }
       }
-      artsJsonWriterWriteUInt64(&writer, "finalValue", finalValue);
+      artsJsonWriterWriteUInt64(&writer, "value", finalValue);
+      // Also write value in milliseconds for timing counters
+      artsJsonWriterWriteDouble(&writer, "value_ms",
+                                (double)finalValue / 1000000.0);
 
-      // Write reduced capture history
-      artsArrayList *reduceList =
-          artsNodeInfo.counterReduces.counterCaptures[i];
-      if (reduceList && reduceList->index > 0) {
-        artsJsonWriterWriteUInt64(&writer, "captureCount", reduceList->index);
-        artsJsonWriterBeginArray(&writer, "captureHistory");
-        artsArrayListIterator *iter = artsNewArrayListIterator(reduceList);
-        while (artsArrayListHasNext(iter)) {
-          uint64_t *value = (uint64_t *)artsArrayListNext(iter);
-          if (value) {
-            artsJsonWriterWriteUInt64(&writer, NULL, *value);
+      // Write capture history only for PERIODIC mode
+      if (artsCaptureModeArray[i] == artsCaptureModesPeriodic) {
+        artsArrayList *reduceList =
+            artsNodeInfo.counterReduces.counterCaptures[i];
+        if (reduceList && reduceList->index > 0) {
+          artsJsonWriterWriteUInt64(&writer, "captureCount", reduceList->index);
+          artsJsonWriterBeginArray(&writer, "captureHistory");
+          artsArrayListIterator *iter = artsNewArrayListIterator(reduceList);
+          while (artsArrayListHasNext(iter)) {
+            uint64_t *value = (uint64_t *)artsArrayListNext(iter);
+            if (value) {
+              artsJsonWriterWriteUInt64(&writer, NULL, *value);
+            }
           }
+          artsDeleteArrayListIterator(iter);
+          artsJsonWriterEndArray(&writer);
         }
-        artsDeleteArrayListIterator(iter);
-        artsJsonWriterEndArray(&writer);
       }
 
       artsJsonWriterEndObject(&writer);
@@ -519,10 +545,12 @@ void artsCounterWriteNode(const char *outputFolder, unsigned int nodeId) {
   }
   artsJsonWriterEndObject(&writer);
 
-// Write arts_id metrics (NODE mode - reduced across all threads)
+// Write arts_id metrics (NODE level - reduced across all threads)
 #if ENABLE_artsIdEdtMetrics || ENABLE_artsIdDbMetrics
-  if (artsCounterMode[artsIdEdtMetrics] == artsCounterModeNode ||
-      artsCounterMode[artsIdDbMetrics] == artsCounterModeNode) {
+  if ((artsCaptureModeArray[artsIdEdtMetrics] != artsCaptureModeOff &&
+       artsCaptureLevelArray[artsIdEdtMetrics] == artsCaptureLevelNode) ||
+      (artsCaptureModeArray[artsIdDbMetrics] != artsCaptureModeOff &&
+       artsCaptureLevelArray[artsIdDbMetrics] == artsCaptureLevelNode)) {
     artsJsonWriterBeginObject(&writer, "artsIdMetrics");
     artsIdHashTable *table = &artsNodeInfo.counterReduces.artsIdMetricsTable;
 

@@ -94,6 +94,10 @@ typedef enum artsCounterType {
   artsIdDbMetrics,
   artsIdEdtCaptures,
   artsIdDbCaptures,
+  // Per-node timing counters
+  initializationTime,
+  endToEndTime,
+  finalizationTime,
   NUM_COUNTER_TYPES,
 } artsCounterType;
 
@@ -103,12 +107,19 @@ typedef enum artsCounterReduceType {
   artsCounterMin,
 } artsCounterReduceType;
 
+// Capture mode: determines when/how often counters are captured
 typedef enum artsCounterCaptureMode {
-  artsCounterModeOff = 0,
-  artsCounterModeOnce = 1,   // Print at the end (single output)
-  artsCounterModeThread = 2, // Capture per thread without reduction
-  artsCounterModeNode = 3,   // Capture and reduce per node
+  artsCaptureModeOff = 0,       // Counter disabled
+  artsCaptureModeOnce = 1,      // Single value at the end (no periodic capture)
+  artsCaptureModesPeriodic = 2, // Periodic capture during execution
 } artsCounterCaptureMode;
+
+// Capture level: determines the aggregation level for output
+typedef enum artsCounterCaptureLevel {
+  artsCaptureLevelThread = 0, // Per-thread output (no reduction)
+  artsCaptureLevelNode = 1,   // Per-node output (reduce across threads)
+  // artsCaptureLevelCluster = 2, // Per-cluster (not implemented)
+} artsCounterCaptureLevel;
 
 typedef struct {
   uint64_t count;
@@ -208,7 +219,10 @@ static const char *const artsCounterNames[] = {"edtCounter",
                                                "artsIdEdtMetrics",
                                                "artsIdDbMetrics",
                                                "artsIdEdtCaptures",
-                                               "artsIdDbCaptures"};
+                                               "artsIdDbCaptures",
+                                               "initializationTime",
+                                               "endToEndTime",
+                                               "finalizationTime"};
 
 static const unsigned int artsCounterReduceTypes[] = {
     artsCounterSum, // edtCounter
@@ -251,7 +265,10 @@ static const unsigned int artsCounterReduceTypes[] = {
     artsCounterSum, // artsIdEdtMetrics
     artsCounterSum, // artsIdDbMetrics
     artsCounterSum, // artsIdEdtCaptures
-    artsCounterSum  // artsIdDbCaptures
+    artsCounterSum, // artsIdDbCaptures
+    artsCounterSum, // initializationTime
+    artsCounterSum, // endToEndTime
+    artsCounterSum  // finalizationTime
 };
 
 #ifdef __cplusplus
