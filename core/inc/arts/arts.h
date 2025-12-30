@@ -234,6 +234,14 @@ void artsSignalEdtValue(artsGuid_t edtGuid, uint32_t slot, uint64_t data);
 void artsSignalEdtPtr(artsGuid_t edtGuid, uint32_t slot, void *ptr,
                       unsigned int size);
 
+// ESD: Signals an EDT with a pointer while preserving the original DB GUID.
+// This is used for byte-slice dependencies where we need both the pointer
+// to the slice (db_ptr + byteOffset) and the original DB GUID for lifecycle
+// management. The EDT's depv[slot].guid will contain dbGuid, and
+// depv[slot].ptr will contain the computed pointer.
+void artsSignalEdtPtrWithGuid(artsGuid_t edtGuid, uint32_t slot,
+                              artsGuid_t dbGuid, void *ptr, unsigned int size);
+
 // Signals an EDT slot as satisfied without any data. Used for boundary
 // conditions where a dependency should be skipped (e.g., stencil edges).
 // The slot is marked satisfied with ARTS_NULL mode - no data is provided.
@@ -364,6 +372,14 @@ void artsAddDependenceToPersistentEventWithModeAndDiff(artsGuid_t eventSource,
                                                        artsType_t acquireMode,
                                                        bool useTwinDiff);
 
+/// ESD: Adds a dependence with byte offset for slice-based signaling.
+/// When byteOffset > 0 or size > 0, the persistent event will signal
+/// with a pointer to (dbPtr + byteOffset) while preserving the DB GUID.
+void artsAddDependenceToPersistentEventWithByteOffset(
+    artsGuid_t eventSource, artsGuid_t edtDest, uint32_t edtSlot,
+    artsType_t acquireMode, bool useTwinDiff, uint64_t byteOffset,
+    uint64_t size);
+
 /*DB***************************************************************************/
 
 // A DataBlock (DB) is the main memory abstraction used in ARTS to share data
@@ -479,6 +495,14 @@ void artsDbAddDependenceWithModeAndDiff(artsGuid_t dbSrc, artsGuid_t edtDest,
 // ARTS_DB_WRITE
 void artsRecordDep(artsGuid_t dbSrc, artsGuid_t edtDest, uint32_t edtSlot,
                    artsType_t acquireMode, bool useTwinDiff);
+
+/// ESD: Records a dependency at a specific byte offset within the DB.
+/// When the DB becomes ready, signals with a pointer to (dbPtr + byteOffset)
+/// while preserving the original DB GUID in depv[slot].guid.
+/// This is used for stencil halo dependencies.
+void artsRecordDepAt(artsGuid_t dbSrc, artsGuid_t edtDest, uint32_t edtSlot,
+                     artsType_t acquireMode, bool useTwinDiff,
+                     uint64_t byteOffset, uint64_t size);
 
 /*Epoch************************************************************************/
 

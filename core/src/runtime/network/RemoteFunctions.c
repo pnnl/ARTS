@@ -604,6 +604,47 @@ void artsRemoteDbAddDependenceWithHints(artsGuid_t dbSrc, artsGuid_t edtDest,
                                   useTwinDiff);
 }
 
+void artsRemoteDbAddDependenceWithByteOffset(artsGuid_t dbSrc,
+                                             artsGuid_t edtDest,
+                                             uint32_t edtSlot,
+                                             artsType_t acquireMode,
+                                             bool useTwinDiff,
+                                             uint64_t byteOffset,
+                                             uint64_t size) {
+  struct artsRemoteDbAddDependenceWithByteOffsetPacket packet;
+  packet.dbSrc = dbSrc;
+  packet.edtDest = edtDest;
+  packet.edtSlot = edtSlot;
+  packet.acquireMode = acquireMode;
+  packet.useTwinDiff = useTwinDiff ? 1 : 0;
+  memset(packet.reserved, 0, sizeof(packet.reserved));
+  packet.byteOffset = byteOffset;
+  packet.size = size;
+  artsFillPacketHeader(&packet.header, sizeof(packet),
+                       ARTS_REMOTE_DB_ADD_DEPENDENCE_WITH_BYTE_OFFSET_MSG);
+  artsRemoteSendRequestAsync(artsGuidGetRank(dbSrc), (char *)&packet,
+                             sizeof(packet));
+}
+
+void artsRemoteHandleDbAddDependenceWithByteOffset(void *ptr) {
+  struct artsRemoteDbAddDependenceWithByteOffsetPacket *packet =
+      (struct artsRemoteDbAddDependenceWithByteOffsetPacket *)ptr;
+
+  /// Look up the local DB
+  struct artsDb *dbRes =
+      (struct artsDb *)artsRouteTableLookupItem(packet->dbSrc);
+  if (dbRes != NULL) {
+    /// DB is local - add dependency to its persistent event with byte offset
+    artsAddDependenceToPersistentEventWithByteOffset(
+        dbRes->eventGuid, packet->edtDest, packet->edtSlot, packet->acquireMode,
+        packet->useTwinDiff != 0, packet->byteOffset, packet->size);
+  } else {
+    /// DB not found locally - this shouldn't happen as we routed to the owner
+    ARTS_DEBUG("ESD: Remote byte-offset dep: DB %lu not found on node %u",
+               packet->dbSrc, artsGlobalRankId);
+  }
+}
+
 void artsRemoteDbIncrementLatch(artsGuid_t db) {
   struct artsRemoteGuidOnlyPacket packet;
   packet.guid = db;

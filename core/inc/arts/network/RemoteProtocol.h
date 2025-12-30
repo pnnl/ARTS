@@ -87,6 +87,7 @@ enum artsServerMessageType {
   ARTS_REMOTE_CONTEXT_SIG_MSG,
   ARTS_REMOTE_DB_RENAME_MSG,
   ARTS_REMOTE_DB_PARTIAL_UPDATE_MSG,
+  ARTS_REMOTE_DB_ADD_DEPENDENCE_WITH_BYTE_OFFSET_MSG,
 };
 
 // Header
@@ -151,6 +152,19 @@ struct __attribute__((__packed__)) artsRemoteDbAddDependencePacket {
   artsType_t acquireMode;
   uint8_t useTwinDiff;
   uint8_t reserved[3];
+};
+
+/// ESD: Packet for byte-offset dependencies (stencil halo exchange)
+struct __attribute__((__packed__)) artsRemoteDbAddDependenceWithByteOffsetPacket {
+  struct artsRemotePacket header;
+  artsGuid_t dbSrc;
+  artsGuid_t edtDest;
+  uint32_t edtSlot;
+  artsType_t acquireMode;
+  uint8_t useTwinDiff;
+  uint8_t reserved[3];
+  uint64_t byteOffset; ///< Byte offset into DB for slice
+  uint64_t size;       ///< Size of slice in bytes
 };
 
 struct __attribute__((__packed__)) artsRemoteDbRequestPacket {

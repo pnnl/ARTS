@@ -177,6 +177,8 @@ struct artsDependent {
   volatile bool doneWriting;
   artsType_t acquireMode;
   bool useTwinDiff;
+  uint64_t byteOffset;
+  uint64_t size;
 };
 
 struct artsDependentList {

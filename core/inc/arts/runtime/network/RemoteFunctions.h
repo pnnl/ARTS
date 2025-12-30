@@ -96,6 +96,13 @@ void artsRemoteDbAddDependenceWithHints(artsGuid_t dbSrc, artsGuid_t edtDest,
                                         uint32_t edtSlot,
                                         artsType_t acquireMode,
                                         bool useTwinDiff);
+void artsRemoteDbAddDependenceWithByteOffset(artsGuid_t dbSrc,
+                                             artsGuid_t edtDest,
+                                             uint32_t edtSlot,
+                                             artsType_t acquireMode,
+                                             bool useTwinDiff, uint64_t byteOffset,
+                                             uint64_t size);
+void artsRemoteHandleDbAddDependenceWithByteOffset(void *ptr);
 void artsRemoteDbIncrementLatch(artsGuid_t db);
 void artsRemoteDbDecrementLatch(artsGuid_t db);
 void artsDbRequestCallback(struct artsEdt *edt, unsigned int slot,

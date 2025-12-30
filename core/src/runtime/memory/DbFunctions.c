@@ -447,6 +447,30 @@ void artsRecordDep(artsGuid_t dbSrc, artsGuid_t edtDest, uint32_t edtSlot,
     artsDbIncrementLatch(dbSrc);
 }
 
+void artsRecordDepAt(artsGuid_t dbSrc, artsGuid_t edtDest, uint32_t edtSlot,
+                     artsType_t acquireMode, bool useTwinDiff,
+                     uint64_t byteOffset, uint64_t size) {
+  // If no byte offset, use the standard path
+  if (byteOffset == 0 && size == 0) {
+    artsRecordDep(dbSrc, edtDest, edtSlot, acquireMode, useTwinDiff);
+    return;
+  }
+
+  // Use extended dependency registration with byte offset info
+  struct artsDb *dbRes = (struct artsDb *)artsRouteTableLookupItem(dbSrc);
+  if (dbRes != NULL)
+    artsAddDependenceToPersistentEventWithByteOffset(
+        dbRes->eventGuid, edtDest, edtSlot, acquireMode, useTwinDiff,
+        byteOffset, size);
+  else
+    artsRemoteDbAddDependenceWithByteOffset(dbSrc, edtDest, edtSlot,
+                                            acquireMode, useTwinDiff,
+                                            byteOffset, size);
+
+  if (acquireMode == ARTS_DB_WRITE)
+    artsDbIncrementLatch(dbSrc);
+}
+
 /**********************DB MEMORY MODEL*************************************/
 // Side Effects: edt depcNeeded will be incremented, ptr will be updated,
 //   and launches out of order handleReadyEdt

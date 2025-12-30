@@ -508,6 +508,11 @@ void artsSignalEdtPtr(artsGuid_t edtGuid, uint32_t slot, void *ptr,
   internalSignalEdt(edtGuid, slot, NULL_GUID, ARTS_PTR, ptr, size);
 }
 
+void artsSignalEdtPtrWithGuid(artsGuid_t edtGuid, uint32_t slot,
+                              artsGuid_t dbGuid, void *ptr, unsigned int size) {
+  internalSignalEdt(edtGuid, slot, dbGuid, ARTS_PTR, ptr, size);
+}
+
 void artsSignalEdtNull(artsGuid_t edtGuid, uint32_t slot) {
   internalSignalEdt(edtGuid, slot, NULL_GUID, ARTS_NULL, NULL, 0);
 }

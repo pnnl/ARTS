@@ -152,6 +152,10 @@ void artsServerProcessPacket(struct artsRemotePacket *packet) {
                                        pack->useTwinDiff);
     break;
   }
+  case ARTS_REMOTE_DB_ADD_DEPENDENCE_WITH_BYTE_OFFSET_MSG: {
+    artsRemoteHandleDbAddDependenceWithByteOffset(packet);
+    break;
+  }
   case ARTS_REMOTE_DB_REQUEST_MSG: {
     struct artsRemoteDbRequestPacket *pack =
         (struct artsRemoteDbRequestPacket *)(packet);

@@ -613,7 +613,23 @@ void artsPersistentEventSatisfy(artsGuid_t eventGuid, uint32_t action,
             ;
           if (dependent[j].type == ARTS_EDT) {
             if (event->data != NULL_GUID) {
-              if (dependent[j].acquireMode != ARTS_NULL) {
+              if (dependent[j].byteOffset != 0 || dependent[j].size != 0) {
+                /// Byte-slice dependency: lookup DB and compute pointer
+                struct artsDb *db =
+                    (struct artsDb *)artsRouteTableLookupItem(event->data);
+                if (db) {
+                  void *dbData = (void *)(db + 1);
+                  void *slicePtr =
+                      (void *)(((char *)dbData) + dependent[j].byteOffset);
+                  artsSignalEdtPtrWithGuid(dependent[j].addr, dependent[j].slot,
+                                           event->data, slicePtr,
+                                           (unsigned int)dependent[j].size);
+                } else {
+                  ARTS_DEBUG(
+                      "ESD: DB not found for byte-slice dep event->data=%lu",
+                      event->data);
+                }
+              } else if (dependent[j].acquireMode != ARTS_NULL) {
                 artsType_t mode = artsGuidGetType(event->data);
                 internalSignalEdtWithMode(
                     dependent[j].addr, dependent[j].slot, event->data, mode,
@@ -792,6 +808,8 @@ void artsAddDependenceToPersistentEventWithModeAndDiff(artsGuid_t eventSource,
     dependent->slot = edtSlot;
     dependent->acquireMode = acquireMode;
     dependent->useTwinDiff = useTwinDiff;
+    dependent->byteOffset = 0;
+    dependent->size = 0;
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
     dependent->doneWriting = true;
 
@@ -807,6 +825,87 @@ void artsAddDependenceToPersistentEventWithModeAndDiff(artsGuid_t eventSource,
     dependent->slot = edtSlot;
     dependent->acquireMode = acquireMode;
     dependent->useTwinDiff = useTwinDiff;
+    dependent->byteOffset = 0;
+    dependent->size = 0;
+    COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
+    dependent->doneWriting = true;
+
+    if (artsAtomicFetchAdd(&version->latchCount, 0U) == 0)
+      needsUpdate = true;
+  }
+  artsUnlock(&event->lock);
+  if (needsUpdate)
+    artsPersistentEventSatisfy(eventSource, ARTS_EVENT_UPDATE, true);
+  return;
+}
+
+void artsAddDependenceToPersistentEventWithByteOffset(
+    artsGuid_t eventSource, artsGuid_t edtDest, uint32_t edtSlot,
+    artsType_t acquireMode, bool useTwinDiff, uint64_t byteOffset,
+    uint64_t size) {
+  /// Check that the eventSource is a persistent event
+  if (artsGuidGetType(eventSource) != ARTS_PERSISTENT_EVENT) {
+    ARTS_DEBUG("Event source %lu is not a persistent event", eventSource);
+    artsDebugGenerateSegFault();
+    return;
+  }
+  artsType_t mode = artsGuidGetType(edtDest);
+  struct artsHeader *sourceHeader =
+      (struct artsHeader *)artsRouteTableLookupItem(eventSource);
+  if (sourceHeader == NULL) {
+    unsigned int rank = artsGuidGetRank(eventSource);
+    if (rank != artsGlobalRankId) {
+      // TODO: Extend remote protocol to pass byteOffset/size
+      artsRemoteAddDependenceToPersistentEventWithHints(
+          eventSource, edtDest, edtSlot, rank, acquireMode, useTwinDiff);
+    } else {
+      // TODO: Extend out-of-order handling to pass byteOffset/size
+      artsOutOfOrderAddDependenceToPersistentEvent(eventSource, edtDest,
+                                                   edtSlot, mode, eventSource);
+    }
+    return;
+  }
+
+  ARTS_DEBUG("Add Dep from Persistent Event [Guid:%lu] to EDT[Guid:"
+             "%lu, Slot:%u, AcquireMode:%s, ByteOffset:%lu, Size:%lu]",
+             eventSource, edtDest, edtSlot, getTypeName(acquireMode),
+             byteOffset, size);
+  struct artsPersistentEvent *event =
+      (struct artsPersistentEvent *)sourceHeader;
+  artsLock(&event->lock);
+  struct artsPersistentEventVersion *version =
+      artsGetLastPersistentEventVersion(event);
+  assert(version != NULL);
+  bool needsUpdate = false;
+  if (mode == ARTS_EDT) {
+    struct artsDependentList *dependentList = &version->dependent;
+    unsigned int position = artsAtomicFetchAdd(&version->dependentCount, 1U);
+    struct artsDependent *dependent = artsDependentGet(dependentList, position);
+    assert(dependent != NULL);
+    dependent->type = ARTS_EDT;
+    dependent->addr = edtDest;
+    dependent->slot = edtSlot;
+    dependent->acquireMode = acquireMode;
+    dependent->useTwinDiff = useTwinDiff;
+    dependent->byteOffset = byteOffset;
+    dependent->size = size;
+    COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
+    dependent->doneWriting = true;
+
+    unsigned int res = artsAtomicFetchAdd(&version->latchCount, 0U);
+    if (res == 0)
+      needsUpdate = true;
+  } else if (mode == ARTS_EVENT) {
+    struct artsDependentList *dependentList = &version->dependent;
+    unsigned int position = artsAtomicFetchAdd(&version->dependentCount, 1U);
+    struct artsDependent *dependent = artsDependentGet(dependentList, position);
+    dependent->type = ARTS_EVENT;
+    dependent->addr = edtDest;
+    dependent->slot = edtSlot;
+    dependent->acquireMode = acquireMode;
+    dependent->useTwinDiff = useTwinDiff;
+    dependent->byteOffset = byteOffset;
+    dependent->size = size;
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
     dependent->doneWriting = true;
 
