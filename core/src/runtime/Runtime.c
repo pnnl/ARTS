@@ -264,6 +264,7 @@ void artsRuntimeGlobalCleanup() {
   FINALIZATION_TIME_STOP();
 
   artsCounterStop();
+  artsCounterWriteCluster(artsNodeInfo.counterFolder);
   artsCounterWriteNode(artsNodeInfo.counterFolder, artsGlobalRankId);
   for (unsigned int t = 0; t < artsNodeInfo.totalThreadCount; t++) {
     artsCounterWriteThread(artsNodeInfo.counterFolder, artsGlobalRankId, t);

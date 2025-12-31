@@ -64,7 +64,7 @@ set(COUNTER_TYPES)
 foreach(MATCH ${MATCHES})
     # Extract just the identifier name (first capture group)
     string(REGEX MATCH "([a-zA-Z_][a-zA-Z0-9_]*)" COUNTER_NAME "${MATCH}")
-    
+
     # Skip NUM_COUNTER_TYPES
     if(COUNTER_NAME AND NOT COUNTER_NAME STREQUAL "NUM_COUNTER_TYPES")
         list(APPEND COUNTER_TYPES "${COUNTER_NAME}")
@@ -94,11 +94,11 @@ foreach(LINE ${COUNTER_CONFIG_LINES})
         continue()
     endif()
     # Match: COUNTER=MODE or COUNTER=MODE,LEVEL
-    if(LINE MATCHES "^([A-Za-z0-9_]+)[ \\t]*=[ \\t]*(OFF|ONCE|PERIODIC)(,[ \\t]*(THREAD|NODE))?")
+    if(LINE MATCHES "^([A-Za-z0-9_]+)[ \\t]*=[ \\t]*(OFF|ONCE|PERIODIC)(,[ \\t]*(THREAD|NODE|CLUSTER))?")
         set(KEY ${CMAKE_MATCH_1})
         set(CAPTURE_MODE ${CMAKE_MATCH_2})
         set(CAPTURE_LEVEL ${CMAKE_MATCH_4})
-        
+
         # Default captureLevel to NODE if not specified
         if(NOT CAPTURE_LEVEL)
             set(CAPTURE_LEVEL "NODE")
@@ -107,25 +107,27 @@ foreach(LINE ${COUNTER_CONFIG_LINES})
         # Set CMake variables for this counter
         if(CAPTURE_MODE STREQUAL "OFF")
             set(ENABLE_${KEY} 0)
-            set(CAPTURE_MODE_${KEY} 0)  # artsCaptureModeOff
+            set(CAPTURE_MODE_${KEY} 0) # artsCaptureModeOff
             set(CAPTURE_LEVEL_${KEY} 1) # default to NODE
             math(EXPR DISABLED_COUNT "${DISABLED_COUNT} + 1")
         else()
             set(ENABLE_${KEY} 1)
             math(EXPR ENABLED_COUNT "${ENABLED_COUNT} + 1")
-            
+
             # Set capture mode
             if(CAPTURE_MODE STREQUAL "ONCE")
-                set(CAPTURE_MODE_${KEY} 1)  # artsCaptureModeOnce
+                set(CAPTURE_MODE_${KEY} 1) # artsCaptureModeOnce
             elseif(CAPTURE_MODE STREQUAL "PERIODIC")
-                set(CAPTURE_MODE_${KEY} 2)  # artsCaptureModesPeriodic
+                set(CAPTURE_MODE_${KEY} 2) # artsCaptureModesPeriodic
             endif()
-            
+
             # Set capture level
             if(CAPTURE_LEVEL STREQUAL "THREAD")
-                set(CAPTURE_LEVEL_${KEY} 0)  # artsCaptureLevelThread
+                set(CAPTURE_LEVEL_${KEY} 0) # artsCaptureLevelThread
             elseif(CAPTURE_LEVEL STREQUAL "NODE")
-                set(CAPTURE_LEVEL_${KEY} 1)  # artsCaptureLevelNode
+                set(CAPTURE_LEVEL_${KEY} 1) # artsCaptureLevelNode
+            elseif(CAPTURE_LEVEL STREQUAL "CLUSTER")
+                set(CAPTURE_LEVEL_${KEY} 2) # artsCaptureLevelCluster
             endif()
         endif()
     endif()
@@ -186,7 +188,7 @@ endforeach()
 file(APPEND ${GENERATED_HEADER} "\n/* Counter Capture Level Flags (0=THREAD, 1=NODE) */\n")
 foreach(COUNTER ${COUNTER_TYPES})
     if(NOT DEFINED CAPTURE_LEVEL_${COUNTER})
-        set(CAPTURE_LEVEL_${COUNTER} 1)  # Default to NODE
+        set(CAPTURE_LEVEL_${COUNTER} 1) # Default to NODE
     endif()
     file(APPEND ${GENERATED_HEADER} "#define CAPTURE_LEVEL_${COUNTER} ${CAPTURE_LEVEL_${COUNTER}}\n")
 endforeach()
@@ -257,7 +259,7 @@ static const unsigned int artsCaptureLevelArray[] = {
 
 foreach(COUNTER ${COUNTER_TYPES})
     if(NOT DEFINED CAPTURE_LEVEL_${COUNTER})
-        set(CAPTURE_LEVEL_${COUNTER} 1)  # Default to NODE
+        set(CAPTURE_LEVEL_${COUNTER} 1) # Default to NODE
     endif()
     file(APPEND ${GENERATED_HEADER} "    ${CAPTURE_LEVEL_${COUNTER}},  /* ${COUNTER} */\n")
 endforeach()

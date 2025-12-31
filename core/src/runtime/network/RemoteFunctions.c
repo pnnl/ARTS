@@ -438,8 +438,7 @@ void artsRemoteHandleEdtMove(void *ptr) {
   memcpy(edt, packet + 1, size);
   artsRouteTableAddItemRace(edt, (artsGuid_t)packet->guid, artsGlobalRankId,
                             false);
-  ARTS_INFO("EDT[Guid:%lu] Moved to Rank: %d", packet->guid,
-            artsGlobalRankId);
+  ARTS_INFO("EDT[Guid:%lu] Moved to Rank: %d", packet->guid, artsGlobalRankId);
   if (edt->depcNeeded == 0)
     artsHandleReadyEdt(edt);
   else
@@ -533,10 +532,9 @@ static void sendRemoteEdtSignalPacket(artsGuid_t edt, artsGuid_t db,
 
 void artsRemoteSignalEdt(artsGuid_t edt, artsGuid_t db, uint32_t slot,
                          artsType_t mode) {
-  ARTS_INFO(
-      "Remote Signal from DB[Guid:%lu] to EDT[Guid:%lu, Slot:%d, Rank: "
-      "%d]",
-      db, edt, slot, artsGuidGetRank(edt));
+  ARTS_INFO("Remote Signal from DB[Guid:%lu] to EDT[Guid:%lu, Slot:%d, Rank: "
+            "%d]",
+            db, edt, slot, artsGuidGetRank(edt));
   sendRemoteEdtSignalPacket(edt, db, slot, mode, ARTS_NULL, true);
 }
 
@@ -1230,4 +1228,138 @@ void artsRemoteDbRename(artsGuid_t newGuid, artsGuid_t oldGuid) {
 void artsRemoteHandleDbRename(void *pack) {
   struct artsRemoteDbRename *packet = (struct artsRemoteDbRename *)pack;
   artsDbRenameWithGuid(packet->newGuid, packet->oldGuid);
+}
+
+// Time synchronization for counter capture alignment (RTT-based)
+// External declarations for time sync state (defined in Counter.c)
+extern volatile int64_t artsCounterTimeOffset;
+extern volatile bool artsCounterTimeSyncReceived;
+extern volatile uint64_t artsCounterTimeSyncT1; // Worker's send time
+
+// Worker sends sync request to master
+void artsRemoteTimeSyncReqSend(unsigned int masterRank) {
+  struct artsRemoteTimeSyncReqPacket packet;
+  uint64_t t1 = artsGetTimeStamp();
+  artsCounterTimeSyncT1 = t1; // Store for RTT calculation
+  packet.workerSendTime = t1;
+  artsFillPacketHeader(&packet.header, sizeof(packet),
+                       ARTS_REMOTE_TIME_SYNC_REQ_MSG);
+  artsRemoteSendRequestAsync(masterRank, (char *)&packet, sizeof(packet));
+  ARTS_INFO("Time sync request sent to master (rank %u), T1=%lu", masterRank,
+            t1);
+}
+
+// Master receives sync request, sends back response
+void artsRemoteHandleTimeSyncReq(void *pack) {
+  struct artsRemoteTimeSyncReqPacket *packet =
+      (struct artsRemoteTimeSyncReqPacket *)pack;
+  uint64_t t2 = artsGetTimeStamp(); // Master's receive time
+  unsigned int workerRank = packet->header.rank;
+  ARTS_INFO("Time sync request received from worker (rank %u), T1=%lu, T2=%lu",
+            workerRank, packet->workerSendTime, t2);
+  // Send response back to worker
+  artsRemoteTimeSyncRespSend(workerRank, packet->workerSendTime, t2);
+}
+
+// Master sends sync response to worker
+void artsRemoteTimeSyncRespSend(unsigned int workerRank,
+                                uint64_t workerSendTime,
+                                uint64_t masterRecvTime) {
+  struct artsRemoteTimeSyncRespPacket packet;
+  packet.workerSendTime = workerSendTime;
+  packet.masterRecvTime = masterRecvTime;
+  artsFillPacketHeader(&packet.header, sizeof(packet),
+                       ARTS_REMOTE_TIME_SYNC_RESP_MSG);
+  artsRemoteSendRequestAsync(workerRank, (char *)&packet, sizeof(packet));
+}
+
+// Worker receives sync response, calculates offset
+void artsRemoteHandleTimeSyncResp(void *pack) {
+  struct artsRemoteTimeSyncRespPacket *packet =
+      (struct artsRemoteTimeSyncRespPacket *)pack;
+  uint64_t t3 = artsGetTimeStamp(); // Worker's receive time
+  uint64_t t1 = packet->workerSendTime;
+  uint64_t t2 = packet->masterRecvTime;
+
+  // NTP-like offset calculation:
+  // offset = ((T1 - T2) + (T3 - T2)) / 2
+  //        = (T1 + T3 - 2*T2) / 2
+  //        = (T1 + T3) / 2 - T2
+  // This gives us: worker_time - offset = master_time
+  // Positive offset means worker clock is ahead of master
+  int64_t offset = ((int64_t)t1 + (int64_t)t3) / 2 - (int64_t)t2;
+
+  // Also calculate RTT for logging
+  uint64_t rtt = t3 - t1;
+
+  artsCounterTimeOffset = offset;
+  artsCounterTimeSyncReceived = true;
+
+  ARTS_INFO("Time sync complete: T1=%lu, T2=%lu, T3=%lu, RTT=%lu ns (%.3f ms), "
+            "offset=%ld ns (%.3f ms)",
+            t1, t2, t3, rtt, (double)rtt / 1000000.0, offset,
+            (double)offset / 1000000.0);
+}
+
+// Cluster counter reduction
+extern uint64_t *artsClusterCounters;
+extern volatile unsigned int artsClusterNodesReceived;
+
+void artsRemoteCounterReduceSend(unsigned int rank, unsigned int counterIndex,
+                                 uint64_t value) {
+  struct artsRemoteCounterReducePacket packet;
+  packet.counterIndex = counterIndex;
+  packet.value = value;
+  artsFillPacketHeader(&packet.header, sizeof(packet),
+                       ARTS_REMOTE_COUNTER_REDUCE_MSG);
+
+  artsRemoteSendRequestAsync(rank, (char *)&packet, sizeof(packet));
+}
+
+void artsRemoteHandleCounterReduce(void *pack) {
+  struct artsRemoteCounterReducePacket *packet =
+      (struct artsRemoteCounterReducePacket *)pack;
+  unsigned int idx = packet->counterIndex;
+  uint64_t value = packet->value;
+
+  // Apply reduction based on the counter's reduce type
+  switch (artsCounterReduceTypes[idx]) {
+  case artsCounterSum:
+    __sync_fetch_and_add(&artsClusterCounters[idx], value);
+    break;
+  case artsCounterMax: {
+    uint64_t old = artsClusterCounters[idx];
+    while (value > old) {
+      uint64_t result =
+          __sync_val_compare_and_swap(&artsClusterCounters[idx], old, value);
+      if (result == old)
+        break;
+      old = result;
+    }
+    break;
+  }
+  case artsCounterMin: {
+    uint64_t old = artsClusterCounters[idx];
+    while (value < old) {
+      uint64_t result =
+          __sync_val_compare_and_swap(&artsClusterCounters[idx], old, value);
+      if (result == old)
+        break;
+      old = result;
+    }
+    break;
+  }
+  }
+}
+
+void artsRemoteCounterReduceDoneSend(unsigned int masterRank) {
+  struct artsRemotePacket packet;
+  artsFillPacketHeader(&packet, sizeof(packet),
+                       ARTS_REMOTE_COUNTER_REDUCE_DONE_MSG);
+  artsRemoteSendRequestAsync(masterRank, (char *)&packet, sizeof(packet));
+}
+
+void artsRemoteHandleCounterReduceDone(void) {
+  // Increment the number of nodes that have sent their cluster counters
+  __sync_fetch_and_add(&artsClusterNodesReceived, 1);
 }

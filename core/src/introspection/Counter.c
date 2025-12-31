@@ -46,6 +46,7 @@
 #include "arts/arts.h"
 #include "arts/introspection/ArtsIdCounter.h"
 #include "arts/introspection/JsonWriter.h"
+#include "arts/runtime/network/RemoteFunctions.h"
 #include "arts/system/ArtsPrint.h"
 #include "arts/system/Debug.h"
 #include "arts/utils/Atomics.h"
@@ -55,6 +56,23 @@
 static uint64_t countersOn = 0;
 static pthread_t captureThread;
 static volatile bool captureThreadRunning = false;
+
+// Time synchronization variables (exported for RemoteFunctions.c)
+// timeOffset = workerTime - masterTime (positive if worker is ahead)
+// To get synchronized time: localTime - timeOffset = masterTime
+volatile int64_t artsCounterTimeOffset = 0;
+volatile bool artsCounterTimeSyncReceived = false;
+volatile uint64_t artsCounterTimeSyncT1 = 0; // Worker's send time for RTT calc
+
+// Cluster counter reduction storage (exported for RemoteFunctions.c)
+// Only used on master node (rank 0) to aggregate values from all nodes
+uint64_t *artsClusterCounters = NULL;
+volatile unsigned int artsClusterNodesReceived = 0;
+
+// Get synchronized timestamp (adjusted to master node's clock)
+static inline uint64_t artsGetSyncedTimeStamp(void) {
+  return (uint64_t)((int64_t)artsGetTimeStamp() - artsCounterTimeOffset);
+}
 
 static uint64_t artsCounterCaptureCounter(artsCounter *counter) {
   uint64_t expected = counter->start;
@@ -73,26 +91,48 @@ static uint64_t artsCounterCaptureCounter(artsCounter *counter) {
 static void *artsCounterCaptureThread(void *args) {
   // We must set artsCounters to prevent invalid memory access
   artsThreadInfo.artsCounters = (artsCounter *)args;
-  unsigned int cnt = 0;
   // milli to nano
-  uint64_t sleepTime = artsNodeInfo.counterCaptureInterval * 1000000;
+  uint64_t intervalNs = artsNodeInfo.counterCaptureInterval * 1000000;
+
+  // Time synchronization: align captures to synchronized time.
+  // All nodes use master node's time (via artsGetSyncedTimeStamp) so they
+  // all capture at the same logical time, preventing drift between nodes.
+  // We compute the next capture time as the next multiple of intervalNs
+  // after the current synchronized time.
+  uint64_t syncedTime = artsGetSyncedTimeStamp();
+  // Calculate the capture epoch (floor of syncedTime / intervalNs)
+  uint64_t captureEpoch = syncedTime / intervalNs;
+  // Next capture will be at the next interval boundary
+  uint64_t nextCaptureTime = (captureEpoch + 1) * intervalNs;
+
   while (captureThreadRunning) {
-    cnt++;
     if (countersOn) {
-      uint64_t adjustedSleepTime =
-          countersOn + cnt * sleepTime - artsGetTimeStamp();
-      ARTS_INFO(
-          "Debug: countersOn=%lf ms, cnt=%u, counterCaptureInterval=%lf ms, "
-          "adjustedSleepTime=%lf ms\n",
-          (double)countersOn / 1000000.0, cnt, (double)sleepTime / 1000000.0,
-          (double)adjustedSleepTime / 1000000.0);
-      nanosleep((const struct timespec[]){{adjustedSleepTime / 1000000000,
-                                           adjustedSleepTime % 1000000000}},
-                NULL);
+      syncedTime = artsGetSyncedTimeStamp();
+      // Calculate sleep time until next aligned capture (in synced time)
+      int64_t sleepNs = (int64_t)(nextCaptureTime - syncedTime);
+
+      if (sleepNs > 0) {
+        ARTS_INFO("Debug: nextCaptureTime=%lf ms, syncedTime=%lf ms, "
+                  "sleepTime=%lf ms, offset=%ld ns\n",
+                  (double)nextCaptureTime / 1000000.0,
+                  (double)syncedTime / 1000000.0, (double)sleepNs / 1000000.0,
+                  artsCounterTimeOffset);
+        nanosleep((const struct timespec[]){{sleepNs / 1000000000,
+                                             sleepNs % 1000000000}},
+                  NULL);
+      }
+
+      // Advance to next capture time
+      nextCaptureTime += intervalNs;
     } else {
-      nanosleep((const struct timespec[]){{sleepTime / 1000000000,
-                                           sleepTime % 1000000000}},
+      // Counters not yet started, wait for interval and re-check
+      nanosleep((const struct timespec[]){{intervalNs / 1000000000,
+                                           intervalNs % 1000000000}},
                 NULL);
+      // Re-align to synced clock when counters start
+      syncedTime = artsGetSyncedTimeStamp();
+      captureEpoch = syncedTime / intervalNs;
+      nextCaptureTime = (captureEpoch + 1) * intervalNs;
       continue;
     }
     // Capture counters - only for PERIODIC mode counters
@@ -100,7 +140,9 @@ static void *artsCounterCaptureThread(void *args) {
       if (artsCaptureModeArray[i] == artsCaptureModesPeriodic) {
         // Only this thread accesses node captures so no atomic needed
         uint64_t *capture = NULL;
-        if (artsCaptureLevelArray[i] == artsCaptureLevelNode) {
+        // CLUSTER level behaves like NODE level during capture
+        if (artsCaptureLevelArray[i] == artsCaptureLevelNode ||
+            artsCaptureLevelArray[i] == artsCaptureLevelCluster) {
           capture = (uint64_t *)artsNextFreeFromArrayList(
               artsNodeInfo.counterReduces.counterCaptures[i]);
           if (artsCounterReduceTypes[i] == artsCounterSum) {
@@ -137,9 +179,12 @@ static void *artsCounterCaptureThread(void *args) {
 // Reduce arts_id hash tables for NODE level with PERIODIC mode
 #if ENABLE_artsIdEdtMetrics || ENABLE_artsIdDbMetrics
     if ((artsCaptureModeArray[artsIdEdtMetrics] == artsCaptureModesPeriodic &&
-         artsCaptureLevelArray[artsIdEdtMetrics] == artsCaptureLevelNode) ||
+         (artsCaptureLevelArray[artsIdEdtMetrics] == artsCaptureLevelNode ||
+          artsCaptureLevelArray[artsIdEdtMetrics] ==
+              artsCaptureLevelCluster)) ||
         (artsCaptureModeArray[artsIdDbMetrics] == artsCaptureModesPeriodic &&
-         artsCaptureLevelArray[artsIdDbMetrics] == artsCaptureLevelNode)) {
+         (artsCaptureLevelArray[artsIdDbMetrics] == artsCaptureLevelNode ||
+          artsCaptureLevelArray[artsIdDbMetrics] == artsCaptureLevelCluster))) {
       // Reduce all thread hash tables into node-level hash table
       for (unsigned int t = 0; t < artsNodeInfo.totalThreadCount; t++) {
         artsIdReduceHashTables(
@@ -175,6 +220,41 @@ void artsCounterStart(unsigned int startPoint) {
     }
 
     if (needCaptureThread) {
+      // Time synchronization across nodes using RTT-based algorithm:
+      // Worker nodes initiate sync requests to master (rank 0).
+      // Master responds with its timestamp.
+      // Worker calculates offset accounting for network latency.
+      //
+      // Algorithm (NTP-like):
+      //   T1 = worker send time (worker clock)
+      //   T2 = master receive time (master clock)
+      //   T3 = worker receive time (worker clock)
+      //   RTT = T3 - T1 (clock offsets cancel)
+      //   offset = ((T1 - T2) + (T3 - T2)) / 2
+      //          = (T1 + T3) / 2 - T2
+      // This assumes symmetric network latency.
+
+      if (artsGlobalRankId == 0) {
+        // Master node: no offset needed, just mark as synced
+        artsCounterTimeOffset = 0;
+        artsCounterTimeSyncReceived = true;
+        ARTS_INFO("Time sync: Master node (rank 0), offset=0");
+      } else {
+        // Worker nodes: send sync request to master and wait for response
+        artsRemoteTimeSyncReqSend(0); // Send to master (rank 0)
+
+        // Wait for sync response with timeout
+        uint64_t timeout = artsGetTimeStamp() + 5000000000ULL; // 5 seconds
+        while (!artsCounterTimeSyncReceived && artsGetTimeStamp() < timeout) {
+          usleep(1000); // Wait 1ms
+        }
+        if (!artsCounterTimeSyncReceived) {
+          ARTS_INFO("Time sync: Timeout waiting for master response, "
+                    "using local time (offset=0)");
+          artsCounterTimeOffset = 0;
+        }
+      }
+
       captureThreadRunning = true;
 
       int ret = pthread_create(&captureThread, NULL, artsCounterCaptureThread,
@@ -607,6 +687,215 @@ void artsCounterWriteNode(const char *outputFolder, unsigned int nodeId) {
   artsJsonWriterFinish(&writer);
   fputc('\n', fp);
   fclose(fp);
+}
+
+void artsCounterWriteCluster(const char *outputFolder) {
+  if (!outputFolder) {
+    return;
+  }
+
+  // Check if any counters have CLUSTER level output
+  bool hasClusterLevel = false;
+  for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
+    if (artsCaptureModeArray[i] != artsCaptureModeOff &&
+        artsCaptureLevelArray[i] == artsCaptureLevelCluster) {
+      hasClusterLevel = true;
+      break;
+    }
+  }
+  if (!hasClusterLevel) {
+    return;
+  }
+
+  unsigned int numNodes = artsGlobalRankCount;
+
+  // Only master (rank 0) writes cluster output
+  if (artsGlobalRankId != 0) {
+    // Non-master nodes send their counter values to master
+    for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
+      if (artsCaptureModeArray[i] != artsCaptureModeOff &&
+          artsCaptureLevelArray[i] == artsCaptureLevelCluster) {
+        // Compute this node's reduced value across all threads
+        uint64_t nodeValue = 0;
+        for (unsigned int t = 0; t < artsNodeInfo.totalThreadCount; t++) {
+          artsCounterCaptures *threadCounters =
+              &artsNodeInfo.counterCaptures[t];
+          switch (artsCounterReduceTypes[i]) {
+          case artsCounterSum:
+            nodeValue += threadCounters->counters[i].count;
+            break;
+          case artsCounterMax:
+            if (nodeValue < threadCounters->counters[i].count) {
+              nodeValue = threadCounters->counters[i].count;
+            }
+            break;
+          case artsCounterMin:
+            if (t == 0 || nodeValue > threadCounters->counters[i].count) {
+              nodeValue = threadCounters->counters[i].count;
+            }
+            break;
+          }
+        }
+        // Send to master
+        artsRemoteCounterReduceSend(0, i, nodeValue);
+      }
+    }
+    // Signal master that we're done sending
+    artsRemoteCounterReduceDoneSend(0);
+    return;
+  }
+
+  // Master node code below
+
+  // Allocate cluster counter storage if not already done
+  if (!artsClusterCounters) {
+    artsClusterCounters =
+        (uint64_t *)artsCalloc(NUM_COUNTER_TYPES, sizeof(uint64_t));
+    // Initialize based on reduce type
+    for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
+      if (artsCaptureLevelArray[i] == artsCaptureLevelCluster) {
+        if (artsCounterReduceTypes[i] == artsCounterMin) {
+          artsClusterCounters[i] = UINT64_MAX;
+        } else {
+          artsClusterCounters[i] = 0;
+        }
+      }
+    }
+  }
+
+  // First, add this node's (master's) own values to the cluster counters
+  for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
+    if (artsCaptureModeArray[i] != artsCaptureModeOff &&
+        artsCaptureLevelArray[i] == artsCaptureLevelCluster) {
+      // Compute this node's reduced value across all threads
+      uint64_t nodeValue = 0;
+      for (unsigned int t = 0; t < artsNodeInfo.totalThreadCount; t++) {
+        artsCounterCaptures *threadCounters = &artsNodeInfo.counterCaptures[t];
+        switch (artsCounterReduceTypes[i]) {
+        case artsCounterSum:
+          nodeValue += threadCounters->counters[i].count;
+          break;
+        case artsCounterMax:
+          if (nodeValue < threadCounters->counters[i].count) {
+            nodeValue = threadCounters->counters[i].count;
+          }
+          break;
+        case artsCounterMin:
+          if (t == 0 || nodeValue > threadCounters->counters[i].count) {
+            nodeValue = threadCounters->counters[i].count;
+          }
+          break;
+        }
+      }
+      // Aggregate into cluster counters
+      switch (artsCounterReduceTypes[i]) {
+      case artsCounterSum:
+        artsClusterCounters[i] += nodeValue;
+        break;
+      case artsCounterMax:
+        if (artsClusterCounters[i] < nodeValue) {
+          artsClusterCounters[i] = nodeValue;
+        }
+        break;
+      case artsCounterMin:
+        if (artsClusterCounters[i] > nodeValue) {
+          artsClusterCounters[i] = nodeValue;
+        }
+        break;
+      }
+    }
+  }
+
+  // Wait for all other nodes to send their counter values
+  // numNodes - 1 because master doesn't send to itself
+  if (numNodes > 1) {
+    while (artsClusterNodesReceived < numNodes - 1) {
+      usleep(1000); // 1ms sleep to avoid busy waiting
+    }
+  }
+
+  // Now write the cluster output file
+  struct stat st = {0};
+  if (stat(outputFolder, &st) == -1)
+    mkdir(outputFolder, 0755);
+
+  char filename[1024];
+  snprintf(filename, sizeof(filename), "%s/c.json", outputFolder);
+
+  FILE *fp = fopen(filename, "w");
+  if (!fp)
+    return;
+
+  artsJsonWriter writer;
+  artsJsonWriterInit(&writer, fp, 2);
+
+  artsJsonWriterBeginObject(&writer, NULL);
+
+  artsJsonWriterBeginObject(&writer, "metadata");
+  artsJsonWriterWriteUInt64(&writer, "numNodes", numNodes);
+  artsJsonWriterWriteUInt64(&writer, "timestamp", (uint64_t)time(NULL));
+  artsJsonWriterWriteString(&writer, "version", "1.0");
+  artsJsonWriterWriteString(&writer, "level", "CLUSTER");
+  artsJsonWriterWriteUInt64(&writer, "startPoint",
+                            artsNodeInfo.counterStartPoint);
+  if (artsNodeInfo.counterFolder) {
+    artsJsonWriterWriteString(&writer, "counterFolder",
+                              artsNodeInfo.counterFolder);
+  }
+  artsJsonWriterEndObject(&writer);
+
+  artsJsonWriterBeginObject(&writer, "counters");
+  for (uint64_t i = 0; i < NUM_COUNTER_TYPES; i++) {
+    // Write CLUSTER level counters (both ONCE and PERIODIC modes)
+    if (artsCaptureModeArray[i] != artsCaptureModeOff &&
+        artsCaptureLevelArray[i] == artsCaptureLevelCluster) {
+
+      artsJsonWriterBeginObject(&writer, artsCounterNames[i]);
+
+      // Write capture mode and level
+      const char *captureModeStr = "ONCE";
+      if (artsCaptureModeArray[i] == artsCaptureModesPeriodic) {
+        captureModeStr = "PERIODIC";
+      }
+      artsJsonWriterWriteString(&writer, "captureMode", captureModeStr);
+      artsJsonWriterWriteString(&writer, "captureLevel", "CLUSTER");
+
+      // Write reduction type
+      const char *reduceTypeStr = "SUM";
+      switch (artsCounterReduceTypes[i]) {
+      case artsCounterSum:
+        reduceTypeStr = "SUM";
+        break;
+      case artsCounterMax:
+        reduceTypeStr = "MAX";
+        break;
+      case artsCounterMin:
+        reduceTypeStr = "MIN";
+        break;
+      }
+      artsJsonWriterWriteString(&writer, "reduceType", reduceTypeStr);
+
+      // Write the cluster-reduced value
+      artsJsonWriterWriteUInt64(&writer, "value", artsClusterCounters[i]);
+      // Also write value in milliseconds for timing counters
+      artsJsonWriterWriteDouble(&writer, "value_ms",
+                                (double)artsClusterCounters[i] / 1000000.0);
+
+      artsJsonWriterEndObject(&writer);
+    }
+  }
+  artsJsonWriterEndObject(&writer);
+
+  artsJsonWriterEndObject(&writer);
+  artsJsonWriterFinish(&writer);
+  fputc('\n', fp);
+  fclose(fp);
+
+  // Free the cluster counters storage
+  if (artsClusterCounters) {
+    artsFree(artsClusterCounters);
+    artsClusterCounters = NULL;
+  }
 }
 
 // ============================================================================

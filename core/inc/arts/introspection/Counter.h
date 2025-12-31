@@ -116,9 +116,9 @@ typedef enum artsCounterCaptureMode {
 
 // Capture level: determines the aggregation level for output
 typedef enum artsCounterCaptureLevel {
-  artsCaptureLevelThread = 0, // Per-thread output (no reduction)
-  artsCaptureLevelNode = 1,   // Per-node output (reduce across threads)
-  // artsCaptureLevelCluster = 2, // Per-cluster (not implemented)
+  artsCaptureLevelThread = 0,  // Per-thread output (no reduction)
+  artsCaptureLevelNode = 1,    // Per-node output (reduce across threads)
+  artsCaptureLevelCluster = 2, // Cluster output (reduce across all nodes)
 } artsCounterCaptureLevel;
 
 typedef struct {
@@ -168,6 +168,7 @@ void artsCounterTimerEnd(artsCounter *counter);
 void artsCounterWriteThread(const char *outputFolder, unsigned int nodeId,
                             unsigned int threadId);
 void artsCounterWriteNode(const char *outputFolder, unsigned int nodeId);
+void artsCounterWriteCluster(const char *outputFolder);
 
 // arts_id tracking wrapper functions (integrated with counter infrastructure)
 void artsCounterRecordArtsIdEdt(uint64_t arts_id, uint64_t exec_ns,
