@@ -213,10 +213,12 @@ void artsRuntimeNodeInit(unsigned int workerThreads,
   }
   artsNodeInfo.counterCaptureInterval = config->counterCaptureInterval;
 
-  // Initialize node-level counter reduces for PERIODIC + NODE level counters
+  // Initialize node-level counter reduces for PERIODIC + NODE/CLUSTER level
+  // counters
   for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
     if (artsCaptureModeArray[i] == artsCaptureModesPeriodic &&
-        artsCaptureLevelArray[i] == artsCaptureLevelNode) {
+        (artsCaptureLevelArray[i] == artsCaptureLevelNode ||
+         artsCaptureLevelArray[i] == artsCaptureLevelCluster)) {
       artsNodeInfo.counterReduces.counterCaptures[i] =
           artsNewArrayList(sizeof(uint64_t), 16);
     }
@@ -264,8 +266,10 @@ void artsRuntimeGlobalCleanup() {
   FINALIZATION_TIME_STOP();
 
   artsCounterStop();
-  artsCounterWriteCluster(artsNodeInfo.counterFolder);
+  // Write node counters first to ensure local data is saved even if cluster
+  // aggregation fails
   artsCounterWriteNode(artsNodeInfo.counterFolder, artsGlobalRankId);
+  artsCounterWriteCluster(artsNodeInfo.counterFolder);
   for (unsigned int t = 0; t < artsNodeInfo.totalThreadCount; t++) {
     artsCounterWriteThread(artsNodeInfo.counterFolder, artsGlobalRankId, t);
   }

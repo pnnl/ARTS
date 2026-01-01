@@ -1234,13 +1234,11 @@ void artsRemoteHandleDbRename(void *pack) {
 // External declarations for time sync state (defined in Counter.c)
 extern volatile int64_t artsCounterTimeOffset;
 extern volatile bool artsCounterTimeSyncReceived;
-extern volatile uint64_t artsCounterTimeSyncT1; // Worker's send time
 
 // Worker sends sync request to master
 void artsRemoteTimeSyncReqSend(unsigned int masterRank) {
   struct artsRemoteTimeSyncReqPacket packet;
   uint64_t t1 = artsGetTimeStamp();
-  artsCounterTimeSyncT1 = t1; // Store for RTT calculation
   packet.workerSendTime = t1;
   artsFillPacketHeader(&packet.header, sizeof(packet),
                        ARTS_REMOTE_TIME_SYNC_REQ_MSG);
@@ -1292,8 +1290,12 @@ void artsRemoteHandleTimeSyncResp(void *pack) {
   // Also calculate RTT for logging
   uint64_t rtt = t3 - t1;
 
-  artsCounterTimeOffset = offset;
-  artsCounterTimeSyncReceived = true;
+  // Ensure atomic and ordered publication of offset and sync flag:
+  // - offset is stored atomically
+  // - the flag is stored with release semantics so readers that see 'true'
+  //   are guaranteed to see the corresponding offset value.
+  __atomic_store_n(&artsCounterTimeOffset, offset, __ATOMIC_RELAXED);
+  __atomic_store_n(&artsCounterTimeSyncReceived, true, __ATOMIC_RELEASE);
 
   ARTS_INFO("Time sync complete: T1=%lu, T2=%lu, T3=%lu, RTT=%lu ns (%.3f ms), "
             "offset=%ld ns (%.3f ms)",
@@ -1321,6 +1323,12 @@ void artsRemoteHandleCounterReduce(void *pack) {
       (struct artsRemoteCounterReducePacket *)pack;
   unsigned int idx = packet->counterIndex;
   uint64_t value = packet->value;
+
+  // Bounds check to prevent out-of-bounds access
+  if (idx >= NUM_COUNTER_TYPES) {
+    ARTS_INFO("Invalid counterIndex %u received, ignoring", idx);
+    return;
+  }
 
   // Apply reduction based on the counter's reduce type
   switch (artsCounterReduceTypes[idx]) {

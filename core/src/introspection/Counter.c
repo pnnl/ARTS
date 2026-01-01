@@ -62,7 +62,6 @@ static volatile bool captureThreadRunning = false;
 // To get synchronized time: localTime - timeOffset = masterTime
 volatile int64_t artsCounterTimeOffset = 0;
 volatile bool artsCounterTimeSyncReceived = false;
-volatile uint64_t artsCounterTimeSyncT1 = 0; // Worker's send time for RTT calc
 
 // Cluster counter reduction storage (exported for RemoteFunctions.c)
 // Only used on master node (rank 0) to aggregate values from all nodes
@@ -120,10 +119,21 @@ static void *artsCounterCaptureThread(void *args) {
         nanosleep((const struct timespec[]){{sleepNs / 1000000000,
                                              sleepNs % 1000000000}},
                   NULL);
+        // Advance to the next expected capture time
+        nextCaptureTime += intervalNs;
+      } else {
+        // We are late: nextCaptureTime is already in the past.
+        // Compute how many intervals we are behind and jump forward
+        // to the next future aligned capture time to avoid drift.
+        uint64_t intervalsBehind =
+            (uint64_t)(((-sleepNs) / (int64_t)intervalNs) + 1);
+        ARTS_INFO(
+            "Counter capture lagging: syncedTime=%lf ms, "
+            "nextCaptureTime=%lf ms, lateBy=%lf ms, skipping %lu interval(s)\n",
+            (double)syncedTime / 1000000.0, (double)nextCaptureTime / 1000000.0,
+            (double)(-sleepNs) / 1000000.0, intervalsBehind);
+        nextCaptureTime += intervalsBehind * intervalNs;
       }
-
-      // Advance to next capture time
-      nextCaptureTime += intervalNs;
     } else {
       // Counters not yet started, wait for interval and re-check
       nanosleep((const struct timespec[]){{intervalNs / 1000000000,
@@ -716,7 +726,13 @@ void artsCounterWriteCluster(const char *outputFolder) {
       if (artsCaptureModeArray[i] != artsCaptureModeOff &&
           artsCaptureLevelArray[i] == artsCaptureLevelCluster) {
         // Compute this node's reduced value across all threads
-        uint64_t nodeValue = 0;
+        // Initialize based on reduce type for correct MIN handling
+        uint64_t nodeValue;
+        if (artsCounterReduceTypes[i] == artsCounterMin) {
+          nodeValue = UINT64_MAX;
+        } else {
+          nodeValue = 0;
+        }
         for (unsigned int t = 0; t < artsNodeInfo.totalThreadCount; t++) {
           artsCounterCaptures *threadCounters =
               &artsNodeInfo.counterCaptures[t];
@@ -730,7 +746,7 @@ void artsCounterWriteCluster(const char *outputFolder) {
             }
             break;
           case artsCounterMin:
-            if (t == 0 || nodeValue > threadCounters->counters[i].count) {
+            if (nodeValue > threadCounters->counters[i].count) {
               nodeValue = threadCounters->counters[i].count;
             }
             break;
@@ -768,7 +784,13 @@ void artsCounterWriteCluster(const char *outputFolder) {
     if (artsCaptureModeArray[i] != artsCaptureModeOff &&
         artsCaptureLevelArray[i] == artsCaptureLevelCluster) {
       // Compute this node's reduced value across all threads
-      uint64_t nodeValue = 0;
+      // Initialize based on reduce type for correct MIN handling
+      uint64_t nodeValue;
+      if (artsCounterReduceTypes[i] == artsCounterMin) {
+        nodeValue = UINT64_MAX;
+      } else {
+        nodeValue = 0;
+      }
       for (unsigned int t = 0; t < artsNodeInfo.totalThreadCount; t++) {
         artsCounterCaptures *threadCounters = &artsNodeInfo.counterCaptures[t];
         switch (artsCounterReduceTypes[i]) {
@@ -781,7 +803,7 @@ void artsCounterWriteCluster(const char *outputFolder) {
           }
           break;
         case artsCounterMin:
-          if (t == 0 || nodeValue > threadCounters->counters[i].count) {
+          if (nodeValue > threadCounters->counters[i].count) {
             nodeValue = threadCounters->counters[i].count;
           }
           break;
@@ -808,9 +830,17 @@ void artsCounterWriteCluster(const char *outputFolder) {
 
   // Wait for all other nodes to send their counter values
   // numNodes - 1 because master doesn't send to itself
+  // Timeout after 30 seconds to prevent indefinite blocking
   if (numNodes > 1) {
-    while (artsClusterNodesReceived < numNodes - 1) {
+    unsigned int timeoutMs = 30000; // 30 second timeout
+    unsigned int waitedMs = 0;
+    while (artsClusterNodesReceived < numNodes - 1 && waitedMs < timeoutMs) {
       usleep(1000); // 1ms sleep to avoid busy waiting
+      waitedMs++;
+    }
+    if (artsClusterNodesReceived < numNodes - 1) {
+      ARTS_INFO("Cluster counter aggregation timed out: received %u/%u nodes",
+                artsClusterNodesReceived, numNodes - 1);
     }
   }
 

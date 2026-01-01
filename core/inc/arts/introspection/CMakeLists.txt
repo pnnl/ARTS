@@ -185,7 +185,7 @@ foreach(COUNTER ${COUNTER_TYPES})
 endforeach()
 
 # Generate capture level flags for counters
-file(APPEND ${GENERATED_HEADER} "\n/* Counter Capture Level Flags (0=THREAD, 1=NODE) */\n")
+file(APPEND ${GENERATED_HEADER} "\n/* Counter Capture Level Flags (0=THREAD, 1=NODE, 2=CLUSTER) */\n")
 foreach(COUNTER ${COUNTER_TYPES})
     if(NOT DEFINED CAPTURE_LEVEL_${COUNTER})
         set(CAPTURE_LEVEL_${COUNTER} 1) # Default to NODE
@@ -253,7 +253,7 @@ file(APPEND ${GENERATED_HEADER} "};\n\n")
 
 # Generate counter capture level array
 file(APPEND ${GENERATED_HEADER} "
-/* Counter capture level array (0=THREAD, 1=NODE) */
+/* Counter capture level array (0=THREAD, 1=NODE, 2=CLUSTER) */
 static const unsigned int artsCaptureLevelArray[] = {
 ")
 
