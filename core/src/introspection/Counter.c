@@ -70,7 +70,9 @@ volatile unsigned int artsClusterNodesReceived = 0;
 
 // Get synchronized timestamp (adjusted to master node's clock)
 static inline uint64_t artsGetSyncedTimeStamp(void) {
-  return (uint64_t)((int64_t)artsGetTimeStamp() - artsCounterTimeOffset);
+  // Use acquire semantics to ensure we see the offset written by sync response
+  int64_t offset = __atomic_load_n(&artsCounterTimeOffset, __ATOMIC_ACQUIRE);
+  return (uint64_t)((int64_t)artsGetTimeStamp() - offset);
 }
 
 static uint64_t artsCounterCaptureCounter(artsCounter *counter) {
@@ -90,6 +92,13 @@ static uint64_t artsCounterCaptureCounter(artsCounter *counter) {
 static void *artsCounterCaptureThread(void *args) {
   // We must set artsCounters to prevent invalid memory access
   artsThreadInfo.artsCounters = (artsCounter *)args;
+
+  // Validate counterCaptureInterval to prevent division by zero
+  if (artsNodeInfo.counterCaptureInterval == 0) {
+    ARTS_INFO("counterCaptureInterval is 0, capture thread exiting");
+    return NULL;
+  }
+
   // milli to nano
   uint64_t intervalNs = artsNodeInfo.counterCaptureInterval * 1000000;
 
@@ -112,10 +121,10 @@ static void *artsCounterCaptureThread(void *args) {
 
       if (sleepNs > 0) {
         ARTS_INFO("Debug: nextCaptureTime=%lf ms, syncedTime=%lf ms, "
-                  "sleepTime=%lf ms, offset=%ld ns\n",
+                  "sleepTime=%lf ms, offset=%ld ns",
                   (double)nextCaptureTime / 1000000.0,
                   (double)syncedTime / 1000000.0, (double)sleepNs / 1000000.0,
-                  artsCounterTimeOffset);
+                  __atomic_load_n(&artsCounterTimeOffset, __ATOMIC_RELAXED));
         nanosleep((const struct timespec[]){{sleepNs / 1000000000,
                                              sleepNs % 1000000000}},
                   NULL);
@@ -129,7 +138,7 @@ static void *artsCounterCaptureThread(void *args) {
             (uint64_t)(((-sleepNs) / (int64_t)intervalNs) + 1);
         ARTS_INFO(
             "Counter capture lagging: syncedTime=%lf ms, "
-            "nextCaptureTime=%lf ms, lateBy=%lf ms, skipping %lu interval(s)\n",
+            "nextCaptureTime=%lf ms, lateBy=%lf ms, skipping %lu interval(s)",
             (double)syncedTime / 1000000.0, (double)nextCaptureTime / 1000000.0,
             (double)(-sleepNs) / 1000000.0, intervalsBehind);
         nextCaptureTime += intervalsBehind * intervalNs;
@@ -262,6 +271,7 @@ void artsCounterStart(unsigned int startPoint) {
           ARTS_INFO("Time sync: Timeout waiting for master response, "
                     "using local time (offset=0)");
           artsCounterTimeOffset = 0;
+          artsCounterTimeSyncReceived = true;
         }
       }
 
@@ -767,14 +777,12 @@ void artsCounterWriteCluster(const char *outputFolder) {
   if (!artsClusterCounters) {
     artsClusterCounters =
         (uint64_t *)artsCalloc(NUM_COUNTER_TYPES, sizeof(uint64_t));
-    // Initialize based on reduce type
+    // Initialize all counters based on reduce type for defensive safety
     for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
-      if (artsCaptureLevelArray[i] == artsCaptureLevelCluster) {
-        if (artsCounterReduceTypes[i] == artsCounterMin) {
-          artsClusterCounters[i] = UINT64_MAX;
-        } else {
-          artsClusterCounters[i] = 0;
-        }
+      if (artsCounterReduceTypes[i] == artsCounterMin) {
+        artsClusterCounters[i] = UINT64_MAX;
+      } else {
+        artsClusterCounters[i] = 0;
       }
     }
   }
@@ -833,10 +841,14 @@ void artsCounterWriteCluster(const char *outputFolder) {
   // Timeout after 30 seconds to prevent indefinite blocking
   if (numNodes > 1) {
     unsigned int timeoutMs = 30000; // 30 second timeout
-    unsigned int waitedMs = 0;
-    while (artsClusterNodesReceived < numNodes - 1 && waitedMs < timeoutMs) {
+    uint64_t startTime = artsGetTimeStamp();
+    while (artsClusterNodesReceived < numNodes - 1) {
+      uint64_t elapsedMs =
+          (artsGetTimeStamp() - startTime) / 1000000ULL; // convert ns to ms
+      if (elapsedMs >= timeoutMs) {
+        break;
+      }
       usleep(1000); // 1ms sleep to avoid busy waiting
-      waitedMs++;
     }
     if (artsClusterNodesReceived < numNodes - 1) {
       ARTS_INFO("Cluster counter aggregation timed out: received %u/%u nodes",

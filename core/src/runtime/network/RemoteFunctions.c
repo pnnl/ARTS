@@ -1285,7 +1285,8 @@ void artsRemoteHandleTimeSyncResp(void *pack) {
   //        = (T1 + T3) / 2 - T2
   // This gives us: worker_time - offset = master_time
   // Positive offset means worker clock is ahead of master
-  int64_t offset = ((int64_t)t1 + (int64_t)t3) / 2 - (int64_t)t2;
+  // Use overflow-safe calculation: ((t1 - t2) + (t3 - t2)) / 2
+  int64_t offset = ((int64_t)(t1 - t2) + (int64_t)(t3 - t2)) / 2;
 
   // Also calculate RTT for logging
   uint64_t rtt = t3 - t1;
@@ -1327,6 +1328,12 @@ void artsRemoteHandleCounterReduce(void *pack) {
   // Bounds check to prevent out-of-bounds access
   if (idx >= NUM_COUNTER_TYPES) {
     ARTS_INFO("Invalid counterIndex %u received, ignoring", idx);
+    return;
+  }
+
+  // Null check to prevent dereference before allocation
+  if (!artsClusterCounters) {
+    ARTS_INFO("artsClusterCounters not allocated, ignoring counter %u", idx);
     return;
   }
 

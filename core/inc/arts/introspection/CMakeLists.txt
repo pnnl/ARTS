@@ -86,7 +86,7 @@ set(ENABLED_COUNT 0)
 set(DISABLED_COUNT 0)
 
 # Counter capture mode values: 0=OFF, 1=ONCE, 2=PERIODIC
-# Counter capture level values: 0=THREAD, 1=NODE
+# Counter capture level values: 0=THREAD, 1=NODE, 2=CLUSTER
 # Format: COUNTER=captureMode[,captureLevel]
 # Default captureLevel is NODE (1)
 foreach(LINE ${COUNTER_CONFIG_LINES})
