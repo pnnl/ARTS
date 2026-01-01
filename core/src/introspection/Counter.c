@@ -136,6 +136,10 @@ static void *artsCounterCaptureThread(void *args) {
         // to the next future aligned capture time to avoid drift.
         uint64_t intervalsBehind =
             (uint64_t)(((-sleepNs) / (int64_t)intervalNs) + 1);
+        // Sanity check: cap at reasonable maximum to prevent overflow
+        if (intervalsBehind > 1000000) {
+          intervalsBehind = 1000000;
+        }
         ARTS_INFO(
             "Counter capture lagging: syncedTime=%lf ms, "
             "nextCaptureTime=%lf ms, lateBy=%lf ms, skipping %lu interval(s)",
@@ -156,7 +160,7 @@ static void *artsCounterCaptureThread(void *args) {
     }
     // Capture counters - only for PERIODIC mode counters
     for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
-      if (artsCaptureModeArray[i] == artsCaptureModesPeriodic) {
+      if (artsCaptureModeArray[i] == artsCaptureModePeriodic) {
         // Only this thread accesses node captures so no atomic needed
         uint64_t *capture = NULL;
         // CLUSTER level behaves like NODE level during capture
@@ -197,11 +201,11 @@ static void *artsCounterCaptureThread(void *args) {
 
 // Reduce arts_id hash tables for NODE level with PERIODIC mode
 #if ENABLE_artsIdEdtMetrics || ENABLE_artsIdDbMetrics
-    if ((artsCaptureModeArray[artsIdEdtMetrics] == artsCaptureModesPeriodic &&
+    if ((artsCaptureModeArray[artsIdEdtMetrics] == artsCaptureModePeriodic &&
          (artsCaptureLevelArray[artsIdEdtMetrics] == artsCaptureLevelNode ||
           artsCaptureLevelArray[artsIdEdtMetrics] ==
               artsCaptureLevelCluster)) ||
-        (artsCaptureModeArray[artsIdDbMetrics] == artsCaptureModesPeriodic &&
+        (artsCaptureModeArray[artsIdDbMetrics] == artsCaptureModePeriodic &&
          (artsCaptureLevelArray[artsIdDbMetrics] == artsCaptureLevelNode ||
           artsCaptureLevelArray[artsIdDbMetrics] == artsCaptureLevelCluster))) {
       // Reduce all thread hash tables into node-level hash table
@@ -230,7 +234,7 @@ void artsCounterStart(unsigned int startPoint) {
 
     for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
       // Need capture thread for PERIODIC mode counters
-      if (artsCaptureModeArray[i] == artsCaptureModesPeriodic) {
+      if (artsCaptureModeArray[i] == artsCaptureModePeriodic) {
         needCaptureThread = true;
         if (artsCaptureLevelArray[i] == artsCaptureLevelNode) {
           hasNodeLevel = true;
@@ -264,10 +268,11 @@ void artsCounterStart(unsigned int startPoint) {
 
         // Wait for sync response with timeout
         uint64_t timeout = artsGetTimeStamp() + 5000000000ULL; // 5 seconds
-        while (!artsCounterTimeSyncReceived && artsGetTimeStamp() < timeout) {
+        while (!__atomic_load_n(&artsCounterTimeSyncReceived, __ATOMIC_ACQUIRE) &&
+               artsGetTimeStamp() < timeout) {
           usleep(1000); // Wait 1ms
         }
-        if (!artsCounterTimeSyncReceived) {
+        if (!__atomic_load_n(&artsCounterTimeSyncReceived, __ATOMIC_ACQUIRE)) {
           ARTS_INFO("Time sync: Timeout waiting for master response, "
                     "using local time (offset=0)");
           artsCounterTimeOffset = 0;
@@ -417,7 +422,7 @@ void artsCounterWriteThread(const char *outputFolder, unsigned int nodeId,
       case artsCaptureModeOnce:
         captureModeStr = "ONCE";
         break;
-      case artsCaptureModesPeriodic:
+      case artsCaptureModePeriodic:
         captureModeStr = "PERIODIC";
         break;
       default:
@@ -427,7 +432,7 @@ void artsCounterWriteThread(const char *outputFolder, unsigned int nodeId,
       artsJsonWriterWriteString(&writer, "captureLevel", "THREAD");
 
       // Write capture history only for PERIODIC mode
-      if (artsCaptureModeArray[i] == artsCaptureModesPeriodic) {
+      if (artsCaptureModeArray[i] == artsCaptureModePeriodic) {
         artsArrayList *captureList = threadCounters->captures[i];
         if (captureList && captureList->index > 0) {
           artsJsonWriterWriteUInt64(&writer, "captureCount",
@@ -575,7 +580,7 @@ void artsCounterWriteNode(const char *outputFolder, unsigned int nodeId) {
 
       // Write capture mode and level
       const char *captureModeStr = "ONCE";
-      if (artsCaptureModeArray[i] == artsCaptureModesPeriodic) {
+      if (artsCaptureModeArray[i] == artsCaptureModePeriodic) {
         captureModeStr = "PERIODIC";
       }
       artsJsonWriterWriteString(&writer, "captureMode", captureModeStr);
@@ -622,7 +627,7 @@ void artsCounterWriteNode(const char *outputFolder, unsigned int nodeId) {
                                 (double)finalValue / 1000000.0);
 
       // Write capture history only for PERIODIC mode
-      if (artsCaptureModeArray[i] == artsCaptureModesPeriodic) {
+      if (artsCaptureModeArray[i] == artsCaptureModePeriodic) {
         artsArrayList *reduceList =
             artsNodeInfo.counterReduces.counterCaptures[i];
         if (reduceList && reduceList->index > 0) {
@@ -709,6 +714,35 @@ void artsCounterWriteNode(const char *outputFolder, unsigned int nodeId) {
   fclose(fp);
 }
 
+// Helper function to compute node-level reduced value across all threads
+static uint64_t artsComputeNodeReducedValue(unsigned int index) {
+  uint64_t nodeValue;
+  if (artsCounterReduceTypes[index] == artsCounterMin) {
+    nodeValue = UINT64_MAX;
+  } else {
+    nodeValue = 0;
+  }
+  for (unsigned int t = 0; t < artsNodeInfo.totalThreadCount; t++) {
+    artsCounterCaptures *threadCounters = &artsNodeInfo.counterCaptures[t];
+    switch (artsCounterReduceTypes[index]) {
+    case artsCounterSum:
+      nodeValue += threadCounters->counters[index].count;
+      break;
+    case artsCounterMax:
+      if (nodeValue < threadCounters->counters[index].count) {
+        nodeValue = threadCounters->counters[index].count;
+      }
+      break;
+    case artsCounterMin:
+      if (nodeValue > threadCounters->counters[index].count) {
+        nodeValue = threadCounters->counters[index].count;
+      }
+      break;
+    }
+  }
+  return nodeValue;
+}
+
 void artsCounterWriteCluster(const char *outputFolder) {
   if (!outputFolder) {
     return;
@@ -736,32 +770,7 @@ void artsCounterWriteCluster(const char *outputFolder) {
       if (artsCaptureModeArray[i] != artsCaptureModeOff &&
           artsCaptureLevelArray[i] == artsCaptureLevelCluster) {
         // Compute this node's reduced value across all threads
-        // Initialize based on reduce type for correct MIN handling
-        uint64_t nodeValue;
-        if (artsCounterReduceTypes[i] == artsCounterMin) {
-          nodeValue = UINT64_MAX;
-        } else {
-          nodeValue = 0;
-        }
-        for (unsigned int t = 0; t < artsNodeInfo.totalThreadCount; t++) {
-          artsCounterCaptures *threadCounters =
-              &artsNodeInfo.counterCaptures[t];
-          switch (artsCounterReduceTypes[i]) {
-          case artsCounterSum:
-            nodeValue += threadCounters->counters[i].count;
-            break;
-          case artsCounterMax:
-            if (nodeValue < threadCounters->counters[i].count) {
-              nodeValue = threadCounters->counters[i].count;
-            }
-            break;
-          case artsCounterMin:
-            if (nodeValue > threadCounters->counters[i].count) {
-              nodeValue = threadCounters->counters[i].count;
-            }
-            break;
-          }
-        }
+        uint64_t nodeValue = artsComputeNodeReducedValue(i);
         // Send to master
         artsRemoteCounterReduceSend(0, i, nodeValue);
       }
@@ -792,31 +801,7 @@ void artsCounterWriteCluster(const char *outputFolder) {
     if (artsCaptureModeArray[i] != artsCaptureModeOff &&
         artsCaptureLevelArray[i] == artsCaptureLevelCluster) {
       // Compute this node's reduced value across all threads
-      // Initialize based on reduce type for correct MIN handling
-      uint64_t nodeValue;
-      if (artsCounterReduceTypes[i] == artsCounterMin) {
-        nodeValue = UINT64_MAX;
-      } else {
-        nodeValue = 0;
-      }
-      for (unsigned int t = 0; t < artsNodeInfo.totalThreadCount; t++) {
-        artsCounterCaptures *threadCounters = &artsNodeInfo.counterCaptures[t];
-        switch (artsCounterReduceTypes[i]) {
-        case artsCounterSum:
-          nodeValue += threadCounters->counters[i].count;
-          break;
-        case artsCounterMax:
-          if (nodeValue < threadCounters->counters[i].count) {
-            nodeValue = threadCounters->counters[i].count;
-          }
-          break;
-        case artsCounterMin:
-          if (nodeValue > threadCounters->counters[i].count) {
-            nodeValue = threadCounters->counters[i].count;
-          }
-          break;
-        }
-      }
+      uint64_t nodeValue = artsComputeNodeReducedValue(i);
       // Aggregate into cluster counters
       switch (artsCounterReduceTypes[i]) {
       case artsCounterSum:
@@ -896,7 +881,7 @@ void artsCounterWriteCluster(const char *outputFolder) {
 
       // Write capture mode and level
       const char *captureModeStr = "ONCE";
-      if (artsCaptureModeArray[i] == artsCaptureModesPeriodic) {
+      if (artsCaptureModeArray[i] == artsCaptureModePeriodic) {
         captureModeStr = "PERIODIC";
       }
       artsJsonWriterWriteString(&writer, "captureMode", captureModeStr);

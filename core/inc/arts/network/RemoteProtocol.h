@@ -90,8 +90,8 @@ enum artsServerMessageType {
   ARTS_REMOTE_DB_ADD_DEPENDENCE_WITH_BYTE_OFFSET_MSG,
   ARTS_REMOTE_TIME_SYNC_REQ_MSG,  // Worker -> Master: request sync
   ARTS_REMOTE_TIME_SYNC_RESP_MSG, // Master -> Worker: response with master time
-  ARTS_REMOTE_COUNTER_REDUCE_MSG, // Worker -> Master: send counter values for
-                                  // cluster reduction
+  ARTS_REMOTE_COUNTER_REDUCE_MSG, // Worker -> Master: single counter value
+                                  // (one packet per counter for reduction)
   ARTS_REMOTE_COUNTER_REDUCE_DONE_MSG, // Worker -> Master: signal all counters
                                        // sent
 };

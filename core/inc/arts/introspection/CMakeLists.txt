@@ -118,7 +118,7 @@ foreach(LINE ${COUNTER_CONFIG_LINES})
             if(CAPTURE_MODE STREQUAL "ONCE")
                 set(CAPTURE_MODE_${KEY} 1) # artsCaptureModeOnce
             elseif(CAPTURE_MODE STREQUAL "PERIODIC")
-                set(CAPTURE_MODE_${KEY} 2) # artsCaptureModesPeriodic
+                set(CAPTURE_MODE_${KEY} 2) # artsCaptureModePeriodic
             endif()
 
             # Set capture level

@@ -94,7 +94,11 @@ typedef enum artsCounterType {
   artsIdDbMetrics,
   artsIdEdtCaptures,
   artsIdDbCaptures,
-  // Per-node timing counters
+  // Per-node timing counters.
+  // These counters measure wall-clock durations on each node:
+  // - initializationTime: time spent in ARTS initialization
+  // - endToEndTime: main workload execution time
+  // - finalizationTime: time spent in ARTS finalization
   initializationTime,
   endToEndTime,
   finalizationTime,
@@ -109,9 +113,9 @@ typedef enum artsCounterReduceType {
 
 // Capture mode: determines when/how often counters are captured
 typedef enum artsCounterCaptureMode {
-  artsCaptureModeOff = 0,       // Counter disabled
-  artsCaptureModeOnce = 1,      // Single value at the end (no periodic capture)
-  artsCaptureModesPeriodic = 2, // Periodic capture during execution
+  artsCaptureModeOff = 0,      // Counter disabled
+  artsCaptureModeOnce = 1,     // Single value at the end (no periodic capture)
+  artsCaptureModePeriodic = 2, // Periodic capture during execution
 } artsCounterCaptureMode;
 
 // Capture level: determines the aggregation level for output

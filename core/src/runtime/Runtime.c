@@ -192,7 +192,7 @@ void artsRuntimeNodeInit(unsigned int workerThreads,
   for (unsigned int t = 0; t < totalThreads; t++) {
     // Initialize standard counter captures for PERIODIC mode counters
     for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
-      if (artsCaptureModeArray[i] == artsCaptureModesPeriodic) {
+      if (artsCaptureModeArray[i] == artsCaptureModePeriodic) {
         artsNodeInfo.counterCaptures[t].captures[i] =
             artsNewArrayList(sizeof(uint64_t), 16);
       }
@@ -216,7 +216,7 @@ void artsRuntimeNodeInit(unsigned int workerThreads,
   // Initialize node-level counter reduces for PERIODIC + NODE/CLUSTER level
   // counters
   for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
-    if (artsCaptureModeArray[i] == artsCaptureModesPeriodic &&
+    if (artsCaptureModeArray[i] == artsCaptureModePeriodic &&
         (artsCaptureLevelArray[i] == artsCaptureLevelNode ||
          artsCaptureLevelArray[i] == artsCaptureLevelCluster)) {
       artsNodeInfo.counterReduces.counterCaptures[i] =
