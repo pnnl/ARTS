@@ -1343,7 +1343,7 @@ void artsRemoteHandleCounterReduce(void *pack) {
     __sync_fetch_and_add(&artsClusterCounters[idx], value);
     break;
   case artsCounterMax: {
-    uint64_t old = artsClusterCounters[idx];
+    uint64_t old = __atomic_load_n(&artsClusterCounters[idx], __ATOMIC_RELAXED);
     while (value > old) {
       uint64_t result =
           __sync_val_compare_and_swap(&artsClusterCounters[idx], old, value);
@@ -1354,7 +1354,7 @@ void artsRemoteHandleCounterReduce(void *pack) {
     break;
   }
   case artsCounterMin: {
-    uint64_t old = artsClusterCounters[idx];
+    uint64_t old = __atomic_load_n(&artsClusterCounters[idx], __ATOMIC_RELAXED);
     while (value < old) {
       uint64_t result =
           __sync_val_compare_and_swap(&artsClusterCounters[idx], old, value);

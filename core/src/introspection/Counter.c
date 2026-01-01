@@ -99,6 +99,12 @@ static void *artsCounterCaptureThread(void *args) {
     return NULL;
   }
 
+  // Validate interval to prevent overflow (max ~18 billion ms before overflow)
+  if (artsNodeInfo.counterCaptureInterval > UINT64_MAX / 1000000) {
+    ARTS_INFO("counterCaptureInterval too large, capture thread exiting");
+    return NULL;
+  }
+
   // milli to nano
   uint64_t intervalNs = artsNodeInfo.counterCaptureInterval * 1000000;
 
@@ -111,6 +117,11 @@ static void *artsCounterCaptureThread(void *args) {
   // Calculate the capture epoch (floor of syncedTime / intervalNs)
   uint64_t captureEpoch = syncedTime / intervalNs;
   // Next capture will be at the next interval boundary
+  // Check for overflow before multiplication
+  if (captureEpoch > UINT64_MAX / intervalNs - 1) {
+    ARTS_INFO("Capture epoch overflow, capture thread exiting");
+    return NULL;
+  }
   uint64_t nextCaptureTime = (captureEpoch + 1) * intervalNs;
 
   while (captureThreadRunning) {
@@ -259,8 +270,8 @@ void artsCounterStart(unsigned int startPoint) {
 
       if (artsGlobalRankId == 0) {
         // Master node: no offset needed, just mark as synced
-        artsCounterTimeOffset = 0;
-        artsCounterTimeSyncReceived = true;
+        __atomic_store_n(&artsCounterTimeOffset, 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&artsCounterTimeSyncReceived, true, __ATOMIC_RELEASE);
         ARTS_INFO("Time sync: Master node (rank 0), offset=0");
       } else {
         // Worker nodes: send sync request to master and wait for response
@@ -275,8 +286,8 @@ void artsCounterStart(unsigned int startPoint) {
         if (!__atomic_load_n(&artsCounterTimeSyncReceived, __ATOMIC_ACQUIRE)) {
           ARTS_INFO("Time sync: Timeout waiting for master response, "
                     "using local time (offset=0)");
-          artsCounterTimeOffset = 0;
-          artsCounterTimeSyncReceived = true;
+          __atomic_store_n(&artsCounterTimeOffset, 0, __ATOMIC_RELAXED);
+          __atomic_store_n(&artsCounterTimeSyncReceived, true, __ATOMIC_RELEASE);
         }
       }
 
