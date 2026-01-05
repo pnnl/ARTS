@@ -128,10 +128,10 @@ void validator(uint32_t paramc, uint64_t *paramv, uint32_t depc,
   // Test 2: Verify counter mode configuration
   ARTS_PRINT("[Validator] Test 2: Checking counter modes...");
 
-  unsigned int edt_metrics_mode = artsCaptureModeArray[artsIdEdtMetrics];
-  unsigned int db_metrics_mode = artsCaptureModeArray[artsIdDbMetrics];
-  unsigned int edt_captures_mode = artsCaptureModeArray[artsIdEdtCaptures];
-  unsigned int db_captures_mode = artsCaptureModeArray[artsIdDbCaptures];
+  unsigned int edt_metrics_mode = artsCounterModeArray[artsIdEdtMetrics];
+  unsigned int db_metrics_mode = artsCounterModeArray[artsIdDbMetrics];
+  unsigned int edt_captures_mode = artsCounterModeArray[artsIdEdtCaptures];
+  unsigned int db_captures_mode = artsCounterModeArray[artsIdDbCaptures];
 
   ARTS_PRINT(
       "[Validator] artsIdEdtMetrics mode: %u (0=OFF, 1=ONCE, 2=PERIODIC)",

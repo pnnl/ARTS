@@ -356,11 +356,6 @@ void artsServerProcessPacket(struct artsRemotePacket *packet) {
     artsRemoteHandleCounterReduce(packet);
     break;
   }
-  case ARTS_REMOTE_COUNTER_REDUCE_DONE_MSG: {
-    ARTS_DEBUG("Counter Reduce Done Received");
-    artsRemoteHandleCounterReduceDone();
-    break;
-  }
   default: {
     ARTS_INFO("Unknown Packet %d %d %d", packet->messageType, packet->size,
               packet->rank);

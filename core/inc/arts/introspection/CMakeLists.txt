@@ -41,7 +41,7 @@
 # Define All Counters - Parse from Counter.h
 # =============================================================================
 
-# Read Counter.h and extract counter types from artsCounterType enum
+# Read Counter.h and extract counter types from ARTS_COUNTER_LIST macro
 set(COUNTER_HEADER "${CMAKE_CURRENT_SOURCE_DIR}/Counter.h")
 if(NOT EXISTS "${COUNTER_HEADER}")
     message(FATAL_ERROR "Counter.h not found at: ${COUNTER_HEADER}")
@@ -49,24 +49,17 @@ endif()
 
 file(READ "${COUNTER_HEADER}" COUNTER_HEADER_CONTENT)
 
-# Extract the enum artsCounterType block
-string(REGEX MATCH "typedef enum artsCounterType[^}]*}" ENUM_BLOCK "${COUNTER_HEADER_CONTENT}")
-
-if(NOT ENUM_BLOCK)
-    message(FATAL_ERROR "Could not find artsCounterType enum in Counter.h")
-endif()
-
-# Extract counter names from the enum - match identifiers at start of line or after whitespace
-# This regex matches: optional whitespace, identifier, optional "= digit", followed by comma or newline
-string(REGEX MATCHALL "[ \t\n\r]+([a-zA-Z_][a-zA-Z0-9_]*)[ \t]*(=[ \t]*[0-9]+)?[ \t]*," MATCHES "${ENUM_BLOCK}")
+# Extract counter names from X(counterName) patterns in ARTS_COUNTER_LIST
+# This matches all X(identifier) patterns
+string(REGEX MATCHALL "X\\(([a-zA-Z_][a-zA-Z0-9_]*)\\)" MATCHES "${COUNTER_HEADER_CONTENT}")
 
 set(COUNTER_TYPES)
 foreach(MATCH ${MATCHES})
-    # Extract just the identifier name (first capture group)
-    string(REGEX MATCH "([a-zA-Z_][a-zA-Z0-9_]*)" COUNTER_NAME "${MATCH}")
+    # Extract just the identifier name from X(name)
+    string(REGEX REPLACE "X\\(([a-zA-Z_][a-zA-Z0-9_]*)\\)" "\\1" COUNTER_NAME "${MATCH}")
 
-    # Skip NUM_COUNTER_TYPES
-    if(COUNTER_NAME AND NOT COUNTER_NAME STREQUAL "NUM_COUNTER_TYPES")
+    # Skip 'name' and 'counterName' which appear in comments/definitions
+    if(COUNTER_NAME AND NOT COUNTER_NAME STREQUAL "name" AND NOT COUNTER_NAME STREQUAL "counterName")
         list(APPEND COUNTER_TYPES "${COUNTER_NAME}")
     endif()
 endforeach()
@@ -85,49 +78,68 @@ file(STRINGS "${COUNTER_CONFIG_PATH}" COUNTER_CONFIG_LINES)
 set(ENABLED_COUNT 0)
 set(DISABLED_COUNT 0)
 
-# Counter capture mode values: 0=OFF, 1=ONCE, 2=PERIODIC
-# Counter capture level values: 0=THREAD, 1=NODE, 2=CLUSTER
-# Format: COUNTER=captureMode[,captureLevel]
-# Default captureLevel is NODE (1)
+# Counter mode values: 0=OFF, 1=ONCE, 2=PERIODIC
+# Counter level values: 0=THREAD, 1=NODE, 2=CLUSTER
+# Counter reduce method values: 0=SUM, 1=MAX, 2=MIN, 3=MASTER
+# Format: COUNTER=counterMode[,counterLevel[,reduceMethod]]
+# Default counterLevel is NODE (1), default reduceMethod is SUM (0)
 foreach(LINE ${COUNTER_CONFIG_LINES})
     if(LINE MATCHES "^[ \\t]*#" OR LINE MATCHES "^[ \\t]*$")
         continue()
     endif()
-    # Match: COUNTER=MODE or COUNTER=MODE,LEVEL
-    if(LINE MATCHES "^([A-Za-z0-9_]+)[ \\t]*=[ \\t]*(OFF|ONCE|PERIODIC)(,[ \\t]*(THREAD|NODE|CLUSTER))?")
+    # Match: COUNTER=MODE or COUNTER=MODE,LEVEL or COUNTER=MODE,LEVEL,REDUCE
+    if(LINE MATCHES "^([A-Za-z0-9_]+)[ \\t]*=[ \\t]*(OFF|ONCE|PERIODIC)(,[ \\t]*(THREAD|NODE|CLUSTER))?(,[ \\t]*(SUM|MAX|MIN|MASTER))?")
         set(KEY ${CMAKE_MATCH_1})
-        set(CAPTURE_MODE ${CMAKE_MATCH_2})
-        set(CAPTURE_LEVEL ${CMAKE_MATCH_4})
+        set(COUNTER_MODE ${CMAKE_MATCH_2})
+        set(COUNTER_LEVEL ${CMAKE_MATCH_4})
+        set(REDUCE_METHOD ${CMAKE_MATCH_6})
 
-        # Default captureLevel to NODE if not specified
-        if(NOT CAPTURE_LEVEL)
-            set(CAPTURE_LEVEL "NODE")
+        # Default counterLevel to NODE if not specified
+        if(NOT COUNTER_LEVEL)
+            set(COUNTER_LEVEL "NODE")
+        endif()
+
+        # Default reduceMethod to SUM if not specified
+        if(NOT REDUCE_METHOD)
+            set(REDUCE_METHOD "SUM")
         endif()
 
         # Set CMake variables for this counter
-        if(CAPTURE_MODE STREQUAL "OFF")
+        if(COUNTER_MODE STREQUAL "OFF")
             set(ENABLE_${KEY} 0)
-            set(CAPTURE_MODE_${KEY} 0) # artsCaptureModeOff
-            set(CAPTURE_LEVEL_${KEY} 1) # default to NODE
+            set(COUNTER_MODE_${KEY} 0) # artsCounterModeOff
+            set(COUNTER_LEVEL_${KEY} 1) # default to NODE
+            set(REDUCE_METHOD_${KEY} 0) # default to SUM
             math(EXPR DISABLED_COUNT "${DISABLED_COUNT} + 1")
         else()
             set(ENABLE_${KEY} 1)
             math(EXPR ENABLED_COUNT "${ENABLED_COUNT} + 1")
 
-            # Set capture mode
-            if(CAPTURE_MODE STREQUAL "ONCE")
-                set(CAPTURE_MODE_${KEY} 1) # artsCaptureModeOnce
-            elseif(CAPTURE_MODE STREQUAL "PERIODIC")
-                set(CAPTURE_MODE_${KEY} 2) # artsCaptureModePeriodic
+            # Set counter mode
+            if(COUNTER_MODE STREQUAL "ONCE")
+                set(COUNTER_MODE_${KEY} 1) # artsCounterModeOnce
+            elseif(COUNTER_MODE STREQUAL "PERIODIC")
+                set(COUNTER_MODE_${KEY} 2) # artsCounterModePeriodic
             endif()
 
-            # Set capture level
-            if(CAPTURE_LEVEL STREQUAL "THREAD")
-                set(CAPTURE_LEVEL_${KEY} 0) # artsCaptureLevelThread
-            elseif(CAPTURE_LEVEL STREQUAL "NODE")
-                set(CAPTURE_LEVEL_${KEY} 1) # artsCaptureLevelNode
-            elseif(CAPTURE_LEVEL STREQUAL "CLUSTER")
-                set(CAPTURE_LEVEL_${KEY} 2) # artsCaptureLevelCluster
+            # Set counter level
+            if(COUNTER_LEVEL STREQUAL "THREAD")
+                set(COUNTER_LEVEL_${KEY} 0) # artsCounterLevelThread
+            elseif(COUNTER_LEVEL STREQUAL "NODE")
+                set(COUNTER_LEVEL_${KEY} 1) # artsCounterLevelNode
+            elseif(COUNTER_LEVEL STREQUAL "CLUSTER")
+                set(COUNTER_LEVEL_${KEY} 2) # artsCounterLevelCluster
+            endif()
+
+            # Set reduce method
+            if(REDUCE_METHOD STREQUAL "SUM")
+                set(REDUCE_METHOD_${KEY} 0) # artsCounterReduceSum
+            elseif(REDUCE_METHOD STREQUAL "MAX")
+                set(REDUCE_METHOD_${KEY} 1) # artsCounterReduceMax
+            elseif(REDUCE_METHOD STREQUAL "MIN")
+                set(REDUCE_METHOD_${KEY} 2) # artsCounterReduceMin
+            elseif(REDUCE_METHOD STREQUAL "MASTER")
+                set(REDUCE_METHOD_${KEY} 3) # artsCounterReduceMaster
             endif()
         endif()
     endif()
@@ -158,8 +170,6 @@ extern \"C\" {
 
 #include <stdbool.h>
 
-#include \"arts/introspection/Counter.h\"
-
 /* ============================================================================
 * Enable/Disable Flags
 * ============================================================================ */
@@ -175,22 +185,31 @@ foreach(COUNTER ${COUNTER_TYPES})
     file(APPEND ${GENERATED_HEADER} "#define ENABLE_${COUNTER} ${ENABLE_${COUNTER}}\n")
 endforeach()
 
-# Generate capture mode flags for counters
-file(APPEND ${GENERATED_HEADER} "\n/* Counter Capture Mode Flags (0=OFF, 1=ONCE, 2=PERIODIC) */\n")
+# Generate counter mode flags for counters
+file(APPEND ${GENERATED_HEADER} "\n/* Counter Mode Flags (0=OFF, 1=ONCE, 2=PERIODIC) */\n")
 foreach(COUNTER ${COUNTER_TYPES})
-    if(NOT DEFINED CAPTURE_MODE_${COUNTER})
-        set(CAPTURE_MODE_${COUNTER} 0)
+    if(NOT DEFINED COUNTER_MODE_${COUNTER})
+        set(COUNTER_MODE_${COUNTER} 0)
     endif()
-    file(APPEND ${GENERATED_HEADER} "#define CAPTURE_MODE_${COUNTER} ${CAPTURE_MODE_${COUNTER}}\n")
+    file(APPEND ${GENERATED_HEADER} "#define COUNTER_MODE_${COUNTER} ${COUNTER_MODE_${COUNTER}}\n")
 endforeach()
 
-# Generate capture level flags for counters
-file(APPEND ${GENERATED_HEADER} "\n/* Counter Capture Level Flags (0=THREAD, 1=NODE, 2=CLUSTER) */\n")
+# Generate counter level flags for counters
+file(APPEND ${GENERATED_HEADER} "\n/* Counter Level Flags (0=THREAD, 1=NODE, 2=CLUSTER) */\n")
 foreach(COUNTER ${COUNTER_TYPES})
-    if(NOT DEFINED CAPTURE_LEVEL_${COUNTER})
-        set(CAPTURE_LEVEL_${COUNTER} 1) # Default to NODE
+    if(NOT DEFINED COUNTER_LEVEL_${COUNTER})
+        set(COUNTER_LEVEL_${COUNTER} 1) # Default to NODE
     endif()
-    file(APPEND ${GENERATED_HEADER} "#define CAPTURE_LEVEL_${COUNTER} ${CAPTURE_LEVEL_${COUNTER}}\n")
+    file(APPEND ${GENERATED_HEADER} "#define COUNTER_LEVEL_${COUNTER} ${COUNTER_LEVEL_${COUNTER}}\n")
+endforeach()
+
+# Generate reduce method flags for counters
+file(APPEND ${GENERATED_HEADER} "\n/* Counter Reduce Method Flags (0=SUM, 1=MAX, 2=MIN, 3=MASTER) */\n")
+foreach(COUNTER ${COUNTER_TYPES})
+    if(NOT DEFINED REDUCE_METHOD_${COUNTER})
+        set(REDUCE_METHOD_${COUNTER} 0) # Default to SUM
+    endif()
+    file(APPEND ${GENERATED_HEADER} "#define REDUCE_METHOD_${COUNTER} ${REDUCE_METHOD_${COUNTER}}\n")
 endforeach()
 
 # Generate counter macros automatically
@@ -213,10 +232,10 @@ foreach(COUNTER ${COUNTER_TYPES})
 
     file(APPEND ${GENERATED_HEADER}
         "#if ENABLE_${COUNTER}
-    #define ${TIMER_START}() artsCounterTimerStart(&artsThreadInfo.artsCounters[${COUNTER_INDEX}])
-    #define ${TIMER_STOP}() artsCounterTimerEnd(&artsThreadInfo.artsCounters[${COUNTER_INDEX}])
-    #define ${INCREMENT}(value) artsCounterIncrementBy(&artsThreadInfo.artsCounters[${COUNTER_INDEX}], value)
-    #define ${DECREMENT}(value) artsCounterDecrementBy(&artsThreadInfo.artsCounters[${COUNTER_INDEX}], value)
+    #define ${TIMER_START}() artsCounterTimerStart(&artsThreadLocalCounters[${COUNTER_INDEX}])
+    #define ${TIMER_STOP}() artsCounterTimerEnd(&artsThreadLocalCounters[${COUNTER_INDEX}])
+    #define ${INCREMENT}(value) artsCounterIncrementBy(&artsThreadLocalCounters[${COUNTER_INDEX}], value)
+    #define ${DECREMENT}(value) artsCounterDecrementBy(&artsThreadLocalCounters[${COUNTER_INDEX}], value)
 #else
     #define ${TIMER_START}() ((void)0)
     #define ${TIMER_STOP}() ((void)0)
@@ -236,36 +255,49 @@ file(APPEND ${GENERATED_HEADER} "
 
 ")
 
-# Generate counter capture mode array
+# Generate counter mode array
 file(APPEND ${GENERATED_HEADER} "
-/* Counter capture mode array (0=OFF, 1=ONCE, 2=PERIODIC) */
-static const unsigned int artsCaptureModeArray[] = {
+/* Counter mode array (0=OFF, 1=ONCE, 2=PERIODIC) */
+static const unsigned int artsCounterModeArray[] = {
 ")
 
 foreach(COUNTER ${COUNTER_TYPES})
-    if(NOT DEFINED CAPTURE_MODE_${COUNTER})
-        set(CAPTURE_MODE_${COUNTER} 0)
+    if(NOT DEFINED COUNTER_MODE_${COUNTER})
+        set(COUNTER_MODE_${COUNTER} 0)
     endif()
-    file(APPEND ${GENERATED_HEADER} "    ${CAPTURE_MODE_${COUNTER}},  /* ${COUNTER} */\n")
+    file(APPEND ${GENERATED_HEADER} "    ${COUNTER_MODE_${COUNTER}},  /* ${COUNTER} */\n")
 endforeach()
 
 file(APPEND ${GENERATED_HEADER} "};\n\n")
 
-# Generate counter capture level array
+# Generate counter level array
 file(APPEND ${GENERATED_HEADER} "
-/* Counter capture level array (0=THREAD, 1=NODE, 2=CLUSTER) */
-static const unsigned int artsCaptureLevelArray[] = {
+/* Counter level array (0=THREAD, 1=NODE, 2=CLUSTER) */
+static const unsigned int artsCounterLevelArray[] = {
 ")
 
 foreach(COUNTER ${COUNTER_TYPES})
-    if(NOT DEFINED CAPTURE_LEVEL_${COUNTER})
-        set(CAPTURE_LEVEL_${COUNTER} 1) # Default to NODE
+    if(NOT DEFINED COUNTER_LEVEL_${COUNTER})
+        set(COUNTER_LEVEL_${COUNTER} 1) # Default to NODE
     endif()
-    file(APPEND ${GENERATED_HEADER} "    ${CAPTURE_LEVEL_${COUNTER}},  /* ${COUNTER} */\n")
+    file(APPEND ${GENERATED_HEADER} "    ${COUNTER_LEVEL_${COUNTER}},  /* ${COUNTER} */\n")
 endforeach()
 
 file(APPEND ${GENERATED_HEADER} "};\n\n")
+# Generate counter reduce method array
+file(APPEND ${GENERATED_HEADER} "
+/* Counter reduce method array (0=SUM, 1=MAX, 2=MIN, 3=MASTER) */
+static const unsigned int artsCounterReduceMethodArray[] = {
+")
 
+foreach(COUNTER ${COUNTER_TYPES})
+    if(NOT DEFINED REDUCE_METHOD_${COUNTER})
+        set(REDUCE_METHOD_${COUNTER} 0) # Default to SUM
+    endif()
+    file(APPEND ${GENERATED_HEADER} "    ${REDUCE_METHOD_${COUNTER}},  /* ${COUNTER} */\n")
+endforeach()
+
+file(APPEND ${GENERATED_HEADER} "};\n\n")
 # Function declarations
 file(APPEND ${GENERATED_HEADER} "
 #ifdef __cplusplus

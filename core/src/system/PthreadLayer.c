@@ -36,6 +36,7 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
+#include "arts/introspection/Preamble.h"
 #define _GNU_SOURCE
 #include "arts/system/Threads.h"
 
@@ -67,13 +68,37 @@ void *artsThreadLoop(void *data) {
   artsRuntimePrivateInit(unit, gConfig);
   artsRuntimeLoop();
   artsRuntimePrivateCleanup();
+
+  // Save final counter values to savedCounters before thread exits
+  // This must happen after cleanup but before thread terminates
+  unsigned int threadId = unit->id;
+  artsCounter *saved = artsNodeInfo.savedCounters[threadId];
+  for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
+    saved[i].count = artsThreadLocalCounters[i].count;
+    saved[i].start = 0;
+  }
+  // Mark thread as closed by clearing liveCounters pointer
+  // Capture thread will skip threads with NULL liveCounters
+  artsNodeInfo.liveCounters[threadId] = NULL;
+
   return NULL;
   // pthread_exit(NULL);
 }
 
 void artsThreadMainJoin() {
   artsRuntimeLoop();
+  END_TO_END_TIME_STOP();
   artsRuntimePrivateCleanup();
+
+  // Save main thread's final counter values before joining other threads
+  artsCounter *saved = artsNodeInfo.savedCounters[0];
+  for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
+    saved[i].count = artsThreadLocalCounters[i].count;
+    saved[i].start = 0;
+  }
+  // Mark main thread as closed
+  artsNodeInfo.liveCounters[0] = NULL;
+
   int i;
   for (i = 1; i < artsNodeInfo.totalThreadCount; i++)
     pthread_join(nodeThreadList[i], NULL);

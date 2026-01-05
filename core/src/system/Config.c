@@ -744,12 +744,6 @@ struct artsConfig *artsConfigLoad() {
   else
     config->counterFolder = artsConfigMakeNewVar("./counter");
 
-  if ((foundVariableChar = artsConfigFindVariableChar(
-           configVariables, "counterStartPoint")) != NULL)
-    config->counterStartPoint = strtol(foundVariableChar, &end, 10);
-  else
-    config->counterStartPoint = 1;
-
   if ((foundVariable = artsConfigFindVariable(
            &configVariables, "counterCaptureInterval")) != NULL)
     config->counterCaptureInterval = strtol(foundVariable->value, &end, 10);

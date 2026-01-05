@@ -491,18 +491,14 @@ void acquireDbs(struct artsEdt *edt) {
 
       // Update acquire-mode counters
       if (effectiveMode == ARTS_DB_READ) {
-        artsCounterIncrementBy(&artsThreadInfo.artsCounters[acquireReadMode],
-                               1);
+        INCREMENT_ACQUIRE_READ_MODE_BY(1);
         // Track owner update savings when override changes WRITE -> READ
         if (depv[i].mode == ARTS_DB_WRITE && owner == artsGlobalRankId)
-          artsCounterIncrementBy(
-              &artsThreadInfo.artsCounters[ownerUpdatesSaved], 1);
+          INCREMENT_OWNER_UPDATES_SAVED_BY(1);
       } else if (effectiveMode == ARTS_DB_WRITE) {
-        artsCounterIncrementBy(&artsThreadInfo.artsCounters[acquireWriteMode],
-                               1);
+        INCREMENT_ACQUIRE_WRITE_MODE_BY(1);
         if (owner == artsGlobalRankId)
-          artsCounterIncrementBy(
-              &artsThreadInfo.artsCounters[ownerUpdatesPerformed], 1);
+          INCREMENT_OWNER_UPDATES_PERFORMED_BY(1);
       }
 
       ARTS_INFO("Acquiring DB[Guid:%lu, Mode:%u, Owner:%d, Rank:%u] "

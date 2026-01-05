@@ -39,6 +39,7 @@
 #include "arts/introspection/Counter.h"
 
 #include <pthread.h>
+#include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -53,9 +54,28 @@
 
 // Arrays are defined as static const in Preamble.h (included via arts.h)
 
-static uint64_t countersOn = 0;
+// Thread-local counter storage - simple array of counters.
+// Each thread updates these directly during execution.
+// No captures here - capture thread handles periodic snapshots separately.
+__thread artsCounter artsThreadLocalCounters[NUM_COUNTER_TYPES];
+
+// arts_id tracking stored separately per-thread (compile-time conditional)
+#if ENABLE_artsIdEdtMetrics || ENABLE_artsIdDbMetrics
+__thread artsIdHashTable artsThreadLocalArtsIdMetrics;
+#endif
+#if ENABLE_artsIdEdtCaptures
+__thread artsArrayList *artsThreadLocalEdtCaptureList = NULL;
+#endif
+#if ENABLE_artsIdDbCaptures
+__thread artsArrayList *artsThreadLocalDbCaptureList = NULL;
+#endif
+
+// Capture thread state - only used for periodic counter capture
 static pthread_t captureThread;
 static volatile bool captureThreadRunning = false;
+
+// First capture epoch - used to normalize all epochs to start from 0
+static uint64_t firstCaptureEpoch = 0;
 
 // Time synchronization variables (exported for RemoteFunctions.c)
 // timeOffset = workerTime - masterTime (positive if worker is ahead)
@@ -63,16 +83,21 @@ static volatile bool captureThreadRunning = false;
 volatile int64_t artsCounterTimeOffset = 0;
 volatile bool artsCounterTimeSyncReceived = false;
 
-// Cluster counter reduction storage (exported for RemoteFunctions.c)
-// Only used on master node (rank 0) to aggregate values from all nodes
-uint64_t *artsClusterCounters = NULL;
-volatile unsigned int artsClusterNodesReceived = 0;
+// Cluster reduction state (exported for RemoteFunctions.c)
+// Master allocates these arrays before workers send their data
+volatile unsigned int artsCounterReduceReceived = 0;
+uint64_t **artsClusterCounterValues = NULL; // [counterIndex][nodeId]
+uint64_t ***artsClusterCaptureEpochs =
+    NULL; // [counterIndex][nodeId][captureIdx]
+uint64_t ***artsClusterCaptureValues =
+    NULL; // [counterIndex][nodeId][captureIdx]
+uint64_t **artsClusterCaptureCounts = NULL; // [counterIndex][nodeId]
 
 // Get synchronized timestamp (adjusted to master node's clock)
+// Call this function only after time synchronization is complete
+// artsCounterTimeSyncReceived == true
 static inline uint64_t artsGetSyncedTimeStamp(void) {
-  // Use acquire semantics to ensure we see the offset written by sync response
-  int64_t offset = __atomic_load_n(&artsCounterTimeOffset, __ATOMIC_ACQUIRE);
-  return (uint64_t)((int64_t)artsGetTimeStamp() - offset);
+  return (uint64_t)((int64_t)artsGetTimeStamp() - artsCounterTimeOffset);
 }
 
 static uint64_t artsCounterCaptureCounter(artsCounter *counter) {
@@ -90,8 +115,7 @@ static uint64_t artsCounterCaptureCounter(artsCounter *counter) {
 }
 
 static void *artsCounterCaptureThread(void *args) {
-  // We must set artsCounters to prevent invalid memory access
-  artsThreadInfo.artsCounters = (artsCounter *)args;
+  (void)args; // Unused - capture thread doesn't need its own counters
 
   // Validate counterCaptureInterval to prevent division by zero
   if (artsNodeInfo.counterCaptureInterval == 0) {
@@ -124,815 +148,892 @@ static void *artsCounterCaptureThread(void *args) {
   }
   uint64_t nextCaptureTime = (captureEpoch + 1) * intervalNs;
 
+  // Record the first capture epoch for normalization (epochs will start from 0)
+  firstCaptureEpoch = captureEpoch + 1;
+
   while (captureThreadRunning) {
-    if (countersOn) {
-      syncedTime = artsGetSyncedTimeStamp();
-      // Calculate sleep time until next aligned capture (in synced time)
-      int64_t sleepNs = (int64_t)(nextCaptureTime - syncedTime);
+    syncedTime = artsGetSyncedTimeStamp();
+    // Calculate sleep time until next aligned capture (in synced time)
+    int64_t sleepNs = (int64_t)(nextCaptureTime - syncedTime);
 
-      if (sleepNs > 0) {
-        ARTS_INFO("Debug: nextCaptureTime=%lf ms, syncedTime=%lf ms, "
-                  "sleepTime=%lf ms, offset=%ld ns",
-                  (double)nextCaptureTime / 1000000.0,
-                  (double)syncedTime / 1000000.0, (double)sleepNs / 1000000.0,
-                  __atomic_load_n(&artsCounterTimeOffset, __ATOMIC_RELAXED));
-        nanosleep((const struct timespec[]){{sleepNs / 1000000000,
-                                             sleepNs % 1000000000}},
-                  NULL);
-        // Advance to the next expected capture time
-        nextCaptureTime += intervalNs;
-      } else {
-        // We are late: nextCaptureTime is already in the past.
-        // Compute how many intervals we are behind and jump forward
-        // to the next future aligned capture time to avoid drift.
-        uint64_t intervalsBehind =
-            (uint64_t)(((-sleepNs) / (int64_t)intervalNs) + 1);
-        // Sanity check: cap at reasonable maximum to prevent overflow
-        if (intervalsBehind > 1000000) {
-          intervalsBehind = 1000000;
-        }
-        ARTS_INFO(
-            "Counter capture lagging: syncedTime=%lf ms, "
-            "nextCaptureTime=%lf ms, lateBy=%lf ms, skipping %lu interval(s)",
-            (double)syncedTime / 1000000.0, (double)nextCaptureTime / 1000000.0,
-            (double)(-sleepNs) / 1000000.0, intervalsBehind);
-        nextCaptureTime += intervalsBehind * intervalNs;
-      }
-    } else {
-      // Counters not yet started, wait for interval and re-check
-      nanosleep((const struct timespec[]){{intervalNs / 1000000000,
-                                           intervalNs % 1000000000}},
+    // Track current epoch for this capture
+    uint64_t currentEpoch = captureEpoch + 1;
+
+    if (sleepNs > 0) {
+      nanosleep((const struct timespec[]){{sleepNs / 1000000000,
+                                           sleepNs % 1000000000}},
                 NULL);
-      // Re-align to synced clock when counters start
-      syncedTime = artsGetSyncedTimeStamp();
-      captureEpoch = syncedTime / intervalNs;
-      nextCaptureTime = (captureEpoch + 1) * intervalNs;
-      continue;
-    }
-    // Capture counters - only for PERIODIC mode counters
-    for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
-      if (artsCaptureModeArray[i] == artsCaptureModePeriodic) {
-        // Only this thread accesses node captures so no atomic needed
-        uint64_t *capture = NULL;
-        // CLUSTER level behaves like NODE level during capture
-        if (artsCaptureLevelArray[i] == artsCaptureLevelNode ||
-            artsCaptureLevelArray[i] == artsCaptureLevelCluster) {
-          capture = (uint64_t *)artsNextFreeFromArrayList(
-              artsNodeInfo.counterReduces.counterCaptures[i]);
-          if (artsCounterReduceTypes[i] == artsCounterSum) {
-            *capture = 0;
-          } else if (artsCounterReduceTypes[i] == artsCounterMax) {
-            *capture = 0;
-          } else if (artsCounterReduceTypes[i] == artsCounterMin) {
-            *capture = UINT64_MAX;
-          }
-        }
-        // Capture and reduce from all threads
-        for (unsigned int t = 0; t < artsNodeInfo.totalThreadCount; t++) {
-          artsCounterCaptures *threadCapture = &artsNodeInfo.counterCaptures[t];
-          uint64_t captured =
-              artsCounterCaptureCounter(&threadCapture->counters[i]);
-          artsPushToArrayList(threadCapture->captures[i], &captured);
-          if (capture) {
-            if (artsCounterReduceTypes[i] == artsCounterSum) {
-              *capture += captured;
-            } else if (artsCounterReduceTypes[i] == artsCounterMax) {
-              if (*capture < captured) {
-                *capture = captured;
-              }
-            } else if (artsCounterReduceTypes[i] == artsCounterMin) {
-              if (*capture > captured) {
-                *capture = captured;
-              }
-            }
-          }
-        }
-      }
+      // Advance to the next expected capture time
+      captureEpoch++;
+      nextCaptureTime += intervalNs;
+    } else {
+      // We are late: nextCaptureTime is already in the past.
+      // Compute how many intervals we are behind and jump forward
+      // to the next future aligned capture time to avoid drift.
+      uint64_t intervalsBehind =
+          (uint64_t)(((-sleepNs) / (int64_t)intervalNs) + 1);
+      ARTS_INFO(
+          "Counter capture lagging: syncedTime=%lf ms, "
+          "nextCaptureTime=%lf ms, lateBy=%lf ms, skipping %lu interval(s)",
+          (double)syncedTime / 1000000.0, (double)nextCaptureTime / 1000000.0,
+          (double)(-sleepNs) / 1000000.0, intervalsBehind);
+      captureEpoch += intervalsBehind;
+      currentEpoch = captureEpoch;
+      nextCaptureTime += intervalsBehind * intervalNs;
     }
 
-// Reduce arts_id hash tables for NODE level with PERIODIC mode
-#if ENABLE_artsIdEdtMetrics || ENABLE_artsIdDbMetrics
-    if ((artsCaptureModeArray[artsIdEdtMetrics] == artsCaptureModePeriodic &&
-         (artsCaptureLevelArray[artsIdEdtMetrics] == artsCaptureLevelNode ||
-          artsCaptureLevelArray[artsIdEdtMetrics] ==
-              artsCaptureLevelCluster)) ||
-        (artsCaptureModeArray[artsIdDbMetrics] == artsCaptureModePeriodic &&
-         (artsCaptureLevelArray[artsIdDbMetrics] == artsCaptureLevelNode ||
-          artsCaptureLevelArray[artsIdDbMetrics] == artsCaptureLevelCluster))) {
-      // Reduce all thread hash tables into node-level hash table
-      for (unsigned int t = 0; t < artsNodeInfo.totalThreadCount; t++) {
-        artsIdReduceHashTables(
-            &artsNodeInfo.counterReduces.artsIdMetricsTable,
-            &artsNodeInfo.counterCaptures[t].artsIdMetricsTable);
+    // Capture counters from all threads - store in nodeInfo.captureArrays
+    // Skip threads with NULL liveCounters (not registered or already closed)
+    for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
+      if (artsCounterModeArray[i] == artsCounterModePeriodic) {
+        for (unsigned int t = 0; t < artsNodeInfo.totalThreadCount; t++) {
+          // Read counter value from thread's __thread storage via liveCounters
+          // pointer NULL means thread hasn't registered yet or has already
+          // closed
+          artsCounter *threadCounters = artsNodeInfo.liveCounters[t];
+          if (!threadCounters) {
+            continue;
+          }
+          artsCounterCapture capture;
+          capture.epoch = currentEpoch;
+          capture.value = artsCounterCaptureCounter(&threadCounters[i]);
+          if (artsNodeInfo.captureArrays[t][i]) {
+            artsPushToArrayList(artsNodeInfo.captureArrays[t][i], &capture);
+          }
+        }
       }
     }
-#endif
   }
   return NULL;
 }
 
-void artsCounterStart(unsigned int startPoint) {
-  if (artsNodeInfo.counterStartPoint == startPoint) {
-    if (countersOn) {
-      ARTS_DEBUG("Trying to start counters which are already started at %lu",
-                 countersOn);
-      artsDebugGenerateSegFault();
-    }
-    countersOn = artsGetTimeStamp();
-
-    bool needCaptureThread = false;
-    bool hasNodeLevel = false;
-
-    for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
-      // Need capture thread for PERIODIC mode counters
-      if (artsCaptureModeArray[i] == artsCaptureModePeriodic) {
-        needCaptureThread = true;
-        if (artsCaptureLevelArray[i] == artsCaptureLevelNode) {
-          hasNodeLevel = true;
-        }
-      }
-    }
-
-    if (needCaptureThread) {
-      // Time synchronization across nodes using RTT-based algorithm:
-      // Worker nodes initiate sync requests to master (rank 0).
-      // Master responds with its timestamp.
-      // Worker calculates offset accounting for network latency.
-      //
-      // Algorithm (NTP-like):
-      //   T1 = worker send time (worker clock)
-      //   T2 = master receive time (master clock)
-      //   T3 = worker receive time (worker clock)
-      //   RTT = T3 - T1 (clock offsets cancel)
-      //   offset = ((T1 - T2) + (T3 - T2)) / 2
-      //          = (T1 + T3) / 2 - T2
-      // This assumes symmetric network latency.
-
-      if (artsGlobalRankId == 0) {
-        // Master node: no offset needed, just mark as synced
-        __atomic_store_n(&artsCounterTimeOffset, 0, __ATOMIC_RELAXED);
-        __atomic_store_n(&artsCounterTimeSyncReceived, true, __ATOMIC_RELEASE);
-        ARTS_INFO("Time sync: Master node (rank 0), offset=0");
-      } else {
-        // Worker nodes: send sync request to master and wait for response
-        artsRemoteTimeSyncReqSend(0); // Send to master (rank 0)
-
-        // Wait for sync response with timeout
-        uint64_t timeout = artsGetTimeStamp() + 5000000000ULL; // 5 seconds
-        while (!__atomic_load_n(&artsCounterTimeSyncReceived, __ATOMIC_ACQUIRE) &&
-               artsGetTimeStamp() < timeout) {
-          usleep(1000); // Wait 1ms
-        }
-        if (!__atomic_load_n(&artsCounterTimeSyncReceived, __ATOMIC_ACQUIRE)) {
-          ARTS_INFO("Time sync: Timeout waiting for master response, "
-                    "using local time (offset=0)");
-          __atomic_store_n(&artsCounterTimeOffset, 0, __ATOMIC_RELAXED);
-          __atomic_store_n(&artsCounterTimeSyncReceived, true, __ATOMIC_RELEASE);
-        }
-      }
-
-      captureThreadRunning = true;
-
-      int ret = pthread_create(&captureThread, NULL, artsCounterCaptureThread,
-                               artsThreadInfo.artsCounters);
-      if (ret) {
-        ARTS_DEBUG("Failed to create capture thread: %d", ret);
-        captureThreadRunning = false;
-      } else {
-        ARTS_INFO("Counter capture thread started (THREAD=%s, NODE=%s)",
-                  needCaptureThread ? "yes" : "no",
-                  hasNodeLevel ? "yes" : "no");
-      }
-    }
-  }
-}
-
-void artsCounterStop() {
-  uint64_t temp = countersOn;
-  countersOn = 0;
-  if (temp == 0) {
-    ARTS_DEBUG("Trying to stop counters which are not started");
+void artsCounterCaptureStart() {
+  if (captureThreadRunning) {
+    ARTS_DEBUG("Trying to start capture thread which is already running");
     artsDebugGenerateSegFault();
   }
 
-  if (captureThreadRunning) {
-    captureThreadRunning = false;
-    int ret = pthread_join(captureThread, NULL);
-    if (ret) {
-      ARTS_DEBUG("Failed to join capture thread: %d", ret);
-    } else {
-      ARTS_INFO("Counter capture thread stopped");
+  bool needCaptureThread = false;
+
+  for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
+    // Need capture thread for PERIODIC mode counters
+    if (artsCounterModeArray[i] == artsCounterModePeriodic) {
+      needCaptureThread = true;
+      break;
     }
   }
 
-  ARTS_INFO("Counter on time: %lu", artsGetTimeStamp() - temp);
+  if (needCaptureThread) {
+    // RTT-based time synchronization: workers send request to master,
+    // master responds with its timestamp, workers calculate offset using RTT.
+    // This provides better accuracy than one-way broadcast.
+
+    if (artsGlobalRankId == 0) {
+      // Master node: no offset needed, just set ready
+      artsCounterTimeOffset = 0;
+      artsCounterTimeSyncReceived = true;
+      ARTS_INFO("Time sync: Master node (rank 0), offset=0");
+    } else {
+      // Worker nodes: send sync request and wait for response
+      artsRemoteTimeSyncRequest();
+      uint64_t timeout = artsGetTimeStamp() + 1000000000ULL; // 1 second
+      while (!artsCounterTimeSyncReceived && artsGetTimeStamp() < timeout) {
+        usleep(1000); // Wait 1ms
+      }
+      if (!artsCounterTimeSyncReceived) {
+        ARTS_INFO("Time sync: Timeout waiting for master response, "
+                  "using local time (offset=0)");
+        artsCounterTimeOffset = 0;
+        artsCounterTimeSyncReceived = true;
+      }
+    }
+
+    captureThreadRunning = true;
+
+    int ret =
+        pthread_create(&captureThread, NULL, artsCounterCaptureThread, NULL);
+    if (ret) {
+      ARTS_DEBUG("Failed to create capture thread: %d", ret);
+      captureThreadRunning = false;
+    } else {
+      ARTS_INFO("Counter capture thread started");
+    }
+  }
 }
 
-void artsCounterReset(artsCounter *counter) {
-  counter->count = 0;
-  counter->start = 0;
+void artsCounterCaptureStop() {
+  if (!captureThreadRunning) {
+    // No capture thread to stop - this is fine, counters still work
+    return;
+  }
+  captureThreadRunning = false;
+  int ret = pthread_join(captureThread, NULL);
+  if (ret) {
+    ARTS_DEBUG("Failed to join capture thread: %d", ret);
+  }
 }
 
 void artsCounterIncrementBy(artsCounter *counter, uint64_t num) {
-  if (countersOn) {
-    artsAtomicFetchAddU64(&counter->count, num);
-  }
+  artsAtomicFetchAddU64(&counter->count, num);
 }
 
 void artsCounterDecrementBy(artsCounter *counter, uint64_t num) {
-  if (countersOn) {
-    artsAtomicFetchSubU64(&counter->count, num);
-  }
+  artsAtomicFetchSubU64(&counter->count, num);
 }
 
 void artsCounterTimerStart(artsCounter *counter) {
-  if (countersOn) {
-    if (artsAtomicCswapU64(&counter->start, 0, artsGetTimeStamp())) {
-      ARTS_DEBUG("Trying to start a timer that is already started");
-      artsDebugGenerateSegFault();
-    }
+  if (artsAtomicCswapU64(&counter->start, 0, artsGetTimeStamp())) {
+    ARTS_DEBUG("Trying to start a timer that is already started");
+    artsDebugGenerateSegFault();
   }
 }
 
 void artsCounterTimerEnd(artsCounter *counter) {
-  if (countersOn) {
-    uint64_t end = artsGetTimeStamp();
-    uint64_t start = artsAtomicSwapU64(&counter->start, 0);
-    if (!start) {
-      ARTS_DEBUG("Trying to end a timer that is not started");
-      artsDebugGenerateSegFault();
-    }
-    artsAtomicFetchAddU64(&counter->count, end - start);
+  uint64_t end = artsGetTimeStamp();
+  uint64_t start = artsAtomicSwapU64(&counter->start, 0);
+  if (!start) {
+    ARTS_DEBUG("Trying to end a timer that is not started");
+    artsDebugGenerateSegFault();
+  }
+  artsAtomicFetchAddU64(&counter->count, end - start);
+}
+
+// Helper: apply one reduction step
+static inline uint64_t artsApplyReduction(uint64_t accumulator, uint64_t value,
+                                          artsCounterReduceMethod reduceMethod,
+                                          unsigned int sourceIndex) {
+  switch (reduceMethod) {
+  case artsCounterReduceSum:
+    return accumulator + value;
+  case artsCounterReduceMax:
+    return (accumulator < value) ? value : accumulator;
+  case artsCounterReduceMin:
+    return (accumulator > value) ? value : accumulator;
+  case artsCounterReduceMaster:
+    return (sourceIndex == 0) ? value : accumulator;
+  }
+  return accumulator;
+}
+
+// Helper: convert reduce method to string for JSON output
+static inline const char *
+artsReduceMethodToString(artsCounterReduceMethod reduceMethod) {
+  switch (reduceMethod) {
+  case artsCounterReduceSum:
+    return "SUM";
+  case artsCounterReduceMax:
+    return "MAX";
+  case artsCounterReduceMin:
+    return "MIN";
+  case artsCounterReduceMaster:
+    return "MASTER";
+  }
+  return "SUM";
+}
+
+// Helper: convert capture mode to string for JSON output
+static inline const char *artsCounterModeToString(unsigned int mode) {
+  switch (mode) {
+  case artsCounterModeOnce:
+    return "ONCE";
+  case artsCounterModePeriodic:
+    return "PERIODIC";
+  default:
+    return "OFF";
   }
 }
 
-void artsCounterWriteThread(const char *outputFolder, unsigned int nodeId,
-                            unsigned int threadId) {
-  if (!outputFolder) {
-    return;
-  }
-
-  // Check if any counters have THREAD level output
-  bool hasThreadLevel = false;
-  for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
-    if (artsCaptureModeArray[i] != artsCaptureModeOff &&
-        artsCaptureLevelArray[i] == artsCaptureLevelThread) {
-      hasThreadLevel = true;
-      break;
+// Helper: check if counter name contains "Time" (case-insensitive)
+static bool artsCounterIsTimeCounter(const char *name) {
+  if (!name)
+    return false;
+  const char *p = name;
+  while (*p) {
+    if ((*p == 'T' || *p == 't') && (*(p + 1) == 'I' || *(p + 1) == 'i') &&
+        (*(p + 2) == 'M' || *(p + 2) == 'm') &&
+        (*(p + 3) == 'E' || *(p + 3) == 'e')) {
+      return true;
     }
+    p++;
   }
-  if (!hasThreadLevel) {
-    return;
-  }
+  return false;
+}
 
-  struct stat st = {0};
-  if (stat(outputFolder, &st) == -1)
-    mkdir(outputFolder, 0755);
-
-  char filename[1024];
-  snprintf(filename, sizeof(filename), "%s/n%u_t%u.json", outputFolder, nodeId,
-           threadId);
-
-  FILE *fp = fopen(filename, "w");
-  if (!fp)
+// Helper: write capture history array to JSON as compact single line
+// Format: [[epoch, value], [epoch, value], ...]
+// Epochs are normalized to start from 0 by subtracting firstCaptureEpoch
+static void artsWriteCaptureHistory(artsJsonWriter *writer, uint64_t *epochs,
+                                    uint64_t *values, uint64_t count) {
+  if (count == 0)
     return;
 
-  artsJsonWriter writer;
-  artsJsonWriterInit(&writer, fp, 2);
+  // Build compact JSON string: [[e,v],[e,v],...]
+  // Estimate size: each entry is at most ~40 chars, plus brackets
+  size_t bufSize = count * 45 + 10;
+  char *buf = (char *)artsMalloc(bufSize);
+  char *p = buf;
+  *p++ = '[';
 
-  artsJsonWriterBeginObject(&writer, NULL);
+  for (uint64_t c = 0; c < count; c++) {
+    if (c > 0)
+      *p++ = ',';
+    uint64_t normalizedEpoch = epochs[c] - firstCaptureEpoch;
+    p += sprintf(p, "[%llu,%llu]", (unsigned long long)normalizedEpoch,
+                 (unsigned long long)values[c]);
+  }
+  *p++ = ']';
+  *p = '\0';
 
-  artsJsonWriterBeginObject(&writer, "metadata");
-  artsJsonWriterWriteUInt64(&writer, "nodeId", nodeId);
-  artsJsonWriterWriteUInt64(&writer, "threadId", threadId);
-  artsJsonWriterWriteUInt64(&writer, "timestamp", (uint64_t)time(NULL));
-  artsJsonWriterWriteString(&writer, "version", "1.0");
-  artsJsonWriterWriteUInt64(&writer, "startPoint",
-                            artsNodeInfo.counterStartPoint);
+  artsJsonWriterWriteRawArray(writer, "captureHistory", buf);
+  artsFree(buf);
+}
+
+// Helper: write common metadata fields to JSON
+static void artsWriteCommonMetadata(artsJsonWriter *writer) {
+  artsJsonWriterWriteUInt64(writer, "timestamp", (uint64_t)time(NULL));
+  artsJsonWriterWriteString(writer, "version", "1.7.0");
   if (artsNodeInfo.counterFolder) {
-    artsJsonWriterWriteString(&writer, "counterFolder",
+    artsJsonWriterWriteString(writer, "counterFolder",
                               artsNodeInfo.counterFolder);
   }
-  artsJsonWriterWriteUInt64(&writer, "counterCaptureInterval",
-                            artsNodeInfo.counterCaptureInterval);
-  artsJsonWriterEndObject(&writer);
+}
 
-  artsJsonWriterBeginObject(&writer, "counters");
-  artsCounterCaptures *threadCounters = &artsNodeInfo.counterCaptures[threadId];
-  for (uint64_t i = 0; i < NUM_COUNTER_TYPES; i++) {
-    // Write counters with THREAD level (both ONCE and PERIODIC modes)
-    if (artsCaptureModeArray[i] != artsCaptureModeOff &&
-        artsCaptureLevelArray[i] == artsCaptureLevelThread) {
-      artsCounter *counter = &threadCounters->counters[i];
-      artsJsonWriterBeginObject(&writer, artsCounterNames[i]);
-      artsJsonWriterWriteUInt64(&writer, "count", counter->count);
-
-      // Write capture mode and level information
-      const char *captureModeStr = "OFF";
-      switch (artsCaptureModeArray[i]) {
-      case artsCaptureModeOnce:
-        captureModeStr = "ONCE";
-        break;
-      case artsCaptureModePeriodic:
-        captureModeStr = "PERIODIC";
-        break;
-      default:
-        break;
-      }
-      artsJsonWriterWriteString(&writer, "captureMode", captureModeStr);
-      artsJsonWriterWriteString(&writer, "captureLevel", "THREAD");
-
-      // Write capture history only for PERIODIC mode
-      if (artsCaptureModeArray[i] == artsCaptureModePeriodic) {
-        artsArrayList *captureList = threadCounters->captures[i];
-        if (captureList && captureList->index > 0) {
-          artsJsonWriterWriteUInt64(&writer, "captureCount",
-                                    captureList->index);
-          artsJsonWriterBeginArray(&writer, "captureHistory");
-          artsArrayListIterator *iter = artsNewArrayListIterator(captureList);
-          while (artsArrayListHasNext(iter)) {
-            uint64_t *value = (uint64_t *)artsArrayListNext(iter);
-            if (value) {
-              artsJsonWriterWriteUInt64(&writer, NULL, *value);
-            }
-          }
-          artsDeleteArrayListIterator(iter);
-          artsJsonWriterEndArray(&writer);
-        }
-      }
-
-      artsJsonWriterEndObject(&writer);
+// Helper: check if any counters exist at given level, return count
+static unsigned int artsCountersAtLevel(unsigned int level) {
+  unsigned int count = 0;
+  for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
+    if (artsCounterModeArray[i] != artsCounterModeOff &&
+        artsCounterLevelArray[i] == level) {
+      count++;
     }
   }
-  artsJsonWriterEndObject(&writer);
+  return count;
+}
 
-// Write arts_id metrics (THREAD level)
-#if ENABLE_artsIdEdtMetrics || ENABLE_artsIdDbMetrics
-  if ((artsCaptureModeArray[artsIdEdtMetrics] != artsCaptureModeOff &&
-       artsCaptureLevelArray[artsIdEdtMetrics] == artsCaptureLevelThread) ||
-      (artsCaptureModeArray[artsIdDbMetrics] != artsCaptureModeOff &&
-       artsCaptureLevelArray[artsIdDbMetrics] == artsCaptureLevelThread)) {
-    artsJsonWriterBeginObject(&writer, "artsIdMetrics");
-    artsIdHashTable *table =
-        &artsNodeInfo.counterCaptures[threadId].artsIdMetricsTable;
-
-    // Export EDT metrics
-    if (artsCounterMode[artsIdEdtMetrics] == artsCounterModeThread) {
-      artsJsonWriterBeginArray(&writer, "edts");
-      for (uint32_t i = 0; i < ARTS_ID_HASH_SIZE; i++) {
-        if (table->edt_metrics[i].valid) {
-          artsJsonWriterBeginObject(&writer, NULL);
-          artsJsonWriterWriteUInt64(&writer, "arts_id",
-                                    table->edt_metrics[i].arts_id);
-          artsJsonWriterWriteUInt64(&writer, "invocations",
-                                    table->edt_metrics[i].invocations);
-          artsJsonWriterWriteUInt64(&writer, "total_exec_ns",
-                                    table->edt_metrics[i].total_exec_ns);
-          artsJsonWriterWriteUInt64(&writer, "total_stall_ns",
-                                    table->edt_metrics[i].total_stall_ns);
-          artsJsonWriterEndObject(&writer);
-        }
-      }
-      artsJsonWriterEndArray(&writer);
-      artsJsonWriterWriteUInt64(&writer, "edt_collisions",
-                                table->edt_collisions);
-    }
-
-    // Export DB metrics
-    if (artsCounterMode[artsIdDbMetrics] == artsCounterModeThread) {
-      artsJsonWriterBeginArray(&writer, "dbs");
-      for (uint32_t i = 0; i < ARTS_ID_HASH_SIZE; i++) {
-        if (table->db_metrics[i].valid) {
-          artsJsonWriterBeginObject(&writer, NULL);
-          artsJsonWriterWriteUInt64(&writer, "arts_id",
-                                    table->db_metrics[i].arts_id);
-          artsJsonWriterWriteUInt64(&writer, "invocations",
-                                    table->db_metrics[i].invocations);
-          artsJsonWriterWriteUInt64(&writer, "bytes_local",
-                                    table->db_metrics[i].bytes_local);
-          artsJsonWriterWriteUInt64(&writer, "bytes_remote",
-                                    table->db_metrics[i].bytes_remote);
-          artsJsonWriterWriteUInt64(&writer, "cache_misses",
-                                    table->db_metrics[i].cache_misses);
-          artsJsonWriterEndObject(&writer);
-        }
-      }
-      artsJsonWriterEndArray(&writer);
-      artsJsonWriterWriteUInt64(&writer, "db_collisions", table->db_collisions);
-    }
-
-    artsJsonWriterEndObject(&writer);
+// Helper: open output file, creating directory if needed
+static FILE *artsOpenCounterFile(const char *outputFolder,
+                                 const char *filename) {
+  struct stat st = {0};
+  if (stat(outputFolder, &st) == -1) {
+    mkdir(outputFolder, 0755);
   }
-#endif
+  char filepath[1024];
+  snprintf(filepath, sizeof(filepath), "%s/%s", outputFolder, filename);
+  return fopen(filepath, "w");
+}
 
-  artsJsonWriterEndObject(&writer);
-  artsJsonWriterFinish(&writer);
+// Helper: finalize and close JSON file
+static void artsCloseCounterFile(artsJsonWriter *writer, FILE *fp) {
+  artsJsonWriterEndObject(writer);
+  artsJsonWriterFinish(writer);
   fputc('\n', fp);
   fclose(fp);
 }
 
-void artsCounterWriteNode(const char *outputFolder, unsigned int nodeId) {
-  if (!outputFolder) {
-    return;
+// Helper function to compute node-level reduced value across all threads
+// Safe to call after threads have closed - uses savedCounters data
+static uint64_t artsComputeNodeReducedValue(unsigned int index) {
+  artsCounterReduceMethod reduceMethod = artsCounterReduceMethodArray[index];
+  uint64_t nodeValue = (reduceMethod == artsCounterReduceMin) ? UINT64_MAX : 0;
+  for (unsigned int t = 0; t < artsNodeInfo.totalThreadCount; t++) {
+    artsCounter *saved = artsNodeInfo.savedCounters[t];
+    if (!saved) {
+      continue; // Thread never registered or data not available
+    }
+    nodeValue =
+        artsApplyReduction(nodeValue, saved[index].count, reduceMethod, t);
   }
+  return nodeValue;
+}
 
-  // Check if any counters have NODE level output
-  bool hasNodeLevel = false;
-  for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
-    if (artsCaptureModeArray[i] != artsCaptureModeOff &&
-        artsCaptureLevelArray[i] == artsCaptureLevelNode) {
-      hasNodeLevel = true;
-      break;
+// Helper function to compute node-level reduced captures for PERIODIC mode
+// Returns arrays of epochs and values, sets count. Caller must free both.
+static void artsComputeNodeReducedCaptures(unsigned int counterIndex,
+                                           uint64_t **outEpochs,
+                                           uint64_t **outValues,
+                                           uint64_t *outCount) {
+  *outEpochs = NULL;
+  *outValues = NULL;
+  *outCount = 0;
+
+  // Find the max number of captures across all threads
+  uint64_t maxCaptures = 0;
+  for (unsigned int t = 0; t < artsNodeInfo.totalThreadCount; t++) {
+    artsArrayList *threadList = artsNodeInfo.captureArrays[t][counterIndex];
+    if (threadList && threadList->index > maxCaptures) {
+      maxCaptures = threadList->index;
     }
   }
-  if (!hasNodeLevel) {
+
+  if (maxCaptures == 0) {
     return;
   }
 
-  struct stat st = {0};
-  if (stat(outputFolder, &st) == -1)
-    mkdir(outputFolder, 0755);
+  // Allocate output arrays (upper bound size)
+  *outEpochs = (uint64_t *)artsMalloc(maxCaptures * sizeof(uint64_t));
+  *outValues = (uint64_t *)artsMalloc(maxCaptures * sizeof(uint64_t));
 
-  char filename[1024];
-  snprintf(filename, sizeof(filename), "%s/n%u.json", outputFolder, nodeId);
+  // Create iterators for all threads
+  artsArrayListIterator **iters = (artsArrayListIterator **)artsCalloc(
+      artsNodeInfo.totalThreadCount, sizeof(artsArrayListIterator *));
+  artsCounterCapture **currentCaptures = (artsCounterCapture **)artsCalloc(
+      artsNodeInfo.totalThreadCount, sizeof(artsCounterCapture *));
 
-  FILE *fp = fopen(filename, "w");
+  for (unsigned int t = 0; t < artsNodeInfo.totalThreadCount; t++) {
+    artsArrayList *threadList = artsNodeInfo.captureArrays[t][counterIndex];
+    if (threadList && threadList->index > 0) {
+      iters[t] = artsNewArrayListIterator(threadList);
+      if (artsArrayListHasNext(iters[t])) {
+        currentCaptures[t] = (artsCounterCapture *)artsArrayListNext(iters[t]);
+      }
+    }
+  }
+
+  // Reduce by epoch - process captures in epoch order
+  uint64_t capturesWritten = 0;
+  while (capturesWritten < maxCaptures) {
+    // Find minimum epoch among all current captures
+    uint64_t minEpoch = UINT64_MAX;
+    for (unsigned int t = 0; t < artsNodeInfo.totalThreadCount; t++) {
+      if (currentCaptures[t] && currentCaptures[t]->epoch < minEpoch) {
+        minEpoch = currentCaptures[t]->epoch;
+      }
+    }
+    if (minEpoch == UINT64_MAX)
+      break;
+
+    // Reduce all captures at this epoch
+    artsCounterReduceMethod reduceMethod =
+        artsCounterReduceMethodArray[counterIndex];
+    uint64_t reducedValue =
+        (reduceMethod == artsCounterReduceMin) ? UINT64_MAX : 0;
+    bool hasValue = false;
+    for (unsigned int t = 0; t < artsNodeInfo.totalThreadCount; t++) {
+      if (currentCaptures[t] && currentCaptures[t]->epoch == minEpoch) {
+        hasValue = true;
+        reducedValue = artsApplyReduction(
+            reducedValue, currentCaptures[t]->value, reduceMethod, t);
+        // Advance this thread's iterator
+        if (artsArrayListHasNext(iters[t])) {
+          currentCaptures[t] =
+              (artsCounterCapture *)artsArrayListNext(iters[t]);
+        } else {
+          currentCaptures[t] = NULL;
+        }
+      }
+    }
+
+    if (hasValue) {
+      (*outEpochs)[capturesWritten] = minEpoch;
+      (*outValues)[capturesWritten] = reducedValue;
+      capturesWritten++;
+    }
+  }
+
+  *outCount = capturesWritten;
+
+  // Cleanup iterators
+  for (unsigned int t = 0; t < artsNodeInfo.totalThreadCount; t++) {
+    if (iters[t]) {
+      artsDeleteArrayListIterator(iters[t]);
+    }
+  }
+  artsFree(iters);
+  artsFree(currentCaptures);
+}
+
+// Helper: write arts_id metrics to JSON
+#if ENABLE_artsIdEdtMetrics || ENABLE_artsIdDbMetrics
+static void artsWriteArtsIdMetrics(artsJsonWriter *writer,
+                                   artsIdHashTable *table, bool writeEdt,
+                                   bool writeDb) {
+  artsJsonWriterBeginObject(writer, "artsIdMetrics");
+
+  if (writeEdt) {
+    artsJsonWriterBeginArray(writer, "edts");
+    for (uint32_t i = 0; i < ARTS_ID_HASH_SIZE; i++) {
+      if (table->edt_metrics[i].valid) {
+        artsJsonWriterBeginObject(writer, NULL);
+        artsJsonWriterWriteUInt64(writer, "arts_id",
+                                  table->edt_metrics[i].arts_id);
+        artsJsonWriterWriteUInt64(writer, "invocations",
+                                  table->edt_metrics[i].invocations);
+        artsJsonWriterWriteUInt64(writer, "total_exec_ns",
+                                  table->edt_metrics[i].total_exec_ns);
+        artsJsonWriterWriteUInt64(writer, "total_stall_ns",
+                                  table->edt_metrics[i].total_stall_ns);
+        artsJsonWriterEndObject(writer);
+      }
+    }
+    artsJsonWriterEndArray(writer);
+    artsJsonWriterWriteUInt64(writer, "edt_collisions", table->edt_collisions);
+  }
+
+  if (writeDb) {
+    artsJsonWriterBeginArray(writer, "dbs");
+    for (uint32_t i = 0; i < ARTS_ID_HASH_SIZE; i++) {
+      if (table->db_metrics[i].valid) {
+        artsJsonWriterBeginObject(writer, NULL);
+        artsJsonWriterWriteUInt64(writer, "arts_id",
+                                  table->db_metrics[i].arts_id);
+        artsJsonWriterWriteUInt64(writer, "invocations",
+                                  table->db_metrics[i].invocations);
+        artsJsonWriterWriteUInt64(writer, "bytes_local",
+                                  table->db_metrics[i].bytes_local);
+        artsJsonWriterWriteUInt64(writer, "bytes_remote",
+                                  table->db_metrics[i].bytes_remote);
+        artsJsonWriterWriteUInt64(writer, "cache_misses",
+                                  table->db_metrics[i].cache_misses);
+        artsJsonWriterEndObject(writer);
+      }
+    }
+    artsJsonWriterEndArray(writer);
+    artsJsonWriterWriteUInt64(writer, "db_collisions", table->db_collisions);
+  }
+
+  artsJsonWriterEndObject(writer);
+}
+#endif
+
+static void artsCounterWriteThread(const char *outputFolder,
+                                   unsigned int nodeId, unsigned int threadId) {
+  if (!artsCountersAtLevel(artsCounterLevelThread))
+    return;
+
+  char filename[64];
+  snprintf(filename, sizeof(filename), "n%u_t%u.json", nodeId, threadId);
+  FILE *fp = artsOpenCounterFile(outputFolder, filename);
   if (!fp)
     return;
 
   artsJsonWriter writer;
   artsJsonWriterInit(&writer, fp, 2);
-
   artsJsonWriterBeginObject(&writer, NULL);
 
+  // Metadata
   artsJsonWriterBeginObject(&writer, "metadata");
   artsJsonWriterWriteUInt64(&writer, "nodeId", nodeId);
-  artsJsonWriterWriteUInt64(&writer, "timestamp", (uint64_t)time(NULL));
-  artsJsonWriterWriteString(&writer, "version", "1.0");
-  artsJsonWriterWriteUInt64(&writer, "startPoint",
-                            artsNodeInfo.counterStartPoint);
-  if (artsNodeInfo.counterFolder) {
-    artsJsonWriterWriteString(&writer, "counterFolder",
-                              artsNodeInfo.counterFolder);
+  artsJsonWriterWriteUInt64(&writer, "threadId", threadId);
+  artsWriteCommonMetadata(&writer);
+  artsJsonWriterWriteUInt64(&writer, "counterCaptureInterval",
+                            artsNodeInfo.counterCaptureInterval);
+  artsJsonWriterEndObject(&writer);
+
+  // Counters
+  artsJsonWriterBeginObject(&writer, "counters");
+  artsCounter *saved = artsNodeInfo.savedCounters[threadId];
+  for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
+    if (artsCounterModeArray[i] == artsCounterModeOff ||
+        artsCounterLevelArray[i] != artsCounterLevelThread)
+      continue;
+
+    artsJsonWriterBeginObject(&writer, artsCounterNames[i]);
+    artsJsonWriterWriteString(&writer, "captureMode",
+                              artsCounterModeToString(artsCounterModeArray[i]));
+    artsJsonWriterWriteString(&writer, "captureLevel", "THREAD");
+
+    // Always write final value
+    uint64_t finalValue = saved[i].count;
+    artsJsonWriterWriteUInt64(&writer, "value", finalValue);
+    if (artsCounterIsTimeCounter(artsCounterNames[i])) {
+      artsJsonWriterWriteDouble(&writer, "value_ms",
+                                (double)finalValue / 1000000.0);
+    }
+
+    if (artsCounterModeArray[i] == artsCounterModePeriodic) {
+      artsArrayList *captureList = artsNodeInfo.captureArrays[threadId][i];
+      if (captureList && captureList->index > 0) {
+        uint64_t count = captureList->index;
+        uint64_t *epochs = (uint64_t *)artsMalloc(count * sizeof(uint64_t));
+        uint64_t *values = (uint64_t *)artsMalloc(count * sizeof(uint64_t));
+        artsArrayListIterator *iter = artsNewArrayListIterator(captureList);
+        for (uint64_t idx = 0; artsArrayListHasNext(iter) && idx < count;
+             idx++) {
+          artsCounterCapture *cap =
+              (artsCounterCapture *)artsArrayListNext(iter);
+          if (cap) {
+            epochs[idx] = cap->epoch;
+            values[idx] = cap->value;
+          }
+        }
+        artsDeleteArrayListIterator(iter);
+        artsWriteCaptureHistory(&writer, epochs, values, count);
+        artsFree(epochs);
+        artsFree(values);
+      }
+    }
+    artsJsonWriterEndObject(&writer);
   }
+  artsJsonWriterEndObject(&writer);
+
+#if ENABLE_artsIdEdtMetrics || ENABLE_artsIdDbMetrics
+  bool edtThread =
+      artsCounterModeArray[artsIdEdtMetrics] != artsCounterModeOff &&
+      artsCounterLevelArray[artsIdEdtMetrics] == artsCounterLevelThread;
+  bool dbThread =
+      artsCounterModeArray[artsIdDbMetrics] != artsCounterModeOff &&
+      artsCounterLevelArray[artsIdDbMetrics] == artsCounterLevelThread;
+  if (edtThread || dbThread) {
+    artsWriteArtsIdMetrics(
+        &writer, &artsNodeInfo.savedCounters[threadId]->artsIdMetricsTable,
+        edtThread, dbThread);
+  }
+#endif
+
+  artsCloseCounterFile(&writer, fp);
+}
+
+static void artsCounterWriteNode(const char *outputFolder,
+                                 unsigned int nodeId) {
+  if (!artsCountersAtLevel(artsCounterLevelNode))
+    return;
+
+  char filename[64];
+  snprintf(filename, sizeof(filename), "n%u.json", nodeId);
+  FILE *fp = artsOpenCounterFile(outputFolder, filename);
+  if (!fp)
+    return;
+
+  artsJsonWriter writer;
+  artsJsonWriterInit(&writer, fp, 2);
+  artsJsonWriterBeginObject(&writer, NULL);
+
+  // Metadata
+  artsJsonWriterBeginObject(&writer, "metadata");
+  artsJsonWriterWriteUInt64(&writer, "nodeId", nodeId);
+  artsWriteCommonMetadata(&writer);
   artsJsonWriterWriteUInt64(&writer, "captureInterval",
                             artsNodeInfo.counterCaptureInterval);
   artsJsonWriterWriteUInt64(&writer, "totalThreads",
                             artsNodeInfo.totalThreadCount);
   artsJsonWriterEndObject(&writer);
 
+  // Counters
   artsJsonWriterBeginObject(&writer, "counters");
-  for (uint64_t i = 0; i < NUM_COUNTER_TYPES; i++) {
-    // Write NODE level counters (both ONCE and PERIODIC modes)
-    if (artsCaptureModeArray[i] != artsCaptureModeOff &&
-        artsCaptureLevelArray[i] == artsCaptureLevelNode) {
+  for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
+    if (artsCounterModeArray[i] == artsCounterModeOff ||
+        artsCounterLevelArray[i] != artsCounterLevelNode)
+      continue;
 
-      artsJsonWriterBeginObject(&writer, artsCounterNames[i]);
+    artsJsonWriterBeginObject(&writer, artsCounterNames[i]);
+    artsJsonWriterWriteString(&writer, "captureMode",
+                              artsCounterModeToString(artsCounterModeArray[i]));
+    artsJsonWriterWriteString(&writer, "captureLevel", "NODE");
+    artsJsonWriterWriteString(
+        &writer, "reduceMethod",
+        artsReduceMethodToString(artsCounterReduceMethodArray[i]));
 
-      // Write capture mode and level
-      const char *captureModeStr = "ONCE";
-      if (artsCaptureModeArray[i] == artsCaptureModePeriodic) {
-        captureModeStr = "PERIODIC";
-      }
-      artsJsonWriterWriteString(&writer, "captureMode", captureModeStr);
-      artsJsonWriterWriteString(&writer, "captureLevel", "NODE");
-
-      // Write reduction type
-      const char *reduceTypeStr = "SUM";
-      switch (artsCounterReduceTypes[i]) {
-      case artsCounterSum:
-        reduceTypeStr = "SUM";
-        break;
-      case artsCounterMax:
-        reduceTypeStr = "MAX";
-        break;
-      case artsCounterMin:
-        reduceTypeStr = "MIN";
-        break;
-      }
-      artsJsonWriterWriteString(&writer, "reduceType", reduceTypeStr);
-
-      // Write the current (final) reduced value
-      uint64_t finalValue = 0;
-      for (unsigned int t = 0; t < artsNodeInfo.totalThreadCount; t++) {
-        artsCounterCaptures *threadCounters = &artsNodeInfo.counterCaptures[t];
-        switch (artsCounterReduceTypes[i]) {
-        case artsCounterSum:
-          finalValue += threadCounters->counters[i].count;
-          break;
-        case artsCounterMax:
-          if (finalValue < threadCounters->counters[i].count) {
-            finalValue = threadCounters->counters[i].count;
-          }
-          break;
-        case artsCounterMin:
-          if (t == 0 || finalValue > threadCounters->counters[i].count) {
-            finalValue = threadCounters->counters[i].count;
-          }
-          break;
-        }
-      }
-      artsJsonWriterWriteUInt64(&writer, "value", finalValue);
-      // Also write value in milliseconds for timing counters
+    uint64_t finalValue = artsComputeNodeReducedValue(i);
+    artsJsonWriterWriteUInt64(&writer, "value", finalValue);
+    if (artsCounterIsTimeCounter(artsCounterNames[i])) {
       artsJsonWriterWriteDouble(&writer, "value_ms",
                                 (double)finalValue / 1000000.0);
-
-      // Write capture history only for PERIODIC mode
-      if (artsCaptureModeArray[i] == artsCaptureModePeriodic) {
-        artsArrayList *reduceList =
-            artsNodeInfo.counterReduces.counterCaptures[i];
-        if (reduceList && reduceList->index > 0) {
-          artsJsonWriterWriteUInt64(&writer, "captureCount", reduceList->index);
-          artsJsonWriterBeginArray(&writer, "captureHistory");
-          artsArrayListIterator *iter = artsNewArrayListIterator(reduceList);
-          while (artsArrayListHasNext(iter)) {
-            uint64_t *value = (uint64_t *)artsArrayListNext(iter);
-            if (value) {
-              artsJsonWriterWriteUInt64(&writer, NULL, *value);
-            }
-          }
-          artsDeleteArrayListIterator(iter);
-          artsJsonWriterEndArray(&writer);
-        }
-      }
-
-      artsJsonWriterEndObject(&writer);
     }
+
+    if (artsCounterModeArray[i] == artsCounterModePeriodic) {
+      uint64_t *epochs, *values, count;
+      artsComputeNodeReducedCaptures(i, &epochs, &values, &count);
+      artsWriteCaptureHistory(&writer, epochs, values, count);
+      if (epochs)
+        artsFree(epochs);
+      if (values)
+        artsFree(values);
+    }
+    artsJsonWriterEndObject(&writer);
   }
   artsJsonWriterEndObject(&writer);
 
-// Write arts_id metrics (NODE level - reduced across all threads)
 #if ENABLE_artsIdEdtMetrics || ENABLE_artsIdDbMetrics
-  if ((artsCaptureModeArray[artsIdEdtMetrics] != artsCaptureModeOff &&
-       artsCaptureLevelArray[artsIdEdtMetrics] == artsCaptureLevelNode) ||
-      (artsCaptureModeArray[artsIdDbMetrics] != artsCaptureModeOff &&
-       artsCaptureLevelArray[artsIdDbMetrics] == artsCaptureLevelNode)) {
-    artsJsonWriterBeginObject(&writer, "artsIdMetrics");
-    artsIdHashTable *table = &artsNodeInfo.counterReduces.artsIdMetricsTable;
-
-    // Export reduced EDT metrics
-    if (artsCounterMode[artsIdEdtMetrics] == artsCounterModeNode) {
-      artsJsonWriterBeginArray(&writer, "edts");
-      for (uint32_t i = 0; i < ARTS_ID_HASH_SIZE; i++) {
-        if (table->edt_metrics[i].valid) {
-          artsJsonWriterBeginObject(&writer, NULL);
-          artsJsonWriterWriteUInt64(&writer, "arts_id",
-                                    table->edt_metrics[i].arts_id);
-          artsJsonWriterWriteUInt64(&writer, "invocations",
-                                    table->edt_metrics[i].invocations);
-          artsJsonWriterWriteUInt64(&writer, "total_exec_ns",
-                                    table->edt_metrics[i].total_exec_ns);
-          artsJsonWriterWriteUInt64(&writer, "total_stall_ns",
-                                    table->edt_metrics[i].total_stall_ns);
-          artsJsonWriterEndObject(&writer);
-        }
-      }
-      artsJsonWriterEndArray(&writer);
-      artsJsonWriterWriteUInt64(&writer, "edt_collisions",
-                                table->edt_collisions);
+  bool edtNode =
+      artsCounterModeArray[artsIdEdtMetrics] != artsCounterModeOff &&
+      artsCounterLevelArray[artsIdEdtMetrics] == artsCounterLevelNode;
+  bool dbNode = artsCounterModeArray[artsIdDbMetrics] != artsCounterModeOff &&
+                artsCounterLevelArray[artsIdDbMetrics] == artsCounterLevelNode;
+  if (edtNode || dbNode) {
+    // Use thread 0's metrics as representative for node level
+    // TODO: implement proper node-level reduction of arts_id metrics
+    if (artsNodeInfo.savedCounters[0]) {
+      artsWriteArtsIdMetrics(&writer,
+                             &artsNodeInfo.savedCounters[0]->artsIdMetricsTable,
+                             edtNode, dbNode);
     }
-
-    // Export reduced DB metrics
-    if (artsCounterMode[artsIdDbMetrics] == artsCounterModeNode) {
-      artsJsonWriterBeginArray(&writer, "dbs");
-      for (uint32_t i = 0; i < ARTS_ID_HASH_SIZE; i++) {
-        if (table->db_metrics[i].valid) {
-          artsJsonWriterBeginObject(&writer, NULL);
-          artsJsonWriterWriteUInt64(&writer, "arts_id",
-                                    table->db_metrics[i].arts_id);
-          artsJsonWriterWriteUInt64(&writer, "invocations",
-                                    table->db_metrics[i].invocations);
-          artsJsonWriterWriteUInt64(&writer, "bytes_local",
-                                    table->db_metrics[i].bytes_local);
-          artsJsonWriterWriteUInt64(&writer, "bytes_remote",
-                                    table->db_metrics[i].bytes_remote);
-          artsJsonWriterWriteUInt64(&writer, "cache_misses",
-                                    table->db_metrics[i].cache_misses);
-          artsJsonWriterEndObject(&writer);
-        }
-      }
-      artsJsonWriterEndArray(&writer);
-      artsJsonWriterWriteUInt64(&writer, "db_collisions", table->db_collisions);
-    }
-
-    artsJsonWriterEndObject(&writer);
   }
 #endif
 
-  artsJsonWriterEndObject(&writer);
-  artsJsonWriterFinish(&writer);
-  fputc('\n', fp);
-  fclose(fp);
+  artsCloseCounterFile(&writer, fp);
 }
 
-// Helper function to compute node-level reduced value across all threads
-static uint64_t artsComputeNodeReducedValue(unsigned int index) {
-  uint64_t nodeValue;
-  if (artsCounterReduceTypes[index] == artsCounterMin) {
-    nodeValue = UINT64_MAX;
-  } else {
-    nodeValue = 0;
-  }
-  for (unsigned int t = 0; t < artsNodeInfo.totalThreadCount; t++) {
-    artsCounterCaptures *threadCounters = &artsNodeInfo.counterCaptures[t];
-    switch (artsCounterReduceTypes[index]) {
-    case artsCounterSum:
-      nodeValue += threadCounters->counters[index].count;
-      break;
-    case artsCounterMax:
-      if (nodeValue < threadCounters->counters[index].count) {
-        nodeValue = threadCounters->counters[index].count;
-      }
-      break;
-    case artsCounterMin:
-      if (nodeValue > threadCounters->counters[index].count) {
-        nodeValue = threadCounters->counters[index].count;
-      }
-      break;
-    }
-  }
-  return nodeValue;
-}
-
-void artsCounterWriteCluster(const char *outputFolder) {
-  if (!outputFolder) {
+static void artsCounterWriteCluster(const char *outputFolder) {
+  unsigned int clusterCounterCount =
+      artsCountersAtLevel(artsCounterLevelCluster);
+  if (!clusterCounterCount)
     return;
-  }
-
-  // Check if any counters have CLUSTER level output
-  bool hasClusterLevel = false;
-  for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
-    if (artsCaptureModeArray[i] != artsCaptureModeOff &&
-        artsCaptureLevelArray[i] == artsCaptureLevelCluster) {
-      hasClusterLevel = true;
-      break;
-    }
-  }
-  if (!hasClusterLevel) {
-    return;
-  }
 
   unsigned int numNodes = artsGlobalRankCount;
 
-  // Only master (rank 0) writes cluster output
-  if (artsGlobalRankId != 0) {
-    // Non-master nodes send their counter values to master
+  if (artsGlobalRankId == 0) {
+    // Master: allocate, wait for workers, reduce and write
+    artsClusterCounterValues =
+        (uint64_t **)artsCalloc(NUM_COUNTER_TYPES, sizeof(uint64_t *));
+    artsClusterCaptureEpochs =
+        (uint64_t ***)artsCalloc(NUM_COUNTER_TYPES, sizeof(uint64_t **));
+    artsClusterCaptureValues =
+        (uint64_t ***)artsCalloc(NUM_COUNTER_TYPES, sizeof(uint64_t **));
+    artsClusterCaptureCounts =
+        (uint64_t **)artsCalloc(NUM_COUNTER_TYPES, sizeof(uint64_t *));
+
     for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
-      if (artsCaptureModeArray[i] != artsCaptureModeOff &&
-          artsCaptureLevelArray[i] == artsCaptureLevelCluster) {
-        // Compute this node's reduced value across all threads
-        uint64_t nodeValue = artsComputeNodeReducedValue(i);
-        // Send to master
-        artsRemoteCounterReduceSend(0, i, nodeValue);
+      if (artsCounterModeArray[i] == artsCounterModeOff ||
+          artsCounterLevelArray[i] != artsCounterLevelCluster)
+        continue;
+      artsClusterCounterValues[i] =
+          (uint64_t *)artsCalloc(numNodes, sizeof(uint64_t));
+      artsClusterCaptureEpochs[i] =
+          (uint64_t **)artsCalloc(numNodes, sizeof(uint64_t *));
+      artsClusterCaptureValues[i] =
+          (uint64_t **)artsCalloc(numNodes, sizeof(uint64_t *));
+      artsClusterCaptureCounts[i] =
+          (uint64_t *)artsCalloc(numNodes, sizeof(uint64_t));
+      if (artsCounterReduceMethodArray[i] == artsCounterReduceMin) {
+        for (unsigned int n = 0; n < numNodes; n++)
+          artsClusterCounterValues[i][n] = UINT64_MAX;
       }
     }
-    // Signal master that we're done sending
-    artsRemoteCounterReduceDoneSend(0);
-    return;
-  }
 
-  // Master node code below
-
-  // Allocate cluster counter storage if not already done
-  if (!artsClusterCounters) {
-    artsClusterCounters =
-        (uint64_t *)artsCalloc(NUM_COUNTER_TYPES, sizeof(uint64_t));
-    // Initialize all counters based on reduce type for defensive safety
+    // Store master's own data
     for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
-      if (artsCounterReduceTypes[i] == artsCounterMin) {
-        artsClusterCounters[i] = UINT64_MAX;
-      } else {
-        artsClusterCounters[i] = 0;
+      if (artsCounterModeArray[i] == artsCounterModeOff ||
+          artsCounterLevelArray[i] != artsCounterLevelCluster)
+        continue;
+      artsClusterCounterValues[i][0] = artsComputeNodeReducedValue(i);
+      if (artsCounterModeArray[i] == artsCounterModePeriodic) {
+        artsComputeNodeReducedCaptures(i, &artsClusterCaptureEpochs[i][0],
+                                       &artsClusterCaptureValues[i][0],
+                                       &artsClusterCaptureCounts[i][0]);
       }
     }
-  }
 
-  // First, add this node's (master's) own values to the cluster counters
-  for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
-    if (artsCaptureModeArray[i] != artsCaptureModeOff &&
-        artsCaptureLevelArray[i] == artsCaptureLevelCluster) {
-      // Compute this node's reduced value across all threads
-      uint64_t nodeValue = artsComputeNodeReducedValue(i);
-      // Aggregate into cluster counters
-      switch (artsCounterReduceTypes[i]) {
-      case artsCounterSum:
-        artsClusterCounters[i] += nodeValue;
-        break;
-      case artsCounterMax:
-        if (artsClusterCounters[i] < nodeValue) {
-          artsClusterCounters[i] = nodeValue;
-        }
-        break;
-      case artsCounterMin:
-        if (artsClusterCounters[i] > nodeValue) {
-          artsClusterCounters[i] = nodeValue;
-        }
-        break;
+    // Wait for workers
+    unsigned int expectedMessages = (numNodes - 1) * clusterCounterCount;
+    if (expectedMessages > 0) {
+      uint64_t timeout = artsGetTimeStamp() + 30000000000ULL;
+      while (artsCounterReduceReceived < expectedMessages &&
+             artsGetTimeStamp() < timeout) {
+        usleep(1000);
       }
     }
-  }
 
-  // Wait for all other nodes to send their counter values
-  // numNodes - 1 because master doesn't send to itself
-  // Timeout after 30 seconds to prevent indefinite blocking
-  if (numNodes > 1) {
-    unsigned int timeoutMs = 30000; // 30 second timeout
-    uint64_t startTime = artsGetTimeStamp();
-    while (artsClusterNodesReceived < numNodes - 1) {
-      uint64_t elapsedMs =
-          (artsGetTimeStamp() - startTime) / 1000000ULL; // convert ns to ms
-      if (elapsedMs >= timeoutMs) {
-        break;
-      }
-      usleep(1000); // 1ms sleep to avoid busy waiting
-    }
-    if (artsClusterNodesReceived < numNodes - 1) {
-      ARTS_INFO("Cluster counter aggregation timed out: received %u/%u nodes",
-                artsClusterNodesReceived, numNodes - 1);
-    }
-  }
+    // Write cluster file
+    FILE *fp = artsOpenCounterFile(outputFolder, "cluster.json");
+    if (!fp)
+      goto cleanup;
 
-  // Now write the cluster output file
-  struct stat st = {0};
-  if (stat(outputFolder, &st) == -1)
-    mkdir(outputFolder, 0755);
+    artsJsonWriter writer;
+    artsJsonWriterInit(&writer, fp, 2);
+    artsJsonWriterBeginObject(&writer, NULL);
 
-  char filename[1024];
-  snprintf(filename, sizeof(filename), "%s/c.json", outputFolder);
+    artsJsonWriterBeginObject(&writer, "metadata");
+    artsJsonWriterWriteUInt64(&writer, "numNodes", numNodes);
+    artsWriteCommonMetadata(&writer);
+    artsJsonWriterWriteString(&writer, "level", "CLUSTER");
+    artsJsonWriterEndObject(&writer);
 
-  FILE *fp = fopen(filename, "w");
-  if (!fp)
-    return;
+    artsJsonWriterBeginObject(&writer, "counters");
+    for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
+      if (artsCounterModeArray[i] == artsCounterModeOff ||
+          artsCounterLevelArray[i] != artsCounterLevelCluster)
+        continue;
 
-  artsJsonWriter writer;
-  artsJsonWriterInit(&writer, fp, 2);
-
-  artsJsonWriterBeginObject(&writer, NULL);
-
-  artsJsonWriterBeginObject(&writer, "metadata");
-  artsJsonWriterWriteUInt64(&writer, "numNodes", numNodes);
-  artsJsonWriterWriteUInt64(&writer, "timestamp", (uint64_t)time(NULL));
-  artsJsonWriterWriteString(&writer, "version", "1.0");
-  artsJsonWriterWriteString(&writer, "level", "CLUSTER");
-  artsJsonWriterWriteUInt64(&writer, "startPoint",
-                            artsNodeInfo.counterStartPoint);
-  if (artsNodeInfo.counterFolder) {
-    artsJsonWriterWriteString(&writer, "counterFolder",
-                              artsNodeInfo.counterFolder);
-  }
-  artsJsonWriterEndObject(&writer);
-
-  artsJsonWriterBeginObject(&writer, "counters");
-  for (uint64_t i = 0; i < NUM_COUNTER_TYPES; i++) {
-    // Write CLUSTER level counters (both ONCE and PERIODIC modes)
-    if (artsCaptureModeArray[i] != artsCaptureModeOff &&
-        artsCaptureLevelArray[i] == artsCaptureLevelCluster) {
-
+      artsCounterReduceMethod reduceMethod = artsCounterReduceMethodArray[i];
       artsJsonWriterBeginObject(&writer, artsCounterNames[i]);
-
-      // Write capture mode and level
-      const char *captureModeStr = "ONCE";
-      if (artsCaptureModeArray[i] == artsCaptureModePeriodic) {
-        captureModeStr = "PERIODIC";
-      }
-      artsJsonWriterWriteString(&writer, "captureMode", captureModeStr);
+      artsJsonWriterWriteString(
+          &writer, "captureMode",
+          artsCounterModeToString(artsCounterModeArray[i]));
       artsJsonWriterWriteString(&writer, "captureLevel", "CLUSTER");
+      artsJsonWriterWriteString(&writer, "reduceMethod",
+                                artsReduceMethodToString(reduceMethod));
 
-      // Write reduction type
-      const char *reduceTypeStr = "SUM";
-      switch (artsCounterReduceTypes[i]) {
-      case artsCounterSum:
-        reduceTypeStr = "SUM";
-        break;
-      case artsCounterMax:
-        reduceTypeStr = "MAX";
-        break;
-      case artsCounterMin:
-        reduceTypeStr = "MIN";
-        break;
+      if (artsCounterModeArray[i] == artsCounterModeOnce) {
+        uint64_t clusterValue =
+            (reduceMethod == artsCounterReduceMin) ? UINT64_MAX : 0;
+        for (unsigned int n = 0; n < numNodes; n++)
+          clusterValue = artsApplyReduction(
+              clusterValue, artsClusterCounterValues[i][n], reduceMethod, n);
+        artsJsonWriterWriteUInt64(&writer, "value", clusterValue);
+        if (artsCounterIsTimeCounter(artsCounterNames[i])) {
+          artsJsonWriterWriteDouble(&writer, "value_ms",
+                                    (double)clusterValue / 1000000.0);
+        }
+      } else {
+        // PERIODIC: first write final value, then capture history
+        uint64_t clusterValue =
+            (reduceMethod == artsCounterReduceMin) ? UINT64_MAX : 0;
+        for (unsigned int n = 0; n < numNodes; n++)
+          clusterValue = artsApplyReduction(
+              clusterValue, artsClusterCounterValues[i][n], reduceMethod, n);
+        artsJsonWriterWriteUInt64(&writer, "value", clusterValue);
+        if (artsCounterIsTimeCounter(artsCounterNames[i])) {
+          artsJsonWriterWriteDouble(&writer, "value_ms",
+                                    (double)clusterValue / 1000000.0);
+        }
+
+        // Then write capture history reduced by epoch as compact single line
+        uint64_t *nodePositions =
+            (uint64_t *)artsCalloc(numNodes, sizeof(uint64_t));
+
+        // First pass: count how many entries we'll have
+        uint64_t entryCount = 0;
+        uint64_t *tempPositions =
+            (uint64_t *)artsCalloc(numNodes, sizeof(uint64_t));
+        while (1) {
+          uint64_t minEpoch = UINT64_MAX;
+          for (unsigned int n = 0; n < numNodes; n++) {
+            if (artsClusterCaptureEpochs[i][n] &&
+                tempPositions[n] < artsClusterCaptureCounts[i][n]) {
+              uint64_t epoch = artsClusterCaptureEpochs[i][n][tempPositions[n]];
+              if (epoch < minEpoch)
+                minEpoch = epoch;
+            }
+          }
+          if (minEpoch == UINT64_MAX)
+            break;
+          unsigned int nodesWithEpoch = 0;
+          for (unsigned int n = 0; n < numNodes; n++) {
+            if (artsClusterCaptureEpochs[i][n] &&
+                tempPositions[n] < artsClusterCaptureCounts[i][n] &&
+                artsClusterCaptureEpochs[i][n][tempPositions[n]] == minEpoch) {
+              nodesWithEpoch++;
+              tempPositions[n]++;
+            }
+          }
+          if (nodesWithEpoch == numNodes)
+            entryCount++;
+        }
+        artsFree(tempPositions);
+
+        // Build compact JSON string
+        size_t bufSize = entryCount * 45 + 10;
+        char *buf = (char *)artsMalloc(bufSize);
+        char *p = buf;
+        *p++ = '[';
+        bool first = true;
+
+        while (1) {
+          uint64_t minEpoch = UINT64_MAX;
+          for (unsigned int n = 0; n < numNodes; n++) {
+            if (artsClusterCaptureEpochs[i][n] &&
+                nodePositions[n] < artsClusterCaptureCounts[i][n]) {
+              uint64_t epoch = artsClusterCaptureEpochs[i][n][nodePositions[n]];
+              if (epoch < minEpoch)
+                minEpoch = epoch;
+            }
+          }
+          if (minEpoch == UINT64_MAX)
+            break;
+
+          uint64_t reducedValue =
+              (reduceMethod == artsCounterReduceMin) ? UINT64_MAX : 0;
+          unsigned int nodesWithEpoch = 0;
+          for (unsigned int n = 0; n < numNodes; n++) {
+            if (artsClusterCaptureEpochs[i][n] &&
+                nodePositions[n] < artsClusterCaptureCounts[i][n] &&
+                artsClusterCaptureEpochs[i][n][nodePositions[n]] == minEpoch) {
+              nodesWithEpoch++;
+              reducedValue = artsApplyReduction(
+                  reducedValue,
+                  artsClusterCaptureValues[i][n][nodePositions[n]],
+                  reduceMethod, n);
+              nodePositions[n]++;
+            }
+          }
+          if (nodesWithEpoch == numNodes) {
+            if (!first)
+              *p++ = ',';
+            first = false;
+            uint64_t normalizedEpoch = minEpoch - firstCaptureEpoch;
+            p += sprintf(p, "[%llu,%llu]", (unsigned long long)normalizedEpoch,
+                         (unsigned long long)reducedValue);
+          }
+        }
+        *p++ = ']';
+        *p = '\0';
+
+        artsJsonWriterWriteRawArray(&writer, "captureHistory", buf);
+        artsFree(buf);
+        artsFree(nodePositions);
       }
-      artsJsonWriterWriteString(&writer, "reduceType", reduceTypeStr);
-
-      // Write the cluster-reduced value
-      artsJsonWriterWriteUInt64(&writer, "value", artsClusterCounters[i]);
-      // Also write value in milliseconds for timing counters
-      artsJsonWriterWriteDouble(&writer, "value_ms",
-                                (double)artsClusterCounters[i] / 1000000.0);
-
       artsJsonWriterEndObject(&writer);
     }
+    artsJsonWriterEndObject(&writer);
+    artsCloseCounterFile(&writer, fp);
+
+  cleanup:
+    for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
+      if (artsClusterCounterValues && artsClusterCounterValues[i])
+        artsFree(artsClusterCounterValues[i]);
+      if (artsClusterCaptureEpochs && artsClusterCaptureEpochs[i]) {
+        for (unsigned int n = 0; n < numNodes; n++)
+          if (artsClusterCaptureEpochs[i][n])
+            artsFree(artsClusterCaptureEpochs[i][n]);
+        artsFree(artsClusterCaptureEpochs[i]);
+      }
+      if (artsClusterCaptureValues && artsClusterCaptureValues[i]) {
+        for (unsigned int n = 0; n < numNodes; n++)
+          if (artsClusterCaptureValues[i][n])
+            artsFree(artsClusterCaptureValues[i][n]);
+        artsFree(artsClusterCaptureValues[i]);
+      }
+      if (artsClusterCaptureCounts && artsClusterCaptureCounts[i])
+        artsFree(artsClusterCaptureCounts[i]);
+    }
+    if (artsClusterCounterValues)
+      artsFree(artsClusterCounterValues);
+    if (artsClusterCaptureEpochs)
+      artsFree(artsClusterCaptureEpochs);
+    if (artsClusterCaptureValues)
+      artsFree(artsClusterCaptureValues);
+    if (artsClusterCaptureCounts)
+      artsFree(artsClusterCaptureCounts);
+    artsClusterCounterValues = NULL;
+    artsClusterCaptureEpochs = NULL;
+    artsClusterCaptureValues = NULL;
+    artsClusterCaptureCounts = NULL;
+
+  } else {
+    // Worker: compute and send to master
+    for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
+      if (artsCounterModeArray[i] == artsCounterModeOff ||
+          artsCounterLevelArray[i] != artsCounterLevelCluster)
+        continue;
+      uint64_t nodeValue = artsComputeNodeReducedValue(i);
+      if (artsCounterModeArray[i] == artsCounterModePeriodic) {
+        uint64_t *epochs, *values, count;
+        artsComputeNodeReducedCaptures(i, &epochs, &values, &count);
+        artsRemoteCounterReduceSend(i, nodeValue, epochs, values, count);
+        if (epochs)
+          artsFree(epochs);
+        if (values)
+          artsFree(values);
+      } else {
+        artsRemoteCounterReduceSend(i, nodeValue, NULL, NULL, 0);
+      }
+    }
   }
-  artsJsonWriterEndObject(&writer);
+}
 
-  artsJsonWriterEndObject(&writer);
-  artsJsonWriterFinish(&writer);
-  fputc('\n', fp);
-  fclose(fp);
+// Unified counter write function - single entry point
+void artsCounterWrite(const char *outputFolder, unsigned int nodeId,
+                      unsigned int threadId) {
+  if (!outputFolder)
+    return;
 
-  // Free the cluster counters storage
-  if (artsClusterCounters) {
-    artsFree(artsClusterCounters);
-    artsClusterCounters = NULL;
+  // Write thread-level counters for this thread
+  artsCounterWriteThread(outputFolder, nodeId, threadId);
+
+  // Thread 0 handles node and cluster level output
+  if (threadId == 0) {
+    artsCounterWriteNode(outputFolder, nodeId);
+    artsCounterWriteCluster(outputFolder);
   }
 }
 
@@ -943,11 +1044,9 @@ void artsCounterWriteCluster(const char *outputFolder) {
 void artsCounterRecordArtsIdEdt(uint64_t arts_id, uint64_t exec_ns,
                                 uint64_t stall_ns) {
 #if ENABLE_artsIdEdtMetrics
-  if (countersOn && artsCounterMode[artsIdEdtMetrics] != artsCounterModeOff) {
-    unsigned int threadId = artsThreadInfo.threadId;
-    artsIdHashTable *hash_table =
-        &artsNodeInfo.counterCaptures[threadId].artsIdMetricsTable;
-    artsIdRecordEdtMetrics(arts_id, exec_ns, stall_ns, hash_table);
+  if (artsCounterMode[artsIdEdtMetrics] != artsCounterModeOff) {
+    artsIdRecordEdtMetrics(arts_id, exec_ns, stall_ns,
+                           &artsThreadLocalArtsIdMetrics);
   }
 #else
   (void)arts_id;
@@ -959,12 +1058,9 @@ void artsCounterRecordArtsIdEdt(uint64_t arts_id, uint64_t exec_ns,
 void artsCounterRecordArtsIdDb(uint64_t arts_id, uint64_t bytes_local,
                                uint64_t bytes_remote, uint64_t cache_misses) {
 #if ENABLE_artsIdDbMetrics
-  if (countersOn && artsCounterMode[artsIdDbMetrics] != artsCounterModeOff) {
-    unsigned int threadId = artsThreadInfo.threadId;
-    artsIdHashTable *hash_table =
-        &artsNodeInfo.counterCaptures[threadId].artsIdMetricsTable;
+  if (artsCounterMode[artsIdDbMetrics] != artsCounterModeOff) {
     artsIdRecordDbMetrics(arts_id, bytes_local, bytes_remote, cache_misses,
-                          hash_table);
+                          &artsThreadLocalArtsIdMetrics);
   }
 #else
   (void)arts_id;
@@ -977,11 +1073,9 @@ void artsCounterRecordArtsIdDb(uint64_t arts_id, uint64_t bytes_local,
 void artsCounterCaptureArtsIdEdt(uint64_t arts_id, uint64_t exec_ns,
                                  uint64_t stall_ns) {
 #if ENABLE_artsIdEdtCaptures
-  if (countersOn && artsCounterMode[artsIdEdtCaptures] != artsCounterModeOff) {
-    unsigned int threadId = artsThreadInfo.threadId;
-    artsArrayList *captures =
-        artsNodeInfo.counterCaptures[threadId].artsIdEdtCaptureList;
-    artsIdCaptureEdtExecution(arts_id, exec_ns, stall_ns, captures);
+  if (artsCounterMode[artsIdEdtCaptures] != artsCounterModeOff) {
+    artsIdCaptureEdtExecution(arts_id, exec_ns, stall_ns,
+                              artsThreadLocalEdtCaptureList);
   }
 #else
   (void)arts_id;
@@ -993,11 +1087,9 @@ void artsCounterCaptureArtsIdEdt(uint64_t arts_id, uint64_t exec_ns,
 void artsCounterCaptureArtsIdDb(uint64_t arts_id, uint64_t bytes_accessed,
                                 uint8_t access_type) {
 #if ENABLE_artsIdDbCaptures
-  if (countersOn && artsCounterMode[artsIdDbCaptures] != artsCounterModeOff) {
-    unsigned int threadId = artsThreadInfo.threadId;
-    artsArrayList *captures =
-        artsNodeInfo.counterCaptures[threadId].artsIdDbCaptureList;
-    artsIdCaptureDbAccess(arts_id, bytes_accessed, access_type, captures);
+  if (artsCounterMode[artsIdDbCaptures] != artsCounterModeOff) {
+    artsIdCaptureDbAccess(arts_id, bytes_accessed, access_type,
+                          artsThreadLocalDbCaptureList);
   }
 #else
   (void)arts_id;

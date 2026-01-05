@@ -49,130 +49,143 @@ extern "C" {
 #include "arts/introspection/Preamble.h"
 #include "arts/utils/ArrayList.h"
 
+// X-macro: Define all counter types in one place.
+// Format: X(counterName)
+// Both the enum and string array are generated from this single list.
+#define ARTS_COUNTER_LIST                                                      \
+  X(edtCounter)                                                                \
+  X(sleepCounter)                                                              \
+  X(signalEventCounter)                                                        \
+  X(signalPersistentEventCounter)                                              \
+  X(signalEdtCounter)                                                          \
+  X(edtCreateCounter)                                                          \
+  X(eventCreateCounter)                                                        \
+  X(persistentEventCreateCounter)                                              \
+  X(dbCreateCounter)                                                           \
+  X(smartDbCreateCounter)                                                      \
+  X(mallocMemory)                                                              \
+  X(callocMemory)                                                              \
+  X(freeMemory)                                                                \
+  X(guidAllocCounter)                                                          \
+  X(guidLookupCounter)                                                         \
+  X(getDbCounter)                                                              \
+  X(putDbCounter)                                                              \
+  X(contextSwitch)                                                             \
+  X(yield)                                                                     \
+  X(remoteMemoryMove)                                                          \
+  X(memoryFootprint)                                                           \
+  X(edtRunningTime)                                                            \
+  X(numEdtsCreated)                                                            \
+  X(numEdtsAcquired)                                                           \
+  X(numEdtsFinished)                                                           \
+  X(remoteBytesSent)                                                           \
+  X(remoteBytesReceived)                                                       \
+  X(numDbsCreated)                                                             \
+  /* Twin-Diff counters */                                                     \
+  X(twinDiffUsed)                                                              \
+  X(twinDiffSkipped)                                                           \
+  X(twinDiffBytesSaved)                                                        \
+  X(twinDiffComputeTime)                                                       \
+  /* Acquire-Mode counters */                                                  \
+  X(acquireReadMode)                                                           \
+  X(acquireWriteMode)                                                          \
+  X(ownerUpdatesSaved)                                                         \
+  X(ownerUpdatesPerformed)                                                     \
+  /* arts_id tracking counters */                                              \
+  X(artsIdEdtMetrics)                                                          \
+  X(artsIdDbMetrics)                                                           \
+  X(artsIdEdtCaptures)                                                         \
+  X(artsIdDbCaptures)                                                          \
+  /* Per-node timing counters (CLUSTER level; master-measured) */              \
+  X(initializationTime)                                                        \
+  X(endToEndTime)
+
+// Generate enum from X-macro
 typedef enum artsCounterType {
-  edtCounter = 0,
-  sleepCounter,
-  totalCounter,
-  signalEventCounter,
-  signalPersistentEventCounter,
-  signalEdtCounter,
-  edtCreateCounter,
-  eventCreateCounter,
-  persistentEventCreateCounter,
-  dbCreateCounter,
-  smartDbCreateCounter,
-  mallocMemory,
-  callocMemory,
-  freeMemory,
-  guidAllocCounter,
-  guidLookupCounter,
-  getDbCounter,
-  putDbCounter,
-  contextSwitch,
-  yield,
-  remoteMemoryMove,
-  memoryFootprint,
-  edtRunningTime,
-  numEdtsCreated,
-  numEdtsAcquired,
-  numEdtsFinished,
-  remoteBytesSent,
-  remoteBytesReceived,
-  numDbsCreated,
-  // Twin-Diff counters
-  twinDiffUsed,
-  twinDiffSkipped,
-  twinDiffBytesSaved,
-  twinDiffComputeTime,
-  // Acquire-Mode counters
-  acquireReadMode,
-  acquireWriteMode,
-  ownerUpdatesSaved,
-  ownerUpdatesPerformed,
-  // arts_id tracking counters
-  artsIdEdtMetrics,
-  artsIdDbMetrics,
-  artsIdEdtCaptures,
-  artsIdDbCaptures,
-  // Per-node timing counters.
-  // These counters measure wall-clock durations on each node:
-  // - initializationTime: time spent in ARTS initialization
-  // - endToEndTime: main workload execution time
-  // - finalizationTime: time spent in ARTS finalization
-  initializationTime,
-  endToEndTime,
-  finalizationTime,
-  NUM_COUNTER_TYPES,
+#define X(name) name,
+  ARTS_COUNTER_LIST
+#undef X
+      NUM_COUNTER_TYPES,
 } artsCounterType;
 
-typedef enum artsCounterReduceType {
-  artsCounterSum = 0,
-  artsCounterMax,
-  artsCounterMin,
-} artsCounterReduceType;
+// Generate string array from X-macro (using stringification operator #)
+static const char *const artsCounterNames[] = {
+#define X(name) #name,
+    ARTS_COUNTER_LIST
+#undef X
+};
 
-// Capture mode: determines when/how often counters are captured
-typedef enum artsCounterCaptureMode {
-  artsCaptureModeOff = 0,      // Counter disabled
-  artsCaptureModeOnce = 1,     // Single value at the end (no periodic capture)
-  artsCaptureModePeriodic = 2, // Periodic capture during execution
-} artsCounterCaptureMode;
+typedef enum artsCounterReduceMethod {
+  artsCounterReduceSum = 0,
+  artsCounterReduceMax,
+  artsCounterReduceMin,
+  artsCounterReduceMaster, // Use master node's value only (no reduction)
+} artsCounterReduceMethod;
 
-// Capture level: determines the aggregation level for output
-typedef enum artsCounterCaptureLevel {
-  artsCaptureLevelThread = 0,  // Per-thread output (no reduction)
-  artsCaptureLevelNode = 1,    // Per-node output (reduce across threads)
-  artsCaptureLevelCluster = 2, // Cluster output (reduce across all nodes)
-} artsCounterCaptureLevel;
+// Counter mode: determines when/how often counters are captured
+typedef enum artsCounterMode {
+  artsCounterModeOff = 0,      // Counter disabled
+  artsCounterModeOnce = 1,     // Single value at the end (no periodic capture)
+  artsCounterModePeriodic = 2, // Periodic capture during execution
+} artsCounterMode;
+
+// Counter level: determines the aggregation level for output
+typedef enum artsCounterLevel {
+  artsCounterLevelThread = 0,  // Per-thread output (no reduction)
+  artsCounterLevelNode = 1,    // Per-node output (reduce across threads)
+  artsCounterLevelCluster = 2, // Cluster output (reduce across all nodes)
+} artsCounterLevel;
 
 typedef struct {
   uint64_t count;
   uint64_t start;
 } artsCounter;
 
+// Captured counter value with epoch information for PERIODIC mode.
+// Epoch is the interval number (e.g., 1 for first interval, 100 for 100th).
+// This allows proper reduction even when some intervals are skipped.
 typedef struct {
-  artsCounter counters[NUM_COUNTER_TYPES];
-  artsArrayList *captures[NUM_COUNTER_TYPES]; // Per-thread captures
-// arts_id tracking (compile-time conditional)
-#if ENABLE_artsIdEdtMetrics || ENABLE_artsIdDbMetrics
-  artsIdHashTable
-      artsIdMetricsTable; // Hash table for per-arts_id aggregate metrics
-#endif
-#if ENABLE_artsIdEdtCaptures || ENABLE_artsIdDbCaptures
-  artsArrayList *artsIdEdtCaptureList; // Per-invocation EDT captures
-  artsArrayList *artsIdDbCaptureList;  // Per-invocation DB captures
-#endif
-} artsCounterCaptures;
+  uint64_t epoch; // Interval number when captured
+  uint64_t value; // Counter value at this epoch
+} artsCounterCapture;
 
-// Node-level captures
-typedef struct {
-  artsArrayList *counterCaptures[NUM_COUNTER_TYPES];
-// arts_id tracking (compile-time conditional)
+// Thread-local counter storage - simple array of counters only.
+// Each thread updates these directly. No captures here.
+// Defined in Counter.c, each thread has its own copy.
+extern __thread artsCounter artsThreadLocalCounters[NUM_COUNTER_TYPES];
+
+// arts_id tracking stored separately per-thread (compile-time conditional)
 #if ENABLE_artsIdEdtMetrics || ENABLE_artsIdDbMetrics
-  artsIdHashTable artsIdMetricsTable; // Reduced hash table for NODE mode
+extern __thread artsIdHashTable artsThreadLocalArtsIdMetrics;
 #endif
-#if ENABLE_artsIdEdtCaptures || ENABLE_artsIdDbCaptures
-  artsArrayList *artsIdEdtCaptureList; // Reduced EDT captures for NODE mode
-  artsArrayList *artsIdDbCaptureList;  // Reduced DB captures for NODE mode
+#if ENABLE_artsIdEdtCaptures
+extern __thread artsArrayList *artsThreadLocalEdtCaptureList;
 #endif
-} artsCounterReduces;
+#if ENABLE_artsIdDbCaptures
+extern __thread artsArrayList *artsThreadLocalDbCaptureList;
+#endif
+
+// Note: Saved counter data is stored directly in artsNodeInfo:
+// - savedCounters[threadId][counterIndex]: final counter values
+// - captureArrays[threadId][counterIndex]: capture history (PERIODIC)
+// - arts_id tracking data stored in __thread variables during runtime,
+//   then merged at output time
 
 // We do not implement system-wide counters due to the overhead of
 // synchronization and network communication
 // Also, we exclude most of the calculation part to reduce the impact on
 // performance
 
-void artsCounterStart(unsigned int startPoint);
-void artsCounterStop();
-void artsCounterReset(artsCounter *counter);
+// Counter initialization is handled internally by runtime init/cleanup.
+
+void artsCounterCaptureStart();
+void artsCounterCaptureStop();
 void artsCounterIncrementBy(artsCounter *counter, uint64_t num);
 void artsCounterDecrementBy(artsCounter *counter, uint64_t num);
 void artsCounterTimerStart(artsCounter *counter);
 void artsCounterTimerEnd(artsCounter *counter);
-void artsCounterWriteThread(const char *outputFolder, unsigned int nodeId,
-                            unsigned int threadId);
-void artsCounterWriteNode(const char *outputFolder, unsigned int nodeId);
-void artsCounterWriteCluster(const char *outputFolder);
+void artsCounterWrite(const char *outputFolder, unsigned int nodeId,
+                      unsigned int threadId);
 
 // arts_id tracking wrapper functions (integrated with counter infrastructure)
 void artsCounterRecordArtsIdEdt(uint64_t arts_id, uint64_t exec_ns,
@@ -183,98 +196,6 @@ void artsCounterCaptureArtsIdEdt(uint64_t arts_id, uint64_t exec_ns,
                                  uint64_t stall_ns);
 void artsCounterCaptureArtsIdDb(uint64_t arts_id, uint64_t bytes_accessed,
                                 uint8_t access_type);
-
-static const char *const artsCounterNames[] = {"edtCounter",
-                                               "sleepCounter",
-                                               "totalCounter",
-                                               "signalEventCounter",
-                                               "signalPersistentEventCounter",
-                                               "signalEdtCounter",
-                                               "edtCreateCounter",
-                                               "eventCreateCounter",
-                                               "persistentEventCreateCounter",
-                                               "dbCreateCounter",
-                                               "smartDbCreateCounter",
-                                               "mallocMemory",
-                                               "callocMemory",
-                                               "freeMemory",
-                                               "guidAllocCounter",
-                                               "guidLookupCounter",
-                                               "getDbCounter",
-                                               "putDbCounter",
-                                               "contextSwitch",
-                                               "yield",
-                                               "remoteMemoryMove",
-                                               "memoryFootprint",
-                                               "edtRunningTime",
-                                               "numEdtsCreated",
-                                               "numEdtsAcquired",
-                                               "numEdtsFinished",
-                                               "remoteBytesSent",
-                                               "remoteBytesReceived",
-                                               "numDbsCreated",
-                                               "twinDiffUsed",
-                                               "twinDiffSkipped",
-                                               "twinDiffBytesSaved",
-                                               "twinDiffComputeTime",
-                                               "acquireReadMode",
-                                               "acquireWriteMode",
-                                               "ownerUpdatesSaved",
-                                               "ownerUpdatesPerformed",
-                                               "artsIdEdtMetrics",
-                                               "artsIdDbMetrics",
-                                               "artsIdEdtCaptures",
-                                               "artsIdDbCaptures",
-                                               "initializationTime",
-                                               "endToEndTime",
-                                               "finalizationTime"};
-
-static const unsigned int artsCounterReduceTypes[] = {
-    artsCounterSum, // edtCounter
-    artsCounterSum, // sleepCounter
-    artsCounterSum, // totalCounter
-    artsCounterSum, // signalEventCounter
-    artsCounterSum, // signalPersistentEventCounter
-    artsCounterSum, // signalEdtCounter
-    artsCounterSum, // edtCreateCounter
-    artsCounterSum, // eventCreateCounter
-    artsCounterSum, // persistentEventCreateCounter
-    artsCounterSum, // dbCreateCounter
-    artsCounterSum, // smartDbCreateCounter
-    artsCounterSum, // mallocMemory
-    artsCounterSum, // callocMemory
-    artsCounterSum, // freeMemory
-    artsCounterSum, // guidAllocCounter
-    artsCounterSum, // guidLookupCounter
-    artsCounterSum, // getDbCounter
-    artsCounterSum, // putDbCounter
-    artsCounterSum, // contextSwitch
-    artsCounterSum, // yield
-    artsCounterSum, // remoteMemoryMove
-    artsCounterSum, // memoryFootprint
-    artsCounterSum, // edtRunningTime
-    artsCounterSum, // numEdtsCreated
-    artsCounterSum, // numEdtsAcquired
-    artsCounterSum, // numEdtsFinished
-    artsCounterSum, // remoteBytesSent
-    artsCounterSum, // remoteBytesReceived
-    artsCounterSum, // numDbsCreated
-    artsCounterSum, // twinDiffUsed
-    artsCounterSum, // twinDiffSkipped
-    artsCounterSum, // twinDiffBytesSaved
-    artsCounterSum, // twinDiffComputeTime
-    artsCounterSum, // acquireReadMode
-    artsCounterSum, // acquireWriteMode
-    artsCounterSum, // ownerUpdatesSaved
-    artsCounterSum, // ownerUpdatesPerformed
-    artsCounterSum, // artsIdEdtMetrics
-    artsCounterSum, // artsIdDbMetrics
-    artsCounterSum, // artsIdEdtCaptures
-    artsCounterSum, // artsIdDbCaptures
-    artsCounterSum, // initializationTime
-    artsCounterSum, // endToEndTime
-    artsCounterSum  // finalizationTime
-};
 
 #ifdef __cplusplus
 }

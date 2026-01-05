@@ -88,12 +88,10 @@ enum artsServerMessageType {
   ARTS_REMOTE_DB_RENAME_MSG,
   ARTS_REMOTE_DB_PARTIAL_UPDATE_MSG,
   ARTS_REMOTE_DB_ADD_DEPENDENCE_WITH_BYTE_OFFSET_MSG,
-  ARTS_REMOTE_TIME_SYNC_REQ_MSG,  // Worker -> Master: request sync
-  ARTS_REMOTE_TIME_SYNC_RESP_MSG, // Master -> Worker: response with master time
-  ARTS_REMOTE_COUNTER_REDUCE_MSG, // Worker -> Master: single counter value
-                                  // (one packet per counter for reduction)
-  ARTS_REMOTE_COUNTER_REDUCE_DONE_MSG, // Worker -> Master: signal all counters
-                                       // sent
+  ARTS_REMOTE_TIME_SYNC_REQ_MSG,  // Worker -> Master: request with T1
+  ARTS_REMOTE_TIME_SYNC_RESP_MSG, // Master -> Worker: response with T1, T2
+  ARTS_REMOTE_COUNTER_REDUCE_MSG, // Worker -> Master: send node-reduced
+                                  // counters
 };
 
 // Header
@@ -302,27 +300,30 @@ struct __attribute__((__packed__)) artsRemotePartialUpdatePacket {
   uint32_t reserved;
 };
 
-// Time synchronization request packet (Worker -> Master)
-// Worker sends this with T1 (worker's send time) to initiate sync
+// Time synchronization packets for RTT-based clock sync
+// Worker sends request with its send time T1
 struct __attribute__((__packed__)) artsRemoteTimeSyncReqPacket {
   struct artsRemotePacket header;
   uint64_t workerSendTime; // T1: worker's local time when sending request
 };
 
-// Time synchronization response packet (Master -> Worker)
-// Master responds with its timestamp so worker can calculate offset
+// Master responds with T1 (echoed) and T2 (master's receive time)
 struct __attribute__((__packed__)) artsRemoteTimeSyncRespPacket {
   struct artsRemotePacket header;
-  uint64_t workerSendTime; // T1: echoed back from request
-  uint64_t masterRecvTime; // T2: master's local time when it received request
+  uint64_t workerSendTime; // T1: echoed back
+  uint64_t masterRecvTime; // T2: master's local time when receiving request
 };
 
-// Counter reduction packet (Worker -> Master for CLUSTER level counters)
-// Each worker sends its reduced counter values to master for final aggregation
+// Counter reduce packet: worker sends node-reduced counter values to master
+// For PERIODIC mode, captures follow the fixed-size header as variable-length
+// data
 struct __attribute__((__packed__)) artsRemoteCounterReducePacket {
   struct artsRemotePacket header;
-  unsigned int counterIndex; // Which counter type
-  uint64_t value;            // The reduced value from this node
+  unsigned int nodeId;       // Source node ID
+  unsigned int counterIndex; // Which counter this is for
+  uint64_t value;            // For ONCE mode: the reduced value
+  uint64_t captureCount;     // For PERIODIC mode: number of epoch-value pairs
+  // Variable length: captureCount * (epoch, value) pairs follow
 };
 
 void outInit(unsigned int size);

@@ -185,6 +185,12 @@ void artsJsonWriterWriteNull(artsJsonWriter *writer, const char *key) {
   fputs("null", writer->fp);
 }
 
+void artsJsonWriterWriteRawArray(artsJsonWriter *writer, const char *key,
+                                 const char *rawJson) {
+  jsonWriterWriteKey(writer, key);
+  fputs(rawJson, writer->fp);
+}
+
 void artsJsonWriterFinish(artsJsonWriter *writer) {
   while (writer->depth)
     jsonWriterPop(writer, '}');

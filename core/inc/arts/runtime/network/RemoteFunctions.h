@@ -176,22 +176,18 @@ void artsRemoteHandleSignalContext(void *pack);
 void artsRemoteDbRename(artsGuid_t newGuid, artsGuid_t oldGuid);
 void artsRemoteHandleDbRename(void *pack);
 
-// Time synchronization for counter capture alignment (RTT-based)
-// Worker initiates sync by sending request to master
-void artsRemoteTimeSyncReqSend(unsigned int masterRank);
-void artsRemoteHandleTimeSyncReq(void *pack);
-// Master responds with its timestamp
-void artsRemoteTimeSyncRespSend(unsigned int workerRank,
-                                uint64_t workerSendTime,
-                                uint64_t masterRecvTime);
-void artsRemoteHandleTimeSyncResp(void *pack);
+// RTT-based time synchronization for precise epoch alignment
+// Worker initiates sync request, master responds, worker calculates offset
+void artsRemoteTimeSyncRequest(void);          // Worker sends request to master
+void artsRemoteHandleTimeSyncReq(void *pack);  // Master handles request
+void artsRemoteHandleTimeSyncResp(void *pack); // Worker handles response
 
-// Counter reduction for CLUSTER level counters
-void artsRemoteCounterReduceSend(unsigned int masterRank,
-                                 unsigned int counterIndex, uint64_t value);
+// Counter cluster reduction via active messaging
+// Worker sends node-reduced counters to master
+void artsRemoteCounterReduceSend(unsigned int counterIndex, uint64_t value,
+                                 uint64_t *epochs, uint64_t *values,
+                                 uint64_t captureCount);
 void artsRemoteHandleCounterReduce(void *pack);
-void artsRemoteCounterReduceDoneSend(unsigned int masterRank);
-void artsRemoteHandleCounterReduceDone(void);
 
 #ifdef __cplusplus
 }
