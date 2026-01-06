@@ -88,6 +88,10 @@ enum artsServerMessageType {
   ARTS_REMOTE_DB_RENAME_MSG,
   ARTS_REMOTE_DB_PARTIAL_UPDATE_MSG,
   ARTS_REMOTE_DB_ADD_DEPENDENCE_WITH_BYTE_OFFSET_MSG,
+  ARTS_REMOTE_TIME_SYNC_REQ_MSG,  // Worker -> Master: request with T1
+  ARTS_REMOTE_TIME_SYNC_RESP_MSG, // Master -> Worker: response with T1, T2
+  ARTS_REMOTE_COUNTER_REDUCE_MSG, // Worker -> Master: send node-reduced
+                                  // counters
 };
 
 // Header
@@ -294,6 +298,32 @@ struct __attribute__((__packed__)) artsRemotePartialUpdatePacket {
   uint32_t dataBytes;
   uint32_t flags;
   uint32_t reserved;
+};
+
+// Time synchronization packets for RTT-based clock sync
+// Worker sends request with its send time T1
+struct __attribute__((__packed__)) artsRemoteTimeSyncReqPacket {
+  struct artsRemotePacket header;
+  uint64_t workerSendTime; // T1: worker's local time when sending request
+};
+
+// Master responds with T1 (echoed) and T2 (master's receive time)
+struct __attribute__((__packed__)) artsRemoteTimeSyncRespPacket {
+  struct artsRemotePacket header;
+  uint64_t workerSendTime; // T1: echoed back
+  uint64_t masterRecvTime; // T2: master's local time when receiving request
+};
+
+// Counter reduce packet: worker sends node-reduced counter values to master
+// For PERIODIC mode, captures follow the fixed-size header as variable-length
+// data
+struct __attribute__((__packed__)) artsRemoteCounterReducePacket {
+  struct artsRemotePacket header;
+  unsigned int nodeId;       // Source node ID
+  unsigned int counterIndex; // Which counter this is for
+  uint64_t value;            // For ONCE mode: the reduced value
+  uint64_t captureCount;     // For PERIODIC mode: number of epoch-value pairs
+  // Variable length: captureCount * (epoch, value) pairs follow
 };
 
 void outInit(unsigned int size);

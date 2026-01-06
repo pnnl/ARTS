@@ -43,6 +43,7 @@
 #include "arts/introspection/ArtsIdCounter.h"
 #include "arts/introspection/Counter.h"
 #include "arts/introspection/Metrics.h"
+#include "arts/introspection/Preamble.h"
 #include "arts/network/Remote.h"
 #include "arts/network/RemoteProtocol.h"
 #include "arts/runtime/Globals.h"
@@ -186,61 +187,40 @@ void artsRuntimeNodeInit(unsigned int workerThreads,
   artsNodeInfo.globalGuidThreadId =
       (uint64_t *)artsCalloc(totalThreads, sizeof(uint64_t));
   artsNodeInfo.counterFolder = config->counterFolder;
-  artsNodeInfo.counterStartPoint = config->counterStartPoint;
-  artsNodeInfo.counterCaptures = (artsCounterCaptures *)artsCalloc(
-      totalThreads, sizeof(artsCounterCaptures));
+
+  // Allocate liveCounters array - pointers to each thread's __thread counters
+  // These will be registered by each thread during artsRuntimePrivateInit
+  artsNodeInfo.liveCounters =
+      (artsCounter **)artsCalloc(totalThreads, sizeof(artsCounter *));
+
+  // Allocate savedCounters - nodeInfo's own counter space for final values
+  // Pre-allocate all counters for all threads upfront
+  artsNodeInfo.savedCounters =
+      (artsCounter **)artsCalloc(totalThreads, sizeof(artsCounter *));
   for (unsigned int t = 0; t < totalThreads; t++) {
-    // Initialize standard counter captures
+    artsNodeInfo.savedCounters[t] =
+        (artsCounter *)artsCalloc(NUM_COUNTER_TYPES, sizeof(artsCounter));
+  }
+
+  // Allocate captureArrays for periodic capture (capture thread writes here)
+  // Pre-allocate all ArrayLists for PERIODIC mode counters
+  artsNodeInfo.captureArrays =
+      (artsArrayList ***)artsCalloc(totalThreads, sizeof(artsArrayList **));
+  for (unsigned int t = 0; t < totalThreads; t++) {
+    artsNodeInfo.captureArrays[t] = (artsArrayList **)artsCalloc(
+        NUM_COUNTER_TYPES, sizeof(artsArrayList *));
     for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
-      if (artsCounterMode[i] == artsCounterModeThread ||
-          artsCounterMode[i] == artsCounterModeNode) {
-        artsNodeInfo.counterCaptures[t].captures[i] =
-            artsNewArrayList(sizeof(uint64_t), 16);
+      if (artsCounterModeArray[i] == artsCounterModePeriodic) {
+        artsNodeInfo.captureArrays[t][i] =
+            artsNewArrayList(sizeof(artsCounterCapture), 16);
       }
     }
-
-// Initialize arts_id tracking (integrated with counter infrastructure)
-#if ENABLE_artsIdEdtMetrics || ENABLE_artsIdDbMetrics
-    artsIdInitHashTable(&artsNodeInfo.counterCaptures[t].artsIdMetricsTable);
-#endif
-#if ENABLE_artsIdEdtCaptures
-    artsNodeInfo.counterCaptures[t].artsIdEdtCaptureList =
-        artsNewArrayList(sizeof(artsIdEdtCapture), 1024);
-#endif
-#if ENABLE_artsIdDbCaptures
-    artsNodeInfo.counterCaptures[t].artsIdDbCaptureList =
-        artsNewArrayList(sizeof(artsIdDbCapture), 1024);
-#endif
   }
+
   artsNodeInfo.counterCaptureInterval = config->counterCaptureInterval;
 
-  // Initialize node-level counter reduces
-  for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
-    if (artsCounterMode[i] == artsCounterModeNode) {
-      artsNodeInfo.counterReduces.counterCaptures[i] =
-          artsNewArrayList(sizeof(uint64_t), 16);
-    }
-  }
-
-// Initialize node-level arts_id reduces (for NODE mode)
-#if ENABLE_artsIdEdtMetrics || ENABLE_artsIdDbMetrics
-  if (artsCounterMode[artsIdEdtMetrics] == artsCounterModeNode ||
-      artsCounterMode[artsIdDbMetrics] == artsCounterModeNode) {
-    artsIdInitHashTable(&artsNodeInfo.counterReduces.artsIdMetricsTable);
-  }
-#endif
-#if ENABLE_artsIdEdtCaptures
-  if (artsCounterMode[artsIdEdtCaptures] == artsCounterModeNode) {
-    artsNodeInfo.counterReduces.artsIdEdtCaptureList =
-        artsNewArrayList(sizeof(artsIdEdtCapture), 1024);
-  }
-#endif
-#if ENABLE_artsIdDbCaptures
-  if (artsCounterMode[artsIdDbCaptures] == artsCounterModeNode) {
-    artsNodeInfo.counterReduces.artsIdDbCaptureList =
-        artsNewArrayList(sizeof(artsIdDbCapture), 1024);
-  }
-#endif
+  // Note: Node-level counter reduction is done at output time using
+  // savedCounters. arts_id node-level reduction also computed at output time.
 
   artsTMTNodeInit(workerThreads);
   artsInitTMTLitePerNode(workerThreads);
@@ -251,10 +231,10 @@ void artsRuntimeNodeInit(unsigned int workerThreads,
 }
 
 void artsRuntimeGlobalCleanup() {
-  artsCounterStop();
-  artsCounterWriteNode(artsNodeInfo.counterFolder, artsGlobalRankId);
+  artsCounterCaptureStop();
+  // Write all counter outputs (thread, node, and cluster levels)
   for (unsigned int t = 0; t < artsNodeInfo.totalThreadCount; t++) {
-    artsCounterWriteThread(artsNodeInfo.counterFolder, artsGlobalRankId, t);
+    artsCounterWrite(artsNodeInfo.counterFolder, artsGlobalRankId, t);
   }
   artsCleanUpDbs();
   artsFree(artsNodeInfo.deque);
@@ -274,10 +254,13 @@ void artsRuntimeGlobalCleanup() {
 }
 
 void artsThreadZeroNodeStart() {
-  artsCounterStart(1);
 
   setGlobalGuidOn();
   createShutdownEpoch();
+
+  artsCounterCaptureStart();
+  INITIALIZATION_TIME_STOP();
+  END_TO_END_TIME_START();
 
   if (initPerNode)
     initPerNode(artsGlobalRankId, mainArgc, mainArgv);
@@ -287,7 +270,6 @@ void artsThreadZeroNodeStart() {
 #endif
   setGuidGeneratorAfterParallelStart();
 
-  artsCounterStart(2);
   artsAtomicSub(&artsNodeInfo.readyToParallelStart, 1U);
   while (artsNodeInfo.readyToParallelStart) {
   }
@@ -302,7 +284,6 @@ void artsThreadZeroNodeStart() {
   artsAtomicSub(&artsNodeInfo.readyToInspect, 1U);
   while (artsNodeInfo.readyToInspect) {
   }
-  artsCounterStart(3);
   artsAtomicSub(&artsNodeInfo.readyToExecute, 1U);
   while (artsNodeInfo.readyToExecute) {
   }
@@ -376,7 +357,20 @@ void artsRuntimePrivateInit(struct threadMask *unit,
   artsThreadInfo.mallocTrace = 1;
   artsThreadInfo.localCounting = 1;
   artsThreadInfo.shadLock = 0;
-  artsThreadInfo.artsCounters = artsNodeInfo.counterCaptures[unit->id].counters;
+
+  // Register thread-local counter storage with nodeInfo
+  artsNodeInfo.liveCounters[unit->id] = artsThreadLocalCounters;
+#if ENABLE_artsIdEdtMetrics || ENABLE_artsIdDbMetrics
+  artsIdInitHashTable(&artsThreadLocalArtsIdMetrics);
+#endif
+#if ENABLE_artsIdEdtCaptures
+  artsThreadLocalEdtCaptureList =
+      artsNewArrayList(sizeof(artsIdEdtCapture), 1024);
+#endif
+#if ENABLE_artsIdDbCaptures
+  artsThreadLocalDbCaptureList =
+      artsNewArrayList(sizeof(artsIdDbCapture), 1024);
+#endif
 
   artsGuidKeyGeneratorInit();
 
@@ -634,7 +628,6 @@ bool artsDefaultSchedulerLoop() {
 }
 
 int artsRuntimeLoop() {
-  TOTAL_COUNTER_START();
   if (artsThreadInfo.networkReceive) {
     while (artsThreadInfo.alive) {
       artsServerTryToReceive(&artsNodeInfo.buf, &artsNodeInfo.packetSize,
@@ -653,6 +646,5 @@ int artsRuntimeLoop() {
       artsNodeInfo.scheduler();
     }
   }
-  TOTAL_COUNTER_STOP();
   return 0;
 }

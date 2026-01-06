@@ -107,11 +107,11 @@ struct artsRuntimeShared {
   uint64_t **keys;
   uint64_t *globalGuidThreadId;
   const char *counterFolder;
-  unsigned int counterStartPoint;
-  artsCounterCaptures *counterCaptures;
+  artsCounter **liveCounters;           // [threadId] -> pointer to thread's __thread counters
+  artsCounter **savedCounters;          // [threadId][counterIndex] - final counter values
+  artsArrayList ***captureArrays;       // [threadId][counterIndex] - capture history (PERIODIC)
   uint64_t counterCaptureInterval;
-  artsCounterReduces counterReduces;
-  // arts_id tracking now integrated in counterCaptures and counterReduces
+  // arts_id reduced metrics computed at output time (not stored during runtime)
 } __attribute__((aligned(64)));
 
 struct artsRuntimePrivate {
@@ -136,9 +136,8 @@ struct artsRuntimePrivate {
   int edtFree;
   int localCounting;
   unsigned int shadLock;
-  artsCounter *artsCounters;
   unsigned short drand_buf[3];
-  // arts_id tracking now accessed via counterCaptures[threadId]
+  // Thread's counter storage accessed via artsThreadLocalCounterCaptures
 };
 
 extern struct artsRuntimeShared artsNodeInfo;

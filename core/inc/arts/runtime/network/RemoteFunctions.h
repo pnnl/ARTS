@@ -66,7 +66,6 @@ void artsRemoteHandleDbDestroy(void *ptr);
 void artsRemoteUpdateDb(artsGuid_t guid, bool sendDb);
 void artsRemoteHandleUpdateDb(void *ptr);
 
-
 struct artsDiffList;
 void artsRemotePartialUpdateDb(artsGuid_t guid, struct artsDiffList *diffs,
                                void *working);
@@ -176,6 +175,19 @@ void artsRemoteSignalContext(unsigned int rank, uint64_t ticket);
 void artsRemoteHandleSignalContext(void *pack);
 void artsRemoteDbRename(artsGuid_t newGuid, artsGuid_t oldGuid);
 void artsRemoteHandleDbRename(void *pack);
+
+// RTT-based time synchronization for precise epoch alignment
+// Worker initiates sync request, master responds, worker calculates offset
+void artsRemoteTimeSyncRequest(void);          // Worker sends request to master
+void artsRemoteHandleTimeSyncReq(void *pack);  // Master handles request
+void artsRemoteHandleTimeSyncResp(void *pack); // Worker handles response
+
+// Counter cluster reduction via active messaging
+// Worker sends node-reduced counters to master
+void artsRemoteCounterReduceSend(unsigned int counterIndex, uint64_t value,
+                                 uint64_t *epochs, uint64_t *values,
+                                 uint64_t captureCount);
+void artsRemoteHandleCounterReduce(void *pack);
 
 #ifdef __cplusplus
 }

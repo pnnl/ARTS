@@ -138,9 +138,11 @@ void artsCheckLockShad() {
   }
 }
 
-void artsStartIntroShad(unsigned int start) { artsCounterStart(start); }
+void artsStartIntroShad(unsigned int start) {
+  // artsCounterCaptureStart(start);
+}
 
-void artsStopIntroShad() { artsCounterStop(); }
+void artsStopIntroShad() { artsCounterCaptureStop(); }
 
 unsigned int artsGetShadLoopStride() { return artsNodeInfo.shadLoopStride; }
 

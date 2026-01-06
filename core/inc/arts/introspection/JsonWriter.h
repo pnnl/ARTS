@@ -67,6 +67,8 @@ void artsJsonWriterWriteDouble(artsJsonWriter *writer, const char *key,
 void artsJsonWriterWriteString(artsJsonWriter *writer, const char *key,
                                const char *value);
 void artsJsonWriterWriteNull(artsJsonWriter *writer, const char *key);
+void artsJsonWriterWriteRawArray(artsJsonWriter *writer, const char *key,
+                                 const char *rawJson);
 void artsJsonWriterFinish(artsJsonWriter *writer);
 
 #ifdef __cplusplus

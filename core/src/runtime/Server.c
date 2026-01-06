@@ -341,6 +341,21 @@ void artsServerProcessPacket(struct artsRemotePacket *packet) {
     artsRemoteHandleDbRename(packet);
     break;
   }
+  case ARTS_REMOTE_TIME_SYNC_REQ_MSG: {
+    ARTS_DEBUG("Time Sync Request Received");
+    artsRemoteHandleTimeSyncReq(packet);
+    break;
+  }
+  case ARTS_REMOTE_TIME_SYNC_RESP_MSG: {
+    ARTS_DEBUG("Time Sync Response Received");
+    artsRemoteHandleTimeSyncResp(packet);
+    break;
+  }
+  case ARTS_REMOTE_COUNTER_REDUCE_MSG: {
+    ARTS_DEBUG("Counter Reduce Received");
+    artsRemoteHandleCounterReduce(packet);
+    break;
+  }
   default: {
     ARTS_INFO("Unknown Packet %d %d %d", packet->messageType, packet->size,
               packet->rank);

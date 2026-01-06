@@ -36,6 +36,7 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
+#include "arts/introspection/Preamble.h"
 #define _GNU_SOURCE
 #define _FILE_OFFSET_BITS 64
 #include "arts/arts.h"
@@ -71,6 +72,7 @@ static inline int carts_benchmarks_should_report_init_runtime(void) {
 }
 
 int artsRT(int argc, char **argv) {
+  INITIALIZATION_TIME_START();
   uint64_t init_start_ns = carts_benchmarks_now_ns();
 
   mainArgc = argc;
