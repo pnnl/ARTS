@@ -188,6 +188,15 @@ void artsServerProcessPacket(struct artsRemotePacket *packet) {
         pack->useTwinDiff);
     break;
   }
+  case ARTS_REMOTE_ADD_DEPENDENCE_TO_PERSISTENT_EVENT_WITH_BYTE_OFFSET_MSG: {
+    ARTS_DEBUG("Persistent Dependence with ByteOffset Received");
+    struct artsRemoteAddDependenceWithByteOffsetPacket *pack =
+        (struct artsRemoteAddDependenceWithByteOffsetPacket *)(packet);
+    artsAddDependenceToPersistentEventWithByteOffset(
+        pack->source, pack->destination, pack->slot, pack->acquireMode,
+        pack->useTwinDiff, pack->byteOffset, pack->size);
+    break;
+  }
   case ARTS_REMOTE_INVALIDATE_DB_MSG: {
     ARTS_DEBUG("DB Invalidate Received");
     artsRemoteHandleInvalidateDb(packet);

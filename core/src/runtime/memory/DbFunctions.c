@@ -574,8 +574,9 @@ void acquireDbs(struct artsEdt *edt) {
               depv[i].guid, &validRank, true);
           // We have found an entry
           if (dbTemp) {
-            bool duplicateAdded = artsAddDbDuplicate(dbTemp, artsGlobalRankId,
-                                                     edt, i, effectiveMode);
+            bool duplicateAdded =
+                artsAddDbDuplicate(dbTemp, artsGlobalRankId, edt,
+                                   edt->currentEdt, i, effectiveMode);
             if (duplicateAdded)
               ARTS_DEBUG("Adding duplicate DB[Guid:%lu]", depv[i].guid);
             else
@@ -602,8 +603,8 @@ void acquireDbs(struct artsEdt *edt) {
                                     depv[i].mode, true, depv[i].acquireMode,
                                     depv[i].useTwinDiff);
               else
-                artsRemoteDbFullRequest(depv[i].guid, validRank, edt, i,
-                                        depv[i].mode);
+                artsRemoteDbFullRequest(depv[i].guid, validRank,
+                                        edt->currentEdt, i, depv[i].mode);
             }
           }
           // The Db hasn't been created yet
@@ -621,39 +622,61 @@ void acquireDbs(struct artsEdt *edt) {
                     "Owner:%d, ValidRank: %d, DbTemp: %p]",
                     depv[i].guid, depv[i].mode, owner, validRank,
                     (void *)dbTemp);
-          if (dbTemp) {
+          bool localValid = (dbTemp && validRank == artsGlobalRankId);
+          if (effectiveMode == ARTS_DB_READ && depv[i].mode == ARTS_DB_WRITE &&
+              localValid) {
+            // Drop cached READ copies for DB_WRITE types to avoid stale data.
+            artsRouteTableInvalidateItem(depv[i].guid);
+            dbTemp = NULL;
+            validRank = -1;
+            localValid = false;
+          }
+          if (localValid && effectiveMode != ARTS_DB_WRITE) {
             dbFound = dbTemp;
             artsAtomicSub(&edt->depcNeeded, 1U);
-            ARTS_INFO("  Found local copy, decremented depcNeeded");
-          }
-
-          artsType_t effectiveMode = artsGetEffectiveMode(&depv[i]);
-          if (effectiveMode == ARTS_DB_WRITE) {
-            // Check if twin-diff is enabled for this WRITE acquire
-            if (depv[i].useTwinDiff && depv[i].acquireMode == ARTS_DB_WRITE) {
-              // Twin-diff enabled: use aggregated request
-              // (will receive diffs, not full DB)
-              ARTS_INFO(
-                  "  WRITE mode with twin-diff - sending aggregated request "
-                  "to rank %d (AcquireMode:%u, UseTwinDiff: %d)",
-                  owner, depv[i].acquireMode, depv[i].useTwinDiff);
-              artsRemoteDbRequest(depv[i].guid, owner, edt, i,
-                                  depv[i].acquireMode, true,
-                                  depv[i].acquireMode, depv[i].useTwinDiff);
+            ARTS_INFO("  Found local valid copy, decremented depcNeeded");
+          } else if (dbTemp && effectiveMode == ARTS_DB_WRITE) {
+            if (localValid) {
+              dbFound = dbTemp;
+              artsAtomicSub(&edt->depcNeeded, 1U);
+              ARTS_INFO("  Found local valid copy for WRITE; using it");
             } else {
-              // Traditional path: full DB transfer for exclusive WRITE
-              ARTS_INFO("  WRITE mode - sending full DB request to rank %d",
-                        owner);
-              artsRemoteDbFullRequest(depv[i].guid, owner, edt, i,
-                                      effectiveMode);
+              // For WRITE, non-owner cached copies may be stale; wait for owner.
+              ARTS_INFO("  Local copy ignored for WRITE; waiting for owner");
             }
-          } else if (!dbTemp) {
+          }
+          if (effectiveMode == ARTS_DB_WRITE) {
+            if (!dbFound) {
+              // Check if twin-diff is enabled for this WRITE acquire
+              if (depv[i].useTwinDiff && depv[i].acquireMode == ARTS_DB_WRITE) {
+                // Twin-diff enabled: use aggregated request
+                // (will receive diffs, not full DB)
+                ARTS_INFO(
+                    "  WRITE mode with twin-diff - sending aggregated request "
+                    "to rank %d (AcquireMode:%u, UseTwinDiff: %d)",
+                    owner, depv[i].acquireMode, depv[i].useTwinDiff);
+                artsRemoteDbRequest(depv[i].guid, owner, edt, i,
+                                    depv[i].acquireMode, true,
+                                    depv[i].acquireMode, depv[i].useTwinDiff);
+              } else {
+                // Traditional path: full DB transfer for exclusive WRITE
+                ARTS_INFO("  WRITE mode - sending full DB request to rank %d",
+                          owner);
+                artsRemoteDbFullRequest(depv[i].guid, owner, edt->currentEdt, i,
+                                        effectiveMode);
+              }
+            } else {
+              ARTS_INFO("  WRITE mode with local valid copy - no remote request "
+                        "needed");
+            }
+          } else if (!dbTemp || !localValid) {
             // We can aggregate read requests for reads
             ARTS_INFO("  READ mode, no local copy - sending aggregated request "
                       "to rank %d",
                       owner);
-            artsRemoteDbRequest(depv[i].guid, owner, edt, i, depv[i].mode, true,
-                                ARTS_NULL, false);
+            int requestRank = owner;
+            artsRemoteDbRequest(depv[i].guid, requestRank, edt, i, depv[i].mode,
+                                true, ARTS_NULL, false);
           } else {
             ARTS_INFO("  READ mode with local copy - no remote request needed");
           }
@@ -829,6 +852,12 @@ void releaseDbs(unsigned int depc, artsEdtDep_t *depv, bool gpu) {
         artsProgressFrontier(db, artsGlobalRankId);
         artsDbDecrementLatch(depv[i].guid);
       } else {
+        struct artsDb *db = ((struct artsDb *)depv[i].ptr) - 1;
+        if (db && (db->header.size - sizeof(struct artsDb)) == 176128) {
+          ARTS_INFO("Release WRITE non-owner DB[Id:%lu, Guid:%lu, Size:%lu] "
+                    "sending update to owner %u",
+                    db->arts_id, depv[i].guid, db->header.size, owner);
+        }
         artsRemoteUpdateDb(depv[i].guid, true);
         INCREMENT_OWNER_UPDATES_PERFORMED_BY(1);
         INCREMENT_TWIN_DIFF_SKIPPED_BY(1);
@@ -845,7 +874,9 @@ void releaseDbs(unsigned int depc, artsEdtDep_t *depv, bool gpu) {
                depv[i].mode == ARTS_DB_ONCE) {
       artsRouteTableInvalidateItem(depv[i].guid);
     } else if (depv[i].mode == ARTS_PTR) {
-      artsFree(depv[i].ptr);
+      // Only free explicit buffers (guid == NULL). ESD slices point into DBs.
+      if (depv[i].guid == NULL_GUID)
+        artsFree(depv[i].ptr);
     } else if (!gpu && depv[i].mode == ARTS_DB_LC) {
       struct artsDb *db = ((struct artsDb *)depv[i].ptr) - 1;
       artsReaderUnlock(&db->reader);
@@ -858,13 +889,15 @@ void releaseDbs(unsigned int depc, artsEdtDep_t *depv, bool gpu) {
 }
 
 bool artsAddDbDuplicate(struct artsDb *db, unsigned int rank,
-                        struct artsEdt *edt, unsigned int slot,
-                        artsType_t mode) {
+                        struct artsEdt *edt, artsGuid_t edtGuid,
+                        unsigned int slot, artsType_t mode) {
   bool write = (mode == ARTS_DB_WRITE);
   bool exclusive = false;
+  if (edt && edtGuid == NULL_GUID)
+    edtGuid = edt->currentEdt;
   return artsPushDbToList((struct artsDbList *)db->dbList, rank, write,
                           exclusive, artsGuidGetRank(db->guid) == rank, false,
-                          edt, slot, mode);
+                          edt, edtGuid, slot, mode);
 }
 
 void internalGetFromDb(artsGuid_t edtGuid, artsGuid_t dbGuid, unsigned int slot,

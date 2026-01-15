@@ -70,6 +70,7 @@ struct artsDbFrontier {
    * be at most one per frontier.
    */
   unsigned int exNode;
+  artsGuid_t exEdtGuid;
   struct artsEdt *exEdt;
   unsigned int exSlot;
   artsType_t exMode;
@@ -110,7 +111,8 @@ struct artsDbFrontierIterator *
 artsProgressAndGetFrontier(struct artsDbList *dbList);
 bool artsPushDbToList(struct artsDbList *dbList, unsigned int data, bool write,
                       bool exclusive, bool local, bool bypass,
-                      struct artsEdt *edt, unsigned int slot, artsType_t mode);
+                      struct artsEdt *edt, artsGuid_t edtGuid,
+                      unsigned int slot, artsType_t mode);
 struct artsDbFrontierIterator *artsCloseFrontier(struct artsDbList *dbList);
 #ifdef __cplusplus
 }

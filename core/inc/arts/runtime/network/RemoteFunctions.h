@@ -56,6 +56,9 @@ void artsRemoteAddDependenceToPersistentEvent(artsGuid_t source,
 void artsRemoteAddDependenceToPersistentEventWithHints(
     artsGuid_t source, artsGuid_t destination, uint32_t slot, unsigned int rank,
     artsType_t acquireMode, bool useTwinDiff);
+void artsRemoteAddDependenceToPersistentEventWithByteOffset(
+    artsGuid_t source, artsGuid_t destination, uint32_t slot, unsigned int rank,
+    artsType_t acquireMode, bool useTwinDiff, uint64_t byteOffset, uint64_t size);
 void artsRemoteUpdateRouteTable(artsGuid_t guid, unsigned int rank);
 void artsRemoteHandleUpdateDbGuid(void *ptr);
 void artsRemoteHandleInvalidateDb(void *ptr);
@@ -115,17 +118,17 @@ void artsRemoteDbSendNow(int rank, struct artsDb *db);
 void artsRemoteDbSendCheck(int rank, struct artsDb *db, artsType_t mode);
 void artsRemoteDbSend(struct artsRemoteDbRequestPacket *pack);
 void artsRemoteHandleDbReceived(struct artsRemoteDbSendPacket *packet);
-void artsRemoteDbFullRequest(artsGuid_t dataGuid, int rank, struct artsEdt *edt,
+void artsRemoteDbFullRequest(artsGuid_t dataGuid, int rank, artsGuid_t edtGuid,
                              int pos, artsType_t mode);
 void artsRemoteDbForwardFull(int destRank, int sourceRank, artsGuid_t dataGuid,
-                             struct artsEdt *edt, int pos, artsType_t mode);
-void artsRemoteDbFullSendNow(int rank, struct artsDb *db, struct artsEdt *edt,
+                             artsGuid_t edtGuid, int pos, artsType_t mode);
+void artsRemoteDbFullSendNow(int rank, struct artsDb *db, artsGuid_t edtGuid,
                              unsigned int slot, artsType_t mode);
-void artsRemoteDbFullSendCheck(int rank, struct artsDb *db, struct artsEdt *edt,
+void artsRemoteDbFullSendCheck(int rank, struct artsDb *db, artsGuid_t edtGuid,
                                unsigned int slot, artsType_t mode);
 void artsRemoteDbFullSend(struct artsRemoteDbFullRequestPacket *pack);
 void artsRemoteHandleDbFullRecieved(struct artsRemoteDbFullSendPacket *packet);
-void artsRemoteSendAlreadyLocal(int rank, artsGuid_t guid, struct artsEdt *edt,
+void artsRemoteSendAlreadyLocal(int rank, artsGuid_t guid, artsGuid_t edtGuid,
                                 unsigned int slot, artsType_t mode);
 void artsRemoteHandleSendAlreadyLocal(void *pack);
 void artsRemoteGetFromDb(artsGuid_t edtGuid, artsGuid_t dbGuid,

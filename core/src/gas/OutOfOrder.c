@@ -116,7 +116,7 @@ struct ooRemoteDbSend {
 struct ooRemoteDbFullSend {
   enum artsOutOfOrderType type;
   int rank;
-  struct artsEdt *edt;
+  artsGuid_t edtGuid;
   unsigned int slot;
   artsType_t mode;
 };
@@ -231,7 +231,7 @@ inline void artsOutOfOrderHandler(void *handleMe, void *memoryPtr) {
   case ooDbFullSend: {
     struct ooRemoteDbFullSend *dbSend = (struct ooRemoteDbFullSend *)handleMe;
     artsRemoteDbFullSendCheck(dbSend->rank, (struct artsDb *)memoryPtr,
-                              dbSend->edt, dbSend->slot, dbSend->mode);
+                              dbSend->edtGuid, dbSend->slot, dbSend->mode);
     break;
   }
   case ooGetFromDb: {
@@ -457,20 +457,20 @@ void artsOutOfOrderHandleDbRequestWithOOList(struct artsOutOfOrderList *addToMe,
 }
 
 void artsOutOfOrderHandleRemoteDbFullSend(artsGuid_t dbGuid, int rank,
-                                          struct artsEdt *edt,
+                                          artsGuid_t edtGuid,
                                           unsigned int slot, artsType_t mode) {
   struct ooRemoteDbFullSend *dbSend = (struct ooRemoteDbFullSend *)artsMalloc(
       sizeof(struct ooRemoteDbFullSend));
   dbSend->type = ooDbFullSend;
   dbSend->rank = rank;
-  dbSend->edt = edt;
+  dbSend->edtGuid = edtGuid;
   dbSend->slot = slot;
   dbSend->mode = mode;
   bool res = artsRouteTableAddOO(dbGuid, dbSend, false);
   if (!res) {
     struct artsDb *db = (struct artsDb *)artsRouteTableLookupItem(dbGuid);
-    artsRemoteDbFullSendCheck(dbSend->rank, db, dbSend->edt, dbSend->slot,
-                              dbSend->mode);
+    artsRemoteDbFullSendCheck(dbSend->rank, db, dbSend->edtGuid,
+                              dbSend->slot, dbSend->mode);
     artsFree(dbSend);
   }
 }

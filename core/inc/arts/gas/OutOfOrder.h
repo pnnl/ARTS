@@ -77,7 +77,7 @@ void artsOutOfOrderHandleRemoteDbExclusiveRequest(artsGuid_t dbGuid, int rank,
                                                   unsigned int slot,
                                                   artsType_t mode);
 void artsOutOfOrderHandleRemoteDbFullSend(artsGuid_t dbGuid, int rank,
-                                          struct artsEdt *edt,
+                                          artsGuid_t edtGuid,
                                           unsigned int slot, artsType_t mode);
 void artsOutOfOrderGetFromDb(artsGuid_t edtGuid, artsGuid_t dbGuid,
                              unsigned int slot, unsigned int offset,

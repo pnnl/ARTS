@@ -367,12 +367,27 @@ void artsEdtFree(struct artsEdt *edt) {
 }
 
 void artsEdtDelete(struct artsEdt *edt) {
+  if (!edt) {
+    ARTS_INFO("EDT delete called with NULL edt on rank %u", artsGlobalRankId);
+    return;
+  }
+  ARTS_INFO("EDT delete [Guid:%lu, Id:%lu, Depc:%u, DepcNeeded:%u] on rank %u",
+            edt->currentEdt, edt->arts_id, edt->depc, edt->depcNeeded,
+            artsGlobalRankId);
   artsRouteTableRemoveItem(edt->currentEdt);
   artsEdtFree(edt);
 }
 
 void artsEdtDestroy(artsGuid_t guid) {
   struct artsEdt *edt = (struct artsEdt *)artsRouteTableLookupItem(guid);
+  if (!edt) {
+    ARTS_INFO("EDT destroy missing [Guid:%lu] on rank %u", guid,
+              artsGlobalRankId);
+    return;
+  }
+  ARTS_INFO("EDT destroy [Guid:%lu, Id:%lu, Depc:%u, DepcNeeded:%u] on rank %u",
+            edt->currentEdt, edt->arts_id, edt->depc, edt->depcNeeded,
+            artsGlobalRankId);
   artsRouteTableRemoveItem(guid);
   artsEdtFree(edt);
 }

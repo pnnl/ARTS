@@ -52,6 +52,7 @@ enum artsServerMessageType {
   ARTS_REMOTE_PERSISTENT_EVENT_SATISFY_SLOT_MSG,
   ARTS_REMOTE_ADD_DEPENDENCE_MSG,
   ARTS_REMOTE_ADD_DEPENDENCE_TO_PERSISTENT_EVENT_MSG,
+  ARTS_REMOTE_ADD_DEPENDENCE_TO_PERSISTENT_EVENT_WITH_BYTE_OFFSET_MSG,
   ARTS_REMOTE_DB_ADD_DEPENDENCE_MSG,
   ARTS_REMOTE_DB_INCREMENT_LATCH_MSG,
   ARTS_REMOTE_DB_DECREMENT_LATCH_MSG,
@@ -122,6 +123,19 @@ struct __attribute__((__packed__)) artsRemoteAddDependencePacket {
   uint8_t reserved[3];
 };
 
+/// ESD: Packet for adding dependency to persistent event with byte offset
+struct __attribute__((__packed__)) artsRemoteAddDependenceWithByteOffsetPacket {
+  struct artsRemotePacket header;
+  artsGuid_t source;
+  artsGuid_t destination;
+  uint32_t slot;
+  artsType_t acquireMode;
+  uint8_t useTwinDiff;
+  uint8_t reserved[3];
+  uint64_t byteOffset;
+  uint64_t size;
+};
+
 struct __attribute__((__packed__)) artsRemoteEdtSignalPacket {
   struct artsRemotePacket header;
   artsGuid_t edt;
@@ -187,14 +201,14 @@ struct __attribute__((__packed__)) artsRemoteDbSendPacket {
 struct __attribute__((__packed__)) artsRemoteDbFullRequestPacket {
   struct artsRemotePacket header;
   artsGuid_t dbGuid;
-  void *edt;
+  artsGuid_t edtGuid;
   unsigned int slot;
   artsType_t mode;
 };
 
 struct __attribute__((__packed__)) artsRemoteDbFullSendPacket {
   struct artsRemotePacket header;
-  struct artsEdt *edt;
+  artsGuid_t edtGuid;
   unsigned int slot;
   artsType_t mode;
 };

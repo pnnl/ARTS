@@ -37,6 +37,7 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 #include "arts/runtime/memory/DbList.h"
+#include "arts/gas/RouteTable.h"
 
 #include "arts/runtime/Globals.h"
 #include "arts/runtime/Runtime.h"
@@ -227,8 +228,8 @@ void artsPushDelayedEdt(struct artsLocalDelayedEdt *head, unsigned int position,
 
 bool artsPushDbToFrontier(struct artsDbFrontier *frontier, unsigned int data,
                           bool write, bool exclusive, bool local, bool bypass,
-                          struct artsEdt *edt, unsigned int slot,
-                          artsType_t mode, bool *unique) {
+                          struct artsEdt *edt, artsGuid_t edtGuid,
+                          unsigned int slot, artsType_t mode, bool *unique) {
   if (bypass) {
     frontierLock(&frontier->lock);
   } else if (exclusive && !frontierAddExclusiveLock(&frontier->lock)) {
@@ -247,6 +248,7 @@ bool artsPushDbToFrontier(struct artsDbFrontier *frontier, unsigned int data,
 
   if (inserted && (exclusive || (write && !local))) {
     frontier->exNode = data;
+    frontier->exEdtGuid = edtGuid;
     frontier->exEdt = edt;
     frontier->exSlot = slot;
     frontier->exMode = mode;
@@ -267,7 +269,8 @@ bool artsPushDbToFrontier(struct artsDbFrontier *frontier, unsigned int data,
  */
 bool artsPushDbToList(struct artsDbList *dbList, unsigned int data, bool write,
                       bool exclusive, bool local, bool bypass,
-                      struct artsEdt *edt, unsigned int slot, artsType_t mode) {
+                      struct artsEdt *edt, artsGuid_t edtGuid,
+                      unsigned int slot, artsType_t mode) {
   if (!dbList->head) {
     if (artsWriterTryLock(&dbList->reader, &dbList->writer)) {
       dbList->head = dbList->tail = artsNewDbFrontier();
@@ -280,7 +283,7 @@ bool artsPushDbToList(struct artsDbList *dbList, unsigned int data, bool write,
   for (struct artsDbFrontier *frontier = dbList->head; frontier;
        frontier = frontier->next) {
     if (artsPushDbToFrontier(frontier, data, write, exclusive, local, bypass,
-                             edt, slot, mode, &unique)) {
+                             edt, edtGuid, slot, mode, &unique)) {
       inserted = true;
       break;
     }
@@ -371,17 +374,19 @@ void artsSignalFrontierRemote(struct artsDbFrontier *frontier,
                               struct artsDb *db, unsigned int getFrom) {
   frontierLock(&frontier->lock);
 
-  if (frontier->exEdt) {
+  if (frontier->exEdt || frontier->exEdtGuid != NULL_GUID) {
+    artsGuid_t edtGuid = frontier->exEdtGuid;
+    if (edtGuid == NULL_GUID && frontier->exEdt)
+      edtGuid = frontier->exEdt->currentEdt;
     if (frontier->exNode == getFrom)
-      artsRemoteSendAlreadyLocal(getFrom, db->guid, frontier->exEdt,
-                                 frontier->exSlot, frontier->exMode);
+      artsRemoteSendAlreadyLocal(getFrom, db->guid, edtGuid, frontier->exSlot,
+                                 frontier->exMode);
     else if (frontier->exNode != artsGlobalRankId)
-      artsRemoteDbForwardFull(frontier->exNode, getFrom, db->guid,
-                              frontier->exEdt, frontier->exSlot,
-                              frontier->exMode);
-    else
-      artsRemoteDbFullRequest(db->guid, getFrom, frontier->exEdt,
+      artsRemoteDbForwardFull(frontier->exNode, getFrom, db->guid, edtGuid,
                               frontier->exSlot, frontier->exMode);
+    else
+      artsRemoteDbFullRequest(db->guid, getFrom, edtGuid, frontier->exSlot,
+                              frontier->exMode);
   }
 
   struct artsDbFrontierIterator *iter = artsDbFrontierIterCreate(frontier);
@@ -389,7 +394,8 @@ void artsSignalFrontierRemote(struct artsDbFrontier *frontier,
     unsigned int node;
     while (artsDbFrontierIterNext(iter, &node)) {
       if (node != artsGlobalRankId &&
-          !(frontier->exEdt && node == frontier->exNode)) {
+          !((frontier->exEdt || frontier->exEdtGuid != NULL_GUID) &&
+            node == frontier->exNode)) {
         artsRemoteDbForward(node, getFrom, db->guid,
                             ARTS_DB_READ); // Don't care about mode
       }
@@ -419,16 +425,27 @@ void artsSignalFrontierLocal(struct artsDbFrontier *frontier,
                              struct artsDb *db) {
   frontierLock(&frontier->lock);
 
-  if (frontier->exEdt) {
+  if (frontier->exEdt || frontier->exEdtGuid != NULL_GUID) {
+    artsGuid_t edtGuid = frontier->exEdtGuid;
+    struct artsEdt *edt = frontier->exEdt;
+    if (edtGuid == NULL_GUID && edt)
+      edtGuid = edt->currentEdt;
+    if (!edt && edtGuid != NULL_GUID)
+      edt = (struct artsEdt *)artsRouteTableLookupItem(edtGuid);
     if (frontier->exNode == artsGlobalRankId) {
-      struct artsEdt *edt = frontier->exEdt;
-      artsEdtDep_t *depv = (artsEdtDep_t *)artsGetDepv(edt);
-      depv[frontier->exSlot].ptr = db + 1;
-      if (artsAtomicSub(&edt->depcNeeded, 1U) == 0)
-        artsHandleRemoteStolenEdt(edt);
-    } else
-      artsRemoteDbFullSendNow(frontier->exNode, db, frontier->exEdt,
-                              frontier->exSlot, frontier->exMode);
+      if (edt) {
+        artsEdtDep_t *depv = (artsEdtDep_t *)artsGetDepv(edt);
+        depv[frontier->exSlot].ptr = db + 1;
+        if (artsAtomicSub(&edt->depcNeeded, 1U) == 0)
+          artsHandleRemoteStolenEdt(edt);
+      } else {
+        ARTS_INFO("Local frontier missing EDT[Guid:%lu] on rank %u", edtGuid,
+                  artsGlobalRankId);
+      }
+    } else {
+      artsRemoteDbFullSendNow(frontier->exNode, db, edtGuid, frontier->exSlot,
+                              frontier->exMode);
+    }
   }
 
   struct artsDbFrontierIterator *iter = artsDbFrontierIterCreate(frontier);
@@ -436,7 +453,8 @@ void artsSignalFrontierLocal(struct artsDbFrontier *frontier,
     unsigned int node;
     while (artsDbFrontierIterNext(iter, &node)) {
       if (node != artsGlobalRankId &&
-          !(frontier->exEdt && node == frontier->exNode)) {
+          !((frontier->exEdt || frontier->exEdtGuid != NULL_GUID) &&
+            node == frontier->exNode)) {
         artsRemoteDbSendNow(node, db);
         ARTS_INFO("Progress Local sending to %u", node);
       }

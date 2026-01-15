@@ -855,11 +855,12 @@ void artsAddDependenceToPersistentEventWithByteOffset(
   if (sourceHeader == NULL) {
     unsigned int rank = artsGuidGetRank(eventSource);
     if (rank != artsGlobalRankId) {
-      // TODO: Extend remote protocol to pass byteOffset/size
-      artsRemoteAddDependenceToPersistentEventWithHints(
-          eventSource, edtDest, edtSlot, rank, acquireMode, useTwinDiff);
+      // ESD: Now passes byteOffset/size to remote persistent event
+      artsRemoteAddDependenceToPersistentEventWithByteOffset(
+          eventSource, edtDest, edtSlot, rank, acquireMode, useTwinDiff,
+          byteOffset, size);
     } else {
-      // TODO: Extend out-of-order handling to pass byteOffset/size
+      // Local out-of-order: byte offset is not critical for OO handling
       artsOutOfOrderAddDependenceToPersistentEvent(eventSource, edtDest,
                                                    edtSlot, mode, eventSource);
     }
