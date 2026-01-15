@@ -154,8 +154,8 @@ void artsAbstractMachineModelPinThread(struct artsCoreInfo *coreInfo) {
 }
 
 void initClusterUnits(hwloc_topology_t topology, hwloc_obj_t obj,
-                      hwloc_obj_t cluster, unsigned int *unitIndex,
-                      struct unitMask *units) {
+                      hwloc_obj_t cluster, unsigned int clusterId,
+                      unsigned int *unitIndex, struct unitMask *units) {
   if (obj->type == HWLOC_OBJ_PU) {
     if (obj->parent->type == HWLOC_OBJ_CORE) {
       units[*unitIndex].coreId = obj->parent->os_index;
@@ -163,7 +163,7 @@ void initClusterUnits(hwloc_topology_t topology, hwloc_obj_t obj,
     } else {
       //            ARTS_INFO("NOT A CORE...");
     }
-    units[*unitIndex].clusterId = cluster->os_index;
+    units[*unitIndex].clusterId = clusterId;
     units[*unitIndex].unitId = obj->os_index;
     units[*unitIndex].on = 0;
 
@@ -182,7 +182,8 @@ void initClusterUnits(hwloc_topology_t topology, hwloc_obj_t obj,
     //        ARTS_INFO("ARITY: %u", obj->arity);
     int i;
     for (i = 0; i < obj->arity; i++)
-      initClusterUnits(topology, obj->children[i], cluster, unitIndex, units);
+      initClusterUnits(topology, obj->children[i], cluster, clusterId,
+                       unitIndex, units);
   }
 }
 
@@ -191,9 +192,7 @@ struct nodeMask *getNodeMask() {
       (struct nodeMask *)artsMalloc(sizeof(struct nodeMask));
   numNumaDomains = node->numClusters =
       hwloc_get_nbobjs_by_type(topology, HWLOC_OBJ_NODE);
-  bool isUMA =
-      (numNumaDomains == 0); // true only when USE_HWLOC_V1 and UMA system,
-                             // false even through UMA when USE_HWLOC_V2
+  bool isUMA = (numNumaDomains == 0);
   if (isUMA)
     numNumaDomains = node->numClusters = 1;
   node->cluster = (struct clusterMask *)artsMalloc(sizeof(struct clusterMask) *
@@ -205,27 +204,63 @@ struct nodeMask *getNodeMask() {
   for (clusterIndex = 0; clusterIndex < node->numClusters; clusterIndex++) {
     if (!isUMA)
       cluster = hwloc_get_next_obj_by_type(topology, HWLOC_OBJ_NODE, cluster);
+    unsigned int clusterId = clusterIndex;
+    if (cluster && cluster->os_index != HWLOC_UNKNOWN_INDEX)
+      clusterId = cluster->os_index;
+    bool useGlobalCoreIndex = false;
 #ifdef USE_HWLOC_V2
-    node->cluster[clusterIndex].numCores =
-        hwloc_get_nbobjs_inside_cpuset_by_type(topology, cluster->cpuset,
-                                               HWLOC_OBJ_CORE);
+    if (cluster && cluster->cpuset) {
+      node->cluster[clusterIndex].numCores =
+          hwloc_get_nbobjs_inside_cpuset_by_type(topology, cluster->cpuset,
+                                                 HWLOC_OBJ_CORE);
+    } else {
+      node->cluster[clusterIndex].numCores = 0;
+    }
 #else
     node->cluster[clusterIndex].numCores =
         getNumberOfType(topology, cluster, HWLOC_OBJ_CORE);
 #endif
+    if (!node->cluster[clusterIndex].numCores) {
+      node->cluster[clusterIndex].numCores =
+          hwloc_get_nbobjs_by_type(topology, HWLOC_OBJ_CORE);
+      useGlobalCoreIndex = true;
+    }
+    if (!node->cluster[clusterIndex].numCores) {
+      node->cluster[clusterIndex].numCores = 1;
+      useGlobalCoreIndex = true;
+    }
     node->cluster[clusterIndex].core = (struct coreMask *)artsMalloc(
         sizeof(struct coreMask) * node->cluster[clusterIndex].numCores);
     for (coreIndex = 0; coreIndex < node->cluster[clusterIndex].numCores;
          coreIndex++) {
-      core = hwloc_get_next_obj_by_type(topology, HWLOC_OBJ_CORE, core);
+      if (useGlobalCoreIndex) {
+        core = hwloc_get_obj_by_type(topology, HWLOC_OBJ_CORE, coreIndex);
+      } else {
+#ifdef USE_HWLOC_V2
+        if (cluster && cluster->cpuset) {
+          core = hwloc_get_next_obj_inside_cpuset_by_type(
+              topology, cluster->cpuset, HWLOC_OBJ_CORE, core);
+        } else {
+          core = hwloc_get_next_obj_by_type(topology, HWLOC_OBJ_CORE, core);
+        }
+#else
+        core = hwloc_get_next_obj_by_type(topology, HWLOC_OBJ_CORE, core);
+#endif
+      }
+      hwloc_obj_t unitParent = core ? core : cluster;
       node->cluster[clusterIndex].core[coreIndex].numUnits =
-          getNumberOfType(topology, core, HWLOC_OBJ_PU);
+          unitParent ? getNumberOfType(topology, unitParent, HWLOC_OBJ_PU) : 0;
+      if (!node->cluster[clusterIndex].core[coreIndex].numUnits)
+        node->cluster[clusterIndex].core[coreIndex].numUnits =
+            hwloc_get_nbobjs_by_type(topology, HWLOC_OBJ_PU);
+      if (!node->cluster[clusterIndex].core[coreIndex].numUnits)
+        node->cluster[clusterIndex].core[coreIndex].numUnits = 1;
       node->cluster[clusterIndex].core[coreIndex].unit =
           (struct unitMask *)artsMalloc(
               sizeof(struct unitMask) *
               node->cluster[clusterIndex].core[coreIndex].numUnits);
       unsigned int unitIndex = 0;
-      initClusterUnits(topology, core, cluster, &unitIndex,
+      initClusterUnits(topology, unitParent, cluster, clusterId, &unitIndex,
                        node->cluster[clusterIndex].core[coreIndex].unit);
     }
   }
