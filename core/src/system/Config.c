@@ -1044,9 +1044,11 @@ void artsConfigDestroy(struct artsConfig *config) {
   if (config->launcherData) {
     artsFree(config->launcherData);
   }
-  for (int i = 0; i < config->tableLength; i++)
-    artsFree(config->table[i].ipAddress);
-  artsFree(config->table);
+  if (config->table) {
+    for (int i = 0; i < config->tableLength; i++)
+      artsFree(config->table[i].ipAddress);
+    artsFree(config->table);
+  }
   if (config->masterNode) {
     artsFree(config->masterNode);
   }
