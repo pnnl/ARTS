@@ -328,6 +328,8 @@ void artsGpuHostWrapUp(void *edtPacket, artsGuid_t toSignal, uint32_t slot,
       if (mode ==
           ARTS_BUFFER) // This is for us to be able to block in a host edt
         artsSetBuffer(toSignal, 0, 0);
+      if (mode == ARTS_PERSISTENT_EVENT)
+        artsPersistentEventSatisfy(toSignal, slot, true);
     }
   }
   artsEdtDelete((struct artsEdt *)edtPacket);
