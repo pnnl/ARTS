@@ -150,7 +150,7 @@ artsGuid_t artsDbCreateRemote(unsigned int route, uint64_t size,
 artsGuid_t artsDbCreate(void **addr, uint64_t size, artsType_t mode) {
   DB_CREATE_COUNTER_START();
   artsGuid_t guid = NULL_GUID;
-  unsigned int dbSize = size + sizeof(struct artsDb);
+  uint64_t dbSize = size + sizeof(struct artsDb);
 
   void *ptr = artsMallocWithType(dbSize, artsDbMemorySize);
   if (ptr) {
@@ -167,7 +167,7 @@ artsGuid_t artsDbCreate(void **addr, uint64_t size, artsType_t mode) {
 artsGuid_t artsDbCreatePtr(artsPtr_t *addr, uint64_t size, artsType_t mode) {
   DB_CREATE_COUNTER_START();
   artsGuid_t guid = NULL_GUID;
-  unsigned int dbSize = size + sizeof(struct artsDb);
+  uint64_t dbSize = size + sizeof(struct artsDb);
 
   void *ptr = artsMallocWithType(dbSize, artsDbMemorySize);
   if (ptr) {
@@ -185,7 +185,7 @@ artsGuid_t artsDbCreateWithArtsId(void **addr, uint64_t size, artsType_t mode,
                                   uint64_t arts_id) {
   DB_CREATE_COUNTER_START();
   artsGuid_t guid = NULL_GUID;
-  unsigned int dbSize = size + sizeof(struct artsDb);
+  uint64_t dbSize = size + sizeof(struct artsDb);
 
   void *ptr = artsMallocWithType(dbSize, artsDbMemorySize);
   if (ptr) {
@@ -206,7 +206,7 @@ void *artsDbCreateWithGuidAndArtsId(artsGuid_t guid, uint64_t size,
 
   void *ptr = NULL;
   if (artsIsGuidLocal(guid)) {
-    unsigned int dbSize = size + sizeof(struct artsDb);
+    uint64_t dbSize = size + sizeof(struct artsDb);
 
     ptr = artsMallocWithType(dbSize, artsDbMemorySize);
     if (ptr) {
@@ -232,7 +232,7 @@ void *artsDbCreateWithGuid(artsGuid_t guid, uint64_t size) {
   void *ptr = NULL;
   uint64_t arts_id = 0;
   if (artsIsGuidLocal(guid)) {
-    unsigned int dbSize = size + sizeof(struct artsDb);
+    uint64_t dbSize = size + sizeof(struct artsDb);
 
     ptr = artsMallocWithType(dbSize, artsDbMemorySize);
     if (ptr) {
@@ -258,7 +258,7 @@ void *artsDbCreateWithGuidAndData(artsGuid_t guid, void *data, uint64_t size) {
   void *ptr = NULL;
   uint64_t arts_id = 0;
   if (artsIsGuidLocal(guid)) {
-    unsigned int dbSize = size + sizeof(struct artsDb);
+    uint64_t dbSize = size + sizeof(struct artsDb);
 
     ptr = artsMallocWithType(dbSize, artsDbMemorySize);
 
