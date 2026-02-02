@@ -49,7 +49,6 @@
 #include "arts/runtime/memory/ArrayDb.h"
 #include "arts/runtime/memory/DbFunctions.h"
 #include "arts/runtime/memory/DbList.h"
-#include "arts/runtime/memory/TwinDiff.h"
 #include "arts/runtime/sync/TerminationDetection.h"
 #include "arts/system/ArtsPrint.h"
 #include "arts/utils/Atomics.h"
@@ -87,15 +86,12 @@ static void sendRemoteAddDependencePacket(unsigned int messageType,
                                           artsGuid_t source,
                                           artsGuid_t destination, uint32_t slot,
                                           unsigned int rank,
-                                          artsType_t acquireMode,
-                                          bool useTwinDiff) {
+                                          artsType_t acquireMode) {
   struct artsRemoteAddDependencePacket packet;
   packet.source = source;
   packet.destination = destination;
   packet.slot = slot;
   packet.acquireMode = acquireMode;
-  packet.useTwinDiff = useTwinDiff ? 1 : 0;
-  memset(packet.reserved, 0, sizeof(packet.reserved));
   artsFillPacketHeader(&packet.header, sizeof(packet), messageType);
   artsRemoteSendRequestAsync(rank, (char *)&packet, sizeof(packet));
 }
@@ -104,18 +100,15 @@ void artsRemoteAddDependence(artsGuid_t source, artsGuid_t destination,
                              uint32_t slot, unsigned int rank) {
   ARTS_DEBUG("Remote Add dependence sent %d", rank);
   sendRemoteAddDependencePacket(ARTS_REMOTE_ADD_DEPENDENCE_MSG, source,
-                                destination, slot, rank, ARTS_NULL, true);
+                                destination, slot, rank, ARTS_NULL);
 }
 
 void artsRemoteAddDependenceWithHints(artsGuid_t source, artsGuid_t destination,
                                       uint32_t slot, unsigned int rank,
-                                      artsType_t acquireMode,
-                                      bool useTwinDiff) {
-  ARTS_DEBUG("Remote Add dependence (acquire=%u, twin=%d) sent %d", acquireMode,
-             useTwinDiff, rank);
+                                      artsType_t acquireMode) {
+  ARTS_DEBUG("Remote Add dependence (acquire=%u) sent %d", acquireMode, rank);
   sendRemoteAddDependencePacket(ARTS_REMOTE_ADD_DEPENDENCE_MSG, source,
-                                destination, slot, rank, acquireMode,
-                                useTwinDiff);
+                                destination, slot, rank, acquireMode);
 }
 
 void artsRemoteAddDependenceToPersistentEvent(artsGuid_t source,
@@ -125,34 +118,30 @@ void artsRemoteAddDependenceToPersistentEvent(artsGuid_t source,
   ARTS_DEBUG("Remote Add dependence to persistent event sent %d", rank);
   sendRemoteAddDependencePacket(
       ARTS_REMOTE_ADD_DEPENDENCE_TO_PERSISTENT_EVENT_MSG, source, destination,
-      slot, rank, ARTS_NULL, true);
+      slot, rank, ARTS_NULL);
 }
 
 void artsRemoteAddDependenceToPersistentEventWithHints(
     artsGuid_t source, artsGuid_t destination, uint32_t slot, unsigned int rank,
-    artsType_t acquireMode, bool useTwinDiff) {
-  ARTS_DEBUG(
-      "Remote Add dependence to persistent event (acquire=%u, twin=%d) sent %d",
-      acquireMode, useTwinDiff, rank);
+    artsType_t acquireMode) {
+  ARTS_DEBUG("Remote Add dependence to persistent event (acquire=%u) sent %d",
+             acquireMode, rank);
   sendRemoteAddDependencePacket(
       ARTS_REMOTE_ADD_DEPENDENCE_TO_PERSISTENT_EVENT_MSG, source, destination,
-      slot, rank, acquireMode, useTwinDiff);
+      slot, rank, acquireMode);
 }
 
 void artsRemoteAddDependenceToPersistentEventWithByteOffset(
     artsGuid_t source, artsGuid_t destination, uint32_t slot, unsigned int rank,
-    artsType_t acquireMode, bool useTwinDiff, uint64_t byteOffset,
-    uint64_t size) {
+    artsType_t acquireMode, uint64_t byteOffset, uint64_t size) {
   ARTS_DEBUG("Remote Add dep to persistent event with byte offset "
-             "(acquire=%u, twin=%d, offset=%lu, size=%lu) sent to rank %d",
-             acquireMode, useTwinDiff, byteOffset, size, rank);
+             "(acquire=%u, offset=%lu, size=%lu) sent to rank %d",
+             acquireMode, byteOffset, size, rank);
   struct artsRemoteAddDependenceWithByteOffsetPacket packet;
   packet.source = source;
   packet.destination = destination;
   packet.slot = slot;
   packet.acquireMode = acquireMode;
-  packet.useTwinDiff = useTwinDiff ? 1 : 0;
-  memset(packet.reserved, 0, sizeof(packet.reserved));
   packet.byteOffset = byteOffset;
   packet.size = size;
   artsFillPacketHeader(
@@ -352,119 +341,15 @@ void artsRemoteHandleUpdateDb(void *ptr) {
 
 void artsRemotePartialUpdateDb(artsGuid_t guid, struct artsDiffList *diffs,
                                void *working) {
-  unsigned int rank = artsGuidGetRank(guid);
-  if (rank == artsGlobalRankId) {
-    ARTS_DEBUG("artsRemotePartialUpdateDb: owner is local, no send needed");
-    return;
-  }
-
-  if (!diffs || diffs->regionCount == 0) {
-    ARTS_DEBUG("artsRemotePartialUpdateDb: no diffs to send");
-    return;
-  }
-
-  // Calculate packet size
-  size_t headerSize = sizeof(struct artsRemotePartialUpdatePacket);
-  size_t regionDescSize =
-      diffs->regionCount * sizeof(struct artsRemoteDiffRegion);
-  size_t totalSize = headerSize + regionDescSize + diffs->totalBytes;
-
-  // Allocate packet buffer
-  char *buffer = (char *)malloc(totalSize);
-  if (!buffer) {
-    ARTS_INFO("Failed to allocate %zu bytes for partial update packet",
-              totalSize);
-    return;
-  }
-
-  // Fill packet header
-  struct artsRemotePartialUpdatePacket *packet =
-      (struct artsRemotePartialUpdatePacket *)buffer;
-  artsFillPacketHeader(&packet->header, totalSize,
-                       ARTS_REMOTE_DB_PARTIAL_UPDATE_MSG);
-  packet->guid = guid;
-  packet->regionCount = diffs->regionCount;
-  packet->dataBytes = diffs->totalBytes;
-  packet->flags = 0;
-  packet->reserved = 0;
-
-  // Fill region descriptors and data
-  struct artsRemoteDiffRegion *regions =
-      (struct artsRemoteDiffRegion *)(packet + 1);
-  uint8_t *dataPtr = (uint8_t *)(regions + diffs->regionCount);
-  uint8_t *workData = (uint8_t *)working;
-
-  struct artsDiffRegion *region = diffs->head;
-  uint32_t idx = 0;
-  while (region) {
-    regions[idx].offset = region->offset;
-    regions[idx].length = region->length;
-
-    // Copy data for this region
-    memcpy(dataPtr, workData + region->offset, region->length);
-    dataPtr += region->length;
-
-    region = region->next;
-    idx++;
-  }
-
-  ARTS_INFO("Sending partial update to rank %u: %u regions, %u bytes (%.2f%%)",
-            rank, diffs->regionCount, diffs->totalBytes,
-            diffs->dirtyRatio * 100.0);
-
-  // Send packet
-  artsRemoteSendRequestAsync(rank, buffer, totalSize);
-
-  // Free buffer
-  free(buffer);
+  (void)guid;
+  (void)diffs;
+  (void)working;
+  ARTS_DEBUG("artsRemotePartialUpdateDb: partial updates disabled");
 }
 
 void artsRemoteHandlePartialUpdate(void *ptr) {
-  struct artsRemotePartialUpdatePacket *packet =
-      (struct artsRemotePartialUpdatePacket *)ptr;
-
-  ARTS_DEBUG("Rank %u handling partial update for DB[Guid:%lu] from rank %u",
-             artsGlobalRankId, packet->guid, packet->header.rank);
-
-  unsigned int rank = artsGuidGetRank(packet->guid);
-  if (rank != artsGlobalRankId) {
-    ARTS_INFO("Received partial update for non-owned DB[Guid:%lu]",
-              packet->guid);
-    return;
-  }
-
-  // Lookup the DB
-  struct artsDb *db = (struct artsDb *)artsRouteTableLookupItem(packet->guid);
-  if (!db) {
-    ARTS_INFO("Partial update for unknown DB[Guid:%lu]", packet->guid);
-    return;
-  }
-
-  void *dbData = (void *)(db + 1);
-
-  // Parse and apply diff regions
-  struct artsRemoteDiffRegion *regions =
-      (struct artsRemoteDiffRegion *)(packet + 1);
-  uint8_t *diffData = (uint8_t *)(regions + packet->regionCount);
-
-  ARTS_INFO("Applying partial update: %u regions, %u bytes to DB[Guid:%lu]",
-            packet->regionCount, packet->dataBytes, packet->guid);
-
-  for (uint32_t i = 0; i < packet->regionCount; i++) {
-    ARTS_DEBUG("  Region %u: offset=%u, length=%u", i, regions[i].offset,
-               regions[i].length);
-    memcpy((uint8_t *)dbData + regions[i].offset, diffData, regions[i].length);
-    diffData += regions[i].length;
-  }
-
-  // Update route table and progress frontier
-  artsRouteTableSetRank(packet->guid, artsGlobalRankId);
-  artsProgressFrontier(db, artsGlobalRankId);
-
-  artsDbDecrementLatch(packet->guid);
-
-  ARTS_DEBUG("Partial update applied successfully for DB[Guid:%lu]",
-             packet->guid);
+  (void)ptr;
+  ARTS_DEBUG("artsRemoteHandlePartialUpdate: partial updates disabled");
 }
 
 void artsRemoteMemoryMove(unsigned int route, artsGuid_t guid, void *ptr,
@@ -571,8 +456,7 @@ void artsRemoteHandlePersistentEventMove(void *ptr) {
 
 static void sendRemoteEdtSignalPacket(artsGuid_t edt, artsGuid_t db,
                                       uint32_t slot, artsType_t mode,
-                                      artsType_t acquireMode,
-                                      bool useTwinDiff) {
+                                      artsType_t acquireMode) {
   struct artsRemoteEdtSignalPacket packet;
   unsigned int rank = artsGuidGetRank(edt);
 
@@ -585,8 +469,6 @@ static void sendRemoteEdtSignalPacket(artsGuid_t edt, artsGuid_t db,
   packet.mode = mode;
   packet.dbRoute = artsGuidGetRank(db);
   packet.acquireMode = acquireMode;
-  packet.useTwinDiff = useTwinDiff ? 1 : 0;
-  memset(packet.signalReserved, 0, sizeof(packet.signalReserved));
   artsFillPacketHeader(&packet.header, sizeof(packet),
                        ARTS_REMOTE_EDT_SIGNAL_MSG);
   artsRemoteSendRequestAsync(rank, (char *)&packet, sizeof(packet));
@@ -597,16 +479,15 @@ void artsRemoteSignalEdt(artsGuid_t edt, artsGuid_t db, uint32_t slot,
   ARTS_INFO("Remote Signal from DB[Guid:%lu] to EDT[Guid:%lu, Slot:%d, Rank: "
             "%d]",
             db, edt, slot, artsGuidGetRank(edt));
-  sendRemoteEdtSignalPacket(edt, db, slot, mode, ARTS_NULL, false);
+  sendRemoteEdtSignalPacket(edt, db, slot, mode, ARTS_NULL);
 }
 
 void artsRemoteSignalEdtWithHints(artsGuid_t edt, artsGuid_t db, uint32_t slot,
-                                  artsType_t mode, artsType_t acquireMode,
-                                  bool useTwinDiff) {
+                                  artsType_t mode, artsType_t acquireMode) {
   ARTS_INFO("Remote Signal from DB[Guid:%lu] to EDT[Guid:%lu, Slot:%d, "
-            "Rank: %d, AcquireMode:%u, Twin=%d]",
-            db, edt, slot, artsGuidGetRank(edt), acquireMode, useTwinDiff);
-  sendRemoteEdtSignalPacket(edt, db, slot, mode, acquireMode, useTwinDiff);
+            "Rank: %d, AcquireMode:%u]",
+            db, edt, slot, artsGuidGetRank(edt), acquireMode);
+  sendRemoteEdtSignalPacket(edt, db, slot, mode, acquireMode);
 }
 
 void artsRemoteEventSatisfySlot(artsGuid_t eventGuid, artsGuid_t dataGuid,
@@ -636,15 +517,12 @@ void artsRemotePersistentEventSatisfySlot(artsGuid_t eventGuid, uint32_t action,
 static void sendRemoteDbAddDependencePacket(artsGuid_t dbSrc,
                                             artsGuid_t edtDest,
                                             uint32_t edtSlot,
-                                            artsType_t acquireMode,
-                                            bool useTwinDiff) {
+                                            artsType_t acquireMode) {
   struct artsRemoteDbAddDependencePacket packet;
   packet.dbSrc = dbSrc;
   packet.edtDest = edtDest;
   packet.edtSlot = edtSlot;
   packet.acquireMode = acquireMode;
-  packet.useTwinDiff = useTwinDiff ? 1 : 0;
-  memset(packet.reserved, 0, sizeof(packet.reserved));
   artsFillPacketHeader(&packet.header, sizeof(packet),
                        ARTS_REMOTE_DB_ADD_DEPENDENCE_MSG);
   artsRemoteSendRequestAsync(artsGuidGetRank(dbSrc), (char *)&packet,
@@ -653,22 +531,19 @@ static void sendRemoteDbAddDependencePacket(artsGuid_t dbSrc,
 
 void artsRemoteDbAddDependence(artsGuid_t dbSrc, artsGuid_t edtDest,
                                uint32_t edtSlot) {
-  sendRemoteDbAddDependencePacket(dbSrc, edtDest, edtSlot, ARTS_NULL, true);
+  sendRemoteDbAddDependencePacket(dbSrc, edtDest, edtSlot, ARTS_NULL);
 }
 
 void artsRemoteDbAddDependenceWithHints(artsGuid_t dbSrc, artsGuid_t edtDest,
                                         uint32_t edtSlot,
-                                        artsType_t acquireMode,
-                                        bool useTwinDiff) {
-  sendRemoteDbAddDependencePacket(dbSrc, edtDest, edtSlot, acquireMode,
-                                  useTwinDiff);
+                                        artsType_t acquireMode) {
+  sendRemoteDbAddDependencePacket(dbSrc, edtDest, edtSlot, acquireMode);
 }
 
 void artsRemoteDbAddDependenceWithByteOffset(artsGuid_t dbSrc,
                                              artsGuid_t edtDest,
                                              uint32_t edtSlot,
                                              artsType_t acquireMode,
-                                             bool useTwinDiff,
                                              uint64_t byteOffset,
                                              uint64_t size) {
   struct artsRemoteDbAddDependenceWithByteOffsetPacket packet;
@@ -676,8 +551,6 @@ void artsRemoteDbAddDependenceWithByteOffset(artsGuid_t dbSrc,
   packet.edtDest = edtDest;
   packet.edtSlot = edtSlot;
   packet.acquireMode = acquireMode;
-  packet.useTwinDiff = useTwinDiff ? 1 : 0;
-  memset(packet.reserved, 0, sizeof(packet.reserved));
   packet.byteOffset = byteOffset;
   packet.size = size;
   artsFillPacketHeader(&packet.header, sizeof(packet),
@@ -697,7 +570,7 @@ void artsRemoteHandleDbAddDependenceWithByteOffset(void *ptr) {
     /// DB is local - add dependency to its persistent event with byte offset
     artsAddDependenceToPersistentEventWithByteOffset(
         dbRes->eventGuid, packet->edtDest, packet->edtSlot, packet->acquireMode,
-        packet->useTwinDiff != 0, packet->byteOffset, packet->size);
+        packet->byteOffset, packet->size);
   } else {
     /// DB not found locally - this shouldn't happen as we routed to the owner
     ARTS_DEBUG("ESD: Remote byte-offset dep: DB %lu not found on node %u",
@@ -734,21 +607,17 @@ void artsDbRequestCallback(struct artsEdt *edt, unsigned int slot,
 
 bool artsRemoteDbRequest(artsGuid_t dataGuid, int rank, struct artsEdt *edt,
                          int pos, artsType_t mode, bool aggRequest,
-                         artsType_t acquireMode, bool useTwinDiff) {
+                         artsType_t acquireMode) {
   if (artsRouteTableAddSent(dataGuid, edt, pos, aggRequest)) {
     struct artsRemoteDbRequestPacket packet;
     packet.dbGuid = dataGuid;
     packet.mode = mode;
     packet.acquireMode = acquireMode;
-    packet.useTwinDiff = useTwinDiff ? 1 : 0;
-    packet.reserved[0] = 0;
-    packet.reserved[1] = 0;
-    packet.reserved[2] = 0;
     artsFillPacketHeader(&packet.header, sizeof(packet),
                          ARTS_REMOTE_DB_REQUEST_MSG);
     ARTS_DEBUG(
-        "Rank %u requesting DB[Guid:%lu] from rank %d (slot=%d, twin=%d)",
-        artsGlobalRankId, dataGuid, rank, pos, packet.useTwinDiff);
+        "Rank %u requesting DB[Guid:%lu] from rank %d (slot=%d)",
+        artsGlobalRankId, dataGuid, rank, pos);
     artsRemoteSendRequestAsync(rank, (char *)&packet, sizeof(packet));
     return true;
   }
@@ -785,10 +654,8 @@ void artsRemoteDbSendCheck(int rank, struct artsDb *db, artsType_t mode) {
 
 void artsRemoteDbSend(struct artsRemoteDbRequestPacket *pack) {
   unsigned int redirected = artsRouteTableLookupRank(pack->dbGuid);
-  ARTS_INFO("Remote DB Send [Guid:%lu] [Rank: %d] [Mode:%d] [AcquireMode:"
-            "%d] [UseTwinDiff: %d]",
-            pack->dbGuid, pack->header.rank, pack->mode, pack->acquireMode,
-            pack->useTwinDiff);
+  ARTS_INFO("Remote DB Send [Guid:%lu] [Rank: %d] [Mode:%d] [AcquireMode:%d]",
+            pack->dbGuid, pack->header.rank, pack->mode, pack->acquireMode);
   if (redirected != artsGlobalRankId && redirected != -1)
     artsRemoteSendRequestAsync(redirected, (char *)pack, pack->header.size);
   else {
@@ -803,13 +670,7 @@ void artsRemoteDbSend(struct artsRemoteDbRequestPacket *pack) {
       // required
       artsRouteTableFireOO(pack->dbGuid, artsOutOfOrderHandler);
     } else {
-      // Check if twin-diff is requested for WRITE mode
-      if (pack->useTwinDiff && pack->acquireMode == ARTS_DB_WRITE) {
-        ARTS_INFO("  Twin-diff requested - sending full DB");
-        artsRemoteDbSendCheck(pack->header.rank, db, pack->mode);
-      } else {
-        artsRemoteDbSendCheck(pack->header.rank, db, pack->mode);
-      }
+      artsRemoteDbSendCheck(pack->header.rank, db, pack->mode);
     }
   }
 }
@@ -960,10 +821,6 @@ void artsRemoteHandleDbFullRecieved(struct artsRemoteDbFullSendPacket *packet) {
     dbRes = (struct artsDb *)artsMallocAlignWithType(packetDb->header.size, 16,
                                                      artsDbMemorySize);
     memcpy(dbRes, packetDb, packetDb->header.size);
-    // Reset local-only pointers for remote copies.
-    dbRes->twin = NULL;
-    dbRes->twinFlags = 0;
-    dbRes->twinSize = 0;
     if (artsIsGuidLocal(packetDb->guid))
       dbRes->dbList = artsNewDbList();
     else

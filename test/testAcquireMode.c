@@ -21,8 +21,8 @@ void writerEdt(uint32_t paramc, uint64_t *paramv, uint32_t depc,
 
   ARTS_PRINT("Writer (Node %u): Initializing array with sequential values",
              nodeId);
-  ARTS_PRINT("Writer: mode=%u, acquireMode=%u, useTwinDiff=%d", depv[0].mode,
-             depv[0].acquireMode, depv[0].useTwinDiff);
+  ARTS_PRINT("Writer: mode=%u, acquireMode=%u", depv[0].mode,
+             depv[0].acquireMode);
 
   // Initialize array with i * 7
   for (unsigned int i = 0; i < arraySize; i++) {
@@ -43,8 +43,8 @@ void readerEdt(uint32_t paramc, uint64_t *paramv, uint32_t depc,
 
   ARTS_PRINT("Reader %u (Node %u): Reading array (acquireMode=READ)", readerId,
              nodeId);
-  ARTS_PRINT("Reader %u: mode=%u, acquireMode=%u, useTwinDiff=%d", readerId,
-             depv[0].mode, depv[0].acquireMode, depv[0].useTwinDiff);
+  ARTS_PRINT("Reader %u: mode=%u, acquireMode=%u", readerId,
+             depv[0].mode, depv[0].acquireMode);
   bool modeOk = (depv[0].acquireMode == ARTS_DB_READ);
   if (!modeOk) {
     ARTS_PRINT("Reader %u (Node %u): ERROR - expected acquireMode=READ but "
@@ -90,8 +90,8 @@ void validatorEdt(uint32_t paramc, uint64_t *paramv, uint32_t depc,
   bool modeOk = (depv[0].acquireMode == ARTS_DB_READ);
 
   ARTS_PRINT("=== Validator: Performing final validation ===");
-  ARTS_PRINT("Validator: mode=%u, acquireMode=%u, useTwinDiff=%d", depv[0].mode,
-             depv[0].acquireMode, depv[0].useTwinDiff);
+  ARTS_PRINT("Validator: mode=%u, acquireMode=%u", depv[0].mode,
+             depv[0].acquireMode);
   if (!modeOk) {
     ARTS_PRINT("Validator ERROR: Expected acquireMode=READ but received %u",
                depv[0].acquireMode);
@@ -212,11 +212,11 @@ void artsMain(int argc, char **argv) {
   ARTS_PRINT("[Step 5] Recording dependencies: 1 writer (WRITE) + %u readers "
              "(READ) + 1 validator (READ)",
              numReaders);
-  artsRecordDep(dataGuid, writerEdtGuid, 0, ARTS_DB_WRITE, true);
+  artsRecordDep(dataGuid, writerEdtGuid, 0, ARTS_DB_WRITE);
   for (unsigned int i = 0; i < numReaders; i++)
-    artsRecordDep(dataGuid, readerEdtGuids[i], 0, ARTS_DB_READ, false);
+    artsRecordDep(dataGuid, readerEdtGuids[i], 0, ARTS_DB_READ);
 
-  artsRecordDep(dataGuid, validatorEdtGuid, 0, ARTS_DB_READ, false);
+  artsRecordDep(dataGuid, validatorEdtGuid, 0, ARTS_DB_READ);
 
   ARTS_PRINT("  All dependencies recorded (latch=1, only writer)");
 

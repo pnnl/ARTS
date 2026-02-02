@@ -1,6 +1,6 @@
 # ARTS Runtime Overview
 
-ARTS (Asynchronous Runtime System) is a distributed, event-driven runtime loosely based on the ideas pioneered in the **Open Community Runtime (OCR)**: work is expressed as Event-Driven Tasks (EDTs), data lives in datablocks identified by GUIDs, and dependencies are tracked through events instead of global synchronization. ARTS uses a CDAG-style memory model where each datablock has a canonical owner copy, remote updates flow via twin/diff messages, and the runtime wires dependency graphs dynamically.
+ARTS (Asynchronous Runtime System) is a distributed, event-driven runtime loosely based on the ideas pioneered in the **Open Community Runtime (OCR)**: work is expressed as Event-Driven Tasks (EDTs), data lives in datablocks identified by GUIDs, and dependencies are tracked through events instead of global synchronization. ARTS uses a CDAG-style memory model where each datablock has a canonical owner copy, remote updates flow via owner updates, and the runtime wires dependency graphs dynamically.
 
 ## What ARTS Provides
 
@@ -10,7 +10,6 @@ ARTS (Asynchronous Runtime System) is a distributed, event-driven runtime loosel
 - **GUID system** – Every EDT, datablock, and event has a GUID so DAGs can be wired across nodes without global pointers.
 - **Datablock lifecycle** – Applications allocate datablocks via `artsDbCreate`, pass GUIDs to EDTs, and the runtime handles acquire/release semantics (read/write modes, owner hand-offs). Reference counts and versioning live in `core/src/runtime/datablock/*`.
 - **Distributed Scheduling** – A decentralized scheduler assigns EDTs to worker threads, maintains per-thread deques, supports work stealing, and cooperates with the network layer (`core/src/runtime/network`) to migrate work or data.
-- **Twin/Diff Updates** – When a task acquires a datablock, ARTS can snapshot (“twin”) it. On release only the modified bytes (diff) are sent back to the owner, preserving concurrent non-overlapping writes under the CDAG model.
 - **Networked DB protocol** – Messages for acquire/release/clone requests flow through configurable transports (shared-memory, MPI, or GASNet depending on build flags). The protocol keeps metadata (size, owner, access mode) alongside payloads so receivers can reconcile updates efficiently.
 
 ## Relationship to OCR
@@ -21,7 +20,7 @@ ARTS borrows heavily from OCR concepts:
 - Events ↔ OCR events/slots
 - GUIDs ↔ OCR GUIDs
 
-However ARTS is purpose-built for this repository and trimmed to match its compiler/tooling integration: lean APIs in `core/include/arts/`, a GUID allocator tailored to cartesian DAGs, and built-in twin/diff protocols optimized for large datablocks.
+However ARTS is purpose-built for this repository and trimmed to match its compiler/tooling integration: lean APIs in `core/include/arts/` and a GUID allocator tailored to cartesian DAGs.
 
 ## Dependencies
 

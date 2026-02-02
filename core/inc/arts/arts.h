@@ -365,20 +365,18 @@ void artsAddDependenceToPersistentEventWithMode(artsGuid_t eventSource,
                                                 uint32_t edtSlot,
                                                 artsType_t acquireMode);
 
-// Adds a dependence with compiler-inferred acquire mode and twin-diff hint
+// Adds a dependence with compiler-inferred acquire mode override
 void artsAddDependenceToPersistentEventWithModeAndDiff(artsGuid_t eventSource,
                                                        artsGuid_t edtDest,
                                                        uint32_t edtSlot,
-                                                       artsType_t acquireMode,
-                                                       bool useTwinDiff);
+                                                       artsType_t acquireMode);
 
 /// ESD: Adds a dependence with byte offset for slice-based signaling.
 /// When byteOffset > 0 or size > 0, the persistent event will signal
 /// with a pointer to (dbPtr + byteOffset) while preserving the DB GUID.
 void artsAddDependenceToPersistentEventWithByteOffset(
     artsGuid_t eventSource, artsGuid_t edtDest, uint32_t edtSlot,
-    artsType_t acquireMode, bool useTwinDiff, uint64_t byteOffset,
-    uint64_t size);
+    artsType_t acquireMode, uint64_t byteOffset, uint64_t size);
 
 /*DB***************************************************************************/
 
@@ -485,24 +483,23 @@ void artsDbAddDependence(artsGuid_t dbSrc, artsGuid_t edtDest,
 void artsDbAddDependenceWithMode(artsGuid_t dbSrc, artsGuid_t edtDest,
                                  uint32_t edtSlot, artsType_t acquireMode);
 
-// Adds a dependence with compiler-inferred acquire mode and twin-diff hint
+// Adds a dependence with compiler-inferred acquire mode override
 void artsDbAddDependenceWithModeAndDiff(artsGuid_t dbSrc, artsGuid_t edtDest,
                                         uint32_t edtSlot,
-                                        artsType_t acquireMode,
-                                        bool useTwinDiff);
+                                        artsType_t acquireMode);
 
 // Records a dependency and automatically increments latch when acquireMode is
 // ARTS_DB_WRITE
 void artsRecordDep(artsGuid_t dbSrc, artsGuid_t edtDest, uint32_t edtSlot,
-                   artsType_t acquireMode, bool useTwinDiff);
+                   artsType_t acquireMode);
 
 /// ESD: Records a dependency at a specific byte offset within the DB.
 /// When the DB becomes ready, signals with a pointer to (dbPtr + byteOffset)
 /// while preserving the original DB GUID in depv[slot].guid.
 /// This is used for stencil halo dependencies.
 void artsRecordDepAt(artsGuid_t dbSrc, artsGuid_t edtDest, uint32_t edtSlot,
-                     artsType_t acquireMode, bool useTwinDiff,
-                     uint64_t byteOffset, uint64_t size);
+                     artsType_t acquireMode, uint64_t byteOffset,
+                     uint64_t size);
 
 /*Epoch************************************************************************/
 

@@ -54,7 +54,6 @@
 #include "arts/runtime/RT.h"
 #include "arts/runtime/compute/EdtFunctions.h"
 #include "arts/runtime/memory/DbList.h"
-#include "arts/runtime/memory/TwinDiff.h"
 #include "arts/runtime/network/RemoteFunctions.h"
 #include "arts/runtime/sync/TerminationDetection.h"
 #include "arts/system/ArtsPrint.h"
@@ -113,9 +112,6 @@ void artsDbCreateInternal(artsGuid_t guid, void *addr, uint64_t size,
   dbRes->reader = 0;
   dbRes->writer = 0;
   dbRes->copyCount = 0;
-  dbRes->twin = NULL;
-  dbRes->twinFlags = 0;
-  dbRes->twinSize = 0;
   if (mode != ARTS_DB_PIN) {
     dbRes->dbList = artsNewDbList();
   }
@@ -420,39 +416,34 @@ void artsDbAddDependence(artsGuid_t dbSrc, artsGuid_t edtDest,
 
 void artsDbAddDependenceWithMode(artsGuid_t dbSrc, artsGuid_t edtDest,
                                  uint32_t edtSlot, artsType_t acquireMode) {
-  artsDbAddDependenceWithModeAndDiff(dbSrc, edtDest, edtSlot, acquireMode,
-                                     true);
+  artsDbAddDependenceWithModeAndDiff(dbSrc, edtDest, edtSlot, acquireMode);
 }
 
 void artsDbAddDependenceWithModeAndDiff(artsGuid_t dbSrc, artsGuid_t edtDest,
                                         uint32_t edtSlot,
-                                        artsType_t acquireMode,
-                                        bool useTwinDiff) {
-
+                                        artsType_t acquireMode) {
   struct artsDb *dbRes = (struct artsDb *)artsRouteTableLookupItem(dbSrc);
   if (dbRes != NULL)
     artsAddDependenceToPersistentEventWithModeAndDiff(
-        dbRes->eventGuid, edtDest, edtSlot, acquireMode, useTwinDiff);
+        dbRes->eventGuid, edtDest, edtSlot, acquireMode);
   else
-    artsRemoteDbAddDependenceWithHints(dbSrc, edtDest, edtSlot, acquireMode,
-                                       useTwinDiff);
+    artsRemoteDbAddDependenceWithHints(dbSrc, edtDest, edtSlot, acquireMode);
 }
 
 // Auto-increments latch for WRITE mode, records dependency with compiler hints
 void artsRecordDep(artsGuid_t dbSrc, artsGuid_t edtDest, uint32_t edtSlot,
-                   artsType_t acquireMode, bool useTwinDiff) {
-  artsDbAddDependenceWithModeAndDiff(dbSrc, edtDest, edtSlot, acquireMode,
-                                     useTwinDiff);
+                   artsType_t acquireMode) {
+  artsDbAddDependenceWithModeAndDiff(dbSrc, edtDest, edtSlot, acquireMode);
   if (acquireMode == ARTS_DB_WRITE)
     artsDbIncrementLatch(dbSrc);
 }
 
 void artsRecordDepAt(artsGuid_t dbSrc, artsGuid_t edtDest, uint32_t edtSlot,
-                     artsType_t acquireMode, bool useTwinDiff,
-                     uint64_t byteOffset, uint64_t size) {
+                     artsType_t acquireMode, uint64_t byteOffset,
+                     uint64_t size) {
   // If no byte offset, use the standard path
   if (byteOffset == 0 && size == 0) {
-    artsRecordDep(dbSrc, edtDest, edtSlot, acquireMode, useTwinDiff);
+    artsRecordDep(dbSrc, edtDest, edtSlot, acquireMode);
     return;
   }
 
@@ -460,12 +451,10 @@ void artsRecordDepAt(artsGuid_t dbSrc, artsGuid_t edtDest, uint32_t edtSlot,
   struct artsDb *dbRes = (struct artsDb *)artsRouteTableLookupItem(dbSrc);
   if (dbRes != NULL)
     artsAddDependenceToPersistentEventWithByteOffset(
-        dbRes->eventGuid, edtDest, edtSlot, acquireMode, useTwinDiff,
-        byteOffset, size);
+        dbRes->eventGuid, edtDest, edtSlot, acquireMode, byteOffset, size);
   else
     artsRemoteDbAddDependenceWithByteOffset(dbSrc, edtDest, edtSlot,
-                                            acquireMode, useTwinDiff,
-                                            byteOffset, size);
+                                            acquireMode, byteOffset, size);
 
   if (acquireMode == ARTS_DB_WRITE)
     artsDbIncrementLatch(dbSrc);
@@ -600,8 +589,7 @@ void acquireDbs(struct artsEdt *edt) {
                   depv[i].mode == ARTS_DB_LC_NO_COPY ||
                   depv[i].mode == ARTS_DB_GPU_MEMSET)
                 artsRemoteDbRequest(depv[i].guid, validRank, edt, i,
-                                    depv[i].mode, true, depv[i].acquireMode,
-                                    depv[i].useTwinDiff);
+                                    depv[i].mode, true, depv[i].acquireMode);
               else
                 artsRemoteDbFullRequest(depv[i].guid, validRank,
                                         edt->currentEdt, i, depv[i].mode);
@@ -670,24 +658,11 @@ void acquireDbs(struct artsEdt *edt) {
           }
           if (effectiveMode == ARTS_DB_WRITE) {
             if (!dbFound) {
-              // Check if twin-diff is enabled for this WRITE acquire
-              if (depv[i].useTwinDiff && depv[i].acquireMode == ARTS_DB_WRITE) {
-                // Twin-diff enabled: use aggregated request
-                // (will receive diffs, not full DB)
-                ARTS_INFO(
-                    "  WRITE mode with twin-diff - sending aggregated request "
-                    "to rank %d (AcquireMode:%u, UseTwinDiff: %d)",
-                    owner, depv[i].acquireMode, depv[i].useTwinDiff);
-                artsRemoteDbRequest(depv[i].guid, owner, edt, i,
-                                    depv[i].acquireMode, true,
-                                    depv[i].acquireMode, depv[i].useTwinDiff);
-              } else {
-                // Traditional path: full DB transfer for exclusive WRITE
-                ARTS_INFO("  WRITE mode - sending full DB request to rank %d",
-                          owner);
-                artsRemoteDbFullRequest(depv[i].guid, owner, edt->currentEdt, i,
-                                        effectiveMode);
-              }
+              // Full DB transfer for exclusive WRITE
+              ARTS_INFO("  WRITE mode - sending full DB request to rank %d",
+                        owner);
+              artsRemoteDbFullRequest(depv[i].guid, owner, edt->currentEdt, i,
+                                      effectiveMode);
             } else {
               ARTS_INFO("  WRITE mode with local valid copy - no remote request "
                         "needed");
@@ -699,7 +674,7 @@ void acquireDbs(struct artsEdt *edt) {
                       owner);
             int requestRank = owner;
             artsRemoteDbRequest(depv[i].guid, requestRank, edt, i, depv[i].mode,
-                                true, ARTS_NULL, false);
+                                true, ARTS_NULL);
           } else {
             ARTS_INFO("  READ mode with local copy - no remote request needed");
           }
@@ -737,23 +712,8 @@ void prepDbs(unsigned int depc, artsEdtDep_t *depv, bool gpu) {
       if (depv[i].mode != ARTS_DB_PIN)
         artsRemoteUpdateRouteTable(depv[i].guid, -1);
       struct artsDb *db = ((struct artsDb *)depv[i].ptr) - 1;
-      ARTS_INFO("[prepDbs] WRITE DB[Guid:%lu, ArtsId:%lu, Mode:%s, "
-                "AcquireMode:%s, UseTwinDiff:%d, Ptr:%p]",
-                depv[i].guid, db ? db->arts_id : 0, getTypeName(depv[i].mode),
-                getTypeName(depv[i].acquireMode), depv[i].useTwinDiff,
-                depv[i].ptr);
-      ARTS_DEBUG("[prepDbs] DB[Id:%lu, Guid:%lu] ptr=%p, db=%p, "
-                 "useTwinDiff=%d",
-                 db->arts_id, depv[i].guid, depv[i].ptr, db,
-                 depv[i].useTwinDiff);
-      // Allocate twin
-      if (depv[i].useTwinDiff && !(db->twinFlags & ARTS_DB_HAS_TWIN)) {
-        artsDbAllocateTwin(db);
-        size_t dbSize = db->header.size - sizeof(struct artsDb);
-        ARTS_DEBUG("Allocated twin for DB[Id:%lu, Guid:%lu, size: %zu] "
-                   "(compiler hint)",
-                   db->arts_id, depv[i].guid, dbSize);
-      }
+      ARTS_DEBUG("[prepDbs] DB[Id:%lu, Guid:%lu] ptr=%p, db=%p", db->arts_id,
+                 depv[i].guid, depv[i].ptr, db);
     }
 #ifdef USE_GPU
     if (!gpu && depv[i].mode == ARTS_DB_LC) {
@@ -771,94 +731,6 @@ void prepDbs(unsigned int depc, artsEdtDep_t *depv, bool gpu) {
   }
 }
 
-/**
- * Helper: Handle twin-diff release for WRITE mode
- * Returns true if release was handled, false otherwise
- */
-static inline bool artsTryReleaseTwinDiff(artsGuid_t guid, artsEdtDep_t *dep) {
-  struct artsDb *db = ((struct artsDb *)dep->ptr) - 1;
-  unsigned int owner = artsGuidGetRank(guid);
-  bool isOwner = (owner == artsGlobalRankId);
-
-  // Check if twin was allocated and use twin-diff
-  if (db->twinFlags & ARTS_DB_HAS_TWIN) {
-    void *working = (void *)(db + 1);
-    void *twin = db->twin;
-    size_t dbSize = db->header.size - sizeof(struct artsDb);
-
-    // Quick estimate of dirty ratio
-    float dirtyRatio = artsEstimateDirtyRatio(working, twin, dbSize);
-
-    ARTS_DEBUG("DB[Id:%lu, Guid:%lu] estimated dirty ratio: %.2f%% "
-               "(isOwner=%d)",
-               db->arts_id, guid, dirtyRatio * 100.0, isOwner);
-
-    // If dirty ratio is too high, fall back to full DB send (non-owner only)
-    if (dirtyRatio > ARTS_DIFF_DIRTY_THRESHOLD && !isOwner) {
-      ARTS_INFO("DB[Id:%lu, Guid:%lu] dirty ratio %.2f%% exceeds threshold, "
-                "using full DB send",
-                db->arts_id, guid, dirtyRatio * 100.0);
-      artsRemoteUpdateDb(guid, true);
-      INCREMENT_OWNER_UPDATES_PERFORMED_BY(1);
-      INCREMENT_TWIN_DIFF_SKIPPED_BY(1);
-    } else {
-      // Compute diffs and send partial update (non-owner) or just update
-      // progress (owner)
-      struct artsDiffList *diffs = artsComputeDiffs(working, twin, dbSize);
-      if (diffs && diffs->regionCount > 0) {
-        ARTS_INFO("DB[Id:%lu, Guid:%lu] using twin-diff: %u regions, "
-                  "%u bytes (%.2f%% of %zu)",
-                  db->arts_id, guid, diffs->regionCount, diffs->totalBytes,
-                  diffs->dirtyRatio * 100.0, dbSize);
-
-        if (!isOwner) {
-          // Non-owner: Send partial update immediately (no coalescing)
-          artsRemotePartialUpdateDb(guid, diffs, working);
-          artsFreeDiffList(diffs);
-        } else {
-          // Owner:Just update progress frontier (canonical DB already has
-          // changes)
-          artsProgressFrontier(db, artsGlobalRankId);
-          artsFreeDiffList(diffs);
-        }
-
-        INCREMENT_OWNER_UPDATES_PERFORMED_BY(1);
-      } else {
-        // No diffs - either signal owner (non-owner) or just update progress
-        // (owner)
-        ARTS_DEBUG("DB[Id:%lu, Guid:%lu] no diffs detected", db->arts_id, guid);
-        if (!isOwner)
-          artsRemoteUpdateDb(guid, false);
-        else
-          artsProgressFrontier(db, artsGlobalRankId);
-
-        INCREMENT_OWNER_UPDATES_PERFORMED_BY(1);
-      }
-    }
-
-    // Free twin after use. Only the owner decrements the latch here; non-owners
-    // defer latch decrement until the controller applies their update.
-    artsDbFreeTwin(db);
-
-    if (isOwner)
-      artsDbDecrementLatch(guid);
-    return true;
-  }
-
-  // No twin allocated - fall back to traditional release
-  if (isOwner) {
-    // Owner without twin: traditional release
-    artsProgressFrontier(db, artsGlobalRankId);
-    artsDbDecrementLatch(guid);
-  } else {
-    // Non-owner without twin: full DB send
-    artsRemoteUpdateDb(guid, true);
-    INCREMENT_OWNER_UPDATES_PERFORMED_BY(1);
-    INCREMENT_TWIN_DIFF_SKIPPED_BY(1);
-  }
-  return true;
-}
-
 void releaseDbs(unsigned int depc, artsEdtDep_t *depv, bool gpu) {
   for (int i = 0; i < depc; i++) {
     ARTS_DEBUG("Releasing DB[Guid:%lu] [Mode:%s]", depv[i].guid,
@@ -873,8 +745,6 @@ void releaseDbs(unsigned int depc, artsEdtDep_t *depv, bool gpu) {
       if (depv[i].mode == ARTS_DB_PIN) {
         ARTS_DEBUG("Pinned DB write release (no frontier update)");
         artsDbDecrementLatch(depv[i].guid);
-      } else if (depv[i].useTwinDiff) {
-        artsTryReleaseTwinDiff(depv[i].guid, &depv[i]);
       } else if (owner == artsGlobalRankId) {
         struct artsDb *db = ((struct artsDb *)depv[i].ptr - 1);
         artsProgressFrontier(db, artsGlobalRankId);
@@ -888,7 +758,6 @@ void releaseDbs(unsigned int depc, artsEdtDep_t *depv, bool gpu) {
         }
         artsRemoteUpdateDb(depv[i].guid, true);
         INCREMENT_OWNER_UPDATES_PERFORMED_BY(1);
-        INCREMENT_TWIN_DIFF_SKIPPED_BY(1);
       }
     } else if (depv[i].guid != NULL_GUID && effectiveMode == ARTS_DB_READ) {
       // READ mode: NO latch decrement, NO owner update

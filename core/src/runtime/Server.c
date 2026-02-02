@@ -116,7 +116,7 @@ void artsServerProcessPacket(struct artsRemotePacket *packet) {
     struct artsRemoteEdtSignalPacket *pack =
         (struct artsRemoteEdtSignalPacket *)(packet);
     internalSignalEdtWithMode(pack->edt, pack->slot, pack->db, pack->mode,
-                              pack->acquireMode, pack->useTwinDiff);
+                              pack->acquireMode);
     break;
   }
   case ARTS_REMOTE_EVENT_SATISFY_SLOT_MSG: {
@@ -148,8 +148,7 @@ void artsServerProcessPacket(struct artsRemotePacket *packet) {
     struct artsRemoteDbAddDependencePacket *pack =
         (struct artsRemoteDbAddDependencePacket *)(packet);
     artsDbAddDependenceWithModeAndDiff(pack->dbSrc, pack->edtDest,
-                                       pack->edtSlot, pack->acquireMode,
-                                       pack->useTwinDiff);
+                                       pack->edtSlot, pack->acquireMode);
     break;
   }
   case ARTS_REMOTE_DB_ADD_DEPENDENCE_WITH_BYTE_OFFSET_MSG: {
@@ -184,8 +183,7 @@ void artsServerProcessPacket(struct artsRemotePacket *packet) {
     struct artsRemoteAddDependencePacket *pack =
         (struct artsRemoteAddDependencePacket *)(packet);
     artsAddDependenceToPersistentEventWithModeAndDiff(
-        pack->source, pack->destination, pack->slot, pack->acquireMode,
-        pack->useTwinDiff);
+        pack->source, pack->destination, pack->slot, pack->acquireMode);
     break;
   }
   case ARTS_REMOTE_ADD_DEPENDENCE_TO_PERSISTENT_EVENT_WITH_BYTE_OFFSET_MSG: {
@@ -194,7 +192,7 @@ void artsServerProcessPacket(struct artsRemotePacket *packet) {
         (struct artsRemoteAddDependenceWithByteOffsetPacket *)(packet);
     artsAddDependenceToPersistentEventWithByteOffset(
         pack->source, pack->destination, pack->slot, pack->acquireMode,
-        pack->useTwinDiff, pack->byteOffset, pack->size);
+        pack->byteOffset, pack->size);
     break;
   }
   case ARTS_REMOTE_INVALIDATE_DB_MSG: {

@@ -56,7 +56,7 @@ void internalSignalEdt(artsGuid_t edtPacket, uint32_t slot, artsGuid_t dataGuid,
                        artsType_t mode, void *ptr, unsigned int size);
 void internalSignalEdtWithMode(artsGuid_t edtPacket, uint32_t slot,
                                artsGuid_t dataGuid, artsType_t mode,
-                               artsType_t acquireMode, bool useTwinDiff);
+                               artsType_t acquireMode);
 
 typedef struct {
   artsGuid_t currentEdtGuid;

@@ -81,11 +81,6 @@ extern "C" {
   X(remoteBytesSent)                                                           \
   X(remoteBytesReceived)                                                       \
   X(numDbsCreated)                                                             \
-  /* Twin-Diff counters */                                                     \
-  X(twinDiffUsed)                                                              \
-  X(twinDiffSkipped)                                                           \
-  X(twinDiffBytesSaved)                                                        \
-  X(twinDiffComputeTime)                                                       \
   /* Acquire-Mode counters */                                                  \
   X(acquireReadMode)                                                           \
   X(acquireWriteMode)                                                          \

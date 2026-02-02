@@ -429,7 +429,6 @@ void internalSignalEdt(artsGuid_t edtPacket, uint32_t slot, artsGuid_t dataGuid,
           edtDep[slot].guid = dataGuid;
           edtDep[slot].mode = mode;
           edtDep[slot].acquireMode = ARTS_NULL;
-          edtDep[slot].useTwinDiff = false;
           edtDep[slot].ptr = ptr;
         }
         unsigned int res = artsAtomicSub(&edt->depcNeeded, 1U);
@@ -465,7 +464,7 @@ void artsSignalEdt(artsGuid_t edtGuid, uint32_t slot, artsGuid_t dataGuid) {
 // Internal function to signal EDT with acquireMode override and diff hint
 void internalSignalEdtWithMode(artsGuid_t edtPacket, uint32_t slot,
                                artsGuid_t dataGuid, artsType_t mode,
-                               artsType_t acquireMode, bool useTwinDiff) {
+                               artsType_t acquireMode) {
   SIGNAL_EDT_COUNTER_START();
   // This is old CDAG code...
   if (currentEdt && currentEdt->invalidateCount > 0) {
@@ -485,14 +484,13 @@ void internalSignalEdtWithMode(artsGuid_t edtPacket, uint32_t slot,
           edtDep[slot].guid = dataGuid;
           edtDep[slot].mode = mode;
           edtDep[slot].acquireMode = acquireMode;
-          edtDep[slot].useTwinDiff = useTwinDiff;
           edtDep[slot].ptr = NULL;
         }
         unsigned int res = artsAtomicSub(&edt->depcNeeded, 1U);
         ARTS_INFO("Signal DB[Guid:%lu] to EDT[Guid:%lu, Slot:%u, "
-                  "DepCount:%d, AcquireMode:%s, UseTwinDiff: %d]",
+                  "DepCount:%d, AcquireMode:%s]",
                   dataGuid, edt->currentEdt, slot, res,
-                  getTypeName(acquireMode), useTwinDiff);
+                  getTypeName(acquireMode));
         if (res == 0)
           artsHandleReadyEdt(edt);
       } else {
@@ -507,7 +505,7 @@ void internalSignalEdtWithMode(artsGuid_t edtPacket, uint32_t slot,
         artsRemoteSignalEdtWithPtr(edtPacket, dataGuid, NULL, 0, slot);
       else
         artsRemoteSignalEdtWithHints(edtPacket, dataGuid, slot, mode,
-                                     acquireMode, useTwinDiff);
+                                     acquireMode);
     }
   }
   artsMetricsTriggerEvent(artsEdtSignalThroughput, artsThread, 1);

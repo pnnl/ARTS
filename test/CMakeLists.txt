@@ -71,7 +71,6 @@ set(TEST_PROGRAMS
     testRouteTableIter
     testRouteTableIter2
     testTMTLite
-    testTwinDiff
     testAcquireMode
     testArtsId
 )

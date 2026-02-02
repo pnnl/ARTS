@@ -301,25 +301,25 @@ void artsMain(int argc, char **argv) {
 
   ARTS_PRINT("");
 
-  // Record all dependencies using artsRecordDep (like testTwinDiff)
+  // Record all dependencies using artsRecordDep
   ARTS_PRINT("[Step 7] Recording dependencies for all EDTs...");
 
   // Record writer dependencies
   for (unsigned int i = 0; i < NUM_TEST_EDTS; i++) {
     unsigned int dbIndex = writerDbIndices[i];
-    artsRecordDep(dbGuids[dbIndex], writerGuids[i], 0, ARTS_DB_WRITE, true);
+    artsRecordDep(dbGuids[dbIndex], writerGuids[i], 0, ARTS_DB_WRITE);
   }
 
   // Record reader dependencies
   for (unsigned int i = 0; i < numReaders; i++) {
     unsigned int numDeps = readerNumDeps[i];
     for (unsigned int d = 0; d < numDeps; d++) {
-      artsRecordDep(dbGuids[d], readerGuids[i], d, ARTS_DB_READ, true);
+      artsRecordDep(dbGuids[d], readerGuids[i], d, ARTS_DB_READ);
     }
   }
 
   // Record validator dependency (reads DB[0] after all writers complete)
-  artsRecordDep(dbGuids[0], validatorGuid, 0, ARTS_DB_READ, false);
+  artsRecordDep(dbGuids[0], validatorGuid, 0, ARTS_DB_READ);
 
   ARTS_PRINT("[Step 8] Waiting for epoch to complete...");
 

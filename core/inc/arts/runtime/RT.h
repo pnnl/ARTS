@@ -112,7 +112,6 @@ typedef struct {
   artsType_t mode;
   void *ptr;
   artsType_t acquireMode;
-  bool useTwinDiff;
 } artsEdtDep_t;
 
 // Signature of an EDT
@@ -149,9 +148,6 @@ struct artsDb {
   volatile unsigned int version;
   unsigned int timeStamp;
   void *dbList;
-  void *twin;
-  uint32_t twinFlags;
-  uint32_t twinSize;
 } __attribute__((aligned));
 
 struct artsEdt {
@@ -176,7 +172,6 @@ struct artsDependent {
   volatile eventCallback_t callback;
   volatile bool doneWriting;
   artsType_t acquireMode;
-  bool useTwinDiff;
   uint64_t byteOffset;
   uint64_t size;
 };

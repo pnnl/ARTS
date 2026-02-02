@@ -410,7 +410,7 @@ void artsSignalFrontierRemote(struct artsDbFrontier *frontier,
       unsigned int slot = current->slot[pos];
       // send through aggregation
       artsRemoteDbRequest(db->guid, getFrom, edt, slot, ARTS_DB_READ, true,
-                          ARTS_NULL, false);
+                          ARTS_NULL);
       if (pos + 1 == DBSPERELEMENT)
         current = current->next;
     }

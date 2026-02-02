@@ -633,7 +633,7 @@ void artsPersistentEventSatisfy(artsGuid_t eventGuid, uint32_t action,
                 artsType_t mode = artsGuidGetType(event->data);
                 internalSignalEdtWithMode(
                     dependent[j].addr, dependent[j].slot, event->data, mode,
-                    dependent[j].acquireMode, dependent[j].useTwinDiff);
+                    dependent[j].acquireMode);
               } else {
                 artsSignalEdt(dependent[j].addr, dependent[j].slot,
                               event->data);
@@ -723,7 +723,6 @@ void artsAddDependenceToPersistentEvent(artsGuid_t eventSource,
     dependent->addr = edtDest;
     dependent->slot = edtSlot;
     dependent->acquireMode = ARTS_NULL;
-    dependent->useTwinDiff = true;
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
     dependent->doneWriting = true;
 
@@ -738,7 +737,6 @@ void artsAddDependenceToPersistentEvent(artsGuid_t eventSource,
     dependent->addr = edtDest;
     dependent->slot = edtSlot;
     dependent->acquireMode = ARTS_NULL;
-    dependent->useTwinDiff = true;
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
     dependent->doneWriting = true;
 
@@ -756,14 +754,13 @@ void artsAddDependenceToPersistentEventWithMode(artsGuid_t eventSource,
                                                 uint32_t edtSlot,
                                                 artsType_t acquireMode) {
   artsAddDependenceToPersistentEventWithModeAndDiff(eventSource, edtDest,
-                                                    edtSlot, acquireMode, true);
+                                                    edtSlot, acquireMode);
 }
 
 void artsAddDependenceToPersistentEventWithModeAndDiff(artsGuid_t eventSource,
                                                        artsGuid_t edtDest,
                                                        uint32_t edtSlot,
-                                                       artsType_t acquireMode,
-                                                       bool useTwinDiff) {
+                                                       artsType_t acquireMode) {
   /// Check that the eventSource is a persistent event
   if (artsGuidGetType(eventSource) != ARTS_PERSISTENT_EVENT) {
     ARTS_DEBUG("Event source %lu is not a persistent event", eventSource);
@@ -778,7 +775,7 @@ void artsAddDependenceToPersistentEventWithModeAndDiff(artsGuid_t eventSource,
     if (rank != artsGlobalRankId) {
       // TODO: Extend remote protocol to pass acquireMode
       artsRemoteAddDependenceToPersistentEventWithHints(
-          eventSource, edtDest, edtSlot, rank, acquireMode, useTwinDiff);
+          eventSource, edtDest, edtSlot, rank, acquireMode);
     } else {
       // TODO: Extend out-of-order handling to pass acquireMode
       // For now, fallback to standard out-of-order add dependence
@@ -807,7 +804,6 @@ void artsAddDependenceToPersistentEventWithModeAndDiff(artsGuid_t eventSource,
     dependent->addr = edtDest;
     dependent->slot = edtSlot;
     dependent->acquireMode = acquireMode;
-    dependent->useTwinDiff = useTwinDiff;
     dependent->byteOffset = 0;
     dependent->size = 0;
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
@@ -824,7 +820,6 @@ void artsAddDependenceToPersistentEventWithModeAndDiff(artsGuid_t eventSource,
     dependent->addr = edtDest;
     dependent->slot = edtSlot;
     dependent->acquireMode = acquireMode;
-    dependent->useTwinDiff = useTwinDiff;
     dependent->byteOffset = 0;
     dependent->size = 0;
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
@@ -841,8 +836,7 @@ void artsAddDependenceToPersistentEventWithModeAndDiff(artsGuid_t eventSource,
 
 void artsAddDependenceToPersistentEventWithByteOffset(
     artsGuid_t eventSource, artsGuid_t edtDest, uint32_t edtSlot,
-    artsType_t acquireMode, bool useTwinDiff, uint64_t byteOffset,
-    uint64_t size) {
+    artsType_t acquireMode, uint64_t byteOffset, uint64_t size) {
   /// Check that the eventSource is a persistent event
   if (artsGuidGetType(eventSource) != ARTS_PERSISTENT_EVENT) {
     ARTS_DEBUG("Event source %lu is not a persistent event", eventSource);
@@ -857,8 +851,7 @@ void artsAddDependenceToPersistentEventWithByteOffset(
     if (rank != artsGlobalRankId) {
       // ESD: Now passes byteOffset/size to remote persistent event
       artsRemoteAddDependenceToPersistentEventWithByteOffset(
-          eventSource, edtDest, edtSlot, rank, acquireMode, useTwinDiff,
-          byteOffset, size);
+          eventSource, edtDest, edtSlot, rank, acquireMode, byteOffset, size);
     } else {
       // Local out-of-order: byte offset is not critical for OO handling
       artsOutOfOrderAddDependenceToPersistentEvent(eventSource, edtDest,
@@ -887,7 +880,6 @@ void artsAddDependenceToPersistentEventWithByteOffset(
     dependent->addr = edtDest;
     dependent->slot = edtSlot;
     dependent->acquireMode = acquireMode;
-    dependent->useTwinDiff = useTwinDiff;
     dependent->byteOffset = byteOffset;
     dependent->size = size;
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
@@ -904,7 +896,6 @@ void artsAddDependenceToPersistentEventWithByteOffset(
     dependent->addr = edtDest;
     dependent->slot = edtSlot;
     dependent->acquireMode = acquireMode;
-    dependent->useTwinDiff = useTwinDiff;
     dependent->byteOffset = byteOffset;
     dependent->size = size;
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
