@@ -623,6 +623,29 @@ void acquireDbs(struct artsEdt *edt) {
                     depv[i].guid, depv[i].mode, owner, validRank,
                     (void *)dbTemp);
           bool localValid = (dbTemp && validRank == artsGlobalRankId);
+          if (dbTemp) {
+            ARTS_INFO("[AcquireDbs] Non-owner cache state DB[Guid:%lu, "
+                      "ArtsId:%lu, Mode:%s, Effective:%s, ValidRank:%d, "
+                      "LocalValid:%d, Version:%u]",
+                      depv[i].guid, dbTemp->arts_id, getTypeName(depv[i].mode),
+                      getTypeName(effectiveMode), validRank, localValid,
+                      dbTemp->version);
+          } else {
+            ARTS_INFO("[AcquireDbs] Non-owner cache miss DB[Guid:%lu, "
+                      "Mode:%s, Effective:%s, ValidRank:%d]",
+                      depv[i].guid, getTypeName(depv[i].mode),
+                      getTypeName(effectiveMode), validRank);
+          }
+          if (effectiveMode == ARTS_DB_WRITE && depv[i].mode == ARTS_DB_WRITE &&
+              localValid) {
+            // Conservative: avoid using possibly stale cached WRITE copies.
+            ARTS_INFO("  Non-owner WRITE acquire: invalidating local cached "
+                      "copy for DB_WRITE to avoid stale data");
+            artsRouteTableInvalidateItem(depv[i].guid);
+            dbTemp = NULL;
+            validRank = -1;
+            localValid = false;
+          }
           if (effectiveMode == ARTS_DB_READ && depv[i].mode == ARTS_DB_WRITE &&
               localValid) {
             // Drop cached READ copies for DB_WRITE types to avoid stale data.
@@ -714,6 +737,11 @@ void prepDbs(unsigned int depc, artsEdtDep_t *depv, bool gpu) {
       if (depv[i].mode != ARTS_DB_PIN)
         artsRemoteUpdateRouteTable(depv[i].guid, -1);
       struct artsDb *db = ((struct artsDb *)depv[i].ptr) - 1;
+      ARTS_INFO("[prepDbs] WRITE DB[Guid:%lu, ArtsId:%lu, Mode:%s, "
+                "AcquireMode:%s, UseTwinDiff:%d, Ptr:%p]",
+                depv[i].guid, db ? db->arts_id : 0, getTypeName(depv[i].mode),
+                getTypeName(depv[i].acquireMode), depv[i].useTwinDiff,
+                depv[i].ptr);
       ARTS_DEBUG("[prepDbs] DB[Id:%lu, Guid:%lu] ptr=%p, db=%p, "
                  "useTwinDiff=%d",
                  db->arts_id, depv[i].guid, depv[i].ptr, db,
