@@ -748,8 +748,8 @@ struct artsConfig *artsConfigLoad() {
            &configVariables, "counterCaptureInterval")) != NULL)
     config->counterCaptureInterval = strtol(foundVariable->value, &end, 10);
   else {
-    ARTS_DEBUG_ONCE("Defaulting the counter capture interval to 1000 ms");
-    config->counterCaptureInterval = 1000;
+    ARTS_DEBUG_ONCE("Defaulting the counter capture interval to 100 ms");
+    config->counterCaptureInterval = 100;
   }
 
   if ((foundVariableChar = artsConfigFindVariableChar(
