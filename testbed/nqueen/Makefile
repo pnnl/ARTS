@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -fopenmp -O3 -Wall -std=c99
+CFLAGS = -g -fopenmp -O0 -Wall -std=c99 -no-pie
 
 all: nqueen_arts_local nqueen_arts_random nqueen_arts_explicit
 # nqueen_seq nqueen_omp nqueen_omp_opt nqueen_arts_seq nqueen_carts
@@ -20,13 +20,13 @@ all: nqueen_arts_local nqueen_arts_random nqueen_arts_explicit
 # 	carts execute $< -o $@
 
 nqueen_arts_local: nqueen_arts_local.c
-	$(CC) $(CFLAGS) -o $@ $< -I../../.install/include -L../../.install/lib -L../../.install/lib64 -larts -lhwloc
+	$(CC) $(CFLAGS) -o $@ $< -I../../install/include -L../../install/lib -larts -lhwloc
 
 nqueen_arts_random: nqueen_arts_random.c
-	$(CC) $(CFLAGS) -o $@ $< -I../../.install/include -L../../.install/lib -L../../.install/lib64 -larts -lhwloc
+	$(CC) $(CFLAGS) -o $@ $< -I../../install/include -L../../install/lib -larts -lhwloc
 
 nqueen_arts_explicit: nqueen_arts_explicit.c
-	$(CC) $(CFLAGS) -o $@ $< -I../../.install/include -L../../.install/lib -L../../.install/lib64 -larts -lhwloc
+	$(CC) $(CFLAGS) -o $@ $< -I../../install/include -L../../install/lib -larts -lhwloc
 
 clean:
 	rm -f nqueen_arts_local nqueen_arts_random nqueen_arts_explicit

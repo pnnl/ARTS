@@ -80,7 +80,6 @@ option(ARTS_BUILD_SHARED "Build shared library" ON)
 option(ARTS_BUILD_STATIC "Build static library" ON)
 option(ARTS_BUILD_EXAMPLES "Build example programs" ON)
 option(ARTS_BUILD_TESTS "Build test programs" ON)
-option(ARTS_BUILD_BENCHMARK "Build benchmark programs" ON)
 
 # Feature options (can be set via command line)
 option(ARTS_USE_SANITIZERS "Enable address and undefined behavior sanitizers in Debug builds" OFF)
@@ -320,10 +319,6 @@ if(ARTS_BUILD_TESTS)
     add_subdirectory(test)
 endif()
 
-if(ARTS_BUILD_BENCHMARK)
-    add_subdirectory(benchmark)
-endif()
-
 add_subdirectory(sampleConfigs)
 
 # Installation configuration
@@ -462,7 +457,6 @@ else()
 endif()
 message(STATUS "  Examples:        ${ARTS_BUILD_EXAMPLES}")
 message(STATUS "  Tests:           ${ARTS_BUILD_TESTS}")
-message(STATUS "  Benchmark:       ${ARTS_BUILD_BENCHMARK}")
 message(STATUS "")
 message(STATUS "Installation paths:")
 message(STATUS "  Libraries:       ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}")
