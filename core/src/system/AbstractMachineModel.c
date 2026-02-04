@@ -42,6 +42,7 @@
 #include "arts/runtime/Globals.h"
 #include "arts/runtime/Runtime.h"
 #include "arts/system/ArtsPrint.h"
+#include "arts/system/Threads.h"
 
 #ifdef USE_HWLOC
 #include <pthread.h>

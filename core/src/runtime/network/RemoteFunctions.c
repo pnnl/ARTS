@@ -38,6 +38,8 @@
 ******************************************************************************/
 #include "arts/runtime/network/RemoteFunctions.h"
 
+#include <string.h>
+
 #include "arts/arts.h"
 #include "arts/gas/OutOfOrder.h"
 #include "arts/gas/RouteTable.h"

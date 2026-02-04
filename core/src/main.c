@@ -42,6 +42,7 @@
 #include "arts/arts.h"
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
 #include "arts/network/Remote.h"

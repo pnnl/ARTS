@@ -40,6 +40,7 @@
 
 #include <inttypes.h>
 #include <stdarg.h>
+#include <stdlib.h>
 
 #include <fcntl.h>
 #include <sys/mman.h>

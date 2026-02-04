@@ -39,6 +39,8 @@
 
 #include "arts/runtime/compute/ShadAdapter.h"
 
+#include <string.h>
+
 #include "arts/arts.h"
 #include "arts/gas/Guid.h"
 #include "arts/gas/RouteTable.h"

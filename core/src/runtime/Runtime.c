@@ -38,6 +38,8 @@
 ******************************************************************************/
 #include "arts/runtime/Runtime.h"
 
+#include <stdlib.h>
+
 #include "arts/gas/Guid.h"
 #include "arts/gas/RouteTable.h"
 #include "arts/introspection/ArtsIdCounter.h"

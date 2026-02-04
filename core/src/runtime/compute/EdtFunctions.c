@@ -38,6 +38,8 @@
 ******************************************************************************/
 #include "arts/runtime/compute/EdtFunctions.h"
 
+#include <string.h>
+
 #include "arts/gas/Guid.h"
 #include "arts/gas/OutOfOrder.h"
 #include "arts/gas/RouteTable.h"
