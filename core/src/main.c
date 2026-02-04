@@ -45,6 +45,7 @@
 #include <string.h>
 #include <time.h>
 
+#include "arts/introspection/Counter.h"
 #include "arts/network/Remote.h"
 #include "arts/network/RemoteLauncher.h"
 #include "arts/runtime/Globals.h"
@@ -112,6 +113,10 @@ int artsRT(int argc, char **argv) {
 
   if (artsGlobalRankId == config->masterRank && config->masterBoot) {
     config->launcherData->cleanupProcesses(config->launcherData);
+  }
+  // Aggregate cluster-level counters on master node after all workers finished
+  if (artsGlobalRankId == config->masterRank) {
+    artsCounterWriteCluster(config->counterFolder, config->nodes);
   }
   artsConfigDestroy(config);
   artsRemoteTryToClosePrinter();

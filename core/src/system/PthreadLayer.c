@@ -48,10 +48,8 @@
 #include "arts/arts.h"
 #include "arts/introspection/Counter.h"
 #include "arts/network/Remote.h"
-#include "arts/network/RemoteProtocol.h"
 #include "arts/runtime/Globals.h"
 #include "arts/runtime/Runtime.h"
-#include "arts/runtime/network/RemoteFunctions.h"
 #include "arts/system/ArtsPrint.h"
 #include "arts/system/Config.h"
 
@@ -103,27 +101,11 @@ void artsThreadMainJoin() {
   // Mark main thread as closed
   artsNodeInfo.liveCounters[0] = NULL;
 
-  // Pre-allocate cluster arrays BEFORE worker threads join
-  // This ensures arrays exist before any counter messages can arrive
-  if (artsGlobalRankCount > 1 && artsNodeInfo.counterFolder) {
-    artsCounterAllocateClusterArrays();
-  }
-
-  int i;
-  for (i = 1; i < artsNodeInfo.totalThreadCount; i++)
+  // File-based counter aggregation: no socket synchronization needed
+  // Each node writes its own JSON file independently, master polls filesystem
+  // Join ALL threads (workers and network threads)
+  for (int i = 1; i < artsNodeInfo.totalThreadCount; i++) {
     pthread_join(nodeThreadList[i], NULL);
-
-  // Multi-node counter exchange
-  // Workers send counters and proceed immediately; master collects
-  if (artsGlobalRankCount > 1 && artsNodeInfo.counterFolder) {
-    if (artsGlobalRankId == 0) {
-      // Master: collect counters from all workers (with timeout)
-      artsCounterCollectCluster();
-    } else {
-      // Worker: send counter data to master, wait for queue to drain
-      artsCounterSendToMaster();
-      artsRemoteFlushOutbound();
-    }
   }
 
   artsRuntimeGlobalCleanup();
@@ -160,20 +142,13 @@ void artsThreadInit(struct artsConfig *config) {
   artsRuntimePrivateInit(&mask[0], config);
 }
 
-static bool artsShutdownCalled = false;
-
 void artsShutdown() {
-  // Guard against multiple calls from different shutdown paths
-  if (__sync_bool_compare_and_swap(&artsShutdownCalled, false, true) == false) {
-    return;
-  }
+  if (artsGlobalRankCount > 1)
+    artsRemoteShutdown();
 
-  // Broadcast shutdown to all other nodes
-  if (artsGlobalRankCount > 1) {
-    artsRemoteBroadcastShutdown();
-  }
+  if (artsGlobalRankCount == 1)
+    artsRuntimeStop();
 
-  artsRuntimeStop();
   fflush(stdout);
 }
 

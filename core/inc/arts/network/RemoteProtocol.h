@@ -91,16 +91,6 @@ enum artsServerMessageType {
   ARTS_REMOTE_DB_ADD_DEPENDENCE_WITH_BYTE_OFFSET_MSG,
   ARTS_REMOTE_TIME_SYNC_REQ_MSG,  // Worker -> Master: request with T1
   ARTS_REMOTE_TIME_SYNC_RESP_MSG, // Master -> Worker: response with T1, T2
-  ARTS_REMOTE_COUNTER_REDUCE_MSG,  // Worker -> Master: send node-reduced
-                                   // counters
-  ARTS_REMOTE_COUNTER_COLLECT_MSG, // Master -> Worker: request counter
-                                   // collection
-  // Two-phase shutdown protocol messages
-  ARTS_REMOTE_SHUTDOWN_PREPARE_MSG,  // Master -> Workers: stop accepting new
-                                     // work
-  ARTS_REMOTE_SHUTDOWN_READY_MSG,    // Worker -> Master: counters sent, ready
-                                     // to close
-  ARTS_REMOTE_SHUTDOWN_FINALIZE_MSG, // Master -> Workers: safe to close network
 };
 
 // Header
@@ -322,18 +312,6 @@ struct __attribute__((__packed__)) artsRemoteTimeSyncRespPacket {
   struct artsRemotePacket header;
   uint64_t workerSendTime; // T1: echoed back
   uint64_t masterRecvTime; // T2: master's local time when receiving request
-};
-
-// Counter reduce packet: worker sends node-reduced counter values to master
-// For PERIODIC mode, captures follow the fixed-size header as variable-length
-// data
-struct __attribute__((__packed__)) artsRemoteCounterReducePacket {
-  struct artsRemotePacket header;
-  unsigned int nodeId;       // Source node ID
-  unsigned int counterIndex; // Which counter this is for
-  uint64_t value;            // For ONCE mode: the reduced value
-  uint64_t captureCount;     // For PERIODIC mode: number of epoch-value pairs
-  // Variable length: captureCount * (epoch, value) pairs follow
 };
 
 void outInit(unsigned int size);

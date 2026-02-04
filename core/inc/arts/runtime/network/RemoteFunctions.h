@@ -182,16 +182,6 @@ void artsRemoteTimeSyncRequest(void);          // Worker sends request to master
 void artsRemoteHandleTimeSyncReq(void *pack);  // Master handles request
 void artsRemoteHandleTimeSyncResp(void *pack); // Worker handles response
 
-// Counter cluster reduction via active messaging
-// Worker sends node-reduced counters to master
-void artsRemoteCounterReduceSend(unsigned int counterIndex, uint64_t value,
-                                 uint64_t *epochs, uint64_t *values,
-                                 uint64_t captureCount);
-void artsRemoteHandleCounterReduce(void *pack);
-
-// Broadcast shutdown to all other nodes
-void artsRemoteBroadcastShutdown(void);
-
 #ifdef __cplusplus
 }
 #endif

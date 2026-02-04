@@ -181,9 +181,7 @@ void artsCounterTimerStart(artsCounter *counter);
 void artsCounterTimerEnd(artsCounter *counter);
 void artsCounterWrite(const char *outputFolder, unsigned int nodeId,
                       unsigned int threadId);
-void artsCounterSendToMaster(void);
-void artsCounterAllocateClusterArrays(void);
-void artsCounterCollectCluster(void);
+void artsCounterWriteCluster(const char *outputFolder, unsigned int nodeCount);
 
 // arts_id tracking wrapper functions (integrated with counter infrastructure)
 void artsCounterRecordArtsIdEdt(uint64_t arts_id, uint64_t exec_ns,

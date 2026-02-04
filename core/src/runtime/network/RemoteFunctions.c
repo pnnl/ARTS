@@ -1201,10 +1201,11 @@ void artsRemoteTimeSyncRequest(void) {
   artsFillPacketHeader(&packet.header, sizeof(packet),
                        ARTS_REMOTE_TIME_SYNC_REQ_MSG);
 
-  // Send to master (rank 0)
-  artsRemoteSendRequestAsync(0, (char *)&packet, sizeof(packet));
-  ARTS_INFO("Time sync: Worker %u sent request at T1=%lu", artsGlobalRankId,
-            packet.workerSendTime);
+  // Send to master
+  artsRemoteSendRequestAsync(artsGlobalMasterRankId, (char *)&packet,
+                             sizeof(packet));
+  ARTS_INFO("Time sync: Worker %u sent request to master %u at T1=%lu",
+            artsGlobalRankId, artsGlobalMasterRankId, packet.workerSendTime);
 }
 
 // Master handles sync request: records T2 and sends response with T1, T2
@@ -1251,121 +1252,3 @@ void artsRemoteHandleTimeSyncResp(void *pack) {
             (double)offset / 1000000.0);
 }
 
-// ============================================================================
-// Counter cluster reduction via active messaging
-// ============================================================================
-
-// External declarations for cluster reduction state (defined in Counter.c)
-extern volatile unsigned int artsCounterReduceReceived;
-extern uint64_t **artsClusterCounterValues; // [counterIndex][nodeId]
-extern uint64_t **
-    *artsClusterCaptureEpochs; // [counterIndex][nodeId][captureIdx]
-extern uint64_t **
-    *artsClusterCaptureValues; // [counterIndex][nodeId][captureIdx]
-extern uint64_t **artsClusterCaptureCounts; // [counterIndex][nodeId]
-
-// Worker sends node-reduced counter values to master
-void artsRemoteCounterReduceSend(unsigned int counterIndex, uint64_t value,
-                                 uint64_t *epochs, uint64_t *values,
-                                 uint64_t captureCount) {
-  // Calculate packet size: fixed header + variable captures
-  size_t capturesSize =
-      captureCount * 2 * sizeof(uint64_t); // epoch + value pairs
-  size_t packetSize =
-      sizeof(struct artsRemoteCounterReducePacket) + capturesSize;
-
-  char *buffer = (char *)artsMalloc(packetSize);
-  struct artsRemoteCounterReducePacket *packet =
-      (struct artsRemoteCounterReducePacket *)buffer;
-
-  packet->nodeId = artsGlobalRankId;
-  packet->counterIndex = counterIndex;
-  packet->value = value;
-  packet->captureCount = captureCount;
-
-  // Copy epoch-value pairs after the header
-  uint64_t *captureData =
-      (uint64_t *)(buffer + sizeof(struct artsRemoteCounterReducePacket));
-  for (uint64_t i = 0; i < captureCount; i++) {
-    captureData[i * 2] = epochs[i];
-    captureData[i * 2 + 1] = values[i];
-  }
-
-  artsFillPacketHeader(&packet->header, (unsigned int)packetSize,
-                       ARTS_REMOTE_COUNTER_REDUCE_MSG);
-
-  // Send to master (rank 0)
-  artsRemoteSendRequestAsync(0, buffer, (unsigned int)packetSize);
-  artsFree(buffer);
-
-  ARTS_INFO("Counter reduce: Node %u sent counter %u to master (value=%lu, "
-            "captures=%lu)",
-            artsGlobalRankId, counterIndex, value, captureCount);
-}
-
-// Master handles incoming counter reduce data from workers
-void artsRemoteHandleCounterReduce(void *pack) {
-  struct artsRemoteCounterReducePacket *packet =
-      (struct artsRemoteCounterReducePacket *)pack;
-
-  unsigned int nodeId = packet->nodeId;
-  unsigned int counterIndex = packet->counterIndex;
-  uint64_t value = packet->value;
-  uint64_t captureCount = packet->captureCount;
-
-  // Ensure cluster arrays are allocated (lazy allocation for race safety)
-  // This handles the case where worker messages arrive before master allocates arrays
-  if (!artsClusterCaptureEpochs || !artsClusterCounterValues) {
-    artsCounterAllocateClusterArrays();
-  }
-
-  // Store the ONCE mode value
-  if (artsClusterCounterValues && artsClusterCounterValues[counterIndex]) {
-    artsClusterCounterValues[counterIndex][nodeId] = value;
-  }
-
-  // Store PERIODIC mode captures
-  if (captureCount > 0 && artsClusterCaptureEpochs &&
-      artsClusterCaptureValues) {
-    uint64_t *captureData =
-        (uint64_t *)((char *)pack +
-                     sizeof(struct artsRemoteCounterReducePacket));
-
-    // Allocate storage for this node's captures
-    artsClusterCaptureEpochs[counterIndex][nodeId] =
-        (uint64_t *)artsMalloc(captureCount * sizeof(uint64_t));
-    artsClusterCaptureValues[counterIndex][nodeId] =
-        (uint64_t *)artsMalloc(captureCount * sizeof(uint64_t));
-    artsClusterCaptureCounts[counterIndex][nodeId] = captureCount;
-
-    for (uint64_t i = 0; i < captureCount; i++) {
-      artsClusterCaptureEpochs[counterIndex][nodeId][i] = captureData[i * 2];
-      artsClusterCaptureValues[counterIndex][nodeId][i] =
-          captureData[i * 2 + 1];
-    }
-  }
-
-  // Atomically increment received count
-  artsAtomicAdd(&artsCounterReduceReceived, 1);
-
-  ARTS_INFO("Counter reduce: Master received counter %u from node %u "
-            "(value=%lu, captures=%lu)",
-            counterIndex, nodeId, value, captureCount);
-}
-
-// Master requests all workers to send their counter data
-// ============================================================================
-// Shutdown broadcast function
-// ============================================================================
-
-// Broadcast shutdown to all other nodes
-void artsRemoteBroadcastShutdown(void) {
-  struct artsRemotePacket packet;
-  artsFillPacketHeader(&packet, sizeof(packet), ARTS_REMOTE_SHUTDOWN_MSG);
-
-  for (unsigned int i = 0; i < artsGlobalRankCount; i++) {
-    if (i != artsGlobalRankId) {
-      artsRemoteSendRequestAsync(i, (char *)&packet, sizeof(packet));
-    }
-  }
-}

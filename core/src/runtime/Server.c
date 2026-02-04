@@ -108,7 +108,8 @@ void artsServerProcessPacket(struct artsRemotePacket *packet) {
 
   switch (packet->messageType) {
   case ARTS_REMOTE_SHUTDOWN_MSG: {
-    ARTS_DEBUG("Remote Shutdown Request");
+    ARTS_INFO("Node %u: Received shutdown message from node %u",
+              artsGlobalRankId, packet->rank);
     artsRuntimeStop();
     break;
   }
@@ -356,11 +357,6 @@ void artsServerProcessPacket(struct artsRemotePacket *packet) {
   case ARTS_REMOTE_TIME_SYNC_RESP_MSG: {
     ARTS_DEBUG("Time Sync Response Received");
     artsRemoteHandleTimeSyncResp(packet);
-    break;
-  }
-  case ARTS_REMOTE_COUNTER_REDUCE_MSG: {
-    ARTS_DEBUG("Counter Reduce Received");
-    artsRemoteHandleCounterReduce(packet);
     break;
   }
   default: {
