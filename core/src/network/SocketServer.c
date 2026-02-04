@@ -255,6 +255,7 @@ void artsServerFixIbNames(struct artsConfig *config) {
 }
 
 bool artsServerSetIP(struct artsConfig *config) {
+  // Always initialize ipList - it's used by artsRemoteSetupOutgoing()
   ipList = (char *)artsMalloc(100 * sizeof(char) * config->tableLength);
   bool result;
   for (int i = 0; i < config->tableLength; i++) {
@@ -265,6 +266,16 @@ bool artsServerSetIP(struct artsConfig *config) {
       ARTS_INFO("Cannot get ip address for '%s'", config->table[i].ipAddress);
       exit(1);
     }
+  }
+
+  // Check if rank was passed via environment (SSH-launched child process)
+  // This prevents recursive spawning when multiple nodes resolve to the same IP
+  char *artsRankEnv = getenv("ARTS_RANK");
+  if (artsRankEnv) {
+    artsGlobalRankId = (unsigned int)atoi(artsRankEnv);
+    config->myRank = artsGlobalRankId;
+    artsGlobalRankCount = config->tableLength;
+    return true;
   }
 
   int fd;
@@ -357,17 +368,23 @@ static inline bool artsRemoteConnect(int rank, unsigned int port) {
         (struct sockaddr *)(remoteServerSendList + rank * ports + port),
         sizeof(struct sockaddr_in));
     if (res < 0) {
-      void *ptrCrap = NULL;
-
-      remoteConnectionAlive[rank] = false;
+      remoteConnectionAlive[rank * ports + port] = false;
 
       rclose(remoteSocketSendList[rank * ports + port]);
       remoteSocketSendList[rank * ports + port] = artsGetNewSocket();
 
+      // Retry with a limit to prevent infinite loop during shutdown
+      int maxRetries = 100;
+      int retryCount = 0;
       while (rconnect(remoteSocketSendList[rank * ports + port],
                       (struct sockaddr *)(remoteServerSendList + rank * ports +
                                           port),
                       sizeof(struct sockaddr_in)) < 0) {
+        if (++retryCount >= maxRetries) {
+          ARTS_INFO("artsRemoteConnect: Failed to connect to rank %d port %d after %d retries",
+                    rank, port, maxRetries);
+          return false;
+        }
         rclose(remoteSocketSendList[rank * ports + port]);
         remoteSocketSendList[rank * ports + port] = artsGetNewSocket();
       }
@@ -388,12 +405,19 @@ static inline bool artsRemoteConnect(int rank, unsigned int port) {
 int artsActualSend(char *message, unsigned int length, int rank, int port) {
   int res = 0;
   int total = 0;
+  int iterations = 0;
   while (length != 0 && res >= 0) {
     res = rsend(remoteSocketSendList[rank * ports + port], message + total,
                 length, MSG_DONTWAIT);
     if (res >= 0) {
       total += res;
       length -= res;
+    }
+    iterations++;
+    if (iterations > 1000000) {
+      ARTS_INFO("artsActualSend: stuck in loop, res=%d, length=%d, total=%d, errno=%d",
+                res, length, total, errno);
+      break;
     }
   }
 
@@ -438,7 +462,10 @@ unsigned int artsRemoteSendPayloadRequest(int rank, unsigned int queue,
 bool artsRemoteSetupIncoming() {
   // ARTS_INFO("%d", FD_SETSIZE);
   int i, j, k, pos;
-  int inPort = artsGlobalMessageTable->port;
+  // Use per-node port if set, otherwise fall back to global port
+  unsigned int myNodePort =
+      artsGlobalMessageTable->table[artsGlobalMessageTable->myRank].port;
+  int inPort = (myNodePort != 0) ? myNodePort : artsGlobalMessageTable->port;
   socklen_t sLength = sizeof(struct sockaddr);
   int count = (artsGlobalMessageTable->tableLength - 1);
 
@@ -547,10 +574,15 @@ void artsRemoteSetupOutgoing() {
   remoteConnectionAlive = (bool *)artsCalloc(count * ports, sizeof(bool));
 
   for (i = 0; i < count; i++) {
+    // Use target node's port if set, otherwise fall back to global port
+    unsigned int targetPort = artsGlobalMessageTable->table[i].port;
+    if (targetPort == 0)
+      targetPort = outPort;
+
     for (j = 0; j < ports; j++)
       remoteSocketSendList[i * ports + j] =
           artsGetSocketOutgoing(remoteServerSendList + i * ports + j,
-                                outPort + j, inet_addr(ipList + 100 * i));
+                                targetPort + j, inet_addr(ipList + 100 * i));
   }
 }
 

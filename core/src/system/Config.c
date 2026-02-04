@@ -353,41 +353,69 @@ char *artsConfigGetSlurmHostname(char *name, char *digitSample,
   return outName;
 }
 
+// Helper: Check if string contains only digits
+static bool artsConfigIsAllDigits(const char *str) {
+  if (!str || !*str)
+    return false;
+  while (*str) {
+    if (!isdigit(*str))
+      return false;
+    str++;
+  }
+  return true;
+}
+
+// Count nodes in new syntax: node[01-10], hostname:port, hostname
 unsigned int artsConfigCountNodes(char *nodeList) {
   unsigned int length = strlen(nodeList);
-  unsigned int rangeCount = 0;
   unsigned int nodes = 0;
 
+  // Count commas to get initial entry count
   for (unsigned int i = 0; i < length; i++)
     if (nodeList[i] == ',')
       nodes++;
-  nodes++;
+  nodes++;  // One more than comma count
 
-  char *begin, *end, *search;
-  begin = nodeList;
+  // Adjust for bracket ranges (each range is one entry but multiple nodes)
+  unsigned int i = 0;
+  while (i < length) {
+    // Find bracket range
+    if (nodeList[i] == '[') {
+      nodes--;  // This entry is a range, not a single node
+      // Find the closing bracket
+      unsigned int bracketStart = i + 1;
+      while (i < length && nodeList[i] != ']')
+        i++;
+      if (i < length) {
+        // Parse range inside brackets: "01-10" or "1-5"
+        char rangeSpec[64];
+        unsigned int rangeLen = i - bracketStart;
+        if (rangeLen < sizeof(rangeSpec)) {
+          strncpy(rangeSpec, nodeList + bracketStart, rangeLen);
+          rangeSpec[rangeLen] = '\0';
 
-  for (unsigned int i = 0; i < length; i++) {
-    if (nodeList[i] == ',')
-      begin = nodeList + i;
-    else if (nodeList[i] == ':') {
-      nodes--;
-      search = nodeList + i;
-      end = nodeList + length;
-
-      for (unsigned int j = 0; j < end - search; j++) {
-        if (nodeList[i + j] == ',') {
-          end = nodeList + i + j;
+          // Find the dash
+          char *dash = strchr(rangeSpec, '-');
+          if (dash) {
+            *dash = '\0';
+            unsigned int start = strtol(rangeSpec, NULL, 10);
+            unsigned int end = strtol(dash + 1, NULL, 10);
+            if (start <= end)
+              nodes += (end - start + 1);
+            else
+              nodes += (start - end + 1);
+          } else {
+            // Single number in brackets (unusual but handle it)
+            nodes += 1;
+          }
         }
       }
-
-      unsigned int front = artsConfigGetValue(begin, nodeList + i);
-      unsigned int back = artsConfigGetValue(nodeList + i + 1, end);
-      if (front > back)
-        nodes += (front - back) + 1;
-      else
-        nodes += (back - front) + 1;
     }
+    // Note: colon after bracket (for port) or colon for hostname:port
+    // doesn't change node count - it's just port specification
+    i++;
   }
+
   return nodes;
 }
 
@@ -442,8 +470,8 @@ void artsConfigCreateRoutingTable(struct artsConfig **config, char *nodeList) {
 
   nodeCount = (*config)->nodes;
   (*config)->tableLength = nodeCount;
-  table = (struct artsConfigTable *)artsMalloc(sizeof(struct artsConfigTable) *
-                                               nodeCount);
+  table = (struct artsConfigTable *)artsCalloc(nodeCount,
+                                               sizeof(struct artsConfigTable));
 
   if (!(*config)->masterBoot) {
     char *part;
@@ -532,47 +560,104 @@ void artsConfigCreateRoutingTable(struct artsConfig **config, char *nodeList) {
       }
     }
   } else {
-    // This is the ssh path...
+    // SSH path: parse node[01-10]:port, hostname:port, or hostname
     char *nodeBegin = nodeList;
     char *next;
+
     do {
+      // Get next comma-separated entry
       nodeBegin = strtok(nodeBegin, ",");
+      if (nodeBegin == NULL)
+        break;
       next = nodeBegin + strlen(nodeBegin) + 1;
 
-      if (nodeBegin != NULL) {
-        nodeBegin = strtok(nodeBegin, ":");
-        char *nodeEnd = strtok(NULL, ":");
+      // Strip trailing newline if present
+      strLength = strlen(nodeBegin);
+      if (strLength > 0 && nodeBegin[strLength - 1] == '\n')
+        nodeBegin[strLength - 1] = '\0';
 
-        if (nodeBegin[strlen(nodeBegin) - 1] == '\n')
-          nodeBegin[strlen(nodeBegin) - 1] = '\0';
+      // Check for bracket range: node[01-10] or node[01-10]:port
+      char *bracketOpen = strchr(nodeBegin, '[');
+      char *bracketClose = bracketOpen ? strchr(bracketOpen, ']') : NULL;
 
-        if (nodeEnd != NULL) {
-          start = artsConfigGetValue(nodeBegin, nodeEnd - 1);
-          stop = artsConfigGetValue(nodeEnd, nodeEnd + strlen(nodeEnd));
+      if (bracketOpen && bracketClose && bracketClose > bracketOpen) {
+        // Bracket range syntax: base[start-end] or base[start-end]:port
+        char baseName[256];
+        unsigned int baseLen = bracketOpen - nodeBegin;
+        if (baseLen >= sizeof(baseName))
+          baseLen = sizeof(baseName) - 1;
+        strncpy(baseName, nodeBegin, baseLen);
+        baseName[baseLen] = '\0';
 
-          char *name = artsConfigGetNodeName(nodeBegin, nodeEnd);
+        // Extract range spec from brackets
+        char rangeSpec[64];
+        unsigned int rangeLen = bracketClose - bracketOpen - 1;
+        if (rangeLen >= sizeof(rangeSpec))
+          rangeLen = sizeof(rangeSpec) - 1;
+        strncpy(rangeSpec, bracketOpen + 1, rangeLen);
+        rangeSpec[rangeLen] = '\0';
 
-          if (start < stop)
+        // Check for port after closing bracket: ]:port
+        unsigned int nodePort = 0;
+        char *portSpec = strchr(bracketClose, ':');
+        if (portSpec) {
+          nodePort = strtol(portSpec + 1, NULL, 10);
+        }
+
+        // Parse range: "01-10" or "1-5"
+        char *dash = strchr(rangeSpec, '-');
+        if (dash) {
+          *dash = '\0';
+          start = strtol(rangeSpec, NULL, 10);
+          stop = strtol(dash + 1, NULL, 10);
+          unsigned int padWidth = strlen(rangeSpec);  // Preserve padding width
+
+          if (start <= stop)
             direction = 1;
           else
             direction = -1;
 
-          strLength = strlen(nodeBegin);
-          while (start != stop + 1) {
+          while (start != stop + direction) {
+            // Create padded hostname: base + padded_number
+            char hostname[512];
+            snprintf(hostname, sizeof(hostname), "%s%0*u", baseName, padWidth,
+                     start);
             table[currentNode].rank = currentNode;
-            table[currentNode].ipAddress = artsConfigGetHostname(name, start);
+            table[currentNode].ipAddress = artsConfigMakeNewVar(hostname);
+            table[currentNode].port = nodePort;
             start += direction;
             currentNode++;
           }
         } else {
+          // Single number in brackets (unusual)
+          unsigned int num = strtol(rangeSpec, NULL, 10);
+          char hostname[512];
+          snprintf(hostname, sizeof(hostname), "%s%s", baseName, rangeSpec);
           table[currentNode].rank = currentNode;
-          strLength = strlen(nodeBegin);
-          temp = (char *)artsMalloc(strLength + 1);
-          strncpy(temp, nodeBegin, strLength + 1);
-          table[currentNode].ipAddress = temp;
+          table[currentNode].ipAddress = artsConfigMakeNewVar(hostname);
+          table[currentNode].port = nodePort;
+          currentNode++;
+        }
+      } else {
+        // No brackets - check for hostname:port or just hostname
+        char *colonPos = strchr(nodeBegin, ':');
+        if (colonPos && artsConfigIsAllDigits(colonPos + 1)) {
+          // hostname:port format
+          *colonPos = '\0';  // Temporarily terminate hostname
+          table[currentNode].rank = currentNode;
+          table[currentNode].ipAddress = artsConfigMakeNewVar(nodeBegin);
+          table[currentNode].port = strtol(colonPos + 1, NULL, 10);
+          *colonPos = ':';  // Restore for safety
+          currentNode++;
+        } else {
+          // Just hostname, no port
+          table[currentNode].rank = currentNode;
+          table[currentNode].ipAddress = artsConfigMakeNewVar(nodeBegin);
+          table[currentNode].port = 0;
           currentNode++;
         }
       }
+
       nodeBegin = next;
     } while (nodeBegin < nodeList + listLength);
   }
@@ -742,7 +827,7 @@ struct artsConfig *artsConfigLoad() {
            artsConfigFindVariable(&configVariables, "counterFolder")) != NULL)
     config->counterFolder = artsConfigMakeNewVar(foundVariable->value);
   else
-    config->counterFolder = artsConfigMakeNewVar("./counter");
+    config->counterFolder = artsConfigMakeNewVar("./counters");
 
   if ((foundVariable = artsConfigFindVariable(
            &configVariables, "counterCaptureInterval")) != NULL)

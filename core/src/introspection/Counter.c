@@ -47,10 +47,15 @@
 #include "arts/arts.h"
 #include "arts/introspection/ArtsIdCounter.h"
 #include "arts/introspection/JsonWriter.h"
+#include "arts/network/Remote.h"
+#include "arts/runtime/Globals.h"
 #include "arts/runtime/network/RemoteFunctions.h"
 #include "arts/system/ArtsPrint.h"
 #include "arts/system/Debug.h"
 #include "arts/utils/Atomics.h"
+
+// Access to network ports for setting up inbound queues during counter collection
+extern unsigned int ports;
 
 // Arrays are defined as static const in Preamble.h (included via arts.h)
 
@@ -236,7 +241,7 @@ void artsCounterCaptureStart() {
     } else {
       // Worker nodes: send sync request and wait for response
       artsRemoteTimeSyncRequest();
-      uint64_t timeout = artsGetTimeStamp() + 1000000000ULL; // 1 second
+      uint64_t timeout = artsGetTimeStamp() + 5000000000ULL; // 5 seconds
       while (!artsCounterTimeSyncReceived && artsGetTimeStamp() < timeout) {
         usleep(1000); // Wait 1ms
       }
@@ -763,6 +768,144 @@ static void artsCounterWriteNode(const char *outputFolder,
   artsCloseCounterFile(&writer, fp);
 }
 
+// Flag to track if cluster counter collection is already done
+static bool artsClusterCountersCollected = false;
+
+// Worker nodes: send counter data to master (called on COUNTER_COLLECT_MSG)
+void artsCounterSendToMaster(void) {
+  unsigned int clusterCounterCount =
+      artsCountersAtLevel(artsCounterLevelCluster);
+  if (!clusterCounterCount || artsGlobalRankId == 0)
+    return; // Only workers send
+
+  for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
+    if (artsCounterModeArray[i] == artsCounterModeOff ||
+        artsCounterLevelArray[i] != artsCounterLevelCluster)
+      continue;
+    uint64_t nodeValue = artsComputeNodeReducedValue(i);
+    if (artsCounterModeArray[i] == artsCounterModePeriodic) {
+      uint64_t *epochs, *values, count;
+      artsComputeNodeReducedCaptures(i, &epochs, &values, &count);
+      artsRemoteCounterReduceSend(i, nodeValue, epochs, values, count);
+      if (epochs)
+        artsFree(epochs);
+      if (values)
+        artsFree(values);
+    } else {
+      artsRemoteCounterReduceSend(i, nodeValue, NULL, NULL, 0);
+    }
+  }
+}
+
+// Lock for thread-safe cluster array allocation
+static volatile unsigned int clusterArrayAllocLock = 0;
+
+// Pre-allocate cluster arrays before receiving worker data
+// Thread-safe: can be called from multiple receiver threads
+void artsCounterAllocateClusterArrays(void) {
+  if (artsGlobalRankId != 0)
+    return;
+
+  unsigned int clusterCounterCount =
+      artsCountersAtLevel(artsCounterLevelCluster);
+  if (!clusterCounterCount)
+    return;
+
+  // Fast path: already allocated?
+  if (artsClusterCounterValues)
+    return;
+
+  // Acquire lock for thread-safe allocation
+  while (__sync_lock_test_and_set(&clusterArrayAllocLock, 1)) {
+    // Spin wait
+  }
+
+  // Double-check after acquiring lock
+  if (artsClusterCounterValues) {
+    __sync_lock_release(&clusterArrayAllocLock);
+    return;
+  }
+
+  unsigned int numNodes = artsGlobalRankCount;
+
+  // Allocate storage arrays for cluster counter values
+  artsClusterCounterValues =
+      (uint64_t **)artsCalloc(NUM_COUNTER_TYPES, sizeof(uint64_t *));
+  artsClusterCaptureEpochs =
+      (uint64_t ***)artsCalloc(NUM_COUNTER_TYPES, sizeof(uint64_t **));
+  artsClusterCaptureValues =
+      (uint64_t ***)artsCalloc(NUM_COUNTER_TYPES, sizeof(uint64_t **));
+  artsClusterCaptureCounts =
+      (uint64_t **)artsCalloc(NUM_COUNTER_TYPES, sizeof(uint64_t *));
+
+  for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
+    if (artsCounterModeArray[i] == artsCounterModeOff ||
+        artsCounterLevelArray[i] != artsCounterLevelCluster)
+      continue;
+    artsClusterCounterValues[i] =
+        (uint64_t *)artsCalloc(numNodes, sizeof(uint64_t));
+    artsClusterCaptureEpochs[i] =
+        (uint64_t **)artsCalloc(numNodes, sizeof(uint64_t *));
+    artsClusterCaptureValues[i] =
+        (uint64_t **)artsCalloc(numNodes, sizeof(uint64_t *));
+    artsClusterCaptureCounts[i] =
+        (uint64_t *)artsCalloc(numNodes, sizeof(uint64_t));
+  }
+
+  // Release lock
+  __sync_lock_release(&clusterArrayAllocLock);
+}
+
+// Master: prepare cluster counter collection before network shutdown
+// Waits for worker data (arrays must be pre-allocated)
+void artsCounterCollectCluster(void) {
+  if (artsGlobalRankId != 0 || artsClusterCountersCollected)
+    return;
+
+  unsigned int clusterCounterCount =
+      artsCountersAtLevel(artsCounterLevelCluster);
+  if (!clusterCounterCount)
+    return;
+
+  unsigned int numNodes = artsGlobalRankCount;
+
+  // Ensure arrays are allocated (in case this is called before pre-allocation)
+  artsCounterAllocateClusterArrays();
+
+  // Store master's own data
+  for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
+    if (artsCounterModeArray[i] == artsCounterModeOff ||
+        artsCounterLevelArray[i] != artsCounterLevelCluster)
+      continue;
+    artsClusterCounterValues[i][0] = artsComputeNodeReducedValue(i);
+    if (artsCounterModeArray[i] == artsCounterModePeriodic) {
+      artsComputeNodeReducedCaptures(i, &artsClusterCaptureEpochs[i][0],
+                                     &artsClusterCaptureValues[i][0],
+                                     &artsClusterCaptureCounts[i][0]);
+    }
+  }
+
+  // Wait for worker data - actively receive since receiver threads may have stopped
+  unsigned int expectedMessages = (numNodes - 1) * clusterCounterCount;
+  if (expectedMessages > 0) {
+    // Set up this thread to poll ALL inbound queues
+    // The main thread doesn't normally have inbound queues assigned since it's a worker
+    unsigned int totalInboundQueues = (artsGlobalRankCount - 1) * ports;
+    artsRemoteSetThreadInboundQueues(0, totalInboundQueues);
+
+    uint64_t timeout = artsGetTimeStamp() + 30000000000ULL; // 30 second timeout
+    while (artsCounterReduceReceived < expectedMessages &&
+           artsGetTimeStamp() < timeout) {
+      // Actively receive instead of just sleeping - receiver threads may have
+      // stopped after artsRuntimeStop() was called
+      artsServerTryToReceive(&artsNodeInfo.buf, &artsNodeInfo.packetSize,
+                             &artsNodeInfo.stealRequestLock);
+    }
+  }
+
+  artsClusterCountersCollected = true;
+}
+
 static void artsCounterWriteCluster(const char *outputFolder) {
   unsigned int clusterCounterCount =
       artsCountersAtLevel(artsCounterLevelCluster);
@@ -772,54 +915,63 @@ static void artsCounterWriteCluster(const char *outputFolder) {
   unsigned int numNodes = artsGlobalRankCount;
 
   if (artsGlobalRankId == 0) {
-    // Master: allocate, wait for workers, reduce and write
-    artsClusterCounterValues =
-        (uint64_t **)artsCalloc(NUM_COUNTER_TYPES, sizeof(uint64_t *));
-    artsClusterCaptureEpochs =
-        (uint64_t ***)artsCalloc(NUM_COUNTER_TYPES, sizeof(uint64_t **));
-    artsClusterCaptureValues =
-        (uint64_t ***)artsCalloc(NUM_COUNTER_TYPES, sizeof(uint64_t **));
-    artsClusterCaptureCounts =
-        (uint64_t **)artsCalloc(NUM_COUNTER_TYPES, sizeof(uint64_t *));
+    // If not already collected (multi-node case does collection in shutdown)
+    if (!artsClusterCountersCollected) {
+      // Master: allocate, wait for workers, reduce and write
+      artsClusterCounterValues =
+          (uint64_t **)artsCalloc(NUM_COUNTER_TYPES, sizeof(uint64_t *));
+      artsClusterCaptureEpochs =
+          (uint64_t ***)artsCalloc(NUM_COUNTER_TYPES, sizeof(uint64_t **));
+      artsClusterCaptureValues =
+          (uint64_t ***)artsCalloc(NUM_COUNTER_TYPES, sizeof(uint64_t **));
+      artsClusterCaptureCounts =
+          (uint64_t **)artsCalloc(NUM_COUNTER_TYPES, sizeof(uint64_t *));
 
-    for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
-      if (artsCounterModeArray[i] == artsCounterModeOff ||
-          artsCounterLevelArray[i] != artsCounterLevelCluster)
-        continue;
-      artsClusterCounterValues[i] =
-          (uint64_t *)artsCalloc(numNodes, sizeof(uint64_t));
-      artsClusterCaptureEpochs[i] =
-          (uint64_t **)artsCalloc(numNodes, sizeof(uint64_t *));
-      artsClusterCaptureValues[i] =
-          (uint64_t **)artsCalloc(numNodes, sizeof(uint64_t *));
-      artsClusterCaptureCounts[i] =
-          (uint64_t *)artsCalloc(numNodes, sizeof(uint64_t));
-      if (artsCounterReduceMethodArray[i] == artsCounterReduceMin) {
-        for (unsigned int n = 0; n < numNodes; n++)
-          artsClusterCounterValues[i][n] = UINT64_MAX;
+      for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
+        if (artsCounterModeArray[i] == artsCounterModeOff ||
+            artsCounterLevelArray[i] != artsCounterLevelCluster)
+          continue;
+        artsClusterCounterValues[i] =
+            (uint64_t *)artsCalloc(numNodes, sizeof(uint64_t));
+        artsClusterCaptureEpochs[i] =
+            (uint64_t **)artsCalloc(numNodes, sizeof(uint64_t *));
+        artsClusterCaptureValues[i] =
+            (uint64_t **)artsCalloc(numNodes, sizeof(uint64_t *));
+        artsClusterCaptureCounts[i] =
+            (uint64_t *)artsCalloc(numNodes, sizeof(uint64_t));
+        if (artsCounterReduceMethodArray[i] == artsCounterReduceMin) {
+          for (unsigned int n = 0; n < numNodes; n++)
+            artsClusterCounterValues[i][n] = UINT64_MAX;
+        }
       }
-    }
 
-    // Store master's own data
-    for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
-      if (artsCounterModeArray[i] == artsCounterModeOff ||
-          artsCounterLevelArray[i] != artsCounterLevelCluster)
-        continue;
-      artsClusterCounterValues[i][0] = artsComputeNodeReducedValue(i);
-      if (artsCounterModeArray[i] == artsCounterModePeriodic) {
-        artsComputeNodeReducedCaptures(i, &artsClusterCaptureEpochs[i][0],
-                                       &artsClusterCaptureValues[i][0],
-                                       &artsClusterCaptureCounts[i][0]);
+      // Store master's own data
+      for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
+        if (artsCounterModeArray[i] == artsCounterModeOff ||
+            artsCounterLevelArray[i] != artsCounterLevelCluster)
+          continue;
+        artsClusterCounterValues[i][0] = artsComputeNodeReducedValue(i);
+        if (artsCounterModeArray[i] == artsCounterModePeriodic) {
+          artsComputeNodeReducedCaptures(i, &artsClusterCaptureEpochs[i][0],
+                                         &artsClusterCaptureValues[i][0],
+                                         &artsClusterCaptureCounts[i][0]);
+        }
       }
-    }
 
-    // Wait for workers
-    unsigned int expectedMessages = (numNodes - 1) * clusterCounterCount;
-    if (expectedMessages > 0) {
-      uint64_t timeout = artsGetTimeStamp() + 30000000000ULL;
-      while (artsCounterReduceReceived < expectedMessages &&
-             artsGetTimeStamp() < timeout) {
-        usleep(1000);
+      // Wait for workers (only in single-node or if collection not done yet)
+      unsigned int expectedMessages = (numNodes - 1) * clusterCounterCount;
+      if (expectedMessages > 0) {
+        // Set up this thread to poll ALL inbound queues
+        unsigned int totalInboundQueues = (artsGlobalRankCount - 1) * ports;
+        artsRemoteSetThreadInboundQueues(0, totalInboundQueues);
+
+        uint64_t timeout = artsGetTimeStamp() + 30000000000ULL;
+        while (artsCounterReduceReceived < expectedMessages &&
+               artsGetTimeStamp() < timeout) {
+          // Actively receive - receiver threads may have stopped
+          artsServerTryToReceive(&artsNodeInfo.buf, &artsNodeInfo.packetSize,
+                                 &artsNodeInfo.stealRequestLock);
+        }
       }
     }
 
@@ -1001,23 +1153,7 @@ static void artsCounterWriteCluster(const char *outputFolder) {
 
   } else {
     // Worker: compute and send to master
-    for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
-      if (artsCounterModeArray[i] == artsCounterModeOff ||
-          artsCounterLevelArray[i] != artsCounterLevelCluster)
-        continue;
-      uint64_t nodeValue = artsComputeNodeReducedValue(i);
-      if (artsCounterModeArray[i] == artsCounterModePeriodic) {
-        uint64_t *epochs, *values, count;
-        artsComputeNodeReducedCaptures(i, &epochs, &values, &count);
-        artsRemoteCounterReduceSend(i, nodeValue, epochs, values, count);
-        if (epochs)
-          artsFree(epochs);
-        if (values)
-          artsFree(values);
-      } else {
-        artsRemoteCounterReduceSend(i, nodeValue, NULL, NULL, 0);
-      }
-    }
+    artsCounterSendToMaster();
   }
 }
 

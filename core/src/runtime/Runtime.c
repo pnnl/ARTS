@@ -260,7 +260,8 @@ void artsThreadZeroNodeStart() {
   setGlobalGuidOn();
   createShutdownEpoch();
 
-  artsCounterCaptureStart();
+  // Note: Counter capture starts AFTER barriers below, when receiver threads
+  // are running. This ensures time sync messages can be processed.
   INITIALIZATION_TIME_STOP();
   END_TO_END_TIME_START();
 
@@ -289,6 +290,10 @@ void artsThreadZeroNodeStart() {
   artsAtomicSub(&artsNodeInfo.readyToExecute, 1U);
   while (artsNodeInfo.readyToExecute) {
   }
+
+  // Start counter capture AFTER all barriers, when receiver threads are in
+  // their runtime loops. This ensures time sync requests can be processed.
+  artsCounterCaptureStart();
 }
 
 void artsRuntimePrivateInit(struct threadMask *unit,

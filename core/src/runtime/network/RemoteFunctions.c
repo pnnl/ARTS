@@ -1313,6 +1313,12 @@ void artsRemoteHandleCounterReduce(void *pack) {
   uint64_t value = packet->value;
   uint64_t captureCount = packet->captureCount;
 
+  // Ensure cluster arrays are allocated (lazy allocation for race safety)
+  // This handles the case where worker messages arrive before master allocates arrays
+  if (!artsClusterCaptureEpochs || !artsClusterCounterValues) {
+    artsCounterAllocateClusterArrays();
+  }
+
   // Store the ONCE mode value
   if (artsClusterCounterValues && artsClusterCounterValues[counterIndex]) {
     artsClusterCounterValues[counterIndex][nodeId] = value;
@@ -1345,4 +1351,21 @@ void artsRemoteHandleCounterReduce(void *pack) {
   ARTS_INFO("Counter reduce: Master received counter %u from node %u "
             "(value=%lu, captures=%lu)",
             counterIndex, nodeId, value, captureCount);
+}
+
+// Master requests all workers to send their counter data
+// ============================================================================
+// Shutdown broadcast function
+// ============================================================================
+
+// Broadcast shutdown to all other nodes
+void artsRemoteBroadcastShutdown(void) {
+  struct artsRemotePacket packet;
+  artsFillPacketHeader(&packet, sizeof(packet), ARTS_REMOTE_SHUTDOWN_MSG);
+
+  for (unsigned int i = 0; i < artsGlobalRankCount; i++) {
+    if (i != artsGlobalRankId) {
+      artsRemoteSendRequestAsync(i, (char *)&packet, sizeof(packet));
+    }
+  }
 }

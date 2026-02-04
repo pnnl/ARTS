@@ -47,6 +47,7 @@ extern "C" {
 struct artsConfigTable {
   unsigned int rank;
   char *ipAddress;
+  unsigned int port;  // Per-node port (0 = use global default)
 };
 
 struct artsConfigVariable {

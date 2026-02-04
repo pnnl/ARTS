@@ -91,8 +91,16 @@ enum artsServerMessageType {
   ARTS_REMOTE_DB_ADD_DEPENDENCE_WITH_BYTE_OFFSET_MSG,
   ARTS_REMOTE_TIME_SYNC_REQ_MSG,  // Worker -> Master: request with T1
   ARTS_REMOTE_TIME_SYNC_RESP_MSG, // Master -> Worker: response with T1, T2
-  ARTS_REMOTE_COUNTER_REDUCE_MSG, // Worker -> Master: send node-reduced
-                                  // counters
+  ARTS_REMOTE_COUNTER_REDUCE_MSG,  // Worker -> Master: send node-reduced
+                                   // counters
+  ARTS_REMOTE_COUNTER_COLLECT_MSG, // Master -> Worker: request counter
+                                   // collection
+  // Two-phase shutdown protocol messages
+  ARTS_REMOTE_SHUTDOWN_PREPARE_MSG,  // Master -> Workers: stop accepting new
+                                     // work
+  ARTS_REMOTE_SHUTDOWN_READY_MSG,    // Worker -> Master: counters sent, ready
+                                     // to close
+  ARTS_REMOTE_SHUTDOWN_FINALIZE_MSG, // Master -> Workers: safe to close network
 };
 
 // Header
@@ -329,6 +337,7 @@ struct __attribute__((__packed__)) artsRemoteCounterReducePacket {
 };
 
 void outInit(unsigned int size);
+void artsRemoteFlushOutbound(void);
 bool artsRemoteAsyncSend();
 void artsRemoteSendRequestAsync(int rank, char *message, unsigned int length);
 void artsRemoteSendRequestPayloadAsync(int rank, char *message,

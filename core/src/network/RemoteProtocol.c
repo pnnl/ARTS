@@ -39,6 +39,7 @@
 #include "arts/network/RemoteProtocol.h"
 
 #include <string.h>
+#include <unistd.h>
 
 #include "arts/arts.h"
 #include "arts/introspection/Metrics.h"
@@ -143,6 +144,106 @@ void outInit(unsigned int size) {
   seqNumber = (uint64_t *)artsCalloc(artsGlobalRankCount, sizeof(uint64_t));
   seqNumLock = (unsigned int *)artsCalloc(size, sizeof(unsigned int));
 #endif
+}
+
+// Actively flush all outbound queues by directly sending (with timeout)
+// This works even if sender threads have stopped, by sending from calling thread
+void artsRemoteFlushOutbound(void) {
+  if (!outHead || nodeListSize == 0)
+    return;
+
+  uint64_t timeout = artsGetTimeStamp() + 5000000000ULL; // 5 second timeout
+
+  // Track partial sends per queue (not using thread-local outResend)
+  struct outList **pendingSends =
+      (struct outList **)artsCalloc(nodeListSize, sizeof(struct outList *));
+
+  while (artsGetTimeStamp() < timeout) {
+    bool didWork = false;
+    bool allEmpty = true;
+
+    // Process all outbound queues
+    for (unsigned int i = 0; i < nodeListSize; i++) {
+      struct outList *out = NULL;
+
+      // Check for pending partial send first
+      if (pendingSends[i]) {
+        out = pendingSends[i];
+      } else {
+        // Pop new item from queue
+        void *freeMe;
+        struct artsLinkList *list = artsLinkListGet(outHead, i);
+        out = (struct outList *)artsLinkListPopFront(list, &freeMe);
+      }
+
+      if (out) {
+        allEmpty = false;
+        unsigned int lengthRemaining;
+
+        if (!out->payload) {
+          lengthRemaining = artsRemoteSendRequest(
+              out->rank, i, ((char *)(out + 1)) + out->offset, out->length);
+        } else {
+          lengthRemaining = artsRemoteSendPayloadRequest(
+              out->rank, i, ((char *)(out + 1)) + out->offset, out->length,
+              ((char *)out->payload) + out->offsetPayload, out->payloadSize);
+          if (out->freeMethod && !lengthRemaining)
+            out->freeMethod(out->payload);
+        }
+
+        if (lengthRemaining == (unsigned int)-1) {
+          // Send error, skip this queue for now
+          pendingSends[i] = out;
+          continue;
+        }
+
+        if (lengthRemaining) {
+          // Partial send, store for retry
+          partialSendStore(out, lengthRemaining);
+          pendingSends[i] = out;
+        } else {
+          // Fully sent, free the item
+          pendingSends[i] = NULL;
+          artsLinkListDeleteItem(out);
+        }
+        didWork = true;
+      } else {
+        // Check if queue has more items
+        struct artsLinkList *list = artsLinkListGet(outHead, i);
+        if (!artsLinkListIsEmpty(list)) {
+          allEmpty = false;
+        }
+      }
+    }
+
+    if (allEmpty) {
+      // All queues empty and no pending sends
+      bool hasPending = false;
+      for (unsigned int i = 0; i < nodeListSize; i++) {
+        if (pendingSends[i]) {
+          hasPending = true;
+          break;
+        }
+      }
+      if (!hasPending)
+        break;
+    }
+
+    if (!didWork) {
+      usleep(100); // Small sleep if no progress
+    }
+  }
+
+  // Clean up any remaining pending sends (shouldn't happen normally)
+  for (unsigned int i = 0; i < nodeListSize; i++) {
+    if (pendingSends[i]) {
+      struct outList *out = pendingSends[i];
+      if (out->freeMethod)
+        out->freeMethod(out->payload);
+      artsLinkListDeleteItem(out);
+    }
+  }
+  artsFree(pendingSends);
 }
 
 static inline void outInsertNode(struct outList *node, unsigned int length) {

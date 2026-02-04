@@ -189,6 +189,9 @@ void artsRemoteCounterReduceSend(unsigned int counterIndex, uint64_t value,
                                  uint64_t captureCount);
 void artsRemoteHandleCounterReduce(void *pack);
 
+// Broadcast shutdown to all other nodes
+void artsRemoteBroadcastShutdown(void);
+
 #ifdef __cplusplus
 }
 #endif

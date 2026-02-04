@@ -180,6 +180,17 @@ void artsRemoteLauncherSSHStartupProcesses(
               snprintf(command + finalLength, sizeof(command) - finalLength,
                        "artsConfig=%s ", artsConfigEnv);
         }
+        // Pass through LD_LIBRARY_PATH if set
+        char *ldLibraryPath = getenv("LD_LIBRARY_PATH");
+        if (ldLibraryPath) {
+          finalLength +=
+              snprintf(command + finalLength, sizeof(command) - finalLength,
+                       "LD_LIBRARY_PATH=%s ", ldLibraryPath);
+        }
+        // Pass ARTS_RANK to tell spawned process its rank (prevents recursive spawning)
+        finalLength +=
+            snprintf(command + finalLength, sizeof(command) - finalLength,
+                     "ARTS_RANK=%d ", i);
         finalLength +=
             snprintf(command + finalLength, sizeof(command) - finalLength,
                      "./%s", binaryName);
@@ -200,6 +211,17 @@ void artsRemoteLauncherSSHStartupProcesses(
               snprintf(command + finalLength, sizeof(command) - finalLength,
                        "artsConfig=%s ", artsConfigEnv);
         }
+        // Pass through LD_LIBRARY_PATH if set
+        char *ldLibraryPath = getenv("LD_LIBRARY_PATH");
+        if (ldLibraryPath) {
+          finalLength +=
+              snprintf(command + finalLength, sizeof(command) - finalLength,
+                       "LD_LIBRARY_PATH=%s ", ldLibraryPath);
+        }
+        // Pass ARTS_RANK to tell spawned process its rank (prevents recursive spawning)
+        finalLength +=
+            snprintf(command + finalLength, sizeof(command) - finalLength,
+                     "ARTS_RANK=%d ", i);
         for (j = 0; j < (int)argc; j++) {
           finalLength +=
               snprintf(command + finalLength, sizeof(command) - finalLength,
