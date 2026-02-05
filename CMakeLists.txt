@@ -288,12 +288,12 @@ if(USE_SIMPLE_ARCH)
 endif()
 
 if(ARTS_INFO_ENABLED)
-    add_compile_definitions(-DARTS_INFO_ENABLED)
+    add_compile_definitions(ARTS_INFO_ENABLED)
     message(STATUS "Info logging: Enabled - ARTS_INFO_ENABLED defined")
 endif()
 
 if(ARTS_DEBUG_ENABLED)
-    add_compile_definitions(-DARTS_DEBUG_ENABLED)
+    add_compile_definitions(ARTS_DEBUG_ENABLED)
     message(STATUS "Debug logging: Enabled - ARTS_DEBUG_ENABLED defined")
 endif()
 

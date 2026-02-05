@@ -93,7 +93,10 @@ bool hostnameToIp(char *hostName, char *ip) {
   struct hostent *he;
   struct in_addr **addr_list;
   struct addrinfo *result;
-  int error = getaddrinfo(hostName, NULL, NULL, &result);
+  struct addrinfo hints;
+  memset(&hints, 0, sizeof(hints));
+  hints.ai_family = AF_INET;  // Force IPv4 - inet_addr() doesn't handle IPv6
+  int error = getaddrinfo(hostName, NULL, &hints, &result);
   if (error == 0) {
     if (result->ai_addr->sa_family == AF_INET) {
       struct sockaddr_in *res = (struct sockaddr_in *)result->ai_addr;
@@ -381,8 +384,11 @@ static inline bool artsRemoteConnect(int rank, unsigned int port) {
                                           port),
                       sizeof(struct sockaddr_in)) < 0) {
         if (++retryCount >= maxRetries) {
-          ARTS_INFO("artsRemoteConnect: Failed to connect to rank %d port %d after %d retries",
-                    rank, port, maxRetries);
+          struct sockaddr_in *addr = remoteServerSendList + rank * ports + port;
+          ARTS_INFO("artsRemoteConnect: Failed to connect to rank %d port %d after %d retries (target %s:%d, errno=%d: %s)",
+                    rank, port, maxRetries,
+                    inet_ntoa(addr->sin_addr), ntohs(addr->sin_port),
+                    errno, strerror(errno));
           return false;
         }
         rclose(remoteSocketSendList[rank * ports + port]);
@@ -578,6 +584,8 @@ void artsRemoteSetupOutgoing() {
     unsigned int targetPort = artsGlobalMessageTable->table[i].port;
     if (targetPort == 0)
       targetPort = outPort;
+
+    ARTS_INFO("artsRemoteSetupOutgoing: node %d ipList='%s' port=%u", i, ipList + 100 * i, targetPort);
 
     for (j = 0; j < ports; j++)
       remoteSocketSendList[i * ports + j] =
