@@ -71,6 +71,9 @@ struct artsConfig {
   unsigned int nodes;
   unsigned int masterRank;
   unsigned int port;
+  bool portRange;
+  unsigned int portStart;
+  unsigned int portEnd;
   unsigned int killMode;
   unsigned int routeTableSize;
   unsigned int routeTableEntries;

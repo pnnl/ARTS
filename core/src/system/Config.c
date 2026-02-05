@@ -1087,11 +1087,36 @@ struct artsConfig *artsConfigLoad() {
   }
 
   if ((foundVariable = artsConfigFindVariable(&configVariables, "port")) !=
-      NULL)
-    config->port = strtol(foundVariable->value, &end, 10);
-  else if (strncmp(config->launcher, "local", 5) != 0) {
+      NULL) {
+    if (foundVariable->value[0] == '[') {
+      unsigned int startPort, endPort;
+      if (sscanf(foundVariable->value, "[%u-%u]", &startPort, &endPort) == 2) {
+        config->portRange = true;
+        config->portStart = startPort;
+        config->portEnd = endPort;
+        config->port = startPort;
+      } else {
+        config->portRange = false;
+        config->port = 75563;
+      }
+    } else {
+      config->portRange = false;
+      config->port = strtol(foundVariable->value, &end, 10);
+    }
+  } else if (strncmp(config->launcher, "local", 5) != 0) {
+    config->portRange = false;
     config->port = 75563;
   }
+
+  // Assign per-node ports from port range to routing table
+  // Each node gets config->ports consecutive ports, non-overlapping
+  // e.g., ports=2, port=[10001-10004]: node0=10001,10002 node1=10003,10004
+  if (config->portRange && config->table != NULL) {
+    for (int i = 0; i < config->tableLength; i++) {
+      config->table[i].port = config->portStart + (i * config->ports);
+    }
+  }
+
   if ((foundVariable =
            artsConfigFindVariable(&configVariables, "routeTableSize")) != NULL)
     config->routeTableSize = strtol(foundVariable->value, &end, 10);

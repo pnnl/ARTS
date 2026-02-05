@@ -281,6 +281,16 @@ bool artsServerSetIP(struct artsConfig *config) {
     return true;
   }
 
+  // SLURM: use SLURM_PROCID for rank (srun sets this per task)
+  // IP matching fails when all nodes resolve to the same address (e.g., WSL2)
+  char *slurmProcId = getenv("SLURM_PROCID");
+  if (slurmProcId) {
+    artsGlobalRankId = (unsigned int)atoi(slurmProcId);
+    config->myRank = artsGlobalRankId;
+    artsGlobalRankCount = config->tableLength;
+    return true;
+  }
+
   int fd;
   struct ifreq ifr;
   char *connection = NULL;
@@ -376,8 +386,9 @@ static inline bool artsRemoteConnect(int rank, unsigned int port) {
       rclose(remoteSocketSendList[rank * ports + port]);
       remoteSocketSendList[rank * ports + port] = artsGetNewSocket();
 
-      // Retry with a limit to prevent infinite loop during shutdown
-      int maxRetries = 100;
+      // Retry with delay to handle SLURM startup skew (srun starts all
+      // processes simultaneously, so the remote may not be listening yet)
+      int maxRetries = 300;
       int retryCount = 0;
       while (rconnect(remoteSocketSendList[rank * ports + port],
                       (struct sockaddr *)(remoteServerSendList + rank * ports +
@@ -393,6 +404,7 @@ static inline bool artsRemoteConnect(int rank, unsigned int port) {
         }
         rclose(remoteSocketSendList[rank * ports + port]);
         remoteSocketSendList[rank * ports + port] = artsGetNewSocket();
+        usleep(100000);
       }
 
       remoteConnectionAlive[rank * ports + port] = true;
