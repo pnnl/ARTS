@@ -271,6 +271,67 @@ bool artsServerSetIP(struct artsConfig *config) {
     }
   }
 
+  // When netInterface is set (e.g., "ib0"), remap resolved IPs to the
+  // target interface's subnet.  Each node resolves hostnames to the default
+  // interface (e.g., eno1 172.16.x.x).  We detect the local subnet
+  // difference between the default and target interfaces, then apply the
+  // same transformation to all resolved IPs so that traffic flows over the
+  // target interface (e.g., ib0 172.17.x.x).
+  if (config->netInterface) {
+    char localHostname[256];
+    char localDefaultIP[100];
+    gethostname(localHostname, sizeof(localHostname));
+    if (!hostnameToIp(localHostname, localDefaultIP)) {
+      ARTS_INFO("netInterface=%s: cannot resolve local hostname '%s', "
+                "skipping IP remap",
+                config->netInterface, localHostname);
+    } else {
+      // Find the target interface's IP via getifaddrs
+      struct in_addr defaultAddr, ifaceAddr;
+      bool foundIface = false;
+      struct ifaddrs *ifap, *ifa;
+      getifaddrs(&ifap);
+      for (ifa = ifap; ifa; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr && ifa->ifa_addr->sa_family == AF_INET &&
+            strcmp(ifa->ifa_name, config->netInterface) == 0) {
+          struct sockaddr_in *sa = (struct sockaddr_in *)ifa->ifa_addr;
+          ifaceAddr = sa->sin_addr;
+          foundIface = true;
+          break;
+        }
+      }
+      freeifaddrs(ifap);
+
+      if (!foundIface) {
+        ARTS_INFO("netInterface=%s: interface not found, using default IPs",
+                  config->netInterface);
+      } else {
+        inet_pton(AF_INET, localDefaultIP, &defaultAddr);
+        uint32_t offset =
+            ntohl(ifaceAddr.s_addr) - ntohl(defaultAddr.s_addr);
+
+        if (offset != 0) {
+          char ifaceIP[100];
+          inet_ntop(AF_INET, &ifaceAddr, ifaceIP, sizeof(ifaceIP));
+          ARTS_INFO("netInterface=%s: remapping IPs (%s -> %s)",
+                    config->netInterface, localDefaultIP, ifaceIP);
+          for (int i = 0; i < config->tableLength; i++) {
+            struct in_addr addr;
+            char oldIP[100];
+            inet_pton(AF_INET, ipList + 100 * i, &addr);
+            inet_ntop(AF_INET, &addr, oldIP, sizeof(oldIP));
+            addr.s_addr = htonl(ntohl(addr.s_addr) + offset);
+            inet_ntop(AF_INET, &addr, ipList + 100 * i, 100);
+            ARTS_INFO("  node %d: %s -> %s", i, oldIP, ipList + 100 * i);
+          }
+        } else {
+          ARTS_INFO("netInterface=%s: already on target subnet (%s)",
+                    config->netInterface, localDefaultIP);
+        }
+      }
+    }
+  }
+
   // Check if rank was passed via environment (SSH-launched child process)
   // This prevents recursive spawning when multiple nodes resolve to the same IP
   char *artsRankEnv = getenv("ARTS_RANK");
@@ -340,13 +401,16 @@ bool artsServerSetIP(struct artsConfig *config) {
 
 void artsLLServerSetup(struct artsConfig *config) {
   artsRemoteSetMessageTable(config);
-#ifdef USE_RDMA
-  if (config->table)
-    artsServerFixIbNames(config);
-#else
-  if (config->table && config->ibNames)
-    artsServerFixIbNames(config);
-#endif
+  // Legacy IB hostname fixing (ib-node01, node01-ib, etc.) - replaced by
+  // subnet-based IP remapping in artsServerSetIP() which does not require
+  // DNS entries for IB hostnames.
+  // #ifdef USE_RDMA
+  //   if (config->table)
+  //     artsServerFixIbNames(config);
+  // #else
+  //   if (config->table && config->ibNames)
+  //     artsServerFixIbNames(config);
+  // #endif
 
   if (!artsServerSetIP(config) && config->nodes > 1) {
     // ARTS_INFO("[%d]Could not connect to %s", artsGlobalRankId,
