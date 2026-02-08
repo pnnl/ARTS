@@ -511,6 +511,18 @@ bool artsWaitOnHandle(artsGuid_t epochGuid) {
     *guid = NULL_GUID; // Unset
     unsigned int flag = 1;
     artsEpoch_t *epoch = (artsEpoch_t *)artsRouteTableLookupItem(local);
+    if (!epoch) {
+      // Epoch may still be in reserved state in route table; spin briefly
+      for (int retries = 0; !epoch && retries < 1000; retries++) {
+        epoch = (artsEpoch_t *)artsRouteTableLookupItem(local);
+      }
+      if (!epoch) {
+        ARTS_ERROR("artsWaitOnHandle: Epoch [Guid:%lu] not found in route table",
+                   local);
+        EDT_RUNNING_TIME_START();
+        return false;
+      }
+    }
     epoch->ticket = artsGetContextTicket();
     if (artsNodeInfo.tMT && epoch->ticket) {
       incrementFinishedEpoch(local);
