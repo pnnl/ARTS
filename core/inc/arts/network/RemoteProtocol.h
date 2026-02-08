@@ -96,7 +96,7 @@ enum artsServerMessageType {
 // Header
 struct __attribute__((__packed__)) artsRemotePacket {
   unsigned int messageType;
-  unsigned int size;
+  uint64_t size;
   unsigned int rank;
 #ifdef SEQUENCENUMBERS
   unsigned int seqRank;
@@ -320,11 +320,11 @@ bool artsRemoteAsyncSend();
 void artsRemoteSendRequestAsync(int rank, char *message, unsigned int length);
 void artsRemoteSendRequestPayloadAsync(int rank, char *message,
                                        unsigned int length, char *payload,
-                                       unsigned int size);
+                                       uint64_t size);
 void artsRemoteSendRequestPayloadAsyncFree(int rank, char *message,
                                            unsigned int length, char *payload,
                                            unsigned int offset,
-                                           unsigned int size,
+                                           uint64_t size,
                                            void (*freeMethod)(void *));
 void artsRemoteSetThreadOutboundQueues(unsigned int start, unsigned int stop);
 void artsRemoteThreadOutboundQueuesCleanup();

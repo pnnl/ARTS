@@ -56,7 +56,7 @@
 #include "arts/utils/Atomics.h"
 
 static inline void artsFillPacketHeader(struct artsRemotePacket *header,
-                                        unsigned int size,
+                                        uint64_t size,
                                         unsigned int messageType) {
   header->size = size;
   header->messageType = messageType;
@@ -291,7 +291,7 @@ void artsRemoteUpdateDb(artsGuid_t guid, bool sendDb) {
                   "from rank %u to rank %u",
                   db->arts_id, guid, db->header.size, artsGlobalRankId, rank);
       }
-      int size = sizeof(struct artsRemoteGuidOnlyPacket) + db->header.size;
+      uint64_t size = sizeof(struct artsRemoteGuidOnlyPacket) + db->header.size;
       artsFillPacketHeader(&packet.header, size, ARTS_REMOTE_DB_UPDATE_MSG);
       artsRemoteSendRequestPayloadAsync(rank, (char *)&packet, sizeof(packet),
                                         (char *)db, db->header.size);
@@ -379,7 +379,7 @@ void artsRemoteMemoryMoveNoFree(unsigned int route, artsGuid_t guid, void *ptr,
 void artsRemoteHandleEdtMove(void *ptr) {
   struct artsRemoteGuidOnlyPacket *packet =
       (struct artsRemoteGuidOnlyPacket *)ptr;
-  unsigned int size =
+  uint64_t size =
       packet->header.size - sizeof(struct artsRemoteGuidOnlyPacket);
   struct artsEdt *edt =
       (struct artsEdt *)artsMallocAlignWithType(size, 16, artsEdtMemorySize);
@@ -397,11 +397,11 @@ void artsRemoteHandleEdtMove(void *ptr) {
 void artsRemoteHandleDbMove(void *ptr) {
   struct artsRemoteGuidOnlyPacket *packet =
       (struct artsRemoteGuidOnlyPacket *)ptr;
-  unsigned int size =
+  uint64_t size =
       packet->header.size - sizeof(struct artsRemoteGuidOnlyPacket);
 
   struct artsDb *dbHeader = (struct artsDb *)(packet + 1);
-  unsigned int dbSize = dbHeader->header.size;
+  uint64_t dbSize = dbHeader->header.size;
 
   struct artsHeader *memPacket = (struct artsHeader *)artsMallocAlignWithType(
       dbSize, 16, artsDbMemorySize);
@@ -427,7 +427,7 @@ void artsRemoteHandleDbMove(void *ptr) {
 void artsRemoteHandleEventMove(void *ptr) {
   struct artsRemoteGuidOnlyPacket *packet =
       (struct artsRemoteGuidOnlyPacket *)ptr;
-  unsigned int size =
+  uint64_t size =
       packet->header.size - sizeof(struct artsRemoteGuidOnlyPacket);
 
   struct artsHeader *memPacket = (struct artsHeader *)artsMallocAlignWithType(
@@ -442,7 +442,7 @@ void artsRemoteHandleEventMove(void *ptr) {
 void artsRemoteHandlePersistentEventMove(void *ptr) {
   struct artsRemoteGuidOnlyPacket *packet =
       (struct artsRemoteGuidOnlyPacket *)ptr;
-  unsigned int size =
+  uint64_t size =
       packet->header.size - sizeof(struct artsRemoteGuidOnlyPacket);
 
   struct artsHeader *memPacket = (struct artsHeader *)artsMallocAlignWithType(
@@ -639,7 +639,7 @@ void artsRemoteDbForward(int destRank, int sourceRank, artsGuid_t dataGuid,
 
 void artsRemoteDbSendNow(int rank, struct artsDb *db) {
   struct artsRemoteDbSendPacket packet;
-  int size = sizeof(struct artsRemoteDbSendPacket) + db->header.size;
+  uint64_t size = sizeof(struct artsRemoteDbSendPacket) + db->header.size;
   artsFillPacketHeader(&packet.header, size, ARTS_REMOTE_DB_SEND_MSG);
   artsRemoteSendRequestPayloadAsync(rank, (char *)&packet, sizeof(packet),
                                     (char *)db, db->header.size);
@@ -763,7 +763,7 @@ void artsRemoteDbFullSendNow(int rank, struct artsDb *db, artsGuid_t edtGuid,
   packet.edtGuid = edtGuid;
   packet.slot = slot;
   packet.mode = mode;
-  int size = sizeof(struct artsRemoteDbFullSendPacket) + db->header.size;
+  uint64_t size = sizeof(struct artsRemoteDbFullSendPacket) + db->header.size;
   artsFillPacketHeader(&packet.header, size, ARTS_REMOTE_DB_FULL_SEND_MSG);
   artsRemoteSendRequestPayloadAsync(rank, (char *)&packet, sizeof(packet),
                                     (char *)db, db->header.size);
@@ -912,7 +912,7 @@ void artsRemotePutInDb(void *ptr, artsGuid_t edtGuid, artsGuid_t dbGuid,
   packet.slot = slot;
   packet.offset = offset;
   packet.size = size;
-  int totalSize = sizeof(struct artsRemoteGetPutPacket) + size;
+  uint64_t totalSize = sizeof(struct artsRemoteGetPutPacket) + size;
   artsFillPacketHeader(&packet.header, totalSize, ARTS_REMOTE_PUT_IN_DB_MSG);
   //    artsRemoteSendRequestPayloadAsync(rank, (char *)&packet, sizeof(packet),
   //    (char *)ptr, size);
@@ -938,7 +938,7 @@ void artsRemoteSignalEdtWithPtr(artsGuid_t edtGuid, artsGuid_t dbGuid,
   packet.dbGuid = dbGuid;
   packet.size = size;
   packet.slot = slot;
-  int totalSize = sizeof(struct artsRemoteSignalEdtWithPtrPacket) + size;
+  uint64_t totalSize = sizeof(struct artsRemoteSignalEdtWithPtrPacket) + size;
   artsFillPacketHeader(&packet.header, totalSize,
                        ARTS_REMOTE_SIGNAL_EDT_WITH_PTR_MSG);
   artsRemoteSendRequestPayloadAsync(rank, (char *)&packet, sizeof(packet),
@@ -1153,7 +1153,7 @@ void artsDbMoveRequestHandle(void *pack) {
 void artsRemoteHandleBufferSend(void *pack) {
   struct artsRemoteGuidOnlyPacket *packet =
       (struct artsRemoteGuidOnlyPacket *)pack;
-  unsigned int size =
+  uint64_t size =
       packet->header.size - sizeof(struct artsRemoteGuidOnlyPacket);
   void *buffer = (void *)(packet + 1);
   artsSetBuffer(packet->guid, buffer, size);

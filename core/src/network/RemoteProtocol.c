@@ -56,7 +56,7 @@ struct outList {
   unsigned int length;
   unsigned int rank;
   void *payload;
-  unsigned int payloadSize;
+  uint64_t payloadSize;
   unsigned int offsetPayload;
   void (*freeMethod)(void *);
 };
@@ -78,12 +78,12 @@ __thread uint64_t *lastOut;
 __thread uint64_t *lastSent;
 #endif
 
-void partialSendStore(struct outList *out, unsigned int lengthRemaining) {
+void partialSendStore(struct outList *out, uint64_t lengthRemaining) {
   if (out->payload == NULL) {
     out->offset = out->offset + (out->length - lengthRemaining);
     out->length = lengthRemaining;
   } else {
-    unsigned int sent = out->length + out->payloadSize;
+    uint64_t sent = out->length + out->payloadSize;
     sent -= lengthRemaining;
     if (sent >= out->length) {
       out->length = 0;
@@ -178,7 +178,7 @@ void artsRemoteFlushOutbound(void) {
 
       if (out) {
         allEmpty = false;
-        unsigned int lengthRemaining;
+        uint64_t lengthRemaining;
 
         if (!out->payload) {
           lengthRemaining = artsRemoteSendRequest(
@@ -191,7 +191,7 @@ void artsRemoteFlushOutbound(void) {
             out->freeMethod(out->payload);
         }
 
-        if (lengthRemaining == (unsigned int)-1) {
+        if (lengthRemaining == (uint64_t)-1) {
           // Send error, skip this queue for now
           pendingSends[i] = out;
           continue;
@@ -293,7 +293,7 @@ bool artsRemoteAsyncSend() {
   bool success = false;
 
   void *freeMe;
-  unsigned int lengthRemaining;
+  uint64_t lengthRemaining;
   struct outList *out;
 
   bool sent = true;
@@ -328,7 +328,7 @@ bool artsRemoteAsyncSend() {
             out->freeMethod(out->payload);
         }
 
-        if (lengthRemaining == -1)
+        if (lengthRemaining == (uint64_t)-1)
           return false;
         if (lengthRemaining) {
           partialSendStore(out, lengthRemaining);
@@ -361,9 +361,9 @@ static inline void selfSendCheck(unsigned int rank) {
   }
 }
 
-static inline void sizeSendCheck(unsigned int size) {
-  if (size == 0 || size > 1073741824) {
-    ARTS_INFO("Send error size stack trace: %d", size);
+static inline void sizeSendCheck(uint64_t size) {
+  if (size == 0) {
+    ARTS_INFO("Send error size stack trace: %lu", size);
     artsDebugPrintStack();
     artsDebugGenerateSegFault();
   }
@@ -384,7 +384,7 @@ void artsRemoteSendRequestAsync(int rank, char *message, unsigned int length) {
 
 void artsRemoteSendRequestPayloadAsync(int rank, char *message,
                                        unsigned int length, char *payload,
-                                       unsigned int size) {
+                                       uint64_t size) {
   selfSendCheck(rank);
   sizeSendCheck(length);
   sizeSendCheck(size);
@@ -404,7 +404,7 @@ void artsRemoteSendRequestPayloadAsync(int rank, char *message,
 void artsRemoteSendRequestPayloadAsyncFree(int rank, char *message,
                                            unsigned int length, char *payload,
                                            unsigned int offset,
-                                           unsigned int size,
+                                           uint64_t size,
                                            void (*freeMethod)(void *)) {
   selfSendCheck(rank);
   sizeSendCheck(length);

@@ -484,9 +484,9 @@ static inline bool artsRemoteConnect(int rank, unsigned int port) {
 
 // inline int artsActualSend(char * message, unsigned int length, int rank, int
 // port)
-int artsActualSend(char *message, unsigned int length, int rank, int port) {
+uint64_t artsActualSend(char *message, uint64_t length, int rank, int port) {
   int res = 0;
-  int total = 0;
+  uint64_t total = 0;
   int iterations = 0;
   while (length != 0 && res >= 0) {
     res = rsend(remoteSocketSendList[rank * ports + port], message + total,
@@ -497,7 +497,7 @@ int artsActualSend(char *message, unsigned int length, int rank, int port) {
     }
     iterations++;
     if (iterations > 1000000) {
-      ARTS_INFO("artsActualSend: stuck in loop, res=%d, length=%d, total=%d, errno=%d",
+      ARTS_INFO("artsActualSend: stuck in loop, res=%d, length=%lu, total=%lu, errno=%d",
                 res, length, total, errno);
       break;
     }
@@ -518,8 +518,8 @@ int artsActualSend(char *message, unsigned int length, int rank, int port) {
   return length;
 }
 
-unsigned int artsRemoteSendRequest(int rank, unsigned int queue, char *message,
-                                   unsigned int length) {
+uint64_t artsRemoteSendRequest(int rank, unsigned int queue, char *message,
+                               uint64_t length) {
   int port = queue % ports;
   if (artsRemoteConnect(rank, port)) {
     return artsActualSend(message, length, rank, port);
@@ -527,12 +527,12 @@ unsigned int artsRemoteSendRequest(int rank, unsigned int queue, char *message,
   return length;
 }
 
-unsigned int artsRemoteSendPayloadRequest(int rank, unsigned int queue,
-                                          char *message, unsigned int length,
-                                          char *payload, int length2) {
+uint64_t artsRemoteSendPayloadRequest(int rank, unsigned int queue,
+                                      char *message, unsigned int length,
+                                      char *payload, uint64_t length2) {
   int port = queue % ports;
   if (artsRemoteConnect(rank, port)) {
-    int tempLength = artsActualSend(message, length, rank, port);
+    uint64_t tempLength = artsActualSend(message, length, rank, port);
     if (tempLength)
       return tempLength + length2;
 
@@ -673,7 +673,7 @@ void artsRemoteSetupOutgoing() {
 static __thread unsigned int threadStart;
 static __thread unsigned int threadStop;
 static __thread char **bypassBuf;
-static __thread unsigned int *bypassPacketSize;
+static __thread uint64_t *bypassPacketSize;
 static __thread unsigned int *reRecieveRes;
 static __thread void **reRecievePacket;
 static __thread bool *maxIncoming;
@@ -685,7 +685,7 @@ void artsRemoteSetThreadInboundQueues(unsigned int start, unsigned int stop) {
   // ARTS_INFO_MASTER("%d %d", start, stop);
   unsigned int size = stop - start;
   bypassBuf = (char **)artsMalloc(sizeof(char *) * size);
-  bypassPacketSize = (unsigned int *)artsMalloc(sizeof(unsigned int) * size);
+  bypassPacketSize = (uint64_t *)artsMalloc(sizeof(uint64_t) * size);
   reRecieveRes = (unsigned int *)artsCalloc(size, sizeof(int));
   reRecievePacket = (void **)artsCalloc(size, sizeof(void *));
   maxIncoming = (bool *)artsCalloc(size, sizeof(bool));
@@ -857,8 +857,11 @@ bool artsServerTryToReceive(char **inBuffer, int *inPacketSize,
                 break;
 
               if (bypassPacketSize[pos] < packet->size) {
-                // ARTS_INFO("Here5");
-                char *nextBuf = (char *)artsMalloc(packet->size * 4);
+                // For large packets (>256MB), avoid 4x over-allocation
+                uint64_t newBufSize = (packet->size > (1ULL << 28))
+                                          ? packet->size
+                                          : packet->size * 4;
+                char *nextBuf = (char *)artsMalloc(newBufSize);
 
                 memcpy(nextBuf, bypassBuf[pos], bypassPacketSize[pos]);
 
@@ -869,7 +872,7 @@ bool artsServerTryToReceive(char **inBuffer, int *inPacketSize,
                                                 (((char *)packet) -
                                                  ((char *)bypassBuf[pos])));
                 bypassBuf[pos] = nextBuf;
-                bypassPacketSize[pos] = packet->size * 4;
+                bypassPacketSize[pos] = newBufSize;
               }
 
               while (res < packet->size) {

@@ -53,11 +53,11 @@ void artsRemoteShutdown();
 bool artsServerTryToReceive(char **inBuffer, int *inPacketSize,
                             volatile unsigned int *remoteStealLock);
 void artsServerSendStealRequest();
-unsigned int artsRemoteSendRequest(int rank, unsigned int queue, char *message,
-                                   unsigned int length);
-unsigned int artsRemoteSendPayloadRequest(int rank, unsigned int queue,
-                                          char *message, unsigned int length,
-                                          char *payload, int length2);
+uint64_t artsRemoteSendRequest(int rank, unsigned int queue, char *message,
+                               uint64_t length);
+uint64_t artsRemoteSendPayloadRequest(int rank, unsigned int queue,
+                                      char *message, unsigned int length,
+                                      char *payload, uint64_t length2);
 
 uint8_t artsEventSatisfyNoBlock(artsGuid_t eventGuid, artsGuid_t dataGuid);
 unsigned int artsRemoteDivision();
