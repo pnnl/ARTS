@@ -1143,18 +1143,34 @@ void artsCounterWriteCluster(const char *outputFolder, unsigned int nodeCount) {
   artsClusterCounterData *nodeData = (artsClusterCounterData *)artsCalloc(
       nodeCount * NUM_COUNTER_TYPES, sizeof(artsClusterCounterData));
 
-  // Read each node's JSON file
+  // Read each node's JSON file, polling until all are available
   unsigned int nodesRead = 0;
-  for (unsigned int n = 0; n < nodeCount; n++) {
-    char filepath[1024];
-    snprintf(filepath, sizeof(filepath), "%s/n%u.json", outputFolder, n);
-    if (artsReadNodeCounterFile(filepath,
-                                &nodeData[n * NUM_COUNTER_TYPES])) {
-      nodesRead++;
-    } else {
-      ARTS_INFO("Warning: Could not read counter file for node %u", n);
+  bool *nodeRead = (bool *)artsCalloc(nodeCount, sizeof(bool));
+  int maxRetries = 100; // 100 * 100ms = 10 seconds
+
+  for (int attempt = 0; attempt < maxRetries && nodesRead < nodeCount;
+       attempt++) {
+    for (unsigned int n = 0; n < nodeCount; n++) {
+      if (nodeRead[n])
+        continue;
+      char filepath[1024];
+      snprintf(filepath, sizeof(filepath), "%s/n%u.json", outputFolder, n);
+      if (artsReadNodeCounterFile(filepath,
+                                  &nodeData[n * NUM_COUNTER_TYPES])) {
+        nodeRead[n] = true;
+        nodesRead++;
+      }
     }
+    if (nodesRead < nodeCount)
+      usleep(100000); // 100ms
   }
+  for (unsigned int n = 0; n < nodeCount; n++) {
+    if (!nodeRead[n])
+      ARTS_INFO("Warning: Could not read counter file for node %u after "
+                "timeout",
+                n);
+  }
+  artsFree(nodeRead);
 
   if (nodesRead == 0) {
     ARTS_INFO("No node counter files found, skipping cluster aggregation");

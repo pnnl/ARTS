@@ -111,12 +111,12 @@ int artsRT(int argc, char **argv) {
 
   artsThreadMainJoin();
 
-  if (artsGlobalRankId == config->masterRank && config->masterBoot) {
-    config->launcherData->cleanupProcesses(config->launcherData);
-  }
-  // Aggregate cluster-level counters on master node after all workers finished
+  // Aggregate cluster counters before cleanup (workers may still be writing)
   if (artsGlobalRankId == config->masterRank) {
     artsCounterWriteCluster(config->counterFolder, config->nodes);
+  }
+  if (artsGlobalRankId == config->masterRank && config->masterBoot) {
+    config->launcherData->cleanupProcesses(config->launcherData);
   }
   artsConfigDestroy(config);
   artsRemoteTryToClosePrinter();
