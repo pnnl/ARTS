@@ -674,7 +674,7 @@ static __thread unsigned int threadStart;
 static __thread unsigned int threadStop;
 static __thread char **bypassBuf;
 static __thread uint64_t *bypassPacketSize;
-static __thread unsigned int *reRecieveRes;
+static __thread int64_t *reRecieveRes;
 static __thread void **reRecievePacket;
 static __thread bool *maxIncoming;
 static __thread bool maxOutWorking;
@@ -686,7 +686,7 @@ void artsRemoteSetThreadInboundQueues(unsigned int start, unsigned int stop) {
   unsigned int size = stop - start;
   bypassBuf = (char **)artsMalloc(sizeof(char *) * size);
   bypassPacketSize = (uint64_t *)artsMalloc(sizeof(uint64_t) * size);
-  reRecieveRes = (unsigned int *)artsCalloc(size, sizeof(int));
+  reRecieveRes = (int64_t *)artsCalloc(size, sizeof(int64_t));
   reRecievePacket = (void **)artsCalloc(size, sizeof(void *));
   maxIncoming = (bool *)artsCalloc(size, sizeof(bool));
   for (int i = 0; i < size; i++) {
@@ -708,7 +708,8 @@ void artsRemoteThreadInboundQueuesCleanup() {
 }
 
 bool maxOutBuffs(unsigned int ignore) {
-  int timeOut = 1, res, res2;
+  int timeOut = 1;
+  int64_t res, res2;
   struct artsRemotePacket *packet;
   // ARTS_INFO("MAX");
   res = rpoll(pollIncoming + threadStart, threadStop - threadStart, timeOut);
@@ -778,7 +779,8 @@ bool maxOutBuffs(unsigned int ignore) {
 
 bool artsServerTryToReceive(char **inBuffer, int *inPacketSize,
                             volatile unsigned int *remoteStealLock) {
-  int i, res, res2, stealHandlerThread = 0;
+  int i, stealHandlerThread = 0;
+  int64_t res, res2;
   struct artsRemotePacket *packet;
   int count = artsGlobalMessageTable->tableLength - 1;
   fd_set tempSet;
