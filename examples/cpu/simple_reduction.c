@@ -44,32 +44,41 @@ arts_guid_t reduction_guid = NULL_GUID;
 
 void reduction(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                arts_edt_dep_t depv[]) {
+  (void)paramc;
   uint64_t total = 0;
   for (unsigned int i = 0; i < depc; i++) {
     int *db_ptr = depv[i].ptr;
     total += db_ptr[0];
   }
-  arts_signal_edt_value(paramv[0], 0, total);
+  arts_signal_edt_value((arts_guid_t)paramv[0], 0, total);
 }
 
 void shut_down(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
               arts_edt_dep_t depv[]) {
-  ARTS_PRINTF("Result %lu\n", depv[0].guid);
+  (void)depc;
+  (void)paramc;
+  (void)paramv;
+  arts_printf("Result %lu\n", depv[0].guid);
   arts_shutdown();
 }
 
 void init_per_node(unsigned int node_id, int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  (void)node_id;
   num_dbs = arts_get_total_nodes();
   reduction_guid = arts_reserve_guid_route(ARTS_EDT, 0);
 }
 
 void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
                    char **argv) {
+  (void)argc;
+  (void)argv;
   if (!worker_id) {
     int *ptr;
     arts_guid_t db_guid =
         arts_db_create((void **)&ptr, sizeof(unsigned int), ARTS_DB_READ);
-    *ptr = node_id;
+    *ptr = (int)node_id;
 
     arts_signal_edt(reduction_guid, node_id, db_guid);
 

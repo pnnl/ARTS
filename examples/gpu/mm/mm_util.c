@@ -47,9 +47,9 @@ void print_matrix(unsigned int row_size, double *mat) {
   unsigned int column_size = row_size;
   for (unsigned int i = 0; i < column_size; i++) {
     for (unsigned int j = 0; j < row_size; j++) {
-      ARTS_PRINTF("%5.2f ", mat[(i * row_size) + j]);
+      arts_printf("%5.2f ", mat[(i * row_size) + j]);
     }
-    ARTS_PRINTF("\n");
+    arts_printf("\n");
   }
 }
 
@@ -66,7 +66,7 @@ void init_matrix(unsigned int row_size, double *mat, bool identity, bool zero) {
           mat[(i * row_size) + j] = 0;
 }
       } else {
-        mat[(i * row_size) + j] = rand() % 10;
+        mat[(i * row_size) + j] = rand() % 10; // NOLINT(cert-msc30-c,cert-msc50-cpp)
 }
     }
   }
@@ -81,13 +81,13 @@ void copy_block(unsigned int x, unsigned int y, unsigned int tile_row_size,
 
   if (to_tile) {
     for (unsigned int i = 0; i < tile_column_size; i++) {
-      memcpy(&tile[i * tile_row_size], &mat[((i + y_offset) * row_size) + x_offset],
-             tile_row_size * sizeof(double));
+      memcpy(&tile[(size_t)i * tile_row_size], &mat[((size_t)(i + y_offset) * row_size) + x_offset],
+             (size_t)tile_row_size * sizeof(double));
 }
   } else {
     for (unsigned int i = 0; i < tile_column_size; i++) {
-      memcpy(&mat[((i + y_offset) * row_size) + x_offset], &tile[i * tile_row_size],
-             tile_row_size * sizeof(double));
+      memcpy(&mat[((size_t)(i + y_offset) * row_size) + x_offset], &tile[(size_t)i * tile_row_size],
+             (size_t)tile_row_size * sizeof(double));
 }
   }
 }

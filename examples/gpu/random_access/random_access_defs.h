@@ -43,13 +43,13 @@
 extern "C" {
 #endif
 
-#define ARTS_PRINTF(...)
-//  #define ARTS_PRINTF(...) ARTS_PRINTF(__VA_ARGS__)
+#define arts_printf(...)
+//  #define arts_printf(...) arts_printf(__VA_ARGS__)
 #define TURNON(...)
 // #define TURNON(...) __VA_ARGS__
 
-#define TABLESIZE 32UL * 2UL * 80UL * 1024UL * 32UL
-#define TILESIZE 32UL * 2UL * 80UL * 1024UL * 4UL
+#define TABLESIZE (32UL * 2UL * 80UL * 1024UL * 32UL)
+#define TILESIZE (32UL * 2UL * 80UL * 1024UL * 4UL)
 #define NUPDATE (16 * TABLESIZE)
 
 #define VALIDATE 1
@@ -66,12 +66,12 @@ extern "C" {
 #define POLY 0x0000000000000007ULL
 #define PERIOD 1317624576693539401LL
 
-#define MAX_TOTAL_PENDING_UPDATES 1024 * 16
-#define MAX_TOTAL_PENDING_UPDATES_CU 1024ULL * 16ULL
+#define MAX_TOTAL_PENDING_UPDATES (1024 * 16)
+#define MAX_TOTAL_PENDING_UPDATES_CU (1024ULL * 16ULL)
 
 #define LOCAL_BUFFER_SIZE MAX_TOTAL_PENDING_UPDATES
 #define MAX_UPDATES_PER_GPU_STEP                                               \
-  MAXTHREADS *MAXTHREADBLOCKSPERSM *NUMBEROFSM *LOCAL_BUFFER_SIZE
+  (MAXTHREADS * MAXTHREADBLOCKSPERSM * NUMBEROFSM * LOCAL_BUFFER_SIZE)
 
 typedef unsigned long long int uint64_cu_t;
 typedef long long int int64_cu_t;

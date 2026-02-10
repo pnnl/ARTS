@@ -47,6 +47,9 @@ uint64_t start = 0;
 // This is the GPU kernel
 __global__ void fib_join(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                         arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
   unsigned int *x = (unsigned int *)depv[0].ptr;
   unsigned int *y = (unsigned int *)depv[1].ptr;
   unsigned int *res = (unsigned int *)depv[2].ptr;
@@ -55,77 +58,85 @@ __global__ void fib_join(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
 void fib_fork(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
              arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
   unsigned int next = 0; //(arts_get_current_node() + 1) % arts_get_total_nodes();
-  //    ARTS_PRINTF("NODE: %u WORKER: %u NEXT: %u\n", arts_get_current_node(),
+  //    arts_printf("NODE: %u WORKER: %u NEXT: %u\n", arts_get_current_node(),
   //    arts_get_current_worker(), next);
 
-  arts_guid_t done_guid = paramv[0];
+  arts_guid_t done_guid = (arts_guid_t)paramv[0];
   unsigned int slot = (unsigned int)paramv[1];
 
-  arts_guid_t resGuid = depv[0].guid;
-  unsigned int *resPtr = (unsigned int *)depv[0].ptr;
+  arts_guid_t res_guid = depv[0].guid;
+  unsigned int *res_ptr = (unsigned int *)depv[0].ptr;
 
-  if ((*resPtr) < 2)
-    arts_signal_edt(done_guid, slot, resGuid);
-  else {
+  if ((*res_ptr) < 2) {
+    arts_signal_edt(done_guid, slot, res_guid);
+  } else {
     // Create two DB of type ARTS_DB_GPU
     unsigned int *x = NULL;
     arts_guid_t x_guid =
         arts_db_create((void **)&x, sizeof(unsigned int), ARTS_DB_GPU_WRITE);
-    (*x) = (*resPtr) - 1;
+    (*x) = (*res_ptr) - 1;
 
     unsigned int *y = NULL;
     arts_guid_t y_guid =
         arts_db_create((void **)&y, sizeof(unsigned int), ARTS_DB_GPU_WRITE);
-    (*y) = (*resPtr) - 2;
+    (*y) = (*res_ptr) - 2;
 
     // Create a continuation edt to run on the GPU
     dim3 grid(1);
     dim3 block(1);
     arts_guid_t join_guid = arts_edt_create_gpu(fib_join, next, 0, NULL, 3, grid,
-                                           block, done_guid, slot, resGuid);
-    arts_signal_edt(join_guid, 2, resGuid);
+                                           block, done_guid, slot, res_guid);
+    arts_signal_edt(join_guid, 2, res_guid);
 
     // Create the forks which will run on the CPU
     uint64_t args[2] = {(uint64_t)join_guid, 0};
-    arts_guid_t forkGuidX = arts_edt_create(fib_fork, next, 2, args, 1);
-    arts_signal_edt(forkGuidX, 0, x_guid);
+    arts_guid_t fork_guid_x = arts_edt_create(fib_fork, next, 2, args, 1);
+    arts_signal_edt(fork_guid_x, 0, x_guid);
 
     args[1] = 1;
-    arts_guid_t forkGuidY = arts_edt_create(fib_fork, next, 2, args, 1);
-    arts_signal_edt(forkGuidY, 0, y_guid);
+    arts_guid_t fork_guid_y = arts_edt_create(fib_fork, next, 2, args, 1);
+    arts_signal_edt(fork_guid_y, 0, y_guid);
   }
 }
 
 void fib_done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
              arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
   uint64_t time = arts_get_time_stamp() - start;
-  unsigned int *resPtr = (unsigned int *)depv[0].ptr;
-  ARTS_PRINTF("Fib %u: %u time: %lu nodes: %u workers: %u\n", paramv[0], *resPtr,
+  unsigned int *res_ptr = (unsigned int *)depv[0].ptr;
+  arts_printf("Fib %u: %u time: %lu nodes: %u workers: %u\n", paramv[0], *res_ptr,
          time, arts_get_total_nodes(), arts_get_total_workers());
   arts_shutdown();
 }
 
-extern "C" void init_per_node(unsigned int node_id, int argc, char **argv) {}
+extern "C" void init_per_node(unsigned int node_id, int argc, char **argv) {
+  (void)node_id;
+  (void)argc;
+  (void)argv;
+}
 
 extern "C" void init_per_worker(unsigned int node_id, unsigned int worker_id,
                               int argc, char **argv) {
   if (!node_id && !worker_id) {
-    unsigned int *resPtr = NULL;
-    arts_guid_t resGuid =
-        arts_db_create((void **)&resPtr, sizeof(unsigned int), ARTS_DB_GPU_WRITE);
+    unsigned int *res_ptr = NULL;
+    arts_guid_t res_guid =
+        arts_db_create((void **)&res_ptr, sizeof(unsigned int), ARTS_DB_GPU_WRITE);
     if (argc < 2) {
-      ARTS_PRINTF("Format: ./fibGpu NUMBER\n");
+      arts_printf("Format: ./fibGpu NUMBER\n");
       arts_shutdown();
       return;
     }
-    *resPtr = atoi(argv[1]);
+    *res_ptr = (unsigned int)strtol(argv[1], NULL, 10);
 
-    arts_guid_t done_guid = arts_edt_create(fib_done, 0, 1, (uint64_t *)resPtr, 1);
+    arts_guid_t done_guid = arts_edt_create(fib_done, 0, 1, (uint64_t *)res_ptr, 1);
 
     uint64_t args[] = {(uint64_t)done_guid, 0};
-    arts_guid_t fibGuid = arts_edt_create(fib_fork, 0, 2, args, 1);
-    arts_signal_edt(fibGuid, 0, resGuid);
+    arts_guid_t fib_guid = arts_edt_create(fib_fork, 0, 2, args, 1);
+    arts_signal_edt(fib_guid, 0, res_guid);
     start = arts_get_time_stamp();
   }
 }

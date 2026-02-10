@@ -1,0 +1,89 @@
+# Doxyfile.in — CMake @VAR@ substitution template for ARTS
+# Only generates XML output for Breathe/Sphinx consumption.
+
+PROJECT_NAME           = "ARTS"
+PROJECT_NUMBER         = "@PROJECT_VERSION@"
+PROJECT_BRIEF          = "Abstract Runtime System — Asynchronous Many-Task Runtime"
+
+OUTPUT_DIRECTORY       = "@DOXYGEN_OUTPUT_DIR@"
+
+#---------------------------------------------------------------------------
+# Input configuration
+#---------------------------------------------------------------------------
+INPUT                  = @DOXYGEN_INPUT_DIRS@
+FILE_PATTERNS          = *.h
+RECURSIVE              = NO
+STRIP_FROM_PATH        = @CMAKE_SOURCE_DIR@
+
+#---------------------------------------------------------------------------
+# Extraction settings
+#---------------------------------------------------------------------------
+EXTRACT_ALL            = YES
+EXTRACT_STATIC         = YES
+EXTRACT_LOCAL_CLASSES  = YES
+
+#---------------------------------------------------------------------------
+# C-optimised parsing
+#---------------------------------------------------------------------------
+OPTIMIZE_OUTPUT_FOR_C  = YES
+TYPEDEF_HIDES_STRUCT   = YES
+
+#---------------------------------------------------------------------------
+# Comment parsing
+#---------------------------------------------------------------------------
+JAVADOC_AUTOBRIEF      = YES
+QT_AUTOBRIEF           = NO
+MULTILINE_CPP_IS_BRIEF = NO
+TAB_SIZE               = 2
+MARKDOWN_SUPPORT       = YES
+
+#---------------------------------------------------------------------------
+# Preprocessor
+#---------------------------------------------------------------------------
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = YES
+PREDEFINED             = ARTS_PACKED= \
+                         ARTS_WEAK= \
+                         ARTS_WEAK_IMPORT= \
+                         ARTS_PURE= \
+                         ARTS_ALIGNED(n)= \
+                         ARTS_ALIGNED_MAX= \
+                         ARTS_ATTRIBUTE(x)= \
+                         ARTS_LIKELY(x)=(!!(x)) \
+                         ARTS_UNLIKELY(x)=(!!(x)) \
+                         __attribute__(x)= \
+                         __extension__= \
+                         _Alignas(n)=
+
+#---------------------------------------------------------------------------
+# Output formats — XML only (Breathe consumes this)
+#---------------------------------------------------------------------------
+GENERATE_HTML          = NO
+GENERATE_LATEX         = NO
+GENERATE_MAN           = NO
+GENERATE_RTF           = NO
+GENERATE_XML           = YES
+XML_PROGRAMLISTING     = YES
+
+#---------------------------------------------------------------------------
+# Warnings
+#---------------------------------------------------------------------------
+QUIET                  = YES
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = NO
+WARN_IF_DOC_ERROR      = YES
+WARN_NO_PARAMDOC       = NO
+
+#---------------------------------------------------------------------------
+# Source browsing (disabled — Sphinx handles this)
+#---------------------------------------------------------------------------
+SOURCE_BROWSER         = NO
+INLINE_SOURCES         = NO
+REFERENCED_BY_RELATION = NO
+REFERENCES_RELATION    = NO
+
+#---------------------------------------------------------------------------
+# Dot / graphs (disabled — keep build fast)
+#---------------------------------------------------------------------------
+HAVE_DOT               = NO

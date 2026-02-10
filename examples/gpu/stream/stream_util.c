@@ -129,16 +129,17 @@ int checktick() {
   int i;
   int min_delta;
   int delta;
-  double t1;
-  double t2;
+  double time_start;
+  double time_end;
+  double timesfound[M];
 
   /*  Collect a sequence of M unique time values from the system. */
 
   for (i = 0; i < M; i++) {
-    t1 = mysecond();
-    while (((t2 = mysecond()) - t1) < 1.0E-6) {
+    time_start = mysecond();
+    while (((time_end = mysecond()) - time_start) < 1.0E-6) {
     }
-    timesfound[i] = t1 = t2;
+    timesfound[i] = time_start = time_end;
   }
 
   /*
@@ -215,27 +216,27 @@ void check_strea_mresults(unsigned int tile_size, unsigned int total_size,
   }
 
 #ifdef VERBOSE
-  ARTS_PRINTF("Results Comparison: \n");
-  ARTS_PRINTF("        Expected  : %f %f %f \n", aj, bj, cj);
-  ARTS_PRINTF("        Observed  : %f %f %f \n", asum, bsum, csum);
+  arts_printf("Results Comparison: \n");
+  arts_printf("        Expected  : %f %f %f \n", aj, bj, cj);
+  arts_printf("        Observed  : %f %f %f \n", asum, bsum, csum);
 #endif
 
-#define abs(a) ((a) >= 0 ? (a) : -(a))
+#define abs(a) ((a) >= 0 ? (a) : -(a)) // NOLINT(readability-identifier-naming)
   epsilon = 1.e-8;
 
   if (abs(aj - asum) / asum > epsilon) {
-    ARTS_PRINTF("Failed Validation on array a[]\n");
-    ARTS_PRINTF("        Expected  : %f \n", aj);
-    ARTS_PRINTF("        Observed  : %f \n", asum);
+    arts_printf("Failed Validation on array a[]\n");
+    arts_printf("        Expected  : %f \n", aj);
+    arts_printf("        Observed  : %f \n", asum);
   } else if (abs(bj - bsum) / bsum > epsilon) {
-    ARTS_PRINTF("Failed Validation on array b[]\n");
-    ARTS_PRINTF("        Expected  : %f \n", bj);
-    ARTS_PRINTF("        Observed  : %f \n", bsum);
+    arts_printf("Failed Validation on array b[]\n");
+    arts_printf("        Expected  : %f \n", bj);
+    arts_printf("        Observed  : %f \n", bsum);
   } else if (abs(cj - csum) / csum > epsilon) {
-    ARTS_PRINTF("Failed Validation on array c[]\n");
-    ARTS_PRINTF("        Expected  : %f \n", cj);
-    ARTS_PRINTF("        Observed  : %f \n", csum);
+    arts_printf("Failed Validation on array c[]\n");
+    arts_printf("        Expected  : %f \n", cj);
+    arts_printf("        Observed  : %f \n", csum);
   } else {
-    ARTS_PRINTF("Solution Validates\n");
+    arts_printf("Solution Validates\n");
   }
 }

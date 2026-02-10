@@ -89,15 +89,15 @@
 #include "arts/gpu/gpu_runtime.cuh"
 #include "arts/runtime/globals.h"
 
-arts_guid_range_t *updateFrontierGuids = NULL;
+arts_guid_range_t *update_frontier_guids = NULL;
 
 unsigned int tile_size = TILESIZE;
 unsigned int num_tiles = 0;
-arts_guid_range_t *tileGuids = NULL;
+arts_guid_range_t *tile_guids = NULL;
 uint64_t **tile = NULL;
-#define getLocalIndex(v) ((v & (tableSize - 1)) % tile_size)
-#define getOwnerIndex(v) ((v & (tableSize - 1)) / tile_size)
-#define getTileGuid(v) arts_get_guid(tileGuids, getOwnerIndex(v))
+#define GET_LOCAL_INDEX(v) (((v) & (tableSize - 1)) % tile_size)
+#define GET_OWNER_INDEX(v) (((v) & (tableSize - 1)) / tile_size)
+#define GET_TILE_GUID(v) arts_get_guid(tile_guids, GET_OWNER_INDEX(v))
 
 uint64_t start = 0;
 arts_guid_t done_guid = NULL_GUID;
@@ -112,303 +112,343 @@ arts_guid_t done_guid = NULL_GUID;
  *     }
  */
 
-uint64_t hpccStartsCPU(int64_t N) {
-  int64_t i, j;
-  uint64_t m2[64];
+uint64_t hpcc_starts_cpu(int64_t num) {
+  int64_t i;
+  int64_t j;
+  uint64_t m2_arr[64];
   uint64_t temp;
   volatile uint64_t ran;
-  volatile int64_t n = N;
+  volatile int64_t n = num;
 
-  while (n < 0)
+  while (n < 0) {
     n += PERIOD2;
-  while (n > PERIOD2)
+  }
+  while (n > PERIOD2) {
     n -= PERIOD2;
+  }
   if (n != 0) {
     temp = 0x1;
     for (i = 0; i < 64; i++) {
-      m2[i] = temp;
+      m2_arr[i] = temp;
       temp = (temp << 1) ^ ((int64_t)temp < 0 ? POLY2 : 0);
       temp = (temp << 1) ^ ((int64_t)temp < 0 ? POLY2 : 0);
     }
 
-    for (i = 62; i >= 0; i--)
-      if ((n >> i) & 1)
+    for (i = 62; i >= 0; i--) {
+      if ((n >> i) & 1) {
         break;
+      }
+    }
 
     ran = 0x2;
     while (i > 0) {
       temp = 0;
-      for (j = 0; j < 64; j++)
-        if ((ran >> j) & 1)
-          temp ^= m2[j];
+      for (j = 0; j < 64; j++) {
+        if ((ran >> j) & 1) {
+          temp ^= m2_arr[j];
+        }
+      }
       ran = temp;
       i -= 1;
-      if ((n >> i) & 1)
+      if ((n >> i) & 1) {
         ran = (ran << 1) ^ ((int64_t)ran < 0 ? POLY2 : 0);
+      }
     }
-  } else
+  } else {
     ran = 0x1;
+  }
 
   ran = (ran << 1) ^ ((int64_t)ran < 0 ? POLY2 : 0);
   return ran;
 }
 
 /* Utility routine to start random number generator at Nth step */
-__global__ void hpccStarts(int64_cu_t N, uint64_cu_t numUpdates,
-                           uint64_cu_t num_tiles, uint64_cu_t tile_size,
-                           uint64_cu_t tableSize, uint64_cu_t *rArray) {
-  int index = threadIdx.x + blockIdx.x * blockDim.x;
+__global__ void hpcc_starts(int64_cu_t num, uint64_cu_t num_updates,
+                            uint64_cu_t num_tiles, uint64_cu_t tile_size,
+                            uint64_cu_t tableSize, uint64_cu_t *r_array) {
+  int index = (int)(threadIdx.x + (blockIdx.x * blockDim.x));
   for (int64_cu_t local = 0; local < MAX_TOTAL_PENDING_UPDATES_CU; local++) {
-    int64_cu_t localIndex = index * MAX_TOTAL_PENDING_UPDATES_CU + local;
-    if (localIndex < numUpdates) {
+    int64_cu_t local_index =
+        (int64_cu_t)(index * MAX_TOTAL_PENDING_UPDATES_CU) + local;
+    if (local_index < num_updates) {
       // Add the step offset
-      volatile int64_cu_t n = N + localIndex;
+      volatile int64_cu_t n = num + local_index;
 
-      int i, j;
-      uint64_cu_t m2[64];
+      int i;
+      int j;
+      uint64_cu_t m2_arr[64];
       uint64_cu_t temp;
 
       uint64_cu_t ran = 0x1;
 
-      while (n < 0)
+      while (n < 0) {
         n += PERIOD;
-      while (n > PERIOD)
+      }
+      while (n > PERIOD) {
         n -= PERIOD;
+      }
 
       if (n) {
         temp = 0x1;
         for (i = 0; i < 64; i++) {
-          m2[i] = temp;
+          m2_arr[i] = temp;
           temp = (temp << 1) ^ ((int64_cu_t)temp < 0 ? POLY : 0);
           temp = (temp << 1) ^ ((int64_cu_t)temp < 0 ? POLY : 0);
         }
 
-        for (i = 62; i >= 0; i--)
-          if ((n >> i) & 1)
+        for (i = 62; i >= 0; i--) {
+          if ((n >> i) & 1) {
             break;
+          }
+        }
 
         ran = 0x2;
         while (i > 0) {
           temp = 0;
-          for (j = 0; j < 64; j++)
-            if ((ran >> j) & 1)
-              temp ^= m2[j];
+          for (j = 0; j < 64; j++) {
+            if ((ran >> j) & 1) {
+              temp ^= m2_arr[j];
+            }
+          }
           ran = temp;
           i -= 1;
-          if ((n >> i) & 1)
+          if ((n >> i) & 1) {
             ran = (ran << 1) ^ ((int64_cu_t)ran < 0 ? POLY : 0);
+          }
         }
-      } else
+      } else {
         ran = 0x1;
+      }
 
       ran = (ran << 1) ^ ((int64_cu_t)ran < 0 ? POLY : 0);
 
-      rArray[localIndex + num_tiles] = ran;
-      uint64_cu_t owner = getOwnerIndex(ran);
-      atomicAdd(&rArray[owner], 1ULL);
+      r_array[local_index + num_tiles] = ran;
+      uint64_cu_t owner = GET_OWNER_INDEX(ran);
+      atomicAdd(&r_array[owner], 1ULL);
     }
   }
 }
 
-__global__ void updateEdt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                          arts_edt_dep_t depv[]) {
+__global__ void update_edt(uint32_t paramc, const uint64_t *paramv,
+                           uint32_t depc, arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
   // uint64_t gpu_id = GET_GPU_INDEX();
-  // ARTS_PRINTF("Hello from %lu\n", gpu_id);
+  // arts_printf("Hello from %lu\n", gpu_id);
   uint64_cu_t tile_size = paramv[0];
   uint64_cu_t num_tiles = paramv[1];
-  uint64_cu_t tableSize = paramv[2];
-  uint64_cu_t numUpdates = paramv[3];
+  uint64_cu_t table_size = paramv[2];
+  uint64_cu_t num_updates = paramv[3];
   uint64_cu_t part_index = paramv[4];
 
   uint64_cu_t *table = (uint64_cu_t *)depv[0].ptr;
   unsigned long long int *ran = (unsigned long long int *)depv[1].ptr;
   ran += num_tiles;
 
-  int index = threadIdx.x + blockIdx.x * blockDim.x;
+  int index = (int)(threadIdx.x + (blockIdx.x * blockDim.x));
   for (uint64_cu_t local = 0; local < MAX_TOTAL_PENDING_UPDATES_CU; local++) {
-    uint64_cu_t localIndex = index * MAX_TOTAL_PENDING_UPDATES_CU + local;
-    if (localIndex < numUpdates) {
-      uint64_cu_t localRan = ran[localIndex];
-      uint64_cu_t globalRanIndex = localRan & (tableSize - 1);
-      if (globalRanIndex / tile_size == part_index) {
-        uint64_cu_t localRanIndex = globalRanIndex % tile_size;
-        atomicXor(&table[localRanIndex], localRan);
+    uint64_cu_t local_index =
+        (uint64_cu_t)(index * MAX_TOTAL_PENDING_UPDATES_CU) + local;
+    if (local_index < num_updates) {
+      uint64_cu_t local_ran = ran[local_index];
+      uint64_cu_t global_ran_index = local_ran & (table_size - 1);
+      if (global_ran_index / tile_size == part_index) {
+        uint64_cu_t local_ran_index = global_ran_index % tile_size;
+        atomicXor(&table[local_ran_index], local_ran);
         // atomicAdd(&table[tile_size], 1);
       }
     }
   }
 }
 
-void randomEdt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-               arts_edt_dep_t depv[]) {
+void random_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
 
-  uint64_t numRemUpdates = paramv[0]; // Number of updates left for this GPU
-  uint64_t numRandom = (numRemUpdates > MAX_UPDATES_PER_GPU_STEP)
-                           ? MAX_UPDATES_PER_GPU_STEP
-                           : numRemUpdates; // Number of updates in the step
+  uint64_t num_rem_updates = paramv[0]; // Number of updates left for this GPU
+  uint64_t num_random = (num_rem_updates > (uint64_t)MAX_UPDATES_PER_GPU_STEP)
+                            ? (uint64_t)MAX_UPDATES_PER_GPU_STEP
+                            : num_rem_updates; // Number of updates in the step
   uint64_t step = paramv[1];
   uint64_t index = paramv[2];
-  int64_t startIndex =
-      (int64_t)(step * MAX_UPDATES_PER_GPU_STEP * arts_get_total_gpus() +
-                index * numRandom);
-  uint64_t *rArray = (uint64_t *)depv[0].ptr;
-  uint64_t tableSize = TABLESIZE;
+  int64_t start_index =
+      (int64_t)((step * (uint64_t)MAX_UPDATES_PER_GPU_STEP *
+                 arts_get_total_gpus()) +
+                (index * num_random));
+  uint64_t *r_array = (uint64_t *)depv[0].ptr;
+  uint64_t table_size = TABLESIZE;
 
-  if (numRemUpdates) {
-    ARTS_PRINTF("Get Random: %lu step: %lu index: %lu startIndex: %lu\n", numRandom,
-           step, index, startIndex);
-    ARTS_PRINTF("TableSize: %lu rArray: %lu %p num_tiles: %lu\n", tableSize,
-           depv[0].guid, depv[0].ptr, num_tiles);
-    ARTS_PRINTF("rArray pointer: %p\n", rArray);
+  if (num_rem_updates) {
+    arts_printf("Get Random: %lu step: %lu index: %lu startIndex: %lu\n",
+                num_random, step, index, start_index);
+    arts_printf("TableSize: %lu rArray: %lu %p num_tiles: %lu\n", table_size,
+                depv[0].guid, depv[0].ptr, num_tiles);
+    arts_printf("rArray pointer: %p\n", r_array);
 
     // Call random function
     dim3 block(MAXTHREADS, 1, 1);
     dim3 grid(MAXTHREADBLOCKSPERSM * NUMBEROFSM, 1, 1);
-    void *kernelArgs[] = {&startIndex, &numRandom, &num_tiles,
-                          &tile_size,   &tableSize, &rArray};
-    CHECKCORRECT(cudaLaunchKernel((const void *)hpccStarts, grid, block,
-                                  (void **)kernelArgs));
+    void *kernel_args[] = {&start_index, &num_random, &num_tiles,
+                           &tile_size,   &table_size, &r_array};
+    CHECKCORRECT(cudaLaunchKernel((const void *)hpcc_starts, grid, block,
+                                  (void **)kernel_args));
     cudaDeviceSynchronize();
 
     // Get random counts
-    unsigned int elemsToCopy = num_tiles; // + numRandom;
-    uint64_t *count = (uint64_t *)arts_calloc(elemsToCopy, sizeof(uint64_t));
-    arts_cuda_mem_cpy_from_dev(count, rArray, sizeof(uint64_t) * elemsToCopy);
+    unsigned int elems_to_copy = num_tiles; // + numRandom;
+    uint64_t *count = (uint64_t *)arts_calloc(elems_to_copy, sizeof(uint64_t));
+    arts_cuda_mem_cpy_from_dev(count, r_array,
+                               sizeof(uint64_t) * elems_to_copy);
     // for(uint64_t i=0; i<num_tiles; i++)
-    //     ARTS_PRINTF("count[%lu]: %lu\n", i, count[i]);
-    // for(uint64_t i=num_tiles; i<elemsToCopy; i++)
-    //     ARTS_PRINTF("rand[%llu]: %llu vs %llu SAME: %u\n", i - num_tiles, count[i],
-    //     HPCC_starts_CPU(startIndex + i - num_tiles),
-    //     HPCC_starts_CPU(startIndex + i - num_tiles) == count[i]);
+    //     arts_printf("count[%lu]: %lu\n", i, count[i]);
+    // for(uint64_t i=num_tiles; i<elems_to_copy; i++)
+    //     arts_printf("rand[%llu]: %llu vs %llu SAME: %u\n", i - num_tiles,
+    //     count[i], hpcc_starts_cpu(start_index + i - num_tiles),
+    //     hpcc_starts_cpu(start_index + i - num_tiles) == count[i]);
 
-    // Reserve next randomEdt
-    arts_guid_t nextRandomGuid =
+    // Reserve next random_edt
+    arts_guid_t next_random_guid =
         arts_reserve_guid_route(ARTS_EDT, arts_get_current_node());
-    unsigned int nextRandomDeps = 1;
+    unsigned int next_random_deps = 1;
 
     // Create readOnly copy of DB
-    arts_guid_t readOnly = arts_db_copy_to_new_type(depv[0].guid, ARTS_DB_GPU_READ);
+    arts_guid_t read_only =
+        arts_db_copy_to_new_type(depv[0].guid, ARTS_DB_GPU_READ);
 
     // Create update edts
-    uint64_t updateArgs[] = {tile_size, num_tiles, tableSize, numRandom, 0};
+    uint64_t update_args[] = {tile_size, num_tiles, table_size, num_random, 0};
     for (uint64_t i = 0; i < num_tiles; i++) {
       if (count[i]) {
-        updateArgs[4] = i;
+        update_args[4] = i;
         dim3 block(MAXTHREADS, 1, 1);
         dim3 grid(MAXTHREADBLOCKSPERSM * NUMBEROFSM, 1, 1);
-        ARTS_PRINTF("Launching for i: %lu count: %lu tileGuid: %lu\n", i, count[i],
-               arts_get_guid(tileGuids, i));
-        arts_guid_t updateGuid =
-            arts_edt_create_gpu(updateEdt, arts_get_current_node(), 5, updateArgs, 2,
-                             grid, block, nextRandomGuid, i + 1, NULL_GUID);
-        arts_gpu_signal_edt_memset(updateGuid, 0, arts_get_guid(tileGuids, i));
-        // arts_signal_edt(updateGuid, 0, arts_get_guid(tileGuids, i));
-        arts_signal_edt(updateGuid, 1, readOnly);
-        nextRandomDeps++;
+        arts_printf("Launching for i: %lu count: %lu tileGuid: %lu\n", i,
+                    count[i], arts_get_guid(tile_guids, i));
+        arts_guid_t update_guid = arts_edt_create_gpu(
+            update_edt, arts_get_current_node(), 5, update_args, 2, grid, block,
+            next_random_guid, i + 1, NULL_GUID);
+        arts_gpu_signal_edt_memset(update_guid, 0,
+                                   arts_get_guid(tile_guids, i));
+        // arts_signal_edt(update_guid, 0, arts_get_guid(tile_guids, i));
+        arts_signal_edt(update_guid, 1, read_only);
+        next_random_deps++;
       }
     }
 
     // Free the counts since we are done with them.
     arts_free(count);
 
-    // Create next randomEdt
-    uint64_t nextRandom = numRemUpdates - numRandom;
-    uint64_t args[] = {nextRandom, step + 1, index};
-    arts_edt_create_gpu_lib_with_guid(randomEdt, nextRandomGuid, 3, args,
-                                nextRandomDeps, grid, block);
-    arts_gpu_signal_edt_memset(nextRandomGuid, 0, depv[0].guid);
-    // arts_signal_edt(nextRandomGuid, 0, depv[0].guid);
-  } else
+    // Create next random_edt
+    uint64_t next_random = num_rem_updates - num_random;
+    uint64_t args[] = {next_random, step + 1, index};
+    arts_edt_create_gpu_lib_with_guid(random_edt, next_random_guid, 3, args,
+                                      next_random_deps, grid, block);
+    arts_gpu_signal_edt_memset(next_random_guid, 0, depv[0].guid);
+    // arts_signal_edt(next_random_guid, 0, depv[0].guid);
+  } else {
     arts_signal_edt(done_guid, (unsigned int)-1, NULL_GUID);
+  }
 }
 
-void syncEdt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-             arts_edt_dep_t depv[]) {
+void sync_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+              arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
   uint64_t time = arts_get_time_stamp() - start;
-  ARTS_PRINTF("Time %lu\n", time);
+  arts_printf("Time %lu\n", time);
 
-  uint64_t *Table = (uint64_t *)arts_calloc(TABLESIZE, sizeof(uint64_t));
-  for (uint64_t i = 0; i < TABLESIZE; i++)
-    Table[i] = i;
+  uint64_t *table = (uint64_t *)arts_calloc(TABLESIZE, sizeof(uint64_t));
+  for (uint64_t i = 0; i < TABLESIZE; i++) {
+    table[i] = i;
+  }
 
 #ifdef VALIDATE
   uint64_t temp = 0x1;
-  uint64_t tableSize = TABLESIZE;
+  uint64_t table_size = TABLESIZE;
   for (uint64_t i = 0; i < NUPDATE; i++) {
     temp = (temp << 1) ^ (((int64_t)temp < 0) ? POLY2 : 0);
-    Table[temp & (tableSize - 1)] ^= temp;
-    // ARTS_PRINTF("i: %lu index: %lu rand: %lu Table: %lu\n", i, temp &
-    // (tableSize-1), temp, Table[temp & (tableSize-1)]);
+    table[temp & (table_size - 1)] ^= temp;
+    // arts_printf("i: %lu index: %lu rand: %lu Table: %lu\n", i, temp &
+    // (table_size-1), temp, table[temp & (table_size-1)]);
   }
 
-  bool firstFailure = 1;
-  uint64_t totalErrors = 0;
+  bool first_failure = 1;
+  uint64_t total_errors = 0;
   uint64_t index = 0;
   for (unsigned int i = 0; i < num_tiles; i++) {
     uint64_t *tile = (uint64_t *)depv[i].ptr;
     for (unsigned int j = 0; j < tile_size; j++) {
-      if (tile[j] != Table[index]) {
-        if (firstFailure) {
-          firstFailure = 0;
-          ARTS_PRINTF(
+      if (tile[j] != table[index]) {
+        if (first_failure) {
+          first_failure = 0;
+          arts_printf(
               "FAILED on index:%lu Exp: %lu vs Rec: %lu updates: %lu -> %lu\n",
-              index, tile[j], Table[index], tile[tile_size],
-              Table[index] ^ tile[j]);
+              index, tile[j], table[index], tile[tile_size],
+              table[index] ^ tile[j]);
         }
-        totalErrors++;
+        total_errors++;
       }
       // else
-      // ARTS_PRINTF("PASSED on index %lu %lu vs %lu updates: %lu -> %lu\n", index,
-      // tile[j], Table[index], tile[tile_size], Table[index]^tile[j]);
+      // arts_printf("PASSED on index %lu %lu vs %lu updates: %lu -> %lu\n",
+      // index, tile[j], table[index], tile[tile_size],
+      // table[index]^tile[j]);
       index++;
     }
   }
-  if (totalErrors)
-    ARTS_PRINTF("%lu errors of %lu!\n", totalErrors, index);
-  else
-    ARTS_PRINTF("Verified!\n");
+  if (total_errors) {
+    arts_printf("%lu errors of %lu!\n", total_errors, index);
+  } else {
+    arts_printf("Verified!\n");
+  }
 #endif
 
-  double GUPS = (double)NUPDATE / time;
-  ARTS_PRINTF("GUPS: %lf MB: %lu\n", GUPS,
-         (TABLESIZE * sizeof(uint64_t)) / (1024 * 1024));
+  double gups = (double)NUPDATE / (double)time;
+  arts_printf("GUPS: %lf MB: %lu\n", gups,
+              (TABLESIZE * sizeof(uint64_t)) / (1024 * 1024));
   arts_shutdown();
 }
 
 extern "C" void init_per_node(unsigned int node_id, int argc, char **argv) {
-  if (argc > 1)
-    tile_size = (unsigned int)atoi(argv[1]);
+  if (argc > 1) {
+    tile_size = (unsigned int)strtol(argv[1], NULL, 10);
+  }
   num_tiles = TABLESIZE / tile_size;
-  ARTS_PRINTF("Random Access Table Size: %u Tile Size: %u Number of Tiles: %u\n",
-         TABLESIZE, tile_size, num_tiles);
+  arts_printf("Random Access Table Size: %u Tile Size: %u Number of Tiles: %u\n",
+              TABLESIZE, tile_size, num_tiles);
 
   // Create tiled table
-  tileGuids = arts_new_guid_range_node(ARTS_DB_LC, num_tiles, node_id);
+  tile_guids = arts_new_guid_range_node(ARTS_DB_LC, num_tiles, node_id);
   tile = (uint64_t **)arts_calloc(num_tiles, sizeof(uint64_t *));
   uint64_t counter = 0;
   for (unsigned int i = 0; i < num_tiles; i++) {
     tile[i] = (uint64_t *)arts_db_create_with_guid(
-        arts_get_guid(tileGuids, i), (tile_size + 1) * sizeof(uint64_t));
-    ARTS_PRINTF("TileGuid[%u]: %lu -> %p\n", i, arts_get_guid(tileGuids, i), tile[i]);
-    for (unsigned int j = 0; j < tile_size; j++)
+        arts_get_guid(tile_guids, i), (tile_size + 1) * sizeof(uint64_t));
+    arts_printf("TileGuid[%u]: %lu -> %p\n", i, arts_get_guid(tile_guids, i),
+                tile[i]);
+    for (unsigned int j = 0; j < tile_size; j++) {
       tile[i][j] = counter++;
+    }
     tile[i][tile_size] = 0;
   }
 
   // Create update frontiers.  The number of updates a frontier can hold is 1024
   // per thread
   unsigned int num_gpus = arts_get_total_gpus();
-  unsigned int elemsPerFrontier = num_tiles + MAX_UPDATES_PER_GPU_STEP;
-  updateFrontierGuids =
+  unsigned int elems_per_frontier =
+      num_tiles + (unsigned int)MAX_UPDATES_PER_GPU_STEP;
+  update_frontier_guids =
       arts_new_guid_range_node(ARTS_DB_GPU_WRITE, num_gpus, node_id);
   for (unsigned int i = 0; i < num_gpus; i++) {
-    uint64_t *updateFrontier =
-        (uint64_t *)arts_db_create_with_guid(arts_get_guid(updateFrontierGuids, i),
-                                         elemsPerFrontier * sizeof(uint64_t));
-    ARTS_PRINTF("updateFrontier[%u]: %lu %p\n", i,
-           arts_get_guid(updateFrontierGuids, i), updateFrontier);
-    for (unsigned int j = 0; j < elemsPerFrontier; j++)
-      updateFrontier[j] = 0;
+    uint64_t *update_frontier = (uint64_t *)arts_db_create_with_guid(
+        arts_get_guid(update_frontier_guids, i),
+        elems_per_frontier * sizeof(uint64_t));
+    arts_printf("updateFrontier[%u]: %lu %p\n", i,
+                arts_get_guid(update_frontier_guids, i), update_frontier);
+    for (unsigned int j = 0; j < elems_per_frontier; j++) {
+      update_frontier[j] = 0;
+    }
   }
 
   // Create a LC sync edt for all partitions
@@ -416,33 +456,37 @@ extern "C" void init_per_node(unsigned int node_id, int argc, char **argv) {
 }
 
 extern "C" void init_per_worker(unsigned int node_id, unsigned int worker_id,
-                              int argc, char **argv) {
+                                int argc, char **argv) {
+  (void)argc;
+  (void)argv;
   if (ARTS_LOOK_UP_CONFIG(gpu_lc_sync) != 6) {
-    ARTS_PRINTF(
+    arts_printf(
         "For correct results set gpu_lc_sync=6 in arts.cfg\nShutting Down...\n");
     arts_shutdown();
   }
 
   if (!node_id && !worker_id) {
     unsigned int num_gpus = arts_get_total_gpus();
-    uint64_t numUpdatesPerGpu = NUPDATE / num_gpus;
-    ARTS_PRINTF("NumGpus: %u numUpdatesPerGpu: %lu\n", num_gpus, numUpdatesPerGpu);
+    uint64_t num_updates_per_gpu = NUPDATE / num_gpus;
+    arts_printf("NumGpus: %u numUpdatesPerGpu: %lu\n", num_gpus,
+                num_updates_per_gpu);
     dim3 block(MAXTHREADS, 1, 1);
     dim3 grid(MAXTHREADBLOCKSPERSM * NUMBEROFSM, 1, 1);
 
     // Create NUPDATE / arts_get_total_gpus() getRandomEdts
-    uint64_t args[] = {numUpdatesPerGpu, 0, 0};
+    uint64_t args[] = {num_updates_per_gpu, 0, 0};
     for (unsigned int i = 0; i < num_gpus; i++) {
       args[2] = i;
-      arts_guid_t updateGuid =
-          arts_edt_create_gpu_lib(randomEdt, 0, 3, args, 1, grid, block);
-      arts_gpu_signal_edt_memset(updateGuid, 0,
-                             arts_get_guid(updateFrontierGuids, i));
+      arts_guid_t update_guid =
+          arts_edt_create_gpu_lib(random_edt, 0, 3, args, 1, grid, block);
+      arts_gpu_signal_edt_memset(update_guid, 0,
+                                 arts_get_guid(update_frontier_guids, i));
     }
 
-    arts_edt_create_with_guid(syncEdt, done_guid, 0, NULL, num_gpus + num_tiles);
-    for (unsigned int i = 0; i < num_tiles; i++)
-      arts_lc_sync(done_guid, i, arts_get_guid(tileGuids, i));
+    arts_edt_create_with_guid(sync_edt, done_guid, 0, NULL, num_gpus + num_tiles);
+    for (unsigned int i = 0; i < num_tiles; i++) {
+      arts_lc_sync(done_guid, i, arts_get_guid(tile_guids, i));
+    }
   }
   start = arts_get_time_stamp();
 }

@@ -39,46 +39,46 @@
 
 # Define test programs to build
 set(TEST_PROGRAMS
-    test_main
-    test_route_table
-    test_route_table2
-    test_cdag
-    test_cdag2
-    test_oo_list
-    test_pin_db
-    test_get_from_db
-    test_put_in_db
-    test_arts_send
-    test_active_message_db
-    test_active_message_buffer
-    test_array_db
-    test_for_each
-    test_termination_detection
-    test_termination_detection2
-    test_put_array_db_epoch
-    test_put_array_db_epoch2
-    test_atomic_add_in_array_db
-    test_atomic_compare_and_swap_in_array_db
-    test_db_move
-    test_db_once
-    test_rec_epoch
-    test_epoch_pool
-    test_epoch_for_shad
-    test_buffer
-    test_event
-    test_shad_lock
-    test_oo_bug
-    test_route_table_iter
-    test_route_table_iter2
-    test_tmt_lite
-    test_acquire_mode
-    test_arts_id
+    main
+    route_table
+    route_table2
+    cdag
+    cdag2
+    oo_list
+    pin_db
+    get_from_db
+    put_in_db
+    arts_send
+    active_message_db
+    active_message_buffer
+    array_db
+    for_each
+    termination_detection
+    termination_detection2
+    put_array_db_epoch
+    put_array_db_epoch2
+    atomic_add_in_array_db
+    atomic_compare_and_swap_in_array_db
+    db_move
+    db_once
+    rec_epoch
+    epoch_pool
+    epoch_for_shad
+    buffer
+    event
+    shad_lock
+    oo_bug
+    route_table_iter
+    route_table_iter2
+    tmt_lite
+    acquire_mode
+    arts_id
 )
 
 # Programs that require arts_graph library
 set(GRAPH_TEST_PROGRAMS
-    test_csr
-    test_distribution
+    csr
+    distribution
 )
 
 # Function to create a test executable
@@ -144,12 +144,12 @@ endforeach()
 # CUDA test programs (only built if CUDA is available)
 if(BUILD_CUDA_LIBRARY)
     set(CUDA_TEST_PROGRAMS
-        test_gpu_stream
-        test_gpu_for_all
-        test_lc_sync
-        test_gpu_lc_red
-        test_gpu_lib
-        test_gpu_ring
+        gpu_stream
+        gpu_for_all
+        lc_sync
+        gpu_lc_red
+        gpu_lib
+        gpu_ring
     )
     
     # Function to create a CUDA test executable

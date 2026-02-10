@@ -80,12 +80,14 @@ typedef struct {
 
 // arts_guid_t exit_program(uint32_t paramc, uint64_t * paramv, uint32_t depc,
 // arts_edt_dep_t depv[]) {
-//   ARTS_PRINTF("Called exit\n");
+//   arts_printf("Called exit\n");
 //   arts_shutdown();
 // }
 
 void max_reducer(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                 arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
   // std::cout << "In max reducer" << std::endl;
   uint32_t max_scan_stat = 0;
   vertex_t max_vertex = 0;
@@ -101,7 +103,7 @@ void max_reducer(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   std::cout << "Max vertex_t: " << max_vertex << " scanStat: " << max_scan_stat
             << '\n';
   end_time = arts_get_time_stamp();
-  ARTS_PRINTF("Total execution time: %f s \n",
+  arts_printf("Total execution time: %f s \n",
          (double)(end_time - start_time) / 1000000000.0);
   arts_stop_intro_shad();
   arts_shutdown();
@@ -109,6 +111,8 @@ void max_reducer(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
 void find_intersection(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                       arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
   uint64_t sum = 0;
   per_vertex_scan_stat_t *local_intersection = (per_vertex_scan_stat_t *)depv[0].ptr;
   vertex_t source = local_intersection->source;
@@ -138,6 +142,9 @@ void find_intersection(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
 void visit_one_hop_neighbor_on_rank(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                                arts_edt_dep_t depv[]) {
+  (void)depc;
+  (void)paramc;
+  (void)paramv;
   source_info_t *src_info = (source_info_t *)depv[0].ptr;
   vertex_t *one_hop_neighbor;
   vertex_t *immediate_neighbors = src_info->neighbors;
@@ -175,6 +182,9 @@ void visit_one_hop_neighbor_on_rank(uint32_t paramc, const uint64_t *paramv, uin
 
 void visit_source(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                  arts_edt_dep_t depv[]) {
+  (void)depc;
+  (void)depv;
+  (void)paramc;
   vertex_t *neighbors = NULL;
   uint64_t neighbor_cnt = 0;
   vertex_t source = (vertex_t)paramv[0];
@@ -216,7 +226,7 @@ void visit_source(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
 extern "C" void init_per_node(unsigned int node_id, int argc, char **argv) {
   // distribution must be initialized in init_per_node
-  ARTS_PRINTF("Node %u argc %u\n", node_id, argc);
+  arts_printf("Node %u argc %u\n", node_id, argc);
   distribution = init_block_distribution_with_cmd_line_args(argc, argv);
   graph = get_graph_from_partition(node_id, distribution);
   // read the edgelist and construct the graph
@@ -228,7 +238,8 @@ extern "C" void init_per_node(unsigned int node_id, int argc, char **argv) {
  * efficient max reduction?*/
 extern "C" void init_per_worker(unsigned int node_id, unsigned int worker_id,
                               int argc, char **argv) {
-  ARTS_PRINTF("Node %u argc %u\n", node_id, argc);
+  (void)argv;
+  arts_printf("Node %u argc %u\n", node_id, argc);
   if (!node_id && !worker_id) {
     /*This edt will calculate which vertex_t has the maximally induced
      * subgraph.*/

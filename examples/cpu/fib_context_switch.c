@@ -44,8 +44,11 @@ uint64_t start = 0;
 
 void fib(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
          arts_edt_dep_t depv[]) {
-  arts_guid_t result_guid = paramv[0];
-  int num = paramv[1];
+  (void)depc;
+  (void)depv;
+  (void)paramc;
+  arts_guid_t result_guid = (arts_guid_t)paramv[0];
+  int num = (int)paramv[1];
   int sum = num;
   int x = -1;
   int y = -1;
@@ -81,7 +84,7 @@ void fib(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_signal_context(paramv[2]);
   } else {
     uint64_t time = arts_get_time_stamp() - start;
-    ARTS_PRINTF("Fib %d: %d %lu\n", num, sum, time);
+    arts_printf("Fib %d: %d %lu\n", num, sum, time);
     arts_shutdown();
   }
 }
@@ -90,8 +93,9 @@ void init_per_node(unsigned int node_id, int argc, char **argv) {}
 
 void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
                    char **argv) {
+  (void)argc;
   if (!node_id && !worker_id) {
-    int num = atoi(argv[1]);
+    int num = (int)strtol(argv[1], NULL, 10);
     uint64_t args[] = {NULL_GUID, (uint64_t)num};
     start = arts_get_time_stamp();
     arts_guid_t guid = arts_edt_create(fib, 0, 2, args, 0);

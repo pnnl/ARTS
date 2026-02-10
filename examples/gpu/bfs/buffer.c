@@ -85,7 +85,7 @@ void create_buffers_on_cpu(unsigned int size) {
 
 void create_buffers_on_gpu(unsigned int gpu, unsigned int size) {
   if (!gpu_buffer_ptr) {
-    ARTS_PRINTF("Must run create_buffers_on_cpu first!\n");
+    arts_printf("Must run create_buffers_on_cpu first!\n");
 }
 
   for (unsigned int i = 0; i < NUMBUFFERS; i++) {
@@ -114,7 +114,7 @@ void create_buffer_db() {
 
 void free_buffers_on_gpu(unsigned int gpu) {
   if (!gpu_buffer_ptr) {
-    ARTS_PRINTF("Must run create_buffers_on_cpu first!\n");
+    arts_printf("Must run create_buffers_on_cpu first!\n");
 }
 
   for (unsigned int i = 0; i < NUMBUFFERS; i++) {
@@ -125,7 +125,7 @@ void free_buffers_on_gpu(unsigned int gpu) {
 void print_master_buffer_guids() {
   unsigned int num_nodes = arts_get_total_nodes();
   for (unsigned int i = 0; i < num_nodes; i++) {
-    ARTS_PRINTF("master_buffer_guids[%u]: %lu\n", i, master_buffer_guids[i]);
+    arts_printf("master_buffer_guids[%u]: %lu\n", i, master_buffer_guids[i]);
 }
 }
 
@@ -133,7 +133,7 @@ void print_local_buffer_guids() {
   unsigned int num_nodes = arts_get_total_nodes();
   unsigned int node_id = arts_get_current_node();
   for (unsigned int i = 0; i < NUMBUFFERS; i++) {
-    ARTS_PRINTF("buffer_guids[%u][%u]: %lu\n", i, node_id,
+    arts_printf("buffer_guids[%u][%u]: %lu\n", i, node_id,
            buffer_guids[(i * num_nodes) + node_id]);
   }
 }
@@ -142,7 +142,7 @@ void print_buffer_ptr() {
   unsigned int num_gpus = arts_get_total_gpus();
   for (unsigned int i = 0; i < NUMBUFFERS; i++) {
     for (unsigned int j = 0; j < num_gpus + 1; j++) {
-      ARTS_PRINTF("buffer: %u buffer_ptr[%u]: %p\n", i, j, buffer_ptr[i][j]);
+      arts_printf("buffer: %u buffer_ptr[%u]: %p\n", i, j, buffer_ptr[i][j]);
     }
 }
 }
@@ -151,16 +151,16 @@ void print_raw_ptr() {
   unsigned int num_gpus = arts_get_total_gpus();
   for (unsigned int i = 0; i < NUMBUFFERS; i++) {
     for (unsigned int j = 0; j < num_gpus; j++) {
-      ARTS_PRINTF("buffer: %u gpu_buffer_ptr[%u]: %p\n", i, j, gpu_buffer_ptr[i][j]);
+      arts_printf("buffer: %u gpu_buffer_ptr[%u]: %p\n", i, j, gpu_buffer_ptr[i][j]);
     }
-    ARTS_PRINTF("buffer: %u cpu_buffer_ptr   : %p\n", i, cpu_buffer_ptr[i]);
+    arts_printf("buffer: %u cpu_buffer_ptr   : %p\n", i, cpu_buffer_ptr[i]);
   }
 }
 
 arts_guid_t get_buffer_guid(unsigned int node_id, uint64_t level) {
   unsigned int num_nodes = arts_get_total_nodes();
   uint64_t index = level % NUMBUFFERS;
-  // ARTS_PRINTF("Get index: %u node_id: %u %lu\n", index, node_id,
+  // arts_printf("Get index: %u node_id: %u %lu\n", index, node_id,
   // buffer_guids[index*num_nodes + node_id]);
   return buffer_guids[(index * num_nodes) + node_id];
 }
@@ -182,7 +182,7 @@ void reset_buffer(uint64_t level) {
   for (unsigned int j = 0; j < num_nodes; j++) {
     buffer_guids[(index * num_nodes) + j] =
         arts_db_rename(buffer_guids[(index * num_nodes) + j]);
-    // ARTS_PRINTF("RENAME index: %u node: %u %lu\n", index, j,
+    // arts_printf("RENAME index: %u node: %u %lu\n", index, j,
     // buffer_guids[index*num_nodes + j]);
   }
 

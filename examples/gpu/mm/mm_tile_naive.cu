@@ -62,39 +62,44 @@ arts_guid_t b_mat_guid = NULL_GUID;
 arts_guid_t c_mat_guid = NULL_GUID;
 arts_guid_t done_guid = NULL_GUID;
 
-__global__ void mmKernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+__global__ void mm_kernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                          arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
   const int blk = (int)paramv[0];
-  double *A = (double *)depv[0].ptr;
-  double *B = (double *)depv[1].ptr;
-  double *C = (double *)depv[2].ptr;
+  double *a = (double *)depv[0].ptr;
+  double *b = (double *)depv[1].ptr;
+  double *c = (double *)depv[2].ptr;
 
-  int col = blockDim.x * blockIdx.x + threadIdx.x;
-  int row = blockDim.y * blockIdx.y + threadIdx.y;
+  int col = (int)(blockDim.x * blockIdx.x) + (int)threadIdx.x;
+  int row = (int)(blockDim.y * blockIdx.y) + (int)threadIdx.y;
 
   double sum = 0;
 
-  for (unsigned int k = 0; k < blk; k++)
-    sum += A[row * blk + k] * B[k * blk + col];
-  C[row * blk + col] = sum;
+  for (unsigned int k = 0; k < (unsigned int)blk; k++) {
+    sum += a[(row * blk) + k] * b[(k * blk) + col];
+  }
+  c[(row * blk) + col] = sum;
 }
 
 void mm_kernel_cpu(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                  arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
   arts_guid_t to_signal = (arts_guid_t)paramv[1];
   unsigned int k = (unsigned int)paramv[2];
   arts_guid_t c_tile_guid = (arts_guid_t)paramv[3];
   const int blk = (int)paramv[0];
-  double *A = (double *)depv[0].ptr;
-  double *B = (double *)depv[1].ptr;
-  double *C = (double *)depv[2].ptr;
+  double *a = (double *)depv[0].ptr;
+  double *b = (double *)depv[1].ptr;
+  double *c = (double *)depv[2].ptr;
 
-  for (unsigned int i = 0; i < blk; i++) {
+  for (unsigned int i = 0; i < (unsigned int)blk; i++) {
     // rows of B
-    for (unsigned int j = 0; j < blk; j++) {
+    for (unsigned int j = 0; j < (unsigned int)blk; j++) {
       // rows of A and columns of B
-      for (unsigned int k = 0; k < blk; k++) {
-        C[i * blk + j] += A[i * blk + k] * B[k * blk + j];
+      for (unsigned int kk = 0; kk < (unsigned int)blk; kk++) {
+        c[(i * blk) + j] += a[(i * blk) + kk] * b[(kk * blk) + j];
       }
     }
   }
@@ -103,7 +108,9 @@ void mm_kernel_cpu(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
 void multiply_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                 arts_edt_dep_t depv[]) {
-  arts_guid_t to_signal = paramv[0];
+  (void)paramc;
+  (void)depc;
+  arts_guid_t to_signal = (arts_guid_t)paramv[0];
 
   unsigned int row_size = tile_size;
 
@@ -118,10 +125,10 @@ void multiply_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   double *b_tile = NULL;
   double *c_tile = NULL;
 
-  arts_guid_t aTileGuid =
+  arts_guid_t a_tile_guid =
       arts_db_create((void **)&a_tile, sizeof(double) * tile_size * tile_size,
                    ARTS_DB_GPU_READ);
-  arts_guid_t bTileGuid =
+  arts_guid_t b_tile_guid =
       arts_db_create((void **)&b_tile, sizeof(double) * tile_size * tile_size,
                    ARTS_DB_GPU_READ);
   arts_guid_t c_tile_guid =
@@ -139,39 +146,41 @@ void multiply_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   uint64_t args[] = {(uint64_t)tile_size};
   arts_guid_t mul_gpu_guid =
-      arts_edt_create_gpu(mmKernel, arts_get_current_node(), 1, args, 3, grid,
+      arts_edt_create_gpu(mm_kernel, arts_get_current_node(), 1, args, 3, grid,
                        threads, to_signal, k, c_tile_guid);
-  arts_signal_edt(mul_gpu_guid, 0, aTileGuid);
-  arts_signal_edt(mul_gpu_guid, 1, bTileGuid);
+  arts_signal_edt(mul_gpu_guid, 0, a_tile_guid);
+  arts_signal_edt(mul_gpu_guid, 1, b_tile_guid);
   arts_signal_edt(mul_gpu_guid, 2, c_tile_guid);
 #else
   uint64_t args[] = {tile_size, to_signal, k, c_tile_guid};
   arts_guid_t mul_gpu_guid =
       arts_edt_create(mm_kernel_cpu, arts_get_current_node(), 4, args, 3);
-  arts_signal_edt(mul_gpu_guid, 0, aTileGuid);
-  arts_signal_edt(mul_gpu_guid, 1, bTileGuid);
+  arts_signal_edt(mul_gpu_guid, 0, a_tile_guid);
+  arts_signal_edt(mul_gpu_guid, 1, b_tile_guid);
   arts_signal_edt(mul_gpu_guid, 2, c_tile_guid);
 #endif
 }
 
-__global__ void sumMMKernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+__global__ void sum_mm_kernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                             arts_edt_dep_t depv[]) {
+  (void)paramc;
   const unsigned int column_size = (unsigned int)paramv[0];
 
   double *c_tile = (double *)depv[0].ptr;
 
-  int row = blockDim.x * blockIdx.x + threadIdx.x;
-  int col = blockDim.y * blockIdx.y + threadIdx.y;
+  int row = (int)(blockDim.x * blockIdx.x) + (int)threadIdx.x;
+  int col = (int)(blockDim.y * blockIdx.y) + (int)threadIdx.y;
 
   for (unsigned int k = 1; k < depc; ++k) {
     double *to_add = (double *)depv[k].ptr;
-    c_tile[row * column_size + col] += to_add[row * column_size + col];
+    c_tile[(row * column_size) + col] += to_add[(row * column_size) + col];
   }
 }
 
 void sum_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
            arts_edt_dep_t depv[]) {
-  arts_guid_t done_guid = paramv[0];
+  (void)paramc;
+  arts_guid_t done_guid = (arts_guid_t)paramv[0];
 
   unsigned int column_size = tile_size;
 
@@ -189,51 +198,60 @@ void sum_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     double *to_add = (double *)depv[i].ptr;
     for (unsigned int j = 0; j < column_size; j++) {
       for (unsigned int k = 0; k < row_size; k++) {
-        c_tile[j * row_size + k] += to_add[j * row_size + k];
+        c_tile[(j * row_size) + k] += to_add[(j * row_size) + k];
       }
     }
   }
-  arts_signal_edt(done_guid, 3 + (row * num_blocks + col), c_tile_guid);
+  arts_signal_edt(done_guid, 3 + ((row * num_blocks) + col), c_tile_guid);
 }
 
 void finish_block_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
   double *c_mat = (double *)depv[0].ptr;
 
-  for (unsigned int i = 0; i < num_blocks; i++)
+  for (unsigned int i = 0; i < num_blocks; i++) {
     for (unsigned int j = 0; j < num_blocks; j++) {
-      double *c_tile = (double *)depv[3 + (i * num_blocks + j)].ptr;
+      double *c_tile = (double *)depv[3 + ((i * num_blocks) + j)].ptr;
       copy_block(i, j, tile_size, c_tile, mat_size, c_mat, false);
     }
+  }
 
   uint64_t time = arts_get_time_stamp() - start;
 
 #if VERIFY
   double *a_mat = (double *)depv[1].ptr;
   double *b_mat = (double *)depv[2].ptr;
-  ARTS_PRINTF("Verifying results...\n");
-  double *temp = (double *)arts_calloc(mat_size * mat_size, sizeof(double));
-  for (unsigned int i = 0; i < mat_size; ++i)
-    for (unsigned int j = 0; j < mat_size; ++j)
-      for (unsigned int k = 0; k < mat_size; ++k)
-        temp[i * mat_size + j] +=
-            a_mat[i * mat_size + k] * b_mat[k * mat_size + j];
+  arts_printf("Verifying results...\n");
+  double *temp = (double *)arts_calloc((size_t)mat_size * mat_size, sizeof(double));
+  for (unsigned int i = 0; i < (unsigned int)mat_size; ++i) {
+    for (unsigned int j = 0; j < (unsigned int)mat_size; ++j) {
+      for (unsigned int k = 0; k < (unsigned int)mat_size; ++k) {
+        temp[(i * mat_size) + j] +=
+            a_mat[(i * mat_size) + k] * b_mat[(k * mat_size) + j];
+      }
+    }
+  }
 
-  for (unsigned int i = 0; i < mat_size; ++i)
-    for (unsigned int j = 0; j < mat_size; ++j)
-      if (temp[i * mat_size + j] != c_mat[i * mat_size + j]) {
-        ARTS_PRINTF("Failed at c_mat[%u][%u]\n", i, j);
-        ARTS_PRINTF("Expected: %lf | Obtained: %lf\n", c_mat[i * mat_size + j],
-               temp[i * mat_size + j]);
+  for (unsigned int i = 0; i < (unsigned int)mat_size; ++i) {
+    for (unsigned int j = 0; j < (unsigned int)mat_size; ++j) {
+      if (temp[(i * mat_size) + j] != c_mat[(i * mat_size) + j]) {
+        arts_printf("Failed at c_mat[%u][%u]\n", i, j);
+        arts_printf("Expected: %lf | Obtained: %lf\n", c_mat[(i * mat_size) + j],
+               temp[(i * mat_size) + j]);
         arts_free(temp);
         arts_shutdown();
         return;
       }
+    }
+  }
 
   arts_free(temp);
-  ARTS_PRINTF("Success %lu\n", time);
+  arts_printf("Success %lu\n", time);
 #else
-  ARTS_PRINTF("Done %lu\n", time);
+  arts_printf("Done %lu\n", time);
 #endif
 
   arts_shutdown();
@@ -244,13 +262,13 @@ extern "C" void init_per_node(unsigned int node_id, int argc, char **argv) {
     mat_size = MATSIZE;
     tile_size = TILESIZE;
   } else if (argc == 2) {
-    mat_size = atoi(argv[1]);
+    mat_size = (int)strtol(argv[1], NULL, 10);
     tile_size = TILESIZE;
   } else {
-    mat_size = atoi(argv[1]);
-    tile_size = atoi(argv[2]);
+    mat_size = (int)strtol(argv[1], NULL, 10);
+    tile_size = (int)strtol(argv[2], NULL, 10);
   }
-  num_blocks = mat_size / tile_size;
+  num_blocks = (unsigned int)(mat_size / tile_size);
   done_guid = arts_reserve_guid_route(ARTS_EDT, 0);
   a_mat_guid = arts_reserve_guid_route(ARTS_DB_READ, 0);
   b_mat_guid = arts_reserve_guid_route(ARTS_DB_READ, 0);
@@ -258,11 +276,11 @@ extern "C" void init_per_node(unsigned int node_id, int argc, char **argv) {
 
   if (!node_id) {
     double *a_mat = (double *)arts_db_create_with_guid(
-        a_mat_guid, mat_size * mat_size * sizeof(double));
+        a_mat_guid, (size_t)mat_size * mat_size * sizeof(double));
     double *b_mat = (double *)arts_db_create_with_guid(
-        b_mat_guid, mat_size * mat_size * sizeof(double));
+        b_mat_guid, (size_t)mat_size * mat_size * sizeof(double));
     double *c_mat = (double *)arts_db_create_with_guid(
-        c_mat_guid, mat_size * mat_size * sizeof(double));
+        c_mat_guid, (size_t)mat_size * mat_size * sizeof(double));
 
     init_matrix(mat_size, a_mat, false, false);
     init_matrix(mat_size, b_mat, false, false);
@@ -272,20 +290,22 @@ extern "C" void init_per_node(unsigned int node_id, int argc, char **argv) {
 
 extern "C" void init_per_worker(unsigned int node_id, unsigned int worker_id,
                               int argc, char **argv) {
+  (void)argc;
+  (void)argv;
   unsigned int total_threads = arts_get_total_nodes() * arts_get_total_workers();
-  unsigned int globalThreadId = node_id * arts_get_total_workers() + worker_id;
+  unsigned int global_thread_id = (node_id * arts_get_total_workers()) + worker_id;
 
-  for (unsigned int i = 0; i < num_blocks; i++)
-    for (unsigned int j = 0; j < num_blocks; j++)
-      if ((i * num_blocks + j) % total_threads == globalThreadId) {
+  for (unsigned int i = 0; i < num_blocks; i++) {
+    for (unsigned int j = 0; j < num_blocks; j++) {
+      if (((i * num_blocks) + j) % total_threads == global_thread_id) {
 #if GPUMM
         uint64_t sum_args[] = {(uint64_t)tile_size};
         dim3 threads(tile_size, tile_size);
         dim3 grid((tile_size + SMTILE - 1) / SMTILE,
                   (tile_size + SMTILE - 1) / SMTILE);
         arts_guid_t sum_guid =
-            arts_edt_create_gpu_pt(sumMMKernel, node_id, 1, sum_args, num_blocks, grid,
-                               threads, done_guid, 3 + (i * num_blocks + j), 0);
+            arts_edt_create_gpu_pt(sum_mm_kernel, node_id, 1, sum_args, num_blocks, grid,
+                               threads, done_guid, 3 + ((i * num_blocks) + j), 0);
 #else
         uint64_t sum_args[] = {done_guid, i, j};
         arts_guid_t sum_guid =
@@ -298,10 +318,12 @@ extern "C" void init_per_worker(unsigned int node_id, unsigned int worker_id,
           arts_signal_edt(mul_guid, 1, b_mat_guid);
         }
       }
+    }
+  }
 
   if (!node_id && !worker_id) {
     arts_edt_create_with_guid(finish_block_mm, done_guid, 0, NULL,
-                          3 + num_blocks * num_blocks);
+                          3 + (num_blocks * num_blocks));
     arts_signal_edt(done_guid, 0, c_mat_guid);
     arts_signal_edt(done_guid, 1, a_mat_guid);
     arts_signal_edt(done_guid, 2, b_mat_guid);

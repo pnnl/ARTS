@@ -321,11 +321,11 @@ set(COUNTER_CONFIG_PATH
 set(COUNTER_CONFIG_FILE "${COUNTER_CONFIG_PATH}")
 
 # Create the main ARTS library target
-add_subdirectory(core)
+add_subdirectory(libs/core)
 
 # Build graph library only if examples or tests are being built
 if(ARTS_BUILD_EXAMPLES OR ARTS_BUILD_TESTS)
-    add_subdirectory(graph)
+    add_subdirectory(libs/graph)
 endif()
 
 # Optional components
@@ -339,10 +339,65 @@ endif()
 
 add_subdirectory(sample_configs)
 
+# Documentation (Doxygen XML → Breathe → Sphinx HTML)
+option(ARTS_BUILD_DOCS "Build documentation (requires Doxygen + Sphinx)" OFF)
+if(ARTS_BUILD_DOCS)
+    find_package(Doxygen REQUIRED)
+    find_program(SPHINX_EXECUTABLE sphinx-build
+        HINTS "$ENV{HOME}/.local/bin" "${CMAKE_SOURCE_DIR}/.venv/bin"
+        DOC "Sphinx documentation generator"
+    )
+    if(NOT SPHINX_EXECUTABLE)
+        message(FATAL_ERROR
+            "sphinx-build not found. Install with:\n"
+            "  pip install -r docs/requirements.txt")
+    endif()
+
+    # Paths for Doxyfile.in @VAR@ substitution
+    set(DOXYGEN_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/docs/doxygen")
+    set(DOXYGEN_INPUT_DIRS
+        "${CMAKE_SOURCE_DIR}/libs/core/include/public/arts.h \
+         ${CMAKE_SOURCE_DIR}/libs/core/include/internal/arts/runtime/rt.h \
+         ${CMAKE_SOURCE_DIR}/libs/core/include/internal/arts/gas/guid.h \
+         ${CMAKE_SOURCE_DIR}/libs/core/include/internal/arts/arts_defs.h"
+    )
+    configure_file(
+        "${CMAKE_SOURCE_DIR}/docs/Doxyfile.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/docs/Doxyfile"
+        @ONLY
+    )
+
+    # Target: ninja doxygen  (XML only)
+    add_custom_target(doxygen
+        COMMAND ${DOXYGEN_EXECUTABLE} "${CMAKE_CURRENT_BINARY_DIR}/docs/Doxyfile"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        COMMENT "Generating Doxygen XML..."
+        VERBATIM
+    )
+
+    # Target: ninja docs  (Sphinx HTML, depends on doxygen)
+    set(SPHINX_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/docs/sphinx")
+    add_custom_target(docs
+        COMMAND ${CMAKE_COMMAND} -E env
+            "BREATHE_DOXYGEN_XML_DIR=${DOXYGEN_OUTPUT_DIR}/xml"
+            ${SPHINX_EXECUTABLE}
+                -b html
+                -c "${CMAKE_SOURCE_DIR}/docs"
+                "${CMAKE_SOURCE_DIR}/docs"
+                "${SPHINX_BUILD_DIR}"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        COMMENT "Building Sphinx HTML documentation..."
+        DEPENDS doxygen
+        VERBATIM
+    )
+
+    message(STATUS "Documentation: enabled (ninja doxygen | ninja docs)")
+endif()
+
 # Installation configuration
 # Only install the public header — all other headers are internal.
 # External users: #include "arts.h"
-install(FILES core/inc/public/arts.h
+install(FILES libs/core/include/public/arts.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
 

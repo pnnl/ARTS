@@ -28,18 +28,21 @@ int is_safe(const int board[], int row, int col) {
 
 void join_nqueens(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                  arts_edt_dep_t depv[]) {
-  arts_guid_t return_guid = paramv[0];
+  (void)paramc;
+  arts_guid_t return_guid = (arts_guid_t)paramv[0];
   uint32_t slot = paramv[1];
   int sum = 0;
   for (uint32_t i = 0; i < depc; i++) {
-    sum += depv[i].guid;
+    sum += (int)depv[i].guid;
   }
   arts_signal_edt_value(return_guid, slot, sum);
 }
 
 void fork_nqueens(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                  arts_edt_dep_t depv[]) {
-  arts_guid_t return_guid = paramv[0];
+  (void)paramc;
+  (void)depc;
+  arts_guid_t return_guid = (arts_guid_t)paramv[0];
   uint32_t slot = paramv[1];
   nqueen_data_t *current_data = (nqueen_data_t *)depv[0].ptr;
 
@@ -85,13 +88,15 @@ void fork_nqueens(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
 void final_nqueens(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                   arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
   struct timespec end;
   (void)clock_gettime(CLOCK_REALTIME, &end);
-  double start_time = paramv[0];
-  double end_time = end.tv_sec + (end.tv_nsec / 1e9);
+  double start_time = (double)paramv[0];
+  double end_time = (double)end.tv_sec + ((double)end.tv_nsec / 1e9);
 
-  int n = paramv[1];
-  int solutions = depv[0].guid;
+  int n = (int)paramv[1];
+  int solutions = (int)depv[0].guid;
 
   printf("\nResults:\n");
   printf("Execution time: %.4f seconds\n", end_time - start_time);
@@ -120,7 +125,7 @@ void arts_main(int argc, char **argv) {
     printf("Usage: %s <board size>\n", argv[0]);
     arts_shutdown();
   }
-  int n = atoi(argv[1]);
+  int n = (int)strtol(argv[1], NULL, 10);
   if (n < 1 || n > N_MAX) {
     printf("Board size must be between 1 and 20\n");
     arts_shutdown();
@@ -131,7 +136,7 @@ void arts_main(int argc, char **argv) {
 
   struct timespec start;
   (void)clock_gettime(CLOCK_REALTIME, &start);
-  double start_time = start.tv_sec + (start.tv_nsec / 1e9);
+  double start_time = (double)start.tv_sec + ((double)start.tv_nsec / 1e9);
 
   uint64_t final_paramv[2] = {(uint64_t)start_time, (uint64_t)n};
   arts_guid_t final_guid = arts_edt_create(final_nqueens, 0, 2, final_paramv, 1);

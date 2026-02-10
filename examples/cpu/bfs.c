@@ -40,6 +40,7 @@
 #include <inttypes.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "arts/block_distribution.h"
@@ -51,15 +52,19 @@ csr_graph_t *graph;
 uint64_t *level;
 
 void bfs_output() {
-  ARTS_PRINTF("Printing vertex levels....\n");
+  arts_printf("Printing vertex levels....\n");
   uint64_t i;
   for (i = 0; i < graph->num_local_vertices; ++i) {
-    ARTS_PRINTF("Local vertex : %" PRIu64 ", Level : %" PRIu64 "\n", i, level[i]);
+    arts_printf("Local vertex : %" PRIu64 ", Level : %" PRIu64 "\n", i, level[i]);
   }
 }
 
 void exit_program(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                  arts_edt_dep_t depv[]) {
+  (void)depc;
+  (void)depv;
+  (void)paramc;
+  (void)paramv;
   bfs_output();
   arts_shutdown();
 }
@@ -68,7 +73,9 @@ void bfs_send(vertex_t u, uint64_t ulevel);
 
 void relax(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
            arts_edt_dep_t depv[]) {
-  ARTS_PRINTF("calling relax\n");
+  (void)depc;
+  (void)depv;
+  arts_printf("calling relax\n");
   assert(paramc == 2);
   vertex_t v = (vertex_t)paramv[0];
   uint64_t vlevel = paramv[1];
@@ -99,7 +106,7 @@ void relax(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       vertex_t u = neighbors[i];
 
       // route message
-      ARTS_PRINTF("sending u=%" PRIu64 ", level= %" PRIu64 "\n", u, neigbrlevel);
+      arts_printf("sending u=%" PRIu64 ", level= %" PRIu64 "\n", u, neigbrlevel);
       bfs_send(u, neigbrlevel);
     }
   }
@@ -120,7 +127,10 @@ void bfs_send(vertex_t u, uint64_t ulevel) {
 
 void kickoff_termination(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                         arts_edt_dep_t depv[]) {
-  ARTS_PRINTF("Kick off\n");
+  (void)depc;
+  (void)depv;
+  (void)paramc;
+  arts_printf("Kick off\n");
   vertex_t source = (vertex_t)paramv[0];
   bfs_send(source, 0);
 }
@@ -181,10 +191,10 @@ void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
 
   if (!worker_id) {
     // find the source vertex_t
-    vertex_t source;
+    vertex_t source = 0;
     for (int i = 0; i < argc; ++i) {
       if (strcmp("--source", argv[i]) == 0) {
-        (void)sscanf(argv[i + 1], "%" SCNu64, &source);
+        source = (uint64_t)strtoull(argv[i + 1], NULL, 10);
       }
     }
 

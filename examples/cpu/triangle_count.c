@@ -87,24 +87,34 @@ static inline unsigned int check_and_set(uint64_t *mask, unsigned int index) {
 
 void final_reduce(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                  arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
   uint64_t count = 0;
   for (unsigned int i = 0; i < depc; i++) {
     count += (uint64_t)depv[i].guid;
   }
   time = arts_get_time_stamp() - time;
-  ARTS_PRINTF("Triangle Count: %lu Time: %lu\n", count, time);
+  arts_printf("Triangle Count: %lu Time: %lu\n", count, time);
   arts_shutdown();
 }
 
 void local_reduce(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                  arts_edt_dep_t depv[]) {
-  ARTS_PRINTF("Local: %lu Remote: %lu Incoming: %lu\n", local, remote, incoming);
+  (void)depc;
+  (void)depv;
+  (void)paramc;
+  (void)paramv;
+  arts_printf("Local: %lu Remote: %lu Incoming: %lu\n", local, remote, incoming);
   arts_signal_edt_value(final_reduce_guid, arts_get_current_node(),
                      local_triangle_count + other_count);
 }
 
 void start_reduce(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                  arts_edt_dep_t depv[]) {
+  (void)depc;
+  (void)depv;
+  (void)paramc;
+  (void)paramv;
   for (unsigned int i = 0; i < arts_get_total_nodes(); i++) {
     arts_edt_create_dep(local_reduce, i, 0, NULL, 0, false);
   }
@@ -152,7 +162,7 @@ static inline uint64_t process_vertex(vertex_t i, vertex_t *neighbors,
 
   uint64_t first_pred = lower_bound(i, 0, neighbor_count, neighbors);
   uint64_t last_pred = neighbor_count;
-  //    ARTS_PRINTF("%lu = %lu %lu\n", i, first_pred, last_pred);
+  //    arts_printf("%lu = %lu %lu\n", i, first_pred, last_pred);
   for (uint64_t next_pred = first_pred + 1; next_pred < last_pred; next_pred++) {
     vertex_t j = neighbors[next_pred];
     unsigned int owner = get_owner_distr(j, distribution);
@@ -165,7 +175,7 @@ static inline uint64_t process_vertex(vertex_t i, vertex_t *neighbors,
       uint64_t temp = count_triangles(neighbors, first_pred, next_pred, j_neighbors,
                                      first_succ, last_succ);
       local_count += temp;
-      //            ARTS_PRINTF("%lu %lu -- %lu\n", i, j, temp);
+      //            arts_printf("%lu %lu -- %lu\n", i, j, temp);
       (*proc_local)++;
     } else if (check_and_set(visit_mask, owner)) {
       uint64_t args[3];
@@ -182,6 +192,7 @@ static inline uint64_t process_vertex(vertex_t i, vertex_t *neighbors,
 
 void visit_vertex(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                  arts_edt_dep_t depv[]) {
+  (void)paramc;
   uint64_t local_count = 0;
 
   vertex_t start = paramv[0];
@@ -206,7 +217,7 @@ void visit_vertex(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     for (vertex_t i = start; i < end; i++) {
       uint64_t visit_mask = 0;
       get_neighbors(graph, i, &neighbors, &neighbor_count);
-      //            ARTS_PRINTF("Neighbors: %lu %lu\n", i, neighbor_count);
+      //            arts_printf("Neighbors: %lu %lu\n", i, neighbor_count);
       local_count += process_vertex(i, neighbors, neighbor_count, &visit_mask,
                                   &proc_local, &proc_remote);
     }
@@ -214,7 +225,7 @@ void visit_vertex(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_atomic_add_u64(&local, proc_local);
     arts_atomic_add_u64(&remote, proc_remote);
   }
-  //    ARTS_PRINTF("%lu : %lu\n", start, local_count);
+  //    arts_printf("%lu : %lu\n", start, local_count);
 }
 
 void init_per_node(unsigned int node_id, int argc, char **argv) {
@@ -238,6 +249,8 @@ void init_per_node(unsigned int node_id, int argc, char **argv) {
 
 void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
                    char **argv) {
+  (void)argc;
+  (void)argv;
   if (!node_id && !worker_id) {
     time = arts_get_time_stamp();
     arts_edt_create_with_guid(start_reduce, start_reduce_guid, 0, NULL, 1);

@@ -110,79 +110,96 @@ unsigned int num_tiles;
 
 arts_guid_range_t *a_tile_guids = NULL;
 arts_guid_range_t *b_tile_guids = NULL;
-arts_guid_range_t *cTileGuids = NULL;
+arts_guid_range_t *c_tile_guids = NULL;
 
 double **a_tile;
 double **b_tile;
 double **c_tile;
 
-__global__ void copyKernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                           arts_edt_dep_t depv[]) {
+__global__ void copy_kernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                            arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
   unsigned int len = (unsigned int)paramv[0];
   double *a = (double *)depv[0].ptr;
   double *b = (double *)depv[1].ptr;
-  int idx = threadIdx.x + blockIdx.x * blockDim.x;
-  if (idx < len)
+  int idx = (int)(threadIdx.x + (blockIdx.x * blockDim.x));
+  if (idx < len) {
     b[idx] = a[idx];
+  }
 }
 
-__global__ void scaleKernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                            arts_edt_dep_t depv[]) {
+__global__ void scale_kernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                             arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
   unsigned int len = (unsigned int)paramv[0];
   double scale = (double)paramv[1];
   double *a = (double *)depv[0].ptr;
   double *b = (double *)depv[1].ptr;
-  int idx = threadIdx.x + blockIdx.x * blockDim.x;
-  if (idx < len)
+  int idx = (int)(threadIdx.x + (blockIdx.x * blockDim.x));
+  if (idx < len) {
     b[idx] = scale * a[idx];
+  }
 }
 
-__global__ void addKernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                          arts_edt_dep_t depv[]) {
+__global__ void add_kernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                           arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
   unsigned int len = (unsigned int)paramv[0];
   double *a = (double *)depv[0].ptr;
   double *b = (double *)depv[1].ptr;
   double *c = (double *)depv[2].ptr;
-  int idx = threadIdx.x + blockIdx.x * blockDim.x;
-  if (idx < len)
+  int idx = (int)(threadIdx.x + (blockIdx.x * blockDim.x));
+  if (idx < len) {
     c[idx] = a[idx] + b[idx];
+  }
 }
 
-__global__ void triadKernal(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                            arts_edt_dep_t depv[]) {
+__global__ void triad_kernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                             arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
   unsigned int len = (unsigned int)paramv[0];
   double scale = (double)paramv[1];
   double *a = (double *)depv[0].ptr;
   double *b = (double *)depv[1].ptr;
   double *c = (double *)depv[2].ptr;
-  int idx = threadIdx.x + blockIdx.x * blockDim.x;
-  if (idx < len)
+  int idx = (int)(threadIdx.x + (blockIdx.x * blockDim.x));
+  if (idx < len) {
     c[idx] = a[idx] + scale * b[idx];
+  }
 }
 
-void streamDriver(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                  arts_edt_dep_t depv[]) {
-  int j, k;
+void stream_driver(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                   arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
+  int j;
+  int k;
 
   double times[4][NTIMES];
 
   double scalar = 3.0;
   for (k = 0; k < NTIMES; k++) {
     times[0][k] = mysecond();
-    launch2_kernel_edt(copyKernel, tile_size, N, 0, a_tile_guids, cTileGuids);
+    launch2_kernel_edt(copy_kernel, tile_size, N, 0, a_tile_guids, c_tile_guids);
     times[0][k] = mysecond() - times[0][k];
 
     times[1][k] = mysecond();
-    launch2_kernel_edt(scaleKernel, tile_size, N, scalar, cTileGuids, b_tile_guids);
+    launch2_kernel_edt(scale_kernel, tile_size, N, scalar, c_tile_guids, b_tile_guids);
     times[1][k] = mysecond() - times[1][k];
 
     times[2][k] = mysecond();
-    launch3_kernel_edt(addKernel, tile_size, N, 0, a_tile_guids, b_tile_guids,
-                     cTileGuids);
+    launch3_kernel_edt(add_kernel, tile_size, N, 0, a_tile_guids, b_tile_guids,
+                     c_tile_guids);
     times[2][k] = mysecond() - times[2][k];
 
     times[3][k] = mysecond();
-    launch3_kernel_edt(triadKernal, tile_size, N, scalar, b_tile_guids, cTileGuids,
+    launch3_kernel_edt(triad_kernel, tile_size, N, scalar, b_tile_guids, c_tile_guids,
                      a_tile_guids);
     times[3][k] = mysecond() - times[3][k];
   }
@@ -197,52 +214,54 @@ void streamDriver(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     }
   }
 
-  ARTS_PRINTF("Function      Rate (MB/s)   Avg time     Min time     Max time\n");
+  arts_printf("Function      Rate (MB/s)   Avg time     Min time     Max time\n");
   for (j = 0; j < 4; j++) {
     avgtime[j] = avgtime[j] / (double)(NTIMES - 1);
 
-    ARTS_PRINTF("%s%11.4f  %11.4f  %11.4f  %11.4f\n", label[j],
+    arts_printf("%s%11.4f  %11.4f  %11.4f  %11.4f\n", label[j],
            1.0E-06 * bytes[j] / mintime[j], avgtime[j], mintime[j], maxtime[j]);
   }
-  ARTS_PRINTF(HLINE);
+  arts_printf(HLINE);
 
   /* --- Check Results --- */
   check_strea_mresults(tile_size, N, a_tile, b_tile, c_tile);
-  ARTS_PRINTF(HLINE);
+  arts_printf(HLINE);
   arts_shutdown();
 }
 
 extern "C" void init_per_node(unsigned int node_id, int argc, char **argv) {
-  if (argc > 1)
-    tile_size = (unsigned int)atoi(argv[1]);
+  if (argc > 1) {
+    tile_size = (unsigned int)strtol(argv[1], NULL, 10);
+  }
 
   num_tiles = N / tile_size;
-  if (N % tile_size)
+  if (N % tile_size) {
     num_tiles++;
+  }
 
-  ARTS_PRINTF("N: %u tile_size: %u num_tiles: %u Gpus: %u\n", N, tile_size, num_tiles,
+  arts_printf("N: %u tile_size: %u num_tiles: %u Gpus: %u\n", N, tile_size, num_tiles,
          arts_get_total_gpus());
 
   a_tile_guids = arts_new_guid_range_node_hash(ARTS_DB_GPU_WRITE, num_tiles, 0,
                                         arts_get_total_gpus());
   b_tile_guids = arts_new_guid_range_node_hash(ARTS_DB_GPU_WRITE, num_tiles, 0,
                                         arts_get_total_gpus());
-  cTileGuids = arts_new_guid_range_node_hash(ARTS_DB_GPU_WRITE, num_tiles, 0,
+  c_tile_guids = arts_new_guid_range_node_hash(ARTS_DB_GPU_WRITE, num_tiles, 0,
                                         arts_get_total_gpus());
 
-  uint64_t aHash = arts_hash_guid_key(arts_get_guid(a_tile_guids, 0));
-  uint64_t bHash = arts_hash_guid_key(arts_get_guid(b_tile_guids, 0));
-  uint64_t cHash = arts_hash_guid_key(arts_get_guid(cTileGuids, 0));
+  uint64_t a_hash = arts_hash_guid_key(arts_get_guid(a_tile_guids, 0));
+  uint64_t b_hash = arts_hash_guid_key(arts_get_guid(b_tile_guids, 0));
+  uint64_t c_hash = arts_hash_guid_key(arts_get_guid(c_tile_guids, 0));
 
 #ifdef SAFE
   if (arts_get_num_gpus() > 1) {
     if (!(ARTS_LOOK_UP_CONFIG(free_db_after_gpu_run) &&
           ARTS_LOOK_UP_CONFIG(run_gpu_gc_pre_edt))) {
-      if (ARTS_LOOK_UP_CONFIG(gpu_locality) != 3 || aHash != bHash ||
-          aHash != cHash) {
-        ARTS_PRINTF("For more than 1 GPU Stream requires gpu_locality to be set to "
+      if (ARTS_LOOK_UP_CONFIG(gpu_locality) != 3 || a_hash != b_hash ||
+          a_hash != c_hash) {
+        arts_printf("For more than 1 GPU Stream requires gpu_locality to be set to "
                "3.\n");
-        ARTS_PRINTF("aHash: %lu bHash: %lu cHash: %lu\n", aHash, bHash, cHash);
+        arts_printf("aHash: %lu bHash: %lu cHash: %lu\n", a_hash, b_hash, c_hash);
         arts_shutdown();
       }
     }
@@ -259,7 +278,7 @@ extern "C" void init_per_node(unsigned int node_id, int argc, char **argv) {
                                                 tile_size * sizeof(double));
       b_tile[i] = (double *)arts_db_create_with_guid(arts_get_guid(b_tile_guids, i),
                                                 tile_size * sizeof(double));
-      c_tile[i] = (double *)arts_db_create_with_guid(arts_get_guid(cTileGuids, i),
+      c_tile[i] = (double *)arts_db_create_with_guid(arts_get_guid(c_tile_guids, i),
                                                 tile_size * sizeof(double));
       for (unsigned int j = 0; j < tile_size; j++) {
         a_tile[i][j] = 1.0;
@@ -268,56 +287,60 @@ extern "C" void init_per_node(unsigned int node_id, int argc, char **argv) {
       }
     }
 
-    ARTS_PRINTF(HLINE);
-    int BytesPerWord = sizeof(double);
-    ARTS_PRINTF("This system uses %d bytes per DOUBLE PRECISION word.\n",
-           BytesPerWord);
-    ARTS_PRINTF(HLINE);
+    arts_printf(HLINE);
+    int bytes_per_word = sizeof(double);
+    arts_printf("This system uses %d bytes per DOUBLE PRECISION word.\n",
+           bytes_per_word);
+    arts_printf(HLINE);
 
-    ARTS_PRINTF("Array size = %d, Offset = %d\n", N, OFFSET);
-    ARTS_PRINTF("Total memory required = %.1f MB.\n",
-           (3.0 * BytesPerWord) * ((double)N / 1048576.0));
-    ARTS_PRINTF("Each test is run %d times, but only\n", NTIMES);
-    ARTS_PRINTF("the *best* time for each is used.\n");
-    ARTS_PRINTF(HLINE);
+    arts_printf("Array size = %d, Offset = %d\n", N, OFFSET);
+    arts_printf("Total memory required = %.1f MB.\n",
+           (3.0 * bytes_per_word) * ((double)N / 1048576.0));
+    arts_printf("Each test is run %d times, but only\n", NTIMES);
+    arts_printf("the *best* time for each is used.\n");
+    arts_printf(HLINE);
 
-    if ((quantum = checktick()) >= 1)
-      ARTS_PRINTF(
+    if ((quantum = checktick()) >= 1) {
+      arts_printf(
           "Your clock granularity/precision appears to be %d microseconds.\n",
           quantum);
-    else
-      ARTS_PRINTF(
+    } else {
+      arts_printf(
           "Your clock granularity appears to be less than one microsecond.\n");
+    }
   }
 }
 
 extern "C" void init_per_worker(unsigned int node_id, unsigned int worker_id,
                               int argc, char **argv) {
+  (void)argc;
+  (void)argv;
   if (!node_id) {
     double t = mysecond();
     for (unsigned int i = 0; i < num_tiles; i++) {
       if (i % arts_get_total_workers() == worker_id) {
-        for (unsigned int j = 0; j < tile_size; j++)
+        for (unsigned int j = 0; j < tile_size; j++) {
           a_tile[i][j] = 2.0E0 * a_tile[i][j];
+        }
       }
     }
     t = 1.0E6 * (mysecond() - t);
 
     if (!worker_id) {
-      ARTS_PRINTF("Each test below will take on the order of %d microseconds.\n",
+      arts_printf("Each test below will take on the order of %d microseconds.\n",
              (int)t);
-      ARTS_PRINTF("   (= %d clock ticks)\n", (int)(t / quantum));
-      ARTS_PRINTF("Increase the size of the arrays if this shows that\n");
-      ARTS_PRINTF("you are not getting at least 20 clock ticks per test.\n");
+      arts_printf("   (= %d clock ticks)\n", (int)(t / quantum));
+      arts_printf("Increase the size of the arrays if this shows that\n");
+      arts_printf("you are not getting at least 20 clock ticks per test.\n");
 
-      ARTS_PRINTF(HLINE);
+      arts_printf(HLINE);
 
-      ARTS_PRINTF("WARNING -- The above is only a rough guideline.\n");
-      ARTS_PRINTF("For best results, please be sure you know the\n");
-      ARTS_PRINTF("precision of your system timer.\n");
-      ARTS_PRINTF(HLINE);
+      arts_printf("WARNING -- The above is only a rough guideline.\n");
+      arts_printf("For best results, please be sure you know the\n");
+      arts_printf("precision of your system timer.\n");
+      arts_printf(HLINE);
 
-      arts_edt_create(streamDriver, 0, 0, NULL, 0);
+      arts_edt_create(stream_driver, 0, 0, NULL, 0);
     }
   }
 }

@@ -71,7 +71,7 @@ void write_bins_to_file(unsigned int index) {
   if (arts_length_array_list(list[index])) {
     FILE *fp = fopen(filename, "w");
     if (fp) {
-      ARTS_PRINTF("Writing to %s\n", filename);
+      arts_printf("Writing to %s\n", filename);
       arts_array_list_iterator_t *iter = arts_new_array_list_iterator(list[index]);
       unsigned int *bin;
       while (arts_array_list_has_next(iter)) {
@@ -81,7 +81,7 @@ void write_bins_to_file(unsigned int index) {
       arts_delete_array_list_iterator(iter);
       (void)fclose(fp);
     } else {
-      ARTS_PRINTF("Couldn't open %s\n", filename);
+      arts_printf("Couldn't open %s\n", filename);
 }
   }
 }

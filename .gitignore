@@ -5,6 +5,9 @@ CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
 
+# Documentation build artifacts
+docs/_build/
+
 # IDEs and editors
 .cache/
 .venv/

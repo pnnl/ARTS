@@ -60,9 +60,9 @@ Distribution Files
 ------------------
 
 Key Directories
-core/ - Main directory containing the runtime source files.  
+libs/core/ - Main directory containing the runtime source files.
 example/ - Directory containing both CPU and GPU examples.  
-graph/ - Directory containing graph data structures/methods for applications.  Not part of the core runtime development.  
+libs/graph/ - Directory containing graph data structures/methods for applications.  Not part of the core runtime development.
 sampleConfigs/ - Directory with arts.conf files required to run examples.  
 test/ - Directory containing tests to debug issues.  For development purposes.  
 

@@ -36,8 +36,8 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef BFSDEFS_H
-#define BFSDEFS_H
+#ifndef BFS_DEFS_H
+#define BFS_DEFS_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -45,24 +45,24 @@ extern "C" {
 
 #include "arts/runtime/globals.h"
 
-#define ARTS_PRINTF(...)
-//  #define ARTS_PRINTF(...) ARTS_PRINTF(__VA_ARGS__)
+#define arts_printf(...)
+//  #define arts_printf(...) arts_printf(__VA_ARGS__)
 #define TURNON(...)
 // #define TURNON(...) __VA_ARGS__
 #define ROOT 7
 #define PARTS 8
-#define GPULISTLEN 1024UL * 1024UL * 256UL
-#define MAXLEVEL (unsigned int)-1
+#define GPULISTLEN (1024UL * 1024UL * 256UL)
+#define MAXLEVEL ((unsigned int)-1)
 #define SMTILE 32
-#define GPU_THRESHOLD (unsigned int)1024
+#define GPU_THRESHOLD ((unsigned int)1024)
 
 #define USE_LC 2
 #ifdef USE_LC
-#define DO_SYNC(level) (level % USE_LC == 0)
+#define DO_SYNC(level) ((level) % USE_LC == 0)
 #define DB_WRITE_TYPE ARTS_DB_LC
 #define CHECK_CONSISTENCY(worker_id)                                             \
-  if (!worker_id && ARTS_LOOK_UP_CONFIG(gpu_lc_sync) != 4) {                         \
-    ARTS_PRINTF("The gpu_lc_sync must be set to 4 (artsGetMinDbUnsignedInt) in arts " \
+  if (!(worker_id) && ARTS_LOOK_UP_CONFIG(gpu_lc_sync) != 4) {                      \
+    arts_printf("The gpu_lc_sync must be set to 4 (arts_get_min_db_unsigned_int) in arts " \
            "config file.\n");                                                  \
     arts_shutdown();                                                            \
     return;                                                                    \
@@ -71,8 +71,8 @@ extern "C" {
 #define DO_SYNC(level) 0
 #define DB_WRITE_TYPE ARTS_DB_GPU_WRITE
 #define CHECK_CONSISTENCY(worker_id)                                             \
-  if (!worker_id && ARTS_LOOK_UP_CONFIG(gpu_locality) != 3) {                       \
-    ARTS_PRINTF("The gpu_locality must be set to 3 (hashOnDBZero) in arts config "   \
+  if (!(worker_id) && ARTS_LOOK_UP_CONFIG(gpu_locality) != 3) {                    \
+    arts_printf("The gpu_locality must be set to 3 (hashOnDBZero) in arts config "   \
            "file.\n");                                                         \
     arts_shutdown();                                                            \
     return;                                                                    \
@@ -80,9 +80,9 @@ extern "C" {
 #endif
 
 #define DASHDASHFILE(argc, argv)                                               \
-  if (argc == 3) {                                                             \
-    argv[1] = argv[2];                                                         \
-    argc--;                                                                    \
+  if ((argc) == 3) {                                                           \
+    (argv)[1] = (argv)[2];                                                     \
+    (argc)--;                                                                  \
   }
 
 #ifdef __cplusplus

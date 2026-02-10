@@ -8,8 +8,8 @@ ARTS (Asynchronous Runtime System) is a distributed, event-driven runtime loosel
 - **Datablocks (DBs)** – Explicit data objects with globally unique identifiers (GUIDs). They carry ownership/rendezvous information so ARTS can ship or replicate data across nodes and enforce the CDAG consistency rules.
 - **Events & Dependencies** – OCR-style events connect producers/consumers. The runtime builds a dynamic DAG and triggers EDTs once all prereqs fire.
 - **GUID system** – Every EDT, datablock, and event has a GUID so DAGs can be wired across nodes without global pointers.
-- **Datablock lifecycle** – Applications allocate datablocks via `artsDbCreate`, pass GUIDs to EDTs, and the runtime handles acquire/release semantics (read/write modes, owner hand-offs). Reference counts and versioning live in `core/src/runtime/datablock/*`.
-- **Distributed Scheduling** – A decentralized scheduler assigns EDTs to worker threads, maintains per-thread deques, supports work stealing, and cooperates with the network layer (`core/src/runtime/network`) to migrate work or data.
+- **Datablock lifecycle** – Applications allocate datablocks via `artsDbCreate`, pass GUIDs to EDTs, and the runtime handles acquire/release semantics (read/write modes, owner hand-offs). Reference counts and versioning live in `libs/core/src/runtime/datablock/*`.
+- **Distributed Scheduling** – A decentralized scheduler assigns EDTs to worker threads, maintains per-thread deques, supports work stealing, and cooperates with the network layer (`libs/core/src/runtime/network`) to migrate work or data.
 - **Networked DB protocol** – Messages for acquire/release/clone requests flow through configurable transports (shared-memory, MPI, or GASNet depending on build flags). The protocol keeps metadata (size, owner, access mode) alongside payloads so receivers can reconcile updates efficiently.
 
 ## Relationship to OCR
@@ -20,7 +20,7 @@ ARTS borrows heavily from OCR concepts:
 - Events ↔ OCR events/slots
 - GUIDs ↔ OCR GUIDs
 
-However ARTS is purpose-built for this repository and trimmed to match its compiler/tooling integration: lean APIs in `core/include/arts/` and a GUID allocator tailored to cartesian DAGs.
+However ARTS is purpose-built for this repository and trimmed to match its compiler/tooling integration: lean APIs in `libs/core/include/` and a GUID allocator tailored to cartesian DAGs.
 
 ## Dependencies
 
@@ -45,12 +45,44 @@ The root CARTS build invokes this automatically when you configure `cmake` at th
 
 ## Repository Layout (selected paths)
 
-- `core/` – Runtime sources: task scheduler, GUID tables, datablock manager, network transports, logging.
+- `libs/core/` – Runtime sources: task scheduler, GUID tables, datablock manager, network transports, logging.
 - `cmake/` – Build helpers
 - `sampleConfigs/` – Example `arts.cfg` files used by tests/benchmarks
 - `example/` – Small standalone programs showing how to create EDTs/datablocks
 - `benchmark/` – Runtime microbenchmarks
 - `docs` – Installation and configuration notes (`INSTALL.md`)
+
+## Documentation
+
+API reference and guides are built with Doxygen + Sphinx.
+
+### Prerequisites
+
+```bash
+# Doxygen (if not already installed)
+sudo apt install doxygen
+
+# Python dependencies
+pip install -r docs/requirements.txt
+```
+
+### Build
+
+```bash
+cmake -GNinja -Bbuild -DARTS_BUILD_DOCS=ON
+ninja -C build docs
+```
+
+HTML output goes to `build/docs/sphinx/`.
+
+### View locally
+
+```bash
+cd build/docs/sphinx/
+python3 -m http.server 8000
+```
+
+Then open <http://localhost:8000> in a browser.
 
 ## Learn More
 

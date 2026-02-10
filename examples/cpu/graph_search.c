@@ -89,8 +89,12 @@ void visit_source(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
 void exit_program(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                  arts_edt_dep_t depv[]) {
+  (void)depc;
+  (void)depv;
+  (void)paramc;
+  (void)paramv;
   end_time = arts_get_time_stamp();
-  ARTS_PRINTF("Total execution time: %f s \n",
+  arts_printf("Total execution time: %f s \n",
          (double)(end_time - start_time) / 1000000000.0);
   arts_stop_intro_shad();
   arts_shutdown();
@@ -98,6 +102,8 @@ void exit_program(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
 void gather_neighbor_property_val(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                                arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
   source_info_t *src_info = (source_info_t *)depv[depc - 1].ptr;
   vertex_property_t *max_weighted_neighbor = (vertex_property_t *)depv[0].ptr;
   for (unsigned int i = 0; i < src_info->numNeighbors; i++) {
@@ -106,7 +112,7 @@ void gather_neighbor_property_val(uint32_t paramc, const uint64_t *paramv, uint3
     // discarded v.
     vertex_id_t *v_id = (vertex_id_t *)depv[i + src_info->numNeighbors].ptr;
     /*For now, just printing in-place*/
-    //    ARTS_PRINTF("Seed: %u, Step: %u, Neighbor: %u, neibID: %llu Weight: %f,
+    //    arts_printf("Seed: %u, Step: %u, Neighbor: %u, neibID: %llu Weight: %f,
     //    Visited: %d, Indicator computation: \n", src_info->seed, num_steps -
     //    src_info->step + 1, data->v,v_id->id, data->propertyVal, src_info->source
     //    == data->v ? 1 : 0);
@@ -125,7 +131,7 @@ void gather_neighbor_property_val(uint32_t paramc, const uint64_t *paramv, uint3
     uint64_t packed_values[3] = {source, src_info->step - 1, src_info->seed};
     arts_guid_t visit_source_guid =
         arts_edt_create(visit_source, rank, 3, (uint64_t *)&packed_values, 2);
-    //        ARTS_PRINTF("New Edt: %lu Source is located on rank %d Guid:%lu\n",
+    //        arts_printf("New Edt: %lu Source is located on rank %d Guid:%lu\n",
     //        visit_source_guid, rank, vertex_property_map_guid);
     arts_signal_edt(visit_source_guid, 0, vertex_property_map_guid);
     arts_signal_edt(visit_source_guid, 1, vertex_id_map_guid);
@@ -134,13 +140,15 @@ void gather_neighbor_property_val(uint32_t paramc, const uint64_t *paramv, uint3
 
 void visit_source(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                  arts_edt_dep_t depv[]) {
+  (void)depc;
+  (void)paramc;
   //  arts_start_intro_shad(intro_start);
   vertex_t *neighbors = NULL;
   uint64_t neighbor_cnt = 0;
   vertex_t source = (vertex_t)paramv[0];
   int n_steps = (int)paramv[1];
   vertex_t seed = (vertex_t)paramv[2];
-  //    ARTS_PRINTF("Current Source  %" PRIu64 "\n", source);
+  //    arts_printf("Current Source  %" PRIu64 "\n", source);
 
   get_neighbors(graph, source, &neighbors, &neighbor_cnt);
   if (neighbor_cnt) {
@@ -153,7 +161,7 @@ void visit_source(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     src_info->step = n_steps;
     src_info->seed = seed;
     src_info->numNeighbors = neighbor_cnt;
-    // ARTS_PRINTF("Exploring from Source  %" PRIu64 " steps: %d with neighbors
+    // arts_printf("Exploring from Source  %" PRIu64 " steps: %d with neighbors
     // %d\n", source, num_steps + 1 - n_steps, neighbor_cnt);
     // memcpy(&(src_info->neighbors), &neighbors, neighbor_cnt *
     // sizeof(vertex_t));
@@ -174,7 +182,7 @@ void visit_source(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_array_db_t *vertex_id_map = (arts_array_db_t *)depv[1].ptr;
     for (unsigned int i = 0; i < neighbor_cnt; i++) {
       vertex_t neib = neighbors[i];
-      // ARTS_PRINTF("Vertex=%llu indexing at %u \n", neib, neighbor_cnt + i);
+      // arts_printf("Vertex=%llu indexing at %u \n", neib, neighbor_cnt + i);
       arts_get_from_array_db(gather_neighbor_property_val_guid, neighbor_cnt + i,
                          vertex_id_map, neib);
     }
@@ -183,9 +191,11 @@ void visit_source(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
 void check(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
            arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
   for (unsigned int i = 0; i < depc; i++) {
     vertex_property_t *data = (vertex_property_t *)depv[i].ptr;
-    //        ARTS_PRINTF("%d %f: %u\n", i, data->v, data->propertyVal);
+    //        arts_printf("%d %f: %u\n", i, data->v, data->propertyVal);
   }
 
   arts_shutdown();
@@ -193,10 +203,18 @@ void check(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
 void end_vertex_id_map_read(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                         arts_edt_dep_t depv[]) {
+  (void)depc;
+  (void)depv;
+  (void)paramc;
+  (void)paramv;
   arts_guid_t exit_guid = arts_edt_create(exit_program, 0, 0, NULL, 1);
   arts_initialize_and_start_epoch(exit_guid, 0);
 
-  uint64_t *seeds = (uint64_t *)malloc(sizeof(uint64_t) * num_seeds);
+  uint64_t *seeds = (uint64_t *)calloc((size_t)num_seeds, sizeof(uint64_t));
+  if (!seeds) {
+    arts_shutdown();
+    return;
+  }
 
   /*A sanity check that the data is put in properly*/
   /* arts_guid_t edt_guid = arts_edt_create(check, 0, 0, NULL,
@@ -206,20 +224,22 @@ void end_vertex_id_map_read(uint32_t paramc, const uint64_t *paramv, uint32_t de
 
   /*Sample seeds*/
   if (fixed_seed > -1) {
-    seeds[0] = fixed_seed;
+    for (int i = 0; i < num_seeds; i++) {
+      seeds[i] = (uint64_t)fixed_seed;
+    }
   } else {
     for (int i = 0; i < num_seeds; i++) {
-      seeds[i] = rand() % distribution->num_vertices;
-      //	ARTS_PRINTF("Seed chosen %d,\n", seeds[i]);
+      seeds[i] = rand() % distribution->num_vertices; // NOLINT(cert-msc30-c,cert-msc50-cpp)
+      //	arts_printf("Seed chosen %d,\n", seeds[i]);
     }
   }
   arts_start_intro_shad(intro_start);
   start_time = arts_get_time_stamp();
   /*Start walk from each seed in parallel*/
   for (int i = 0; i < num_seeds; i++) {
-    vertex_t source = seeds[i];
+    vertex_t source = (vertex_t)seeds[i];
     partition_t rank = get_owner_distr(source, distribution);
-    // ARTS_PRINTF("Source is located on rank %d\n", rank);
+    // arts_printf("Source is located on rank %d\n", rank);
     /*Spawn an edt at rank that is the owner of current seed vertex*/
     uint64_t packed_values[3] = {source, (uint64_t)num_steps, source};
     arts_guid_t visit_source_guid =
@@ -229,10 +249,19 @@ void end_vertex_id_map_read(uint32_t paramc, const uint64_t *paramv, uint32_t de
 
     arts_signal_edt(visit_source_guid, 1, vertex_id_map_guid);
   }
+  free(seeds);
 }
 
 void end_vertex_property_read(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                            arts_edt_dep_t depv[]) {
+
+(void)depc;
+
+(void)depv;
+
+(void)paramc;
+
+(void)paramv;
 
   /*Now read in the vertex ID map*/
 
@@ -252,31 +281,32 @@ void end_vertex_property_read(uint32_t paramc, const uint64_t *paramv, uint32_t 
       vertex_id_map_guid, sizeof(vertex_id_t), distribution->num_vertices);
 
   // Read in property file
-  ARTS_PRINTF("[INFO] Reading in and constructing the vertex id map ...\n");
+  arts_printf("[INFO] Reading in and constructing the vertex id map ...\n");
   FILE *file = fopen(id_file, "r");
-  ARTS_PRINTF("File to be opened %s\n", id_file);
+  arts_printf("File to be opened %s\n", id_file);
   if (file == NULL) {
-    ARTS_PRINTF("[ERROR] File containing vertex ids  can't be open -- %s", file);
+    arts_printf("[ERROR] File containing vertex ids  can't be open -- %s", id_file);
     arts_shutdown();
+    return;
   }
 
-  ARTS_PRINTF("Started reading the vertex ids file..\n");
+  arts_printf("Started reading the vertex ids file..\n");
 
   char str[MAXCHAR];
   uint64_t index = 0;
   while (fgets(str, MAXCHAR, file) != NULL) {
-    graph_sz_t vertex;
-    graph_sz_t id;
+    graph_sz_t vertex = 0;
+    graph_sz_t id = 0;
     char *token = strtok(str, "\t");
     int i = 0;
     while (token != NULL) {
       if (i == 0) { // vertex
-        vertex = atoll(token);
-        // ARTS_PRINTF("Vertex=%llu ", vertex);
+        vertex = strtoll(token, NULL, 10);
+        // arts_printf("Vertex=%llu ", vertex);
         ++i;
       } else if (i == 1) { // id
-        id = atoll(token);
-        // ARTS_PRINTF("id=%llu\n", id);
+        id = strtoll(token, NULL, 10);
+        // arts_printf("id=%llu\n", id);
         i = 0;
       }
       token = strtok(NULL, " ");
@@ -315,14 +345,14 @@ void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
     // How many seeds
     for (int i = 0; i < argc; ++i) {
       if (strcmp("--num-seeds", argv[i]) == 0) {
-        (void)sscanf(argv[i + 1], "%d", &num_seeds);
+        num_seeds = (int)strtol(argv[i + 1], NULL, 10);
       }
     }
 
     // How many steps
     for (int i = 0; i < argc; ++i) {
       if (strcmp("--num-steps", argv[i]) == 0) {
-        (void)sscanf(argv[i + 1], "%d", &num_steps);
+        num_steps = (int)strtol(argv[i + 1], NULL, 10);
       }
     }
 
@@ -356,31 +386,32 @@ void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
                                distribution->num_vertices);
 
     // Read in property file
-    ARTS_PRINTF("[INFO] Reading in and constructing the vertex property map ...\n");
+    arts_printf("[INFO] Reading in and constructing the vertex property map ...\n");
     FILE *file = fopen(graph_file, "r");
-    ARTS_PRINTF("File to be opened %s\n", graph_file);
+    arts_printf("File to be opened %s\n", graph_file);
     if (file == NULL) {
-      ARTS_PRINTF("[ERROR] File containing property value can't be open -- %s",
+      arts_printf("[ERROR] File containing property value can't be open -- %s",
              graph_file);
       arts_shutdown();
+      return;
     }
 
-    ARTS_PRINTF("Started reading the vertex property file..\n");
+    arts_printf("Started reading the vertex property file..\n");
     char str[MAXCHAR];
     uint64_t index = 0;
     while (fgets(str, MAXCHAR, file) != NULL) {
-      graph_sz_t vertex;
-      double v_property_val;
+      graph_sz_t vertex = 0;
+      double v_property_val = 0.0;
       char *token = strtok(str, "\t");
       int i = 0;
       while (token != NULL) {
         if (i == 0) { // vertex
-          vertex = atoll(token);
-          // ARTS_PRINTF("Vertex=%llu ", vertex);
+          vertex = strtoll(token, NULL, 10);
+          // arts_printf("Vertex=%llu ", vertex);
           ++i;
         } else if (i == 1) { // property
-          v_property_val = atof(token);
-          // ARTS_PRINTF("propval=%f\n", v_property_val);
+          v_property_val = strtod(token, NULL);
+          // arts_printf("propval=%f\n", v_property_val);
           i = 0;
         }
         token = strtok(NULL, " ");

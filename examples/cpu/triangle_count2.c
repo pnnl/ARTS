@@ -71,25 +71,35 @@ unsigned int check_and_set(uint64_t *mask, unsigned int index) {
 
 void final_reduce(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                  arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
   uint64_t count = 0;
   for (unsigned int i = 0; i < depc; i++) {
     count += (uint64_t)depv[i].guid;
   }
   time = arts_get_time_stamp() - time;
-  ARTS_PRINTF("Triangle Count: %lu Time: %lu\n", count, time);
+  arts_printf("Triangle Count: %lu Time: %lu\n", count, time);
   arts_shutdown();
 }
 
 void local_reduce(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                  arts_edt_dep_t depv[]) {
-  //    ARTS_PRINTF("Local Count: %lu Signal: %lu\n", local_triangle_count,
+  (void)depc;
+  (void)depv;
+  (void)paramc;
+  (void)paramv;
+  //    arts_printf("Local Count: %lu Signal: %lu\n", local_triangle_count,
   //    finalEdtGuid);
   arts_signal_edt_value(final_reduce_guid, arts_get_current_node(), local_triangle_count);
 }
 
 void start_reduce(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                  arts_edt_dep_t depv[]) {
-  //    ARTS_PRINTF("Local Count: %lu Signal: %lu\n", local_triangle_count,
+  (void)depc;
+  (void)depv;
+  (void)paramc;
+  (void)paramv;
+  //    arts_printf("Local Count: %lu Signal: %lu\n", local_triangle_count,
   //    finalEdtGuid);
   for (unsigned int i = 0; i < arts_get_total_nodes(); i++) {
     arts_edt_create_dep(local_reduce, i, 0, NULL, 0, false);
@@ -165,6 +175,9 @@ uint64_t process_block(uint64_t index) {
 
 void visit_node(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                arts_edt_dep_t depv[]) {
+  (void)depc;
+  (void)depv;
+  (void)paramc;
   uint64_t local_count = 0;
   uint64_t index = paramv[0];
 
@@ -188,6 +201,8 @@ void init_per_node(unsigned int node_id, int argc, char **argv) {
 
 void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
                    char **argv) {
+  (void)argc;
+  (void)argv;
   if (!node_id && !worker_id) {
     time = arts_get_time_stamp();
     arts_edt_create_with_guid(start_reduce, start_reduce_guid, 0, NULL, 1);
@@ -200,7 +215,7 @@ void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
   vertex_t end = partition_end_distr(node_id, distribution);
 
   uint64_t size = end - start;
-  block_size = size / (arts_get_total_workers() * 32 * 2);
+  block_size = size / ((uint64_t)arts_get_total_workers() * 32 * 2);
   num_blocks = size / block_size;
   if (size % block_size) {
     num_blocks++;

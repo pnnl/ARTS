@@ -1,0 +1,109 @@
+/******************************************************************************
+** This material was prepared as an account of work sponsored by an agency   **
+** of the United States Government.  Neither the United States Government    **
+** nor the United States Department of Energy, nor Battelle, nor any of      **
+** their employees, nor any jurisdiction or organization that has cooperated **
+** in the development of these materials, makes any warranty, express or     **
+** implied, or assumes any legal liability or responsibility for the accuracy,*
+** completeness, or usefulness or any information, apparatus, product,       **
+** software, or process disclosed, or represents that its use would not      **
+** infringe privately owned rights.                                          **
+**                                                                           **
+** Reference herein to any specific commercial product, process, or service  **
+** by trade name, trademark, manufacturer, or otherwise does not necessarily **
+** constitute or imply its endorsement, recommendation, or favoring by the   **
+** United States Government or any agency thereof, or Battelle Memorial      **
+** Institute. The views and opinions of authors expressed herein do not      **
+** necessarily state or reflect those of the United States Government or     **
+** any agency thereof.                                                       **
+**                                                                           **
+**                      PACIFIC NORTHWEST NATIONAL LABORATORY                **
+**                                  operated by                              **
+**                                    BATTELLE                               **
+**                                     for the                               **
+**                      UNITED STATES DEPARTMENT OF ENERGY                   **
+**                         under Contract DE-AC05-76RL01830                  **
+**                                                                           **
+** Copyright 2019 Battelle Memorial Institute                                **
+** Licensed under the Apache License, Version 2.0 (the "License");           **
+** you may not use this file except in compliance with the License.          **
+** You may obtain a copy of the License at                                   **
+**                                                                           **
+**    https://www.apache.org/licenses/LICENSE-2.0                            **
+**                                                                           **
+** Unless required by applicable law or agreed to in writing, software       **
+** distributed under the License is distributed on an "AS IS" BASIS, WITHOUT **
+** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
+** License for the specific language governing permissions and limitations   **
+******************************************************************************/
+#include <stdio.h>
+
+#include "arts.h"
+#include "arts/gas/route_table.h"
+#include "arts/runtime/globals.h"
+#include "arts/utils/atomics.h"
+
+#define MYSIZE 10
+
+void print_rt() {
+  arts_route_table_iterator_t *iter =
+      arts_new_route_table_iterator(arts_node_info.route_table[0]);
+  arts_route_item_t *item = arts_route_table_iterate(iter);
+  while (item) {
+    arts_print_item(item);
+    item = arts_route_table_iterate(iter);
+  }
+}
+
+void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
+                   char **argv) {
+  (void)argc;
+  (void)argv;
+  (void)worker_id;
+  printf("Init per node\n");
+  arts_guid_range_t *range = arts_new_guid_range_node(ARTS_EDT, MYSIZE, node_id);
+  for (uint64_t i = 0; i < MYSIZE; i++) {
+    arts_route_item_t *location = (arts_route_item_t *)arts_route_table_add_item(
+        (void *)range, arts_guid_range_next(range), node_id, 0);
+    if (!i) {
+      arts_printf("SWAPPING\n");
+      arts_atomic_cswap_u64(&location->lock, AVAILABLE_ITEM,
+                         (AVAILABLE_ITEM | DELETE_ITEM));
+    }
+  }
+
+  print_rt();
+
+  int rank;
+  arts_guid_t guid = arts_get_guid(range, 0);
+  arts_route_table_lookup_db(guid, &rank, true);
+  arts_route_table_return_db(guid, true);
+
+  void *ptr = arts_route_table_lookup_item(guid);
+  arts_printf("Lookup %lu %p\n", guid, ptr);
+  arts_print_item(get_item_from_data(guid, ptr));
+
+  ptr = arts_route_table_lookup_db(guid, &rank, true);
+  arts_printf("DB Lookup %lu %p\n", guid, ptr);
+  arts_print_item(get_item_from_data(guid, ptr));
+
+  arts_route_item_t *location =
+      (arts_route_item_t *)arts_route_table_add_item((void *)range, guid, node_id, 0);
+  // arts_atomic_cswap_u64(&location->lock, AVAILABLE_ITEM, (AVAILABLE_ITEM |
+  // DELETE_ITEM));
+
+  ptr = arts_route_table_lookup_item(guid);
+  arts_printf("Lookup2 %lu %p\n", guid, ptr);
+  arts_print_item(get_item_from_data(guid, ptr));
+
+  ptr = arts_route_table_lookup_db(guid, &rank, true);
+  arts_printf("DB Lookup2 %lu %p\n", guid, ptr);
+  arts_print_item(get_item_from_data(guid, ptr));
+
+  arts_shutdown();
+}
+
+int main(int argc, char **argv) {
+  arts_rt(argc, argv);
+  return 0;
+}

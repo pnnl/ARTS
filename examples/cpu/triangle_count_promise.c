@@ -87,24 +87,34 @@ static inline unsigned int check_and_set(uint64_t *mask, unsigned int index) {
 
 void final_reduce(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                  arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
   uint64_t count = 0;
   for (unsigned int i = 0; i < depc; i++) {
     count += (uint64_t)depv[i].guid;
   }
   time = arts_get_time_stamp() - time;
-  ARTS_PRINTF("Triangle Count: %lu Time: %lu\n", count, time);
+  arts_printf("Triangle Count: %lu Time: %lu\n", count, time);
   arts_shutdown();
 }
 
 void local_reduce(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                  arts_edt_dep_t depv[]) {
-  ARTS_PRINTF("Local: %lu Remote: %lu Incoming: %lu\n", local, remote, incoming);
+  (void)depc;
+  (void)depv;
+  (void)paramc;
+  (void)paramv;
+  arts_printf("Local: %lu Remote: %lu Incoming: %lu\n", local, remote, incoming);
   arts_signal_edt_value(final_reduce_guid, arts_get_current_node(),
                      local_triangle_count + other_count);
 }
 
 void start_reduce(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                  arts_edt_dep_t depv[]) {
+  (void)depc;
+  (void)depv;
+  (void)paramc;
+  (void)paramv;
   for (unsigned int i = 0; i < arts_get_total_nodes(); i++) {
     arts_edt_create_dep(local_reduce, i, 0, NULL, 0, false);
   }
@@ -180,6 +190,7 @@ static inline uint64_t process_vertex(vertex_t i, vertex_t *neighbors,
 
 void visit_vertex(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                  arts_edt_dep_t depv[]) {
+  (void)paramc;
   uint64_t local_count = 0;
 
   vertex_t start = paramv[0];
@@ -234,6 +245,8 @@ void init_per_node(unsigned int node_id, int argc, char **argv) {
 
 void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
                    char **argv) {
+  (void)argc;
+  (void)argv;
   if (!node_id && !worker_id) {
     time = arts_get_time_stamp();
     arts_edt_create_with_guid(start_reduce, start_reduce_guid, 0, NULL, 1);

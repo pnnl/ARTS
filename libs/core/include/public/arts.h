@@ -1,0 +1,1420 @@
+/******************************************************************************
+** This material was prepared as an account of work sponsored by an agency   **
+** of the United States Government.  Neither the United States Government    **
+** nor the United States Department of Energy, nor Battelle, nor any of      **
+** their employees, nor any jurisdiction or organization that has cooperated **
+** in the development of these materials, makes any warranty, express or     **
+** implied, or assumes any legal liability or responsibility for the accuracy,*
+** completeness, or usefulness or any information, apparatus, product,       **
+** software, or process disclosed, or represents that its use would not      **
+** infringe privately owned rights.                                          **
+**                                                                           **
+** Reference herein to any specific commercial product, process, or service  **
+** by trade name, trademark, manufacturer, or otherwise does not necessarily **
+** constitute or imply its endorsement, recommendation, or favoring by the   **
+** United States Government or any agency thereof, or Battelle Memorial      **
+** Institute. The views and opinions of authors expressed herein do not      **
+** necessarily state or reflect those of the United States Government or     **
+** any agency thereof.                                                       **
+**                                                                           **
+**                      PACIFIC NORTHWEST NATIONAL LABORATORY                **
+**                                  operated by                              **
+**                                    BATTELLE                               **
+**                                     for the                               **
+**                      UNITED STATES DEPARTMENT OF ENERGY                   **
+**                         under Contract DE-AC05-76RL01830                  **
+**                                                                           **
+** Copyright 2019 Battelle Memorial Institute                                **
+** Licensed under the Apache License, Version 2.0 (the "License");           **
+** you may not use this file except in compliance with the License.          **
+** You may obtain a copy of the License at                                   **
+**                                                                           **
+**    https://www.apache.org/licenses/LICENSE-2.0                            **
+**                                                                           **
+** Unless required by applicable law or agreed to in writing, software       **
+** distributed under the License is distributed on an "AS IS" BASIS, WITHOUT **
+** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
+** License for the specific language governing permissions and limitations   **
+******************************************************************************/
+/**
+ * @file arts.h
+ * @brief Public API for the ARTS (Abstract Runtime System) runtime.
+ *
+ * This header exposes every user-facing function in ARTS.  Include it as
+ * @code
+ * #include "arts.h"
+ * @endcode
+ *
+ * @see arts_rt, arts_shutdown
+ */
+#ifndef ARTS_ARTS_H
+#define ARTS_ARTS_H
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include <stddef.h>
+#include <stdint.h>
+
+#include "arts/runtime/rt.h"
+
+#include "arts/utils/atomics.h"
+
+/** @defgroup runtime Runtime Lifecycle
+ *  @{ */
+
+/**
+ * @brief Entry point to the ARTS runtime.
+ *
+ * Reads @c arts.cfg, initializes threading and networking, invokes
+ * init_per_node() / init_per_worker() callbacks, and blocks until
+ * arts_shutdown() is called.
+ *
+ * @param argc Argument count from main().
+ * @param argv Argument vector from main().
+ * @return 0 on success.
+ * @see arts_shutdown
+ */
+int arts_rt(int argc, char **argv);
+
+/**
+ * @brief Shut down the ARTS runtime.
+ *
+ * Triggers global termination detection.  It is possible to race to shutdown
+ * if there are multiple concurrent calls.
+ *
+ * @see arts_rt
+ */
+void arts_shutdown();
+
+/** @} */ /* end runtime */
+
+/* ========================================================================= */
+/** @defgroup alloc Memory Allocation
+ *  Runtime-tracked allocation that gives ARTS a full view of resource usage.
+ *  @{ */
+
+/**
+ * @brief Allocate @p size bytes of memory.
+ *
+ * ARTS applications should use this instead of @c malloc to give the runtime
+ * a full view of resource utilization.
+ *
+ * @param size Number of bytes to allocate.
+ * @return Pointer to the allocated memory, or @c NULL on failure.
+ * @see arts_free
+ */
+void *arts_malloc(size_t size);
+
+/**
+ * @brief Allocate @p size bytes with the given @p align alignment.
+ *
+ * @param size  Number of bytes to allocate.
+ * @param align Required alignment (must be a power of two).
+ * @return Pointer to the allocated memory, or @c NULL on failure.
+ * @see arts_free
+ */
+void *arts_malloc_align(size_t size, size_t align);
+
+/**
+ * @brief Allocate zero-initialized memory for an array.
+ *
+ * @param nmemb Number of elements.
+ * @param size  Size of each element in bytes.
+ * @return Pointer to the allocated memory, or @c NULL on failure.
+ * @see arts_free
+ */
+void *arts_calloc(size_t nmemb, size_t size);
+
+/**
+ * @brief Allocate zero-initialized memory with the given alignment.
+ *
+ * @param nmemb Number of elements.
+ * @param size  Size of each element in bytes.
+ * @param align Required alignment (must be a power of two).
+ * @return Pointer to the allocated memory, or @c NULL on failure.
+ * @see arts_free
+ */
+void *arts_calloc_align(size_t nmemb, size_t size, size_t align);
+
+/**
+ * @brief Resize a previous arts_malloc / arts_calloc allocation.
+ *
+ * Provided for completeness; prefer creating a fresh allocation instead.
+ *
+ * @param ptr  Pointer previously returned by arts_malloc / arts_calloc.
+ * @param size New size in bytes.
+ * @return Pointer to the reallocated memory, or @c NULL on failure.
+ */
+void *arts_realloc(void *ptr, size_t size);
+
+/**
+ * @brief Free memory allocated by arts_malloc or arts_calloc.
+ *
+ * @param ptr Pointer to free (may be @c NULL).
+ */
+void arts_free(void *ptr);
+
+/** @} */ /* end alloc */
+
+/* ========================================================================= */
+/** @defgroup guid GUID Management
+ *  Globally Unique Identifiers (GUIDs) and GUID ranges.
+ *  @{ */
+
+/**
+ * @brief Reserve a GUID of the given @p type on node @p route.
+ *
+ * @param type  Type tag for the GUID (e.g. @c ARTS_EDT, @c ARTS_DB_READ).
+ * @param route Target node rank.
+ * @return A new GUID.
+ */
+arts_guid_t arts_reserve_guid_route(arts_type_t type, unsigned int route);
+
+/**
+ * @brief Check whether @p guid is local to this node.
+ *
+ * @param guid GUID to test.
+ * @return @c true if the GUID belongs to this node, @c false otherwise.
+ */
+bool arts_is_guid_local(arts_guid_t guid);
+
+/**
+ * @brief Return the rank of the node that owns @p guid.
+ *
+ * @param guid GUID to query.
+ * @return Node rank.
+ */
+unsigned int arts_guid_get_rank(arts_guid_t guid);
+
+/**
+ * @brief Return the type tag encoded in @p guid.
+ *
+ * @param guid GUID to query.
+ * @return The arts_type_t stored in the GUID.
+ */
+arts_type_t arts_guid_get_type(arts_guid_t guid);
+
+/**
+ * @brief Return @p guid with its type field changed to @p type.
+ *
+ * Primarily used to change the access mode of a DataBlock (e.g. cast
+ * @c ARTS_DB_READ to @c ARTS_DB_WRITE).
+ *
+ * @param guid Original GUID.
+ * @param type New type / access mode.
+ * @return The retyped GUID (same rank + key, different type).
+ */
+arts_guid_t arts_guid_cast(arts_guid_t guid, arts_type_t type);
+
+/**
+ * @brief Allocate a contiguous range of @p size GUIDs on node @p route.
+ *
+ * Because GUIDs are formed by a bitfield with several fields, their raw
+ * integer values may not be consecutive.  A GUID range provides an
+ * iterator-style interface over a logically contiguous block.
+ *
+ * @param type  Type tag for every GUID in the range.
+ * @param size  Number of GUIDs to allocate.
+ * @param route Target node rank.
+ * @return Pointer to a new GUID range, or @c NULL on failure.
+ * @see arts_get_guid, arts_guid_range_next
+ */
+arts_guid_range_t *arts_new_guid_range_node(arts_type_t type, unsigned int size,
+                                    unsigned int route);
+
+/**
+ * @brief Get the GUID at @p index within @p range.
+ *
+ * @param range Pointer to a GUID range.
+ * @param index Zero-based offset from the start of the range.
+ * @return The GUID at the requested position.
+ */
+arts_guid_t arts_get_guid(arts_guid_range_t *range, unsigned int index);
+
+/**
+ * @brief Advance the range iterator and return the next GUID.
+ *
+ * @note Not thread-safe.
+ *
+ * @param range Pointer to a GUID range.
+ * @return The next GUID, or @c NULL_GUID if the end has been reached.
+ */
+arts_guid_t arts_guid_range_next(arts_guid_range_t *range);
+
+/**
+ * @brief Check whether the range iterator has more GUIDs.
+ *
+ * @note Not thread-safe.
+ *
+ * @param range Pointer to a GUID range.
+ * @return @c true if GUIDs remain, @c false otherwise.
+ */
+bool arts_guid_range_has_next(arts_guid_range_t *range);
+
+/**
+ * @brief Reset the range iterator to the beginning.
+ *
+ * @note Not thread-safe.
+ *
+ * @param range Pointer to a GUID range.
+ */
+void arts_guid_range_reset_iter(arts_guid_range_t *range);
+
+/**
+ * @brief Reserve @p size GUIDs distributed round-robin across all nodes.
+ *
+ * @param size Number of GUIDs to allocate.
+ * @param type Type tag for every GUID.
+ * @return Array of GUIDs (caller must free).
+ */
+arts_guid_t *arts_reserve_guids_round_robin(unsigned int size, arts_type_t type);
+
+/** @} */ /* end guid */
+
+/* ========================================================================= */
+/** @defgroup edt Event-Driven Tasks (EDT)
+ *  Create, signal, and destroy asynchronous task units.
+ *  @{ */
+
+/**
+ * @brief Create an EDT to run on node @p route.
+ *
+ * The EDT will execute @p func_ptr once all @p depc dependency slots have
+ * been satisfied via arts_signal_edt() or related functions.
+ *
+ * @param func_ptr Function to execute.
+ * @param route    Target node rank.
+ * @param paramc   Number of static parameters.
+ * @param paramv   Array of @p paramc uint64_t values copied into the closure.
+ * @param depc     Number of dependency slots.
+ * @return GUID of the newly created EDT.
+ * @see arts_signal_edt, arts_edt_destroy
+ */
+arts_guid_t arts_edt_create(arts_edt_t func_ptr, unsigned int route, uint32_t paramc,
+                         const uint64_t *paramv, uint32_t depc);
+
+/**
+ * @brief Create an EDT with compiler-assigned @p arts_id tracking.
+ *
+ * Same as arts_edt_create() but stores @p arts_id in the EDT structure for
+ * runtime performance tracking (ArtsMate integration).
+ *
+ * @param func_ptr Function to execute.
+ * @param route    Target node rank.
+ * @param paramc   Number of static parameters.
+ * @param paramv   Array of parameters.
+ * @param depc     Number of dependency slots.
+ * @param arts_id  Compiler-assigned unique identifier.
+ * @return GUID of the newly created EDT.
+ */
+arts_guid_t arts_edt_create_with_arts_id(arts_edt_t func_ptr, unsigned int route,
+                                   uint32_t paramc, const uint64_t *paramv,
+                                   uint32_t depc, uint64_t arts_id);
+
+/**
+ * @brief Create an EDT in a specific @p epoch_guid with @p arts_id tracking.
+ *
+ * Combines epoch association and ArtsMate compiler ID tracking.
+ *
+ * @param func_ptr   Function to execute.
+ * @param route      Target node rank.
+ * @param paramc     Number of static parameters.
+ * @param paramv     Array of parameters.
+ * @param depc       Number of dependency slots.
+ * @param epoch_guid Epoch this EDT belongs to (must still be live).
+ * @param arts_id    Compiler-assigned unique identifier.
+ * @return GUID of the newly created EDT.
+ */
+arts_guid_t arts_edt_create_with_epoch_arts_id(arts_edt_t func_ptr, unsigned int route,
+                                        uint32_t paramc, const uint64_t *paramv,
+                                        uint32_t depc, arts_guid_t epoch_guid,
+                                        uint64_t arts_id);
+
+/* artsEdtParallel — not implemented */
+
+/**
+ * @brief Create an EDT with a pre-reserved @p guid.
+ *
+ * The EDT runs on the home node of @p guid.
+ *
+ * @param func_ptr Function to execute.
+ * @param guid     Pre-reserved GUID (determines target node).
+ * @param paramc   Number of static parameters.
+ * @param paramv   Array of parameters.
+ * @param depc     Number of dependency slots.
+ * @return The same @p guid, now associated with the EDT.
+ * @see arts_reserve_guid_route
+ */
+arts_guid_t arts_edt_create_with_guid(arts_edt_t func_ptr, arts_guid_t guid,
+                                 uint32_t paramc, const uint64_t *paramv,
+                                 uint32_t depc);
+
+/**
+ * @brief Create an EDT in a specific epoch.
+ *
+ * The user must ensure the epoch is still live.
+ *
+ * @param func_ptr   Function to execute.
+ * @param route      Target node rank.
+ * @param paramc     Number of static parameters.
+ * @param paramv     Array of parameters.
+ * @param depc       Number of dependency slots.
+ * @param epoch_guid Epoch GUID (must still be live).
+ * @return GUID of the newly created EDT.
+ * @see arts_initialize_and_start_epoch
+ */
+arts_guid_t arts_edt_create_with_epoch(arts_edt_t func_ptr, unsigned int route,
+                                  uint32_t paramc, const uint64_t *paramv,
+                                  uint32_t depc, arts_guid_t epoch_guid);
+
+/**
+ * @brief Create an EDT with optional dependency-slot allocation.
+ *
+ * When @p has_depv is @c false the runtime does not allocate storage for the
+ * dependency array, but still uses the @p depc counter.  Useful when an EDT
+ * has many dependencies but does not need their result data.
+ *
+ * @param func_ptr Function to execute.
+ * @param route    Target node rank.
+ * @param paramc   Number of static parameters.
+ * @param paramv   Array of parameters.
+ * @param depc     Number of dependencies.
+ * @param has_depv If @c false, skip depv allocation.
+ * @return GUID of the newly created EDT.
+ */
+arts_guid_t arts_edt_create_dep(arts_edt_t func_ptr, unsigned int route,
+                            uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                            bool has_depv);
+
+/**
+ * @brief Create an EDT with a pre-reserved GUID and optional depv allocation.
+ *
+ * @param func_ptr Function to execute.
+ * @param guid     Pre-reserved GUID (determines target node).
+ * @param paramc   Number of static parameters.
+ * @param paramv   Array of parameters.
+ * @param depc     Number of dependencies.
+ * @param has_depv If @c false, skip depv allocation.
+ * @return The same @p guid, now associated with the EDT.
+ */
+arts_guid_t arts_edt_create_with_guid_dep(arts_edt_t func_ptr, arts_guid_t guid,
+                                    uint32_t paramc, const uint64_t *paramv,
+                                    uint32_t depc, bool has_depv);
+
+/**
+ * @brief Create an EDT in a specific epoch with optional depv allocation.
+ *
+ * @param func_ptr   Function to execute.
+ * @param route      Target node rank.
+ * @param paramc     Number of static parameters.
+ * @param paramv     Array of parameters.
+ * @param depc       Number of dependencies.
+ * @param epoch_guid Epoch GUID (must still be live).
+ * @param has_depv   If @c false, skip depv allocation.
+ * @return GUID of the newly created EDT.
+ */
+arts_guid_t arts_edt_create_with_epoch_dep(arts_edt_t func_ptr, unsigned int route,
+                                     uint32_t paramc, const uint64_t *paramv,
+                                     uint32_t depc, arts_guid_t epoch_guid,
+                                     bool has_depv);
+
+/**
+ * @brief Destroy an EDT and remove its GUID from the routing table.
+ *
+ * EDTs are automatically destroyed after they finish running; call this only
+ * to cancel an EDT that has not yet fired.
+ *
+ * @param guid GUID of the EDT to destroy.
+ */
+void arts_edt_destroy(arts_guid_t guid);
+
+/**
+ * @brief Signal an EDT dependency slot with a DataBlock GUID.
+ *
+ * When all @c depc slots are satisfied the EDT is scheduled.  The
+ * @c depv[slot] entry is filled with the GUID and a pointer to the DB data.
+ * The acquire mode is determined by the type field of @p data_guid; use
+ * arts_guid_cast() to override.
+ *
+ * @param edt_guid  GUID of the target EDT.
+ * @param slot      Dependency slot index.
+ * @param data_guid GUID of the DataBlock to deliver.
+ * @see arts_guid_cast
+ */
+void arts_signal_edt(arts_guid_t edt_guid, uint32_t slot, arts_guid_t data_guid);
+
+/**
+ * @brief Signal an EDT dependency slot with a plain 64-bit value.
+ *
+ * The value is stored in the @c guid field of @c depv[slot].
+ *
+ * @param edt_guid GUID of the target EDT.
+ * @param slot     Dependency slot index.
+ * @param value    Value to deliver.
+ */
+void arts_signal_edt_value(arts_guid_t edt_guid, uint32_t slot, uint64_t value);
+
+/**
+ * @brief Signal an EDT dependency slot with a data copy.
+ *
+ * @p size bytes starting at @p ptr are copied into the EDT's @c depv[slot].ptr.
+ * The copy is freed automatically after the EDT runs.
+ *
+ * @param edt_guid GUID of the target EDT.
+ * @param slot     Dependency slot index.
+ * @param ptr      Source data pointer.
+ * @param size     Number of bytes to copy.
+ */
+void arts_signal_edt_ptr(arts_guid_t edt_guid, uint32_t slot, void *ptr,
+                      unsigned int size);
+
+/**
+ * @brief Signal an EDT slot with a pointer while preserving the DB GUID.
+ *
+ * Used for byte-slice dependencies where both the pointer
+ * (@c db_ptr + byte_offset) and the original DB GUID are needed.
+ *
+ * @param edt_guid GUID of the target EDT.
+ * @param slot     Dependency slot index.
+ * @param db_guid  Original DataBlock GUID (stored in @c depv[slot].guid).
+ * @param ptr      Computed pointer (stored in @c depv[slot].ptr).
+ * @param size     Number of bytes.
+ */
+void arts_signal_edt_ptr_with_guid(arts_guid_t edt_guid, uint32_t slot,
+                              arts_guid_t db_guid, void *ptr, unsigned int size);
+
+/**
+ * @brief Signal an EDT slot as satisfied without any data.
+ *
+ * Used for boundary conditions where a dependency should be skipped
+ * (e.g. stencil edges).  The slot is marked @c ARTS_NULL.
+ *
+ * @param edt_guid GUID of the target EDT.
+ * @param slot     Dependency slot index.
+ */
+void arts_signal_edt_null(arts_guid_t edt_guid, uint32_t slot);
+
+/** @} */ /* end edt */
+
+/* ========================================================================= */
+/** @defgroup active_msg Active Messages
+ *  Convenience wrappers that combine EDT creation and signaling.
+ *  @{ */
+
+/**
+ * @brief Create an EDT co-located with @p db_guid and signal it.
+ *
+ * Wrapper around arts_edt_create() + arts_signal_edt().
+ *
+ * @param func_ptr Function to execute.
+ * @param paramc   Number of static parameters.
+ * @param paramv   Array of parameters.
+ * @param depc     Number of dependency slots.
+ * @param db_guid  DataBlock to co-locate with and deliver.
+ * @return GUID of the created EDT.
+ */
+arts_guid_t arts_active_message_with_db(arts_edt_t func_ptr, uint32_t paramc,
+                                   const uint64_t *paramv, uint32_t depc,
+                                   arts_guid_t db_guid);
+
+/**
+ * @brief Create an EDT on @p rank and signal it with @p db_guid.
+ *
+ * @param func_ptr Function to execute.
+ * @param paramc   Number of static parameters.
+ * @param paramv   Array of parameters.
+ * @param depc     Number of dependency slots.
+ * @param db_guid  DataBlock to deliver.
+ * @param rank     Target node rank.
+ * @return GUID of the created EDT.
+ */
+arts_guid_t arts_active_message_with_db_at(arts_edt_t func_ptr, uint32_t paramc,
+                                     const uint64_t *paramv, uint32_t depc,
+                                     arts_guid_t db_guid, unsigned int rank);
+
+/**
+ * @brief Create an EDT and deliver a copy of a data buffer.
+ *
+ * Wrapper around arts_edt_create() + arts_signal_edt_ptr().
+ *
+ * @param func_ptr Function to execute.
+ * @param route    Target node rank.
+ * @param paramc   Number of static parameters.
+ * @param paramv   Array of parameters.
+ * @param depc     Number of dependency slots.
+ * @param data     Source buffer to copy.
+ * @param size     Number of bytes to copy.
+ * @return GUID of the created EDT.
+ */
+arts_guid_t arts_active_message_with_buffer(arts_edt_t func_ptr, unsigned int route,
+                                       uint32_t paramc, const uint64_t *paramv,
+                                       uint32_t depc, void *data,
+                                       unsigned int size);
+
+/**
+ * @brief Allocate a node-local buffer accessible by GUID.
+ *
+ * The buffer lives on the allocating node.  Remote nodes may write to it
+ * via arts_set_buffer().  Each access decrements @p uses; when it reaches
+ * zero the routing-table entry is freed.
+ *
+ * @param[out] buffer     Pointer to the allocated buffer.
+ * @param      size       Buffer size in bytes.
+ * @param      uses       Number of accesses before auto-free.
+ * @param      epoch_guid Epoch for termination-detection accounting.
+ * @return GUID of the buffer.
+ * @see arts_set_buffer, arts_get_buffer
+ */
+arts_guid_t arts_allocate_local_buffer(void **buffer, unsigned int size,
+                                   unsigned int uses, arts_guid_t epoch_guid);
+
+/**
+ * @brief Write data into a buffer identified by @p buffer_guid.
+ *
+ * @param buffer_guid Target buffer GUID.
+ * @param buffer      Source data to copy.
+ * @param size        Number of bytes.
+ * @return Pointer to the buffer's internal storage.
+ */
+void *arts_set_buffer(arts_guid_t buffer_guid, void *buffer, unsigned int size);
+
+/**
+ * @brief Read the buffer identified by @p buffer_guid and decrement its use
+ * count.
+ *
+ * If the use count reaches zero the routing-table entry is freed.
+ * Only available on the node that allocated the buffer.
+ *
+ * @param buffer_guid Buffer GUID.
+ * @return Pointer to the buffer data.
+ */
+void *arts_get_buffer(arts_guid_t buffer_guid);
+
+/**
+ * @brief Block until the buffer identified by @p buffer_guid is available.
+ *
+ * @param buffer_guid Buffer GUID.
+ * @return Pointer to the buffer data.
+ */
+void *arts_block_for_buffer(arts_guid_t buffer_guid);
+
+/** @} */ /* end active_msg */
+
+/* ========================================================================= */
+/** @defgroup event Events
+ *  Latch-based event synchronization primitives.
+ *  @{ */
+
+/**
+ * @brief Create a latch event on node @p route.
+ *
+ * A latch event maintains a counter that can be incremented/decremented via
+ * arts_event_satisfy_slot().  When it reaches zero the event fires,
+ * broadcasting its data to all registered dependents.
+ *
+ * @param route       Target node rank.
+ * @param latch_count Initial counter value.
+ * @return GUID of the new event.
+ * @see arts_event_satisfy_slot, arts_add_dependence
+ */
+arts_guid_t arts_event_create(unsigned int route, unsigned int latch_count);
+
+/**
+ * @brief Create a latch event with a pre-reserved @p guid.
+ *
+ * @param guid        Pre-reserved GUID (determines home node).
+ * @param latch_count Initial counter value.
+ * @return The same @p guid, now associated with the event.
+ */
+arts_guid_t arts_event_create_with_guid(arts_guid_t guid, unsigned int latch_count);
+
+/**
+ * @brief Check whether the event has already fired.
+ *
+ * @param event Event GUID.
+ * @return @c true if fired, @c false otherwise.
+ */
+bool arts_is_event_fired(arts_guid_t event);
+
+/**
+ * @brief Destroy a local event.
+ *
+ * @param guid Event GUID.
+ */
+void arts_event_destroy(arts_guid_t guid);
+
+/**
+ * @brief Signal a latch-event slot.
+ *
+ * Use @c ARTS_EVENT_LATCH_INCR_SLOT to increment and
+ * @c ARTS_EVENT_LATCH_DECR_SLOT to decrement the counter.  When the counter
+ * reaches zero the event fires.
+ *
+ * @param event_guid Event GUID.
+ * @param data_guid  DataBlock to broadcast when the event fires.
+ * @param slot       Slot type (see arts_latch_event_slot_t).
+ * @see arts_latch_event_slot_t
+ */
+void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
+                          uint32_t slot);
+
+/**
+ * @brief Wire an event to an EDT or another event.
+ *
+ * When @p source fires it will signal @p destination at @p slot.  If the
+ * source has already fired the signal propagates immediately.
+ *
+ * @param source      Source event GUID.
+ * @param destination Destination EDT or event GUID.
+ * @param slot        Dependency slot on the destination.
+ */
+void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
+                       uint32_t slot);
+
+/**
+ * @brief Register a callback to execute when @p source fires.
+ *
+ * Unlike an EDT, the callback runs inline on the thread that decrements the
+ * counter to zero.
+ *
+ * @param source     Event GUID.
+ * @param callback_t Function to invoke.
+ */
+void arts_add_local_event_callback(arts_guid_t source, event_callback_t callback_t);
+
+/** @} */ /* end event */
+
+/* ========================================================================= */
+/** @defgroup persistent_event Persistent Events
+ *  Reusable synchronization points that can fire multiple times.
+ *  @{ */
+
+/**
+ * @brief Create a persistent event on node @p route.
+ *
+ * A persistent event stays alive after firing and can be triggered again.
+ *
+ * @param route       Target node rank.
+ * @param latch_count Initial counter value.
+ * @param data_guid   DataBlock GUID to deliver when the event fires.
+ * @return GUID of the new persistent event.
+ */
+arts_guid_t arts_persistent_event_create(unsigned int route,
+                                     unsigned int latch_count,
+                                     arts_guid_t data_guid);
+
+/**
+ * @brief Satisfy a persistent event.
+ *
+ * @param event_guid Persistent event GUID.
+ * @param action     Slot / action type.
+ * @param lock       Whether to acquire the event lock.
+ */
+void arts_persistent_event_satisfy(arts_guid_t event_guid, uint32_t action,
+                                bool lock);
+
+/**
+ * @brief Increment the latch count of a persistent event.
+ *
+ * Indicates that a new dependency has been added, allowing the event to fire
+ * again after the counter drops back to zero.
+ *
+ * @param event_guid Persistent event GUID.
+ */
+void arts_persistent_event_increment_latch(arts_guid_t event_guid);
+
+/**
+ * @brief Decrement the latch count of a persistent event.
+ *
+ * If the counter reaches zero the event fires, signaling all dependents.
+ *
+ * @param event_guid Persistent event GUID.
+ */
+void arts_persistent_event_decrement_latch(arts_guid_t event_guid);
+
+/**
+ * @brief Add a dependence from a persistent event to an EDT slot.
+ *
+ * If the event's latch count is already zero the EDT is signaled immediately.
+ *
+ * @param event_source Source persistent event GUID.
+ * @param edt_dest     Destination EDT GUID.
+ * @param edt_slot     Dependency slot on the EDT.
+ */
+void arts_add_dependence_to_persistent_event(arts_guid_t event_source,
+                                        arts_guid_t edt_dest, uint32_t edt_slot);
+
+/**
+ * @brief Add a dependence with a compiler-inferred acquire mode.
+ *
+ * @param event_source Source persistent event GUID.
+ * @param edt_dest     Destination EDT GUID.
+ * @param edt_slot     Dependency slot on the EDT.
+ * @param acquire_mode Acquire mode override.
+ */
+void arts_add_dependence_to_persistent_event_with_mode(arts_guid_t event_source,
+                                                arts_guid_t edt_dest,
+                                                uint32_t edt_slot,
+                                                arts_type_t acquire_mode);
+
+/**
+ * @brief Add a dependence with acquire mode override and diff tracking.
+ *
+ * @param event_source Source persistent event GUID.
+ * @param edt_dest     Destination EDT GUID.
+ * @param edt_slot     Dependency slot on the EDT.
+ * @param acquire_mode Acquire mode override.
+ */
+void arts_add_dependence_to_persistent_event_with_mode_and_diff(arts_guid_t event_source,
+                                                       arts_guid_t edt_dest,
+                                                       uint32_t edt_slot,
+                                                       arts_type_t acquire_mode);
+
+/**
+ * @brief Add a dependence with byte offset for slice-based signaling.
+ *
+ * When @p byte_offset > 0 or @p size > 0, the persistent event will signal
+ * with a pointer to (@c db_ptr + @p byte_offset) while preserving the DB GUID.
+ *
+ * @param event_source Source persistent event GUID.
+ * @param edt_dest     Destination EDT GUID.
+ * @param edt_slot     Dependency slot on the EDT.
+ * @param acquire_mode Acquire mode.
+ * @param byte_offset  Byte offset into the DataBlock.
+ * @param size         Slice size in bytes.
+ */
+void arts_add_dependence_to_persistent_event_with_byte_offset(
+    arts_guid_t event_source, arts_guid_t edt_dest, uint32_t edt_slot,
+    arts_type_t acquire_mode, uint64_t byte_offset, uint64_t size);
+
+/** @} */ /* end persistent_event */
+
+/* ========================================================================= */
+/** @defgroup db DataBlocks (DB)
+ *  Fixed-size data objects shared between tasks via the CDAG memory model.
+ *  @{ */
+
+/**
+ * @brief Create a local DataBlock of @p size bytes.
+ *
+ * A DataBlock (DB) is the main memory abstraction used in ARTS to share data
+ * between tasks.  The access pattern is dictated by @p mode (see @ref
+ * arts_type_t).  When an EDT that depends on this DB runs, it receives the
+ * GUID, mode, and raw pointer via arts_edt_dep_t.
+ *
+ * @param[out] addr Receives a pointer to the DB payload.
+ * @param      size Size in bytes.
+ * @param      mode Access mode (e.g. @c ARTS_DB_READ, @c ARTS_DB_PIN).
+ * @return GUID of the created DB.
+ * @see arts_signal_edt, arts_db_destroy
+ */
+arts_guid_t arts_db_create(void **addr, uint64_t size, arts_type_t mode);
+
+/**
+ * @brief Create a local DataBlock — variant returning arts_ptr_t.
+ *
+ * @param[out] addr Receives the address as @c arts_ptr_t.
+ * @param      size Size in bytes.
+ * @param      mode Access mode.
+ * @return GUID of the created DB.
+ */
+arts_guid_t arts_db_create_ptr(arts_ptr_t *addr, uint64_t size, arts_type_t mode);
+
+/**
+ * @brief Create a DataBlock with @p arts_id tracking (ArtsMate integration).
+ *
+ * @param[out] addr    Receives a pointer to the DB payload.
+ * @param      size    Size in bytes.
+ * @param      mode    Access mode.
+ * @param      arts_id Compiler-assigned unique identifier.
+ * @return GUID of the created DB.
+ */
+arts_guid_t arts_db_create_with_arts_id(void **addr, uint64_t size, arts_type_t mode,
+                                  uint64_t arts_id);
+
+/**
+ * @brief Create a DataBlock with a pre-reserved GUID and @p arts_id.
+ *
+ * @param guid    Pre-reserved GUID.
+ * @param size    Size in bytes.
+ * @param arts_id Compiler-assigned unique identifier.
+ * @return Pointer to the DB payload.
+ */
+void *arts_db_create_with_guid_and_arts_id(arts_guid_t guid, uint64_t size,
+                                    uint64_t arts_id);
+
+/**
+ * @brief Create a DataBlock with a pre-reserved @p guid.
+ *
+ * The type and route are encoded in the GUID.
+ *
+ * @param guid Pre-reserved GUID (must be local).
+ * @param size Size in bytes.
+ * @return Pointer to the DB payload.
+ */
+void *arts_db_create_with_guid(arts_guid_t guid, uint64_t size);
+
+/**
+ * @brief Create a DataBlock with a pre-reserved @p guid and initial @p data.
+ *
+ * The data is copied into the DB at creation time.  This avoids a race
+ * between user writes and out-of-order EDT acquisitions.
+ *
+ * @param guid Pre-reserved GUID (must be local).
+ * @param data Source data to copy into the DB.
+ * @param size Size in bytes.
+ * @return Pointer to the DB payload.
+ */
+void *arts_db_create_with_guid_and_data(arts_guid_t guid, void *data, uint64_t size);
+
+/**
+ * @brief Create an uninitialized DataBlock on remote node @p route.
+ *
+ * @param route Target node rank.
+ * @param size  Size in bytes.
+ * @param mode  Access mode.
+ * @return GUID of the created DB.
+ */
+arts_guid_t arts_db_create_remote(unsigned int route, uint64_t size,
+                              arts_type_t mode);
+
+/**
+ * @brief Move a DataBlock to remote node @p rank.
+ *
+ * @warning The GUID does not change, so remote lookups still go to the
+ *          original home node.  Local access from @p rank will succeed.
+ *
+ * @param db_guid GUID of the DataBlock to move.
+ * @param rank    Destination node rank.
+ */
+void arts_db_move(arts_guid_t db_guid, unsigned int rank);
+
+/**
+ * @brief Destroy all copies of a DataBlock system-wide.
+ *
+ * @param guid DataBlock GUID.
+ */
+void arts_db_destroy(arts_guid_t guid);
+
+/**
+ * @brief Destroy the local copy of a DataBlock.
+ *
+ * If @p remote is @c true and the DB is not local, the request is forwarded
+ * to the home node.
+ *
+ * @param guid   DataBlock GUID.
+ * @param remote Whether to forward to the home node if not local.
+ */
+void arts_db_destroy_safe(arts_guid_t guid, bool remote);
+
+/**
+ * @brief Write data into a DataBlock on its home node and signal an EDT.
+ *
+ * @param ptr      Source data.
+ * @param edt_guid EDT to signal upon completion.
+ * @param db_guid  Target DataBlock.
+ * @param slot     EDT dependency slot to satisfy.
+ * @param offset   Byte offset within the DB.
+ * @param size     Number of bytes to write.
+ */
+void arts_put_in_db(void *ptr, arts_guid_t edt_guid, arts_guid_t db_guid,
+                 unsigned int slot, unsigned int offset, unsigned int size);
+
+/**
+ * @brief Write data into a DataBlock on a specific node @p rank.
+ *
+ * @param ptr      Source data.
+ * @param edt_guid EDT to signal upon completion.
+ * @param db_guid  Target DataBlock.
+ * @param slot     EDT dependency slot to satisfy.
+ * @param offset   Byte offset within the DB.
+ * @param size     Number of bytes to write.
+ * @param rank     Node rank where the write is applied.
+ */
+void arts_put_in_db_at(void *ptr, arts_guid_t edt_guid, arts_guid_t db_guid,
+                   unsigned int slot, unsigned int offset, unsigned int size,
+                   unsigned int rank);
+
+/**
+ * @brief Write data into a DataBlock within a specific epoch.
+ *
+ * @param ptr        Source data.
+ * @param epoch_guid Epoch to associate the put with.
+ * @param db_guid    Target DataBlock.
+ * @param offset     Byte offset within the DB.
+ * @param size       Number of bytes to write.
+ */
+void arts_put_in_db_epoch(void *ptr, arts_guid_t epoch_guid, arts_guid_t db_guid,
+                      unsigned int offset, unsigned int size);
+
+/**
+ * @brief Read data from a DataBlock on its home node.
+ *
+ * A copy of @p size bytes at @p offset is delivered to @p edt_guid via
+ * arts_signal_edt_ptr().
+ *
+ * @param edt_guid Destination EDT.
+ * @param db_guid  Source DataBlock.
+ * @param slot     EDT dependency slot.
+ * @param offset   Byte offset within the DB.
+ * @param size     Number of bytes to read.
+ */
+void arts_get_from_db(arts_guid_t edt_guid, arts_guid_t db_guid, unsigned int slot,
+                   unsigned int offset, unsigned int size);
+
+/**
+ * @brief Read data from a DataBlock on a specific node @p rank.
+ *
+ * @param edt_guid Destination EDT.
+ * @param db_guid  Source DataBlock.
+ * @param slot     EDT dependency slot.
+ * @param offset   Byte offset within the DB.
+ * @param size     Number of bytes to read.
+ * @param rank     Node rank to read from.
+ */
+void arts_get_from_db_at(arts_guid_t edt_guid, arts_guid_t db_guid, unsigned int slot,
+                     unsigned int offset, unsigned int size, unsigned int rank);
+
+/** @brief Rename a DataBlock, returning a new GUID pointing to the same data.
+ */
+arts_guid_t arts_db_rename(arts_guid_t guid);
+
+/** @brief Rename a DataBlock to @p new_guid from @p old_guid. */
+bool arts_db_rename_with_guid(arts_guid_t new_guid, arts_guid_t old_guid);
+
+/** @brief Copy a DataBlock to a new GUID with a different type / access mode.
+ */
+arts_guid_t arts_db_copy_to_new_type(arts_guid_t old_guid, arts_type_t new_type);
+
+/**
+ * @brief Increment the latch on the persistent event associated with a DB.
+ *
+ * @param guid DataBlock GUID.
+ */
+void arts_db_increment_latch(arts_guid_t guid);
+
+/**
+ * @brief Decrement the latch on the persistent event associated with a DB.
+ *
+ * @param guid DataBlock GUID.
+ */
+void arts_db_decrement_latch(arts_guid_t guid);
+
+/**
+ * @brief Add a dependence from a DB's persistent event to an EDT slot.
+ *
+ * @param db_src   Source DataBlock GUID.
+ * @param edt_dest Destination EDT GUID.
+ * @param edt_slot EDT dependency slot.
+ */
+void arts_db_add_dependence(arts_guid_t db_src, arts_guid_t edt_dest,
+                         uint32_t edt_slot);
+
+/**
+ * @brief Add a DB dependence with acquire mode override.
+ *
+ * @param db_src       Source DataBlock GUID.
+ * @param edt_dest     Destination EDT GUID.
+ * @param edt_slot     EDT dependency slot.
+ * @param acquire_mode Acquire mode override.
+ */
+void arts_db_add_dependence_with_mode(arts_guid_t db_src, arts_guid_t edt_dest,
+                                 uint32_t edt_slot, arts_type_t acquire_mode);
+
+/**
+ * @brief Add a DB dependence with acquire mode override and diff tracking.
+ *
+ * @param db_src       Source DataBlock GUID.
+ * @param edt_dest     Destination EDT GUID.
+ * @param edt_slot     EDT dependency slot.
+ * @param acquire_mode Acquire mode override.
+ */
+void arts_db_add_dependence_with_mode_and_diff(arts_guid_t db_src, arts_guid_t edt_dest,
+                                        uint32_t edt_slot,
+                                        arts_type_t acquire_mode);
+
+/**
+ * @brief Record a dependency, auto-incrementing latch for @c ARTS_DB_WRITE.
+ *
+ * @param db_src       Source DataBlock GUID.
+ * @param edt_dest     Destination EDT GUID.
+ * @param edt_slot     EDT dependency slot.
+ * @param acquire_mode Requested acquire mode.
+ */
+void arts_record_dep(arts_guid_t db_src, arts_guid_t edt_dest, uint32_t edt_slot,
+                   arts_type_t acquire_mode);
+
+/**
+ * @brief Record a dependency at a byte offset within a DataBlock.
+ *
+ * When the DB is ready, the EDT receives a pointer to
+ * (@c db_ptr + @p byte_offset) while the original DB GUID is preserved in
+ * @c depv[slot].guid.  Used for stencil halo dependencies.
+ *
+ * @param db_src       Source DataBlock GUID.
+ * @param edt_dest     Destination EDT GUID.
+ * @param edt_slot     EDT dependency slot.
+ * @param acquire_mode Requested acquire mode.
+ * @param byte_offset  Byte offset into the DB.
+ * @param size         Slice size in bytes.
+ */
+void arts_record_dep_at(arts_guid_t db_src, arts_guid_t edt_dest, uint32_t edt_slot,
+                     arts_type_t acquire_mode, uint64_t byte_offset,
+                     uint64_t size);
+
+/** @} */ /* end db */
+
+/* ========================================================================= */
+/** @defgroup epoch Epochs / Termination Detection
+ *  Nested termination detection scopes.
+ *  @{ */
+
+/**
+ * @brief Return the GUID of the currently active epoch.
+ *
+ * @return Current epoch GUID.
+ */
+arts_guid_t arts_get_current_epoch_guid();
+
+/**
+ * @brief Assign an EDT to a specific epoch.
+ *
+ * The caller must ensure the EDT has not yet run and the epoch is still live.
+ *
+ * @param edt_guid   EDT to assign.
+ * @param epoch_guid Target epoch.
+ */
+void arts_add_edt_to_epoch(arts_guid_t edt_guid, arts_guid_t epoch_guid);
+
+/**
+ * @brief Create and immediately start a new epoch.
+ *
+ * Any EDTs created by the currently running EDT will belong to this epoch.
+ * When the epoch completes, @p finish_edt_guid is signaled at @p slot with
+ * the number of EDTs, buffer ops, get/puts, etc. executed.
+ *
+ * @param finish_edt_guid EDT to signal when the epoch finishes.
+ * @param slot            Dependency slot to fill with the epoch summary.
+ * @return GUID of the new epoch.
+ * @see arts_wait_on_handle
+ */
+arts_guid_t arts_initialize_and_start_epoch(arts_guid_t finish_edt_guid,
+                                       unsigned int slot);
+
+/**
+ * @brief Create an epoch without starting it.
+ *
+ * Use arts_start_epoch() to begin the epoch later.
+ *
+ * @param rank            Source node rank.
+ * @param finish_edt_guid EDT to signal when the epoch finishes.
+ * @param slot            Dependency slot for the epoch summary.
+ * @return GUID of the new epoch.
+ * @see arts_start_epoch
+ */
+arts_guid_t arts_initialize_epoch(unsigned int rank, arts_guid_t finish_edt_guid,
+                               unsigned int slot);
+
+/**
+ * @brief Start an epoch previously created with arts_initialize_epoch().
+ *
+ * @param epoch_guid Epoch GUID.
+ */
+void arts_start_epoch(arts_guid_t epoch_guid);
+
+/**
+ * @brief Block until @p epoch_guid finishes.
+ *
+ * The calling thread runs another scheduling round while waiting.
+ * Only valid from the EDT that created the epoch.
+ *
+ * @param epoch_guid Epoch to wait for.
+ * @return @c true on success.
+ */
+bool arts_wait_on_handle(arts_guid_t epoch_guid);
+
+/**
+ * @brief Yield the current EDT and run another scheduling round.
+ */
+void arts_yield();
+
+/**
+ * @brief Obtain a context ticket for arts_signal_context().
+ *
+ * @return A new ticket value.
+ * @see arts_context_switch, arts_signal_context
+ */
+arts_ticket_t arts_get_context_ticket();
+
+/**
+ * @brief Context-switch the current thread.
+ *
+ * Requires the @c tmt setting in @c arts.cfg.  The context sleeps until
+ * @p wait_count signals are received via arts_signal_context().
+ *
+ * @param wait_count Number of signals required to wake up.
+ * @return @c true on success.
+ */
+bool arts_context_switch(unsigned int wait_count);
+
+/**
+ * @brief Context-switch without blocking the current context.
+ */
+void arts_open_context_switch();
+
+/** @brief Switch to the next available context. */
+void arts_next_context();
+
+/** @brief Return the id of the current context on this thread. */
+unsigned int arts_get_context_id();
+
+/**
+ * @brief Wake a context that is sleeping from a context switch.
+ *
+ * @param ticket Ticket obtained from arts_get_context_ticket().
+ * @return @c true if the signal was delivered.
+ */
+bool arts_signal_context(arts_ticket_t ticket);
+
+/** @} */ /* end epoch */
+
+/* ========================================================================= */
+/** @defgroup arraydb Array DataBlocks
+ *  Distributed arrays spanning all nodes.
+ *  @{ */
+
+/**
+ * @brief Create a distributed array DB spread equally across all nodes.
+ *
+ * @param[out] addr         Receives the local portion pointer.
+ * @param      element_size Size of each element in bytes.
+ * @param      num_elements Total number of elements.
+ * @return GUID for accessing the array DB.
+ */
+arts_guid_t arts_new_array_db(arts_array_db_t **addr, unsigned int element_size,
+                          unsigned int num_elements);
+
+/**
+ * @brief Create a distributed array DB with a pre-reserved @p guid.
+ *
+ * The GUID can target any node but must be of type @c ARTS_DB_PIN.
+ *
+ * @param guid         Pre-reserved GUID.
+ * @param element_size Size of each element in bytes.
+ * @param num_elements Total number of elements.
+ * @return Pointer to the local arts_array_db_t.
+ */
+arts_array_db_t *arts_new_array_db_with_guid(arts_guid_t guid, unsigned int element_size,
+                                      unsigned int num_elements);
+
+/**
+ * @brief Create a node-local array DB (not shared across nodes).
+ *
+ * @param guid         Pre-reserved GUID.
+ * @param element_size Size of each element in bytes.
+ * @param num_elements Total number of elements.
+ * @param data         Optional initial data (may be @c NULL).
+ * @return Pointer to the local arts_array_db_t.
+ */
+arts_array_db_t *arts_new_local_array_db_with_guid(arts_guid_t guid,
+                                           unsigned int element_size,
+                                           unsigned int num_elements,
+                                           void *data);
+
+/**
+ * @brief Signal an EDT with all blocks of an array DB.
+ *
+ * @param array    Array DB.
+ * @param edt_guid Target EDT.
+ * @param slot     Starting dependency slot.
+ */
+void arts_signal_array_db(arts_array_db_t *array, arts_guid_t edt_guid,
+                       unsigned int slot);
+
+/**
+ * @brief Read an element from an array DB at @p index.
+ *
+ * Delivered to @p edt_guid at @p slot via arts_signal_edt_ptr().
+ *
+ * @param edt_guid Destination EDT.
+ * @param slot     Dependency slot.
+ * @param array    Array DB.
+ * @param index    Element index.
+ */
+void arts_get_from_array_db(arts_guid_t edt_guid, unsigned int slot,
+                        arts_array_db_t *array, unsigned int index);
+
+/**
+ * @brief Write data into an array DB element and signal an EDT.
+ *
+ * The put falls within the current epoch.
+ *
+ * @param ptr      Source data.
+ * @param edt_guid EDT to signal.
+ * @param slot     Dependency slot.
+ * @param array    Array DB.
+ * @param index    Element index.
+ */
+void arts_put_in_array_db(void *ptr, arts_guid_t edt_guid, unsigned int slot,
+                      arts_array_db_t *array, unsigned int index);
+
+/**
+ * @brief Launch an EDT for each element locally.
+ *
+ * Data is acquired read-only via arts_signal_edt_ptr().
+ *
+ * @param array    Array DB.
+ * @param func_ptr Function to execute per element.
+ * @param paramc   Number of static parameters.
+ * @param paramv   Array of parameters.
+ */
+void arts_for_each_in_array_db(arts_array_db_t *array, arts_edt_t func_ptr,
+                          uint32_t paramc, const uint64_t *paramv);
+
+/**
+ * @brief Launch an EDT for each element across all nodes.
+ *
+ * Data is acquired read-only via arts_signal_edt_ptr().
+ *
+ * @param array    Array DB.
+ * @param stride   Number of elements per EDT.
+ * @param func_ptr Function to execute.
+ * @param paramc   Number of static parameters.
+ * @param paramv   Array of parameters.
+ */
+void arts_for_each_in_array_db_at_data(arts_array_db_t *array, unsigned int stride,
+                                arts_edt_t func_ptr, uint32_t paramc,
+                                const uint64_t *paramv);
+
+/**
+ * @brief Gather all chunks of an array DB on one node and run an EDT.
+ *
+ * @param array    Array DB.
+ * @param func_ptr Function to execute after gathering.
+ * @param route    Node to gather on.
+ * @param paramc   Number of static parameters.
+ * @param paramv   Array of parameters.
+ * @param depc     Number of dependency slots (usually num_blocks).
+ */
+void arts_gather_array_db(arts_array_db_t *array, arts_edt_t func_ptr,
+                       unsigned int route, uint32_t paramc, const uint64_t *paramv,
+                       uint64_t depc);
+
+/** @brief Gather array DB within a specific epoch. */
+void arts_gather_array_db_epoch(arts_array_db_t *array, arts_edt_t func_ptr,
+                            unsigned int route, uint32_t paramc,
+                            const uint64_t *paramv, uint64_t depc,
+                            arts_guid_t epoch_guid);
+
+/** @brief Gather array DB chunks into an existing EDT. */
+void arts_gather_array_db_in_edt(arts_array_db_t *array, arts_guid_t to_edt_guid,
+                            uint64_t slot_offset);
+
+/**
+ * @brief Atomic add on an array DB element.
+ *
+ * Signals @p edt_guid at @p slot upon completion.
+ *
+ * @param array    Array DB.
+ * @param index    Element index.
+ * @param to_add   Value to add.
+ * @param edt_guid EDT to signal.
+ * @param slot     Dependency slot.
+ */
+void arts_atomic_add_in_array_db(arts_array_db_t *array, unsigned int index,
+                            unsigned int to_add, arts_guid_t edt_guid,
+                            unsigned int slot);
+
+/**
+ * @brief Atomic compare-and-swap on an array DB element.
+ *
+ * Signals @p edt_guid at @p slot upon completion.
+ *
+ * @param array     Array DB.
+ * @param index     Element index.
+ * @param old_value Expected current value.
+ * @param new_value Desired new value.
+ * @param edt_guid  EDT to signal.
+ * @param slot      Dependency slot.
+ */
+void arts_atomic_compare_and_swap_in_array_db(arts_array_db_t *array, unsigned int index,
+                                       unsigned int old_value,
+                                       unsigned int new_value,
+                                       arts_guid_t edt_guid, unsigned int slot);
+
+/** @} */ /* end arraydb */
+
+/* ========================================================================= */
+/** @defgroup util Utility Functions
+ *  Query runtime state and miscellaneous helpers.
+ *  @{ */
+
+/** @brief Extract the GUID from an EDT dependency. */
+inline arts_guid_t arts_get_guid_from_edt_dep(arts_edt_dep_t dep) { return dep.guid; }
+
+/** @brief Extract the data pointer from an EDT dependency. */
+inline void *arts_get_ptr_from_edt_dep(arts_edt_dep_t dep) { return dep.ptr; }
+
+/** @brief Return the GUID of the currently executing EDT. */
+arts_guid_t arts_get_current_guid();
+
+/** @brief Return the rank of this node. */
+unsigned int arts_get_current_node();
+
+/** @brief Return the total number of nodes. */
+unsigned int arts_get_total_nodes();
+
+/** @brief Return the worker-thread id on this node. */
+unsigned int arts_get_current_worker();
+
+/**
+ * @brief Return the total number of worker threads per node.
+ *
+ * Does not include network send/receive threads.
+ */
+unsigned int arts_get_total_workers();
+
+/**
+ * @brief Return the NUMA domain id of the current thread.
+ * @note Requires HWLOC.
+ */
+unsigned int arts_get_current_cluster();
+
+/**
+ * @brief Return the total number of NUMA domains.
+ * @note Requires HWLOC.
+ */
+unsigned int arts_get_total_clusters();
+
+/** @brief Return the number of GPUs per node. */
+unsigned int arts_get_total_gpus();
+
+/** @brief Return a monotonic timestamp in nanoseconds. */
+uint64_t arts_get_time_stamp();
+
+/** @brief Return a thread-safe pseudo-random number. */
+uint64_t arts_thread_safe_random();
+
+/**
+ * @brief Send a function call to a specific node.
+ *
+ * If @p rank is the current node the function executes inline.  Otherwise
+ * the arguments are serialized and sent over the network; the receiver
+ * thread will invoke @p fun_ptr.
+ *
+ * @param rank    Target node rank.
+ * @param fun_ptr Handler function.
+ * @param args    Argument buffer.
+ * @param size    Size of @p args in bytes.
+ * @param free    Whether the runtime should free @p args after sending.
+ */
+void arts_remote_send(unsigned int rank, send_handler_t fun_ptr, void *args,
+                    unsigned int size, bool free);
+
+/** @} */ /* end util */
+
+#ifdef __cplusplus
+}
+#endif
+#endif
