@@ -39,6 +39,7 @@
 
 #include "arts/runtime/rt.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 
 #include "arts/runtime/globals.h"

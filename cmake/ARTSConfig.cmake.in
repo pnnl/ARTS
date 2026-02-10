@@ -41,7 +41,11 @@
 
 @PACKAGE_INIT@
 
-# Find required dependencies
+include(CMakeFindDependencyMacro)
+
+# Find required dependencies for consumers
+# Note: hwloc is statically embedded in libarts when USE_HWLOC=ON
+#       and is not required as a consumer dependency
 find_dependency(Threads REQUIRED)
 
 # Import ARTS targets

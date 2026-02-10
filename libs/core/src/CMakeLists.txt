@@ -103,8 +103,11 @@ if(ARTS_BUILD_STATIC)
         ${M_LIBRARY}
         ${ANL_LIBRARY}
         ${RDMACM_LIBRARIES}
-        ${HWLOC_LIBRARIES}
+        $<BUILD_INTERFACE:${HWLOC_LIBRARIES}>
     )
+
+    # Link with -latomic for 128-bit CAS operations
+    target_link_libraries(arts_static PRIVATE atomic)
 
     # Add macOS framework dependencies for hwloc
     if(APPLE AND HWLOC_FOUND)
@@ -158,8 +161,18 @@ if(ARTS_BUILD_SHARED)
         ${M_LIBRARY}
         ${ANL_LIBRARY}
         ${RDMACM_LIBRARIES}
-        ${HWLOC_LIBRARIES}
+        $<BUILD_INTERFACE:${HWLOC_LIBRARIES}>
     )
+
+    # Hide hwloc symbols from shared library exports (GNU ld/lld)
+    if(HWLOC_FOUND AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_link_options(arts_shared PRIVATE
+            "LINKER:--exclude-libs,libhwloc.a"
+        )
+    endif()
+
+    # Link with -latomic for 128-bit CAS operations
+    target_link_libraries(arts_shared PRIVATE atomic)
 
     # Add macOS framework dependencies for hwloc
     if(APPLE AND HWLOC_FOUND)
@@ -222,11 +235,14 @@ if(BUILD_CUDA_LIBRARY)
             ${M_LIBRARY}
             ${ANL_LIBRARY}
             ${RDMACM_LIBRARIES}
-            ${HWLOC_LIBRARIES}
+            $<BUILD_INTERFACE:${HWLOC_LIBRARIES}>
             CUDA::cudart
             CUDA::cuda_driver
             CUDA::cublas
         )
+
+        # Link with -latomic for 128-bit CAS operations
+        target_link_libraries(arts_cuda_static PRIVATE atomic)
 
         # Add macOS framework dependencies for hwloc
         if(APPLE AND HWLOC_FOUND)
@@ -284,11 +300,21 @@ if(BUILD_CUDA_LIBRARY)
             ${M_LIBRARY}
             ${ANL_LIBRARY}
             ${RDMACM_LIBRARIES}
-            ${HWLOC_LIBRARIES}
+            $<BUILD_INTERFACE:${HWLOC_LIBRARIES}>
             CUDA::cudart
             CUDA::cuda_driver
             CUDA::cublas
         )
+
+        # Hide hwloc symbols from shared library exports (GNU ld/lld)
+        if(HWLOC_FOUND AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            target_link_options(arts_cuda_shared PRIVATE
+                "LINKER:--exclude-libs,libhwloc.a"
+            )
+        endif()
+
+        # Link with -latomic for 128-bit CAS operations
+        target_link_libraries(arts_cuda_shared PRIVATE atomic)
 
         # Add macOS framework dependencies for hwloc
         if(APPLE AND HWLOC_FOUND)

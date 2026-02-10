@@ -331,7 +331,7 @@ void arts_runtime_private_init(struct thread_mask_s *unit,
         start = unit->group_pos * (size + 1);
         arts_remote_set_thread_outbound_queues(start, start + size + 1);
       } else {
-        start = rem * (size + 1) + (unit->group_pos - rem) * size;
+        start = (rem * (size + 1)) + ((unit->group_pos - rem) * size);
         arts_remote_set_thread_outbound_queues(start, start + size);
       }
     }
@@ -347,7 +347,7 @@ void arts_runtime_private_init(struct thread_mask_s *unit,
         // ARTS_INFO("%d %d %d %d", start, size, unit->group_pos, rem);
         arts_remote_set_thread_inbound_queues(start, start + size + 1);
       } else {
-        start = rem * (size + 1) + (unit->group_pos - rem) * size;
+        start = (rem * (size + 1)) + ((unit->group_pos - rem) * size);
         // ARTS_INFO("%d %d %d %d", start, size, unit->group_pos, rem);
         arts_remote_set_thread_inbound_queues(start, start + size);
       }
@@ -423,7 +423,7 @@ void arts_runtime_private_init(struct thread_mask_s *unit,
     while (arts_node_info.ready_to_execute) {
     };
   }
-  arts_thread_info.drand_buf[0] = 1202107158 + unit->id * 1999;
+  arts_thread_info.drand_buf[0] = 1202107158 + (unit->id * 1999);
   arts_thread_info.drand_buf[1] = 0;
   arts_thread_info.drand_buf[2] = 0;
 }

@@ -36,11 +36,19 @@ function(build_hwloc)
 
     # Configure hwloc
     set(HWLOC_BUILD_DIR "${CMAKE_BINARY_DIR}/third_party/hwloc")
+    set(HWLOC_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/hwloc_install")
     file(MAKE_DIRECTORY ${HWLOC_BUILD_DIR})
 
-    message(STATUS "Configuring hwloc with prefix: ${CMAKE_INSTALL_PREFIX}")
+    message(STATUS "Configuring hwloc with prefix: ${HWLOC_INSTALL_DIR}")
     execute_process(
-        COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/hwloc/configure --prefix=${CMAKE_INSTALL_PREFIX} --disable-rsmi --enable-static --enable-shared
+        COMMAND ${CMAKE_COMMAND} -E env CFLAGS=-fPIC ${CMAKE_CURRENT_SOURCE_DIR}/hwloc/configure
+            --prefix=${HWLOC_INSTALL_DIR}
+            --disable-rsmi
+            --disable-cuda
+            --disable-nvml
+            --disable-libxml2
+            --enable-static
+            --disable-shared
         WORKING_DIRECTORY ${HWLOC_BUILD_DIR}
         RESULT_VARIABLE CONFIGURE_RESULT
     )
@@ -63,8 +71,8 @@ function(build_hwloc)
         message(FATAL_ERROR "Failed to build hwloc")
     endif()
 
-    # Install hwloc
-    message(STATUS "Installing hwloc to ${CMAKE_INSTALL_PREFIX}")
+    # Install hwloc to build directory
+    message(STATUS "Installing hwloc to ${HWLOC_INSTALL_DIR}")
     execute_process(
         COMMAND make install
         WORKING_DIRECTORY ${HWLOC_BUILD_DIR}
@@ -79,29 +87,28 @@ endfunction()
 
 # Check if hwloc is needed and build if necessary
 if(USE_HWLOC AND NOT HWLOC_FOUND)
-    # Check if hwloc is already installed in CMAKE_INSTALL_PREFIX
-    # Check for different library extensions
-    set(HWLOC_LIB_SO "${CMAKE_INSTALL_PREFIX}/lib/libhwloc.so")
-    set(HWLOC_LIB_A "${CMAKE_INSTALL_PREFIX}/lib/libhwloc.a")
-    set(HWLOC_INCLUDE_PATH "${CMAKE_INSTALL_PREFIX}/include/hwloc.h")
+    # Check if hwloc is already built in the build directory
+    set(HWLOC_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/hwloc_install")
+    set(HWLOC_LIB_A "${HWLOC_INSTALL_DIR}/lib/libhwloc.a")
+    set(HWLOC_INCLUDE_PATH "${HWLOC_INSTALL_DIR}/include/hwloc.h")
 
-    if(NOT ((EXISTS ${HWLOC_LIB_SO} OR EXISTS ${HWLOC_LIB_A}) AND EXISTS ${HWLOC_INCLUDE_PATH}))
-        message(STATUS "hwloc not found in CMAKE_INSTALL_PREFIX, building from source")
+    if(NOT (EXISTS ${HWLOC_LIB_A} AND EXISTS ${HWLOC_INCLUDE_PATH}))
+        message(STATUS "hwloc not found in build directory, building from source")
         build_hwloc()
     endif()
 
-    # Prefer shared library over static
-    if(EXISTS ${HWLOC_LIB_SO})
-        set(HWLOC_LIBRARIES "${HWLOC_LIB_SO}")
-    else()
-        set(HWLOC_LIBRARIES "${HWLOC_LIB_A}")
+    if(NOT EXISTS ${HWLOC_LIB_A})
+        message(FATAL_ERROR "hwloc static library not found after build at ${HWLOC_LIB_A}")
     endif()
-    set(HWLOC_INCLUDE_DIRS "${CMAKE_INSTALL_PREFIX}/include")
+
+    # Always use static library for embedding into libarts
+    set(HWLOC_LIBRARIES "${HWLOC_LIB_A}")
+    set(HWLOC_INCLUDE_DIRS "${HWLOC_INSTALL_DIR}/include")
     set(HWLOC_FOUND TRUE)
 
     # Try to determine version
-    if(EXISTS "${CMAKE_INSTALL_PREFIX}/lib/pkgconfig/hwloc.pc")
-        file(READ "${CMAKE_INSTALL_PREFIX}/lib/pkgconfig/hwloc.pc" HWLOC_PC_CONTENT)
+    if(EXISTS "${HWLOC_INSTALL_DIR}/lib/pkgconfig/hwloc.pc")
+        file(READ "${HWLOC_INSTALL_DIR}/lib/pkgconfig/hwloc.pc" HWLOC_PC_CONTENT)
         string(REGEX MATCH "Version: ([0-9]+\\.[0-9]+\\.[0-9]+)" HWLOC_VERSION_MATCH "${HWLOC_PC_CONTENT}")
         if(HWLOC_VERSION_MATCH)
             set(HWLOC_VERSION ${CMAKE_MATCH_1})

@@ -463,7 +463,6 @@ install(EXPORT ARTSTargets
     FILE ARTSTargets.cmake
     NAMESPACE ARTS::
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ARTS
-    EXPORT_LINK_INTERFACE_LIBRARIES
 )
 
 # Print configuration summary

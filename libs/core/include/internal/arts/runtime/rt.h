@@ -44,171 +44,19 @@ extern "C" {
 
 /**
  * @file rt.h
- * @brief Core types, enumerations, and internal structures for the ARTS
- * runtime.
+ * @brief Internal structures for the ARTS runtime.
  *
- * This header defines the fundamental types used throughout ARTS: GUIDs,
- * type/access-mode enumerations, EDT and DataBlock structures, event
- * primitives, and termination-detection state.
+ * This header defines internal types used by the runtime implementation:
+ * EDT and DataBlock descriptors, event structures, and termination-detection
+ * state.  Public types (arts_guid_t, arts_type_t, etc.) live in arts.h.
  *
  * @note This is an internal header.  User code should include @c arts.h.
  */
 
-#include <inttypes.h>
-#include <stdarg.h>
-#include <stdbool.h>
-#include <stdint.h>
+#include "arts.h"
 
 #include "arts/arts_defs.h"
 #include "arts/utils/link_list.h"
-
-/* ========================================================================= */
-/** @defgroup core_types Core Types
- *  Fundamental typedefs shared by the entire runtime.
- *  @{ */
-
-/** Globally Unique Identifier — 64-bit bitfield encoding type, rank, and key.
- */
-typedef intptr_t arts_guid_t;
-
-/** Sentinel value representing an invalid or absent GUID. */
-#define NULL_GUID ((arts_guid_t)0x0)
-
-/** Opaque pointer type used in DataBlock creation variants. */
-typedef uintptr_t arts_ptr_t;
-
-/** Ticket for context-switch wake-up signaling.
- *  @see arts_get_context_ticket, arts_signal_context */
-typedef uint64_t arts_ticket_t;
-
-/** @} */ /* end core_types */
-
-/* ========================================================================= */
-/** @defgroup type_enum Type / Access-Mode Enumeration
- *  Every GUID carries a type tag from this enum.
- *  @{ */
-
-/**
- * @brief Type tag and DataBlock access-mode enumeration.
- *
- * Values below @c ARTS_DB_READ identify runtime object kinds (EDT, event,
- * epoch, …).  Values from @c ARTS_DB_READ through @c ARTS_DB_LC are
- * DataBlock access modes that control coherence, caching, and lifetime.
- */
-typedef enum {
-  ARTS_NULL = 0,         /**< Empty / untyped placeholder. */
-  ARTS_EDT,              /**< Event-Driven Task (CPU). */
-  ARTS_GPU_EDT,          /**< Event-Driven Task (GPU). */
-  ARTS_EVENT,            /**< Latch-based synchronization event. */
-  ARTS_PERSISTENT_EVENT, /**< Re-armable persistent event. */
-  ARTS_EPOCH,            /**< Termination-detection epoch. */
-  ARTS_CALLBACK,         /**< Inline event callback. */
-  ARTS_BUFFER,           /**< Node-local buffer accessible by GUID. */
-
-  /* ── DataBlock access modes ──────────────────────────────────────────── */
-
-  /** Write-once, read-many.
-   *
-   *  Create the DB in this mode and write data before signaling the GUID.
-   *  The runtime aggregates requests and caches reads in the routing table. */
-  ARTS_DB_READ,
-
-  /** Exclusive write access.
-   *
-   *  Obtain by casting an @c ARTS_DB_READ DB to @c ARTS_DB_WRITE via
-   *  arts_guid_cast() and signaling an EDT.
-   *  @warning This mode is currently experimental. */
-  ARTS_DB_WRITE,
-
-  /** Pinned (node-local) mode — bypasses the CDAG memory model.
-   *
-   *  The DB is only accessible on the creating node.  Remote interaction
-   *  is limited to explicit put/get operations. */
-  ARTS_DB_PIN,
-
-  /** Single-use mode — the DB is automatically freed after the first acquire.
-   *
-   *  Useful for one-shot data that is never reused. */
-  ARTS_DB_ONCE,
-
-  /** Local single-use mode — same as @c ARTS_DB_ONCE with the additional
-   *  guarantee that the DB is co-located with the acquiring EDT
-   *  (i.e. @c edt_guid and @c db_guid share the same route). */
-  ARTS_DB_ONCE_LOCAL,
-
-  ARTS_DB_GPU_READ,  /**< GPU read-only DataBlock. */
-  ARTS_DB_GPU_WRITE, /**< GPU exclusive-write DataBlock. */
-  ARTS_DB_LC,        /**< Locality-class DataBlock. */
-
-  /* ── Pseudo-types (not valid for allocation) ─────────────────────────── */
-
-  ARTS_LAST_TYPE,     /**< Sentinel — first invalid type value. */
-  ARTS_SINGLE_VALUE,  /**< Marker: dependency carries a uint64 value. */
-  ARTS_PTR,           /**< Marker: dependency carries a pointer copy. */
-  ARTS_DB_LC_SYNC,    /**< Locality-class with synchronous copy. */
-  ARTS_DB_LC_NO_COPY, /**< Locality-class without data copy. */
-  ARTS_DB_GPU_MEMSET  /**< GPU memset operation pseudo-type. */
-} arts_type_t;
-
-/** @} */ /* end type_enum */
-
-/* ========================================================================= */
-/** @defgroup dep_types Dependency Types
- *  Structures and function-pointer types used to wire EDT dependencies.
- *  @{ */
-
-/**
- * @brief Describes a single dependency slot delivered to an EDT.
- *
- * When an EDT fires, each satisfied dependency appears as an element of
- * the @c depv[] array passed to the EDT function.
- */
-typedef struct {
-  arts_guid_t guid;         /**< GUID of the DataBlock (or encoded value). */
-  arts_type_t mode;         /**< Original type/mode of the DataBlock. */
-  void *ptr;                /**< Pointer to the DataBlock payload. */
-  arts_type_t acquire_mode; /**< Actual acquire mode used at delivery. */
-} arts_edt_dep_t;
-
-/**
- * @brief Function signature for Event-Driven Tasks (CPU and GPU).
- *
- * @param paramc Number of 64-bit static parameters.
- * @param paramv Array of @p paramc static parameter values.
- * @param depc   Number of dependency slots.
- * @param depv   Array of @p depc satisfied dependencies.
- */
-typedef void (*arts_edt_t)(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                          arts_edt_dep_t depv[]);
-
-/**
- * @brief Callback invoked inline when a latch event fires.
- *
- * @param data The dependency data from the event's satisfy call.
- */
-typedef void (*event_callback_t)(arts_edt_dep_t data);
-
-/**
- * @brief Handler function for arts_remote_send().
- *
- * @param args Pointer to the serialized argument buffer.
- */
-typedef void (*send_handler_t)(void *args);
-
-/** @} */ /* end dep_types */
-
-/* ========================================================================= */
-/** @defgroup event_slots Event Slot Types
- *  @{ */
-
-/** Slot constants for latch-event signaling. */
-typedef enum {
-  ARTS_EVENT_LATCH_DECR_SLOT = 0, /**< Decrement the latch counter. */
-  ARTS_EVENT_LATCH_INCR_SLOT = 1, /**< Increment the latch counter. */
-  ARTS_EVENT_UPDATE = 2           /**< Update data (persistent events only). */
-} arts_latch_event_slot_t;
-
-/** @} */ /* end event_slots */
 
 /* ========================================================================= */
 /** @defgroup internal_structs Internal Runtime Structures
@@ -303,29 +151,6 @@ struct arts_event_s {
 /** @} */ /* end internal_structs */
 
 /* ========================================================================= */
-/** @defgroup range_array GUID Range and Array DB
- *  @{ */
-
-/** Iterator over a contiguous range of GUIDs. */
-struct arts_guid_range_s {
-  unsigned int size;      /**< Total number of GUIDs in the range. */
-  unsigned int index;     /**< Current iterator position. */
-  arts_guid_t start_guid; /**< First GUID in the range. */
-};
-typedef struct arts_guid_range_s arts_guid_range_t;
-
-/** Distributed array DataBlock spanning multiple nodes. */
-struct arts_array_db_s {
-  unsigned int element_size;       /**< Size of each element in bytes. */
-  unsigned int elements_per_block; /**< Elements per node-local block. */
-  unsigned int num_blocks;         /**< Total number of blocks. */
-  char head[];                     /**< Flexible array of block GUIDs. */
-};
-typedef struct arts_array_db_s arts_array_db_t;
-
-/** @} */ /* end range_array */
-
-/* ========================================================================= */
 /** @defgroup td_types Termination Detection
  *  @{ */
 
@@ -378,14 +203,6 @@ typedef struct {
 } arts_buffer_t;
 
 /** @} */ /* end buffer_type */
-
-/**
- * @brief Thread-safe printf that serializes output across ARTS workers.
- *
- * @param format printf-style format string.
- * @param ...    Format arguments.
- */
-void arts_printf(const char *format, ...);
 
 #ifdef __cplusplus
 }
