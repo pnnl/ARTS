@@ -54,8 +54,9 @@ if(BUILD_CUDA_LIBRARY)
     
     # Include directories
     target_include_directories(arts_gpu PRIVATE
-        ${ARTS_CORE_INCLUDE_DIR}
-        ${ARTS_CORE_BUILD_INCLUDE_DIR}
+        ${ARTS_PUBLIC_INCLUDE_DIR}
+        ${ARTS_INTERNAL_INCLUDE_DIR}
+        ${ARTS_BUILD_INTERNAL_INCLUDE_DIR}
     )
     
     message(STATUS "GPU module configured with CUDA support")

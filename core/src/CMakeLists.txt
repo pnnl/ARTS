@@ -40,8 +40,9 @@
 # Create the main ARTS library interface target
 add_library(arts_interface INTERFACE)
 target_include_directories(arts_interface INTERFACE
-    $<BUILD_INTERFACE:${ARTS_CORE_INCLUDE_DIR}>
-    $<BUILD_INTERFACE:${ARTS_CORE_BUILD_INCLUDE_DIR}>
+    $<BUILD_INTERFACE:${ARTS_PUBLIC_INCLUDE_DIR}>
+    $<BUILD_INTERFACE:${ARTS_INTERNAL_INCLUDE_DIR}>
+    $<BUILD_INTERFACE:${ARTS_BUILD_INTERNAL_INCLUDE_DIR}>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
@@ -69,8 +70,9 @@ if(ARTS_BUILD_STATIC)
     add_library(arts_static STATIC ${ARTS_MAIN_SOURCES})
 
     target_include_directories(arts_static BEFORE PRIVATE
-        ${ARTS_CORE_BUILD_INCLUDE_DIR}
-        ${ARTS_CORE_INCLUDE_DIR}
+        ${ARTS_BUILD_INTERNAL_INCLUDE_DIR}
+        ${ARTS_PUBLIC_INCLUDE_DIR}
+        ${ARTS_INTERNAL_INCLUDE_DIR}
     )
 
     # Add hwloc include directories if available
@@ -123,8 +125,9 @@ if(ARTS_BUILD_SHARED)
     add_library(arts_shared SHARED ${ARTS_MAIN_SOURCES})
 
     target_include_directories(arts_shared BEFORE PRIVATE
-        ${ARTS_CORE_BUILD_INCLUDE_DIR}
-        ${ARTS_CORE_INCLUDE_DIR}
+        ${ARTS_BUILD_INTERNAL_INCLUDE_DIR}
+        ${ARTS_PUBLIC_INCLUDE_DIR}
+        ${ARTS_INTERNAL_INCLUDE_DIR}
     )
 
     # Add hwloc include directories if available
@@ -182,8 +185,9 @@ if(BUILD_CUDA_LIBRARY)
         add_library(arts_cuda_static STATIC ${ARTS_MAIN_SOURCES})
 
         target_include_directories(arts_cuda_static BEFORE PRIVATE
-            ${ARTS_CORE_BUILD_INCLUDE_DIR}
-            ${ARTS_CORE_INCLUDE_DIR}
+            ${ARTS_BUILD_INTERNAL_INCLUDE_DIR}
+            ${ARTS_PUBLIC_INCLUDE_DIR}
+            ${ARTS_INTERNAL_INCLUDE_DIR}
         )
 
         # Add hwloc include directories if available
@@ -243,8 +247,9 @@ if(BUILD_CUDA_LIBRARY)
         add_library(arts_cuda_shared SHARED ${ARTS_MAIN_SOURCES})
 
         target_include_directories(arts_cuda_shared BEFORE PRIVATE
-            ${ARTS_CORE_BUILD_INCLUDE_DIR}
-            ${ARTS_CORE_INCLUDE_DIR}
+            ${ARTS_BUILD_INTERNAL_INCLUDE_DIR}
+            ${ARTS_PUBLIC_INCLUDE_DIR}
+            ${ARTS_INTERNAL_INCLUDE_DIR}
         )
 
         # Add hwloc include directories if available

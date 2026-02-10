@@ -37,88 +37,93 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 #include "arts/introspection/Preamble.h"
-#define _GNU_SOURCE
+#define GNU_SOURCE
 #define _FILE_OFFSET_BITS 64
-#include "arts/arts.h"
+#include "arts.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
-#include "arts/introspection/Counter.h"
-#include "arts/network/Remote.h"
-#include "arts/network/RemoteLauncher.h"
-#include "arts/runtime/Globals.h"
-#include "arts/runtime/Runtime.h"
-#include "arts/system/ArtsPrint.h"
-#include "arts/system/Config.h"
-#include "arts/system/Debug.h"
-#include "arts/system/Threads.h"
+#include "arts/introspection/counter.h"
+#include "arts/network/remote.h"
+#include "arts/network/remote_launcher.h"
+#include "arts/runtime/globals.h"
+#include "arts/runtime/runtime.h"
+#include "arts/system/arts_print.h"
+#include "arts/system/config.h"
+#include "arts/system/debug.h"
+#include "arts/system/threads.h"
 
-extern struct artsConfig *config;
+extern struct arts_config *config;
 
-int mainArgc = 0;
-char **mainArgv = NULL;
+int main_argc = 0;
+char **main_argv = NULL;
 
 static inline uint64_t carts_benchmarks_now_ns(void) {
   struct timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return (uint64_t)ts.tv_sec * (uint64_t)1000000000ULL + (uint64_t)ts.tv_nsec;
+  (void)clock_gettime(CLOCK_MONOTONIC, &ts);
+  return ((uint64_t)ts.tv_sec * (uint64_t)1000000000ULL) + (uint64_t)ts.tv_nsec;
 }
 
 static inline int carts_benchmarks_should_report_init_runtime(void) {
   const char *v = getenv("CARTS_BENCHMARKS_REPORT_INIT_RUNTIME");
-  if (!v || !*v)
+  if (!v || !*v) {
     return 0;
+}
   return !(v[0] == '0' && v[1] == '\0');
 }
 
-int artsRT(int argc, char **argv) {
+int arts_rt(int argc, char **argv) {
   INITIALIZATION_TIME_START();
   uint64_t init_start_ns = carts_benchmarks_now_ns();
 
-  mainArgc = argc;
-  mainArgv = argv;
-  artsRemoteTryToBecomePrinter();
-  config = artsConfigLoad();
+  main_argc = argc;
+  main_argv = argv;
+  arts_remote_try_to_become_printer();
+  config = arts_config_load();
 
-  if (config->coreDump)
-    artsTurnOnCoreDumps();
+  if (config->core_dump) {
+    arts_turn_on_core_dumps();
+}
 
-  artsGlobalRankId = 0;
-  artsGlobalRankCount = config->tableLength;
-  if (strncmp(config->launcher, "local", 5) != 0)
-    artsServerSetup(config);
-  artsGlobalMasterRankId = config->masterRank;
-  if (artsGlobalRankId == config->masterRank && config->masterBoot)
-    config->launcherData->launchProcesses(config->launcherData);
+  arts_global_rank_id = 0;
+  arts_global_rank_count = config->table_length;
+  if (strncmp(config->launcher, "local", 5) != 0) {
+    arts_server_setup(config);
+}
+  arts_global_master_rank_id = config->master_rank;
+  if (arts_global_rank_id == config->master_rank && config->master_boot) {
+    config->launcher_data->launch_processes(config->launcher_data);
+}
 
-  if (artsGlobalRankCount > 1) {
-    artsRemoteSetupOutgoing();
-    if (!artsRemoteSetupIncoming())
+  if (arts_global_rank_count > 1) {
+    arts_remote_setup_outgoing();
+    if (!arts_remote_setup_incoming()) {
       return -1;
+}
   }
 
-  artsThreadInit(config);
-  artsThreadZeroNodeStart();
+  arts_thread_init(config);
+  arts_thread_zero_node_start();
 
-  if (artsGlobalRankId == 0 && carts_benchmarks_should_report_init_runtime()) {
+  if (arts_global_rank_id == 0 && carts_benchmarks_should_report_init_runtime()) {
     uint64_t init_end_ns = carts_benchmarks_now_ns();
     double elapsed_sec = (double)(init_end_ns - init_start_ns) * 1e-9;
     printf("init.arts_runtime: %.9fs\n", elapsed_sec);
-    fflush(stdout);
+    (void)fflush(stdout);
   }
 
-  artsThreadMainJoin();
+  arts_thread_main_join();
 
   // Aggregate cluster counters before cleanup (workers may still be writing)
-  if (artsGlobalRankId == config->masterRank) {
-    artsCounterWriteCluster(config->counterFolder, config->nodes);
+  if (arts_global_rank_id == config->master_rank) {
+    arts_counter_write_cluster(config->counter_folder, config->nodes);
   }
-  if (artsGlobalRankId == config->masterRank && config->masterBoot) {
-    config->launcherData->cleanupProcesses(config->launcherData);
+  if (arts_global_rank_id == config->master_rank && config->master_boot) {
+    config->launcher_data->cleanup_processes(config->launcher_data);
   }
-  artsConfigDestroy(config);
-  artsRemoteTryToClosePrinter();
+  arts_config_destroy(config);
+  arts_remote_try_to_close_printer();
   return 0;
 }

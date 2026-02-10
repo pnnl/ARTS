@@ -45,7 +45,8 @@ add_library(datastructures OBJECT ${DATASTRUCTURES_SOURCES})
 # Set include directories for the object library
 target_include_directories(datastructures PRIVATE
     ${ARTS_GRAPH_INCLUDE_DIR}
-    ${ARTS_CORE_INCLUDE_DIR}
-    ${ARTS_CORE_BUILD_INCLUDE_DIR}
+    ${ARTS_PUBLIC_INCLUDE_DIR}
+    ${ARTS_INTERNAL_INCLUDE_DIR}
+    ${ARTS_BUILD_INTERNAL_INCLUDE_DIR}
 )
 

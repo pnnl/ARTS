@@ -37,28 +37,46 @@
 ## License for the specific language governing permissions and limitations
 ###############################################################################
 
-cmake_minimum_required(VERSION 3.25)
+cmake_minimum_required(VERSION 3.22)
 project(ARTS
-    VERSION 1.7.0
+    VERSION 2.0.0
     DESCRIPTION "ARTS - Abstract Runtime System"
     LANGUAGES C CXX
 )
 
-# Modern CMake features
+# Enforce Ninja generator
+if(NOT CMAKE_GENERATOR STREQUAL "Ninja")
+    message(FATAL_ERROR
+        "ARTS requires the Ninja build generator.\n"
+        "  Use: cmake -GNinja <source-dir>")
+endif()
+
+# C17 strict mode — no GNU extensions
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_C_EXTENSIONS ON)
-set(CMAKE_CXX_EXTENSIONS ON)
+set(CMAKE_C_EXTENSIONS OFF)
+set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# Feature test macro: strict -std=c17 hides POSIX/BSD/XSI functions.
+# _DEFAULT_SOURCE enables glibc defaults (POSIX.1-2008 + XSI + BSD + extensions)
+# while CMAKE_C_EXTENSIONS=OFF keeps the C17 *language* strict.
+add_compile_definitions(_DEFAULT_SOURCE _GNU_SOURCE)
+
+# x86-64: enable 128-bit compare-and-swap (cmpxchg16b)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|amd64|AMD64")
+    add_compile_options($<$<COMPILE_LANGUAGE:C>:-mcx16>)
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-mcx16>)
+endif()
 
 # Set global properties for all targets
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # Set default install prefix if not specified
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
-    set(CMAKE_INSTALL_PREFIX "/usr/local" CACHE PATH "Install prefix" FORCE)
+    set(CMAKE_INSTALL_PREFIX "${CMAKE_SOURCE_DIR}/install" CACHE PATH "Install prefix" FORCE)
     message(STATUS "Install prefix not specified, defaulting to ${CMAKE_INSTALL_PREFIX}")
 else()
     message(STATUS "Install prefix: ${CMAKE_INSTALL_PREFIX}")
@@ -254,7 +272,7 @@ else()
 endif()
 
 # Add third-party dependencies
-add_subdirectory(third-party)
+add_subdirectory(third_party)
 
 # Hardware locality (hwloc) detection
 if(NOT USE_HWLOC)
@@ -298,7 +316,7 @@ if(ARTS_DEBUG_ENABLED)
 endif()
 
 set(COUNTER_CONFIG_PATH
-    "${CMAKE_CURRENT_SOURCE_DIR}/counter.cfg"
+    "${CMAKE_CURRENT_SOURCE_DIR}/sample_configs/counters.cfg"
     CACHE FILEPATH "ARTS counter configuration file (parsed to generate introspection macros)")
 set(COUNTER_CONFIG_FILE "${COUNTER_CONFIG_PATH}")
 
@@ -312,35 +330,20 @@ endif()
 
 # Optional components
 if(ARTS_BUILD_EXAMPLES)
-    add_subdirectory(example)
+    add_subdirectory(examples)
 endif()
 
 if(ARTS_BUILD_TESTS)
-    add_subdirectory(test)
+    add_subdirectory(tests)
 endif()
 
-add_subdirectory(sampleConfigs)
+add_subdirectory(sample_configs)
 
 # Installation configuration
-if(BUILD_CUDA_LIBRARY)
-    # Install both C/C++ headers and CUDA headers when CUDA library is built
-    install(DIRECTORY core/inc/arts/
-        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/arts
-        FILES_MATCHING
-        PATTERN "*.h"
-        PATTERN "*.cuh"
-    )
-else()
-    # Install only C/C++ headers when CUDA library is not built
-    install(DIRECTORY core/inc/arts/
-        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/arts
-        FILES_MATCHING PATTERN "*.h"
-    )
-endif()
-
-# Install generated counter/Preamble.h from build directory
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/core/inc/arts/introspection/Preamble.h
-    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/arts/introspection
+# Only install the public header — all other headers are internal.
+# External users: #include "arts.h"
+install(FILES core/inc/public/arts.h
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
 
 # Install library targets

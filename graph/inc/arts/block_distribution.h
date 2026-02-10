@@ -1,0 +1,87 @@
+/******************************************************************************
+** This material was prepared as an account of work sponsored by an agency   **
+** of the United States Government.  Neither the United States Government    **
+** nor the United States Department of Energy, nor Battelle, nor any of      **
+** their employees, nor any jurisdiction or organization that has cooperated **
+** in the development of these materials, makes any warranty, express or     **
+** implied, or assumes any legal liability or responsibility for the accuracy,*
+** completeness, or usefulness or any information, apparatus, product,       **
+** software, or process disclosed, or represents that its use would not      **
+** infringe privately owned rights.                                          **
+**                                                                           **
+** Reference herein to any specific commercial product, process, or service  **
+** by trade name, trademark, manufacturer, or otherwise does not necessarily **
+** constitute or imply its endorsement, recommendation, or favoring by the   **
+** United States Government or any agency thereof, or Battelle Memorial      **
+** Institute. The views and opinions of authors expressed herein do not      **
+** necessarily state or reflect those of the United States Government or     **
+** any agency thereof.                                                       **
+**                                                                           **
+**                      PACIFIC NORTHWEST NATIONAL LABORATORY                **
+**                                  operated by                              **
+**                                    BATTELLE                               **
+**                                     for the                               **
+**                      UNITED STATES DEPARTMENT OF ENERGY                   **
+**                         under Contract DE-AC05-76RL01830                  **
+**                                                                           **
+** Copyright 2019 Battelle Memorial Institute                                **
+** Licensed under the Apache License, Version 2.0 (the "License");           **
+** you may not use this file except in compliance with the License.          **
+** You may obtain a copy of the License at                                   **
+**                                                                           **
+**    https://www.apache.org/licenses/LICENSE-2.0                            **
+**                                                                           **
+** Unless required by applicable law or agreed to in writing, software       **
+** distributed under the License is distributed on an "AS IS" BASIS, WITHOUT **
+** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
+** License for the specific language governing permissions and limitations   **
+******************************************************************************/
+
+#ifndef ARTS_BLOCK_DISTRIBUTION_H
+#define ARTS_BLOCK_DISTRIBUTION_H
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include "arts/graph_defs.h"
+#include "arts/runtime/rt.h"
+
+typedef struct {
+  graph_sz_t num_vertices; // Complete number of vertices
+  graph_sz_t num_edges;    // Complete number of edges
+  graph_sz_t block_sz;     // Standard block size
+  unsigned int num_blocks; // Total number of blocks
+  arts_guid_t graphGuid[]; // Guids for all the partitions
+} arts_block_dist_t;
+
+arts_block_dist_t *init_block_distribution_block(graph_sz_t n, graph_sz_t m,
+                                                 unsigned int num_blocks,
+                                                 arts_type_t db_type);
+arts_block_dist_t *init_block_distribution(graph_sz_t n, graph_sz_t m);
+arts_block_dist_t *init_block_distribution_with_cmd_line_args(int argc,
+                                                              char **argv);
+void free_distribution(arts_block_dist_t *dist);
+
+unsigned int get_num_local_blocks(arts_block_dist_t *dist);
+
+graph_sz_t get_block_size_for_partition(partition_t index,
+                                        const arts_block_dist_t *dist);
+
+partition_t get_owner_distr(vertex_t v, const arts_block_dist_t *dist);
+vertex_t partition_start_distr(partition_t index,
+                               const arts_block_dist_t *dist);
+vertex_t partition_end_distr(partition_t index, const arts_block_dist_t *dist);
+vertex_t get_vertex_from_local_distr(partition_t local, local_index_t u,
+                                     const arts_block_dist_t *dist);
+local_index_t get_local_index_distr(vertex_t v, const arts_block_dist_t *dist);
+
+arts_guid_t get_guid_for_vertex_distr(vertex_t v,
+                                      const arts_block_dist_t *dist);
+arts_guid_t get_guid_for_partition_distr(const arts_block_dist_t *dist,
+                                         partition_t index);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

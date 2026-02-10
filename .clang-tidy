@@ -1,35 +1,109 @@
+---
+# ------------------------------------------------------------------------------
+# PNNL ARTS (Abstract RunTime System) - Clang-Tidy Configuration
+# ------------------------------------------------------------------------------
+# This configuration is tuned for C11/C17 System Programming.
+# It enforces POSIX/Linux Kernel naming conventions and rigorous safety checks.
+# ------------------------------------------------------------------------------
+
+# Checks Configuration
+# 1. Bug Detection & Safety - Detects memory leaks, undefined behaviors, and risky patterns.
+# 2. Code Readability & Naming - Enforcing snake_case.
+# 3. Performance Optimizations - Flags code that might hurt HPC performance.
+# 4. Portability & Security - Ensures code runs across different architectures.
 Checks: >
   -*,
   clang-diagnostic-*,
-  llvm-*,
-  misc-*,
-  -misc-const-correctness,
-  -misc-include-cleaner,
-  -misc-no-recursion,
-  -misc-non-private-member-variables-in-classes,
-  -misc-unused-parameters,
-  -misc-use-anonymous-namespace,
-  -misc-use-internal-linkage,
-  readability-identifier-naming
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-reserved-identifier,
+  -bugprone-narrowing-conversions,
+  -bugprone-assignment-in-if-condition,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-multi-level-implicit-pointer-conversion,
+  -bugprone-branch-clone,
+  readability-*,
+  -readability-function-cognitive-complexity,
+  -readability-magic-numbers,
+  -readability-implicit-bool-conversion,
+  -readability-uppercase-literal-suffix,
+  -readability-suspicious-call-argument,
+  -readability-function-size,
+  performance-*,
+  -performance-no-int-to-ptr,
+  portability-*,
+  cert-*,
+  -cert-err34-c
+
+# Treat all warnings as errors in CI to ensure code quality.
+WarningsAsErrors: '*'
 
 CheckOptions:
-  - key:             readability-identifier-naming.ClassCase
-    value:           camelCase
-  - key:             readability-identifier-naming.EnumCase
-    value:           camelCase
+  # ----------------------------------------------------------------------------
+  # Naming Convention: The "Modern C System" Style
+  # Goal: Seamless integration with POSIX/Linux APIs and clear type distinction.
+  # ----------------------------------------------------------------------------
+
+  # [Functions & Variables]
+  # Must use snake_case to match system calls (e.g., arts_create_task).
   - key:             readability-identifier-naming.FunctionCase
-    value:           camelBack
-  - key:             readability-identifier-naming.MemberCase
-    value:           camelCase
-  - key:             readability-identifier-naming.ParameterCase
-    value:           camelCase
-  - key:             readability-identifier-naming.UnionCase
-    value:           camelCase
+    value:           lower_case
   - key:             readability-identifier-naming.VariableCase
-    value:           camelCase
-  - key:             readability-identifier-naming.IgnoreMainLikeFunctions
+    value:           lower_case
+  - key:             readability-identifier-naming.ParameterCase
+    value:           lower_case
+  - key:             readability-identifier-naming.GlobalVariableCase
+    value:           lower_case
+  
+  # [Types] 
+  # Enforce snake_case with '_t' suffix to clearly distinguish types from variables.
+  # Example: arts_guid_t, arts_task_t
+  - key:             readability-identifier-naming.TypedefCase
+    value:           lower_case
+  - key:             readability-identifier-naming.TypedefSuffix
+    value:           _t
+  - key:             readability-identifier-naming.StructCase
+    value:           lower_case
+  
+  # [Macros & Constants]
+  # Must be UPPER_CASE to indicate they are preprocessor constants.
+  # Example: ARTS_MAX_THREADS
+  - key:             readability-identifier-naming.MacroDefinitionCase
+    value:           UPPER_CASE
+  - key:             readability-identifier-naming.EnumConstantCase
+    value:           UPPER_CASE
+  
+  # [Header Guards]
+  # Enforce UPPER_CASE for header guards.
+  - key:             readability-identifier-naming.HeaderGuardCase
+    value:           UPPER_CASE
+
+  # ----------------------------------------------------------------------------
+  # Safety & Robustness Settings
+  # ----------------------------------------------------------------------------
+  
+  # [Braces Enforcement]
+  # Force braces {} even for single-line statements to prevent bugs (e.g., "goto fail").
+  - key:             readability-braces-around-statements.ShortStatementLines
+    value:           0 
+
+  # [Identifier Length]
+  # Allow single-character names for loop counters and short abbreviations
+  # common in systems code (i, j, n, db, fp, id, etc.).
+  - key:             readability-identifier-length.MinimumVariableNameLength
     value:           1
-  - key:             readability-redundant-member-init.IgnoreBaseInCopyConstructors
+  - key:             readability-identifier-length.MinimumParameterNameLength
     value:           1
-  - key:             modernize-use-default-member-init.UseAssignment
+  - key:             readability-identifier-length.MinimumLoopCounterNameLength
+    value:           1
+
+  # [Function Size]
+  # ARTS API functions (EDT create, DB ops) legitimately require 7+ parameters.
+  # Disable parameter threshold; keep line/statement thresholds at defaults.
+  - key:             readability-function-size.ParameterThreshold
+    value:           10
+    
+  # [Include Sorting]
+  # Enforce sorted includes for cleaner dependency management.
+  - key:             llvm-include-order
     value:           1

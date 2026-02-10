@@ -1,10 +1,13 @@
-# Build
+# Build and installation directories
 build/
-.install/
-# Dependencies
-deps/
+install/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+
+# IDEs and editors
 .cache/
-test/**/*.cfg
-test/**/*.insp
-example/**/*.cfg
-example/**/*.insp
+.venv/
+.vscode/
+.claude/
+CLAUDE.md

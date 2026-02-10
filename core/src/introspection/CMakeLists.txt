@@ -45,6 +45,7 @@ add_library(arts_introspection OBJECT ${INTROSPECTION_SOURCES})
 
 # Include directories
 target_include_directories(arts_introspection PRIVATE
-    ${ARTS_CORE_INCLUDE_DIR}
-    ${ARTS_CORE_BUILD_INCLUDE_DIR}
+    ${ARTS_PUBLIC_INCLUDE_DIR}
+    ${ARTS_INTERNAL_INCLUDE_DIR}
+    ${ARTS_BUILD_INTERNAL_INCLUDE_DIR}
 )

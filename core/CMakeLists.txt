@@ -37,12 +37,14 @@
 ## License for the specific language governing permissions and limitations
 ###############################################################################
 
-set(ARTS_CORE_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/inc")
-set(ARTS_CORE_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/inc" PARENT_SCOPE)
+set(ARTS_PUBLIC_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/inc/public")
+set(ARTS_PUBLIC_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/inc/public" PARENT_SCOPE)
+set(ARTS_INTERNAL_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/inc/internal")
+set(ARTS_INTERNAL_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/inc/internal" PARENT_SCOPE)
 
-# Add build directory for generated Config.h
-set(ARTS_CORE_BUILD_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/inc")
-set(ARTS_CORE_BUILD_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/inc" PARENT_SCOPE)
+# Build directory for generated headers (preamble.h)
+set(ARTS_BUILD_INTERNAL_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/inc/internal")
+set(ARTS_BUILD_INTERNAL_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/inc/internal" PARENT_SCOPE)
 
 add_subdirectory(src)
-add_subdirectory(inc/arts/introspection)
+add_subdirectory(inc/internal/arts/introspection)

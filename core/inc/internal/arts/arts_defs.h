@@ -1,0 +1,89 @@
+/******************************************************************************
+** This material was prepared as an account of work sponsored by an agency   **
+** of the United States Government.  Neither the United States Government    **
+** nor the United States Department of Energy, nor Battelle, nor any of      **
+** their employees, nor any jurisdiction or organization that has cooperated **
+** in the development of these materials, makes any warranty, express or     **
+** implied, or assumes any legal liability or responsibility for the accuracy,*
+** completeness, or usefulness or any information, apparatus, product,       **
+** software, or process disclosed, or represents that its use would not      **
+** infringe privately owned rights.                                          **
+**                                                                           **
+** Reference herein to any specific commercial product, process, or service  **
+** by trade name, trademark, manufacturer, or otherwise does not necessarily **
+** constitute or imply its endorsement, recommendation, or favoring by the   **
+** United States Government or any agency thereof, or Battelle Memorial      **
+** Institute. The views and opinions of authors expressed herein do not      **
+** necessarily state or reflect those of the United States Government or     **
+** any agency thereof.                                                       **
+**                                                                           **
+**                      PACIFIC NORTHWEST NATIONAL LABORATORY                **
+**                                  operated by                              **
+**                                    BATTELLE                               **
+**                                     for the                               **
+**                      UNITED STATES DEPARTMENT OF ENERGY                   **
+**                         under Contract DE-AC05-76RL01830                  **
+**                                                                           **
+** Copyright 2019 Battelle Memorial Institute                                **
+** Licensed under the Apache License, Version 2.0 (the "License");           **
+** you may not use this file except in compliance with the License.          **
+** You may obtain a copy of the License at                                   **
+**                                                                           **
+**    https://www.apache.org/licenses/LICENSE-2.0                            **
+**                                                                           **
+** Unless required by applicable law or agreed to in writing, software       **
+** distributed under the License is distributed on an "AS IS" BASIS, WITHOUT **
+** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
+** License for the specific language governing permissions and limitations   **
+******************************************************************************/
+#ifndef ARTS_DEFS_H
+#define ARTS_DEFS_H
+
+#if !defined(__GNUC__) && !defined(__clang__)
+#error "ARTS requires GCC or Clang."
+#endif
+
+/*
+ * Compiler attribute abstraction layer.
+ *
+ * ARTS targets strict -std=c17 (CMAKE_C_EXTENSIONS=OFF).  Double-underscore
+ * attribute spellings (__packed__, __weak__, etc.) are silently accepted by
+ * GCC/Clang under -std=c17 without needing __extension__.  The wrapper
+ * macros allow attributes to appear in any position (before declarations,
+ * between 'struct' and tag name, after parameter lists, etc.).
+ */
+
+/* Generic attribute wrapper */
+#define ARTS_ATTRIBUTE(x) __attribute__((x))
+
+/* Structure packing — place between 'struct' and the tag name:
+ *   struct ARTS_PACKED foo { ... };                                       */
+#define ARTS_PACKED ARTS_ATTRIBUTE(__packed__)
+
+/* Weak symbol — allows user programs to override default implementations */
+#define ARTS_WEAK ARTS_ATTRIBUTE(__weak__)
+
+/* macOS uses weak_import instead of weak for extern declarations */
+#if defined(__APPLE__)
+#define ARTS_WEAK_IMPORT ARTS_ATTRIBUTE(__weak_import__)
+#else
+#define ARTS_WEAK_IMPORT ARTS_WEAK
+#endif
+
+/* Pure function — return value depends only on arguments + global state */
+#define ARTS_PURE ARTS_ATTRIBUTE(__pure__)
+
+/* Cache-line / custom alignment (use _Alignas when the value is known) */
+#define ARTS_ALIGNED(n) ARTS_ATTRIBUTE(__aligned__(n))
+
+/* Max natural alignment (replaces bare __attribute__((aligned))) */
+#define ARTS_ALIGNED_MAX ARTS_ATTRIBUTE(__aligned__)
+
+/* Branch prediction hints */
+#define ARTS_LIKELY(x)   __extension__ __builtin_expect(!!(x), 1)
+#define ARTS_UNLIKELY(x) __extension__ __builtin_expect(!!(x), 0)
+
+/* 128-bit unsigned integer (used for 128-bit CAS in lock-free queues) */
+__extension__ typedef unsigned __int128 arts_uint128_t;
+
+#endif /* ARTS_DEFS_H */
