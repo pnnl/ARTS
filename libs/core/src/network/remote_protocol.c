@@ -42,6 +42,7 @@
 #include <unistd.h>
 
 #include "arts.h"
+#include "arts/utils/malloc.h"
 #include "arts/introspection/metrics.h"
 #include "arts/network/remote.h"
 #include "arts/runtime/globals.h"

@@ -38,6 +38,7 @@
 ******************************************************************************/
 #define GNU_SOURCE
 #include "arts/system/abstract_machine_model.h"
+#include "arts/utils/malloc.h"
 
 #include "arts/runtime/globals.h"
 #include "arts/runtime/runtime.h"

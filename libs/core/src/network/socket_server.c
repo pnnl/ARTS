@@ -53,6 +53,7 @@
 #include <unistd.h>
 
 #include "arts.h"
+#include "arts/utils/malloc.h"
 #include "arts/introspection/metrics.h"
 #include "arts/network/connection.h"
 #include "arts/network/remote.h"
@@ -169,7 +170,7 @@ void arts_server_fix_ib_names(struct arts_config_s *config) {
   int error = getaddrinfo_a(GAI_NOWAIT, gaicb_ptrs, request_count, NULL);
   if (error) {
     arts_printf("getaddrinfo_a failed: %s\n", gai_strerror(error));
-    exit(1);
+    arts_abort(1);
   }
   bool all_completed = false;
   for (int try = 0; try < 3 && !all_completed; try++) {
@@ -268,7 +269,7 @@ bool arts_server_set_ip(struct arts_config_s *config) {
 
     if (!result) {
       ARTS_INFO("Cannot get ip address for '%s'", config->table[i].ip_address);
-      exit(1);
+      arts_abort(1);
     }
   }
 
@@ -420,7 +421,7 @@ void arts_ll_server_setup(struct arts_config_s *config) {
     // ARTS_INFO("[%d]Could not connect to %s", arts_global_rank_id,
     // config->net_interface);
     ARTS_INFO("Could not resolve ip to any device");
-    exit(1);
+    arts_abort(1);
   }
 }
 
@@ -617,7 +618,7 @@ bool arts_remote_setup_incoming() {
             int retry_limit = 3;
             while (remote_socket_recieve_list[z + (j * ports)] < 0) {
               if (retry == retry_limit) {
-                exit(1);
+                arts_abort(1);
               }
               remote_socket_recieve_list[z + (j * ports)] = RACCEPT(
                   local_socket_recieve[z], (struct sockaddr *)&test, &s_length);

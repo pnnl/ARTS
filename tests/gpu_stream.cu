@@ -46,7 +46,7 @@
 arts_guid_t local_db_create(void **addr, uint64_t size, arts_type_t mode,
                             arts_guid_t guid) {
   size_t db_size = size + sizeof(struct arts_db_s);
-  //    void * ptr = arts_malloc(db_size);
+  //    void * ptr = malloc(db_size);
   void *ptr = arts_cuda_malloc_host(db_size);
   if (ptr) {
     struct arts_header_s *header = (struct arts_header_s *)ptr;

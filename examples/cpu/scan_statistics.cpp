@@ -132,7 +132,7 @@ void find_intersection(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   unsigned int db_size = sizeof(per_vertex_scan_stat_t);
   void *ptr = NULL;
-  arts_guid_t db_guid = arts_db_create(&ptr, db_size, ARTS_DB_READ);
+  arts_guid_t db_guid = arts_db_create(&ptr, db_size, NULL);
   per_vertex_scan_stat_t *vertex_scan_stat = (per_vertex_scan_stat_t *)ptr;
   vertex_scan_stat->source = source;
   vertex_scan_stat->scanStat = sum;
@@ -170,7 +170,7 @@ void visit_one_hop_neighbor_on_rank(uint32_t paramc, const uint64_t *paramv, uin
 
   unsigned int db_size = sizeof(per_vertex_scan_stat_t);
   void *ptr = NULL;
-  arts_guid_t db_guid = arts_db_create(&ptr, db_size, ARTS_DB_READ);
+  arts_guid_t db_guid = arts_db_create(&ptr, db_size, NULL);
   per_vertex_scan_stat_t *vertex_scan_stat = (per_vertex_scan_stat_t *)ptr;
   vertex_scan_stat->source = src_info->source;
   vertex_scan_stat->scanStat = local_intersection.size();
@@ -193,29 +193,31 @@ void visit_source(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   if (neighbor_cnt) {
     /*Now spawn an edt that will wait to get oneHopneighbors from all the ranks
      * in slots and calculate the grand count */
+    arts_hint_t local_hint = {arts_get_current_node(), 0};
     arts_guid_t find_intersection_guid = arts_edt_create(
-        find_intersection, arts_get_current_node(), 0, NULL, arts_get_total_nodes());
+        find_intersection, 0, NULL, arts_get_total_nodes(), &local_hint);
     /*For each rank, now spawn an edt that will perform an intersection*/
     for (unsigned int i = 0; i < arts_get_total_nodes(); i++) {
       unsigned int db_size =
           sizeof(source_info_t) + (sizeof(vertex_t) * neighbor_cnt);
       void *ptr = NULL;
-      arts_guid_t db_guid = arts_db_create(&ptr, db_size, ARTS_DB_READ);
+      arts_guid_t db_guid = arts_db_create(&ptr, db_size, NULL);
       source_info_t *src_info = (source_info_t *)ptr;
       src_info->find_intersection_guid = find_intersection_guid;
       src_info->source = source;
       src_info->numNeighbors = neighbor_cnt;
       memcpy(&(src_info->neighbors), neighbors, sizeof(vertex_t) * neighbor_cnt);
       /*create the edt to find # one-hop neighbors*/
+      arts_hint_t hop_hint = {i, 0};
       arts_guid_t visit_one_hop_neighbor_guid =
-          arts_edt_create(visit_one_hop_neighbor_on_rank, i, 0, NULL, 1);
+          arts_edt_create(visit_one_hop_neighbor_on_rank, 0, NULL, 1, &hop_hint);
       arts_signal_edt(visit_one_hop_neighbor_guid, 0, db_guid);
     }
   } else {
     /*signal maxreducer*/
     unsigned int db_size = sizeof(per_vertex_scan_stat_t);
     void *ptr = NULL;
-    arts_guid_t db_guid = arts_db_create(&ptr, db_size, ARTS_DB_READ);
+    arts_guid_t db_guid = arts_db_create(&ptr, db_size, NULL);
     per_vertex_scan_stat_t *vertex_scan_stat = (per_vertex_scan_stat_t *)ptr;
     vertex_scan_stat->source = source;
     vertex_scan_stat->scanStat = 1;
@@ -224,44 +226,52 @@ void visit_source(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 }
 
-extern "C" void init_per_node(unsigned int node_id, int argc, char **argv) {
-  // distribution must be initialized in init_per_node
+extern "C" void init_node(uint32_t paramc, const uint64_t *paramv,
+                          uint32_t depc, arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  (void)depv;
+  int argc = (int)paramv[0];
+  char **argv = (char **)paramv[1];
+  unsigned int node_id = arts_get_current_node();
+
   arts_printf("Node %u argc %u\n", node_id, argc);
   distribution = init_block_distribution_with_cmd_line_args(argc, argv);
   graph = get_graph_from_partition(node_id, distribution);
-  // read the edgelist and construct the graph
   load_graph_using_cmd_line_args(distribution, argc, argv);
-  max_reducer_guid = arts_reserve_guid_route(ARTS_EDT, 0);
+  max_reducer_guid = arts_guid_reserve(ARTS_EDT, 0);
 }
 
-/*TODO: How to start parallel vertex_t scan stat calculation? How to do an
- * efficient max reduction?*/
-extern "C" void init_per_worker(unsigned int node_id, unsigned int worker_id,
-                              int argc, char **argv) {
-  (void)argv;
-  arts_printf("Node %u argc %u\n", node_id, argc);
-  if (!node_id && !worker_id) {
-    /*This edt will calculate which vertex_t has the maximally induced
-     * subgraph.*/
-    arts_edt_create_with_guid(max_reducer, max_reducer_guid, 0, NULL,
-                          distribution->num_vertices);
-    // arts_guid_t exit_guid = arts_edt_create(exit_program, 0, 0, NULL, 1);
-    // arts_initialize_and_start_epoch(exit_guid, 0);
-    arts_start_intro_shad(5);
-    start_time = arts_get_time_stamp();
-    for (uint64_t i = 0; i < distribution->num_vertices; ++i) {
-      uint64_t source = i;
-      partition_t rank = get_owner_distr(source, distribution);
-      uint64_t packed_values[1] = {source};
-      arts_guid_t visit_source_guid =
-          arts_edt_create(visit_source, rank, 1, (uint64_t *)&packed_values, 1);
-      arts_signal_edt_value(visit_source_guid, -1, 0);
-    }
-    // arts_shutdown();
+extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
+                              uint32_t depc, arts_edt_dep_t depv[]) {
+  (void)depc;
+  (void)depv;
+
+  // Initialize graph data on every node
+  arts_guid_t init_epoch_guid = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  for (unsigned int i = 0; i < arts_get_total_nodes(); i++) {
+    arts_hint_t node_hint = {i, 0};
+    arts_edt_create_with_epoch(init_node, paramc, paramv, 0, init_epoch_guid, &node_hint);
+  }
+  arts_wait_on_handle(init_epoch_guid);
+
+  // Create max reducer EDT
+  arts_edt_create_with_guid(max_reducer, max_reducer_guid, 0, NULL,
+                            distribution->num_vertices);
+  arts_start_intro_shad(5);
+  start_time = arts_get_time_stamp();
+  for (uint64_t i = 0; i < distribution->num_vertices; ++i) {
+    uint64_t source = i;
+    partition_t rank = get_owner_distr(source, distribution);
+    uint64_t packed_values[1] = {source};
+    arts_hint_t rank_hint = {(unsigned int)rank, 0};
+    arts_guid_t visit_source_guid =
+        arts_edt_create(visit_source, 1, (uint64_t *)&packed_values, 1, &rank_hint);
+    arts_signal_edt_value(visit_source_guid, -1, 0);
   }
 }
+
 int main(int argc, char **argv) {
-  // raise(SIGTRAP);
   arts_rt(argc, argv);
   return 0;
 }

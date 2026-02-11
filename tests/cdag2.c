@@ -66,49 +66,53 @@ void write_test(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 }
 
-void init_per_node(unsigned int node_id, int argc, char **argv) {
-  (void)argc;
-  (void)node_id;
-  db_guid = arts_reserve_guid_route(ARTS_DB_READ, 0);
+void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
+  uint64_t args[2];
+  for (uint64_t i = 0; i < num_writes; i++) {
+    if (arts_guid_is_local(write_guids[i])) {
+      args[0] = i;
+
+      if (i < num_writes - 1) {
+        args[1] = write_guids[i + 1];
+        arts_edt_create_with_guid(write_test, write_guids[i], 2, args, 2);
+      } else {
+        arts_edt_create_with_guid(write_test, write_guids[i], 1, args, 2);
+      }
+      arts_signal_edt(write_guids[i], 0, db_guid);
+    }
+  }
+}
+
+void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                   arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  (void)depv;
+  char **argv = (char **)paramv[1];
+  db_guid = arts_guid_reserve(ARTS_DB, 0);
 
   num_writes = strtol(argv[1], NULL, 10);
-  write_guids = (arts_guid_t *)arts_malloc(sizeof(arts_guid_t) * num_writes);
+  write_guids = (arts_guid_t *)malloc(sizeof(arts_guid_t) * num_writes);
   for (unsigned int i = 0; i < num_writes; i++) {
-    write_guids[i] = arts_reserve_guid_route(ARTS_EDT, i % arts_get_total_nodes());
-}
-}
-
-void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
-                   char **argv) {
-  (void)argc;
-  (void)argv;
-  if (!worker_id) {
-    if (!node_id) {
-      unsigned int *ptr = (unsigned int *)arts_db_create_with_guid(
-          db_guid, sizeof(unsigned int) * num_writes);
-      for (unsigned int i = 0; i < num_writes; i++) {
-        ptr[i] = 0;
-}
-    }
-
-    uint64_t args[2];
-    for (uint64_t i = 0; i < num_writes; i++) {
-      if (arts_is_guid_local(write_guids[i])) {
-        args[0] = i;
-
-        if (i < num_writes - 1) {
-          args[1] = write_guids[i + 1];
-          arts_edt_create_with_guid(write_test, write_guids[i], 2, args, 2);
-        } else {
-          arts_edt_create_with_guid(write_test, write_guids[i], 1, args, 2);
-        }
-        arts_signal_edt(write_guids[i], 0, arts_guid_cast(db_guid, ARTS_DB_WRITE));
-      }
-    }
-    if (!node_id) {
-      arts_signal_edt_value(write_guids[0], -1, 0);
-}
+    write_guids[i] = arts_guid_reserve(ARTS_EDT, i % arts_get_total_nodes());
   }
+
+  unsigned int *ptr = (unsigned int *)arts_db_create_with_guid(
+      db_guid, sizeof(unsigned int) * num_writes, NULL);
+  for (unsigned int i = 0; i < num_writes; i++) {
+    ptr[i] = 0;
+  }
+
+  for (unsigned int n = 0; n < arts_get_total_nodes(); n++) {
+    arts_edt_create(node_setup, 0, NULL, 0, &(arts_hint_t){.route = n});
+  }
+
+  arts_signal_edt_value(write_guids[0], -1, 0);
 }
 
 int main(int argc, char **argv) {

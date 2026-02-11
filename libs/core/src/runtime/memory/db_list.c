@@ -37,6 +37,7 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 #include "arts/runtime/memory/db_list.h"
+#include "arts/utils/malloc.h"
 #include "arts/gas/route_table.h"
 
 #include "arts/runtime/globals.h"
@@ -432,8 +433,7 @@ void arts_signal_frontier_remote(struct arts_db_frontier_s *frontier,
       struct arts_edt_s *edt = current->edt[pos];
       unsigned int slot = current->slot[pos];
       // send through aggregation
-      arts_remote_db_request(db->guid, (int)get_from, edt, (int)slot, ARTS_DB_READ, true,
-                          ARTS_NULL);
+      arts_remote_db_request(db->guid, (int)get_from, edt, (int)slot, ARTS_DB_READ, true);
       if (pos + 1 == DBSPERELEMENT) {
         current = current->next;
 }

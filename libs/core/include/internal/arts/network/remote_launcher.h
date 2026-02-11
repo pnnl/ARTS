@@ -43,6 +43,7 @@ extern "C" {
 #endif
 
 #include "arts.h"
+#include "arts/utils/malloc.h"
 #include "arts/system/config.h"
 
 struct arts_remote_launcher_s {

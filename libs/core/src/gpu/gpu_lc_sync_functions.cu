@@ -41,6 +41,7 @@
 #include <cuda_runtime_api.h>
 
 #include "arts.h"
+#include "arts/utils/malloc.h"
 #include "arts/gpu/gpu_route_table.h"
 #include "arts/gpu/gpu_stream_buffer.h"
 #include "arts/runtime/globals.h"

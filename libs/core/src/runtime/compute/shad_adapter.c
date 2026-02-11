@@ -42,6 +42,7 @@
 #include <string.h>
 
 #include "arts.h"
+#include "arts/utils/malloc.h"
 #include "arts/gas/guid.h"
 #include "arts/gas/route_table.h"
 #include "arts/introspection/counter.h"

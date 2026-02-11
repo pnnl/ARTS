@@ -39,6 +39,7 @@
 #include "arts/runtime/sync/event_functions.h"
 
 #include "arts.h"
+#include "arts/utils/malloc.h"
 #include "arts/gas/guid.h"
 #include "arts/gas/out_of_order.h"
 #include "arts/gas/route_table.h"
@@ -217,8 +218,6 @@ void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
               arts_edt_dep_t arg;
               arg.guid = event->data;
               arg.ptr = arts_route_table_lookup_item(event->data);
-              arg.mode = ARTS_NULL;
-              arg.acquire_mode = ARTS_NULL;
               dependent[j].callback_t(arg);
             }
             j++;
@@ -372,8 +371,6 @@ void arts_add_local_event_callback(arts_guid_t source, event_callback_t callback
         arts_edt_dep_t arg;
         arg.guid = event->data;
         arg.ptr = arts_route_table_lookup_item(event->data);
-        arg.mode = ARTS_NULL;
-        arg.acquire_mode = ARTS_NULL;
         callback_t(arg);
         if (!destroy_event) {
           arts_event_free(event);
@@ -653,11 +650,10 @@ void arts_persistent_event_satisfy(arts_guid_t event_guid, uint32_t action,
                       "ESD: DB not found for byte-slice dep event->data=%lu",
                       event->data);
                 }
-              } else if (dependent[j].acquire_mode != ARTS_NULL) {
-                arts_type_t mode = arts_guid_get_type(event->data);
+              } else if (dependent[j].mode != ARTS_NULL) {
                 internal_signal_edt_with_mode(
-                    dependent[j].addr, dependent[j].slot, event->data, mode,
-                    dependent[j].acquire_mode);
+                    dependent[j].addr, dependent[j].slot, event->data,
+                    dependent[j].mode);
               } else {
                 arts_signal_edt(dependent[j].addr, dependent[j].slot,
                               event->data);
@@ -674,8 +670,6 @@ void arts_persistent_event_satisfy(arts_guid_t event_guid, uint32_t action,
             arts_edt_dep_t arg;
             arg.guid = event->data;
             arg.ptr = arts_route_table_lookup_item(event->data);
-            arg.mode = ARTS_NULL;
-            arg.acquire_mode = ARTS_NULL;
             dependent[j].callback_t(arg);
           }
           j++;
@@ -716,7 +710,7 @@ void arts_add_dependence_to_persistent_event(arts_guid_t event_source,
     arts_debug_generate_seg_fault();
     return;
   }
-  arts_type_t mode = arts_guid_get_type(edt_dest);
+  arts_type_t dest_type = arts_guid_get_type(edt_dest);
   struct arts_header_s *source_header =
       (struct arts_header_s *)arts_route_table_lookup_item(event_source);
   if (source_header == NULL) {
@@ -726,7 +720,7 @@ void arts_add_dependence_to_persistent_event(arts_guid_t event_source,
                                                rank);
     } else {
       arts_out_of_order_add_dependence_to_persistent_event(event_source, edt_dest,
-                                                   edt_slot, mode, event_source);
+                                                   edt_slot, dest_type, event_source);
     }
     return;
   }
@@ -741,7 +735,7 @@ void arts_add_dependence_to_persistent_event(arts_guid_t event_source,
       arts_get_last_persistent_event_version(event);
   assert(version != NULL);
   bool needs_update = false;
-  if (mode == ARTS_EDT) {
+  if (dest_type == ARTS_EDT) {
     struct arts_dependent_list_s *dependent_list = &version->dependent;
     unsigned int position = arts_atomic_fetch_add(&version->dependent_count, 1U);
     struct arts_dependent_s *dependent = arts_dependent_get(dependent_list, (int)position);
@@ -749,7 +743,7 @@ void arts_add_dependence_to_persistent_event(arts_guid_t event_source,
     dependent->type = ARTS_EDT;
     dependent->addr = edt_dest;
     dependent->slot = edt_slot;
-    dependent->acquire_mode = ARTS_NULL;
+    dependent->mode = ARTS_NULL;
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
     dependent->doneWriting = true;
 
@@ -757,14 +751,14 @@ void arts_add_dependence_to_persistent_event(arts_guid_t event_source,
     if (res == 0) {
       needs_update = true;
 }
-  } else if (mode == ARTS_EVENT) {
+  } else if (dest_type == ARTS_EVENT) {
     struct arts_dependent_list_s *dependent_list = &version->dependent;
     unsigned int position = arts_atomic_fetch_add(&version->dependent_count, 1U);
     struct arts_dependent_s *dependent = arts_dependent_get(dependent_list, (int)position);
     dependent->type = ARTS_EVENT;
     dependent->addr = edt_dest;
     dependent->slot = edt_slot;
-    dependent->acquire_mode = ARTS_NULL;
+    dependent->mode = ARTS_NULL;
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
     dependent->doneWriting = true;
 
@@ -781,42 +775,42 @@ void arts_add_dependence_to_persistent_event(arts_guid_t event_source,
 void arts_add_dependence_to_persistent_event_with_mode(arts_guid_t event_source,
                                                 arts_guid_t edt_dest,
                                                 uint32_t edt_slot,
-                                                arts_type_t acquire_mode) {
+                                                arts_type_t mode) {
   arts_add_dependence_to_persistent_event_with_mode_and_diff(event_source, edt_dest,
-                                                    edt_slot, acquire_mode);
+                                                    edt_slot, mode);
 }
 
 void arts_add_dependence_to_persistent_event_with_mode_and_diff(arts_guid_t event_source,
                                                        arts_guid_t edt_dest,
                                                        uint32_t edt_slot,
-                                                       arts_type_t acquire_mode) {
+                                                       arts_type_t mode) {
   /// Check that the event_source is a persistent event
   if (arts_guid_get_type(event_source) != ARTS_PERSISTENT_EVENT) {
     ARTS_DEBUG("Event source %lu is not a persistent event", event_source);
     arts_debug_generate_seg_fault();
     return;
   }
-  arts_type_t mode = arts_guid_get_type(edt_dest);
+  arts_type_t dest_type = arts_guid_get_type(edt_dest);
   struct arts_header_s *source_header =
       (struct arts_header_s *)arts_route_table_lookup_item(event_source);
   if (source_header == NULL) {
     unsigned int rank = arts_guid_get_rank(event_source);
     if (rank != arts_global_rank_id) {
-      // TODO: Extend remote protocol to pass acquire_mode
+      // TODO: Extend remote protocol to pass mode
       arts_remote_add_dependence_to_persistent_event_with_hints(
-          event_source, edt_dest, edt_slot, rank, acquire_mode);
+          event_source, edt_dest, edt_slot, rank, mode);
     } else {
-      // TODO: Extend out-of-order handling to pass acquire_mode
+      // TODO: Extend out-of-order handling to pass mode
       // For now, fallback to standard out-of-order add dependence
       arts_out_of_order_add_dependence_to_persistent_event(event_source, edt_dest,
-                                                   edt_slot, mode, event_source);
+                                                   edt_slot, dest_type, event_source);
     }
     return;
   }
 
   ARTS_DEBUG("Add Dep from Persistent Event [Guid:%lu] to EDT[Guid:"
              "%lu, Slot:%u, AcquireMode:%s]",
-             event_source, edt_dest, edt_slot, GET_TYPE_NAME(acquire_mode));
+             event_source, edt_dest, edt_slot, GET_TYPE_NAME(mode));
   struct arts_persistent_event_s *event =
       (struct arts_persistent_event_s *)source_header;
   arts_lock(&event->lock);
@@ -824,7 +818,7 @@ void arts_add_dependence_to_persistent_event_with_mode_and_diff(arts_guid_t even
       arts_get_last_persistent_event_version(event);
   assert(version != NULL);
   bool needs_update = false;
-  if (mode == ARTS_EDT) {
+  if (dest_type == ARTS_EDT) {
     struct arts_dependent_list_s *dependent_list = &version->dependent;
     unsigned int position = arts_atomic_fetch_add(&version->dependent_count, 1U);
     struct arts_dependent_s *dependent = arts_dependent_get(dependent_list, (int)position);
@@ -832,7 +826,7 @@ void arts_add_dependence_to_persistent_event_with_mode_and_diff(arts_guid_t even
     dependent->type = ARTS_EDT;
     dependent->addr = edt_dest;
     dependent->slot = edt_slot;
-    dependent->acquire_mode = acquire_mode;
+    dependent->mode = mode;
     dependent->byte_offset = 0;
     dependent->size = 0;
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
@@ -842,14 +836,14 @@ void arts_add_dependence_to_persistent_event_with_mode_and_diff(arts_guid_t even
     if (res == 0) {
       needs_update = true;
 }
-  } else if (mode == ARTS_EVENT) {
+  } else if (dest_type == ARTS_EVENT) {
     struct arts_dependent_list_s *dependent_list = &version->dependent;
     unsigned int position = arts_atomic_fetch_add(&version->dependent_count, 1U);
     struct arts_dependent_s *dependent = arts_dependent_get(dependent_list, (int)position);
     dependent->type = ARTS_EVENT;
     dependent->addr = edt_dest;
     dependent->slot = edt_slot;
-    dependent->acquire_mode = acquire_mode;
+    dependent->mode = mode;
     dependent->byte_offset = 0;
     dependent->size = 0;
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
@@ -867,34 +861,34 @@ void arts_add_dependence_to_persistent_event_with_mode_and_diff(arts_guid_t even
 
 void arts_add_dependence_to_persistent_event_with_byte_offset(
     arts_guid_t event_source, arts_guid_t edt_dest, uint32_t edt_slot,
-    arts_type_t acquire_mode, uint64_t byte_offset, uint64_t size) {
+    arts_type_t mode, uint64_t byte_offset, uint64_t len) {
   /// Check that the event_source is a persistent event
   if (arts_guid_get_type(event_source) != ARTS_PERSISTENT_EVENT) {
     ARTS_DEBUG("Event source %lu is not a persistent event", event_source);
     arts_debug_generate_seg_fault();
     return;
   }
-  arts_type_t mode = arts_guid_get_type(edt_dest);
+  arts_type_t dest_type = arts_guid_get_type(edt_dest);
   struct arts_header_s *source_header =
       (struct arts_header_s *)arts_route_table_lookup_item(event_source);
   if (source_header == NULL) {
     unsigned int rank = arts_guid_get_rank(event_source);
     if (rank != arts_global_rank_id) {
-      // ESD: Now passes byte_offset/size to remote persistent event
+      // ESD: Now passes byte_offset/len to remote persistent event
       arts_remote_add_dependence_to_persistent_event_with_byte_offset(
-          event_source, edt_dest, edt_slot, rank, acquire_mode, byte_offset, size);
+          event_source, edt_dest, edt_slot, rank, mode, byte_offset, len);
     } else {
       // Local out-of-order: byte offset is not critical for OO handling
       arts_out_of_order_add_dependence_to_persistent_event(event_source, edt_dest,
-                                                   edt_slot, mode, event_source);
+                                                   edt_slot, dest_type, event_source);
     }
     return;
   }
 
   ARTS_DEBUG("Add Dep from Persistent Event [Guid:%lu] to EDT[Guid:"
              "%lu, Slot:%u, AcquireMode:%s, ByteOffset:%lu, Size:%lu]",
-             event_source, edt_dest, edt_slot, GET_TYPE_NAME(acquire_mode),
-             byte_offset, size);
+             event_source, edt_dest, edt_slot, GET_TYPE_NAME(mode),
+             byte_offset, len);
   struct arts_persistent_event_s *event =
       (struct arts_persistent_event_s *)source_header;
   arts_lock(&event->lock);
@@ -902,7 +896,7 @@ void arts_add_dependence_to_persistent_event_with_byte_offset(
       arts_get_last_persistent_event_version(event);
   assert(version != NULL);
   bool needs_update = false;
-  if (mode == ARTS_EDT) {
+  if (dest_type == ARTS_EDT) {
     struct arts_dependent_list_s *dependent_list = &version->dependent;
     unsigned int position = arts_atomic_fetch_add(&version->dependent_count, 1U);
     struct arts_dependent_s *dependent = arts_dependent_get(dependent_list, (int)position);
@@ -910,9 +904,9 @@ void arts_add_dependence_to_persistent_event_with_byte_offset(
     dependent->type = ARTS_EDT;
     dependent->addr = edt_dest;
     dependent->slot = edt_slot;
-    dependent->acquire_mode = acquire_mode;
+    dependent->mode = mode;
     dependent->byte_offset = byte_offset;
-    dependent->size = size;
+    dependent->size = len;
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
     dependent->doneWriting = true;
 
@@ -920,16 +914,16 @@ void arts_add_dependence_to_persistent_event_with_byte_offset(
     if (res == 0) {
       needs_update = true;
 }
-  } else if (mode == ARTS_EVENT) {
+  } else if (dest_type == ARTS_EVENT) {
     struct arts_dependent_list_s *dependent_list = &version->dependent;
     unsigned int position = arts_atomic_fetch_add(&version->dependent_count, 1U);
     struct arts_dependent_s *dependent = arts_dependent_get(dependent_list, (int)position);
     dependent->type = ARTS_EVENT;
     dependent->addr = edt_dest;
     dependent->slot = edt_slot;
-    dependent->acquire_mode = acquire_mode;
+    dependent->mode = mode;
     dependent->byte_offset = byte_offset;
-    dependent->size = size;
+    dependent->size = len;
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
     dependent->doneWriting = true;
 

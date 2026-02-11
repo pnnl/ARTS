@@ -10,12 +10,11 @@ This tutorial walks through a minimal ARTS program step by step.
 Program Structure
 -----------------
 
-Every ARTS program consists of four parts:
+Every ARTS program consists of three parts:
 
 1. **EDT functions** — the async work units.
-2. ``init_per_node()`` — called once on each node at startup.
-3. ``init_per_worker()`` — called once per worker thread.
-4. ``main()`` — calls :c:func:`arts_rt` to start the runtime.
+2. ``arts_main_edt()`` — entry-point EDT, scheduled on rank 0 after runtime init.
+3. ``main()`` — calls :c:func:`arts_rt` to start the runtime.
 
 .. code-block:: c
 
@@ -29,20 +28,16 @@ Every ARTS program consists of four parts:
        arts_shutdown();
    }
 
-   /* 2 & 3. Init callbacks ----------------------------------------------- */
-   void init_per_node(unsigned int node_id, int argc, char **argv) {
-       /* per-node setup (e.g., read input files) */
+   /* 2.  Entry-point EDT ------------------------------------------------- */
+   void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
+                      uint32_t depc, arts_edt_dep_t depv[]) {
+       (void)depc;
+       (void)depv;
+       /* paramv[0] = argc, paramv[1] = argv */
+       arts_edt_create(my_task, 0, 0, NULL, 0);
    }
 
-   void init_per_worker(unsigned int node_id, unsigned int worker_id,
-                        int argc, char **argv) {
-       if (!node_id && !worker_id) {
-           /* Master thread: create the first EDT */
-           arts_edt_create(my_task, 0, 0, NULL, 0);
-       }
-   }
-
-   /* 4.  Entry point ----------------------------------------------------- */
+   /* 3.  Entry point ----------------------------------------------------- */
    int main(int argc, char **argv) {
        arts_rt(argc, argv);   /* blocks until arts_shutdown() */
        return 0;

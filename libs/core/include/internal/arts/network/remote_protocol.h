@@ -116,7 +116,7 @@ struct __attribute__((__packed__)) arts_remote_add_dependence_packet_s {
   arts_guid_t source;
   arts_guid_t destination;
   uint32_t slot;
-  arts_type_t acquire_mode;
+  arts_type_t mode;
 };
 
 /// ESD: Packet for adding dependency to persistent event with byte offset
@@ -125,7 +125,7 @@ struct __attribute__((__packed__)) arts_remote_add_dependence_with_byte_offset_p
   arts_guid_t source;
   arts_guid_t destination;
   uint32_t slot;
-  arts_type_t acquire_mode;
+  arts_type_t mode;
   uint64_t byte_offset;
   uint64_t size;
 };
@@ -137,7 +137,6 @@ struct __attribute__((__packed__)) arts_remote_edt_signal_packet_s {
   uint32_t slot;
   arts_type_t mode;
   unsigned int dbRoute;
-  arts_type_t acquire_mode;
 };
 
 struct __attribute__((__packed__)) arts_remote_event_satisfy_slot_packet_s {
@@ -159,7 +158,7 @@ struct __attribute__((__packed__)) arts_remote_db_add_dependence_packet_s {
   arts_guid_t db_src;
   arts_guid_t edt_dest;
   uint32_t edt_slot;
-  arts_type_t acquire_mode;
+  arts_type_t mode;
 };
 
 /// ESD: Packet for byte-offset dependencies (stencil halo exchange)
@@ -168,7 +167,7 @@ struct __attribute__((__packed__)) arts_remote_db_add_dependence_with_byte_offse
   arts_guid_t db_src;
   arts_guid_t edt_dest;
   uint32_t edt_slot;
-  arts_type_t acquire_mode;
+  arts_type_t mode;
   uint64_t byte_offset; ///< Byte offset into DB for slice
   uint64_t size;       ///< Size of slice in bytes
 };
@@ -177,7 +176,6 @@ struct __attribute__((__packed__)) arts_remote_db_request_packet_s {
   struct arts_remote_packet_s header;
   arts_guid_t db_guid;
   arts_type_t mode;
-  arts_type_t acquire_mode;
 };
 
 struct __attribute__((__packed__)) arts_remote_db_send_packet_s {

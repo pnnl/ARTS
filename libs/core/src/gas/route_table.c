@@ -42,6 +42,7 @@
 #include <stdlib.h>
 
 #include "arts.h"
+#include "arts/utils/malloc.h"
 #include "arts/gas/guid.h"
 #include "arts/gas/out_of_order.h"
 #include "arts/runtime/globals.h"

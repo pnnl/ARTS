@@ -154,7 +154,7 @@ void work(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   float *final_data;
   arts_guid_t final_guid =
-      arts_db_create((void **)&final_data, sizeof(float) * (size_t)M * N, ARTS_DB_READ);
+      arts_db_create((void **)&final_data, sizeof(float) * (size_t)M * N, NULL);
   arts_put_in_db_from_gpu(d_c, final_guid, 0, sizeof(float) * (size_t)M * N, true);
   // stat = cublasGetMatrix(M, N, sizeof(*c), d_c, M, c, M);    // cp d_c - >c
 
@@ -186,29 +186,22 @@ void done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-extern "C" void init_per_node(unsigned int node_id, int argc, char **argv) {
-  (void)node_id;
-  (void)argc;
-  (void)argv;
+extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
+                              uint32_t depc, arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
+  dim3 threads(1, 1);
+  dim3 grid(1, 1);
+
+  arts_guid_t done_guid = arts_edt_create(done, 0, NULL, 1, &(arts_hint_t){.route = 0});
+  arts_guid_t work_guid = arts_edt_create_gpu_lib(work, 0, 1, (uint64_t *)&done_guid,
+                                            0, grid, threads);
+  (void)work_guid;
 }
 
-extern "C" void init_per_worker(unsigned int node_id, unsigned int worker_id,
-                              int argc, char **argv) {
-  (void)node_id;
-  (void)argc;
-  (void)argv;
-  if (!worker_id) {
-    dim3 threads(1, 1);
-    dim3 grid(1, 1);
-
-    arts_guid_t done_guid = arts_edt_create(done, 0, 0, NULL, 1);
-    arts_guid_t work_guid = arts_edt_create_gpu_lib(work, 0, 1, (uint64_t *)&done_guid,
-                                              0, grid, threads);
-    (void)work_guid;
-  }
-}
-
-extern "C" void init_per_gpu(unsigned int node_id, int dev_id,
+extern "C" void arts_init_per_gpu(unsigned int node_id, int dev_id,
                              cudaStream_t *stream, int argc, char **argv) {
   (void)node_id;
   (void)stream;
@@ -217,14 +210,14 @@ extern "C" void init_per_gpu(unsigned int node_id, int dev_id,
   arts_printf("DevId: %d\n", dev_id);
   if (!dev_id) {
     handle =
-        (cublasHandle_t *)arts_calloc(arts_get_num_gpus(), sizeof(cublasHandle_t));
+        (cublasHandle_t *)calloc(arts_get_num_gpus(), sizeof(cublasHandle_t));
     arts_printf("NUM GPUS: %u\n", arts_get_num_gpus());
   }
   cublasStatus_t stat = cublasCreate(&handle[dev_id]);
   (void)stat;
 }
 
-extern "C" void clean_per_gpu(unsigned int node_id, int dev_id,
+extern "C" void arts_fini_per_gpu(unsigned int node_id, int dev_id,
                               cudaStream_t *stream) {
   (void)node_id;
   (void)stream;

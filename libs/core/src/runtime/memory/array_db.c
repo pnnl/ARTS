@@ -42,6 +42,7 @@
 #include <string.h>
 
 #include "arts.h"
+#include "arts/utils/malloc.h"
 #include "arts/gas/out_of_order.h"
 #include "arts/gas/route_table.h"
 #include "arts/runtime/globals.h"
@@ -138,7 +139,7 @@ arts_array_db_t *arts_new_local_array_db_with_guid(arts_guid_t guid,
 
 arts_guid_t arts_new_array_db(arts_array_db_t **addr, unsigned int element_size,
                           unsigned int num_elements) {
-  arts_guid_t guid = arts_reserve_guid_route(ARTS_DB_PIN, arts_global_rank_id);
+  arts_guid_t guid = arts_guid_reserve(ARTS_DB_PIN, arts_global_rank_id);
   *addr = arts_new_array_db_with_guid(guid, element_size, num_elements);
   return guid;
 }
@@ -200,7 +201,8 @@ void arts_for_each_in_array_db(arts_array_db_t *array, arts_edt_t func_ptr,
   for (unsigned int i = 0; i < size; i++) {
     args[0] = i;
     unsigned int route = get_rank_from_index(array, i);
-    arts_guid_t guid = arts_edt_create(func_ptr, route, paramc + 1, args, 1);
+    arts_guid_t guid = arts_edt_create(func_ptr, paramc + 1, args, 1,
+                                       &(arts_hint_t){.route = route});
     arts_get_from_array_db(guid, 0, array, i);
   }
 }
@@ -216,7 +218,8 @@ void arts_gather_array_db(arts_array_db_t *array, arts_edt_t func_ptr,
   arts_guid_t array_guid = get_array_db_guid(array);
 
   arts_guid_t guid =
-      arts_edt_create(func_ptr, route, paramc, paramv, array->num_blocks + depc);
+      arts_edt_create(func_ptr, paramc, paramv, array->num_blocks + depc,
+                      &(arts_hint_t){.route = route});
   for (unsigned int i = 0; i < array->num_blocks; i++) {
     arts_get_from_db_at(guid, array_guid, i, offset, size, i);
   }
@@ -233,8 +236,9 @@ void arts_gather_array_db_epoch(arts_array_db_t *array, arts_edt_t func_ptr,
   unsigned int size = array->element_size * array->elements_per_block;
   arts_guid_t array_guid = get_array_db_guid(array);
 
-  arts_guid_t guid = arts_edt_create_with_epoch(func_ptr, route, paramc, paramv,
-                                           array->num_blocks + depc, epoch_guid);
+  arts_guid_t guid = arts_edt_create_with_epoch(func_ptr, paramc, paramv,
+                                           array->num_blocks + depc, epoch_guid,
+                                           &(arts_hint_t){.route = route});
   for (unsigned int i = 0; i < array->num_blocks; i++) {
     arts_get_from_db_at(guid, array_guid, i, offset, size, i);
   }
@@ -291,8 +295,10 @@ void arts_for_each_in_array_db_at_data(arts_array_db_t *array, unsigned int stri
   for (unsigned int i = 0; i < size; i += block_size) {
     args[2] = (i + block_size < size) ? i + block_size : size;
     args[3] = i;
-    arts_active_message_with_db_at(loop_policy, paramc + 4, args, 0, guid,
-                              get_rank_from_index(array, i));
+    unsigned int target_rank = get_rank_from_index(array, i);
+    arts_guid_t am = arts_edt_create(loop_policy, paramc + 4, args, 1,
+                                     &(arts_hint_t){.route = target_rank});
+    arts_signal_edt(am, 0, guid);
   }
 }
 

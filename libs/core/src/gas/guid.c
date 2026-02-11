@@ -39,6 +39,7 @@
 #include "arts/gas/guid.h"
 
 #include "arts.h"
+#include "arts/utils/malloc.h"
 #include "arts/runtime/globals.h"
 #include "arts/system/arts_print.h"
 #include "arts/system/debug.h"
@@ -122,14 +123,6 @@ void arts_guid_key_generator_init() {
   //        keys[i] = 1;
 }
 
-// I think this might be a problem.  If all keys start at 1 then when we cast
-// type, it can override a legitimate guid of another type
-arts_guid_t arts_guid_cast(arts_guid_t guid, arts_type_t type) {
-  arts_guid_bits_t address_info = (arts_guid_bits_t){.bits = guid};
-  address_info.fields.type = (unsigned int)type;
-  return (arts_guid_t)address_info.bits;
-}
-
 arts_type_t arts_guid_get_type(arts_guid_t guid) {
   INCREMENT_GUID_LOOKUP_COUNTER_BY(1);
   arts_guid_bits_t address_info = (arts_guid_bits_t){.bits = guid};
@@ -142,16 +135,16 @@ unsigned int arts_guid_get_rank(arts_guid_t guid) {
   return address_info.fields.rank;
 }
 
-bool arts_is_guid_local(arts_guid_t guid) {
+bool arts_guid_is_local(arts_guid_t guid) {
   return (arts_global_rank_id == arts_guid_get_rank(guid));
 }
 
-uint64_t arts_get_guid_key(arts_guid_t guid) {
+uint64_t arts_guid_get_key(arts_guid_t guid) {
   arts_guid_bits_t address_info = (arts_guid_bits_t){.bits = guid};
   return address_info.fields.key;
 }
 
-arts_guid_t arts_reserve_guid_route(arts_type_t type, unsigned int route) {
+arts_guid_t arts_guid_reserve(arts_type_t type, unsigned int route) {
   arts_guid_t guid = NULL_GUID;
   if (route == -1) {
     route = arts_global_rank_id;
@@ -168,7 +161,7 @@ arts_guid_t arts_reserve_guid_route(arts_type_t type, unsigned int route) {
   return guid;
 }
 
-arts_guid_t *arts_reserve_guids_round_robin(unsigned int size, arts_type_t type) {
+arts_guid_t *arts_guid_reserve_round_robin(unsigned int size, arts_type_t type) {
   arts_guid_t *guids = NULL;
   if (type > ARTS_NULL && type < ARTS_LAST_TYPE) {
     guids = (arts_guid_t *)arts_malloc(size * sizeof(arts_guid_t));
@@ -180,7 +173,7 @@ arts_guid_t *arts_reserve_guids_round_robin(unsigned int size, arts_type_t type)
   return guids;
 }
 
-arts_guid_range_t *arts_new_guid_range_node(arts_type_t type, unsigned int size,
+arts_guid_range_t *arts_guid_range_create(arts_type_t type, unsigned int size,
                                     unsigned int route) {
   if (route == -1) {
     route = arts_global_rank_id;
@@ -204,7 +197,7 @@ arts_guid_range_t *arts_new_guid_range_node(arts_type_t type, unsigned int size,
   return range;
 }
 
-arts_guid_range_t *arts_new_guid_range_node_hash(arts_type_t type, unsigned int size,
+arts_guid_range_t *arts_guid_range_create_hash(arts_type_t type, unsigned int size,
                                         unsigned int route,
                                         unsigned int hash_size) {
   arts_guid_range_t *range = NULL;
@@ -225,7 +218,7 @@ arts_guid_range_t *arts_new_guid_range_node_hash(arts_type_t type, unsigned int 
   return range;
 }
 
-arts_guid_t arts_get_guid(arts_guid_range_t *range, unsigned int index) {
+arts_guid_t arts_guid_range_get(arts_guid_range_t *range, unsigned int index) {
   if (!range || index >= range->size) {
     return NULL_GUID;
   }
@@ -238,7 +231,7 @@ arts_guid_t arts_guid_range_next(arts_guid_range_t *range) {
   arts_guid_t ret = NULL_GUID;
   if (range) {
     if (range->index < range->size) {
-      ret = arts_get_guid(range, range->index++);
+      ret = arts_guid_range_get(range, range->index++);
     }
   }
   return ret;
@@ -257,7 +250,7 @@ void arts_guid_range_reset_iter(arts_guid_range_t *range) {
 }
 }
 
-bool arts_is_in_guid_range(arts_guid_range_t *range, arts_guid_t guid) {
+bool arts_guid_range_contains(arts_guid_range_t *range, arts_guid_t guid) {
   arts_guid_bits_t start_guid = (arts_guid_bits_t){.bits = range->start_guid};
   arts_guid_bits_t to_check = (arts_guid_bits_t){.bits = guid};
 
@@ -277,7 +270,7 @@ bool arts_is_in_guid_range(arts_guid_range_t *range, arts_guid_t guid) {
   return false;
 }
 
-uint64_t arts_hash_guid_key(arts_guid_t guid) {
-  uint64_t key = arts_get_guid_key(guid);
+uint64_t arts_guid_hash_key(arts_guid_t guid) {
+  uint64_t key = arts_guid_get_key(guid);
   return key % (uint64_t)arts_node_info.gpu;
 }

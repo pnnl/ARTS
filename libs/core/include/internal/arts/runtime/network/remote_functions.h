@@ -49,16 +49,16 @@ void arts_remote_add_dependence(arts_guid_t source, arts_guid_t destination,
                              uint32_t slot, unsigned int rank);
 void arts_remote_add_dependence_with_hints(arts_guid_t source, arts_guid_t destination,
                                       uint32_t slot, unsigned int rank,
-                                      arts_type_t acquire_mode);
+                                      arts_type_t mode);
 void arts_remote_add_dependence_to_persistent_event(arts_guid_t source,
                                               arts_guid_t destination,
                                               uint32_t slot, unsigned int rank);
 void arts_remote_add_dependence_to_persistent_event_with_hints(
     arts_guid_t source, arts_guid_t destination, uint32_t slot, unsigned int rank,
-    arts_type_t acquire_mode);
+    arts_type_t mode);
 void arts_remote_add_dependence_to_persistent_event_with_byte_offset(
     arts_guid_t source, arts_guid_t destination, uint32_t slot, unsigned int rank,
-    arts_type_t acquire_mode, uint64_t byte_offset, uint64_t size);
+    arts_type_t mode, uint64_t byte_offset, uint64_t len);
 void arts_remote_update_route_table(arts_guid_t guid, unsigned int rank);
 void arts_remote_handle_update_db_guid(void *ptr);
 void arts_remote_handle_invalidate_db(void *ptr);
@@ -85,8 +85,6 @@ void arts_remote_handle_event_move(void *ptr);
 void arts_remote_handle_persistent_event_move(void *ptr);
 void arts_remote_signal_edt(arts_guid_t edt, arts_guid_t db, uint32_t slot,
                          arts_type_t mode);
-void arts_remote_signal_edt_with_hints(arts_guid_t edt, arts_guid_t db, uint32_t slot,
-                                  arts_type_t mode, arts_type_t acquire_mode);
 void arts_remote_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
                                 uint32_t slot);
 void arts_remote_persistent_event_satisfy_slot(arts_guid_t event_guid, uint32_t action,
@@ -95,20 +93,19 @@ void arts_remote_db_add_dependence(arts_guid_t db_src, arts_guid_t edt_dest,
                                uint32_t edt_slot);
 void arts_remote_db_add_dependence_with_hints(arts_guid_t db_src, arts_guid_t edt_dest,
                                         uint32_t edt_slot,
-                                        arts_type_t acquire_mode);
+                                        arts_type_t mode);
 void arts_remote_db_add_dependence_with_byte_offset(arts_guid_t db_src,
                                              arts_guid_t edt_dest,
                                              uint32_t edt_slot,
-                                             arts_type_t acquire_mode,
-                                             uint64_t byte_offset, uint64_t size);
+                                             arts_type_t mode,
+                                             uint64_t byte_offset, uint64_t len);
 void arts_remote_handle_db_add_dependence_with_byte_offset(void *ptr);
 void arts_remote_db_increment_latch(arts_guid_t db);
 void arts_remote_db_decrement_latch(arts_guid_t db);
 void arts_db_request_callback(struct arts_edt_s *edt, unsigned int slot,
                            struct arts_db_s *db_res);
 bool arts_remote_db_request(arts_guid_t data_guid, int rank, struct arts_edt_s *edt,
-                         int pos, arts_type_t mode, bool agg_request,
-                         arts_type_t acquire_mode);
+                         int pos, arts_type_t mode, bool agg_request);
 void arts_remote_db_forward(int dest_rank, int source_rank, arts_guid_t data_guid,
                          arts_type_t mode);
 void arts_remote_db_send_now(int rank, struct arts_db_s *db);
@@ -130,11 +127,11 @@ void arts_remote_send_already_local(int rank, arts_guid_t guid, arts_guid_t edt_
 void arts_remote_handle_send_already_local(void *pack);
 void arts_remote_get_from_db(arts_guid_t edt_guid, arts_guid_t db_guid,
                          unsigned int slot, unsigned int offset,
-                         unsigned int size, unsigned int rank);
+                         unsigned int len, unsigned int rank);
 void arts_remote_handle_get_from_db(void *pack);
 void arts_remote_put_in_db(void *ptr, arts_guid_t edt_guid, arts_guid_t db_guid,
                        unsigned int slot, unsigned int offset,
-                       unsigned int size, arts_guid_t epoch_guid,
+                       unsigned int len, arts_guid_t epoch_guid,
                        unsigned int rank);
 void arts_remote_handle_put_in_db(void *pack);
 void arts_remote_signal_edt_with_ptr(arts_guid_t edt_guid, arts_guid_t db_guid,

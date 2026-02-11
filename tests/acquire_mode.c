@@ -2,7 +2,6 @@
 ** Test: Acquire-Mode Override
 ******************************************************************************/
 #include "arts.h"
-#include "arts/runtime/memory/db_functions.h"
 #include "arts/system/arts_print.h"
 #include <stdlib.h>
 
@@ -24,8 +23,6 @@ void writer_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   ARTS_PRINT("Writer (Node %u): Initializing array with sequential values",
              node_id);
-  ARTS_PRINT("Writer: mode=%u, acquire_mode=%u", depv[0].mode,
-             depv[0].acquire_mode);
 
   // Initialize array with i * 7
   for (unsigned int i = 0; i < array_size; i++) {
@@ -46,16 +43,8 @@ void reader_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   unsigned int node_id = arts_get_current_node();
   uint64_t *data = (uint64_t *)depv[0].ptr;
 
-  ARTS_PRINT("Reader %u (Node %u): Reading array (acquire_mode=READ)", reader_id,
+  ARTS_PRINT("Reader %u (Node %u): Reading array (mode=READ)", reader_id,
              node_id);
-  ARTS_PRINT("Reader %u: mode=%u, acquire_mode=%u", reader_id,
-             depv[0].mode, depv[0].acquire_mode);
-  bool mode_ok = (depv[0].acquire_mode == ARTS_DB_READ);
-  if (!mode_ok) {
-    ARTS_PRINT("Reader %u (Node %u): ERROR - expected acquire_mode=READ but "
-               "received %u",
-               reader_id, node_id, depv[0].acquire_mode);
-  }
 
   // Read and validate a stripe of the array
   unsigned int start_idx = reader_id * (array_size / num_readers);
@@ -78,7 +67,7 @@ void reader_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     sum += actual;
   }
 
-  if (errors == 0 && mode_ok) {
+  if (errors == 0) {
     ARTS_PRINT("Reader %u (Node %u): SUCCESS - all values correct (sum=%lu)",
                reader_id, node_id, sum);
   } else {
@@ -95,15 +84,8 @@ void validator_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramv;
   uint64_t *data = (uint64_t *)depv[0].ptr;
   unsigned int errors = 0;
-  bool mode_ok = (depv[0].acquire_mode == ARTS_DB_READ);
 
   ARTS_PRINT("=== Validator: Performing final validation ===");
-  ARTS_PRINT("Validator: mode=%u, acquire_mode=%u", depv[0].mode,
-             depv[0].acquire_mode);
-  if (!mode_ok) {
-    ARTS_PRINT("Validator ERROR: Expected acquire_mode=READ but received %u",
-               depv[0].acquire_mode);
-  }
 
   // Full array validation
   for (unsigned int i = 0; i < array_size; i++) {
@@ -119,7 +101,7 @@ void validator_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     }
   }
 
-  if (errors == 0 && mode_ok) {
+  if (errors == 0) {
     ARTS_PRINT("=== ACQUIRE-MODE TEST PASSED ===");
     ARTS_PRINT("SUCCESS: All %u elements validated correctly!", array_size);
     ARTS_PRINT("All %u readers completed with READ mode (no owner updates).",
@@ -135,12 +117,16 @@ void validator_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     }
   }
 
-  // Acquire-mode metrics are tracked via counter infrastructure
-  // To view metrics, enable counters in counters.cfg and check output files
   ARTS_PRINT("Acquire-Mode Test Complete");
 }
 
-void arts_main(int argc, char **argv) {
+void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                   arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  (void)depv;
+  int argc = (int)paramv[0];
+  char **argv = (char **)paramv[1];
   /// Parse command line arguments for parametric testing
   /// Usage: ./testAcquireModeCompilerPattern [array_size] [num_readers]
   ///  - Parse array_size
@@ -176,18 +162,18 @@ void arts_main(int argc, char **argv) {
   /// Reserve GUID for data DB
 
   /// Create data DB and initialize to zeros
-  data_guid = arts_reserve_guid_route(ARTS_DB_WRITE, 0);
+  data_guid = arts_guid_reserve(ARTS_DB, 0);
   size_t db_size = array_size * sizeof(uint64_t);
   ARTS_PRINT("Creating Data DB (guid: %lu, size: %zu bytes = %.2f MB)",
              data_guid, db_size, db_size / (1024.0 * 1024.0));
-  uint64_t *data_ptr = (uint64_t *)arts_db_create_with_guid(data_guid, db_size);
+  uint64_t *data_ptr = (uint64_t *)arts_db_create_with_guid(data_guid, db_size, NULL);
   for (size_t i = 0; i < array_size; i++) {
     data_ptr[i] = 0;
 }
   ARTS_PRINT("Data DB initialized to zeros");
 
   /// Allocate validation result flag (shared with validator)
-  validation_result = (volatile unsigned int *)arts_malloc(sizeof(unsigned int));
+  validation_result = (volatile unsigned int *)malloc(sizeof(unsigned int));
   *validation_result = 0;
 
   /// Start epoch
@@ -196,17 +182,17 @@ void arts_main(int argc, char **argv) {
 
   /// Create writer EDT
   arts_guid_t writer_edt_guid =
-      arts_edt_create_with_epoch(writer_edt, 0, 0, NULL, 1, epoch_guid);
+      arts_edt_create_with_epoch(writer_edt, 0, NULL, 1, epoch_guid, &(arts_hint_t){.route = 0});
   ARTS_PRINT("[Step 2] Created writer EDT (guid: %lu)", writer_edt_guid);
 
   /// Create reader EDTs
   arts_guid_t *reader_edt_guids =
-      (arts_guid_t *)arts_malloc(num_readers * sizeof(arts_guid_t));
+      (arts_guid_t *)calloc(num_readers, sizeof(arts_guid_t));
   for (unsigned int i = 0; i < num_readers; i++) {
     unsigned int target_node = (i % arts_get_total_nodes());
     uint64_t param = i;
     reader_edt_guids[i] =
-        arts_edt_create_with_epoch(reader_edt, target_node, 1, &param, 1, epoch_guid);
+        arts_edt_create_with_epoch(reader_edt, 1, &param, 1, epoch_guid, &(arts_hint_t){.route = target_node});
 
     if ((i + 1) % 4 == 0 || i == num_readers - 1) {
       unsigned int range_start = (i / 4) * 4;
@@ -216,7 +202,7 @@ void arts_main(int argc, char **argv) {
   }
 
   arts_guid_t validator_edt_guid =
-      arts_edt_create_with_epoch(validator_edt, 0, 0, NULL, 1, epoch_guid);
+      arts_edt_create_with_epoch(validator_edt, 0, NULL, 1, epoch_guid, &(arts_hint_t){.route = 0});
   ARTS_PRINT("[Step 4] Created validator EDT (guid: %lu)", validator_edt_guid);
 
   /// Record ALL dependencies
@@ -237,7 +223,7 @@ void arts_main(int argc, char **argv) {
   arts_wait_on_handle(epoch_guid);
 
   /// Free reader EDTs
-  arts_free(reader_edt_guids);
+  free(reader_edt_guids);
 
   /// Print final status
   if (validation_result && *validation_result == 1) {

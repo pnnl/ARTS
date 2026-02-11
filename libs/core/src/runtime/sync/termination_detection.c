@@ -39,6 +39,7 @@
 #include "arts/runtime/sync/termination_detection.h"
 
 #include "arts.h"
+#include "arts/utils/malloc.h"
 #include "arts/gas/guid.h"
 #include "arts/gas/out_of_order.h"
 #include "arts/gas/route_table.h"
@@ -174,7 +175,7 @@ arts_epoch_t *create_epoch(arts_guid_t *guid, arts_guid_t edt_guid,
   epoch->terminationExitSlot = slot;
   epoch->guid = *guid;
   epoch->pool_guid = NULL_GUID;
-  epoch->queued = (arts_is_guid_local(*guid)) ? 0 : EPOCH_BIT;
+  epoch->queued = (arts_guid_is_local(*guid)) ? 0 : EPOCH_BIT;
   arts_route_table_add_item_race(epoch, *guid, arts_global_rank_id, false);
   arts_route_table_fire_oo(*guid, arts_out_of_order_handler);
   return epoch;
@@ -370,8 +371,8 @@ arts_epoch_pool_t *create_epoch_pool(arts_guid_t *epoch_pool_guid,
   arts_guid_range_t temp;
   arts_guid_range_t *range;
   if (new_range) {
-    range = arts_new_guid_range_node(ARTS_EDT, pool_size, arts_global_rank_id);
-    *start_guid = arts_get_guid(range, 0);
+    range = arts_guid_range_create(ARTS_EDT, pool_size, arts_global_rank_id);
+    *start_guid = arts_guid_range_get(range, 0);
   } else {
     temp.size = pool_size;
     temp.index = 0;
@@ -389,10 +390,10 @@ arts_epoch_pool_t *create_epoch_pool(arts_guid_t *epoch_pool_guid,
   for (unsigned int i = 0; i < pool_size; i++) {
     epoch_pool->pool[i].phase = PHASE_1;
     epoch_pool->pool[i].pool_guid = *epoch_pool_guid;
-    epoch_pool->pool[i].guid = arts_get_guid(range, i);
+    epoch_pool->pool[i].guid = arts_guid_range_get(range, i);
     epoch_pool->pool[i].queued =
-        (arts_is_guid_local(*epoch_pool_guid)) ? 0 : EPOCH_BIT;
-    if (!arts_is_guid_local(*epoch_pool_guid)) {
+        (arts_guid_is_local(*epoch_pool_guid)) ? 0 : EPOCH_BIT;
+    if (!arts_guid_is_local(*epoch_pool_guid)) {
       arts_route_table_add_item_race(&epoch_pool->pool[i], epoch_pool->pool[i].guid,
                                 arts_global_rank_id, false);
       arts_route_table_fire_oo(epoch_pool->pool[i].guid, arts_out_of_order_handler);
@@ -415,7 +416,7 @@ void delete_epoch(arts_guid_t epoch_guid, arts_epoch_t *epoch) {
   if (epoch->pool_guid) {
     arts_epoch_pool_t *pool =
         (arts_epoch_pool_t *)arts_route_table_lookup_item(epoch->pool_guid);
-    if (arts_is_guid_local(epoch->pool_guid)) {
+    if (arts_guid_is_local(epoch->pool_guid)) {
       arts_route_table_remove_item(epoch_guid);
       if (!arts_atomic_sub(&pool->outstanding, 1)) {
         arts_route_table_remove_item(epoch->pool_guid);
@@ -437,7 +438,7 @@ void delete_epoch(arts_guid_t epoch_guid, arts_epoch_t *epoch) {
     arts_route_table_remove_item(epoch_guid);
     arts_free(epoch);
 
-    if (arts_is_guid_local(epoch_guid)) {
+    if (arts_guid_is_local(epoch_guid)) {
       for (unsigned int i = 0; i < arts_global_rank_count; i++) {
         if (i != arts_global_rank_id) {
           arts_remote_epoch_delete(i, epoch_guid);

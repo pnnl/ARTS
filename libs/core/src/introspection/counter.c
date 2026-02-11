@@ -46,6 +46,7 @@
 #include <unistd.h>
 
 #include "arts.h"
+#include "arts/utils/malloc.h"
 #include "arts/introspection/arts_id_counter.h"
 #include "arts/introspection/json_writer.h"
 #include "arts/network/remote.h"

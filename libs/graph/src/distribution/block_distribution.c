@@ -44,6 +44,7 @@
 
 #include "arts/block_distribution.h"
 #include "arts.h"
+#include "arts/utils/malloc.h"
 #include "arts/system/arts_print.h"
 
 void internal_init_block_distribution(arts_block_dist_t *dist, graph_sz_t n,
@@ -64,10 +65,10 @@ arts_block_dist_t *init_block_distribution_block(graph_sz_t n, graph_sz_t m,
   unsigned int current = 0;
   for (unsigned int i = 0; i < arts_get_total_nodes(); i++) {
     for (unsigned int j = 0; j < blocks_per_node; j++) {
-      dist->graphGuid[current++] = arts_reserve_guid_route(db_type, i);
+      dist->graphGuid[current++] = arts_guid_reserve(db_type, i);
     }
     if (mod) {
-      dist->graphGuid[current++] = arts_reserve_guid_route(db_type, i);
+      dist->graphGuid[current++] = arts_guid_reserve(db_type, i);
       mod--;
     }
   }
@@ -81,7 +82,7 @@ arts_block_dist_t *init_block_distribution(graph_sz_t n, graph_sz_t m) {
   arts_block_dist_t *dist = (arts_block_dist_t *)arts_malloc(
       sizeof(arts_block_dist_t) + (sizeof(arts_guid_t) * num_blocks));
   for (unsigned int i = 0; i < num_blocks; i++) {
-    dist->graphGuid[i] = arts_reserve_guid_route(ARTS_DB_PIN, i);
+    dist->graphGuid[i] = arts_guid_reserve(ARTS_DB_PIN, i);
 }
   internal_init_block_distribution(dist, n, m, num_blocks);
   return dist;
@@ -104,7 +105,7 @@ arts_block_dist_t *init_block_distribution_with_cmd_line_args(int argc, char **a
     arts_block_dist_t *dist = (arts_block_dist_t *)arts_malloc(
         sizeof(arts_block_dist_t) + (sizeof(arts_guid_t) * num_blocks));
     for (unsigned int i = 0; i < num_blocks; i++) {
-      dist->graphGuid[i] = arts_reserve_guid_route(ARTS_DB_PIN, i);
+      dist->graphGuid[i] = arts_guid_reserve(ARTS_DB_PIN, i);
 }
     internal_init_block_distribution(dist, n, m, num_blocks);
     return dist;
@@ -118,7 +119,7 @@ void free_distribution(arts_block_dist_t *dist) { arts_free(dist); }
 unsigned int get_num_local_blocks(arts_block_dist_t *dist) {
   unsigned int num_local_parts = 0;
   for (unsigned int i = 0; i < dist->num_blocks; i++) {
-    if (arts_is_guid_local(get_guid_for_vertex_distr(i, dist))) {
+    if (arts_guid_is_local(get_guid_for_vertex_distr(i, dist))) {
       num_local_parts++;
 }
   }

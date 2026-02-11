@@ -45,6 +45,7 @@
 #include "arts/csr.h"
 #include "arts/edge_vector.h"
 #include "arts.h"
+#include "arts/utils/malloc.h"
 #include "arts/gas/route_table.h"
 #include "arts/system/arts_print.h"
 
@@ -60,12 +61,12 @@ csr_graph_t *init_csr(partition_t part_index, graph_sz_t localv,
                      arts_guid_t block_guid) {
   // TODO: what will happen if partition does not have any vertex??
   csr_graph_t *csr = NULL;
-  if (arts_is_guid_local(block_guid)) {
+  if (arts_guid_is_local(block_guid)) {
     // data is a single array that merges row_indices and columns
     graph_sz_t totsz = (localv + 1) + locale;
     unsigned int db_size = sizeof(csr_graph_t) + (totsz * sizeof(vertex_t));
 
-    csr = (csr_graph_t *)arts_db_create_with_guid(block_guid, db_size);
+    csr = (csr_graph_t *)arts_db_create_with_guid(block_guid, db_size, NULL);
     csr->partGuid = block_guid;
     csr->num_local_vertices = localv;
     csr->num_local_edges = locale;
@@ -271,7 +272,7 @@ int load_graph_no_weight(const char *file_path, arts_block_dist_t *dist, bool fl
   arts_edge_vector_t *vedges;
 
   for (unsigned int i = 0; i < dist->num_blocks; i++) {
-    if (arts_is_guid_local(get_guid_for_partition_distr(dist, i))) {
+    if (arts_guid_is_local(get_guid_for_partition_distr(dist, i))) {
       num_local_parts++;
 }
   }
@@ -281,7 +282,7 @@ int load_graph_no_weight(const char *file_path, arts_block_dist_t *dist, bool fl
 
   unsigned int j = 0;
   for (unsigned int i = 0; i < dist->num_blocks; i++) {
-    if (arts_is_guid_local(get_guid_for_partition_distr(dist, i))) {
+    if (arts_guid_is_local(get_guid_for_partition_distr(dist, i))) {
       part_index[j] = i;
       init_edge_vector(&vedges[j], EDGE_VEC_SZ);
       j++;
@@ -394,7 +395,7 @@ int load_graph_no_weight_csr(const char *file_path, arts_block_dist_t *dist,
   arts_edge_vector_t *vedges;
 
   for (unsigned int i = 0; i < dist->num_blocks; i++) {
-    if (arts_is_guid_local(get_guid_for_partition_distr(dist, i))) {
+    if (arts_guid_is_local(get_guid_for_partition_distr(dist, i))) {
       num_local_parts++;
 }
   }
@@ -404,7 +405,7 @@ int load_graph_no_weight_csr(const char *file_path, arts_block_dist_t *dist,
 
   unsigned int j = 0;
   for (unsigned int i = 0; i < dist->num_blocks; i++) {
-    if (arts_is_guid_local(get_guid_for_partition_distr(dist, i))) {
+    if (arts_guid_is_local(get_guid_for_partition_distr(dist, i))) {
       part_index[j] = i;
       init_edge_vector(&vedges[j], EDGE_VEC_SZ);
       j++;
@@ -494,7 +495,7 @@ int load_graph_no_weight_csr(const char *file_path, arts_block_dist_t *dist,
 
 csr_graph_t *get_graph_from_guid(arts_guid_t guid) {
   struct arts_db_s *db_res = (struct arts_db_s *)arts_route_table_lookup_item(guid);
-  if (arts_is_guid_local(guid) && db_res) {
+  if (arts_guid_is_local(guid) && db_res) {
     return (csr_graph_t *)(db_res + 1);
 }
   return NULL;

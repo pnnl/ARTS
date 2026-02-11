@@ -37,9 +37,11 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 #include "arts/runtime/runtime.h"
+#include "arts/utils/malloc.h"
 
 #include <stdlib.h>
 
+#include "arts/arts_defs.h"
 #include "arts/gas/guid.h"
 #include "arts/gas/route_table.h"
 #include "arts/introspection/arts_id_counter.h"
@@ -72,27 +74,9 @@
 extern unsigned int num_numa_domains;
 extern int main_argc;
 extern char **main_argv;
-#if defined(__APPLE__)
-extern void init_per_node(unsigned int node_id, int argc, char **argv)
-    __attribute__((weak_import));
-extern void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
-                          char **argv) __attribute__((weak_import));
-extern void arts_main(int argc, char **argv) __attribute__((weak_import));
-#else
-extern void init_per_node(unsigned int node_id, int argc, char **argv)
-    __attribute__((weak));
-extern void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
-                          char **argv) __attribute__((weak));
-extern void arts_main(int argc, char **argv) __attribute__((weak));
-#endif
 
-// Weak implementations of optional user functions
-__attribute__((weak)) void init_per_node(unsigned int node_id, int argc,
-                                       char **argv) {}
-__attribute__((weak)) void init_per_worker(unsigned int node_id,
-                                         unsigned int worker_id, int argc,
-                                         char **argv) {}
-__attribute__((weak)) void arts_main(int argc, char **argv) {}
+ARTS_WEAK void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
+                              uint32_t depc, arts_edt_dep_t depv[]) {}
 
 struct arts_runtime_shared_s arts_node_info;
 __thread struct arts_runtime_private_s arts_thread_info;
@@ -111,18 +95,6 @@ scheduler_t scheduler_loop[] = {(scheduler_t)arts_default_scheduler_loop,
                                (scheduler_t)arts_network_first_scheduler_loop};
 #endif
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                 arts_edt_dep_t depv[]) {
-  (void)depc;
-  (void)depv;
-  (void)paramc;
-  (void)paramv;
-  ARTS_DEBUG("Runtime Main EDT called");
-  if (arts_main) {
-    arts_main(main_argc, main_argv);
-}
-  ARTS_DEBUG("Runtime Main EDT finished");
-}
 
 void arts_runtime_node_init(unsigned int worker_threads,
                          unsigned int receiving_threads,
@@ -271,10 +243,6 @@ void arts_thread_zero_node_start() {
   INITIALIZATION_TIME_STOP();
   END_TO_END_TIME_START();
 
-  if (init_per_node) {
-    init_per_node(arts_global_rank_id, main_argc, main_argv);
-}
-
 #ifdef USE_GPU
   arts_init_per_gpu_wrapper(main_argc, main_argv);
 #endif
@@ -283,13 +251,10 @@ void arts_thread_zero_node_start() {
   arts_atomic_sub(&arts_node_info.ready_to_parallel_start, 1U);
   while (arts_node_info.ready_to_parallel_start) {
   }
-  if (init_per_worker && arts_thread_info.worker) {
-    init_per_worker(arts_global_rank_id, arts_thread_info.group_id, main_argc, main_argv);
-}
-
-  if (arts_main && !arts_global_rank_id) {
-    arts_edt_create(arts_main_edt, 0, 0, NULL, 0);
-}
+  if (arts_main_edt && !arts_global_rank_id) {
+    uint64_t main_args[2] = {(uint64_t)main_argc, (uint64_t)main_argv};
+    arts_edt_create(arts_main_edt, 2, main_args, 0, &(arts_hint_t){.route = 0});
+  }
 
   arts_increment_finished_epoch_list();
 
@@ -409,10 +374,6 @@ void arts_runtime_private_init(struct thread_mask_s *unit,
     };
 
     if (arts_thread_info.worker) {
-      if (init_per_worker) {
-        init_per_worker(arts_global_rank_id, arts_thread_info.group_id, main_argc,
-                      main_argv);
-}
       arts_increment_finished_epoch_list();
     }
 
@@ -516,7 +477,8 @@ void arts_run_edt(struct arts_edt_s *edt) {
   ARTS_INFO("Running EDT[Id:%lu, Guid:%lu, Deps: %u, Params: %u, "
             "DepvPtr: %p]",
             edt->arts_id, edt->current_edt, depc, paramc, depv);
-  prep_dbs(depc, depv, false);
+  arts_type_t *modes = arts_get_dep_modes(edt);
+  prep_dbs(depc, depv, modes, false);
 
   arts_set_thread_local_edt_info(edt);
 
@@ -546,7 +508,7 @@ void arts_run_edt(struct arts_edt_s *edt) {
 }
 
   ARTS_INFO("EDT[Id:%lu, Guid:%lu] Finished", edt->arts_id, edt->current_edt);
-  release_dbs(depc, depv, false);
+  release_dbs(depc, depv, modes, false);
   arts_edt_delete(edt);
   // This is for debugging purposes
   DEC_OUSTANDING_EDTS(1);

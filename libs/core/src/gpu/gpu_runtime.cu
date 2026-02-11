@@ -43,6 +43,7 @@
 // Once this *class* works we will put a stream(s) in create a thread local
 // stream.  Then we will push stuff!
 #include "arts/gpu/gpu_runtime.cuh"
+#include "arts/utils/malloc.h"
 
 #include "arts/gas/out_of_order.h"
 #include "arts/gpu/gpu_lc_sync_functions.cuh"
@@ -99,7 +100,7 @@ void *arts_cuda_malloc_host(unsigned int size) {
   // ptr = arts_calloc(1, size);
   if (!ptr) {
     arts_debug_print_stack();
-    exit(1);
+    arts_abort(1);
   }
   return ptr;
 }
@@ -118,7 +119,7 @@ void *arts_cuda_malloc(unsigned int size) {
     ARTS_INFO("arts_cuda_malloc failed %lu\n",
               arts_gpus[arts_current_device_id].availGlobalMem);
     arts_debug_print_stack();
-    exit(1);
+    arts_abort(1);
   }
   return ptr;
 }
@@ -155,8 +156,9 @@ arts_guid_t internal_edt_create_gpu(arts_edt_t func_ptr, arts_guid_t *guid,
                                 bool pass_through, bool lib, int gpu_to_run_on) {
   //    ARTSEDTCOUNTERTIMERSTART(EDT_CREATE_COUNTER);
   unsigned int dep_space = (has_depv) ? depc * sizeof(arts_edt_dep_t) : 0;
+  unsigned int mode_space = (has_depv) ? depc * sizeof(arts_type_t) : 0;
   unsigned int edt_space =
-      sizeof(arts_gpu_edt_t) + (paramc * sizeof(uint64_t)) + dep_space;
+      sizeof(arts_gpu_edt_t) + (paramc * sizeof(uint64_t)) + dep_space + mode_space;
 
   arts_gpu_edt_t *edt = (arts_gpu_edt_t *)arts_calloc(1, edt_space);
   edt->wrapperEdt.invalidateCount = 1;
@@ -296,7 +298,8 @@ void arts_run_gpu(void *edt_packet, arts_gpu_t *arts_gpu) {
 
   arts_atomic_add(&arts_gpu->runningEdts, 1U);
 
-  prep_dbs(depc, depv, true);
+  arts_type_t *modes = arts_get_dep_modes(edt_packet);
+  prep_dbs(depc, depv, modes, true);
   arts_schedule_to_gpu(func, paramc, paramv, depc, depv, edt_packet, arts_gpu);
 
   arts_cuda_restore_device();
@@ -310,7 +313,8 @@ void arts_gpu_host_wrap_up(void *edt_packet, arts_guid_t to_signal, uint32_t slo
   const uint64_t *paramv = (uint64_t *)(edt + 1);
   arts_edt_dep_t *depv = (arts_edt_dep_t *)(paramv + paramc);
 
-  release_dbs(depc, depv, true);
+  arts_type_t *modes = arts_get_dep_modes(edt_packet);
+  release_dbs(depc, depv, modes, true);
 
   if (edt->lib) {
     edt->wrapperEdt.invalidateCount = 0;

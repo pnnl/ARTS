@@ -60,23 +60,22 @@ void send_handler(void *args) {
   }
 }
 
-void init_per_node(unsigned int node_id, int argc, char **argv) {
-  (void)argc;
+void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                   arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  (void)depv;
+  char **argv = (char **)paramv[1];
   num_elements = strtol(argv[1], NULL, 10);
-  if (!node_id) {
-    unsigned int size = sizeof(unsigned int) * num_elements;
-    for (unsigned int i = 0; i < arts_get_total_nodes(); i++) {
-      unsigned int *data = (unsigned int *)arts_malloc(size);
-      for (unsigned int j = 0; j < num_elements; j++) {
-        data[j] = j;
-}
-      arts_remote_send(i, send_handler, data, size, true);
+  unsigned int size = sizeof(unsigned int) * num_elements;
+  for (unsigned int i = 0; i < arts_get_total_nodes(); i++) {
+    unsigned int *data = (unsigned int *)malloc(size);
+    for (unsigned int j = 0; j < num_elements; j++) {
+      data[j] = j;
     }
+    arts_remote_send(i, send_handler, data, size, true);
   }
 }
-
-void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
-                   char **argv) {}
 
 int main(int argc, char **argv) {
   arts_rt(argc, argv);

@@ -86,6 +86,7 @@
 #include <cuda_runtime_api.h>
 
 #include "arts.h"
+#include <stdlib.h>
 #include "arts/gpu/gpu_runtime.cuh"
 #include "arts/runtime/globals.h"
 
@@ -97,7 +98,7 @@ arts_guid_range_t *tile_guids = NULL;
 uint64_t **tile = NULL;
 #define GET_LOCAL_INDEX(v) (((v) & (tableSize - 1)) % tile_size)
 #define GET_OWNER_INDEX(v) (((v) & (tableSize - 1)) / tile_size)
-#define GET_TILE_GUID(v) arts_get_guid(tile_guids, GET_OWNER_INDEX(v))
+#define GET_TILE_GUID(v) arts_guid_range_get(tile_guids, GET_OWNER_INDEX(v))
 
 uint64_t start = 0;
 arts_guid_t done_guid = NULL_GUID;
@@ -297,7 +298,7 @@ void random_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
     // Get random counts
     unsigned int elems_to_copy = num_tiles; // + numRandom;
-    uint64_t *count = (uint64_t *)arts_calloc(elems_to_copy, sizeof(uint64_t));
+    uint64_t *count = (uint64_t *)calloc(elems_to_copy, sizeof(uint64_t));
     arts_cuda_mem_cpy_from_dev(count, r_array,
                                sizeof(uint64_t) * elems_to_copy);
     // for(uint64_t i=0; i<num_tiles; i++)
@@ -309,7 +310,7 @@ void random_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
     // Reserve next random_edt
     arts_guid_t next_random_guid =
-        arts_reserve_guid_route(ARTS_EDT, arts_get_current_node());
+        arts_guid_reserve(ARTS_EDT, arts_get_current_node());
     unsigned int next_random_deps = 1;
 
     // Create readOnly copy of DB
@@ -324,20 +325,20 @@ void random_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
         dim3 block(MAXTHREADS, 1, 1);
         dim3 grid(MAXTHREADBLOCKSPERSM * NUMBEROFSM, 1, 1);
         arts_printf("Launching for i: %lu count: %lu tileGuid: %lu\n", i,
-                    count[i], arts_get_guid(tile_guids, i));
+                    count[i], arts_guid_range_get(tile_guids, i));
         arts_guid_t update_guid = arts_edt_create_gpu(
             update_edt, arts_get_current_node(), 5, update_args, 2, grid, block,
             next_random_guid, i + 1, NULL_GUID);
         arts_gpu_signal_edt_memset(update_guid, 0,
-                                   arts_get_guid(tile_guids, i));
-        // arts_signal_edt(update_guid, 0, arts_get_guid(tile_guids, i));
+                                   arts_guid_range_get(tile_guids, i));
+        // arts_signal_edt(update_guid, 0, arts_guid_range_get(tile_guids, i));
         arts_signal_edt(update_guid, 1, read_only);
         next_random_deps++;
       }
     }
 
     // Free the counts since we are done with them.
-    arts_free(count);
+    free(count);
 
     // Create next random_edt
     uint64_t next_random = num_rem_updates - num_random;
@@ -359,7 +360,7 @@ void sync_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   uint64_t time = arts_get_time_stamp() - start;
   arts_printf("Time %lu\n", time);
 
-  uint64_t *table = (uint64_t *)arts_calloc(TABLESIZE, sizeof(uint64_t));
+  uint64_t *table = (uint64_t *)calloc(TABLESIZE, sizeof(uint64_t));
   for (uint64_t i = 0; i < TABLESIZE; i++) {
     table[i] = i;
   }
@@ -410,7 +411,15 @@ void sync_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-extern "C" void init_per_node(unsigned int node_id, int argc, char **argv) {
+extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
+                              uint32_t depc, arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  (void)depv;
+  int argc = (int)paramv[0];
+  char **argv = (char **)paramv[1];
+  unsigned int node_id = arts_get_current_node();
+
   if (argc > 1) {
     tile_size = (unsigned int)strtol(argv[1], NULL, 10);
   }
@@ -419,13 +428,13 @@ extern "C" void init_per_node(unsigned int node_id, int argc, char **argv) {
               TABLESIZE, tile_size, num_tiles);
 
   // Create tiled table
-  tile_guids = arts_new_guid_range_node(ARTS_DB_LC, num_tiles, node_id);
-  tile = (uint64_t **)arts_calloc(num_tiles, sizeof(uint64_t *));
+  tile_guids = arts_guid_range_create(ARTS_DB_LC, num_tiles, node_id);
+  tile = (uint64_t **)calloc(num_tiles, sizeof(uint64_t *));
   uint64_t counter = 0;
   for (unsigned int i = 0; i < num_tiles; i++) {
     tile[i] = (uint64_t *)arts_db_create_with_guid(
-        arts_get_guid(tile_guids, i), (tile_size + 1) * sizeof(uint64_t));
-    arts_printf("TileGuid[%u]: %lu -> %p\n", i, arts_get_guid(tile_guids, i),
+        arts_guid_range_get(tile_guids, i), (tile_size + 1) * sizeof(uint64_t), NULL);
+    arts_printf("TileGuid[%u]: %lu -> %p\n", i, arts_guid_range_get(tile_guids, i),
                 tile[i]);
     for (unsigned int j = 0; j < tile_size; j++) {
       tile[i][j] = counter++;
@@ -433,60 +442,50 @@ extern "C" void init_per_node(unsigned int node_id, int argc, char **argv) {
     tile[i][tile_size] = 0;
   }
 
-  // Create update frontiers.  The number of updates a frontier can hold is 1024
-  // per thread
+  // Create update frontiers
   unsigned int num_gpus = arts_get_total_gpus();
   unsigned int elems_per_frontier =
       num_tiles + (unsigned int)MAX_UPDATES_PER_GPU_STEP;
   update_frontier_guids =
-      arts_new_guid_range_node(ARTS_DB_GPU_WRITE, num_gpus, node_id);
+      arts_guid_range_create(ARTS_DB_GPU_WRITE, num_gpus, node_id);
   for (unsigned int i = 0; i < num_gpus; i++) {
     uint64_t *update_frontier = (uint64_t *)arts_db_create_with_guid(
-        arts_get_guid(update_frontier_guids, i),
-        elems_per_frontier * sizeof(uint64_t));
+        arts_guid_range_get(update_frontier_guids, i),
+        elems_per_frontier * sizeof(uint64_t), NULL);
     arts_printf("updateFrontier[%u]: %lu %p\n", i,
-                arts_get_guid(update_frontier_guids, i), update_frontier);
+                arts_guid_range_get(update_frontier_guids, i), update_frontier);
     for (unsigned int j = 0; j < elems_per_frontier; j++) {
       update_frontier[j] = 0;
     }
   }
 
-  // Create a LC sync edt for all partitions
-  done_guid = arts_reserve_guid_route(ARTS_EDT, 0);
-}
+  done_guid = arts_guid_reserve(ARTS_EDT, 0);
 
-extern "C" void init_per_worker(unsigned int node_id, unsigned int worker_id,
-                                int argc, char **argv) {
-  (void)argc;
-  (void)argv;
   if (ARTS_LOOK_UP_CONFIG(gpu_lc_sync) != 6) {
     arts_printf(
         "For correct results set gpu_lc_sync=6 in arts.cfg\nShutting Down...\n");
     arts_shutdown();
+    return;
   }
 
-  if (!node_id && !worker_id) {
-    unsigned int num_gpus = arts_get_total_gpus();
-    uint64_t num_updates_per_gpu = NUPDATE / num_gpus;
-    arts_printf("NumGpus: %u numUpdatesPerGpu: %lu\n", num_gpus,
-                num_updates_per_gpu);
-    dim3 block(MAXTHREADS, 1, 1);
-    dim3 grid(MAXTHREADBLOCKSPERSM * NUMBEROFSM, 1, 1);
+  uint64_t num_updates_per_gpu = NUPDATE / num_gpus;
+  arts_printf("NumGpus: %u numUpdatesPerGpu: %lu\n", num_gpus,
+              num_updates_per_gpu);
+  dim3 block(MAXTHREADS, 1, 1);
+  dim3 grid(MAXTHREADBLOCKSPERSM * NUMBEROFSM, 1, 1);
 
-    // Create NUPDATE / arts_get_total_gpus() getRandomEdts
-    uint64_t args[] = {num_updates_per_gpu, 0, 0};
-    for (unsigned int i = 0; i < num_gpus; i++) {
-      args[2] = i;
-      arts_guid_t update_guid =
-          arts_edt_create_gpu_lib(random_edt, 0, 3, args, 1, grid, block);
-      arts_gpu_signal_edt_memset(update_guid, 0,
-                                 arts_get_guid(update_frontier_guids, i));
-    }
+  uint64_t args[] = {num_updates_per_gpu, 0, 0};
+  for (unsigned int i = 0; i < num_gpus; i++) {
+    args[2] = i;
+    arts_guid_t update_guid =
+        arts_edt_create_gpu_lib(random_edt, 0, 3, args, 1, grid, block);
+    arts_gpu_signal_edt_memset(update_guid, 0,
+                               arts_guid_range_get(update_frontier_guids, i));
+  }
 
-    arts_edt_create_with_guid(sync_edt, done_guid, 0, NULL, num_gpus + num_tiles);
-    for (unsigned int i = 0; i < num_tiles; i++) {
-      arts_lc_sync(done_guid, i, arts_get_guid(tile_guids, i));
-    }
+  arts_edt_create_with_guid(sync_edt, done_guid, 0, NULL, num_gpus + num_tiles);
+  for (unsigned int i = 0; i < num_tiles; i++) {
+    arts_lc_sync(done_guid, i, arts_guid_range_get(tile_guids, i));
   }
   start = arts_get_time_stamp();
 }

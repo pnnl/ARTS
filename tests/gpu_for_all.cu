@@ -82,8 +82,8 @@ void thrust_sort(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                                                     // (frontier) to our gpu
 
   unsigned int *tile = NULL; // This will hold a tile of the new frontier
-  arts_guid_t tile_guid = arts_db_create(
-      (void **)&tile, sizeof(unsigned int) * GPULISTLEN, ARTS_DB_GPU_READ);
+  arts_guid_t tile_guid = arts_guid_reserve(ARTS_DB_GPU_READ, 0);
+  tile = (unsigned int *)arts_db_create_with_guid(tile_guid, sizeof(unsigned int) * GPULISTLEN, NULL);
 
   thrust::device_ptr<unsigned int> dev_thrust_ptr(raw_ptr);
   thrust::sort(dev_thrust_ptr, dev_thrust_ptr + GPULISTLEN); // Do the sorting
@@ -116,53 +116,49 @@ void done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-extern "C" void init_per_node(unsigned int node_id, int argc, char **argv) {
-  (void)node_id;
-  (void)argc;
-  (void)argv;
-  dev_ptr_raw =
-      (unsigned int **)arts_calloc(arts_get_total_gpus(), sizeof(unsigned int *));
-}
-
-extern "C" void init_per_gpu(unsigned int node_id, int dev_id,
+extern "C" void arts_init_per_gpu(unsigned int node_id, int dev_id,
                              cudaStream_t *stream, int argc, char **argv) {
   (void)node_id;
   (void)stream;
   (void)argc;
   (void)argv;
+  if (!dev_id) {
+    dev_ptr_raw =
+        (unsigned int **)calloc(arts_get_total_gpus(), sizeof(unsigned int *));
+  }
   dev_ptr_raw[dev_id] =
       (unsigned int *)arts_cuda_malloc(sizeof(unsigned int) * GPULISTLEN);
 }
 
-extern "C" void init_per_worker(unsigned int node_id, unsigned int worker_id,
-                              int argc, char **argv) {
-  (void)argc;
-  (void)argv;
-  if (!worker_id) {
-    unsigned int **addr;
-    arts_guid_t db_guid = arts_db_create(
-        (void **)&addr, sizeof(unsigned int *) * arts_get_total_gpus(),
-        ARTS_DB_GPU_READ);
-    for (uint64_t i = 0; i < arts_get_total_gpus(); i++) {
-      addr[i] = dev_ptr_raw[i];
-    }
+extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
+                              uint32_t depc, arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
+  unsigned int node_id = arts_get_current_node();
+  unsigned int **addr;
+  arts_guid_t db_guid = arts_guid_reserve(ARTS_DB_GPU_READ, 0);
+  addr = (unsigned int **)arts_db_create_with_guid(db_guid, sizeof(unsigned int *) * arts_get_total_gpus(), NULL);
+  for (uint64_t i = 0; i < arts_get_total_gpus(); i++) {
+    addr[i] = dev_ptr_raw[i];
+  }
 
-    arts_guid_t done_guid = arts_edt_create(done, 0, 0, NULL, arts_get_total_gpus());
+  arts_guid_t done_guid = arts_edt_create(done, 0, NULL, arts_get_total_gpus(), &(arts_hint_t){.route = 0});
 
-    dim3 threads(GPULISTLEN, 1, 1);
-    dim3 grid(1, 1, 1);
-    for (uint64_t i = 0; i < arts_get_total_gpus(); i++) {
-      uint64_t args[] = {(uint64_t)done_guid, i};
-      arts_guid_t edt_guid = arts_edt_create_gpu_lib_direct(thrust_sort, node_id, i, 2,
-                                                     args, 1, grid, threads);
-      arts_guid_t edt_guid2 = arts_edt_create_gpu_direct(
-          temp, node_id, i, 1, &i, 1, grid, threads, edt_guid, 0, db_guid, true);
-      arts_signal_edt(edt_guid2, 0, db_guid);
-    }
+  dim3 threads(GPULISTLEN, 1, 1);
+  dim3 grid(1, 1, 1);
+  for (uint64_t i = 0; i < arts_get_total_gpus(); i++) {
+    uint64_t args[] = {(uint64_t)done_guid, i};
+    arts_guid_t edt_guid = arts_edt_create_gpu_lib_direct(thrust_sort, node_id, i, 2,
+                                                   args, 1, grid, threads);
+    arts_guid_t edt_guid2 = arts_edt_create_gpu_direct(
+        temp, node_id, i, 1, &i, 1, grid, threads, edt_guid, 0, db_guid, true);
+    arts_signal_edt(edt_guid2, 0, db_guid);
   }
 }
 
-extern "C" void clean_per_gpu(unsigned int node_id, int dev_id,
+extern "C" void arts_fini_per_gpu(unsigned int node_id, int dev_id,
                               cudaStream_t *stream) {
   (void)node_id;
   (void)stream;

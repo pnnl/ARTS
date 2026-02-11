@@ -131,8 +131,8 @@ void multiply_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_guid_t a_tile_guid = depv[0].guid;
   arts_guid_t b_tile_guid = depv[1].guid;
-  arts_guid_t c_tile_guid = arts_db_create(
-      (void **)&c_tile, sizeof(double) * tile_size * tile_size, ARTS_DB_GPU_WRITE);
+  arts_guid_t c_tile_guid = arts_guid_reserve(ARTS_DB_GPU_WRITE, 0);
+  c_tile = (double *)arts_db_create_with_guid(c_tile_guid, sizeof(double) * tile_size * tile_size, NULL);
 
   init_matrix(row_size, c_tile, false, true);
 
@@ -150,7 +150,7 @@ void multiply_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 #else
   uint64_t args[] = {tile_size, to_signal, k, c_tile_guid};
   arts_guid_t mul_gpu_guid =
-      arts_edt_create(mm_kernel_cpu, arts_get_current_node(), 4, args, 3);
+      arts_edt_create(mm_kernel_cpu, 4, args, 3, &(arts_hint_t){.route = arts_get_current_node()});
   arts_signal_edt(mul_gpu_guid, 0, a_tile_guid);
   arts_signal_edt(mul_gpu_guid, 1, b_tile_guid);
   arts_signal_edt(mul_gpu_guid, 2, c_tile_guid);
@@ -185,8 +185,8 @@ void sum_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   double *c_tile;
   unsigned int row_size = tile_size;
-  arts_guid_t c_tile_guid = arts_db_create(
-      (void **)&c_tile, sizeof(double) * tile_size * tile_size, ARTS_DB_GPU_WRITE);
+  arts_guid_t c_tile_guid = arts_guid_reserve(ARTS_DB_GPU_WRITE, 0);
+  c_tile = (double *)arts_db_create_with_guid(c_tile_guid, sizeof(double) * tile_size * tile_size, NULL);
   init_matrix(row_size, c_tile, false, true);
 
   for (unsigned int i = 0; i < depc; i++) {
@@ -220,7 +220,7 @@ void finish_block_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   double *a_mat = (double *)depv[1].ptr;
   double *b_mat = (double *)depv[2].ptr;
   arts_printf("Verifying results...\n");
-  double *temp = (double *)arts_calloc(mat_size * mat_size, sizeof(double));
+  double *temp = (double *)calloc(mat_size * mat_size, sizeof(double));
   for (unsigned int i = 0; i < (unsigned int)mat_size; ++i) {
     for (unsigned int j = 0; j < (unsigned int)mat_size; ++j) {
       for (unsigned int k = 0; k < (unsigned int)mat_size; ++k) {
@@ -235,14 +235,14 @@ void finish_block_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
         arts_printf("Failed at c_mat[%u][%u]\n", i, j);
         arts_printf("Expected: %lf | Obtained: %lf\n", temp[(i * mat_size) + j],
                c_mat[(i * mat_size) + j]);
-        arts_free(temp);
+        free(temp);
         arts_shutdown();
         return;
       }
     }
   }
 
-  arts_free(temp);
+  free(temp);
   arts_printf("Success %lu\n", time);
 #else
   arts_printf("Done %lu\n", time);
@@ -251,7 +251,15 @@ void finish_block_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-extern "C" void init_per_node(unsigned int node_id, int argc, char **argv) {
+extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
+                              uint32_t depc, arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  (void)depv;
+  int argc = (int)paramv[0];
+  char **argv = (char **)paramv[1];
+  unsigned int node_id = arts_get_current_node();
+
   if (argc == 1) {
     mat_size = MATSIZE;
     tile_size = TILESIZE;
@@ -263,88 +271,72 @@ extern "C" void init_per_node(unsigned int node_id, int argc, char **argv) {
     tile_size = (int)strtol(argv[2], NULL, 10);
   }
   num_blocks = (unsigned int)(mat_size / tile_size);
-  done_guid = arts_reserve_guid_route(ARTS_EDT, 0);
-  a_mat_guid = arts_reserve_guid_route(ARTS_DB_READ, 0);
-  b_mat_guid = arts_reserve_guid_route(ARTS_DB_READ, 0);
-  c_mat_guid = arts_reserve_guid_route(ARTS_DB_READ, 0);
+  done_guid = arts_guid_reserve(ARTS_EDT, 0);
+  a_mat_guid = arts_guid_reserve(ARTS_DB, 0);
+  b_mat_guid = arts_guid_reserve(ARTS_DB, 0);
+  c_mat_guid = arts_guid_reserve(ARTS_DB, 0);
 
-  a_tile_guids = arts_new_guid_range_node(ARTS_DB_GPU_READ, num_blocks * num_blocks, 0);
-  b_tile_guids = arts_new_guid_range_node(ARTS_DB_GPU_READ, num_blocks * num_blocks, 0);
+  a_tile_guids = arts_guid_range_create(ARTS_DB_GPU_READ, num_blocks * num_blocks, 0);
+  b_tile_guids = arts_guid_range_create(ARTS_DB_GPU_READ, num_blocks * num_blocks, 0);
 
-  if (!node_id) {
-    a_matrix = (double *)arts_db_create_with_guid(a_mat_guid, (size_t)mat_size * mat_size *
-                                                           sizeof(double));
-    b_matrix = (double *)arts_db_create_with_guid(b_mat_guid, (size_t)mat_size * mat_size *
-                                                           sizeof(double));
-    c_matrix = (double *)arts_db_create_with_guid(c_mat_guid, (size_t)mat_size * mat_size *
-                                                           sizeof(double));
+  a_matrix = (double *)arts_db_create_with_guid(a_mat_guid, (size_t)mat_size * mat_size *
+                                                         sizeof(double), NULL);
+  b_matrix = (double *)arts_db_create_with_guid(b_mat_guid, (size_t)mat_size * mat_size *
+                                                         sizeof(double), NULL);
+  c_matrix = (double *)arts_db_create_with_guid(c_mat_guid, (size_t)mat_size * mat_size *
+                                                         sizeof(double), NULL);
 
-    init_matrix(mat_size, a_matrix, true, false);
-    init_matrix(mat_size, b_matrix, false, false);
-    init_matrix(mat_size, c_matrix, false, true);
+  init_matrix(mat_size, a_matrix, true, false);
+  init_matrix(mat_size, b_matrix, false, false);
+  init_matrix(mat_size, c_matrix, false, true);
 
-    arts_printf("Starting\n");
-  }
-}
+  arts_printf("Starting\n");
 
-extern "C" void init_per_worker(unsigned int node_id, unsigned int worker_id,
-                              int argc, char **argv) {
-  (void)argc;
-  (void)argv;
-  unsigned int total_threads = arts_get_total_nodes() * arts_get_total_workers();
-  unsigned int global_thread_id = (node_id * arts_get_total_workers()) + worker_id;
+  for (unsigned int i = 0; i < num_blocks; i++) {
+    for (unsigned int j = 0; j < num_blocks; j++) {
+      arts_guid_t a_tile_guid = arts_guid_range_get(a_tile_guids, (i * num_blocks) + j);
+      double *a_tile = (double *)arts_db_create_with_guid(
+          a_tile_guid, sizeof(double) * tile_size * tile_size, NULL);
+      copy_block(i, j, tile_size, a_tile, mat_size, a_matrix, true);
 
-  if (!node_id && !worker_id) {
-    for (unsigned int i = 0; i < num_blocks; i++) {
-      for (unsigned int j = 0; j < num_blocks; j++) {
-        arts_guid_t a_tile_guid = arts_get_guid(a_tile_guids, (i * num_blocks) + j);
-        double *a_tile = (double *)arts_db_create_with_guid(
-            a_tile_guid, sizeof(double) * tile_size * tile_size);
-        copy_block(i, j, tile_size, a_tile, mat_size, a_matrix, true);
-
-        arts_guid_t b_tile_guid = arts_get_guid(b_tile_guids, (i * num_blocks) + j);
-        double *b_tile = (double *)arts_db_create_with_guid(
-            b_tile_guid, sizeof(double) * tile_size * tile_size);
-        copy_block(i, j, tile_size, b_tile, mat_size, b_matrix, true);
-      }
+      arts_guid_t b_tile_guid = arts_guid_range_get(b_tile_guids, (i * num_blocks) + j);
+      double *b_tile = (double *)arts_db_create_with_guid(
+          b_tile_guid, sizeof(double) * tile_size * tile_size, NULL);
+      copy_block(i, j, tile_size, b_tile, mat_size, b_matrix, true);
     }
   }
 
   for (unsigned int i = 0; i < num_blocks; i++) {
     for (unsigned int j = 0; j < num_blocks; j++) {
-      if (((i * num_blocks) + j) % total_threads == global_thread_id) {
 #if GPUMM
-        uint64_t sum_args[] = {(uint64_t)tile_size};
-        dim3 threads(SMTILE, SMTILE);
-        dim3 grid((tile_size + SMTILE - 1) / SMTILE,
-                  (tile_size + SMTILE - 1) / SMTILE);
+      uint64_t sum_args[] = {(uint64_t)tile_size};
+      dim3 threads(SMTILE, SMTILE);
+      dim3 grid((tile_size + SMTILE - 1) / SMTILE,
+                (tile_size + SMTILE - 1) / SMTILE);
 
-        arts_guid_t sum_guid =
-            arts_edt_create_gpu_pt(sum_mm_kernel, node_id, 1, sum_args, num_blocks, grid,
-                               threads, done_guid, 3 + ((i * num_blocks) + j), 0);
+      arts_guid_t sum_guid =
+          arts_edt_create_gpu_pt(sum_mm_kernel, node_id, 1, sum_args, num_blocks, grid,
+                             threads, done_guid, 3 + ((i * num_blocks) + j), 0);
 #else
-        uint64_t sum_args[] = {done_guid, i, j};
-        arts_guid_t sum_guid =
-            arts_edt_create(sum_mm, node_id, 3, sum_args, num_blocks);
+      uint64_t sum_args[] = {done_guid, i, j};
+      arts_guid_t sum_guid =
+          arts_edt_create(sum_mm, 3, sum_args, num_blocks, &(arts_hint_t){.route = node_id});
 #endif
-        for (unsigned int k = 0; k < num_blocks; k++) {
-          uint64_t args[] = {(uint64_t)sum_guid, i, j, k};
-          arts_guid_t mul_guid = arts_edt_create(multiply_mm, node_id, 4, args, 2);
-          arts_signal_edt(mul_guid, 0, arts_get_guid(a_tile_guids, (i * num_blocks) + k));
-          arts_signal_edt(mul_guid, 1, arts_get_guid(b_tile_guids, (k * num_blocks) + j));
-        }
+      for (unsigned int k = 0; k < num_blocks; k++) {
+        uint64_t args[] = {(uint64_t)sum_guid, i, j, k};
+        arts_guid_t mul_guid = arts_edt_create(multiply_mm, 4, args, 2, &(arts_hint_t){.route = node_id});
+        arts_signal_edt(mul_guid, 0, arts_guid_range_get(a_tile_guids, (i * num_blocks) + k));
+        arts_signal_edt(mul_guid, 1, arts_guid_range_get(b_tile_guids, (k * num_blocks) + j));
       }
     }
   }
 
-  if (!node_id && !worker_id) {
-    arts_edt_create_with_guid(finish_block_mm, done_guid, 0, NULL,
-                          3 + (num_blocks * num_blocks));
-    arts_signal_edt(done_guid, 0, c_mat_guid);
-    arts_signal_edt(done_guid, 1, a_mat_guid);
-    arts_signal_edt(done_guid, 2, b_mat_guid);
-    start = arts_get_time_stamp();
-  }
+  arts_edt_create_with_guid(finish_block_mm, done_guid, 0, NULL,
+                        3 + (num_blocks * num_blocks));
+  arts_signal_edt(done_guid, 0, c_mat_guid);
+  arts_signal_edt(done_guid, 1, a_mat_guid);
+  arts_signal_edt(done_guid, 2, b_mat_guid);
+  start = arts_get_time_stamp();
 }
 
 int main(int argc, char **argv) {

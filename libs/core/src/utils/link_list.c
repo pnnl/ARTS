@@ -39,6 +39,7 @@
 #include "arts/utils/link_list.h"
 
 #include "arts.h"
+#include "arts/utils/malloc.h"
 #include "arts/utils/atomics.h"
 
 void arts_link_list_new(struct arts_link_list_s *list) {

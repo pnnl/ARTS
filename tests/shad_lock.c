@@ -65,24 +65,15 @@ void tester(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 }
 
-void init_per_node(unsigned int node_id, unsigned int worker_id, int argc,
-                 char **argv) {
-  (void)argc;
-  (void)argv;
-  (void)node_id;
-  (void)worker_id;
+void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                   arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
   arts_printf("%u -- %u\n", arts_get_total_workers(), arts_get_current_worker());
-}
-
-void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
-                   char **argv) {
-  (void)argc;
-  (void)argv;
-  (void)node_id;
   for (unsigned int i = 0; i < EDTCOUNT; i++) {
-    if (i % arts_get_total_workers() == worker_id) {
-      arts_edt_create(tester, 0, 0, NULL, 0);
-}
+    arts_edt_create(tester, 0, NULL, 0, &(arts_hint_t){.route = 0});
   }
 }
 
@@ -90,49 +81,3 @@ int main(int argc, char **argv) {
   arts_rt(argc, argv);
   return 0;
 }
-
-// #include <stdio.h>
-// #include <stdlib.h>
-// #include "arts.h"
-// #include "arts/runtime/compute/shad_adapter.h"
-// #define EDTCOUNT 100
-// arts_shad_lock_t * lock;
-// unsigned int count = 0;
-
-// void tester(uint32_t paramc, uint64_t * paramv, uint32_t depc, arts_edt_dep_t
-// depv[])
-// {
-//     unsigned int local;
-//     arts_shad_lock(lock);
-//     arts_printf("%u A\n", arts_get_current_worker());
-//     local = ++count;
-//     arts_printf("%u B Local: %u\n", arts_get_current_worker(), local);
-//     arts_shad_unlock(lock);
-//     if(local == EDTCOUNT)
-//     {
-//         arts_printf("SHUTTING DOWN\n");
-//         arts_shutdown();
-//     }
-// }
-
-// void init_per_node(unsigned int node_id, int argc, char** argv)
-// {
-//     lock = arts_shad_create_lock();
-// }
-
-// void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
-// char** argv)
-// {
-
-//         for(unsigned int i=0; i<EDTCOUNT; i++)
-//         {
-//             if(i % arts_get_total_workers() == worker_id)
-//                 arts_edt_create(tester, 0, 0, NULL, 0);
-//         }
-// }
-
-// int main(int argc, char** argv)
-// {
-//     arts_rt(argc, argv);
-//     return 0;
-// }

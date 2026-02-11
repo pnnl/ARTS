@@ -102,7 +102,7 @@ void set_guid_generator_after_parallel_start();
  * @param guid GUID to query.
  * @return The node-local key value.
  */
-uint64_t arts_get_guid_key(arts_guid_t guid);
+uint64_t arts_guid_get_key(arts_guid_t guid);
 
 /**
  * @brief Hash a GUID's key for routing-table lookups.
@@ -110,12 +110,12 @@ uint64_t arts_get_guid_key(arts_guid_t guid);
  * @param guid GUID to hash.
  * @return Hash value derived from the key field.
  */
-uint64_t arts_hash_guid_key(arts_guid_t guid);
+uint64_t arts_guid_hash_key(arts_guid_t guid);
 
 /**
  * @brief Allocate a range of GUIDs with a fixed hash-table size.
  *
- * Similar to arts_new_guid_range_node() but pre-allocates routing-table
+ * Similar to arts_guid_range_create() but pre-allocates routing-table
  * entries sized to @p hash_size.
  *
  * @param type      Type tag for every GUID in the range.
@@ -124,7 +124,7 @@ uint64_t arts_hash_guid_key(arts_guid_t guid);
  * @param hash_size Routing-table bucket count.
  * @return Pointer to a new GUID range, or @c NULL on failure.
  */
-arts_guid_range_t *arts_new_guid_range_node_hash(arts_type_t type, unsigned int size,
+arts_guid_range_t *arts_guid_range_create_hash(arts_type_t type, unsigned int size,
                                         unsigned int route,
                                         unsigned int hash_size);
 

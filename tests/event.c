@@ -49,24 +49,19 @@ void edt_func(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("HELLO\n");
 }
 
-void init_per_node(unsigned int node_id, int argc, char **argv) {
-  (void)argc;
-  (void)argv;
-  (void)node_id;
-  db_guid = arts_reserve_guid_route(ARTS_DB_READ, arts_get_total_nodes() - 1);
-}
-
-void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
-                   char **argv) {
-  (void)argc;
-  (void)argv;
-  if (arts_get_total_nodes() - 1 == node_id) {
-    arts_db_create_with_guid(db_guid, sizeof(unsigned int));
-  }
-
-  if (node_id != arts_get_total_nodes() - 1 && !worker_id) {
-    arts_active_message_with_db_at(edt_func, 0, NULL, 0, db_guid,
-                              arts_get_total_nodes() - 1);
+void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                   arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
+  unsigned int last_node = arts_get_total_nodes() - 1;
+  db_guid = arts_guid_reserve(ARTS_DB, last_node);
+  arts_db_create_with_guid(db_guid, sizeof(unsigned int), NULL);
+  for (unsigned int n = 0; n < last_node; n++) {
+    arts_guid_t am = arts_edt_create(edt_func, 0, NULL, 1,
+        &(arts_hint_t){.route = last_node});
+    arts_signal_edt(am, 0, db_guid);
   }
 }
 

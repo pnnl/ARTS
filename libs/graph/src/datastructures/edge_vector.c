@@ -42,6 +42,7 @@
 
 #include "arts/edge_vector.h"
 #include "arts.h"
+#include "arts/utils/malloc.h"
 #include "arts/system/arts_print.h"
 
 #define INCREASE_SZ_BY 2

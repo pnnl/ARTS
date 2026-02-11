@@ -37,6 +37,7 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 #include "arts/runtime/compute/edt_functions.h"
+#include "arts/utils/malloc.h"
 
 #include <string.h>
 
@@ -223,7 +224,7 @@ bool arts_edt_create_internal(struct arts_edt_s *edt, arts_type_t mode,
 
     if (paramc) {
       unsigned int offset =
-          edt_space - (depc * sizeof(arts_edt_dep_t) + paramc * sizeof(uint64_t));
+          edt_space - (depc * sizeof(arts_type_t) + depc * sizeof(arts_edt_dep_t) + paramc * sizeof(uint64_t));
       char *tmp = (char *)edt + offset;
       memcpy(tmp, paramv, sizeof(uint64_t) * paramc);
     }
@@ -264,21 +265,22 @@ bool arts_edt_create_internal(struct arts_edt_s *edt, arts_type_t mode,
   return false;
 }
 
-arts_guid_t arts_edt_create_dep(arts_edt_t func_ptr, unsigned int route,
-                            uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                            bool has_depv) {
+arts_guid_t arts_edt_create_dep(arts_edt_t func_ptr, uint32_t paramc,
+                            const uint64_t *paramv, uint32_t depc,
+                            bool has_depv, const arts_hint_t *hint) {
   EDT_CREATE_COUNTER_START();
-  if (route == -1) {
-    route = arts_global_rank_id;
-}
+  unsigned int route =
+      (hint && hint->route != ARTS_HINT_CURRENT_NODE) ? hint->route : arts_global_rank_id;
+  uint64_t arts_id = hint ? hint->id : 0;
   unsigned int dep_space = (has_depv) ? depc * sizeof(arts_edt_dep_t) : 0;
+  unsigned int mode_space = (has_depv) ? depc * sizeof(arts_type_t) : 0;
   unsigned int edt_space =
-      sizeof(struct arts_edt_s) + (paramc * sizeof(uint64_t)) + dep_space;
+      sizeof(struct arts_edt_s) + (paramc * sizeof(uint64_t)) + dep_space + mode_space;
   arts_guid_t guid = NULL_GUID;
   arts_guid_t *guid_ptr = &guid;
   bool created = arts_edt_create_internal(
       NULL, ARTS_EDT, guid_ptr, route, arts_thread_info.cluster_id, edt_space,
-      NULL_GUID, func_ptr, paramc, paramv, depc, true, NULL_GUID, has_depv, 0);
+      NULL_GUID, func_ptr, paramc, paramv, depc, true, NULL_GUID, has_depv, arts_id);
   EDT_CREATE_COUNTER_STOP();
   return guid;
 }
@@ -289,8 +291,9 @@ arts_guid_t arts_edt_create_with_guid_dep(arts_edt_t func_ptr, arts_guid_t guid,
   EDT_CREATE_COUNTER_START();
   unsigned int route = arts_guid_get_rank(guid);
   unsigned int dep_space = (has_depv) ? depc * sizeof(arts_edt_dep_t) : 0;
+  unsigned int mode_space = (has_depv) ? depc * sizeof(arts_type_t) : 0;
   unsigned int edt_space =
-      sizeof(struct arts_edt_s) + (paramc * sizeof(uint64_t)) + dep_space;
+      sizeof(struct arts_edt_s) + (paramc * sizeof(uint64_t)) + dep_space + mode_space;
   bool ret = arts_edt_create_internal(
       NULL, ARTS_EDT, &guid, route, arts_thread_info.cluster_id, edt_space,
       NULL_GUID, func_ptr, paramc, paramv, depc, true, NULL_GUID, has_depv, 0);
@@ -298,31 +301,30 @@ arts_guid_t arts_edt_create_with_guid_dep(arts_edt_t func_ptr, arts_guid_t guid,
   return (ret) ? guid : NULL_GUID;
 }
 
-arts_guid_t arts_edt_create_with_epoch_dep(arts_edt_t func_ptr, unsigned int route,
+arts_guid_t arts_edt_create_with_epoch_dep(arts_edt_t func_ptr,
                                      uint32_t paramc, const uint64_t *paramv,
                                      uint32_t depc, arts_guid_t epoch_guid,
-                                     bool has_depv) {
+                                     bool has_depv, const arts_hint_t *hint) {
   EDT_CREATE_COUNTER_START();
-  if (route == -1) {
-    route = arts_global_rank_id;
-}
+  unsigned int route =
+      (hint && hint->route != ARTS_HINT_CURRENT_NODE) ? hint->route : arts_global_rank_id;
+  uint64_t arts_id = hint ? hint->id : 0;
   unsigned int dep_space = (has_depv) ? depc * sizeof(arts_edt_dep_t) : 0;
+  unsigned int mode_space = (has_depv) ? depc * sizeof(arts_type_t) : 0;
   unsigned int edt_space =
-      sizeof(struct arts_edt_s) + (paramc * sizeof(uint64_t)) + dep_space;
+      sizeof(struct arts_edt_s) + (paramc * sizeof(uint64_t)) + dep_space + mode_space;
   arts_guid_t guid = NULL_GUID;
   bool created = arts_edt_create_internal(
       NULL, ARTS_EDT, &guid, route, arts_thread_info.cluster_id, edt_space,
-      NULL_GUID, func_ptr, paramc, paramv, depc, true, epoch_guid, has_depv, 0);
+      NULL_GUID, func_ptr, paramc, paramv, depc, true, epoch_guid, has_depv, arts_id);
   EDT_CREATE_COUNTER_STOP();
   return guid;
 }
 
-arts_guid_t arts_edt_create(arts_edt_t func_ptr, unsigned int route, uint32_t paramc,
-                         const uint64_t *paramv, uint32_t depc) {
-  if (route == -1) {
-    route = arts_global_rank_id;
-}
-  return arts_edt_create_dep(func_ptr, route, paramc, paramv, depc, true);
+arts_guid_t arts_edt_create(arts_edt_t func_ptr, uint32_t paramc,
+                         const uint64_t *paramv, uint32_t depc,
+                         const arts_hint_t *hint) {
+  return arts_edt_create_dep(func_ptr, paramc, paramv, depc, true, hint);
 }
 
 arts_guid_t arts_edt_create_with_guid(arts_edt_t func_ptr, arts_guid_t guid,
@@ -331,53 +333,14 @@ arts_guid_t arts_edt_create_with_guid(arts_edt_t func_ptr, arts_guid_t guid,
   return arts_edt_create_with_guid_dep(func_ptr, guid, paramc, paramv, depc, true);
 }
 
-arts_guid_t arts_edt_create_with_epoch(arts_edt_t func_ptr, unsigned int route,
-                                  uint32_t paramc, const uint64_t *paramv,
-                                  uint32_t depc, arts_guid_t epoch_guid) {
-  if (route == -1) {
-    route = arts_global_rank_id;
-}
-  return arts_edt_create_with_epoch_dep(func_ptr, route, paramc, paramv, depc,
-                                   epoch_guid, true);
+arts_guid_t arts_edt_create_with_epoch(arts_edt_t func_ptr, uint32_t paramc,
+                                  const uint64_t *paramv, uint32_t depc,
+                                  arts_guid_t epoch_guid,
+                                  const arts_hint_t *hint) {
+  return arts_edt_create_with_epoch_dep(func_ptr, paramc, paramv, depc,
+                                   epoch_guid, true, hint);
 }
 
-arts_guid_t arts_edt_create_with_arts_id(arts_edt_t func_ptr, unsigned int route,
-                                   uint32_t paramc, const uint64_t *paramv,
-                                   uint32_t depc, uint64_t arts_id) {
-  EDT_CREATE_COUNTER_START();
-  if (route == -1) {
-    route = arts_global_rank_id;
-}
-  unsigned int dep_space = depc * sizeof(arts_edt_dep_t);
-  unsigned int edt_space =
-      sizeof(struct arts_edt_s) + (paramc * sizeof(uint64_t)) + dep_space;
-  arts_guid_t guid = NULL_GUID;
-  arts_guid_t *guid_ptr = &guid;
-  bool created = arts_edt_create_internal(
-      NULL, ARTS_EDT, guid_ptr, route, arts_thread_info.cluster_id, edt_space,
-      NULL_GUID, func_ptr, paramc, paramv, depc, true, NULL_GUID, true, arts_id);
-  EDT_CREATE_COUNTER_STOP();
-  return guid;
-}
-
-arts_guid_t arts_edt_create_with_epoch_arts_id(arts_edt_t func_ptr, unsigned int route,
-                                        uint32_t paramc, const uint64_t *paramv,
-                                        uint32_t depc, arts_guid_t epoch_guid,
-                                        uint64_t arts_id) {
-  EDT_CREATE_COUNTER_START();
-  if (route == -1) {
-    route = arts_global_rank_id;
-}
-  unsigned int dep_space = depc * sizeof(arts_edt_dep_t);
-  unsigned int edt_space =
-      sizeof(struct arts_edt_s) + (paramc * sizeof(uint64_t)) + dep_space;
-  arts_guid_t guid = NULL_GUID;
-  bool created = arts_edt_create_internal(
-      NULL, ARTS_EDT, &guid, route, arts_thread_info.cluster_id, edt_space,
-      NULL_GUID, func_ptr, paramc, paramv, depc, true, epoch_guid, true, arts_id);
-  EDT_CREATE_COUNTER_STOP();
-  return (created) ? guid : NULL_GUID;
-}
 
 void arts_edt_free(struct arts_edt_s *edt) {
   arts_thread_info.edt_free = 1;
@@ -427,6 +390,15 @@ void *arts_get_depv(void *edt_ptr) {
   return NULL;
 }
 
+arts_type_t *arts_get_dep_modes(void *edt_ptr) {
+  struct arts_edt_s *edt = (struct arts_edt_s *)edt_ptr;
+  arts_edt_dep_t *depv = (arts_edt_dep_t *)arts_get_depv(edt_ptr);
+  if (!depv) {
+    return NULL;
+  }
+  return (arts_type_t *)(depv + edt->depc);
+}
+
 void internal_signal_edt(arts_guid_t edt_packet, uint32_t slot, arts_guid_t data_guid,
                        arts_type_t mode, void *ptr, unsigned int size) {
   SIGNAL_EDT_COUNTER_START();
@@ -445,11 +417,11 @@ void internal_signal_edt(arts_guid_t edt_packet, uint32_t slot, arts_guid_t data
           (struct arts_edt_s *)arts_route_table_lookup_item(edt_packet);
       if (edt) {
         arts_edt_dep_t *edt_dep = (arts_edt_dep_t *)arts_get_depv(edt);
+        arts_type_t *modes = arts_get_dep_modes(edt);
         if (slot < edt->depc) {
           edt_dep[slot].guid = data_guid;
-          edt_dep[slot].mode = mode;
-          edt_dep[slot].acquire_mode = ARTS_NULL;
           edt_dep[slot].ptr = ptr;
+          modes[slot] = mode;
         }
         unsigned int res = arts_atomic_sub(&edt->depcNeeded, 1U);
         ARTS_INFO("Signal DB[Guid:%lu] to EDT[Guid:%lu, Slot:%u, "
@@ -479,15 +451,12 @@ void internal_signal_edt(arts_guid_t edt_packet, uint32_t slot, arts_guid_t data
 }
 
 void arts_signal_edt(arts_guid_t edt_guid, uint32_t slot, arts_guid_t data_guid) {
-  arts_guid_t acq_guid = data_guid;
-  arts_type_t mode = arts_guid_get_type(data_guid);
-  internal_signal_edt(edt_guid, slot, acq_guid, mode, NULL, 0);
+  internal_signal_edt(edt_guid, slot, data_guid, ARTS_DB_WRITE, NULL, 0);
 }
 
-// Internal function to signal EDT with acquire_mode override and diff hint
+// Internal function to signal EDT with explicit access mode
 void internal_signal_edt_with_mode(arts_guid_t edt_packet, uint32_t slot,
-                               arts_guid_t data_guid, arts_type_t mode,
-                               arts_type_t acquire_mode) {
+                               arts_guid_t data_guid, arts_type_t mode) {
   SIGNAL_EDT_COUNTER_START();
   // This is old CDAG code...
   if (current_edt && current_edt->invalidateCount > 0) {
@@ -504,17 +473,17 @@ void internal_signal_edt_with_mode(arts_guid_t edt_packet, uint32_t slot,
           (struct arts_edt_s *)arts_route_table_lookup_item(edt_packet);
       if (edt) {
         arts_edt_dep_t *edt_dep = (arts_edt_dep_t *)arts_get_depv(edt);
+        arts_type_t *modes = arts_get_dep_modes(edt);
         if (slot < edt->depc) {
           edt_dep[slot].guid = data_guid;
-          edt_dep[slot].mode = mode;
-          edt_dep[slot].acquire_mode = acquire_mode;
           edt_dep[slot].ptr = NULL;
+          modes[slot] = mode;
         }
         unsigned int res = arts_atomic_sub(&edt->depcNeeded, 1U);
         ARTS_INFO("Signal DB[Guid:%lu] to EDT[Guid:%lu, Slot:%u, "
-                  "DepCount:%d, AcquireMode:%s]",
+                  "DepCount:%d, Mode:%s]",
                   data_guid, edt->current_edt, slot, res,
-                  GET_TYPE_NAME(acquire_mode));
+                  GET_TYPE_NAME(mode));
         if (res == 0) {
           arts_handle_ready_edt(edt);
 }
@@ -530,8 +499,7 @@ void internal_signal_edt_with_mode(arts_guid_t edt_packet, uint32_t slot,
       if (mode == ARTS_PTR) {
         arts_remote_signal_edt_with_ptr(edt_packet, data_guid, NULL, 0, slot);
       } else {
-        arts_remote_signal_edt_with_hints(edt_packet, data_guid, slot, mode,
-                                     acquire_mode);
+        arts_remote_signal_edt(edt_packet, data_guid, slot, mode);
 }
     }
   }
@@ -555,37 +523,6 @@ void arts_signal_edt_ptr_with_guid(arts_guid_t edt_guid, uint32_t slot,
 
 void arts_signal_edt_null(arts_guid_t edt_guid, uint32_t slot) {
   internal_signal_edt(edt_guid, slot, NULL_GUID, ARTS_NULL, NULL, 0);
-}
-
-arts_guid_t arts_active_message_with_db(arts_edt_t func_ptr, uint32_t paramc,
-                                   const uint64_t *paramv, uint32_t depc,
-                                   arts_guid_t db_guid) {
-  unsigned int rank = arts_guid_get_rank(db_guid);
-  arts_guid_t guid = arts_edt_create(func_ptr, rank, paramc, paramv, depc + 1);
-  arts_signal_edt(guid, 0, db_guid);
-  return guid;
-}
-
-arts_guid_t arts_active_message_with_db_at(arts_edt_t func_ptr, uint32_t paramc,
-                                     const uint64_t *paramv, uint32_t depc,
-                                     arts_guid_t db_guid, unsigned int rank) {
-  arts_guid_t guid = arts_edt_create(func_ptr, rank, paramc, paramv, depc + 1);
-  arts_signal_edt(guid, 0, db_guid);
-  return guid;
-}
-
-arts_guid_t arts_active_message_with_buffer(arts_edt_t func_ptr, unsigned int route,
-                                       uint32_t paramc, const uint64_t *paramv,
-                                       uint32_t depc, void *data,
-                                       unsigned int size) {
-  if (route == -1) {
-    route = arts_global_rank_id;
-}
-  void *ptr = arts_malloc(size);
-  memcpy(ptr, data, size);
-  arts_guid_t guid = arts_edt_create(func_ptr, route, paramc, paramv, depc + 1);
-  arts_signal_edt_ptr(guid, 0, ptr, size);
-  return guid;
 }
 
 arts_guid_t arts_allocate_local_buffer(void **buffer, unsigned int size,
@@ -674,7 +611,7 @@ void *arts_set_buffer(arts_guid_t buffer_guid, void *buffer, unsigned int size) 
 
 void *arts_get_buffer(arts_guid_t buffer_guid) {
   void *buffer = NULL;
-  if (arts_is_guid_local(buffer_guid)) {
+  if (arts_guid_is_local(buffer_guid)) {
     arts_buffer_t *stub = (arts_buffer_t *)arts_route_table_lookup_item(buffer_guid);
     buffer = stub->buffer;
     if (!arts_atomic_sub(&stub->uses, 1)) {
@@ -687,7 +624,7 @@ void *arts_get_buffer(arts_guid_t buffer_guid) {
 
 void *arts_block_for_buffer(arts_guid_t buffer_guid) {
   void *buffer = NULL;
-  if (arts_is_guid_local(buffer_guid)) {
+  if (arts_guid_is_local(buffer_guid)) {
     arts_buffer_t *stub = (arts_buffer_t *)arts_route_table_lookup_item(buffer_guid);
     while (stub->uses > 1) {
       ARTS_DEBUG("Yield: [Uses: %u]", stub->uses);

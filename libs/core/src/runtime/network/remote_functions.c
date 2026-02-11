@@ -41,6 +41,7 @@
 #include <string.h>
 
 #include "arts.h"
+#include "arts/utils/malloc.h"
 #include "arts/gas/out_of_order.h"
 #include "arts/gas/route_table.h"
 #include "arts/introspection/metrics.h"
@@ -89,12 +90,12 @@ static void send_remote_add_dependence_packet(unsigned int message_type,
                                           arts_guid_t source,
                                           arts_guid_t destination, uint32_t slot,
                                           unsigned int rank,
-                                          arts_type_t acquire_mode) {
+                                          arts_type_t mode) {
   struct arts_remote_add_dependence_packet_s packet;
   packet.source = source;
   packet.destination = destination;
   packet.slot = slot;
-  packet.acquire_mode = acquire_mode;
+  packet.mode = mode;
   arts_fill_packet_header(&packet.header, sizeof(packet), message_type);
   arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
 }
@@ -108,10 +109,10 @@ void arts_remote_add_dependence(arts_guid_t source, arts_guid_t destination,
 
 void arts_remote_add_dependence_with_hints(arts_guid_t source, arts_guid_t destination,
                                       uint32_t slot, unsigned int rank,
-                                      arts_type_t acquire_mode) {
-  ARTS_DEBUG("Remote Add dependence (acquire=%u) sent %d", acquire_mode, rank);
+                                      arts_type_t mode) {
+  ARTS_DEBUG("Remote Add dependence (mode=%u) sent %d", mode, rank);
   send_remote_add_dependence_packet(ARTS_REMOTE_ADD_DEPENDENCE_MSG, source,
-                                destination, slot, rank, acquire_mode);
+                                destination, slot, rank, mode);
 }
 
 void arts_remote_add_dependence_to_persistent_event(arts_guid_t source,
@@ -126,27 +127,27 @@ void arts_remote_add_dependence_to_persistent_event(arts_guid_t source,
 
 void arts_remote_add_dependence_to_persistent_event_with_hints(
     arts_guid_t source, arts_guid_t destination, uint32_t slot, unsigned int rank,
-    arts_type_t acquire_mode) {
-  ARTS_DEBUG("Remote Add dependence to persistent event (acquire=%u) sent %d",
-             acquire_mode, rank);
+    arts_type_t mode) {
+  ARTS_DEBUG("Remote Add dependence to persistent event (mode=%u) sent %d",
+             mode, rank);
   send_remote_add_dependence_packet(
       ARTS_REMOTE_ADD_DEPENDENCE_TO_PERSISTENT_EVENT_MSG, source, destination,
-      slot, rank, acquire_mode);
+      slot, rank, mode);
 }
 
 void arts_remote_add_dependence_to_persistent_event_with_byte_offset(
     arts_guid_t source, arts_guid_t destination, uint32_t slot, unsigned int rank,
-    arts_type_t acquire_mode, uint64_t byte_offset, uint64_t size) {
+    arts_type_t mode, uint64_t byte_offset, uint64_t len) {
   ARTS_DEBUG("Remote Add dep to persistent event with byte offset "
-             "(acquire=%u, offset=%lu, size=%lu) sent to rank %d",
-             acquire_mode, byte_offset, size, rank);
+             "(mode=%u, offset=%lu, size=%lu) sent to rank %d",
+             mode, byte_offset, len, rank);
   struct arts_remote_add_dependence_with_byte_offset_packet_s packet;
   packet.source = source;
   packet.destination = destination;
   packet.slot = slot;
-  packet.acquire_mode = acquire_mode;
+  packet.mode = mode;
   packet.byte_offset = byte_offset;
-  packet.size = size;
+  packet.size = len;
   arts_fill_packet_header(
       &packet.header, sizeof(packet),
       ARTS_REMOTE_ADD_DEPENDENCE_TO_PERSISTENT_EVENT_WITH_BYTE_OFFSET_MSG);
@@ -462,21 +463,19 @@ void arts_remote_handle_persistent_event_move(void *ptr) {
 }
 
 static void send_remote_edt_signal_packet(arts_guid_t edt, arts_guid_t db,
-                                      uint32_t slot, arts_type_t mode,
-                                      arts_type_t acquire_mode) {
+                                      uint32_t slot, arts_type_t mode) {
   struct arts_remote_edt_signal_packet_s packet;
   unsigned int rank = arts_guid_get_rank(edt);
 
   if (rank == arts_global_rank_id) {
     rank = arts_route_table_lookup_rank(edt);
-}
+  }
 
   packet.db = db;
   packet.edt = edt;
   packet.slot = slot;
   packet.mode = mode;
   packet.dbRoute = arts_guid_get_rank(db);
-  packet.acquire_mode = acquire_mode;
   arts_fill_packet_header(&packet.header, sizeof(packet),
                        ARTS_REMOTE_EDT_SIGNAL_MSG);
   arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
@@ -487,15 +486,7 @@ void arts_remote_signal_edt(arts_guid_t edt, arts_guid_t db, uint32_t slot,
   ARTS_INFO("Remote Signal from DB[Guid:%lu] to EDT[Guid:%lu, Slot:%d, Rank: "
             "%d]",
             db, edt, slot, arts_guid_get_rank(edt));
-  send_remote_edt_signal_packet(edt, db, slot, mode, ARTS_NULL);
-}
-
-void arts_remote_signal_edt_with_hints(arts_guid_t edt, arts_guid_t db, uint32_t slot,
-                                  arts_type_t mode, arts_type_t acquire_mode) {
-  ARTS_INFO("Remote Signal from DB[Guid:%lu] to EDT[Guid:%lu, Slot:%d, "
-            "Rank: %d, AcquireMode:%u]",
-            db, edt, slot, arts_guid_get_rank(edt), acquire_mode);
-  send_remote_edt_signal_packet(edt, db, slot, mode, acquire_mode);
+  send_remote_edt_signal_packet(edt, db, slot, mode);
 }
 
 void arts_remote_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
@@ -525,12 +516,12 @@ void arts_remote_persistent_event_satisfy_slot(arts_guid_t event_guid, uint32_t 
 static void send_remote_db_add_dependence_packet(arts_guid_t db_src,
                                             arts_guid_t edt_dest,
                                             uint32_t edt_slot,
-                                            arts_type_t acquire_mode) {
+                                            arts_type_t mode) {
   struct arts_remote_db_add_dependence_packet_s packet;
   packet.db_src = db_src;
   packet.edt_dest = edt_dest;
   packet.edt_slot = edt_slot;
-  packet.acquire_mode = acquire_mode;
+  packet.mode = mode;
   arts_fill_packet_header(&packet.header, sizeof(packet),
                        ARTS_REMOTE_DB_ADD_DEPENDENCE_MSG);
   arts_remote_send_request_async((int)arts_guid_get_rank(db_src), (char *)&packet,
@@ -544,23 +535,23 @@ void arts_remote_db_add_dependence(arts_guid_t db_src, arts_guid_t edt_dest,
 
 void arts_remote_db_add_dependence_with_hints(arts_guid_t db_src, arts_guid_t edt_dest,
                                         uint32_t edt_slot,
-                                        arts_type_t acquire_mode) {
-  send_remote_db_add_dependence_packet(db_src, edt_dest, edt_slot, acquire_mode);
+                                        arts_type_t mode) {
+  send_remote_db_add_dependence_packet(db_src, edt_dest, edt_slot, mode);
 }
 
 void arts_remote_db_add_dependence_with_byte_offset(arts_guid_t db_src,
                                              arts_guid_t edt_dest,
                                              uint32_t edt_slot,
-                                             arts_type_t acquire_mode,
+                                             arts_type_t mode,
                                              uint64_t byte_offset,
-                                             uint64_t size) {
+                                             uint64_t len) {
   struct arts_remote_db_add_dependence_with_byte_offset_packet_s packet;
   packet.db_src = db_src;
   packet.edt_dest = edt_dest;
   packet.edt_slot = edt_slot;
-  packet.acquire_mode = acquire_mode;
+  packet.mode = mode;
   packet.byte_offset = byte_offset;
-  packet.size = size;
+  packet.size = len;
   arts_fill_packet_header(&packet.header, sizeof(packet),
                        ARTS_REMOTE_DB_ADD_DEPENDENCE_WITH_BYTE_OFFSET_MSG);
   arts_remote_send_request_async((int)arts_guid_get_rank(db_src), (char *)&packet,
@@ -577,7 +568,7 @@ void arts_remote_handle_db_add_dependence_with_byte_offset(void *ptr) {
   if (db_res != NULL) {
     /// DB is local - add dependency to its persistent event with byte offset
     arts_add_dependence_to_persistent_event_with_byte_offset(
-        db_res->event_guid, packet->edt_dest, packet->edt_slot, packet->acquire_mode,
+        db_res->event_guid, packet->edt_dest, packet->edt_slot, packet->mode,
         packet->byte_offset, packet->size);
   } else {
     /// DB not found locally - this shouldn't happen as we routed to the owner
@@ -615,13 +606,11 @@ void arts_db_request_callback(struct arts_edt_s *edt, unsigned int slot,
 }
 
 bool arts_remote_db_request(arts_guid_t data_guid, int rank, struct arts_edt_s *edt,
-                         int pos, arts_type_t mode, bool agg_request,
-                         arts_type_t acquire_mode) {
+                         int pos, arts_type_t mode, bool agg_request) {
   if (arts_route_table_add_sent(data_guid, edt, pos, agg_request)) {
     struct arts_remote_db_request_packet_s packet;
     packet.db_guid = data_guid;
     packet.mode = mode;
-    packet.acquire_mode = acquire_mode;
     arts_fill_packet_header(&packet.header, sizeof(packet),
                          ARTS_REMOTE_DB_REQUEST_MSG);
     ARTS_DEBUG(
@@ -653,7 +642,7 @@ void arts_remote_db_send_now(int rank, struct arts_db_s *db) {
 }
 
 void arts_remote_db_send_check(int rank, struct arts_db_s *db, arts_type_t mode) {
-  if (!arts_is_guid_local(db->guid)) {
+  if (!arts_guid_is_local(db->guid)) {
     arts_route_table_return_db(db->guid, false);
     arts_remote_db_send_now(rank, db);
   } else if (arts_add_db_duplicate(db, rank, NULL, NULL_GUID, 0, mode)) {
@@ -663,8 +652,8 @@ void arts_remote_db_send_check(int rank, struct arts_db_s *db, arts_type_t mode)
 
 void arts_remote_db_send(struct arts_remote_db_request_packet_s *pack) {
   unsigned int redirected = arts_route_table_lookup_rank(pack->db_guid);
-  ARTS_INFO("Remote DB Send [Guid:%lu] [Rank: %d] [Mode:%d] [AcquireMode:%d]",
-            pack->db_guid, pack->header.rank, pack->mode, pack->acquire_mode);
+  ARTS_INFO("Remote DB Send [Guid:%lu] [Rank: %d] [Mode:%d]",
+            pack->db_guid, pack->header.rank, pack->mode);
   if (redirected != arts_global_rank_id && redirected != -1) {
     arts_remote_send_request_async((int)redirected, (char *)pack, pack->header.size);
   } else {
@@ -672,10 +661,10 @@ void arts_remote_db_send(struct arts_remote_db_request_packet_s *pack) {
     if (db == NULL) {
       arts_out_of_order_handle_remote_db_send((int)pack->header.rank, pack->db_guid,
                                        pack->mode);
-    } else if (!arts_is_guid_local(db->guid) &&
+    } else if (!arts_guid_is_local(db->guid) &&
                pack->header.rank == arts_global_rank_id) {
       // This is when the memory model sends a CDAG write after CDAG write to
-      // the same node The arts_is_guid_local should be an extra check, maybe not
+      // the same node The arts_guid_is_local should be an extra check, maybe not
       // required
       arts_route_table_fire_oo(pack->db_guid, arts_out_of_order_handler);
     } else {
@@ -695,7 +684,7 @@ void arts_remote_handle_db_received(struct arts_remote_db_send_packet_s *packet)
 
   struct arts_db_s *t_ptr = (data_ptr) ? *data_ptr : NULL;
   struct arts_db_list_s *db_list = NULL;
-  if (t_ptr && arts_is_guid_local(packet_db->guid)) {
+  if (t_ptr && arts_guid_is_local(packet_db->guid)) {
     db_list = (struct arts_db_list_s *)t_ptr->db_list;
 }
   ARTS_DEBUG("Rec DB State: %u", state);
@@ -716,7 +705,7 @@ void arts_remote_handle_db_received(struct arts_remote_db_send_packet_s *packet)
     db_res = (struct arts_db_s *)ARTS_MALLOC_ALIGN_WITH_TYPE(packet_db->header.size, 16,
                                                      ARTS_DB_MEMORY_SIZE);
     memcpy(db_res, packet_db, packet_db->header.size);
-    if (arts_is_guid_local(packet_db->guid)) {
+    if (arts_guid_is_local(packet_db->guid)) {
       db_res->db_list = arts_new_db_list();
     } else {
       db_res->db_list = NULL;
@@ -784,7 +773,7 @@ void arts_remote_db_full_send_now(int rank, struct arts_db_s *db, arts_guid_t ed
 
 void arts_remote_db_full_send_check(int rank, struct arts_db_s *db, arts_guid_t edt_guid,
                                unsigned int slot, arts_type_t mode) {
-  if (!arts_is_guid_local(db->guid)) {
+  if (!arts_guid_is_local(db->guid)) {
     arts_route_table_return_db(db->guid, false);
     arts_remote_db_full_send_now(rank, db, edt_guid, slot, mode);
   } else if (arts_add_db_duplicate(db, rank, NULL, edt_guid, slot, mode)) {
@@ -832,7 +821,7 @@ void arts_remote_handle_db_full_recieved(struct arts_remote_db_full_send_packet_
     db_res = (struct arts_db_s *)ARTS_MALLOC_ALIGN_WITH_TYPE(packet_db->header.size, 16,
                                                      ARTS_DB_MEMORY_SIZE);
     memcpy(db_res, packet_db, packet_db->header.size);
-    if (arts_is_guid_local(packet_db->guid)) {
+    if (arts_guid_is_local(packet_db->guid)) {
       db_res->db_list = arts_new_db_list();
     } else {
       db_res->db_list = NULL;
@@ -894,13 +883,13 @@ void arts_remote_handle_send_already_local(void *pack) {
 
 void arts_remote_get_from_db(arts_guid_t edt_guid, arts_guid_t db_guid,
                          unsigned int slot, unsigned int offset,
-                         unsigned int size, unsigned int rank) {
+                         unsigned int len, unsigned int rank) {
   struct arts_remote_get_put_packet_s packet;
   packet.edt_guid = edt_guid;
   packet.db_guid = db_guid;
   packet.slot = slot;
   packet.offset = offset;
-  packet.size = size;
+  packet.size = len;
   arts_fill_packet_header(&packet.header, sizeof(packet),
                        ARTS_REMOTE_GET_FROM_DB_MSG);
   arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
@@ -914,7 +903,7 @@ void arts_remote_handle_get_from_db(void *pack) {
 
 void arts_remote_put_in_db(void *ptr, arts_guid_t edt_guid, arts_guid_t db_guid,
                        unsigned int slot, unsigned int offset,
-                       unsigned int size, arts_guid_t epoch_guid,
+                       unsigned int len, arts_guid_t epoch_guid,
                        unsigned int rank) {
   struct arts_remote_get_put_packet_s packet;
   packet.edt_guid = edt_guid;
@@ -922,13 +911,13 @@ void arts_remote_put_in_db(void *ptr, arts_guid_t edt_guid, arts_guid_t db_guid,
   packet.epoch_guid = epoch_guid;
   packet.slot = slot;
   packet.offset = offset;
-  packet.size = size;
-  uint64_t total_size = sizeof(struct arts_remote_get_put_packet_s) + size;
+  packet.size = len;
+  uint64_t total_size = sizeof(struct arts_remote_get_put_packet_s) + len;
   arts_fill_packet_header(&packet.header, total_size, ARTS_REMOTE_PUT_IN_DB_MSG);
   //    arts_remote_send_request_payload_async(rank, (char *)&packet, sizeof(packet),
-  //    (char *)ptr, size);
+  //    (char *)ptr, len);
   arts_remote_send_request_payload_async_free((int)rank, (char *)&packet, sizeof(packet),
-                                        (char *)ptr, 0, size, arts_free);
+                                        (char *)ptr, 0, len, arts_free);
 }
 
 void arts_remote_handle_put_in_db(void *pack) {

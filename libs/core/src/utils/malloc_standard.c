@@ -37,6 +37,7 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 #include "arts.h"
+#include "arts/utils/malloc.h"
 
 #include <stdlib.h>
 #include <string.h>

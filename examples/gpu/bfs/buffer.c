@@ -39,6 +39,7 @@
 #include "buffer.h"
 
 #include "arts.h"
+#include <stdlib.h>
 #include "arts/gpu/gpu_runtime.cuh"
 
 #define NUMBUFFERS 2
@@ -57,28 +58,28 @@ void create_buffers_on_cpu(unsigned int size) {
   unsigned int node_id = arts_get_current_node();
 
   cpu_buffer_ptr =
-      (unsigned int **)arts_calloc(NUMBUFFERS, sizeof(unsigned int *));
+      (unsigned int **)calloc(NUMBUFFERS, sizeof(unsigned int *));
   for (unsigned int i = 0; i < NUMBUFFERS; i++) {
-    cpu_buffer_ptr[i] = (unsigned int *)arts_calloc(size, sizeof(unsigned int));
+    cpu_buffer_ptr[i] = (unsigned int *)calloc(size, sizeof(unsigned int));
 }
 
   gpu_buffer_ptr =
-      (unsigned int ***)arts_calloc(NUMBUFFERS, sizeof(unsigned int **));
+      (unsigned int ***)calloc(NUMBUFFERS, sizeof(unsigned int **));
   for (unsigned int i = 0; i < NUMBUFFERS; i++) {
     gpu_buffer_ptr[i] =
-        (unsigned int **)arts_calloc(num_gpus, sizeof(unsigned int *));
+        (unsigned int **)calloc(num_gpus, sizeof(unsigned int *));
 }
 
-  master_buffer_guids = (arts_guid_t *)arts_calloc(num_nodes, sizeof(arts_guid_t));
+  master_buffer_guids = (arts_guid_t *)calloc(num_nodes, sizeof(arts_guid_t));
   for (unsigned int i = 0; i < num_nodes; i++) {
-    master_buffer_guids[i] = arts_reserve_guid_route(ARTS_DB_READ, i);
+    master_buffer_guids[i] = arts_guid_reserve(ARTS_DB, i);
 }
 
   buffer_guids = (arts_guid_t *)arts_db_create_with_guid(
-      master_buffer_guids[node_id], sizeof(arts_guid_t) * num_nodes * NUMBUFFERS);
+      master_buffer_guids[node_id], sizeof(arts_guid_t) * num_nodes * NUMBUFFERS, NULL);
   for (unsigned int i = 0; i < NUMBUFFERS; i++) {
     for (unsigned int j = 0; j < num_nodes; j++) {
-      buffer_guids[(i * num_nodes) + j] = arts_reserve_guid_route(ARTS_DB_GPU_READ, j);
+      buffer_guids[(i * num_nodes) + j] = arts_guid_reserve(ARTS_DB_GPU_READ, j);
 }
   }
 }
@@ -99,12 +100,12 @@ void create_buffer_db() {
   unsigned int num_gpus = arts_get_total_gpus();
   unsigned int node_id = arts_get_current_node();
 
-  buffer_ptr = (unsigned int ***)arts_calloc(NUMBUFFERS, sizeof(unsigned int **));
+  buffer_ptr = (unsigned int ***)calloc(NUMBUFFERS, sizeof(unsigned int **));
   for (unsigned int j = 0; j < NUMBUFFERS; j++) {
 
     buffer_ptr[j] = (unsigned int **)arts_db_create_with_guid(
         buffer_guids[(j * num_nodes) + node_id],
-        sizeof(unsigned int *) * (num_gpus + 1));
+        sizeof(unsigned int *) * (num_gpus + 1), NULL);
     for (uint64_t i = 0; i < num_gpus; i++) {
       buffer_ptr[j][i] = gpu_buffer_ptr[j][i];
 }

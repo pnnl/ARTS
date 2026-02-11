@@ -81,43 +81,35 @@ void epoch_end(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_gather_array_db(array, check, 0, 1, paramv, 0);
 }
 
-void init_per_node(unsigned int node_id, int argc, char **argv) {
-  (void)argc;
+void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                   arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  (void)depv;
+  char **argv = (char **)paramv[1];
   elements_per_block = strtol(argv[1], NULL, 10);
   blocks = arts_get_total_nodes();
   num_add = strtol(argv[2], NULL, 10);
-  array_guid = arts_reserve_guid_route(ARTS_DB_PIN, 0);
-  if (!node_id) {
-    arts_printf("ElementsPerBlock: %u Blocks: %u\n", elements_per_block, blocks);
-}
-}
+  array_guid = arts_guid_reserve(ARTS_DB_PIN, 0);
+  arts_printf("ElementsPerBlock: %u Blocks: %u\n", elements_per_block, blocks);
 
-void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
-                   char **argv) {
+  // The end will get all the updates and a signal from the gather
+  arts_guid_t end_guid =
+      arts_edt_create(end, 0, NULL, (num_add * elements_per_block * blocks) + 1, &(arts_hint_t){.route = 0});
 
-(void)argc;
+  arts_guid_t end_epoch_guid =
+      arts_edt_create(epoch_end, 1, (uint64_t *)&end_guid, 1, &(arts_hint_t){.route = 0});
+  arts_initialize_and_start_epoch(end_epoch_guid, 0);
 
-(void)argv;
+  array = arts_new_array_db_with_guid(array_guid, sizeof(unsigned int),
+                                 elements_per_block * blocks);
 
-  if (!worker_id && !node_id) {
-    // The end will get all the updates and a signal from the gather
-    arts_guid_t end_guid =
-        arts_edt_create(end, 0, 0, NULL, (num_add * elements_per_block * blocks) + 1);
-
-    arts_guid_t end_epoch_guid =
-        arts_edt_create(epoch_end, 0, 1, (uint64_t *)&end_guid, 1);
-    arts_initialize_and_start_epoch(end_epoch_guid, 0);
-
-    array = arts_new_array_db_with_guid(array_guid, sizeof(unsigned int),
-                                   elements_per_block * blocks);
-
-    for (unsigned int j = 0; j < num_add; j++) {
-      for (unsigned int i = 0; i < elements_per_block * blocks; i++) {
-        arts_printf("i: %u Slot:%u edt: %lu\n", i,
-               (j * elements_per_block * blocks) + i, end_guid);
-        arts_atomic_add_in_array_db(array, i, 1, end_guid,
-                               (j * elements_per_block * blocks) + i);
-      }
+  for (unsigned int j = 0; j < num_add; j++) {
+    for (unsigned int i = 0; i < elements_per_block * blocks; i++) {
+      arts_printf("i: %u Slot:%u edt: %lu\n", i,
+             (j * elements_per_block * blocks) + i, end_guid);
+      arts_atomic_add_in_array_db(array, i, 1, end_guid,
+                             (j * elements_per_block * blocks) + i);
     }
   }
 }

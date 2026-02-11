@@ -69,11 +69,11 @@ void fib(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     args[0] = x_guid;
     args[1] = num - 2;
     args[2] = ctx;
-    arts_edt_create(fib, 0, 3, args, 0);
+    arts_edt_create(fib, 3, args, 0, &(arts_hint_t){.route = 0});
 
     args[0] = y_guid;
     args[1] = num - 1;
-    arts_edt_create(fib, 0, 3, args, 0);
+    arts_edt_create(fib, 3, args, 0, &(arts_hint_t){.route = 0});
 
     arts_context_switch(2);
     sum = x + y;
@@ -89,17 +89,16 @@ void fib(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 }
 
-void init_per_node(unsigned int node_id, int argc, char **argv) {}
-
-void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
-                   char **argv) {
-  (void)argc;
-  if (!node_id && !worker_id) {
-    int num = (int)strtol(argv[1], NULL, 10);
-    uint64_t args[] = {NULL_GUID, (uint64_t)num};
-    start = arts_get_time_stamp();
-    arts_guid_t guid = arts_edt_create(fib, 0, 2, args, 0);
-  }
+void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                   arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  (void)depv;
+  char **argv = (char **)paramv[1];
+  int num = (int)strtol(argv[1], NULL, 10);
+  uint64_t args[] = {NULL_GUID, (uint64_t)num};
+  start = arts_get_time_stamp();
+  arts_guid_t guid = arts_edt_create(fib, 2, args, 0, &(arts_hint_t){.route = 0});
 }
 
 int main(int argc, char **argv) {

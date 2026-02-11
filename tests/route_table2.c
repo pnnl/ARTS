@@ -62,29 +62,36 @@ void acquire_test(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_signal_edt_value(shutdown_guid, 0, 0);
 }
 
-void init_per_node(unsigned int node_id, int argc, char **argv) {
-  (void)argc;
-  (void)argv;
-  (void)node_id;
-  edt_guid = arts_reserve_guid_route(ARTS_EDT, 0);
-  shutdown_guid = arts_reserve_guid_route(ARTS_EDT, 0);
-  db_guid = arts_reserve_guid_route(ARTS_DB_READ, 1);
+void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  (void)depv;
+  unsigned int node_id = (unsigned int)paramv[0];
+  if (node_id) {
+    unsigned int *ptr =
+        (unsigned int *)arts_db_create_with_guid(db_guid, sizeof(unsigned int), NULL);
+    *ptr = 999;
+    arts_signal_edt(edt_guid, 0, db_guid);
+  }
 }
 
-void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
-                   char **argv) {
-  (void)argc;
-  (void)argv;
-  if (!worker_id) {
-    if (node_id) {
-      unsigned int *ptr =
-          (unsigned int *)arts_db_create_with_guid(db_guid, sizeof(unsigned int));
-      *ptr = 999;
-      arts_signal_edt(edt_guid, 0, db_guid);
-    } else {
-      arts_edt_create_with_guid(shutdown_edt, shutdown_guid, 0, NULL, 1);
-      arts_edt_create_with_guid(acquire_test, edt_guid, 0, NULL, 1);
-    }
+void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                   arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
+  edt_guid = arts_guid_reserve(ARTS_EDT, 0);
+  shutdown_guid = arts_guid_reserve(ARTS_EDT, 0);
+  db_guid = arts_guid_reserve(ARTS_DB, 1);
+
+  arts_edt_create_with_guid(shutdown_edt, shutdown_guid, 0, NULL, 1);
+  arts_edt_create_with_guid(acquire_test, edt_guid, 0, NULL, 1);
+
+  for (unsigned int n = 0; n < arts_get_total_nodes(); n++) {
+    uint64_t args = n;
+    arts_edt_create(node_setup, 1, &args, 0, &(arts_hint_t){.route = n});
   }
 }
 

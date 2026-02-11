@@ -39,6 +39,7 @@
 #include "arts/gpu/gpu_route_table.h"
 
 #include "arts.h"
+#include "arts/utils/malloc.h"
 #include "arts/gpu/gpu_stream.h"
 #include "arts/introspection/metrics.h"
 #include "arts/runtime/globals.h"

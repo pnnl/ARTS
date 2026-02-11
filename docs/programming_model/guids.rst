@@ -31,18 +31,7 @@ Inspecting GUIDs
 
    unsigned int rank = arts_guid_get_rank(guid);
    unsigned int type = arts_guid_get_type(guid);
-   bool local = arts_is_guid_local(guid);
-
-Casting
--------
-
-:c:func:`arts_guid_cast` changes the type tag of a GUID without
-changing its rank or key:
-
-.. code-block:: c
-
-   /* Upgrade a READ DB to WRITE mode */
-   arts_guid_t write_guid = arts_guid_cast(read_guid, ARTS_DB_WRITE);
+   bool local = arts_guid_is_local(guid);
 
 GUID Ranges
 -----------
@@ -53,10 +42,10 @@ keys:
 .. code-block:: c
 
    arts_guid_range_t *range =
-       arts_new_guid_range_node(ARTS_DB_READ, 100, target_node);
+       arts_guid_range_create(ARTS_DB, 100, target_node);
 
    while (arts_guid_range_has_next(range)) {
-       arts_guid_t g = arts_get_guid(range);
+       arts_guid_t g = arts_guid_range_get(range);
        arts_guid_range_next(range);
        /* use g ... */
    }
@@ -69,7 +58,7 @@ To distribute GUIDs evenly across nodes:
 .. code-block:: c
 
    arts_guid_range_t *range =
-       arts_reserve_guids_round_robin(ARTS_DB_READ, total_count);
+       arts_guid_reserve_round_robin(ARTS_DB, total_count);
 
 ``NULL_GUID``
 -------------

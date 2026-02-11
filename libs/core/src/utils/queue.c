@@ -40,6 +40,7 @@
 #include "arts/utils/queue.h"
 
 #include "arts.h"
+#include "arts/utils/malloc.h"
 
 #define CACHE_ALIGN __attribute__((aligned(64)))
 

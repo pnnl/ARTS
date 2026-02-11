@@ -46,6 +46,7 @@
 #include <unistd.h>
 
 #include "arts.h"
+#include "arts/utils/malloc.h"
 #include "arts/network/remote_launcher.h"
 #include "arts/system/arts_print.h"
 #include "arts/system/debug.h"
@@ -1164,7 +1165,7 @@ struct arts_config_s *arts_config_load() {
     config->table_length = 1; // for GUID
     config->master_rank = 0;
   } else {
-    exit(1);
+    arts_abort(1);
   }
 
   if ((found_variable = arts_config_find_variable(&config_variables, "stack_size")) !=

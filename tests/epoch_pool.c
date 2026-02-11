@@ -68,8 +68,7 @@ void root_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     unsigned int num_nodes = arts_get_total_nodes();
     //        arts_edt_create_shad(root_task, (arts_get_current_node()+1)%num_nodes, 1,
     //        &dep);
-    arts_edt_create_dep(root_task, (arts_get_current_node() + 1) % num_nodes, 1, &dep,
-                     0, false);
+    arts_edt_create_dep(root_task, 1, &dep, 0, false, &(arts_hint_t){.route = (arts_get_current_node() + 1) % num_nodes});
 
     //        uint64_t args[2];
     //        args[0] = dep;
@@ -77,7 +76,7 @@ void root_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     //        for(uint64_t i=0; i<num_dummy; i++)
     //        {
     //            args[1] = i;
-    //            arts_edt_create_dep(dummytask, i%num_nodes, 2, args, 0, false);
+    //            arts_edt_create_dep(dummytask, 2, args, 0, false, &(arts_hint_t){.route = i%num_nodes});
     //        }
     arts_printf("Waiting on %lu\n", pool_guid);
     if (arts_wait_on_handle(pool_guid)) {
@@ -90,21 +89,16 @@ void root_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 }
 
-void init_per_node(unsigned int node_id, int argc, char **argv) {
-  (void)argc;
-  (void)node_id;
+void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                   arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  (void)depv;
+  char **argv = (char **)paramv[1];
   num_dummy = (uint64_t)strtol(argv[1], NULL, 10);
-}
-
-void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
-                   char **argv) {
-  (void)argc;
-  (void)argv;
-  if (!node_id && !worker_id) {
-    arts_printf("Starting\n");
-    uint64_t arg = num_dummy;
-    arts_edt_create_shad(root_task, 0, 1, &arg);
-  }
+  arts_printf("Starting\n");
+  uint64_t arg = num_dummy;
+  arts_edt_create_shad(root_task, 0, 1, &arg);
 }
 
 int main(int argc, char **argv) {

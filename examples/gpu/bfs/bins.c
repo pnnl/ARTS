@@ -44,13 +44,14 @@
 #include <stdio.h>
 
 #include "arts.h"
+#include <stdlib.h>
 #include "arts/utils/array_list.h"
 
 static arts_array_list_t **list;
 
 void init_list_record() {
   unsigned int size = arts_get_total_gpus() + 1;
-  list = (arts_array_list_t **)arts_calloc(size, sizeof(arts_array_list_t *));
+  list = (arts_array_list_t **)calloc(size, sizeof(arts_array_list_t *));
   for (unsigned int i = 0; i < size; i++) {
     list[i] = arts_new_array_list(sizeof(unsigned int), 32);
 }

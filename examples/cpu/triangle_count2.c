@@ -102,7 +102,7 @@ void start_reduce(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   //    arts_printf("Local Count: %lu Signal: %lu\n", local_triangle_count,
   //    finalEdtGuid);
   for (unsigned int i = 0; i < arts_get_total_nodes(); i++) {
-    arts_edt_create_dep(local_reduce, i, 0, NULL, 0, false);
+    arts_edt_create_dep(local_reduce, 0, NULL, 0, false, &(arts_hint_t){.route = i});
   }
 }
 
@@ -189,26 +189,31 @@ void visit_node(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_atomic_add_u64(&local_triangle_count, local_count);
 }
 
-void init_per_node(unsigned int node_id, int argc, char **argv) {
+void init_node(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+               arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  (void)depv;
+  int argc = (int)paramv[0];
+  char **argv = (char **)paramv[1];
+  unsigned int node_id = arts_get_current_node();
+
   distribution = init_block_distribution_with_cmd_line_args(argc, argv);
   load_graph_using_cmd_line_args(distribution, argc, argv);
   graph = get_graph_from_partition(node_id, distribution);
 
-  start_reduce_guid = arts_reserve_guid_route(ARTS_EDT, 0);
-  final_reduce_guid = arts_reserve_guid_route(ARTS_EDT, 0);
+  start_reduce_guid = arts_guid_reserve(ARTS_EDT, 0);
+  final_reduce_guid = arts_guid_reserve(ARTS_EDT, 0);
   epoch_guid = arts_initialize_epoch(0, start_reduce_guid, 0);
 }
 
-void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
-                   char **argv) {
-  (void)argc;
-  (void)argv;
-  if (!node_id && !worker_id) {
-    time = arts_get_time_stamp();
-    arts_edt_create_with_guid(start_reduce, start_reduce_guid, 0, NULL, 1);
-    arts_edt_create_with_guid(final_reduce, final_reduce_guid, 0, NULL,
-                          arts_get_total_nodes());
-  }
+void start_work(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
+  unsigned int node_id = arts_get_current_node();
 
   arts_start_epoch(epoch_guid);
   vertex_t start = partition_start_distr(node_id, distribution);
@@ -219,17 +224,39 @@ void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
   num_blocks = size / block_size;
   if (size % block_size) {
     num_blocks++;
-}
+  }
 
   uint64_t half = num_blocks / 2;
   if (num_blocks % 2) {
     half++;
-}
+  }
 
   for (uint64_t index = 0; index < half; index++) {
-    if (index % arts_get_total_workers() == worker_id) {
-      arts_edt_create(visit_node, node_id, 1, &index, 0);
-    }
+    arts_edt_create(visit_node, 1, &index, 0, &(arts_hint_t){.route = node_id});
+  }
+}
+
+void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                   arts_edt_dep_t depv[]) {
+  (void)depc;
+  (void)depv;
+
+  // Initialize graph data on every node
+  arts_guid_t init_epoch_guid = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  for (unsigned int i = 0; i < arts_get_total_nodes(); i++) {
+    arts_edt_create_with_epoch(init_node, paramc, paramv, 0, init_epoch_guid, &(arts_hint_t){.route = i});
+  }
+  arts_wait_on_handle(init_epoch_guid);
+
+  // Master creates reduce EDTs
+  time = arts_get_time_stamp();
+  arts_edt_create_with_guid(start_reduce, start_reduce_guid, 0, NULL, 1);
+  arts_edt_create_with_guid(final_reduce, final_reduce_guid, 0, NULL,
+                            arts_get_total_nodes());
+
+  // Start work on every node
+  for (unsigned int i = 0; i < arts_get_total_nodes(); i++) {
+    arts_edt_create(start_work, 0, NULL, 0, &(arts_hint_t){.route = i});
   }
 }
 

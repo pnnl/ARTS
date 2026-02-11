@@ -32,8 +32,8 @@ protocol:
      - Write-once, read-many.  Default mode for most use cases.  The
        runtime caches reads and aggregates remote requests.
    * - ``ARTS_DB_WRITE``
-     - Exclusive write access.  Obtained by casting an ``ARTS_DB_READ``
-       DB via :c:func:`arts_guid_cast`.
+     - Exclusive write access.  Set at dependency-registration time
+       via :c:func:`arts_record_dep`.
    * - ``ARTS_DB_PIN``
      - Pinned (node-local).  Bypasses the CDAG model; only accessible
        on the creating node.  Use put/get for remote interaction.

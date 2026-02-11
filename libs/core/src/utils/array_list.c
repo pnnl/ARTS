@@ -41,6 +41,7 @@
 #include <string.h>
 
 #include "arts.h"
+#include "arts/utils/malloc.h"
 
 arts_array_list_element_t *arts_new_array_list_element(uint64_t start,
                                               size_t element_size,

@@ -38,6 +38,7 @@
 ******************************************************************************/
 
 #include "arts/network/remote_launcher.h"
+#include "arts/utils/malloc.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -258,7 +259,7 @@ void arts_remote_launcher_ssh_startup_processes(
              wrapped_command, (char *)NULL);
 
       // If execlp fails
-      exit(1);
+      arts_abort(1);
     }
   }
 

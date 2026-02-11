@@ -37,6 +37,7 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 #include <stdlib.h>
+#include <string.h>
 
 #include "arts.h"
 
@@ -70,9 +71,12 @@ void getter(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   unsigned int *buffer = &source[(size_t)id * block_size];
   arts_printf("Getter: %u\n", id);
   // This one actually sends to a remote node... yea for testing!
-  arts_guid_t am = arts_active_message_with_buffer(setter, arts_get_total_nodes() - 1,
-                                              paramc, paramv, 1, buffer,
-                                              sizeof(unsigned int) * (size_t)block_size);
+  unsigned int buf_size = sizeof(unsigned int) * (size_t)block_size;
+  void *buf_copy = malloc(buf_size);
+  memcpy(buf_copy, buffer, buf_size);
+  arts_guid_t am = arts_edt_create(setter, paramc, paramv, 2,
+      &(arts_hint_t){.route = arts_get_total_nodes() - 1});
+  arts_signal_edt_ptr(am, 0, buf_copy, buf_size);
   arts_signal_edt(am, 1, db_dest_guid);
 }
 
@@ -96,39 +100,39 @@ void shut_down_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-void init_per_node(unsigned int node_id, int argc, char **argv) {
-  (void)argc;
-  (void)node_id;
+void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                   arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  (void)depv;
+  char **argv = (char **)paramv[1];
   block_size = strtol(argv[1], NULL, 10);
   num_elements = block_size * arts_get_total_nodes();
-  db_dest_guid = arts_reserve_guid_route(ARTS_DB_PIN, arts_get_total_nodes() - 1);
-  shutdown_guid = arts_reserve_guid_route(ARTS_EDT, arts_get_total_nodes() - 1);
-}
+  db_dest_guid = arts_guid_reserve(ARTS_DB_PIN, arts_get_total_nodes() - 1);
+  shutdown_guid = arts_guid_reserve(ARTS_EDT, arts_get_total_nodes() - 1);
 
-void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
-                   char **argv) {
-  (void)argc;
-  (void)argv;
-  if (!worker_id) {
-    uint64_t id = node_id;
-    unsigned int *data =
-        (unsigned int *)arts_malloc(sizeof(unsigned int) * num_elements);
-    for (unsigned int i = 0; i < num_elements; i++) {
-      data[i] = i;
-    }
-    // This is kinda dumb since it is sending to itself, but hey lets check
-    // it...
-    arts_active_message_with_buffer(getter, node_id, 1, &id, 0, data,
-                                sizeof(unsigned int) * num_elements);
+  unsigned int node_id = arts_get_current_node();
+  uint64_t id = node_id;
+  unsigned int *data =
+      (unsigned int *)malloc(sizeof(unsigned int) * num_elements);
+  for (unsigned int i = 0; i < num_elements; i++) {
+    data[i] = i;
+  }
+  // This is kinda dumb since it is sending to itself, but hey lets check
+  // it...
+  unsigned int data_size = sizeof(unsigned int) * num_elements;
+  void *data_copy = malloc(data_size);
+  memcpy(data_copy, data, data_size);
+  free(data);
+  arts_guid_t getter_edt = arts_edt_create(getter, 1, &id, 1,
+      &(arts_hint_t){.route = node_id});
+  arts_signal_edt_ptr(getter_edt, 0, data_copy, data_size);
 
-    if (!node_id) {
-      arts_edt_create_with_guid(shut_down_edt, shutdown_guid, 0, NULL,
-                            arts_get_total_nodes());
-}
+  arts_edt_create_with_guid(shut_down_edt, shutdown_guid, 0, NULL,
+                        arts_get_total_nodes());
 
-    if (node_id == arts_get_total_nodes() - 1) {
-      arts_db_create_with_guid(db_dest_guid, sizeof(unsigned int) * num_elements);
-}
+  if (node_id == arts_get_total_nodes() - 1) {
+    arts_db_create_with_guid(db_dest_guid, sizeof(unsigned int) * num_elements, NULL);
   }
 }
 

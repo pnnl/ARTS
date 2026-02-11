@@ -197,9 +197,12 @@ void validator(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 }
 
-void arts_main(int argc, char **argv) {
-  (void)argc;
-  (void)argv;
+void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                   arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
   ARTS_PRINT("═══════════════════════════════════════");
   ARTS_PRINT("ARTS arts_id Tracking Test");
   ARTS_PRINT("═══════════════════════════════════════");
@@ -211,7 +214,7 @@ void arts_main(int argc, char **argv) {
   ARTS_PRINT("═══════════════════════════════════════\n");
 
   // Allocate test result flag
-  test_result = (volatile unsigned int *)arts_malloc(sizeof(unsigned int));
+  test_result = (volatile unsigned int *)malloc(sizeof(unsigned int));
   *test_result = 0;
 
   // Start epoch for coordination
@@ -222,8 +225,8 @@ void arts_main(int argc, char **argv) {
   ARTS_PRINT("[Step 3] Creating %u test DBs with arts_id values:",
              NUM_TEST_DBS);
   arts_guid_t *db_guids =
-      (arts_guid_t *)arts_malloc(NUM_TEST_DBS * sizeof(arts_guid_t));
-  void **db_ptrs = (void **)arts_malloc(NUM_TEST_DBS * sizeof(void *));
+      (arts_guid_t *)malloc(NUM_TEST_DBS * sizeof(arts_guid_t));
+  void **db_ptrs = (void **)malloc(NUM_TEST_DBS * sizeof(void *));
 
   unsigned int matrix_size = (unsigned int)((unsigned long)32 * 32 * sizeof(double));
 
@@ -232,7 +235,7 @@ void arts_main(int argc, char **argv) {
         TEST_ARTS_ID_BASE + 100 + i; // DB arts_id: 1100, 1101, ...
 
     db_guids[i] =
-        arts_db_create_with_arts_id(&db_ptrs[i], matrix_size, ARTS_DB_WRITE, arts_id);
+        arts_db_create(&db_ptrs[i], matrix_size, &(arts_hint_t){.id = arts_id});
 
     // Initialize matrix to zeros
     double *matrix = (double *)db_ptrs[i];
@@ -249,15 +252,15 @@ void arts_main(int argc, char **argv) {
   // Create validator EDT first
   ARTS_PRINT("[Step 4] Creating validator EDT (will run last)...");
   arts_guid_t validator_guid =
-      arts_edt_create_with_epoch(validator, 0, 0, NULL, 1, epoch_guid);
+      arts_edt_create_with_epoch(validator, 0, NULL, 1, epoch_guid, &(arts_hint_t){.route = 0});
 
   // Create writer EDTs with arts_id values
   ARTS_PRINT("[Step 5] Creating %u writer EDTs with arts_id values:",
              NUM_TEST_EDTS);
   arts_guid_t *writer_guids =
-      (arts_guid_t *)arts_malloc(NUM_TEST_EDTS * sizeof(arts_guid_t));
+      (arts_guid_t *)malloc(NUM_TEST_EDTS * sizeof(arts_guid_t));
   unsigned int *writer_db_indices =
-      (unsigned int *)arts_malloc(NUM_TEST_EDTS * sizeof(unsigned int));
+      (unsigned int *)malloc(NUM_TEST_EDTS * sizeof(unsigned int));
 
   for (unsigned int i = 0; i < NUM_TEST_EDTS; i++) {
     uint64_t arts_id = TEST_ARTS_ID_BASE + i; // EDT arts_id: 1000, 1001, ...
@@ -270,8 +273,7 @@ void arts_main(int argc, char **argv) {
     unsigned int db_index = i % NUM_TEST_DBS;
     writer_db_indices[i] = db_index;
 
-    writer_guids[i] = arts_edt_create_with_arts_id(test_edt_worker, target_node, 1,
-                                             &param, 1, arts_id);
+    writer_guids[i] = arts_edt_create(test_edt_worker, 1, &param, 1, &(arts_hint_t){.route = target_node, .id = arts_id});
 
     ARTS_PRINT("  - EDT[%u]: guid=%lu, arts_id=%lu, node=%u, using DB[%u]", i,
                writer_guids[i], arts_id, target_node, db_index);
@@ -284,9 +286,9 @@ void arts_main(int argc, char **argv) {
 
   unsigned int num_readers = 3;
   arts_guid_t *reader_guids =
-      (arts_guid_t *)arts_malloc(num_readers * sizeof(arts_guid_t));
+      (arts_guid_t *)malloc(num_readers * sizeof(arts_guid_t));
   unsigned int *reader_num_deps =
-      (unsigned int *)arts_malloc(num_readers * sizeof(unsigned int));
+      (unsigned int *)malloc(num_readers * sizeof(unsigned int));
 
   for (unsigned int i = 0; i < num_readers; i++) {
     uint64_t arts_id =
@@ -300,8 +302,7 @@ void arts_main(int argc, char **argv) {
         (i % NUM_TEST_DBS) + 1; // 1 to NUM_TEST_DBS dependencies
     reader_num_deps[i] = num_deps;
 
-    reader_guids[i] = arts_edt_create_with_arts_id(test_edt_reader, target_node, 1,
-                                             &param, num_deps, arts_id);
+    reader_guids[i] = arts_edt_create(test_edt_reader, 1, &param, num_deps, &(arts_hint_t){.route = target_node, .id = arts_id});
 
     ARTS_PRINT("  - Reader[%u]: guid=%lu, arts_id=%lu, node=%u, deps=%u", i,
                reader_guids[i], arts_id, target_node, num_deps);
@@ -347,13 +348,13 @@ void arts_main(int argc, char **argv) {
   // No manual export call needed - arts_counter_write_thread() handles all metrics
 
   // Cleanup
-  arts_free((void *)writer_guids);
-  arts_free((void *)writer_db_indices);
-  arts_free((void *)reader_guids);
-  arts_free((void *)reader_num_deps);
-  arts_free((void *)db_ptrs);
-  arts_free((void *)db_guids);
-  arts_free((void *)test_result);
+  free((void *)writer_guids);
+  free((void *)writer_db_indices);
+  free((void *)reader_guids);
+  free((void *)reader_num_deps);
+  free((void *)db_ptrs);
+  free((void *)db_guids);
+  free((void *)test_result);
 
   // Shutdown
   arts_shutdown();

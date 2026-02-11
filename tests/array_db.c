@@ -60,32 +60,26 @@ void edt_func(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
   (void)paramc;
   (void)paramv;
-  arts_guid_t edt_guid = arts_edt_create(check, 0, 0, NULL, elements);
+  arts_guid_t edt_guid = arts_edt_create(check, 0, NULL, elements, &(arts_hint_t){.route = 0});
   for (unsigned int i = 0; i < depc; i++) {
     arts_get_from_array_db(edt_guid, i, array, i);
 }
 }
 
-void init_per_node(unsigned int node_id, int argc, char **argv) {
-  (void)node_id;
+void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                   arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  (void)depv;
+  int argc = (int)paramv[0];
+  char **argv = (char **)paramv[1];
   if (argc > 1) {
     elements = strtol(argv[1], NULL, 10);
-}
-}
-
-void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
-                   char **argv) {
-
-(void)argc;
-
-(void)argv;
-
-  if (!node_id && !worker_id) {
-    arts_guid_t edt_guid = arts_edt_create(edt_func, 0, 0, NULL, elements);
-    arts_guid_t guid = arts_new_array_db(&array, sizeof(unsigned int), elements);
-    for (unsigned int i = 0; i < elements; i++) {
-      arts_put_in_array_db(&i, edt_guid, i, array, i);
-    }
+  }
+  arts_guid_t edt_guid = arts_edt_create(edt_func, 0, NULL, elements, &(arts_hint_t){.route = 0});
+  arts_guid_t guid = arts_new_array_db(&array, sizeof(unsigned int), elements);
+  for (unsigned int i = 0; i < elements; i++) {
+    arts_put_in_array_db(&i, edt_guid, i, array, i);
   }
 }
 

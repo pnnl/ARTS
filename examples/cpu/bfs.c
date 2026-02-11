@@ -73,6 +73,7 @@ void bfs_send(vertex_t u, uint64_t ulevel);
 
 void relax(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
            arts_edt_dep_t depv[]) {
+  (void)paramc;
   (void)depc;
   (void)depv;
   arts_printf("calling relax\n");
@@ -117,12 +118,9 @@ void bfs_send(vertex_t u, uint64_t ulevel) {
   uint64_t send[2];
   send[0] = u;
   send[1] = ulevel;
-  arts_guid_t relax_guid = arts_active_message_with_db(
-      relax,         // function
-      2,             // number of parameters
-      send,          // parameters
-      0,             // additional deps
-      neighb_dbguid); // this is the guid to co-locate task with
+  arts_guid_t relax_guid = arts_edt_create(relax, 2, send, 1,
+      &(arts_hint_t){.route = arts_guid_get_rank(neighb_dbguid)});
+  arts_signal_edt(relax_guid, 0, neighb_dbguid);
 }
 
 void kickoff_termination(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -135,78 +133,52 @@ void kickoff_termination(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   bfs_send(source, 0);
 }
 
-void init_per_node(unsigned int node_id, int argc, char **argv) {
+void init_node(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+               arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  (void)depv;
+  int argc = (int)paramv[0];
+  char **argv = (char **)paramv[1];
+  unsigned int node_id = arts_get_current_node();
 
-  //    int edge_arr[] = {
-  //    5,  6,
-  //    1,  2,
-  //    2,  5,
-  //    2,  3,
-  //    2,  4,
-  //    1,  6,
-  //    1,  3,
-  //    1,  7,
-  //    1,  4,
-  //    3,  5,
-  //    1, 5
-  //  };
-  //
-  //  init_block_distribution(&distribution,
-  //                        8, /*global vertices*/
-  //                        11); /*global edges*/
-  //
-  //  // Create a list of edges, use arts_edge_vector_t
-  //  arts_edge_vector_t vec;
-  //  init_edge_vector(&vec, 100);
-  //  for(int i=0; i < 11; ++i) {
-  //    push_back_edge(&vec, edge_arr[i*2], edge_arr[(i*2)+1], 0);
-  //  }
-  //
-  //  init_csr(&graph, // graph structure
-  //          8, // number of "local" vertices
-  //          11, // number of "local" edges
-  //          &distribution, // distribution
-  //          &vec, // edges
-  //          false /*are edges sorted ?*/);
-  //
-  //  // Edge list not needed after creating the CSR
-  //  free_edge_vector(&vec);
-
-  // distribution must be initialized in init_per_node
   distribution = init_block_distribution_with_cmd_line_args(argc, argv);
-  // set-up the graph
   load_graph_using_cmd_line_args(distribution, argc, argv);
   graph = get_graph_from_partition(node_id, distribution);
 
-  // should probably encapsulate into something
-  level = (uint64_t *)arts_malloc(graph->num_local_vertices * sizeof(uint64_t));
-  // initialize the level array
+  level = (uint64_t *)malloc(graph->num_local_vertices * sizeof(uint64_t));
   for (uint64_t i = 0; i < graph->num_local_vertices; ++i) {
     level[i] = UINT64_MAX;
   }
 }
 
-void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
-                   char **argv) {
+void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                   arts_edt_dep_t depv[]) {
+  (void)depc;
+  (void)depv;
+  int argc = (int)paramv[0];
+  char **argv = (char **)paramv[1];
 
-  if (!worker_id) {
-    // find the source vertex_t
-    vertex_t source = 0;
-    for (int i = 0; i < argc; ++i) {
-      if (strcmp("--source", argv[i]) == 0) {
-        source = (uint64_t)strtoull(argv[i + 1], NULL, 10);
-      }
-    }
+  // Initialize graph data on every node
+  arts_guid_t init_epoch_guid = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  for (unsigned int i = 0; i < arts_get_total_nodes(); i++) {
+    arts_edt_create_with_epoch(init_node, paramc, paramv, 0, init_epoch_guid, &(arts_hint_t){.route = i});
+  }
+  arts_wait_on_handle(init_epoch_guid);
 
-    assert(source < distribution->num_vertices);
-
-    if (!node_id) {
-      arts_guid_t exit_guid = arts_edt_create(exit_program, 0, 0, NULL, 1);
-      arts_initialize_and_start_epoch(exit_guid, 0);
-      arts_guid_t start_guid =
-          arts_edt_create(kickoff_termination, 0, 1, (uint64_t *)&source, 0);
+  // Find the source vertex
+  vertex_t source = 0;
+  for (int i = 0; i < argc; ++i) {
+    if (strcmp("--source", argv[i]) == 0) {
+      source = (uint64_t)strtoull(argv[i + 1], NULL, 10);
     }
   }
+
+  assert(source < distribution->num_vertices);
+
+  arts_guid_t exit_guid = arts_edt_create(exit_program, 0, NULL, 1, &(arts_hint_t){.route = 0});
+  arts_initialize_and_start_epoch(exit_guid, 0);
+  arts_edt_create(kickoff_termination, 1, (uint64_t *)&source, 0, &(arts_hint_t){.route = 0});
 }
 
 int main(int argc, char **argv) {

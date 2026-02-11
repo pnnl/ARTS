@@ -67,13 +67,7 @@ void done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-extern "C" void init_per_node(unsigned int node_id, int argc, char **argv) {
-  (void)node_id;
-  (void)argc;
-  (void)argv;
-}
-
-extern "C" void init_per_gpu(unsigned int node_id, int dev_id,
+extern "C" void arts_init_per_gpu(unsigned int node_id, int dev_id,
                              cudaStream_t *stream, int argc, char **argv) {
   (void)node_id;
   (void)dev_id;
@@ -82,41 +76,41 @@ extern "C" void init_per_gpu(unsigned int node_id, int dev_id,
   (void)argv;
 }
 
-extern "C" void init_per_worker(unsigned int node_id, unsigned int worker_id,
-                              int argc, char **argv) {
-  (void)argc;
-  (void)argv;
-  if (!worker_id) {
-    unsigned int *addr = NULL;
-    arts_printf("creating size: %u\n", sizeof(unsigned int) * arts_get_total_gpus());
-    arts_guid_t db_guid = arts_db_create(
-        (void **)&addr, sizeof(unsigned int) * arts_get_total_gpus(), ARTS_DB_LC);
-    for (uint64_t i = 0; i < arts_get_total_gpus(); i++) {
-      addr[i] = (unsigned int)-1;
-    }
+extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
+                              uint32_t depc, arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
+  unsigned int *addr = NULL;
+  arts_printf("creating size: %u\n", sizeof(unsigned int) * arts_get_total_gpus());
+  arts_guid_t db_guid = arts_guid_reserve(ARTS_DB_LC, 0);
+  addr = (unsigned int *)arts_db_create_with_guid(db_guid, sizeof(unsigned int) * arts_get_total_gpus(), NULL);
+  for (uint64_t i = 0; i < arts_get_total_gpus(); i++) {
+    addr[i] = (unsigned int)-1;
+  }
 
-    arts_guid_t done_guid =
-        arts_edt_create(done, 0, 0, NULL, arts_get_total_gpus() + 1);
-    arts_lc_sync(done_guid, 0, db_guid);
-    // arts_signal_edt(done_guid, 0, db_guid);
+  unsigned int node_id = arts_get_current_node();
+  arts_guid_t done_guid =
+      arts_edt_create(done, 0, NULL, arts_get_total_gpus() + 1, &(arts_hint_t){.route = 0});
+  arts_lc_sync(done_guid, 0, db_guid);
 
-    dim3 threads(arts_get_total_gpus(), 1, 1);
-    dim3 grid(1, 1, 1);
-    for (uint64_t i = 0; i < arts_get_total_gpus(); i++) {
-      if (i == 3 || i == 4 || i == 7) {
-        arts_printf("CREATING EDT for GPU: %lu\n", i);
-        arts_guid_t edt_guid =
-            arts_edt_create_gpu_direct(temp, node_id, i, 0, NULL, 1, grid, threads,
-                                   done_guid, i + 1, NULL_GUID, true);
-        arts_signal_edt(edt_guid, 0, db_guid);
-      } else {
-        arts_signal_edt(done_guid, i + 1, NULL_GUID);
-      }
+  dim3 threads(arts_get_total_gpus(), 1, 1);
+  dim3 grid(1, 1, 1);
+  for (uint64_t i = 0; i < arts_get_total_gpus(); i++) {
+    if (i == 3 || i == 4 || i == 7) {
+      arts_printf("CREATING EDT for GPU: %lu\n", i);
+      arts_guid_t edt_guid =
+          arts_edt_create_gpu_direct(temp, node_id, i, 0, NULL, 1, grid, threads,
+                                 done_guid, i + 1, NULL_GUID, true);
+      arts_signal_edt(edt_guid, 0, db_guid);
+    } else {
+      arts_signal_edt(done_guid, i + 1, NULL_GUID);
     }
   }
 }
 
-extern "C" void clean_per_gpu(unsigned int node_id, int dev_id,
+extern "C" void arts_fini_per_gpu(unsigned int node_id, int dev_id,
                               cudaStream_t *stream) {
   (void)node_id;
   (void)dev_id;

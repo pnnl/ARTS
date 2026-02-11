@@ -66,14 +66,14 @@ void fib_fork(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_signal_edt_value(guid, slot, num);
   } else {
     arts_guid_t join_guid =
-        arts_edt_create(fib_join, arts_get_current_node(), paramc - 1, paramv, 2);
+        arts_edt_create(fib_join, paramc - 1, paramv, 2, &(arts_hint_t){.route = arts_get_current_node()});
 
     uint64_t args[3] = {(uint64_t)join_guid, 0, num - 1};
-    arts_edt_create(fib_fork, next, 3, args, 0);
+    arts_edt_create(fib_fork, 3, args, 0, &(arts_hint_t){.route = next});
 
     args[1] = 1;
     args[2] = num - 2;
-    arts_edt_create(fib_fork, next, 3, args, 0);
+    arts_edt_create(fib_fork, 3, args, 0, &(arts_hint_t){.route = next});
   }
 }
 
@@ -87,18 +87,17 @@ void fib_done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-void init_per_node(unsigned int node_id, int argc, char **argv) {}
-
-void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
-                   char **argv) {
-  (void)argc;
-  if (!node_id && !worker_id) {
-    uint64_t num = strtol(argv[1], NULL, 10);
-    arts_guid_t done_guid = arts_edt_create(fib_done, 0, 1, &num, 1);
-    uint64_t args[3] = {(uint64_t)done_guid, 0, num};
-    start = arts_get_time_stamp();
-    arts_guid_t guid = arts_edt_create(fib_fork, 0, 3, args, 0);
-  }
+void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                   arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  (void)depv;
+  char **argv = (char **)paramv[1];
+  uint64_t num = strtol(argv[1], NULL, 10);
+  arts_guid_t done_guid = arts_edt_create(fib_done, 1, &num, 1, &(arts_hint_t){.route = 0});
+  uint64_t args[3] = {(uint64_t)done_guid, 0, num};
+  start = arts_get_time_stamp();
+  arts_guid_t guid = arts_edt_create(fib_fork, 3, args, 0, &(arts_hint_t){.route = 0});
 }
 
 int main(int argc, char **argv) {

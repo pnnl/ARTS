@@ -37,6 +37,7 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 #include "arts/system/tmt_lite.h"
+#include "arts/utils/malloc.h"
 
 #include <inttypes.h>
 #include <stdarg.h>

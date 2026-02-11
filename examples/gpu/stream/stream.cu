@@ -229,7 +229,14 @@ void stream_driver(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-extern "C" void init_per_node(unsigned int node_id, int argc, char **argv) {
+extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
+                              uint32_t depc, arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  (void)depv;
+  int argc = (int)paramv[0];
+  char **argv = (char **)paramv[1];
+
   if (argc > 1) {
     tile_size = (unsigned int)strtol(argv[1], NULL, 10);
   }
@@ -242,16 +249,16 @@ extern "C" void init_per_node(unsigned int node_id, int argc, char **argv) {
   arts_printf("N: %u tile_size: %u num_tiles: %u Gpus: %u\n", N, tile_size, num_tiles,
          arts_get_total_gpus());
 
-  a_tile_guids = arts_new_guid_range_node_hash(ARTS_DB_GPU_WRITE, num_tiles, 0,
+  a_tile_guids = arts_guid_range_create_hash(ARTS_DB_GPU_WRITE, num_tiles, 0,
                                         arts_get_total_gpus());
-  b_tile_guids = arts_new_guid_range_node_hash(ARTS_DB_GPU_WRITE, num_tiles, 0,
+  b_tile_guids = arts_guid_range_create_hash(ARTS_DB_GPU_WRITE, num_tiles, 0,
                                         arts_get_total_gpus());
-  c_tile_guids = arts_new_guid_range_node_hash(ARTS_DB_GPU_WRITE, num_tiles, 0,
+  c_tile_guids = arts_guid_range_create_hash(ARTS_DB_GPU_WRITE, num_tiles, 0,
                                         arts_get_total_gpus());
 
-  uint64_t a_hash = arts_hash_guid_key(arts_get_guid(a_tile_guids, 0));
-  uint64_t b_hash = arts_hash_guid_key(arts_get_guid(b_tile_guids, 0));
-  uint64_t c_hash = arts_hash_guid_key(arts_get_guid(c_tile_guids, 0));
+  uint64_t a_hash = arts_guid_hash_key(arts_guid_range_get(a_tile_guids, 0));
+  uint64_t b_hash = arts_guid_hash_key(arts_guid_range_get(b_tile_guids, 0));
+  uint64_t c_hash = arts_guid_hash_key(arts_guid_range_get(c_tile_guids, 0));
 
 #ifdef SAFE
   if (arts_get_num_gpus() > 1) {
@@ -263,86 +270,74 @@ extern "C" void init_per_node(unsigned int node_id, int argc, char **argv) {
                "3.\n");
         arts_printf("aHash: %lu bHash: %lu cHash: %lu\n", a_hash, b_hash, c_hash);
         arts_shutdown();
+        return;
       }
     }
   }
 #endif
 
-  if (!node_id) {
-    a_tile = (double **)arts_calloc(num_tiles, sizeof(double *));
-    b_tile = (double **)arts_calloc(num_tiles, sizeof(double *));
-    c_tile = (double **)arts_calloc(num_tiles, sizeof(double *));
+  a_tile = (double **)calloc(num_tiles, sizeof(double *));
+  b_tile = (double **)calloc(num_tiles, sizeof(double *));
+  c_tile = (double **)calloc(num_tiles, sizeof(double *));
 
-    for (unsigned int i = 0; i < num_tiles; i++) {
-      a_tile[i] = (double *)arts_db_create_with_guid(arts_get_guid(a_tile_guids, i),
-                                                tile_size * sizeof(double));
-      b_tile[i] = (double *)arts_db_create_with_guid(arts_get_guid(b_tile_guids, i),
-                                                tile_size * sizeof(double));
-      c_tile[i] = (double *)arts_db_create_with_guid(arts_get_guid(c_tile_guids, i),
-                                                tile_size * sizeof(double));
-      for (unsigned int j = 0; j < tile_size; j++) {
-        a_tile[i][j] = 1.0;
-        b_tile[i][j] = 2.0;
-        c_tile[i][j] = 0.0;
-      }
-    }
-
-    arts_printf(HLINE);
-    int bytes_per_word = sizeof(double);
-    arts_printf("This system uses %d bytes per DOUBLE PRECISION word.\n",
-           bytes_per_word);
-    arts_printf(HLINE);
-
-    arts_printf("Array size = %d, Offset = %d\n", N, OFFSET);
-    arts_printf("Total memory required = %.1f MB.\n",
-           (3.0 * bytes_per_word) * ((double)N / 1048576.0));
-    arts_printf("Each test is run %d times, but only\n", NTIMES);
-    arts_printf("the *best* time for each is used.\n");
-    arts_printf(HLINE);
-
-    if ((quantum = checktick()) >= 1) {
-      arts_printf(
-          "Your clock granularity/precision appears to be %d microseconds.\n",
-          quantum);
-    } else {
-      arts_printf(
-          "Your clock granularity appears to be less than one microsecond.\n");
+  for (unsigned int i = 0; i < num_tiles; i++) {
+    a_tile[i] = (double *)arts_db_create_with_guid(arts_guid_range_get(a_tile_guids, i),
+                                              tile_size * sizeof(double), NULL);
+    b_tile[i] = (double *)arts_db_create_with_guid(arts_guid_range_get(b_tile_guids, i),
+                                              tile_size * sizeof(double), NULL);
+    c_tile[i] = (double *)arts_db_create_with_guid(arts_guid_range_get(c_tile_guids, i),
+                                              tile_size * sizeof(double), NULL);
+    for (unsigned int j = 0; j < tile_size; j++) {
+      a_tile[i][j] = 1.0;
+      b_tile[i][j] = 2.0;
+      c_tile[i][j] = 0.0;
     }
   }
-}
 
-extern "C" void init_per_worker(unsigned int node_id, unsigned int worker_id,
-                              int argc, char **argv) {
-  (void)argc;
-  (void)argv;
-  if (!node_id) {
-    double t = mysecond();
-    for (unsigned int i = 0; i < num_tiles; i++) {
-      if (i % arts_get_total_workers() == worker_id) {
-        for (unsigned int j = 0; j < tile_size; j++) {
-          a_tile[i][j] = 2.0E0 * a_tile[i][j];
-        }
-      }
-    }
-    t = 1.0E6 * (mysecond() - t);
+  arts_printf(HLINE);
+  int bytes_per_word = sizeof(double);
+  arts_printf("This system uses %d bytes per DOUBLE PRECISION word.\n",
+         bytes_per_word);
+  arts_printf(HLINE);
 
-    if (!worker_id) {
-      arts_printf("Each test below will take on the order of %d microseconds.\n",
-             (int)t);
-      arts_printf("   (= %d clock ticks)\n", (int)(t / quantum));
-      arts_printf("Increase the size of the arrays if this shows that\n");
-      arts_printf("you are not getting at least 20 clock ticks per test.\n");
+  arts_printf("Array size = %d, Offset = %d\n", N, OFFSET);
+  arts_printf("Total memory required = %.1f MB.\n",
+         (3.0 * bytes_per_word) * ((double)N / 1048576.0));
+  arts_printf("Each test is run %d times, but only\n", NTIMES);
+  arts_printf("the *best* time for each is used.\n");
+  arts_printf(HLINE);
 
-      arts_printf(HLINE);
+  if ((quantum = checktick()) >= 1) {
+    arts_printf(
+        "Your clock granularity/precision appears to be %d microseconds.\n",
+        quantum);
+  } else {
+    arts_printf(
+        "Your clock granularity appears to be less than one microsecond.\n");
+  }
 
-      arts_printf("WARNING -- The above is only a rough guideline.\n");
-      arts_printf("For best results, please be sure you know the\n");
-      arts_printf("precision of your system timer.\n");
-      arts_printf(HLINE);
-
-      arts_edt_create(stream_driver, 0, 0, NULL, 0);
+  double t = mysecond();
+  for (unsigned int i = 0; i < num_tiles; i++) {
+    for (unsigned int j = 0; j < tile_size; j++) {
+      a_tile[i][j] = 2.0E0 * a_tile[i][j];
     }
   }
+  t = 1.0E6 * (mysecond() - t);
+
+  arts_printf("Each test below will take on the order of %d microseconds.\n",
+         (int)t);
+  arts_printf("   (= %d clock ticks)\n", (int)(t / quantum));
+  arts_printf("Increase the size of the arrays if this shows that\n");
+  arts_printf("you are not getting at least 20 clock ticks per test.\n");
+
+  arts_printf(HLINE);
+
+  arts_printf("WARNING -- The above is only a rough guideline.\n");
+  arts_printf("For best results, please be sure you know the\n");
+  arts_printf("precision of your system timer.\n");
+  arts_printf(HLINE);
+
+  arts_edt_create(stream_driver, 0, NULL, 0, &(arts_hint_t){.route = 0});
 }
 
 int main(int argc, char **argv) {

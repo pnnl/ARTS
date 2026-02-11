@@ -79,28 +79,34 @@ void root_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("Starting %lu %u\n", guid, arts_guid_get_rank(guid));
   unsigned int num_nodes = arts_get_total_nodes();
   for (unsigned int rank = 0; rank < num_nodes * num_dummy; rank++) {
-    arts_edt_create(dummytask, rank % num_nodes, 0, 0, 0);
+    arts_edt_create(dummytask, 0, 0, 0, &(arts_hint_t){.route = rank % num_nodes});
 }
 }
 
-void init_per_node(unsigned int node_id, int argc, char **argv) {
-  (void)argc;
-  (void)node_id;
+void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  (void)depv;
+  unsigned int node_id = (unsigned int)paramv[0];
+  arts_initialize_and_start_epoch(exit_guid, node_id);
+  arts_edt_create(root_task, 0, NULL, 0, &(arts_hint_t){.route = node_id});
+}
+
+void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                   arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  (void)depv;
+  char **argv = (char **)paramv[1];
   num_dummy = (unsigned int)strtol(argv[1], NULL, 10);
-  exit_guid = arts_reserve_guid_route(ARTS_EDT, 0);
-}
+  exit_guid = arts_guid_reserve(ARTS_EDT, 0);
+  arts_edt_create_with_guid(exit_program, exit_guid, 0, NULL,
+                        arts_get_total_nodes());
 
-void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
-                   char **argv) {
-  (void)argc;
-  (void)argv;
-  if (!node_id && !worker_id) {
-    arts_edt_create_with_guid(exit_program, exit_guid, 0, NULL, arts_get_total_nodes());
-}
-
-  if (!worker_id) {
-    arts_initialize_and_start_epoch(exit_guid, node_id);
-    arts_guid_t start_guid = arts_edt_create(root_task, node_id, 0, NULL, 0);
+  for (unsigned int n = 0; n < arts_get_total_nodes(); n++) {
+    uint64_t args = n;
+    arts_edt_create(node_setup, 1, &args, 0, &(arts_hint_t){.route = n});
   }
 }
 

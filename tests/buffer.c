@@ -37,6 +37,8 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 #include "arts.h"
+#include <stdlib.h>
+#include <string.h>
 
 arts_guid_t db_dest_guid = NULL_GUID;
 arts_guid_t shutdown_guid = NULL_GUID;
@@ -52,7 +54,7 @@ void dummy(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   unsigned int buffer_size = paramv[2] / sizeof(unsigned int);
   unsigned int *buffer = (unsigned int *)depv[0].ptr;
   arts_printf("%lu %u %u %p\n", result_guid, result_size, buffer_size, buffer);
-  unsigned int *sum = (unsigned int *)arts_calloc(1, result_size);
+  unsigned int *sum = (unsigned int *)calloc(1, result_size);
   for (unsigned int i = 0; i < buffer_size; i++) {
     arts_printf("%u\n", buffer[i]);
     *sum += buffer[i];
@@ -76,15 +78,18 @@ void start_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   args[1] = sizeof(unsigned int);
 
   unsigned int buffer_size = sizeof(unsigned int) * 5;
-  unsigned int *data = (unsigned int *)arts_calloc(1, buffer_size);
+  unsigned int *data = (unsigned int *)calloc(1, buffer_size);
   for (unsigned int i = 0; i < 5; i++) {
     data[i] = i;
 }
   args[2] = buffer_size;
 
-  arts_active_message_with_buffer(dummy,
-                              (arts_get_current_node() + 1) % arts_get_total_nodes(),
-                              3, args, 0, data, buffer_size);
+  void *data_copy = malloc(buffer_size);
+  memcpy(data_copy, data, buffer_size);
+  unsigned int target = (arts_get_current_node() + 1) % arts_get_total_nodes();
+  arts_guid_t am = arts_edt_create(dummy, 3, args, 1,
+      &(arts_hint_t){.route = target});
+  arts_signal_edt_ptr(am, 0, data_copy, buffer_size);
 
   while (!result) {
     arts_yield();
@@ -95,20 +100,14 @@ void start_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-void init_per_node(unsigned int node_id, int argc, char **argv) {
-  (void)argc;
-  (void)argv;
-  (void)node_id;
+void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                   arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
   arts_printf("Starting\n");
-}
-
-void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
-                   char **argv) {
-  (void)argc;
-  (void)argv;
-  if (!node_id && !worker_id) {
-    arts_edt_create(start_edt, 0, 0, NULL, 0);
-  }
+  arts_edt_create(start_edt, 0, NULL, 0, &(arts_hint_t){.route = 0});
 }
 
 int main(int argc, char **argv) {

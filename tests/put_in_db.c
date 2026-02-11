@@ -52,7 +52,7 @@ void shut_down_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramc;
   (void)paramv;
   bool pass = true;
-  if (arts_is_guid_local(depv[0].guid)) {
+  if (arts_guid_is_local(depv[0].guid)) {
     unsigned int *data = (unsigned int *)depv[0].ptr;
     for (unsigned int i = 0; i < num_elements; i++) {
       if (data[i] != i) {
@@ -67,50 +67,41 @@ void shut_down_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-void init_per_node(unsigned int node_id, int argc, char **argv) {
-  (void)argc;
-  db_guid = arts_reserve_guid_route(ARTS_DB_PIN, 0);
-  shutdown_guid = arts_reserve_guid_route(ARTS_EDT, 0);
+void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                   arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  (void)depv;
+  char **argv = (char **)paramv[1];
+  db_guid = arts_guid_reserve(ARTS_DB_PIN, 0);
+  shutdown_guid = arts_guid_reserve(ARTS_EDT, 0);
   num_elements = strtol(argv[1], NULL, 10);
   block_size = num_elements / arts_get_total_nodes();
   stride = strtol(argv[2], NULL, 10);
-  if (!node_id) {
-    arts_printf("num_elements: %u block_size: %u stride: %u\n", num_elements, block_size,
-           stride);
-}
-}
+  arts_printf("num_elements: %u block_size: %u stride: %u\n", num_elements,
+         block_size, stride);
 
-void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
-                   char **argv) {
-  (void)argc;
-  (void)argv;
   if (block_size % stride) {
-    if (!node_id && !worker_id) {
-      arts_shutdown();
-    }
+    arts_shutdown();
     return;
   }
 
-  if (!worker_id) {
-    unsigned int deps = block_size / stride;
+  arts_db_create_with_guid(db_guid, sizeof(unsigned int) * num_elements, NULL);
+  arts_edt_create_with_guid(shut_down_edt, shutdown_guid, 0, NULL,
+                        num_elements / stride);
+
+  unsigned int deps = block_size / stride;
+  for (unsigned int n = 0; n < arts_get_total_nodes(); n++) {
     for (unsigned int j = 0; j < deps; j++) {
       unsigned int *data =
-          (unsigned int *)arts_malloc(sizeof(unsigned int) * stride);
+          (unsigned int *)malloc(sizeof(unsigned int) * stride);
       for (unsigned int i = 0; i < stride; i++) {
-        data[i] = node_id * block_size + j * stride + i;
-}
-      //            arts_printf("PUT: index: %u slot: %u\n", node_id*block_size +
-      //            j*stride, node_id*deps + j);
-      arts_put_in_db(data, shutdown_guid, db_guid, (node_id * deps) + j,
-                  sizeof(unsigned int) * (node_id * block_size + j * stride),
+        data[i] = n * block_size + j * stride + i;
+      }
+      arts_put_in_db(data, shutdown_guid, db_guid, (n * deps) + j,
+                  sizeof(unsigned int) * (n * block_size + j * stride),
                   sizeof(unsigned int) * stride);
-      arts_free(data);
-    }
-
-    if (!node_id) {
-      arts_db_create_with_guid(db_guid, sizeof(unsigned int) * num_elements);
-      arts_edt_create_with_guid(shut_down_edt, shutdown_guid, 0, NULL,
-                            num_elements / stride);
+      free(data);
     }
   }
 }

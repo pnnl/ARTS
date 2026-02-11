@@ -108,7 +108,7 @@ struct arts_dependent_s {
   volatile arts_guid_t addr;            /**< GUID of the dependent EDT/event. */
   volatile event_callback_t callback_t; /**< Inline callback (if any). */
   volatile bool doneWriting;            /**< Write completion flag. */
-  arts_type_t acquire_mode;             /**< Acquire mode for signaling. */
+  arts_type_t mode;                     /**< Access mode for signaling. */
   uint64_t byte_offset; /**< Byte offset for slice dependencies. */
   uint64_t size;        /**< Slice size in bytes. */
 };

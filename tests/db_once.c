@@ -48,8 +48,8 @@ void check(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramc;
   (void)paramv;
   unsigned int *ptr;
-  arts_guid_t guid =
-      arts_db_create((void **)&ptr, sizeof(unsigned int), ARTS_DB_ONCE);
+  arts_guid_t guid = arts_guid_reserve(ARTS_DB_ONCE, 0);
+  ptr = (unsigned int *)arts_db_create_with_guid(guid, sizeof(unsigned int), NULL);
   *ptr = 2;
 
   arts_printf("Check: %lu %u new_guid: %lu\n", depv[0].guid,
@@ -66,34 +66,30 @@ void shut_down_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-void init_per_node(unsigned int node_id, int argc, char **argv) {
-  (void)argc;
-  (void)argv;
-  (void)node_id;
-  db_guid = arts_reserve_guid_route(ARTS_DB_ONCE, 0);
-  a_guid = arts_reserve_guid_route(ARTS_EDT, 1);
-  b_guid = arts_reserve_guid_route(ARTS_EDT, 2);
-}
+void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                   arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
+  db_guid = arts_guid_reserve(ARTS_DB_ONCE, 0);
+  a_guid = arts_guid_reserve(ARTS_EDT, 1);
+  b_guid = arts_guid_reserve(ARTS_EDT, 2);
 
-void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
-                   char **argv) {
-  (void)argc;
-  (void)argv;
-  if (!worker_id) {
-    if (node_id == 0) {
-      unsigned int *a_ptr =
-          (unsigned int *)arts_db_create_with_guid(db_guid, sizeof(unsigned int));
-      *a_ptr = 1;
-    }
+  unsigned int node_id = arts_get_current_node();
+  if (node_id == 0) {
+    unsigned int *a_ptr =
+        (unsigned int *)arts_db_create_with_guid(db_guid, sizeof(unsigned int), NULL);
+    *a_ptr = 1;
+  }
 
-    if (node_id == 1) {
-      arts_edt_create_with_guid(check, a_guid, 0, NULL, 1);
-      arts_signal_edt(a_guid, 0, db_guid);
-    }
+  if (node_id == 1) {
+    arts_edt_create_with_guid(check, a_guid, 0, NULL, 1);
+    arts_signal_edt(a_guid, 0, db_guid);
+  }
 
-    if (node_id == 2) {
-      arts_edt_create_with_guid(shut_down_edt, b_guid, 0, NULL, 1);
-    }
+  if (node_id == 2) {
+    arts_edt_create_with_guid(shut_down_edt, b_guid, 0, NULL, 1);
   }
 }
 

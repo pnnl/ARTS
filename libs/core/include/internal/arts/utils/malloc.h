@@ -36,69 +36,22 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include "arts.h"
-#include "arts/runtime/compute/shad_adapter.h"
-#include "arts/system/tmt_lite.h"
+#ifndef ARTS_UTILS_MALLOC_H
+#define ARTS_UTILS_MALLOC_H
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-#define EDTCOUNT 2
-volatile uint64_t ulock = 0x8000000000000000ULL;
-volatile unsigned int lock = 0;
-unsigned int count = 0;
+#include <stddef.h>
 
-void locker(volatile unsigned int *lock) {
-  // if(!arts_try_lock(lock))
-  // {
-  //     arts_create_lite_contexts(lock);
-  //     while(!arts_try_lock(lock))
-  //     {
-  //         arts_resume_lite_context();
-  //     }
-  // }
-  // arts_resume_lite_context();
-  // if(!arts_try_lock(lock))
-  // {
-  //     arts_create_lite_contexts();
-  //     while(!arts_try_lock(lock)) { pthread_yield(); }
-  // }
-  // arts_resume_lite_context();
+void *arts_malloc(size_t size);
+void *arts_malloc_align(size_t size, size_t align);
+void *arts_calloc(size_t nmemb, size_t size);
+void *arts_calloc_align(size_t nmemb, size_t size, size_t align);
+void *arts_realloc(void *ptr, size_t size);
+void arts_free(void *ptr);
+
+#ifdef __cplusplus
 }
-
-void tester(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-            arts_edt_dep_t depv[]) {
-  (void)depc;
-  (void)depv;
-  (void)paramc;
-  (void)paramv;
-  // locker(&lock);
-  arts_shad_tmt_lock(&ulock);
-  unsigned int local = ++count;
-  arts_printf("Done  %u:%u Local: %u\n", arts_get_current_worker(),
-         arts_tmt_lite_get_alias(), local);
-  // if(!arts_get_current_worker() && !arts_tmt_lite_get_alias())
-  // sleep(5);
-  arts_tmt_lite_get_alias();
-  arts_shad_tmt_unlock(&ulock);
-  // arts_unlock(&lock);
-
-  if (local == EDTCOUNT) {
-    arts_printf("SHUTTING DOWN %u\n", count);
-    arts_shutdown();
-  }
-}
-
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                   arts_edt_dep_t depv[]) {
-  (void)paramc;
-  (void)paramv;
-  (void)depc;
-  (void)depv;
-  arts_printf("%u -- %u\n", arts_get_total_workers(), arts_get_current_worker());
-  for (unsigned int i = 0; i < EDTCOUNT; i++) {
-    arts_edt_create(tester, 0, NULL, 0, &(arts_hint_t){.route = 0});
-  }
-}
-
-int main(int argc, char **argv) {
-  arts_rt(argc, argv);
-  return 0;
-}
+#endif
+#endif

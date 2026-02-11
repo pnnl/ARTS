@@ -62,31 +62,35 @@ void shut_down(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-void init_per_node(unsigned int node_id, int argc, char **argv) {
-  (void)argc;
-  (void)argv;
-  (void)node_id;
-  num_dbs = arts_get_total_nodes();
-  reduction_guid = arts_reserve_guid_route(ARTS_EDT, 0);
+void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  (void)depv;
+  unsigned int node_id = (unsigned int)paramv[0];
+  int *ptr;
+  arts_guid_t db_guid =
+      arts_db_create((void **)&ptr, sizeof(unsigned int), NULL);
+  *ptr = (int)node_id;
+  arts_signal_edt(reduction_guid, node_id, db_guid);
 }
 
-void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
-                   char **argv) {
-  (void)argc;
-  (void)argv;
-  if (!worker_id) {
-    int *ptr;
-    arts_guid_t db_guid =
-        arts_db_create((void **)&ptr, sizeof(unsigned int), ARTS_DB_READ);
-    *ptr = (int)node_id;
+void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                   arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
+  num_dbs = arts_get_total_nodes();
+  reduction_guid = arts_guid_reserve(ARTS_EDT, 0);
 
-    arts_signal_edt(reduction_guid, node_id, db_guid);
+  arts_guid_t guid = arts_edt_create(shut_down, 0, NULL, 1, &(arts_hint_t){.route = 0});
+  arts_edt_create_with_guid(reduction, reduction_guid, 1, (uint64_t *)&guid,
+                        num_dbs);
 
-    if (!node_id) {
-      arts_guid_t guid = arts_edt_create(shut_down, 0, 0, NULL, 1);
-      arts_edt_create_with_guid(reduction, reduction_guid, 1, (uint64_t *)&guid,
-                            num_dbs);
-    }
+  for (unsigned int n = 0; n < num_dbs; n++) {
+    uint64_t args = n;
+    arts_edt_create(node_setup, 1, &args, 0, &(arts_hint_t){.route = n});
   }
 }
 

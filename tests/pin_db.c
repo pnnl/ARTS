@@ -68,32 +68,28 @@ void edt_func(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-void init_per_node(unsigned int node_id, int argc, char **argv) {
-  (void)argc;
-  (void)node_id;
+void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                   arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  (void)depv;
+  char **argv = (char **)paramv[1];
   // This is the node we are going to pin to
   node = strtol(argv[1], NULL, 10);
   // Allocate some DB to test arts_db_create_with_guid
-  some_db_guid = arts_reserve_guid_route(ARTS_DB_PIN, node);
-}
+  some_db_guid = arts_guid_reserve(ARTS_DB_PIN, node);
 
-void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
-                   char **argv) {
-
-(void)argc;
-
-(void)argv;
-
-  if (!worker_id && node_id == node) {
+  unsigned int node_id = arts_get_current_node();
+  if (node_id == node) {
     int *ptr = NULL;
     // Set pin to true to pin to node given by command line
     // It is pinned to the node creating the DB
-    arts_guid_t db_guid =
-        arts_db_create((void **)&ptr, sizeof(unsigned int), ARTS_DB_PIN);
+    arts_guid_t db_guid = arts_guid_reserve(ARTS_DB_PIN, 0);
+    ptr = (int *)arts_db_create_with_guid(db_guid, sizeof(unsigned int), NULL);
     *ptr = 1234;
 
     // EDT is going to run on node given by command line
-    arts_guid_t edt_guid = arts_edt_create(edt_func, node, 0, NULL, 2);
+    arts_guid_t edt_guid = arts_edt_create(edt_func, 0, NULL, 2, &(arts_hint_t){.route = node});
 
     // Put both signals up front forcing one to be out of order to test the OO
     // code path
@@ -101,7 +97,7 @@ void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
     arts_signal_edt(edt_guid, 1, some_db_guid); // Note the mode
 
     // This is the delayed DB
-    int *ptr2 = (int *)arts_db_create_with_guid(some_db_guid, sizeof(unsigned int));
+    int *ptr2 = (int *)arts_db_create_with_guid(some_db_guid, sizeof(unsigned int), NULL);
     *ptr2 = 9876;
   }
 }

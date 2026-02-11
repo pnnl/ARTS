@@ -63,13 +63,13 @@ void printer(void *id, void *arg) {
   (void)arg;
   unsigned int *guid_id = (unsigned int *)id;
   printf("Print %u\n", *guid_id);
-  arts_free(guid_id);
+  free(guid_id);
 }
 
 void *adder(void *data) {
   (void)data;
   for (unsigned int i = 0; i < 20; i++) {
-    unsigned int *id = (unsigned int *)arts_malloc(sizeof(unsigned int));
+    unsigned int *id = (unsigned int *)malloc(sizeof(unsigned int));
     *id = i;
     while (!arts_out_of_order_list_add_item(&list, id)) {
       arts_printf("RESET\n");

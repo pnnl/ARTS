@@ -75,7 +75,7 @@ bool set_max_cycle(const unsigned int *cycle, unsigned int cycle_size) {
       }
     }
 
-    max_cycle = (unsigned int *)arts_calloc(cycle_size, sizeof(unsigned int));
+    max_cycle = (unsigned int *)calloc(cycle_size, sizeof(unsigned int));
     for (unsigned int i = 0; i < cycle_size; i++) {
       max_cycle[i] = cycle[i];
     }
@@ -103,7 +103,7 @@ bool depth_first_rec(unsigned int vertex, unsigned int current,
 
 void depth_first(unsigned int cycle_size) {
   unsigned int *cycle =
-      (unsigned int *)arts_calloc(order + 1, sizeof(unsigned int));
+      (unsigned int *)calloc(order + 1, sizeof(unsigned int));
   for (unsigned int i = 0; i < order; i++) {
     if (depth_first_rec(i, 0, cycle_size, cycle)) {
       for (unsigned int j = 0; j < cycle_size; j++) {
@@ -116,9 +116,9 @@ void depth_first(unsigned int cycle_size) {
 }
 
 bool **fully_connect() {
-  bool **local_adj_list = (bool **)arts_calloc(order, sizeof(bool *));
+  bool **local_adj_list = (bool **)calloc(order, sizeof(bool *));
   for (unsigned int i = 0; i < order; i++) {
-    local_adj_list[i] = (bool *)arts_calloc(order, sizeof(bool));
+    local_adj_list[i] = (bool *)calloc(order, sizeof(bool));
   }
 
   uint64_t length = arts_length_array_list(gpu_list);

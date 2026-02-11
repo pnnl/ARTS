@@ -46,6 +46,7 @@
 #include <unistd.h>
 
 #include "arts.h"
+#include "arts/utils/malloc.h"
 #include "arts/introspection/counter.h"
 #include "arts/network/remote.h"
 #include "arts/runtime/globals.h"
@@ -156,6 +157,12 @@ void arts_shutdown() {
 }
 
   (void)fflush(stdout);
+}
+
+_Noreturn void arts_abort(uint8_t error_code) {
+  (void)fflush(stdout);
+  (void)fflush(stderr);
+  exit(error_code);
 }
 
 void arts_thread_set_os_thread_count(unsigned int threads) {

@@ -82,27 +82,18 @@ void epoch_start(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 }
 
-void init_per_node(unsigned int node_id, int argc, char **argv) {
-  (void)argc;
+void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                   arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  (void)depv;
+  char **argv = (char **)paramv[1];
   elements_per_block = strtol(argv[1], NULL, 10);
   blocks = arts_get_total_nodes();
-  if (!node_id) {
-    arts_printf("ElementsPerBlock: %u Blocks: %u\n", elements_per_block, blocks);
-}
-}
-
-void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
-                   char **argv) {
-
-(void)argc;
-
-(void)argv;
-
-  if (!node_id && !worker_id) {
-    arts_guid_t end_epoch_guid = arts_edt_create(epoch_end, 0, 0, NULL, 1);
-    arts_initialize_and_start_epoch(end_epoch_guid, 0);
-    arts_guid_t start_epoch_guid = arts_edt_create(epoch_start, 0, 0, NULL, 0);
-  }
+  arts_printf("ElementsPerBlock: %u Blocks: %u\n", elements_per_block, blocks);
+  arts_guid_t end_epoch_guid = arts_edt_create(epoch_end, 0, NULL, 1, &(arts_hint_t){.route = 0});
+  arts_initialize_and_start_epoch(end_epoch_guid, 0);
+  arts_edt_create(epoch_start, 0, NULL, 0, &(arts_hint_t){.route = 0});
 }
 
 int main(int argc, char **argv) {

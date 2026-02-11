@@ -40,16 +40,15 @@
 
 #include "arts.h"
 
-extern "C" void init_per_node(unsigned int node_id, int argc, char **argv) {
-  (void)node_id;
-  (void)argc;
-  (void)argv;
-  // for(unsigned int i=0; i<256; i++)
+extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
+                              uint32_t depc, arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
   {
     unsigned int i = 1 + 2 + 4;
     arts_printf("i: %u -> %p\n", i, (void *)&i);
-    // unsigned int rem = artsSendTree(i);
-    // arts_printf("REM: %u\n", rem);
   }
   arts_shutdown();
 }

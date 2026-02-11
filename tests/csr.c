@@ -44,10 +44,13 @@
 #include "arts/csr.h"
 #include "arts.h"
 
-void init_per_node(unsigned int node_id, int argc, char **argv) {
-  (void)argc;
-  (void)argv;
-  (void)node_id;
+void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                   arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
+
   // Simple Graph, vertices = 8, edges = 11
   /**
    0 6
@@ -77,7 +80,7 @@ void init_per_node(unsigned int node_id, int argc, char **argv) {
   init_edge_vector(&vec, 100);
   for (int i = 0; i < 11; ++i) {
     push_back_edge(&vec, edge_arr[(ptrdiff_t)i * 2], edge_arr[((ptrdiff_t)i * 2) + 1], 0);
-}
+  }
   sort_by_source_and_target(&vec);
 
   // Create the CSR graph, graphGuid is used to allocate
@@ -107,23 +110,7 @@ void init_per_node(unsigned int node_id, int argc, char **argv) {
   printf("}\n");
   free_csr(graph);
 
-  // Testing -- reading from commandline
-  // e.g., srun -N 1 ./testCSR --file /Users/kane972/Downloads/ca-HepTh.tsv
-  // --num-vertices 9877 --num-edges 51946 --keep-self-loops
-
-  // arts_block_dist_t * distCmd = init_block_distribution_with_cmd_line_args(argc,
-  // argv); load_graph_using_cmd_line_args(&graphCmd, &distCmd, argc, argv);
-  // printLocalCSR(arts_get_current_node(), &graphCmd);
-  // free_csr(arts_get_current_node(), &graphCmd);
-}
-
-void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
-                   char **argv) {
-  (void)argc;
-  (void)argv;
-  if (!node_id && !worker_id) {
-    arts_shutdown();
-}
+  arts_shutdown();
 }
 
 int main(int argc, char **argv) {

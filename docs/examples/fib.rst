@@ -52,18 +52,21 @@ Initialization
 
 .. code-block:: c
 
-   void init_per_worker(unsigned int node_id, unsigned int worker_id,
-                        int argc, char **argv) {
-       if (!node_id && !worker_id) {
-           uint64_t num = strtol(argv[1], NULL, 10);
-           arts_guid_t done_guid = arts_edt_create(fib_done, 0, 1, &num, 1);
-           uint64_t args[3] = {(uint64_t)done_guid, 0, num};
-           start = arts_get_time_stamp();
-           arts_edt_create(fib_fork, 0, 3, args, 0);
-       }
+   void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
+                      uint32_t depc, arts_edt_dep_t depv[]) {
+       (void)paramc;
+       (void)depc;
+       (void)depv;
+       char **argv = (char **)paramv[1];
+       uint64_t num = strtol(argv[1], NULL, 10);
+       arts_guid_t done_guid = arts_edt_create(fib_done, 0, 1, &num, 1);
+       uint64_t args[3] = {(uint64_t)done_guid, 0, num};
+       start = arts_get_time_stamp();
+       arts_edt_create(fib_fork, 0, 3, args, 0);
    }
 
-Only the master thread (node 0, worker 0) performs initialisation:
+``arts_main_edt`` is scheduled by the runtime on rank 0 after init.
+It receives ``argc``/``argv`` via ``paramv[0]``/``paramv[1]``:
 
 1. Create ``fib_done`` with 1 dependency slot (to receive the result).
 2. Create the root ``fib_fork``, passing the done-EDT GUID and the

@@ -55,6 +55,7 @@
 #define PT_CONTEXTS // maintain contexts via PThreads
 
 #include "arts/system/tmt.h"
+#include "arts/utils/malloc.h"
 
 #include <inttypes.h>
 #include <stdarg.h>

@@ -55,13 +55,15 @@ void print_rt() {
   }
 }
 
-void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
-                   char **argv) {
-  (void)argc;
-  (void)argv;
-  (void)worker_id;
+void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                   arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
+  unsigned int node_id = arts_get_current_node();
   printf("Init per node\n");
-  arts_guid_range_t *range = arts_new_guid_range_node(ARTS_EDT, MYSIZE, node_id);
+  arts_guid_range_t *range = arts_guid_range_create(ARTS_EDT, MYSIZE, node_id);
   for (uint64_t i = 0; i < MYSIZE; i++) {
     arts_route_item_t *location = (arts_route_item_t *)arts_route_table_add_item(
         (void *)range, arts_guid_range_next(range), node_id, 0);
@@ -75,7 +77,7 @@ void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
   print_rt();
 
   int rank;
-  arts_guid_t guid = arts_get_guid(range, 0);
+  arts_guid_t guid = arts_guid_range_get(range, 0);
   arts_route_table_lookup_db(guid, &rank, true);
   arts_route_table_return_db(guid, true);
 

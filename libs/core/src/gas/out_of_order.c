@@ -37,6 +37,7 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 #include "arts/gas/out_of_order.h"
+#include "arts/utils/malloc.h"
 
 #include "arts/gas/route_table.h"
 #include "arts/runtime/globals.h"

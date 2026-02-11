@@ -61,6 +61,7 @@
 #include <string.h>
 
 #include "arts.h"
+#include "arts/utils/malloc.h"
 #include "arts/utils/atomics.h"
 
 struct circular_array_s {

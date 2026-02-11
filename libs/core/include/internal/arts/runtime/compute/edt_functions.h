@@ -55,8 +55,7 @@ void arts_edt_delete(struct arts_edt_s *edt);
 void internal_signal_edt(arts_guid_t edt_packet, uint32_t slot, arts_guid_t data_guid,
                        arts_type_t mode, void *ptr, unsigned int size);
 void internal_signal_edt_with_mode(arts_guid_t edt_packet, uint32_t slot,
-                               arts_guid_t data_guid, arts_type_t mode,
-                               arts_type_t acquire_mode);
+                               arts_guid_t data_guid, arts_type_t mode);
 
 typedef struct {
   arts_guid_t current_edt_guid;
@@ -74,6 +73,7 @@ arts_guid_t *arts_check_epoch_is_root(arts_guid_t to_check);
 void arts_increment_finished_epoch_list();
 
 void *arts_get_depv(void *edt_ptr);
+arts_type_t *arts_get_dep_modes(void *edt_ptr);
 #ifdef __cplusplus
 }
 #endif

@@ -75,13 +75,13 @@ void fib_fork(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   } else {
     // Create two DB of type ARTS_DB_GPU
     unsigned int *x = NULL;
-    arts_guid_t x_guid =
-        arts_db_create((void **)&x, sizeof(unsigned int), ARTS_DB_GPU_WRITE);
+    arts_guid_t x_guid = arts_guid_reserve(ARTS_DB_GPU_WRITE, 0);
+    x = (unsigned int *)arts_db_create_with_guid(x_guid, sizeof(unsigned int), NULL);
     (*x) = (*res_ptr) - 1;
 
     unsigned int *y = NULL;
-    arts_guid_t y_guid =
-        arts_db_create((void **)&y, sizeof(unsigned int), ARTS_DB_GPU_WRITE);
+    arts_guid_t y_guid = arts_guid_reserve(ARTS_DB_GPU_WRITE, 0);
+    y = (unsigned int *)arts_db_create_with_guid(y_guid, sizeof(unsigned int), NULL);
     (*y) = (*res_ptr) - 2;
 
     // Create a continuation edt to run on the GPU
@@ -93,11 +93,11 @@ void fib_fork(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
     // Create the forks which will run on the CPU
     uint64_t args[2] = {(uint64_t)join_guid, 0};
-    arts_guid_t fork_guid_x = arts_edt_create(fib_fork, next, 2, args, 1);
+    arts_guid_t fork_guid_x = arts_edt_create(fib_fork, 2, args, 1, &(arts_hint_t){.route = next});
     arts_signal_edt(fork_guid_x, 0, x_guid);
 
     args[1] = 1;
-    arts_guid_t fork_guid_y = arts_edt_create(fib_fork, next, 2, args, 1);
+    arts_guid_t fork_guid_y = arts_edt_create(fib_fork, 2, args, 1, &(arts_hint_t){.route = next});
     arts_signal_edt(fork_guid_y, 0, y_guid);
   }
 }
@@ -113,32 +113,30 @@ void fib_done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-extern "C" void init_per_node(unsigned int node_id, int argc, char **argv) {
-  (void)node_id;
-  (void)argc;
-  (void)argv;
-}
+extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
+                              uint32_t depc, arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  (void)depv;
+  int argc = (int)paramv[0];
+  char **argv = (char **)paramv[1];
 
-extern "C" void init_per_worker(unsigned int node_id, unsigned int worker_id,
-                              int argc, char **argv) {
-  if (!node_id && !worker_id) {
-    unsigned int *res_ptr = NULL;
-    arts_guid_t res_guid =
-        arts_db_create((void **)&res_ptr, sizeof(unsigned int), ARTS_DB_GPU_WRITE);
-    if (argc < 2) {
-      arts_printf("Format: ./fibGpu NUMBER\n");
-      arts_shutdown();
-      return;
-    }
-    *res_ptr = (unsigned int)strtol(argv[1], NULL, 10);
-
-    arts_guid_t done_guid = arts_edt_create(fib_done, 0, 1, (uint64_t *)res_ptr, 1);
-
-    uint64_t args[] = {(uint64_t)done_guid, 0};
-    arts_guid_t fib_guid = arts_edt_create(fib_fork, 0, 2, args, 1);
-    arts_signal_edt(fib_guid, 0, res_guid);
-    start = arts_get_time_stamp();
+  unsigned int *res_ptr = NULL;
+  arts_guid_t res_guid = arts_guid_reserve(ARTS_DB_GPU_WRITE, 0);
+  res_ptr = (unsigned int *)arts_db_create_with_guid(res_guid, sizeof(unsigned int), NULL);
+  if (argc < 2) {
+    arts_printf("Format: ./fibGpu NUMBER\n");
+    arts_shutdown();
+    return;
   }
+  *res_ptr = (unsigned int)strtol(argv[1], NULL, 10);
+
+  arts_guid_t done_guid = arts_edt_create(fib_done, 1, (uint64_t *)res_ptr, 1, &(arts_hint_t){.route = 0});
+
+  uint64_t args[] = {(uint64_t)done_guid, 0};
+  arts_guid_t fib_guid = arts_edt_create(fib_fork, 2, args, 1, &(arts_hint_t){.route = 0});
+  arts_signal_edt(fib_guid, 0, res_guid);
+  start = arts_get_time_stamp();
 }
 
 int main(int argc, char **argv) {

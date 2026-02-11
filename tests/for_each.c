@@ -76,20 +76,18 @@ void edt_func(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_signal_edt_value(check_guid, 0, 0);
 }
 
-void init_per_node(unsigned int node_id, int argc, char **argv) {}
-
-void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
-                   char **argv) {
-  (void)argc;
-  (void)argv;
-  if (!node_id && !worker_id) {
-    arts_guid_t check_guid =
-        arts_edt_create(check, 0, 0, NULL, elems_per_node * arts_get_total_nodes());
-    arts_guid_t guid = arts_new_array_db(&array, sizeof(unsigned int),
-                                     elems_per_node * arts_get_total_nodes());
-    arts_for_each_in_array_db_at_data(array, 1, edt_func, 1, (uint64_t *)&check_guid);
-    //        arts_for_each_in_array_db(array, edt_func, 1, &check_guid);
-  }
+void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                   arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
+  arts_guid_t check_guid =
+      arts_edt_create(check, 0, NULL, elems_per_node * arts_get_total_nodes(), &(arts_hint_t){.route = 0});
+  arts_guid_t guid = arts_new_array_db(&array, sizeof(unsigned int),
+                                   elems_per_node * arts_get_total_nodes());
+  arts_for_each_in_array_db_at_data(array, 1, edt_func, 1, (uint64_t *)&check_guid);
+  //        arts_for_each_in_array_db(array, edt_func, 1, &check_guid);
 }
 
 int main(int argc, char **argv) {

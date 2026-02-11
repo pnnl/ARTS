@@ -41,6 +41,7 @@
 #include <unistd.h>
 
 #include "arts.h"
+#include "arts/utils/malloc.h"
 #include "arts/introspection/metrics.h"
 #include "arts/network/remote.h"
 #include "arts/network/remote_protocol.h"
@@ -118,8 +119,7 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
   case ARTS_REMOTE_EDT_SIGNAL_MSG: {
     struct arts_remote_edt_signal_packet_s *pack =
         (struct arts_remote_edt_signal_packet_s *)(packet);
-    internal_signal_edt_with_mode(pack->edt, pack->slot, pack->db, pack->mode,
-                              pack->acquire_mode);
+    internal_signal_edt_with_mode(pack->edt, pack->slot, pack->db, pack->mode);
     break;
   }
   case ARTS_REMOTE_EVENT_SATISFY_SLOT_MSG: {
@@ -151,7 +151,7 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
     struct arts_remote_db_add_dependence_packet_s *pack =
         (struct arts_remote_db_add_dependence_packet_s *)(packet);
     arts_db_add_dependence_with_mode_and_diff(pack->db_src, pack->edt_dest,
-                                       pack->edt_slot, pack->acquire_mode);
+                                       pack->edt_slot, pack->mode);
     break;
   }
   case ARTS_REMOTE_DB_ADD_DEPENDENCE_WITH_BYTE_OFFSET_MSG: {
@@ -186,7 +186,7 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
     struct arts_remote_add_dependence_packet_s *pack =
         (struct arts_remote_add_dependence_packet_s *)(packet);
     arts_add_dependence_to_persistent_event_with_mode_and_diff(
-        pack->source, pack->destination, pack->slot, pack->acquire_mode);
+        pack->source, pack->destination, pack->slot, pack->mode);
     break;
   }
   case ARTS_REMOTE_ADD_DEPENDENCE_TO_PERSISTENT_EVENT_WITH_BYTE_OFFSET_MSG: {
@@ -194,7 +194,7 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
     struct arts_remote_add_dependence_with_byte_offset_packet_s *pack =
         (struct arts_remote_add_dependence_with_byte_offset_packet_s *)(packet);
     arts_add_dependence_to_persistent_event_with_byte_offset(
-        pack->source, pack->destination, pack->slot, pack->acquire_mode,
+        pack->source, pack->destination, pack->slot, pack->mode,
         pack->byte_offset, pack->size);
     break;
   }

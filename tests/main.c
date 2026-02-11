@@ -59,11 +59,6 @@ void test(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 #endif
 }
 
-void init_per_node(unsigned int node_id, int argc, char **argv) {
-  (void)argv;
-  arts_printf("Node %u argc %u\n", node_id, argc);
-}
-
 void exit_program(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                  arts_edt_dep_t depv[]) {
   (void)depc;
@@ -73,19 +68,22 @@ void exit_program(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-void arts_main(int argc, char **argv) {
-  (void)argc;
-  (void)argv;
+void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                   arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
   arts_printf("Main EDT %u\n", arts_get_current_guid());
   arts_printf("Starting\n");
-  arts_guid_t exit_guid = arts_reserve_guid_route(ARTS_EDT, 0);
+  arts_guid_t exit_guid = arts_guid_reserve(ARTS_EDT, 0);
   arts_edt_create_with_guid(exit_program, exit_guid, 0, NULL, 1);
   arts_guid_t epoch_guid = arts_initialize_and_start_epoch(exit_guid, 0);
 
   int number_of_workers = (int)arts_get_total_workers();
   for (int i = 0; i < number_of_workers; i++) {
     uint64_t args[3];
-    arts_guid_t guid = arts_edt_create_with_epoch(test, 0, 3, args, 0, epoch_guid);
+    arts_guid_t guid = arts_edt_create_with_epoch(test, 3, args, 0, epoch_guid, &(arts_hint_t){.route = 0});
   }
   for (int i = 0; i < 100000000; i++) {
     // Simulate some work

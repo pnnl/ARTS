@@ -123,9 +123,8 @@ void create_first_round(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Create the first search frontier!
   unsigned int *first_search_frontier = NULL;
-  arts_guid_t first_search_frontier_guid =
-      arts_db_create((void **)&first_search_frontier, 2 * sizeof(unsigned int),
-                   ARTS_DB_GPU_READ);
+  arts_guid_t first_search_frontier_guid = arts_guid_reserve(ARTS_DB_GPU_READ, 0);
+  first_search_frontier = (unsigned int *)arts_db_create_with_guid(first_search_frontier_guid, 2 * sizeof(unsigned int), NULL);
   first_search_frontier[0] = 1;   // size of the frontier
   first_search_frontier[1] = (unsigned int)src; // root
   arts_printf("ROOT: %u GRAPH GUID: %lu VISITED GUID: %lu\n", first_search_frontier[1],
@@ -134,7 +133,7 @@ void create_first_round(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Create the first epoch
   arts_guid_t launch_sort_guid =
-      arts_edt_create(launch_sort, arts_get_current_node(), 1, &next_level, 1);
+      arts_edt_create(launch_sort, 1, &next_level, 1, &(arts_hint_t){.route = arts_get_current_node()});
   arts_initialize_and_start_epoch(launch_sort_guid, 0);
 
   // Launching the first bfs
@@ -150,7 +149,7 @@ void create_first_round(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                                grid, threads, NULL_GUID, 0, NULL_GUID);
     arts_printf("LAUNCHING GPU\n");
   } else {
-    bfs_guid = arts_edt_create(cpu_bfs, arts_get_current_node(), 1, &next_level, 4);
+    bfs_guid = arts_edt_create(cpu_bfs, 1, &next_level, 4, &(arts_hint_t){.route = arts_get_current_node()});
     arts_printf("LAUNCHING CPU\n");
   }
   arts_signal_edt(bfs_guid, 0, visit_guid);
@@ -279,12 +278,12 @@ void launch_sort(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // epoch, we need the next round's launch_sort.
   uint64_t next_level = local_level + 1;
   arts_guid_t next_launch_sort_guid =
-      arts_edt_create(launch_sort, arts_get_current_node(), 1, &next_level, 1);
+      arts_edt_create(launch_sort, 1, &next_level, 1, &(arts_hint_t){.route = arts_get_current_node()});
   arts_initialize_and_start_epoch(next_launch_sort_guid, 0);
 
   // While we are at it, lets create the next sync point, launch_bfs.
   arts_guid_t next_launch_bfs_guid =
-      arts_reserve_guid_route(ARTS_EDT, arts_get_current_node());
+      arts_guid_reserve(ARTS_EDT, arts_get_current_node());
   uint32_t next_launch_bfs_depc = arts_get_total_nodes() * (arts_get_total_gpus() + 1);
 
   // Lasly, we will launch a sort for every gpu in the system.
@@ -300,7 +299,7 @@ void launch_sort(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       (void)thrust_guid;
     }
     // Launch CPU sort here!
-    arts_guid_t sort_guid = arts_edt_create(cpu_sort, j, 2, args, 0);
+    arts_guid_t sort_guid = arts_edt_create(cpu_sort, 2, args, 0, &(arts_hint_t){.route = j});
     (void)sort_guid;
   }
 
@@ -312,7 +311,7 @@ void launch_sort(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     for (unsigned int i = 0; i < arts_get_total_nodes(); i++) {
       uint64_t sync_args[] = {local_level, (uint64_t)next_launch_bfs_guid};
       arts_guid_t edt_guid =
-          arts_edt_create(do_partition_sync, i, 2, sync_args, part_count[i]);
+          arts_edt_create(do_partition_sync, 2, sync_args, part_count[i], &(arts_hint_t){.route = i});
       unsigned int slot = 0;
       for (unsigned int j = 0; j < PARTS; j++) {
         if (i == arts_guid_get_rank(visited_guid[j])) {
@@ -377,8 +376,7 @@ void cpu_sort(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_guid_t *edt_guids_to_launch_bfs =
         NULL; // This will hold the new edt guids to launch
     edt_guids_to_launch_bfs_guid =
-        arts_db_create((void **)&edt_guids_to_launch_bfs, sizeof(arts_guid_t) * PARTS,
-                     ARTS_DB_READ);
+        arts_db_create((void **)&edt_guids_to_launch_bfs, sizeof(arts_guid_t) * PARTS, NULL);
 
     uint64_t next_level = local_level + 1;
     unsigned int temp_index = 0;
@@ -386,9 +384,8 @@ void cpu_sort(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       if (size_per_bound[i]) {
         unsigned int *new_search_frontier =
             NULL; // This will hold a tile of the new frontier
-        arts_guid_t new_search_frontier_guid = arts_db_create(
-            (void **)&new_search_frontier,
-            sizeof(unsigned int) * (size_per_bound[i] + 1), ARTS_DB_GPU_READ);
+        arts_guid_t new_search_frontier_guid = arts_guid_reserve(ARTS_DB_GPU_READ, 0);
+        new_search_frontier = (unsigned int *)arts_db_create_with_guid(new_search_frontier_guid, sizeof(unsigned int) * (size_per_bound[i] + 1), NULL);
         *new_search_frontier = size_per_bound[i];
 
         // Copy the data from the gpu to the host
@@ -413,7 +410,7 @@ void cpu_sort(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
         {
           arts_printf("CPU PART: %u\n", i);
           edt_guids_to_launch_bfs[i] =
-              arts_edt_create(cpu_bfs, rank, 1, &next_level, 4);
+              arts_edt_create(cpu_bfs, 1, &next_level, 4, &(arts_hint_t){.route = rank});
         }
 
         arts_signal_edt(edt_guids_to_launch_bfs[i], 0, visited_guid[i]);
@@ -496,8 +493,7 @@ void thrust_sort(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_guid_t *edt_guids_to_launch_bfs =
         NULL; // This will hold the new edt guids to launch
     edt_guids_to_launch_bfs_guid =
-        arts_db_create((void **)&edt_guids_to_launch_bfs, sizeof(arts_guid_t) * PARTS,
-                     ARTS_DB_READ);
+        arts_db_create((void **)&edt_guids_to_launch_bfs, sizeof(arts_guid_t) * PARTS, NULL);
 
     uint64_t next_level = local_level + 1;
     unsigned int temp_index = 0;
@@ -505,9 +501,8 @@ void thrust_sort(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       if (size_per_bound[i]) {
         unsigned int *new_search_frontier =
             NULL; // This will hold a tile of the new frontier
-        arts_guid_t new_search_frontier_guid = arts_db_create(
-            (void **)&new_search_frontier,
-            sizeof(unsigned int) * (size_per_bound[i] + 1), ARTS_DB_GPU_READ);
+        arts_guid_t new_search_frontier_guid = arts_guid_reserve(ARTS_DB_GPU_READ, 0);
+        new_search_frontier = (unsigned int *)arts_db_create_with_guid(new_search_frontier_guid, sizeof(unsigned int) * (size_per_bound[i] + 1), NULL);
         *new_search_frontier = size_per_bound[i];
 
         // Copy the data from the gpu to the host
@@ -533,7 +528,7 @@ void thrust_sort(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
         {
           arts_printf("CPU PART: %u\n", i);
           edt_guids_to_launch_bfs[i] =
-              arts_edt_create(cpu_bfs, rank, 1, &next_level, 4);
+              arts_edt_create(cpu_bfs, 1, &next_level, 4, &(arts_hint_t){.route = rank});
         }
 
         arts_signal_edt(edt_guids_to_launch_bfs[i], 0, visited_guid[i]);
@@ -605,16 +600,22 @@ void launch_bfs(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
 /********************************************************************************************/
 
-extern "C" void init_per_node(unsigned int node_id, int argc, char **argv) {
+void init_node(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+               arts_edt_dep_t depv[]) {
+  (void)depc;
+  (void)depv;
+  int argc = (int)paramv[0];
+  char **argv = (char **)paramv[1];
   (void)argc;
-  char *file_name = argv[1];  //"/home/suet688/ca-HepTh.tsv";
-                               ////"/home/firo017/datasets/ca-HepTh.tsv";
-  unsigned int num_verts = 0; // 9877;
-  unsigned int num_edges = 0; // 51946;
+  unsigned int node_id = arts_get_current_node();
+
+  char *file_name = argv[1];
+  unsigned int num_verts = 0;
+  unsigned int num_edges = 0;
   get_properties(file_name, &num_verts, &num_edges);
 
   // Create graph partitions
-  graph = (csr_graph_t *)arts_calloc(PARTS, sizeof(csr_graph_t));
+  graph = (csr_graph_t *)calloc(PARTS, sizeof(csr_graph_t));
   distribution =
       init_block_distribution_block(num_verts, num_edges, PARTS, ARTS_DB_GPU_READ);
   load_graph_no_weight_csr(file_name, distribution, true, false);
@@ -628,25 +629,23 @@ extern "C" void init_per_node(unsigned int node_id, int argc, char **argv) {
 
   // Count the number of partitions per node for later...
   part_count =
-      (unsigned int *)arts_calloc(arts_get_total_nodes(), sizeof(unsigned int));
+      (unsigned int *)calloc(arts_get_total_nodes(), sizeof(unsigned int));
   for (unsigned int i = 0; i < arts_get_total_nodes(); i++) {
     part_count[i] = 0;
   }
 
   // Create visited array per partition
-  visited_guid = (arts_guid_t *)arts_calloc(PARTS, sizeof(arts_guid_t));
-  visited = (unsigned int **)arts_calloc(PARTS, sizeof(unsigned int *));
+  visited_guid = (arts_guid_t *)calloc(PARTS, sizeof(arts_guid_t));
+  visited = (unsigned int **)calloc(PARTS, sizeof(unsigned int *));
   for (unsigned int i = 0; i < PARTS; i++) {
     unsigned int num_elements = get_block_size_for_partition(i, distribution);
     unsigned int size = sizeof(unsigned int) * num_elements;
-    // Put the visiter db on the same rank as the graph partition
     unsigned int rank =
         arts_guid_get_rank(get_guid_for_partition_distr(distribution, i));
-    visited_guid[i] = arts_reserve_guid_route(DB_WRITE_TYPE, rank);
+    visited_guid[i] = arts_guid_reserve(DB_WRITE_TYPE, rank);
     part_count[rank]++;
-    // If the partition is on our node lets create the db and -1 it out
     if (rank == node_id) {
-      visited[i] = (unsigned int *)arts_db_create_with_guid(visited_guid[i], size);
+      visited[i] = (unsigned int *)arts_db_create_with_guid(visited_guid[i], size, NULL);
       for (unsigned int j = 0; j < num_elements; j++) {
         visited[i][j] = UINT32_MAX;
       }
@@ -657,9 +656,11 @@ extern "C" void init_per_node(unsigned int node_id, int argc, char **argv) {
 
   // Inits some data recording
   init_list_record();
+
+  create_buffer_db();
 }
 
-extern "C" void init_per_gpu(unsigned int node_id, int dev_id, cudaStream_t *stream,
+extern "C" void arts_init_per_gpu(unsigned int node_id, int dev_id, cudaStream_t *stream,
                              int argc, const char *argv) {
   (void)node_id;
   (void)stream;
@@ -668,31 +669,25 @@ extern "C" void init_per_gpu(unsigned int node_id, int dev_id, cudaStream_t *str
   create_buffers_on_gpu(dev_id, sizeof(unsigned int) * (GPULISTLEN + 1));
 }
 
-extern "C" void init_per_worker(unsigned int node_id, unsigned int worker_id,
-                              int argc, char **argv) {
-  (void)argc;
-  (void)argv;
-  CHECK_CONSISTENCY(worker_id);
-  if (!worker_id) {
-    create_buffer_db();
-    vertex_t source = ROOT;
+extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
+                              uint32_t depc, arts_edt_dep_t depv[]) {
+  (void)depc;
+  (void)depv;
 
-    if (!node_id) {
-      // Spawn a task on the rank containing the source
-      unsigned int owner_rank = get_owner_distr(source, distribution);
-      uint64_t args_fr_rnd_one[] = {source};
-      arts_guid_t create_first_round_guid =
-          arts_edt_create(create_first_round, owner_rank, 1, args_fr_rnd_one, 0);
-      (void)create_first_round_guid;
-    }
-    // print_master_buffer_guids();
-    // print_local_buffer_guids();
-    // print_buffer_ptr();
-    // print_raw_ptr();
+  arts_guid_t init_epoch_guid = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  for (unsigned int i = 0; i < arts_get_total_nodes(); i++) {
+    arts_edt_create_with_epoch(init_node, paramc, paramv, 0, init_epoch_guid, &(arts_hint_t){.route = i});
   }
+  arts_wait_on_handle(init_epoch_guid);
+
+  // Spawn a task on the rank containing the source
+  vertex_t source = ROOT;
+  unsigned int owner_rank = get_owner_distr(source, distribution);
+  uint64_t args_fr_rnd_one[] = {source};
+  arts_edt_create(create_first_round, 1, args_fr_rnd_one, 0, &(arts_hint_t){.route = owner_rank});
 }
 
-extern "C" void clean_per_gpu(unsigned int node_id, int dev_id,
+extern "C" void arts_fini_per_gpu(unsigned int node_id, int dev_id,
                               cudaStream_t *stream) {
   (void)node_id;
   (void)stream;
