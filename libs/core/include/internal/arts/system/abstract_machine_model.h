@@ -37,8 +37,8 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 
-#ifndef ARTS_SYSTEM_ABSTRACTMACHINEMODEL_H
-#define ARTS_SYSTEM_ABSTRACTMACHINEMODEL_H
+#ifndef ARTS_SYSTEM_ABSTRACT_MACHINE_MODEL_H
+#define ARTS_SYSTEM_ABSTRACT_MACHINE_MODEL_H
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -54,12 +54,12 @@ extern "C" {
 struct arts_core_info_s {
   hwloc_bitmap_t cpuset;
 #ifndef __APPLE__
-  cpu_set_t linuxCpuSet;
+  cpu_set_t linux_cpu_set;
 #endif
 };
 #else
 struct arts_core_info_s {
-  unsigned int cpuId;
+  unsigned int cpu_id;
 };
 #endif
 struct unit_thread_s {
@@ -75,7 +75,7 @@ struct unit_thread_s {
 };
 
 struct thread_mask_s {
-  unsigned int cluster_id;
+  unsigned int numa_domain_id;
   unsigned int core_id;
   unsigned int unit_id;
   bool on;
@@ -91,13 +91,13 @@ struct thread_mask_s {
 };
 
 struct unit_mask_s {
-  unsigned int cluster_id;
+  unsigned int numa_domain_id;
   unsigned int core_id;
   unsigned int unit_id;
   bool on;
   unsigned int threads;
-  struct unit_thread_s *listHead;
-  struct unit_thread_s *listTail;
+  struct unit_thread_s *list_head;
+  struct unit_thread_s *list_tail;
   struct arts_core_info_s core_info;
 };
 
@@ -106,14 +106,14 @@ struct core_mask_s {
   struct unit_mask_s *unit;
 };
 
-struct cluster_mask_s {
+struct numa_domain_mask_s {
   unsigned int num_cores;
   struct core_mask_s *core;
 };
 
 struct node_mask_s {
-  unsigned int num_clusters;
-  struct cluster_mask_s *cluster;
+  unsigned int num_numa_domains;
+  struct numa_domain_mask_s *numa_domain;
 };
 
 struct thread_mask_s *get_thread_mask(struct arts_config_s *config);
@@ -125,4 +125,4 @@ void destroy_thread_mask(struct thread_mask_s *mask);
 }
 #endif
 
-#endif /* artsABSTRACTMACHINEMODEL_H */
+#endif /* ARTS_SYSTEM_ABSTRACT_MACHINE_MODEL_H */

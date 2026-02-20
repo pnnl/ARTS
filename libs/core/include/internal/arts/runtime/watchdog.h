@@ -36,88 +36,37 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include <stdio.h>
-#include <stdlib.h>
+#ifndef ARTS_RUNTIME_WATCHDOG_H
+#define ARTS_RUNTIME_WATCHDOG_H
 
-#include "arts.h"
-#include "arts/gpu/gpu_runtime.cuh"
+/*
+ * Watchdog — Per-thread hang detection for ARTS runtime.
+ *
+ * When ARTS_WATCHDOG_ENABLED is defined (via CMake), each worker thread
+ * periodically records progress and checks for stalls:
+ *
+ *   arts_watchdog_init(timeout_sec)  — Set the timeout threshold (once).
+ *   arts_watchdog_tick()             — Record progress (after each EDT).
+ *   arts_watchdog_check()            — Check if timeout exceeded (in idle).
+ *
+ * When ARTS_WATCHDOG_ENABLED is NOT defined, all calls expand to ((void)0)
+ * at compile time — zero overhead in release builds.
+ */
 
-__global__ void temp(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                     arts_edt_dep_t depv[]) {
-  (void)paramc;
-  (void)paramv;
-  (void)depc;
-  uint64_t gpu_id = GET_GPU_INDEX();
-  // printf("Hello from %lu\n", gpu_id);
-  unsigned int *addr = (unsigned int *)depv[0].ptr;
-  unsigned int index = threadIdx.x + (blockIdx.x * blockDim.x);
-  addr[index] = (unsigned int)(gpu_id + 1);
-}
+#include <stdint.h>
 
-void done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-          arts_edt_dep_t depv[]) {
-  (void)paramc;
-  (void)paramv;
-  (void)depc;
-  unsigned int *tile = (unsigned int *)depv[0].ptr;
-  for (unsigned int j = 0; j < arts_get_total_gpus(); j++) {
-    printf("%u, ", tile[j]);
-  }
-  printf("\n");
-  arts_shutdown();
-}
+#ifdef ARTS_WATCHDOG_ENABLED
 
-extern "C" void arts_init_per_gpu(unsigned int node_id, int dev_id,
-                             cudaStream_t *stream, int argc, char **argv) {
-  (void)node_id;
-  (void)dev_id;
-  (void)stream;
-  (void)argc;
-  (void)argv;
-}
+void arts_watchdog_init(uint64_t timeout_sec);
+void arts_watchdog_tick(void);
+void arts_watchdog_check(void);
 
-extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
-                              uint32_t depc, arts_edt_dep_t depv[]) {
-  (void)paramc;
-  (void)paramv;
-  (void)depc;
-  (void)depv;
-  unsigned int *addr = NULL;
-  arts_printf("creating size: %u\n", sizeof(unsigned int) * arts_get_total_gpus());
-  arts_guid_t db_guid = arts_guid_reserve(ARTS_DB_LC, 0);
-  addr = (unsigned int *)arts_db_create_with_guid(db_guid, sizeof(unsigned int) * arts_get_total_gpus(), NULL);
-  for (uint64_t i = 0; i < arts_get_total_gpus(); i++) {
-    addr[i] = (unsigned int)-1;
-  }
+#else
 
-  unsigned int node_id = arts_get_current_node();
-  arts_guid_t done_guid =
-      arts_edt_create(done, 0, NULL, arts_get_total_gpus() + 1, &(arts_hint_t){.route = 0});
-  arts_lc_sync(done_guid, 0, db_guid);
+#define arts_watchdog_init(t) ((void)0)
+#define arts_watchdog_tick()  ((void)0)
+#define arts_watchdog_check() ((void)0)
 
-  dim3 threads(arts_get_total_gpus(), 1, 1);
-  dim3 grid(1, 1, 1);
-  for (uint64_t i = 0; i < arts_get_total_gpus(); i++) {
-    if (i == 3 || i == 4 || i == 7) {
-      arts_printf("CREATING EDT for GPU: %lu\n", i);
-      arts_guid_t edt_guid =
-          arts_edt_create_gpu_direct(temp, node_id, i, 0, NULL, 1, grid, threads,
-                                 done_guid, i + 1, NULL_GUID, true);
-      arts_signal_edt(edt_guid, 0, db_guid, ARTS_DB_WRITE);
-    } else {
-      arts_signal_edt(done_guid, i + 1, NULL_GUID, ARTS_DB_WRITE);
-    }
-  }
-}
+#endif /* ARTS_WATCHDOG_ENABLED */
 
-extern "C" void arts_fini_per_gpu(unsigned int node_id, int dev_id,
-                              cudaStream_t *stream) {
-  (void)node_id;
-  (void)dev_id;
-  (void)stream;
-}
-
-int main(int argc, char **argv) {
-  arts_rt(argc, argv);
-  return 0;
-}
+#endif /* ARTS_RUNTIME_WATCHDOG_H */

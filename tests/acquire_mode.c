@@ -218,6 +218,9 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   ARTS_PRINT("  All dependencies recorded (latch=1, only writer)");
 
+  // Release auto-acquired WRITE access before blocking on epoch.
+  arts_db_release(data_guid);
+
   /// Wait for epoch to complete
   ARTS_PRINT("[Step 6] Waiting for epoch to complete");
   arts_wait_on_handle(epoch_guid);

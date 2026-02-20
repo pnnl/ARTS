@@ -520,12 +520,23 @@ internal_route_table_add_deleted_item_race(arts_route_table_t *route_table, void
   return found;
 }
 
+/*
+ * arts_route_table_add_item_race — Insert or find an item under a global lock.
+ *
+ * If the GUID already has a RESERVED slot, transitions it to AVAILABLE
+ * (the item was pre-reserved by arts_guid_reserve).  Otherwise, creates
+ * a new entry.
+ *
+ * Returns true if this call actually added (or filled) the entry, false if
+ * the entry already existed in AVAILABLE state.
+ */
 bool arts_route_table_add_item_race(void *item, arts_guid_t key, unsigned int rank,
                                bool used) {
   bool ret;
   arts_route_table_t *route_table = arts_get_route_table(key);
   internal_route_table_add_item_race(&ret, route_table, item, key, rank, used, false,
                                 0);
+  ARTS_DEBUG("add_item_race: Key=%lu, added=%d", key, ret);
   return ret;
 }
 
@@ -703,13 +714,22 @@ int arts_route_table_set_rank(arts_guid_t key, int rank) {
   return ret;
 }
 
+/*
+ * arts_route_table_fire_oo — Replay all queued OO operations for a GUID.
+ *
+ * Called immediately after an item transitions to AVAILABLE state (e.g.,
+ * after arts_route_table_add_item_race marks it writable).  Each OO entry
+ * is dispatched via callback_t (typically arts_out_of_order_handler).
+ */
 void arts_route_table_fire_oo(arts_guid_t key, void (*callback_t)(void *, void *)) {
   arts_route_table_t *route_table = arts_get_route_table(key);
   arts_route_item_t *item =
       arts_route_table_search_for_key(route_table, key, AVAILABLE_KEY);
   if (item != NULL) {
+    ARTS_DEBUG("fire_oo: Key=%lu, ooList=%p, data=%p",
+               key, (void *)&item->ooList, item->data);
     arts_out_of_order_list_fire_callback(&item->ooList, item->data, callback_t);
-}
+  }
 }
 
 bool arts_route_table_add_oo(arts_guid_t key, void *data, bool inc) {
@@ -862,7 +882,7 @@ uint64_t arts_clean_up_route_table(arts_route_table_t *route_table) {
     if (type > ARTS_BUFFER && type < ARTS_LAST_TYPE) {
       struct arts_db_s *db = (struct arts_db_s *)item->data;
       if (db) {
-        if (!arts_atomic_sub(&db->copyCount, 1)) {
+        if (!arts_atomic_sub(&db->copy_count, 1)) {
           free_size += db->header.size;
           ARTS_DEBUG("Freeing DB[Guid:%lu] [Size:%lu]", item->key, db->header.size);
           arts_db_free(db);

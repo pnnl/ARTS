@@ -83,7 +83,7 @@ void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       } else {
         arts_edt_create_with_guid(write_test, write_guids[i], 1, args, 2);
       }
-      arts_signal_edt(write_guids[i], 0, db_guid);
+      arts_signal_edt(write_guids[i], 0, db_guid, ARTS_DB_WRITE);
     }
   }
 }

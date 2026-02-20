@@ -36,14 +36,35 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef ARTS_GAS_OUTOFORDER_H
-#define ARTS_GAS_OUTOFORDER_H
+#ifndef ARTS_GAS_OUT_OF_ORDER_H
+#define ARTS_GAS_OUT_OF_ORDER_H
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #include "arts/gas/out_of_order_list.h"
 #include "arts/runtime/rt.h"
+
+enum arts_out_of_order_type {
+  OO_SIGNAL_EDT,
+  OO_EVENT_SATISFY_SLOT,
+  OO_PERSISTENT_EVENT_SATISFY_SLOT,
+  OO_ADD_DEPENDENCE,
+  OO_HANDLE_READY_EDT,
+  OO_REMOTE_DB_SEND,
+  OO_DB_REQUEST_SATISFY,
+  OO_DB_FULL_SEND,
+  OO_GET_FROM_DB,
+  OO_SIGNAL_EDT_PTR,
+  OO_PUT_IN_DB,
+  OO_EPOCH_ACTIVE,
+  OO_EPOCH_FINISH,
+  OO_EPOCH_SEND,
+  OO_EPOCH_INC_QUEUE,
+  OO_ATOMIC_ADD_IN_ARRAY_DB,
+  OO_ATOMIC_COMPARE_AND_SWAP_IN_ARRAY_DB,
+  OO_DB_MOVE
+};
 
 void arts_out_of_order_signal_edt(arts_guid_t wait_on, arts_guid_t edt_packet,
                              arts_guid_t data_guid, uint32_t slot,
@@ -72,10 +93,6 @@ void arts_out_of_order_handle_db_request_with_oo_list(struct arts_out_of_order_l
                                              unsigned int slot);
 void arts_out_of_order_handle_db_request(arts_guid_t db_guid, struct arts_edt_s *edt,
                                    unsigned int slot, bool inc);
-void arts_out_of_order_handle_remote_db_exclusive_request(arts_guid_t db_guid, int rank,
-                                                  struct arts_edt_s *edt,
-                                                  unsigned int slot,
-                                                  arts_type_t mode);
 void arts_out_of_order_handle_remote_db_full_send(arts_guid_t db_guid, int rank,
                                           arts_guid_t edt_guid,
                                           unsigned int slot, arts_type_t mode);
@@ -93,13 +110,6 @@ void arts_out_of_order_inc_finished_epoch(arts_guid_t epoch_guid);
 void arts_out_of_order_send_epoch(arts_guid_t epoch_guid, unsigned int source,
                              unsigned int dest);
 void arts_out_of_order_inc_queue_epoch(arts_guid_t epoch_guid);
-void arts_out_of_order_atomic_add_in_array_db(arts_guid_t db_guid, unsigned int index,
-                                      unsigned int to_add, arts_guid_t edt_guid,
-                                      unsigned int slot, arts_guid_t epoch_guid);
-void arts_out_of_order_atomic_compare_and_swap_in_array_db(
-    arts_guid_t db_guid, unsigned int index, unsigned int old_value,
-    unsigned int new_value, arts_guid_t edt_guid, unsigned int slot,
-    arts_guid_t epoch_guid);
 void arts_out_of_order_db_move(arts_guid_t data_guid, unsigned int rank);
 
 void arts_out_of_order_handler(void *handle_me, void *memory_ptr);

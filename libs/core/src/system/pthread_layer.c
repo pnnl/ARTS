@@ -89,8 +89,18 @@ void *arts_thread_loop(void *data) {
   // pthread_exit(NULL);
 }
 
+/*
+ * arts_thread_main_join — Main thread (thread 0) entry after initialization.
+ *
+ * Runs the runtime loop until alive==false, then cleans up and joins all
+ * other pthreads.  Counter data is saved before joining to ensure no
+ * data loss.
+ */
 void arts_thread_main_join() {
+  ARTS_DEBUG("arts_thread_main_join: main thread entering runtime_loop");
   arts_runtime_loop();
+  ARTS_DEBUG("arts_thread_main_join: main thread exited runtime_loop, joining "
+             "%u threads", arts_node_info.total_thread_count - 1);
   END_TO_END_TIME_STOP();
   arts_runtime_private_cleanup();
 
@@ -147,14 +157,28 @@ void arts_thread_init(struct arts_config_s *config) {
   arts_runtime_private_init(&mask[0], config);
 }
 
+/*
+ * arts_shutdown — Initiate global shutdown of the ARTS runtime.
+ *
+ * Multi-node: delegates to arts_remote_shutdown() which broadcasts the
+ *   shutdown message and waits for acknowledgements.  The send thread
+ *   then calls arts_runtime_stop() after the timeout.
+ * Single-node: directly calls arts_runtime_stop() to signal all threads.
+ *
+ * Called from:
+ *   - global_guid_shutdown() when the shutdown epoch completes.
+ *   - User code via the arts_shutdown() public API.
+ */
 void arts_shutdown() {
+  ARTS_PRINT("arts_shutdown: rank_count=%u, rank_id=%u",
+             arts_global_rank_count, arts_global_rank_id);
   if (arts_global_rank_count > 1) {
     arts_remote_shutdown();
-}
+  }
 
   if (arts_global_rank_count == 1) {
     arts_runtime_stop();
-}
+  }
 
   (void)fflush(stdout);
 }

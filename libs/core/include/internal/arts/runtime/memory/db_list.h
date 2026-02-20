@@ -65,9 +65,9 @@ struct arts_db_frontier_s {
   volatile unsigned int lock;
 
   /*
-   * This is because we can't aggregate exclusive requests
-   * and we need to store them somewhere.  There will only
-   * be at most one per frontier.
+   * Remote writer slot — at most one remote writer per frontier.
+   * Set when a remote node requests WRITE access (write && !local).
+   * Signaled by arts_signal_frontier_local/remote when frontier progresses.
    */
   unsigned int exNode;
   arts_guid_t exEdtGuid;
@@ -110,9 +110,10 @@ void arts_progress_frontier(struct arts_db_s *db, unsigned int rank);
 struct arts_db_frontier_iterator_s *
 arts_progress_and_get_frontier(struct arts_db_list_s *db_list);
 bool arts_push_db_to_list(struct arts_db_list_s *db_list, unsigned int data, bool write,
-                      bool exclusive, bool local, bool bypass,
+                      bool local, bool bypass,
                       struct arts_edt_s *edt, arts_guid_t edt_guid,
-                      unsigned int slot, arts_type_t mode);
+                      unsigned int slot, arts_type_t mode,
+                      bool *on_head);
 struct arts_db_frontier_iterator_s *arts_close_frontier(struct arts_db_list_s *db_list);
 #ifdef __cplusplus
 }

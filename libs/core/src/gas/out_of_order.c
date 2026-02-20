@@ -50,27 +50,6 @@
 #include "arts/runtime/sync/termination_detection.h"
 #include "arts/system/arts_print.h"
 
-enum arts_out_of_order_type {
-  OO_SIGNAL_EDT,
-  OO_EVENT_SATISFY_SLOT,
-  OO_PERSISTENT_EVENT_SATISFY_SLOT,
-  OO_ADD_DEPENDENCE,
-  OO_HANDLE_READY_EDT,
-  OO_REMOTE_DB_SEND,
-  OO_DB_REQUEST_SATISFY,
-  OO_DB_FULL_SEND,
-  OO_GET_FROM_DB,
-  OO_SIGNAL_EDT_PTR,
-  OO_PUT_IN_DB,
-  OO_EPOCH_ACTIVE,
-  OO_EPOCH_FINISH,
-  OO_EPOCH_SEND,
-  OO_EPOCH_INC_QUEUE,
-  OO_ATOMIC_ADD_IN_ARRAY_DB,
-  OO_ATOMIC_COMPARE_AND_SWAP_IN_ARRAY_DB,
-  OO_DB_MOVE
-};
-
 struct oo_signal_edt_s {
   enum arts_out_of_order_type type;
   arts_guid_t edt_packet;
@@ -163,33 +142,23 @@ struct oo_epoch_send_s {
   unsigned int dest;
 };
 
-struct oo_atomic_add_in_array_db_s {
-  enum arts_out_of_order_type type;
-  arts_guid_t db_guid;
-  arts_guid_t edt_guid;
-  arts_guid_t epoch_guid;
-  unsigned int slot;
-  unsigned int index;
-  unsigned int to_add;
-};
-
-struct oo_atomic_compare_and_swap_in_array_db_s {
-  enum arts_out_of_order_type type;
-  arts_guid_t db_guid;
-  arts_guid_t edt_guid;
-  arts_guid_t epoch_guid;
-  unsigned int slot;
-  unsigned int index;
-  unsigned int old_value;
-  unsigned int new_value;
-};
-
 struct oo_generic_s {
   enum arts_out_of_order_type type;
 };
 
+/*
+ * arts_out_of_order_handler — Replay a deferred operation.
+ *
+ * When an operation arrives before its target object exists in the route
+ * table (e.g., signal to an EDT that hasn't been created yet), it is
+ * queued as an OO entry.  Once the target is inserted, this handler
+ * replays each queued operation.
+ *
+ * The switch dispatches by OO type to the appropriate runtime function.
+ */
 inline void arts_out_of_order_handler(void *handle_me, void *memory_ptr) {
   struct oo_generic_s *type_ptr = (struct oo_generic_s *)handle_me;
+  ARTS_DEBUG("OO handler: dispatching type=%d", type_ptr->type);
   switch (type_ptr->type) {
   case OO_SIGNAL_EDT: {
     struct oo_signal_edt_s *edt = (struct oo_signal_edt_s *)handle_me;
@@ -288,6 +257,7 @@ inline void arts_out_of_order_handler(void *handle_me, void *memory_ptr) {
     internal_atomic_compare_and_swap_in_array_db(
         req->db_guid, req->index, req->old_value, req->new_value, req->edt_guid,
         req->slot, req->epoch_guid);
+    break;
   }
   case OO_DB_MOVE: {
     struct oo_remote_db_send_s *req = (struct oo_remote_db_send_s *)handle_me;
@@ -300,6 +270,14 @@ inline void arts_out_of_order_handler(void *handle_me, void *memory_ptr) {
   arts_free(handle_me);
 }
 
+/*
+ * arts_out_of_order_signal_edt — Queue an EDT signal for deferred delivery.
+ *
+ * If the target EDT's GUID is still in RESERVED state in the route table,
+ * the signal is stored in the OO list.  If the item is already AVAILABLE
+ * (race: created between our check and now), the signal is delivered
+ * immediately and the OO entry is freed.
+ */
 void arts_out_of_order_signal_edt(arts_guid_t wait_on, arts_guid_t edt_packet,
                              arts_guid_t data_guid, uint32_t slot,
                              arts_type_t mode, bool force) {
@@ -426,8 +404,17 @@ void arts_out_of_order_handle_remote_db_send(int rank, arts_guid_t db_guid,
   }
 }
 
+/*
+ * arts_out_of_order_handle_db_request — Queue a DB acquisition for deferred
+ *   resolution when the DB does not yet exist in the route table.
+ *
+ * If the DB becomes available before the OO entry is added (race), the
+ * callback fires immediately.
+ */
 void arts_out_of_order_handle_db_request(arts_guid_t db_guid, struct arts_edt_s *edt,
                                    unsigned int slot, bool inc) {
+  ARTS_DEBUG("OO db_request: DB[Guid:%lu] -> EDT[Guid:%lu] slot=%u inc=%d",
+             db_guid, edt->current_edt, slot, inc);
   struct oo_db_request_satisfy_s *req = (struct oo_db_request_satisfy_s *)arts_malloc(
       sizeof(struct oo_db_request_satisfy_s));
   req->type = OO_DB_REQUEST_SATISFY;
@@ -435,6 +422,8 @@ void arts_out_of_order_handle_db_request(arts_guid_t db_guid, struct arts_edt_s 
   req->slot = slot;
   bool res = arts_route_table_add_oo(db_guid, req, inc);
   if (!res) {
+    ARTS_DEBUG("OO db_request: DB[Guid:%lu] already available — immediate callback",
+               db_guid);
     struct arts_db_s *db = (struct arts_db_s *)arts_route_table_lookup_item(db_guid);
     arts_db_request_callback(req->edt, req->slot, db);
     arts_free(req);
@@ -578,52 +567,6 @@ void arts_out_of_order_inc_queue_epoch(arts_guid_t epoch_guid) {
   bool res = arts_route_table_add_oo(epoch_guid, req, false);
   if (!res) {
     increment_queue_epoch(epoch_guid);
-    arts_free(req);
-  }
-}
-
-void arts_out_of_order_atomic_add_in_array_db(arts_guid_t db_guid, unsigned int index,
-                                      unsigned int to_add, arts_guid_t edt_guid,
-                                      unsigned int slot, arts_guid_t epoch_guid) {
-  struct oo_atomic_add_in_array_db_s *req = (struct oo_atomic_add_in_array_db_s *)arts_malloc(
-      sizeof(struct oo_atomic_add_in_array_db_s));
-  req->type = OO_ATOMIC_ADD_IN_ARRAY_DB;
-  req->edt_guid = edt_guid;
-  req->db_guid = db_guid;
-  req->epoch_guid = epoch_guid;
-  req->slot = slot;
-  req->index = index;
-  req->to_add = to_add;
-  bool res = arts_route_table_add_oo(db_guid, req, false);
-  if (!res) {
-    ARTS_INFO("edt_guid OO2: %lu", req->edt_guid);
-    internal_atomic_add_in_array_db(req->db_guid, req->index, req->to_add,
-                               req->edt_guid, req->slot, req->epoch_guid);
-    arts_free(req);
-  }
-}
-
-void arts_out_of_order_atomic_compare_and_swap_in_array_db(
-    arts_guid_t db_guid, unsigned int index, unsigned int old_value,
-    unsigned int new_value, arts_guid_t edt_guid, unsigned int slot,
-    arts_guid_t epoch_guid) {
-  struct oo_atomic_compare_and_swap_in_array_db_s *req =
-      (struct oo_atomic_compare_and_swap_in_array_db_s *)arts_malloc(
-          sizeof(struct oo_atomic_compare_and_swap_in_array_db_s));
-  req->type = OO_ATOMIC_ADD_IN_ARRAY_DB;
-  req->edt_guid = edt_guid;
-  req->db_guid = db_guid;
-  req->epoch_guid = epoch_guid;
-  req->slot = slot;
-  req->index = index;
-  req->old_value = old_value;
-  req->new_value = new_value;
-  bool res = arts_route_table_add_oo(db_guid, req, false);
-  if (!res) {
-    ARTS_INFO("edt_guid OO2: %lu", req->edt_guid);
-    internal_atomic_compare_and_swap_in_array_db(
-        req->db_guid, req->index, req->old_value, req->new_value, req->edt_guid,
-        req->slot, req->epoch_guid);
     arts_free(req);
   }
 }

@@ -182,11 +182,6 @@ typedef void (*arts_edt_t)(uint32_t paramc, const uint64_t *paramv,
  */
 typedef void (*event_callback_t)(arts_edt_dep_t data);
 
-/**
- * @brief Handler function for arts_remote_send().
- */
-typedef void (*send_handler_t)(void *args);
-
 /** @} */ /* end dep_types */
 
 /* ========================================================================= */
@@ -534,14 +529,14 @@ void arts_edt_destroy(arts_guid_t guid);
  *
  * When all @c depc slots are satisfied the EDT is scheduled.  The
  * @c depv[slot] entry is filled with the GUID and a pointer to the DB data.
- * The acquire mode is determined by the type field of @p data_guid.
  *
  * @param edt_guid  GUID of the target EDT.
  * @param slot      Dependency slot index.
  * @param data_guid GUID of the DataBlock to deliver.
+ * @param mode      Access mode (@c ARTS_DB_READ or @c ARTS_DB_WRITE).
  */
-void arts_signal_edt(arts_guid_t edt_guid, uint32_t slot,
-                     arts_guid_t data_guid);
+void arts_signal_edt(arts_guid_t edt_guid, uint32_t slot, arts_guid_t data_guid,
+                     arts_type_t mode);
 
 /**
  * @brief Signal an EDT dependency slot with a plain 64-bit value.
@@ -897,6 +892,25 @@ void *arts_db_create_with_guid_and_data(arts_guid_t guid, void *data,
  * @return GUID of the created DB.
  */
 arts_guid_t arts_db_create_remote(unsigned int route, uint64_t len);
+
+/**
+ * @brief Release the auto-acquired WRITE access for a DataBlock.
+ *
+ * When an EDT creates a local DB, the runtime automatically holds WRITE
+ * access (OCR EW semantics).  Call this to release that access early —
+ * before the EDT function returns — so that consumer EDTs waiting on
+ * the DB can proceed.
+ *
+ * This is required when an EDT creates DBs and then blocks inside its
+ * body (e.g. via arts_wait_on_handle), because the automatic release
+ * in the EDT epilogue cannot run until the function returns.
+ *
+ * Calling this on a DB that was not auto-acquired (or was already
+ * released) is a no-op.
+ *
+ * @param guid GUID of the DataBlock to release.
+ */
+void arts_db_release(arts_guid_t guid);
 
 /**
  * @brief Move a DataBlock to remote node @p rank.
@@ -1326,12 +1340,12 @@ void arts_for_each_in_array_db_at_data(arts_array_db_t *array,
  */
 void arts_gather_array_db(arts_array_db_t *array, arts_edt_t func_ptr,
                           unsigned int route, uint32_t paramc,
-                          const uint64_t *paramv, uint64_t depc);
+                          const uint64_t *paramv, uint32_t depc);
 
 /** @brief Gather array DB within a specific epoch. */
 void arts_gather_array_db_epoch(arts_array_db_t *array, arts_edt_t func_ptr,
                                 unsigned int route, uint32_t paramc,
-                                const uint64_t *paramv, uint64_t depc,
+                                const uint64_t *paramv, uint32_t depc,
                                 arts_guid_t epoch_guid);
 
 /** @brief Gather array DB chunks into an existing EDT. */
@@ -1376,14 +1390,6 @@ void arts_atomic_compare_and_swap_in_array_db(
  *  Query runtime state and miscellaneous helpers.
  *  @{ */
 
-/** @brief Extract the GUID from an EDT dependency. */
-inline arts_guid_t arts_get_guid_from_edt_dep(arts_edt_dep_t dep) {
-  return dep.guid;
-}
-
-/** @brief Extract the data pointer from an EDT dependency. */
-inline void *arts_get_ptr_from_edt_dep(arts_edt_dep_t dep) { return dep.ptr; }
-
 /** @brief Return the GUID of the currently executing EDT. */
 arts_guid_t arts_get_current_guid();
 
@@ -1405,15 +1411,15 @@ unsigned int arts_get_total_workers();
 
 /**
  * @brief Return the NUMA domain id of the current thread.
- * @note Requires HWLOC.
+ * @return NUMA domain index. Returns 0 when HWLOC is not available.
  */
-unsigned int arts_get_current_cluster();
+unsigned int arts_get_current_numa_domain();
 
 /**
  * @brief Return the total number of NUMA domains.
- * @note Requires HWLOC.
+ * @return Number of NUMA domains. Returns 1 when HWLOC is not available.
  */
-unsigned int arts_get_total_clusters();
+unsigned int arts_get_total_numa_domains();
 
 /** @brief Return the number of GPUs per node. */
 unsigned int arts_get_total_gpus();
@@ -1423,22 +1429,6 @@ uint64_t arts_get_time_stamp();
 
 /** @brief Return a thread-safe pseudo-random number. */
 uint64_t arts_thread_safe_random();
-
-/**
- * @brief Send a function call to a specific node.
- *
- * If @p rank is the current node the function executes inline.  Otherwise
- * the arguments are serialized and sent over the network; the receiver
- * thread will invoke @p fun_ptr.
- *
- * @param rank    Target node rank.
- * @param fun_ptr Handler function.
- * @param args    Argument buffer.
- * @param size    Size of @p args in bytes.
- * @param free    Whether the runtime should free @p args after sending.
- */
-void arts_remote_send(unsigned int rank, send_handler_t fun_ptr, void *args,
-                      unsigned int size, bool free);
 
 /** @} */ /* end util */
 

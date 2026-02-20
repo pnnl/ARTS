@@ -120,7 +120,7 @@ void bfs_send(vertex_t u, uint64_t ulevel) {
   send[1] = ulevel;
   arts_guid_t relax_guid = arts_edt_create(relax, 2, send, 1,
       &(arts_hint_t){.route = arts_guid_get_rank(neighb_dbguid)});
-  arts_signal_edt(relax_guid, 0, neighb_dbguid);
+  arts_signal_edt(relax_guid, 0, neighb_dbguid, ARTS_DB_WRITE);
 }
 
 void kickoff_termination(uint32_t paramc, const uint64_t *paramv, uint32_t depc,

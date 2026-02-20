@@ -154,7 +154,7 @@ void mm_kernel_cpu(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       }
     }
   }
-  arts_signal_edt(to_signal, idx_k, c_tile_guid);
+  arts_signal_edt(to_signal, idx_k, c_tile_guid, ARTS_DB_WRITE);
 }
 
 void multiply_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -183,9 +183,9 @@ void multiply_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   uint64_t args[] = {TILE, (uint64_t)to_signal, k, (uint64_t)c_tile_guid, i, j, k};
   arts_guid_t mul_gpu_guid = arts_edt_create(mm_kernel_cpu, 7, args, 3, &(arts_hint_t){.route = 0});
-  arts_signal_edt(mul_gpu_guid, 0, depv[0].guid);
-  arts_signal_edt(mul_gpu_guid, 1, depv[1].guid);
-  arts_signal_edt(mul_gpu_guid, 2, c_tile_guid);
+  arts_signal_edt(mul_gpu_guid, 0, depv[0].guid, ARTS_DB_WRITE);
+  arts_signal_edt(mul_gpu_guid, 1, depv[1].guid, ARTS_DB_WRITE);
+  arts_signal_edt(mul_gpu_guid, 2, c_tile_guid, ARTS_DB_WRITE);
 }
 
 void sum_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -214,7 +214,7 @@ void sum_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       }
     }
   }
-  arts_signal_edt(done_guid, 1 + (idx_i * num_blocks + idx_j), c_tile_guid);
+  arts_signal_edt(done_guid, 1 + (idx_i * num_blocks + idx_j), c_tile_guid, ARTS_DB_WRITE);
 }
 
 void finish_block_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -272,14 +272,14 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_guid_t done_guid =
       arts_edt_create(finish_block_mm, 0, NULL, 1 + (num_blocks * num_blocks), &(arts_hint_t){.route = 0});
-  arts_signal_edt(done_guid, 0, c_mat_guid);
+  arts_signal_edt(done_guid, 0, c_mat_guid, ARTS_DB_WRITE);
 
   for (unsigned int i = 0; i < num_blocks; i++) {
     for (unsigned int j = 0; j < num_blocks; j++) {
       uint64_t init_args[] = {i, j};
       arts_guid_t init_guid = arts_edt_create(init_block_mm, 2, init_args, 2, &(arts_hint_t){.route = 0});
-      arts_signal_edt(init_guid, 0, a_mat_guid);
-      arts_signal_edt(init_guid, 1, b_mat_guid);
+      arts_signal_edt(init_guid, 0, a_mat_guid, ARTS_DB_WRITE);
+      arts_signal_edt(init_guid, 1, b_mat_guid, ARTS_DB_WRITE);
 
       uint64_t sum_args[] = {(uint64_t)done_guid, i, j};
       arts_guid_t sum_guid = arts_edt_create(sum_mm, 3, sum_args, num_blocks, &(arts_hint_t){.route = 0});
@@ -290,8 +290,8 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
         arts_printf("%lu Signaling: i: %u k: %u %lu i: %u k: %u %lu\n", mul_guid, i,
                k, arts_guid_range_get(a_tile_guids, (i * num_blocks) + k), k, j,
                arts_guid_range_get(b_tile_guids, (k * num_blocks) + j));
-        arts_signal_edt(mul_guid, 0, arts_guid_range_get(a_tile_guids, (i * num_blocks) + k));
-        arts_signal_edt(mul_guid, 1, arts_guid_range_get(b_tile_guids, (k * num_blocks) + j));
+        arts_signal_edt(mul_guid, 0, arts_guid_range_get(a_tile_guids, (i * num_blocks) + k), ARTS_DB_WRITE);
+        arts_signal_edt(mul_guid, 1, arts_guid_range_get(b_tile_guids, (k * num_blocks) + j), ARTS_DB_WRITE);
       }
     }
   }

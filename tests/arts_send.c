@@ -39,6 +39,7 @@
 #include <stdlib.h>
 
 #include "arts.h"
+#include "arts/runtime/network/remote_functions.h"
 
 unsigned int num_elements = 0;
 

@@ -54,7 +54,7 @@ void check(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("Check: %lu %u new_guid: %lu\n", depv[0].guid,
          *((unsigned int *)depv[0].ptr), guid);
-  arts_signal_edt(b_guid, 0, guid);
+  arts_signal_edt(b_guid, 0, guid, ARTS_DB_WRITE);
 }
 
 void shut_down_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -85,7 +85,7 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   if (node_id == 1) {
     arts_edt_create_with_guid(check, a_guid, 0, NULL, 1);
-    arts_signal_edt(a_guid, 0, db_guid);
+    arts_signal_edt(a_guid, 0, db_guid, ARTS_DB_WRITE);
   }
 
   if (node_id == 2) {

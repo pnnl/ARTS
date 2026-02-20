@@ -146,9 +146,9 @@ uint64_t arts_guid_get_key(arts_guid_t guid) {
 
 arts_guid_t arts_guid_reserve(arts_type_t type, unsigned int route) {
   arts_guid_t guid = NULL_GUID;
-  if (route == -1) {
+  if (route == ARTS_HINT_CURRENT_NODE) {
     route = arts_global_rank_id;
-}
+  }
   route = route % arts_global_rank_count;
   if (type > ARTS_NULL && type < ARTS_LAST_TYPE) {
     guid = arts_guid_create_for_rank_internal(route, (unsigned int)type, 1);
@@ -175,9 +175,9 @@ arts_guid_t *arts_guid_reserve_round_robin(unsigned int size, arts_type_t type) 
 
 arts_guid_range_t *arts_guid_range_create(arts_type_t type, unsigned int size,
                                     unsigned int route) {
-  if (route == -1) {
+  if (route == ARTS_HINT_CURRENT_NODE) {
     route = arts_global_rank_id;
-}
+  }
   arts_guid_range_t *range = NULL;
   if (size && type > ARTS_NULL && type < ARTS_LAST_TYPE) {
     range = (arts_guid_range_t *)arts_calloc(1, sizeof(arts_guid_range_t));

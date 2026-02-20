@@ -60,7 +60,7 @@ void setter(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     dest[(id * block_size) + i] = buffer[i];
   }
   arts_printf("Setter: %u\n", id);
-  arts_signal_edt(shutdown_guid, id, db_dest_guid);
+  arts_signal_edt(shutdown_guid, id, db_dest_guid, ARTS_DB_WRITE);
 }
 
 void getter(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -77,7 +77,7 @@ void getter(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t am = arts_edt_create(setter, paramc, paramv, 2,
       &(arts_hint_t){.route = arts_get_total_nodes() - 1});
   arts_signal_edt_ptr(am, 0, buf_copy, buf_size);
-  arts_signal_edt(am, 1, db_dest_guid);
+  arts_signal_edt(am, 1, db_dest_guid, ARTS_DB_WRITE);
 }
 
 void shut_down_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,

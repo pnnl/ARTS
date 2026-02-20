@@ -107,6 +107,7 @@ option(USE_GPU "Enable GPU support (default: ON, disable when OFF)" ON)
 option(USE_SIMPLE_ARCH "Use simple architecture implementations" OFF)
 option(ARTS_INFO_ENABLED "Enable info-level logging" OFF)
 option(ARTS_DEBUG_ENABLED "Enable debug-level logging" OFF)
+option(ARTS_WATCHDOG_ENABLED "Enable runtime watchdog for hang detection (zero overhead when OFF)" OFF)
 option(USE_PRIORITY_DEQUE "Use priority Chase-Lev deque implementation" OFF)
 option(USE_LOCAL_CUDA_ARCHITECTURES "Auto-detect CUDA architectures from local GPUs using nvidia-smi" ON)
 
@@ -313,6 +314,11 @@ endif()
 if(ARTS_DEBUG_ENABLED)
     add_compile_definitions(ARTS_DEBUG_ENABLED)
     message(STATUS "Debug logging: Enabled - ARTS_DEBUG_ENABLED defined")
+endif()
+
+if(ARTS_WATCHDOG_ENABLED)
+    add_compile_definitions(ARTS_WATCHDOG_ENABLED)
+    message(STATUS "Watchdog: Enabled - ARTS_WATCHDOG_ENABLED defined")
 endif()
 
 set(COUNTER_CONFIG_PATH

@@ -36,88 +36,53 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include <stdio.h>
-#include <stdlib.h>
+#include "arts/runtime/memory/array_db.h"
+#include "arts/gas/route_table.h"
+#include "arts/utils/malloc.h"
+#include "arts/system/arts_print.h"
 
-#include "arts.h"
-#include "arts/gpu/gpu_runtime.cuh"
-
-__global__ void temp(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                     arts_edt_dep_t depv[]) {
-  (void)paramc;
-  (void)paramv;
-  (void)depc;
-  uint64_t gpu_id = GET_GPU_INDEX();
-  // printf("Hello from %lu\n", gpu_id);
-  unsigned int *addr = (unsigned int *)depv[0].ptr;
-  unsigned int index = threadIdx.x + (blockIdx.x * blockDim.x);
-  addr[index] = (unsigned int)(gpu_id + 1);
-}
-
-void done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-          arts_edt_dep_t depv[]) {
-  (void)paramc;
-  (void)paramv;
-  (void)depc;
-  unsigned int *tile = (unsigned int *)depv[0].ptr;
-  for (unsigned int j = 0; j < arts_get_total_gpus(); j++) {
-    printf("%u, ", tile[j]);
-  }
-  printf("\n");
-  arts_shutdown();
-}
-
-extern "C" void arts_init_per_gpu(unsigned int node_id, int dev_id,
-                             cudaStream_t *stream, int argc, char **argv) {
-  (void)node_id;
-  (void)dev_id;
-  (void)stream;
-  (void)argc;
-  (void)argv;
-}
-
-extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
-                              uint32_t depc, arts_edt_dep_t depv[]) {
-  (void)paramc;
-  (void)paramv;
-  (void)depc;
-  (void)depv;
-  unsigned int *addr = NULL;
-  arts_printf("creating size: %u\n", sizeof(unsigned int) * arts_get_total_gpus());
-  arts_guid_t db_guid = arts_guid_reserve(ARTS_DB_LC, 0);
-  addr = (unsigned int *)arts_db_create_with_guid(db_guid, sizeof(unsigned int) * arts_get_total_gpus(), NULL);
-  for (uint64_t i = 0; i < arts_get_total_gpus(); i++) {
-    addr[i] = (unsigned int)-1;
-  }
-
-  unsigned int node_id = arts_get_current_node();
-  arts_guid_t done_guid =
-      arts_edt_create(done, 0, NULL, arts_get_total_gpus() + 1, &(arts_hint_t){.route = 0});
-  arts_lc_sync(done_guid, 0, db_guid);
-
-  dim3 threads(arts_get_total_gpus(), 1, 1);
-  dim3 grid(1, 1, 1);
-  for (uint64_t i = 0; i < arts_get_total_gpus(); i++) {
-    if (i == 3 || i == 4 || i == 7) {
-      arts_printf("CREATING EDT for GPU: %lu\n", i);
-      arts_guid_t edt_guid =
-          arts_edt_create_gpu_direct(temp, node_id, i, 0, NULL, 1, grid, threads,
-                                 done_guid, i + 1, NULL_GUID, true);
-      arts_signal_edt(edt_guid, 0, db_guid, ARTS_DB_WRITE);
-    } else {
-      arts_signal_edt(done_guid, i + 1, NULL_GUID, ARTS_DB_WRITE);
-    }
+void arts_out_of_order_atomic_add_in_array_db(arts_guid_t db_guid, unsigned int index,
+                                      unsigned int to_add, arts_guid_t edt_guid,
+                                      unsigned int slot, arts_guid_t epoch_guid) {
+  struct oo_atomic_add_in_array_db_s *req = (struct oo_atomic_add_in_array_db_s *)arts_malloc(
+      sizeof(struct oo_atomic_add_in_array_db_s));
+  req->type = OO_ATOMIC_ADD_IN_ARRAY_DB;
+  req->edt_guid = edt_guid;
+  req->db_guid = db_guid;
+  req->epoch_guid = epoch_guid;
+  req->slot = slot;
+  req->index = index;
+  req->to_add = to_add;
+  bool res = arts_route_table_add_oo(db_guid, req, false);
+  if (!res) {
+    ARTS_INFO("edt_guid OO2: %lu", req->edt_guid);
+    internal_atomic_add_in_array_db(req->db_guid, req->index, req->to_add,
+                               req->edt_guid, req->slot, req->epoch_guid);
+    arts_free(req);
   }
 }
 
-extern "C" void arts_fini_per_gpu(unsigned int node_id, int dev_id,
-                              cudaStream_t *stream) {
-  (void)node_id;
-  (void)dev_id;
-  (void)stream;
-}
-
-int main(int argc, char **argv) {
-  arts_rt(argc, argv);
-  return 0;
+void arts_out_of_order_atomic_compare_and_swap_in_array_db(
+    arts_guid_t db_guid, unsigned int index, unsigned int old_value,
+    unsigned int new_value, arts_guid_t edt_guid, unsigned int slot,
+    arts_guid_t epoch_guid) {
+  struct oo_atomic_compare_and_swap_in_array_db_s *req =
+      (struct oo_atomic_compare_and_swap_in_array_db_s *)arts_malloc(
+          sizeof(struct oo_atomic_compare_and_swap_in_array_db_s));
+  req->type = OO_ATOMIC_COMPARE_AND_SWAP_IN_ARRAY_DB;
+  req->edt_guid = edt_guid;
+  req->db_guid = db_guid;
+  req->epoch_guid = epoch_guid;
+  req->slot = slot;
+  req->index = index;
+  req->old_value = old_value;
+  req->new_value = new_value;
+  bool res = arts_route_table_add_oo(db_guid, req, false);
+  if (!res) {
+    ARTS_INFO("edt_guid OO2: %lu", req->edt_guid);
+    internal_atomic_compare_and_swap_in_array_db(
+        req->db_guid, req->index, req->old_value, req->new_value, req->edt_guid,
+        req->slot, req->epoch_guid);
+    arts_free(req);
+  }
 }

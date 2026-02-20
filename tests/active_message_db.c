@@ -59,7 +59,7 @@ void setter(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   for (unsigned int i = 0; i < block_size; i++) {
     dest[(id * block_size) + i] = buffer[i];
   }
-  arts_signal_edt(shutdown_guid, id, db_dest_guid);
+  arts_signal_edt(shutdown_guid, id, db_dest_guid, ARTS_DB_WRITE);
 }
 
 void getter(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -76,8 +76,8 @@ void getter(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
   arts_guid_t am = arts_edt_create(setter, paramc, paramv, 2,
       &(arts_hint_t){.route = arts_guid_get_rank(db_dest_guid)});
-  arts_signal_edt(am, 0, db_dest_guid);
-  arts_signal_edt(am, 1, cpy_db);
+  arts_signal_edt(am, 0, db_dest_guid, ARTS_DB_WRITE);
+  arts_signal_edt(am, 1, cpy_db, ARTS_DB_WRITE);
 }
 
 void shut_down_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -116,7 +116,7 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   uint64_t id = node_id;
   arts_guid_t getter_edt = arts_edt_create(getter, 1, &id, 1,
       &(arts_hint_t){.route = arts_guid_get_rank(db_source_guid)});
-  arts_signal_edt(getter_edt, 0, db_source_guid);
+  arts_signal_edt(getter_edt, 0, db_source_guid, ARTS_DB_WRITE);
 
   unsigned int *data =
       (unsigned int *)malloc(sizeof(unsigned int) * num_elements);

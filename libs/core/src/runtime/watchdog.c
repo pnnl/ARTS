@@ -36,50 +36,102 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include "arts.h"
 
-#include <inttypes.h>
-#include <stdarg.h>
-#include <stdlib.h>
+#ifdef ARTS_WATCHDOG_ENABLED
 
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <unistd.h>
+#include "arts/runtime/watchdog.h"
+
+#include <time.h>
+#include <stdbool.h>
 
 #include "arts/runtime/globals.h"
 #include "arts/runtime/runtime.h"
+#include "arts/system/arts_print.h"
+#include "arts/utils/deque.h"
 
-extern __thread struct arts_edt_s *current_edt;
-extern unsigned int num_numa_domains;
+/*
+ * TLS-based watchdog state.  Each worker thread maintains its own last-tick
+ * timestamp.  No inter-thread synchronization is needed — each thread only
+ * reads/writes its own TLS variables.
+ */
+static uint64_t watchdog_timeout_ns = 0;
+static _Thread_local uint64_t watchdog_last_tick_ns = 0;
+static _Thread_local bool watchdog_triggered = false;
 
-arts_guid_t arts_get_current_guid() {
-  if (current_edt) {
-    return current_edt->current_edt;
+static inline uint64_t get_monotonic_ns(void) {
+  struct timespec ts;
+  (void)clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+}
+
+void arts_watchdog_init(uint64_t timeout_sec) {
+  watchdog_timeout_ns = timeout_sec * 1000000000ULL;
+  ARTS_PRINT("Watchdog initialized: timeout=%lu sec", timeout_sec);
+}
+
+void arts_watchdog_tick(void) {
+  watchdog_last_tick_ns = get_monotonic_ns();
+  watchdog_triggered = false;
+}
+
+/*
+ * arts_watchdog_check — Called from the scheduler idle path.
+ *
+ * If the timeout has elapsed since the last tick (EDT completion or
+ * initial tick), dump diagnostic state.  The dump fires at most once
+ * per stall episode (reset by arts_watchdog_tick).
+ */
+void arts_watchdog_check(void) {
+  if (watchdog_timeout_ns == 0 || watchdog_triggered) {
+    return;
   }
-  return NULL_GUID;
+
+  /* First call: initialize the tick so we don't false-trigger */
+  if (watchdog_last_tick_ns == 0) {
+    watchdog_last_tick_ns = get_monotonic_ns();
+    return;
+  }
+
+  uint64_t now = get_monotonic_ns();
+  uint64_t elapsed = now - watchdog_last_tick_ns;
+
+  if (elapsed >= watchdog_timeout_ns) {
+    watchdog_triggered = true;
+
+    uint64_t elapsed_sec = elapsed / 1000000000ULL;
+
+    ARTS_PRINT("===== WATCHDOG TIMEOUT =====");
+    ARTS_PRINT("Thread %u: no progress for %lu seconds",
+               arts_thread_info.thread_id, elapsed_sec);
+    ARTS_PRINT("  thread_id=%u, core_id=%d, worker=%d, alive=%d",
+               arts_thread_info.thread_id,
+               arts_thread_info.core_id,
+               arts_thread_info.worker,
+               arts_thread_info.alive);
+    ARTS_PRINT("  network_send=%d, network_receive=%d",
+               arts_thread_info.network_send,
+               arts_thread_info.network_receive);
+
+    /* Deque sizes (may be NULL for network threads) */
+    if (arts_thread_info.my_deque) {
+      ARTS_PRINT("  deque_size=%u",
+                 arts_deque_size(arts_thread_info.my_deque));
+    }
+
+    /* Global state snapshot */
+    ARTS_PRINT("  shutdown_started=%u, total_threads=%u",
+               arts_node_info.shutdown_started,
+               arts_node_info.total_thread_count);
+
+    /* Thread registration status */
+    for (unsigned int i = 0; i < arts_node_info.total_thread_count; i++) {
+      volatile bool *spin = arts_node_info.local_spin[i];
+      ARTS_PRINT("  thread[%u] local_spin=%p alive=%d",
+                 i, (void *)spin, spin ? *spin : -1);
+    }
+
+    ARTS_PRINT("===== END WATCHDOG DUMP =====");
+  }
 }
 
-unsigned int arts_get_current_node() { return arts_global_rank_id; }
-
-unsigned int arts_get_total_nodes() { return arts_global_rank_count; }
-
-unsigned int arts_get_total_workers() { return arts_node_info.worker_thread_count; }
-
-unsigned int arts_get_current_worker() { return arts_thread_info.group_id; }
-
-unsigned int arts_get_current_numa_domain() { return arts_thread_info.numa_domain_id; }
-
-unsigned int arts_get_total_numa_domains() { return num_numa_domains; }
-
-void arts_stop_local_worker() { arts_thread_info.alive = false; }
-
-void arts_stop_local_node() { arts_runtime_stop(); }
-
-uint64_t arts_thread_safe_random() {
-  long int temp = jrand48(arts_thread_info.drand_buf);
-  return (uint64_t)temp;
-}
-
-unsigned int arts_get_total_gpus() { return arts_node_info.gpu; }
+#endif /* ARTS_WATCHDOG_ENABLED */

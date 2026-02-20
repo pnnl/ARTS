@@ -330,6 +330,12 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Record validator dependency (reads DB[0] after all writers complete)
   arts_record_dep(db_guids[0], validator_guid, 0, ARTS_DB_READ);
 
+  // Release auto-acquired WRITE access for all created DBs before blocking.
+  // Without this, consumer EDTs would deadlock waiting for our epilogue.
+  for (unsigned int i = 0; i < NUM_TEST_DBS; i++) {
+    arts_db_release(db_guids[i]);
+  }
+
   ARTS_PRINT("[Step 8] Waiting for epoch to complete...");
 
   // Wait for all EDTs to complete

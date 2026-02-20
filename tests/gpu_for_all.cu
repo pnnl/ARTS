@@ -96,7 +96,7 @@ void thrust_sort(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Or signal the end if we are done
   arts_signal_edt(
       done_guid, gpu_index,
-      tile_guid); // don't really need tile_guid just doing it for testing
+      tile_guid, ARTS_DB_WRITE); // don't really need tile_guid just doing it for testing
 }
 
 void done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -154,7 +154,7 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
                                                    args, 1, grid, threads);
     arts_guid_t edt_guid2 = arts_edt_create_gpu_direct(
         temp, node_id, i, 1, &i, 1, grid, threads, edt_guid, 0, db_guid, true);
-    arts_signal_edt(edt_guid2, 0, db_guid);
+    arts_signal_edt(edt_guid2, 0, db_guid, ARTS_DB_WRITE);
   }
 }
 

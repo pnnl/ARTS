@@ -262,8 +262,8 @@ static inline void out_insert_node(struct out_list_s *node, unsigned int length)
   struct arts_remote_packet_s *packet = (struct arts_remote_packet_s *)(node + 1);
 #ifdef SEQUENCENUMBERS
   arts_lock(&seq_num_lock[list_id]);
-  packet->seqNum = arts_atomic_fetch_add_u64(&seq_number[node->rank], 1U);
-  packet->seqRank = arts_global_rank_id;
+  packet->seq_num = arts_atomic_fetch_add_u64(&seq_number[node->rank], 1U);
+  packet->seq_rank = arts_global_rank_id;
 #endif
   arts_link_list_push_back(list, node);
 #ifdef SEQUENCENUMBERS
@@ -282,12 +282,12 @@ static inline struct out_list_s *out_pop_node(unsigned int thread_id, void **fre
   if (out) {
     struct arts_remote_packet_s *packet = (struct arts_remote_packet_s *)(out + 1);
 #ifdef SEQUENCENUMBERS
-    if (last_out[packet->seqRank] &&
-        packet->seqNum != last_out[packet->seqRank] + 1) {
-      ARTS_DEBUG("POP OUT OF ORDER %u -> %u %lu vs %lu %p", packet->seqRank,
-                 packet->rank, last_out[packet->seqRank], packet->seqNum, list);
+    if (last_out[packet->seq_rank] &&
+        packet->seq_num != last_out[packet->seq_rank] + 1) {
+      ARTS_DEBUG("POP OUT OF ORDER %u -> %u %lu vs %lu %p", packet->seq_rank,
+                 packet->rank, last_out[packet->seq_rank], packet->seq_num, list);
     }
-    last_out[packet->seqRank] = packet->seqNum;
+    last_out[packet->seq_rank] = packet->seq_num;
 #endif
     // artsUpdatePerformanceMetric(ARTS_NETWORK_QUEUE_POP, ARTS_THREAD,
     // packet->size, false);
@@ -318,12 +318,12 @@ bool arts_remote_async_send() {
       if (out) {
 #ifdef SEQUENCENUMBERS
         struct arts_remote_packet_s *packet = (struct arts_remote_packet_s *)(out + 1);
-        if (last_sent[packet->seqRank] != packet->seqNum &&
-            packet->seqNum != last_sent[packet->seqRank] + 1) {
-          ARTS_DEBUG("SENT OUT OF ORDER %lu vs %lu", last_sent[packet->seqRank],
-                     packet->seqNum);
+        if (last_sent[packet->seq_rank] != packet->seq_num &&
+            packet->seq_num != last_sent[packet->seq_rank] + 1) {
+          ARTS_DEBUG("SENT OUT OF ORDER %lu vs %lu", last_sent[packet->seq_rank],
+                     packet->seq_num);
         }
-        last_sent[packet->seqRank] = packet->seqNum;
+        last_sent[packet->seq_rank] = packet->seq_num;
 #endif
         if (!out->payload) {
           length_remaining = arts_remote_send_request(

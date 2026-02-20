@@ -79,7 +79,7 @@ typedef struct {
 typedef struct {
   vertex_t source;
   unsigned int step;
-  unsigned int numNeighbors;
+  unsigned int num_neighbors;
   vertex_t seed;
   // vertex_t neighbors[];
 } source_info_t;
@@ -106,11 +106,11 @@ void gather_neighbor_property_val(uint32_t paramc, const uint64_t *paramv, uint3
   (void)paramv;
   source_info_t *src_info = (source_info_t *)depv[depc - 1].ptr;
   vertex_property_t *max_weighted_neighbor = (vertex_property_t *)depv[0].ptr;
-  for (unsigned int i = 0; i < src_info->numNeighbors; i++) {
+  for (unsigned int i = 0; i < src_info->num_neighbors; i++) {
     vertex_property_t *data = (vertex_property_t *)depv[i].ptr;
     // TODO: For now, its inefficiently getting both v and id, could have
     // discarded v.
-    vertex_id_t *v_id = (vertex_id_t *)depv[i + src_info->numNeighbors].ptr;
+    vertex_id_t *v_id = (vertex_id_t *)depv[i + src_info->num_neighbors].ptr;
     /*For now, just printing in-place*/
     //    arts_printf("Seed: %u, Step: %u, Neighbor: %u, neibID: %llu Weight: %f,
     //    Visited: %d, Indicator computation: \n", src_info->seed, num_steps -
@@ -133,8 +133,8 @@ void gather_neighbor_property_val(uint32_t paramc, const uint64_t *paramv, uint3
         arts_edt_create(visit_source, 3, (uint64_t *)&packed_values, 2, &(arts_hint_t){.route = rank});
     //        arts_printf("New Edt: %lu Source is located on rank %d Guid:%lu\n",
     //        visit_source_guid, rank, vertex_property_map_guid);
-    arts_signal_edt(visit_source_guid, 0, vertex_property_map_guid);
-    arts_signal_edt(visit_source_guid, 1, vertex_id_map_guid);
+    arts_signal_edt(visit_source_guid, 0, vertex_property_map_guid, ARTS_DB_WRITE);
+    arts_signal_edt(visit_source_guid, 1, vertex_id_map_guid, ARTS_DB_WRITE);
   }
 }
 
@@ -161,7 +161,7 @@ void visit_source(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     src_info->source = source;
     src_info->step = n_steps;
     src_info->seed = seed;
-    src_info->numNeighbors = neighbor_cnt;
+    src_info->num_neighbors = neighbor_cnt;
     // arts_printf("Exploring from Source  %" PRIu64 " steps: %d with neighbors
     // %d\n", source, num_steps + 1 - n_steps, neighbor_cnt);
     // memcpy(&(src_info->neighbors), &neighbors, neighbor_cnt *
@@ -170,7 +170,7 @@ void visit_source(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_guid_t gather_neighbor_property_val_guid =
         arts_edt_create(gather_neighbor_property_val, 0, NULL, (2 * neighbor_cnt) + 1, &(arts_hint_t){.route = arts_get_current_node()});
 
-    arts_signal_edt(gather_neighbor_property_val_guid, 2 * neighbor_cnt, db_guid);
+    arts_signal_edt(gather_neighbor_property_val_guid, 2 * neighbor_cnt, db_guid, ARTS_DB_WRITE);
 
     arts_array_db_t *vertex_property_map = (arts_array_db_t *)depv[0].ptr;
     for (unsigned int i = 0; i < neighbor_cnt; i++) {
@@ -245,9 +245,9 @@ void end_vertex_id_map_read(uint32_t paramc, const uint64_t *paramv, uint32_t de
     arts_guid_t visit_source_guid =
         arts_edt_create(visit_source, 3, (uint64_t *)&packed_values, 2, &(arts_hint_t){.route = rank});
     // TODO: why pass vertexpropertguid as an argument?
-    arts_signal_edt(visit_source_guid, 0, vertex_property_map_guid);
+    arts_signal_edt(visit_source_guid, 0, vertex_property_map_guid, ARTS_DB_WRITE);
 
-    arts_signal_edt(visit_source_guid, 1, vertex_id_map_guid);
+    arts_signal_edt(visit_source_guid, 1, vertex_id_map_guid, ARTS_DB_WRITE);
   }
   free(seeds);
 }
@@ -271,7 +271,7 @@ void end_vertex_property_read(uint32_t paramc, const uint64_t *paramv, uint32_t 
 
   // TODO: Is the following line necessary ?
   // Signal the ID map guid
-  arts_signal_edt(end_vertex_id_map_read_epoch_guid, 1, vertex_id_map_guid);
+  arts_signal_edt(end_vertex_id_map_read_epoch_guid, 1, vertex_id_map_guid, ARTS_DB_WRITE);
 
   // Start the epoch
   arts_initialize_and_start_epoch(end_vertex_id_map_read_epoch_guid, 0);
@@ -380,7 +380,7 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       arts_edt_create(end_vertex_property_read, 0, NULL, 2, &(arts_hint_t){.route = 0});
 
   // Signal the property map guid
-  arts_signal_edt(end_vertex_property_read_epoch_guid, 1, vertex_property_map_guid);
+  arts_signal_edt(end_vertex_property_read_epoch_guid, 1, vertex_property_map_guid, ARTS_DB_WRITE);
 
   // Start the epoch
   arts_initialize_and_start_epoch(end_vertex_property_read_epoch_guid, 0);

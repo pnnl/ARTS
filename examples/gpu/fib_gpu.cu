@@ -71,7 +71,7 @@ void fib_fork(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   unsigned int *res_ptr = (unsigned int *)depv[0].ptr;
 
   if ((*res_ptr) < 2) {
-    arts_signal_edt(done_guid, slot, res_guid);
+    arts_signal_edt(done_guid, slot, res_guid, ARTS_DB_WRITE);
   } else {
     // Create two DB of type ARTS_DB_GPU
     unsigned int *x = NULL;
@@ -89,16 +89,16 @@ void fib_fork(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     dim3 block(1);
     arts_guid_t join_guid = arts_edt_create_gpu(fib_join, next, 0, NULL, 3, grid,
                                            block, done_guid, slot, res_guid);
-    arts_signal_edt(join_guid, 2, res_guid);
+    arts_signal_edt(join_guid, 2, res_guid, ARTS_DB_WRITE);
 
     // Create the forks which will run on the CPU
     uint64_t args[2] = {(uint64_t)join_guid, 0};
     arts_guid_t fork_guid_x = arts_edt_create(fib_fork, 2, args, 1, &(arts_hint_t){.route = next});
-    arts_signal_edt(fork_guid_x, 0, x_guid);
+    arts_signal_edt(fork_guid_x, 0, x_guid, ARTS_DB_WRITE);
 
     args[1] = 1;
     arts_guid_t fork_guid_y = arts_edt_create(fib_fork, 2, args, 1, &(arts_hint_t){.route = next});
-    arts_signal_edt(fork_guid_y, 0, y_guid);
+    arts_signal_edt(fork_guid_y, 0, y_guid, ARTS_DB_WRITE);
   }
 }
 
@@ -131,11 +131,12 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
   }
   *res_ptr = (unsigned int)strtol(argv[1], NULL, 10);
 
-  arts_guid_t done_guid = arts_edt_create(fib_done, 1, (uint64_t *)res_ptr, 1, &(arts_hint_t){.route = 0});
+  uint64_t done_args[] = {(uint64_t)*res_ptr};
+  arts_guid_t done_guid = arts_edt_create(fib_done, 1, done_args, 1, &(arts_hint_t){.route = 0});
 
   uint64_t args[] = {(uint64_t)done_guid, 0};
   arts_guid_t fib_guid = arts_edt_create(fib_fork, 2, args, 1, &(arts_hint_t){.route = 0});
-  arts_signal_edt(fib_guid, 0, res_guid);
+  arts_signal_edt(fib_guid, 0, res_guid, ARTS_DB_WRITE);
   start = arts_get_time_stamp();
 }
 

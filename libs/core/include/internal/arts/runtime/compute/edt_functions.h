@@ -36,17 +36,18 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef ARTS_RUNTIME_COMPUTE_EDTFUNCTIONS_H
-#define ARTS_RUNTIME_COMPUTE_EDTFUNCTIONS_H
+#ifndef ARTS_RUNTIME_COMPUTE_EDT_FUNCTIONS_H
+#define ARTS_RUNTIME_COMPUTE_EDT_FUNCTIONS_H
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #include "arts/runtime/rt.h"
+#include "arts/utils/array_list.h"
 
 bool arts_edt_create_internal(struct arts_edt_s *edt, arts_type_t mode,
                            arts_guid_t *guid, unsigned int route,
-                           unsigned int cluster, unsigned int edt_space,
+                           unsigned int numa_domain, unsigned int edt_space,
                            arts_guid_t output_buffer, arts_edt_t func_ptr,
                            uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                            bool use_epoch, arts_guid_t epoch_guid, bool has_depv,
@@ -61,6 +62,7 @@ typedef struct {
   arts_guid_t current_edt_guid;
   struct arts_edt_s *current_edt;
   void *epoch_list;
+  void *created_db_list;
 } thread_local_t;
 
 void arts_set_thread_local_edt_info(struct arts_edt_s *edt);
@@ -74,6 +76,9 @@ void arts_increment_finished_epoch_list();
 
 void *arts_get_depv(void *edt_ptr);
 arts_type_t *arts_get_dep_modes(void *edt_ptr);
+
+void arts_track_created_db(arts_guid_t guid);
+arts_array_list_t *arts_get_created_db_list(void);
 #ifdef __cplusplus
 }
 #endif

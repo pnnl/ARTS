@@ -105,20 +105,20 @@ void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   if (node_id == 0) {
     arts_guid_t edt_guid = arts_edt_create(check, 0, NULL, 2, &(arts_hint_t){.route = node_id});
-    arts_signal_edt(edt_guid, 0, guid[0]);
-    arts_signal_edt(edt_guid, 1, guid[2]);
+    arts_signal_edt(edt_guid, 0, guid[0], ARTS_DB_WRITE);
+    arts_signal_edt(edt_guid, 1, guid[2], ARTS_DB_WRITE);
 
     arts_edt_create_with_guid(shut_down_edt, shutdown_guid, 0, NULL, 3);
   }
 
   if (node_id == 1) {
     arts_guid_t edt_guid = arts_edt_create(check, 0, NULL, 1, &(arts_hint_t){.route = node_id});
-    arts_signal_edt(edt_guid, 0, guid[1]);
+    arts_signal_edt(edt_guid, 0, guid[1], ARTS_DB_WRITE);
   }
 
   if (node_id == 2) {
     arts_guid_t edt_guid = arts_edt_create(check, 0, NULL, 1, &(arts_hint_t){.route = node_id});
-    arts_signal_edt(edt_guid, 0, guid[3]);
+    arts_signal_edt(edt_guid, 0, guid[3], ARTS_DB_WRITE);
   }
 }
 

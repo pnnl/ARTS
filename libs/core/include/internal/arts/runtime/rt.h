@@ -36,8 +36,8 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef ARTS_RUNTIME_SYNC_RT_H
-#define ARTS_RUNTIME_SYNC_RT_H
+#ifndef ARTS_RUNTIME_RT_H
+#define ARTS_RUNTIME_RT_H
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -76,7 +76,7 @@ struct arts_db_s {
   uint64_t arts_id;       /**< Compiler-assigned unique id (0 = unset). */
   arts_guid_t guid;       /**< GUID of this DataBlock. */
   arts_guid_t event_guid; /**< Associated persistent event GUID. */
-  volatile unsigned int copyCount; /**< Number of outstanding copies. */
+  volatile unsigned int copy_count; /**< Number of outstanding copies. */
   volatile unsigned int reader;    /**< Active reader count. */
   volatile unsigned int writer;    /**< Active writer count. */
   volatile unsigned int version;   /**< Coherence version counter. */
@@ -94,11 +94,11 @@ struct arts_edt_s {
   arts_guid_t current_edt;   /**< GUID of this EDT. */
   arts_guid_t output_buffer; /**< Optional output buffer GUID. */
   arts_guid_t epoch_guid;    /**< Enclosing epoch GUID. */
-  unsigned int cluster;      /**< NUMA cluster assignment. */
+  unsigned int numa_domain;  /**< NUMA domain assignment. */
   unsigned int node;         /**< Target node rank. */
-  volatile unsigned int depcNeeded; /**< Remaining unsatisfied deps. */
+  volatile unsigned int depc_needed; /**< Remaining unsatisfied deps. */
   volatile unsigned int
-      invalidateCount; /**< Outstanding cache invalidations. */
+      invalidate_count; /**< Outstanding cache invalidations. */
 } __attribute__((aligned));
 
 /** An individual dependent registered on an event or persistent event. */
@@ -107,7 +107,7 @@ struct arts_dependent_s {
   volatile unsigned int slot;           /**< Target dependency slot. */
   volatile arts_guid_t addr;            /**< GUID of the dependent EDT/event. */
   volatile event_callback_t callback_t; /**< Inline callback (if any). */
-  volatile bool doneWriting;            /**< Write completion flag. */
+  volatile bool done_writing;            /**< Write completion flag. */
   arts_type_t mode;                     /**< Access mode for signaling. */
   uint64_t byte_offset; /**< Byte offset for slice dependencies. */
   uint64_t size;        /**< Slice size in bytes. */
@@ -164,23 +164,23 @@ typedef enum {
 /**
  * @brief Per-epoch termination detection state.
  *
- * Tracks active/finished task counts across the cluster to determine when
+ * Tracks active/finished task counts across nodes to determine when
  * all work within the epoch has completed.
  */
 typedef struct {
   termination_detection_phase_t phase;     /**< Current TD phase. */
-  volatile unsigned int activeCount;       /**< Local active task count. */
-  volatile unsigned int finishedCount;     /**< Local finished task count. */
-  volatile unsigned int globalActiveCount; /**< Cluster-wide active count. */
+  volatile unsigned int active_count;       /**< Local active task count. */
+  volatile unsigned int finished_count;     /**< Local finished task count. */
+  volatile unsigned int global_active_count; /**< Cluster-wide active count. */
   volatile unsigned int
-      globalFinishedCount;               /**< Cluster-wide finished count. */
-  volatile unsigned int lastActiveCount; /**< Previous-round active count. */
+      global_finished_count;               /**< Cluster-wide finished count. */
+  volatile unsigned int last_active_count; /**< Previous-round active count. */
   volatile unsigned int
-      lastFinishedCount;            /**< Previous-round finished count. */
+      last_finished_count;            /**< Previous-round finished count. */
   volatile uint64_t queued;         /**< Number of queued operations. */
   volatile uint64_t outstanding;    /**< Number of outstanding remote ops. */
-  unsigned int terminationExitSlot; /**< EDT slot to signal on completion. */
-  arts_guid_t terminationExitGuid;  /**< EDT to signal on completion. */
+  unsigned int termination_exit_slot; /**< EDT slot to signal on completion. */
+  arts_guid_t termination_exit_guid;  /**< EDT to signal on completion. */
   arts_guid_t guid;                 /**< GUID of this epoch. */
   arts_guid_t pool_guid;            /**< Associated resource pool GUID. */
   volatile unsigned int *wait_ptr;  /**< Context-switch wait pointer. */
@@ -208,4 +208,4 @@ typedef struct {
 }
 #endif
 
-#endif /* ARTSRT_H */
+#endif /* ARTS_RUNTIME_RT_H */

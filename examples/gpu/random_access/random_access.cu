@@ -331,8 +331,8 @@ void random_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
             next_random_guid, i + 1, NULL_GUID);
         arts_gpu_signal_edt_memset(update_guid, 0,
                                    arts_guid_range_get(tile_guids, i));
-        // arts_signal_edt(update_guid, 0, arts_guid_range_get(tile_guids, i));
-        arts_signal_edt(update_guid, 1, read_only);
+        // arts_signal_edt(update_guid, 0, arts_guid_range_get(tile_guids, i), ARTS_DB_WRITE);
+        arts_signal_edt(update_guid, 1, read_only, ARTS_DB_WRITE);
         next_random_deps++;
       }
     }
@@ -346,9 +346,9 @@ void random_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_edt_create_gpu_lib_with_guid(random_edt, next_random_guid, 3, args,
                                       next_random_deps, grid, block);
     arts_gpu_signal_edt_memset(next_random_guid, 0, depv[0].guid);
-    // arts_signal_edt(next_random_guid, 0, depv[0].guid);
+    // arts_signal_edt(next_random_guid, 0, depv[0].guid, ARTS_DB_WRITE);
   } else {
-    arts_signal_edt(done_guid, (unsigned int)-1, NULL_GUID);
+    arts_signal_edt(done_guid, (unsigned int)-1, NULL_GUID, ARTS_DB_WRITE);
   }
 }
 

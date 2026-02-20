@@ -142,10 +142,10 @@ void create_first_round(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t bfs_guid =
       arts_edt_create_gpu(bfs, arts_get_current_node(), 1, &next_level, 4, grid,
                        threads, NULL_GUID, 0, NULL_GUID);
-  arts_signal_edt(bfs_guid, 0, visit_guid);
-  arts_signal_edt(bfs_guid, 1, next_search_frontier_addr_guid[arts_get_current_node()]);
-  arts_signal_edt(bfs_guid, 2, first_search_frontier_guid);
-  arts_signal_edt(bfs_guid, 3, graph_guid);
+  arts_signal_edt(bfs_guid, 0, visit_guid, ARTS_DB_WRITE);
+  arts_signal_edt(bfs_guid, 1, next_search_frontier_addr_guid[arts_get_current_node()], ARTS_DB_WRITE);
+  arts_signal_edt(bfs_guid, 2, first_search_frontier_guid, ARTS_DB_WRITE);
+  arts_signal_edt(bfs_guid, 3, graph_guid, ARTS_DB_WRITE);
   arts_printf("LAUNCHING\n");
 }
 
@@ -203,7 +203,7 @@ void do_partition_sync(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
   arts_printf("Just Synced Partitions! %lu\n", paramv[0]);
-  arts_signal_edt((arts_guid_t)paramv[1], (uint32_t)-1, NULL_GUID);
+  arts_signal_edt((arts_guid_t)paramv[1], (uint32_t)-1, NULL_GUID, ARTS_DB_WRITE);
 }
 
 // There is only one of these per level.  It is signaled by the epoch containing
@@ -353,10 +353,10 @@ void thrust_sort(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
         edt_guids_to_launch_bfs[i] =
             arts_edt_create_gpu(bfs, rank, 1, &next_level, 4, grid, threads,
                              NULL_GUID, 0, NULL_GUID);
-        arts_signal_edt(edt_guids_to_launch_bfs[i], 0, visited_guid[i]);
-        arts_signal_edt(edt_guids_to_launch_bfs[i], 2, new_search_frontier_guid);
+        arts_signal_edt(edt_guids_to_launch_bfs[i], 0, visited_guid[i], ARTS_DB_WRITE);
+        arts_signal_edt(edt_guids_to_launch_bfs[i], 2, new_search_frontier_guid, ARTS_DB_WRITE);
         arts_signal_edt(edt_guids_to_launch_bfs[i], 3,
-                      get_guid_for_partition_distr(distribution, i));
+                      get_guid_for_partition_distr(distribution, i), ARTS_DB_WRITE);
 
         add_to_list(size_per_bound[i], arts_get_gpu_id());
       } else {
@@ -366,7 +366,7 @@ void thrust_sort(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
   arts_signal_edt(next_launch_bfs_guid,
                 (arts_get_current_node() * arts_get_total_gpus()) + arts_get_gpu_id(),
-                edt_guids_to_launch_bfs_guid);
+                edt_guids_to_launch_bfs_guid, ARTS_DB_WRITE);
 }
 
 // This needs nodes * gpus signals.  Each db has PARTS guids to signal.
@@ -387,7 +387,7 @@ void launch_bfs(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
         for (unsigned int j = 0; j < PARTS; j++) {
           if (guid_to_signal[j]) {
             unsigned int rank = arts_guid_get_rank(guid_to_signal[j]);
-            arts_signal_edt(guid_to_signal[j], 1, next_search_frontier_addr_guid[rank]);
+            arts_signal_edt(guid_to_signal[j], 1, next_search_frontier_addr_guid[rank], ARTS_DB_WRITE);
             total_new_bfs++;
           }
         }

@@ -165,7 +165,7 @@ unsigned int get_rank_from_index(arts_array_db_t *array, unsigned int index) {
 void arts_signal_array_db(arts_array_db_t *array, arts_guid_t edt_guid,
                        unsigned int slot) {
   arts_guid_t array_guid = get_array_db_guid(array);
-  arts_signal_edt(edt_guid, slot, array_guid);
+  arts_signal_edt(edt_guid, slot, array_guid, ARTS_DB_WRITE);
 }
 
 void arts_get_from_array_db(arts_guid_t edt_guid, unsigned int slot,
@@ -209,10 +209,10 @@ void arts_for_each_in_array_db(arts_array_db_t *array, arts_edt_t func_ptr,
 
 void arts_gather_array_db(arts_array_db_t *array, arts_edt_t func_ptr,
                        unsigned int route, uint32_t paramc, const uint64_t *paramv,
-                       uint64_t depc) {
-  if (route == -1) {
+                       uint32_t depc) {
+  if (route == ARTS_HINT_CURRENT_NODE) {
     route = arts_global_rank_id;
-}
+  }
   unsigned int offset = get_offset_from_index(array, 0);
   unsigned int size = array->element_size * array->elements_per_block;
   arts_guid_t array_guid = get_array_db_guid(array);
@@ -227,11 +227,11 @@ void arts_gather_array_db(arts_array_db_t *array, arts_edt_t func_ptr,
 
 void arts_gather_array_db_epoch(arts_array_db_t *array, arts_edt_t func_ptr,
                             unsigned int route, uint32_t paramc,
-                            const uint64_t *paramv, uint64_t depc,
+                            const uint64_t *paramv, uint32_t depc,
                             arts_guid_t epoch_guid) {
-  if (route == -1) {
+  if (route == ARTS_HINT_CURRENT_NODE) {
     route = arts_global_rank_id;
-}
+  }
   unsigned int offset = get_offset_from_index(array, 0);
   unsigned int size = array->element_size * array->elements_per_block;
   arts_guid_t array_guid = get_array_db_guid(array);
@@ -298,7 +298,7 @@ void arts_for_each_in_array_db_at_data(arts_array_db_t *array, unsigned int stri
     unsigned int target_rank = get_rank_from_index(array, i);
     arts_guid_t am = arts_edt_create(loop_policy, paramc + 4, args, 1,
                                      &(arts_hint_t){.route = target_rank});
-    arts_signal_edt(am, 0, guid);
+    arts_signal_edt(am, 0, guid, ARTS_DB_WRITE);
   }
 }
 

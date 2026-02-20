@@ -36,14 +36,17 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef ARTS_RUNTIME_NETWORK_REMOTEFUNCTIONS_H
-#define ARTS_RUNTIME_NETWORK_REMOTEFUNCTIONS_H
+#ifndef ARTS_RUNTIME_NETWORK_REMOTE_FUNCTIONS_H
+#define ARTS_RUNTIME_NETWORK_REMOTE_FUNCTIONS_H
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #include "arts/network/remote_protocol.h"
 #include "arts/runtime/rt.h"
+
+void arts_remote_send(unsigned int rank, send_handler_t fun_ptr, void *args,
+                      unsigned int size, bool free);
 
 void arts_remote_add_dependence(arts_guid_t source, arts_guid_t destination,
                              uint32_t slot, unsigned int rank);
@@ -152,16 +155,6 @@ void arts_remote_handle_epoch_req(void *pack);
 void arts_remote_epoch_send(unsigned int rank, arts_guid_t guid,
                          unsigned int active, unsigned int finish);
 void arts_remote_handle_epoch_send(void *pack);
-void arts_remote_atomic_add_in_array_db(unsigned int rank, arts_guid_t db_guid,
-                                  unsigned int index, unsigned int to_add,
-                                  arts_guid_t edt_guid, unsigned int slot,
-                                  arts_guid_t epoch_guid);
-void arts_remote_handle_atomic_add_in_array_db(void *pack);
-void arts_remote_atomic_compare_and_swap_in_array_db(
-    unsigned int rank, arts_guid_t db_guid, unsigned int index,
-    unsigned int old_value, unsigned int new_value, arts_guid_t edt_guid,
-    unsigned int slot, arts_guid_t epoch_guid);
-void arts_remote_handle_atomic_compare_and_swap_in_array_db(void *pack);
 void arts_remote_epoch_delete(unsigned int rank, arts_guid_t epoch_guid);
 void arts_remote_handle_epoch_delete(void *pack);
 void arts_db_move_request(arts_guid_t db_guid, unsigned int dest_rank);

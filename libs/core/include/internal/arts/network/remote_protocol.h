@@ -36,8 +36,8 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef ARTS_NETWORK_REMOTEPROTOCOL_H
-#define ARTS_NETWORK_REMOTEPROTOCOL_H
+#ifndef ARTS_NETWORK_REMOTE_PROTOCOL_H
+#define ARTS_NETWORK_REMOTE_PROTOCOL_H
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -99,11 +99,11 @@ struct __attribute__((__packed__)) arts_remote_packet_s {
   uint64_t size;
   unsigned int rank;
 #ifdef SEQUENCENUMBERS
-  unsigned int seqRank;
-  uint64_t seqNum;
+  unsigned int seq_rank;
+  uint64_t seq_num;
 #endif
   uint64_t time_stamp;
-  uint64_t procTimeStamp;
+  uint64_t proc_time_stamp;
 };
 
 struct __attribute__((__packed__)) arts_remote_guid_only_packet_s {
@@ -136,7 +136,7 @@ struct __attribute__((__packed__)) arts_remote_edt_signal_packet_s {
   arts_guid_t db;
   uint32_t slot;
   arts_type_t mode;
-  unsigned int dbRoute;
+  unsigned int db_route;
 };
 
 struct __attribute__((__packed__)) arts_remote_event_satisfy_slot_packet_s {
@@ -223,6 +223,8 @@ struct __attribute__((__packed__)) arts_remote_signal_edt_with_ptr_packet_s {
   unsigned int slot;
 };
 
+typedef void (*send_handler_t)(void *args);
+
 struct __attribute__((__packed__)) arts_remote_send_s {
   struct arts_remote_packet_s header;
   send_handler_t fun_ptr;
@@ -292,8 +294,8 @@ struct __attribute__((__packed__)) arts_remote_diff_region_s {
 struct __attribute__((__packed__)) arts_remote_partial_update_packet_s {
   struct arts_remote_packet_s header;
   arts_guid_t guid;
-  uint32_t regionCount;
-  uint32_t dataBytes;
+  uint32_t region_count;
+  uint32_t data_bytes;
   uint32_t flags;
   uint32_t reserved;
 };
@@ -302,15 +304,25 @@ struct __attribute__((__packed__)) arts_remote_partial_update_packet_s {
 // Worker sends request with its send time T1
 struct __attribute__((__packed__)) arts_remote_time_sync_req_packet_s {
   struct arts_remote_packet_s header;
-  uint64_t workerSendTime; // T1: worker's local time when sending request
+  uint64_t worker_send_time; // T1: worker's local time when sending request
 };
 
 // Master responds with T1 (echoed) and T2 (master's receive time)
 struct __attribute__((__packed__)) arts_remote_time_sync_resp_packet_s {
   struct arts_remote_packet_s header;
-  uint64_t workerSendTime; // T1: echoed back
+  uint64_t worker_send_time; // T1: echoed back
   uint64_t master_recv_time; // T2: master's local time when receiving request
 };
+
+#include "arts/runtime/globals.h"
+
+static inline void arts_fill_packet_header(struct arts_remote_packet_s *header,
+                                           uint64_t size,
+                                           unsigned int message_type) {
+  header->size = size;
+  header->message_type = message_type;
+  header->rank = arts_global_rank_id;
+}
 
 void out_init(unsigned int size);
 void arts_remote_flush_outbound(void);

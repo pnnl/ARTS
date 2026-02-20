@@ -64,6 +64,16 @@
 #include "arts/utils/malloc.h"
 #include "arts/utils/atomics.h"
 
+/*
+ * Chase-Lev work-stealing deque (simplified variant).
+ *
+ * Lock-free concurrent deque with LIFO push/pop from the owning thread
+ * (front) and FIFO steal from other threads (back).  Each worker thread
+ * has its own deque; other threads steal from the back.
+ *
+ * Fields are cache-line padded (64-byte aligned) to prevent false sharing
+ * between the owning thread (modifies bottom) and stealers (read/CAS top).
+ */
 struct circular_array_s {
   struct circular_array_s *next;
   unsigned int size;
@@ -71,13 +81,13 @@ struct circular_array_s {
 } __attribute__((aligned(64)));
 
 struct arts_deque_s {
-  volatile uint64_t top;
+  volatile uint64_t top;     /* Modified by stealers via CAS */
   char pad1[56];
-  volatile uint64_t bottom;
+  volatile uint64_t bottom;  /* Modified only by the owning thread */
   char pad2[56];
   struct circular_array_s *volatile activeArray;
   char pad3[56];
-  struct circular_array_s *head;
+  struct circular_array_s *head;  /* Head of circular array chain (for cleanup) */
   volatile unsigned int push;
   volatile unsigned int pop;
   volatile unsigned int steal;

@@ -62,6 +62,7 @@
 #include "arts/utils/array_list.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/deque.h"
+#include "arts/runtime/watchdog.h"
 
 #ifdef USE_GPU
 #include "arts/gpu/gpu_runtime.cuh"
@@ -233,8 +234,19 @@ void arts_runtime_global_cleanup() {
 #endif
 }
 
+/*
+ * arts_thread_zero_node_start — Thread 0 (master) startup sequence.
+ *
+ * After all threads have registered (ready_to_push barrier), thread 0:
+ *   1. Enables global GUID generation.
+ *   2. Creates the shutdown epoch (termination detection).
+ *   3. Schedules arts_main_edt on rank 0 (if defined by the application).
+ *   4. Waits for all threads through a series of barriers before entering
+ *      the main scheduler loop.
+ */
 void arts_thread_zero_node_start() {
-
+  ARTS_INFO("Thread 0: starting node initialization");
+  arts_watchdog_init(10);  /* 10-second default; overridden by config if needed */
   set_global_guid_on();
   create_shutdown_epoch();
 
@@ -252,6 +264,7 @@ void arts_thread_zero_node_start() {
   while (arts_node_info.ready_to_parallel_start) {
   }
   if (arts_main_edt && !arts_global_rank_id) {
+    ARTS_INFO("Thread 0: scheduling arts_main_edt on rank 0 (argc=%d)", main_argc);
     uint64_t main_args[2] = {(uint64_t)main_argc, (uint64_t)main_argv};
     arts_edt_create(arts_main_edt, 2, main_args, 0, &(arts_hint_t){.route = 0});
   }
@@ -328,7 +341,7 @@ void arts_runtime_private_init(struct thread_mask_s *unit,
   arts_thread_info.core_id = unit->unit_id;
   arts_thread_info.thread_id = unit->id;
   arts_thread_info.group_id = unit->group_pos;
-  arts_thread_info.cluster_id = unit->cluster_id;
+  arts_thread_info.numa_domain_id = unit->numa_domain_id;
   arts_thread_info.worker = unit->worker;
   arts_thread_info.network_send = unit->network_send;
   arts_thread_info.network_receive = unit->network_receive;
@@ -410,16 +423,32 @@ void arts_runtime_private_cleanup() {
 }
 }
 
+/*
+ * arts_runtime_stop — Stop all worker/network threads.
+ *
+ * Called from arts_shutdown() (single-node) or from the network send thread
+ * after the shutdown timeout (multi-node).
+ *
+ * Protocol:
+ *   1. Wait for each thread to register its local_spin pointer (non-NULL
+ *      means the thread has finished arts_runtime_private_init).
+ *   2. Set *local_spin[i] = false, which clears arts_thread_info.alive for
+ *      that thread, causing it to exit its scheduler/network loop.
+ */
 void arts_runtime_stop() {
+  ARTS_PRINT("arts_runtime_stop: stopping %u threads", arts_node_info.total_thread_count);
   unsigned int i;
   for (i = 0; i < arts_node_info.total_thread_count; i++) {
+    ARTS_DEBUG("arts_runtime_stop: waiting for thread %u to register", i);
     while (!arts_node_info.local_spin[i]) {
       ;
-}
+    }
     (*arts_node_info.local_spin[i]) = false;
+    ARTS_DEBUG("arts_runtime_stop: thread %u signaled to stop", i);
   }
   arts_tmt_runtime_stop();
   arts_tmt_lite_shutdown();
+  ARTS_PRINT("arts_runtime_stop: all threads signaled");
 }
 
 void arts_handle_remote_stolen_edt(struct arts_edt_s *edt) {
@@ -442,10 +471,30 @@ void arts_handle_remote_stolen_edt(struct arts_edt_s *edt) {
   }
 }
 
+/*
+ * arts_handle_ready_edt — Transition an EDT from "all deps signaled" to
+ *                         "queued for execution".
+ *
+ * Called when depc_needed reaches 0 after the last signal or after the
+ * sentinel is removed during creation.
+ *
+ * Two phases:
+ *   Phase 1 (acquire_dbs): Re-initialize depc_needed = depc + 1 (sentinel)
+ *     and attempt to acquire each DB dependency locally.  If a DB is not
+ *     available, an OOO request is issued; when it resolves later, it will
+ *     decrement depc_needed and potentially push the EDT to the deque.
+ *   Phase 2 (sentinel removal): Atomically decrement the sentinel.  If all
+ *     DBs were acquired synchronously, depc_needed hits 0 here and the EDT
+ *     is pushed to the worker deque for execution.
+ */
 void arts_handle_ready_edt(struct arts_edt_s *edt) {
-  ARTS_INFO("EDT[Id:%lu, Guid:%lu] is ready", edt->arts_id, edt->current_edt);
+  ARTS_INFO("EDT[Guid:%lu, Id:%lu] ready — entering acquire_dbs "
+            "(depc=%u)", edt->current_edt, edt->arts_id, edt->depc);
   acquire_dbs(edt);
-  if (arts_atomic_sub(&edt->depcNeeded, 1U) == 0) {
+  unsigned int remaining = arts_atomic_sub(&edt->depc_needed, 1U);
+  ARTS_INFO("EDT[Guid:%lu] acquire_dbs done, sentinel removed: "
+            "depc_needed=%u", edt->current_edt, remaining);
+  if (remaining == 0) {
     INCREMENT_NUM_EDTS_ACQUIRED_BY(1);
     increment_queue_epoch(edt->epoch_guid);
     global_shutdown_guid_inc_queue();
@@ -457,12 +506,17 @@ void arts_handle_ready_edt(struct arts_edt_s *edt) {
 #endif
     {
       if (edt->header.type == ARTS_EDT) {
+        ARTS_INFO("EDT[Guid:%lu] pushed to worker deque", edt->current_edt);
         arts_deque_push_front(arts_thread_info.my_deque, edt, 0);
       } else if (edt->header.type == ARTS_GPU_EDT) {
+        ARTS_INFO("EDT[Guid:%lu] pushed to GPU deque", edt->current_edt);
         arts_deque_push_front(arts_thread_info.my_gpu_deque, edt, 0);
-}
+      }
     }
     ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_EDT_QUEUE, ARTS_METRIC_THREAD, 1);
+  } else {
+    ARTS_DEBUG("EDT[Guid:%lu] waiting for %u more DB acquisitions",
+               edt->current_edt, remaining);
   }
 }
 
@@ -507,11 +561,14 @@ void arts_run_edt(struct arts_edt_s *edt) {
                   sizeof(unsigned int));
 }
 
-  ARTS_INFO("EDT[Id:%lu, Guid:%lu] Finished", edt->arts_id, edt->current_edt);
+  ARTS_INFO("EDT[Guid:%lu, Id:%lu] finished (exec_ns=%lu)",
+            edt->current_edt, edt->arts_id, exec_ns);
   release_dbs(depc, depv, modes, false);
+  arts_release_created_dbs();
   arts_edt_delete(edt);
-  // This is for debugging purposes
-  DEC_OUSTANDING_EDTS(1);
+  DEC_OUTSTANDING_EDTS(1);
+  ARTS_DEBUG("EDT completed, outstanding_edts decremented");
+  arts_watchdog_tick();
 }
 
 inline struct arts_edt_s *arts_runtime_steal_from_network() {
@@ -616,6 +673,7 @@ bool arts_default_scheduler_loop() {
     // arts_wake_up_context();
     return true;
   }
+  arts_watchdog_check();
   CHECK_OUTSTANDING_EDTS(10000000);
   arts_next_context();
   // arts_tmt_scheduler_yield();
@@ -623,7 +681,22 @@ bool arts_default_scheduler_loop() {
   return false;
 }
 
+/*
+ * arts_runtime_loop — Main per-thread dispatch loop.
+ *
+ * Each thread enters exactly one of three roles:
+ *   - network_receive: Polls for incoming messages (multi-node only).
+ *   - network_send:    Drains outbound queues; triggers arts_runtime_stop()
+ *                      when shutdown timeout elapses.
+ *   - worker:          Runs the selected scheduler loop until alive==false.
+ *
+ * On single-node configurations, all threads are workers (no network threads).
+ * The loop exits when arts_runtime_stop() sets alive=false for this thread.
+ */
 int arts_runtime_loop() {
+  ARTS_DEBUG("Thread %u entering runtime_loop (worker=%d, send=%d, recv=%d)",
+             arts_thread_info.thread_id, arts_thread_info.worker,
+             arts_thread_info.network_send, arts_thread_info.network_receive);
   if (arts_thread_info.network_receive) {
     while (arts_thread_info.alive) {
       arts_server_try_to_receive(&arts_node_info.buf, &arts_node_info.packet_size,
@@ -636,12 +709,13 @@ int arts_runtime_loop() {
         arts_runtime_stop();
       } else {
         arts_remote_async_send();
-}
+      }
     }
   } else if (arts_thread_info.worker) {
     while (arts_thread_info.alive) {
       arts_node_info.scheduler();
     }
   }
+  ARTS_DEBUG("Thread %u exiting runtime_loop", arts_thread_info.thread_id);
   return 0;
 }

@@ -31,3 +31,5 @@ if(BUILD_CUDA_LIBRARY)
 		target_include_directories(arts_runtime_memory_gpu PRIVATE ${HWLOC_INCLUDE_DIRS})
 	endif()
 endif()
+
+add_subdirectory(array_db)

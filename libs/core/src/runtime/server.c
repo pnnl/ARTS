@@ -49,6 +49,7 @@
 #include "arts/runtime/runtime.h"
 #include "arts/runtime/compute/edt_functions.h"
 #include "arts/runtime/memory/db_functions.h"
+#include "arts/runtime/memory/array_db.h"
 #include "arts/runtime/network/remote_functions.h"
 #include "arts/runtime/sync/event_functions.h"
 #include "arts/system/arts_print.h"
@@ -98,15 +99,15 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
   }
 #ifdef SEQUENCENUMBERS
   uint64_t exp_seq_number =
-      __sync_fetch_and_add(&rec_seq_numbers[packet->seqRank], 1U);
-  if (exp_seq_number != packet->seqNum) {
+      __sync_fetch_and_add(&rec_seq_numbers[packet->seq_rank], 1U);
+  if (exp_seq_number != packet->seq_num) {
     ARTS_DEBUG(
         "MESSAGE RECIEVED OUT OF ORDER exp: %lu rec: %lu source: %u type: %d",
-        exp_seq_number, packet->seqNum, packet->rank, packet->message_type);
+        exp_seq_number, packet->seq_num, packet->rank, packet->message_type);
   }
 //    else
-//        ARTS_INFO("Recv: %lu -> %lu = %lu", packet->seqRank, arts_global_rank_id,
-//        packet->seqNum);
+//        ARTS_INFO("Recv: %lu -> %lu = %lu", packet->seq_rank, arts_global_rank_id,
+//        packet->seq_num);
 #endif
 
   switch (packet->message_type) {

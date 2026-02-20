@@ -87,18 +87,18 @@ void write_test(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   for (unsigned int i = 0; i < num_dynamic_reads; i++) {
     arts_guid_t guid = arts_edt_create(read_test, 0, NULL, 1, &(arts_hint_t){.route = arts_get_current_node()});
-    arts_signal_edt(guid, 0, db_guid);
+    arts_signal_edt(guid, 0, db_guid, ARTS_DB_WRITE);
   }
 
   uint64_t idx = paramv[0];
   for (unsigned int i = 0; i < num_dynamic_writes; i++) {
     idx = (idx + 1) % num_writes;
     arts_guid_t guid = arts_edt_create(read_test, 0, NULL, 1, &(arts_hint_t){.route = arts_get_current_node()});
-    arts_signal_edt(guid, 0, db_guid);
+    arts_signal_edt(guid, 0, db_guid, ARTS_DB_WRITE);
   }
 
   if (!index) {
-    arts_signal_edt(shutdown_guid, 0, db_guid);
+    arts_signal_edt(shutdown_guid, 0, db_guid, ARTS_DB_WRITE);
   } else {
     arts_signal_edt_value(shutdown_guid, -1, 0);
 }
@@ -113,14 +113,14 @@ void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   for (uint64_t i = 0; i < num_reads; i++) {
     if (arts_guid_is_local(read_guids[i])) {
       arts_edt_create_with_guid(read_test, read_guids[i], 0, NULL, 1);
-      arts_signal_edt(read_guids[i], 0, db_guid);
+      arts_signal_edt(read_guids[i], 0, db_guid, ARTS_DB_WRITE);
     }
   }
 
   for (uint64_t i = 0; i < num_writes; i++) {
     if (arts_guid_is_local(write_guids[i])) {
       arts_edt_create_with_guid(write_test, write_guids[i], 1, &i, 1);
-      arts_signal_edt(write_guids[i], 0, db_guid);
+      arts_signal_edt(write_guids[i], 0, db_guid, ARTS_DB_WRITE);
     }
   }
 }

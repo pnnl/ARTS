@@ -49,7 +49,6 @@
 #include "arts/utils/atomics.h"
 
 #define WRITE_SET 0x80000000
-#define EXCLUSIVE_SET 0x40000000
 
 void frontier_lock(volatile unsigned int *lock) {
   unsigned int local;
@@ -66,8 +65,7 @@ void frontier_lock(volatile unsigned int *lock) {
 }
 
 void frontier_unlock(volatile unsigned int *lock) {
-  unsigned int mask = WRITE_SET | EXCLUSIVE_SET;
-  arts_atomic_fetch_and(lock, mask);
+  arts_atomic_fetch_and(lock, WRITE_SET);
 }
 
 bool frontier_add_read_lock(volatile unsigned int *lock) {
@@ -75,10 +73,10 @@ bool frontier_add_read_lock(volatile unsigned int *lock) {
   unsigned int temp;
   while (1) {
     local = *lock;
-    // Make sure exclusive not set first
-    if ((local & EXCLUSIVE_SET) != 0) {
+    // Reject if a writer owns this frontier (or frontier is sealed)
+    if ((local & WRITE_SET) != 0) {
       return false;
-}
+    }
     if ((local & 1U) == 0) {
       temp = arts_atomic_cswap(lock, local, local | 1U);
       if (temp == local) {
@@ -90,49 +88,20 @@ bool frontier_add_read_lock(volatile unsigned int *lock) {
 
 // Returns true if there is no write in the frontier, false if there is
 bool frontier_add_write_lock(volatile unsigned int *lock) {
-  // ARTS_DEBUG("Wlocking frontier: >>>>>>> %p", lock);
   unsigned int local;
   unsigned int temp;
   while (1) {
     local = *lock;
-    // Make sure exclusive not set first
-    if ((local & EXCLUSIVE_SET) != 0) {
-      return false;
-}
-    // Make sure write not set first
+    // Reject if another writer already owns this frontier (or sealed)
     if ((local & WRITE_SET) != 0) {
       return false;
-}
+    }
     // Wait for lock to be free
     if ((local & 1U) == 0) {
       temp = arts_atomic_cswap(lock, local, local | WRITE_SET | 1U);
       if (temp == local) {
         return true;
       }
-    }
-  }
-}
-
-bool frontier_add_exclusive_lock(volatile unsigned int *lock) {
-  // ARTS_DEBUG("Elocking frontier: >>>>>>> %p", lock);
-  unsigned int local;
-  unsigned int temp;
-  while (1) {
-    local = *lock;
-    // Make sure exclusive not set first
-    if ((local & EXCLUSIVE_SET) != 0) {
-      return false;
-}
-    // Make sure write not set first
-    if ((local & WRITE_SET) != 0) {
-      return false;
-}
-    // We reserved the write, now wait for lock to be free
-    if ((local & 1U) == 0) {
-      temp = arts_atomic_cswap(lock, local, local | EXCLUSIVE_SET | WRITE_SET | 1U);
-      if (temp == local) {
-        return true;
-}
     }
   }
 }
@@ -246,16 +215,14 @@ void arts_push_delayed_edt(struct arts_local_delayed_edt_s *head, unsigned int p
 }
 
 bool arts_push_db_to_frontier(struct arts_db_frontier_s *frontier, unsigned int data,
-                          bool write, bool exclusive, bool local, bool bypass,
+                          bool write, bool local, bool bypass,
                           struct arts_edt_s *edt, arts_guid_t edt_guid,
                           unsigned int slot, arts_type_t mode, bool *unique) {
   if (bypass) {
     frontier_lock(&frontier->lock);
-  } else if (exclusive && !frontier_add_exclusive_lock(&frontier->lock)) {
-    return false;
   } else if (write && !frontier_add_write_lock(&frontier->lock)) {
     return false;
-  } else if (!exclusive && !write && !frontier_add_read_lock(&frontier->lock)) {
+  } else if (!write && !frontier_add_read_lock(&frontier->lock)) {
     return false;
   }
 
@@ -263,10 +230,10 @@ bool arts_push_db_to_frontier(struct arts_db_frontier_s *frontier, unsigned int 
       arts_push_db_to_element(&frontier->list, frontier->position, data);
   if (inserted) {
     frontier->position++;
-}
+  }
   *unique = inserted;
 
-  if (inserted && (exclusive || (write && !local))) {
+  if (inserted && (write && !local)) {
     frontier->exNode = data;
     frontier->exEdtGuid = edt_guid;
     frontier->exEdt = edt;
@@ -287,10 +254,25 @@ bool arts_push_db_to_frontier(struct arts_db_frontier_s *frontier, unsigned int 
  * rank to the frontier is unique.  If the db is local then we return if the DB
  * is added to the first frontier reguardless of if there are duplicates.
  */
+/*
+ * arts_push_db_to_list — Register a rank/EDT in the DB's frontier list.
+ *
+ * Tries each frontier from head to tail until one accepts the push (i.e.
+ * the frontier's lock allows the requested access mode).  The first
+ * frontier attempted is always db_list->head (the "current" frontier).
+ *
+ * on_head (out, optional): set to true if the push landed on the head
+ *   frontier, false if a later frontier was used.  Callers use this to
+ *   decide whether acquire_dbs should decrement depc_needed directly
+ *   (head) or defer to frontier signaling (non-head).
+ *
+ * Returns true if the rank was inserted uniquely.
+ */
 bool arts_push_db_to_list(struct arts_db_list_s *db_list, unsigned int data, bool write,
-                      bool exclusive, bool local, bool bypass,
+                      bool local, bool bypass,
                       struct arts_edt_s *edt, arts_guid_t edt_guid,
-                      unsigned int slot, arts_type_t mode) {
+                      unsigned int slot, arts_type_t mode,
+                      bool *on_head) {
   if (!db_list->head) {
     if (arts_writer_try_lock(&db_list->reader, &db_list->writer)) {
       db_list->head = db_list->tail = arts_new_db_frontier();
@@ -300,13 +282,15 @@ bool arts_push_db_to_list(struct arts_db_list_s *db_list, unsigned int data, boo
   arts_reader_lock(&db_list->reader, &db_list->writer);
   bool inserted = false;
   bool unique = true;
+  bool is_head = true;
   for (struct arts_db_frontier_s *frontier = db_list->head; frontier;
        frontier = frontier->next) {
-    if (arts_push_db_to_frontier(frontier, data, write, exclusive, local, bypass,
+    if (arts_push_db_to_frontier(frontier, data, write, local, bypass,
                              edt, edt_guid, slot, mode, &unique)) {
       inserted = true;
       break;
     }
+    is_head = false;
     if (!frontier->next) {
       struct arts_db_frontier_s *new_frontier = arts_new_db_frontier();
       if (arts_atomic_cswap_ptr((volatile void **)&frontier->next, NULL,
@@ -317,6 +301,9 @@ bool arts_push_db_to_list(struct arts_db_list_s *db_list, unsigned int data, boo
 }
       }
     }
+  }
+  if (on_head) {
+    *on_head = inserted && is_head;
   }
   arts_reader_unlock(&db_list->reader);
   return inserted && unique;
@@ -330,7 +317,7 @@ unsigned int arts_current_frontier_size(struct arts_db_list_s *db_list) {
     size = db_list->head->position;
     frontier_unlock(&db_list->head->lock);
   }
-  arts_reader_unlock(&db_list->head->lock);
+  arts_reader_unlock(&db_list->reader);
   return size;
 }
 
@@ -347,8 +334,7 @@ arts_db_frontier_iter_create(struct arts_db_frontier_s *frontier) {
     iter->frontier = frontier;
     iter->currentElement = &frontier->list;
   }
-  // Need to mark unreachable
-  return NULL;
+  return iter;
 }
 
 unsigned int arts_db_frontier_iter_size(struct arts_db_frontier_iterator_s *iter) {
@@ -372,7 +358,6 @@ bool arts_db_frontier_iter_has_next(struct arts_db_frontier_iterator_s *iter) {
 }
 
 void arts_db_frontier_iter_delete(struct arts_db_frontier_iterator_s *iter) {
-  arts_free(iter->frontier);
   arts_free(iter);
 }
 
@@ -383,7 +368,7 @@ struct arts_db_frontier_iterator_s *arts_close_frontier(struct arts_db_list_s *d
   if (frontier) {
     frontier_lock(&frontier->lock);
 
-    arts_atomic_fetch_or(&frontier->lock, EXCLUSIVE_SET | WRITE_SET | 1U);
+    arts_atomic_fetch_or(&frontier->lock, WRITE_SET | 1U);
     iter = arts_db_frontier_iter_create(frontier);
 
     frontier_unlock(&frontier->lock);
@@ -432,8 +417,8 @@ void arts_signal_frontier_remote(struct arts_db_frontier_s *frontier,
       unsigned int pos = i % DBSPERELEMENT;
       struct arts_edt_s *edt = current->edt[pos];
       unsigned int slot = current->slot[pos];
-      // send through aggregation
-      arts_remote_db_request(db->guid, (int)get_from, edt, (int)slot, ARTS_DB_READ, true);
+      arts_remote_db_request(db->guid, (int)get_from, edt, (int)slot,
+                            current->mode[pos], true);
       if (pos + 1 == DBSPERELEMENT) {
         current = current->next;
 }
@@ -461,9 +446,10 @@ void arts_signal_frontier_local(struct arts_db_frontier_s *frontier,
 }
     if (frontier->exNode == arts_global_rank_id) {
       if (edt) {
+        // TODO(gpu): GPU EDTs need GPU memory, not this CPU pointer.
         arts_edt_dep_t *depv = (arts_edt_dep_t *)arts_get_depv(edt);
         depv[frontier->exSlot].ptr = db + 1;
-        if (arts_atomic_sub(&edt->depcNeeded, 1U) == 0) {
+        if (arts_atomic_sub(&edt->depc_needed, 1U) == 0) {
           arts_handle_remote_stolen_edt(edt);
 }
       } else {
@@ -494,11 +480,11 @@ void arts_signal_frontier_local(struct arts_db_frontier_s *frontier,
     for (unsigned int i = 0; i < frontier->localPosition; i++) {
       unsigned int pos = i % DBSPERELEMENT;
       struct arts_edt_s *edt = current->edt[pos];
-      // This is prob wrong now with GPUs
+      // TODO(gpu): GPU EDTs need GPU memory, not this CPU pointer.
       arts_edt_dep_t *depv = (arts_edt_dep_t *)arts_get_depv(edt);
       depv[current->slot[pos]].ptr = db + 1;
 
-      if (arts_atomic_sub(&edt->depcNeeded, 1U) == 0) {
+      if (arts_atomic_sub(&edt->depc_needed, 1U) == 0) {
         arts_handle_remote_stolen_edt(edt);
       }
 

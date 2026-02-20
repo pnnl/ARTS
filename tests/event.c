@@ -61,7 +61,7 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   for (unsigned int n = 0; n < last_node; n++) {
     arts_guid_t am = arts_edt_create(edt_func, 0, NULL, 1,
         &(arts_hint_t){.route = last_node});
-    arts_signal_edt(am, 0, db_guid);
+    arts_signal_edt(am, 0, db_guid, ARTS_DB_WRITE);
   }
 }
 

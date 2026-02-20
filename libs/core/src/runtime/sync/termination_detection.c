@@ -56,26 +56,46 @@
 #define DEFAULT_EPOCH_POOL_SIZE 4096
 __thread arts_epoch_pool_t *epoch_thread_pool;
 
+/*
+ * Shutdown-epoch helpers.
+ *
+ * The shutdown epoch tracks all EDTs globally.  When the epoch completes
+ * (active == finished, no outstanding), global_guid_shutdown is called,
+ * which triggers arts_shutdown().
+ *
+ * Three counters are incremented at different EDT lifecycle stages:
+ *   inc_active  — when an EDT is created (globally visible).
+ *   inc_queue   — when an EDT becomes ready (all deps satisfied).
+ *   inc_finished — when an EDT completes execution.
+ */
 void global_shutdown_guid_inc_active() {
   if (arts_node_info.shutdown_epoch) {
+    ARTS_DEBUG("shutdown_epoch: inc_active [Epoch:%lu]",
+               arts_node_info.shutdown_epoch);
     increment_active_epoch(arts_node_info.shutdown_epoch);
-}
+  }
 }
 
 void global_shutdown_guid_inc_queue() {
   if (arts_node_info.shutdown_epoch) {
+    ARTS_DEBUG("shutdown_epoch: inc_queue [Epoch:%lu]",
+               arts_node_info.shutdown_epoch);
     increment_queue_epoch(arts_node_info.shutdown_epoch);
-}
+  }
 }
 
 void global_shutdown_guid_inc_finished() {
   if (arts_node_info.shutdown_epoch) {
+    ARTS_DEBUG("shutdown_epoch: inc_finished [Epoch:%lu]",
+               arts_node_info.shutdown_epoch);
     increment_finished_epoch(arts_node_info.shutdown_epoch);
-}
+  }
 }
 
 void global_guid_shutdown(arts_guid_t guid) {
   if (arts_node_info.shutdown_epoch == guid) {
+    ARTS_INFO("global_guid_shutdown: Epoch[Guid:%lu] matched shutdown epoch — "
+              "calling arts_shutdown()", guid);
     arts_shutdown();
   }
 }
@@ -110,19 +130,30 @@ void increment_queue_epoch(arts_guid_t epoch_guid) {
 void increment_active_epoch(arts_guid_t epoch_guid) {
   arts_epoch_t *epoch = (arts_epoch_t *)arts_route_table_lookup_item(epoch_guid);
   if (epoch) {
-    arts_atomic_add(&epoch->activeCount, 1);
+    arts_atomic_add(&epoch->active_count, 1);
   } else {
     arts_out_of_order_inc_active_epoch(epoch_guid);
   }
 }
 
+/*
+ * increment_finished_epoch — Called when an EDT finishes execution.
+ *
+ * Single-node fast path: directly check if epoch can terminate.
+ * Multi-node: owner rank collects responses; non-owner ranks decrement
+ * their queued counter and, when it hits 1, send their active/finished
+ * counts to the owner for global reduction.
+ */
 void increment_finished_epoch(arts_guid_t epoch_guid) {
   if (epoch_guid != NULL_GUID) {
     arts_epoch_t *epoch = (arts_epoch_t *)arts_route_table_lookup_item(epoch_guid);
     if (epoch) {
-      arts_atomic_add(&epoch->finishedCount, 1);
+      unsigned int new_finished = arts_atomic_add(&epoch->finished_count, 1);
+      ARTS_DEBUG("increment_finished_epoch[Guid:%lu]: finished_count=%u, "
+                 "active_count=%u, phase=%u",
+                 epoch_guid, new_finished, epoch->active_count, epoch->phase);
       if (arts_global_rank_count == 1) {
-        if (!check_epoch(epoch, epoch->activeCount, epoch->finishedCount)) {
+        if (!check_epoch(epoch, epoch->active_count, epoch->finished_count)) {
           if (epoch->phase == PHASE_3) {
             delete_epoch(epoch_guid, epoch);
 }
@@ -138,8 +169,8 @@ void increment_finished_epoch(arts_guid_t epoch_guid) {
           }
         } else {
           if (decrement_queue_epoch(epoch)) {
-            arts_remote_epoch_send(rank, epoch_guid, epoch->activeCount,
-                                epoch->finishedCount);
+            arts_remote_epoch_send(rank, epoch_guid, epoch->active_count,
+                                epoch->finished_count);
           }
         }
       }
@@ -155,8 +186,8 @@ void send_epoch(arts_guid_t epoch_guid, unsigned int source, unsigned int dest) 
     ARTS_DEBUG("Sending epoch [Guid:%lu] to rank %u", epoch_guid, dest);
     arts_atomic_fetch_and_u64(&epoch->queued, EPOCH_MASK);
     if (!arts_atomic_cswap_u64(&epoch->queued, 0, EPOCH_BIT)) {
-      arts_remote_epoch_send(dest, epoch_guid, epoch->activeCount,
-                          epoch->finishedCount);
+      arts_remote_epoch_send(dest, epoch_guid, epoch->active_count,
+                          epoch->finished_count);
     }
   } else {
     arts_out_of_order_send_epoch(epoch_guid, source, dest);
@@ -171,8 +202,8 @@ arts_epoch_t *create_epoch(arts_guid_t *guid, arts_guid_t edt_guid,
 
   arts_epoch_t *epoch = (arts_epoch_t *)arts_calloc(1, sizeof(arts_epoch_t));
   epoch->phase = PHASE_1;
-  epoch->terminationExitGuid = edt_guid;
-  epoch->terminationExitSlot = slot;
+  epoch->termination_exit_guid = edt_guid;
+  epoch->termination_exit_slot = slot;
   epoch->guid = *guid;
   epoch->pool_guid = NULL_GUID;
   epoch->queued = (arts_guid_is_local(*guid)) ? 0 : EPOCH_BIT;
@@ -181,12 +212,22 @@ arts_epoch_t *create_epoch(arts_guid_t *guid, arts_guid_t edt_guid,
   return epoch;
 }
 
+/*
+ * create_shutdown_epoch — Initialize the global termination epoch.
+ *
+ * Pre-seeds active_count and queued with the total number of workers,
+ * since each worker thread will call increment_finished_epoch when it
+ * finishes its initialization sequence.
+ */
 bool create_shutdown_epoch() {
   if (arts_node_info.shutdown_epoch) {
     arts_node_info.shutdown_epoch = arts_guid_create_for_rank(0, ARTS_EDT);
     arts_epoch_t *epoch = create_epoch(&arts_node_info.shutdown_epoch, NULL_GUID, 0);
-    arts_atomic_add(&epoch->activeCount, arts_get_total_workers());
-    arts_atomic_add_u64(&epoch->queued, arts_get_total_workers());
+    unsigned int total_workers = arts_get_total_workers();
+    arts_atomic_add(&epoch->active_count, total_workers);
+    arts_atomic_add_u64(&epoch->queued, total_workers);
+    ARTS_INFO("create_shutdown_epoch: Epoch[Guid:%lu] created with %u workers",
+              arts_node_info.shutdown_epoch, total_workers);
     return true;
   }
   return false;
@@ -215,7 +256,7 @@ arts_guid_t arts_initialize_and_start_epoch(arts_guid_t finish_edt_guid,
   arts_epoch_t *epoch = get_pool_epoch(finish_edt_guid, slot);
 
   arts_set_current_epoch_guid(epoch->guid);
-  arts_atomic_add(&epoch->activeCount, 1);
+  arts_atomic_add(&epoch->active_count, 1);
   arts_atomic_add_u64(&epoch->queued, 1);
   ARTS_INFO("Creating and Initializing Epoch [Guid:%lu]", epoch->guid);
   return epoch->guid;
@@ -250,7 +291,7 @@ void arts_start_epoch(arts_guid_t epoch_guid) {
   arts_epoch_t *epoch = (arts_epoch_t *)arts_route_table_lookup_item(epoch_guid);
   if (epoch) {
     arts_set_current_epoch_guid(epoch->guid);
-    arts_atomic_add(&epoch->activeCount, 1);
+    arts_atomic_add(&epoch->active_count, 1);
     arts_atomic_add_u64(&epoch->queued, 1);
   } else {
     ARTS_ERROR("Epoch [Guid:%lu] doesn't exist in the Route table", epoch_guid);
@@ -263,12 +304,12 @@ bool check_epoch(arts_epoch_t *epoch, unsigned int total_active,
   ARTS_INFO("Checking Epoch [Guid:%lu, TotalActive:%u, TotalFinish:%u, "
             "Diff:%u, Phase:%u, LastActive:%u, LastFinished:%u]",
             epoch->guid, total_active, total_finish, diff, epoch->phase,
-            epoch->lastActiveCount, epoch->lastFinishedCount);
+            epoch->last_active_count, epoch->last_finished_count);
   // We have a zero
   if (total_finish && !diff) {
     // Lets check the phase and if we have the same counts as before
-    if (epoch->phase == PHASE_2 && epoch->lastActiveCount == total_active &&
-        epoch->lastFinishedCount == total_finish) {
+    if (epoch->phase == PHASE_2 && epoch->last_active_count == total_active &&
+        epoch->last_finished_count == total_finish) {
       ARTS_DEBUG(
           "check_epoch: Advancing to PHASE_3 - epoch termination complete!");
       epoch->phase = PHASE_3;
@@ -278,17 +319,17 @@ bool check_epoch(arts_epoch_t *epoch, unsigned int total_active,
       if (epoch->ticket) {
         arts_signal_context(epoch->ticket);
       }
-      if (epoch->terminationExitGuid) {
-        arts_signal_edt_value(epoch->terminationExitGuid,
-                           epoch->terminationExitSlot, total_finish);
+      if (epoch->termination_exit_guid) {
+        arts_signal_edt_value(epoch->termination_exit_guid,
+                           epoch->termination_exit_slot, total_finish);
       } else {
         global_guid_shutdown(epoch->guid);
       }
       return false;
     }
     // We didn't match the last one so lets try again
-    epoch->lastActiveCount = total_active;
-    epoch->lastFinishedCount = total_finish;
+    epoch->last_active_count = total_active;
+    epoch->last_finished_count = total_finish;
     epoch->phase = PHASE_2;
     if (arts_global_rank_count == 1) {
       epoch->phase = PHASE_3;
@@ -298,9 +339,9 @@ bool check_epoch(arts_epoch_t *epoch, unsigned int total_active,
       if (epoch->ticket) {
         arts_signal_context(epoch->ticket);
 }
-      if (epoch->terminationExitGuid) {
-        arts_signal_edt_value(epoch->terminationExitGuid,
-                           epoch->terminationExitSlot, total_finish);
+      if (epoch->termination_exit_guid) {
+        arts_signal_edt_value(epoch->termination_exit_guid,
+                           epoch->termination_exit_slot, total_finish);
       } else {
         global_guid_shutdown(epoch->guid);
       }
@@ -316,13 +357,13 @@ void reduce_epoch(arts_guid_t epoch_guid, unsigned int active,
                  unsigned int finish) {
   arts_epoch_t *epoch = (arts_epoch_t *)arts_route_table_lookup_item(epoch_guid);
   if (epoch) {
-    unsigned int total_active = arts_atomic_add(&epoch->globalActiveCount, active);
+    unsigned int total_active = arts_atomic_add(&epoch->global_active_count, active);
     unsigned int total_finish =
-        arts_atomic_add(&epoch->globalFinishedCount, finish);
+        arts_atomic_add(&epoch->global_finished_count, finish);
     uint64_t outstanding_before = epoch->outstanding;
     if (arts_atomic_sub_u64(&epoch->outstanding, 1) == 1) {
-      total_active += epoch->activeCount;
-      total_finish += epoch->finishedCount;
+      total_active += epoch->active_count;
+      total_finish += epoch->finished_count;
 
       ARTS_DEBUG("reduce_epoch [Guid:%lu]: total_active=%u, total_finish=%u, "
                  "phase=%u, outstanding_before=%lu, queued=%lu",
@@ -330,8 +371,8 @@ void reduce_epoch(arts_guid_t epoch_guid, unsigned int active,
                  outstanding_before, epoch->queued);
 
       // Reset for the next round
-      epoch->globalActiveCount = 0;
-      epoch->globalFinishedCount = 0;
+      epoch->global_active_count = 0;
+      epoch->global_finished_count = 0;
 
       if (check_epoch(epoch, total_active, total_finish)) {
         ARTS_DEBUG("  check_epoch returned TRUE - broadcasting new request");
@@ -505,8 +546,8 @@ arts_epoch_t *get_pool_epoch(arts_guid_t edt_guid, unsigned int slot) {
     }
   }
 
-  epoch->terminationExitGuid = edt_guid;
-  epoch->terminationExitSlot = slot;
+  epoch->termination_exit_guid = edt_guid;
+  epoch->termination_exit_slot = slot;
   arts_route_table_add_item_race(epoch, epoch->guid, arts_global_rank_id, false);
   arts_route_table_fire_oo(epoch->guid, arts_out_of_order_handler);
   return epoch;
@@ -522,10 +563,21 @@ void arts_yield() {
   EDT_RUNNING_TIME_START();
 }
 
+/*
+ * arts_wait_on_handle — Block current EDT until the given epoch completes.
+ *
+ * Increments the epoch's finished counter (this EDT is now "done" from the
+ * epoch's perspective), then either:
+ *   (a) Context-switches to another coroutine (if TMT enabled), or
+ *   (b) Spin-polls the scheduler loop until the epoch sets the flag to 0.
+ *
+ * This is a key synchronization point: if the epoch never terminates, the
+ * calling thread will spin here indefinitely (potential hang point).
+ */
 bool arts_wait_on_handle(arts_guid_t epoch_guid) {
   EDT_RUNNING_TIME_STOP();
   arts_guid_t *guid = arts_check_epoch_is_root(epoch_guid);
-  ARTS_DEBUG("Waiting on epoch [Guid:%lu]", epoch_guid);
+  ARTS_INFO("arts_wait_on_handle: Waiting on epoch [Guid:%lu]", epoch_guid);
   // For now lets leave this rule here
   if (guid) {
     arts_guid_t local = *guid;

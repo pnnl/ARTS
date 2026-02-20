@@ -49,20 +49,11 @@
 #include "arts/runtime/globals.h"
 #include "arts/runtime/runtime.h"
 #include "arts/runtime/compute/edt_functions.h"
-#include "arts/runtime/memory/array_db.h"
 #include "arts/runtime/memory/db_functions.h"
 #include "arts/runtime/memory/db_list.h"
 #include "arts/runtime/sync/termination_detection.h"
 #include "arts/system/arts_print.h"
 #include "arts/utils/atomics.h"
-
-static inline void arts_fill_packet_header(struct arts_remote_packet_s *header,
-                                        uint64_t size,
-                                        unsigned int message_type) {
-  header->size = size;
-  header->message_type = message_type;
-  header->rank = arts_global_rank_id;
-}
 
 static void arts_clear_exclusive_request(struct arts_db_s *db, int rank,
                                       arts_guid_t edt_guid) {
@@ -392,7 +383,7 @@ void arts_remote_handle_edt_move(void *ptr) {
   arts_route_table_add_item_race(edt, packet->guid, arts_global_rank_id,
                             false);
   ARTS_INFO("EDT[Guid:%lu] Moved to Rank: %d", packet->guid, arts_global_rank_id);
-  if (edt->depcNeeded == 0) {
+  if (edt->depc_needed == 0) {
     arts_handle_ready_edt(edt);
   } else {
     arts_route_table_fire_oo(packet->guid, arts_out_of_order_handler);
@@ -475,7 +466,7 @@ static void send_remote_edt_signal_packet(arts_guid_t edt, arts_guid_t db,
   packet.edt = edt;
   packet.slot = slot;
   packet.mode = mode;
-  packet.dbRoute = arts_guid_get_rank(db);
+  packet.db_route = arts_guid_get_rank(db);
   arts_fill_packet_header(&packet.header, sizeof(packet),
                        ARTS_REMOTE_EDT_SIGNAL_MSG);
   arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
@@ -599,7 +590,7 @@ void arts_db_request_callback(struct arts_edt_s *edt, unsigned int slot,
                            struct arts_db_s *db_res) {
   arts_edt_dep_t *depv = (arts_edt_dep_t *)arts_get_depv(edt);
   depv[slot].ptr = db_res + 1;
-  unsigned int temp = arts_atomic_sub(&edt->depcNeeded, 1U);
+  unsigned int temp = arts_atomic_sub(&edt->depc_needed, 1U);
   if (temp == 0) {
     arts_handle_remote_stolen_edt(edt);
 }
@@ -645,7 +636,7 @@ void arts_remote_db_send_check(int rank, struct arts_db_s *db, arts_type_t mode)
   if (!arts_guid_is_local(db->guid)) {
     arts_route_table_return_db(db->guid, false);
     arts_remote_db_send_now(rank, db);
-  } else if (arts_add_db_duplicate(db, rank, NULL, NULL_GUID, 0, mode)) {
+  } else if (arts_add_db_duplicate(db, rank, NULL, NULL_GUID, 0, mode, NULL)) {
     arts_remote_db_send_now(rank, db);
   }
 }
@@ -776,7 +767,7 @@ void arts_remote_db_full_send_check(int rank, struct arts_db_s *db, arts_guid_t 
   if (!arts_guid_is_local(db->guid)) {
     arts_route_table_return_db(db->guid, false);
     arts_remote_db_full_send_now(rank, db, edt_guid, slot, mode);
-  } else if (arts_add_db_duplicate(db, rank, NULL, edt_guid, slot, mode)) {
+  } else if (arts_add_db_duplicate(db, rank, NULL, edt_guid, slot, mode, NULL)) {
     arts_remote_db_full_send_now(rank, db, edt_guid, slot, mode);
     arts_clear_exclusive_request(db, rank, edt_guid);
   }
@@ -1073,56 +1064,6 @@ void arts_remote_handle_epoch_send(void *pack) {
   reduce_epoch(packet->epoch_guid, packet->active, packet->finish);
 }
 
-void arts_remote_atomic_add_in_array_db(unsigned int rank, arts_guid_t db_guid,
-                                  unsigned int index, unsigned int to_add,
-                                  arts_guid_t edt_guid, unsigned int slot,
-                                  arts_guid_t epoch_guid) {
-  struct arts_remote_atomic_add_in_array_db_packet_s packet;
-  packet.db_guid = db_guid;
-  packet.edt_guid = edt_guid;
-  packet.epoch_guid = epoch_guid;
-  packet.slot = slot;
-  packet.index = index;
-  packet.to_add = to_add;
-  arts_fill_packet_header(&packet.header, sizeof(packet),
-                       ARTS_ATOMIC_ADD_ARRAYDB_MSG);
-  arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
-}
-
-void arts_remote_handle_atomic_add_in_array_db(void *pack) {
-  struct arts_remote_atomic_add_in_array_db_packet_s *packet =
-      (struct arts_remote_atomic_add_in_array_db_packet_s *)pack;
-  struct arts_db_s *db = (struct arts_db_s *)arts_route_table_lookup_item(packet->db_guid);
-  internal_atomic_add_in_array_db(packet->db_guid, packet->index, packet->to_add,
-                             packet->edt_guid, packet->slot, packet->epoch_guid);
-}
-
-void arts_remote_atomic_compare_and_swap_in_array_db(
-    unsigned int rank, arts_guid_t db_guid, unsigned int index,
-    unsigned int old_value, unsigned int new_value, arts_guid_t edt_guid,
-    unsigned int slot, arts_guid_t epoch_guid) {
-  struct arts_remote_atomic_compare_and_swap_in_array_db_packet_s packet;
-  packet.db_guid = db_guid;
-  packet.edt_guid = edt_guid;
-  packet.epoch_guid = epoch_guid;
-  packet.slot = slot;
-  packet.index = index;
-  packet.old_value = old_value;
-  packet.new_value = new_value;
-  arts_fill_packet_header(&packet.header, sizeof(packet),
-                       ARTS_ATOMIC_CAS_ARRAYDB_MSG);
-  arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
-}
-
-void arts_remote_handle_atomic_compare_and_swap_in_array_db(void *pack) {
-  struct arts_remote_atomic_compare_and_swap_in_array_db_packet_s *packet =
-      (struct arts_remote_atomic_compare_and_swap_in_array_db_packet_s *)pack;
-  struct arts_db_s *db = (struct arts_db_s *)arts_route_table_lookup_item(packet->db_guid);
-  internal_atomic_compare_and_swap_in_array_db(
-      packet->db_guid, packet->index, packet->old_value, packet->new_value,
-      packet->edt_guid, packet->slot, packet->epoch_guid);
-}
-
 void arts_remote_epoch_delete(unsigned int rank, arts_guid_t epoch_guid) {
   struct arts_remote_guid_only_packet_s packet;
   packet.guid = epoch_guid;
@@ -1200,7 +1141,7 @@ extern volatile bool arts_counter_time_sync_received;
 // Worker sends sync request to master with its current timestamp (T1)
 void arts_remote_time_sync_request(void) {
   struct arts_remote_time_sync_req_packet_s packet;
-  packet.workerSendTime = arts_get_time_stamp(); // T1
+  packet.worker_send_time = arts_get_time_stamp(); // T1
   arts_fill_packet_header(&packet.header, sizeof(packet),
                        ARTS_REMOTE_TIME_SYNC_REQ_MSG);
 
@@ -1208,7 +1149,7 @@ void arts_remote_time_sync_request(void) {
   arts_remote_send_request_async((int)arts_global_master_rank_id, (char *)&packet,
                              sizeof(packet));
   ARTS_INFO("Time sync: Worker %u sent request to master %u at T1=%lu",
-            arts_global_rank_id, arts_global_master_rank_id, packet.workerSendTime);
+            arts_global_rank_id, arts_global_master_rank_id, packet.worker_send_time);
 }
 
 // Master handles sync request: records T2 and sends response with T1, T2
@@ -1218,7 +1159,7 @@ void arts_remote_handle_time_sync_req(void *pack) {
   uint64_t master_recv_time = arts_get_time_stamp(); // T2
 
   struct arts_remote_time_sync_resp_packet_s resp;
-  resp.workerSendTime = req->workerSendTime; // Echo T1
+  resp.worker_send_time = req->worker_send_time; // Echo T1
   resp.master_recv_time = master_recv_time;      // T2
   arts_fill_packet_header(&resp.header, sizeof(resp),
                        ARTS_REMOTE_TIME_SYNC_RESP_MSG);
@@ -1226,7 +1167,7 @@ void arts_remote_handle_time_sync_req(void *pack) {
   // Send response back to the requesting worker
   arts_remote_send_request_async((int)req->header.rank, (char *)&resp, sizeof(resp));
   ARTS_INFO("Time sync: Master received request from rank %u, T1=%lu, T2=%lu",
-            req->header.rank, req->workerSendTime, master_recv_time);
+            req->header.rank, req->worker_send_time, master_recv_time);
 }
 
 // Worker handles sync response: calculates offset using RTT
@@ -1235,7 +1176,7 @@ void arts_remote_handle_time_sync_resp(void *pack) {
       (struct arts_remote_time_sync_resp_packet_s *)pack;
   uint64_t worker_recv_time = arts_get_time_stamp(); // T3
 
-  uint64_t ntp_t1 = resp->workerSendTime;
+  uint64_t ntp_t1 = resp->worker_send_time;
   uint64_t ntp_t2 = resp->master_recv_time;
   uint64_t ntp_t3 = worker_recv_time;
 

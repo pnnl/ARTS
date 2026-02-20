@@ -102,7 +102,7 @@ void multiply_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
               tile_size, &beta, c_tile_dev, tile_size);
 
   arts_put_in_db_from_gpu(c_tile_dev, c_tile_guid, 0, size, true);
-  arts_signal_edt(to_signal, k, c_tile_guid);
+  arts_signal_edt(to_signal, k, c_tile_guid, ARTS_DB_WRITE);
 }
 
 __global__ void sum_mm_kernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -238,17 +238,17 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
         uint64_t args[] = {(uint64_t)sum_guid, i, j, k};
         arts_guid_t mul_guid = arts_edt_create_gpu_lib(multiply_mm, node_id, 4, args,
                                                  2, grid, threads);
-        arts_signal_edt(mul_guid, 0, arts_guid_range_get(a_tile_guids, (i * num_blocks) + k));
-        arts_signal_edt(mul_guid, 1, arts_guid_range_get(b_tile_guids, (k * num_blocks) + j));
+        arts_signal_edt(mul_guid, 0, arts_guid_range_get(a_tile_guids, (i * num_blocks) + k), ARTS_DB_WRITE);
+        arts_signal_edt(mul_guid, 1, arts_guid_range_get(b_tile_guids, (k * num_blocks) + j), ARTS_DB_WRITE);
       }
     }
   }
 
   arts_edt_create_with_guid(finish_block_mm, done_guid, 0, NULL,
                         3 + (num_blocks * num_blocks));
-  arts_signal_edt(done_guid, 0, c_mat_guid);
-  arts_signal_edt(done_guid, 1, a_mat_guid);
-  arts_signal_edt(done_guid, 2, b_mat_guid);
+  arts_signal_edt(done_guid, 0, c_mat_guid, ARTS_DB_WRITE);
+  arts_signal_edt(done_guid, 1, a_mat_guid, ARTS_DB_WRITE);
+  arts_signal_edt(done_guid, 2, b_mat_guid, ARTS_DB_WRITE);
   start = arts_get_time_stamp();
 }
 

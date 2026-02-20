@@ -61,7 +61,7 @@ enum abstractGroupId {
 
 void set_thread_mask(struct thread_mask_s *thread_mask, struct unit_mask_s *unit_mask,
                    struct unit_thread_s *unit_thread) {
-  thread_mask->cluster_id = unit_mask->cluster_id;
+  thread_mask->numa_domain_id = unit_mask->numa_domain_id;
   thread_mask->core_id = unit_mask->core_id;
   thread_mask->unit_id = unit_mask->unit_id;
   thread_mask->on = unit_mask->on;
@@ -101,15 +101,15 @@ void add_a_thread(struct unit_mask_s *mask, bool work_on, bool network_out_on,
                 bool pin) {
   struct unit_thread_s *next;
   mask->threads++;
-  if (mask->listHead == NULL) {
-    mask->listTail = mask->listHead =
+  if (mask->list_head == NULL) {
+    mask->list_tail = mask->list_head =
         (struct unit_thread_s *)arts_malloc(sizeof(struct unit_thread_s));
-    next = mask->listHead;
+    next = mask->list_head;
   } else {
-    next = mask->listTail;
+    next = mask->list_tail;
     next->next = (struct unit_thread_s *)arts_malloc(sizeof(struct unit_thread_s));
     next = next->next;
-    mask->listTail = next;
+    mask->list_tail = next;
   }
 
   next->worker = work_on;
@@ -154,12 +154,12 @@ void arts_abstract_machine_model_pin_thread(struct arts_core_info_s *core_info) 
 }
 #ifndef __APPLE__
   pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t),
-                         &core_info->linuxCpuSet);
+                         &core_info->linux_cpu_set);
 #endif
 }
 
-void init_cluster_units(hwloc_topology_t topology, hwloc_obj_t obj,
-                      hwloc_obj_t cluster, unsigned int cluster_id,
+void init_numa_domain_units(hwloc_topology_t topology, hwloc_obj_t obj,
+                      hwloc_obj_t numa_domain, unsigned int numa_domain_id,
                       unsigned int *unit_index, struct unit_mask_s *units) {
   if (obj == NULL) {
     return;
@@ -171,26 +171,26 @@ void init_cluster_units(hwloc_topology_t topology, hwloc_obj_t obj,
     } else {
       //            ARTS_INFO("NOT A CORE...");
     }
-    units[*unit_index].cluster_id = cluster_id;
+    units[*unit_index].numa_domain_id = numa_domain_id;
     units[*unit_index].unit_id = obj->os_index;
     units[*unit_index].on = 0;
 
     //        ARTS_INFO("Cluster: %u Unit: %u", cluster->os_index,
     //        obj->os_index);
 
-    units[*unit_index].listHead = NULL;
+    units[*unit_index].list_head = NULL;
     units[*unit_index].threads = 0;
     units[*unit_index].core_info.cpuset = hwloc_bitmap_dup(obj->cpuset);
 #ifndef __APPLE__
     fill_linux_cpu_set(units[*unit_index].core_info.cpuset,
-                    &units[*unit_index].core_info.linuxCpuSet);
+                    &units[*unit_index].core_info.linux_cpu_set);
 #endif
     *unit_index = (*unit_index) + 1;
   } else {
     //        ARTS_INFO("ARITY: %u", obj->arity);
     int i;
     for (i = 0; i < obj->arity; i++) {
-      init_cluster_units(topology, obj->children[i], cluster, cluster_id,
+      init_numa_domain_units(topology, obj->children[i], numa_domain, numa_domain_id,
                        unit_index, units);
 }
   }
@@ -199,59 +199,59 @@ void init_cluster_units(hwloc_topology_t topology, hwloc_obj_t obj,
 struct node_mask_s *get_node_mask() {
   struct node_mask_s *node =
       (struct node_mask_s *)arts_malloc(sizeof(struct node_mask_s));
-  num_numa_domains = node->num_clusters =
+  num_numa_domains = node->num_numa_domains =
       hwloc_get_nbobjs_by_type(topology, HWLOC_OBJ_NODE);
   bool is_uma = (num_numa_domains == 0);
   if (is_uma) {
-    num_numa_domains = node->num_clusters = 1;
+    num_numa_domains = node->num_numa_domains = 1;
 }
-  node->cluster = (struct cluster_mask_s *)arts_malloc(sizeof(struct cluster_mask_s) *
-                                                   node->num_clusters);
-  unsigned int cluster_index = 0;
+  node->numa_domain = (struct numa_domain_mask_s *)arts_malloc(sizeof(struct numa_domain_mask_s) *
+                                                   node->num_numa_domains);
+  unsigned int numa_domain_index = 0;
   unsigned int core_index = 0;
-  hwloc_obj_t cluster = is_uma ? hwloc_get_root_obj(topology) : NULL;
+  hwloc_obj_t numa_domain = is_uma ? hwloc_get_root_obj(topology) : NULL;
   hwloc_obj_t core = NULL;
-  for (cluster_index = 0; cluster_index < node->num_clusters; cluster_index++) {
+  for (numa_domain_index = 0; numa_domain_index < node->num_numa_domains; numa_domain_index++) {
     if (!is_uma) {
-      cluster = hwloc_get_next_obj_by_type(topology, HWLOC_OBJ_NODE, cluster);
+      numa_domain = hwloc_get_next_obj_by_type(topology, HWLOC_OBJ_NODE, numa_domain);
 }
-    unsigned int cluster_id = cluster_index;
-    if (cluster && cluster->os_index != HWLOC_UNKNOWN_INDEX) {
-      cluster_id = cluster->os_index;
+    unsigned int numa_domain_id = numa_domain_index;
+    if (numa_domain && numa_domain->os_index != HWLOC_UNKNOWN_INDEX) {
+      numa_domain_id = numa_domain->os_index;
 }
     bool use_global_core_index = false;
 #ifdef USE_HWLOC_V2
-    if (cluster && cluster->cpuset) {
-      node->cluster[cluster_index].num_cores =
-          hwloc_get_nbobjs_inside_cpuset_by_type(topology, cluster->cpuset,
+    if (numa_domain && numa_domain->cpuset) {
+      node->numa_domain[numa_domain_index].num_cores =
+          hwloc_get_nbobjs_inside_cpuset_by_type(topology, numa_domain->cpuset,
                                                  HWLOC_OBJ_CORE);
     } else {
-      node->cluster[cluster_index].num_cores = 0;
+      node->numa_domain[numa_domain_index].num_cores = 0;
     }
 #else
-    node->cluster[cluster_index].num_cores =
-        get_number_of_type(topology, cluster, HWLOC_OBJ_CORE);
+    node->numa_domain[numa_domain_index].num_cores =
+        get_number_of_type(topology, numa_domain, HWLOC_OBJ_CORE);
 #endif
-    if (!node->cluster[cluster_index].num_cores) {
-      node->cluster[cluster_index].num_cores =
+    if (!node->numa_domain[numa_domain_index].num_cores) {
+      node->numa_domain[numa_domain_index].num_cores =
           hwloc_get_nbobjs_by_type(topology, HWLOC_OBJ_CORE);
       use_global_core_index = true;
     }
-    if (!node->cluster[cluster_index].num_cores) {
-      node->cluster[cluster_index].num_cores = 1;
+    if (!node->numa_domain[numa_domain_index].num_cores) {
+      node->numa_domain[numa_domain_index].num_cores = 1;
       use_global_core_index = true;
     }
-    node->cluster[cluster_index].core = (struct core_mask_s *)arts_malloc(
-        sizeof(struct core_mask_s) * node->cluster[cluster_index].num_cores);
-    for (core_index = 0; core_index < node->cluster[cluster_index].num_cores;
+    node->numa_domain[numa_domain_index].core = (struct core_mask_s *)arts_malloc(
+        sizeof(struct core_mask_s) * node->numa_domain[numa_domain_index].num_cores);
+    for (core_index = 0; core_index < node->numa_domain[numa_domain_index].num_cores;
          core_index++) {
       if (use_global_core_index) {
         core = hwloc_get_obj_by_type(topology, HWLOC_OBJ_CORE, core_index);
       } else {
 #ifdef USE_HWLOC_V2
-        if (cluster && cluster->cpuset) {
+        if (numa_domain && numa_domain->cpuset) {
           core = hwloc_get_next_obj_inside_cpuset_by_type(
-              topology, cluster->cpuset, HWLOC_OBJ_CORE, core);
+              topology, numa_domain->cpuset, HWLOC_OBJ_CORE, core);
         } else {
           core = hwloc_get_next_obj_by_type(topology, HWLOC_OBJ_CORE, core);
         }
@@ -259,23 +259,23 @@ struct node_mask_s *get_node_mask() {
         core = hwloc_get_next_obj_by_type(topology, HWLOC_OBJ_CORE, core);
 #endif
       }
-      hwloc_obj_t unit_parent = core ? core : cluster;
-      node->cluster[cluster_index].core[core_index].num_units =
+      hwloc_obj_t unit_parent = core ? core : numa_domain;
+      node->numa_domain[numa_domain_index].core[core_index].num_units =
           unit_parent ? get_number_of_type(topology, unit_parent, HWLOC_OBJ_PU) : 0;
-      if (!node->cluster[cluster_index].core[core_index].num_units) {
-        node->cluster[cluster_index].core[core_index].num_units =
+      if (!node->numa_domain[numa_domain_index].core[core_index].num_units) {
+        node->numa_domain[numa_domain_index].core[core_index].num_units =
             hwloc_get_nbobjs_by_type(topology, HWLOC_OBJ_PU);
 }
-      if (!node->cluster[cluster_index].core[core_index].num_units) {
-        node->cluster[cluster_index].core[core_index].num_units = 1;
+      if (!node->numa_domain[numa_domain_index].core[core_index].num_units) {
+        node->numa_domain[numa_domain_index].core[core_index].num_units = 1;
 }
-      node->cluster[cluster_index].core[core_index].unit =
+      node->numa_domain[numa_domain_index].core[core_index].unit =
           (struct unit_mask_s *)arts_malloc(
               sizeof(struct unit_mask_s) *
-              node->cluster[cluster_index].core[core_index].num_units);
+              node->numa_domain[numa_domain_index].core[core_index].num_units);
       unsigned int unit_index = 0;
-      init_cluster_units(topology, unit_parent, cluster, cluster_id, &unit_index,
-                       node->cluster[cluster_index].core[core_index].unit);
+      init_numa_domain_units(topology, unit_parent, numa_domain, numa_domain_id, &unit_index,
+                       node->numa_domain[numa_domain_index].core[core_index].unit);
     }
   }
   // hwloc_topology_destroy(topology);
@@ -285,12 +285,12 @@ struct node_mask_s *get_node_mask() {
 void default_policy(unsigned int number_of_workers, unsigned int number_of_senders,
                    unsigned int number_of_receivers, struct node_mask_s *node,
                    struct arts_config_s *config) {
-  unsigned int num_clusters = node->num_clusters;
-  unsigned int num_cores = node->cluster[0].num_cores;
-  unsigned int num_units = node->cluster[0].core[0].num_units;
-  //    ARTS_INFO("%d %d %d", num_clusters, num_cores, num_units);
-  unsigned int cores_per_cluster = num_cores * num_units;
-  unsigned int core_count = num_clusters * num_cores * num_units;
+  unsigned int num_numa_domains = node->num_numa_domains;
+  unsigned int num_cores = node->numa_domain[0].num_cores;
+  unsigned int num_units = node->numa_domain[0].core[0].num_units;
+  //    ARTS_INFO("%d %d %d", num_numa_domains, num_cores, num_units);
+  unsigned int cores_per_numa_domain = num_cores * num_units;
+  unsigned int core_count = num_numa_domains * num_cores * num_units;
   unsigned int i = 0;
   unsigned int j = 0;
   unsigned int k = 0;
@@ -306,36 +306,36 @@ void default_policy(unsigned int number_of_workers, unsigned int number_of_sende
   unsigned int network_out_thread_id = 0;
   unsigned int network_in_thread_id = 0;
   while (total_threads < number_of_workers + network_threads) {
-    node->cluster[i].core[j].unit[k].on = 1;
+    node->numa_domain[i].core[j].unit[k].on = 1;
 
     if (total_threads < number_of_workers) {
-      add_a_thread(&node->cluster[i].core[j].unit[k], 1, 0, 0, ABSTRACT_WORKER,
+      add_a_thread(&node->numa_domain[i].core[j].unit[k], 1, 0, 0, ABSTRACT_WORKER,
                  worker_thread_id++, config->pin_threads);
     } else {
       if (total_threads < number_of_workers + number_of_senders) {
-        add_a_thread(&node->cluster[i].core[j].unit[k], 0, 1, 0, ABSTRACT_OUTBOUND,
+        add_a_thread(&node->numa_domain[i].core[j].unit[k], 0, 1, 0, ABSTRACT_OUTBOUND,
                    network_out_thread_id++, config->pin_threads);
       } else if (total_threads <
                  number_of_workers + number_of_receivers + number_of_senders) {
-        add_a_thread(&node->cluster[i].core[j].unit[k], 0, 0, 1, ABSTRACT_INBOUND,
+        add_a_thread(&node->numa_domain[i].core[j].unit[k], 0, 0, 1, ABSTRACT_INBOUND,
                    network_in_thread_id++, config->pin_threads);
       }
     }
     total_threads++;
-    num_cores = node->cluster[i].num_cores;
-    num_units = node->cluster[i].core[j].num_units;
+    num_cores = node->numa_domain[i].num_cores;
+    num_units = node->numa_domain[i].core[j].num_units;
     j += stride;
     if (j >= num_cores) {
       i++;
-      if (i < num_clusters) {
-        while (node->cluster[i].num_cores == 0) {
+      if (i < num_numa_domains) {
+        while (node->numa_domain[i].num_cores == 0) {
           i++;
-          if (i == num_clusters) {
+          if (i == num_numa_domains) {
             break;
 }
         }
       }
-      if (i == num_clusters) {
+      if (i == num_numa_domains) {
         i = 0;
 
         if (stride > 1) {
@@ -366,11 +366,11 @@ unsigned int flatten_mask(struct arts_config_s *config, struct node_mask_s *node
   unsigned int k;
   unsigned int total;
   unsigned int count = 0;
-  for (i = 0; i < node->num_clusters; i++) {
-    for (j = 0; j < node->cluster[i].num_cores; j++) {
-      for (k = 0; k < node->cluster[i].core[j].num_units; k++) {
-        if (node->cluster[i].core[j].unit[k].on) {
-          count += node->cluster[i].core[j].unit[k].threads;
+  for (i = 0; i < node->num_numa_domains; i++) {
+    for (j = 0; j < node->numa_domain[i].num_cores; j++) {
+      for (k = 0; k < node->numa_domain[i].core[j].num_units; k++) {
+        if (node->numa_domain[i].core[j].unit[k].on) {
+          count += node->numa_domain[i].core[j].unit[k].threads;
 }
       }
     }
@@ -381,14 +381,14 @@ unsigned int flatten_mask(struct arts_config_s *config, struct node_mask_s *node
       (unsigned int *)arts_calloc(ABSTRACT_MAX, sizeof(unsigned int));
   count = 0;
   struct unit_thread_s *next;
-  for (i = 0; i < node->num_clusters; i++) {
-    for (j = 0; j < node->cluster[i].num_cores; j++) {
-      for (k = 0; k < node->cluster[i].core[j].num_units; k++) {
-        if (node->cluster[i].core[j].unit[k].on) {
-          next = node->cluster[i].core[j].unit[k].listHead;
+  for (i = 0; i < node->num_numa_domains; i++) {
+    for (j = 0; j < node->numa_domain[i].num_cores; j++) {
+      for (k = 0; k < node->numa_domain[i].core[j].num_units; k++) {
+        if (node->numa_domain[i].core[j].unit[k].on) {
+          next = node->numa_domain[i].core[j].unit[k].list_head;
 
           while (next != NULL) {
-            set_thread_mask(&(*flat)[count], &node->cluster[i].core[j].unit[k],
+            set_thread_mask(&(*flat)[count], &node->numa_domain[i].core[j].unit[k],
                           next);
             (*flat)[count].group_pos = group_count[next->group_id]++;
             (*flat)[count].id = count;
@@ -402,18 +402,18 @@ unsigned int flatten_mask(struct arts_config_s *config, struct node_mask_s *node
     }
   }
   arts_free(group_count);
-  for (i = 0; i < node->num_clusters; i++) {
-    for (j = 0; j < node->cluster[i].num_cores; j++) {
-      for (k = 0; k < node->cluster[i].core[j].num_units; k++) {
-        if (node->cluster[i].core[j].unit[k].core_info.cpuset) {
-          hwloc_bitmap_free(node->cluster[i].core[j].unit[k].core_info.cpuset);
+  for (i = 0; i < node->num_numa_domains; i++) {
+    for (j = 0; j < node->numa_domain[i].num_cores; j++) {
+      for (k = 0; k < node->numa_domain[i].core[j].num_units; k++) {
+        if (node->numa_domain[i].core[j].unit[k].core_info.cpuset) {
+          hwloc_bitmap_free(node->numa_domain[i].core[j].unit[k].core_info.cpuset);
 }
       }
-      arts_free(node->cluster[i].core[j].unit);
+      arts_free(node->numa_domain[i].core[j].unit);
     }
-    arts_free(node->cluster[i].core);
+    arts_free(node->numa_domain[i].core);
   }
-  arts_free(node->cluster);
+  arts_free(node->numa_domain);
   arts_free(node);
   return total;
 }
@@ -461,17 +461,17 @@ void destroy_thread_mask(struct thread_mask_s *mask) {
 }
 
 void print_topology(struct node_mask_s *node) {
-  ARTS_INFO("Node %u", node->num_clusters);
+  ARTS_INFO("Node %u", node->num_numa_domains);
   unsigned int i;
   unsigned int j;
   unsigned int k;
-  for (i = 0; i < node->num_clusters; i++) {
-    ARTS_INFO(" Cluster %u", node->cluster[i].num_cores);
-    for (j = 0; j < node->cluster[i].num_cores; j++) {
-      ARTS_INFO("  Core %u", node->cluster[i].core[j].num_units);
-      for (k = 0; k < node->cluster[i].core[j].num_units; k++) {
-        struct unit_mask_s *unit = &node->cluster[i].core[j].unit[k];
-        struct unit_thread_s *temp = unit->listHead;
+  for (i = 0; i < node->num_numa_domains; i++) {
+    ARTS_INFO(" Cluster %u", node->numa_domain[i].num_cores);
+    for (j = 0; j < node->numa_domain[i].num_cores; j++) {
+      ARTS_INFO("  Core %u", node->numa_domain[i].core[j].num_units);
+      for (k = 0; k < node->numa_domain[i].core[j].num_units; k++) {
+        struct unit_mask_s *unit = &node->numa_domain[i].core[j].unit[k];
+        struct unit_thread_s *temp = unit->list_head;
         while (temp != NULL) {
           ARTS_INFO("   Unit %u %u %u %u %u %u %u", temp->id, unit->unit_id,
                     unit->on, temp->worker, temp->network_send,
@@ -485,7 +485,7 @@ void print_topology(struct node_mask_s *node) {
 #else
 
 void arts_abstract_machine_model_pin_thread(struct arts_core_info_s *core_info) {
-  arts_pthread_affinity(core_info->cpuId, true);
+  arts_pthread_affinity(core_info->cpu_id, true);
 }
 
 int artsAffinityFromPthreadValid(unsigned int i, int *validCpus,
@@ -551,7 +551,7 @@ void default_policy(unsigned int number_of_workers, unsigned int number_of_sende
     int tempAffin =
         artsAffinityFromPthreadValid(i, validCpus, validCpuCount - networkCores,
                                      workerCores, stride); // i % num_cores;
-    flat[i % workerCores].core_id = flat[i % workerCores].core_info.cpuId =
+    flat[i % workerCores].core_id = flat[i % workerCores].core_info.cpu_id =
         tempAffin;
     add_a_thread(&flat[i % workerCores], 1, 0, 0, ABSTRACT_WORKER,
                worker_thread_id++, config->pin_threads);
@@ -575,7 +575,7 @@ void default_policy(unsigned int number_of_workers, unsigned int number_of_sende
     for (; next < num_cores; next += config->cores_per_network_thread) {
       if (validCpus[next] > -1) {
         flat[i + workerCores].on = 1;
-        flat[i + workerCores].core_id = flat[i + workerCores].core_info.cpuId =
+        flat[i + workerCores].core_id = flat[i + workerCores].core_info.cpu_id =
             validCpus[next];
         add_a_thread(&flat[i + workerCores], 0, 1, 0, ABSTRACT_OUTBOUND,
                    network_out_thread_id++, config->pin_threads);
@@ -589,7 +589,7 @@ void default_policy(unsigned int number_of_workers, unsigned int number_of_sende
       if (validCpus[next] > -1) {
         flat[i + workerCores + number_of_senders].on = 1;
         flat[i + workerCores + number_of_senders].core_id =
-            flat[i + workerCores + number_of_senders].core_info.cpuId =
+            flat[i + workerCores + number_of_senders].core_info.cpu_id =
                 validCpus[next];
         add_a_thread(&flat[i + workerCores + number_of_senders], 0, 0, 1,
                    ABSTRACT_INBOUND, network_in_thread_id++, config->pin_threads);
@@ -618,7 +618,7 @@ unsigned int flatten_mask(struct arts_config_s *config, unsigned int num_cores,
   unsigned int count = 0;
   for (int i = 0; i < num_cores; i++) {
     if (unit[i].on) {
-      next = unit[i].listHead;
+      next = unit[i].list_head;
 
       while (next != NULL) {
         assert(count < maskSize);
@@ -688,7 +688,7 @@ void print_mask(struct thread_mask_s *units, unsigned int number_of_units) {
     ARTS_INFO_MASTER(
         "%3u    %3u     %3u       %3u     %3u    %3u     %1u     %1u "
         "    %1u     %1u      %1u    %1u",
-        units[i].id, units[i].group_id, units[i].group_pos, units[i].cluster_id,
+        units[i].id, units[i].group_id, units[i].group_pos, units[i].numa_domain_id,
         units[i].core_id, units[i].unit_id, units[i].on, units[i].worker,
         units[i].network_send, units[i].network_receive, units[i].pin,
         units[i].status_send);

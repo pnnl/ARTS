@@ -72,7 +72,7 @@ void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t db_guid =
       arts_db_create((void **)&ptr, sizeof(unsigned int), NULL);
   *ptr = (int)node_id;
-  arts_signal_edt(reduction_guid, node_id, db_guid);
+  arts_signal_edt(reduction_guid, node_id, db_guid, ARTS_DB_WRITE);
 }
 
 void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,

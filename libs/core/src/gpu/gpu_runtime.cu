@@ -161,7 +161,7 @@ arts_guid_t internal_edt_create_gpu(arts_edt_t func_ptr, arts_guid_t *guid,
       sizeof(arts_gpu_edt_t) + (paramc * sizeof(uint64_t)) + dep_space + mode_space;
 
   arts_gpu_edt_t *edt = (arts_gpu_edt_t *)arts_calloc(1, edt_space);
-  edt->wrapperEdt.invalidateCount = 1;
+  edt->wrapperEdt.invalidate_count = 1;
   edt->grid = grid;
   edt->block = block;
   edt->gpuToRunOn = gpu_to_run_on;
@@ -174,7 +174,7 @@ arts_guid_t internal_edt_create_gpu(arts_edt_t func_ptr, arts_guid_t *guid,
   // artsIntrospectionEdtCreateBegin();
   (void)arts_edt_create_internal(
       (struct arts_edt_s *)edt, ARTS_GPU_EDT, guid, route,
-      arts_thread_info.cluster_id, edt_space, NULL_GUID, func_ptr, paramc, paramv,
+      arts_thread_info.numa_domain_id, edt_space, NULL_GUID, func_ptr, paramc, paramv,
       depc, true, NULL_GUID, has_depv, 0);
   // artsIntrospectionEdtCreateFinish(created);
   //    ARTSEDTCOUNTERTIMERENDINCREMENT(EDT_CREATE_COUNTER);
@@ -315,9 +315,10 @@ void arts_gpu_host_wrap_up(void *edt_packet, arts_guid_t to_signal, uint32_t slo
 
   arts_type_t *modes = arts_get_dep_modes(edt_packet);
   release_dbs(depc, depv, modes, true);
+  arts_release_created_dbs();
 
   if (edt->lib) {
-    edt->wrapperEdt.invalidateCount = 0;
+    edt->wrapperEdt.invalidate_count = 0;
     arts_route_table_fire_oo(edt->wrapperEdt.current_edt, arts_out_of_order_handler);
   } else if (edt->wrapperEdt.epoch_guid) {
     increment_finished_epoch(edt->wrapperEdt.epoch_guid);
@@ -327,11 +328,11 @@ void arts_gpu_host_wrap_up(void *edt_packet, arts_guid_t to_signal, uint32_t slo
   // Signal next
   if (to_signal) {
     if (edt->passthrough) {
-      arts_signal_edt(to_signal, slot, depv[data_guid].guid);
+      arts_signal_edt(to_signal, slot, depv[data_guid].guid, ARTS_DB_WRITE);
     } else {
       arts_type_t mode = arts_guid_get_type(to_signal);
       if (mode == ARTS_EDT || mode == ARTS_GPU_EDT) {
-        arts_signal_edt(to_signal, slot, data_guid);
+        arts_signal_edt(to_signal, slot, data_guid, ARTS_DB_WRITE);
       }
       if (mode == ARTS_EVENT) {
         arts_event_satisfy_slot(to_signal, data_guid, slot);

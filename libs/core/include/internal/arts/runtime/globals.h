@@ -36,8 +36,8 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef ARTS_RUNTIME_SYNC_GLOBALS_H
-#define ARTS_RUNTIME_SYNC_GLOBALS_H
+#ifndef ARTS_RUNTIME_GLOBALS_H
+#define ARTS_RUNTIME_GLOBALS_H
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -121,7 +121,7 @@ struct arts_runtime_private_s {
   unsigned int core_id;
   unsigned int thread_id;
   unsigned int group_id;
-  unsigned int cluster_id;
+  unsigned int numa_domain_id;
   unsigned int back_off;
   volatile unsigned int outstanding_memory_moves;
   struct atomic_create_barrier_info_s atomic_wait;
@@ -151,11 +151,15 @@ extern uint64_t arts_guid_min;
 extern uint64_t arts_guid_max;
 
 #define MASTER_PRINTF(...)                                                     \
-  if (arts_global_rank_id == arts_global_master_rank_id)                              \
-  arts_printf(__VA_ARGS__)
+  do {                                                                         \
+    if (arts_global_rank_id == arts_global_master_rank_id)                      \
+      arts_printf(__VA_ARGS__);                                                \
+  } while (0)
 #define ONCE_PRINTF(...)                                                       \
-  if (arts_global_i_will_print == true)                                            \
-  arts_printf(__VA_ARGS__)
+  do {                                                                         \
+    if (arts_global_i_will_print == true)                                       \
+      arts_printf(__VA_ARGS__);                                                \
+  } while (0)
 
 #define ARTS_LOOK_UP_CONFIG(name) arts_node_info.name
 
@@ -168,6 +172,7 @@ extern uint64_t arts_guid_max;
                                        "ARTS_EPOCH",                           \
                                        "ARTS_CALLBACK",                        \
                                        "ARTS_BUFFER",                          \
+                                       "ARTS_DB",                              \
                                        "ARTS_DB_READ",                         \
                                        "ARTS_DB_WRITE",                        \
                                        "ARTS_DB_PIN",                          \
@@ -188,18 +193,18 @@ extern uint64_t arts_guid_max;
 extern const char *const arts_type_name[];
 
 extern volatile uint64_t outstanding_edts;
-void check_out_edts(uint64_t threashold);
+void check_out_edts(uint64_t threshold);
 
 // #ifdef CHECK_NO_EDT
-#define INC_OUSTANDING_EDTS(num_edts)                                             \
+#define INC_OUTSTANDING_EDTS(num_edts)                                            \
   arts_atomic_fetch_add_u64(&outstanding_edts, num_edts)
-#define DEC_OUSTANDING_EDTS(num_edts)                                             \
+#define DEC_OUTSTANDING_EDTS(num_edts)                                            \
   arts_atomic_fetch_sub_u64(&outstanding_edts, num_edts)
-#define CHECK_OUTSTANDING_EDTS(threashold) check_out_edts(threashold)
+#define CHECK_OUTSTANDING_EDTS(threshold) check_out_edts(threshold)
 // #else
-// #define INC_OUSTANDING_EDTS(num_edts)
-// #define DEC_OUSTANDING_EDTS(num_edts)
-// #define CHECK_OUTSTANDING_EDTS(threashold)
+// #define INC_OUTSTANDING_EDTS(num_edts)
+// #define DEC_OUTSTANDING_EDTS(num_edts)
+// #define CHECK_OUTSTANDING_EDTS(threshold)
 // #endif
 
 #ifdef __cplusplus

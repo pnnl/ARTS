@@ -104,9 +104,9 @@ bool arts_event_create_internal(arts_guid_t *guid, unsigned int route,
 
 arts_guid_t arts_event_create(unsigned int route, unsigned int latch_count) {
   EVENT_CREATE_COUNTER_START();
-  if (route == -1) {
+  if (route == ARTS_HINT_CURRENT_NODE) {
     route = arts_global_rank_id;
-}
+  }
   arts_guid_t guid = NULL_GUID;
   arts_event_create_internal(&guid, route, INITIAL_DEPENDENT_SIZE, latch_count,
                           false, NULL_GUID);
@@ -145,7 +145,7 @@ void arts_event_destroy(arts_guid_t guid) {
 void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
                           uint32_t slot) {
   SIGNAL_EVENT_COUNTER_START();
-  if (current_edt && current_edt->invalidateCount > 0) {
+  if (current_edt && current_edt->invalidate_count > 0) {
     arts_out_of_order_event_satisfy_slot(current_edt->current_edt, event_guid, data_guid,
                                    slot, true);
     return;
@@ -204,11 +204,12 @@ void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
         while (i < last_known) {
           j = i - total_size;
           while (i < last_known && j < dependent_list->size) {
-            while (!dependent[j].doneWriting) {
+            while (!dependent[j].done_writing) {
               ;
 }
             if (dependent[j].type == ARTS_EDT) {
-              arts_signal_edt(dependent[j].addr, dependent[j].slot, event->data);
+              arts_signal_edt(dependent[j].addr, dependent[j].slot, event->data,
+                              ARTS_DB_WRITE);
             } else if (dependent[j].type == ARTS_EVENT) {
               SIGNAL_EVENT_COUNTER_STOP();
               arts_event_satisfy_slot(dependent[j].addr, event->data,
@@ -224,9 +225,12 @@ void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
             i++;
           }
           total_size += (int)dependent_list->size;
-          while (i < last_known && dependent_list->next == NULL) {
+          if (i >= last_known) {
+            break;
+          }
+          while (dependent_list->next == NULL) {
             ;
-}
+          }
           dependent_list = dependent_list->next;
           dependent = dependent_list->dependents;
         }
@@ -255,6 +259,10 @@ struct arts_dependent_s *arts_dependent_get(struct arts_dependent_list_s *head,
           temp = (volatile struct arts_dependent_list_s *)arts_calloc(
               1, sizeof(struct arts_dependent_list_s) +
                      (sizeof(struct arts_dependent_s) * list->size * 2));
+          if (temp == NULL) {
+            arts_printf("FATAL: arts_dependent_get: calloc failed\n");
+            arts_debug_generate_seg_fault();
+          }
           temp->size = list->size * 2;
           list->next = (struct arts_dependent_list_s *)temp;
         }
@@ -299,7 +307,7 @@ void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
     dependent->addr = destination;
     dependent->slot = slot;
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
-    dependent->doneWriting = true;
+    dependent->done_writing = true;
 
     unsigned int destroy_event = (event->destroy_on_fire != -1)
                                     ? arts_atomic_sub(&event->destroy_on_fire, 1U)
@@ -309,7 +317,7 @@ void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
         ;
 }
       if (position >= event->pos - 1) {
-        arts_signal_edt(destination, slot, event->data);
+        arts_signal_edt(destination, slot, event->data, ARTS_DB_WRITE);
         if (!destroy_event) {
           arts_event_free(event);
           arts_route_table_remove_item(source);
@@ -325,7 +333,7 @@ void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
     dependent->addr = destination;
     dependent->slot = slot;
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
-    dependent->doneWriting = true;
+    dependent->done_writing = true;
 
     unsigned int destroy_event = (event->destroy_on_fire != -1)
                                     ? arts_atomic_sub(&event->destroy_on_fire, 1U)
@@ -358,7 +366,7 @@ void arts_add_local_event_callback(arts_guid_t source, event_callback_t callback
     dependent->addr = NULL_GUID;
     dependent->slot = 0;
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
-    dependent->doneWriting = true;
+    dependent->done_writing = true;
 
     unsigned int destroy_event = (event->destroy_on_fire != -1)
                                     ? arts_atomic_sub(&event->destroy_on_fire, 1U)
@@ -530,9 +538,9 @@ arts_guid_t arts_persistent_event_create(unsigned int route,
                                      arts_guid_t data_guid) {
   (void)latch_count;
   PERSISTENT_EVENT_CREATE_COUNTER_START();
-  if (route == -1) {
+  if (route == ARTS_HINT_CURRENT_NODE) {
     route = arts_global_rank_id;
-}
+  }
   arts_guid_t guid = NULL_GUID;
   arts_persistent_event_create_internal(&guid, route, data_guid);
   PERSISTENT_EVENT_CREATE_COUNTER_STOP();
@@ -556,7 +564,7 @@ void arts_persistent_event_destroy(arts_guid_t guid) {
 void arts_persistent_event_satisfy(arts_guid_t event_guid, uint32_t action,
                                 bool lock) {
   SIGNAL_PERSISTENT_EVENT_COUNTER_START();
-  if (current_edt && current_edt->invalidateCount > 0) {
+  if (current_edt && current_edt->invalidate_count > 0) {
     arts_out_of_order_persistent_event_satisfy_slot(current_edt->current_edt, event_guid,
                                              action, true);
     return;
@@ -629,7 +637,7 @@ void arts_persistent_event_satisfy(arts_guid_t event_guid, uint32_t action,
       while (i < last_known) {
         j = i - total_size;
         while (i < last_known && j < dependent_list->size) {
-          while (!dependent[j].doneWriting) {
+          while (!dependent[j].done_writing) {
             ;
 }
           if (dependent[j].type == ARTS_EDT) {
@@ -656,7 +664,7 @@ void arts_persistent_event_satisfy(arts_guid_t event_guid, uint32_t action,
                     dependent[j].mode);
               } else {
                 arts_signal_edt(dependent[j].addr, dependent[j].slot,
-                              event->data);
+                              event->data, ARTS_DB_WRITE);
               }
             } else {
               ARTS_DEBUG("Event data is NULL_GUID for event %u", event_guid);
@@ -676,9 +684,12 @@ void arts_persistent_event_satisfy(arts_guid_t event_guid, uint32_t action,
           i++;
         }
         total_size += (int)dependent_list->size;
-        while (i < last_known && dependent_list->next == NULL) {
+        if (i >= last_known) {
+          break;
+        }
+        while (dependent_list->next == NULL) {
           ;
-}
+        }
         dependent_list = dependent_list->next;
         dependent = dependent_list->dependents;
       }
@@ -745,7 +756,7 @@ void arts_add_dependence_to_persistent_event(arts_guid_t event_source,
     dependent->slot = edt_slot;
     dependent->mode = ARTS_NULL;
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
-    dependent->doneWriting = true;
+    dependent->done_writing = true;
 
     unsigned int res = arts_atomic_fetch_add(&version->latch_count, 0U);
     if (res == 0) {
@@ -760,7 +771,7 @@ void arts_add_dependence_to_persistent_event(arts_guid_t event_source,
     dependent->slot = edt_slot;
     dependent->mode = ARTS_NULL;
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
-    dependent->doneWriting = true;
+    dependent->done_writing = true;
 
     if (arts_atomic_fetch_add(&version->latch_count, 0U) == 0) {
       needs_update = true;
@@ -830,7 +841,7 @@ void arts_add_dependence_to_persistent_event_with_mode_and_diff(arts_guid_t even
     dependent->byte_offset = 0;
     dependent->size = 0;
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
-    dependent->doneWriting = true;
+    dependent->done_writing = true;
 
     unsigned int res = arts_atomic_fetch_add(&version->latch_count, 0U);
     if (res == 0) {
@@ -847,7 +858,7 @@ void arts_add_dependence_to_persistent_event_with_mode_and_diff(arts_guid_t even
     dependent->byte_offset = 0;
     dependent->size = 0;
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
-    dependent->doneWriting = true;
+    dependent->done_writing = true;
 
     if (arts_atomic_fetch_add(&version->latch_count, 0U) == 0) {
       needs_update = true;
@@ -908,7 +919,7 @@ void arts_add_dependence_to_persistent_event_with_byte_offset(
     dependent->byte_offset = byte_offset;
     dependent->size = len;
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
-    dependent->doneWriting = true;
+    dependent->done_writing = true;
 
     unsigned int res = arts_atomic_fetch_add(&version->latch_count, 0U);
     if (res == 0) {
@@ -925,7 +936,7 @@ void arts_add_dependence_to_persistent_event_with_byte_offset(
     dependent->byte_offset = byte_offset;
     dependent->size = len;
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
-    dependent->doneWriting = true;
+    dependent->done_writing = true;
 
     if (arts_atomic_fetch_add(&version->latch_count, 0U) == 0) {
       needs_update = true;

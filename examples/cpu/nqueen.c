@@ -82,7 +82,7 @@ void fork_nqueens(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
         next_data->row <= 2 ? (current_node + i) % num_nodes : current_node;
     arts_guid_t fork_guid = arts_edt_create(fork_nqueens, 2, new_paramv, 1, &(arts_hint_t){.route = route});
 
-    arts_signal_edt(fork_guid, 0, db_guid);
+    arts_signal_edt(fork_guid, 0, db_guid, ARTS_DB_WRITE);
   }
 }
 
@@ -92,7 +92,8 @@ void final_nqueens(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   struct timespec end;
   (void)clock_gettime(CLOCK_REALTIME, &end);
-  double start_time = (double)paramv[0];
+  double start_time;
+  memcpy(&start_time, &paramv[0], sizeof(double));
   double end_time = (double)end.tv_sec + ((double)end.tv_nsec / 1e9);
 
   int n = (int)paramv[1];
@@ -144,7 +145,9 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)clock_gettime(CLOCK_REALTIME, &start);
   double start_time = (double)start.tv_sec + ((double)start.tv_nsec / 1e9);
 
-  uint64_t final_paramv[2] = {(uint64_t)start_time, (uint64_t)n};
+  uint64_t time_bits;
+  memcpy(&time_bits, &start_time, sizeof(double));
+  uint64_t final_paramv[2] = {time_bits, (uint64_t)n};
   arts_guid_t final_guid = arts_edt_create(final_nqueens, 2, final_paramv, 1, &(arts_hint_t){.route = 0});
   uint64_t fork_paramv[2] = {final_guid, 0};
   arts_guid_t fork_guid = arts_edt_create(fork_nqueens, 2, fork_paramv, 1, &(arts_hint_t){.route = 0});
@@ -156,7 +159,7 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
   fork_data->row = 0;
   fork_data->n = n;
-  arts_signal_edt(fork_guid, 0, db_guid);
+  arts_signal_edt(fork_guid, 0, db_guid, ARTS_DB_WRITE);
 }
 
 int main(int argc, char **argv) { return arts_rt(argc, argv); }
