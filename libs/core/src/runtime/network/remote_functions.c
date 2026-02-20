@@ -1103,20 +1103,6 @@ void arts_remote_handle_buffer_send(void *pack) {
   arts_set_buffer(packet->guid, buffer, size);
 }
 
-void arts_remote_signal_context(unsigned int rank, uint64_t ticket) {
-  struct arts_remote_signal_context_packet_s packet;
-  packet.ticket = ticket;
-  arts_fill_packet_header(&packet.header, sizeof(packet),
-                       ARTS_ATOMIC_ADD_ARRAYDB_MSG);
-  arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
-}
-
-void arts_remote_handle_signal_context(void *pack) {
-  struct arts_remote_signal_context_packet_s *packet =
-      (struct arts_remote_signal_context_packet_s *)pack;
-  arts_signal_context(packet->ticket);
-}
-
 void arts_remote_db_rename(arts_guid_t new_guid, arts_guid_t old_guid) {
   unsigned int dest_rank = arts_guid_get_rank(old_guid);
   struct arts_remote_db_rename_s packet;

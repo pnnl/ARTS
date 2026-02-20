@@ -52,9 +52,7 @@
 #include "arts/runtime/sync/termination_detection.h"
 #include "arts/system/arts_print.h"
 #include "arts/system/debug.h"
-#include "arts/system/tmt_lite.h"
 #include "arts/utils/atomics.h"
-#include "arts/utils/queue.h"
 
 arts_guid_t arts_edt_create_shad(arts_edt_t func_ptr, unsigned int route,
                              uint32_t paramc, const uint64_t *paramv) {
@@ -147,8 +145,6 @@ void arts_start_intro_shad(unsigned int start) {
 
 void arts_stop_intro_shad() { arts_counter_capture_stop(); }
 
-unsigned int arts_get_shad_loop_stride() { return arts_node_info.shad_loop_stride; }
-
 arts_guid_t arts_allocate_local_buffer_shad(void **buffer, uint32_t *size_to_write,
                                        arts_guid_t epoch_guid) {
   if (epoch_guid) {
@@ -156,7 +152,7 @@ arts_guid_t arts_allocate_local_buffer_shad(void **buffer, uint32_t *size_to_wri
   } else {
     ARTS_INFO("No EPOCH!!!");
   }
-  global_shutdown_guid_inc_active();
+  arts_shutdown_epoch_inc_active();
 
   arts_buffer_t *stub = (arts_buffer_t *)arts_malloc(sizeof(arts_buffer_t));
   stub->buffer = *buffer;
@@ -168,34 +164,6 @@ arts_guid_t arts_allocate_local_buffer_shad(void **buffer, uint32_t *size_to_wri
   arts_guid_t guid = arts_guid_create_for_rank(arts_global_rank_id, ARTS_BUFFER);
   arts_route_table_add_item(stub, guid, arts_global_rank_id, false);
   return guid;
-}
-
-arts_shad_lock_t *arts_shad_create_lock() {
-  arts_shad_lock_t *lock =
-      (arts_shad_lock_t *)arts_calloc(1, sizeof(arts_shad_lock_t));
-  lock->queue = arts_new_queue();
-  return lock;
-}
-
-void arts_shad_lock(arts_shad_lock_t *lock) {
-  unsigned int res = arts_atomic_fetch_add(&lock->size, 1);
-  if (res) {
-    enqueue(arts_get_context_ticket(), lock->queue);
-    arts_context_switch(1);
-  }
-}
-
-void arts_shad_unlock(arts_shad_lock_t *lock) {
-  unsigned int res = arts_atomic_sub(&lock->size, 1);
-  if (res) {
-    while (1) {
-      arts_ticket_t ticket = dequeue(lock->queue);
-      if (ticket) {
-        arts_signal_context(ticket);
-        return;
-      }
-    }
-  }
 }
 
 #define ALIASOWNERMAP 0xF000000000000000
@@ -232,75 +200,3 @@ void arts_shad_alias_unlock(volatile uint64_t *lock) {
   }
 }
 
-#define LITEOWNERMAP 0x8000000000000000ULL
-#define LITECOUNTMAP 0x7FFFFFFFFFFFFFFFULL
-#define LITEGETOWNER(x) ((x) & LITEOWNERMAP)
-#define LITEGETCOUNT(x) ((x) & ALIASCOUNTMAP)
-
-static inline bool arts_tmt_lite_try_lock(volatile uint64_t *lock) {
-  uint64_t local = *lock;
-  if (!LITEGETOWNER(local)) {
-    if (local == arts_atomic_cswap_u64(lock, local, local | LITEOWNERMAP)) {
-      return true;
-}
-  }
-  return false;
-}
-
-static inline void arts_tmt_lite_unlock(volatile uint64_t *lock) {
-  arts_atomic_fetch_and_u64(lock, LITECOUNTMAP);
-}
-
-// Returns if you should dec on unlock
-bool arts_shad_tmt_lock2(volatile uint64_t *lock) {
-  // We should have the execution lock on entry
-  if (!arts_tmt_lite_try_lock(lock)) // Try lock but fail
-  {
-    // arts_atomic_add_u64(lock, 1); //Inc the counter that we have created thread
-    arts_create_lite_contexts(lock); // Still have execution lock at end
-    uint64_t counter = 0;
-    while (1) {
-      if (arts_tmt_lite_try_lock(lock)) {
-        break;
-}
-      arts_yield_lite_context();  // Give up execution lock
-      arts_resume_lite_context(); // Has execution lock at end
-      if (counter > 1000000) {
-        arts_atomic_add_u64(lock, 1); // Inc the counter that we have created
-                                   // thread
-        arts_create_lite_contexts(lock);
-        ARTS_INFO("STUPID CREATE!!!");
-        counter = 0;
-      }
-      counter++;
-    }
-    return true;
-  }
-  return false;
-}
-
-void arts_shad_tmt_unlock(volatile uint64_t *lock) {
-  // ARTS_INFO("Unlock: %p %u:%u", lock, arts_get_current_worker(),
-  // arts_tmt_lite_get_alias());
-  arts_tmt_lite_unlock(lock);
-}
-
-void arts_shad_tmt_lock(volatile uint64_t *lock) {
-  while (arts_thread_info.alive) {
-    if (arts_tmt_lite_try_lock(lock)) { // Try lock but fail
-      break;
-    }
-    struct arts_edt_s *edt = arts_find_edt();
-    if (edt) {
-      arts_atomic_add_u64(lock, 1); // Inc the counter that we have created
-                                 // thread
-      arts_create_lite_contexts2(lock, edt); // Still have execution lock at end
-    } else {
-      CHECK_OUTSTANDING_EDTS(10000000);
-    }
-    arts_yield_lite_context(); // Give up execution lock
-    arts_resume_lite_context();
-  }
-  // ARTS_INFO("Lock: %p %u:%u", lock, arts_get_current_worker(),
-  // arts_tmt_lite_get_alias());
-}

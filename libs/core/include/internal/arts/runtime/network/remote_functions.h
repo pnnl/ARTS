@@ -160,8 +160,6 @@ void arts_remote_handle_epoch_delete(void *pack);
 void arts_db_move_request(arts_guid_t db_guid, unsigned int dest_rank);
 void arts_db_move_request_handle(void *pack);
 void arts_remote_handle_buffer_send(void *pack);
-void arts_remote_signal_context(unsigned int rank, uint64_t ticket);
-void arts_remote_handle_signal_context(void *pack);
 void arts_remote_db_rename(arts_guid_t new_guid, arts_guid_t old_guid);
 void arts_remote_handle_db_rename(void *pack);
 

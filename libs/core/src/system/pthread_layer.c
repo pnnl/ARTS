@@ -166,7 +166,7 @@ void arts_thread_init(struct arts_config_s *config) {
  * Single-node: directly calls arts_runtime_stop() to signal all threads.
  *
  * Called from:
- *   - global_guid_shutdown() when the shutdown epoch completes.
+ *   - arts_shutdown_epoch_fire() when the shutdown epoch completes.
  *   - User code via the arts_shutdown() public API.
  */
 void arts_shutdown() {
@@ -187,10 +187,6 @@ _Noreturn void arts_abort(uint8_t error_code) {
   (void)fflush(stdout);
   (void)fflush(stderr);
   exit(error_code);
-}
-
-void arts_thread_set_os_thread_count(unsigned int threads) {
-  pthread_setconcurrency((int)threads);
 }
 
 void arts_pthread_affinity(unsigned int cpu_core_id, bool verbose) {

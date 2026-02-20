@@ -56,8 +56,6 @@
 #include "arts/runtime/sync/termination_detection.h"
 #include "arts/system/abstract_machine_model.h"
 #include "arts/system/arts_print.h"
-#include "arts/system/tmt.h"
-#include "arts/system/tmt_lite.h"
 #include "arts/system/threads.h"
 #include "arts/utils/array_list.h"
 #include "arts/utils/atomics.h"
@@ -104,7 +102,6 @@ void arts_runtime_node_init(unsigned int worker_threads,
                          unsigned int total_threads, bool remote_stealing_on,
                          struct arts_config_s *config) {
   (void)receiving_threads;
-  arts_thread_set_os_thread_count(config->os_thread_count);
   arts_node_info.scheduler = scheduler_loop[config->scheduler];
   arts_node_info.deque = (struct arts_deque_s **)arts_malloc(
       sizeof(struct arts_deque_s *) * total_threads);
@@ -146,9 +143,7 @@ void arts_runtime_node_init(unsigned int worker_threads,
   arts_node_info.buf = (char *)arts_malloc(PACKET_SIZE);
   arts_node_info.packet_size = PACKET_SIZE;
   arts_node_info.print_node_stats = config->print_node_stats;
-  arts_node_info.shutdown_epoch = (config->shutdown_epoch) ? 1 : NULL_GUID;
-  arts_node_info.shad_loop_stride = config->shad_loop_stride;
-  arts_node_info.tmt = config->tmt;
+  arts_node_info.auto_shutdown_guid = (config->auto_shutdown) ? 1 : NULL_GUID;
   arts_node_info.gpu = config->gpu;
   arts_node_info.gpu_route_table_size = config->gpu_route_table_size;
   arts_node_info.gpu_route_table_entries = config->gpu_route_table_entries;
@@ -164,6 +159,7 @@ void arts_runtime_node_init(unsigned int worker_threads,
   arts_node_info.run_gpu_gc_pre_edt = config->run_gpu_gc_pre_edt;
   arts_node_info.delete_zeros_gpu_gc = config->delete_zeros_gpu_gc;
   arts_node_info.pin_threads = config->pin_threads;
+  arts_node_info.watchdog_timeout = config->watchdog_timeout;
   arts_node_info.keys = (uint64_t **)arts_calloc(total_threads, sizeof(uint64_t *));
   arts_node_info.global_guid_thread_id =
       (uint64_t *)arts_calloc(total_threads, sizeof(uint64_t));
@@ -203,8 +199,6 @@ void arts_runtime_node_init(unsigned int worker_threads,
   // Note: Node-level counter reduction is done at output time using
   // saved_counters. arts_id node-level reduction also computed at output time.
 
-  arts_tmt_node_init(worker_threads);
-  arts_init_tmt_lite_per_node(worker_threads);
 #ifdef USE_GPU
   if (arts_node_info.gpu) // TODO: Multi-Node init
     arts_node_init_gpus();
@@ -246,9 +240,9 @@ void arts_runtime_global_cleanup() {
  */
 void arts_thread_zero_node_start() {
   ARTS_INFO("Thread 0: starting node initialization");
-  arts_watchdog_init(10);  /* 10-second default; overridden by config if needed */
+  arts_watchdog_init(arts_node_info.watchdog_timeout);
   set_global_guid_on();
-  create_shutdown_epoch();
+  arts_shutdown_epoch_create();
 
   // Note: Counter capture starts AFTER barriers below, when receiver threads
   // are running. This ensures time sync messages can be processed.
@@ -301,9 +295,9 @@ void arts_runtime_private_init(struct thread_mask_s *unit,
   if (unit->network_send || unit->network_receive) {
     if (unit->network_send) {
       unsigned int size =
-          arts_global_rank_count * config->ports / arts_node_info.sender_thread_count;
+          arts_global_rank_count * config->num_ports / arts_node_info.sender_thread_count;
       unsigned int rem =
-          arts_global_rank_count * config->ports % arts_node_info.sender_thread_count;
+          arts_global_rank_count * config->num_ports % arts_node_info.sender_thread_count;
       unsigned int start;
       if (unit->group_pos < rem) {
         start = unit->group_pos * (size + 1);
@@ -315,9 +309,9 @@ void arts_runtime_private_init(struct thread_mask_s *unit,
     }
     if (unit->network_receive) {
       arts_node_info.receiver_deque[unit->group_pos] = arts_node_info.deque[unit->id];
-      unsigned int size = (arts_global_rank_count - 1) * config->ports /
+      unsigned int size = (arts_global_rank_count - 1) * config->num_ports /
                           arts_node_info.receiver_thread_count;
-      unsigned int rem = (arts_global_rank_count - 1) * config->ports %
+      unsigned int rem = (arts_global_rank_count - 1) * config->num_ports %
                          arts_node_info.receiver_thread_count;
       unsigned int start;
       if (unit->group_pos < rem) {
@@ -368,16 +362,6 @@ void arts_runtime_private_init(struct thread_mask_s *unit,
 
   arts_guid_key_generator_init();
 
-  if (arts_thread_info.worker) {
-    if (arts_node_info.tmt && arts_thread_info.worker) // @awmm
-    {
-      ARTS_DEBUG("tmt: PthreadLayer: preparing aliasing for master thread %d",
-                 unit->id);
-      arts_tmt_runtime_private_init(unit, &arts_thread_info);
-    }
-    arts_init_tmt_lite_per_worker(arts_thread_info.group_id);
-  }
-
   arts_atomic_sub(&arts_node_info.ready_to_push, 1U);
   while (arts_node_info.ready_to_push) {
   };
@@ -403,10 +387,6 @@ void arts_runtime_private_init(struct thread_mask_s *unit,
 }
 
 void arts_runtime_private_cleanup() {
-  if (arts_thread_info.worker) {
-    arts_tmt_runtime_private_cleanup();
-    arts_tmt_lite_private_clean_up(arts_thread_info.group_id);
-  }
   arts_atomic_sub(&arts_node_info.ready_to_clean, 1U);
   while (arts_node_info.ready_to_clean) {
   };
@@ -446,8 +426,6 @@ void arts_runtime_stop() {
     (*arts_node_info.local_spin[i]) = false;
     ARTS_DEBUG("arts_runtime_stop: thread %u signaled to stop", i);
   }
-  arts_tmt_runtime_stop();
-  arts_tmt_lite_shutdown();
   ARTS_PRINT("arts_runtime_stop: all threads signaled");
 }
 
@@ -455,7 +433,7 @@ void arts_handle_remote_stolen_edt(struct arts_edt_s *edt) {
   ARTS_DEBUG("Processing stolen EDT[Id:%lu, Guid:%lu] on core %d", edt->arts_id,
              edt->current_edt, arts_thread_info.core_id);
   increment_queue_epoch(edt->epoch_guid);
-  global_shutdown_guid_inc_queue();
+  arts_shutdown_epoch_inc_queue();
 #ifdef USE_GPU
   if (arts_node_info.gpu &&
       (!arts_thread_info.my_deque || !arts_thread_info.my_gpu_deque))
@@ -497,7 +475,7 @@ void arts_handle_ready_edt(struct arts_edt_s *edt) {
   if (remaining == 0) {
     INCREMENT_NUM_EDTS_ACQUIRED_BY(1);
     increment_queue_epoch(edt->epoch_guid);
-    global_shutdown_guid_inc_queue();
+    arts_shutdown_epoch_inc_queue();
 #ifdef USE_GPU
     if (arts_node_info.gpu &&
         (!arts_thread_info.my_deque || !arts_thread_info.my_gpu_deque))
@@ -675,9 +653,6 @@ bool arts_default_scheduler_loop() {
   }
   arts_watchdog_check();
   CHECK_OUTSTANDING_EDTS(10000000);
-  arts_next_context();
-  // arts_tmt_scheduler_yield();
-  //        usleep(1);
   return false;
 }
 

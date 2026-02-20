@@ -60,7 +60,7 @@ __thread arts_epoch_pool_t *epoch_thread_pool;
  * Shutdown-epoch helpers.
  *
  * The shutdown epoch tracks all EDTs globally.  When the epoch completes
- * (active == finished, no outstanding), global_guid_shutdown is called,
+ * (active == finished, no outstanding), arts_shutdown_epoch_fire is called,
  * which triggers arts_shutdown().
  *
  * Three counters are incremented at different EDT lifecycle stages:
@@ -68,33 +68,33 @@ __thread arts_epoch_pool_t *epoch_thread_pool;
  *   inc_queue   — when an EDT becomes ready (all deps satisfied).
  *   inc_finished — when an EDT completes execution.
  */
-void global_shutdown_guid_inc_active() {
-  if (arts_node_info.shutdown_epoch) {
+void arts_shutdown_epoch_inc_active() {
+  if (arts_node_info.auto_shutdown_guid) {
     ARTS_DEBUG("shutdown_epoch: inc_active [Epoch:%lu]",
-               arts_node_info.shutdown_epoch);
-    increment_active_epoch(arts_node_info.shutdown_epoch);
+               arts_node_info.auto_shutdown_guid);
+    increment_active_epoch(arts_node_info.auto_shutdown_guid);
   }
 }
 
-void global_shutdown_guid_inc_queue() {
-  if (arts_node_info.shutdown_epoch) {
+void arts_shutdown_epoch_inc_queue() {
+  if (arts_node_info.auto_shutdown_guid) {
     ARTS_DEBUG("shutdown_epoch: inc_queue [Epoch:%lu]",
-               arts_node_info.shutdown_epoch);
-    increment_queue_epoch(arts_node_info.shutdown_epoch);
+               arts_node_info.auto_shutdown_guid);
+    increment_queue_epoch(arts_node_info.auto_shutdown_guid);
   }
 }
 
-void global_shutdown_guid_inc_finished() {
-  if (arts_node_info.shutdown_epoch) {
+void arts_shutdown_epoch_inc_finished() {
+  if (arts_node_info.auto_shutdown_guid) {
     ARTS_DEBUG("shutdown_epoch: inc_finished [Epoch:%lu]",
-               arts_node_info.shutdown_epoch);
-    increment_finished_epoch(arts_node_info.shutdown_epoch);
+               arts_node_info.auto_shutdown_guid);
+    increment_finished_epoch(arts_node_info.auto_shutdown_guid);
   }
 }
 
-void global_guid_shutdown(arts_guid_t guid) {
-  if (arts_node_info.shutdown_epoch == guid) {
-    ARTS_INFO("global_guid_shutdown: Epoch[Guid:%lu] matched shutdown epoch — "
+void arts_shutdown_epoch_fire(arts_guid_t guid) {
+  if (arts_node_info.auto_shutdown_guid == guid) {
+    ARTS_INFO("arts_shutdown_epoch_fire: Epoch[Guid:%lu] matched shutdown epoch — "
               "calling arts_shutdown()", guid);
     arts_shutdown();
   }
@@ -213,21 +213,21 @@ arts_epoch_t *create_epoch(arts_guid_t *guid, arts_guid_t edt_guid,
 }
 
 /*
- * create_shutdown_epoch — Initialize the global termination epoch.
+ * arts_shutdown_epoch_create — Initialize the global termination epoch.
  *
  * Pre-seeds active_count and queued with the total number of workers,
  * since each worker thread will call increment_finished_epoch when it
  * finishes its initialization sequence.
  */
-bool create_shutdown_epoch() {
-  if (arts_node_info.shutdown_epoch) {
-    arts_node_info.shutdown_epoch = arts_guid_create_for_rank(0, ARTS_EDT);
-    arts_epoch_t *epoch = create_epoch(&arts_node_info.shutdown_epoch, NULL_GUID, 0);
+bool arts_shutdown_epoch_create() {
+  if (arts_node_info.auto_shutdown_guid) {
+    arts_node_info.auto_shutdown_guid = arts_guid_create_for_rank(0, ARTS_EDT);
+    arts_epoch_t *epoch = create_epoch(&arts_node_info.auto_shutdown_guid, NULL_GUID, 0);
     unsigned int total_workers = arts_get_total_workers();
     arts_atomic_add(&epoch->active_count, total_workers);
     arts_atomic_add_u64(&epoch->queued, total_workers);
-    ARTS_INFO("create_shutdown_epoch: Epoch[Guid:%lu] created with %u workers",
-              arts_node_info.shutdown_epoch, total_workers);
+    ARTS_INFO("arts_shutdown_epoch_create: Epoch[Guid:%lu] created with %u workers",
+              arts_node_info.auto_shutdown_guid, total_workers);
     return true;
   }
   return false;
@@ -316,14 +316,11 @@ bool check_epoch(arts_epoch_t *epoch, unsigned int total_active,
       if (epoch->wait_ptr) {
         *epoch->wait_ptr = 0;
 }
-      if (epoch->ticket) {
-        arts_signal_context(epoch->ticket);
-      }
       if (epoch->termination_exit_guid) {
         arts_signal_edt_value(epoch->termination_exit_guid,
                            epoch->termination_exit_slot, total_finish);
       } else {
-        global_guid_shutdown(epoch->guid);
+        arts_shutdown_epoch_fire(epoch->guid);
       }
       return false;
     }
@@ -336,14 +333,11 @@ bool check_epoch(arts_epoch_t *epoch, unsigned int total_active,
       if (epoch->wait_ptr) {
         *epoch->wait_ptr = 0;
 }
-      if (epoch->ticket) {
-        arts_signal_context(epoch->ticket);
-}
       if (epoch->termination_exit_guid) {
         arts_signal_edt_value(epoch->termination_exit_guid,
                            epoch->termination_exit_slot, total_finish);
       } else {
-        global_guid_shutdown(epoch->guid);
+        arts_shutdown_epoch_fire(epoch->guid);
       }
       return false;
     }
@@ -596,40 +590,25 @@ bool arts_wait_on_handle(arts_guid_t epoch_guid) {
         return false;
       }
     }
-    epoch->ticket = arts_get_context_ticket();
-    if (arts_node_info.tmt && epoch->ticket) {
-      increment_finished_epoch(local);
-      arts_context_switch(1);
-      // Drain any work enqueued during the context switch so DB releases finish
-      while (arts_node_info.scheduler()) {
-        ;
-}
-      clean_epoch_pool();
-      EDT_RUNNING_TIME_START();
-      return true;
+    epoch->wait_ptr = &flag;
+    increment_finished_epoch(local);
+
+    INCREMENT_YIELD_BY(1);
+    thread_local_t tl;
+    arts_save_thread_local(&tl);
+    while (flag) {
+      arts_node_info.scheduler();
     }
-    if (!epoch->ticket) {
-      epoch->wait_ptr = &flag;
-      increment_finished_epoch(local);
-      //        global_shutdown_guid_inc_finished();
-
-      INCREMENT_YIELD_BY(1);
-      thread_local_t tl;
-      arts_save_thread_local(&tl);
-      while (flag) {
-        arts_node_info.scheduler();
-}
-      // Continue running until the scheduler reports no more ready work
-      while (arts_node_info.scheduler()) {
-        ;
-}
-      arts_restore_thread_local(&tl);
-
-      clean_epoch_pool();
-
-      EDT_RUNNING_TIME_START();
-      return true;
+    // Continue running until the scheduler reports no more ready work
+    while (arts_node_info.scheduler()) {
+      ;
     }
+    arts_restore_thread_local(&tl);
+
+    clean_epoch_pool();
+
+    EDT_RUNNING_TIME_START();
+    return true;
   }
   EDT_RUNNING_TIME_START();
   return false;

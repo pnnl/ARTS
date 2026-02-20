@@ -39,6 +39,7 @@
 #include "arts/system/config.h"
 
 #include <ctype.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -126,70 +127,7 @@ arts_config_find_variable(struct arts_config_variable_s **head, const char *stri
   return found;
 }
 
-char *arts_config_find_variable_char(struct arts_config_variable_s *head,
-                                 const char *string) {
-  struct arts_config_variable_s *found = NULL;
-  char *overide = getenv(string);
-
-  if (overide) {
-    return overide;
-}
-
-  while (head != NULL) {
-    if (strcmp(string, head->variable) == 0) {
-      found = head;
-      break;
-    }
-    head = head->next;
-  }
-
-  if (found) {
-    return found->value;
-}
-
-  return NULL;
-}
-
-unsigned int arts_config_get_variable(FILE *config, const char *look_for_me) {
-  char *line;
-  size_t len = 0;
-  ssize_t read;
-  char *var;
-  char *val;
-  int size;
-  struct arts_config_variable_s *c_var;
-  struct arts_config_variable_s *head;
-  struct arts_config_variable_s *next = NULL;
-
-  while ((read = getline(&line, &len, config)) != -1) {
-    var = strtok(line, "=");
-    val = strtok(NULL, "=");
-
-    if (strcmp(look_for_me, var) == 0) {
-      if (val == NULL) {
-        free(line);
-        return 4;
-}
-      size = (int)strlen(val);
-
-      if (val[size - 1] == '\n') {
-        val[size - 1] = '\0';
-}
-
-      {
-        long result = strtol(val, NULL, 10);
-        free(line);
-        return (unsigned int)result;
-      }
-    }
-  }
-  if (line) {
-    free(line);
-}
-  return 4;
-}
-
-void remove_white_spaces(char *str) {
+static void remove_white_spaces(char *str) {
   char *write = str;
   char *read = str;
   do {
@@ -257,131 +195,21 @@ char *arts_config_make_new_var(const char *var) {
   return new_var;
 }
 
-unsigned int arts_config_get_value(char *start, char *stop) {
-  int i;
-  int value;
-  int size = (int)(stop - start);
-  for (i = 0; i < size; i++) {
-    if (isdigit(start[i])) {
-      break;
-}
-  }
-  if (i == size) {
-    // No digits found, raise an error
-    arts_printf("arts_config_get_value: No digits found in %s\n", start);
-    arts_debug_generate_seg_fault();
-  }
-  if (*stop == ':') {
-    *stop = '\0';
-    value = (int)strtol(start + i, NULL, 10);
-    *stop = ':';
-  } else {
-    value = (int)strtol(start + i, NULL, 10);
-  }
-  return value;
-}
-
-char *arts_config_get_node_name(char *start, const char *stop) {
-  int i;
-  int value;
-  int size = (int)(stop - start);
-  char *name;
-
-  for (i = 0; i < size; i++) {
-    if (isdigit(start[i])) {
-      break;
-}
-  }
-  if (i == size) {
-    // No digits found, return the original string
-    arts_debug_generate_seg_fault();
-  }
-  name = (char *)arts_malloc(size);
-  strncpy(name, start, size);
-  return name;
-}
-
-char *arts_config_get_hostname(char *name, unsigned int value) {
-  unsigned int length = strlen(name);
-  unsigned int digits = 1;
-  unsigned int temp = value;
-  unsigned int stop;
-  char *out_name = (char *)arts_malloc(length);
-
-  while (temp > 9) {
-    temp /= 10;
-    digits++;
-  }
-
-  temp = value;
-  for (unsigned int i = 0; i < length; i++) {
-    if (isdigit(name[i])) {
-      stop = i;
-      while (stop < length) {
-        if (!isdigit(name[stop])) {
-          break;
-        }
-        stop++;
-      }
-
-      for (unsigned int j = stop - 1; j > (stop - 1) - digits; j--) {
-        // name[j]= itoa( value%10 );
-        // sprintf(name+j,"%d",value%10);
-        name[j] = (char)('0' + (value % 10));
-        value /= 10;
-      }
-
-      for (unsigned int j = (stop - 1) - digits; j >= i; j--) {
-        name[j] = '0';
-      }
-      break;
-    }
-  }
-  strncpy(out_name, name, length);
-  return out_name;
-}
-
 char *arts_config_get_slurm_hostname(char *name, char *digit_sample,
-                                 unsigned int value, bool ib, char *prefix,
-                                 char *suffix) {
-  (void)ib;
+                                     unsigned int value) {
   unsigned int length = strlen(name);
   unsigned int digit_length = strlen(digit_sample);
-  unsigned int suffix_length = 0;
-  unsigned int prefix_length = 0;
-  unsigned int name_length;
-
-  if (suffix != NULL) {
-    suffix_length = strlen(suffix);
-}
-
-  if (prefix != NULL) {
-    prefix_length = strlen(prefix);
-}
-
-  name_length = length + digit_length + 1 + prefix_length + suffix_length;
+  unsigned int name_length = length + digit_length + 1;
   char *out_name = (char *)arts_malloc(name_length);
 
-  if (prefix != NULL) {
-    strncpy(out_name, prefix, prefix_length);
-    strncpy(out_name + prefix_length, name, length);
-  } else {
-    strncpy(out_name, name, length);
-}
+  strncpy(out_name, name, length);
 
   for (unsigned int i = digit_length; i > 0; i--) {
-    out_name[prefix_length + length + i - 1] = (char)('0' + (value % 10));
+    out_name[length + i - 1] = (char)('0' + (value % 10));
     value /= 10;
   }
 
-  if (suffix != NULL) {
-    strncpy(out_name + prefix_length + digit_length + length, suffix,
-            suffix_length);
-    strncpy(out_name + prefix_length + digit_length + length + suffix_length, "\0",
-            1);
-  } else {
-    strncpy(out_name + prefix_length + digit_length + length, "\0", 1);
-}
+  out_name[name_length - 1] = '\0';
   return out_name;
 }
 
@@ -500,19 +328,7 @@ void arts_config_create_routing_table(struct arts_config_s **config, char *node_
   }
   list_length = strlen(node_list);
 
-  unsigned int suffix_length = 0;
-  unsigned int prefix_length = 0;
   unsigned int total_length = 0;
-
-  char *prefix = (*config)->prefix;
-  char *suffix = (*config)->suffix;
-
-  if (suffix != NULL) {
-    suffix_length = strlen(suffix);
-}
-  if (prefix != NULL) {
-    prefix_length = strlen(prefix);
-}
 
   node_count = (*config)->nodes;
   (*config)->table_length = node_count;
@@ -552,9 +368,8 @@ void arts_config_create_routing_table(struct arts_config_s **config, char *node_
 
               while (start != stop + 1) {
                 table[current_node].rank = current_node;
-                table[current_node].ip_address = arts_config_get_slurm_hostname(
-                    name, node_begin, start, (*config)->ib_names,
-                    (*config)->prefix, (*config)->suffix);
+                table[current_node].ip_address =
+                    arts_config_get_slurm_hostname(name, node_begin, start);
                 start += direction;
                 current_node++;
               }
@@ -565,22 +380,12 @@ void arts_config_create_routing_table(struct arts_config_s **config, char *node_
               }
 
               unsigned int name_length = strlen(name);
-              str_length = strlen(node_begin) + name_length;
-              total_length = str_length + 1 + prefix_length + suffix_length;
+              unsigned int node_len = strlen(node_begin);
+              total_length = name_length + node_len + 1;
               temp = (char *)arts_malloc(total_length);
-
-              if (prefix != NULL) {
-                strncpy(temp, prefix, prefix_length);
-}
-              strncpy(temp + prefix_length, name, name_length);
-
-              strncpy(temp + prefix_length + name_length, node_begin,
-                      strlen(node_begin));
-
-              if (suffix != NULL) {
-                strncpy(temp + prefix_length + str_length, suffix, suffix_length);
-}
-              strncpy(temp + total_length - 1, "\0", 1);
+              memcpy(temp, name, name_length);
+              memcpy(temp + name_length, node_begin, node_len);
+              temp[total_length - 1] = '\0';
 
               table[current_node].rank = current_node;
               table[current_node].ip_address = temp;
@@ -592,18 +397,9 @@ void arts_config_create_routing_table(struct arts_config_s **config, char *node_
       } else {
         // Single node
         str_length = strlen(node_begin);
-        total_length = str_length + 1 + prefix_length + suffix_length;
-        temp = (char *)arts_malloc(total_length);
-
-        if (prefix != NULL) {
-          strncpy(temp, prefix, prefix_length);
-}
-        strncpy(temp + prefix_length, node_begin, str_length);
-
-        if (suffix != NULL) {
-          strncpy(temp + prefix_length + str_length, suffix, suffix_length);
-}
-        strncpy(temp + total_length - 1, "\0", 1);
+        temp = (char *)arts_malloc(str_length + 1);
+        memcpy(temp, node_begin, str_length);
+        temp[str_length] = '\0';
 
         table[current_node].rank = current_node;
         table[current_node].ip_address = temp;
@@ -721,538 +517,446 @@ void arts_config_create_routing_table(struct arts_config_s **config, char *node_
   (*config)->table = table;
 }
 
-unsigned int arts_config_get_number_of_threads(char *location) {
-  FILE *config_file = NULL;
-  if (location == NULL) {
-    config_file = fopen("arts.cfg", "r");
-  } else {
-    config_file = fopen(location, "r");
+/*=============================================================================
+ * Table-Driven Configuration Infrastructure
+ *
+ * Each config keyword is registered in a declarative table. Simple keywords
+ * (uint, uint64, bool, string) are auto-parsed via offsetof(). Complex
+ * keywords use custom handler functions.
+ *===========================================================================*/
+
+enum arts_config_type {
+  CONFIG_UINT,   /* unsigned int — strtol(value, NULL, 10) */
+  CONFIG_UINT64, /* uint64_t — strtoull(value, NULL, 10) */
+  CONFIG_BOOL,   /* bool — strtol(value, NULL, 10) > 0 */
+  CONFIG_STRING, /* char* — arts_config_make_new_var(value) */
+  CONFIG_CUSTOM  /* custom handler function */
+};
+
+typedef void (*config_handler_t)(struct arts_config_s *config, const char *value,
+                                 struct arts_config_variable_s **vars);
+
+struct arts_config_entry_s {
+  const char *key;
+  enum arts_config_type type;
+  size_t offset;
+  const char *default_value;
+  config_handler_t handler;
+};
+
+/* Look up a config variable's value string, with env var override. */
+static const char *config_lookup(struct arts_config_variable_s **vars,
+                                 const char *key) {
+  struct arts_config_variable_s *found = arts_config_find_variable(vars, key);
+  return found ? found->value : NULL;
 }
 
-  if (config_file == NULL) {
-    return 4;
-  }
-
-  unsigned int result = arts_config_get_variable(config_file, "threads");
-  (void)fclose(config_file);
-  return result;
-}
-
-struct arts_config_s *arts_config_load() {
-  FILE *config_file = NULL;
-  struct arts_config_s *config;
-  struct arts_config_variable_s *config_variables;
-  struct arts_config_variable_s *found_variable;
-  char *found_variable_char;
-
+/* Auto-parse a config value into the struct field at entry->offset. */
+static void config_auto_parse(struct arts_config_s *config,
+                              const struct arts_config_entry_s *entry,
+                              const char *value) {
+  char *base = (char *)config;
   char *end = NULL;
-
-  config = (struct arts_config_s *)arts_calloc(1, sizeof(struct arts_config_s));
-
-  char *location = getenv("ARTS_CONFIG");
-  if (location) {
-    config_file = fopen(location, "r");
-  } else {
-    config_file = fopen("arts.cfg", "r");
+  switch (entry->type) {
+  case CONFIG_UINT:
+    *(unsigned int *)(base + entry->offset) =
+        (unsigned int)strtol(value, &end, 10);
+    break;
+  case CONFIG_UINT64:
+    *(uint64_t *)(base + entry->offset) = strtoull(value, &end, 10);
+    break;
+  case CONFIG_BOOL:
+    *(bool *)(base + entry->offset) = strtol(value, &end, 10) > 0;
+    break;
+  case CONFIG_STRING: {
+    char **field = (char **)(base + entry->offset);
+    if (*field) {
+      arts_free(*field);
+    }
+    *field = arts_config_make_new_var(value);
+    break;
+  }
+  case CONFIG_CUSTOM:
+    break;
+  }
 }
 
-  if (config_file == NULL) {
-    ARTS_INFO("No Config file found (./arts.cfg).");
-    config_variables = NULL;
-    arts_debug_generate_seg_fault();
-  } else {
-    config_variables = arts_config_get_variables(config_file);
-    (void)fclose(config_file);
-}
+/*--- Custom Handlers -------------------------------------------------------*/
 
-  found_variable = arts_config_find_variable(&config_variables, "launcher");
-  if (found_variable == NULL) {
+static void handle_launcher(struct arts_config_s *config, const char *value,
+                            struct arts_config_variable_s **vars) {
+  (void)vars;
+  if (!value) {
+    /* Auto-detect from environment: SLURM > LSF > default SSH */
+    if (getenv("SLURM_PROCID") || getenv("SLURM_NNODES")) {
+      config->launcher = arts_config_make_new_var("slurm");
+    } else if (getenv("LSB_HOSTS") || getenv("LSB_MCPU_HOSTS")) {
+      config->launcher = arts_config_make_new_var("lsf");
+    } else {
+      config->launcher = arts_config_make_new_var("ssh");
+    }
+    return;
+  }
+  if (strncmp(value, "ssh", 3) == 0) {
     config->launcher = arts_config_make_new_var("ssh");
-  } else if (strncmp(found_variable->value, "slurm", 5) == 0) {
+  } else if (strncmp(value, "slurm", 5) == 0) {
     config->launcher = arts_config_make_new_var("slurm");
-  } else if (strncmp(found_variable->value, "lsf", 3) == 0) {
+  } else if (strncmp(value, "lsf", 3) == 0) {
     config->launcher = arts_config_make_new_var("lsf");
-  } else if (strncmp(found_variable->value, "local", 5) == 0) {
+  } else if (strncmp(value, "local", 5) == 0) {
     config->launcher = arts_config_make_new_var("local");
   } else {
     config->launcher = arts_config_make_new_var("ssh");
-}
-
-  char *kill_set = getenv("kill_mode");
-  if (kill_set == NULL) {
-    if ((found_variable =
-             arts_config_find_variable(&config_variables, "kill_mode")) != NULL) {
-      config->kill_mode = strtol(found_variable->value, &end, 10);
-    } else {
-      config->kill_mode = 0;
-    }
-  } else {
-    config->kill_mode = strtol(kill_set, &end, 10);
   }
+}
 
-  if ((found_variable = arts_config_find_variable(&config_variables, "core_dump")) !=
-      NULL) {
-    config->core_dump = strtol(found_variable->value, &end, 10);
-  } else {
-    config->core_dump = 0;
+static void handle_net_interface(struct arts_config_s *config, const char *value,
+                                 struct arts_config_variable_s **vars) {
+  (void)vars;
+  if (value) {
+    config->net_interface = arts_config_make_new_var(value);
   }
+}
 
-  if ((found_variable = arts_config_find_variable(&config_variables, "pin_stride")) !=
-      NULL) {
-    config->pin_stride = strtol(found_variable->value, &end, 10);
-  } else {
-    config->pin_stride = 1;
+static void handle_port(struct arts_config_s *config, const char *value,
+                        struct arts_config_variable_s **vars) {
+  (void)vars;
+  if (!value) {
+    /* Default applied later in config_compute_derived for non-local launchers */
+    return;
   }
-
-  if ((found_variable =
-           arts_config_find_variable(&config_variables, "print_topology")) != NULL) {
-    config->print_topology = strtol(found_variable->value, &end, 10);
-  } else {
-    config->print_topology = 0;
-  }
-
-  if ((found_variable = arts_config_find_variable(&config_variables, "threads")) !=
-      NULL) {
-    config->thread_count = strtol(found_variable->value, &end, 10);
-  } else {
-    config->thread_count = 4;
-  }
-
-  if ((found_variable = arts_config_find_variable(&config_variables, "os_threads")) !=
-      NULL) {
-    config->os_thread_count = strtol(found_variable->value, &end, 10);
-  } else {
-    config->os_thread_count = 0;
-  }
-
-  if ((found_variable = arts_config_find_variable(&config_variables,
-                                              "cores_per_network_thread")) != NULL) {
-    config->cores_per_network_thread = strtol(found_variable->value, &end, 10);
-  } else {
-    config->cores_per_network_thread = 1;
-  }
-
-  if ((found_variable = arts_config_find_variable(&config_variables, "ports")) !=
-      NULL) {
-    config->ports = strtol(found_variable->value, &end, 10);
-  } else if (strncmp(config->launcher, "local", 5) != 0) {
-    config->ports = 1;
-  }
-
-  if ((found_variable = arts_config_find_variable(&config_variables, "outgoing")) !=
-      NULL) {
-    config->sender_count = strtol(found_variable->value, &end, 10);
-  } else if (strncmp(config->launcher, "local", 5) != 0) {
-    config->sender_count = 1;
-  }
-
-  if ((found_variable = arts_config_find_variable(&config_variables, "incoming")) !=
-      NULL) {
-    config->receiver_count = strtol(found_variable->value, &end, 10);
-  } else if (strncmp(config->launcher, "local", 5) != 0) {
-    config->receiver_count = 1;
-  }
-
-  if ((found_variable =
-           arts_config_find_variable(&config_variables, "net_interface")) != NULL) {
-    config->net_interface = arts_config_make_new_var(found_variable->value);
-
-    if (config->net_interface[0] == 'i') {
-      config->ib_names = true;
-    } else {
-      config->ib_names = false;
-}
-  } else {
-    config->net_interface = NULL;
-    config->ib_names = false;
-  }
-
-  if ((found_variable =
-           arts_config_find_variable(&config_variables, "master_node")) != NULL) {
-    if (config->master_node) {
-      arts_free(config->master_node);
-    }
-    config->master_node = arts_config_make_new_var(found_variable->value);
-  } else if (strncmp(config->launcher, "local", 5) != 0) {
-    config->master_node = NULL;
-  }
-
-  if ((found_variable = arts_config_find_variable(&config_variables, "prefix")) !=
-      NULL) {
-    config->prefix = arts_config_make_new_var(found_variable->value);
-  } else {
-    config->prefix = NULL;
-}
-
-  if ((found_variable = arts_config_find_variable(&config_variables, "suffix")) !=
-      NULL) {
-    config->suffix = arts_config_make_new_var(found_variable->value);
-  } else {
-    config->suffix = NULL;
-}
-
-  if ((found_variable =
-           arts_config_find_variable(&config_variables, "counter_folder")) != NULL) {
-    config->counter_folder = arts_config_make_new_var(found_variable->value);
-  } else {
-    config->counter_folder = arts_config_make_new_var("./counters");
-}
-
-  if ((found_variable = arts_config_find_variable(
-           &config_variables, "counter_capture_interval")) != NULL) {
-    config->counter_capture_interval = strtol(found_variable->value, &end, 10);
-  } else {
-    ARTS_DEBUG_ONCE("Defaulting the counter capture interval to 100 ms");
-    config->counter_capture_interval = 100;
-  }
-
-  if ((found_variable_char = arts_config_find_variable_char(
-           config_variables, "print_node_stats")) != NULL) {
-    config->print_node_stats = strtol(found_variable_char, &end, 10);
-  } else {
-    config->print_node_stats = 0;
-}
-
-  if ((found_variable_char =
-           arts_config_find_variable_char(config_variables, "scheduler")) != NULL) {
-    config->scheduler = strtol(found_variable_char, &end, 10);
-  } else {
-    config->scheduler = 0;
-}
-
-  if ((found_variable_char = arts_config_find_variable_char(config_variables,
-                                                      "shutdown_epoch")) != NULL) {
-    config->shutdown_epoch = strtol(found_variable_char, &end, 10);
-  } else {
-    config->shutdown_epoch = 0;
-}
-
-  if ((found_variable_char = arts_config_find_variable_char(
-           config_variables, "shad_loop_stride")) != NULL) {
-    config->shad_loop_stride = strtol(found_variable_char, &end, 10);
-  } else {
-    config->shad_loop_stride = 32;
-}
-
-  // @awmm tmt
-  if ((found_variable = arts_config_find_variable(&config_variables, "tmt")) != NULL) {
-    config->tmt = strtol(found_variable->value, &end, 10);
-  } else {
-    config->tmt = 0;
-}
-
-  if ((found_variable = arts_config_find_variable(&config_variables, "core_count")) !=
-      NULL) {
-    config->core_count = strtol(found_variable->value, &end, 10);
-  } else {
-    config->core_count = 0;
-}
-
-  if ((found_variable = arts_config_find_variable(&config_variables, "gpu")) != NULL) {
-    config->gpu = strtol(found_variable->value, &end, 10);
-  } else {
-    config->gpu = 0;
-}
-
-  if ((found_variable =
-           arts_config_find_variable(&config_variables, "gpu_locality")) != NULL) {
-    config->gpu_locality = strtol(found_variable->value, &end, 10);
-  } else {
-    config->gpu_locality = 0;
-}
-
-  if ((found_variable = arts_config_find_variable(&config_variables, "gpu_fit")) !=
-      NULL) {
-    config->gpu_fit = strtol(found_variable->value, &end, 10);
-  } else {
-    config->gpu_fit = 0;
-}
-
-  if ((found_variable = arts_config_find_variable(&config_variables, "gpu_lc_sync")) !=
-      NULL) {
-    config->gpu_lc_sync = strtol(found_variable->value, &end, 10);
-  } else {
-    config->gpu_lc_sync = 0;
-}
-
-  if ((found_variable =
-           arts_config_find_variable(&config_variables, "gpu_max_edts")) != NULL) {
-    config->gpu_max_edts = strtol(found_variable->value, &end, 10);
-  } else {
-    config->gpu_max_edts = (unsigned int)-1;
-}
-
-  if ((found_variable =
-           arts_config_find_variable(&config_variables, "gpu_max_memory")) != NULL) {
-    config->gpu_max_memory = strtol(found_variable->value, &end, 10);
-  } else {
-    config->gpu_max_memory = (uint64_t)-1;
-}
-
-  if ((found_variable = arts_config_find_variable(&config_variables, "gpu_p2p")) !=
-      NULL) {
-    config->gpu_p2p = strtol(found_variable->value, &end, 10) > 0;
-  } else {
-    config->gpu_p2p = false;
-}
-
-  if ((found_variable = arts_config_find_variable(&config_variables,
-                                              "gpu_route_table_size")) != NULL) {
-    config->gpu_route_table_size = strtol(found_variable->value, &end, 10);
-  } else {
-    config->gpu_route_table_size = 12; // 2^12
-}
-
-  if ((found_variable = arts_config_find_variable(&config_variables,
-                                              "free_db_after_gpu_run")) != NULL) {
-    config->free_db_after_gpu_run = strtol(found_variable->value, &end, 10) > 0;
-  } else {
-    config->free_db_after_gpu_run = false;
-}
-
-  if (config->free_db_after_gpu_run) {
-    ARTS_INFO("FreeDbAfterGpuRun is turned on... This mode is intended for "
-              "testing not performance.");
-  }
-
-  if ((found_variable =
-           arts_config_find_variable(&config_variables, "run_gpu_gc_idle")) != NULL) {
-    config->run_gpu_gc_idle = strtol(found_variable->value, &end, 10) > 0;
-  } else {
-    config->run_gpu_gc_idle = true;
-}
-
-  if ((found_variable =
-           arts_config_find_variable(&config_variables, "run_gpu_gc_pre_edt")) != NULL) {
-    config->run_gpu_gc_pre_edt = strtol(found_variable->value, &end, 10) > 0;
-  } else {
-    config->run_gpu_gc_pre_edt = false;
-}
-  if (config->run_gpu_gc_pre_edt) {
-    ARTS_INFO(
-        "RunGpuGcPreEdt is turned on... This mode is intended for testing "
-        "not performance.");
-  }
-
-  if ((found_variable = arts_config_find_variable(&config_variables,
-                                              "delete_zeros_gpu_gc")) != NULL) {
-    config->delete_zeros_gpu_gc = strtol(found_variable->value, &end, 10) > 0;
-  } else {
-    config->delete_zeros_gpu_gc = true;
-}
-
-  if ((found_variable = arts_config_find_variable(&config_variables, "gpu_buff_on")) !=
-      NULL) {
-    config->gpu_buff_on = strtol(found_variable->value, &end, 10) > 0;
-  } else {
-    config->gpu_buff_on = false;
-}
-
-  // WARNING: Slurm Launcher Set!
-  if (strncmp(config->launcher, "slurm", 5) == 0) {
-    config->master_boot = false;
-
-    char *threads_temp = getenv("SLURM_CPUS_PER_TASK");
-    if (threads_temp != NULL) {
-      config->thread_count = strtol(threads_temp, &end, 10);
-}
-
-    char *slurm_nodes;
-    slurm_nodes = getenv("SLURM_NNODES");
-    if (slurm_nodes != NULL) {
-      config->nodes = strtol(slurm_nodes, &end, 10);
-    } else {
-      config->nodes = 1;
-    }
-
-    char *node_list = getenv("SLURM_STEP_NODELIST");
-    arts_config_create_routing_table(&config, node_list);
-
-    unsigned int length = strlen(config->table[0].ip_address) + 1;
-    if (config->master_node) {
-      arts_free(config->master_node);
-    }
-    config->master_node = (char *)arts_malloc(sizeof(char) * length);
-    strncpy(config->master_node, config->table[0].ip_address, length);
-
-    for (int i = 0; i < config->table_length; i++) {
-      config->table[i].rank = i;
-      if (strcmp(config->master_node, config->table[i].ip_address) == 0) {
-        config->master_rank = i;
+  if (value[0] == '[') {
+    char *ptr = (char *)value + 1;
+    char *endptr;
+    unsigned long start_port = strtoul(ptr, &endptr, 10);
+    if (endptr != ptr && *endptr == '-') {
+      ptr = endptr + 1;
+      unsigned long end_port = strtoul(ptr, &endptr, 10);
+      if (endptr != ptr) {
+        config->port_range = true;
+        config->port_start = (unsigned int)start_port;
+        config->port_end = (unsigned int)end_port;
+        config->port = (unsigned int)start_port;
+        return;
       }
     }
-  } else if (strncmp(config->launcher, "lsf", 3) == 0) {
-    config->master_boot = false;
-    unsigned int count = 0;
-    char *node_list = extract_nodelist_lsf("LSB_HOSTS", 1, &count);
-    if (!node_list) {
-      node_list = extract_nodelist_lsf("LSB_MCPU_HOSTS", 2, &count);
-    }
-    config->nodes = count;
+    config->port_range = false;
+    config->port = 75563;
+  } else {
+    config->port_range = false;
+    config->port = (unsigned int)strtol(value, NULL, 10);
+  }
+}
 
-    arts_config_create_routing_table(&config, node_list);
+/*--- Config Entry Table ----------------------------------------------------*/
 
-    unsigned int length = strlen(config->table[0].ip_address) + 1;
-    if (config->master_node) {
-      arts_free(config->master_node);
-    }
-    config->master_node = (char *)arts_malloc(sizeof(char) * length);
+#define OFF(f) offsetof(struct arts_config_s, f)
 
-    strncpy(config->master_node, config->table[0].ip_address, length);
+static const struct arts_config_entry_s config_entries[] = {
+    /* --- Threading --- */
+    {"worker_threads",           CONFIG_UINT,   OFF(worker_thread_count),      "4",          NULL},
+    {"stack_size",               CONFIG_UINT64, OFF(stack_size),               "0",          NULL},
+    /* --- Pinning --- */
+    {"pin",                      CONFIG_BOOL,   OFF(pin_threads),              "1",          NULL},
+    {"pin_stride",               CONFIG_UINT,   OFF(pin_stride),               "1",          NULL},
+    {"print_topology",           CONFIG_BOOL,   OFF(print_topology),           "0",          NULL},
+    /* --- Scheduling --- */
+    {"scheduler",                CONFIG_UINT,   OFF(scheduler),                "0",          NULL},
+    {"worker_init_deque_size",   CONFIG_UINT,   OFF(deque_size),               "4096",       NULL},
+    {"route_table_size",         CONFIG_UINT,   OFF(route_table_size),         "20",         NULL},
+    {"auto_shutdown",            CONFIG_UINT,   OFF(auto_shutdown),            "0",          NULL},
+    /* --- GPU --- */
+    {"gpu",                      CONFIG_UINT,   OFF(gpu),                      "0",          NULL},
+    {"gpu_locality",             CONFIG_UINT,   OFF(gpu_locality),             "0",          NULL},
+    {"gpu_fit",                  CONFIG_UINT,   OFF(gpu_fit),                  "0",          NULL},
+    {"gpu_lc_sync",              CONFIG_UINT,   OFF(gpu_lc_sync),              "0",          NULL},
+    {"gpu_max_edts",             CONFIG_UINT,   OFF(gpu_max_edts),             NULL,         NULL},
+    {"gpu_max_memory",           CONFIG_UINT64, OFF(gpu_max_memory),           NULL,         NULL},
+    {"gpu_p2p",                  CONFIG_BOOL,   OFF(gpu_p2p),                  "0",          NULL},
+    {"gpu_route_table_size",     CONFIG_UINT,   OFF(gpu_route_table_size),     "12",         NULL},
+    {"free_db_after_gpu_run",    CONFIG_BOOL,   OFF(free_db_after_gpu_run),    "0",          NULL},
+    {"run_gpu_gc_idle",          CONFIG_BOOL,   OFF(run_gpu_gc_idle),          "1",          NULL},
+    {"run_gpu_gc_pre_edt",       CONFIG_BOOL,   OFF(run_gpu_gc_pre_edt),      "0",          NULL},
+    {"delete_zeros_gpu_gc",      CONFIG_BOOL,   OFF(delete_zeros_gpu_gc),      "1",          NULL},
+    {"gpu_buff_on",              CONFIG_BOOL,   OFF(gpu_buff_on),              "0",          NULL},
+    /* --- Networking (conditional defaults applied in config_compute_derived) --- */
+    {"sender_threads",           CONFIG_UINT,   OFF(sender_thread_count),      NULL,         NULL},
+    {"receiver_threads",         CONFIG_UINT,   OFF(receiver_thread_count),    NULL,         NULL},
+    {"num_ports",                CONFIG_UINT,   OFF(num_ports),                NULL,         NULL},
+    {"master_node",              CONFIG_STRING, OFF(master_node),              NULL,         NULL},
+    /* --- Debug --- */
+    {"kill_mode",                CONFIG_UINT,   OFF(kill_mode),                "0",          NULL},
+    {"core_dump",                CONFIG_BOOL,   OFF(core_dump),                "0",          NULL},
+    {"print_node_stats",         CONFIG_UINT,   OFF(print_node_stats),         "0",          NULL},
+    {"watchdog_timeout",         CONFIG_UINT,   OFF(watchdog_timeout),         "10",         NULL},
+    /* --- Counters --- */
+    {"counter_folder",           CONFIG_STRING, OFF(counter_folder),           "./counters", NULL},
+    {"counter_capture_interval", CONFIG_UINT,   OFF(counter_capture_interval), "100",        NULL},
+    /* --- Custom handlers --- */
+    {"launcher",                 CONFIG_CUSTOM, 0,                             NULL,         handle_launcher},
+    {"net_interface",            CONFIG_CUSTOM, 0,                             NULL,         handle_net_interface},
+    {"default_port",             CONFIG_CUSTOM, 0,                             NULL,         handle_port},
+    /* sentinel */
+    {NULL, 0, 0, NULL, NULL}
+};
 
-    for (int i = 0; i < config->table_length; i++) {
-      config->table[i].rank = i;
-      if (strcmp(config->master_node, config->table[i].ip_address) == 0) {
-        config->master_rank = i;
+#undef OFF
+
+/*--- Table-Driven Parse Loop -----------------------------------------------*/
+
+static void config_parse_table(struct arts_config_s *config,
+                               struct arts_config_variable_s **vars) {
+  for (int i = 0; config_entries[i].key != NULL; i++) {
+    const struct arts_config_entry_s *entry = &config_entries[i];
+    const char *value = config_lookup(vars, entry->key);
+    if (entry->type == CONFIG_CUSTOM) {
+      if (entry->handler) {
+        entry->handler(config, value, vars);
       }
+      continue;
     }
-  } else if (strncmp(config->launcher, "ssh", 3) == 0) {
-    config->launcher_data =
-        arts_remote_launcher_create(0, NULL, config, config->kill_mode,
-                                 arts_remote_launcher_ssh_startup_processes,
-                                 arts_remote_launcher_ssh_cleanup_processes);
-    config->master_boot = true;
-
-    char *node_list = 0;
-    if ((found_variable = arts_config_find_variable(&config_variables, "nodes")) !=
-        NULL) {
-      node_list = found_variable->value;
-
-      if ((found_variable =
-               arts_config_find_variable(&config_variables, "node_count")) != NULL) {
-        config->nodes = strtol(found_variable->value, &end, 10);
-      } else {
-        config->nodes = arts_config_count_nodes(node_list);
+    if (value == NULL) {
+      value = entry->default_value;
+    }
+    if (value != NULL) {
+      config_auto_parse(config, entry, value);
+    }
+  }
 }
-    } else {
-      node_list = (char *)arts_malloc(sizeof(char) * strlen("localhost\0"));
-      strncpy(node_list, "localhost\0", strlen("localhost\0") + 1);
-      config->nodes = 1;
-    }
 
-    arts_config_create_routing_table(&config, node_list);
+/*--- Launcher Setup --------------------------------------------------------*/
 
-    if (config->master_node == NULL) {
-      unsigned int length = strlen(config->table[0].ip_address) + 1;
-      config->master_node = (char *)arts_malloc(sizeof(char) * length);
-      strncpy(config->master_node, config->table[0].ip_address, length);
+/* Set master node from routing table[0] and find master rank. */
+static void config_set_master_from_table(struct arts_config_s *config) {
+  if (config->master_node) {
+    arts_free(config->master_node);
+  }
+  config->master_node = arts_config_make_new_var(config->table[0].ip_address);
+  for (unsigned int i = 0; i < config->table_length; i++) {
+    config->table[i].rank = i;
+    if (strcmp(config->master_node, config->table[i].ip_address) == 0) {
+      config->master_rank = i;
     }
-
-    for (int i = 0; i < config->table_length; i++) {
-      config->table[i].rank = i;
-      if (strcmp(config->master_node, config->table[i].ip_address) == 0) {
-        config->master_rank = i;
-      }
-    }
-  } else if (strncmp(config->launcher, "local", 5) == 0) {
-    config->master_boot = false;
-    config->master_node = NULL;
-    // OS Threads
-    char *threads_os = getenv("OS_THREAD_COUNT");
-    if (threads_os != NULL) {
-      config->os_thread_count = strtol(threads_os, &end, 10);
-    } else if (!config->os_thread_count) {
-      config->os_thread_count = 0; // Default to single thread.
+  }
 }
-    // OS Threads
-    char *threads_user = getenv("USER_THREAD_COUNT");
-    if (threads_user != NULL) {
-      config->thread_count = strtol(threads_user, &end, 10);
-    } else if (!config->thread_count) {
-      config->thread_count = 4; // Default to single thread.
-}
+
+static void config_setup_slurm(struct arts_config_s *config) {
+  config->master_boot = false;
+
+  char *threads_temp = getenv("SLURM_CPUS_PER_TASK");
+  if (threads_temp != NULL) {
+    config->thread_count = (unsigned int)strtol(threads_temp, NULL, 10);
+  }
+
+  char *slurm_nodes = getenv("SLURM_NNODES");
+  if (slurm_nodes != NULL) {
+    config->nodes = (unsigned int)strtol(slurm_nodes, NULL, 10);
+  } else {
     config->nodes = 1;
-    config->table_length = 1; // for GUID
-    config->master_rank = 0;
+  }
+
+  char *node_list = getenv("SLURM_STEP_NODELIST");
+  arts_config_create_routing_table(&config, node_list);
+  config_set_master_from_table(config);
+}
+
+static void config_setup_lsf(struct arts_config_s *config) {
+  config->master_boot = false;
+  unsigned int count = 0;
+  char *node_list = extract_nodelist_lsf("LSB_HOSTS", 1, &count);
+  if (!node_list) {
+    node_list = extract_nodelist_lsf("LSB_MCPU_HOSTS", 2, &count);
+  }
+  config->nodes = count;
+
+  arts_config_create_routing_table(&config, node_list);
+  config_set_master_from_table(config);
+}
+
+static void config_setup_ssh(struct arts_config_s *config,
+                             struct arts_config_variable_s **vars) {
+  config->launcher_data =
+      arts_remote_launcher_create(0, NULL, config, config->kill_mode,
+                                  arts_remote_launcher_ssh_startup_processes,
+                                  arts_remote_launcher_ssh_cleanup_processes);
+  config->master_boot = true;
+
+  char *node_list = NULL;
+  const char *nodes_value = config_lookup(vars, "nodes");
+  if (nodes_value) {
+    /* nodes_value points into the linked list — safe to use as strtok input
+       since arts_config_create_routing_table will tokenize it. We need a
+       mutable copy for count_nodes since it may also tokenize. */
+    node_list = arts_config_make_new_var(nodes_value);
+
+    const char *node_count_value = config_lookup(vars, "node_count");
+    if (node_count_value) {
+      config->nodes = (unsigned int)strtol(node_count_value, NULL, 10);
+    } else {
+      config->nodes = arts_config_count_nodes(node_list);
+    }
+  } else {
+    node_list = arts_config_make_new_var("localhost");
+    config->nodes = 1;
+  }
+
+  arts_config_create_routing_table(&config, node_list);
+
+  if (config->master_node == NULL) {
+    config->master_node = arts_config_make_new_var(config->table[0].ip_address);
+  }
+  for (unsigned int i = 0; i < config->table_length; i++) {
+    config->table[i].rank = i;
+    if (strcmp(config->master_node, config->table[i].ip_address) == 0) {
+      config->master_rank = i;
+    }
+  }
+}
+
+static void config_setup_local(struct arts_config_s *config) {
+  config->master_boot = false;
+  if (config->master_node) {
+    arts_free(config->master_node);
+    config->master_node = NULL;
+  }
+
+  char *threads_user = getenv("USER_THREAD_COUNT");
+  if (threads_user != NULL) {
+    config->worker_thread_count = (unsigned int)strtol(threads_user, NULL, 10);
+  }
+
+  config->nodes = 1;
+  config->table_length = 1;
+  config->master_rank = 0;
+}
+
+static void config_setup_launcher(struct arts_config_s *config,
+                                  struct arts_config_variable_s **vars) {
+  if (strcmp(config->launcher, "slurm") == 0) {
+    config_setup_slurm(config);
+  } else if (strcmp(config->launcher, "lsf") == 0) {
+    config_setup_lsf(config);
+  } else if (strcmp(config->launcher, "ssh") == 0) {
+    config_setup_ssh(config, vars);
+  } else if (strcmp(config->launcher, "local") == 0) {
+    config_setup_local(config);
   } else {
     arts_abort(1);
   }
+}
 
-  if ((found_variable = arts_config_find_variable(&config_variables, "stack_size")) !=
-      NULL) {
-    config->stack_size = strtoull(found_variable->value, &end, 10);
-  } else {
-    config->stack_size = 0;
-  }
+/*--- Computed Fields & Warnings --------------------------------------------*/
 
-  if ((found_variable = arts_config_find_variable(&config_variables,
-                                              "worker_init_deque_size")) != NULL) {
-    config->deque_size = strtol(found_variable->value, &end, 10);
-  } else {
-    config->deque_size = 4096;
-  }
+static void config_set_pre_defaults(struct arts_config_s *config) {
+  config->gpu_max_edts = (unsigned int)-1;
+  config->gpu_max_memory = (uint64_t)-1;
+}
 
-  if ((found_variable = arts_config_find_variable(&config_variables, "port")) !=
-      NULL) {
-    if (found_variable->value[0] == '[') {
-      char *ptr = found_variable->value + 1; // skip '['
-      char *endptr;
-      unsigned long start_port = strtoul(ptr, &endptr, 10);
-      if (endptr != ptr && *endptr == '-') {
-        ptr = endptr + 1;
-        unsigned long end_port = strtoul(ptr, &endptr, 10);
-        if (endptr != ptr) {
-          config->port_range = true;
-          config->port_start = (unsigned int)start_port;
-          config->port_end = (unsigned int)end_port;
-          config->port = (unsigned int)start_port;
-        } else {
-          config->port_range = false;
-          config->port = 75563;
-        }
-      } else {
-        config->port_range = false;
-        config->port = 75563;
-      }
-    } else {
-      config->port_range = false;
-      config->port = strtol(found_variable->value, &end, 10);
+static void config_compute_derived(struct arts_config_s *config) {
+  /* Power-of-2 route table entries via bit shift. */
+  config->route_table_entries = 1U << config->route_table_size;
+  config->gpu_route_table_entries = 1U << config->gpu_route_table_size;
+
+  /* Networking conditional defaults (non-local launcher only). */
+  if (strcmp(config->launcher, "local") != 0) {
+    if (!config->sender_thread_count) {
+      config->sender_thread_count = 1;
     }
-  } else if (strncmp(config->launcher, "local", 5) != 0) {
-    config->port_range = false;
-    config->port = 75563;
+    if (!config->receiver_thread_count) {
+      config->receiver_thread_count = 1;
+    }
+    if (!config->num_ports) {
+      config->num_ports = 1;
+    }
+    if (!config->port) {
+      config->port = 75563;
+    }
   }
 
-  // Assign per-node ports from port range to routing table
-  // Each node gets config->ports consecutive ports, non-overlapping
-  // e.g., ports=2, port=[10001-10004]: node0=10001,10002 node1=10003,10004
+  /* Compute total thread count.
+     If thread_count was set directly (SLURM/env), derive worker count from it.
+     Otherwise compute total from worker + sender + receiver. */
+  if (config->thread_count > 0) {
+    config->worker_thread_count = config->thread_count
+        - config->sender_thread_count - config->receiver_thread_count;
+  }
+  config->thread_count = config->worker_thread_count
+      + config->sender_thread_count + config->receiver_thread_count;
+
+  /* Assign per-node ports from port range to routing table.
+     Each node gets config->num_ports consecutive ports, non-overlapping.
+     e.g., ports=2, port=[10001-10004]: node0=10001,10002 node1=10003,10004 */
   if (config->port_range && config->table != NULL) {
-    for (int i = 0; i < config->table_length; i++) {
-      config->table[i].port = config->port_start + (i * config->ports);
+    for (unsigned int i = 0; i < config->table_length; i++) {
+      config->table[i].port = config->port_start + (i * config->num_ports);
     }
   }
-
-  if ((found_variable =
-           arts_config_find_variable(&config_variables, "route_table_size")) != NULL) {
-    config->route_table_size = strtol(found_variable->value, &end, 10);
-  } else {
-    config->route_table_size = 20;
-  }
-
-  int route_table_entries = 1;
-  for (int i = 0; i < config->route_table_size; i++) {
-    route_table_entries *= 2;
 }
-  config->route_table_entries = route_table_entries;
 
-  int gpu_route_table_entries = 1;
-  for (int i = 0; i < config->gpu_route_table_size; i++) {
-    gpu_route_table_entries *= 2;
+static void config_print_warnings(struct arts_config_s *config) {
+  if (config->free_db_after_gpu_run) {
+    ARTS_INFO("free_db_after_gpu_run is on -- intended for testing, not "
+              "performance.");
+  }
+  if (config->run_gpu_gc_pre_edt) {
+    ARTS_INFO("run_gpu_gc_pre_edt is on -- intended for testing, not "
+              "performance.");
+  }
 }
-  config->gpu_route_table_entries = gpu_route_table_entries;
 
-  if ((found_variable = arts_config_find_variable(&config_variables, "pin")) != NULL) {
-    config->pin_threads = strtol(found_variable->value, &end, 10);
-  } else {
-    config->pin_threads = 1;
+/*--- Config File Open / Variable Cleanup -----------------------------------*/
+
+static FILE *config_open_file(void) {
+  const char *location = getenv("ARTS_CONFIG");
+  FILE *f = fopen(location ? location : "arts.cfg", "r");
+  if (!f) {
+    ARTS_INFO("No config file found (./arts.cfg).");
+    arts_debug_generate_seg_fault();
   }
+  return f;
+}
 
-  while (config_variables != NULL) {
-    struct arts_config_variable_s *next_var = config_variables->next;
-    arts_free(config_variables);
-    config_variables = next_var;
+static void config_free_variables(struct arts_config_variable_s *vars) {
+  while (vars != NULL) {
+    struct arts_config_variable_s *next_var = vars->next;
+    arts_free(vars);
+    vars = next_var;
   }
+}
 
+/*=============================================================================
+ * arts_config_load — Phased config loading
+ *
+ * Phase 1: Open file, parse key=value pairs into linked list
+ * Phase 2: Allocate config, set non-zero pre-defaults
+ * Phase 3: Table-driven parse (replaces ~280 lines of if-else)
+ * Phase 4: Launcher-specific setup (nodes, routing table, master)
+ * Phase 5: Computed fields, warnings
+ *===========================================================================*/
+
+struct arts_config_s *arts_config_load(void) {
+  /* Phase 1: Open config file, parse key=value pairs. */
+  FILE *fp = config_open_file();
+  struct arts_config_variable_s *vars = arts_config_get_variables(fp);
+  (void)fclose(fp);
+
+  /* Phase 2: Allocate config, set non-zero pre-defaults. */
+  struct arts_config_s *config =
+      (struct arts_config_s *)arts_calloc(1, sizeof(struct arts_config_s));
+  config_set_pre_defaults(config);
+
+  /* Phase 3: Table-driven parse. */
+  config_parse_table(config, &vars);
+
+  /* Phase 4: Launcher-specific setup (nodes, routing table, master). */
+  config_setup_launcher(config, &vars);
+
+  /* Phase 5: Computed fields, warnings. */
+  config_compute_derived(config);
+  config_print_warnings(config);
+
+  /* Cleanup variable linked list. */
+  config_free_variables(vars);
   return config;
 }
 
@@ -1262,13 +966,19 @@ void arts_config_destroy(struct arts_config_s *config) {
     arts_free(config->launcher_data);
   }
   if (config->table) {
-    for (int i = 0; i < config->table_length; i++) {
+    for (unsigned int i = 0; i < config->table_length; i++) {
       arts_free(config->table[i].ip_address);
-}
+    }
     arts_free(config->table);
   }
   if (config->master_node) {
     arts_free(config->master_node);
+  }
+  if (config->net_interface) {
+    arts_free(config->net_interface);
+  }
+  if (config->counter_folder) {
+    arts_free(config->counter_folder);
   }
   arts_free(config);
 }

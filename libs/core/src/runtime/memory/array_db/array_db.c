@@ -310,7 +310,7 @@ void internal_atomic_add_in_array_db(arts_guid_t db_guid, unsigned int index,
     arts_array_db_t *array = (arts_array_db_t *)(db + 1);
     // Do this so when we increment finished we can check the term status
     increment_queue_epoch(epoch_guid);
-    global_shutdown_guid_inc_queue();
+    arts_shutdown_epoch_inc_queue();
     unsigned int offset = get_offset_from_index(array, index);
     unsigned int *data = (unsigned int *)(((char *)array) + offset);
     unsigned int result = arts_atomic_add(data, to_add);
@@ -322,7 +322,7 @@ void internal_atomic_add_in_array_db(arts_guid_t db_guid, unsigned int index,
     }
 
     increment_finished_epoch(epoch_guid);
-    global_shutdown_guid_inc_finished();
+    arts_shutdown_epoch_inc_finished();
   } else {
     arts_out_of_order_atomic_add_in_array_db(db_guid, index, to_add, edt_guid, slot,
                                      epoch_guid);
@@ -335,7 +335,7 @@ void arts_atomic_add_in_array_db(arts_array_db_t *array, unsigned int index,
   arts_guid_t db_guid = get_array_db_guid(array);
   arts_guid_t epoch_guid = arts_get_current_epoch_guid();
   increment_active_epoch(epoch_guid);
-  global_shutdown_guid_inc_active();
+  arts_shutdown_epoch_inc_active();
   unsigned int rank = get_rank_from_index(array, index);
   if (rank == arts_global_rank_id) {
     internal_atomic_add_in_array_db(db_guid, index, to_add, edt_guid, slot, epoch_guid);
@@ -354,7 +354,7 @@ void internal_atomic_compare_and_swap_in_array_db(
     arts_array_db_t *array = (arts_array_db_t *)(db + 1);
     // Do this so when we increment finished we can check the term status
     increment_queue_epoch(epoch_guid);
-    global_shutdown_guid_inc_queue();
+    arts_shutdown_epoch_inc_queue();
     unsigned int offset = get_offset_from_index(array, index);
     unsigned int *data = (unsigned int *)(((char *)array) + offset);
     unsigned int result = arts_atomic_cswap(data, old_value, new_value);
@@ -366,7 +366,7 @@ void internal_atomic_compare_and_swap_in_array_db(
     }
 
     increment_finished_epoch(epoch_guid);
-    global_shutdown_guid_inc_finished();
+    arts_shutdown_epoch_inc_finished();
   } else {
     arts_out_of_order_atomic_compare_and_swap_in_array_db(
         db_guid, index, old_value, new_value, edt_guid, slot, epoch_guid);
@@ -380,7 +380,7 @@ void arts_atomic_compare_and_swap_in_array_db(arts_array_db_t *array, unsigned i
   arts_guid_t db_guid = get_array_db_guid(array);
   arts_guid_t epoch_guid = arts_get_current_epoch_guid();
   increment_active_epoch(epoch_guid);
-  global_shutdown_guid_inc_active();
+  arts_shutdown_epoch_inc_active();
   unsigned int rank = get_rank_from_index(array, index);
   if (rank == arts_global_rank_id) {
     internal_atomic_compare_and_swap_in_array_db(db_guid, index, old_value, new_value,

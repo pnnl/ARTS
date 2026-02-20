@@ -41,7 +41,6 @@
 set(CPU_EXAMPLES
     fib
     fib_yield
-    fib_context_switch
     simple_reduction
 )
 

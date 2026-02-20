@@ -189,7 +189,7 @@ void arts_increment_finished_epoch_list() {
       arts_reset_array_list(epoch_list);
 }
   }
-  global_shutdown_guid_inc_finished();
+  arts_shutdown_epoch_inc_finished();
 }
 
 void arts_unset_thread_local_edt_info() {
@@ -271,7 +271,7 @@ bool arts_edt_create_internal(struct arts_edt_s *edt, arts_type_t mode,
       increment_active_epoch(current_epoch_guid);
     }
   }
-  global_shutdown_guid_inc_active();
+  arts_shutdown_epoch_inc_active();
 
   /* Copy inline parameter values into the EDT's trailing storage. */
   if (paramc) {
@@ -632,7 +632,7 @@ arts_guid_t arts_allocate_local_buffer(void **buffer, unsigned int size,
   if (epoch_guid) {
     increment_active_epoch(epoch_guid);
 }
-  global_shutdown_guid_inc_active();
+  arts_shutdown_epoch_inc_active();
 
   // unsigned int alloc = 0;
   if (size) {
@@ -664,7 +664,7 @@ void *arts_set_buffer(arts_guid_t buffer_guid, void *buffer, unsigned int size) 
       if (epoch_guid) {
         increment_queue_epoch(epoch_guid);
 }
-      global_shutdown_guid_inc_queue();
+      arts_shutdown_epoch_inc_queue();
 
       if (size > stub->size) {
         if (stub->size) {
@@ -700,7 +700,7 @@ void *arts_set_buffer(arts_guid_t buffer_guid, void *buffer, unsigned int size) 
       if (epoch_guid) {
         increment_finished_epoch(epoch_guid);
 }
-      global_shutdown_guid_inc_finished();
+      arts_shutdown_epoch_inc_finished();
     } else {
       ARTS_INFO("Out-of-order buffers not supported");
     }

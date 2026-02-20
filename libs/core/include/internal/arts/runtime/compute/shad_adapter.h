@@ -42,8 +42,7 @@
 extern "C" {
 #endif
 
-#include "arts/runtime/rt.h"
-#include "arts/utils/queue.h"
+#include "arts.h"
 
 arts_guid_t arts_edt_create_shad(arts_edt_t func_ptr, unsigned int route,
                              uint32_t paramc, const uint64_t *paramv);
@@ -59,25 +58,11 @@ void arts_dec_lock_shad();
 void arts_check_lock_shad();
 void arts_start_intro_shad(unsigned int start);
 void arts_stop_intro_shad();
-unsigned int arts_get_shad_loop_stride();
-
-typedef struct {
-  volatile unsigned int lock;
-  volatile unsigned int size;
-  arts_queue_t *queue;
-} arts_shad_lock_t;
-arts_shad_lock_t *arts_shad_create_lock();
-void arts_shad_lock(arts_shad_lock_t *lock);
-void arts_shad_unlock(arts_shad_lock_t *lock);
-
 arts_guid_t arts_allocate_local_buffer_shad(void **buffer, uint32_t *size_to_write,
                                        arts_guid_t epoch_guid);
 
 bool arts_shad_alias_try_lock(volatile uint64_t *lock);
 void arts_shad_alias_unlock(volatile uint64_t *lock);
-
-void arts_shad_tmt_lock(volatile uint64_t *lock);
-void arts_shad_tmt_unlock(volatile uint64_t *lock);
 
 #ifdef __cplusplus
 }

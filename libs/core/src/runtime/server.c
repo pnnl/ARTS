@@ -83,7 +83,7 @@ void arts_remote_shutdown() { arts_ll_server_shutdown(); }
 void arts_server_setup(struct arts_config_s *config) {
   // ASYNC Message Deque Init
   arts_ll_server_setup(config);
-  out_init(arts_global_rank_count * config->ports);
+  out_init(arts_global_rank_count * config->num_ports);
 #ifdef SEQUENCENUMBERS
   rec_seq_numbers = (uint64_t *)arts_calloc(arts_global_rank_count, sizeof(uint64_t));
 #endif

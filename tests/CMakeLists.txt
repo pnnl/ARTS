@@ -70,7 +70,6 @@ set(TEST_PROGRAMS
     oo_bug
     route_table_iter
     route_table_iter2
-    tmt_lite
     acquire_mode
     arts_id
 )

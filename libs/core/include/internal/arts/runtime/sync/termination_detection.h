@@ -70,10 +70,10 @@ arts_epoch_pool_t *create_epoch_pool(arts_guid_t *epoch_pool_guid,
                                  unsigned int pool_size, arts_guid_t *start_guid);
 arts_epoch_t *get_pool_epoch(arts_guid_t edt_guid, unsigned int slot);
 
-void global_shutdown_guid_inc_active();
-void global_shutdown_guid_inc_queue();
-void global_shutdown_guid_inc_finished();
-bool create_shutdown_epoch();
+void arts_shutdown_epoch_inc_active();
+void arts_shutdown_epoch_inc_queue();
+void arts_shutdown_epoch_inc_finished();
+bool arts_shutdown_epoch_create();
 
 #ifdef __cplusplus
 }

@@ -933,14 +933,14 @@ void internal_put_in_db(void *ptr, arts_guid_t edt_guid, arts_guid_t db_guid,
     if (db) {
       // Do this so when we increment finished we can check the term status
       increment_queue_epoch(epoch_guid);
-      global_shutdown_guid_inc_queue();
+      arts_shutdown_epoch_inc_queue();
       void *data = (void *)(((char *)(db + 1)) + offset);
       memcpy(data, ptr, size);
       if (edt_guid != NULL_GUID) {
         arts_signal_edt(edt_guid, slot, db_guid, ARTS_DB_WRITE);
 }
       increment_finished_epoch(epoch_guid);
-      global_shutdown_guid_inc_finished();
+      arts_shutdown_epoch_inc_finished();
       ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_PUT_BW, ARTS_METRIC_THREAD, size);
     } else {
       void *cpy_ptr = arts_malloc(size);
@@ -963,7 +963,7 @@ void arts_put_in_db_at(void *ptr, arts_guid_t edt_guid, arts_guid_t db_guid,
   arts_guid_t epoch_guid = arts_get_current_epoch_guid();
   ARTS_DEBUG("Epoch [Guid:%lu]", epoch_guid);
   increment_active_epoch(epoch_guid);
-  global_shutdown_guid_inc_active();
+  arts_shutdown_epoch_inc_active();
   internal_put_in_db(ptr, edt_guid, db_guid, slot, offset, len, epoch_guid, rank);
   PUT_DB_COUNTER_STOP();
 }
@@ -975,7 +975,7 @@ void arts_put_in_db(void *ptr, arts_guid_t edt_guid, arts_guid_t db_guid,
   arts_guid_t epoch_guid = arts_get_current_epoch_guid();
   ARTS_DEBUG("Epoch [Guid:%lu]", epoch_guid);
   increment_active_epoch(epoch_guid);
-  global_shutdown_guid_inc_active();
+  arts_shutdown_epoch_inc_active();
   internal_put_in_db(ptr, edt_guid, db_guid, slot, offset, len, epoch_guid, rank);
   PUT_DB_COUNTER_STOP();
 }
@@ -985,7 +985,7 @@ void arts_put_in_db_epoch(void *ptr, arts_guid_t epoch_guid, arts_guid_t db_guid
   PUT_DB_COUNTER_START();
   unsigned int rank = arts_guid_get_rank(db_guid);
   increment_active_epoch(epoch_guid);
-  global_shutdown_guid_inc_active();
+  arts_shutdown_epoch_inc_active();
   internal_put_in_db(ptr, NULL_GUID, db_guid, 0, offset, len, epoch_guid, rank);
   PUT_DB_COUNTER_STOP();
 }

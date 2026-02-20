@@ -86,9 +86,7 @@ struct arts_runtime_shared_s {
   uint64_t shutdown_timeout;
   uint64_t shutdown_force_timeout;
   unsigned int print_node_stats;
-  arts_guid_t shutdown_epoch;
-  unsigned int shad_loop_stride;
-  bool tmt;
+  arts_guid_t auto_shutdown_guid;
   unsigned int gpu;
   unsigned int gpu_locality;
   unsigned int gpu_fit;
@@ -104,6 +102,7 @@ struct arts_runtime_shared_s {
   bool delete_zeros_gpu_gc;
   bool gpu_buff_on;
   unsigned int pin_threads;
+  unsigned int watchdog_timeout;
   uint64_t **keys;
   uint64_t *global_guid_thread_id;
   const char *counter_folder;

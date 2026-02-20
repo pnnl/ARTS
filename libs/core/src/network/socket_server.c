@@ -87,7 +87,7 @@ char *ip_list;
 
 void arts_remote_set_message_table(struct arts_config_s *table) {
   arts_global_message_table = table;
-  ports = table->ports;
+  ports = table->num_ports;
 }
 bool hostname_to_ip(char *host_name, char *ip) {
   int j;
@@ -112,151 +112,6 @@ bool hostname_to_ip(char *host_name, char *ip) {
   ARTS_INFO("%s", gai_strerror(error));
 
   return false;
-}
-
-void arts_remote_fix_names(char *fix, unsigned int fix_length, bool is_it_post,
-                        char **fix_me) {
-  char *old_str;
-  char *new_str;
-  int old_str_length;
-  // for(int i=0; i<arts_global_message_table->table_length; i++)
-  {
-    old_str = *fix_me; // arts_global_message_table->table[i].ip_address;
-    old_str_length = (int)strlen(old_str);
-
-    new_str = (char *)arts_malloc(old_str_length + fix_length + 1);
-
-    if (is_it_post) {
-      strncpy(new_str, old_str, old_str_length);
-      strncpy(new_str + old_str_length, fix, fix_length);
-      *(new_str + fix_length + old_str_length) = '\0';
-      *fix_me = new_str;
-      arts_free(old_str);
-    } else {
-      strncpy(new_str, fix, fix_length);
-      strncpy(new_str + fix_length, old_str, old_str_length);
-      *(new_str + fix_length + old_str_length) = '\0';
-      // arts_global_message_table->table[i].ip_address = new_str;
-      *fix_me = new_str;
-      arts_free(old_str);
-    }
-  }
-}
-
-void arts_server_fix_ib_names(struct arts_config_s *config) {
-#ifdef __linux__
-  const char *hostname_formats[] = {"ib-%s",    "ib%s",     "ib.%s",
-                                   "%s-ib",    "%sib",     "%s.ib",
-                                   "%s-ib.ib", "%s.ibnet", NULL};
-  const int request_count = (int)(config->table_length * 8);
-
-  struct gaicb gaicb_requests[request_count];
-  struct gaicb *gaicb_ptrs[request_count];
-  memset(gaicb_requests, 0, sizeof(gaicb_requests));
-  for (int i = 0; i < request_count; i++) {
-    gaicb_ptrs[i] = &gaicb_requests[i];
-  }
-
-  for (int j = 0; j < config->table_length; j++) {
-    char *host_name = arts_global_message_table->table[j].ip_address;
-    for (int i = 0; hostname_formats[i] != NULL; i++) {
-      int buffer_size = snprintf(NULL, 0, hostname_formats[i], host_name) + 1;
-      char *formatted_hostname = (char *)arts_malloc(buffer_size);
-      (void)sprintf(formatted_hostname, hostname_formats[i], host_name);
-      gaicb_requests[(j * 8) + i].ar_name = formatted_hostname;
-    }
-  }
-
-  int error = getaddrinfo_a(GAI_NOWAIT, gaicb_ptrs, request_count, NULL);
-  if (error) {
-    arts_printf("getaddrinfo_a failed: %s\n", gai_strerror(error));
-    arts_abort(1);
-  }
-  bool all_completed = false;
-  for (int try = 0; try < 3 && !all_completed; try++) {
-    all_completed = true;
-    sleep(1);
-    for (int i = 0; i < request_count; i++) {
-      if (gai_error(&gaicb_requests[i]) == EAI_INPROGRESS) {
-        all_completed = false;
-        break;
-      }
-    }
-  }
-
-  bool node_resolved[config->table_length];
-  memset(node_resolved, 0, sizeof(node_resolved));
-  for (int i = 0; i < request_count; i++) {
-    int node_idx = i / 8;
-    if (node_resolved[node_idx]) {
-      continue;
-    }
-    error = gai_error(&gaicb_requests[i]);
-    if (!error) {
-      char *old_hostname = arts_global_message_table->table[node_idx].ip_address;
-      size_t name_len = strlen(gaicb_requests[i].ar_name) + 1;
-      char *new_hostname = (char *)arts_malloc(name_len);
-      memcpy(new_hostname, gaicb_requests[i].ar_name, name_len);
-      arts_global_message_table->table[node_idx].ip_address = new_hostname;
-      arts_free(old_hostname);
-      node_resolved[node_idx] = true;
-    }
-  }
-
-  gai_cancel(NULL);
-  for (int i = 0; i < request_count; i++) {
-    if (gaicb_requests[i].ar_result) {
-      freeaddrinfo(gaicb_requests[i].ar_result);
-    }
-    arts_free((void *)gaicb_requests[i].ar_name);
-  }
-#else
-  char post[6][10] = {"-ib\0", "ib\0", ".ib\0", "-ib.ib\0", ".ibnet\0", "\0"};
-  char pre[4][10] = {"ib-\0", "ib\0", "ib.\0", "\0"};
-
-  int curLength;
-  for (int j = 0; j < config->table_length; j++) {
-    char *testStr = arts_global_message_table->table[j].ip_address;
-    int testStrLength = strlen(testStr);
-    char *stringFixed = (char *)arts_malloc(testStrLength + 50);
-    struct addrinfo *result;
-    bool found = false;
-    int i = 0, error;
-    while (pre[i][0] != '\0' && !found) {
-      curLength = strlen(pre[i]);
-      strncpy(stringFixed, pre[i], curLength);
-      strncpy(stringFixed + curLength, testStr, testStrLength);
-      *(stringFixed + curLength + testStrLength) = '\0';
-      error = getaddrinfo(stringFixed, NULL, NULL, &result);
-
-      if (error == 0) {
-        arts_remote_fix_names(pre[i], curLength, false,
-                           &arts_global_message_table->table[j].ip_address);
-        arts_free(stringFixed);
-        freeaddrinfo(result);
-        found = true;
-      }
-      i++;
-    }
-
-    i = 0;
-    while (post[i][0] != '\0' && !found) {
-      curLength = strlen(post[i]);
-      strncpy(stringFixed, testStr, testStrLength);
-      strncpy(stringFixed + testStrLength, post[i], curLength);
-      *(stringFixed + curLength + testStrLength) = '\0';
-      error = getaddrinfo(stringFixed, NULL, NULL, &result);
-      if (error == 0) {
-        arts_remote_fix_names(post[i], curLength, true,
-                           &arts_global_message_table->table[j].ip_address);
-        arts_free(stringFixed);
-        freeaddrinfo(result);
-        found = true;
-      }
-      i++;
-    }
-  }
-#endif
 }
 
 bool arts_server_set_ip(struct arts_config_s *config) {
@@ -406,16 +261,6 @@ bool arts_server_set_ip(struct arts_config_s *config) {
 
 void arts_ll_server_setup(struct arts_config_s *config) {
   arts_remote_set_message_table(config);
-  // Legacy IB hostname fixing (ib-node01, node01-ib, etc.) - replaced by
-  // subnet-based IP remapping in arts_server_set_ip() which does not require
-  // DNS entries for IB hostnames.
-  // #ifdef USE_RDMA
-  //   if (config->table)
-  //     arts_server_fix_ib_names(config);
-  // #else
-  //   if (config->table && config->ib_names)
-  //     arts_server_fix_ib_names(config);
-  // #endif
 
   if (!arts_server_set_ip(config) && config->nodes > 1) {
     // ARTS_INFO("[%d]Could not connect to %s", arts_global_rank_id,
@@ -574,7 +419,7 @@ bool arts_remote_setup_incoming() {
   local_socket_recieve = (int *)arts_calloc(ports, sizeof(int));
 
   int i_set_option;
-  for (i = 0; i < arts_global_message_table->ports; i++) {
+  for (i = 0; i < arts_global_message_table->num_ports; i++) {
     local_socket_recieve[i] =
         (int)arts_get_socket_listening(&local_server_addr[i], in_port + i);
 

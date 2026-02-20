@@ -183,8 +183,7 @@ typedef struct {
   arts_guid_t termination_exit_guid;  /**< EDT to signal on completion. */
   arts_guid_t guid;                 /**< GUID of this epoch. */
   arts_guid_t pool_guid;            /**< Associated resource pool GUID. */
-  volatile unsigned int *wait_ptr;  /**< Context-switch wait pointer. */
-  volatile uint64_t ticket;         /**< Context-switch ticket. */
+  volatile unsigned int *wait_ptr;  /**< Epoch-wait flag pointer. */
 } arts_epoch_t;
 
 /** @} */ /* end td_types */

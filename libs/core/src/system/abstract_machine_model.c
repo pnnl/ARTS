@@ -45,9 +45,10 @@
 #include "arts/system/arts_print.h"
 #include "arts/system/threads.h"
 
+#include <sched.h>
+
 #ifdef USE_HWLOC
 #include <pthread.h>
-#include <sched.h>
 #endif
 
 unsigned int num_numa_domains = 1;
@@ -419,15 +420,15 @@ unsigned int flatten_mask(struct arts_config_s *config, struct node_mask_s *node
 }
 
 struct thread_mask_s *get_thread_mask(struct arts_config_s *config) {
-  if (config->sender_count > (arts_global_rank_count - 1) * config->ports) {
-    config->sender_count = (arts_global_rank_count - 1) * config->ports;
+  if (config->sender_thread_count > (arts_global_rank_count - 1) * config->num_ports) {
+    config->sender_thread_count = (arts_global_rank_count - 1) * config->num_ports;
 }
-  if (config->receiver_count > (arts_global_rank_count - 1) * config->ports) {
-    config->receiver_count = (arts_global_rank_count - 1) * config->ports;
+  if (config->receiver_thread_count > (arts_global_rank_count - 1) * config->num_ports) {
+    config->receiver_thread_count = (arts_global_rank_count - 1) * config->num_ports;
 }
 
   unsigned int worker_threads =
-      config->thread_count - config->sender_count - config->receiver_count;
+      config->thread_count - config->sender_thread_count - config->receiver_thread_count;
   unsigned int total_threads = config->thread_count;
 
   bool network_on = (arts_global_rank_count > 1);
@@ -435,12 +436,12 @@ struct thread_mask_s *get_thread_mask(struct arts_config_s *config) {
   init_topology();
   struct node_mask_s *node = get_node_mask();
 
-  default_policy(worker_threads, config->sender_count, config->receiver_count, node,
+  default_policy(worker_threads, config->sender_thread_count, config->receiver_thread_count, node,
                 config);
   total_threads = flatten_mask(config, node, &flat);
 
-  arts_runtime_node_init(worker_threads, 1, config->sender_count,
-                      config->receiver_count, total_threads, 0, config);
+  arts_runtime_node_init(worker_threads, 1, config->sender_thread_count,
+                      config->receiver_thread_count, total_threads, 0, config);
   if (config->print_topology) {
     print_mask(flat, total_threads);
 }
@@ -535,7 +536,7 @@ void default_policy(unsigned int number_of_workers, unsigned int number_of_sende
   unsigned int i = 0, offset = 0;
   unsigned int network_threads =
       (arts_global_rank_count > 1) * (number_of_receivers + number_of_senders);
-  unsigned int networkCores = network_threads * config->cores_per_network_thread;
+  unsigned int networkCores = network_threads;
   unsigned int worker_thread_id = 0;
   unsigned int network_out_thread_id = 0;
   unsigned int network_in_thread_id = 0;
@@ -572,20 +573,20 @@ void default_policy(unsigned int number_of_workers, unsigned int number_of_sende
 
   unsigned int next = (max - max % stride) + stride;
   for (unsigned int i = 0; i < number_of_senders; i++) {
-    for (; next < num_cores; next += config->cores_per_network_thread) {
+    for (; next < num_cores; next++) {
       if (validCpus[next] > -1) {
         flat[i + workerCores].on = 1;
         flat[i + workerCores].core_id = flat[i + workerCores].core_info.cpu_id =
             validCpus[next];
         add_a_thread(&flat[i + workerCores], 0, 1, 0, ABSTRACT_OUTBOUND,
                    network_out_thread_id++, config->pin_threads);
-        next += config->cores_per_network_thread;
+        next++;
         break;
       }
     }
   }
   for (unsigned int i = 0; i < number_of_receivers; i++) {
-    for (; next < num_cores; next += config->cores_per_network_thread) {
+    for (; next < num_cores; next++) {
       if (validCpus[next] > -1) {
         flat[i + workerCores + number_of_senders].on = 1;
         flat[i + workerCores + number_of_senders].core_id =
@@ -593,7 +594,7 @@ void default_policy(unsigned int number_of_workers, unsigned int number_of_sende
                 validCpus[next];
         add_a_thread(&flat[i + workerCores + number_of_senders], 0, 0, 1,
                    ABSTRACT_INBOUND, network_in_thread_id++, config->pin_threads);
-        next += config->cores_per_network_thread;
+        next++;
         break;
       }
     }
@@ -645,32 +646,37 @@ unsigned int flatten_mask(struct arts_config_s *config, unsigned int num_cores,
 }
 
 struct thread_mask_s *get_thread_mask(struct arts_config_s *config) {
-  if (config->sender_count > (arts_global_rank_count - 1) * config->ports)
-    config->sender_count = (arts_global_rank_count - 1) * config->ports;
-  if (config->receiver_count > (arts_global_rank_count - 1) * config->ports)
-    config->receiver_count = (arts_global_rank_count - 1) * config->ports;
+  if (config->sender_thread_count > (arts_global_rank_count - 1) * config->num_ports)
+    config->sender_thread_count = (arts_global_rank_count - 1) * config->num_ports;
+  if (config->receiver_thread_count > (arts_global_rank_count - 1) * config->num_ports)
+    config->receiver_thread_count = (arts_global_rank_count - 1) * config->num_ports;
 
   unsigned int worker_threads =
-      config->thread_count - config->sender_count - config->receiver_count;
+      config->thread_count - config->sender_thread_count - config->receiver_thread_count;
   unsigned int total_threads = config->thread_count;
 
   bool network_on = (arts_global_rank_count > 1);
   struct unit_mask_s *unit;
   struct thread_mask_s *flat;
 
-  unsigned int core_count =
-      (config->core_count) ? config->core_count : sysconf(_SC_NPROCESSORS_ONLN);
+  cpu_set_t cpuset;
+  unsigned int core_count;
+  if (sched_getaffinity(0, sizeof(cpuset), &cpuset) == 0) {
+    core_count = (unsigned int)CPU_COUNT(&cpuset);
+  } else {
+    core_count = (unsigned int)sysconf(_SC_NPROCESSORS_ONLN);
+  }
 
   unit = arts_calloc(core_count, sizeof(struct unit_mask_s));
-  default_policy(worker_threads, config->sender_count, config->receiver_count, unit,
+  default_policy(worker_threads, config->sender_thread_count, config->receiver_thread_count, unit,
                 core_count, config);
 
   total_threads = flatten_mask(config, core_count, unit, &flat);
 
   if (config->print_topology)
     print_mask(flat, total_threads);
-  arts_runtime_node_init(worker_threads, 1, config->sender_count,
-                      config->receiver_count, total_threads, 0, config);
+  arts_runtime_node_init(worker_threads, 1, config->sender_thread_count,
+                      config->receiver_thread_count, total_threads, 0, config);
   return flat;
 }
 

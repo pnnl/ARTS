@@ -69,10 +69,6 @@ typedef intptr_t arts_guid_t;
 /** Sentinel value representing an invalid or absent GUID. */
 #define NULL_GUID ((arts_guid_t)0x0)
 
-/** Ticket for context-switch wake-up signaling.
- *  @see arts_get_context_ticket, arts_signal_context */
-typedef uint64_t arts_ticket_t;
-
 /** @} */ /* end core_types */
 
 /* ========================================================================= */
@@ -1178,44 +1174,6 @@ bool arts_wait_on_handle(arts_guid_t epoch_guid);
  * @brief Yield the current EDT and run another scheduling round.
  */
 void arts_yield();
-
-/**
- * @brief Obtain a context ticket for arts_signal_context().
- *
- * @return A new ticket value.
- * @see arts_context_switch, arts_signal_context
- */
-arts_ticket_t arts_get_context_ticket();
-
-/**
- * @brief Context-switch the current thread.
- *
- * Requires the @c tmt setting in @c arts.cfg.  The context sleeps until
- * @p wait_count signals are received via arts_signal_context().
- *
- * @param wait_count Number of signals required to wake up.
- * @return @c true on success.
- */
-bool arts_context_switch(unsigned int wait_count);
-
-/**
- * @brief Context-switch without blocking the current context.
- */
-void arts_open_context_switch();
-
-/** @brief Switch to the next available context. */
-void arts_next_context();
-
-/** @brief Return the id of the current context on this thread. */
-unsigned int arts_get_context_id();
-
-/**
- * @brief Wake a context that is sleeping from a context switch.
- *
- * @param ticket Ticket obtained from arts_get_context_ticket().
- * @return @c true if the signal was delivered.
- */
-bool arts_signal_context(arts_ticket_t ticket);
 
 /** @} */ /* end epoch */
 

@@ -62,12 +62,11 @@ struct arts_config_s {
   char *master_node;
   char *net_interface;
   char *launcher;
-  unsigned int ports;
-  unsigned int os_thread_count;
+  unsigned int num_ports;
+  unsigned int worker_thread_count;
+  unsigned int sender_thread_count;
+  unsigned int receiver_thread_count;
   unsigned int thread_count;
-  unsigned int core_count;
-  unsigned int receiver_count;
-  unsigned int sender_count;
   unsigned int nodes;
   unsigned int master_rank;
   unsigned int port;
@@ -82,22 +81,16 @@ struct arts_config_s {
   unsigned int counter_capture_interval;
   unsigned int print_node_stats;
   unsigned int scheduler;
-  unsigned int shutdown_epoch;
-  char *prefix;
-  char *suffix;
-  bool ib_names;
+  unsigned int auto_shutdown;
   bool master_boot;
   bool core_dump;
+  unsigned int watchdog_timeout;
   unsigned int pin_stride;
   bool print_topology;
   bool pin_threads;
-  unsigned int shad_loop_stride;
   uint64_t stack_size;
   struct arts_remote_launcher_s *launcher_data;
   unsigned int table_length;
-  unsigned int
-      tmt; // @awmm temporal MT; # of MT aliases per core thread; 0 if disabled
-  unsigned int cores_per_network_thread;
   unsigned int gpu;
   unsigned int gpu_locality;
   unsigned int gpu_fit;
@@ -115,9 +108,8 @@ struct arts_config_s {
   struct arts_config_table_s *table;
 };
 
-struct arts_config_s *arts_config_load();
+struct arts_config_s *arts_config_load(void);
 void arts_config_destroy(struct arts_config_s *config);
-unsigned int arts_config_get_number_of_threads(char *location);
 #ifdef __cplusplus
 }
 #endif
