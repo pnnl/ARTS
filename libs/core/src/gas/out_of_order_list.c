@@ -38,11 +38,11 @@
 ******************************************************************************/
 #include "arts/gas/out_of_order_list.h"
 
-#include "arts.h"
+#include <time.h>
+
 #include "arts/system/arts_print.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
-#include <time.h>
 
 #define FIRE_LOCK 1U
 #define RESET_LOCK 2U

@@ -86,7 +86,7 @@ function(build_hwloc)
 endfunction()
 
 # Check if hwloc is needed and build if necessary
-if(USE_HWLOC AND NOT HWLOC_FOUND)
+if(NOT HWLOC_FOUND)
     # Check if hwloc is already built in the build directory
     set(HWLOC_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/hwloc_install")
     set(HWLOC_LIB_A "${HWLOC_INSTALL_DIR}/lib/libhwloc.a")

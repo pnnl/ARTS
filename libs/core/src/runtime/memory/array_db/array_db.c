@@ -42,14 +42,12 @@
 #include <string.h>
 
 #include "arts.h"
-#include "arts/gas/out_of_order.h"
 #include "arts/gas/route_table.h"
 #include "arts/runtime/globals.h"
 #include "arts/runtime/memory/db_functions.h"
 #include "arts/runtime/network/remote_functions.h"
 #include "arts/runtime/sync/termination_detection.h"
 #include "arts/system/arts_print.h"
-#include "arts/system/debug.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
 

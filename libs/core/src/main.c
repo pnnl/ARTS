@@ -36,11 +36,11 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include "arts/introspection/Preamble.h"
+#include "arts/counter/Preamble.h"
 #define GNU_SOURCE
 #define _FILE_OFFSET_BITS 64 // NOLINT(readability-identifier-naming)
 #include "arts.h"
-#include "arts/introspection/counter.h"
+#include "arts/counter/counter.h"
 #include "arts/network/remote.h"
 #include "arts/network/remote_launcher.h"
 #include "arts/runtime/globals.h"
@@ -53,20 +53,21 @@
 int arts_rt(int argc, char **argv) {
   INITIALIZATION_TIME_START();
 
-  struct arts_config_s *config = arts_config_load();
+  struct arts_config_s config;
+  arts_config_load(&config);
 
-  if (config->core_dump) {
+  if (config.core_dump) {
     arts_turn_on_core_dumps();
   }
 
   arts_global_rank_id = 0;
-  arts_global_rank_count = config->table_length;
-  if (strncmp(config->launcher, "local", 5) != 0) {
-    arts_server_setup(config);
+  arts_global_rank_count = config.table_length;
+  if (strncmp(config.launcher, "local", 5) != 0) {
+    arts_server_setup(&config);
   }
-  arts_global_master_rank_id = config->master_rank;
-  if (arts_global_rank_id == config->master_rank && config->master_boot) {
-    config->launcher_data->launch_processes(config->launcher_data);
+  arts_global_master_rank_id = config.master_rank;
+  if (arts_global_rank_id == config.master_rank && config.master_boot) {
+    config.launcher_data->launch_processes(config.launcher_data);
   }
 
   if (arts_global_rank_count > 1) {
@@ -76,18 +77,18 @@ int arts_rt(int argc, char **argv) {
     }
   }
 
-  arts_thread_init(config);
+  arts_thread_init(&config);
   arts_thread_zero_node_start(argc, argv);
 
   arts_thread_main_join();
 
   // Aggregate cluster counters before cleanup (workers may still be writing)
-  if (arts_global_rank_id == config->master_rank) {
-    arts_counter_write_cluster(config->counter_folder, config->nodes);
+  if (arts_global_rank_id == config.master_rank) {
+    arts_counter_write_cluster(config.counter_folder, config.nodes);
   }
-  if (arts_global_rank_id == config->master_rank && config->master_boot) {
-    config->launcher_data->cleanup_processes(config->launcher_data);
+  if (arts_global_rank_id == config.master_rank && config.master_boot) {
+    config.launcher_data->cleanup_processes(config.launcher_data);
   }
-  arts_config_destroy(config);
+  arts_config_destroy(&config);
   return 0;
 }

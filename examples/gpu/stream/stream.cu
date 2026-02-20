@@ -168,7 +168,7 @@ __global__ void triad_kernel(uint32_t paramc, const uint64_t *paramv,
   double *c = (double *)depv[2].ptr;
   int idx = (int)(threadIdx.x + (blockIdx.x * blockDim.x));
   if (idx < len) {
-    c[idx] = a[idx] + scale * b[idx];
+    c[idx] = a[idx] + (scale * b[idx]);
   }
 }
 
@@ -343,7 +343,8 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
   arts_printf("precision of your system timer.\n");
   arts_printf(HLINE);
 
-  arts_edt_create(stream_driver, 0, NULL, 0, &(arts_hint_t){.route = 0});
+  arts_hint_t hint_0 = {0, 0};
+  arts_edt_create(stream_driver, 0, NULL, 0, &hint_0);
 }
 
 int main(int argc, char **argv) {

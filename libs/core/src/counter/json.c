@@ -37,7 +37,7 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 
-#include "arts/introspection/json_writer.h"
+#include "arts/counter/json.h"
 
 #include <string.h>
 

@@ -148,8 +148,9 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
     addr[i] = dev_ptr_raw[i];
   }
 
+  arts_hint_t hint_0 = {0, 0};
   arts_guid_t done_guid = arts_edt_create(done, 0, NULL, arts_get_total_gpus(),
-                                          &(arts_hint_t){.route = 0});
+                                          &hint_0);
 
   dim3 threads(GPULISTLEN, 1, 1);
   dim3 grid(1, 1, 1);

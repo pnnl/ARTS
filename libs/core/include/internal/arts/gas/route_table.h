@@ -42,8 +42,10 @@
 extern "C" {
 #endif
 
+#include "arts.h"
 #include "arts/gas/out_of_order_list.h"
-#include "arts/runtime/rt.h"
+
+struct arts_db_frontier_iterator_s;
 
 // These are for the lock for each item in the RT
 #define RESERVED_ITEM 0x8000000000000000
@@ -151,8 +153,9 @@ arts_route_table_search_for_key(arts_route_table_t *route_table,
                                 arts_guid_t key, item_state_t state);
 bool arts_route_table_update_item(arts_guid_t key, void *data,
                                   unsigned int rank, item_state_t state);
-struct arts_db_frontier_iterator_s *
-arts_route_table_get_rank_duplicates(arts_guid_t key, unsigned int rank);
+bool arts_route_table_get_rank_duplicates(
+    arts_guid_t key, unsigned int rank,
+    struct arts_db_frontier_iterator_s *iter);
 bool arts_route_table_add_sent(arts_guid_t key, void *edt, unsigned int slot,
                                bool aggregate);
 void arts_route_table_add_rank_duplicate(arts_guid_t key, unsigned int rank);
@@ -189,8 +192,6 @@ void arts_route_table_reset_oo(arts_guid_t key);
 void **arts_route_table_get_oo_list(arts_guid_t key,
                                     struct arts_out_of_order_list_s **list);
 
-arts_route_table_iterator_t *
-arts_new_route_table_iterator(arts_route_table_t *table);
 void arts_reset_route_table_iterator(arts_route_table_iterator_t *iter,
                                      arts_route_table_t *table);
 arts_route_item_t *arts_route_table_iterate(arts_route_table_iterator_t *iter);

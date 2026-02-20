@@ -48,7 +48,6 @@
 #include "arts/runtime/memory/db_functions.h"
 #include "arts/runtime/memory/db_list.h"
 #include "arts/system/arts_print.h"
-#include "arts/system/debug.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
 
@@ -834,14 +833,6 @@ void arts_route_table_dec_item(arts_guid_t key, void *data) {
   }
 }
 
-arts_route_table_iterator_t *
-arts_new_route_table_iterator(arts_route_table_t *table) {
-  arts_route_table_iterator_t *ret = (arts_route_table_iterator_t *)arts_calloc(
-      1, sizeof(arts_route_table_iterator_t));
-  ret->table = table;
-  return ret;
-}
-
 void arts_reset_route_table_iterator(arts_route_table_iterator_t *iter,
                                      arts_route_table_t *table) {
   iter->table = table;
@@ -945,20 +936,20 @@ bool arts_route_table_invalidate_item(arts_guid_t key) {
 
 void arts_route_table_add_rank_duplicate(arts_guid_t key, unsigned int rank) {}
 
-struct arts_db_frontier_iterator_s *
-arts_route_table_get_rank_duplicates(arts_guid_t key, unsigned int rank) {
-  struct arts_db_frontier_iterator_s *iter = NULL;
+bool arts_route_table_get_rank_duplicates(
+    arts_guid_t key, unsigned int rank,
+    struct arts_db_frontier_iterator_s *iter) {
   arts_route_table_t *route_table = arts_get_route_table(key);
   arts_route_item_t *location =
       arts_route_table_search_for_key(route_table, key, AVAILABLE_KEY);
   if (location) {
-    if (rank != -1) {
+    if (rank != (unsigned int)-1) {
       // Blocks until the OO is done firing
       arts_out_of_order_list_reset(&location->ooList);
       location->rank = rank;
     }
     struct arts_db_s *db = (struct arts_db_s *)location->data;
-    iter = arts_close_frontier((struct arts_db_list_s *)db->db_list);
+    return arts_close_frontier((struct arts_db_list_s *)db->db_list, iter);
   }
-  return iter;
+  return false;
 }

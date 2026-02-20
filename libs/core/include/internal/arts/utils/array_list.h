@@ -83,11 +83,10 @@ void *arts_next_free_from_array_list(arts_array_list_t *a_list);
 void arts_reset_array_list(arts_array_list_t *a_list);
 uint64_t arts_length_array_list(arts_array_list_t *a_list);
 void *arts_get_from_array_list(arts_array_list_t *a_list, uint64_t index);
-arts_array_list_iterator_t *
-arts_new_array_list_iterator(arts_array_list_t *a_list);
+void arts_array_list_iter_init(arts_array_list_iterator_t *iter,
+                               arts_array_list_t *a_list);
 void *arts_array_list_next(arts_array_list_iterator_t *iter);
 bool arts_array_list_has_next(arts_array_list_iterator_t *iter);
-void arts_delete_array_list_iterator(arts_array_list_iterator_t *iter);
 
 #ifdef __cplusplus
 }

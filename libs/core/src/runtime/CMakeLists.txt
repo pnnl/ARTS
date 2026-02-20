@@ -63,7 +63,7 @@ if(BUILD_CUDA_LIBRARY)
 
     add_library(arts_runtime_gpu OBJECT ${RUNTIME_GPU_SOURCES})
     target_include_directories(arts_runtime_gpu PRIVATE ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR} ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
-    target_compile_definitions(arts_runtime_gpu PRIVATE USE_GPU)
+    target_compile_definitions(arts_runtime_gpu PRIVATE ARTS_USE_GPU)
 
     # Add hwloc include directories if available
     if(HWLOC_INCLUDE_DIRS)

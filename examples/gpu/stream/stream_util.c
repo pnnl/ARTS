@@ -201,7 +201,7 @@ void check_strea_mresults(unsigned int tile_size, unsigned int total_size,
     cj = aj;
     bj = scalar * cj;
     cj = aj + bj;
-    aj = bj + scalar * cj;
+    aj = bj + (scalar * cj);
   }
   aj = aj * (double)(N);
   bj = bj * (double)(N);

@@ -153,9 +153,10 @@ void multiply_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_signal_edt(mul_gpu_guid, 2, c_tile_guid, ARTS_DB_WRITE);
 #else
   uint64_t args[] = {tile_size, to_signal, k, c_tile_guid};
+  arts_hint_t hint_0 = {arts_get_current_node(), 0};
   arts_guid_t mul_gpu_guid =
       arts_edt_create(mm_kernel_cpu, 4, args, 3,
-                      &(arts_hint_t){.route = arts_get_current_node()});
+                      &hint_0);
   arts_signal_edt(mul_gpu_guid, 0, a_tile_guid, ARTS_DB_WRITE);
   arts_signal_edt(mul_gpu_guid, 1, b_tile_guid, ARTS_DB_WRITE);
   arts_signal_edt(mul_gpu_guid, 2, c_tile_guid, ARTS_DB_WRITE);
@@ -307,13 +308,15 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
           done_guid, 3 + ((i * num_blocks) + j), 0);
 #else
       uint64_t sum_args[] = {done_guid, i, j};
+      arts_hint_t hint_1 = {node_id, 0};
       arts_guid_t sum_guid = arts_edt_create(sum_mm, 3, sum_args, num_blocks,
-                                             &(arts_hint_t){.route = node_id});
+                                             &hint_1);
 #endif
       for (unsigned int k = 0; k < num_blocks; k++) {
         uint64_t args[] = {(uint64_t)sum_guid, i, j, k};
+        arts_hint_t hint_2 = {node_id, 0};
         arts_guid_t mul_guid = arts_edt_create(
-            multiply_mm, 4, args, 2, &(arts_hint_t){.route = node_id});
+            multiply_mm, 4, args, 2, &hint_2);
         arts_signal_edt(mul_guid, 0, a_mat_guid, ARTS_DB_WRITE);
         arts_signal_edt(mul_guid, 1, b_mat_guid, ARTS_DB_WRITE);
       }

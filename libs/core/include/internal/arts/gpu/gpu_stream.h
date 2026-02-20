@@ -45,9 +45,10 @@ extern "C" {
 
 #include <cuda_runtime_api.h>
 
+#include "arts/arts_defs.h"
 #include "arts/gas/route_table.h"
 #include "arts/runtime/rt.h"
-#include "arts/system/debug.h"
+#include "arts/system/arts_print.h"
 #include "arts/utils/array_list.h"
 
 #define CHECKCORRECT(x)                                                        \
@@ -107,10 +108,10 @@ void arts_store_new_edts(void *edt);
 void arts_handle_new_edts();
 void free_gpu_item(arts_route_item_t *item);
 
-extern __thread dim3 *arts_local_grid;
-extern __thread dim3 *arts_local_block;
-extern __thread cudaStream_t *arts_local_stream;
-extern __thread int arts_local_gpu_id;
+extern ARTS_THREAD_LOCAL dim3 *arts_local_grid;
+extern ARTS_THREAD_LOCAL dim3 *arts_local_block;
+extern ARTS_THREAD_LOCAL cudaStream_t *arts_local_stream;
+extern ARTS_THREAD_LOCAL int arts_local_gpu_id;
 
 extern volatile unsigned int hits;
 extern volatile unsigned int misses;

@@ -41,16 +41,13 @@
 #include <unistd.h>
 
 #include "arts.h"
-#include "arts/introspection/metrics.h"
 #include "arts/network/remote.h"
 #include "arts/network/remote_protocol.h"
 #include "arts/runtime/compute/edt_functions.h"
 #include "arts/runtime/globals.h"
 #include "arts/runtime/memory/array_db.h"
-#include "arts/runtime/memory/db_functions.h"
 #include "arts/runtime/network/remote_functions.h"
 #include "arts/runtime/runtime.h"
-#include "arts/runtime/sync/event_functions.h"
 #include "arts/system/arts_print.h"
 #include "arts/utils/malloc.h"
 
@@ -75,14 +72,6 @@ void arts_server_setup(struct arts_config_s *config) {
 }
 
 void arts_server_process_packet(struct arts_remote_packet_s *packet) {
-  if (packet->message_type != ARTS_REMOTE_METRIC_UPDATE_MSG &&
-      packet->message_type != ARTS_REMOTE_SHUTDOWN_MSG) {
-    ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_NETWORK_RECIEVE_BW,
-                               ARTS_METRIC_THREAD, packet->size);
-    ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_FREE_BW + packet->message_type,
-                               ARTS_METRIC_THREAD, packet->size);
-    ARTS_METRICS_UPDATE_PACKET_INFO(packet->size);
-  }
 #ifdef SEQUENCENUMBERS
   uint64_t exp_seq_number =
       __sync_fetch_and_add(&rec_seq_numbers[packet->seq_rank], 1U);
@@ -259,13 +248,7 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
     break;
   }
   case ARTS_REMOTE_METRIC_UPDATE_MSG: {
-
-    struct arts_remote_metric_update_s *pack =
-        (struct arts_remote_metric_update_s *)(packet);
-    ARTS_DEBUG("Metric update Received %u -> %d %ld", arts_global_rank_id,
-               pack->type, pack->to_add);
-    ARTS_METRICS_HANDLE_REMOTE_UPDATE(pack->type, ARTS_METRIC_SYSTEM,
-                                      pack->to_add, pack->sub);
+    ARTS_DEBUG("Metric update received (no-op)");
     break;
   }
   case ARTS_REMOTE_GET_FROM_DB_MSG: {

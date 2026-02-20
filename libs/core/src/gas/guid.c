@@ -38,10 +38,11 @@
 ******************************************************************************/
 #include "arts/gas/guid.h"
 
+#include <string.h>
+
 #include "arts.h"
 #include "arts/runtime/globals.h"
 #include "arts/system/arts_print.h"
-#include "arts/system/debug.h"
 #include "arts/utils/malloc.h"
 
 uint64_t num_tables = 0;
@@ -53,8 +54,8 @@ uint64_t max_global_guid_thread = 0;
 void set_global_guid_on() { global_guid_on = ((uint64_t)1) << 40; }
 
 uint64_t *arts_guid_generator_get_key(unsigned int route, unsigned int type) {
-  return &arts_node_info
-              .keys[arts_thread_info.group_id][(route * ARTS_LAST_TYPE) + type];
+  return &arts_node_info.keys[arts_thread_info.group_pos]
+                             [(route * ARTS_LAST_TYPE) + type];
 }
 
 arts_guid_t arts_guid_create_for_rank_internal(unsigned int route,
@@ -75,8 +76,8 @@ arts_guid_t arts_guid_create_for_rank_internal(unsigned int route,
     if (value + guid_count < keys_per_thread) {
       guid.fields.key =
           value +
-          keys_per_thread *
-              arts_node_info.global_guid_thread_id[arts_thread_info.group_id];
+          (keys_per_thread *
+           arts_node_info.global_guid_thread_id[arts_thread_info.group_pos]);
       (*key) += guid_count;
     } else {
       ARTS_ERROR("GUID generation failed: out of keys");
@@ -103,7 +104,7 @@ void arts_guid_key_generator_init() {
   num_tables = (arts_global_rank_count == 1)
                    ? arts_node_info.worker_thread_count
                    : arts_node_info.worker_thread_count + 1;
-  uint64_t local_id = (arts_thread_info.worker)
+  uint64_t local_id = (arts_thread_info.role == ARTS_ROLE_WORKER)
                           ? arts_thread_info.thread_id
                           : arts_node_info.worker_thread_count;
   min_global_guid_thread = num_tables * arts_global_rank_id;
@@ -111,7 +112,7 @@ void arts_guid_key_generator_init() {
                                ? min_global_guid_thread + num_tables
                                : min_global_guid_thread + num_tables - 1;
   //    global_guid_thread_id  = min_global_guid_thread + local_id;
-  arts_node_info.global_guid_thread_id[arts_thread_info.group_id] =
+  arts_node_info.global_guid_thread_id[arts_thread_info.group_pos] =
       min_global_guid_thread + local_id;
 
   //    ARTS_INFO("num_tables: %lu local_id: %lu min_global_guid_thread: %lu
@@ -119,10 +120,10 @@ void arts_guid_key_generator_init() {
   //    local_id, min_global_guid_thread, max_global_guid_thread,
   //    global_guid_thread_id); keys = arts_malloc(sizeof(uint64_t) *
   //    ARTS_LAST_TYPE * arts_global_rank_count);
-  arts_node_info.keys[arts_thread_info.group_id] = (uint64_t *)arts_malloc(
+  arts_node_info.keys[arts_thread_info.group_pos] = (uint64_t *)arts_malloc(
       sizeof(uint64_t) * ARTS_LAST_TYPE * arts_global_rank_count);
   for (unsigned int i = 0; i < ARTS_LAST_TYPE * arts_global_rank_count; i++) {
-    arts_node_info.keys[arts_thread_info.group_id][i] = 1;
+    arts_node_info.keys[arts_thread_info.group_pos][i] = 1;
   }
   //        keys[i] = 1;
 }
@@ -178,26 +179,25 @@ arts_guid_t *arts_guid_reserve_round_robin(unsigned int size,
   return guids;
 }
 
-arts_guid_range_t *arts_guid_range_create(arts_type_t type, unsigned int size,
-                                          unsigned int route) {
+void arts_guid_range_init(arts_guid_range_t *range, arts_type_t type,
+                          unsigned int size, unsigned int route) {
   if (route == ARTS_HINT_CURRENT_NODE) {
     route = arts_global_rank_id;
   }
-  arts_guid_range_t *range = NULL;
+  memset(range, 0, sizeof(*range));
   if (size && type > ARTS_NULL && type < ARTS_LAST_TYPE) {
-    range = (arts_guid_range_t *)arts_calloc(1, sizeof(arts_guid_range_t));
     range->size = size;
     range->start_guid =
         arts_guid_create_for_rank_internal(route, (unsigned int)type, size);
-    //        if(artsIsGuidLocalExt(range->start_guid))
-    //        {
-    //            arts_guid_bits_t temp = (arts_guid_t) range->start_guid;
-    //            for(unsigned int i=0; i<size; i++)
-    //            {
-    //                arts_route_table_add_item(NULL, temp.bits, route);
-    //                temp.fields.key++;
-    //            }
-    //        }
+  }
+}
+
+arts_guid_range_t *arts_guid_range_create(arts_type_t type, unsigned int size,
+                                          unsigned int route) {
+  arts_guid_range_t *range = NULL;
+  if (size && type > ARTS_NULL && type < ARTS_LAST_TYPE) {
+    range = (arts_guid_range_t *)arts_calloc(1, sizeof(arts_guid_range_t));
+    arts_guid_range_init(range, type, size, route);
   }
   return range;
 }

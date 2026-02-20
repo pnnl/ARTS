@@ -43,83 +43,46 @@
 extern "C" {
 #endif
 
-#include <assert.h>
+/*
+ * Abstract Machine Model -- topology discovery and thread-to-PU mapping.
+ *
+ * Uses hwloc to enumerate PUs in Package -> Core -> PU order,
+ * then assigns threads with configurable stride.
+ * NUMA is a memory property, not a CPU tree level -- looked up per PU.
+ *
+ * Output: thread_mask_s[] -- one entry per thread, combining HW topology
+ * info and SW thread assignment.  Consumed by arts_runtime_private_init().
+ */
+
+#include <stdbool.h>
 #include <unistd.h>
 
 #include "arts/system/config.h"
 
-#ifdef USE_HWLOC
-#include <hwloc.h>
-#include <sched.h>
-struct arts_core_info_s {
-  hwloc_bitmap_t cpuset;
-#ifndef __APPLE__
-  cpu_set_t linux_cpu_set;
-#endif
-};
-#else
-struct arts_core_info_s {
-  unsigned int cpu_id;
-};
-#endif
-struct unit_thread_s {
-  unsigned int id;
-  unsigned int group_id;
-  unsigned int group_pos;
-  bool worker;
-  bool network_send;
-  bool network_receive;
-  bool status_send;
-  bool pin;
-  struct unit_thread_s *next;
+/* Thread roles.  A thread has exactly one role. */
+enum arts_thread_role {
+  ARTS_ROLE_WORKER = 0, /* Executes EDTs from work-stealing deque */
+  ARTS_ROLE_RECEIVER,   /* Processes inbound network messages */
+  ARTS_ROLE_SENDER,     /* Drains outbound network messages */
+  ARTS_ROLE_MAX
 };
 
+/* Per-thread descriptor (output of get_thread_mask).
+ * Combines HW topology info + thread assignment.
+ * Consumed by arts_runtime_private_init(). */
 struct thread_mask_s {
-  unsigned int numa_domain_id;
-  unsigned int core_id;
-  unsigned int unit_id;
-  bool on;
-  unsigned int id;
-  unsigned int group_id;
-  unsigned int group_pos;
-  bool worker;
-  bool network_send;
-  bool network_receive;
-  bool status_send;
+  unsigned int id;             /* sequential 0..total_threads-1 */
+  unsigned int pu_id;          /* hwloc PU os_index (== Linux CPU number) */
+  unsigned int core_id;        /* hwloc CORE os_index */
+  unsigned int package_id;     /* hwloc PACKAGE os_index */
+  unsigned int numa_domain_id; /* nearest NUMA domain */
+  enum arts_thread_role role;
+  unsigned int group_pos; /* 0-based index within role group */
   bool pin;
-  struct arts_core_info_s core_info;
 };
 
-struct unit_mask_s {
-  unsigned int numa_domain_id;
-  unsigned int core_id;
-  unsigned int unit_id;
-  bool on;
-  unsigned int threads;
-  struct unit_thread_s *list_head;
-  struct unit_thread_s *list_tail;
-  struct arts_core_info_s core_info;
-};
-
-struct core_mask_s {
-  unsigned int num_units;
-  struct unit_mask_s *unit;
-};
-
-struct numa_domain_mask_s {
-  unsigned int num_cores;
-  struct core_mask_s *core;
-};
-
-struct node_mask_s {
-  unsigned int num_numa_domains;
-  struct numa_domain_mask_s *numa_domain;
-};
-
-struct thread_mask_s *get_thread_mask(struct arts_config_s *config);
-void print_mask(struct thread_mask_s *units, unsigned int number_of_units);
-void arts_abstract_machine_model_pin_thread(struct arts_core_info_s *core_info);
-void destroy_thread_mask(struct thread_mask_s *mask);
+void get_thread_mask(struct arts_config_s *config, struct thread_mask_s *flat);
+void print_mask(struct thread_mask_s *threads, unsigned int num_threads);
 
 #ifdef __cplusplus
 }

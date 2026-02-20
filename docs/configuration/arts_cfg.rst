@@ -51,10 +51,6 @@ Hardware Pinning
    * - ``pin_stride``
      - 1
      - Core spacing between pinned threads (useful for SMT).
-   * - ``print_topology``
-     - 0
-     - Print hardware topology at startup.
-
 Scheduling
 ----------
 

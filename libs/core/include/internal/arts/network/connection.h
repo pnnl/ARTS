@@ -43,7 +43,7 @@
 extern "C" {
 #endif
 
-#ifdef USE_RDMA
+#ifdef ARTS_USE_RDMA
 #include <rdma/RSOCKET.h>
 #else
 #include <sys/poll.h>

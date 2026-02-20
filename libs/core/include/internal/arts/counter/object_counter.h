@@ -36,8 +36,8 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef ARTS_ID_COUNTER_H
-#define ARTS_ID_COUNTER_H
+#ifndef ARTS_COUNTER_OBJECT_COUNTER_H
+#define ARTS_COUNTER_OBJECT_COUNTER_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -121,4 +121,4 @@ void arts_id_init_hash_table(arts_id_hash_table_t *table);
 }
 #endif
 
-#endif // ARTS_ID_COUNTER_H
+#endif /* ARTS_COUNTER_OBJECT_COUNTER_H */

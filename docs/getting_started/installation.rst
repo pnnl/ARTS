@@ -57,13 +57,10 @@ CMake Options
    * - Option
      - Default
      - Description
-   * - ``USE_GPU``
+   * - ``ARTS_USE_GPU``
      - Auto
      - Enable GPU / CUDA support (auto-detects CUDA toolkit).
-   * - ``USE_HWLOC``
-     - OFF
-     - Use ``hwloc`` for topology discovery and thread pinning.
-   * - ``USE_RDMA``
+   * - ``ARTS_USE_RDMA``
      - OFF
      - Use RDMA (InfiniBand) instead of TCP sockets.
    * - ``ARTS_BUILD_EXAMPLES``

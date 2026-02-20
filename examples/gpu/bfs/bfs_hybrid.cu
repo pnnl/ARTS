@@ -141,9 +141,9 @@ void create_first_round(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       visited_guid[get_owner_distr(first_search_frontier[1], distribution)]);
 
   // Create the first epoch
+  arts_hint_t hint_0 = {arts_get_current_node(), 0};
   arts_guid_t launch_sort_guid =
-      arts_edt_create(launch_sort, 1, &next_level, 1,
-                      &(arts_hint_t){.route = arts_get_current_node()});
+      arts_edt_create(launch_sort, 1, &next_level, 1, &hint_0);
   arts_initialize_and_start_epoch(launch_sort_guid, 0);
 
   // Launching the first bfs
@@ -160,9 +160,8 @@ void create_first_round(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                             grid, threads, NULL_GUID, 0, NULL_GUID);
     arts_printf("LAUNCHING GPU\n");
   } else {
-    bfs_guid =
-        arts_edt_create(cpu_bfs, 1, &next_level, 4,
-                        &(arts_hint_t){.route = arts_get_current_node()});
+    arts_hint_t hint_1 = {arts_get_current_node(), 0};
+    bfs_guid = arts_edt_create(cpu_bfs, 1, &next_level, 4, &hint_1);
     arts_printf("LAUNCHING CPU\n");
   }
   arts_signal_edt(bfs_guid, 0, visit_guid, ARTS_DB_WRITE);
@@ -286,9 +285,9 @@ void launch_sort(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // thrust_sort will create the next rounds' Bfs'es.  In order to create the
   // epoch, we need the next round's launch_sort.
   uint64_t next_level = local_level + 1;
+  arts_hint_t hint_2 = {arts_get_current_node(), 0};
   arts_guid_t next_launch_sort_guid =
-      arts_edt_create(launch_sort, 1, &next_level, 1,
-                      &(arts_hint_t){.route = arts_get_current_node()});
+      arts_edt_create(launch_sort, 1, &next_level, 1, &hint_2);
   arts_initialize_and_start_epoch(next_launch_sort_guid, 0);
 
   // While we are at it, lets create the next sync point, launch_bfs.
@@ -309,16 +308,17 @@ void launch_sort(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                                      threads);
     }
     // Launch CPU sort here!
-    arts_edt_create(cpu_sort, 2, args, 0, &(arts_hint_t){.route = j});
+    arts_hint_t hint_3 = {j, 0};
+    arts_edt_create(cpu_sort, 2, args, 0, &hint_3);
   }
 
   // This uses the LC memory model if turned on
   if (DO_SYNC(local_level)) {
     for (unsigned int i = 0; i < arts_get_total_nodes(); i++) {
       uint64_t sync_args[] = {local_level, (uint64_t)next_launch_bfs_guid};
-      arts_guid_t edt_guid =
-          arts_edt_create(do_partition_sync, 2, sync_args, part_count[i],
-                          &(arts_hint_t){.route = i});
+      arts_hint_t hint_4 = {i, 0};
+      arts_guid_t edt_guid = arts_edt_create(do_partition_sync, 2, sync_args,
+                                             part_count[i], &hint_4);
       unsigned int slot = 0;
       for (unsigned int j = 0; j < PARTS; j++) {
         if (i == arts_guid_get_rank(visited_guid[j])) {
@@ -424,8 +424,9 @@ void cpu_sort(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
         } else // Create CPU EDT
         {
           arts_printf("CPU PART: %u\n", i);
-          edt_guids_to_launch_bfs[i] = arts_edt_create(
-              cpu_bfs, 1, &next_level, 4, &(arts_hint_t){.route = rank});
+          arts_hint_t hint_5 = {rank, 0};
+          edt_guids_to_launch_bfs[i] =
+              arts_edt_create(cpu_bfs, 1, &next_level, 4, &hint_5);
         }
 
         arts_signal_edt(edt_guids_to_launch_bfs[i], 0, visited_guid[i],
@@ -547,8 +548,9 @@ void thrust_sort(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
         } else // Create CPU EDT
         {
           arts_printf("CPU PART: %u\n", i);
-          edt_guids_to_launch_bfs[i] = arts_edt_create(
-              cpu_bfs, 1, &next_level, 4, &(arts_hint_t){.route = rank});
+          arts_hint_t hint_6 = {rank, 0};
+          edt_guids_to_launch_bfs[i] =
+              arts_edt_create(cpu_bfs, 1, &next_level, 4, &hint_6);
         }
 
         arts_signal_edt(edt_guids_to_launch_bfs[i], 0, visited_guid[i],
@@ -619,6 +621,7 @@ void launch_bfs(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
 void init_node(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                arts_edt_dep_t depv[]) {
+  (void)paramc;
   (void)depc;
   (void)depv;
   int argc = (int)paramv[0];
@@ -707,13 +710,15 @@ extern "C" void arts_init_per_gpu(unsigned int node_id, int dev_id,
 
 extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
                               uint32_t depc, arts_edt_dep_t depv[]) {
+  (void)paramc;
   (void)depc;
   (void)depv;
 
   arts_guid_t init_epoch_guid = arts_initialize_and_start_epoch(NULL_GUID, 0);
   for (unsigned int i = 0; i < arts_get_total_nodes(); i++) {
+    arts_hint_t hint_7 = {i, 0};
     arts_edt_create_with_epoch(init_node, paramc, paramv, 0, init_epoch_guid,
-                               &(arts_hint_t){.route = i});
+                               &hint_7);
   }
   arts_wait_on_handle(init_epoch_guid);
 
@@ -721,8 +726,8 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
   vertex_t source = ROOT;
   unsigned int owner_rank = get_owner_distr(source, distribution);
   uint64_t args_fr_rnd_one[] = {source};
-  arts_edt_create(create_first_round, 1, args_fr_rnd_one, 0,
-                  &(arts_hint_t){.route = owner_rank});
+  arts_hint_t hint_8 = {owner_rank, 0};
+  arts_edt_create(create_first_round, 1, args_fr_rnd_one, 0, &hint_8);
 }
 
 extern "C" void arts_fini_per_gpu(unsigned int node_id, int dev_id,

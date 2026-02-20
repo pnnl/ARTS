@@ -20,6 +20,7 @@ Checks: >
   -bugprone-assignment-in-if-condition,
   -bugprone-multi-level-implicit-pointer-conversion,
   -bugprone-branch-clone,
+  -bugprone-dynamic-static-initializers,
   readability-*,
   -readability-function-cognitive-complexity,
   -readability-magic-numbers,

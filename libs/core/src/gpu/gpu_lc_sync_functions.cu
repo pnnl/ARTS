@@ -45,7 +45,6 @@
 #include "arts/gpu/gpu_stream_buffer.h"
 #include "arts/runtime/globals.h"
 #include "arts/system/arts_print.h"
-#include "arts/system/debug.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
 

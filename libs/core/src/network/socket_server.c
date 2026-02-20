@@ -53,7 +53,6 @@
 #include <unistd.h>
 
 #include "arts.h"
-#include "arts/introspection/metrics.h"
 #include "arts/network/connection.h"
 #include "arts/network/remote.h"
 #include "arts/network/remote_protocol.h"
@@ -299,8 +298,7 @@ static inline bool arts_remote_connect(int rank, unsigned int port) {
       remote_connection_alive[(rank * ports) + port] = false;
 
       RCLOSE(remote_socket_send_list[(rank * ports) + port]);
-      remote_socket_send_list[(rank * ports) + port] =
-          (int)arts_get_new_socket();
+      remote_socket_send_list[(rank * ports) + port] = arts_get_new_socket();
 
       // Retry with delay to handle SLURM startup skew (srun starts all
       // processes simultaneously, so the remote may not be listening yet)
@@ -320,8 +318,7 @@ static inline bool arts_remote_connect(int rank, unsigned int port) {
           return false;
         }
         RCLOSE(remote_socket_send_list[(rank * ports) + port]);
-        remote_socket_send_list[(rank * ports) + port] =
-            (int)arts_get_new_socket();
+        remote_socket_send_list[(rank * ports) + port] = arts_get_new_socket();
         usleep(100000);
       }
 
@@ -425,7 +422,7 @@ bool arts_remote_setup_incoming() {
   int i_set_option;
   for (i = 0; i < (int)arts_global_message_table->port_count; i++) {
     local_socket_recieve[i] =
-        (int)arts_get_socket_listening(&local_server_addr[i], my_ports[i]);
+        arts_get_socket_listening(&local_server_addr[i], my_ports[i]);
 
     i_set_option = 1;
     setsockopt(local_socket_recieve[i], SOL_SOCKET, SO_REUSEADDR,
@@ -526,21 +523,21 @@ void arts_remote_setup_outgoing() {
               ip_list + ((ptrdiff_t)100 * i), target_ports[0]);
 
     for (j = 0; j < ports; j++) {
-      remote_socket_send_list[(i * ports) + j] = (int)arts_get_socket_outgoing(
+      remote_socket_send_list[(i * ports) + j] = arts_get_socket_outgoing(
           remote_server_send_list + ((size_t)i * ports) + j, target_ports[j],
           inet_addr(ip_list + ((ptrdiff_t)100 * i)));
     }
   }
 }
 
-static __thread unsigned int thread_start;
-static __thread unsigned int thread_stop;
-static __thread char **bypass_buf;
-static __thread uint64_t *bypass_packet_size;
-static __thread int64_t *re_recieve_res;
-static __thread void **re_recieve_packet;
-static __thread bool *max_incoming;
-static __thread bool max_out_working;
+static ARTS_THREAD_LOCAL unsigned int thread_start;
+static ARTS_THREAD_LOCAL unsigned int thread_stop;
+static ARTS_THREAD_LOCAL char **bypass_buf;
+static ARTS_THREAD_LOCAL uint64_t *bypass_packet_size;
+static ARTS_THREAD_LOCAL int64_t *re_recieve_res;
+static ARTS_THREAD_LOCAL void **re_recieve_packet;
+static ARTS_THREAD_LOCAL bool *max_incoming;
+static ARTS_THREAD_LOCAL bool max_out_working;
 
 void arts_remote_set_thread_inbound_queues(unsigned int start,
                                            unsigned int stop) {
@@ -862,12 +859,6 @@ void arts_server_ping_pong_test_recieve(char *in_buffer, int in_packet_size) {
             }
             if (packet->message_type == ARTS_REMOTE_PINGPONG_TEST_MSG) {
               recieved = true;
-              ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_NETWORK_RECIEVE_BW,
-                                         ARTS_METRIC_THREAD, packet->size);
-              ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_FREE_BW +
-                                             packet->message_type,
-                                         ARTS_METRIC_THREAD, 1);
-              ARTS_METRICS_UPDATE_PACKET_INFO(packet->size);
             } else {
               ARTS_INFO("Shit Packet %d %d %d", packet->message_type,
                         packet->size, packet->rank);
@@ -891,25 +882,34 @@ void arts_server_ping_pong_test_recieve(char *in_buffer, int in_packet_size) {
   }
 }
 
-unsigned int arts_get_new_socket() {
-  unsigned int socket_out = RSOCKET(PF_INET, SOCK_STREAM, 0);
+int arts_get_new_socket() {
+  int socket_out = RSOCKET(PF_INET, SOCK_STREAM, 0);
+  if (socket_out < 0) {
+    ARTS_ERROR("socket() failed: %s", strerror(errno));
+  }
   return socket_out;
 }
 
-unsigned int arts_get_socket_listening(struct sockaddr_in *listening_socket,
-                                       unsigned int port) {
+int arts_get_socket_listening(struct sockaddr_in *listening_socket,
+                              unsigned int port) {
   memset((char *)listening_socket, 0, sizeof(*listening_socket));
-  unsigned int socket_out = RSOCKET(PF_INET, SOCK_STREAM, 0);
+  int socket_out = RSOCKET(PF_INET, SOCK_STREAM, 0);
+  if (socket_out < 0) {
+    ARTS_ERROR("socket() failed: %s", strerror(errno));
+  }
   listening_socket->sin_family = AF_INET;
   listening_socket->sin_addr.s_addr = htonl(INADDR_ANY);
   listening_socket->sin_port = htons(port);
   return socket_out;
 }
 
-unsigned int arts_get_socket_outgoing(struct sockaddr_in *outgoing_socket,
-                                      unsigned int port, in_addr_t s_addr) {
+int arts_get_socket_outgoing(struct sockaddr_in *outgoing_socket,
+                             unsigned int port, in_addr_t s_addr) {
   memset((char *)outgoing_socket, 0, sizeof(*outgoing_socket));
-  unsigned int socket_out = RSOCKET(PF_INET, SOCK_STREAM, 0);
+  int socket_out = RSOCKET(PF_INET, SOCK_STREAM, 0);
+  if (socket_out < 0) {
+    ARTS_ERROR("socket() failed: %s", strerror(errno));
+  }
   outgoing_socket->sin_family = AF_INET;
   outgoing_socket->sin_addr.s_addr = s_addr;
   outgoing_socket->sin_port = htons(port);

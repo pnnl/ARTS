@@ -61,6 +61,7 @@
 #include <string.h>
 
 #include "arts.h"
+#include "arts/arts_defs.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
 
@@ -124,11 +125,11 @@ static inline void *get_circular_array(struct circular_array_s *array,
   return array->segment[i % array->size];
 }
 
-__thread void *steal_array[STEALSIZE];
+ARTS_THREAD_LOCAL void *steal_array[STEALSIZE];
 
 static inline void get_multiple_circular_array(struct circular_array_s *array,
                                                uint64_t i) {
-  if (i % array->size + STEALSIZE < array->size) {
+  if ((i % array->size) + STEALSIZE < array->size) {
     memcpy(steal_array, &array->segment[i % array->size],
            sizeof(void *) * STEALSIZE);
   } else {

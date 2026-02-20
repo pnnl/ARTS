@@ -47,4 +47,4 @@ set(ARTS_BUILD_INTERNAL_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/include/interna
 set(ARTS_BUILD_INTERNAL_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/include/internal" PARENT_SCOPE)
 
 add_subdirectory(src)
-add_subdirectory(include/internal/arts/introspection)
+add_subdirectory(include/internal/arts/counter)

@@ -42,11 +42,9 @@
 #include <unistd.h>
 
 #include "arts.h"
-#include "arts/introspection/metrics.h"
 #include "arts/network/remote.h"
 #include "arts/runtime/globals.h"
 #include "arts/system/arts_print.h"
-#include "arts/system/debug.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/link_list.h"
 #include "arts/utils/malloc.h"
@@ -67,16 +65,16 @@ unsigned int node_list_size;
 struct arts_link_list_s *out_head;
 extern unsigned int ports;
 
-__thread unsigned int thread_start;
-__thread unsigned int thread_stop;
+ARTS_THREAD_LOCAL unsigned int thread_start;
+ARTS_THREAD_LOCAL unsigned int thread_stop;
 
-__thread struct out_list_s **out_resend;
+ARTS_THREAD_LOCAL struct out_list_s **out_resend;
 
 #ifdef SEQUENCENUMBERS
 unsigned int *seq_num_lock = NULL;
 uint64_t *seq_number = NULL;
-__thread uint64_t *last_out;
-__thread uint64_t *last_sent;
+ARTS_THREAD_LOCAL uint64_t *last_out;
+ARTS_THREAD_LOCAL uint64_t *last_sent;
 #endif
 
 void partial_send_store(struct out_list_s *out, uint64_t length_remaining) {
@@ -263,7 +261,7 @@ static inline void out_insert_node(struct out_list_s *node,
   // int list_id = node->rank*ports+arts_thread_info.thread_id%ports;
   long unsigned int list_id;
   // mrand48_r (&arts_thread_info.drand_buf, &list_id);
-  list_id = node->rank * ports + arts_thread_info.group_id % ports;
+  list_id = (node->rank * ports) + (arts_thread_info.group_pos % ports);
   struct arts_link_list_s *list = arts_link_list_get(out_head, list_id);
   struct arts_remote_packet_s *packet =
       (struct arts_remote_packet_s *)(node + 1);
@@ -276,10 +274,6 @@ static inline void out_insert_node(struct out_list_s *node,
 #ifdef SEQUENCENUMBERS
   arts_unlock(&seq_num_lock[list_id]);
 #endif
-  //    nartsUpdatePerformanceMetric(ARTS_NETWORK_QUEUE_PUSH, ARTS_THREAD,
-  //    packet->size, false);
-  ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_NETWORK_QUEUE_PUSH, ARTS_METRIC_THREAD,
-                             1);
 }
 
 static inline struct out_list_s *out_pop_node(unsigned int thread_id,
@@ -300,11 +294,7 @@ static inline struct out_list_s *out_pop_node(unsigned int thread_id,
     }
     last_out[packet->seq_rank] = packet->seq_num;
 #endif
-    // artsUpdatePerformanceMetric(ARTS_NETWORK_QUEUE_POP, ARTS_THREAD,
-    // packet->size, false);
   }
-  ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_NETWORK_QUEUE_POP, ARTS_METRIC_THREAD,
-                             1);
   return out;
 }
 
@@ -360,11 +350,6 @@ bool arts_remote_async_send() {
         } else {
           struct arts_remote_packet_s *packet =
               (struct arts_remote_packet_s *)(out + 1);
-          if (packet->message_type != ARTS_REMOTE_METRIC_UPDATE_MSG) {
-            ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_NETWORK_SEND_BW,
-                                       ARTS_METRIC_THREAD, packet->size);
-          }
-
           out_resend[i - (int)thread_start] = NULL;
           arts_link_list_delete_item(out);
         }

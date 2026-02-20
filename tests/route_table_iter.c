@@ -46,12 +46,12 @@
 #define MYSIZE 10
 
 void print_rt() {
-  arts_route_table_iterator_t *iter =
-      arts_new_route_table_iterator(arts_node_info.route_table[0]);
-  arts_route_item_t *item = arts_route_table_iterate(iter);
+  arts_route_table_iterator_t iter;
+  arts_reset_route_table_iterator(&iter, arts_node_info.route_table[0]);
+  arts_route_item_t *item = arts_route_table_iterate(&iter);
   while (item) {
     arts_print_item(item);
-    item = arts_route_table_iterate(iter);
+    item = arts_route_table_iterate(&iter);
   }
 }
 

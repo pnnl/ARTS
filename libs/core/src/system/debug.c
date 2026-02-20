@@ -72,7 +72,7 @@ static void arts_install_crash_handlers(void) {
   }
 }
 
-#if !defined(__APPLE__)
+#ifndef __APPLE__
 
 #include <sys/prctl.h>
 #include <sys/resource.h>

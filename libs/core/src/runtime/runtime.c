@@ -40,29 +40,27 @@
 #include "arts/utils/malloc.h"
 
 #include <stdlib.h>
+#include <time.h>
 
 #include "arts/arts_defs.h"
+#include "arts/counter/Preamble.h"
+#include "arts/counter/counter.h"
+#include "arts/counter/object_counter.h"
 #include "arts/gas/guid.h"
 #include "arts/gas/route_table.h"
-#include "arts/introspection/Preamble.h"
-#include "arts/introspection/arts_id_counter.h"
-#include "arts/introspection/counter.h"
-#include "arts/introspection/metrics.h"
 #include "arts/network/remote.h"
 #include "arts/network/remote_protocol.h"
 #include "arts/runtime/compute/edt_functions.h"
 #include "arts/runtime/globals.h"
 #include "arts/runtime/memory/db_functions.h"
 #include "arts/runtime/sync/termination_detection.h"
-#include "arts/runtime/watchdog.h"
 #include "arts/system/abstract_machine_model.h"
 #include "arts/system/arts_print.h"
-#include "arts/system/threads.h"
 #include "arts/utils/array_list.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/deque.h"
 
-#ifdef USE_GPU
+#ifdef ARTS_USE_GPU
 #include "arts/gpu/gpu_runtime.cuh"
 #include "arts/gpu/gpu_stream.h"
 #endif
@@ -76,10 +74,10 @@ ARTS_WEAK void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
                              uint32_t depc, arts_edt_dep_t depv[]) {}
 
 struct arts_runtime_shared_s arts_node_info;
-__thread struct arts_runtime_private_s arts_thread_info;
+ARTS_THREAD_LOCAL struct arts_runtime_private_s arts_thread_info;
 
 typedef bool (*scheduler_t)(void);
-#ifdef USE_GPU
+#ifdef ARTS_USE_GPU
 scheduler_t scheduler_loop[] = {
     (scheduler_t)arts_default_scheduler_loop,
     (scheduler_t)arts_network_before_steal_scheduler_loop,
@@ -94,55 +92,64 @@ scheduler_t scheduler_loop[] = {
     (scheduler_t)arts_network_first_scheduler_loop};
 #endif
 
-void arts_runtime_node_init(unsigned int worker_threads,
-                            unsigned int receiving_threads,
-                            unsigned int sender_threads,
-                            unsigned int receiver_threads,
-                            unsigned int total_threads, bool remote_stealing_on,
-                            struct arts_config_s *config) {
-  (void)receiving_threads;
+void arts_runtime_node_init(struct arts_config_s *config) {
+  unsigned int tc = config->thread_count;
+
+  /* Scheduler */
   arts_node_info.scheduler = scheduler_loop[config->scheduler];
-  arts_node_info.deque = (struct arts_deque_s **)arts_malloc(
-      sizeof(struct arts_deque_s *) * total_threads);
+
+  /* Per-thread indexed arrays */
+  arts_node_info.deque =
+      (struct arts_deque_s **)arts_malloc(sizeof(struct arts_deque_s *) * tc);
   arts_node_info.receiver_deque =
-      receiver_threads ? (struct arts_deque_s **)arts_malloc(
-                             sizeof(struct arts_deque_s *) * receiver_threads)
-                       : NULL;
-  arts_node_info.gpu_deque = (struct arts_deque_s **)arts_malloc(
-      sizeof(struct arts_deque_s *) * total_threads);
-  arts_node_info.route_table = (arts_route_table_t **)arts_calloc(
-      total_threads, sizeof(arts_route_table_t *));
+      config->receiver_thread_count
+          ? (struct arts_deque_s **)arts_malloc(sizeof(struct arts_deque_s *) *
+                                                config->receiver_thread_count)
+          : NULL;
+  arts_node_info.gpu_deque =
+      (struct arts_deque_s **)arts_malloc(sizeof(struct arts_deque_s *) * tc);
+  arts_node_info.route_table =
+      (arts_route_table_t **)arts_calloc(tc, sizeof(arts_route_table_t *));
   arts_node_info.gpu_route_table =
       config->gpu ? (arts_route_table_t **)arts_calloc(
                         config->gpu, sizeof(arts_route_table_t *))
                   : NULL;
   arts_node_info.remote_route_table = arts_new_route_table(
       config->route_table_entries, config->route_table_size);
-  arts_node_info.local_spin =
-      (volatile bool **)arts_calloc(total_threads, sizeof(bool *));
+  arts_node_info.local_spin = (volatile bool **)arts_calloc(tc, sizeof(bool *));
   arts_node_info.memory_moves =
-      (unsigned int **)arts_calloc(total_threads, sizeof(unsigned int *));
+      (unsigned int **)arts_calloc(tc, sizeof(unsigned int *));
   arts_node_info.atomic_waits =
       (struct atomic_create_barrier_info_s **)arts_calloc(
-          total_threads, sizeof(struct atomic_create_barrier_info_s *));
-  arts_node_info.worker_thread_count = worker_threads;
-  arts_node_info.sender_thread_count = sender_threads;
-  arts_node_info.receiver_thread_count = receiver_threads;
-  arts_node_info.total_thread_count = total_threads;
-  arts_node_info.ready_to_push = total_threads;
-  arts_node_info.ready_to_parallel_start = total_threads;
-  arts_node_info.ready_to_inspect = total_threads;
-  arts_node_info.ready_to_execute = total_threads;
-  arts_node_info.ready_to_clean = total_threads;
+          tc, sizeof(struct atomic_create_barrier_info_s *));
+
+  /* Thread counts */
+  arts_node_info.worker_thread_count = config->worker_thread_count;
+  arts_node_info.sender_thread_count = config->sender_thread_count;
+  arts_node_info.receiver_thread_count = config->receiver_thread_count;
+  arts_node_info.total_thread_count = tc;
+
+  /* Synchronization barriers */
+  arts_node_info.ready_to_push = tc;
+  arts_node_info.ready_to_parallel_start = tc;
+  arts_node_info.ready_to_inspect = tc;
+  arts_node_info.ready_to_execute = tc;
+  arts_node_info.ready_to_clean = tc;
+
+  /* Locks and shutdown coordination */
   arts_node_info.send_lock = 0U;
   arts_node_info.recv_lock = 0U;
+  arts_node_info.steal_request_lock = 1U;
   arts_node_info.shutdown_count = arts_global_rank_count - 1;
   arts_node_info.shutdown_started = 0;
   arts_node_info.ready_to_shutdown = arts_global_rank_count - 1;
-  arts_node_info.steal_request_lock = !remote_stealing_on;
+  arts_node_info.auto_shutdown_guid = config->auto_shutdown ? 1 : NULL_GUID;
+
+  /* Network buffer */
   arts_node_info.buf = (char *)arts_malloc(PACKET_SIZE);
   arts_node_info.packet_size = PACKET_SIZE;
-  arts_node_info.auto_shutdown_guid = (config->auto_shutdown) ? 1 : NULL_GUID;
+
+  /* GPU config */
   arts_node_info.gpu = config->gpu;
   arts_node_info.gpu_route_table_size = config->gpu_route_table_size;
   arts_node_info.gpu_route_table_entries = config->gpu_route_table_entries;
@@ -157,33 +164,29 @@ void arts_runtime_node_init(unsigned int worker_threads,
   arts_node_info.run_gpu_gc_idle = config->run_gpu_gc_idle;
   arts_node_info.run_gpu_gc_pre_edt = config->run_gpu_gc_pre_edt;
   arts_node_info.delete_zeros_gpu_gc = config->delete_zeros_gpu_gc;
-  arts_node_info.pin_threads = config->pin_threads;
-  arts_node_info.watchdog_timeout = config->watchdog_timeout;
-  arts_node_info.keys =
-      (uint64_t **)arts_calloc(total_threads, sizeof(uint64_t *));
+
+  /* GUID generation */
+  arts_node_info.keys = (uint64_t **)arts_calloc(tc, sizeof(uint64_t *));
   arts_node_info.global_guid_thread_id =
-      (uint64_t *)arts_calloc(total_threads, sizeof(uint64_t));
+      (uint64_t *)arts_calloc(tc, sizeof(uint64_t));
+
+  /* Performance counters */
   arts_node_info.counter_folder = config->counter_folder;
+  arts_node_info.counter_capture_interval = config->counter_capture_interval;
 
-  // Allocate live_counters array - pointers to each thread's __thread counters
-  // These will be registered by each thread during arts_runtime_private_init
   arts_node_info.live_counters =
-      (arts_counter_t **)arts_calloc(total_threads, sizeof(arts_counter_t *));
+      (arts_counter_t **)arts_calloc(tc, sizeof(arts_counter_t *));
 
-  // Allocate saved_counters - nodeInfo's own counter space for final values
-  // Pre-allocate all counters for all threads upfront
   arts_node_info.saved_counters =
-      (arts_counter_t **)arts_calloc(total_threads, sizeof(arts_counter_t *));
-  for (unsigned int t = 0; t < total_threads; t++) {
+      (arts_counter_t **)arts_calloc(tc, sizeof(arts_counter_t *));
+  for (unsigned int t = 0; t < tc; t++) {
     arts_node_info.saved_counters[t] = (arts_counter_t *)arts_calloc(
         NUM_COUNTER_TYPES, sizeof(arts_counter_t));
   }
 
-  // Allocate capture_arrays for periodic capture (capture thread writes here)
-  // Pre-allocate all ArrayLists for PERIODIC mode counters
-  arts_node_info.capture_arrays = (arts_array_list_t ***)arts_calloc(
-      total_threads, sizeof(arts_array_list_t **));
-  for (unsigned int t = 0; t < total_threads; t++) {
+  arts_node_info.capture_arrays =
+      (arts_array_list_t ***)arts_calloc(tc, sizeof(arts_array_list_t **));
+  for (unsigned int t = 0; t < tc; t++) {
     arts_node_info.capture_arrays[t] = (arts_array_list_t **)arts_calloc(
         NUM_COUNTER_TYPES, sizeof(arts_array_list_t *));
     for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
@@ -194,24 +197,41 @@ void arts_runtime_node_init(unsigned int worker_threads,
     }
   }
 
-  arts_node_info.counter_capture_interval = config->counter_capture_interval;
-
-  // Note: Node-level counter reduction is done at output time using
-  // saved_counters. arts_id node-level reduction also computed at output time.
-
-#ifdef USE_GPU
-  if (arts_node_info.gpu) // TODO: Multi-Node init
+#ifdef ARTS_USE_GPU
+  if (arts_node_info.gpu) {
     arts_node_init_gpus();
+  }
 #endif
 }
 
 void arts_runtime_global_cleanup() {
   arts_counter_capture_stop();
   // Write all counter outputs (thread, node, and cluster levels)
-  for (unsigned int t = 0; t < arts_node_info.total_thread_count; t++) {
+  unsigned int tc = arts_node_info.total_thread_count;
+  for (unsigned int t = 0; t < tc; t++) {
     arts_counter_write(arts_node_info.counter_folder, arts_global_rank_id, t);
   }
   arts_clean_up_dbs();
+
+  /* Counter cleanup (reverse of arts_runtime_node_init allocation) */
+  for (unsigned int t = 0; t < tc; t++) {
+    if (arts_node_info.capture_arrays && arts_node_info.capture_arrays[t]) {
+      for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
+        if (arts_node_info.capture_arrays[t][i]) {
+          arts_delete_array_list(arts_node_info.capture_arrays[t][i]);
+        }
+      }
+      arts_free(arts_node_info.capture_arrays[t]);
+    }
+    if (arts_node_info.saved_counters) {
+      arts_free(arts_node_info.saved_counters[t]);
+    }
+  }
+  arts_free(arts_node_info.capture_arrays);
+  arts_free(arts_node_info.saved_counters);
+  arts_free(arts_node_info.live_counters);
+
+  /* Per-thread indexed arrays */
   arts_free(arts_node_info.deque);
   arts_free(arts_node_info.receiver_deque);
   arts_free(arts_node_info.gpu_deque);
@@ -222,9 +242,10 @@ void arts_runtime_global_cleanup() {
   arts_free(arts_node_info.buf);
   arts_free(arts_node_info.keys);
   arts_free(arts_node_info.global_guid_thread_id);
-#ifdef USE_GPU
-  if (arts_node_info.gpu)
+#ifdef ARTS_USE_GPU
+  if (arts_node_info.gpu) {
     arts_cleanup_gpus();
+  }
 #endif
 }
 
@@ -240,7 +261,6 @@ void arts_runtime_global_cleanup() {
  */
 void arts_thread_zero_node_start(int argc, char **argv) {
   ARTS_INFO("Thread 0: starting node initialization");
-  arts_watchdog_init(arts_node_info.watchdog_timeout);
   set_global_guid_on();
   arts_shutdown_epoch_create();
 
@@ -249,7 +269,7 @@ void arts_thread_zero_node_start(int argc, char **argv) {
   INITIALIZATION_TIME_STOP();
   END_TO_END_TIME_START();
 
-#ifdef USE_GPU
+#ifdef ARTS_USE_GPU
   arts_init_per_gpu_wrapper(argc, argv);
 #endif
   set_guid_generator_after_parallel_start();
@@ -260,7 +280,8 @@ void arts_thread_zero_node_start(int argc, char **argv) {
   if (arts_main_edt && !arts_global_rank_id) {
     ARTS_INFO("Thread 0: scheduling arts_main_edt on rank 0 (argc=%d)", argc);
     uint64_t main_args[2] = {(uint64_t)argc, (uint64_t)argv};
-    arts_edt_create(arts_main_edt, 2, main_args, 0, &(arts_hint_t){.route = 0});
+    arts_hint_t main_hint = {0, 0};
+    arts_edt_create(arts_main_edt, 2, main_args, 0, &main_hint);
   }
 
   arts_increment_finished_epoch_list();
@@ -277,78 +298,73 @@ void arts_thread_zero_node_start(int argc, char **argv) {
   arts_counter_capture_start();
 }
 
-void arts_runtime_private_init(struct thread_mask_s *unit,
+void arts_runtime_private_init(struct thread_mask_s *thread,
                                struct arts_config_s *config) {
-  arts_node_info.deque[unit->id] = arts_thread_info.my_deque =
+  arts_node_info.deque[thread->id] = arts_thread_info.my_deque =
       arts_deque_new(config->deque_size);
-  arts_node_info.gpu_deque[unit->id] = arts_thread_info.my_gpu_deque =
+  arts_node_info.gpu_deque[thread->id] = arts_thread_info.my_gpu_deque =
       (config->gpu) ? arts_deque_new(config->deque_size) : NULL;
-  if (unit->worker) {
-    arts_node_info.route_table[unit->id] = arts_new_route_table(
+  if (thread->role == ARTS_ROLE_WORKER) {
+    arts_node_info.route_table[thread->id] = arts_new_route_table(
         config->route_table_entries, config->route_table_size);
-#ifdef USE_GPU
-    if (config->gpu) // TODO: Multi-Node init
+#ifdef ARTS_USE_GPU
+    if (config->gpu) {
       arts_worker_init_gpus();
+    }
 #endif
   }
 
-  if (unit->network_send || unit->network_receive) {
-    if (unit->network_send) {
+  if (thread->role == ARTS_ROLE_SENDER || thread->role == ARTS_ROLE_RECEIVER) {
+    if (thread->role == ARTS_ROLE_SENDER) {
       unsigned int size = arts_global_rank_count * config->port_count /
                           arts_node_info.sender_thread_count;
       unsigned int rem = arts_global_rank_count * config->port_count %
                          arts_node_info.sender_thread_count;
       unsigned int start;
-      if (unit->group_pos < rem) {
-        start = unit->group_pos * (size + 1);
+      if (thread->group_pos < rem) {
+        start = thread->group_pos * (size + 1);
         arts_remote_set_thread_outbound_queues(start, start + size + 1);
       } else {
-        start = (rem * (size + 1)) + ((unit->group_pos - rem) * size);
+        start = (rem * (size + 1)) + ((thread->group_pos - rem) * size);
         arts_remote_set_thread_outbound_queues(start, start + size);
       }
     }
-    if (unit->network_receive) {
-      arts_node_info.receiver_deque[unit->group_pos] =
-          arts_node_info.deque[unit->id];
+    if (thread->role == ARTS_ROLE_RECEIVER) {
+      arts_node_info.receiver_deque[thread->group_pos] =
+          arts_node_info.deque[thread->id];
       unsigned int size = (arts_global_rank_count - 1) * config->port_count /
                           arts_node_info.receiver_thread_count;
       unsigned int rem = (arts_global_rank_count - 1) * config->port_count %
                          arts_node_info.receiver_thread_count;
       unsigned int start;
-      if (unit->group_pos < rem) {
-        start = unit->group_pos * (size + 1);
-        // ARTS_INFO("%d %d %d %d", start, size, unit->group_pos, rem);
+      if (thread->group_pos < rem) {
+        start = thread->group_pos * (size + 1);
         arts_remote_set_thread_inbound_queues(start, start + size + 1);
       } else {
-        start = (rem * (size + 1)) + ((unit->group_pos - rem) * size);
-        // ARTS_INFO("%d %d %d %d", start, size, unit->group_pos, rem);
+        start = (rem * (size + 1)) + ((thread->group_pos - rem) * size);
         arts_remote_set_thread_inbound_queues(start, start + size);
       }
     }
   }
-  arts_node_info.local_spin[unit->id] = &arts_thread_info.alive;
+  arts_node_info.local_spin[thread->id] = &arts_thread_info.alive;
   arts_thread_info.alive = true;
-  arts_node_info.memory_moves[unit->id] =
+  arts_node_info.memory_moves[thread->id] =
       (unsigned int *)&arts_thread_info.outstanding_memory_moves;
-  arts_node_info.atomic_waits[unit->id] = &arts_thread_info.atomic_wait;
+  arts_node_info.atomic_waits[thread->id] = &arts_thread_info.atomic_wait;
   arts_thread_info.atomic_wait.wait = true;
   arts_thread_info.outstanding_memory_moves = 0;
-  arts_thread_info.core_id = unit->unit_id;
-  arts_thread_info.thread_id = unit->id;
-  arts_thread_info.group_id = unit->group_pos;
-  arts_thread_info.numa_domain_id = unit->numa_domain_id;
-  arts_thread_info.worker = unit->worker;
-  arts_thread_info.network_send = unit->network_send;
-  arts_thread_info.network_receive = unit->network_receive;
+  arts_thread_info.pu_id = thread->pu_id;
+  arts_thread_info.thread_id = thread->id;
+  arts_thread_info.group_pos = thread->group_pos;
+  arts_thread_info.numa_domain_id = thread->numa_domain_id;
+  arts_thread_info.role = thread->role;
   arts_thread_info.back_off = 1;
   arts_thread_info.current_edt_guid = 0;
-  arts_thread_info.malloc_type = ARTS_METRIC_DEFAULT_MEMORY_SIZE;
-  arts_thread_info.malloc_trace = 1;
   arts_thread_info.local_counting = 1;
   arts_thread_info.shad_lock = 0;
 
   // Register thread-local counter storage with nodeInfo
-  arts_node_info.live_counters[unit->id] = arts_thread_local_counters;
+  arts_node_info.live_counters[thread->id] = arts_thread_local_counters;
 #if ENABLE_ARTS_ID_EDT_METRICS || ENABLE_ARTS_ID_DB_METRICS
   arts_id_init_hash_table(&arts_thread_local_arts_id_metrics);
 #endif
@@ -366,12 +382,12 @@ void arts_runtime_private_init(struct thread_mask_s *unit,
   arts_atomic_sub(&arts_node_info.ready_to_push, 1U);
   while (arts_node_info.ready_to_push) {
   };
-  if (unit->id) {
+  if (thread->id) {
     arts_atomic_sub(&arts_node_info.ready_to_parallel_start, 1U);
     while (arts_node_info.ready_to_parallel_start) {
     };
 
-    if (arts_thread_info.worker) {
+    if (arts_thread_info.role == ARTS_ROLE_WORKER) {
       arts_increment_finished_epoch_list();
     }
 
@@ -382,7 +398,7 @@ void arts_runtime_private_init(struct thread_mask_s *unit,
     while (arts_node_info.ready_to_execute) {
     };
   }
-  arts_thread_info.drand_buf[0] = 1202107158 + (unit->id * 1999);
+  arts_thread_info.drand_buf[0] = 1202107158 + (thread->id * 1999);
   arts_thread_info.drand_buf[1] = 0;
   arts_thread_info.drand_buf[2] = 0;
 }
@@ -432,11 +448,11 @@ void arts_runtime_stop() {
 }
 
 void arts_handle_remote_stolen_edt(struct arts_edt_s *edt) {
-  ARTS_DEBUG("Processing stolen EDT[Id:%lu, Guid:%lu] on core %d", edt->arts_id,
-             edt->current_edt, arts_thread_info.core_id);
+  ARTS_DEBUG("Processing stolen EDT[Id:%lu, Guid:%lu] on PU %u", edt->arts_id,
+             edt->current_edt, arts_thread_info.pu_id);
   increment_queue_epoch(edt->epoch_guid);
   arts_shutdown_epoch_inc_queue();
-#ifdef USE_GPU
+#ifdef ARTS_USE_GPU
   if (arts_node_info.gpu &&
       (!arts_thread_info.my_deque || !arts_thread_info.my_gpu_deque))
     arts_store_new_edts(edt);
@@ -480,7 +496,7 @@ void arts_handle_ready_edt(struct arts_edt_s *edt) {
     INCREMENT_NUM_EDTS_ACQUIRED_BY(1);
     increment_queue_epoch(edt->epoch_guid);
     arts_shutdown_epoch_inc_queue();
-#ifdef USE_GPU
+#ifdef ARTS_USE_GPU
     if (arts_node_info.gpu &&
         (!arts_thread_info.my_deque || !arts_thread_info.my_gpu_deque))
       arts_store_new_edts(edt);
@@ -495,7 +511,6 @@ void arts_handle_ready_edt(struct arts_edt_s *edt) {
         arts_deque_push_front(arts_thread_info.my_gpu_deque, edt, 0);
       }
     }
-    ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_EDT_QUEUE, ARTS_METRIC_THREAD, 1);
   } else {
     ARTS_DEBUG("EDT[Guid:%lu] waiting for %u more DB acquisitions",
                edt->current_edt, remaining);
@@ -534,8 +549,6 @@ void arts_run_edt(struct arts_edt_s *edt) {
 
   INCREMENT_NUM_EDTS_FINISHED_BY(1);
 
-  ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_EDT_THROUGHPUT, ARTS_METRIC_THREAD, 1);
-
   arts_unset_thread_local_edt_info();
 
   // This is for a synchronous path
@@ -551,7 +564,6 @@ void arts_run_edt(struct arts_edt_s *edt) {
   arts_edt_delete(edt);
   DEC_OUTSTANDING_EDTS(1);
   ARTS_DEBUG("EDT completed, outstanding_edts decremented");
-  arts_watchdog_tick();
 }
 
 inline struct arts_edt_s *arts_runtime_steal_from_network() {
@@ -629,10 +641,6 @@ struct arts_edt_s *arts_find_edt() {
         edt_found = arts_runtime_steal_from_network();
       }
     }
-
-    if (edt_found) {
-      ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_EDT_STEAL, ARTS_METRIC_THREAD, 1);
-    }
   }
   return edt_found;
 }
@@ -646,10 +654,6 @@ bool arts_default_scheduler_loop() {
         edt_found = arts_runtime_steal_from_network();
       }
     }
-
-    if (edt_found) {
-      ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_EDT_STEAL, ARTS_METRIC_THREAD, 1);
-    }
   }
 
   if (edt_found) {
@@ -657,7 +661,6 @@ bool arts_default_scheduler_loop() {
     // arts_wake_up_context();
     return true;
   }
-  arts_watchdog_check();
   CHECK_OUTSTANDING_EDTS(10000000);
   return false;
 }
@@ -675,16 +678,17 @@ bool arts_default_scheduler_loop() {
  * The loop exits when arts_runtime_stop() sets alive=false for this thread.
  */
 int arts_runtime_loop() {
-  ARTS_DEBUG("Thread %u entering runtime_loop (worker=%d, send=%d, recv=%d)",
-             arts_thread_info.thread_id, arts_thread_info.worker,
-             arts_thread_info.network_send, arts_thread_info.network_receive);
-  if (arts_thread_info.network_receive) {
+  ARTS_DEBUG("Thread %u entering runtime_loop (role=%d)",
+             arts_thread_info.thread_id, arts_thread_info.role);
+  switch (arts_thread_info.role) {
+  case ARTS_ROLE_RECEIVER:
     while (arts_thread_info.alive) {
       arts_server_try_to_receive(&arts_node_info.buf,
                                  &arts_node_info.packet_size,
                                  &arts_node_info.steal_request_lock);
     }
-  } else if (arts_thread_info.network_send) {
+    break;
+  case ARTS_ROLE_SENDER:
     while (arts_thread_info.alive) {
       if (arts_node_info.shutdown_started &&
           arts_node_info.shutdown_timeout > arts_get_time_stamp()) {
@@ -693,10 +697,14 @@ int arts_runtime_loop() {
         arts_remote_async_send();
       }
     }
-  } else if (arts_thread_info.worker) {
+    break;
+  case ARTS_ROLE_WORKER:
     while (arts_thread_info.alive) {
       arts_node_info.scheduler();
     }
+    break;
+  default:
+    break;
   }
   ARTS_DEBUG("Thread %u exiting runtime_loop", arts_thread_info.thread_id);
   return 0;

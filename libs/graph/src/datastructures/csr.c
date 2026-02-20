@@ -36,6 +36,8 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
+#include "arts/csr.h"
+
 #include <assert.h>
 #include <inttypes.h>
 #include <stdio.h>
@@ -43,7 +45,6 @@
 #include <string.h>
 
 #include "arts.h"
-#include "arts/csr.h"
 #include "arts/edge_vector.h"
 #include "arts/gas/route_table.h"
 #include "arts/system/arts_print.h"

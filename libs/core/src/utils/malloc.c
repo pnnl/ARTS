@@ -37,16 +37,13 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 #include "arts/utils/malloc.h"
-#include "arts.h"
 
 #include <stdlib.h>
 #include <string.h>
 
-#include "arts/introspection/metrics.h"
-#include "arts/runtime/globals.h"
-#include "arts/system/debug.h"
-#include "arts/utils/queue.h"
+#include "arts/system/arts_print.h"
 
+#define ALIGNMENT 8
 #define IS_POWER_OF_TWO(x) (!((x) & ((x) - 1)))
 
 typedef struct header_s {
@@ -76,9 +73,6 @@ void *arts_malloc(size_t size) {
   base->align = 0;
   base->base = base;
 
-  if (arts_thread_info.malloc_trace) {
-    ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_MALLOC_BW, ARTS_METRIC_THREAD, size);
-  }
   MALLOC_MEMORY_STOP();
 
   return base + 1;
@@ -106,9 +100,6 @@ void *arts_malloc_align(size_t size, size_t align) {
   hdr->align = align;
   hdr->base = base;
 
-  if (arts_thread_info.malloc_trace) {
-    ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_MALLOC_BW, ARTS_METRIC_THREAD, size);
-  }
   MALLOC_MEMORY_STOP();
 
   return aligned;
@@ -126,9 +117,6 @@ void *arts_calloc(size_t nmemb, size_t size) {
   void *ptr = arts_malloc(total_size);
   memset(ptr, 0, total_size);
 
-  if (arts_thread_info.malloc_trace) {
-    ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_MALLOC_BW, ARTS_METRIC_THREAD, size);
-  }
   CALLOC_MEMORY_STOP();
 
   return ptr;
@@ -148,9 +136,6 @@ void *arts_calloc_align(size_t nmemb, size_t size, size_t align) {
   void *ptr = arts_malloc_align(total_size, align);
   memset(ptr, 0, total_size);
 
-  if (arts_thread_info.malloc_trace) {
-    ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_MALLOC_BW, ARTS_METRIC_THREAD, size);
-  }
   CALLOC_MEMORY_STOP();
 
   return ptr;
@@ -192,8 +177,5 @@ void arts_free(void *ptr) {
   free(hdr->base);
   DECREMENT_MEMORY_FOOTPRINT_BY(size);
 
-  if (arts_thread_info.malloc_trace) {
-    ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_FREE_BW, ARTS_METRIC_THREAD, size);
-  }
   FREE_MEMORY_STOP();
 }

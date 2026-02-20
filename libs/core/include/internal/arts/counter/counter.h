@@ -36,8 +36,8 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef ARTS_INTROSPECTION_COUNTER_H
-#define ARTS_INTROSPECTION_COUNTER_H
+#ifndef ARTS_COUNTER_COUNTER_H
+#define ARTS_COUNTER_COUNTER_H
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -45,9 +45,8 @@ extern "C" {
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "arts/introspection/Preamble.h"
-#include "arts/introspection/arts_id_counter.h"
-#include "arts/utils/array_list.h"
+#include "arts/arts_defs.h"
+#include "arts/counter/Preamble.h"
 
 // X-macro: Define all counter types in one place.
 // Format: X(counterName)
@@ -147,17 +146,18 @@ typedef struct {
 // Thread-local counter storage - simple array of counters only.
 // Each thread updates these directly. No captures here.
 // Defined in Counter.c, each thread has its own copy.
-extern __thread arts_counter_t arts_thread_local_counters[NUM_COUNTER_TYPES];
+extern ARTS_THREAD_LOCAL arts_counter_t
+    arts_thread_local_counters[NUM_COUNTER_TYPES];
 
 // arts_id tracking stored separately per-thread (compile-time conditional)
 #if ENABLE_ARTS_ID_EDT_METRICS || ENABLE_ARTS_ID_DB_METRICS
-extern __thread arts_id_hash_table_t arts_thread_local_arts_id_metrics;
+extern ARTS_THREAD_LOCAL arts_id_hash_table_t arts_thread_local_arts_id_metrics;
 #endif
 #if ENABLE_ARTS_ID_EDT_CAPTURES
-extern __thread arts_array_list_t *arts_thread_local_edt_capture_list;
+extern ARTS_THREAD_LOCAL arts_array_list_t *arts_thread_local_edt_capture_list;
 #endif
 #if ENABLE_ARTS_ID_DB_CAPTURES
-extern __thread arts_array_list_t *arts_thread_local_db_capture_list;
+extern ARTS_THREAD_LOCAL arts_array_list_t *arts_thread_local_db_capture_list;
 #endif
 
 // Note: Saved counter data is stored directly in arts_node_info:

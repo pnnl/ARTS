@@ -36,14 +36,14 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
+#include "arts/block_distribution.h"
+
 #include <assert.h>
 #include <inttypes.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "arts.h"
-#include "arts/block_distribution.h"
 #include "arts/system/arts_print.h"
 #include "arts/utils/malloc.h"
 

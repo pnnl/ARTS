@@ -61,7 +61,7 @@ void exit_program(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   unsigned int num_nodes = arts_get_total_nodes();
   for (unsigned int i = 0; i < depc; i++) {
     unsigned int num_edts = depv[i].guid;
-    if (num_edts != num_nodes * num_dummy + 2) {
+    if (num_edts != (num_nodes * num_dummy) + 2) {
       arts_printf("Error: %u vs %u\n", num_edts, (num_nodes * num_dummy) + 2);
     }
   }

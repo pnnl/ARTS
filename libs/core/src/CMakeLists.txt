@@ -51,7 +51,7 @@ add_subdirectory(utils)
 add_subdirectory(network)
 add_subdirectory(runtime)
 add_subdirectory(gas)
-add_subdirectory(introspection)
+add_subdirectory(counter)
 
 # GPU module is only built for CUDA library
 if(BUILD_CUDA_LIBRARY)
@@ -84,7 +84,7 @@ if(ARTS_BUILD_STATIC)
     target_sources(arts_static PRIVATE
         $<TARGET_OBJECTS:arts_gas>
         $<TARGET_OBJECTS:arts_network>
-        $<TARGET_OBJECTS:arts_introspection>
+        $<TARGET_OBJECTS:arts_counter>
         $<TARGET_OBJECTS:arts_runtime>
         $<TARGET_OBJECTS:arts_runtime_compute>
         $<TARGET_OBJECTS:arts_runtime_memory>
@@ -143,7 +143,7 @@ if(ARTS_BUILD_SHARED)
     target_sources(arts_shared PRIVATE
         $<TARGET_OBJECTS:arts_gas>
         $<TARGET_OBJECTS:arts_network>
-        $<TARGET_OBJECTS:arts_introspection>
+        $<TARGET_OBJECTS:arts_counter>
         $<TARGET_OBJECTS:arts_runtime>
         $<TARGET_OBJECTS:arts_runtime_compute>
         $<TARGET_OBJECTS:arts_runtime_memory>
@@ -214,7 +214,7 @@ if(BUILD_CUDA_LIBRARY)
         target_sources(arts_cuda_static PRIVATE
             $<TARGET_OBJECTS:arts_gas>
             $<TARGET_OBJECTS:arts_network>
-            $<TARGET_OBJECTS:arts_introspection>
+            $<TARGET_OBJECTS:arts_counter>
             $<TARGET_OBJECTS:arts_runtime_gpu>
             $<TARGET_OBJECTS:arts_runtime_compute_gpu>
             $<TARGET_OBJECTS:arts_runtime_memory_gpu>
@@ -229,7 +229,7 @@ if(BUILD_CUDA_LIBRARY)
         target_link_libraries(arts_cuda_static PUBLIC arts_interface)
 
         # Add CUDA compile definition for this target
-        target_compile_definitions(arts_cuda_static PRIVATE USE_GPU)
+        target_compile_definitions(arts_cuda_static PRIVATE ARTS_USE_GPU)
 
         # Link external dependencies and CUDA libraries
         target_link_libraries(arts_cuda_static PRIVATE
@@ -280,7 +280,7 @@ if(BUILD_CUDA_LIBRARY)
         target_sources(arts_cuda_shared PRIVATE
             $<TARGET_OBJECTS:arts_gas>
             $<TARGET_OBJECTS:arts_network>
-            $<TARGET_OBJECTS:arts_introspection>
+            $<TARGET_OBJECTS:arts_counter>
             $<TARGET_OBJECTS:arts_runtime_gpu>
             $<TARGET_OBJECTS:arts_runtime_compute_gpu>
             $<TARGET_OBJECTS:arts_runtime_memory_gpu>
@@ -295,7 +295,7 @@ if(BUILD_CUDA_LIBRARY)
         target_link_libraries(arts_cuda_shared PUBLIC arts_interface)
 
         # Add CUDA compile definition for this target
-        target_compile_definitions(arts_cuda_shared PRIVATE USE_GPU)
+        target_compile_definitions(arts_cuda_shared PRIVATE ARTS_USE_GPU)
 
         # Link external dependencies and CUDA libraries
         target_link_libraries(arts_cuda_shared PRIVATE

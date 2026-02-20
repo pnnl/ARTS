@@ -95,7 +95,7 @@ static inline void arts_atomic_print(const char *format, ...) {
   do {                                                                         \
     arts_atomic_print(                                                         \
         ARTS_CLR_RED "[%u:%u] [ERROR] " format ARTS_CLR_RESET "\n",            \
-        arts_global_rank_id, arts_thread_info.group_id, ##__VA_ARGS__);        \
+        arts_global_rank_id, arts_thread_info.group_pos, ##__VA_ARGS__);       \
     arts_abort(1);                                                             \
   } while (0)
 #else
@@ -110,7 +110,7 @@ static inline void arts_atomic_print(const char *format, ...) {
 #define ARTS_WARN(format, ...)                                                 \
   arts_atomic_print(                                                           \
       ARTS_CLR_YELLOW "[%u:%u] [WARN] " format ARTS_CLR_RESET "\n",            \
-      arts_global_rank_id, arts_thread_info.group_id, ##__VA_ARGS__)
+      arts_global_rank_id, arts_thread_info.group_pos, ##__VA_ARGS__)
 #else
 #define ARTS_WARN(...)
 #endif
@@ -120,7 +120,7 @@ static inline void arts_atomic_print(const char *format, ...) {
 #define ARTS_INFO(format, ...)                                                 \
   arts_atomic_print(                                                           \
       ARTS_CLR_CYAN "[%u:%u] [INFO] " format ARTS_CLR_RESET "\n",              \
-      arts_global_rank_id, arts_thread_info.group_id, ##__VA_ARGS__)
+      arts_global_rank_id, arts_thread_info.group_pos, ##__VA_ARGS__)
 #else
 #define ARTS_INFO(...)
 #endif
@@ -130,7 +130,7 @@ static inline void arts_atomic_print(const char *format, ...) {
 #define ARTS_DEBUG(format, ...)                                                \
   arts_atomic_print(                                                           \
       ARTS_CLR_DIM "[%u:%u] [DEBUG] " format ARTS_CLR_RESET "\n",              \
-      arts_global_rank_id, arts_thread_info.group_id, ##__VA_ARGS__)
+      arts_global_rank_id, arts_thread_info.group_pos, ##__VA_ARGS__)
 #else
 #define ARTS_DEBUG(...)
 #endif

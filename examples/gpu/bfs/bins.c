@@ -73,14 +73,13 @@ void write_bins_to_file(unsigned int index) {
     FILE *fp = fopen(filename, "w");
     if (fp) {
       arts_printf("Writing to %s\n", filename);
-      arts_array_list_iterator_t *iter =
-          arts_new_array_list_iterator(list[index]);
+      arts_array_list_iterator_t iter;
+      arts_array_list_iter_init(&iter, list[index]);
       unsigned int *bin;
-      while (arts_array_list_has_next(iter)) {
-        bin = (unsigned int *)arts_array_list_next(iter);
+      while (arts_array_list_has_next(&iter)) {
+        bin = (unsigned int *)arts_array_list_next(&iter);
         (void)fprintf(fp, "%u\n", *bin);
       }
-      arts_delete_array_list_iterator(iter);
       (void)fclose(fp);
     } else {
       arts_printf("Couldn't open %s\n", filename);

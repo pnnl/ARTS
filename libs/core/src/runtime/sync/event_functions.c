@@ -42,7 +42,6 @@
 #include "arts/gas/guid.h"
 #include "arts/gas/out_of_order.h"
 #include "arts/gas/route_table.h"
-#include "arts/introspection/metrics.h"
 #include "arts/runtime/compute/edt_functions.h"
 #include "arts/runtime/globals.h"
 #include "arts/runtime/network/remote_functions.h"
@@ -55,7 +54,7 @@
 #include <assert.h>
 #include <time.h>
 
-extern __thread struct arts_edt_s *current_edt;
+extern ARTS_THREAD_LOCAL struct arts_edt_s *current_edt;
 
 bool arts_event_create_internal(arts_guid_t *guid, unsigned int route,
                                 unsigned int dependent_count,
@@ -63,8 +62,7 @@ bool arts_event_create_internal(arts_guid_t *guid, unsigned int route,
                                 arts_guid_t event_data) {
   unsigned int event_size = sizeof(struct arts_event_s) +
                             (sizeof(struct arts_dependent_s) * dependent_count);
-  void *event_packet =
-      ARTS_CALLOC_WITH_TYPE(1, event_size, ARTS_METRIC_EVENT_MEMORY_SIZE);
+  void *event_packet = arts_calloc(1, event_size);
 
   if (event_size) {
     struct arts_event_s *event = (struct arts_event_s *)event_packet;
@@ -244,8 +242,6 @@ void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
       }
     }
   }
-  ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_EVENT_SIGNAL_THROUGHPUT,
-                             ARTS_METRIC_THREAD, 1);
   SIGNAL_EVENT_COUNTER_STOP();
 }
 
@@ -473,8 +469,7 @@ bool arts_persistent_event_create_internal(arts_guid_t *guid,
     ARTS_ERROR("Persistent event requires non-NULL data GUID");
   }
   const unsigned int event_size = sizeof(struct arts_persistent_event_s);
-  void *event_packet = ARTS_CALLOC_WITH_TYPE(
-      1, event_size, ARTS_METRIC_PERSISTENT_EVENT_MEMORY_SIZE);
+  void *event_packet = arts_calloc(1, event_size);
 
   if (event_size) {
     struct arts_persistent_event_s *event =
@@ -714,8 +709,6 @@ void arts_persistent_event_satisfy(arts_guid_t event_guid, uint32_t action,
       arts_unlock(&event->lock);
     }
   }
-  ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_PERSISTENT_EVENT_SIGNAL_THROUGHPUT,
-                             ARTS_METRIC_THREAD, 1);
   SIGNAL_PERSISTENT_EVENT_COUNTER_STOP();
 }
 

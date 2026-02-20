@@ -103,11 +103,9 @@ void arts_watchdog_check(void) {
     ARTS_WARN("===== WATCHDOG TIMEOUT =====");
     ARTS_WARN("Thread %u: no progress for %lu seconds",
               arts_thread_info.thread_id, elapsed_sec);
-    ARTS_WARN("  thread_id=%u, core_id=%d, worker=%d, alive=%d",
-              arts_thread_info.thread_id, arts_thread_info.core_id,
-              arts_thread_info.worker, arts_thread_info.alive);
-    ARTS_WARN("  network_send=%d, network_receive=%d",
-              arts_thread_info.network_send, arts_thread_info.network_receive);
+    ARTS_WARN("  thread_id=%u, pu_id=%u, role=%d, alive=%d",
+              arts_thread_info.thread_id, arts_thread_info.pu_id,
+              arts_thread_info.role, arts_thread_info.alive);
 
     /* Deque sizes (may be NULL for network threads) */
     if (arts_thread_info.my_deque) {

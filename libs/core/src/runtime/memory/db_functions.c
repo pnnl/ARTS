@@ -43,13 +43,11 @@
 #include <string.h>
 
 #include "arts.h"
+#include "arts/counter/Preamble.h"
+#include "arts/counter/counter.h"
 #include "arts/gas/guid.h"
 #include "arts/gas/out_of_order.h"
 #include "arts/gas/route_table.h"
-#include "arts/introspection/Preamble.h"
-#include "arts/introspection/arts_id_counter.h"
-#include "arts/introspection/counter.h"
-#include "arts/introspection/metrics.h"
 #include "arts/runtime/compute/edt_functions.h"
 #include "arts/runtime/globals.h"
 #include "arts/runtime/memory/db_list.h"
@@ -60,13 +58,13 @@
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
 
-#ifdef USE_GPU
+#ifdef ARTS_USE_GPU
 #include "arts/gpu/gpu_runtime.cuh"
 #endif
 
 ARTS_TYPE_NAME;
 
-extern _Thread_local struct arts_edt_s *current_edt;
+extern ARTS_THREAD_LOCAL struct arts_edt_s *current_edt;
 
 #define WRITE_SET 0x80000000
 
@@ -92,7 +90,7 @@ static void arts_db_auto_acquire(struct arts_db_s *db) {
 void *arts_db_malloc(arts_type_t mode, unsigned int size) {
   (void)mode;
   void *ptr = NULL;
-#ifdef USE_GPU
+#ifdef ARTS_USE_GPU
   if (arts_node_info.gpu) {
     if (mode == ARTS_DB_LC)
       ptr = arts_cuda_malloc_host(size * 2);
@@ -108,7 +106,7 @@ void *arts_db_malloc(arts_type_t mode, unsigned int size) {
 
 void arts_db_free(void *ptr) {
   struct arts_db_s *db = (struct arts_db_s *)ptr;
-#ifdef USE_GPU
+#ifdef ARTS_USE_GPU
   if (arts_node_info.gpu &&
       (db->header.type == ARTS_DB_GPU_READ ||
        db->header.type == ARTS_DB_GPU_WRITE || db->header.type == ARTS_DB_LC)) {
@@ -187,7 +185,7 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, const arts_hint_t *hint) {
   arts_guid_t guid = NULL_GUID;
   uint64_t db_size = len + sizeof(struct arts_db_s);
 
-  void *ptr = ARTS_MALLOC_WITH_TYPE(db_size, ARTS_METRIC_DB_MEMORY_SIZE);
+  void *ptr = arts_malloc(db_size);
   if (ptr) {
     guid = arts_guid_create_for_rank(arts_global_rank_id, ARTS_DB);
     arts_db_create_internal(guid, ptr, len, db_size, ARTS_DB, arts_id);
@@ -214,7 +212,7 @@ void *arts_db_create_with_guid(arts_guid_t guid, uint64_t len,
   if (arts_guid_is_local(guid)) {
     uint64_t db_size = len + sizeof(struct arts_db_s);
 
-    ptr = ARTS_MALLOC_WITH_TYPE(db_size, ARTS_METRIC_DB_MEMORY_SIZE);
+    ptr = arts_malloc(db_size);
     if (ptr) {
       struct arts_db_s *db_header = (struct arts_db_s *)ptr;
       arts_db_create_internal(guid, db_header, len, db_size, mode, arts_id);
@@ -245,7 +243,7 @@ void *arts_db_create_with_guid_and_data(arts_guid_t guid, void *data,
   if (arts_guid_is_local(guid)) {
     uint64_t db_size = len + sizeof(struct arts_db_s);
 
-    ptr = ARTS_MALLOC_WITH_TYPE(db_size, ARTS_METRIC_DB_MEMORY_SIZE);
+    ptr = arts_malloc(db_size);
 
     if (ptr) {
       struct arts_db_s *db_header = (struct arts_db_s *)ptr;
@@ -276,8 +274,8 @@ void *arts_db_resize_ptr(struct arts_db_s *db_res, unsigned int size,
   if (db_res) {
     unsigned int old_size = db_res->header.size;
     unsigned int new_size = size + sizeof(struct arts_db_s);
-    struct arts_db_s *ptr = (struct arts_db_s *)ARTS_CALLOC_ALIGN_WITH_TYPE(
-        1, new_size, 16, ARTS_METRIC_DB_MEMORY_SIZE);
+    struct arts_db_s *ptr =
+        (struct arts_db_s *)arts_calloc_align(1, new_size, 16);
     if (ptr) {
       if (copy) {
         memcpy(ptr, db_res, old_size);
@@ -757,7 +755,7 @@ void prep_dbs(unsigned int depc, arts_edt_dep_t *depv, const arts_type_t *modes,
       ARTS_DEBUG("[prep_dbs] DB[Id:%lu, Guid:%lu] ptr=%p, db=%p", db->arts_id,
                  depv[i].guid, depv[i].ptr, db);
     }
-#ifdef USE_GPU
+#ifdef ARTS_USE_GPU
     if (!gpu && db_type == ARTS_DB_LC) {
       struct arts_db_s *db = ((struct arts_db_s *)depv[i].ptr) - 1;
       arts_reader_lock(&db->reader, &db->writer);
@@ -922,7 +920,6 @@ void internal_get_from_db(arts_guid_t edt_guid, arts_guid_t db_guid,
       if (edt_guid != NULL_GUID) {
         arts_signal_edt_ptr(edt_guid, slot, ptr, size);
       }
-      ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_GET_BW, ARTS_METRIC_THREAD, size);
     } else {
       assert(edt_guid != NULL_GUID && "DB not found and no EDT to signal");
       ARTS_INFO("Getting OO-DB[Guid:%lu] From: %p", db_guid, NULL);
@@ -970,7 +967,6 @@ void internal_put_in_db(void *ptr, arts_guid_t edt_guid, arts_guid_t db_guid,
       }
       increment_finished_epoch(epoch_guid);
       arts_shutdown_epoch_inc_finished();
-      ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_PUT_BW, ARTS_METRIC_THREAD, size);
     } else {
       void *cpy_ptr = arts_malloc(size);
       memcpy(cpy_ptr, ptr, size);

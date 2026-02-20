@@ -42,7 +42,6 @@
 extern "C" {
 #endif
 
-#include "arts.h"
 #include "arts/system/config.h"
 #include "arts/utils/malloc.h"
 

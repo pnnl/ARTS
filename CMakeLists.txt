@@ -100,15 +100,12 @@ option(ARTS_BUILD_EXAMPLES "Build example programs" ON)
 option(ARTS_BUILD_TESTS "Build test programs" ON)
 
 # Feature options (can be set via command line)
-option(ARTS_USE_SANITIZERS "Enable address and undefined behavior sanitizers in Debug builds" OFF)
-option(USE_RDMA "Use RDMA RSockets networking (default: ON, use TCP when OFF)" OFF)
-option(USE_HWLOC "Use hwloc for hardware topology (default: ON, disable when OFF)" ON)
-option(USE_GPU "Enable GPU support (default: ON, disable when OFF)" ON)
-option(USE_SIMPLE_ARCH "Use simple architecture implementations" OFF)
 set(ARTS_LOG_LEVEL "1" CACHE STRING "Log verbosity: 0=ERROR, 1=+WARN (default), 2=+INFO, 3=+DEBUG")
-option(ARTS_WATCHDOG_ENABLED "Enable runtime watchdog for hang detection (zero overhead when OFF)" OFF)
-option(USE_PRIORITY_DEQUE "Use priority Chase-Lev deque implementation" OFF)
-option(USE_LOCAL_CUDA_ARCHITECTURES "Auto-detect CUDA architectures from local GPUs using nvidia-smi" ON)
+option(ARTS_USE_GPU "Enable GPU support (default: ON, disable when OFF)" ON)
+option(ARTS_USE_RDMA "Use RDMA RSockets networking (default: ON, use TCP when OFF)" OFF)
+option(ARTS_USE_SANITIZERS "Enable address and undefined behavior sanitizers in Debug builds" ON)
+option(ARTS_USE_PRIORITY_DEQUE "Use priority Chase-Lev deque implementation" OFF)
+option(ARTS_USE_LOCAL_CUDA_ARCHITECTURES "Auto-detect CUDA architectures from local GPUs using nvidia-smi" ON)
 
 # Compiler-specific settings
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -149,86 +146,86 @@ endif()
 
 # CUDA support detection (only when GPU support is requested)
 set(CUDA_AVAILABLE OFF)
-if(USE_GPU)
+if(ARTS_USE_GPU)
     check_language(CUDA)
     if(CMAKE_CUDA_COMPILER)
-    enable_language(CUDA)
-    set(CMAKE_CUDA_STANDARD 17)
-    set(CMAKE_CUDA_STANDARD_REQUIRED ON)
-    set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
+        enable_language(CUDA)
+        set(CMAKE_CUDA_STANDARD 17)
+        set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+        set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
 
-    message(STATUS "CUDA compiler detected: ${CMAKE_CUDA_COMPILER}")
+        message(STATUS "CUDA compiler detected: ${CMAKE_CUDA_COMPILER}")
 
-    # Try to find CUDA toolkit - required for full CUDA support
-    # Fix for CUDA 12.0+ where nvToolsExt is no longer a library but header-only
-    if(NOT TARGET CUDA::nvToolsExt)
-        add_library(CUDA::nvToolsExt INTERFACE IMPORTED)
-    endif()
+        # Try to find CUDA toolkit - required for full CUDA support
+        # Fix for CUDA 12.0+ where nvToolsExt is no longer a library but header-only
+        if(NOT TARGET CUDA::nvToolsExt)
+            add_library(CUDA::nvToolsExt INTERFACE IMPORTED)
+        endif()
 
-    find_package(CUDAToolkit QUIET)
-    if(CUDAToolkit_FOUND)
-        message(STATUS "CUDA toolkit found: ${CUDAToolkit_VERSION}")
-        set(CUDA_AVAILABLE ON)
-    else()
-        message(STATUS "CUDA compiler available but CUDAToolkit not found")
-        message(STATUS "  CUDA support disabled - toolkit required for CUDA library")
-        set(CUDA_AVAILABLE OFF)
-    endif()
+        find_package(CUDAToolkit QUIET)
+        if(CUDAToolkit_FOUND)
+            message(STATUS "CUDA toolkit found: ${CUDAToolkit_VERSION}")
+            set(CUDA_AVAILABLE ON)
+        else()
+            message(STATUS "CUDA compiler available but CUDAToolkit not found")
+            message(STATUS "  CUDA support disabled - toolkit required for CUDA library")
+            set(CUDA_AVAILABLE OFF)
+        endif()
 
-    # Set CUDA architectures - auto-detect if explicitly requested
-    if(USE_LOCAL_CUDA_ARCHITECTURES)
-        # Try to auto-detect GPU compute capability using nvidia-smi
-        find_program(NVIDIA_SMI nvidia-smi)
-        if(NVIDIA_SMI)
-            execute_process(
-                COMMAND ${NVIDIA_SMI} --query-gpu=compute_cap --format=csv,noheader,nounits
-                OUTPUT_VARIABLE NVIDIA_SMI_OUTPUT
-                ERROR_QUIET
-                OUTPUT_STRIP_TRAILING_WHITESPACE
-            )
+        # Set CUDA architectures - auto-detect if explicitly requested
+        if(ARTS_USE_LOCAL_CUDA_ARCHITECTURES)
+            # Try to auto-detect GPU compute capability using nvidia-smi
+            find_program(NVIDIA_SMI nvidia-smi)
+            if(NVIDIA_SMI)
+                execute_process(
+                    COMMAND ${NVIDIA_SMI} --query-gpu=compute_cap --format=csv,noheader,nounits
+                    OUTPUT_VARIABLE NVIDIA_SMI_OUTPUT
+                    ERROR_QUIET
+                    OUTPUT_STRIP_TRAILING_WHITESPACE
+                )
 
-            if(NVIDIA_SMI_OUTPUT)
-                # Parse compute capabilities for all GPUs (e.g., "8.6\n7.5" -> "86;75")
-                string(REPLACE "\n" ";" GPU_CAPS ${NVIDIA_SMI_OUTPUT})
-                string(REPLACE "." "" CUDA_ARCH_NUMS "${GPU_CAPS}")
+                if(NVIDIA_SMI_OUTPUT)
+                    # Parse compute capabilities for all GPUs (e.g., "8.6\n7.5" -> "86;75")
+                    string(REPLACE "\n" ";" GPU_CAPS ${NVIDIA_SMI_OUTPUT})
+                    string(REPLACE "." "" CUDA_ARCH_NUMS "${GPU_CAPS}")
 
-                # Remove duplicates and sort
-                list(REMOVE_DUPLICATES CUDA_ARCH_NUMS)
-                list(SORT CUDA_ARCH_NUMS)
+                    # Remove duplicates and sort
+                    list(REMOVE_DUPLICATES CUDA_ARCH_NUMS)
+                    list(SORT CUDA_ARCH_NUMS)
 
-                set(CMAKE_CUDA_ARCHITECTURES ${CUDA_ARCH_NUMS})
-                message(STATUS "USE_LOCAL_CUDA_ARCHITECTURES enabled - detected CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
+                    set(CMAKE_CUDA_ARCHITECTURES ${CUDA_ARCH_NUMS})
+                    message(STATUS "ARTS_USE_LOCAL_CUDA_ARCHITECTURES enabled - detected CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
+                else()
+                    message(WARNING "ARTS_USE_LOCAL_CUDA_ARCHITECTURES enabled but nvidia-smi detection failed - keeping default CMAKE_CUDA_ARCHITECTURES: ${CMAKE_CUDA_ARCHITECTURES}")
+                endif()
             else()
-                message(WARNING "USE_LOCAL_CUDA_ARCHITECTURES enabled but nvidia-smi detection failed - keeping default CMAKE_CUDA_ARCHITECTURES: ${CMAKE_CUDA_ARCHITECTURES}")
+                message(WARNING "ARTS_USE_LOCAL_CUDA_ARCHITECTURES enabled but nvidia-smi not found - keeping default CMAKE_CUDA_ARCHITECTURES: ${CMAKE_CUDA_ARCHITECTURES}")
             endif()
         else()
-            message(WARNING "USE_LOCAL_CUDA_ARCHITECTURES enabled but nvidia-smi not found - keeping default CMAKE_CUDA_ARCHITECTURES: ${CMAKE_CUDA_ARCHITECTURES}")
+            message(STATUS "CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
         endif()
-    else()
-        message(STATUS "CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
-    endif()
 
-    # CUDA compiler flags
-    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-        add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-G>)
-    endif()
+        # CUDA compiler flags
+        if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+            add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-G>)
+        endif()
 
-    # Ensure NVCC uses the same host compiler and flags as the C++ compiler
-    set(CMAKE_CUDA_HOST_COMPILER ${CMAKE_CXX_COMPILER})
-    if(CMAKE_CXX_FLAGS)
-        string(REPLACE " " "," CUDA_HOST_FLAGS "${CMAKE_CXX_FLAGS}")
-        add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=${CUDA_HOST_FLAGS}>)
-    endif()
+        # Ensure NVCC uses the same host compiler and flags as the C++ compiler
+        set(CMAKE_CUDA_HOST_COMPILER ${CMAKE_CXX_COMPILER})
+        if(CMAKE_CXX_FLAGS)
+            string(REPLACE " " "," CUDA_HOST_FLAGS "${CMAKE_CXX_FLAGS}")
+            add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=${CUDA_HOST_FLAGS}>)
+        endif()
     else()
         message(STATUS "CUDA compiler not found - CUDA support unavailable")
     endif()
 else()
-    message(STATUS "GPU support disabled (USE_GPU=OFF)")
+    message(STATUS "GPU support disabled (ARTS_USE_GPU=OFF)")
 endif()
 
 # Determine which libraries to build
 set(BUILD_CUDA_LIBRARY OFF)
-if(USE_GPU AND CUDA_AVAILABLE)
+if(ARTS_USE_GPU AND CUDA_AVAILABLE)
     # GPU support enabled and CUDA is available
     set(BUILD_CUDA_LIBRARY ON)
     message(STATUS "Will build both standard ARTS library and CUDA-enabled ARTS library")
@@ -249,7 +246,7 @@ else()
 endif()
 
 # Network library detection and configuration
-if(NOT USE_RDMA)
+if(NOT ARTS_USE_RDMA)
     # User explicitly disabled RDMA, use TCP
     message(STATUS "Network: Using TCP (RDMA disabled)")
     set(RDMACM_LIBRARIES "")
@@ -262,8 +259,8 @@ else()
     endif()
 
     if(RDMACM_FOUND)
-        add_compile_definitions(USE_RDMA)
-        message(STATUS "Network: Using RDMA RSockets - USE_RDMA defined")
+        add_compile_definitions(ARTS_USE_RDMA)
+        message(STATUS "Network: Using RDMA RSockets - ARTS_USE_RDMA defined")
     else()
         message(STATUS "Network: RDMA requested but not available, falling back to TCP")
         set(RDMACM_LIBRARIES "")
@@ -274,44 +271,19 @@ endif()
 # Add third-party dependencies
 add_subdirectory(third_party)
 
-# Hardware locality (hwloc) detection
-if(NOT USE_HWLOC)
-    # User explicitly disabled hwloc
-    message(STATUS "Hardware topology: hwloc disabled")
-    set(HWLOC_LIBRARIES "")
-    set(HWLOC_INCLUDE_DIRS "")
-else()
-    if(HWLOC_FOUND)
-        add_compile_definitions(USE_HWLOC)
-        message(STATUS "Hardware topology: Using hwloc - USE_HWLOC defined")
-
-        # Check hwloc version for v2 features
-        if(HWLOC_VERSION VERSION_GREATER_EQUAL "2.0")
-            add_compile_definitions(USE_HWLOC_V2)
-            message(STATUS "Hardware topology: hwloc v${HWLOC_VERSION} >= 2.0 - USE_HWLOC_V2 defined")
-        else()
-            message(STATUS "Hardware topology: hwloc v${HWLOC_VERSION} < 2.0")
-        endif()
+# Hardware locality (hwloc) — mandatory dependency, v2+ required
+if(HWLOC_FOUND)
+    if(HWLOC_VERSION VERSION_GREATER_EQUAL "2.0")
+        message(STATUS "Hardware topology: hwloc v${HWLOC_VERSION}")
     else()
-        message(STATUS "Hardware topology: hwloc requested but not available, disabled")
-        set(HWLOC_LIBRARIES "")
-        set(HWLOC_INCLUDE_DIRS "")
+        message(FATAL_ERROR "hwloc v${HWLOC_VERSION} < 2.0 — v2+ required")
     endif()
-endif()
-
-# Architecture flags
-if(USE_SIMPLE_ARCH)
-    add_compile_definitions(USE_SIMPLE_ARCH)
-    message(STATUS "Architecture: Simple CAS2 and BIT_TEST_AND_SET enabled - USE_SIMPLE_ARCH defined")
+else()
+    message(FATAL_ERROR "hwloc not found — required dependency")
 endif()
 
 add_compile_definitions(ARTS_LOG_LEVEL=${ARTS_LOG_LEVEL})
 message(STATUS "Log level: ${ARTS_LOG_LEVEL} (0=ERROR, 1=+WARN, 2=+INFO, 3=+DEBUG)")
-
-if(ARTS_WATCHDOG_ENABLED)
-    add_compile_definitions(ARTS_WATCHDOG_ENABLED)
-    message(STATUS "Watchdog: Enabled - ARTS_WATCHDOG_ENABLED defined")
-endif()
 
 set(COUNTER_CONFIG_PATH
     "${CMAKE_CURRENT_SOURCE_DIR}/sample_configs/counters.cfg"
@@ -377,12 +349,12 @@ if(ARTS_BUILD_DOCS)
     set(SPHINX_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/docs/sphinx")
     add_custom_target(docs
         COMMAND ${CMAKE_COMMAND} -E env
-            "BREATHE_DOXYGEN_XML_DIR=${DOXYGEN_OUTPUT_DIR}/xml"
-            ${SPHINX_EXECUTABLE}
-                -b html
-                -c "${CMAKE_SOURCE_DIR}/docs"
-                "${CMAKE_SOURCE_DIR}/docs"
-                "${SPHINX_BUILD_DIR}"
+        "BREATHE_DOXYGEN_XML_DIR=${DOXYGEN_OUTPUT_DIR}/xml"
+        ${SPHINX_EXECUTABLE}
+        -b html
+        -c "${CMAKE_SOURCE_DIR}/docs"
+        "${CMAKE_SOURCE_DIR}/docs"
+        "${SPHINX_BUILD_DIR}"
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
         COMMENT "Building Sphinx HTML documentation..."
         DEPENDS doxygen
@@ -482,16 +454,12 @@ if(BUILD_CUDA_LIBRARY)
 else()
     message(STATUS "  CUDA Library:     OFF")
 endif()
-if(USE_RDMA AND RDMACM_FOUND)
+if(ARTS_USE_RDMA AND RDMACM_FOUND)
     message(STATUS "  Network:          RDMA RSockets")
 else()
     message(STATUS "  Network:          TCP (default)")
 endif()
-if(HWLOC_FOUND)
-    message(STATUS "  Hardware Topo:    hwloc v${HWLOC_VERSION}")
-else()
-    message(STATUS "  Hardware Topo:    disabled")
-endif()
+message(STATUS "  Hardware Topo:    hwloc v${HWLOC_VERSION}")
 message(STATUS "")
 message(STATUS "Build options:")
 if(ARTS_BUILD_SHARED)

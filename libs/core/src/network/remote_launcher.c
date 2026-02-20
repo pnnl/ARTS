@@ -38,7 +38,6 @@
 ******************************************************************************/
 
 #include "arts/network/remote_launcher.h"
-#include "arts/utils/malloc.h"
 
 #include <errno.h>
 #include <limits.h>

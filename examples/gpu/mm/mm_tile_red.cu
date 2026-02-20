@@ -358,8 +358,9 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
 
   arts_guid_t init_epoch_guid = arts_initialize_and_start_epoch(NULL_GUID, 0);
   for (unsigned int i = 0; i < arts_get_total_nodes(); i++) {
+    arts_hint_t hint_0 = {i, 0};
     arts_edt_create_with_epoch(init_node, paramc, paramv, 0, init_epoch_guid,
-                               &(arts_hint_t){.route = i});
+                               &hint_0);
   }
   arts_wait_on_handle(init_epoch_guid);
 

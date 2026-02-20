@@ -43,13 +43,13 @@
 extern "C" {
 #endif
 #include <netinet/in.h>
-unsigned int arts_get_new_socket();
+int arts_get_new_socket();
 void arts_server_set_socket_options_sender(unsigned int socket);
 void arts_server_set_socket_options_reciever(unsigned int socket);
-unsigned int arts_get_socket_listening(struct sockaddr_in *listening_socket,
-                                       unsigned int port);
-unsigned int arts_get_socket_outgoing(struct sockaddr_in *outgoing_socket,
-                                      unsigned int port, in_addr_t s_addr);
+int arts_get_socket_listening(struct sockaddr_in *listening_socket,
+                              unsigned int port);
+int arts_get_socket_outgoing(struct sockaddr_in *outgoing_socket,
+                             unsigned int port, in_addr_t s_addr);
 #ifdef __cplusplus
 }
 #endif

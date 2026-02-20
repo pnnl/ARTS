@@ -45,7 +45,6 @@
 #include "arts/gpu/gpu_stream_buffer.h"
 
 #include "arts/gpu/gpu_runtime.cuh"
-#include "arts/introspection/metrics.h"
 #include "arts/runtime/globals.h"
 #include "arts/system/arts_print.h"
 #include "arts/utils/atomics.h"
@@ -107,8 +106,6 @@ bool push_data_to_stream(unsigned int gpu_id, void *dst, void *src,
   if (src) {
     CHECKCORRECT(cudaMemcpyAsync(dst, src, count, cudaMemcpyHostToDevice,
                                  arts_gpus[gpu_id].stream));
-    ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_GPU_BW_PUSH, ARTS_METRIC_THREAD,
-                               count);
   } else {
     CHECKCORRECT(cudaMemsetAsync(dst, 0, count, arts_gpus[gpu_id].stream));
   }
@@ -133,8 +130,6 @@ bool get_data_from_stream(unsigned int gpu_id, void *dst, void *src,
   }
   CHECKCORRECT(cudaMemcpyAsync(dst, src, count, cudaMemcpyDeviceToHost,
                                arts_gpus[gpu_id].stream));
-  ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_GPU_BW_PULL, ARTS_METRIC_THREAD,
-                             count);
   return true;
 }
 
@@ -170,7 +165,6 @@ bool push_kernel_to_stream(unsigned int gpu_id, uint32_t paramc,
                                 (void **)kernel_args, (size_t)0,
                                 arts_gpus[gpu_id].stream));
   check_occupancy(fn_ptr, gpu_id, block);
-  ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_GPU_EDT, ARTS_METRIC_THREAD, 1);
   return true;
 }
 
@@ -217,13 +211,6 @@ bool flush_mem_stream(unsigned int gpu_id, unsigned int *count,
       }
     }
     *count = 0;
-    if (kind == cudaMemcpyHostToDevice) {
-      ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_GPU_BW_PUSH, ARTS_METRIC_THREAD,
-                                 data_size);
-    } else {
-      ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_GPU_BW_PULL, ARTS_METRIC_THREAD,
-                                 data_size);
-    }
     return true;
   }
   return false;
@@ -248,8 +235,6 @@ bool flush_kernel_stream(unsigned int gpu_id) {
           (void **)kernel_args, (size_t)0, arts_gpus[gpu_id].stream));
       check_occupancy(kernel_to_dev_buff[gpu_id][i].fn_ptr, gpu_id, block);
     }
-    ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_GPU_EDT, ARTS_METRIC_THREAD,
-                               kernel_to_dev_count[gpu_id]);
     kernel_to_dev_count[gpu_id] = 0;
   }
   return ret;
@@ -287,8 +272,6 @@ bool flush_stream(unsigned int gpu_id) {
     flush_wrap_up_stream(gpu_id);
 
     arts_cuda_restore_device();
-    ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_GPU_BUFFER_FLUSH, ARTS_METRIC_THREAD,
-                               1);
     return true;
   }
   return false;
@@ -344,7 +327,7 @@ void do_reduction_now(unsigned int gpu_id, void *sink, void *src,
     void *kernel_args[] = {&sink, &src};
     CHECKCORRECT(cudaLaunchKernel((const void *)fn_ptr, grid, block,
                                   (void **)kernel_args, (size_t)0,
-                                  arts_gpus[gpu_id].stream))
+                                  arts_gpus[gpu_id].stream));
   }
 
   arts_cuda_restore_device();
@@ -397,7 +380,7 @@ void reduce_datafrom_gpus(void *dst, unsigned int dst_gpu_id, void *src,
     ARTS_DEBUG("SRC: %p DST: %p\n", db_data, dst);
     CHECKCORRECT(cudaLaunchKernel((const void *)fn_ptr, grid, block,
                                   (void **)kernel_args, (size_t)0,
-                                  arts_gpus[dst_gpu_id].stream))
+                                  arts_gpus[dst_gpu_id].stream));
   }
 
   // CHECKCORRECT(cudaStreamSynchronize(arts_gpus[src_gpu_id].stream));

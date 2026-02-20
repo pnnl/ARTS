@@ -42,7 +42,7 @@
 #define GNU_SOURCE
 #include <pthread.h>
 #include <sys/resource.h>
-#if !defined(__APPLE__)
+#ifndef __APPLE__
 #include <sys/prctl.h>
 #endif
 #include <sys/types.h>

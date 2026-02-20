@@ -43,26 +43,24 @@
 // Once this *class* works we will put a stream(s) in create a thread local
 // stream.  Then we will push stuff!
 #include "arts/gpu/gpu_runtime.cuh"
-#include "arts/utils/malloc.h"
 
 #include "arts/gas/out_of_order.h"
 #include "arts/gpu/gpu_lc_sync_functions.cuh"
 #include "arts/gpu/gpu_route_table.h"
 #include "arts/gpu/gpu_stream.h"
 #include "arts/gpu/gpu_stream_buffer.h"
-#include "arts/introspection/metrics.h"
 #include "arts/runtime/compute/edt_functions.h"
 #include "arts/runtime/globals.h"
 #include "arts/runtime/memory/db_functions.h"
 #include "arts/runtime/runtime.h"
 #include "arts/runtime/sync/termination_detection.h"
 #include "arts/system/arts_print.h"
-#include "arts/system/debug.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/deque.h"
+#include "arts/utils/malloc.h"
 
-__thread int arts_saved_device_id = -1;
-__thread int arts_current_device_id = -1;
+ARTS_THREAD_LOCAL int arts_saved_device_id = -1;
+ARTS_THREAD_LOCAL int arts_current_device_id = -1;
 
 int arts_get_current_gpu() {
   if (arts_current_device_id == -1) {
@@ -414,8 +412,8 @@ bool arts_gpu_scheduler_loop() {
 }
 
 #define GCHARDLIMIT 2000000000000
-__thread uint64_t backoff = 1;
-__thread uint64_t gc_counter = 0;
+ARTS_THREAD_LOCAL uint64_t backoff = 1;
+ARTS_THREAD_LOCAL uint64_t gc_counter = 0;
 
 bool arts_gpu_scheduler_backoff_loop() {
   arts_gpu_t *arts_gpu = NULL;
@@ -480,7 +478,7 @@ bool arts_gpu_scheduler_backoff_loop() {
   return ran_cpu_edt;
 }
 
-extern __thread unsigned int run_gc_flag;
+extern ARTS_THREAD_LOCAL unsigned int run_gc_flag;
 
 bool arts_gpu_scheduler_demand_loop() {
   arts_gpu_t *arts_gpu = NULL;
@@ -642,9 +640,6 @@ void internal_lc_sync_gpu(arts_guid_t acq_guid, struct arts_db_s *db) {
           } else {
             lc_sync_function[arts_node_info.gpu_lc_sync](&host, &dev);
           }
-
-          ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_GPU_SYNC, ARTS_METRIC_THREAD,
-                                     1);
         }
       } else {
         ARTS_DEBUG("NO DB COPY ON GPU %d\n", i);

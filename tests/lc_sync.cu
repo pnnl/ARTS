@@ -93,8 +93,9 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
   }
 
   unsigned int node_id = arts_get_current_node();
+  arts_hint_t hint_0 = {0, 0};
   arts_guid_t done_guid = arts_edt_create(
-      done, 0, NULL, arts_get_total_gpus() + 1, &(arts_hint_t){.route = 0});
+      done, 0, NULL, arts_get_total_gpus() + 1, &hint_0);
   arts_lc_sync(done_guid, 0, db_guid);
 
   dim3 threads(arts_get_total_gpus(), 1, 1);

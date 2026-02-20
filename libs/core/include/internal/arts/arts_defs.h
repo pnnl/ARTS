@@ -67,7 +67,7 @@
 
 /** Weak-import attribute — uses @c __weak_import__ on macOS, @c __weak__
  * elsewhere. */
-#if defined(__APPLE__)
+#ifdef __APPLE__
 #define ARTS_WEAK_IMPORT ARTS_ATTRIBUTE(__weak_import__)
 #else
 #define ARTS_WEAK_IMPORT ARTS_WEAK
@@ -90,7 +90,18 @@
 /** Branch prediction hint — indicates the condition is likely false. */
 #define ARTS_UNLIKELY(x) __extension__ __builtin_expect(!!(x), 0)
 
-/** 128-bit unsigned integer type (used for 128-bit CAS in lock-free queues). */
+/** Thread-local storage — C11 @c _Thread_local in C, C++11 @c thread_local
+ *  in C++/CUDA.  Replaces the non-standard @c __thread throughout ARTS. */
+#ifdef __cplusplus
+#define ARTS_THREAD_LOCAL thread_local
+#else
+#define ARTS_THREAD_LOCAL _Thread_local
+#endif
+
+/** 128-bit unsigned integer type (used for 128-bit CAS in lock-free queues).
+ *  Not available under NVCC — CUDA does not support 128-bit integers. */
+#ifndef __CUDACC__
 __extension__ typedef unsigned __int128 arts_uint128_t;
+#endif
 
 #endif /* ARTS_DEFS_H */

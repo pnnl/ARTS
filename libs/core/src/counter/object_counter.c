@@ -36,15 +36,14 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include "arts/introspection/arts_id_counter.h"
-#include "arts.h"
-#include "arts/introspection/Preamble.h"
-#include "arts/introspection/counter.h"
-#include "arts/runtime/globals.h"
+#include "arts/counter/object_counter.h"
+
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+#include "arts.h"
+#include "arts/runtime/globals.h"
 
 // Simple hash function (FNV-1a) for distributing arts_id values
 static inline uint32_t arts_id_hash(uint64_t arts_id) {

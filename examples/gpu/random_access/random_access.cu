@@ -81,14 +81,15 @@
  * This core is used by both the single_cpu and star_single_cpu tests.
  */
 
-#include "random_access_defs.h"
-
 #include <cuda_runtime_api.h>
+#include <stdlib.h>
 
 #include "arts.h"
 #include "arts/gpu/gpu_runtime.cuh"
+#include "arts/gpu/gpu_stream.h"
 #include "arts/runtime/globals.h"
-#include <stdlib.h>
+
+#include "random_access_defs.h"
 
 arts_guid_range_t *update_frontier_guids = NULL;
 

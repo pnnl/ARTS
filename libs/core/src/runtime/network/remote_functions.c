@@ -43,7 +43,6 @@
 #include "arts.h"
 #include "arts/gas/out_of_order.h"
 #include "arts/gas/route_table.h"
-#include "arts/introspection/metrics.h"
 #include "arts/network/remote_protocol.h"
 #include "arts/runtime/compute/edt_functions.h"
 #include "arts/runtime/globals.h"
@@ -149,11 +148,10 @@ void arts_remote_add_dependence_to_persistent_event_with_byte_offset(
 void arts_remote_update_route_table(arts_guid_t guid, unsigned int rank) {
   unsigned int owner = arts_guid_get_rank(guid);
   if (owner == arts_global_rank_id) {
-    struct arts_db_frontier_iterator_s *iter =
-        arts_route_table_get_rank_duplicates(guid, rank);
-    if (iter) {
+    struct arts_db_frontier_iterator_s iter;
+    if (arts_route_table_get_rank_duplicates(guid, rank, &iter)) {
       unsigned int node;
-      while (arts_db_frontier_iter_next(iter, &node)) {
+      while (arts_db_frontier_iter_next(&iter, &node)) {
         if (node != arts_global_rank_id && node != rank) {
           struct arts_remote_guid_only_packet_s out_packet;
           out_packet.guid = guid;
@@ -163,7 +161,6 @@ void arts_remote_update_route_table(arts_guid_t guid, unsigned int rank) {
                                          sizeof(out_packet));
         }
       }
-      arts_free(iter);
     }
   } else {
     struct arts_remote_guid_only_packet_s packet;
@@ -389,8 +386,7 @@ void arts_remote_handle_edt_move(void *ptr) {
       (struct arts_remote_guid_only_packet_s *)ptr;
   uint64_t size =
       packet->header.size - sizeof(struct arts_remote_guid_only_packet_s);
-  struct arts_edt_s *edt = (struct arts_edt_s *)ARTS_MALLOC_ALIGN_WITH_TYPE(
-      size, 16, ARTS_EDT_MEMORY_SIZE);
+  struct arts_edt_s *edt = (struct arts_edt_s *)arts_malloc_align(size, 16);
 
   memcpy(edt, packet + 1, size);
   arts_route_table_add_item_race(edt, packet->guid, arts_global_rank_id, false);
@@ -413,8 +409,7 @@ void arts_remote_handle_db_move(void *ptr) {
   uint64_t db_size = db_header->header.size;
 
   struct arts_header_s *mem_packet =
-      (struct arts_header_s *)ARTS_MALLOC_ALIGN_WITH_TYPE(db_size, 16,
-                                                          ARTS_DB_MEMORY_SIZE);
+      (struct arts_header_s *)arts_malloc_align(db_size, 16);
 
   if (size == db_size) {
     memcpy(mem_packet, packet + 1, size);
@@ -443,8 +438,7 @@ void arts_remote_handle_event_move(void *ptr) {
       packet->header.size - sizeof(struct arts_remote_guid_only_packet_s);
 
   struct arts_header_s *mem_packet =
-      (struct arts_header_s *)ARTS_MALLOC_ALIGN_WITH_TYPE(
-          size, 16, ARTS_EVENT_MEMORY_SIZE);
+      (struct arts_header_s *)arts_malloc_align(size, 16);
 
   memcpy(mem_packet, packet + 1, size);
   arts_route_table_add_item_race(mem_packet, packet->guid, arts_global_rank_id,
@@ -459,8 +453,7 @@ void arts_remote_handle_persistent_event_move(void *ptr) {
       packet->header.size - sizeof(struct arts_remote_guid_only_packet_s);
 
   struct arts_header_s *mem_packet =
-      (struct arts_header_s *)ARTS_MALLOC_ALIGN_WITH_TYPE(
-          size, 16, ARTS_PERSISTENT_EVENT_MEMORY_SIZE);
+      (struct arts_header_s *)arts_malloc_align(size, 16);
 
   memcpy(mem_packet, packet + 1, size);
   ARTS_INFO("Persistent Event [Guid:%lu] Moved to Rank: %d", packet->guid,
@@ -712,8 +705,7 @@ void arts_remote_handle_db_received(
   } break;
 
   case RESERVED_KEY: {
-    db_res = (struct arts_db_s *)ARTS_MALLOC_ALIGN_WITH_TYPE(
-        packet_db->header.size, 16, ARTS_DB_MEMORY_SIZE);
+    db_res = (struct arts_db_s *)arts_malloc_align(packet_db->header.size, 16);
     memcpy(db_res, packet_db, packet_db->header.size);
     if (arts_guid_is_local(packet_db->guid)) {
       db_res->db_list = arts_new_db_list();
@@ -838,8 +830,7 @@ void arts_remote_handle_db_full_recieved(
       ARTS_INFO("Did the DB do a remote resize...");
     }
   } else {
-    db_res = (struct arts_db_s *)ARTS_MALLOC_ALIGN_WITH_TYPE(
-        packet_db->header.size, 16, ARTS_DB_MEMORY_SIZE);
+    db_res = (struct arts_db_s *)arts_malloc_align(packet_db->header.size, 16);
     memcpy(db_res, packet_db, packet_db->header.size);
     if (arts_guid_is_local(packet_db->guid)) {
       db_res->db_list = arts_new_db_list();

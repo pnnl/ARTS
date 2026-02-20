@@ -38,13 +38,13 @@
 ###############################################################################
 
 # Collect all source files
-file(GLOB INTROSPECTION_SOURCES "*.c")
+file(GLOB COUNTER_SOURCES "*.c")
 
-# Create object library for the introspection module
-add_library(arts_introspection OBJECT ${INTROSPECTION_SOURCES})
+# Create object library for the counter module
+add_library(arts_counter OBJECT ${COUNTER_SOURCES})
 
 # Include directories
-target_include_directories(arts_introspection PRIVATE
+target_include_directories(arts_counter PRIVATE
     ${ARTS_PUBLIC_INCLUDE_DIR}
     ${ARTS_INTERNAL_INCLUDE_DIR}
     ${ARTS_BUILD_INTERNAL_INCLUDE_DIR}

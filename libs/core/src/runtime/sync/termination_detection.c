@@ -54,7 +54,7 @@
 #define EPOCH_BIT 0x8000000000000000
 
 #define DEFAULT_EPOCH_POOL_SIZE 4096
-__thread arts_epoch_pool_t *epoch_thread_pool;
+ARTS_THREAD_LOCAL arts_epoch_pool_t *epoch_thread_pool;
 
 /*
  * Shutdown-epoch helpers.
@@ -419,16 +419,12 @@ arts_epoch_pool_t *create_epoch_pool(arts_guid_t *epoch_pool_guid,
   }
 
   bool new_range = (*start_guid == NULL_GUID);
-  arts_guid_range_t temp;
-  arts_guid_range_t *range;
+  arts_guid_range_t range;
   if (new_range) {
-    range = arts_guid_range_create(ARTS_EDT, pool_size, arts_global_rank_id);
-    *start_guid = arts_guid_range_get(range, 0);
+    arts_guid_range_init(&range, ARTS_EDT, pool_size, arts_global_rank_id);
+    *start_guid = arts_guid_range_get(&range, 0);
   } else {
-    temp.size = pool_size;
-    temp.index = 0;
-    temp.start_guid = *start_guid;
-    range = &temp;
+    range = (arts_guid_range_t){.size = pool_size, .start_guid = *start_guid};
   }
 
   arts_epoch_pool_t *epoch_pool = (arts_epoch_pool_t *)arts_calloc(
@@ -442,7 +438,7 @@ arts_epoch_pool_t *create_epoch_pool(arts_guid_t *epoch_pool_guid,
   for (unsigned int i = 0; i < pool_size; i++) {
     epoch_pool->pool[i].phase = PHASE_1;
     epoch_pool->pool[i].pool_guid = *epoch_pool_guid;
-    epoch_pool->pool[i].guid = arts_guid_range_get(range, i);
+    epoch_pool->pool[i].guid = arts_guid_range_get(&range, i);
     epoch_pool->pool[i].queued =
         (arts_guid_is_local(*epoch_pool_guid)) ? 0 : EPOCH_BIT;
     if (!arts_guid_is_local(*epoch_pool_guid)) {
@@ -452,10 +448,6 @@ arts_epoch_pool_t *create_epoch_pool(arts_guid_t *epoch_pool_guid,
       arts_route_table_fire_oo(epoch_pool->pool[i].guid,
                                arts_out_of_order_handler);
     }
-  }
-
-  if (new_range) {
-    arts_free(range);
   }
 
   return epoch_pool;

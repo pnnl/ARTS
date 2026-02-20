@@ -44,22 +44,7 @@ extern "C" {
 #include "arts/runtime/rt.h"
 #include "arts/system/abstract_machine_model.h"
 
-#define NODEDEQUESIZE 8
-
-enum artsInitType {
-  ARTS_WORKER_THREAD,
-  ARTS_RECEIVER_THREAD,
-  ARTS_REMOTE_STEAL_THREAD,
-  ARTS_COUNTER_THREAD,
-  ARTS_OTHER_THREAD
-};
-
-void arts_runtime_node_init(unsigned int worker_threads,
-                            unsigned int receiving_threads,
-                            unsigned int sender_threads,
-                            unsigned int receiver_threads,
-                            unsigned int total_threads, bool remote_stealing_on,
-                            struct arts_config_s *config);
+void arts_runtime_node_init(struct arts_config_s *config);
 void arts_runtime_global_cleanup();
 void arts_runtime_private_cleanup();
 void arts_runtime_stop();
@@ -69,9 +54,7 @@ void arts_run_edt(struct arts_edt_s *edt);
 void arts_handle_remote_stolen_edt(struct arts_edt_s *edt);
 bool arts_runtime_scheduler_loop();
 void arts_thread_zero_node_start(int argc, char **argv);
-void arts_thread_zero_private_init(struct thread_mask_s *unit,
-                                   struct arts_config_s *config);
-void arts_runtime_private_init(struct thread_mask_s *unit,
+void arts_runtime_private_init(struct thread_mask_s *thread,
                                struct arts_config_s *config);
 int arts_runtime_loop();
 int arts_runtime_scheduler_loop_wait(volatile bool *wait_for_me);

@@ -39,9 +39,7 @@
 
 #include "arts/runtime/memory/array_db.h"
 
-#include "arts/gas/route_table.h"
 #include "arts/network/remote_protocol.h"
-#include "arts/runtime/globals.h"
 
 void arts_remote_atomic_add_in_array_db(unsigned int rank, arts_guid_t db_guid,
                                         unsigned int index, unsigned int to_add,

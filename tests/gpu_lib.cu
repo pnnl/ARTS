@@ -44,6 +44,7 @@
 
 #include "arts.h"
 #include "arts/gpu/gpu_runtime.cuh"
+#include "arts/gpu/gpu_stream.h"
 
 #define IDX2C(i, j, ld) (((j) * (ld)) + (i))
 #define M 6 // a - mxk matrix
@@ -197,8 +198,8 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
   dim3 threads(1, 1);
   dim3 grid(1, 1);
 
-  arts_guid_t done_guid =
-      arts_edt_create(done, 0, NULL, 1, &(arts_hint_t){.route = 0});
+  arts_hint_t hint_0 = {0, 0};
+  arts_guid_t done_guid = arts_edt_create(done, 0, NULL, 1, &hint_0);
   arts_guid_t work_guid = arts_edt_create_gpu_lib(
       work, 0, 1, (uint64_t *)&done_guid, 0, grid, threads);
   (void)work_guid;

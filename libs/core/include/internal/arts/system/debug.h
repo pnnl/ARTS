@@ -44,9 +44,6 @@ extern "C" {
 
 void arts_turn_on_core_dumps(void);
 
-// Include the runtime debug and print interfaces
-#include "arts/system/arts_print.h"
-
 #ifdef __cplusplus
 }
 #endif

@@ -96,13 +96,15 @@ void fib_fork(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
     // Create the forks which will run on the CPU
     uint64_t args[2] = {(uint64_t)join_guid, 0};
+    arts_hint_t hint_0 = {next, 0};
     arts_guid_t fork_guid_x =
-        arts_edt_create(fib_fork, 2, args, 1, &(arts_hint_t){.route = next});
+        arts_edt_create(fib_fork, 2, args, 1, &hint_0);
     arts_signal_edt(fork_guid_x, 0, x_guid, ARTS_DB_WRITE);
 
     args[1] = 1;
+    arts_hint_t hint_1 = {next, 0};
     arts_guid_t fork_guid_y =
-        arts_edt_create(fib_fork, 2, args, 1, &(arts_hint_t){.route = next});
+        arts_edt_create(fib_fork, 2, args, 1, &hint_1);
     arts_signal_edt(fork_guid_y, 0, y_guid, ARTS_DB_WRITE);
   }
 }
@@ -138,12 +140,14 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
   *res_ptr = (unsigned int)strtol(argv[1], NULL, 10);
 
   uint64_t done_args[] = {(uint64_t)*res_ptr};
+  arts_hint_t hint_2 = {0, 0};
   arts_guid_t done_guid =
-      arts_edt_create(fib_done, 1, done_args, 1, &(arts_hint_t){.route = 0});
+      arts_edt_create(fib_done, 1, done_args, 1, &hint_2);
 
   uint64_t args[] = {(uint64_t)done_guid, 0};
+  arts_hint_t hint_3 = {0, 0};
   arts_guid_t fib_guid =
-      arts_edt_create(fib_fork, 2, args, 1, &(arts_hint_t){.route = 0});
+      arts_edt_create(fib_fork, 2, args, 1, &hint_3);
   arts_signal_edt(fib_guid, 0, res_guid, ARTS_DB_WRITE);
   start = arts_get_time_stamp();
 }

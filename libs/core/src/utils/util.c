@@ -51,7 +51,7 @@
 #include "arts/runtime/globals.h"
 #include "arts/runtime/runtime.h"
 
-extern __thread struct arts_edt_s *current_edt;
+extern ARTS_THREAD_LOCAL struct arts_edt_s *current_edt;
 extern unsigned int num_numa_domains;
 
 arts_guid_t arts_get_current_guid() {
@@ -69,7 +69,7 @@ unsigned int arts_get_total_workers() {
   return arts_node_info.worker_thread_count;
 }
 
-unsigned int arts_get_current_worker() { return arts_thread_info.group_id; }
+unsigned int arts_get_current_worker() { return arts_thread_info.group_pos; }
 
 unsigned int arts_get_current_numa_domain() {
   return arts_thread_info.numa_domain_id;

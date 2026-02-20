@@ -46,10 +46,8 @@
 
 #include <unistd.h>
 
-#include "arts.h"
 #include "arts/network/remote_launcher.h"
 #include "arts/system/arts_print.h"
-#include "arts/system/debug.h"
 #include "arts/utils/malloc.h"
 
 char *extract_nodelist_lsf(const char *envr, int stride, unsigned int *cnt) {
@@ -729,7 +727,6 @@ static const struct arts_config_entry_s config_entries[] = {
     /* --- Pinning --- */
     {"pin", CONFIG_BOOL, OFF(pin_threads), "1", NULL},
     {"pin_stride", CONFIG_UINT, OFF(pin_stride), "1", NULL},
-    {"print_topology", CONFIG_BOOL, OFF(print_topology), "0", NULL},
     /* --- Scheduling --- */
     {"scheduler", CONFIG_UINT, OFF(scheduler), "0", NULL},
     {"worker_init_deque_size", CONFIG_UINT, OFF(deque_size), "4096", NULL},
@@ -760,7 +757,6 @@ static const struct arts_config_entry_s config_entries[] = {
     /* --- Debug --- */
     {"kill_mode", CONFIG_UINT, OFF(kill_mode), "0", NULL},
     {"core_dump", CONFIG_BOOL, OFF(core_dump), "0", NULL},
-    {"watchdog_timeout", CONFIG_UINT, OFF(watchdog_timeout), "10", NULL},
     /* --- Counters --- */
     {"counter_folder", CONFIG_STRING, OFF(counter_folder), "./counters", NULL},
     {"counter_capture_interval", CONFIG_UINT, OFF(counter_capture_interval),
@@ -1030,15 +1026,14 @@ static void config_free_variables(struct arts_config_variable_s *vars) {
  * Phase 5: Computed fields, warnings
  *===========================================================================*/
 
-struct arts_config_s *arts_config_load(void) {
+void arts_config_load(struct arts_config_s *config) {
   /* Phase 1: Open config file, parse key=value pairs. */
   FILE *fp = config_open_file();
   struct arts_config_variable_s *vars = arts_config_get_variables(fp);
   (void)fclose(fp);
 
-  /* Phase 2: Allocate config, set non-zero pre-defaults. */
-  struct arts_config_s *config =
-      (struct arts_config_s *)arts_calloc(1, sizeof(struct arts_config_s));
+  /* Phase 2: Zero-init and set non-zero pre-defaults. */
+  memset(config, 0, sizeof(*config));
   config_set_pre_defaults(config);
 
   /* Phase 3: Table-driven parse. */
@@ -1053,7 +1048,6 @@ struct arts_config_s *arts_config_load(void) {
 
   /* Cleanup variable linked list. */
   config_free_variables(vars);
-  return config;
 }
 
 void arts_config_destroy(struct arts_config_s *config) {
@@ -1082,5 +1076,4 @@ void arts_config_destroy(struct arts_config_s *config) {
   if (config->counter_folder) {
     arts_free(config->counter_folder);
   }
-  arts_free(config);
 }

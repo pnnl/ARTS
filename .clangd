@@ -1,0 +1,9 @@
+CompileFlags:
+  Remove:
+    - "-forward-unknown-to-host-compiler"
+    - "--generate-code=*"
+    - "-Xcompiler=*"
+    - "-G"
+    - "-dc"
+    - "--diag-suppress=*"
+    - "-isystem=*"

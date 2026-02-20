@@ -36,7 +36,7 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include "arts/introspection/counter.h"
+#include "arts/counter/counter.h"
 
 #include <pthread.h>
 #include <stdlib.h>
@@ -46,13 +46,10 @@
 #include <unistd.h>
 
 #include "arts.h"
-#include "arts/introspection/arts_id_counter.h"
-#include "arts/introspection/json_writer.h"
-#include "arts/network/remote.h"
+#include "arts/counter/json.h"
 #include "arts/runtime/globals.h"
 #include "arts/runtime/network/remote_functions.h"
 #include "arts/system/arts_print.h"
-#include "arts/system/debug.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
 
@@ -65,17 +62,17 @@ extern unsigned int ports;
 // Thread-local counter storage - simple array of counters.
 // Each thread updates these directly during execution.
 // No captures here - capture thread handles periodic snapshots separately.
-__thread arts_counter_t arts_thread_local_counters[NUM_COUNTER_TYPES];
+ARTS_THREAD_LOCAL arts_counter_t arts_thread_local_counters[NUM_COUNTER_TYPES];
 
 // arts_id tracking stored separately per-thread (compile-time conditional)
 #if ENABLE_ARTS_ID_EDT_METRICS || ENABLE_ARTS_ID_DB_METRICS
-__thread arts_id_hash_table_t arts_thread_local_arts_id_metrics;
+ARTS_THREAD_LOCAL arts_id_hash_table_t arts_thread_local_arts_id_metrics;
 #endif
 #if ENABLE_ARTS_ID_EDT_CAPTURES
-__thread arts_array_list_t *arts_thread_local_edt_capture_list = NULL;
+ARTS_THREAD_LOCAL arts_array_list_t *arts_thread_local_edt_capture_list = NULL;
 #endif
 #if ENABLE_ARTS_ID_DB_CAPTURES
-__thread arts_array_list_t *arts_thread_local_db_capture_list = NULL;
+ARTS_THREAD_LOCAL arts_array_list_t *arts_thread_local_db_capture_list = NULL;
 #endif
 
 // Capture thread state - only used for periodic counter capture
@@ -185,7 +182,7 @@ static void *arts_counter_capture_thread(void *args) {
     for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
       if (arts_counter_mode_array[i] == ARTS_COUNTER_MODE_PERIODIC) {
         for (unsigned int t = 0; t < arts_node_info.total_thread_count; t++) {
-          // Read counter value from thread's __thread storage via live_counters
+          // Read counter value from thread's ARTS_THREAD_LOCAL storage via live_counters
           // pointer NULL means thread hasn't registered yet or has already
           // closed
           arts_counter_t *thread_counters = arts_node_info.live_counters[t];
@@ -478,23 +475,24 @@ static void arts_compute_node_reduced_captures(unsigned int counter_index,
   *out_epochs = (uint64_t *)arts_malloc(max_captures * sizeof(uint64_t));
   *out_values = (uint64_t *)arts_malloc(max_captures * sizeof(uint64_t));
 
-  // Create iterators for all threads
-  arts_array_list_iterator_t **iters =
-      (arts_array_list_iterator_t **)arts_calloc(
-          arts_node_info.total_thread_count,
-          sizeof(arts_array_list_iterator_t *));
+  // Create iterators for all threads (stack-allocated array)
+  unsigned int tc = arts_node_info.total_thread_count;
+  arts_array_list_iterator_t *iters = (arts_array_list_iterator_t *)arts_calloc(
+      tc, sizeof(arts_array_list_iterator_t));
+  bool *iter_valid = (bool *)arts_calloc(tc, sizeof(bool));
   arts_counter_capture_t **current_captures =
-      (arts_counter_capture_t **)arts_calloc(arts_node_info.total_thread_count,
+      (arts_counter_capture_t **)arts_calloc(tc,
                                              sizeof(arts_counter_capture_t *));
 
-  for (unsigned int t = 0; t < arts_node_info.total_thread_count; t++) {
+  for (unsigned int t = 0; t < tc; t++) {
     arts_array_list_t *thread_list =
         arts_node_info.capture_arrays[t][counter_index];
     if (thread_list && thread_list->index > 0) {
-      iters[t] = arts_new_array_list_iterator(thread_list);
-      if (arts_array_list_has_next(iters[t])) {
+      arts_array_list_iter_init(&iters[t], thread_list);
+      iter_valid[t] = true;
+      if (arts_array_list_has_next(&iters[t])) {
         current_captures[t] =
-            (arts_counter_capture_t *)arts_array_list_next(iters[t]);
+            (arts_counter_capture_t *)arts_array_list_next(&iters[t]);
       }
     }
   }
@@ -525,9 +523,9 @@ static void arts_compute_node_reduced_captures(unsigned int counter_index,
         reduced_value = arts_apply_reduction(
             reduced_value, current_captures[t]->value, reduce_method, t);
         // Advance this thread's iterator
-        if (arts_array_list_has_next(iters[t])) {
+        if (arts_array_list_has_next(&iters[t])) {
           current_captures[t] =
-              (arts_counter_capture_t *)arts_array_list_next(iters[t]);
+              (arts_counter_capture_t *)arts_array_list_next(&iters[t]);
         } else {
           current_captures[t] = NULL;
         }
@@ -543,13 +541,8 @@ static void arts_compute_node_reduced_captures(unsigned int counter_index,
 
   *out_count = captures_written;
 
-  // Cleanup iterators
-  for (unsigned int t = 0; t < arts_node_info.total_thread_count; t++) {
-    if (iters[t]) {
-      arts_delete_array_list_iterator(iters[t]);
-    }
-  }
   arts_free(iters);
+  arts_free(iter_valid);
   arts_free(current_captures);
 }
 
@@ -666,18 +659,17 @@ static void arts_counter_write_thread(const char *output_folder,
         uint64_t count = capture_list->index;
         uint64_t *epochs = (uint64_t *)arts_malloc(count * sizeof(uint64_t));
         uint64_t *values = (uint64_t *)arts_malloc(count * sizeof(uint64_t));
-        arts_array_list_iterator_t *iter =
-            arts_new_array_list_iterator(capture_list);
-        for (uint64_t idx = 0; arts_array_list_has_next(iter) && idx < count;
+        arts_array_list_iterator_t iter;
+        arts_array_list_iter_init(&iter, capture_list);
+        for (uint64_t idx = 0; arts_array_list_has_next(&iter) && idx < count;
              idx++) {
           arts_counter_capture_t *cap =
-              (arts_counter_capture_t *)arts_array_list_next(iter);
+              (arts_counter_capture_t *)arts_array_list_next(&iter);
           if (cap) {
             epochs[idx] = cap->epoch;
             values[idx] = cap->value;
           }
         }
-        arts_delete_array_list_iterator(iter);
         arts_write_capture_history(&writer, epochs, values, count);
         arts_free(epochs);
         arts_free(values);

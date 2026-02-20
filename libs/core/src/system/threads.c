@@ -36,17 +36,20 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include "arts/introspection/Preamble.h"
-#define GNU_SOURCE
 #include "arts/system/threads.h"
+#include "arts/counter/Preamble.h"
 
 #include <limits.h>
+#include <stdlib.h>
 
 #include <pthread.h>
 #include <unistd.h>
+#ifndef __APPLE__
+#include <sched.h>
+#endif
 
 #include "arts.h"
-#include "arts/introspection/counter.h"
+#include "arts/counter/counter.h"
 #include "arts/network/remote.h"
 #include "arts/runtime/globals.h"
 #include "arts/runtime/runtime.h"
@@ -63,17 +66,14 @@ struct thread_mask_s *mask;
 pthread_t *node_thread_list;
 
 void *arts_thread_loop(void *data) {
-  struct thread_mask_s *unit = (struct thread_mask_s *)data;
-  if (unit->pin) {
-    arts_abstract_machine_model_pin_thread(&unit->core_info);
-  }
-  arts_runtime_private_init(unit, g_config);
+  struct thread_mask_s *thread = (struct thread_mask_s *)data;
+  arts_runtime_private_init(thread, g_config);
   arts_runtime_loop();
   arts_runtime_private_cleanup();
 
   // Save final counter values to saved_counters before thread exits
   // This must happen after cleanup but before thread terminates
-  unsigned int thread_id = unit->id;
+  unsigned int thread_id = thread->id;
   arts_counter_t *saved = arts_node_info.saved_counters[thread_id];
   for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
     saved[i].count = arts_thread_local_counters[i].count;
@@ -121,38 +121,83 @@ void arts_thread_main_join() {
 
   arts_runtime_global_cleanup();
   // arts_free(args);
-  destroy_thread_mask(mask);
+  arts_free(mask);
   arts_free(node_thread_list);
 }
 
 void arts_thread_init(struct arts_config_s *config) {
   g_config = config;
-  mask = get_thread_mask(config);
-  node_thread_list = (pthread_t *)arts_malloc(
-      sizeof(pthread_t) * arts_node_info.total_thread_count);
-  unsigned int i = 0;
-  unsigned int thread_count = arts_node_info.total_thread_count;
 
-  if (config->stack_size) {
-    void *stack;
-    pthread_attr_t attr;
-    long page_size = sysconf(_SC_PAGESIZE);
-    size_t size = ((config->stack_size % page_size > 0) +
-                   (config->stack_size / page_size)) *
-                  page_size;
-    for (i = 1; i < thread_count; i++) {
-      pthread_attr_init(&attr);
-      pthread_attr_setstacksize(&attr, size);
-      pthread_create(&node_thread_list[i], &attr, &arts_thread_loop, &mask[i]);
-    }
+  /* Validate/adjust network thread counts now that rank_count is known. */
+  if (arts_global_rank_count == 1) {
+    config->sender_thread_count = 0;
+    config->receiver_thread_count = 0;
   } else {
-    for (i = 1; i < thread_count; i++) {
-      pthread_create(&node_thread_list[i], NULL, &arts_thread_loop, &mask[i]);
+    unsigned int max_net = (arts_global_rank_count - 1) * config->port_count;
+    if (config->sender_thread_count > max_net) {
+      ARTS_ERROR(
+          "sender_threads (%u) exceeds node*port limit (%u nodes * %u ports)",
+          config->sender_thread_count, arts_global_rank_count - 1,
+          config->port_count);
+    }
+    if (config->receiver_thread_count > max_net) {
+      ARTS_ERROR(
+          "receiver_threads (%u) exceeds node*port limit (%u nodes * %u ports)",
+          config->receiver_thread_count, arts_global_rank_count - 1,
+          config->port_count);
     }
   }
-  if (mask->pin) {
-    arts_abstract_machine_model_pin_thread(&mask->core_info);
+  config->worker_thread_count = config->thread_count -
+                                config->sender_thread_count -
+                                config->receiver_thread_count;
+
+  mask =
+      (struct thread_mask_s *)arts_malloc(sizeof(*mask) * config->thread_count);
+  get_thread_mask(config, mask);
+  arts_runtime_node_init(config);
+  print_mask(mask, config->thread_count);
+
+  node_thread_list =
+      (pthread_t *)arts_malloc(sizeof(pthread_t) * config->thread_count);
+  unsigned int thread_count = config->thread_count;
+
+  /* Compute page-aligned stack size (0 = use default). */
+  size_t stack_size = 0;
+  if (config->stack_size) {
+    long page_size = sysconf(_SC_PAGESIZE);
+    stack_size = ((config->stack_size % page_size > 0) +
+                  (config->stack_size / page_size)) *
+                 (size_t)page_size;
   }
+
+  /* Create worker and network threads with optional pinning. */
+  for (unsigned int i = 1; i < thread_count; i++) {
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    if (stack_size) {
+      pthread_attr_setstacksize(&attr, stack_size);
+    }
+#ifndef __APPLE__
+    if (config->pin_threads) {
+      cpu_set_t set;
+      CPU_ZERO(&set);
+      CPU_SET(mask[i].pu_id, &set);
+      pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), &set);
+    }
+#endif
+    pthread_create(&node_thread_list[i], &attr, &arts_thread_loop, &mask[i]);
+    pthread_attr_destroy(&attr);
+  }
+
+  /* Pin main thread (thread 0). */
+#ifndef __APPLE__
+  if (config->pin_threads) {
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    CPU_SET(mask[0].pu_id, &set);
+    pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &set);
+  }
+#endif
   arts_runtime_private_init(&mask[0], config);
 }
 
@@ -186,49 +231,4 @@ _Noreturn void arts_abort(uint8_t error_code) {
   (void)fflush(stdout);
   (void)fflush(stderr);
   exit(error_code);
-}
-
-void arts_pthread_affinity(unsigned int cpu_core_id, bool verbose) {
-#ifdef __APPLE__
-  (void)cpu_core_id;
-  (void)verbose;
-  return;
-#else
-  cpu_set_t cpuset;
-  pthread_t thread;
-  thread = pthread_self();
-  CPU_ZERO(&cpuset);
-  CPU_SET(cpu_core_id, &cpuset);
-  if (pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset) && verbose) {
-    ARTS_INFO("Failed to set affinity %u", cpu_core_id);
-  }
-#endif
-}
-
-int *arts_valid_pthread_affinity(unsigned int *size) {
-#ifdef __APPLE__
-  // macOS doesn't support CPU affinity, return a simple array
-  *size = 1;
-  int *affin = (int *)arts_malloc(sizeof(int));
-  affin[0] = 0; // Just return core 0
-  return affin;
-#else
-  unsigned int count = 0;
-  cpu_set_t cpuset;
-  pthread_t thread = pthread_self();
-
-  int *affin = (int *)arts_malloc(sizeof(int) * CPU_SETSIZE);
-  for (int i = 0; i < CPU_SETSIZE; i++) {
-    CPU_ZERO(&cpuset);
-    CPU_SET(i, &cpuset);
-    if (pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset)) {
-      affin[i] = -1;
-    } else {
-      affin[i] = i;
-      count++;
-    }
-  }
-  *size = count;
-  return affin;
-#endif
 }

@@ -40,7 +40,6 @@
 
 #include <string.h>
 
-#include "arts.h"
 #include "arts/utils/malloc.h"
 
 arts_array_list_element_t *arts_new_array_list_element(uint64_t start,
@@ -158,16 +157,13 @@ void *arts_get_from_array_list(arts_array_list_t *a_list, uint64_t index) {
   return NULL;
 }
 
-arts_array_list_iterator_t *
-arts_new_array_list_iterator(arts_array_list_t *a_list) {
-  arts_array_list_iterator_t *iter = (arts_array_list_iterator_t *)arts_malloc(
-      sizeof(arts_array_list_iterator_t));
+void arts_array_list_iter_init(arts_array_list_iterator_t *iter,
+                               arts_array_list_t *a_list) {
   iter->index = 0;
   iter->last = a_list->index;
   iter->element_size = a_list->element_size;
   iter->array_length = a_list->array_length;
   iter->current = a_list->head;
-  return iter;
 }
 
 void *arts_array_list_next(arts_array_list_iterator_t *iter) {
@@ -190,8 +186,4 @@ void *arts_array_list_next(arts_array_list_iterator_t *iter) {
 
 bool arts_array_list_has_next(arts_array_list_iterator_t *iter) {
   return (iter->index < iter->last);
-}
-
-void arts_delete_array_list_iterator(arts_array_list_iterator_t *iter) {
-  arts_free(iter);
 }

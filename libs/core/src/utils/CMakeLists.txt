@@ -40,8 +40,8 @@
 # Collect all source files
 file(GLOB UTILS_SOURCES "*.c")
 
-# Handle deque implementation selection based on USE_PRIORITY_DEQUE option
-if(USE_PRIORITY_DEQUE)
+# Handle deque implementation selection based on ARTS_USE_PRIORITY_DEQUE option
+if(ARTS_USE_PRIORITY_DEQUE)
     list(REMOVE_ITEM UTILS_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/deque_simple.c")
     message(STATUS "Utils: Using Priority Chase-Lev Deque")
 else()

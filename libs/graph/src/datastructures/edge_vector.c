@@ -36,12 +36,12 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
+#include "arts/edge_vector.h"
+
 #include <assert.h>
 #include <inttypes.h>
 #include <stdlib.h>
 
-#include "arts.h"
-#include "arts/edge_vector.h"
 #include "arts/system/arts_print.h"
 #include "arts/utils/malloc.h"
 

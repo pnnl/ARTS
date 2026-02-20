@@ -44,17 +44,15 @@
 #include "arts/gas/guid.h"
 #include "arts/gas/out_of_order.h"
 #include "arts/gas/route_table.h"
-#include "arts/introspection/metrics.h"
 #include "arts/runtime/globals.h"
 #include "arts/runtime/network/remote_functions.h"
 #include "arts/runtime/runtime.h"
 #include "arts/runtime/sync/termination_detection.h"
 #include "arts/system/arts_print.h"
-#include "arts/system/debug.h"
 #include "arts/utils/array_list.h"
 #include "arts/utils/atomics.h"
 
-#ifdef USE_GPU
+#ifdef ARTS_USE_GPU
 #include "arts/gpu/gpu_runtime.cuh"
 #endif
 
@@ -62,9 +60,9 @@
 
 extern unsigned int num_numa_domains;
 
-__thread arts_array_list_t *epoch_list = NULL;
-__thread struct arts_edt_s *current_edt = NULL;
-__thread arts_array_list_t *created_db_list = NULL;
+ARTS_THREAD_LOCAL arts_array_list_t *epoch_list = NULL;
+ARTS_THREAD_LOCAL struct arts_edt_s *current_edt = NULL;
+ARTS_THREAD_LOCAL arts_array_list_t *created_db_list = NULL;
 
 bool arts_set_current_epoch_guid(arts_guid_t epoch_guid) {
   if (epoch_guid) {
@@ -147,7 +145,6 @@ void arts_save_thread_local(thread_local_t *tl) {
   epoch_list = NULL;
   created_db_list = NULL;
   CONTEXT_SWITCH_STOP();
-  ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_YIELD_BW, ARTS_METRIC_THREAD, 1);
 }
 
 void arts_restore_thread_local(thread_local_t *tl) {
@@ -232,8 +229,7 @@ bool arts_edt_create_internal(struct arts_edt_s *edt, arts_type_t mode,
                               arts_guid_t epoch_guid, bool has_depv,
                               uint64_t arts_id) {
   if (!edt) {
-    edt = (struct arts_edt_s *)ARTS_CALLOC_ALIGN_WITH_TYPE(
-        1, edt_space, 16, ARTS_METRIC_EDT_MEMORY_SIZE);
+    edt = (struct arts_edt_s *)arts_calloc_align(1, edt_space, 16);
   }
   if (!edt) {
     ARTS_ERROR("EDT allocation failed (size=%u)", edt_space);
@@ -461,7 +457,7 @@ void *arts_get_depv(void *edt_ptr) {
   if (edt->header.type == ARTS_EDT) {
     return (void *)((uint64_t *)(edt + 1) + paramc);
   }
-#ifdef USE_GPU
+#ifdef ARTS_USE_GPU
   if (edt->header.type == ARTS_GPU_EDT) {
     arts_gpu_edt_t *edtGpu = (arts_gpu_edt_t *)edt_ptr;
     return (void *)((uint64_t *)(edtGpu + 1) + paramc);
@@ -556,8 +552,6 @@ void internal_signal_edt(arts_guid_t edt_packet, uint32_t slot,
       }
     }
   }
-  ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_EDT_SIGNAL_THROUGHPUT,
-                             ARTS_METRIC_THREAD, 1);
   SIGNAL_EDT_COUNTER_STOP();
 }
 
@@ -618,8 +612,6 @@ void internal_signal_edt_with_mode(arts_guid_t edt_packet, uint32_t slot,
       }
     }
   }
-  ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_EDT_SIGNAL_THROUGHPUT,
-                             ARTS_METRIC_THREAD, 1);
   SIGNAL_EDT_COUNTER_STOP();
 }
 

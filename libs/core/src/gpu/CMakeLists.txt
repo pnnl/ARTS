@@ -49,8 +49,8 @@ if(BUILD_CUDA_LIBRARY)
     # Create object library for the GPU module
     add_library(arts_gpu OBJECT ${GPU_SOURCES})
     
-    # Add USE_GPU definition for this module
-    target_compile_definitions(arts_gpu PRIVATE USE_GPU)
+    # Add ARTS_USE_GPU definition for this module
+    target_compile_definitions(arts_gpu PRIVATE ARTS_USE_GPU)
     
     # Include directories
     target_include_directories(arts_gpu PRIVATE

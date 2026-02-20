@@ -36,8 +36,8 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef ARTS_JSON_WRITER_H
-#define ARTS_JSON_WRITER_H
+#ifndef ARTS_COUNTER_JSON_H
+#define ARTS_COUNTER_JSON_H
 
 #include <stdint.h>
 #include <stdio.h>
@@ -76,4 +76,4 @@ void arts_json_writer_finish(arts_json_writer_t *writer);
 }
 #endif
 
-#endif /* ARTS_JSON_WRITER_H */
+#endif /* ARTS_COUNTER_JSON_H */

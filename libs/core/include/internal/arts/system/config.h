@@ -42,6 +42,9 @@
 extern "C" {
 #endif
 
+#include <stdbool.h>
+#include <stdint.h>
+
 #include "arts/network/remote_launcher.h"
 
 struct arts_config_table_s {
@@ -81,9 +84,7 @@ struct arts_config_s {
   unsigned int auto_shutdown;
   bool master_boot;
   bool core_dump;
-  unsigned int watchdog_timeout;
   unsigned int pin_stride;
-  bool print_topology;
   bool pin_threads;
   uint64_t stack_size;
   struct arts_remote_launcher_s *launcher_data;
@@ -105,7 +106,7 @@ struct arts_config_s {
   struct arts_config_table_s *table;
 };
 
-struct arts_config_s *arts_config_load(void);
+void arts_config_load(struct arts_config_s *config);
 void arts_config_destroy(struct arts_config_s *config);
 #ifdef __cplusplus
 }

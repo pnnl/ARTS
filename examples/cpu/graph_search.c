@@ -235,9 +235,7 @@ void end_vertex_id_map_read(uint32_t paramc, const uint64_t *paramv,
     }
   } else {
     for (int i = 0; i < num_seeds; i++) {
-      seeds[i] =
-          rand() %
-          distribution->num_vertices; // NOLINT(cert-msc30-c,cert-msc50-cpp)
+      seeds[i] = arc4random_uniform(distribution->num_vertices);
       //	arts_printf("Seed chosen %d,\n", seeds[i]);
     }
   }

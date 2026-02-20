@@ -42,9 +42,10 @@
 extern "C" {
 #endif
 
-#include "arts/introspection/arts_id_counter.h"
-#include "arts/introspection/counter.h"
+#include "arts/counter/counter.h"
+#include "arts/counter/object_counter.h"
 #include "arts/runtime/rt.h"
+#include "arts/system/abstract_machine_model.h"
 
 struct atomic_create_barrier_info_s {
   volatile unsigned int wait;
@@ -71,7 +72,6 @@ struct arts_runtime_shared_s {
   unsigned int worker_thread_count;
   unsigned int sender_thread_count;
   unsigned int receiver_thread_count;
-  unsigned int remote_stealing_thread_count;
   unsigned int total_thread_count;
   volatile unsigned int ready_to_push;
   volatile unsigned int ready_to_parallel_start;
@@ -100,8 +100,6 @@ struct arts_runtime_shared_s {
   bool run_gpu_gc_pre_edt;
   bool delete_zeros_gpu_gc;
   bool gpu_buff_on;
-  unsigned int pin_threads;
-  unsigned int watchdog_timeout;
   uint64_t **keys;
   uint64_t *global_guid_thread_id;
   const char *counter_folder;
@@ -119,30 +117,24 @@ struct arts_runtime_private_s {
   struct arts_deque_s *my_deque;
   struct arts_deque_s *my_node_deque;
   struct arts_deque_s *my_gpu_deque;
-  unsigned int core_id;
+  unsigned int pu_id;
   unsigned int thread_id;
-  unsigned int group_id;
+  unsigned int group_pos;
   unsigned int numa_domain_id;
   unsigned int back_off;
   volatile unsigned int outstanding_memory_moves;
   struct atomic_create_barrier_info_s atomic_wait;
   volatile bool alive;
-  volatile bool worker;
-  volatile bool network_send;
-  volatile bool network_receive;
-  volatile bool status_send;
+  enum arts_thread_role role;
   arts_guid_t current_edt_guid;
-  int malloc_type;
-  int malloc_trace;
   int edt_free;
   int local_counting;
   unsigned int shad_lock;
   unsigned short drand_buf[3];
-  // Thread's counter storage accessed via artsThreadLocalCounterCaptures
 };
 
 extern struct arts_runtime_shared_s arts_node_info;
-extern __thread struct arts_runtime_private_s arts_thread_info;
+extern ARTS_THREAD_LOCAL struct arts_runtime_private_s arts_thread_info;
 
 extern unsigned int arts_global_rank_id;
 extern unsigned int arts_global_rank_count;

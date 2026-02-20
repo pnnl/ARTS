@@ -45,7 +45,6 @@
 #include "arts/runtime/network/remote_functions.h"
 #include "arts/runtime/runtime.h"
 #include "arts/system/arts_print.h"
-#include "arts/system/debug.h"
 #include "arts/utils/atomics.h"
 
 #define WRITE_SET 0x80000000
@@ -320,19 +319,16 @@ unsigned int arts_current_frontier_size(struct arts_db_list_s *db_list) {
   return size;
 }
 
-struct arts_db_frontier_iterator_s *
-arts_db_frontier_iter_create(struct arts_db_frontier_s *frontier) {
-  struct arts_db_frontier_iterator_s *iter = NULL;
-  if (frontier && frontier->position) {
-    iter = (struct arts_db_frontier_iterator_s *)arts_calloc(
-        1, sizeof(struct arts_db_frontier_iterator_s));
-    if (!iter) {
-      ARTS_ERROR("DB frontier iterator allocation failed");
-    }
-    iter->frontier = frontier;
-    iter->currentElement = &frontier->list;
+bool arts_db_frontier_iter_init(struct arts_db_frontier_iterator_s *iter,
+                                struct arts_db_frontier_s *frontier) {
+  if (!frontier || !frontier->position) {
+    return false;
   }
-  return iter;
+  *iter = (struct arts_db_frontier_iterator_s){
+      .frontier = frontier,
+      .currentElement = &frontier->list,
+  };
+  return true;
 }
 
 unsigned int
@@ -356,25 +352,21 @@ bool arts_db_frontier_iter_has_next(struct arts_db_frontier_iterator_s *iter) {
   return (iter->currentIndex < iter->frontier->position);
 }
 
-void arts_db_frontier_iter_delete(struct arts_db_frontier_iterator_s *iter) {
-  arts_free(iter);
-}
-
-struct arts_db_frontier_iterator_s *
-arts_close_frontier(struct arts_db_list_s *db_list) {
-  struct arts_db_frontier_iterator_s *iter = NULL;
+bool arts_close_frontier(struct arts_db_list_s *db_list,
+                         struct arts_db_frontier_iterator_s *iter) {
+  bool valid = false;
   arts_reader_lock(&db_list->reader, &db_list->writer);
   struct arts_db_frontier_s *frontier = db_list->head;
   if (frontier) {
     frontier_lock(&frontier->lock);
 
     arts_atomic_fetch_or(&frontier->lock, WRITE_SET | 1U);
-    iter = arts_db_frontier_iter_create(frontier);
+    valid = arts_db_frontier_iter_init(iter, frontier);
 
     frontier_unlock(&frontier->lock);
   }
   arts_reader_unlock(&db_list->reader);
-  return iter;
+  return valid;
 }
 
 void arts_signal_frontier_remote(struct arts_db_frontier_s *frontier,
@@ -399,11 +391,10 @@ void arts_signal_frontier_remote(struct arts_db_frontier_s *frontier,
     }
   }
 
-  struct arts_db_frontier_iterator_s *iter =
-      arts_db_frontier_iter_create(frontier);
-  if (iter) {
+  struct arts_db_frontier_iterator_s iter;
+  if (arts_db_frontier_iter_init(&iter, frontier)) {
     unsigned int node;
-    while (arts_db_frontier_iter_next(iter, &node)) {
+    while (arts_db_frontier_iter_next(&iter, &node)) {
       if (node != arts_global_rank_id &&
           !((frontier->exEdt || frontier->exEdtGuid != NULL_GUID) &&
             node == frontier->exNode)) {
@@ -464,11 +455,10 @@ void arts_signal_frontier_local(struct arts_db_frontier_s *frontier,
     }
   }
 
-  struct arts_db_frontier_iterator_s *iter =
-      arts_db_frontier_iter_create(frontier);
-  if (iter) {
+  struct arts_db_frontier_iterator_s iter;
+  if (arts_db_frontier_iter_init(&iter, frontier)) {
     unsigned int node;
-    while (arts_db_frontier_iter_next(iter, &node)) {
+    while (arts_db_frontier_iter_next(&iter, &node)) {
       if (node != arts_global_rank_id &&
           !((frontier->exEdt || frontier->exEdtGuid != NULL_GUID) &&
             node == frontier->exNode)) {
@@ -520,12 +510,12 @@ void arts_progress_frontier(struct arts_db_s *db, unsigned int rank) {
   }
 }
 
-struct arts_db_frontier_iterator_s *
-arts_progress_and_get_frontier(struct arts_db_list_s *db_list) {
+bool arts_progress_and_get_frontier(struct arts_db_list_s *db_list,
+                                    struct arts_db_frontier_iterator_s *iter) {
   arts_writer_lock(&db_list->reader, &db_list->writer);
   struct arts_db_frontier_s *tail = db_list->head;
   db_list->head = db_list->head->next;
   arts_writer_unlock(&db_list->writer);
   // This should be safe since the writer lock ensures all readers are done
-  return arts_db_frontier_iter_create(tail);
+  return arts_db_frontier_iter_init(iter, tail);
 }

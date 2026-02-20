@@ -38,6 +38,7 @@
 ******************************************************************************/
 #ifndef ARTS_GAS_GUID_H
 #define ARTS_GAS_GUID_H
+#include "arts.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -58,8 +59,6 @@ extern "C" {
  *
  * @note This is an internal header.  User code should include @c arts.h.
  */
-
-#include "arts/runtime/rt.h"
 
 /**
  * @brief Overlay union for inspecting / constructing GUID bitfields.
@@ -124,6 +123,15 @@ uint64_t arts_guid_hash_key(arts_guid_t guid);
  * @param hash_size Routing-table bucket count.
  * @return Pointer to a new GUID range, or @c NULL on failure.
  */
+/**
+ * @brief Initialize a caller-allocated GUID range (internal use).
+ *
+ * Like arts_guid_range_create() but writes into a caller-provided struct
+ * instead of heap-allocating.
+ */
+void arts_guid_range_init(arts_guid_range_t *range, arts_type_t type,
+                          unsigned int size, unsigned int route);
+
 arts_guid_range_t *arts_guid_range_create_hash(arts_type_t type,
                                                unsigned int size,
                                                unsigned int route,

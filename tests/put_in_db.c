@@ -96,10 +96,10 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       unsigned int *data =
           (unsigned int *)malloc(sizeof(unsigned int) * stride);
       for (unsigned int i = 0; i < stride; i++) {
-        data[i] = n * block_size + j * stride + i;
+        data[i] = (n * block_size) + (j * stride) + i;
       }
       arts_put_in_db(data, shutdown_guid, db_guid, (n * deps) + j,
-                     sizeof(unsigned int) * (n * block_size + j * stride),
+                     sizeof(unsigned int) * ((n * block_size) + (j * stride)),
                      sizeof(unsigned int) * stride);
       free(data);
     }

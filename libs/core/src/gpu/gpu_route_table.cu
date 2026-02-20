@@ -40,7 +40,6 @@
 
 #include "arts.h"
 #include "arts/gpu/gpu_stream.h"
-#include "arts/introspection/metrics.h"
 #include "arts/runtime/globals.h"
 #include "arts/system/arts_print.h"
 #include "arts/utils/atomics.h"
@@ -50,7 +49,7 @@
 volatile unsigned int gpu_node_order = 0;
 
 // Must be thread local
-__thread uint64_t gpu_item_size_bypass = 0;
+ARTS_THREAD_LOCAL uint64_t gpu_item_size_bypass = 0;
 
 void set_gpu_item(arts_route_item_t *item, void *data) {
   ARTS_DEBUG("gpu_item_size_bypass: %lu", gpu_item_size_bypass);
@@ -303,9 +302,6 @@ uint64_t arts_gpu_clean_up_route_table(unsigned int size_to_clean,
       }
       item = arts_route_table_iterate(&iter);
     }
-    ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_GPU_GC, ARTS_METRIC_THREAD, 1);
-    ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_GPU_GCBW, ARTS_METRIC_THREAD,
-                               freed_size);
     arts_unlock(&gpu_route_table->gcLock);
   }
   gpu_gc_read_unlock();

@@ -43,8 +43,8 @@
 extern "C" {
 #endif
 
+#include "arts.h"
 #include "arts/graph_defs.h"
-#include "arts/runtime/rt.h"
 
 typedef struct {
   graph_sz_t num_vertices; // Complete number of vertices

@@ -37,7 +37,6 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 #include "arts/gas/out_of_order.h"
-#include "arts/utils/malloc.h"
 
 #include "arts/gas/route_table.h"
 #include "arts/runtime/compute/edt_functions.h"
@@ -49,6 +48,7 @@
 #include "arts/runtime/runtime.h"
 #include "arts/runtime/sync/termination_detection.h"
 #include "arts/system/arts_print.h"
+#include "arts/utils/malloc.h"
 
 struct oo_signal_edt_s {
   enum arts_out_of_order_type type;

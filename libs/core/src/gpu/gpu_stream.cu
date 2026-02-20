@@ -51,11 +51,9 @@
 #include "arts/gpu/gpu_route_table.h"
 #include "arts/gpu/gpu_runtime.cuh"
 #include "arts/gpu/gpu_stream_buffer.h"
-#include "arts/introspection/metrics.h"
 #include "arts/runtime/compute/edt_functions.h"
 #include "arts/runtime/globals.h"
 #include "arts/system/arts_print.h"
-#include "arts/system/debug.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/deque.h"
 #include "arts/utils/malloc.h"
@@ -90,16 +88,16 @@ fit_t fit_scheme[] = {first_fit, best_fit, worst_fit, round_robin_fit};
 
 fit_t fit; // Fit function ptr
 
-__thread volatile unsigned int *new_edt_lock = 0;
-__thread arts_array_list_t *new_edts = NULL;
+ARTS_THREAD_LOCAL volatile unsigned int *new_edt_lock = 0;
+ARTS_THREAD_LOCAL arts_array_list_t *new_edts = NULL;
 
 // These are for the library version of GPU EDTs
 // The user can query to get these values
 // We still want to collect them for scheduling purposes
-__thread dim3 *arts_local_grid;
-__thread dim3 *arts_local_block;
-__thread cudaStream_t *arts_local_stream;
-__thread int arts_local_gpu_id;
+ARTS_THREAD_LOCAL dim3 *arts_local_grid;
+ARTS_THREAD_LOCAL dim3 *arts_local_block;
+ARTS_THREAD_LOCAL cudaStream_t *arts_local_stream;
+ARTS_THREAD_LOCAL int arts_local_gpu_id;
 
 #ifdef __cplusplus
 extern "C" {
@@ -477,7 +475,6 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
     arts_route_table_reset_oo(host_gc_ptr->edt->current_edt);
 
     host_gc_ptr->edt->func_ptr(paramc, host_paramv, depc, host_depv);
-    ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_GPU_EDT, ARTS_METRIC_THREAD, 1);
 
     arts_unset_thread_local_edt_info();
   } else {
@@ -571,8 +568,6 @@ void free_gpu_item(arts_route_item_t *item) {
       arts_free(temp_space);
       arts_cuda_free((void *)wrapper->realData);
 
-      ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_GPU_SYNC_DELETE,
-                                 ARTS_METRIC_THREAD, 1);
     } else {
       ARTS_INFO("Trying to delete an LC but there is no DB to back up to\n");
     }
@@ -588,7 +583,7 @@ void free_gpu_item(arts_route_item_t *item) {
   item->touched = 0;
 }
 
-__thread unsigned int run_gc_flag = 0;
+ARTS_THREAD_LOCAL unsigned int run_gc_flag = 0;
 
 bool try_reserve(int gpu, uint64_t size, unsigned int threads) {
   (void)threads;

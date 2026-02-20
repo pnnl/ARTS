@@ -154,8 +154,8 @@ set(GENERATED_HEADER "${CMAKE_CURRENT_BINARY_DIR}/Preamble.h")
 file(WRITE ${GENERATED_HEADER}
     "/* counter.h - AUTOMATICALLY GENERATED - DO NOT EDIT */
 
-#ifndef ARTS_INTROSPECTION_PREAMBLE_H
-#define ARTS_INTROSPECTION_PREAMBLE_H
+#ifndef ARTS_COUNTER_PREAMBLE_H
+#define ARTS_COUNTER_PREAMBLE_H
 
 #ifdef __cplusplus
 extern \"C\" {
@@ -304,7 +304,7 @@ file(APPEND ${GENERATED_HEADER} "
 }
 #endif /* __cplusplus */
 
-#endif /* ARTS_INTROSPECTION_PREAMBLE_H */
+#endif /* ARTS_COUNTER_PREAMBLE_H */
 ")
 
 message(STATUS "Generated: ${GENERATED_HEADER}")

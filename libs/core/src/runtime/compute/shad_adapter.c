@@ -42,15 +42,13 @@
 #include <string.h>
 
 #include "arts.h"
+#include "arts/counter/counter.h"
 #include "arts/gas/guid.h"
 #include "arts/gas/route_table.h"
-#include "arts/introspection/counter.h"
 #include "arts/runtime/compute/edt_functions.h"
 #include "arts/runtime/globals.h"
-#include "arts/runtime/runtime.h"
 #include "arts/runtime/sync/termination_detection.h"
 #include "arts/system/arts_print.h"
-#include "arts/system/debug.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
 
@@ -138,7 +136,7 @@ void arts_dec_lock_shad() { arts_thread_info.shad_lock--; }
 void arts_check_lock_shad() {
   if (arts_thread_info.shad_lock) {
     ARTS_ERROR("Synchronous call under SHAD lock (worker=%u, lock=%u)",
-               arts_thread_info.group_id, arts_thread_info.shad_lock);
+               arts_thread_info.group_pos, arts_thread_info.shad_lock);
   }
 }
 
@@ -175,12 +173,12 @@ arts_guid_t arts_allocate_local_buffer_shad(void **buffer,
 #define ALIASCOUNTMAP 0x0FFFFFFFFFFFFFFF
 #define ALIASGETOWNER(x) (((x) & ALIASOWNERMAP) >> 60)
 #define ALIASGETCOUNT(x) ((x) & ALIASCOUNTMAP)
-#define ALIASEMPTY (((((uint64_t)arts_thread_info.group_id) + 1) << 60) + 1)
+#define ALIASEMPTY (((((uint64_t)arts_thread_info.group_pos) + 1) << 60) + 1)
 
 bool arts_shad_alias_try_lock(volatile uint64_t *lock) {
   uint64_t dirty_read = *lock;
   uint64_t owner = ALIASGETOWNER(dirty_read);
-  while (!owner || owner == arts_thread_info.group_id + 1) {
+  while (!owner || owner == arts_thread_info.group_pos + 1) {
     uint64_t new_value = (!owner) ? ALIASEMPTY : dirty_read + 1;
     uint64_t res = arts_atomic_cswap_u64(lock, dirty_read, new_value);
     if (res == dirty_read) {
