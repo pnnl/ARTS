@@ -58,10 +58,11 @@ struct arts_out_of_order_list_s {
   struct arts_out_of_order_element_s head;
 };
 
-bool arts_out_of_order_list_add_item(struct arts_out_of_order_list_s *add_to_me, void *item);
-void arts_out_of_order_list_fire_callback(struct arts_out_of_order_list_s *fire_me,
-                                    void *local_guid_address,
-                                    void (*callback_t)(void *, void *));
+bool arts_out_of_order_list_add_item(struct arts_out_of_order_list_s *add_to_me,
+                                     void *item);
+void arts_out_of_order_list_fire_callback(
+    struct arts_out_of_order_list_s *fire_me, void *local_guid_address,
+    void (*callback_t)(void *, void *));
 void arts_out_of_order_list_reset(struct arts_out_of_order_list_s *list);
 void arts_out_of_order_list_delete(struct arts_out_of_order_list_s *list);
 #ifdef __cplusplus

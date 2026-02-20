@@ -42,7 +42,6 @@
 #include <string.h>
 
 #include "arts.h"
-#include "arts/utils/malloc.h"
 #include "arts/gas/out_of_order.h"
 #include "arts/gas/route_table.h"
 #include "arts/runtime/globals.h"
@@ -52,6 +51,7 @@
 #include "arts/system/arts_print.h"
 #include "arts/system/debug.h"
 #include "arts/utils/atomics.h"
+#include "arts/utils/malloc.h"
 
 unsigned int arts_get_size_array_db(arts_array_db_t *array) {
   return array->elements_per_block * array->num_blocks;
@@ -65,8 +65,9 @@ void *copy_db(void *ptr, unsigned int size, arts_guid_t guid) {
   return (void *)(new_db + 1);
 }
 
-arts_array_db_t *arts_new_array_db_with_guid(arts_guid_t guid, unsigned int element_size,
-                                      unsigned int num_elements) {
+arts_array_db_t *arts_new_array_db_with_guid(arts_guid_t guid,
+                                             unsigned int element_size,
+                                             unsigned int num_elements) {
   unsigned int num_blocks = arts_global_rank_count;
   unsigned int elements_per_block = num_elements / num_blocks;
   if (!elements_per_block) {
@@ -80,14 +81,15 @@ arts_array_db_t *arts_new_array_db_with_guid(arts_guid_t guid, unsigned int elem
   ARTS_INFO("Elements: %u Blocks: %u Element Size:%u", num_elements, num_blocks,
             element_size);
 
-  unsigned int alloc_size =
-      sizeof(arts_array_db_t) + ((unsigned long)element_size * elements_per_block);
+  unsigned int alloc_size = sizeof(arts_array_db_t) +
+                            ((unsigned long)element_size * elements_per_block);
   arts_array_db_t *block = NULL;
   if (num_blocks) {
     // We have to manually create the db so it isn't updated before we send
     // it...
     unsigned int db_size = sizeof(struct arts_db_s) + alloc_size;
-    struct arts_db_s *to_send = (struct arts_db_s *)arts_calloc_align(1, db_size, 16);
+    struct arts_db_s *to_send =
+        (struct arts_db_s *)arts_calloc_align(1, db_size, 16);
     arts_db_create_internal(guid, to_send, alloc_size, db_size, ARTS_DB_PIN, 0);
 
     block = (arts_array_db_t *)(to_send + 1);
@@ -98,8 +100,8 @@ arts_array_db_t *arts_new_array_db_with_guid(arts_guid_t guid, unsigned int elem
     for (unsigned int i = 0; i < arts_global_rank_count; i++) {
       if (i != arts_global_rank_id) {
         arts_remote_memory_move_no_free(i, guid, to_send,
-                                   alloc_size + sizeof(struct arts_db_s),
-                                   ARTS_REMOTE_DB_MOVE_MSG);
+                                        alloc_size + sizeof(struct arts_db_s),
+                                        ARTS_REMOTE_DB_MOVE_MSG);
       }
     }
 
@@ -109,16 +111,16 @@ arts_array_db_t *arts_new_array_db_with_guid(arts_guid_t guid, unsigned int elem
 }
 
 arts_array_db_t *arts_new_local_array_db_with_guid(arts_guid_t guid,
-                                           unsigned int element_size,
-                                           unsigned int num_elements,
-                                           void *data) {
+                                                   unsigned int element_size,
+                                                   unsigned int num_elements,
+                                                   void *data) {
   unsigned int num_blocks = 1;
   unsigned int elements_per_block = num_elements;
 
   ARTS_INFO("Elements: %u Blocks: %u Element Size:%u", num_elements, num_blocks,
             element_size);
-  unsigned int alloc_size =
-      sizeof(arts_array_db_t) + ((unsigned long)element_size * elements_per_block);
+  unsigned int alloc_size = sizeof(arts_array_db_t) +
+                            ((unsigned long)element_size * elements_per_block);
   arts_array_db_t *block = NULL;
 
   unsigned int db_size = sizeof(struct arts_db_s) + alloc_size;
@@ -138,7 +140,7 @@ arts_array_db_t *arts_new_local_array_db_with_guid(arts_guid_t guid,
 }
 
 arts_guid_t arts_new_array_db(arts_array_db_t **addr, unsigned int element_size,
-                          unsigned int num_elements) {
+                              unsigned int num_elements) {
   arts_guid_t guid = arts_guid_reserve(ARTS_DB_PIN, arts_global_rank_id);
   *addr = arts_new_array_db_with_guid(guid, element_size, num_elements);
   return guid;
@@ -151,7 +153,8 @@ arts_guid_t get_array_db_guid(arts_array_db_t *array) {
 
 unsigned int get_offset_from_index(arts_array_db_t *array, unsigned int index) {
   unsigned int base = sizeof(arts_array_db_t);
-  unsigned int local = (index % array->elements_per_block) * array->element_size;
+  unsigned int local =
+      (index % array->elements_per_block) * array->element_size;
   //    ARTS_INFO("array: %p base: %u index: %u elements_per_block: %u mod: %u
   //    element_size: %u", array, base, index, array->elements_per_block,
   //    index%array->elements_per_block, array->element_size);
@@ -163,20 +166,21 @@ unsigned int get_rank_from_index(arts_array_db_t *array, unsigned int index) {
 }
 
 void arts_signal_array_db(arts_array_db_t *array, arts_guid_t edt_guid,
-                       unsigned int slot) {
+                          unsigned int slot) {
   arts_guid_t array_guid = get_array_db_guid(array);
   arts_signal_edt(edt_guid, slot, array_guid, ARTS_DB_WRITE);
 }
 
 void arts_get_from_array_db(arts_guid_t edt_guid, unsigned int slot,
-                        arts_array_db_t *array, unsigned int index) {
+                            arts_array_db_t *array, unsigned int index) {
   if (index < array->elements_per_block * array->num_blocks) {
     arts_guid_t guid = get_array_db_guid(array);
     unsigned int rank = get_rank_from_index(array, index);
     unsigned int offset = get_offset_from_index(array, index);
     //        ARTS_INFO("Get index: %u rank: %u offset: %u", index, rank,
     //        offset);
-    arts_get_from_db_at(edt_guid, guid, slot, offset, array->element_size, rank);
+    arts_get_from_db_at(edt_guid, guid, slot, offset, array->element_size,
+                        rank);
   } else {
     ARTS_ERROR("Array DB index out of bounds: %u >= %u", index,
                array->elements_per_block * array->num_blocks);
@@ -184,15 +188,16 @@ void arts_get_from_array_db(arts_guid_t edt_guid, unsigned int slot,
 }
 
 void arts_put_in_array_db(void *ptr, arts_guid_t edt_guid, unsigned int slot,
-                      arts_array_db_t *array, unsigned int index) {
+                          arts_array_db_t *array, unsigned int index) {
   arts_guid_t guid = get_array_db_guid(array);
   unsigned int rank = get_rank_from_index(array, index);
   unsigned int offset = get_offset_from_index(array, index);
-  arts_put_in_db_at(ptr, edt_guid, guid, slot, offset, array->element_size, rank);
+  arts_put_in_db_at(ptr, edt_guid, guid, slot, offset, array->element_size,
+                    rank);
 }
 
 void arts_for_each_in_array_db(arts_array_db_t *array, arts_edt_t func_ptr,
-                          uint32_t paramc, const uint64_t *paramv) {
+                               uint32_t paramc, const uint64_t *paramv) {
   uint64_t *args = (uint64_t *)arts_malloc(sizeof(uint64_t) * (paramc + 1));
   memcpy(&args[1], paramv, sizeof(uint64_t) * paramc);
 
@@ -207,8 +212,8 @@ void arts_for_each_in_array_db(arts_array_db_t *array, arts_edt_t func_ptr,
 }
 
 void arts_gather_array_db(arts_array_db_t *array, arts_edt_t func_ptr,
-                       unsigned int route, uint32_t paramc, const uint64_t *paramv,
-                       uint32_t depc) {
+                          unsigned int route, uint32_t paramc,
+                          const uint64_t *paramv, uint32_t depc) {
   if (route == ARTS_HINT_CURRENT_NODE) {
     route = arts_global_rank_id;
   }
@@ -225,9 +230,9 @@ void arts_gather_array_db(arts_array_db_t *array, arts_edt_t func_ptr,
 }
 
 void arts_gather_array_db_epoch(arts_array_db_t *array, arts_edt_t func_ptr,
-                            unsigned int route, uint32_t paramc,
-                            const uint64_t *paramv, uint32_t depc,
-                            arts_guid_t epoch_guid) {
+                                unsigned int route, uint32_t paramc,
+                                const uint64_t *paramv, uint32_t depc,
+                                arts_guid_t epoch_guid) {
   if (route == ARTS_HINT_CURRENT_NODE) {
     route = arts_global_rank_id;
   }
@@ -235,27 +240,29 @@ void arts_gather_array_db_epoch(arts_array_db_t *array, arts_edt_t func_ptr,
   unsigned int size = array->element_size * array->elements_per_block;
   arts_guid_t array_guid = get_array_db_guid(array);
 
-  arts_guid_t guid = arts_edt_create_with_epoch(func_ptr, paramc, paramv,
-                                           array->num_blocks + depc, epoch_guid,
-                                           &(arts_hint_t){.route = route});
+  arts_guid_t guid = arts_edt_create_with_epoch(
+      func_ptr, paramc, paramv, array->num_blocks + depc, epoch_guid,
+      &(arts_hint_t){.route = route});
   for (unsigned int i = 0; i < array->num_blocks; i++) {
     arts_get_from_db_at(guid, array_guid, i, offset, size, i);
   }
 }
 
-void arts_gather_array_db_in_edt(arts_array_db_t *array, arts_guid_t to_edt_guid,
-                            uint64_t slot_offset) {
+void arts_gather_array_db_in_edt(arts_array_db_t *array,
+                                 arts_guid_t to_edt_guid,
+                                 uint64_t slot_offset) {
   unsigned int offset = get_offset_from_index(array, 0);
   unsigned int size = array->element_size * array->elements_per_block;
   arts_guid_t array_guid = get_array_db_guid(array);
 
   for (unsigned int i = 0; i < array->num_blocks; i++) {
-    arts_get_from_db_at(to_edt_guid, array_guid, slot_offset + i, offset, size, i);
+    arts_get_from_db_at(to_edt_guid, array_guid, slot_offset + i, offset, size,
+                        i);
   }
 }
 
 void loop_policy(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                arts_edt_dep_t depv[]) {
+                 arts_edt_dep_t depv[]) {
   (void)depc;
   arts_edt_t func_ptr = (arts_edt_t)paramv[0];
   unsigned int stride = paramv[1];
@@ -276,9 +283,10 @@ void loop_policy(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   depv[0].ptr = (void *)raw;
 }
 
-void arts_for_each_in_array_db_at_data(arts_array_db_t *array, unsigned int stride,
-                                arts_edt_t func_ptr, uint32_t paramc,
-                                const uint64_t *paramv) {
+void arts_for_each_in_array_db_at_data(arts_array_db_t *array,
+                                       unsigned int stride, arts_edt_t func_ptr,
+                                       uint32_t paramc,
+                                       const uint64_t *paramv) {
   unsigned int block_size = array->elements_per_block;
   unsigned int size = arts_get_size_array_db(array);
   if (size % stride) {
@@ -288,7 +296,7 @@ void arts_for_each_in_array_db_at_data(arts_array_db_t *array, unsigned int stri
   uint64_t *args = (uint64_t *)arts_malloc(sizeof(uint64_t) * (paramc + 4));
   if (paramc) {
     memcpy(&args[4], paramv, sizeof(uint64_t) * paramc);
-}
+  }
   args[0] = (uint64_t)func_ptr;
   args[1] = stride;
   for (unsigned int i = 0; i < size; i += block_size) {
@@ -302,9 +310,11 @@ void arts_for_each_in_array_db_at_data(arts_array_db_t *array, unsigned int stri
 }
 
 void internal_atomic_add_in_array_db(arts_guid_t db_guid, unsigned int index,
-                                unsigned int to_add, arts_guid_t edt_guid,
-                                unsigned int slot, arts_guid_t epoch_guid) {
-  struct arts_db_s *db = (struct arts_db_s *)arts_route_table_lookup_item(db_guid);
+                                     unsigned int to_add, arts_guid_t edt_guid,
+                                     unsigned int slot,
+                                     arts_guid_t epoch_guid) {
+  struct arts_db_s *db =
+      (struct arts_db_s *)arts_route_table_lookup_item(db_guid);
   if (db) {
     arts_array_db_t *array = (arts_array_db_t *)(db + 1);
     // Do this so when we increment finished we can check the term status
@@ -323,32 +333,34 @@ void internal_atomic_add_in_array_db(arts_guid_t db_guid, unsigned int index,
     increment_finished_epoch(epoch_guid);
     arts_shutdown_epoch_inc_finished();
   } else {
-    arts_out_of_order_atomic_add_in_array_db(db_guid, index, to_add, edt_guid, slot,
-                                     epoch_guid);
+    arts_out_of_order_atomic_add_in_array_db(db_guid, index, to_add, edt_guid,
+                                             slot, epoch_guid);
   }
 }
 
 void arts_atomic_add_in_array_db(arts_array_db_t *array, unsigned int index,
-                            unsigned int to_add, arts_guid_t edt_guid,
-                            unsigned int slot) {
+                                 unsigned int to_add, arts_guid_t edt_guid,
+                                 unsigned int slot) {
   arts_guid_t db_guid = get_array_db_guid(array);
   arts_guid_t epoch_guid = arts_get_current_epoch_guid();
   increment_active_epoch(epoch_guid);
   arts_shutdown_epoch_inc_active();
   unsigned int rank = get_rank_from_index(array, index);
   if (rank == arts_global_rank_id) {
-    internal_atomic_add_in_array_db(db_guid, index, to_add, edt_guid, slot, epoch_guid);
+    internal_atomic_add_in_array_db(db_guid, index, to_add, edt_guid, slot,
+                                    epoch_guid);
   } else {
-    arts_remote_atomic_add_in_array_db(rank, db_guid, index, to_add, edt_guid, slot,
-                                 epoch_guid);
-}
+    arts_remote_atomic_add_in_array_db(rank, db_guid, index, to_add, edt_guid,
+                                       slot, epoch_guid);
+  }
 }
 
 void internal_atomic_compare_and_swap_in_array_db(
     arts_guid_t db_guid, unsigned int index, unsigned int old_value,
     unsigned int new_value, arts_guid_t edt_guid, unsigned int slot,
     arts_guid_t epoch_guid) {
-  struct arts_db_s *db = (struct arts_db_s *)arts_route_table_lookup_item(db_guid);
+  struct arts_db_s *db =
+      (struct arts_db_s *)arts_route_table_lookup_item(db_guid);
   if (db) {
     arts_array_db_t *array = (arts_array_db_t *)(db + 1);
     // Do this so when we increment finished we can check the term status
@@ -372,20 +384,19 @@ void internal_atomic_compare_and_swap_in_array_db(
   }
 }
 
-void arts_atomic_compare_and_swap_in_array_db(arts_array_db_t *array, unsigned int index,
-                                       unsigned int old_value,
-                                       unsigned int new_value,
-                                       arts_guid_t edt_guid, unsigned int slot) {
+void arts_atomic_compare_and_swap_in_array_db(
+    arts_array_db_t *array, unsigned int index, unsigned int old_value,
+    unsigned int new_value, arts_guid_t edt_guid, unsigned int slot) {
   arts_guid_t db_guid = get_array_db_guid(array);
   arts_guid_t epoch_guid = arts_get_current_epoch_guid();
   increment_active_epoch(epoch_guid);
   arts_shutdown_epoch_inc_active();
   unsigned int rank = get_rank_from_index(array, index);
   if (rank == arts_global_rank_id) {
-    internal_atomic_compare_and_swap_in_array_db(db_guid, index, old_value, new_value,
-                                          edt_guid, slot, epoch_guid);
+    internal_atomic_compare_and_swap_in_array_db(
+        db_guid, index, old_value, new_value, edt_guid, slot, epoch_guid);
   } else {
-    arts_remote_atomic_compare_and_swap_in_array_db(rank, db_guid, index, old_value,
-                                            new_value, edt_guid, slot, epoch_guid);
-}
+    arts_remote_atomic_compare_and_swap_in_array_db(
+        rank, db_guid, index, old_value, new_value, edt_guid, slot, epoch_guid);
+  }
 }

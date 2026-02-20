@@ -43,7 +43,7 @@
 uint64_t start = 0;
 
 void fib_join(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-             arts_edt_dep_t depv[]) {
+              arts_edt_dep_t depv[]) {
   (void)depc;
   (void)paramc;
   unsigned int x = (unsigned int)depv[0].guid;
@@ -52,7 +52,7 @@ void fib_join(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 void fib_fork(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-             arts_edt_dep_t depv[]) {
+              arts_edt_dep_t depv[]) {
   (void)depc;
   (void)depv;
   unsigned int next = (arts_get_current_node() + 1) % arts_get_total_nodes();
@@ -66,7 +66,8 @@ void fib_fork(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_signal_edt_value(guid, slot, num);
   } else {
     arts_guid_t join_guid =
-        arts_edt_create(fib_join, paramc - 1, paramv, 2, &(arts_hint_t){.route = arts_get_current_node()});
+        arts_edt_create(fib_join, paramc - 1, paramv, 2,
+                        &(arts_hint_t){.route = arts_get_current_node()});
 
     uint64_t args[3] = {(uint64_t)join_guid, 0, num - 1};
     arts_edt_create(fib_fork, 3, args, 0, &(arts_hint_t){.route = next});
@@ -78,12 +79,13 @@ void fib_fork(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 void fib_done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-             arts_edt_dep_t depv[]) {
+              arts_edt_dep_t depv[]) {
   (void)depc;
   (void)paramc;
   uint64_t time = arts_get_time_stamp() - start;
   arts_printf("Fib %u: %u time: %lu nodes: %u workers: %u\n", paramv[0],
-         depv[0].guid, time, arts_get_total_nodes(), arts_get_total_workers());
+              depv[0].guid, time, arts_get_total_nodes(),
+              arts_get_total_workers());
   arts_shutdown();
 }
 
@@ -94,10 +96,12 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
   char **argv = (char **)paramv[1];
   uint64_t num = strtol(argv[1], NULL, 10);
-  arts_guid_t done_guid = arts_edt_create(fib_done, 1, &num, 1, &(arts_hint_t){.route = 0});
+  arts_guid_t done_guid =
+      arts_edt_create(fib_done, 1, &num, 1, &(arts_hint_t){.route = 0});
   uint64_t args[3] = {(uint64_t)done_guid, 0, num};
   start = arts_get_time_stamp();
-  arts_guid_t guid = arts_edt_create(fib_fork, 3, args, 0, &(arts_hint_t){.route = 0});
+  arts_guid_t guid =
+      arts_edt_create(fib_fork, 3, args, 0, &(arts_hint_t){.route = 0});
 }
 
 int main(int argc, char **argv) {

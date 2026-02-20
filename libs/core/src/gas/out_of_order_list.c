@@ -39,9 +39,9 @@
 #include "arts/gas/out_of_order_list.h"
 
 #include "arts.h"
-#include "arts/utils/malloc.h"
 #include "arts/system/arts_print.h"
 #include "arts/utils/atomics.h"
+#include "arts/utils/malloc.h"
 #include <time.h>
 
 #define FIRE_LOCK 1U
@@ -51,14 +51,14 @@ bool reader_oo_try_lock(struct arts_out_of_order_list_s *list) {
   while (1) {
     if (list->writerLock == FIRE_LOCK) {
       return false;
-}
+    }
     while (list->writerLock == RESET_LOCK) {
       ;
-}
+    }
     arts_atomic_fetch_add(&list->readerLock, 1U);
     if (list->writerLock == 0) {
       break;
-}
+    }
     arts_atomic_sub(&list->readerLock, 1U);
   }
   return true;
@@ -68,11 +68,11 @@ inline void reader_oo_lock(struct arts_out_of_order_list_s *list) {
   while (1) {
     while (list->writerLock) {
       ;
-}
+    }
     arts_atomic_fetch_add(&list->readerLock, 1U);
     if (list->writerLock == 0) {
       break;
-}
+    }
     arts_atomic_sub(&list->readerLock, 1U);
   }
 }
@@ -81,20 +81,22 @@ void reader_oo_unlock(struct arts_out_of_order_list_s *list) {
   arts_atomic_sub(&list->readerLock, 1U);
 }
 
-void writer_oo_lock(struct arts_out_of_order_list_s *list, unsigned int lock_type) {
+void writer_oo_lock(struct arts_out_of_order_list_s *list,
+                    unsigned int lock_type) {
   while (arts_atomic_cswap(&list->writerLock, 0U, lock_type) != 0U) {
     ;
-}
+  }
   while (list->readerLock) {
     ;
-}
   }
+}
 
 void writer_oo_unlock(struct arts_out_of_order_list_s *list) {
   arts_atomic_swap(&list->writerLock, 0U);
 }
 
-bool writer_try_oo_lock(struct arts_out_of_order_list_s *list, unsigned int lock_type) {
+bool writer_try_oo_lock(struct arts_out_of_order_list_s *list,
+                        unsigned int lock_type) {
   // Attempt to acquire the writer lock atomically
   unsigned int temp = arts_atomic_cswap(&list->writerLock, 0U, lock_type);
 
@@ -119,9 +121,12 @@ bool writer_try_oo_lock(struct arts_out_of_order_list_s *list, unsigned int lock
   return false;
 }
 
-bool arts_o_ois_fired(struct arts_out_of_order_list_s *list) { return list->isFired; }
+bool arts_o_ois_fired(struct arts_out_of_order_list_s *list) {
+  return list->isFired;
+}
 
-bool arts_out_of_order_list_add_item(struct arts_out_of_order_list_s *add_to_me, void *item) {
+bool arts_out_of_order_list_add_item(struct arts_out_of_order_list_s *add_to_me,
+                                     void *item) {
   if (!reader_oo_try_lock(add_to_me)) {
     return false;
   }
@@ -143,7 +148,7 @@ bool arts_out_of_order_list_add_item(struct arts_out_of_order_list_s *add_to_me,
       } else {
         while (!current->next) {
           ;
-}
+        }
       }
     }
     current = current->next;
@@ -152,7 +157,7 @@ bool arts_out_of_order_list_add_item(struct arts_out_of_order_list_s *add_to_me,
   // Always insert and always release lock
   // The CAS is used to wait for slot availability, but we should still unlock
   while (arts_atomic_cswap_ptr((volatile void **)&current->array[element_pos],
-                            (void *)0, item)) {
+                               (void *)0, item)) {
     // Slot was occupied - this shouldn't happen in normal operation
     // but we need to wait for it to become available
   }
@@ -174,7 +179,7 @@ void delete_oo_elements(struct arts_out_of_order_element_s *current) {
     for (unsigned int i = 0; i < OOPERELEMENT; i++) {
       while (current->array[i]) {
         ;
-}
+      }
     }
     trail = current;
     current = (struct arts_out_of_order_element_s *)current->next;
@@ -190,9 +195,9 @@ void arts_out_of_order_list_delete(struct arts_out_of_order_list_s *list) {
   list->count = 0;
 }
 
-void arts_out_of_order_list_fire_callback(struct arts_out_of_order_list_s *fire_me,
-                                    void *local_guid_address,
-                                    void (*callback_t)(void *, void *)) {
+void arts_out_of_order_list_fire_callback(
+    struct arts_out_of_order_list_s *fire_me, void *local_guid_address,
+    void (*callback_t)(void *, void *)) {
   // Retry mechanism: Try multiple times with brief delays
   // This allows readers to complete and release locks
   // 1000 attempts × 10μs ≈ 10ms total retry window
@@ -203,14 +208,15 @@ void arts_out_of_order_list_fire_callback(struct arts_out_of_order_list_s *fire_
       fire_me->isFired = true;
       unsigned int pos = fire_me->count;
       unsigned int j = 0;
-      for (volatile struct arts_out_of_order_element_s *current = &fire_me->head;
+      for (volatile struct arts_out_of_order_element_s *current =
+               &fire_me->head;
            current; current = current->next) {
         for (unsigned int i = 0; i < OOPERELEMENT; i++) {
           if (j < pos) {
             volatile void *item = NULL;
             while (!item) {
               item = arts_atomic_swap_ptr((volatile void **)&current->array[i],
-                                       (void *)0);
+                                          (void *)0);
             }
             callback_t((void *)item, local_guid_address);
             j++;
@@ -218,10 +224,10 @@ void arts_out_of_order_list_fire_callback(struct arts_out_of_order_list_s *fire_
         }
         if (j == pos) {
           break;
-}
+        }
         while (!current->next) {
           ;
-}
+        }
       }
       fire_me->count = 0;
       struct arts_out_of_order_element_s *p =
@@ -243,7 +249,8 @@ void arts_out_of_order_list_fire_callback(struct arts_out_of_order_list_s *fire_
 
   // If we get here, we failed after max_retries attempts
   // This should be very rare, but log it for debugging
-  ARTS_WARN("arts_out_of_order_list_fire_callback: failed to acquire lock after %d "
-            "attempts",
-            max_retries);
+  ARTS_WARN(
+      "arts_out_of_order_list_fire_callback: failed to acquire lock after %d "
+      "attempts",
+      max_retries);
 }

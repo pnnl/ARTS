@@ -45,9 +45,9 @@ extern "C" {
 #define INITIAL_DEPENDENT_SIZE 4
 
 bool arts_event_create_internal(arts_guid_t *guid, unsigned int route,
-                             unsigned int dependent_count,
-                             unsigned int latch_count, bool destroy_on_fire,
-                             arts_guid_t event_data);
+                                unsigned int dependent_count,
+                                unsigned int latch_count, bool destroy_on_fire,
+                                arts_guid_t event_data);
 
 struct arts_persistent_event_version_s *
 arts_get_front_persistent_event_version(struct arts_persistent_event_s *event);

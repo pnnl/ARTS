@@ -57,10 +57,12 @@ typedef struct {
   volatile unsigned int *write_lock;
 } arts_lc_meta_t;
 
-typedef void (*arts_lc_sync_function_t)(arts_lc_meta_t *host, arts_lc_meta_t *dev);
+typedef void (*arts_lc_sync_function_t)(arts_lc_meta_t *host,
+                                        arts_lc_meta_t *dev);
 extern arts_lc_sync_function_t lc_sync_function[];
 
-typedef void (*arts_lc_sync_function_gpu_t)(struct arts_db_s *src, struct arts_db_s *dst);
+typedef void (*arts_lc_sync_function_gpu_t)(struct arts_db_s *src,
+                                            struct arts_db_s *dst);
 extern arts_lc_sync_function_gpu_t lc_sync_function_gpu[];
 
 extern unsigned int lc_sync_element_size[];
@@ -76,14 +78,17 @@ void arts_add_db_unsigned_int(arts_lc_meta_t *host, arts_lc_meta_t *dev);
 void arts_xor_db_uint64(arts_lc_meta_t *host, arts_lc_meta_t *dev);
 
 unsigned int gpu_lc_reduce(arts_guid_t guid, struct arts_db_s *db,
-                         arts_lc_sync_function_gpu_t db_fn, bool *copy_only);
+                           arts_lc_sync_function_gpu_t db_fn, bool *copy_only);
 
 __global__ void arts_copy_gpu_db(struct arts_db_s *src, struct arts_db_s *dst);
-__global__ void arts_min_gpu_db_unsigned_int(struct arts_db_s *src, struct arts_db_s *dst);
+__global__ void arts_min_gpu_db_unsigned_int(struct arts_db_s *src,
+                                             struct arts_db_s *dst);
 __global__ void arts_non_zero_gpu_db_unsigned_int(struct arts_db_s *src,
-                                            struct arts_db_s *dst);
-__global__ void arts_add_gpu_db_unsigned_int(struct arts_db_s *src, struct arts_db_s *dst);
-__global__ void arts_xor_gpu_db_uint64(struct arts_db_s *sink, struct arts_db_s *src);
+                                                  struct arts_db_s *dst);
+__global__ void arts_add_gpu_db_unsigned_int(struct arts_db_s *src,
+                                             struct arts_db_s *dst);
+__global__ void arts_xor_gpu_db_uint64(struct arts_db_s *sink,
+                                       struct arts_db_s *src);
 
 #ifdef __cplusplus
 }

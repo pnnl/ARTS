@@ -41,13 +41,13 @@
 #include <cuda_runtime_api.h>
 
 #include "arts.h"
-#include "arts/utils/malloc.h"
 #include "arts/gpu/gpu_route_table.h"
 #include "arts/gpu/gpu_stream_buffer.h"
 #include "arts/runtime/globals.h"
 #include "arts/system/arts_print.h"
 #include "arts/system/debug.h"
 #include "arts/utils/atomics.h"
+#include "arts/utils/malloc.h"
 
 // To use this lock the unlock must be an even number
 unsigned int version_lock(arts_lc_meta_t *meta) {
@@ -80,10 +80,11 @@ void *make_lc_shadow_copy(struct arts_db_s *db) {
 
 inline void arts_print_db_meta_data(arts_lc_meta_t *db) {
   (void)db;
-  ARTS_DEBUG("guid: %lu ptr: %p data_size: %lu host_version: %u gpu_version: %u "
-             "gpu_time_stamp: %u gpu: %d",
-             db->guid, db->data, db->data_size, *db->host_version,
-             *db->host_time_stamp, db->gpu_version, db->gpu_time_stamp, db->gpu);
+  ARTS_DEBUG(
+      "guid: %lu ptr: %p data_size: %lu host_version: %u gpu_version: %u "
+      "gpu_time_stamp: %u gpu: %d",
+      db->guid, db->data, db->data_size, *db->host_version,
+      *db->host_time_stamp, db->gpu_version, db->gpu_time_stamp, db->gpu);
 }
 
 void arts_memcpy_gpu_db(arts_lc_meta_t *host, arts_lc_meta_t *dev) {
@@ -122,7 +123,8 @@ void arts_get_random_gpu_db(arts_lc_meta_t *host, arts_lc_meta_t *dev) {
   }
 }
 
-void arts_get_non_zeros_unsigned_int(arts_lc_meta_t *host, arts_lc_meta_t *dev) {
+void arts_get_non_zeros_unsigned_int(arts_lc_meta_t *host,
+                                     arts_lc_meta_t *dev) {
   unsigned int num_elem = host->data_size / sizeof(unsigned int);
   unsigned int *dst = (unsigned int *)host->data;
   unsigned int *src = (unsigned int *)dev->data;
@@ -187,7 +189,8 @@ void arts_xor_db_uint64(arts_lc_meta_t *host, arts_lc_meta_t *dev) {
 
 /***********************************************************************/
 
-__global__ void arts_copy_gpu_db(struct arts_db_s *sink, struct arts_db_s *src) {
+__global__ void arts_copy_gpu_db(struct arts_db_s *sink,
+                                 struct arts_db_s *src) {
   unsigned int *src_data = (unsigned int *)(src + 1);
   unsigned int *sink_data = (unsigned int *)(sink + 1);
 
@@ -196,7 +199,7 @@ __global__ void arts_copy_gpu_db(struct arts_db_s *sink, struct arts_db_s *src) 
 }
 
 __global__ void arts_min_gpu_db_unsigned_int(struct arts_db_s *sink,
-                                        struct arts_db_s *src) {
+                                             struct arts_db_s *src) {
   unsigned int *src_data = (unsigned int *)(src + 1);
   unsigned int *sink_data = (unsigned int *)(sink + 1);
 
@@ -207,7 +210,7 @@ __global__ void arts_min_gpu_db_unsigned_int(struct arts_db_s *sink,
 }
 
 __global__ void arts_non_zero_gpu_db_unsigned_int(struct arts_db_s *sink,
-                                            struct arts_db_s *src) {
+                                                  struct arts_db_s *src) {
   unsigned int *src_data = (unsigned int *)(src + 1);
   unsigned int *sink_data = (unsigned int *)(sink + 1);
 
@@ -218,7 +221,7 @@ __global__ void arts_non_zero_gpu_db_unsigned_int(struct arts_db_s *sink,
 }
 
 __global__ void arts_add_gpu_db_unsigned_int(struct arts_db_s *sink,
-                                        struct arts_db_s *src) {
+                                             struct arts_db_s *src) {
   unsigned int *src_data = (unsigned int *)(src + 1);
   unsigned int *sink_data = (unsigned int *)(sink + 1);
 
@@ -226,7 +229,8 @@ __global__ void arts_add_gpu_db_unsigned_int(struct arts_db_s *sink,
   sink_data[index] += src_data[index];
 }
 
-__global__ void arts_xor_gpu_db_uint64(struct arts_db_s *sink, struct arts_db_s *src) {
+__global__ void arts_xor_gpu_db_uint64(struct arts_db_s *sink,
+                                       struct arts_db_s *src) {
   unsigned long long *src_data = (unsigned long long *)(src + 1);
   unsigned long long *sink_data = (unsigned long long *)(sink + 1);
 
@@ -240,49 +244,55 @@ __global__ void arts_xor_gpu_db_uint64(struct arts_db_s *sink, struct arts_db_s 
 #define GPUNUMGROUP 2
 
 void gpu_reduction_launch(int root, int a, int b, unsigned int *rem_mask,
-                        arts_guid_t guid, unsigned int size,
-                        arts_lc_sync_function_gpu_t fn_ptr) {
+                          arts_guid_t guid, unsigned int size,
+                          arts_lc_sync_function_gpu_t fn_ptr) {
   if (a < 0 || b < 0) {
     return;
   }
 
   if (root != a && root != b) {
-    ARTS_ERROR("LC reduction tree invalid: root %d not in {%d, %d}", root, a, b);
+    ARTS_ERROR("LC reduction tree invalid: root %d not in {%d, %d}", root, a,
+               b);
   }
 
   ARTS_DEBUG("A: %d B: %d -> Root: %d guid: %lu", a, b, root, guid);
   unsigned int to_remove = (root == a) ? (unsigned int)b : (unsigned int)a;
   *rem_mask &= ~(1 << to_remove);
 
-  void *db_data = arts_gpu_route_table_lookup_db_res(guid, root, NULL, NULL, false);
+  void *db_data =
+      arts_gpu_route_table_lookup_db_res(guid, root, NULL, NULL, false);
   void *dst = (void *)(((char *)db_data) + size);
   ARTS_DEBUG("%d %p %p", root, db_data, dst);
 
-  void *src = arts_gpu_route_table_lookup_db_res(guid, (int)to_remove, NULL, NULL, false);
+  void *src = arts_gpu_route_table_lookup_db_res(guid, (int)to_remove, NULL,
+                                                 NULL, false);
   ARTS_DEBUG("%d %p", to_remove, src);
 
   ARTS_DEBUG("src: %p dst: %p size: %u", src, dst, size);
   reduce_datafrom_gpus(dst, root, src, (int)to_remove, size, fn_ptr,
-                     lc_sync_element_size[arts_node_info.gpu_lc_sync], db_data);
+                       lc_sync_element_size[arts_node_info.gpu_lc_sync],
+                       db_data);
 }
 
 void gpu_shadow_reduction_launch(int root, arts_guid_t guid, unsigned int size,
-                              arts_lc_sync_function_gpu_t fn_ptr) {
-  void *sink = arts_gpu_route_table_lookup_db_res(guid, root, NULL, NULL, false);
+                                 arts_lc_sync_function_gpu_t fn_ptr) {
+  void *sink =
+      arts_gpu_route_table_lookup_db_res(guid, root, NULL, NULL, false);
   void *src = (void *)(((char *)sink) + size);
 
   do_reduction_now(root, sink, src, fn_ptr, sizeof(unsigned int), size);
 }
 
 void gpu_copy_launch(int root, int a, int b, bool src_shadow, bool dst_shadow,
-                   arts_guid_t guid, unsigned int size) {
+                     arts_guid_t guid, unsigned int size) {
 
   if (a < 0 || b < 0) {
     return;
   }
 
   if (root != a && root != b) {
-    ARTS_ERROR("LC reduction tree invalid: root %d not in {%d, %d}", root, a, b);
+    ARTS_ERROR("LC reduction tree invalid: root %d not in {%d, %d}", root, a,
+               b);
   }
 
   ARTS_DEBUG("A: %d B: %d -> Root: %d", a, b, root);
@@ -294,7 +304,8 @@ void gpu_copy_launch(int root, int a, int b, bool src_shadow, bool dst_shadow,
   }
   ARTS_DEBUG("%d %p", root, dst);
 
-  void *src = arts_gpu_route_table_lookup_db_res(guid, (int)to_remove, NULL, NULL, false);
+  void *src = arts_gpu_route_table_lookup_db_res(guid, (int)to_remove, NULL,
+                                                 NULL, false);
   if (src_shadow) {
     src = (void *)(((char *)src) + size);
   }
@@ -356,7 +367,7 @@ typedef struct {
 } trav_t;
 
 void add_to_trav(int root, int a, int b, unsigned int level, unsigned int *size,
-               trav_t *ds, unsigned int *max_level) {
+                 trav_t *ds, unsigned int *max_level) {
   if (a < 0 || b < 0) {
     return;
   }
@@ -372,9 +383,9 @@ void add_to_trav(int root, int a, int b, unsigned int level, unsigned int *size,
 }
 
 int gpu_tree_reduction_rec(int root, unsigned int start, unsigned int stop,
-                        unsigned int mask, unsigned int level,
-                        unsigned int *list_size, trav_t *list,
-                        unsigned int *max_level) {
+                           unsigned int mask, unsigned int level,
+                           unsigned int *list_size, trav_t *list,
+                           unsigned int *max_level) {
   int local_root = -1;
   // ARTS_INFO("root: %u start: %u stop: %u", root, start, stop);
   int gpu_id[2] = {(int)start, (int)stop};
@@ -383,9 +394,9 @@ int gpu_tree_reduction_rec(int root, unsigned int start, unsigned int stop,
   {
     unsigned int middle = (1 + stop - start) / 2;
     gpu_id[0] = gpu_tree_reduction_rec(root, start, start + middle - 1, mask,
-                                   level + 1, list_size, list, max_level);
-    gpu_id[1] = gpu_tree_reduction_rec(root, start + middle, stop, mask, level + 1,
-                                   list_size, list, max_level);
+                                       level + 1, list_size, list, max_level);
+    gpu_id[1] = gpu_tree_reduction_rec(root, start + middle, stop, mask,
+                                       level + 1, list_size, list, max_level);
   }
 
   bool start_found = (gpu_id[0] >= 0) && ((mask & (1 << gpu_id[0])) != 0);
@@ -396,7 +407,7 @@ int gpu_tree_reduction_rec(int root, unsigned int start, unsigned int stop,
     if (root == gpu_id[0] || root == gpu_id[1]) {
       local_root = root;
     } else {
-      local_root = gpu_id[0];            // This is the min
+      local_root = gpu_id[0]; // This is the min
     }
   } else if (start_found && !stop_found) // Only start is in the mask
   {
@@ -413,25 +424,27 @@ int gpu_tree_reduction_rec(int root, unsigned int start, unsigned int stop,
     // local_root = -1;
   }
 
-  add_to_trav(local_root, gpu_id[0], gpu_id[1], level, list_size, list, max_level);
+  add_to_trav(local_root, gpu_id[0], gpu_id[1], level, list_size, list,
+              max_level);
   return local_root;
 }
 
 void gpu_tree_reduction_start(unsigned int mask, unsigned int *list_size,
-                           trav_t *list, unsigned int *max_level) {
+                              trav_t *list, unsigned int *max_level) {
   int root[GPUNUMGROUP];
   find_roots(mask, root);
   for (unsigned int i = 0; i < GPUNUMGROUP; i++) {
     ARTS_DEBUG("Root[%d]: %d", i, root[i]);
-    gpu_tree_reduction_rec(root[i], i * GPUGROUPSIZE, ((i + 1) * GPUGROUPSIZE) - 1,
-                        mask, 2, list_size, list, max_level);
+    gpu_tree_reduction_rec(root[i], i * GPUGROUPSIZE,
+                           ((i + 1) * GPUGROUPSIZE) - 1, mask, 2, list_size,
+                           list, max_level);
   }
   add_to_trav(root[0], root[0], root[1], 1, list_size, list, max_level);
 }
 
 unsigned int gpu_tree_reduction(unsigned int mask, arts_guid_t guid,
-                              unsigned int db_size,
-                              arts_lc_sync_function_gpu_t db_fn) {
+                                unsigned int db_size,
+                                arts_lc_sync_function_gpu_t db_fn) {
   ARTS_DEBUG("mask: %u", mask);
   unsigned int max_level = 0;
   unsigned int list_size = 0;
@@ -444,8 +457,8 @@ unsigned int gpu_tree_reduction(unsigned int mask, arts_guid_t guid,
   for (unsigned int i = max_level; i > 0; i--) {
     for (unsigned int j = 0; j < list_size; j++) {
       if (list[j].level == (int)i) {
-        gpu_reduction_launch(list[j].root, list[j].a, list[j].b, &rem_mask, guid,
-                           db_size, db_fn);
+        gpu_reduction_launch(list[j].root, list[j].a, list[j].b, &rem_mask,
+                             guid, db_size, db_fn);
       }
     }
   }
@@ -456,8 +469,8 @@ unsigned int gpu_tree_reduction(unsigned int mask, arts_guid_t guid,
 /***********************************************************/
 
 bool check_max(unsigned int current_size, unsigned int *visited,
-              unsigned int *max_size, unsigned int *max_visited,
-              unsigned int cycle_size) {
+               unsigned int *max_size, unsigned int *max_visited,
+               unsigned int cycle_size) {
   if (*max_size < current_size) {
     *max_size = current_size;
     memcpy(max_visited, visited, sizeof(unsigned int) * current_size);
@@ -469,9 +482,9 @@ bool check_max(unsigned int current_size, unsigned int *visited,
 
 extern bool **gpu_adj_list;
 unsigned int gpu_depth_first_rec(unsigned int vertex, unsigned int cycle_size,
-                              unsigned int mask, unsigned int current,
-                              unsigned int *visited, unsigned int *max_size,
-                              unsigned int *max_visited) {
+                                 unsigned int mask, unsigned int current,
+                                 unsigned int *visited, unsigned int *max_size,
+                                 unsigned int *max_visited) {
   unsigned int order = arts_get_total_gpus();
   visited[current++] = vertex; // Record order visited
 
@@ -491,7 +504,7 @@ unsigned int gpu_depth_first_rec(unsigned int vertex, unsigned int cycle_size,
       if ((mask & (1 << i)) && gpu_adj_list[vertex][i]) {
         ARTS_INFO("%u -> %u", vertex, i);
         if (gpu_depth_first_rec(i, cycle_size, mask, current, visited, max_size,
-                             max_visited)) {
+                                max_visited)) {
           return true;
         }
       }
@@ -517,7 +530,7 @@ unsigned int *gpu_depth_first(unsigned int mask, unsigned int *max_size) {
     if (mask & (1 << i)) {
       ARTS_INFO("i: %u", i);
       if (gpu_depth_first_rec(i, cycle_size, mask, 0, visited, max_size,
-                           max_visited)) {
+                              max_visited)) {
         ret = max_visited;
         break;
       }
@@ -530,8 +543,9 @@ unsigned int *gpu_depth_first(unsigned int mask, unsigned int *max_size) {
   return ret;
 }
 
-bool gpu_ring_reduction(unsigned int mask, unsigned int guid, unsigned int db_size,
-                      arts_lc_sync_function_gpu_t fn_ptr) {
+bool gpu_ring_reduction(unsigned int mask, unsigned int guid,
+                        unsigned int db_size,
+                        arts_lc_sync_function_gpu_t fn_ptr) {
   // unsigned int rem_mask = mask;
   unsigned int cycle_size = 0;
   unsigned int *cycle = gpu_depth_first(mask, &cycle_size);
@@ -540,8 +554,8 @@ bool gpu_ring_reduction(unsigned int mask, unsigned int guid, unsigned int db_si
     ARTS_INFO("Cycle Size:%u", cycle_size);
     for (unsigned int i = 0; i < 1; i++) {
       for (unsigned int j = 1; j < cycle_size; j++) {
-        gpu_copy_launch((int)cycle[j], (int)cycle[j - 1], (int)cycle[j], (i != 0),
-                      true, guid, db_size);
+        gpu_copy_launch((int)cycle[j], (int)cycle[j - 1], (int)cycle[j],
+                        (i != 0), true, guid, db_size);
       }
 
       for (unsigned int j = 0; j < num_gpus; j++) {
@@ -577,7 +591,7 @@ unsigned int gpu_lc_return_db(unsigned int mask, arts_guid_t guid) {
 }
 
 unsigned int gpu_lc_reduce(arts_guid_t guid, struct arts_db_s *db,
-                         arts_lc_sync_function_gpu_t db_fn, bool *copy_only) {
+                           arts_lc_sync_function_gpu_t db_fn, bool *copy_only) {
   *copy_only = false;
   unsigned int rem_mask = 0;
   unsigned int size = db->header.size;

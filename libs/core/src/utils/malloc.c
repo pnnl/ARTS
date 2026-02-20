@@ -36,8 +36,8 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include "arts.h"
 #include "arts/utils/malloc.h"
+#include "arts.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -88,12 +88,14 @@ void *arts_malloc_align(size_t size, size_t align) {
   MALLOC_MEMORY_START();
 
   if (!size || align < ALIGNMENT || !IS_POWER_OF_TWO(align)) {
-    ARTS_ERROR("arts_malloc_align: invalid params (size=%zu, align=%zu)", size, align);
+    ARTS_ERROR("arts_malloc_align: invalid params (size=%zu, align=%zu)", size,
+               align);
   }
 
   void *base = malloc(size + align - 1 + sizeof(header_t));
   if (!base) {
-    ARTS_ERROR("arts_malloc_align: system malloc failed (size=%zu, align=%zu)", size, align);
+    ARTS_ERROR("arts_malloc_align: system malloc failed (size=%zu, align=%zu)",
+               size, align);
   }
   INCREMENT_MEMORY_FOOTPRINT_BY(size);
 
@@ -116,7 +118,8 @@ void *arts_calloc(size_t nmemb, size_t size) {
   CALLOC_MEMORY_START();
 
   if (!nmemb || !size || size > SIZE_MAX / nmemb) {
-    ARTS_ERROR("arts_calloc: invalid params (nmemb=%zu, size=%zu)", nmemb, size);
+    ARTS_ERROR("arts_calloc: invalid params (nmemb=%zu, size=%zu)", nmemb,
+               size);
   }
 
   size_t total_size = nmemb * size;
@@ -136,7 +139,9 @@ void *arts_calloc_align(size_t nmemb, size_t size, size_t align) {
 
   if (!nmemb || !size || size > SIZE_MAX / nmemb || align < ALIGNMENT ||
       !IS_POWER_OF_TWO(align)) {
-    ARTS_ERROR("arts_calloc_align: invalid params (nmemb=%zu, size=%zu, align=%zu)", nmemb, size, align);
+    ARTS_ERROR(
+        "arts_calloc_align: invalid params (nmemb=%zu, size=%zu, align=%zu)",
+        nmemb, size, align);
   }
 
   size_t total_size = nmemb * size;

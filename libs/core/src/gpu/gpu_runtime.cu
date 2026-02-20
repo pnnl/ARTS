@@ -51,10 +51,10 @@
 #include "arts/gpu/gpu_stream.h"
 #include "arts/gpu/gpu_stream_buffer.h"
 #include "arts/introspection/metrics.h"
-#include "arts/runtime/globals.h"
-#include "arts/runtime/runtime.h"
 #include "arts/runtime/compute/edt_functions.h"
+#include "arts/runtime/globals.h"
 #include "arts/runtime/memory/db_functions.h"
+#include "arts/runtime/runtime.h"
 #include "arts/runtime/sync/termination_detection.h"
 #include "arts/system/arts_print.h"
 #include "arts/system/debug.h"
@@ -146,16 +146,17 @@ int arts_get_gpu_id() { return arts_local_gpu_id; }
 unsigned int arts_get_num_gpus() { return arts_node_info.gpu; }
 
 arts_guid_t internal_edt_create_gpu(arts_edt_t func_ptr, arts_guid_t *guid,
-                                unsigned int route, uint32_t paramc,
-                                const uint64_t *paramv, uint32_t depc, dim3 grid,
-                                dim3 block, arts_guid_t end_guid, uint32_t slot,
-                                arts_guid_t data_guid, bool has_depv,
-                                bool pass_through, bool lib, int gpu_to_run_on) {
+                                    unsigned int route, uint32_t paramc,
+                                    const uint64_t *paramv, uint32_t depc,
+                                    dim3 grid, dim3 block, arts_guid_t end_guid,
+                                    uint32_t slot, arts_guid_t data_guid,
+                                    bool has_depv, bool pass_through, bool lib,
+                                    int gpu_to_run_on) {
   //    ARTSEDTCOUNTERTIMERSTART(EDT_CREATE_COUNTER);
   unsigned int dep_space = (has_depv) ? depc * sizeof(arts_edt_dep_t) : 0;
   unsigned int mode_space = (has_depv) ? depc * sizeof(arts_type_t) : 0;
-  unsigned int edt_space =
-      sizeof(arts_gpu_edt_t) + (paramc * sizeof(uint64_t)) + dep_space + mode_space;
+  unsigned int edt_space = sizeof(arts_gpu_edt_t) +
+                           (paramc * sizeof(uint64_t)) + dep_space + mode_space;
 
   arts_gpu_edt_t *edt = (arts_gpu_edt_t *)arts_calloc(1, edt_space);
   edt->wrapperEdt.invalidate_count = 1;
@@ -169,109 +170,113 @@ arts_guid_t internal_edt_create_gpu(arts_edt_t func_ptr, arts_guid_t *guid,
   edt->lib = lib;
 
   // artsIntrospectionEdtCreateBegin();
-  (void)arts_edt_create_internal(
-      (struct arts_edt_s *)edt, ARTS_GPU_EDT, guid, route,
-      arts_thread_info.numa_domain_id, edt_space, NULL_GUID, func_ptr, paramc, paramv,
-      depc, true, NULL_GUID, has_depv, 0);
+  (void)arts_edt_create_internal((struct arts_edt_s *)edt, ARTS_GPU_EDT, guid,
+                                 route, arts_thread_info.numa_domain_id,
+                                 edt_space, NULL_GUID, func_ptr, paramc, paramv,
+                                 depc, true, NULL_GUID, has_depv, 0);
   // artsIntrospectionEdtCreateFinish(created);
   //    ARTSEDTCOUNTERTIMERENDINCREMENT(EDT_CREATE_COUNTER);
   return *guid;
 }
 
 arts_guid_t arts_edt_create_gpu_dep(arts_edt_t func_ptr, unsigned int route,
-                               uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                               dim3 grid, dim3 block, arts_guid_t end_guid,
-                               uint32_t slot, arts_guid_t data_guid,
-                               bool has_depv) {
-  arts_guid_t guid = NULL_GUID;
-  return internal_edt_create_gpu(func_ptr, &guid, route, paramc, paramv, depc, grid,
-                              block, end_guid, slot, data_guid, has_depv, false,
-                              false, -1);
-}
-
-arts_guid_t arts_edt_create_gpu_pt_dep(arts_edt_t func_ptr, unsigned int route,
-                                 uint32_t paramc, const uint64_t *paramv,
-                                 uint32_t depc, dim3 grid, dim3 block,
-                                 arts_guid_t end_guid, uint32_t slot,
-                                 unsigned int pass_slot, bool has_depv) {
-  arts_guid_t guid = NULL_GUID;
-  return internal_edt_create_gpu(func_ptr, &guid, route, paramc, paramv, depc, grid,
-                              block, end_guid, slot, (arts_guid_t)pass_slot,
-                              has_depv, true, false, -1);
-}
-
-arts_guid_t arts_edt_create_gpu(arts_edt_t func_ptr, unsigned int route,
-                            uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                            dim3 grid, dim3 block, arts_guid_t end_guid,
-                            uint32_t slot, arts_guid_t data_guid) {
-  return arts_edt_create_gpu_dep(func_ptr, route, paramc, paramv, depc, grid, block,
-                             end_guid, slot, data_guid, true);
-}
-
-arts_guid_t arts_edt_create_gpu_with_guid(arts_edt_t func_ptr, arts_guid_t guid,
                                     uint32_t paramc, const uint64_t *paramv,
                                     uint32_t depc, dim3 grid, dim3 block,
                                     arts_guid_t end_guid, uint32_t slot,
-                                    arts_guid_t data_guid) {
-  return internal_edt_create_gpu(func_ptr, &guid, arts_guid_get_rank(guid), paramc,
-                              paramv, depc, grid, block, end_guid, slot,
-                              data_guid, true, false, false, -1);
+                                    arts_guid_t data_guid, bool has_depv) {
+  arts_guid_t guid = NULL_GUID;
+  return internal_edt_create_gpu(func_ptr, &guid, route, paramc, paramv, depc,
+                                 grid, block, end_guid, slot, data_guid,
+                                 has_depv, false, false, -1);
+}
+
+arts_guid_t arts_edt_create_gpu_pt_dep(arts_edt_t func_ptr, unsigned int route,
+                                       uint32_t paramc, const uint64_t *paramv,
+                                       uint32_t depc, dim3 grid, dim3 block,
+                                       arts_guid_t end_guid, uint32_t slot,
+                                       unsigned int pass_slot, bool has_depv) {
+  arts_guid_t guid = NULL_GUID;
+  return internal_edt_create_gpu(
+      func_ptr, &guid, route, paramc, paramv, depc, grid, block, end_guid, slot,
+      (arts_guid_t)pass_slot, has_depv, true, false, -1);
+}
+
+arts_guid_t arts_edt_create_gpu(arts_edt_t func_ptr, unsigned int route,
+                                uint32_t paramc, const uint64_t *paramv,
+                                uint32_t depc, dim3 grid, dim3 block,
+                                arts_guid_t end_guid, uint32_t slot,
+                                arts_guid_t data_guid) {
+  return arts_edt_create_gpu_dep(func_ptr, route, paramc, paramv, depc, grid,
+                                 block, end_guid, slot, data_guid, true);
+}
+
+arts_guid_t arts_edt_create_gpu_with_guid(arts_edt_t func_ptr, arts_guid_t guid,
+                                          uint32_t paramc,
+                                          const uint64_t *paramv, uint32_t depc,
+                                          dim3 grid, dim3 block,
+                                          arts_guid_t end_guid, uint32_t slot,
+                                          arts_guid_t data_guid) {
+  return internal_edt_create_gpu(func_ptr, &guid, arts_guid_get_rank(guid),
+                                 paramc, paramv, depc, grid, block, end_guid,
+                                 slot, data_guid, true, false, false, -1);
 }
 
 arts_guid_t arts_edt_create_gpu_pt(arts_edt_t func_ptr, unsigned int route,
-                              uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                              dim3 grid, dim3 block, arts_guid_t end_guid,
-                              uint32_t slot, unsigned int pass_slot) {
+                                   uint32_t paramc, const uint64_t *paramv,
+                                   uint32_t depc, dim3 grid, dim3 block,
+                                   arts_guid_t end_guid, uint32_t slot,
+                                   unsigned int pass_slot) {
   return arts_edt_create_gpu_pt_dep(func_ptr, route, paramc, paramv, depc, grid,
-                               block, end_guid, slot, pass_slot, true);
+                                    block, end_guid, slot, pass_slot, true);
 }
 
-arts_guid_t arts_edt_create_gpu_pt_with_guid(arts_edt_t func_ptr, arts_guid_t guid,
-                                      uint32_t paramc, const uint64_t *paramv,
-                                      uint32_t depc, dim3 grid, dim3 block,
-                                      arts_guid_t end_guid, uint32_t slot,
-                                      unsigned int pass_slot) {
-  return internal_edt_create_gpu(func_ptr, &guid, arts_guid_get_rank(guid), paramc,
-                              paramv, depc, grid, block, end_guid, slot,
-                              (arts_guid_t)pass_slot, true, true, false, -1);
+arts_guid_t arts_edt_create_gpu_pt_with_guid(
+    arts_edt_t func_ptr, arts_guid_t guid, uint32_t paramc,
+    const uint64_t *paramv, uint32_t depc, dim3 grid, dim3 block,
+    arts_guid_t end_guid, uint32_t slot, unsigned int pass_slot) {
+  return internal_edt_create_gpu(
+      func_ptr, &guid, arts_guid_get_rank(guid), paramc, paramv, depc, grid,
+      block, end_guid, slot, (arts_guid_t)pass_slot, true, true, false, -1);
 }
 
 arts_guid_t arts_edt_create_gpu_lib(arts_edt_t func_ptr, unsigned int route,
-                               uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                               dim3 grid, dim3 block) {
+                                    uint32_t paramc, const uint64_t *paramv,
+                                    uint32_t depc, dim3 grid, dim3 block) {
   arts_guid_t guid = NULL_GUID;
-  return internal_edt_create_gpu(func_ptr, &guid, route, paramc, paramv, depc, grid,
-                              block, NULL_GUID, 0, NULL_GUID, true, false, true,
-                              -1);
+  return internal_edt_create_gpu(func_ptr, &guid, route, paramc, paramv, depc,
+                                 grid, block, NULL_GUID, 0, NULL_GUID, true,
+                                 false, true, -1);
 }
 
-arts_guid_t arts_edt_create_gpu_lib_with_guid(arts_edt_t func_ptr, arts_guid_t guid,
-                                       uint32_t paramc, const uint64_t *paramv,
-                                       uint32_t depc, dim3 grid, dim3 block) {
-  return internal_edt_create_gpu(func_ptr, &guid, arts_guid_get_rank(guid), paramc,
-                              paramv, depc, grid, block, NULL_GUID, 0,
-                              NULL_GUID, true, false, true, -1);
+arts_guid_t arts_edt_create_gpu_lib_with_guid(arts_edt_t func_ptr,
+                                              arts_guid_t guid, uint32_t paramc,
+                                              const uint64_t *paramv,
+                                              uint32_t depc, dim3 grid,
+                                              dim3 block) {
+  return internal_edt_create_gpu(func_ptr, &guid, arts_guid_get_rank(guid),
+                                 paramc, paramv, depc, grid, block, NULL_GUID,
+                                 0, NULL_GUID, true, false, true, -1);
 }
 
 arts_guid_t arts_edt_create_gpu_direct(arts_edt_t func_ptr, unsigned int route,
-                                  unsigned int gpu, uint32_t paramc,
-                                  const uint64_t *paramv, uint32_t depc, dim3 grid,
-                                  dim3 block, arts_guid_t end_guid, uint32_t slot,
-                                  arts_guid_t data_guid, bool has_depv) {
+                                       unsigned int gpu, uint32_t paramc,
+                                       const uint64_t *paramv, uint32_t depc,
+                                       dim3 grid, dim3 block,
+                                       arts_guid_t end_guid, uint32_t slot,
+                                       arts_guid_t data_guid, bool has_depv) {
   arts_guid_t guid = NULL_GUID;
-  return internal_edt_create_gpu(func_ptr, &guid, route, paramc, paramv, depc, grid,
-                              block, end_guid, slot, data_guid, has_depv, false,
-                              false, (int)gpu);
+  return internal_edt_create_gpu(func_ptr, &guid, route, paramc, paramv, depc,
+                                 grid, block, end_guid, slot, data_guid,
+                                 has_depv, false, false, (int)gpu);
 }
 
-arts_guid_t arts_edt_create_gpu_lib_direct(arts_edt_t func_ptr, unsigned int route,
-                                     unsigned int gpu, uint32_t paramc,
-                                     const uint64_t *paramv, uint32_t depc, dim3 grid,
-                                     dim3 block) {
+arts_guid_t arts_edt_create_gpu_lib_direct(
+    arts_edt_t func_ptr, unsigned int route, unsigned int gpu, uint32_t paramc,
+    const uint64_t *paramv, uint32_t depc, dim3 grid, dim3 block) {
   arts_guid_t guid = NULL_GUID;
-  return internal_edt_create_gpu(func_ptr, &guid, route, paramc, paramv, depc, grid,
-                              block, NULL_GUID, 0, NULL_GUID, true, false, true,
-                              (int)gpu);
+  return internal_edt_create_gpu(func_ptr, &guid, route, paramc, paramv, depc,
+                                 grid, block, NULL_GUID, 0, NULL_GUID, true,
+                                 false, true, (int)gpu);
 }
 
 void arts_run_gpu(void *edt_packet, arts_gpu_t *arts_gpu) {
@@ -302,8 +307,8 @@ void arts_run_gpu(void *edt_packet, arts_gpu_t *arts_gpu) {
   arts_cuda_restore_device();
 }
 
-void arts_gpu_host_wrap_up(void *edt_packet, arts_guid_t to_signal, uint32_t slot,
-                       arts_guid_t data_guid) {
+void arts_gpu_host_wrap_up(void *edt_packet, arts_guid_t to_signal,
+                           uint32_t slot, arts_guid_t data_guid) {
   arts_gpu_edt_t *edt = (arts_gpu_edt_t *)edt_packet;
   uint32_t paramc = edt->wrapperEdt.paramc;
   uint32_t depc = edt->wrapperEdt.depc;
@@ -316,7 +321,8 @@ void arts_gpu_host_wrap_up(void *edt_packet, arts_guid_t to_signal, uint32_t slo
 
   if (edt->lib) {
     edt->wrapperEdt.invalidate_count = 0;
-    arts_route_table_fire_oo(edt->wrapperEdt.current_edt, arts_out_of_order_handler);
+    arts_route_table_fire_oo(edt->wrapperEdt.current_edt,
+                             arts_out_of_order_handler);
   } else if (edt->wrapperEdt.epoch_guid) {
     increment_finished_epoch(edt->wrapperEdt.epoch_guid);
   }
@@ -354,7 +360,8 @@ struct arts_edt_s *arts_runtime_steal_gpu_task() {
       steal_loc = jrand48(arts_thread_info.drand_buf);
       steal_loc = steal_loc % arts_node_info.total_thread_count;
     } while (steal_loc == arts_thread_info.thread_id);
-    edt = (struct arts_edt_s *)arts_deque_pop_back(arts_node_info.gpu_deque[steal_loc]);
+    edt = (struct arts_edt_s *)arts_deque_pop_back(
+        arts_node_info.gpu_deque[steal_loc]);
   }
   return edt;
 }
@@ -364,8 +371,8 @@ bool arts_gpu_scheduler_loop() {
   arts_handle_new_edts();
 
   struct arts_edt_s *edt_found = (struct arts_edt_s *)NULL;
-  if (!(edt_found =
-            (struct arts_edt_s *)arts_deque_pop_front(arts_thread_info.my_gpu_deque))) {
+  if (!(edt_found = (struct arts_edt_s *)arts_deque_pop_front(
+            arts_thread_info.my_gpu_deque))) {
     if (!edt_found) {
       edt_found = arts_runtime_steal_gpu_task();
     }
@@ -415,8 +422,8 @@ bool arts_gpu_scheduler_backoff_loop() {
   arts_handle_new_edts();
 
   struct arts_edt_s *edt_found = (struct arts_edt_s *)NULL;
-  if (!(edt_found =
-            (struct arts_edt_s *)arts_deque_pop_front(arts_thread_info.my_gpu_deque))) {
+  if (!(edt_found = (struct arts_edt_s *)arts_deque_pop_front(
+            arts_thread_info.my_gpu_deque))) {
     if (!edt_found) {
       edt_found = arts_runtime_steal_gpu_task();
     }
@@ -480,8 +487,8 @@ bool arts_gpu_scheduler_demand_loop() {
   arts_handle_new_edts();
 
   struct arts_edt_s *edt_found = (struct arts_edt_s *)NULL;
-  if (!(edt_found =
-            (struct arts_edt_s *)arts_deque_pop_front(arts_thread_info.my_gpu_deque))) {
+  if (!(edt_found = (struct arts_edt_s *)arts_deque_pop_front(
+            arts_thread_info.my_gpu_deque))) {
     if (!edt_found) {
       edt_found = arts_runtime_steal_gpu_task();
     }
@@ -526,11 +533,13 @@ bool arts_gpu_scheduler_demand_loop() {
   return ran_cpu_edt;
 }
 
-void arts_put_in_db_from_gpu(void *ptr, arts_guid_t db_guid, unsigned int offset,
-                        unsigned int size, bool free_data) {
+void arts_put_in_db_from_gpu(void *ptr, arts_guid_t db_guid,
+                             unsigned int offset, unsigned int size,
+                             bool free_data) {
   unsigned int rank = arts_guid_get_rank(db_guid);
   if (rank == arts_global_rank_id) {
-    struct arts_db_s *db = (struct arts_db_s *)arts_route_table_lookup_item(db_guid);
+    struct arts_db_s *db =
+        (struct arts_db_s *)arts_route_table_lookup_item(db_guid);
     if (db) {
       void *data = (void *)(((char *)(db + 1)) + offset);
       // memcpy(data, ptr, size);
@@ -543,30 +552,36 @@ void arts_put_in_db_from_gpu(void *ptr, arts_guid_t db_guid, unsigned int offset
       CHECKCORRECT(cudaMemcpyAsync(cpy_ptr, ptr, size, cudaMemcpyDeviceToHost,
                                    *arts_local_stream));
       arts_out_of_order_put_in_db(cpy_ptr, NULL_GUID, db_guid, 0, offset, size,
-                            NULL_GUID);
+                                  NULL_GUID);
     }
     if (free_data) {
-      arts_gpu_route_table_add_item_to_delete_race(ptr, 0, db_guid, arts_local_gpu_id);
+      arts_gpu_route_table_add_item_to_delete_race(ptr, 0, db_guid,
+                                                   arts_local_gpu_id);
     }
   }
 }
 
-arts_lc_sync_function_t lc_sync_function[] = {
-    arts_memcpy_gpu_db,         arts_get_latest_gpu_db,
-    arts_get_random_gpu_db,      arts_get_non_zeros_unsigned_int,
-    arts_get_min_db_unsigned_int, arts_add_db_unsigned_int,
-    arts_xor_db_uint64};
+arts_lc_sync_function_t lc_sync_function[] = {arts_memcpy_gpu_db,
+                                              arts_get_latest_gpu_db,
+                                              arts_get_random_gpu_db,
+                                              arts_get_non_zeros_unsigned_int,
+                                              arts_get_min_db_unsigned_int,
+                                              arts_add_db_unsigned_int,
+                                              arts_xor_db_uint64};
 
 arts_lc_sync_function_gpu_t lc_sync_function_gpu[] = {
-    arts_copy_gpu_db,           arts_copy_gpu_db,
-    arts_copy_gpu_db,           arts_non_zero_gpu_db_unsigned_int,
-    arts_min_gpu_db_unsigned_int, arts_add_gpu_db_unsigned_int,
+    arts_copy_gpu_db,
+    arts_copy_gpu_db,
+    arts_copy_gpu_db,
+    arts_non_zero_gpu_db_unsigned_int,
+    arts_min_gpu_db_unsigned_int,
+    arts_add_gpu_db_unsigned_int,
     arts_xor_gpu_db_uint64};
 
-unsigned int lc_sync_element_size[] = {sizeof(unsigned int), sizeof(unsigned int),
-                                    sizeof(unsigned int), sizeof(unsigned int),
-                                    sizeof(unsigned int), sizeof(unsigned int),
-                                    sizeof(uint64_t)};
+unsigned int lc_sync_element_size[] = {
+    sizeof(unsigned int), sizeof(unsigned int), sizeof(unsigned int),
+    sizeof(unsigned int), sizeof(unsigned int), sizeof(unsigned int),
+    sizeof(uint64_t)};
 
 void internal_lc_sync_gpu(arts_guid_t acq_guid, struct arts_db_s *db) {
   if (db) {
@@ -587,20 +602,22 @@ void internal_lc_sync_gpu(arts_guid_t acq_guid, struct arts_db_s *db) {
 
     bool copy_only = false;
     unsigned int size = db->header.size;
-    struct arts_db_s *temp_space = (struct arts_db_s *)arts_malloc_align(size, 16);
+    struct arts_db_s *temp_space =
+        (struct arts_db_s *)arts_malloc_align(size, 16);
 
     gpu_gc_write_lock(); // Don't let the gc take our copies...
     ARTS_DEBUG("FUNCTION: %u\n", arts_node_info.gpu_lc_sync);
     unsigned int rem_mask = gpu_lc_reduce(
-        acq_guid, db, lc_sync_function_gpu[arts_node_info.gpu_lc_sync], &copy_only);
+        acq_guid, db, lc_sync_function_gpu[arts_node_info.gpu_lc_sync],
+        &copy_only);
     ARTS_DEBUG("RemMask: %u\n", rem_mask);
     for (unsigned int i = 0; i < arts_node_info.gpu; i++) {
       if (rem_mask & (1 << i)) {
         ARTS_DEBUG("Merging: %u\n", i);
         unsigned int gpu_version;
         unsigned int time_stamp;
-        void *data_ptr = arts_gpu_route_table_lookup_db_res(acq_guid, (int)i, &gpu_version,
-                                                     &time_stamp, false);
+        void *data_ptr = arts_gpu_route_table_lookup_db_res(
+            acq_guid, (int)i, &gpu_version, &time_stamp, false);
         if (data_ptr) {
           if (!copy_only) {
             arts_gpu_invalidate_on_route_table(acq_guid, i);
@@ -626,7 +643,8 @@ void internal_lc_sync_gpu(arts_guid_t acq_guid, struct arts_db_s *db) {
             lc_sync_function[arts_node_info.gpu_lc_sync](&host, &dev);
           }
 
-          ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_GPU_SYNC, ARTS_METRIC_THREAD, 1);
+          ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_GPU_SYNC, ARTS_METRIC_THREAD,
+                                     1);
         }
       } else {
         ARTS_DEBUG("NO DB COPY ON GPU %d\n", i);
@@ -640,7 +658,8 @@ void internal_lc_sync_gpu(arts_guid_t acq_guid, struct arts_db_s *db) {
 
 void internal_lc_sync_cpu(arts_guid_t acq_guid, struct arts_db_s *db) {
 
-  // struct arts_db_s * db = (struct arts_db_s*) arts_route_table_lookup_item(acq_guid);
+  // struct arts_db_s * db = (struct arts_db_s*)
+  // arts_route_table_lookup_item(acq_guid);
   if (db) {
     arts_lc_meta_t host;
     arts_lc_meta_t dev;
@@ -658,15 +677,16 @@ void internal_lc_sync_cpu(arts_guid_t acq_guid, struct arts_db_s *db) {
     // arts_cuda_set_device(-1, true);
 
     unsigned int size = db->header.size;
-    struct arts_db_s *temp_space = (struct arts_db_s *)arts_malloc_align(size, 16);
+    struct arts_db_s *temp_space =
+        (struct arts_db_s *)arts_malloc_align(size, 16);
     gpu_gc_write_lock(); // Don't let the gc take our copies...
     for (unsigned int i = 0; i < arts_node_info.gpu; i++) {
       unsigned int gpu_version;
       unsigned int time_stamp;
       ARTS_DEBUG("acq_guid: %lu type: %u i: %u\n", acq_guid,
                  arts_guid_get_type(acq_guid), i);
-      void *data_ptr =
-          arts_gpu_route_table_lookup_db(acq_guid, (int)i, &gpu_version, &time_stamp);
+      void *data_ptr = arts_gpu_route_table_lookup_db(
+          acq_guid, (int)i, &gpu_version, &time_stamp);
       if (data_ptr) {
         ARTS_DEBUG("i: %u %lu\n", i, acq_guid);
         arts_gpu_invalidate_on_route_table(acq_guid, i);

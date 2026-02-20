@@ -53,7 +53,8 @@ typedef struct {
 } arts_edge_vector_t;
 
 void init_edge_vector(arts_edge_vector_t *v, graph_sz_t initial_size);
-void push_back_edge(arts_edge_vector_t *v, vertex_t s, vertex_t t, edge_data_t d);
+void push_back_edge(arts_edge_vector_t *v, vertex_t s, vertex_t t,
+                    edge_data_t d);
 void free_edge_vector(arts_edge_vector_t *v);
 void sort_by_source(arts_edge_vector_t *v);
 void sort_by_source_and_target(arts_edge_vector_t *v);

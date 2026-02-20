@@ -68,17 +68,17 @@ extern "C" {
 #endif
 
 void launch2_kernel_edt(arts_edt_t fun_ptr, unsigned int tile_size,
-                      unsigned int total_size, double scalar,
-                      arts_guid_range_t *a_guid, arts_guid_range_t *b_guid);
+                        unsigned int total_size, double scalar,
+                        arts_guid_range_t *a_guid, arts_guid_range_t *b_guid);
 void launch3_kernel_edt(arts_edt_t fun_ptr, unsigned int tile_size,
-                      unsigned int total_size, double scalar,
-                      arts_guid_range_t *a_guid, arts_guid_range_t *b_guid,
-                      arts_guid_range_t *c_guid);
+                        unsigned int total_size, double scalar,
+                        arts_guid_range_t *a_guid, arts_guid_range_t *b_guid,
+                        arts_guid_range_t *c_guid);
 
 int checktick();
 double mysecond();
 void check_strea_mresults(unsigned int tile_size, unsigned int total_size,
-                        double **a_tiles, double **b_tiles, double **c_tiles);
+                          double **a_tiles, double **b_tiles, double **c_tiles);
 
 #ifdef __cplusplus
 }

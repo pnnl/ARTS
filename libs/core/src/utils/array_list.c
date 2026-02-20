@@ -44,8 +44,8 @@
 #include "arts/utils/malloc.h"
 
 arts_array_list_element_t *arts_new_array_list_element(uint64_t start,
-                                              size_t element_size,
-                                              size_t array_length) {
+                                                       size_t element_size,
+                                                       size_t array_length) {
   arts_array_list_element_t *ret = (arts_array_list_element_t *)arts_malloc(
       sizeof(arts_array_list_element_t) + (element_size * array_length));
   ret->start = start;
@@ -54,8 +54,10 @@ arts_array_list_element_t *arts_new_array_list_element(uint64_t start,
   return ret;
 }
 
-arts_array_list_t *arts_new_array_list(size_t element_size, size_t array_length) {
-  arts_array_list_t *ret = (arts_array_list_t *)arts_malloc(sizeof(arts_array_list_t));
+arts_array_list_t *arts_new_array_list(size_t element_size,
+                                       size_t array_length) {
+  arts_array_list_t *ret =
+      (arts_array_list_t *)arts_malloc(sizeof(arts_array_list_t));
   ret->element_size = element_size;
   ret->array_length = array_length;
   ret->head = ret->current =
@@ -81,15 +83,15 @@ uint64_t arts_push_to_array_list(arts_array_list_t *a_list, void *element) {
   uint64_t index = a_list->index;
   if (!(a_list->index % a_list->array_length) && a_list->index) {
     if (!a_list->current->next) {
-      a_list->current->next =
-          arts_new_array_list_element(a_list->current->start + a_list->array_length,
-                                  a_list->element_size, a_list->array_length);
-}
+      a_list->current->next = arts_new_array_list_element(
+          a_list->current->start + a_list->array_length, a_list->element_size,
+          a_list->array_length);
+    }
     a_list->current = a_list->current->next;
   }
   uint64_t offset = a_list->index - a_list->current->start;
-  void *ptr =
-      (void *)((char *)a_list->current->array + (offset * a_list->element_size));
+  void *ptr = (void *)((char *)a_list->current->array +
+                       (offset * a_list->element_size));
   memcpy(ptr, element, a_list->element_size);
   a_list->index++;
   return index;
@@ -99,15 +101,15 @@ void *arts_next_free_from_array_list(arts_array_list_t *a_list) {
   uint64_t index = a_list->index;
   if (!(a_list->index % a_list->array_length) && a_list->index) {
     if (!a_list->current->next) {
-      a_list->current->next =
-          arts_new_array_list_element(a_list->current->start + a_list->array_length,
-                                  a_list->element_size, a_list->array_length);
-}
+      a_list->current->next = arts_new_array_list_element(
+          a_list->current->start + a_list->array_length, a_list->element_size,
+          a_list->array_length);
+    }
     a_list->current = a_list->current->next;
   }
   uint64_t offset = a_list->index - a_list->current->start;
-  void *ptr =
-      (void *)((char *)a_list->current->array + (offset * a_list->element_size));
+  void *ptr = (void *)((char *)a_list->current->array +
+                       (offset * a_list->element_size));
   a_list->index++;
   return ptr;
 }
@@ -119,22 +121,24 @@ void arts_reset_array_list(arts_array_list_t *a_list) {
   a_list->lastRequestPtr = a_list->head->array;
 }
 
-uint64_t arts_length_array_list(arts_array_list_t *a_list) { return a_list->index; }
+uint64_t arts_length_array_list(arts_array_list_t *a_list) {
+  return a_list->index;
+}
 
 void *arts_get_from_array_list(arts_array_list_t *a_list, uint64_t index) {
   if (a_list) {
     // Fastest Path
     if (index == a_list->lastRequest) {
       return a_list->lastRequestPtr;
-}
+    }
 
     if (index < a_list->index) {
       a_list->lastRequest = index;
 
       // Faster Path
       if (a_list->index < a_list->array_length) {
-        a_list->lastRequestPtr =
-            (void *)((char *)a_list->head->array + (index * a_list->element_size));
+        a_list->lastRequestPtr = (void *)((char *)a_list->head->array +
+                                          (index * a_list->element_size));
         return a_list->lastRequestPtr;
       }
 
@@ -142,7 +146,7 @@ void *arts_get_from_array_list(arts_array_list_t *a_list, uint64_t index) {
       arts_array_list_element_t *node = a_list->head;
       while (node && index >= node->start + a_list->array_length) {
         node = node->next;
-}
+      }
       if (node) {
         uint64_t offset = index - node->start;
         a_list->lastRequestPtr =
@@ -154,9 +158,10 @@ void *arts_get_from_array_list(arts_array_list_t *a_list, uint64_t index) {
   return NULL;
 }
 
-arts_array_list_iterator_t *arts_new_array_list_iterator(arts_array_list_t *a_list) {
-  arts_array_list_iterator_t *iter =
-      (arts_array_list_iterator_t *)arts_malloc(sizeof(arts_array_list_iterator_t));
+arts_array_list_iterator_t *
+arts_new_array_list_iterator(arts_array_list_t *a_list) {
+  arts_array_list_iterator_t *iter = (arts_array_list_iterator_t *)arts_malloc(
+      sizeof(arts_array_list_iterator_t));
   iter->index = 0;
   iter->last = a_list->index;
   iter->element_size = a_list->element_size;
@@ -173,9 +178,9 @@ void *arts_array_list_next(arts_array_list_iterator_t *iter) {
         iter->current = iter->current->next;
       }
       if (iter->current) {
-        ret =
-            (void *)((char *)iter->current->array +
-                     ((iter->index - iter->current->start) * iter->element_size));
+        ret = (void *)((char *)iter->current->array +
+                       ((iter->index - iter->current->start) *
+                        iter->element_size));
         iter->index++;
       }
     }

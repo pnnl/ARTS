@@ -36,16 +36,17 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include "arts/runtime/memory/array_db.h"
 #include "arts/gas/route_table.h"
-#include "arts/utils/malloc.h"
+#include "arts/runtime/memory/array_db.h"
 #include "arts/system/arts_print.h"
+#include "arts/utils/malloc.h"
 
-void arts_out_of_order_atomic_add_in_array_db(arts_guid_t db_guid, unsigned int index,
-                                      unsigned int to_add, arts_guid_t edt_guid,
-                                      unsigned int slot, arts_guid_t epoch_guid) {
-  struct oo_atomic_add_in_array_db_s *req = (struct oo_atomic_add_in_array_db_s *)arts_malloc(
-      sizeof(struct oo_atomic_add_in_array_db_s));
+void arts_out_of_order_atomic_add_in_array_db(
+    arts_guid_t db_guid, unsigned int index, unsigned int to_add,
+    arts_guid_t edt_guid, unsigned int slot, arts_guid_t epoch_guid) {
+  struct oo_atomic_add_in_array_db_s *req =
+      (struct oo_atomic_add_in_array_db_s *)arts_malloc(
+          sizeof(struct oo_atomic_add_in_array_db_s));
   req->type = OO_ATOMIC_ADD_IN_ARRAY_DB;
   req->edt_guid = edt_guid;
   req->db_guid = db_guid;
@@ -57,7 +58,7 @@ void arts_out_of_order_atomic_add_in_array_db(arts_guid_t db_guid, unsigned int 
   if (!res) {
     ARTS_INFO("edt_guid OO2: %lu", req->edt_guid);
     internal_atomic_add_in_array_db(req->db_guid, req->index, req->to_add,
-                               req->edt_guid, req->slot, req->epoch_guid);
+                                    req->edt_guid, req->slot, req->epoch_guid);
     arts_free(req);
   }
 }

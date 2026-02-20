@@ -50,7 +50,7 @@ void check(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       if (guid[j] == depv[i].guid) {
         unsigned int *data = (unsigned int *)depv[i].ptr;
         arts_printf("j: %u %lu: %u from %u\n", j, depv[i].guid, *data,
-               arts_guid_get_rank(depv[i].guid));
+                    arts_guid_get_rank(depv[i].guid));
       }
     }
   }
@@ -58,7 +58,7 @@ void check(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 void shut_down_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                 arts_edt_dep_t depv[]) {
+                   arts_edt_dep_t depv[]) {
   (void)depc;
   (void)depv;
   (void)paramc;
@@ -75,14 +75,14 @@ void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   if (node_id == 0) {
     // Local to local
-    unsigned int *a_ptr =
-        (unsigned int *)arts_db_create_with_guid(guid[0], sizeof(unsigned int), NULL);
+    unsigned int *a_ptr = (unsigned int *)arts_db_create_with_guid(
+        guid[0], sizeof(unsigned int), NULL);
     *a_ptr = 1;
     arts_db_move(guid[0], 0);
 
     // Local to remote
-    unsigned int *a_ptr2 =
-        (unsigned int *)arts_db_create_with_guid(guid[1], sizeof(unsigned int), NULL);
+    unsigned int *a_ptr2 = (unsigned int *)arts_db_create_with_guid(
+        guid[1], sizeof(unsigned int), NULL);
     *a_ptr2 = 2;
     arts_db_move(guid[1], 1);
 
@@ -94,17 +94,18 @@ void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 
   if (node_id == 1) {
-    unsigned int *b_ptr =
-        (unsigned int *)arts_db_create_with_guid(guid[2], sizeof(unsigned int), NULL);
+    unsigned int *b_ptr = (unsigned int *)arts_db_create_with_guid(
+        guid[2], sizeof(unsigned int), NULL);
     *b_ptr = 3;
 
-    unsigned int *c_ptr =
-        (unsigned int *)arts_db_create_with_guid(guid[3], sizeof(unsigned int), NULL);
+    unsigned int *c_ptr = (unsigned int *)arts_db_create_with_guid(
+        guid[3], sizeof(unsigned int), NULL);
     *c_ptr = 4;
   }
 
   if (node_id == 0) {
-    arts_guid_t edt_guid = arts_edt_create(check, 0, NULL, 2, &(arts_hint_t){.route = node_id});
+    arts_guid_t edt_guid =
+        arts_edt_create(check, 0, NULL, 2, &(arts_hint_t){.route = node_id});
     arts_signal_edt(edt_guid, 0, guid[0], ARTS_DB_WRITE);
     arts_signal_edt(edt_guid, 1, guid[2], ARTS_DB_WRITE);
 
@@ -112,12 +113,14 @@ void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 
   if (node_id == 1) {
-    arts_guid_t edt_guid = arts_edt_create(check, 0, NULL, 1, &(arts_hint_t){.route = node_id});
+    arts_guid_t edt_guid =
+        arts_edt_create(check, 0, NULL, 1, &(arts_hint_t){.route = node_id});
     arts_signal_edt(edt_guid, 0, guid[1], ARTS_DB_WRITE);
   }
 
   if (node_id == 2) {
-    arts_guid_t edt_guid = arts_edt_create(check, 0, NULL, 1, &(arts_hint_t){.route = node_id});
+    arts_guid_t edt_guid =
+        arts_edt_create(check, 0, NULL, 1, &(arts_hint_t){.route = node_id});
     arts_signal_edt(edt_guid, 0, guid[3], ARTS_DB_WRITE);
   }
 }

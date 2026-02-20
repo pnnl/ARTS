@@ -38,8 +38,8 @@
 ******************************************************************************/
 #include "arts/introspection/arts_id_counter.h"
 #include "arts.h"
-#include "arts/introspection/counter.h"
 #include "arts/introspection/Preamble.h"
+#include "arts/introspection/counter.h"
 #include "arts/runtime/globals.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -62,8 +62,9 @@ static inline uint64_t arts_get_time_ns() {
 }
 
 // Find or create slot in hash table using linear probing
-static inline arts_id_metrics_t *
-arts_id_find_slot(arts_id_metrics_t *table, uint64_t arts_id, uint64_t *collisions) {
+static inline arts_id_metrics_t *arts_id_find_slot(arts_id_metrics_t *table,
+                                                   uint64_t arts_id,
+                                                   uint64_t *collisions) {
   uint32_t idx = arts_id_hash(arts_id);
   uint32_t start_idx = idx;
 
@@ -72,8 +73,9 @@ arts_id_find_slot(arts_id_metrics_t *table, uint64_t arts_id, uint64_t *collisio
     idx = (idx + 1) & (ARTS_ID_HASH_SIZE - 1);
     if (idx == start_idx) {
       // Hash table full - critical error
-      (void)fprintf(stderr,
-              "WARNING: arts_id hash table full! Increase ARTS_ID_HASH_SIZE\n");
+      (void)fprintf(
+          stderr,
+          "WARNING: arts_id hash table full! Increase ARTS_ID_HASH_SIZE\n");
       return NULL;
     }
     (*collisions)++;
@@ -91,13 +93,14 @@ arts_id_find_slot(arts_id_metrics_t *table, uint64_t arts_id, uint64_t *collisio
 
 // Record EDT execution metrics (aggregate mode)
 void arts_id_record_edt_metrics(uint64_t arts_id, uint64_t exec_ns,
-                            uint64_t stall_ns, arts_id_hash_table_t *hash_table) {
+                                uint64_t stall_ns,
+                                arts_id_hash_table_t *hash_table) {
   if (arts_id == 0) {
     return; // Skip if no arts_id set
-}
+  }
 
   arts_id_metrics_t *slot = arts_id_find_slot(hash_table->edt_metrics, arts_id,
-                                       &hash_table->edt_collisions);
+                                              &hash_table->edt_collisions);
 
   if (slot) {
     // Use atomic operations for thread safety (in case of shared access)
@@ -109,15 +112,15 @@ void arts_id_record_edt_metrics(uint64_t arts_id, uint64_t exec_ns,
 
 // Record DB access metrics (aggregate mode)
 void arts_id_record_db_metrics(uint64_t arts_id, uint64_t bytes_local,
-                           uint64_t bytes_remote, uint64_t cache_misses,
-                           arts_id_hash_table_t *hash_table) {
+                               uint64_t bytes_remote, uint64_t cache_misses,
+                               arts_id_hash_table_t *hash_table) {
   // Skip if no arts_id set
   if (arts_id == 0) {
     return;
-}
+  }
 
   arts_id_metrics_t *slot = arts_id_find_slot(hash_table->db_metrics, arts_id,
-                                       &hash_table->db_collisions);
+                                              &hash_table->db_collisions);
 
   if (slot) {
     __sync_fetch_and_add(&slot->invocations, 1);
@@ -129,45 +132,47 @@ void arts_id_record_db_metrics(uint64_t arts_id, uint64_t bytes_local,
 
 // Capture individual EDT execution (detailed mode)
 void arts_id_capture_edt_execution(uint64_t arts_id, uint64_t exec_ns,
-                               uint64_t stall_ns, arts_array_list_t *captures) {
+                                   uint64_t stall_ns,
+                                   arts_array_list_t *captures) {
   // Skip if no arts_id set
   if (arts_id == 0) {
     return;
-}
+  }
 
   // Safety check
   if (captures == NULL) {
     return;
-}
+  }
 
   arts_id_edt_capture_t capture = {.arts_id = arts_id,
-                              .timestamp_ns = arts_get_time_ns(),
-                              .exec_ns = exec_ns,
-                              .stall_ns = stall_ns,
-                              .node = arts_get_current_node(),
-                              .thread = arts_thread_info.thread_id};
+                                   .timestamp_ns = arts_get_time_ns(),
+                                   .exec_ns = exec_ns,
+                                   .stall_ns = stall_ns,
+                                   .node = arts_get_current_node(),
+                                   .thread = arts_thread_info.thread_id};
 
   arts_push_to_array_list(captures, &capture);
 }
 
 // Capture individual DB access (detailed mode)
 void arts_id_capture_db_access(uint64_t arts_id, uint64_t bytes_accessed,
-                           uint8_t access_type, arts_array_list_t *captures) {
+                               uint8_t access_type,
+                               arts_array_list_t *captures) {
 
   // Skip if no arts_id set
   if (arts_id == 0) {
     return;
-}
+  }
   // Safety check
   if (captures == NULL) {
     return;
-}
+  }
 
   arts_id_db_capture_t capture = {.arts_id = arts_id,
-                             .timestamp_ns = arts_get_time_ns(),
-                             .bytes_accessed = bytes_accessed,
-                             .node = arts_get_current_node(),
-                             .access_type = access_type};
+                                  .timestamp_ns = arts_get_time_ns(),
+                                  .bytes_accessed = bytes_accessed,
+                                  .node = arts_get_current_node(),
+                                  .access_type = access_type};
 
   arts_push_to_array_list(captures, &capture);
 }
@@ -176,22 +181,23 @@ void arts_id_capture_db_access(uint64_t arts_id, uint64_t bytes_accessed,
 void arts_id_init_hash_table(arts_id_hash_table_t *table) {
   if (!table) {
     return;
-}
+  }
   memset(table, 0, sizeof(arts_id_hash_table_t));
 }
 
 // Reduce (merge) src hash table into dest hash table
 // Used for NODE mode reduction across threads
-void arts_id_reduce_hash_tables(arts_id_hash_table_t *dest, const arts_id_hash_table_t *src) {
+void arts_id_reduce_hash_tables(arts_id_hash_table_t *dest,
+                                const arts_id_hash_table_t *src) {
   if (!dest || !src) {
     return;
-}
+  }
 
   // Merge EDT metrics
   for (uint32_t i = 0; i < ARTS_ID_HASH_SIZE; i++) {
     if (!src->edt_metrics[i].valid) {
       continue;
-}
+    }
 
     uint64_t arts_id = src->edt_metrics[i].arts_id;
     arts_id_metrics_t *dest_slot =
@@ -210,7 +216,7 @@ void arts_id_reduce_hash_tables(arts_id_hash_table_t *dest, const arts_id_hash_t
   for (uint32_t i = 0; i < ARTS_ID_HASH_SIZE; i++) {
     if (!src->db_metrics[i].valid) {
       continue;
-}
+    }
 
     uint64_t arts_id = src->db_metrics[i].arts_id;
     arts_id_metrics_t *dest_slot =

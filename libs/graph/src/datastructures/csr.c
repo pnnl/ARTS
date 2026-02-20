@@ -42,12 +42,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "arts.h"
 #include "arts/csr.h"
 #include "arts/edge_vector.h"
-#include "arts.h"
-#include "arts/utils/malloc.h"
 #include "arts/gas/route_table.h"
 #include "arts/system/arts_print.h"
+#include "arts/utils/malloc.h"
 
 vertex_t *get_row_ptr(csr_graph_t *csr) { return (vertex_t *)(csr + 1); }
 
@@ -56,9 +56,9 @@ vertex_t *get_col_ptr(csr_graph_t *csr) {
 }
 
 csr_graph_t *init_csr(partition_t part_index, graph_sz_t localv,
-                     graph_sz_t locale, arts_block_dist_t *dist,
-                     arts_edge_vector_t *edges, bool sorted_by_src,
-                     arts_guid_t block_guid) {
+                      graph_sz_t locale, arts_block_dist_t *dist,
+                      arts_edge_vector_t *edges, bool sorted_by_src,
+                      arts_guid_t block_guid) {
   // TODO: what will happen if partition does not have any vertex??
   csr_graph_t *csr = NULL;
   if (arts_guid_is_local(block_guid)) {
@@ -79,15 +79,15 @@ csr_graph_t *init_csr(partition_t part_index, graph_sz_t localv,
 
     for (uint64_t i = 0; i <= localv; ++i) {
       row_indices[i] = 0;
-}
+    }
 
     for (uint64_t i = 0; i < locale; ++i) {
       columns[i] = 0;
-}
+    }
 
     if (!sorted_by_src) {
       sort_by_source(edges);
-}
+    }
 
     vertex_t last_src = edges->edge_array[0].source;
     vertex_t t = edges->edge_array[0].target;
@@ -116,7 +116,7 @@ csr_graph_t *init_csr(partition_t part_index, graph_sz_t localv,
         assert(last_src_ind <= src_ind);
         while (last_src_ind != src_ind) {
           row_indices[++last_src_ind] = val;
-}
+        }
 
         // new source
         // assert(csr->row_indices[src_ind] == i);
@@ -137,7 +137,7 @@ csr_graph_t *init_csr(partition_t part_index, graph_sz_t localv,
     assert(last_src_ind <= localv);
     while (last_src_ind < localv) {
       row_indices[++last_src_ind] = val;
-}
+    }
   }
   return csr;
 }
@@ -168,7 +168,8 @@ vertex_t partition_end_csr(const csr_graph_t *const part) {
   return index_end_csr(part->index, part);
 }
 
-vertex_t get_vertex_from_local_csr(local_index_t u, const csr_graph_t *const part) {
+vertex_t get_vertex_from_local_csr(local_index_t u,
+                                   const csr_graph_t *const part) {
   vertex_t v = partition_start_csr(part);
   return (v + u);
 }
@@ -183,8 +184,7 @@ void print_csr(csr_graph_t *csr) {
   ARTS_INFO("=============================================");
   ARTS_INFO("[INFO] Number of local vertices : %" PRIu64 "",
             csr->num_local_vertices);
-  ARTS_INFO("[INFO] Number of local edges : %" PRIu64 "",
-            csr->num_local_edges);
+  ARTS_INFO("[INFO] Number of local edges : %" PRIu64 "", csr->num_local_edges);
 
   vertex_t *row_indices = get_row_ptr(csr);
   vertex_t *columns = get_col_ptr(csr);
@@ -195,7 +195,7 @@ void print_csr(csr_graph_t *csr) {
   for (i = 0; i < csr->num_local_vertices; ++i) {
     if (nedges == csr->num_local_edges) {
       break;
-}
+    }
 
     vertex_t v = get_vertex_from_local_csr(i, csr);
 
@@ -209,7 +209,7 @@ void print_csr(csr_graph_t *csr) {
 }
 
 void get_neighbors(csr_graph_t *csr, vertex_t v, vertex_t **out,
-                  graph_sz_t *neighborcount) {
+                   graph_sz_t *neighborcount) {
   vertex_t *row_indices = get_row_ptr(csr);
   vertex_t *columns = get_col_ptr(csr);
   // get the local index for the vertex
@@ -222,7 +222,8 @@ void get_neighbors(csr_graph_t *csr, vertex_t v, vertex_t **out,
   (*neighborcount) = (end - start);
 }
 
-int load_graph_using_cmd_line_args(arts_block_dist_t *dist, int argc, char **argv) {
+int load_graph_using_cmd_line_args(arts_block_dist_t *dist, int argc,
+                                   char **argv) {
   bool flip = false;
   bool keep_self_loops = false;
   bool csr_format = false;
@@ -231,16 +232,16 @@ int load_graph_using_cmd_line_args(arts_block_dist_t *dist, int argc, char **arg
   for (int i = 0; i < argc; ++i) {
     if (strcmp("--file", argv[i]) == 0) {
       file = argv[i + 1];
-}
+    }
     if (strcmp("--flip", argv[i]) == 0) {
       flip = true;
-}
+    }
     if (strcmp("--keep-self-loops", argv[i]) == 0) {
       keep_self_loops = true;
-}
+    }
     if (strcmp("--csr-format", argv[i]) == 0) {
       csr_format = true;
-}
+    }
   }
 
   ARTS_INFO("[INFO] Initializing GraphDB with following parameters ...");
@@ -255,8 +256,8 @@ int load_graph_using_cmd_line_args(arts_block_dist_t *dist, int argc, char **arg
 }
 
 // If we want to read the graph as an undirected graph set flip = True
-int load_graph_no_weight(const char *file_path, arts_block_dist_t *dist, bool flip,
-                      bool ignore_self_loops) {
+int load_graph_no_weight(const char *file_path, arts_block_dist_t *dist,
+                         bool flip, bool ignore_self_loops) {
   if (file_path == NULL) {
     ARTS_INFO("[ERROR] File path is NULL");
     return -1;
@@ -274,11 +275,13 @@ int load_graph_no_weight(const char *file_path, arts_block_dist_t *dist, bool fl
   for (unsigned int i = 0; i < dist->num_blocks; i++) {
     if (arts_guid_is_local(get_guid_for_partition_distr(dist, i))) {
       num_local_parts++;
-}
+    }
   }
 
-  part_index = (unsigned int *)arts_calloc(num_local_parts, sizeof(unsigned int));
-  vedges = (arts_edge_vector_t *)arts_calloc(num_local_parts, sizeof(arts_edge_vector_t));
+  part_index =
+      (unsigned int *)arts_calloc(num_local_parts, sizeof(unsigned int));
+  vedges = (arts_edge_vector_t *)arts_calloc(num_local_parts,
+                                             sizeof(arts_edge_vector_t));
 
   unsigned int j = 0;
   for (unsigned int i = 0; i < dist->num_blocks; i++) {
@@ -298,7 +301,7 @@ int load_graph_no_weight(const char *file_path, arts_block_dist_t *dist, bool fl
     }
     if (str[0] == '#') {
       continue;
-}
+    }
     if (ignore_first) {
       ignore_first = false;
       continue;
@@ -327,7 +330,7 @@ int load_graph_no_weight(const char *file_path, arts_block_dist_t *dist, bool fl
 
     if (ignore_self_loops && (src == target)) {
       continue;
-}
+    }
 
     // TODO weights
     // source belongs to current node
@@ -335,8 +338,10 @@ int load_graph_no_weight(const char *file_path, arts_block_dist_t *dist, bool fl
     for (unsigned int k = 0; k < num_local_parts; k++) {
       if (owner == part_index[k]) {
         // ARTS_INFO("src = %lu owner = %u start = %lu end = %lu", src, owner,
-        // partition_start_distr(owner, dist), partition_end_distr(owner, dist));
-        push_back_edge(&vedges[k], src, target, 0 /*weight zeor for the moment*/);
+        // partition_start_distr(owner, dist), partition_end_distr(owner,
+        // dist));
+        push_back_edge(&vedges[k], src, target,
+                       0 /*weight zeor for the moment*/);
       }
       /*else {
           printf("src = %" PRIu64 ", owner = %d, global rank : %d", src,
@@ -351,8 +356,8 @@ int load_graph_no_weight(const char *file_path, arts_block_dist_t *dist, bool fl
       for (unsigned int k = 0; k < num_local_parts; k++) {
         if (owner == part_index[k]) {
           push_back_edge(&vedges[k], target, src,
-                       0 /*weight zeor for the moment*/);
-}
+                         0 /*weight zeor for the moment*/);
+        }
       }
     }
   }
@@ -366,8 +371,8 @@ int load_graph_no_weight(const char *file_path, arts_block_dist_t *dist, bool fl
     // vedges[k].used: %lu ", get_block_size_for_partition(part_index[k], dist),
     // vedges[k].used);
     init_csr(part_index[k], get_block_size_for_partition(part_index[k], dist),
-            vedges[k].used, dist, &vedges[k], true,
-            dist->graphGuid[part_index[k]]);
+             vedges[k].used, dist, &vedges[k], true,
+             dist->graphGuid[part_index[k]]);
 
     free_edge_vector(&vedges[k]);
   }
@@ -375,7 +380,7 @@ int load_graph_no_weight(const char *file_path, arts_block_dist_t *dist, bool fl
 }
 
 int load_graph_no_weight_csr(const char *file_path, arts_block_dist_t *dist,
-                         bool flip, bool ignore_self_loops) {
+                             bool flip, bool ignore_self_loops) {
   (void)flip;
   if (file_path == NULL) {
     ARTS_INFO("[ERROR] File path is NULL");
@@ -397,11 +402,13 @@ int load_graph_no_weight_csr(const char *file_path, arts_block_dist_t *dist,
   for (unsigned int i = 0; i < dist->num_blocks; i++) {
     if (arts_guid_is_local(get_guid_for_partition_distr(dist, i))) {
       num_local_parts++;
-}
+    }
   }
 
-  part_index = (unsigned int *)arts_calloc(num_local_parts, sizeof(unsigned int));
-  vedges = (arts_edge_vector_t *)arts_calloc(num_local_parts, sizeof(arts_edge_vector_t));
+  part_index =
+      (unsigned int *)arts_calloc(num_local_parts, sizeof(unsigned int));
+  vedges = (arts_edge_vector_t *)arts_calloc(num_local_parts,
+                                             sizeof(arts_edge_vector_t));
 
   unsigned int j = 0;
   for (unsigned int i = 0; i < dist->num_blocks; i++) {
@@ -453,7 +460,7 @@ int load_graph_no_weight_csr(const char *file_path, arts_block_dist_t *dist,
       for (unsigned int k = 0; k < num_local_parts; k++) {
         if (owner == part_index[k]) {
           push_back_edge(&vedges[k], src, target,
-                       0 /*weight zeor for the moment*/);
+                         0 /*weight zeor for the moment*/);
           local_edges++;
         }
       }
@@ -481,8 +488,8 @@ int load_graph_no_weight_csr(const char *file_path, arts_block_dist_t *dist,
       sort_by_source(&vedges[k]);
 
       init_csr(part_index[k], get_block_size_for_partition(part_index[k], dist),
-              vedges[k].used, dist, &vedges[k], true,
-              dist->graphGuid[part_index[k]]);
+               vedges[k].used, dist, &vedges[k], true,
+               dist->graphGuid[part_index[k]]);
       free_edge_vector(&vedges[k]);
     }
   } else {
@@ -494,14 +501,15 @@ int load_graph_no_weight_csr(const char *file_path, arts_block_dist_t *dist,
 }
 
 csr_graph_t *get_graph_from_guid(arts_guid_t guid) {
-  struct arts_db_s *db_res = (struct arts_db_s *)arts_route_table_lookup_item(guid);
+  struct arts_db_s *db_res =
+      (struct arts_db_s *)arts_route_table_lookup_item(guid);
   if (arts_guid_is_local(guid) && db_res) {
     return (csr_graph_t *)(db_res + 1);
-}
+  }
   return NULL;
 }
 
 csr_graph_t *get_graph_from_partition(partition_t part_index,
-                                   arts_block_dist_t *dist) {
+                                      arts_block_dist_t *dist) {
   return get_graph_from_guid(dist->graphGuid[part_index]);
 }

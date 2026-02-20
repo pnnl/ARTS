@@ -45,9 +45,9 @@
 #include <string.h>
 
 #include "arts.h"
-#include "arts/utils/malloc.h"
 #include "arts/gas/route_table.h"
 #include "arts/runtime/globals.h"
+#include "arts/utils/malloc.h"
 
 // Constants for memory management
 #define HOT_ACCESS_THRESHOLD 1000 // Number of accesses to consider data "hot"
@@ -57,7 +57,7 @@
 
 // Helper function to calculate access cost based on metrics
 static float calculate_access_cost(const arts_mem_metrics_t *metrics,
-                                 arts_mem_placement_t placement) {
+                                   arts_mem_placement_t placement) {
   float base_cost = 0.0f;
 
   // Base cost based on placement
@@ -96,9 +96,10 @@ static float calculate_access_cost(const arts_mem_metrics_t *metrics,
 
 // Create a new SmartDB with the given size and type
 arts_smart_db_t *arts_smart_db_create(uint64_t size, arts_type_t type,
-                                 arts_smart_db_flags_t flags) {
+                                      arts_smart_db_flags_t flags) {
   SMART_DB_CREATE_COUNTER_START();
-  arts_smart_db_t *smart_db = (arts_smart_db_t *)arts_malloc(sizeof(arts_smart_db_t));
+  arts_smart_db_t *smart_db =
+      (arts_smart_db_t *)arts_malloc(sizeof(arts_smart_db_t));
   if (!smart_db) {
     SMART_DB_CREATE_COUNTER_STOP();
     return NULL;
@@ -157,11 +158,12 @@ arts_smart_db_t *arts_smart_db_create(uint64_t size, arts_type_t type,
 
 // Create a SmartDB with a specific GUID
 arts_smart_db_t *arts_smart_db_create_with_guid(arts_guid_t guid, uint64_t size,
-                                         arts_smart_db_flags_t flags) {
-  arts_smart_db_t *smart_db = (arts_smart_db_t *)arts_malloc(sizeof(arts_smart_db_t));
+                                                arts_smart_db_flags_t flags) {
+  arts_smart_db_t *smart_db =
+      (arts_smart_db_t *)arts_malloc(sizeof(arts_smart_db_t));
   if (!smart_db) {
     return NULL;
-}
+  }
 
   // Initialize core components
   smart_db->db_guid = guid;
@@ -198,7 +200,8 @@ arts_smart_db_t *arts_smart_db_create_with_guid(arts_guid_t guid, uint64_t size,
   }
 
   // Create a persistent event to track readiness
-  smart_db->event_guid = arts_persistent_event_create(arts_global_rank_id, 0, guid);
+  smart_db->event_guid =
+      arts_persistent_event_create(arts_global_rank_id, 0, guid);
   if (smart_db->event_guid == NULL_GUID) {
     arts_db_destroy(guid);
     arts_free(smart_db);
@@ -216,7 +219,7 @@ arts_smart_db_t *arts_smart_db_create_with_guid(arts_guid_t guid, uint64_t size,
 void arts_smart_db_destroy(arts_smart_db_t *smart_db) {
   if (!smart_db) {
     return;
-}
+  }
 
   // Wait for any ongoing migration to complete
   while (smart_db->isMigrating) {
@@ -237,7 +240,7 @@ void arts_smart_db_destroy(arts_smart_db_t *smart_db) {
 void arts_smart_db_add_producer(arts_smart_db_t *smart_db) {
   if (!smart_db) {
     return;
-}
+  }
   smart_db->numProducers++;
   smart_db->latch_count++;
   arts_persistent_event_increment_latch(smart_db->event_guid);
@@ -246,14 +249,14 @@ void arts_smart_db_add_producer(arts_smart_db_t *smart_db) {
 void arts_smart_db_add_consumer(arts_smart_db_t *smart_db) {
   if (!smart_db) {
     return;
-}
+  }
   smart_db->numConsumers++;
 }
 
 void arts_smart_db_producer_complete(arts_smart_db_t *smart_db) {
   if (!smart_db) {
     return;
-}
+  }
   arts_persistent_event_decrement_latch(smart_db->event_guid);
   smart_db->latch_count--;
   smart_db->version++;
@@ -265,7 +268,7 @@ void arts_smart_db_producer_complete(arts_smart_db_t *smart_db) {
 void arts_smart_db_consumer_complete(arts_smart_db_t *smart_db) {
   if (!smart_db) {
     return;
-}
+  }
   // Update metrics for consumer completion
   arts_smart_db_update_metrics(smart_db, smart_db->size, 0);
 }
@@ -273,16 +276,16 @@ void arts_smart_db_consumer_complete(arts_smart_db_t *smart_db) {
 bool arts_smart_db_is_ready(arts_smart_db_t *smart_db) {
   if (!smart_db) {
     return false;
-}
+  }
   return smart_db->isReady && !arts_is_event_fired(smart_db->event_guid);
 }
 
 // Memory sensor operations
-void arts_smart_db_update_metrics(arts_smart_db_t *smart_db, uint64_t access_size,
-                              uint64_t latency) {
+void arts_smart_db_update_metrics(arts_smart_db_t *smart_db,
+                                  uint64_t access_size, uint64_t latency) {
   if (!smart_db) {
     return;
-}
+  }
 
   arts_mem_metrics_t *metrics = &smart_db->metrics;
   uint64_t current_time = arts_get_time_stamp();
@@ -295,8 +298,9 @@ void arts_smart_db_update_metrics(arts_smart_db_t *smart_db, uint64_t access_siz
 
   // Update contention score based on access frequency
   float time_since_last_access =
-      (float)(current_time - metrics->lastAccessTime) / 1e9f; // Convert to seconds
-  if (time_since_last_access < 0.001f) {                 // High frequency access
+      (float)(current_time - metrics->lastAccessTime) /
+      1e9f;                              // Convert to seconds
+  if (time_since_last_access < 0.001f) { // High frequency access
     metrics->contentionScore = fminf(1.0f, metrics->contentionScore + 0.1f);
   } else {
     metrics->contentionScore = fmaxf(0.0f, metrics->contentionScore - 0.05f);
@@ -310,10 +314,10 @@ void arts_smart_db_update_metrics(arts_smart_db_t *smart_db, uint64_t access_siz
 }
 
 void arts_smart_db_set_placement(arts_smart_db_t *smart_db,
-                             arts_mem_placement_t placement) {
+                                 arts_mem_placement_t placement) {
   if (!smart_db || smart_db->isMigrating) {
     return;
-}
+  }
 
   if (placement != smart_db->placement) {
     smart_db->isMigrating = true;
@@ -326,38 +330,39 @@ void arts_smart_db_set_placement(arts_smart_db_t *smart_db,
 arts_mem_placement_t arts_smart_db_get_placement(arts_smart_db_t *smart_db) {
   if (!smart_db) {
     return ARTS_MEM_PLACE_DEFAULT;
-}
+  }
   return smart_db->placement;
 }
 
 void arts_smart_db_set_access_pattern(arts_smart_db_t *smart_db,
-                                 arts_access_pattern_t pattern) {
+                                      arts_access_pattern_t pattern) {
   if (!smart_db) {
     return;
-}
+  }
   smart_db->metrics.pattern = pattern;
   smart_db->accessCost =
       calculate_access_cost(&smart_db->metrics, smart_db->placement);
 }
 
-arts_access_pattern_t arts_smart_db_get_access_pattern(arts_smart_db_t *smart_db) {
+arts_access_pattern_t
+arts_smart_db_get_access_pattern(arts_smart_db_t *smart_db) {
   if (!smart_db) {
     return ARTS_ACCESS_PATTERN_UNKNOWN;
-}
+  }
   return smart_db->metrics.pattern;
 }
 
 float arts_smart_db_get_access_cost(arts_smart_db_t *smart_db) {
   if (!smart_db) {
     return 0.0f;
-}
+  }
   return smart_db->accessCost;
 }
 
 bool arts_smart_db_should_migrate(arts_smart_db_t *smart_db) {
   if (!smart_db || !(smart_db->flags & ARTS_SMART_DB_AUTO_MIGRATE)) {
     return false;
-}
+  }
 
   const arts_mem_metrics_t *metrics = &smart_db->metrics;
 
@@ -366,8 +371,8 @@ bool arts_smart_db_should_migrate(arts_smart_db_t *smart_db) {
   // 2. Current placement is not optimal
   // 3. Migration cost is justified
   bool should_migrate = metrics->isHot &&
-                       metrics->contentionScore > CONTENTION_THRESHOLD &&
-                       smart_db->accessCost > MIGRATION_COST_THRESHOLD;
+                        metrics->contentionScore > CONTENTION_THRESHOLD &&
+                        smart_db->accessCost > MIGRATION_COST_THRESHOLD;
 
   return should_migrate;
 }
@@ -375,7 +380,7 @@ bool arts_smart_db_should_migrate(arts_smart_db_t *smart_db) {
 bool arts_smart_db_should_replicate(arts_smart_db_t *smart_db) {
   if (!smart_db || !(smart_db->flags & ARTS_SMART_DB_REPLICATE)) {
     return false;
-}
+  }
 
   const arts_mem_metrics_t *metrics = &smart_db->metrics;
 
@@ -384,8 +389,8 @@ bool arts_smart_db_should_replicate(arts_smart_db_t *smart_db) {
   // 2. High contention
   // 3. Multiple consumers
   bool should_replicate = metrics->isHot &&
-                         metrics->contentionScore > REPLICATION_THRESHOLD &&
-                         smart_db->numConsumers > 1;
+                          metrics->contentionScore > REPLICATION_THRESHOLD &&
+                          smart_db->numConsumers > 1;
 
   return should_replicate;
 }
@@ -394,11 +399,12 @@ bool arts_smart_db_should_replicate(arts_smart_db_t *smart_db) {
 void *arts_smart_db_get_data(arts_smart_db_t *smart_db) {
   if (!smart_db) {
     return NULL;
-}
+  }
 
   // Update metrics for this access
   uint64_t start_time = arts_get_time_stamp();
-  void *data = arts_db_create_with_guid(smart_db->db_guid, smart_db->size, NULL);
+  void *data =
+      arts_db_create_with_guid(smart_db->db_guid, smart_db->size, NULL);
   uint64_t latency = arts_get_time_stamp() - start_time;
 
   if (data) {
@@ -411,16 +417,18 @@ void *arts_smart_db_get_data(arts_smart_db_t *smart_db) {
   return data;
 }
 
-void arts_smart_db_set_data(arts_smart_db_t *smart_db, void *data, uint64_t size) {
+void arts_smart_db_set_data(arts_smart_db_t *smart_db, void *data,
+                            uint64_t size) {
   if (!smart_db || !data || size > smart_db->size) {
     return;
-}
+  }
 
   // Get the current data pointer
-  void *current_data = arts_db_create_with_guid(smart_db->db_guid, smart_db->size, NULL);
+  void *current_data =
+      arts_db_create_with_guid(smart_db->db_guid, smart_db->size, NULL);
   if (!current_data) {
     return;
-}
+  }
 
   // Copy the new data
   uint64_t start_time = arts_get_time_stamp();
@@ -438,10 +446,10 @@ void arts_smart_db_set_data(arts_smart_db_t *smart_db, void *data, uint64_t size
 }
 
 void arts_smart_db_migrate(arts_smart_db_t *smart_db,
-                        arts_mem_placement_t new_placement) {
+                           arts_mem_placement_t new_placement) {
   if (!smart_db || smart_db->isMigrating) {
     return;
-}
+  }
 
   smart_db->isMigrating = true;
 
@@ -456,11 +464,12 @@ void arts_smart_db_migrate(arts_smart_db_t *smart_db,
   smart_db->isMigrating = false;
 }
 
-void arts_smart_db_replicate(arts_smart_db_t *smart_db, unsigned int num_copies) {
+void arts_smart_db_replicate(arts_smart_db_t *smart_db,
+                             unsigned int num_copies) {
   (void)num_copies;
   if (!smart_db || !(smart_db->flags & ARTS_SMART_DB_REPLICATE)) {
     return;
-}
+  }
 
   // TODO: Implement data replication
   // This would involve:
@@ -470,11 +479,11 @@ void arts_smart_db_replicate(arts_smart_db_t *smart_db, unsigned int num_copies)
 }
 
 // Dependence management
-void arts_smart_db_add_dependence(arts_smart_db_t *smart_db, arts_guid_t edt_guid,
-                              uint32_t slot) {
+void arts_smart_db_add_dependence(arts_smart_db_t *smart_db,
+                                  arts_guid_t edt_guid, uint32_t slot) {
   if (!smart_db || edt_guid == NULL_GUID) {
     return;
-}
+  }
   arts_add_dependence_to_persistent_event(smart_db->event_guid, edt_guid, slot);
 }
 
@@ -482,43 +491,46 @@ void arts_smart_db_add_dependence(arts_smart_db_t *smart_db, arts_guid_t edt_gui
 arts_smart_db_flags_t arts_smart_db_get_flags(arts_smart_db_t *smart_db) {
   if (!smart_db) {
     return ARTS_SMART_DB_NONE;
-}
+  }
   return smart_db->flags;
 }
 
-void arts_smart_db_set_flags(arts_smart_db_t *smart_db, arts_smart_db_flags_t flags) {
+void arts_smart_db_set_flags(arts_smart_db_t *smart_db,
+                             arts_smart_db_flags_t flags) {
   if (!smart_db) {
     return;
-}
+  }
   smart_db->flags = flags;
 }
 
 unsigned int arts_smart_db_get_num_producers(arts_smart_db_t *smart_db) {
   if (!smart_db) {
     return 0;
-}
+  }
   return smart_db->numProducers;
 }
 
 unsigned int arts_smart_db_get_num_consumers(arts_smart_db_t *smart_db) {
   if (!smart_db) {
     return 0;
-}
+  }
   return smart_db->numConsumers;
 }
 
 // Migration API: Move SmartDB to a new node
-void arts_smart_db_migrate_to_node(arts_smart_db_t *smart_db, unsigned int new_node) {
+void arts_smart_db_migrate_to_node(arts_smart_db_t *smart_db,
+                                   unsigned int new_node) {
   if (!smart_db || smart_db->isMigrating || smart_db->homeNode == new_node) {
     return;
-}
+  }
   smart_db->isMigrating = true;
 
   // Quiescence: Prevent concurrent accesses during migration
   // (isMigrating flag is checked in all SmartDB accessors)
 
   // Marshall SmartDB metadata and data
-  size_t msg_size = sizeof(arts_smart_db_migration_msg_t) + smart_db->memRefSize;
+  size_t msg_size =
+      sizeof(arts_smart_db_migration_msg_t) + smart_db->memRefSize;
   char *buffer = (char *)arts_malloc(msg_size);
   arts_smart_db_migration_msg_t *msg = (arts_smart_db_migration_msg_t *)buffer;
   msg->size = smart_db->size;
@@ -538,11 +550,11 @@ void arts_smart_db_migrate_to_node(arts_smart_db_t *smart_db, unsigned int new_n
   if (smart_db->memRef && smart_db->memRefSize > 0) {
     memcpy(buffer + sizeof(arts_smart_db_migration_msg_t), smart_db->memRef,
            smart_db->memRefSize);
-}
+  }
 
   // Send to new node
-  arts_remote_send(new_node, (send_handler_t)arts_smart_db_migration_handler, buffer,
-                 msg_size, true);
+  arts_remote_send(new_node, (send_handler_t)arts_smart_db_migration_handler,
+                   buffer, msg_size, true);
 
   // Update homeNode
   smart_db->homeNode = new_node;
@@ -563,15 +575,16 @@ void arts_smart_db_migrate_to_node(arts_smart_db_t *smart_db, unsigned int new_n
 void arts_smart_db_migration_handler(void *args) {
   if (!args) {
     return;
-}
+  }
   arts_smart_db_migration_msg_t *msg = (arts_smart_db_migration_msg_t *)args;
   void *data_ptr = (void *)(msg + 1);
 
   // Create new SmartDB and DataBlock
-  arts_smart_db_t *smart_db = arts_smart_db_create(msg->size, msg->type, msg->flags);
+  arts_smart_db_t *smart_db =
+      arts_smart_db_create(msg->size, msg->type, msg->flags);
   if (!smart_db) {
     return;
-}
+  }
 
   // Copy metadata
   smart_db->version = msg->version;
@@ -595,7 +608,8 @@ void arts_smart_db_migration_handler(void *args) {
 
   // Update routing table so the SmartDB's GUID points to this node
   // (Assume db_guid is the SmartDB's GUID for now)
-  arts_route_table_add_item(smart_db, smart_db->db_guid, smart_db->homeNode, false);
+  arts_route_table_add_item(smart_db, smart_db->db_guid, smart_db->homeNode,
+                            false);
 
   // Placeholder: Migrate persistent event and update dependents
   // TODO: Implement persistent event migration and update dependents
@@ -608,26 +622,26 @@ void arts_smart_db_migration_handler(void *args) {
 void arts_smart_db_record_access(arts_smart_db_t *smart_db, uint64_t offset) {
   if (!smart_db) {
     return;
-}
+  }
   smart_db->accessOffsets[smart_db->accessHistoryIdx] = offset;
   smart_db->accessHistoryIdx =
       (smart_db->accessHistoryIdx + 1) % ARTS_SMART_DB_ACCESS_HISTORY;
   if (smart_db->accessHistoryCount < ARTS_SMART_DB_ACCESS_HISTORY) {
     smart_db->accessHistoryCount++;
-}
+  }
 }
 
 void arts_smart_db_analyze_access_pattern(arts_smart_db_t *smart_db) {
   if (!smart_db || smart_db->accessHistoryCount < 2) {
     return;
-}
+  }
   int sequential = 0;
   int random = 0;
   int streaming = 0;
   int reuse = 0;
   uint64_t last = smart_db->accessOffsets[(smart_db->accessHistoryIdx +
-                                          ARTS_SMART_DB_ACCESS_HISTORY - 1) %
-                                         ARTS_SMART_DB_ACCESS_HISTORY];
+                                           ARTS_SMART_DB_ACCESS_HISTORY - 1) %
+                                          ARTS_SMART_DB_ACCESS_HISTORY];
   for (unsigned int i = 1; i < smart_db->accessHistoryCount; ++i) {
     unsigned int idx =
         (smart_db->accessHistoryIdx + ARTS_SMART_DB_ACCESS_HISTORY - 1 - i) %
@@ -648,13 +662,14 @@ void arts_smart_db_analyze_access_pattern(arts_smart_db_t *smart_db) {
   // Pick the dominant pattern
   if (sequential > random && sequential > streaming && sequential > reuse) {
     smart_db->metrics.pattern = ARTS_ACCESS_PATTERN_SEQUENTIAL;
-  } else if (streaming > sequential && streaming > random && streaming > reuse) {
+  } else if (streaming > sequential && streaming > random &&
+             streaming > reuse) {
     smart_db->metrics.pattern = ARTS_ACCESS_PATTERN_STREAMING;
   } else if (reuse > sequential && reuse > streaming && reuse > random) {
     smart_db->metrics.pattern = ARTS_ACCESS_PATTERN_REUSE;
   } else {
     smart_db->metrics.pattern = ARTS_ACCESS_PATTERN_RANDOM;
-}
+  }
   // Update access cost
   smart_db->accessCost =
       calculate_access_cost(&smart_db->metrics, smart_db->placement);

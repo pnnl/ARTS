@@ -43,7 +43,7 @@ arts_guid_t edt_guid;
 arts_guid_t db_guid;
 
 void shutdown_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                 arts_edt_dep_t depv[]) {
+                  arts_edt_dep_t depv[]) {
   (void)depc;
   (void)depv;
   (void)paramc;
@@ -52,13 +52,13 @@ void shutdown_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 void acquire_test(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                 arts_edt_dep_t depv[]) {
+                  arts_edt_dep_t depv[]) {
   (void)depc;
   (void)paramc;
   (void)paramv;
   unsigned int *num = (unsigned int *)depv[0].ptr;
-  arts_printf("%u %u i: %u %u\n", arts_get_current_node(), arts_get_current_worker(), 0,
-         *num);
+  arts_printf("%u %u i: %u %u\n", arts_get_current_node(),
+              arts_get_current_worker(), 0, *num);
   arts_signal_edt_value(shutdown_guid, 0, 0);
 }
 
@@ -69,8 +69,8 @@ void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
   unsigned int node_id = (unsigned int)paramv[0];
   if (node_id) {
-    unsigned int *ptr =
-        (unsigned int *)arts_db_create_with_guid(db_guid, sizeof(unsigned int), NULL);
+    unsigned int *ptr = (unsigned int *)arts_db_create_with_guid(
+        db_guid, sizeof(unsigned int), NULL);
     *ptr = 999;
     arts_signal_edt(edt_guid, 0, db_guid, ARTS_DB_WRITE);
   }

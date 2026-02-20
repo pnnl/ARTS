@@ -70,13 +70,13 @@ typedef enum {
 
 // Memory sensor metrics structure
 typedef struct {
-  uint64_t accessCount;        // Number of times data has been accessed
-  uint64_t lastAccessTime;     // Timestamp of last access
-  uint64_t totalAccessLatency; // Cumulative access latency
-  uint64_t totalAccessBytes;   // Total bytes accessed
+  uint64_t accessCount;          // Number of times data has been accessed
+  uint64_t lastAccessTime;       // Timestamp of last access
+  uint64_t totalAccessLatency;   // Cumulative access latency
+  uint64_t totalAccessBytes;     // Total bytes accessed
   arts_access_pattern_t pattern; // Observed access pattern
-  float contentionScore;       // Score indicating memory contention (0-1)
-  bool isHot;                  // Whether data is frequently accessed
+  float contentionScore;         // Score indicating memory contention (0-1)
+  bool isHot;                    // Whether data is frequently accessed
 } arts_mem_metrics_t;
 
 // SmartDB metadata flags
@@ -98,23 +98,23 @@ typedef struct arts_smart_db_s {
   arts_guid_t db_guid;    // GUID of the underlying DataBlock
   arts_guid_t event_guid; // GUID of the persistent event
   // arts_guid_t data_guid;  // GUID for the data being tracked
-  uint64_t size;   // Size of the data
+  uint64_t size;    // Size of the data
   arts_type_t type; // Type of the DataBlock
 
   // Readiness sensor components
   unsigned int numProducers; // Number of producers
   unsigned int numConsumers; // Number of consumers
   unsigned int version;      // Version number for tracking updates
-  unsigned int latch_count;   // Current latch count for readiness
+  unsigned int latch_count;  // Current latch count for readiness
   bool isReady;              // Current readiness state
 
   // Memory sensor components
-  arts_smart_db_flags_t flags;     // Metadata flags
+  arts_smart_db_flags_t flags;    // Metadata flags
   arts_mem_placement_t placement; // Current memory placement
   arts_mem_metrics_t metrics;     // Memory access metrics
-  unsigned int numaNode;        // Current NUMA node
-  unsigned int gpuDevice;       // Current GPU device (if applicable)
-  float accessCost;             // Estimated access cost (latency + bandwidth)
+  unsigned int numaNode;          // Current NUMA node
+  unsigned int gpuDevice;         // Current GPU device (if applicable)
+  float accessCost;               // Estimated access cost (latency + bandwidth)
 
   // Memory management
   void *memRef;          // Reference to actual memory location
@@ -154,11 +154,11 @@ void arts_smart_db_migration_handler(void *args);
 
 // Create a new SmartDB with the given size and type
 arts_smart_db_t *arts_smart_db_create(uint64_t size, arts_type_t type,
-                                 arts_smart_db_flags_t flags);
+                                      arts_smart_db_flags_t flags);
 
 // Create a SmartDB with a specific GUID
 arts_smart_db_t *arts_smart_db_create_with_guid(arts_guid_t guid, uint64_t size,
-                                         arts_smart_db_flags_t flags);
+                                                arts_smart_db_flags_t flags);
 
 // Destroy a SmartDB and its associated resources
 void arts_smart_db_destroy(arts_smart_db_t *smart_db);
@@ -173,37 +173,42 @@ unsigned int arts_smart_db_get_version(arts_smart_db_t *smart_db);
 void arts_smart_db_increment_version(arts_smart_db_t *smart_db);
 
 // Memory sensor operations
-void arts_smart_db_update_metrics(arts_smart_db_t *smart_db, uint64_t access_size,
-                              uint64_t latency);
+void arts_smart_db_update_metrics(arts_smart_db_t *smart_db,
+                                  uint64_t access_size, uint64_t latency);
 void arts_smart_db_set_placement(arts_smart_db_t *smart_db,
-                             arts_mem_placement_t placement);
+                                 arts_mem_placement_t placement);
 arts_mem_placement_t arts_smart_db_get_placement(arts_smart_db_t *smart_db);
 void arts_smart_db_set_access_pattern(arts_smart_db_t *smart_db,
-                                 arts_access_pattern_t pattern);
-arts_access_pattern_t arts_smart_db_get_access_pattern(arts_smart_db_t *smart_db);
+                                      arts_access_pattern_t pattern);
+arts_access_pattern_t
+arts_smart_db_get_access_pattern(arts_smart_db_t *smart_db);
 float arts_smart_db_get_access_cost(arts_smart_db_t *smart_db);
 bool arts_smart_db_should_migrate(arts_smart_db_t *smart_db);
 bool arts_smart_db_should_replicate(arts_smart_db_t *smart_db);
 
 // Data operations with memory awareness
 void *arts_smart_db_get_data(arts_smart_db_t *smart_db);
-void arts_smart_db_set_data(arts_smart_db_t *smart_db, void *data, uint64_t size);
+void arts_smart_db_set_data(arts_smart_db_t *smart_db, void *data,
+                            uint64_t size);
 void arts_smart_db_migrate(arts_smart_db_t *smart_db,
-                        arts_mem_placement_t new_placement);
-void arts_smart_db_replicate(arts_smart_db_t *smart_db, unsigned int num_copies);
+                           arts_mem_placement_t new_placement);
+void arts_smart_db_replicate(arts_smart_db_t *smart_db,
+                             unsigned int num_copies);
 
 // Dependence management
-void arts_smart_db_add_dependence(arts_smart_db_t *smart_db, arts_guid_t edt_guid,
-                              uint32_t slot);
+void arts_smart_db_add_dependence(arts_smart_db_t *smart_db,
+                                  arts_guid_t edt_guid, uint32_t slot);
 
 // Metadata operations
 arts_smart_db_flags_t arts_smart_db_get_flags(arts_smart_db_t *smart_db);
-void arts_smart_db_set_flags(arts_smart_db_t *smart_db, arts_smart_db_flags_t flags);
+void arts_smart_db_set_flags(arts_smart_db_t *smart_db,
+                             arts_smart_db_flags_t flags);
 unsigned int arts_smart_db_get_num_producers(arts_smart_db_t *smart_db);
 unsigned int arts_smart_db_get_num_consumers(arts_smart_db_t *smart_db);
 
 // Migration API
-void arts_smart_db_migrate_to_node(arts_smart_db_t *smart_db, unsigned int new_node);
+void arts_smart_db_migrate_to_node(arts_smart_db_t *smart_db,
+                                   unsigned int new_node);
 
 // Sophisticated access pattern detection
 void arts_smart_db_record_access(arts_smart_db_t *smart_db, uint64_t offset);

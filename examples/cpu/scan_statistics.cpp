@@ -45,9 +45,9 @@
 #include <iostream>
 #include <vector>
 
+#include "arts.h"
 #include "arts/block_distribution.h"
 #include "arts/csr.h"
-#include "arts.h"
 #include "arts/runtime/compute/shad_adapter.h"
 
 arts_block_dist_t *distribution;
@@ -85,14 +85,15 @@ typedef struct {
 // }
 
 void max_reducer(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                arts_edt_dep_t depv[]) {
+                 arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   // std::cout << "In max reducer" << std::endl;
   uint32_t max_scan_stat = 0;
   vertex_t max_vertex = 0;
   for (uint32_t v = 0; v < depc; v++) {
-    per_vertex_scan_stat_t *vertex_scan_stat = (per_vertex_scan_stat_t *)depv[v].ptr;
+    per_vertex_scan_stat_t *vertex_scan_stat =
+        (per_vertex_scan_stat_t *)depv[v].ptr;
     // std::cout << "Vertex: " << vertex_scan_stat->source << " scan_stat: " <<
     // vertex_scan_stat->scan_stat << std::endl;
     if (vertex_scan_stat->scan_stat > max_scan_stat) {
@@ -104,21 +105,23 @@ void max_reducer(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
             << '\n';
   end_time = arts_get_time_stamp();
   arts_printf("Total execution time: %f s \n",
-         (double)(end_time - start_time) / 1000000000.0);
+              (double)(end_time - start_time) / 1000000000.0);
   arts_stop_intro_shad();
   arts_shutdown();
 }
 
 void find_intersection(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                      arts_edt_dep_t depv[]) {
+                       arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   uint64_t sum = 0;
-  per_vertex_scan_stat_t *local_intersection = (per_vertex_scan_stat_t *)depv[0].ptr;
+  per_vertex_scan_stat_t *local_intersection =
+      (per_vertex_scan_stat_t *)depv[0].ptr;
   vertex_t source = local_intersection->source;
 
   for (uint64_t rank = 0; rank < depc; rank++) {
-    per_vertex_scan_stat_t *local_intersection = (per_vertex_scan_stat_t *)depv[rank].ptr;
+    per_vertex_scan_stat_t *local_intersection =
+        (per_vertex_scan_stat_t *)depv[rank].ptr;
     // std::cout << "Source: " << source << " Rank: " << rank << "Scanstat: " <<
     // local_intersection->scan_stat << std::endl;
     sum += local_intersection->scan_stat;
@@ -140,8 +143,8 @@ void find_intersection(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_signal_edt(max_reducer_guid, source, db_guid, ARTS_DB_WRITE);
 }
 
-void visit_one_hop_neighbor_on_rank(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                               arts_edt_dep_t depv[]) {
+void visit_one_hop_neighbor_on_rank(uint32_t paramc, const uint64_t *paramv,
+                                    uint32_t depc, arts_edt_dep_t depv[]) {
   (void)depc;
   (void)paramc;
   (void)paramv;
@@ -151,7 +154,8 @@ void visit_one_hop_neighbor_on_rank(uint32_t paramc, const uint64_t *paramv, uin
   std::vector<vertex_t> local_intersection;
   for (unsigned int i = 0; i < src_info->num_neighbors; i++) {
     vertex_t current_neighbor = src_info->neighbors[i];
-    if (get_owner_distr(current_neighbor, distribution) == arts_get_current_node()) {
+    if (get_owner_distr(current_neighbor, distribution) ==
+        arts_get_current_node()) {
       // std::cout << "Source " << src_info->source << " Current_neighbor: " <<
       // current_neighbor << std::endl;
       vertex_t *one_hop_neighbors = NULL;
@@ -177,11 +181,12 @@ void visit_one_hop_neighbor_on_rank(uint32_t paramc, const uint64_t *paramv, uin
   // std::cout << "Source: " << src_info->source << " rank: "  <<
   // arts_get_current_node() << " set intersection size: " <<
   // local_intersection.size() <<std::endl;
-  arts_signal_edt(src_info->find_intersection_guid, arts_get_current_node(), db_guid, ARTS_DB_WRITE);
+  arts_signal_edt(src_info->find_intersection_guid, arts_get_current_node(),
+                  db_guid, ARTS_DB_WRITE);
 }
 
 void visit_source(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                 arts_edt_dep_t depv[]) {
+                  arts_edt_dep_t depv[]) {
   (void)depc;
   (void)depv;
   (void)paramc;
@@ -206,11 +211,12 @@ void visit_source(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       src_info->find_intersection_guid = find_intersection_guid;
       src_info->source = source;
       src_info->num_neighbors = neighbor_cnt;
-      memcpy(&(src_info->neighbors), neighbors, sizeof(vertex_t) * neighbor_cnt);
+      memcpy(&(src_info->neighbors), neighbors,
+             sizeof(vertex_t) * neighbor_cnt);
       /*create the edt to find # one-hop neighbors*/
       arts_hint_t hop_hint = {i, 0};
-      arts_guid_t visit_one_hop_neighbor_guid =
-          arts_edt_create(visit_one_hop_neighbor_on_rank, 0, NULL, 1, &hop_hint);
+      arts_guid_t visit_one_hop_neighbor_guid = arts_edt_create(
+          visit_one_hop_neighbor_on_rank, 0, NULL, 1, &hop_hint);
       arts_signal_edt(visit_one_hop_neighbor_guid, 0, db_guid, ARTS_DB_WRITE);
     }
   } else {
@@ -251,7 +257,8 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
   arts_guid_t init_epoch_guid = arts_initialize_and_start_epoch(NULL_GUID, 0);
   for (unsigned int i = 0; i < arts_get_total_nodes(); i++) {
     arts_hint_t node_hint = {i, 0};
-    arts_edt_create_with_epoch(init_node, paramc, paramv, 0, init_epoch_guid, &node_hint);
+    arts_edt_create_with_epoch(init_node, paramc, paramv, 0, init_epoch_guid,
+                               &node_hint);
   }
   arts_wait_on_handle(init_epoch_guid);
 
@@ -265,8 +272,8 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
     partition_t rank = get_owner_distr(source, distribution);
     uint64_t packed_values[1] = {source};
     arts_hint_t rank_hint = {(unsigned int)rank, 0};
-    arts_guid_t visit_source_guid =
-        arts_edt_create(visit_source, 1, (uint64_t *)&packed_values, 1, &rank_hint);
+    arts_guid_t visit_source_guid = arts_edt_create(
+        visit_source, 1, (uint64_t *)&packed_values, 1, &rank_hint);
     arts_signal_edt_value(visit_source_guid, -1, 0);
   }
 }

@@ -39,16 +39,16 @@
 #include "arts/runtime/sync/termination_detection.h"
 
 #include "arts.h"
-#include "arts/utils/malloc.h"
 #include "arts/gas/guid.h"
 #include "arts/gas/out_of_order.h"
 #include "arts/gas/route_table.h"
-#include "arts/runtime/globals.h"
-#include "arts/runtime/rt.h"
 #include "arts/runtime/compute/edt_functions.h"
+#include "arts/runtime/globals.h"
 #include "arts/runtime/network/remote_functions.h"
+#include "arts/runtime/rt.h"
 #include "arts/system/arts_print.h"
 #include "arts/utils/atomics.h"
+#include "arts/utils/malloc.h"
 
 #define EPOCH_MASK 0x7FFFFFFFFFFFFFFF
 #define EPOCH_BIT 0x8000000000000000
@@ -94,8 +94,10 @@ void arts_shutdown_epoch_inc_finished() {
 
 void arts_shutdown_epoch_fire(arts_guid_t guid) {
   if (arts_node_info.auto_shutdown_guid == guid) {
-    ARTS_INFO("arts_shutdown_epoch_fire: Epoch[Guid:%lu] matched shutdown epoch — "
-              "calling arts_shutdown()", guid);
+    ARTS_INFO(
+        "arts_shutdown_epoch_fire: Epoch[Guid:%lu] matched shutdown epoch — "
+        "calling arts_shutdown()",
+        guid);
     arts_shutdown();
   }
 }
@@ -107,18 +109,19 @@ bool decrement_queue_epoch(arts_epoch_t *epoch) {
     if (local == 1) {
       if (1 == arts_atomic_cswap_u64(&epoch->queued, 1, EPOCH_BIT)) {
         return true;
-}
+      }
     } else {
       if (local == arts_atomic_cswap_u64(&epoch->queued, local, local - 1)) {
         return false;
-}
+      }
     }
   }
 }
 
 void increment_queue_epoch(arts_guid_t epoch_guid) {
   if (epoch_guid != NULL_GUID) {
-    arts_epoch_t *epoch = (arts_epoch_t *)arts_route_table_lookup_item(epoch_guid);
+    arts_epoch_t *epoch =
+        (arts_epoch_t *)arts_route_table_lookup_item(epoch_guid);
     if (epoch) {
       arts_atomic_add_u64(&epoch->queued, 1);
     } else {
@@ -128,7 +131,8 @@ void increment_queue_epoch(arts_guid_t epoch_guid) {
 }
 
 void increment_active_epoch(arts_guid_t epoch_guid) {
-  arts_epoch_t *epoch = (arts_epoch_t *)arts_route_table_lookup_item(epoch_guid);
+  arts_epoch_t *epoch =
+      (arts_epoch_t *)arts_route_table_lookup_item(epoch_guid);
   if (epoch) {
     arts_atomic_add(&epoch->active_count, 1);
   } else {
@@ -146,7 +150,8 @@ void increment_active_epoch(arts_guid_t epoch_guid) {
  */
 void increment_finished_epoch(arts_guid_t epoch_guid) {
   if (epoch_guid != NULL_GUID) {
-    arts_epoch_t *epoch = (arts_epoch_t *)arts_route_table_lookup_item(epoch_guid);
+    arts_epoch_t *epoch =
+        (arts_epoch_t *)arts_route_table_lookup_item(epoch_guid);
     if (epoch) {
       unsigned int new_finished = arts_atomic_add(&epoch->finished_count, 1);
       ARTS_DEBUG("increment_finished_epoch[Guid:%lu]: finished_count=%u, "
@@ -156,21 +161,21 @@ void increment_finished_epoch(arts_guid_t epoch_guid) {
         if (!check_epoch(epoch, epoch->active_count, epoch->finished_count)) {
           if (epoch->phase == PHASE_3) {
             delete_epoch(epoch_guid, epoch);
-}
+          }
         }
       } else {
         unsigned int rank = arts_guid_get_rank(epoch_guid);
         if (rank == arts_global_rank_id) {
           if (!arts_atomic_sub_u64(&epoch->queued, 1)) {
             if (!arts_atomic_cswap_u64(&epoch->outstanding, 0,
-                                    arts_global_rank_count)) {
+                                       arts_global_rank_count)) {
               broadcast_epoch_request(epoch_guid);
             }
           }
         } else {
           if (decrement_queue_epoch(epoch)) {
             arts_remote_epoch_send(rank, epoch_guid, epoch->active_count,
-                                epoch->finished_count);
+                                   epoch->finished_count);
           }
         }
       }
@@ -180,25 +185,27 @@ void increment_finished_epoch(arts_guid_t epoch_guid) {
   }
 }
 
-void send_epoch(arts_guid_t epoch_guid, unsigned int source, unsigned int dest) {
-  arts_epoch_t *epoch = (arts_epoch_t *)arts_route_table_lookup_item(epoch_guid);
+void send_epoch(arts_guid_t epoch_guid, unsigned int source,
+                unsigned int dest) {
+  arts_epoch_t *epoch =
+      (arts_epoch_t *)arts_route_table_lookup_item(epoch_guid);
   if (epoch) {
     ARTS_DEBUG("Sending epoch [Guid:%lu] to rank %u", epoch_guid, dest);
     arts_atomic_fetch_and_u64(&epoch->queued, EPOCH_MASK);
     if (!arts_atomic_cswap_u64(&epoch->queued, 0, EPOCH_BIT)) {
       arts_remote_epoch_send(dest, epoch_guid, epoch->active_count,
-                          epoch->finished_count);
+                             epoch->finished_count);
     }
   } else {
     arts_out_of_order_send_epoch(epoch_guid, source, dest);
-}
+  }
 }
 
 arts_epoch_t *create_epoch(arts_guid_t *guid, arts_guid_t edt_guid,
-                         unsigned int slot) {
+                           unsigned int slot) {
   if (*guid == NULL_GUID) {
     *guid = arts_guid_create_for_rank(arts_global_rank_id, ARTS_EDT);
-}
+  }
 
   arts_epoch_t *epoch = (arts_epoch_t *)arts_calloc(1, sizeof(arts_epoch_t));
   epoch->phase = PHASE_1;
@@ -222,25 +229,28 @@ arts_epoch_t *create_epoch(arts_guid_t *guid, arts_guid_t edt_guid,
 bool arts_shutdown_epoch_create() {
   if (arts_node_info.auto_shutdown_guid) {
     arts_node_info.auto_shutdown_guid = arts_guid_create_for_rank(0, ARTS_EDT);
-    arts_epoch_t *epoch = create_epoch(&arts_node_info.auto_shutdown_guid, NULL_GUID, 0);
+    arts_epoch_t *epoch =
+        create_epoch(&arts_node_info.auto_shutdown_guid, NULL_GUID, 0);
     unsigned int total_workers = arts_get_total_workers();
     arts_atomic_add(&epoch->active_count, total_workers);
     arts_atomic_add_u64(&epoch->queued, total_workers);
-    ARTS_INFO("arts_shutdown_epoch_create: Epoch[Guid:%lu] created with %u workers",
-              arts_node_info.auto_shutdown_guid, total_workers);
+    ARTS_INFO(
+        "arts_shutdown_epoch_create: Epoch[Guid:%lu] created with %u workers",
+        arts_node_info.auto_shutdown_guid, total_workers);
     return true;
   }
   return false;
 }
 
 void arts_add_edt_to_epoch(arts_guid_t edt_guid, arts_guid_t epoch_guid) {
-  struct arts_edt_s *edt = (struct arts_edt_s *)arts_route_table_lookup_item(edt_guid);
+  struct arts_edt_s *edt =
+      (struct arts_edt_s *)arts_route_table_lookup_item(edt_guid);
   if (edt) {
     edt->epoch_guid = epoch_guid;
     increment_active_epoch(epoch_guid);
     return;
   }
-  }
+}
 
 void broadcast_epoch_request(arts_guid_t epoch_guid) {
   unsigned int origin_rank = arts_guid_get_rank(epoch_guid);
@@ -252,7 +262,7 @@ void broadcast_epoch_request(arts_guid_t epoch_guid) {
 }
 
 arts_guid_t arts_initialize_and_start_epoch(arts_guid_t finish_edt_guid,
-                                       unsigned int slot) {
+                                            unsigned int slot) {
   arts_epoch_t *epoch = get_pool_epoch(finish_edt_guid, slot);
 
   arts_set_current_epoch_guid(epoch->guid);
@@ -262,13 +272,14 @@ arts_guid_t arts_initialize_and_start_epoch(arts_guid_t finish_edt_guid,
   return epoch->guid;
 }
 
-arts_guid_t arts_initialize_epoch(unsigned int rank, arts_guid_t finish_edt_guid,
-                               unsigned int slot) {
+arts_guid_t arts_initialize_epoch(unsigned int rank,
+                                  arts_guid_t finish_edt_guid,
+                                  unsigned int slot) {
   arts_guid_t guid = NULL_GUID;
   // I think the idea is this is that during parallel start
-  // (arts_node_info.ready_to_execute > 0) This means that the epoch will be created
-  // on all nodes assuming that each node goes through the initializeEpoch code
-  // path. Pool assume the current host...
+  // (arts_node_info.ready_to_execute > 0) This means that the epoch will be
+  // created on all nodes assuming that each node goes through the
+  // initializeEpoch code path. Pool assume the current host...
   if (!arts_node_info.ready_to_execute || rank != arts_global_rank_id) {
     guid = arts_guid_create_for_rank(rank, ARTS_EDT);
     create_epoch(&guid, finish_edt_guid, slot);
@@ -276,7 +287,7 @@ arts_guid_t arts_initialize_epoch(unsigned int rank, arts_guid_t finish_edt_guid
       for (unsigned int i = 0; i < arts_global_rank_count; i++) {
         if (i != arts_global_rank_id) {
           arts_remote_epoch_init_send(i, guid, finish_edt_guid, slot);
-}
+        }
       }
     }
   } else // Lets get it from the pool...
@@ -288,7 +299,8 @@ arts_guid_t arts_initialize_epoch(unsigned int rank, arts_guid_t finish_edt_guid
 }
 
 void arts_start_epoch(arts_guid_t epoch_guid) {
-  arts_epoch_t *epoch = (arts_epoch_t *)arts_route_table_lookup_item(epoch_guid);
+  arts_epoch_t *epoch =
+      (arts_epoch_t *)arts_route_table_lookup_item(epoch_guid);
   if (epoch) {
     arts_set_current_epoch_guid(epoch->guid);
     arts_atomic_add(&epoch->active_count, 1);
@@ -299,7 +311,7 @@ void arts_start_epoch(arts_guid_t epoch_guid) {
 }
 
 bool check_epoch(arts_epoch_t *epoch, unsigned int total_active,
-                unsigned int total_finish) {
+                 unsigned int total_finish) {
   unsigned int diff = total_active - total_finish;
   ARTS_INFO("Checking Epoch [Guid:%lu, TotalActive:%u, TotalFinish:%u, "
             "Diff:%u, Phase:%u, LastActive:%u, LastFinished:%u]",
@@ -315,10 +327,10 @@ bool check_epoch(arts_epoch_t *epoch, unsigned int total_active,
       epoch->phase = PHASE_3;
       if (epoch->wait_ptr) {
         *epoch->wait_ptr = 0;
-}
+      }
       if (epoch->termination_exit_guid) {
         arts_signal_edt_value(epoch->termination_exit_guid,
-                           epoch->termination_exit_slot, total_finish);
+                              epoch->termination_exit_slot, total_finish);
       } else {
         arts_shutdown_epoch_fire(epoch->guid);
       }
@@ -332,10 +344,10 @@ bool check_epoch(arts_epoch_t *epoch, unsigned int total_active,
       epoch->phase = PHASE_3;
       if (epoch->wait_ptr) {
         *epoch->wait_ptr = 0;
-}
+      }
       if (epoch->termination_exit_guid) {
         arts_signal_edt_value(epoch->termination_exit_guid,
-                           epoch->termination_exit_slot, total_finish);
+                              epoch->termination_exit_slot, total_finish);
       } else {
         arts_shutdown_epoch_fire(epoch->guid);
       }
@@ -348,10 +360,12 @@ bool check_epoch(arts_epoch_t *epoch, unsigned int total_active,
 }
 
 void reduce_epoch(arts_guid_t epoch_guid, unsigned int active,
-                 unsigned int finish) {
-  arts_epoch_t *epoch = (arts_epoch_t *)arts_route_table_lookup_item(epoch_guid);
+                  unsigned int finish) {
+  arts_epoch_t *epoch =
+      (arts_epoch_t *)arts_route_table_lookup_item(epoch_guid);
   if (epoch) {
-    unsigned int total_active = arts_atomic_add(&epoch->global_active_count, active);
+    unsigned int total_active =
+        arts_atomic_add(&epoch->global_active_count, active);
     unsigned int total_finish =
         arts_atomic_add(&epoch->global_finished_count, finish);
     uint64_t outstanding_before = epoch->outstanding;
@@ -377,9 +391,10 @@ void reduce_epoch(arts_guid_t epoch_guid, unsigned int active,
         // off
         //                arts_atomic_sub(&epoch->checkinCount, 1);
       } else {
-        ARTS_DEBUG("  check_epoch returned FALSE - epoch completed or advancing "
-                   "to phase %u",
-                   epoch->phase);
+        ARTS_DEBUG(
+            "  check_epoch returned FALSE - epoch completed or advancing "
+            "to phase %u",
+            epoch->phase);
         arts_atomic_sub_u64(&epoch->outstanding, 1);
       }
 
@@ -397,10 +412,11 @@ void reduce_epoch(arts_guid_t epoch_guid, unsigned int active,
 }
 
 arts_epoch_pool_t *create_epoch_pool(arts_guid_t *epoch_pool_guid,
-                                 unsigned int pool_size, arts_guid_t *start_guid) {
+                                     unsigned int pool_size,
+                                     arts_guid_t *start_guid) {
   if (*epoch_pool_guid == NULL_GUID) {
     *epoch_pool_guid = arts_guid_create_for_rank(arts_global_rank_id, ARTS_EDT);
-}
+  }
 
   bool new_range = (*start_guid == NULL_GUID);
   arts_guid_range_t temp;
@@ -421,7 +437,8 @@ arts_epoch_pool_t *create_epoch_pool(arts_guid_t *epoch_pool_guid,
   epoch_pool->outstanding = pool_size;
   epoch_pool->size = pool_size;
 
-  arts_route_table_add_item(epoch_pool, *epoch_pool_guid, arts_global_rank_id, false);
+  arts_route_table_add_item(epoch_pool, *epoch_pool_guid, arts_global_rank_id,
+                            false);
   for (unsigned int i = 0; i < pool_size; i++) {
     epoch_pool->pool[i].phase = PHASE_1;
     epoch_pool->pool[i].pool_guid = *epoch_pool_guid;
@@ -429,15 +446,17 @@ arts_epoch_pool_t *create_epoch_pool(arts_guid_t *epoch_pool_guid,
     epoch_pool->pool[i].queued =
         (arts_guid_is_local(*epoch_pool_guid)) ? 0 : EPOCH_BIT;
     if (!arts_guid_is_local(*epoch_pool_guid)) {
-      arts_route_table_add_item_race(&epoch_pool->pool[i], epoch_pool->pool[i].guid,
-                                arts_global_rank_id, false);
-      arts_route_table_fire_oo(epoch_pool->pool[i].guid, arts_out_of_order_handler);
+      arts_route_table_add_item_race(&epoch_pool->pool[i],
+                                     epoch_pool->pool[i].guid,
+                                     arts_global_rank_id, false);
+      arts_route_table_fire_oo(epoch_pool->pool[i].guid,
+                               arts_out_of_order_handler);
     }
   }
 
   if (new_range) {
     arts_free(range);
-}
+  }
 
   return epoch_pool;
 }
@@ -446,7 +465,7 @@ void delete_epoch(arts_guid_t epoch_guid, arts_epoch_t *epoch) {
   // Can't call delete unless we already hit two barriers thus it must exit
   if (!epoch) {
     epoch = (arts_epoch_t *)arts_route_table_lookup_item(epoch_guid);
-}
+  }
 
   if (epoch->pool_guid) {
     arts_epoch_pool_t *pool =
@@ -459,13 +478,13 @@ void delete_epoch(arts_guid_t epoch_guid, arts_epoch_t *epoch) {
         for (unsigned int i = 0; i < arts_global_rank_count; i++) {
           if (i != arts_global_rank_id) {
             arts_remote_epoch_delete(i, epoch_guid);
-}
+          }
         }
       }
     } else {
       for (unsigned int i = 0; i < pool->size; i++) {
         arts_route_table_remove_item(pool->pool[i].guid);
-}
+      }
       arts_route_table_remove_item(epoch->pool_guid);
       arts_free(pool);
     }
@@ -477,7 +496,7 @@ void delete_epoch(arts_guid_t epoch_guid, arts_epoch_t *epoch) {
       for (unsigned int i = 0; i < arts_global_rank_count; i++) {
         if (i != arts_global_rank_id) {
           arts_remote_epoch_delete(i, epoch_guid);
-}
+        }
       }
     }
   }
@@ -497,7 +516,7 @@ void clean_epoch_pool() {
         trail_pool->next = pool;
       } else {
         epoch_thread_pool = pool;
-}
+      }
 
       arts_free(to_free);
     } else {
@@ -516,19 +535,20 @@ arts_epoch_t *get_pool_epoch(arts_guid_t edt_guid, unsigned int slot) {
     if (!pool) {
       arts_guid_t pool_guid = NULL_GUID;
       arts_guid_t start_guid = NULL_GUID;
-      pool = create_epoch_pool(&pool_guid, DEFAULT_EPOCH_POOL_SIZE, &start_guid);
+      pool =
+          create_epoch_pool(&pool_guid, DEFAULT_EPOCH_POOL_SIZE, &start_guid);
 
       if (trail_pool) {
         trail_pool->next = pool;
       } else {
         epoch_thread_pool = pool;
-}
+      }
 
       for (unsigned int i = 0; i < arts_global_rank_count; i++) {
         if (i != arts_global_rank_id) {
-          arts_remote_epoch_init_pool_send(i, DEFAULT_EPOCH_POOL_SIZE, start_guid,
-                                      pool_guid);
-}
+          arts_remote_epoch_init_pool_send(i, DEFAULT_EPOCH_POOL_SIZE,
+                                           start_guid, pool_guid);
+        }
       }
     }
 
@@ -542,7 +562,8 @@ arts_epoch_t *get_pool_epoch(arts_guid_t edt_guid, unsigned int slot) {
 
   epoch->termination_exit_guid = edt_guid;
   epoch->termination_exit_slot = slot;
-  arts_route_table_add_item_race(epoch, epoch->guid, arts_global_rank_id, false);
+  arts_route_table_add_item_race(epoch, epoch->guid, arts_global_rank_id,
+                                 false);
   arts_route_table_fire_oo(epoch->guid, arts_out_of_order_handler);
   return epoch;
 }
@@ -584,8 +605,9 @@ bool arts_wait_on_handle(arts_guid_t epoch_guid) {
         epoch = (arts_epoch_t *)arts_route_table_lookup_item(local);
       }
       if (!epoch) {
-        ARTS_WARN("arts_wait_on_handle: Epoch [Guid:%lu] not found in route table",
-                  local);
+        ARTS_WARN(
+            "arts_wait_on_handle: Epoch [Guid:%lu] not found in route table",
+            local);
         EDT_RUNNING_TIME_START();
         return false;
       }

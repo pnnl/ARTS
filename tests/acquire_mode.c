@@ -13,7 +13,7 @@ volatile unsigned int *validation_result = NULL;
 
 /// Writer EDT: Initializes the array (WRITE mode)
 void writer_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-               arts_edt_dep_t depv[]) {
+                arts_edt_dep_t depv[]) {
   (void)depc;
   (void)paramc;
   (void)paramv;
@@ -21,7 +21,7 @@ void writer_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   uint64_t *data = (uint64_t *)depv[0].ptr;
 
   arts_printf("Writer (Node %u): Initializing array with sequential values\n",
-             node_id);
+              node_id);
 
   // Initialize array with i * 7
   for (unsigned int i = 0; i < array_size; i++) {
@@ -29,13 +29,13 @@ void writer_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 
   arts_printf("Writer (Node %u): Completed initialization of %u elements\n",
-             node_id, array_size);
+              node_id, array_size);
   // dec_latch happens automatically on release (WRITE mode)
 }
 
 /// Reader EDT: Reads and validates a portion of the array (READ mode override)
 void reader_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-               arts_edt_dep_t depv[]) {
+                arts_edt_dep_t depv[]) {
   (void)depc;
   (void)paramc;
   unsigned int reader_id = (unsigned int)paramv[0];
@@ -43,7 +43,7 @@ void reader_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   uint64_t *data = (uint64_t *)depv[0].ptr;
 
   arts_printf("Reader %u (Node %u): Reading array (mode=READ)\n", reader_id,
-             node_id);
+              node_id);
 
   // Read and validate a stripe of the array
   unsigned int start_idx = reader_id * (array_size / num_readers);
@@ -59,7 +59,7 @@ void reader_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     if (actual != expected) {
       if (errors < 3) {
         arts_printf("Reader %u ERROR at index %u: expected %lu, got %lu\n",
-                   reader_id, i, expected, actual);
+                    reader_id, i, expected, actual);
       }
       errors++;
     }
@@ -68,16 +68,16 @@ void reader_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   if (errors == 0) {
     arts_printf("Reader %u (Node %u): SUCCESS - all values correct (sum=%lu)\n",
-               reader_id, node_id, sum);
+                reader_id, node_id, sum);
   } else {
     arts_printf("Reader %u (Node %u): FAILURE - %u errors found\n", reader_id,
-               node_id, errors);
+                node_id, errors);
   }
 }
 
 /// Validator EDT: Final check after all readers (READ mode override)
 void validator_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                  arts_edt_dep_t depv[]) {
+                   arts_edt_dep_t depv[]) {
   (void)depc;
   (void)paramc;
   (void)paramv;
@@ -94,7 +94,7 @@ void validator_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     if (actual != expected) {
       if (errors < 5) {
         arts_printf("Validator ERROR at index %u: expected %lu, got %lu\n", i,
-                   expected, actual);
+                    expected, actual);
       }
       errors++;
     }
@@ -104,7 +104,7 @@ void validator_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_printf("=== ACQUIRE-MODE TEST PASSED ===\n");
     arts_printf("SUCCESS: All %u elements validated correctly!\n", array_size);
     arts_printf("All %u readers completed with READ mode (no owner updates).\n",
-               num_readers);
+                num_readers);
     if (validation_result) {
       *validation_result = 1;
     }
@@ -131,30 +131,32 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   ///  - Parse array_size
   if (argc > 1 && argv[1]) {
     array_size = (unsigned int)strtol(argv[1], NULL, 10);
-}
+  }
   ///  - Parse num_readers
   if (argc > 2 && argv[2]) {
     num_readers = (unsigned int)strtol(argv[2], NULL, 10);
-}
+  }
 
   /// Validate parameters
   if (array_size == 0 || num_readers == 0) {
     arts_printf("ERROR: array_size (%u) and num_readers (%u) must be > 0\n",
-               array_size, num_readers);
+                array_size, num_readers);
     arts_shutdown();
     return;
   }
   /// Validate that array_size is divisible by num_readers
   if (array_size % num_readers != 0) {
-    arts_printf("ERROR: array_size (%u) must be divisible by num_readers (%u)\n",
-               array_size, num_readers);
+    arts_printf(
+        "ERROR: array_size (%u) must be divisible by num_readers (%u)\n",
+        array_size, num_readers);
     arts_shutdown();
     return;
   }
 
   arts_printf("Acquire-Mode Test\n");
   arts_printf("- Array:   %u elements (%zu MB)\n", array_size,
-             ((unsigned long)array_size * sizeof(uint64_t)) / (1024UL * 1024UL));
+              ((unsigned long)array_size * sizeof(uint64_t)) /
+                  (1024UL * 1024UL));
   arts_printf("- Readers: %u concurrent reader EDTs\n", num_readers);
   arts_printf("- Nodes:   %u\n", arts_get_total_nodes());
 
@@ -164,11 +166,12 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   data_guid = arts_guid_reserve(ARTS_DB, 0);
   size_t db_size = array_size * sizeof(uint64_t);
   arts_printf("Creating Data DB (guid: %lu, size: %zu bytes = %.2f MB)\n",
-             data_guid, db_size, db_size / (1024.0 * 1024.0));
-  uint64_t *data_ptr = (uint64_t *)arts_db_create_with_guid(data_guid, db_size, NULL);
+              data_guid, db_size, db_size / (1024.0 * 1024.0));
+  uint64_t *data_ptr =
+      (uint64_t *)arts_db_create_with_guid(data_guid, db_size, NULL);
   for (size_t i = 0; i < array_size; i++) {
     data_ptr[i] = 0;
-}
+  }
   arts_printf("Data DB initialized to zeros\n");
 
   /// Allocate validation result flag (shared with validator)
@@ -180,8 +183,8 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("[Step 1] Started epoch (guid: %lu)\n", epoch_guid);
 
   /// Create writer EDT
-  arts_guid_t writer_edt_guid =
-      arts_edt_create_with_epoch(writer_edt, 0, NULL, 1, epoch_guid, &(arts_hint_t){.route = 0});
+  arts_guid_t writer_edt_guid = arts_edt_create_with_epoch(
+      writer_edt, 0, NULL, 1, epoch_guid, &(arts_hint_t){.route = 0});
   arts_printf("[Step 2] Created writer EDT (guid: %lu)\n", writer_edt_guid);
 
   /// Create reader EDTs
@@ -191,7 +194,8 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     unsigned int target_node = (i % arts_get_total_nodes());
     uint64_t param = i;
     reader_edt_guids[i] =
-        arts_edt_create_with_epoch(reader_edt, 1, &param, 1, epoch_guid, &(arts_hint_t){.route = target_node});
+        arts_edt_create_with_epoch(reader_edt, 1, &param, 1, epoch_guid,
+                                   &(arts_hint_t){.route = target_node});
 
     if ((i + 1) % 4 == 0 || i == num_readers - 1) {
       unsigned int range_start = (i / 4) * 4;
@@ -200,18 +204,20 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     }
   }
 
-  arts_guid_t validator_edt_guid =
-      arts_edt_create_with_epoch(validator_edt, 0, NULL, 1, epoch_guid, &(arts_hint_t){.route = 0});
-  arts_printf("[Step 4] Created validator EDT (guid: %lu)\n", validator_edt_guid);
+  arts_guid_t validator_edt_guid = arts_edt_create_with_epoch(
+      validator_edt, 0, NULL, 1, epoch_guid, &(arts_hint_t){.route = 0});
+  arts_printf("[Step 4] Created validator EDT (guid: %lu)\n",
+              validator_edt_guid);
 
   /// Record ALL dependencies
-  arts_printf("[Step 5] Recording dependencies: 1 writer (WRITE) + %u readers \n"
-             "(READ) + 1 validator (READ)",
-             num_readers);
+  arts_printf(
+      "[Step 5] Recording dependencies: 1 writer (WRITE) + %u readers \n"
+      "(READ) + 1 validator (READ)",
+      num_readers);
   arts_record_dep(data_guid, writer_edt_guid, 0, ARTS_DB_WRITE);
   for (unsigned int i = 0; i < num_readers; i++) {
     arts_record_dep(data_guid, reader_edt_guids[i], 0, ARTS_DB_READ);
-}
+  }
 
   arts_record_dep(data_guid, validator_edt_guid, 0, ARTS_DB_READ);
 
@@ -231,8 +237,9 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   if (validation_result && *validation_result == 1) {
     arts_printf("TEST STATUS: SUCCESS\n");
     arts_printf("Acquire-mode override successfully reduced owner updates.\n");
-    arts_printf("Expected: 1 writer update + 0 reader updates = ~%u%% reduction\n",
-               (100 * num_readers) / (num_readers + 1));
+    arts_printf(
+        "Expected: 1 writer update + 0 reader updates = ~%u%% reduction\n",
+        (100 * num_readers) / (num_readers + 1));
     arts_printf("(vs %u updates if all were WRITE mode)\n", num_readers + 1);
   } else {
     arts_printf("TEST STATUS: FAILURE\n");

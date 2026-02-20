@@ -43,8 +43,8 @@ extern "C" {
 #endif
 
 #include "arts.h"
-#include "arts/utils/malloc.h"
 #include "arts/system/config.h"
+#include "arts/utils/malloc.h"
 
 struct arts_remote_launcher_s {
   unsigned int argc;
@@ -57,15 +57,19 @@ struct arts_remote_launcher_s {
 };
 
 // Add your launcher prototypes here
-void arts_remote_launcher_ssh_startup_processes(struct arts_remote_launcher_s *launcher);
-void arts_remote_launcher_ssh_cleanup_processes(struct arts_remote_launcher_s *launcher);
+void arts_remote_launcher_ssh_startup_processes(
+    struct arts_remote_launcher_s *launcher);
+void arts_remote_launcher_ssh_cleanup_processes(
+    struct arts_remote_launcher_s *launcher);
 
 static inline struct arts_remote_launcher_s *arts_remote_launcher_create(
     unsigned int argc, char **argv, struct arts_config_s *config,
-    unsigned int kill_mode, void (*launch_processes)(struct arts_remote_launcher_s *),
+    unsigned int kill_mode,
+    void (*launch_processes)(struct arts_remote_launcher_s *),
     void (*cleanup_processes)(struct arts_remote_launcher_s *)) {
-  struct arts_remote_launcher_s *launcher = (struct arts_remote_launcher_s *)arts_malloc(
-      sizeof(struct arts_remote_launcher_s));
+  struct arts_remote_launcher_s *launcher =
+      (struct arts_remote_launcher_s *)arts_malloc(
+          sizeof(struct arts_remote_launcher_s));
 
   launcher->argc = argc;
   launcher->argv = argv;

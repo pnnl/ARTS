@@ -86,9 +86,9 @@
 #include <cuda_runtime_api.h>
 
 #include "arts.h"
-#include <stdlib.h>
 #include "arts/gpu/gpu_runtime.cuh"
 #include "arts/runtime/globals.h"
+#include <stdlib.h>
 
 arts_guid_range_t *update_frontier_guids = NULL;
 
@@ -273,10 +273,9 @@ void random_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                             : num_rem_updates; // Number of updates in the step
   uint64_t step = paramv[1];
   uint64_t index = paramv[2];
-  int64_t start_index =
-      (int64_t)((step * (uint64_t)MAX_UPDATES_PER_GPU_STEP *
-                 arts_get_total_gpus()) +
-                (index * num_random));
+  int64_t start_index = (int64_t)((step * (uint64_t)MAX_UPDATES_PER_GPU_STEP *
+                                   arts_get_total_gpus()) +
+                                  (index * num_random));
   uint64_t *r_array = (uint64_t *)depv[0].ptr;
   uint64_t table_size = TABLESIZE;
 
@@ -331,7 +330,8 @@ void random_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
             next_random_guid, i + 1, NULL_GUID);
         arts_gpu_signal_edt_memset(update_guid, 0,
                                    arts_guid_range_get(tile_guids, i));
-        // arts_signal_edt(update_guid, 0, arts_guid_range_get(tile_guids, i), ARTS_DB_WRITE);
+        // arts_signal_edt(update_guid, 0, arts_guid_range_get(tile_guids, i),
+        // ARTS_DB_WRITE);
         arts_signal_edt(update_guid, 1, read_only, ARTS_DB_WRITE);
         next_random_deps++;
       }
@@ -424,8 +424,9 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
     tile_size = (unsigned int)strtol(argv[1], NULL, 10);
   }
   num_tiles = TABLESIZE / tile_size;
-  arts_printf("Random Access Table Size: %u Tile Size: %u Number of Tiles: %u\n",
-              TABLESIZE, tile_size, num_tiles);
+  arts_printf(
+      "Random Access Table Size: %u Tile Size: %u Number of Tiles: %u\n",
+      TABLESIZE, tile_size, num_tiles);
 
   // Create tiled table
   tile_guids = arts_guid_range_create(ARTS_DB_LC, num_tiles, node_id);
@@ -433,9 +434,10 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
   uint64_t counter = 0;
   for (unsigned int i = 0; i < num_tiles; i++) {
     tile[i] = (uint64_t *)arts_db_create_with_guid(
-        arts_guid_range_get(tile_guids, i), (tile_size + 1) * sizeof(uint64_t), NULL);
-    arts_printf("TileGuid[%u]: %lu -> %p\n", i, arts_guid_range_get(tile_guids, i),
-                tile[i]);
+        arts_guid_range_get(tile_guids, i), (tile_size + 1) * sizeof(uint64_t),
+        NULL);
+    arts_printf("TileGuid[%u]: %lu -> %p\n", i,
+                arts_guid_range_get(tile_guids, i), tile[i]);
     for (unsigned int j = 0; j < tile_size; j++) {
       tile[i][j] = counter++;
     }
@@ -462,8 +464,8 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
   done_guid = arts_guid_reserve(ARTS_EDT, 0);
 
   if (ARTS_LOOK_UP_CONFIG(gpu_lc_sync) != 6) {
-    arts_printf(
-        "For correct results set gpu_lc_sync=6 in arts.cfg\nShutting Down...\n");
+    arts_printf("For correct results set gpu_lc_sync=6 in arts.cfg\nShutting "
+                "Down...\n");
     arts_shutdown();
     return;
   }

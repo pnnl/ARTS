@@ -37,13 +37,13 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 #include "arts/runtime/memory/db_list.h"
-#include "arts/utils/malloc.h"
 #include "arts/gas/route_table.h"
+#include "arts/utils/malloc.h"
 
-#include "arts/runtime/globals.h"
-#include "arts/runtime/runtime.h"
 #include "arts/runtime/compute/edt_functions.h"
+#include "arts/runtime/globals.h"
 #include "arts/runtime/network/remote_functions.h"
+#include "arts/runtime/runtime.h"
 #include "arts/system/arts_print.h"
 #include "arts/system/debug.h"
 #include "arts/utils/atomics.h"
@@ -107,8 +107,8 @@ bool frontier_add_write_lock(volatile unsigned int *lock) {
 }
 
 struct arts_db_element_s *arts_new_db_element() {
-  struct arts_db_element_s *ret =
-      (struct arts_db_element_s *)arts_calloc(1, sizeof(struct arts_db_element_s));
+  struct arts_db_element_s *ret = (struct arts_db_element_s *)arts_calloc(
+      1, sizeof(struct arts_db_element_s));
   if (!ret) {
     ARTS_ERROR("DB element allocation failed");
   }
@@ -116,8 +116,8 @@ struct arts_db_element_s *arts_new_db_element() {
 }
 
 struct arts_db_frontier_s *arts_new_db_frontier() {
-  struct arts_db_frontier_s *ret =
-      (struct arts_db_frontier_s *)arts_calloc(1, sizeof(struct arts_db_frontier_s));
+  struct arts_db_frontier_s *ret = (struct arts_db_frontier_s *)arts_calloc(
+      1, sizeof(struct arts_db_frontier_s));
   if (!ret) {
     ARTS_ERROR("DB frontier allocation failed");
   }
@@ -158,17 +158,18 @@ void arts_delete_local_delayed_edt(struct arts_local_delayed_edt_s *head) {
 void arts_delete_db_frontier(struct arts_db_frontier_s *frontier) {
   if (frontier->list.next) {
     arts_delete_db_element(frontier->list.next);
-}
+  }
   if (frontier->localDelayed.next) {
     arts_delete_local_delayed_edt(frontier->localDelayed.next);
-}
+  }
   arts_free(frontier);
 }
 
-bool arts_push_db_to_element(struct arts_db_element_s *head, unsigned int position,
-                         unsigned int data) {
+bool arts_push_db_to_element(struct arts_db_element_s *head,
+                             unsigned int position, unsigned int data) {
   unsigned int j = 0;
-  for (struct arts_db_element_s *current = head; current; current = current->next) {
+  for (struct arts_db_element_s *current = head; current;
+       current = current->next) {
     for (unsigned int i = 0; i < DBSPERELEMENT; i++) {
       if (j < position) {
         if (current->array[i] == data) {
@@ -182,15 +183,15 @@ bool arts_push_db_to_element(struct arts_db_element_s *head, unsigned int positi
     }
     if (!current->next) {
       current->next = arts_new_db_element();
-}
+    }
   }
   // Need to mark unreachable
   return false;
 }
 
-void arts_push_delayed_edt(struct arts_local_delayed_edt_s *head, unsigned int position,
-                        struct arts_edt_s *edt, unsigned int slot,
-                        arts_type_t mode) {
+void arts_push_delayed_edt(struct arts_local_delayed_edt_s *head,
+                           unsigned int position, struct arts_edt_s *edt,
+                           unsigned int slot, arts_type_t mode) {
   if (!head) {
     return;
   }
@@ -212,10 +213,11 @@ void arts_push_delayed_edt(struct arts_local_delayed_edt_s *head, unsigned int p
   current->mode[element_pos] = mode;
 }
 
-bool arts_push_db_to_frontier(struct arts_db_frontier_s *frontier, unsigned int data,
-                          bool write, bool local, bool bypass,
-                          struct arts_edt_s *edt, arts_guid_t edt_guid,
-                          unsigned int slot, arts_type_t mode, bool *unique) {
+bool arts_push_db_to_frontier(struct arts_db_frontier_s *frontier,
+                              unsigned int data, bool write, bool local,
+                              bool bypass, struct arts_edt_s *edt,
+                              arts_guid_t edt_guid, unsigned int slot,
+                              arts_type_t mode, bool *unique) {
   if (bypass) {
     frontier_lock(&frontier->lock);
   } else if (write && !frontier_add_write_lock(&frontier->lock)) {
@@ -238,8 +240,8 @@ bool arts_push_db_to_frontier(struct arts_db_frontier_s *frontier, unsigned int 
     frontier->exSlot = slot;
     frontier->exMode = mode;
   } else if (inserted && local) {
-    arts_push_delayed_edt(&frontier->localDelayed, frontier->localPosition++, edt,
-                       slot, mode);
+    arts_push_delayed_edt(&frontier->localDelayed, frontier->localPosition++,
+                          edt, slot, mode);
   }
 
   frontier_unlock(&frontier->lock);
@@ -266,11 +268,10 @@ bool arts_push_db_to_frontier(struct arts_db_frontier_s *frontier, unsigned int 
  *
  * Returns true if the rank was inserted uniquely.
  */
-bool arts_push_db_to_list(struct arts_db_list_s *db_list, unsigned int data, bool write,
-                      bool local, bool bypass,
-                      struct arts_edt_s *edt, arts_guid_t edt_guid,
-                      unsigned int slot, arts_type_t mode,
-                      bool *on_head) {
+bool arts_push_db_to_list(struct arts_db_list_s *db_list, unsigned int data,
+                          bool write, bool local, bool bypass,
+                          struct arts_edt_s *edt, arts_guid_t edt_guid,
+                          unsigned int slot, arts_type_t mode, bool *on_head) {
   if (!db_list->head) {
     if (arts_writer_try_lock(&db_list->reader, &db_list->writer)) {
       db_list->head = db_list->tail = arts_new_db_frontier();
@@ -283,8 +284,8 @@ bool arts_push_db_to_list(struct arts_db_list_s *db_list, unsigned int data, boo
   bool is_head = true;
   for (struct arts_db_frontier_s *frontier = db_list->head; frontier;
        frontier = frontier->next) {
-    if (arts_push_db_to_frontier(frontier, data, write, local, bypass,
-                             edt, edt_guid, slot, mode, &unique)) {
+    if (arts_push_db_to_frontier(frontier, data, write, local, bypass, edt,
+                                 edt_guid, slot, mode, &unique)) {
       inserted = true;
       break;
     }
@@ -292,11 +293,11 @@ bool arts_push_db_to_list(struct arts_db_list_s *db_list, unsigned int data, boo
     if (!frontier->next) {
       struct arts_db_frontier_s *new_frontier = arts_new_db_frontier();
       if (arts_atomic_cswap_ptr((volatile void **)&frontier->next, NULL,
-                             new_frontier)) {
+                                new_frontier)) {
         arts_delete_db_frontier(new_frontier);
         while (!frontier->next) {
           ;
-}
+        }
       }
     }
   }
@@ -334,12 +335,13 @@ arts_db_frontier_iter_create(struct arts_db_frontier_s *frontier) {
   return iter;
 }
 
-unsigned int arts_db_frontier_iter_size(struct arts_db_frontier_iterator_s *iter) {
+unsigned int
+arts_db_frontier_iter_size(struct arts_db_frontier_iterator_s *iter) {
   return iter->frontier->position;
 }
 
 bool arts_db_frontier_iter_next(struct arts_db_frontier_iterator_s *iter,
-                            unsigned int *next) {
+                                unsigned int *next) {
   if (iter->currentIndex < iter->frontier->position) {
     *next = iter->currentElement->array[iter->currentIndex++ % DBSPERELEMENT];
     if (!(iter->currentIndex % DBSPERELEMENT)) {
@@ -358,7 +360,8 @@ void arts_db_frontier_iter_delete(struct arts_db_frontier_iterator_s *iter) {
   arts_free(iter);
 }
 
-struct arts_db_frontier_iterator_s *arts_close_frontier(struct arts_db_list_s *db_list) {
+struct arts_db_frontier_iterator_s *
+arts_close_frontier(struct arts_db_list_s *db_list) {
   struct arts_db_frontier_iterator_s *iter = NULL;
   arts_reader_lock(&db_list->reader, &db_list->writer);
   struct arts_db_frontier_s *frontier = db_list->head;
@@ -375,27 +378,29 @@ struct arts_db_frontier_iterator_s *arts_close_frontier(struct arts_db_list_s *d
 }
 
 void arts_signal_frontier_remote(struct arts_db_frontier_s *frontier,
-                              struct arts_db_s *db, unsigned int get_from) {
+                                 struct arts_db_s *db, unsigned int get_from) {
   frontier_lock(&frontier->lock);
 
   if (frontier->exEdt || frontier->exEdtGuid != NULL_GUID) {
     arts_guid_t edt_guid = frontier->exEdtGuid;
     if (edt_guid == NULL_GUID && frontier->exEdt) {
       edt_guid = frontier->exEdt->current_edt;
-}
+    }
     if (frontier->exNode == get_from) {
-      arts_remote_send_already_local((int)get_from, db->guid, edt_guid, frontier->exSlot,
-                                 frontier->exMode);
+      arts_remote_send_already_local((int)get_from, db->guid, edt_guid,
+                                     frontier->exSlot, frontier->exMode);
     } else if (frontier->exNode != arts_global_rank_id) {
-      arts_remote_db_forward_full((int)frontier->exNode, (int)get_from, db->guid, edt_guid,
-                              (int)frontier->exSlot, frontier->exMode);
+      arts_remote_db_forward_full((int)frontier->exNode, (int)get_from,
+                                  db->guid, edt_guid, (int)frontier->exSlot,
+                                  frontier->exMode);
     } else {
-      arts_remote_db_full_request(db->guid, (int)get_from, edt_guid, (int)frontier->exSlot,
-                              frontier->exMode);
-}
+      arts_remote_db_full_request(db->guid, (int)get_from, edt_guid,
+                                  (int)frontier->exSlot, frontier->exMode);
+    }
   }
 
-  struct arts_db_frontier_iterator_s *iter = arts_db_frontier_iter_create(frontier);
+  struct arts_db_frontier_iterator_s *iter =
+      arts_db_frontier_iter_create(frontier);
   if (iter) {
     unsigned int node;
     while (arts_db_frontier_iter_next(iter, &node)) {
@@ -403,7 +408,7 @@ void arts_signal_frontier_remote(struct arts_db_frontier_s *frontier,
           !((frontier->exEdt || frontier->exEdtGuid != NULL_GUID) &&
             node == frontier->exNode)) {
         arts_remote_db_forward((int)node, (int)get_from, db->guid,
-                            ARTS_DB_READ); // Don't care about mode
+                               ARTS_DB_READ); // Don't care about mode
       }
     }
   }
@@ -415,21 +420,21 @@ void arts_signal_frontier_remote(struct arts_db_frontier_s *frontier,
       struct arts_edt_s *edt = current->edt[pos];
       unsigned int slot = current->slot[pos];
       arts_remote_db_request(db->guid, (int)get_from, edt, (int)slot,
-                            current->mode[pos], true);
+                             current->mode[pos], true);
       if (pos + 1 == DBSPERELEMENT) {
         current = current->next;
-}
+      }
     }
   }
 
   if (arts_push_db_to_element(&frontier->list, frontier->position, get_from)) {
     frontier->position++;
-}
+  }
   frontier_unlock(&frontier->lock);
 }
 
 void arts_signal_frontier_local(struct arts_db_frontier_s *frontier,
-                             struct arts_db_s *db) {
+                                struct arts_db_s *db) {
   frontier_lock(&frontier->lock);
 
   if (frontier->exEdt || frontier->exEdtGuid != NULL_GUID) {
@@ -437,10 +442,10 @@ void arts_signal_frontier_local(struct arts_db_frontier_s *frontier,
     struct arts_edt_s *edt = frontier->exEdt;
     if (edt_guid == NULL_GUID && edt) {
       edt_guid = edt->current_edt;
-}
+    }
     if (!edt && edt_guid != NULL_GUID) {
       edt = (struct arts_edt_s *)arts_route_table_lookup_item(edt_guid);
-}
+    }
     if (frontier->exNode == arts_global_rank_id) {
       if (edt) {
         // TODO(gpu): GPU EDTs need GPU memory, not this CPU pointer.
@@ -448,18 +453,19 @@ void arts_signal_frontier_local(struct arts_db_frontier_s *frontier,
         depv[frontier->exSlot].ptr = db + 1;
         if (arts_atomic_sub(&edt->depc_needed, 1U) == 0) {
           arts_handle_remote_stolen_edt(edt);
-}
+        }
       } else {
         ARTS_INFO("Local frontier missing EDT[Guid:%lu] on rank %u", edt_guid,
                   arts_global_rank_id);
       }
     } else {
-      arts_remote_db_full_send_now((int)frontier->exNode, db, edt_guid, frontier->exSlot,
-                              frontier->exMode);
+      arts_remote_db_full_send_now((int)frontier->exNode, db, edt_guid,
+                                   frontier->exSlot, frontier->exMode);
     }
   }
 
-  struct arts_db_frontier_iterator_s *iter = arts_db_frontier_iter_create(frontier);
+  struct arts_db_frontier_iterator_s *iter =
+      arts_db_frontier_iter_create(frontier);
   if (iter) {
     unsigned int node;
     while (arts_db_frontier_iter_next(iter, &node)) {
@@ -487,7 +493,7 @@ void arts_signal_frontier_local(struct arts_db_frontier_s *frontier,
 
       if (pos + 1 == DBSPERELEMENT) {
         current = current->next;
-}
+      }
     }
   }
   frontier_unlock(&frontier->lock);
@@ -504,14 +510,14 @@ void arts_progress_frontier(struct arts_db_s *db, unsigned int rank) {
         arts_signal_frontier_local(db_list->head, db);
       } else {
         arts_signal_frontier_remote(db_list->head, db, rank);
-}
+      }
     }
   }
   arts_writer_unlock(&db_list->writer);
   // This should be safe since the writer lock ensures all readers are done
   if (tail) {
     arts_delete_db_frontier(tail);
-}
+  }
 }
 
 struct arts_db_frontier_iterator_s *

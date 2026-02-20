@@ -46,13 +46,13 @@
 #include <unistd.h>
 
 #include "arts.h"
-#include "arts/utils/malloc.h"
 #include "arts/introspection/counter.h"
 #include "arts/network/remote.h"
 #include "arts/runtime/globals.h"
 #include "arts/runtime/runtime.h"
 #include "arts/system/arts_print.h"
 #include "arts/system/config.h"
+#include "arts/utils/malloc.h"
 
 unsigned int arts_global_rank_id;
 unsigned int arts_global_rank_count;
@@ -62,12 +62,11 @@ struct arts_config_s *g_config;
 struct thread_mask_s *mask;
 pthread_t *node_thread_list;
 
-
 void *arts_thread_loop(void *data) {
   struct thread_mask_s *unit = (struct thread_mask_s *)data;
   if (unit->pin) {
     arts_abstract_machine_model_pin_thread(&unit->core_info);
-}
+  }
   arts_runtime_private_init(unit, g_config);
   arts_runtime_loop();
   arts_runtime_private_cleanup();
@@ -99,7 +98,8 @@ void arts_thread_main_join() {
   ARTS_DEBUG("arts_thread_main_join: main thread entering runtime_loop");
   arts_runtime_loop();
   ARTS_DEBUG("arts_thread_main_join: main thread exited runtime_loop, joining "
-             "%u threads", arts_node_info.total_thread_count - 1);
+             "%u threads",
+             arts_node_info.total_thread_count - 1);
   END_TO_END_TIME_STOP();
   arts_runtime_private_cleanup();
 
@@ -128,8 +128,8 @@ void arts_thread_main_join() {
 void arts_thread_init(struct arts_config_s *config) {
   g_config = config;
   mask = get_thread_mask(config);
-  node_thread_list = (pthread_t *)arts_malloc(sizeof(pthread_t) *
-                                           arts_node_info.total_thread_count);
+  node_thread_list = (pthread_t *)arts_malloc(
+      sizeof(pthread_t) * arts_node_info.total_thread_count);
   unsigned int i = 0;
   unsigned int thread_count = arts_node_info.total_thread_count;
 
@@ -137,9 +137,9 @@ void arts_thread_init(struct arts_config_s *config) {
     void *stack;
     pthread_attr_t attr;
     long page_size = sysconf(_SC_PAGESIZE);
-    size_t size =
-        ((config->stack_size % page_size > 0) + (config->stack_size / page_size)) *
-        page_size;
+    size_t size = ((config->stack_size % page_size > 0) +
+                   (config->stack_size / page_size)) *
+                  page_size;
     for (i = 1; i < thread_count; i++) {
       pthread_attr_init(&attr);
       pthread_attr_setstacksize(&attr, size);
@@ -148,11 +148,11 @@ void arts_thread_init(struct arts_config_s *config) {
   } else {
     for (i = 1; i < thread_count; i++) {
       pthread_create(&node_thread_list[i], NULL, &arts_thread_loop, &mask[i]);
-}
+    }
   }
   if (mask->pin) {
     arts_abstract_machine_model_pin_thread(&mask->core_info);
-}
+  }
   arts_runtime_private_init(&mask[0], config);
 }
 
@@ -169,8 +169,8 @@ void arts_thread_init(struct arts_config_s *config) {
  *   - User code via the arts_shutdown() public API.
  */
 void arts_shutdown() {
-  ARTS_INFO("arts_shutdown: rank_count=%u, rank_id=%u",
-            arts_global_rank_count, arts_global_rank_id);
+  ARTS_INFO("arts_shutdown: rank_count=%u, rank_id=%u", arts_global_rank_count,
+            arts_global_rank_id);
   if (arts_global_rank_count > 1) {
     arts_remote_shutdown();
   }

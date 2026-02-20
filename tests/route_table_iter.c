@@ -65,12 +65,13 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   printf("Init per node\n");
   arts_guid_range_t *range = arts_guid_range_create(ARTS_EDT, MYSIZE, node_id);
   for (uint64_t i = 0; i < MYSIZE; i++) {
-    arts_route_item_t *location = (arts_route_item_t *)arts_route_table_add_item(
-        (void *)range, arts_guid_range_next(range), node_id, 0);
+    arts_route_item_t *location =
+        (arts_route_item_t *)arts_route_table_add_item(
+            (void *)range, arts_guid_range_next(range), node_id, 0);
     if (!i) {
       arts_printf("SWAPPING\n");
       arts_atomic_cswap_u64(&location->lock, AVAILABLE_ITEM,
-                         (AVAILABLE_ITEM | DELETE_ITEM));
+                            (AVAILABLE_ITEM | DELETE_ITEM));
     }
   }
 
@@ -89,8 +90,8 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("DB Lookup %lu %p\n", guid, ptr);
   arts_print_item(get_item_from_data(guid, ptr));
 
-  arts_route_item_t *location =
-      (arts_route_item_t *)arts_route_table_add_item((void *)range, guid, node_id, 0);
+  arts_route_item_t *location = (arts_route_item_t *)arts_route_table_add_item(
+      (void *)range, guid, node_id, 0);
   // arts_atomic_cswap_u64(&location->lock, AVAILABLE_ITEM, (AVAILABLE_ITEM |
   // DELETE_ITEM));
 

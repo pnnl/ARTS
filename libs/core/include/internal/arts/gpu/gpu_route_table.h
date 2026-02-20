@@ -57,29 +57,33 @@ typedef struct {
 } arts_gpu_route_table_t;
 
 arts_route_table_t *arts_gpu_new_route_table(unsigned int route_table_size,
-                                       unsigned int shift);
+                                             unsigned int shift);
 
 uint64_t arts_gpu_lookup_db(arts_guid_t key);
 unsigned int arts_gpu_lookup_db_fix(arts_guid_t key);
-void *arts_gpu_route_table_add_item_race(void *item, uint64_t size, arts_guid_t key,
-                                   unsigned int gpu_id);
-arts_item_wrapper_t *arts_gpu_route_table_reserve_item_race(bool *added, uint64_t size,
-                                                    arts_guid_t key,
-                                                    unsigned int gpu_id,
-                                                    bool add_to_use);
+void *arts_gpu_route_table_add_item_race(void *item, uint64_t size,
+                                         arts_guid_t key, unsigned int gpu_id);
+arts_item_wrapper_t *arts_gpu_route_table_reserve_item_race(bool *added,
+                                                            uint64_t size,
+                                                            arts_guid_t key,
+                                                            unsigned int gpu_id,
+                                                            bool add_to_use);
 void *arts_gpu_route_table_add_item_to_delete_race(void *item, uint64_t size,
-                                           arts_guid_t key, unsigned int gpu_id);
+                                                   arts_guid_t key,
+                                                   unsigned int gpu_id);
 void *arts_gpu_route_table_lookup_db(arts_guid_t key, int gpu_id,
-                                unsigned int *touched, unsigned int *time_stamp);
+                                     unsigned int *touched,
+                                     unsigned int *time_stamp);
 void *arts_gpu_route_table_lookup_db_res(arts_guid_t key, int gpu_id,
-                                   unsigned int *touched,
-                                   unsigned int *time_stamp, bool res);
+                                         unsigned int *touched,
+                                         unsigned int *time_stamp, bool res);
 bool arts_gpu_route_table_return_db(arts_guid_t key, bool mark_to_delete,
-                               unsigned int gpu_id);
-bool arts_gpu_invalidate_route_tables(arts_guid_t key, unsigned int keep_on_this_gpu);
+                                    unsigned int gpu_id);
+bool arts_gpu_invalidate_route_tables(arts_guid_t key,
+                                      unsigned int keep_on_this_gpu);
 bool arts_gpu_invalidate_on_route_table(arts_guid_t key, unsigned int gpu_id);
-uint64_t arts_gpu_clean_up_route_table(unsigned int size_to_clean, bool clean_zeros,
-                                  unsigned int gpu_id);
+uint64_t arts_gpu_clean_up_route_table(unsigned int size_to_clean,
+                                       bool clean_zeros, unsigned int gpu_id);
 uint64_t arts_gpu_free_all(unsigned int gpu_id);
 
 void gpu_gc_read_lock();

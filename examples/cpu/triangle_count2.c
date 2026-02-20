@@ -41,9 +41,9 @@
 #include <inttypes.h>
 #include <stdint.h>
 
+#include "arts.h"
 #include "arts/block_distribution.h"
 #include "arts/csr.h"
-#include "arts.h"
 #include "arts/utils/atomics.h"
 
 arts_block_dist_t *distribution;
@@ -70,7 +70,7 @@ unsigned int check_and_set(uint64_t *mask, unsigned int index) {
 }
 
 void final_reduce(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                 arts_edt_dep_t depv[]) {
+                  arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   uint64_t count = 0;
@@ -83,18 +83,19 @@ void final_reduce(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 void local_reduce(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                 arts_edt_dep_t depv[]) {
+                  arts_edt_dep_t depv[]) {
   (void)depc;
   (void)depv;
   (void)paramc;
   (void)paramv;
   //    arts_printf("Local Count: %lu Signal: %lu\n", local_triangle_count,
   //    finalEdtGuid);
-  arts_signal_edt_value(final_reduce_guid, arts_get_current_node(), local_triangle_count);
+  arts_signal_edt_value(final_reduce_guid, arts_get_current_node(),
+                        local_triangle_count);
 }
 
 void start_reduce(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                 arts_edt_dep_t depv[]) {
+                  arts_edt_dep_t depv[]) {
   (void)depc;
   (void)depv;
   (void)paramc;
@@ -102,28 +103,29 @@ void start_reduce(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   //    arts_printf("Local Count: %lu Signal: %lu\n", local_triangle_count,
   //    finalEdtGuid);
   for (unsigned int i = 0; i < arts_get_total_nodes(); i++) {
-    arts_edt_create_dep(local_reduce, 0, NULL, 0, false, &(arts_hint_t){.route = i});
+    arts_edt_create_dep(local_reduce, 0, NULL, 0, false,
+                        &(arts_hint_t){.route = i});
   }
 }
 
 uint64_t lower_bound(vertex_t value, uint64_t start, uint64_t end,
-                    const vertex_t *edges) {
+                     const vertex_t *edges) {
   while ((start < end) && (edges[start] < value)) {
     start++;
-}
+  }
   return start;
 }
 
 uint64_t upper_bound(vertex_t value, uint64_t start, uint64_t end,
-                    const vertex_t *edges) {
+                     const vertex_t *edges) {
   while ((start < end) && (value < edges[end - 1])) {
     end--;
-}
+  }
   return end;
 }
 
 uint64_t count_triangles(const vertex_t *a, uint64_t a_start, uint64_t a_end,
-                        const vertex_t *b, uint64_t b_start, uint64_t b_end) {
+                         const vertex_t *b, uint64_t b_start, uint64_t b_end) {
   uint64_t count = 0;
   while ((a_start < a_end) && (b_start < b_end)) {
     if (a[a_start] < b[b_start]) {
@@ -145,9 +147,10 @@ uint64_t process_block(uint64_t index) {
   uint64_t local_count = 0;
 
   uint64_t i_start = index * block_size;
-  uint64_t i_end = (index + 1 == num_blocks)
-                      ? partition_end_distr(arts_get_current_node(), distribution)
-                      : i_start + block_size;
+  uint64_t i_end =
+      (index + 1 == num_blocks)
+          ? partition_end_distr(arts_get_current_node(), distribution)
+          : i_start + block_size;
 
   for (vertex_t i = i_start; i < i_end; i++) {
 
@@ -156,7 +159,8 @@ uint64_t process_block(uint64_t index) {
     uint64_t first_pred = lower_bound(i, 0, neighbor_count, neighbors);
     uint64_t last_pred = neighbor_count;
 
-    for (uint64_t next_pred = first_pred + 1; next_pred < last_pred; next_pred++) {
+    for (uint64_t next_pred = first_pred + 1; next_pred < last_pred;
+         next_pred++) {
       vertex_t j = neighbors[next_pred];
       unsigned int owner = get_owner_distr(j, distribution);
       if (get_owner_distr(j, distribution) == arts_get_current_node()) {
@@ -165,8 +169,8 @@ uint64_t process_block(uint64_t index) {
         get_neighbors(graph, j, &j_neighbors, &j_neighbor_count);
         uint64_t first_succ = lower_bound(i, 0, j_neighbor_count, j_neighbors);
         uint64_t last_succ = upper_bound(j, 0, j_neighbor_count, j_neighbors);
-        local_count += count_triangles(neighbors, first_pred, next_pred, j_neighbors,
-                                     first_succ, last_succ);
+        local_count += count_triangles(neighbors, first_pred, next_pred,
+                                       j_neighbors, first_succ, last_succ);
       }
     }
   }
@@ -174,7 +178,7 @@ uint64_t process_block(uint64_t index) {
 }
 
 void visit_node(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-               arts_edt_dep_t depv[]) {
+                arts_edt_dep_t depv[]) {
   (void)depc;
   (void)depv;
   (void)paramc;
@@ -244,7 +248,8 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Initialize graph data on every node
   arts_guid_t init_epoch_guid = arts_initialize_and_start_epoch(NULL_GUID, 0);
   for (unsigned int i = 0; i < arts_get_total_nodes(); i++) {
-    arts_edt_create_with_epoch(init_node, paramc, paramv, 0, init_epoch_guid, &(arts_hint_t){.route = i});
+    arts_edt_create_with_epoch(init_node, paramc, paramv, 0, init_epoch_guid,
+                               &(arts_hint_t){.route = i});
   }
   arts_wait_on_handle(init_epoch_guid);
 

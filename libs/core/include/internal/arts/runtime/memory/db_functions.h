@@ -45,21 +45,21 @@ extern "C" {
 #include "arts/runtime/rt.h"
 
 void arts_db_create_internal(arts_guid_t guid, void *addr, uint64_t len,
-                          uint64_t packet_size, arts_type_t mode,
-                          uint64_t arts_id);
+                             uint64_t packet_size, arts_type_t mode,
+                             uint64_t arts_id);
 void acquire_dbs(struct arts_edt_s *edt);
 void release_dbs(unsigned int depc, arts_edt_dep_t *depv,
                  const arts_type_t *modes, bool gpu);
 void arts_release_created_dbs(void);
 bool arts_add_db_duplicate(struct arts_db_s *db, unsigned int rank,
-                        struct arts_edt_s *edt, arts_guid_t edt_guid,
-                        unsigned int slot, arts_type_t mode,
-                        bool *on_head);
-void prep_dbs(unsigned int depc, arts_edt_dep_t *depv,
-              const arts_type_t *modes, bool gpu);
+                           struct arts_edt_s *edt, arts_guid_t edt_guid,
+                           unsigned int slot, arts_type_t mode, bool *on_head);
+void prep_dbs(unsigned int depc, arts_edt_dep_t *depv, const arts_type_t *modes,
+              bool gpu);
 void internal_put_in_db(void *ptr, arts_guid_t edt_guid, arts_guid_t db_guid,
-                     unsigned int slot, unsigned int offset, unsigned int size,
-                     arts_guid_t epoch_guid, unsigned int rank);
+                        unsigned int slot, unsigned int offset,
+                        unsigned int size, arts_guid_t epoch_guid,
+                        unsigned int rank);
 
 void *arts_db_malloc(arts_type_t mode, unsigned int size);
 void arts_db_free(void *ptr);

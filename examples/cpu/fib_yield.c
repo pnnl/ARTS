@@ -75,7 +75,7 @@ void fib(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
     while (x < 0 || y < 0) {
       arts_yield();
-}
+    }
     sum = x + y;
   }
 
@@ -97,7 +97,8 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   int num = (int)strtol(argv[1], NULL, 10);
   uint64_t args[3] = {NULL_GUID, (uint64_t)num};
   start = arts_get_time_stamp();
-  arts_guid_t guid = arts_edt_create(fib, 2, args, 0, &(arts_hint_t){.route = 0});
+  arts_guid_t guid =
+      arts_edt_create(fib, 2, args, 0, &(arts_hint_t){.route = 0});
 }
 
 int main(int argc, char **argv) {

@@ -9,8 +9,7 @@ __device__ vertex_t *get_col_ptr_gpu(csr_graph_t *csr);
 __device__ unsigned int get_owner_gpu(vertex_t v, const csr_graph_t *part);
 __device__ vertex_t index_start_gpu(unsigned int index,
                                     const csr_graph_t *part);
-__device__ vertex_t index_end_gpu(unsigned int index,
-                                  const csr_graph_t *part);
+__device__ vertex_t index_end_gpu(unsigned int index, const csr_graph_t *part);
 __device__ vertex_t partition_start_gpu(const csr_graph_t *part);
 __device__ vertex_t partition_end_gpu(const csr_graph_t *part);
 __device__ vertex_t get_vertex_from_local_gpu(local_index_t u,

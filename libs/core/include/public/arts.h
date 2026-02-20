@@ -95,7 +95,7 @@ typedef enum {
 
   /* ── DataBlock types ──────────────────────────────────────────────────── */
 
-  ARTS_DB,       /**< Generic DataBlock (mode-less). */
+  ARTS_DB, /**< Generic DataBlock (mode-less). */
 
   /* ── DataBlock access modes (used at dependency time) ─────────────────── */
 
@@ -201,7 +201,7 @@ typedef void (*event_callback_t)(arts_edt_dep_t data);
  * @param depv   Dependency array (empty when called by the runtime).
  */
 extern void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
-                           uint32_t depc, arts_edt_dep_t depv[]);
+                          uint32_t depc, arts_edt_dep_t depv[]);
 
 /** @} */ /* end user_callbacks */
 
@@ -344,7 +344,7 @@ arts_type_t arts_guid_get_type(arts_guid_t guid);
  * @see arts_guid_range_get, arts_guid_range_next
  */
 arts_guid_range_t *arts_guid_range_create(arts_type_t type, unsigned int size,
-                                            unsigned int route);
+                                          unsigned int route);
 
 /**
  * @brief Get the GUID at @p index within @p range.
@@ -391,8 +391,7 @@ void arts_guid_range_reset_iter(arts_guid_range_t *range);
  * @param type Type tag for every GUID.
  * @return Array of GUIDs (caller must free).
  */
-arts_guid_t *arts_guid_reserve_round_robin(unsigned int size,
-                                            arts_type_t type);
+arts_guid_t *arts_guid_reserve_round_robin(unsigned int size, arts_type_t type);
 
 /** @} */ /* end guid */
 
@@ -502,13 +501,9 @@ arts_guid_t arts_edt_create_with_guid_dep(arts_edt_t func_ptr, arts_guid_t guid,
  * @param hint       Advisory metadata (route, profiling id). NULL = defaults.
  * @return GUID of the newly created EDT.
  */
-arts_guid_t arts_edt_create_with_epoch_dep(arts_edt_t func_ptr,
-                                           uint32_t paramc,
-                                           const uint64_t *paramv,
-                                           uint32_t depc,
-                                           arts_guid_t epoch_guid,
-                                           bool has_depv,
-                                           const arts_hint_t *hint);
+arts_guid_t arts_edt_create_with_epoch_dep(
+    arts_edt_t func_ptr, uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+    arts_guid_t epoch_guid, bool has_depv, const arts_hint_t *hint);
 
 /**
  * @brief Destroy an EDT and remove its GUID from the routing table.
@@ -798,9 +793,10 @@ void arts_add_dependence_to_persistent_event(arts_guid_t event_source,
  * @param edt_slot     Dependency slot on the EDT.
  * @param mode Acquire mode override.
  */
-void arts_add_dependence_to_persistent_event_with_mode(
-    arts_guid_t event_source, arts_guid_t edt_dest, uint32_t edt_slot,
-    arts_type_t mode);
+void arts_add_dependence_to_persistent_event_with_mode(arts_guid_t event_source,
+                                                       arts_guid_t edt_dest,
+                                                       uint32_t edt_slot,
+                                                       arts_type_t mode);
 
 /**
  * @brief Add a dependence with acquire mode override and diff tracking.
@@ -962,8 +958,8 @@ void arts_put_in_db(void *ptr, arts_guid_t edt_guid, arts_guid_t db_guid,
  * @param rank     Node rank where the write is applied.
  */
 void arts_put_in_db_at(void *ptr, arts_guid_t edt_guid, arts_guid_t db_guid,
-                       unsigned int slot, unsigned int offset,
-                       unsigned int len, unsigned int rank);
+                       unsigned int slot, unsigned int offset, unsigned int len,
+                       unsigned int rank);
 
 /**
  * @brief Write data into a DataBlock within a specific epoch.
@@ -991,8 +987,7 @@ void arts_put_in_db_epoch(void *ptr, arts_guid_t epoch_guid,
  * @param len      Number of bytes to read.
  */
 void arts_get_from_db(arts_guid_t edt_guid, arts_guid_t db_guid,
-                      unsigned int slot, unsigned int offset,
-                      unsigned int len);
+                      unsigned int slot, unsigned int offset, unsigned int len);
 
 /**
  * @brief Read data from a DataBlock on a specific node @p rank.
@@ -1053,8 +1048,7 @@ void arts_db_add_dependence(arts_guid_t db_src, arts_guid_t edt_dest,
  * @param mode Acquire mode override.
  */
 void arts_db_add_dependence_with_mode(arts_guid_t db_src, arts_guid_t edt_dest,
-                                      uint32_t edt_slot,
-                                      arts_type_t mode);
+                                      uint32_t edt_slot, arts_type_t mode);
 
 /**
  * @brief Add a DB dependence with acquire mode override and diff tracking.

@@ -45,54 +45,54 @@ extern "C" {
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "arts/introspection/arts_id_counter.h"
 #include "arts/introspection/Preamble.h"
+#include "arts/introspection/arts_id_counter.h"
 #include "arts/utils/array_list.h"
 
 // X-macro: Define all counter types in one place.
 // Format: X(counterName)
 // Both the enum and string array are generated from this single list.
 #define ARTS_COUNTER_LIST                                                      \
-  X(EDT_COUNTER)                                                                \
-  X(SLEEP_COUNTER)                                                              \
-  X(SIGNAL_EVENT_COUNTER)                                                        \
-  X(SIGNAL_PERSISTENT_EVENT_COUNTER)                                              \
-  X(SIGNAL_EDT_COUNTER)                                                          \
-  X(EDT_CREATE_COUNTER)                                                          \
-  X(EVENT_CREATE_COUNTER)                                                        \
-  X(PERSISTENT_EVENT_CREATE_COUNTER)                                              \
-  X(DB_CREATE_COUNTER)                                                           \
-  X(SMART_DB_CREATE_COUNTER)                                                      \
-  X(MALLOC_MEMORY)                                                              \
-  X(CALLOC_MEMORY)                                                              \
-  X(FREE_MEMORY)                                                                \
-  X(GUID_ALLOC_COUNTER)                                                          \
-  X(GUID_LOOKUP_COUNTER)                                                         \
-  X(GET_DB_COUNTER)                                                              \
-  X(PUT_DB_COUNTER)                                                              \
-  X(CONTEXT_SWITCH)                                                             \
+  X(EDT_COUNTER)                                                               \
+  X(SLEEP_COUNTER)                                                             \
+  X(SIGNAL_EVENT_COUNTER)                                                      \
+  X(SIGNAL_PERSISTENT_EVENT_COUNTER)                                           \
+  X(SIGNAL_EDT_COUNTER)                                                        \
+  X(EDT_CREATE_COUNTER)                                                        \
+  X(EVENT_CREATE_COUNTER)                                                      \
+  X(PERSISTENT_EVENT_CREATE_COUNTER)                                           \
+  X(DB_CREATE_COUNTER)                                                         \
+  X(SMART_DB_CREATE_COUNTER)                                                   \
+  X(MALLOC_MEMORY)                                                             \
+  X(CALLOC_MEMORY)                                                             \
+  X(FREE_MEMORY)                                                               \
+  X(GUID_ALLOC_COUNTER)                                                        \
+  X(GUID_LOOKUP_COUNTER)                                                       \
+  X(GET_DB_COUNTER)                                                            \
+  X(PUT_DB_COUNTER)                                                            \
+  X(CONTEXT_SWITCH)                                                            \
   X(YIELD)                                                                     \
-  X(REMOTE_MEMORY_MOVE)                                                          \
-  X(MEMORY_FOOTPRINT)                                                           \
-  X(EDT_RUNNING_TIME)                                                            \
-  X(NUM_EDTS_CREATED)                                                            \
-  X(NUM_EDTS_ACQUIRED)                                                           \
-  X(NUM_EDTS_FINISHED)                                                           \
-  X(REMOTE_BYTES_SENT)                                                           \
-  X(REMOTE_BYTES_RECEIVED)                                                       \
-  X(NUM_DBS_CREATED)                                                             \
+  X(REMOTE_MEMORY_MOVE)                                                        \
+  X(MEMORY_FOOTPRINT)                                                          \
+  X(EDT_RUNNING_TIME)                                                          \
+  X(NUM_EDTS_CREATED)                                                          \
+  X(NUM_EDTS_ACQUIRED)                                                         \
+  X(NUM_EDTS_FINISHED)                                                         \
+  X(REMOTE_BYTES_SENT)                                                         \
+  X(REMOTE_BYTES_RECEIVED)                                                     \
+  X(NUM_DBS_CREATED)                                                           \
   /* Acquire-Mode counters */                                                  \
-  X(ACQUIRE_READ_MODE)                                                           \
-  X(ACQUIRE_WRITE_MODE)                                                          \
-  X(OWNER_UPDATES_SAVED)                                                         \
-  X(OWNER_UPDATES_PERFORMED)                                                     \
+  X(ACQUIRE_READ_MODE)                                                         \
+  X(ACQUIRE_WRITE_MODE)                                                        \
+  X(OWNER_UPDATES_SAVED)                                                       \
+  X(OWNER_UPDATES_PERFORMED)                                                   \
   /* arts_id tracking counters */                                              \
-  X(ARTS_ID_EDT_METRICS)                                                          \
-  X(ARTS_ID_DB_METRICS)                                                           \
-  X(ARTS_ID_EDT_CAPTURES)                                                         \
-  X(ARTS_ID_DB_CAPTURES)                                                          \
+  X(ARTS_ID_EDT_METRICS)                                                       \
+  X(ARTS_ID_DB_METRICS)                                                        \
+  X(ARTS_ID_EDT_CAPTURES)                                                      \
+  X(ARTS_ID_DB_CAPTURES)                                                       \
   /* Per-node timing counters (CLUSTER level; master-measured) */              \
-  X(INITIALIZATION_TIME)                                                        \
+  X(INITIALIZATION_TIME)                                                       \
   X(END_TO_END_TIME)
 
 // Generate enum from X-macro
@@ -119,8 +119,8 @@ typedef enum arts_counter_reduce_method_t {
 
 // Counter mode: determines when/how often counters are captured
 typedef enum arts_counter_mode_t {
-  ARTS_COUNTER_MODE_OFF = 0,      // Counter disabled
-  ARTS_COUNTER_MODE_ONCE = 1,     // Single value at the end (no periodic capture)
+  ARTS_COUNTER_MODE_OFF = 0,  // Counter disabled
+  ARTS_COUNTER_MODE_ONCE = 1, // Single value at the end (no periodic capture)
   ARTS_COUNTER_MODE_PERIODIC = 2, // Periodic capture during execution
 } arts_counter_mode_t;
 
@@ -180,18 +180,20 @@ void arts_counter_decrement_by(arts_counter_t *counter, uint64_t num);
 void arts_counter_timer_start(arts_counter_t *counter);
 void arts_counter_timer_end(arts_counter_t *counter);
 void arts_counter_write(const char *output_folder, unsigned int node_id,
-                      unsigned int thread_id);
-void arts_counter_write_cluster(const char *output_folder, unsigned int node_count);
+                        unsigned int thread_id);
+void arts_counter_write_cluster(const char *output_folder,
+                                unsigned int node_count);
 
 // arts_id tracking wrapper functions (integrated with counter infrastructure)
 void arts_counter_record_arts_id_edt(uint64_t arts_id, uint64_t exec_ns,
-                                uint64_t stall_ns);
+                                     uint64_t stall_ns);
 void arts_counter_record_arts_id_db(uint64_t arts_id, uint64_t bytes_local,
-                               uint64_t bytes_remote, uint64_t cache_misses);
+                                    uint64_t bytes_remote,
+                                    uint64_t cache_misses);
 void arts_counter_capture_arts_id_edt(uint64_t arts_id, uint64_t exec_ns,
-                                 uint64_t stall_ns);
+                                      uint64_t stall_ns);
 void arts_counter_capture_arts_id_db(uint64_t arts_id, uint64_t bytes_accessed,
-                                uint8_t access_type);
+                                     uint8_t access_type);
 
 #ifdef __cplusplus
 }

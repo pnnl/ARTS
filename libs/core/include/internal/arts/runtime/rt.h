@@ -77,10 +77,10 @@ struct arts_db_s {
   arts_guid_t guid;       /**< GUID of this DataBlock. */
   arts_guid_t event_guid; /**< Associated persistent event GUID. */
   volatile unsigned int copy_count; /**< Number of outstanding copies. */
-  volatile unsigned int reader;    /**< Active reader count. */
-  volatile unsigned int writer;    /**< Active writer count. */
-  volatile unsigned int version;   /**< Coherence version counter. */
-  unsigned int time_stamp;         /**< Creation timestamp (relative). */
+  volatile unsigned int reader;     /**< Active reader count. */
+  volatile unsigned int writer;     /**< Active writer count. */
+  volatile unsigned int version;    /**< Coherence version counter. */
+  unsigned int time_stamp;          /**< Creation timestamp (relative). */
   void *db_list; /**< Node in the per-node DB tracking list. */
 } __attribute__((aligned));
 
@@ -107,7 +107,7 @@ struct arts_dependent_s {
   volatile unsigned int slot;           /**< Target dependency slot. */
   volatile arts_guid_t addr;            /**< GUID of the dependent EDT/event. */
   volatile event_callback_t callback_t; /**< Inline callback (if any). */
-  volatile bool done_writing;            /**< Write completion flag. */
+  volatile bool done_writing;           /**< Write completion flag. */
   arts_type_t mode;                     /**< Access mode for signaling. */
   uint64_t byte_offset; /**< Byte offset for slice dependencies. */
   uint64_t size;        /**< Slice size in bytes. */
@@ -168,22 +168,22 @@ typedef enum {
  * all work within the epoch has completed.
  */
 typedef struct {
-  termination_detection_phase_t phase;     /**< Current TD phase. */
-  volatile unsigned int active_count;       /**< Local active task count. */
-  volatile unsigned int finished_count;     /**< Local finished task count. */
+  termination_detection_phase_t phase;       /**< Current TD phase. */
+  volatile unsigned int active_count;        /**< Local active task count. */
+  volatile unsigned int finished_count;      /**< Local finished task count. */
   volatile unsigned int global_active_count; /**< Cluster-wide active count. */
   volatile unsigned int
       global_finished_count;               /**< Cluster-wide finished count. */
   volatile unsigned int last_active_count; /**< Previous-round active count. */
   volatile unsigned int
       last_finished_count;            /**< Previous-round finished count. */
-  volatile uint64_t queued;         /**< Number of queued operations. */
-  volatile uint64_t outstanding;    /**< Number of outstanding remote ops. */
+  volatile uint64_t queued;           /**< Number of queued operations. */
+  volatile uint64_t outstanding;      /**< Number of outstanding remote ops. */
   unsigned int termination_exit_slot; /**< EDT slot to signal on completion. */
   arts_guid_t termination_exit_guid;  /**< EDT to signal on completion. */
-  arts_guid_t guid;                 /**< GUID of this epoch. */
-  arts_guid_t pool_guid;            /**< Associated resource pool GUID. */
-  volatile unsigned int *wait_ptr;  /**< Epoch-wait flag pointer. */
+  arts_guid_t guid;                   /**< GUID of this epoch. */
+  arts_guid_t pool_guid;              /**< Associated resource pool GUID. */
+  volatile unsigned int *wait_ptr;    /**< Epoch-wait flag pointer. */
 } arts_epoch_t;
 
 /** @} */ /* end td_types */

@@ -71,18 +71,20 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   printf("Start\n");
   arts_guid_range_t *range = arts_guid_range_create(ARTS_DB, MYSIZE, node_id);
   for (uint64_t i = 0; i < MYSIZE; i++) {
-    arts_db_create_with_guid(arts_guid_range_next(range), 1024 * sizeof(char), NULL);
+    arts_db_create_with_guid(arts_guid_range_next(range), 1024 * sizeof(char),
+                             NULL);
   }
   print_rt("After DB Init");
 
   for (uint64_t i = 0; i < MYSIZE; i++) {
-    arts_route_table_lookup_db(arts_guid_range_get(range, i), &dummy_rank, true);
+    arts_route_table_lookup_db(arts_guid_range_get(range, i), &dummy_rank,
+                               true);
   }
   print_rt("After DB Lookup");
 
   for (uint64_t i = 0; i < MYSIZE; i++) {
     internal_route_table_return_db(arts_node_info.route_table[0],
-                               arts_guid_range_get(range, i), false, false);
+                                   arts_guid_range_get(range, i), false, false);
   }
   print_rt("After DB Return with Mark");
 

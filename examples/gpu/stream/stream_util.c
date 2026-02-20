@@ -46,14 +46,15 @@
 #include "arts/gpu/gpu_runtime.cuh"
 
 void launch2_kernel_edt(arts_edt_t fun_ptr, unsigned int tile_size,
-                      unsigned int total_size, double scalar,
-                      arts_guid_range_t *a_guid, arts_guid_range_t *b_guid) {
+                        unsigned int total_size, double scalar,
+                        arts_guid_range_t *a_guid, arts_guid_range_t *b_guid) {
   unsigned int tiles = total_size / tile_size;
   if (total_size % tile_size) {
     tiles++;
-}
+  }
 
-  arts_guid_t to_signal = arts_allocate_local_buffer(NULL, 0, tiles + 1, NULL_GUID);
+  arts_guid_t to_signal =
+      arts_allocate_local_buffer(NULL, 0, tiles + 1, NULL_GUID);
 
   unsigned int num_threads =
       (THREADSPERBLOCK < tile_size) ? THREADSPERBLOCK : tile_size;
@@ -65,34 +66,39 @@ void launch2_kernel_edt(arts_edt_t fun_ptr, unsigned int tile_size,
     for (unsigned int i = 0; i < tiles; ++i) {
       args[0] = (i + 1 < tiles) ? tile_size : total_size - (i * tile_size);
       arts_guid_t edt_guid =
-          arts_edt_create_gpu(fun_ptr, arts_get_current_node(), 2, args, 2, grid,
-                           threads, to_signal, 0, NULL_GUID);
-      arts_signal_edt(edt_guid, 0, arts_guid_range_get(a_guid, i), ARTS_DB_WRITE);
-      arts_signal_edt(edt_guid, 1, arts_guid_range_get(b_guid, i), ARTS_DB_WRITE);
+          arts_edt_create_gpu(fun_ptr, arts_get_current_node(), 2, args, 2,
+                              grid, threads, to_signal, 0, NULL_GUID);
+      arts_signal_edt(edt_guid, 0, arts_guid_range_get(a_guid, i),
+                      ARTS_DB_WRITE);
+      arts_signal_edt(edt_guid, 1, arts_guid_range_get(b_guid, i),
+                      ARTS_DB_WRITE);
     }
   } else {
     for (unsigned int i = 0; i < tiles; ++i) {
       args[0] = (i + 1 < tiles) ? tile_size : total_size - (i * tile_size);
       arts_guid_t edt_guid =
-          arts_edt_create_gpu(fun_ptr, arts_get_current_node(), 1, args, 2, grid,
-                           threads, to_signal, 0, NULL_GUID);
-      arts_signal_edt(edt_guid, 0, arts_guid_range_get(a_guid, i), ARTS_DB_WRITE);
-      arts_signal_edt(edt_guid, 1, arts_guid_range_get(b_guid, i), ARTS_DB_WRITE);
+          arts_edt_create_gpu(fun_ptr, arts_get_current_node(), 1, args, 2,
+                              grid, threads, to_signal, 0, NULL_GUID);
+      arts_signal_edt(edt_guid, 0, arts_guid_range_get(a_guid, i),
+                      ARTS_DB_WRITE);
+      arts_signal_edt(edt_guid, 1, arts_guid_range_get(b_guid, i),
+                      ARTS_DB_WRITE);
     }
   }
   arts_block_for_buffer(to_signal);
 }
 
 void launch3_kernel_edt(arts_edt_t fun_ptr, unsigned int tile_size,
-                      unsigned int total_size, double scalar,
-                      arts_guid_range_t *a_guid, arts_guid_range_t *b_guid,
-                      arts_guid_range_t *c_guid) {
+                        unsigned int total_size, double scalar,
+                        arts_guid_range_t *a_guid, arts_guid_range_t *b_guid,
+                        arts_guid_range_t *c_guid) {
   unsigned int tiles = total_size / tile_size;
   if (total_size % tile_size) {
     tiles++;
-}
+  }
 
-  arts_guid_t to_signal = arts_allocate_local_buffer(NULL, 0, tiles + 1, NULL_GUID);
+  arts_guid_t to_signal =
+      arts_allocate_local_buffer(NULL, 0, tiles + 1, NULL_GUID);
 
   unsigned int num_threads =
       (THREADSPERBLOCK < tile_size) ? THREADSPERBLOCK : tile_size;
@@ -105,21 +111,27 @@ void launch3_kernel_edt(arts_edt_t fun_ptr, unsigned int tile_size,
     for (unsigned int i = 0; i < tiles; ++i) {
       args[0] = (i + 1 < tiles) ? tile_size : total_size - (i * tile_size);
       arts_guid_t edt_guid =
-          arts_edt_create_gpu(fun_ptr, arts_get_current_node(), 2, args, 3, grid,
-                           threads, to_signal, 0, NULL_GUID);
-      arts_signal_edt(edt_guid, 0, arts_guid_range_get(a_guid, i), ARTS_DB_WRITE);
-      arts_signal_edt(edt_guid, 1, arts_guid_range_get(b_guid, i), ARTS_DB_WRITE);
-      arts_signal_edt(edt_guid, 2, arts_guid_range_get(c_guid, i), ARTS_DB_WRITE);
+          arts_edt_create_gpu(fun_ptr, arts_get_current_node(), 2, args, 3,
+                              grid, threads, to_signal, 0, NULL_GUID);
+      arts_signal_edt(edt_guid, 0, arts_guid_range_get(a_guid, i),
+                      ARTS_DB_WRITE);
+      arts_signal_edt(edt_guid, 1, arts_guid_range_get(b_guid, i),
+                      ARTS_DB_WRITE);
+      arts_signal_edt(edt_guid, 2, arts_guid_range_get(c_guid, i),
+                      ARTS_DB_WRITE);
     }
   } else {
     for (unsigned int i = 0; i < tiles; ++i) {
       args[0] = (i + 1 < tiles) ? tile_size : total_size - (i * tile_size);
       arts_guid_t edt_guid =
-          arts_edt_create_gpu(fun_ptr, arts_get_current_node(), 1, args, 3, grid,
-                           threads, to_signal, 0, NULL_GUID);
-      arts_signal_edt(edt_guid, 0, arts_guid_range_get(a_guid, i), ARTS_DB_WRITE);
-      arts_signal_edt(edt_guid, 1, arts_guid_range_get(b_guid, i), ARTS_DB_WRITE);
-      arts_signal_edt(edt_guid, 2, arts_guid_range_get(c_guid, i), ARTS_DB_WRITE);
+          arts_edt_create_gpu(fun_ptr, arts_get_current_node(), 1, args, 3,
+                              grid, threads, to_signal, 0, NULL_GUID);
+      arts_signal_edt(edt_guid, 0, arts_guid_range_get(a_guid, i),
+                      ARTS_DB_WRITE);
+      arts_signal_edt(edt_guid, 1, arts_guid_range_get(b_guid, i),
+                      ARTS_DB_WRITE);
+      arts_signal_edt(edt_guid, 2, arts_guid_range_get(c_guid, i),
+                      ARTS_DB_WRITE);
     }
   }
   arts_block_for_buffer(to_signal);
@@ -165,7 +177,7 @@ double mysecond() {
   return ((double)tp.tv_sec + ((double)tp.tv_usec * 1.e-6));
 }
 void check_strea_mresults(unsigned int tile_size, unsigned int total_size,
-                        double **a_tile, double **b_tile, double **c_tile) {
+                          double **a_tile, double **b_tile, double **c_tile) {
   double aj;
   double bj;
   double cj;
@@ -202,11 +214,12 @@ void check_strea_mresults(unsigned int tile_size, unsigned int total_size,
   unsigned int num_tiles = total_size / tile_size;
   if (total_size % tile_size) {
     num_tiles++;
-}
+  }
 
   unsigned int temp = 0;
   for (unsigned int i = 0; i < num_tiles; i++) {
-    unsigned int end = (i + 1 < num_tiles) ? tile_size : total_size - (i * tile_size);
+    unsigned int end =
+        (i + 1 < num_tiles) ? tile_size : total_size - (i * tile_size);
     for (unsigned int j = 0; j < end; j++) {
       asum += a_tile[i][j];
       bsum += b_tile[i][j];

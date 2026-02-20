@@ -51,8 +51,8 @@ unsigned int get_offset_from_index(arts_array_db_t *array, unsigned int index);
 unsigned int get_rank_from_index(arts_array_db_t *array, unsigned int index);
 arts_guid_t get_array_db_guid(arts_array_db_t *array);
 void internal_atomic_add_in_array_db(arts_guid_t db_guid, unsigned int index,
-                                unsigned int to_add, arts_guid_t edt_guid,
-                                unsigned int slot, arts_guid_t epoch_guid);
+                                     unsigned int to_add, arts_guid_t edt_guid,
+                                     unsigned int slot, arts_guid_t epoch_guid);
 void internal_atomic_compare_and_swap_in_array_db(
     arts_guid_t db_guid, unsigned int index, unsigned int old_value,
     unsigned int new_value, arts_guid_t edt_guid, unsigned int slot,
@@ -82,9 +82,9 @@ struct oo_atomic_compare_and_swap_in_array_db_s {
 
 // Remote handler functions (defined in array_db_remote.c)
 void arts_remote_atomic_add_in_array_db(unsigned int rank, arts_guid_t db_guid,
-                                    unsigned int index, unsigned int to_add,
-                                    arts_guid_t edt_guid, unsigned int slot,
-                                    arts_guid_t epoch_guid);
+                                        unsigned int index, unsigned int to_add,
+                                        arts_guid_t edt_guid, unsigned int slot,
+                                        arts_guid_t epoch_guid);
 void arts_remote_handle_atomic_add_in_array_db(void *pack);
 void arts_remote_atomic_compare_and_swap_in_array_db(
     unsigned int rank, arts_guid_t db_guid, unsigned int index,
@@ -93,12 +93,9 @@ void arts_remote_atomic_compare_and_swap_in_array_db(
 void arts_remote_handle_atomic_compare_and_swap_in_array_db(void *pack);
 
 // OOO registration functions (defined in array_db_oo.c)
-void arts_out_of_order_atomic_add_in_array_db(arts_guid_t db_guid,
-                                          unsigned int index,
-                                          unsigned int to_add,
-                                          arts_guid_t edt_guid,
-                                          unsigned int slot,
-                                          arts_guid_t epoch_guid);
+void arts_out_of_order_atomic_add_in_array_db(
+    arts_guid_t db_guid, unsigned int index, unsigned int to_add,
+    arts_guid_t edt_guid, unsigned int slot, arts_guid_t epoch_guid);
 void arts_out_of_order_atomic_compare_and_swap_in_array_db(
     arts_guid_t db_guid, unsigned int index, unsigned int old_value,
     unsigned int new_value, arts_guid_t edt_guid, unsigned int slot,

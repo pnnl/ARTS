@@ -45,8 +45,8 @@
 #include <sys/stat.h>
 
 // #include "arts.h"
-#include "arts/utils/malloc.h"
 #include "arts/runtime/globals.h"
+#include "arts/utils/malloc.h"
 // #include "arts/runtime/network/remote_functions.h"
 #include "arts/system/arts_print.h"
 #include "arts/system/debug.h"
@@ -56,73 +56,74 @@
 #define LOCAL_TIME_STAMP arts_get_time_stamp
 #define GLOBAL_TIME_STAMP arts_get_time_stamp
 
-const char *const arts_metric_name[] = {"ARTS_METRIC_EDT_THROUGHPUT",
-                                      "ARTS_METRIC_EDT_QUEUE",
-                                      "ARTS_METRIC_EDT_STEAL_ATTEMPT",
-                                      "ARTS_METRIC_EDT_STEAL",
-                                      "ARTS_METRIC_EDT_LAST_LOCAL_HIT",
-                                      "ARTS_METRIC_EDT_SIGNAL_THROUGHPUT",
-                                      "ARTS_METRIC_EVENT_SIGNAL_THROUGHPUT",
-                                      "ARTS_METRIC_PERSISTENT_EVENT_SIGNAL_THROUGHPUT",
-                                      "ARTS_METRIC_GET_BW",
-                                      "ARTS_METRIC_PUT_BW",
-                                      "ARTS_METRIC_NETWORK_SEND_BW",
-                                      "ARTS_METRIC_NETWORK_RECIEVE_BW",
-                                      "ARTS_METRIC_NETWORK_QUEUE_PUSH",
-                                      "ARTS_METRIC_NETWORK_QUEUE_POP",
-                                      "ARTS_METRIC_YIELD_BW",
-                                      "ARTS_METRIC_GPU_EDT",
-                                      "ARTS_METRIC_GPU_GC",
-                                      "ARTS_METRIC_GPU_GCBW",
-                                      "ARTS_METRIC_GPU_BW_PUSH",
-                                      "ARTS_METRIC_GPU_BW_PULL",
-                                      "ARTS_METRIC_GPU_BUFFER_FLUSH",
-                                      "ARTS_METRIC_GPU_SYNC",
-                                      "ARTS_METRIC_GPU_SYNC_DELETE",
-                                      "ARTS_METRIC_MALLOC_BW",
-                                      "ARTS_METRIC_FREE_BW",
-                                      "ARTS_METRIC_REMOTE_SHUTDOWN_MSG",
-                                      "ARTS_METRIC_REMOTE_EDT_SIGNAL_MSG",
-                                      "ARTS_METRIC_REMOTE_SIGNAL_EDT_WITH_PTR_MSG",
-                                      "ARTS_METRIC_REMOTE_EVENT_SATISFY_SLOT_MSG",
-                                      "ARTS_METRIC_REMOTE_ADD_DEPENDENCE_MSG",
-                                      "ARTS_METRIC_REMOTE_DB_REQUEST_MSG",
-                                      "ARTS_METRIC_REMOTE_DB_SEND_MSG",
-                                      "ARTS_METRIC_REMOTE_INVALIDATE_DB_MSG",
-                                      "ARTS_METRIC_REMOTE_DB_UPDATE_GUID_MSG",
-                                      "ARTS_METRIC_REMOTE_DB_UPDATE_MSG",
-                                      "ARTS_METRIC_REMOTE_DB_DESTROY_MSG",
-                                      "ARTS_METRIC_REMOTE_DB_DESTROY_FORWARD_MSG",
-                                      "ARTS_METRIC_REMOTE_DB_CLEAN_FORWARD_MSG",
-                                      "ARTS_METRIC_REMOTE_DB_MOVE_REQ_MSG",
-                                      "ARTS_METRIC_REMOTE_EDT_MOVE_MSG",
-                                      "ARTS_METRIC_REMOTE_EVENT_MOVE_MSG",
-                                      "ARTS_METRIC_REMOTE_DB_MOVE_MSG",
-                                      "ARTS_METRIC_REMOTE_PINGPONG_TEST_MSG",
-                                      "ARTS_METRIC_REMOTE_METRIC_UPDATE_MSG",
-                                      "ARTS_METRIC_REMOTE_DB_FULL_REQUEST_MSG",
-                                      "ARTS_METRIC_REMOTE_DB_FULL_SEND_MSG",
-                                      "ARTS_METRIC_REMOTE_DB_FULL_SEND_ALREADY_LOCAL_MSG",
-                                      "ARTS_METRIC_REMOTE_GET_FROM_DB_MSG",
-                                      "ARTS_METRIC_REMOTE_PUT_IN_DB_MSG",
-                                      "ARTS_METRIC_REMOTE_SEND_MSG",
-                                      "ARTS_METRIC_EPOCH_INIT_MSG",
-                                      "ARTS_METRIC_EPOCH_INIT_POOL_MSG",
-                                      "ARTS_METRIC_EPOCH_REQ_MSG",
-                                      "ARTS_METRIC_EPOCH_SEND_MSG",
-                                      "ARTS_METRIC_EPOCH_DELETE_MSG",
-                                      "ARTS_METRIC_ATOMIC_ADD_ARRAYDB_MSG",
-                                      "ARTS_METRIC_ATOMIC_CAS_ARRAYDB_MSG",
-                                      "ARTS_METRIC_REMOTE_BUFFER_SEND_MSG",
-                                      "ARTS_METRIC_REMOTE_CONTEXT_SIG_MSG",
-                                      "ARTS_METRIC_REMOTE_DB_RENAME_MSG",
-                                      "ARTS_METRIC_DEFAULT_MEMORY_SIZE",
-                                      "ARTS_METRIC_EDT_MEMORY_SIZE",
-                                      "ARTS_METRIC_EVENT_MEMORY_SIZE",
-                                      "ARTS_METRIC_PERSISTENT_EVENT_MEMORY_SIZE",
-                                      "ARTS_METRIC_DB_MEMORY_SIZE",
-                                      "ARTS_METRIC_BUFFER_MEMORY_SIZE",
-                                      "ARTS_METRIC_DB_COUNT"};
+const char *const arts_metric_name[] = {
+    "ARTS_METRIC_EDT_THROUGHPUT",
+    "ARTS_METRIC_EDT_QUEUE",
+    "ARTS_METRIC_EDT_STEAL_ATTEMPT",
+    "ARTS_METRIC_EDT_STEAL",
+    "ARTS_METRIC_EDT_LAST_LOCAL_HIT",
+    "ARTS_METRIC_EDT_SIGNAL_THROUGHPUT",
+    "ARTS_METRIC_EVENT_SIGNAL_THROUGHPUT",
+    "ARTS_METRIC_PERSISTENT_EVENT_SIGNAL_THROUGHPUT",
+    "ARTS_METRIC_GET_BW",
+    "ARTS_METRIC_PUT_BW",
+    "ARTS_METRIC_NETWORK_SEND_BW",
+    "ARTS_METRIC_NETWORK_RECIEVE_BW",
+    "ARTS_METRIC_NETWORK_QUEUE_PUSH",
+    "ARTS_METRIC_NETWORK_QUEUE_POP",
+    "ARTS_METRIC_YIELD_BW",
+    "ARTS_METRIC_GPU_EDT",
+    "ARTS_METRIC_GPU_GC",
+    "ARTS_METRIC_GPU_GCBW",
+    "ARTS_METRIC_GPU_BW_PUSH",
+    "ARTS_METRIC_GPU_BW_PULL",
+    "ARTS_METRIC_GPU_BUFFER_FLUSH",
+    "ARTS_METRIC_GPU_SYNC",
+    "ARTS_METRIC_GPU_SYNC_DELETE",
+    "ARTS_METRIC_MALLOC_BW",
+    "ARTS_METRIC_FREE_BW",
+    "ARTS_METRIC_REMOTE_SHUTDOWN_MSG",
+    "ARTS_METRIC_REMOTE_EDT_SIGNAL_MSG",
+    "ARTS_METRIC_REMOTE_SIGNAL_EDT_WITH_PTR_MSG",
+    "ARTS_METRIC_REMOTE_EVENT_SATISFY_SLOT_MSG",
+    "ARTS_METRIC_REMOTE_ADD_DEPENDENCE_MSG",
+    "ARTS_METRIC_REMOTE_DB_REQUEST_MSG",
+    "ARTS_METRIC_REMOTE_DB_SEND_MSG",
+    "ARTS_METRIC_REMOTE_INVALIDATE_DB_MSG",
+    "ARTS_METRIC_REMOTE_DB_UPDATE_GUID_MSG",
+    "ARTS_METRIC_REMOTE_DB_UPDATE_MSG",
+    "ARTS_METRIC_REMOTE_DB_DESTROY_MSG",
+    "ARTS_METRIC_REMOTE_DB_DESTROY_FORWARD_MSG",
+    "ARTS_METRIC_REMOTE_DB_CLEAN_FORWARD_MSG",
+    "ARTS_METRIC_REMOTE_DB_MOVE_REQ_MSG",
+    "ARTS_METRIC_REMOTE_EDT_MOVE_MSG",
+    "ARTS_METRIC_REMOTE_EVENT_MOVE_MSG",
+    "ARTS_METRIC_REMOTE_DB_MOVE_MSG",
+    "ARTS_METRIC_REMOTE_PINGPONG_TEST_MSG",
+    "ARTS_METRIC_REMOTE_METRIC_UPDATE_MSG",
+    "ARTS_METRIC_REMOTE_DB_FULL_REQUEST_MSG",
+    "ARTS_METRIC_REMOTE_DB_FULL_SEND_MSG",
+    "ARTS_METRIC_REMOTE_DB_FULL_SEND_ALREADY_LOCAL_MSG",
+    "ARTS_METRIC_REMOTE_GET_FROM_DB_MSG",
+    "ARTS_METRIC_REMOTE_PUT_IN_DB_MSG",
+    "ARTS_METRIC_REMOTE_SEND_MSG",
+    "ARTS_METRIC_EPOCH_INIT_MSG",
+    "ARTS_METRIC_EPOCH_INIT_POOL_MSG",
+    "ARTS_METRIC_EPOCH_REQ_MSG",
+    "ARTS_METRIC_EPOCH_SEND_MSG",
+    "ARTS_METRIC_EPOCH_DELETE_MSG",
+    "ARTS_METRIC_ATOMIC_ADD_ARRAYDB_MSG",
+    "ARTS_METRIC_ATOMIC_CAS_ARRAYDB_MSG",
+    "ARTS_METRIC_REMOTE_BUFFER_SEND_MSG",
+    "ARTS_METRIC_REMOTE_CONTEXT_SIG_MSG",
+    "ARTS_METRIC_REMOTE_DB_RENAME_MSG",
+    "ARTS_METRIC_DEFAULT_MEMORY_SIZE",
+    "ARTS_METRIC_EDT_MEMORY_SIZE",
+    "ARTS_METRIC_EVENT_MEMORY_SIZE",
+    "ARTS_METRIC_PERSISTENT_EVENT_MEMORY_SIZE",
+    "ARTS_METRIC_DB_MEMORY_SIZE",
+    "ARTS_METRIC_BUFFER_MEMORY_SIZE",
+    "ARTS_METRIC_DB_COUNT"};
 
 uint64_t **count_window;
 uint64_t **time_window;
@@ -145,7 +146,7 @@ static void ensure_metric_overrides() {
   if (!metric_override_initialized) {
     for (int i = 0; i < ARTS_METRIC_LAST_TYPE; i++) {
       metric_enabled_override[i] = -1;
-}
+    }
     metric_override_initialized = true;
   }
 }
@@ -153,12 +154,12 @@ static void ensure_metric_overrides() {
 static int metric_index_from_name(const char *name) {
   if (!name) {
     return -1;
-}
+  }
   for (int i = 0; i < ARTS_METRIC_LAST_TYPE; i++) {
     const char *candidate = arts_metric_name[i];
     if (candidate && !strcasecmp(candidate, name)) {
       return i;
-}
+    }
   }
   return -1;
 }
@@ -166,20 +167,20 @@ static int metric_index_from_name(const char *name) {
 static inline bool metric_is_enabled(arts_metric_type_t type) {
   if (!metric_override_initialized) {
     return metric_default_enabled;
-}
+  }
   int override = metric_enabled_override[type];
   if (override != -1) {
     return override;
-}
+  }
   return metric_default_enabled;
 }
 
 static arts_performance_unit_t *get_metric(arts_metric_type_t type,
-                                      arts_metric_level_t level);
-static arts_metric_level_t update_performance_core_metric(unsigned int core,
-                                                   arts_metric_type_t type,
-                                                   arts_metric_level_t level,
-                                                   uint64_t to_add, bool sub);
+                                           arts_metric_level_t level);
+static arts_metric_level_t
+update_performance_core_metric(unsigned int core, arts_metric_type_t type,
+                               arts_metric_level_t level, uint64_t to_add,
+                               bool sub);
 
 // void ARTS_METRICS_CONFIG_SET_DEFAULT_ENABLED(bool enabled) {
 //   ensure_metric_overrides();
@@ -193,14 +194,14 @@ static arts_metric_level_t update_performance_core_metric(unsigned int core,
 //     metric_enabled_override[index] = enabled ? 1 : 0;
 // }
 
-// void ARTS_METRICS_TRIGGER_EVENT(arts_metric_type_t metricType, arts_metric_level_t
-// level,
+// void ARTS_METRICS_TRIGGER_EVENT(arts_metric_type_t metricType,
+// arts_metric_level_t level,
 //                              uint64_t value) {
 //   if (!inspector_on || inspector_ignore || !metric_is_enabled(metricType))
 //     return;
 
-//   update_performance_core_metric(arts_thread_info.thread_id, metricType, level,
-//   value,
+//   update_performance_core_metric(arts_thread_info.thread_id, metricType,
+//   level, value,
 //                               false);
 // }
 
@@ -251,21 +252,24 @@ static void print_metrics() {
 }
 
 // void ARTS_METRICS_INIT_INTROSPECTOR(unsigned int startPoint) {
-//   ARTS_DEBUG("count_window %u\n", sizeof(uint64_t *) * ARTS_METRIC_LAST_TYPE);
-//   count_window = arts_malloc(sizeof(uint64_t *) * ARTS_METRIC_LAST_TYPE);
-//   ARTS_DEBUG("time_window %u\n", sizeof(uint64_t *) * ARTS_METRIC_LAST_TYPE);
-//   time_window = arts_malloc(sizeof(uint64_t *) * ARTS_METRIC_LAST_TYPE);
-//   ARTS_DEBUG("max_total %u\n", sizeof(uint64_t *) * ARTS_METRIC_LAST_TYPE);
-//   max_total = arts_malloc(sizeof(uint64_t *) * ARTS_METRIC_LAST_TYPE);
+//   ARTS_DEBUG("count_window %u\n", sizeof(uint64_t *) *
+//   ARTS_METRIC_LAST_TYPE); count_window = arts_malloc(sizeof(uint64_t *) *
+//   ARTS_METRIC_LAST_TYPE); ARTS_DEBUG("time_window %u\n", sizeof(uint64_t *) *
+//   ARTS_METRIC_LAST_TYPE); time_window = arts_malloc(sizeof(uint64_t *) *
+//   ARTS_METRIC_LAST_TYPE); ARTS_DEBUG("max_total %u\n", sizeof(uint64_t *) *
+//   ARTS_METRIC_LAST_TYPE); max_total = arts_malloc(sizeof(uint64_t *) *
+//   ARTS_METRIC_LAST_TYPE);
 
 //   for (unsigned int i = 0; i < ARTS_METRIC_LAST_TYPE; i++) {
 //     ARTS_DEBUG("count_window[%u] %u\n", i, sizeof(uint64_t) *
 //     ARTS_METRICLEVELS); count_window[i] = arts_malloc(sizeof(uint64_t) *
-//     ARTS_METRICLEVELS); ARTS_DEBUG("time_window[%u] %u\n", i, sizeof(uint64_t)
+//     ARTS_METRICLEVELS); ARTS_DEBUG("time_window[%u] %u\n", i,
+//     sizeof(uint64_t)
 //     * ARTS_METRICLEVELS); time_window[i] = arts_malloc(sizeof(uint64_t) *
-//     ARTS_METRICLEVELS); ARTS_DEBUG("max_total[%u] %u\n", i, sizeof(uint64_t) *
-//     ARTS_METRICLEVELS); max_total[i] = arts_malloc(sizeof(uint64_t) *
-//     ARTS_METRICLEVELS); for (unsigned int j = 0; j < ARTS_METRICLEVELS; j++) {
+//     ARTS_METRICLEVELS); ARTS_DEBUG("max_total[%u] %u\n", i, sizeof(uint64_t)
+//     * ARTS_METRICLEVELS); max_total[i] = arts_malloc(sizeof(uint64_t) *
+//     ARTS_METRICLEVELS); for (unsigned int j = 0; j < ARTS_METRICLEVELS; j++)
+//     {
 //       count_window[i][j] = -1;
 //       time_window[i][j] = -1;
 //       max_total[i][j] = -1;
@@ -316,41 +320,45 @@ static void print_metrics() {
 //   packet_inspector->intervalMax = 0;
 // }
 
-static bool metric_try_lock(arts_metric_level_t level, arts_performance_unit_t *metric) {
+static bool metric_try_lock(arts_metric_level_t level,
+                            arts_performance_unit_t *metric) {
   if (level == ARTS_METRIC_THREAD) {
     return true;
-}
+  }
 
   unsigned int local;
   while (1) {
     local = arts_atomic_cswap(&metric->lock, 0U, 1U);
     if (local != 2U) {
       break;
-}
+    }
   }
   return (local == 0U);
 }
 
-static void metric_lock(arts_metric_level_t level, arts_performance_unit_t *metric) {
+static void metric_lock(arts_metric_level_t level,
+                        arts_performance_unit_t *metric) {
   if (level == ARTS_METRIC_THREAD) {
     return;
-}
+  }
   while (!arts_atomic_cswap(&metric->lock, 0U, 1U)) {
     ;
-}
+  }
 }
 
-static void metric_unlock(arts_performance_unit_t *metric) { metric->lock = 0U; }
+static void metric_unlock(arts_performance_unit_t *metric) {
+  metric->lock = 0U;
+}
 
 static arts_performance_unit_t *get_metric(arts_metric_type_t type,
-                                      arts_metric_level_t level) {
+                                           arts_metric_level_t level) {
   arts_performance_unit_t *metric = NULL;
   if (inspector) {
     switch (level) {
     case ARTS_METRIC_THREAD:
-      metric =
-          &inspector->coreMetric[(arts_thread_info.thread_id * ARTS_METRIC_LAST_TYPE) +
-                                 type];
+      metric = &inspector->coreMetric[(arts_thread_info.thread_id *
+                                       ARTS_METRIC_LAST_TYPE) +
+                                      type];
       break;
     case ARTS_METRIC_NODE:
       metric = &inspector->nodeMetric[type];
@@ -366,12 +374,14 @@ static arts_performance_unit_t *get_metric(arts_metric_type_t type,
   return metric;
 }
 
-// uint64_t ARTS_METRICS_GET_TOTAL(arts_metric_type_t type, arts_metric_level_t level) {
+// uint64_t ARTS_METRICS_GET_TOTAL(arts_metric_type_t type, arts_metric_level_t
+// level) {
 //   arts_performance_unit_t *metric = get_metric(type, level);
 //   return (metric) ? metric->totalCount : 0;
 // }
 
-// double ARTS_METRICS_GET_RATE(arts_metric_type_t type, arts_metric_level_t level,
+// double ARTS_METRICS_GET_RATE(arts_metric_type_t type, arts_metric_level_t
+// level,
 //                           bool last) {
 //   arts_performance_unit_t *metric = get_metric(type, level);
 //   if (metric) {
@@ -396,16 +406,17 @@ static arts_performance_unit_t *get_metric(arts_metric_type_t type,
 //     }
 
 //     if (localCurrentCountStamp && localCurrentTimeStamp) {
-//       double num = (double)(localCurrentCountStamp - local_window_count_stamp);
-//       double den = (double)(localCurrentTimeStamp - local_window_time_stamp);
-//       ARTS_INFO("%u %s %lf / %lf\n", level, arts_metric_name[type], num, den);
-//       return num / den / 1E9;
+//       double num = (double)(localCurrentCountStamp -
+//       local_window_count_stamp); double den = (double)(localCurrentTimeStamp
+//       - local_window_time_stamp); ARTS_INFO("%u %s %lf / %lf\n", level,
+//       arts_metric_name[type], num, den); return num / den / 1E9;
 //     }
 //   }
 //   return 0;
 // }
 
-// double ARTS_METRICS_GET_TOTAL_RATE(arts_metric_type_t type, arts_metric_level_t level) {
+// double ARTS_METRICS_GET_TOTAL_RATE(arts_metric_type_t type,
+// arts_metric_level_t level) {
 //   arts_performance_unit_t *metric = get_metric(type, level);
 //   if (metric) {
 //     double num = (double)metric->totalCount;
@@ -431,7 +442,8 @@ static arts_performance_unit_t *get_metric(arts_metric_type_t type,
 //   return 0;
 // }
 
-// uint64_t ARTS_METRICS_GET_RATE_U64(arts_metric_type_t type, arts_metric_level_t level,
+// uint64_t ARTS_METRICS_GET_RATE_U64(arts_metric_type_t type,
+// arts_metric_level_t level,
 //                                bool last) {
 //   arts_performance_unit_t *metric = get_metric(type, level);
 //   if (metric) {
@@ -464,8 +476,8 @@ static arts_performance_unit_t *get_metric(arts_metric_type_t type,
 //   return 0;
 // }
 
-// uint64_t ARTS_METRICS_GET_RATE_U64_DIFF(arts_metric_type_t type, arts_metric_level_t
-// level,
+// uint64_t ARTS_METRICS_GET_RATE_U64_DIFF(arts_metric_type_t type,
+// arts_metric_level_t level,
 //                                    uint64_t *total) {
 //   arts_performance_unit_t *metric = get_metric(type, level);
 //   if (metric) {
@@ -493,8 +505,8 @@ static arts_performance_unit_t *get_metric(arts_metric_type_t type,
 //   return 0;
 // }
 
-// uint64_t ARTS_METRICS_GET_TOTAL_RATE_U64(arts_metric_type_t type, arts_metric_level_t
-// level,
+// uint64_t ARTS_METRICS_GET_TOTAL_RATE_U64(arts_metric_type_t type,
+// arts_metric_level_t level,
 //                                     uint64_t *total, uint64_t *time_stamp) {
 //   arts_performance_unit_t *metric = get_metric(type, level);
 //   if (metric) {
@@ -509,8 +521,8 @@ static arts_performance_unit_t *get_metric(arts_metric_type_t type,
 //   return 0;
 // }
 
-// void ARTS_METRICS_HANDLE_REMOTE_UPDATE(arts_metric_type_t type, arts_metric_level_t
-// level,
+// void ARTS_METRICS_HANDLE_REMOTE_UPDATE(arts_metric_type_t type,
+// arts_metric_level_t level,
 //                                    uint64_t to_add, bool sub) {
 //   arts_performance_unit_t *metric = get_metric(type, level);
 //   if (metric) {
@@ -528,12 +540,13 @@ static arts_performance_unit_t *get_metric(arts_metric_type_t type,
 // }
 
 static void internal_update_max(arts_metric_level_t level,
-                              arts_performance_unit_t *metric, uint64_t total) {
+                                arts_performance_unit_t *metric,
+                                uint64_t total) {
   uint64_t entry = metric->max_total;
   uint64_t local_max = metric->max_total;
   if (local_max > total) {
     return;
-}
+  }
   if (level == ARTS_METRIC_THREAD) {
     metric->max_total = total;
   } else {
@@ -544,7 +557,7 @@ static void internal_update_max(arts_metric_level_t level,
 }
 
 static uint64_t internal_observe_max(arts_metric_level_t level,
-                                   arts_performance_unit_t *metric) {
+                                     arts_performance_unit_t *metric) {
   uint64_t max = -1;
   if (metric->max_total != -1) {
     if (level == ARTS_METRIC_THREAD) {
@@ -557,16 +570,16 @@ static uint64_t internal_observe_max(arts_metric_level_t level,
   return max;
 }
 
-static bool single_metric_update(arts_metric_type_t type, arts_metric_level_t level,
-                               uint64_t *to_add, bool *sub,
-                               arts_performance_unit_t *metric) {
+static bool single_metric_update(arts_metric_type_t type,
+                                 arts_metric_level_t level, uint64_t *to_add,
+                                 bool *sub, arts_performance_unit_t *metric) {
   if (!count_window[type][level] || !time_window[type][level]) {
     return true;
-}
+  }
 
   if (count_window[type][level] == -1 && time_window[type][level] == -1) {
     return false;
-}
+  }
 
   uint64_t total_stamp = 0;
   if (*to_add) {
@@ -577,12 +590,12 @@ static bool single_metric_update(arts_metric_type_t type, arts_metric_level_t le
             level, arts_metric_name[type]);
       }
       total_stamp = (level == ARTS_METRIC_THREAD)
-                       ? metric->totalCount -= *to_add
-                       : arts_atomic_sub_u64(&metric->totalCount, *to_add);
+                        ? metric->totalCount -= *to_add
+                        : arts_atomic_sub_u64(&metric->totalCount, *to_add);
     } else {
       total_stamp = (level == ARTS_METRIC_THREAD)
-                       ? metric->totalCount += *to_add
-                       : arts_atomic_add_u64(&metric->totalCount, *to_add);
+                        ? metric->totalCount += *to_add
+                        : arts_atomic_add_u64(&metric->totalCount, *to_add);
     }
     internal_update_max(level, metric, total_stamp);
   }
@@ -594,20 +607,22 @@ static bool single_metric_update(arts_metric_type_t type, arts_metric_level_t le
   if (!local_window_time_stamp) {
     if (!arts_atomic_cswap_u64(&metric->windowTimeStamp, 0, time_stamp)) {
       metric->firstTimeStamp = metric->windowTimeStamp;
-}
+    }
     return false;
   }
 
-  uint64_t elapsed =
-      (time_stamp > local_window_time_stamp) ? time_stamp - local_window_time_stamp : 0;
+  uint64_t elapsed = (time_stamp > local_window_time_stamp)
+                         ? time_stamp - local_window_time_stamp
+                         : 0;
   uint64_t last = (total_stamp > local_window_count_stamp)
                       ? total_stamp - local_window_count_stamp
                       : local_window_count_stamp - total_stamp;
 
-  if (last >= count_window[type][level] || elapsed >= time_window[type][level]) {
+  if (last >= count_window[type][level] ||
+      elapsed >= time_window[type][level]) {
     if (!metric_try_lock(level, metric)) {
       return false;
-}
+    }
     if (local_window_time_stamp != metric->windowTimeStamp) {
       metric_unlock(metric);
       return false;
@@ -638,11 +653,11 @@ static bool single_metric_update(arts_metric_type_t type, arts_metric_level_t le
 }
 
 static void take_rate_shot(arts_metric_type_t type, arts_metric_level_t level,
-                         bool last) {
+                           bool last) {
   if (inspector_shots && level >= inspector_shots->traceLevel) {
     if (!count_window[type][level] || !time_window[type][level]) {
       return;
-}
+    }
     ARTS_DEBUG("TRACING LEVEL %d\n", level);
 
     // int traceOn = arts_thread_info.malloc_trace;
@@ -653,9 +668,9 @@ static void take_rate_shot(arts_metric_type_t type, arts_metric_level_t level,
       unsigned int *lock = NULL;
       switch (level) {
       case ARTS_METRIC_THREAD:
-        list = inspector_shots
-                   ->coreMetric[(arts_thread_info.thread_id * ARTS_METRIC_LAST_TYPE) +
-                                type];
+        list = inspector_shots->coreMetric[(arts_thread_info.thread_id *
+                                            ARTS_METRIC_LAST_TYPE) +
+                                           type];
         lock = NULL;
         break;
 
@@ -686,7 +701,7 @@ static void take_rate_shot(arts_metric_type_t type, arts_metric_level_t level,
             }
             if (!local) {
               break;
-}
+            }
           }
         }
         arts_metric_shot_t shot;
@@ -715,17 +730,17 @@ static void take_rate_shot(arts_metric_type_t type, arts_metric_level_t level,
 
         if (lock) {
           *lock = 0U;
-}
+        }
       }
     }
     // arts_thread_info.malloc_trace = traceOn;
   }
 }
 
-static arts_metric_level_t update_performance_core_metric(unsigned int core,
-                                                   arts_metric_type_t type,
-                                                   arts_metric_level_t level,
-                                                   uint64_t to_add, bool sub) {
+static arts_metric_level_t
+update_performance_core_metric(unsigned int core, arts_metric_type_t type,
+                               arts_metric_level_t level, uint64_t to_add,
+                               bool sub) {
   if (type <= ARTS_METRIC_FIRST_TYPE || type >= ARTS_METRIC_LAST_TYPE) {
     ARTS_ERROR("Metrics: invalid type %d", type);
   }
@@ -740,7 +755,7 @@ static arts_metric_level_t update_performance_core_metric(unsigned int core,
               type, ARTS_METRIC_THREAD, &to_add, &sub,
               &inspector->coreMetric[(core * ARTS_METRIC_LAST_TYPE) + type])) {
         break;
-}
+      }
       take_rate_shot(type, ARTS_METRIC_THREAD, true);
       updated_level = ARTS_METRIC_THREAD;
 
@@ -748,9 +763,9 @@ static arts_metric_level_t update_performance_core_metric(unsigned int core,
       ARTS_DEBUG("Node   updated up to %d %" PRIu64 " %u %s\n", updated_level,
                  to_add, sub, arts_metric_name[type]);
       if (!single_metric_update(type, ARTS_METRIC_NODE, &to_add, &sub,
-                              &inspector->nodeMetric[type])) {
+                                &inspector->nodeMetric[type])) {
         break;
-}
+      }
       arts_atomic_add_u64(&stats->nodeUpdates, 1);
       take_rate_shot(type, ARTS_METRIC_NODE, true);
       updated_level = ARTS_METRIC_NODE;
@@ -759,18 +774,20 @@ static arts_metric_level_t update_performance_core_metric(unsigned int core,
       ARTS_DEBUG("System updated up to %d %" PRIu64 " %u %s\n", updated_level,
                  to_add, sub, arts_metric_name[type]);
       if (single_metric_update(type, ARTS_METRIC_SYSTEM, &to_add, &sub,
-                             &inspector->systemMetric[type])) {
+                               &inspector->systemMetric[type])) {
         uint64_t time_to_send = inspector->systemMetric[type].timeMethod();
         // int traceOn = arts_thread_info.malloc_trace;
         // arts_thread_info.malloc_trace = 0;
         // for (unsigned int i = 0; i < arts_global_rank_count; i++)
         //   if (i != arts_global_rank_id)
-        //     arts_remote_metric_update(i, type, level, time_to_send, to_add, sub);
+        //     arts_remote_metric_update(i, type, level, time_to_send, to_add,
+        //     sub);
         // arts_thread_info.malloc_trace = traceOn;
         arts_atomic_add_u64(&stats->systemUpdates, 1);
         if (arts_global_rank_count > 1) {
-          arts_atomic_add_u64(&stats->systemMessages, arts_global_rank_count - 1);
-}
+          arts_atomic_add_u64(&stats->systemMessages,
+                              arts_global_rank_count - 1);
+        }
         take_rate_shot(type, ARTS_METRIC_SYSTEM, true);
         updated_level = ARTS_METRIC_SYSTEM;
       }
@@ -782,9 +799,10 @@ static arts_metric_level_t update_performance_core_metric(unsigned int core,
 }
 
 static void set_thread_metric(arts_metric_type_t type, uint64_t value) {
-  if (count_window[type][ARTS_METRIC_THREAD] == -1 && time_window[type][ARTS_METRIC_THREAD] == -1) {
+  if (count_window[type][ARTS_METRIC_THREAD] == -1 &&
+      time_window[type][ARTS_METRIC_THREAD] == -1) {
     return;
-}
+  }
 
   arts_performance_unit_t *metric = get_metric(type, ARTS_METRIC_THREAD);
   if (metric) {
@@ -805,7 +823,7 @@ static void set_thread_metric(arts_metric_type_t type, uint64_t value) {
     metric->windowTimeStamp = local_time;
     if (metric->max_total < value) {
       metric->max_total = value;
-}
+    }
     if (shot) {
       take_rate_shot(type, ARTS_METRIC_THREAD, true);
     }
@@ -818,7 +836,7 @@ void arts_metrics_read_config_file(char *filename) {
   FILE *fp = fopen(filename, "r");
   if (!fp) {
     return;
-}
+  }
 
   char temp[ARTS_MAXMETRICNAME];
 
@@ -840,10 +858,11 @@ void arts_metrics_read_config_file(char *filename) {
         for (unsigned int i = 0; i < ARTS_METRICLEVELS; i++) {
           while (line[offset] == ' ') {
             offset++;
-}
+          }
           {
             char *endptr;
-            count_window[metric_index][i] = strtoull(&line[offset], &endptr, 10);
+            count_window[metric_index][i] =
+                strtoull(&line[offset], &endptr, 10);
             if (endptr != &line[offset]) {
               param_read++;
             }
@@ -857,7 +876,7 @@ void arts_metrics_read_config_file(char *filename) {
         for (unsigned int i = 0; i < ARTS_METRICLEVELS; i++) {
           while (line[offset] == ' ') {
             offset++;
-}
+          }
           {
             char *endptr;
             time_window[metric_index][i] = strtoull(&line[offset], &endptr, 10);
@@ -874,7 +893,7 @@ void arts_metrics_read_config_file(char *filename) {
         for (unsigned int i = 0; i < ARTS_METRICLEVELS; i++) {
           while (line[offset] == ' ') {
             offset++;
-}
+          }
           {
             char *endptr;
             max_total[metric_index][i] = strtoull(&line[offset], &endptr, 10);
@@ -899,7 +918,7 @@ void arts_metrics_read_config_file(char *filename) {
 
   if (line) {
     free(line);
-}
+  }
 }
 
 // void ARTS_METRICS_PRINT_INSPECTOR_TIME() {
@@ -920,12 +939,13 @@ void arts_metrics_read_config_file(char *filename) {
 //     printf("Stat 1 Node %u edt %" PRIu64 " edt_signal %" PRIu64
 //            " event_signal %" PRIu64 " network_sent %" PRIu64
 //            " network_recv %" PRIu64 " malloc %" PRIu64 " free %" PRIu64 "\n",
-//            arts_global_rank_id, ARTS_METRICS_GET_TOTAL(ARTS_METRIC_EDT_THROUGHPUT, level),
+//            arts_global_rank_id,
+//            ARTS_METRICS_GET_TOTAL(ARTS_METRIC_EDT_THROUGHPUT, level),
 //            ARTS_METRICS_GET_TOTAL(ARTS_METRIC_EDT_SIGNAL_THROUGHPUT, level),
-//            ARTS_METRICS_GET_TOTAL(ARTS_METRIC_EVENT_SIGNAL_THROUGHPUT, level),
-//            ARTS_METRICS_GET_TOTAL(ARTS_METRIC_NETWORK_SEND_BW, level),
-//            ARTS_METRICS_GET_TOTAL(ARTS_METRIC_NETWORK_RECIEVE_BW, level),
-//            ARTS_METRICS_GET_TOTAL(ARTS_METRIC_MALLOC_BW, level),
+//            ARTS_METRICS_GET_TOTAL(ARTS_METRIC_EVENT_SIGNAL_THROUGHPUT,
+//            level), ARTS_METRICS_GET_TOTAL(ARTS_METRIC_NETWORK_SEND_BW,
+//            level), ARTS_METRICS_GET_TOTAL(ARTS_METRIC_NETWORK_RECIEVE_BW,
+//            level), ARTS_METRICS_GET_TOTAL(ARTS_METRIC_MALLOC_BW, level),
 //            ARTS_METRICS_GET_TOTAL(ARTS_METRIC_FREE_BW, level));
 //   else if (level == ARTS_METRIC_THREAD) {
 //     ARTS_INFO("Stat 1 Thread %u edt %" PRIu64 " edt_signal %" PRIu64
@@ -933,17 +953,18 @@ void arts_metrics_read_config_file(char *filename) {
 //               " network_recv %" PRIu64 " malloc %" PRIu64 " free %" PRIu64
 //               "\n", arts_thread_info.thread_id,
 //               ARTS_METRICS_GET_TOTAL(ARTS_METRIC_EDT_THROUGHPUT, level),
-//               ARTS_METRICS_GET_TOTAL(ARTS_METRIC_EDT_SIGNAL_THROUGHPUT, level),
-//               ARTS_METRICS_GET_TOTAL(ARTS_METRIC_EVENT_SIGNAL_THROUGHPUT, level),
-//               ARTS_METRICS_GET_TOTAL(ARTS_METRIC_NETWORK_SEND_BW, level),
-//               ARTS_METRICS_GET_TOTAL(ARTS_METRIC_NETWORK_RECIEVE_BW, level),
-//               ARTS_METRICS_GET_TOTAL(ARTS_METRIC_MALLOC_BW, level),
+//               ARTS_METRICS_GET_TOTAL(ARTS_METRIC_EDT_SIGNAL_THROUGHPUT,
+//               level),
+//               ARTS_METRICS_GET_TOTAL(ARTS_METRIC_EVENT_SIGNAL_THROUGHPUT,
+//               level), ARTS_METRICS_GET_TOTAL(ARTS_METRIC_NETWORK_SEND_BW,
+//               level), ARTS_METRICS_GET_TOTAL(ARTS_METRIC_NETWORK_RECIEVE_BW,
+//               level), ARTS_METRICS_GET_TOTAL(ARTS_METRIC_MALLOC_BW, level),
 //               ARTS_METRICS_GET_TOTAL(ARTS_METRIC_FREE_BW, level));
 //   }
 // }
 
 static inline void update_packet_extreme(uint64_t val, volatile uint64_t *old,
-                                       bool min) {
+                                         bool min) {
   uint64_t local = *old;
   uint64_t res;
   if (min) {
@@ -951,7 +972,7 @@ static inline void update_packet_extreme(uint64_t val, volatile uint64_t *old,
       res = arts_atomic_cswap_u64(old, local, val);
       if (res == local) {
         break;
-}
+      }
       local = res;
     }
   } else {
@@ -959,7 +980,7 @@ static inline void update_packet_extreme(uint64_t val, volatile uint64_t *old,
       res = arts_atomic_cswap_u64(old, local, val);
       if (res == local) {
         break;
-}
+      }
       local = res;
     }
   }
@@ -1003,7 +1024,8 @@ static inline void update_packet_extreme(uint64_t val, volatile uint64_t *old,
 //     arts_writer_lock(&packet_inspector->intervalReader,
 //                    &packet_inspector->intervalWriter);
 //     (*totalBytes) = arts_atomic_swap_u64(&packet_inspector->totalBytes, 0);
-//     (*totalPackets) = arts_atomic_swap_u64(&packet_inspector->totalPackets, 0);
+//     (*totalPackets) = arts_atomic_swap_u64(&packet_inspector->totalPackets,
+//     0);
 //     (*minPacket) = arts_atomic_swap_u64(&packet_inspector->minPacket, 0);
 //     (*maxPacket) = arts_atomic_swap_u64(&packet_inspector->maxPacket, 0);
 //     arts_writer_unlock(&packet_inspector->intervalWriter);

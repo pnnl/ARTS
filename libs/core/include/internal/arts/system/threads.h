@@ -48,7 +48,8 @@ extern "C" {
 void arts_thread_init(struct arts_config_s *config);
 void arts_thread_main_join();
 void arts_pthread_affinity(unsigned int cpu_core_id, bool verbose);
-void arts_pthread_check_affinity(unsigned int thread_id, unsigned int cpu_core_id);
+void arts_pthread_check_affinity(unsigned int thread_id,
+                                 unsigned int cpu_core_id);
 int arts_check_affinity();
 int *arts_valid_pthread_affinity(unsigned int *size);
 #ifdef __cplusplus

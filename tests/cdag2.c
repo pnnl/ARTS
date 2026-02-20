@@ -45,7 +45,7 @@ arts_guid_t db_guid;
 arts_guid_t *write_guids;
 
 void write_test(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-               arts_edt_dep_t depv[]) {
+                arts_edt_dep_t depv[]) {
   (void)depc;
   unsigned int index = paramv[0];
   unsigned int *array = (unsigned int *)depv[0].ptr;
@@ -53,7 +53,7 @@ void write_test(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   //    {
   for (unsigned int i = index; i < num_writes; i++) {
     array[i] = index;
-}
+  }
   //    }
   if (paramc > 1) {
     arts_printf("-----------------SIGNALLING NEXT %u\n", index);

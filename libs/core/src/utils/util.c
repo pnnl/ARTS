@@ -65,11 +65,15 @@ unsigned int arts_get_current_node() { return arts_global_rank_id; }
 
 unsigned int arts_get_total_nodes() { return arts_global_rank_count; }
 
-unsigned int arts_get_total_workers() { return arts_node_info.worker_thread_count; }
+unsigned int arts_get_total_workers() {
+  return arts_node_info.worker_thread_count;
+}
 
 unsigned int arts_get_current_worker() { return arts_thread_info.group_id; }
 
-unsigned int arts_get_current_numa_domain() { return arts_thread_info.numa_domain_id; }
+unsigned int arts_get_current_numa_domain() {
+  return arts_thread_info.numa_domain_id;
+}
 
 unsigned int arts_get_total_numa_domains() { return num_numa_domains; }
 

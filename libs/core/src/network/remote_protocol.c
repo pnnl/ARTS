@@ -42,7 +42,6 @@
 #include <unistd.h>
 
 #include "arts.h"
-#include "arts/utils/malloc.h"
 #include "arts/introspection/metrics.h"
 #include "arts/network/remote.h"
 #include "arts/runtime/globals.h"
@@ -50,6 +49,7 @@
 #include "arts/system/debug.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/link_list.h"
+#include "arts/utils/malloc.h"
 
 struct out_list_s {
   uint64_t time_stamp;
@@ -100,12 +100,14 @@ void partial_send_store(struct out_list_s *out, uint64_t length_remaining) {
   }
 }
 
-void arts_remote_set_thread_outbound_queues(unsigned int start, unsigned int stop) {
+void arts_remote_set_thread_outbound_queues(unsigned int start,
+                                            unsigned int stop) {
   thread_start = start;
   thread_stop = stop;
 
   unsigned int size = stop - start;
-  out_resend = (struct out_list_s **)arts_calloc(size, sizeof(struct out_list_s *));
+  out_resend =
+      (struct out_list_s **)arts_calloc(size, sizeof(struct out_list_s *));
 #ifdef SEQUENCENUMBERS
   last_out = (uint64_t *)arts_calloc(arts_global_rank_count, sizeof(uint64_t));
   last_sent = (uint64_t *)arts_calloc(arts_global_rank_count, sizeof(uint64_t));
@@ -120,7 +122,7 @@ void arts_remote_thread_outbound_queues_cleanup() {
         struct out_list_s *out = out_resend[i];
         if (out->free_method) {
           out->free_method(out->payload);
-}
+        }
         arts_link_list_delete_item(out);
       }
     }
@@ -143,23 +145,25 @@ void out_init(unsigned int size) {
   node_list_size = size;
   out_head = arts_link_list_group_new(size);
 #ifdef SEQUENCENUMBERS
-  seq_number = (uint64_t *)arts_calloc(arts_global_rank_count, sizeof(uint64_t));
+  seq_number =
+      (uint64_t *)arts_calloc(arts_global_rank_count, sizeof(uint64_t));
   seq_num_lock = (unsigned int *)arts_calloc(size, sizeof(unsigned int));
 #endif
 }
 
 // Actively flush all outbound queues by directly sending (with timeout)
-// This works even if sender threads have stopped, by sending from calling thread
+// This works even if sender threads have stopped, by sending from calling
+// thread
 void arts_remote_flush_outbound(void) {
   if (!out_head || node_list_size == 0) {
     return;
-}
+  }
 
   uint64_t timeout = arts_get_time_stamp() + 5000000000ULL; // 5 second timeout
 
   // Track partial sends per queue (not using thread-local out_resend)
-  struct out_list_s **pending_sends =
-      (struct out_list_s **)arts_calloc(node_list_size, sizeof(struct out_list_s *));
+  struct out_list_s **pending_sends = (struct out_list_s **)arts_calloc(
+      node_list_size, sizeof(struct out_list_s *));
 
   while (arts_get_time_stamp() < timeout) {
     bool did_work = false;
@@ -185,14 +189,15 @@ void arts_remote_flush_outbound(void) {
 
         if (!out->payload) {
           length_remaining = arts_remote_send_request(
-              (int)out->rank, i, ((char *)(out + 1)) + out->offset, out->length);
+              (int)out->rank, i, ((char *)(out + 1)) + out->offset,
+              out->length);
         } else {
           length_remaining = arts_remote_send_payload_request(
               (int)out->rank, i, ((char *)(out + 1)) + out->offset, out->length,
               ((char *)out->payload) + out->offsetPayload, out->payloadSize);
           if (out->free_method && !length_remaining) {
             out->free_method(out->payload);
-}
+          }
         }
 
         if (length_remaining == (uint64_t)-1) {
@@ -231,7 +236,7 @@ void arts_remote_flush_outbound(void) {
       }
       if (!has_pending) {
         break;
-}
+      }
     }
 
     if (!did_work) {
@@ -245,21 +250,23 @@ void arts_remote_flush_outbound(void) {
       struct out_list_s *out = pending_sends[i];
       if (out->free_method) {
         out->free_method(out->payload);
-}
+      }
       arts_link_list_delete_item(out);
     }
   }
   arts_free(pending_sends);
 }
 
-static inline void out_insert_node(struct out_list_s *node, unsigned int length) {
+static inline void out_insert_node(struct out_list_s *node,
+                                   unsigned int length) {
   (void)length;
   // int list_id = node->rank*ports+arts_thread_info.thread_id%ports;
   long unsigned int list_id;
   // mrand48_r (&arts_thread_info.drand_buf, &list_id);
   list_id = node->rank * ports + arts_thread_info.group_id % ports;
   struct arts_link_list_s *list = arts_link_list_get(out_head, list_id);
-  struct arts_remote_packet_s *packet = (struct arts_remote_packet_s *)(node + 1);
+  struct arts_remote_packet_s *packet =
+      (struct arts_remote_packet_s *)(node + 1);
 #ifdef SEQUENCENUMBERS
   arts_lock(&seq_num_lock[list_id]);
   packet->seq_num = arts_atomic_fetch_add_u64(&seq_number[node->rank], 1U);
@@ -271,28 +278,33 @@ static inline void out_insert_node(struct out_list_s *node, unsigned int length)
 #endif
   //    nartsUpdatePerformanceMetric(ARTS_NETWORK_QUEUE_PUSH, ARTS_THREAD,
   //    packet->size, false);
-  ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_NETWORK_QUEUE_PUSH, ARTS_METRIC_THREAD, 1);
+  ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_NETWORK_QUEUE_PUSH, ARTS_METRIC_THREAD,
+                             1);
 }
 
-static inline struct out_list_s *out_pop_node(unsigned int thread_id, void **free_me) {
+static inline struct out_list_s *out_pop_node(unsigned int thread_id,
+                                              void **free_me) {
   struct out_list_s *out;
   struct arts_link_list_s *list;
   list = arts_link_list_get(out_head, thread_id);
   out = (struct out_list_s *)arts_link_list_pop_front(list, free_me);
   if (out) {
-    struct arts_remote_packet_s *packet = (struct arts_remote_packet_s *)(out + 1);
+    struct arts_remote_packet_s *packet =
+        (struct arts_remote_packet_s *)(out + 1);
 #ifdef SEQUENCENUMBERS
     if (last_out[packet->seq_rank] &&
         packet->seq_num != last_out[packet->seq_rank] + 1) {
       ARTS_DEBUG("POP OUT OF ORDER %u -> %u %lu vs %lu %p", packet->seq_rank,
-                 packet->rank, last_out[packet->seq_rank], packet->seq_num, list);
+                 packet->rank, last_out[packet->seq_rank], packet->seq_num,
+                 list);
     }
     last_out[packet->seq_rank] = packet->seq_num;
 #endif
     // artsUpdatePerformanceMetric(ARTS_NETWORK_QUEUE_POP, ARTS_THREAD,
     // packet->size, false);
   }
-  ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_NETWORK_QUEUE_POP, ARTS_METRIC_THREAD, 1);
+  ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_NETWORK_QUEUE_POP, ARTS_METRIC_THREAD,
+                             1);
   return out;
 }
 
@@ -308,38 +320,40 @@ bool arts_remote_async_send() {
     sent = false;
     // Loop over our threads
     for (int i = (int)thread_start; i < (int)thread_stop; i++) {
-      out = NULL;                     // For looping purposes...
+      out = NULL;                              // For looping purposes...
       if (out_resend[i - (int)thread_start]) { // Checking failed sends?
         out = out_resend[i - (int)thread_start];
       } else { // Look for new messages
         out = out_pop_node(i, &free_me);
-}
+      }
 
       if (out) {
 #ifdef SEQUENCENUMBERS
-        struct arts_remote_packet_s *packet = (struct arts_remote_packet_s *)(out + 1);
+        struct arts_remote_packet_s *packet =
+            (struct arts_remote_packet_s *)(out + 1);
         if (last_sent[packet->seq_rank] != packet->seq_num &&
             packet->seq_num != last_sent[packet->seq_rank] + 1) {
-          ARTS_DEBUG("SENT OUT OF ORDER %lu vs %lu", last_sent[packet->seq_rank],
-                     packet->seq_num);
+          ARTS_DEBUG("SENT OUT OF ORDER %lu vs %lu",
+                     last_sent[packet->seq_rank], packet->seq_num);
         }
         last_sent[packet->seq_rank] = packet->seq_num;
 #endif
         if (!out->payload) {
           length_remaining = arts_remote_send_request(
-              (int)out->rank, i, ((char *)(out + 1)) + out->offset, out->length);
+              (int)out->rank, i, ((char *)(out + 1)) + out->offset,
+              out->length);
         } else {
           length_remaining = arts_remote_send_payload_request(
               (int)out->rank, i, ((char *)(out + 1)) + out->offset, out->length,
               ((char *)out->payload) + out->offsetPayload, out->payloadSize);
           if (out->free_method && !length_remaining) {
             out->free_method(out->payload);
-}
+          }
         }
 
         if (length_remaining == (uint64_t)-1) {
           return false;
-}
+        }
         if (length_remaining) {
           partial_send_store(out, length_remaining);
           out_resend[i - (int)thread_start] = out;
@@ -347,9 +361,9 @@ bool arts_remote_async_send() {
           struct arts_remote_packet_s *packet =
               (struct arts_remote_packet_s *)(out + 1);
           if (packet->message_type != ARTS_REMOTE_METRIC_UPDATE_MSG) {
-            ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_NETWORK_SEND_BW, ARTS_METRIC_THREAD,
-                                    packet->size);
-}
+            ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_NETWORK_SEND_BW,
+                                       ARTS_METRIC_THREAD, packet->size);
+          }
 
           out_resend[i - (int)thread_start] = NULL;
           arts_link_list_delete_item(out);
@@ -376,10 +390,11 @@ static inline void size_send_check(uint64_t size) {
   }
 }
 
-void arts_remote_send_request_async(int rank, char *message, unsigned int length) {
+void arts_remote_send_request_async(int rank, char *message,
+                                    unsigned int length) {
   self_send_check(rank);
-  struct out_list_s *next =
-      (struct out_list_s *)arts_link_list_new_item(length + sizeof(struct out_list_s));
+  struct out_list_s *next = (struct out_list_s *)arts_link_list_new_item(
+      length + sizeof(struct out_list_s));
   next->offset = 0;
   next->offsetPayload = 0;
   next->length = length;
@@ -390,13 +405,13 @@ void arts_remote_send_request_async(int rank, char *message, unsigned int length
 }
 
 void arts_remote_send_request_payload_async(int rank, char *message,
-                                       unsigned int length, char *payload,
-                                       uint64_t size) {
+                                            unsigned int length, char *payload,
+                                            uint64_t size) {
   self_send_check(rank);
   size_send_check(length);
   size_send_check(size);
-  struct out_list_s *next =
-      (struct out_list_s *)arts_link_list_new_item(length + sizeof(struct out_list_s));
+  struct out_list_s *next = (struct out_list_s *)arts_link_list_new_item(
+      length + sizeof(struct out_list_s));
   next->offset = 0;
   next->offsetPayload = 0;
   next->length = length;
@@ -408,16 +423,14 @@ void arts_remote_send_request_payload_async(int rank, char *message,
   out_insert_node(next, length + sizeof(struct out_list_s));
 }
 
-void arts_remote_send_request_payload_async_free(int rank, char *message,
-                                           unsigned int length, char *payload,
-                                           unsigned int offset,
-                                           uint64_t size,
-                                           void (*free_method)(void *)) {
+void arts_remote_send_request_payload_async_free(
+    int rank, char *message, unsigned int length, char *payload,
+    unsigned int offset, uint64_t size, void (*free_method)(void *)) {
   self_send_check(rank);
   size_send_check(length);
   size_send_check(size);
-  struct out_list_s *next =
-      (struct out_list_s *)arts_link_list_new_item(length + sizeof(struct out_list_s));
+  struct out_list_s *next = (struct out_list_s *)arts_link_list_new_item(
+      length + sizeof(struct out_list_s));
   next->offset = 0;
   next->offsetPayload = offset;
   next->length = length;

@@ -54,7 +54,7 @@
   {                                                                            \
     cublasStatus_t err;                                                        \
     if ((err = (x)) != CUBLAS_STATUS_SUCCESS) {                                \
-      arts_printf("FAILED %s: %s\n", #x, err);                                \
+      arts_printf("FAILED %s: %s\n", #x, err);                                 \
     }                                                                          \
   }
 
@@ -65,8 +65,8 @@ void work(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramc;
   (void)depc;
   (void)depv;
-  int i; // i-row index
-  int j; // j- column index
+  int i;    // i-row index
+  int j;    // j- column index
   float *a; // mxk matrix a on the host
   float *b; // kxn matrix b on the host
   float *c; // mxn matrix c on the host
@@ -149,13 +149,15 @@ void work(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // matrix - matrix multiplication : d_c = al*d_a *d_b + bet *d_c
   // d_a -mxk matrix , d_b -kxn matrix , d_c -mxn matrix ;
   // al ,bet -scalars
-  CHECKCUBLASERROR(cublasSgemm(handle[arts_get_gpu_id()], CUBLAS_OP_N, CUBLAS_OP_N,
-                               M, N, K, &al, d_a, M, d_b, K, &bet, d_c, M));
+  CHECKCUBLASERROR(cublasSgemm(handle[arts_get_gpu_id()], CUBLAS_OP_N,
+                               CUBLAS_OP_N, M, N, K, &al, d_a, M, d_b, K, &bet,
+                               d_c, M));
 
   float *final_data;
   arts_guid_t final_guid =
       arts_db_create((void **)&final_data, sizeof(float) * (size_t)M * N, NULL);
-  arts_put_in_db_from_gpu(d_c, final_guid, 0, sizeof(float) * (size_t)M * N, true);
+  arts_put_in_db_from_gpu(d_c, final_guid, 0, sizeof(float) * (size_t)M * N,
+                          true);
   // stat = cublasGetMatrix(M, N, sizeof(*c), d_c, M, c, M);    // cp d_c - >c
 
   cudaFree(d_a); // free device memory
@@ -195,14 +197,15 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
   dim3 threads(1, 1);
   dim3 grid(1, 1);
 
-  arts_guid_t done_guid = arts_edt_create(done, 0, NULL, 1, &(arts_hint_t){.route = 0});
-  arts_guid_t work_guid = arts_edt_create_gpu_lib(work, 0, 1, (uint64_t *)&done_guid,
-                                            0, grid, threads);
+  arts_guid_t done_guid =
+      arts_edt_create(done, 0, NULL, 1, &(arts_hint_t){.route = 0});
+  arts_guid_t work_guid = arts_edt_create_gpu_lib(
+      work, 0, 1, (uint64_t *)&done_guid, 0, grid, threads);
   (void)work_guid;
 }
 
 extern "C" void arts_init_per_gpu(unsigned int node_id, int dev_id,
-                             cudaStream_t *stream, int argc, char **argv) {
+                                  cudaStream_t *stream, int argc, char **argv) {
   (void)node_id;
   (void)stream;
   (void)argc;
@@ -218,7 +221,7 @@ extern "C" void arts_init_per_gpu(unsigned int node_id, int dev_id,
 }
 
 extern "C" void arts_fini_per_gpu(unsigned int node_id, int dev_id,
-                              cudaStream_t *stream) {
+                                  cudaStream_t *stream) {
   (void)node_id;
   (void)stream;
   arts_printf("DevId: %d\n", dev_id);

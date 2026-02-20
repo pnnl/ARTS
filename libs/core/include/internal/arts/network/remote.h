@@ -51,18 +51,20 @@ bool arts_remote_setup_incoming();
 unsigned int arts_remote_get_my_rank();
 void arts_remote_shutdown();
 bool arts_server_try_to_receive(char **in_buffer, const int *in_packet_size,
-                            const volatile unsigned int *remote_steal_lock);
+                                const volatile unsigned int *remote_steal_lock);
 void arts_server_send_steal_request();
 uint64_t arts_remote_send_request(int rank, unsigned int queue, char *message,
-                               uint64_t length);
+                                  uint64_t length);
 uint64_t arts_remote_send_payload_request(int rank, unsigned int queue,
-                                      char *message, unsigned int length,
-                                      char *payload, uint64_t length2);
+                                          char *message, unsigned int length,
+                                          char *payload, uint64_t length2);
 
-uint8_t arts_event_satisfy_no_block(arts_guid_t event_guid, arts_guid_t data_guid);
+uint8_t arts_event_satisfy_no_block(arts_guid_t event_guid,
+                                    arts_guid_t data_guid);
 unsigned int arts_remote_division();
 void arts_server_ping_pong_test_recieve(char *in_buffer, int in_packet_size);
-void arts_remote_set_thread_inbound_queues(unsigned int start, unsigned int stop);
+void arts_remote_set_thread_inbound_queues(unsigned int start,
+                                           unsigned int stop);
 void arts_remote_thread_inbound_queues_cleanup();
 void arts_remote_shutdown_ping(unsigned int route);
 #ifdef __cplusplus

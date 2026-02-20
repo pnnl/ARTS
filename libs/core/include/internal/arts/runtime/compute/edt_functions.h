@@ -46,17 +46,19 @@ extern "C" {
 #include "arts/utils/array_list.h"
 
 bool arts_edt_create_internal(struct arts_edt_s *edt, arts_type_t mode,
-                           arts_guid_t *guid, unsigned int route,
-                           unsigned int numa_domain, unsigned int edt_space,
-                           arts_guid_t output_buffer, arts_edt_t func_ptr,
-                           uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                           bool use_epoch, arts_guid_t epoch_guid, bool has_depv,
-                           uint64_t arts_id);
+                              arts_guid_t *guid, unsigned int route,
+                              unsigned int numa_domain, unsigned int edt_space,
+                              arts_guid_t output_buffer, arts_edt_t func_ptr,
+                              uint32_t paramc, const uint64_t *paramv,
+                              uint32_t depc, bool use_epoch,
+                              arts_guid_t epoch_guid, bool has_depv,
+                              uint64_t arts_id);
 void arts_edt_delete(struct arts_edt_s *edt);
-void internal_signal_edt(arts_guid_t edt_packet, uint32_t slot, arts_guid_t data_guid,
-                       arts_type_t mode, void *ptr, unsigned int size);
+void internal_signal_edt(arts_guid_t edt_packet, uint32_t slot,
+                         arts_guid_t data_guid, arts_type_t mode, void *ptr,
+                         unsigned int size);
 void internal_signal_edt_with_mode(arts_guid_t edt_packet, uint32_t slot,
-                               arts_guid_t data_guid, arts_type_t mode);
+                                   arts_guid_t data_guid, arts_type_t mode);
 
 typedef struct {
   arts_guid_t current_edt_guid;

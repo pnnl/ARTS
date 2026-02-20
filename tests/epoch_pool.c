@@ -50,12 +50,12 @@ void dummytask(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramc;
   uint64_t index = paramv[0];
   uint64_t dep = paramv[1];
-  arts_printf("Dep: %lu ID: %lu Current Node: %u Current Worker: %u\n", dep, index,
-         arts_get_current_node(), arts_get_current_worker());
+  arts_printf("Dep: %lu ID: %lu Current Node: %u Current Worker: %u\n", dep,
+              index, arts_get_current_node(), arts_get_current_worker());
 }
 
 void root_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-              arts_edt_dep_t depv[]) {
+               arts_edt_dep_t depv[]) {
   (void)depc;
   (void)depv;
   (void)paramc;
@@ -66,9 +66,11 @@ void root_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
     dep--;
     unsigned int num_nodes = arts_get_total_nodes();
-    //        arts_edt_create_shad(root_task, (arts_get_current_node()+1)%num_nodes, 1,
-    //        &dep);
-    arts_edt_create_dep(root_task, 1, &dep, 0, false, &(arts_hint_t){.route = (arts_get_current_node() + 1) % num_nodes});
+    //        arts_edt_create_shad(root_task,
+    //        (arts_get_current_node()+1)%num_nodes, 1, &dep);
+    arts_edt_create_dep(
+        root_task, 1, &dep, 0, false,
+        &(arts_hint_t){.route = (arts_get_current_node() + 1) % num_nodes});
 
     //        uint64_t args[2];
     //        args[0] = dep;
@@ -76,17 +78,18 @@ void root_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     //        for(uint64_t i=0; i<num_dummy; i++)
     //        {
     //            args[1] = i;
-    //            arts_edt_create_dep(dummytask, 2, args, 0, false, &(arts_hint_t){.route = i%num_nodes});
+    //            arts_edt_create_dep(dummytask, 2, args, 0, false,
+    //            &(arts_hint_t){.route = i%num_nodes});
     //        }
     arts_printf("Waiting on %lu\n", pool_guid);
     if (arts_wait_on_handle(pool_guid)) {
       arts_printf("Done waiting on %lu dep: %lu\n", pool_guid, dep);
-}
+    }
   }
 
   if (dep + 1 == num_dummy) {
     arts_shutdown();
-}
+  }
 }
 
 void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,

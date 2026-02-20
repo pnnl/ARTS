@@ -55,20 +55,21 @@ typedef struct {
   uint8_t needComma[ARTS_JSON_MAX_DEPTH];
 } arts_json_writer_t;
 
-void arts_json_writer_init(arts_json_writer_t *writer, FILE *fp, unsigned indent_size);
+void arts_json_writer_init(arts_json_writer_t *writer, FILE *fp,
+                           unsigned indent_size);
 void arts_json_writer_begin_object(arts_json_writer_t *writer, const char *key);
 void arts_json_writer_end_object(arts_json_writer_t *writer);
 void arts_json_writer_begin_array(arts_json_writer_t *writer, const char *key);
 void arts_json_writer_end_array(arts_json_writer_t *writer);
 void arts_json_writer_write_u_int64(arts_json_writer_t *writer, const char *key,
-                               uint64_t value);
+                                    uint64_t value);
 void arts_json_writer_write_double(arts_json_writer_t *writer, const char *key,
-                               double value);
+                                   double value);
 void arts_json_writer_write_string(arts_json_writer_t *writer, const char *key,
-                               const char *value);
+                                   const char *value);
 void arts_json_writer_write_null(arts_json_writer_t *writer, const char *key);
-void arts_json_writer_write_raw_array(arts_json_writer_t *writer, const char *key,
-                                 const char *raw_json);
+void arts_json_writer_write_raw_array(arts_json_writer_t *writer,
+                                      const char *key, const char *raw_json);
 void arts_json_writer_finish(arts_json_writer_t *writer);
 
 #ifdef __cplusplus

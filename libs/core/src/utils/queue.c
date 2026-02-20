@@ -50,7 +50,7 @@
 
 #define CASPTR CAS64
 
-#define STORE_PREFETCH(val)                                                     \
+#define STORE_PREFETCH(val)                                                    \
   do {                                                                         \
   } while (0)
 
@@ -133,19 +133,19 @@ pthread_mutex_t amtx = PTHREAD_MUTEX_INITIALIZER;
     __typeof__(o2) __old2 = (o2);                                              \
     __typeof__(*(ptr)) __new1 = (n1);                                          \
     __typeof__(o2) __new2 = (n2);                                              \
-    __asm__ volatile("lock cmpxchg16b %2;setz %1"                                  \
-                 : "=d"(__junk), "=a"(__ret), "+m"(*(ptr))                     \
-                 : "b"(__new1), "c"(__new2), "a"(__old1), "d"(__old2));        \
+    __asm__ volatile("lock cmpxchg16b %2;setz %1"                              \
+                     : "=d"(__junk), "=a"(__ret), "+m"(*(ptr))                 \
+                     : "b"(__new1), "c"(__new2), "a"(__old1), "d"(__old2));    \
     __ret;                                                                     \
   })
 
 #define BIT_TEST_AND_SET(ptr, b)                                               \
   ({                                                                           \
     char __ret;                                                                \
-    __asm__ volatile("lock btsq $63, %0; setnc %1"                                 \
-                 : "+m"(*(ptr)), "=a"(__ret)                                   \
-                 :                                                             \
-                 : "cc");                                                      \
+    __asm__ volatile("lock btsq $63, %0; setnc %1"                             \
+                     : "+m"(*(ptr)), "=a"(__ret)                               \
+                     :                                                         \
+                     : "cc");                                                  \
     __ret;                                                                     \
   })
 #endif
@@ -176,8 +176,10 @@ uint64_t tail_index(uint64_t t) { return (t & ~(1ull << 63)); }
 int crq_is_closed(uint64_t t) { return (t & (1ull << 63)) != 0; }
 
 arts_queue_t *arts_new_queue() {
-  arts_queue_t *queue = (arts_queue_t *)arts_calloc_align(1, sizeof(arts_queue_t), 128);
-  ring_queue_t *rq = (ring_queue_t *)arts_calloc_align(1, sizeof(ring_queue_t), 128);
+  arts_queue_t *queue =
+      (arts_queue_t *)arts_calloc_align(1, sizeof(arts_queue_t), 128);
+  ring_queue_t *rq =
+      (ring_queue_t *)arts_calloc_align(1, sizeof(ring_queue_t), 128);
   init_ring(rq);
   queue->head = queue->tail = rq;
   return queue;
@@ -193,12 +195,12 @@ void fix_state(ring_queue_t *rq) {
 
     if (UNLIKELY(rq->tail != t)) {
       continue;
-}
+    }
 
     if (h > t) {
       if (CAS64(&rq->tail, t, h)) {
         break;
-}
+      }
       continue;
     }
     break;
@@ -287,14 +289,14 @@ OBJECT dequeue(arts_queue_t *queue) {
 
       if (UNLIKELY(idx > h)) {
         break;
-}
+      }
 
       if (LIKELY(!is_empty(val))) {
         if (LIKELY(idx == h)) {
           if (CAS2((uint64_t *)cell, val, cell_idx, -1,
                    unsafe | (h + RING_SIZE))) {
             return val;
-}
+          }
         } else {
           if (CAS2((uint64_t *)cell, val, cell_idx, val, set_unsafe(idx))) {
             break;
@@ -303,7 +305,7 @@ OBJECT dequeue(arts_queue_t *queue) {
       } else {
         if ((r & ((1ull << 10) - 1)) == 0) {
           tt = rq->tail;
-}
+        }
 
         // Optimization: try to bail quickly if queue is closed.
         int crq_closed = crq_is_closed(tt);
@@ -314,11 +316,11 @@ OBJECT dequeue(arts_queue_t *queue) {
           if (CAS2((uint64_t *)cell, val, cell_idx, val,
                    unsafe | (h + RING_SIZE))) {
             break;
-}
+          }
         } else if (t <= h + 1 || r > 200000 || crq_closed) {
           if (CAS2((uint64_t *)cell, val, idx, val, h + RING_SIZE)) {
             break;
-}
+          }
         } else {
           ++r;
         }

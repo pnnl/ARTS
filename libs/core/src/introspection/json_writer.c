@@ -44,7 +44,7 @@
 static void json_writer_write_indent(const arts_json_writer_t *writer) {
   for (unsigned i = 0; i < writer->depth * writer->indent_size; i++) {
     (void)fputc(' ', writer->fp);
-}
+  }
 }
 
 static void json_writer_prepare_entry(arts_json_writer_t *writer) {
@@ -52,21 +52,21 @@ static void json_writer_prepare_entry(arts_json_writer_t *writer) {
     (void)fputs(",\n", writer->fp);
   } else if (writer->depth) {
     (void)fputc('\n', writer->fp);
-}
+  }
 
   if (writer->depth) {
     json_writer_write_indent(writer);
-}
+  }
 
   if (writer->depth < ARTS_JSON_MAX_DEPTH) {
     writer->needComma[writer->depth] = 1;
-}
+  }
 }
 
 static void json_writer_push(arts_json_writer_t *writer) {
   if (writer->depth + 1 >= ARTS_JSON_MAX_DEPTH) {
     return;
-}
+  }
   writer->depth++;
   writer->needComma[writer->depth] = 0;
 }
@@ -74,7 +74,7 @@ static void json_writer_push(arts_json_writer_t *writer) {
 static void json_writer_pop(arts_json_writer_t *writer, char closing) {
   if (!writer->depth) {
     return;
-}
+  }
 
   int had_entries = writer->needComma[writer->depth];
   writer->needComma[writer->depth] = 0;
@@ -84,28 +84,30 @@ static void json_writer_pop(arts_json_writer_t *writer, char closing) {
     (void)fputc('\n', writer->fp);
     if (writer->depth) {
       json_writer_write_indent(writer);
-}
+    }
   }
   (void)fputc(closing, writer->fp);
 }
 
-void arts_json_writer_init(arts_json_writer_t *writer, FILE *fp, unsigned indent_size) {
+void arts_json_writer_init(arts_json_writer_t *writer, FILE *fp,
+                           unsigned indent_size) {
   writer->fp = fp;
   writer->indent_size = indent_size;
   writer->depth = 0;
   memset(writer->needComma, 0, sizeof(writer->needComma));
 }
 
-void arts_json_writer_begin_object(arts_json_writer_t *writer, const char *key) {
+void arts_json_writer_begin_object(arts_json_writer_t *writer,
+                                   const char *key) {
   if (writer->depth) {
     json_writer_prepare_entry(writer);
-}
+  }
 
   if (key) {
     (void)fprintf(writer->fp, "\"%s\": {", key);
   } else {
     (void)fputc('{', writer->fp);
-}
+  }
   json_writer_push(writer);
 }
 
@@ -116,13 +118,13 @@ void arts_json_writer_end_object(arts_json_writer_t *writer) {
 void arts_json_writer_begin_array(arts_json_writer_t *writer, const char *key) {
   if (writer->depth) {
     json_writer_prepare_entry(writer);
-}
+  }
 
   if (key) {
     (void)fprintf(writer->fp, "\"%s\": [", key);
   } else {
     (void)fputc('[', writer->fp);
-}
+  }
   json_writer_push(writer);
 }
 
@@ -160,7 +162,7 @@ static void json_writer_write_escaped(const char *value, FILE *fp) {
         (void)fprintf(fp, "\\u%04x", *cursor);
       } else {
         (void)fputc(*cursor, fp);
-}
+      }
     }
   }
   (void)fputc('"', fp);
@@ -175,19 +177,19 @@ static void json_writer_write_key(arts_json_writer_t *writer, const char *key) {
 }
 
 void arts_json_writer_write_u_int64(arts_json_writer_t *writer, const char *key,
-                               uint64_t value) {
+                                    uint64_t value) {
   json_writer_write_key(writer, key);
   (void)fprintf(writer->fp, "%llu", (unsigned long long)value);
 }
 
 void arts_json_writer_write_double(arts_json_writer_t *writer, const char *key,
-                               double value) {
+                                   double value) {
   json_writer_write_key(writer, key);
   (void)fprintf(writer->fp, "%.6f", value);
 }
 
 void arts_json_writer_write_string(arts_json_writer_t *writer, const char *key,
-                               const char *value) {
+                                   const char *value) {
   json_writer_write_key(writer, key);
   json_writer_write_escaped(value ? value : "", writer->fp);
 }
@@ -197,8 +199,8 @@ void arts_json_writer_write_null(arts_json_writer_t *writer, const char *key) {
   (void)fputs("null", writer->fp);
 }
 
-void arts_json_writer_write_raw_array(arts_json_writer_t *writer, const char *key,
-                                 const char *raw_json) {
+void arts_json_writer_write_raw_array(arts_json_writer_t *writer,
+                                      const char *key, const char *raw_json) {
   json_writer_write_key(writer, key);
   (void)fputs(raw_json, writer->fp);
 }
@@ -206,5 +208,5 @@ void arts_json_writer_write_raw_array(arts_json_writer_t *writer, const char *ke
 void arts_json_writer_finish(arts_json_writer_t *writer) {
   while (writer->depth) {
     json_writer_pop(writer, '}');
-}
+  }
 }

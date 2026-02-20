@@ -49,9 +49,9 @@ unsigned int block_size = 0;
 void setter(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
             arts_edt_dep_t depv[]) {
 
-(void)depc;
+  (void)depc;
 
-(void)paramc;
+  (void)paramc;
 
   unsigned int id = paramv[0];
   unsigned int *dest = (unsigned int *)depv[0].ptr;
@@ -66,22 +66,23 @@ void getter(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
             arts_edt_dep_t depv[]) {
   (void)depc;
   unsigned int *buffer;
-  arts_guid_t cpy_db = arts_db_create(
-      (void **)&buffer, sizeof(unsigned int) * block_size, NULL);
+  arts_guid_t cpy_db =
+      arts_db_create((void **)&buffer, sizeof(unsigned int) * block_size, NULL);
 
   unsigned int id = paramv[0];
   unsigned int *source = (unsigned int *)depv[0].ptr;
   for (unsigned int i = 0; i < block_size; i++) {
     buffer[i] = source[(id * block_size) + i];
   }
-  arts_guid_t am = arts_edt_create(setter, paramc, paramv, 2,
+  arts_guid_t am = arts_edt_create(
+      setter, paramc, paramv, 2,
       &(arts_hint_t){.route = arts_guid_get_rank(db_dest_guid)});
   arts_signal_edt(am, 0, db_dest_guid, ARTS_DB_WRITE);
   arts_signal_edt(am, 1, cpy_db, ARTS_DB_WRITE);
 }
 
 void shut_down_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                 arts_edt_dep_t depv[]) {
+                   arts_edt_dep_t depv[]) {
   (void)depc;
   (void)paramc;
   (void)paramv;
@@ -96,7 +97,7 @@ void shut_down_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   if (pass) {
     arts_printf("CHECK\n");
-}
+  }
   arts_shutdown();
 }
 
@@ -114,7 +115,8 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   unsigned int node_id = arts_get_current_node();
   uint64_t id = node_id;
-  arts_guid_t getter_edt = arts_edt_create(getter, 1, &id, 1,
+  arts_guid_t getter_edt = arts_edt_create(
+      getter, 1, &id, 1,
       &(arts_hint_t){.route = arts_guid_get_rank(db_source_guid)});
   arts_signal_edt(getter_edt, 0, db_source_guid, ARTS_DB_WRITE);
 
@@ -124,12 +126,13 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     data[i] = i;
   }
   arts_db_create_with_guid_and_data(db_source_guid, data,
-                                sizeof(unsigned int) * num_elements);
+                                    sizeof(unsigned int) * num_elements);
   arts_edt_create_with_guid(shut_down_edt, shutdown_guid, 0, NULL,
-                        arts_get_total_nodes());
+                            arts_get_total_nodes());
 
   if (node_id == arts_get_total_nodes() - 1) {
-    arts_db_create_with_guid(db_dest_guid, sizeof(unsigned int) * num_elements, NULL);
+    arts_db_create_with_guid(db_dest_guid, sizeof(unsigned int) * num_elements,
+                             NULL);
   }
 }
 

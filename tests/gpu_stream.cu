@@ -87,8 +87,8 @@ int main(void) {
   // }
 
   // arts_printf("LAUNCHING 1 %u\n", SOMEARGS);
-  // arts_schedule_to_gpu_internal(kernel, SOMEARGS, paramv, SOMEARGS, depv, grid,
-  // block, NULL, arts_gpu);
+  // arts_schedule_to_gpu_internal(kernel, SOMEARGS, paramv, SOMEARGS, depv,
+  // grid, block, NULL, arts_gpu);
 
   // arts_printf("WAITING\n");
   // arts_gpu_synchronize(arts_gpu);

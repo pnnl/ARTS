@@ -48,14 +48,14 @@ extern "C" {
 
 struct arts_deque_s;
 struct arts_deque_s *arts_deque_list_new(unsigned int list_size,
-                                   unsigned int deque_size);
+                                         unsigned int deque_size);
 struct arts_deque_s *arts_deque_list_get_deque(struct arts_deque_s *deque_list,
-                                        unsigned int position);
+                                               unsigned int position);
 void arts_deque_list_delete(void *deque_list);
 struct arts_deque_s *arts_deque_new(unsigned int size);
 void arts_deque_delete(struct arts_deque_s *deque);
 bool arts_deque_push_front(struct arts_deque_s *deque, void *item,
-                        unsigned int priority);
+                           unsigned int priority);
 void *arts_deque_pop_front(struct arts_deque_s *deque);
 void *arts_deque_pop_back(struct arts_deque_s *deque);
 

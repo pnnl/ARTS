@@ -45,21 +45,24 @@ extern "C" {
 #include "arts.h"
 
 arts_guid_t arts_edt_create_shad(arts_edt_t func_ptr, unsigned int route,
-                             uint32_t paramc, const uint64_t *paramv);
+                                 uint32_t paramc, const uint64_t *paramv);
 arts_guid_t arts_active_message_shad(arts_edt_t func_ptr, unsigned int route,
-                                 uint32_t paramc, const uint64_t *paramv, void *data,
-                                 unsigned int size, arts_guid_t epoch_guid);
-void arts_synchronous_active_message_shad(arts_edt_t func_ptr, unsigned int route,
-                                      uint32_t paramc, const uint64_t *paramv,
-                                      void *data, unsigned int size);
+                                     uint32_t paramc, const uint64_t *paramv,
+                                     void *data, unsigned int size,
+                                     arts_guid_t epoch_guid);
+void arts_synchronous_active_message_shad(arts_edt_t func_ptr,
+                                          unsigned int route, uint32_t paramc,
+                                          const uint64_t *paramv, void *data,
+                                          unsigned int size);
 
 void arts_inc_lock_shad();
 void arts_dec_lock_shad();
 void arts_check_lock_shad();
 void arts_start_intro_shad(unsigned int start);
 void arts_stop_intro_shad();
-arts_guid_t arts_allocate_local_buffer_shad(void **buffer, uint32_t *size_to_write,
-                                       arts_guid_t epoch_guid);
+arts_guid_t arts_allocate_local_buffer_shad(void **buffer,
+                                            uint32_t *size_to_write,
+                                            arts_guid_t epoch_guid);
 
 bool arts_shad_alias_try_lock(volatile uint64_t *lock);
 void arts_shad_alias_unlock(volatile uint64_t *lock);

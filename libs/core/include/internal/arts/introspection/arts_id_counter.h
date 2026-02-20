@@ -98,19 +98,23 @@ typedef struct {
 
 // Aggregate metrics recording (hash table based)
 void arts_id_record_edt_metrics(uint64_t arts_id, uint64_t exec_ns,
-                            uint64_t stall_ns, arts_id_hash_table_t *hash_table);
+                                uint64_t stall_ns,
+                                arts_id_hash_table_t *hash_table);
 void arts_id_record_db_metrics(uint64_t arts_id, uint64_t bytes_local,
-                           uint64_t bytes_remote, uint64_t cache_misses,
-                           arts_id_hash_table_t *hash_table);
+                               uint64_t bytes_remote, uint64_t cache_misses,
+                               arts_id_hash_table_t *hash_table);
 
 // Detailed per-invocation captures (ArrayList based)
 void arts_id_capture_edt_execution(uint64_t arts_id, uint64_t exec_ns,
-                               uint64_t stall_ns, arts_array_list_t *captures);
+                                   uint64_t stall_ns,
+                                   arts_array_list_t *captures);
 void arts_id_capture_db_access(uint64_t arts_id, uint64_t bytes_accessed,
-                           uint8_t access_type, arts_array_list_t *captures);
+                               uint8_t access_type,
+                               arts_array_list_t *captures);
 
 // Reduction functions for NODE mode (merge multiple hash tables)
-void arts_id_reduce_hash_tables(arts_id_hash_table_t *dest, const arts_id_hash_table_t *src);
+void arts_id_reduce_hash_tables(arts_id_hash_table_t *dest,
+                                const arts_id_hash_table_t *src);
 void arts_id_init_hash_table(arts_id_hash_table_t *table);
 
 #ifdef __cplusplus

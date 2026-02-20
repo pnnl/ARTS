@@ -25,7 +25,7 @@ volatile unsigned int *test_result = NULL;
 
 /// Test EDT that simulates work
 void test_edt_worker(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                   arts_edt_dep_t depv[]) {
+                     arts_edt_dep_t depv[]) {
   arts_printf("[test_edt_worker] Entry - paramc=%u, depc=%u\n", paramc, depc);
 
   if (paramc < 1) {
@@ -37,7 +37,7 @@ void test_edt_worker(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   unsigned int node_id = arts_get_current_node();
 
   arts_printf("Node %u - EDT with expected arts_id=%lu executing\n", node_id,
-             expected_arts_id);
+              expected_arts_id);
 
   // Simulate some work (matrix computation)
   if (depc > 0 && depv[0].ptr != NULL) {
@@ -47,12 +47,13 @@ void test_edt_worker(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     // Simple matrix operation to simulate work
     for (unsigned int i = 0; i < size; i++) {
       for (unsigned int j = 0; j < size; j++) {
-        matrix[((uint64_t)i * size) + j] = (double)(((uint64_t)i * j) + expected_arts_id);
+        matrix[((uint64_t)i * size) + j] =
+            (double)(((uint64_t)i * j) + expected_arts_id);
       }
     }
 
     arts_printf("Node %u - EDT %lu completed matrix computation\n", node_id,
-               expected_arts_id);
+                expected_arts_id);
   }
 
   arts_printf("[test_edt_worker] Completed - arts_id=%lu\n", expected_arts_id);
@@ -60,7 +61,7 @@ void test_edt_worker(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
 /// Test EDT that reads multiple DBs
 void test_edt_reader(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                   arts_edt_dep_t depv[]) {
+                     arts_edt_dep_t depv[]) {
   arts_printf("[test_edt_reader] Entry - paramc=%u, depc=%u\n", paramc, depc);
 
   if (paramc < 1) {
@@ -72,7 +73,7 @@ void test_edt_reader(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   unsigned int node_id = arts_get_current_node();
 
   arts_printf("Node %u - Reader EDT %lu accessing %u DBs\n", node_id,
-             expected_arts_id, depc);
+              expected_arts_id, depc);
 
   // Access multiple DBs
   for (uint32_t i = 0; i < depc; i++) {
@@ -87,7 +88,7 @@ void test_edt_reader(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       }
 
       arts_printf("Node %u - Reader EDT %lu: DB[%u] sum=%.2f\n", node_id,
-                 expected_arts_id, i, sum);
+                  expected_arts_id, i, sum);
     }
   }
 
@@ -119,13 +120,15 @@ void validator(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 #if ENABLE_ARTS_ID_EDT_CAPTURES
   arts_printf("[Validator] ✓ EDT captures enabled\n");
 #else
-  arts_printf("[Validator] ✗ EDT captures disabled (expected if counters OFF)\n");
+  arts_printf(
+      "[Validator] ✗ EDT captures disabled (expected if counters OFF)\n");
 #endif
 
 #if ENABLE_ARTS_ID_DB_CAPTURES
   arts_printf("[Validator] ✓ DB captures enabled\n");
 #else
-  arts_printf("[Validator] ✗ DB captures disabled (expected if counters OFF)\n");
+  arts_printf(
+      "[Validator] ✗ DB captures disabled (expected if counters OFF)\n");
 #endif
 
   // Test 2: Verify counter mode configuration
@@ -133,7 +136,8 @@ void validator(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   unsigned int edt_metrics_mode = arts_counter_mode_array[ARTS_ID_EDT_METRICS];
   unsigned int db_metrics_mode = arts_counter_mode_array[ARTS_ID_DB_METRICS];
-  unsigned int edt_captures_mode = arts_counter_mode_array[ARTS_ID_EDT_CAPTURES];
+  unsigned int edt_captures_mode =
+      arts_counter_mode_array[ARTS_ID_EDT_CAPTURES];
   unsigned int db_captures_mode = arts_counter_mode_array[ARTS_ID_DB_CAPTURES];
 
   arts_printf(
@@ -147,7 +151,8 @@ void validator(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("[Validator] Test 3: Per-thread JSON export...\n");
 
 #if ENABLE_ARTS_ID_EDT_METRICS || ENABLE_ARTS_ID_DB_METRICS
-  arts_printf("[Validator] ✓ Per-thread export happens during thread cleanup\n");
+  arts_printf(
+      "[Validator] ✓ Per-thread export happens during thread cleanup\n");
   arts_printf(
       "[Validator] ✓ Look for counters_thread_N.json files after shutdown\n");
 #else
@@ -165,12 +170,14 @@ void validator(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   for (unsigned int t = 0; t < arts_node_info.total_thread_count; t++) {
     // Note: We can't easily access per-thread data from validator EDT
     // This is just to demonstrate the concept
-    arts_printf("[Validator] Thread %u data collection (implementation pending)\n",
-               t);
+    arts_printf(
+        "[Validator] Thread %u data collection (implementation pending)\n", t);
   }
 
-  arts_printf("[Validator] Total EDT hash collisions: %u\n", total_edt_collisions);
-  arts_printf("[Validator] Total DB hash collisions: %u\n", total_db_collisions);
+  arts_printf("[Validator] Total EDT hash collisions: %u\n",
+              total_edt_collisions);
+  arts_printf("[Validator] Total DB hash collisions: %u\n",
+              total_db_collisions);
 #endif
 
   // Final result
@@ -184,7 +191,7 @@ void validator(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_printf("✓ Counter infrastructure validated\n");
     if (test_result) {
       *test_result = 1;
-}
+    }
   } else {
     arts_printf("═══════════════════════════════════════\n");
     arts_printf("TEST STATUS: FAILURE\n");
@@ -192,7 +199,7 @@ void validator(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_printf("✗ Found %u errors in arts_id tracking!\n", errors);
     if (test_result) {
       *test_result = 0;
-}
+    }
   }
 }
 
@@ -222,12 +229,13 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Create test DBs with arts_id values
   arts_printf("[Step 3] Creating %u test DBs with arts_id values:\n",
-             NUM_TEST_DBS);
+              NUM_TEST_DBS);
   arts_guid_t *db_guids =
       (arts_guid_t *)malloc(NUM_TEST_DBS * sizeof(arts_guid_t));
   void **db_ptrs = (void **)malloc(NUM_TEST_DBS * sizeof(void *));
 
-  unsigned int matrix_size = (unsigned int)((unsigned long)32 * 32 * sizeof(double));
+  unsigned int matrix_size =
+      (unsigned int)((unsigned long)32 * 32 * sizeof(double));
 
   for (unsigned int i = 0; i < NUM_TEST_DBS; i++) {
     uint64_t arts_id =
@@ -243,19 +251,19 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     }
 
     arts_printf("  - DB[%u]: guid=%lu, arts_id=%lu, size=%u bytes\n", i,
-               db_guids[i], arts_id, matrix_size);
+                db_guids[i], arts_id, matrix_size);
   }
 
   arts_printf("\n");
 
   // Create validator EDT first
   arts_printf("[Step 4] Creating validator EDT (will run last)...\n");
-  arts_guid_t validator_guid =
-      arts_edt_create_with_epoch(validator, 0, NULL, 1, epoch_guid, &(arts_hint_t){.route = 0});
+  arts_guid_t validator_guid = arts_edt_create_with_epoch(
+      validator, 0, NULL, 1, epoch_guid, &(arts_hint_t){.route = 0});
 
   // Create writer EDTs with arts_id values
   arts_printf("[Step 5] Creating %u writer EDTs with arts_id values:\n",
-             NUM_TEST_EDTS);
+              NUM_TEST_EDTS);
   arts_guid_t *writer_guids =
       (arts_guid_t *)malloc(NUM_TEST_EDTS * sizeof(arts_guid_t));
   unsigned int *writer_db_indices =
@@ -272,10 +280,12 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     unsigned int db_index = i % NUM_TEST_DBS;
     writer_db_indices[i] = db_index;
 
-    writer_guids[i] = arts_edt_create(test_edt_worker, 1, &param, 1, &(arts_hint_t){.route = target_node, .id = arts_id});
+    writer_guids[i] =
+        arts_edt_create(test_edt_worker, 1, &param, 1,
+                        &(arts_hint_t){.route = target_node, .id = arts_id});
 
-    arts_printf("  - EDT[%u]: guid=%lu, arts_id=%lu, node=%u, using DB[%u]\n", i,
-               writer_guids[i], arts_id, target_node, db_index);
+    arts_printf("  - EDT[%u]: guid=%lu, arts_id=%lu, node=%u, using DB[%u]\n",
+                i, writer_guids[i], arts_id, target_node, db_index);
   }
 
   arts_printf("\n");
@@ -301,10 +311,12 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
         (i % NUM_TEST_DBS) + 1; // 1 to NUM_TEST_DBS dependencies
     reader_num_deps[i] = num_deps;
 
-    reader_guids[i] = arts_edt_create(test_edt_reader, 1, &param, num_deps, &(arts_hint_t){.route = target_node, .id = arts_id});
+    reader_guids[i] =
+        arts_edt_create(test_edt_reader, 1, &param, num_deps,
+                        &(arts_hint_t){.route = target_node, .id = arts_id});
 
     arts_printf("  - Reader[%u]: guid=%lu, arts_id=%lu, node=%u, deps=%u\n", i,
-               reader_guids[i], arts_id, target_node, num_deps);
+                reader_guids[i], arts_id, target_node, num_deps);
   }
 
   arts_printf("\n");
@@ -350,7 +362,8 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 
   // Note: Counter export now happens automatically via counter infrastructure
-  // No manual export call needed - arts_counter_write_thread() handles all metrics
+  // No manual export call needed - arts_counter_write_thread() handles all
+  // metrics
 
   // Cleanup
   free((void *)writer_guids);

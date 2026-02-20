@@ -67,48 +67,53 @@ enum arts_out_of_order_type {
 };
 
 void arts_out_of_order_signal_edt(arts_guid_t wait_on, arts_guid_t edt_packet,
-                             arts_guid_t data_guid, uint32_t slot,
-                             arts_type_t mode, bool force);
-void arts_out_of_order_event_satisfy(arts_guid_t wait_on, arts_guid_t event_guid,
-                                arts_guid_t data_guid);
-void arts_out_of_order_event_satisfy_slot(arts_guid_t wait_on, arts_guid_t event_guid,
-                                    arts_guid_t data_guid, uint32_t slot,
-                                    bool force);
+                                  arts_guid_t data_guid, uint32_t slot,
+                                  arts_type_t mode, bool force);
+void arts_out_of_order_event_satisfy(arts_guid_t wait_on,
+                                     arts_guid_t event_guid,
+                                     arts_guid_t data_guid);
+void arts_out_of_order_event_satisfy_slot(arts_guid_t wait_on,
+                                          arts_guid_t event_guid,
+                                          arts_guid_t data_guid, uint32_t slot,
+                                          bool force);
 void arts_out_of_order_persistent_event_satisfy_slot(arts_guid_t wait_on,
-                                              arts_guid_t event_guid,
-                                              uint32_t slot, bool force);
-void arts_out_of_order_add_dependence(arts_guid_t source, arts_guid_t destination,
-                                 uint32_t slot, arts_type_t mode,
-                                 arts_guid_t wait_on);
-void arts_out_of_order_add_dependence_to_persistent_event(arts_guid_t source,
-                                                  arts_guid_t destination,
-                                                  uint32_t slot,
-                                                  arts_type_t mode,
-                                                  arts_guid_t wait_on);
-void arts_out_of_order_handle_ready_edt(arts_guid_t trigger_guid, struct arts_edt_s *edt);
+                                                     arts_guid_t event_guid,
+                                                     uint32_t slot, bool force);
+void arts_out_of_order_add_dependence(arts_guid_t source,
+                                      arts_guid_t destination, uint32_t slot,
+                                      arts_type_t mode, arts_guid_t wait_on);
+void arts_out_of_order_add_dependence_to_persistent_event(
+    arts_guid_t source, arts_guid_t destination, uint32_t slot,
+    arts_type_t mode, arts_guid_t wait_on);
+void arts_out_of_order_handle_ready_edt(arts_guid_t trigger_guid,
+                                        struct arts_edt_s *edt);
 void arts_out_of_order_handle_remote_db_send(int rank, arts_guid_t db_guid,
-                                      arts_type_t mode);
-void arts_out_of_order_handle_db_request_with_oo_list(struct arts_out_of_order_list_s *add_to_me,
-                                             void **data, struct arts_edt_s *edt,
-                                             unsigned int slot);
-void arts_out_of_order_handle_db_request(arts_guid_t db_guid, struct arts_edt_s *edt,
-                                   unsigned int slot, bool inc);
+                                             arts_type_t mode);
+void arts_out_of_order_handle_db_request_with_oo_list(
+    struct arts_out_of_order_list_s *add_to_me, void **data,
+    struct arts_edt_s *edt, unsigned int slot);
+void arts_out_of_order_handle_db_request(arts_guid_t db_guid,
+                                         struct arts_edt_s *edt,
+                                         unsigned int slot, bool inc);
 void arts_out_of_order_handle_remote_db_full_send(arts_guid_t db_guid, int rank,
-                                          arts_guid_t edt_guid,
-                                          unsigned int slot, arts_type_t mode);
+                                                  arts_guid_t edt_guid,
+                                                  unsigned int slot,
+                                                  arts_type_t mode);
 void arts_out_of_order_get_from_db(arts_guid_t edt_guid, arts_guid_t db_guid,
-                             unsigned int slot, unsigned int offset,
-                             unsigned int size);
-void arts_out_of_order_signal_edt_with_ptr(arts_guid_t edt_guid, arts_guid_t db_guid,
-                                    void *ptr, unsigned int size,
-                                    unsigned int slot);
-void arts_out_of_order_put_in_db(void *ptr, arts_guid_t edt_guid, arts_guid_t db_guid,
-                           unsigned int slot, unsigned int offset,
-                           unsigned int size, arts_guid_t epoch_guid);
+                                   unsigned int slot, unsigned int offset,
+                                   unsigned int size);
+void arts_out_of_order_signal_edt_with_ptr(arts_guid_t edt_guid,
+                                           arts_guid_t db_guid, void *ptr,
+                                           unsigned int size,
+                                           unsigned int slot);
+void arts_out_of_order_put_in_db(void *ptr, arts_guid_t edt_guid,
+                                 arts_guid_t db_guid, unsigned int slot,
+                                 unsigned int offset, unsigned int size,
+                                 arts_guid_t epoch_guid);
 void arts_out_of_order_inc_active_epoch(arts_guid_t epoch_guid);
 void arts_out_of_order_inc_finished_epoch(arts_guid_t epoch_guid);
 void arts_out_of_order_send_epoch(arts_guid_t epoch_guid, unsigned int source,
-                             unsigned int dest);
+                                  unsigned int dest);
 void arts_out_of_order_inc_queue_epoch(arts_guid_t epoch_guid);
 void arts_out_of_order_db_move(arts_guid_t data_guid, unsigned int rank);
 

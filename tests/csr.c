@@ -40,9 +40,9 @@
 #include <inttypes.h>
 #include <stdio.h>
 
+#include "arts.h"
 #include "arts/block_distribution.h"
 #include "arts/csr.h"
-#include "arts.h"
 
 void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
@@ -71,27 +71,28 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Create a block distribution
   arts_block_dist_t *dist = init_block_distribution_block(8,  // global vertices
-                                                       11, // global edges
-                                                       1,  // partitions
-                                                       ARTS_DB_PIN);
+                                                          11, // global edges
+                                                          1,  // partitions
+                                                          ARTS_DB_PIN);
 
   // Create a list of edges, use arts_edge_vector_t
   arts_edge_vector_t vec;
   init_edge_vector(&vec, 100);
   for (int i = 0; i < 11; ++i) {
-    push_back_edge(&vec, edge_arr[(ptrdiff_t)i * 2], edge_arr[((ptrdiff_t)i * 2) + 1], 0);
+    push_back_edge(&vec, edge_arr[(ptrdiff_t)i * 2],
+                   edge_arr[((ptrdiff_t)i * 2) + 1], 0);
   }
   sort_by_source_and_target(&vec);
 
   // Create the CSR graph, graphGuid is used to allocate
   // row indices and column array
   csr_graph_t *graph = init_csr(0,
-                               8,    // number of "local" vertices
-                               11,   // number of "local" edges
-                               dist, // distribution
-                               &vec, // edges
-                               true, /*are edges sorted ?*/
-                               get_guid_for_partition_distr(dist, 0));
+                                8,    // number of "local" vertices
+                                11,   // number of "local" edges
+                                dist, // distribution
+                                &vec, // edges
+                                true, /*are edges sorted ?*/
+                                get_guid_for_partition_distr(dist, 0));
 
   // Edge list not needed after creating the CSR
   free_edge_vector(&vec);

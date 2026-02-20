@@ -39,8 +39,8 @@
 #include "arts/utils/link_list.h"
 
 #include "arts.h"
-#include "arts/utils/malloc.h"
 #include "arts/utils/atomics.h"
+#include "arts/utils/malloc.h"
 
 void arts_link_list_new(struct arts_link_list_s *list) {
   list->headPtr = list->tailPtr = NULL;
@@ -58,8 +58,8 @@ void arts_link_list_delete(void *link_list) {
 }
 
 struct arts_link_list_s *arts_link_list_group_new(unsigned int list_size) {
-  struct arts_link_list_s *link_list =
-      (struct arts_link_list_s *)arts_calloc(list_size, sizeof(struct arts_link_list_s));
+  struct arts_link_list_s *link_list = (struct arts_link_list_s *)arts_calloc(
+      list_size, sizeof(struct arts_link_list_s));
   for (int i = 0; i < list_size; i++) {
     arts_link_list_new(&link_list[i]);
   }
@@ -67,8 +67,9 @@ struct arts_link_list_s *arts_link_list_group_new(unsigned int list_size) {
 }
 
 void *arts_link_list_new_item(unsigned int size) {
-  struct arts_link_list_item_s *new_item = (struct arts_link_list_item_s *)arts_calloc(
-      1, sizeof(struct arts_link_list_item_s) + size);
+  struct arts_link_list_item_s *new_item =
+      (struct arts_link_list_item_s *)arts_calloc(
+          1, sizeof(struct arts_link_list_item_s) + size);
   new_item->next = NULL;
   if (size) {
     return (void *)(new_item + 1);
@@ -77,12 +78,13 @@ void *arts_link_list_new_item(unsigned int size) {
 }
 
 void arts_link_list_delete_item(void *to_delete) {
-  struct arts_link_list_item_s *item = ((struct arts_link_list_item_s *)to_delete) - 1;
+  struct arts_link_list_item_s *item =
+      ((struct arts_link_list_item_s *)to_delete) - 1;
   arts_free(item);
 }
 
-inline struct arts_link_list_s *arts_link_list_get(struct arts_link_list_s *link_list,
-                                            unsigned int position) {
+inline struct arts_link_list_s *
+arts_link_list_get(struct arts_link_list_s *link_list, unsigned int position) {
   return (struct arts_link_list_s *)(link_list + position);
 }
 
@@ -140,7 +142,7 @@ void *arts_link_list_pop_front(struct arts_link_list_s *list, void **free_pos) {
   void *data = NULL;
   if (free_pos) {
     *free_pos = NULL;
-}
+  }
   arts_lock(&list->lock);
   if (list->headPtr) {
     data = (void *)(list->headPtr + 1);

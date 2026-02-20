@@ -85,7 +85,7 @@
 #define ARTS_ALIGNED_MAX ARTS_ATTRIBUTE(__aligned__)
 
 /** Branch prediction hint — indicates the condition is likely true. */
-#define ARTS_LIKELY(x)   __extension__ __builtin_expect(!!(x), 1)
+#define ARTS_LIKELY(x) __extension__ __builtin_expect(!!(x), 1)
 
 /** Branch prediction hint — indicates the condition is likely false. */
 #define ARTS_UNLIKELY(x) __extension__ __builtin_expect(!!(x), 0)

@@ -59,7 +59,7 @@ void check(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 void epoch_end(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-              arts_edt_dep_t depv[]) {
+               arts_edt_dep_t depv[]) {
   (void)depc;
   (void)paramc;
   (void)paramv;
@@ -77,7 +77,8 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   elements_per_block = strtol(argv[1], NULL, 10);
   blocks = arts_get_total_nodes();
   arts_printf("ElementsPerBlock: %u Blocks: %u\n", elements_per_block, blocks);
-  arts_guid_t end_epoch_guid = arts_edt_create(epoch_end, 0, NULL, 1, &(arts_hint_t){.route = 0});
+  arts_guid_t end_epoch_guid =
+      arts_edt_create(epoch_end, 0, NULL, 1, &(arts_hint_t){.route = 0});
   arts_initialize_and_start_epoch(end_epoch_guid, 0);
   arts_new_array_db(&array, sizeof(unsigned int), elements_per_block * blocks);
   for (unsigned int i = 0; i < elements_per_block * blocks; i++) {

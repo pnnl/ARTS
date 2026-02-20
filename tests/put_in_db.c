@@ -47,7 +47,7 @@ unsigned int block_size = 0;
 unsigned int stride = 0;
 
 void shut_down_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                 arts_edt_dep_t depv[]) {
+                   arts_edt_dep_t depv[]) {
   (void)depc;
   (void)paramc;
   (void)paramv;
@@ -63,7 +63,7 @@ void shut_down_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
   if (pass) {
     arts_printf("CHECK\n");
-}
+  }
   arts_shutdown();
 }
 
@@ -79,7 +79,7 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   block_size = num_elements / arts_get_total_nodes();
   stride = strtol(argv[2], NULL, 10);
   arts_printf("num_elements: %u block_size: %u stride: %u\n", num_elements,
-         block_size, stride);
+              block_size, stride);
 
   if (block_size % stride) {
     arts_shutdown();
@@ -88,7 +88,7 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_db_create_with_guid(db_guid, sizeof(unsigned int) * num_elements, NULL);
   arts_edt_create_with_guid(shut_down_edt, shutdown_guid, 0, NULL,
-                        num_elements / stride);
+                            num_elements / stride);
 
   unsigned int deps = block_size / stride;
   for (unsigned int n = 0; n < arts_get_total_nodes(); n++) {
@@ -99,8 +99,8 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
         data[i] = n * block_size + j * stride + i;
       }
       arts_put_in_db(data, shutdown_guid, db_guid, (n * deps) + j,
-                  sizeof(unsigned int) * (n * block_size + j * stride),
-                  sizeof(unsigned int) * stride);
+                     sizeof(unsigned int) * (n * block_size + j * stride),
+                     sizeof(unsigned int) * stride);
       free(data);
     }
   }

@@ -71,7 +71,7 @@ arts_guid_t *input_tile_guids = NULL;
 arts_guid_t *partial_histo_guids = NULL;
 
 __global__ void private_histogram(uint32_t paramc, const uint64_t *paramv,
-                                 uint32_t depc, arts_edt_dep_t depv[]) {
+                                  uint32_t depc, arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;
   const unsigned int num_elements = (unsigned int)paramv[0];
@@ -104,7 +104,7 @@ __global__ void private_histogram(uint32_t paramc, const uint64_t *paramv,
 }
 
 __global__ void reduce_histogram(uint32_t paramc, const uint64_t *paramv,
-                                uint32_t depc, arts_edt_dep_t depv[]) {
+                                 uint32_t depc, arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   // Reduce histograms from all GPUs.
@@ -144,7 +144,7 @@ __global__ void reduce_histogram(uint32_t paramc, const uint64_t *paramv,
 }
 
 void finish_histogram(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                     arts_edt_dep_t depv[]) {
+                      arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
@@ -160,15 +160,15 @@ void finish_histogram(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 
   for (unsigned int i = 0; i < NUMBINS; i++) {
-    ARTS_PRINTF("histo[%u] = %u | finalHisto[%u] = %u\n", i, histo_expected[i], i,
-           histo_obtained[i]);
+    ARTS_PRINTF("histo[%u] = %u | finalHisto[%u] = %u\n", i, histo_expected[i],
+                i, histo_obtained[i]);
   }
 
   for (unsigned int i = 0; i < NUMBINS; i++) {
     if (histo_expected[i] != histo_obtained[i]) {
       ARTS_PRINTF("Failed at histo[%u]\n", i);
       ARTS_PRINTF("Expected: %u | Obtained: %u\n", histo_expected[i],
-             histo_obtained[i]);
+                  histo_obtained[i]);
       free(histo_expected);
       arts_shutdown();
       return;
@@ -204,15 +204,18 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
 
   num_blocks = (input_array_size + tile_size - 1) / tile_size;
 
-  ARTS_PRINTF("ArraySize = %u | tile_size = %u | num_blocks: %u | num_gpus: %u\n",
-         input_array_size, tile_size, num_blocks, arts_get_total_gpus());
+  ARTS_PRINTF(
+      "ArraySize = %u | tile_size = %u | num_blocks: %u | num_gpus: %u\n",
+      input_array_size, tile_size, num_blocks, arts_get_total_gpus());
 
   done_guid = arts_guid_reserve(ARTS_EDT, 0);
   final_sum_guid = arts_guid_reserve(ARTS_GPU_EDT, 0);
   histo_guid = arts_guid_reserve(ARTS_DB_GPU_WRITE, 0);
 
-  input_tile_guids = arts_guid_reserve_round_robin(num_blocks, ARTS_DB_GPU_READ);
-  partial_histo_guids = arts_guid_reserve_round_robin(num_blocks, ARTS_DB_GPU_WRITE);
+  input_tile_guids =
+      arts_guid_reserve_round_robin(num_blocks, ARTS_DB_GPU_READ);
+  partial_histo_guids =
+      arts_guid_reserve_round_robin(num_blocks, ARTS_DB_GPU_WRITE);
 
   final_histogram = (unsigned int *)arts_db_create_with_guid(
       histo_guid, NUMBINS * sizeof(unsigned int), NULL);
@@ -224,7 +227,8 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
 
   srand(7); // NOLINT(cert-msc32-c,cert-msc51-cpp)
   for (unsigned int elem = 0; elem < input_array_size; elem++) {
-    input_array[elem] = (unsigned int)(rand() % NUMBINS); // NOLINT(cert-msc30-c,cert-msc50-cpp)
+    input_array[elem] =
+        (unsigned int)(rand() % NUMBINS); // NOLINT(cert-msc30-c,cert-msc50-cpp)
   }
 
   dim3 threads(SMTILE);
@@ -234,8 +238,8 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
   arts_signal_edt(done_guid, 0, histo_guid, ARTS_DB_WRITE);
 
   arts_edt_create_gpu_with_guid(reduce_histogram, final_sum_guid, 0, NULL,
-                             num_blocks + 1, grid, threads, done_guid, 0,
-                             histo_guid);
+                                num_blocks + 1, grid, threads, done_guid, 0,
+                                histo_guid);
   arts_signal_edt(final_sum_guid, 0, histo_guid, ARTS_DB_WRITE);
 
   for (unsigned int tile = 0; tile < num_blocks; tile++) {
@@ -255,9 +259,9 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
       memset(partial_histo, 0, NUMBINS * sizeof(unsigned int));
 
       uint64_t args[] = {tile_size};
-      arts_guid_t priv_histo_guid =
-          arts_edt_create_gpu(private_histogram, node_id, 2, args, 2, grid,
-                           threads, final_sum_guid, 1 + tile, partial_histo_guid);
+      arts_guid_t priv_histo_guid = arts_edt_create_gpu(
+          private_histogram, node_id, 2, args, 2, grid, threads, final_sum_guid,
+          1 + tile, partial_histo_guid);
       arts_signal_edt(priv_histo_guid, 0, input_tile_guid, ARTS_DB_WRITE);
       arts_signal_edt(priv_histo_guid, 1, partial_histo_guid, ARTS_DB_WRITE);
     }

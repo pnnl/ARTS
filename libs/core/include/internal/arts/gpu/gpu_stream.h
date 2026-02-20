@@ -54,7 +54,8 @@ extern "C" {
   do {                                                                         \
     cudaError_t err;                                                           \
     if ((err = (x)) != cudaSuccess) {                                          \
-      ARTS_ERROR("CUDA operation failed: %s: %s", #x, cudaGetErrorString(err));\
+      ARTS_ERROR("CUDA operation failed: %s: %s", #x,                          \
+                 cudaGetErrorString(err));                                     \
     }                                                                          \
   } while (0)
 
@@ -89,12 +90,13 @@ void arts_init_per_gpu_wrapper(int argc, char **argv);
 void arts_worker_init_gpus();
 void arts_cleanup_gpus();
 void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
-                               const uint64_t *paramv, uint32_t depc,
-                               arts_edt_dep_t *depv, dim3 grid, dim3 block,
-                               void *edt_ptr, arts_gpu_t *arts_gpu);
-void arts_schedule_to_gpu(arts_edt_t fn_ptr, uint32_t paramc, const uint64_t *paramv,
-                       uint32_t depc, arts_edt_dep_t *depv, void *edt_ptr,
-                       arts_gpu_t *arts_gpu);
+                                   const uint64_t *paramv, uint32_t depc,
+                                   arts_edt_dep_t *depv, dim3 grid, dim3 block,
+                                   void *edt_ptr, arts_gpu_t *arts_gpu);
+void arts_schedule_to_gpu(arts_edt_t fn_ptr, uint32_t paramc,
+                          const uint64_t *paramv, uint32_t depc,
+                          arts_edt_dep_t *depv, void *edt_ptr,
+                          arts_gpu_t *arts_gpu);
 void arts_wrap_up(cudaStream_t stream, cudaError_t status, void *data);
 void arts_wrap_up_host_func(void *data);
 void arts_gpu_synchronize(arts_gpu_t *arts_gpu);

@@ -42,33 +42,35 @@
 #include <string.h>
 
 #include "arts.h"
-#include "arts/utils/malloc.h"
 #include "arts/gas/guid.h"
 #include "arts/gas/route_table.h"
 #include "arts/introspection/counter.h"
+#include "arts/runtime/compute/edt_functions.h"
 #include "arts/runtime/globals.h"
 #include "arts/runtime/runtime.h"
-#include "arts/runtime/compute/edt_functions.h"
 #include "arts/runtime/sync/termination_detection.h"
 #include "arts/system/arts_print.h"
 #include "arts/system/debug.h"
 #include "arts/utils/atomics.h"
+#include "arts/utils/malloc.h"
 
 arts_guid_t arts_edt_create_shad(arts_edt_t func_ptr, unsigned int route,
-                             uint32_t paramc, const uint64_t *paramv) {
-  unsigned int edt_space = sizeof(struct arts_edt_s) + (paramc * sizeof(uint64_t));
+                                 uint32_t paramc, const uint64_t *paramv) {
+  unsigned int edt_space =
+      sizeof(struct arts_edt_s) + (paramc * sizeof(uint64_t));
   arts_guid_t guid = NULL_GUID;
-  arts_edt_create_internal(NULL, ARTS_EDT, &guid, route, arts_thread_info.numa_domain_id,
-                        edt_space, NULL_GUID, func_ptr, paramc, paramv, 0, false,
-                        NULL_GUID, false, 0);
+  arts_edt_create_internal(
+      NULL, ARTS_EDT, &guid, route, arts_thread_info.numa_domain_id, edt_space,
+      NULL_GUID, func_ptr, paramc, paramv, 0, false, NULL_GUID, false, 0);
   return guid;
 }
 
 arts_guid_t arts_active_message_shad(arts_edt_t func_ptr, unsigned int route,
-                                 uint32_t paramc, const uint64_t *paramv, void *data,
-                                 unsigned int size, arts_guid_t epoch_guid) {
-  unsigned int rank = route; // route / num_numa_domains;
-  unsigned int numa_domain = 0;  // route % num_numa_domains;
+                                     uint32_t paramc, const uint64_t *paramv,
+                                     void *data, unsigned int size,
+                                     arts_guid_t epoch_guid) {
+  unsigned int rank = route;    // route / num_numa_domains;
+  unsigned int numa_domain = 0; // route % num_numa_domains;
   arts_guid_t guid = NULL_GUID;
   bool use_epoch = (epoch_guid != NULL_GUID);
 
@@ -76,27 +78,29 @@ arts_guid_t arts_active_message_shad(arts_edt_t func_ptr, unsigned int route,
     unsigned int dep_space = sizeof(arts_edt_dep_t);
     unsigned int edt_space =
         sizeof(struct arts_edt_s) + (paramc * sizeof(uint64_t)) + dep_space;
-    arts_edt_create_internal(NULL, ARTS_EDT, &guid, rank, numa_domain, edt_space,
-                          NULL_GUID, func_ptr, paramc, paramv, 1, use_epoch,
-                          epoch_guid, true, 0);
+    arts_edt_create_internal(NULL, ARTS_EDT, &guid, rank, numa_domain,
+                             edt_space, NULL_GUID, func_ptr, paramc, paramv, 1,
+                             use_epoch, epoch_guid, true, 0);
 
     void *ptr = arts_malloc(size);
     memcpy(ptr, data, size);
     arts_signal_edt_ptr(guid, 0, ptr, size);
   } else {
-    unsigned int edt_space = sizeof(struct arts_edt_s) + (paramc * sizeof(uint64_t));
-    arts_edt_create_internal(NULL, ARTS_EDT, &guid, rank, numa_domain, edt_space,
-                          NULL_GUID, func_ptr, paramc, paramv, 0, use_epoch,
-                          epoch_guid, false, 0);
+    unsigned int edt_space =
+        sizeof(struct arts_edt_s) + (paramc * sizeof(uint64_t));
+    arts_edt_create_internal(NULL, ARTS_EDT, &guid, rank, numa_domain,
+                             edt_space, NULL_GUID, func_ptr, paramc, paramv, 0,
+                             use_epoch, epoch_guid, false, 0);
   }
   return guid;
 }
 
-void arts_synchronous_active_message_shad(arts_edt_t func_ptr, unsigned int route,
-                                      uint32_t paramc, const uint64_t *paramv,
-                                      void *data, unsigned int size) {
-  unsigned int rank = route; // route / num_numa_domains;
-  unsigned int numa_domain = 0;  // route % num_numa_domains;
+void arts_synchronous_active_message_shad(arts_edt_t func_ptr,
+                                          unsigned int route, uint32_t paramc,
+                                          const uint64_t *paramv, void *data,
+                                          unsigned int size) {
+  unsigned int rank = route;    // route / num_numa_domains;
+  unsigned int numa_domain = 0; // route % num_numa_domains;
   unsigned int wait_flag = 1;
   void *wait_ptr = &wait_flag;
   arts_guid_t wait_guid = arts_allocate_local_buffer(
@@ -107,18 +111,19 @@ void arts_synchronous_active_message_shad(arts_edt_t func_ptr, unsigned int rout
     unsigned int dep_space = sizeof(arts_edt_dep_t);
     unsigned int edt_space =
         sizeof(struct arts_edt_s) + (paramc * sizeof(uint64_t)) + dep_space;
-    arts_edt_create_internal(NULL, ARTS_EDT, &guid, rank, numa_domain, edt_space,
-                          wait_guid, func_ptr, paramc, paramv, 1, false,
-                          NULL_GUID, true, 0);
+    arts_edt_create_internal(NULL, ARTS_EDT, &guid, rank, numa_domain,
+                             edt_space, wait_guid, func_ptr, paramc, paramv, 1,
+                             false, NULL_GUID, true, 0);
 
     void *ptr = arts_malloc(size);
     memcpy(ptr, data, size);
     arts_signal_edt_ptr(guid, 0, ptr, size);
   } else {
-    unsigned int edt_space = sizeof(struct arts_edt_s) + (paramc * sizeof(uint64_t));
-    arts_edt_create_internal(NULL, ARTS_EDT, &guid, rank, numa_domain, edt_space,
-                          wait_guid, func_ptr, paramc, paramv, 0, false,
-                          NULL_GUID, false, 0);
+    unsigned int edt_space =
+        sizeof(struct arts_edt_s) + (paramc * sizeof(uint64_t));
+    arts_edt_create_internal(NULL, ARTS_EDT, &guid, rank, numa_domain,
+                             edt_space, wait_guid, func_ptr, paramc, paramv, 0,
+                             false, NULL_GUID, false, 0);
   }
 
   while (wait_flag) {
@@ -143,8 +148,9 @@ void arts_start_intro_shad(unsigned int start) {
 
 void arts_stop_intro_shad() { arts_counter_capture_stop(); }
 
-arts_guid_t arts_allocate_local_buffer_shad(void **buffer, uint32_t *size_to_write,
-                                       arts_guid_t epoch_guid) {
+arts_guid_t arts_allocate_local_buffer_shad(void **buffer,
+                                            uint32_t *size_to_write,
+                                            arts_guid_t epoch_guid) {
   if (epoch_guid) {
     increment_active_epoch(epoch_guid);
   } else {
@@ -159,7 +165,8 @@ arts_guid_t arts_allocate_local_buffer_shad(void **buffer, uint32_t *size_to_wri
   stub->uses = 1;
   stub->epoch_guid = epoch_guid;
 
-  arts_guid_t guid = arts_guid_create_for_rank(arts_global_rank_id, ARTS_BUFFER);
+  arts_guid_t guid =
+      arts_guid_create_for_rank(arts_global_rank_id, ARTS_BUFFER);
   arts_route_table_add_item(stub, guid, arts_global_rank_id, false);
   return guid;
 }
@@ -178,7 +185,7 @@ bool arts_shad_alias_try_lock(volatile uint64_t *lock) {
     uint64_t res = arts_atomic_cswap_u64(lock, dirty_read, new_value);
     if (res == dirty_read) {
       return true;
-}
+    }
     dirty_read = res;
     owner = ALIASGETOWNER(dirty_read);
   }
@@ -197,4 +204,3 @@ void arts_shad_alias_unlock(volatile uint64_t *lock) {
     dirty_read = res;
   }
 }
-

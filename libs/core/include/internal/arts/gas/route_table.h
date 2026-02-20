@@ -57,11 +57,11 @@ extern "C" {
 #define GET_COUNT(x) ((x) & COUNT_MASK)
 
 #define IS_DEL(x) ((x) & DELETE_ITEM)
-#define IS_RES(x)                                                               \
+#define IS_RES(x)                                                              \
   (((x) & RESERVED_ITEM) && !((x) & AVAILABLE_ITEM) && !((x) & DELETE_ITEM))
-#define IS_AVAIL(x)                                                             \
+#define IS_AVAIL(x)                                                            \
   (((x) & AVAILABLE_ITEM) && !((x) & RESERVED_ITEM) && !((x) & DELETE_ITEM))
-#define IS_REQ(x)                                                               \
+#define IS_REQ(x)                                                              \
   (((x) & RESERVED_ITEM) && ((x) & AVAILABLE_ITEM) && !((x) & DELETE_ITEM))
 
 #define SHOULD_DELETE(x) (IS_DEL(x) && !GET_COUNT(x))
@@ -81,7 +81,8 @@ typedef enum {
   DELETED_KEY,   // deleted only
   ALLOCATED_KEY, // reserved, available, or requested
   AVAILABLE_KEY, // available only
-  REQUESTED_KEY, // available but reserved (means so one else has the valid copy)
+  REQUESTED_KEY, // available but reserved (means so one else has the valid
+                 // copy)
   RESERVED_KEY,  // reserved only
 } item_state_t;
 
@@ -99,7 +100,7 @@ typedef struct arts_route_table_s arts_route_table_t;
 typedef void (*set_route_item_t)(arts_route_item_t *item, void *data);
 typedef void (*free_route_item_t)(arts_route_item_t *item);
 typedef arts_route_table_t *(*new_route_table_t)(unsigned int route_table_size,
-                                             unsigned int shift);
+                                                 unsigned int shift);
 
 // Add padding around locks...
 struct arts_route_table_s {
@@ -122,68 +123,76 @@ typedef struct {
 bool dec_item(arts_route_table_t *route_table, arts_route_item_t *item);
 
 arts_route_table_t *arts_new_route_table(unsigned int route_table_size,
-                                    unsigned int shift);
+                                         unsigned int shift);
 
 void *arts_route_table_add_item(void *item, arts_guid_t key, unsigned int rank,
-                            bool used);
-arts_route_item_t *internal_route_table_add_item_race(bool *added_item,
-                                               arts_route_table_t *route_table,
-                                               void *item, arts_guid_t key,
-                                               unsigned int rank, bool used_res,
-                                               bool used_avail,
-                                               unsigned int to_add_on_creation);
-bool arts_route_table_add_item_race(void *item, arts_guid_t key, unsigned int route,
-                               bool used);
+                                bool used);
+arts_route_item_t *internal_route_table_add_item_race(
+    bool *added_item, arts_route_table_t *route_table, void *item,
+    arts_guid_t key, unsigned int rank, bool used_res, bool used_avail,
+    unsigned int to_add_on_creation);
+bool arts_route_table_add_item_race(void *item, arts_guid_t key,
+                                    unsigned int route, bool used);
 arts_route_item_t *
-internal_route_table_add_deleted_item_race(arts_route_table_t *route_table, void *item,
-                                     arts_guid_t key, unsigned int rank);
+internal_route_table_add_deleted_item_race(arts_route_table_t *route_table,
+                                           void *item, arts_guid_t key,
+                                           unsigned int rank);
 
 void *arts_route_table_lookup_item(arts_guid_t key);
 int arts_route_table_lookup_rank(arts_guid_t key);
-bool internal_route_table_remove_item(arts_route_table_t *route_table, arts_guid_t key);
+bool internal_route_table_remove_item(arts_route_table_t *route_table,
+                                      arts_guid_t key);
 bool arts_route_table_remove_item(arts_guid_t key);
 bool arts_route_table_hide_item(arts_guid_t key);
 bool arts_route_table_invalidate_item(arts_guid_t key);
 
-arts_route_item_t *arts_route_table_search_for_key(arts_route_table_t *route_table,
-                                            arts_guid_t key, item_state_t state);
-bool arts_route_table_update_item(arts_guid_t key, void *data, unsigned int rank,
-                              item_state_t state);
+arts_route_item_t *
+arts_route_table_search_for_key(arts_route_table_t *route_table,
+                                arts_guid_t key, item_state_t state);
+bool arts_route_table_update_item(arts_guid_t key, void *data,
+                                  unsigned int rank, item_state_t state);
 struct arts_db_frontier_iterator_s *
 arts_route_table_get_rank_duplicates(arts_guid_t key, unsigned int rank);
 bool arts_route_table_add_sent(arts_guid_t key, void *edt, unsigned int slot,
-                           bool aggregate);
+                               bool aggregate);
 void arts_route_table_add_rank_duplicate(arts_guid_t key, unsigned int rank);
 
-item_state_t arts_route_table_lookup_item_with_state(arts_guid_t key, void ***data,
-                                              item_state_t min, bool inc);
+item_state_t arts_route_table_lookup_item_with_state(arts_guid_t key,
+                                                     void ***data,
+                                                     item_state_t min,
+                                                     bool inc);
 item_state_t getitem_state(arts_route_item_t *item);
 
 int arts_route_table_set_rank(arts_guid_t key, int rank);
 
-void **arts_route_table_reserve(arts_guid_t key, bool *dec, item_state_t *state);
+void **arts_route_table_reserve(arts_guid_t key, bool *dec,
+                                item_state_t *state);
 
 void arts_route_table_dec_item(arts_guid_t key, void *data);
 arts_route_item_t *get_item_from_data(arts_guid_t key, void *data);
 
 unsigned int internal_inc_db_version(volatile unsigned int *touched);
-void *internal_route_table_lookup_db(arts_route_table_t *route_table, arts_guid_t key,
-                                 int *rank, unsigned int **touched);
+void *internal_route_table_lookup_db(arts_route_table_t *route_table,
+                                     arts_guid_t key, int *rank,
+                                     unsigned int **touched);
 void *arts_route_table_lookup_db(arts_guid_t key, int *rank, bool touch);
-bool internal_route_table_return_db(arts_route_table_t *route_table, arts_guid_t key,
-                                bool mark_to_delete, bool do_delete);
+bool internal_route_table_return_db(arts_route_table_t *route_table,
+                                    arts_guid_t key, bool mark_to_delete,
+                                    bool do_delete);
 bool arts_route_table_return_db(arts_guid_t key, bool mark_to_delete);
 
 bool arts_route_table_add_oo(arts_guid_t key, void *data, bool inc);
 bool arts_route_table_add_oo_existing(arts_guid_t key, void *data, bool inc);
-void arts_route_table_fire_oo(arts_guid_t key, void (*callback_t)(void *, void *));
+void arts_route_table_fire_oo(arts_guid_t key,
+                              void (*callback_t)(void *, void *));
 void arts_route_table_reset_oo(arts_guid_t key);
 void **arts_route_table_get_oo_list(arts_guid_t key,
-                               struct arts_out_of_order_list_s **list);
+                                    struct arts_out_of_order_list_s **list);
 
-arts_route_table_iterator_t *arts_new_route_table_iterator(arts_route_table_t *table);
+arts_route_table_iterator_t *
+arts_new_route_table_iterator(arts_route_table_t *table);
 void arts_reset_route_table_iterator(arts_route_table_iterator_t *iter,
-                                 arts_route_table_t *table);
+                                     arts_route_table_t *table);
 arts_route_item_t *arts_route_table_iterate(arts_route_table_iterator_t *iter);
 void arts_print_item(arts_route_item_t *item);
 

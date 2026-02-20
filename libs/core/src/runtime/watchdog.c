@@ -41,8 +41,8 @@
 
 #include "arts/runtime/watchdog.h"
 
-#include <time.h>
 #include <stdbool.h>
+#include <time.h>
 
 #include "arts/runtime/globals.h"
 #include "arts/runtime/runtime.h"
@@ -104,18 +104,14 @@ void arts_watchdog_check(void) {
     ARTS_WARN("Thread %u: no progress for %lu seconds",
               arts_thread_info.thread_id, elapsed_sec);
     ARTS_WARN("  thread_id=%u, core_id=%d, worker=%d, alive=%d",
-              arts_thread_info.thread_id,
-              arts_thread_info.core_id,
-              arts_thread_info.worker,
-              arts_thread_info.alive);
+              arts_thread_info.thread_id, arts_thread_info.core_id,
+              arts_thread_info.worker, arts_thread_info.alive);
     ARTS_WARN("  network_send=%d, network_receive=%d",
-              arts_thread_info.network_send,
-              arts_thread_info.network_receive);
+              arts_thread_info.network_send, arts_thread_info.network_receive);
 
     /* Deque sizes (may be NULL for network threads) */
     if (arts_thread_info.my_deque) {
-      ARTS_WARN("  deque_size=%u",
-                arts_deque_size(arts_thread_info.my_deque));
+      ARTS_WARN("  deque_size=%u", arts_deque_size(arts_thread_info.my_deque));
     }
 
     /* Global state snapshot */
@@ -126,8 +122,8 @@ void arts_watchdog_check(void) {
     /* Thread registration status */
     for (unsigned int i = 0; i < arts_node_info.total_thread_count; i++) {
       volatile bool *spin = arts_node_info.local_spin[i];
-      ARTS_WARN("  thread[%u] local_spin=%p alive=%d",
-                i, (void *)spin, spin ? *spin : -1);
+      ARTS_WARN("  thread[%u] local_spin=%p alive=%d", i, (void *)spin,
+                spin ? *spin : -1);
     }
 
     ARTS_WARN("===== END WATCHDOG DUMP =====");

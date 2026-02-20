@@ -39,10 +39,10 @@
 #include "arts/gas/guid.h"
 
 #include "arts.h"
-#include "arts/utils/malloc.h"
 #include "arts/runtime/globals.h"
 #include "arts/system/arts_print.h"
 #include "arts/system/debug.h"
+#include "arts/utils/malloc.h"
 
 uint64_t num_tables = 0;
 uint64_t keys_per_thread = 0;
@@ -57,8 +57,9 @@ uint64_t *arts_guid_generator_get_key(unsigned int route, unsigned int type) {
               .keys[arts_thread_info.group_id][(route * ARTS_LAST_TYPE) + type];
 }
 
-arts_guid_t arts_guid_create_for_rank_internal(unsigned int route, unsigned int type,
-                                         unsigned int guid_count) {
+arts_guid_t arts_guid_create_for_rank_internal(unsigned int route,
+                                               unsigned int type,
+                                               unsigned int guid_count) {
   arts_guid_bits_t guid;
   if (global_guid_on) {
     // Safeguard against wrap around
@@ -73,8 +74,9 @@ arts_guid_t arts_guid_create_for_rank_internal(unsigned int route, unsigned int 
     uint64_t value = *key;
     if (value + guid_count < keys_per_thread) {
       guid.fields.key =
-          value + keys_per_thread *
-                      arts_node_info.global_guid_thread_id[arts_thread_info.group_id];
+          value +
+          keys_per_thread *
+              arts_node_info.global_guid_thread_id[arts_thread_info.group_id];
       (*key) += guid_count;
     } else {
       ARTS_ERROR("GUID generation failed: out of keys");
@@ -92,32 +94,36 @@ arts_guid_t arts_guid_create_for_rank(unsigned int route, unsigned int type) {
 
 void set_guid_generator_after_parallel_start() {
   unsigned int num_of_tables = arts_node_info.worker_thread_count + 1;
-  keys_per_thread = global_guid_on / ((uint64_t)num_of_tables * arts_global_rank_count);
+  keys_per_thread =
+      global_guid_on / ((uint64_t)num_of_tables * arts_global_rank_count);
   global_guid_on = 0;
 }
 
 void arts_guid_key_generator_init() {
-  num_tables = (arts_global_rank_count == 1) ? arts_node_info.worker_thread_count
-                                         : arts_node_info.worker_thread_count + 1;
-  uint64_t local_id = (arts_thread_info.worker) ? arts_thread_info.thread_id
-                                             : arts_node_info.worker_thread_count;
+  num_tables = (arts_global_rank_count == 1)
+                   ? arts_node_info.worker_thread_count
+                   : arts_node_info.worker_thread_count + 1;
+  uint64_t local_id = (arts_thread_info.worker)
+                          ? arts_thread_info.thread_id
+                          : arts_node_info.worker_thread_count;
   min_global_guid_thread = num_tables * arts_global_rank_id;
   max_global_guid_thread = (arts_global_rank_count == 1)
-                            ? min_global_guid_thread + num_tables
-                            : min_global_guid_thread + num_tables - 1;
+                               ? min_global_guid_thread + num_tables
+                               : min_global_guid_thread + num_tables - 1;
   //    global_guid_thread_id  = min_global_guid_thread + local_id;
   arts_node_info.global_guid_thread_id[arts_thread_info.group_id] =
       min_global_guid_thread + local_id;
 
   //    ARTS_INFO("num_tables: %lu local_id: %lu min_global_guid_thread: %lu
-  //    max_global_guid_thread: %lu global_guid_thread_id: %lu", num_tables, local_id,
-  //    min_global_guid_thread, max_global_guid_thread, global_guid_thread_id); keys =
-  //    arts_malloc(sizeof(uint64_t) * ARTS_LAST_TYPE * arts_global_rank_count);
+  //    max_global_guid_thread: %lu global_guid_thread_id: %lu", num_tables,
+  //    local_id, min_global_guid_thread, max_global_guid_thread,
+  //    global_guid_thread_id); keys = arts_malloc(sizeof(uint64_t) *
+  //    ARTS_LAST_TYPE * arts_global_rank_count);
   arts_node_info.keys[arts_thread_info.group_id] = (uint64_t *)arts_malloc(
       sizeof(uint64_t) * ARTS_LAST_TYPE * arts_global_rank_count);
   for (unsigned int i = 0; i < ARTS_LAST_TYPE * arts_global_rank_count; i++) {
     arts_node_info.keys[arts_thread_info.group_id][i] = 1;
-}
+  }
   //        keys[i] = 1;
 }
 
@@ -159,7 +165,8 @@ arts_guid_t arts_guid_reserve(arts_type_t type, unsigned int route) {
   return guid;
 }
 
-arts_guid_t *arts_guid_reserve_round_robin(unsigned int size, arts_type_t type) {
+arts_guid_t *arts_guid_reserve_round_robin(unsigned int size,
+                                           arts_type_t type) {
   arts_guid_t *guids = NULL;
   if (type > ARTS_NULL && type < ARTS_LAST_TYPE) {
     guids = (arts_guid_t *)arts_malloc(size * sizeof(arts_guid_t));
@@ -172,7 +179,7 @@ arts_guid_t *arts_guid_reserve_round_robin(unsigned int size, arts_type_t type) 
 }
 
 arts_guid_range_t *arts_guid_range_create(arts_type_t type, unsigned int size,
-                                    unsigned int route) {
+                                          unsigned int route) {
   if (route == ARTS_HINT_CURRENT_NODE) {
     route = arts_global_rank_id;
   }
@@ -195,15 +202,16 @@ arts_guid_range_t *arts_guid_range_create(arts_type_t type, unsigned int size,
   return range;
 }
 
-arts_guid_range_t *arts_guid_range_create_hash(arts_type_t type, unsigned int size,
-                                        unsigned int route,
-                                        unsigned int hash_size) {
+arts_guid_range_t *arts_guid_range_create_hash(arts_type_t type,
+                                               unsigned int size,
+                                               unsigned int route,
+                                               unsigned int hash_size) {
   arts_guid_range_t *range = NULL;
   if (size && type > ARTS_NULL && type < ARTS_LAST_TYPE) {
     range = (arts_guid_range_t *)arts_calloc(1, sizeof(arts_guid_range_t));
     range->size = size;
-    range->start_guid = arts_guid_create_for_rank_internal(route, (unsigned int)type,
-                                                     size + hash_size);
+    range->start_guid = arts_guid_create_for_rank_internal(
+        route, (unsigned int)type, size + hash_size);
     arts_guid_bits_t temp = (arts_guid_bits_t){.bits = range->start_guid};
     for (unsigned int i = 0; i < hash_size; i++) {
       if (temp.fields.key % hash_size == 0) {
@@ -238,14 +246,14 @@ arts_guid_t arts_guid_range_next(arts_guid_range_t *range) {
 bool arts_guid_range_has_next(arts_guid_range_t *range) {
   if (range) {
     return (range->index < range->size);
-}
+  }
   return false;
 }
 
 void arts_guid_range_reset_iter(arts_guid_range_t *range) {
   if (range) {
     range->index = 0;
-}
+  }
 }
 
 bool arts_guid_range_contains(arts_guid_range_t *range, arts_guid_t guid) {
@@ -254,16 +262,16 @@ bool arts_guid_range_contains(arts_guid_range_t *range, arts_guid_t guid) {
 
   if (start_guid.fields.rank != to_check.fields.rank) {
     return false;
-}
+  }
 
   if (start_guid.fields.type != to_check.fields.type) {
     return false;
-}
+  }
 
   if (start_guid.fields.key <= to_check.fields.key &&
       to_check.fields.key < start_guid.fields.key + range->index) {
     return true;
-}
+  }
 
   return false;
 }

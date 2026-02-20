@@ -52,11 +52,12 @@ void tester(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   unsigned int local;
   while (!arts_shad_alias_try_lock(&lock)) {
     arts_yield();
-}
+  }
   arts_printf("Yield %u Lock: %lu\n", arts_get_current_worker(), lock);
   arts_yield();
   local = ++count;
-  arts_printf("Done  %u Local: %u Lock: %lu\n", arts_get_current_worker(), local, lock);
+  arts_printf("Done  %u Local: %u Lock: %lu\n", arts_get_current_worker(),
+              local, lock);
   arts_shad_alias_unlock(&lock);
 
   if (local == EDTCOUNT) {
@@ -71,7 +72,8 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramv;
   (void)depc;
   (void)depv;
-  arts_printf("%u -- %u\n", arts_get_total_workers(), arts_get_current_worker());
+  arts_printf("%u -- %u\n", arts_get_total_workers(),
+              arts_get_current_worker());
   for (unsigned int i = 0; i < EDTCOUNT; i++) {
     arts_edt_create(tester, 0, NULL, 0, &(arts_hint_t){.route = 0});
   }

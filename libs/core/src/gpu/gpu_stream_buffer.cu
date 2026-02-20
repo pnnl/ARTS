@@ -74,19 +74,21 @@ void check_occupancy(arts_edt_t fn_ptr, unsigned int gpu_id, dim3 block) {
 
   CHECKCORRECT(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
       &max_active_blocks, (const void *)fn_ptr, block_size, 0));
-  float occupancy = ((float)(max_active_blocks * block_size) / (float)prop.warpSize) /
-                    ((float)prop.maxThreadsPerMultiProcessor / (float)prop.warpSize);
+  float occupancy =
+      ((float)(max_active_blocks * block_size) / (float)prop.warpSize) /
+      ((float)prop.maxThreadsPerMultiProcessor / (float)prop.warpSize);
 
   // Moving average of occupancy
   arts_lock(&arts_gpus[gpu_id].deviceLock);
-  arts_gpus[gpu_id].occupancy = (occupancy + ((float)(arts_gpus[gpu_id].totalEdts - 1) *
-                                               arts_gpus[gpu_id].occupancy)) /
-                              (float)(++arts_gpus[gpu_id].totalEdts);
+  arts_gpus[gpu_id].occupancy =
+      (occupancy + ((float)(arts_gpus[gpu_id].totalEdts - 1) *
+                    arts_gpus[gpu_id].occupancy)) /
+      (float)(++arts_gpus[gpu_id].totalEdts);
   arts_unlock(&arts_gpus[gpu_id].deviceLock);
 }
 
-bool push_data_to_stream(unsigned int gpu_id, void *dst, void *src, size_t count,
-                      bool buff) {
+bool push_data_to_stream(unsigned int gpu_id, void *dst, void *src,
+                         size_t count, bool buff) {
   if (buff) {
     arts_lock(&buff_lock[gpu_id]);
     host_to_dev_buff[gpu_id][host_to_dev_count[gpu_id]].dst = dst;
@@ -105,15 +107,16 @@ bool push_data_to_stream(unsigned int gpu_id, void *dst, void *src, size_t count
   if (src) {
     CHECKCORRECT(cudaMemcpyAsync(dst, src, count, cudaMemcpyHostToDevice,
                                  arts_gpus[gpu_id].stream));
-    ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_GPU_BW_PUSH, ARTS_METRIC_THREAD, count);
+    ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_GPU_BW_PUSH, ARTS_METRIC_THREAD,
+                               count);
   } else {
     CHECKCORRECT(cudaMemsetAsync(dst, 0, count, arts_gpus[gpu_id].stream));
   }
   return true;
 }
 
-bool get_data_from_stream(unsigned int gpu_id, void *dst, void *src, size_t count,
-                       bool buff) {
+bool get_data_from_stream(unsigned int gpu_id, void *dst, void *src,
+                          size_t count, bool buff) {
   if (buff) {
     arts_lock(&buff_lock[gpu_id]);
     dev_to_host_buff[gpu_id][dev_to_host_count[gpu_id]].dst = dst;
@@ -130,13 +133,15 @@ bool get_data_from_stream(unsigned int gpu_id, void *dst, void *src, size_t coun
   }
   CHECKCORRECT(cudaMemcpyAsync(dst, src, count, cudaMemcpyDeviceToHost,
                                arts_gpus[gpu_id].stream));
-  ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_GPU_BW_PULL, ARTS_METRIC_THREAD, count);
+  ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_GPU_BW_PULL, ARTS_METRIC_THREAD,
+                             count);
   return true;
 }
 
-bool push_kernel_to_stream(unsigned int gpu_id, uint32_t paramc, const uint64_t *paramv,
-                        uint32_t depc, arts_edt_dep_t *depv, arts_edt_t fn_ptr,
-                        dim3 grid, dim3 block, bool buff) {
+bool push_kernel_to_stream(unsigned int gpu_id, uint32_t paramc,
+                           const uint64_t *paramv, uint32_t depc,
+                           arts_edt_dep_t *depv, arts_edt_t fn_ptr, dim3 grid,
+                           dim3 block, bool buff) {
   if (buff) {
     arts_lock(&buff_lock[gpu_id]);
     kernel_to_dev_buff[gpu_id][kernel_to_dev_count[gpu_id]].paramc = paramc;
@@ -169,7 +174,8 @@ bool push_kernel_to_stream(unsigned int gpu_id, uint32_t paramc, const uint64_t 
   return true;
 }
 
-bool push_wrap_up_to_stream(unsigned int gpu_id, void *host_closure, bool buff) {
+bool push_wrap_up_to_stream(unsigned int gpu_id, void *host_closure,
+                            bool buff) {
   if (buff) {
     arts_lock(&buff_lock[gpu_id]);
     wrap_up_buff[gpu_id][wrap_up_count[gpu_id]] = host_closure;
@@ -184,8 +190,8 @@ bool push_wrap_up_to_stream(unsigned int gpu_id, void *host_closure, bool buff) 
   }
 
 #if CUDART_VERSION >= 10000
-  CHECKCORRECT(cudaLaunchHostFunc(arts_gpus[gpu_id].stream, arts_wrap_up_host_func,
-                                  host_closure));
+  CHECKCORRECT(cudaLaunchHostFunc(arts_gpus[gpu_id].stream,
+                                  arts_wrap_up_host_func, host_closure));
 #else
   CHECKCORRECT(cudaStreamAddCallback(arts_gpus[gpu_id].stream, arts_wrap_up,
                                      host_closure, 0));
@@ -194,7 +200,7 @@ bool push_wrap_up_to_stream(unsigned int gpu_id, void *host_closure, bool buff) 
 }
 
 bool flush_mem_stream(unsigned int gpu_id, unsigned int *count,
-                    arts_buffer_mem_move_t *buff, enum cudaMemcpyKind kind) {
+                      arts_buffer_mem_move_t *buff, enum cudaMemcpyKind kind) {
   unsigned int max = *count;
   if (max > 0) {
     uint64_t data_size = 0;
@@ -212,9 +218,11 @@ bool flush_mem_stream(unsigned int gpu_id, unsigned int *count,
     }
     *count = 0;
     if (kind == cudaMemcpyHostToDevice) {
-      ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_GPU_BW_PUSH, ARTS_METRIC_THREAD, data_size);
+      ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_GPU_BW_PUSH, ARTS_METRIC_THREAD,
+                                 data_size);
     } else {
-      ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_GPU_BW_PULL, ARTS_METRIC_THREAD, data_size);
+      ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_GPU_BW_PULL, ARTS_METRIC_THREAD,
+                                 data_size);
     }
     return true;
   }
@@ -225,9 +233,10 @@ bool flush_kernel_stream(unsigned int gpu_id) {
   bool ret = (kernel_to_dev_count[gpu_id] > 0);
   if (ret) {
     for (unsigned int i = 0; i < kernel_to_dev_count[gpu_id]; i++) {
-      void *kernel_args[] = {
-          &kernel_to_dev_buff[gpu_id][i].paramc, &kernel_to_dev_buff[gpu_id][i].paramv,
-          &kernel_to_dev_buff[gpu_id][i].depc, &kernel_to_dev_buff[gpu_id][i].depv};
+      void *kernel_args[] = {&kernel_to_dev_buff[gpu_id][i].paramc,
+                             &kernel_to_dev_buff[gpu_id][i].paramv,
+                             &kernel_to_dev_buff[gpu_id][i].depc,
+                             &kernel_to_dev_buff[gpu_id][i].depv};
       dim3 grid(kernel_to_dev_buff[gpu_id][i].grid[0],
                 kernel_to_dev_buff[gpu_id][i].grid[1],
                 kernel_to_dev_buff[gpu_id][i].grid[2]);
@@ -239,7 +248,8 @@ bool flush_kernel_stream(unsigned int gpu_id) {
           (void **)kernel_args, (size_t)0, arts_gpus[gpu_id].stream));
       check_occupancy(kernel_to_dev_buff[gpu_id][i].fn_ptr, gpu_id, block);
     }
-    ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_GPU_EDT, ARTS_METRIC_THREAD, kernel_to_dev_count[gpu_id]);
+    ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_GPU_EDT, ARTS_METRIC_THREAD,
+                               kernel_to_dev_count[gpu_id]);
     kernel_to_dev_count[gpu_id] = 0;
   }
   return ret;
@@ -249,7 +259,8 @@ bool flush_wrap_up_stream(unsigned int gpu_id) {
   bool ret = (wrap_up_count[gpu_id] > 0);
   for (unsigned int i = 0; i < wrap_up_count[gpu_id]; i++) {
 #if CUDART_VERSION >= 10000
-    CHECKCORRECT(cudaLaunchHostFunc(arts_gpus[gpu_id].stream, arts_wrap_up_host_func,
+    CHECKCORRECT(cudaLaunchHostFunc(arts_gpus[gpu_id].stream,
+                                    arts_wrap_up_host_func,
                                     wrap_up_buff[gpu_id][i]));
 #else
     CHECKCORRECT(cudaStreamAddCallback(arts_gpus[gpu_id].stream, arts_wrap_up,
@@ -261,28 +272,30 @@ bool flush_wrap_up_stream(unsigned int gpu_id) {
 }
 
 bool flush_stream(unsigned int gpu_id) {
-  ARTS_DEBUG("%u %u %u %u\n", host_to_dev_count[gpu_id], kernel_to_dev_count[gpu_id],
-             dev_to_host_count[gpu_id], wrap_up_count[gpu_id]);
+  ARTS_DEBUG("%u %u %u %u\n", host_to_dev_count[gpu_id],
+             kernel_to_dev_count[gpu_id], dev_to_host_count[gpu_id],
+             wrap_up_count[gpu_id]);
   if (host_to_dev_count[gpu_id] || kernel_to_dev_count[gpu_id] ||
       dev_to_host_count[gpu_id] || wrap_up_count[gpu_id]) {
     arts_cuda_set_device((int)gpu_id, true);
 
-    flush_mem_stream(gpu_id, &host_to_dev_count[gpu_id], host_to_dev_buff[gpu_id],
-                   cudaMemcpyHostToDevice);
+    flush_mem_stream(gpu_id, &host_to_dev_count[gpu_id],
+                     host_to_dev_buff[gpu_id], cudaMemcpyHostToDevice);
     flush_kernel_stream(gpu_id);
-    flush_mem_stream(gpu_id, &dev_to_host_count[gpu_id], dev_to_host_buff[gpu_id],
-                   cudaMemcpyDeviceToHost);
+    flush_mem_stream(gpu_id, &dev_to_host_count[gpu_id],
+                     dev_to_host_buff[gpu_id], cudaMemcpyDeviceToHost);
     flush_wrap_up_stream(gpu_id);
 
     arts_cuda_restore_device();
-    ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_GPU_BUFFER_FLUSH, ARTS_METRIC_THREAD, 1);
+    ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_GPU_BUFFER_FLUSH, ARTS_METRIC_THREAD,
+                               1);
     return true;
   }
   return false;
 }
 
 void copy_gputo_gpu(void *dst, unsigned int dst_gpu_id, void *src,
-                  unsigned int src_gpu_id, unsigned int size) {
+                    unsigned int src_gpu_id, unsigned int size) {
   // We need to lock in a fixed order, so smallest first
   unsigned int first = (dst_gpu_id < src_gpu_id) ? dst_gpu_id : src_gpu_id;
   unsigned int second = (dst_gpu_id == first) ? src_gpu_id : dst_gpu_id;
@@ -306,8 +319,8 @@ void copy_gputo_gpu(void *dst, unsigned int dst_gpu_id, void *src,
 }
 
 void do_reduction_now(unsigned int gpu_id, void *sink, void *src,
-                    arts_lc_sync_function_gpu_t fn_ptr, unsigned int element_size,
-                    unsigned int size) {
+                      arts_lc_sync_function_gpu_t fn_ptr,
+                      unsigned int element_size, unsigned int size) {
   arts_lock(&buff_lock[gpu_id]);
   flush_stream(gpu_id);
 
@@ -339,9 +352,9 @@ void do_reduction_now(unsigned int gpu_id, void *sink, void *src,
 }
 
 void reduce_datafrom_gpus(void *dst, unsigned int dst_gpu_id, void *src,
-                        unsigned int src_gpu_id, unsigned int size,
-                        arts_lc_sync_function_gpu_t fn_ptr, unsigned int element_size,
-                        void *db_data) {
+                          unsigned int src_gpu_id, unsigned int size,
+                          arts_lc_sync_function_gpu_t fn_ptr,
+                          unsigned int element_size, void *db_data) {
   ARTS_DEBUG("ELEMENT SIZE: %lu\n", element_size);
   // We need to lock in a fixed order, so smallest first
   unsigned int first = (dst_gpu_id < src_gpu_id) ? dst_gpu_id : src_gpu_id;
@@ -397,7 +410,7 @@ void reduce_datafrom_gpus(void *dst, unsigned int dst_gpu_id, void *src,
 }
 
 void get_data_from_stream_now(unsigned int gpu_id, void *dst, void *src,
-                          size_t count, bool buff) {
+                              size_t count, bool buff) {
   if (buff) {
     arts_lock(&buff_lock[gpu_id]);
     flush_stream(gpu_id);
@@ -413,8 +426,8 @@ bool check_streams(bool buff_on) {
   if (buff_on) {
     bool ret = false;
     for (unsigned int i = 0; i < arts_node_info.gpu; i++) {
-      if (host_to_dev_count[i] || kernel_to_dev_count[i] || dev_to_host_count[i] ||
-          wrap_up_count[i]) {
+      if (host_to_dev_count[i] || kernel_to_dev_count[i] ||
+          dev_to_host_count[i] || wrap_up_count[i]) {
         arts_atomic_fetch_add(&stream_check_count[i], 1U);
         if (stream_check_count[i] % CHECKSTREAM == 0) {
           arts_lock(&buff_lock[i]);

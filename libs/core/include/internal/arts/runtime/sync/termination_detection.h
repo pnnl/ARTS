@@ -46,16 +46,16 @@ extern "C" {
 #include "arts/runtime/rt.h"
 
 arts_epoch_t *create_epoch(arts_guid_t *guid, arts_guid_t edt_guid,
-                         unsigned int slot);
+                           unsigned int slot);
 void increment_queue_epoch(arts_guid_t epoch_guid);
 void increment_active_epoch(arts_guid_t epoch_guid);
 void increment_finished_epoch(arts_guid_t epoch_guid);
 void send_epoch(arts_guid_t epoch_guid, unsigned int source, unsigned int dest);
 void broadcast_epoch_request(arts_guid_t epoch_guid);
 bool check_epoch(arts_epoch_t *epoch, unsigned int total_active,
-                unsigned int total_finish);
+                 unsigned int total_finish);
 void reduce_epoch(arts_guid_t epoch_guid, unsigned int active,
-                 unsigned int finish);
+                  unsigned int finish);
 void delete_epoch(arts_guid_t epoch_guid, arts_epoch_t *epoch);
 
 typedef struct arts_epoch_pool_s {
@@ -67,7 +67,8 @@ typedef struct arts_epoch_pool_s {
 } arts_epoch_pool_t;
 
 arts_epoch_pool_t *create_epoch_pool(arts_guid_t *epoch_pool_guid,
-                                 unsigned int pool_size, arts_guid_t *start_guid);
+                                     unsigned int pool_size,
+                                     arts_guid_t *start_guid);
 arts_epoch_t *get_pool_epoch(arts_guid_t edt_guid, unsigned int slot);
 
 void arts_shutdown_epoch_inc_active();

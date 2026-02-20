@@ -45,7 +45,6 @@
 #include "arts/gpu/gpu_stream.h"
 
 #include "arts.h"
-#include "arts/utils/malloc.h"
 #include "arts/arts_defs.h"
 #include "arts/gas/guid.h"
 #include "arts/gpu/gpu_lc_sync_functions.cuh"
@@ -53,12 +52,13 @@
 #include "arts/gpu/gpu_runtime.cuh"
 #include "arts/gpu/gpu_stream_buffer.h"
 #include "arts/introspection/metrics.h"
-#include "arts/runtime/globals.h"
 #include "arts/runtime/compute/edt_functions.h"
+#include "arts/runtime/globals.h"
 #include "arts/system/arts_print.h"
 #include "arts/system/debug.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/deque.h"
+#include "arts/utils/malloc.h"
 
 int random(void *edt_packet);
 int all_or_nothing(void *edt_packet);
@@ -79,8 +79,8 @@ arts_gpu_t *arts_gpus;
 
 typedef int (*locality_t)(void *edt);
 
-locality_t locality_scheme[] = {random, all_or_nothing, atleast_one, hash_on_db_zero,
-                               hash_largest};
+locality_t locality_scheme[] = {random, all_or_nothing, atleast_one,
+                                hash_on_db_zero, hash_largest};
 
 locality_t locality; // Locality function ptr
 
@@ -105,10 +105,10 @@ __thread int arts_local_gpu_id;
 extern "C" {
 #endif
 extern void arts_init_per_gpu(unsigned int node_id, int dev_id,
-                               cudaStream_t *stream, int argc,
-                               char **argv) ARTS_WEAK_IMPORT;
+                              cudaStream_t *stream, int argc,
+                              char **argv) ARTS_WEAK_IMPORT;
 extern void arts_fini_per_gpu(unsigned int node_id, int dev_id,
-                               cudaStream_t *stream) ARTS_WEAK_IMPORT;
+                              cudaStream_t *stream) ARTS_WEAK_IMPORT;
 #ifdef __cplusplus
 }
 #endif
@@ -127,7 +127,8 @@ void arts_fully_connect_gpus(bool p2p, bool disconnect_p2p) {
       for (unsigned int dst = 0; dst < arts_node_info.gpu; dst++) {
         if (src != dst) {
           int has_access = 0;
-          CHECKCORRECT(cudaDeviceCanAccessPeer(&has_access, (int)src, (int)dst));
+          CHECKCORRECT(
+              cudaDeviceCanAccessPeer(&has_access, (int)src, (int)dst));
           if (has_access) {
             if (disconnect_p2p) {
               CHECKCORRECT(cudaDeviceDisablePeerAccess((int)dst));
@@ -154,9 +155,11 @@ void arts_node_init_gpus() {
   }
 
   ARTS_DEBUG(
-      "gpu_route_table_size: %u gpu_route_table_entries: %u free_db_after_gpu_run: "
+      "gpu_route_table_size: %u gpu_route_table_entries: %u "
+      "free_db_after_gpu_run: "
       "%u run_gpu_gc_idle: %u run_gpu_gc_pre_edt: %u delete_zeros_gpu_gc: %u\n",
-      arts_node_info.gpu_route_table_size, arts_node_info.gpu_route_table_entries,
+      arts_node_info.gpu_route_table_size,
+      arts_node_info.gpu_route_table_entries,
       arts_node_info.free_db_after_gpu_run, arts_node_info.run_gpu_gc_idle,
       arts_node_info.run_gpu_gc_pre_edt, arts_node_info.delete_zeros_gpu_gc);
 
@@ -171,11 +174,13 @@ void arts_node_init_gpus() {
     ARTS_DEBUG("Setting %u\n", i);
     arts_cuda_set_device((int)i, false);
     CHECKCORRECT(cudaStreamCreate(&arts_gpus[i].stream)); // Make it scalable
-    arts_node_info.gpu_route_table[i] = arts_gpu_new_route_table(
-        arts_node_info.gpu_route_table_entries, arts_node_info.gpu_route_table_size);
+    arts_node_info.gpu_route_table[i] =
+        arts_gpu_new_route_table(arts_node_info.gpu_route_table_entries,
+                                 arts_node_info.gpu_route_table_size);
     size_t temp_free_mem = 0;
     size_t temp_max_mem = 0;
-    CHECKCORRECT(cudaMemGetInfo((size_t *)&temp_free_mem, (size_t *)&temp_max_mem));
+    CHECKCORRECT(
+        cudaMemGetInfo((size_t *)&temp_free_mem, (size_t *)&temp_max_mem));
     CHECKCORRECT(
         cudaGetDeviceProperties(&arts_gpus[i].prop, arts_gpus[i].device));
     arts_gpus[i].availGlobalMem = (uint64_t)temp_free_mem;
@@ -197,7 +202,8 @@ void arts_init_per_gpu_wrapper(int argc, char **argv) {
     for (unsigned int i = 0; i < arts_node_info.gpu; ++i) {
       ARTS_DEBUG("Set device: %u\n", i);
       arts_cuda_set_device((int)i, false);
-      arts_init_per_gpu(arts_global_rank_id, (int)i, &arts_gpus[i].stream, argc, argv);
+      arts_init_per_gpu(arts_global_rank_id, (int)i, &arts_gpus[i].stream, argc,
+                        argv);
     }
     arts_cuda_restore_device();
   }
@@ -276,8 +282,8 @@ void arts_wrap_up(cudaStream_t stream, cudaError_t status, void *data) {
   arts_edt_dep_t *depv = (arts_edt_dep_t *)(paramv + paramc);
 
   unsigned int total_threads = (edt->grid.x * edt->block.x) +
-                              (edt->grid.y * edt->block.y) +
-                              (edt->grid.z * edt->block.z);
+                               (edt->grid.y * edt->block.y) +
+                               (edt->grid.z * edt->block.z);
   arts_atomic_sub(&arts_gpu->availableThreads, total_threads);
 
   for (unsigned int i = 0; i < depc; i++) {
@@ -287,12 +293,14 @@ void arts_wrap_up(cudaStream_t stream, cudaError_t status, void *data) {
       }
       // True says to mark it for deletion... Change this to false to further
       // delay delete!
-      //  bool mark_delete = (arts_guid_get_type(depv[i].guid) != ARTS_DB_GPU_WRITE)
+      //  bool mark_delete = (arts_guid_get_type(depv[i].guid) !=
+      //  ARTS_DB_GPU_WRITE)
       //  && arts_node_info.free_db_after_gpu_run;
       bool mark_delete = arts_node_info.free_db_after_gpu_run;
-      bool res = arts_gpu_route_table_return_db(depv[i].guid, mark_delete, gc->gpu_id);
-      // arts_gpu_route_table_return_db(depv[i].guid, arts_node_info.free_db_after_gpu_run,
-      // gc->gpu_id);
+      bool res =
+          arts_gpu_route_table_return_db(depv[i].guid, mark_delete, gc->gpu_id);
+      // arts_gpu_route_table_return_db(depv[i].guid,
+      // arts_node_info.free_db_after_gpu_run, gc->gpu_id);
       ARTS_DEBUG("Returning Db: %lu id: %d res: %u\n", depv[i].guid, gc->gpu_id,
                  res);
     }
@@ -312,9 +320,9 @@ void arts_wrap_up_host_func(void *data) {
 }
 
 void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
-                               const uint64_t *paramv, uint32_t depc,
-                               arts_edt_dep_t *depv, dim3 grid, dim3 block,
-                               void *edt_ptr, arts_gpu_t *arts_gpu) {
+                                   const uint64_t *paramv, uint32_t depc,
+                                   arts_edt_dep_t *depv, dim3 grid, dim3 block,
+                                   void *edt_ptr, arts_gpu_t *arts_gpu) {
   //    For now this should push the following into the stream:
   //    1. Copy data from host to device
   //    2. Push kernel
@@ -375,10 +383,10 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
     ARTS_DEBUG("Filled host closure\n");
 
     arts_guid_t edt_guid = host_gc_ptr->edt->current_edt;
-    // arts_gpu_route_table_add_item_race(host_gc_ptr, host_closure_size, edt_guid,
-    // arts_gpu->device);
+    // arts_gpu_route_table_add_item_race(host_gc_ptr, host_closure_size,
+    // edt_guid, arts_gpu->device);
     arts_gpu_route_table_add_item_race(host_gc_ptr, dev_closure_size, edt_guid,
-                                 arts_gpu->device);
+                                       arts_gpu->device);
     ARTS_DEBUG("Added edt_guid: %lu size: %u to gpu: %d routing table\n",
                edt_guid, host_closure_size, arts_gpu->device);
   }
@@ -393,8 +401,8 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
           arts_guid_get_type(depv[i].guid); // allocation type from GUID
       unsigned int gpu_version;
       unsigned int time_stamp;
-      void *data_ptr = arts_gpu_route_table_lookup_db(depv[i].guid, arts_gpu->device,
-                                                &gpu_version, &time_stamp);
+      void *data_ptr = arts_gpu_route_table_lookup_db(
+          depv[i].guid, arts_gpu->device, &gpu_version, &time_stamp);
       struct arts_db_s *db = (struct arts_db_s *)depv[i].ptr - 1;
       uint64_t size = db->header.size;
       uint64_t alloc_size = (mode == ARTS_DB_LC) ? (size * 2) : size;
@@ -407,8 +415,8 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
 
         if (successful_add) // We won, so allocate and move data
         {
-          ARTS_DEBUG("Adding %lu %u id: %d mode: %s\n", depv[i].guid, alloc_size,
-                     arts_gpu->device, arts_type_name[modes[i]]);
+          ARTS_DEBUG("Adding %lu %u id: %d mode: %s\n", depv[i].guid,
+                     alloc_size, arts_gpu->device, arts_type_name[modes[i]]);
           data_ptr = arts_cuda_malloc(alloc_size);
           void *src = (void *)db;
           if (mode == ARTS_DB_LC) {
@@ -419,20 +427,22 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
             src = NULL;
           }
           push_data_to_stream(arts_gpu->device, data_ptr, src, size,
-                           arts_node_info.gpu_buff_on && !gpu_edt->lib);
+                              arts_node_info.gpu_buff_on && !gpu_edt->lib);
           // Must have already launched the memcpy before setting realData or
           // races will ensue
           wrapper->realData = data_ptr;
-          ARTS_DEBUG("Malloc[%d]: %p %p\n", arts_gpu->device, wrapper, data_ptr);
+          ARTS_DEBUG("Malloc[%d]: %p %p\n", arts_gpu->device, wrapper,
+                     data_ptr);
           arts_atomic_add(&misses, 1U);
         } else // Someone beat us to creating the data... So we must free
         {
-          while (!arts_atomic_fetch_add_u64((uint64_t *)&wrapper->realData, 0)) {
+          while (
+              !arts_atomic_fetch_add_u64((uint64_t *)&wrapper->realData, 0)) {
           } // Spin till the data memcpy is launched
           data_ptr = (void *)wrapper->realData;
           if (mode == ARTS_DB_GPU_WRITE && modes[i] == ARTS_DB_GPU_MEMSET) {
             push_data_to_stream(arts_gpu->device, data_ptr, NULL, size,
-                             arts_node_info.gpu_buff_on && !gpu_edt->lib);
+                                arts_node_info.gpu_buff_on && !gpu_edt->lib);
           }
           arts_atomic_add_u64(&arts_gpu->availGlobalMem, alloc_size);
           arts_atomic_add(&hits, 1U);
@@ -454,7 +464,8 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
   ARTS_DEBUG("Allocated, added, and moved dbs\n");
 
   push_data_to_stream(arts_gpu->device, dev_closure, (void *)host_gpu_id,
-                   dev_closure_size, arts_node_info.gpu_buff_on && !gpu_edt->lib);
+                      dev_closure_size,
+                      arts_node_info.gpu_buff_on && !gpu_edt->lib);
   ARTS_DEBUG("Filled GPU Closure\n");
 
   if (gpu_edt->lib) {
@@ -470,8 +481,8 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
 
     arts_unset_thread_local_edt_info();
   } else {
-    push_kernel_to_stream(arts_gpu->device, paramc, dev_paramv, depc, dev_depv, fn_ptr,
-                       grid, block, arts_node_info.gpu_buff_on);
+    push_kernel_to_stream(arts_gpu->device, paramc, dev_paramv, depc, dev_depv,
+                          fn_ptr, grid, block, arts_node_info.gpu_buff_on);
   }
 
   // Move data back
@@ -480,22 +491,23 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
     if (depv[i].ptr && mode == ARTS_DB_GPU_WRITE) {
       struct arts_db_s *db = (struct arts_db_s *)depv[i].ptr - 1;
       size_t size = (size_t)(db->header.size - sizeof(struct arts_db_s));
-      get_data_from_stream(arts_gpu->device, depv[i].ptr, host_depv[i].ptr, size,
-                        arts_node_info.gpu_buff_on && !gpu_edt->lib);
+      get_data_from_stream(arts_gpu->device, depv[i].ptr, host_depv[i].ptr,
+                           size, arts_node_info.gpu_buff_on && !gpu_edt->lib);
       // CHECKCORRECT(cudaStreamSynchronize(arts_gpu->stream));
     }
   }
 
   push_wrap_up_to_stream(arts_gpu->device, host_closure,
-                     arts_node_info.gpu_buff_on && !gpu_edt->lib);
+                         arts_node_info.gpu_buff_on && !gpu_edt->lib);
 }
 
-void arts_schedule_to_gpu(arts_edt_t fn_ptr, uint32_t paramc, const uint64_t *paramv,
-                       uint32_t depc, arts_edt_dep_t *depv, void *edt_ptr,
-                       arts_gpu_t *arts_gpu) {
+void arts_schedule_to_gpu(arts_edt_t fn_ptr, uint32_t paramc,
+                          const uint64_t *paramv, uint32_t depc,
+                          arts_edt_dep_t *depv, void *edt_ptr,
+                          arts_gpu_t *arts_gpu) {
   arts_gpu_edt_t *edt = (arts_gpu_edt_t *)edt_ptr;
   arts_schedule_to_gpu_internal(fn_ptr, paramc, paramv, depc, depv, edt->grid,
-                            edt->block, edt_ptr, arts_gpu);
+                                edt->block, edt_ptr, arts_gpu);
 }
 
 void arts_gpu_synchronize(arts_gpu_t *arts_gpu) {
@@ -517,11 +529,12 @@ void free_gpu_item(arts_route_item_t *item) {
     arts_cuda_free_host(host_gc_ptr);
   } else if (type == ARTS_DB_LC) {
     int valid_rank = -1;
-    struct arts_db_s *db =
-        (struct arts_db_s *)arts_route_table_lookup_db(item->key, &valid_rank, false);
+    struct arts_db_s *db = (struct arts_db_s *)arts_route_table_lookup_db(
+        item->key, &valid_rank, false);
     if (db) {
       unsigned int size = db->header.size;
-      struct arts_db_s *temp_space = (struct arts_db_s *)arts_malloc_align(size, 16);
+      struct arts_db_s *temp_space =
+          (struct arts_db_s *)arts_malloc_align(size, 16);
 
       arts_lc_meta_t host;
       host.guid = item->key;
@@ -535,9 +548,10 @@ void free_gpu_item(arts_route_item_t *item) {
       host.read_lock = &db->reader;
       host.write_lock = &db->writer;
 
-      // arts_cuda_mem_cpy_from_dev(temp_space, (void*) wrapper->realData, size);
+      // arts_cuda_mem_cpy_from_dev(temp_space, (void*) wrapper->realData,
+      // size);
       get_data_from_stream_now(arts_get_current_gpu(), temp_space,
-                           (void *)wrapper->realData, size, false);
+                               (void *)wrapper->realData, size, false);
 
       arts_lc_meta_t dev;
       dev.guid = item->key;
@@ -557,7 +571,8 @@ void free_gpu_item(arts_route_item_t *item) {
       arts_free(temp_space);
       arts_cuda_free((void *)wrapper->realData);
 
-      ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_GPU_SYNC_DELETE, ARTS_METRIC_THREAD, 1);
+      ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_GPU_SYNC_DELETE,
+                                 ARTS_METRIC_THREAD, 1);
     } else {
       ARTS_INFO("Trying to delete an LC but there is no DB to back up to\n");
     }
@@ -587,7 +602,7 @@ bool try_reserve(int gpu, uint64_t size, unsigned int threads) {
       volatile uint64_t avail_size = arts_gpu->availGlobalMem;
       while (avail_size >= size) {
         if (arts_atomic_cswap_u64(&arts_gpu->availGlobalMem, avail_size,
-                               avail_size - size)) {
+                                  avail_size - size)) {
           run_gc_flag = 0;
           return true;
         }
@@ -705,11 +720,12 @@ int random(void *edt_packet) {
   const uint64_t *paramv = (uint64_t *)(edt + 1);
   arts_edt_dep_t *depv = (arts_edt_dep_t *)(paramv + paramc);
   unsigned int total_threads = (edt->grid.x * edt->block.x) +
-                              (edt->grid.y * edt->block.y) +
-                              (edt->grid.z * edt->block.z);
+                               (edt->grid.y * edt->block.y) +
+                               (edt->grid.z * edt->block.z);
 
   // Size to be allocated on the GPU
-  uint64_t size = (sizeof(uint64_t) * paramc) + (sizeof(arts_edt_dep_t) * depc) +
+  uint64_t size = (sizeof(uint64_t) * paramc) +
+                  (sizeof(arts_edt_dep_t) * depc) +
                   get_db_size_needed(depc, depv);
   uint64_t mask = ~0;
   return fit(mask, size, total_threads);
@@ -722,11 +738,12 @@ int all_or_nothing(void *edt_packet) {
   const uint64_t *paramv = (uint64_t *)(edt + 1);
   arts_edt_dep_t *depv = (arts_edt_dep_t *)(paramv + paramc);
   unsigned int total_threads = (edt->grid.x * edt->block.x) +
-                              (edt->grid.y * edt->block.y) +
-                              (edt->grid.z * edt->block.z);
+                               (edt->grid.y * edt->block.y) +
+                               (edt->grid.z * edt->block.z);
 
   // Size to be allocated on the GPU
-  uint64_t size = (sizeof(uint64_t) * paramc) + (sizeof(arts_edt_dep_t) * depc) +
+  uint64_t size = (sizeof(uint64_t) * paramc) +
+                  (sizeof(arts_edt_dep_t) * depc) +
                   get_db_size_needed(depc, depv);
   uint64_t mask = 0;
   for (unsigned int i = 0; i < depc; ++i) {
@@ -749,11 +766,12 @@ int atleast_one(void *edt_packet) {
   const uint64_t *paramv = (uint64_t *)(edt + 1);
   arts_edt_dep_t *depv = (arts_edt_dep_t *)(paramv + paramc);
   unsigned int total_threads = (edt->grid.x * edt->block.x) +
-                              (edt->grid.y * edt->block.y) +
-                              (edt->grid.z * edt->block.z);
+                               (edt->grid.y * edt->block.y) +
+                               (edt->grid.z * edt->block.z);
 
   // Size to be allocated on the GPU
-  uint64_t size = (sizeof(uint64_t) * paramc) + (sizeof(arts_edt_dep_t) * depc) +
+  uint64_t size = (sizeof(uint64_t) * paramc) +
+                  (sizeof(arts_edt_dep_t) * depc) +
                   get_db_size_needed(depc, depv);
   uint64_t mask = 0;
   for (unsigned int i = 0; i < depc; ++i) {
@@ -775,16 +793,18 @@ int hash_on_db_zero(void *edt_packet) {
   const uint64_t *paramv = (uint64_t *)(edt + 1);
   arts_edt_dep_t *depv = (arts_edt_dep_t *)(paramv + paramc);
   unsigned int total_threads = (edt->grid.x * edt->block.x) +
-                              (edt->grid.y * edt->block.y) +
-                              (edt->grid.z * edt->block.z);
+                               (edt->grid.y * edt->block.y) +
+                               (edt->grid.z * edt->block.z);
 
   // Size to be allocated on the GPU
-  uint64_t size = (sizeof(uint64_t) * paramc) + (sizeof(arts_edt_dep_t) * depc) +
+  uint64_t size = (sizeof(uint64_t) * paramc) +
+                  (sizeof(arts_edt_dep_t) * depc) +
                   get_db_size_needed(depc, depv);
   uint64_t key = (depv[0].guid) ? arts_guid_get_key(depv[0].guid) : 0;
   int index = (int)(key % (uint64_t)arts_node_info.gpu);
   if ((unsigned int)index > arts_node_info.gpu) {
-    ARTS_ERROR("GPU stream hash failed: index %d >= gpu count %u", index, arts_node_info.gpu);
+    ARTS_ERROR("GPU stream hash failed: index %d >= gpu count %u", index,
+               arts_node_info.gpu);
   }
   ARTS_DEBUG("HASH: %lu %d\n", depv[0].guid, index);
   if (try_reserve(index, size, total_threads)) {
@@ -800,11 +820,12 @@ int hash_largest(void *edt_packet) {
   const uint64_t *paramv = (uint64_t *)(edt + 1);
   arts_edt_dep_t *depv = (arts_edt_dep_t *)(paramv + paramc);
   unsigned int total_threads = (edt->grid.x * edt->block.x) +
-                              (edt->grid.y * edt->block.y) +
-                              (edt->grid.z * edt->block.z);
+                               (edt->grid.y * edt->block.y) +
+                               (edt->grid.z * edt->block.z);
 
   // Size to be allocated on the GPU
-  uint64_t size = (sizeof(uint64_t) * paramc) + (sizeof(arts_edt_dep_t) * depc) +
+  uint64_t size = (sizeof(uint64_t) * paramc) +
+                  (sizeof(arts_edt_dep_t) * depc) +
                   get_db_size_needed(depc, depv);
   // uint64_t mask = 0;
   uint64_t largest = 0;
@@ -830,12 +851,13 @@ int arts_reserve_edt_required_gpu(int *gpu, void *edt_packet) {
   const uint64_t *paramv = (uint64_t *)(edt + 1);
   arts_edt_dep_t *depv = (arts_edt_dep_t *)(paramv + paramc);
   unsigned int total_threads = (edt->grid.x * edt->block.x) +
-                              (edt->grid.y * edt->block.y) +
-                              (edt->grid.z * edt->block.z);
+                               (edt->grid.y * edt->block.y) +
+                               (edt->grid.z * edt->block.z);
 
   if (edt->gpuToRunOn > -1) {
     // Size to be allocated on the GPU
-    uint64_t size = (sizeof(uint64_t) * paramc) + (sizeof(arts_edt_dep_t) * depc) +
+    uint64_t size = (sizeof(uint64_t) * paramc) +
+                    (sizeof(arts_edt_dep_t) * depc) +
                     get_db_size_needed(depc, depv);
     if (try_reserve(edt->gpuToRunOn, size, total_threads)) {
       *gpu = edt->gpuToRunOn;

@@ -61,8 +61,8 @@
 #include <string.h>
 
 #include "arts.h"
-#include "arts/utils/malloc.h"
 #include "arts/utils/atomics.h"
+#include "arts/utils/malloc.h"
 
 /*
  * Chase-Lev work-stealing deque (simplified variant).
@@ -81,13 +81,14 @@ struct circular_array_s {
 } __attribute__((aligned(64)));
 
 struct arts_deque_s {
-  volatile uint64_t top;     /* Modified by stealers via CAS */
+  volatile uint64_t top; /* Modified by stealers via CAS */
   char pad1[56];
-  volatile uint64_t bottom;  /* Modified only by the owning thread */
+  volatile uint64_t bottom; /* Modified only by the owning thread */
   char pad2[56];
   struct circular_array_s *volatile activeArray;
   char pad3[56];
-  struct circular_array_s *head;  /* Head of circular array chain (for cleanup) */
+  struct circular_array_s
+      *head; /* Head of circular array chain (for cleanup) */
   volatile unsigned int push;
   volatile unsigned int pop;
   volatile unsigned int steal;
@@ -110,32 +111,35 @@ bool arts_deque_empty(struct arts_deque_s *deque) {
   return false;
 }
 
-void arts_deque_clear(struct arts_deque_s *deque) { deque->top = deque->bottom; }
+void arts_deque_clear(struct arts_deque_s *deque) {
+  deque->top = deque->bottom;
+}
 
 unsigned int arts_deque_size(struct arts_deque_s *deque) {
   return deque->bottom - deque->top;
 }
 
-static inline void *get_circular_array(struct circular_array_s *array, uint64_t i) {
+static inline void *get_circular_array(struct circular_array_s *array,
+                                       uint64_t i) {
   return array->segment[i % array->size];
 }
 
 __thread void *steal_array[STEALSIZE];
 
 static inline void get_multiple_circular_array(struct circular_array_s *array,
-                                            uint64_t i) {
+                                               uint64_t i) {
   if (i % array->size + STEALSIZE < array->size) {
     memcpy(steal_array, &array->segment[i % array->size],
            sizeof(void *) * STEALSIZE);
   } else {
     for (unsigned int j = 0; j < STEALSIZE; j++) {
       steal_array[j] = array->segment[(i + j) % array->size];
-}
-}
+    }
+  }
 }
 
-static inline void put_circular_array(struct circular_array_s *array, uint64_t i,
-                                    void *object) {
+static inline void put_circular_array(struct circular_array_s *array,
+                                      uint64_t i, void *object) {
   array->segment[i % array->size] = object;
 }
 
@@ -146,12 +150,12 @@ grow_circular_array(struct circular_array_s *array, uint64_t b, uint64_t t) {
   uint64_t i;
   for (i = t; i < b; i++) {
     put_circular_array(a, i, get_circular_array(array, i));
-}
+  }
   return a;
 }
 
 static inline void arts_deque_new_init(struct arts_deque_s *deque,
-                                    unsigned int size) {
+                                       unsigned int size) {
   deque->top = 1;
   deque->bottom = 1;
   deque->activeArray = new_circular_array(size);
@@ -162,8 +166,8 @@ static inline void arts_deque_new_init(struct arts_deque_s *deque,
 }
 
 struct arts_deque_s *arts_deque_new(unsigned int size) {
-  struct arts_deque_s *deque =
-      (struct arts_deque_s *)arts_calloc_align(1, sizeof(struct arts_deque_s), 64);
+  struct arts_deque_s *deque = (struct arts_deque_s *)arts_calloc_align(
+      1, sizeof(struct arts_deque_s), 64);
   arts_deque_new_init(deque, size);
   return deque;
 }
@@ -180,7 +184,7 @@ void arts_deque_delete(struct arts_deque_s *deque) {
 }
 
 bool arts_deque_push_front(struct arts_deque_s *deque, void *item,
-                        unsigned int priority) {
+                           unsigned int priority) {
   (void)priority;
   struct circular_array_s *a = deque->activeArray;
   uint64_t b = deque->bottom;
@@ -210,7 +214,7 @@ void *arts_deque_pop_front(struct arts_deque_s *deque) {
   }
   if (arts_atomic_cswap_u64(&deque->top, t, t + 1) != t) {
     o = NULL;
-}
+  }
   deque->bottom = t + 1;
   return o;
 }
@@ -230,19 +234,19 @@ void *arts_deque_pop_back(struct arts_deque_s *deque) {
 }
 
 struct arts_deque_s *arts_deque_list_new(unsigned int list_size,
-                                   unsigned int deque_size) {
+                                         unsigned int deque_size) {
   struct arts_deque_s *deque_list = (struct arts_deque_s *)arts_calloc_align(
       list_size, sizeof(struct arts_deque_s), 64);
   unsigned int i = 0;
   for (i = 0; i < list_size; i++) {
     arts_deque_new_init(&deque_list[i], deque_size);
-}
+  }
 
   return deque_list;
 }
 
 struct arts_deque_s *arts_deque_list_get_deque(struct arts_deque_s *deque_list,
-                                        unsigned int position) {
+                                               unsigned int position) {
   return deque_list + position;
 }
 

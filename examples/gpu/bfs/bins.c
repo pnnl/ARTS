@@ -44,8 +44,8 @@
 #include <stdio.h>
 
 #include "arts.h"
-#include <stdlib.h>
 #include "arts/utils/array_list.h"
+#include <stdlib.h>
 
 static arts_array_list_t **list;
 
@@ -54,7 +54,7 @@ void init_list_record() {
   list = (arts_array_list_t **)calloc(size, sizeof(arts_array_list_t *));
   for (unsigned int i = 0; i < size; i++) {
     list[i] = arts_new_array_list(sizeof(unsigned int), 32);
-}
+  }
 }
 
 void add_to_list(unsigned int frontier_size, unsigned int index) {
@@ -65,7 +65,7 @@ void write_bins_to_file(unsigned int index) {
   // Do the CPU bins
   if (index + 1 == arts_get_total_gpus()) {
     write_bins_to_file(index + 1);
-}
+  }
 
   char filename[1024];
   (void)sprintf(filename, "bins_%u_%u.ct", arts_get_current_node(), index);
@@ -73,7 +73,8 @@ void write_bins_to_file(unsigned int index) {
     FILE *fp = fopen(filename, "w");
     if (fp) {
       arts_printf("Writing to %s\n", filename);
-      arts_array_list_iterator_t *iter = arts_new_array_list_iterator(list[index]);
+      arts_array_list_iterator_t *iter =
+          arts_new_array_list_iterator(list[index]);
       unsigned int *bin;
       while (arts_array_list_has_next(iter)) {
         bin = (unsigned int *)arts_array_list_next(iter);
@@ -83,6 +84,6 @@ void write_bins_to_file(unsigned int index) {
       (void)fclose(fp);
     } else {
       arts_printf("Couldn't open %s\n", filename);
-}
+    }
   }
 }

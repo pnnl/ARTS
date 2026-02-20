@@ -116,8 +116,8 @@ double **a_tile;
 double **b_tile;
 double **c_tile;
 
-__global__ void copy_kernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                            arts_edt_dep_t depv[]) {
+__global__ void copy_kernel(uint32_t paramc, const uint64_t *paramv,
+                            uint32_t depc, arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;
   unsigned int len = (unsigned int)paramv[0];
@@ -129,8 +129,8 @@ __global__ void copy_kernel(uint32_t paramc, const uint64_t *paramv, uint32_t de
   }
 }
 
-__global__ void scale_kernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                             arts_edt_dep_t depv[]) {
+__global__ void scale_kernel(uint32_t paramc, const uint64_t *paramv,
+                             uint32_t depc, arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;
   unsigned int len = (unsigned int)paramv[0];
@@ -143,8 +143,8 @@ __global__ void scale_kernel(uint32_t paramc, const uint64_t *paramv, uint32_t d
   }
 }
 
-__global__ void add_kernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                           arts_edt_dep_t depv[]) {
+__global__ void add_kernel(uint32_t paramc, const uint64_t *paramv,
+                           uint32_t depc, arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;
   unsigned int len = (unsigned int)paramv[0];
@@ -157,8 +157,8 @@ __global__ void add_kernel(uint32_t paramc, const uint64_t *paramv, uint32_t dep
   }
 }
 
-__global__ void triad_kernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                             arts_edt_dep_t depv[]) {
+__global__ void triad_kernel(uint32_t paramc, const uint64_t *paramv,
+                             uint32_t depc, arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;
   unsigned int len = (unsigned int)paramv[0];
@@ -186,21 +186,23 @@ void stream_driver(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   double scalar = 3.0;
   for (k = 0; k < NTIMES; k++) {
     times[0][k] = mysecond();
-    launch2_kernel_edt(copy_kernel, tile_size, N, 0, a_tile_guids, c_tile_guids);
+    launch2_kernel_edt(copy_kernel, tile_size, N, 0, a_tile_guids,
+                       c_tile_guids);
     times[0][k] = mysecond() - times[0][k];
 
     times[1][k] = mysecond();
-    launch2_kernel_edt(scale_kernel, tile_size, N, scalar, c_tile_guids, b_tile_guids);
+    launch2_kernel_edt(scale_kernel, tile_size, N, scalar, c_tile_guids,
+                       b_tile_guids);
     times[1][k] = mysecond() - times[1][k];
 
     times[2][k] = mysecond();
     launch3_kernel_edt(add_kernel, tile_size, N, 0, a_tile_guids, b_tile_guids,
-                     c_tile_guids);
+                       c_tile_guids);
     times[2][k] = mysecond() - times[2][k];
 
     times[3][k] = mysecond();
-    launch3_kernel_edt(triad_kernel, tile_size, N, scalar, b_tile_guids, c_tile_guids,
-                     a_tile_guids);
+    launch3_kernel_edt(triad_kernel, tile_size, N, scalar, b_tile_guids,
+                       c_tile_guids, a_tile_guids);
     times[3][k] = mysecond() - times[3][k];
   }
 
@@ -214,12 +216,14 @@ void stream_driver(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     }
   }
 
-  arts_printf("Function      Rate (MB/s)   Avg time     Min time     Max time\n");
+  arts_printf(
+      "Function      Rate (MB/s)   Avg time     Min time     Max time\n");
   for (j = 0; j < 4; j++) {
     avgtime[j] = avgtime[j] / (double)(NTIMES - 1);
 
     arts_printf("%s%11.4f  %11.4f  %11.4f  %11.4f\n", label[j],
-           1.0E-06 * bytes[j] / mintime[j], avgtime[j], mintime[j], maxtime[j]);
+                1.0E-06 * bytes[j] / mintime[j], avgtime[j], mintime[j],
+                maxtime[j]);
   }
   arts_printf(HLINE);
 
@@ -246,15 +250,15 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
     num_tiles++;
   }
 
-  arts_printf("N: %u tile_size: %u num_tiles: %u Gpus: %u\n", N, tile_size, num_tiles,
-         arts_get_total_gpus());
+  arts_printf("N: %u tile_size: %u num_tiles: %u Gpus: %u\n", N, tile_size,
+              num_tiles, arts_get_total_gpus());
 
   a_tile_guids = arts_guid_range_create_hash(ARTS_DB_GPU_WRITE, num_tiles, 0,
-                                        arts_get_total_gpus());
+                                             arts_get_total_gpus());
   b_tile_guids = arts_guid_range_create_hash(ARTS_DB_GPU_WRITE, num_tiles, 0,
-                                        arts_get_total_gpus());
+                                             arts_get_total_gpus());
   c_tile_guids = arts_guid_range_create_hash(ARTS_DB_GPU_WRITE, num_tiles, 0,
-                                        arts_get_total_gpus());
+                                             arts_get_total_gpus());
 
   uint64_t a_hash = arts_guid_hash_key(arts_guid_range_get(a_tile_guids, 0));
   uint64_t b_hash = arts_guid_hash_key(arts_guid_range_get(b_tile_guids, 0));
@@ -266,9 +270,11 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
           ARTS_LOOK_UP_CONFIG(run_gpu_gc_pre_edt))) {
       if (ARTS_LOOK_UP_CONFIG(gpu_locality) != 3 || a_hash != b_hash ||
           a_hash != c_hash) {
-        arts_printf("For more than 1 GPU Stream requires gpu_locality to be set to "
-               "3.\n");
-        arts_printf("aHash: %lu bHash: %lu cHash: %lu\n", a_hash, b_hash, c_hash);
+        arts_printf(
+            "For more than 1 GPU Stream requires gpu_locality to be set to "
+            "3.\n");
+        arts_printf("aHash: %lu bHash: %lu cHash: %lu\n", a_hash, b_hash,
+                    c_hash);
         arts_shutdown();
         return;
       }
@@ -281,12 +287,12 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
   c_tile = (double **)calloc(num_tiles, sizeof(double *));
 
   for (unsigned int i = 0; i < num_tiles; i++) {
-    a_tile[i] = (double *)arts_db_create_with_guid(arts_guid_range_get(a_tile_guids, i),
-                                              tile_size * sizeof(double), NULL);
-    b_tile[i] = (double *)arts_db_create_with_guid(arts_guid_range_get(b_tile_guids, i),
-                                              tile_size * sizeof(double), NULL);
-    c_tile[i] = (double *)arts_db_create_with_guid(arts_guid_range_get(c_tile_guids, i),
-                                              tile_size * sizeof(double), NULL);
+    a_tile[i] = (double *)arts_db_create_with_guid(
+        arts_guid_range_get(a_tile_guids, i), tile_size * sizeof(double), NULL);
+    b_tile[i] = (double *)arts_db_create_with_guid(
+        arts_guid_range_get(b_tile_guids, i), tile_size * sizeof(double), NULL);
+    c_tile[i] = (double *)arts_db_create_with_guid(
+        arts_guid_range_get(c_tile_guids, i), tile_size * sizeof(double), NULL);
     for (unsigned int j = 0; j < tile_size; j++) {
       a_tile[i][j] = 1.0;
       b_tile[i][j] = 2.0;
@@ -297,12 +303,12 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
   arts_printf(HLINE);
   int bytes_per_word = sizeof(double);
   arts_printf("This system uses %d bytes per DOUBLE PRECISION word.\n",
-         bytes_per_word);
+              bytes_per_word);
   arts_printf(HLINE);
 
   arts_printf("Array size = %d, Offset = %d\n", N, OFFSET);
   arts_printf("Total memory required = %.1f MB.\n",
-         (3.0 * bytes_per_word) * ((double)N / 1048576.0));
+              (3.0 * bytes_per_word) * ((double)N / 1048576.0));
   arts_printf("Each test is run %d times, but only\n", NTIMES);
   arts_printf("the *best* time for each is used.\n");
   arts_printf(HLINE);
@@ -325,7 +331,7 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
   t = 1.0E6 * (mysecond() - t);
 
   arts_printf("Each test below will take on the order of %d microseconds.\n",
-         (int)t);
+              (int)t);
   arts_printf("   (= %d clock ticks)\n", (int)(t / quantum));
   arts_printf("Increase the size of the arrays if this shows that\n");
   arts_printf("you are not getting at least 20 clock ticks per test.\n");

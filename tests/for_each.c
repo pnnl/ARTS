@@ -65,7 +65,7 @@ void check(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 void edt_func(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-             arts_edt_dep_t depv[]) {
+              arts_edt_dep_t depv[]) {
   (void)depc;
   (void)paramc;
   unsigned int index = paramv[0];
@@ -83,10 +83,12 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
   arts_guid_t check_guid =
-      arts_edt_create(check, 0, NULL, elems_per_node * arts_get_total_nodes(), &(arts_hint_t){.route = 0});
+      arts_edt_create(check, 0, NULL, elems_per_node * arts_get_total_nodes(),
+                      &(arts_hint_t){.route = 0});
   arts_guid_t guid = arts_new_array_db(&array, sizeof(unsigned int),
-                                   elems_per_node * arts_get_total_nodes());
-  arts_for_each_in_array_db_at_data(array, 1, edt_func, 1, (uint64_t *)&check_guid);
+                                       elems_per_node * arts_get_total_nodes());
+  arts_for_each_in_array_db_at_data(array, 1, edt_func, 1,
+                                    (uint64_t *)&check_guid);
   //        arts_for_each_in_array_db(array, edt_func, 1, &check_guid);
 }
 

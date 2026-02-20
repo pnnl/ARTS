@@ -64,7 +64,7 @@ void dummy(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 void start_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-              arts_edt_dep_t depv[]) {
+               arts_edt_dep_t depv[]) {
   (void)depc;
   (void)depv;
   (void)paramc;
@@ -73,22 +73,22 @@ void start_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   unsigned int result = 0;
   unsigned int *data_ptr = &result;
-  args[0] = arts_allocate_local_buffer((void **)&data_ptr, sizeof(unsigned int), 1,
-                                    NULL_GUID);
+  args[0] = arts_allocate_local_buffer((void **)&data_ptr, sizeof(unsigned int),
+                                       1, NULL_GUID);
   args[1] = sizeof(unsigned int);
 
   unsigned int buffer_size = sizeof(unsigned int) * 5;
   unsigned int *data = (unsigned int *)calloc(1, buffer_size);
   for (unsigned int i = 0; i < 5; i++) {
     data[i] = i;
-}
+  }
   args[2] = buffer_size;
 
   void *data_copy = malloc(buffer_size);
   memcpy(data_copy, data, buffer_size);
   unsigned int target = (arts_get_current_node() + 1) % arts_get_total_nodes();
-  arts_guid_t am = arts_edt_create(dummy, 3, args, 1,
-      &(arts_hint_t){.route = target});
+  arts_guid_t am =
+      arts_edt_create(dummy, 3, args, 1, &(arts_hint_t){.route = target});
   arts_signal_edt_ptr(am, 0, data_copy, buffer_size);
 
   while (!result) {

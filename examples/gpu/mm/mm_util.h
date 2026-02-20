@@ -47,7 +47,7 @@ extern "C" {
 void print_matrix(unsigned int row_size, double *mat);
 void init_matrix(unsigned int row_size, double *mat, bool identity, bool zero);
 void copy_block(unsigned int x, unsigned int y, unsigned int tile_row_size,
-               double *tile, unsigned int row_size, double *mat, bool to_tile);
+                double *tile, unsigned int row_size, double *mat, bool to_tile);
 
 #ifdef __cplusplus
 }

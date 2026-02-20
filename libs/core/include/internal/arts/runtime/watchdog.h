@@ -64,7 +64,7 @@ void arts_watchdog_check(void);
 #else
 
 #define arts_watchdog_init(t) ((void)0)
-#define arts_watchdog_tick()  ((void)0)
+#define arts_watchdog_tick() ((void)0)
 #define arts_watchdog_check() ((void)0)
 
 #endif /* ARTS_WATCHDOG_ENABLED */

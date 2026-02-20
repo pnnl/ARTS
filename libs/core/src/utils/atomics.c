@@ -40,35 +40,37 @@
 #include "arts/utils/atomics.h"
 
 unsigned int arts_atomic_swap(volatile unsigned int *destination,
-                            unsigned int swap_in) {
+                              unsigned int swap_in) {
   return __sync_lock_test_and_set(destination, swap_in);
 }
 
-uint64_t arts_atomic_swap_u64(volatile uint64_t *destination, uint64_t swap_in) {
+uint64_t arts_atomic_swap_u64(volatile uint64_t *destination,
+                              uint64_t swap_in) {
   return __sync_lock_test_and_set(destination, swap_in);
 }
 
-volatile void *arts_atomic_swap_ptr(volatile void **destination, void *swap_in) {
+volatile void *arts_atomic_swap_ptr(volatile void **destination,
+                                    void *swap_in) {
   return __sync_lock_test_and_set(destination, swap_in);
 }
 
 unsigned int arts_atomic_add(volatile unsigned int *destination,
-                           unsigned int add_val) {
+                             unsigned int add_val) {
   return __sync_add_and_fetch(destination, add_val);
 }
 
 unsigned int arts_atomic_fetch_add(volatile unsigned int *destination,
-                                unsigned int add_val) {
+                                   unsigned int add_val) {
   return __sync_fetch_and_add(destination, add_val);
 }
 
 uint64_t arts_atomic_fetch_add_u64(volatile uint64_t *destination,
-                               uint64_t add_val) {
+                                   uint64_t add_val) {
   return __sync_fetch_and_add(destination, add_val);
 }
 
 uint64_t arts_atomic_fetch_sub_u64(volatile uint64_t *destination,
-                               uint64_t sub_val) {
+                                   uint64_t sub_val) {
   return __sync_fetch_and_sub(destination, sub_val);
 }
 
@@ -81,22 +83,22 @@ uint64_t arts_atomic_sub_u64(volatile uint64_t *destination, uint64_t sub_val) {
 }
 
 unsigned int arts_atomic_sub(volatile unsigned int *destination,
-                           unsigned int sub_val) {
+                             unsigned int sub_val) {
   return __sync_sub_and_fetch(destination, sub_val);
 }
 
 unsigned int arts_atomic_cswap(volatile unsigned int *destination,
-                             unsigned int old_val, unsigned int swap_in) {
+                               unsigned int old_val, unsigned int swap_in) {
   return __sync_val_compare_and_swap(destination, old_val, swap_in);
 }
 
 uint64_t arts_atomic_cswap_u64(volatile uint64_t *destination, uint64_t old_val,
-                            uint64_t swap_in) {
+                               uint64_t swap_in) {
   return __sync_val_compare_and_swap(destination, old_val, swap_in);
 }
 
 volatile void *arts_atomic_cswap_ptr(volatile void **destination, void *old_val,
-                                  void *swap_in) {
+                                     void *swap_in) {
   return __sync_val_compare_and_swap(destination, old_val, swap_in);
 }
 
@@ -107,7 +109,7 @@ bool arts_atomic_swap_bool(volatile bool *destination, bool value) {
 bool arts_lock(volatile unsigned int *lock) {
   while (arts_atomic_cswap(lock, 0U, 1U) == 1U) {
     ;
-}
+  }
   return true;
 }
 
@@ -121,40 +123,41 @@ bool arts_try_lock(volatile unsigned int *lock) {
 }
 
 uint64_t arts_atomic_fetch_and_u64(volatile uint64_t *destination,
-                               uint64_t add_val) {
+                                   uint64_t add_val) {
   return __sync_fetch_and_and(destination, add_val);
 }
 
-uint64_t arts_atomic_fetch_or_u64(volatile uint64_t *destination, uint64_t add_val) {
+uint64_t arts_atomic_fetch_or_u64(volatile uint64_t *destination,
+                                  uint64_t add_val) {
   return __sync_fetch_and_or(destination, add_val);
 }
 
 uint64_t arts_atomic_fetch_x_or_u64(volatile uint64_t *destination,
-                               uint64_t add_val) // @awmm
+                                    uint64_t add_val) // @awmm
 {
   return __sync_fetch_and_xor(destination, add_val);
 }
 
 unsigned int arts_atomic_fetch_or(volatile unsigned int *destination,
-                               unsigned int add_val) {
+                                  unsigned int add_val) {
   return __sync_fetch_and_or(destination, add_val);
 }
 
 unsigned int arts_atomic_fetch_and(volatile unsigned int *destination,
-                                unsigned int add_val) {
+                                   unsigned int add_val) {
   return __sync_fetch_and_and(destination, add_val);
 }
 
 void arts_reader_lock(volatile unsigned int *read_lock,
-                    const volatile unsigned int *write_lock) {
+                      const volatile unsigned int *write_lock) {
   while (1) {
     while (*write_lock) {
       ;
-}
+    }
     arts_atomic_fetch_add(read_lock, 1U);
     if (*write_lock == 0) {
       break;
-}
+    }
     arts_atomic_sub(read_lock, 1U);
   }
 }
@@ -164,21 +167,21 @@ void arts_reader_unlock(volatile unsigned int *read_lock) {
 }
 
 void arts_writer_lock(const volatile unsigned int *read_lock,
-                    volatile unsigned int *write_lock) {
+                      volatile unsigned int *write_lock) {
   while (arts_atomic_cswap(write_lock, 0U, 1U) != 0U) {
     ;
-}
+  }
   while ((*read_lock)) {
     ;
-}
   }
+}
 
 bool arts_writer_try_lock(const volatile unsigned int *read_lock,
-                       volatile unsigned int *write_lock) {
+                          volatile unsigned int *write_lock) {
   if (arts_atomic_cswap(write_lock, 0U, 1U) == 0U) {
     while (*read_lock) {
       ;
-}
+    }
     return true;
   }
   return false;

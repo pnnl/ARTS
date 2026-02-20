@@ -50,7 +50,8 @@
 #include "arts/system/arts_print.h"
 #include "arts/system/config.h"
 
-static int arts_shell_quote(const char *input, char *output, size_t output_size) {
+static int arts_shell_quote(const char *input, char *output,
+                            size_t output_size) {
   size_t out_index = 0;
 
   if (output_size < 3) {
@@ -107,7 +108,8 @@ void arts_remote_launcher_ssh_startup_processes(
   binary_name[0] = '\0';
 
   // Try to get the current executable path
-  ssize_t self_exe_len = readlink("/proc/self/exe", self_exe, sizeof(self_exe) - 1);
+  ssize_t self_exe_len =
+      readlink("/proc/self/exe", self_exe, sizeof(self_exe) - 1);
   if (self_exe_len != -1) {
     self_exe[self_exe_len] = '\0';
   } else if (argc > 0 && argv && argv[0]) {
@@ -126,8 +128,9 @@ void arts_remote_launcher_ssh_startup_processes(
   }
   if (base_ptr && base_ptr[0] != '\0') {
     size_t base_len = strlen(base_ptr);
-    size_t copy_len =
-        (base_len < sizeof(binary_name) - 1) ? base_len : sizeof(binary_name) - 1;
+    size_t copy_len = (base_len < sizeof(binary_name) - 1)
+                          ? base_len
+                          : sizeof(binary_name) - 1;
     memcpy(binary_name, base_ptr, copy_len);
     binary_name[copy_len] = '\0';
   }
@@ -159,7 +162,7 @@ void arts_remote_launcher_ssh_startup_processes(
         char *argv_slash = strrchr(argv[0], '/');
         if (argv_slash) {
           argv_base = argv_slash + 1;
-}
+        }
 
         // Limit to 15 chars for pkill
         char pkill_name[16];
@@ -193,7 +196,8 @@ void arts_remote_launcher_ssh_startup_processes(
               snprintf(command + final_length, sizeof(command) - final_length,
                        "LD_LIBRARY_PATH=%s ", ld_library_path);
         }
-        // Pass ARTS_RANK to tell spawned process its rank (prevents recursive spawning)
+        // Pass ARTS_RANK to tell spawned process its rank (prevents recursive
+        // spawning)
         final_length +=
             snprintf(command + final_length, sizeof(command) - final_length,
                      "ARTS_RANK=%d ", i);
@@ -208,8 +212,9 @@ void arts_remote_launcher_ssh_startup_processes(
         }
       } else {
         // Fallback: attempt to use argv if available, otherwise just cd
-        final_length += snprintf(command + final_length,
-                                sizeof(command) - final_length, "cd %s && ", cwd);
+        final_length +=
+            snprintf(command + final_length, sizeof(command) - final_length,
+                     "cd %s && ", cwd);
         // Pass through arts_config environment variable if set
         char *arts_config_env = getenv("ARTS_CONFIG");
         if (arts_config_env) {
@@ -224,7 +229,8 @@ void arts_remote_launcher_ssh_startup_processes(
               snprintf(command + final_length, sizeof(command) - final_length,
                        "LD_LIBRARY_PATH=%s ", ld_library_path);
         }
-        // Pass ARTS_RANK to tell spawned process its rank (prevents recursive spawning)
+        // Pass ARTS_RANK to tell spawned process its rank (prevents recursive
+        // spawning)
         final_length +=
             snprintf(command + final_length, sizeof(command) - final_length,
                      "ARTS_RANK=%d ", i);
@@ -239,13 +245,15 @@ void arts_remote_launcher_ssh_startup_processes(
     // Null-terminate
     command[final_length] = '\0';
 
-    if (arts_shell_quote(command, quoted_command, sizeof(quoted_command)) != 0) {
+    if (arts_shell_quote(command, quoted_command, sizeof(quoted_command)) !=
+        0) {
       continue;
     }
 
     int wrapped_length = snprintf(wrapped_command, sizeof(wrapped_command),
-                                 "sh -c %s", quoted_command);
-    if (wrapped_length < 0 || (size_t)wrapped_length >= sizeof(wrapped_command)) {
+                                  "sh -c %s", quoted_command);
+    if (wrapped_length < 0 ||
+        (size_t)wrapped_length >= sizeof(wrapped_command)) {
       continue;
     }
 

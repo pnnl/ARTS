@@ -11,7 +11,8 @@ __device__ vertex_t *get_col_ptr_gpu(csr_graph_t *csr) {
   return get_row_ptr_gpu(csr) + csr->num_local_vertices + 1;
 }
 
-__device__ unsigned int get_owner_gpu(vertex_t v, const csr_graph_t *const part) {
+__device__ unsigned int get_owner_gpu(vertex_t v,
+                                      const csr_graph_t *const part) {
   return (unsigned int)(v / part->block_sz);
 }
 

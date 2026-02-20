@@ -57,16 +57,17 @@ void check(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 void gather_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                arts_edt_dep_t depv[]) {
+                 arts_edt_dep_t depv[]) {
   (void)depc;
   (void)depv;
   (void)paramc;
   (void)paramv;
   arts_printf("Gather task\n");
-  arts_guid_t edt_guid = arts_edt_create(check, 0, NULL, elements, &(arts_hint_t){.route = 0});
+  arts_guid_t edt_guid =
+      arts_edt_create(check, 0, NULL, elements, &(arts_hint_t){.route = 0});
   for (unsigned int i = 0; i < elements; i++) {
     arts_get_from_array_db(edt_guid, i, array, i);
-}
+  }
 }
 
 void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -76,7 +77,8 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
   char **argv = (char **)paramv[1];
   elements = (unsigned int)strtol(argv[1], NULL, 10);
-  arts_guid_t gather_guid = arts_edt_create(gather_task, 0, 0, 1, &(arts_hint_t){.route = 0});
+  arts_guid_t gather_guid =
+      arts_edt_create(gather_task, 0, 0, 1, &(arts_hint_t){.route = 0});
   arts_initialize_and_start_epoch(gather_guid, 0);
   array_guid = arts_new_array_db(&array, sizeof(unsigned int), elements);
   for (unsigned int i = 0; i < elements; i++) {

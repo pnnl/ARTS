@@ -39,8 +39,8 @@
 #include "buffer.h"
 
 #include "arts.h"
-#include <stdlib.h>
 #include "arts/gpu/gpu_runtime.cuh"
+#include <stdlib.h>
 
 #define NUMBUFFERS 2
 
@@ -57,37 +57,38 @@ void create_buffers_on_cpu(unsigned int size) {
   unsigned int num_gpus = arts_get_total_gpus();
   unsigned int node_id = arts_get_current_node();
 
-  cpu_buffer_ptr =
-      (unsigned int **)calloc(NUMBUFFERS, sizeof(unsigned int *));
+  cpu_buffer_ptr = (unsigned int **)calloc(NUMBUFFERS, sizeof(unsigned int *));
   for (unsigned int i = 0; i < NUMBUFFERS; i++) {
     cpu_buffer_ptr[i] = (unsigned int *)calloc(size, sizeof(unsigned int));
-}
+  }
 
   gpu_buffer_ptr =
       (unsigned int ***)calloc(NUMBUFFERS, sizeof(unsigned int **));
   for (unsigned int i = 0; i < NUMBUFFERS; i++) {
     gpu_buffer_ptr[i] =
         (unsigned int **)calloc(num_gpus, sizeof(unsigned int *));
-}
+  }
 
   master_buffer_guids = (arts_guid_t *)calloc(num_nodes, sizeof(arts_guid_t));
   for (unsigned int i = 0; i < num_nodes; i++) {
     master_buffer_guids[i] = arts_guid_reserve(ARTS_DB, i);
-}
+  }
 
   buffer_guids = (arts_guid_t *)arts_db_create_with_guid(
-      master_buffer_guids[node_id], sizeof(arts_guid_t) * num_nodes * NUMBUFFERS, NULL);
+      master_buffer_guids[node_id],
+      sizeof(arts_guid_t) * num_nodes * NUMBUFFERS, NULL);
   for (unsigned int i = 0; i < NUMBUFFERS; i++) {
     for (unsigned int j = 0; j < num_nodes; j++) {
-      buffer_guids[(i * num_nodes) + j] = arts_guid_reserve(ARTS_DB_GPU_READ, j);
-}
+      buffer_guids[(i * num_nodes) + j] =
+          arts_guid_reserve(ARTS_DB_GPU_READ, j);
+    }
   }
 }
 
 void create_buffers_on_gpu(unsigned int gpu, unsigned int size) {
   if (!gpu_buffer_ptr) {
     arts_printf("Must run create_buffers_on_cpu first!\n");
-}
+  }
 
   for (unsigned int i = 0; i < NUMBUFFERS; i++) {
     gpu_buffer_ptr[i][gpu] =
@@ -108,7 +109,7 @@ void create_buffer_db() {
         sizeof(unsigned int *) * (num_gpus + 1), NULL);
     for (uint64_t i = 0; i < num_gpus; i++) {
       buffer_ptr[j][i] = gpu_buffer_ptr[j][i];
-}
+    }
     buffer_ptr[j][num_gpus] = cpu_buffer_ptr[j];
   }
 }
@@ -116,7 +117,7 @@ void create_buffer_db() {
 void free_buffers_on_gpu(unsigned int gpu) {
   if (!gpu_buffer_ptr) {
     arts_printf("Must run create_buffers_on_cpu first!\n");
-}
+  }
 
   for (unsigned int i = 0; i < NUMBUFFERS; i++) {
     arts_cuda_free(gpu_buffer_ptr[i][gpu]);
@@ -127,7 +128,7 @@ void print_master_buffer_guids() {
   unsigned int num_nodes = arts_get_total_nodes();
   for (unsigned int i = 0; i < num_nodes; i++) {
     arts_printf("master_buffer_guids[%u]: %lu\n", i, master_buffer_guids[i]);
-}
+  }
 }
 
 void print_local_buffer_guids() {
@@ -135,7 +136,7 @@ void print_local_buffer_guids() {
   unsigned int node_id = arts_get_current_node();
   for (unsigned int i = 0; i < NUMBUFFERS; i++) {
     arts_printf("buffer_guids[%u][%u]: %lu\n", i, node_id,
-           buffer_guids[(i * num_nodes) + node_id]);
+                buffer_guids[(i * num_nodes) + node_id]);
   }
 }
 
@@ -145,14 +146,15 @@ void print_buffer_ptr() {
     for (unsigned int j = 0; j < num_gpus + 1; j++) {
       arts_printf("buffer: %u buffer_ptr[%u]: %p\n", i, j, buffer_ptr[i][j]);
     }
-}
+  }
 }
 
 void print_raw_ptr() {
   unsigned int num_gpus = arts_get_total_gpus();
   for (unsigned int i = 0; i < NUMBUFFERS; i++) {
     for (unsigned int j = 0; j < num_gpus; j++) {
-      arts_printf("buffer: %u gpu_buffer_ptr[%u]: %p\n", i, j, gpu_buffer_ptr[i][j]);
+      arts_printf("buffer: %u gpu_buffer_ptr[%u]: %p\n", i, j,
+                  gpu_buffer_ptr[i][j]);
     }
     arts_printf("buffer: %u cpu_buffer_ptr   : %p\n", i, cpu_buffer_ptr[i]);
   }
@@ -171,7 +173,7 @@ unsigned int *get_local_buffer(unsigned int index, uint64_t level) {
   unsigned int buffer_index = level % NUMBUFFERS;
   if (index == num_gpus) {
     return cpu_buffer_ptr[buffer_index];
-}
+  }
   return gpu_buffer_ptr[buffer_index][index];
 }
 
@@ -192,7 +194,7 @@ void reset_buffer(uint64_t level) {
   for (unsigned int i = 0; i < num_nodes; i++) {
     if (i != node_id) {
       arts_put_in_db_at(src, NULL_GUID, master_buffer_guids[i], -1, offset,
-                    sizeof(arts_guid_t) * num_nodes, i);
-}
+                        sizeof(arts_guid_t) * num_nodes, i);
+    }
   }
 }

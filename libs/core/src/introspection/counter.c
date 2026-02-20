@@ -46,7 +46,6 @@
 #include <unistd.h>
 
 #include "arts.h"
-#include "arts/utils/malloc.h"
 #include "arts/introspection/arts_id_counter.h"
 #include "arts/introspection/json_writer.h"
 #include "arts/network/remote.h"
@@ -55,8 +54,10 @@
 #include "arts/system/arts_print.h"
 #include "arts/system/debug.h"
 #include "arts/utils/atomics.h"
+#include "arts/utils/malloc.h"
 
-// Access to network ports for setting up inbound queues during counter collection
+// Access to network ports for setting up inbound queues during counter
+// collection
 extern unsigned int ports;
 
 // Arrays are defined as static const in Preamble.h (included via arts.h)
@@ -171,7 +172,8 @@ static void *arts_counter_capture_thread(void *args) {
       ARTS_INFO(
           "Counter capture lagging: synced_time=%lf ms, "
           "next_capture_time=%lf ms, lateBy=%lf ms, skipping %lu interval(s)",
-          (double)synced_time / 1000000.0, (double)next_capture_time / 1000000.0,
+          (double)synced_time / 1000000.0,
+          (double)next_capture_time / 1000000.0,
           (double)(-sleep_ns) / 1000000.0, intervals_behind);
       capture_epoch += intervals_behind;
       current_epoch = capture_epoch;
@@ -194,7 +196,8 @@ static void *arts_counter_capture_thread(void *args) {
           capture.epoch = current_epoch;
           capture.value = arts_counter_capture_counter(&thread_counters[i]);
           if (arts_node_info.capture_arrays[t][i]) {
-            arts_push_to_array_list(arts_node_info.capture_arrays[t][i], &capture);
+            arts_push_to_array_list(arts_node_info.capture_arrays[t][i],
+                                    &capture);
           }
         }
       }
@@ -233,7 +236,8 @@ void arts_counter_capture_start() {
       // Worker nodes: send sync request and wait for response
       arts_remote_time_sync_request();
       uint64_t timeout = arts_get_time_stamp() + 5000000000ULL; // 5 seconds
-      while (!arts_counter_time_sync_received && arts_get_time_stamp() < timeout) {
+      while (!arts_counter_time_sync_received &&
+             arts_get_time_stamp() < timeout) {
         usleep(1000); // Wait 1ms
       }
       if (!arts_counter_time_sync_received) {
@@ -246,8 +250,8 @@ void arts_counter_capture_start() {
 
     capture_thread_running = true;
 
-    int ret =
-        pthread_create(&capture_thread, NULL, arts_counter_capture_thread, NULL);
+    int ret = pthread_create(&capture_thread, NULL, arts_counter_capture_thread,
+                             NULL);
     if (ret) {
       ARTS_DEBUG("Failed to create capture thread: %d", ret);
       capture_thread_running = false;
@@ -293,9 +297,10 @@ void arts_counter_timer_end(arts_counter_t *counter) {
 }
 
 // Helper: apply one reduction step
-static inline uint64_t arts_apply_reduction(uint64_t accumulator, uint64_t value,
-                                          arts_counter_reduce_method_t reduce_method,
-                                          unsigned int source_index) {
+static inline uint64_t
+arts_apply_reduction(uint64_t accumulator, uint64_t value,
+                     arts_counter_reduce_method_t reduce_method,
+                     unsigned int source_index) {
   switch (reduce_method) {
   case ARTS_COUNTER_REDUCE_SUM:
     return accumulator + value;
@@ -341,7 +346,7 @@ static inline const char *arts_counter_mode_to_string(unsigned int mode) {
 static bool arts_counter_is_time_counter(const char *name) {
   if (!name) {
     return false;
-}
+  }
   const char *p = name;
   while (*p) {
     if ((*p == 'T' || *p == 't') && (*(p + 1) == 'I' || *(p + 1) == 'i') &&
@@ -357,11 +362,12 @@ static bool arts_counter_is_time_counter(const char *name) {
 // Helper: write capture history array to JSON as compact single line
 // Format: [[epoch, value], [epoch, value], ...]
 // Epochs are absolute (synced across nodes) for proper offline merging
-static void arts_write_capture_history(arts_json_writer_t *writer, uint64_t *epochs,
-                                    uint64_t *values, uint64_t count) {
+static void arts_write_capture_history(arts_json_writer_t *writer,
+                                       uint64_t *epochs, uint64_t *values,
+                                       uint64_t count) {
   if (count == 0) {
     return;
-}
+  }
 
   // Build compact JSON string: [[e,v],[e,v],...]
   // Estimate size: each entry is at most ~40 chars, plus brackets
@@ -373,7 +379,7 @@ static void arts_write_capture_history(arts_json_writer_t *writer, uint64_t *epo
   for (uint64_t c = 0; c < count; c++) {
     if (c > 0) {
       *p++ = ',';
-}
+    }
     p += sprintf(p, "[%llu,%llu]", (unsigned long long)epochs[c],
                  (unsigned long long)values[c]);
   }
@@ -390,7 +396,7 @@ static void arts_write_common_metadata(arts_json_writer_t *writer) {
   arts_json_writer_write_string(writer, "version", "1.7.0");
   if (arts_node_info.counter_folder) {
     arts_json_writer_write_string(writer, "counter_folder",
-                              arts_node_info.counter_folder);
+                                  arts_node_info.counter_folder);
   }
 }
 
@@ -408,7 +414,7 @@ static unsigned int arts_counters_at_level(unsigned int level) {
 
 // Helper: open output file, creating directory if needed
 static FILE *arts_open_counter_file(const char *output_folder,
-                                 const char *filename) {
+                                    const char *filename) {
   struct stat st = {0};
   if (stat(output_folder, &st) == -1) {
     mkdir(output_folder, 0755);
@@ -429,8 +435,10 @@ static void arts_close_counter_file(arts_json_writer_t *writer, FILE *fp) {
 // Helper function to compute node-level reduced value across all threads
 // Safe to call after threads have closed - uses saved_counters data
 static uint64_t arts_compute_node_reduced_value(unsigned int index) {
-  arts_counter_reduce_method_t reduce_method = arts_counter_reduce_method_array[index];
-  uint64_t node_value = (reduce_method == ARTS_COUNTER_REDUCE_MIN) ? UINT64_MAX : 0;
+  arts_counter_reduce_method_t reduce_method =
+      arts_counter_reduce_method_array[index];
+  uint64_t node_value =
+      (reduce_method == ARTS_COUNTER_REDUCE_MIN) ? UINT64_MAX : 0;
   for (unsigned int t = 0; t < arts_node_info.total_thread_count; t++) {
     arts_counter_t *saved = arts_node_info.saved_counters[t];
     if (!saved) {
@@ -445,9 +453,9 @@ static uint64_t arts_compute_node_reduced_value(unsigned int index) {
 // Helper function to compute node-level reduced captures for PERIODIC mode
 // Returns arrays of epochs and values, sets count. Caller must free both.
 static void arts_compute_node_reduced_captures(unsigned int counter_index,
-                                           uint64_t **out_epochs,
-                                           uint64_t **out_values,
-                                           uint64_t *out_count) {
+                                               uint64_t **out_epochs,
+                                               uint64_t **out_values,
+                                               uint64_t *out_count) {
   *out_epochs = NULL;
   *out_values = NULL;
   *out_count = 0;
@@ -455,7 +463,8 @@ static void arts_compute_node_reduced_captures(unsigned int counter_index,
   // Find the max number of captures across all threads
   uint64_t max_captures = 0;
   for (unsigned int t = 0; t < arts_node_info.total_thread_count; t++) {
-    arts_array_list_t *thread_list = arts_node_info.capture_arrays[t][counter_index];
+    arts_array_list_t *thread_list =
+        arts_node_info.capture_arrays[t][counter_index];
     if (thread_list && thread_list->index > max_captures) {
       max_captures = thread_list->index;
     }
@@ -470,17 +479,22 @@ static void arts_compute_node_reduced_captures(unsigned int counter_index,
   *out_values = (uint64_t *)arts_malloc(max_captures * sizeof(uint64_t));
 
   // Create iterators for all threads
-  arts_array_list_iterator_t **iters = (arts_array_list_iterator_t **)arts_calloc(
-      arts_node_info.total_thread_count, sizeof(arts_array_list_iterator_t *));
-  arts_counter_capture_t **current_captures = (arts_counter_capture_t **)arts_calloc(
-      arts_node_info.total_thread_count, sizeof(arts_counter_capture_t *));
+  arts_array_list_iterator_t **iters =
+      (arts_array_list_iterator_t **)arts_calloc(
+          arts_node_info.total_thread_count,
+          sizeof(arts_array_list_iterator_t *));
+  arts_counter_capture_t **current_captures =
+      (arts_counter_capture_t **)arts_calloc(arts_node_info.total_thread_count,
+                                             sizeof(arts_counter_capture_t *));
 
   for (unsigned int t = 0; t < arts_node_info.total_thread_count; t++) {
-    arts_array_list_t *thread_list = arts_node_info.capture_arrays[t][counter_index];
+    arts_array_list_t *thread_list =
+        arts_node_info.capture_arrays[t][counter_index];
     if (thread_list && thread_list->index > 0) {
       iters[t] = arts_new_array_list_iterator(thread_list);
       if (arts_array_list_has_next(iters[t])) {
-        current_captures[t] = (arts_counter_capture_t *)arts_array_list_next(iters[t]);
+        current_captures[t] =
+            (arts_counter_capture_t *)arts_array_list_next(iters[t]);
       }
     }
   }
@@ -497,7 +511,7 @@ static void arts_compute_node_reduced_captures(unsigned int counter_index,
     }
     if (min_epoch == UINT64_MAX) {
       break;
-}
+    }
 
     // Reduce all captures at this epoch
     arts_counter_reduce_method_t reduce_method =
@@ -552,18 +566,19 @@ static void artsWriteArtsIdMetrics(arts_json_writer_t *writer,
       if (table->edt_metrics[i].valid) {
         arts_json_writer_begin_object(writer, NULL);
         arts_json_writer_write_u_int64(writer, "arts_id",
-                                  table->edt_metrics[i].arts_id);
+                                       table->edt_metrics[i].arts_id);
         arts_json_writer_write_u_int64(writer, "invocations",
-                                  table->edt_metrics[i].invocations);
+                                       table->edt_metrics[i].invocations);
         arts_json_writer_write_u_int64(writer, "total_exec_ns",
-                                  table->edt_metrics[i].total_exec_ns);
+                                       table->edt_metrics[i].total_exec_ns);
         arts_json_writer_write_u_int64(writer, "total_stall_ns",
-                                  table->edt_metrics[i].total_stall_ns);
+                                       table->edt_metrics[i].total_stall_ns);
         arts_json_writer_end_object(writer);
       }
     }
     arts_json_writer_end_array(writer);
-    arts_json_writer_write_u_int64(writer, "edt_collisions", table->edt_collisions);
+    arts_json_writer_write_u_int64(writer, "edt_collisions",
+                                   table->edt_collisions);
   }
 
   if (writeDb) {
@@ -572,20 +587,21 @@ static void artsWriteArtsIdMetrics(arts_json_writer_t *writer,
       if (table->db_metrics[i].valid) {
         arts_json_writer_begin_object(writer, NULL);
         arts_json_writer_write_u_int64(writer, "arts_id",
-                                  table->db_metrics[i].arts_id);
+                                       table->db_metrics[i].arts_id);
         arts_json_writer_write_u_int64(writer, "invocations",
-                                  table->db_metrics[i].invocations);
+                                       table->db_metrics[i].invocations);
         arts_json_writer_write_u_int64(writer, "bytes_local",
-                                  table->db_metrics[i].bytes_local);
+                                       table->db_metrics[i].bytes_local);
         arts_json_writer_write_u_int64(writer, "bytes_remote",
-                                  table->db_metrics[i].bytes_remote);
+                                       table->db_metrics[i].bytes_remote);
         arts_json_writer_write_u_int64(writer, "cache_misses",
-                                  table->db_metrics[i].cache_misses);
+                                       table->db_metrics[i].cache_misses);
         arts_json_writer_end_object(writer);
       }
     }
     arts_json_writer_end_array(writer);
-    arts_json_writer_write_u_int64(writer, "db_collisions", table->db_collisions);
+    arts_json_writer_write_u_int64(writer, "db_collisions",
+                                   table->db_collisions);
   }
 
   arts_json_writer_end_object(writer);
@@ -593,17 +609,19 @@ static void artsWriteArtsIdMetrics(arts_json_writer_t *writer,
 #endif
 
 static void arts_counter_write_thread(const char *output_folder,
-                                   unsigned int node_id, unsigned int thread_id) {
+                                      unsigned int node_id,
+                                      unsigned int thread_id) {
   if (!arts_counters_at_level(ARTS_COUNTER_LEVEL_THREAD)) {
     return;
-}
+  }
 
   char filename[64];
-  (void)snprintf(filename, sizeof(filename), "n%u_t%u.json", node_id, thread_id);
+  (void)snprintf(filename, sizeof(filename), "n%u_t%u.json", node_id,
+                 thread_id);
   FILE *fp = arts_open_counter_file(output_folder, filename);
   if (!fp) {
     return;
-}
+  }
 
   arts_json_writer_t writer;
   arts_json_writer_init(&writer, fp, 2);
@@ -615,7 +633,7 @@ static void arts_counter_write_thread(const char *output_folder,
   arts_json_writer_write_u_int64(&writer, "thread_id", thread_id);
   arts_write_common_metadata(&writer);
   arts_json_writer_write_u_int64(&writer, "counter_capture_interval",
-                            arts_node_info.counter_capture_interval);
+                                 arts_node_info.counter_capture_interval);
   arts_json_writer_end_object(&writer);
 
   // Counters
@@ -625,11 +643,12 @@ static void arts_counter_write_thread(const char *output_folder,
     if (arts_counter_mode_array[i] == ARTS_COUNTER_MODE_OFF ||
         arts_counter_level_array[i] != ARTS_COUNTER_LEVEL_THREAD) {
       continue;
-}
+    }
 
     arts_json_writer_begin_object(&writer, arts_counter_names[i]);
-    arts_json_writer_write_string(&writer, "captureMode",
-                              arts_counter_mode_to_string(arts_counter_mode_array[i]));
+    arts_json_writer_write_string(
+        &writer, "captureMode",
+        arts_counter_mode_to_string(arts_counter_mode_array[i]));
     arts_json_writer_write_string(&writer, "captureLevel", "THREAD");
 
     // Always write final value
@@ -637,16 +656,18 @@ static void arts_counter_write_thread(const char *output_folder,
     arts_json_writer_write_u_int64(&writer, "value", final_value);
     if (arts_counter_is_time_counter(arts_counter_names[i])) {
       arts_json_writer_write_double(&writer, "value_ms",
-                                (double)final_value / 1000000.0);
+                                    (double)final_value / 1000000.0);
     }
 
     if (arts_counter_mode_array[i] == ARTS_COUNTER_MODE_PERIODIC) {
-      arts_array_list_t *capture_list = arts_node_info.capture_arrays[thread_id][i];
+      arts_array_list_t *capture_list =
+          arts_node_info.capture_arrays[thread_id][i];
       if (capture_list && capture_list->index > 0) {
         uint64_t count = capture_list->index;
         uint64_t *epochs = (uint64_t *)arts_malloc(count * sizeof(uint64_t));
         uint64_t *values = (uint64_t *)arts_malloc(count * sizeof(uint64_t));
-        arts_array_list_iterator_t *iter = arts_new_array_list_iterator(capture_list);
+        arts_array_list_iterator_t *iter =
+            arts_new_array_list_iterator(capture_list);
         for (uint64_t idx = 0; arts_array_list_has_next(iter) && idx < count;
              idx++) {
           arts_counter_capture_t *cap =
@@ -669,7 +690,8 @@ static void arts_counter_write_thread(const char *output_folder,
 #if ENABLE_ARTS_ID_EDT_METRICS || ENABLE_ARTS_ID_DB_METRICS
   bool edtThread =
       arts_counter_mode_array[ARTS_ID_EDT_METRICS] != ARTS_COUNTER_MODE_OFF &&
-      arts_counter_level_array[ARTS_ID_EDT_METRICS] == ARTS_COUNTER_LEVEL_THREAD;
+      arts_counter_level_array[ARTS_ID_EDT_METRICS] ==
+          ARTS_COUNTER_LEVEL_THREAD;
   bool dbThread =
       arts_counter_mode_array[ARTS_ID_DB_METRICS] != ARTS_COUNTER_MODE_OFF &&
       arts_counter_level_array[ARTS_ID_DB_METRICS] == ARTS_COUNTER_LEVEL_THREAD;
@@ -684,19 +706,19 @@ static void arts_counter_write_thread(const char *output_folder,
 }
 
 static void arts_counter_write_node(const char *output_folder,
-                                 unsigned int node_id) {
+                                    unsigned int node_id) {
   // Write if we have NODE-level counters OR CLUSTER-level counters
   if (!arts_counters_at_level(ARTS_COUNTER_LEVEL_NODE) &&
       !arts_counters_at_level(ARTS_COUNTER_LEVEL_CLUSTER)) {
     return;
-}
+  }
 
   char filename[64];
   (void)snprintf(filename, sizeof(filename), "n%u.json", node_id);
   FILE *fp = arts_open_counter_file(output_folder, filename);
   if (!fp) {
     return;
-}
+  }
 
   arts_json_writer_t writer;
   arts_json_writer_init(&writer, fp, 2);
@@ -707,9 +729,9 @@ static void arts_counter_write_node(const char *output_folder,
   arts_json_writer_write_u_int64(&writer, "node_id", node_id);
   arts_write_common_metadata(&writer);
   arts_json_writer_write_u_int64(&writer, "captureInterval",
-                            arts_node_info.counter_capture_interval);
+                                 arts_node_info.counter_capture_interval);
   arts_json_writer_write_u_int64(&writer, "total_threads",
-                            arts_node_info.total_thread_count);
+                                 arts_node_info.total_thread_count);
   arts_json_writer_end_object(&writer);
 
   // Counters
@@ -718,11 +740,12 @@ static void arts_counter_write_node(const char *output_folder,
     if (arts_counter_mode_array[i] == ARTS_COUNTER_MODE_OFF ||
         arts_counter_level_array[i] != ARTS_COUNTER_LEVEL_NODE) {
       continue;
-}
+    }
 
     arts_json_writer_begin_object(&writer, arts_counter_names[i]);
-    arts_json_writer_write_string(&writer, "captureMode",
-                              arts_counter_mode_to_string(arts_counter_mode_array[i]));
+    arts_json_writer_write_string(
+        &writer, "captureMode",
+        arts_counter_mode_to_string(arts_counter_mode_array[i]));
     arts_json_writer_write_string(&writer, "captureLevel", "NODE");
     arts_json_writer_write_string(
         &writer, "reduce_method",
@@ -732,7 +755,7 @@ static void arts_counter_write_node(const char *output_folder,
     arts_json_writer_write_u_int64(&writer, "value", final_value);
     if (arts_counter_is_time_counter(arts_counter_names[i])) {
       arts_json_writer_write_double(&writer, "value_ms",
-                                (double)final_value / 1000000.0);
+                                    (double)final_value / 1000000.0);
     }
 
     if (arts_counter_mode_array[i] == ARTS_COUNTER_MODE_PERIODIC) {
@@ -743,32 +766,35 @@ static void arts_counter_write_node(const char *output_folder,
       arts_write_capture_history(&writer, epochs, values, count);
       if (epochs) {
         arts_free(epochs);
-}
+      }
       if (values) {
         arts_free(values);
-}
+      }
     }
     arts_json_writer_end_object(&writer);
   }
 
-  // Write CLUSTER-level counters (node-reduced values for later cluster reduction)
-  // These will be read by master node for file-based cluster aggregation
+  // Write CLUSTER-level counters (node-reduced values for later cluster
+  // reduction) These will be read by master node for file-based cluster
+  // aggregation
   for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
     if (arts_counter_mode_array[i] == ARTS_COUNTER_MODE_OFF ||
         arts_counter_level_array[i] != ARTS_COUNTER_LEVEL_CLUSTER) {
       continue;
-}
+    }
 
     // MASTER reduce method counters: only emit on master node
-    // Workers don't need to emit these since cluster reduction uses master's value only
+    // Workers don't need to emit these since cluster reduction uses master's
+    // value only
     if (arts_counter_reduce_method_array[i] == ARTS_COUNTER_REDUCE_MASTER &&
         arts_global_rank_id != arts_global_master_rank_id) {
       continue;
-}
+    }
 
     arts_json_writer_begin_object(&writer, arts_counter_names[i]);
-    arts_json_writer_write_string(&writer, "captureMode",
-                              arts_counter_mode_to_string(arts_counter_mode_array[i]));
+    arts_json_writer_write_string(
+        &writer, "captureMode",
+        arts_counter_mode_to_string(arts_counter_mode_array[i]));
     arts_json_writer_write_string(&writer, "captureLevel", "CLUSTER");
     arts_json_writer_write_string(
         &writer, "reduce_method",
@@ -778,7 +804,7 @@ static void arts_counter_write_node(const char *output_folder,
     arts_json_writer_write_u_int64(&writer, "value", final_value);
     if (arts_counter_is_time_counter(arts_counter_names[i])) {
       arts_json_writer_write_double(&writer, "value_ms",
-                                (double)final_value / 1000000.0);
+                                    (double)final_value / 1000000.0);
     }
 
     if (arts_counter_mode_array[i] == ARTS_COUNTER_MODE_PERIODIC) {
@@ -789,10 +815,10 @@ static void arts_counter_write_node(const char *output_folder,
       arts_write_capture_history(&writer, epochs, values, count);
       if (epochs) {
         arts_free(epochs);
-}
+      }
       if (values) {
         arts_free(values);
-}
+      }
     }
     arts_json_writer_end_object(&writer);
   }
@@ -803,15 +829,16 @@ static void arts_counter_write_node(const char *output_folder,
   bool edtNode =
       arts_counter_mode_array[ARTS_ID_EDT_METRICS] != ARTS_COUNTER_MODE_OFF &&
       arts_counter_level_array[ARTS_ID_EDT_METRICS] == ARTS_COUNTER_LEVEL_NODE;
-  bool dbNode = arts_counter_mode_array[ARTS_ID_DB_METRICS] != ARTS_COUNTER_MODE_OFF &&
-                arts_counter_level_array[ARTS_ID_DB_METRICS] == ARTS_COUNTER_LEVEL_NODE;
+  bool dbNode =
+      arts_counter_mode_array[ARTS_ID_DB_METRICS] != ARTS_COUNTER_MODE_OFF &&
+      arts_counter_level_array[ARTS_ID_DB_METRICS] == ARTS_COUNTER_LEVEL_NODE;
   if (edtNode || dbNode) {
     // Use thread 0's metrics as representative for node level
     // TODO: implement proper node-level reduction of arts_id metrics
     if (arts_node_info.saved_counters[0]) {
-      artsWriteArtsIdMetrics(&writer,
-                             &arts_node_info.saved_counters[0]->artsIdMetricsTable,
-                             edtNode, dbNode);
+      artsWriteArtsIdMetrics(
+          &writer, &arts_node_info.saved_counters[0]->artsIdMetricsTable,
+          edtNode, dbNode);
     }
   }
 #endif
@@ -821,10 +848,10 @@ static void arts_counter_write_node(const char *output_folder,
 
 // Unified counter write function - single entry point
 void arts_counter_write(const char *output_folder, unsigned int node_id,
-                      unsigned int thread_id) {
+                        unsigned int thread_id) {
   if (!output_folder) {
     return;
-}
+  }
 
   // Write thread-level counters for this thread
   arts_counter_write_thread(output_folder, node_id, thread_id);
@@ -840,11 +867,11 @@ void arts_counter_write(const char *output_folder, unsigned int node_id,
 // ============================================================================
 
 void arts_counter_record_arts_id_edt(uint64_t arts_id, uint64_t exec_ns,
-                                uint64_t stall_ns) {
+                                     uint64_t stall_ns) {
 #if ENABLE_ARTS_ID_EDT_METRICS
   if (arts_counter_mode_t[ARTS_ID_EDT_METRICS] != ARTS_COUNTER_MODE_OFF) {
     arts_id_record_edt_metrics(arts_id, exec_ns, stall_ns,
-                           &arts_thread_local_arts_id_metrics);
+                               &arts_thread_local_arts_id_metrics);
   }
 #else
   (void)arts_id;
@@ -854,11 +881,12 @@ void arts_counter_record_arts_id_edt(uint64_t arts_id, uint64_t exec_ns,
 }
 
 void arts_counter_record_arts_id_db(uint64_t arts_id, uint64_t bytes_local,
-                               uint64_t bytes_remote, uint64_t cache_misses) {
+                                    uint64_t bytes_remote,
+                                    uint64_t cache_misses) {
 #if ENABLE_ARTS_ID_DB_METRICS
   if (arts_counter_mode_t[ARTS_ID_DB_METRICS] != ARTS_COUNTER_MODE_OFF) {
     arts_id_record_db_metrics(arts_id, bytes_local, bytes_remote, cache_misses,
-                          &arts_thread_local_arts_id_metrics);
+                              &arts_thread_local_arts_id_metrics);
   }
 #else
   (void)arts_id;
@@ -869,11 +897,11 @@ void arts_counter_record_arts_id_db(uint64_t arts_id, uint64_t bytes_local,
 }
 
 void arts_counter_capture_arts_id_edt(uint64_t arts_id, uint64_t exec_ns,
-                                 uint64_t stall_ns) {
+                                      uint64_t stall_ns) {
 #if ENABLE_ARTS_ID_EDT_CAPTURES
   if (arts_counter_mode_t[ARTS_ID_EDT_CAPTURES] != ARTS_COUNTER_MODE_OFF) {
     arts_id_capture_edt_execution(arts_id, exec_ns, stall_ns,
-                              arts_thread_local_edt_capture_list);
+                                  arts_thread_local_edt_capture_list);
   }
 #else
   (void)arts_id;
@@ -883,11 +911,11 @@ void arts_counter_capture_arts_id_edt(uint64_t arts_id, uint64_t exec_ns,
 }
 
 void arts_counter_capture_arts_id_db(uint64_t arts_id, uint64_t bytes_accessed,
-                                uint8_t access_type) {
+                                     uint8_t access_type) {
 #if ENABLE_ARTS_ID_DB_CAPTURES
   if (arts_counter_mode_t[ARTS_ID_DB_CAPTURES] != ARTS_COUNTER_MODE_OFF) {
     arts_id_capture_db_access(arts_id, bytes_accessed, access_type,
-                          arts_thread_local_db_capture_list);
+                              arts_thread_local_db_capture_list);
   }
 #else
   (void)arts_id;
@@ -915,7 +943,7 @@ typedef struct {
 static const char *arts_json_skip_whitespace(const char *p) {
   while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
     p++;
-}
+  }
   return p;
 }
 
@@ -926,12 +954,12 @@ static const char *arts_json_find_key(const char *json, const char *key) {
   const char *found = strstr(json, search_key);
   if (!found) {
     return NULL;
-}
+  }
   found += strlen(search_key);
   found = arts_json_skip_whitespace(found);
   if (*found != ':') {
     return NULL;
-}
+  }
   return arts_json_skip_whitespace(found + 1);
 }
 
@@ -943,11 +971,11 @@ static uint64_t arts_json_parse_u_int64(const char *p) {
 // Parse capture history array: [[epoch,value],[epoch,value],...]
 // Returns number of entries parsed
 static uint64_t arts_json_parse_capture_history(const char *p, uint64_t *epochs,
-                                            uint64_t *values,
-                                            uint64_t max_entries) {
+                                                uint64_t *values,
+                                                uint64_t max_entries) {
   if (!p || *p != '[') {
     return 0;
-}
+  }
   p++; // Skip opening [
 
   uint64_t count = 0;
@@ -955,11 +983,11 @@ static uint64_t arts_json_parse_capture_history(const char *p, uint64_t *epochs,
     p = arts_json_skip_whitespace(p);
     if (*p == ',') {
       p++;
-}
+    }
     p = arts_json_skip_whitespace(p);
     if (*p != '[') {
       break;
-}
+    }
     p++; // Skip inner [
 
     // Parse epoch
@@ -967,7 +995,7 @@ static uint64_t arts_json_parse_capture_history(const char *p, uint64_t *epochs,
     p = arts_json_skip_whitespace(p);
     if (*p == ',') {
       p++;
-}
+    }
     p = arts_json_skip_whitespace(p);
 
     // Parse value
@@ -975,7 +1003,7 @@ static uint64_t arts_json_parse_capture_history(const char *p, uint64_t *epochs,
     p = arts_json_skip_whitespace(p);
     if (*p == ']') {
       p++; // Skip inner ]
-}
+    }
     count++;
   }
   return count;
@@ -985,7 +1013,7 @@ static uint64_t arts_json_parse_capture_history(const char *p, uint64_t *epochs,
 static const char *arts_json_find_object_end(const char *p) {
   if (*p != '{') {
     return NULL;
-}
+  }
   int depth = 1;
   p++;
   while (*p && depth > 0) {
@@ -998,24 +1026,25 @@ static const char *arts_json_find_object_end(const char *p) {
       while (*p && *p != '"') {
         if (*p == '\\') {
           p++;
-}
+        }
         p++;
       }
     }
     if (*p) {
       p++;
-}
+    }
   }
   return p;
 }
 
 // Read and parse a node's counter JSON file
-static bool arts_read_node_counter_file(const char *filepath,
-                                    arts_cluster_counter_data_t *counter_data) {
+static bool
+arts_read_node_counter_file(const char *filepath,
+                            arts_cluster_counter_data_t *counter_data) {
   FILE *fp = fopen(filepath, "r");
   if (!fp) {
     return false;
-}
+  }
 
   // Get file size
   (void)fseek(fp, 0, SEEK_END);
@@ -1047,10 +1076,11 @@ static bool arts_read_node_counter_file(const char *filepath,
     }
 
     // Find this counter's object
-    const char *counter_obj = arts_json_find_key(counters, arts_counter_names[i]);
+    const char *counter_obj =
+        arts_json_find_key(counters, arts_counter_names[i]);
     if (!counter_obj) {
       continue;
-}
+    }
 
     // Find the end of this counter object for scoped searching
     const char *counter_end = arts_json_find_object_end(counter_obj);
@@ -1066,7 +1096,8 @@ static bool arts_read_node_counter_file(const char *filepath,
     }
 
     // Parse "captureHistory" if present
-    const char *history_ptr = arts_json_find_key(counter_json, "captureHistory");
+    const char *history_ptr =
+        arts_json_find_key(counter_json, "captureHistory");
     if (history_ptr) {
       counter_data[i].captureEpochs =
           (uint64_t *)arts_malloc(MAX_CAPTURE_HISTORY * sizeof(uint64_t));
@@ -1086,10 +1117,11 @@ static bool arts_read_node_counter_file(const char *filepath,
 
 // Merge capture histories from all nodes for a single counter
 static void arts_merge_capture_histories(arts_cluster_counter_data_t *node_data,
-                                      unsigned int node_count,
-                                      unsigned int counter_index,
-                                      uint64_t **out_epochs, uint64_t **out_values,
-                                      uint64_t *out_count) {
+                                         unsigned int node_count,
+                                         unsigned int counter_index,
+                                         uint64_t **out_epochs,
+                                         uint64_t **out_values,
+                                         uint64_t *out_count) {
   *out_epochs = NULL;
   *out_values = NULL;
   *out_count = 0;
@@ -1099,12 +1131,13 @@ static void arts_merge_capture_histories(arts_cluster_counter_data_t *node_data,
   for (unsigned int n = 0; n < node_count; n++) {
     if (node_data[(n * NUM_COUNTER_TYPES) + counter_index].captureCount >
         max_captures) {
-      max_captures = node_data[(n * NUM_COUNTER_TYPES) + counter_index].captureCount;
+      max_captures =
+          node_data[(n * NUM_COUNTER_TYPES) + counter_index].captureCount;
     }
   }
   if (max_captures == 0) {
     return;
-}
+  }
 
   // Allocate output arrays
   *out_epochs = (uint64_t *)arts_malloc(max_captures * sizeof(uint64_t));
@@ -1131,7 +1164,7 @@ static void arts_merge_capture_histories(arts_cluster_counter_data_t *node_data,
     }
     if (min_epoch == UINT64_MAX) {
       break;
-}
+    }
 
     // Reduce all values at this epoch
     uint64_t reduced_value =
@@ -1145,7 +1178,8 @@ static void arts_merge_capture_histories(arts_cluster_counter_data_t *node_data,
           data->captureEpochs[node_indices[n]] == min_epoch) {
         has_value = true;
         reduced_value = arts_apply_reduction(
-            reduced_value, data->captureValues[node_indices[n]], reduce_method, n);
+            reduced_value, data->captureValues[node_indices[n]], reduce_method,
+            n);
         node_indices[n]++;
       }
     }
@@ -1162,22 +1196,25 @@ static void arts_merge_capture_histories(arts_cluster_counter_data_t *node_data,
 }
 
 // Write cluster-aggregated counter file
-void arts_counter_write_cluster(const char *output_folder, unsigned int node_count) {
+void arts_counter_write_cluster(const char *output_folder,
+                                unsigned int node_count) {
   if (!output_folder || node_count == 0) {
     return;
-}
+  }
 
   // Check if we have any CLUSTER-level counters
   if (!arts_counters_at_level(ARTS_COUNTER_LEVEL_CLUSTER)) {
     return;
-}
+  }
 
   ARTS_INFO("Aggregating cluster counters from %u nodes", node_count);
 
   // Allocate storage for all nodes' counter data
   // Layout: node_data[node_id * NUM_COUNTER_TYPES + counter_index]
-  arts_cluster_counter_data_t *node_data = (arts_cluster_counter_data_t *)arts_calloc(
-      (size_t)node_count * NUM_COUNTER_TYPES, sizeof(arts_cluster_counter_data_t));
+  arts_cluster_counter_data_t *node_data =
+      (arts_cluster_counter_data_t *)arts_calloc(
+          (size_t)node_count * NUM_COUNTER_TYPES,
+          sizeof(arts_cluster_counter_data_t));
 
   // Read each node's JSON file, polling until all are available
   unsigned int nodes_read = 0;
@@ -1189,25 +1226,26 @@ void arts_counter_write_cluster(const char *output_folder, unsigned int node_cou
     for (unsigned int n = 0; n < node_count; n++) {
       if (node_read[n]) {
         continue;
-}
+      }
       char filepath[1024];
-      (void)snprintf(filepath, sizeof(filepath), "%s/n%u.json", output_folder, n);
-      if (arts_read_node_counter_file(filepath,
-                                  &node_data[(size_t)n * NUM_COUNTER_TYPES])) {
+      (void)snprintf(filepath, sizeof(filepath), "%s/n%u.json", output_folder,
+                     n);
+      if (arts_read_node_counter_file(
+              filepath, &node_data[(size_t)n * NUM_COUNTER_TYPES])) {
         node_read[n] = true;
         nodes_read++;
       }
     }
     if (nodes_read < node_count) {
       usleep(100000); // 100ms
-}
+    }
   }
   for (unsigned int n = 0; n < node_count; n++) {
     if (!node_read[n]) {
       ARTS_INFO("Warning: Could not read counter file for node %u after "
                 "timeout",
                 n);
-}
+    }
   }
   arts_free(node_read);
 
@@ -1235,7 +1273,7 @@ void arts_counter_write_cluster(const char *output_folder, unsigned int node_cou
   arts_json_writer_write_u_int64(&writer, "nodes_read", nodes_read);
   arts_write_common_metadata(&writer);
   arts_json_writer_write_u_int64(&writer, "captureInterval",
-                            arts_node_info.counter_capture_interval);
+                                 arts_node_info.counter_capture_interval);
   arts_json_writer_end_object(&writer);
 
   // Counters
@@ -1246,14 +1284,16 @@ void arts_counter_write_cluster(const char *output_folder, unsigned int node_cou
       continue;
     }
 
-    arts_counter_reduce_method_t reduce_method = arts_counter_reduce_method_array[i];
+    arts_counter_reduce_method_t reduce_method =
+        arts_counter_reduce_method_array[i];
 
     arts_json_writer_begin_object(&writer, arts_counter_names[i]);
-    arts_json_writer_write_string(&writer, "captureMode",
-                              arts_counter_mode_to_string(arts_counter_mode_array[i]));
+    arts_json_writer_write_string(
+        &writer, "captureMode",
+        arts_counter_mode_to_string(arts_counter_mode_array[i]));
     arts_json_writer_write_string(&writer, "captureLevel", "CLUSTER");
     arts_json_writer_write_string(&writer, "reduce_method",
-                              arts_reduce_method_to_string(reduce_method));
+                                  arts_reduce_method_to_string(reduce_method));
 
     // Reduce final values across all nodes
     uint64_t cluster_value =
@@ -1266,7 +1306,7 @@ void arts_counter_write_cluster(const char *output_folder, unsigned int node_cou
     arts_json_writer_write_u_int64(&writer, "value", cluster_value);
     if (arts_counter_is_time_counter(arts_counter_names[i])) {
       arts_json_writer_write_double(&writer, "value_ms",
-                                (double)cluster_value / 1000000.0);
+                                    (double)cluster_value / 1000000.0);
     }
 
     // Merge and write capture histories if PERIODIC
@@ -1275,7 +1315,7 @@ void arts_counter_write_cluster(const char *output_folder, unsigned int node_cou
       uint64_t *values;
       uint64_t count;
       arts_merge_capture_histories(node_data, node_count, i, &epochs, &values,
-                                &count);
+                                   &count);
       if (count > 0) {
         arts_write_capture_history(&writer, epochs, values, count);
         arts_free(epochs);
@@ -1292,13 +1332,14 @@ void arts_counter_write_cluster(const char *output_folder, unsigned int node_cou
   // Cleanup allocated capture history arrays
   for (unsigned int n = 0; n < node_count; n++) {
     for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
-      arts_cluster_counter_data_t *data = &node_data[(n * NUM_COUNTER_TYPES) + i];
+      arts_cluster_counter_data_t *data =
+          &node_data[(n * NUM_COUNTER_TYPES) + i];
       if (data->captureEpochs) {
         arts_free(data->captureEpochs);
-}
+      }
       if (data->captureValues) {
         arts_free(data->captureValues);
-}
+      }
     }
   }
   arts_free(node_data);

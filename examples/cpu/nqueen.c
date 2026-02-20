@@ -27,7 +27,7 @@ int is_safe(const int board[], int row, int col) {
 }
 
 void join_nqueens(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                 arts_edt_dep_t depv[]) {
+                  arts_edt_dep_t depv[]) {
   (void)paramc;
   arts_guid_t return_guid = (arts_guid_t)paramv[0];
   uint32_t slot = paramv[1];
@@ -39,7 +39,7 @@ void join_nqueens(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 void fork_nqueens(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                 arts_edt_dep_t depv[]) {
+                  arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;
   arts_guid_t return_guid = (arts_guid_t)paramv[0];
@@ -66,13 +66,14 @@ void fork_nqueens(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   unsigned int num_nodes = arts_get_total_nodes();
   unsigned int current_node = arts_get_current_node();
-  arts_guid_t join_guid =
-      arts_edt_create(join_nqueens, 2, paramv, count, &(arts_hint_t){.route = current_node});
+  arts_guid_t join_guid = arts_edt_create(
+      join_nqueens, 2, paramv, count, &(arts_hint_t){.route = current_node});
   for (int i = 0; i < count; i++) {
     nqueen_data_t *next_data;
     arts_guid_t db_guid =
         arts_db_create((void **)&next_data, sizeof(nqueen_data_t), NULL);
-    memcpy(next_data->board, current_data->board, sizeof(int) * current_data->row);
+    memcpy(next_data->board, current_data->board,
+           sizeof(int) * current_data->row);
     next_data->board[current_data->row] = safe_positions[i];
     next_data->row = current_data->row + 1;
     next_data->n = current_data->n;
@@ -80,14 +81,15 @@ void fork_nqueens(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     uint64_t new_paramv[2] = {(uint64_t)join_guid, i};
     unsigned int route =
         next_data->row <= 2 ? (current_node + i) % num_nodes : current_node;
-    arts_guid_t fork_guid = arts_edt_create(fork_nqueens, 2, new_paramv, 1, &(arts_hint_t){.route = route});
+    arts_guid_t fork_guid = arts_edt_create(fork_nqueens, 2, new_paramv, 1,
+                                            &(arts_hint_t){.route = route});
 
     arts_signal_edt(fork_guid, 0, db_guid, ARTS_DB_WRITE);
   }
 }
 
 void final_nqueens(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                  arts_edt_dep_t depv[]) {
+                   arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;
   struct timespec end;
@@ -148,15 +150,17 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   uint64_t time_bits;
   memcpy(&time_bits, &start_time, sizeof(double));
   uint64_t final_paramv[2] = {time_bits, (uint64_t)n};
-  arts_guid_t final_guid = arts_edt_create(final_nqueens, 2, final_paramv, 1, &(arts_hint_t){.route = 0});
+  arts_guid_t final_guid = arts_edt_create(final_nqueens, 2, final_paramv, 1,
+                                           &(arts_hint_t){.route = 0});
   uint64_t fork_paramv[2] = {final_guid, 0};
-  arts_guid_t fork_guid = arts_edt_create(fork_nqueens, 2, fork_paramv, 1, &(arts_hint_t){.route = 0});
+  arts_guid_t fork_guid = arts_edt_create(fork_nqueens, 2, fork_paramv, 1,
+                                          &(arts_hint_t){.route = 0});
   nqueen_data_t *fork_data;
   arts_guid_t db_guid =
       arts_db_create((void **)&fork_data, sizeof(nqueen_data_t), NULL);
   for (int i = 0; i < n; i++) {
     fork_data->board[i] = -1;
-}
+  }
   fork_data->row = 0;
   fork_data->n = n;
   arts_signal_edt(fork_guid, 0, db_guid, ARTS_DB_WRITE);

@@ -49,20 +49,22 @@ void check(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramv;
   unsigned int *ptr;
   arts_guid_t guid = arts_guid_reserve(ARTS_DB_ONCE, 0);
-  ptr = (unsigned int *)arts_db_create_with_guid(guid, sizeof(unsigned int), NULL);
+  ptr = (unsigned int *)arts_db_create_with_guid(guid, sizeof(unsigned int),
+                                                 NULL);
   *ptr = 2;
 
   arts_printf("Check: %lu %u new_guid: %lu\n", depv[0].guid,
-         *((unsigned int *)depv[0].ptr), guid);
+              *((unsigned int *)depv[0].ptr), guid);
   arts_signal_edt(b_guid, 0, guid, ARTS_DB_WRITE);
 }
 
 void shut_down_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                 arts_edt_dep_t depv[]) {
+                   arts_edt_dep_t depv[]) {
   (void)depc;
   (void)paramc;
   (void)paramv;
-  arts_printf("ShutdownEdt: %lu %u\n", depv[0].guid, *((unsigned int *)depv[0].ptr));
+  arts_printf("ShutdownEdt: %lu %u\n", depv[0].guid,
+              *((unsigned int *)depv[0].ptr));
   arts_shutdown();
 }
 
@@ -78,8 +80,8 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   unsigned int node_id = arts_get_current_node();
   if (node_id == 0) {
-    unsigned int *a_ptr =
-        (unsigned int *)arts_db_create_with_guid(db_guid, sizeof(unsigned int), NULL);
+    unsigned int *a_ptr = (unsigned int *)arts_db_create_with_guid(
+        db_guid, sizeof(unsigned int), NULL);
     *a_ptr = 1;
   }
 

@@ -53,7 +53,6 @@
 #include <unistd.h>
 
 #include "arts.h"
-#include "arts/utils/malloc.h"
 #include "arts/introspection/metrics.h"
 #include "arts/network/connection.h"
 #include "arts/network/remote.h"
@@ -63,6 +62,7 @@
 #include "arts/runtime/runtime.h"
 #include "arts/system/arts_print.h"
 #include "arts/system/config.h"
+#include "arts/utils/malloc.h"
 
 struct arts_config_s *arts_global_message_table;
 unsigned int ports;
@@ -96,7 +96,7 @@ bool hostname_to_ip(char *host_name, char *ip) {
   struct addrinfo *result;
   struct addrinfo hints;
   memset(&hints, 0, sizeof(hints));
-  hints.ai_family = AF_INET;  // Force IPv4 - inet_addr() doesn't handle IPv6
+  hints.ai_family = AF_INET; // Force IPv4 - inet_addr() doesn't handle IPv6
   int error = getaddrinfo(host_name, NULL, &hints, &result);
   if (error == 0) {
     if (result->ai_addr->sa_family == AF_INET) {
@@ -119,7 +119,8 @@ bool arts_server_set_ip(struct arts_config_s *config) {
   ip_list = (char *)arts_malloc(100 * sizeof(char) * config->table_length);
   bool result;
   for (int i = 0; i < config->table_length; i++) {
-    result = hostname_to_ip(config->table[i].ip_address, ip_list + ((ptrdiff_t)100 * i));
+    result = hostname_to_ip(config->table[i].ip_address,
+                            ip_list + ((ptrdiff_t)100 * i));
     // result = hostname_to_ip("www.google.com", ip_list+100*i);
 
     if (!result) {
@@ -165,8 +166,7 @@ bool arts_server_set_ip(struct arts_config_s *config) {
                   config->net_interface);
       } else {
         inet_pton(AF_INET, local_default_ip, &default_addr);
-        uint32_t offset =
-            ntohl(iface_addr.s_addr) - ntohl(default_addr.s_addr);
+        uint32_t offset = ntohl(iface_addr.s_addr) - ntohl(default_addr.s_addr);
 
         if (offset != 0) {
           char iface_ip[100];
@@ -180,7 +180,8 @@ bool arts_server_set_ip(struct arts_config_s *config) {
             inet_ntop(AF_INET, &addr, old_ip, sizeof(old_ip));
             addr.s_addr = htonl(ntohl(addr.s_addr) + offset);
             inet_ntop(AF_INET, &addr, ip_list + ((ptrdiff_t)100 * i), 100);
-            ARTS_INFO("  node %d: %s -> %s", i, old_ip, ip_list + ((ptrdiff_t)100 * i));
+            ARTS_INFO("  node %d: %s -> %s", i, old_ip,
+                      ip_list + ((ptrdiff_t)100 * i));
           }
         } else {
           ARTS_INFO("net_interface=%s: already on target subnet (%s)",
@@ -283,39 +284,44 @@ void arts_ll_server_shutdown() {
   }
 }
 
-unsigned int arts_remote_get_my_rank() { return arts_global_message_table->my_rank; }
+unsigned int arts_remote_get_my_rank() {
+  return arts_global_message_table->my_rank;
+}
 
 static inline bool arts_remote_connect(int rank, unsigned int port) {
 
   if (!remote_connection_alive[(rank * ports) + port]) {
-    int res = RCONNECT(
-        remote_socket_send_list[(rank * ports) + port],
-        (struct sockaddr *)(remote_server_send_list + ((size_t)rank * ports) + port),
-        sizeof(struct sockaddr_in));
+    int res = RCONNECT(remote_socket_send_list[(rank * ports) + port],
+                       (struct sockaddr *)(remote_server_send_list +
+                                           ((size_t)rank * ports) + port),
+                       sizeof(struct sockaddr_in));
     if (res < 0) {
       remote_connection_alive[(rank * ports) + port] = false;
 
       RCLOSE(remote_socket_send_list[(rank * ports) + port]);
-      remote_socket_send_list[(rank * ports) + port] = (int)arts_get_new_socket();
+      remote_socket_send_list[(rank * ports) + port] =
+          (int)arts_get_new_socket();
 
       // Retry with delay to handle SLURM startup skew (srun starts all
       // processes simultaneously, so the remote may not be listening yet)
       int max_retries = 300;
       int retry_count = 0;
       while (RCONNECT(remote_socket_send_list[(rank * ports) + port],
-                      (struct sockaddr *)(remote_server_send_list + ((size_t)rank * ports) +
-                                          port),
+                      (struct sockaddr *)(remote_server_send_list +
+                                          ((size_t)rank * ports) + port),
                       sizeof(struct sockaddr_in)) < 0) {
         if (++retry_count >= max_retries) {
-          struct sockaddr_in *addr = remote_server_send_list + ((size_t)rank * ports) + port;
-          ARTS_INFO("arts_remote_connect: Failed to connect to rank %d port %d after %d retries (target %s:%d, errno=%d: %s)",
-                    rank, port, max_retries,
-                    inet_ntoa(addr->sin_addr), ntohs(addr->sin_port),
-                    errno, strerror(errno));
+          struct sockaddr_in *addr =
+              remote_server_send_list + ((size_t)rank * ports) + port;
+          ARTS_INFO("arts_remote_connect: Failed to connect to rank %d port %d "
+                    "after %d retries (target %s:%d, errno=%d: %s)",
+                    rank, port, max_retries, inet_ntoa(addr->sin_addr),
+                    ntohs(addr->sin_port), errno, strerror(errno));
           return false;
         }
         RCLOSE(remote_socket_send_list[(rank * ports) + port]);
-        remote_socket_send_list[(rank * ports) + port] = (int)arts_get_new_socket();
+        remote_socket_send_list[(rank * ports) + port] =
+            (int)arts_get_new_socket();
         usleep(100000);
       }
 
@@ -330,8 +336,8 @@ static inline bool arts_remote_connect(int rank, unsigned int port) {
   return true;
 }
 
-// inline int arts_actual_send(char * message, unsigned int length, int rank, int
-// port)
+// inline int arts_actual_send(char * message, unsigned int length, int rank,
+// int port)
 uint64_t arts_actual_send(char *message, uint64_t length, int rank, int port) {
   int res = 0;
   uint64_t total = 0;
@@ -345,7 +351,8 @@ uint64_t arts_actual_send(char *message, uint64_t length, int rank, int port) {
     }
     iterations++;
     if (iterations > 1000000) {
-      ARTS_INFO("arts_actual_send: stuck in loop, res=%d, length=%lu, total=%lu, errno=%d",
+      ARTS_INFO("arts_actual_send: stuck in loop, res=%d, length=%lu, "
+                "total=%lu, errno=%d",
                 res, length, total, errno);
       break;
     }
@@ -367,7 +374,7 @@ uint64_t arts_actual_send(char *message, uint64_t length, int rank, int port) {
 }
 
 uint64_t arts_remote_send_request(int rank, unsigned int queue, char *message,
-                               uint64_t length) {
+                                  uint64_t length) {
   int port = (int)(queue % ports);
   if (arts_remote_connect(rank, port)) {
     return arts_actual_send(message, length, rank, port);
@@ -376,14 +383,14 @@ uint64_t arts_remote_send_request(int rank, unsigned int queue, char *message,
 }
 
 uint64_t arts_remote_send_payload_request(int rank, unsigned int queue,
-                                      char *message, unsigned int length,
-                                      char *payload, uint64_t length2) {
+                                          char *message, unsigned int length,
+                                          char *payload, uint64_t length2) {
   int port = (int)(queue % ports);
   if (arts_remote_connect(rank, port)) {
     uint64_t temp_length = arts_actual_send(message, length, rank, port);
     if (temp_length) {
       return temp_length + length2;
-}
+    }
 
     return arts_actual_send(payload, length2, rank, port);
   }
@@ -397,7 +404,8 @@ bool arts_remote_setup_incoming() {
   int k;
   int pos;
   unsigned int *my_ports =
-      arts_global_message_table->table[arts_global_message_table->my_rank].ports;
+      arts_global_message_table->table[arts_global_message_table->my_rank]
+          .ports;
   socklen_t s_length = sizeof(struct sockaddr);
   int count = (int)(arts_global_message_table->table_length - 1);
 
@@ -459,7 +467,8 @@ bool arts_remote_setup_incoming() {
             int retry_limit = 3;
             while (remote_socket_recieve_list[z + (j * ports)] < 0) {
               if (retry == retry_limit) {
-                ARTS_ERROR("Socket accept failed after %d retries", retry_limit);
+                ARTS_ERROR("Socket accept failed after %d retries",
+                           retry_limit);
               }
               remote_socket_recieve_list[z + (j * ports)] = RACCEPT(
                   local_socket_recieve[z], (struct sockaddr *)&test, &s_length);
@@ -501,22 +510,25 @@ void arts_remote_setup_outgoing() {
   char ip[100];
   int pos;
 
-  remote_socket_send_list = (int *)arts_malloc(sizeof(int) * (size_t)count * ports);
+  remote_socket_send_list =
+      (int *)arts_malloc(sizeof(int) * (size_t)count * ports);
   remote_socket_send_lock_list =
       (volatile unsigned int *)arts_calloc((size_t)count * ports, sizeof(int));
   remote_server_send_list = (struct sockaddr_in *)arts_calloc(
       (size_t)count * ports, sizeof(struct sockaddr_in));
-  remote_connection_alive = (bool *)arts_calloc((size_t)count * ports, sizeof(bool));
+  remote_connection_alive =
+      (bool *)arts_calloc((size_t)count * ports, sizeof(bool));
 
   for (i = 0; i < count; i++) {
     unsigned int *target_ports = arts_global_message_table->table[i].ports;
 
-    ARTS_INFO("arts_remote_setup_outgoing: node %d ip_list='%s' port=%u", i, ip_list + ((ptrdiff_t)100 * i), target_ports[0]);
+    ARTS_INFO("arts_remote_setup_outgoing: node %d ip_list='%s' port=%u", i,
+              ip_list + ((ptrdiff_t)100 * i), target_ports[0]);
 
     for (j = 0; j < ports; j++) {
-      remote_socket_send_list[(i * ports) + j] =
-          (int)arts_get_socket_outgoing(remote_server_send_list + ((size_t)i * ports) + j,
-                                target_ports[j], inet_addr(ip_list + ((ptrdiff_t)100 * i)));
+      remote_socket_send_list[(i * ports) + j] = (int)arts_get_socket_outgoing(
+          remote_server_send_list + ((size_t)i * ports) + j, target_ports[j],
+          inet_addr(ip_list + ((ptrdiff_t)100 * i)));
     }
   }
 }
@@ -530,7 +542,8 @@ static __thread void **re_recieve_packet;
 static __thread bool *max_incoming;
 static __thread bool max_out_working;
 
-void arts_remote_set_thread_inbound_queues(unsigned int start, unsigned int stop) {
+void arts_remote_set_thread_inbound_queues(unsigned int start,
+                                           unsigned int stop) {
   thread_start = start;
   thread_stop = stop;
   // ARTS_INFO_MASTER("%d %d", start, stop);
@@ -564,7 +577,8 @@ bool max_out_buffs(unsigned int ignore) {
   int64_t res2;
   struct arts_remote_packet_s *packet;
   // ARTS_INFO("MAX");
-  res = RPOLL(poll_incoming + thread_start, thread_stop - thread_start, time_out);
+  res =
+      RPOLL(poll_incoming + thread_start, thread_stop - thread_start, time_out);
   unsigned int pos;
 
   if (res == -1) {
@@ -629,8 +643,9 @@ bool max_out_buffs(unsigned int ignore) {
   return true;
 }
 
-bool arts_server_try_to_receive(char **in_buffer, const int *in_packet_size,
-                            const volatile unsigned int *remote_steal_lock) {
+bool arts_server_try_to_receive(
+    char **in_buffer, const int *in_packet_size,
+    const volatile unsigned int *remote_steal_lock) {
   (void)in_buffer;
   (void)in_packet_size;
   (void)remote_steal_lock;
@@ -644,7 +659,8 @@ bool arts_server_try_to_receive(char **in_buffer, const int *in_packet_size,
   int time_out = 300000;
   struct timeval sel_timeout;
   unsigned int pos;
-  res = RPOLL(poll_incoming + thread_start, thread_stop - thread_start, time_out);
+  res =
+      RPOLL(poll_incoming + thread_start, thread_stop - thread_start, time_out);
 
   if (res == -1) {
     arts_shutdown();
@@ -692,8 +708,9 @@ bool arts_server_try_to_receive(char **in_buffer, const int *in_packet_size,
                   memmove(bypass_buf[pos], packet, res);
                   packet = (struct arts_remote_packet_s *)bypass_buf[pos];
                 }
-                res2 = RRECV(remote_socket_recieve_list[i], bypass_buf[pos] + res,
-                             bypass_packet_size[pos] - res, MSG_DONTWAIT);
+                res2 =
+                    RRECV(remote_socket_recieve_list[i], bypass_buf[pos] + res,
+                          bypass_packet_size[pos] - res, MSG_DONTWAIT);
                 if (res2 > 0) {
                   INCREMENT_REMOTE_BYTES_RECEIVED_BY(res);
                 }
@@ -714,23 +731,22 @@ bool arts_server_try_to_receive(char **in_buffer, const int *in_packet_size,
               }
               if (goto_next) {
                 break;
-}
+              }
 
               if (bypass_packet_size[pos] < packet->size) {
                 // For large packets (>256MB), avoid 4x over-allocation
                 uint64_t new_buf_size = (packet->size > (1ULL << 28))
-                                          ? packet->size
-                                          : packet->size * 4;
+                                            ? packet->size
+                                            : packet->size * 4;
                 char *next_buf = (char *)arts_malloc(new_buf_size);
 
                 memcpy(next_buf, bypass_buf[pos], bypass_packet_size[pos]);
 
                 arts_free(bypass_buf[pos]);
 
-                packet =
-                    (struct arts_remote_packet_s *)(next_buf +
-                                                (((char *)packet) -
-                                                 (bypass_buf[pos])));
+                packet = (struct arts_remote_packet_s *)(next_buf +
+                                                         (((char *)packet) -
+                                                          (bypass_buf[pos])));
                 bypass_buf[pos] = next_buf;
                 bypass_packet_size[pos] = new_buf_size;
               }
@@ -740,8 +756,9 @@ bool arts_server_try_to_receive(char **in_buffer, const int *in_packet_size,
                   memmove(bypass_buf[pos], packet, res);
                   packet = (struct arts_remote_packet_s *)bypass_buf[pos];
                 }
-                res2 = RRECV(remote_socket_recieve_list[i], bypass_buf[pos] + res,
-                             bypass_packet_size[pos] - res, MSG_DONTWAIT);
+                res2 =
+                    RRECV(remote_socket_recieve_list[i], bypass_buf[pos] + res,
+                          bypass_packet_size[pos] - res, MSG_DONTWAIT);
                 if (res2 > 0) {
                   INCREMENT_REMOTE_BYTES_RECEIVED_BY(res2);
                 }
@@ -760,12 +777,12 @@ bool arts_server_try_to_receive(char **in_buffer, const int *in_packet_size,
               }
               if (goto_next) {
                 break;
-}
+              }
               arts_server_process_packet(packet);
 
               res -= (int64_t)packet->size;
-              packet =
-                  (struct arts_remote_packet_s *)(((char *)packet) + packet->size);
+              packet = (struct arts_remote_packet_s *)(((char *)packet) +
+                                                       packet->size);
             }
           } else if (res == -1) {
             arts_shutdown();
@@ -845,18 +862,19 @@ void arts_server_ping_pong_test_recieve(char *in_buffer, int in_packet_size) {
             }
             if (packet->message_type == ARTS_REMOTE_PINGPONG_TEST_MSG) {
               recieved = true;
-              ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_NETWORK_RECIEVE_BW, ARTS_METRIC_THREAD,
-                                      packet->size);
-              ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_FREE_BW + packet->message_type,
-                                      ARTS_METRIC_THREAD, 1);
+              ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_NETWORK_RECIEVE_BW,
+                                         ARTS_METRIC_THREAD, packet->size);
+              ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_FREE_BW +
+                                             packet->message_type,
+                                         ARTS_METRIC_THREAD, 1);
               ARTS_METRICS_UPDATE_PACKET_INFO(packet->size);
             } else {
               ARTS_INFO("Shit Packet %d %d %d", packet->message_type,
                         packet->size, packet->rank);
             }
             res -= (int)packet->size;
-            packet =
-                (struct arts_remote_packet_s *)(((char *)packet) + packet->size);
+            packet = (struct arts_remote_packet_s *)(((char *)packet) +
+                                                     packet->size);
           }
         } else if (res == -1) {
           ARTS_INFO("Error on recv socket return 0");
@@ -879,7 +897,7 @@ unsigned int arts_get_new_socket() {
 }
 
 unsigned int arts_get_socket_listening(struct sockaddr_in *listening_socket,
-                                    unsigned int port) {
+                                       unsigned int port) {
   memset((char *)listening_socket, 0, sizeof(*listening_socket));
   unsigned int socket_out = RSOCKET(PF_INET, SOCK_STREAM, 0);
   listening_socket->sin_family = AF_INET;
@@ -889,7 +907,7 @@ unsigned int arts_get_socket_listening(struct sockaddr_in *listening_socket,
 }
 
 unsigned int arts_get_socket_outgoing(struct sockaddr_in *outgoing_socket,
-                                   unsigned int port, in_addr_t s_addr) {
+                                      unsigned int port, in_addr_t s_addr) {
   memset((char *)outgoing_socket, 0, sizeof(*outgoing_socket));
   unsigned int socket_out = RSOCKET(PF_INET, SOCK_STREAM, 0);
   outgoing_socket->sin_family = AF_INET;

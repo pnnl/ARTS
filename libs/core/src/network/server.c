@@ -41,18 +41,18 @@
 #include <unistd.h>
 
 #include "arts.h"
-#include "arts/utils/malloc.h"
 #include "arts/introspection/metrics.h"
 #include "arts/network/remote.h"
 #include "arts/network/remote_protocol.h"
-#include "arts/runtime/globals.h"
-#include "arts/runtime/runtime.h"
 #include "arts/runtime/compute/edt_functions.h"
-#include "arts/runtime/memory/db_functions.h"
+#include "arts/runtime/globals.h"
 #include "arts/runtime/memory/array_db.h"
+#include "arts/runtime/memory/db_functions.h"
 #include "arts/runtime/network/remote_functions.h"
+#include "arts/runtime/runtime.h"
 #include "arts/runtime/sync/event_functions.h"
 #include "arts/system/arts_print.h"
+#include "arts/utils/malloc.h"
 
 #define EDT_MUG_SIZE 32
 
@@ -69,16 +69,18 @@ void arts_server_setup(struct arts_config_s *config) {
   arts_ll_server_setup(config);
   out_init(arts_global_rank_count * config->port_count);
 #ifdef SEQUENCENUMBERS
-  rec_seq_numbers = (uint64_t *)arts_calloc(arts_global_rank_count, sizeof(uint64_t));
+  rec_seq_numbers =
+      (uint64_t *)arts_calloc(arts_global_rank_count, sizeof(uint64_t));
 #endif
 }
 
 void arts_server_process_packet(struct arts_remote_packet_s *packet) {
   if (packet->message_type != ARTS_REMOTE_METRIC_UPDATE_MSG &&
       packet->message_type != ARTS_REMOTE_SHUTDOWN_MSG) {
-    ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_NETWORK_RECIEVE_BW, ARTS_METRIC_THREAD, packet->size);
-    ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_FREE_BW + packet->message_type, ARTS_METRIC_THREAD,
-                            packet->size);
+    ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_NETWORK_RECIEVE_BW,
+                               ARTS_METRIC_THREAD, packet->size);
+    ARTS_METRICS_TRIGGER_EVENT(ARTS_METRIC_FREE_BW + packet->message_type,
+                               ARTS_METRIC_THREAD, packet->size);
     ARTS_METRICS_UPDATE_PACKET_INFO(packet->size);
   }
 #ifdef SEQUENCENUMBERS
@@ -90,8 +92,8 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
         exp_seq_number, packet->seq_num, packet->rank, packet->message_type);
   }
 //    else
-//        ARTS_INFO("Recv: %lu -> %lu = %lu", packet->seq_rank, arts_global_rank_id,
-//        packet->seq_num);
+//        ARTS_INFO("Recv: %lu -> %lu = %lu", packet->seq_rank,
+//        arts_global_rank_id, packet->seq_num);
 #endif
 
   switch (packet->message_type) {
@@ -136,7 +138,7 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
     struct arts_remote_db_add_dependence_packet_s *pack =
         (struct arts_remote_db_add_dependence_packet_s *)(packet);
     arts_db_add_dependence_with_mode_and_diff(pack->db_src, pack->edt_dest,
-                                       pack->edt_slot, pack->mode);
+                                              pack->edt_slot, pack->mode);
     break;
   }
   case ARTS_REMOTE_DB_ADD_DEPENDENCE_WITH_BYTE_OFFSET_MSG: {
@@ -262,8 +264,8 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
         (struct arts_remote_metric_update_s *)(packet);
     ARTS_DEBUG("Metric update Received %u -> %d %ld", arts_global_rank_id,
                pack->type, pack->to_add);
-    ARTS_METRICS_HANDLE_REMOTE_UPDATE(pack->type, ARTS_METRIC_SYSTEM, pack->to_add,
-                                  pack->sub);
+    ARTS_METRICS_HANDLE_REMOTE_UPDATE(pack->type, ARTS_METRIC_SYSTEM,
+                                      pack->to_add, pack->sub);
     break;
   }
   case ARTS_REMOTE_GET_FROM_DB_MSG: {

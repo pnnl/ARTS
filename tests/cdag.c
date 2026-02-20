@@ -50,7 +50,7 @@ arts_guid_t *read_guids;
 arts_guid_t *write_guids;
 
 void shutdown_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                 arts_edt_dep_t depv[]) {
+                  arts_edt_dep_t depv[]) {
   (void)depc;
   (void)paramc;
   (void)paramv;
@@ -62,7 +62,7 @@ void shutdown_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 void read_test(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-              arts_edt_dep_t depv[]) {
+               arts_edt_dep_t depv[]) {
   (void)depc;
   (void)paramc;
   (void)paramv;
@@ -77,7 +77,7 @@ void read_test(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 void write_test(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-               arts_edt_dep_t depv[]) {
+                arts_edt_dep_t depv[]) {
   (void)depc;
   (void)paramc;
   unsigned int index = paramv[0];
@@ -86,14 +86,18 @@ void write_test(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   array[index] += index;
 
   for (unsigned int i = 0; i < num_dynamic_reads; i++) {
-    arts_guid_t guid = arts_edt_create(read_test, 0, NULL, 1, &(arts_hint_t){.route = arts_get_current_node()});
+    arts_guid_t guid =
+        arts_edt_create(read_test, 0, NULL, 1,
+                        &(arts_hint_t){.route = arts_get_current_node()});
     arts_signal_edt(guid, 0, db_guid, ARTS_DB_WRITE);
   }
 
   uint64_t idx = paramv[0];
   for (unsigned int i = 0; i < num_dynamic_writes; i++) {
     idx = (idx + 1) % num_writes;
-    arts_guid_t guid = arts_edt_create(read_test, 0, NULL, 1, &(arts_hint_t){.route = arts_get_current_node()});
+    arts_guid_t guid =
+        arts_edt_create(read_test, 0, NULL, 1,
+                        &(arts_hint_t){.route = arts_get_current_node()});
     arts_signal_edt(guid, 0, db_guid, ARTS_DB_WRITE);
   }
 
@@ -101,7 +105,7 @@ void write_test(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_signal_edt(shutdown_guid, 0, db_guid, ARTS_DB_WRITE);
   } else {
     arts_signal_edt_value(shutdown_guid, -1, 0);
-}
+  }
 }
 
 void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -136,10 +140,10 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   num_dynamic_reads = strtol(argv[3], NULL, 10);
   num_dynamic_writes = strtol(argv[4], NULL, 10);
   arts_printf("Reads: %u Writes: %u Dynamic Reads: %u Dynamic Writes: %u Final "
-         "Deps: %u\n",
-         num_reads, num_writes, num_dynamic_reads, num_dynamic_writes,
-         (num_dynamic_reads * num_writes) + (num_dynamic_writes * num_writes) +
-             num_reads + num_writes);
+              "Deps: %u\n",
+              num_reads, num_writes, num_dynamic_reads, num_dynamic_writes,
+              (num_dynamic_reads * num_writes) +
+                  (num_dynamic_writes * num_writes) + num_reads + num_writes);
 
   read_guids = (arts_guid_t *)malloc(sizeof(arts_guid_t) * num_reads);
   write_guids = (arts_guid_t *)malloc(sizeof(arts_guid_t) * num_writes);
@@ -162,9 +166,9 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 
   arts_edt_create_with_guid(shutdown_edt, shutdown_guid, 0, NULL,
-                        (num_dynamic_reads * num_writes) +
-                            (num_dynamic_writes * num_writes) + num_reads +
-                            num_writes);
+                            (num_dynamic_reads * num_writes) +
+                                (num_dynamic_writes * num_writes) + num_reads +
+                                num_writes);
 
   for (unsigned int n = 0; n < arts_get_total_nodes(); n++) {
     arts_edt_create(node_setup, 0, NULL, 0, &(arts_hint_t){.route = n});

@@ -52,15 +52,16 @@ void test(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramv;
 #ifdef __linux__
   arts_printf("Running edt %u on %u %u, %u\n", arts_get_current_guid(),
-         arts_get_current_node(), arts_get_current_worker(), sched_getcpu());
+              arts_get_current_node(), arts_get_current_worker(),
+              sched_getcpu());
 #else
   arts_printf("Running edt %u on %u %u\n", arts_get_current_guid(),
-         arts_get_current_node(), arts_get_current_worker());
+              arts_get_current_node(), arts_get_current_worker());
 #endif
 }
 
 void exit_program(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                 arts_edt_dep_t depv[]) {
+                  arts_edt_dep_t depv[]) {
   (void)depc;
   (void)paramc;
   (void)paramv;
@@ -83,13 +84,14 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   int number_of_workers = (int)arts_get_total_workers();
   for (int i = 0; i < number_of_workers; i++) {
     uint64_t args[3];
-    arts_guid_t guid = arts_edt_create_with_epoch(test, 3, args, 0, epoch_guid, &(arts_hint_t){.route = 0});
+    arts_guid_t guid = arts_edt_create_with_epoch(test, 3, args, 0, epoch_guid,
+                                                  &(arts_hint_t){.route = 0});
   }
   for (int i = 0; i < 100000000; i++) {
     // Simulate some work
     if (i % 10000000 == 0) {
-      printf("Thread %d is working on iteration %d\n", arts_get_current_worker(),
-             i);
+      printf("Thread %d is working on iteration %d\n",
+             arts_get_current_worker(), i);
     }
   }
   arts_wait_on_handle(epoch_guid);

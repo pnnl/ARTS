@@ -42,9 +42,9 @@
 
 int main(int argc, char **argv) {
 
-(void)argc;
+  (void)argc;
 
-(void)argv;
+  (void)argv;
 
 #ifdef NDEBUG
   arts_printf("[WARN] asserts are disabled. Verification will not run.\n");

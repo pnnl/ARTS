@@ -55,11 +55,11 @@ enum artsInitType {
 };
 
 void arts_runtime_node_init(unsigned int worker_threads,
-                         unsigned int receiving_threads,
-                         unsigned int sender_threads,
-                         unsigned int receiver_threads,
-                         unsigned int total_threads, bool remote_stealing_on,
-                         struct arts_config_s *config);
+                            unsigned int receiving_threads,
+                            unsigned int sender_threads,
+                            unsigned int receiver_threads,
+                            unsigned int total_threads, bool remote_stealing_on,
+                            struct arts_config_s *config);
 void arts_runtime_global_cleanup();
 void arts_runtime_private_cleanup();
 void arts_runtime_stop();
@@ -70,23 +70,24 @@ void arts_handle_remote_stolen_edt(struct arts_edt_s *edt);
 bool arts_runtime_scheduler_loop();
 void arts_thread_zero_node_start(int argc, char **argv);
 void arts_thread_zero_private_init(struct thread_mask_s *unit,
+                                   struct arts_config_s *config);
+void arts_runtime_private_init(struct thread_mask_s *unit,
                                struct arts_config_s *config);
-void arts_runtime_private_init(struct thread_mask_s *unit, struct arts_config_s *config);
 int arts_runtime_loop();
 int arts_runtime_scheduler_loop_wait(volatile bool *wait_for_me);
 bool arts_default_scheduler_loop();
 struct arts_edt_s *arts_find_edt();
 
-bool arts_runtime_edt_lock_db(arts_guid_t db_guid, struct arts_db_s *db, void *edt_packet,
-                          bool shared);
-void arts_runtime_edt_lock_db_signal_next(struct arts_db_s *db, arts_guid_t db_guid,
-                                    bool remote);
+bool arts_runtime_edt_lock_db(arts_guid_t db_guid, struct arts_db_s *db,
+                              void *edt_packet, bool shared);
+void arts_runtime_edt_lock_db_signal_next(struct arts_db_s *db,
+                                          arts_guid_t db_guid, bool remote);
 struct arts_edt_s *arts_runtime_steal_from_worker();
 struct arts_edt_s *arts_runtime_steal_from_network();
 void arts_db_unlock(struct arts_db_s *db, arts_guid_t db_guid, bool write);
 bool arts_db_lock_all_dbs(struct arts_edt_s *edt);
 bool arts_db_lock(arts_guid_t db_guid, void *edt_packet, unsigned int rank,
-                bool shared);
+                  bool shared);
 
 bool arts_network_first_scheduler_loop();
 bool arts_network_before_steal_scheduler_loop();

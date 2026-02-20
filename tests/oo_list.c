@@ -85,12 +85,12 @@ void *firer(void *data) {
   (void)data;
   while (count < 10) {
     ;
-}
+  }
   arts_printf("FIRE 1\n");
   arts_out_of_order_list_fire_callback(&list, 0, printer);
   while (count < 20) {
     ;
-}
+  }
   arts_printf("FIRE 2\n");
   arts_out_of_order_list_fire_callback(&list, 0, printer);
   return NULL;

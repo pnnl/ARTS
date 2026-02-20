@@ -74,11 +74,12 @@ arts_guid_range_t *b_tile_guids = NULL;
 cublasHandle_t *handle;
 
 void multiply_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                arts_edt_dep_t depv[]) {
+                 arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;
   arts_guid_t to_signal = (arts_guid_t)paramv[0];
-  unsigned int size = sizeof(double) * (unsigned int)tile_size * (unsigned int)tile_size;
+  unsigned int size =
+      sizeof(double) * (unsigned int)tile_size * (unsigned int)tile_size;
   // unsigned int i = paramv[1];
   // unsigned int j = paramv[2];
   unsigned int k = paramv[3];
@@ -105,8 +106,8 @@ void multiply_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_signal_edt(to_signal, k, c_tile_guid, ARTS_DB_WRITE);
 }
 
-__global__ void sum_mm_kernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                            arts_edt_dep_t depv[]) {
+__global__ void sum_mm_kernel(uint32_t paramc, const uint64_t *paramv,
+                              uint32_t depc, arts_edt_dep_t depv[]) {
   (void)paramc;
   const unsigned int tile_size = (unsigned int)paramv[0];
   double *c_tile = (double *)depv[0].ptr;
@@ -121,7 +122,7 @@ __global__ void sum_mm_kernel(uint32_t paramc, const uint64_t *paramv, uint32_t 
 }
 
 void finish_block_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                   arts_edt_dep_t depv[]) {
+                     arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
@@ -143,7 +144,8 @@ void finish_block_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   for (unsigned int i = 0; i < (unsigned int)mat_size; ++i) {
     for (unsigned int j = 0; j < (unsigned int)mat_size; ++j) {
       for (unsigned int k = 0; k < (unsigned int)mat_size; ++k) {
-        temp[(i * mat_size) + j] += a_mat[(i * mat_size) + k] * b_mat[(k * mat_size) + j];
+        temp[(i * mat_size) + j] +=
+            a_mat[(i * mat_size) + k] * b_mat[(k * mat_size) + j];
       }
     }
   }
@@ -153,7 +155,7 @@ void finish_block_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       if (temp[(i * mat_size) + j] != c_mat[(i * mat_size) + j]) {
         arts_printf("Failed at c_mat[%u][%u]\n", i, j);
         arts_printf("Expected: %lf | Obtained: %lf\n", temp[(i * mat_size) + j],
-               c_mat[(i * mat_size) + j]);
+                    c_mat[(i * mat_size) + j]);
         free(temp);
         arts_shutdown();
         return;
@@ -195,15 +197,17 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
   b_mat_guid = arts_guid_reserve(ARTS_DB, 0);
   c_mat_guid = arts_guid_reserve(ARTS_DB, 0);
 
-  a_tile_guids = arts_guid_range_create(ARTS_DB_GPU_READ, num_blocks * num_blocks, 0);
-  b_tile_guids = arts_guid_range_create(ARTS_DB_GPU_READ, num_blocks * num_blocks, 0);
+  a_tile_guids =
+      arts_guid_range_create(ARTS_DB_GPU_READ, num_blocks * num_blocks, 0);
+  b_tile_guids =
+      arts_guid_range_create(ARTS_DB_GPU_READ, num_blocks * num_blocks, 0);
 
-  a_matrix = (double *)arts_db_create_with_guid(a_mat_guid, (size_t)mat_size * mat_size *
-                                                         sizeof(double), NULL);
-  b_matrix = (double *)arts_db_create_with_guid(b_mat_guid, (size_t)mat_size * mat_size *
-                                                         sizeof(double), NULL);
-  c_matrix = (double *)arts_db_create_with_guid(c_mat_guid, (size_t)mat_size * mat_size *
-                                                         sizeof(double), NULL);
+  a_matrix = (double *)arts_db_create_with_guid(
+      a_mat_guid, (size_t)mat_size * mat_size * sizeof(double), NULL);
+  b_matrix = (double *)arts_db_create_with_guid(
+      b_mat_guid, (size_t)mat_size * mat_size * sizeof(double), NULL);
+  c_matrix = (double *)arts_db_create_with_guid(
+      c_mat_guid, (size_t)mat_size * mat_size * sizeof(double), NULL);
 
   init_matrix(mat_size, a_matrix, true, false);
   init_matrix(mat_size, b_matrix, false, false);
@@ -213,12 +217,14 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
 
   for (unsigned int i = 0; i < num_blocks; i++) {
     for (unsigned int j = 0; j < num_blocks; j++) {
-      arts_guid_t a_tile_guid = arts_guid_range_get(a_tile_guids, (i * num_blocks) + j);
+      arts_guid_t a_tile_guid =
+          arts_guid_range_get(a_tile_guids, (i * num_blocks) + j);
       double *a_tile = (double *)arts_db_create_with_guid(
           a_tile_guid, sizeof(double) * tile_size * tile_size, NULL);
       copy_block(i, j, tile_size, a_tile, mat_size, a_matrix, true);
 
-      arts_guid_t b_tile_guid = arts_guid_range_get(b_tile_guids, (i * num_blocks) + j);
+      arts_guid_t b_tile_guid =
+          arts_guid_range_get(b_tile_guids, (i * num_blocks) + j);
       double *b_tile = (double *)arts_db_create_with_guid(
           b_tile_guid, sizeof(double) * tile_size * tile_size, NULL);
       copy_block(i, j, tile_size, b_tile, mat_size, b_matrix, true);
@@ -227,33 +233,39 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
 
   uint64_t sum_args[] = {(uint64_t)tile_size};
   dim3 threads(SMTILE, SMTILE);
-  dim3 grid((tile_size + SMTILE - 1) / SMTILE, (tile_size + SMTILE - 1) / SMTILE);
+  dim3 grid((tile_size + SMTILE - 1) / SMTILE,
+            (tile_size + SMTILE - 1) / SMTILE);
 
   for (unsigned int i = 0; i < num_blocks; i++) {
     for (unsigned int j = 0; j < num_blocks; j++) {
-      arts_guid_t sum_guid =
-          arts_edt_create_gpu_pt(sum_mm_kernel, node_id, 1, sum_args, num_blocks, grid,
-                             threads, done_guid, 3 + ((i * num_blocks) + j), 0);
+      arts_guid_t sum_guid = arts_edt_create_gpu_pt(
+          sum_mm_kernel, node_id, 1, sum_args, num_blocks, grid, threads,
+          done_guid, 3 + ((i * num_blocks) + j), 0);
       for (unsigned int k = 0; k < num_blocks; k++) {
         uint64_t args[] = {(uint64_t)sum_guid, i, j, k};
-        arts_guid_t mul_guid = arts_edt_create_gpu_lib(multiply_mm, node_id, 4, args,
-                                                 2, grid, threads);
-        arts_signal_edt(mul_guid, 0, arts_guid_range_get(a_tile_guids, (i * num_blocks) + k), ARTS_DB_WRITE);
-        arts_signal_edt(mul_guid, 1, arts_guid_range_get(b_tile_guids, (k * num_blocks) + j), ARTS_DB_WRITE);
+        arts_guid_t mul_guid = arts_edt_create_gpu_lib(multiply_mm, node_id, 4,
+                                                       args, 2, grid, threads);
+        arts_signal_edt(mul_guid, 0,
+                        arts_guid_range_get(a_tile_guids, (i * num_blocks) + k),
+                        ARTS_DB_WRITE);
+        arts_signal_edt(mul_guid, 1,
+                        arts_guid_range_get(b_tile_guids, (k * num_blocks) + j),
+                        ARTS_DB_WRITE);
       }
     }
   }
 
   arts_edt_create_with_guid(finish_block_mm, done_guid, 0, NULL,
-                        3 + (num_blocks * num_blocks));
+                            3 + (num_blocks * num_blocks));
   arts_signal_edt(done_guid, 0, c_mat_guid, ARTS_DB_WRITE);
   arts_signal_edt(done_guid, 1, a_mat_guid, ARTS_DB_WRITE);
   arts_signal_edt(done_guid, 2, b_mat_guid, ARTS_DB_WRITE);
   start = arts_get_time_stamp();
 }
 
-extern "C" void arts_init_per_gpu(unsigned int node_id, int dev_id, cudaStream_t *stream,
-                           int argc, const char *argv) {
+extern "C" void arts_init_per_gpu(unsigned int node_id, int dev_id,
+                                  cudaStream_t *stream, int argc,
+                                  const char *argv) {
   (void)node_id;
   (void)stream;
   (void)argc;
@@ -267,7 +279,7 @@ extern "C" void arts_init_per_gpu(unsigned int node_id, int dev_id, cudaStream_t
 }
 
 extern "C" void arts_fini_per_gpu(unsigned int node_id, int dev_id,
-                            cudaStream_t *stream) {
+                                  cudaStream_t *stream) {
   (void)node_id;
   (void)stream;
   cublasStatus_t stat = cublasDestroy(handle[dev_id]);

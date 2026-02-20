@@ -60,13 +60,14 @@ __global__ void temp(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // unsigned int gpu_id = (unsigned int) paramv[0]; //The current gpu we are on
   uint64_t gpu_id = GET_GPU_INDEX();
   unsigned int **addr =
-      (unsigned int **)depv[0].ptr;  // This is the dev_ptr_raw -> tells us where
-                                     // current frontier is on device
-  unsigned int *local = addr[gpu_id]; // We need the one corresponding to our gpu
+      (unsigned int **)depv[0].ptr; // This is the dev_ptr_raw -> tells us where
+                                    // current frontier is on device
+  unsigned int *local =
+      addr[gpu_id]; // We need the one corresponding to our gpu
 
   unsigned int index = threadIdx.x + (blockIdx.x * blockDim.x);
-  local[(GPULISTLEN - 1) - index] =
-      (unsigned int)gpu_id; // index; //Just writing some blah blah value to sort
+  local[(GPULISTLEN - 1) - index] = (unsigned int)
+      gpu_id; // index; //Just writing some blah blah value to sort
 }
 
 // This should be where we do the sorting and should launch the next iteration
@@ -78,25 +79,27 @@ void thrust_sort(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t done_guid =
       (arts_guid_t)paramv[0]; // This can be the end if the frontier is empty
   unsigned int gpu_index = (unsigned int)paramv[1]; // gpu_index
-  unsigned int *raw_ptr = dev_ptr_raw[gpu_index];   // The corresponding dev pointer
-                                                    // (frontier) to our gpu
+  unsigned int *raw_ptr =
+      dev_ptr_raw[gpu_index]; // The corresponding dev pointer
+                              // (frontier) to our gpu
 
   unsigned int *tile = NULL; // This will hold a tile of the new frontier
   arts_guid_t tile_guid = arts_guid_reserve(ARTS_DB_GPU_READ, 0);
-  tile = (unsigned int *)arts_db_create_with_guid(tile_guid, sizeof(unsigned int) * GPULISTLEN, NULL);
+  tile = (unsigned int *)arts_db_create_with_guid(
+      tile_guid, sizeof(unsigned int) * GPULISTLEN, NULL);
 
   thrust::device_ptr<unsigned int> dev_thrust_ptr(raw_ptr);
   thrust::sort(dev_thrust_ptr, dev_thrust_ptr + GPULISTLEN); // Do the sorting
 
   // Copy the data from the gpu to the host
-  arts_put_in_db_from_gpu(thrust::raw_pointer_cast(dev_thrust_ptr), tile_guid, 0,
-                     sizeof(unsigned int) * GPULISTLEN, false);
+  arts_put_in_db_from_gpu(thrust::raw_pointer_cast(dev_thrust_ptr), tile_guid,
+                          0, sizeof(unsigned int) * GPULISTLEN, false);
 
   // Probably should make some new edts and signal them with the data!
   // Or signal the end if we are done
   arts_signal_edt(
-      done_guid, gpu_index,
-      tile_guid, ARTS_DB_WRITE); // don't really need tile_guid just doing it for testing
+      done_guid, gpu_index, tile_guid,
+      ARTS_DB_WRITE); // don't really need tile_guid just doing it for testing
 }
 
 void done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -117,7 +120,7 @@ void done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 extern "C" void arts_init_per_gpu(unsigned int node_id, int dev_id,
-                             cudaStream_t *stream, int argc, char **argv) {
+                                  cudaStream_t *stream, int argc, char **argv) {
   (void)node_id;
   (void)stream;
   (void)argc;
@@ -139,19 +142,21 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
   unsigned int node_id = arts_get_current_node();
   unsigned int **addr;
   arts_guid_t db_guid = arts_guid_reserve(ARTS_DB_GPU_READ, 0);
-  addr = (unsigned int **)arts_db_create_with_guid(db_guid, sizeof(unsigned int *) * arts_get_total_gpus(), NULL);
+  addr = (unsigned int **)arts_db_create_with_guid(
+      db_guid, sizeof(unsigned int *) * arts_get_total_gpus(), NULL);
   for (uint64_t i = 0; i < arts_get_total_gpus(); i++) {
     addr[i] = dev_ptr_raw[i];
   }
 
-  arts_guid_t done_guid = arts_edt_create(done, 0, NULL, arts_get_total_gpus(), &(arts_hint_t){.route = 0});
+  arts_guid_t done_guid = arts_edt_create(done, 0, NULL, arts_get_total_gpus(),
+                                          &(arts_hint_t){.route = 0});
 
   dim3 threads(GPULISTLEN, 1, 1);
   dim3 grid(1, 1, 1);
   for (uint64_t i = 0; i < arts_get_total_gpus(); i++) {
     uint64_t args[] = {(uint64_t)done_guid, i};
-    arts_guid_t edt_guid = arts_edt_create_gpu_lib_direct(thrust_sort, node_id, i, 2,
-                                                   args, 1, grid, threads);
+    arts_guid_t edt_guid = arts_edt_create_gpu_lib_direct(
+        thrust_sort, node_id, i, 2, args, 1, grid, threads);
     arts_guid_t edt_guid2 = arts_edt_create_gpu_direct(
         temp, node_id, i, 1, &i, 1, grid, threads, edt_guid, 0, db_guid, true);
     arts_signal_edt(edt_guid2, 0, db_guid, ARTS_DB_WRITE);
@@ -159,7 +164,7 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
 }
 
 extern "C" void arts_fini_per_gpu(unsigned int node_id, int dev_id,
-                              cudaStream_t *stream) {
+                                  cudaStream_t *stream) {
   (void)node_id;
   (void)stream;
   arts_cuda_free(dev_ptr_raw[dev_id]);

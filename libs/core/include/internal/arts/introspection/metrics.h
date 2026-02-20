@@ -89,9 +89,10 @@ extern "C" {
   }) */
 
 #define ARTS_MALLOC_WITH_TYPE(size, type) arts_malloc(size)
-#define ARTS_MALLOC_ALIGN_WITH_TYPE(size, align, type) arts_malloc_align(size, align)
+#define ARTS_MALLOC_ALIGN_WITH_TYPE(size, align, type)                         \
+  arts_malloc_align(size, align)
 #define ARTS_CALLOC_WITH_TYPE(nmemb, size, type) arts_calloc(nmemb, size)
-#define ARTS_CALLOC_ALIGN_WITH_TYPE(nmemb, size, align, type)                      \
+#define ARTS_CALLOC_ALIGN_WITH_TYPE(nmemb, size, align, type)                  \
   arts_calloc_align(nmemb, size, align)
 
 extern const char *const arts_metric_name[];
@@ -251,8 +252,8 @@ typedef struct {
 
 // void ARTS_METRICS_CONFIG_SET_DEFAULT_ENABLED(bool enabled);
 // void ARTS_METRICS_CONFIG_SET_ENABLED(const char *name, bool enabled);
-// void ARTS_METRICS_TRIGGER_EVENT(arts_metric_type_t metricType, arts_metric_level_t
-// level,
+// void ARTS_METRICS_TRIGGER_EVENT(arts_metric_type_t metricType,
+// arts_metric_level_t level,
 //                              uint64_t value);
 // void ARTS_METRICS_TRIGGER_TIMER_EVENT(arts_metric_type_t metricType,
 //                                   arts_metric_level_t level, bool start);
@@ -262,22 +263,25 @@ typedef struct {
 // void ARTS_METRICS_START(unsigned int startPoint);
 // void ARTS_METRICS_STOP();
 // void ARTS_METRICS_INIT_INTROSPECTOR(unsigned int startPoint);
-// uint64_t ARTS_METRICS_GET_TOTAL(arts_metric_type_t type, arts_metric_level_t level);
-// double ARTS_METRICS_GET_RATE(arts_metric_type_t type, arts_metric_level_t level,
+// uint64_t ARTS_METRICS_GET_TOTAL(arts_metric_type_t type, arts_metric_level_t
+// level); double ARTS_METRICS_GET_RATE(arts_metric_type_t type,
+// arts_metric_level_t level,
 //                           bool last);
-// double ARTS_METRICS_GET_TOTAL_RATE(arts_metric_type_t type, arts_metric_level_t level);
-// double ARTS_METRICS_TEST(arts_metric_type_t type, arts_metric_level_t level,
+// double ARTS_METRICS_GET_TOTAL_RATE(arts_metric_type_t type,
+// arts_metric_level_t level); double ARTS_METRICS_TEST(arts_metric_type_t type,
+// arts_metric_level_t level,
 //                        uint64_t num);
-// uint64_t ARTS_METRICS_GET_RATE_U64(arts_metric_type_t type, arts_metric_level_t level,
+// uint64_t ARTS_METRICS_GET_RATE_U64(arts_metric_type_t type,
+// arts_metric_level_t level,
 //                                bool last);
-// uint64_t ARTS_METRICS_GET_RATE_U64_DIFF(arts_metric_type_t type, arts_metric_level_t
-// level,
+// uint64_t ARTS_METRICS_GET_RATE_U64_DIFF(arts_metric_type_t type,
+// arts_metric_level_t level,
 //                                    uint64_t *diff);
-// uint64_t ARTS_METRICS_GET_TOTAL_RATE_U64(arts_metric_type_t type, arts_metric_level_t
-// level,
+// uint64_t ARTS_METRICS_GET_TOTAL_RATE_U64(arts_metric_type_t type,
+// arts_metric_level_t level,
 //                                     uint64_t *total, uint64_t *time_stamp);
-// void ARTS_METRICS_HANDLE_REMOTE_UPDATE(arts_metric_type_t type, arts_metric_level_t
-// level,
+// void ARTS_METRICS_HANDLE_REMOTE_UPDATE(arts_metric_type_t type,
+// arts_metric_level_t level,
 //                                    uint64_t to_add, bool sub);
 // void ARTS_METRICS_PRINT_INSPECTOR_TIME();
 // void ARTS_METRICS_PRINT_INSPECTOR_STATS();
@@ -311,9 +315,10 @@ typedef struct {
 #define ARTS_METRICS_PRINT_INSPECTOR_STATS()
 #define ARTS_METRICS_PRINT_MODEL_TOTAL_METRICS(level)
 #define ARTS_METRICS_UPDATE_PACKET_INFO(bytes)
-#define ARTS_METRICS_PACKET_STATS(totalBytes, totalPackets, minPacket, maxPacket)
-#define ARTS_METRICS_INTERVAL_PACKET_STATS(totalBytes, totalPackets, minPacket,    \
-                                       maxPacket)
+#define ARTS_METRICS_PACKET_STATS(totalBytes, totalPackets, minPacket,         \
+                                  maxPacket)
+#define ARTS_METRICS_INTERVAL_PACKET_STATS(totalBytes, totalPackets,           \
+                                           minPacket, maxPacket)
 
 #ifdef __cplusplus
 }

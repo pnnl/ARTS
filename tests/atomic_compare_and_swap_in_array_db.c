@@ -67,12 +67,13 @@ void check(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       arts_printf("i: %u j: %u %u\n", i, j, data[j]);
     }
   }
-  arts_signal_edt_value((arts_guid_t)paramv[0], (num_add + 1) * elements_per_block * blocks, 0);
+  arts_signal_edt_value((arts_guid_t)paramv[0],
+                        (num_add + 1) * elements_per_block * blocks, 0);
 }
 
 // This is run at the end of the epoch
 void epoch_end(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-              arts_edt_dep_t depv[]) {
+               arts_edt_dep_t depv[]) {
   (void)depc;
   (void)paramc;
   unsigned int num_in_epoch = depv[0].guid;
@@ -92,10 +93,12 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("ElementsPerBlock: %u Blocks: %u\n", elements_per_block, blocks);
 
   // The end will get all the updates and a signal from the gather
-  arts_guid_t end_guid = arts_edt_create(end, 0, NULL, ((num_add + 1) * elements_per_block * blocks) + 1, &(arts_hint_t){.route = 0});
+  arts_guid_t end_guid = arts_edt_create(
+      end, 0, NULL, ((num_add + 1) * elements_per_block * blocks) + 1,
+      &(arts_hint_t){.route = 0});
 
-  arts_guid_t end_epoch_guid =
-      arts_edt_create(epoch_end, 1, (uint64_t *)&end_guid, 1, &(arts_hint_t){.route = 0});
+  arts_guid_t end_epoch_guid = arts_edt_create(
+      epoch_end, 1, (uint64_t *)&end_guid, 1, &(arts_hint_t){.route = 0});
   arts_initialize_and_start_epoch(end_epoch_guid, 0);
 
   arts_new_array_db(&array, sizeof(unsigned int), elements_per_block * blocks);
@@ -103,17 +106,18 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   for (unsigned int j = 0; j < num_add; j++) {
     for (unsigned int i = 0; i < elements_per_block * blocks; i++) {
       arts_printf("i: %u Slot:%u edt: %lu\n", i,
-             (j * elements_per_block * blocks) + i, end_guid);
-      arts_atomic_compare_and_swap_in_array_db(array, i, j, j + 1, end_guid,
-                                        (j * elements_per_block * blocks) + i);
+                  (j * elements_per_block * blocks) + i, end_guid);
+      arts_atomic_compare_and_swap_in_array_db(
+          array, i, j, j + 1, end_guid, (j * elements_per_block * blocks) + i);
     }
   }
 
   for (unsigned int i = 0; i < elements_per_block * blocks; i++) {
     arts_printf("i: %u Slot:%u edt: %lu\n", i,
-           (num_add * elements_per_block * blocks) + i, end_guid);
-    arts_atomic_compare_and_swap_in_array_db(array, i, num_add + 1, 0, end_guid,
-                                      (num_add * elements_per_block * blocks) + i);
+                (num_add * elements_per_block * blocks) + i, end_guid);
+    arts_atomic_compare_and_swap_in_array_db(
+        array, i, num_add + 1, 0, end_guid,
+        (num_add * elements_per_block * blocks) + i);
   }
 }
 

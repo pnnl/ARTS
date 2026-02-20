@@ -66,17 +66,18 @@ typedef struct {
 
 // CHECKCORRECT(cudaMemcpyAsync(data_ptr, depv[i].ptr, size,
 // cudaMemcpyHostToDevice, arts_gpu->stream));
-bool push_data_to_stream(unsigned int gpu_id, void *dst, void *src, size_t count,
-                      bool buff);
-bool get_data_from_stream(unsigned int gpu_id, void *dst, void *src, size_t count,
-                       bool buff);
+bool push_data_to_stream(unsigned int gpu_id, void *dst, void *src,
+                         size_t count, bool buff);
+bool get_data_from_stream(unsigned int gpu_id, void *dst, void *src,
+                          size_t count, bool buff);
 
 //  void * kernelArgs[] = { &paramc, &devParamv, &depc, &devDepv };
 // CHECKCORRECT(cudaLaunchKernel((const void *)fn_ptr, grid, block,
 // (void**)kernelArgs, (size_t)0, arts_gpu->stream));
-bool push_kernel_to_stream(unsigned int gpu_id, uint32_t paramc, const uint64_t *paramv,
-                        uint32_t depc, arts_edt_dep_t *depv, arts_edt_t fn_ptr,
-                        dim3 grid, dim3 block, bool buff);
+bool push_kernel_to_stream(unsigned int gpu_id, uint32_t paramc,
+                           const uint64_t *paramv, uint32_t depc,
+                           arts_edt_dep_t *depv, arts_edt_t fn_ptr, dim3 grid,
+                           dim3 block, bool buff);
 
 // #if CUDART_VERSION >= 10000
 //     CHECKCORRECT(cudaLaunchHostFunc(arts_gpu->stream, artsWrapUp,
@@ -88,7 +89,7 @@ bool push_kernel_to_stream(unsigned int gpu_id, uint32_t paramc, const uint64_t 
 bool push_wrap_up_to_stream(unsigned int gpu_id, void *host_closure, bool buff);
 
 bool flush_mem_stream(unsigned int gpu_id, unsigned int *count,
-                    arts_buffer_mem_move_t *buff, enum cudaMemcpyKind kind);
+                      arts_buffer_mem_move_t *buff, enum cudaMemcpyKind kind);
 bool flush_kernel_stream(unsigned int gpu_id);
 bool flush_wrap_up_stream(unsigned int gpu_id);
 
@@ -96,16 +97,16 @@ bool flush_stream(unsigned int gpu_id);
 bool check_streams(bool buff_on);
 
 void reduce_datafrom_gpus(void *dst, unsigned int dst_gpu_id, void *src,
-                        unsigned int src_gpu_id, unsigned int size,
-                        arts_lc_sync_function_gpu_t fn_ptr, unsigned int element_size,
-                        void *db_data);
+                          unsigned int src_gpu_id, unsigned int size,
+                          arts_lc_sync_function_gpu_t fn_ptr,
+                          unsigned int element_size, void *db_data);
 void get_data_from_stream_now(unsigned int gpu_id, void *dst, void *src,
-                          size_t count, bool buff);
+                              size_t count, bool buff);
 void copy_gputo_gpu(void *dst, unsigned int dst_gpu_id, void *src,
-                  unsigned int src_gpu_id, unsigned int size);
+                    unsigned int src_gpu_id, unsigned int size);
 void do_reduction_now(unsigned int gpu_id, void *sink, void *src,
-                    arts_lc_sync_function_gpu_t fn_ptr, unsigned int element_size,
-                    unsigned int size);
+                      arts_lc_sync_function_gpu_t fn_ptr,
+                      unsigned int element_size, unsigned int size);
 
 #ifdef __cplusplus
 }

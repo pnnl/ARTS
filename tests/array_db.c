@@ -56,14 +56,15 @@ void check(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 void edt_func(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-             arts_edt_dep_t depv[]) {
+              arts_edt_dep_t depv[]) {
   (void)depv;
   (void)paramc;
   (void)paramv;
-  arts_guid_t edt_guid = arts_edt_create(check, 0, NULL, elements, &(arts_hint_t){.route = 0});
+  arts_guid_t edt_guid =
+      arts_edt_create(check, 0, NULL, elements, &(arts_hint_t){.route = 0});
   for (unsigned int i = 0; i < depc; i++) {
     arts_get_from_array_db(edt_guid, i, array, i);
-}
+  }
 }
 
 void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -76,7 +77,8 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   if (argc > 1) {
     elements = strtol(argv[1], NULL, 10);
   }
-  arts_guid_t edt_guid = arts_edt_create(edt_func, 0, NULL, elements, &(arts_hint_t){.route = 0});
+  arts_guid_t edt_guid =
+      arts_edt_create(edt_func, 0, NULL, elements, &(arts_hint_t){.route = 0});
   arts_guid_t guid = arts_new_array_db(&array, sizeof(unsigned int), elements);
   for (unsigned int i = 0; i < elements; i++) {
     arts_put_in_array_db(&i, edt_guid, i, array, i);

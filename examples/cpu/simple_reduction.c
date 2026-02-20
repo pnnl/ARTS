@@ -54,7 +54,7 @@ void reduction(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 void shut_down(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-              arts_edt_dep_t depv[]) {
+               arts_edt_dep_t depv[]) {
   (void)depc;
   (void)paramc;
   (void)paramv;
@@ -84,9 +84,10 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   num_dbs = arts_get_total_nodes();
   reduction_guid = arts_guid_reserve(ARTS_EDT, 0);
 
-  arts_guid_t guid = arts_edt_create(shut_down, 0, NULL, 1, &(arts_hint_t){.route = 0});
+  arts_guid_t guid =
+      arts_edt_create(shut_down, 0, NULL, 1, &(arts_hint_t){.route = 0});
   arts_edt_create_with_guid(reduction, reduction_guid, 1, (uint64_t *)&guid,
-                        num_dbs);
+                            num_dbs);
 
   for (unsigned int n = 0; n < num_dbs; n++) {
     uint64_t args = n;

@@ -60,21 +60,23 @@ extern "C" {
 #ifdef USE_LC
 #define DO_SYNC(level) ((level) % USE_LC == 0)
 #define DB_WRITE_TYPE ARTS_DB_LC
-#define CHECK_CONSISTENCY(worker_id)                                             \
-  if (!(worker_id) && ARTS_LOOK_UP_CONFIG(gpu_lc_sync) != 4) {                      \
-    arts_printf("The gpu_lc_sync must be set to 4 (arts_get_min_db_unsigned_int) in arts " \
-           "config file.\n");                                                  \
-    arts_shutdown();                                                            \
+#define CHECK_CONSISTENCY(worker_id)                                           \
+  if (!(worker_id) && ARTS_LOOK_UP_CONFIG(gpu_lc_sync) != 4) {                 \
+    arts_printf("The gpu_lc_sync must be set to 4 "                            \
+                "(arts_get_min_db_unsigned_int) in arts "                      \
+                "config file.\n");                                             \
+    arts_shutdown();                                                           \
     return;                                                                    \
   }
 #else
 #define DO_SYNC(level) 0
 #define DB_WRITE_TYPE ARTS_DB_GPU_WRITE
-#define CHECK_CONSISTENCY(worker_id)                                             \
-  if (!(worker_id) && ARTS_LOOK_UP_CONFIG(gpu_locality) != 3) {                    \
-    arts_printf("The gpu_locality must be set to 3 (hashOnDBZero) in arts config "   \
-           "file.\n");                                                         \
-    arts_shutdown();                                                            \
+#define CHECK_CONSISTENCY(worker_id)                                           \
+  if (!(worker_id) && ARTS_LOOK_UP_CONFIG(gpu_locality) != 3) {                \
+    arts_printf(                                                               \
+        "The gpu_locality must be set to 3 (hashOnDBZero) in arts config "     \
+        "file.\n");                                                            \
+    arts_shutdown();                                                           \
     return;                                                                    \
   }
 #endif

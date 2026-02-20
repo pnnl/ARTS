@@ -48,7 +48,7 @@
   {                                                                            \
     cudaError_t err;                                                           \
     if ((err = (x)) != cudaSuccess) {                                          \
-      arts_printf("FAILED %s: %s\n", #x, cudaGetErrorString(err));            \
+      arts_printf("FAILED %s: %s\n", #x, cudaGetErrorString(err));             \
     }                                                                          \
   }
 
@@ -102,8 +102,7 @@ bool depth_first_rec(unsigned int vertex, unsigned int current,
 }
 
 void depth_first(unsigned int cycle_size) {
-  unsigned int *cycle =
-      (unsigned int *)calloc(order + 1, sizeof(unsigned int));
+  unsigned int *cycle = (unsigned int *)calloc(order + 1, sizeof(unsigned int));
   for (unsigned int i = 0; i < order; i++) {
     if (depth_first_rec(i, 0, cycle_size, cycle)) {
       for (unsigned int j = 0; j < cycle_size; j++) {

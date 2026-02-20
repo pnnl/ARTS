@@ -46,7 +46,7 @@ arts_guid_t some_db_guid = NULL_GUID;
 // This will hang but print a warning if the edt is not on the same node as the
 // pinned DBs
 void edt_func(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-             arts_edt_dep_t depv[]) {
+              arts_edt_dep_t depv[]) {
   (void)depc;
   (void)paramc;
   (void)paramv;
@@ -57,13 +57,13 @@ void edt_func(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_printf("arts_db_create Check\n");
   } else {
     arts_printf("artsDBCreate Fail\n");
-}
+  }
 
   if (*ptr2 == 9876) {
     arts_printf("arts_db_create_with_guid Check\n");
   } else {
     arts_printf("arts_db_create_with_guid Fail\n");
-}
+  }
 
   arts_shutdown();
 }
@@ -89,15 +89,17 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     *ptr = 1234;
 
     // EDT is going to run on node given by command line
-    arts_guid_t edt_guid = arts_edt_create(edt_func, 0, NULL, 2, &(arts_hint_t){.route = node});
+    arts_guid_t edt_guid =
+        arts_edt_create(edt_func, 0, NULL, 2, &(arts_hint_t){.route = node});
 
     // Put both signals up front forcing one to be out of order to test the OO
     // code path
-    arts_signal_edt(edt_guid, 0, db_guid, ARTS_DB_WRITE);     // Note the mode
+    arts_signal_edt(edt_guid, 0, db_guid, ARTS_DB_WRITE);      // Note the mode
     arts_signal_edt(edt_guid, 1, some_db_guid, ARTS_DB_WRITE); // Note the mode
 
     // This is the delayed DB
-    int *ptr2 = (int *)arts_db_create_with_guid(some_db_guid, sizeof(unsigned int), NULL);
+    int *ptr2 = (int *)arts_db_create_with_guid(some_db_guid,
+                                                sizeof(unsigned int), NULL);
     *ptr2 = 9876;
   }
 }

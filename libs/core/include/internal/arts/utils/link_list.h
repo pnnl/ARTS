@@ -56,7 +56,7 @@ struct arts_link_list_s {
 
 struct arts_link_list_s *arts_link_list_group_new(unsigned int list_size);
 struct arts_link_list_s *arts_link_list_get(struct arts_link_list_s *link_list,
-                                     unsigned int position);
+                                            unsigned int position);
 unsigned arts_link_list_get_size(struct arts_link_list_s *link_list);
 uint8_t arts_link_list_is_empty(struct arts_link_list_s *link_list);
 void *arts_link_list_get_front_data(struct arts_link_list_s *link_list);

@@ -49,11 +49,12 @@ void send_handler(void *args) {
   for (unsigned int i = 0; i < num_elements; i++) {
     if (data[i] != i) {
       pass = false;
-}
+    }
   }
   if (pass) {
-    arts_printf("CHECK %u of %u\n", arts_get_current_node(), arts_get_total_nodes());
-}
+    arts_printf("CHECK %u of %u\n", arts_get_current_node(),
+                arts_get_total_nodes());
+  }
 
   if (arts_get_current_node() + 1 == arts_get_total_nodes()) {
     arts_printf("Shutdown\n");

@@ -40,13 +40,13 @@
 #include "arts/utils/malloc.h"
 
 #include "arts/gas/route_table.h"
-#include "arts/runtime/globals.h"
-#include "arts/runtime/rt.h"
-#include "arts/runtime/runtime.h"
 #include "arts/runtime/compute/edt_functions.h"
+#include "arts/runtime/globals.h"
 #include "arts/runtime/memory/array_db.h"
 #include "arts/runtime/memory/db_functions.h"
 #include "arts/runtime/network/remote_functions.h"
+#include "arts/runtime/rt.h"
+#include "arts/runtime/runtime.h"
 #include "arts/runtime/sync/termination_detection.h"
 #include "arts/system/arts_print.h"
 
@@ -162,17 +162,19 @@ inline void arts_out_of_order_handler(void *handle_me, void *memory_ptr) {
   switch (type_ptr->type) {
   case OO_SIGNAL_EDT: {
     struct oo_signal_edt_s *edt = (struct oo_signal_edt_s *)handle_me;
-    internal_signal_edt(edt->edt_packet, edt->slot, edt->data_guid, edt->mode, NULL,
-                      0);
+    internal_signal_edt(edt->edt_packet, edt->slot, edt->data_guid, edt->mode,
+                        NULL, 0);
     break;
   }
   case OO_EVENT_SATISFY_SLOT: {
-    struct oo_event_satisfy_slot_s *event = (struct oo_event_satisfy_slot_s *)handle_me;
+    struct oo_event_satisfy_slot_s *event =
+        (struct oo_event_satisfy_slot_s *)handle_me;
     arts_event_satisfy_slot(event->event_guid, event->data_guid, event->slot);
     break;
   }
   case OO_PERSISTENT_EVENT_SATISFY_SLOT: {
-    struct oo_event_satisfy_slot_s *event = (struct oo_event_satisfy_slot_s *)handle_me;
+    struct oo_event_satisfy_slot_s *event =
+        (struct oo_event_satisfy_slot_s *)handle_me;
     arts_persistent_event_satisfy(event->event_guid, event->slot, true);
     break;
   }
@@ -182,32 +184,38 @@ inline void arts_out_of_order_handler(void *handle_me, void *memory_ptr) {
     break;
   }
   case OO_HANDLE_READY_EDT: {
-    struct oo_handle_ready_edt_s *ready_edt = (struct oo_handle_ready_edt_s *)handle_me;
+    struct oo_handle_ready_edt_s *ready_edt =
+        (struct oo_handle_ready_edt_s *)handle_me;
     arts_handle_ready_edt(ready_edt->edt);
     break;
   }
   case OO_REMOTE_DB_SEND: {
-    struct oo_remote_db_send_s *db_send = (struct oo_remote_db_send_s *)handle_me;
+    struct oo_remote_db_send_s *db_send =
+        (struct oo_remote_db_send_s *)handle_me;
     arts_remote_db_send_check(db_send->rank, (struct arts_db_s *)memory_ptr,
-                          db_send->mode);
+                              db_send->mode);
     break;
   }
   case OO_DB_REQUEST_SATISFY: {
-    struct oo_db_request_satisfy_s *req = (struct oo_db_request_satisfy_s *)handle_me;
+    struct oo_db_request_satisfy_s *req =
+        (struct oo_db_request_satisfy_s *)handle_me;
     ARTS_DEBUG("FILL %lu %u %p", req->edt, req->slot, memory_ptr);
-    arts_db_request_callback(req->edt, req->slot, (struct arts_db_s *)memory_ptr);
+    arts_db_request_callback(req->edt, req->slot,
+                             (struct arts_db_s *)memory_ptr);
     break;
   }
   case OO_DB_FULL_SEND: {
-    struct oo_remote_db_full_send_s *db_send = (struct oo_remote_db_full_send_s *)handle_me;
-    arts_remote_db_full_send_check(db_send->rank, (struct arts_db_s *)memory_ptr,
-                              db_send->edt_guid, db_send->slot, db_send->mode);
+    struct oo_remote_db_full_send_s *db_send =
+        (struct oo_remote_db_full_send_s *)handle_me;
+    arts_remote_db_full_send_check(
+        db_send->rank, (struct arts_db_s *)memory_ptr, db_send->edt_guid,
+        db_send->slot, db_send->mode);
     break;
   }
   case OO_GET_FROM_DB: {
     struct oo_get_from_db_s *req = (struct oo_get_from_db_s *)handle_me;
     arts_get_from_db_at(req->edt_guid, req->db_guid, req->slot, req->offset,
-                    req->size, arts_global_rank_id);
+                        req->size, arts_global_rank_id);
     break;
   }
   case OO_SIGNAL_EDT_PTR: {
@@ -217,8 +225,9 @@ inline void arts_out_of_order_handler(void *handle_me, void *memory_ptr) {
   }
   case OO_PUT_IN_DB: {
     struct oo_put_in_db_s *req = (struct oo_put_in_db_s *)handle_me;
-    internal_put_in_db(req->ptr, req->edt_guid, req->db_guid, req->slot, req->offset,
-                    req->size, req->epoch_guid, arts_global_rank_id);
+    internal_put_in_db(req->ptr, req->edt_guid, req->db_guid, req->slot,
+                       req->offset, req->size, req->epoch_guid,
+                       arts_global_rank_id);
     arts_free(req->ptr);
     break;
   }
@@ -246,9 +255,10 @@ inline void arts_out_of_order_handler(void *handle_me, void *memory_ptr) {
     break;
   }
   case OO_ATOMIC_ADD_IN_ARRAY_DB: {
-    struct oo_atomic_add_in_array_db_s *req = (struct oo_atomic_add_in_array_db_s *)handle_me;
+    struct oo_atomic_add_in_array_db_s *req =
+        (struct oo_atomic_add_in_array_db_s *)handle_me;
     internal_atomic_add_in_array_db(req->db_guid, req->index, req->to_add,
-                               req->edt_guid, req->slot, req->epoch_guid);
+                                    req->edt_guid, req->slot, req->epoch_guid);
     break;
   }
   case OO_ATOMIC_COMPARE_AND_SWAP_IN_ARRAY_DB: {
@@ -279,8 +289,8 @@ inline void arts_out_of_order_handler(void *handle_me, void *memory_ptr) {
  * immediately and the OO entry is freed.
  */
 void arts_out_of_order_signal_edt(arts_guid_t wait_on, arts_guid_t edt_packet,
-                             arts_guid_t data_guid, uint32_t slot,
-                             arts_type_t mode, bool force) {
+                                  arts_guid_t data_guid, uint32_t slot,
+                                  arts_type_t mode, bool force) {
   struct oo_signal_edt_s *edt =
       (struct oo_signal_edt_s *)arts_malloc(sizeof(struct oo_signal_edt_s));
   edt->type = OO_SIGNAL_EDT;
@@ -299,11 +309,13 @@ void arts_out_of_order_signal_edt(arts_guid_t wait_on, arts_guid_t edt_packet,
   }
 }
 
-void arts_out_of_order_event_satisfy_slot(arts_guid_t wait_on, arts_guid_t event_guid,
-                                    arts_guid_t data_guid, uint32_t slot,
-                                    bool force) {
-  struct oo_event_satisfy_slot_s *event = (struct oo_event_satisfy_slot_s *)arts_malloc(
-      sizeof(struct oo_event_satisfy_slot_s));
+void arts_out_of_order_event_satisfy_slot(arts_guid_t wait_on,
+                                          arts_guid_t event_guid,
+                                          arts_guid_t data_guid, uint32_t slot,
+                                          bool force) {
+  struct oo_event_satisfy_slot_s *event =
+      (struct oo_event_satisfy_slot_s *)arts_malloc(
+          sizeof(struct oo_event_satisfy_slot_s));
   event->type = OO_EVENT_SATISFY_SLOT;
   event->event_guid = event_guid;
   event->data_guid = data_guid;
@@ -321,10 +333,12 @@ void arts_out_of_order_event_satisfy_slot(arts_guid_t wait_on, arts_guid_t event
 }
 
 void arts_out_of_order_persistent_event_satisfy_slot(arts_guid_t wait_on,
-                                              arts_guid_t event_guid,
-                                              uint32_t slot, bool force) {
-  struct oo_event_satisfy_slot_s *event = (struct oo_event_satisfy_slot_s *)arts_malloc(
-      sizeof(struct oo_event_satisfy_slot_s));
+                                                     arts_guid_t event_guid,
+                                                     uint32_t slot,
+                                                     bool force) {
+  struct oo_event_satisfy_slot_s *event =
+      (struct oo_event_satisfy_slot_s *)arts_malloc(
+          sizeof(struct oo_event_satisfy_slot_s));
   event->type = OO_PERSISTENT_EVENT_SATISFY_SLOT;
   event->event_guid = event_guid;
   event->slot = slot;
@@ -340,11 +354,11 @@ void arts_out_of_order_persistent_event_satisfy_slot(arts_guid_t wait_on,
   }
 }
 
-void arts_out_of_order_add_dependence(arts_guid_t source, arts_guid_t destination,
-                                 uint32_t slot, arts_type_t mode,
-                                 arts_guid_t wait_on) {
-  struct oo_add_dependence_s *dep =
-      (struct oo_add_dependence_s *)arts_malloc(sizeof(struct oo_add_dependence_s));
+void arts_out_of_order_add_dependence(arts_guid_t source,
+                                      arts_guid_t destination, uint32_t slot,
+                                      arts_type_t mode, arts_guid_t wait_on) {
+  struct oo_add_dependence_s *dep = (struct oo_add_dependence_s *)arts_malloc(
+      sizeof(struct oo_add_dependence_s));
   dep->type = OO_ADD_DEPENDENCE;
   dep->source = source;
   dep->destination = destination;
@@ -357,13 +371,11 @@ void arts_out_of_order_add_dependence(arts_guid_t source, arts_guid_t destinatio
   }
 }
 
-void arts_out_of_order_add_dependence_to_persistent_event(arts_guid_t source,
-                                                  arts_guid_t destination,
-                                                  uint32_t slot,
-                                                  arts_type_t mode,
-                                                  arts_guid_t wait_on) {
-  struct oo_add_dependence_s *dep =
-      (struct oo_add_dependence_s *)arts_malloc(sizeof(struct oo_add_dependence_s));
+void arts_out_of_order_add_dependence_to_persistent_event(
+    arts_guid_t source, arts_guid_t destination, uint32_t slot,
+    arts_type_t mode, arts_guid_t wait_on) {
+  struct oo_add_dependence_s *dep = (struct oo_add_dependence_s *)arts_malloc(
+      sizeof(struct oo_add_dependence_s));
   dep->type = OO_ADD_DEPENDENCE;
   dep->source = source;
   dep->destination = destination;
@@ -376,9 +388,11 @@ void arts_out_of_order_add_dependence_to_persistent_event(arts_guid_t source,
   }
 }
 
-void arts_out_of_order_handle_ready_edt(arts_guid_t trigger_guid, struct arts_edt_s *edt) {
+void arts_out_of_order_handle_ready_edt(arts_guid_t trigger_guid,
+                                        struct arts_edt_s *edt) {
   struct oo_handle_ready_edt_s *ready_edt =
-      (struct oo_handle_ready_edt_s *)arts_malloc(sizeof(struct oo_handle_ready_edt_s));
+      (struct oo_handle_ready_edt_s *)arts_malloc(
+          sizeof(struct oo_handle_ready_edt_s));
   ready_edt->type = OO_HANDLE_READY_EDT;
   ready_edt->edt = edt;
   bool res = arts_route_table_add_oo(trigger_guid, ready_edt, false);
@@ -389,16 +403,18 @@ void arts_out_of_order_handle_ready_edt(arts_guid_t trigger_guid, struct arts_ed
 }
 
 void arts_out_of_order_handle_remote_db_send(int rank, arts_guid_t db_guid,
-                                      arts_type_t mode) {
+                                             arts_type_t mode) {
   struct oo_remote_db_send_s *ready_send =
-      (struct oo_remote_db_send_s *)arts_malloc(sizeof(struct oo_remote_db_send_s));
+      (struct oo_remote_db_send_s *)arts_malloc(
+          sizeof(struct oo_remote_db_send_s));
   ready_send->type = OO_REMOTE_DB_SEND;
   ready_send->rank = rank;
   ready_send->data_guid = db_guid;
   ready_send->mode = mode;
   bool res = arts_route_table_add_oo(db_guid, ready_send, false);
   if (!res) {
-    struct arts_db_s *db = (struct arts_db_s *)arts_route_table_lookup_item(db_guid);
+    struct arts_db_s *db =
+        (struct arts_db_s *)arts_route_table_lookup_item(db_guid);
     arts_remote_db_send_check(ready_send->rank, db, ready_send->mode);
     arts_free(ready_send);
   }
@@ -411,31 +427,36 @@ void arts_out_of_order_handle_remote_db_send(int rank, arts_guid_t db_guid,
  * If the DB becomes available before the OO entry is added (race), the
  * callback fires immediately.
  */
-void arts_out_of_order_handle_db_request(arts_guid_t db_guid, struct arts_edt_s *edt,
-                                   unsigned int slot, bool inc) {
+void arts_out_of_order_handle_db_request(arts_guid_t db_guid,
+                                         struct arts_edt_s *edt,
+                                         unsigned int slot, bool inc) {
   ARTS_DEBUG("OO db_request: DB[Guid:%lu] -> EDT[Guid:%lu] slot=%u inc=%d",
              db_guid, edt->current_edt, slot, inc);
-  struct oo_db_request_satisfy_s *req = (struct oo_db_request_satisfy_s *)arts_malloc(
-      sizeof(struct oo_db_request_satisfy_s));
+  struct oo_db_request_satisfy_s *req =
+      (struct oo_db_request_satisfy_s *)arts_malloc(
+          sizeof(struct oo_db_request_satisfy_s));
   req->type = OO_DB_REQUEST_SATISFY;
   req->edt = edt;
   req->slot = slot;
   bool res = arts_route_table_add_oo(db_guid, req, inc);
   if (!res) {
-    ARTS_DEBUG("OO db_request: DB[Guid:%lu] already available — immediate callback",
-               db_guid);
-    struct arts_db_s *db = (struct arts_db_s *)arts_route_table_lookup_item(db_guid);
+    ARTS_DEBUG(
+        "OO db_request: DB[Guid:%lu] already available — immediate callback",
+        db_guid);
+    struct arts_db_s *db =
+        (struct arts_db_s *)arts_route_table_lookup_item(db_guid);
     arts_db_request_callback(req->edt, req->slot, db);
     arts_free(req);
   }
 }
 
 // This should save one lookup compared to the function above...
-void arts_out_of_order_handle_db_request_with_oo_list(struct arts_out_of_order_list_s *add_to_me,
-                                             void **data, struct arts_edt_s *edt,
-                                             unsigned int slot) {
-  struct oo_db_request_satisfy_s *req = (struct oo_db_request_satisfy_s *)arts_malloc(
-      sizeof(struct oo_db_request_satisfy_s));
+void arts_out_of_order_handle_db_request_with_oo_list(
+    struct arts_out_of_order_list_s *add_to_me, void **data,
+    struct arts_edt_s *edt, unsigned int slot) {
+  struct oo_db_request_satisfy_s *req =
+      (struct oo_db_request_satisfy_s *)arts_malloc(
+          sizeof(struct oo_db_request_satisfy_s));
   req->type = OO_DB_REQUEST_SATISFY;
   req->edt = edt;
   req->slot = slot;
@@ -447,10 +468,12 @@ void arts_out_of_order_handle_db_request_with_oo_list(struct arts_out_of_order_l
 }
 
 void arts_out_of_order_handle_remote_db_full_send(arts_guid_t db_guid, int rank,
-                                          arts_guid_t edt_guid,
-                                          unsigned int slot, arts_type_t mode) {
-  struct oo_remote_db_full_send_s *db_send = (struct oo_remote_db_full_send_s *)arts_malloc(
-      sizeof(struct oo_remote_db_full_send_s));
+                                                  arts_guid_t edt_guid,
+                                                  unsigned int slot,
+                                                  arts_type_t mode) {
+  struct oo_remote_db_full_send_s *db_send =
+      (struct oo_remote_db_full_send_s *)arts_malloc(
+          sizeof(struct oo_remote_db_full_send_s));
   db_send->type = OO_DB_FULL_SEND;
   db_send->rank = rank;
   db_send->edt_guid = edt_guid;
@@ -458,16 +481,17 @@ void arts_out_of_order_handle_remote_db_full_send(arts_guid_t db_guid, int rank,
   db_send->mode = mode;
   bool res = arts_route_table_add_oo(db_guid, db_send, false);
   if (!res) {
-    struct arts_db_s *db = (struct arts_db_s *)arts_route_table_lookup_item(db_guid);
+    struct arts_db_s *db =
+        (struct arts_db_s *)arts_route_table_lookup_item(db_guid);
     arts_remote_db_full_send_check(db_send->rank, db, db_send->edt_guid,
-                              db_send->slot, db_send->mode);
+                                   db_send->slot, db_send->mode);
     arts_free(db_send);
   }
 }
 
 void arts_out_of_order_get_from_db(arts_guid_t edt_guid, arts_guid_t db_guid,
-                             unsigned int slot, unsigned int offset,
-                             unsigned int size) {
+                                   unsigned int slot, unsigned int offset,
+                                   unsigned int size) {
   struct oo_get_from_db_s *req =
       (struct oo_get_from_db_s *)arts_malloc(sizeof(struct oo_get_from_db_s));
   req->type = OO_GET_FROM_DB;
@@ -479,16 +503,17 @@ void arts_out_of_order_get_from_db(arts_guid_t edt_guid, arts_guid_t db_guid,
   bool res = arts_route_table_add_oo(db_guid, req, false);
   if (!res) {
     arts_get_from_db_at(req->edt_guid, req->db_guid, req->slot, req->offset,
-                    req->size, arts_global_rank_id);
+                        req->size, arts_global_rank_id);
     arts_free(req);
   }
 }
 
-void arts_out_of_order_signal_edt_with_ptr(arts_guid_t edt_guid, arts_guid_t db_guid,
-                                    void *ptr, unsigned int size,
-                                    unsigned int slot) {
-  struct oo_signal_edt_ptr_s *req =
-      (struct oo_signal_edt_ptr_s *)arts_malloc(sizeof(struct oo_signal_edt_ptr_s));
+void arts_out_of_order_signal_edt_with_ptr(arts_guid_t edt_guid,
+                                           arts_guid_t db_guid, void *ptr,
+                                           unsigned int size,
+                                           unsigned int slot) {
+  struct oo_signal_edt_ptr_s *req = (struct oo_signal_edt_ptr_s *)arts_malloc(
+      sizeof(struct oo_signal_edt_ptr_s));
   req->type = OO_SIGNAL_EDT_PTR;
   req->edt_guid = edt_guid;
   req->db_guid = db_guid;
@@ -502,9 +527,10 @@ void arts_out_of_order_signal_edt_with_ptr(arts_guid_t edt_guid, arts_guid_t db_
   }
 }
 
-void arts_out_of_order_put_in_db(void *ptr, arts_guid_t edt_guid, arts_guid_t db_guid,
-                           unsigned int slot, unsigned int offset,
-                           unsigned int size, arts_guid_t epoch_guid) {
+void arts_out_of_order_put_in_db(void *ptr, arts_guid_t edt_guid,
+                                 arts_guid_t db_guid, unsigned int slot,
+                                 unsigned int offset, unsigned int size,
+                                 arts_guid_t epoch_guid) {
   struct oo_put_in_db_s *req =
       (struct oo_put_in_db_s *)arts_malloc(sizeof(struct oo_put_in_db_s));
   req->type = OO_PUT_IN_DB;
@@ -517,15 +543,17 @@ void arts_out_of_order_put_in_db(void *ptr, arts_guid_t edt_guid, arts_guid_t db
   req->epoch_guid = epoch_guid;
   bool res = arts_route_table_add_oo(db_guid, req, false);
   if (!res) {
-    internal_put_in_db(req->ptr, req->edt_guid, req->db_guid, req->slot, req->offset,
-                    req->size, req->epoch_guid, arts_global_rank_id);
+    internal_put_in_db(req->ptr, req->edt_guid, req->db_guid, req->slot,
+                       req->offset, req->size, req->epoch_guid,
+                       arts_global_rank_id);
     arts_free(req->ptr);
     arts_free(req);
   }
 }
 
 void arts_out_of_order_inc_active_epoch(arts_guid_t epoch_guid) {
-  struct oo_epoch_s *req = (struct oo_epoch_s *)arts_malloc(sizeof(struct oo_epoch_s));
+  struct oo_epoch_s *req =
+      (struct oo_epoch_s *)arts_malloc(sizeof(struct oo_epoch_s));
   req->type = OO_EPOCH_ACTIVE;
   req->guid = epoch_guid;
   bool res = arts_route_table_add_oo(epoch_guid, req, false);
@@ -536,7 +564,8 @@ void arts_out_of_order_inc_active_epoch(arts_guid_t epoch_guid) {
 }
 
 void arts_out_of_order_inc_finished_epoch(arts_guid_t epoch_guid) {
-  struct oo_epoch_s *req = (struct oo_epoch_s *)arts_malloc(sizeof(struct oo_epoch_s));
+  struct oo_epoch_s *req =
+      (struct oo_epoch_s *)arts_malloc(sizeof(struct oo_epoch_s));
   req->type = OO_EPOCH_FINISH;
   req->guid = epoch_guid;
   bool res = arts_route_table_add_oo(epoch_guid, req, false);
@@ -547,7 +576,7 @@ void arts_out_of_order_inc_finished_epoch(arts_guid_t epoch_guid) {
 }
 
 void arts_out_of_order_send_epoch(arts_guid_t epoch_guid, unsigned int source,
-                             unsigned int dest) {
+                                  unsigned int dest) {
   struct oo_epoch_send_s *req =
       (struct oo_epoch_send_s *)arts_malloc(sizeof(struct oo_epoch_send_s));
   req->type = OO_EPOCH_SEND;
@@ -561,7 +590,8 @@ void arts_out_of_order_send_epoch(arts_guid_t epoch_guid, unsigned int source,
 }
 
 void arts_out_of_order_inc_queue_epoch(arts_guid_t epoch_guid) {
-  struct oo_epoch_s *req = (struct oo_epoch_s *)arts_malloc(sizeof(struct oo_epoch_s));
+  struct oo_epoch_s *req =
+      (struct oo_epoch_s *)arts_malloc(sizeof(struct oo_epoch_s));
   req->type = OO_EPOCH_INC_QUEUE;
   req->guid = epoch_guid;
   bool res = arts_route_table_add_oo(epoch_guid, req, false);
@@ -572,8 +602,8 @@ void arts_out_of_order_inc_queue_epoch(arts_guid_t epoch_guid) {
 }
 
 void arts_out_of_order_db_move(arts_guid_t data_guid, unsigned int rank) {
-  struct oo_remote_db_send_s *req =
-      (struct oo_remote_db_send_s *)arts_malloc(sizeof(struct oo_remote_db_send_s));
+  struct oo_remote_db_send_s *req = (struct oo_remote_db_send_s *)arts_malloc(
+      sizeof(struct oo_remote_db_send_s));
   req->type = OO_DB_MOVE;
   req->data_guid = data_guid;
   req->rank = (int)rank;

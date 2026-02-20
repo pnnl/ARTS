@@ -43,9 +43,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "arts.h"
 #include "arts/block_distribution.h"
 #include "arts/csr.h"
-#include "arts.h"
 
 arts_block_dist_t *distribution;
 csr_graph_t *graph;
@@ -55,12 +55,13 @@ void bfs_output() {
   arts_printf("Printing vertex levels....\n");
   uint64_t i;
   for (i = 0; i < graph->num_local_vertices; ++i) {
-    arts_printf("Local vertex : %" PRIu64 ", Level : %" PRIu64 "\n", i, level[i]);
+    arts_printf("Local vertex : %" PRIu64 ", Level : %" PRIu64 "\n", i,
+                level[i]);
   }
 }
 
 void exit_program(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                 arts_edt_dep_t depv[]) {
+                  arts_edt_dep_t depv[]) {
   (void)depc;
   (void)depv;
   (void)paramc;
@@ -107,7 +108,8 @@ void relax(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       vertex_t u = neighbors[i];
 
       // route message
-      arts_printf("sending u=%" PRIu64 ", level= %" PRIu64 "\n", u, neigbrlevel);
+      arts_printf("sending u=%" PRIu64 ", level= %" PRIu64 "\n", u,
+                  neigbrlevel);
       bfs_send(u, neigbrlevel);
     }
   }
@@ -118,13 +120,14 @@ void bfs_send(vertex_t u, uint64_t ulevel) {
   uint64_t send[2];
   send[0] = u;
   send[1] = ulevel;
-  arts_guid_t relax_guid = arts_edt_create(relax, 2, send, 1,
+  arts_guid_t relax_guid = arts_edt_create(
+      relax, 2, send, 1,
       &(arts_hint_t){.route = arts_guid_get_rank(neighb_dbguid)});
   arts_signal_edt(relax_guid, 0, neighb_dbguid, ARTS_DB_WRITE);
 }
 
 void kickoff_termination(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                        arts_edt_dep_t depv[]) {
+                         arts_edt_dep_t depv[]) {
   (void)depc;
   (void)depv;
   (void)paramc;
@@ -162,7 +165,8 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Initialize graph data on every node
   arts_guid_t init_epoch_guid = arts_initialize_and_start_epoch(NULL_GUID, 0);
   for (unsigned int i = 0; i < arts_get_total_nodes(); i++) {
-    arts_edt_create_with_epoch(init_node, paramc, paramv, 0, init_epoch_guid, &(arts_hint_t){.route = i});
+    arts_edt_create_with_epoch(init_node, paramc, paramv, 0, init_epoch_guid,
+                               &(arts_hint_t){.route = i});
   }
   arts_wait_on_handle(init_epoch_guid);
 
@@ -176,9 +180,11 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   assert(source < distribution->num_vertices);
 
-  arts_guid_t exit_guid = arts_edt_create(exit_program, 0, NULL, 1, &(arts_hint_t){.route = 0});
+  arts_guid_t exit_guid =
+      arts_edt_create(exit_program, 0, NULL, 1, &(arts_hint_t){.route = 0});
   arts_initialize_and_start_epoch(exit_guid, 0);
-  arts_edt_create(kickoff_termination, 1, (uint64_t *)&source, 0, &(arts_hint_t){.route = 0});
+  arts_edt_create(kickoff_termination, 1, (uint64_t *)&source, 0,
+                  &(arts_hint_t){.route = 0});
 }
 
 int main(int argc, char **argv) {

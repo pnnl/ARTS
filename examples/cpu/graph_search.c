@@ -43,9 +43,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "arts.h"
 #include "arts/block_distribution.h"
 #include "arts/csr.h"
-#include "arts.h"
 #include "arts/runtime/compute/shad_adapter.h"
 
 unsigned int intro_start = 5;
@@ -85,23 +85,23 @@ typedef struct {
 } source_info_t;
 
 void visit_source(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                 arts_edt_dep_t depv[]);
+                  arts_edt_dep_t depv[]);
 
 void exit_program(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                 arts_edt_dep_t depv[]) {
+                  arts_edt_dep_t depv[]) {
   (void)depc;
   (void)depv;
   (void)paramc;
   (void)paramv;
   end_time = arts_get_time_stamp();
   arts_printf("Total execution time: %f s \n",
-         (double)(end_time - start_time) / 1000000000.0);
+              (double)(end_time - start_time) / 1000000000.0);
   arts_stop_intro_shad();
   arts_shutdown();
 }
 
-void gather_neighbor_property_val(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                               arts_edt_dep_t depv[]) {
+void gather_neighbor_property_val(uint32_t paramc, const uint64_t *paramv,
+                                  uint32_t depc, arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   source_info_t *src_info = (source_info_t *)depv[depc - 1].ptr;
@@ -112,9 +112,10 @@ void gather_neighbor_property_val(uint32_t paramc, const uint64_t *paramv, uint3
     // discarded v.
     vertex_id_t *v_id = (vertex_id_t *)depv[i + src_info->num_neighbors].ptr;
     /*For now, just printing in-place*/
-    //    arts_printf("Seed: %u, Step: %u, Neighbor: %u, neibID: %llu Weight: %f,
-    //    Visited: %d, Indicator computation: \n", src_info->seed, num_steps -
-    //    src_info->step + 1, data->v,v_id->id, data->propertyVal, src_info->source
+    //    arts_printf("Seed: %u, Step: %u, Neighbor: %u, neibID: %llu Weight:
+    //    %f, Visited: %d, Indicator computation: \n", src_info->seed, num_steps
+    //    - src_info->step + 1, data->v,v_id->id, data->propertyVal,
+    //    src_info->source
     //    == data->v ? 1 : 0);
     /*For now we are doing in-place max-weighted sampling for next source*/
     if (data->propertyVal > max_weighted_neighbor->propertyVal) {
@@ -130,16 +131,18 @@ void gather_neighbor_property_val(uint32_t paramc, const uint64_t *paramv, uint3
     /*Spawn an edt at rank that is the owner of current seed vertex*/
     uint64_t packed_values[3] = {source, src_info->step - 1, src_info->seed};
     arts_guid_t visit_source_guid =
-        arts_edt_create(visit_source, 3, (uint64_t *)&packed_values, 2, &(arts_hint_t){.route = rank});
-    //        arts_printf("New Edt: %lu Source is located on rank %d Guid:%lu\n",
-    //        visit_source_guid, rank, vertex_property_map_guid);
-    arts_signal_edt(visit_source_guid, 0, vertex_property_map_guid, ARTS_DB_WRITE);
+        arts_edt_create(visit_source, 3, (uint64_t *)&packed_values, 2,
+                        &(arts_hint_t){.route = rank});
+    //        arts_printf("New Edt: %lu Source is located on rank %d
+    //        Guid:%lu\n", visit_source_guid, rank, vertex_property_map_guid);
+    arts_signal_edt(visit_source_guid, 0, vertex_property_map_guid,
+                    ARTS_DB_WRITE);
     arts_signal_edt(visit_source_guid, 1, vertex_id_map_guid, ARTS_DB_WRITE);
   }
 }
 
 void visit_source(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                 arts_edt_dep_t depv[]) {
+                  arts_edt_dep_t depv[]) {
   (void)depc;
   (void)paramc;
   //  arts_start_intro_shad(intro_start);
@@ -167,24 +170,26 @@ void visit_source(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     // memcpy(&(src_info->neighbors), &neighbors, neighbor_cnt *
     // sizeof(vertex_t));
     /* //... keep filling in */
-    arts_guid_t gather_neighbor_property_val_guid =
-        arts_edt_create(gather_neighbor_property_val, 0, NULL, (2 * neighbor_cnt) + 1, &(arts_hint_t){.route = arts_get_current_node()});
+    arts_guid_t gather_neighbor_property_val_guid = arts_edt_create(
+        gather_neighbor_property_val, 0, NULL, (2 * neighbor_cnt) + 1,
+        &(arts_hint_t){.route = arts_get_current_node()});
 
-    arts_signal_edt(gather_neighbor_property_val_guid, 2 * neighbor_cnt, db_guid, ARTS_DB_WRITE);
+    arts_signal_edt(gather_neighbor_property_val_guid, 2 * neighbor_cnt,
+                    db_guid, ARTS_DB_WRITE);
 
     arts_array_db_t *vertex_property_map = (arts_array_db_t *)depv[0].ptr;
     for (unsigned int i = 0; i < neighbor_cnt; i++) {
       vertex_t neib = neighbors[i];
-      arts_get_from_array_db(gather_neighbor_property_val_guid, i, vertex_property_map,
-                         neib);
+      arts_get_from_array_db(gather_neighbor_property_val_guid, i,
+                             vertex_property_map, neib);
     }
 
     arts_array_db_t *vertex_id_map = (arts_array_db_t *)depv[1].ptr;
     for (unsigned int i = 0; i < neighbor_cnt; i++) {
       vertex_t neib = neighbors[i];
       // arts_printf("Vertex=%llu indexing at %u \n", neib, neighbor_cnt + i);
-      arts_get_from_array_db(gather_neighbor_property_val_guid, neighbor_cnt + i,
-                         vertex_id_map, neib);
+      arts_get_from_array_db(gather_neighbor_property_val_guid,
+                             neighbor_cnt + i, vertex_id_map, neib);
     }
   }
 }
@@ -201,13 +206,14 @@ void check(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-void end_vertex_id_map_read(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                        arts_edt_dep_t depv[]) {
+void end_vertex_id_map_read(uint32_t paramc, const uint64_t *paramv,
+                            uint32_t depc, arts_edt_dep_t depv[]) {
   (void)depc;
   (void)depv;
   (void)paramc;
   (void)paramv;
-  arts_guid_t exit_guid = arts_edt_create(exit_program, 0, NULL, 1, &(arts_hint_t){.route = 0});
+  arts_guid_t exit_guid =
+      arts_edt_create(exit_program, 0, NULL, 1, &(arts_hint_t){.route = 0});
   arts_initialize_and_start_epoch(exit_guid, 0);
 
   uint64_t *seeds = (uint64_t *)calloc((size_t)num_seeds, sizeof(uint64_t));
@@ -229,7 +235,9 @@ void end_vertex_id_map_read(uint32_t paramc, const uint64_t *paramv, uint32_t de
     }
   } else {
     for (int i = 0; i < num_seeds; i++) {
-      seeds[i] = rand() % distribution->num_vertices; // NOLINT(cert-msc30-c,cert-msc50-cpp)
+      seeds[i] =
+          rand() %
+          distribution->num_vertices; // NOLINT(cert-msc30-c,cert-msc50-cpp)
       //	arts_printf("Seed chosen %d,\n", seeds[i]);
     }
   }
@@ -243,35 +251,38 @@ void end_vertex_id_map_read(uint32_t paramc, const uint64_t *paramv, uint32_t de
     /*Spawn an edt at rank that is the owner of current seed vertex*/
     uint64_t packed_values[3] = {source, (uint64_t)num_steps, source};
     arts_guid_t visit_source_guid =
-        arts_edt_create(visit_source, 3, (uint64_t *)&packed_values, 2, &(arts_hint_t){.route = rank});
+        arts_edt_create(visit_source, 3, (uint64_t *)&packed_values, 2,
+                        &(arts_hint_t){.route = rank});
     // TODO: why pass vertexpropertguid as an argument?
-    arts_signal_edt(visit_source_guid, 0, vertex_property_map_guid, ARTS_DB_WRITE);
+    arts_signal_edt(visit_source_guid, 0, vertex_property_map_guid,
+                    ARTS_DB_WRITE);
 
     arts_signal_edt(visit_source_guid, 1, vertex_id_map_guid, ARTS_DB_WRITE);
   }
   free(seeds);
 }
 
-void end_vertex_property_read(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                           arts_edt_dep_t depv[]) {
+void end_vertex_property_read(uint32_t paramc, const uint64_t *paramv,
+                              uint32_t depc, arts_edt_dep_t depv[]) {
 
-(void)depc;
+  (void)depc;
 
-(void)depv;
+  (void)depv;
 
-(void)paramc;
+  (void)paramc;
 
-(void)paramv;
+  (void)paramv;
 
   /*Now read in the vertex ID map*/
 
   // Start an epoch to read in the ID value
-  arts_guid_t end_vertex_id_map_read_epoch_guid =
-      arts_edt_create(end_vertex_id_map_read, 0, NULL, 2, &(arts_hint_t){.route = 0});
+  arts_guid_t end_vertex_id_map_read_epoch_guid = arts_edt_create(
+      end_vertex_id_map_read, 0, NULL, 2, &(arts_hint_t){.route = 0});
 
   // TODO: Is the following line necessary ?
   // Signal the ID map guid
-  arts_signal_edt(end_vertex_id_map_read_epoch_guid, 1, vertex_id_map_guid, ARTS_DB_WRITE);
+  arts_signal_edt(end_vertex_id_map_read_epoch_guid, 1, vertex_id_map_guid,
+                  ARTS_DB_WRITE);
 
   // Start the epoch
   arts_initialize_and_start_epoch(end_vertex_id_map_read_epoch_guid, 0);
@@ -285,7 +296,8 @@ void end_vertex_property_read(uint32_t paramc, const uint64_t *paramv, uint32_t 
   FILE *file = fopen(id_file, "r");
   arts_printf("File to be opened %s\n", id_file);
   if (file == NULL) {
-    arts_printf("[ERROR] File containing vertex ids  can't be open -- %s", id_file);
+    arts_printf("[ERROR] File containing vertex ids  can't be open -- %s",
+                id_file);
     arts_shutdown();
     return;
   }
@@ -346,7 +358,8 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Initialize graph data on every node
   arts_guid_t init_epoch_guid = arts_initialize_and_start_epoch(NULL_GUID, 0);
   for (unsigned int i = 0; i < arts_get_total_nodes(); i++) {
-    arts_edt_create_with_epoch(init_node, paramc, paramv, 0, init_epoch_guid, &(arts_hint_t){.route = i});
+    arts_edt_create_with_epoch(init_node, paramc, paramv, 0, init_epoch_guid,
+                               &(arts_hint_t){.route = i});
   }
   arts_wait_on_handle(init_epoch_guid);
 
@@ -376,22 +389,24 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 
   // Start an epoch to read in the property value
-  arts_guid_t end_vertex_property_read_epoch_guid =
-      arts_edt_create(end_vertex_property_read, 0, NULL, 2, &(arts_hint_t){.route = 0});
+  arts_guid_t end_vertex_property_read_epoch_guid = arts_edt_create(
+      end_vertex_property_read, 0, NULL, 2, &(arts_hint_t){.route = 0});
 
   // Signal the property map guid
-  arts_signal_edt(end_vertex_property_read_epoch_guid, 1, vertex_property_map_guid, ARTS_DB_WRITE);
+  arts_signal_edt(end_vertex_property_read_epoch_guid, 1,
+                  vertex_property_map_guid, ARTS_DB_WRITE);
 
   // Start the epoch
   arts_initialize_and_start_epoch(end_vertex_property_read_epoch_guid, 0);
 
   // Allocate vertex property map and populate it from node 0
-  arts_array_db_t *vertex_property_map =
-      arts_new_array_db_with_guid(vertex_property_map_guid, sizeof(vertex_property_t),
-                                  distribution->num_vertices);
+  arts_array_db_t *vertex_property_map = arts_new_array_db_with_guid(
+      vertex_property_map_guid, sizeof(vertex_property_t),
+      distribution->num_vertices);
 
   // Read in property file
-  arts_printf("[INFO] Reading in and constructing the vertex property map ...\n");
+  arts_printf(
+      "[INFO] Reading in and constructing the vertex property map ...\n");
   FILE *file = fopen(graph_file, "r");
   arts_printf("File to be opened %s\n", graph_file);
   if (file == NULL) {

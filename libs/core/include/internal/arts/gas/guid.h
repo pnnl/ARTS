@@ -124,9 +124,10 @@ uint64_t arts_guid_hash_key(arts_guid_t guid);
  * @param hash_size Routing-table bucket count.
  * @return Pointer to a new GUID range, or @c NULL on failure.
  */
-arts_guid_range_t *arts_guid_range_create_hash(arts_type_t type, unsigned int size,
-                                        unsigned int route,
-                                        unsigned int hash_size);
+arts_guid_range_t *arts_guid_range_create_hash(arts_type_t type,
+                                               unsigned int size,
+                                               unsigned int route,
+                                               unsigned int hash_size);
 
 #ifdef __cplusplus
 }

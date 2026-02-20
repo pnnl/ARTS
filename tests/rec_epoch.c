@@ -48,15 +48,15 @@ void dummytask(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                arts_edt_dep_t depv[]) {}
 
 void sync_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-              arts_edt_dep_t depv[]) {
+               arts_edt_dep_t depv[]) {
   (void)depc;
   (void)paramc;
   arts_printf("Guid:%lu Sync %lu: %lu\n", arts_get_current_guid(), paramv[0],
-         depv[0].guid);
+              depv[0].guid);
 }
 
 void exit_program(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                 arts_edt_dep_t depv[]) {
+                  arts_edt_dep_t depv[]) {
   (void)depc;
   (void)paramc;
   (void)paramv;
@@ -65,7 +65,7 @@ void exit_program(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 void root_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-              arts_edt_dep_t depv[]) {
+               arts_edt_dep_t depv[]) {
   (void)depc;
   (void)depv;
   (void)paramc;
@@ -77,17 +77,19 @@ void root_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     //        arts_guid_t epoch_guid = arts_initialize_and_start_epoch(guid,
     //        0);
     arts_guid_t epoch_guid = arts_initialize_and_start_epoch(NULL_GUID, 0);
-    arts_printf("Guid:%lu Root: %lu sync: %lu epoch: %lu\n", arts_get_current_guid(),
-           dep, NULL_GUID, epoch_guid);
+    arts_printf("Guid:%lu Root: %lu sync: %lu epoch: %lu\n",
+                arts_get_current_guid(), dep, NULL_GUID, epoch_guid);
 
     unsigned int num_nodes = arts_get_total_nodes();
     for (unsigned int rank = 0; rank < num_nodes; rank++) {
-      arts_edt_create(root_task, 1, &dep, 0, &(arts_hint_t){.route = rank % num_nodes});
-}
+      arts_edt_create(root_task, 1, &dep, 0,
+                      &(arts_hint_t){.route = rank % num_nodes});
+    }
 
     for (uint64_t rank = 0; rank < num_nodes * num_dummy; rank++) {
-      arts_edt_create(dummytask, 0, NULL, 0, &(arts_hint_t){.route = rank % num_nodes});
-}
+      arts_edt_create(dummytask, 0, NULL, 0,
+                      &(arts_hint_t){.route = rank % num_nodes});
+    }
 
     arts_wait_on_handle(epoch_guid);
   }

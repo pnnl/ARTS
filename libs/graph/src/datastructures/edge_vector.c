@@ -40,10 +40,10 @@
 #include <inttypes.h>
 #include <stdlib.h>
 
-#include "arts/edge_vector.h"
 #include "arts.h"
-#include "arts/utils/malloc.h"
+#include "arts/edge_vector.h"
 #include "arts/system/arts_print.h"
+#include "arts/utils/malloc.h"
 
 #define INCREASE_SZ_BY 2
 
@@ -54,10 +54,10 @@ int compare_by_source(const void *e1, const void *e2) {
 
   if (pe1->source < pe2->source) {
     return -1;
-}
+  }
   if (pe1->source == pe2->source) {
     return 0;
-}
+  }
   return 1;
 }
 
@@ -67,14 +67,14 @@ int compare_by_source_and_target(const void *e1, const void *e2) {
 
   if (pe1->source < pe2->source) {
     return -1;
-}
+  }
   if (pe1->source == pe2->source) {
     if (pe1->target < pe2->target) {
       return -1;
-}
+    }
     if (pe1->target == pe2->target) {
       return 0;
-}
+    }
     return 1;
   }
   return 1;
@@ -88,7 +88,8 @@ void init_edge_vector(arts_edge_vector_t *v, graph_sz_t initial_size) {
   v->size = initial_size;
 }
 
-void push_back_edge(arts_edge_vector_t *v, vertex_t s, vertex_t t, edge_data_t d) {
+void push_back_edge(arts_edge_vector_t *v, vertex_t s, vertex_t t,
+                    edge_data_t d) {
   if (v->used == v->size) {
     v->size *= INCREASE_SZ_BY;
     edge_t *new_edge_array =

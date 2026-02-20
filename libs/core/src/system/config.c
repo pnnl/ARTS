@@ -47,10 +47,10 @@
 #include <unistd.h>
 
 #include "arts.h"
-#include "arts/utils/malloc.h"
 #include "arts/network/remote_launcher.h"
 #include "arts/system/arts_print.h"
 #include "arts/system/debug.h"
+#include "arts/utils/malloc.h"
 
 char *extract_nodelist_lsf(const char *envr, int stride, unsigned int *cnt) {
   char *lsf_nodes;
@@ -60,10 +60,10 @@ char *extract_nodelist_lsf(const char *envr, int stride, unsigned int *cnt) {
   lsf_nodes = getenv(envr);
   if (lsf_nodes == NULL) {
     return NULL;
-}
+  }
   if (stride <= 0) {
     stride = 1;
-}
+  }
   unsigned int nodes_str_len = strlen(lsf_nodes) + 1;
   char *node_list = (char *)arts_malloc(sizeof(char) * nodes_str_len);
   unsigned int count = 0;
@@ -87,7 +87,8 @@ char *extract_nodelist_lsf(const char *envr, int stride, unsigned int *cnt) {
 }
 
 struct arts_config_variable_s *
-arts_config_find_variable(struct arts_config_variable_s **head, const char *string) {
+arts_config_find_variable(struct arts_config_variable_s **head,
+                          const char *string) {
   struct arts_config_variable_s *found = NULL;
   struct arts_config_variable_s *last = NULL;
   struct arts_config_variable_s *next = *head;
@@ -104,8 +105,9 @@ arts_config_find_variable(struct arts_config_variable_s **head, const char *stri
   char *overide = getenv(string);
   if (overide) {
     unsigned int size = strlen(overide);
-    struct arts_config_variable_s *new_var = (struct arts_config_variable_s *)arts_malloc(
-        sizeof(struct arts_config_variable_s) + size);
+    struct arts_config_variable_s *new_var =
+        (struct arts_config_variable_s *)arts_malloc(
+            sizeof(struct arts_config_variable_s) + size);
 
     new_var->size = size;
     memcpy(new_var->variable, string, strlen(string) + 1);
@@ -133,7 +135,7 @@ static void remove_white_spaces(char *str) {
   do {
     if (*read != ' ') {
       *write++ = *read;
-}
+    }
   } while (*read++);
 }
 
@@ -157,7 +159,7 @@ struct arts_config_variable_s *arts_config_get_variables(FILE *config) {
 
       if (val[size - 1] == '\n') {
         val[size - 1] = '\0';
-}
+      }
 
       c_var = (struct arts_config_variable_s *)arts_malloc(
           sizeof(struct arts_config_variable_s) + size);
@@ -175,13 +177,13 @@ struct arts_config_variable_s *arts_config_get_variables(FILE *config) {
         next->next = c_var;
       } else {
         head = c_var;
-}
+      }
       next = c_var;
     }
   }
   if (line) {
     free(line);
-}
+  }
   return head;
 }
 
@@ -217,11 +219,11 @@ char *arts_config_get_slurm_hostname(char *name, char *digit_sample,
 static bool arts_config_is_all_digits(const char *str) {
   if (!str || !*str) {
     return false;
-}
+  }
   while (*str) {
     if (!isdigit(*str)) {
       return false;
-}
+    }
     str++;
   }
   return true;
@@ -236,21 +238,21 @@ unsigned int arts_config_count_nodes(char *node_list) {
   for (unsigned int i = 0; i < length; i++) {
     if (node_list[i] == ',') {
       nodes++;
-}
-}
-  nodes++;  // One more than comma count
+    }
+  }
+  nodes++; // One more than comma count
 
   // Adjust for bracket ranges (each range is one entry but multiple nodes)
   unsigned int i = 0;
   while (i < length) {
     // Find bracket range
     if (node_list[i] == '[') {
-      nodes--;  // This entry is a range, not a single node
+      nodes--; // This entry is a range, not a single node
       // Find the closing bracket
       unsigned int bracket_start = i + 1;
       while (i < length && node_list[i] != ']') {
         i++;
-}
+      }
       if (i < length) {
         // Parse range inside brackets: "01-10" or "1-5"
         char range_spec[64];
@@ -269,7 +271,7 @@ unsigned int arts_config_count_nodes(char *node_list) {
               nodes += (end - start + 1);
             } else {
               nodes += (start - end + 1);
-}
+            }
           } else {
             // Single number in brackets (unusual but handle it)
             nodes += 1;
@@ -313,7 +315,8 @@ char *arts_get_next_partition(char **remainder) {
 
 static unsigned int *parse_port_spec(const char *spec, unsigned int *count);
 
-void arts_config_create_routing_table(struct arts_config_s **config, char *node_list) {
+void arts_config_create_routing_table(struct arts_config_s **config,
+                                      char *node_list) {
   unsigned int node_count;
   struct arts_config_table_s *table;
   unsigned int current_node = 0;
@@ -334,8 +337,8 @@ void arts_config_create_routing_table(struct arts_config_s **config, char *node_
 
   node_count = (*config)->nodes;
   (*config)->table_length = node_count;
-  table = (struct arts_config_table_s *)arts_calloc(node_count,
-                                               sizeof(struct arts_config_table_s));
+  table = (struct arts_config_table_s *)arts_calloc(
+      node_count, sizeof(struct arts_config_table_s));
 
   if (!(*config)->master_boot) {
     char *part;
@@ -366,7 +369,7 @@ void arts_config_create_routing_table(struct arts_config_s **config, char *node_
                 direction = 1;
               } else {
                 direction = -1;
-}
+              }
 
               while (start != stop + 1) {
                 table[current_node].rank = current_node;
@@ -418,14 +421,14 @@ void arts_config_create_routing_table(struct arts_config_s **config, char *node_
       node_begin = strtok(node_begin, ",");
       if (node_begin == NULL) {
         break;
-}
+      }
       next = node_begin + strlen(node_begin) + 1;
 
       // Strip trailing newline if present
       str_length = strlen(node_begin);
       if (str_length > 0 && node_begin[str_length - 1] == '\n') {
         node_begin[str_length - 1] = '\0';
-}
+      }
 
       // Check for bracket range: node[01-10] or node[01-10]:port_spec
       char *bracket_open = strchr(node_begin, '[');
@@ -474,8 +477,8 @@ void arts_config_create_routing_table(struct arts_config_s **config, char *node_
 
           while (start != stop + direction) {
             char hostname[512];
-            (void)snprintf(hostname, sizeof(hostname), "%s%0*u", base_name, pad_width,
-                     start);
+            (void)snprintf(hostname, sizeof(hostname), "%s%0*u", base_name,
+                           pad_width, start);
             table[current_node].rank = current_node;
             table[current_node].ip_address = arts_config_make_new_var(hostname);
             if (node_ports) {
@@ -491,7 +494,8 @@ void arts_config_create_routing_table(struct arts_config_s **config, char *node_
         } else {
           // Single number in brackets (unusual)
           char hostname[512];
-          (void)snprintf(hostname, sizeof(hostname), "%s%s", base_name, range_spec);
+          (void)snprintf(hostname, sizeof(hostname), "%s%s", base_name,
+                         range_spec);
           table[current_node].rank = current_node;
           table[current_node].ip_address = arts_config_make_new_var(hostname);
           if (node_ports) {
@@ -549,7 +553,8 @@ enum arts_config_type {
   CONFIG_CUSTOM  /* custom handler function */
 };
 
-typedef void (*config_handler_t)(struct arts_config_s *config, const char *value,
+typedef void (*config_handler_t)(struct arts_config_s *config,
+                                 const char *value,
                                  struct arts_config_variable_s **vars);
 
 struct arts_config_entry_s {
@@ -619,7 +624,8 @@ static void handle_launcher(struct arts_config_s *config, const char *value,
   }
 }
 
-static void handle_net_interface(struct arts_config_s *config, const char *value,
+static void handle_net_interface(struct arts_config_s *config,
+                                 const char *value,
                                  struct arts_config_variable_s **vars) {
   (void)vars;
   if (value) {
@@ -654,7 +660,8 @@ static unsigned int *parse_port_spec(const char *spec, unsigned int *count) {
       unsigned long end = strtoul(ptr, &endptr, 10);
       if (endptr != ptr && start <= end) {
         unsigned int n = (unsigned int)(end - start + 1);
-        unsigned int *ports = (unsigned int *)arts_malloc(n * sizeof(unsigned int));
+        unsigned int *ports =
+            (unsigned int *)arts_malloc(n * sizeof(unsigned int));
         for (unsigned int i = 0; i < n; i++) {
           ports[i] = (unsigned int)(start + i);
         }
@@ -697,7 +704,8 @@ static unsigned int *parse_port_spec(const char *spec, unsigned int *count) {
   return ports;
 }
 
-static void handle_default_ports(struct arts_config_s *config, const char *value,
+static void handle_default_ports(struct arts_config_s *config,
+                                 const char *value,
                                  struct arts_config_variable_s **vars) {
   (void)vars;
   if (!value) {
@@ -716,50 +724,53 @@ static void handle_default_ports(struct arts_config_s *config, const char *value
 
 static const struct arts_config_entry_s config_entries[] = {
     /* --- Threading --- */
-    {"worker_threads",           CONFIG_UINT,   OFF(worker_thread_count),      "4",          NULL},
-    {"stack_size",               CONFIG_UINT64, OFF(stack_size),               "0",          NULL},
+    {"worker_threads", CONFIG_UINT, OFF(worker_thread_count), "4", NULL},
+    {"stack_size", CONFIG_UINT64, OFF(stack_size), "0", NULL},
     /* --- Pinning --- */
-    {"pin",                      CONFIG_BOOL,   OFF(pin_threads),              "1",          NULL},
-    {"pin_stride",               CONFIG_UINT,   OFF(pin_stride),               "1",          NULL},
-    {"print_topology",           CONFIG_BOOL,   OFF(print_topology),           "0",          NULL},
+    {"pin", CONFIG_BOOL, OFF(pin_threads), "1", NULL},
+    {"pin_stride", CONFIG_UINT, OFF(pin_stride), "1", NULL},
+    {"print_topology", CONFIG_BOOL, OFF(print_topology), "0", NULL},
     /* --- Scheduling --- */
-    {"scheduler",                CONFIG_UINT,   OFF(scheduler),                "0",          NULL},
-    {"worker_init_deque_size",   CONFIG_UINT,   OFF(deque_size),               "4096",       NULL},
-    {"route_table_size",         CONFIG_UINT,   OFF(route_table_size),         "20",         NULL},
-    {"auto_shutdown",            CONFIG_UINT,   OFF(auto_shutdown),            "0",          NULL},
+    {"scheduler", CONFIG_UINT, OFF(scheduler), "0", NULL},
+    {"worker_init_deque_size", CONFIG_UINT, OFF(deque_size), "4096", NULL},
+    {"route_table_size", CONFIG_UINT, OFF(route_table_size), "20", NULL},
+    {"auto_shutdown", CONFIG_UINT, OFF(auto_shutdown), "0", NULL},
     /* --- GPU --- */
-    {"gpu",                      CONFIG_UINT,   OFF(gpu),                      "0",          NULL},
-    {"gpu_locality",             CONFIG_UINT,   OFF(gpu_locality),             "0",          NULL},
-    {"gpu_fit",                  CONFIG_UINT,   OFF(gpu_fit),                  "0",          NULL},
-    {"gpu_lc_sync",              CONFIG_UINT,   OFF(gpu_lc_sync),              "0",          NULL},
-    {"gpu_max_edts",             CONFIG_UINT,   OFF(gpu_max_edts),             NULL,         NULL},
-    {"gpu_max_memory",           CONFIG_UINT64, OFF(gpu_max_memory),           NULL,         NULL},
-    {"gpu_p2p",                  CONFIG_BOOL,   OFF(gpu_p2p),                  "0",          NULL},
-    {"gpu_route_table_size",     CONFIG_UINT,   OFF(gpu_route_table_size),     "12",         NULL},
-    {"free_db_after_gpu_run",    CONFIG_BOOL,   OFF(free_db_after_gpu_run),    "0",          NULL},
-    {"run_gpu_gc_idle",          CONFIG_BOOL,   OFF(run_gpu_gc_idle),          "1",          NULL},
-    {"run_gpu_gc_pre_edt",       CONFIG_BOOL,   OFF(run_gpu_gc_pre_edt),      "0",          NULL},
-    {"delete_zeros_gpu_gc",      CONFIG_BOOL,   OFF(delete_zeros_gpu_gc),      "1",          NULL},
-    {"gpu_buff_on",              CONFIG_BOOL,   OFF(gpu_buff_on),              "0",          NULL},
-    /* --- Networking (conditional defaults applied in config_compute_derived) --- */
-    {"sender_threads",           CONFIG_UINT,   OFF(sender_thread_count),      NULL,         NULL},
-    {"receiver_threads",         CONFIG_UINT,   OFF(receiver_thread_count),    NULL,         NULL},
-    {"port_count",               CONFIG_UINT,   OFF(port_count),               NULL,         NULL},
-    {"master_node",              CONFIG_STRING, OFF(master_node),              NULL,         NULL},
+    {"gpu", CONFIG_UINT, OFF(gpu), "0", NULL},
+    {"gpu_locality", CONFIG_UINT, OFF(gpu_locality), "0", NULL},
+    {"gpu_fit", CONFIG_UINT, OFF(gpu_fit), "0", NULL},
+    {"gpu_lc_sync", CONFIG_UINT, OFF(gpu_lc_sync), "0", NULL},
+    {"gpu_max_edts", CONFIG_UINT, OFF(gpu_max_edts), NULL, NULL},
+    {"gpu_max_memory", CONFIG_UINT64, OFF(gpu_max_memory), NULL, NULL},
+    {"gpu_p2p", CONFIG_BOOL, OFF(gpu_p2p), "0", NULL},
+    {"gpu_route_table_size", CONFIG_UINT, OFF(gpu_route_table_size), "12",
+     NULL},
+    {"free_db_after_gpu_run", CONFIG_BOOL, OFF(free_db_after_gpu_run), "0",
+     NULL},
+    {"run_gpu_gc_idle", CONFIG_BOOL, OFF(run_gpu_gc_idle), "1", NULL},
+    {"run_gpu_gc_pre_edt", CONFIG_BOOL, OFF(run_gpu_gc_pre_edt), "0", NULL},
+    {"delete_zeros_gpu_gc", CONFIG_BOOL, OFF(delete_zeros_gpu_gc), "1", NULL},
+    {"gpu_buff_on", CONFIG_BOOL, OFF(gpu_buff_on), "0", NULL},
+    /* --- Networking (conditional defaults applied in config_compute_derived)
+       --- */
+    {"sender_threads", CONFIG_UINT, OFF(sender_thread_count), NULL, NULL},
+    {"receiver_threads", CONFIG_UINT, OFF(receiver_thread_count), NULL, NULL},
+    {"port_count", CONFIG_UINT, OFF(port_count), NULL, NULL},
+    {"master_node", CONFIG_STRING, OFF(master_node), NULL, NULL},
     /* --- Debug --- */
-    {"kill_mode",                CONFIG_UINT,   OFF(kill_mode),                "0",          NULL},
-    {"core_dump",                CONFIG_BOOL,   OFF(core_dump),                "0",          NULL},
-    {"watchdog_timeout",         CONFIG_UINT,   OFF(watchdog_timeout),         "10",         NULL},
+    {"kill_mode", CONFIG_UINT, OFF(kill_mode), "0", NULL},
+    {"core_dump", CONFIG_BOOL, OFF(core_dump), "0", NULL},
+    {"watchdog_timeout", CONFIG_UINT, OFF(watchdog_timeout), "10", NULL},
     /* --- Counters --- */
-    {"counter_folder",           CONFIG_STRING, OFF(counter_folder),           "./counters", NULL},
-    {"counter_capture_interval", CONFIG_UINT,   OFF(counter_capture_interval), "100",        NULL},
+    {"counter_folder", CONFIG_STRING, OFF(counter_folder), "./counters", NULL},
+    {"counter_capture_interval", CONFIG_UINT, OFF(counter_capture_interval),
+     "100", NULL},
     /* --- Custom handlers --- */
-    {"launcher",                 CONFIG_CUSTOM, 0,                             NULL,         handle_launcher},
-    {"net_interface",            CONFIG_CUSTOM, 0,                             NULL,         handle_net_interface},
-    {"default_ports",            CONFIG_CUSTOM, 0,                             NULL,         handle_default_ports},
+    {"launcher", CONFIG_CUSTOM, 0, NULL, handle_launcher},
+    {"net_interface", CONFIG_CUSTOM, 0, NULL, handle_net_interface},
+    {"default_ports", CONFIG_CUSTOM, 0, NULL, handle_default_ports},
     /* sentinel */
-    {NULL, 0, 0, NULL, NULL}
-};
+    {NULL, 0, 0, NULL, NULL}};
 
 #undef OFF
 
@@ -934,8 +945,8 @@ static void config_compute_derived(struct arts_config_s *config) {
     } else if (config->port_count > 0 && config->default_ports_count == 0) {
       /* Only port_count specified → generate consecutive default ports */
       config->default_ports_count = config->port_count;
-      config->default_ports = (unsigned int *)arts_malloc(
-          config->port_count * sizeof(unsigned int));
+      config->default_ports = (unsigned int *)arts_malloc(config->port_count *
+                                                          sizeof(unsigned int));
       for (unsigned int i = 0; i < config->port_count; i++) {
         config->default_ports[i] = 75563 + i;
       }
@@ -970,11 +981,13 @@ static void config_compute_derived(struct arts_config_s *config) {
      If thread_count was set directly (SLURM/env), derive worker count from it.
      Otherwise compute total from worker + sender + receiver. */
   if (config->thread_count > 0) {
-    config->worker_thread_count = config->thread_count
-        - config->sender_thread_count - config->receiver_thread_count;
+    config->worker_thread_count = config->thread_count -
+                                  config->sender_thread_count -
+                                  config->receiver_thread_count;
   }
-  config->thread_count = config->worker_thread_count
-      + config->sender_thread_count + config->receiver_thread_count;
+  config->thread_count = config->worker_thread_count +
+                         config->sender_thread_count +
+                         config->receiver_thread_count;
 }
 
 static void config_print_warnings(struct arts_config_s *config) {

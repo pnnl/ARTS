@@ -44,9 +44,9 @@
 #include "arts/runtime/globals.h"
 
 void arts_remote_atomic_add_in_array_db(unsigned int rank, arts_guid_t db_guid,
-                                  unsigned int index, unsigned int to_add,
-                                  arts_guid_t edt_guid, unsigned int slot,
-                                  arts_guid_t epoch_guid) {
+                                        unsigned int index, unsigned int to_add,
+                                        arts_guid_t edt_guid, unsigned int slot,
+                                        arts_guid_t epoch_guid) {
   struct arts_remote_atomic_add_in_array_db_packet_s packet;
   packet.db_guid = db_guid;
   packet.edt_guid = edt_guid;
@@ -55,15 +55,16 @@ void arts_remote_atomic_add_in_array_db(unsigned int rank, arts_guid_t db_guid,
   packet.index = index;
   packet.to_add = to_add;
   arts_fill_packet_header(&packet.header, sizeof(packet),
-                       ARTS_ATOMIC_ADD_ARRAYDB_MSG);
+                          ARTS_ATOMIC_ADD_ARRAYDB_MSG);
   arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
 }
 
 void arts_remote_handle_atomic_add_in_array_db(void *pack) {
   struct arts_remote_atomic_add_in_array_db_packet_s *packet =
       (struct arts_remote_atomic_add_in_array_db_packet_s *)pack;
-  internal_atomic_add_in_array_db(packet->db_guid, packet->index, packet->to_add,
-                             packet->edt_guid, packet->slot, packet->epoch_guid);
+  internal_atomic_add_in_array_db(packet->db_guid, packet->index,
+                                  packet->to_add, packet->edt_guid,
+                                  packet->slot, packet->epoch_guid);
 }
 
 void arts_remote_atomic_compare_and_swap_in_array_db(
@@ -79,7 +80,7 @@ void arts_remote_atomic_compare_and_swap_in_array_db(
   packet.old_value = old_value;
   packet.new_value = new_value;
   arts_fill_packet_header(&packet.header, sizeof(packet),
-                       ARTS_ATOMIC_CAS_ARRAYDB_MSG);
+                          ARTS_ATOMIC_CAS_ARRAYDB_MSG);
   arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
 }
 
