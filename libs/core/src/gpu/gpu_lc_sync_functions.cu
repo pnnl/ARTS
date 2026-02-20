@@ -247,8 +247,7 @@ void gpu_reduction_launch(int root, int a, int b, unsigned int *rem_mask,
   }
 
   if (root != a && root != b) {
-    ARTS_INFO("LC Reduction tree invalid root! %d %d %d", root, a, b);
-    arts_debug_generate_seg_fault();
+    ARTS_ERROR("LC reduction tree invalid: root %d not in {%d, %d}", root, a, b);
   }
 
   ARTS_DEBUG("A: %d B: %d -> Root: %d guid: %lu", a, b, root, guid);
@@ -283,8 +282,7 @@ void gpu_copy_launch(int root, int a, int b, bool src_shadow, bool dst_shadow,
   }
 
   if (root != a && root != b) {
-    ARTS_INFO("LC Reduction tree invalid root! %d %d %d", root, a, b);
-    arts_debug_generate_seg_fault();
+    ARTS_ERROR("LC reduction tree invalid: root %d not in {%d, %d}", root, a, b);
   }
 
   ARTS_DEBUG("A: %d B: %d -> Root: %d", a, b, root);

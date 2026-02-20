@@ -669,7 +669,6 @@ void *arts_set_buffer(arts_guid_t buffer_guid, void *buffer, unsigned int size) 
         if (stub->size) {
           ARTS_INFO("Truncating buffer data buffer size: %u stub size: %u",
                     size, stub->size);
-          arts_debug_print_stack();
         } else if (stub->buffer == NULL) {
           stub->buffer = (char *)arts_malloc(sizeof(char) * size);
           stub->size = size;

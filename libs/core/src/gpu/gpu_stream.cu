@@ -784,8 +784,7 @@ int hash_on_db_zero(void *edt_packet) {
   uint64_t key = (depv[0].guid) ? arts_guid_get_key(depv[0].guid) : 0;
   int index = (int)(key % (uint64_t)arts_node_info.gpu);
   if ((unsigned int)index > arts_node_info.gpu) {
-    ARTS_INFO("WHATS WRONG WITH THE HASH %d\n", index);
-    arts_debug_generate_seg_fault();
+    ARTS_ERROR("GPU stream hash failed: index %d >= gpu count %u", index, arts_node_info.gpu);
   }
   ARTS_DEBUG("HASH: %lu %d\n", depv[0].guid, index);
   if (try_reserve(index, size, total_threads)) {

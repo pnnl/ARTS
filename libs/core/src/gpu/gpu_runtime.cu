@@ -99,7 +99,6 @@ void *arts_cuda_malloc_host(unsigned int size) {
   CHECKCORRECT(cudaMallocHost(&ptr, size));
   // ptr = arts_calloc(1, size);
   if (!ptr) {
-    arts_debug_print_stack();
     ARTS_ERROR("CUDA host malloc failed (size=%u)", size);
   }
   return ptr;
@@ -116,7 +115,6 @@ void *arts_cuda_malloc(unsigned int size) {
   void *ptr = NULL;
   CHECKCORRECT(cudaMalloc(&ptr, size));
   if (!ptr) {
-    arts_debug_print_stack();
     ARTS_ERROR("CUDA device malloc failed (%lu avail)",
                arts_gpus[arts_current_device_id].availGlobalMem);
   }

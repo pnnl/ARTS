@@ -68,7 +68,7 @@ void arts_rehandle_ready_edt(struct arts_edt_s *edt);
 void arts_run_edt(struct arts_edt_s *edt);
 void arts_handle_remote_stolen_edt(struct arts_edt_s *edt);
 bool arts_runtime_scheduler_loop();
-void arts_thread_zero_node_start();
+void arts_thread_zero_node_start(int argc, char **argv);
 void arts_thread_zero_private_init(struct thread_mask_s *unit,
                                struct arts_config_s *config);
 void arts_runtime_private_init(struct thread_mask_s *unit, struct arts_config_s *config);

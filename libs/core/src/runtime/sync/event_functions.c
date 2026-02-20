@@ -163,9 +163,8 @@ void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
     }
   } else {
     if (event->fired) {
-      ARTS_INFO("ARTS_EVENT_LATCH_T already fired guid: %lu data: %lu slot: %u",
-                event_guid, data_guid, slot);
-      arts_debug_generate_seg_fault();
+      ARTS_ERROR("Event latch already fired (guid=%lu, data=%lu, slot=%u)",
+                 event_guid, data_guid, slot);
     }
 
     unsigned int res = 0U;
@@ -177,17 +176,15 @@ void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
 }
       res = arts_atomic_sub(&event->latch_count, 1U);
     } else {
-      ARTS_INFO("Bad latch slot %u", slot);
-      arts_debug_generate_seg_fault();
+      ARTS_ERROR("Event latch invalid slot %u", slot);
     }
 
     /// When the latch count reaches 0, fire the event
     if (!res) {
       /// If the event is already fired, we should not fire it again
       if (arts_atomic_swap_bool(&event->fired, true)) {
-        arts_printf("ARTS_EVENT_LATCH_T already fired guid: %lu data: %lu slot: %u",
-               event_guid, data_guid, slot);
-        arts_debug_generate_seg_fault();
+        ARTS_ERROR("Event latch already fired (guid=%lu, data=%lu, slot=%u)",
+                   event_guid, data_guid, slot);
       }
       /// If the event is not fired, we need to fire it
       else {
@@ -260,8 +257,7 @@ struct arts_dependent_s *arts_dependent_get(struct arts_dependent_list_s *head,
               1, sizeof(struct arts_dependent_list_s) +
                      (sizeof(struct arts_dependent_s) * list->size * 2));
           if (temp == NULL) {
-            arts_printf("FATAL: arts_dependent_get: calloc failed\n");
-            arts_debug_generate_seg_fault();
+            ARTS_ERROR("Event dependent list allocation failed");
           }
           temp->size = list->size * 2;
           list->next = (struct arts_dependent_list_s *)temp;
@@ -460,8 +456,7 @@ arts_get_last_persistent_event_version(struct arts_persistent_event_s *event) {
 bool arts_persistent_event_create_internal(arts_guid_t *guid, unsigned int route,
                                        arts_guid_t event_data) {
   if (event_data == NULL_GUID) {
-    ARTS_INFO("Event data is NULL_GUID for persistent event");
-    arts_debug_generate_seg_fault();
+    ARTS_ERROR("Persistent event requires non-NULL data GUID");
   }
   const unsigned int event_size = sizeof(struct arts_persistent_event_s);
   void *event_packet =
@@ -584,8 +579,7 @@ void arts_persistent_event_satisfy(arts_guid_t event_guid, uint32_t action,
       arts_lock(&event->lock);
 }
     if (event->data == NULL_GUID) {
-      ARTS_DEBUG("Data: NULL_GUID, avoiding signaling");
-      arts_debug_generate_seg_fault();
+      ARTS_ERROR("Persistent event has NULL data GUID");
     }
     unsigned int res = -1;
     struct arts_persistent_event_version_s *version =
@@ -621,8 +615,7 @@ void arts_persistent_event_satisfy(arts_guid_t event_guid, uint32_t action,
       res = arts_atomic_fetch_add(&version->latch_count, 0U);
       ARTS_DEBUG("Update Event [Guid:%lu, Latch Count: %d] ", event_guid, res);
     } else {
-      ARTS_DEBUG("Bad latch slot %u", action);
-      arts_debug_generate_seg_fault();
+      ARTS_ERROR("Persistent event invalid action slot %u", action);
     }
 
     if (res == 0) {
@@ -717,9 +710,7 @@ void arts_add_dependence_to_persistent_event(arts_guid_t event_source,
                                         arts_guid_t edt_dest, uint32_t edt_slot) {
   /// Check that the event_source is a persistent event
   if (arts_guid_get_type(event_source) != ARTS_PERSISTENT_EVENT) {
-    ARTS_DEBUG("Event source %lu is not a persistent event", event_source);
-    arts_debug_generate_seg_fault();
-    return;
+    ARTS_ERROR("Source GUID %lu is not a persistent event", event_source);
   }
   arts_type_t dest_type = arts_guid_get_type(edt_dest);
   struct arts_header_s *source_header =
@@ -797,9 +788,7 @@ void arts_add_dependence_to_persistent_event_with_mode_and_diff(arts_guid_t even
                                                        arts_type_t mode) {
   /// Check that the event_source is a persistent event
   if (arts_guid_get_type(event_source) != ARTS_PERSISTENT_EVENT) {
-    ARTS_DEBUG("Event source %lu is not a persistent event", event_source);
-    arts_debug_generate_seg_fault();
-    return;
+    ARTS_ERROR("Source GUID %lu is not a persistent event", event_source);
   }
   arts_type_t dest_type = arts_guid_get_type(edt_dest);
   struct arts_header_s *source_header =
@@ -875,9 +864,7 @@ void arts_add_dependence_to_persistent_event_with_byte_offset(
     arts_type_t mode, uint64_t byte_offset, uint64_t len) {
   /// Check that the event_source is a persistent event
   if (arts_guid_get_type(event_source) != ARTS_PERSISTENT_EVENT) {
-    ARTS_DEBUG("Event source %lu is not a persistent event", event_source);
-    arts_debug_generate_seg_fault();
-    return;
+    ARTS_ERROR("Source GUID %lu is not a persistent event", event_source);
   }
   arts_type_t dest_type = arts_guid_get_type(edt_dest);
   struct arts_header_s *source_header =

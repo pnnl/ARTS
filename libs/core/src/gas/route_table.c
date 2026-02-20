@@ -399,11 +399,8 @@ arts_route_item_t *arts_route_table_search_for_empty(arts_route_table_t *route_t
     }
     current = next;
   }
-  arts_printf(
-      "Route table search in impossible state: producing a segfault now %p ...",
-      route_table);
-  arts_debug_generate_seg_fault();
-  return NULL;
+  ARTS_ERROR("Route table search failed: impossible state (table=%p)",
+             (void *)route_table);
 }
 
 void *internal_route_table_add_item(arts_route_table_t *route_table, void *item,

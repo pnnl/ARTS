@@ -63,15 +63,12 @@ void *arts_malloc(size_t size) {
   MALLOC_MEMORY_START();
 
   if (!size) {
-    MALLOC_MEMORY_STOP();
-    arts_debug_generate_seg_fault();
+    ARTS_ERROR("arts_malloc: zero size");
   }
 
   header_t *base = (header_t *)malloc(size + sizeof(header_t));
   if (!base) {
-    MALLOC_MEMORY_STOP();
-    arts_debug_generate_seg_fault();
-    return NULL;
+    ARTS_ERROR("arts_malloc: system malloc failed (size=%zu)", size);
   }
   INCREMENT_MEMORY_FOOTPRINT_BY(size);
 
@@ -91,14 +88,12 @@ void *arts_malloc_align(size_t size, size_t align) {
   MALLOC_MEMORY_START();
 
   if (!size || align < ALIGNMENT || !IS_POWER_OF_TWO(align)) {
-    MALLOC_MEMORY_STOP();
-    arts_debug_generate_seg_fault();
+    ARTS_ERROR("arts_malloc_align: invalid params (size=%zu, align=%zu)", size, align);
   }
 
   void *base = malloc(size + align - 1 + sizeof(header_t));
   if (!base) {
-    MALLOC_MEMORY_STOP();
-    arts_debug_generate_seg_fault();
+    ARTS_ERROR("arts_malloc_align: system malloc failed (size=%zu, align=%zu)", size, align);
   }
   INCREMENT_MEMORY_FOOTPRINT_BY(size);
 
@@ -121,8 +116,7 @@ void *arts_calloc(size_t nmemb, size_t size) {
   CALLOC_MEMORY_START();
 
   if (!nmemb || !size || size > SIZE_MAX / nmemb) {
-    CALLOC_MEMORY_STOP();
-    arts_debug_generate_seg_fault();
+    ARTS_ERROR("arts_calloc: invalid params (nmemb=%zu, size=%zu)", nmemb, size);
   }
 
   size_t total_size = nmemb * size;
@@ -142,8 +136,7 @@ void *arts_calloc_align(size_t nmemb, size_t size, size_t align) {
 
   if (!nmemb || !size || size > SIZE_MAX / nmemb || align < ALIGNMENT ||
       !IS_POWER_OF_TWO(align)) {
-    CALLOC_MEMORY_STOP();
-    arts_debug_generate_seg_fault();
+    ARTS_ERROR("arts_calloc_align: invalid params (nmemb=%zu, size=%zu, align=%zu)", nmemb, size, align);
   }
 
   size_t total_size = nmemb * size;

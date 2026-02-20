@@ -66,8 +66,7 @@ arts_guid_t arts_guid_create_for_rank_internal(unsigned int route, unsigned int 
       guid.fields.key = global_guid_on - guid_count;
       global_guid_on -= guid_count;
     } else {
-      ARTS_INFO("Parallel Start out of guid keys");
-      arts_debug_generate_seg_fault();
+      ARTS_ERROR("GUID generation failed: parallel start out of keys");
     }
   } else {
     uint64_t *key = arts_guid_generator_get_key(route, type);
@@ -78,8 +77,7 @@ arts_guid_t arts_guid_create_for_rank_internal(unsigned int route, unsigned int 
                       arts_node_info.global_guid_thread_id[arts_thread_info.group_id];
       (*key) += guid_count;
     } else {
-      ARTS_INFO("Out of guid keys");
-      arts_debug_generate_seg_fault();
+      ARTS_ERROR("GUID generation failed: out of keys");
     }
   }
   guid.fields.type = type;

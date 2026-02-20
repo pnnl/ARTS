@@ -872,3 +872,28 @@ void arts_server_ping_pong_test_recieve(char *in_buffer, int in_packet_size) {
     }
   }
 }
+
+unsigned int arts_get_new_socket() {
+  unsigned int socket_out = RSOCKET(PF_INET, SOCK_STREAM, 0);
+  return socket_out;
+}
+
+unsigned int arts_get_socket_listening(struct sockaddr_in *listening_socket,
+                                    unsigned int port) {
+  memset((char *)listening_socket, 0, sizeof(*listening_socket));
+  unsigned int socket_out = RSOCKET(PF_INET, SOCK_STREAM, 0);
+  listening_socket->sin_family = AF_INET;
+  listening_socket->sin_addr.s_addr = htonl(INADDR_ANY);
+  listening_socket->sin_port = htons(port);
+  return socket_out;
+}
+
+unsigned int arts_get_socket_outgoing(struct sockaddr_in *outgoing_socket,
+                                   unsigned int port, in_addr_t s_addr) {
+  memset((char *)outgoing_socket, 0, sizeof(*outgoing_socket));
+  unsigned int socket_out = RSOCKET(PF_INET, SOCK_STREAM, 0);
+  outgoing_socket->sin_family = AF_INET;
+  outgoing_socket->sin_addr.s_addr = s_addr;
+  outgoing_socket->sin_port = htons(port);
+  return socket_out;
+}

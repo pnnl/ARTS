@@ -42,10 +42,7 @@
 extern "C" {
 #endif
 
-void arts_debug_print_stack();
-void arts_debug_generate_seg_fault();
-void arts_turn_on_core_dumps();
-char *get_back_trace(unsigned int skip);
+void arts_turn_on_core_dumps(void);
 
 // Include the runtime debug and print interfaces
 #include "arts/system/arts_print.h"

@@ -4,7 +4,7 @@
 ** nor the United States Department of Energy, nor Battelle, nor any of      **
 ** their employees, nor any jurisdiction or organization that has cooperated **
 ** in the development of these materials, makes any warranty, express or     **
-** implied, or assumes any legal liability or responsibility for the accuracy,* 
+** implied, or assumes any legal liability or responsibility for the accuracy,*
 ** completeness, or usefulness or any information, apparatus, product,       **
 ** software, or process disclosed, or represents that its use would not      **
 ** infringe privately owned rights.                                          **
@@ -36,27 +36,65 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
+#include "arts/system/debug.h"
 
-/*
+#include <execinfo.h>
+#include <signal.h>
+#include <string.h>
+#include <unistd.h>
 
-GPU Scheduling policies
------------------------
+#include "arts/system/arts_print.h"
 
-1. Fitting based (MU) : Find the best fit with respect to available memory in a GPU.
-2. Locality based
-    a. All Hits (AND) : if (Find the GPU with all the required data blocks) else (random policy).
-    b. At least one hit (OR) : if (Find the GPU with at least one of the required data blocks) else (random policy).
-    c. AND-MU : if (Find the GPU with all the required data blocks) else if (MU) else (random policy).
-    d. OR-MU : if (Find the GPU with at least one of the required data blocks) else if (MU) else (random policy).
-3. Inter-device Fetching
-    a. D2D Memcpy : if (data block is a hit in one GPU and Edt is scheduled in another) Move data block DeviceToDevice instead of HostToDevice.
-    b. D2D Load-Store : if (data block is a hit in one GPU and Edt is scheduled in another) Access data blocks using P2P L/S.
-    c. Prefetch : Move data on to the device for future Edts peeking up the stack.
-4. Random : 
-    a. LRU
-    b. Round Robin
-    c. Time-bomb
-    d. Greedy than oldest
-    e. FIFO
-    f. Prediction : Evict a data block based on static analysis or compile-time percolated knowledge.
-*/
+static void arts_crash_signal_handler(int sig) {
+  const char *msg = "\n[ARTS] Fatal signal — stack trace:\n";
+  (void)write(STDERR_FILENO, msg, strlen(msg));
+
+  void *frames[32];
+  int n = backtrace(frames, 32);
+  backtrace_symbols_fd(frames, n, STDERR_FILENO);
+
+  struct sigaction sa;
+  sa.sa_handler = SIG_DFL;
+  sigemptyset(&sa.sa_mask);
+  sa.sa_flags = 0;
+  sigaction(sig, &sa, NULL);
+  (void)raise(sig);
+}
+
+static void arts_install_crash_handlers(void) {
+  struct sigaction sa;
+  sa.sa_handler = arts_crash_signal_handler;
+  sigemptyset(&sa.sa_mask);
+  sa.sa_flags = 0;
+  int sigs[] = {SIGSEGV, SIGBUS, SIGFPE};
+  for (int i = 0; i < 3; i++) {
+    sigaction(sigs[i], &sa, NULL);
+  }
+}
+
+#if !defined(__APPLE__)
+
+#include <sys/prctl.h>
+#include <sys/resource.h>
+
+void arts_turn_on_core_dumps(void) {
+  (void)prctl(PR_SET_DUMPABLE, 1);
+
+  struct rlimit limit;
+  limit.rlim_cur = RLIM_INFINITY;
+  limit.rlim_max = RLIM_INFINITY;
+  if (setrlimit(RLIMIT_CORE, &limit) != 0) {
+    ARTS_INFO("Failed to force core dumps");
+  }
+
+  arts_install_crash_handlers();
+}
+
+#else
+
+void arts_turn_on_core_dumps(void) {
+  ARTS_INFO("Core dumps not supported on OS X.");
+  arts_install_crash_handlers();
+}
+
+#endif

@@ -994,8 +994,7 @@ static FILE *config_open_file(void) {
   const char *location = getenv("ARTS_CONFIG");
   FILE *f = fopen(location ? location : "arts.cfg", "r");
   if (!f) {
-    ARTS_INFO("No config file found (./arts.cfg).");
-    arts_debug_generate_seg_fault();
+    ARTS_ERROR("Config file not found: %s", location ? location : "arts.cfg");
   }
   return f;
 }

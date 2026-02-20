@@ -71,8 +71,6 @@
 #define NETWORK_BACKOFF_INCREMENT 0
 
 extern unsigned int num_numa_domains;
-extern int main_argc;
-extern char **main_argv;
 
 ARTS_WEAK void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
                               uint32_t depc, arts_edt_dep_t depv[]) {}
@@ -237,7 +235,7 @@ void arts_runtime_global_cleanup() {
  *   4. Waits for all threads through a series of barriers before entering
  *      the main scheduler loop.
  */
-void arts_thread_zero_node_start() {
+void arts_thread_zero_node_start(int argc, char **argv) {
   ARTS_INFO("Thread 0: starting node initialization");
   arts_watchdog_init(arts_node_info.watchdog_timeout);
   set_global_guid_on();
@@ -249,7 +247,7 @@ void arts_thread_zero_node_start() {
   END_TO_END_TIME_START();
 
 #ifdef USE_GPU
-  arts_init_per_gpu_wrapper(main_argc, main_argv);
+  arts_init_per_gpu_wrapper(argc, argv);
 #endif
   set_guid_generator_after_parallel_start();
 
@@ -257,8 +255,8 @@ void arts_thread_zero_node_start() {
   while (arts_node_info.ready_to_parallel_start) {
   }
   if (arts_main_edt && !arts_global_rank_id) {
-    ARTS_INFO("Thread 0: scheduling arts_main_edt on rank 0 (argc=%d)", main_argc);
-    uint64_t main_args[2] = {(uint64_t)main_argc, (uint64_t)main_argv};
+    ARTS_INFO("Thread 0: scheduling arts_main_edt on rank 0 (argc=%d)", argc);
+    uint64_t main_args[2] = {(uint64_t)argc, (uint64_t)argv};
     arts_edt_create(arts_main_edt, 2, main_args, 0, &(arts_hint_t){.route = 0});
   }
 

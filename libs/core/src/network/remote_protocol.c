@@ -365,18 +365,14 @@ bool arts_remote_async_send() {
 
 static inline void self_send_check(unsigned int rank) {
   if (rank == arts_global_rank_id || rank >= arts_global_rank_count) {
-    ARTS_INFO("Send error rank stack trace: %u of %u", rank,
-              arts_global_rank_count);
-    arts_debug_print_stack();
-    arts_debug_generate_seg_fault();
+    ARTS_ERROR("Cannot send to rank %u (self=%u, total=%u)", rank,
+               arts_global_rank_id, arts_global_rank_count);
   }
 }
 
 static inline void size_send_check(uint64_t size) {
   if (size == 0) {
-    ARTS_INFO("Send error size stack trace: %lu", size);
-    arts_debug_print_stack();
-    arts_debug_generate_seg_fault();
+    ARTS_ERROR("Cannot send zero-size message");
   }
 }
 

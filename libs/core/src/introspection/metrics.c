@@ -575,7 +575,6 @@ static bool single_metric_update(arts_metric_type_t type, arts_metric_level_t le
         ARTS_INFO(
             "Potential Inspection Underflow Detected! Level: %s Type: %s\n",
             level, arts_metric_name[type]);
-        arts_debug_print_stack();
       }
       total_stamp = (level == ARTS_METRIC_THREAD)
                        ? metric->totalCount -= *to_add
@@ -728,8 +727,7 @@ static arts_metric_level_t update_performance_core_metric(unsigned int core,
                                                    arts_metric_level_t level,
                                                    uint64_t to_add, bool sub) {
   if (type <= ARTS_METRIC_FIRST_TYPE || type >= ARTS_METRIC_LAST_TYPE) {
-    ARTS_INFO("Wrong Introspection Type %d\n", type);
-    arts_debug_generate_seg_fault();
+    ARTS_ERROR("Metrics: invalid type %d", type);
   }
 
   arts_metric_level_t updated_level = ARTS_METRIC_NO_LEVEL;

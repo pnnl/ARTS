@@ -51,13 +51,12 @@ extern "C" {
 #include "arts/utils/array_list.h"
 
 #define CHECKCORRECT(x)                                                        \
-  {                                                                            \
+  do {                                                                         \
     cudaError_t err;                                                           \
     if ((err = (x)) != cudaSuccess) {                                          \
-      arts_printf("FAILED %s: %s\n", #x, cudaGetErrorString(err));                  \
-      arts_debug_generate_seg_fault();                                             \
+      ARTS_ERROR("CUDA operation failed: %s: %s", #x, cudaGetErrorString(err));\
     }                                                                          \
-  }
+  } while (0)
 
 typedef struct {
   unsigned int gpu_id;

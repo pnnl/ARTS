@@ -132,10 +132,8 @@ void arts_dec_lock_shad() { arts_thread_info.shad_lock--; }
 
 void arts_check_lock_shad() {
   if (arts_thread_info.shad_lock) {
-    ARTS_INFO("ARTS: Cannot perform synchronous call under lock Worker: %u "
-              "ShadLock: %u",
-              arts_thread_info.group_id, arts_thread_info.shad_lock);
-    arts_debug_generate_seg_fault();
+    ARTS_ERROR("Synchronous call under SHAD lock (worker=%u, lock=%u)",
+               arts_thread_info.group_id, arts_thread_info.shad_lock);
   }
 }
 

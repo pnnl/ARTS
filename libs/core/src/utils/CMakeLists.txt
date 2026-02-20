@@ -42,10 +42,10 @@ file(GLOB UTILS_SOURCES "*.c")
 
 # Handle deque implementation selection based on USE_PRIORITY_DEQUE option
 if(USE_PRIORITY_DEQUE)
-    list(REMOVE_ITEM UTILS_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/chase_lev_deque_simple.c")
+    list(REMOVE_ITEM UTILS_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/deque_simple.c")
     message(STATUS "Utils: Using Priority Chase-Lev Deque")
 else()
-    list(REMOVE_ITEM UTILS_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/chase_lev_deque_priority.c")
+    list(REMOVE_ITEM UTILS_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/deque_priority.c")
     message(STATUS "Utils: Using Simple Chase-Lev Deque")
 endif()
 

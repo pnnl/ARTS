@@ -58,7 +58,6 @@ unsigned int arts_global_rank_id;
 unsigned int arts_global_rank_count;
 unsigned int arts_global_master_rank_id;
 struct arts_config_s *g_config;
-struct arts_config_s *config;
 
 struct thread_mask_s *mask;
 pthread_t *node_thread_list;

@@ -205,8 +205,7 @@ static void *arts_counter_capture_thread(void *args) {
 
 void arts_counter_capture_start() {
   if (capture_thread_running) {
-    ARTS_DEBUG("Trying to start capture thread which is already running");
-    arts_debug_generate_seg_fault();
+    ARTS_ERROR("Counter capture thread already running");
   }
 
   bool need_capture_thread = false;
@@ -280,8 +279,7 @@ void arts_counter_decrement_by(arts_counter_t *counter, uint64_t num) {
 
 void arts_counter_timer_start(arts_counter_t *counter) {
   if (arts_atomic_cswap_u64(&counter->start, 0, arts_get_time_stamp())) {
-    ARTS_DEBUG("Trying to start a timer that is already started");
-    arts_debug_generate_seg_fault();
+    ARTS_ERROR("Counter timer already started");
   }
 }
 
@@ -289,8 +287,7 @@ void arts_counter_timer_end(arts_counter_t *counter) {
   uint64_t end = arts_get_time_stamp();
   uint64_t start = arts_atomic_swap_u64(&counter->start, 0);
   if (!start) {
-    ARTS_DEBUG("Trying to end a timer that is not started");
-    arts_debug_generate_seg_fault();
+    ARTS_ERROR("Counter timer not started");
   }
   arts_atomic_fetch_add_u64(&counter->count, end - start);
 }

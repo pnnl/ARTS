@@ -110,7 +110,7 @@ struct arts_db_element_s *arts_new_db_element() {
   struct arts_db_element_s *ret =
       (struct arts_db_element_s *)arts_calloc(1, sizeof(struct arts_db_element_s));
   if (!ret) {
-    arts_debug_generate_seg_fault();
+    ARTS_ERROR("DB element allocation failed");
   }
   return ret;
 }
@@ -119,7 +119,7 @@ struct arts_db_frontier_s *arts_new_db_frontier() {
   struct arts_db_frontier_s *ret =
       (struct arts_db_frontier_s *)arts_calloc(1, sizeof(struct arts_db_frontier_s));
   if (!ret) {
-    arts_debug_generate_seg_fault();
+    ARTS_ERROR("DB frontier allocation failed");
   }
   return ret;
 }
@@ -129,8 +129,7 @@ struct arts_db_list_s *arts_new_db_list() {
   struct arts_db_list_s *ret =
       (struct arts_db_list_s *)arts_calloc(1, sizeof(struct arts_db_list_s));
   if (!ret) {
-    arts_debug_generate_seg_fault();
-    return NULL;
+    ARTS_ERROR("DB list allocation failed");
   }
   ret->head = ret->tail = arts_new_db_frontier();
   return ret;
@@ -203,8 +202,7 @@ void arts_push_delayed_edt(struct arts_local_delayed_edt_s *head, unsigned int p
       current->next = (struct arts_local_delayed_edt_s *)arts_calloc(
           1, sizeof(struct arts_local_delayed_edt_s));
       if (!current->next) {
-        arts_debug_generate_seg_fault();
-        return;
+        ARTS_ERROR("DB local delayed EDT allocation failed");
       }
     }
     current = current->next;
@@ -328,8 +326,7 @@ arts_db_frontier_iter_create(struct arts_db_frontier_s *frontier) {
     iter = (struct arts_db_frontier_iterator_s *)arts_calloc(
         1, sizeof(struct arts_db_frontier_iterator_s));
     if (!iter) {
-      arts_debug_generate_seg_fault();
-      return NULL;
+      ARTS_ERROR("DB frontier iterator allocation failed");
     }
     iter->frontier = frontier;
     iter->currentElement = &frontier->list;

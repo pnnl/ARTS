@@ -178,9 +178,8 @@ void arts_get_from_array_db(arts_guid_t edt_guid, unsigned int slot,
     //        offset);
     arts_get_from_db_at(edt_guid, guid, slot, offset, array->element_size, rank);
   } else {
-    ARTS_INFO("Index >= Array Size:%u >= %u * %u", index,
-              array->elements_per_block, array->num_blocks);
-    arts_debug_generate_seg_fault();
+    ARTS_ERROR("Array DB index out of bounds: %u >= %u", index,
+               array->elements_per_block * array->num_blocks);
   }
 }
 
