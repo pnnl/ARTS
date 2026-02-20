@@ -294,7 +294,7 @@ void arts_start_epoch(arts_guid_t epoch_guid) {
     arts_atomic_add(&epoch->active_count, 1);
     arts_atomic_add_u64(&epoch->queued, 1);
   } else {
-    ARTS_ERROR("Epoch [Guid:%lu] doesn't exist in the Route table", epoch_guid);
+    ARTS_WARN("Epoch [Guid:%lu] doesn't exist in the Route table", epoch_guid);
   }
 }
 
@@ -584,8 +584,8 @@ bool arts_wait_on_handle(arts_guid_t epoch_guid) {
         epoch = (arts_epoch_t *)arts_route_table_lookup_item(local);
       }
       if (!epoch) {
-        ARTS_ERROR("arts_wait_on_handle: Epoch [Guid:%lu] not found in route table",
-                   local);
+        ARTS_WARN("arts_wait_on_handle: Epoch [Guid:%lu] not found in route table",
+                  local);
         EDT_RUNNING_TIME_START();
         return false;
       }

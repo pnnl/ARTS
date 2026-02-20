@@ -40,12 +40,14 @@
 #include "arts/network/remote_launcher.h"
 #include "arts/utils/malloc.h"
 
+#include <errno.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
+#include "arts/system/arts_print.h"
 #include "arts/system/config.h"
 
 static int arts_shell_quote(const char *input, char *output, size_t output_size) {
@@ -259,7 +261,7 @@ void arts_remote_launcher_ssh_startup_processes(
              wrapped_command, (char *)NULL);
 
       // If execlp fails
-      arts_abort(1);
+      ARTS_ERROR("SSH execlp failed: %s", strerror(errno));
     }
   }
 

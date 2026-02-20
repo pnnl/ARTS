@@ -243,7 +243,7 @@ void arts_out_of_order_list_fire_callback(struct arts_out_of_order_list_s *fire_
 
   // If we get here, we failed after max_retries attempts
   // This should be very rare, but log it for debugging
-  ARTS_ERROR("arts_out_of_order_list_fire_callback: failed to acquire lock after %d "
-             "attempts",
-             max_retries);
+  ARTS_WARN("arts_out_of_order_list_fire_callback: failed to acquire lock after %d "
+            "attempts",
+            max_retries);
 }

@@ -142,7 +142,6 @@ void arts_runtime_node_init(unsigned int worker_threads,
   arts_node_info.steal_request_lock = !remote_stealing_on;
   arts_node_info.buf = (char *)arts_malloc(PACKET_SIZE);
   arts_node_info.packet_size = PACKET_SIZE;
-  arts_node_info.print_node_stats = config->print_node_stats;
   arts_node_info.auto_shutdown_guid = (config->auto_shutdown) ? 1 : NULL_GUID;
   arts_node_info.gpu = config->gpu;
   arts_node_info.gpu_route_table_size = config->gpu_route_table_size;
@@ -295,9 +294,9 @@ void arts_runtime_private_init(struct thread_mask_s *unit,
   if (unit->network_send || unit->network_receive) {
     if (unit->network_send) {
       unsigned int size =
-          arts_global_rank_count * config->num_ports / arts_node_info.sender_thread_count;
+          arts_global_rank_count * config->port_count / arts_node_info.sender_thread_count;
       unsigned int rem =
-          arts_global_rank_count * config->num_ports % arts_node_info.sender_thread_count;
+          arts_global_rank_count * config->port_count % arts_node_info.sender_thread_count;
       unsigned int start;
       if (unit->group_pos < rem) {
         start = unit->group_pos * (size + 1);
@@ -309,9 +308,9 @@ void arts_runtime_private_init(struct thread_mask_s *unit,
     }
     if (unit->network_receive) {
       arts_node_info.receiver_deque[unit->group_pos] = arts_node_info.deque[unit->id];
-      unsigned int size = (arts_global_rank_count - 1) * config->num_ports /
+      unsigned int size = (arts_global_rank_count - 1) * config->port_count /
                           arts_node_info.receiver_thread_count;
-      unsigned int rem = (arts_global_rank_count - 1) * config->num_ports %
+      unsigned int rem = (arts_global_rank_count - 1) * config->port_count %
                          arts_node_info.receiver_thread_count;
       unsigned int start;
       if (unit->group_pos < rem) {
@@ -416,7 +415,7 @@ void arts_runtime_private_cleanup() {
  *      that thread, causing it to exit its scheduler/network loop.
  */
 void arts_runtime_stop() {
-  ARTS_PRINT("arts_runtime_stop: stopping %u threads", arts_node_info.total_thread_count);
+  ARTS_INFO("arts_runtime_stop: stopping %u threads", arts_node_info.total_thread_count);
   unsigned int i;
   for (i = 0; i < arts_node_info.total_thread_count; i++) {
     ARTS_DEBUG("arts_runtime_stop: waiting for thread %u to register", i);
@@ -426,7 +425,7 @@ void arts_runtime_stop() {
     (*arts_node_info.local_spin[i]) = false;
     ARTS_DEBUG("arts_runtime_stop: thread %u signaled to stop", i);
   }
-  ARTS_PRINT("arts_runtime_stop: all threads signaled");
+  ARTS_INFO("arts_runtime_stop: all threads signaled");
 }
 
 void arts_handle_remote_stolen_edt(struct arts_edt_s *edt) {

@@ -170,8 +170,8 @@ void arts_thread_init(struct arts_config_s *config) {
  *   - User code via the arts_shutdown() public API.
  */
 void arts_shutdown() {
-  ARTS_PRINT("arts_shutdown: rank_count=%u, rank_id=%u",
-             arts_global_rank_count, arts_global_rank_id);
+  ARTS_INFO("arts_shutdown: rank_count=%u, rank_id=%u",
+            arts_global_rank_count, arts_global_rank_id);
   if (arts_global_rank_count > 1) {
     arts_remote_shutdown();
   }

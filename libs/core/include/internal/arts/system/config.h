@@ -47,7 +47,7 @@ extern "C" {
 struct arts_config_table_s {
   unsigned int rank;
   char *ip_address;
-  unsigned int port;  // Per-node port (0 = use global default)
+  unsigned int *ports;  // Port list (port_count entries), always populated
 };
 
 struct arts_config_variable_s {
@@ -62,24 +62,21 @@ struct arts_config_s {
   char *master_node;
   char *net_interface;
   char *launcher;
-  unsigned int num_ports;
+  unsigned int port_count;
+  unsigned int *default_ports;
+  unsigned int default_ports_count;
   unsigned int worker_thread_count;
   unsigned int sender_thread_count;
   unsigned int receiver_thread_count;
   unsigned int thread_count;
   unsigned int nodes;
   unsigned int master_rank;
-  unsigned int port;
-  bool port_range;
-  unsigned int port_start;
-  unsigned int port_end;
   unsigned int kill_mode;
   unsigned int route_table_size;
   unsigned int route_table_entries;
   unsigned int deque_size;
   char *counter_folder;
   unsigned int counter_capture_interval;
-  unsigned int print_node_stats;
   unsigned int scheduler;
   unsigned int auto_shutdown;
   bool master_boot;

@@ -80,7 +80,6 @@ int arts_rt(int argc, char **argv) {
 
   main_argc = argc;
   main_argv = argv;
-  arts_remote_try_to_become_printer();
   config = arts_config_load();
 
   if (config->core_dump) {
@@ -124,6 +123,5 @@ int arts_rt(int argc, char **argv) {
     config->launcher_data->cleanup_processes(config->launcher_data);
   }
   arts_config_destroy(config);
-  arts_remote_try_to_close_printer();
   return 0;
 }

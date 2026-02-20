@@ -311,6 +311,8 @@ char *arts_get_next_partition(char **remainder) {
   return NULL;
 }
 
+static unsigned int *parse_port_spec(const char *spec, unsigned int *count);
+
 void arts_config_create_routing_table(struct arts_config_s **config, char *node_list) {
   unsigned int node_count;
   struct arts_config_table_s *table;
@@ -425,17 +427,17 @@ void arts_config_create_routing_table(struct arts_config_s **config, char *node_
         node_begin[str_length - 1] = '\0';
 }
 
-      // Check for bracket range: node[01-10] or node[01-10]:port
+      // Check for bracket range: node[01-10] or node[01-10]:port_spec
       char *bracket_open = strchr(node_begin, '[');
       char *bracket_close = bracket_open ? strchr(bracket_open, ']') : NULL;
 
       if (bracket_open && bracket_close && bracket_close > bracket_open) {
-        // Bracket range syntax: base[start-end] or base[start-end]:port
+        // Bracket range syntax: base[start-end] or base[start-end]:port_spec
         char base_name[256];
         unsigned int base_len = bracket_open - node_begin;
         if (base_len >= sizeof(base_name)) {
           base_len = sizeof(base_name) - 1;
-}
+        }
         strncpy(base_name, node_begin, base_len);
         base_name[base_len] = '\0';
 
@@ -444,15 +446,16 @@ void arts_config_create_routing_table(struct arts_config_s **config, char *node_
         unsigned int range_len = bracket_close - bracket_open - 1;
         if (range_len >= sizeof(range_spec)) {
           range_len = sizeof(range_spec) - 1;
-}
+        }
         strncpy(range_spec, bracket_open + 1, range_len);
         range_spec[range_len] = '\0';
 
-        // Check for port after closing bracket: ]:port
-        unsigned int node_port = 0;
-        char *port_spec = strchr(bracket_close, ':');
-        if (port_spec) {
-          node_port = strtol(port_spec + 1, NULL, 10);
+        // Check for port spec after closing bracket: ]:port or ]:[start-end]
+        unsigned int *node_ports = NULL;
+        unsigned int node_port_count = 0;
+        char *pspec = strchr(bracket_close, ':');
+        if (pspec) {
+          node_ports = parse_port_spec(pspec + 1, &node_port_count);
         }
 
         // Parse range: "01-10" or "1-5"
@@ -461,51 +464,64 @@ void arts_config_create_routing_table(struct arts_config_s **config, char *node_
           *dash = '\0';
           start = strtol(range_spec, NULL, 10);
           stop = strtol(dash + 1, NULL, 10);
-          unsigned int pad_width = strlen(range_spec);  // Preserve padding width
+          unsigned int pad_width = strlen(range_spec);
 
           if (start <= stop) {
             direction = 1;
           } else {
             direction = -1;
-}
+          }
 
           while (start != stop + direction) {
-            // Create padded hostname: base + padded_number
             char hostname[512];
             (void)snprintf(hostname, sizeof(hostname), "%s%0*u", base_name, pad_width,
                      start);
             table[current_node].rank = current_node;
             table[current_node].ip_address = arts_config_make_new_var(hostname);
-            table[current_node].port = node_port;
+            if (node_ports) {
+              // Copy port list for each node (each needs its own allocation)
+              table[current_node].ports = (unsigned int *)arts_malloc(
+                  node_port_count * sizeof(unsigned int));
+              memcpy(table[current_node].ports, node_ports,
+                     node_port_count * sizeof(unsigned int));
+            }
             start += direction;
             current_node++;
           }
         } else {
           // Single number in brackets (unusual)
-          unsigned int num = strtol(range_spec, NULL, 10);
           char hostname[512];
           (void)snprintf(hostname, sizeof(hostname), "%s%s", base_name, range_spec);
           table[current_node].rank = current_node;
           table[current_node].ip_address = arts_config_make_new_var(hostname);
-          table[current_node].port = node_port;
+          if (node_ports) {
+            table[current_node].ports = (unsigned int *)arts_malloc(
+                node_port_count * sizeof(unsigned int));
+            memcpy(table[current_node].ports, node_ports,
+                   node_port_count * sizeof(unsigned int));
+          }
           current_node++;
         }
+        // Free the template port list
+        if (node_ports) {
+          arts_free(node_ports);
+        }
       } else {
-        // No brackets - check for hostname:port or just hostname
+        // No brackets - check for hostname:port_spec or just hostname
         char *colon_pos = strchr(node_begin, ':');
-        if (colon_pos && arts_config_is_all_digits(colon_pos + 1)) {
-          // hostname:port format
-          *colon_pos = '\0';  // Temporarily terminate hostname
+        if (colon_pos) {
+          // hostname:port or hostname:[start-end]
+          unsigned int hp_count = 0;
+          *colon_pos = '\0';
           table[current_node].rank = current_node;
           table[current_node].ip_address = arts_config_make_new_var(node_begin);
-          table[current_node].port = strtol(colon_pos + 1, NULL, 10);
-          *colon_pos = ':';  // Restore for safety
+          table[current_node].ports = parse_port_spec(colon_pos + 1, &hp_count);
+          *colon_pos = ':';
           current_node++;
         } else {
-          // Just hostname, no port
+          // Just hostname, no port (default_ports applied later)
           table[current_node].rank = current_node;
           table[current_node].ip_address = arts_config_make_new_var(node_begin);
-          table[current_node].port = 0;
           current_node++;
         }
       }
@@ -586,24 +602,17 @@ static void config_auto_parse(struct arts_config_s *config,
 static void handle_launcher(struct arts_config_s *config, const char *value,
                             struct arts_config_variable_s **vars) {
   (void)vars;
-  if (!value) {
-    /* Auto-detect from environment: SLURM > LSF > default SSH */
-    if (getenv("SLURM_PROCID") || getenv("SLURM_NNODES")) {
-      config->launcher = arts_config_make_new_var("slurm");
-    } else if (getenv("LSB_HOSTS") || getenv("LSB_MCPU_HOSTS")) {
-      config->launcher = arts_config_make_new_var("lsf");
-    } else {
-      config->launcher = arts_config_make_new_var("ssh");
-    }
+  /* Environment always wins: SLURM/LSF env vars override config value */
+  if (getenv("SLURM_PROCID") || getenv("SLURM_NNODES")) {
+    config->launcher = arts_config_make_new_var("slurm");
     return;
   }
-  if (strncmp(value, "ssh", 3) == 0) {
-    config->launcher = arts_config_make_new_var("ssh");
-  } else if (strncmp(value, "slurm", 5) == 0) {
-    config->launcher = arts_config_make_new_var("slurm");
-  } else if (strncmp(value, "lsf", 3) == 0) {
+  if (getenv("LSB_HOSTS") || getenv("LSB_MCPU_HOSTS")) {
     config->launcher = arts_config_make_new_var("lsf");
-  } else if (strncmp(value, "local", 5) == 0) {
+    return;
+  }
+  /* No job scheduler env — use config value (ssh or local) */
+  if (value && strncmp(value, "local", 5) == 0) {
     config->launcher = arts_config_make_new_var("local");
   } else {
     config->launcher = arts_config_make_new_var("ssh");
@@ -618,34 +627,87 @@ static void handle_net_interface(struct arts_config_s *config, const char *value
   }
 }
 
-static void handle_port(struct arts_config_s *config, const char *value,
-                        struct arts_config_variable_s **vars) {
-  (void)vars;
-  if (!value) {
-    /* Default applied later in config_compute_derived for non-local launchers */
-    return;
+/*
+ * parse_port_spec — Parse a port specification string into an array.
+ *
+ * Supported formats:
+ *   "50000"              → [50000]              (single port)
+ *   "[50000-50001]"      → [50000, 50001]       (range)
+ *   "50000,50020,50040"  → [50000, 50020, 50040] (comma-separated)
+ *
+ * Returns: dynamically allocated array (caller must free), sets *count.
+ * Returns NULL with *count=0 if spec is NULL or empty.
+ */
+static unsigned int *parse_port_spec(const char *spec, unsigned int *count) {
+  *count = 0;
+  if (!spec || !*spec) {
+    return NULL;
   }
-  if (value[0] == '[') {
-    char *ptr = (char *)value + 1;
+
+  if (spec[0] == '[') {
+    /* Range format: [start-end] */
+    char *ptr = (char *)spec + 1;
     char *endptr;
-    unsigned long start_port = strtoul(ptr, &endptr, 10);
+    unsigned long start = strtoul(ptr, &endptr, 10);
     if (endptr != ptr && *endptr == '-') {
       ptr = endptr + 1;
-      unsigned long end_port = strtoul(ptr, &endptr, 10);
-      if (endptr != ptr) {
-        config->port_range = true;
-        config->port_start = (unsigned int)start_port;
-        config->port_end = (unsigned int)end_port;
-        config->port = (unsigned int)start_port;
-        return;
+      unsigned long end = strtoul(ptr, &endptr, 10);
+      if (endptr != ptr && start <= end) {
+        unsigned int n = (unsigned int)(end - start + 1);
+        unsigned int *ports = (unsigned int *)arts_malloc(n * sizeof(unsigned int));
+        for (unsigned int i = 0; i < n; i++) {
+          ports[i] = (unsigned int)(start + i);
+        }
+        *count = n;
+        return ports;
       }
     }
-    config->port_range = false;
-    config->port = 75563;
-  } else {
-    config->port_range = false;
-    config->port = (unsigned int)strtol(value, NULL, 10);
+    /* Invalid range → treat as single port with default */
+    unsigned int *ports = (unsigned int *)arts_malloc(sizeof(unsigned int));
+    ports[0] = 75563;
+    *count = 1;
+    return ports;
   }
+
+  /* Check for comma-separated list */
+  if (strchr(spec, ',')) {
+    unsigned int n = 1;
+    for (const char *p = spec; *p; p++) {
+      if (*p == ',') {
+        n++;
+      }
+    }
+    unsigned int *ports = (unsigned int *)arts_malloc(n * sizeof(unsigned int));
+    char *copy = arts_config_make_new_var(spec);
+    char *tok = strtok(copy, ",");
+    unsigned int i = 0;
+    while (tok && i < n) {
+      ports[i++] = (unsigned int)strtoul(tok, NULL, 10);
+      tok = strtok(NULL, ",");
+    }
+    arts_free(copy);
+    *count = i;
+    return ports;
+  }
+
+  /* Single port */
+  unsigned int *ports = (unsigned int *)arts_malloc(sizeof(unsigned int));
+  ports[0] = (unsigned int)strtoul(spec, NULL, 10);
+  *count = 1;
+  return ports;
+}
+
+static void handle_default_ports(struct arts_config_s *config, const char *value,
+                                 struct arts_config_variable_s **vars) {
+  (void)vars;
+  if (!value) {
+    /* Default applied later in config_compute_derived */
+    return;
+  }
+  if (config->default_ports) {
+    arts_free(config->default_ports);
+  }
+  config->default_ports = parse_port_spec(value, &config->default_ports_count);
 }
 
 /*--- Config Entry Table ----------------------------------------------------*/
@@ -682,12 +744,11 @@ static const struct arts_config_entry_s config_entries[] = {
     /* --- Networking (conditional defaults applied in config_compute_derived) --- */
     {"sender_threads",           CONFIG_UINT,   OFF(sender_thread_count),      NULL,         NULL},
     {"receiver_threads",         CONFIG_UINT,   OFF(receiver_thread_count),    NULL,         NULL},
-    {"num_ports",                CONFIG_UINT,   OFF(num_ports),                NULL,         NULL},
+    {"port_count",               CONFIG_UINT,   OFF(port_count),               NULL,         NULL},
     {"master_node",              CONFIG_STRING, OFF(master_node),              NULL,         NULL},
     /* --- Debug --- */
     {"kill_mode",                CONFIG_UINT,   OFF(kill_mode),                "0",          NULL},
     {"core_dump",                CONFIG_BOOL,   OFF(core_dump),                "0",          NULL},
-    {"print_node_stats",         CONFIG_UINT,   OFF(print_node_stats),         "0",          NULL},
     {"watchdog_timeout",         CONFIG_UINT,   OFF(watchdog_timeout),         "10",         NULL},
     /* --- Counters --- */
     {"counter_folder",           CONFIG_STRING, OFF(counter_folder),           "./counters", NULL},
@@ -695,7 +756,7 @@ static const struct arts_config_entry_s config_entries[] = {
     /* --- Custom handlers --- */
     {"launcher",                 CONFIG_CUSTOM, 0,                             NULL,         handle_launcher},
     {"net_interface",            CONFIG_CUSTOM, 0,                             NULL,         handle_net_interface},
-    {"default_port",             CONFIG_CUSTOM, 0,                             NULL,         handle_port},
+    {"default_ports",            CONFIG_CUSTOM, 0,                             NULL,         handle_default_ports},
     /* sentinel */
     {NULL, 0, 0, NULL, NULL}
 };
@@ -841,7 +902,7 @@ static void config_setup_launcher(struct arts_config_s *config,
   } else if (strcmp(config->launcher, "local") == 0) {
     config_setup_local(config);
   } else {
-    arts_abort(1);
+    ARTS_ERROR("Invalid launcher: %s", config->launcher);
   }
 }
 
@@ -865,11 +926,43 @@ static void config_compute_derived(struct arts_config_s *config) {
     if (!config->receiver_thread_count) {
       config->receiver_thread_count = 1;
     }
-    if (!config->num_ports) {
-      config->num_ports = 1;
+
+    /* Port defaults: derive port_count and default_ports. */
+    if (!config->port_count && config->default_ports_count > 0) {
+      /* Only default_ports specified → derive port_count */
+      config->port_count = config->default_ports_count;
+    } else if (config->port_count > 0 && config->default_ports_count == 0) {
+      /* Only port_count specified → generate consecutive default ports */
+      config->default_ports_count = config->port_count;
+      config->default_ports = (unsigned int *)arts_malloc(
+          config->port_count * sizeof(unsigned int));
+      for (unsigned int i = 0; i < config->port_count; i++) {
+        config->default_ports[i] = 75563 + i;
+      }
+    } else if (!config->port_count) {
+      /* Neither specified → defaults */
+      config->port_count = 1;
+      config->default_ports_count = 1;
+      config->default_ports = (unsigned int *)arts_malloc(sizeof(unsigned int));
+      config->default_ports[0] = 75563;
     }
-    if (!config->port) {
-      config->port = 75563;
+
+    /* Validate: port_count and default_ports_count must agree. */
+    if (config->default_ports_count != config->port_count) {
+      ARTS_ERROR("default_ports specifies %u ports but port_count=%u",
+                 config->default_ports_count, config->port_count);
+    }
+
+    /* Populate table[i].ports from default_ports where NULL. */
+    if (config->table != NULL) {
+      for (unsigned int i = 0; i < config->table_length; i++) {
+        if (config->table[i].ports == NULL) {
+          config->table[i].ports = (unsigned int *)arts_malloc(
+              config->port_count * sizeof(unsigned int));
+          memcpy(config->table[i].ports, config->default_ports,
+                 config->port_count * sizeof(unsigned int));
+        }
+      }
     }
   }
 
@@ -882,15 +975,6 @@ static void config_compute_derived(struct arts_config_s *config) {
   }
   config->thread_count = config->worker_thread_count
       + config->sender_thread_count + config->receiver_thread_count;
-
-  /* Assign per-node ports from port range to routing table.
-     Each node gets config->num_ports consecutive ports, non-overlapping.
-     e.g., ports=2, port=[10001-10004]: node0=10001,10002 node1=10003,10004 */
-  if (config->port_range && config->table != NULL) {
-    for (unsigned int i = 0; i < config->table_length; i++) {
-      config->table[i].port = config->port_start + (i * config->num_ports);
-    }
-  }
 }
 
 static void config_print_warnings(struct arts_config_s *config) {
@@ -968,8 +1052,14 @@ void arts_config_destroy(struct arts_config_s *config) {
   if (config->table) {
     for (unsigned int i = 0; i < config->table_length; i++) {
       arts_free(config->table[i].ip_address);
+      if (config->table[i].ports) {
+        arts_free(config->table[i].ports);
+      }
     }
     arts_free(config->table);
+  }
+  if (config->default_ports) {
+    arts_free(config->default_ports);
   }
   if (config->master_node) {
     arts_free(config->master_node);

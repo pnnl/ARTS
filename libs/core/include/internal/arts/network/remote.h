@@ -61,8 +61,6 @@ uint64_t arts_remote_send_payload_request(int rank, unsigned int queue,
 
 uint8_t arts_event_satisfy_no_block(arts_guid_t event_guid, arts_guid_t data_guid);
 unsigned int arts_remote_division();
-void arts_remote_try_to_become_printer();
-void arts_remote_try_to_close_printer();
 void arts_server_ping_pong_test_recieve(char *in_buffer, int in_packet_size);
 void arts_remote_set_thread_inbound_queues(unsigned int start, unsigned int stop);
 void arts_remote_thread_inbound_queues_cleanup();

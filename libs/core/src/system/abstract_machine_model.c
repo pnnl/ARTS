@@ -420,11 +420,11 @@ unsigned int flatten_mask(struct arts_config_s *config, struct node_mask_s *node
 }
 
 struct thread_mask_s *get_thread_mask(struct arts_config_s *config) {
-  if (config->sender_thread_count > (arts_global_rank_count - 1) * config->num_ports) {
-    config->sender_thread_count = (arts_global_rank_count - 1) * config->num_ports;
+  if (config->sender_thread_count > (arts_global_rank_count - 1) * config->port_count) {
+    config->sender_thread_count = (arts_global_rank_count - 1) * config->port_count;
 }
-  if (config->receiver_thread_count > (arts_global_rank_count - 1) * config->num_ports) {
-    config->receiver_thread_count = (arts_global_rank_count - 1) * config->num_ports;
+  if (config->receiver_thread_count > (arts_global_rank_count - 1) * config->port_count) {
+    config->receiver_thread_count = (arts_global_rank_count - 1) * config->port_count;
 }
 
   unsigned int worker_threads =
@@ -646,10 +646,10 @@ unsigned int flatten_mask(struct arts_config_s *config, unsigned int num_cores,
 }
 
 struct thread_mask_s *get_thread_mask(struct arts_config_s *config) {
-  if (config->sender_thread_count > (arts_global_rank_count - 1) * config->num_ports)
-    config->sender_thread_count = (arts_global_rank_count - 1) * config->num_ports;
-  if (config->receiver_thread_count > (arts_global_rank_count - 1) * config->num_ports)
-    config->receiver_thread_count = (arts_global_rank_count - 1) * config->num_ports;
+  if (config->sender_thread_count > (arts_global_rank_count - 1) * config->port_count)
+    config->sender_thread_count = (arts_global_rank_count - 1) * config->port_count;
+  if (config->receiver_thread_count > (arts_global_rank_count - 1) * config->port_count)
+    config->receiver_thread_count = (arts_global_rank_count - 1) * config->port_count;
 
   unsigned int worker_threads =
       config->thread_count - config->sender_thread_count - config->receiver_thread_count;
@@ -687,11 +687,11 @@ void destroy_thread_mask(struct thread_mask_s *mask) { arts_free(mask); }
 void print_mask(struct thread_mask_s *units, unsigned int number_of_units) {
   (void)units;
   unsigned int i;
-  ARTS_INFO_MASTER(
+  ARTS_INFO(
       " Id   GroupId  GroupPos  Cluster  Core  Unit    On  Worker  "
       "Send  Recv   Pin Status");
   for (i = 0; i < number_of_units; i++) {
-    ARTS_INFO_MASTER(
+    ARTS_INFO(
         "%3u    %3u     %3u       %3u     %3u    %3u     %1u     %1u "
         "    %1u     %1u      %1u    %1u",
         units[i].id, units[i].group_id, units[i].group_pos, units[i].numa_domain_id,

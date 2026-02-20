@@ -66,7 +66,7 @@ static inline uint64_t get_monotonic_ns(void) {
 
 void arts_watchdog_init(uint64_t timeout_sec) {
   watchdog_timeout_ns = timeout_sec * 1000000000ULL;
-  ARTS_PRINT("Watchdog initialized: timeout=%lu sec", timeout_sec);
+  ARTS_INFO("Watchdog initialized: timeout=%lu sec", timeout_sec);
 }
 
 void arts_watchdog_tick(void) {
@@ -100,37 +100,37 @@ void arts_watchdog_check(void) {
 
     uint64_t elapsed_sec = elapsed / 1000000000ULL;
 
-    ARTS_PRINT("===== WATCHDOG TIMEOUT =====");
-    ARTS_PRINT("Thread %u: no progress for %lu seconds",
-               arts_thread_info.thread_id, elapsed_sec);
-    ARTS_PRINT("  thread_id=%u, core_id=%d, worker=%d, alive=%d",
-               arts_thread_info.thread_id,
-               arts_thread_info.core_id,
-               arts_thread_info.worker,
-               arts_thread_info.alive);
-    ARTS_PRINT("  network_send=%d, network_receive=%d",
-               arts_thread_info.network_send,
-               arts_thread_info.network_receive);
+    ARTS_WARN("===== WATCHDOG TIMEOUT =====");
+    ARTS_WARN("Thread %u: no progress for %lu seconds",
+              arts_thread_info.thread_id, elapsed_sec);
+    ARTS_WARN("  thread_id=%u, core_id=%d, worker=%d, alive=%d",
+              arts_thread_info.thread_id,
+              arts_thread_info.core_id,
+              arts_thread_info.worker,
+              arts_thread_info.alive);
+    ARTS_WARN("  network_send=%d, network_receive=%d",
+              arts_thread_info.network_send,
+              arts_thread_info.network_receive);
 
     /* Deque sizes (may be NULL for network threads) */
     if (arts_thread_info.my_deque) {
-      ARTS_PRINT("  deque_size=%u",
-                 arts_deque_size(arts_thread_info.my_deque));
+      ARTS_WARN("  deque_size=%u",
+                arts_deque_size(arts_thread_info.my_deque));
     }
 
     /* Global state snapshot */
-    ARTS_PRINT("  shutdown_started=%u, total_threads=%u",
-               arts_node_info.shutdown_started,
-               arts_node_info.total_thread_count);
+    ARTS_WARN("  shutdown_started=%u, total_threads=%u",
+              arts_node_info.shutdown_started,
+              arts_node_info.total_thread_count);
 
     /* Thread registration status */
     for (unsigned int i = 0; i < arts_node_info.total_thread_count; i++) {
       volatile bool *spin = arts_node_info.local_spin[i];
-      ARTS_PRINT("  thread[%u] local_spin=%p alive=%d",
-                 i, (void *)spin, spin ? *spin : -1);
+      ARTS_WARN("  thread[%u] local_spin=%p alive=%d",
+                i, (void *)spin, spin ? *spin : -1);
     }
 
-    ARTS_PRINT("===== END WATCHDOG DUMP =====");
+    ARTS_WARN("===== END WATCHDOG DUMP =====");
   }
 }
 

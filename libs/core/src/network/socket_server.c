@@ -87,7 +87,7 @@ char *ip_list;
 
 void arts_remote_set_message_table(struct arts_config_s *table) {
   arts_global_message_table = table;
-  ports = table->num_ports;
+  ports = table->port_count;
 }
 bool hostname_to_ip(char *host_name, char *ip) {
   int j;
@@ -123,8 +123,7 @@ bool arts_server_set_ip(struct arts_config_s *config) {
     // result = hostname_to_ip("www.google.com", ip_list+100*i);
 
     if (!result) {
-      ARTS_INFO("Cannot get ip address for '%s'", config->table[i].ip_address);
-      arts_abort(1);
+      ARTS_ERROR("Cannot get ip address for '%s'", config->table[i].ip_address);
     }
   }
 
@@ -265,8 +264,7 @@ void arts_ll_server_setup(struct arts_config_s *config) {
   if (!arts_server_set_ip(config) && config->nodes > 1) {
     // ARTS_INFO("[%d]Could not connect to %s", arts_global_rank_id,
     // config->net_interface);
-    ARTS_INFO("Could not resolve ip to any device");
-    arts_abort(1);
+    ARTS_ERROR("Could not resolve ip to any device");
   }
 }
 
@@ -398,10 +396,8 @@ bool arts_remote_setup_incoming() {
   int j;
   int k;
   int pos;
-  // Use per-node port if set, otherwise fall back to global port
-  unsigned int my_node_port =
-      arts_global_message_table->table[arts_global_message_table->my_rank].port;
-  int in_port = (int)((my_node_port != 0) ? my_node_port : arts_global_message_table->port);
+  unsigned int *my_ports =
+      arts_global_message_table->table[arts_global_message_table->my_rank].ports;
   socklen_t s_length = sizeof(struct sockaddr);
   int count = (int)(arts_global_message_table->table_length - 1);
 
@@ -419,9 +415,9 @@ bool arts_remote_setup_incoming() {
   local_socket_recieve = (int *)arts_calloc(ports, sizeof(int));
 
   int i_set_option;
-  for (i = 0; i < arts_global_message_table->num_ports; i++) {
+  for (i = 0; i < (int)arts_global_message_table->port_count; i++) {
     local_socket_recieve[i] =
-        (int)arts_get_socket_listening(&local_server_addr[i], in_port + i);
+        (int)arts_get_socket_listening(&local_server_addr[i], my_ports[i]);
 
     i_set_option = 1;
     setsockopt(local_socket_recieve[i], SOL_SOCKET, SO_REUSEADDR,
@@ -463,7 +459,7 @@ bool arts_remote_setup_incoming() {
             int retry_limit = 3;
             while (remote_socket_recieve_list[z + (j * ports)] < 0) {
               if (retry == retry_limit) {
-                arts_abort(1);
+                ARTS_ERROR("Socket accept failed after %d retries", retry_limit);
               }
               remote_socket_recieve_list[z + (j * ports)] = RACCEPT(
                   local_socket_recieve[z], (struct sockaddr *)&test, &s_length);
@@ -497,7 +493,6 @@ void arts_remote_setup_outgoing() {
   int i;
   int j;
   int k;
-  int out_port = (int)arts_global_message_table->port;
   struct sockaddr_in server_address;
   struct sockaddr_in client_address;
   int count = (int)arts_global_message_table->table_length;
@@ -514,19 +509,15 @@ void arts_remote_setup_outgoing() {
   remote_connection_alive = (bool *)arts_calloc((size_t)count * ports, sizeof(bool));
 
   for (i = 0; i < count; i++) {
-    // Use target node's port if set, otherwise fall back to global port
-    unsigned int target_port = arts_global_message_table->table[i].port;
-    if (target_port == 0) {
-      target_port = out_port;
-}
+    unsigned int *target_ports = arts_global_message_table->table[i].ports;
 
-    ARTS_INFO("arts_remote_setup_outgoing: node %d ip_list='%s' port=%u", i, ip_list + ((ptrdiff_t)100 * i), target_port);
+    ARTS_INFO("arts_remote_setup_outgoing: node %d ip_list='%s' port=%u", i, ip_list + ((ptrdiff_t)100 * i), target_ports[0]);
 
     for (j = 0; j < ports; j++) {
       remote_socket_send_list[(i * ports) + j] =
           (int)arts_get_socket_outgoing(remote_server_send_list + ((size_t)i * ports) + j,
-                                target_port + j, inet_addr(ip_list + ((ptrdiff_t)100 * i)));
-}
+                                target_ports[j], inet_addr(ip_list + ((ptrdiff_t)100 * i)));
+    }
   }
 }
 

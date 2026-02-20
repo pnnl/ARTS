@@ -235,7 +235,6 @@ bool arts_edt_create_internal(struct arts_edt_s *edt, arts_type_t mode,
   }
   if (!edt) {
     ARTS_ERROR("EDT allocation failed (size=%u)", edt_space);
-    return false;
   }
 
   edt->header.type = mode;

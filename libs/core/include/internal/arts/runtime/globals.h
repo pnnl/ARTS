@@ -85,7 +85,6 @@ struct arts_runtime_shared_s {
   volatile unsigned int shutdown_count;
   uint64_t shutdown_timeout;
   uint64_t shutdown_force_timeout;
-  unsigned int print_node_stats;
   arts_guid_t auto_shutdown_guid;
   unsigned int gpu;
   unsigned int gpu_locality;
@@ -145,20 +144,8 @@ extern __thread struct arts_runtime_private_s arts_thread_info;
 extern unsigned int arts_global_rank_id;
 extern unsigned int arts_global_rank_count;
 extern unsigned int arts_global_master_rank_id;
-extern bool arts_global_i_will_print;
 extern uint64_t arts_guid_min;
 extern uint64_t arts_guid_max;
-
-#define MASTER_PRINTF(...)                                                     \
-  do {                                                                         \
-    if (arts_global_rank_id == arts_global_master_rank_id)                      \
-      arts_printf(__VA_ARGS__);                                                \
-  } while (0)
-#define ONCE_PRINTF(...)                                                       \
-  do {                                                                         \
-    if (arts_global_i_will_print == true)                                       \
-      arts_printf(__VA_ARGS__);                                                \
-  } while (0)
 
 #define ARTS_LOOK_UP_CONFIG(name) arts_node_info.name
 

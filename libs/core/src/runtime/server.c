@@ -56,34 +56,18 @@
 
 #define EDT_MUG_SIZE 32
 
-bool arts_global_i_will_print = false;
-FILE *lock_print_file;
 extern bool server_end;
 
 #ifdef SEQUENCENUMBERS
 uint64_t *rec_seq_numbers;
 #endif
 
-void arts_remote_try_to_become_printer() {
-  lock_print_file = fopen(".artsPrintLock", "wx");
-  if (lock_print_file) {
-    arts_global_i_will_print = true;
-}
-}
-
-void arts_remote_try_to_close_printer() {
-  if (lock_print_file) {
-    (void)fclose(lock_print_file);
-}
-  (void)remove(".artsPrintLock");
-}
-
 void arts_remote_shutdown() { arts_ll_server_shutdown(); }
 
 void arts_server_setup(struct arts_config_s *config) {
   // ASYNC Message Deque Init
   arts_ll_server_setup(config);
-  out_init(arts_global_rank_count * config->num_ports);
+  out_init(arts_global_rank_count * config->port_count);
 #ifdef SEQUENCENUMBERS
   rec_seq_numbers = (uint64_t *)arts_calloc(arts_global_rank_count, sizeof(uint64_t));
 #endif
