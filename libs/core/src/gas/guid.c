@@ -85,7 +85,6 @@ arts_guid_t arts_guid_create_for_rank_internal(unsigned int route,
   }
   guid.fields.type = type;
   guid.fields.rank = route;
-  INCREMENT_GUID_ALLOC_COUNTER_BY(guid_count);
   return (arts_guid_t)guid.bits;
 }
 
@@ -129,13 +128,11 @@ void arts_guid_key_generator_init() {
 }
 
 arts_type_t arts_guid_get_type(arts_guid_t guid) {
-  INCREMENT_GUID_LOOKUP_COUNTER_BY(1);
   arts_guid_bits_t address_info = (arts_guid_bits_t){.bits = guid};
   return (arts_type_t)address_info.fields.type;
 }
 
 unsigned int arts_guid_get_rank(arts_guid_t guid) {
-  INCREMENT_GUID_LOOKUP_COUNTER_BY(1);
   arts_guid_bits_t address_info = (arts_guid_bits_t){.bits = guid};
   return address_info.fields.rank;
 }

@@ -64,17 +64,6 @@ extern unsigned int ports;
 // No captures here - capture thread handles periodic snapshots separately.
 ARTS_THREAD_LOCAL arts_counter_t arts_thread_local_counters[NUM_COUNTER_TYPES];
 
-// arts_id tracking stored separately per-thread (compile-time conditional)
-#if ENABLE_ARTS_ID_EDT_METRICS || ENABLE_ARTS_ID_DB_METRICS
-ARTS_THREAD_LOCAL arts_id_hash_table_t arts_thread_local_arts_id_metrics;
-#endif
-#if ENABLE_ARTS_ID_EDT_CAPTURES
-ARTS_THREAD_LOCAL arts_array_list_t *arts_thread_local_edt_capture_list = NULL;
-#endif
-#if ENABLE_ARTS_ID_DB_CAPTURES
-ARTS_THREAD_LOCAL arts_array_list_t *arts_thread_local_db_capture_list = NULL;
-#endif
-
 // Capture thread state - only used for periodic counter capture
 static pthread_t capture_thread;
 static volatile bool capture_thread_running = false;
@@ -182,9 +171,9 @@ static void *arts_counter_capture_thread(void *args) {
     for (unsigned int i = 0; i < NUM_COUNTER_TYPES; i++) {
       if (arts_counter_mode_array[i] == ARTS_COUNTER_MODE_PERIODIC) {
         for (unsigned int t = 0; t < arts_node_info.total_thread_count; t++) {
-          // Read counter value from thread's ARTS_THREAD_LOCAL storage via live_counters
-          // pointer NULL means thread hasn't registered yet or has already
-          // closed
+          // Read counter value from thread's ARTS_THREAD_LOCAL storage via
+          // live_counters pointer NULL means thread hasn't registered yet or
+          // has already closed
           arts_counter_t *thread_counters = arts_node_info.live_counters[t];
           if (!thread_counters) {
             continue;
@@ -546,61 +535,6 @@ static void arts_compute_node_reduced_captures(unsigned int counter_index,
   arts_free(current_captures);
 }
 
-// Helper: write arts_id metrics to JSON
-#if ENABLE_ARTS_ID_EDT_METRICS || ENABLE_ARTS_ID_DB_METRICS
-static void artsWriteArtsIdMetrics(arts_json_writer_t *writer,
-                                   arts_id_hash_table_t *table, bool writeEdt,
-                                   bool writeDb) {
-  arts_json_writer_begin_object(writer, "arts_id_metrics_t");
-
-  if (writeEdt) {
-    arts_json_writer_begin_array(writer, "edts");
-    for (uint32_t i = 0; i < ARTS_ID_HASH_SIZE; i++) {
-      if (table->edt_metrics[i].valid) {
-        arts_json_writer_begin_object(writer, NULL);
-        arts_json_writer_write_u_int64(writer, "arts_id",
-                                       table->edt_metrics[i].arts_id);
-        arts_json_writer_write_u_int64(writer, "invocations",
-                                       table->edt_metrics[i].invocations);
-        arts_json_writer_write_u_int64(writer, "total_exec_ns",
-                                       table->edt_metrics[i].total_exec_ns);
-        arts_json_writer_write_u_int64(writer, "total_stall_ns",
-                                       table->edt_metrics[i].total_stall_ns);
-        arts_json_writer_end_object(writer);
-      }
-    }
-    arts_json_writer_end_array(writer);
-    arts_json_writer_write_u_int64(writer, "edt_collisions",
-                                   table->edt_collisions);
-  }
-
-  if (writeDb) {
-    arts_json_writer_begin_array(writer, "dbs");
-    for (uint32_t i = 0; i < ARTS_ID_HASH_SIZE; i++) {
-      if (table->db_metrics[i].valid) {
-        arts_json_writer_begin_object(writer, NULL);
-        arts_json_writer_write_u_int64(writer, "arts_id",
-                                       table->db_metrics[i].arts_id);
-        arts_json_writer_write_u_int64(writer, "invocations",
-                                       table->db_metrics[i].invocations);
-        arts_json_writer_write_u_int64(writer, "bytes_local",
-                                       table->db_metrics[i].bytes_local);
-        arts_json_writer_write_u_int64(writer, "bytes_remote",
-                                       table->db_metrics[i].bytes_remote);
-        arts_json_writer_write_u_int64(writer, "cache_misses",
-                                       table->db_metrics[i].cache_misses);
-        arts_json_writer_end_object(writer);
-      }
-    }
-    arts_json_writer_end_array(writer);
-    arts_json_writer_write_u_int64(writer, "db_collisions",
-                                   table->db_collisions);
-  }
-
-  arts_json_writer_end_object(writer);
-}
-#endif
-
 static void arts_counter_write_thread(const char *output_folder,
                                       unsigned int node_id,
                                       unsigned int thread_id) {
@@ -678,21 +612,6 @@ static void arts_counter_write_thread(const char *output_folder,
     arts_json_writer_end_object(&writer);
   }
   arts_json_writer_end_object(&writer);
-
-#if ENABLE_ARTS_ID_EDT_METRICS || ENABLE_ARTS_ID_DB_METRICS
-  bool edtThread =
-      arts_counter_mode_array[ARTS_ID_EDT_METRICS] != ARTS_COUNTER_MODE_OFF &&
-      arts_counter_level_array[ARTS_ID_EDT_METRICS] ==
-          ARTS_COUNTER_LEVEL_THREAD;
-  bool dbThread =
-      arts_counter_mode_array[ARTS_ID_DB_METRICS] != ARTS_COUNTER_MODE_OFF &&
-      arts_counter_level_array[ARTS_ID_DB_METRICS] == ARTS_COUNTER_LEVEL_THREAD;
-  if (edtThread || dbThread) {
-    artsWriteArtsIdMetrics(
-        &writer, &arts_node_info.saved_counters[thread_id]->artsIdMetricsTable,
-        edtThread, dbThread);
-  }
-#endif
 
   arts_close_counter_file(&writer, fp);
 }
@@ -817,24 +736,6 @@ static void arts_counter_write_node(const char *output_folder,
 
   arts_json_writer_end_object(&writer);
 
-#if ENABLE_ARTS_ID_EDT_METRICS || ENABLE_ARTS_ID_DB_METRICS
-  bool edtNode =
-      arts_counter_mode_array[ARTS_ID_EDT_METRICS] != ARTS_COUNTER_MODE_OFF &&
-      arts_counter_level_array[ARTS_ID_EDT_METRICS] == ARTS_COUNTER_LEVEL_NODE;
-  bool dbNode =
-      arts_counter_mode_array[ARTS_ID_DB_METRICS] != ARTS_COUNTER_MODE_OFF &&
-      arts_counter_level_array[ARTS_ID_DB_METRICS] == ARTS_COUNTER_LEVEL_NODE;
-  if (edtNode || dbNode) {
-    // Use thread 0's metrics as representative for node level
-    // TODO: implement proper node-level reduction of arts_id metrics
-    if (arts_node_info.saved_counters[0]) {
-      artsWriteArtsIdMetrics(
-          &writer, &arts_node_info.saved_counters[0]->artsIdMetricsTable,
-          edtNode, dbNode);
-    }
-  }
-#endif
-
   arts_close_counter_file(&writer, fp);
 }
 
@@ -852,68 +753,6 @@ void arts_counter_write(const char *output_folder, unsigned int node_id,
   if (thread_id == 0) {
     arts_counter_write_node(output_folder, node_id);
   }
-}
-
-// ============================================================================
-// arts_id tracking wrapper functions (integrated with counter infrastructure)
-// ============================================================================
-
-void arts_counter_record_arts_id_edt(uint64_t arts_id, uint64_t exec_ns,
-                                     uint64_t stall_ns) {
-#if ENABLE_ARTS_ID_EDT_METRICS
-  if (arts_counter_mode_t[ARTS_ID_EDT_METRICS] != ARTS_COUNTER_MODE_OFF) {
-    arts_id_record_edt_metrics(arts_id, exec_ns, stall_ns,
-                               &arts_thread_local_arts_id_metrics);
-  }
-#else
-  (void)arts_id;
-  (void)exec_ns;
-  (void)stall_ns;
-#endif
-}
-
-void arts_counter_record_arts_id_db(uint64_t arts_id, uint64_t bytes_local,
-                                    uint64_t bytes_remote,
-                                    uint64_t cache_misses) {
-#if ENABLE_ARTS_ID_DB_METRICS
-  if (arts_counter_mode_t[ARTS_ID_DB_METRICS] != ARTS_COUNTER_MODE_OFF) {
-    arts_id_record_db_metrics(arts_id, bytes_local, bytes_remote, cache_misses,
-                              &arts_thread_local_arts_id_metrics);
-  }
-#else
-  (void)arts_id;
-  (void)bytes_local;
-  (void)bytes_remote;
-  (void)cache_misses;
-#endif
-}
-
-void arts_counter_capture_arts_id_edt(uint64_t arts_id, uint64_t exec_ns,
-                                      uint64_t stall_ns) {
-#if ENABLE_ARTS_ID_EDT_CAPTURES
-  if (arts_counter_mode_t[ARTS_ID_EDT_CAPTURES] != ARTS_COUNTER_MODE_OFF) {
-    arts_id_capture_edt_execution(arts_id, exec_ns, stall_ns,
-                                  arts_thread_local_edt_capture_list);
-  }
-#else
-  (void)arts_id;
-  (void)exec_ns;
-  (void)stall_ns;
-#endif
-}
-
-void arts_counter_capture_arts_id_db(uint64_t arts_id, uint64_t bytes_accessed,
-                                     uint8_t access_type) {
-#if ENABLE_ARTS_ID_DB_CAPTURES
-  if (arts_counter_mode_t[ARTS_ID_DB_CAPTURES] != ARTS_COUNTER_MODE_OFF) {
-    arts_id_capture_db_access(arts_id, bytes_accessed, access_type,
-                              arts_thread_local_db_capture_list);
-  }
-#else
-  (void)arts_id;
-  (void)bytes_accessed;
-  (void)access_type;
-#endif
 }
 
 // ============================================================================

@@ -51,7 +51,7 @@
 #include <string.h>
 
 int arts_rt(int argc, char **argv) {
-  INITIALIZATION_TIME_START();
+  TIME_INIT_START();
 
   struct arts_config_s config;
   arts_config_load(&config);
@@ -85,6 +85,7 @@ int arts_rt(int argc, char **argv) {
   // Aggregate cluster counters before cleanup (workers may still be writing)
   if (arts_global_rank_id == config.master_rank) {
     arts_counter_write_cluster(config.counter_folder, config.nodes);
+    arts_object_write_cluster(config.counter_folder, config.nodes);
   }
   if (arts_global_rank_id == config.master_rank && config.master_boot) {
     config.launcher_data->cleanup_processes(config.launcher_data);

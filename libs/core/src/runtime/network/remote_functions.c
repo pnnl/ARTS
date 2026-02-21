@@ -358,7 +358,7 @@ void arts_remote_handle_partial_update(void *ptr) {
 void arts_remote_memory_move(unsigned int route, arts_guid_t guid, void *ptr,
                              unsigned int mem_size, unsigned message_type,
                              void (*free_method)(void *)) {
-  REMOTE_MEMORY_MOVE_START();
+  TIME_REMOTE_MOVE_START();
   struct arts_remote_guid_only_packet_s packet;
   arts_fill_packet_header(&packet.header, sizeof(packet) + mem_size,
                           message_type);
@@ -367,7 +367,7 @@ void arts_remote_memory_move(unsigned int route, arts_guid_t guid, void *ptr,
                                               sizeof(packet), (char *)ptr, 0,
                                               mem_size, free_method);
   arts_route_table_remove_item(guid);
-  REMOTE_MEMORY_MOVE_STOP();
+  TIME_REMOTE_MOVE_STOP();
 }
 
 void arts_remote_memory_move_no_free(unsigned int route, arts_guid_t guid,

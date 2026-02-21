@@ -52,47 +52,76 @@ extern "C" {
 // Format: X(counterName)
 // Both the enum and string array are generated from this single list.
 #define ARTS_COUNTER_LIST                                                      \
-  X(EDT_COUNTER)                                                               \
-  X(SLEEP_COUNTER)                                                             \
-  X(SIGNAL_EVENT_COUNTER)                                                      \
-  X(SIGNAL_PERSISTENT_EVENT_COUNTER)                                           \
-  X(SIGNAL_EDT_COUNTER)                                                        \
-  X(EDT_CREATE_COUNTER)                                                        \
-  X(EVENT_CREATE_COUNTER)                                                      \
-  X(PERSISTENT_EVENT_CREATE_COUNTER)                                           \
-  X(DB_CREATE_COUNTER)                                                         \
-  X(SMART_DB_CREATE_COUNTER)                                                   \
-  X(MALLOC_MEMORY)                                                             \
-  X(CALLOC_MEMORY)                                                             \
-  X(FREE_MEMORY)                                                               \
-  X(GUID_ALLOC_COUNTER)                                                        \
-  X(GUID_LOOKUP_COUNTER)                                                       \
-  X(GET_DB_COUNTER)                                                            \
-  X(PUT_DB_COUNTER)                                                            \
-  X(CONTEXT_SWITCH)                                                            \
-  X(YIELD)                                                                     \
-  X(REMOTE_MEMORY_MOVE)                                                        \
-  X(MEMORY_FOOTPRINT)                                                          \
-  X(EDT_RUNNING_TIME)                                                          \
-  X(NUM_EDTS_CREATED)                                                          \
-  X(NUM_EDTS_ACQUIRED)                                                         \
-  X(NUM_EDTS_FINISHED)                                                         \
-  X(REMOTE_BYTES_SENT)                                                         \
-  X(REMOTE_BYTES_RECEIVED)                                                     \
-  X(NUM_DBS_CREATED)                                                           \
-  /* Acquire-Mode counters */                                                  \
-  X(ACQUIRE_READ_MODE)                                                         \
-  X(ACQUIRE_WRITE_MODE)                                                        \
-  X(OWNER_UPDATES_SAVED)                                                       \
-  X(OWNER_UPDATES_PERFORMED)                                                   \
-  /* arts_id tracking counters */                                              \
-  X(ARTS_ID_EDT_METRICS)                                                       \
-  X(ARTS_ID_DB_METRICS)                                                        \
-  X(ARTS_ID_EDT_CAPTURES)                                                      \
-  X(ARTS_ID_DB_CAPTURES)                                                       \
-  /* Per-node timing counters (CLUSTER level; master-measured) */              \
-  X(INITIALIZATION_TIME)                                                       \
-  X(END_TO_END_TIME)
+  /* Time: EDT lifecycle */                                                    \
+  X(TIME_EDT_EXEC)                                                             \
+  X(TIME_EDT_CREATE)                                                           \
+  X(TIME_EDT_SIGNAL)                                                           \
+  X(TIME_CONTEXT_SWITCH)                                                       \
+  /* Num: EDT lifecycle */                                                     \
+  X(NUM_EDT_CREATE)                                                            \
+  X(NUM_EDT_ACQUIRE)                                                           \
+  X(NUM_EDT_FINISH)                                                            \
+  X(NUM_EDT_SIGNAL)                                                            \
+  X(NUM_YIELD)                                                                 \
+  /* Time: DB lifecycle */                                                     \
+  X(TIME_DB_CREATE)                                                            \
+  X(TIME_DB_GET)                                                               \
+  X(TIME_DB_PUT)                                                               \
+  /* Num: DB lifecycle */                                                      \
+  X(NUM_DB_CREATE)                                                             \
+  X(NUM_DB_GET)                                                                \
+  X(NUM_DB_PUT)                                                                \
+  X(NUM_DB_DESTROY)                                                            \
+  X(NUM_DB_MOVE)                                                               \
+  X(NUM_DB_ACQUIRE_READ)                                                       \
+  X(NUM_DB_ACQUIRE_WRITE)                                                      \
+  X(NUM_OWNER_UPDATE_SAVED)                                                    \
+  X(NUM_OWNER_UPDATE_PERFORMED)                                                \
+  /* Bytes: DB data */                                                         \
+  X(BYTES_DB_CREATE)                                                           \
+  X(BYTES_DB_PUT)                                                              \
+  /* Bytes: memory */                                                          \
+  X(BYTES_MEMORY_FOOTPRINT)                                                    \
+  /* Bytes: network */                                                         \
+  X(BYTES_REMOTE_SENT)                                                         \
+  X(BYTES_REMOTE_RECEIVED)                                                     \
+  /* Num: network */                                                           \
+  X(NUM_REMOTE_SEND)                                                           \
+  X(NUM_REMOTE_RECEIVE)                                                        \
+  /* Time: network */                                                          \
+  X(TIME_REMOTE_MOVE)                                                          \
+  /* Time: events */                                                           \
+  X(TIME_EVENT_CREATE)                                                         \
+  X(TIME_PERSISTENT_EVENT_CREATE)                                              \
+  X(TIME_EVENT_SIGNAL)                                                         \
+  X(TIME_PERSISTENT_EVENT_SIGNAL)                                              \
+  /* Num: events */                                                            \
+  X(NUM_EVENT_CREATE)                                                          \
+  X(NUM_EVENT_SIGNAL)                                                          \
+  X(NUM_PERSISTENT_EVENT_CREATE)                                               \
+  X(NUM_PERSISTENT_EVENT_SIGNAL)                                               \
+  /* Num: scheduling */                                                        \
+  X(NUM_STEAL_ATTEMPT)                                                         \
+  X(NUM_STEAL_SUCCESS)                                                         \
+  /* Time: scheduling */                                                       \
+  X(TIME_YIELD)                                                                \
+  /* Num: epoch */                                                             \
+  X(NUM_EPOCH_CREATE)                                                          \
+  /* Num: out-of-order */                                                      \
+  X(NUM_OO_ENQUEUE)                                                            \
+  /* Object counters — per arts_id tracking */                                 \
+  X(OBJ_NUM_EDT)                                                               \
+  X(OBJ_TIME_EDT_EXEC)                                                         \
+  X(OBJ_TIME_EDT_STALL)                                                        \
+  X(OBJ_NUM_DB)                                                                \
+  X(OBJ_BYTES_DB_LOCAL)                                                        \
+  X(OBJ_BYTES_DB_REMOTE)                                                       \
+  X(OBJ_NUM_DB_CACHE_MISS)                                                     \
+  X(OBJ_TRACE_EDT)                                                             \
+  X(OBJ_TRACE_DB)                                                              \
+  /* Time: runtime phases */                                                   \
+  X(TIME_INIT)                                                                 \
+  X(TIME_TOTAL)
 
 // Generate enum from X-macro
 typedef enum arts_counter_type_t {
@@ -149,22 +178,10 @@ typedef struct {
 extern ARTS_THREAD_LOCAL arts_counter_t
     arts_thread_local_counters[NUM_COUNTER_TYPES];
 
-// arts_id tracking stored separately per-thread (compile-time conditional)
-#if ENABLE_ARTS_ID_EDT_METRICS || ENABLE_ARTS_ID_DB_METRICS
-extern ARTS_THREAD_LOCAL arts_id_hash_table_t arts_thread_local_arts_id_metrics;
-#endif
-#if ENABLE_ARTS_ID_EDT_CAPTURES
-extern ARTS_THREAD_LOCAL arts_array_list_t *arts_thread_local_edt_capture_list;
-#endif
-#if ENABLE_ARTS_ID_DB_CAPTURES
-extern ARTS_THREAD_LOCAL arts_array_list_t *arts_thread_local_db_capture_list;
-#endif
-
 // Note: Saved counter data is stored directly in arts_node_info:
 // - saved_counters[thread_id][counter_index]: final counter values
 // - capture_arrays[thread_id][counter_index]: capture history (PERIODIC)
-// - arts_id tracking data stored in __thread variables during runtime,
-//   then merged at output time
+// Object counter (per-arts_id) data is managed by object_counter.h
 
 // We do not implement system-wide counters due to the overhead of
 // synchronization and network communication
@@ -183,17 +200,6 @@ void arts_counter_write(const char *output_folder, unsigned int node_id,
                         unsigned int thread_id);
 void arts_counter_write_cluster(const char *output_folder,
                                 unsigned int node_count);
-
-// arts_id tracking wrapper functions (integrated with counter infrastructure)
-void arts_counter_record_arts_id_edt(uint64_t arts_id, uint64_t exec_ns,
-                                     uint64_t stall_ns);
-void arts_counter_record_arts_id_db(uint64_t arts_id, uint64_t bytes_local,
-                                    uint64_t bytes_remote,
-                                    uint64_t cache_misses);
-void arts_counter_capture_arts_id_edt(uint64_t arts_id, uint64_t exec_ns,
-                                      uint64_t stall_ns);
-void arts_counter_capture_arts_id_db(uint64_t arts_id, uint64_t bytes_accessed,
-                                     uint8_t access_type);
 
 #ifdef __cplusplus
 }

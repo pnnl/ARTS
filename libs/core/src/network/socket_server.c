@@ -366,7 +366,8 @@ uint64_t arts_actual_send(char *message, uint64_t length, int rank, int port) {
       return -1;
     }
   }
-  INCREMENT_REMOTE_BYTES_SENT_BY(total);
+  INCREMENT_BYTES_REMOTE_SENT_BY(total);
+  INCREMENT_NUM_REMOTE_SEND_BY(1);
   return length;
 }
 
@@ -689,7 +690,7 @@ bool arts_server_try_to_receive(
             res = RRECV(remote_socket_recieve_list[i], bypass_buf[pos],
                         bypass_packet_size[pos], MSG_DONTWAIT);
             if (res > 0) {
-              INCREMENT_REMOTE_BYTES_RECEIVED_BY(res);
+              INCREMENT_BYTES_REMOTE_RECEIVED_BY(res);
             }
           } else {
             // packet = re_recieve_packet[pos];
@@ -709,7 +710,7 @@ bool arts_server_try_to_receive(
                     RRECV(remote_socket_recieve_list[i], bypass_buf[pos] + res,
                           bypass_packet_size[pos] - res, MSG_DONTWAIT);
                 if (res2 > 0) {
-                  INCREMENT_REMOTE_BYTES_RECEIVED_BY(res);
+                  INCREMENT_BYTES_REMOTE_RECEIVED_BY(res2);
                 }
 
                 if (res2 < 0) {
@@ -757,7 +758,7 @@ bool arts_server_try_to_receive(
                     RRECV(remote_socket_recieve_list[i], bypass_buf[pos] + res,
                           bypass_packet_size[pos] - res, MSG_DONTWAIT);
                 if (res2 > 0) {
-                  INCREMENT_REMOTE_BYTES_RECEIVED_BY(res2);
+                  INCREMENT_BYTES_REMOTE_RECEIVED_BY(res2);
                 }
                 if (res2 < 0) {
                   if (errno != EAGAIN) {
@@ -775,6 +776,7 @@ bool arts_server_try_to_receive(
               if (goto_next) {
                 break;
               }
+              INCREMENT_NUM_REMOTE_RECEIVE_BY(1);
               arts_server_process_packet(packet);
 
               res -= (int64_t)packet->size;

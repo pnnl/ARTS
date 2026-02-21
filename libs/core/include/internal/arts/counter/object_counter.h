@@ -43,79 +43,108 @@
 extern "C" {
 #endif
 
-#include "arts/utils/array_list.h"
 #include <stdbool.h>
 #include <stdint.h>
 
-// Forward declaration
-struct arts_runtime_private_s;
+#include "arts/arts_defs.h"
+#include "arts/counter/Preamble.h"
+#include "arts/utils/array_list.h"
 
 // Hash table size (must be power of 2 for fast modulo)
-#ifndef ARTS_ID_HASH_SIZE
-#define ARTS_ID_HASH_SIZE 1024
+#define ARTS_OBJECT_TABLE_SIZE 1024
+
+// Composite enable flags (auto-derived from individual Preamble ENABLE_* flags)
+#define ARTS_OBJECT_EDT_TABLE_ENABLED                                          \
+  (ENABLE_OBJ_NUM_EDT || ENABLE_OBJ_TIME_EDT_EXEC || ENABLE_OBJ_TIME_EDT_STALL)
+#define ARTS_OBJECT_DB_TABLE_ENABLED                                           \
+  (ENABLE_OBJ_NUM_DB || ENABLE_OBJ_BYTES_DB_LOCAL ||                           \
+   ENABLE_OBJ_BYTES_DB_REMOTE || ENABLE_OBJ_NUM_DB_CACHE_MISS)
+#define ARTS_OBJECT_EDT_TRACE_ENABLED ENABLE_OBJ_TRACE_EDT
+#define ARTS_OBJECT_DB_TRACE_ENABLED ENABLE_OBJ_TRACE_DB
+#define ARTS_OBJECT_ANY_ENABLED                                                \
+  (ARTS_OBJECT_EDT_TABLE_ENABLED || ARTS_OBJECT_DB_TABLE_ENABLED ||            \
+   ARTS_OBJECT_EDT_TRACE_ENABLED || ARTS_OBJECT_DB_TRACE_ENABLED)
+
+// Per-object EDT hash entry
+typedef struct {
+  uint64_t arts_id;
+  uint64_t count;
+  uint64_t exec_ns;
+  uint64_t stall_ns;
+  bool valid;
+} arts_object_edt_entry_t;
+
+// Per-object DB hash entry
+typedef struct {
+  uint64_t arts_id;
+  uint64_t count;
+  uint64_t bytes_local;
+  uint64_t bytes_remote;
+  uint64_t cache_misses;
+  bool valid;
+} arts_object_db_entry_t;
+
+// Per-thread object counter table (contains both EDT and DB hash tables)
+typedef struct {
+  arts_object_edt_entry_t edt_table[ARTS_OBJECT_TABLE_SIZE];
+  arts_object_db_entry_t db_table[ARTS_OBJECT_TABLE_SIZE];
+  uint64_t edt_collisions;
+  uint64_t db_collisions;
+} arts_object_table_t;
+
+// Per-invocation EDT trace record
+typedef struct {
+  uint64_t arts_id;
+  uint64_t timestamp_ns;
+  uint64_t exec_ns;
+  uint64_t stall_ns;
+  uint32_t node;
+  uint32_t thread;
+} arts_object_edt_trace_t;
+
+// Per-invocation DB trace record
+typedef struct {
+  uint64_t arts_id;
+  uint64_t timestamp_ns;
+  uint64_t bytes_accessed;
+  uint32_t node;
+  uint8_t access_type; // 0=READ, 1=WRITE
+} arts_object_db_trace_t;
+
+// Thread-local storage (declared here, defined in object_counter.c)
+#if ARTS_OBJECT_EDT_TABLE_ENABLED || ARTS_OBJECT_DB_TABLE_ENABLED
+extern ARTS_THREAD_LOCAL arts_object_table_t arts_object_tls_table;
+#endif
+#if ARTS_OBJECT_EDT_TRACE_ENABLED
+extern ARTS_THREAD_LOCAL arts_array_list_t *arts_object_tls_edt_traces;
+#endif
+#if ARTS_OBJECT_DB_TRACE_ENABLED
+extern ARTS_THREAD_LOCAL arts_array_list_t *arts_object_tls_db_traces;
 #endif
 
-// Per-arts_id aggregate metrics
-typedef struct {
-  uint64_t arts_id;        // Key
-  uint64_t invocations;    // Number of invocations
-  uint64_t total_exec_ns;  // Total execution time (nanoseconds)
-  uint64_t total_stall_ns; // Total stall time (nanoseconds)
-  uint64_t bytes_local;    // For DBs: local bytes accessed
-  uint64_t bytes_remote;   // For DBs: remote bytes accessed
-  uint64_t cache_misses;   // For DBs: cache misses
-  bool valid;              // Slot occupied
-} arts_id_metrics_t;
+// Recording functions (runtime hot path)
+void arts_object_record_edt(uint64_t arts_id, uint64_t exec_ns,
+                            uint64_t stall_ns);
+void arts_object_record_db(uint64_t arts_id, uint64_t bytes_local,
+                           uint64_t bytes_remote, uint64_t cache_misses);
+void arts_object_trace_edt(uint64_t arts_id, uint64_t exec_ns,
+                           uint64_t stall_ns);
+void arts_object_trace_db(uint64_t arts_id, uint64_t bytes_accessed,
+                          uint8_t access_type);
 
-// Per-thread hash table for aggregate metrics
-typedef struct {
-  arts_id_metrics_t edt_metrics[ARTS_ID_HASH_SIZE]; // EDT metrics by arts_id
-  arts_id_metrics_t db_metrics[ARTS_ID_HASH_SIZE];  // DB metrics by arts_id
-  uint64_t edt_collisions; // Stats: hash collisions for EDTs
-  uint64_t db_collisions;  // Stats: hash collisions for DBs
-} arts_id_hash_table_t;
+// Lifecycle functions (called from runtime init/shutdown)
+void arts_object_alloc_node_storage(unsigned int thread_count);
+void arts_object_save_thread_data(unsigned int thread_id);
+void arts_object_write_node(const char *output_folder, unsigned int node_id,
+                            unsigned int thread_count);
+void arts_object_write_cluster(const char *output_folder,
+                               unsigned int node_count);
+void arts_object_cleanup_node_storage(unsigned int thread_count);
 
-// Per-invocation capture structure for detailed EDT tracking
-typedef struct {
-  uint64_t arts_id;      // Which arts_id
-  uint64_t timestamp_ns; // When it executed
-  uint64_t exec_ns;      // Execution time
-  uint64_t stall_ns;     // Stall time
-  uint32_t node;         // Which node
-  uint32_t thread;       // Which thread
-} arts_id_edt_capture_t;
-
-// Per-invocation capture structure for detailed DB tracking
-typedef struct {
-  uint64_t arts_id;        // Which arts_id
-  uint64_t timestamp_ns;   // When accessed
-  uint64_t bytes_accessed; // How much data
-  uint32_t node;           // Which node
-  uint8_t access_type;     // READ (0) or WRITE (1)
-} arts_id_db_capture_t;
-
-// Function declarations
-
-// Aggregate metrics recording (hash table based)
-void arts_id_record_edt_metrics(uint64_t arts_id, uint64_t exec_ns,
-                                uint64_t stall_ns,
-                                arts_id_hash_table_t *hash_table);
-void arts_id_record_db_metrics(uint64_t arts_id, uint64_t bytes_local,
-                               uint64_t bytes_remote, uint64_t cache_misses,
-                               arts_id_hash_table_t *hash_table);
-
-// Detailed per-invocation captures (ArrayList based)
-void arts_id_capture_edt_execution(uint64_t arts_id, uint64_t exec_ns,
-                                   uint64_t stall_ns,
-                                   arts_array_list_t *captures);
-void arts_id_capture_db_access(uint64_t arts_id, uint64_t bytes_accessed,
-                               uint8_t access_type,
-                               arts_array_list_t *captures);
-
-// Reduction functions for NODE mode (merge multiple hash tables)
-void arts_id_reduce_hash_tables(arts_id_hash_table_t *dest,
-                                const arts_id_hash_table_t *src);
-void arts_id_init_hash_table(arts_id_hash_table_t *table);
+// Reduction and initialization
+void arts_object_reduce_tables(arts_object_table_t *dest,
+                               const arts_object_table_t *src);
+void arts_object_init_table(arts_object_table_t *table);
 
 #ifdef __cplusplus
 }

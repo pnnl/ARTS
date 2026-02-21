@@ -203,6 +203,7 @@ void send_epoch(arts_guid_t epoch_guid, unsigned int source,
 
 arts_epoch_t *create_epoch(arts_guid_t *guid, arts_guid_t edt_guid,
                            unsigned int slot) {
+  INCREMENT_NUM_EPOCH_CREATE_BY(1);
   if (*guid == NULL_GUID) {
     *guid = arts_guid_create_for_rank(arts_global_rank_id, ARTS_EDT);
   }
@@ -561,13 +562,15 @@ arts_epoch_t *get_pool_epoch(arts_guid_t edt_guid, unsigned int slot) {
 }
 
 void arts_yield() {
-  EDT_RUNNING_TIME_STOP();
-  INCREMENT_YIELD_BY(1);
+  TIME_EDT_EXEC_STOP();
+  INCREMENT_NUM_YIELD_BY(1);
   thread_local_t tl;
   arts_save_thread_local(&tl);
+  TIME_YIELD_START();
   arts_node_info.scheduler();
+  TIME_YIELD_STOP();
   arts_restore_thread_local(&tl);
-  EDT_RUNNING_TIME_START();
+  TIME_EDT_EXEC_START();
 }
 
 /*
@@ -582,7 +585,7 @@ void arts_yield() {
  * calling thread will spin here indefinitely (potential hang point).
  */
 bool arts_wait_on_handle(arts_guid_t epoch_guid) {
-  EDT_RUNNING_TIME_STOP();
+  TIME_EDT_EXEC_STOP();
   arts_guid_t *guid = arts_check_epoch_is_root(epoch_guid);
   ARTS_INFO("arts_wait_on_handle: Waiting on epoch [Guid:%lu]", epoch_guid);
   // For now lets leave this rule here
@@ -600,16 +603,17 @@ bool arts_wait_on_handle(arts_guid_t epoch_guid) {
         ARTS_WARN(
             "arts_wait_on_handle: Epoch [Guid:%lu] not found in route table",
             local);
-        EDT_RUNNING_TIME_START();
+        TIME_EDT_EXEC_START();
         return false;
       }
     }
     epoch->wait_ptr = &flag;
     increment_finished_epoch(local);
 
-    INCREMENT_YIELD_BY(1);
+    INCREMENT_NUM_YIELD_BY(1);
     thread_local_t tl;
     arts_save_thread_local(&tl);
+    TIME_YIELD_START();
     while (flag) {
       arts_node_info.scheduler();
     }
@@ -617,13 +621,14 @@ bool arts_wait_on_handle(arts_guid_t epoch_guid) {
     while (arts_node_info.scheduler()) {
       ;
     }
+    TIME_YIELD_STOP();
     arts_restore_thread_local(&tl);
 
     clean_epoch_pool();
 
-    EDT_RUNNING_TIME_START();
+    TIME_EDT_EXEC_START();
     return true;
   }
-  EDT_RUNNING_TIME_START();
+  TIME_EDT_EXEC_START();
   return false;
 }

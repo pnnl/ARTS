@@ -57,8 +57,6 @@ static inline void *align_pointer(void *ptr, size_t align) {
 }
 
 void *arts_malloc(size_t size) {
-  MALLOC_MEMORY_START();
-
   if (!size) {
     ARTS_ERROR("arts_malloc: zero size");
   }
@@ -67,20 +65,16 @@ void *arts_malloc(size_t size) {
   if (!base) {
     ARTS_ERROR("arts_malloc: system malloc failed (size=%zu)", size);
   }
-  INCREMENT_MEMORY_FOOTPRINT_BY(size);
+  INCREMENT_BYTES_MEMORY_FOOTPRINT_BY(size);
 
   base->size = size;
   base->align = 0;
   base->base = base;
 
-  MALLOC_MEMORY_STOP();
-
   return base + 1;
 }
 
 void *arts_malloc_align(size_t size, size_t align) {
-  MALLOC_MEMORY_START();
-
   if (!size || align < ALIGNMENT || !IS_POWER_OF_TWO(align)) {
     ARTS_ERROR("arts_malloc_align: invalid params (size=%zu, align=%zu)", size,
                align);
@@ -91,7 +85,7 @@ void *arts_malloc_align(size_t size, size_t align) {
     ARTS_ERROR("arts_malloc_align: system malloc failed (size=%zu, align=%zu)",
                size, align);
   }
-  INCREMENT_MEMORY_FOOTPRINT_BY(size);
+  INCREMENT_BYTES_MEMORY_FOOTPRINT_BY(size);
 
   void *aligned = align_pointer((char *)base + sizeof(header_t), align);
   header_t *hdr = (header_t *)aligned - 1;
@@ -100,14 +94,10 @@ void *arts_malloc_align(size_t size, size_t align) {
   hdr->align = align;
   hdr->base = base;
 
-  MALLOC_MEMORY_STOP();
-
   return aligned;
 }
 
 void *arts_calloc(size_t nmemb, size_t size) {
-  CALLOC_MEMORY_START();
-
   if (!nmemb || !size || size > SIZE_MAX / nmemb) {
     ARTS_ERROR("arts_calloc: invalid params (nmemb=%zu, size=%zu)", nmemb,
                size);
@@ -117,14 +107,10 @@ void *arts_calloc(size_t nmemb, size_t size) {
   void *ptr = arts_malloc(total_size);
   memset(ptr, 0, total_size);
 
-  CALLOC_MEMORY_STOP();
-
   return ptr;
 }
 
 void *arts_calloc_align(size_t nmemb, size_t size, size_t align) {
-  CALLOC_MEMORY_START();
-
   if (!nmemb || !size || size > SIZE_MAX / nmemb || align < ALIGNMENT ||
       !IS_POWER_OF_TWO(align)) {
     ARTS_ERROR(
@@ -135,8 +121,6 @@ void *arts_calloc_align(size_t nmemb, size_t size, size_t align) {
   size_t total_size = nmemb * size;
   void *ptr = arts_malloc_align(total_size, align);
   memset(ptr, 0, total_size);
-
-  CALLOC_MEMORY_STOP();
 
   return ptr;
 }
@@ -166,16 +150,11 @@ void *arts_realloc(void *ptr, size_t size) {
 }
 
 void arts_free(void *ptr) {
-  FREE_MEMORY_START();
-
   if (!ptr) {
-    FREE_MEMORY_STOP();
     return;
   }
   header_t *hdr = (header_t *)ptr - 1;
   size_t size = hdr->size;
   free(hdr->base);
-  DECREMENT_MEMORY_FOOTPRINT_BY(size);
-
-  FREE_MEMORY_STOP();
+  DECREMENT_BYTES_MEMORY_FOOTPRINT_BY(size);
 }

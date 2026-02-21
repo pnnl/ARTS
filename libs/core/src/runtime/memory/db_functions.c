@@ -150,13 +150,15 @@ void arts_db_create_internal(arts_guid_t guid, void *addr, uint64_t len,
   }
   db_res->event_guid =
       arts_persistent_event_create(arts_guid_get_rank(guid), 0, guid);
-  // Record arts_id metrics via counter infrastructure
-  arts_counter_record_arts_id_db(arts_id, packet_size, 0, 0);
-  INCREMENT_NUM_DBS_CREATED_BY(1);
+  // Record per-object DB metrics
+  arts_object_record_db(arts_id, packet_size, 0, 0);
+  arts_object_trace_db(arts_id, packet_size, 0);
+  INCREMENT_NUM_DB_CREATE_BY(1);
+  INCREMENT_BYTES_DB_CREATE_BY(len);
 }
 
 arts_guid_t arts_db_create_remote(unsigned int route, uint64_t len) {
-  DB_CREATE_COUNTER_START();
+  TIME_DB_CREATE_START();
   if (route == ARTS_HINT_CURRENT_NODE) {
     route = arts_global_rank_id;
   }
@@ -168,7 +170,7 @@ arts_guid_t arts_db_create_remote(unsigned int route, uint64_t len) {
 
   arts_remote_memory_move(route, guid, ptr, sizeof(struct arts_db_s),
                           ARTS_REMOTE_DB_SEND_MSG, arts_db_free);
-  DB_CREATE_COUNTER_STOP();
+  TIME_DB_CREATE_STOP();
   return guid;
 }
 
@@ -180,7 +182,7 @@ arts_guid_t arts_db_create_remote(unsigned int route, uint64_t len) {
  * through *addr.
  */
 arts_guid_t arts_db_create(void **addr, uint64_t len, const arts_hint_t *hint) {
-  DB_CREATE_COUNTER_START();
+  TIME_DB_CREATE_START();
   uint64_t arts_id = hint ? hint->id : 0;
   arts_guid_t guid = NULL_GUID;
   uint64_t db_size = len + sizeof(struct arts_db_s);
@@ -197,14 +199,14 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, const arts_hint_t *hint) {
     ARTS_DEBUG("arts_db_create: DB[Guid:%lu, Id:%lu, Size:%lu] created locally",
                guid, arts_id, len);
   }
-  DB_CREATE_COUNTER_STOP();
+  TIME_DB_CREATE_STOP();
   return guid;
 }
 
 // Guid must be for a local DB only
 void *arts_db_create_with_guid(arts_guid_t guid, uint64_t len,
                                const arts_hint_t *hint) {
-  DB_CREATE_COUNTER_START();
+  TIME_DB_CREATE_START();
   uint64_t arts_id = hint ? hint->id : 0;
   arts_type_t mode = arts_guid_get_type(guid);
 
@@ -230,13 +232,13 @@ void *arts_db_create_with_guid(arts_guid_t guid, uint64_t len,
             "Size:%lu]",
             arts_id, guid, GET_TYPE_NAME(mode), ptr, arts_guid_get_rank(guid),
             len);
-  DB_CREATE_COUNTER_STOP();
+  TIME_DB_CREATE_STOP();
   return ptr;
 }
 
 void *arts_db_create_with_guid_and_data(arts_guid_t guid, void *data,
                                         uint64_t len) {
-  DB_CREATE_COUNTER_START();
+  TIME_DB_CREATE_START();
   arts_type_t mode = arts_guid_get_type(guid);
   void *ptr = NULL;
   uint64_t arts_id = 0;
@@ -265,7 +267,7 @@ void *arts_db_create_with_guid_and_data(arts_guid_t guid, void *data,
             "Size:%lu]",
             arts_id, guid, GET_TYPE_NAME(mode), ptr, arts_guid_get_rank(guid),
             len);
-  DB_CREATE_COUNTER_STOP();
+  TIME_DB_CREATE_STOP();
   return ptr;
 }
 
@@ -303,6 +305,7 @@ void *arts_db_resize(arts_guid_t guid, unsigned int size, bool copy) {
 }
 
 void arts_db_move(arts_guid_t db_guid, unsigned int rank) {
+  INCREMENT_NUM_DB_MOVE_BY(1);
   unsigned int guid_rank = arts_guid_get_rank(db_guid);
   if (guid_rank != rank) {
     if (guid_rank != arts_global_rank_id) {
@@ -321,6 +324,7 @@ void arts_db_move(arts_guid_t db_guid, unsigned int rank) {
 }
 
 void arts_db_destroy(arts_guid_t guid) {
+  INCREMENT_NUM_DB_DESTROY_BY(1);
   arts_type_t mode = arts_guid_get_type(guid);
   struct arts_db_s *db_res =
       (struct arts_db_s *)arts_route_table_lookup_item(guid);
@@ -521,11 +525,11 @@ void acquire_dbs(struct arts_edt_s *edt) {
 
       // Update access-mode counters
       if (access_mode == ARTS_DB_READ) {
-        INCREMENT_ACQUIRE_READ_MODE_BY(1);
+        INCREMENT_NUM_DB_ACQUIRE_READ_BY(1);
       } else if (access_mode == ARTS_DB_WRITE) {
-        INCREMENT_ACQUIRE_WRITE_MODE_BY(1);
+        INCREMENT_NUM_DB_ACQUIRE_WRITE_BY(1);
         if (owner == arts_global_rank_id) {
-          INCREMENT_OWNER_UPDATES_PERFORMED_BY(1);
+          INCREMENT_NUM_OWNER_UPDATE_PERFORMED_BY(1);
         }
       }
 
@@ -739,14 +743,6 @@ void prep_dbs(unsigned int depc, arts_edt_dep_t *depv, const arts_type_t *modes,
   for (unsigned int i = 0; i < depc; i++) {
     arts_type_t access_mode = modes[i];
     arts_type_t db_type = arts_guid_get_type(depv[i].guid);
-    if (depv[i].guid != NULL_GUID) {
-      if (access_mode == ARTS_DB_READ) {
-        INCREMENT_ACQUIRE_READ_MODE_BY(1);
-      } else if (access_mode == ARTS_DB_WRITE) {
-        INCREMENT_ACQUIRE_WRITE_MODE_BY(1);
-      }
-    }
-
     if (depv[i].guid != NULL_GUID && access_mode == ARTS_DB_WRITE) {
       if (db_type != ARTS_DB_PIN) {
         arts_remote_update_route_table(depv[i].guid, -1);
@@ -806,13 +802,13 @@ void release_dbs(unsigned int depc, arts_edt_dep_t *depv,
                     db->arts_id, depv[i].guid, db->header.size, owner);
         }
         arts_remote_update_db(depv[i].guid, true);
-        INCREMENT_OWNER_UPDATES_PERFORMED_BY(1);
+        INCREMENT_NUM_OWNER_UPDATE_PERFORMED_BY(1);
       }
     } else if (depv[i].guid != NULL_GUID && access_mode == ARTS_DB_READ) {
       ARTS_DEBUG("DB[Guid:%lu] released in READ mode (no owner update, no "
                  "latch decrement)",
                  depv[i].guid);
-      INCREMENT_OWNER_UPDATES_SAVED_BY(1);
+      INCREMENT_NUM_OWNER_UPDATE_SAVED_BY(1);
     } else if (db_type == ARTS_DB_PIN) {
       arts_db_decrement_latch(depv[i].guid);
     } else if (db_type == ARTS_DB_ONCE_LOCAL || db_type == ARTS_DB_ONCE) {
@@ -935,18 +931,20 @@ void internal_get_from_db(arts_guid_t edt_guid, arts_guid_t db_guid,
 void arts_get_from_db(arts_guid_t edt_guid, arts_guid_t db_guid,
                       unsigned int slot, unsigned int offset,
                       unsigned int len) {
-  GET_DB_COUNTER_START();
+  TIME_DB_GET_START();
+  INCREMENT_NUM_DB_GET_BY(1);
   unsigned int rank = arts_guid_get_rank(db_guid);
   internal_get_from_db(edt_guid, db_guid, slot, offset, len, rank);
-  GET_DB_COUNTER_STOP();
+  TIME_DB_GET_STOP();
 }
 
 void arts_get_from_db_at(arts_guid_t edt_guid, arts_guid_t db_guid,
                          unsigned int slot, unsigned int offset,
                          unsigned int len, unsigned int rank) {
-  GET_DB_COUNTER_START();
+  TIME_DB_GET_START();
+  INCREMENT_NUM_DB_GET_BY(1);
   internal_get_from_db(edt_guid, db_guid, slot, offset, len, rank);
-  GET_DB_COUNTER_STOP();
+  TIME_DB_GET_STOP();
 }
 
 void internal_put_in_db(void *ptr, arts_guid_t edt_guid, arts_guid_t db_guid,
@@ -984,19 +982,23 @@ void internal_put_in_db(void *ptr, arts_guid_t edt_guid, arts_guid_t db_guid,
 void arts_put_in_db_at(void *ptr, arts_guid_t edt_guid, arts_guid_t db_guid,
                        unsigned int slot, unsigned int offset, unsigned int len,
                        unsigned int rank) {
-  PUT_DB_COUNTER_START();
+  TIME_DB_PUT_START();
+  INCREMENT_NUM_DB_PUT_BY(1);
+  INCREMENT_BYTES_DB_PUT_BY(len);
   arts_guid_t epoch_guid = arts_get_current_epoch_guid();
   ARTS_DEBUG("Epoch [Guid:%lu]", epoch_guid);
   increment_active_epoch(epoch_guid);
   arts_shutdown_epoch_inc_active();
   internal_put_in_db(ptr, edt_guid, db_guid, slot, offset, len, epoch_guid,
                      rank);
-  PUT_DB_COUNTER_STOP();
+  TIME_DB_PUT_STOP();
 }
 
 void arts_put_in_db(void *ptr, arts_guid_t edt_guid, arts_guid_t db_guid,
                     unsigned int slot, unsigned int offset, unsigned int len) {
-  PUT_DB_COUNTER_START();
+  TIME_DB_PUT_START();
+  INCREMENT_NUM_DB_PUT_BY(1);
+  INCREMENT_BYTES_DB_PUT_BY(len);
   unsigned int rank = arts_guid_get_rank(db_guid);
   arts_guid_t epoch_guid = arts_get_current_epoch_guid();
   ARTS_DEBUG("Epoch [Guid:%lu]", epoch_guid);
@@ -1004,16 +1006,18 @@ void arts_put_in_db(void *ptr, arts_guid_t edt_guid, arts_guid_t db_guid,
   arts_shutdown_epoch_inc_active();
   internal_put_in_db(ptr, edt_guid, db_guid, slot, offset, len, epoch_guid,
                      rank);
-  PUT_DB_COUNTER_STOP();
+  TIME_DB_PUT_STOP();
 }
 
 void arts_put_in_db_epoch(void *ptr, arts_guid_t epoch_guid,
                           arts_guid_t db_guid, unsigned int offset,
                           unsigned int len) {
-  PUT_DB_COUNTER_START();
+  TIME_DB_PUT_START();
+  INCREMENT_NUM_DB_PUT_BY(1);
+  INCREMENT_BYTES_DB_PUT_BY(len);
   unsigned int rank = arts_guid_get_rank(db_guid);
   increment_active_epoch(epoch_guid);
   arts_shutdown_epoch_inc_active();
   internal_put_in_db(ptr, NULL_GUID, db_guid, 0, offset, len, epoch_guid, rank);
-  PUT_DB_COUNTER_STOP();
+  TIME_DB_PUT_STOP();
 }

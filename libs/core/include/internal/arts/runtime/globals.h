@@ -110,7 +110,10 @@ struct arts_runtime_shared_s {
   arts_array_list_t ***
       capture_arrays; // [thread_id][counter_index] - capture history (PERIODIC)
   uint64_t counter_capture_interval;
-  // arts_id reduced metrics computed at output time (not stored during runtime)
+  // Object counter storage (per-thread saved data for per-arts_id tracking)
+  arts_object_table_t **object_tables;   // [thread_id]
+  arts_array_list_t **object_edt_traces; // [thread_id]
+  arts_array_list_t **object_db_traces;  // [thread_id]
 } __attribute__((aligned(64)));
 
 struct arts_runtime_private_s {

@@ -104,24 +104,26 @@ bool arts_event_create_internal(arts_guid_t *guid, unsigned int route,
 }
 
 arts_guid_t arts_event_create(unsigned int route, unsigned int latch_count) {
-  EVENT_CREATE_COUNTER_START();
+  TIME_EVENT_CREATE_START();
+  INCREMENT_NUM_EVENT_CREATE_BY(1);
   if (route == ARTS_HINT_CURRENT_NODE) {
     route = arts_global_rank_id;
   }
   arts_guid_t guid = NULL_GUID;
   arts_event_create_internal(&guid, route, INITIAL_DEPENDENT_SIZE, latch_count,
                              false, NULL_GUID);
-  EVENT_CREATE_COUNTER_STOP();
+  TIME_EVENT_CREATE_STOP();
   return guid;
 }
 
 arts_guid_t arts_event_create_with_guid(arts_guid_t guid,
                                         unsigned int latch_count) {
-  EVENT_CREATE_COUNTER_START();
+  TIME_EVENT_CREATE_START();
+  INCREMENT_NUM_EVENT_CREATE_BY(1);
   unsigned int route = arts_guid_get_rank(guid);
   bool ret = arts_event_create_internal(&guid, route, INITIAL_DEPENDENT_SIZE,
                                         latch_count, false, NULL_GUID);
-  EVENT_CREATE_COUNTER_STOP();
+  TIME_EVENT_CREATE_STOP();
   return (ret) ? guid : NULL_GUID;
 }
 
@@ -147,7 +149,8 @@ void arts_event_destroy(arts_guid_t guid) {
 
 void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
                              uint32_t slot) {
-  SIGNAL_EVENT_COUNTER_START();
+  TIME_EVENT_SIGNAL_START();
+  INCREMENT_NUM_EVENT_SIGNAL_BY(1);
   if (current_edt && current_edt->invalidate_count > 0) {
     arts_out_of_order_event_satisfy_slot(current_edt->current_edt, event_guid,
                                          data_guid, slot, true);
@@ -212,10 +215,10 @@ void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
               arts_signal_edt(dependent[j].addr, dependent[j].slot, event->data,
                               ARTS_DB_WRITE);
             } else if (dependent[j].type == ARTS_EVENT) {
-              SIGNAL_EVENT_COUNTER_STOP();
+              TIME_EVENT_SIGNAL_STOP();
               arts_event_satisfy_slot(dependent[j].addr, event->data,
                                       dependent[j].slot);
-              SIGNAL_EVENT_COUNTER_START();
+              TIME_EVENT_SIGNAL_START();
             } else if (dependent[j].type == ARTS_CALLBACK) {
               arts_edt_dep_t arg;
               arg.guid = event->data;
@@ -242,7 +245,7 @@ void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
       }
     }
   }
-  SIGNAL_EVENT_COUNTER_STOP();
+  TIME_EVENT_SIGNAL_STOP();
 }
 
 struct arts_dependent_s *arts_dependent_get(struct arts_dependent_list_s *head,
@@ -544,13 +547,14 @@ arts_guid_t arts_persistent_event_create(unsigned int route,
                                          unsigned int latch_count,
                                          arts_guid_t data_guid) {
   (void)latch_count;
-  PERSISTENT_EVENT_CREATE_COUNTER_START();
+  TIME_PERSISTENT_EVENT_CREATE_START();
+  INCREMENT_NUM_PERSISTENT_EVENT_CREATE_BY(1);
   if (route == ARTS_HINT_CURRENT_NODE) {
     route = arts_global_rank_id;
   }
   arts_guid_t guid = NULL_GUID;
   arts_persistent_event_create_internal(&guid, route, data_guid);
-  PERSISTENT_EVENT_CREATE_COUNTER_STOP();
+  TIME_PERSISTENT_EVENT_CREATE_STOP();
   return guid;
 }
 
@@ -570,7 +574,8 @@ void arts_persistent_event_destroy(arts_guid_t guid) {
 
 void arts_persistent_event_satisfy(arts_guid_t event_guid, uint32_t action,
                                    bool lock) {
-  SIGNAL_PERSISTENT_EVENT_COUNTER_START();
+  TIME_PERSISTENT_EVENT_SIGNAL_START();
+  INCREMENT_NUM_PERSISTENT_EVENT_SIGNAL_BY(1);
   if (current_edt && current_edt->invalidate_count > 0) {
     arts_out_of_order_persistent_event_satisfy_slot(current_edt->current_edt,
                                                     event_guid, action, true);
@@ -678,10 +683,10 @@ void arts_persistent_event_satisfy(arts_guid_t event_guid, uint32_t action,
               ARTS_DEBUG("Event data is NULL_GUID for event %u", event_guid);
             }
           } else if (dependent[j].type == ARTS_EVENT) {
-            SIGNAL_PERSISTENT_EVENT_COUNTER_STOP();
+            TIME_PERSISTENT_EVENT_SIGNAL_STOP();
             arts_persistent_event_satisfy(dependent[j].addr, dependent[j].slot,
                                           true);
-            SIGNAL_PERSISTENT_EVENT_COUNTER_START();
+            TIME_PERSISTENT_EVENT_SIGNAL_START();
           } else if (dependent[j].type == ARTS_CALLBACK) {
             arts_edt_dep_t arg;
             arg.guid = event->data;
@@ -709,7 +714,7 @@ void arts_persistent_event_satisfy(arts_guid_t event_guid, uint32_t action,
       arts_unlock(&event->lock);
     }
   }
-  SIGNAL_PERSISTENT_EVENT_COUNTER_STOP();
+  TIME_PERSISTENT_EVENT_SIGNAL_STOP();
 }
 
 void arts_persistent_event_increment_latch(arts_guid_t event_guid) {

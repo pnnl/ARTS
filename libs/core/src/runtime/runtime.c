@@ -197,6 +197,9 @@ void arts_runtime_node_init(struct arts_config_s *config) {
     }
   }
 
+  /* Object counter storage (per-arts_id tracking) */
+  arts_object_alloc_node_storage(tc);
+
 #ifdef ARTS_USE_GPU
   if (arts_node_info.gpu) {
     arts_node_init_gpus();
@@ -211,6 +214,9 @@ void arts_runtime_global_cleanup() {
   for (unsigned int t = 0; t < tc; t++) {
     arts_counter_write(arts_node_info.counter_folder, arts_global_rank_id, t);
   }
+  // Write object counter output (per-arts_id tracking)
+  arts_object_write_node(arts_node_info.counter_folder, arts_global_rank_id,
+                         tc);
   arts_clean_up_dbs();
 
   /* Counter cleanup (reverse of arts_runtime_node_init allocation) */
@@ -230,6 +236,9 @@ void arts_runtime_global_cleanup() {
   arts_free(arts_node_info.capture_arrays);
   arts_free(arts_node_info.saved_counters);
   arts_free(arts_node_info.live_counters);
+
+  /* Object counter cleanup */
+  arts_object_cleanup_node_storage(tc);
 
   /* Per-thread indexed arrays */
   arts_free(arts_node_info.deque);
@@ -266,8 +275,8 @@ void arts_thread_zero_node_start(int argc, char **argv) {
 
   // Note: Counter capture starts AFTER barriers below, when receiver threads
   // are running. This ensures time sync messages can be processed.
-  INITIALIZATION_TIME_STOP();
-  END_TO_END_TIME_START();
+  TIME_INIT_STOP();
+  TIME_TOTAL_START();
 
 #ifdef ARTS_USE_GPU
   arts_init_per_gpu_wrapper(argc, argv);
@@ -493,7 +502,7 @@ void arts_handle_ready_edt(struct arts_edt_s *edt) {
             "depc_needed=%u",
             edt->current_edt, remaining);
   if (remaining == 0) {
-    INCREMENT_NUM_EDTS_ACQUIRED_BY(1);
+    INCREMENT_NUM_EDT_ACQUIRE_BY(1);
     increment_queue_epoch(edt->epoch_guid);
     arts_shutdown_epoch_inc_queue();
 #ifdef ARTS_USE_GPU
@@ -534,20 +543,21 @@ void arts_run_edt(struct arts_edt_s *edt) {
 
   arts_set_thread_local_edt_info(edt);
 
-  EDT_RUNNING_TIME_START();
+  TIME_EDT_EXEC_START();
   struct timespec start_time;
   struct timespec end_time;
   (void)clock_gettime(CLOCK_MONOTONIC, &start_time);
   func(paramc, paramv, depc, depv);
   (void)clock_gettime(CLOCK_MONOTONIC, &end_time);
-  EDT_RUNNING_TIME_STOP();
+  TIME_EDT_EXEC_STOP();
 
-  // Record arts_id metrics via counter infrastructure
+  // Record per-object EDT metrics
   uint64_t exec_ns = ((end_time.tv_sec - start_time.tv_sec) * 1000000000ULL) +
                      (end_time.tv_nsec - start_time.tv_nsec);
-  arts_counter_record_arts_id_edt(edt->arts_id, exec_ns, 0);
+  arts_object_record_edt(edt->arts_id, exec_ns, 0);
+  arts_object_trace_edt(edt->arts_id, exec_ns, 0);
 
-  INCREMENT_NUM_EDTS_FINISHED_BY(1);
+  INCREMENT_NUM_EDT_FINISH_BY(1);
 
   arts_unset_thread_local_edt_info();
 
@@ -584,6 +594,7 @@ inline struct arts_edt_s *arts_runtime_steal_from_network() {
 inline struct arts_edt_s *arts_runtime_steal_from_worker() {
   struct arts_edt_s *edt = NULL;
   if (arts_node_info.total_thread_count > 1) {
+    INCREMENT_NUM_STEAL_ATTEMPT_BY(1);
     long unsigned int steal_loc;
     do {
       steal_loc = jrand48(arts_thread_info.drand_buf);
@@ -591,6 +602,9 @@ inline struct arts_edt_s *arts_runtime_steal_from_worker() {
     } while (steal_loc == arts_thread_info.thread_id);
     edt = (struct arts_edt_s *)arts_deque_pop_back(
         arts_node_info.deque[steal_loc]);
+    if (edt) {
+      INCREMENT_NUM_STEAL_SUCCESS_BY(1);
+    }
   }
   return edt;
 }

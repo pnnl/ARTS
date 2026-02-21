@@ -748,7 +748,9 @@ bool arts_route_table_add_oo(arts_guid_t key, void *data, bool inc) {
       inc_item(item, 1, item->key, arts_get_route_table(key));
     }
     bool res = arts_out_of_order_list_add_item(&item->ooList, data);
-
+    if (res) {
+      INCREMENT_NUM_OO_ENQUEUE_BY(1);
+    }
     return res;
   }
   if (inc) {

@@ -145,77 +145,58 @@ void validator(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   bool success = true;
   unsigned int errors = 0;
 
-  // Test 1: Verify arts_id tracking data structures exist
-  arts_printf("[Validator] Test 1: Checking arts_id data structures...\n");
+  // Test 1: Verify object counter data structures exist
+  arts_printf(
+      "[Validator] Test 1: Checking object counter data structures...\n");
 
-#if ENABLE_ARTS_ID_EDT_METRICS || ENABLE_ARTS_ID_DB_METRICS
-  arts_printf("[Validator] ✓ arts_id hash table enabled\n");
+#if ARTS_OBJECT_EDT_TABLE_ENABLED
+  arts_printf("[Validator] EDT object table enabled\n");
 #else
   arts_printf(
-      "[Validator] ✗ arts_id hash table disabled (expected if counters OFF)\n");
+      "[Validator] EDT object table disabled (expected if counters OFF)\n");
 #endif
 
-#if ENABLE_ARTS_ID_EDT_CAPTURES
-  arts_printf("[Validator] ✓ EDT captures enabled\n");
+#if ARTS_OBJECT_DB_TABLE_ENABLED
+  arts_printf("[Validator] DB object table enabled\n");
 #else
   arts_printf(
-      "[Validator] ✗ EDT captures disabled (expected if counters OFF)\n");
+      "[Validator] DB object table disabled (expected if counters OFF)\n");
 #endif
 
-#if ENABLE_ARTS_ID_DB_CAPTURES
-  arts_printf("[Validator] ✓ DB captures enabled\n");
+#if ARTS_OBJECT_EDT_TRACE_ENABLED
+  arts_printf("[Validator] EDT traces enabled\n");
 #else
-  arts_printf(
-      "[Validator] ✗ DB captures disabled (expected if counters OFF)\n");
+  arts_printf("[Validator] EDT traces disabled (expected if counters OFF)\n");
+#endif
+
+#if ARTS_OBJECT_DB_TRACE_ENABLED
+  arts_printf("[Validator] DB traces enabled\n");
+#else
+  arts_printf("[Validator] DB traces disabled (expected if counters OFF)\n");
 #endif
 
   // Test 2: Verify counter mode configuration
   arts_printf("[Validator] Test 2: Checking counter modes...\n");
 
-  unsigned int edt_metrics_mode = arts_counter_mode_array[ARTS_ID_EDT_METRICS];
-  unsigned int db_metrics_mode = arts_counter_mode_array[ARTS_ID_DB_METRICS];
-  unsigned int edt_captures_mode =
-      arts_counter_mode_array[ARTS_ID_EDT_CAPTURES];
-  unsigned int db_captures_mode = arts_counter_mode_array[ARTS_ID_DB_CAPTURES];
+  unsigned int obj_num_edt_mode = arts_counter_mode_array[OBJ_NUM_EDT];
+  unsigned int obj_num_db_mode = arts_counter_mode_array[OBJ_NUM_DB];
+  unsigned int obj_trace_edt_mode = arts_counter_mode_array[OBJ_TRACE_EDT];
+  unsigned int obj_trace_db_mode = arts_counter_mode_array[OBJ_TRACE_DB];
 
-  arts_printf(
-      "[Validator] ARTS_ID_EDT_METRICS mode: %u (0=OFF, 1=ONCE, 2=PERIODIC)\n",
-      edt_metrics_mode);
-  arts_printf("[Validator] ARTS_ID_DB_METRICS mode: %u\n", db_metrics_mode);
-  arts_printf("[Validator] ARTS_ID_EDT_CAPTURES mode: %u\n", edt_captures_mode);
-  arts_printf("[Validator] ARTS_ID_DB_CAPTURES mode: %u\n", db_captures_mode);
+  arts_printf("[Validator] OBJ_NUM_EDT mode: %u (0=OFF, 1=ONCE, 2=PERIODIC)\n",
+              obj_num_edt_mode);
+  arts_printf("[Validator] OBJ_NUM_DB mode: %u\n", obj_num_db_mode);
+  arts_printf("[Validator] OBJ_TRACE_EDT mode: %u\n", obj_trace_edt_mode);
+  arts_printf("[Validator] OBJ_TRACE_DB mode: %u\n", obj_trace_db_mode);
 
-  // Test 3: Per-thread JSON export
-  arts_printf("[Validator] Test 3: Per-thread JSON export...\n");
+  // Test 3: Per-node JSON export
+  arts_printf("[Validator] Test 3: Object counter JSON export...\n");
 
-#if ENABLE_ARTS_ID_EDT_METRICS || ENABLE_ARTS_ID_DB_METRICS
-  arts_printf(
-      "[Validator] ✓ Per-thread export happens during thread cleanup\n");
-  arts_printf(
-      "[Validator] ✓ Look for counters_thread_N.json files after shutdown\n");
+#if ARTS_OBJECT_ANY_ENABLED
+  arts_printf("[Validator] Object counter export active\n");
+  arts_printf("[Validator] Look for object_n*.json files after shutdown\n");
 #else
-  arts_printf("[Validator] ⚠ Export skipped (counters disabled)\n");
-#endif
-
-  // Test 4: Verify hash table statistics (if enabled)
-#if ENABLE_ARTS_ID_EDT_METRICS || ENABLE_ARTS_ID_DB_METRICS
-  arts_printf("[Validator] Test 4: Checking hash table statistics...\n");
-
-  // Access thread info (this is thread 0, the main worker)
-  unsigned int total_edt_collisions = 0;
-  unsigned int total_db_collisions = 0;
-
-  for (unsigned int t = 0; t < arts_node_info.total_thread_count; t++) {
-    // Note: We can't easily access per-thread data from validator EDT
-    // This is just to demonstrate the concept
-    arts_printf(
-        "[Validator] Thread %u data collection (implementation pending)\n", t);
-  }
-
-  arts_printf("[Validator] Total EDT hash collisions: %u\n",
-              total_edt_collisions);
-  arts_printf("[Validator] Total DB hash collisions: %u\n",
-              total_db_collisions);
+  arts_printf("[Validator] Object counter export skipped (all counters OFF)\n");
 #endif
 
   // Final result

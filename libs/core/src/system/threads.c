@@ -79,6 +79,7 @@ void *arts_thread_loop(void *data) {
     saved[i].count = arts_thread_local_counters[i].count;
     saved[i].start = 0;
   }
+  arts_object_save_thread_data(thread_id);
   // Mark thread as closed by clearing live_counters pointer
   // Capture thread will skip threads with NULL live_counters
   arts_node_info.live_counters[thread_id] = NULL;
@@ -100,7 +101,7 @@ void arts_thread_main_join() {
   ARTS_DEBUG("arts_thread_main_join: main thread exited runtime_loop, joining "
              "%u threads",
              arts_node_info.total_thread_count - 1);
-  END_TO_END_TIME_STOP();
+  TIME_TOTAL_STOP();
   arts_runtime_private_cleanup();
 
   // Save main thread's final counter values before joining other threads
@@ -109,6 +110,7 @@ void arts_thread_main_join() {
     saved[i].count = arts_thread_local_counters[i].count;
     saved[i].start = 0;
   }
+  arts_object_save_thread_data(0);
   // Mark main thread as closed
   arts_node_info.live_counters[0] = NULL;
 
