@@ -84,7 +84,7 @@ void thrust_sort(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                               // (frontier) to our gpu
 
   unsigned int *tile = NULL; // This will hold a tile of the new frontier
-  arts_guid_t tile_guid = arts_guid_reserve(ARTS_DB_GPU_READ, 0);
+  arts_guid_t tile_guid = arts_guid_reserve(ARTS_DB_GPU, 0);
   tile = (unsigned int *)arts_db_create_with_guid(
       tile_guid, sizeof(unsigned int) * GPULISTLEN, NULL);
 
@@ -99,7 +99,7 @@ void thrust_sort(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Or signal the end if we are done
   arts_signal_edt(
       done_guid, gpu_index, tile_guid,
-      ARTS_DB_WRITE); // don't really need tile_guid just doing it for testing
+      ARTS_MODE_EW); // don't really need tile_guid just doing it for testing
 }
 
 void done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -141,7 +141,7 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
   (void)depv;
   unsigned int node_id = arts_get_current_node();
   unsigned int **addr;
-  arts_guid_t db_guid = arts_guid_reserve(ARTS_DB_GPU_READ, 0);
+  arts_guid_t db_guid = arts_guid_reserve(ARTS_DB_GPU, 0);
   addr = (unsigned int **)arts_db_create_with_guid(
       db_guid, sizeof(unsigned int *) * arts_get_total_gpus(), NULL);
   for (uint64_t i = 0; i < arts_get_total_gpus(); i++) {
@@ -160,7 +160,7 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
         thrust_sort, node_id, i, 2, args, 1, grid, threads);
     arts_guid_t edt_guid2 = arts_edt_create_gpu_direct(
         temp, node_id, i, 1, &i, 1, grid, threads, edt_guid, 0, db_guid, true);
-    arts_signal_edt(edt_guid2, 0, db_guid, ARTS_DB_WRITE);
+    arts_signal_edt(edt_guid2, 0, db_guid, ARTS_MODE_EW);
   }
 }
 

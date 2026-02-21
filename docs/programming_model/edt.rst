@@ -36,7 +36,6 @@ EDT Function Signature
 
   - ``depv[i].guid`` — the GUID of the dependency (or an encoded value).
   - ``depv[i].ptr``  — pointer to the DataBlock payload (for DB deps).
-  - ``depv[i].mode`` — the original DataBlock access mode.
 
 Creating an EDT
 ---------------
@@ -44,14 +43,16 @@ Creating an EDT
 .. code-block:: c
 
    arts_guid_t guid = arts_edt_create(
-       my_edt,                /* function pointer  */
-       target_node,           /* destination node   */
-       paramc, paramv,        /* static params      */
-       depc                   /* dependency count   */
+       my_edt,                /* function pointer      */
+       paramc, paramv,        /* static params         */
+       depc,                  /* dependency count      */
+       &(arts_hint_t){.route = target_node}  /* placement hint */
    );
 
-The returned GUID identifies the EDT.  If ``depc > 0``, the EDT will
-not run until all slots are signaled.
+The returned GUID identifies the EDT.  The ``hint`` parameter controls
+placement: pass ``NULL`` for the current node, or a pointer to an
+``arts_hint_t`` with the ``.route`` field set to the target node rank.
+If ``depc > 0``, the EDT will not run until all slots are signaled.
 
 Signaling Dependencies
 ----------------------
@@ -60,8 +61,8 @@ Wire a DataBlock or value into a dependency slot:
 
 .. code-block:: c
 
-   /* Signal a DataBlock into slot 0 */
-   arts_signal_edt(edt_guid, 0, db_guid);
+   /* Signal a DataBlock into slot 0 (exclusive write) */
+   arts_signal_edt(edt_guid, 0, db_guid, ARTS_MODE_EW);
 
    /* Signal a raw 64-bit value into slot 1 */
    arts_signal_edt_value(edt_guid, 1, 42);

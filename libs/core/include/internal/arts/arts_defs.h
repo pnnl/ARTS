@@ -77,7 +77,7 @@
  *  Enables additional compiler optimizations for idempotent functions. */
 #define ARTS_PURE ARTS_ATTRIBUTE(__pure__)
 
-/** Custom alignment — wraps @c _Alignas when the value is known.
+/** Custom alignment — wraps @c __attribute__((aligned(n))).
  *  @param n Required alignment in bytes (must be a power of two). */
 #define ARTS_ALIGNED(n) ARTS_ATTRIBUTE(__aligned__(n))
 

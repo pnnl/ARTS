@@ -49,9 +49,9 @@ extern "C" {
  *
  * A GUID is a 64-bit value composed of three packed fields:
  *
- * | Bits 63–56 | Bits 55–40 | Bits 39–0  |
+ * | Bits 63–24 | Bits 23–8  | Bits 7–0   |
  * |:----------:|:----------:|:----------:|
- * | type (8)   | rank (16)  | key  (40)  |
+ * | key  (40)  | rank (16)  | type (8)   |
  *
  * - **type** — @ref arts_type_t tag identifying the object kind or DB mode.
  * - **rank** — Node rank that owns the object (up to 65 535 nodes).

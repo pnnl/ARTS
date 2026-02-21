@@ -82,7 +82,7 @@ arts_block_dist_t *init_block_distribution(graph_sz_t n, graph_sz_t m) {
   arts_block_dist_t *dist = (arts_block_dist_t *)arts_malloc(
       sizeof(arts_block_dist_t) + (sizeof(arts_guid_t) * num_blocks));
   for (unsigned int i = 0; i < num_blocks; i++) {
-    dist->graphGuid[i] = arts_guid_reserve(ARTS_DB_PIN, i);
+    dist->graphGuid[i] = arts_guid_reserve(ARTS_DB_LOCAL, i);
   }
   internal_init_block_distribution(dist, n, m, num_blocks);
   return dist;
@@ -106,7 +106,7 @@ arts_block_dist_t *init_block_distribution_with_cmd_line_args(int argc,
     arts_block_dist_t *dist = (arts_block_dist_t *)arts_malloc(
         sizeof(arts_block_dist_t) + (sizeof(arts_guid_t) * num_blocks));
     for (unsigned int i = 0; i < num_blocks; i++) {
-      dist->graphGuid[i] = arts_guid_reserve(ARTS_DB_PIN, i);
+      dist->graphGuid[i] = arts_guid_reserve(ARTS_DB_LOCAL, i);
     }
     internal_init_block_distribution(dist, n, m, num_blocks);
     return dist;
@@ -129,7 +129,7 @@ unsigned int get_num_local_blocks(arts_block_dist_t *dist) {
 
 graph_sz_t get_block_size_for_partition(unsigned int index,
                                         const arts_block_dist_t *const dist) {
-  // is this the last node
+  // is this the last block/partition
   if (index == (dist->num_blocks - 1)) {
     return (dist->num_vertices - ((dist->num_blocks - 1) * dist->block_sz));
   }
@@ -147,7 +147,7 @@ vertex_t partition_start_distr(partition_t index,
 
 vertex_t partition_end_distr(partition_t index,
                              const arts_block_dist_t *const dist) {
-  // is this the last node ?
+  // is this the last block/partition?
   if (index == (dist->num_blocks - 1)) {
     return (vertex_t)(dist->num_vertices - 1);
   }

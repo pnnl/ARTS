@@ -263,7 +263,7 @@ untill it it reaches this size or it has made a full pass across the RT. Passing
 2.  clean_zeros - this flag indicates if we should delete data that is not being
 used by anyone. Will delete up to size_to_clean.
 3.  gpu_id - the id of which GPU this RT belongs.  This is the contiguous id [0
-- num_gpus-1]. Pass -1 for a host RT. Returns the size of the memory freed!
+- num_gpus-1]. Returns the size of the memory freed!
 */
 uint64_t arts_gpu_clean_up_route_table(unsigned int size_to_clean,
                                        bool clean_zeros, unsigned int gpu_id) {

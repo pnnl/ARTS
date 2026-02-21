@@ -36,43 +36,56 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
+
+/// @file epoch_deferred_start.c
+/// @brief Tests arts_initialize_epoch + arts_start_epoch (deferred start).
+
 #include "arts.h"
 
-arts_guid_t shutdown_guid;
-arts_guid_t edt_guid;
-arts_guid_t db_guid;
+#define NUM_TASKS 5
 
-void shutdown_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                  arts_edt_dep_t depv[]) {
+/// Simple task within the epoch.
+void deferred_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                   arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
   (void)depc;
   (void)depv;
-  (void)paramc;
-  (void)paramv;
-  arts_shutdown();
 }
 
-void acquire_test(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                  arts_edt_dep_t depv[]) {
+/// Finish callback.
+void deferred_finish(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                     arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
   (void)depc;
-  (void)paramc;
-  (void)paramv;
-  unsigned int *num = (unsigned int *)depv[0].ptr;
-  arts_printf("%u %u i: %u %u\n", arts_get_current_node(),
-              arts_get_current_worker(), 0, *num);
-  arts_signal_edt_value(shutdown_guid, 0, 0);
+  (void)depv;
+  arts_printf("  PASS: deferred start epoch completed\n");
 }
 
-void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+/// Test 2: Start epoch, then use arts_add_edt_to_epoch.
+void added_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                 arts_edt_dep_t depv[]) {
   (void)paramc;
+  (void)paramv;
   (void)depc;
   (void)depv;
-  unsigned int node_id = (unsigned int)paramv[0];
-  if (node_id) {
-    unsigned int *ptr = (unsigned int *)arts_db_create_with_guid(
-        db_guid, sizeof(unsigned int), NULL);
-    *ptr = 999;
-    arts_signal_edt(edt_guid, 0, db_guid, ARTS_DB_WRITE);
+  arts_printf("  PASS: EDT added to epoch via arts_add_edt_to_epoch\n");
+}
+
+/// Test 3: arts_get_current_epoch_guid inside an epoch.
+void check_current_epoch(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                         arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  (void)depv;
+  arts_guid_t expected = (arts_guid_t)paramv[0];
+  arts_guid_t current = arts_get_current_epoch_guid();
+  bool ok = (current == expected);
+  if (ok) {
+    arts_printf("  PASS: get_current_epoch_guid matches expected\n");
+  } else {
+    arts_printf("  FAIL: get_current_epoch_guid mismatch\n");
   }
 }
 
@@ -82,17 +95,32 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramv;
   (void)depc;
   (void)depv;
-  edt_guid = arts_guid_reserve(ARTS_EDT, 0);
-  shutdown_guid = arts_guid_reserve(ARTS_EDT, 0);
-  db_guid = arts_guid_reserve(ARTS_DB, 1);
 
-  arts_edt_create_with_guid(shutdown_edt, shutdown_guid, 0, NULL, 1);
-  arts_edt_create_with_guid(acquire_test, edt_guid, 0, NULL, 1);
+  arts_printf("=== epoch_deferred_start ===\n");
 
-  for (unsigned int n = 0; n < arts_get_total_nodes(); n++) {
-    uint64_t args = n;
-    arts_edt_create(node_setup, 1, &args, 0, &(arts_hint_t){.route = n});
+  // Test 1: Initialize epoch with finish EDT, create tasks, start, wait.
+  arts_guid_t fin1 =
+      arts_edt_create(deferred_finish, 0, NULL, 1, &(arts_hint_t){.route = 0});
+  arts_guid_t epoch1 = arts_initialize_epoch(0, fin1, 0);
+
+  // Create tasks using arts_edt_create_with_epoch (proper epoch enrollment).
+  for (int i = 0; i < NUM_TASKS; i++) {
+    arts_edt_create_with_epoch(deferred_task, 0, NULL, 0, epoch1,
+                               &(arts_hint_t){.route = 0});
   }
+
+  // Now start — epoch begins tracking completion.
+  arts_start_epoch(epoch1);
+
+  // Test 2: get_current_epoch_guid inside an epoch.
+  arts_guid_t epoch2 = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  uint64_t ep_param = (uint64_t)epoch2;
+  arts_edt_create_with_epoch(check_current_epoch, 1, &ep_param, 0, epoch2,
+                             &(arts_hint_t){.route = 0});
+  arts_wait_on_handle(epoch2);
+
+  arts_printf("=== epoch_deferred_start complete ===\n");
+  arts_shutdown();
 }
 
 int main(int argc, char **argv) {

@@ -13,14 +13,22 @@ Bitfield Layout
 
 .. code-block:: text
 
-   ┌──────────┬──────────────────┬────────────────────────────────────────┐
-   │ type (8) │   rank (16)      │              key (40)                  │
-   └──────────┴──────────────────┴────────────────────────────────────────┘
-    Bits 63–56    Bits 55–40                Bits 39–0
+   ┌────────────────────────────────────────┬──────────────────┬──────────┐
+   │              key (40)                  │   rank (16)      │ type (8) │
+   └────────────────────────────────────────┴──────────────────┴──────────┘
+                 Bits 63–24                    Bits 23–8        Bits 7–0
 
-- **type** (8 bits): Object kind from :c:enum:`arts_type_t`.
+- **type** (8 bits): Object kind from :c:enum:`arts_type_t` (stored in the
+  lowest bits).
 - **rank** (16 bits): Node that owns the object (up to 65 535 nodes).
 - **key** (40 bits): Node-local unique key (~1 trillion per node).
+
+.. note::
+
+   On little-endian platforms (x86), the first declared field in a packed
+   bitfield occupies the lowest bits.  The struct fields are declared in
+   order ``type``, ``rank``, ``key`` — so ``type`` is at bits 7–0, not
+   63–56.
 
 Inspecting GUIDs
 ----------------

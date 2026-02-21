@@ -72,7 +72,6 @@ extern "C" {
   X(NUM_DB_GET)                                                                \
   X(NUM_DB_PUT)                                                                \
   X(NUM_DB_DESTROY)                                                            \
-  X(NUM_DB_MOVE)                                                               \
   X(NUM_DB_ACQUIRE_READ)                                                       \
   X(NUM_DB_ACQUIRE_WRITE)                                                      \
   X(NUM_OWNER_UPDATE_SAVED)                                                    \

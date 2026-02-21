@@ -50,6 +50,7 @@
 #include "arts/gas/route_table.h"
 #include "arts/network/remote.h"
 #include "arts/network/remote_protocol.h"
+#include "arts/network/server.h"
 #include "arts/runtime/compute/edt_functions.h"
 #include "arts/runtime/globals.h"
 #include "arts/runtime/memory/db_functions.h"
@@ -240,6 +241,13 @@ void arts_runtime_global_cleanup() {
   /* Object counter cleanup */
   arts_object_cleanup_node_storage(tc);
 
+  /* Route table cleanup (after entries cleaned by arts_clean_up_dbs) */
+  for (unsigned int i = 0; i < tc; i++) {
+    arts_delete_route_table(arts_node_info.route_table[i]);
+  }
+  arts_free(arts_node_info.route_table);
+  arts_delete_route_table(arts_node_info.remote_route_table);
+
   /* Per-thread indexed arrays */
   arts_free(arts_node_info.deque);
   arts_free(arts_node_info.receiver_deque);
@@ -249,6 +257,9 @@ void arts_runtime_global_cleanup() {
   arts_free(arts_node_info.memory_moves);
   arts_free(arts_node_info.atomic_waits);
   arts_free(arts_node_info.buf);
+  for (unsigned int i = 0; i < tc; i++) {
+    arts_free(arts_node_info.keys[i]);
+  }
   arts_free(arts_node_info.keys);
   arts_free(arts_node_info.global_guid_thread_id);
 #ifdef ARTS_USE_GPU
@@ -256,6 +267,9 @@ void arts_runtime_global_cleanup() {
     arts_cleanup_gpus();
   }
 #endif
+
+  /* Socket server global arrays (safe to call even for single-node) */
+  arts_ll_server_cleanup();
 }
 
 /*
@@ -427,6 +441,8 @@ void arts_runtime_private_cleanup() {
   if (arts_thread_info.my_gpu_deque) {
     arts_deque_delete(arts_thread_info.my_gpu_deque);
   }
+  arts_cleanup_epoch_pools();
+  arts_cleanup_edt_tls();
 }
 
 /*
@@ -538,7 +554,7 @@ void arts_run_edt(struct arts_edt_s *edt) {
   ARTS_INFO("Running EDT[Id:%lu, Guid:%lu, Deps: %u, Params: %u, "
             "DepvPtr: %p]",
             edt->arts_id, edt->current_edt, depc, paramc, depv);
-  arts_type_t *modes = arts_get_dep_modes(edt);
+  arts_db_mode_t *modes = arts_get_dep_modes(edt);
   prep_dbs(depc, depv, modes, false);
 
   arts_set_thread_local_edt_info(edt);

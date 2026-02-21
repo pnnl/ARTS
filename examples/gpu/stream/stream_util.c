@@ -69,9 +69,9 @@ void launch2_kernel_edt(arts_edt_t fun_ptr, unsigned int tile_size,
           arts_edt_create_gpu(fun_ptr, arts_get_current_node(), 2, args, 2,
                               grid, threads, to_signal, 0, NULL_GUID);
       arts_signal_edt(edt_guid, 0, arts_guid_range_get(a_guid, i),
-                      ARTS_DB_WRITE);
+                      ARTS_MODE_EW);
       arts_signal_edt(edt_guid, 1, arts_guid_range_get(b_guid, i),
-                      ARTS_DB_WRITE);
+                      ARTS_MODE_EW);
     }
   } else {
     for (unsigned int i = 0; i < tiles; ++i) {
@@ -80,9 +80,9 @@ void launch2_kernel_edt(arts_edt_t fun_ptr, unsigned int tile_size,
           arts_edt_create_gpu(fun_ptr, arts_get_current_node(), 1, args, 2,
                               grid, threads, to_signal, 0, NULL_GUID);
       arts_signal_edt(edt_guid, 0, arts_guid_range_get(a_guid, i),
-                      ARTS_DB_WRITE);
+                      ARTS_MODE_EW);
       arts_signal_edt(edt_guid, 1, arts_guid_range_get(b_guid, i),
-                      ARTS_DB_WRITE);
+                      ARTS_MODE_EW);
     }
   }
   arts_block_for_buffer(to_signal);
@@ -114,11 +114,11 @@ void launch3_kernel_edt(arts_edt_t fun_ptr, unsigned int tile_size,
           arts_edt_create_gpu(fun_ptr, arts_get_current_node(), 2, args, 3,
                               grid, threads, to_signal, 0, NULL_GUID);
       arts_signal_edt(edt_guid, 0, arts_guid_range_get(a_guid, i),
-                      ARTS_DB_WRITE);
+                      ARTS_MODE_EW);
       arts_signal_edt(edt_guid, 1, arts_guid_range_get(b_guid, i),
-                      ARTS_DB_WRITE);
+                      ARTS_MODE_EW);
       arts_signal_edt(edt_guid, 2, arts_guid_range_get(c_guid, i),
-                      ARTS_DB_WRITE);
+                      ARTS_MODE_EW);
     }
   } else {
     for (unsigned int i = 0; i < tiles; ++i) {
@@ -127,11 +127,11 @@ void launch3_kernel_edt(arts_edt_t fun_ptr, unsigned int tile_size,
           arts_edt_create_gpu(fun_ptr, arts_get_current_node(), 1, args, 3,
                               grid, threads, to_signal, 0, NULL_GUID);
       arts_signal_edt(edt_guid, 0, arts_guid_range_get(a_guid, i),
-                      ARTS_DB_WRITE);
+                      ARTS_MODE_EW);
       arts_signal_edt(edt_guid, 1, arts_guid_range_get(b_guid, i),
-                      ARTS_DB_WRITE);
+                      ARTS_MODE_EW);
       arts_signal_edt(edt_guid, 2, arts_guid_range_get(c_guid, i),
-                      ARTS_DB_WRITE);
+                      ARTS_MODE_EW);
     }
   }
   arts_block_for_buffer(to_signal);

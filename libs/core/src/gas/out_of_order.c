@@ -55,7 +55,7 @@ struct oo_signal_edt_s {
   arts_guid_t edt_packet;
   arts_guid_t data_guid;
   uint32_t slot;
-  arts_type_t mode;
+  arts_db_mode_t mode;
 };
 
 struct oo_db_request_satisfy_s {
@@ -71,7 +71,7 @@ struct oo_add_dependence_s {
   arts_guid_t destination;
   uint32_t slot;
   arts_guid_t data;
-  arts_type_t mode;
+  arts_db_mode_t mode;
 };
 
 struct oo_event_satisfy_slot_s {
@@ -89,7 +89,7 @@ struct oo_handle_ready_edt_s {
 struct oo_remote_db_send_s {
   enum arts_out_of_order_type type;
   int rank;
-  arts_type_t mode;
+  arts_db_mode_t mode;
   arts_guid_t data_guid;
 };
 
@@ -98,7 +98,7 @@ struct oo_remote_db_full_send_s {
   int rank;
   arts_guid_t edt_guid;
   unsigned int slot;
-  arts_type_t mode;
+  arts_db_mode_t mode;
 };
 
 struct oo_get_from_db_s {
@@ -269,11 +269,6 @@ inline void arts_out_of_order_handler(void *handle_me, void *memory_ptr) {
         req->slot, req->epoch_guid);
     break;
   }
-  case OO_DB_MOVE: {
-    struct oo_remote_db_send_s *req = (struct oo_remote_db_send_s *)handle_me;
-    arts_db_move(req->data_guid, req->rank);
-    break;
-  }
   default:
     ARTS_INFO("OO Handler Error");
   }
@@ -290,7 +285,7 @@ inline void arts_out_of_order_handler(void *handle_me, void *memory_ptr) {
  */
 void arts_out_of_order_signal_edt(arts_guid_t wait_on, arts_guid_t edt_packet,
                                   arts_guid_t data_guid, uint32_t slot,
-                                  arts_type_t mode, bool force) {
+                                  arts_db_mode_t mode, bool force) {
   struct oo_signal_edt_s *edt =
       (struct oo_signal_edt_s *)arts_malloc(sizeof(struct oo_signal_edt_s));
   edt->type = OO_SIGNAL_EDT;
@@ -356,7 +351,8 @@ void arts_out_of_order_persistent_event_satisfy_slot(arts_guid_t wait_on,
 
 void arts_out_of_order_add_dependence(arts_guid_t source,
                                       arts_guid_t destination, uint32_t slot,
-                                      arts_type_t mode, arts_guid_t wait_on) {
+                                      arts_db_mode_t mode,
+                                      arts_guid_t wait_on) {
   struct oo_add_dependence_s *dep = (struct oo_add_dependence_s *)arts_malloc(
       sizeof(struct oo_add_dependence_s));
   dep->type = OO_ADD_DEPENDENCE;
@@ -373,7 +369,7 @@ void arts_out_of_order_add_dependence(arts_guid_t source,
 
 void arts_out_of_order_add_dependence_to_persistent_event(
     arts_guid_t source, arts_guid_t destination, uint32_t slot,
-    arts_type_t mode, arts_guid_t wait_on) {
+    arts_db_mode_t mode, arts_guid_t wait_on) {
   struct oo_add_dependence_s *dep = (struct oo_add_dependence_s *)arts_malloc(
       sizeof(struct oo_add_dependence_s));
   dep->type = OO_ADD_DEPENDENCE;
@@ -403,7 +399,7 @@ void arts_out_of_order_handle_ready_edt(arts_guid_t trigger_guid,
 }
 
 void arts_out_of_order_handle_remote_db_send(int rank, arts_guid_t db_guid,
-                                             arts_type_t mode) {
+                                             arts_db_mode_t mode) {
   struct oo_remote_db_send_s *ready_send =
       (struct oo_remote_db_send_s *)arts_malloc(
           sizeof(struct oo_remote_db_send_s));
@@ -470,7 +466,7 @@ void arts_out_of_order_handle_db_request_with_oo_list(
 void arts_out_of_order_handle_remote_db_full_send(arts_guid_t db_guid, int rank,
                                                   arts_guid_t edt_guid,
                                                   unsigned int slot,
-                                                  arts_type_t mode) {
+                                                  arts_db_mode_t mode) {
   struct oo_remote_db_full_send_s *db_send =
       (struct oo_remote_db_full_send_s *)arts_malloc(
           sizeof(struct oo_remote_db_full_send_s));
@@ -597,19 +593,6 @@ void arts_out_of_order_inc_queue_epoch(arts_guid_t epoch_guid) {
   bool res = arts_route_table_add_oo(epoch_guid, req, false);
   if (!res) {
     increment_queue_epoch(epoch_guid);
-    arts_free(req);
-  }
-}
-
-void arts_out_of_order_db_move(arts_guid_t data_guid, unsigned int rank) {
-  struct oo_remote_db_send_s *req = (struct oo_remote_db_send_s *)arts_malloc(
-      sizeof(struct oo_remote_db_send_s));
-  req->type = OO_DB_MOVE;
-  req->data_guid = data_guid;
-  req->rank = (int)rank;
-  bool res = arts_route_table_add_oo(data_guid, req, false);
-  if (!res) {
-    arts_db_move(data_guid, rank);
     arts_free(req);
   }
 }

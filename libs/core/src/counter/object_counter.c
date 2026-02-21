@@ -66,7 +66,7 @@ ARTS_THREAD_LOCAL arts_array_list_t *arts_object_tls_db_traces = NULL;
 // Hash table internals
 // ============================================================================
 
-// FNV-1a hash for distributing arts_id values
+// FNV-inspired hash for distributing arts_id values
 static inline uint32_t arts_object_hash(uint64_t arts_id) {
   uint64_t hash = 14695981039346656037ULL; // FNV offset basis
   hash ^= arts_id;

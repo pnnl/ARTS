@@ -64,7 +64,6 @@ enum artsServerMessageType {
   ARTS_REMOTE_DB_DESTROY_MSG,
   ARTS_REMOTE_DB_DESTROY_FORWARD_MSG,
   ARTS_REMOTE_DB_CLEAN_FORWARD_MSG,
-  ARTS_REMOTE_DB_MOVE_REQ_MSG,
   ARTS_REMOTE_EDT_MOVE_MSG,
   ARTS_REMOTE_EVENT_MOVE_MSG,
   ARTS_REMOTE_PERSISTENT_EVENT_MOVE_MSG,
@@ -116,7 +115,7 @@ struct __attribute__((__packed__)) arts_remote_add_dependence_packet_s {
   arts_guid_t source;
   arts_guid_t destination;
   uint32_t slot;
-  arts_type_t mode;
+  arts_db_mode_t mode;
 };
 
 /// ESD: Packet for adding dependency to persistent event with byte offset
@@ -126,7 +125,7 @@ struct __attribute__((
   arts_guid_t source;
   arts_guid_t destination;
   uint32_t slot;
-  arts_type_t mode;
+  arts_db_mode_t mode;
   uint64_t byte_offset;
   uint64_t size;
 };
@@ -136,7 +135,7 @@ struct __attribute__((__packed__)) arts_remote_edt_signal_packet_s {
   arts_guid_t edt;
   arts_guid_t db;
   uint32_t slot;
-  arts_type_t mode;
+  arts_db_mode_t mode;
   unsigned int db_route;
 };
 
@@ -160,7 +159,7 @@ struct __attribute__((__packed__)) arts_remote_db_add_dependence_packet_s {
   arts_guid_t db_src;
   arts_guid_t edt_dest;
   uint32_t edt_slot;
-  arts_type_t mode;
+  arts_db_mode_t mode;
 };
 
 /// ESD: Packet for byte-offset dependencies (stencil halo exchange)
@@ -170,7 +169,7 @@ struct __attribute__((
   arts_guid_t db_src;
   arts_guid_t edt_dest;
   uint32_t edt_slot;
-  arts_type_t mode;
+  arts_db_mode_t mode;
   uint64_t byte_offset; ///< Byte offset into DB for slice
   uint64_t size;        ///< Size of slice in bytes
 };
@@ -178,7 +177,7 @@ struct __attribute__((
 struct __attribute__((__packed__)) arts_remote_db_request_packet_s {
   struct arts_remote_packet_s header;
   arts_guid_t db_guid;
-  arts_type_t mode;
+  arts_db_mode_t mode;
 };
 
 struct __attribute__((__packed__)) arts_remote_db_send_packet_s {
@@ -190,14 +189,14 @@ struct __attribute__((__packed__)) arts_remote_db_full_request_packet_s {
   arts_guid_t db_guid;
   arts_guid_t edt_guid;
   unsigned int slot;
-  arts_type_t mode;
+  arts_db_mode_t mode;
 };
 
 struct __attribute__((__packed__)) arts_remote_db_full_send_packet_s {
   struct arts_remote_packet_s header;
   arts_guid_t edt_guid;
   unsigned int slot;
-  arts_type_t mode;
+  arts_db_mode_t mode;
 };
 
 struct __attribute__((__packed__)) arts_remote_metric_update_s {

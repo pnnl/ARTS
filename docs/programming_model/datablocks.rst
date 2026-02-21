@@ -16,11 +16,36 @@ identifier.  DataBlocks decouple *data identity* from *data location*:
 any node can reference a DB by GUID, and the runtime handles data
 movement transparently.
 
+DB Types
+--------
+
+The DB type is set at creation time and determines allocation strategy
+and coherence behavior:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 75
+
+   * - Type
+     - Semantics
+   * - ``ARTS_DB``
+     - Distributed DataBlock (CDAG-managed).  The default type for most
+       use cases.  Supports read sharing and write coherence across nodes.
+   * - ``ARTS_DB_LOCAL``
+     - Node-resident DataBlock (no CDAG).  Only directly accessible on
+       the creating node.  Use put/get for remote interaction.
+   * - ``ARTS_DB_GPU``
+     - GPU-pinned DataBlock (CDAG-managed).  Allocated via GPU pinned
+       memory for efficient host-device transfers.
+   * - ``ARTS_DB_LC``
+     - Locality-class DataBlock (CPU-GPU coherence).  Double-sized
+       allocation with shadow copy for CPU-GPU data movement.
+
 Access Modes
 ------------
 
-The access mode is specified at creation time and controls the coherence
-protocol:
+The access mode is set per-dependency at :c:func:`arts_record_dep` time,
+not at creation:
 
 .. list-table::
    :header-rows: 1
@@ -28,38 +53,35 @@ protocol:
 
    * - Mode
      - Semantics
-   * - ``ARTS_DB_READ``
-     - Write-once, read-many.  Default mode for most use cases.  The
-       runtime caches reads and aggregates remote requests.
-   * - ``ARTS_DB_WRITE``
-     - Exclusive write access.  Set at dependency-registration time
-       via :c:func:`arts_record_dep`.
-   * - ``ARTS_DB_PIN``
-     - Pinned (node-local).  Bypasses the CDAG model; only accessible
-       on the creating node.  Use put/get for remote interaction.
-   * - ``ARTS_DB_ONCE``
-     - Single-use.  Automatically freed after the first acquire.
-   * - ``ARTS_DB_ONCE_LOCAL``
-     - Like ``ARTS_DB_ONCE`` but guarantees co-location with the
-       acquiring EDT.
+   * - ``ARTS_MODE_RO``
+     - Read-Only.  Shared readers, no writeback.
+   * - ``ARTS_MODE_EW``
+     - Exclusive Write.  Single writer with frontier progression
+       and latch decrement on release.
 
 Creating a DataBlock
 --------------------
 
 .. code-block:: c
 
-   /* Create a 1024-byte read-mode DB on this node */
-   arts_guid_t db_guid = arts_db_create(1024, ARTS_DB_READ);
+   /* Create a 1024-byte DB on this node (mode-less; access mode set later) */
+   void *addr;
+   arts_guid_t db_guid = arts_db_create(&addr, 1024, NULL);
 
    /* Create on a specific node */
-   arts_guid_t db_guid = arts_db_create_remote(1024, target_node, ARTS_DB_PIN);
+   arts_guid_t db_guid = arts_db_create(&addr, 1024,
+                                        &(arts_hint_t){.route = target_node});
+
+   /* Create a LOCAL (node-resident) DB */
+   arts_guid_t guid = arts_guid_reserve(ARTS_DB_LOCAL, target_node);
+   arts_db_create_with_guid(guid, 1024, NULL);
 
 Writing Data
 ------------
 
 .. code-block:: c
 
-   /* Put data into a DB (any node, any mode) */
+   /* Put data into a DB (any node, any type) */
    int data[] = {1, 2, 3};
    arts_put_in_db(data, db_guid, 0, sizeof(data));
 
@@ -76,8 +98,8 @@ The simplest way to read DB data is through an EDT dependency:
        /* ... use data ... */
    }
 
-   /* Signal the DB into the EDT's slot 0 */
-   arts_signal_edt(edt_guid, 0, db_guid);
+   /* Record a read dependency and signal the EDT */
+   arts_record_dep(db_guid, edt_guid, 0, ARTS_MODE_RO);
 
 For explicit reads outside an EDT dependency:
 
@@ -88,11 +110,10 @@ For explicit reads outside an EDT dependency:
 CDAG Memory Model
 -----------------
 
-For ``ARTS_DB_READ`` DataBlocks, ARTS uses a Canonical-owner DAG (CDAG)
+For ``ARTS_DB`` DataBlocks, ARTS uses a Canonical-owner DAG (CDAG)
 model:
 
-1. Each DB has a single **canonical owner** node (the creating node, or
-   the node after a :c:func:`arts_db_move`).
+1. Each DB has a single **canonical owner** node (the creating node).
 2. Remote reads are cached in the routing table.
 3. Writes flow through the owner; the owner invalidates cached copies.
 
@@ -103,7 +124,7 @@ Array DataBlocks
 ----------------
 
 For large distributed arrays, ARTS provides **Array DBs** — a collection
-of DataBlocks distributed across nodes:
+of ``ARTS_DB_LOCAL`` DataBlocks distributed across nodes:
 
 .. code-block:: c
 

@@ -145,8 +145,6 @@ DataBlock Lifecycle — Count
      - Number of ``arts_put_in_db()`` calls (remote DB writes).
    * - ``NUM_DB_DESTROY``
      - Number of ``arts_db_destroy()`` calls.
-   * - ``NUM_DB_MOVE``
-     - Number of ``arts_db_move()`` calls (ownership transfers).
    * - ``NUM_DB_ACQUIRE_READ``
      - Count of READ-mode DataBlock acquisitions.
    * - ``NUM_DB_ACQUIRE_WRITE``
@@ -351,7 +349,20 @@ Runtime Phases — Time
 Output
 ------
 
-Counter output is written to the directory specified by
+Counter output is written as JSON to the directory specified by
 ``counter_folder`` in ``arts.cfg`` (default: ``./counters``).
-Files are named by node/thread and contain timestamped values in a
-format suitable for post-processing.
+
+File naming depends on the counter level:
+
+- **THREAD** — ``n{node}_t{thread}.json`` (one file per thread).
+- **NODE** — ``n{node}.json`` (one file per node, reduced across threads).
+- **CLUSTER** — ``cluster.json`` (single file on the master node, reduced
+  across all nodes).
+
+Object counters are written to separate ``object_n{node}.json`` and
+``object.json`` files.
+
+Each JSON file includes a ``timestamp`` (Unix epoch), a ``version``
+string, and a ``counters`` object whose keys are counter names.
+``PERIODIC`` counters include a ``captureHistory`` array of
+``[epoch, value]`` pairs.

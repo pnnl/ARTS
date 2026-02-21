@@ -82,7 +82,7 @@ struct circular_array_s {
 } __attribute__((aligned(64)));
 
 struct arts_deque_s {
-  volatile uint64_t top; /* Modified by stealers via CAS */
+  volatile uint64_t top; /* Modified by stealers and owner via CAS */
   char pad1[56];
   volatile uint64_t bottom; /* Modified only by the owning thread */
   char pad2[56];

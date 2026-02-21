@@ -39,12 +39,12 @@
 
 # Define test programs to build
 set(TEST_PROGRAMS
-    main
+    edt_epoch_wait
     route_table
-    route_table2
+    route_table_remote_guid
     cdag
-    cdag2
-    oo_list
+    cdag_ew_chain
+    out_of_order_list
     pin_db
     get_from_db
     put_in_db
@@ -54,22 +54,21 @@ set(TEST_PROGRAMS
     array_db
     for_each
     termination_detection
-    termination_detection2
+    termination_detection_array_db
     put_array_db_epoch
-    put_array_db_epoch2
+    put_array_db_epoch_direct
     atomic_add_in_array_db
     atomic_compare_and_swap_in_array_db
-    db_move
-    db_once
+    # db_move and db_once test removed APIs (arts_db_move, ARTS_DB_ONCE)
     rec_epoch
     epoch_pool
-    epoch_for_shad
+    epoch_shad_adapter
     buffer
-    event
+    remote_db_event
     shad_lock
-    oo_bug
+    tiled_matmul_dep
     route_table_iter
-    route_table_iter2
+    route_table_iter_destroy
     acquire_mode
     arts_id
 )
@@ -83,7 +82,7 @@ set(GRAPH_TEST_PROGRAMS
 # Function to create a test executable
 function(add_arts_test test_name)
     add_executable(${test_name} ${test_name}.c)
-    
+
     # Set include directories
     target_include_directories(${test_name} PRIVATE ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR} ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
 
@@ -92,10 +91,10 @@ function(add_arts_test test_name)
     set_property(TARGET ${test_name} PROPERTY POSITION_INDEPENDENT_CODE OFF)
     target_compile_options(${test_name} PRIVATE -fno-pie -fno-PIE)
     target_link_options(${test_name} PRIVATE -no-pie -fno-pie -fno-PIE)
-    
+
     # Link with runtime libraries
     target_link_libraries(${test_name} PRIVATE Threads::Threads ${RT_LIBRARY} ${M_LIBRARY} ${ANL_LIBRARY})
-    
+
     # Use the appropriate ARTS library based on availability
     if(TARGET arts_shared)
         target_link_libraries(${test_name} PRIVATE arts_shared)
@@ -114,17 +113,17 @@ endforeach()
 # Function to create a test executable that uses arts_graph
 function(add_arts_graph_test test_name)
     add_executable(${test_name} ${test_name}.c)
-    
+
     # Set include directories
     target_include_directories(${test_name} PRIVATE ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR} ${ARTS_BUILD_INTERNAL_INCLUDE_DIR} ${ARTS_GRAPH_INCLUDE_DIR})
 
     set_property(TARGET ${test_name} PROPERTY POSITION_INDEPENDENT_CODE OFF)
     target_compile_options(${test_name} PRIVATE -fno-pie -fno-PIE)
     target_link_options(${test_name} PRIVATE -no-pie -fno-pie -fno-PIE)
-    
+
     # Link with arts_graph and runtime libraries
     target_link_libraries(${test_name} PRIVATE arts_graph Threads::Threads ${RT_LIBRARY} ${M_LIBRARY} ${ANL_LIBRARY})
-    
+
     # Use the appropriate ARTS library based on availability
     if(TARGET arts_shared)
         target_link_libraries(${test_name} PRIVATE arts_shared)
@@ -150,29 +149,29 @@ if(BUILD_CUDA_LIBRARY)
         gpu_lib
         gpu_ring
     )
-    
+
     # Function to create a CUDA test executable
     function(add_cuda_test test_name)
         add_executable(${test_name} ${test_name}.cu)
-        
+
         # Set include directories
         target_include_directories(${test_name} PRIVATE ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR} ${ARTS_BUILD_INTERNAL_INCLUDE_DIR} ${CUDA_INCLUDE_DIRS})
 
         set_property(TARGET ${test_name} PROPERTY POSITION_INDEPENDENT_CODE OFF)
         target_compile_options(${test_name} PRIVATE -fno-pie -fno-PIE)
         target_link_options(${test_name} PRIVATE -no-pie -fno-pie -fno-PIE)
-        
+
         # Link with CUDA libraries
-        target_link_libraries(${test_name} PRIVATE 
-            Threads::Threads 
-            ${RT_LIBRARY} 
-            ${M_LIBRARY} 
-            ${ANL_LIBRARY} 
-            CUDA::cudart 
-            CUDA::cuda_driver 
+        target_link_libraries(${test_name} PRIVATE
+            Threads::Threads
+            ${RT_LIBRARY}
+            ${M_LIBRARY}
+            ${ANL_LIBRARY}
+            CUDA::cudart
+            CUDA::cuda_driver
             CUDA::cublas
         )
-        
+
         # Use the CUDA-enabled ARTS library
         if(TARGET arts_cuda_shared)
             target_link_libraries(${test_name} PRIVATE arts_cuda_shared)
@@ -182,12 +181,12 @@ if(BUILD_CUDA_LIBRARY)
             message(FATAL_ERROR "No CUDA ARTS library target found")
         endif()
     endfunction()
-    
+
     # Create CUDA test executables
     foreach(cuda_test ${CUDA_TEST_PROGRAMS})
         add_cuda_test(${cuda_test})
     endforeach()
-    
+
     message(STATUS "CUDA test programs will be built")
 else()
     message(STATUS "CUDA test programs will not be built (CUDA not available)")

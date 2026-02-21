@@ -347,7 +347,7 @@ static bool arts_counter_is_time_counter(const char *name) {
 
 // Helper: write capture history array to JSON as compact single line
 // Format: [[epoch, value], [epoch, value], ...]
-// Epochs are absolute (synced across nodes) for proper offline merging
+// Epochs are relative (synced across nodes) for proper offline merging
 static void arts_write_capture_history(arts_json_writer_t *writer,
                                        uint64_t *epochs, uint64_t *values,
                                        uint64_t count) {

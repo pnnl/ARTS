@@ -206,9 +206,9 @@ void arts_thread_init(struct arts_config_s *config) {
 /*
  * arts_shutdown — Initiate global shutdown of the ARTS runtime.
  *
- * Multi-node: delegates to arts_remote_shutdown() which broadcasts the
- *   shutdown message and waits for acknowledgements.  The send thread
- *   then calls arts_runtime_stop() after the timeout.
+ * Multi-node: delegates to arts_remote_shutdown() which shuts down all
+ *   send and receive sockets.  Remote nodes detect the socket closure
+ *   in their receive path and call arts_runtime_stop() themselves.
  * Single-node: directly calls arts_runtime_stop() to signal all threads.
  *
  * Called from:

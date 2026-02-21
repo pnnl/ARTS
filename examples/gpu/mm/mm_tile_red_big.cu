@@ -173,7 +173,7 @@ void fire_binary_reduction_tree(binary_reduction_tree_t *tree) {
     unsigned int to_signal_slot = (is_right) ? 1 : 0;
     ARTS_PRINTF("ToSignal: %lu slot: %u\n", to_signal, to_signal_slot);
     arts_signal_edt(to_signal, to_signal_slot, tree->red_db_guids[i],
-                    ARTS_DB_WRITE);
+                    ARTS_MODE_EW);
   }
 }
 
@@ -186,7 +186,7 @@ void fire_db_from_reduction_tree(binary_reduction_tree_t *tree,
   unsigned int to_signal_slot = (is_right) ? 1 : 0;
   ARTS_PRINTF("ToSignal: %lu slot: %u\n", to_signal, to_signal_slot);
   arts_signal_edt(to_signal, to_signal_slot, tree->red_db_guids[which_db],
-                  ARTS_DB_WRITE);
+                  ARTS_MODE_EW);
 }
 
 void multiply_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -220,7 +220,7 @@ void multiply_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)c_tile_host;
   arts_put_in_db_from_gpu(c_tile_dev, c_tile_guid, 0, size, true);
   fire_db_from_reduction_tree(red_tree[(i * num_blocks) + j], k);
-  // arts_signal_edt(to_signal, k, c_tile_guid, ARTS_DB_WRITE);
+  // arts_signal_edt(to_signal, k, c_tile_guid, ARTS_MODE_EW);
 }
 
 __global__ void sum_mm_kernel(uint32_t paramc, const uint64_t *paramv,
@@ -268,9 +268,9 @@ void init_node(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   b_mat_guid = arts_guid_reserve(ARTS_DB, 0);
   c_mat_guid = arts_guid_reserve(ARTS_DB, 0);
 
-  a_tile_guids = arts_guid_range_create(ARTS_DB_GPU_READ,
+  a_tile_guids = arts_guid_range_create(ARTS_DB_GPU,
                                         (size_t)num_blocks * num_blocks, 0);
-  b_tile_guids = arts_guid_range_create(ARTS_DB_GPU_READ,
+  b_tile_guids = arts_guid_range_create(ARTS_DB_GPU,
                                         (size_t)num_blocks * num_blocks, 0);
 
   uint64_t sum_args[] = {tile_size};
@@ -282,7 +282,7 @@ void init_node(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   for (unsigned int i = 0; i < num_blocks; i++) {
     for (unsigned int j = 0; j < num_blocks; j++) {
       red_tree[(i * num_blocks) + j] = init_binary_reduction_tree(
-          num_blocks, sum_mm_kernel, ARTS_DB_GPU_WRITE, ARTS_GPU_EDT, 1,
+          num_blocks, sum_mm_kernel, ARTS_DB_GPU, ARTS_GPU_EDT, 1,
           sum_args, grid, threads, done_guid, 3 + ((i * num_blocks) + j));
     }
   }
@@ -346,19 +346,19 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
                                                        args, 2, grid, threads);
         arts_signal_edt(mul_guid, 0,
                         arts_guid_range_get(a_tile_guids, (i * num_blocks) + k),
-                        ARTS_DB_WRITE);
+                        ARTS_MODE_EW);
         arts_signal_edt(mul_guid, 1,
                         arts_guid_range_get(b_tile_guids, (k * num_blocks) + j),
-                        ARTS_DB_WRITE);
+                        ARTS_MODE_EW);
       }
     }
   }
 
   arts_edt_create_with_guid(finish_block_mm, done_guid, 0, NULL,
                             3 + (num_blocks * num_blocks));
-  arts_signal_edt(done_guid, 0, NULL_GUID, ARTS_DB_WRITE);
-  arts_signal_edt(done_guid, 1, NULL_GUID, ARTS_DB_WRITE);
-  arts_signal_edt(done_guid, 2, NULL_GUID, ARTS_DB_WRITE);
+  arts_signal_edt(done_guid, 0, NULL_GUID, ARTS_MODE_EW);
+  arts_signal_edt(done_guid, 1, NULL_GUID, ARTS_MODE_EW);
+  arts_signal_edt(done_guid, 2, NULL_GUID, ARTS_MODE_EW);
   ARTS_PRINTF("Starting\n");
   start = arts_get_time_stamp();
 }

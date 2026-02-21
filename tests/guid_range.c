@@ -36,18 +36,12 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
+
+/// @file guid_range.c
+/// @brief Tests GUID range APIs: create, get, next, has_next, reset_iter.
+
 #include "arts.h"
-
-arts_guid_t db_guid = NULL_GUID;
-
-void edt_func(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-              arts_edt_dep_t depv[]) {
-  (void)depc;
-  (void)depv;
-  (void)paramc;
-  (void)paramv;
-  arts_printf("HELLO\n");
-}
+#include <stdlib.h>
 
 void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
@@ -55,14 +49,96 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramv;
   (void)depc;
   (void)depv;
-  unsigned int last_node = arts_get_total_nodes() - 1;
-  db_guid = arts_guid_reserve(ARTS_DB, last_node);
-  arts_db_create_with_guid(db_guid, sizeof(unsigned int), NULL);
-  for (unsigned int n = 0; n < last_node; n++) {
-    arts_guid_t am = arts_edt_create(edt_func, 0, NULL, 1,
-                                     &(arts_hint_t){.route = last_node});
-    arts_signal_edt(am, 0, db_guid, ARTS_DB_WRITE);
+
+  arts_printf("=== guid_range ===\n");
+  unsigned int my_node = arts_get_current_node();
+  bool all_pass = true;
+
+#define RANGE_SIZE 16
+
+  // Test 1: Create range and iterate with arts_guid_range_get.
+  arts_guid_range_t *range =
+      arts_guid_range_create(ARTS_DB, RANGE_SIZE, my_node);
+  if (range == NULL) {
+    arts_printf("  FAIL: guid_range_create returned NULL\n");
+    arts_shutdown();
+    return;
   }
+  arts_printf("  PASS: guid_range_create succeeded (size=%d)\n", RANGE_SIZE);
+
+  // Verify all GUIDs via get() are unique and have correct type/rank.
+  arts_guid_t gotten[RANGE_SIZE];
+  for (unsigned int i = 0; i < RANGE_SIZE; i++) {
+    gotten[i] = arts_guid_range_get(range, i);
+    if (arts_guid_get_type(gotten[i]) != ARTS_DB) {
+      arts_printf("  FAIL: range[%u] type mismatch\n", i);
+      all_pass = false;
+    }
+    if (arts_guid_get_rank(gotten[i]) != my_node) {
+      arts_printf("  FAIL: range[%u] rank mismatch\n", i);
+      all_pass = false;
+    }
+  }
+  // Check uniqueness.
+  for (unsigned int i = 0; i < RANGE_SIZE; i++) {
+    for (unsigned int j = i + 1; j < RANGE_SIZE; j++) {
+      if (gotten[i] == gotten[j]) {
+        arts_printf("  FAIL: range[%u] == range[%u]\n", i, j);
+        all_pass = false;
+      }
+    }
+  }
+  if (all_pass) {
+    arts_printf(
+        "  PASS: guid_range_get returns unique, correctly-typed GUIDs\n");
+  }
+
+  // Test 2: Iterator: has_next + next.
+  arts_guid_range_reset_iter(range);
+  unsigned int iter_count = 0;
+  while (arts_guid_range_has_next(range)) {
+    arts_guid_t g = arts_guid_range_next(range);
+    if (g != gotten[iter_count]) {
+      arts_printf("  FAIL: next[%u] != get[%u]\n", iter_count, iter_count);
+      all_pass = false;
+    }
+    iter_count++;
+  }
+  if (iter_count == RANGE_SIZE) {
+    arts_printf("  PASS: iterator yielded %u GUIDs\n", iter_count);
+  } else {
+    arts_printf("  FAIL: iterator yielded %u, expected %d\n", iter_count,
+                RANGE_SIZE);
+    all_pass = false;
+  }
+
+  // Test 3: has_next returns false after exhaustion.
+  if (!arts_guid_range_has_next(range)) {
+    arts_printf("  PASS: has_next returns false after exhaustion\n");
+  } else {
+    arts_printf("  FAIL: has_next still true\n");
+    all_pass = false;
+  }
+
+  // Test 4: reset_iter and re-iterate.
+  arts_guid_range_reset_iter(range);
+  if (arts_guid_range_has_next(range)) {
+    arts_guid_t first = arts_guid_range_next(range);
+    if (first == gotten[0]) {
+      arts_printf("  PASS: reset_iter restarts from beginning\n");
+    } else {
+      arts_printf("  FAIL: reset_iter first GUID mismatch\n");
+      all_pass = false;
+    }
+  } else {
+    arts_printf("  FAIL: has_next false after reset\n");
+    all_pass = false;
+  }
+
+  free(range);
+
+  arts_printf("=== guid_range: %s ===\n", all_pass ? "ALL PASSED" : "FAILED");
+  arts_shutdown();
 }
 
 int main(int argc, char **argv) {

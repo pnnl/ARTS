@@ -36,7 +36,8 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#define GNU_SOURCE // Required for getaddrinfo_a()
+#define GNU_SOURCE // (unused — getaddrinfo_a() is not called; getaddrinfo() is
+                   // POSIX)
 #include "arts/network/socket_server.h"
 
 #include <errno.h>
@@ -281,6 +282,18 @@ void arts_ll_server_shutdown() {
       //            RCLOSE(remote_socket_send_list[i]);
     }
   }
+}
+
+void arts_ll_server_cleanup() {
+  arts_free(ip_list);
+  arts_free(remote_socket_send_list);
+  arts_free((void *)remote_socket_send_lock_list);
+  arts_free(remote_server_send_list);
+  arts_free(remote_connection_alive);
+  arts_free(remote_socket_recieve_list);
+  arts_free(remote_server_recieve_list);
+  arts_free(poll_incoming);
+  arts_free(local_socket_recieve);
 }
 
 unsigned int arts_remote_get_my_rank() {

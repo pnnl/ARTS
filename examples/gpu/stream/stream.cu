@@ -253,11 +253,11 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
   arts_printf("N: %u tile_size: %u num_tiles: %u Gpus: %u\n", N, tile_size,
               num_tiles, arts_get_total_gpus());
 
-  a_tile_guids = arts_guid_range_create_hash(ARTS_DB_GPU_WRITE, num_tiles, 0,
+  a_tile_guids = arts_guid_range_create_hash(ARTS_DB_GPU, num_tiles, 0,
                                              arts_get_total_gpus());
-  b_tile_guids = arts_guid_range_create_hash(ARTS_DB_GPU_WRITE, num_tiles, 0,
+  b_tile_guids = arts_guid_range_create_hash(ARTS_DB_GPU, num_tiles, 0,
                                              arts_get_total_gpus());
-  c_tile_guids = arts_guid_range_create_hash(ARTS_DB_GPU_WRITE, num_tiles, 0,
+  c_tile_guids = arts_guid_range_create_hash(ARTS_DB_GPU, num_tiles, 0,
                                              arts_get_total_gpus());
 
   uint64_t a_hash = arts_guid_hash_key(arts_guid_range_get(a_tile_guids, 0));

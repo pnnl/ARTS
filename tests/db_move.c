@@ -106,8 +106,8 @@ void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   if (node_id == 0) {
     arts_guid_t edt_guid =
         arts_edt_create(check, 0, NULL, 2, &(arts_hint_t){.route = node_id});
-    arts_signal_edt(edt_guid, 0, guid[0], ARTS_DB_WRITE);
-    arts_signal_edt(edt_guid, 1, guid[2], ARTS_DB_WRITE);
+    arts_signal_edt(edt_guid, 0, guid[0], ARTS_MODE_EW);
+    arts_signal_edt(edt_guid, 1, guid[2], ARTS_MODE_EW);
 
     arts_edt_create_with_guid(shut_down_edt, shutdown_guid, 0, NULL, 3);
   }
@@ -115,13 +115,13 @@ void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   if (node_id == 1) {
     arts_guid_t edt_guid =
         arts_edt_create(check, 0, NULL, 1, &(arts_hint_t){.route = node_id});
-    arts_signal_edt(edt_guid, 0, guid[1], ARTS_DB_WRITE);
+    arts_signal_edt(edt_guid, 0, guid[1], ARTS_MODE_EW);
   }
 
   if (node_id == 2) {
     arts_guid_t edt_guid =
         arts_edt_create(check, 0, NULL, 1, &(arts_hint_t){.route = node_id});
-    arts_signal_edt(edt_guid, 0, guid[3], ARTS_DB_WRITE);
+    arts_signal_edt(edt_guid, 0, guid[3], ARTS_MODE_EW);
   }
 }
 
@@ -131,10 +131,10 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramv;
   (void)depc;
   (void)depv;
-  guid[0] = arts_guid_reserve(ARTS_DB_ONCE_LOCAL, 0);
-  guid[1] = arts_guid_reserve(ARTS_DB_ONCE_LOCAL, 0);
-  guid[2] = arts_guid_reserve(ARTS_DB_ONCE_LOCAL, 1);
-  guid[3] = arts_guid_reserve(ARTS_DB_ONCE_LOCAL, 1);
+  guid[0] = arts_guid_reserve(ARTS_DB_LOCAL, 0);
+  guid[1] = arts_guid_reserve(ARTS_DB_LOCAL, 0);
+  guid[2] = arts_guid_reserve(ARTS_DB_LOCAL, 1);
+  guid[3] = arts_guid_reserve(ARTS_DB_LOCAL, 1);
   shutdown_guid = arts_guid_reserve(ARTS_EDT, 0);
 
   for (unsigned int n = 0; n < arts_get_total_nodes(); n++) {

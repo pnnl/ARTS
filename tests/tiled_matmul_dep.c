@@ -158,7 +158,7 @@ void mm_kernel_cpu(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       }
     }
   }
-  arts_signal_edt(to_signal, idx_k, c_tile_guid, ARTS_DB_WRITE);
+  arts_signal_edt(to_signal, idx_k, c_tile_guid, ARTS_MODE_EW);
 }
 
 void multiply_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -181,7 +181,7 @@ void multiply_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   float *b_tile = (float *)depv[1].ptr;
   float *c_tile = NULL;
 
-  arts_guid_t c_tile_guid = arts_guid_reserve(ARTS_DB_GPU_WRITE, 0);
+  arts_guid_t c_tile_guid = arts_guid_reserve(ARTS_DB_GPU, 0);
   c_tile = (float *)arts_db_create_with_guid(c_tile_guid,
                                              sizeof(float) * TILE * TILE, NULL);
   init_matrix(row_size, c_tile, false, true);
@@ -190,9 +190,9 @@ void multiply_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                      k};
   arts_guid_t mul_gpu_guid =
       arts_edt_create(mm_kernel_cpu, 7, args, 3, &(arts_hint_t){.route = 0});
-  arts_signal_edt(mul_gpu_guid, 0, depv[0].guid, ARTS_DB_WRITE);
-  arts_signal_edt(mul_gpu_guid, 1, depv[1].guid, ARTS_DB_WRITE);
-  arts_signal_edt(mul_gpu_guid, 2, c_tile_guid, ARTS_DB_WRITE);
+  arts_signal_edt(mul_gpu_guid, 0, depv[0].guid, ARTS_MODE_EW);
+  arts_signal_edt(mul_gpu_guid, 1, depv[1].guid, ARTS_MODE_EW);
+  arts_signal_edt(mul_gpu_guid, 2, c_tile_guid, ARTS_MODE_EW);
 }
 
 void sum_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -209,7 +209,7 @@ void sum_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   //    arts_printf("%s: i: %u j: %u %lu\n", __func__, idx_i, idx_j, done_guid);
 
   float *c_tile;
-  arts_guid_t c_tile_guid = arts_guid_reserve(ARTS_DB_GPU_WRITE, 0);
+  arts_guid_t c_tile_guid = arts_guid_reserve(ARTS_DB_GPU, 0);
   c_tile = (float *)arts_db_create_with_guid(c_tile_guid,
                                              sizeof(float) * TILE * TILE, NULL);
   init_matrix(row_size, c_tile, false, true);
@@ -223,7 +223,7 @@ void sum_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     }
   }
   arts_signal_edt(done_guid, 1 + (idx_i * num_blocks + idx_j), c_tile_guid,
-                  ARTS_DB_WRITE);
+                  ARTS_MODE_EW);
 }
 
 void finish_block_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -258,9 +258,9 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   c_mat_guid = arts_guid_reserve(ARTS_DB, 0);
 
   a_tile_guids =
-      arts_guid_range_create(ARTS_DB_PIN, num_blocks * num_blocks, 0);
+      arts_guid_range_create(ARTS_DB_LOCAL, num_blocks * num_blocks, 0);
   b_tile_guids =
-      arts_guid_range_create(ARTS_DB_PIN, num_blocks * num_blocks, 0);
+      arts_guid_range_create(ARTS_DB_LOCAL, num_blocks * num_blocks, 0);
 
   float *a_mat = (float *)arts_db_create_with_guid(
       a_mat_guid, (unsigned long)MATSIZE * MATSIZE * sizeof(float), NULL);
@@ -284,15 +284,15 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t done_guid =
       arts_edt_create(finish_block_mm, 0, NULL, 1 + (num_blocks * num_blocks),
                       &(arts_hint_t){.route = 0});
-  arts_signal_edt(done_guid, 0, c_mat_guid, ARTS_DB_WRITE);
+  arts_signal_edt(done_guid, 0, c_mat_guid, ARTS_MODE_EW);
 
   for (unsigned int i = 0; i < num_blocks; i++) {
     for (unsigned int j = 0; j < num_blocks; j++) {
       uint64_t init_args[] = {i, j};
       arts_guid_t init_guid = arts_edt_create(init_block_mm, 2, init_args, 2,
                                               &(arts_hint_t){.route = 0});
-      arts_signal_edt(init_guid, 0, a_mat_guid, ARTS_DB_WRITE);
-      arts_signal_edt(init_guid, 1, b_mat_guid, ARTS_DB_WRITE);
+      arts_signal_edt(init_guid, 0, a_mat_guid, ARTS_MODE_EW);
+      arts_signal_edt(init_guid, 1, b_mat_guid, ARTS_MODE_EW);
 
       uint64_t sum_args[] = {(uint64_t)done_guid, i, j};
       arts_guid_t sum_guid = arts_edt_create(sum_mm, 3, sum_args, num_blocks,
@@ -308,10 +308,10 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                     j, arts_guid_range_get(b_tile_guids, (k * num_blocks) + j));
         arts_signal_edt(mul_guid, 0,
                         arts_guid_range_get(a_tile_guids, (i * num_blocks) + k),
-                        ARTS_DB_WRITE);
+                        ARTS_MODE_EW);
         arts_signal_edt(mul_guid, 1,
                         arts_guid_range_get(b_tile_guids, (k * num_blocks) + j),
-                        ARTS_DB_WRITE);
+                        ARTS_MODE_EW);
       }
     }
   }

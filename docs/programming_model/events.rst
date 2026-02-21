@@ -17,13 +17,18 @@ dependents.
 
 .. code-block:: c
 
-   arts_guid_t evt = arts_event_create(initial_latch_count);
+   arts_guid_t evt = arts_event_create(target_node, initial_latch_count);
 
    /* Register an EDT to fire when the event completes */
    arts_add_dependence(evt, edt_guid, slot);
 
    /* Decrement the latch counter */
    arts_event_satisfy_slot(evt, data_guid, ARTS_EVENT_LATCH_DECR_SLOT);
+
+.. note::
+
+   ``arts_event_create`` takes two parameters: the target node rank and
+   the initial latch count.
 
 Slot Types
 ~~~~~~~~~~

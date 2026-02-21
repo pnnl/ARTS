@@ -66,9 +66,10 @@ extern "C" {
 
 /** Common header prepended to every runtime object (EDT, DB, event). */
 struct arts_header_s {
-  uint8_t type : 8;   /**< Type tag (@ref arts_type_t). */
-  uint64_t size : 56; /**< Payload size in bytes. */
-} __attribute__((aligned));
+  uint8_t type : 8; /**< Type tag (@ref arts_type_t). */
+  uint64_t size
+      : 56; /**< Total allocation size in bytes (includes struct metadata). */
+} ARTS_ALIGNED_MAX;
 
 /** Internal DataBlock descriptor. */
 struct arts_db_s {
@@ -82,7 +83,7 @@ struct arts_db_s {
   volatile unsigned int version;    /**< Coherence version counter. */
   unsigned int time_stamp;          /**< Creation timestamp (relative). */
   void *db_list; /**< Node in the per-node DB tracking list. */
-} __attribute__((aligned));
+} ARTS_ALIGNED_MAX;
 
 /** Internal EDT descriptor. */
 struct arts_edt_s {
@@ -99,7 +100,7 @@ struct arts_edt_s {
   volatile unsigned int depc_needed; /**< Remaining unsatisfied deps. */
   volatile unsigned int
       invalidate_count; /**< Outstanding cache invalidations. */
-} __attribute__((aligned));
+} ARTS_ALIGNED_MAX;
 
 /** An individual dependent registered on an event or persistent event. */
 struct arts_dependent_s {
@@ -108,7 +109,7 @@ struct arts_dependent_s {
   volatile arts_guid_t addr;            /**< GUID of the dependent EDT/event. */
   volatile event_callback_t callback_t; /**< Inline callback (if any). */
   volatile bool done_writing;           /**< Write completion flag. */
-  arts_type_t mode;                     /**< Access mode for signaling. */
+  arts_db_mode_t mode;                  /**< Access mode for signaling. */
   uint64_t byte_offset; /**< Byte offset for slice dependencies. */
   uint64_t size;        /**< Slice size in bytes. */
 };
@@ -134,7 +135,7 @@ struct arts_persistent_event_s {
   struct arts_header_s header;
   arts_guid_t data;                  /**< DataBlock GUID to deliver on fire. */
   struct arts_link_list_s *versions; /**< Version history list. */
-} __attribute__((aligned));
+} ARTS_ALIGNED_MAX;
 
 /** Internal latch event descriptor. */
 struct arts_event_s {
@@ -146,7 +147,7 @@ struct arts_event_s {
   volatile unsigned int dependent_count; /**< Registered dependent count. */
   arts_guid_t data; /**< DataBlock GUID to deliver on fire. */
   struct arts_dependent_list_s dependent; /**< Inline dependent list head. */
-} __attribute__((aligned));
+} ARTS_ALIGNED_MAX;
 
 /** @} */ /* end internal_structs */
 

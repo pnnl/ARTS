@@ -59,18 +59,21 @@ Initialization
        (void)depv;
        char **argv = (char **)paramv[1];
        uint64_t num = strtol(argv[1], NULL, 10);
-       arts_guid_t done_guid = arts_edt_create(fib_done, 0, 1, &num, 1);
+       arts_guid_t done_guid =
+           arts_edt_create(fib_done, 1, &num, 1, &(arts_hint_t){.route = 0});
        uint64_t args[3] = {(uint64_t)done_guid, 0, num};
        start = arts_get_time_stamp();
-       arts_edt_create(fib_fork, 0, 3, args, 0);
+       arts_edt_create(fib_fork, 3, args, 0, &(arts_hint_t){.route = 0});
    }
 
 ``arts_main_edt`` is scheduled by the runtime on rank 0 after init.
 It receives ``argc``/``argv`` via ``paramv[0]``/``paramv[1]``:
 
-1. Create ``fib_done`` with 1 dependency slot (to receive the result).
-2. Create the root ``fib_fork``, passing the done-EDT GUID and the
-   input number as static parameters.
+1. Create ``fib_done`` with 1 static parameter (the input number) and
+   1 dependency slot (to receive the result), placed on node 0.
+2. Create the root ``fib_fork`` with 0 dependency slots (fires
+   immediately), passing the done-EDT GUID, slot index, and the input
+   number as static parameters.
 
 Fork
 ~~~~

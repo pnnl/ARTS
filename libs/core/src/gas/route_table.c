@@ -47,6 +47,7 @@
 #include "arts/runtime/globals.h"
 #include "arts/runtime/memory/db_functions.h"
 #include "arts/runtime/memory/db_list.h"
+#include "arts/runtime/sync/event_functions.h"
 #include "arts/system/arts_print.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
@@ -142,7 +143,7 @@ void print_state(arts_route_item_t *item) {
   }
 }
 
-// 11000 & 11100 = 11000, 10000 & 11100 = 10000, 11100 & 11100 = 11000
+// 11000 & 11100 = 11000, 10000 & 11100 = 10000, 11100 & 11100 = 11100
 bool check_item_state(arts_route_item_t *item, item_state_t state) {
   if (item) {
     uint64_t local = item->lock;
@@ -884,7 +885,6 @@ uint64_t arts_clean_up_route_table(arts_route_table_t *route_table) {
   while (item) {
     // arts_print_item(item);
     arts_type_t type = arts_guid_get_type(item->key);
-    // These are DB types
     if (type > ARTS_BUFFER && type < ARTS_LAST_TYPE) {
       struct arts_db_s *db = (struct arts_db_s *)item->data;
       if (db) {
@@ -892,14 +892,44 @@ uint64_t arts_clean_up_route_table(arts_route_table_t *route_table) {
           free_size += db->header.size;
           ARTS_DEBUG("Freeing DB[Guid:%lu] [Size:%lu]", item->key,
                      db->header.size);
+          if (db->db_list && db->db_list != (void *)1) {
+            arts_delete_db_list((struct arts_db_list_s *)db->db_list);
+          }
           arts_db_free(db);
           free_item(item);
         }
       }
+    } else if (type == ARTS_EVENT) {
+      struct arts_event_s *event = (struct arts_event_s *)item->data;
+      if (event) {
+        arts_event_free(event);
+        free_item(item);
+      }
+    } else if (type == ARTS_PERSISTENT_EVENT) {
+      struct arts_persistent_event_s *event =
+          (struct arts_persistent_event_s *)item->data;
+      if (event) {
+        arts_persistent_event_free_all(event);
+        free_item(item);
+      }
+    } else if (type != ARTS_NULL) {
+      /* EDT, EPOCH, CALLBACK, BUFFER — clean up OOO list only.
+       * Data for these types is managed elsewhere (e.g., EDTs freed after
+       * execution, epochs freed by termination detection). */
+      free_item(item);
     }
     item = arts_route_table_iterate(&iter);
   }
   return free_size;
+}
+
+void arts_delete_route_table(arts_route_table_t *route_table) {
+  if (!route_table) {
+    return;
+  }
+  arts_delete_route_table(route_table->next);
+  arts_free(route_table->data);
+  arts_free(route_table);
 }
 
 void arts_clean_up_dbs() {
@@ -907,7 +937,7 @@ void arts_clean_up_dbs() {
   for (unsigned int i = 0; i < arts_node_info.total_thread_count; i++) {
     free_size += arts_clean_up_route_table(arts_node_info.route_table[i]);
   }
-  // arts_clean_up_route_table(arts_node_info.remote_route_table);
+  free_size += arts_clean_up_route_table(arts_node_info.remote_route_table);
   ARTS_INFO("Cleaned %lu bytes", free_size);
 }
 

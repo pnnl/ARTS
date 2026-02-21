@@ -170,7 +170,7 @@ void work(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   free(c); // free host memory
 
   arts_guid_t to_signal = (arts_guid_t)paramv[0];
-  arts_signal_edt(to_signal, 0, final_guid, ARTS_DB_WRITE);
+  arts_signal_edt(to_signal, 0, final_guid, ARTS_MODE_EW);
 }
 
 void done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,

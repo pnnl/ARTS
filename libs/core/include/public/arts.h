@@ -77,11 +77,11 @@ typedef intptr_t arts_guid_t;
  *  @{ */
 
 /**
- * @brief Type tag and DataBlock access-mode enumeration.
+ * @brief Runtime object type tag (stored in GUID bits 7–0).
  *
- * Values below @c ARTS_DB_READ identify runtime object kinds (EDT, event,
- * epoch, …).  Values from @c ARTS_DB_READ through @c ARTS_DB_LC are
- * DataBlock access modes that control coherence, caching, and lifetime.
+ * Identifies what kind of object a GUID refers to: EDT, event, datablock, etc.
+ * For datablocks, the type selects the allocation and coherence strategy.
+ * Access modes (read/write) are separate — see @c arts_db_mode_t.
  */
 typedef enum {
   ARTS_NULL = 0,         /**< Empty / untyped placeholder. */
@@ -95,28 +95,31 @@ typedef enum {
 
   /* ── DataBlock types ──────────────────────────────────────────────────── */
 
-  ARTS_DB, /**< Generic DataBlock (mode-less). */
+  ARTS_DB,       /**< Distributed DataBlock (CDAG-managed). */
+  ARTS_DB_LOCAL, /**< Node-resident DataBlock (no CDAG). */
+  ARTS_DB_GPU,   /**< GPU-pinned DataBlock (CDAG-managed). */
+  ARTS_DB_LC,    /**< Locality-class DataBlock (CPU-GPU coherence). */
 
-  /* ── DataBlock access modes (used at dependency time) ─────────────────── */
-
-  ARTS_DB_READ,
-  ARTS_DB_WRITE,
-  ARTS_DB_PIN,
-  ARTS_DB_ONCE,
-  ARTS_DB_ONCE_LOCAL,
-  ARTS_DB_GPU_READ,  /**< GPU read-only DataBlock. */
-  ARTS_DB_GPU_WRITE, /**< GPU exclusive-write DataBlock. */
-  ARTS_DB_LC,        /**< Locality-class DataBlock. */
-
-  /* ── Pseudo-types (not valid for allocation) ─────────────────────────── */
-
-  ARTS_LAST_TYPE,     /**< Sentinel — first invalid type value. */
-  ARTS_SINGLE_VALUE,  /**< Marker: dependency carries a uint64 value. */
-  ARTS_PTR,           /**< Marker: dependency carries a pointer copy. */
-  ARTS_DB_LC_SYNC,    /**< Locality-class with synchronous copy. */
-  ARTS_DB_LC_NO_COPY, /**< Locality-class without data copy. */
-  ARTS_DB_GPU_MEMSET  /**< GPU memset operation pseudo-type. */
+  ARTS_LAST_TYPE /**< Sentinel — first invalid type value. */
 } arts_type_t;
+
+/**
+ * @brief DataBlock access mode (per-dependency, stored in EDT modes[] array).
+ *
+ * Specifies how an EDT accesses a datablock dependency.  Set at
+ * @c arts_record_dep() / @c arts_signal_edt() time, not at DB creation.
+ */
+typedef enum {
+  ARTS_MODE_NULL = 0, /**< Unset / placeholder. */
+  ARTS_MODE_RO,       /**< Read-Only (shared readers, no writeback). */
+  ARTS_MODE_EW, /**< Exclusive Write (single writer, frontier progression). */
+  ARTS_MODE_RW, /**< Read-Write, no ordering (LOCAL DBs only). */
+  ARTS_MODE_VALUE,   /**< Dependency carries a raw uint64 value (not a GUID). */
+  ARTS_MODE_PTR,     /**< Dependency carries a copied pointer buffer. */
+  ARTS_MODE_LC_SYNC, /**< LC with synchronous GPU-to-CPU copy. */
+  ARTS_MODE_LC_NO_COPY, /**< LC without data copy (just allocate on GPU). */
+  ARTS_MODE_MEMSET,     /**< GPU zero-initialization. */
+} arts_db_mode_t;
 
 /** @} */ /* end type_enum */
 
@@ -300,7 +303,7 @@ void arts_abort(uint8_t error_code);
 /**
  * @brief Reserve a GUID of the given @p type on node @p route.
  *
- * @param type  Type tag for the GUID (e.g. @c ARTS_EDT, @c ARTS_DB_READ).
+ * @param type  Type tag for the GUID (e.g. @c ARTS_EDT, @c ARTS_DB).
  * @param route Target node rank.
  * @return A new GUID.
  */
@@ -524,10 +527,10 @@ void arts_edt_destroy(arts_guid_t guid);
  * @param edt_guid  GUID of the target EDT.
  * @param slot      Dependency slot index.
  * @param data_guid GUID of the DataBlock to deliver.
- * @param mode      Access mode (@c ARTS_DB_READ or @c ARTS_DB_WRITE).
+ * @param mode      Access mode (@c ARTS_MODE_RO or @c ARTS_MODE_EW).
  */
 void arts_signal_edt(arts_guid_t edt_guid, uint32_t slot, arts_guid_t data_guid,
-                     arts_type_t mode);
+                     arts_db_mode_t mode);
 
 /**
  * @brief Signal an EDT dependency slot with a plain 64-bit value.
@@ -796,7 +799,7 @@ void arts_add_dependence_to_persistent_event(arts_guid_t event_source,
 void arts_add_dependence_to_persistent_event_with_mode(arts_guid_t event_source,
                                                        arts_guid_t edt_dest,
                                                        uint32_t edt_slot,
-                                                       arts_type_t mode);
+                                                       arts_db_mode_t mode);
 
 /**
  * @brief Add a dependence with acquire mode override and diff tracking.
@@ -808,7 +811,7 @@ void arts_add_dependence_to_persistent_event_with_mode(arts_guid_t event_source,
  */
 void arts_add_dependence_to_persistent_event_with_mode_and_diff(
     arts_guid_t event_source, arts_guid_t edt_dest, uint32_t edt_slot,
-    arts_type_t mode);
+    arts_db_mode_t mode);
 
 /**
  * @brief Add a dependence with byte offset for slice-based signaling.
@@ -825,7 +828,7 @@ void arts_add_dependence_to_persistent_event_with_mode_and_diff(
  */
 void arts_add_dependence_to_persistent_event_with_byte_offset(
     arts_guid_t event_source, arts_guid_t edt_dest, uint32_t edt_slot,
-    arts_type_t mode, uint64_t byte_offset, uint64_t len);
+    arts_db_mode_t mode, uint64_t byte_offset, uint64_t len);
 
 /** @} */ /* end persistent_event */
 
@@ -903,17 +906,6 @@ arts_guid_t arts_db_create_remote(unsigned int route, uint64_t len);
  * @param guid GUID of the DataBlock to release.
  */
 void arts_db_release(arts_guid_t guid);
-
-/**
- * @brief Move a DataBlock to remote node @p rank.
- *
- * @warning The GUID does not change, so remote lookups still go to the
- *          original home node.  Local access from @p rank will succeed.
- *
- * @param db_guid GUID of the DataBlock to move.
- * @param rank    Destination node rank.
- */
-void arts_db_move(arts_guid_t db_guid, unsigned int rank);
 
 /**
  * @brief Destroy all copies of a DataBlock system-wide.
@@ -1048,7 +1040,7 @@ void arts_db_add_dependence(arts_guid_t db_src, arts_guid_t edt_dest,
  * @param mode Acquire mode override.
  */
 void arts_db_add_dependence_with_mode(arts_guid_t db_src, arts_guid_t edt_dest,
-                                      uint32_t edt_slot, arts_type_t mode);
+                                      uint32_t edt_slot, arts_db_mode_t mode);
 
 /**
  * @brief Add a DB dependence with acquire mode override and diff tracking.
@@ -1061,10 +1053,10 @@ void arts_db_add_dependence_with_mode(arts_guid_t db_src, arts_guid_t edt_dest,
 void arts_db_add_dependence_with_mode_and_diff(arts_guid_t db_src,
                                                arts_guid_t edt_dest,
                                                uint32_t edt_slot,
-                                               arts_type_t mode);
+                                               arts_db_mode_t mode);
 
 /**
- * @brief Record a dependency, auto-incrementing latch for @c ARTS_DB_WRITE.
+ * @brief Record a dependency, auto-incrementing latch for @c ARTS_MODE_EW.
  *
  * @param db_src       Source DataBlock GUID.
  * @param edt_dest     Destination EDT GUID.
@@ -1072,7 +1064,7 @@ void arts_db_add_dependence_with_mode_and_diff(arts_guid_t db_src,
  * @param mode Requested acquire mode.
  */
 void arts_record_dep(arts_guid_t db_src, arts_guid_t edt_dest,
-                     uint32_t edt_slot, arts_type_t mode);
+                     uint32_t edt_slot, arts_db_mode_t mode);
 
 /**
  * @brief Record a dependency at a byte offset within a DataBlock.
@@ -1089,7 +1081,7 @@ void arts_record_dep(arts_guid_t db_src, arts_guid_t edt_dest,
  * @param len          Slice length in bytes.
  */
 void arts_record_dep_at(arts_guid_t db_src, arts_guid_t edt_dest,
-                        uint32_t edt_slot, arts_type_t mode,
+                        uint32_t edt_slot, arts_db_mode_t mode,
                         uint64_t byte_offset, uint64_t len);
 
 /** @} */ /* end db */
@@ -1190,7 +1182,7 @@ arts_guid_t arts_new_array_db(arts_array_db_t **addr, unsigned int element_size,
 /**
  * @brief Create a distributed array DB with a pre-reserved @p guid.
  *
- * The GUID can target any node but must be of type @c ARTS_DB_PIN.
+ * The GUID can target any node but must be of type @c ARTS_DB_LOCAL.
  *
  * @param guid         Pre-reserved GUID.
  * @param element_size Size of each element in bytes.

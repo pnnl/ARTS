@@ -43,6 +43,7 @@ extern "C" {
 #endif
 
 #include "arts.h"
+#include "arts/arts_defs.h"
 #include "arts/gas/out_of_order_list.h"
 
 struct arts_db_frontier_iterator_s;
@@ -88,14 +89,16 @@ typedef enum {
   RESERVED_KEY,  // reserved only
 } item_state_t;
 
-typedef struct __attribute__((aligned)) {
+struct arts_route_item_s {
   arts_guid_t key;
   void *data;
   volatile uint64_t lock;
   unsigned int rank;
   unsigned int touched;
   struct arts_out_of_order_list_s ooList;
-} arts_route_item_t;
+} ARTS_ALIGNED_MAX;
+
+typedef struct arts_route_item_s arts_route_item_t;
 
 typedef struct arts_route_table_s arts_route_table_t;
 
@@ -198,6 +201,7 @@ arts_route_item_t *arts_route_table_iterate(arts_route_table_iterator_t *iter);
 void arts_print_item(arts_route_item_t *item);
 
 uint64_t arts_clean_up_route_table(arts_route_table_t *route_table);
+void arts_delete_route_table(arts_route_table_t *route_table);
 void arts_clean_up_dbs();
 
 #ifdef __cplusplus

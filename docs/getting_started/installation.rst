@@ -41,11 +41,11 @@ ARTS *requires* the Ninja generator. Make is not supported.
    ninja
    ninja install   # installs to CMAKE_INSTALL_PREFIX (default: project/install)
 
-Debug build with sanitizers:
+Debug build with sanitizers (enabled by default in Debug mode):
 
 .. code-block:: bash
 
-   cmake -GNinja .. -DCMAKE_BUILD_TYPE=Debug -DARTS_USE_SANITIZERS=ON
+   cmake -GNinja .. -DCMAKE_BUILD_TYPE=Debug
 
 CMake Options
 ~~~~~~~~~~~~~
@@ -58,8 +58,9 @@ CMake Options
      - Default
      - Description
    * - ``ARTS_USE_GPU``
-     - Auto
-     - Enable GPU / CUDA support (auto-detects CUDA toolkit).
+     - ON
+     - Enable GPU / CUDA support (requires CUDA toolkit; set to OFF to
+       disable).
    * - ``ARTS_USE_RDMA``
      - OFF
      - Use RDMA (InfiniBand) instead of TCP sockets.
@@ -69,9 +70,9 @@ CMake Options
    * - ``ARTS_BUILD_TESTS``
      - ON
      - Build test programs in ``tests/``.
-   * - ``ARTS_BUILD_DOCS``
-     - OFF
-     - Build Doxygen + Sphinx documentation (``ninja docs``).
+   * - ``ARTS_USE_SANITIZERS``
+     - ON
+     - Enable address and undefined behavior sanitizers in Debug builds.
 
 GPU Build
 ~~~~~~~~~

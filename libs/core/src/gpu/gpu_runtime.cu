@@ -152,7 +152,7 @@ arts_guid_t internal_edt_create_gpu(arts_edt_t func_ptr, arts_guid_t *guid,
                                     int gpu_to_run_on) {
   //    ARTSEDTCOUNTERTIMERSTART(EDT_CREATE_COUNTER);
   unsigned int dep_space = (has_depv) ? depc * sizeof(arts_edt_dep_t) : 0;
-  unsigned int mode_space = (has_depv) ? depc * sizeof(arts_type_t) : 0;
+  unsigned int mode_space = (has_depv) ? depc * sizeof(arts_db_mode_t) : 0;
   unsigned int edt_space = sizeof(arts_gpu_edt_t) +
                            (paramc * sizeof(uint64_t)) + dep_space + mode_space;
 
@@ -298,7 +298,7 @@ void arts_run_gpu(void *edt_packet, arts_gpu_t *arts_gpu) {
 
   arts_atomic_add(&arts_gpu->runningEdts, 1U);
 
-  arts_type_t *modes = arts_get_dep_modes(edt_packet);
+  arts_db_mode_t *modes = arts_get_dep_modes(edt_packet);
   prep_dbs(depc, depv, modes, true);
   arts_schedule_to_gpu(func, paramc, paramv, depc, depv, edt_packet, arts_gpu);
 
@@ -313,7 +313,7 @@ void arts_gpu_host_wrap_up(void *edt_packet, arts_guid_t to_signal,
   const uint64_t *paramv = (uint64_t *)(edt + 1);
   arts_edt_dep_t *depv = (arts_edt_dep_t *)(paramv + paramc);
 
-  arts_type_t *modes = arts_get_dep_modes(edt_packet);
+  arts_db_mode_t *modes = arts_get_dep_modes(edt_packet);
   release_dbs(depc, depv, modes, true);
   arts_release_created_dbs();
 
@@ -329,11 +329,11 @@ void arts_gpu_host_wrap_up(void *edt_packet, arts_guid_t to_signal,
   // Signal next
   if (to_signal) {
     if (edt->passthrough) {
-      arts_signal_edt(to_signal, slot, depv[data_guid].guid, ARTS_DB_WRITE);
+      arts_signal_edt(to_signal, slot, depv[data_guid].guid, ARTS_MODE_EW);
     } else {
       arts_type_t mode = arts_guid_get_type(to_signal);
       if (mode == ARTS_EDT || mode == ARTS_GPU_EDT) {
-        arts_signal_edt(to_signal, slot, data_guid, ARTS_DB_WRITE);
+        arts_signal_edt(to_signal, slot, data_guid, ARTS_MODE_EW);
       }
       if (mode == ARTS_EVENT) {
         arts_event_satisfy_slot(to_signal, data_guid, slot);

@@ -154,7 +154,7 @@ vertex_t index_start_csr(unsigned int index, const csr_graph_t *const part) {
 }
 
 vertex_t index_end_csr(unsigned int index, const csr_graph_t *const part) {
-  // is this the last node ?
+  // is this the last block/partition?
   if (index == (part->num_blocks - 1)) {
     return (vertex_t)(part->num_local_vertices - 1);
   }

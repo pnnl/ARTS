@@ -80,8 +80,8 @@ void *make_lc_shadow_copy(struct arts_db_s *db) {
 inline void arts_print_db_meta_data(arts_lc_meta_t *db) {
   (void)db;
   ARTS_DEBUG(
-      "guid: %lu ptr: %p data_size: %lu host_version: %u gpu_version: %u "
-      "gpu_time_stamp: %u gpu: %d",
+      "guid: %lu ptr: %p data_size: %lu host_version: %u host_time_stamp: %u "
+      "gpu_version: %u gpu_time_stamp: %u gpu: %d",
       db->guid, db->data, db->data_size, *db->host_version,
       *db->host_time_stamp, db->gpu_version, db->gpu_time_stamp, db->gpu);
 }

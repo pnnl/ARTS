@@ -62,7 +62,7 @@ uint64_t *rec_seq_numbers;
 void arts_remote_shutdown() { arts_ll_server_shutdown(); }
 
 void arts_server_setup(struct arts_config_s *config) {
-  // ASYNC Message Deque Init
+  // ASYNC Message Queue Init
   arts_ll_server_setup(config);
   out_init(arts_global_rank_count * config->port_count);
 #ifdef SEQUENCENUMBERS
@@ -309,11 +309,6 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
   case ARTS_REMOTE_BUFFER_SEND_MSG: {
     ARTS_DEBUG("Buffer Send Received");
     arts_remote_handle_buffer_send(packet);
-    break;
-  }
-  case ARTS_REMOTE_DB_MOVE_REQ_MSG: {
-    ARTS_DEBUG("DB Move Request Received");
-    arts_db_move_request_handle(packet);
     break;
   }
   case ARTS_REMOTE_DB_RENAME_MSG: {

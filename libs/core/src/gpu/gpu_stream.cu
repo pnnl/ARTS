@@ -286,13 +286,13 @@ void arts_wrap_up(cudaStream_t stream, cudaError_t status, void *data) {
 
   for (unsigned int i = 0; i < depc; i++) {
     if (depv[i].ptr) {
-      if (arts_guid_get_type(depv[i].guid) == ARTS_DB_GPU_WRITE) {
+      if (arts_guid_get_type(depv[i].guid) == ARTS_DB_GPU) {
         arts_gpu_invalidate_route_tables(depv[i].guid, gc->gpu_id);
       }
       // True says to mark it for deletion... Change this to false to further
       // delay delete!
       //  bool mark_delete = (arts_guid_get_type(depv[i].guid) !=
-      //  ARTS_DB_GPU_WRITE)
+      //  ARTS_DB_GPU)
       //  && arts_node_info.free_db_after_gpu_run;
       bool mark_delete = arts_node_info.free_db_after_gpu_run;
       bool res =
@@ -390,7 +390,7 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
   }
 
   arts_gpu_edt_t *gpu_edt = (arts_gpu_edt_t *)host_gc_ptr->edt;
-  arts_type_t *modes = arts_get_dep_modes(edt_ptr);
+  arts_db_mode_t *modes = arts_get_dep_modes(edt_ptr);
 
   // Allocate space for DB on GPU and Move Data
   for (unsigned int i = 0; i < depc; ++i) {
@@ -414,14 +414,14 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
         if (successful_add) // We won, so allocate and move data
         {
           ARTS_DEBUG("Adding %lu %u id: %d mode: %s\n", depv[i].guid,
-                     alloc_size, arts_gpu->device, arts_type_name[modes[i]]);
+                     alloc_size, arts_gpu->device, arts_mode_name[modes[i]]);
           data_ptr = arts_cuda_malloc(alloc_size);
           void *src = (void *)db;
           if (mode == ARTS_DB_LC) {
             src = make_lc_shadow_copy(db);
           }
-          if (modes[i] == ARTS_DB_LC_NO_COPY ||
-              modes[i] == ARTS_DB_GPU_MEMSET) {
+          if (modes[i] == ARTS_MODE_LC_NO_COPY ||
+              modes[i] == ARTS_MODE_MEMSET) {
             src = NULL;
           }
           push_data_to_stream(arts_gpu->device, data_ptr, src, size,
@@ -438,7 +438,7 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
               !arts_atomic_fetch_add_u64((uint64_t *)&wrapper->realData, 0)) {
           } // Spin till the data memcpy is launched
           data_ptr = (void *)wrapper->realData;
-          if (mode == ARTS_DB_GPU_WRITE && modes[i] == ARTS_DB_GPU_MEMSET) {
+          if (mode == ARTS_DB_GPU && modes[i] == ARTS_MODE_MEMSET) {
             push_data_to_stream(arts_gpu->device, data_ptr, NULL, size,
                                 arts_node_info.gpu_buff_on && !gpu_edt->lib);
           }
@@ -485,7 +485,7 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
   // Move data back
   for (unsigned int i = 0; i < depc; i++) {
     arts_type_t mode = arts_guid_get_type(depv[i].guid);
-    if (depv[i].ptr && mode == ARTS_DB_GPU_WRITE) {
+    if (depv[i].ptr && mode == ARTS_DB_GPU && modes[i] == ARTS_MODE_EW) {
       struct arts_db_s *db = (struct arts_db_s *)depv[i].ptr - 1;
       size_t size = (size_t)(db->header.size - sizeof(struct arts_db_s));
       get_data_from_stream(arts_gpu->device, depv[i].ptr, host_depv[i].ptr,
@@ -660,8 +660,10 @@ int best_fit(uint64_t mask, uint64_t size, unsigned int total_threads) {
         }
       }
       if (try_reserve(index, size, total_threads)) {
-        // If successful relinquish previous allocation.
-        arts_atomic_add_u64(&arts_gpus[selected_gpu].availGlobalMem, size);
+        // If successful relinquish previous allocation (if any).
+        if (selected_gpu != -1) {
+          arts_atomic_add_u64(&arts_gpus[selected_gpu].availGlobalMem, size);
+        }
         selected_gpu = index;
         selected_gpu_avail_size = arts_gpus[index].availGlobalMem;
       }
@@ -684,8 +686,10 @@ int worst_fit(uint64_t mask, uint64_t size, unsigned int total_threads) {
         }
       }
       if (try_reserve(index, size, total_threads)) {
-        // If successful relinquish previous allocation.
-        arts_atomic_add_u64(&arts_gpus[selected_gpu].availGlobalMem, size);
+        // If successful relinquish previous allocation (if any).
+        if (selected_gpu != -1) {
+          arts_atomic_add_u64(&arts_gpus[selected_gpu].availGlobalMem, size);
+        }
         selected_gpu = index;
         selected_gpu_avail_size = arts_gpus[index].availGlobalMem;
       }

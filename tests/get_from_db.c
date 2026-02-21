@@ -107,7 +107,7 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
   char **argv = (char **)paramv[1];
-  db_guid = arts_guid_reserve(ARTS_DB_PIN, 0);
+  db_guid = arts_guid_reserve(ARTS_DB_LOCAL, 0);
   shutdown_guid = arts_guid_reserve(ARTS_EDT, 0);
   edt_guid_fixed = arts_guid_reserve(ARTS_EDT, 0);
   num_elements = strtol(argv[1], NULL, 10);

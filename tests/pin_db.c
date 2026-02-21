@@ -77,14 +77,14 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // This is the node we are going to pin to
   node = strtol(argv[1], NULL, 10);
   // Allocate some DB to test arts_db_create_with_guid
-  some_db_guid = arts_guid_reserve(ARTS_DB_PIN, node);
+  some_db_guid = arts_guid_reserve(ARTS_DB_LOCAL, node);
 
   unsigned int node_id = arts_get_current_node();
   if (node_id == node) {
     int *ptr = NULL;
     // Set pin to true to pin to node given by command line
     // It is pinned to the node creating the DB
-    arts_guid_t db_guid = arts_guid_reserve(ARTS_DB_PIN, 0);
+    arts_guid_t db_guid = arts_guid_reserve(ARTS_DB_LOCAL, 0);
     ptr = (int *)arts_db_create_with_guid(db_guid, sizeof(unsigned int), NULL);
     *ptr = 1234;
 
@@ -94,8 +94,8 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
     // Put both signals up front forcing one to be out of order to test the OO
     // code path
-    arts_signal_edt(edt_guid, 0, db_guid, ARTS_DB_WRITE);      // Note the mode
-    arts_signal_edt(edt_guid, 1, some_db_guid, ARTS_DB_WRITE); // Note the mode
+    arts_signal_edt(edt_guid, 0, db_guid, ARTS_MODE_EW);      // Note the mode
+    arts_signal_edt(edt_guid, 1, some_db_guid, ARTS_MODE_EW); // Note the mode
 
     // This is the delayed DB
     int *ptr2 = (int *)arts_db_create_with_guid(some_db_guid,

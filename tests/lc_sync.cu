@@ -106,9 +106,9 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
       arts_guid_t edt_guid = arts_edt_create_gpu_direct(
           temp, node_id, i, 0, NULL, 1, grid, threads, done_guid, i + 1,
           NULL_GUID, true);
-      arts_signal_edt(edt_guid, 0, db_guid, ARTS_DB_WRITE);
+      arts_signal_edt(edt_guid, 0, db_guid, ARTS_MODE_EW);
     } else {
-      arts_signal_edt(done_guid, i + 1, NULL_GUID, ARTS_DB_WRITE);
+      arts_signal_edt(done_guid, i + 1, NULL_GUID, ARTS_MODE_EW);
     }
   }
 }

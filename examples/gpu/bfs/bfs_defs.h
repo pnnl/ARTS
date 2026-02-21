@@ -70,7 +70,7 @@ extern "C" {
   }
 #else
 #define DO_SYNC(level) 0
-#define DB_WRITE_TYPE ARTS_DB_GPU_WRITE
+#define DB_WRITE_TYPE ARTS_DB_GPU
 #define CHECK_CONSISTENCY(worker_id)                                           \
   if (!(worker_id) && ARTS_LOOK_UP_CONFIG(gpu_locality) != 3) {                \
     arts_printf(                                                               \

@@ -91,7 +91,7 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   elements_per_block = strtol(argv[1], NULL, 10);
   blocks = arts_get_total_nodes();
   num_add = strtol(argv[2], NULL, 10);
-  array_guid = arts_guid_reserve(ARTS_DB_PIN, 0);
+  array_guid = arts_guid_reserve(ARTS_DB_LOCAL, 0);
   arts_printf("ElementsPerBlock: %u Blocks: %u\n", elements_per_block, blocks);
 
   // The end will get all the updates and a signal from the gather

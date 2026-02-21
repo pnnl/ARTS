@@ -519,6 +519,16 @@ void clean_epoch_pool() {
   }
 }
 
+void arts_cleanup_epoch_pools(void) {
+  arts_epoch_pool_t *pool = epoch_thread_pool;
+  while (pool) {
+    arts_epoch_pool_t *next = pool->next;
+    arts_free(pool);
+    pool = next;
+  }
+  epoch_thread_pool = NULL;
+}
+
 arts_epoch_t *get_pool_epoch(arts_guid_t edt_guid, unsigned int slot) {
   //    clean_epoch_pool();
   arts_epoch_pool_t *trail_pool = NULL;

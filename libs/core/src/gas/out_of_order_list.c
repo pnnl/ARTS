@@ -177,9 +177,8 @@ void delete_oo_elements(struct arts_out_of_order_element_s *current) {
   struct arts_out_of_order_element_s *trail = NULL;
   while (current) {
     for (unsigned int i = 0; i < OOPERELEMENT; i++) {
-      while (current->array[i]) {
-        ;
-      }
+      arts_free((void *)current->array[i]);
+      current->array[i] = NULL;
     }
     trail = current;
     current = (struct arts_out_of_order_element_s *)current->next;
@@ -189,6 +188,11 @@ void delete_oo_elements(struct arts_out_of_order_element_s *current) {
 
 // Not threadsafe
 void arts_out_of_order_list_delete(struct arts_out_of_order_list_s *list) {
+  /* Free any unconsumed items in the head element */
+  for (unsigned int i = 0; i < OOPERELEMENT; i++) {
+    arts_free((void *)list->head.array[i]);
+    list->head.array[i] = NULL;
+  }
   delete_oo_elements((struct arts_out_of_order_element_s *)list->head.next);
   list->head.next = NULL;
   list->isFired = false;
@@ -200,7 +204,7 @@ void arts_out_of_order_list_fire_callback(
     void (*callback_t)(void *, void *)) {
   // Retry mechanism: Try multiple times with brief delays
   // This allows readers to complete and release locks
-  // 1000 attempts × 10μs ≈ 10ms total retry window
+  // 1000 attempts: first 6 are busy-spin, remaining ~994 × 10μs ≈ 10ms
   const int max_retries = 1000;
 
   for (int attempt = 0; attempt < max_retries; attempt++) {

@@ -157,24 +157,24 @@ extern uint64_t arts_guid_max;
                                         "ARTS_CALLBACK",                       \
                                         "ARTS_BUFFER",                         \
                                         "ARTS_DB",                             \
-                                        "ARTS_DB_READ",                        \
-                                        "ARTS_DB_WRITE",                       \
-                                        "ARTS_DB_PIN",                         \
-                                        "ARTS_DB_ONCE",                        \
-                                        "ARTS_DB_ONCE_LOCAL",                  \
-                                        "ARTS_DB_GPU_READ",                    \
-                                        "ARTS_DB_GPU_WRITE",                   \
+                                        "ARTS_DB_LOCAL",                       \
+                                        "ARTS_DB_GPU",                         \
                                         "ARTS_DB_LC",                          \
-                                        "ARTS_LAST_TYPE",                      \
-                                        "ARTS_SINGLE_VALUE",                   \
-                                        "ARTS_PTR",                            \
-                                        "ARTS_DB_LC_SYNC",                     \
-                                        "ARTS_DB_LC_NO_COPY",                  \
-                                        "ARTS_DB_GPU_MEMSET"}
+                                        "ARTS_LAST_TYPE"}
 
 #define GET_TYPE_NAME(x) arts_type_name[x]
 
 extern const char *const arts_type_name[];
+
+#define ARTS_MODE_NAME                                                         \
+  const char *const arts_mode_name[] = {                                       \
+      "ARTS_MODE_NULL",    "ARTS_MODE_RO",         "ARTS_MODE_EW",             \
+      "ARTS_MODE_RW",      "ARTS_MODE_VALUE",      "ARTS_MODE_PTR",            \
+      "ARTS_MODE_LC_SYNC", "ARTS_MODE_LC_NO_COPY", "ARTS_MODE_MEMSET"}
+
+#define GET_MODE_NAME(x) arts_mode_name[x]
+
+extern const char *const arts_mode_name[];
 
 extern volatile uint64_t outstanding_edts;
 void check_out_edts(uint64_t threshold);

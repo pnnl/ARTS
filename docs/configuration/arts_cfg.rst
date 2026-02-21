@@ -23,14 +23,10 @@ Threading
    * - Key
      - Default
      - Description
-   * - ``threads``
+   * - ``worker_threads``
      - 4
-     - Total threads per node.  For multi-node runs the actual worker
-       count is ``threads - outgoing - incoming``.
-   * - ``tmt``
-     - 0
-     - Temporal multi-threading depth (0–64).  Enables context switching
-       within a worker.
+     - Worker threads per node.  For multi-node runs the actual worker
+       count is ``worker_threads``; sender/receiver threads are separate.
    * - ``stack_size``
      - 0
      - Thread stack size in bytes (0 = OS default).
@@ -70,6 +66,10 @@ Scheduling
    * - ``route_table_size``
      - 20
      - Routing table size as power of 2 (e.g., 20 → 2\ :sup:`20`).
+   * - ``auto_shutdown``
+     - 0
+     - Terminate when all EDTs complete.  Adds overhead from global EDT
+       tracking; prefer explicit ``arts_shutdown()`` calls.
 
 GPU Support
 -----------
@@ -105,6 +105,13 @@ To enable GPU support, set ``scheduler=3`` and ``gpu=<N>``.
    * - ``gpu_p2p``
      - 0
      - Enable GPU peer-to-peer transfers.
+   * - ``gpu_lc_sync``
+     - 0
+     - Location Consistency sync policy: 0 = artsGetLatestGpuDb,
+       1 = artsGetRandomGpuDb.
+   * - ``gpu_buff_on``
+     - 0
+     - Enable GPU stream buffering.
 
 Networking
 ----------
@@ -116,15 +123,15 @@ Networking
    * - Key
      - Default
      - Description
-   * - ``outgoing``
+   * - ``sender_threads``
      - 1
-     - Number of outgoing (sender) network threads.
-   * - ``incoming``
+     - Number of outgoing (sender) network threads (0 for local mode).
+   * - ``receiver_threads``
      - 1
-     - Number of incoming (receiver) network threads.
-   * - ``ports``
+     - Number of incoming (receiver) network threads (0 for local mode).
+   * - ``port_count``
      - 1
-     - Number of network ports/connections per node pair.
+     - Number of parallel network connections per node pair.
    * - ``net_interface``
      - auto
      - Network interface name (``eth0``, ``ib0``, etc.).
@@ -142,6 +149,8 @@ Launcher
    * - ``launcher``
      - ssh
      - Launch method: ``ssh``, ``slurm``, ``lsf``, or ``local``.
+       SLURM and LSF are auto-detected from environment variables
+       (``SLURM_PROCID``, ``LSB_HOSTS``) and override this setting.
    * - ``master_node``
      - (first)
      - Hostname of the master node.
@@ -152,14 +161,16 @@ Launcher
      - localhost
      - Comma-separated node list.  Supports per-node ports
        (``host:port``) and range expansion (``node[01-10]``).
-   * - ``port``
+   * - ``default_ports``
      - 75563
-     - Default network port (overridden by per-node ports).
+     - Default network port(s).  Per-node ports in the ``nodes`` list
+       override this.  Supports single port (``34739``), range
+       (``[34739-34740]``), or comma-separated (``34739,34800``).
 
 .. tip::
 
    When running multiple instances on the same machine via SSH, assign
-   different ports: ``nodes=localhost:34739,localhost:34740``.
+   different ports per node: ``nodes=localhost:34739,localhost:34740``.
 
 Debug / Utility
 ---------------

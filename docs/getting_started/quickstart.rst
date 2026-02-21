@@ -34,7 +34,7 @@ Every ARTS program consists of three parts:
        (void)depc;
        (void)depv;
        /* paramv[0] = argc, paramv[1] = argv */
-       arts_edt_create(my_task, 0, 0, NULL, 0);
+       arts_edt_create(my_task, 0, NULL, 0, NULL);
    }
 
    /* 3.  Entry point ----------------------------------------------------- */
@@ -52,11 +52,11 @@ the ``artsConfig`` environment variable).  A minimal configuration:
 .. code-block:: ini
 
    [ARTS]
-   threads=4
+   worker_threads=4
    launcher=ssh
    node_count=1
    nodes=localhost
-   port=34739
+   default_ports=34739
 
 Copy the sample config for a quick start:
 

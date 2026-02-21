@@ -88,7 +88,7 @@ arts_array_db_t *arts_new_array_db_with_guid(arts_guid_t guid,
     unsigned int db_size = sizeof(struct arts_db_s) + alloc_size;
     struct arts_db_s *to_send =
         (struct arts_db_s *)arts_calloc_align(1, db_size, 16);
-    arts_db_create_internal(guid, to_send, alloc_size, db_size, ARTS_DB_PIN, 0);
+    arts_db_create_internal(guid, to_send, alloc_size, db_size, ARTS_DB_LOCAL, 0);
 
     block = (arts_array_db_t *)(to_send + 1);
     block->element_size = element_size;
@@ -124,7 +124,7 @@ arts_array_db_t *arts_new_local_array_db_with_guid(arts_guid_t guid,
   unsigned int db_size = sizeof(struct arts_db_s) + alloc_size;
   // struct arts_db_s *local = arts_calloc(1, db_size);
   struct arts_db_s *local = (struct arts_db_s *)arts_malloc_align(db_size, 16);
-  arts_db_create_internal(guid, local, alloc_size, db_size, ARTS_DB_PIN, 0);
+  arts_db_create_internal(guid, local, alloc_size, db_size, ARTS_DB_LOCAL, 0);
 
   block = (arts_array_db_t *)(local + 1);
   block->element_size = element_size;
@@ -139,7 +139,7 @@ arts_array_db_t *arts_new_local_array_db_with_guid(arts_guid_t guid,
 
 arts_guid_t arts_new_array_db(arts_array_db_t **addr, unsigned int element_size,
                               unsigned int num_elements) {
-  arts_guid_t guid = arts_guid_reserve(ARTS_DB_PIN, arts_global_rank_id);
+  arts_guid_t guid = arts_guid_reserve(ARTS_DB_LOCAL, arts_global_rank_id);
   *addr = arts_new_array_db_with_guid(guid, element_size, num_elements);
   return guid;
 }
@@ -166,7 +166,7 @@ unsigned int get_rank_from_index(arts_array_db_t *array, unsigned int index) {
 void arts_signal_array_db(arts_array_db_t *array, arts_guid_t edt_guid,
                           unsigned int slot) {
   arts_guid_t array_guid = get_array_db_guid(array);
-  arts_signal_edt(edt_guid, slot, array_guid, ARTS_DB_WRITE);
+  arts_signal_edt(edt_guid, slot, array_guid, ARTS_MODE_EW);
 }
 
 void arts_get_from_array_db(arts_guid_t edt_guid, unsigned int slot,
@@ -303,7 +303,7 @@ void arts_for_each_in_array_db_at_data(arts_array_db_t *array,
     unsigned int target_rank = get_rank_from_index(array, i);
     arts_guid_t am = arts_edt_create(loop_policy, paramc + 4, args, 1,
                                      &(arts_hint_t){.route = target_rank});
-    arts_signal_edt(am, 0, guid, ARTS_DB_WRITE);
+    arts_signal_edt(am, 0, guid, ARTS_MODE_EW);
   }
 }
 

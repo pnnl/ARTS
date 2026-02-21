@@ -164,6 +164,25 @@ void arts_delete_db_frontier(struct arts_db_frontier_s *frontier) {
   arts_free(frontier);
 }
 
+void arts_delete_db_list(struct arts_db_list_s *db_list) {
+  if (!db_list) {
+    return;
+  }
+  struct arts_db_frontier_s *frontier = db_list->head;
+  while (frontier) {
+    struct arts_db_frontier_s *next = frontier->next;
+    if (frontier->list.next) {
+      arts_delete_db_element(frontier->list.next);
+    }
+    if (frontier->localDelayed.next) {
+      arts_delete_local_delayed_edt(frontier->localDelayed.next);
+    }
+    arts_free(frontier);
+    frontier = next;
+  }
+  arts_free(db_list);
+}
+
 bool arts_push_db_to_element(struct arts_db_element_s *head,
                              unsigned int position, unsigned int data) {
   unsigned int j = 0;
@@ -190,7 +209,7 @@ bool arts_push_db_to_element(struct arts_db_element_s *head,
 
 void arts_push_delayed_edt(struct arts_local_delayed_edt_s *head,
                            unsigned int position, struct arts_edt_s *edt,
-                           unsigned int slot, arts_type_t mode) {
+                           unsigned int slot, arts_db_mode_t mode) {
   if (!head) {
     return;
   }
@@ -216,7 +235,7 @@ bool arts_push_db_to_frontier(struct arts_db_frontier_s *frontier,
                               unsigned int data, bool write, bool local,
                               bool bypass, struct arts_edt_s *edt,
                               arts_guid_t edt_guid, unsigned int slot,
-                              arts_type_t mode, bool *unique) {
+                              arts_db_mode_t mode, bool *unique) {
   if (bypass) {
     frontier_lock(&frontier->lock);
   } else if (write && !frontier_add_write_lock(&frontier->lock)) {
@@ -270,7 +289,8 @@ bool arts_push_db_to_frontier(struct arts_db_frontier_s *frontier,
 bool arts_push_db_to_list(struct arts_db_list_s *db_list, unsigned int data,
                           bool write, bool local, bool bypass,
                           struct arts_edt_s *edt, arts_guid_t edt_guid,
-                          unsigned int slot, arts_type_t mode, bool *on_head) {
+                          unsigned int slot, arts_db_mode_t mode,
+                          bool *on_head) {
   if (!db_list->head) {
     if (arts_writer_try_lock(&db_list->reader, &db_list->writer)) {
       db_list->head = db_list->tail = arts_new_db_frontier();
@@ -399,7 +419,7 @@ void arts_signal_frontier_remote(struct arts_db_frontier_s *frontier,
           !((frontier->exEdt || frontier->exEdtGuid != NULL_GUID) &&
             node == frontier->exNode)) {
         arts_remote_db_forward((int)node, (int)get_from, db->guid,
-                               ARTS_DB_READ); // Don't care about mode
+                               ARTS_MODE_RO); // Don't care about mode
       }
     }
   }

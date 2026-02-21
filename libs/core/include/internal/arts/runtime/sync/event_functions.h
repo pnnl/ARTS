@@ -52,6 +52,9 @@ bool arts_event_create_internal(arts_guid_t *guid, unsigned int route,
 struct arts_persistent_event_version_s *
 arts_get_front_persistent_event_version(struct arts_persistent_event_s *event);
 
+void arts_event_free(struct arts_event_s *event);
+void arts_persistent_event_free_all(struct arts_persistent_event_s *event);
+
 #ifdef __cplusplus
 }
 #endif

@@ -80,7 +80,7 @@ void create_buffers_on_cpu(unsigned int size) {
   for (unsigned int i = 0; i < NUMBUFFERS; i++) {
     for (unsigned int j = 0; j < num_nodes; j++) {
       buffer_guids[(i * num_nodes) + j] =
-          arts_guid_reserve(ARTS_DB_GPU_READ, j);
+          arts_guid_reserve(ARTS_DB_GPU, j);
     }
   }
 }

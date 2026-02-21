@@ -77,7 +77,7 @@ void check_occupancy(arts_edt_t fn_ptr, unsigned int gpu_id, dim3 block) {
       ((float)(max_active_blocks * block_size) / (float)prop.warpSize) /
       ((float)prop.maxThreadsPerMultiProcessor / (float)prop.warpSize);
 
-  // Moving average of occupancy
+  // Cumulative (running) average of occupancy
   arts_lock(&arts_gpus[gpu_id].deviceLock);
   arts_gpus[gpu_id].occupancy =
       (occupancy + ((float)(arts_gpus[gpu_id].totalEdts - 1) *

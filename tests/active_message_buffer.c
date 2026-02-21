@@ -60,7 +60,7 @@ void setter(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     dest[(id * block_size) + i] = buffer[i];
   }
   arts_printf("Setter: %u\n", id);
-  arts_signal_edt(shutdown_guid, id, db_dest_guid, ARTS_DB_WRITE);
+  arts_signal_edt(shutdown_guid, id, db_dest_guid, ARTS_MODE_EW);
 }
 
 void getter(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -78,7 +78,7 @@ void getter(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       arts_edt_create(setter, paramc, paramv, 2,
                       &(arts_hint_t){.route = arts_get_total_nodes() - 1});
   arts_signal_edt_ptr(am, 0, buf_copy, buf_size);
-  arts_signal_edt(am, 1, db_dest_guid, ARTS_DB_WRITE);
+  arts_signal_edt(am, 1, db_dest_guid, ARTS_MODE_EW);
 }
 
 void shut_down_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -109,7 +109,7 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   char **argv = (char **)paramv[1];
   block_size = strtol(argv[1], NULL, 10);
   num_elements = block_size * arts_get_total_nodes();
-  db_dest_guid = arts_guid_reserve(ARTS_DB_PIN, arts_get_total_nodes() - 1);
+  db_dest_guid = arts_guid_reserve(ARTS_DB_LOCAL, arts_get_total_nodes() - 1);
   shutdown_guid = arts_guid_reserve(ARTS_EDT, arts_get_total_nodes() - 1);
 
   unsigned int node_id = arts_get_current_node();
