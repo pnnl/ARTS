@@ -104,7 +104,6 @@ set(ARTS_LOG_LEVEL "1" CACHE STRING "Log verbosity: 0=ERROR, 1=+WARN (default), 
 option(ARTS_USE_GPU "Enable GPU support (default: ON, disable when OFF)" ON)
 option(ARTS_USE_RDMA "Use RDMA RSockets networking (default: ON, use TCP when OFF)" OFF)
 option(ARTS_USE_SANITIZERS "Enable address and undefined behavior sanitizers in Debug builds" ON)
-option(ARTS_USE_PRIORITY_DEQUE "Use priority Chase-Lev deque implementation" OFF)
 option(ARTS_USE_LOCAL_CUDA_ARCHITECTURES "Auto-detect CUDA architectures from local GPUs using nvidia-smi" ON)
 
 # Compiler-specific settings
@@ -290,14 +289,8 @@ set(COUNTER_CONFIG_PATH
     CACHE FILEPATH "ARTS counter configuration file (parsed to generate introspection macros)")
 set(COUNTER_CONFIG_FILE "${COUNTER_CONFIG_PATH}")
 
-# Create the main ARTS library target
-add_subdirectory(libs/core)
-
-# Build extension libraries only if examples or tests are being built
-if(ARTS_BUILD_EXAMPLES OR ARTS_BUILD_TESTS)
-    add_subdirectory(libs/array_db)
-    add_subdirectory(libs/graph)
-endif()
+# Create the ARTS library targets (core + extensions)
+add_subdirectory(libs)
 
 # Optional components
 if(ARTS_BUILD_EXAMPLES)
@@ -327,10 +320,12 @@ if(ARTS_BUILD_DOCS)
     # Paths for Doxyfile.in @VAR@ substitution
     set(DOXYGEN_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/docs/doxygen")
     set(DOXYGEN_INPUT_DIRS
-        "${CMAKE_SOURCE_DIR}/libs/core/include/public/arts.h \
-         ${CMAKE_SOURCE_DIR}/libs/core/include/internal/arts/runtime/rt.h \
-         ${CMAKE_SOURCE_DIR}/libs/core/include/internal/arts/gas/guid.h \
-         ${CMAKE_SOURCE_DIR}/libs/core/include/internal/arts/arts_defs.h"
+        "${CMAKE_SOURCE_DIR}/libs/include/public/arts.h \
+         ${CMAKE_SOURCE_DIR}/libs/include/public/arts/graph.h \
+         ${CMAKE_SOURCE_DIR}/libs/include/public/arts/array_db.h \
+         ${CMAKE_SOURCE_DIR}/libs/include/internal/arts/runtime/rt.h \
+         ${CMAKE_SOURCE_DIR}/libs/include/internal/arts/gas/guid.h \
+         ${CMAKE_SOURCE_DIR}/libs/include/internal/arts/defs.h"
     )
     configure_file(
         "${CMAKE_SOURCE_DIR}/docs/Doxyfile.in"
@@ -366,10 +361,14 @@ if(ARTS_BUILD_DOCS)
 endif()
 
 # Installation configuration
-# Only install the public header — all other headers are internal.
-# External users: #include "arts.h"
-install(FILES libs/core/include/public/arts.h
+# Install public headers — all other headers are internal.
+# External users: #include "arts.h", #include "arts/graph.h", #include "arts/array_db.h"
+install(FILES libs/include/public/arts.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+install(DIRECTORY libs/include/public/arts/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/arts
+    FILES_MATCHING PATTERN "*.h"
 )
 
 # Install library targets

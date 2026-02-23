@@ -46,8 +46,7 @@
 #include <vector>
 
 #include "arts.h"
-#include "arts/block_distribution.h"
-#include "arts/csr.h"
+#include "arts/graph.h"
 #include "arts/runtime/compute/shad_adapter.h"
 
 arts_block_dist_t *distribution;

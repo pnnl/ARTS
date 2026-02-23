@@ -40,7 +40,7 @@
 #include <cuda_runtime_api.h>
 #include <inttypes.h>
 
-#include "arts/csr.h"
+#include "arts/graph.h"
 
 __device__ vertex_t *get_row_ptr_gpu(csr_graph_t *csr);
 __device__ vertex_t *get_col_ptr_gpu(csr_graph_t *csr);

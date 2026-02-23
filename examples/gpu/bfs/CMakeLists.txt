@@ -37,28 +37,26 @@
 ## License for the specific language governing permissions and limitations
 ###############################################################################
 
-# Function to create a BFS CUDA example that uses arts_graph
+# Function to create a BFS CUDA example
 function(add_bfs_cuda_example example_name)
     add_executable(gpu${example_name} ${ARGN})
-    
+
     # Set include directories
-    target_include_directories(gpu${example_name} PRIVATE 
+    target_include_directories(gpu${example_name} PRIVATE
         ${ARTS_PUBLIC_INCLUDE_DIR}
         ${ARTS_INTERNAL_INCLUDE_DIR}
         ${ARTS_BUILD_INTERNAL_INCLUDE_DIR}
-        ${ARTS_GRAPH_INCLUDE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}
     )
-    
-    # Link with arts_graph and runtime libraries
-    target_link_libraries(gpu${example_name} PRIVATE 
-        arts_graph
-        Threads::Threads 
-        ${RT_LIBRARY} 
-        ${M_LIBRARY} 
-        ${ANL_LIBRARY} 
-        CUDA::cudart 
-        CUDA::cuda_driver 
+
+    # Link with runtime libraries
+    target_link_libraries(gpu${example_name} PRIVATE
+        Threads::Threads
+        ${RT_LIBRARY}
+        ${M_LIBRARY}
+        ${ANL_LIBRARY}
+        CUDA::cudart
+        CUDA::cuda_driver
         CUDA::cublas
     )
     

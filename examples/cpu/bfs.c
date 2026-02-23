@@ -44,8 +44,7 @@
 #include <string.h>
 
 #include "arts.h"
-#include "arts/block_distribution.h"
-#include "arts/csr.h"
+#include "arts/graph.h"
 
 arts_block_dist_t *distribution;
 csr_graph_t *graph;
@@ -157,7 +156,7 @@ void init_node(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                   arts_edt_dep_t depv[]) {
+              arts_edt_dep_t depv[]) {
   (void)depc;
   (void)depv;
   int argc = (int)paramv[0];

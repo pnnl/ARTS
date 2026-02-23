@@ -41,8 +41,7 @@
 #include <stdio.h>
 
 #include "arts.h"
-#include "arts/block_distribution.h"
-#include "arts/csr.h"
+#include "arts/graph.h"
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
               arts_edt_dep_t depv[]) {

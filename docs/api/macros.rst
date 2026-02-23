@@ -1,8 +1,8 @@
-Compiler Macros (``arts_defs.h``)
+Compiler Macros (``defs.h``)
 =================================
 
 ARTS abstracts compiler-specific attributes through portable macros
-defined in ``arts_defs.h``.  These macros work with both GCC and Clang
+defined in ``defs.h``.  These macros work with both GCC and Clang
 under strict ``-std=c17`` mode.
 
 .. contents:: On this page

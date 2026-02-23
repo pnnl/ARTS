@@ -37,16 +37,12 @@
 ## License for the specific language governing permissions and limitations
 ###############################################################################
 
-# Define CPU example programs
+# Define CPU example programs (C)
 set(CPU_EXAMPLES
     fib
     fib_yield
     simple_reduction
     tiled_matmul
-)
-
-# Programs that require arts_graph library
-set(CPU_GRAPH_EXAMPLES
     bfs
     graph_search
     triangle_count
@@ -54,64 +50,45 @@ set(CPU_GRAPH_EXAMPLES
     triangle_count_promise
 )
 
-# C++ programs that require arts_graph library  
-set(CPU_CXX_GRAPH_EXAMPLES
+# C++ CPU examples
+set(CPU_CXX_EXAMPLES
     scan_statistics
 )
 
 # Function to create a CPU example executable
 function(add_cpu_example example_name)
     add_executable(${example_name} ${example_name}.c)
-    
+
     # Set include directories
     target_include_directories(${example_name} PRIVATE ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR} ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
-    
+
     # Use the appropriate ARTS library based on availability
     if(TARGET arts_shared)
         target_link_libraries(${example_name} PRIVATE arts_shared)
     elseif(TARGET arts_static)
         target_link_libraries(${example_name} PRIVATE arts_static)
     endif()
-    
+
     # Link with runtime libraries
     target_link_libraries(${example_name} PRIVATE Threads::Threads ${RT_LIBRARY} ${M_LIBRARY} ${ANL_LIBRARY})
-
 endfunction()
 
-# Function to create a CPU example executable that uses arts_graph
-function(add_cpu_graph_example example_name)
-    add_executable(${example_name} ${example_name}.c)
-    
-    # Set include directories
-    target_include_directories(${example_name} PRIVATE ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR} ${ARTS_BUILD_INTERNAL_INCLUDE_DIR} ${ARTS_GRAPH_INCLUDE_DIR})
-    
-    # Link with arts_graph, main ARTS library, and runtime libraries
-    target_link_libraries(${example_name} PRIVATE arts_graph Threads::Threads ${RT_LIBRARY} ${M_LIBRARY} ${ANL_LIBRARY})
-    
-    # Link with the appropriate ARTS library based on availability
-    if(TARGET arts_shared)
-        target_link_libraries(${example_name} PRIVATE arts_shared)
-    elseif(TARGET arts_static)
-        target_link_libraries(${example_name} PRIVATE arts_static)
-    endif()
-endfunction()
-
-# Function to create a C++ CPU example executable that uses arts_graph
-function(add_cpu_cxx_graph_example example_name)
+# Function to create a C++ CPU example executable
+function(add_cpu_cxx_example example_name)
     add_executable(${example_name} ${example_name}.cpp)
-    
+
     # Set include directories
-    target_include_directories(${example_name} PRIVATE ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR} ${ARTS_BUILD_INTERNAL_INCLUDE_DIR} ${ARTS_GRAPH_INCLUDE_DIR})
-    
-    # Link with arts_graph, main ARTS library, and runtime libraries
-    target_link_libraries(${example_name} PRIVATE arts_graph Threads::Threads ${RT_LIBRARY} ${M_LIBRARY} ${ANL_LIBRARY})
-    
-    # Link with the appropriate ARTS library based on availability
+    target_include_directories(${example_name} PRIVATE ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR} ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
+
+    # Use the appropriate ARTS library based on availability
     if(TARGET arts_shared)
         target_link_libraries(${example_name} PRIVATE arts_shared)
     elseif(TARGET arts_static)
         target_link_libraries(${example_name} PRIVATE arts_static)
     endif()
+
+    # Link with runtime libraries
+    target_link_libraries(${example_name} PRIVATE Threads::Threads ${RT_LIBRARY} ${M_LIBRARY} ${ANL_LIBRARY})
 endfunction()
 
 # Create CPU example executables
@@ -119,16 +96,7 @@ foreach(example ${CPU_EXAMPLES})
     add_cpu_example(${example})
 endforeach()
 
-# Create CPU graph example executables
-foreach(example ${CPU_GRAPH_EXAMPLES})
-    add_cpu_graph_example(${example})
-endforeach()
-
-# graph_search also depends on arts_array_db
-target_include_directories(graph_search PRIVATE ${ARTS_ARRAY_DB_INCLUDE_DIR})
-target_link_libraries(graph_search PRIVATE arts_array_db)
-
-# Create C++ CPU graph example executables
-foreach(example ${CPU_CXX_GRAPH_EXAMPLES})
-    add_cpu_cxx_graph_example(${example})
+# Create C++ CPU example executables
+foreach(example ${CPU_CXX_EXAMPLES})
+    add_cpu_cxx_example(${example})
 endforeach()

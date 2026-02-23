@@ -101,12 +101,20 @@ set(TEST_PROGRAMS
     multinode_edt
     multinode_epoch
     multinode_event
-)
-
-# Programs that require arts_graph library
-set(GRAPH_TEST_PROGRAMS
+    # --- Graph tests ---
     csr
     distribution
+    # --- Array DB tests ---
+    array_db
+    array_db_advanced
+    array_db_for_each
+    array_db_with_guid
+    local_array_db
+    for_each
+    termination_detection_array_db
+    put_array_db_epoch
+    put_array_db_epoch_direct
+    gather_array_db_epoch
 )
 
 # Function to create a test executable
@@ -135,81 +143,9 @@ function(add_arts_test test_name)
     endif()
 endfunction()
 
-# Create standard test executables
+# Create test executables
 foreach(test_program ${TEST_PROGRAMS})
     add_arts_test(${test_program})
-endforeach()
-
-# Function to create a test executable that uses arts_graph
-function(add_arts_graph_test test_name)
-    add_executable(${test_name} ${test_name}.c)
-
-    # Set include directories
-    target_include_directories(${test_name} PRIVATE ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR} ${ARTS_BUILD_INTERNAL_INCLUDE_DIR} ${ARTS_GRAPH_INCLUDE_DIR})
-
-    set_property(TARGET ${test_name} PROPERTY POSITION_INDEPENDENT_CODE OFF)
-    target_compile_options(${test_name} PRIVATE -fno-pie -fno-PIE)
-    target_link_options(${test_name} PRIVATE -no-pie -fno-pie -fno-PIE)
-
-    # Link with arts_graph and runtime libraries
-    target_link_libraries(${test_name} PRIVATE arts_graph Threads::Threads ${RT_LIBRARY} ${M_LIBRARY} ${ANL_LIBRARY})
-
-    # Use the appropriate ARTS library based on availability
-    if(TARGET arts_shared)
-        target_link_libraries(${test_name} PRIVATE arts_shared)
-    elseif(TARGET arts_static)
-        target_link_libraries(${test_name} PRIVATE arts_static)
-    else()
-        message(FATAL_ERROR "No ARTS library target found")
-    endif()
-endfunction()
-
-# Create graph test executables
-foreach(test_program ${GRAPH_TEST_PROGRAMS})
-    add_arts_graph_test(${test_program})
-endforeach()
-
-# Programs that require arts_array_db library
-set(ARRAY_DB_TEST_PROGRAMS
-    array_db
-    array_db_advanced
-    array_db_for_each
-    array_db_with_guid
-    local_array_db
-    for_each
-    termination_detection_array_db
-    put_array_db_epoch
-    put_array_db_epoch_direct
-    gather_array_db_epoch
-)
-
-# Function to create a test executable that uses arts_array_db
-function(add_arts_array_db_test test_name)
-    add_executable(${test_name} ${test_name}.c)
-
-    # Set include directories
-    target_include_directories(${test_name} PRIVATE ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR} ${ARTS_BUILD_INTERNAL_INCLUDE_DIR} ${ARTS_ARRAY_DB_INCLUDE_DIR})
-
-    set_property(TARGET ${test_name} PROPERTY POSITION_INDEPENDENT_CODE OFF)
-    target_compile_options(${test_name} PRIVATE -fno-pie -fno-PIE)
-    target_link_options(${test_name} PRIVATE -no-pie -fno-pie -fno-PIE)
-
-    # Link with arts_array_db and runtime libraries
-    target_link_libraries(${test_name} PRIVATE arts_array_db Threads::Threads ${RT_LIBRARY} ${M_LIBRARY} ${ANL_LIBRARY})
-
-    # Use the appropriate ARTS library based on availability
-    if(TARGET arts_shared)
-        target_link_libraries(${test_name} PRIVATE arts_shared)
-    elseif(TARGET arts_static)
-        target_link_libraries(${test_name} PRIVATE arts_static)
-    else()
-        message(FATAL_ERROR "No ARTS library target found")
-    endif()
-endfunction()
-
-# Create array_db test executables
-foreach(test_program ${ARRAY_DB_TEST_PROGRAMS})
-    add_arts_array_db_test(${test_program})
 endforeach()
 
 # CUDA test programs (only built if CUDA is available)
