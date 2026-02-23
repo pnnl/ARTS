@@ -77,15 +77,15 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // This is the node we are going to pin to
   node = strtol(argv[1], NULL, 10);
   // Allocate some DB to test arts_db_create_with_guid
-  some_db_guid = arts_guid_reserve(ARTS_DB_LOCAL, node);
+  some_db_guid = arts_guid_reserve(ARTS_DB, node);
 
   unsigned int node_id = arts_get_current_node();
   if (node_id == node) {
     int *ptr = NULL;
     // Set pin to true to pin to node given by command line
     // It is pinned to the node creating the DB
-    arts_guid_t db_guid = arts_guid_reserve(ARTS_DB_LOCAL, 0);
-    ptr = (int *)arts_db_create_with_guid(db_guid, sizeof(unsigned int), NULL);
+    arts_guid_t db_guid = arts_guid_reserve(ARTS_DB, 0);
+    ptr = (int *)arts_db_create_with_guid(db_guid, sizeof(unsigned int), ARTS_DB_LOCAL, NULL, NULL);
     *ptr = 1234;
 
     // EDT is going to run on node given by command line
@@ -99,7 +99,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
     // This is the delayed DB
     int *ptr2 = (int *)arts_db_create_with_guid(some_db_guid,
-                                                sizeof(unsigned int), NULL);
+                                                sizeof(unsigned int), ARTS_DB_LOCAL, NULL, NULL);
     *ptr2 = 9876;
   }
 }

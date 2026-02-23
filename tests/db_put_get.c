@@ -124,7 +124,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Create a DB and fill with known data.
   arts_guid_t db_guid = arts_guid_reserve(ARTS_DB, 0);
   unsigned int *db_data =
-      (unsigned int *)arts_db_create_with_guid(db_guid, DB_SIZE, NULL);
+      (unsigned int *)arts_db_create_with_guid(db_guid, DB_SIZE, ARTS_DB_DEFAULT, NULL, NULL);
   for (unsigned int i = 0; i < DB_SIZE / sizeof(unsigned int); i++) {
     db_data[i] = i * 7;
   }
@@ -148,7 +148,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Test 3: arts_put_in_db_epoch.
   arts_guid_t db2_guid = arts_guid_reserve(ARTS_DB, 0);
   unsigned int *db2 =
-      (unsigned int *)arts_db_create_with_guid(db2_guid, DB_SIZE, NULL);
+      (unsigned int *)arts_db_create_with_guid(db2_guid, DB_SIZE, ARTS_DB_DEFAULT, NULL, NULL);
   memset(db2, 0, DB_SIZE);
   arts_db_release(db2_guid);
 

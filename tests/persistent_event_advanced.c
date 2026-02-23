@@ -38,15 +38,15 @@
 ******************************************************************************/
 
 /// @file persistent_event_advanced.c
-/// @brief Tests advanced persistent event features:
-///        arts_persistent_event_satisfy,
-///        arts_add_dependence_to_persistent_event_with_byte_offset,
-///        arts_add_dependence_to_persistent_event_with_mode_and_diff.
+/// @brief Tests advanced channel event features:
+///        arts_event_satisfy_slot (CHANNEL path),
+///        arts_event_add_dependence_with_byte_offset,
+///        arts_event_add_dependence_with_mode.
 
 #include "arts.h"
 #include <string.h>
 
-/// Test 1: arts_persistent_event_satisfy with explicit action.
+/// Test 1: arts_event_satisfy_slot on a CHANNEL event.
 void pe_satisfy_check(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                       arts_edt_dep_t depv[]) {
   (void)paramc;
@@ -55,14 +55,14 @@ void pe_satisfy_check(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   int *data = (int *)depv[0].ptr;
   bool ok = (data != NULL && data[0] == 111);
   if (ok) {
-    arts_printf("  PASS: persistent_event_satisfy delivered data\n");
+    arts_printf("  PASS: channel event satisfy delivered data\n");
   } else {
-    arts_printf("  FAIL: persistent_event_satisfy\n");
+    arts_printf("  FAIL: channel event satisfy\n");
   }
 }
 
-/// Test 2: arts_add_dependence_to_persistent_event_with_byte_offset.
-/// DB = [int a, int b, int c]. Offset=sizeof(int), len=sizeof(int) → b.
+/// Test 2: arts_event_add_dependence_with_byte_offset.
+/// DB = [int a, int b, int c]. Offset=sizeof(int), len=sizeof(int) -> b.
 void pe_byte_offset_check(uint32_t paramc, const uint64_t *paramv,
                           uint32_t depc, arts_edt_dep_t depv[]) {
   (void)paramc;
@@ -72,15 +72,14 @@ void pe_byte_offset_check(uint32_t paramc, const uint64_t *paramv,
   bool ok = (slice != NULL && slice[0] == 200);
   bool guid_ok = (depv[0].guid == expected_guid);
   if (ok && guid_ok) {
-    arts_printf("  PASS: persistent_event byte_offset slice correct\n");
+    arts_printf("  PASS: channel event byte_offset slice correct\n");
   } else {
-    arts_printf(
-        "  FAIL: persistent_event byte_offset (data_ok=%d, guid_ok=%d)\n", ok,
-        guid_ok);
+    arts_printf("  FAIL: channel event byte_offset (data_ok=%d, guid_ok=%d)\n",
+                ok, guid_ok);
   }
 }
 
-/// Test 3: arts_add_dependence_to_persistent_event_with_mode_and_diff.
+/// Test 3: arts_event_add_dependence_with_mode.
 void pe_mode_diff_check(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                         arts_edt_dep_t depv[]) {
   (void)paramc;
@@ -89,14 +88,14 @@ void pe_mode_diff_check(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   int *data = (int *)depv[0].ptr;
   bool ok = (data != NULL && data[0] == 999);
   if (ok) {
-    arts_printf("  PASS: persistent_event_with_mode_and_diff OK\n");
+    arts_printf("  PASS: channel event with_mode OK\n");
   } else {
-    arts_printf("  FAIL: persistent_event_with_mode_and_diff\n");
+    arts_printf("  FAIL: channel event with_mode\n");
   }
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                   arts_edt_dep_t depv[]) {
+              arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
@@ -106,48 +105,47 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
 
-  // Test 1: arts_persistent_event_satisfy.
+  // Test 1: arts_event_satisfy_slot on CHANNEL.
   void *p1 = NULL;
-  arts_guid_t db1 = arts_db_create(&p1, sizeof(int), NULL);
+  arts_guid_t db1 = arts_db_create(&p1, sizeof(int), ARTS_DB_DEFAULT, NULL);
   ((int *)p1)[0] = 111;
   arts_db_release(db1);
 
-  arts_guid_t pe1 = arts_persistent_event_create(0, 1, db1);
+  arts_guid_t ch1 = arts_event_create(0, ARTS_EVENT_CHANNEL, 0, db1);
   arts_guid_t e1 = arts_edt_create_with_epoch(
       pe_satisfy_check, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_add_dependence_to_persistent_event(pe1, e1, 0);
-  arts_persistent_event_satisfy(pe1, ARTS_EVENT_LATCH_DECR_SLOT, true);
+  arts_add_dependence(ch1, e1, 0);
+  arts_event_satisfy_slot(ch1, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
 
-  // Test 2: byte-offset dependence from persistent event.
+  // Test 2: byte-offset dependence from channel event.
   void *p2 = NULL;
-  arts_guid_t db2 = arts_db_create(&p2, 3 * sizeof(int), NULL);
+  arts_guid_t db2 = arts_db_create(&p2, 3 * sizeof(int), ARTS_DB_DEFAULT, NULL);
   int *d2 = (int *)p2;
   d2[0] = 100;
   d2[1] = 200;
   d2[2] = 300;
   arts_db_release(db2);
 
-  arts_guid_t pe2 = arts_persistent_event_create(0, 1, db2);
+  arts_guid_t ch2 = arts_event_create(0, ARTS_EVENT_CHANNEL, 0, db2);
   uint64_t guid_param = (uint64_t)db2;
   arts_guid_t e2 =
       arts_edt_create_with_epoch(pe_byte_offset_check, 1, &guid_param, 1, epoch,
                                  &(arts_hint_t){.route = 0});
-  arts_add_dependence_to_persistent_event_with_byte_offset(
-      pe2, e2, 0, DB_MODE_RO, sizeof(int), sizeof(int));
-  arts_persistent_event_satisfy(pe2, ARTS_EVENT_LATCH_DECR_SLOT, true);
+  arts_event_add_dependence_with_byte_offset(ch2, e2, 0, DB_MODE_RO,
+                                             sizeof(int), sizeof(int));
+  arts_event_satisfy_slot(ch2, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
 
-  // Test 3: mode_and_diff.
+  // Test 3: mode dependence.
   void *p3 = NULL;
-  arts_guid_t db3 = arts_db_create(&p3, sizeof(int), NULL);
+  arts_guid_t db3 = arts_db_create(&p3, sizeof(int), ARTS_DB_DEFAULT, NULL);
   ((int *)p3)[0] = 999;
   arts_db_release(db3);
 
-  arts_guid_t pe3 = arts_persistent_event_create(0, 1, db3);
+  arts_guid_t ch3 = arts_event_create(0, ARTS_EVENT_CHANNEL, 0, db3);
   arts_guid_t e3 = arts_edt_create_with_epoch(
       pe_mode_diff_check, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_add_dependence_to_persistent_event_with_mode_and_diff(pe3, e3, 0,
-                                                             DB_MODE_RO);
-  arts_persistent_event_satisfy(pe3, ARTS_EVENT_LATCH_DECR_SLOT, true);
+  arts_event_add_dependence_with_mode(ch3, e3, 0, DB_MODE_RO);
+  arts_event_satisfy_slot(ch3, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
 
   arts_wait_on_handle(epoch);
   arts_shutdown();

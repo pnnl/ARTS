@@ -90,7 +90,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Test 1: arts_db_destroy.
   void *p1 = NULL;
-  arts_guid_t db1 = arts_db_create(&p1, 64, NULL);
+  arts_guid_t db1 = arts_db_create(&p1, 64, ARTS_DB_DEFAULT, NULL);
   arts_db_release(db1);
   arts_db_destroy(db1);
   arts_edt_create_with_epoch(after_destroy, 0, NULL, 0, epoch,
@@ -98,7 +98,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Test 2: arts_db_destroy_safe (local, remote=false).
   void *p2 = NULL;
-  arts_guid_t db2 = arts_db_create(&p2, 64, NULL);
+  arts_guid_t db2 = arts_db_create(&p2, 64, ARTS_DB_DEFAULT, NULL);
   arts_db_release(db2);
   arts_db_destroy_safe(db2, false);
   arts_edt_create_with_epoch(after_destroy_safe, 0, NULL, 0, epoch,
@@ -106,7 +106,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Test 3: arts_db_destroy_safe (local, remote=true).
   void *p2b = NULL;
-  arts_guid_t db2b = arts_db_create(&p2b, 64, NULL);
+  arts_guid_t db2b = arts_db_create(&p2b, 64, ARTS_DB_DEFAULT, NULL);
   arts_db_release(db2b);
   arts_db_destroy_safe(db2b, true);
   arts_edt_create_with_epoch(after_destroy_safe, 0, NULL, 0, epoch,
@@ -114,7 +114,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Test 4: Create new DB after destroying old one.
   void *p3 = NULL;
-  arts_guid_t db3 = arts_db_create(&p3, sizeof(int), NULL);
+  arts_guid_t db3 = arts_db_create(&p3, sizeof(int), ARTS_DB_DEFAULT, NULL);
   ((int *)p3)[0] = 777;
   arts_db_release(db3);
 
@@ -124,7 +124,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Test 5: Double destroy (should be no-op on second call, not crash).
   void *p5 = NULL;
-  arts_guid_t db5 = arts_db_create(&p5, 64, NULL);
+  arts_guid_t db5 = arts_db_create(&p5, 64, ARTS_DB_DEFAULT, NULL);
   arts_db_release(db5);
   arts_db_destroy(db5);
   arts_db_destroy(db5);  // Second destroy — route table returns NULL
@@ -132,7 +132,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Test 6: arts_db_destroy on ARTS_DB_LOCAL should warn (not crash).
   void *p6 = NULL;
-  arts_guid_t db6 = arts_db_local_create(&p6, 64, NULL);
+  arts_guid_t db6 = arts_db_create(&p6, 64, ARTS_DB_LOCAL, NULL);
   arts_db_release(db6);
   arts_db_destroy(db6);  // Should log warning and return
   arts_printf("  PASS: destroy on LOCAL DB warned without crash\n");

@@ -85,7 +85,7 @@ void fan_in_done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                   arts_edt_dep_t depv[]) {
+              arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
@@ -103,7 +103,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
 
   // Test 1: Event on node 0, satisfied from node 1.
-  arts_guid_t ev1 = arts_event_create(0, 1);
+  arts_guid_t ev1 = arts_event_create(0, ARTS_EVENT_LATCH, 1, NULL_GUID);
   arts_guid_t done1 = arts_edt_create_with_epoch(event_done, 0, NULL, 1, epoch,
                                                  &(arts_hint_t){.route = 0});
   arts_add_dependence(ev1, done1, 0);
@@ -113,7 +113,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                              &(arts_hint_t){.route = 1});
 
   // Test 2: Event with latch = total_nodes, each node satisfies once.
-  arts_guid_t ev2 = arts_event_create(0, total);
+  arts_guid_t ev2 = arts_event_create(0, ARTS_EVENT_LATCH, total, NULL_GUID);
   uint64_t total_param = (uint64_t)total;
   arts_guid_t done2 = arts_edt_create_with_epoch(
       fan_in_done, 1, &total_param, 1, epoch, &(arts_hint_t){.route = 0});

@@ -72,8 +72,8 @@ void creater(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   for (unsigned int i = 0; i < num_elements; i++) {
     data[i] = i;
   }
-  arts_db_create_with_guid_and_data(db_guid, data,
-                                    sizeof(unsigned int) * num_elements);
+  arts_db_create_with_guid(db_guid, sizeof(unsigned int) * num_elements,
+                           ARTS_DB_DEFAULT, data, NULL);
   free(data);
   arts_edt_create_with_guid(getter, edt_guid_fixed, 0, NULL,
                             block_size / stride);
@@ -103,12 +103,12 @@ void shut_down_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                   arts_edt_dep_t depv[]) {
+              arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;
   (void)depv;
   char **argv = (char **)paramv[1];
-  db_guid = arts_guid_reserve(ARTS_DB_LOCAL, 0);
+  db_guid = arts_guid_reserve(ARTS_DB, 0);
   shutdown_guid = arts_guid_reserve(ARTS_EDT, 0);
   edt_guid_fixed = arts_guid_reserve(ARTS_EDT, 0);
   num_elements = strtol(argv[1], NULL, 10);

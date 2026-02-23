@@ -46,7 +46,7 @@
 #include <stdlib.h>
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                   arts_edt_dep_t depv[]) {
+              arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
@@ -85,11 +85,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 
   // Test 4: Reserve GUIDs for multiple types, verify get_type.
-  arts_type_t types[] = {ARTS_DB, ARTS_DB_LOCAL, ARTS_EVENT, ARTS_EPOCH,
-                         ARTS_BUFFER};
-  const char *names[] = {"ARTS_DB", "ARTS_DB_LOCAL", "ARTS_EVENT", "ARTS_EPOCH",
-                         "ARTS_BUFFER"};
-  for (unsigned int i = 0; i < 5; i++) {
+  arts_type_t types[] = {ARTS_DB, ARTS_EVENT, ARTS_EPOCH, ARTS_BUFFER};
+  const char *names[] = {"ARTS_DB", "ARTS_EVENT", "ARTS_EPOCH", "ARTS_BUFFER"};
+  for (unsigned int i = 0; i < 4; i++) {
     arts_guid_t g = arts_guid_reserve(types[i], my_node);
     arts_type_t got = arts_guid_get_type(g);
     if (got != types[i]) {

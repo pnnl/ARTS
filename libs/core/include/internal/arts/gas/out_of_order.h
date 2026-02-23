@@ -48,7 +48,6 @@ extern "C" {
 enum arts_out_of_order_type {
   OO_SIGNAL_EDT,
   OO_EVENT_SATISFY_SLOT,
-  OO_PERSISTENT_EVENT_SATISFY_SLOT,
   OO_ADD_DEPENDENCE,
   OO_HANDLE_READY_EDT,
   OO_REMOTE_DB_SEND,
@@ -73,15 +72,10 @@ void arts_out_of_order_event_satisfy_slot(arts_guid_t wait_on,
                                           arts_guid_t event_guid,
                                           arts_guid_t data_guid, uint32_t slot,
                                           bool force);
-void arts_out_of_order_persistent_event_satisfy_slot(arts_guid_t wait_on,
-                                                     arts_guid_t event_guid,
-                                                     uint32_t slot, bool force);
 void arts_out_of_order_add_dependence(arts_guid_t source,
                                       arts_guid_t destination, uint32_t slot,
-                                      arts_db_access_mode_t mode, arts_guid_t wait_on);
-void arts_out_of_order_add_dependence_to_persistent_event(
-    arts_guid_t source, arts_guid_t destination, uint32_t slot,
-    arts_db_access_mode_t mode, arts_guid_t wait_on);
+                                      arts_db_access_mode_t mode,
+                                      arts_guid_t wait_on);
 void arts_out_of_order_handle_ready_edt(arts_guid_t trigger_guid,
                                         struct arts_edt_s *edt);
 void arts_out_of_order_handle_remote_db_send(int rank, arts_guid_t db_guid,

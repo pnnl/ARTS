@@ -159,8 +159,8 @@ void visit_source(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     unsigned int db_size =
         sizeof(source_info_t);  // + neighbor_cnt * sizeof(vertex_t);
     void *ptr = NULL;
-    arts_guid_t db_guid = arts_guid_reserve(ARTS_DB_LOCAL, 0);
-    ptr = arts_db_create_with_guid(db_guid, db_size, NULL);
+    arts_guid_t db_guid = arts_guid_reserve(ARTS_DB, 0);
+    ptr = arts_db_create_with_guid(db_guid, db_size, ARTS_DB_LOCAL, NULL, NULL);
     source_info_t *src_info = (source_info_t *)ptr;
     src_info->source = source;
     src_info->step = n_steps;
@@ -339,8 +339,8 @@ void init_node(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   char **argv = (char **)paramv[1];
   unsigned int node_id = arts_get_current_node();
 
-  vertex_property_map_guid = arts_guid_reserve(ARTS_DB_LOCAL, 0);
-  vertex_id_map_guid = arts_guid_reserve(ARTS_DB_LOCAL, 0);
+  vertex_property_map_guid = arts_guid_reserve(ARTS_DB, 0);
+  vertex_id_map_guid = arts_guid_reserve(ARTS_DB, 0);
 
   distribution = init_block_distribution_with_cmd_line_args(argc, argv);
   load_graph_using_cmd_line_args(distribution, argc, argv);

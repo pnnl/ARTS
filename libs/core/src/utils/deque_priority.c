@@ -59,6 +59,7 @@
 #include "arts/utils/deque.h"
 
 #include "arts.h"
+#include "arts/arts_defs.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
 
@@ -66,7 +67,7 @@ struct circular_array_s {
   struct circular_array_s *next;
   unsigned int size;
   void **segment;
-} __attribute__((aligned(64)));
+} ARTS_ALIGNED(64);
 
 struct arts_deque_s {
   volatile uint64_t top;
@@ -86,7 +87,7 @@ struct arts_deque_s {
   unsigned int priority;
   struct arts_deque_s *volatile left;
   struct arts_deque_s *volatile right;
-} __attribute__((aligned(64)));
+} ARTS_ALIGNED(64);
 
 static inline struct circular_array_s *new_circular_array(unsigned int size) {
   struct circular_array_s *array = (struct circular_array_s *)arts_calloc_align(
@@ -123,8 +124,8 @@ static inline void put_circular_array(struct circular_array_s *array,
   array->segment[i % array->size] = object;
 }
 
-static inline struct circular_array_s *grow_circular_array(
-    struct circular_array_s *array, uint64_t b, uint64_t t) {
+static inline struct circular_array_s *
+grow_circular_array(struct circular_array_s *array, uint64_t b, uint64_t t) {
   struct circular_array_s *a = new_circular_array(array->size * 2);
   array->next = a;
   uint64_t i;

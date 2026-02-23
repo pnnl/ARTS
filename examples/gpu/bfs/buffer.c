@@ -76,10 +76,10 @@ void create_buffers_on_cpu(unsigned int size) {
 
   buffer_guids = (arts_guid_t *)arts_db_create_with_guid(
       master_buffer_guids[node_id],
-      sizeof(arts_guid_t) * num_nodes * NUMBUFFERS, NULL);
+      sizeof(arts_guid_t) * num_nodes * NUMBUFFERS, ARTS_DB_GPU, NULL, NULL);
   for (unsigned int i = 0; i < NUMBUFFERS; i++) {
     for (unsigned int j = 0; j < num_nodes; j++) {
-      buffer_guids[(i * num_nodes) + j] = arts_guid_reserve(ARTS_DB_GPU, j);
+      buffer_guids[(i * num_nodes) + j] = arts_guid_reserve(ARTS_DB, j);
     }
   }
 }
@@ -105,7 +105,7 @@ void create_buffer_db() {
 
     buffer_ptr[j] = (unsigned int **)arts_db_create_with_guid(
         buffer_guids[(j * num_nodes) + node_id],
-        sizeof(unsigned int *) * (num_gpus + 1), NULL);
+        sizeof(unsigned int *) * (num_gpus + 1), ARTS_DB_GPU, NULL, NULL);
     for (uint64_t i = 0; i < num_gpus; i++) {
       buffer_ptr[j][i] = gpu_buffer_ptr[j][i];
     }

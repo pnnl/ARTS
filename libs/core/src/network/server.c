@@ -58,9 +58,7 @@ extern bool server_end;
 uint64_t *rec_seq_numbers;
 #endif
 
-void arts_remote_shutdown() {
-  arts_ll_server_shutdown();
-}
+void arts_remote_shutdown() { arts_ll_server_shutdown(); }
 
 void arts_server_cleanup(void) {
   out_cleanup();
@@ -113,13 +111,6 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
     arts_event_satisfy_slot(pack->event, pack->db, pack->slot);
     break;
   }
-  case ARTS_REMOTE_PERSISTENT_EVENT_SATISFY_SLOT_MSG: {
-    struct arts_remote_persistent_event_satisfy_slot_packet_s *pack =
-        (struct arts_remote_persistent_event_satisfy_slot_packet_s *)(packet);
-
-    arts_persistent_event_satisfy(pack->event, pack->action, pack->lock);
-    break;
-  }
   case ARTS_REMOTE_DB_INCREMENT_LATCH_MSG: {
     struct arts_remote_guid_only_packet_s *pack =
         (struct arts_remote_guid_only_packet_s *)(packet);
@@ -166,21 +157,21 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
     arts_add_dependence(pack->source, pack->destination, pack->slot);
     break;
   }
-  case ARTS_REMOTE_ADD_DEPENDENCE_TO_PERSISTENT_EVENT_MSG: {
-    ARTS_DEBUG("Persistent Dependence Received");
+  case ARTS_REMOTE_CHANNEL_ADD_DEPENDENCE_MSG: {
+    ARTS_DEBUG("Channel Event Dependence Received");
     struct arts_remote_add_dependence_packet_s *pack =
         (struct arts_remote_add_dependence_packet_s *)(packet);
-    arts_add_dependence_to_persistent_event_with_mode_and_diff(
-        pack->source, pack->destination, pack->slot, pack->mode);
+    arts_event_add_dependence_with_mode(pack->source, pack->destination,
+                                        pack->slot, pack->mode);
     break;
   }
-  case ARTS_REMOTE_ADD_DEPENDENCE_TO_PERSISTENT_EVENT_WITH_BYTE_OFFSET_MSG: {
-    ARTS_DEBUG("Persistent Dependence with ByteOffset Received");
+  case ARTS_REMOTE_CHANNEL_ADD_DEPENDENCE_WITH_BYTE_OFFSET_MSG: {
+    ARTS_DEBUG("Channel Event Dependence with ByteOffset Received");
     struct arts_remote_add_dependence_with_byte_offset_packet_s *pack =
         (struct arts_remote_add_dependence_with_byte_offset_packet_s *)(packet);
-    arts_add_dependence_to_persistent_event_with_byte_offset(
-        pack->source, pack->destination, pack->slot, pack->mode,
-        pack->byte_offset, pack->size);
+    arts_event_add_dependence_with_byte_offset(pack->source, pack->destination,
+                                               pack->slot, pack->mode,
+                                               pack->byte_offset, pack->size);
     break;
   }
   case ARTS_REMOTE_INVALIDATE_DB_MSG: {
@@ -248,11 +239,6 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
   case ARTS_REMOTE_EVENT_MOVE_MSG: {
     ARTS_DEBUG("Event Move Received");
     arts_remote_handle_event_move(packet);
-    break;
-  }
-  case ARTS_REMOTE_PERSISTENT_EVENT_MOVE_MSG: {
-    ARTS_DEBUG("Persistent Event Move Received");
-    arts_remote_handle_persistent_event_move(packet);
     break;
   }
   case ARTS_REMOTE_METRIC_UPDATE_MSG: {

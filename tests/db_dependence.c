@@ -38,7 +38,7 @@
 ******************************************************************************/
 
 /// @file db_dependence.c
-/// @brief Tests DB persistent-event dependences: arts_db_add_dependence,
+/// @brief Tests DB channel event dependences: arts_db_add_dependence,
 ///        arts_db_add_dependence_with_mode,
 ///        arts_db_add_dependence_with_mode_and_diff, arts_db_increment_latch,
 ///        arts_db_decrement_latch.
@@ -108,7 +108,7 @@ void check_db_dep_mode_diff(uint32_t paramc, const uint64_t *paramv,
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                   arts_edt_dep_t depv[]) {
+              arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
@@ -120,7 +120,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Test 1: arts_db_add_dependence.
   void *p1 = NULL;
-  arts_guid_t db1 = arts_db_create(&p1, sizeof(int), NULL);
+  arts_guid_t db1 = arts_db_create(&p1, sizeof(int), ARTS_DB_DEFAULT, NULL);
   ((int *)p1)[0] = 77;
   arts_db_release(db1);
 
@@ -130,7 +130,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Test 2: arts_db_add_dependence_with_mode.
   void *p2 = NULL;
-  arts_guid_t db2 = arts_db_create(&p2, sizeof(int), NULL);
+  arts_guid_t db2 = arts_db_create(&p2, sizeof(int), ARTS_DB_DEFAULT, NULL);
   ((int *)p2)[0] = 88;
   arts_db_release(db2);
 
@@ -140,7 +140,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Test 3: increment/decrement latch.
   void *p3 = NULL;
-  arts_guid_t db3 = arts_db_create(&p3, sizeof(int), NULL);
+  arts_guid_t db3 = arts_db_create(&p3, sizeof(int), ARTS_DB_DEFAULT, NULL);
   ((int *)p3)[0] = 55;
   arts_db_release(db3);
 
@@ -158,7 +158,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Test 4: arts_db_add_dependence_with_mode_and_diff.
   void *p4 = NULL;
-  arts_guid_t db4 = arts_db_create(&p4, sizeof(int), NULL);
+  arts_guid_t db4 = arts_db_create(&p4, sizeof(int), ARTS_DB_DEFAULT, NULL);
   ((int *)p4)[0] = 33;
   arts_db_release(db4);
 

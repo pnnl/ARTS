@@ -54,14 +54,12 @@ void arts_remote_add_dependence_with_hints(arts_guid_t source,
                                            arts_guid_t destination,
                                            uint32_t slot, unsigned int rank,
                                            arts_db_access_mode_t mode);
-void arts_remote_add_dependence_to_persistent_event(arts_guid_t source,
-                                                    arts_guid_t destination,
-                                                    uint32_t slot,
-                                                    unsigned int rank);
-void arts_remote_add_dependence_to_persistent_event_with_hints(
-    arts_guid_t source, arts_guid_t destination, uint32_t slot,
-    unsigned int rank, arts_db_access_mode_t mode);
-void arts_remote_add_dependence_to_persistent_event_with_byte_offset(
+void arts_remote_channel_add_dependence_with_mode(arts_guid_t source,
+                                                  arts_guid_t destination,
+                                                  uint32_t slot,
+                                                  unsigned int rank,
+                                                  arts_db_access_mode_t mode);
+void arts_remote_channel_add_dependence_with_byte_offset(
     arts_guid_t source, arts_guid_t destination, uint32_t slot,
     unsigned int rank, arts_db_access_mode_t mode, uint64_t byte_offset,
     uint64_t len);
@@ -88,13 +86,10 @@ void arts_remote_memory_move_no_free(unsigned int route, arts_guid_t guid,
 void arts_remote_handle_edt_move(void *ptr);
 void arts_remote_handle_db_move(void *ptr);
 void arts_remote_handle_event_move(void *ptr);
-void arts_remote_handle_persistent_event_move(void *ptr);
 void arts_remote_signal_edt(arts_guid_t edt, arts_guid_t db, uint32_t slot,
                             arts_db_access_mode_t mode);
 void arts_remote_event_satisfy_slot(arts_guid_t event_guid,
                                     arts_guid_t data_guid, uint32_t slot);
-void arts_remote_persistent_event_satisfy_slot(arts_guid_t event_guid,
-                                               uint32_t action, bool lock);
 void arts_remote_db_add_dependence(arts_guid_t db_src, arts_guid_t edt_dest,
                                    uint32_t edt_slot);
 void arts_remote_db_add_dependence_with_hints(arts_guid_t db_src,
@@ -176,9 +171,9 @@ void arts_remote_handle_db_rename(void *pack);
 
 // RTT-based time synchronization for precise epoch alignment
 // Worker initiates sync request, master responds, worker calculates offset
-void arts_remote_time_sync_request(void);  // Worker sends request to master
-void arts_remote_handle_time_sync_req(void *pack);   // Master handles request
-void arts_remote_handle_time_sync_resp(void *pack);  // Worker handles response
+void arts_remote_time_sync_request(void); // Worker sends request to master
+void arts_remote_handle_time_sync_req(void *pack);  // Master handles request
+void arts_remote_handle_time_sync_resp(void *pack); // Worker handles response
 
 #ifdef __cplusplus
 }

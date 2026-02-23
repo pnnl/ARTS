@@ -102,9 +102,9 @@ void lib_work(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   /* Proceed to test 1 */
   unsigned int *addr = NULL;
-  arts_guid_t db_guid = arts_guid_reserve(ARTS_DB_GPU, 0);
+  arts_guid_t db_guid = arts_guid_reserve(ARTS_DB, 0);
   addr = (unsigned int *)arts_db_create_with_guid(
-      db_guid, sizeof(unsigned int) * N_ELEMENTS, NULL);
+      db_guid, sizeof(unsigned int) * N_ELEMENTS, ARTS_DB_GPU, NULL, NULL);
   for (unsigned int i = 0; i < N_ELEMENTS; i++) {
     addr[i] = 0;
   }

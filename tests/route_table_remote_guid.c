@@ -70,7 +70,7 @@ void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   unsigned int node_id = (unsigned int)paramv[0];
   if (node_id) {
     unsigned int *ptr = (unsigned int *)arts_db_create_with_guid(
-        db_guid, sizeof(unsigned int), NULL);
+        db_guid, sizeof(unsigned int), ARTS_DB_DEFAULT, NULL, NULL);
     *ptr = 999;
     arts_signal_edt(edt_guid, 0, db_guid, DB_MODE_EW);
   }

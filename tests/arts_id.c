@@ -261,7 +261,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
         TEST_ARTS_ID_BASE + 100 + i;  // DB arts_id: 1100, 1101, ...
 
     db_guids[i] =
-        arts_db_create(&db_ptrs[i], matrix_size, &(arts_hint_t){.id = arts_id});
+        arts_db_create(&db_ptrs[i], matrix_size, ARTS_DB_DEFAULT, &(arts_hint_t){.id = arts_id});
 
     // Initialize matrix to zeros
     double *matrix = (double *)db_ptrs[i];

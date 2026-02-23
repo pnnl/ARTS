@@ -135,7 +135,7 @@ void find_intersection(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   unsigned int db_size = sizeof(per_vertex_scan_stat_t);
   void *ptr = NULL;
-  arts_guid_t db_guid = arts_db_create(&ptr, db_size, NULL);
+  arts_guid_t db_guid = arts_db_create(&ptr, db_size, ARTS_DB_DEFAULT, NULL);
   per_vertex_scan_stat_t *vertex_scan_stat = (per_vertex_scan_stat_t *)ptr;
   vertex_scan_stat->source = source;
   vertex_scan_stat->scan_stat = sum;
@@ -174,7 +174,7 @@ void visit_one_hop_neighbor_on_rank(uint32_t paramc, const uint64_t *paramv,
 
   unsigned int db_size = sizeof(per_vertex_scan_stat_t);
   void *ptr = NULL;
-  arts_guid_t db_guid = arts_db_create(&ptr, db_size, NULL);
+  arts_guid_t db_guid = arts_db_create(&ptr, db_size, ARTS_DB_DEFAULT, NULL);
   per_vertex_scan_stat_t *vertex_scan_stat = (per_vertex_scan_stat_t *)ptr;
   vertex_scan_stat->source = src_info->source;
   vertex_scan_stat->scan_stat = local_intersection.size();
@@ -206,7 +206,8 @@ void visit_source(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       unsigned int db_size =
           sizeof(source_info_t) + (sizeof(vertex_t) * neighbor_cnt);
       void *ptr = NULL;
-      arts_guid_t db_guid = arts_db_create(&ptr, db_size, NULL);
+      arts_guid_t db_guid =
+          arts_db_create(&ptr, db_size, ARTS_DB_DEFAULT, NULL);
       source_info_t *src_info = (source_info_t *)ptr;
       src_info->find_intersection_guid = find_intersection_guid;
       src_info->source = source;
@@ -223,7 +224,7 @@ void visit_source(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     /*signal maxreducer*/
     unsigned int db_size = sizeof(per_vertex_scan_stat_t);
     void *ptr = NULL;
-    arts_guid_t db_guid = arts_db_create(&ptr, db_size, NULL);
+    arts_guid_t db_guid = arts_db_create(&ptr, db_size, ARTS_DB_DEFAULT, NULL);
     per_vertex_scan_stat_t *vertex_scan_stat = (per_vertex_scan_stat_t *)ptr;
     vertex_scan_stat->source = source;
     vertex_scan_stat->scan_stat = 1;
@@ -248,8 +249,8 @@ extern "C" void init_node(uint32_t paramc, const uint64_t *paramv,
   max_reducer_guid = arts_guid_reserve(ARTS_EDT, 0);
 }
 
-extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
-                              uint32_t depc, arts_edt_dep_t depv[]) {
+extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                         arts_edt_dep_t depv[]) {
   (void)depc;
   (void)depv;
 

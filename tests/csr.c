@@ -45,7 +45,7 @@
 #include "arts/csr.h"
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                   arts_edt_dep_t depv[]) {
+              arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
@@ -71,9 +71,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Create a block distribution
   arts_block_dist_t *dist = init_block_distribution_block(8,  // global vertices
-                                                          11,  // global edges
-                                                          1,   // partitions
-                                                          ARTS_DB_LOCAL);
+                                                          11, // global edges
+                                                          1,  // partitions
+                                                          ARTS_DB);
 
   // Create a list of edges, use arts_edge_vector_t
   arts_edge_vector_t vec;
@@ -87,11 +87,11 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Create the CSR graph, graphGuid is used to allocate
   // row indices and column array
   csr_graph_t *graph = init_csr(0,
-                                8,     // number of "local" vertices
-                                11,    // number of "local" edges
-                                dist,  // distribution
-                                &vec,  // edges
-                                true,  /*are edges sorted ?*/
+                                8,    // number of "local" vertices
+                                11,   // number of "local" edges
+                                dist, // distribution
+                                &vec, // edges
+                                true, /*are edges sorted ?*/
                                 get_guid_for_partition_distr(dist, 0));
 
   // Edge list not needed after creating the CSR

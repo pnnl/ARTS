@@ -80,27 +80,21 @@ typedef intptr_t arts_guid_t;
  * @brief Runtime object type tag (stored in GUID bits 63–56).
  *
  * Identifies what kind of object a GUID refers to: EDT, event, datablock, etc.
- * For datablocks, the type selects the allocation and coherence strategy.
+ * All datablocks share the single @c ARTS_DB tag; the DB subtype is specified
+ * via @c arts_db_types_t at creation time.
  * Access modes (read/write) are separate — see @c arts_db_access_mode_t.
  */
 typedef enum {
-  ARTS_NULL = 0,         /**< Empty / untyped placeholder. */
-  ARTS_EDT,              /**< Event-Driven Task (CPU). */
-  ARTS_GPU_EDT,          /**< Event-Driven Task (GPU). */
-  ARTS_EVENT,            /**< Latch-based synchronization event. */
-  ARTS_PERSISTENT_EVENT, /**< Re-armable persistent event. */
-  ARTS_EPOCH,            /**< Termination-detection epoch. */
-  ARTS_CALLBACK,         /**< Inline event callback. */
-  ARTS_BUFFER,           /**< Node-local buffer accessible by GUID. */
+  ARTS_NULL = 0,     /**< Empty / untyped placeholder. */
+  ARTS_EDT = 1,      /**< Event-Driven Task (CPU). */
+  ARTS_GPU_EDT = 2,  /**< Event-Driven Task (GPU). */
+  ARTS_EVENT = 3,    /**< Latch-based synchronization event. */
+  ARTS_EPOCH = 5,    /**< Termination-detection epoch. */
+  ARTS_CALLBACK = 6, /**< Inline event callback. */
+  ARTS_BUFFER = 7,   /**< Node-local buffer accessible by GUID. */
+  ARTS_DB = 8,       /**< DataBlock (all subtypes share this tag). */
 
-  /* ── DataBlock types ──────────────────────────────────────────────────── */
-
-  ARTS_DB,       /**< Distributed DataBlock (CDAG-managed). */
-  ARTS_DB_LOCAL, /**< Node-resident DataBlock (no CDAG). */
-  ARTS_DB_GPU,   /**< GPU-pinned DataBlock (CDAG-managed). */
-  ARTS_DB_LC,    /**< Locality-class DataBlock (CPU-GPU coherence). */
-
-  ARTS_LAST_TYPE /**< Sentinel — first invalid type value. */
+  ARTS_LAST_TYPE = 9 /**< Sentinel — first invalid type value. */
 } arts_type_t;
 
 /**
@@ -120,6 +114,20 @@ typedef enum {
   DB_MODE_LC_NO_COPY, /**< LC without data copy (just allocate on GPU). */
   DB_MODE_MEMSET,     /**< GPU zero-initialization. */
 } arts_db_access_mode_t;
+
+/**
+ * @brief DataBlock subtype (stored in @c arts_db_s.db_type, NOT in the GUID).
+ *
+ * Specifies the storage and coherence class of a DataBlock.  All subtypes
+ * share the same @c ARTS_DB tag in the GUID; the subtype is carried inside
+ * the DB descriptor.
+ */
+typedef enum {
+  ARTS_DB_DEFAULT = 0, /**< Distributed, CDAG-managed (OCR spec DB). */
+  ARTS_DB_LOCAL,       /**< Node-pinned, no CDAG frontier. */
+  ARTS_DB_GPU,         /**< GPU-pinned, CDAG-managed. */
+  ARTS_DB_LC,          /**< Locality-class (CPU-GPU coherence). */
+} arts_db_types_t;
 
 /** @} */ /* end type_enum */
 
@@ -216,10 +224,32 @@ extern void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 typedef enum {
   ARTS_EVENT_LATCH_DECR_SLOT = 0, /**< Decrement the latch counter. */
   ARTS_EVENT_LATCH_INCR_SLOT = 1, /**< Increment the latch counter. */
-  ARTS_EVENT_UPDATE = 2           /**< Update data (persistent events only). */
+  ARTS_EVENT_UPDATE = 2           /**< Update data (channel events only). */
 } arts_latch_event_slot_t;
 
 /** @} */ /* end event_slots */
+
+/* ========================================================================= */
+/** @defgroup event_behavior Event Behavior Types
+ *  @{ */
+
+/** Event behavior types (OCR-compatible).
+ *
+ *  All four behaviors share the same @c ARTS_EVENT GUID type and the same
+ *  latch-counter mechanism.  The difference is in what happens after the
+ *  counter reaches zero (fire) and on re-satisfy attempts.
+ */
+typedef enum {
+  ARTS_EVENT_LATCH = 0, /**< N-counter, auto-destroy on fire (OCR LATCH_T). */
+  ARTS_EVENT_ONCE,      /**< latch=1 shorthand, auto-destroy (OCR ONCE_T). */
+  ARTS_EVENT_STICKY,  /**< latch=1, persist, error on re-satisfy (OCR STICKY_T).
+                       */
+  ARTS_EVENT_IDEM,    /**< latch=1, persist, ignore re-satisfy (OCR IDEM_T). */
+  ARTS_EVENT_COUNTED, /**< N-counter, auto-destroy, no INCR (OCR-Vx). */
+  ARTS_EVENT_CHANNEL, /**< Re-armable, version-based, DB-coupled (OCR-Vx). */
+} arts_event_types_t;
+
+/** @} */ /* end event_types */
 
 /* ========================================================================= */
 
@@ -617,28 +647,100 @@ void *arts_block_for_buffer(arts_guid_t buffer_guid);
  *  @{ */
 
 /**
- * @brief Create a latch event on node @p route.
+ * @brief Create an event on node @p route.
  *
- * A latch event maintains a counter that can be incremented/decremented via
- * arts_event_satisfy_slot().  When it reaches zero the event fires,
- * broadcasting its data to all registered dependents.
+ * The @p type parameter selects the event behavior:
  *
- * @param route       Target node rank.
- * @param latch_count Initial counter value.
+ * - @c ARTS_EVENT_LATCH — N-counter, auto-destroy on fire.
+ * - @c ARTS_EVENT_ONCE — latch=1, auto-destroy on fire.
+ * - @c ARTS_EVENT_STICKY — latch=1, persists, error on re-satisfy.
+ * - @c ARTS_EVENT_IDEM — latch=1, persists, ignore re-satisfy.
+ * - @c ARTS_EVENT_COUNTED — N-counter, auto-destroy, rejects INCR_SLOT.
+ * - @c ARTS_EVENT_CHANNEL — re-armable, version-based, DB-coupled.
+ *
+ * @param route       Target node rank (or @c ARTS_HINT_CURRENT_NODE).
+ * @param type        Event behavior type.
+ * @param latch_count Initial counter value.  Used for LATCH and COUNTED.
+ *                    Ignored for ONCE/STICKY/IDEM (forced to 1) and
+ *                    CHANNEL (forced to 0).
+ * @param data_guid   DataBlock GUID for CHANNEL events.  Ignored for
+ *                    all other types.  Pass @c NULL_GUID when not needed.
  * @return GUID of the new event.
- * @see arts_event_satisfy_slot, arts_add_dependence
+ * @see arts_event_satisfy_slot, arts_add_dependence, arts_event_types_t
  */
-arts_guid_t arts_event_create(unsigned int route, unsigned int latch_count);
+arts_guid_t arts_event_create(unsigned int route, arts_event_types_t type,
+                              unsigned int latch_count, arts_guid_t data_guid);
 
 /**
- * @brief Create a latch event with a pre-reserved @p guid.
+ * @brief Create an event with a pre-reserved @p guid.
+ *
+ * The home node is determined by the rank encoded in @p guid.
+ * See arts_event_create() for @p type, @p latch_count, @p data_guid.
  *
  * @param guid        Pre-reserved GUID (determines home node).
- * @param latch_count Initial counter value.
- * @return The same @p guid, now associated with the event.
+ * @param type        Event behavior type.
+ * @param latch_count Initial counter value (see arts_event_create()).
+ * @param data_guid   DataBlock GUID for CHANNEL events (see
+ *                    arts_event_create()).
+ * @return The same @p guid on success, @c NULL_GUID on failure.
  */
 arts_guid_t arts_event_create_with_guid(arts_guid_t guid,
-                                        unsigned int latch_count);
+                                        arts_event_types_t type,
+                                        unsigned int latch_count,
+                                        arts_guid_t data_guid);
+
+/**
+ * @brief Increment the latch counter of a channel event.
+ *
+ * Convenience wrapper around @c arts_event_satisfy_slot with
+ * @c ARTS_EVENT_LATCH_INCR_SLOT.
+ *
+ * @param event_guid Channel event GUID.
+ */
+void arts_event_increment_latch(arts_guid_t event_guid);
+
+/**
+ * @brief Decrement the latch counter of a channel event.
+ *
+ * Convenience wrapper around @c arts_event_satisfy_slot with
+ * @c ARTS_EVENT_LATCH_DECR_SLOT.
+ *
+ * @param event_guid Channel event GUID.
+ */
+void arts_event_decrement_latch(arts_guid_t event_guid);
+
+/**
+ * @brief Add a mode-aware dependence to a channel event.
+ *
+ * Registers @p edt_dest at @p edt_slot on the latest version of the
+ * channel event, with the given access @p mode.
+ *
+ * @param event_source Channel event GUID.
+ * @param edt_dest     Destination EDT or event GUID.
+ * @param edt_slot     Dependency slot on the destination.
+ * @param mode         Access mode for signaling.
+ */
+void arts_event_add_dependence_with_mode(arts_guid_t event_source,
+                                         arts_guid_t edt_dest,
+                                         uint32_t edt_slot,
+                                         arts_db_access_mode_t mode);
+
+/**
+ * @brief Add a byte-slice dependence to a channel event.
+ *
+ * Like @c arts_event_add_dependence_with_mode but delivers a slice of the
+ * DataBlock starting at @p byte_offset for @p len bytes.
+ *
+ * @param event_source Channel event GUID.
+ * @param edt_dest     Destination EDT GUID.
+ * @param edt_slot     Dependency slot on the destination.
+ * @param mode         Access mode for signaling.
+ * @param byte_offset  Byte offset into the DataBlock.
+ * @param len          Slice size in bytes.
+ */
+void arts_event_add_dependence_with_byte_offset(
+    arts_guid_t event_source, arts_guid_t edt_dest, uint32_t edt_slot,
+    arts_db_access_mode_t mode, uint64_t byte_offset, uint64_t len);
 
 /**
  * @brief Check whether the event has already fired.
@@ -698,183 +800,45 @@ void arts_add_local_event_callback(arts_guid_t source,
 /** @} */ /* end event */
 
 /* ========================================================================= */
-/** @defgroup persistent_event Persistent Events
- *  Reusable synchronization points that can fire multiple times.
- *  @{ */
-
-/**
- * @brief Create a persistent event on node @p route.
- *
- * A persistent event stays alive after firing and can be triggered again.
- *
- * @param route       Target node rank.
- * @param latch_count Initial counter value.
- * @param data_guid   DataBlock GUID to deliver when the event fires.
- * @return GUID of the new persistent event.
- */
-arts_guid_t arts_persistent_event_create(unsigned int route,
-                                         unsigned int latch_count,
-                                         arts_guid_t data_guid);
-
-/**
- * @brief Satisfy a persistent event.
- *
- * @param event_guid Persistent event GUID.
- * @param action     Slot / action type.
- * @param lock       Whether to acquire the event lock.
- */
-void arts_persistent_event_satisfy(arts_guid_t event_guid, uint32_t action,
-                                   bool lock);
-
-/**
- * @brief Increment the latch count of a persistent event.
- *
- * Indicates that a new dependency has been added, allowing the event to fire
- * again after the counter drops back to zero.
- *
- * @param event_guid Persistent event GUID.
- */
-void arts_persistent_event_increment_latch(arts_guid_t event_guid);
-
-/**
- * @brief Decrement the latch count of a persistent event.
- *
- * If the counter reaches zero the event fires, signaling all dependents.
- *
- * @param event_guid Persistent event GUID.
- */
-void arts_persistent_event_decrement_latch(arts_guid_t event_guid);
-
-/**
- * @brief Add a dependence from a persistent event to an EDT slot.
- *
- * If the event's latch count is already zero the EDT is signaled immediately.
- *
- * @param event_source Source persistent event GUID.
- * @param edt_dest     Destination EDT GUID.
- * @param edt_slot     Dependency slot on the EDT.
- */
-void arts_add_dependence_to_persistent_event(arts_guid_t event_source,
-                                             arts_guid_t edt_dest,
-                                             uint32_t edt_slot);
-
-/**
- * @brief Add a dependence with a compiler-inferred acquire mode.
- *
- * @param event_source Source persistent event GUID.
- * @param edt_dest     Destination EDT GUID.
- * @param edt_slot     Dependency slot on the EDT.
- * @param mode Acquire mode override.
- */
-void arts_add_dependence_to_persistent_event_with_mode(
-    arts_guid_t event_source, arts_guid_t edt_dest, uint32_t edt_slot,
-    arts_db_access_mode_t mode);
-
-/**
- * @brief Add a dependence with acquire mode override and diff tracking.
- *
- * @param event_source Source persistent event GUID.
- * @param edt_dest     Destination EDT GUID.
- * @param edt_slot     Dependency slot on the EDT.
- * @param mode Acquire mode override.
- */
-void arts_add_dependence_to_persistent_event_with_mode_and_diff(
-    arts_guid_t event_source, arts_guid_t edt_dest, uint32_t edt_slot,
-    arts_db_access_mode_t mode);
-
-/**
- * @brief Add a dependence with byte offset for slice-based signaling.
- *
- * When @p byte_offset > 0 or @p len > 0, the persistent event will signal
- * with a pointer to (@c db_ptr + @p byte_offset) while preserving the DB GUID.
- *
- * @param event_source Source persistent event GUID.
- * @param edt_dest     Destination EDT GUID.
- * @param edt_slot     Dependency slot on the EDT.
- * @param mode Acquire mode.
- * @param byte_offset  Byte offset into the DataBlock.
- * @param len          Slice length in bytes.
- */
-void arts_add_dependence_to_persistent_event_with_byte_offset(
-    arts_guid_t event_source, arts_guid_t edt_dest, uint32_t edt_slot,
-    arts_db_access_mode_t mode, uint64_t byte_offset, uint64_t len);
-
-/** @} */ /* end persistent_event */
-
-/* ========================================================================= */
 /** @defgroup db DataBlocks (DB)
  *  Fixed-size data objects shared between tasks via the CDAG memory model.
  *  @{ */
 
 /**
- * @brief Create a local DataBlock of @p len bytes.
+ * @brief Create a DataBlock of @p len bytes.
  *
  * A DataBlock (DB) is the main memory abstraction used in ARTS to share data
  * between tasks.  Access mode is specified at dependency time via
  * arts_record_dep() or arts_signal_edt(), not at creation.
  *
- * @param[out] addr Receives a pointer to the DB payload.
- * @param      len  Length in bytes.
- * @param      hint Advisory metadata (profiling id). NULL = defaults.
+ * @param[out] addr    Receives a pointer to the DB payload.  Set to @c NULL
+ *                     when @c hint->route targets a remote node.
+ * @param      len     Length in bytes.
+ * @param      db_type Storage/coherence class (DEFAULT, LOCAL, GPU, LC).
+ * @param      hint    Advisory metadata.  @c hint->route selects the target
+ *                     node; NULL or ARTS_HINT_CURRENT_NODE = current node.
  * @return GUID of the created DB.
  * @see arts_signal_edt, arts_db_destroy
  */
-arts_guid_t arts_db_create(void **addr, uint64_t len, const arts_hint_t *hint);
+arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
+                           const arts_hint_t *hint);
 
 /**
  * @brief Create a DataBlock with a pre-reserved @p guid.
  *
- * The type and route are encoded in the GUID.
+ * The route is encoded in the GUID.  If @p data is non-NULL it is copied
+ * into the DB at creation time (avoids races with out-of-order EDTs).
  *
- * @param guid Pre-reserved GUID (must be local).
- * @param len  Length in bytes.
- * @param hint Advisory metadata (profiling id). NULL = defaults.
+ * @param guid    Pre-reserved GUID (must be local).
+ * @param len     Length in bytes.
+ * @param db_type Storage/coherence class (DEFAULT, LOCAL, GPU, LC).
+ * @param data    Optional source data to copy into the DB (NULL = uninit).
+ * @param hint    Advisory metadata (profiling id). NULL = defaults.
  * @return Pointer to the DB payload.
  */
 void *arts_db_create_with_guid(arts_guid_t guid, uint64_t len,
+                               arts_db_types_t db_type, const void *data,
                                const arts_hint_t *hint);
-
-/**
- * @brief Create a DataBlock with a pre-reserved @p guid and initial @p data.
- *
- * The data is copied into the DB at creation time.  This avoids a race
- * between user writes and out-of-order EDT acquisitions.
- *
- * @param guid Pre-reserved GUID (must be local).
- * @param data Source data to copy into the DB.
- * @param len  Length in bytes.
- * @return Pointer to the DB payload.
- */
-void *arts_db_create_with_guid_and_data(arts_guid_t guid, void *data,
-                                        uint64_t len);
-
-/**
- * @brief Create an uninitialized DataBlock on remote node @p route.
- *
- * @param route Target node rank.
- * @param len   Length in bytes.
- * @return GUID of the created DB.
- */
-arts_guid_t arts_db_create_remote(unsigned int route, uint64_t len);
-
-/**
- * @brief Create a node-pinned (LOCAL) DataBlock of @p len bytes.
- *
- * Unlike @c arts_db_create(), a LOCAL DataBlock has no CDAG frontier and
- * is only directly accessible on its home node.  Remote access is
- * possible via @c arts_put_in_db() / @c arts_get_from_db().
- *
- * @param[out] addr Receives a pointer to the DB payload.  Set to @c NULL
- *                  when the DB is created on a remote node.
- * @param      len  Length in bytes.
- * @param      hint Advisory metadata.  @c hint->route selects the target
- *                  node (@c ARTS_HINT_CURRENT_NODE or NULL = current node).
- *                  @c hint->id = optional profiling ID.
- * @return GUID of the created DB.
- * @see arts_db_create, arts_db_create_with_guid
- */
-arts_guid_t arts_db_local_create(void **addr, uint64_t len,
-                                 const arts_hint_t *hint);
 
 /**
  * @brief Release the auto-acquired WRITE access for a DataBlock.
@@ -993,24 +957,24 @@ bool arts_db_rename_with_guid(arts_guid_t new_guid, arts_guid_t old_guid);
 /** @brief Copy a DataBlock to a new GUID with a different type / access mode.
  */
 arts_guid_t arts_db_copy_to_new_type(arts_guid_t old_guid,
-                                     arts_type_t new_type);
+                                     arts_db_types_t new_type);
 
 /**
- * @brief Increment the latch on the persistent event associated with a DB.
+ * @brief Increment the latch on the channel event associated with a DB.
  *
  * @param guid DataBlock GUID.
  */
 void arts_db_increment_latch(arts_guid_t guid);
 
 /**
- * @brief Decrement the latch on the persistent event associated with a DB.
+ * @brief Decrement the latch on the channel event associated with a DB.
  *
  * @param guid DataBlock GUID.
  */
 void arts_db_decrement_latch(arts_guid_t guid);
 
 /**
- * @brief Add a dependence from a DB's persistent event to an EDT slot.
+ * @brief Add a dependence from a DB's channel event to an EDT slot.
  *
  * @param db_src   Source DataBlock GUID.
  * @param edt_dest Destination EDT GUID.

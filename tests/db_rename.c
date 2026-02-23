@@ -105,7 +105,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Test 1: arts_db_rename.
   void *ptr1 = NULL;
-  arts_guid_t db1 = arts_db_create(&ptr1, DB_SIZE, NULL);
+  arts_guid_t db1 = arts_db_create(&ptr1, DB_SIZE, ARTS_DB_DEFAULT, NULL);
   uint64_t *d1 = (uint64_t *)ptr1;
   for (unsigned int i = 0; i < DB_SIZE / sizeof(uint64_t); i++) {
     d1[i] = i + 42;
@@ -122,7 +122,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Test 2: arts_db_rename_with_guid.
   void *ptr2 = NULL;
-  arts_guid_t db2 = arts_db_create(&ptr2, DB_SIZE, NULL);
+  arts_guid_t db2 = arts_db_create(&ptr2, DB_SIZE, ARTS_DB_DEFAULT, NULL);
   uint64_t *d2 = (uint64_t *)ptr2;
   for (unsigned int i = 0; i < DB_SIZE / sizeof(uint64_t); i++) {
     d2[i] = (uint64_t)i * 5;

@@ -72,7 +72,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t range_start = arts_guid_reserve_range(ARTS_DB, MYSIZE, node_id);
   for (uint64_t i = 0; i < MYSIZE; i++) {
     arts_db_create_with_guid(arts_guid_from_index(range_start, i),
-                             1024 * sizeof(char), NULL);
+                             1024 * sizeof(char), ARTS_DB_DEFAULT, NULL, NULL);
   }
   print_rt("After DB Init");
 

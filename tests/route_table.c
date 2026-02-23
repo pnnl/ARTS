@@ -74,7 +74,7 @@ void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   for (unsigned int i = 0; i < arts_get_total_nodes(); i++) {
     if (arts_guid_is_local(guids[i])) {
       unsigned int *ptr = (unsigned int *)arts_db_create_with_guid(
-          guids[i], sizeof(unsigned int), NULL);
+          guids[i], sizeof(unsigned int), ARTS_DB_DEFAULT, NULL, NULL);
       *ptr = i;
       arts_printf("Created i: %u guid: %ld\n", i, guids[i]);
     }

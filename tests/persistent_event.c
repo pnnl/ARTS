@@ -38,12 +38,14 @@
 ******************************************************************************/
 
 /// @file persistent_event.c
-/// @brief Tests persistent event APIs: create, satisfy, increment/decrement
-///        latch, add_dependence_to_persistent_event variants.
+/// @brief Tests channel event APIs:
+///        arts_event_create (ARTS_EVENT_CHANNEL), arts_event_increment_latch,
+///        arts_event_decrement_latch, arts_add_dependence,
+///        arts_event_add_dependence_with_mode.
 
 #include "arts.h"
 
-/// EDT triggered by persistent event — counts invocations.
+/// EDT triggered by channel event — counts invocations.
 volatile unsigned int pe_fire_count = 0;
 
 void pe_dependent(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -56,16 +58,16 @@ void pe_dependent(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("  pe_dependent fired (count=%u)\n", count);
 }
 
-/// Verify persistent event fired dependent with correct data GUID.
+/// Verify channel event fired dependent with correct data GUID.
 void pe_data_check(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;
   arts_guid_t expected_db = (arts_guid_t)paramv[0];
   if (depv[0].guid == expected_db && depv[0].ptr != NULL) {
-    arts_printf("  PASS: persistent event delivered data GUID correctly\n");
+    arts_printf("  PASS: channel event delivered data GUID correctly\n");
   } else {
-    arts_printf("  FAIL: persistent event data mismatch (got guid=%lu)\n",
+    arts_printf("  FAIL: channel event data mismatch (got guid=%lu)\n",
                 (uint64_t)depv[0].guid);
   }
 }
@@ -79,7 +81,7 @@ void pe_final(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
   arts_printf("  pe_fire_count = %u\n", pe_fire_count);
   if (pe_fire_count >= 2) {
-    arts_printf("  PASS: persistent event fired multiple dependents\n");
+    arts_printf("  PASS: channel event fired multiple dependents\n");
   } else {
     arts_printf("  FAIL: expected >= 2 fires, got %u\n", pe_fire_count);
   }
@@ -87,7 +89,7 @@ void pe_final(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                   arts_edt_dep_t depv[]) {
+              arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
@@ -97,39 +99,40 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
 
-  // Create a DB to associate with the persistent event.
+  // Create a DB to associate with the channel event.
   void *db_ptr = NULL;
-  arts_guid_t db = arts_db_create(&db_ptr, 64, NULL);
+  arts_guid_t db = arts_db_create(&db_ptr, 64, ARTS_DB_DEFAULT, NULL);
   *(uint64_t *)db_ptr = 0xABCDULL;
   arts_db_release(db);
 
-  // Test 1: Basic persistent event with latch=1 and 2 dependents.
-  arts_guid_t pe1 = arts_persistent_event_create(0, 1, db);
+  // Test 1: Basic channel event with 2 dependents.
+  arts_guid_t ch1 = arts_event_create(0, ARTS_EVENT_CHANNEL, 0, db);
 
   arts_guid_t dep1 = arts_edt_create_with_epoch(pe_dependent, 0, NULL, 1, epoch,
                                                 &(arts_hint_t){.route = 0});
-  arts_add_dependence_to_persistent_event(pe1, dep1, 0);
+  arts_add_dependence(ch1, dep1, 0);
 
   arts_guid_t dep2 = arts_edt_create_with_epoch(pe_dependent, 0, NULL, 1, epoch,
                                                 &(arts_hint_t){.route = 0});
-  arts_add_dependence_to_persistent_event(pe1, dep2, 0);
+  arts_add_dependence(ch1, dep2, 0);
 
   // Fire: decrement latch to 0.
-  arts_persistent_event_decrement_latch(pe1);
+  arts_event_decrement_latch(ch1);
 
-  // Test 2: Persistent event with data GUID check.
-  arts_guid_t pe2 = arts_persistent_event_create(0, 1, db);
+  // Test 2: Channel event with data GUID check via mode.
+  arts_guid_t ch2 = arts_event_create(0, ARTS_EVENT_CHANNEL, 0, db);
   uint64_t db_param = (uint64_t)db;
   arts_guid_t dep3 = arts_edt_create_with_epoch(
       pe_data_check, 1, &db_param, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_add_dependence_to_persistent_event_with_mode(pe2, dep3, 0, DB_MODE_RO);
-  arts_persistent_event_decrement_latch(pe2);
+  arts_event_add_dependence_with_mode(ch2, dep3, 0, DB_MODE_RO);
+  arts_event_decrement_latch(ch2);
 
   // Test 3: Increment + decrement pattern.
-  arts_guid_t pe3 = arts_persistent_event_create(0, 1, NULL_GUID);
-  arts_persistent_event_increment_latch(pe3);  // latch = 2
-  arts_persistent_event_decrement_latch(pe3);  // latch = 1
-  arts_persistent_event_decrement_latch(pe3);  // latch = 0, fires
+  arts_guid_t ch3 = arts_event_create(0, ARTS_EVENT_CHANNEL, 0, NULL_GUID);
+  arts_event_increment_latch(ch3); // latch = 1 (from 0)
+  arts_event_increment_latch(ch3); // latch = 2
+  arts_event_decrement_latch(ch3); // latch = 1
+  arts_event_decrement_latch(ch3); // latch = 0, fires
   arts_printf("  PASS: increment/decrement latch did not crash\n");
 
   // Final EDT.

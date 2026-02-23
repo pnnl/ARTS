@@ -88,7 +88,7 @@ void check_remote_put_get(uint32_t paramc, const uint64_t *paramv,
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                   arts_edt_dep_t depv[]) {
+              arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
@@ -103,12 +103,14 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     return;
   }
 
-  unsigned int target = 1;  // Remote node.
+  unsigned int target = 1; // Remote node.
 
   arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
 
   // Test 1: arts_db_create_remote on node 1.
-  arts_guid_t remote_db = arts_db_create_remote(target, DATA_SIZE);
+  void *tmp;
+  arts_guid_t remote_db = arts_db_create(&tmp, DATA_SIZE, ARTS_DB_DEFAULT,
+                                         &(arts_hint_t){.route = target});
 
   uint64_t params[2];
   params[0] = (uint64_t)remote_db;

@@ -173,12 +173,6 @@ inline void arts_out_of_order_handler(void *handle_me, void *memory_ptr) {
     arts_event_satisfy_slot(event->event_guid, event->data_guid, event->slot);
     break;
   }
-  case OO_PERSISTENT_EVENT_SATISFY_SLOT: {
-    struct oo_event_satisfy_slot_s *event =
-        (struct oo_event_satisfy_slot_s *)handle_me;
-    arts_persistent_event_satisfy(event->event_guid, event->slot, true);
-    break;
-  }
   case OO_ADD_DEPENDENCE: {
     struct oo_add_dependence_s *dep = (struct oo_add_dependence_s *)handle_me;
     arts_add_dependence(dep->source, dep->destination, dep->slot);
@@ -314,28 +308,6 @@ void arts_out_of_order_event_satisfy_slot(arts_guid_t wait_on,
   }
 }
 
-void arts_out_of_order_persistent_event_satisfy_slot(arts_guid_t wait_on,
-                                                     arts_guid_t event_guid,
-                                                     uint32_t slot,
-                                                     bool force) {
-  struct oo_event_satisfy_slot_s *event =
-      (struct oo_event_satisfy_slot_s *)arts_malloc(
-          sizeof(struct oo_event_satisfy_slot_s));
-  event->type = OO_PERSISTENT_EVENT_SATISFY_SLOT;
-  event->event_guid = event_guid;
-  event->slot = slot;
-  bool res;
-  if (force) {
-    arts_route_table_add_oo_existing(wait_on, event, false);
-  } else {
-    bool res = arts_route_table_add_oo(wait_on, event, false);
-    if (!res) {
-      arts_persistent_event_satisfy(event_guid, slot, true);
-      arts_free(event);
-    }
-  }
-}
-
 void arts_out_of_order_add_dependence(arts_guid_t source,
                                       arts_guid_t destination, uint32_t slot,
                                       arts_db_access_mode_t mode,
@@ -350,23 +322,6 @@ void arts_out_of_order_add_dependence(arts_guid_t source,
   bool res = arts_route_table_add_oo(wait_on, dep, false);
   if (!res) {
     arts_add_dependence(source, destination, slot);
-    arts_free(dep);
-  }
-}
-
-void arts_out_of_order_add_dependence_to_persistent_event(
-    arts_guid_t source, arts_guid_t destination, uint32_t slot,
-    arts_db_access_mode_t mode, arts_guid_t wait_on) {
-  struct oo_add_dependence_s *dep = (struct oo_add_dependence_s *)arts_malloc(
-      sizeof(struct oo_add_dependence_s));
-  dep->type = OO_ADD_DEPENDENCE;
-  dep->source = source;
-  dep->destination = destination;
-  dep->slot = slot;
-  dep->mode = mode;
-  bool res = arts_route_table_add_oo(wait_on, dep, false);
-  if (!res) {
-    arts_add_dependence_to_persistent_event(source, destination, slot);
     arts_free(dep);
   }
 }

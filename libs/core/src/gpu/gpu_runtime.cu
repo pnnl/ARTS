@@ -133,25 +133,15 @@ void arts_cuda_mem_cpy_to_dev(void *dst, void *src, size_t count) {
   CHECKCORRECT(cudaMemcpy(dst, src, count, cudaMemcpyHostToDevice));
 }
 
-dim3 *arts_get_gpu_grid() {
-  return arts_local_grid;
-}
+dim3 *arts_get_gpu_grid() { return arts_local_grid; }
 
-dim3 *arts_get_gpu_block() {
-  return arts_local_block;
-}
+dim3 *arts_get_gpu_block() { return arts_local_block; }
 
-cudaStream_t *arts_get_gpu_stream() {
-  return arts_local_stream;
-}
+cudaStream_t *arts_get_gpu_stream() { return arts_local_stream; }
 
-int arts_get_gpu_id() {
-  return arts_local_gpu_id;
-}
+int arts_get_gpu_id() { return arts_local_gpu_id; }
 
-unsigned int arts_get_num_gpus() {
-  return arts_node_info.gpu;
-}
+unsigned int arts_get_num_gpus() { return arts_node_info.gpu; }
 
 arts_guid_t internal_edt_create_gpu(arts_edt_t func_ptr, arts_guid_t *guid,
                                     unsigned int route, uint32_t paramc,
@@ -162,7 +152,8 @@ arts_guid_t internal_edt_create_gpu(arts_edt_t func_ptr, arts_guid_t *guid,
                                     int gpu_to_run_on) {
   //    ARTSEDTCOUNTERTIMERSTART(EDT_CREATE_COUNTER);
   unsigned int dep_space = (has_depv) ? depc * sizeof(arts_edt_dep_t) : 0;
-  unsigned int mode_space = (has_depv) ? depc * sizeof(arts_db_access_mode_t) : 0;
+  unsigned int mode_space =
+      (has_depv) ? depc * sizeof(arts_db_access_mode_t) : 0;
   unsigned int edt_space = sizeof(arts_gpu_edt_t) +
                            (paramc * sizeof(uint64_t)) + dep_space + mode_space;
 
@@ -349,11 +340,8 @@ void arts_gpu_host_wrap_up(void *edt_packet, arts_guid_t to_signal,
         arts_event_satisfy_slot(to_signal, data_guid, slot);
       }
       if (mode ==
-          ARTS_BUFFER) {  // This is for us to be able to block in a host edt
+          ARTS_BUFFER) { // This is for us to be able to block in a host edt
         arts_set_buffer(to_signal, 0, 0);
-      }
-      if (mode == ARTS_PERSISTENT_EVENT) {
-        arts_persistent_event_satisfy(to_signal, slot, true);
       }
     }
   }
@@ -613,7 +601,7 @@ void internal_lc_sync_gpu(arts_guid_t acq_guid, struct arts_db_s *db) {
     struct arts_db_s *temp_space =
         (struct arts_db_s *)arts_malloc_align(size, 16);
 
-    gpu_gc_write_lock();  // Don't let the gc take our copies...
+    gpu_gc_write_lock(); // Don't let the gc take our copies...
     ARTS_DEBUG("FUNCTION: %u\n", arts_node_info.gpu_lc_sync);
     unsigned int rem_mask = gpu_lc_reduce(
         acq_guid, db, lc_sync_function_gpu[arts_node_info.gpu_lc_sync],
@@ -684,7 +672,7 @@ void internal_lc_sync_cpu(arts_guid_t acq_guid, struct arts_db_s *db) {
     unsigned int size = db->header.size;
     struct arts_db_s *temp_space =
         (struct arts_db_s *)arts_malloc_align(size, 16);
-    gpu_gc_write_lock();  // Don't let the gc take our copies...
+    gpu_gc_write_lock(); // Don't let the gc take our copies...
     for (unsigned int i = 0; i < arts_node_info.gpu; i++) {
       unsigned int gpu_version;
       unsigned int time_stamp;

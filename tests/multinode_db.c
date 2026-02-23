@@ -113,7 +113,7 @@ void check_round_robin(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                   arts_edt_dep_t depv[]) {
+              arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
@@ -131,7 +131,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
 
   // Test 1: Create DB on node 0, have node 1 write data, then read on node 0.
-  arts_guid_t db = arts_db_create_remote(0, 8 * sizeof(int));
+  void *db_ptr;
+  arts_guid_t db = arts_db_create(&db_ptr, 8 * sizeof(int), ARTS_DB_DEFAULT,
+                                  &(arts_hint_t){.route = 0});
   arts_guid_t reader = arts_edt_create_with_epoch(
       check_cross_get, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
   uint64_t params[2];

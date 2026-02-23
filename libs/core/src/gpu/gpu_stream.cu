@@ -80,13 +80,13 @@ typedef int (*locality_t)(void *edt);
 locality_t locality_scheme[] = {random, all_or_nothing, atleast_one,
                                 hash_on_db_zero, hash_largest};
 
-locality_t locality;  // Locality function ptr
+locality_t locality; // Locality function ptr
 
 typedef int (*fit_t)(uint64_t mask, uint64_t size, unsigned int total_threads);
 
 fit_t fit_scheme[] = {first_fit, best_fit, worst_fit, round_robin_fit};
 
-fit_t fit;  // Fit function ptr
+fit_t fit; // Fit function ptr
 
 ARTS_THREAD_LOCAL volatile unsigned int *new_edt_lock = 0;
 ARTS_THREAD_LOCAL arts_array_list_t *new_edts = NULL;
@@ -171,7 +171,7 @@ void arts_node_init_gpus() {
     arts_gpus[i].device = (int)i;
     ARTS_DEBUG("Setting %u\n", i);
     arts_cuda_set_device((int)i, false);
-    CHECKCORRECT(cudaStreamCreate(&arts_gpus[i].stream));  // Make it scalable
+    CHECKCORRECT(cudaStreamCreate(&arts_gpus[i].stream)); // Make it scalable
     arts_node_info.gpu_route_table[i] =
         arts_gpu_new_route_table(arts_node_info.gpu_route_table_entries,
                                  arts_node_info.gpu_route_table_size);
@@ -286,7 +286,8 @@ void arts_wrap_up(cudaStream_t stream, cudaError_t status, void *data) {
 
   for (unsigned int i = 0; i < depc; i++) {
     if (depv[i].ptr) {
-      if (arts_guid_get_type(depv[i].guid) == ARTS_DB_GPU) {
+      struct arts_db_s *db_hdr = (struct arts_db_s *)depv[i].ptr - 1;
+      if (db_hdr->db_type == ARTS_DB_GPU) {
         arts_gpu_invalidate_route_tables(depv[i].guid, gc->gpu_id);
       }
       // True says to mark it for deletion... Change this to false to further
@@ -395,33 +396,31 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
   // Allocate space for DB on GPU and Move Data
   for (unsigned int i = 0; i < depc; ++i) {
     if (depv[i].ptr) {
-      arts_type_t mode =
-          arts_guid_get_type(depv[i].guid);  // allocation type from GUID
+      struct arts_db_s *db = (struct arts_db_s *)depv[i].ptr - 1;
+      arts_db_types_t db_subtype = db->db_type;
       unsigned int gpu_version;
       unsigned int time_stamp;
       void *data_ptr = arts_gpu_route_table_lookup_db(
           depv[i].guid, arts_gpu->device, &gpu_version, &time_stamp);
-      struct arts_db_s *db = (struct arts_db_s *)depv[i].ptr - 1;
       uint64_t size = db->header.size;
-      uint64_t alloc_size = (mode == ARTS_DB_LC) ? (size * 2) : size;
+      uint64_t alloc_size = (db_subtype == ARTS_DB_LC) ? (size * 2) : size;
       if (!data_ptr) {
         bool successful_add = false;
         ARTS_DEBUG("WRAPPER SIZE: %lu\n", alloc_size);
         arts_item_wrapper_t *wrapper = arts_gpu_route_table_reserve_item_race(
             &successful_add, alloc_size, depv[i].guid, arts_gpu->device,
-            false);  //(mode == ARTS_DB_LC));
+            false); //(mode == ARTS_DB_LC));
 
-        if (successful_add)  // We won, so allocate and move data
+        if (successful_add) // We won, so allocate and move data
         {
           ARTS_DEBUG("Adding %lu %u id: %d mode: %s\n", depv[i].guid,
                      alloc_size, arts_gpu->device, db_mode_name[modes[i]]);
           data_ptr = arts_cuda_malloc(alloc_size);
           void *src = (void *)db;
-          if (mode == ARTS_DB_LC) {
+          if (db_subtype == ARTS_DB_LC) {
             src = make_lc_shadow_copy(db);
           }
-          if (modes[i] == DB_MODE_LC_NO_COPY ||
-              modes[i] == DB_MODE_MEMSET) {
+          if (modes[i] == DB_MODE_LC_NO_COPY || modes[i] == DB_MODE_MEMSET) {
             src = NULL;
           }
           push_data_to_stream(arts_gpu->device, data_ptr, src, size,
@@ -432,13 +431,13 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
           ARTS_DEBUG("Malloc[%d]: %p %p\n", arts_gpu->device, wrapper,
                      data_ptr);
           arts_atomic_add(&misses, 1U);
-        } else  // Someone beat us to creating the data... So we must free
+        } else // Someone beat us to creating the data... So we must free
         {
           while (
               !arts_atomic_fetch_add_u64((uint64_t *)&wrapper->realData, 0)) {
-          }  // Spin till the data memcpy is launched
+          } // Spin till the data memcpy is launched
           data_ptr = (void *)wrapper->realData;
-          if (mode == ARTS_DB_GPU && modes[i] == DB_MODE_MEMSET) {
+          if (db_subtype == ARTS_DB_GPU && modes[i] == DB_MODE_MEMSET) {
             push_data_to_stream(arts_gpu->device, data_ptr, NULL, size,
                                 arts_node_info.gpu_buff_on && !gpu_edt->lib);
           }
@@ -484,13 +483,13 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
 
   // Move data back
   for (unsigned int i = 0; i < depc; i++) {
-    arts_type_t mode = arts_guid_get_type(depv[i].guid);
-    if (depv[i].ptr && mode == ARTS_DB_GPU && modes[i] == DB_MODE_EW) {
-      struct arts_db_s *db = (struct arts_db_s *)depv[i].ptr - 1;
-      size_t size = (size_t)(db->header.size - sizeof(struct arts_db_s));
-      get_data_from_stream(arts_gpu->device, depv[i].ptr, host_depv[i].ptr,
-                           size, arts_node_info.gpu_buff_on && !gpu_edt->lib);
-      // CHECKCORRECT(cudaStreamSynchronize(arts_gpu->stream));
+    if (depv[i].ptr) {
+      struct arts_db_s *cb_db = (struct arts_db_s *)depv[i].ptr - 1;
+      if (cb_db->db_type == ARTS_DB_GPU && modes[i] == DB_MODE_EW) {
+        size_t size = (size_t)(cb_db->header.size - sizeof(struct arts_db_s));
+        get_data_from_stream(arts_gpu->device, depv[i].ptr, host_depv[i].ptr,
+                             size, arts_node_info.gpu_buff_on && !gpu_edt->lib);
+      }
     }
   }
 
@@ -524,11 +523,11 @@ void free_gpu_item(arts_route_item_t *item) {
     arts_cuda_free(host_gc_ptr->devClosure);
     ARTS_DEBUG("FREEING HOST PTR: %p\n", host_gc_ptr);
     arts_cuda_free_host(host_gc_ptr);
-  } else if (type == ARTS_DB_LC) {
+  } else if (type == ARTS_DB) {
     int valid_rank = -1;
     struct arts_db_s *db = (struct arts_db_s *)arts_route_table_lookup_db(
         item->key, &valid_rank, false);
-    if (db) {
+    if (db && db->db_type == ARTS_DB_LC) {
       unsigned int size = db->header.size;
       struct arts_db_s *temp_space =
           (struct arts_db_s *)arts_malloc_align(size, 16);
@@ -569,11 +568,9 @@ void free_gpu_item(arts_route_item_t *item) {
       arts_cuda_free((void *)wrapper->realData);
 
     } else {
-      ARTS_INFO("Trying to delete an LC but there is no DB to back up to\n");
+      // Non-LC DB (DEFAULT/GPU) or LC DB not found — just free GPU memory
+      arts_cuda_free((void *)wrapper->realData);
     }
-  } else if (type > ARTS_BUFFER && type < ARTS_LAST_TYPE) {
-    // DBs
-    arts_cuda_free((void *)wrapper->realData);
   }
 
   wrapper->realData = NULL;
@@ -704,7 +701,7 @@ uint64_t get_db_size_needed(uint32_t depc, arts_edt_dep_t *depv) {
     if (depv[i].ptr) {
       struct arts_db_s *db = (struct arts_db_s *)depv[i].ptr - 1;
       size += db->header.size;
-      if (arts_guid_get_type(depv[i].guid) == ARTS_DB_LC) {
+      if (db->db_type == ARTS_DB_LC) {
         size += db->header.size;
       }
     }
@@ -751,9 +748,9 @@ int all_or_nothing(void *edt_packet) {
 
   ARTS_DEBUG("Mask: %p\n", mask);
 
-  if (mask) {  // All DBs in GPU
+  if (mask) { // All DBs in GPU
     return fit(mask, size,
-               total_threads);  // No need to fit since all Dbs are in a GPU
+               total_threads); // No need to fit since all Dbs are in a GPU
   }
   return random(edt_packet);
 }
@@ -779,7 +776,7 @@ int atleast_one(void *edt_packet) {
 
   ARTS_DEBUG("Mask: %p\n", mask);
 
-  if (mask) {  // At least one DB in GPU
+  if (mask) { // At least one DB in GPU
     return fit(mask, size, total_threads);
   }
   return random(edt_packet);

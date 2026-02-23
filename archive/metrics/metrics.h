@@ -39,6 +39,7 @@
 #ifndef ARTSMETRICS_H
 #define ARTSMETRICS_H
 
+#include "arts/arts_defs.h"
 #include "arts/utils/array_list.h"
 
 #ifdef __cplusplus
@@ -211,7 +212,7 @@ struct arts_performance_unit_s {
   volatile uint64_t lastWindowTimeStamp;
   volatile uint64_t lastWindowMaxTotal;
   uint64_t (*timeMethod)(void);
-} __attribute__((aligned(64)));
+} ARTS_ALIGNED(64);
 
 typedef struct arts_performance_unit_s arts_performance_unit_t;
 

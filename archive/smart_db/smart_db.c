@@ -133,7 +133,7 @@ arts_smart_db_t *arts_smart_db_create(uint64_t size, arts_type_t type,
 
   // Create the underlying DataBlock
   void *data = NULL;
-  smart_db->db_guid = arts_db_create(&data, size, NULL);
+  smart_db->db_guid = arts_db_create(&data, size, ARTS_DB_DEFAULT, NULL);
   if (smart_db->db_guid == NULL_GUID) {
     arts_free(smart_db);
     return NULL;
@@ -193,7 +193,7 @@ arts_smart_db_t *arts_smart_db_create_with_guid(arts_guid_t guid, uint64_t size,
   smart_db->accessHistoryCount = 0;
 
   // Create the underlying DataBlock with the given GUID
-  void *data = arts_db_create_with_guid(guid, size, NULL);
+  void *data = arts_db_create_with_guid(guid, size, ARTS_DB_DEFAULT, NULL, NULL);
   if (!data) {
     arts_free(smart_db);
     return NULL;
@@ -404,7 +404,7 @@ void *arts_smart_db_get_data(arts_smart_db_t *smart_db) {
   // Update metrics for this access
   uint64_t start_time = arts_get_time_stamp();
   void *data =
-      arts_db_create_with_guid(smart_db->db_guid, smart_db->size, NULL);
+      arts_db_create_with_guid(smart_db->db_guid, smart_db->size, ARTS_DB_DEFAULT, NULL, NULL);
   uint64_t latency = arts_get_time_stamp() - start_time;
 
   if (data) {
@@ -425,7 +425,7 @@ void arts_smart_db_set_data(arts_smart_db_t *smart_db, void *data,
 
   // Get the current data pointer
   void *current_data =
-      arts_db_create_with_guid(smart_db->db_guid, smart_db->size, NULL);
+      arts_db_create_with_guid(smart_db->db_guid, smart_db->size, ARTS_DB_DEFAULT, NULL, NULL);
   if (!current_data) {
     return;
   }

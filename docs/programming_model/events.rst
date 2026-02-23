@@ -17,7 +17,8 @@ dependents.
 
 .. code-block:: c
 
-   arts_guid_t evt = arts_event_create(target_node, initial_latch_count);
+   arts_guid_t evt = arts_event_create(target_node, ARTS_EVENT_LATCH,
+                                       initial_latch_count, NULL_GUID);
 
    /* Register an EDT to fire when the event completes */
    arts_add_dependence(evt, edt_guid, slot);
@@ -27,8 +28,11 @@ dependents.
 
 .. note::
 
-   ``arts_event_create`` takes two parameters: the target node rank and
-   the initial latch count.
+   ``arts_event_create`` takes the target node rank, the event type
+   (``ARTS_EVENT_LATCH``, ``ARTS_EVENT_ONCE``, ``ARTS_EVENT_STICKY``,
+   ``ARTS_EVENT_IDEM``, ``ARTS_EVENT_COUNTED``, or ``ARTS_EVENT_CHANNEL``),
+   a latch count (used by LATCH and COUNTED), and a data GUID (used by
+   CHANNEL).  Unused parameters are silently ignored.
 
 Slot Types
 ~~~~~~~~~~
@@ -64,21 +68,22 @@ Instead of wiring an EDT, you can attach an inline callback:
    Callbacks execute on the signaling thread. Keep them short and
    avoid blocking operations.
 
-Persistent Events
------------------
+Channel Events
+--------------
 
-Persistent events are re-armable: they can fire multiple times, each
-time delivering updated data.
+Channel events are re-armable: they can fire multiple times, each
+time delivering updated data via a coupled DataBlock.
 
 .. code-block:: c
 
-   arts_guid_t pevt = arts_persistent_event_create();
+   arts_guid_t ch = arts_event_create(route, ARTS_EVENT_CHANNEL, 0, db_guid);
 
    /* Register a dependent — will be notified on every fire */
-   arts_add_dependence_to_persistent_event(pevt, edt_guid, slot);
+   arts_add_dependence(ch, edt_guid, slot);
 
-   /* Satisfy (fire) the persistent event with new data */
-   arts_persistent_event_satisfy(pevt, data_guid);
+   /* Increment and decrement the latch to control fire cycles */
+   arts_event_increment_latch(ch);
+   arts_event_decrement_latch(ch);
 
 Use cases include iterative algorithms (e.g., graph analytics) where
 data is updated in rounds and dependents need to be re-notified.

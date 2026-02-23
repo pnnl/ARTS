@@ -76,14 +76,14 @@ void fib_fork(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   } else {
     // Create two DB of type ARTS_DB_GPU
     unsigned int *x = NULL;
-    arts_guid_t x_guid = arts_guid_reserve(ARTS_DB_GPU, 0);
-    x = (unsigned int *)arts_db_create_with_guid(x_guid, sizeof(unsigned int),
+    arts_guid_t x_guid = arts_guid_reserve(ARTS_DB, 0);
+    x = (unsigned int *)arts_db_create_with_guid(x_guid, sizeof(unsigned int), ARTS_DB_GPU, NULL,
                                                  NULL);
     (*x) = (*res_ptr) - 1;
 
     unsigned int *y = NULL;
-    arts_guid_t y_guid = arts_guid_reserve(ARTS_DB_GPU, 0);
-    y = (unsigned int *)arts_db_create_with_guid(y_guid, sizeof(unsigned int),
+    arts_guid_t y_guid = arts_guid_reserve(ARTS_DB, 0);
+    y = (unsigned int *)arts_db_create_with_guid(y_guid, sizeof(unsigned int), ARTS_DB_GPU, NULL,
                                                  NULL);
     (*y) = (*res_ptr) - 2;
 
@@ -127,9 +127,9 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
   char **argv = (char **)paramv[1];
 
   unsigned int *res_ptr = NULL;
-  arts_guid_t res_guid = arts_guid_reserve(ARTS_DB_GPU, 0);
+  arts_guid_t res_guid = arts_guid_reserve(ARTS_DB, 0);
   res_ptr = (unsigned int *)arts_db_create_with_guid(
-      res_guid, sizeof(unsigned int), NULL);
+      res_guid, sizeof(unsigned int), ARTS_DB_GPU, NULL, NULL);
   if (argc < 2) {
     arts_printf("Format: ./fibGpu NUMBER\n");
     arts_shutdown();

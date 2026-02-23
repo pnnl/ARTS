@@ -58,7 +58,8 @@ extern ARTS_THREAD_LOCAL struct arts_edt_s *current_edt;
 
 bool arts_event_create_internal(arts_guid_t *guid, unsigned int route,
                                 unsigned int dependent_count,
-                                unsigned int latch_count, bool destroy_on_fire,
+                                unsigned int latch_count,
+                                arts_event_types_t event_type,
                                 arts_guid_t event_data) {
   unsigned int event_size = sizeof(struct arts_event_s) +
                             (sizeof(struct arts_dependent_s) * dependent_count);
@@ -71,7 +72,9 @@ bool arts_event_create_internal(arts_guid_t *guid, unsigned int route,
     event->dependent_count = 0;
     event->dependent.size = dependent_count;
     event->latch_count = latch_count;
-    event->destroy_on_fire = (destroy_on_fire) ? dependent_count : -1;
+    event->type = event_type;
+    event->lock = 0;
+    event->versions = NULL;
     event->data = event_data;
 
     if (route == arts_global_rank_id) {
@@ -103,31 +106,406 @@ bool arts_event_create_internal(arts_guid_t *guid, unsigned int route,
   return false;
 }
 
-arts_guid_t arts_event_create(unsigned int route, unsigned int latch_count) {
+arts_guid_t arts_event_create(unsigned int route, arts_event_types_t type,
+                              unsigned int latch_count, arts_guid_t data_guid) {
   TIME_EVENT_CREATE_START();
   INCREMENT_NUM_EVENT_CREATE_BY(1);
   if (route == ARTS_HINT_CURRENT_NODE) {
     route = arts_global_rank_id;
   }
   arts_guid_t guid = NULL_GUID;
-  arts_event_create_internal(&guid, route, INITIAL_DEPENDENT_SIZE, latch_count,
-                             false, NULL_GUID);
+  switch (type) {
+  case ARTS_EVENT_ONCE:
+  case ARTS_EVENT_STICKY:
+  case ARTS_EVENT_IDEM:
+    arts_event_create_internal(&guid, route, INITIAL_DEPENDENT_SIZE, 1, type,
+                               NULL_GUID);
+    break;
+  case ARTS_EVENT_CHANNEL:
+    arts_event_create_channel_internal(&guid, route, data_guid);
+    break;
+  default: /* LATCH, COUNTED */
+    arts_event_create_internal(&guid, route, INITIAL_DEPENDENT_SIZE,
+                               latch_count, type, NULL_GUID);
+    break;
+  }
   TIME_EVENT_CREATE_STOP();
   return guid;
 }
 
 arts_guid_t arts_event_create_with_guid(arts_guid_t guid,
-                                        unsigned int latch_count) {
+                                        arts_event_types_t type,
+                                        unsigned int latch_count,
+                                        arts_guid_t data_guid) {
   TIME_EVENT_CREATE_START();
   INCREMENT_NUM_EVENT_CREATE_BY(1);
   unsigned int route = arts_guid_get_rank(guid);
-  bool ret = arts_event_create_internal(&guid, route, INITIAL_DEPENDENT_SIZE,
-                                        latch_count, false, NULL_GUID);
+  bool ret = false;
+  switch (type) {
+  case ARTS_EVENT_ONCE:
+  case ARTS_EVENT_STICKY:
+  case ARTS_EVENT_IDEM:
+    ret = arts_event_create_internal(&guid, route, INITIAL_DEPENDENT_SIZE, 1,
+                                     type, NULL_GUID);
+    break;
+  case ARTS_EVENT_CHANNEL:
+    ret = arts_event_create_channel_internal(&guid, route, data_guid);
+    break;
+  default: /* LATCH, COUNTED */
+    ret = arts_event_create_internal(&guid, route, INITIAL_DEPENDENT_SIZE,
+                                     latch_count, type, NULL_GUID);
+    break;
+  }
   TIME_EVENT_CREATE_STOP();
   return (ret) ? guid : NULL_GUID;
 }
 
+/* ── Forward declarations ──────────────────────────────────────────── */
+
+static struct arts_event_version_s *
+channel_push_version(struct arts_event_s *event);
+
+struct arts_dependent_s *arts_dependent_get(struct arts_dependent_list_s *head,
+                                            int position);
+
+/* ── CHANNEL version helpers ─────────────────────────────────────────── */
+
+static struct arts_link_list_s *
+channel_get_versions(struct arts_event_s *event) {
+  if (event->versions != NULL) {
+    return event->versions;
+  }
+  event->versions = arts_link_list_group_new(1);
+  struct arts_event_version_s *version = channel_push_version(event);
+  version->dependent.next = NULL;
+  assert(version != NULL);
+  return event->versions;
+}
+
+static struct arts_event_version_s *
+channel_push_version(struct arts_event_s *event) {
+  struct arts_link_list_s *versions = channel_get_versions(event);
+  struct arts_event_version_s *next =
+      (struct arts_event_version_s *)arts_link_list_new_item(
+          (sizeof(struct arts_event_version_s) +
+           (sizeof(struct arts_dependent_s) * INITIAL_DEPENDENT_SIZE)));
+  next->latch_count = 0;
+  next->dependent_count = 0;
+  next->dependent.size = INITIAL_DEPENDENT_SIZE;
+  struct arts_event_version_s *last = NULL;
+  if (versions && versions->tailPtr) {
+    last =
+        (struct arts_event_version_s *)arts_link_list_get_tail_data(versions);
+  }
+  if (last) {
+    next->version = last->version + 1;
+  } else {
+    next->version = 0;
+  }
+  arts_link_list_push_back(versions, next);
+  return next;
+}
+
+static struct arts_event_version_s *
+channel_get_front_version(struct arts_event_s *event) {
+  return (struct arts_event_version_s *)arts_link_list_get_front_data(
+      channel_get_versions(event));
+}
+
+static struct arts_event_version_s *
+channel_get_last_version(struct arts_event_s *event) {
+  return (struct arts_event_version_s *)arts_link_list_get_tail_data(
+      channel_get_versions(event));
+}
+
+static bool channel_free_version(struct arts_event_s *event) {
+  struct arts_link_list_s *versions = event->versions;
+  assert(versions != NULL);
+  bool last = true;
+  arts_lock(&versions->lock);
+
+  if (versions->headPtr != versions->tailPtr) {
+    last = false;
+  }
+
+  struct arts_event_version_s *version =
+      (struct arts_event_version_s *)(versions->headPtr + 1);
+  assert(version != NULL);
+
+  struct arts_dependent_list_s *trail;
+  struct arts_dependent_list_s *current = version->dependent.next;
+  while (current) {
+    trail = current;
+    current = current->next;
+    arts_free(trail);
+  }
+  version->dependent.next = NULL;
+
+  if (last) {
+    version->latch_count = 0;
+    version->dependent_count = 0;
+  } else {
+    versions->headPtr = versions->headPtr->next;
+    struct arts_link_list_item_s *item =
+        ((struct arts_link_list_item_s *)version) - 1;
+    arts_free(item);
+  }
+
+  arts_unlock(&versions->lock);
+  return last;
+}
+
+static void channel_free_all_versions(struct arts_event_s *event) {
+  if (event->versions) {
+    struct arts_link_list_item_s *item = event->versions->headPtr;
+    while (item) {
+      struct arts_link_list_item_s *next = item->next;
+      struct arts_event_version_s *version =
+          (struct arts_event_version_s *)(item + 1);
+      struct arts_dependent_list_s *trail;
+      struct arts_dependent_list_s *current = version->dependent.next;
+      while (current) {
+        trail = current;
+        current = current->next;
+        arts_free(trail);
+      }
+      arts_free(item);
+      item = next;
+    }
+    arts_free(event->versions);
+    event->versions = NULL;
+  }
+}
+
+/* ── CHANNEL fire loop ──────────────────────────────────────────────── */
+
+static void channel_fire_dependents(struct arts_event_s *event,
+                                    struct arts_event_version_s *version,
+                                    arts_guid_t event_guid) {
+  (void)event_guid;
+  struct arts_dependent_list_s *dependent_list = &version->dependent;
+  struct arts_dependent_s *dependent = version->dependent.dependents;
+  unsigned int last_known =
+      arts_atomic_fetch_add(&version->dependent_count, 0U);
+  int i = 0;
+  int total_size = 0;
+  while (i < (int)last_known) {
+    int j = i - total_size;
+    while (i < (int)last_known && j < (int)dependent_list->size) {
+      while (!dependent[j].done_writing) {
+        ;
+      }
+      if (dependent[j].type == ARTS_EDT) {
+        if (event->data != NULL_GUID) {
+          if (dependent[j].byte_offset != 0 || dependent[j].size != 0) {
+            struct arts_db_s *db =
+                (struct arts_db_s *)arts_route_table_lookup_item(event->data);
+            if (db) {
+              void *db_data = (void *)(db + 1);
+              void *slice_ptr =
+                  (void *)(((char *)db_data) + dependent[j].byte_offset);
+              arts_signal_edt_ptr_with_guid(
+                  dependent[j].addr, dependent[j].slot, event->data, slice_ptr,
+                  (unsigned int)dependent[j].size);
+            }
+          } else if (dependent[j].mode != DB_MODE_NULL) {
+            internal_signal_edt_with_mode(dependent[j].addr, dependent[j].slot,
+                                          event->data, dependent[j].mode);
+          } else {
+            arts_signal_edt(dependent[j].addr, dependent[j].slot, event->data,
+                            DB_MODE_EW);
+          }
+        }
+      } else if (dependent[j].type == ARTS_EVENT) {
+        arts_event_satisfy_slot(dependent[j].addr, event->data,
+                                dependent[j].slot);
+      } else if (dependent[j].type == ARTS_CALLBACK) {
+        arts_edt_dep_t arg;
+        arg.guid = event->data;
+        arg.ptr = arts_route_table_lookup_item(event->data);
+        dependent[j].callback_t(arg);
+      }
+      j++;
+      i++;
+    }
+    total_size += (int)dependent_list->size;
+    if (i >= (int)last_known) {
+      break;
+    }
+    while (dependent_list->next == NULL) {
+      ;
+    }
+    dependent_list = dependent_list->next;
+    dependent = dependent_list->dependents;
+  }
+
+  channel_free_version(event);
+}
+
+/* ── CHANNEL satisfy ────────────────────────────────────────────────── */
+
+static void channel_satisfy_slot(struct arts_event_s *event,
+                                 arts_guid_t event_guid, uint32_t slot) {
+  arts_lock(&event->lock);
+
+  if (event->data == NULL_GUID) {
+    ARTS_WARN("Channel event firing without data GUID (guid=%lu)", event_guid);
+  }
+
+  unsigned int res = (unsigned int)-1;
+  struct arts_event_version_s *version = channel_get_front_version(event);
+  assert(version != NULL);
+
+  if (slot == ARTS_EVENT_LATCH_INCR_SLOT) {
+    res = arts_atomic_fetch_add(&version->latch_count, 0U);
+    if (res == 1) {
+      version = channel_push_version(event);
+    }
+    res = arts_atomic_add(&version->latch_count, 1U);
+  } else if (slot == ARTS_EVENT_LATCH_DECR_SLOT) {
+    res = arts_atomic_fetch_add(&version->latch_count, 0U);
+    if (res == (unsigned int)-1) {
+      version = channel_push_version(event);
+    }
+    res = arts_atomic_sub(&version->latch_count, 1U);
+  } else if (slot == ARTS_EVENT_UPDATE) {
+    res = arts_atomic_fetch_add(&version->latch_count, 0U);
+  } else {
+    ARTS_ERROR("Channel event invalid slot %u (guid=%lu)", slot, event_guid);
+  }
+
+  if (res == 0) {
+    channel_fire_dependents(event, version, event_guid);
+  }
+
+  arts_unlock(&event->lock);
+}
+
+/* ── CHANNEL creation ───────────────────────────────────────────────── */
+
+bool arts_event_create_channel_internal(arts_guid_t *guid, unsigned int route,
+                                        arts_guid_t data_guid) {
+  if (data_guid == NULL_GUID) {
+    ARTS_WARN("Channel event created without data GUID");
+  }
+  bool ret = arts_event_create_internal(guid, route, INITIAL_DEPENDENT_SIZE, 0,
+                                        ARTS_EVENT_CHANNEL, data_guid);
+  return ret;
+}
+
+/* ── CHANNEL latch wrappers ─────────────────────────────────────────── */
+
+void arts_event_increment_latch(arts_guid_t event_guid) {
+  arts_event_satisfy_slot(event_guid, NULL_GUID, ARTS_EVENT_LATCH_INCR_SLOT);
+}
+
+void arts_event_decrement_latch(arts_guid_t event_guid) {
+  arts_event_satisfy_slot(event_guid, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+}
+
+/* ── CHANNEL add dependence with mode ───────────────────────────────── */
+
+void arts_event_add_dependence_with_mode(arts_guid_t event_source,
+                                         arts_guid_t edt_dest,
+                                         uint32_t edt_slot,
+                                         arts_db_access_mode_t mode) {
+  arts_type_t dest_type = arts_guid_get_type(edt_dest);
+  struct arts_event_s *event =
+      (struct arts_event_s *)arts_route_table_lookup_item(event_source);
+  if (event == NULL) {
+    unsigned int rank = arts_guid_get_rank(event_source);
+    if (rank != arts_global_rank_id) {
+      arts_remote_channel_add_dependence_with_mode(event_source, edt_dest,
+                                                   edt_slot, rank, mode);
+    } else {
+      arts_out_of_order_add_dependence(event_source, edt_dest, edt_slot,
+                                       DB_MODE_NULL, event_source);
+    }
+    return;
+  }
+
+  arts_lock(&event->lock);
+  struct arts_event_version_s *version = channel_get_last_version(event);
+  assert(version != NULL);
+  bool needs_update = false;
+
+  struct arts_dependent_list_s *dependent_list = &version->dependent;
+  unsigned int position = arts_atomic_fetch_add(&version->dependent_count, 1U);
+  struct arts_dependent_s *dependent =
+      arts_dependent_get(dependent_list, (int)position);
+  assert(dependent != NULL);
+  dependent->type = (dest_type == ARTS_EVENT) ? ARTS_EVENT : ARTS_EDT;
+  dependent->addr = edt_dest;
+  dependent->slot = edt_slot;
+  dependent->mode = mode;
+  dependent->byte_offset = 0;
+  dependent->size = 0;
+  COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
+  dependent->done_writing = true;
+
+  if (arts_atomic_fetch_add(&version->latch_count, 0U) == 0) {
+    needs_update = true;
+  }
+
+  arts_unlock(&event->lock);
+  if (needs_update) {
+    arts_event_satisfy_slot(event_source, NULL_GUID, ARTS_EVENT_UPDATE);
+  }
+}
+
+void arts_event_add_dependence_with_byte_offset(
+    arts_guid_t event_source, arts_guid_t edt_dest, uint32_t edt_slot,
+    arts_db_access_mode_t mode, uint64_t byte_offset, uint64_t len) {
+  arts_type_t dest_type = arts_guid_get_type(edt_dest);
+  struct arts_event_s *event =
+      (struct arts_event_s *)arts_route_table_lookup_item(event_source);
+  if (event == NULL) {
+    unsigned int rank = arts_guid_get_rank(event_source);
+    if (rank != arts_global_rank_id) {
+      arts_remote_channel_add_dependence_with_byte_offset(
+          event_source, edt_dest, edt_slot, rank, mode, byte_offset, len);
+    } else {
+      arts_out_of_order_add_dependence(event_source, edt_dest, edt_slot,
+                                       DB_MODE_NULL, event_source);
+    }
+    return;
+  }
+
+  arts_lock(&event->lock);
+  struct arts_event_version_s *version = channel_get_last_version(event);
+  assert(version != NULL);
+  bool needs_update = false;
+
+  struct arts_dependent_list_s *dependent_list = &version->dependent;
+  unsigned int position = arts_atomic_fetch_add(&version->dependent_count, 1U);
+  struct arts_dependent_s *dependent =
+      arts_dependent_get(dependent_list, (int)position);
+  assert(dependent != NULL);
+  dependent->type = (dest_type == ARTS_EVENT) ? ARTS_EVENT : ARTS_EDT;
+  dependent->addr = edt_dest;
+  dependent->slot = edt_slot;
+  dependent->mode = mode;
+  dependent->byte_offset = byte_offset;
+  dependent->size = len;
+  COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
+  dependent->done_writing = true;
+
+  if (arts_atomic_fetch_add(&version->latch_count, 0U) == 0) {
+    needs_update = true;
+  }
+
+  arts_unlock(&event->lock);
+  if (needs_update) {
+    arts_event_satisfy_slot(event_source, NULL_GUID, ARTS_EVENT_UPDATE);
+  }
+}
+
+/* ── Event free / destroy ───────────────────────────────────────────── */
+
 void arts_event_free(struct arts_event_s *event) {
+  if (event->type == ARTS_EVENT_CHANNEL) {
+    channel_free_all_versions(event);
+  }
   struct arts_dependent_list_s *trail;
   struct arts_dependent_list_s *current = event->dependent.next;
   while (current) {
@@ -168,13 +546,32 @@ void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
                                            slot, false);
     }
   } else {
+    // CHANNEL events use their own lock-protected version-based path
+    if (event->type == ARTS_EVENT_CHANNEL) {
+      channel_satisfy_slot(event, event_guid, slot);
+      goto done;
+    }
+
+    // Re-satisfy guard: type-aware handling for already-fired events
     if (event->fired) {
-      ARTS_ERROR("Event latch already fired (guid=%lu, data=%lu, slot=%u)",
-                 event_guid, data_guid, slot);
+      if (event->type == ARTS_EVENT_IDEM) {
+        goto done;
+      } else if (event->type == ARTS_EVENT_STICKY) {
+        ARTS_WARN("Sticky event %lu: re-satisfy rejected", event_guid);
+        goto done;
+      } else {
+        ARTS_ERROR("Event latch already fired (guid=%lu, data=%lu, slot=%u)",
+                   event_guid, data_guid, slot);
+      }
     }
 
     unsigned int res = 0U;
     if (slot == ARTS_EVENT_LATCH_INCR_SLOT) {
+      if (event->type == ARTS_EVENT_ONCE || event->type == ARTS_EVENT_COUNTED) {
+        ARTS_ERROR("INCR_SLOT rejected for %s event (guid=%lu)",
+                   event->type == ARTS_EVENT_ONCE ? "ONCE" : "COUNTED",
+                   event_guid);
+      }
       res = arts_atomic_add(&event->latch_count, 1U);
     } else if (slot == ARTS_EVENT_LATCH_DECR_SLOT) {
       if (data_guid != NULL_GUID) {
@@ -238,13 +635,16 @@ void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
           dependent_list = dependent_list->next;
           dependent = dependent_list->dependents;
         }
-        if (!event->destroy_on_fire) {
-          arts_event_free(event);
+        // Auto-destroy for LATCH/ONCE/COUNTED; STICKY/IDEM persist
+        if (event->type == ARTS_EVENT_LATCH || event->type == ARTS_EVENT_ONCE ||
+            event->type == ARTS_EVENT_COUNTED) {
           arts_route_table_remove_item(event_guid);
+          arts_event_free(event);
         }
       }
     }
   }
+done:
   TIME_EVENT_SIGNAL_STOP();
 }
 
@@ -301,6 +701,14 @@ void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
   }
 
   struct arts_event_s *event = (struct arts_event_s *)source_header;
+
+  // CHANNEL events use lock-protected version-based dependence
+  if (event->type == ARTS_EVENT_CHANNEL) {
+    arts_event_add_dependence_with_mode(source, destination, slot,
+                                        DB_MODE_NULL);
+    return;
+  }
+
   if (mode == ARTS_EDT) {
     struct arts_dependent_list_s *dependent_list = &event->dependent;
     struct arts_dependent_s *dependent;
@@ -312,20 +720,18 @@ void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
     dependent->done_writing = true;
 
-    unsigned int destroy_event =
-        (event->destroy_on_fire != -1)
-            ? arts_atomic_sub(&event->destroy_on_fire, 1U)
-            : 1;
     if (event->fired) {
+      // LATCH/ONCE/COUNTED: event may already be freed — UB per OCR semantics
+      if (event->type == ARTS_EVENT_LATCH || event->type == ARTS_EVENT_ONCE ||
+          event->type == ARTS_EVENT_COUNTED) {
+        return;
+      }
+      // STICKY/IDEM: event persists — self-signal for out-of-range deps
       while (event->pos == 0) {
         ;
       }
       if (position >= event->pos - 1) {
         arts_signal_edt(destination, slot, event->data, DB_MODE_EW);
-        if (!destroy_event) {
-          arts_event_free(event);
-          arts_route_table_remove_item(source);
-        }
       }
     }
   } else if (mode == ARTS_EVENT) {
@@ -339,20 +745,18 @@ void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
     dependent->done_writing = true;
 
-    unsigned int destroy_event =
-        (event->destroy_on_fire != -1)
-            ? arts_atomic_sub(&event->destroy_on_fire, 1U)
-            : 1;
     if (event->fired) {
+      // LATCH/ONCE/COUNTED: event may already be freed — UB per OCR semantics
+      if (event->type == ARTS_EVENT_LATCH || event->type == ARTS_EVENT_ONCE ||
+          event->type == ARTS_EVENT_COUNTED) {
+        return;
+      }
+      // STICKY/IDEM: event persists — self-signal for out-of-range deps
       while (event->pos == 0) {
         ;
       }
       if (event->pos - 1 <= position) {
         arts_event_satisfy_slot(destination, event->data, slot);
-        if (!destroy_event) {
-          arts_event_free(event);
-          arts_route_table_remove_item(source);
-        }
       }
     }
   }
@@ -363,6 +767,33 @@ void arts_add_local_event_callback(arts_guid_t source,
   struct arts_event_s *event =
       (struct arts_event_s *)arts_route_table_lookup_item(source);
   if (event && arts_guid_get_type(source) == ARTS_EVENT) {
+    // CHANNEL events: register callback on latest version (lock-protected)
+    if (event->type == ARTS_EVENT_CHANNEL) {
+      arts_lock(&event->lock);
+      struct arts_event_version_s *version = channel_get_last_version(event);
+      assert(version != NULL);
+      struct arts_dependent_list_s *dep_list = &version->dependent;
+      unsigned int pos = arts_atomic_fetch_add(&version->dependent_count, 1U);
+      struct arts_dependent_s *dep = arts_dependent_get(dep_list, (int)pos);
+      assert(dep != NULL);
+      dep->type = ARTS_CALLBACK;
+      dep->callback_t = callback_t;
+      dep->addr = NULL_GUID;
+      dep->slot = 0;
+      dep->mode = DB_MODE_NULL;
+      dep->byte_offset = 0;
+      dep->size = 0;
+      COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
+      dep->done_writing = true;
+      bool needs_update =
+          (arts_atomic_fetch_add(&version->latch_count, 0U) == 0);
+      arts_unlock(&event->lock);
+      if (needs_update) {
+        arts_event_satisfy_slot(source, NULL_GUID, ARTS_EVENT_UPDATE);
+      }
+      return;
+    }
+
     struct arts_dependent_list_s *dependent_list = &event->dependent;
     struct arts_dependent_s *dependent;
     unsigned int position = arts_atomic_fetch_add(&event->dependent_count, 1U);
@@ -374,11 +805,13 @@ void arts_add_local_event_callback(arts_guid_t source,
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
     dependent->done_writing = true;
 
-    unsigned int destroy_event =
-        (event->destroy_on_fire != -1)
-            ? arts_atomic_sub(&event->destroy_on_fire, 1U)
-            : 1;
     if (event->fired) {
+      // LATCH/ONCE/COUNTED: event may already be freed — UB per OCR semantics
+      if (event->type == ARTS_EVENT_LATCH || event->type == ARTS_EVENT_ONCE ||
+          event->type == ARTS_EVENT_COUNTED) {
+        return;
+      }
+      // STICKY/IDEM: event persists — self-signal for out-of-range callbacks
       while (event->pos == 0) {
         ;
       }
@@ -387,10 +820,6 @@ void arts_add_local_event_callback(arts_guid_t source,
         arg.guid = event->data;
         arg.ptr = arts_route_table_lookup_item(event->data);
         callback_t(arg);
-        if (!destroy_event) {
-          arts_event_free(event);
-          arts_route_table_remove_item(source);
-        }
       }
     }
   }
@@ -404,581 +833,4 @@ bool arts_is_event_fired(arts_guid_t event) {
     fired = actual_event->fired;
   }
   return fired;
-}
-
-/// Persistent events
-struct arts_persistent_event_version_s *arts_push_persistent_event_version(
-    struct arts_persistent_event_s *event);
-
-struct arts_link_list_s *arts_get_event_versions(
-    struct arts_persistent_event_s *event) {
-  if (event->versions != NULL) {
-    return event->versions;
-  }
-  event->versions = arts_link_list_group_new(1);
-  struct arts_persistent_event_version_s *version =
-      arts_push_persistent_event_version(event);
-  version->dependent.next = NULL;
-
-  assert(version != NULL);
-  return event->versions;
-}
-
-struct arts_persistent_event_version_s *arts_push_persistent_event_version(
-    struct arts_persistent_event_s *event) {
-  struct arts_link_list_s *versions = arts_get_event_versions(event);
-  struct arts_persistent_event_version_s *next =
-      (struct arts_persistent_event_version_s *)arts_link_list_new_item(
-          (sizeof(struct arts_persistent_event_version_s) +
-           (sizeof(struct arts_dependent_s) * INITIAL_DEPENDENT_SIZE)));
-  next->latch_count = 0;
-  next->dependent_count = 0;
-  next->dependent.size = INITIAL_DEPENDENT_SIZE;
-  struct arts_persistent_event_version_s *last = NULL;
-  if (versions && versions->tailPtr) {
-    last =
-        (struct arts_persistent_event_version_s *)arts_link_list_get_tail_data(
-            versions);
-  }
-
-  if (last) {
-    next->version = last->version + 1;
-  } else {
-    next->version = 0;
-  }
-  arts_link_list_push_back(versions, next);
-  return next;
-}
-
-struct arts_persistent_event_version_s *arts_get_front_persistent_event_version(
-    struct arts_persistent_event_s *event) {
-  struct arts_persistent_event_version_s *v =
-      (struct arts_persistent_event_version_s *)arts_link_list_get_front_data(
-          arts_get_event_versions(event));
-  return v;
-}
-
-struct arts_persistent_event_version_s *arts_get_last_persistent_event_version(
-    struct arts_persistent_event_s *event) {
-  struct arts_persistent_event_version_s *v =
-      (struct arts_persistent_event_version_s *)arts_link_list_get_tail_data(
-          arts_get_event_versions(event));
-  return v;
-}
-
-bool arts_persistent_event_create_internal(arts_guid_t *guid,
-                                           unsigned int route,
-                                           arts_guid_t event_data) {
-  if (event_data == NULL_GUID) {
-    ARTS_WARN("Persistent event created without data GUID");
-  }
-  const unsigned int event_size = sizeof(struct arts_persistent_event_s);
-  void *event_packet = arts_calloc(1, event_size);
-
-  if (event_size) {
-    struct arts_persistent_event_s *event =
-        (struct arts_persistent_event_s *)event_packet;
-    event->header.type = ARTS_PERSISTENT_EVENT;
-    event->header.size = event_size;
-    event->versions = NULL;
-    event->data = event_data;
-    event->lock = 0;
-
-    if (route == arts_global_rank_id) {
-      if (*guid) {
-        arts_route_table_add_item(event_packet, *guid, arts_global_rank_id,
-                                  false);
-        arts_route_table_fire_oo(*guid, arts_out_of_order_handler);
-      } else {
-        *guid = arts_guid_create_for_rank(route, ARTS_PERSISTENT_EVENT);
-        arts_route_table_add_item(event_packet, *guid, arts_global_rank_id,
-                                  false);
-      }
-    } else {
-      arts_remote_memory_move(route, *guid, event_packet, event_size,
-                              ARTS_REMOTE_PERSISTENT_EVENT_MOVE_MSG, arts_free);
-    }
-    return true;
-  }
-  ARTS_INFO("Failed to create persistent event");
-  return false;
-}
-
-void arts_persistent_event_free_all(struct arts_persistent_event_s *event) {
-  if (event->versions) {
-    struct arts_link_list_item_s *item = event->versions->headPtr;
-    while (item) {
-      struct arts_link_list_item_s *next = item->next;
-      struct arts_persistent_event_version_s *version =
-          (struct arts_persistent_event_version_s *)(item + 1);
-      struct arts_dependent_list_s *trail;
-      struct arts_dependent_list_s *current = version->dependent.next;
-      while (current) {
-        trail = current;
-        current = current->next;
-        arts_free(trail);
-      }
-      arts_free(item);
-      item = next;
-    }
-    arts_free(event->versions);
-  }
-  arts_free(event);
-}
-
-bool arts_persistent_event_free_version(struct arts_persistent_event_s *event) {
-  struct arts_link_list_s *versions = event->versions;
-  assert(versions != NULL);
-  bool last = true;
-  arts_lock(&versions->lock);
-
-  if (versions->headPtr != versions->tailPtr) {
-    last = false;
-  }
-
-  /// Get the top version
-  struct arts_persistent_event_version_s *version =
-      (struct arts_persistent_event_version_s *)(versions->headPtr + 1);
-  assert(version != NULL);
-
-  /// Free dependencies for this version
-  struct arts_dependent_list_s *trail;
-  struct arts_dependent_list_s *current = version->dependent.next;
-  while (current) {
-    trail = current;
-    current = current->next;
-    arts_free(trail);
-  }
-  version->dependent.next = NULL;
-
-  /// Free the version
-  if (last) {
-    version->latch_count = 0;
-    version->dependent_count = 0;
-  } else {
-    versions->headPtr = versions->headPtr->next;
-    struct arts_link_list_item_s *item =
-        ((struct arts_link_list_item_s *)version) - 1;
-    arts_free(item);
-  }
-
-  arts_unlock(&versions->lock);
-  return last;
-}
-
-arts_guid_t arts_persistent_event_create(unsigned int route,
-                                         unsigned int latch_count,
-                                         arts_guid_t data_guid) {
-  (void)latch_count;
-  TIME_PERSISTENT_EVENT_CREATE_START();
-  INCREMENT_NUM_PERSISTENT_EVENT_CREATE_BY(1);
-  if (route == ARTS_HINT_CURRENT_NODE) {
-    route = arts_global_rank_id;
-  }
-  arts_guid_t guid = NULL_GUID;
-  arts_persistent_event_create_internal(&guid, route, data_guid);
-  TIME_PERSISTENT_EVENT_CREATE_STOP();
-  return guid;
-}
-
-void arts_persistent_event_destroy(arts_guid_t guid) {
-  struct arts_persistent_event_s *event =
-      (struct arts_persistent_event_s *)arts_route_table_lookup_item(guid);
-  if (event != NULL) {
-    arts_route_table_remove_item(guid);
-    arts_persistent_event_free_all(event);
-  }
-}
-
-void arts_persistent_event_satisfy(arts_guid_t event_guid, uint32_t action,
-                                   bool lock) {
-  TIME_PERSISTENT_EVENT_SIGNAL_START();
-  INCREMENT_NUM_PERSISTENT_EVENT_SIGNAL_BY(1);
-  if (current_edt && current_edt->invalidate_count > 0) {
-    arts_out_of_order_persistent_event_satisfy_slot(current_edt->current_edt,
-                                                    event_guid, action, true);
-    return;
-  }
-  struct arts_persistent_event_s *event =
-      (struct arts_persistent_event_s *)arts_route_table_lookup_item(
-          event_guid);
-  if (!event) {
-    unsigned int rank = arts_guid_get_rank(event_guid);
-    if (rank != arts_global_rank_id) {
-      arts_remote_persistent_event_satisfy_slot(event_guid, action, lock);
-    } else {
-      arts_out_of_order_persistent_event_satisfy_slot(event_guid, event_guid,
-                                                      action, false);
-    }
-  } else {
-    if (lock) {
-      arts_lock(&event->lock);
-    }
-    if (event->data == NULL_GUID) {
-      ARTS_WARN("Persistent event firing without data GUID");
-    }
-    unsigned int res = -1;
-    struct arts_persistent_event_version_s *version =
-        arts_get_front_persistent_event_version(event);
-    assert(version != NULL);
-    if (action == ARTS_EVENT_LATCH_INCR_SLOT) {
-      res = arts_atomic_fetch_add(&version->latch_count, 0U);
-      if (res == 1) {
-        ARTS_DEBUG(
-            "Latch count is 1 for Event [Guid:%lu], creating new version",
-            event_guid);
-        version = arts_push_persistent_event_version(event);
-        ARTS_DEBUG("Created Event [Guid:%lu, Version: %u]", version->version,
-                   event_guid);
-      }
-      res = arts_atomic_add(&version->latch_count, 1U);
-      ARTS_DEBUG("Increment Event [Guid:%lu, Latch Count: %d]", event_guid,
-                 res);
-    } else if (action == ARTS_EVENT_LATCH_DECR_SLOT) {
-      res = arts_atomic_fetch_add(&version->latch_count, 0U);
-      if (res == (unsigned int)-1) {
-        ARTS_DEBUG(
-            "Latch count is -1 for Event [Guid:%lu], creating new version",
-            event_guid);
-        version = arts_push_persistent_event_version(event);
-        ARTS_DEBUG("Created version %u for Event [Guid:%lu, Version: %u]",
-                   version->version, event_guid);
-      }
-      res = arts_atomic_sub(&version->latch_count, 1U);
-      ARTS_DEBUG("Decrement Event [Guid:%lu, Latch Count: %d] ", event_guid,
-                 res);
-    } else if (action == ARTS_EVENT_UPDATE) {
-      res = arts_atomic_fetch_add(&version->latch_count, 0U);
-      ARTS_DEBUG("Update Event [Guid:%lu, Latch Count: %d] ", event_guid, res);
-    } else {
-      ARTS_ERROR("Persistent event invalid action slot %u", action);
-    }
-
-    if (res == 0) {
-      assert(version != NULL);
-      struct arts_dependent_list_s *dependent_list = &version->dependent;
-      struct arts_dependent_s *dependent = version->dependent.dependents;
-      int i;
-      int j;
-      unsigned int last_known =
-          arts_atomic_fetch_add(&version->dependent_count, 0U);
-      i = 0;
-      int total_size = 0;
-      while (i < last_known) {
-        j = i - total_size;
-        while (i < last_known && j < dependent_list->size) {
-          while (!dependent[j].done_writing) {
-            ;
-          }
-          if (dependent[j].type == ARTS_EDT) {
-            if (event->data != NULL_GUID) {
-              if (dependent[j].byte_offset != 0 || dependent[j].size != 0) {
-                /// Byte-slice dependency: lookup DB and compute pointer
-                struct arts_db_s *db =
-                    (struct arts_db_s *)arts_route_table_lookup_item(
-                        event->data);
-                if (db) {
-                  void *db_data = (void *)(db + 1);
-                  void *slice_ptr =
-                      (void *)(((char *)db_data) + dependent[j].byte_offset);
-                  arts_signal_edt_ptr_with_guid(
-                      dependent[j].addr, dependent[j].slot, event->data,
-                      slice_ptr, (unsigned int)dependent[j].size);
-                } else {
-                  ARTS_DEBUG(
-                      "ESD: DB not found for byte-slice dep event->data=%lu",
-                      event->data);
-                }
-              } else if (dependent[j].mode != DB_MODE_NULL) {
-                internal_signal_edt_with_mode(dependent[j].addr,
-                                              dependent[j].slot, event->data,
-                                              dependent[j].mode);
-              } else {
-                arts_signal_edt(dependent[j].addr, dependent[j].slot,
-                                event->data, DB_MODE_EW);
-              }
-            } else {
-              ARTS_DEBUG("Event data is NULL_GUID for event %u", event_guid);
-            }
-          } else if (dependent[j].type == ARTS_EVENT) {
-            TIME_PERSISTENT_EVENT_SIGNAL_STOP();
-            arts_persistent_event_satisfy(dependent[j].addr, dependent[j].slot,
-                                          true);
-            TIME_PERSISTENT_EVENT_SIGNAL_START();
-          } else if (dependent[j].type == ARTS_CALLBACK) {
-            arts_edt_dep_t arg;
-            arg.guid = event->data;
-            arg.ptr = arts_route_table_lookup_item(event->data);
-            dependent[j].callback_t(arg);
-          }
-          j++;
-          i++;
-        }
-        total_size += (int)dependent_list->size;
-        if (i >= last_known) {
-          break;
-        }
-        while (dependent_list->next == NULL) {
-          ;
-        }
-        dependent_list = dependent_list->next;
-        dependent = dependent_list->dependents;
-      }
-
-      /// Free dependencies for this version
-      arts_persistent_event_free_version(event);
-    }
-    if (lock) {
-      arts_unlock(&event->lock);
-    }
-  }
-  TIME_PERSISTENT_EVENT_SIGNAL_STOP();
-}
-
-void arts_persistent_event_increment_latch(arts_guid_t event_guid) {
-  arts_persistent_event_satisfy(event_guid, ARTS_EVENT_LATCH_INCR_SLOT, true);
-}
-
-void arts_persistent_event_decrement_latch(arts_guid_t event_guid) {
-  arts_persistent_event_satisfy(event_guid, ARTS_EVENT_LATCH_DECR_SLOT, true);
-}
-
-void arts_add_dependence_to_persistent_event(arts_guid_t event_source,
-                                             arts_guid_t edt_dest,
-                                             uint32_t edt_slot) {
-  /// Check that the event_source is a persistent event
-  if (arts_guid_get_type(event_source) != ARTS_PERSISTENT_EVENT) {
-    ARTS_ERROR("Source GUID %lu is not a persistent event", event_source);
-  }
-  arts_type_t dest_type = arts_guid_get_type(edt_dest);
-  struct arts_header_s *source_header =
-      (struct arts_header_s *)arts_route_table_lookup_item(event_source);
-  if (source_header == NULL) {
-    unsigned int rank = arts_guid_get_rank(event_source);
-    if (rank != arts_global_rank_id) {
-      arts_remote_add_dependence_to_persistent_event(event_source, edt_dest,
-                                                     edt_slot, rank);
-    } else {
-      arts_out_of_order_add_dependence_to_persistent_event(
-          event_source, edt_dest, edt_slot, DB_MODE_NULL, event_source);
-    }
-    return;
-  }
-
-  ARTS_DEBUG("Add Dep from Persistent Event [Guid:%lu] to EDT[Guid:"
-             "%lu, Slot:%u]",
-             event_source, edt_dest, edt_slot);
-  struct arts_persistent_event_s *event =
-      (struct arts_persistent_event_s *)source_header;
-  arts_lock(&event->lock);
-  struct arts_persistent_event_version_s *version =
-      arts_get_last_persistent_event_version(event);
-  assert(version != NULL);
-  bool needs_update = false;
-  if (dest_type == ARTS_EDT) {
-    struct arts_dependent_list_s *dependent_list = &version->dependent;
-    unsigned int position =
-        arts_atomic_fetch_add(&version->dependent_count, 1U);
-    struct arts_dependent_s *dependent =
-        arts_dependent_get(dependent_list, (int)position);
-    assert(dependent != NULL);
-    dependent->type = ARTS_EDT;
-    dependent->addr = edt_dest;
-    dependent->slot = edt_slot;
-    dependent->mode = DB_MODE_NULL;
-    COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
-    dependent->done_writing = true;
-
-    unsigned int res = arts_atomic_fetch_add(&version->latch_count, 0U);
-    if (res == 0) {
-      needs_update = true;
-    }
-  } else if (dest_type == ARTS_EVENT) {
-    struct arts_dependent_list_s *dependent_list = &version->dependent;
-    unsigned int position =
-        arts_atomic_fetch_add(&version->dependent_count, 1U);
-    struct arts_dependent_s *dependent =
-        arts_dependent_get(dependent_list, (int)position);
-    dependent->type = ARTS_EVENT;
-    dependent->addr = edt_dest;
-    dependent->slot = edt_slot;
-    dependent->mode = DB_MODE_NULL;
-    COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
-    dependent->done_writing = true;
-
-    if (arts_atomic_fetch_add(&version->latch_count, 0U) == 0) {
-      needs_update = true;
-    }
-  }
-  arts_unlock(&event->lock);
-  if (needs_update) {
-    arts_persistent_event_satisfy(event_source, ARTS_EVENT_UPDATE, true);
-  }
-}
-
-void arts_add_dependence_to_persistent_event_with_mode(
-    arts_guid_t event_source, arts_guid_t edt_dest, uint32_t edt_slot,
-    arts_db_access_mode_t mode) {
-  arts_add_dependence_to_persistent_event_with_mode_and_diff(
-      event_source, edt_dest, edt_slot, mode);
-}
-
-void arts_add_dependence_to_persistent_event_with_mode_and_diff(
-    arts_guid_t event_source, arts_guid_t edt_dest, uint32_t edt_slot,
-    arts_db_access_mode_t mode) {
-  /// Check that the event_source is a persistent event
-  if (arts_guid_get_type(event_source) != ARTS_PERSISTENT_EVENT) {
-    ARTS_ERROR("Source GUID %lu is not a persistent event", event_source);
-  }
-  arts_type_t dest_type = arts_guid_get_type(edt_dest);
-  struct arts_header_s *source_header =
-      (struct arts_header_s *)arts_route_table_lookup_item(event_source);
-  if (source_header == NULL) {
-    unsigned int rank = arts_guid_get_rank(event_source);
-    if (rank != arts_global_rank_id) {
-      // TODO: Extend remote protocol to pass mode
-      arts_remote_add_dependence_to_persistent_event_with_hints(
-          event_source, edt_dest, edt_slot, rank, mode);
-    } else {
-      // TODO: Extend out-of-order handling to pass mode
-      // For now, fallback to standard out-of-order add dependence
-      arts_out_of_order_add_dependence_to_persistent_event(
-          event_source, edt_dest, edt_slot, DB_MODE_NULL, event_source);
-    }
-    return;
-  }
-
-  ARTS_DEBUG("Add Dep from Persistent Event [Guid:%lu] to EDT[Guid:"
-             "%lu, Slot:%u, AcquireMode:%s]",
-             event_source, edt_dest, edt_slot, GET_TYPE_NAME(mode));
-  struct arts_persistent_event_s *event =
-      (struct arts_persistent_event_s *)source_header;
-  arts_lock(&event->lock);
-  struct arts_persistent_event_version_s *version =
-      arts_get_last_persistent_event_version(event);
-  assert(version != NULL);
-  bool needs_update = false;
-  if (dest_type == ARTS_EDT) {
-    struct arts_dependent_list_s *dependent_list = &version->dependent;
-    unsigned int position =
-        arts_atomic_fetch_add(&version->dependent_count, 1U);
-    struct arts_dependent_s *dependent =
-        arts_dependent_get(dependent_list, (int)position);
-    assert(dependent != NULL);
-    dependent->type = ARTS_EDT;
-    dependent->addr = edt_dest;
-    dependent->slot = edt_slot;
-    dependent->mode = mode;
-    dependent->byte_offset = 0;
-    dependent->size = 0;
-    COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
-    dependent->done_writing = true;
-
-    unsigned int res = arts_atomic_fetch_add(&version->latch_count, 0U);
-    if (res == 0) {
-      needs_update = true;
-    }
-  } else if (dest_type == ARTS_EVENT) {
-    struct arts_dependent_list_s *dependent_list = &version->dependent;
-    unsigned int position =
-        arts_atomic_fetch_add(&version->dependent_count, 1U);
-    struct arts_dependent_s *dependent =
-        arts_dependent_get(dependent_list, (int)position);
-    dependent->type = ARTS_EVENT;
-    dependent->addr = edt_dest;
-    dependent->slot = edt_slot;
-    dependent->mode = mode;
-    dependent->byte_offset = 0;
-    dependent->size = 0;
-    COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
-    dependent->done_writing = true;
-
-    if (arts_atomic_fetch_add(&version->latch_count, 0U) == 0) {
-      needs_update = true;
-    }
-  }
-  arts_unlock(&event->lock);
-  if (needs_update) {
-    arts_persistent_event_satisfy(event_source, ARTS_EVENT_UPDATE, true);
-  }
-}
-
-void arts_add_dependence_to_persistent_event_with_byte_offset(
-    arts_guid_t event_source, arts_guid_t edt_dest, uint32_t edt_slot,
-    arts_db_access_mode_t mode, uint64_t byte_offset, uint64_t len) {
-  /// Check that the event_source is a persistent event
-  if (arts_guid_get_type(event_source) != ARTS_PERSISTENT_EVENT) {
-    ARTS_ERROR("Source GUID %lu is not a persistent event", event_source);
-  }
-  arts_type_t dest_type = arts_guid_get_type(edt_dest);
-  struct arts_header_s *source_header =
-      (struct arts_header_s *)arts_route_table_lookup_item(event_source);
-  if (source_header == NULL) {
-    unsigned int rank = arts_guid_get_rank(event_source);
-    if (rank != arts_global_rank_id) {
-      // ESD: Now passes byte_offset/len to remote persistent event
-      arts_remote_add_dependence_to_persistent_event_with_byte_offset(
-          event_source, edt_dest, edt_slot, rank, mode, byte_offset, len);
-    } else {
-      // Local out-of-order: byte offset is not critical for OO handling
-      arts_out_of_order_add_dependence_to_persistent_event(
-          event_source, edt_dest, edt_slot, DB_MODE_NULL, event_source);
-    }
-    return;
-  }
-
-  ARTS_DEBUG("Add Dep from Persistent Event [Guid:%lu] to EDT[Guid:"
-             "%lu, Slot:%u, AcquireMode:%s, ByteOffset:%lu, Size:%lu]",
-             event_source, edt_dest, edt_slot, GET_TYPE_NAME(mode), byte_offset,
-             len);
-  struct arts_persistent_event_s *event =
-      (struct arts_persistent_event_s *)source_header;
-  arts_lock(&event->lock);
-  struct arts_persistent_event_version_s *version =
-      arts_get_last_persistent_event_version(event);
-  assert(version != NULL);
-  bool needs_update = false;
-  if (dest_type == ARTS_EDT) {
-    struct arts_dependent_list_s *dependent_list = &version->dependent;
-    unsigned int position =
-        arts_atomic_fetch_add(&version->dependent_count, 1U);
-    struct arts_dependent_s *dependent =
-        arts_dependent_get(dependent_list, (int)position);
-    assert(dependent != NULL);
-    dependent->type = ARTS_EDT;
-    dependent->addr = edt_dest;
-    dependent->slot = edt_slot;
-    dependent->mode = mode;
-    dependent->byte_offset = byte_offset;
-    dependent->size = len;
-    COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
-    dependent->done_writing = true;
-
-    unsigned int res = arts_atomic_fetch_add(&version->latch_count, 0U);
-    if (res == 0) {
-      needs_update = true;
-    }
-  } else if (dest_type == ARTS_EVENT) {
-    struct arts_dependent_list_s *dependent_list = &version->dependent;
-    unsigned int position =
-        arts_atomic_fetch_add(&version->dependent_count, 1U);
-    struct arts_dependent_s *dependent =
-        arts_dependent_get(dependent_list, (int)position);
-    dependent->type = ARTS_EVENT;
-    dependent->addr = edt_dest;
-    dependent->slot = edt_slot;
-    dependent->mode = mode;
-    dependent->byte_offset = byte_offset;
-    dependent->size = len;
-    COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
-    dependent->done_writing = true;
-
-    if (arts_atomic_fetch_add(&version->latch_count, 0U) == 0) {
-      needs_update = true;
-    }
-  }
-  arts_unlock(&event->lock);
-  if (needs_update) {
-    arts_persistent_event_satisfy(event_source, ARTS_EVENT_UPDATE, true);
-  }
 }

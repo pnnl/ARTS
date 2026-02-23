@@ -137,7 +137,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Test 1: Basic RO record_dep.
   void *ptr1 = NULL;
-  arts_guid_t db1 = arts_db_create(&ptr1, 2 * sizeof(int), NULL);
+  arts_guid_t db1 = arts_db_create(&ptr1, 2 * sizeof(int), ARTS_DB_DEFAULT, NULL);
   int *d1 = (int *)ptr1;
   d1[0] = 42;
   d1[1] = 99;
@@ -149,7 +149,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Test 2: EW → RO ordering via record_dep.
   void *ptr2 = NULL;
-  arts_guid_t db2 = arts_db_create(&ptr2, 2 * sizeof(int), NULL);
+  arts_guid_t db2 = arts_db_create(&ptr2, 2 * sizeof(int), ARTS_DB_DEFAULT, NULL);
   int *d2 = (int *)ptr2;
   d2[0] = 0;
   d2[1] = 0;
@@ -165,7 +165,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Test 3: record_dep_at with byte offset.
   void *ptr3 = NULL;
-  arts_guid_t db3 = arts_db_create(&ptr3, 4 * sizeof(int), NULL);
+  arts_guid_t db3 = arts_db_create(&ptr3, 4 * sizeof(int), ARTS_DB_DEFAULT, NULL);
   int *d3 = (int *)ptr3;
   d3[0] = 100;
   d3[1] = 200;

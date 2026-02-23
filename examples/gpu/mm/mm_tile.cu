@@ -131,9 +131,9 @@ void multiply_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_guid_t a_tile_guid = depv[0].guid;
   arts_guid_t b_tile_guid = depv[1].guid;
-  arts_guid_t c_tile_guid = arts_guid_reserve(ARTS_DB_GPU, 0);
+  arts_guid_t c_tile_guid = arts_guid_reserve(ARTS_DB, 0);
   c_tile = (double *)arts_db_create_with_guid(
-      c_tile_guid, sizeof(double) * tile_size * tile_size, NULL);
+      c_tile_guid, sizeof(double) * tile_size * tile_size, ARTS_DB_GPU, NULL, NULL);
 
   init_matrix(row_size, c_tile, false, true);
 
@@ -188,9 +188,9 @@ void sum_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   double *c_tile;
   unsigned int row_size = tile_size;
-  arts_guid_t c_tile_guid = arts_guid_reserve(ARTS_DB_GPU, 0);
+  arts_guid_t c_tile_guid = arts_guid_reserve(ARTS_DB, 0);
   c_tile = (double *)arts_db_create_with_guid(
-      c_tile_guid, sizeof(double) * tile_size * tile_size, NULL);
+      c_tile_guid, sizeof(double) * tile_size * tile_size, ARTS_DB_GPU, NULL, NULL);
   init_matrix(row_size, c_tile, false, true);
 
   for (unsigned int i = 0; i < depc; i++) {
@@ -283,16 +283,16 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
   c_mat_guid = arts_guid_reserve(ARTS_DB, 0);
 
   a_tile_guids =
-      arts_guid_reserve_range(ARTS_DB_GPU, num_blocks * num_blocks, 0);
+      arts_guid_reserve_range(ARTS_DB, num_blocks * num_blocks, 0);
   b_tile_guids =
-      arts_guid_reserve_range(ARTS_DB_GPU, num_blocks * num_blocks, 0);
+      arts_guid_reserve_range(ARTS_DB, num_blocks * num_blocks, 0);
 
   a_matrix = (double *)arts_db_create_with_guid(
-      a_mat_guid, (size_t)mat_size * mat_size * sizeof(double), NULL);
+      a_mat_guid, (size_t)mat_size * mat_size * sizeof(double), ARTS_DB_GPU, NULL, NULL);
   b_matrix = (double *)arts_db_create_with_guid(
-      b_mat_guid, (size_t)mat_size * mat_size * sizeof(double), NULL);
+      b_mat_guid, (size_t)mat_size * mat_size * sizeof(double), ARTS_DB_GPU, NULL, NULL);
   c_matrix = (double *)arts_db_create_with_guid(
-      c_mat_guid, (size_t)mat_size * mat_size * sizeof(double), NULL);
+      c_mat_guid, (size_t)mat_size * mat_size * sizeof(double), ARTS_DB_GPU, NULL, NULL);
 
   init_matrix(mat_size, a_matrix, true, false);
   init_matrix(mat_size, b_matrix, false, false);
@@ -305,13 +305,13 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
       arts_guid_t a_tile_guid =
           arts_guid_from_index(a_tile_guids, (i * num_blocks) + j);
       double *a_tile = (double *)arts_db_create_with_guid(
-          a_tile_guid, sizeof(double) * tile_size * tile_size, NULL);
+          a_tile_guid, sizeof(double) * tile_size * tile_size, ARTS_DB_GPU, NULL, NULL);
       copy_block(i, j, tile_size, a_tile, mat_size, a_matrix, true);
 
       arts_guid_t b_tile_guid =
           arts_guid_from_index(b_tile_guids, (i * num_blocks) + j);
       double *b_tile = (double *)arts_db_create_with_guid(
-          b_tile_guid, sizeof(double) * tile_size * tile_size, NULL);
+          b_tile_guid, sizeof(double) * tile_size * tile_size, ARTS_DB_GPU, NULL, NULL);
       copy_block(i, j, tile_size, b_tile, mat_size, b_matrix, true);
     }
   }

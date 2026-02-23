@@ -82,8 +82,8 @@ void transfer_to_db(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   /* Create host DB to receive the data */
   unsigned int *host = NULL;
-  arts_guid_t db_guid =
-      arts_db_create((void **)&host, sizeof(unsigned int) * N_ELEMENTS, NULL);
+  arts_guid_t db_guid = arts_db_create(
+      (void **)&host, sizeof(unsigned int) * N_ELEMENTS, ARTS_DB_DEFAULT, NULL);
 
   /* Copy from GPU device memory into the host DB */
   arts_put_in_db_from_gpu(dev_data, db_guid, 0,
@@ -127,8 +127,8 @@ extern "C" void arts_init_per_gpu(unsigned int node_id, int dev_id,
   }
 }
 
-extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
-                              uint32_t depc, arts_edt_dep_t depv[]) {
+extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                         arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
@@ -138,9 +138,9 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
 
   /* Test 1: ARTS_DB_GPU creation */
   unsigned int *addr = NULL;
-  arts_guid_t gpu_db = arts_guid_reserve(ARTS_DB_GPU, 0);
+  arts_guid_t gpu_db = arts_guid_reserve(ARTS_DB, 0);
   addr = (unsigned int *)arts_db_create_with_guid(
-      gpu_db, sizeof(unsigned int) * N_ELEMENTS, NULL);
+      gpu_db, sizeof(unsigned int) * N_ELEMENTS, ARTS_DB_GPU, NULL, NULL);
   if (addr != NULL) {
     arts_printf("PASS test1: ARTS_DB_GPU created with non-NULL addr\n");
   } else {

@@ -104,17 +104,17 @@ struct arts_runtime_shared_s {
   uint64_t *global_guid_thread_id;
   const char *counter_folder;
   arts_counter_t *
-      *live_counters;  // [thread_id] -> pointer to thread's __thread counters
+      *live_counters; // [thread_id] -> pointer to thread's __thread counters
   arts_counter_t *
-      *saved_counters;  // [thread_id][counter_index] - final counter values
-  arts_array_list_t ***capture_arrays;  // [thread_id][counter_index] - capture
-                                        // history (PERIODIC)
+      *saved_counters; // [thread_id][counter_index] - final counter values
+  arts_array_list_t ***capture_arrays; // [thread_id][counter_index] - capture
+                                       // history (PERIODIC)
   uint64_t counter_capture_interval;
   // Object counter storage (per-thread saved data for per-arts_id tracking)
-  arts_object_table_t **object_tables;    // [thread_id]
-  arts_array_list_t **object_edt_traces;  // [thread_id]
-  arts_array_list_t **object_db_traces;   // [thread_id]
-} __attribute__((aligned(64)));
+  arts_object_table_t **object_tables;   // [thread_id]
+  arts_array_list_t **object_edt_traces; // [thread_id]
+  arts_array_list_t **object_db_traces;  // [thread_id]
+} ARTS_ALIGNED(64);
 
 struct arts_runtime_private_s {
   struct arts_deque_s *my_deque;
@@ -147,32 +147,31 @@ extern uint64_t arts_guid_max;
 
 #define ARTS_LOOK_UP_CONFIG(name) arts_node_info.name
 
-#define ARTS_TYPE_NAME                                           \
-  const char *const arts_type_name[] = {"ARTS_NULL",             \
-                                        "ARTS_EDT",              \
-                                        "ARTS_GPU_EDT",          \
-                                        "ARTS_EVENT",            \
-                                        "ARTS_PERSISTENT_EVENT", \
-                                        "ARTS_EPOCH",            \
-                                        "ARTS_CALLBACK",         \
-                                        "ARTS_BUFFER",           \
-                                        "ARTS_DB",               \
-                                        "ARTS_DB_LOCAL",         \
-                                        "ARTS_DB_GPU",           \
-                                        "ARTS_DB_LC",            \
-                                        "ARTS_LAST_TYPE"}
+#define ARTS_TYPE_NAME                                                         \
+  const char *const arts_type_name[] = {                                       \
+      "ARTS_NULL", "ARTS_EDT",      "ARTS_GPU_EDT",  "ARTS_EVENT",             \
+      "",          "ARTS_EPOCH",    "ARTS_CALLBACK", "ARTS_BUFFER",            \
+      "ARTS_DB",   "ARTS_LAST_TYPE"}
 
 #define GET_TYPE_NAME(x) arts_type_name[x]
 
 extern const char *const arts_type_name[];
 
-#define DB_MODE_NAME                                              \
-  const char *const db_mode_name[] = {                            \
-      "DB_MODE_NULL",    "DB_MODE_RO",         "DB_MODE_EW",  \
-      "DB_MODE_RW",      "DB_MODE_VALUE",      "DB_MODE_PTR", \
+#define DB_MODE_NAME                                                           \
+  const char *const db_mode_name[] = {                                         \
+      "DB_MODE_NULL",    "DB_MODE_RO",         "DB_MODE_EW",                   \
+      "DB_MODE_RW",      "DB_MODE_VALUE",      "DB_MODE_PTR",                  \
       "DB_MODE_LC_SYNC", "DB_MODE_LC_NO_COPY", "DB_MODE_MEMSET"}
 
 #define GET_DB_MODE_NAME(x) db_mode_name[x]
+
+#define ARTS_DB_TYPE_NAME                                                      \
+  const char *const arts_db_type_name[] = {"ARTS_DB_DEFAULT", "ARTS_DB_LOCAL", \
+                                           "ARTS_DB_GPU", "ARTS_DB_LC"}
+
+#define GET_DB_TYPE_NAME(x) arts_db_type_name[x]
+
+extern const char *const arts_db_type_name[];
 
 extern const char *const db_mode_name[];
 
@@ -180,9 +179,9 @@ extern volatile uint64_t outstanding_edts;
 void check_out_edts(uint64_t threshold);
 
 // #ifdef CHECK_NO_EDT
-#define INC_OUTSTANDING_EDTS(num_edts) \
+#define INC_OUTSTANDING_EDTS(num_edts)                                         \
   arts_atomic_fetch_add_u64(&outstanding_edts, num_edts)
-#define DEC_OUTSTANDING_EDTS(num_edts) \
+#define DEC_OUTSTANDING_EDTS(num_edts)                                         \
   arts_atomic_fetch_sub_u64(&outstanding_edts, num_edts)
 #define CHECK_OUTSTANDING_EDTS(threshold) check_out_edts(threshold)
 // #else

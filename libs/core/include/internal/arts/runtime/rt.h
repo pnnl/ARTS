@@ -76,13 +76,14 @@ struct arts_db_s {
   struct arts_header_s header;
   uint64_t arts_id;       /**< Compiler-assigned unique id (0 = unset). */
   arts_guid_t guid;       /**< GUID of this DataBlock. */
-  arts_guid_t event_guid; /**< Associated persistent event GUID. */
+  arts_guid_t event_guid; /**< Associated channel event GUID. */
   volatile unsigned int copy_count; /**< Number of outstanding copies. */
   volatile unsigned int reader;     /**< Active reader count. */
   volatile unsigned int writer;     /**< Active writer count. */
   volatile unsigned int version;    /**< Coherence version counter. */
   unsigned int time_stamp;          /**< Creation timestamp (relative). */
-  void *db_list; /**< Node in the per-node DB tracking list. */
+  arts_db_types_t db_type; /**< Storage subtype (DEFAULT/LOCAL/GPU/LC). */
+  void *db_list;           /**< Node in the per-node DB tracking list. */
 } ARTS_ALIGNED_MAX;
 
 /** Internal EDT descriptor. */
@@ -102,14 +103,14 @@ struct arts_edt_s {
       invalidate_count; /**< Outstanding cache invalidations. */
 } ARTS_ALIGNED_MAX;
 
-/** An individual dependent registered on an event or persistent event. */
+/** An individual dependent registered on an event. */
 struct arts_dependent_s {
   uint8_t type;                         /**< Dependent kind (EDT or event). */
   volatile unsigned int slot;           /**< Target dependency slot. */
   volatile arts_guid_t addr;            /**< GUID of the dependent EDT/event. */
   volatile event_callback_t callback_t; /**< Inline callback (if any). */
   volatile bool done_writing;           /**< Write completion flag. */
-  arts_db_access_mode_t mode;                  /**< Access mode for signaling. */
+  arts_db_access_mode_t mode;           /**< Access mode for signaling. */
   uint64_t byte_offset; /**< Byte offset for slice dependencies. */
   uint64_t size;        /**< Slice size in bytes. */
 };
@@ -121,31 +122,27 @@ struct arts_dependent_list_s {
   struct arts_dependent_s dependents[];        /**< Flexible array. */
 };
 
-/** Version record for a persistent event (one per re-arm cycle). */
-struct arts_persistent_event_version_s {
+/** Version record for a channel event (one per re-arm cycle). */
+struct arts_event_version_s {
   unsigned int version;                   /**< Version sequence number. */
   volatile unsigned int latch_count;      /**< Current latch counter. */
   volatile unsigned int dependent_count;  /**< Registered dependent count. */
   struct arts_dependent_list_s dependent; /**< Inline dependent list head. */
 };
 
-/** Internal persistent event descriptor. */
-struct arts_persistent_event_s {
-  volatile unsigned int lock; /**< Spin-lock for concurrent updates. */
-  struct arts_header_s header;
-  arts_guid_t data;                  /**< DataBlock GUID to deliver on fire. */
-  struct arts_link_list_s *versions; /**< Version history list. */
-} ARTS_ALIGNED_MAX;
-
-/** Internal latch event descriptor. */
+/** Internal event descriptor (supports LATCH, ONCE, COUNTED, STICKY, IDEM,
+ * CHANNEL). */
 struct arts_event_s {
   struct arts_header_s header;
-  volatile bool fired;                   /**< Whether the event has fired. */
-  volatile unsigned int destroy_on_fire; /**< Auto-destroy flag. */
-  volatile unsigned int latch_count;     /**< Current latch counter. */
-  volatile unsigned int pos; /**< Allocation cursor for dependents. */
+  volatile bool fired;        /**< Whether the event has fired. */
+  arts_event_types_t type;    /**< Event type (LATCH/ONCE/.../CHANNEL). */
+  volatile unsigned int lock; /**< Spin-lock (CHANNEL only, 0 otherwise). */
+  volatile unsigned int latch_count; /**< Current latch counter. */
+  volatile unsigned int pos;         /**< Allocation cursor for dependents. */
   volatile unsigned int dependent_count; /**< Registered dependent count. */
   arts_guid_t data; /**< DataBlock GUID to deliver on fire. */
+  struct arts_link_list_s
+      *versions; /**< Version list (CHANNEL only, else NULL). */
   struct arts_dependent_list_s dependent; /**< Inline dependent list head. */
 } ARTS_ALIGNED_MAX;
 

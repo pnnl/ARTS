@@ -99,7 +99,7 @@ arts_guid_t tile_guids = NULL_GUID;
 uint64_t **tile = NULL;
 #define GET_LOCAL_INDEX(v) (((v) & (tableSize - 1)) % tile_size)
 #define GET_OWNER_INDEX(v) (((v) & (tableSize - 1)) / tile_size)
-#define GET_TILE_GUID(v)   arts_guid_from_index(tile_guids, GET_OWNER_INDEX(v))
+#define GET_TILE_GUID(v) arts_guid_from_index(tile_guids, GET_OWNER_INDEX(v))
 
 uint64_t start = 0;
 arts_guid_t done_guid = NULL_GUID;
@@ -268,10 +268,10 @@ void random_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramc;
   (void)depc;
 
-  uint64_t num_rem_updates = paramv[0];  // Number of updates left for this GPU
+  uint64_t num_rem_updates = paramv[0]; // Number of updates left for this GPU
   uint64_t num_random = (num_rem_updates > (uint64_t)MAX_UPDATES_PER_GPU_STEP)
                             ? (uint64_t)MAX_UPDATES_PER_GPU_STEP
-                            : num_rem_updates;  // Number of updates in the step
+                            : num_rem_updates; // Number of updates in the step
   uint64_t step = paramv[1];
   uint64_t index = paramv[2];
   int64_t start_index = (int64_t)((step * (uint64_t)MAX_UPDATES_PER_GPU_STEP *
@@ -297,7 +297,7 @@ void random_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     cudaDeviceSynchronize();
 
     // Get random counts
-    unsigned int elems_to_copy = num_tiles;  // + numRandom;
+    unsigned int elems_to_copy = num_tiles; // + numRandom;
     uint64_t *count = (uint64_t *)calloc(elems_to_copy, sizeof(uint64_t));
     arts_cuda_mem_cpy_from_dev(count, r_array,
                                sizeof(uint64_t) * elems_to_copy);
@@ -411,8 +411,8 @@ void sync_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
-                              uint32_t depc, arts_edt_dep_t depv[]) {
+extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                         arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;
   (void)depv;
@@ -429,13 +429,13 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
       TABLESIZE, tile_size, num_tiles);
 
   // Create tiled table
-  tile_guids = arts_guid_reserve_range(ARTS_DB_LC, num_tiles, node_id);
+  tile_guids = arts_guid_reserve_range(ARTS_DB, num_tiles, node_id);
   tile = (uint64_t **)calloc(num_tiles, sizeof(uint64_t *));
   uint64_t counter = 0;
   for (unsigned int i = 0; i < num_tiles; i++) {
     tile[i] = (uint64_t *)arts_db_create_with_guid(
         arts_guid_from_index(tile_guids, i), (tile_size + 1) * sizeof(uint64_t),
-        NULL);
+        ARTS_DB_LC, NULL, NULL);
     arts_printf("TileGuid[%u]: %lu -> %p\n", i,
                 arts_guid_from_index(tile_guids, i), tile[i]);
     for (unsigned int j = 0; j < tile_size; j++) {
@@ -448,14 +448,14 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
   unsigned int num_gpus = arts_get_total_gpus();
   unsigned int elems_per_frontier =
       num_tiles + (unsigned int)MAX_UPDATES_PER_GPU_STEP;
-  update_frontier_guids =
-      arts_guid_reserve_range(ARTS_DB_GPU, num_gpus, node_id);
+  update_frontier_guids = arts_guid_reserve_range(ARTS_DB, num_gpus, node_id);
   for (unsigned int i = 0; i < num_gpus; i++) {
     uint64_t *update_frontier = (uint64_t *)arts_db_create_with_guid(
         arts_guid_from_index(update_frontier_guids, i),
-        elems_per_frontier * sizeof(uint64_t), NULL);
+        elems_per_frontier * sizeof(uint64_t), ARTS_DB_GPU, NULL, NULL);
     arts_printf("updateFrontier[%u]: %lu %p\n", i,
-                arts_guid_from_index(update_frontier_guids, i), update_frontier);
+                arts_guid_from_index(update_frontier_guids, i),
+                update_frontier);
     for (unsigned int j = 0; j < elems_per_frontier; j++) {
       update_frontier[j] = 0;
     }

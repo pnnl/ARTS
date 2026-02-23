@@ -65,7 +65,7 @@ void check_get_at(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                   arts_edt_dep_t depv[]) {
+              arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
@@ -83,7 +83,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   unsigned int target = 1;
 
   // Create DB on remote rank.
-  arts_guid_t db = arts_db_create_remote(target, 2 * sizeof(int));
+  void *tmp;
+  arts_guid_t db = arts_db_create(&tmp, 2 * sizeof(int), ARTS_DB_DEFAULT,
+                                  &(arts_hint_t){.route = target});
 
   // Put data at rank=target.
   int send[2] = {42, 43};

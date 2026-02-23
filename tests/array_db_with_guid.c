@@ -87,7 +87,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("=== array_db_with_guid ===\n");
 
   // Test 1: Create distributed array with pre-reserved GUID.
-  arts_guid_t arr_guid = arts_guid_reserve(ARTS_DB_LOCAL, 0);
+  arts_guid_t arr_guid = arts_guid_reserve(ARTS_DB, 0);
   arts_array_db_t *arr = arts_new_array_db_with_guid(arr_guid, sizeof(int), 16);
 
   if (arr == NULL) {

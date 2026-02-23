@@ -41,6 +41,7 @@
 
 #include "arts/runtime/watchdog.h"
 
+#include "arts/arts_defs.h"
 #include <stdbool.h>
 #include <time.h>
 
@@ -55,8 +56,8 @@
  * reads/writes its own TLS variables.
  */
 static uint64_t watchdog_timeout_ns = 0;
-static _Thread_local uint64_t watchdog_last_tick_ns = 0;
-static _Thread_local bool watchdog_triggered = false;
+static ARTS_THREAD_LOCAL uint64_t watchdog_last_tick_ns = 0;
+static ARTS_THREAD_LOCAL bool watchdog_triggered = false;
 
 static inline uint64_t get_monotonic_ns(void) {
   struct timespec ts;

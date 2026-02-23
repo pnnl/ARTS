@@ -64,13 +64,14 @@
 #endif
 
 ARTS_TYPE_NAME;
+ARTS_DB_TYPE_NAME;
 DB_MODE_NAME;
 
 extern ARTS_THREAD_LOCAL struct arts_edt_s *current_edt;
 
-// True for DB types that can have remote copies (have a frontier).
-static inline bool arts_db_type_is_remote_capable(arts_type_t type) {
-  return type == ARTS_DB || type == ARTS_DB_GPU || type == ARTS_DB_LC;
+// True for DB subtypes that have a CDAG frontier (remote-capable).
+static inline bool arts_db_subtype_has_frontier(arts_db_types_t db_type) {
+  return db_type != ARTS_DB_LOCAL;
 }
 
 #define WRITE_SET 0x80000000
@@ -81,7 +82,7 @@ static inline bool arts_db_type_is_remote_capable(arts_type_t type) {
  *
  * Called when an EDT creates a local DB.  Sets WRITE_SET on the initial
  * frontier (blocking all consumers from joining the HEAD frontier) and
- * increments the persistent event latch (blocking arts_record_dep consumers).
+ * increments the channel event latch (blocking arts_record_dep consumers).
  * The DB's GUID is tracked in the thread-local created_db_list for cleanup
  * when the EDT completes.
  */
@@ -90,18 +91,18 @@ static void arts_db_auto_acquire(struct arts_db_s *db) {
     struct arts_db_list_s *db_list = (struct arts_db_list_s *)db->db_list;
     arts_atomic_fetch_or(&db_list->head->lock, WRITE_SET);
   }
-  arts_persistent_event_increment_latch(db->event_guid);
+  arts_event_increment_latch(db->event_guid);
   arts_track_created_db(db->guid);
 }
 
-void *arts_db_malloc(arts_type_t mode, unsigned int size) {
-  (void)mode;
+void *arts_db_malloc(arts_db_types_t db_type, unsigned int size) {
+  (void)db_type;
   void *ptr = NULL;
 #ifdef ARTS_USE_GPU
   if (arts_node_info.gpu) {
-    if (mode == ARTS_DB_LC)
+    if (db_type == ARTS_DB_LC)
       ptr = arts_cuda_malloc_host(size * 2);
-    else if (mode == ARTS_DB_GPU)
+    else if (db_type == ARTS_DB_GPU)
       ptr = arts_cuda_malloc_host(size);
   }
 #endif
@@ -113,10 +114,10 @@ void *arts_db_malloc(arts_type_t mode, unsigned int size) {
 
 void arts_db_free(void *ptr) {
   struct arts_db_s *db = (struct arts_db_s *)ptr;
-  // Destroy persistent event if we're the owner (non-owner copies
+  // Destroy channel event if we're the owner (non-owner copies
   // store the GUID but the actual event lives on the owner node)
   if (arts_guid_get_rank(db->guid) == arts_global_rank_id) {
-    arts_persistent_event_destroy(db->event_guid);
+    arts_event_destroy(db->event_guid);
   }
   if (db->db_list && db->db_list != (void *)1) {
     arts_delete_db_list((struct arts_db_list_s *)db->db_list);
@@ -124,7 +125,7 @@ void arts_db_free(void *ptr) {
   }
 #ifdef ARTS_USE_GPU
   if (arts_node_info.gpu &&
-      (db->header.type == ARTS_DB_GPU || db->header.type == ARTS_DB_LC)) {
+      (db->db_type == ARTS_DB_GPU || db->db_type == ARTS_DB_LC)) {
     arts_cuda_free_host(ptr);
     ptr = NULL;
   }
@@ -142,31 +143,32 @@ void arts_db_free(void *ptr) {
  * responsible for route-table registration.
  */
 void arts_db_create_internal(arts_guid_t guid, void *addr, uint64_t len,
-                             uint64_t packet_size, arts_type_t mode,
+                             uint64_t packet_size, arts_db_types_t db_type,
                              uint64_t arts_id) {
   (void)len;
   struct arts_header_s *header = (struct arts_header_s *)addr;
-  header->type = mode;
+  header->type = ARTS_DB; // All DB subtypes share one GUID type tag
   header->size = packet_size;
 
   struct arts_db_s *db_res = (struct arts_db_s *)header;
-  db_res->arts_id = arts_id;  // Set compiler-assigned arts_id (0 if not set)
+  db_res->arts_id = arts_id;
   db_res->guid = guid;
   db_res->version = 0;
   db_res->reader = 0;
   db_res->writer = 0;
   db_res->copy_count = 1;
-  if (mode != ARTS_DB_LOCAL) {
+  db_res->db_type = db_type;
+  if (db_type != ARTS_DB_LOCAL) {
     db_res->db_list = arts_new_db_list();
   } else {
     db_res->db_list = NULL;
   }
-  if (mode == ARTS_DB_LC) {
+  if (db_type == ARTS_DB_LC) {
     void *shadow_copy = (void *)(((char *)addr) + packet_size);
     memcpy(shadow_copy, addr, sizeof(struct arts_db_s));
   }
   db_res->event_guid =
-      arts_persistent_event_create(arts_guid_get_rank(guid), 0, guid);
+      arts_event_create(arts_guid_get_rank(guid), ARTS_EVENT_CHANNEL, 0, guid);
   // Record per-object DB metrics
   arts_object_record_db(arts_id, packet_size, 0, 0);
   arts_object_trace_db(arts_id, packet_size, 0);
@@ -174,31 +176,15 @@ void arts_db_create_internal(arts_guid_t guid, void *addr, uint64_t len,
   INCREMENT_BYTES_DB_CREATE_BY(len);
 }
 
-arts_guid_t arts_db_create_remote(unsigned int route, uint64_t len) {
-  TIME_DB_CREATE_START();
-  if (route == ARTS_HINT_CURRENT_NODE) {
-    route = arts_global_rank_id;
-  }
-  arts_guid_t guid = arts_guid_create_for_rank(route, ARTS_DB);
-  void *ptr = arts_db_malloc(ARTS_DB, sizeof(struct arts_db_s));
-  struct arts_db_s *db = (struct arts_db_s *)ptr;
-  db->header.size = len + sizeof(struct arts_db_s);
-  db->db_list = (void *)1;
-
-  arts_remote_memory_move(route, guid, ptr, sizeof(struct arts_db_s),
-                          ARTS_REMOTE_DB_SEND_MSG, arts_db_free);
-  TIME_DB_CREATE_STOP();
-  return guid;
-}
-
 /*
- * arts_db_local_create — Create a node-pinned (LOCAL) DB.
+ * arts_db_create — Unified DataBlock creation.
  *
- * Local path: allocate + initialize on current node.
- * Remote path: send stub via ARTS_REMOTE_DB_SEND_MSG; *addr = NULL.
+ * Handles all DB subtypes (DEFAULT, LOCAL, GPU, LC).  When hint->route
+ * targets a remote node, sends a stub via ARTS_REMOTE_DB_SEND_MSG and
+ * sets *addr = NULL.
  */
-arts_guid_t arts_db_local_create(void **addr, uint64_t len,
-                                 const arts_hint_t *hint) {
+arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
+                           const arts_hint_t *hint) {
   TIME_DB_CREATE_START();
   unsigned int route = (hint && hint->route != ARTS_HINT_CURRENT_NODE)
                            ? hint->route
@@ -208,60 +194,32 @@ arts_guid_t arts_db_local_create(void **addr, uint64_t len,
 
   if (route == arts_global_rank_id) {
     uint64_t db_size = len + sizeof(struct arts_db_s);
-    void *ptr = arts_malloc(db_size);
+    void *ptr = arts_db_malloc(db_type, db_size);
     if (ptr) {
-      guid = arts_guid_create_for_rank(arts_global_rank_id, ARTS_DB_LOCAL);
-      arts_db_create_internal(guid, ptr, len, db_size, ARTS_DB_LOCAL, arts_id);
+      guid = arts_guid_create_for_rank(arts_global_rank_id, ARTS_DB);
+      arts_db_create_internal(guid, ptr, len, db_size, db_type, arts_id);
       arts_route_table_add_item(ptr, guid, arts_global_rank_id, false);
       if (current_edt) {
         arts_db_auto_acquire((struct arts_db_s *)ptr);
       }
       *addr = (void *)((struct arts_db_s *)ptr + 1);
-      ARTS_DEBUG("arts_db_local_create: DB[Guid:%lu, Id:%lu, Size:%lu] created "
-                 "locally",
-                 guid, arts_id, len);
+      ARTS_DEBUG("arts_db_create: DB[Guid:%lu, Id:%lu, Type:%s, Size:%lu] "
+                 "created locally",
+                 guid, arts_id, GET_DB_TYPE_NAME(db_type), len);
     }
   } else {
-    guid = arts_guid_create_for_rank(route, ARTS_DB_LOCAL);
-    void *ptr = arts_db_malloc(ARTS_DB_LOCAL, sizeof(struct arts_db_s));
+    guid = arts_guid_create_for_rank(route, ARTS_DB);
+    void *ptr = arts_db_malloc(db_type, sizeof(struct arts_db_s));
     struct arts_db_s *db = (struct arts_db_s *)ptr;
     db->header.size = len + sizeof(struct arts_db_s);
+    db->db_type = db_type;
     db->db_list = (void *)1;
     arts_remote_memory_move(route, guid, ptr, sizeof(struct arts_db_s),
                             ARTS_REMOTE_DB_SEND_MSG, arts_db_free);
     *addr = NULL;
-    ARTS_DEBUG("arts_db_local_create: DB[Guid:%lu, Id:%lu, Size:%lu] "
+    ARTS_DEBUG("arts_db_create: DB[Guid:%lu, Id:%lu, Type:%s, Size:%lu] "
                "created remotely on rank %u",
-               guid, arts_id, len, route);
-  }
-  TIME_DB_CREATE_STOP();
-  return guid;
-}
-
-/*
- * arts_db_create — Create a new local DB (mode-less).
- *
- * Allocates memory, initializes the header, inserts into the route table
- * (no race — the GUID is brand new), and returns the user-data pointer
- * through *addr.
- */
-arts_guid_t arts_db_create(void **addr, uint64_t len, const arts_hint_t *hint) {
-  TIME_DB_CREATE_START();
-  uint64_t arts_id = hint ? hint->id : 0;
-  arts_guid_t guid = NULL_GUID;
-  uint64_t db_size = len + sizeof(struct arts_db_s);
-
-  void *ptr = arts_malloc(db_size);
-  if (ptr) {
-    guid = arts_guid_create_for_rank(arts_global_rank_id, ARTS_DB);
-    arts_db_create_internal(guid, ptr, len, db_size, ARTS_DB, arts_id);
-    arts_route_table_add_item(ptr, guid, arts_global_rank_id, false);
-    if (current_edt) {
-      arts_db_auto_acquire((struct arts_db_s *)ptr);
-    }
-    *addr = (void *)((struct arts_db_s *)ptr + 1);
-    ARTS_DEBUG("arts_db_create: DB[Guid:%lu, Id:%lu, Size:%lu] created locally",
-               guid, arts_id, len);
+               guid, arts_id, GET_DB_TYPE_NAME(db_type), len, route);
   }
   TIME_DB_CREATE_STOP();
   return guid;
@@ -269,19 +227,22 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, const arts_hint_t *hint) {
 
 // Guid must be for a local DB only
 void *arts_db_create_with_guid(arts_guid_t guid, uint64_t len,
+                               arts_db_types_t db_type, const void *data,
                                const arts_hint_t *hint) {
   TIME_DB_CREATE_START();
   uint64_t arts_id = hint ? hint->id : 0;
-  arts_type_t mode = arts_guid_get_type(guid);
 
   void *ptr = NULL;
   if (arts_guid_is_local(guid)) {
     uint64_t db_size = len + sizeof(struct arts_db_s);
 
-    ptr = arts_malloc(db_size);
+    ptr = arts_db_malloc(db_type, db_size);
     if (ptr) {
       struct arts_db_s *db_header = (struct arts_db_s *)ptr;
-      arts_db_create_internal(guid, db_header, len, db_size, mode, arts_id);
+      arts_db_create_internal(guid, db_header, len, db_size, db_type, arts_id);
+      if (data) {
+        memcpy((void *)(db_header + 1), data, len);
+      }
       if (arts_route_table_add_item_race(db_header, guid, arts_global_rank_id,
                                          false)) {
         arts_route_table_fire_oo(guid, arts_out_of_order_handler);
@@ -292,45 +253,10 @@ void *arts_db_create_with_guid(arts_guid_t guid, uint64_t len,
       ptr = (void *)(db_header + 1);
     }
   }
-  ARTS_INFO("Creating DB[Id:%lu, Guid:%lu, Mode:%s, Ptr:%p, Route:%d, "
+  ARTS_INFO("Creating DB[Id:%lu, Guid:%lu, Type:%s, Ptr:%p, Route:%d, "
             "Size:%lu]",
-            arts_id, guid, GET_TYPE_NAME(mode), ptr, arts_guid_get_rank(guid),
-            len);
-  TIME_DB_CREATE_STOP();
-  return ptr;
-}
-
-void *arts_db_create_with_guid_and_data(arts_guid_t guid, void *data,
-                                        uint64_t len) {
-  TIME_DB_CREATE_START();
-  arts_type_t mode = arts_guid_get_type(guid);
-  void *ptr = NULL;
-  uint64_t arts_id = 0;
-  if (arts_guid_is_local(guid)) {
-    uint64_t db_size = len + sizeof(struct arts_db_s);
-
-    ptr = arts_malloc(db_size);
-
-    if (ptr) {
-      struct arts_db_s *db_header = (struct arts_db_s *)ptr;
-      arts_db_create_internal(guid, db_header, len, db_size, mode, 0);
-      arts_id = db_header->arts_id;
-      void *db_data = (void *)(db_header + 1);
-      memcpy(db_data, data, len);
-      if (arts_route_table_add_item_race(db_header, guid, arts_global_rank_id,
-                                         false)) {
-        arts_route_table_fire_oo(guid, arts_out_of_order_handler);
-      }
-      if (current_edt) {
-        arts_db_auto_acquire(db_header);
-      }
-      ptr = db_data;
-    }
-  }
-  ARTS_INFO("Creating DB[Id:%lu, Guid:%lu, Mode:%s, Ptr:%p, Route:%d, "
-            "Size:%lu]",
-            arts_id, guid, GET_TYPE_NAME(mode), ptr, arts_guid_get_rank(guid),
-            len);
+            arts_id, guid, GET_DB_TYPE_NAME(db_type), ptr,
+            arts_guid_get_rank(guid), len);
   TIME_DB_CREATE_STOP();
   return ptr;
 }
@@ -381,7 +307,7 @@ void *arts_db_resize(arts_guid_t guid, unsigned int size, bool copy) {
 void arts_db_destroy(arts_guid_t guid) {
   INCREMENT_NUM_DB_DESTROY_BY(1);
   arts_type_t type = arts_guid_get_type(guid);
-  if (!arts_db_type_is_remote_capable(type)) {
+  if (type != ARTS_DB) {
     ARTS_WARN("arts_db_destroy called with non-DB type %u (GUID %lu)", type,
               guid);
     return;
@@ -389,7 +315,9 @@ void arts_db_destroy(arts_guid_t guid) {
   struct arts_db_s *db_res =
       (struct arts_db_s *)arts_route_table_lookup_item(guid);
   if (db_res != NULL) {
-    arts_remote_db_destroy(guid, arts_global_rank_id);
+    if (arts_db_subtype_has_frontier(db_res->db_type)) {
+      arts_remote_db_destroy(guid, arts_global_rank_id);
+    }
     arts_db_free(db_res);
     arts_route_table_remove_item(guid);
   } else {
@@ -420,17 +348,17 @@ bool arts_db_rename_with_guid(arts_guid_t new_guid, arts_guid_t old_guid) {
 }
 
 arts_guid_t arts_db_copy_to_new_type(arts_guid_t old_guid,
-                                     arts_type_t new_type) {
+                                     arts_db_types_t new_type) {
   arts_guid_t ret = NULL_GUID;
   unsigned int rank = arts_guid_get_rank(old_guid);
   if (rank == arts_global_rank_id) {
-    arts_guid_t new_guid =
-        arts_guid_create_for_rank(rank, arts_guid_get_type(new_type));
+    arts_guid_t new_guid = arts_guid_create_for_rank(rank, ARTS_DB);
     struct arts_db_s *db_res =
         (struct arts_db_s *)arts_route_table_lookup_item(old_guid);
     if (db_res != NULL) {
       arts_atomic_add(&db_res->copy_count, 1);
       db_res->guid = new_guid;
+      db_res->db_type = new_type;
       if (arts_route_table_add_item_race(db_res, new_guid, arts_global_rank_id,
                                          false)) {
         arts_route_table_fire_oo(new_guid, arts_out_of_order_handler);
@@ -451,13 +379,13 @@ void arts_db_destroy_safe(arts_guid_t guid, bool remote) {
   struct arts_db_s *db_res =
       (struct arts_db_s *)arts_route_table_lookup_item(guid);
   if (db_res != NULL) {
-    if (remote && arts_db_type_is_remote_capable(arts_guid_get_type(guid))) {
+    if (remote && arts_db_subtype_has_frontier(db_res->db_type)) {
       arts_remote_db_destroy(guid, arts_global_rank_id);
     }
     arts_db_free(db_res);
     arts_route_table_remove_item(guid);
-  } else if (remote &&
-             arts_db_type_is_remote_capable(arts_guid_get_type(guid))) {
+  } else if (remote) {
+    // No local copy — forward destroy to remote if this is a DB GUID
     arts_remote_db_destroy(guid, arts_global_rank_id);
   }
 }
@@ -466,7 +394,7 @@ void arts_db_increment_latch(arts_guid_t guid) {
   struct arts_db_s *db_res =
       (struct arts_db_s *)arts_route_table_lookup_item(guid);
   if (db_res != NULL) {
-    arts_persistent_event_increment_latch(db_res->event_guid);
+    arts_event_increment_latch(db_res->event_guid);
   } else {
     arts_remote_db_increment_latch(guid);
   }
@@ -476,7 +404,7 @@ void arts_db_decrement_latch(arts_guid_t guid) {
   struct arts_db_s *db_res =
       (struct arts_db_s *)arts_route_table_lookup_item(guid);
   if (db_res != NULL) {
-    arts_persistent_event_decrement_latch(db_res->event_guid);
+    arts_event_decrement_latch(db_res->event_guid);
   } else {
     arts_remote_db_decrement_latch(guid);
   }
@@ -487,8 +415,7 @@ void arts_db_add_dependence(arts_guid_t db_src, arts_guid_t edt_dest,
   struct arts_db_s *db_res =
       (struct arts_db_s *)arts_route_table_lookup_item(db_src);
   if (db_res != NULL) {
-    arts_add_dependence_to_persistent_event(db_res->event_guid, edt_dest,
-                                            edt_slot);
+    arts_add_dependence(db_res->event_guid, edt_dest, edt_slot);
   } else {
     arts_remote_db_add_dependence(db_src, edt_dest, edt_slot);
   }
@@ -507,8 +434,8 @@ void arts_db_add_dependence_with_mode_and_diff(arts_guid_t db_src,
   struct arts_db_s *db_res =
       (struct arts_db_s *)arts_route_table_lookup_item(db_src);
   if (db_res != NULL) {
-    arts_add_dependence_to_persistent_event_with_mode_and_diff(
-        db_res->event_guid, edt_dest, edt_slot, mode);
+    arts_event_add_dependence_with_mode(db_res->event_guid, edt_dest, edt_slot,
+                                        mode);
   } else {
     arts_remote_db_add_dependence_with_hints(db_src, edt_dest, edt_slot, mode);
   }
@@ -517,7 +444,7 @@ void arts_db_add_dependence_with_mode_and_diff(arts_guid_t db_src,
 /*
  * arts_record_dep — Public API to record a DB→EDT dependency with access mode.
  *
- * Registers the dependency via the persistent event system, and for WRITE
+ * Registers the dependency via the channel event system, and for WRITE
  * mode, increments the DB's latch counter so that the owner knows to wait
  * for the update before progressing the frontier.
  */
@@ -544,7 +471,7 @@ void arts_record_dep_at(arts_guid_t db_src, arts_guid_t edt_dest,
   struct arts_db_s *db_res =
       (struct arts_db_s *)arts_route_table_lookup_item(db_src);
   if (db_res != NULL) {
-    arts_add_dependence_to_persistent_event_with_byte_offset(
+    arts_event_add_dependence_with_byte_offset(
         db_res->event_guid, edt_dest, edt_slot, mode, byte_offset, len);
   } else {
     arts_remote_db_add_dependence_with_byte_offset(db_src, edt_dest, edt_slot,
@@ -583,7 +510,7 @@ void acquire_dbs(struct arts_edt_s *edt) {
 
       struct arts_db_s *db_found = NULL;
       int owner = (int)arts_guid_get_rank(depv[i].guid);
-      arts_type_t db_type = arts_guid_get_type(depv[i].guid);
+      arts_type_t guid_type = arts_guid_get_type(depv[i].guid);
 
       // Update access-mode counters
       if (access_mode == DB_MODE_RO) {
@@ -595,108 +522,70 @@ void acquire_dbs(struct arts_edt_s *edt) {
         }
       }
 
-      ARTS_INFO("Acquiring DB[Guid:%lu, DbType:%u, AccessMode:%u, Owner:%d, "
+      ARTS_INFO("Acquiring DB[Guid:%lu, GuidType:%u, AccessMode:%u, Owner:%d, "
                 "Rank:%u] in EDT[Id:%lu, Guid:%lu, Slot:%u]",
-                depv[i].guid, db_type, access_mode, owner, arts_global_rank_id,
-                edt->arts_id, edt->current_edt, i);
-      switch (db_type) {
-      case ARTS_DB_LOCAL: {
+                depv[i].guid, guid_type, access_mode, owner,
+                arts_global_rank_id, edt->arts_id, edt->current_edt, i);
+
+      if (guid_type == ARTS_DB) {
+        // Look up DB first — subtype dispatch requires the struct
         int valid_rank = -1;
         struct arts_db_s *db_temp =
             (struct arts_db_s *)arts_route_table_lookup_db(depv[i].guid,
                                                            &valid_rank, true);
-        if (db_temp) {
+
+        if (db_temp && db_temp->db_type == ARTS_DB_LOCAL) {
+          // LOCAL: direct access, no frontier
           db_found = db_temp;
           arts_atomic_sub(&edt->depc_needed, 1U);
-        } else {
-          arts_out_of_order_handle_db_request(depv[i].guid, edt, i, true);
-        }
-        break;
-      }
-      case ARTS_DB_GPU:
-      case ARTS_DB_LC:
-      default: {
-        // LC_SYNC access mode on owner — direct lookup, skip frontier.
-        if (access_mode == DB_MODE_LC_SYNC && owner == arts_global_rank_id) {
-          int valid_rank = -1;
-          struct arts_db_s *db_temp =
-              (struct arts_db_s *)arts_route_table_lookup_db(
-                  depv[i].guid, &valid_rank, false);
-          if (db_temp) {
-            ARTS_DEBUG("LC_SYNC -> %p", db_temp);
+        } else if (db_temp && access_mode == DB_MODE_LC_SYNC &&
+                   owner == arts_global_rank_id) {
+          // LC_SYNC on owner — direct lookup, skip frontier
+          ARTS_DEBUG("LC_SYNC -> %p", db_temp);
+          db_found = db_temp;
+          arts_atomic_sub(&edt->depc_needed, 1U);
+        } else if (db_temp && owner == arts_global_rank_id) {
+          // Owner path: CDAG frontier for DEFAULT/GPU/LC
+          bool on_head = false;
+          bool duplicate_added =
+              arts_add_db_duplicate(db_temp, arts_global_rank_id, edt,
+                                    edt->current_edt, i, access_mode, &on_head);
+          if (duplicate_added) {
+            ARTS_DEBUG("Adding duplicate DB[Guid:%lu] on_head=%d", depv[i].guid,
+                       on_head);
+          } else {
+            ARTS_DEBUG(
+                "Duplicate not added DB[Guid:%lu] (rank already tracked)",
+                depv[i].guid);
+          }
+
+          if (valid_rank == arts_global_rank_id &&
+              (!duplicate_added || on_head)) {
             db_found = db_temp;
             arts_atomic_sub(&edt->depc_needed, 1U);
+          } else if (valid_rank == arts_global_rank_id && duplicate_added &&
+                     !on_head) {
+            ARTS_DEBUG("EDT[Guid:%lu] deferred to frontier for "
+                       "DB[Guid:%lu] (non-head write frontier)",
+                       edt->current_edt, depv[i].guid);
           } else {
-            ARTS_DEBUG("DB[Guid:%lu] out of order request for LC_SYNC not "
-                       "supported yet",
-                       depv[i].guid);
-          }
-          break;
-        }
-        // Regular CDAG DB (DB_MODE_EW in GUID) or GPU/LC variants.
-        // Use access_mode for coherence decisions.
-        if (owner == arts_global_rank_id) {
-          int valid_rank = -1;
-          struct arts_db_s *db_temp =
-              (struct arts_db_s *)arts_route_table_lookup_db(depv[i].guid,
-                                                             &valid_rank, true);
-          if (db_temp) {
-            bool on_head = false;
-            bool duplicate_added = arts_add_db_duplicate(
-                db_temp, arts_global_rank_id, edt, edt->current_edt, i,
-                access_mode, &on_head);
-            if (duplicate_added) {
-              ARTS_DEBUG("Adding duplicate DB[Guid:%lu] on_head=%d",
-                         depv[i].guid, on_head);
+            if (access_mode == DB_MODE_RO || db_temp->db_type == ARTS_DB_GPU ||
+                db_temp->db_type == ARTS_DB_LC) {
+              arts_remote_db_request(depv[i].guid, valid_rank, edt, i,
+                                     access_mode, true);
             } else {
-              ARTS_DEBUG(
-                  "Duplicate not added DB[Guid:%lu] (rank already tracked)",
-                  depv[i].guid);
+              arts_remote_db_full_request(depv[i].guid, valid_rank,
+                                          edt->current_edt, i, access_mode);
             }
-
-            /*
-             * Only decrement depc_needed directly when the EDT is on the
-             * HEAD frontier (or not a duplicate at all).  Non-head frontier
-             * entries will be signaled by arts_signal_frontier_local() when
-             * the preceding writer's release_dbs() progresses the frontier.
-             * Decrementing here AND via frontier signaling causes a double-
-             * decrement race that leads to depc_needed underflow.
-             */
-            if (valid_rank == arts_global_rank_id &&
-                (!duplicate_added || on_head)) {
-              db_found = db_temp;
-              arts_atomic_sub(&edt->depc_needed, 1U);
-            } else if (valid_rank == arts_global_rank_id && duplicate_added &&
-                       !on_head) {
-              ARTS_DEBUG("EDT[Guid:%lu] deferred to frontier for "
-                         "DB[Guid:%lu] (non-head write frontier)",
-                         edt->current_edt, depv[i].guid);
-            } else {
-              if (access_mode == DB_MODE_RO || db_type == ARTS_DB_GPU ||
-                  db_type == ARTS_DB_LC) {
-                arts_remote_db_request(depv[i].guid, valid_rank, edt, i,
-                                       access_mode, true);
-              } else {
-                arts_remote_db_full_request(depv[i].guid, valid_rank,
-                                            edt->current_edt, i, access_mode);
-              }
-            }
-          } else {
-            ARTS_DEBUG("DB[Guid:%lu] out of order request slot %u",
-                       depv[i].guid, i);
-            arts_out_of_order_handle_db_request(depv[i].guid, edt, i, true);
           }
-        } else {
-          int valid_rank = -1;
-          struct arts_db_s *db_temp =
-              (struct arts_db_s *)arts_route_table_lookup_db(depv[i].guid,
-                                                             &valid_rank, true);
+        } else if (db_temp) {
+          // Non-owner path: cached copy management
           ARTS_INFO("[AcquireDbs] Non-owner case for DB[Guid:%lu, "
                     "AccessMode:%u, Owner:%d, ValidRank: %d, DbTemp: %p]",
                     depv[i].guid, access_mode, owner, valid_rank,
                     (void *)db_temp);
-          bool local_valid = (db_temp && valid_rank == arts_global_rank_id);
-          if (db_temp) {
+          bool local_valid = (valid_rank == arts_global_rank_id);
+          if (local_valid) {
             ARTS_INFO("[AcquireDbs] Non-owner cache state DB[Guid:%lu, "
                       "ArtsId:%lu, AccessMode:%s, ValidRank:%d, "
                       "LocalValid:%d, Version:%u]",
@@ -709,7 +598,6 @@ void acquire_dbs(struct arts_edt_s *edt) {
                       depv[i].guid, GET_DB_MODE_NAME(access_mode), valid_rank);
           }
           if (access_mode == DB_MODE_EW && local_valid) {
-            // Conservative: avoid using possibly stale cached WRITE copies.
             ARTS_INFO("  Non-owner WRITE acquire: invalidating local cached "
                       "copy to avoid stale data");
             arts_route_table_invalidate_item(depv[i].guid);
@@ -733,22 +621,34 @@ void acquire_dbs(struct arts_edt_s *edt) {
                   "  WRITE mode with local valid copy - no remote request "
                   "needed");
             }
-          } else if (!db_temp || !local_valid) {
+          } else if (!local_valid) {
             ARTS_INFO("  READ mode, no local copy - sending aggregated request "
                       "to rank %d",
                       owner);
-            int request_rank = owner;
-            arts_remote_db_request(depv[i].guid, request_rank, edt, i,
-                                   access_mode, true);
+            arts_remote_db_request(depv[i].guid, owner, edt, i, access_mode,
+                                   true);
           } else {
             ARTS_INFO("  READ mode with local copy - no remote request needed");
           }
+        } else {
+          // DB not in route table — out-of-order or remote
+          if (arts_guid_is_local(depv[i].guid)) {
+            ARTS_DEBUG("DB[Guid:%lu] out of order request slot %u",
+                       depv[i].guid, i);
+            arts_out_of_order_handle_db_request(depv[i].guid, edt, i, true);
+          } else {
+            // Remote DB not cached locally — request from owner
+            if (access_mode == DB_MODE_EW) {
+              arts_remote_db_full_request(depv[i].guid, owner, edt->current_edt,
+                                          i, access_mode);
+            } else {
+              arts_remote_db_request(depv[i].guid, owner, edt, i, access_mode,
+                                     true);
+            }
+          }
         }
-      } break;
-
-      case ARTS_NULL:
+      } else if (guid_type == ARTS_NULL) {
         arts_atomic_sub(&edt->depc_needed, 1U);
-        break;
       }
 
       if (db_found) {
@@ -779,23 +679,24 @@ void prep_dbs(unsigned int depc, arts_edt_dep_t *depv,
   (void)gpu;
   for (unsigned int i = 0; i < depc; i++) {
     arts_db_access_mode_t access_mode = modes[i];
-    arts_type_t db_type = arts_guid_get_type(depv[i].guid);
-    if (depv[i].guid != NULL_GUID && access_mode == DB_MODE_EW) {
-      if (db_type != ARTS_DB_LOCAL) {
+    if (depv[i].guid != NULL_GUID && depv[i].ptr && access_mode == DB_MODE_EW) {
+      struct arts_db_s *db = ((struct arts_db_s *)depv[i].ptr) - 1;
+      if (db->db_type != ARTS_DB_LOCAL) {
         arts_remote_update_route_table(depv[i].guid, -1);
       }
-      struct arts_db_s *db = ((struct arts_db_s *)depv[i].ptr) - 1;
       ARTS_DEBUG("[prep_dbs] DB[Id:%lu, Guid:%lu] ptr=%p, db=%p", db->arts_id,
                  depv[i].guid, depv[i].ptr, db);
     }
 #ifdef ARTS_USE_GPU
-    if (!gpu && db_type == ARTS_DB_LC) {
+    if (!gpu && depv[i].ptr) {
       struct arts_db_s *db = ((struct arts_db_s *)depv[i].ptr) - 1;
-      arts_reader_lock(&db->reader, &db->writer);
-      internal_inc_db_version(&db->version);
+      if (db->db_type == ARTS_DB_LC) {
+        arts_reader_lock(&db->reader, &db->writer);
+        internal_inc_db_version(&db->version);
+      }
     }
 
-    if (!gpu && access_mode == DB_MODE_LC_SYNC) {
+    if (!gpu && access_mode == DB_MODE_LC_SYNC && depv[i].ptr) {
       struct arts_db_s *db = ((struct arts_db_s *)depv[i].ptr) - 1;
       ARTS_DEBUG("internalLCSync %lu %p", depv[i].guid, db);
       internal_lc_sync_gpu(depv[i].guid, db);
@@ -808,7 +709,7 @@ void prep_dbs(unsigned int depc, arts_edt_dep_t *depv,
  * release_dbs — Release DB dependencies after EDT execution completes.
  *
  * For WRITE-mode deps owned locally: progresses the CDAG frontier and
- * decrements the persistent-event latch (notifying waiting readers).
+ * decrements the channel event latch (notifying waiting readers).
  * For WRITE-mode deps on remote owners: sends the updated data back to
  * the owner node.  For READ-mode: returns the route table entry.
  * For LC DBs (GPU builds): releases the reader lock.
@@ -817,14 +718,19 @@ void release_dbs(unsigned int depc, arts_edt_dep_t *depv,
                  const arts_db_access_mode_t *modes, bool gpu) {
   for (int i = 0; i < depc; i++) {
     arts_db_access_mode_t access_mode = modes[i];
-    arts_type_t db_type = arts_guid_get_type(depv[i].guid);
-    ARTS_DEBUG("Releasing DB[Guid:%lu] [AccessMode:%s, DbType:%s]",
+    // Get DB subtype from struct when ptr is available
+    arts_db_types_t db_subtype = ARTS_DB_DEFAULT;
+    if (depv[i].ptr) {
+      struct arts_db_s *db_hdr = ((struct arts_db_s *)depv[i].ptr) - 1;
+      db_subtype = db_hdr->db_type;
+    }
+    ARTS_DEBUG("Releasing DB[Guid:%lu] [AccessMode:%s, DbSubtype:%s]",
                depv[i].guid, GET_DB_MODE_NAME(access_mode),
-               GET_TYPE_NAME(db_type));
+               GET_DB_TYPE_NAME(db_subtype));
     unsigned int owner = arts_guid_get_rank(depv[i].guid);
 
     if (depv[i].guid != NULL_GUID && access_mode == DB_MODE_EW) {
-      if (db_type == ARTS_DB_LOCAL) {
+      if (db_subtype == ARTS_DB_LOCAL) {
         ARTS_DEBUG("Pinned DB write release (no frontier update)");
         arts_db_decrement_latch(depv[i].guid);
       } else if (owner == arts_global_rank_id) {
@@ -846,20 +752,21 @@ void release_dbs(unsigned int depc, arts_edt_dep_t *depv,
                  "latch decrement)",
                  depv[i].guid);
       INCREMENT_NUM_OWNER_UPDATE_SAVED_BY(1);
-    } else if (db_type == ARTS_DB_LOCAL) {
+    } else if (db_subtype == ARTS_DB_LOCAL && depv[i].guid != NULL_GUID) {
       arts_db_decrement_latch(depv[i].guid);
     } else if (access_mode == DB_MODE_PTR) {
       // Only free explicit buffers (guid == NULL). ESD slices point into DBs.
       if (depv[i].guid == NULL_GUID) {
         arts_free(depv[i].ptr);
       }
-    } else if (!gpu && db_type == ARTS_DB_LC) {
+    } else if (!gpu && db_subtype == ARTS_DB_LC) {
       if (depv[i].ptr) {
         struct arts_db_s *db = ((struct arts_db_s *)depv[i].ptr) - 1;
         arts_reader_unlock(&db->reader);
       }
     } else {
-      if (arts_route_table_return_db(depv[i].guid, db_type != ARTS_DB_LOCAL)) {
+      if (arts_route_table_return_db(depv[i].guid,
+                                     db_subtype != ARTS_DB_LOCAL)) {
         ARTS_DEBUG("FREED A COPY - DB[Guid:%lu]", depv[i].guid);
       }
     }
@@ -889,7 +796,7 @@ void arts_db_release(arts_guid_t guid) {
         if (db->db_list) {
           arts_progress_frontier(db, arts_global_rank_id);
         }
-        arts_persistent_event_decrement_latch(db->event_guid);
+        arts_event_decrement_latch(db->event_guid);
       }
       return;
     }
@@ -902,7 +809,7 @@ void arts_db_release(arts_guid_t guid) {
  *
  * Mirrors release_dbs() but operates on the thread-local created_db_list
  * instead of the EDT's depv[].  For each tracked DB: progresses the frontier
- * (unblocking consumers) and decrements the persistent event latch.
+ * (unblocking consumers) and decrements the channel event latch.
  * Skips entries already released via arts_db_release() (marked NULL_GUID).
  */
 void arts_release_created_dbs(void) {
@@ -922,7 +829,7 @@ void arts_release_created_dbs(void) {
       if (db->db_list) {
         arts_progress_frontier(db, arts_global_rank_id);
       }
-      arts_persistent_event_decrement_latch(db->event_guid);
+      arts_event_decrement_latch(db->event_guid);
     }
   }
 }

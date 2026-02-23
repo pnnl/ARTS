@@ -62,7 +62,7 @@ void check_local(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     }
   }
   if (ok) {
-    ok = (arts_guid_get_type(guid) == ARTS_DB_LOCAL);
+    ok = (arts_guid_get_type(guid) == ARTS_DB);
   }
   arts_printf("  %s: arts_db_local_create local path\n", ok ? "PASS" : "FAIL");
 }
@@ -74,7 +74,7 @@ void check_null_hint(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   arts_guid_t guid = (arts_guid_t)paramv[0];
   unsigned int *data = (unsigned int *)depv[0].ptr;
-  bool ok = (data != NULL && arts_guid_get_type(guid) == ARTS_DB_LOCAL);
+  bool ok = (data != NULL && arts_guid_get_type(guid) == ARTS_DB);
   if (ok) {
     ok = (*data == 42);
   }
@@ -117,7 +117,7 @@ void ew_verify(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                   arts_edt_dep_t depv[]) {
+              arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
@@ -130,8 +130,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Test 1: Local creation with explicit route = current node.
   void *ptr1 = NULL;
   arts_hint_t hint1 = {.route = arts_get_current_node(), .id = 0};
-  arts_guid_t g1 =
-      arts_db_local_create(&ptr1, NUM_ELEMS * sizeof(unsigned int), &hint1);
+  arts_guid_t g1 = arts_db_create(&ptr1, NUM_ELEMS * sizeof(unsigned int),
+                                  ARTS_DB_LOCAL, &hint1);
   unsigned int *d1 = (unsigned int *)ptr1;
   for (unsigned int i = 0; i < NUM_ELEMS; i++) {
     d1[i] = i + 1;
@@ -144,7 +144,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Test 2: NULL hint.
   void *ptr2 = NULL;
-  arts_guid_t g2 = arts_db_local_create(&ptr2, sizeof(unsigned int), NULL);
+  arts_guid_t g2 =
+      arts_db_create(&ptr2, sizeof(unsigned int), ARTS_DB_LOCAL, NULL);
   *(unsigned int *)ptr2 = 42;
   arts_db_release(g2);
   uint64_t p2 = (uint64_t)g2;
@@ -154,8 +155,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Test 3: EW ordering — writer then verifier.
   void *ptr3 = NULL;
-  arts_guid_t g3 =
-      arts_db_local_create(&ptr3, NUM_ELEMS * sizeof(unsigned int), NULL);
+  arts_guid_t g3 = arts_db_create(&ptr3, NUM_ELEMS * sizeof(unsigned int),
+                                  ARTS_DB_LOCAL, NULL);
   unsigned int *d3 = (unsigned int *)ptr3;
   for (unsigned int i = 0; i < NUM_ELEMS; i++) {
     d3[i] = i + 1;

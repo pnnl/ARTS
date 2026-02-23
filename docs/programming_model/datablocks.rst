@@ -19,16 +19,17 @@ movement transparently.
 DB Types
 --------
 
-The DB type is set at creation time and determines allocation strategy
-and coherence behavior:
+All DataBlocks use a single GUID type (``ARTS_DB``).  The **subtype**
+is set at creation time via :c:enum:`arts_db_types_t` and determines
+allocation strategy and coherence behavior:
 
 .. list-table::
    :header-rows: 1
    :widths: 25 75
 
-   * - Type
+   * - Subtype
      - Semantics
-   * - ``ARTS_DB``
+   * - ``ARTS_DB_DEFAULT``
      - Distributed DataBlock (CDAG-managed).  The default type for most
        use cases.  Supports read sharing and write coherence across nodes.
    * - ``ARTS_DB_LOCAL``
@@ -64,17 +65,22 @@ Creating a DataBlock
 
 .. code-block:: c
 
-   /* Create a 1024-byte DB on this node (mode-less; access mode set later) */
+   /* Create a 1024-byte DEFAULT DB on this node */
    void *addr;
-   arts_guid_t db_guid = arts_db_create(&addr, 1024, NULL);
+   arts_guid_t db_guid = arts_db_create(&addr, 1024, ARTS_DB_DEFAULT, NULL);
 
    /* Create on a specific node */
-   arts_guid_t db_guid = arts_db_create(&addr, 1024,
+   arts_guid_t db_guid = arts_db_create(&addr, 1024, ARTS_DB_DEFAULT,
                                         &(arts_hint_t){.route = target_node});
 
-   /* Create a LOCAL (node-resident) DB */
-   arts_guid_t guid = arts_guid_reserve(ARTS_DB_LOCAL, target_node);
-   arts_db_create_with_guid(guid, 1024, NULL);
+   /* Create a LOCAL (node-resident) DB with a pre-reserved GUID */
+   arts_guid_t guid = arts_guid_reserve(ARTS_DB, target_node);
+   arts_db_create_with_guid(guid, 1024, ARTS_DB_LOCAL, NULL, NULL);
+
+   /* Create a DB with initial data */
+   int data[] = {1, 2, 3};
+   arts_guid_t g = arts_guid_reserve(ARTS_DB, 0);
+   arts_db_create_with_guid(g, sizeof(data), ARTS_DB_DEFAULT, data, NULL);
 
 Writing Data
 ------------

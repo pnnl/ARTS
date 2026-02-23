@@ -112,9 +112,7 @@ void arts_track_created_db(arts_guid_t guid) {
   arts_push_to_array_list(created_db_list, &guid);
 }
 
-arts_array_list_t *arts_get_created_db_list(void) {
-  return created_db_list;
-}
+arts_array_list_t *arts_get_created_db_list(void) { return created_db_list; }
 
 void arts_set_thread_local_edt_info(struct arts_edt_s *edt) {
   arts_thread_info.current_edt_guid = edt->current_edt;
@@ -352,7 +350,8 @@ arts_guid_t arts_edt_create_dep(arts_edt_t func_ptr, uint32_t paramc,
                            : arts_global_rank_id;
   uint64_t arts_id = hint ? hint->id : 0;
   unsigned int dep_space = (has_depv) ? depc * sizeof(arts_edt_dep_t) : 0;
-  unsigned int mode_space = (has_depv) ? depc * sizeof(arts_db_access_mode_t) : 0;
+  unsigned int mode_space =
+      (has_depv) ? depc * sizeof(arts_db_access_mode_t) : 0;
   unsigned int edt_space = sizeof(struct arts_edt_s) +
                            (paramc * sizeof(uint64_t)) + dep_space + mode_space;
   arts_guid_t guid = NULL_GUID;
@@ -372,7 +371,8 @@ arts_guid_t arts_edt_create_with_guid_dep(arts_edt_t func_ptr, arts_guid_t guid,
   TIME_EDT_CREATE_START();
   unsigned int route = arts_guid_get_rank(guid);
   unsigned int dep_space = (has_depv) ? depc * sizeof(arts_edt_dep_t) : 0;
-  unsigned int mode_space = (has_depv) ? depc * sizeof(arts_db_access_mode_t) : 0;
+  unsigned int mode_space =
+      (has_depv) ? depc * sizeof(arts_db_access_mode_t) : 0;
   unsigned int edt_space = sizeof(struct arts_edt_s) +
                            (paramc * sizeof(uint64_t)) + dep_space + mode_space;
   bool ret = arts_edt_create_internal(
@@ -391,7 +391,8 @@ arts_guid_t arts_edt_create_with_epoch_dep(
                            : arts_global_rank_id;
   uint64_t arts_id = hint ? hint->id : 0;
   unsigned int dep_space = (has_depv) ? depc * sizeof(arts_edt_dep_t) : 0;
-  unsigned int mode_space = (has_depv) ? depc * sizeof(arts_db_access_mode_t) : 0;
+  unsigned int mode_space =
+      (has_depv) ? depc * sizeof(arts_db_access_mode_t) : 0;
   unsigned int edt_space = sizeof(struct arts_edt_s) +
                            (paramc * sizeof(uint64_t)) + dep_space + mode_space;
   arts_guid_t guid = NULL_GUID;
@@ -497,8 +498,8 @@ arts_db_access_mode_t *arts_get_dep_modes(void *edt_ptr) {
  *   4. Remote EDT → forward the signal over the network.
  */
 void internal_signal_edt(arts_guid_t edt_packet, uint32_t slot,
-                         arts_guid_t data_guid, arts_db_access_mode_t mode, void *ptr,
-                         unsigned int size) {
+                         arts_guid_t data_guid, arts_db_access_mode_t mode,
+                         void *ptr, unsigned int size) {
   TIME_EDT_SIGNAL_START();
   INCREMENT_NUM_EDT_SIGNAL_BY(1);
 
@@ -578,7 +579,8 @@ void arts_signal_edt(arts_guid_t edt_guid, uint32_t slot, arts_guid_t data_guid,
 
 // Internal function to signal EDT with explicit access mode
 void internal_signal_edt_with_mode(arts_guid_t edt_packet, uint32_t slot,
-                                   arts_guid_t data_guid, arts_db_access_mode_t mode) {
+                                   arts_guid_t data_guid,
+                                   arts_db_access_mode_t mode) {
   TIME_EDT_SIGNAL_START();
   // This is old CDAG code...
   if (current_edt && current_edt->invalidate_count > 0) {
@@ -605,7 +607,8 @@ void internal_signal_edt_with_mode(arts_guid_t edt_packet, uint32_t slot,
         unsigned int res = arts_atomic_sub(&edt->depc_needed, 1U);
         ARTS_INFO("Signal DB[Guid:%lu] to EDT[Guid:%lu, Slot:%u, "
                   "DepCount:%d, Mode:%s]",
-                  data_guid, edt->current_edt, slot, res, GET_DB_MODE_NAME(mode));
+                  data_guid, edt->current_edt, slot, res,
+                  GET_DB_MODE_NAME(mode));
         if (res == 0) {
           arts_handle_ready_edt(edt);
         }
@@ -793,11 +796,10 @@ void arts_lc_sync(arts_guid_t edt_guid, uint32_t slot, arts_guid_t data_guid) {
 
 void arts_gpu_signal_edt_memset(arts_guid_t edt_guid, uint32_t slot,
                                 arts_guid_t data_guid) {
-  arts_type_t type = arts_guid_get_type(data_guid);
   arts_db_access_mode_t mode = DB_MODE_MEMSET;
-  if (type == ARTS_DB_GPU) {
-    mode = DB_MODE_MEMSET;
-  } else if (type == ARTS_DB_LC) {
+  struct arts_db_s *db =
+      (struct arts_db_s *)arts_route_table_lookup_item(data_guid);
+  if (db && db->db_type == ARTS_DB_LC) {
     mode = DB_MODE_LC_NO_COPY;
   }
   internal_signal_edt(edt_guid, slot, data_guid, mode, NULL, 0);

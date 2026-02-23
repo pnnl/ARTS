@@ -45,7 +45,7 @@ extern "C" {
 #include "arts/runtime/rt.h"
 
 void arts_db_create_internal(arts_guid_t guid, void *addr, uint64_t len,
-                             uint64_t packet_size, arts_type_t mode,
+                             uint64_t packet_size, arts_db_types_t db_type,
                              uint64_t arts_id);
 void acquire_dbs(struct arts_edt_s *edt);
 void release_dbs(unsigned int depc, arts_edt_dep_t *depv,
@@ -62,7 +62,7 @@ void internal_put_in_db(void *ptr, arts_guid_t edt_guid, arts_guid_t db_guid,
                         unsigned int size, arts_guid_t epoch_guid,
                         unsigned int rank);
 
-void *arts_db_malloc(arts_type_t mode, unsigned int size);
+void *arts_db_malloc(arts_db_types_t db_type, unsigned int size);
 void arts_db_free(void *ptr);
 void *arts_db_adopt(arts_guid_t guid, struct arts_db_s *db);
 

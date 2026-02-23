@@ -136,7 +136,7 @@ arts_inspector_stats_t *stats = NULL;
 arts_inspector_shots_t *inspector_shots = NULL;
 arts_packet_inspector_t *packet_inspector = NULL;
 
-__thread bool inspector_ignore = 0;
+ARTS_THREAD_LOCAL bool inspector_ignore = 0;
 
 static int metric_default_enabled = 1;
 static int metric_enabled_override[ARTS_METRIC_LAST_TYPE];

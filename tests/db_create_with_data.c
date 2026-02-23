@@ -92,7 +92,7 @@ void check_zero_len(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                   arts_edt_dep_t depv[]) {
+              arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
@@ -108,7 +108,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     src[i] = (i + 1) * 11;
   }
   arts_guid_t g1 = arts_guid_reserve(ARTS_DB, 0);
-  arts_db_create_with_guid_and_data(g1, src, 8 * sizeof(int));
+  arts_db_create_with_guid(g1, 8 * sizeof(int), ARTS_DB_DEFAULT, src, NULL);
   arts_db_release(g1);
 
   arts_guid_t e1 = arts_edt_create_with_epoch(
@@ -118,7 +118,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Test 2: Modify source after creation — DB should be independent.
   int src2[2] = {100, 200};
   arts_guid_t g2 = arts_guid_reserve(ARTS_DB, 0);
-  arts_db_create_with_guid_and_data(g2, src2, 2 * sizeof(int));
+  arts_db_create_with_guid(g2, 2 * sizeof(int), ARTS_DB_DEFAULT, src2, NULL);
   arts_db_release(g2);
   // Zero out source.
   memset(src2, 0, sizeof(src2));

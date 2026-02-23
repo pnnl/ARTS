@@ -48,7 +48,7 @@
 
 #include "mm_util.h"
 
-#define MATSIZE  1024
+#define MATSIZE 1024
 #define TILESIZE 32
 // #define VERIFY 1
 #define SMTILE 32
@@ -87,15 +87,9 @@ typedef struct {
 
 binary_reduction_tree_t **red_tree = NULL;
 
-unsigned int left(unsigned int i) {
-  return (2 * i) + 1;
-}
-unsigned int right(unsigned int i) {
-  return (2 * i) + 2;
-}
-unsigned int parent(unsigned int i) {
-  return (i - 1) / 2;
-}
+unsigned int left(unsigned int i) { return (2 * i) + 1; }
+unsigned int right(unsigned int i) { return (2 * i) + 2; }
+unsigned int parent(unsigned int i) { return (i - 1) / 2; }
 
 unsigned int reserve_edt_guids(arts_guid_t *all_guids, unsigned int index,
                                arts_type_t edt_type) {
@@ -112,10 +106,11 @@ unsigned int reserve_edt_guids(arts_guid_t *all_guids, unsigned int index,
   return rank;
 }
 
-binary_reduction_tree_t *init_binary_reduction_tree(
-    unsigned int num_leaves, arts_edt_t fun_ptr, arts_type_t db_type,
-    arts_type_t edt_type, uint32_t paramc, const uint64_t *paramv, dim3 grid,
-    dim3 block, arts_guid_t end_guid, uint32_t slot) {
+binary_reduction_tree_t *
+init_binary_reduction_tree(unsigned int num_leaves, arts_edt_t fun_ptr,
+                           arts_type_t db_type, arts_type_t edt_type,
+                           uint32_t paramc, const uint64_t *paramv, dim3 grid,
+                           dim3 block, arts_guid_t end_guid, uint32_t slot) {
   binary_reduction_tree_t *tree =
       (binary_reduction_tree_t *)calloc(1, sizeof(binary_reduction_tree_t));
   tree->num_leaves = num_leaves;
@@ -222,8 +217,8 @@ void multiply_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
               a_tile_dev, (int)tile_size, b_tile_dev, (int)tile_size, &beta,
               c_tile_dev, (int)tile_size);
 
-  double *c_tile_host =
-      (double *)arts_db_create_with_guid(c_tile_guid, size, NULL);
+  double *c_tile_host = (double *)arts_db_create_with_guid(
+      c_tile_guid, size, ARTS_DB_GPU, NULL, NULL);
   (void)c_tile_host;
   arts_put_in_db_from_gpu(c_tile_dev, c_tile_guid, 0, size, true);
   fire_db_from_reduction_tree(red_tree[(i * num_blocks) + j], k);
@@ -307,18 +302,19 @@ void init_node(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   b_mat_guid = arts_guid_reserve(ARTS_DB, 0);
   c_mat_guid = arts_guid_reserve(ARTS_DB, 0);
 
-  a_tile_guids =
-      arts_guid_reserve_range(ARTS_DB_GPU, num_blocks * num_blocks, 0);
-  b_tile_guids =
-      arts_guid_reserve_range(ARTS_DB_GPU, num_blocks * num_blocks, 0);
+  a_tile_guids = arts_guid_reserve_range(ARTS_DB, num_blocks * num_blocks, 0);
+  b_tile_guids = arts_guid_reserve_range(ARTS_DB, num_blocks * num_blocks, 0);
 
   if (!node_id) {
     a_matrix = (double *)arts_db_create_with_guid(
-        a_mat_guid, (size_t)mat_size * mat_size * sizeof(double), NULL);
+        a_mat_guid, (size_t)mat_size * mat_size * sizeof(double), ARTS_DB_GPU,
+        NULL, NULL);
     b_matrix = (double *)arts_db_create_with_guid(
-        b_mat_guid, (size_t)mat_size * mat_size * sizeof(double), NULL);
+        b_mat_guid, (size_t)mat_size * mat_size * sizeof(double), ARTS_DB_GPU,
+        NULL, NULL);
     c_matrix = (double *)arts_db_create_with_guid(
-        c_mat_guid, (size_t)mat_size * mat_size * sizeof(double), NULL);
+        c_mat_guid, (size_t)mat_size * mat_size * sizeof(double), ARTS_DB_GPU,
+        NULL, NULL);
 
     init_matrix(mat_size, a_matrix, true, false);
     init_matrix(mat_size, b_matrix, false, false);
@@ -336,14 +332,14 @@ void init_node(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   for (unsigned int i = 0; i < num_blocks; i++) {
     for (unsigned int j = 0; j < num_blocks; j++) {
       red_tree[(i * num_blocks) + j] = init_binary_reduction_tree(
-          num_blocks, sum_mm_kernel, ARTS_DB_GPU, ARTS_GPU_EDT, 1, sum_args,
-          grid, threads, done_guid, 3 + ((i * num_blocks) + j));
+          num_blocks, sum_mm_kernel, ARTS_DB, ARTS_GPU_EDT, 1, sum_args, grid,
+          threads, done_guid, 3 + ((i * num_blocks) + j));
     }
   }
 }
 
-extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
-                              uint32_t depc, arts_edt_dep_t depv[]) {
+extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                         arts_edt_dep_t depv[]) {
   (void)depc;
   (void)depv;
   int argc = (int)paramv[0];
@@ -374,13 +370,15 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
       arts_guid_t a_tile_guid =
           arts_guid_from_index(a_tile_guids, (i * num_blocks) + j);
       double *a_tile = (double *)arts_db_create_with_guid(
-          a_tile_guid, sizeof(double) * tile_size * tile_size, NULL);
+          a_tile_guid, sizeof(double) * tile_size * tile_size, ARTS_DB_GPU,
+          NULL, NULL);
       copy_block(i, j, tile_size, a_tile, mat_size, a_matrix, true);
 
       arts_guid_t b_tile_guid =
           arts_guid_from_index(b_tile_guids, (i * num_blocks) + j);
       double *b_tile = (double *)arts_db_create_with_guid(
-          b_tile_guid, sizeof(double) * tile_size * tile_size, NULL);
+          b_tile_guid, sizeof(double) * tile_size * tile_size, ARTS_DB_GPU,
+          NULL, NULL);
       copy_block(i, j, tile_size, b_tile, mat_size, b_matrix, true);
     }
   }
@@ -396,12 +394,14 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
         uint64_t args[] = {0, i, j, k, (uint64_t)c_guid[k]};
         arts_guid_t mul_guid = arts_edt_create_gpu_lib(multiply_mm, node_id, 5,
                                                        args, 2, grid, threads);
-        arts_signal_edt(mul_guid, 0,
-                        arts_guid_from_index(a_tile_guids, (i * num_blocks) + k),
-                        DB_MODE_EW);
-        arts_signal_edt(mul_guid, 1,
-                        arts_guid_from_index(b_tile_guids, (k * num_blocks) + j),
-                        DB_MODE_EW);
+        arts_signal_edt(
+            mul_guid, 0,
+            arts_guid_from_index(a_tile_guids, (i * num_blocks) + k),
+            DB_MODE_EW);
+        arts_signal_edt(
+            mul_guid, 1,
+            arts_guid_from_index(b_tile_guids, (k * num_blocks) + j),
+            DB_MODE_EW);
       }
     }
   }

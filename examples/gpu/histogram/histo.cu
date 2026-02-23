@@ -210,13 +210,13 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
 
   done_guid = arts_guid_reserve(ARTS_EDT, 0);
   final_sum_guid = arts_guid_reserve(ARTS_GPU_EDT, 0);
-  histo_guid = arts_guid_reserve(ARTS_DB_GPU, 0);
+  histo_guid = arts_guid_reserve(ARTS_DB, 0);
 
-  input_tile_guids = arts_guid_reserve_round_robin(num_blocks, ARTS_DB_GPU);
-  partial_histo_guids = arts_guid_reserve_round_robin(num_blocks, ARTS_DB_GPU);
+  input_tile_guids = arts_guid_reserve_round_robin(num_blocks, ARTS_DB);
+  partial_histo_guids = arts_guid_reserve_round_robin(num_blocks, ARTS_DB);
 
   final_histogram = (unsigned int *)arts_db_create_with_guid(
-      histo_guid, NUMBINS * sizeof(unsigned int), NULL);
+      histo_guid, NUMBINS * sizeof(unsigned int), ARTS_DB_GPU, NULL, NULL);
   memset(final_histogram, 0, NUMBINS * sizeof(unsigned int));
 
   input_array = (unsigned int *)calloc(input_array_size, sizeof(unsigned int));
@@ -249,12 +249,12 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
 
     if (arts_guid_get_rank(input_tile_guid) == node_id) {
       unsigned int *input_tile = (unsigned int *)arts_db_create_with_guid(
-          input_tile_guid, sizeof(unsigned int) * tile_size, NULL);
+          input_tile_guid, sizeof(unsigned int) * tile_size, ARTS_DB_GPU, NULL, NULL);
       memcpy(input_tile, &input_array[(size_t)tile * tile_size],
              tile_size * sizeof(unsigned int));
 
       unsigned int *partial_histo = (unsigned int *)arts_db_create_with_guid(
-          partial_histo_guid, sizeof(unsigned int) * NUMBINS, NULL);
+          partial_histo_guid, sizeof(unsigned int) * NUMBINS, ARTS_DB_GPU, NULL, NULL);
       memset(partial_histo, 0, NUMBINS * sizeof(unsigned int));
 
       uint64_t args[] = {tile_size};

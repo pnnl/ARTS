@@ -131,9 +131,9 @@ void verify_gpu_index(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   /* --- Now run test 1 --- */
   unsigned int node_id = arts_get_current_node();
   unsigned int *addr = NULL;
-  arts_guid_t db_guid1 = arts_guid_reserve(ARTS_DB_GPU, 0);
+  arts_guid_t db_guid1 = arts_guid_reserve(ARTS_DB, 0);
   addr = (unsigned int *)arts_db_create_with_guid(
-      db_guid1, sizeof(unsigned int) * N_ELEMENTS, NULL);
+      db_guid1, sizeof(unsigned int) * N_ELEMENTS, ARTS_DB_GPU, NULL, NULL);
   for (unsigned int i = 0; i < N_ELEMENTS; i++) {
     addr[i] = 0;
   }
@@ -169,9 +169,9 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
 
   /* Test 2: arts_edt_create_gpu_direct targeting gpu 0 */
   unsigned int *addr = NULL;
-  arts_guid_t db_guid = arts_guid_reserve(ARTS_DB_GPU, 0);
+  arts_guid_t db_guid = arts_guid_reserve(ARTS_DB, 0);
   addr = (unsigned int *)arts_db_create_with_guid(
-      db_guid, sizeof(unsigned int) * N_ELEMENTS, NULL);
+      db_guid, sizeof(unsigned int) * N_ELEMENTS, ARTS_DB_GPU, NULL, NULL);
   for (unsigned int i = 0; i < N_ELEMENTS; i++) {
     addr[i] = (unsigned int)-1;
   }

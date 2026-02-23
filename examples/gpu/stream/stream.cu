@@ -233,8 +233,8 @@ void stream_driver(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
-                              uint32_t depc, arts_edt_dep_t depv[]) {
+extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                         arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;
   (void)depv;
@@ -253,12 +253,12 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
   arts_printf("N: %u tile_size: %u num_tiles: %u Gpus: %u\n", N, tile_size,
               num_tiles, arts_get_total_gpus());
 
-  a_tile_guids = arts_guid_reserve_range_hash(ARTS_DB_GPU, num_tiles, 0,
-                                             arts_get_total_gpus());
-  b_tile_guids = arts_guid_reserve_range_hash(ARTS_DB_GPU, num_tiles, 0,
-                                             arts_get_total_gpus());
-  c_tile_guids = arts_guid_reserve_range_hash(ARTS_DB_GPU, num_tiles, 0,
-                                             arts_get_total_gpus());
+  a_tile_guids = arts_guid_reserve_range_hash(ARTS_DB, num_tiles, 0,
+                                              arts_get_total_gpus());
+  b_tile_guids = arts_guid_reserve_range_hash(ARTS_DB, num_tiles, 0,
+                                              arts_get_total_gpus());
+  c_tile_guids = arts_guid_reserve_range_hash(ARTS_DB, num_tiles, 0,
+                                              arts_get_total_gpus());
 
   uint64_t a_hash = arts_guid_hash_key(arts_guid_from_index(a_tile_guids, 0));
   uint64_t b_hash = arts_guid_hash_key(arts_guid_from_index(b_tile_guids, 0));
@@ -288,11 +288,14 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
 
   for (unsigned int i = 0; i < num_tiles; i++) {
     a_tile[i] = (double *)arts_db_create_with_guid(
-        arts_guid_from_index(a_tile_guids, i), tile_size * sizeof(double), NULL);
+        arts_guid_from_index(a_tile_guids, i), tile_size * sizeof(double),
+        ARTS_DB_GPU, NULL, NULL);
     b_tile[i] = (double *)arts_db_create_with_guid(
-        arts_guid_from_index(b_tile_guids, i), tile_size * sizeof(double), NULL);
+        arts_guid_from_index(b_tile_guids, i), tile_size * sizeof(double),
+        ARTS_DB_GPU, NULL, NULL);
     c_tile[i] = (double *)arts_db_create_with_guid(
-        arts_guid_from_index(c_tile_guids, i), tile_size * sizeof(double), NULL);
+        arts_guid_from_index(c_tile_guids, i), tile_size * sizeof(double),
+        ARTS_DB_GPU, NULL, NULL);
     for (unsigned int j = 0; j < tile_size; j++) {
       a_tile[i][j] = 1.0;
       b_tile[i][j] = 2.0;

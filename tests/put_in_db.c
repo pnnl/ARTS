@@ -73,7 +73,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
   char **argv = (char **)paramv[1];
-  db_guid = arts_guid_reserve(ARTS_DB_LOCAL, 0);
+  db_guid = arts_guid_reserve(ARTS_DB, 0);
   shutdown_guid = arts_guid_reserve(ARTS_EDT, 0);
   num_elements = strtol(argv[1], NULL, 10);
   block_size = num_elements / arts_get_total_nodes();
@@ -86,7 +86,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     return;
   }
 
-  arts_db_create_with_guid(db_guid, sizeof(unsigned int) * num_elements, NULL);
+  arts_db_create_with_guid(db_guid, sizeof(unsigned int) * num_elements, ARTS_DB_LOCAL, NULL, NULL);
   arts_edt_create_with_guid(shut_down_edt, shutdown_guid, 0, NULL,
                             num_elements / stride);
 

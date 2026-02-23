@@ -44,7 +44,7 @@
 #include "arts.h"
 
 #define MATSIZE 3
-#define TILE    1
+#define TILE 1
 
 uint64_t start = 0;
 
@@ -123,9 +123,9 @@ void init_block_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t b_guid = arts_guid_from_index(b_tile_guids, (i * num_blocks) + j);
 
   float *a_tile = (float *)arts_db_create_with_guid(
-      a_guid, sizeof(float) * TILE * TILE, NULL);
+      a_guid, sizeof(float) * TILE * TILE, ARTS_DB_LOCAL, NULL, NULL);
   float *b_tile = (float *)arts_db_create_with_guid(
-      b_guid, sizeof(float) * TILE * TILE, NULL);
+      b_guid, sizeof(float) * TILE * TILE, ARTS_DB_LOCAL, NULL, NULL);
   //    arts_db_create_with_guid_and_data(arts_guid_t guid, void * data,
   //    uint64_t size)
 
@@ -181,9 +181,9 @@ void multiply_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   float *b_tile = (float *)depv[1].ptr;
   float *c_tile = NULL;
 
-  arts_guid_t c_tile_guid = arts_guid_reserve(ARTS_DB_GPU, 0);
-  c_tile = (float *)arts_db_create_with_guid(c_tile_guid,
-                                             sizeof(float) * TILE * TILE, NULL);
+  arts_guid_t c_tile_guid = arts_guid_reserve(ARTS_DB, 0);
+  c_tile = (float *)arts_db_create_with_guid(
+      c_tile_guid, sizeof(float) * TILE * TILE, ARTS_DB_GPU, NULL, NULL);
   init_matrix(row_size, c_tile, false, true);
 
   uint64_t args[] = {TILE, (uint64_t)to_signal, k, (uint64_t)c_tile_guid, i, j,
@@ -209,9 +209,9 @@ void sum_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   //    arts_printf("%s: i: %u j: %u %lu\n", __func__, idx_i, idx_j, done_guid);
 
   float *c_tile;
-  arts_guid_t c_tile_guid = arts_guid_reserve(ARTS_DB_GPU, 0);
-  c_tile = (float *)arts_db_create_with_guid(c_tile_guid,
-                                             sizeof(float) * TILE * TILE, NULL);
+  arts_guid_t c_tile_guid = arts_guid_reserve(ARTS_DB, 0);
+  c_tile = (float *)arts_db_create_with_guid(
+      c_tile_guid, sizeof(float) * TILE * TILE, ARTS_DB_GPU, NULL, NULL);
   init_matrix(row_size, c_tile, false, true);
 
   for (unsigned int i = 0; i < depc; i++) {
@@ -246,7 +246,7 @@ void finish_block_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                   arts_edt_dep_t depv[]) {
+              arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
@@ -257,17 +257,18 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   b_mat_guid = arts_guid_reserve(ARTS_DB, 0);
   c_mat_guid = arts_guid_reserve(ARTS_DB, 0);
 
-  a_tile_guids =
-      arts_guid_reserve_range(ARTS_DB_LOCAL, num_blocks * num_blocks, 0);
-  b_tile_guids =
-      arts_guid_reserve_range(ARTS_DB_LOCAL, num_blocks * num_blocks, 0);
+  a_tile_guids = arts_guid_reserve_range(ARTS_DB, num_blocks * num_blocks, 0);
+  b_tile_guids = arts_guid_reserve_range(ARTS_DB, num_blocks * num_blocks, 0);
 
   float *a_mat = (float *)arts_db_create_with_guid(
-      a_mat_guid, (unsigned long)MATSIZE * MATSIZE * sizeof(float), NULL);
+      a_mat_guid, (unsigned long)MATSIZE * MATSIZE * sizeof(float),
+      ARTS_DB_DEFAULT, NULL, NULL);
   float *b_mat = (float *)arts_db_create_with_guid(
-      b_mat_guid, (unsigned long)MATSIZE * MATSIZE * sizeof(float), NULL);
+      b_mat_guid, (unsigned long)MATSIZE * MATSIZE * sizeof(float),
+      ARTS_DB_DEFAULT, NULL, NULL);
   float *c_mat = (float *)arts_db_create_with_guid(
-      c_mat_guid, (unsigned long)MATSIZE * MATSIZE * sizeof(float), NULL);
+      c_mat_guid, (unsigned long)MATSIZE * MATSIZE * sizeof(float),
+      ARTS_DB_DEFAULT, NULL, NULL);
 
   init_matrix(MATSIZE, a_mat, false, false);
   init_matrix(MATSIZE, b_mat, true, false);
@@ -302,16 +303,18 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
         uint64_t args[] = {(uint64_t)sum_guid, i, j, k};
         arts_guid_t mul_guid = arts_edt_create(multiply_mm, 4, args, 2,
                                                &(arts_hint_t){.route = 0});
-        arts_printf("%lu Signaling: i: %u k: %u %lu i: %u k: %u %lu\n",
-                    mul_guid, i, k,
-                    arts_guid_from_index(a_tile_guids, (i * num_blocks) + k), k,
-                    j, arts_guid_from_index(b_tile_guids, (k * num_blocks) + j));
-        arts_signal_edt(mul_guid, 0,
-                        arts_guid_from_index(a_tile_guids, (i * num_blocks) + k),
-                        DB_MODE_EW);
-        arts_signal_edt(mul_guid, 1,
-                        arts_guid_from_index(b_tile_guids, (k * num_blocks) + j),
-                        DB_MODE_EW);
+        arts_printf(
+            "%lu Signaling: i: %u k: %u %lu i: %u k: %u %lu\n", mul_guid, i, k,
+            arts_guid_from_index(a_tile_guids, (i * num_blocks) + k), k, j,
+            arts_guid_from_index(b_tile_guids, (k * num_blocks) + j));
+        arts_signal_edt(
+            mul_guid, 0,
+            arts_guid_from_index(a_tile_guids, (i * num_blocks) + k),
+            DB_MODE_EW);
+        arts_signal_edt(
+            mul_guid, 1,
+            arts_guid_from_index(b_tile_guids, (k * num_blocks) + j),
+            DB_MODE_EW);
       }
     }
   }

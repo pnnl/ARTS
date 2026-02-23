@@ -109,7 +109,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   char **argv = (char **)paramv[1];
   block_size = strtol(argv[1], NULL, 10);
   num_elements = block_size * arts_get_total_nodes();
-  db_dest_guid = arts_guid_reserve(ARTS_DB_LOCAL, arts_get_total_nodes() - 1);
+  db_dest_guid = arts_guid_reserve(ARTS_DB, arts_get_total_nodes() - 1);
   shutdown_guid = arts_guid_reserve(ARTS_EDT, arts_get_total_nodes() - 1);
 
   unsigned int node_id = arts_get_current_node();
@@ -133,7 +133,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                             arts_get_total_nodes());
 
   if (node_id == arts_get_total_nodes() - 1) {
-    arts_db_create_with_guid(db_dest_guid, sizeof(unsigned int) * num_elements,
+    arts_db_create_with_guid(db_dest_guid, sizeof(unsigned int) * num_elements, ARTS_DB_LOCAL, NULL,
                              NULL);
   }
 }

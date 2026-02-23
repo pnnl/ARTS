@@ -110,9 +110,9 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
   unsigned int node_id = arts_get_current_node();
 
   /* Create an LC datablock */
-  arts_guid_t lc_guid = arts_guid_reserve(ARTS_DB_LC, 0);
+  arts_guid_t lc_guid = arts_guid_reserve(ARTS_DB, 0);
   unsigned int *addr = (unsigned int *)arts_db_create_with_guid(
-      lc_guid, sizeof(unsigned int) * N_ELEMENTS, NULL);
+      lc_guid, sizeof(unsigned int) * N_ELEMENTS, ARTS_DB_LC, NULL, NULL);
 
   /* Initialize to sentinel values */
   for (unsigned int i = 0; i < N_ELEMENTS; i++) {

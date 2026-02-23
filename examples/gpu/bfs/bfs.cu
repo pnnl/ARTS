@@ -120,9 +120,9 @@ void create_first_round(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Create the first search frontier!
   unsigned int *first_search_frontier = NULL;
-  arts_guid_t first_search_frontier_guid = arts_guid_reserve(ARTS_DB_GPU, 0);
+  arts_guid_t first_search_frontier_guid = arts_guid_reserve(ARTS_DB, 0);
   first_search_frontier = (unsigned int *)arts_db_create_with_guid(
-      first_search_frontier_guid, 2 * sizeof(unsigned int), NULL);
+      first_search_frontier_guid, 2 * sizeof(unsigned int), ARTS_DB_GPU, NULL, NULL);
   first_search_frontier[0] = 1;                  // size of the frontier
   first_search_frontier[1] = (unsigned int)src;  // root
   arts_printf(
@@ -340,7 +340,7 @@ void thrust_sort(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_guid_t *edt_guids_to_launch_bfs =
         NULL;  // This will hold the new edt guids to launch
     edt_guids_to_launch_bfs_guid = arts_db_create(
-        (void **)&edt_guids_to_launch_bfs, sizeof(arts_guid_t) * PARTS, NULL);
+        (void **)&edt_guids_to_launch_bfs, sizeof(arts_guid_t) * PARTS, ARTS_DB_DEFAULT, NULL);
 
     uint64_t next_level = local_level + 1;
     unsigned int temp_index = 0;
@@ -349,10 +349,10 @@ void thrust_sort(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
         unsigned int *new_search_frontier =
             NULL;  // This will hold a tile of the new frontier
         arts_guid_t new_search_frontier_guid =
-            arts_guid_reserve(ARTS_DB_GPU, 0);
+            arts_guid_reserve(ARTS_DB, 0);
         new_search_frontier = (unsigned int *)arts_db_create_with_guid(
             new_search_frontier_guid,
-            sizeof(unsigned int) * (size_per_bound[i] + 1), NULL);
+            sizeof(unsigned int) * (size_per_bound[i] + 1), ARTS_DB_GPU, NULL, NULL);
         *new_search_frontier = size_per_bound[i];
 
         // Copy the data from the gpu to the host
@@ -457,7 +457,7 @@ void init_node(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Create graph partitions
   graph = (csr_graph_t *)calloc(PARTS, sizeof(csr_graph_t));
   distribution =
-      init_block_distribution_block(num_verts, num_edges, PARTS, ARTS_DB_GPU);
+      init_block_distribution_block(num_verts, num_edges, PARTS, ARTS_DB);
   load_graph_no_weight_csr(file_name, distribution, true, false);
 
   // Find the boundaries for sorting
@@ -482,11 +482,11 @@ void init_node(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     unsigned int size = sizeof(unsigned int) * num_elements;
     unsigned int rank =
         arts_guid_get_rank(get_guid_for_partition_distr(distribution, i));
-    visited_guid[i] = arts_guid_reserve(DB_WRITE_TYPE, rank);
+    visited_guid[i] = arts_guid_reserve(ARTS_DB, rank);
     part_count[rank]++;
     if (rank == node_id) {
       visited[i] =
-          (unsigned int *)arts_db_create_with_guid(visited_guid[i], size, NULL);
+          (unsigned int *)arts_db_create_with_guid(visited_guid[i], size, ARTS_DB_GPU, NULL, NULL);
       for (unsigned int j = 0; j < num_elements; j++) {
         visited[i][j] = UINT32_MAX;
       }
@@ -497,7 +497,7 @@ void init_node(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   next_search_frontier_addr_guid =
       (arts_guid_t *)malloc(sizeof(arts_guid_t) * arts_get_total_nodes());
   for (unsigned int i = 0; i < arts_get_total_nodes(); i++) {
-    next_search_frontier_addr_guid[i] = arts_guid_reserve(ARTS_DB_GPU, i);
+    next_search_frontier_addr_guid[i] = arts_guid_reserve(ARTS_DB, i);
   }
 
   // Create an array to hold the addresses of next search frontier for each gpu
@@ -510,7 +510,7 @@ void init_node(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Create the db to hold device address of the next search frontier
   unsigned int **addr = (unsigned int **)arts_db_create_with_guid(
       next_search_frontier_addr_guid[node_id],
-      sizeof(unsigned int *) * arts_get_total_gpus(), NULL);
+      sizeof(unsigned int *) * arts_get_total_gpus(), ARTS_DB_GPU, NULL, NULL);
   for (uint64_t i = 0; i < arts_get_total_gpus(); i++) {
     addr[i] = dev_ptr_raw[i];
   }

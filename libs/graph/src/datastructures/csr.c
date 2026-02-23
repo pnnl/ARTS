@@ -69,7 +69,7 @@ csr_graph_t *init_csr(partition_t part_index, graph_sz_t localv,
     graph_sz_t totsz = (localv + 1) + locale;
     unsigned int db_size = sizeof(csr_graph_t) + (totsz * sizeof(vertex_t));
 
-    csr = (csr_graph_t *)arts_db_create_with_guid(block_guid, db_size, NULL);
+    csr = (csr_graph_t *)arts_db_create_with_guid(block_guid, db_size, ARTS_DB_LOCAL, NULL, NULL);
     csr->partGuid = block_guid;
     csr->num_local_vertices = localv;
     csr->num_local_edges = locale;

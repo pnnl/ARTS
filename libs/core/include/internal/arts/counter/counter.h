@@ -51,75 +51,71 @@ extern "C" {
 // X-macro: Define all counter types in one place.
 // Format: X(counterName)
 // Both the enum and string array are generated from this single list.
-#define ARTS_COUNTER_LIST                      \
-  /* Time: EDT lifecycle */                    \
-  X(TIME_EDT_EXEC)                             \
-  X(TIME_EDT_CREATE)                           \
-  X(TIME_EDT_SIGNAL)                           \
-  X(TIME_CONTEXT_SWITCH)                       \
-  /* Num: EDT lifecycle */                     \
-  X(NUM_EDT_CREATE)                            \
-  X(NUM_EDT_ACQUIRE)                           \
-  X(NUM_EDT_FINISH)                            \
-  X(NUM_EDT_SIGNAL)                            \
-  X(NUM_YIELD)                                 \
-  /* Time: DB lifecycle */                     \
-  X(TIME_DB_CREATE)                            \
-  X(TIME_DB_GET)                               \
-  X(TIME_DB_PUT)                               \
-  /* Num: DB lifecycle */                      \
-  X(NUM_DB_CREATE)                             \
-  X(NUM_DB_GET)                                \
-  X(NUM_DB_PUT)                                \
-  X(NUM_DB_DESTROY)                            \
-  X(NUM_DB_ACQUIRE_READ)                       \
-  X(NUM_DB_ACQUIRE_WRITE)                      \
-  X(NUM_OWNER_UPDATE_SAVED)                    \
-  X(NUM_OWNER_UPDATE_PERFORMED)                \
-  /* Bytes: DB data */                         \
-  X(BYTES_DB_CREATE)                           \
-  X(BYTES_DB_PUT)                              \
-  /* Bytes: memory */                          \
-  X(BYTES_MEMORY_FOOTPRINT)                    \
-  /* Bytes: network */                         \
-  X(BYTES_REMOTE_SENT)                         \
-  X(BYTES_REMOTE_RECEIVED)                     \
-  /* Num: network */                           \
-  X(NUM_REMOTE_SEND)                           \
-  X(NUM_REMOTE_RECEIVE)                        \
-  /* Time: network */                          \
-  X(TIME_REMOTE_MOVE)                          \
-  /* Time: events */                           \
-  X(TIME_EVENT_CREATE)                         \
-  X(TIME_PERSISTENT_EVENT_CREATE)              \
-  X(TIME_EVENT_SIGNAL)                         \
-  X(TIME_PERSISTENT_EVENT_SIGNAL)              \
-  /* Num: events */                            \
-  X(NUM_EVENT_CREATE)                          \
-  X(NUM_EVENT_SIGNAL)                          \
-  X(NUM_PERSISTENT_EVENT_CREATE)               \
-  X(NUM_PERSISTENT_EVENT_SIGNAL)               \
-  /* Num: scheduling */                        \
-  X(NUM_STEAL_ATTEMPT)                         \
-  X(NUM_STEAL_SUCCESS)                         \
-  /* Time: scheduling */                       \
-  X(TIME_YIELD)                                \
-  /* Num: epoch */                             \
-  X(NUM_EPOCH_CREATE)                          \
-  /* Num: out-of-order */                      \
-  X(NUM_OO_ENQUEUE)                            \
-  /* Object counters — per arts_id tracking */ \
-  X(OBJ_NUM_EDT)                               \
-  X(OBJ_TIME_EDT_EXEC)                         \
-  X(OBJ_TIME_EDT_STALL)                        \
-  X(OBJ_NUM_DB)                                \
-  X(OBJ_BYTES_DB_LOCAL)                        \
-  X(OBJ_BYTES_DB_REMOTE)                       \
-  X(OBJ_NUM_DB_CACHE_MISS)                     \
-  X(OBJ_TRACE_EDT)                             \
-  X(OBJ_TRACE_DB)                              \
-  /* Time: runtime phases */                   \
-  X(TIME_INIT)                                 \
+#define ARTS_COUNTER_LIST                                                      \
+  /* Time: EDT lifecycle */                                                    \
+  X(TIME_EDT_EXEC)                                                             \
+  X(TIME_EDT_CREATE)                                                           \
+  X(TIME_EDT_SIGNAL)                                                           \
+  X(TIME_CONTEXT_SWITCH)                                                       \
+  /* Num: EDT lifecycle */                                                     \
+  X(NUM_EDT_CREATE)                                                            \
+  X(NUM_EDT_ACQUIRE)                                                           \
+  X(NUM_EDT_FINISH)                                                            \
+  X(NUM_EDT_SIGNAL)                                                            \
+  X(NUM_YIELD)                                                                 \
+  /* Time: DB lifecycle */                                                     \
+  X(TIME_DB_CREATE)                                                            \
+  X(TIME_DB_GET)                                                               \
+  X(TIME_DB_PUT)                                                               \
+  /* Num: DB lifecycle */                                                      \
+  X(NUM_DB_CREATE)                                                             \
+  X(NUM_DB_GET)                                                                \
+  X(NUM_DB_PUT)                                                                \
+  X(NUM_DB_DESTROY)                                                            \
+  X(NUM_DB_ACQUIRE_READ)                                                       \
+  X(NUM_DB_ACQUIRE_WRITE)                                                      \
+  X(NUM_OWNER_UPDATE_SAVED)                                                    \
+  X(NUM_OWNER_UPDATE_PERFORMED)                                                \
+  /* Bytes: DB data */                                                         \
+  X(BYTES_DB_CREATE)                                                           \
+  X(BYTES_DB_PUT)                                                              \
+  /* Bytes: memory */                                                          \
+  X(BYTES_MEMORY_FOOTPRINT)                                                    \
+  /* Bytes: network */                                                         \
+  X(BYTES_REMOTE_SENT)                                                         \
+  X(BYTES_REMOTE_RECEIVED)                                                     \
+  /* Num: network */                                                           \
+  X(NUM_REMOTE_SEND)                                                           \
+  X(NUM_REMOTE_RECEIVE)                                                        \
+  /* Time: network */                                                          \
+  X(TIME_REMOTE_MOVE)                                                          \
+  /* Time: events */                                                           \
+  X(TIME_EVENT_CREATE)                                                         \
+  X(TIME_EVENT_SIGNAL)                                                         \
+  /* Num: events */                                                            \
+  X(NUM_EVENT_CREATE)                                                          \
+  X(NUM_EVENT_SIGNAL)                                                          \
+  /* Num: scheduling */                                                        \
+  X(NUM_STEAL_ATTEMPT)                                                         \
+  X(NUM_STEAL_SUCCESS)                                                         \
+  /* Time: scheduling */                                                       \
+  X(TIME_YIELD)                                                                \
+  /* Num: epoch */                                                             \
+  X(NUM_EPOCH_CREATE)                                                          \
+  /* Num: out-of-order */                                                      \
+  X(NUM_OO_ENQUEUE)                                                            \
+  /* Object counters — per arts_id tracking */                                 \
+  X(OBJ_NUM_EDT)                                                               \
+  X(OBJ_TIME_EDT_EXEC)                                                         \
+  X(OBJ_TIME_EDT_STALL)                                                        \
+  X(OBJ_NUM_DB)                                                                \
+  X(OBJ_BYTES_DB_LOCAL)                                                        \
+  X(OBJ_BYTES_DB_REMOTE)                                                       \
+  X(OBJ_NUM_DB_CACHE_MISS)                                                     \
+  X(OBJ_TRACE_EDT)                                                             \
+  X(OBJ_TRACE_DB)                                                              \
+  /* Time: runtime phases */                                                   \
+  X(TIME_INIT)                                                                 \
   X(TIME_TOTAL)
 
 // Generate enum from X-macro
@@ -141,21 +137,21 @@ typedef enum arts_counter_reduce_method_t {
   ARTS_COUNTER_REDUCE_SUM = 0,
   ARTS_COUNTER_REDUCE_MAX,
   ARTS_COUNTER_REDUCE_MIN,
-  ARTS_COUNTER_REDUCE_MASTER,  // Use master node's value only (no reduction)
+  ARTS_COUNTER_REDUCE_MASTER, // Use master node's value only (no reduction)
 } arts_counter_reduce_method_t;
 
 // Counter mode: determines when/how often counters are captured
 typedef enum arts_counter_mode_t {
-  ARTS_COUNTER_MODE_OFF = 0,   // Counter disabled
-  ARTS_COUNTER_MODE_ONCE = 1,  // Single value at the end (no periodic capture)
-  ARTS_COUNTER_MODE_PERIODIC = 2,  // Periodic capture during execution
+  ARTS_COUNTER_MODE_OFF = 0,  // Counter disabled
+  ARTS_COUNTER_MODE_ONCE = 1, // Single value at the end (no periodic capture)
+  ARTS_COUNTER_MODE_PERIODIC = 2, // Periodic capture during execution
 } arts_counter_mode_t;
 
 // Counter level: determines the aggregation level for output
 typedef enum arts_counter_level_t {
-  ARTS_COUNTER_LEVEL_THREAD = 0,   // Per-thread output (no reduction)
-  ARTS_COUNTER_LEVEL_NODE = 1,     // Per-node output (reduce across threads)
-  ARTS_COUNTER_LEVEL_CLUSTER = 2,  // Cluster output (reduce across all nodes)
+  ARTS_COUNTER_LEVEL_THREAD = 0,  // Per-thread output (no reduction)
+  ARTS_COUNTER_LEVEL_NODE = 1,    // Per-node output (reduce across threads)
+  ARTS_COUNTER_LEVEL_CLUSTER = 2, // Cluster output (reduce across all nodes)
 } arts_counter_level_t;
 
 typedef struct {
@@ -167,8 +163,8 @@ typedef struct {
 // Epoch is the interval number (e.g., 1 for first interval, 100 for 100th).
 // This allows proper reduction even when some intervals are skipped.
 typedef struct {
-  uint64_t epoch;  // Interval number when captured
-  uint64_t value;  // Counter value at this epoch
+  uint64_t epoch; // Interval number when captured
+  uint64_t value; // Counter value at this epoch
 } arts_counter_capture_t;
 
 // Thread-local counter storage - simple array of counters only.

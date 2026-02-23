@@ -160,7 +160,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   shutdown_guid = arts_guid_reserve(ARTS_EDT, 0);
 
   unsigned int *ptr = (unsigned int *)arts_db_create_with_guid(
-      db_guid, sizeof(unsigned int) * num_writes, NULL);
+      db_guid, sizeof(unsigned int) * num_writes, ARTS_DB_DEFAULT, NULL, NULL);
   for (unsigned int i = 0; i < num_writes; i++) {
     ptr[i] = 0;
   }

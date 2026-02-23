@@ -82,7 +82,7 @@ arts_block_dist_t *init_block_distribution(graph_sz_t n, graph_sz_t m) {
   arts_block_dist_t *dist = (arts_block_dist_t *)arts_malloc(
       sizeof(arts_block_dist_t) + (sizeof(arts_guid_t) * num_blocks));
   for (unsigned int i = 0; i < num_blocks; i++) {
-    dist->graphGuid[i] = arts_guid_reserve(ARTS_DB_LOCAL, i);
+    dist->graphGuid[i] = arts_guid_reserve(ARTS_DB, i);
   }
   internal_init_block_distribution(dist, n, m, num_blocks);
   return dist;
@@ -106,7 +106,7 @@ arts_block_dist_t *init_block_distribution_with_cmd_line_args(int argc,
     arts_block_dist_t *dist = (arts_block_dist_t *)arts_malloc(
         sizeof(arts_block_dist_t) + (sizeof(arts_guid_t) * num_blocks));
     for (unsigned int i = 0; i < num_blocks; i++) {
-      dist->graphGuid[i] = arts_guid_reserve(ARTS_DB_LOCAL, i);
+      dist->graphGuid[i] = arts_guid_reserve(ARTS_DB, i);
     }
     internal_init_block_distribution(dist, n, m, num_blocks);
     return dist;
@@ -115,9 +115,7 @@ arts_block_dist_t *init_block_distribution_with_cmd_line_args(int argc,
   return NULL;
 }
 
-void free_distribution(arts_block_dist_t *dist) {
-  arts_free(dist);
-}
+void free_distribution(arts_block_dist_t *dist) { arts_free(dist); }
 
 unsigned int get_num_local_blocks(arts_block_dist_t *dist) {
   unsigned int num_local_parts = 0;
