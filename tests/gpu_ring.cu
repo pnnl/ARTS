@@ -44,12 +44,12 @@
 #include "arts.h"
 #include "arts/utils/array_list.h"
 
-#define CHECKCORRECT(x)                                                        \
-  {                                                                            \
-    cudaError_t err;                                                           \
-    if ((err = (x)) != cudaSuccess) {                                          \
-      arts_printf("FAILED %s: %s\n", #x, cudaGetErrorString(err));             \
-    }                                                                          \
+#define CHECKCORRECT(x)                                            \
+  {                                                                \
+    cudaError_t err;                                               \
+    if ((err = (x)) != cudaSuccess) {                              \
+      arts_printf("FAILED %s: %s\n", #x, cudaGetErrorString(err)); \
+    }                                                              \
   }
 
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))

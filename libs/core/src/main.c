@@ -38,7 +38,7 @@
 ******************************************************************************/
 #include "arts/counter/Preamble.h"
 #define GNU_SOURCE
-#define _FILE_OFFSET_BITS 64 // NOLINT(readability-identifier-naming)
+#define _FILE_OFFSET_BITS 64  // NOLINT(readability-identifier-naming)
 #include "arts.h"
 #include "arts/counter/counter.h"
 #include "arts/network/remote.h"

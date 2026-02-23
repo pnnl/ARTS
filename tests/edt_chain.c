@@ -48,6 +48,7 @@
 /// Each stage increments the value by 1 and passes it on.
 void chain_stage(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                  arts_edt_dep_t depv[]) {
+  (void)paramc;
   (void)depc;
   uint64_t stage = paramv[0];
   arts_guid_t next_guid = (arts_guid_t)paramv[1];
@@ -74,7 +75,7 @@ void chain_final(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;

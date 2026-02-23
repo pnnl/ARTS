@@ -45,8 +45,8 @@
 #define NUMBUFFERS 2
 
 static volatile unsigned int current_buffer = 0;
-static unsigned int ***gpu_buffer_ptr = NULL; // NUMBUFFERS per GPU (Many)
-static unsigned int **cpu_buffer_ptr = NULL;  // NUMBUFFERS per Node (One)
+static unsigned int ***gpu_buffer_ptr = NULL;  // NUMBUFFERS per GPU (Many)
+static unsigned int **cpu_buffer_ptr = NULL;   // NUMBUFFERS per Node (One)
 
 static arts_guid_t *master_buffer_guids = NULL;
 static arts_guid_t *buffer_guids = NULL;
@@ -79,8 +79,7 @@ void create_buffers_on_cpu(unsigned int size) {
       sizeof(arts_guid_t) * num_nodes * NUMBUFFERS, NULL);
   for (unsigned int i = 0; i < NUMBUFFERS; i++) {
     for (unsigned int j = 0; j < num_nodes; j++) {
-      buffer_guids[(i * num_nodes) + j] =
-          arts_guid_reserve(ARTS_DB_GPU, j);
+      buffer_guids[(i * num_nodes) + j] = arts_guid_reserve(ARTS_DB_GPU, j);
     }
   }
 }

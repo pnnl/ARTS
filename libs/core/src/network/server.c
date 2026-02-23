@@ -45,7 +45,6 @@
 #include "arts/network/remote_protocol.h"
 #include "arts/runtime/compute/edt_functions.h"
 #include "arts/runtime/globals.h"
-#include "arts/runtime/memory/array_db.h"
 #include "arts/runtime/network/remote_functions.h"
 #include "arts/runtime/runtime.h"
 #include "arts/system/arts_print.h"
@@ -59,7 +58,17 @@ extern bool server_end;
 uint64_t *rec_seq_numbers;
 #endif
 
-void arts_remote_shutdown() { arts_ll_server_shutdown(); }
+void arts_remote_shutdown() {
+  arts_ll_server_shutdown();
+}
+
+void arts_server_cleanup(void) {
+  out_cleanup();
+#ifdef SEQUENCENUMBERS
+  arts_free(rec_seq_numbers);
+  rec_seq_numbers = NULL;
+#endif
+}
 
 void arts_server_setup(struct arts_config_s *config) {
   // ASYNC Message Queue Init
@@ -208,8 +217,7 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
     break;
   }
   case ARTS_REMOTE_DB_CLEAN_FORWARD_MSG: {
-    ARTS_DEBUG("DB Clean Forward Received");
-    arts_remote_handle_db_clean_forward(packet);
+    ARTS_WARN("Unexpected CLEAN_FORWARD message (removed)");
     break;
   }
   case ARTS_REMOTE_DB_UPDATE_GUID_MSG: {
@@ -284,16 +292,6 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
   case ARTS_EPOCH_SEND_MSG: {
     ARTS_DEBUG("Epoch Send Received");
     arts_remote_handle_epoch_send(packet);
-    break;
-  }
-  case ARTS_ATOMIC_ADD_ARRAYDB_MSG: {
-    ARTS_DEBUG("Atomic Add ArrayDB Received");
-    arts_remote_handle_atomic_add_in_array_db(packet);
-    break;
-  }
-  case ARTS_ATOMIC_CAS_ARRAYDB_MSG: {
-    ARTS_DEBUG("Atomic Compare And Swap ArrayDB Received");
-    arts_remote_handle_atomic_compare_and_swap_in_array_db(packet);
     break;
   }
   case ARTS_EPOCH_INIT_POOL_MSG: {

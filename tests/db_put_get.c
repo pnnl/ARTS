@@ -110,7 +110,7 @@ void check_put_epoch(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
@@ -131,7 +131,7 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_db_release(db_guid);
 
   // Test 1: arts_get_from_db with offset = 3 * sizeof(unsigned int).
-  uint64_t get_param = db_data[3]; // i.e., 3 * 7 = 21
+  uint64_t get_param = db_data[3];  // i.e., 3 * 7 = 21
   arts_guid_t e1 = arts_edt_create_with_epoch(
       check_get, 1, &get_param, 1, epoch, &(arts_hint_t){.route = 0});
   arts_get_from_db(e1, db_guid, 0, 3 * sizeof(unsigned int),
@@ -158,7 +158,7 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_guid_t e3 = arts_edt_create_with_epoch(
       check_put_epoch, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_signal_edt(e3, 0, db2_guid, ARTS_MODE_RO);
+  arts_signal_edt(e3, 0, db2_guid, DB_MODE_RO);
 
   arts_wait_on_handle(epoch);
   arts_shutdown();

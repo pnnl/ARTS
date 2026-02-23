@@ -293,8 +293,9 @@ set(COUNTER_CONFIG_FILE "${COUNTER_CONFIG_PATH}")
 # Create the main ARTS library target
 add_subdirectory(libs/core)
 
-# Build graph library only if examples or tests are being built
+# Build extension libraries only if examples or tests are being built
 if(ARTS_BUILD_EXAMPLES OR ARTS_BUILD_TESTS)
+    add_subdirectory(libs/array_db)
     add_subdirectory(libs/graph)
 endif()
 

@@ -47,16 +47,16 @@ extern "C" {
 #include <rdma/RSOCKET.h>
 #else
 #include <sys/poll.h>
-#define RRECV recv
-#define RSEND send
-#define RLISTEN listen
-#define RPOLL poll
-#define RSELECT select
-#define RBIND bind
-#define RCLOSE close
-#define RACCEPT accept
-#define RCONNECT connect
-#define RSOCKET socket
+#define RRECV     recv
+#define RSEND     send
+#define RLISTEN   listen
+#define RPOLL     poll
+#define RSELECT   select
+#define RBIND     bind
+#define RCLOSE    close
+#define RACCEPT   accept
+#define RCONNECT  connect
+#define RSOCKET   socket
 #define RSHUTDOWN shutdown
 #endif
 

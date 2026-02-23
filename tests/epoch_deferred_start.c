@@ -89,7 +89,7 @@ void check_current_epoch(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
@@ -111,6 +111,7 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Now start — epoch begins tracking completion.
   arts_start_epoch(epoch1);
+  arts_wait_on_handle(epoch1);
 
   // Test 2: get_current_epoch_guid inside an epoch.
   arts_guid_t epoch2 = arts_initialize_and_start_epoch(NULL_GUID, 0);

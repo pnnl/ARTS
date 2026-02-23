@@ -137,7 +137,7 @@ void verify_nodep(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t gpu_edt =
       arts_edt_create_gpu_dep(dep_kernel, node_id, 0, NULL, 1, grid, threads,
                               verify_guid, 0, db_guid, true);
-  arts_signal_edt(gpu_edt, 0, db_guid, ARTS_MODE_EW);
+  arts_signal_edt(gpu_edt, 0, db_guid, DB_MODE_EW);
 }
 
 extern "C" void arts_init_per_gpu(unsigned int node_id, int dev_id,
@@ -149,7 +149,7 @@ extern "C" void arts_init_per_gpu(unsigned int node_id, int dev_id,
   (void)argv;
 }
 
-extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
+extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
                               uint32_t depc, arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;

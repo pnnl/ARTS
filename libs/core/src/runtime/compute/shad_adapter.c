@@ -39,8 +39,6 @@
 
 #include "arts/runtime/compute/shad_adapter.h"
 
-#include <string.h>
-
 #include "arts.h"
 #include "arts/counter/counter.h"
 #include "arts/gas/guid.h"
@@ -67,8 +65,8 @@ arts_guid_t arts_active_message_shad(arts_edt_t func_ptr, unsigned int route,
                                      uint32_t paramc, const uint64_t *paramv,
                                      void *data, unsigned int size,
                                      arts_guid_t epoch_guid) {
-  unsigned int rank = route;    // route / num_numa_domains;
-  unsigned int numa_domain = 0; // route % num_numa_domains;
+  unsigned int rank = route;     // route / num_numa_domains;
+  unsigned int numa_domain = 0;  // route % num_numa_domains;
   arts_guid_t guid = NULL_GUID;
   bool use_epoch = (epoch_guid != NULL_GUID);
 
@@ -80,9 +78,7 @@ arts_guid_t arts_active_message_shad(arts_edt_t func_ptr, unsigned int route,
                              edt_space, NULL_GUID, func_ptr, paramc, paramv, 1,
                              use_epoch, epoch_guid, true, 0);
 
-    void *ptr = arts_malloc(size);
-    memcpy(ptr, data, size);
-    arts_signal_edt_ptr(guid, 0, ptr, size);
+    arts_signal_edt_ptr(guid, 0, data, size);
   } else {
     unsigned int edt_space =
         sizeof(struct arts_edt_s) + (paramc * sizeof(uint64_t));
@@ -97,8 +93,8 @@ void arts_synchronous_active_message_shad(arts_edt_t func_ptr,
                                           unsigned int route, uint32_t paramc,
                                           const uint64_t *paramv, void *data,
                                           unsigned int size) {
-  unsigned int rank = route;    // route / num_numa_domains;
-  unsigned int numa_domain = 0; // route % num_numa_domains;
+  unsigned int rank = route;     // route / num_numa_domains;
+  unsigned int numa_domain = 0;  // route % num_numa_domains;
   unsigned int wait_flag = 1;
   void *wait_ptr = &wait_flag;
   arts_guid_t wait_guid = arts_allocate_local_buffer(
@@ -113,9 +109,7 @@ void arts_synchronous_active_message_shad(arts_edt_t func_ptr,
                              edt_space, wait_guid, func_ptr, paramc, paramv, 1,
                              false, NULL_GUID, true, 0);
 
-    void *ptr = arts_malloc(size);
-    memcpy(ptr, data, size);
-    arts_signal_edt_ptr(guid, 0, ptr, size);
+    arts_signal_edt_ptr(guid, 0, data, size);
   } else {
     unsigned int edt_space =
         sizeof(struct arts_edt_s) + (paramc * sizeof(uint64_t));
@@ -129,9 +123,13 @@ void arts_synchronous_active_message_shad(arts_edt_t func_ptr,
   }
 }
 
-void arts_inc_lock_shad() { arts_thread_info.shad_lock++; }
+void arts_inc_lock_shad() {
+  arts_thread_info.shad_lock++;
+}
 
-void arts_dec_lock_shad() { arts_thread_info.shad_lock--; }
+void arts_dec_lock_shad() {
+  arts_thread_info.shad_lock--;
+}
 
 void arts_check_lock_shad() {
   if (arts_thread_info.shad_lock) {
@@ -144,7 +142,9 @@ void arts_start_intro_shad(unsigned int start) {
   // arts_counter_capture_start(start);
 }
 
-void arts_stop_intro_shad() { arts_counter_capture_stop(); }
+void arts_stop_intro_shad() {
+  arts_counter_capture_stop();
+}
 
 arts_guid_t arts_allocate_local_buffer_shad(void **buffer,
                                             uint32_t *size_to_write,
@@ -169,11 +169,11 @@ arts_guid_t arts_allocate_local_buffer_shad(void **buffer,
   return guid;
 }
 
-#define ALIASOWNERMAP 0xF000000000000000
-#define ALIASCOUNTMAP 0x0FFFFFFFFFFFFFFF
+#define ALIASOWNERMAP    0xF000000000000000
+#define ALIASCOUNTMAP    0x0FFFFFFFFFFFFFFF
 #define ALIASGETOWNER(x) (((x) & ALIASOWNERMAP) >> 60)
 #define ALIASGETCOUNT(x) ((x) & ALIASCOUNTMAP)
-#define ALIASEMPTY (((((uint64_t)arts_thread_info.group_pos) + 1) << 60) + 1)
+#define ALIASEMPTY       (((((uint64_t)arts_thread_info.group_pos) + 1) << 60) + 1)
 
 bool arts_shad_alias_try_lock(volatile uint64_t *lock) {
   uint64_t dirty_read = *lock;

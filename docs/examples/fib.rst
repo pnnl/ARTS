@@ -52,7 +52,7 @@ Initialization
 
 .. code-block:: c
 
-   void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
+   void main_edt(uint32_t paramc, const uint64_t *paramv,
                       uint32_t depc, arts_edt_dep_t depv[]) {
        (void)paramc;
        (void)depc;
@@ -66,7 +66,7 @@ Initialization
        arts_edt_create(fib_fork, 3, args, 0, &(arts_hint_t){.route = 0});
    }
 
-``arts_main_edt`` is scheduled by the runtime on rank 0 after init.
+``main_edt`` is scheduled by the runtime on rank 0 after init.
 It receives ``argc``/``argv`` via ``paramv[0]``/``paramv[1]``:
 
 1. Create ``fib_done`` with 1 static parameter (the input number) and

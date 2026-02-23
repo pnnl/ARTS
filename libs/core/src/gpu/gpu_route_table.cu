@@ -244,7 +244,9 @@ void gpu_gc_read_lock() {
   }
 }
 
-void gpu_gc_read_unlock() { arts_atomic_sub(&gpu_reader, 1U); }
+void gpu_gc_read_unlock() {
+  arts_atomic_sub(&gpu_reader, 1U);
+}
 
 void gpu_gc_write_lock() {
   while (arts_atomic_cswap(&gpu_writer, 0U, 1U) != 0U) {
@@ -253,7 +255,9 @@ void gpu_gc_write_lock() {
   }
 }
 
-void gpu_gc_write_unlock() { arts_atomic_swap(&gpu_writer, 0U); }
+void gpu_gc_write_unlock() {
+  arts_atomic_swap(&gpu_writer, 0U);
+}
 
 /*This takes three parameters to regulate what is deleted.  This will only clean
 up DBs!

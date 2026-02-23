@@ -51,13 +51,13 @@ extern "C" {
 #include "arts/system/arts_print.h"
 #include "arts/utils/array_list.h"
 
-#define CHECKCORRECT(x)                                                        \
-  do {                                                                         \
-    cudaError_t err;                                                           \
-    if ((err = (x)) != cudaSuccess) {                                          \
-      ARTS_ERROR("CUDA operation failed: %s: %s", #x,                          \
-                 cudaGetErrorString(err));                                     \
-    }                                                                          \
+#define CHECKCORRECT(x)                               \
+  do {                                                \
+    cudaError_t err;                                  \
+    if ((err = (x)) != cudaSuccess) {                 \
+      ARTS_ERROR("CUDA operation failed: %s: %s", #x, \
+                 cudaGetErrorString(err));            \
+    }                                                 \
   } while (0)
 
 typedef struct {

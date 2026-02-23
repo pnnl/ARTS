@@ -94,7 +94,7 @@ void outer_finish(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;

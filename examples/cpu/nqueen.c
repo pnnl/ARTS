@@ -126,7 +126,7 @@ void fork_nqueens(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_guid_t fork_guid = arts_edt_create(fork_nqueens, 2, new_paramv, 1,
                                             &(arts_hint_t){.route = route});
 
-    arts_signal_edt(fork_guid, 0, db_guid, ARTS_MODE_EW);
+    arts_signal_edt(fork_guid, 0, db_guid, DB_MODE_EW);
   }
 }
 
@@ -164,7 +164,7 @@ void final_nqueens(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;
@@ -205,7 +205,9 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
   fork_data->row = 0;
   fork_data->n = n;
-  arts_signal_edt(fork_guid, 0, db_guid, ARTS_MODE_EW);
+  arts_signal_edt(fork_guid, 0, db_guid, DB_MODE_EW);
 }
 
-int main(int argc, char **argv) { return arts_rt(argc, argv); }
+int main(int argc, char **argv) {
+  return arts_rt(argc, argv);
+}

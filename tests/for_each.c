@@ -37,6 +37,7 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 #include "arts.h"
+#include "arts/array_db.h"
 
 unsigned int elems_per_node = 4;
 arts_array_db_t *array = NULL;
@@ -76,7 +77,7 @@ void edt_func(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_signal_edt_value(check_guid, 0, 0);
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;

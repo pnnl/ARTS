@@ -139,6 +139,29 @@ void arts_remote_thread_outbound_queues_cleanup() {
 #endif
 }
 
+void out_cleanup(void) {
+  if (out_head) {
+    for (unsigned int i = 0; i < node_list_size; i++) {
+      struct arts_link_list_s *list = arts_link_list_get(out_head, i);
+      struct arts_link_list_item_s *cur = list->headPtr;
+      while (cur) {
+        struct arts_link_list_item_s *next = cur->next;
+        arts_free(cur);
+        cur = next;
+      }
+    }
+    arts_free(out_head);
+    out_head = NULL;
+  }
+#ifdef SEQUENCENUMBERS
+  arts_free(seq_number);
+  seq_number = NULL;
+  arts_free(seq_num_lock);
+  seq_num_lock = NULL;
+#endif
+  node_list_size = 0;
+}
+
 void out_init(unsigned int size) {
   node_list_size = size;
   out_head = arts_link_list_group_new(size);
@@ -157,7 +180,7 @@ void arts_remote_flush_outbound(void) {
     return;
   }
 
-  uint64_t timeout = arts_get_time_stamp() + 5000000000ULL; // 5 second timeout
+  uint64_t timeout = arts_get_time_stamp() + 5000000000ULL;  // 5 second timeout
 
   // Track partial sends per queue (not using thread-local out_resend)
   struct out_list_s **pending_sends = (struct out_list_s **)arts_calloc(
@@ -238,7 +261,7 @@ void arts_remote_flush_outbound(void) {
     }
 
     if (!did_work) {
-      usleep(100); // Small sleep if no progress
+      usleep(100);  // Small sleep if no progress
     }
   }
 
@@ -310,10 +333,10 @@ bool arts_remote_async_send() {
     sent = false;
     // Loop over our threads
     for (int i = (int)thread_start; i < (int)thread_stop; i++) {
-      out = NULL;                              // For looping purposes...
-      if (out_resend[i - (int)thread_start]) { // Checking failed sends?
+      out = NULL;                               // For looping purposes...
+      if (out_resend[i - (int)thread_start]) {  // Checking failed sends?
         out = out_resend[i - (int)thread_start];
-      } else { // Look for new messages
+      } else {  // Look for new messages
         out = out_pop_node(i, &free_me);
       }
 
@@ -362,11 +385,13 @@ bool arts_remote_async_send() {
   return success;
 }
 
-static inline void self_send_check(unsigned int rank) {
+static inline bool self_send_check(unsigned int rank) {
   if (rank == arts_global_rank_id || rank >= arts_global_rank_count) {
-    ARTS_ERROR("Cannot send to rank %u (self=%u, total=%u)", rank,
-               arts_global_rank_id, arts_global_rank_count);
+    ARTS_WARN("Cannot send to rank %u (self=%u, total=%u)", rank,
+              arts_global_rank_id, arts_global_rank_count);
+    return false;
   }
+  return true;
 }
 
 static inline void size_send_check(uint64_t size) {
@@ -377,7 +402,9 @@ static inline void size_send_check(uint64_t size) {
 
 void arts_remote_send_request_async(int rank, char *message,
                                     unsigned int length) {
-  self_send_check(rank);
+  if (!self_send_check(rank)) {
+    return;
+  }
   struct out_list_s *next = (struct out_list_s *)arts_link_list_new_item(
       length + sizeof(struct out_list_s));
   next->offset = 0;
@@ -392,7 +419,9 @@ void arts_remote_send_request_async(int rank, char *message,
 void arts_remote_send_request_payload_async(int rank, char *message,
                                             unsigned int length, char *payload,
                                             uint64_t size) {
-  self_send_check(rank);
+  if (!self_send_check(rank)) {
+    return;
+  }
   size_send_check(length);
   size_send_check(size);
   struct out_list_s *next = (struct out_list_s *)arts_link_list_new_item(
@@ -411,7 +440,9 @@ void arts_remote_send_request_payload_async(int rank, char *message,
 void arts_remote_send_request_payload_async_free(
     int rank, char *message, unsigned int length, char *payload,
     unsigned int offset, uint64_t size, void (*free_method)(void *)) {
-  self_send_check(rank);
+  if (!self_send_check(rank)) {
+    return;
+  }
   size_send_check(length);
   size_send_check(size);
   struct out_list_s *next = (struct out_list_s *)arts_link_list_new_item(

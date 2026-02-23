@@ -107,7 +107,7 @@ void check_db_dep_mode_diff(uint32_t paramc, const uint64_t *paramv,
   }
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
@@ -136,7 +136,7 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_guid_t e2 = arts_edt_create_with_epoch(
       check_db_dep_mode, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_db_add_dependence_with_mode(db2, e2, 0, ARTS_MODE_RO);
+  arts_db_add_dependence_with_mode(db2, e2, 0, DB_MODE_RO);
 
   // Test 3: increment/decrement latch.
   void *p3 = NULL;
@@ -150,7 +150,7 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_guid_t e3 = arts_edt_create_with_epoch(
       check_latch_done, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_db_add_dependence_with_mode(db3, e3, 0, ARTS_MODE_RO);
+  arts_db_add_dependence_with_mode(db3, e3, 0, DB_MODE_RO);
 
   // Decrement the 2 extra latches to let the event fire.
   arts_db_decrement_latch(db3);
@@ -164,7 +164,7 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_guid_t e4 = arts_edt_create_with_epoch(
       check_db_dep_mode_diff, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_db_add_dependence_with_mode_and_diff(db4, e4, 0, ARTS_MODE_RO);
+  arts_db_add_dependence_with_mode_and_diff(db4, e4, 0, DB_MODE_RO);
 
   arts_wait_on_handle(epoch);
   arts_shutdown();

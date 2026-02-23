@@ -84,9 +84,8 @@ char *extract_nodelist_lsf(const char *envr, int stride, unsigned int *cnt) {
   return node_list;
 }
 
-struct arts_config_variable_s *
-arts_config_find_variable(struct arts_config_variable_s **head,
-                          const char *string) {
+struct arts_config_variable_s *arts_config_find_variable(
+    struct arts_config_variable_s **head, const char *string) {
   struct arts_config_variable_s *found = NULL;
   struct arts_config_variable_s *last = NULL;
   struct arts_config_variable_s *next = *head;
@@ -238,14 +237,14 @@ unsigned int arts_config_count_nodes(char *node_list) {
       nodes++;
     }
   }
-  nodes++; // One more than comma count
+  nodes++;  // One more than comma count
 
   // Adjust for bracket ranges (each range is one entry but multiple nodes)
   unsigned int i = 0;
   while (i < length) {
     // Find bracket range
     if (node_list[i] == '[') {
-      nodes--; // This entry is a range, not a single node
+      nodes--;  // This entry is a range, not a single node
       // Find the closing bracket
       unsigned int bracket_start = i + 1;
       while (i < length && node_list[i] != ']') {

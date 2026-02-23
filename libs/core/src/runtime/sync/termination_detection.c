@@ -51,7 +51,7 @@
 #include "arts/utils/malloc.h"
 
 #define EPOCH_MASK 0x7FFFFFFFFFFFFFFF
-#define EPOCH_BIT 0x8000000000000000
+#define EPOCH_BIT  0x8000000000000000
 
 #define DEFAULT_EPOCH_POOL_SIZE 4096
 ARTS_THREAD_LOCAL arts_epoch_pool_t *epoch_thread_pool;
@@ -291,7 +291,7 @@ arts_guid_t arts_initialize_epoch(unsigned int rank,
         }
       }
     }
-  } else // Lets get it from the pool...
+  } else  // Lets get it from the pool...
   {
     arts_epoch_t *epoch = get_pool_epoch(finish_edt_guid, slot);
     guid = epoch->guid;
@@ -419,13 +419,9 @@ arts_epoch_pool_t *create_epoch_pool(arts_guid_t *epoch_pool_guid,
     *epoch_pool_guid = arts_guid_create_for_rank(arts_global_rank_id, ARTS_EDT);
   }
 
-  bool new_range = (*start_guid == NULL_GUID);
-  arts_guid_range_t range;
-  if (new_range) {
-    arts_guid_range_init(&range, ARTS_EDT, pool_size, arts_global_rank_id);
-    *start_guid = arts_guid_range_get(&range, 0);
-  } else {
-    range = (arts_guid_range_t){.size = pool_size, .start_guid = *start_guid};
+  if (*start_guid == NULL_GUID) {
+    *start_guid =
+        arts_guid_reserve_range(ARTS_EDT, pool_size, arts_global_rank_id);
   }
 
   arts_epoch_pool_t *epoch_pool = (arts_epoch_pool_t *)arts_calloc(
@@ -439,7 +435,7 @@ arts_epoch_pool_t *create_epoch_pool(arts_guid_t *epoch_pool_guid,
   for (unsigned int i = 0; i < pool_size; i++) {
     epoch_pool->pool[i].phase = PHASE_1;
     epoch_pool->pool[i].pool_guid = *epoch_pool_guid;
-    epoch_pool->pool[i].guid = arts_guid_range_get(&range, i);
+    epoch_pool->pool[i].guid = arts_guid_from_index(*start_guid, i);
     epoch_pool->pool[i].queued =
         (arts_guid_is_local(*epoch_pool_guid)) ? 0 : EPOCH_BIT;
     if (!arts_guid_is_local(*epoch_pool_guid)) {
@@ -601,7 +597,7 @@ bool arts_wait_on_handle(arts_guid_t epoch_guid) {
   // For now lets leave this rule here
   if (guid) {
     arts_guid_t local = *guid;
-    *guid = NULL_GUID; // Unset
+    *guid = NULL_GUID;  // Unset
     unsigned int flag = 1;
     arts_epoch_t *epoch = (arts_epoch_t *)arts_route_table_lookup_item(local);
     if (!epoch) {

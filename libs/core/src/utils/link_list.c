@@ -83,8 +83,8 @@ void arts_link_list_delete_item(void *to_delete) {
   arts_free(item);
 }
 
-inline struct arts_link_list_s *
-arts_link_list_get(struct arts_link_list_s *link_list, unsigned int position) {
+inline struct arts_link_list_s *arts_link_list_get(
+    struct arts_link_list_s *link_list, unsigned int position) {
   return (struct arts_link_list_s *)(link_list + position);
 }
 

@@ -89,7 +89,7 @@ void already_fired_end(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("  PASS: already-fired event triggered EDT immediately\n");
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
@@ -113,19 +113,19 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Fire ev1.
   arts_event_satisfy_slot(ev1, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
 
-  // Test 2: Fan-in: evA + evB → evC → EDT.
-  arts_guid_t evA = arts_event_create(0, 1);
-  arts_guid_t evB = arts_event_create(0, 1);
-  arts_guid_t evC = arts_event_create(0, 2); // latch=2 needs both.
+  // Test 2: Fan-in: ev_a + ev_b → ev_c → EDT.
+  arts_guid_t ev_a = arts_event_create(0, 1);
+  arts_guid_t ev_b = arts_event_create(0, 1);
+  arts_guid_t ev_c = arts_event_create(0, 2);  // latch=2 needs both.
   arts_guid_t edt2 = arts_edt_create_with_epoch(fan_in_end, 0, NULL, 1, epoch,
                                                 &(arts_hint_t){.route = 0});
 
-  arts_add_dependence(evA, evC, ARTS_EVENT_LATCH_DECR_SLOT);
-  arts_add_dependence(evB, evC, ARTS_EVENT_LATCH_DECR_SLOT);
-  arts_add_dependence(evC, edt2, 0);
+  arts_add_dependence(ev_a, ev_c, ARTS_EVENT_LATCH_DECR_SLOT);
+  arts_add_dependence(ev_b, ev_c, ARTS_EVENT_LATCH_DECR_SLOT);
+  arts_add_dependence(ev_c, edt2, 0);
 
-  arts_event_satisfy_slot(evA, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
-  arts_event_satisfy_slot(evB, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+  arts_event_satisfy_slot(ev_a, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+  arts_event_satisfy_slot(ev_b, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
 
   // Test 3: Event chain with DB data propagation.
   void *dbptr = NULL;

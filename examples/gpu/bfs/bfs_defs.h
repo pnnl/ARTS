@@ -49,42 +49,42 @@ extern "C" {
 //  #define arts_printf(...) arts_printf(__VA_ARGS__)
 #define TURNON(...)
 // #define TURNON(...) __VA_ARGS__
-#define ROOT 7
-#define PARTS 8
-#define GPULISTLEN (1024UL * 1024UL * 256UL)
-#define MAXLEVEL ((unsigned int)-1)
-#define SMTILE 32
+#define ROOT          7
+#define PARTS         8
+#define GPULISTLEN    (1024UL * 1024UL * 256UL)
+#define MAXLEVEL      ((unsigned int)-1)
+#define SMTILE        32
 #define GPU_THRESHOLD ((unsigned int)1024)
 
 #define USE_LC 2
 #ifdef USE_LC
 #define DO_SYNC(level) ((level) % USE_LC == 0)
-#define DB_WRITE_TYPE ARTS_DB_LC
-#define CHECK_CONSISTENCY(worker_id)                                           \
-  if (!(worker_id) && ARTS_LOOK_UP_CONFIG(gpu_lc_sync) != 4) {                 \
-    arts_printf("The gpu_lc_sync must be set to 4 "                            \
-                "(arts_get_min_db_unsigned_int) in arts "                      \
-                "config file.\n");                                             \
-    arts_shutdown();                                                           \
-    return;                                                                    \
+#define DB_WRITE_TYPE  ARTS_DB_LC
+#define CHECK_CONSISTENCY(worker_id)                           \
+  if (!(worker_id) && ARTS_LOOK_UP_CONFIG(gpu_lc_sync) != 4) { \
+    arts_printf("The gpu_lc_sync must be set to 4 "            \
+                "(arts_get_min_db_unsigned_int) in arts "      \
+                "config file.\n");                             \
+    arts_shutdown();                                           \
+    return;                                                    \
   }
 #else
 #define DO_SYNC(level) 0
-#define DB_WRITE_TYPE ARTS_DB_GPU
-#define CHECK_CONSISTENCY(worker_id)                                           \
-  if (!(worker_id) && ARTS_LOOK_UP_CONFIG(gpu_locality) != 3) {                \
-    arts_printf(                                                               \
-        "The gpu_locality must be set to 3 (hashOnDBZero) in arts config "     \
-        "file.\n");                                                            \
-    arts_shutdown();                                                           \
-    return;                                                                    \
+#define DB_WRITE_TYPE  ARTS_DB_GPU
+#define CHECK_CONSISTENCY(worker_id)                                       \
+  if (!(worker_id) && ARTS_LOOK_UP_CONFIG(gpu_locality) != 3) {            \
+    arts_printf(                                                           \
+        "The gpu_locality must be set to 3 (hashOnDBZero) in arts config " \
+        "file.\n");                                                        \
+    arts_shutdown();                                                       \
+    return;                                                                \
   }
 #endif
 
-#define DASHDASHFILE(argc, argv)                                               \
-  if ((argc) == 3) {                                                           \
-    (argv)[1] = (argv)[2];                                                     \
-    (argc)--;                                                                  \
+#define DASHDASHFILE(argc, argv) \
+  if ((argc) == 3) {             \
+    (argv)[1] = (argv)[2];       \
+    (argc)--;                    \
   }
 
 #ifdef __cplusplus

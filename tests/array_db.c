@@ -39,6 +39,7 @@
 #include <stdlib.h>
 
 #include "arts.h"
+#include "arts/array_db.h"
 
 unsigned int elements = 32;
 arts_array_db_t *array = NULL;
@@ -67,7 +68,7 @@ void edt_func(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;

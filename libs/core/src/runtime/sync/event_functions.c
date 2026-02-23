@@ -213,7 +213,7 @@ void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
             }
             if (dependent[j].type == ARTS_EDT) {
               arts_signal_edt(dependent[j].addr, dependent[j].slot, event->data,
-                              ARTS_MODE_EW);
+                              DB_MODE_EW);
             } else if (dependent[j].type == ARTS_EVENT) {
               TIME_EVENT_SIGNAL_STOP();
               arts_event_satisfy_slot(dependent[j].addr, event->data,
@@ -294,7 +294,8 @@ void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
     if (rank != arts_global_rank_id) {
       arts_remote_add_dependence(source, destination, slot, rank);
     } else {
-      arts_out_of_order_add_dependence(source, destination, slot, mode, source);
+      arts_out_of_order_add_dependence(source, destination, slot, DB_MODE_NULL,
+                                       source);
     }
     return;
   }
@@ -320,7 +321,7 @@ void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
         ;
       }
       if (position >= event->pos - 1) {
-        arts_signal_edt(destination, slot, event->data, ARTS_MODE_EW);
+        arts_signal_edt(destination, slot, event->data, DB_MODE_EW);
         if (!destroy_event) {
           arts_event_free(event);
           arts_route_table_remove_item(source);
@@ -406,11 +407,11 @@ bool arts_is_event_fired(arts_guid_t event) {
 }
 
 /// Persistent events
-struct arts_persistent_event_version_s *
-arts_push_persistent_event_version(struct arts_persistent_event_s *event);
+struct arts_persistent_event_version_s *arts_push_persistent_event_version(
+    struct arts_persistent_event_s *event);
 
-struct arts_link_list_s *
-arts_get_event_versions(struct arts_persistent_event_s *event) {
+struct arts_link_list_s *arts_get_event_versions(
+    struct arts_persistent_event_s *event) {
   if (event->versions != NULL) {
     return event->versions;
   }
@@ -423,8 +424,8 @@ arts_get_event_versions(struct arts_persistent_event_s *event) {
   return event->versions;
 }
 
-struct arts_persistent_event_version_s *
-arts_push_persistent_event_version(struct arts_persistent_event_s *event) {
+struct arts_persistent_event_version_s *arts_push_persistent_event_version(
+    struct arts_persistent_event_s *event) {
   struct arts_link_list_s *versions = arts_get_event_versions(event);
   struct arts_persistent_event_version_s *next =
       (struct arts_persistent_event_version_s *)arts_link_list_new_item(
@@ -449,16 +450,16 @@ arts_push_persistent_event_version(struct arts_persistent_event_s *event) {
   return next;
 }
 
-struct arts_persistent_event_version_s *
-arts_get_front_persistent_event_version(struct arts_persistent_event_s *event) {
+struct arts_persistent_event_version_s *arts_get_front_persistent_event_version(
+    struct arts_persistent_event_s *event) {
   struct arts_persistent_event_version_s *v =
       (struct arts_persistent_event_version_s *)arts_link_list_get_front_data(
           arts_get_event_versions(event));
   return v;
 }
 
-struct arts_persistent_event_version_s *
-arts_get_last_persistent_event_version(struct arts_persistent_event_s *event) {
+struct arts_persistent_event_version_s *arts_get_last_persistent_event_version(
+    struct arts_persistent_event_s *event) {
   struct arts_persistent_event_version_s *v =
       (struct arts_persistent_event_version_s *)arts_link_list_get_tail_data(
           arts_get_event_versions(event));
@@ -469,7 +470,7 @@ bool arts_persistent_event_create_internal(arts_guid_t *guid,
                                            unsigned int route,
                                            arts_guid_t event_data) {
   if (event_data == NULL_GUID) {
-    ARTS_ERROR("Persistent event requires non-NULL data GUID");
+    ARTS_WARN("Persistent event created without data GUID");
   }
   const unsigned int event_size = sizeof(struct arts_persistent_event_s);
   void *event_packet = arts_calloc(1, event_size);
@@ -584,13 +585,8 @@ void arts_persistent_event_destroy(arts_guid_t guid) {
   struct arts_persistent_event_s *event =
       (struct arts_persistent_event_s *)arts_route_table_lookup_item(guid);
   if (event != NULL) {
-    arts_lock(&event->lock);
     arts_route_table_remove_item(guid);
-    while (!arts_persistent_event_free_version(event)) {
-      ;
-    }
-    arts_unlock(&event->lock);
-    arts_free(event);
+    arts_persistent_event_free_all(event);
   }
 }
 
@@ -619,7 +615,7 @@ void arts_persistent_event_satisfy(arts_guid_t event_guid, uint32_t action,
       arts_lock(&event->lock);
     }
     if (event->data == NULL_GUID) {
-      ARTS_ERROR("Persistent event has NULL data GUID");
+      ARTS_WARN("Persistent event firing without data GUID");
     }
     unsigned int res = -1;
     struct arts_persistent_event_version_s *version =
@@ -693,13 +689,13 @@ void arts_persistent_event_satisfy(arts_guid_t event_guid, uint32_t action,
                       "ESD: DB not found for byte-slice dep event->data=%lu",
                       event->data);
                 }
-              } else if (dependent[j].mode != ARTS_NULL) {
+              } else if (dependent[j].mode != DB_MODE_NULL) {
                 internal_signal_edt_with_mode(dependent[j].addr,
                                               dependent[j].slot, event->data,
                                               dependent[j].mode);
               } else {
                 arts_signal_edt(dependent[j].addr, dependent[j].slot,
-                                event->data, ARTS_MODE_EW);
+                                event->data, DB_MODE_EW);
               }
             } else {
               ARTS_DEBUG("Event data is NULL_GUID for event %u", event_guid);
@@ -764,7 +760,7 @@ void arts_add_dependence_to_persistent_event(arts_guid_t event_source,
                                                      edt_slot, rank);
     } else {
       arts_out_of_order_add_dependence_to_persistent_event(
-          event_source, edt_dest, edt_slot, dest_type, event_source);
+          event_source, edt_dest, edt_slot, DB_MODE_NULL, event_source);
     }
     return;
   }
@@ -789,7 +785,7 @@ void arts_add_dependence_to_persistent_event(arts_guid_t event_source,
     dependent->type = ARTS_EDT;
     dependent->addr = edt_dest;
     dependent->slot = edt_slot;
-    dependent->mode = ARTS_NULL;
+    dependent->mode = DB_MODE_NULL;
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
     dependent->done_writing = true;
 
@@ -806,7 +802,7 @@ void arts_add_dependence_to_persistent_event(arts_guid_t event_source,
     dependent->type = ARTS_EVENT;
     dependent->addr = edt_dest;
     dependent->slot = edt_slot;
-    dependent->mode = ARTS_NULL;
+    dependent->mode = DB_MODE_NULL;
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
     dependent->done_writing = true;
 
@@ -820,17 +816,16 @@ void arts_add_dependence_to_persistent_event(arts_guid_t event_source,
   }
 }
 
-void arts_add_dependence_to_persistent_event_with_mode(arts_guid_t event_source,
-                                                       arts_guid_t edt_dest,
-                                                       uint32_t edt_slot,
-                                                       arts_db_mode_t mode) {
+void arts_add_dependence_to_persistent_event_with_mode(
+    arts_guid_t event_source, arts_guid_t edt_dest, uint32_t edt_slot,
+    arts_db_access_mode_t mode) {
   arts_add_dependence_to_persistent_event_with_mode_and_diff(
       event_source, edt_dest, edt_slot, mode);
 }
 
 void arts_add_dependence_to_persistent_event_with_mode_and_diff(
     arts_guid_t event_source, arts_guid_t edt_dest, uint32_t edt_slot,
-    arts_db_mode_t mode) {
+    arts_db_access_mode_t mode) {
   /// Check that the event_source is a persistent event
   if (arts_guid_get_type(event_source) != ARTS_PERSISTENT_EVENT) {
     ARTS_ERROR("Source GUID %lu is not a persistent event", event_source);
@@ -848,7 +843,7 @@ void arts_add_dependence_to_persistent_event_with_mode_and_diff(
       // TODO: Extend out-of-order handling to pass mode
       // For now, fallback to standard out-of-order add dependence
       arts_out_of_order_add_dependence_to_persistent_event(
-          event_source, edt_dest, edt_slot, dest_type, event_source);
+          event_source, edt_dest, edt_slot, DB_MODE_NULL, event_source);
     }
     return;
   }
@@ -910,7 +905,7 @@ void arts_add_dependence_to_persistent_event_with_mode_and_diff(
 
 void arts_add_dependence_to_persistent_event_with_byte_offset(
     arts_guid_t event_source, arts_guid_t edt_dest, uint32_t edt_slot,
-    arts_db_mode_t mode, uint64_t byte_offset, uint64_t len) {
+    arts_db_access_mode_t mode, uint64_t byte_offset, uint64_t len) {
   /// Check that the event_source is a persistent event
   if (arts_guid_get_type(event_source) != ARTS_PERSISTENT_EVENT) {
     ARTS_ERROR("Source GUID %lu is not a persistent event", event_source);
@@ -927,7 +922,7 @@ void arts_add_dependence_to_persistent_event_with_byte_offset(
     } else {
       // Local out-of-order: byte offset is not critical for OO handling
       arts_out_of_order_add_dependence_to_persistent_event(
-          event_source, edt_dest, edt_slot, dest_type, event_source);
+          event_source, edt_dest, edt_slot, DB_MODE_NULL, event_source);
     }
     return;
   }

@@ -66,13 +66,14 @@
 #include "arts/gpu/gpu_stream.h"
 #endif
 
-#define PACKET_SIZE 4096
+#define PACKET_SIZE               4096
 #define NETWORK_BACKOFF_INCREMENT 0
 
 extern unsigned int num_numa_domains;
 
-ARTS_WEAK void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
-                             uint32_t depc, arts_edt_dep_t depv[]) {}
+ARTS_WEAK void main_edt(uint32_t paramc, const uint64_t *paramv,
+                             uint32_t depc, arts_edt_dep_t depv[]) {
+}
 
 struct arts_runtime_shared_s arts_node_info;
 ARTS_THREAD_LOCAL struct arts_runtime_private_s arts_thread_info;
@@ -268,6 +269,9 @@ void arts_runtime_global_cleanup() {
   }
 #endif
 
+  /* Network outbound queues and sequence tracking arrays */
+  arts_server_cleanup();
+
   /* Socket server global arrays (safe to call even for single-node) */
   arts_ll_server_cleanup();
 }
@@ -278,7 +282,7 @@ void arts_runtime_global_cleanup() {
  * After all threads have registered (ready_to_push barrier), thread 0:
  *   1. Enables global GUID generation.
  *   2. Creates the shutdown epoch (termination detection).
- *   3. Schedules arts_main_edt on rank 0 (if defined by the application).
+ *   3. Schedules main_edt on rank 0 (if defined by the application).
  *   4. Waits for all threads through a series of barriers before entering
  *      the main scheduler loop.
  */
@@ -300,11 +304,11 @@ void arts_thread_zero_node_start(int argc, char **argv) {
   arts_atomic_sub(&arts_node_info.ready_to_parallel_start, 1U);
   while (arts_node_info.ready_to_parallel_start) {
   }
-  if (arts_main_edt && !arts_global_rank_id) {
-    ARTS_INFO("Thread 0: scheduling arts_main_edt on rank 0 (argc=%d)", argc);
+  if (main_edt && !arts_global_rank_id) {
+    ARTS_INFO("Thread 0: scheduling main_edt on rank 0 (argc=%d)", argc);
     uint64_t main_args[2] = {(uint64_t)argc, (uint64_t)argv};
     arts_hint_t main_hint = {0, 0};
-    arts_edt_create(arts_main_edt, 2, main_args, 0, &main_hint);
+    arts_edt_create(main_edt, 2, main_args, 0, &main_hint);
   }
 
   arts_increment_finished_epoch_list();
@@ -554,7 +558,7 @@ void arts_run_edt(struct arts_edt_s *edt) {
   ARTS_INFO("Running EDT[Id:%lu, Guid:%lu, Deps: %u, Params: %u, "
             "DepvPtr: %p]",
             edt->arts_id, edt->current_edt, depc, paramc, depv);
-  arts_db_mode_t *modes = arts_get_dep_modes(edt);
+  arts_db_access_mode_t *modes = arts_get_dep_modes(edt);
   prep_dbs(depc, depv, modes, false);
 
   arts_set_thread_local_edt_info(edt);

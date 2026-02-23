@@ -37,18 +37,16 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 
-#include "arts/runtime/memory/array_db.h"
+#include "arts/array_db.h"
+#include "arts/array_db_internal.h"
 
 #include <string.h>
 
 #include "arts.h"
-#include "arts/gas/route_table.h"
 #include "arts/runtime/globals.h"
 #include "arts/runtime/memory/db_functions.h"
 #include "arts/runtime/network/remote_functions.h"
-#include "arts/runtime/sync/termination_detection.h"
 #include "arts/system/arts_print.h"
-#include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
 
 unsigned int arts_get_size_array_db(arts_array_db_t *array) {
@@ -88,7 +86,8 @@ arts_array_db_t *arts_new_array_db_with_guid(arts_guid_t guid,
     unsigned int db_size = sizeof(struct arts_db_s) + alloc_size;
     struct arts_db_s *to_send =
         (struct arts_db_s *)arts_calloc_align(1, db_size, 16);
-    arts_db_create_internal(guid, to_send, alloc_size, db_size, ARTS_DB_LOCAL, 0);
+    arts_db_create_internal(guid, to_send, alloc_size, db_size, ARTS_DB_LOCAL,
+                            0);
 
     block = (arts_array_db_t *)(to_send + 1);
     block->element_size = element_size;
@@ -103,7 +102,7 @@ arts_array_db_t *arts_new_array_db_with_guid(arts_guid_t guid,
       }
     }
 
-    arts_db_create_with_guid_and_data(guid, block, alloc_size);
+    arts_db_adopt(guid, to_send);
   }
   return block;
 }
@@ -130,10 +129,12 @@ arts_array_db_t *arts_new_local_array_db_with_guid(arts_guid_t guid,
   block->element_size = element_size;
   block->elements_per_block = elements_per_block;
   block->num_blocks = num_blocks;
-  memcpy((char *)block + sizeof(arts_array_db_t), data,
-         ((unsigned long)element_size * elements_per_block));
+  if (data) {
+    memcpy((char *)block + sizeof(arts_array_db_t), data,
+           ((unsigned long)element_size * elements_per_block));
+  }
 
-  arts_db_create_with_guid_and_data(guid, block, alloc_size);
+  arts_db_adopt(guid, local);
   return block;
 }
 
@@ -166,7 +167,7 @@ unsigned int get_rank_from_index(arts_array_db_t *array, unsigned int index) {
 void arts_signal_array_db(arts_array_db_t *array, arts_guid_t edt_guid,
                           unsigned int slot) {
   arts_guid_t array_guid = get_array_db_guid(array);
-  arts_signal_edt(edt_guid, slot, array_guid, ARTS_MODE_EW);
+  arts_signal_edt(edt_guid, slot, array_guid, DB_MODE_EW);
 }
 
 void arts_get_from_array_db(arts_guid_t edt_guid, unsigned int slot,
@@ -197,7 +198,9 @@ void arts_put_in_array_db(void *ptr, arts_guid_t edt_guid, unsigned int slot,
 void arts_for_each_in_array_db(arts_array_db_t *array, arts_edt_t func_ptr,
                                uint32_t paramc, const uint64_t *paramv) {
   uint64_t *args = (uint64_t *)arts_malloc(sizeof(uint64_t) * (paramc + 1));
-  memcpy(&args[1], paramv, sizeof(uint64_t) * paramc);
+  if (paramc) {
+    memcpy(&args[1], paramv, sizeof(uint64_t) * paramc);
+  }
 
   unsigned int size = arts_get_size_array_db(array);
   for (unsigned int i = 0; i < size; i++) {
@@ -207,6 +210,7 @@ void arts_for_each_in_array_db(arts_array_db_t *array, arts_edt_t func_ptr,
                                        &(arts_hint_t){.route = route});
     arts_get_from_array_db(guid, 0, array, i);
   }
+  arts_free(args);
 }
 
 void arts_gather_array_db(arts_array_db_t *array, arts_edt_t func_ptr,
@@ -267,18 +271,26 @@ void loop_policy(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   unsigned int end = paramv[2];
   unsigned int start = paramv[3];
 
+  /* Build callback paramv: [loop_index, user_param0, user_param1, ...] */
+  uint32_t cb_paramc = paramc - 3; /* 1 (index) + user_paramc */
+  uint64_t *cb_paramv = (uint64_t *)arts_malloc(sizeof(uint64_t) * cb_paramc);
+  uint32_t user_paramc = paramc - 4;
+  if (user_paramc) {
+    memcpy(&cb_paramv[1], &paramv[4], sizeof(uint64_t) * user_paramc);
+  }
+
   arts_array_db_t *array = (arts_array_db_t *)depv[0].ptr;
   unsigned int offset = get_offset_from_index(array, start);
   char *raw = (char *)depv[0].ptr;
 
-  uint64_t loop_index = start;
   for (unsigned int i = start; i < end; i += stride) {
-    loop_index = i;
+    cb_paramv[0] = i;
     depv[0].ptr = (void *)(&raw[offset]);
-    func_ptr(paramc - 3, &loop_index, 1, depv);
+    func_ptr(cb_paramc, cb_paramv, 1, depv);
     offset += array->element_size;
   }
   depv[0].ptr = (void *)raw;
+  arts_free(cb_paramv);
 }
 
 void arts_for_each_in_array_db_at_data(arts_array_db_t *array,
@@ -303,98 +315,7 @@ void arts_for_each_in_array_db_at_data(arts_array_db_t *array,
     unsigned int target_rank = get_rank_from_index(array, i);
     arts_guid_t am = arts_edt_create(loop_policy, paramc + 4, args, 1,
                                      &(arts_hint_t){.route = target_rank});
-    arts_signal_edt(am, 0, guid, ARTS_MODE_EW);
+    arts_signal_edt(am, 0, guid, DB_MODE_EW);
   }
-}
-
-void internal_atomic_add_in_array_db(arts_guid_t db_guid, unsigned int index,
-                                     unsigned int to_add, arts_guid_t edt_guid,
-                                     unsigned int slot,
-                                     arts_guid_t epoch_guid) {
-  struct arts_db_s *db =
-      (struct arts_db_s *)arts_route_table_lookup_item(db_guid);
-  if (db) {
-    arts_array_db_t *array = (arts_array_db_t *)(db + 1);
-    // Do this so when we increment finished we can check the term status
-    increment_queue_epoch(epoch_guid);
-    arts_shutdown_epoch_inc_queue();
-    unsigned int offset = get_offset_from_index(array, index);
-    unsigned int *data = (unsigned int *)(((char *)array) + offset);
-    unsigned int result = arts_atomic_add(data, to_add);
-    //        ARTS_INFO("index: %u result: %u", index, result);
-
-    if (edt_guid) {
-      //            ARTS_INFO("Signaling edt_guid: %lu", edt_guid);
-      arts_signal_edt_value(edt_guid, slot, result);
-    }
-
-    increment_finished_epoch(epoch_guid);
-    arts_shutdown_epoch_inc_finished();
-  } else {
-    arts_out_of_order_atomic_add_in_array_db(db_guid, index, to_add, edt_guid,
-                                             slot, epoch_guid);
-  }
-}
-
-void arts_atomic_add_in_array_db(arts_array_db_t *array, unsigned int index,
-                                 unsigned int to_add, arts_guid_t edt_guid,
-                                 unsigned int slot) {
-  arts_guid_t db_guid = get_array_db_guid(array);
-  arts_guid_t epoch_guid = arts_get_current_epoch_guid();
-  increment_active_epoch(epoch_guid);
-  arts_shutdown_epoch_inc_active();
-  unsigned int rank = get_rank_from_index(array, index);
-  if (rank == arts_global_rank_id) {
-    internal_atomic_add_in_array_db(db_guid, index, to_add, edt_guid, slot,
-                                    epoch_guid);
-  } else {
-    arts_remote_atomic_add_in_array_db(rank, db_guid, index, to_add, edt_guid,
-                                       slot, epoch_guid);
-  }
-}
-
-void internal_atomic_compare_and_swap_in_array_db(
-    arts_guid_t db_guid, unsigned int index, unsigned int old_value,
-    unsigned int new_value, arts_guid_t edt_guid, unsigned int slot,
-    arts_guid_t epoch_guid) {
-  struct arts_db_s *db =
-      (struct arts_db_s *)arts_route_table_lookup_item(db_guid);
-  if (db) {
-    arts_array_db_t *array = (arts_array_db_t *)(db + 1);
-    // Do this so when we increment finished we can check the term status
-    increment_queue_epoch(epoch_guid);
-    arts_shutdown_epoch_inc_queue();
-    unsigned int offset = get_offset_from_index(array, index);
-    unsigned int *data = (unsigned int *)(((char *)array) + offset);
-    unsigned int result = arts_atomic_cswap(data, old_value, new_value);
-    //        ARTS_INFO("index: %u result: %u", index, result);
-
-    if (edt_guid) {
-      //            ARTS_INFO("Signaling edt_guid: %lu", edt_guid);
-      arts_signal_edt_value(edt_guid, slot, result);
-    }
-
-    increment_finished_epoch(epoch_guid);
-    arts_shutdown_epoch_inc_finished();
-  } else {
-    arts_out_of_order_atomic_compare_and_swap_in_array_db(
-        db_guid, index, old_value, new_value, edt_guid, slot, epoch_guid);
-  }
-}
-
-void arts_atomic_compare_and_swap_in_array_db(
-    arts_array_db_t *array, unsigned int index, unsigned int old_value,
-    unsigned int new_value, arts_guid_t edt_guid, unsigned int slot) {
-  arts_guid_t db_guid = get_array_db_guid(array);
-  arts_guid_t epoch_guid = arts_get_current_epoch_guid();
-  increment_active_epoch(epoch_guid);
-  arts_shutdown_epoch_inc_active();
-  unsigned int rank = get_rank_from_index(array, index);
-  if (rank == arts_global_rank_id) {
-    internal_atomic_compare_and_swap_in_array_db(
-        db_guid, index, old_value, new_value, edt_guid, slot, epoch_guid);
-  } else {
-    arts_remote_atomic_compare_and_swap_in_array_db(
-        rank, db_guid, index, old_value, new_value, edt_guid, slot, epoch_guid);
-  }
+  arts_free(args);
 }

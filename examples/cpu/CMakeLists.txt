@@ -42,6 +42,7 @@ set(CPU_EXAMPLES
     fib
     fib_yield
     simple_reduction
+    tiled_matmul
 )
 
 # Programs that require arts_graph library
@@ -122,6 +123,10 @@ endforeach()
 foreach(example ${CPU_GRAPH_EXAMPLES})
     add_cpu_graph_example(${example})
 endforeach()
+
+# graph_search also depends on arts_array_db
+target_include_directories(graph_search PRIVATE ${ARTS_ARRAY_DB_INCLUDE_DIR})
+target_link_libraries(graph_search PRIVATE arts_array_db)
 
 # Create C++ CPU graph example executables
 foreach(example ${CPU_CXX_GRAPH_EXAMPLES})

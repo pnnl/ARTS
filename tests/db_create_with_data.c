@@ -91,7 +91,7 @@ void check_zero_len(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("  PASS: db_create_with_data zero-length OK\n");
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
@@ -113,7 +113,7 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_guid_t e1 = arts_edt_create_with_epoch(
       check_initial_data, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_signal_edt(e1, 0, g1, ARTS_MODE_RO);
+  arts_signal_edt(e1, 0, g1, DB_MODE_RO);
 
   // Test 2: Modify source after creation — DB should be independent.
   int src2[2] = {100, 200};
@@ -125,7 +125,7 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_guid_t e2 = arts_edt_create_with_epoch(
       check_source_independence, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_signal_edt(e2, 0, g2, ARTS_MODE_RO);
+  arts_signal_edt(e2, 0, g2, DB_MODE_RO);
 
   arts_wait_on_handle(epoch);
   arts_shutdown();

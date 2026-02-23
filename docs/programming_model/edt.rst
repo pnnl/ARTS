@@ -62,7 +62,7 @@ Wire a DataBlock or value into a dependency slot:
 .. code-block:: c
 
    /* Signal a DataBlock into slot 0 (exclusive write) */
-   arts_signal_edt(edt_guid, 0, db_guid, ARTS_MODE_EW);
+   arts_signal_edt(edt_guid, 0, db_guid, DB_MODE_EW);
 
    /* Signal a raw 64-bit value into slot 1 */
    arts_signal_edt_value(edt_guid, 1, 42);

@@ -96,7 +96,7 @@ static uint64_t arts_counter_capture_counter(arts_counter_t *counter) {
 }
 
 static void *arts_counter_capture_thread(void *args) {
-  (void)args; // Unused - capture thread doesn't need its own counters
+  (void)args;  // Unused - capture thread doesn't need its own counters
 
   // Validate counter_capture_interval to prevent division by zero
   if (arts_node_info.counter_capture_interval == 0) {
@@ -221,10 +221,10 @@ void arts_counter_capture_start() {
     } else {
       // Worker nodes: send sync request and wait for response
       arts_remote_time_sync_request();
-      uint64_t timeout = arts_get_time_stamp() + 5000000000ULL; // 5 seconds
+      uint64_t timeout = arts_get_time_stamp() + 5000000000ULL;  // 5 seconds
       while (!arts_counter_time_sync_received &&
              arts_get_time_stamp() < timeout) {
-        usleep(1000); // Wait 1ms
+        usleep(1000);  // Wait 1ms
       }
       if (!arts_counter_time_sync_received) {
         ARTS_INFO("Time sync: Timeout waiting for master response, "
@@ -283,10 +283,9 @@ void arts_counter_timer_end(arts_counter_t *counter) {
 }
 
 // Helper: apply one reduction step
-static inline uint64_t
-arts_apply_reduction(uint64_t accumulator, uint64_t value,
-                     arts_counter_reduce_method_t reduce_method,
-                     unsigned int source_index) {
+static inline uint64_t arts_apply_reduction(
+    uint64_t accumulator, uint64_t value,
+    arts_counter_reduce_method_t reduce_method, unsigned int source_index) {
   switch (reduce_method) {
   case ARTS_COUNTER_REDUCE_SUM:
     return accumulator + value;
@@ -301,8 +300,8 @@ arts_apply_reduction(uint64_t accumulator, uint64_t value,
 }
 
 // Helper: convert reduce method to string for JSON output
-static inline const char *
-arts_reduce_method_to_string(arts_counter_reduce_method_t reduce_method) {
+static inline const char *arts_reduce_method_to_string(
+    arts_counter_reduce_method_t reduce_method) {
   switch (reduce_method) {
   case ARTS_COUNTER_REDUCE_SUM:
     return "SUM";
@@ -428,7 +427,7 @@ static uint64_t arts_compute_node_reduced_value(unsigned int index) {
   for (unsigned int t = 0; t < arts_node_info.total_thread_count; t++) {
     arts_counter_t *saved = arts_node_info.saved_counters[t];
     if (!saved) {
-      continue; // Thread never registered or data not available
+      continue;  // Thread never registered or data not available
     }
     node_value =
         arts_apply_reduction(node_value, saved[index].count, reduce_method, t);
@@ -807,7 +806,7 @@ static uint64_t arts_json_parse_capture_history(const char *p, uint64_t *epochs,
   if (!p || *p != '[') {
     return 0;
   }
-  p++; // Skip opening [
+  p++;  // Skip opening [
 
   uint64_t count = 0;
   while (*p && *p != ']' && count < max_entries) {
@@ -819,7 +818,7 @@ static uint64_t arts_json_parse_capture_history(const char *p, uint64_t *epochs,
     if (*p != '[') {
       break;
     }
-    p++; // Skip inner [
+    p++;  // Skip inner [
 
     // Parse epoch
     epochs[count] = strtoull(p, (char **)&p, 10);
@@ -833,7 +832,7 @@ static uint64_t arts_json_parse_capture_history(const char *p, uint64_t *epochs,
     values[count] = strtoull(p, (char **)&p, 10);
     p = arts_json_skip_whitespace(p);
     if (*p == ']') {
-      p++; // Skip inner ]
+      p++;  // Skip inner ]
     }
     count++;
   }
@@ -869,9 +868,8 @@ static const char *arts_json_find_object_end(const char *p) {
 }
 
 // Read and parse a node's counter JSON file
-static bool
-arts_read_node_counter_file(const char *filepath,
-                            arts_cluster_counter_data_t *counter_data) {
+static bool arts_read_node_counter_file(
+    const char *filepath, arts_cluster_counter_data_t *counter_data) {
   FILE *fp = fopen(filepath, "r");
   if (!fp) {
     return false;
@@ -882,7 +880,7 @@ arts_read_node_counter_file(const char *filepath,
   long file_size = ftell(fp);
   (void)fseek(fp, 0, SEEK_SET);
 
-  if (file_size <= 0 || file_size > 10L * 1024 * 1024) { // Max 10MB
+  if (file_size <= 0 || file_size > 10L * 1024 * 1024) {  // Max 10MB
     (void)fclose(fp);
     return false;
   }
@@ -1050,7 +1048,7 @@ void arts_counter_write_cluster(const char *output_folder,
   // Read each node's JSON file, polling until all are available
   unsigned int nodes_read = 0;
   bool *node_read = (bool *)arts_calloc(node_count, sizeof(bool));
-  int max_retries = 100; // 100 * 100ms = 10 seconds
+  int max_retries = 100;  // 100 * 100ms = 10 seconds
 
   for (int attempt = 0; attempt < max_retries && nodes_read < node_count;
        attempt++) {
@@ -1068,7 +1066,7 @@ void arts_counter_write_cluster(const char *output_folder,
       }
     }
     if (nodes_read < node_count) {
-      usleep(100000); // 100ms
+      usleep(100000);  // 100ms
     }
   }
   for (unsigned int n = 0; n < node_count; n++) {

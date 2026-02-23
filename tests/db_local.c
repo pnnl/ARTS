@@ -38,7 +38,7 @@
 ******************************************************************************/
 
 /// @file db_local.c
-/// @brief Tests ARTS_DB_LOCAL (pinned) datablocks, ARTS_MODE_RW access,
+/// @brief Tests ARTS_DB_LOCAL (pinned) datablocks, DB_MODE_RW access,
 ///        and arts_db_copy_to_new_type.
 
 #include "arts.h"
@@ -125,7 +125,7 @@ void check_copy_type(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
@@ -136,7 +136,7 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
 
-  // Test 1: Create ARTS_DB_LOCAL and use ARTS_MODE_RW.
+  // Test 1: Create ARTS_DB_LOCAL and use DB_MODE_RW.
   arts_guid_t local_guid = arts_guid_reserve(ARTS_DB_LOCAL, 0);
   unsigned int *local_data =
       (unsigned int *)arts_db_create_with_guid(local_guid, DB_SIZE, NULL);
@@ -153,8 +153,8 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_guid_t e1 = arts_edt_create_with_epoch(check_local_rw, 0, NULL, 1, epoch,
                                               &(arts_hint_t){.route = 0});
-  arts_record_dep(local_guid, e1, 0, ARTS_MODE_EW);
-  arts_record_dep(local_guid, e2, 0, ARTS_MODE_EW);
+  arts_record_dep(local_guid, e1, 0, DB_MODE_EW);
+  arts_record_dep(local_guid, e2, 0, DB_MODE_EW);
 
   // Test 3: arts_db_copy_to_new_type (DB -> DB_LOCAL).
   void *src_ptr = NULL;
@@ -169,7 +169,7 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   uint64_t copy_param = (uint64_t)copied;
   arts_guid_t e3 = arts_edt_create_with_epoch(
       check_copy_type, 1, &copy_param, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_signal_edt(e3, 0, copied, ARTS_MODE_RO);
+  arts_signal_edt(e3, 0, copied, DB_MODE_RO);
 }
 
 int main(int argc, char **argv) {

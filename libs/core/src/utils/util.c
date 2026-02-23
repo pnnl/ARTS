@@ -61,29 +61,43 @@ arts_guid_t arts_get_current_guid() {
   return NULL_GUID;
 }
 
-unsigned int arts_get_current_node() { return arts_global_rank_id; }
+unsigned int arts_get_current_node() {
+  return arts_global_rank_id;
+}
 
-unsigned int arts_get_total_nodes() { return arts_global_rank_count; }
+unsigned int arts_get_total_nodes() {
+  return arts_global_rank_count;
+}
 
 unsigned int arts_get_total_workers() {
   return arts_node_info.worker_thread_count;
 }
 
-unsigned int arts_get_current_worker() { return arts_thread_info.group_pos; }
+unsigned int arts_get_current_worker() {
+  return arts_thread_info.group_pos;
+}
 
 unsigned int arts_get_current_numa_domain() {
   return arts_thread_info.numa_domain_id;
 }
 
-unsigned int arts_get_total_numa_domains() { return num_numa_domains; }
+unsigned int arts_get_total_numa_domains() {
+  return num_numa_domains;
+}
 
-void arts_stop_local_worker() { arts_thread_info.alive = false; }
+void arts_stop_local_worker() {
+  arts_thread_info.alive = false;
+}
 
-void arts_stop_local_node() { arts_runtime_stop(); }
+void arts_stop_local_node() {
+  arts_runtime_stop();
+}
 
 uint64_t arts_thread_safe_random() {
   long int temp = jrand48(arts_thread_info.drand_buf);
   return (uint64_t)temp;
 }
 
-unsigned int arts_get_total_gpus() { return arts_node_info.gpu; }
+unsigned int arts_get_total_gpus() {
+  return arts_node_info.gpu;
+}

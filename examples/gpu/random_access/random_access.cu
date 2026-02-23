@@ -91,15 +91,15 @@
 
 #include "random_access_defs.h"
 
-arts_guid_range_t *update_frontier_guids = NULL;
+arts_guid_t update_frontier_guids = NULL_GUID;
 
 unsigned int tile_size = TILESIZE;
 unsigned int num_tiles = 0;
-arts_guid_range_t *tile_guids = NULL;
+arts_guid_t tile_guids = NULL_GUID;
 uint64_t **tile = NULL;
 #define GET_LOCAL_INDEX(v) (((v) & (tableSize - 1)) % tile_size)
 #define GET_OWNER_INDEX(v) (((v) & (tableSize - 1)) / tile_size)
-#define GET_TILE_GUID(v) arts_guid_range_get(tile_guids, GET_OWNER_INDEX(v))
+#define GET_TILE_GUID(v)   arts_guid_from_index(tile_guids, GET_OWNER_INDEX(v))
 
 uint64_t start = 0;
 arts_guid_t done_guid = NULL_GUID;
@@ -268,10 +268,10 @@ void random_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramc;
   (void)depc;
 
-  uint64_t num_rem_updates = paramv[0]; // Number of updates left for this GPU
+  uint64_t num_rem_updates = paramv[0];  // Number of updates left for this GPU
   uint64_t num_random = (num_rem_updates > (uint64_t)MAX_UPDATES_PER_GPU_STEP)
                             ? (uint64_t)MAX_UPDATES_PER_GPU_STEP
-                            : num_rem_updates; // Number of updates in the step
+                            : num_rem_updates;  // Number of updates in the step
   uint64_t step = paramv[1];
   uint64_t index = paramv[2];
   int64_t start_index = (int64_t)((step * (uint64_t)MAX_UPDATES_PER_GPU_STEP *
@@ -297,7 +297,7 @@ void random_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     cudaDeviceSynchronize();
 
     // Get random counts
-    unsigned int elems_to_copy = num_tiles; // + numRandom;
+    unsigned int elems_to_copy = num_tiles;  // + numRandom;
     uint64_t *count = (uint64_t *)calloc(elems_to_copy, sizeof(uint64_t));
     arts_cuda_mem_cpy_from_dev(count, r_array,
                                sizeof(uint64_t) * elems_to_copy);
@@ -314,8 +314,7 @@ void random_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     unsigned int next_random_deps = 1;
 
     // Create readOnly copy of DB
-    arts_guid_t read_only =
-        arts_db_copy_to_new_type(depv[0].guid, ARTS_DB_GPU);
+    arts_guid_t read_only = arts_db_copy_to_new_type(depv[0].guid, ARTS_DB_GPU);
 
     // Create update edts
     uint64_t update_args[] = {tile_size, num_tiles, table_size, num_random, 0};
@@ -325,15 +324,15 @@ void random_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
         dim3 block(MAXTHREADS, 1, 1);
         dim3 grid(MAXTHREADBLOCKSPERSM * NUMBEROFSM, 1, 1);
         arts_printf("Launching for i: %lu count: %lu tileGuid: %lu\n", i,
-                    count[i], arts_guid_range_get(tile_guids, i));
+                    count[i], arts_guid_from_index(tile_guids, i));
         arts_guid_t update_guid = arts_edt_create_gpu(
             update_edt, arts_get_current_node(), 5, update_args, 2, grid, block,
             next_random_guid, i + 1, NULL_GUID);
         arts_gpu_signal_edt_memset(update_guid, 0,
-                                   arts_guid_range_get(tile_guids, i));
-        // arts_signal_edt(update_guid, 0, arts_guid_range_get(tile_guids, i),
-        // ARTS_MODE_EW);
-        arts_signal_edt(update_guid, 1, read_only, ARTS_MODE_EW);
+                                   arts_guid_from_index(tile_guids, i));
+        // arts_signal_edt(update_guid, 0, arts_guid_from_index(tile_guids, i),
+        // DB_MODE_EW);
+        arts_signal_edt(update_guid, 1, read_only, DB_MODE_EW);
         next_random_deps++;
       }
     }
@@ -347,9 +346,9 @@ void random_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_edt_create_gpu_lib_with_guid(random_edt, next_random_guid, 3, args,
                                       next_random_deps, grid, block);
     arts_gpu_signal_edt_memset(next_random_guid, 0, depv[0].guid);
-    // arts_signal_edt(next_random_guid, 0, depv[0].guid, ARTS_MODE_EW);
+    // arts_signal_edt(next_random_guid, 0, depv[0].guid, DB_MODE_EW);
   } else {
-    arts_signal_edt(done_guid, (unsigned int)-1, NULL_GUID, ARTS_MODE_EW);
+    arts_signal_edt(done_guid, (unsigned int)-1, NULL_GUID, DB_MODE_EW);
   }
 }
 
@@ -412,7 +411,7 @@ void sync_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
+extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
                               uint32_t depc, arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;
@@ -430,15 +429,15 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
       TABLESIZE, tile_size, num_tiles);
 
   // Create tiled table
-  tile_guids = arts_guid_range_create(ARTS_DB_LC, num_tiles, node_id);
+  tile_guids = arts_guid_reserve_range(ARTS_DB_LC, num_tiles, node_id);
   tile = (uint64_t **)calloc(num_tiles, sizeof(uint64_t *));
   uint64_t counter = 0;
   for (unsigned int i = 0; i < num_tiles; i++) {
     tile[i] = (uint64_t *)arts_db_create_with_guid(
-        arts_guid_range_get(tile_guids, i), (tile_size + 1) * sizeof(uint64_t),
+        arts_guid_from_index(tile_guids, i), (tile_size + 1) * sizeof(uint64_t),
         NULL);
     arts_printf("TileGuid[%u]: %lu -> %p\n", i,
-                arts_guid_range_get(tile_guids, i), tile[i]);
+                arts_guid_from_index(tile_guids, i), tile[i]);
     for (unsigned int j = 0; j < tile_size; j++) {
       tile[i][j] = counter++;
     }
@@ -450,13 +449,13 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
   unsigned int elems_per_frontier =
       num_tiles + (unsigned int)MAX_UPDATES_PER_GPU_STEP;
   update_frontier_guids =
-      arts_guid_range_create(ARTS_DB_GPU, num_gpus, node_id);
+      arts_guid_reserve_range(ARTS_DB_GPU, num_gpus, node_id);
   for (unsigned int i = 0; i < num_gpus; i++) {
     uint64_t *update_frontier = (uint64_t *)arts_db_create_with_guid(
-        arts_guid_range_get(update_frontier_guids, i),
+        arts_guid_from_index(update_frontier_guids, i),
         elems_per_frontier * sizeof(uint64_t), NULL);
     arts_printf("updateFrontier[%u]: %lu %p\n", i,
-                arts_guid_range_get(update_frontier_guids, i), update_frontier);
+                arts_guid_from_index(update_frontier_guids, i), update_frontier);
     for (unsigned int j = 0; j < elems_per_frontier; j++) {
       update_frontier[j] = 0;
     }
@@ -483,12 +482,12 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
     arts_guid_t update_guid =
         arts_edt_create_gpu_lib(random_edt, 0, 3, args, 1, grid, block);
     arts_gpu_signal_edt_memset(update_guid, 0,
-                               arts_guid_range_get(update_frontier_guids, i));
+                               arts_guid_from_index(update_frontier_guids, i));
   }
 
   arts_edt_create_with_guid(sync_edt, done_guid, 0, NULL, num_gpus + num_tiles);
   for (unsigned int i = 0; i < num_tiles; i++) {
-    arts_lc_sync(done_guid, i, arts_guid_range_get(tile_guids, i));
+    arts_lc_sync(done_guid, i, arts_guid_from_index(tile_guids, i));
   }
   start = arts_get_time_stamp();
 }

@@ -44,6 +44,7 @@
 #include <string.h>
 
 #include "arts.h"
+#include "arts/array_db.h"
 #include "arts/block_distribution.h"
 #include "arts/csr.h"
 #include "arts/runtime/compute/shad_adapter.h"
@@ -136,8 +137,8 @@ void gather_neighbor_property_val(uint32_t paramc, const uint64_t *paramv,
     //        arts_printf("New Edt: %lu Source is located on rank %d
     //        Guid:%lu\n", visit_source_guid, rank, vertex_property_map_guid);
     arts_signal_edt(visit_source_guid, 0, vertex_property_map_guid,
-                    ARTS_MODE_EW);
-    arts_signal_edt(visit_source_guid, 1, vertex_id_map_guid, ARTS_MODE_EW);
+                    DB_MODE_EW);
+    arts_signal_edt(visit_source_guid, 1, vertex_id_map_guid, DB_MODE_EW);
   }
 }
 
@@ -156,7 +157,7 @@ void visit_source(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   get_neighbors(graph, source, &neighbors, &neighbor_cnt);
   if (neighbor_cnt) {
     unsigned int db_size =
-        sizeof(source_info_t); // + neighbor_cnt * sizeof(vertex_t);
+        sizeof(source_info_t);  // + neighbor_cnt * sizeof(vertex_t);
     void *ptr = NULL;
     arts_guid_t db_guid = arts_guid_reserve(ARTS_DB_LOCAL, 0);
     ptr = arts_db_create_with_guid(db_guid, db_size, NULL);
@@ -175,7 +176,7 @@ void visit_source(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
         &(arts_hint_t){.route = arts_get_current_node()});
 
     arts_signal_edt(gather_neighbor_property_val_guid, 2 * neighbor_cnt,
-                    db_guid, ARTS_MODE_EW);
+                    db_guid, DB_MODE_EW);
 
     arts_array_db_t *vertex_property_map = (arts_array_db_t *)depv[0].ptr;
     for (unsigned int i = 0; i < neighbor_cnt; i++) {
@@ -253,9 +254,9 @@ void end_vertex_id_map_read(uint32_t paramc, const uint64_t *paramv,
                         &(arts_hint_t){.route = rank});
     // TODO: why pass vertexpropertguid as an argument?
     arts_signal_edt(visit_source_guid, 0, vertex_property_map_guid,
-                    ARTS_MODE_EW);
+                    DB_MODE_EW);
 
-    arts_signal_edt(visit_source_guid, 1, vertex_id_map_guid, ARTS_MODE_EW);
+    arts_signal_edt(visit_source_guid, 1, vertex_id_map_guid, DB_MODE_EW);
   }
   free(seeds);
 }
@@ -280,7 +281,7 @@ void end_vertex_property_read(uint32_t paramc, const uint64_t *paramv,
   // TODO: Is the following line necessary ?
   // Signal the ID map guid
   arts_signal_edt(end_vertex_id_map_read_epoch_guid, 1, vertex_id_map_guid,
-                  ARTS_MODE_EW);
+                  DB_MODE_EW);
 
   // Start the epoch
   arts_initialize_and_start_epoch(end_vertex_id_map_read_epoch_guid, 0);
@@ -310,11 +311,11 @@ void end_vertex_property_read(uint32_t paramc, const uint64_t *paramv,
     char *token = strtok(str, "\t");
     int i = 0;
     while (token != NULL) {
-      if (i == 0) { // vertex
+      if (i == 0) {  // vertex
         vertex = strtoll(token, NULL, 10);
         // arts_printf("Vertex=%llu ", vertex);
         ++i;
-      } else if (i == 1) { // id
+      } else if (i == 1) {  // id
         id = strtoll(token, NULL, 10);
         // arts_printf("id=%llu\n", id);
         i = 0;
@@ -346,7 +347,7 @@ void init_node(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   graph = get_graph_from_partition(node_id, distribution);
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)depc;
   (void)depv;
@@ -392,7 +393,7 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Signal the property map guid
   arts_signal_edt(end_vertex_property_read_epoch_guid, 1,
-                  vertex_property_map_guid, ARTS_MODE_EW);
+                  vertex_property_map_guid, DB_MODE_EW);
 
   // Start the epoch
   arts_initialize_and_start_epoch(end_vertex_property_read_epoch_guid, 0);
@@ -423,10 +424,10 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     char *token = strtok(str, "\t");
     int i = 0;
     while (token != NULL) {
-      if (i == 0) { // vertex
+      if (i == 0) {  // vertex
         vertex = strtoll(token, NULL, 10);
         ++i;
-      } else if (i == 1) { // property
+      } else if (i == 1) {  // property
         v_property_val = strtod(token, NULL);
         i = 0;
       }

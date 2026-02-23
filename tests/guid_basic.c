@@ -45,7 +45,7 @@
 #include "arts.h"
 #include <stdlib.h>
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
@@ -147,7 +147,7 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     if (!rr_ok) {
       all_pass = false;
     }
-    free(rr);
+    arts_guid_round_robin_destroy(rr);
   }
 
   arts_printf("=== guid_basic: %s ===\n", all_pass ? "ALL PASSED" : "FAILED");

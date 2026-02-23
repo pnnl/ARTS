@@ -240,7 +240,7 @@ __global__ void arts_xor_gpu_db_uint64(struct arts_db_s *sink,
 /***********************************************************************/
 
 #define GPUGROUPSIZE 4
-#define GPUNUMGROUP 2
+#define GPUNUMGROUP  2
 
 void gpu_reduction_launch(int root, int a, int b, unsigned int *rem_mask,
                           arts_guid_t guid, unsigned int size,
@@ -389,7 +389,7 @@ int gpu_tree_reduction_rec(int root, unsigned int start, unsigned int stop,
   // ARTS_INFO("root: %u start: %u stop: %u", root, start, stop);
   int gpu_id[2] = {(int)start, (int)stop};
 
-  if (stop - start > 1) // Recursive call
+  if (stop - start > 1)  // Recursive call
   {
     unsigned int middle = (1 + stop - start) / 2;
     gpu_id[0] = gpu_tree_reduction_rec(root, start, start + middle - 1, mask,
@@ -401,22 +401,22 @@ int gpu_tree_reduction_rec(int root, unsigned int start, unsigned int stop,
   bool start_found = (gpu_id[0] >= 0) && ((mask & (1 << gpu_id[0])) != 0);
   bool stop_found = (gpu_id[1] >= 0) && ((mask & (1 << gpu_id[1])) != 0);
 
-  if (start_found && stop_found) // Both are in the mask
+  if (start_found && stop_found)  // Both are in the mask
   {
     if (root == gpu_id[0] || root == gpu_id[1]) {
       local_root = root;
     } else {
-      local_root = gpu_id[0]; // This is the min
+      local_root = gpu_id[0];  // This is the min
     }
-  } else if (start_found && !stop_found) // Only start is in the mask
+  } else if (start_found && !stop_found)  // Only start is in the mask
   {
     gpu_id[1] = -1;
     local_root = gpu_id[0];
-  } else if (!start_found && stop_found) // Only stop is in the mask
+  } else if (!start_found && stop_found)  // Only stop is in the mask
   {
     gpu_id[0] = -1;
     local_root = gpu_id[1];
-  } else // Neither start or stop is in the mask
+  } else  // Neither start or stop is in the mask
   {
     gpu_id[1] = -1;
     gpu_id[0] = -1;
@@ -485,11 +485,11 @@ unsigned int gpu_depth_first_rec(unsigned int vertex, unsigned int cycle_size,
                                  unsigned int *visited, unsigned int *max_size,
                                  unsigned int *max_visited) {
   unsigned int order = arts_get_total_gpus();
-  visited[current++] = vertex; // Record order visited
+  visited[current++] = vertex;  // Record order visited
 
   bool ret = check_max(current, visited, max_size, max_visited, cycle_size);
 
-  unsigned int temp = ~(1 << vertex); // Mark off list
+  unsigned int temp = ~(1 << vertex);  // Mark off list
   mask &= temp;
 
   if (current + 1 == cycle_size) {
@@ -514,7 +514,7 @@ unsigned int gpu_depth_first_rec(unsigned int vertex, unsigned int cycle_size,
 
 unsigned int *gpu_depth_first(unsigned int mask, unsigned int *max_size) {
   unsigned int *ret = NULL;
-  unsigned int cycle_size = 1; // Add one for the backedge
+  unsigned int cycle_size = 1;  // Add one for the backedge
   for (unsigned int i = 0; i < sizeof(mask) * 8; i++) {
     if (mask & (1 << i)) {
       cycle_size++;

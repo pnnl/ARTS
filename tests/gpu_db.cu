@@ -90,7 +90,7 @@ void transfer_to_db(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                           sizeof(unsigned int) * N_ELEMENTS, false);
 
   /* Signal done EDT with the host DB */
-  arts_signal_edt(done_guid, 0, db_guid, ARTS_MODE_EW);
+  arts_signal_edt(done_guid, 0, db_guid, DB_MODE_EW);
 }
 
 /* Verify the data transferred correctly */
@@ -127,7 +127,7 @@ extern "C" void arts_init_per_gpu(unsigned int node_id, int dev_id,
   }
 }
 
-extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
+extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
                               uint32_t depc, arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;

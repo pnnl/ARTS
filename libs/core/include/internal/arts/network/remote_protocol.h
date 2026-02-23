@@ -63,7 +63,7 @@ enum artsServerMessageType {
   ARTS_REMOTE_DB_UPDATE_MSG,
   ARTS_REMOTE_DB_DESTROY_MSG,
   ARTS_REMOTE_DB_DESTROY_FORWARD_MSG,
-  ARTS_REMOTE_DB_CLEAN_FORWARD_MSG,
+  ARTS_REMOTE_DB_CLEAN_FORWARD_MSG,  // Unused — kept for enum stability
   ARTS_REMOTE_EDT_MOVE_MSG,
   ARTS_REMOTE_EVENT_MOVE_MSG,
   ARTS_REMOTE_PERSISTENT_EVENT_MOVE_MSG,
@@ -81,15 +81,13 @@ enum artsServerMessageType {
   ARTS_EPOCH_REQ_MSG,
   ARTS_EPOCH_SEND_MSG,
   ARTS_EPOCH_DELETE_MSG,
-  ARTS_ATOMIC_ADD_ARRAYDB_MSG,
-  ARTS_ATOMIC_CAS_ARRAYDB_MSG,
   ARTS_REMOTE_BUFFER_SEND_MSG,
   ARTS_REMOTE_CONTEXT_SIG_MSG,
   ARTS_REMOTE_DB_RENAME_MSG,
   ARTS_REMOTE_DB_PARTIAL_UPDATE_MSG,
   ARTS_REMOTE_DB_ADD_DEPENDENCE_WITH_BYTE_OFFSET_MSG,
-  ARTS_REMOTE_TIME_SYNC_REQ_MSG,  // Worker -> Master: request with T1
-  ARTS_REMOTE_TIME_SYNC_RESP_MSG, // Master -> Worker: response with T1, T2
+  ARTS_REMOTE_TIME_SYNC_REQ_MSG,   // Worker -> Master: request with T1
+  ARTS_REMOTE_TIME_SYNC_RESP_MSG,  // Master -> Worker: response with T1, T2
 };
 
 // Header
@@ -115,17 +113,17 @@ struct __attribute__((__packed__)) arts_remote_add_dependence_packet_s {
   arts_guid_t source;
   arts_guid_t destination;
   uint32_t slot;
-  arts_db_mode_t mode;
+  arts_db_access_mode_t mode;
 };
 
 /// ESD: Packet for adding dependency to persistent event with byte offset
-struct __attribute__((
-    __packed__)) arts_remote_add_dependence_with_byte_offset_packet_s {
+struct __attribute__((__packed__))
+arts_remote_add_dependence_with_byte_offset_packet_s {
   struct arts_remote_packet_s header;
   arts_guid_t source;
   arts_guid_t destination;
   uint32_t slot;
-  arts_db_mode_t mode;
+  arts_db_access_mode_t mode;
   uint64_t byte_offset;
   uint64_t size;
 };
@@ -135,7 +133,7 @@ struct __attribute__((__packed__)) arts_remote_edt_signal_packet_s {
   arts_guid_t edt;
   arts_guid_t db;
   uint32_t slot;
-  arts_db_mode_t mode;
+  arts_db_access_mode_t mode;
   unsigned int db_route;
 };
 
@@ -146,8 +144,8 @@ struct __attribute__((__packed__)) arts_remote_event_satisfy_slot_packet_s {
   uint32_t slot;
 };
 
-struct __attribute__((
-    __packed__)) arts_remote_persistent_event_satisfy_slot_packet_s {
+struct __attribute__((__packed__))
+arts_remote_persistent_event_satisfy_slot_packet_s {
   struct arts_remote_packet_s header;
   arts_guid_t event;
   uint32_t action;
@@ -159,25 +157,25 @@ struct __attribute__((__packed__)) arts_remote_db_add_dependence_packet_s {
   arts_guid_t db_src;
   arts_guid_t edt_dest;
   uint32_t edt_slot;
-  arts_db_mode_t mode;
+  arts_db_access_mode_t mode;
 };
 
 /// ESD: Packet for byte-offset dependencies (stencil halo exchange)
-struct __attribute__((
-    __packed__)) arts_remote_db_add_dependence_with_byte_offset_packet_s {
+struct __attribute__((__packed__))
+arts_remote_db_add_dependence_with_byte_offset_packet_s {
   struct arts_remote_packet_s header;
   arts_guid_t db_src;
   arts_guid_t edt_dest;
   uint32_t edt_slot;
-  arts_db_mode_t mode;
-  uint64_t byte_offset; ///< Byte offset into DB for slice
-  uint64_t size;        ///< Size of slice in bytes
+  arts_db_access_mode_t mode;
+  uint64_t byte_offset;  ///< Byte offset into DB for slice
+  uint64_t size;         ///< Size of slice in bytes
 };
 
 struct __attribute__((__packed__)) arts_remote_db_request_packet_s {
   struct arts_remote_packet_s header;
   arts_guid_t db_guid;
-  arts_db_mode_t mode;
+  arts_db_access_mode_t mode;
 };
 
 struct __attribute__((__packed__)) arts_remote_db_send_packet_s {
@@ -189,14 +187,14 @@ struct __attribute__((__packed__)) arts_remote_db_full_request_packet_s {
   arts_guid_t db_guid;
   arts_guid_t edt_guid;
   unsigned int slot;
-  arts_db_mode_t mode;
+  arts_db_access_mode_t mode;
 };
 
 struct __attribute__((__packed__)) arts_remote_db_full_send_packet_s {
   struct arts_remote_packet_s header;
   arts_guid_t edt_guid;
   unsigned int slot;
-  arts_db_mode_t mode;
+  arts_db_access_mode_t mode;
 };
 
 struct __attribute__((__packed__)) arts_remote_metric_update_s {
@@ -253,28 +251,6 @@ struct __attribute__((__packed__)) arts_remote_epoch_send_packet_s {
   unsigned int finish;
 };
 
-struct __attribute__((__packed__)) arts_remote_atomic_add_in_array_db_packet_s {
-  struct arts_remote_packet_s header;
-  arts_guid_t db_guid;
-  arts_guid_t edt_guid;
-  arts_guid_t epoch_guid;
-  unsigned int slot;
-  unsigned int index;
-  unsigned int to_add;
-};
-
-struct __attribute__((
-    __packed__)) arts_remote_atomic_compare_and_swap_in_array_db_packet_s {
-  struct arts_remote_packet_s header;
-  arts_guid_t db_guid;
-  arts_guid_t edt_guid;
-  arts_guid_t epoch_guid;
-  unsigned int slot;
-  unsigned int index;
-  unsigned int old_value;
-  unsigned int new_value;
-};
-
 struct __attribute__((__packed__)) arts_remote_signal_context_packet_s {
   struct arts_remote_packet_s header;
   uint64_t ticket;
@@ -306,14 +282,14 @@ struct __attribute__((__packed__)) arts_remote_partial_update_packet_s {
 // Worker sends request with its send time T1
 struct __attribute__((__packed__)) arts_remote_time_sync_req_packet_s {
   struct arts_remote_packet_s header;
-  uint64_t worker_send_time; // T1: worker's local time when sending request
+  uint64_t worker_send_time;  // T1: worker's local time when sending request
 };
 
 // Master responds with T1 (echoed) and T2 (master's receive time)
 struct __attribute__((__packed__)) arts_remote_time_sync_resp_packet_s {
   struct arts_remote_packet_s header;
-  uint64_t worker_send_time; // T1: echoed back
-  uint64_t master_recv_time; // T2: master's local time when receiving request
+  uint64_t worker_send_time;  // T1: echoed back
+  uint64_t master_recv_time;  // T2: master's local time when receiving request
 };
 
 #include "arts/runtime/globals.h"
@@ -327,6 +303,7 @@ static inline void arts_fill_packet_header(struct arts_remote_packet_s *header,
 }
 
 void out_init(unsigned int size);
+void out_cleanup(void);
 void arts_remote_flush_outbound(void);
 bool arts_remote_async_send();
 void arts_remote_send_request_async(int rank, char *message,

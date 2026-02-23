@@ -61,6 +61,7 @@ void dummy(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
   arts_printf("Sum before: %u\n", *sum);
   arts_set_buffer(result_guid, sum, result_size);
+  free(sum);
 }
 
 void start_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -90,6 +91,8 @@ void start_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t am =
       arts_edt_create(dummy, 3, args, 1, &(arts_hint_t){.route = target});
   arts_signal_edt_ptr(am, 0, data_copy, buffer_size);
+  free(data);
+  free(data_copy);
 
   while (!result) {
     arts_yield();
@@ -100,7 +103,7 @@ void start_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;

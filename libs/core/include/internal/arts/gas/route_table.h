@@ -49,22 +49,22 @@ extern "C" {
 struct arts_db_frontier_iterator_s;
 
 // These are for the lock for each item in the RT
-#define RESERVED_ITEM 0x8000000000000000
+#define RESERVED_ITEM  0x8000000000000000
 #define AVAILABLE_ITEM 0x4000000000000000
-#define DELETE_ITEM 0x2000000000000000
-#define STATUS_MASK (RESERVED_ITEM | AVAILABLE_ITEM | DELETE_ITEM)
+#define DELETE_ITEM    0x2000000000000000
+#define STATUS_MASK    (RESERVED_ITEM | AVAILABLE_ITEM | DELETE_ITEM)
 
-#define MAX_ITEM 0x1FFFFFFFFFFFFFFF
-#define COUNT_MASK ~(RESERVED_ITEM | AVAILABLE_ITEM | DELETE_ITEM)
+#define MAX_ITEM          0x1FFFFFFFFFFFFFFF
+#define COUNT_MASK        ~(RESERVED_ITEM | AVAILABLE_ITEM | DELETE_ITEM)
 #define CHECK_MAX_ITEM(x) ((((x) & COUNT_MASK) + 1) < MAX_ITEM)
-#define GET_COUNT(x) ((x) & COUNT_MASK)
+#define GET_COUNT(x)      ((x) & COUNT_MASK)
 
 #define IS_DEL(x) ((x) & DELETE_ITEM)
-#define IS_RES(x)                                                              \
+#define IS_RES(x) \
   (((x) & RESERVED_ITEM) && !((x) & AVAILABLE_ITEM) && !((x) & DELETE_ITEM))
-#define IS_AVAIL(x)                                                            \
+#define IS_AVAIL(x) \
   (((x) & AVAILABLE_ITEM) && !((x) & RESERVED_ITEM) && !((x) & DELETE_ITEM))
-#define IS_REQ(x)                                                              \
+#define IS_REQ(x) \
   (((x) & RESERVED_ITEM) && ((x) & AVAILABLE_ITEM) && !((x) & DELETE_ITEM))
 
 #define SHOULD_DELETE(x) (IS_DEL(x) && !GET_COUNT(x))
@@ -81,12 +81,12 @@ struct arts_route_invalidate_s {
 typedef enum {
   NO_KEY = 0,
   ANY_KEY,
-  DELETED_KEY,   // deleted only
-  ALLOCATED_KEY, // reserved, available, or requested
-  AVAILABLE_KEY, // available only
-  REQUESTED_KEY, // available but reserved (means so one else has the valid
-                 // copy)
-  RESERVED_KEY,  // reserved only
+  DELETED_KEY,    // deleted only
+  ALLOCATED_KEY,  // reserved, available, or requested
+  AVAILABLE_KEY,  // available only
+  REQUESTED_KEY,  // available but reserved (means so one else has the valid
+                  // copy)
+  RESERVED_KEY,   // reserved only
 } item_state_t;
 
 struct arts_route_item_s {
@@ -118,7 +118,7 @@ struct arts_route_table_s {
   set_route_item_t setFunc;
   free_route_item_t freeFunc;
   new_route_table_t newFunc;
-}; // __attribute__ ((aligned));
+};  // __attribute__ ((aligned));
 
 typedef struct {
   uint64_t index;
@@ -138,10 +138,9 @@ arts_route_item_t *internal_route_table_add_item_race(
     unsigned int to_add_on_creation);
 bool arts_route_table_add_item_race(void *item, arts_guid_t key,
                                     unsigned int route, bool used);
-arts_route_item_t *
-internal_route_table_add_deleted_item_race(arts_route_table_t *route_table,
-                                           void *item, arts_guid_t key,
-                                           unsigned int rank);
+arts_route_item_t *internal_route_table_add_deleted_item_race(
+    arts_route_table_t *route_table, void *item, arts_guid_t key,
+    unsigned int rank);
 
 void *arts_route_table_lookup_item(arts_guid_t key);
 int arts_route_table_lookup_rank(arts_guid_t key);
@@ -151,9 +150,8 @@ bool arts_route_table_remove_item(arts_guid_t key);
 bool arts_route_table_hide_item(arts_guid_t key);
 bool arts_route_table_invalidate_item(arts_guid_t key);
 
-arts_route_item_t *
-arts_route_table_search_for_key(arts_route_table_t *route_table,
-                                arts_guid_t key, item_state_t state);
+arts_route_item_t *arts_route_table_search_for_key(
+    arts_route_table_t *route_table, arts_guid_t key, item_state_t state);
 bool arts_route_table_update_item(arts_guid_t key, void *data,
                                   unsigned int rank, item_state_t state);
 bool arts_route_table_get_rank_duplicates(

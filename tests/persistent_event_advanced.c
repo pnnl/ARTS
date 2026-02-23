@@ -95,7 +95,7 @@ void pe_mode_diff_check(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
@@ -133,7 +133,7 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       arts_edt_create_with_epoch(pe_byte_offset_check, 1, &guid_param, 1, epoch,
                                  &(arts_hint_t){.route = 0});
   arts_add_dependence_to_persistent_event_with_byte_offset(
-      pe2, e2, 0, ARTS_MODE_RO, sizeof(int), sizeof(int));
+      pe2, e2, 0, DB_MODE_RO, sizeof(int), sizeof(int));
   arts_persistent_event_satisfy(pe2, ARTS_EVENT_LATCH_DECR_SLOT, true);
 
   // Test 3: mode_and_diff.
@@ -146,7 +146,7 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t e3 = arts_edt_create_with_epoch(
       pe_mode_diff_check, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
   arts_add_dependence_to_persistent_event_with_mode_and_diff(pe3, e3, 0,
-                                                             ARTS_MODE_RO);
+                                                             DB_MODE_RO);
   arts_persistent_event_satisfy(pe3, ARTS_EVENT_LATCH_DECR_SLOT, true);
 
   arts_wait_on_handle(epoch);

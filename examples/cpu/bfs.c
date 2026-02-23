@@ -124,7 +124,7 @@ void bfs_send(vertex_t u, uint64_t ulevel) {
   arts_guid_t relax_guid = arts_edt_create(
       relax, 2, send, 1,
       &(arts_hint_t){.route = arts_guid_get_rank(neighb_dbguid)});
-  arts_signal_edt(relax_guid, 0, neighb_dbguid, ARTS_MODE_EW);
+  arts_signal_edt(relax_guid, 0, neighb_dbguid, DB_MODE_EW);
 }
 
 void kickoff_termination(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -156,7 +156,7 @@ void init_node(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)depc;
   (void)depv;

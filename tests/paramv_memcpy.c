@@ -94,7 +94,7 @@ void check_int32(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 /// Test passing a struct through paramv.
-struct test_struct {
+struct test_struct_s {
   uint32_t a;
   uint16_t b;
   uint8_t c;
@@ -106,8 +106,8 @@ void check_struct(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
   (void)paramc;
-  struct test_struct s;
-  memcpy(&s, &paramv[0], sizeof(struct test_struct));
+  struct test_struct_s s;
+  memcpy(&s, &paramv[0], sizeof(struct test_struct_s));
   bool ok = (s.a == 0xDEADBEEF && s.b == 0x1234 && s.c == 0xAB && s.d == 0xCD);
   if (ok) {
     arts_printf("  PASS: struct via memcpy\n");
@@ -134,7 +134,7 @@ void check_multi(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
@@ -167,9 +167,9 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                              &(arts_hint_t){.route = 0});
 
   // Test 4: struct.
-  struct test_struct s = {.a = 0xDEADBEEF, .b = 0x1234, .c = 0xAB, .d = 0xCD};
+  struct test_struct_s s = {.a = 0xDEADBEEF, .b = 0x1234, .c = 0xAB, .d = 0xCD};
   uint64_t s_param = 0;
-  memcpy(&s_param, &s, sizeof(struct test_struct));
+  memcpy(&s_param, &s, sizeof(struct test_struct_s));
   arts_edt_create_with_epoch(check_struct, 1, &s_param, 0, epoch,
                              &(arts_hint_t){.route = 0});
 

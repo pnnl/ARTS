@@ -49,11 +49,12 @@ bool arts_event_create_internal(arts_guid_t *guid, unsigned int route,
                                 unsigned int latch_count, bool destroy_on_fire,
                                 arts_guid_t event_data);
 
-struct arts_persistent_event_version_s *
-arts_get_front_persistent_event_version(struct arts_persistent_event_s *event);
+struct arts_persistent_event_version_s *arts_get_front_persistent_event_version(
+    struct arts_persistent_event_s *event);
 
 void arts_event_free(struct arts_event_s *event);
 void arts_persistent_event_free_all(struct arts_persistent_event_s *event);
+void arts_persistent_event_destroy(arts_guid_t guid);
 
 #ifdef __cplusplus
 }

@@ -50,7 +50,7 @@ extern "C" {
 
 #include "arts/runtime/rt.h"
 
-#define N 2000000
+#define N      2000000
 #define NTIMES 10
 #define OFFSET 0
 
@@ -69,11 +69,11 @@ extern "C" {
 
 void launch2_kernel_edt(arts_edt_t fun_ptr, unsigned int tile_size,
                         unsigned int total_size, double scalar,
-                        arts_guid_range_t *a_guid, arts_guid_range_t *b_guid);
+                        arts_guid_t a_guid, arts_guid_t b_guid);
 void launch3_kernel_edt(arts_edt_t fun_ptr, unsigned int tile_size,
                         unsigned int total_size, double scalar,
-                        arts_guid_range_t *a_guid, arts_guid_range_t *b_guid,
-                        arts_guid_range_t *c_guid);
+                        arts_guid_t a_guid, arts_guid_t b_guid,
+                        arts_guid_t c_guid);
 
 int checktick();
 double mysecond();

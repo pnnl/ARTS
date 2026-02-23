@@ -76,7 +76,7 @@ extern "C" void arts_init_per_gpu(unsigned int node_id, int dev_id,
   (void)argv;
 }
 
-extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
+extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
                               uint32_t depc, arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
@@ -94,8 +94,8 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
 
   unsigned int node_id = arts_get_current_node();
   arts_hint_t hint_0 = {0, 0};
-  arts_guid_t done_guid = arts_edt_create(
-      done, 0, NULL, arts_get_total_gpus() + 1, &hint_0);
+  arts_guid_t done_guid =
+      arts_edt_create(done, 0, NULL, arts_get_total_gpus() + 1, &hint_0);
   arts_lc_sync(done_guid, 0, db_guid);
 
   dim3 threads(arts_get_total_gpus(), 1, 1);
@@ -106,9 +106,9 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
       arts_guid_t edt_guid = arts_edt_create_gpu_direct(
           temp, node_id, i, 0, NULL, 1, grid, threads, done_guid, i + 1,
           NULL_GUID, true);
-      arts_signal_edt(edt_guid, 0, db_guid, ARTS_MODE_EW);
+      arts_signal_edt(edt_guid, 0, db_guid, DB_MODE_EW);
     } else {
-      arts_signal_edt(done_guid, i + 1, NULL_GUID, ARTS_MODE_EW);
+      arts_signal_edt(done_guid, i + 1, NULL_GUID, DB_MODE_EW);
     }
   }
 }

@@ -55,7 +55,7 @@ struct arts_local_delayed_edt_s {
   struct arts_local_delayed_edt_s *next;
   struct arts_edt_s *edt[DBSPERELEMENT];
   unsigned int slot[DBSPERELEMENT];
-  arts_db_mode_t mode[DBSPERELEMENT];
+  arts_db_access_mode_t mode[DBSPERELEMENT];
 };
 
 struct arts_db_frontier_s {
@@ -73,7 +73,7 @@ struct arts_db_frontier_s {
   arts_guid_t exEdtGuid;
   struct arts_edt_s *exEdt;
   unsigned int exSlot;
-  arts_db_mode_t exMode;
+  arts_db_access_mode_t exMode;
 
   /*
    * This is dumb, but we need somewhere to store requests
@@ -102,8 +102,8 @@ void arts_delete_db_list(struct arts_db_list_s *db_list);
 unsigned int arts_current_frontier_size(struct arts_db_list_s *db_list);
 bool arts_db_frontier_iter_init(struct arts_db_frontier_iterator_s *iter,
                                 struct arts_db_frontier_s *frontier);
-unsigned int
-arts_db_frontier_iter_size(struct arts_db_frontier_iterator_s *iter);
+unsigned int arts_db_frontier_iter_size(
+    struct arts_db_frontier_iterator_s *iter);
 bool arts_db_frontier_iter_next(struct arts_db_frontier_iterator_s *iter,
                                 unsigned int *next);
 bool arts_db_frontier_iter_has_next(struct arts_db_frontier_iterator_s *iter);
@@ -113,7 +113,7 @@ bool arts_progress_and_get_frontier(struct arts_db_list_s *db_list,
 bool arts_push_db_to_list(struct arts_db_list_s *db_list, unsigned int data,
                           bool write, bool local, bool bypass,
                           struct arts_edt_s *edt, arts_guid_t edt_guid,
-                          unsigned int slot, arts_db_mode_t mode,
+                          unsigned int slot, arts_db_access_mode_t mode,
                           bool *on_head);
 bool arts_close_frontier(struct arts_db_list_s *db_list,
                          struct arts_db_frontier_iterator_s *iter);

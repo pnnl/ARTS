@@ -53,12 +53,13 @@ bool arts_edt_create_internal(struct arts_edt_s *edt, arts_type_t mode,
                               uint32_t depc, bool use_epoch,
                               arts_guid_t epoch_guid, bool has_depv,
                               uint64_t arts_id);
+void arts_edt_free(struct arts_edt_s *edt);
 void arts_edt_delete(struct arts_edt_s *edt);
 void internal_signal_edt(arts_guid_t edt_packet, uint32_t slot,
-                         arts_guid_t data_guid, arts_db_mode_t mode, void *ptr,
+                         arts_guid_t data_guid, arts_db_access_mode_t mode, void *ptr,
                          unsigned int size);
 void internal_signal_edt_with_mode(arts_guid_t edt_packet, uint32_t slot,
-                                   arts_guid_t data_guid, arts_db_mode_t mode);
+                                   arts_guid_t data_guid, arts_db_access_mode_t mode);
 
 typedef struct {
   arts_guid_t current_edt_guid;
@@ -77,7 +78,7 @@ arts_guid_t *arts_check_epoch_is_root(arts_guid_t to_check);
 void arts_increment_finished_epoch_list();
 
 void *arts_get_depv(void *edt_ptr);
-arts_db_mode_t *arts_get_dep_modes(void *edt_ptr);
+arts_db_access_mode_t *arts_get_dep_modes(void *edt_ptr);
 
 void arts_track_created_db(arts_guid_t guid);
 arts_array_list_t *arts_get_created_db_list(void);

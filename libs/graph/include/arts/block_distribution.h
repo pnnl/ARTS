@@ -47,11 +47,11 @@ extern "C" {
 #include "arts/graph_defs.h"
 
 typedef struct {
-  graph_sz_t num_vertices; // Complete number of vertices
-  graph_sz_t num_edges;    // Complete number of edges
-  graph_sz_t block_sz;     // Standard block size
-  unsigned int num_blocks; // Total number of blocks
-  arts_guid_t graphGuid[]; // Guids for all the partitions
+  graph_sz_t num_vertices;  // Complete number of vertices
+  graph_sz_t num_edges;     // Complete number of edges
+  graph_sz_t block_sz;      // Standard block size
+  unsigned int num_blocks;  // Total number of blocks
+  arts_guid_t graphGuid[];  // Guids for all the partitions
 } arts_block_dist_t;
 
 arts_block_dist_t *init_block_distribution_block(graph_sz_t n, graph_sz_t m,

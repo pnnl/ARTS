@@ -86,7 +86,7 @@ void pe_final(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
@@ -122,14 +122,14 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   uint64_t db_param = (uint64_t)db;
   arts_guid_t dep3 = arts_edt_create_with_epoch(
       pe_data_check, 1, &db_param, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_add_dependence_to_persistent_event_with_mode(pe2, dep3, 0, ARTS_MODE_RO);
+  arts_add_dependence_to_persistent_event_with_mode(pe2, dep3, 0, DB_MODE_RO);
   arts_persistent_event_decrement_latch(pe2);
 
   // Test 3: Increment + decrement pattern.
   arts_guid_t pe3 = arts_persistent_event_create(0, 1, NULL_GUID);
-  arts_persistent_event_increment_latch(pe3); // latch = 2
-  arts_persistent_event_decrement_latch(pe3); // latch = 1
-  arts_persistent_event_decrement_latch(pe3); // latch = 0, fires
+  arts_persistent_event_increment_latch(pe3);  // latch = 2
+  arts_persistent_event_decrement_latch(pe3);  // latch = 1
+  arts_persistent_event_decrement_latch(pe3);  // latch = 0, fires
   arts_printf("  PASS: increment/decrement latch did not crash\n");
 
   // Final EDT.

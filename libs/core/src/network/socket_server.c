@@ -36,8 +36,8 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#define GNU_SOURCE // (unused — getaddrinfo_a() is not called; getaddrinfo() is
-                   // POSIX)
+#define GNU_SOURCE  // (unused — getaddrinfo_a() is not called; getaddrinfo() is
+                    // POSIX)
 #include "arts/network/socket_server.h"
 
 #include <errno.h>
@@ -79,8 +79,8 @@ int max_fd;
 struct sockaddr_in *remote_server_recieve_list;
 struct pollfd *poll_incoming;
 
-#define EDT_MUG_SIZE 32
-#define PACKET_SIZE 4194304
+#define EDT_MUG_SIZE     32
+#define PACKET_SIZE      4194304
 #define INITIAL_OUT_SIZE 80000000
 
 char *ip_list;
@@ -96,7 +96,7 @@ bool hostname_to_ip(char *host_name, char *ip) {
   struct addrinfo *result;
   struct addrinfo hints;
   memset(&hints, 0, sizeof(hints));
-  hints.ai_family = AF_INET; // Force IPv4 - inet_addr() doesn't handle IPv6
+  hints.ai_family = AF_INET;  // Force IPv4 - inet_addr() doesn't handle IPv6
   int error = getaddrinfo(host_name, NULL, &hints, &result);
   if (error == 0) {
     if (result->ai_addr->sa_family == AF_INET) {

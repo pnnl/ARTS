@@ -108,9 +108,9 @@ int quantum;
 unsigned int tile_size = 1024 * 1024;
 unsigned int num_tiles;
 
-arts_guid_range_t *a_tile_guids = NULL;
-arts_guid_range_t *b_tile_guids = NULL;
-arts_guid_range_t *c_tile_guids = NULL;
+arts_guid_t a_tile_guids = NULL_GUID;
+arts_guid_t b_tile_guids = NULL_GUID;
+arts_guid_t c_tile_guids = NULL_GUID;
 
 double **a_tile;
 double **b_tile;
@@ -233,7 +233,7 @@ void stream_driver(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
+extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
                               uint32_t depc, arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;
@@ -253,16 +253,16 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
   arts_printf("N: %u tile_size: %u num_tiles: %u Gpus: %u\n", N, tile_size,
               num_tiles, arts_get_total_gpus());
 
-  a_tile_guids = arts_guid_range_create_hash(ARTS_DB_GPU, num_tiles, 0,
+  a_tile_guids = arts_guid_reserve_range_hash(ARTS_DB_GPU, num_tiles, 0,
                                              arts_get_total_gpus());
-  b_tile_guids = arts_guid_range_create_hash(ARTS_DB_GPU, num_tiles, 0,
+  b_tile_guids = arts_guid_reserve_range_hash(ARTS_DB_GPU, num_tiles, 0,
                                              arts_get_total_gpus());
-  c_tile_guids = arts_guid_range_create_hash(ARTS_DB_GPU, num_tiles, 0,
+  c_tile_guids = arts_guid_reserve_range_hash(ARTS_DB_GPU, num_tiles, 0,
                                              arts_get_total_gpus());
 
-  uint64_t a_hash = arts_guid_hash_key(arts_guid_range_get(a_tile_guids, 0));
-  uint64_t b_hash = arts_guid_hash_key(arts_guid_range_get(b_tile_guids, 0));
-  uint64_t c_hash = arts_guid_hash_key(arts_guid_range_get(c_tile_guids, 0));
+  uint64_t a_hash = arts_guid_hash_key(arts_guid_from_index(a_tile_guids, 0));
+  uint64_t b_hash = arts_guid_hash_key(arts_guid_from_index(b_tile_guids, 0));
+  uint64_t c_hash = arts_guid_hash_key(arts_guid_from_index(c_tile_guids, 0));
 
 #ifdef SAFE
   if (arts_get_num_gpus() > 1) {
@@ -288,11 +288,11 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
 
   for (unsigned int i = 0; i < num_tiles; i++) {
     a_tile[i] = (double *)arts_db_create_with_guid(
-        arts_guid_range_get(a_tile_guids, i), tile_size * sizeof(double), NULL);
+        arts_guid_from_index(a_tile_guids, i), tile_size * sizeof(double), NULL);
     b_tile[i] = (double *)arts_db_create_with_guid(
-        arts_guid_range_get(b_tile_guids, i), tile_size * sizeof(double), NULL);
+        arts_guid_from_index(b_tile_guids, i), tile_size * sizeof(double), NULL);
     c_tile[i] = (double *)arts_db_create_with_guid(
-        arts_guid_range_get(c_tile_guids, i), tile_size * sizeof(double), NULL);
+        arts_guid_from_index(c_tile_guids, i), tile_size * sizeof(double), NULL);
     for (unsigned int j = 0; j < tile_size; j++) {
       a_tile[i][j] = 1.0;
       b_tile[i][j] = 2.0;

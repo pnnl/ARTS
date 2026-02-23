@@ -80,13 +80,13 @@ typedef int (*locality_t)(void *edt);
 locality_t locality_scheme[] = {random, all_or_nothing, atleast_one,
                                 hash_on_db_zero, hash_largest};
 
-locality_t locality; // Locality function ptr
+locality_t locality;  // Locality function ptr
 
 typedef int (*fit_t)(uint64_t mask, uint64_t size, unsigned int total_threads);
 
 fit_t fit_scheme[] = {first_fit, best_fit, worst_fit, round_robin_fit};
 
-fit_t fit; // Fit function ptr
+fit_t fit;  // Fit function ptr
 
 ARTS_THREAD_LOCAL volatile unsigned int *new_edt_lock = 0;
 ARTS_THREAD_LOCAL arts_array_list_t *new_edts = NULL;
@@ -171,7 +171,7 @@ void arts_node_init_gpus() {
     arts_gpus[i].device = (int)i;
     ARTS_DEBUG("Setting %u\n", i);
     arts_cuda_set_device((int)i, false);
-    CHECKCORRECT(cudaStreamCreate(&arts_gpus[i].stream)); // Make it scalable
+    CHECKCORRECT(cudaStreamCreate(&arts_gpus[i].stream));  // Make it scalable
     arts_node_info.gpu_route_table[i] =
         arts_gpu_new_route_table(arts_node_info.gpu_route_table_entries,
                                  arts_node_info.gpu_route_table_size);
@@ -390,13 +390,13 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
   }
 
   arts_gpu_edt_t *gpu_edt = (arts_gpu_edt_t *)host_gc_ptr->edt;
-  arts_db_mode_t *modes = arts_get_dep_modes(edt_ptr);
+  arts_db_access_mode_t *modes = arts_get_dep_modes(edt_ptr);
 
   // Allocate space for DB on GPU and Move Data
   for (unsigned int i = 0; i < depc; ++i) {
     if (depv[i].ptr) {
       arts_type_t mode =
-          arts_guid_get_type(depv[i].guid); // allocation type from GUID
+          arts_guid_get_type(depv[i].guid);  // allocation type from GUID
       unsigned int gpu_version;
       unsigned int time_stamp;
       void *data_ptr = arts_gpu_route_table_lookup_db(
@@ -409,19 +409,19 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
         ARTS_DEBUG("WRAPPER SIZE: %lu\n", alloc_size);
         arts_item_wrapper_t *wrapper = arts_gpu_route_table_reserve_item_race(
             &successful_add, alloc_size, depv[i].guid, arts_gpu->device,
-            false); //(mode == ARTS_DB_LC));
+            false);  //(mode == ARTS_DB_LC));
 
-        if (successful_add) // We won, so allocate and move data
+        if (successful_add)  // We won, so allocate and move data
         {
           ARTS_DEBUG("Adding %lu %u id: %d mode: %s\n", depv[i].guid,
-                     alloc_size, arts_gpu->device, arts_mode_name[modes[i]]);
+                     alloc_size, arts_gpu->device, db_mode_name[modes[i]]);
           data_ptr = arts_cuda_malloc(alloc_size);
           void *src = (void *)db;
           if (mode == ARTS_DB_LC) {
             src = make_lc_shadow_copy(db);
           }
-          if (modes[i] == ARTS_MODE_LC_NO_COPY ||
-              modes[i] == ARTS_MODE_MEMSET) {
+          if (modes[i] == DB_MODE_LC_NO_COPY ||
+              modes[i] == DB_MODE_MEMSET) {
             src = NULL;
           }
           push_data_to_stream(arts_gpu->device, data_ptr, src, size,
@@ -432,13 +432,13 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
           ARTS_DEBUG("Malloc[%d]: %p %p\n", arts_gpu->device, wrapper,
                      data_ptr);
           arts_atomic_add(&misses, 1U);
-        } else // Someone beat us to creating the data... So we must free
+        } else  // Someone beat us to creating the data... So we must free
         {
           while (
               !arts_atomic_fetch_add_u64((uint64_t *)&wrapper->realData, 0)) {
-          } // Spin till the data memcpy is launched
+          }  // Spin till the data memcpy is launched
           data_ptr = (void *)wrapper->realData;
-          if (mode == ARTS_DB_GPU && modes[i] == ARTS_MODE_MEMSET) {
+          if (mode == ARTS_DB_GPU && modes[i] == DB_MODE_MEMSET) {
             push_data_to_stream(arts_gpu->device, data_ptr, NULL, size,
                                 arts_node_info.gpu_buff_on && !gpu_edt->lib);
           }
@@ -485,7 +485,7 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
   // Move data back
   for (unsigned int i = 0; i < depc; i++) {
     arts_type_t mode = arts_guid_get_type(depv[i].guid);
-    if (depv[i].ptr && mode == ARTS_DB_GPU && modes[i] == ARTS_MODE_EW) {
+    if (depv[i].ptr && mode == ARTS_DB_GPU && modes[i] == DB_MODE_EW) {
       struct arts_db_s *db = (struct arts_db_s *)depv[i].ptr - 1;
       size_t size = (size_t)(db->header.size - sizeof(struct arts_db_s));
       get_data_from_stream(arts_gpu->device, depv[i].ptr, host_depv[i].ptr,
@@ -751,9 +751,9 @@ int all_or_nothing(void *edt_packet) {
 
   ARTS_DEBUG("Mask: %p\n", mask);
 
-  if (mask) { // All DBs in GPU
+  if (mask) {  // All DBs in GPU
     return fit(mask, size,
-               total_threads); // No need to fit since all Dbs are in a GPU
+               total_threads);  // No need to fit since all Dbs are in a GPU
   }
   return random(edt_packet);
 }
@@ -779,7 +779,7 @@ int atleast_one(void *edt_packet) {
 
   ARTS_DEBUG("Mask: %p\n", mask);
 
-  if (mask) { // At least one DB in GPU
+  if (mask) {  // At least one DB in GPU
     return fit(mask, size, total_threads);
   }
   return random(edt_packet);

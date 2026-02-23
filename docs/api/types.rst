@@ -75,10 +75,12 @@ here for reference only.
    :members:
 
 
-GUID Bitfield Layout (``guid.h``)
----------------------------------
+GUID Layout (``guid.h``)
+------------------------
 
-.. doxygenunion:: arts_guid_bits_t
+The GUID is a 64-bit integer with three fields accessed via shift/mask
+macros (``ARTS_GUID_GET_TYPE``, ``ARTS_GUID_GET_RANK``, ``ARTS_GUID_GET_KEY``,
+``ARTS_GUID_MAKE``).  See :doc:`/programming_model/guids` for the bit layout.
 
 
 Utility

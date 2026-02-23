@@ -140,7 +140,7 @@ void find_intersection(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   vertex_scan_stat->source = source;
   vertex_scan_stat->scan_stat = sum;
   // std::cout << "Source " << source << " ScanStat: " << sum << std::endl;
-  arts_signal_edt(max_reducer_guid, source, db_guid, ARTS_MODE_EW);
+  arts_signal_edt(max_reducer_guid, source, db_guid, DB_MODE_EW);
 }
 
 void visit_one_hop_neighbor_on_rank(uint32_t paramc, const uint64_t *paramv,
@@ -182,7 +182,7 @@ void visit_one_hop_neighbor_on_rank(uint32_t paramc, const uint64_t *paramv,
   // arts_get_current_node() << " set intersection size: " <<
   // local_intersection.size() <<std::endl;
   arts_signal_edt(src_info->find_intersection_guid, arts_get_current_node(),
-                  db_guid, ARTS_MODE_EW);
+                  db_guid, DB_MODE_EW);
 }
 
 void visit_source(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -217,7 +217,7 @@ void visit_source(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       arts_hint_t hop_hint = {i, 0};
       arts_guid_t visit_one_hop_neighbor_guid = arts_edt_create(
           visit_one_hop_neighbor_on_rank, 0, NULL, 1, &hop_hint);
-      arts_signal_edt(visit_one_hop_neighbor_guid, 0, db_guid, ARTS_MODE_EW);
+      arts_signal_edt(visit_one_hop_neighbor_guid, 0, db_guid, DB_MODE_EW);
     }
   } else {
     /*signal maxreducer*/
@@ -228,7 +228,7 @@ void visit_source(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     vertex_scan_stat->source = source;
     vertex_scan_stat->scan_stat = 1;
     // std::cout << "signaling maxruducer for source " << source << std::endl;
-    arts_signal_edt(max_reducer_guid, source, db_guid, ARTS_MODE_EW);
+    arts_signal_edt(max_reducer_guid, source, db_guid, DB_MODE_EW);
   }
 }
 
@@ -248,7 +248,7 @@ extern "C" void init_node(uint32_t paramc, const uint64_t *paramv,
   max_reducer_guid = arts_guid_reserve(ARTS_EDT, 0);
 }
 
-extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
+extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
                               uint32_t depc, arts_edt_dep_t depv[]) {
   (void)depc;
   (void)depv;

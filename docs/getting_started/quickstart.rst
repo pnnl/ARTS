@@ -13,7 +13,7 @@ Program Structure
 Every ARTS program consists of three parts:
 
 1. **EDT functions** — the async work units.
-2. ``arts_main_edt()`` — entry-point EDT, scheduled on rank 0 after runtime init.
+2. ``main_edt()`` — entry-point EDT, scheduled on rank 0 after runtime init.
 3. ``main()`` — calls :c:func:`arts_rt` to start the runtime.
 
 .. code-block:: c
@@ -29,7 +29,7 @@ Every ARTS program consists of three parts:
    }
 
    /* 2.  Entry-point EDT ------------------------------------------------- */
-   void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
+   void main_edt(uint32_t paramc, const uint64_t *paramv,
                       uint32_t depc, arts_edt_dep_t depv[]) {
        (void)depc;
        (void)depv;

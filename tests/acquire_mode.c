@@ -154,7 +154,7 @@ void validator_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("Acquire-Mode Test Complete\n");
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;
@@ -249,12 +249,12 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       "[Step 5] Recording dependencies: 1 writer (WRITE) + %u readers \n"
       "(READ) + 1 validator (READ)",
       num_readers);
-  arts_record_dep(data_guid, writer_edt_guid, 0, ARTS_MODE_EW);
+  arts_record_dep(data_guid, writer_edt_guid, 0, DB_MODE_EW);
   for (unsigned int i = 0; i < num_readers; i++) {
-    arts_record_dep(data_guid, reader_edt_guids[i], 0, ARTS_MODE_RO);
+    arts_record_dep(data_guid, reader_edt_guids[i], 0, DB_MODE_RO);
   }
 
-  arts_record_dep(data_guid, validator_edt_guid, 0, ARTS_MODE_RO);
+  arts_record_dep(data_guid, validator_edt_guid, 0, DB_MODE_RO);
 
   arts_printf("  All dependencies recorded (latch=1, only writer)\n");
 

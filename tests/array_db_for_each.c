@@ -41,6 +41,7 @@
 /// @brief Tests arts_for_each_in_array_db (local iteration).
 
 #include "arts.h"
+#include "arts/array_db.h"
 
 /// Per-element EDT launched by for_each_in_array_db.
 /// depv[0].ptr points to one element (int) via signal_edt_ptr.
@@ -74,7 +75,7 @@ void gather_verify(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;

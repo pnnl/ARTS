@@ -50,6 +50,7 @@ void arts_remote_setup_outgoing();
 bool arts_remote_setup_incoming();
 unsigned int arts_remote_get_my_rank();
 void arts_remote_shutdown();
+void arts_server_cleanup(void);
 bool arts_server_try_to_receive(char **in_buffer, const int *in_packet_size,
                                 const volatile unsigned int *remote_steal_lock);
 void arts_server_send_steal_request();

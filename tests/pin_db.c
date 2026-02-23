@@ -68,7 +68,7 @@ void edt_func(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;
@@ -94,8 +94,8 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
     // Put both signals up front forcing one to be out of order to test the OO
     // code path
-    arts_signal_edt(edt_guid, 0, db_guid, ARTS_MODE_EW);      // Note the mode
-    arts_signal_edt(edt_guid, 1, some_db_guid, ARTS_MODE_EW); // Note the mode
+    arts_signal_edt(edt_guid, 0, db_guid, DB_MODE_EW);       // Note the mode
+    arts_signal_edt(edt_guid, 1, some_db_guid, DB_MODE_EW);  // Note the mode
 
     // This is the delayed DB
     int *ptr2 = (int *)arts_db_create_with_guid(some_db_guid,

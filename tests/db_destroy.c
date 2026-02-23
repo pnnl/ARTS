@@ -77,8 +77,8 @@ void verify_new_db(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                   arts_edt_dep_t depv[]) {
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+              arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
@@ -120,7 +120,22 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_guid_t e3 = arts_edt_create_with_epoch(verify_new_db, 0, NULL, 1, epoch,
                                               &(arts_hint_t){.route = 0});
-  arts_signal_edt(e3, 0, db3, ARTS_MODE_RO);
+  arts_signal_edt(e3, 0, db3, DB_MODE_RO);
+
+  // Test 5: Double destroy (should be no-op on second call, not crash).
+  void *p5 = NULL;
+  arts_guid_t db5 = arts_db_create(&p5, 64, NULL);
+  arts_db_release(db5);
+  arts_db_destroy(db5);
+  arts_db_destroy(db5);  // Second destroy — route table returns NULL
+  arts_printf("  PASS: double destroy did not crash\n");
+
+  // Test 6: arts_db_destroy on ARTS_DB_LOCAL should warn (not crash).
+  void *p6 = NULL;
+  arts_guid_t db6 = arts_db_local_create(&p6, 64, NULL);
+  arts_db_release(db6);
+  arts_db_destroy(db6);  // Should log warning and return
+  arts_printf("  PASS: destroy on LOCAL DB warned without crash\n");
 
   arts_wait_on_handle(epoch);
   arts_shutdown();

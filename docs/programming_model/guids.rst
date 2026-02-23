@@ -13,22 +13,17 @@ Bitfield Layout
 
 .. code-block:: text
 
-   ┌────────────────────────────────────────┬──────────────────┬──────────┐
-   │              key (40)                  │   rank (16)      │ type (8) │
-   └────────────────────────────────────────┴──────────────────┴──────────┘
-                 Bits 63–24                    Bits 23–8        Bits 7–0
+   ┌──────────┬──────────────────┬────────────────────────────────────────┐
+   │ type (8) │   rank (16)      │              key (40)                  │
+   └──────────┴──────────────────┴────────────────────────────────────────┘
+    Bits 63–56    Bits 55–40                   Bits 39–0
 
-- **type** (8 bits): Object kind from :c:enum:`arts_type_t` (stored in the
-  lowest bits).
+- **type** (8 bits): Object kind from :c:enum:`arts_type_t` (most-significant
+  byte).
 - **rank** (16 bits): Node that owns the object (up to 65 535 nodes).
-- **key** (40 bits): Node-local unique key (~1 trillion per node).
-
-.. note::
-
-   On little-endian platforms (x86), the first declared field in a packed
-   bitfield occupies the lowest bits.  The struct fields are declared in
-   order ``type``, ``rank``, ``key`` — so ``type`` is at bits 7–0, not
-   63–56.
+- **key** (40 bits): Node-local unique key (~1 trillion per node), stored in
+  the least-significant bits so that GUID-range arithmetic reduces to plain
+  integer addition.
 
 Inspecting GUIDs
 ----------------
@@ -49,12 +44,11 @@ keys:
 
 .. code-block:: c
 
-   arts_guid_range_t *range =
-       arts_guid_range_create(ARTS_DB, 100, target_node);
+   arts_guid_t start =
+       arts_guid_reserve_range(ARTS_DB, 100, target_node);
 
-   while (arts_guid_range_has_next(range)) {
-       arts_guid_t g = arts_guid_range_get(range);
-       arts_guid_range_next(range);
+   for (unsigned int i = 0; i < 100; i++) {
+       arts_guid_t g = arts_guid_from_index(start, i);
        /* use g ... */
    }
 
@@ -65,8 +59,8 @@ To distribute GUIDs evenly across nodes:
 
 .. code-block:: c
 
-   arts_guid_range_t *range =
-       arts_guid_reserve_round_robin(ARTS_DB, total_count);
+   arts_guid_t *guids =
+       arts_guid_reserve_round_robin(total_count, ARTS_DB);
 
 ``NULL_GUID``
 -------------

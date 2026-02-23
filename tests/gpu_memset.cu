@@ -40,7 +40,7 @@
 /*
  * gpu_memset.cu
  *
- * Tests ARTS_MODE_MEMSET for GPU zero-initialization:
+ * Tests DB_MODE_MEMSET for GPU zero-initialization:
  *   - arts_gpu_signal_edt_memset: signal an EDT dep slot with GPU memset
  *   - The signaled slot receives a zero-initialized GPU DB
  */
@@ -96,7 +96,7 @@ extern "C" void arts_init_per_gpu(unsigned int node_id, int dev_id,
   (void)argv;
 }
 
-extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
+extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
                               uint32_t depc, arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;

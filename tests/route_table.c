@@ -86,12 +86,12 @@ void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
         arts_edt_create(acquire_test, 0, NULL, arts_get_total_nodes(),
                         &(arts_hint_t){.route = node_id});
     for (unsigned int i = 0; i < arts_get_total_nodes(); i++) {
-      arts_signal_edt(edt_guid, i, guids[i], ARTS_MODE_EW);
+      arts_signal_edt(edt_guid, i, guids[i], DB_MODE_EW);
     }
   }
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;

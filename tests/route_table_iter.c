@@ -55,19 +55,20 @@ void print_rt() {
   }
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                   arts_edt_dep_t depv[]) {
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+              arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
   (void)depv;
   unsigned int node_id = arts_get_current_node();
   printf("Init per node\n");
-  arts_guid_range_t *range = arts_guid_range_create(ARTS_EDT, MYSIZE, node_id);
+  arts_guid_t range_start = arts_guid_reserve_range(ARTS_EDT, MYSIZE, node_id);
   for (uint64_t i = 0; i < MYSIZE; i++) {
     arts_route_item_t *location =
         (arts_route_item_t *)arts_route_table_add_item(
-            (void *)range, arts_guid_range_next(range), node_id, 0);
+            (void *)(uintptr_t)range_start,
+            arts_guid_from_index(range_start, i), node_id, 0);
     if (!i) {
       arts_printf("SWAPPING\n");
       arts_atomic_cswap_u64(&location->lock, AVAILABLE_ITEM,
@@ -78,30 +79,25 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   print_rt();
 
   int rank;
-  arts_guid_t guid = arts_guid_range_get(range, 0);
+  arts_guid_t guid = arts_guid_from_index(range_start, 0);
   arts_route_table_lookup_db(guid, &rank, true);
   arts_route_table_return_db(guid, true);
 
   void *ptr = arts_route_table_lookup_item(guid);
   arts_printf("Lookup %lu %p\n", guid, ptr);
-  arts_print_item(get_item_from_data(guid, ptr));
 
   ptr = arts_route_table_lookup_db(guid, &rank, true);
   arts_printf("DB Lookup %lu %p\n", guid, ptr);
-  arts_print_item(get_item_from_data(guid, ptr));
 
   arts_route_item_t *location = (arts_route_item_t *)arts_route_table_add_item(
-      (void *)range, guid, node_id, 0);
-  // arts_atomic_cswap_u64(&location->lock, AVAILABLE_ITEM, (AVAILABLE_ITEM |
-  // DELETE_ITEM));
+      (void *)(uintptr_t)range_start, guid, node_id, 0);
+  (void)location;
 
   ptr = arts_route_table_lookup_item(guid);
   arts_printf("Lookup2 %lu %p\n", guid, ptr);
-  arts_print_item(get_item_from_data(guid, ptr));
 
   ptr = arts_route_table_lookup_db(guid, &rank, true);
   arts_printf("DB Lookup2 %lu %p\n", guid, ptr);
-  arts_print_item(get_item_from_data(guid, ptr));
 
   arts_shutdown();
 }

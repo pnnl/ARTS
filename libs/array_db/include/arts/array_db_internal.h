@@ -36,87 +36,21 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include <stdlib.h>
 
-#include "arts.h"
+#ifndef ARTS_ARRAY_DB_INTERNAL_H
+#define ARTS_ARRAY_DB_INTERNAL_H
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-unsigned int elements_per_block = 0;
-unsigned int blocks = 0;
-unsigned int num_add = 0;
-arts_array_db_t *array = NULL;
-arts_guid_t array_guid = NULL_GUID;
+#include "arts/runtime/rt.h"
 
-void end(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-         arts_edt_dep_t depv[]) {
-  (void)paramc;
-  (void)paramv;
-  for (unsigned int i = 0; i < depc - 1; i++) {
-    unsigned int data = depv[i].guid;
-    arts_printf("updates: %u\n", data);
-  }
-  arts_shutdown();
+unsigned int arts_get_size_array_db(arts_array_db_t *array);
+unsigned int get_offset_from_index(arts_array_db_t *array, unsigned int index);
+unsigned int get_rank_from_index(arts_array_db_t *array, unsigned int index);
+arts_guid_t get_array_db_guid(arts_array_db_t *array);
+
+#ifdef __cplusplus
 }
-
-// Created by the epoch_end via gather will signal end
-void check(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-           arts_edt_dep_t depv[]) {
-  (void)depc;
-  (void)paramc;
-  for (unsigned int i = 0; i < blocks; i++) {
-    unsigned int *data = (unsigned int *)depv[i].ptr;
-    for (unsigned int j = 0; j < elements_per_block; j++) {
-      arts_printf("i: %u j: %u %u\n", i, j, data[j]);
-    }
-  }
-  arts_signal_edt_value((arts_guid_t)paramv[0],
-                        num_add * elements_per_block * blocks, 0);
-}
-
-// This is run at the end of the epoch
-void epoch_end(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-               arts_edt_dep_t depv[]) {
-  (void)depc;
-  (void)paramc;
-  unsigned int num_in_epoch = depv[0].guid;
-  arts_printf("%u in Epoch\n", num_in_epoch);
-  arts_gather_array_db(array, check, 0, 1, paramv, 0);
-}
-
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                   arts_edt_dep_t depv[]) {
-  (void)paramc;
-  (void)depc;
-  (void)depv;
-  char **argv = (char **)paramv[1];
-  elements_per_block = strtol(argv[1], NULL, 10);
-  blocks = arts_get_total_nodes();
-  num_add = strtol(argv[2], NULL, 10);
-  array_guid = arts_guid_reserve(ARTS_DB_LOCAL, 0);
-  arts_printf("ElementsPerBlock: %u Blocks: %u\n", elements_per_block, blocks);
-
-  // The end will get all the updates and a signal from the gather
-  arts_guid_t end_guid =
-      arts_edt_create(end, 0, NULL, (num_add * elements_per_block * blocks) + 1,
-                      &(arts_hint_t){.route = 0});
-
-  arts_guid_t end_epoch_guid = arts_edt_create(
-      epoch_end, 1, (uint64_t *)&end_guid, 1, &(arts_hint_t){.route = 0});
-  arts_initialize_and_start_epoch(end_epoch_guid, 0);
-
-  array = arts_new_array_db_with_guid(array_guid, sizeof(unsigned int),
-                                      elements_per_block * blocks);
-
-  for (unsigned int j = 0; j < num_add; j++) {
-    for (unsigned int i = 0; i < elements_per_block * blocks; i++) {
-      arts_printf("i: %u Slot:%u edt: %lu\n", i,
-                  (j * elements_per_block * blocks) + i, end_guid);
-      arts_atomic_add_in_array_db(array, i, 1, end_guid,
-                                  (j * elements_per_block * blocks) + i);
-    }
-  }
-}
-
-int main(int argc, char **argv) {
-  arts_rt(argc, argv);
-  return 0;
-}
+#endif
+#endif /* ARTS_ARRAY_DB_INTERNAL_H */

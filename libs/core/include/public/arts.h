@@ -77,11 +77,11 @@ typedef intptr_t arts_guid_t;
  *  @{ */
 
 /**
- * @brief Runtime object type tag (stored in GUID bits 7–0).
+ * @brief Runtime object type tag (stored in GUID bits 63–56).
  *
  * Identifies what kind of object a GUID refers to: EDT, event, datablock, etc.
  * For datablocks, the type selects the allocation and coherence strategy.
- * Access modes (read/write) are separate — see @c arts_db_mode_t.
+ * Access modes (read/write) are separate — see @c arts_db_access_mode_t.
  */
 typedef enum {
   ARTS_NULL = 0,         /**< Empty / untyped placeholder. */
@@ -110,16 +110,16 @@ typedef enum {
  * @c arts_record_dep() / @c arts_signal_edt() time, not at DB creation.
  */
 typedef enum {
-  ARTS_MODE_NULL = 0, /**< Unset / placeholder. */
-  ARTS_MODE_RO,       /**< Read-Only (shared readers, no writeback). */
-  ARTS_MODE_EW, /**< Exclusive Write (single writer, frontier progression). */
-  ARTS_MODE_RW, /**< Read-Write, no ordering (LOCAL DBs only). */
-  ARTS_MODE_VALUE,   /**< Dependency carries a raw uint64 value (not a GUID). */
-  ARTS_MODE_PTR,     /**< Dependency carries a copied pointer buffer. */
-  ARTS_MODE_LC_SYNC, /**< LC with synchronous GPU-to-CPU copy. */
-  ARTS_MODE_LC_NO_COPY, /**< LC without data copy (just allocate on GPU). */
-  ARTS_MODE_MEMSET,     /**< GPU zero-initialization. */
-} arts_db_mode_t;
+  DB_MODE_NULL = 0, /**< Unset / placeholder. */
+  DB_MODE_RO,       /**< Read-Only (shared readers, no writeback). */
+  DB_MODE_EW,    /**< Exclusive Write (single writer, frontier progression). */
+  DB_MODE_RW,    /**< Read-Write, no ordering (LOCAL DBs only). */
+  DB_MODE_VALUE, /**< Dependency carries a raw uint64 value (not a GUID). */
+  DB_MODE_PTR,   /**< Dependency carries a copied pointer buffer. */
+  DB_MODE_LC_SYNC,    /**< LC with synchronous GPU-to-CPU copy. */
+  DB_MODE_LC_NO_COPY, /**< LC without data copy (just allocate on GPU). */
+  DB_MODE_MEMSET,     /**< GPU zero-initialization. */
+} arts_db_access_mode_t;
 
 /** @} */ /* end type_enum */
 
@@ -203,8 +203,8 @@ typedef void (*event_callback_t)(arts_edt_dep_t data);
  * @param depc   Number of dependency slots (0 when called by the runtime).
  * @param depv   Dependency array (empty when called by the runtime).
  */
-extern void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
-                          uint32_t depc, arts_edt_dep_t depv[]);
+extern void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                     arts_edt_dep_t depv[]);
 
 /** @} */ /* end user_callbacks */
 
@@ -222,27 +222,6 @@ typedef enum {
 /** @} */ /* end event_slots */
 
 /* ========================================================================= */
-/** @defgroup range_array GUID Range and Array DB
- *  @{ */
-
-/** Iterator over a contiguous range of GUIDs. */
-struct arts_guid_range_s {
-  unsigned int size;      /**< Total number of GUIDs in the range. */
-  unsigned int index;     /**< Current iterator position. */
-  arts_guid_t start_guid; /**< First GUID in the range. */
-};
-typedef struct arts_guid_range_s arts_guid_range_t;
-
-/** Distributed array DataBlock spanning multiple nodes. */
-struct arts_array_db_s {
-  unsigned int element_size;       /**< Size of each element in bytes. */
-  unsigned int elements_per_block; /**< Elements per node-local block. */
-  unsigned int num_blocks;         /**< Total number of blocks. */
-  char head[];                     /**< Flexible array of block GUIDs. */
-};
-typedef struct arts_array_db_s arts_array_db_t;
-
-/** @} */ /* end range_array */
 
 /**
  * @brief Thread-safe printf that serializes output across ARTS workers.
@@ -257,7 +236,7 @@ void arts_printf(const char *format, ...);
  * @brief Entry point to the ARTS runtime.
  *
  * Reads @c arts.cfg, initializes threading and networking, schedules
- * arts_main_edt() on rank 0 (if defined), and blocks until
+ * main_edt() on rank 0 (if defined), and blocks until
  * arts_shutdown() is called.
  *
  * @param argc Argument count from main().
@@ -334,67 +313,58 @@ unsigned int arts_guid_get_rank(arts_guid_t guid);
 arts_type_t arts_guid_get_type(arts_guid_t guid);
 
 /**
- * @brief Allocate a contiguous range of @p size GUIDs on node @p route.
+ * @brief Reserve a contiguous range of @p size GUIDs on node @p route.
  *
- * Because GUIDs are formed by a bitfield with several fields, their raw
- * integer values may not be consecutive.  A GUID range provides an
- * iterator-style interface over a logically contiguous block.
+ * Returns the start GUID of the range.  Use @c arts_guid_from_index() to
+ * access individual GUIDs within the range.
  *
  * @param type  Type tag for every GUID in the range.
  * @param size  Number of GUIDs to allocate.
  * @param route Target node rank.
- * @return Pointer to a new GUID range, or @c NULL on failure.
- * @see arts_guid_range_get, arts_guid_range_next
+ * @return The start GUID of the range, or @c NULL_GUID on failure.
+ * @see arts_guid_from_index, arts_guid_index_from
  */
-arts_guid_range_t *arts_guid_range_create(arts_type_t type, unsigned int size,
-                                          unsigned int route);
+arts_guid_t arts_guid_reserve_range(arts_type_t type, unsigned int size,
+                                    unsigned int route);
 
 /**
- * @brief Get the GUID at @p index within @p range.
+ * @brief Get the GUID at @p idx offset from @p range_guid (no bounds check).
  *
- * @param range Pointer to a GUID range.
- * @param index Zero-based offset from the start of the range.
- * @return The GUID at the requested position.
+ * This is the OCR-style index-based accessor.  The caller is responsible
+ * for ensuring @p idx is within the range.
+ *
+ * @param range_guid The start GUID of a range.
+ * @param idx        Zero-based offset.
+ * @return The GUID at the requested offset.
  */
-arts_guid_t arts_guid_range_get(arts_guid_range_t *range, unsigned int index);
+arts_guid_t arts_guid_from_index(arts_guid_t range_guid, unsigned int idx);
 
 /**
- * @brief Advance the range iterator and return the next GUID.
+ * @brief Compute the index of @p guid relative to @p range_guid.
  *
- * @note Not thread-safe.
+ * Returns -1 if the two GUIDs differ in type or rank, or if
+ * @p guid precedes @p range_guid.
  *
- * @param range Pointer to a GUID range.
- * @return The next GUID, or @c NULL_GUID if the end has been reached.
+ * @param range_guid The start GUID of a range.
+ * @param guid       The GUID to look up.
+ * @return Zero-based index, or -1 on mismatch.
  */
-arts_guid_t arts_guid_range_next(arts_guid_range_t *range);
-
-/**
- * @brief Check whether the range iterator has more GUIDs.
- *
- * @note Not thread-safe.
- *
- * @param range Pointer to a GUID range.
- * @return @c true if GUIDs remain, @c false otherwise.
- */
-bool arts_guid_range_has_next(arts_guid_range_t *range);
-
-/**
- * @brief Reset the range iterator to the beginning.
- *
- * @note Not thread-safe.
- *
- * @param range Pointer to a GUID range.
- */
-void arts_guid_range_reset_iter(arts_guid_range_t *range);
+int arts_guid_index_from(arts_guid_t range_guid, arts_guid_t guid);
 
 /**
  * @brief Reserve @p size GUIDs distributed round-robin across all nodes.
  *
  * @param size Number of GUIDs to allocate.
  * @param type Type tag for every GUID.
- * @return Array of GUIDs (caller must free).
+ * @return Array of GUIDs (caller must destroy with
+ * arts_guid_round_robin_destroy).
  */
 arts_guid_t *arts_guid_reserve_round_robin(unsigned int size, arts_type_t type);
+
+/**
+ * @brief Free an array returned by arts_guid_reserve_round_robin().
+ */
+void arts_guid_round_robin_destroy(arts_guid_t *guids);
 
 /** @} */ /* end guid */
 
@@ -527,10 +497,10 @@ void arts_edt_destroy(arts_guid_t guid);
  * @param edt_guid  GUID of the target EDT.
  * @param slot      Dependency slot index.
  * @param data_guid GUID of the DataBlock to deliver.
- * @param mode      Access mode (@c ARTS_MODE_RO or @c ARTS_MODE_EW).
+ * @param mode      Access mode (@c DB_MODE_RO or @c DB_MODE_EW).
  */
 void arts_signal_edt(arts_guid_t edt_guid, uint32_t slot, arts_guid_t data_guid,
-                     arts_db_mode_t mode);
+                     arts_db_access_mode_t mode);
 
 /**
  * @brief Signal an EDT dependency slot with a plain 64-bit value.
@@ -796,10 +766,9 @@ void arts_add_dependence_to_persistent_event(arts_guid_t event_source,
  * @param edt_slot     Dependency slot on the EDT.
  * @param mode Acquire mode override.
  */
-void arts_add_dependence_to_persistent_event_with_mode(arts_guid_t event_source,
-                                                       arts_guid_t edt_dest,
-                                                       uint32_t edt_slot,
-                                                       arts_db_mode_t mode);
+void arts_add_dependence_to_persistent_event_with_mode(
+    arts_guid_t event_source, arts_guid_t edt_dest, uint32_t edt_slot,
+    arts_db_access_mode_t mode);
 
 /**
  * @brief Add a dependence with acquire mode override and diff tracking.
@@ -811,7 +780,7 @@ void arts_add_dependence_to_persistent_event_with_mode(arts_guid_t event_source,
  */
 void arts_add_dependence_to_persistent_event_with_mode_and_diff(
     arts_guid_t event_source, arts_guid_t edt_dest, uint32_t edt_slot,
-    arts_db_mode_t mode);
+    arts_db_access_mode_t mode);
 
 /**
  * @brief Add a dependence with byte offset for slice-based signaling.
@@ -828,7 +797,7 @@ void arts_add_dependence_to_persistent_event_with_mode_and_diff(
  */
 void arts_add_dependence_to_persistent_event_with_byte_offset(
     arts_guid_t event_source, arts_guid_t edt_dest, uint32_t edt_slot,
-    arts_db_mode_t mode, uint64_t byte_offset, uint64_t len);
+    arts_db_access_mode_t mode, uint64_t byte_offset, uint64_t len);
 
 /** @} */ /* end persistent_event */
 
@@ -887,6 +856,25 @@ void *arts_db_create_with_guid_and_data(arts_guid_t guid, void *data,
  * @return GUID of the created DB.
  */
 arts_guid_t arts_db_create_remote(unsigned int route, uint64_t len);
+
+/**
+ * @brief Create a node-pinned (LOCAL) DataBlock of @p len bytes.
+ *
+ * Unlike @c arts_db_create(), a LOCAL DataBlock has no CDAG frontier and
+ * is only directly accessible on its home node.  Remote access is
+ * possible via @c arts_put_in_db() / @c arts_get_from_db().
+ *
+ * @param[out] addr Receives a pointer to the DB payload.  Set to @c NULL
+ *                  when the DB is created on a remote node.
+ * @param      len  Length in bytes.
+ * @param      hint Advisory metadata.  @c hint->route selects the target
+ *                  node (@c ARTS_HINT_CURRENT_NODE or NULL = current node).
+ *                  @c hint->id = optional profiling ID.
+ * @return GUID of the created DB.
+ * @see arts_db_create, arts_db_create_with_guid
+ */
+arts_guid_t arts_db_local_create(void **addr, uint64_t len,
+                                 const arts_hint_t *hint);
 
 /**
  * @brief Release the auto-acquired WRITE access for a DataBlock.
@@ -1040,7 +1028,8 @@ void arts_db_add_dependence(arts_guid_t db_src, arts_guid_t edt_dest,
  * @param mode Acquire mode override.
  */
 void arts_db_add_dependence_with_mode(arts_guid_t db_src, arts_guid_t edt_dest,
-                                      uint32_t edt_slot, arts_db_mode_t mode);
+                                      uint32_t edt_slot,
+                                      arts_db_access_mode_t mode);
 
 /**
  * @brief Add a DB dependence with acquire mode override and diff tracking.
@@ -1053,10 +1042,10 @@ void arts_db_add_dependence_with_mode(arts_guid_t db_src, arts_guid_t edt_dest,
 void arts_db_add_dependence_with_mode_and_diff(arts_guid_t db_src,
                                                arts_guid_t edt_dest,
                                                uint32_t edt_slot,
-                                               arts_db_mode_t mode);
+                                               arts_db_access_mode_t mode);
 
 /**
- * @brief Record a dependency, auto-incrementing latch for @c ARTS_MODE_EW.
+ * @brief Record a dependency, auto-incrementing latch for @c DB_MODE_EW.
  *
  * @param db_src       Source DataBlock GUID.
  * @param edt_dest     Destination EDT GUID.
@@ -1064,7 +1053,7 @@ void arts_db_add_dependence_with_mode_and_diff(arts_guid_t db_src,
  * @param mode Requested acquire mode.
  */
 void arts_record_dep(arts_guid_t db_src, arts_guid_t edt_dest,
-                     uint32_t edt_slot, arts_db_mode_t mode);
+                     uint32_t edt_slot, arts_db_access_mode_t mode);
 
 /**
  * @brief Record a dependency at a byte offset within a DataBlock.
@@ -1081,7 +1070,7 @@ void arts_record_dep(arts_guid_t db_src, arts_guid_t edt_dest,
  * @param len          Slice length in bytes.
  */
 void arts_record_dep_at(arts_guid_t db_src, arts_guid_t edt_dest,
-                        uint32_t edt_slot, arts_db_mode_t mode,
+                        uint32_t edt_slot, arts_db_access_mode_t mode,
                         uint64_t byte_offset, uint64_t len);
 
 /** @} */ /* end db */
@@ -1162,172 +1151,6 @@ bool arts_wait_on_handle(arts_guid_t epoch_guid);
 void arts_yield();
 
 /** @} */ /* end epoch */
-
-/* ========================================================================= */
-/** @defgroup arraydb Array DataBlocks
- *  Distributed arrays spanning all nodes.
- *  @{ */
-
-/**
- * @brief Create a distributed array DB spread equally across all nodes.
- *
- * @param[out] addr         Receives the local portion pointer.
- * @param      element_size Size of each element in bytes.
- * @param      num_elements Total number of elements.
- * @return GUID for accessing the array DB.
- */
-arts_guid_t arts_new_array_db(arts_array_db_t **addr, unsigned int element_size,
-                              unsigned int num_elements);
-
-/**
- * @brief Create a distributed array DB with a pre-reserved @p guid.
- *
- * The GUID can target any node but must be of type @c ARTS_DB_LOCAL.
- *
- * @param guid         Pre-reserved GUID.
- * @param element_size Size of each element in bytes.
- * @param num_elements Total number of elements.
- * @return Pointer to the local arts_array_db_t.
- */
-arts_array_db_t *arts_new_array_db_with_guid(arts_guid_t guid,
-                                             unsigned int element_size,
-                                             unsigned int num_elements);
-
-/**
- * @brief Create a node-local array DB (not shared across nodes).
- *
- * @param guid         Pre-reserved GUID.
- * @param element_size Size of each element in bytes.
- * @param num_elements Total number of elements.
- * @param data         Optional initial data (may be @c NULL).
- * @return Pointer to the local arts_array_db_t.
- */
-arts_array_db_t *arts_new_local_array_db_with_guid(arts_guid_t guid,
-                                                   unsigned int element_size,
-                                                   unsigned int num_elements,
-                                                   void *data);
-
-/**
- * @brief Signal an EDT with all blocks of an array DB.
- *
- * @param array    Array DB.
- * @param edt_guid Target EDT.
- * @param slot     Starting dependency slot.
- */
-void arts_signal_array_db(arts_array_db_t *array, arts_guid_t edt_guid,
-                          unsigned int slot);
-
-/**
- * @brief Read an element from an array DB at @p index.
- *
- * Delivered to @p edt_guid at @p slot via arts_signal_edt_ptr().
- *
- * @param edt_guid Destination EDT.
- * @param slot     Dependency slot.
- * @param array    Array DB.
- * @param index    Element index.
- */
-void arts_get_from_array_db(arts_guid_t edt_guid, unsigned int slot,
-                            arts_array_db_t *array, unsigned int index);
-
-/**
- * @brief Write data into an array DB element and signal an EDT.
- *
- * The put falls within the current epoch.
- *
- * @param ptr      Source data.
- * @param edt_guid EDT to signal.
- * @param slot     Dependency slot.
- * @param array    Array DB.
- * @param index    Element index.
- */
-void arts_put_in_array_db(void *ptr, arts_guid_t edt_guid, unsigned int slot,
-                          arts_array_db_t *array, unsigned int index);
-
-/**
- * @brief Launch an EDT for each element locally.
- *
- * Data is acquired read-only via arts_signal_edt_ptr().
- *
- * @param array    Array DB.
- * @param func_ptr Function to execute per element.
- * @param paramc   Number of static parameters.
- * @param paramv   Array of parameters.
- */
-void arts_for_each_in_array_db(arts_array_db_t *array, arts_edt_t func_ptr,
-                               uint32_t paramc, const uint64_t *paramv);
-
-/**
- * @brief Launch an EDT for each element across all nodes.
- *
- * Data is acquired read-only via arts_signal_edt_ptr().
- *
- * @param array    Array DB.
- * @param stride   Number of elements per EDT.
- * @param func_ptr Function to execute.
- * @param paramc   Number of static parameters.
- * @param paramv   Array of parameters.
- */
-void arts_for_each_in_array_db_at_data(arts_array_db_t *array,
-                                       unsigned int stride, arts_edt_t func_ptr,
-                                       uint32_t paramc, const uint64_t *paramv);
-
-/**
- * @brief Gather all chunks of an array DB on one node and run an EDT.
- *
- * @param array    Array DB.
- * @param func_ptr Function to execute after gathering.
- * @param route    Node to gather on.
- * @param paramc   Number of static parameters.
- * @param paramv   Array of parameters.
- * @param depc     Number of dependency slots (usually num_blocks).
- */
-void arts_gather_array_db(arts_array_db_t *array, arts_edt_t func_ptr,
-                          unsigned int route, uint32_t paramc,
-                          const uint64_t *paramv, uint32_t depc);
-
-/** @brief Gather array DB within a specific epoch. */
-void arts_gather_array_db_epoch(arts_array_db_t *array, arts_edt_t func_ptr,
-                                unsigned int route, uint32_t paramc,
-                                const uint64_t *paramv, uint32_t depc,
-                                arts_guid_t epoch_guid);
-
-/** @brief Gather array DB chunks into an existing EDT. */
-void arts_gather_array_db_in_edt(arts_array_db_t *array,
-                                 arts_guid_t to_edt_guid, uint64_t slot_offset);
-
-/**
- * @brief Atomic add on an array DB element.
- *
- * Signals @p edt_guid at @p slot upon completion.
- *
- * @param array    Array DB.
- * @param index    Element index.
- * @param to_add   Value to add.
- * @param edt_guid EDT to signal.
- * @param slot     Dependency slot.
- */
-void arts_atomic_add_in_array_db(arts_array_db_t *array, unsigned int index,
-                                 unsigned int to_add, arts_guid_t edt_guid,
-                                 unsigned int slot);
-
-/**
- * @brief Atomic compare-and-swap on an array DB element.
- *
- * Signals @p edt_guid at @p slot upon completion.
- *
- * @param array     Array DB.
- * @param index     Element index.
- * @param old_value Expected current value.
- * @param new_value Desired new value.
- * @param edt_guid  EDT to signal.
- * @param slot      Dependency slot.
- */
-void arts_atomic_compare_and_swap_in_array_db(
-    arts_array_db_t *array, unsigned int index, unsigned int old_value,
-    unsigned int new_value, arts_guid_t edt_guid, unsigned int slot);
-
-/** @} */ /* end arraydb */
 
 /* ========================================================================= */
 /** @defgroup util Utility Functions

@@ -136,7 +136,7 @@ void done_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
@@ -154,7 +154,7 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_db_release(db);
   arts_guid_t e1 = arts_edt_create_with_epoch(signal_db_edt, 0, NULL, 1, epoch,
                                               &(arts_hint_t){.route = 0});
-  arts_signal_edt(e1, 0, db, ARTS_MODE_RO);
+  arts_signal_edt(e1, 0, db, DB_MODE_RO);
 
   // 2) signal_edt_value.
   arts_guid_t e2 = arts_edt_create_with_epoch(

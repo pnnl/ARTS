@@ -38,8 +38,6 @@
 ******************************************************************************/
 #include "arts/gas/guid.h"
 
-#include <string.h>
-
 #include "arts.h"
 #include "arts/runtime/globals.h"
 #include "arts/system/arts_print.h"
@@ -51,7 +49,9 @@ uint64_t global_guid_on = 0;
 uint64_t min_global_guid_thread = 0;
 uint64_t max_global_guid_thread = 0;
 
-void set_global_guid_on() { global_guid_on = ((uint64_t)1) << 40; }
+void set_global_guid_on() {
+  global_guid_on = ((uint64_t)1) << 40;
+}
 
 uint64_t *arts_guid_generator_get_key(unsigned int route, unsigned int type) {
   return &arts_node_info.keys[arts_thread_info.group_pos]
@@ -61,31 +61,28 @@ uint64_t *arts_guid_generator_get_key(unsigned int route, unsigned int type) {
 arts_guid_t arts_guid_create_for_rank_internal(unsigned int route,
                                                unsigned int type,
                                                unsigned int guid_count) {
-  arts_guid_bits_t guid;
+  uint64_t key = 0;
   if (global_guid_on) {
     // Safeguard against wrap around
     if (global_guid_on > guid_count) {
-      guid.fields.key = global_guid_on - guid_count;
+      key = global_guid_on - guid_count;
       global_guid_on -= guid_count;
     } else {
       ARTS_ERROR("GUID generation failed: parallel start out of keys");
     }
   } else {
-    uint64_t *key = arts_guid_generator_get_key(route, type);
-    uint64_t value = *key;
+    uint64_t *key_ptr = arts_guid_generator_get_key(route, type);
+    uint64_t value = *key_ptr;
     if (value + guid_count < keys_per_thread) {
-      guid.fields.key =
-          value +
-          (keys_per_thread *
-           arts_node_info.global_guid_thread_id[arts_thread_info.group_pos]);
-      (*key) += guid_count;
+      key = value +
+            (keys_per_thread *
+             arts_node_info.global_guid_thread_id[arts_thread_info.group_pos]);
+      (*key_ptr) += guid_count;
     } else {
       ARTS_ERROR("GUID generation failed: out of keys");
     }
   }
-  guid.fields.type = type;
-  guid.fields.rank = route;
-  return (arts_guid_t)guid.bits;
+  return ARTS_GUID_MAKE(type, route, key);
 }
 
 arts_guid_t arts_guid_create_for_rank(unsigned int route, unsigned int type) {
@@ -128,13 +125,11 @@ void arts_guid_key_generator_init() {
 }
 
 arts_type_t arts_guid_get_type(arts_guid_t guid) {
-  arts_guid_bits_t address_info = (arts_guid_bits_t){.bits = guid};
-  return (arts_type_t)address_info.fields.type;
+  return (arts_type_t)ARTS_GUID_GET_TYPE(guid);
 }
 
 unsigned int arts_guid_get_rank(arts_guid_t guid) {
-  arts_guid_bits_t address_info = (arts_guid_bits_t){.bits = guid};
-  return address_info.fields.rank;
+  return (unsigned int)ARTS_GUID_GET_RANK(guid);
 }
 
 bool arts_guid_is_local(arts_guid_t guid) {
@@ -142,8 +137,7 @@ bool arts_guid_is_local(arts_guid_t guid) {
 }
 
 uint64_t arts_guid_get_key(arts_guid_t guid) {
-  arts_guid_bits_t address_info = (arts_guid_bits_t){.bits = guid};
-  return address_info.fields.key;
+  return ARTS_GUID_GET_KEY(guid);
 }
 
 arts_guid_t arts_guid_reserve(arts_type_t type, unsigned int route) {
@@ -176,101 +170,55 @@ arts_guid_t *arts_guid_reserve_round_robin(unsigned int size,
   return guids;
 }
 
-void arts_guid_range_init(arts_guid_range_t *range, arts_type_t type,
-                          unsigned int size, unsigned int route) {
+arts_guid_t arts_guid_reserve_range(arts_type_t type, unsigned int size,
+                                    unsigned int route) {
   if (route == ARTS_HINT_CURRENT_NODE) {
     route = arts_global_rank_id;
   }
-  memset(range, 0, sizeof(*range));
   if (size && type > ARTS_NULL && type < ARTS_LAST_TYPE) {
-    range->size = size;
-    range->start_guid =
-        arts_guid_create_for_rank_internal(route, (unsigned int)type, size);
+    return arts_guid_create_for_rank_internal(route, (unsigned int)type, size);
   }
+  return NULL_GUID;
 }
 
-arts_guid_range_t *arts_guid_range_create(arts_type_t type, unsigned int size,
-                                          unsigned int route) {
-  arts_guid_range_t *range = NULL;
+arts_guid_t arts_guid_reserve_range_hash(arts_type_t type, unsigned int size,
+                                         unsigned int route,
+                                         unsigned int hash_size) {
   if (size && type > ARTS_NULL && type < ARTS_LAST_TYPE) {
-    range = (arts_guid_range_t *)arts_calloc(1, sizeof(arts_guid_range_t));
-    arts_guid_range_init(range, type, size, route);
-  }
-  return range;
-}
-
-arts_guid_range_t *arts_guid_range_create_hash(arts_type_t type,
-                                               unsigned int size,
-                                               unsigned int route,
-                                               unsigned int hash_size) {
-  arts_guid_range_t *range = NULL;
-  if (size && type > ARTS_NULL && type < ARTS_LAST_TYPE) {
-    range = (arts_guid_range_t *)arts_calloc(1, sizeof(arts_guid_range_t));
-    range->size = size;
-    range->start_guid = arts_guid_create_for_rank_internal(
+    arts_guid_t start = arts_guid_create_for_rank_internal(
         route, (unsigned int)type, size + hash_size);
-    arts_guid_bits_t temp = (arts_guid_bits_t){.bits = range->start_guid};
     for (unsigned int i = 0; i < hash_size; i++) {
-      if (temp.fields.key % hash_size == 0) {
-        range->start_guid = (arts_guid_t)temp.bits;
+      if (ARTS_GUID_GET_KEY(start) % hash_size == 0) {
         break;
       }
-      temp.fields.key++;
+      start++;
     }
+    return start;
   }
-  return range;
+  return NULL_GUID;
 }
 
-arts_guid_t arts_guid_range_get(arts_guid_range_t *range, unsigned int index) {
-  if (!range || index >= range->size) {
-    return NULL_GUID;
-  }
-  arts_guid_bits_t ret = (arts_guid_bits_t){.bits = range->start_guid};
-  ret.fields.key += index;
-  return ret.bits;
+arts_guid_t arts_guid_from_index(arts_guid_t range_guid, unsigned int idx) {
+  return range_guid + idx;
 }
 
-arts_guid_t arts_guid_range_next(arts_guid_range_t *range) {
-  arts_guid_t ret = NULL_GUID;
-  if (range) {
-    if (range->index < range->size) {
-      ret = arts_guid_range_get(range, range->index++);
-    }
+int arts_guid_index_from(arts_guid_t range_guid, arts_guid_t guid) {
+  if (ARTS_GUID_GET_TYPE(range_guid) != ARTS_GUID_GET_TYPE(guid)) {
+    return -1;
   }
-  return ret;
+  if (ARTS_GUID_GET_RANK(range_guid) != ARTS_GUID_GET_RANK(guid)) {
+    return -1;
+  }
+  uint64_t start_key = ARTS_GUID_GET_KEY(range_guid);
+  uint64_t check_key = ARTS_GUID_GET_KEY(guid);
+  if (check_key < start_key) {
+    return -1;
+  }
+  return (int)(check_key - start_key);
 }
 
-bool arts_guid_range_has_next(arts_guid_range_t *range) {
-  if (range) {
-    return (range->index < range->size);
-  }
-  return false;
-}
-
-void arts_guid_range_reset_iter(arts_guid_range_t *range) {
-  if (range) {
-    range->index = 0;
-  }
-}
-
-bool arts_guid_range_contains(arts_guid_range_t *range, arts_guid_t guid) {
-  arts_guid_bits_t start_guid = (arts_guid_bits_t){.bits = range->start_guid};
-  arts_guid_bits_t to_check = (arts_guid_bits_t){.bits = guid};
-
-  if (start_guid.fields.rank != to_check.fields.rank) {
-    return false;
-  }
-
-  if (start_guid.fields.type != to_check.fields.type) {
-    return false;
-  }
-
-  if (start_guid.fields.key <= to_check.fields.key &&
-      to_check.fields.key < start_guid.fields.key + range->index) {
-    return true;
-  }
-
-  return false;
+void arts_guid_round_robin_destroy(arts_guid_t *guids) {
+  arts_free(guids);
 }
 
 uint64_t arts_guid_hash_key(arts_guid_t guid) {

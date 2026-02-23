@@ -50,7 +50,7 @@ extern "C" {
 struct arts_config_table_s {
   unsigned int rank;
   char *ip_address;
-  unsigned int *ports; // Port list (port_count entries), always populated
+  unsigned int *ports;  // Port list (port_count entries), always populated
 };
 
 struct arts_config_variable_s {

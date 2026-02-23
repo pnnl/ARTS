@@ -74,6 +74,7 @@ void creater(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
   arts_db_create_with_guid_and_data(db_guid, data,
                                     sizeof(unsigned int) * num_elements);
+  free(data);
   arts_edt_create_with_guid(getter, edt_guid_fixed, 0, NULL,
                             block_size / stride);
 }
@@ -101,7 +102,7 @@ void shut_down_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;

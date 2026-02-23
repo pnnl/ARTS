@@ -127,7 +127,7 @@ void collector_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
@@ -162,7 +162,7 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t db = arts_db_create(&db_ptr, 64, NULL);
   arts_guid_t dep_t =
       arts_edt_create(dep_true_edt, 0, NULL, 1, &(arts_hint_t){.route = 0});
-  arts_signal_edt(dep_t, 0, db, ARTS_MODE_RO);
+  arts_signal_edt(dep_t, 0, db, DB_MODE_RO);
 }
 
 int main(int argc, char **argv) {

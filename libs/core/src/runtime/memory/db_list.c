@@ -209,7 +209,7 @@ bool arts_push_db_to_element(struct arts_db_element_s *head,
 
 void arts_push_delayed_edt(struct arts_local_delayed_edt_s *head,
                            unsigned int position, struct arts_edt_s *edt,
-                           unsigned int slot, arts_db_mode_t mode) {
+                           unsigned int slot, arts_db_access_mode_t mode) {
   if (!head) {
     return;
   }
@@ -235,7 +235,7 @@ bool arts_push_db_to_frontier(struct arts_db_frontier_s *frontier,
                               unsigned int data, bool write, bool local,
                               bool bypass, struct arts_edt_s *edt,
                               arts_guid_t edt_guid, unsigned int slot,
-                              arts_db_mode_t mode, bool *unique) {
+                              arts_db_access_mode_t mode, bool *unique) {
   if (bypass) {
     frontier_lock(&frontier->lock);
   } else if (write && !frontier_add_write_lock(&frontier->lock)) {
@@ -289,7 +289,7 @@ bool arts_push_db_to_frontier(struct arts_db_frontier_s *frontier,
 bool arts_push_db_to_list(struct arts_db_list_s *db_list, unsigned int data,
                           bool write, bool local, bool bypass,
                           struct arts_edt_s *edt, arts_guid_t edt_guid,
-                          unsigned int slot, arts_db_mode_t mode,
+                          unsigned int slot, arts_db_access_mode_t mode,
                           bool *on_head) {
   if (!db_list->head) {
     if (arts_writer_try_lock(&db_list->reader, &db_list->writer)) {
@@ -351,8 +351,8 @@ bool arts_db_frontier_iter_init(struct arts_db_frontier_iterator_s *iter,
   return true;
 }
 
-unsigned int
-arts_db_frontier_iter_size(struct arts_db_frontier_iterator_s *iter) {
+unsigned int arts_db_frontier_iter_size(
+    struct arts_db_frontier_iterator_s *iter) {
   return iter->frontier->position;
 }
 
@@ -419,7 +419,7 @@ void arts_signal_frontier_remote(struct arts_db_frontier_s *frontier,
           !((frontier->exEdt || frontier->exEdtGuid != NULL_GUID) &&
             node == frontier->exNode)) {
         arts_remote_db_forward((int)node, (int)get_from, db->guid,
-                               ARTS_MODE_RO); // Don't care about mode
+                               DB_MODE_RO);  // Don't care about mode
       }
     }
   }

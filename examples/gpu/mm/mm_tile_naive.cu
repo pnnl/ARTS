@@ -45,8 +45,8 @@
 
 #include "mm_util.h"
 
-#define GPUMM 1
-#define MATSIZE 1024
+#define GPUMM    1
+#define MATSIZE  1024
 #define TILESIZE 32
 // #define VERIFY 1
 #define SMTILE 32
@@ -103,7 +103,7 @@ void mm_kernel_cpu(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       }
     }
   }
-  arts_signal_edt(to_signal, k, c_tile_guid, ARTS_MODE_EW);
+  arts_signal_edt(to_signal, k, c_tile_guid, DB_MODE_EW);
 }
 
 void multiply_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -148,17 +148,17 @@ void multiply_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t mul_gpu_guid =
       arts_edt_create_gpu(mm_kernel, arts_get_current_node(), 1, args, 3, grid,
                           threads, to_signal, k, c_tile_guid);
-  arts_signal_edt(mul_gpu_guid, 0, a_tile_guid, ARTS_MODE_EW);
-  arts_signal_edt(mul_gpu_guid, 1, b_tile_guid, ARTS_MODE_EW);
-  arts_signal_edt(mul_gpu_guid, 2, c_tile_guid, ARTS_MODE_EW);
+  arts_signal_edt(mul_gpu_guid, 0, a_tile_guid, DB_MODE_EW);
+  arts_signal_edt(mul_gpu_guid, 1, b_tile_guid, DB_MODE_EW);
+  arts_signal_edt(mul_gpu_guid, 2, c_tile_guid, DB_MODE_EW);
 #else
   uint64_t args[] = {tile_size, to_signal, k, c_tile_guid};
   arts_hint_t hint_0 = {arts_get_current_node(), 0};
   arts_guid_t mul_gpu_guid =
       arts_edt_create(mm_kernel_cpu, 4, args, 3, &hint_0);
-  arts_signal_edt(mul_gpu_guid, 0, a_tile_guid, ARTS_MODE_EW);
-  arts_signal_edt(mul_gpu_guid, 1, b_tile_guid, ARTS_MODE_EW);
-  arts_signal_edt(mul_gpu_guid, 2, c_tile_guid, ARTS_MODE_EW);
+  arts_signal_edt(mul_gpu_guid, 0, a_tile_guid, DB_MODE_EW);
+  arts_signal_edt(mul_gpu_guid, 1, b_tile_guid, DB_MODE_EW);
+  arts_signal_edt(mul_gpu_guid, 2, c_tile_guid, DB_MODE_EW);
 #endif
 }
 
@@ -204,7 +204,7 @@ void sum_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     }
   }
   arts_signal_edt(done_guid, 3 + ((row * num_blocks) + col), c_tile_guid,
-                  ARTS_MODE_EW);
+                  DB_MODE_EW);
 }
 
 void finish_block_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -259,7 +259,7 @@ void finish_block_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
+extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
                               uint32_t depc, arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;
@@ -316,17 +316,17 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
         arts_hint_t hint_2 = {node_id, 0};
         arts_guid_t mul_guid =
             arts_edt_create(multiply_mm, 4, args, 2, &hint_2);
-        arts_signal_edt(mul_guid, 0, a_mat_guid, ARTS_MODE_EW);
-        arts_signal_edt(mul_guid, 1, b_mat_guid, ARTS_MODE_EW);
+        arts_signal_edt(mul_guid, 0, a_mat_guid, DB_MODE_EW);
+        arts_signal_edt(mul_guid, 1, b_mat_guid, DB_MODE_EW);
       }
     }
   }
 
   arts_edt_create_with_guid(finish_block_mm, done_guid, 0, NULL,
                             3 + (num_blocks * num_blocks));
-  arts_signal_edt(done_guid, 0, c_mat_guid, ARTS_MODE_EW);
-  arts_signal_edt(done_guid, 1, a_mat_guid, ARTS_MODE_EW);
-  arts_signal_edt(done_guid, 2, b_mat_guid, ARTS_MODE_EW);
+  arts_signal_edt(done_guid, 0, c_mat_guid, DB_MODE_EW);
+  arts_signal_edt(done_guid, 1, a_mat_guid, DB_MODE_EW);
+  arts_signal_edt(done_guid, 2, b_mat_guid, DB_MODE_EW);
   start = arts_get_time_stamp();
 }
 

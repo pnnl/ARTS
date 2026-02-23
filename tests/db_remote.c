@@ -51,6 +51,7 @@ void check_remote_db(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                      arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;
+  (void)depv;
   arts_guid_t db_guid = (arts_guid_t)paramv[0];
   unsigned int target_rank = (unsigned int)paramv[1];
   unsigned int db_rank = arts_guid_get_rank(db_guid);
@@ -86,7 +87,7 @@ void check_remote_put_get(uint32_t paramc, const uint64_t *paramv,
   arts_shutdown();
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
@@ -102,7 +103,7 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     return;
   }
 
-  unsigned int target = 1; // Remote node.
+  unsigned int target = 1;  // Remote node.
 
   arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
 

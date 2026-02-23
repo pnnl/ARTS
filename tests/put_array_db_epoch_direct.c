@@ -39,6 +39,7 @@
 #include <stdlib.h>
 
 #include "arts.h"
+#include "arts/array_db.h"
 
 unsigned int elements_per_block = 0;
 unsigned int blocks = 0;
@@ -68,7 +69,7 @@ void epoch_end(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("%u in Epoch\n", num_in_epoch);
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;

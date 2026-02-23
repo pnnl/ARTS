@@ -87,7 +87,7 @@ void epoch_dep_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("  PASS: edt_create_with_epoch_dep ran, depc=%u\n", depc);
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;

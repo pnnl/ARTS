@@ -39,6 +39,7 @@
 #include <stdlib.h>
 
 #include "arts.h"
+#include "arts/array_db.h"
 
 arts_array_db_t *array = NULL;
 arts_guid_t array_guid = NULL_GUID;
@@ -70,7 +71,7 @@ void gather_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;

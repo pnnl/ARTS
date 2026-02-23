@@ -39,11 +39,13 @@
 
 # Define test programs to build
 set(TEST_PROGRAMS
+    # --- Original tests ---
     edt_epoch_wait
     route_table
     route_table_remote_guid
     cdag
     cdag_ew_chain
+    cdag_ew_ordering
     out_of_order_list
     pin_db
     get_from_db
@@ -51,26 +53,54 @@ set(TEST_PROGRAMS
     arts_send
     active_message_db
     active_message_buffer
-    array_db
-    for_each
     termination_detection
-    termination_detection_array_db
-    put_array_db_epoch
-    put_array_db_epoch_direct
-    atomic_add_in_array_db
-    atomic_compare_and_swap_in_array_db
-    # db_move and db_once test removed APIs (arts_db_move, ARTS_DB_ONCE)
     rec_epoch
     epoch_pool
+    epoch_basic
+    epoch_deferred_start
+    epoch_finish_edt
     epoch_shad_adapter
     buffer
+    buffer_basic
     remote_db_event
     shad_lock
-    tiled_matmul_dep
     route_table_iter
     route_table_iter_destroy
     acquire_mode
     arts_id
+    # --- New unit tests ---
+    edt_create_basic
+    edt_chain
+    edt_fan_out
+    edt_signal
+    edt_dep_variants
+    edt_destroy
+    stress_edt
+    paramv_memcpy
+    db_create
+    db_create_with_data
+    db_dependence
+    db_destroy
+    db_local
+    db_local_create
+    db_put_get
+    db_put_get_at
+    db_remote
+    db_rename
+    event_basic
+    event_chain
+    persistent_event
+    persistent_event_advanced
+    guid_basic
+    guid_range
+    hint_routing
+    node_query
+    record_dep_at
+    utility_api
+    multinode_db
+    multinode_edt
+    multinode_epoch
+    multinode_event
 )
 
 # Programs that require arts_graph library
@@ -137,6 +167,49 @@ endfunction()
 # Create graph test executables
 foreach(test_program ${GRAPH_TEST_PROGRAMS})
     add_arts_graph_test(${test_program})
+endforeach()
+
+# Programs that require arts_array_db library
+set(ARRAY_DB_TEST_PROGRAMS
+    array_db
+    array_db_advanced
+    array_db_for_each
+    array_db_with_guid
+    local_array_db
+    for_each
+    termination_detection_array_db
+    put_array_db_epoch
+    put_array_db_epoch_direct
+    gather_array_db_epoch
+)
+
+# Function to create a test executable that uses arts_array_db
+function(add_arts_array_db_test test_name)
+    add_executable(${test_name} ${test_name}.c)
+
+    # Set include directories
+    target_include_directories(${test_name} PRIVATE ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR} ${ARTS_BUILD_INTERNAL_INCLUDE_DIR} ${ARTS_ARRAY_DB_INCLUDE_DIR})
+
+    set_property(TARGET ${test_name} PROPERTY POSITION_INDEPENDENT_CODE OFF)
+    target_compile_options(${test_name} PRIVATE -fno-pie -fno-PIE)
+    target_link_options(${test_name} PRIVATE -no-pie -fno-pie -fno-PIE)
+
+    # Link with arts_array_db and runtime libraries
+    target_link_libraries(${test_name} PRIVATE arts_array_db Threads::Threads ${RT_LIBRARY} ${M_LIBRARY} ${ANL_LIBRARY})
+
+    # Use the appropriate ARTS library based on availability
+    if(TARGET arts_shared)
+        target_link_libraries(${test_name} PRIVATE arts_shared)
+    elseif(TARGET arts_static)
+        target_link_libraries(${test_name} PRIVATE arts_static)
+    else()
+        message(FATAL_ERROR "No ARTS library target found")
+    endif()
+endfunction()
+
+# Create array_db test executables
+foreach(test_program ${ARRAY_DB_TEST_PROGRAMS})
+    add_arts_array_db_test(${test_program})
 endforeach()
 
 # CUDA test programs (only built if CUDA is available)

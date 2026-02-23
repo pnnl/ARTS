@@ -52,7 +52,7 @@ void internal_init_block_distribution(arts_block_dist_t *dist, graph_sz_t n,
   dist->num_vertices = n;
   dist->num_edges = m;
   dist->num_blocks = num_blocks;
-  dist->block_sz = (num_blocks > 0) ? (n / num_blocks) : 0;
+  dist->block_sz = (num_blocks > 0) ? ((n + num_blocks - 1) / num_blocks) : 0;
 }
 
 arts_block_dist_t *init_block_distribution_block(graph_sz_t n, graph_sz_t m,
@@ -115,7 +115,9 @@ arts_block_dist_t *init_block_distribution_with_cmd_line_args(int argc,
   return NULL;
 }
 
-void free_distribution(arts_block_dist_t *dist) { arts_free(dist); }
+void free_distribution(arts_block_dist_t *dist) {
+  arts_free(dist);
+}
 
 unsigned int get_num_local_blocks(arts_block_dist_t *dist) {
   unsigned int num_local_parts = 0;

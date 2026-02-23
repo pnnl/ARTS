@@ -54,7 +54,7 @@ void fan_child(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // paramv[0] = index, paramv[1] = collector GUID.
   uint32_t index = (uint32_t)paramv[0];
   arts_guid_t collector = (arts_guid_t)paramv[1];
-  arts_signal_edt_value(collector, index, (uint64_t)(index + 1));
+  arts_signal_edt_value(collector, index, (uint64_t)index + 1);
 }
 
 /// Collector: receives FAN_WIDTH value-mode deps.
@@ -67,7 +67,7 @@ void collector(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   unsigned int sum = 0;
   for (uint32_t i = 0; i < depc && ok; i++) {
     uint64_t val = (uint64_t)depv[i].guid;
-    if (val != (uint64_t)(i + 1)) {
+    if (val != (uint64_t)i + 1) {
       ok = false;
     }
     sum += (unsigned int)val;
@@ -96,7 +96,7 @@ void db_fan_child(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   void *db_ptr = arts_db_create_with_guid(db_guid, sizeof(int), NULL);
   ((int *)db_ptr)[0] = (int)(index * 10);
   arts_db_release(db_guid);
-  arts_signal_edt(coll_guid, index, db_guid, ARTS_MODE_RO);
+  arts_signal_edt(coll_guid, index, db_guid, DB_MODE_RO);
 }
 
 void db_collector(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -125,8 +125,8 @@ void db_collector(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                   arts_edt_dep_t depv[]) {
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+              arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
@@ -150,9 +150,9 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Test 2: DB-mode fan-out/fan-in.
   arts_guid_t db_coll = arts_edt_create_with_epoch(
       db_collector, 0, NULL, FAN_WIDTH, epoch, &(arts_hint_t){.route = 0});
-  arts_guid_range_t *range = arts_guid_range_create(ARTS_DB, FAN_WIDTH, 0);
+  arts_guid_t range_start = arts_guid_reserve_range(ARTS_DB, FAN_WIDTH, 0);
   for (uint32_t i = 0; i < FAN_WIDTH; i++) {
-    arts_guid_t db_guid = arts_guid_range_get(range, i);
+    arts_guid_t db_guid = arts_guid_from_index(range_start, i);
     uint64_t params[3];
     params[0] = (uint64_t)i;
     params[1] = (uint64_t)db_coll;

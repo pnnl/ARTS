@@ -50,7 +50,9 @@
 #include "arts/system/arts_print.h"
 #include "arts/utils/malloc.h"
 
-vertex_t *get_row_ptr(csr_graph_t *csr) { return (vertex_t *)(csr + 1); }
+vertex_t *get_row_ptr(csr_graph_t *csr) {
+  return (vertex_t *)(csr + 1);
+}
 
 vertex_t *get_col_ptr(csr_graph_t *csr) {
   return get_row_ptr(csr) + csr->num_local_vertices + 1;
@@ -143,7 +145,9 @@ csr_graph_t *init_csr(partition_t part_index, graph_sz_t localv,
   return csr;
 }
 
-void free_csr(csr_graph_t *csr) { arts_db_destroy(csr->partGuid); }
+void free_csr(csr_graph_t *csr) {
+  arts_db_destroy(csr->partGuid);
+}
 
 unsigned int get_owner_csr(vertex_t v, const csr_graph_t *const part) {
   return (unsigned int)(v / part->block_sz);
@@ -297,7 +301,7 @@ int load_graph_no_weight(const char *file_path, arts_block_dist_t *dist,
   bool ignore_first = false;
   while (fgets(str, MAXCHAR, file) != NULL) {
     if (str[0] == '%') {
-      ignore_first = true; // for mmio
+      ignore_first = true;  // for mmio
       continue;
     }
     if (str[0] == '#') {
@@ -315,11 +319,11 @@ int load_graph_no_weight(const char *file_path, arts_block_dist_t *dist,
     char *token = strtok(str, " \t");
     int i = 0;
     while (token != NULL) {
-      if (i == 0) // Source
+      if (i == 0)  // Source
       {
         src = strtoll(token, NULL, 10);
         ++i;
-      } else if (i == 1) // Target
+      } else if (i == 1)  // Target
       {
         target = strtoll(token, NULL, 10);
         i = 0;

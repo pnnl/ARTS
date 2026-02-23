@@ -78,7 +78,7 @@ void check_renamed_guid(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   bool ok = (data != NULL && depv[0].guid == expected_new);
   if (ok) {
     for (unsigned int i = 0; i < DB_SIZE / sizeof(uint64_t); i++) {
-      if (data[i] != (i * 5)) {
+      if (data[i] != ((uint64_t)i * 5)) {
         ok = false;
         break;
       }
@@ -92,7 +92,7 @@ void check_renamed_guid(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
@@ -118,14 +118,14 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   uint64_t old_param = (uint64_t)db1;
   arts_guid_t e1 = arts_edt_create_with_epoch(
       check_renamed, 1, &old_param, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_signal_edt(e1, 0, new_guid1, ARTS_MODE_RO);
+  arts_signal_edt(e1, 0, new_guid1, DB_MODE_RO);
 
   // Test 2: arts_db_rename_with_guid.
   void *ptr2 = NULL;
   arts_guid_t db2 = arts_db_create(&ptr2, DB_SIZE, NULL);
   uint64_t *d2 = (uint64_t *)ptr2;
   for (unsigned int i = 0; i < DB_SIZE / sizeof(uint64_t); i++) {
-    d2[i] = i * 5;
+    d2[i] = (uint64_t)i * 5;
   }
   arts_db_release(db2);
 
@@ -137,7 +137,7 @@ void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t e2 =
       arts_edt_create_with_epoch(check_renamed_guid, 1, &target_param, 1, epoch,
                                  &(arts_hint_t){.route = 0});
-  arts_signal_edt(e2, 0, target, ARTS_MODE_RO);
+  arts_signal_edt(e2, 0, target, DB_MODE_RO);
 
   arts_wait_on_handle(epoch);
   arts_shutdown();

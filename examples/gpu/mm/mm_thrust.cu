@@ -50,7 +50,7 @@
 
 #include "mm_util.h"
 
-#define MATSIZE 1024
+#define MATSIZE  1024
 #define TILESIZE 32
 // #define VERIFY 1
 
@@ -70,8 +70,8 @@ double *a_matrix = NULL;
 double *b_matrix = NULL;
 double *c_matrix = NULL;
 
-arts_guid_range_t *a_tile_guids = NULL;
-arts_guid_range_t *b_tile_guids = NULL;
+arts_guid_t a_tile_guids = NULL_GUID;
+arts_guid_t b_tile_guids = NULL_GUID;
 
 void multiply_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                  arts_edt_dep_t depv[]) {
@@ -103,7 +103,7 @@ void multiply_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
               tile_size, &beta, c_tile_dev, tile_size);
 
   arts_put_in_db_from_gpu(c_tile_dev, c_tile_guid, 0, size, true);
-  arts_signal_edt(to_signal, k, c_tile_guid, ARTS_MODE_EW);
+  arts_signal_edt(to_signal, k, c_tile_guid, DB_MODE_EW);
 }
 
 void sum_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -135,7 +135,7 @@ void sum_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                           c_tile_guid, 0,
                           sizeof(double) * tile_size * tile_size, false);
   arts_signal_edt(done_guid, 3 + ((i * num_blocks) + j), c_tile_guid,
-                  ARTS_MODE_EW);
+                  DB_MODE_EW);
 }
 
 void finish_block_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -190,7 +190,7 @@ void finish_block_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
+extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
                               uint32_t depc, arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;
@@ -216,9 +216,9 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
   c_mat_guid = arts_guid_reserve(ARTS_DB, 0);
 
   a_tile_guids =
-      arts_guid_range_create(ARTS_DB_GPU, num_blocks * num_blocks, 0);
+      arts_guid_reserve_range(ARTS_DB_GPU, num_blocks * num_blocks, 0);
   b_tile_guids =
-      arts_guid_range_create(ARTS_DB_GPU, num_blocks * num_blocks, 0);
+      arts_guid_reserve_range(ARTS_DB_GPU, num_blocks * num_blocks, 0);
 
   a_matrix = (double *)arts_db_create_with_guid(
       a_mat_guid, (size_t)mat_size * mat_size * sizeof(double), NULL);
@@ -236,13 +236,13 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
   for (unsigned int i = 0; i < num_blocks; i++) {
     for (unsigned int j = 0; j < num_blocks; j++) {
       arts_guid_t a_tile_guid =
-          arts_guid_range_get(a_tile_guids, (i * num_blocks) + j);
+          arts_guid_from_index(a_tile_guids, (i * num_blocks) + j);
       double *a_tile = (double *)arts_db_create_with_guid(
           a_tile_guid, sizeof(double) * tile_size * tile_size, NULL);
       copy_block(i, j, tile_size, a_tile, mat_size, a_matrix, true);
 
       arts_guid_t b_tile_guid =
-          arts_guid_range_get(b_tile_guids, (i * num_blocks) + j);
+          arts_guid_from_index(b_tile_guids, (i * num_blocks) + j);
       double *b_tile = (double *)arts_db_create_with_guid(
           b_tile_guid, sizeof(double) * tile_size * tile_size, NULL);
       copy_block(i, j, tile_size, b_tile, mat_size, b_matrix, true);
@@ -262,20 +262,20 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
         arts_guid_t mul_guid = arts_edt_create_gpu_lib(multiply_mm, node_id, 4,
                                                        args, 2, grid, threads);
         arts_signal_edt(mul_guid, 0,
-                        arts_guid_range_get(a_tile_guids, (i * num_blocks) + k),
-                        ARTS_MODE_EW);
+                        arts_guid_from_index(a_tile_guids, (i * num_blocks) + k),
+                        DB_MODE_EW);
         arts_signal_edt(mul_guid, 1,
-                        arts_guid_range_get(b_tile_guids, (k * num_blocks) + j),
-                        ARTS_MODE_EW);
+                        arts_guid_from_index(b_tile_guids, (k * num_blocks) + j),
+                        DB_MODE_EW);
       }
     }
   }
 
   arts_edt_create_with_guid(finish_block_mm, done_guid, 0, NULL,
                             3 + (num_blocks * num_blocks));
-  arts_signal_edt(done_guid, 0, c_mat_guid, ARTS_MODE_EW);
-  arts_signal_edt(done_guid, 1, a_mat_guid, ARTS_MODE_EW);
-  arts_signal_edt(done_guid, 2, b_mat_guid, ARTS_MODE_EW);
+  arts_signal_edt(done_guid, 0, c_mat_guid, DB_MODE_EW);
+  arts_signal_edt(done_guid, 1, a_mat_guid, DB_MODE_EW);
+  arts_signal_edt(done_guid, 2, b_mat_guid, DB_MODE_EW);
   start = arts_get_time_stamp();
 }
 

@@ -100,7 +100,7 @@ extern "C" void arts_init_per_gpu(unsigned int node_id, int dev_id,
   (void)argv;
 }
 
-extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
+extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
                               uint32_t depc, arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
@@ -138,7 +138,7 @@ extern "C" void arts_main_edt(uint32_t paramc, const uint64_t *paramv,
   arts_guid_t gpu_edt =
       arts_edt_create_gpu_direct(lc_write_kernel, node_id, 0, 0, NULL, 1, grid,
                                  threads, done_guid, 1, NULL_GUID, true);
-  arts_signal_edt(gpu_edt, 0, lc_guid, ARTS_MODE_EW);
+  arts_signal_edt(gpu_edt, 0, lc_guid, DB_MODE_EW);
 }
 
 extern "C" void arts_fini_per_gpu(unsigned int node_id, int dev_id,

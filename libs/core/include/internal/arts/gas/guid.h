@@ -45,35 +45,69 @@ extern "C" {
 
 /**
  * @file guid.h
- * @brief GUID bitfield layout and low-level GUID manipulation functions.
+ * @brief GUID layout and low-level GUID manipulation functions.
  *
  * A GUID is a 64-bit value composed of three packed fields:
  *
- * | Bits 63–24 | Bits 23–8  | Bits 7–0   |
+ * | Bits 63–56 | Bits 55–40 | Bits 39–0  |
  * |:----------:|:----------:|:----------:|
- * | key  (40)  | rank (16)  | type (8)   |
+ * | type  (8)  | rank (16)  | key  (40)  |
  *
- * - **type** — @ref arts_type_t tag identifying the object kind or DB mode.
+ * - **type** — @ref arts_type_t tag identifying the object kind.
  * - **rank** — Node rank that owns the object (up to 65 535 nodes).
  * - **key**  — Node-local key (up to ~1 trillion unique objects per node).
+ *
+ * Key occupies the least-significant bits so that GUID-range arithmetic
+ * reduces to plain integer addition: @c start_guid+i yields the i-th GUID.
+ *
+ * All field access uses portable shift/mask macros — no C bitfield structs,
+ * no endianness dependence.
  *
  * @note This is an internal header.  User code should include @c arts.h.
  */
 
-/**
- * @brief Overlay union for inspecting / constructing GUID bitfields.
- *
- * Cast an @c arts_guid_t to this union to access its @c type, @c rank,
- * and @c key fields directly.
- */
-typedef union {
-  intptr_t bits : 64; /**< Raw 64-bit GUID value. */
-  struct __attribute__((packed)) {
-    uint8_t type : 8;   /**< Object type (@ref arts_type_t). */
-    uint16_t rank : 16; /**< Owning node rank. */
-    uint64_t key : 40;  /**< Node-local unique key. */
-  } fields;             /**< Named bitfield access. */
-} arts_guid_bits_t;
+/* ── GUID field dimensions ─────────────────────────────────────────────── */
+
+#define ARTS_GUID_KEY_BITS  40
+#define ARTS_GUID_RANK_BITS 16
+#define ARTS_GUID_TYPE_BITS 8
+
+/* ── Field positions (bit offset from LSB) ─────────────────────────────── */
+
+#define ARTS_GUID_KEY_SHIFT  0
+#define ARTS_GUID_RANK_SHIFT ARTS_GUID_KEY_BITS /* 40 */
+#define ARTS_GUID_TYPE_SHIFT                       \
+  (ARTS_GUID_KEY_BITS + ARTS_GUID_RANK_BITS) /* 56 \
+                                              */
+
+/* ── Per-field masks (in field-local position) ─────────────────────────── */
+
+#define ARTS_GUID_KEY_MASK  (((uint64_t)1 << ARTS_GUID_KEY_BITS) - 1)
+#define ARTS_GUID_RANK_MASK (((uint64_t)1 << ARTS_GUID_RANK_BITS) - 1)
+#define ARTS_GUID_TYPE_MASK (((uint64_t)1 << ARTS_GUID_TYPE_BITS) - 1)
+
+/* ── Extraction macros ─────────────────────────────────────────────────── */
+
+/** Extract the 40-bit key from a GUID (bits 39–0). */
+#define ARTS_GUID_GET_KEY(g) ((uint64_t)(g) & ARTS_GUID_KEY_MASK)
+
+/** Extract the 16-bit rank from a GUID (bits 55–40). */
+#define ARTS_GUID_GET_RANK(g) \
+  (((uint64_t)(g) >> ARTS_GUID_RANK_SHIFT) & ARTS_GUID_RANK_MASK)
+
+/** Extract the 8-bit type tag from a GUID (bits 63–56). */
+#define ARTS_GUID_GET_TYPE(g) \
+  (((uint64_t)(g) >> ARTS_GUID_TYPE_SHIFT) & ARTS_GUID_TYPE_MASK)
+
+/* ── Construction macro ────────────────────────────────────────────────── */
+
+/** Build a GUID from its three components. */
+#define ARTS_GUID_MAKE(type, rank, key)                    \
+  ((arts_guid_t)(((uint64_t)(key) & ARTS_GUID_KEY_MASK) |  \
+                 (((uint64_t)(rank) & ARTS_GUID_RANK_MASK) \
+                  << ARTS_GUID_RANK_SHIFT) |               \
+                 (((uint64_t)(type) & ARTS_GUID_TYPE_MASK) \
+                  << ARTS_GUID_TYPE_SHIFT)))
 
 /**
  * @brief Create a GUID for a given node rank and type.
@@ -112,30 +146,19 @@ uint64_t arts_guid_get_key(arts_guid_t guid);
 uint64_t arts_guid_hash_key(arts_guid_t guid);
 
 /**
- * @brief Allocate a range of GUIDs with a fixed hash-table size.
+ * @brief Reserve a contiguous range of hash-aligned GUIDs (internal use).
  *
- * Similar to arts_guid_range_create() but pre-allocates routing-table
- * entries sized to @p hash_size.
+ * Over-allocates by @p hash_size to find a hash-aligned start GUID.
  *
  * @param type      Type tag for every GUID in the range.
  * @param size      Number of GUIDs to allocate.
  * @param route     Target node rank.
- * @param hash_size Routing-table bucket count.
- * @return Pointer to a new GUID range, or @c NULL on failure.
+ * @param hash_size Hash-table bucket count for alignment.
+ * @return The hash-aligned start GUID, or @c NULL_GUID on failure.
  */
-/**
- * @brief Initialize a caller-allocated GUID range (internal use).
- *
- * Like arts_guid_range_create() but writes into a caller-provided struct
- * instead of heap-allocating.
- */
-void arts_guid_range_init(arts_guid_range_t *range, arts_type_t type,
-                          unsigned int size, unsigned int route);
-
-arts_guid_range_t *arts_guid_range_create_hash(arts_type_t type,
-                                               unsigned int size,
-                                               unsigned int route,
-                                               unsigned int hash_size);
+arts_guid_t arts_guid_reserve_range_hash(arts_type_t type, unsigned int size,
+                                         unsigned int route,
+                                         unsigned int hash_size);
 
 #ifdef __cplusplus
 }

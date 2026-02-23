@@ -39,6 +39,7 @@
 
 #include "arts/gas/route_table.h"
 
+#include <stddef.h>
 #include <stdlib.h>
 
 #include "arts.h"
@@ -53,10 +54,12 @@
 #include "arts/utils/malloc.h"
 
 #define INIT_INVALIDATE_SIZE 128
-#define GUID_LOCK_SIZE 1024
+#define GUID_LOCK_SIZE       1024
 volatile unsigned int guid_lock[GUID_LOCK_SIZE] = {0};
 
-void set_item(arts_route_item_t *item, void *data) { item->data = data; }
+void set_item(arts_route_item_t *item, void *data) {
+  item->data = data;
+}
 
 void free_item(arts_route_item_t *item) {
   // arts_type_t type = arts_guid_get_type(item->key);
@@ -224,7 +227,7 @@ bool inc_item(arts_route_item_t *item, unsigned int count, arts_guid_t key,
     uint64_t local = item->lock;
     if (!(local & DELETE_ITEM) && CHECK_MAX_ITEM(local) && item->key == key) {
       if (local == arts_atomic_cswap_u64(&item->lock, local, local + count)) {
-        if (item->key != key) // This is for an ABA problem
+        if (item->key != key)  // This is for an ABA problem
         {
           ARTS_DEBUG("The key changed on us from %lu -> %lu", key, item->key);
           dec_item(route_table, item);
@@ -316,8 +319,7 @@ extern uint64_t min_global_guid_thread;
 extern uint64_t max_global_guid_thread;
 
 static inline arts_route_table_t *arts_get_route_table(arts_guid_t guid) {
-  arts_guid_bits_t raw = (arts_guid_bits_t){.bits = guid};
-  uint64_t key = raw.fields.key;
+  uint64_t key = ARTS_GUID_GET_KEY(guid);
   if (keys_per_thread) {
     uint64_t global_thread = (key / keys_per_thread);
     if (min_global_guid_thread <= global_thread &&
@@ -343,9 +345,8 @@ arts_route_table_t *arts_new_route_table(unsigned int route_table_size,
   return route_table;
 }
 
-arts_route_item_t *
-arts_route_table_search_for_key(arts_route_table_t *route_table,
-                                arts_guid_t key, item_state_t state) {
+arts_route_item_t *arts_route_table_search_for_key(
+    arts_route_table_t *route_table, arts_guid_t key, item_state_t state) {
   arts_route_table_t *current = route_table;
   arts_route_table_t *next;
   uint64_t key_val;
@@ -367,9 +368,8 @@ arts_route_table_search_for_key(arts_route_table_t *route_table,
   return NULL;
 }
 
-arts_route_item_t *
-arts_route_table_search_for_empty(arts_route_table_t *route_table,
-                                  arts_guid_t key, bool mark_used) {
+arts_route_item_t *arts_route_table_search_for_empty(
+    arts_route_table_t *route_table, arts_guid_t key, bool mark_used) {
   arts_route_table_t *current = route_table;
   arts_route_table_t *next;
   uint64_t key_val;
@@ -500,10 +500,9 @@ arts_route_item_t *internal_route_table_add_item_race(
   return found;
 }
 
-arts_route_item_t *
-internal_route_table_add_deleted_item_race(arts_route_table_t *route_table,
-                                           void *item, arts_guid_t key,
-                                           unsigned int rank) {
+arts_route_item_t *internal_route_table_add_deleted_item_race(
+    arts_route_table_t *route_table, void *item, arts_guid_t key,
+    unsigned int rank) {
   unsigned int pos = (unsigned int)(((uint64_t)key) % (uint64_t)GUID_LOCK_SIZE);
   arts_route_item_t *found = NULL;
   while (!found) {
@@ -808,7 +807,7 @@ void **arts_route_table_reserve(arts_guid_t key, bool *dec,
         break;
       }
       // If we were not keep trying...
-    } else { // we were successful in reserving
+    } else {  // we were successful in reserving
       break;
     }
   }
@@ -821,7 +820,7 @@ void **arts_route_table_reserve(arts_guid_t key, bool *dec,
 arts_route_item_t *get_item_from_data(arts_guid_t key, void *data) {
   if (data) {
     arts_route_item_t *item =
-        (arts_route_item_t *)((char *)data - sizeof(arts_guid_t));
+        (arts_route_item_t *)((char *)data - offsetof(arts_route_item_t, data));
     if (key == item->key) {
       return item;
     }
@@ -883,7 +882,6 @@ uint64_t arts_clean_up_route_table(arts_route_table_t *route_table) {
 
   arts_route_item_t *item = arts_route_table_iterate(&iter);
   while (item) {
-    // arts_print_item(item);
     arts_type_t type = arts_guid_get_type(item->key);
     if (type > ARTS_BUFFER && type < ARTS_LAST_TYPE) {
       struct arts_db_s *db = (struct arts_db_s *)item->data;
@@ -892,30 +890,35 @@ uint64_t arts_clean_up_route_table(arts_route_table_t *route_table) {
           free_size += db->header.size;
           ARTS_DEBUG("Freeing DB[Guid:%lu] [Size:%lu]", item->key,
                      db->header.size);
-          if (db->db_list && db->db_list != (void *)1) {
-            arts_delete_db_list((struct arts_db_list_s *)db->db_list);
-          }
           arts_db_free(db);
-          free_item(item);
         }
       }
+      free_item(item);
     } else if (type == ARTS_EVENT) {
       struct arts_event_s *event = (struct arts_event_s *)item->data;
       if (event) {
         arts_event_free(event);
-        free_item(item);
       }
+      free_item(item);
     } else if (type == ARTS_PERSISTENT_EVENT) {
       struct arts_persistent_event_s *event =
           (struct arts_persistent_event_s *)item->data;
       if (event) {
         arts_persistent_event_free_all(event);
-        free_item(item);
       }
+      free_item(item);
+    } else if (type == ARTS_BUFFER) {
+      arts_buffer_t *buf = (arts_buffer_t *)item->data;
+      if (buf) {
+        arts_free(buf);
+      }
+      free_item(item);
     } else if (type != ARTS_NULL) {
-      /* EDT, EPOCH, CALLBACK, BUFFER — clean up OOO list only.
-       * Data for these types is managed elsewhere (e.g., EDTs freed after
-       * execution, epochs freed by termination detection). */
+      /* EDT, EPOCH — data is managed by execution path or epoch pools.
+       * EDT data is freed by arts_edt_delete after execution.  Epoch pool
+       * entries share ARTS_EDT GUIDs but are bulk-allocated and freed by
+       * arts_cleanup_epoch_pools — cannot safely distinguish from individual
+       * EDTs, so only clean OOO list via free_item. */
       free_item(item);
     }
     item = arts_route_table_iterate(&iter);
@@ -928,6 +931,13 @@ void arts_delete_route_table(arts_route_table_t *route_table) {
     return;
   }
   arts_delete_route_table(route_table->next);
+  /* Safety sweep: clean up any OOO lists that arts_clean_up_route_table
+   * missed (e.g., entries that were fully deleted and had lock reset to 0,
+   * or entries in unexpected states). */
+  for (uint64_t i = 0; i < (uint64_t)route_table->size * COLLISION_RESOLVES;
+       i++) {
+    arts_out_of_order_list_delete(&route_table->data[i].ooList);
+  }
   arts_free(route_table->data);
   arts_free(route_table);
 }
@@ -966,7 +976,8 @@ bool arts_route_table_invalidate_item(arts_guid_t key) {
   return internal_route_table_remove_item(route_table, key);
 }
 
-void arts_route_table_add_rank_duplicate(arts_guid_t key, unsigned int rank) {}
+void arts_route_table_add_rank_duplicate(arts_guid_t key, unsigned int rank) {
+}
 
 bool arts_route_table_get_rank_duplicates(
     arts_guid_t key, unsigned int rank,
@@ -981,6 +992,9 @@ bool arts_route_table_get_rank_duplicates(
       location->rank = rank;
     }
     struct arts_db_s *db = (struct arts_db_s *)location->data;
+    if (!db->db_list) {
+      return false;  // LOCAL DBs have no frontier
+    }
     return arts_close_frontier((struct arts_db_list_s *)db->db_list, iter);
   }
   return false;

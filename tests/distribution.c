@@ -38,13 +38,15 @@
 ******************************************************************************/
 #include <assert.h>
 
+#include "arts.h"
 #include "arts/block_distribution.h"
 
-int main(int argc, char **argv) {
-
-  (void)argc;
-
-  (void)argv;
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                   arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
 
 #ifdef NDEBUG
   arts_printf("[WARN] asserts are disabled. Verification will not run.\n");
@@ -75,4 +77,12 @@ int main(int argc, char **argv) {
   assert(partition_start_distr(2, dist) == 6);
   assert(partition_end_distr(2, dist) == 7);
   free_distribution(dist);
+
+  arts_printf("distribution: ALL PASSED\n");
+  arts_shutdown();
+}
+
+int main(int argc, char **argv) {
+  arts_rt(argc, argv);
+  return 0;
 }

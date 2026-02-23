@@ -42,6 +42,7 @@
 ///        pre-reserved GUID).
 
 #include "arts.h"
+#include "arts/array_db.h"
 
 void check_array_with_guid(uint32_t paramc, const uint64_t *paramv,
                            uint32_t depc, arts_edt_dep_t depv[]) {
@@ -76,7 +77,7 @@ void check_get_from_array(uint32_t paramc, const uint64_t *paramv,
   arts_shutdown();
 }
 
-void arts_main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;

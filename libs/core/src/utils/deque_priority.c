@@ -123,8 +123,8 @@ static inline void put_circular_array(struct circular_array_s *array,
   array->segment[i % array->size] = object;
 }
 
-static inline struct circular_array_s *
-grow_circular_array(struct circular_array_s *array, uint64_t b, uint64_t t) {
+static inline struct circular_array_s *grow_circular_array(
+    struct circular_array_s *array, uint64_t b, uint64_t t) {
   struct circular_array_s *a = new_circular_array(array->size * 2);
   array->next = a;
   uint64_t i;

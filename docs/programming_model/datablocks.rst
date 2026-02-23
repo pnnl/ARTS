@@ -53,9 +53,9 @@ not at creation:
 
    * - Mode
      - Semantics
-   * - ``ARTS_MODE_RO``
+   * - ``DB_MODE_RO``
      - Read-Only.  Shared readers, no writeback.
-   * - ``ARTS_MODE_EW``
+   * - ``DB_MODE_EW``
      - Exclusive Write.  Single writer with frontier progression
        and latch decrement on release.
 
@@ -99,7 +99,7 @@ The simplest way to read DB data is through an EDT dependency:
    }
 
    /* Record a read dependency and signal the EDT */
-   arts_record_dep(db_guid, edt_guid, 0, ARTS_MODE_RO);
+   arts_record_dep(db_guid, edt_guid, 0, DB_MODE_RO);
 
 For explicit reads outside an EDT dependency:
 
