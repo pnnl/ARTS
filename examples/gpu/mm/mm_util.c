@@ -67,7 +67,7 @@ void init_matrix(unsigned int row_size, double *mat, bool identity, bool zero) {
         }
       } else {
         mat[(i * row_size) + j] =
-            rand() % 10;  // NOLINT(cert-msc30-c,cert-msc50-cpp)
+            rand() % 10; // NOLINT(cert-msc30-c,cert-msc50-cpp)
       }
     }
   }

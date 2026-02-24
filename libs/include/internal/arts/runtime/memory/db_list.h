@@ -102,8 +102,8 @@ void arts_delete_db_list(struct arts_db_list_s *db_list);
 unsigned int arts_current_frontier_size(struct arts_db_list_s *db_list);
 bool arts_db_frontier_iter_init(struct arts_db_frontier_iterator_s *iter,
                                 struct arts_db_frontier_s *frontier);
-unsigned int arts_db_frontier_iter_size(
-    struct arts_db_frontier_iterator_s *iter);
+unsigned int
+arts_db_frontier_iter_size(struct arts_db_frontier_iterator_s *iter);
 bool arts_db_frontier_iter_next(struct arts_db_frontier_iterator_s *iter,
                                 unsigned int *next);
 bool arts_db_frontier_iter_has_next(struct arts_db_frontier_iterator_s *iter);

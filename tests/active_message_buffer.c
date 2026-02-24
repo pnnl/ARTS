@@ -102,7 +102,7 @@ void shut_down_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                   arts_edt_dep_t depv[]) {
+              arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;
   (void)depv;
@@ -133,8 +133,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                             arts_get_total_nodes());
 
   if (node_id == arts_get_total_nodes() - 1) {
-    arts_db_create_with_guid(db_dest_guid, sizeof(unsigned int) * num_elements, ARTS_DB_LOCAL, NULL,
-                             NULL);
+    arts_db_create_with_guid(db_dest_guid, sizeof(unsigned int) * num_elements,
+                             ARTS_DB_LOCAL, NULL, NULL);
   }
 }
 

@@ -46,23 +46,23 @@ extern "C" {
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "arts/defs.h"
 #include "arts/counter/Preamble.h"
+#include "arts/defs.h"
 #include "arts/utils/array_list.h"
 
 // Hash table size (must be power of 2 for fast modulo)
 #define ARTS_OBJECT_TABLE_SIZE 1024
 
 // Composite enable flags (auto-derived from individual Preamble ENABLE_* flags)
-#define ARTS_OBJECT_EDT_TABLE_ENABLED \
+#define ARTS_OBJECT_EDT_TABLE_ENABLED                                          \
   (ENABLE_OBJ_NUM_EDT || ENABLE_OBJ_TIME_EDT_EXEC || ENABLE_OBJ_TIME_EDT_STALL)
-#define ARTS_OBJECT_DB_TABLE_ENABLED                 \
-  (ENABLE_OBJ_NUM_DB || ENABLE_OBJ_BYTES_DB_LOCAL || \
+#define ARTS_OBJECT_DB_TABLE_ENABLED                                           \
+  (ENABLE_OBJ_NUM_DB || ENABLE_OBJ_BYTES_DB_LOCAL ||                           \
    ENABLE_OBJ_BYTES_DB_REMOTE || ENABLE_OBJ_NUM_DB_CACHE_MISS)
 #define ARTS_OBJECT_EDT_TRACE_ENABLED ENABLE_OBJ_TRACE_EDT
-#define ARTS_OBJECT_DB_TRACE_ENABLED  ENABLE_OBJ_TRACE_DB
-#define ARTS_OBJECT_ANY_ENABLED                                     \
-  (ARTS_OBJECT_EDT_TABLE_ENABLED || ARTS_OBJECT_DB_TABLE_ENABLED || \
+#define ARTS_OBJECT_DB_TRACE_ENABLED ENABLE_OBJ_TRACE_DB
+#define ARTS_OBJECT_ANY_ENABLED                                                \
+  (ARTS_OBJECT_EDT_TABLE_ENABLED || ARTS_OBJECT_DB_TABLE_ENABLED ||            \
    ARTS_OBJECT_EDT_TRACE_ENABLED || ARTS_OBJECT_DB_TRACE_ENABLED)
 
 // Per-object EDT hash entry
@@ -108,7 +108,7 @@ typedef struct {
   uint64_t timestamp_ns;
   uint64_t bytes_accessed;
   uint32_t node;
-  uint8_t access_type;  // 0=READ, 1=WRITE
+  uint8_t access_type; // 0=READ, 1=WRITE
 } arts_object_db_trace_t;
 
 // Thread-local storage (declared here, defined in object_counter.c)

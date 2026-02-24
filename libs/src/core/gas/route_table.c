@@ -979,7 +979,7 @@ bool arts_route_table_get_rank_duplicates(
   arts_route_item_t *location =
       arts_route_table_search_for_key(route_table, key, AVAILABLE_KEY);
   if (location) {
-    if (rank != (unsigned int)-1) {
+    if (rank != ARTS_HINT_CURRENT_NODE) {
       // Blocks until the OO is done firing
       arts_out_of_order_list_reset(&location->ooList);
       location->rank = rank;

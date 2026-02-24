@@ -68,9 +68,9 @@ ARTS_THREAD_LOCAL arts_array_list_t *arts_object_tls_db_traces = NULL;
 
 // FNV-inspired hash for distributing arts_id values
 static inline uint32_t arts_object_hash(uint64_t arts_id) {
-  uint64_t hash = 14695981039346656037ULL;  // FNV offset basis
+  uint64_t hash = 14695981039346656037ULL; // FNV offset basis
   hash ^= arts_id;
-  hash *= 1099511628211ULL;  // FNV prime
+  hash *= 1099511628211ULL; // FNV prime
   return (uint32_t)(hash & (ARTS_OBJECT_TABLE_SIZE - 1));
 }
 
@@ -83,15 +83,16 @@ static inline uint64_t arts_object_get_time_ns(void) {
 
 // Find or create EDT slot using linear probing
 #if ARTS_OBJECT_EDT_TABLE_ENABLED
-static inline arts_object_edt_entry_t *arts_object_find_edt_slot(
-    arts_object_edt_entry_t *table, uint64_t arts_id, uint64_t *collisions) {
+static inline arts_object_edt_entry_t *
+arts_object_find_edt_slot(arts_object_edt_entry_t *table, uint64_t arts_id,
+                          uint64_t *collisions) {
   uint32_t idx = arts_object_hash(arts_id);
   uint32_t start_idx = idx;
 
   while (table[idx].valid && table[idx].arts_id != arts_id) {
     idx = (idx + 1) & (ARTS_OBJECT_TABLE_SIZE - 1);
     if (idx == start_idx) {
-      return NULL;  // Table full
+      return NULL; // Table full
     }
     (*collisions)++;
   }
@@ -108,15 +109,16 @@ static inline arts_object_edt_entry_t *arts_object_find_edt_slot(
 
 // Find or create DB slot using linear probing
 #if ARTS_OBJECT_DB_TABLE_ENABLED
-static inline arts_object_db_entry_t *arts_object_find_db_slot(
-    arts_object_db_entry_t *table, uint64_t arts_id, uint64_t *collisions) {
+static inline arts_object_db_entry_t *
+arts_object_find_db_slot(arts_object_db_entry_t *table, uint64_t arts_id,
+                         uint64_t *collisions) {
   uint32_t idx = arts_object_hash(arts_id);
   uint32_t start_idx = idx;
 
   while (table[idx].valid && table[idx].arts_id != arts_id) {
     idx = (idx + 1) & (ARTS_OBJECT_TABLE_SIZE - 1);
     if (idx == start_idx) {
-      return NULL;  // Table full
+      return NULL; // Table full
     }
     (*collisions)++;
   }
@@ -310,7 +312,7 @@ void arts_object_save_thread_data(unsigned int thread_id) {
 #endif
 #if ARTS_OBJECT_EDT_TRACE_ENABLED
   arts_node_info.object_edt_traces[thread_id] = arts_object_tls_edt_traces;
-  arts_object_tls_edt_traces = NULL;  // Transfer ownership
+  arts_object_tls_edt_traces = NULL; // Transfer ownership
 #endif
 #if ARTS_OBJECT_DB_TRACE_ENABLED
   arts_node_info.object_db_traces[thread_id] = arts_object_tls_db_traces;
@@ -520,7 +522,7 @@ void arts_object_write_node(const char *output_folder, unsigned int node_id,
   arts_json_writer_finish(&writer);
   (void)fputc('\n', fp);
   (void)fclose(fp);
-#endif  // ARTS_OBJECT_ANY_ENABLED
+#endif // ARTS_OBJECT_ANY_ENABLED
 }
 
 // ============================================================================

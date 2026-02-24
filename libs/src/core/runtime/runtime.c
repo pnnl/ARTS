@@ -72,7 +72,12 @@
 extern unsigned int num_numa_domains;
 
 ARTS_WEAK void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                        arts_edt_dep_t depv[]) {}
+                        arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
+}
 
 struct arts_runtime_shared_s arts_node_info;
 ARTS_THREAD_LOCAL struct arts_runtime_private_s arts_thread_info;
@@ -306,7 +311,7 @@ void arts_thread_zero_node_start(int argc, char **argv) {
   arts_atomic_sub(&arts_node_info.ready_to_parallel_start, 1U);
   while (arts_node_info.ready_to_parallel_start) {
   }
-  if (main_edt && !arts_global_rank_id) {
+  if (!arts_global_rank_id) {
     ARTS_INFO("Thread 0: scheduling main_edt on rank 0 (argc=%d)", argc);
     uint64_t main_args[2] = {(uint64_t)argc, (uint64_t)argv};
     arts_hint_t main_hint = {0, 0};

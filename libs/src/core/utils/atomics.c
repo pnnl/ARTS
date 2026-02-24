@@ -133,7 +133,7 @@ uint64_t arts_atomic_fetch_or_u64(volatile uint64_t *destination,
 }
 
 uint64_t arts_atomic_fetch_x_or_u64(volatile uint64_t *destination,
-                                    uint64_t add_val)  // @awmm
+                                    uint64_t add_val) // @awmm
 {
   return __sync_fetch_and_xor(destination, add_val);
 }

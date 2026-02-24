@@ -45,8 +45,8 @@ extern "C" {
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "arts/defs.h"
 #include "arts/counter/Preamble.h"
+#include "arts/defs.h"
 
 // X-macro: Define all counter types in one place.
 // Format: X(counterName)

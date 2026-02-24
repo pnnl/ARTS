@@ -68,21 +68,21 @@ extern "C" {
 
 /* ── GUID field dimensions ─────────────────────────────────────────────── */
 
-#define ARTS_GUID_KEY_BITS  40
+#define ARTS_GUID_KEY_BITS 40
 #define ARTS_GUID_RANK_BITS 16
 #define ARTS_GUID_TYPE_BITS 8
 
 /* ── Field positions (bit offset from LSB) ─────────────────────────────── */
 
-#define ARTS_GUID_KEY_SHIFT  0
+#define ARTS_GUID_KEY_SHIFT 0
 #define ARTS_GUID_RANK_SHIFT ARTS_GUID_KEY_BITS /* 40 */
-#define ARTS_GUID_TYPE_SHIFT                       \
-  (ARTS_GUID_KEY_BITS + ARTS_GUID_RANK_BITS) /* 56 \
+#define ARTS_GUID_TYPE_SHIFT                                                   \
+  (ARTS_GUID_KEY_BITS + ARTS_GUID_RANK_BITS) /* 56                             \
                                               */
 
 /* ── Per-field masks (in field-local position) ─────────────────────────── */
 
-#define ARTS_GUID_KEY_MASK  (((uint64_t)1 << ARTS_GUID_KEY_BITS) - 1)
+#define ARTS_GUID_KEY_MASK (((uint64_t)1 << ARTS_GUID_KEY_BITS) - 1)
 #define ARTS_GUID_RANK_MASK (((uint64_t)1 << ARTS_GUID_RANK_BITS) - 1)
 #define ARTS_GUID_TYPE_MASK (((uint64_t)1 << ARTS_GUID_TYPE_BITS) - 1)
 
@@ -92,21 +92,21 @@ extern "C" {
 #define ARTS_GUID_GET_KEY(g) ((uint64_t)(g) & ARTS_GUID_KEY_MASK)
 
 /** Extract the 16-bit rank from a GUID (bits 55–40). */
-#define ARTS_GUID_GET_RANK(g) \
+#define ARTS_GUID_GET_RANK(g)                                                  \
   (((uint64_t)(g) >> ARTS_GUID_RANK_SHIFT) & ARTS_GUID_RANK_MASK)
 
 /** Extract the 8-bit type tag from a GUID (bits 63–56). */
-#define ARTS_GUID_GET_TYPE(g) \
+#define ARTS_GUID_GET_TYPE(g)                                                  \
   (((uint64_t)(g) >> ARTS_GUID_TYPE_SHIFT) & ARTS_GUID_TYPE_MASK)
 
 /* ── Construction macro ────────────────────────────────────────────────── */
 
 /** Build a GUID from its three components. */
-#define ARTS_GUID_MAKE(type, rank, key)                    \
-  ((arts_guid_t)(((uint64_t)(key) & ARTS_GUID_KEY_MASK) |  \
-                 (((uint64_t)(rank) & ARTS_GUID_RANK_MASK) \
-                  << ARTS_GUID_RANK_SHIFT) |               \
-                 (((uint64_t)(type) & ARTS_GUID_TYPE_MASK) \
+#define ARTS_GUID_MAKE(type, rank, key)                                        \
+  ((arts_guid_t)(((uint64_t)(key) & ARTS_GUID_KEY_MASK) |                      \
+                 (((uint64_t)(rank) & ARTS_GUID_RANK_MASK)                     \
+                  << ARTS_GUID_RANK_SHIFT) |                                   \
+                 (((uint64_t)(type) & ARTS_GUID_TYPE_MASK)                     \
                   << ARTS_GUID_TYPE_SHIFT)))
 
 /**

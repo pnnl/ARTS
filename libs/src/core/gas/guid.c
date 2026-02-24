@@ -49,9 +49,7 @@ uint64_t global_guid_on = 0;
 uint64_t min_global_guid_thread = 0;
 uint64_t max_global_guid_thread = 0;
 
-void set_global_guid_on() {
-  global_guid_on = ((uint64_t)1) << 40;
-}
+void set_global_guid_on() { global_guid_on = ((uint64_t)1) << 40; }
 
 uint64_t *arts_guid_generator_get_key(unsigned int route, unsigned int type) {
   return &arts_node_info.keys[arts_thread_info.group_pos]
@@ -136,9 +134,7 @@ bool arts_guid_is_local(arts_guid_t guid) {
   return (arts_global_rank_id == arts_guid_get_rank(guid));
 }
 
-uint64_t arts_guid_get_key(arts_guid_t guid) {
-  return ARTS_GUID_GET_KEY(guid);
-}
+uint64_t arts_guid_get_key(arts_guid_t guid) { return ARTS_GUID_GET_KEY(guid); }
 
 arts_guid_t arts_guid_reserve(arts_type_t type, unsigned int route) {
   arts_guid_t guid = NULL_GUID;
@@ -217,9 +213,7 @@ int arts_guid_index_from(arts_guid_t range_guid, arts_guid_t guid) {
   return (int)(check_key - start_key);
 }
 
-void arts_guid_round_robin_destroy(arts_guid_t *guids) {
-  arts_free(guids);
-}
+void arts_guid_round_robin_destroy(arts_guid_t *guids) { arts_free(guids); }
 
 uint64_t arts_guid_hash_key(arts_guid_t guid) {
   uint64_t key = arts_guid_get_key(guid);

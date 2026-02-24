@@ -46,8 +46,8 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "arts/system/print.h"
 #include "arts/system/config.h"
+#include "arts/system/print.h"
 
 static int arts_shell_quote(const char *input, char *output,
                             size_t output_size) {

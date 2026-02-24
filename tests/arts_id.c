@@ -53,10 +53,10 @@
 #include <string.h>
 
 /// Test configuration
-#define NUM_TEST_EDTS     10
-#define NUM_TEST_DBS      5
+#define NUM_TEST_EDTS 10
+#define NUM_TEST_DBS 5
 #define TEST_ARTS_ID_BASE 1000
-#define TEST_MATRIX_SIZE  1024
+#define TEST_MATRIX_SIZE 1024
 
 /// Global validation flag
 volatile unsigned int *test_result = NULL;
@@ -80,7 +80,7 @@ void test_edt_worker(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Simulate some work (matrix computation)
   if (depc > 0 && depv[0].ptr != NULL) {
     double *matrix = (double *)depv[0].ptr;
-    unsigned int size = 32;  // Small test matrix
+    unsigned int size = 32; // Small test matrix
 
     // Simple matrix operation to simulate work
     for (unsigned int i = 0; i < size; i++) {
@@ -223,7 +223,7 @@ void validator(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                   arts_edt_dep_t depv[]) {
+              arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
@@ -258,10 +258,10 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   for (unsigned int i = 0; i < NUM_TEST_DBS; i++) {
     uint64_t arts_id =
-        TEST_ARTS_ID_BASE + 100 + i;  // DB arts_id: 1100, 1101, ...
+        TEST_ARTS_ID_BASE + 100 + i; // DB arts_id: 1100, 1101, ...
 
-    db_guids[i] =
-        arts_db_create(&db_ptrs[i], matrix_size, ARTS_DB_DEFAULT, &(arts_hint_t){.id = arts_id});
+    db_guids[i] = arts_db_create(&db_ptrs[i], matrix_size, ARTS_DB_DEFAULT,
+                                 &(arts_hint_t){.id = arts_id});
 
     // Initialize matrix to zeros
     double *matrix = (double *)db_ptrs[i];
@@ -289,7 +289,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       (unsigned int *)malloc(NUM_TEST_EDTS * sizeof(unsigned int));
 
   for (unsigned int i = 0; i < NUM_TEST_EDTS; i++) {
-    uint64_t arts_id = TEST_ARTS_ID_BASE + i;  // EDT arts_id: 1000, 1001, ...
+    uint64_t arts_id = TEST_ARTS_ID_BASE + i; // EDT arts_id: 1000, 1001, ...
     uint64_t param = arts_id;
 
     // Distribute EDTs across nodes (round-robin)
@@ -320,14 +320,14 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   for (unsigned int i = 0; i < num_readers; i++) {
     uint64_t arts_id =
-        TEST_ARTS_ID_BASE + 200 + i;  // Reader arts_id: 1200, 1201, ...
+        TEST_ARTS_ID_BASE + 200 + i; // Reader arts_id: 1200, 1201, ...
     uint64_t param = arts_id;
 
     unsigned int target_node = i % arts_get_total_nodes();
 
     // Readers will depend on multiple DBs
     unsigned int num_deps =
-        (i % NUM_TEST_DBS) + 1;  // 1 to NUM_TEST_DBS dependencies
+        (i % NUM_TEST_DBS) + 1; // 1 to NUM_TEST_DBS dependencies
     reader_num_deps[i] = num_deps;
 
     reader_guids[i] =

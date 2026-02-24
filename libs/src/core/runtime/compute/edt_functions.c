@@ -176,9 +176,11 @@ void arts_increment_finished_epoch_list() {
     for (unsigned int i = 0; i < epoch_array_length; i++) {
       arts_guid_t *guid =
           (arts_guid_t *)arts_get_from_array_list(epoch_list, i);
+#if ARTS_LOG_LEVEL >= 2
       uint64_t current_id = current_edt ? current_edt->arts_id : 0;
       ARTS_INFO("Current EDT[Id:%lu, Guid:%lu] - Unsetting Epoch [Guid:%lu]",
                 current_id, arts_thread_info.current_edt_guid, *guid);
+#endif
       if (*guid) {
         increment_finished_epoch(*guid);
       }

@@ -137,7 +137,7 @@ void done_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                   arts_edt_dep_t depv[]) {
+              arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
@@ -149,7 +149,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // 1) signal_edt with DB.
   void *db_ptr = NULL;
-  arts_guid_t db = arts_db_create(&db_ptr, sizeof(uint64_t), ARTS_DB_DEFAULT, NULL);
+  arts_guid_t db =
+      arts_db_create(&db_ptr, sizeof(uint64_t), ARTS_DB_DEFAULT, NULL);
   *(uint64_t *)db_ptr = MAGIC;
   arts_db_release(db);
   arts_guid_t e1 = arts_edt_create_with_epoch(signal_db_edt, 0, NULL, 1, epoch,
@@ -173,7 +174,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // 4) signal_edt_ptr_with_guid.
   void *db2_ptr = NULL;
-  arts_guid_t db2 = arts_db_create(&db2_ptr, sizeof(unsigned int) * 4, ARTS_DB_DEFAULT, NULL);
+  arts_guid_t db2 =
+      arts_db_create(&db2_ptr, sizeof(unsigned int) * 4, ARTS_DB_DEFAULT, NULL);
   unsigned int *db2_data = (unsigned int *)db2_ptr;
   db2_data[0] = 9999;
   arts_db_release(db2);

@@ -83,33 +83,33 @@ static inline void arts_atomic_print(const char *format, ...) {
 #define ARTS_LOG_LEVEL 1
 #endif
 
-#define ARTS_CLR_RED    "\033[1;31m"
+#define ARTS_CLR_RED "\033[1;31m"
 #define ARTS_CLR_YELLOW "\033[1;33m"
-#define ARTS_CLR_CYAN   "\033[36m"
-#define ARTS_CLR_DIM    "\033[2m"
-#define ARTS_CLR_RESET  "\033[0m"
+#define ARTS_CLR_CYAN "\033[36m"
+#define ARTS_CLR_DIM "\033[2m"
+#define ARTS_CLR_RESET "\033[0m"
 
 /* Level 0: ERROR — abort always fires */
 #if ARTS_LOG_LEVEL >= 0
-#define ARTS_ERROR(format, ...)                                          \
-  do {                                                                   \
-    arts_atomic_print(                                                   \
-        ARTS_CLR_RED "[%u:%u] [ERROR] " format ARTS_CLR_RESET "\n",      \
-        arts_global_rank_id, arts_thread_info.group_pos, ##__VA_ARGS__); \
-    arts_abort(1);                                                       \
+#define ARTS_ERROR(format, ...)                                                \
+  do {                                                                         \
+    arts_atomic_print(                                                         \
+        ARTS_CLR_RED "[%u:%u] [ERROR] " format ARTS_CLR_RESET "\n",            \
+        arts_global_rank_id, arts_thread_info.group_pos, ##__VA_ARGS__);       \
+    arts_abort(1);                                                             \
   } while (0)
 #else
-#define ARTS_ERROR(format, ...) \
-  do {                          \
-    arts_abort(1);              \
+#define ARTS_ERROR(format, ...)                                                \
+  do {                                                                         \
+    arts_abort(1);                                                             \
   } while (0)
 #endif
 
 /* Level 1: WARN */
 #if ARTS_LOG_LEVEL >= 1
-#define ARTS_WARN(format, ...)                                      \
-  arts_atomic_print(                                                \
-      ARTS_CLR_YELLOW "[%u:%u] [WARN] " format ARTS_CLR_RESET "\n", \
+#define ARTS_WARN(format, ...)                                                 \
+  arts_atomic_print(                                                           \
+      ARTS_CLR_YELLOW "[%u:%u] [WARN] " format ARTS_CLR_RESET "\n",            \
       arts_global_rank_id, arts_thread_info.group_pos, ##__VA_ARGS__)
 #else
 #define ARTS_WARN(...)
@@ -117,9 +117,9 @@ static inline void arts_atomic_print(const char *format, ...) {
 
 /* Level 2: INFO */
 #if ARTS_LOG_LEVEL >= 2
-#define ARTS_INFO(format, ...)                                    \
-  arts_atomic_print(                                              \
-      ARTS_CLR_CYAN "[%u:%u] [INFO] " format ARTS_CLR_RESET "\n", \
+#define ARTS_INFO(format, ...)                                                 \
+  arts_atomic_print(                                                           \
+      ARTS_CLR_CYAN "[%u:%u] [INFO] " format ARTS_CLR_RESET "\n",              \
       arts_global_rank_id, arts_thread_info.group_pos, ##__VA_ARGS__)
 #else
 #define ARTS_INFO(...)
@@ -127,9 +127,9 @@ static inline void arts_atomic_print(const char *format, ...) {
 
 /* Level 3: DEBUG */
 #if ARTS_LOG_LEVEL >= 3
-#define ARTS_DEBUG(format, ...)                                   \
-  arts_atomic_print(                                              \
-      ARTS_CLR_DIM "[%u:%u] [DEBUG] " format ARTS_CLR_RESET "\n", \
+#define ARTS_DEBUG(format, ...)                                                \
+  arts_atomic_print(                                                           \
+      ARTS_CLR_DIM "[%u:%u] [DEBUG] " format ARTS_CLR_RESET "\n",              \
       arts_global_rank_id, arts_thread_info.group_pos, ##__VA_ARGS__)
 #else
 #define ARTS_DEBUG(...)

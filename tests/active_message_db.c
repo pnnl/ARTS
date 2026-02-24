@@ -128,6 +128,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
   arts_db_create_with_guid(db_source_guid, sizeof(unsigned int) * num_elements,
                            ARTS_DB_DEFAULT, data, NULL);
+  free(data);
   arts_edt_create_with_guid(shut_down_edt, shutdown_guid, 0, NULL,
                             arts_get_total_nodes());
 

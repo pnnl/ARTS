@@ -51,7 +51,7 @@
 #include "arts/utils/malloc.h"
 
 #define EPOCH_MASK 0x7FFFFFFFFFFFFFFF
-#define EPOCH_BIT  0x8000000000000000
+#define EPOCH_BIT 0x8000000000000000
 
 #define DEFAULT_EPOCH_POOL_SIZE 4096
 ARTS_THREAD_LOCAL arts_epoch_pool_t *epoch_thread_pool;
@@ -291,7 +291,7 @@ arts_guid_t arts_initialize_epoch(unsigned int rank,
         }
       }
     }
-  } else  // Lets get it from the pool...
+  } else // Lets get it from the pool...
   {
     arts_epoch_t *epoch = get_pool_epoch(finish_edt_guid, slot);
     guid = epoch->guid;
@@ -597,7 +597,7 @@ bool arts_wait_on_handle(arts_guid_t epoch_guid) {
   // For now lets leave this rule here
   if (guid) {
     arts_guid_t local = *guid;
-    *guid = NULL_GUID;  // Unset
+    *guid = NULL_GUID; // Unset
     unsigned int flag = 1;
     arts_epoch_t *epoch = (arts_epoch_t *)arts_route_table_lookup_item(local);
     if (!epoch) {

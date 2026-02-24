@@ -351,8 +351,8 @@ bool arts_db_frontier_iter_init(struct arts_db_frontier_iterator_s *iter,
   return true;
 }
 
-unsigned int arts_db_frontier_iter_size(
-    struct arts_db_frontier_iterator_s *iter) {
+unsigned int
+arts_db_frontier_iter_size(struct arts_db_frontier_iterator_s *iter) {
   return iter->frontier->position;
 }
 
@@ -419,7 +419,7 @@ void arts_signal_frontier_remote(struct arts_db_frontier_s *frontier,
           !((frontier->exEdt || frontier->exEdtGuid != NULL_GUID) &&
             node == frontier->exNode)) {
         arts_remote_db_forward((int)node, (int)get_from, db->guid,
-                               DB_MODE_RO);  // Don't care about mode
+                               DB_MODE_RO); // Don't care about mode
       }
     }
   }

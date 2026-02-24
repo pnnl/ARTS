@@ -45,7 +45,7 @@ extern "C" {
 #include <stdbool.h>
 #include <stdint.h>
 #define HW_MEMORY_FENCE() __sync_synchronize()
-#define COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT() \
+#define COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT()                    \
   __asm__ volatile("" : : : "memory")
 
 unsigned int arts_atomic_swap(volatile unsigned int *destination,
@@ -79,7 +79,7 @@ uint64_t arts_atomic_fetch_and_u64(volatile uint64_t *destination,
 uint64_t arts_atomic_fetch_or_u64(volatile uint64_t *destination,
                                   uint64_t add_val);
 uint64_t arts_atomic_fetch_x_or_u64(volatile uint64_t *destination,
-                                    uint64_t add_val);  //@awmm
+                                    uint64_t add_val); //@awmm
 unsigned int arts_atomic_fetch_or(volatile unsigned int *destination,
                                   unsigned int add_val);
 unsigned int arts_atomic_fetch_and(volatile unsigned int *destination,

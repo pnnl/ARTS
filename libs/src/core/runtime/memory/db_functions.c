@@ -682,7 +682,7 @@ void prep_dbs(unsigned int depc, arts_edt_dep_t *depv,
     if (depv[i].guid != NULL_GUID && depv[i].ptr && access_mode == DB_MODE_EW) {
       struct arts_db_s *db = ((struct arts_db_s *)depv[i].ptr) - 1;
       if (db->db_type != ARTS_DB_LOCAL) {
-        arts_remote_update_route_table(depv[i].guid, -1);
+        arts_remote_update_route_table(depv[i].guid, ARTS_HINT_CURRENT_NODE);
       }
       ARTS_DEBUG("[prep_dbs] DB[Id:%lu, Guid:%lu] ptr=%p, db=%p", db->arts_id,
                  depv[i].guid, depv[i].ptr, db);

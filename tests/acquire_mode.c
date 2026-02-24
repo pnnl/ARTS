@@ -155,7 +155,7 @@ void validator_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                   arts_edt_dep_t depv[]) {
+              arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;
   (void)depv;
@@ -202,8 +202,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   size_t db_size = array_size * sizeof(uint64_t);
   arts_printf("Creating Data DB (guid: %lu, size: %zu bytes = %.2lf MB)\n",
               data_guid, db_size, (double)db_size / (1024.0 * 1024.0));
-  uint64_t *data_ptr =
-      (uint64_t *)arts_db_create_with_guid(data_guid, db_size, ARTS_DB_DEFAULT, NULL, NULL);
+  uint64_t *data_ptr = (uint64_t *)arts_db_create_with_guid(
+      data_guid, db_size, ARTS_DB_DEFAULT, NULL, NULL);
   for (size_t i = 0; i < array_size; i++) {
     data_ptr[i] = 0;
   }

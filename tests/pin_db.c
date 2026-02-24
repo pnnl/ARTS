@@ -69,7 +69,7 @@ void edt_func(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                   arts_edt_dep_t depv[]) {
+              arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;
   (void)depv;
@@ -85,7 +85,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     // Set pin to true to pin to node given by command line
     // It is pinned to the node creating the DB
     arts_guid_t db_guid = arts_guid_reserve(ARTS_DB, 0);
-    ptr = (int *)arts_db_create_with_guid(db_guid, sizeof(unsigned int), ARTS_DB_LOCAL, NULL, NULL);
+    ptr = (int *)arts_db_create_with_guid(db_guid, sizeof(unsigned int),
+                                          ARTS_DB_LOCAL, NULL, NULL);
     *ptr = 1234;
 
     // EDT is going to run on node given by command line
@@ -94,12 +95,12 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
     // Put both signals up front forcing one to be out of order to test the OO
     // code path
-    arts_signal_edt(edt_guid, 0, db_guid, DB_MODE_EW);       // Note the mode
-    arts_signal_edt(edt_guid, 1, some_db_guid, DB_MODE_EW);  // Note the mode
+    arts_signal_edt(edt_guid, 0, db_guid, DB_MODE_EW);      // Note the mode
+    arts_signal_edt(edt_guid, 1, some_db_guid, DB_MODE_EW); // Note the mode
 
     // This is the delayed DB
-    int *ptr2 = (int *)arts_db_create_with_guid(some_db_guid,
-                                                sizeof(unsigned int), ARTS_DB_LOCAL, NULL, NULL);
+    int *ptr2 = (int *)arts_db_create_with_guid(
+        some_db_guid, sizeof(unsigned int), ARTS_DB_LOCAL, NULL, NULL);
     *ptr2 = 9876;
   }
 }

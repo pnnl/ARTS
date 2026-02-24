@@ -44,7 +44,7 @@
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
 
-#define FIRE_LOCK  1U
+#define FIRE_LOCK 1U
 #define RESET_LOCK 2U
 
 bool reader_oo_try_lock(struct arts_out_of_order_list_s *list) {

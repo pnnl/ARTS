@@ -43,9 +43,8 @@
 extern "C" {
 #endif
 
-#include "arts/runtime/rt.h"
+#include "arts/array_db.h"
 
-unsigned int arts_get_size_array_db(arts_array_db_t *array);
 unsigned int get_offset_from_index(arts_array_db_t *array, unsigned int index);
 unsigned int get_rank_from_index(arts_array_db_t *array, unsigned int index);
 arts_guid_t get_array_db_guid(arts_array_db_t *array);

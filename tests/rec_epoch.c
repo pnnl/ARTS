@@ -45,8 +45,7 @@ uint64_t num_dummy = 0;
 arts_guid_t exit_guid = NULL_GUID;
 
 void dummytask(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-               arts_edt_dep_t depv[]) {
-}
+               arts_edt_dep_t depv[]) {}
 
 void sync_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                arts_edt_dep_t depv[]) {
@@ -97,7 +96,7 @@ void root_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                   arts_edt_dep_t depv[]) {
+              arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;
   (void)depv;

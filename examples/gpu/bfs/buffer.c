@@ -45,8 +45,8 @@
 #define NUMBUFFERS 2
 
 static volatile unsigned int current_buffer = 0;
-static unsigned int ***gpu_buffer_ptr = NULL;  // NUMBUFFERS per GPU (Many)
-static unsigned int **cpu_buffer_ptr = NULL;   // NUMBUFFERS per Node (One)
+static unsigned int ***gpu_buffer_ptr = NULL; // NUMBUFFERS per GPU (Many)
+static unsigned int **cpu_buffer_ptr = NULL;  // NUMBUFFERS per Node (One)
 
 static arts_guid_t *master_buffer_guids = NULL;
 static arts_guid_t *buffer_guids = NULL;
