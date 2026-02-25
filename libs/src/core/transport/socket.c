@@ -57,10 +57,10 @@
 #include "arts/network/connection.h"
 #include "arts/network/remote_protocol.h"
 #include "arts/network/server.h"
-#include "arts/runtime/globals.h"
 #include "arts/runtime/runtime.h"
 #include "arts/system/config.h"
 #include "arts/system/print.h"
+#include "arts/system/threads.h"
 #include "arts/utils/malloc.h"
 
 struct arts_config_s *arts_global_message_table;

@@ -45,11 +45,12 @@
 #include "arts.h"
 #include "arts/gas/guid.h"
 #include "arts/gas/out_of_order.h"
-#include "arts/runtime/globals.h"
 #include "arts/runtime/memory/db_functions.h"
 #include "arts/runtime/memory/db_list.h"
+#include "arts/runtime/runtime.h"
 #include "arts/runtime/sync/event_functions.h"
 #include "arts/system/print.h"
+#include "arts/system/threads.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
 

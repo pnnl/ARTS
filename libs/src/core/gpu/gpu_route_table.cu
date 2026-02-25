@@ -40,8 +40,9 @@
 
 #include "arts.h"
 #include "arts/gpu/gpu_stream.h"
-#include "arts/runtime/globals.h"
+#include "arts/runtime/runtime.h"
 #include "arts/system/print.h"
+#include "arts/system/threads.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
 

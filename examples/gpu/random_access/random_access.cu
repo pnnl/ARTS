@@ -87,7 +87,7 @@
 #include "arts.h"
 #include "arts/gpu/gpu_runtime.cuh"
 #include "arts/gpu/gpu_stream.h"
-#include "arts/runtime/globals.h"
+#include "arts/runtime/runtime.h"
 
 #include "random_access_defs.h"
 

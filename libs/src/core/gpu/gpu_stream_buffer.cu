@@ -45,13 +45,13 @@
 #include "arts/gpu/gpu_stream_buffer.h"
 
 #include "arts/gpu/gpu_runtime.cuh"
-#include "arts/runtime/globals.h"
+#include "arts/runtime/runtime.h"
 #include "arts/system/print.h"
 #include "arts/utils/atomics.h"
 
 #define CHECKSTREAM 4096
-#define MAXSTREAM   32
-#define MAXBUFFER   128
+#define MAXSTREAM 32
+#define MAXBUFFER 128
 
 volatile unsigned int stream_check_count[MAXSTREAM] = {0};
 
@@ -314,7 +314,7 @@ void do_reduction_now(unsigned int gpu_id, void *sink, void *src,
   unsigned int tile_size = size / element_size;
   ARTS_INFO("TileSize: %u\n", tile_size);
   if (tile_size < 32) {
-    dim3 block(tile_size, 1, 1);  // For volta...
+    dim3 block(tile_size, 1, 1); // For volta...
     dim3 grid(1, 1, 1);
     void *kernel_args[] = {&sink, &src};
     ARTS_INFO("SRC: %p DST: %p\n", sink, src);
@@ -322,7 +322,7 @@ void do_reduction_now(unsigned int gpu_id, void *sink, void *src,
                                   (void **)kernel_args, (size_t)0,
                                   arts_gpus[gpu_id].stream));
   } else {
-    dim3 block(32, 1, 1);  // For volta...
+    dim3 block(32, 1, 1); // For volta...
     dim3 grid((tile_size + 32 - 1) / 32, 1, 1);
     void *kernel_args[] = {&sink, &src};
     CHECKCORRECT(cudaLaunchKernel((const void *)fn_ptr, grid, block,
@@ -366,7 +366,7 @@ void reduce_datafrom_gpus(void *dst, unsigned int dst_gpu_id, void *src,
   unsigned int tile_size = size / element_size;
   ARTS_DEBUG("TileSize: %u\n", tile_size);
   if (tile_size < 32) {
-    dim3 block(tile_size, 1, 1);  // For volta...
+    dim3 block(tile_size, 1, 1); // For volta...
     dim3 grid(1, 1, 1);
     void *kernel_args[] = {&db_data, &dst};
     ARTS_DEBUG("SRC: %p DST: %p\n", db_data, dst);
@@ -374,7 +374,7 @@ void reduce_datafrom_gpus(void *dst, unsigned int dst_gpu_id, void *src,
                                   (void **)kernel_args, (size_t)0,
                                   arts_gpus[dst_gpu_id].stream));
   } else {
-    dim3 block(32, 1, 1);  // For volta...
+    dim3 block(32, 1, 1); // For volta...
     dim3 grid((tile_size + 32 - 1) / 32, 1, 1);
     void *kernel_args[] = {&db_data, &dst};
     ARTS_DEBUG("SRC: %p DST: %p\n", db_data, dst);

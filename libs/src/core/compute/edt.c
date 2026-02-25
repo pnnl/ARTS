@@ -44,11 +44,12 @@
 #include "arts/gas/guid.h"
 #include "arts/gas/out_of_order.h"
 #include "arts/gas/route_table.h"
-#include "arts/runtime/globals.h"
+#include "arts/runtime/memory/db_functions.h"
 #include "arts/runtime/network/remote_functions.h"
 #include "arts/runtime/runtime.h"
 #include "arts/runtime/sync/termination_detection.h"
 #include "arts/system/print.h"
+#include "arts/system/threads.h"
 #include "arts/utils/array_list.h"
 #include "arts/utils/atomics.h"
 

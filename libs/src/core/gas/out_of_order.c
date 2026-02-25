@@ -40,13 +40,13 @@
 
 #include "arts/gas/route_table.h"
 #include "arts/runtime/compute/edt_functions.h"
-#include "arts/runtime/globals.h"
 #include "arts/runtime/memory/db_functions.h"
 #include "arts/runtime/network/remote_functions.h"
 #include "arts/runtime/rt.h"
 #include "arts/runtime/runtime.h"
 #include "arts/runtime/sync/termination_detection.h"
 #include "arts/system/print.h"
+#include "arts/system/threads.h"
 #include "arts/utils/malloc.h"
 
 #include <string.h>

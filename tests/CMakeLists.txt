@@ -177,7 +177,7 @@ if(BUILD_CUDA_LIBRARY)
         add_executable(${test_name} ${test_name}.cu)
 
         # Set include directories
-        target_include_directories(${test_name} PRIVATE ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR} ${ARTS_BUILD_INTERNAL_INCLUDE_DIR} ${CUDA_INCLUDE_DIRS})
+        target_include_directories(${test_name} PRIVATE ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR} ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
 
         set_property(TARGET ${test_name} PROPERTY POSITION_INDEPENDENT_CODE OFF)
         target_compile_options(${test_name} PRIVATE -fno-pie -fno-PIE)

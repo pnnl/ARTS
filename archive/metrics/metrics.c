@@ -45,7 +45,8 @@
 #include <sys/stat.h>
 
 // #include "arts.h"
-#include "arts/runtime/globals.h"
+#include "arts/runtime/runtime.h"
+#include "arts/system/threads.h"
 #include "arts/utils/malloc.h"
 // #include "arts/runtime/network/remote_functions.h"
 #include "arts/system/arts_print.h"

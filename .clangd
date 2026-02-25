@@ -7,3 +7,22 @@ CompileFlags:
     - "-dc"
     - "--diag-suppress=*"
     - "-isystem=*"
+  Add:
+    - "-isystem"
+    - "/usr/local/cuda/include"
+    - "-isystem"
+    - "/usr/local/cuda/include/cccl"
+
+---
+
+# CUDA (.cu) files: clangd cannot produce reliable diagnostics for .cu files.
+# Suppress CCCL template errors and CUDA syntax errors selectively.
+If:
+  PathMatch: .*\.cu
+Diagnostics:
+  Suppress:
+    - "no_member"
+    - "typename_nested_not_found"
+    - "undeclared_var_use"
+    - "unknown_attribute"
+    - "expected_expression"

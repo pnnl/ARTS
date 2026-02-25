@@ -279,7 +279,7 @@ struct ARTS_PACKED arts_remote_time_sync_resp_packet_s {
   uint64_t master_recv_time; // T2: master's local time when receiving request
 };
 
-#include "arts/runtime/globals.h"
+#include "arts/system/threads.h"
 
 static inline void arts_fill_packet_header(struct arts_remote_packet_s *header,
                                            uint64_t size,

@@ -45,7 +45,7 @@
 
 #include "arts.h"
 #include "arts/counter/json.h"
-#include "arts/runtime/globals.h"
+#include "arts/runtime/runtime.h"
 #include "arts/utils/malloc.h"
 
 // ============================================================================

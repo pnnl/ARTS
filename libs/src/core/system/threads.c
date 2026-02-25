@@ -51,7 +51,6 @@
 #include "arts.h"
 #include "arts/counter/counter.h"
 #include "arts/network/server.h"
-#include "arts/runtime/globals.h"
 #include "arts/runtime/runtime.h"
 #include "arts/system/config.h"
 #include "arts/system/print.h"

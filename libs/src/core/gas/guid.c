@@ -39,8 +39,9 @@
 #include "arts/gas/guid.h"
 
 #include "arts.h"
-#include "arts/runtime/globals.h"
+#include "arts/runtime/runtime.h"
 #include "arts/system/print.h"
+#include "arts/system/threads.h"
 #include "arts/utils/malloc.h"
 
 uint64_t num_tables = 0;

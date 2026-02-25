@@ -129,7 +129,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Element ELEMS_PER_NODE should be on node 1 (round-robin block placement).
   {
     unsigned int remote_idx = ELEMS_PER_NODE; // first element on node 1
-    uint64_t expected_param = (uint64_t)(remote_idx * 10);
+    uint64_t expected_param = (uint64_t)remote_idx * 10;
     arts_guid_t checker =
         arts_edt_create_with_epoch(check_remote_get, 1, &expected_param, 1,
                                    epoch, &(arts_hint_t){.route = 0});

@@ -43,10 +43,10 @@
 #include "arts.h"
 #include "arts/network/remote_protocol.h"
 #include "arts/runtime/compute/edt_functions.h"
-#include "arts/runtime/globals.h"
 #include "arts/runtime/network/remote_functions.h"
 #include "arts/runtime/runtime.h"
 #include "arts/system/print.h"
+#include "arts/system/threads.h"
 #include "arts/utils/malloc.h"
 
 #define EDT_MUG_SIZE 32

@@ -43,10 +43,11 @@
 #include <string.h>
 
 #include "arts.h"
-#include "arts/runtime/globals.h"
 #include "arts/runtime/memory/db_functions.h"
 #include "arts/runtime/network/remote_functions.h"
+#include "arts/runtime/runtime.h"
 #include "arts/system/print.h"
+#include "arts/system/threads.h"
 #include "arts/utils/malloc.h"
 
 unsigned int arts_get_size_array_db(arts_array_db_t *array) {

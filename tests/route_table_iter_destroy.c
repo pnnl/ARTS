@@ -41,7 +41,7 @@
 
 #include "arts.h"
 #include "arts/gas/route_table.h"
-#include "arts/runtime/globals.h"
+#include "arts/runtime/runtime.h"
 
 #define MYSIZE 10
 

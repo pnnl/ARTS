@@ -36,12 +36,75 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef ARTS_RUNTIME_GLOBALS_H
-#define ARTS_RUNTIME_GLOBALS_H
+#include "arts/utils/util.h"
 
-#include "arts/runtime/compute/edt_functions.h"
-#include "arts/runtime/memory/db_functions.h"
+#include <inttypes.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+#include "arts.h"
 #include "arts/runtime/runtime.h"
 #include "arts/system/threads.h"
 
-#endif
+extern ARTS_THREAD_LOCAL struct arts_edt_s *current_edt;
+extern unsigned int num_numa_domains;
+
+arts_guid_t arts_get_current_guid() {
+  if (current_edt) {
+    return current_edt->current_edt;
+  }
+  return NULL_GUID;
+}
+
+unsigned int arts_get_current_node() { return arts_global_rank_id; }
+
+unsigned int arts_get_total_nodes() { return arts_global_rank_count; }
+
+unsigned int arts_get_total_workers() {
+  return arts_node_info.worker_thread_count;
+}
+
+unsigned int arts_get_current_worker() { return arts_thread_info.group_pos; }
+
+unsigned int arts_get_current_numa_domain() {
+  return arts_thread_info.numa_domain_id;
+}
+
+unsigned int arts_get_total_numa_domains() { return num_numa_domains; }
+
+void arts_stop_local_worker() { arts_thread_info.alive = false; }
+
+void arts_stop_local_node() { arts_runtime_stop(); }
+
+uint64_t arts_thread_safe_random() {
+  long int temp = jrand48(arts_thread_info.drand_buf);
+  return (uint64_t)temp;
+}
+
+unsigned int arts_get_total_gpus() { return arts_node_info.gpu; }
+
+void arts_printf(const char *format, ...) {
+  va_list arglist;
+  printf(" [%u] ", arts_global_rank_id);
+  va_start(arglist, format);
+  vprintf(format, arglist);
+  va_end(arglist);
+  (void)fflush(stdout);
+}
+
+#define NANOSECS 1000000000
+
+uint64_t arts_get_time_stamp() {
+  struct timespec res;
+  (void)clock_gettime(CLOCK_REALTIME, &res);
+  uint64_t time_res = (res.tv_sec * NANOSECS) + res.tv_nsec;
+  return time_res;
+}

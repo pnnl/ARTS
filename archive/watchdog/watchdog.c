@@ -45,7 +45,6 @@
 #include <stdbool.h>
 #include <time.h>
 
-#include "arts/runtime/globals.h"
 #include "arts/runtime/runtime.h"
 #include "arts/system/arts_print.h"
 #include "arts/utils/deque.h"
