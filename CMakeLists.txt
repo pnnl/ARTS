@@ -100,7 +100,15 @@ option(ARTS_BUILD_EXAMPLES "Build example programs" ON)
 option(ARTS_BUILD_TESTS "Build test programs" ON)
 
 # Feature options (can be set via command line)
-set(ARTS_LOG_LEVEL "1" CACHE STRING "Log verbosity: 0=ERROR, 1=+WARN (default), 2=+INFO, 3=+DEBUG")
+# Default log level: Debug→3 (DEBUG), Release/etc→1 (WARN).
+# Explicit -DARTS_LOG_LEVEL=N on the command line always wins.
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(_arts_log_default 3)
+else()
+    set(_arts_log_default 1)
+endif()
+set(ARTS_LOG_LEVEL "${_arts_log_default}" CACHE STRING
+    "Log verbosity: 0=ERROR, 1=+WARN, 2=+INFO, 3=+DEBUG")
 option(ARTS_USE_GPU "Enable GPU support (default: ON, disable when OFF)" ON)
 option(ARTS_USE_RDMA "Use RDMA RSockets networking (default: ON, use TCP when OFF)" OFF)
 option(ARTS_USE_SANITIZERS "Enable address and undefined behavior sanitizers in Debug builds" ON)
@@ -123,11 +131,16 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
         add_compile_options(-Wno-stringop-truncation)
     endif()
 
-    # Sanitizers
+    # Sanitizers (C/CXX only — CUDA excluded to avoid ASan shadow memory
+    # conflicting with the CUDA driver's virtual address space mapping)
     if(ARTS_USE_SANITIZERS)
-        add_compile_options(-fsanitize=address -fsanitize=undefined -fsanitize=leak)
+        add_compile_options(
+            $<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:-fsanitize=address>
+            $<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:-fsanitize=undefined>
+            $<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:-fsanitize=leak>
+        )
         add_link_options(-fsanitize=address -fsanitize=undefined -fsanitize=leak)
-        message(STATUS "Enabled sanitizers for Debug build")
+        message(STATUS "Enabled sanitizers for Debug build (C/CXX only, excludes CUDA)")
     endif()
 else()
     message(STATUS "Configuring Release build")

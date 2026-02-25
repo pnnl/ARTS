@@ -53,6 +53,7 @@
 #include "arts/gpu/gpu_stream_buffer.h"
 #include "arts/runtime/compute/edt_functions.h"
 #include "arts/runtime/globals.h"
+#include "arts/runtime/memory/db_functions.h"
 #include "arts/system/print.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/deque.h"
@@ -408,8 +409,7 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
         bool successful_add = false;
         ARTS_DEBUG("WRAPPER SIZE: %lu\n", alloc_size);
         arts_item_wrapper_t *wrapper = arts_gpu_route_table_reserve_item_race(
-            &successful_add, alloc_size, depv[i].guid, arts_gpu->device,
-            false); //(mode == ARTS_DB_LC));
+            &successful_add, alloc_size, depv[i].guid, arts_gpu->device, true);
 
         if (successful_add) // We won, so allocate and move data
         {
@@ -476,6 +476,11 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
     host_gc_ptr->edt->func_ptr(paramc, host_paramv, depc, host_depv);
 
     arts_unset_thread_local_edt_info();
+    /* Release DBs created during the lib function NOW, on the worker thread.
+       The wrap-up callback runs on the CUDA callback thread whose TLS
+       created_db_list is empty, so arts_release_created_dbs() there would be
+       a no-op — leaving frontiers un-progressed and consumer EDTs stuck. */
+    arts_release_created_dbs();
   } else {
     push_kernel_to_stream(arts_gpu->device, paramc, dev_paramv, depc, dev_depv,
                           fn_ptr, grid, block, arts_node_info.gpu_buff_on);
@@ -485,7 +490,8 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
   for (unsigned int i = 0; i < depc; i++) {
     if (depv[i].ptr) {
       struct arts_db_s *cb_db = (struct arts_db_s *)depv[i].ptr - 1;
-      if (cb_db->db_type == ARTS_DB_GPU && modes[i] == DB_MODE_EW) {
+      if (cb_db->db_type == ARTS_DB_GPU &&
+          (modes[i] == DB_MODE_EW || modes[i] == DB_MODE_MEMSET)) {
         size_t size = (size_t)(cb_db->header.size - sizeof(struct arts_db_s));
         get_data_from_stream(arts_gpu->device, depv[i].ptr, host_depv[i].ptr,
                              size, arts_node_info.gpu_buff_on && !gpu_edt->lib);

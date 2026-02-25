@@ -94,11 +94,6 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("=== multinode_event ===\n");
 
   unsigned int total = arts_get_total_nodes();
-  if (total < 2) {
-    arts_printf("  SKIP: need node_count >= 2 (have %u)\n", total);
-    arts_shutdown();
-    return;
-  }
 
   arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
 
@@ -124,9 +119,6 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_edt_create_with_epoch(node_satisfier, 1, &param, 0, epoch,
                                &(arts_hint_t){.route = r});
   }
-
-  arts_wait_on_handle(epoch);
-  arts_shutdown();
 }
 
 int main(int argc, char **argv) {

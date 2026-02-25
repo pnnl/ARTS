@@ -163,11 +163,11 @@ arts_guid_t arts_allocate_local_buffer_shad(void **buffer,
   return guid;
 }
 
-#define ALIASOWNERMAP 0xF000000000000000
-#define ALIASCOUNTMAP 0x0FFFFFFFFFFFFFFF
-#define ALIASGETOWNER(x) (((x) & ALIASOWNERMAP) >> 60)
+#define ALIASOWNERMAP 0xFFFF000000000000ULL
+#define ALIASCOUNTMAP 0x0000FFFFFFFFFFFFULL
+#define ALIASGETOWNER(x) (((x) & ALIASOWNERMAP) >> 48)
 #define ALIASGETCOUNT(x) ((x) & ALIASCOUNTMAP)
-#define ALIASEMPTY (((((uint64_t)arts_thread_info.group_pos) + 1) << 60) + 1)
+#define ALIASEMPTY (((((uint64_t)arts_thread_info.group_pos) + 1) << 48) + 1)
 
 bool arts_shad_alias_try_lock(volatile uint64_t *lock) {
   uint64_t dirty_read = *lock;

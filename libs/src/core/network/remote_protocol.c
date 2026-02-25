@@ -146,6 +146,10 @@ void out_cleanup(void) {
       struct arts_link_list_item_s *cur = list->headPtr;
       while (cur) {
         struct arts_link_list_item_s *next = cur->next;
+        struct out_list_s *out = (struct out_list_s *)(cur + 1);
+        if (out->payload && out->free_method) {
+          out->free_method(out->payload);
+        }
         arts_free(cur);
         cur = next;
       }
@@ -365,6 +369,11 @@ bool arts_remote_async_send() {
         }
 
         if (length_remaining == (uint64_t)-1) {
+          if (out->payload && out->free_method) {
+            out->free_method(out->payload);
+          }
+          out_resend[i - (int)thread_start] = NULL;
+          arts_link_list_delete_item(out);
           return false;
         }
         if (length_remaining) {

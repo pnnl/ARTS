@@ -36,11 +36,12 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include "arts.h"
 
-arts_guid_t shutdown_guid;
-arts_guid_t edt_guid;
-arts_guid_t db_guid;
+/// @file route_table_remote_guid.c
+/// @brief Tests route table operations with remote GUIDs (DB on rank 1,
+///        EDT on rank 0). Requires multi-node (node_count > 1).
+
+#include "arts.h"
 
 void shutdown_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                   arts_edt_dep_t depv[]) {
@@ -55,24 +56,27 @@ void acquire_test(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                   arts_edt_dep_t depv[]) {
   (void)depc;
   (void)paramc;
-  (void)paramv;
+  arts_guid_t shut_guid = (arts_guid_t)paramv[0];
   unsigned int *num = (unsigned int *)depv[0].ptr;
   arts_printf("%u %u i: %u %u\n", arts_get_current_node(),
               arts_get_current_worker(), 0, *num);
-  arts_signal_edt_value(shutdown_guid, 0, 0);
+  arts_signal_edt_value(shut_guid, 0, 0);
 }
 
+/// node_setup paramv: [0]=node_id, [1]=edt_guid, [2]=db_guid
 void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                 arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;
   (void)depv;
   unsigned int node_id = (unsigned int)paramv[0];
+  arts_guid_t local_edt_guid = (arts_guid_t)paramv[1];
+  arts_guid_t local_db_guid = (arts_guid_t)paramv[2];
   if (node_id) {
     unsigned int *ptr = (unsigned int *)arts_db_create_with_guid(
-        db_guid, sizeof(unsigned int), ARTS_DB_DEFAULT, NULL, NULL);
+        local_db_guid, sizeof(unsigned int), ARTS_DB_DEFAULT, NULL, NULL);
     *ptr = 999;
-    arts_signal_edt(edt_guid, 0, db_guid, DB_MODE_EW);
+    arts_signal_edt(local_edt_guid, 0, local_db_guid, DB_MODE_EW);
   }
 }
 
@@ -82,16 +86,21 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramv;
   (void)depc;
   (void)depv;
-  edt_guid = arts_guid_reserve(ARTS_EDT, 0);
-  shutdown_guid = arts_guid_reserve(ARTS_EDT, 0);
-  db_guid = arts_guid_reserve(ARTS_DB, 1);
+  arts_guid_t local_edt_guid = arts_guid_reserve(ARTS_EDT, 0);
+  arts_guid_t local_shutdown_guid = arts_guid_reserve(ARTS_EDT, 0);
+  arts_guid_t local_db_guid = arts_guid_reserve(ARTS_DB, 1);
 
-  arts_edt_create_with_guid(shutdown_edt, shutdown_guid, 0, NULL, 1);
-  arts_edt_create_with_guid(acquire_test, edt_guid, 0, NULL, 1);
+  uint64_t acq_params[1];
+  acq_params[0] = (uint64_t)local_shutdown_guid;
+  arts_edt_create_with_guid(acquire_test, local_edt_guid, 1, acq_params, 1);
+  arts_edt_create_with_guid(shutdown_edt, local_shutdown_guid, 0, NULL, 1);
 
   for (unsigned int n = 0; n < arts_get_total_nodes(); n++) {
-    uint64_t args = n;
-    arts_edt_create(node_setup, 1, &args, 0, &(arts_hint_t){.route = n});
+    uint64_t args[3];
+    args[0] = (uint64_t)n;
+    args[1] = (uint64_t)local_edt_guid;
+    args[2] = (uint64_t)local_db_guid;
+    arts_edt_create(node_setup, 3, args, 0, &(arts_hint_t){.route = n});
   }
 }
 

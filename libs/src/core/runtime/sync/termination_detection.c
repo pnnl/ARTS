@@ -326,9 +326,6 @@ bool check_epoch(arts_epoch_t *epoch, unsigned int total_active,
       ARTS_DEBUG(
           "check_epoch: Advancing to PHASE_3 - epoch termination complete!");
       epoch->phase = PHASE_3;
-      if (epoch->wait_ptr) {
-        *epoch->wait_ptr = 0;
-      }
       if (epoch->termination_exit_guid) {
         arts_signal_edt_value(epoch->termination_exit_guid,
                               epoch->termination_exit_slot, total_finish);
@@ -343,9 +340,6 @@ bool check_epoch(arts_epoch_t *epoch, unsigned int total_active,
     epoch->phase = PHASE_2;
     if (arts_global_rank_count == 1) {
       epoch->phase = PHASE_3;
-      if (epoch->wait_ptr) {
-        *epoch->wait_ptr = 0;
-      }
       if (epoch->termination_exit_guid) {
         arts_signal_edt_value(epoch->termination_exit_guid,
                               epoch->termination_exit_slot, total_finish);
@@ -515,6 +509,11 @@ void clean_epoch_pool() {
   }
 }
 
+void arts_link_epoch_pool_to_tls(arts_epoch_pool_t *pool) {
+  pool->next = epoch_thread_pool;
+  epoch_thread_pool = pool;
+}
+
 void arts_cleanup_epoch_pools(void) {
   arts_epoch_pool_t *pool = epoch_thread_pool;
   while (pool) {
@@ -583,12 +582,12 @@ void arts_yield() {
  * arts_wait_on_handle — Block current EDT until the given epoch completes.
  *
  * Increments the epoch's finished counter (this EDT is now "done" from the
- * epoch's perspective), then either:
- *   (a) Context-switches to another coroutine (if TMT enabled), or
- *   (b) Spin-polls the scheduler loop until the epoch sets the flag to 0.
+ * epoch's perspective), then spin-polls the scheduler loop until the epoch
+ * is removed from the route table (by delete_epoch).  Also breaks out if
+ * the thread's alive flag becomes false (e.g., arts_shutdown was called).
  *
- * This is a key synchronization point: if the epoch never terminates, the
- * calling thread will spin here indefinitely (potential hang point).
+ * Uses route-table lookup instead of a volatile flag to avoid accessing
+ * the epoch struct after delete_epoch frees it.
  */
 bool arts_wait_on_handle(arts_guid_t epoch_guid) {
   TIME_EDT_EXEC_STOP();
@@ -598,7 +597,6 @@ bool arts_wait_on_handle(arts_guid_t epoch_guid) {
   if (guid) {
     arts_guid_t local = *guid;
     *guid = NULL_GUID; // Unset
-    unsigned int flag = 1;
     arts_epoch_t *epoch = (arts_epoch_t *)arts_route_table_lookup_item(local);
     if (!epoch) {
       // Epoch may still be in reserved state in route table; spin briefly
@@ -613,14 +611,17 @@ bool arts_wait_on_handle(arts_guid_t epoch_guid) {
         return false;
       }
     }
-    epoch->wait_ptr = &flag;
     increment_finished_epoch(local);
 
     INCREMENT_NUM_YIELD_BY(1);
     thread_local_t tl;
     arts_save_thread_local(&tl);
     TIME_YIELD_START();
-    while (flag) {
+    while (arts_thread_info.alive) {
+      arts_epoch_t *e = (arts_epoch_t *)arts_route_table_lookup_item(local);
+      if (!e || e->phase == PHASE_3) {
+        break;
+      }
       arts_node_info.scheduler();
     }
     // Continue running until the scheduler reports no more ready work

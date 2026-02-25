@@ -48,9 +48,17 @@ void check(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
            arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
+  bool ok = true;
   for (unsigned int i = 0; i < depc; i++) {
     unsigned int *data = (unsigned int *)depv[i].ptr;
-    arts_printf("%u: %u\n", i, *data);
+    if (data == NULL || *data != i) {
+      arts_printf("  FAIL: array_db elem[%u] = %u expected %u\n", i,
+                  data ? *data : 0xFFFFFFFF, i);
+      ok = false;
+    }
+  }
+  if (ok) {
+    arts_printf("  PASS: array_db %u elements verified\n", depc);
   }
 
   arts_shutdown();

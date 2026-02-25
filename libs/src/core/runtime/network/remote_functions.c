@@ -254,7 +254,7 @@ void arts_remote_update_db(arts_guid_t guid, bool send_db) {
 void arts_remote_handle_update_db(void *ptr) {
   struct arts_remote_guid_only_packet_s *packet =
       (struct arts_remote_guid_only_packet_s *)ptr;
-  struct arts_db_s *packet_db = (struct arts_db_s *)(packet + 1);
+  void *packet_payload = (char *)(packet + 1) + sizeof(struct arts_db_s);
   unsigned int rank = arts_guid_get_rank(packet->guid);
   if (rank == arts_global_rank_id) {
     struct arts_db_s **data_ptr;
@@ -275,7 +275,7 @@ void arts_remote_handle_update_db(void *ptr) {
     if (db) {
       if (write) {
         void *ptr = (void *)(db + 1);
-        memcpy(ptr, packet_db + 1, db->header.size - sizeof(struct arts_db_s));
+        memcpy(ptr, packet_payload, db->header.size - sizeof(struct arts_db_s));
         arts_route_table_set_rank(packet->guid, (int)arts_global_rank_id);
         arts_progress_frontier(db, arts_global_rank_id);
       } else {
@@ -349,8 +349,9 @@ void arts_remote_handle_db_move(void *ptr) {
   uint64_t size =
       packet->header.size - sizeof(struct arts_remote_guid_only_packet_s);
 
-  struct arts_db_s *db_header = (struct arts_db_s *)(packet + 1);
-  uint64_t db_size = db_header->header.size;
+  struct arts_db_s db_header_buf;
+  memcpy(&db_header_buf, (packet + 1), sizeof(struct arts_db_s));
+  uint64_t db_size = db_header_buf.header.size;
 
   struct arts_header_s *mem_packet =
       (struct arts_header_s *)arts_malloc_align(db_size, 16);
@@ -362,7 +363,7 @@ void arts_remote_handle_db_move(void *ptr) {
     mem_packet->size = db_size;
   }
   // We need a local pointer for this node
-  if (db_header->db_list) {
+  if (db_header_buf.db_list) {
     struct arts_db_s *new_db = (struct arts_db_s *)mem_packet;
     new_db->db_list = arts_new_db_list();
   }
@@ -594,28 +595,35 @@ void arts_remote_db_send(struct arts_remote_db_request_packet_s *pack) {
 
 void arts_remote_handle_db_received(
     struct arts_remote_db_send_packet_s *packet) {
-  struct arts_db_s *packet_db = (struct arts_db_s *)(packet + 1);
-  ARTS_DEBUG("Handle DB Received [Guid:%lu] on rank %u", packet_db->guid,
-             arts_global_rank_id);
+  struct arts_db_s pdb;
+  memcpy(&pdb, (packet + 1), sizeof(struct arts_db_s));
+  // Actual DB bytes in the packet (may be a stub or a full DB).
+  uint64_t received_bytes =
+      packet->header.size - sizeof(struct arts_remote_db_send_packet_s);
+  void *packet_payload = (char *)(packet + 1) + sizeof(struct arts_db_s);
+  ARTS_DEBUG("Handle DB Received [Guid:%lu, Size:%lu, Received:%lu] on rank %u",
+             pdb.guid, pdb.header.size, received_bytes, arts_global_rank_id);
   struct arts_db_s *db_res = NULL;
   struct arts_db_s **data_ptr = NULL;
   item_state_t state = arts_route_table_lookup_item_with_state(
-      packet_db->guid, (void ***)&data_ptr, ALLOCATED_KEY, true);
+      pdb.guid, (void ***)&data_ptr, ALLOCATED_KEY, true);
 
   struct arts_db_s *t_ptr = (data_ptr) ? *data_ptr : NULL;
   struct arts_db_list_s *db_list = NULL;
-  bool needs_frontier = arts_guid_is_local(packet_db->guid) &&
-                        packet_db->db_type != ARTS_DB_LOCAL;
+  bool needs_frontier =
+      arts_guid_is_local(pdb.guid) && pdb.db_type != ARTS_DB_LOCAL;
   if (t_ptr && needs_frontier) {
     db_list = (struct arts_db_list_s *)t_ptr->db_list;
   }
   ARTS_DEBUG("Rec DB State: %u", state);
   switch (state) {
   case REQUESTED_KEY: {
-    if (t_ptr && packet_db->header.size == t_ptr->header.size) {
-      void *source = (void *)(packet_db + 1);
-      void *dest = (void *)(t_ptr + 1);
-      memcpy(dest, source, packet_db->header.size - sizeof(struct arts_db_s));
+    if (t_ptr && pdb.header.size == t_ptr->header.size) {
+      uint64_t payload_bytes = received_bytes - sizeof(struct arts_db_s);
+      if (payload_bytes > 0) {
+        void *dest = (void *)(t_ptr + 1);
+        memcpy(dest, packet_payload, payload_bytes);
+      }
       t_ptr->db_list = db_list;
       db_res = t_ptr;
     } else {
@@ -624,8 +632,8 @@ void arts_remote_handle_db_received(
   } break;
 
   case RESERVED_KEY: {
-    db_res = (struct arts_db_s *)arts_malloc_align(packet_db->header.size, 16);
-    memcpy(db_res, packet_db, packet_db->header.size);
+    db_res = (struct arts_db_s *)arts_malloc_align(pdb.header.size, 16);
+    memcpy(db_res, (packet + 1), received_bytes);
     if (needs_frontier) {
       db_res->db_list = arts_new_db_list();
     } else {
@@ -634,14 +642,29 @@ void arts_remote_handle_db_received(
   } break;
 
   default: {
-    item_state_t state = arts_route_table_lookup_item_with_state(
-        packet_db->guid, (void ***)&t_ptr, ANY_KEY, false);
+    // Fresh remote DB creation: GUID not previously in this node's route
+    // table.  Allocate the full DB, copy the received stub, and register.
+    db_res = (struct arts_db_s *)arts_malloc_align(pdb.header.size, 16);
+    memcpy(db_res, (packet + 1), received_bytes);
+    if (needs_frontier) {
+      db_res->db_list = arts_new_db_list();
+    } else {
+      db_res->db_list = NULL;
+    }
+    db_res->copy_count = 1;
+    db_res->event_guid = arts_event_create(arts_guid_get_rank(pdb.guid),
+                                           ARTS_EVENT_CHANNEL, 0, pdb.guid);
+    if (arts_route_table_add_item_race(db_res, pdb.guid, arts_global_rank_id,
+                                       false)) {
+      arts_route_table_fire_oo(pdb.guid, arts_out_of_order_handler);
+    }
+    return;
   } break;
   }
 
-  if (db_res && arts_route_table_update_item(packet_db->guid, (void *)db_res,
+  if (db_res && arts_route_table_update_item(pdb.guid, (void *)db_res,
                                              arts_global_rank_id, state)) {
-    arts_route_table_fire_oo(packet_db->guid, arts_out_of_order_handler);
+    arts_route_table_fire_oo(pdb.guid, arts_out_of_order_handler);
   }
 }
 
@@ -733,34 +756,34 @@ void arts_remote_handle_db_full_recieved(
     struct arts_remote_db_full_send_packet_s *packet) {
   bool dec;
   item_state_t state;
-  struct arts_db_s *packet_db = (struct arts_db_s *)(packet + 1);
-  ARTS_DEBUG("Handle Full DB Received [Guid:%lu, Slot:%u, Mode:%u]",
-             packet_db->guid, packet->slot, packet->mode);
-  void **data_ptr = arts_route_table_reserve(packet_db->guid, &dec, &state);
+  struct arts_db_s pdb;
+  memcpy(&pdb, (packet + 1), sizeof(struct arts_db_s));
+  void *packet_payload = (char *)(packet + 1) + sizeof(struct arts_db_s);
+  ARTS_DEBUG("Handle Full DB Received [Guid:%lu, Slot:%u, Mode:%u]", pdb.guid,
+             packet->slot, packet->mode);
+  void **data_ptr = arts_route_table_reserve(pdb.guid, &dec, &state);
   struct arts_db_s *db_res = (data_ptr) ? (struct arts_db_s *)*data_ptr : NULL;
   if (db_res) {
-    if (packet_db->header.size == db_res->header.size) {
+    if (pdb.header.size == db_res->header.size) {
       struct arts_db_list_s *db_list = (struct arts_db_list_s *)db_res->db_list;
-      void *source = (void *)(packet_db + 1);
       void *dest = (void *)(db_res + 1);
-      memcpy(dest, source, packet_db->header.size - sizeof(struct arts_db_s));
+      memcpy(dest, packet_payload, pdb.header.size - sizeof(struct arts_db_s));
       db_res->db_list = db_list;
     } else {
       ARTS_INFO("Did the DB do a remote resize...");
     }
   } else {
-    db_res = (struct arts_db_s *)arts_malloc_align(packet_db->header.size, 16);
-    memcpy(db_res, packet_db, packet_db->header.size);
-    if (arts_guid_is_local(packet_db->guid) &&
-        packet_db->db_type != ARTS_DB_LOCAL) {
+    db_res = (struct arts_db_s *)arts_malloc_align(pdb.header.size, 16);
+    memcpy(db_res, (packet + 1), pdb.header.size);
+    if (arts_guid_is_local(pdb.guid) && pdb.db_type != ARTS_DB_LOCAL) {
       db_res->db_list = arts_new_db_list();
     } else {
       db_res->db_list = NULL;
     }
   }
-  if (arts_route_table_update_item(packet_db->guid, (void *)db_res,
+  if (arts_route_table_update_item(pdb.guid, (void *)db_res,
                                    arts_global_rank_id, state)) {
-    arts_route_table_fire_oo(packet_db->guid, arts_out_of_order_handler);
+    arts_route_table_fire_oo(pdb.guid, arts_out_of_order_handler);
   }
   struct arts_edt_s *edt =
       (struct arts_edt_s *)arts_route_table_lookup_item(packet->edt_guid);
@@ -771,7 +794,7 @@ void arts_remote_handle_db_full_recieved(
     ARTS_INFO("Full DB received for missing EDT[Guid:%lu] on rank %u "
               "(state=%u, data=%p) [DbGuid:%lu, Slot:%u, Mode:%u]",
               packet->edt_guid, arts_global_rank_id, edt_state,
-              edt_data ? *edt_data : NULL, packet_db->guid, packet->slot,
+              edt_data ? *edt_data : NULL, pdb.guid, packet->slot,
               packet->mode);
     return;
   }
@@ -869,27 +892,28 @@ void arts_remote_signal_edt_with_ptr(arts_guid_t edt_guid, arts_guid_t db_guid,
                                      unsigned int slot) {
   unsigned int rank = arts_guid_get_rank(edt_guid);
   ARTS_DEBUG("SEND NOW: %u -> %u", arts_global_rank_id, rank);
-  struct arts_remote_signal_edt_with_ptr_packet_s packet;
-  packet.edt_guid = edt_guid;
-  packet.db_guid = db_guid;
-  packet.size = size;
-  packet.slot = slot;
   uint64_t total_size =
       sizeof(struct arts_remote_signal_edt_with_ptr_packet_s) + size;
-  arts_fill_packet_header(&packet.header, total_size,
+  char *buf = (char *)arts_malloc((size_t)total_size);
+  struct arts_remote_signal_edt_with_ptr_packet_s *packet =
+      (struct arts_remote_signal_edt_with_ptr_packet_s *)buf;
+  packet->edt_guid = edt_guid;
+  packet->db_guid = db_guid;
+  packet->size = size;
+  packet->slot = slot;
+  arts_fill_packet_header(&packet->header, total_size,
                           ARTS_REMOTE_SIGNAL_EDT_WITH_PTR_MSG);
-  arts_remote_send_request_payload_async((int)rank, (char *)&packet,
-                                         sizeof(packet), (char *)ptr, size);
+  memcpy(buf + sizeof(*packet), ptr, size);
+  arts_remote_send_request_async((int)rank, buf, (unsigned int)total_size);
+  arts_free(buf);
 }
 
 void arts_remote_handle_signal_edt_with_ptr(void *pack) {
   struct arts_remote_signal_edt_with_ptr_packet_s *packet =
       (struct arts_remote_signal_edt_with_ptr_packet_s *)pack;
   void *source = (void *)(packet + 1);
-  void *dest = arts_malloc(packet->size);
-  memcpy(dest, source, packet->size);
   arts_signal_edt_ptr_with_guid(packet->edt_guid, packet->slot, packet->db_guid,
-                                dest, packet->size);
+                                source, packet->size);
 }
 
 void arts_remote_metric_update(int rank, int type, int level,
@@ -970,14 +994,13 @@ void arts_remote_epoch_init_pool_send(unsigned int rank, unsigned int pool_size,
 }
 
 void arts_remote_handle_epoch_init_pool_send(void *pack) {
-  //    ARTS_INFO("Net Epoch Init Pool Rec");
   struct arts_remote_epoch_init_pool_packet_s *packet =
       (struct arts_remote_epoch_init_pool_packet_s *)pack;
-  //    ARTS_INFO("Net Epoch Init Pool Rec %lu %lu", packet->start_guid,
-  //    packet->pool_guid);
   arts_guid_t local_pool_guid = packet->pool_guid;
   arts_guid_t local_start_guid = packet->start_guid;
-  create_epoch_pool(&local_pool_guid, packet->pool_size, &local_start_guid);
+  arts_epoch_pool_t *pool =
+      create_epoch_pool(&local_pool_guid, packet->pool_size, &local_start_guid);
+  arts_link_epoch_pool_to_tls(pool);
   packet->pool_guid = local_pool_guid;
   packet->start_guid = local_start_guid;
 }

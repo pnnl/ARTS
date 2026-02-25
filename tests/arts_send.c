@@ -40,6 +40,7 @@
 
 #include "arts.h"
 #include "arts/runtime/network/remote_functions.h"
+#include "arts/utils/malloc.h"
 
 unsigned int num_elements = 0;
 
@@ -71,7 +72,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   num_elements = strtol(argv[1], NULL, 10);
   unsigned int size = sizeof(unsigned int) * num_elements;
   for (unsigned int i = 0; i < arts_get_total_nodes(); i++) {
-    unsigned int *data = (unsigned int *)malloc(size);
+    unsigned int *data = (unsigned int *)arts_malloc(size);
     for (unsigned int j = 0; j < num_elements; j++) {
       data[j] = j;
     }

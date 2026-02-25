@@ -41,54 +41,72 @@
 
 #include "arts.h"
 
-arts_guid_t db_dest_guid = NULL_GUID;
-arts_guid_t shutdown_guid = NULL_GUID;
-unsigned int num_elements = 0;
-unsigned int block_size = 0;
+/*
+ * All cross-node values are passed via paramv (no shared globals).
+ *
+ * getter/setter paramv layout (paramc=4):
+ *   [0] = id (node index)
+ *   [1] = shutdown_guid
+ *   [2] = block_size
+ *   [3] = db_dest_guid
+ *
+ * getter depv (depc=1):
+ *   [0] = source data (PTR mode, from arts_signal_edt_ptr)
+ *
+ * setter depv (depc=2):
+ *   [0] = buffer data (PTR mode)
+ *   [1] = db_dest_guid (EW mode)
+ *
+ * shut_down_edt paramv (paramc=1):
+ *   [0] = num_elements
+ * shut_down_edt depv (depc=total_nodes):
+ *   [0..N-1] = db_dest_guid (RO mode)
+ */
 
 void setter(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
             arts_edt_dep_t depv[]) {
-
   (void)depc;
-
   (void)paramc;
 
-  unsigned int id = paramv[0];
+  unsigned int id = (unsigned int)paramv[0];
+  arts_guid_t sd_guid = (arts_guid_t)paramv[1];
+  unsigned int bs = (unsigned int)paramv[2];
+  arts_guid_t dest_guid = (arts_guid_t)paramv[3];
+
   unsigned int *buffer = (unsigned int *)depv[0].ptr;
   unsigned int *dest = (unsigned int *)depv[1].ptr;
-  for (unsigned int i = 0; i < block_size; i++) {
-    dest[(id * block_size) + i] = buffer[i];
+  for (unsigned int i = 0; i < bs; i++) {
+    dest[(id * bs) + i] = buffer[i];
   }
-  arts_printf("Setter: %u\n", id);
-  arts_signal_edt(shutdown_guid, id, db_dest_guid, DB_MODE_EW);
+  arts_signal_edt(sd_guid, id, dest_guid, DB_MODE_RO);
 }
 
 void getter(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
             arts_edt_dep_t depv[]) {
   (void)depc;
-  unsigned int id = paramv[0];
+  unsigned int id = (unsigned int)paramv[0];
+  unsigned int bs = (unsigned int)paramv[2];
+  arts_guid_t dest_guid = (arts_guid_t)paramv[3];
+
   unsigned int *source = (unsigned int *)depv[0].ptr;
-  unsigned int *buffer = &source[(size_t)id * block_size];
-  arts_printf("Getter: %u\n", id);
-  // This one actually sends to a remote node... yea for testing!
-  unsigned int buf_size = sizeof(unsigned int) * (size_t)block_size;
-  void *buf_copy = malloc(buf_size);
-  memcpy(buf_copy, buffer, buf_size);
+  unsigned int *buffer = &source[(size_t)id * bs];
+  unsigned int buf_size = sizeof(unsigned int) * (size_t)bs;
+
   arts_guid_t am =
       arts_edt_create(setter, paramc, paramv, 2,
-                      &(arts_hint_t){.route = arts_get_total_nodes() - 1});
-  arts_signal_edt_ptr(am, 0, buf_copy, buf_size);
-  arts_signal_edt(am, 1, db_dest_guid, DB_MODE_EW);
+                      &(arts_hint_t){.route = arts_guid_get_rank(dest_guid)});
+  arts_signal_edt_ptr(am, 0, buffer, buf_size);
+  arts_signal_edt(am, 1, dest_guid, DB_MODE_EW);
 }
 
 void shut_down_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)depc;
   (void)paramc;
-  (void)paramv;
+  unsigned int ne = (unsigned int)paramv[0];
   bool pass = true;
   unsigned int *data = (unsigned int *)depv[0].ptr;
-  for (unsigned int i = 0; i < num_elements; i++) {
+  for (unsigned int i = 0; i < ne; i++) {
     if (data[i] != i) {
       arts_printf("I: %u vs %u\n", i, data[i]);
       pass = false;
@@ -107,35 +125,35 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
   char **argv = (char **)paramv[1];
-  block_size = strtol(argv[1], NULL, 10);
-  num_elements = block_size * arts_get_total_nodes();
-  db_dest_guid = arts_guid_reserve(ARTS_DB, arts_get_total_nodes() - 1);
-  shutdown_guid = arts_guid_reserve(ARTS_EDT, arts_get_total_nodes() - 1);
+  unsigned int block_size = strtol(argv[1], NULL, 10);
+  unsigned int num_elements = block_size * arts_get_total_nodes();
+  unsigned int last_node = arts_get_total_nodes() - 1;
 
-  unsigned int node_id = arts_get_current_node();
-  uint64_t id = node_id;
+  arts_guid_t shutdown_guid = arts_guid_reserve(ARTS_EDT, last_node);
+
   unsigned int *data =
       (unsigned int *)malloc(sizeof(unsigned int) * num_elements);
   for (unsigned int i = 0; i < num_elements; i++) {
     data[i] = i;
   }
-  // This is kinda dumb since it is sending to itself, but hey lets check
-  // it...
   unsigned int data_size = sizeof(unsigned int) * num_elements;
-  void *data_copy = malloc(data_size);
-  memcpy(data_copy, data, data_size);
-  free(data);
-  arts_guid_t getter_edt =
-      arts_edt_create(getter, 1, &id, 1, &(arts_hint_t){.route = node_id});
-  arts_signal_edt_ptr(getter_edt, 0, data_copy, data_size);
 
-  arts_edt_create_with_guid(shut_down_edt, shutdown_guid, 0, NULL,
+  void *tmp;
+  arts_guid_t db_dest_guid =
+      arts_db_create(&tmp, sizeof(unsigned int) * num_elements, ARTS_DB_DEFAULT,
+                     &(arts_hint_t){.route = last_node});
+
+  uint64_t ne = num_elements;
+  arts_edt_create_with_guid(shut_down_edt, shutdown_guid, 1, &ne,
                             arts_get_total_nodes());
 
-  if (node_id == arts_get_total_nodes() - 1) {
-    arts_db_create_with_guid(db_dest_guid, sizeof(unsigned int) * num_elements,
-                             ARTS_DB_LOCAL, NULL, NULL);
+  for (unsigned int r = 0; r < arts_get_total_nodes(); r++) {
+    uint64_t getter_params[4] = {r, shutdown_guid, block_size, db_dest_guid};
+    arts_guid_t getter_edt = arts_edt_create(getter, 4, getter_params, 1,
+                                             &(arts_hint_t){.route = 0});
+    arts_signal_edt_ptr(getter_edt, 0, data, data_size);
   }
+  free(data);
 }
 
 int main(int argc, char **argv) {

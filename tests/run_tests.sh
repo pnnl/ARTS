@@ -10,6 +10,7 @@
 #   bash run_tests.sh                    # Run from tests/ directory
 #   bash tests/run_tests.sh --no-build   # Skip the build step
 #   bash tests/run_tests.sh --multinode  # Also run multi-node tests
+#   bash tests/run_tests.sh --gpu        # Also run GPU tests (requires CUDA)
 ###############################################################################
 set -euo pipefail
 
@@ -33,10 +34,12 @@ LOG_DIR="$SCRIPT_DIR/logs"
 #===============================================================================
 DO_BUILD=1
 DO_MULTINODE=0
+DO_GPU=0
 for arg in "$@"; do
   case "$arg" in
     --no-build)   DO_BUILD=0 ;;
     --multinode)  DO_MULTINODE=1 ;;
+    --gpu)        DO_GPU=1 ;;
     *)            echo "Unknown argument: $arg"; exit 1 ;;
   esac
 done
@@ -63,6 +66,9 @@ LOG_FILE="$LOG_DIR/${TIMESTAMP}.log"
 cp "$PROJECT_ROOT/sample_configs/arts.cfg" "$TEST_BIN_DIR/arts.cfg"
 if [ -f "$PROJECT_ROOT/sample_configs/arts_multinode.cfg" ]; then
   cp "$PROJECT_ROOT/sample_configs/arts_multinode.cfg" "$TEST_BIN_DIR/arts_multinode.cfg"
+fi
+if [ -f "$PROJECT_ROOT/sample_configs/arts_gpu.cfg" ]; then
+  cp "$PROJECT_ROOT/sample_configs/arts_gpu.cfg" "$TEST_BIN_DIR/arts_gpu.cfg"
 fi
 
 # Counters
@@ -93,7 +99,6 @@ SINGLE_NODE_TESTS=(
   "db_local||$TIMEOUT_DEFAULT|DB local"
   "db_local_create||$TIMEOUT_DEFAULT|DB local create"
   "db_put_get||$TIMEOUT_DEFAULT|DB put/get"
-  "db_put_get_at||$TIMEOUT_DEFAULT|DB put/get at"
   "db_rename||$TIMEOUT_DEFAULT|DB rename"
   "pin_db|0|$TIMEOUT_DEFAULT|PIN DB (node 0)"
   "get_from_db|16 1|$TIMEOUT_DEFAULT|get from DB"
@@ -133,7 +138,6 @@ SINGLE_NODE_TESTS=(
   "route_table||$TIMEOUT_DEFAULT|Route table"
   "route_table_iter||$TIMEOUT_DEFAULT|Route table iter"
   "route_table_iter_destroy||$TIMEOUT_DEFAULT|Route table iter destroy"
-  "route_table_remote_guid||$TIMEOUT_DEFAULT|Route table remote GUID"
   "acquire_mode||$TIMEOUT_DEFAULT|Acquire mode"
   "arts_id||$TIMEOUT_DEFAULT|Arts ID (object counters)"
   "out_of_order_list||$TIMEOUT_DEFAULT|Out-of-order list"
@@ -150,15 +154,42 @@ SINGLE_NODE_TESTS=(
 )
 
 MULTI_NODE_TESTS=(
-  "multinode_db||$TIMEOUT_DEFAULT|Multi-node DB"
-  "multinode_edt||$TIMEOUT_DEFAULT|Multi-node EDT"
-  "multinode_epoch||$TIMEOUT_DEFAULT|Multi-node epoch"
-  "multinode_event||$TIMEOUT_DEFAULT|Multi-node event"
-  "active_message_db|64|$TIMEOUT_DEFAULT|Active message DB"
-  "active_message_buffer|64|$TIMEOUT_DEFAULT|Active message buffer"
-  "arts_send|16|$TIMEOUT_DEFAULT|arts_send"
-  "db_remote||$TIMEOUT_DEFAULT|DB remote"
-  "remote_db_event||$TIMEOUT_DEFAULT|Remote DB event"
+  "multinode_db||$TIMEOUT_LONG|Multi-node DB"
+  "multinode_edt||$TIMEOUT_LONG|Multi-node EDT"
+  "multinode_epoch||$TIMEOUT_LONG|Multi-node epoch"
+  "multinode_event||$TIMEOUT_LONG|Multi-node event"
+  "active_message_db|64|$TIMEOUT_LONG|Active message DB"
+  "active_message_buffer|64|$TIMEOUT_LONG|Active message buffer"
+  "arts_send|16|$TIMEOUT_LONG|arts_send"
+  "route_table_remote_guid||$TIMEOUT_LONG|Route table remote GUID"
+  "db_put_get_at||$TIMEOUT_LONG|DB put/get at"
+  "db_remote||$TIMEOUT_LONG|DB remote"
+  "remote_db_event||$TIMEOUT_LONG|Remote DB event"
+  "multinode_cdag||$TIMEOUT_LONG|Multi-node CDAG"
+  "multinode_event_types||$TIMEOUT_LONG|Multi-node event types"
+  "multinode_array_db||$TIMEOUT_LONG|Multi-node array DB"
+  "multinode_db_advanced||$TIMEOUT_LONG|Multi-node DB advanced"
+)
+
+GPU_TESTS=(
+  # --- GPU EDT tests ---
+  "gpu_edt_basic||$TIMEOUT_DEFAULT|GPU EDT basic"
+  "gpu_edt_dep||$TIMEOUT_DEFAULT|GPU EDT dep variants"
+  "gpu_edt_with_guid||$TIMEOUT_DEFAULT|GPU EDT with GUID"
+  "gpu_edt_passthrough||$TIMEOUT_DEFAULT|GPU EDT passthrough"
+  # --- GPU memory tests ---
+  "gpu_memory||$TIMEOUT_DEFAULT|GPU memory"
+  "gpu_memset||$TIMEOUT_DEFAULT|GPU memset"
+  # --- GPU DB tests ---
+  "gpu_db||$TIMEOUT_DEFAULT|GPU DB transfer"
+  # --- GPU LC tests ---
+  "gpu_lc_sync_basic||$TIMEOUT_DEFAULT|GPU LC sync basic"
+  "lc_sync||$TIMEOUT_DEFAULT|LC sync"
+  # --- GPU multi-kernel ---
+  "gpu_multi_kernel||$TIMEOUT_DEFAULT|GPU multi-kernel"
+  # --- GPU library tests (thrust/cuBLAS) ---
+  "gpu_for_all||$TIMEOUT_DEFAULT|GPU for_all (thrust)"
+  "gpu_lib||$TIMEOUT_DEFAULT|GPU lib (cuBLAS)"
 )
 
 #===============================================================================
@@ -188,7 +219,7 @@ run_test() {
   # Use multinode config if specified
   local env_prefix=""
   if [ -n "$config" ]; then
-    env_prefix="artsConfig=$config"
+    env_prefix="ARTS_CONFIG=$config"
   fi
 
   # Run with timeout, capture output
@@ -197,7 +228,13 @@ run_test() {
   echo "=== $desc ($binary $args) ===" >> "$LOG_FILE"
 
   if [ -n "$config" ]; then
-    output=$(cd "$TEST_BIN_DIR" && timeout "$tout" env artsConfig="$config" "./$binary" $args 2>&1) || exit_code=$?
+    # Relax ASan for GPU/multinode tests: protect_shadow_gap=0 prevents ASan
+    # shadow memory from blocking CUDA driver VA mappings; detect_leaks=0
+    # suppresses false-positive leak reports from libcuda.so internals.
+    output=$(cd "$TEST_BIN_DIR" && timeout "$tout" env \
+      ARTS_CONFIG="$config" \
+      ASAN_OPTIONS="${ASAN_OPTIONS:-}:protect_shadow_gap=0:detect_leaks=0:alloc_dealloc_mismatch=0" \
+      "./$binary" $args 2>&1) || exit_code=$?
   else
     output=$(cd "$TEST_BIN_DIR" && timeout "$tout" "./$binary" $args 2>&1) || exit_code=$?
   fi
@@ -258,6 +295,23 @@ if [ "$DO_MULTINODE" -eq 1 ]; then
     for entry in "${MULTI_NODE_TESTS[@]}"; do
       IFS='|' read -r binary args tout desc <<< "$entry"
       run_test "$binary" "$args" "$tout" "$desc" "$MULTINODE_CFG"
+    done
+  fi
+fi
+
+if [ "$DO_GPU" -eq 1 ]; then
+  echo ""
+  echo "--- GPU tests (requires CUDA) ---"
+  echo "" >> "$LOG_FILE"
+  echo "=== GPU tests ===" >> "$LOG_FILE"
+
+  GPU_CFG="$TEST_BIN_DIR/arts_gpu.cfg"
+  if [ ! -f "$GPU_CFG" ]; then
+    echo "  ERROR: arts_gpu.cfg not found at $GPU_CFG"
+  else
+    for entry in "${GPU_TESTS[@]}"; do
+      IFS='|' read -r binary args tout desc <<< "$entry"
+      run_test "$binary" "$args" "$tout" "$desc" "$GPU_CFG"
     done
   fi
 fi

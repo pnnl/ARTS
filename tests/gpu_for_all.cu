@@ -48,8 +48,8 @@
 
 #define GPULISTLEN 32
 
-unsigned int **dev_ptr_raw;  // This is a list of the search frontier in global
-                             // memory on each gpu
+unsigned int **dev_ptr_raw; // This is a list of the search frontier in global
+                            // memory on each gpu
 
 // This will probably be where you want to do the actual traversal
 __global__ void temp(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -60,14 +60,14 @@ __global__ void temp(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // unsigned int gpu_id = (unsigned int) paramv[0]; //The current gpu we are on
   uint64_t gpu_id = GET_GPU_INDEX();
   unsigned int **addr =
-      (unsigned int **)depv[0].ptr;  // This is the dev_ptr_raw -> tells us
-                                     // where current frontier is on device
+      (unsigned int **)depv[0].ptr; // This is the dev_ptr_raw -> tells us
+                                    // where current frontier is on device
   unsigned int *local =
-      addr[gpu_id];  // We need the one corresponding to our gpu
+      addr[gpu_id]; // We need the one corresponding to our gpu
 
   unsigned int index = threadIdx.x + (blockIdx.x * blockDim.x);
   local[(GPULISTLEN - 1) - index] = (unsigned int)
-      gpu_id;  // index; //Just writing some blah blah value to sort
+      gpu_id; // index; //Just writing some blah blah value to sort
 }
 
 // This should be where we do the sorting and should launch the next iteration
@@ -77,19 +77,19 @@ void thrust_sort(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
   arts_guid_t done_guid =
-      (arts_guid_t)paramv[0];  // This can be the end if the frontier is empty
-  unsigned int gpu_index = (unsigned int)paramv[1];  // gpu_index
+      (arts_guid_t)paramv[0]; // This can be the end if the frontier is empty
+  unsigned int gpu_index = (unsigned int)paramv[1]; // gpu_index
   unsigned int *raw_ptr =
-      dev_ptr_raw[gpu_index];  // The corresponding dev pointer
-                               // (frontier) to our gpu
+      dev_ptr_raw[gpu_index]; // The corresponding dev pointer
+                              // (frontier) to our gpu
 
-  unsigned int *tile = NULL;  // This will hold a tile of the new frontier
+  unsigned int *tile = NULL; // This will hold a tile of the new frontier
   arts_guid_t tile_guid = arts_guid_reserve(ARTS_DB, 0);
   tile = (unsigned int *)arts_db_create_with_guid(
       tile_guid, sizeof(unsigned int) * GPULISTLEN, ARTS_DB_GPU, NULL, NULL);
 
   thrust::device_ptr<unsigned int> dev_thrust_ptr(raw_ptr);
-  thrust::sort(dev_thrust_ptr, dev_thrust_ptr + GPULISTLEN);  // Do the sorting
+  thrust::sort(dev_thrust_ptr, dev_thrust_ptr + GPULISTLEN); // Do the sorting
 
   // Copy the data from the gpu to the host
   arts_put_in_db_from_gpu(thrust::raw_pointer_cast(dev_thrust_ptr), tile_guid,
@@ -99,22 +99,32 @@ void thrust_sort(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Or signal the end if we are done
   arts_signal_edt(
       done_guid, gpu_index, tile_guid,
-      DB_MODE_EW);  // don't really need tile_guid just doing it for testing
+      DB_MODE_EW); // don't really need tile_guid just doing it for testing
 }
 
 void done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
           arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
-  // This is just for testing...
-  // We should see it is sorted
+  bool ok = true;
   for (unsigned int i = 0; i < depc; i++) {
     unsigned int *tile = (unsigned int *)depv[i].ptr;
-    printf("GPU %u: ", i);
-    for (unsigned int j = 0; j < GPULISTLEN; j++) {
-      printf("%u, ", tile[j]);
+    if (tile == NULL) {
+      arts_printf("  FAIL: GPU %u tile is NULL\n", i);
+      ok = false;
+      continue;
     }
-    printf("\n");
+    for (unsigned int j = 0; j < GPULISTLEN; j++) {
+      if (tile[j] != i) {
+        arts_printf("  FAIL: GPU %u tile[%u] = %u, expected %u\n", i, j,
+                    tile[j], i);
+        ok = false;
+        break;
+      }
+    }
+  }
+  if (ok) {
+    arts_printf("  PASS: gpu_for_all thrust sort verified (%u GPUs)\n", depc);
   }
   arts_shutdown();
 }
@@ -133,8 +143,8 @@ extern "C" void arts_init_per_gpu(unsigned int node_id, int dev_id,
       (unsigned int *)arts_cuda_malloc(sizeof(unsigned int) * GPULISTLEN);
 }
 
-extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
-                              uint32_t depc, arts_edt_dep_t depv[]) {
+extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                         arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
@@ -143,7 +153,8 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
   unsigned int **addr;
   arts_guid_t db_guid = arts_guid_reserve(ARTS_DB, 0);
   addr = (unsigned int **)arts_db_create_with_guid(
-      db_guid, sizeof(unsigned int *) * arts_get_total_gpus(), ARTS_DB_GPU, NULL, NULL);
+      db_guid, sizeof(unsigned int *) * arts_get_total_gpus(), ARTS_DB_GPU,
+      NULL, NULL);
   for (uint64_t i = 0; i < arts_get_total_gpus(); i++) {
     addr[i] = dev_ptr_raw[i];
   }

@@ -42,6 +42,7 @@
 extern "C" {
 #endif
 
+void arts_install_signal_handlers(void);
 void arts_turn_on_core_dumps(void);
 
 #ifdef __cplusplus

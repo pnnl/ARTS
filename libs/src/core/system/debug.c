@@ -44,14 +44,64 @@
 #include <unistd.h>
 
 #include "arts/system/print.h"
+#include "arts/system/threads.h"
 
-static void arts_crash_signal_handler(int sig) {
-  const char *msg = "\n[ARTS] Fatal signal — stack trace:\n";
-  (void)write(STDERR_FILENO, msg, strlen(msg));
+// Async-signal-safe signal name lookup (strsignal() is NOT safe).
+static const char *signal_name(int sig) {
+  switch (sig) {
+  case SIGSEGV:
+    return "SIGSEGV";
+  case SIGBUS:
+    return "SIGBUS";
+  case SIGFPE:
+    return "SIGFPE";
+  case SIGTERM:
+    return "SIGTERM";
+  case SIGINT:
+    return "SIGINT";
+  case SIGALRM:
+    return "SIGALRM";
+  case SIGHUP:
+    return "SIGHUP";
+  default:
+    return "UNKNOWN";
+  }
+}
 
+// Async-signal-safe: write an unsigned int as decimal digits to stderr.
+static void write_uint(unsigned int val) {
+  char buf[16];
+  int pos = (int)sizeof(buf);
+  if (val == 0) {
+    buf[--pos] = '0';
+  } else {
+    while (val > 0) {
+      buf[--pos] = (char)('0' + (val % 10));
+      val /= 10;
+    }
+  }
+  (void)write(STDERR_FILENO, buf + pos, (size_t)(sizeof(buf) - (size_t)pos));
+}
+
+static void write_backtrace(void) {
   void *frames[32];
-  int n = backtrace(frames, 32);
-  backtrace_symbols_fd(frames, n, STDERR_FILENO);
+  int depth = backtrace(frames, 32);
+  backtrace_symbols_fd(frames, depth, STDERR_FILENO);
+}
+
+// Crash signals (SIGSEGV, SIGBUS, SIGFPE) — unrecoverable, re-raise for core.
+static void arts_crash_signal_handler(int sig) {
+  const char *pre = "\n[ARTS] Crashed: ";
+  (void)write(STDERR_FILENO, pre, strlen(pre));
+  const char *name = signal_name(sig);
+  (void)write(STDERR_FILENO, name, strlen(name));
+  const char *mid = " (rank ";
+  (void)write(STDERR_FILENO, mid, strlen(mid));
+  write_uint(arts_global_rank_id);
+  const char *post = ") — stack trace:\n";
+  (void)write(STDERR_FILENO, post, strlen(post));
+
+  write_backtrace();
 
   struct sigaction sa;
   sa.sa_handler = SIG_DFL;
@@ -61,15 +111,51 @@ static void arts_crash_signal_handler(int sig) {
   (void)raise(sig);
 }
 
-static void arts_install_crash_handlers(void) {
+// Termination signals (SIGTERM, SIGINT, SIGALRM, SIGHUP) — graceful exit.
+static void arts_term_signal_handler(int sig) {
+  const char *pre = "\n[ARTS] Killed by ";
+  (void)write(STDERR_FILENO, pre, strlen(pre));
+  const char *name = signal_name(sig);
+  (void)write(STDERR_FILENO, name, strlen(name));
+  const char *mid = " (rank ";
+  (void)write(STDERR_FILENO, mid, strlen(mid));
+  write_uint(arts_global_rank_id);
+  const char *post = ") — stack trace:\n";
+  (void)write(STDERR_FILENO, post, strlen(post));
+
+  write_backtrace();
+
   struct sigaction sa;
-  sa.sa_handler = arts_crash_signal_handler;
+  sa.sa_handler = SIG_DFL;
   sigemptyset(&sa.sa_mask);
   sa.sa_flags = 0;
-  int sigs[] = {SIGSEGV, SIGBUS, SIGFPE};
+  sigaction(sig, &sa, NULL);
+  (void)raise(sig);
+}
+
+void arts_install_signal_handlers(void) {
+  // Crash handlers — backtrace + re-raise for core dump.
+  struct sigaction crash_sa;
+  crash_sa.sa_handler = arts_crash_signal_handler;
+  sigemptyset(&crash_sa.sa_mask);
+  crash_sa.sa_flags = 0;
+  int crash_sigs[] = {SIGSEGV, SIGBUS, SIGFPE};
   for (int i = 0; i < 3; i++) {
-    sigaction(sigs[i], &sa, NULL);
+    sigaction(crash_sigs[i], &crash_sa, NULL);
   }
+
+  // Termination handlers — backtrace + re-raise for clean exit.
+  struct sigaction term_sa;
+  term_sa.sa_handler = arts_term_signal_handler;
+  sigemptyset(&term_sa.sa_mask);
+  term_sa.sa_flags = 0;
+  int term_sigs[] = {SIGTERM, SIGINT, SIGALRM, SIGHUP};
+  for (int i = 0; i < 4; i++) {
+    sigaction(term_sigs[i], &term_sa, NULL);
+  }
+
+  // Ignore SIGPIPE — let socket writes fail with EPIPE instead of killing us.
+  signal(SIGPIPE, SIG_IGN); // NOLINT(cert-err33-c)
 }
 
 #ifndef __APPLE__
@@ -86,15 +172,12 @@ void arts_turn_on_core_dumps(void) {
   if (setrlimit(RLIMIT_CORE, &limit) != 0) {
     ARTS_INFO("Failed to force core dumps");
   }
-
-  arts_install_crash_handlers();
 }
 
 #else
 
 void arts_turn_on_core_dumps(void) {
   ARTS_INFO("Core dumps not supported on OS X.");
-  arts_install_crash_handlers();
 }
 
 #endif

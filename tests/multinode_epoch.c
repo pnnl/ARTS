@@ -38,21 +38,58 @@
 ******************************************************************************/
 
 /// @file multinode_epoch.c
-/// @brief Tests epoch termination detection across nodes.
+/// @brief Tests epoch termination detection across nodes with result
+///        verification: each task reports its rank, collector verifies
+///        all tasks ran on the correct nodes.
 ///        Requires multi-node (node_count > 1).
 
 #include "arts.h"
 
 #define TASKS_PER_NODE 10
+#define MAX_NODES 64
 
-/// Simple dummy task on each node.
+/// Task on each node: reports rank to collector.
 void node_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                arts_edt_dep_t depv[]) {
-  (void)paramc;
-  (void)paramv;
   (void)depc;
   (void)depv;
-  // Do nothing — epoch counts it.
+  (void)paramc;
+  arts_guid_t collector = (arts_guid_t)paramv[0];
+  uint32_t slot = (uint32_t)paramv[1];
+  unsigned int my_rank = arts_get_current_node();
+  arts_signal_edt_value(collector, slot, (uint64_t)my_rank);
+}
+
+/// Collector: verify that each rank appears TASKS_PER_NODE times.
+void check_epoch_results(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                         arts_edt_dep_t depv[]) {
+  (void)paramc;
+  unsigned int total_nodes = (unsigned int)paramv[0];
+  unsigned int counts[MAX_NODES] = {0};
+  bool ok = true;
+
+  for (uint32_t i = 0; i < depc; i++) {
+    unsigned int rank = (unsigned int)(uint64_t)depv[i].guid;
+    if (rank >= total_nodes) {
+      arts_printf("  FAIL: task %u reported invalid rank %u\n", i, rank);
+      ok = false;
+    } else {
+      counts[rank]++;
+    }
+  }
+
+  for (unsigned int r = 0; r < total_nodes && ok; r++) {
+    if (counts[r] != TASKS_PER_NODE) {
+      arts_printf("  FAIL: rank %u ran %u tasks, expected %u\n", r, counts[r],
+                  (unsigned int)TASKS_PER_NODE);
+      ok = false;
+    }
+  }
+
+  if (ok) {
+    arts_printf("  PASS: all %u tasks ran across %u nodes (%u per node)\n",
+                depc, total_nodes, (unsigned int)TASKS_PER_NODE);
+  }
 }
 
 /// Finish EDT: epoch completed across all nodes.
@@ -76,22 +113,29 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("=== multinode_epoch ===\n");
 
   unsigned int total = arts_get_total_nodes();
-  if (total < 2) {
-    arts_printf("  SKIP: need node_count >= 2 (have %u)\n", total);
-    arts_shutdown();
-    return;
-  }
 
   // Create epoch with finish EDT.
   arts_guid_t fin =
       arts_edt_create(epoch_finish, 0, NULL, 1, &(arts_hint_t){.route = 0});
   arts_guid_t epoch = arts_initialize_and_start_epoch(fin, 0);
 
+  // Create collector EDT that receives one signal per task.
+  unsigned int total_tasks = TASKS_PER_NODE * total;
+  uint64_t total_param = (uint64_t)total;
+  arts_guid_t collector = arts_edt_create_with_epoch(
+      check_epoch_results, 1, &total_param, total_tasks, epoch,
+      &(arts_hint_t){.route = 0});
+
   // Launch TASKS_PER_NODE tasks on each node.
+  uint32_t slot = 0;
   for (unsigned int r = 0; r < total; r++) {
-    for (int i = 0; i < TASKS_PER_NODE; i++) {
-      arts_edt_create_with_epoch(node_task, 0, NULL, 0, epoch,
+    for (unsigned int i = 0; i < TASKS_PER_NODE; i++) {
+      uint64_t params[2];
+      params[0] = (uint64_t)collector;
+      params[1] = (uint64_t)slot;
+      arts_edt_create_with_epoch(node_task, 2, params, 0, epoch,
                                  &(arts_hint_t){.route = r});
+      slot++;
     }
   }
 }

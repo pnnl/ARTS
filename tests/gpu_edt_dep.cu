@@ -149,8 +149,8 @@ extern "C" void arts_init_per_gpu(unsigned int node_id, int dev_id,
   (void)argv;
 }
 
-extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
-                              uint32_t depc, arts_edt_dep_t depv[]) {
+extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                         arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
@@ -167,7 +167,7 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
 
   /* has_depv=false means no dependency slots are allocated */
   arts_guid_t gpu_edt =
-      arts_edt_create_gpu_dep(nodep_kernel, node_id, 1, NULL, 0, grid, threads,
+      arts_edt_create_gpu_dep(nodep_kernel, node_id, 0, NULL, 0, grid, threads,
                               verify2_guid, 0, NULL_GUID, false);
   (void)gpu_edt;
 }

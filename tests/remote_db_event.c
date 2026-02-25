@@ -47,6 +47,7 @@ void edt_func(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramc;
   (void)paramv;
   arts_printf("HELLO\n");
+  arts_shutdown();
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -56,9 +57,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
   unsigned int last_node = arts_get_total_nodes() - 1;
-  db_guid = arts_guid_reserve(ARTS_DB, last_node);
-  arts_db_create_with_guid(db_guid, sizeof(unsigned int), ARTS_DB_DEFAULT, NULL,
-                           NULL);
+  void *tmp;
+  db_guid = arts_db_create(&tmp, sizeof(unsigned int), ARTS_DB_DEFAULT,
+                           &(arts_hint_t){.route = last_node});
   for (unsigned int n = 0; n < last_node; n++) {
     arts_guid_t am = arts_edt_create(edt_func, 0, NULL, 1,
                                      &(arts_hint_t){.route = last_node});

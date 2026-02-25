@@ -528,7 +528,7 @@ void internal_signal_edt(arts_guid_t edt_packet, uint32_t slot,
         arts_db_access_mode_t *modes = arts_get_dep_modes(edt);
         if (slot < edt->depc) {
           edt_dep[slot].guid = data_guid;
-          if (mode == DB_MODE_PTR && size > 0 && data_guid == NULL_GUID) {
+          if (mode == DB_MODE_PTR && size > 0) {
             void *copy = arts_malloc(size);
             memcpy(copy, ptr, size);
             edt_dep[slot].ptr = copy;

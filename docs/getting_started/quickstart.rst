@@ -47,7 +47,7 @@ Configuration File
 ------------------
 
 ARTS looks for ``arts.cfg`` in the current directory (or the path in
-the ``artsConfig`` environment variable).  A minimal configuration:
+the ``ARTS_CONFIG`` environment variable).  A minimal configuration:
 
 .. code-block:: ini
 

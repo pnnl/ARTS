@@ -805,6 +805,7 @@ static void config_set_master_from_table(struct arts_config_s *config) {
     config->table[i].rank = i;
     if (strcmp(config->master_node, config->table[i].ip_address) == 0) {
       config->master_rank = i;
+      break;
     }
   }
 }
@@ -878,6 +879,7 @@ static void config_setup_ssh(struct arts_config_s *config,
     config->table[i].rank = i;
     if (strcmp(config->master_node, config->table[i].ip_address) == 0) {
       config->master_rank = i;
+      break;
     }
   }
 }

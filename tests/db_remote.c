@@ -96,13 +96,6 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== db_remote (multi-node) ===\n");
 
-  unsigned int total = arts_get_total_nodes();
-  if (total < 2) {
-    arts_printf("  SKIP: need node_count >= 2 (have %u)\n", total);
-    arts_shutdown();
-    return;
-  }
-
   unsigned int target = 1; // Remote node.
 
   arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
@@ -130,9 +123,6 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Get the data back.
   arts_get_from_db(read_edt, remote_db, 0, 0, DATA_SIZE);
-
-  arts_wait_on_handle(epoch);
-  arts_shutdown();
 }
 
 int main(int argc, char **argv) {

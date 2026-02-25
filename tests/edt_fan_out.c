@@ -123,7 +123,6 @@ void db_collector(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   } else {
     arts_printf("  FAIL: fan-out DB mode, sum=%d expected=%d\n", sum, expected);
   }
-  arts_shutdown();
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,

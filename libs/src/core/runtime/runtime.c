@@ -150,7 +150,6 @@ void arts_runtime_node_init(struct arts_config_s *config) {
   arts_node_info.recv_lock = 0U;
   arts_node_info.steal_request_lock = 1U;
   arts_node_info.shutdown_count = arts_global_rank_count - 1;
-  arts_node_info.shutdown_started = 0;
   arts_node_info.ready_to_shutdown = arts_global_rank_count - 1;
   arts_node_info.auto_shutdown_guid = config->auto_shutdown ? 1 : NULL_GUID;
 
@@ -249,6 +248,14 @@ void arts_runtime_global_cleanup() {
   /* Object counter cleanup */
   arts_object_cleanup_node_storage(tc);
 
+#ifdef ARTS_USE_GPU
+  /* GPU cleanup must run BEFORE route tables are freed — free_gpu_item()
+     calls arts_route_table_lookup_db() for LC DB host-side metadata. */
+  if (arts_node_info.gpu) {
+    arts_cleanup_gpus();
+  }
+#endif
+
   /* Route table cleanup (after entries cleaned by arts_clean_up_dbs) */
   for (unsigned int i = 0; i < tc; i++) {
     arts_delete_route_table(arts_node_info.route_table[i]);
@@ -270,11 +277,6 @@ void arts_runtime_global_cleanup() {
   }
   arts_free(arts_node_info.keys);
   arts_free(arts_node_info.global_guid_thread_id);
-#ifdef ARTS_USE_GPU
-  if (arts_node_info.gpu) {
-    arts_cleanup_gpus();
-  }
-#endif
 
   /* Network outbound queues and sequence tracking arrays */
   arts_server_cleanup();
@@ -337,7 +339,9 @@ void arts_runtime_private_init(struct thread_mask_s *thread,
   arts_node_info.deque[thread->id] = arts_thread_info.my_deque =
       arts_deque_new(config->deque_size);
   arts_node_info.gpu_deque[thread->id] = arts_thread_info.my_gpu_deque =
-      (config->gpu) ? arts_deque_new(config->deque_size) : NULL;
+      (config->gpu && thread->role == ARTS_ROLE_WORKER)
+          ? arts_deque_new(config->deque_size)
+          : NULL;
   if (thread->role == ARTS_ROLE_WORKER) {
     arts_node_info.route_table[thread->id] = arts_new_route_table(
         config->route_table_entries, config->route_table_size);
@@ -534,9 +538,19 @@ void arts_handle_ready_edt(struct arts_edt_s *edt) {
     arts_shutdown_epoch_inc_queue();
 #ifdef ARTS_USE_GPU
     if (arts_node_info.gpu &&
-        (!arts_thread_info.my_deque || !arts_thread_info.my_gpu_deque))
-      arts_store_new_edts(edt);
-    else
+        (!arts_thread_info.my_deque || !arts_thread_info.my_gpu_deque)) {
+      if (!arts_thread_info.my_deque) {
+        /* CUDA callback thread: new_edts/new_edt_lock set from closure */
+        arts_store_new_edts(edt);
+      } else {
+        /* Non-worker thread (sender/receiver): push to worker 0's deque */
+        if (edt->header.type == ARTS_GPU_EDT) {
+          arts_deque_push_front(arts_node_info.gpu_deque[0], edt, 0);
+        } else {
+          arts_deque_push_front(arts_node_info.deque[0], edt, 0);
+        }
+      }
+    } else
 #endif
     {
       if (edt->header.type == ARTS_EDT) {
@@ -731,12 +745,7 @@ int arts_runtime_loop() {
     break;
   case ARTS_ROLE_SENDER:
     while (arts_thread_info.alive) {
-      if (arts_node_info.shutdown_started &&
-          arts_node_info.shutdown_timeout > arts_get_time_stamp()) {
-        arts_runtime_stop();
-      } else {
-        arts_remote_async_send();
-      }
+      arts_remote_async_send();
     }
     break;
   case ARTS_ROLE_WORKER:

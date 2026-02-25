@@ -180,12 +180,24 @@ void done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramv;
   (void)depc;
   float *c = (float *)depv[0].ptr;
-  printf("c after Sgemm :\n");
-  for (unsigned int i = 0; i < M; i++) {
-    for (unsigned int j = 0; j < N; j++) {
-      printf(" %7.0f", c[IDX2C(i, j, M)]); // print c after Sgemm
-    }
-    printf("\n");
+  /*
+   * Verify C = alpha*A*B + beta*C_init where alpha=1, beta=1.
+   * A(6x5) col-major starting at 11, B(5x4) col-major starting at 11,
+   * C_init(6x4) col-major starting at 11.
+   * C[0][0] = 11*11 + 17*12 + 23*13 + 29*14 + 35*15 + 11 = 1566.
+   */
+  float expected_c00 = 1566.0f;
+  bool ok = true;
+  if (c == NULL) {
+    arts_printf("  FAIL: gpu_lib cuBLAS result is NULL\n");
+    ok = false;
+  } else if (c[IDX2C(0, 0, M)] != expected_c00) {
+    arts_printf("  FAIL: gpu_lib C[0][0] = %.0f, expected %.0f\n",
+                c[IDX2C(0, 0, M)], expected_c00);
+    ok = false;
+  }
+  if (ok) {
+    arts_printf("  PASS: gpu_lib cuBLAS Sgemm result verified\n");
   }
   arts_shutdown();
 }

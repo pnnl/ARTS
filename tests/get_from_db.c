@@ -75,8 +75,6 @@ void creater(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_db_create_with_guid(db_guid, sizeof(unsigned int) * num_elements,
                            ARTS_DB_DEFAULT, data, NULL);
   free(data);
-  arts_edt_create_with_guid(getter, edt_guid_fixed, 0, NULL,
-                            block_size / stride);
 }
 
 void shut_down_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,

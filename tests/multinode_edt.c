@@ -38,12 +38,16 @@
 ******************************************************************************/
 
 /// @file multinode_edt.c
-/// @brief Tests EDT creation and signaling across nodes.
+/// @brief Tests EDT creation and signaling across nodes: remote execution,
+///        all-nodes fan-in, multi-hop chains, and paramv delivery.
 ///        Requires multi-node (node_count > 1).
 
 #include "arts.h"
 
-/// EDT running on remote node, signals master on slot 0.
+// ---------------------------------------------------------------------------
+// Test 1: Remote EDT signals back to master.
+// ---------------------------------------------------------------------------
+
 void remote_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                  arts_edt_dep_t depv[]) {
   (void)depc;
@@ -54,7 +58,6 @@ void remote_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_signal_edt_value(collector, 0, (uint64_t)my_rank);
 }
 
-/// Collector on node 0: verify the value came from the remote node.
 void check_remote_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                       arts_edt_dep_t depv[]) {
   (void)paramc;
@@ -71,7 +74,10 @@ void check_remote_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 }
 
-/// EDT on all nodes: each signals the collector with its rank.
+// ---------------------------------------------------------------------------
+// Test 2: One EDT per node, fan-in to collector.
+// ---------------------------------------------------------------------------
+
 void all_nodes_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                     arts_edt_dep_t depv[]) {
   (void)depc;
@@ -88,7 +94,6 @@ void check_all_nodes(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramc;
   (void)paramv;
   bool ok = true;
-  // Each slot should have a unique rank.
   for (uint32_t i = 0; i < depc; i++) {
     uint64_t rank = (uint64_t)depv[i].guid;
     if (rank != (uint64_t)i) {
@@ -100,6 +105,68 @@ void check_all_nodes(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   } else {
     arts_printf("  FAIL: EDT distribution incorrect\n");
   }
+}
+
+// ---------------------------------------------------------------------------
+// Test 3: Multi-hop chain: A(node 0) -> B(node 1) -> C(node 0).
+// ---------------------------------------------------------------------------
+
+/// Intermediate hop: add 10 to value, signal next.
+void chain_hop(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+               arts_edt_dep_t depv[]) {
+  (void)depc;
+  (void)paramc;
+  arts_guid_t next = (arts_guid_t)paramv[0];
+  uint64_t value = (uint64_t)depv[0].guid;
+  arts_signal_edt_value(next, 0, value + 10);
+}
+
+/// Final hop: assert accumulated value.
+void chain_check(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                 arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  uint64_t value = (uint64_t)depv[0].guid;
+  uint64_t expected = (uint64_t)paramv[0];
+  bool ok = (value == expected);
+  if (ok) {
+    arts_printf("  PASS: multi-hop chain value=%lu\n", (unsigned long)value);
+  } else {
+    arts_printf("  FAIL: multi-hop chain value=%lu expected=%lu\n",
+                (unsigned long)value, (unsigned long)expected);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Test 4: Paramv delivery to remote node.
+// ---------------------------------------------------------------------------
+
+void check_paramv(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                  arts_edt_dep_t depv[]) {
+  (void)depc;
+  (void)depv;
+  uint64_t expected[] = {0xDEAD, 0xBEEF, 0xCAFE, 0xF00D};
+  bool ok = (paramc == 4);
+  for (uint32_t i = 0; i < paramc && ok; i++) {
+    if (paramv[i] != expected[i]) {
+      ok = false;
+    }
+  }
+  if (ok) {
+    arts_printf("  PASS: paramv delivered correctly to remote node\n");
+  } else {
+    arts_printf("  FAIL: paramv mismatch on remote node\n");
+  }
+}
+
+// ---------------------------------------------------------------------------
+
+void shutdown_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                  arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
   arts_shutdown();
 }
 
@@ -113,36 +180,55 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("=== multinode_edt ===\n");
 
   unsigned int total = arts_get_total_nodes();
-  if (total < 2) {
-    arts_printf("  SKIP: need node_count >= 2 (have %u)\n", total);
-    arts_shutdown();
-    return;
-  }
-
-  arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  arts_guid_t shut = arts_edt_create(shutdown_edt, 0, NULL, 1, NULL);
+  arts_guid_t epoch = arts_initialize_and_start_epoch(shut, 0);
 
   // Test 1: Create EDT on remote node 1, have it signal back.
-  uint64_t expected_param = 1;
-  arts_guid_t checker =
-      arts_edt_create_with_epoch(check_remote_edt, 1, &expected_param, 1, epoch,
-                                 &(arts_hint_t){.route = 0});
-  uint64_t coll_param = (uint64_t)checker;
-  arts_edt_create_with_epoch(remote_task, 1, &coll_param, 0, epoch,
-                             &(arts_hint_t){.route = 1});
-
-  // Test 2: Create one EDT per node, each reports its rank.
-  arts_guid_t all_coll = arts_edt_create_with_epoch(
-      check_all_nodes, 0, NULL, total, epoch, &(arts_hint_t){.route = 0});
-  for (unsigned int r = 0; r < total; r++) {
-    uint64_t params[2];
-    params[0] = (uint64_t)all_coll;
-    params[1] = (uint64_t)r;
-    arts_edt_create_with_epoch(all_nodes_task, 2, params, 0, epoch,
-                               &(arts_hint_t){.route = r});
+  {
+    uint64_t expected_param = 1;
+    arts_guid_t checker =
+        arts_edt_create_with_epoch(check_remote_edt, 1, &expected_param, 1,
+                                   epoch, &(arts_hint_t){.route = 0});
+    uint64_t coll_param = (uint64_t)checker;
+    arts_edt_create_with_epoch(remote_task, 1, &coll_param, 0, epoch,
+                               &(arts_hint_t){.route = 1});
   }
 
-  arts_wait_on_handle(epoch);
-  arts_shutdown();
+  // Test 2: Create one EDT per node, each reports its rank.
+  {
+    arts_guid_t all_coll = arts_edt_create_with_epoch(
+        check_all_nodes, 0, NULL, total, epoch, &(arts_hint_t){.route = 0});
+    for (unsigned int r = 0; r < total; r++) {
+      uint64_t params[2];
+      params[0] = (uint64_t)all_coll;
+      params[1] = (uint64_t)r;
+      arts_edt_create_with_epoch(all_nodes_task, 2, params, 0, epoch,
+                                 &(arts_hint_t){.route = r});
+    }
+  }
+
+  // Test 3: Multi-hop chain A(node 0) -> B(node 1) -> C(node 0).
+  // A receives 100, adds 10, sends to B. B adds 10, sends to C.
+  // C asserts value == 120.
+  {
+    uint64_t exp3 = 120;
+    arts_guid_t c = arts_edt_create_with_epoch(chain_check, 1, &exp3, 1, epoch,
+                                               &(arts_hint_t){.route = 0});
+    uint64_t c_param = (uint64_t)c;
+    arts_guid_t b = arts_edt_create_with_epoch(chain_hop, 1, &c_param, 1, epoch,
+                                               &(arts_hint_t){.route = 1});
+    uint64_t b_param = (uint64_t)b;
+    arts_guid_t a = arts_edt_create_with_epoch(chain_hop, 1, &b_param, 1, epoch,
+                                               &(arts_hint_t){.route = 0});
+    arts_signal_edt_value(a, 0, 100);
+  }
+
+  // Test 4: Paramv delivery to remote node.
+  {
+    uint64_t pv[4] = {0xDEAD, 0xBEEF, 0xCAFE, 0xF00D};
+    arts_edt_create_with_epoch(check_paramv, 4, pv, 0, epoch,
+                               &(arts_hint_t){.route = 1});
+  }
 }
 
 int main(int argc, char **argv) {

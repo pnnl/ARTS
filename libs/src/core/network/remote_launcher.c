@@ -186,7 +186,7 @@ void arts_remote_launcher_ssh_startup_processes(
         if (arts_config_env) {
           final_length +=
               snprintf(command + final_length, sizeof(command) - final_length,
-                       "arts_config=%s ", arts_config_env);
+                       "ARTS_CONFIG=%s ", arts_config_env);
         }
         // Pass through LD_LIBRARY_PATH if set
         char *ld_library_path = getenv("LD_LIBRARY_PATH");
@@ -219,7 +219,7 @@ void arts_remote_launcher_ssh_startup_processes(
         if (arts_config_env) {
           final_length +=
               snprintf(command + final_length, sizeof(command) - final_length,
-                       "arts_config=%s ", arts_config_env);
+                       "ARTS_CONFIG=%s ", arts_config_env);
         }
         // Pass through LD_LIBRARY_PATH if set
         char *ld_library_path = getenv("LD_LIBRARY_PATH");
@@ -244,6 +244,8 @@ void arts_remote_launcher_ssh_startup_processes(
     // Null-terminate
     command[final_length] = '\0';
 
+    ARTS_DEBUG("SSH command[%d]: %s", i, command);
+
     if (arts_shell_quote(command, quoted_command, sizeof(quoted_command)) !=
         0) {
       continue;
@@ -255,6 +257,8 @@ void arts_remote_launcher_ssh_startup_processes(
         (size_t)wrapped_length >= sizeof(wrapped_command)) {
       continue;
     }
+
+    ARTS_DEBUG("SSH wrapped[%d]: %s", i, wrapped_command);
 
     child = fork();
 

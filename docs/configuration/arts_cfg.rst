@@ -2,12 +2,12 @@ Runtime Configuration (``arts.cfg``)
 ====================================
 
 ARTS reads its runtime configuration from ``arts.cfg`` in the current
-working directory.  Override the path with the ``artsConfig`` environment
+working directory.  Override the path with the ``ARTS_CONFIG`` environment
 variable:
 
 .. code-block:: bash
 
-   artsConfig=/path/to/custom.cfg ./my_program
+   ARTS_CONFIG=/path/to/custom.cfg ./my_program
 
 .. contents:: On this page
    :local:

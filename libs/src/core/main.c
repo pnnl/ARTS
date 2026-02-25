@@ -57,6 +57,7 @@ int arts_rt(int argc, char **argv) {
   struct arts_config_s config;
   arts_config_load(&config);
 
+  arts_install_signal_handlers();
   if (config.core_dump) {
     arts_turn_on_core_dumps();
   }

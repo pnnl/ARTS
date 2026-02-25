@@ -42,6 +42,7 @@
 ///        another. Requires multi-node (node_count > 1).
 
 #include "arts.h"
+#include "arts/utils/malloc.h"
 #include <string.h>
 
 /// Verify data received via cross-node get.
@@ -83,6 +84,15 @@ void remote_writer(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_put_in_db(data, reader_edt, db_guid, 0, 0, 8 * sizeof(int));
 }
 
+void shutdown_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                  arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
+  arts_shutdown();
+}
+
 /// Verify round-robin GUIDs across nodes.
 void check_round_robin(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                        arts_edt_dep_t depv[]) {
@@ -109,7 +119,6 @@ void check_round_robin(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   } else if (guids == NULL) {
     arts_printf("  FAIL: round-robin null pointer\n");
   }
-  arts_shutdown();
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -122,13 +131,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("=== multinode_db ===\n");
 
   unsigned int total = arts_get_total_nodes();
-  if (total < 2) {
-    arts_printf("  SKIP: need node_count >= 2 (have %u)\n", total);
-    arts_shutdown();
-    return;
-  }
-
-  arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  arts_guid_t shut = arts_edt_create(shutdown_edt, 0, NULL, 1, NULL);
+  arts_guid_t epoch = arts_initialize_and_start_epoch(shut, 0);
 
   // Test 1: Create DB on node 0, have node 1 write data, then read on node 0.
   void *db_ptr;
@@ -153,9 +157,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t rr_checker = arts_edt_create_with_epoch(
       check_round_robin, 2, rr_params, 1, epoch, &(arts_hint_t){.route = 0});
   arts_signal_edt_ptr(rr_checker, 0, rr_guids, count * sizeof(arts_guid_t));
-
-  arts_wait_on_handle(epoch);
-  arts_shutdown();
+  arts_free(rr_guids);
 }
 
 int main(int argc, char **argv) {

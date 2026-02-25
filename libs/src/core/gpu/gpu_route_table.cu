@@ -131,7 +131,7 @@ void *arts_gpu_route_table_add_item_race(void *item, uint64_t size,
   arts_route_table_t *route_table = arts_node_info.gpu_route_table[gpu_id];
   bool ret;
   arts_route_item_t *entry = internal_route_table_add_item_race(
-      &ret, route_table, item, key, arts_global_rank_id, true, true, 0);
+      &ret, route_table, item, key, arts_global_rank_id, true, true, 1);
   arts_item_wrapper_t *wrapper = (arts_item_wrapper_t *)entry->data;
   set_gpu_timestamp(&wrapper->time_stamp);
   return (void *)wrapper->realData;
@@ -244,9 +244,7 @@ void gpu_gc_read_lock() {
   }
 }
 
-void gpu_gc_read_unlock() {
-  arts_atomic_sub(&gpu_reader, 1U);
-}
+void gpu_gc_read_unlock() { arts_atomic_sub(&gpu_reader, 1U); }
 
 void gpu_gc_write_lock() {
   while (arts_atomic_cswap(&gpu_writer, 0U, 1U) != 0U) {
@@ -255,9 +253,7 @@ void gpu_gc_write_lock() {
   }
 }
 
-void gpu_gc_write_unlock() {
-  arts_atomic_swap(&gpu_writer, 0U);
-}
+void gpu_gc_write_unlock() { arts_atomic_swap(&gpu_writer, 0U); }
 
 /*This takes three parameters to regulate what is deleted.  This will only clean
 up DBs!

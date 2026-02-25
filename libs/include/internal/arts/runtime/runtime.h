@@ -81,10 +81,7 @@ struct arts_runtime_shared_s {
   volatile unsigned int ready_to_shutdown;
   char *buf;
   int packet_size;
-  bool shutdown_started;
   volatile unsigned int shutdown_count;
-  uint64_t shutdown_timeout;
-  uint64_t shutdown_force_timeout;
   arts_guid_t auto_shutdown_guid;
   unsigned int gpu;
   unsigned int gpu_locality;

@@ -73,13 +73,6 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== db_put_get_at (multi-node) ===\n");
 
-  unsigned int total = arts_get_total_nodes();
-  if (total < 2) {
-    arts_printf("  SKIP: need node_count >= 2 (have %u)\n", total);
-    arts_shutdown();
-    return;
-  }
-
   unsigned int target = 1;
 
   // Create DB on remote rank.

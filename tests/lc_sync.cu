@@ -60,10 +60,18 @@ void done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramv;
   (void)depc;
   unsigned int *tile = (unsigned int *)depv[0].ptr;
-  for (unsigned int j = 0; j < arts_get_total_gpus(); j++) {
-    printf("%u, ", tile[j]);
+  unsigned int total = arts_get_total_gpus();
+  bool any_modified = false;
+  for (unsigned int j = 0; j < total; j++) {
+    if (tile[j] != (unsigned int)-1) {
+      any_modified = true;
+    }
   }
-  printf("\n");
+  if (any_modified) {
+    arts_printf("  PASS: lc_sync data synced from GPU (%u GPUs)\n", total);
+  } else {
+    arts_printf("  FAIL: lc_sync all values still sentinel\n");
+  }
   arts_shutdown();
 }
 
@@ -76,8 +84,8 @@ extern "C" void arts_init_per_gpu(unsigned int node_id, int dev_id,
   (void)argv;
 }
 
-extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
-                              uint32_t depc, arts_edt_dep_t depv[]) {
+extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                         arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
@@ -87,7 +95,8 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
               sizeof(unsigned int) * arts_get_total_gpus());
   arts_guid_t db_guid = arts_guid_reserve(ARTS_DB, 0);
   addr = (unsigned int *)arts_db_create_with_guid(
-      db_guid, sizeof(unsigned int) * arts_get_total_gpus(), ARTS_DB_LC, NULL, NULL);
+      db_guid, sizeof(unsigned int) * arts_get_total_gpus(), ARTS_DB_LC, NULL,
+      NULL);
   for (uint64_t i = 0; i < arts_get_total_gpus(); i++) {
     addr[i] = (unsigned int)-1;
   }
@@ -101,7 +110,7 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
   dim3 threads(arts_get_total_gpus(), 1, 1);
   dim3 grid(1, 1, 1);
   for (uint64_t i = 0; i < arts_get_total_gpus(); i++) {
-    if (i == 3 || i == 4 || i == 7) {
+    if (i == 0 || i == 3 || i == 4 || i == 7) {
       arts_printf("CREATING EDT for GPU: %lu\n", i);
       arts_guid_t edt_guid = arts_edt_create_gpu_direct(
           temp, node_id, i, 0, NULL, 1, grid, threads, done_guid, i + 1,

@@ -69,6 +69,7 @@ typedef struct arts_epoch_pool_s {
 arts_epoch_pool_t *create_epoch_pool(arts_guid_t *epoch_pool_guid,
                                      unsigned int pool_size,
                                      arts_guid_t *start_guid);
+void arts_link_epoch_pool_to_tls(arts_epoch_pool_t *pool);
 arts_epoch_t *get_pool_epoch(arts_guid_t edt_guid, unsigned int slot);
 void arts_cleanup_epoch_pools(void);
 

@@ -122,7 +122,6 @@ void check_copy_type(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   } else {
     arts_printf("  FAIL: db_copy_to_new_type mismatch\n");
   }
-  arts_shutdown();
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -170,6 +169,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t e3 = arts_edt_create_with_epoch(
       check_copy_type, 1, &copy_param, 1, epoch, &(arts_hint_t){.route = 0});
   arts_signal_edt(e3, 0, copied, DB_MODE_RO);
+
+  arts_wait_on_handle(epoch);
+  arts_shutdown();
 }
 
 int main(int argc, char **argv) {

@@ -37,110 +37,107 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 
-/*
- * gpu_memset.cu
- *
- * Tests DB_MODE_MEMSET for GPU zero-initialization:
- *   - arts_gpu_signal_edt_memset: signal an EDT dep slot with GPU memset
- *   - The signaled slot receives a zero-initialized GPU DB
- */
-
-#include <stdio.h>
-#include <stdlib.h>
-
-#include <cuda_runtime_api.h>
+/// @file multinode_array_db.c
+/// @brief Tests array DB distributed across nodes: cross-node put/get,
+///        cross-node gather. Requires multi-node (node_count > 1).
 
 #include "arts.h"
-#include "arts/gpu/gpu_runtime.cuh"
+#include "arts/array_db.h"
 
-#define N_ELEMENTS 64
+#define ELEMS_PER_NODE 4
 
-/* Kernel: verify all values are zero and write pass/fail into first element */
-__global__ void check_zeroed(uint32_t paramc, const uint64_t *paramv,
-                             uint32_t depc, arts_edt_dep_t depv[]) {
+/// Test 1: Verify cross-node get retrieved correct value.
+void check_remote_get(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                      arts_edt_dep_t depv[]) {
   (void)paramc;
-  (void)paramv;
   (void)depc;
   unsigned int *data = (unsigned int *)depv[0].ptr;
-  unsigned int idx = threadIdx.x;
-  /* Only thread 0 does the check to avoid races */
-  if (idx == 0) {
-    unsigned int all_zero = 1;
-    for (unsigned int i = 0; i < N_ELEMENTS; i++) {
-      if (data[i] != 0) {
-        all_zero = 0;
-      }
-    }
-    /* Write result: 1 = all zeroes (pass), 0 = not all zeroes (fail) */
-    data[0] = all_zero;
+  unsigned int expected = (unsigned int)paramv[0];
+  bool ok = (data != NULL && *data == expected);
+  if (ok) {
+    arts_printf("  PASS: cross-node array get element=%u\n", expected);
+  } else {
+    arts_printf("  FAIL: cross-node array get expected=%u got=%u\n", expected,
+                data ? *data : 0xFFFFFFFF);
   }
 }
 
-/* Host EDT: verify kernel's zero-check result */
-void verify_memset(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                   arts_edt_dep_t depv[]) {
+/// Test 2: Gather checker — verify all blocks across nodes.
+void mn_gather_check(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                     arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  bool ok = true;
+  unsigned int idx = 0;
+  for (unsigned int i = 0; i < depc; i++) {
+    unsigned int *block_data = (unsigned int *)depv[i].ptr;
+    if (!block_data) {
+      arts_printf("  FAIL: gather block %u is NULL\n", i);
+      ok = false;
+      idx += ELEMS_PER_NODE;
+      continue;
+    }
+    for (unsigned int j = 0; j < ELEMS_PER_NODE; j++) {
+      if (block_data[j] != idx * 10) {
+        arts_printf("  FAIL: gather[%u] = %u expected %u\n", idx, block_data[j],
+                    idx * 10);
+        ok = false;
+      }
+      idx++;
+    }
+  }
+  if (ok) {
+    arts_printf("  PASS: cross-node gather verified %u elements\n", idx);
+  }
+}
+
+void shutdown_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                  arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
-  unsigned int *data = (unsigned int *)depv[0].ptr;
-  if (data != NULL && data[0] == 1) {
-    arts_printf("  PASS: arts_gpu_signal_edt_memset zero-init verified\n");
-  } else {
-    arts_printf("  FAIL: arts_gpu_signal_edt_memset data not zeroed\n");
-  }
+  (void)depv;
   arts_shutdown();
 }
 
-extern "C" void arts_init_per_gpu(unsigned int node_id, int dev_id,
-                                  cudaStream_t *stream, int argc, char **argv) {
-  (void)node_id;
-  (void)dev_id;
-  (void)stream;
-  (void)argc;
-  (void)argv;
-}
-
-extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                         arts_edt_dep_t depv[]) {
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+              arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
   (void)depv;
 
-  unsigned int node_id = arts_get_current_node();
+  arts_printf("=== multinode_array_db ===\n");
 
-  /* Create a GPU DB with non-zero initial data */
-  arts_guid_t db_guid = arts_guid_reserve(ARTS_DB, 0);
-  unsigned int *addr = (unsigned int *)arts_db_create_with_guid(
-      db_guid, sizeof(unsigned int) * N_ELEMENTS, ARTS_DB_GPU, NULL, NULL);
-  for (unsigned int i = 0; i < N_ELEMENTS; i++) {
-    addr[i] = 0xDEADBEEF;
+  unsigned int total = arts_get_total_nodes();
+  unsigned int total_elems = ELEMS_PER_NODE * total;
+
+  arts_guid_t shut = arts_edt_create(shutdown_edt, 0, NULL, 1, NULL);
+  arts_guid_t epoch = arts_initialize_and_start_epoch(shut, 0);
+
+  // Create distributed array — blocks spread across all nodes.
+  arts_array_db_t *array = NULL;
+  arts_new_array_db(&array, sizeof(unsigned int), total_elems);
+
+  // Write all elements with value = index * 10.
+  for (unsigned int i = 0; i < total_elems; i++) {
+    unsigned int val = i * 10;
+    arts_put_in_array_db(&val, NULL_GUID, 0, array, i);
   }
 
-  arts_hint_t hint_0 = {0, 0};
+  // Test 1: Cross-node get — retrieve an element owned by node 1.
+  // Element ELEMS_PER_NODE should be on node 1 (round-robin block placement).
+  {
+    unsigned int remote_idx = ELEMS_PER_NODE; // first element on node 1
+    uint64_t expected_param = (uint64_t)(remote_idx * 10);
+    arts_guid_t checker =
+        arts_edt_create_with_epoch(check_remote_get, 1, &expected_param, 1,
+                                   epoch, &(arts_hint_t){.route = 0});
+    arts_get_from_array_db(checker, 0, array, remote_idx);
+  }
 
-  /* Create done EDT */
-  arts_guid_t done_guid = arts_edt_create(verify_memset, 0, NULL, 1, &hint_0);
-
-  dim3 threads(N_ELEMENTS, 1, 1);
-  dim3 grid(1, 1, 1);
-
-  /* Create GPU EDT to check if memset zeroed the data.
-   * data_guid = db_guid so the result is delivered to done EDT. */
-  arts_guid_t gpu_edt =
-      arts_edt_create_gpu_direct(check_zeroed, node_id, 0, 0, NULL, 1, grid,
-                                 threads, done_guid, 0, db_guid, true);
-
-  /* Signal the GPU EDT with MEMSET mode — this should zero-init the DB
-   * before the kernel accesses it */
-  arts_gpu_signal_edt_memset(gpu_edt, 0, db_guid);
-}
-
-extern "C" void arts_fini_per_gpu(unsigned int node_id, int dev_id,
-                                  cudaStream_t *stream) {
-  (void)node_id;
-  (void)dev_id;
-  (void)stream;
+  // Test 2: Gather all blocks to node 0 and verify data integrity.
+  arts_gather_array_db_epoch(array, mn_gather_check, 0, 0, NULL, 0, epoch);
 }
 
 int main(int argc, char **argv) {

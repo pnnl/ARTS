@@ -48,6 +48,7 @@
 #include "arts/gas/guid.h"
 #include "arts/gas/out_of_order.h"
 #include "arts/gas/route_table.h"
+#include "arts/network/remote_protocol.h"
 #include "arts/runtime/compute/edt_functions.h"
 #include "arts/runtime/globals.h"
 #include "arts/runtime/memory/db_list.h"
@@ -211,11 +212,21 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
     guid = arts_guid_create_for_rank(route, ARTS_DB);
     void *ptr = arts_db_malloc(db_type, sizeof(struct arts_db_s));
     struct arts_db_s *db = (struct arts_db_s *)ptr;
+    db->header.type = ARTS_DB;
     db->header.size = len + sizeof(struct arts_db_s);
+    db->guid = guid;
     db->db_type = db_type;
     db->db_list = (void *)1;
-    arts_remote_memory_move(route, guid, ptr, sizeof(struct arts_db_s),
-                            ARTS_REMOTE_DB_SEND_MSG, arts_db_free);
+    // Send stub using arts_remote_db_send_packet_s format (matches receiver).
+    // Only the header struct is sent; the receiver allocates the full size.
+    struct arts_remote_db_send_packet_s send_pkt;
+    uint64_t pkt_size = sizeof(send_pkt) + sizeof(struct arts_db_s);
+    arts_fill_packet_header(&send_pkt.header, pkt_size,
+                            ARTS_REMOTE_DB_SEND_MSG);
+    arts_remote_send_request_payload_async_free(
+        (int)route, (char *)&send_pkt, sizeof(send_pkt), (char *)ptr, 0,
+        sizeof(struct arts_db_s), arts_db_free);
+    arts_route_table_remove_item(guid);
     *addr = NULL;
     ARTS_DEBUG("arts_db_create: DB[Guid:%lu, Id:%lu, Type:%s, Size:%lu] "
                "created remotely on rank %u",
@@ -688,7 +699,7 @@ void prep_dbs(unsigned int depc, arts_edt_dep_t *depv,
                  depv[i].guid, depv[i].ptr, db);
     }
 #ifdef ARTS_USE_GPU
-    if (!gpu && depv[i].ptr) {
+    if (!gpu && depv[i].ptr && access_mode != DB_MODE_LC_SYNC) {
       struct arts_db_s *db = ((struct arts_db_s *)depv[i].ptr) - 1;
       if (db->db_type == ARTS_DB_LC) {
         arts_reader_lock(&db->reader, &db->writer);
@@ -729,7 +740,8 @@ void release_dbs(unsigned int depc, arts_edt_dep_t *depv,
                GET_DB_TYPE_NAME(db_subtype));
     unsigned int owner = arts_guid_get_rank(depv[i].guid);
 
-    if (depv[i].guid != NULL_GUID && access_mode == DB_MODE_EW) {
+    if (depv[i].guid != NULL_GUID &&
+        (access_mode == DB_MODE_EW || access_mode == DB_MODE_MEMSET)) {
       if (db_subtype == ARTS_DB_LOCAL) {
         ARTS_DEBUG("Pinned DB write release (no frontier update)");
         arts_db_decrement_latch(depv[i].guid);
@@ -755,8 +767,7 @@ void release_dbs(unsigned int depc, arts_edt_dep_t *depv,
     } else if (db_subtype == ARTS_DB_LOCAL && depv[i].guid != NULL_GUID) {
       arts_db_decrement_latch(depv[i].guid);
     } else if (access_mode == DB_MODE_PTR) {
-      // Only free explicit buffers (guid == NULL). ESD slices point into DBs.
-      if (depv[i].guid == NULL_GUID) {
+      if (depv[i].ptr) {
         arts_free(depv[i].ptr);
       }
     } else if (!gpu && db_subtype == ARTS_DB_LC) {
@@ -838,7 +849,7 @@ bool arts_add_db_duplicate(struct arts_db_s *db, unsigned int rank,
                            struct arts_edt_s *edt, arts_guid_t edt_guid,
                            unsigned int slot, arts_db_access_mode_t mode,
                            bool *on_head) {
-  bool write = (mode == DB_MODE_EW);
+  bool write = (mode == DB_MODE_EW || mode == DB_MODE_MEMSET);
   if (edt && edt_guid == NULL_GUID) {
     edt_guid = edt->current_edt;
   }

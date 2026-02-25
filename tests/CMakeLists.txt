@@ -101,6 +101,10 @@ set(TEST_PROGRAMS
     multinode_edt
     multinode_epoch
     multinode_event
+    multinode_cdag
+    multinode_event_types
+    multinode_array_db
+    multinode_db_advanced
     # --- Graph tests ---
     csr
     distribution
@@ -157,6 +161,15 @@ if(BUILD_CUDA_LIBRARY)
         gpu_lc_red
         gpu_lib
         gpu_ring
+        gpu_edt_basic
+        gpu_edt_dep
+        gpu_edt_with_guid
+        gpu_edt_passthrough
+        gpu_memory
+        gpu_memset
+        gpu_db
+        gpu_lc_sync_basic
+        gpu_multi_kernel
     )
 
     # Function to create a CUDA test executable
