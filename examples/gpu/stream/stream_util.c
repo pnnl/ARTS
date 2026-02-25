@@ -43,7 +43,7 @@
 #include <cuda_runtime_api.h>
 
 #include "arts.h"
-#include "arts/gpu/gpu_runtime.cuh"
+#include "arts/gpu.h"
 
 void launch2_kernel_edt(arts_edt_t fun_ptr, unsigned int tile_size,
                         unsigned int total_size, double scalar,
@@ -62,12 +62,20 @@ void launch2_kernel_edt(arts_edt_t fun_ptr, unsigned int tile_size,
   dim3 grid = {tile_size / num_threads, 1, 1};
 
   uint64_t args[] = {0, (uint64_t)scalar};
+  arts_gpu_hint_t gpu_hint = {
+      .gpu = -1,
+      .route = arts_get_current_node(),
+      .end_guid = to_signal,
+      .slot = 0,
+      .data_guid = NULL_GUID,
+  };
+  arts_dim3_t g = {grid.x, grid.y, grid.z};
+  arts_dim3_t t = {threads.x, threads.y, threads.z};
   if (scalar != 0) {
     for (unsigned int i = 0; i < tiles; ++i) {
       args[0] = (i + 1 < tiles) ? tile_size : total_size - (i * tile_size);
       arts_guid_t edt_guid =
-          arts_edt_create_gpu(fun_ptr, arts_get_current_node(), 2, args, 2,
-                              grid, threads, to_signal, 0, NULL_GUID);
+          arts_edt_create_gpu(fun_ptr, 2, args, 2, g, t, &gpu_hint);
       arts_signal_edt(edt_guid, 0, arts_guid_from_index(a_guid, i), DB_MODE_EW);
       arts_signal_edt(edt_guid, 1, arts_guid_from_index(b_guid, i), DB_MODE_EW);
     }
@@ -75,8 +83,7 @@ void launch2_kernel_edt(arts_edt_t fun_ptr, unsigned int tile_size,
     for (unsigned int i = 0; i < tiles; ++i) {
       args[0] = (i + 1 < tiles) ? tile_size : total_size - (i * tile_size);
       arts_guid_t edt_guid =
-          arts_edt_create_gpu(fun_ptr, arts_get_current_node(), 1, args, 2,
-                              grid, threads, to_signal, 0, NULL_GUID);
+          arts_edt_create_gpu(fun_ptr, 1, args, 2, g, t, &gpu_hint);
       arts_signal_edt(edt_guid, 0, arts_guid_from_index(a_guid, i), DB_MODE_EW);
       arts_signal_edt(edt_guid, 1, arts_guid_from_index(b_guid, i), DB_MODE_EW);
     }
@@ -103,12 +110,20 @@ void launch3_kernel_edt(arts_edt_t fun_ptr, unsigned int tile_size,
   dim3 grid = {tile_size / num_threads, 1, 1};
 
   uint64_t args[] = {0, (uint64_t)scalar};
+  arts_gpu_hint_t gpu_hint = {
+      .gpu = -1,
+      .route = arts_get_current_node(),
+      .end_guid = to_signal,
+      .slot = 0,
+      .data_guid = NULL_GUID,
+  };
+  arts_dim3_t g = {grid.x, grid.y, grid.z};
+  arts_dim3_t t = {threads.x, threads.y, threads.z};
   if (scalar != 0) {
     for (unsigned int i = 0; i < tiles; ++i) {
       args[0] = (i + 1 < tiles) ? tile_size : total_size - (i * tile_size);
       arts_guid_t edt_guid =
-          arts_edt_create_gpu(fun_ptr, arts_get_current_node(), 2, args, 3,
-                              grid, threads, to_signal, 0, NULL_GUID);
+          arts_edt_create_gpu(fun_ptr, 2, args, 3, g, t, &gpu_hint);
       arts_signal_edt(edt_guid, 0, arts_guid_from_index(a_guid, i), DB_MODE_EW);
       arts_signal_edt(edt_guid, 1, arts_guid_from_index(b_guid, i), DB_MODE_EW);
       arts_signal_edt(edt_guid, 2, arts_guid_from_index(c_guid, i), DB_MODE_EW);
@@ -117,8 +132,7 @@ void launch3_kernel_edt(arts_edt_t fun_ptr, unsigned int tile_size,
     for (unsigned int i = 0; i < tiles; ++i) {
       args[0] = (i + 1 < tiles) ? tile_size : total_size - (i * tile_size);
       arts_guid_t edt_guid =
-          arts_edt_create_gpu(fun_ptr, arts_get_current_node(), 1, args, 3,
-                              grid, threads, to_signal, 0, NULL_GUID);
+          arts_edt_create_gpu(fun_ptr, 1, args, 3, g, t, &gpu_hint);
       arts_signal_edt(edt_guid, 0, arts_guid_from_index(a_guid, i), DB_MODE_EW);
       arts_signal_edt(edt_guid, 1, arts_guid_from_index(b_guid, i), DB_MODE_EW);
       arts_signal_edt(edt_guid, 2, arts_guid_from_index(c_guid, i), DB_MODE_EW);

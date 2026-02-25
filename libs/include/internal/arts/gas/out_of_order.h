@@ -43,7 +43,7 @@ extern "C" {
 #endif
 
 #include "arts/gas/out_of_order_list.h"
-#include "arts/runtime/rt.h"
+#include "arts/runtime_types.h"
 
 enum arts_out_of_order_type {
   OO_SIGNAL_EDT,

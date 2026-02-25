@@ -36,11 +36,13 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef ARTS_NETWORK_REMOTELAUNCHER_H
-#define ARTS_NETWORK_REMOTELAUNCHER_H
+#ifndef ARTS_TRANSPORT_LAUNCHER_H
+#define ARTS_TRANSPORT_LAUNCHER_H
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#include <sys/types.h>
 
 #include "arts/system/config.h"
 #include "arts/utils/malloc.h"
@@ -52,7 +54,8 @@ struct arts_remote_launcher_s {
   unsigned int killStuckProcesses;
   void (*launch_processes)(struct arts_remote_launcher_s *);
   void (*cleanup_processes)(struct arts_remote_launcher_s *);
-  // void *launcherMemory;
+  pid_t *child_pids;
+  unsigned int child_count;
 };
 
 // Add your launcher prototypes here
@@ -74,7 +77,8 @@ static inline struct arts_remote_launcher_s *arts_remote_launcher_create(
   launcher->argv = argv;
   launcher->config = config;
   launcher->killStuckProcesses = kill_mode;
-  // launcher->launcherMemory = NULL;
+  launcher->child_pids = NULL;
+  launcher->child_count = 0;
   launcher->launch_processes = launch_processes;
   launcher->cleanup_processes = cleanup_processes;
 

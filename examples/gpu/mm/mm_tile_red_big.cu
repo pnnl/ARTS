@@ -44,7 +44,7 @@
 #include <cuda_runtime_api.h>
 
 #include "arts.h"
-#include "arts/gpu/gpu_runtime.cuh"
+#include "arts/gpu.h"
 
 #define MATSIZE 1024
 #define TILESIZE 32
@@ -143,9 +143,15 @@ init_binary_reduction_tree(unsigned int num_leaves, arts_edt_t fun_ptr,
       if (!i) {
         ARTS_PRINTF("Last: %lu -> %lu slot: %u\n", tree->red_edt_guids[i],
                     end_guid, slot);
-        arts_edt_create_gpu_pt_with_guid(fun_ptr, tree->red_edt_guids[i],
-                                         paramc, paramv, 2, grid, block,
-                                         end_guid, slot, 0);
+        arts_gpu_hint_t gpu_hint_root = {};
+        gpu_hint_root.gpu = -1;
+        gpu_hint_root.end_guid = end_guid;
+        gpu_hint_root.slot = slot;
+        gpu_hint_root.data_guid = (arts_guid_t)0;
+        gpu_hint_root.passthrough = true;
+        arts_edt_create_gpu_with_guid(fun_ptr, tree->red_edt_guids[i], paramc,
+                                      paramv, 2, arts_from_dim3(grid),
+                                      arts_from_dim3(block), &gpu_hint_root);
       } else {
         unsigned int parent_index = parent(i);
         bool is_right = right(parent_index) == i;
@@ -153,9 +159,15 @@ init_binary_reduction_tree(unsigned int num_leaves, arts_edt_t fun_ptr,
         unsigned int to_signal_slot = (is_right) ? 1 : 0;
         ARTS_PRINTF("%lu -> %lu slot: %u parent: %u\n", tree->red_edt_guids[i],
                     to_signal, to_signal_slot, parent_index);
-        arts_edt_create_gpu_pt_with_guid(fun_ptr, tree->red_edt_guids[i],
-                                         paramc, paramv, 2, grid, block,
-                                         to_signal, to_signal_slot, 0);
+        arts_gpu_hint_t gpu_hint_inner = {};
+        gpu_hint_inner.gpu = -1;
+        gpu_hint_inner.end_guid = to_signal;
+        gpu_hint_inner.slot = to_signal_slot;
+        gpu_hint_inner.data_guid = (arts_guid_t)0;
+        gpu_hint_inner.passthrough = true;
+        arts_edt_create_gpu_with_guid(fun_ptr, tree->red_edt_guids[i], paramc,
+                                      paramv, 2, arts_from_dim3(grid),
+                                      arts_from_dim3(block), &gpu_hint_inner);
       }
     }
   }
@@ -282,7 +294,7 @@ void init_node(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   for (unsigned int i = 0; i < num_blocks; i++) {
     for (unsigned int j = 0; j < num_blocks; j++) {
       red_tree[(i * num_blocks) + j] = init_binary_reduction_tree(
-          num_blocks, sum_mm_kernel, ARTS_DB, ARTS_GPU_EDT, 1, sum_args, grid,
+          num_blocks, sum_mm_kernel, ARTS_DB, ARTS_EDT, 1, sum_args, grid,
           threads, done_guid, 3 + ((i * num_blocks) + j));
     }
   }
@@ -344,8 +356,13 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       arts_guid_t *c_guid = red_tree[(i * num_blocks) + j]->red_db_guids;
       for (unsigned int k = 0; k < num_blocks; k++) {
         uint64_t args[] = {0, i, j, k, (uint64_t)c_guid[k]};
-        arts_guid_t mul_guid = arts_edt_create_gpu_lib(multiply_mm, node_id, 5,
-                                                       args, 2, grid, threads);
+        arts_gpu_hint_t gpu_hint_mul = {};
+        gpu_hint_mul.gpu = -1;
+        gpu_hint_mul.route = node_id;
+        gpu_hint_mul.lib = true;
+        arts_guid_t mul_guid =
+            arts_edt_create_gpu(multiply_mm, 5, args, 2, arts_from_dim3(grid),
+                                arts_from_dim3(threads), &gpu_hint_mul);
         arts_signal_edt(
             mul_guid, 0,
             arts_guid_from_index(a_tile_guids, (i * num_blocks) + k),

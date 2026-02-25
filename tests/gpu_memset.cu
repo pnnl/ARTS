@@ -51,7 +51,7 @@
 #include <cuda_runtime_api.h>
 
 #include "arts.h"
-#include "arts/gpu/gpu_runtime.cuh"
+#include "arts/gpu.h"
 
 #define N_ELEMENTS 64
 
@@ -127,9 +127,15 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   /* Create GPU EDT to check if memset zeroed the data.
    * data_guid = db_guid so the result is delivered to done EDT. */
+  arts_gpu_hint_t gpu_hint = {};
+  gpu_hint.route = node_id;
+  gpu_hint.gpu = 0;
+  gpu_hint.end_guid = done_guid;
+  gpu_hint.slot = 0;
+  gpu_hint.data_guid = db_guid;
   arts_guid_t gpu_edt =
-      arts_edt_create_gpu_direct(check_zeroed, node_id, 0, 0, NULL, 1, grid,
-                                 threads, done_guid, 0, db_guid, true);
+      arts_edt_create_gpu(check_zeroed, 0, NULL, 1, arts_from_dim3(grid),
+                          arts_from_dim3(threads), &gpu_hint);
 
   /* Signal the GPU EDT with MEMSET mode — this should zero-init the DB
    * before the kernel accesses it */

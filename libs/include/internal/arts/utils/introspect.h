@@ -36,15 +36,15 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef ARTS_UTILS_UTIL_H
-#define ARTS_UTILS_UTIL_H
+#ifndef ARTS_UTILS_INTROSPECT_H
+#define ARTS_UTILS_INTROSPECT_H
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #include <stdint.h>
 
-#include "arts/runtime/rt.h"
+#include "arts/runtime_types.h"
 
 void arts_printf(const char *format, ...);
 uint64_t arts_get_time_stamp();

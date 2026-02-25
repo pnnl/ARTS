@@ -41,12 +41,12 @@
 #include <stdlib.h>
 
 #include "arts.h"
-#include "arts/gpu/gpu_runtime.cuh"
+#include "arts/gpu.h"
 
 #include "mm_util.h"
 
-#define GPUMM    1
-#define MATSIZE  1024
+#define GPUMM 1
+#define MATSIZE 1024
 #define TILESIZE 32
 // #define VERIFY 1
 #define SMTILE 32
@@ -127,13 +127,16 @@ void multiply_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_guid_t a_tile_guid = arts_guid_reserve(ARTS_DB, 0);
   a_tile = (double *)arts_db_create_with_guid(
-      a_tile_guid, sizeof(double) * tile_size * tile_size, ARTS_DB_GPU, NULL, NULL);
+      a_tile_guid, sizeof(double) * tile_size * tile_size, ARTS_DB_GPU, NULL,
+      NULL);
   arts_guid_t b_tile_guid = arts_guid_reserve(ARTS_DB, 0);
   b_tile = (double *)arts_db_create_with_guid(
-      b_tile_guid, sizeof(double) * tile_size * tile_size, ARTS_DB_GPU, NULL, NULL);
+      b_tile_guid, sizeof(double) * tile_size * tile_size, ARTS_DB_GPU, NULL,
+      NULL);
   arts_guid_t c_tile_guid = arts_guid_reserve(ARTS_DB, 0);
   c_tile = (double *)arts_db_create_with_guid(
-      c_tile_guid, sizeof(double) * tile_size * tile_size, ARTS_DB_GPU, NULL, NULL);
+      c_tile_guid, sizeof(double) * tile_size * tile_size, ARTS_DB_GPU, NULL,
+      NULL);
 
   copy_block(i, k, tile_size, a_tile, mat_size, a_mat, true);
   copy_block(k, j, tile_size, b_tile, mat_size, b_mat, true);
@@ -145,9 +148,15 @@ void multiply_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
             (tile_size + SMTILE - 1) / SMTILE);
 
   uint64_t args[] = {(uint64_t)tile_size};
+  arts_gpu_hint_t gpu_hint_mul = {};
+  gpu_hint_mul.gpu = -1;
+  gpu_hint_mul.route = arts_get_current_node();
+  gpu_hint_mul.end_guid = to_signal;
+  gpu_hint_mul.slot = k;
+  gpu_hint_mul.data_guid = c_tile_guid;
   arts_guid_t mul_gpu_guid =
-      arts_edt_create_gpu(mm_kernel, arts_get_current_node(), 1, args, 3, grid,
-                          threads, to_signal, k, c_tile_guid);
+      arts_edt_create_gpu(mm_kernel, 1, args, 3, arts_from_dim3(grid),
+                          arts_from_dim3(threads), &gpu_hint_mul);
   arts_signal_edt(mul_gpu_guid, 0, a_tile_guid, DB_MODE_EW);
   arts_signal_edt(mul_gpu_guid, 1, b_tile_guid, DB_MODE_EW);
   arts_signal_edt(mul_gpu_guid, 2, c_tile_guid, DB_MODE_EW);
@@ -192,7 +201,8 @@ void sum_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   unsigned int row_size = tile_size;
   arts_guid_t c_tile_guid = arts_guid_reserve(ARTS_DB, 0);
   c_tile = (double *)arts_db_create_with_guid(
-      c_tile_guid, sizeof(double) * tile_size * tile_size, ARTS_DB_GPU, NULL, NULL);
+      c_tile_guid, sizeof(double) * tile_size * tile_size, ARTS_DB_GPU, NULL,
+      NULL);
   init_matrix(row_size, c_tile, false, true);
 
   for (unsigned int i = 0; i < depc; i++) {
@@ -259,8 +269,8 @@ void finish_block_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
-                              uint32_t depc, arts_edt_dep_t depv[]) {
+extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                         arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;
   (void)depv;
@@ -284,11 +294,14 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
   c_mat_guid = arts_guid_reserve(ARTS_DB, 0);
 
   double *a_mat = (double *)arts_db_create_with_guid(
-      a_mat_guid, (size_t)mat_size * mat_size * sizeof(double), ARTS_DB_GPU, NULL, NULL);
+      a_mat_guid, (size_t)mat_size * mat_size * sizeof(double), ARTS_DB_GPU,
+      NULL, NULL);
   double *b_mat = (double *)arts_db_create_with_guid(
-      b_mat_guid, (size_t)mat_size * mat_size * sizeof(double), ARTS_DB_GPU, NULL, NULL);
+      b_mat_guid, (size_t)mat_size * mat_size * sizeof(double), ARTS_DB_GPU,
+      NULL, NULL);
   double *c_mat = (double *)arts_db_create_with_guid(
-      c_mat_guid, (size_t)mat_size * mat_size * sizeof(double), ARTS_DB_GPU, NULL, NULL);
+      c_mat_guid, (size_t)mat_size * mat_size * sizeof(double), ARTS_DB_GPU,
+      NULL, NULL);
 
   init_matrix(mat_size, a_mat, false, false);
   init_matrix(mat_size, b_mat, false, false);
@@ -302,9 +315,16 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
       dim3 threads(tile_size, tile_size);
       dim3 grid((tile_size + SMTILE - 1) / SMTILE,
                 (tile_size + SMTILE - 1) / SMTILE);
-      arts_guid_t sum_guid = arts_edt_create_gpu_pt(
-          sum_mm_kernel, node_id, 1, sum_args, num_blocks, grid, threads,
-          done_guid, 3 + ((i * num_blocks) + j), 0);
+      arts_gpu_hint_t gpu_hint_sum = {};
+      gpu_hint_sum.gpu = -1;
+      gpu_hint_sum.route = node_id;
+      gpu_hint_sum.end_guid = done_guid;
+      gpu_hint_sum.slot = 3 + ((i * num_blocks) + j);
+      gpu_hint_sum.data_guid = (arts_guid_t)0;
+      gpu_hint_sum.passthrough = true;
+      arts_guid_t sum_guid = arts_edt_create_gpu(
+          sum_mm_kernel, 1, sum_args, num_blocks, arts_from_dim3(grid),
+          arts_from_dim3(threads), &gpu_hint_sum);
 #else
       uint64_t sum_args[] = {done_guid, i, j};
       arts_hint_t hint_1 = {node_id, 0};

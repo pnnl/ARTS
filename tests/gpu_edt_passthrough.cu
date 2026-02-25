@@ -40,9 +40,9 @@
 /*
  * gpu_edt_passthrough.cu
  *
- * Tests GPU EDT passthrough variants:
- *   - arts_edt_create_gpu_pt: passthrough EDT that forwards a dep slot
- *   - arts_edt_create_gpu_pt_dep: passthrough with has_depv control
+ * Tests GPU EDT passthrough mode:
+ *   - arts_edt_create_gpu with hint.passthrough=true: passthrough EDT that
+ *     forwards a dep slot
  */
 
 #include <stdio.h>
@@ -51,7 +51,7 @@
 #include <cuda_runtime_api.h>
 
 #include "arts.h"
-#include "arts/gpu/gpu_runtime.cuh"
+#include "arts/gpu.h"
 
 #define N_ELEMENTS 16
 
@@ -83,7 +83,7 @@ void verify_passthrough(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     }
   }
   if (pass) {
-    arts_printf("PASS: arts_edt_create_gpu_pt passthrough\n");
+    arts_printf("PASS: arts_edt_create_gpu passthrough mode\n");
   }
   arts_shutdown();
 }
@@ -97,8 +97,8 @@ extern "C" void arts_init_per_gpu(unsigned int node_id, int dev_id,
   (void)argv;
 }
 
-extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
-                              uint32_t depc, arts_edt_dep_t depv[]) {
+extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                         arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
@@ -124,14 +124,20 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
   dim3 grid(1, 1, 1);
 
   /*
-   * arts_edt_create_gpu_pt: passthrough variant.
-   * The GPU kernel runs, and upon completion the dep at pass_slot is
-   * forwarded to end_guid at slot.
-   * pass_slot = 0 means depv[0] (our DB) is passed through.
+   * Passthrough mode: the GPU kernel runs, and upon completion the dep at
+   * the slot stored in hint.data_guid is forwarded to end_guid at slot.
+   * data_guid = 0 means depv[0] (our DB) is passed through.
    */
+  arts_gpu_hint_t gpu_hint = {};
+  gpu_hint.gpu = -1;
+  gpu_hint.route = node_id;
+  gpu_hint.end_guid = verify_guid;
+  gpu_hint.slot = 0;
+  gpu_hint.data_guid = (arts_guid_t)0;
+  gpu_hint.passthrough = true;
   arts_guid_t gpu_edt =
-      arts_edt_create_gpu_pt(increment_kernel, node_id, 0, NULL, 1, grid,
-                             threads, verify_guid, 0, 0 /* pass_slot */);
+      arts_edt_create_gpu(increment_kernel, 0, NULL, 1, arts_from_dim3(grid),
+                          arts_from_dim3(threads), &gpu_hint);
   arts_signal_edt(gpu_edt, 0, db_guid, DB_MODE_EW);
 }
 

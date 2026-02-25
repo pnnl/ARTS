@@ -50,8 +50,8 @@
 
 #include "arts.h"
 #include "arts/counter/counter.h"
-#include "arts/network/server.h"
-#include "arts/runtime/runtime.h"
+#include "arts/transport/dispatcher.h"
+#include "arts/runtime_state.h"
 #include "arts/system/config.h"
 #include "arts/system/print.h"
 #include "arts/utils/malloc.h"

@@ -41,8 +41,8 @@
  * gpu_edt_dep.cu
  *
  * Tests GPU EDT creation with dependency variants:
- *   - arts_edt_create_gpu_dep with has_depv=true (signal deps later)
- *   - arts_edt_create_gpu_dep with has_depv=false (no depv)
+ *   - arts_edt_create_gpu with depc>0 (signal deps later)
+ *   - arts_edt_create_gpu with depc=0 (no deps)
  *   - arts_edt_create_gpu with data_guid (auto-signal)
  */
 
@@ -52,11 +52,11 @@
 #include <cuda_runtime_api.h>
 
 #include "arts.h"
-#include "arts/gpu/gpu_runtime.cuh"
+#include "arts/gpu.h"
 
 #define N_ELEMENTS 32
 
-/* ---------- Test 1: arts_edt_create_gpu_dep (has_depv=true) ---------- */
+/* ---------- Test 1: arts_edt_create_gpu (depc=1, signal later) ---------- */
 
 /* Kernel: each thread writes thread index to the output DB */
 __global__ void dep_kernel(uint32_t paramc, const uint64_t *paramv,
@@ -87,12 +87,12 @@ void verify_dep(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     }
   }
   if (pass) {
-    arts_printf("PASS test1: arts_edt_create_gpu_dep (has_depv=true)\n");
+    arts_printf("PASS test1: arts_edt_create_gpu (depc=1, signal later)\n");
   }
   arts_shutdown();
 }
 
-/* ---------- Test 2: arts_edt_create_gpu_dep (has_depv=false) ---------- */
+/* ---------- Test 2: arts_edt_create_gpu (depc=0, no deps) ---------- */
 
 /* Kernel with no depv: just writes paramc+1 into paramv output */
 __global__ void nodep_kernel(uint32_t paramc, const uint64_t *paramv,
@@ -115,7 +115,7 @@ void verify_nodep(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramv;
   (void)depc;
   (void)depv;
-  arts_printf("PASS test2: arts_edt_create_gpu_dep (has_depv=false) ran\n");
+  arts_printf("PASS test2: arts_edt_create_gpu (depc=0) ran\n");
 
   /* Now run test 1 */
   unsigned int node_id = arts_get_current_node();
@@ -133,10 +133,16 @@ void verify_nodep(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   dim3 threads(N_ELEMENTS, 1, 1);
   dim3 grid(1, 1, 1);
 
-  /* Create GPU EDT with has_depv=true, signal dep manually */
+  /* Create GPU EDT with depc=1, signal dep manually */
+  arts_gpu_hint_t gpu_hint = {};
+  gpu_hint.gpu = -1;
+  gpu_hint.route = node_id;
+  gpu_hint.end_guid = verify_guid;
+  gpu_hint.slot = 0;
+  gpu_hint.data_guid = db_guid;
   arts_guid_t gpu_edt =
-      arts_edt_create_gpu_dep(dep_kernel, node_id, 0, NULL, 1, grid, threads,
-                              verify_guid, 0, db_guid, true);
+      arts_edt_create_gpu(dep_kernel, 0, NULL, 1, arts_from_dim3(grid),
+                          arts_from_dim3(threads), &gpu_hint);
   arts_signal_edt(gpu_edt, 0, db_guid, DB_MODE_EW);
 }
 
@@ -165,10 +171,16 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   dim3 threads(1, 1, 1);
   dim3 grid(1, 1, 1);
 
-  /* has_depv=false means no dependency slots are allocated */
+  /* depc=0 means no dependency slots */
+  arts_gpu_hint_t gpu_hint = {};
+  gpu_hint.gpu = -1;
+  gpu_hint.route = node_id;
+  gpu_hint.end_guid = verify2_guid;
+  gpu_hint.slot = 0;
+  gpu_hint.data_guid = NULL_GUID;
   arts_guid_t gpu_edt =
-      arts_edt_create_gpu_dep(nodep_kernel, node_id, 0, NULL, 0, grid, threads,
-                              verify2_guid, 0, NULL_GUID, false);
+      arts_edt_create_gpu(nodep_kernel, 0, NULL, 0, arts_from_dim3(grid),
+                          arts_from_dim3(threads), &gpu_hint);
   (void)gpu_edt;
 }
 

@@ -54,7 +54,7 @@
 #include <cuda_runtime_api.h>
 
 #include "arts.h"
-#include "arts/gpu/gpu_runtime.cuh"
+#include "arts/gpu.h"
 
 #define N_ELEMENTS 32
 
@@ -156,11 +156,22 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   dim3 grid(1, 1, 1);
 
   /* Chain: kernel -> lib_transfer -> done */
-  arts_guid_t lib_edt = arts_edt_create_gpu_lib_direct(
-      transfer_to_db, node_id, 0, 2, args, 0, grid, threads);
-  arts_guid_t gpu_edt = arts_edt_create_gpu_direct(
-      fill_device_mem, node_id, 0, 1, (uint64_t *)&dev_buffer, 0, grid, threads,
-      lib_edt, 0, NULL_GUID, false);
+  arts_gpu_hint_t lib_hint = {};
+  lib_hint.route = node_id;
+  lib_hint.gpu = 0;
+  lib_hint.lib = true;
+  arts_guid_t lib_edt =
+      arts_edt_create_gpu(transfer_to_db, 2, args, 0, arts_from_dim3(grid),
+                          arts_from_dim3(threads), &lib_hint);
+  arts_gpu_hint_t kern_hint = {};
+  kern_hint.route = node_id;
+  kern_hint.gpu = 0;
+  kern_hint.end_guid = lib_edt;
+  kern_hint.slot = 0;
+  kern_hint.data_guid = NULL_GUID;
+  arts_guid_t gpu_edt = arts_edt_create_gpu(
+      fill_device_mem, 1, (uint64_t *)&dev_buffer, 0, arts_from_dim3(grid),
+      arts_from_dim3(threads), &kern_hint);
   (void)gpu_edt;
 }
 

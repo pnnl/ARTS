@@ -45,10 +45,10 @@
 #include <sys/stat.h>
 
 // #include "arts.h"
-#include "arts/runtime/runtime.h"
+#include "arts/runtime_state.h"
 #include "arts/system/threads.h"
 #include "arts/utils/malloc.h"
-// #include "arts/runtime/network/remote_functions.h"
+// #include "arts/remote/handler.h"
 #include "arts/system/arts_print.h"
 #include "arts/system/debug.h"
 #include "arts/utils/atomics.h"

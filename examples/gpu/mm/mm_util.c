@@ -41,7 +41,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "arts/runtime/rt.h"
+#include "arts/runtime_types.h"
 
 void print_matrix(unsigned int row_size, double *mat) {
   unsigned int column_size = row_size;

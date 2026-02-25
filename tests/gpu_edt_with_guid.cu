@@ -42,7 +42,8 @@
  *
  * Tests GPU EDT creation with pre-reserved GUIDs:
  *   - arts_edt_create_gpu_with_guid: GPU kernel EDT with specific GUID
- *   - arts_edt_create_gpu_lib_with_guid: GPU lib (host) EDT with specific GUID
+ *   - arts_edt_create_gpu_with_guid (lib=true): GPU lib (host) EDT with
+ *     specific GUID
  */
 
 #include <stdio.h>
@@ -51,7 +52,7 @@
 #include <cuda_runtime_api.h>
 
 #include "arts.h"
-#include "arts/gpu/gpu_runtime.cuh"
+#include "arts/gpu.h"
 
 #define N_ELEMENTS 16
 
@@ -89,7 +90,7 @@ void verify_fill(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-/* ---------- Test 2: arts_edt_create_gpu_lib_with_guid ---------- */
+/* ---------- Test 2: arts_edt_create_gpu_with_guid (lib=true) ---------- */
 
 /* Host function scheduled as GPU lib EDT */
 void lib_work(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -98,7 +99,7 @@ void lib_work(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
   arts_guid_t done_guid = (arts_guid_t)paramv[0];
-  arts_printf("PASS test2: arts_edt_create_gpu_lib_with_guid ran\n");
+  arts_printf("PASS test2: arts_edt_create_gpu_with_guid (lib=true) ran\n");
 
   /* Proceed to test 1 */
   unsigned int *addr = NULL;
@@ -116,9 +117,15 @@ void lib_work(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   dim3 grid(1, 1, 1);
 
   /* Use pre-reserved GUID for GPU EDT */
-  arts_guid_t edt_guid = arts_guid_reserve(ARTS_GPU_EDT, 0);
-  arts_edt_create_gpu_with_guid(fill_kernel, edt_guid, 0, NULL, 1, grid,
-                                threads, verify_guid, 0, db_guid);
+  arts_guid_t edt_guid = arts_guid_reserve(ARTS_EDT, 0);
+  arts_gpu_hint_t gpu_hint = {};
+  gpu_hint.gpu = -1;
+  gpu_hint.end_guid = verify_guid;
+  gpu_hint.slot = 0;
+  gpu_hint.data_guid = db_guid;
+  arts_edt_create_gpu_with_guid(fill_kernel, edt_guid, 0, NULL, 1,
+                                arts_from_dim3(grid), arts_from_dim3(threads),
+                                &gpu_hint);
   arts_signal_edt(edt_guid, 0, db_guid, DB_MODE_EW);
 
   (void)done_guid;
@@ -133,15 +140,15 @@ extern "C" void arts_init_per_gpu(unsigned int node_id, int dev_id,
   (void)argv;
 }
 
-extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
-                              uint32_t depc, arts_edt_dep_t depv[]) {
+extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                         arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
   (void)depv;
 
   /* Test 2: create a GPU lib EDT with a pre-reserved GUID */
-  arts_guid_t lib_guid = arts_guid_reserve(ARTS_GPU_EDT, 0);
+  arts_guid_t lib_guid = arts_guid_reserve(ARTS_EDT, 0);
   arts_hint_t hint_0 = {0, 0};
   arts_guid_t placeholder_guid =
       arts_edt_create(verify_fill, 0, NULL, 1, &hint_0);
@@ -149,8 +156,12 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
 
   dim3 threads(1, 1, 1);
   dim3 grid(1, 1, 1);
-  arts_edt_create_gpu_lib_with_guid(lib_work, lib_guid, 1, args, 0, grid,
-                                    threads);
+  arts_gpu_hint_t gpu_hint = {};
+  gpu_hint.gpu = -1;
+  gpu_hint.lib = true;
+  arts_edt_create_gpu_with_guid(lib_work, lib_guid, 1, args, 0,
+                                arts_from_dim3(grid), arts_from_dim3(threads),
+                                &gpu_hint);
   (void)lib_guid;
 }
 

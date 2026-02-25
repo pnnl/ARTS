@@ -42,7 +42,7 @@
  *
  * Tests launching multiple GPU kernels across available GPUs:
  *   - One kernel per GPU, each writes its GPU index into a shared LC DB
- *   - Uses arts_edt_create_gpu_direct to target specific GPUs
+ *   - Uses arts_edt_create_gpu with hint.gpu to target specific GPUs
  *   - Fan-in pattern: all GPU EDTs signal a single done EDT
  *   - Similar to the existing lc_sync.cu pattern but exercises multi-GPU
  */
@@ -51,7 +51,7 @@
 #include <stdlib.h>
 
 #include "arts.h"
-#include "arts/gpu/gpu_runtime.cuh"
+#include "arts/gpu.h"
 
 /* Maximum supported GPUs for this test */
 #define MAX_GPUS 8
@@ -62,7 +62,7 @@ __global__ void tag_kernel(uint32_t paramc, const uint64_t *paramv,
   (void)paramc;
   (void)paramv;
   (void)depc;
-  uint64_t gpu_id = GET_GPU_INDEX();
+  uint64_t gpu_id = ARTS_GPU_INDEX();
   unsigned int *data = (unsigned int *)depv[0].ptr;
   if (threadIdx.x == 0 && blockIdx.x == 0) {
     data[gpu_id] = (unsigned int)(gpu_id + 1);
@@ -99,8 +99,8 @@ extern "C" void arts_init_per_gpu(unsigned int node_id, int dev_id,
   (void)argv;
 }
 
-extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
-                              uint32_t depc, arts_edt_dep_t depv[]) {
+extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                         arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
@@ -143,9 +143,15 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
 
   /* Launch one kernel per GPU */
   for (unsigned int i = 0; i < total_gpus; i++) {
+    arts_gpu_hint_t gpu_hint = {};
+    gpu_hint.route = node_id;
+    gpu_hint.gpu = (int)i;
+    gpu_hint.end_guid = done_guid;
+    gpu_hint.slot = i + 1;
+    gpu_hint.data_guid = NULL_GUID;
     arts_guid_t gpu_edt =
-        arts_edt_create_gpu_direct(tag_kernel, node_id, i, 0, NULL, 1, grid,
-                                   threads, done_guid, i + 1, NULL_GUID, true);
+        arts_edt_create_gpu(tag_kernel, 0, NULL, 1, arts_from_dim3(grid),
+                            arts_from_dim3(threads), &gpu_hint);
     arts_signal_edt(gpu_edt, 0, lc_guid, DB_MODE_EW);
   }
 }

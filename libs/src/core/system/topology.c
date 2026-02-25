@@ -36,7 +36,7 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include "arts/system/abstract_machine_model.h"
+#include "arts/system/topology.h"
 
 #include "arts/system/print.h"
 

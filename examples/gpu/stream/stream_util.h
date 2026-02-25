@@ -48,7 +48,7 @@ extern "C" {
 
 #include <sys/time.h>
 
-#include "arts/runtime/rt.h"
+#include "arts/runtime_types.h"
 
 #define N 2000000
 #define NTIMES 10

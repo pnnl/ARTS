@@ -36,15 +36,15 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include "arts/runtime/sync/termination_detection.h"
+#include "arts/sync/termination.h"
 
 #include "arts.h"
 #include "arts/gas/guid.h"
 #include "arts/gas/out_of_order.h"
 #include "arts/gas/route_table.h"
-#include "arts/runtime/compute/edt_functions.h"
-#include "arts/runtime/network/remote_functions.h"
-#include "arts/runtime/rt.h"
+#include "arts/compute/edt.h"
+#include "arts/remote/handler.h"
+#include "arts/runtime_types.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/utils/atomics.h"

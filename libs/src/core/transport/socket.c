@@ -38,7 +38,7 @@
 ******************************************************************************/
 #define GNU_SOURCE // (unused — getaddrinfo_a() is not called; getaddrinfo() is
                    // POSIX)
-#include "arts/network/socket_server.h"
+#include "arts/transport/socket.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -54,13 +54,13 @@
 #include <unistd.h>
 
 #include "arts.h"
-#include "arts/network/connection.h"
-#include "arts/network/remote_protocol.h"
-#include "arts/network/server.h"
-#include "arts/runtime/runtime.h"
+#include "arts/runtime_state.h"
 #include "arts/system/config.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
+#include "arts/transport/connection.h"
+#include "arts/transport/dispatcher.h"
+#include "arts/transport/protocol.h"
 #include "arts/utils/malloc.h"
 
 struct arts_config_s *arts_global_message_table;
@@ -469,27 +469,27 @@ bool arts_remote_setup_incoming() {
       for (j = 0; j < count; j++) {
         for (int z = 0; z < ports; z++) {
           s_length = sizeof(struct sockaddr_in);
+
+          // Poll with timeout before blocking accept — prevents indefinite
+          // hang when the SSH-spawned remote process is slow to start or
+          // a previous test's remote still holds the port.
+          struct pollfd accept_pfd = {.fd = local_socket_recieve[z],
+                                      .events = POLLIN};
+          int poll_res = poll(&accept_pfd, 1, 20000);
+          if (poll_res <= 0) {
+            ARTS_INFO("Accept timed out waiting for remote connection "
+                      "(port index %d, poll=%d, errno=%d: %s)",
+                      z, poll_res, errno, strerror(errno));
+            return false;
+          }
+
           remote_socket_recieve_list[z + (j * ports)] = RACCEPT(
               local_socket_recieve[z], (struct sockaddr *)&test, &s_length);
-
           if (remote_socket_recieve_list[z + (j * ports)] < 0) {
-            int retry = 0;
-            int retry_limit = 3;
-            while (remote_socket_recieve_list[z + (j * ports)] < 0) {
-              if (retry == retry_limit) {
-                ARTS_ERROR("Socket accept failed after %d retries",
-                           retry_limit);
-              }
-              remote_socket_recieve_list[z + (j * ports)] = RACCEPT(
-                  local_socket_recieve[z], (struct sockaddr *)&test, &s_length);
-              retry++;
-              if (remote_socket_recieve_list[z + (j * ports)] < 0) {
-                ARTS_INFO("Accept Failed");
-                ARTS_INFO("error %s", strerror(errno));
-              }
-            }
+            ARTS_INFO("Accept failed: %s", strerror(errno));
+            return false;
           }
-          // FD_SET(remote_socket_recieve_list[j] , &read_set  );
+
           poll_incoming[z + (j * ports)].fd =
               remote_socket_recieve_list[z + (j * ports)];
           poll_incoming[z + (j * ports)].events = POLLIN;

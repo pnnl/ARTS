@@ -36,8 +36,8 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef ARTS_RUNTIME_RT_H
-#define ARTS_RUNTIME_RT_H
+#ifndef ARTS_RUNTIME_TYPES_H
+#define ARTS_RUNTIME_TYPES_H
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -98,6 +98,7 @@ struct arts_edt_s {
   arts_guid_t epoch_guid;    /**< Enclosing epoch GUID. */
   unsigned int numa_domain;  /**< NUMA domain assignment. */
   unsigned int node;         /**< Target node rank. */
+  arts_edt_types_t edt_type; /**< EDT subtype (DEFAULT=CPU, GPU). */
   volatile unsigned int depc_needed; /**< Remaining unsatisfied deps. */
   volatile unsigned int
       invalidate_count; /**< Outstanding cache invalidations. */
@@ -204,4 +205,4 @@ typedef struct {
 }
 #endif
 
-#endif /* ARTS_RUNTIME_RT_H */
+#endif /* ARTS_RUNTIME_TYPES_H */

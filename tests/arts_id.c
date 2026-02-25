@@ -48,7 +48,7 @@
 #include "arts.h"
 #include "arts/counter/counter.h"
 #include "arts/counter/object_counter.h"
-#include "arts/runtime/runtime.h"
+#include "arts/runtime_state.h"
 #include <stdlib.h>
 #include <string.h>
 

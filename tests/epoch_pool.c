@@ -39,7 +39,7 @@
 #include <stdlib.h>
 
 #include "arts.h"
-#include "arts/runtime/compute/shad_adapter.h"
+#include "arts/compute/shad.h"
 
 uint64_t num_dummy = 0;
 

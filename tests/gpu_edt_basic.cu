@@ -42,9 +42,9 @@
  *
  * Tests basic GPU EDT creation and execution:
  *   - arts_edt_create_gpu: create a GPU EDT that runs a __global__ kernel
- *   - arts_edt_create_gpu_direct: create a GPU EDT targeting a specific GPU
+ *   - arts_edt_create_gpu with hint.gpu: target a specific GPU
  *   - Kernel writes results to a DB, host EDT verifies correctness
- *   - GET_GPU_INDEX macro
+ *   - ARTS_GPU_INDEX macro
  */
 
 #include <stdio.h>
@@ -53,7 +53,7 @@
 #include <cuda_runtime_api.h>
 
 #include "arts.h"
-#include "arts/gpu/gpu_runtime.cuh"
+#include "arts/gpu.h"
 
 #define N_ELEMENTS 64
 
@@ -93,15 +93,15 @@ void verify_write(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-/* ---------- Test 2: arts_edt_create_gpu_direct + GET_GPU_INDEX ---------- */
+/* ---------- Test 2: arts_edt_create_gpu (gpu=0) + ARTS_GPU_INDEX ---------- */
 
-/* Kernel: writes the GPU index from GET_GPU_INDEX() into each element */
+/* Kernel: writes the GPU index from ARTS_GPU_INDEX() into each element */
 __global__ void gpu_index_kernel(uint32_t paramc, const uint64_t *paramv,
                                  uint32_t depc, arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
-  uint64_t gpu_id = GET_GPU_INDEX();
+  uint64_t gpu_id = ARTS_GPU_INDEX();
   unsigned int *data = (unsigned int *)depv[0].ptr;
   unsigned int idx = threadIdx.x + (blockIdx.x * blockDim.x);
   if (idx < N_ELEMENTS) {
@@ -125,7 +125,7 @@ void verify_gpu_index(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     }
   }
   if (pass) {
-    arts_printf("PASS test2: arts_edt_create_gpu_direct + GET_GPU_INDEX\n");
+    arts_printf("PASS test2: arts_edt_create_gpu (gpu=0) + ARTS_GPU_INDEX\n");
   }
 
   /* --- Now run test 1 --- */
@@ -143,9 +143,15 @@ void verify_gpu_index(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   dim3 threads(N_ELEMENTS, 1, 1);
   dim3 grid(1, 1, 1);
+  arts_gpu_hint_t gpu_hint = {};
+  gpu_hint.gpu = -1;
+  gpu_hint.route = node_id;
+  gpu_hint.end_guid = verify_guid;
+  gpu_hint.slot = 0;
+  gpu_hint.data_guid = db_guid1;
   arts_guid_t gpu_edt =
-      arts_edt_create_gpu(write_kernel, node_id, 0, NULL, 1, grid, threads,
-                          verify_guid, 0, db_guid1);
+      arts_edt_create_gpu(write_kernel, 0, NULL, 1, arts_from_dim3(grid),
+                          arts_from_dim3(threads), &gpu_hint);
   arts_signal_edt(gpu_edt, 0, db_guid1, DB_MODE_EW);
 }
 
@@ -158,8 +164,8 @@ extern "C" void arts_init_per_gpu(unsigned int node_id, int dev_id,
   (void)argv;
 }
 
-extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
-                              uint32_t depc, arts_edt_dep_t depv[]) {
+extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                         arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
@@ -167,7 +173,7 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
 
   unsigned int node_id = arts_get_current_node();
 
-  /* Test 2: arts_edt_create_gpu_direct targeting gpu 0 */
+  /* Test 2: arts_edt_create_gpu targeting gpu 0 */
   unsigned int *addr = NULL;
   arts_guid_t db_guid = arts_guid_reserve(ARTS_DB, 0);
   addr = (unsigned int *)arts_db_create_with_guid(
@@ -184,9 +190,15 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
   dim3 grid(1, 1, 1);
 
   /* Create GPU EDT targeting GPU 0 directly */
+  arts_gpu_hint_t gpu_hint = {};
+  gpu_hint.route = node_id;
+  gpu_hint.gpu = 0;
+  gpu_hint.end_guid = verify_guid;
+  gpu_hint.slot = 0;
+  gpu_hint.data_guid = db_guid;
   arts_guid_t gpu_edt =
-      arts_edt_create_gpu_direct(gpu_index_kernel, node_id, 0, 0, NULL, 1, grid,
-                                 threads, verify_guid, 0, db_guid, true);
+      arts_edt_create_gpu(gpu_index_kernel, 0, NULL, 1, arts_from_dim3(grid),
+                          arts_from_dim3(threads), &gpu_hint);
   arts_signal_edt(gpu_edt, 0, db_guid, DB_MODE_EW);
 }
 

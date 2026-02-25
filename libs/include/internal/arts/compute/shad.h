@@ -36,8 +36,8 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef ARTS_RUNTIME_COMPUTE_SHADADAPTER_H
-#define ARTS_RUNTIME_COMPUTE_SHADADAPTER_H
+#ifndef ARTS_COMPUTE_SHAD_H
+#define ARTS_COMPUTE_SHAD_H
 #ifdef __cplusplus
 extern "C" {
 #endif

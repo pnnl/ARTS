@@ -36,24 +36,58 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef ARTS_TRANSPORT_DISPATCHER_H
-#define ARTS_TRANSPORT_DISPATCHER_H
+
+/**
+ * @file gpu_internal.h
+ * @brief Internal GPU runtime structures and functions.
+ *
+ * This header is for runtime-internal use only — included from .cu files
+ * that are compiled with NVCC.  User code should include arts/gpu.h instead.
+ */
+#ifndef ARTS_GPU_INTERNAL_H
+#define ARTS_GPU_INTERNAL_H
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include "arts/transport/protocol.h"
-#include "arts/system/config.h"
 
-void arts_ll_server_setup(struct arts_config_s *config);
-void arts_server_process_packet(struct arts_remote_packet_s *packet);
-void arts_ll_server_shutdown();
-void arts_ll_server_cleanup();
+#include "arts/gpu/gpu_stream.h"
+#include "arts/runtime_types.h"
 
-void arts_server_setup(struct arts_config_s *config);
-void arts_remote_shutdown();
-void arts_server_cleanup(void);
+/**
+ * @brief Internal GPU EDT descriptor.
+ *
+ * Wraps the base @c arts_edt_s with GPU-specific scheduling metadata.
+ * Allocated as a single contiguous block: [arts_gpu_edt_t | paramv | depv |
+ * modes].
+ */
+typedef struct {
+  struct arts_edt_s wrapperEdt;
+  arts_dim3_t grid;
+  arts_dim3_t block;
+  int gpuToRunOn;
+  arts_guid_t end_guid;
+  arts_guid_t data_guid;
+  uint32_t slot;
+  bool passthrough;
+  bool lib;
+} arts_gpu_edt_t;
+
+/* --- Internal GPU runtime functions --- */
+
+void arts_gpu_host_wrap_up(void *edt_packet, arts_guid_t to_signal,
+                           uint32_t slot, arts_guid_t data_guid);
+void arts_run_gpu(void *edt_packet, arts_gpu_t *arts_gpu);
+bool arts_gpu_scheduler_loop(void);
+
+/* --- LC sync / GPU signal helpers (always compiled, used from core) --- */
+
+void arts_lc_sync(arts_guid_t edt_guid, uint32_t slot, arts_guid_t data_guid);
+void arts_gpu_signal_edt_memset(arts_guid_t edt_guid, uint32_t slot,
+                                arts_guid_t data_guid);
+void internal_lc_sync_cpu(arts_guid_t acq_guid, struct arts_db_s *db);
+void internal_lc_sync_gpu(arts_guid_t acq_guid, struct arts_db_s *db);
+
 #ifdef __cplusplus
 }
 #endif
-
-#endif
+#endif /* ARTS_GPU_INTERNAL_H */

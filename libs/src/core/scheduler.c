@@ -36,7 +36,7 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include "arts/runtime/runtime.h"
+#include "arts/runtime_state.h"
 #include "arts/utils/malloc.h"
 
 #include <stdlib.h>
@@ -48,13 +48,13 @@
 #include "arts/defs.h"
 #include "arts/gas/guid.h"
 #include "arts/gas/route_table.h"
-#include "arts/network/remote_protocol.h"
-#include "arts/network/server.h"
-#include "arts/network/socket_server.h"
-#include "arts/runtime/compute/edt_functions.h"
-#include "arts/runtime/memory/db_functions.h"
-#include "arts/runtime/sync/termination_detection.h"
-#include "arts/system/abstract_machine_model.h"
+#include "arts/transport/protocol.h"
+#include "arts/transport/dispatcher.h"
+#include "arts/transport/socket.h"
+#include "arts/compute/edt.h"
+#include "arts/memory/db.h"
+#include "arts/sync/termination.h"
+#include "arts/system/topology.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/utils/array_list.h"
@@ -62,7 +62,7 @@
 #include "arts/utils/deque.h"
 
 #ifdef ARTS_USE_GPU
-#include "arts/gpu/gpu_runtime.cuh"
+#include "arts/gpu/gpu_internal.h"
 #include "arts/gpu/gpu_stream.h"
 #endif
 
@@ -499,10 +499,10 @@ void arts_handle_remote_stolen_edt(struct arts_edt_s *edt) {
   else
 #endif
   {
-    if (edt->header.type == ARTS_EDT) {
-      arts_deque_push_front(arts_thread_info.my_deque, edt, 0);
-    } else if (edt->header.type == ARTS_GPU_EDT) {
+    if (edt->edt_type == ARTS_EDT_GPU) {
       arts_deque_push_front(arts_thread_info.my_gpu_deque, edt, 0);
+    } else {
+      arts_deque_push_front(arts_thread_info.my_deque, edt, 0);
     }
   }
 }
@@ -544,7 +544,7 @@ void arts_handle_ready_edt(struct arts_edt_s *edt) {
         arts_store_new_edts(edt);
       } else {
         /* Non-worker thread (sender/receiver): push to worker 0's deque */
-        if (edt->header.type == ARTS_GPU_EDT) {
+        if (edt->edt_type == ARTS_EDT_GPU) {
           arts_deque_push_front(arts_node_info.gpu_deque[0], edt, 0);
         } else {
           arts_deque_push_front(arts_node_info.deque[0], edt, 0);
@@ -553,12 +553,12 @@ void arts_handle_ready_edt(struct arts_edt_s *edt) {
     } else
 #endif
     {
-      if (edt->header.type == ARTS_EDT) {
-        ARTS_INFO("EDT[Guid:%lu] pushed to worker deque", edt->current_edt);
-        arts_deque_push_front(arts_thread_info.my_deque, edt, 0);
-      } else if (edt->header.type == ARTS_GPU_EDT) {
+      if (edt->edt_type == ARTS_EDT_GPU) {
         ARTS_INFO("EDT[Guid:%lu] pushed to GPU deque", edt->current_edt);
         arts_deque_push_front(arts_thread_info.my_gpu_deque, edt, 0);
+      } else {
+        ARTS_INFO("EDT[Guid:%lu] pushed to worker deque", edt->current_edt);
+        arts_deque_push_front(arts_thread_info.my_deque, edt, 0);
       }
     }
   } else {

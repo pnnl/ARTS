@@ -36,16 +36,16 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef ARTS_RUNTIME_SYNC_RUNTIME_H
-#define ARTS_RUNTIME_SYNC_RUNTIME_H
+#ifndef ARTS_RUNTIME_STATE_H
+#define ARTS_RUNTIME_STATE_H
 #ifdef __cplusplus
 extern "C" {
 #endif
 #include "arts/counter/counter.h"
 #include "arts/counter/object_counter.h"
 #include "arts/defs.h"
-#include "arts/runtime/rt.h"
-#include "arts/system/abstract_machine_model.h"
+#include "arts/runtime_types.h"
+#include "arts/system/topology.h"
 
 struct atomic_create_barrier_info_s {
   volatile unsigned int wait;

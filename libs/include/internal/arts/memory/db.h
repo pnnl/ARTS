@@ -36,19 +36,25 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef ARTS_RUNTIME_MEMORY_DBFUNCTIONS_H
-#define ARTS_RUNTIME_MEMORY_DBFUNCTIONS_H
+#ifndef ARTS_MEMORY_DB_H
+#define ARTS_MEMORY_DB_H
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#include "arts/runtime/rt.h"
+#include "arts/runtime_types.h"
 
 #define ARTS_TYPE_NAME                                                         \
-  const char *const arts_type_name[] = {                                       \
-      "ARTS_NULL", "ARTS_EDT",      "ARTS_GPU_EDT",  "ARTS_EVENT",             \
-      "",          "ARTS_EPOCH",    "ARTS_CALLBACK", "ARTS_BUFFER",            \
-      "ARTS_DB",   "ARTS_LAST_TYPE"}
+  const char *const arts_type_name[] = {"ARTS_NULL",                           \
+                                        "ARTS_EDT",                            \
+                                        "",                                    \
+                                        "ARTS_EVENT",                          \
+                                        "",                                    \
+                                        "ARTS_EPOCH",                          \
+                                        "ARTS_CALLBACK",                       \
+                                        "ARTS_BUFFER",                         \
+                                        "ARTS_DB",                             \
+                                        "ARTS_LAST_TYPE"}
 
 #define GET_TYPE_NAME(x) arts_type_name[x]
 

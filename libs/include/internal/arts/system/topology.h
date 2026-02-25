@@ -37,8 +37,8 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 
-#ifndef ARTS_SYSTEM_ABSTRACT_MACHINE_MODEL_H
-#define ARTS_SYSTEM_ABSTRACT_MACHINE_MODEL_H
+#ifndef ARTS_SYSTEM_TOPOLOGY_H
+#define ARTS_SYSTEM_TOPOLOGY_H
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -88,4 +88,4 @@ void print_mask(struct thread_mask_s *threads, unsigned int num_threads);
 }
 #endif
 
-#endif /* ARTS_SYSTEM_ABSTRACT_MACHINE_MODEL_H */
+#endif /* ARTS_SYSTEM_TOPOLOGY_H */

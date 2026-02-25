@@ -36,14 +36,14 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef ARTS_RUNTIME_NETWORK_REMOTE_FUNCTIONS_H
-#define ARTS_RUNTIME_NETWORK_REMOTE_FUNCTIONS_H
+#ifndef ARTS_REMOTE_HANDLER_H
+#define ARTS_REMOTE_HANDLER_H
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#include "arts/network/remote_protocol.h"
-#include "arts/runtime/rt.h"
+#include "arts/transport/protocol.h"
+#include "arts/runtime_types.h"
 
 void arts_remote_send(unsigned int rank, send_handler_t fun_ptr, void *args,
                       unsigned int size, bool free);

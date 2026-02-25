@@ -46,8 +46,8 @@
 
 #include <unistd.h>
 
-#include "arts/network/remote_launcher.h"
 #include "arts/system/print.h"
+#include "arts/transport/launcher.h"
 #include "arts/utils/malloc.h"
 
 char *extract_nodelist_lsf(const char *envr, int stride, unsigned int *cnt) {
@@ -928,8 +928,18 @@ static void config_compute_derived(struct arts_config_s *config) {
   config->route_table_entries = 1U << config->route_table_size;
   config->gpu_route_table_entries = 1U << config->gpu_route_table_size;
 
+  /* Single-node: force sender/receiver to 0 — no networking needed. */
+  if (config->table_length <= 1) {
+    if (config->sender_thread_count || config->receiver_thread_count) {
+      ARTS_WARN("Single-node: ignoring sender_threads=%u, receiver_threads=%u",
+                config->sender_thread_count, config->receiver_thread_count);
+      config->sender_thread_count = 0;
+      config->receiver_thread_count = 0;
+    }
+  }
+
   /* Networking conditional defaults (non-local launcher only). */
-  if (strcmp(config->launcher, "local") != 0) {
+  if (strcmp(config->launcher, "local") != 0 && config->table_length > 1) {
     if (!config->sender_thread_count) {
       config->sender_thread_count = 1;
     }

@@ -38,14 +38,37 @@
 ###############################################################################
 
 # Core runtime modules — each defines its own OBJECT library target
+add_subdirectory(compute)
+add_subdirectory(memory)
+add_subdirectory(remote)
+add_subdirectory(sync)
+add_subdirectory(transport)
+add_subdirectory(gas)
 add_subdirectory(system)
 add_subdirectory(utils)
-add_subdirectory(network)
-add_subdirectory(runtime)
-add_subdirectory(gas)
 add_subdirectory(counter)
+
+# Scheduler (scheduler.c at core/ top level, needs GPU wrapper for CUDA builds)
+add_library(arts_scheduler OBJECT scheduler.c)
+target_include_directories(arts_scheduler PRIVATE
+    ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR} ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
+if(HWLOC_INCLUDE_DIRS)
+    target_include_directories(arts_scheduler PRIVATE ${HWLOC_INCLUDE_DIRS})
+endif()
 
 # GPU module is only built for CUDA library
 if(BUILD_CUDA_LIBRARY)
     add_subdirectory(gpu)
+
+    # GPU variant of scheduler (wraps scheduler.c as .cu for NVCC)
+    set(SCHED_PATH "${CMAKE_CURRENT_SOURCE_DIR}/scheduler.c")
+    set(SCHED_WRAPPER ${CMAKE_CURRENT_BINARY_DIR}/scheduler_gpu.cu)
+    file(WRITE ${SCHED_WRAPPER} "#include \"${SCHED_PATH}\"\n")
+    add_library(arts_scheduler_gpu OBJECT ${SCHED_WRAPPER})
+    target_include_directories(arts_scheduler_gpu PRIVATE
+        ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR} ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
+    if(HWLOC_INCLUDE_DIRS)
+        target_include_directories(arts_scheduler_gpu PRIVATE ${HWLOC_INCLUDE_DIRS})
+    endif()
+    target_compile_definitions(arts_scheduler_gpu PRIVATE ARTS_USE_GPU)
 endif()

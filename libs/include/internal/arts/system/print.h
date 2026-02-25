@@ -43,7 +43,7 @@
 #include <stdio.h>
 #include <unistd.h>
 
-#include "arts/runtime/runtime.h"
+#include "arts/runtime_state.h"
 #include "arts/system/threads.h"
 
 #ifdef __cplusplus

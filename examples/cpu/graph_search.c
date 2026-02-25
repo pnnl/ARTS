@@ -46,7 +46,7 @@
 #include "arts.h"
 #include "arts/array_db.h"
 #include "arts/graph.h"
-#include "arts/runtime/compute/shad_adapter.h"
+#include "arts/compute/shad.h"
 
 unsigned int intro_start = 5;
 

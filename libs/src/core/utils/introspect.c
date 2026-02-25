@@ -36,7 +36,7 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include "arts/utils/util.h"
+#include "arts/utils/introspect.h"
 
 #include <inttypes.h>
 #include <stdarg.h>
@@ -51,7 +51,7 @@
 #include <unistd.h>
 
 #include "arts.h"
-#include "arts/runtime/runtime.h"
+#include "arts/runtime_state.h"
 #include "arts/system/threads.h"
 
 extern ARTS_THREAD_LOCAL struct arts_edt_s *current_edt;

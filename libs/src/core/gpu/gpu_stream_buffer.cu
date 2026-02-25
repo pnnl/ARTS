@@ -44,8 +44,8 @@
 // stream.  Then we will push stuff!
 #include "arts/gpu/gpu_stream_buffer.h"
 
-#include "arts/gpu/gpu_runtime.cuh"
-#include "arts/runtime/runtime.h"
+#include "arts/gpu/gpu_internal.h"
+#include "arts/runtime_state.h"
 #include "arts/system/print.h"
 #include "arts/utils/atomics.h"
 

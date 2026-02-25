@@ -59,7 +59,7 @@ static inline void *align_pointer(void *ptr, size_t align) {
 
 void *arts_malloc(size_t size) {
   if (!size) {
-    ARTS_ERROR("arts_malloc: zero size");
+    return NULL;
   }
 
   header_t *base = (header_t *)malloc(size + sizeof(header_t));
@@ -99,9 +99,12 @@ void *arts_malloc_align(size_t size, size_t align) {
 }
 
 void *arts_calloc(size_t nmemb, size_t size) {
-  if (!nmemb || !size || size > SIZE_MAX / nmemb) {
-    ARTS_ERROR("arts_calloc: invalid params (nmemb=%zu, size=%zu)", nmemb,
-               size);
+  if (!nmemb || !size) {
+    return NULL;
+  }
+  if (size > SIZE_MAX / nmemb) {
+    ARTS_ERROR("arts_calloc: overflow (nmemb=%zu, size=%zu)", nmemb, size);
+    return NULL;
   }
 
   size_t total_size = nmemb * size;
@@ -112,11 +115,14 @@ void *arts_calloc(size_t nmemb, size_t size) {
 }
 
 void *arts_calloc_align(size_t nmemb, size_t size, size_t align) {
-  if (!nmemb || !size || size > SIZE_MAX / nmemb || align < ALIGNMENT ||
-      !IS_POWER_OF_TWO(align)) {
+  if (!nmemb || !size) {
+    return NULL;
+  }
+  if (size > SIZE_MAX / nmemb || align < ALIGNMENT || !IS_POWER_OF_TWO(align)) {
     ARTS_ERROR(
         "arts_calloc_align: invalid params (nmemb=%zu, size=%zu, align=%zu)",
         nmemb, size, align);
+    return NULL;
   }
 
   size_t total_size = nmemb * size;

@@ -53,7 +53,7 @@
 #include <stdlib.h>
 
 #include "arts.h"
-#include "arts/gpu/gpu_runtime.cuh"
+#include "arts/gpu.h"
 
 #define N_ELEMENTS 8
 
@@ -100,8 +100,8 @@ extern "C" void arts_init_per_gpu(unsigned int node_id, int dev_id,
   (void)argv;
 }
 
-extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
-                              uint32_t depc, arts_edt_dep_t depv[]) {
+extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                         arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
@@ -135,9 +135,15 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
   dim3 grid(1, 1, 1);
 
   /* Create GPU EDT targeting GPU 0, signals done_guid slot 1 on completion */
+  arts_gpu_hint_t gpu_hint = {};
+  gpu_hint.route = node_id;
+  gpu_hint.gpu = 0;
+  gpu_hint.end_guid = done_guid;
+  gpu_hint.slot = 1;
+  gpu_hint.data_guid = NULL_GUID;
   arts_guid_t gpu_edt =
-      arts_edt_create_gpu_direct(lc_write_kernel, node_id, 0, 0, NULL, 1, grid,
-                                 threads, done_guid, 1, NULL_GUID, true);
+      arts_edt_create_gpu(lc_write_kernel, 0, NULL, 1, arts_from_dim3(grid),
+                          arts_from_dim3(threads), &gpu_hint);
   arts_signal_edt(gpu_edt, 0, lc_guid, DB_MODE_EW);
 }
 

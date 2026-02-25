@@ -47,7 +47,7 @@ extern "C" {
 #include <stddef.h>
 #include <stdint.h>
 
-#include "arts/runtime/rt.h"
+#include "arts/runtime_types.h"
 
 // Memory placement hints for the memory sensor
 typedef enum {

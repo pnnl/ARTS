@@ -36,13 +36,13 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include "arts/runtime/memory/db_list.h"
+#include "arts/memory/frontier.h"
 #include "arts/gas/route_table.h"
 #include "arts/utils/malloc.h"
 
-#include "arts/runtime/compute/edt_functions.h"
-#include "arts/runtime/network/remote_functions.h"
-#include "arts/runtime/runtime.h"
+#include "arts/compute/edt.h"
+#include "arts/remote/handler.h"
+#include "arts/runtime_state.h"
 #include "arts/system/print.h"
 #include "arts/utils/atomics.h"
 

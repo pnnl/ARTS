@@ -37,7 +37,7 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 
-#include "arts/runtime/memory/db_functions.h"
+#include "arts/memory/db.h"
 
 #include <assert.h>
 #include <string.h>
@@ -48,21 +48,21 @@
 #include "arts/gas/guid.h"
 #include "arts/gas/out_of_order.h"
 #include "arts/gas/route_table.h"
-#include "arts/network/remote_protocol.h"
-#include "arts/runtime/compute/edt_functions.h"
-#include "arts/runtime/memory/db_list.h"
-#include "arts/runtime/network/remote_functions.h"
-#include "arts/runtime/rt.h"
-#include "arts/runtime/runtime.h"
-#include "arts/runtime/sync/event_functions.h"
-#include "arts/runtime/sync/termination_detection.h"
+#include "arts/transport/protocol.h"
+#include "arts/compute/edt.h"
+#include "arts/memory/frontier.h"
+#include "arts/remote/handler.h"
+#include "arts/runtime_types.h"
+#include "arts/runtime_state.h"
+#include "arts/sync/event.h"
+#include "arts/sync/termination.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
 
 #ifdef ARTS_USE_GPU
-#include "arts/gpu/gpu_runtime.cuh"
+#include "arts/gpu/gpu_internal.h"
 #endif
 
 ARTS_TYPE_NAME;

@@ -213,3 +213,181 @@ if(BUILD_CUDA_LIBRARY)
 else()
     message(STATUS "CUDA test programs will not be built (CUDA not available)")
 endif()
+
+###############################################################################
+# CTest registration
+#
+# ARTS runtime occupies the entire process (binds ports, spawns worker threads).
+# RESOURCE_LOCK ensures only one test runs at a time, even with ctest -j.
+###############################################################################
+
+# --- Helper functions ---
+
+function(register_single_node_test test_name)
+    cmake_parse_arguments(ARG "" "TIMEOUT" "ARGS" ${ARGN})
+    if(NOT ARG_TIMEOUT)
+        set(ARG_TIMEOUT 10)
+    endif()
+    add_test(
+        NAME ${test_name}
+        COMMAND ${test_name} ${ARG_ARGS}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    )
+    set_tests_properties(${test_name} PROPERTIES
+        LABELS "single_node"
+        TIMEOUT ${ARG_TIMEOUT}
+        RESOURCE_LOCK "arts_runtime"
+    )
+endfunction()
+
+function(register_multinode_test test_name)
+    cmake_parse_arguments(ARG "" "TIMEOUT" "ARGS" ${ARGN})
+    if(NOT ARG_TIMEOUT)
+        set(ARG_TIMEOUT 30)
+    endif()
+    add_test(
+        NAME ${test_name}
+        COMMAND ${test_name} ${ARG_ARGS}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    )
+    set_tests_properties(${test_name} PROPERTIES
+        LABELS "multinode"
+        TIMEOUT ${ARG_TIMEOUT}
+        RESOURCE_LOCK "arts_runtime"
+        ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_multinode.cfg"
+    )
+endfunction()
+
+function(register_gpu_test test_name)
+    cmake_parse_arguments(ARG "" "TIMEOUT" "ARGS" ${ARGN})
+    if(NOT ARG_TIMEOUT)
+        set(ARG_TIMEOUT 10)
+    endif()
+    add_test(
+        NAME ${test_name}
+        COMMAND ${test_name} ${ARG_ARGS}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    )
+    set_tests_properties(${test_name} PROPERTIES
+        LABELS "gpu"
+        TIMEOUT ${ARG_TIMEOUT}
+        RESOURCE_LOCK "arts_runtime"
+        ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_gpu.cfg;ASAN_OPTIONS=protect_shadow_gap=0:detect_leaks=0:alloc_dealloc_mismatch=0"
+    )
+endfunction()
+
+# --- Single-node tests ---
+
+# EDT tests
+register_single_node_test(edt_create_basic)
+register_single_node_test(edt_chain)
+register_single_node_test(edt_fan_out)
+register_single_node_test(edt_signal)
+register_single_node_test(edt_dep_variants)
+register_single_node_test(edt_destroy)
+register_single_node_test(edt_epoch_wait)
+register_single_node_test(stress_edt TIMEOUT 30)
+register_single_node_test(paramv_memcpy)
+
+# DB tests
+register_single_node_test(db_create)
+register_single_node_test(db_create_with_data)
+register_single_node_test(db_dependence)
+register_single_node_test(db_destroy)
+register_single_node_test(db_local)
+register_single_node_test(db_local_create)
+register_single_node_test(db_put_get)
+register_single_node_test(db_rename)
+register_single_node_test(pin_db ARGS 0)
+register_single_node_test(get_from_db ARGS 16 1)
+register_single_node_test(put_in_db ARGS 16 1)
+
+# Array DB tests
+register_single_node_test(array_db)
+register_single_node_test(array_db_advanced)
+register_single_node_test(array_db_for_each)
+register_single_node_test(array_db_with_guid)
+register_single_node_test(local_array_db)
+register_single_node_test(for_each)
+register_single_node_test(put_array_db_epoch ARGS 16)
+register_single_node_test(put_array_db_epoch_direct ARGS 16)
+register_single_node_test(gather_array_db_epoch)
+register_single_node_test(termination_detection_array_db ARGS 16)
+
+# Epoch / sync tests
+register_single_node_test(epoch_basic)
+register_single_node_test(epoch_deferred_start)
+register_single_node_test(epoch_finish_edt)
+register_single_node_test(epoch_pool ARGS 3)
+register_single_node_test(epoch_shad_adapter ARGS 3)
+register_single_node_test(rec_epoch ARGS 3)
+register_single_node_test(termination_detection ARGS 3)
+
+# Event tests
+register_single_node_test(event_basic)
+register_single_node_test(event_chain)
+register_single_node_test(persistent_event)
+register_single_node_test(persistent_event_advanced)
+
+# GUID tests
+register_single_node_test(guid_basic)
+register_single_node_test(guid_range)
+
+# Routing / misc
+register_single_node_test(hint_routing)
+register_single_node_test(node_query)
+register_single_node_test(record_dep_at)
+register_single_node_test(utility_api)
+register_single_node_test(route_table)
+register_single_node_test(route_table_iter)
+register_single_node_test(route_table_iter_destroy)
+register_single_node_test(acquire_mode)
+register_single_node_test(arts_id)
+register_single_node_test(out_of_order_list)
+register_single_node_test(buffer)
+register_single_node_test(buffer_basic)
+register_single_node_test(shad_lock)
+
+# CDAG tests
+register_single_node_test(cdag ARGS 32 0 0 0)
+register_single_node_test(cdag_ew_chain ARGS 4)
+register_single_node_test(cdag_ew_ordering)
+
+# Graph tests
+register_single_node_test(csr)
+register_single_node_test(distribution)
+
+# --- Multi-node tests ---
+
+register_multinode_test(multinode_db)
+register_multinode_test(multinode_edt)
+register_multinode_test(multinode_epoch)
+register_multinode_test(multinode_event)
+register_multinode_test(active_message_db ARGS 64)
+register_multinode_test(active_message_buffer ARGS 64)
+register_multinode_test(arts_send ARGS 16)
+register_multinode_test(route_table_remote_guid)
+register_multinode_test(db_put_get_at)
+register_multinode_test(db_remote)
+register_multinode_test(remote_db_event)
+register_multinode_test(multinode_cdag)
+register_multinode_test(multinode_event_types)
+register_multinode_test(multinode_array_db)
+register_multinode_test(multinode_db_advanced)
+
+# --- GPU tests ---
+
+if(BUILD_CUDA_LIBRARY)
+    register_gpu_test(gpu_edt_basic)
+    register_gpu_test(gpu_edt_dep)
+    register_gpu_test(gpu_edt_with_guid)
+    register_gpu_test(gpu_edt_passthrough)
+    register_gpu_test(gpu_memory)
+    register_gpu_test(gpu_memset)
+    register_gpu_test(gpu_db)
+    register_gpu_test(gpu_lc_sync_basic)
+    register_gpu_test(lc_sync)
+    register_gpu_test(gpu_multi_kernel)
+    register_gpu_test(gpu_for_all)
+    register_gpu_test(gpu_lib)
+endif()

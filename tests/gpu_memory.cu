@@ -55,7 +55,7 @@
 #include <cuda_runtime_api.h>
 
 #include "arts.h"
-#include "arts/gpu/gpu_runtime.cuh"
+#include "arts/gpu.h"
 
 #define N_ELEMENTS 128
 
@@ -145,8 +145,8 @@ void run_mem_tests(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
-                              uint32_t depc, arts_edt_dep_t depv[]) {
+extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                         arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
@@ -156,8 +156,12 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
   dim3 threads(1, 1, 1);
   dim3 grid(1, 1, 1);
   unsigned int node_id = arts_get_current_node();
-  arts_edt_create_gpu_lib_direct(run_mem_tests, node_id, 0, 0, NULL, 0, grid,
-                                 threads);
+  arts_gpu_hint_t gpu_hint = {};
+  gpu_hint.route = node_id;
+  gpu_hint.gpu = 0;
+  gpu_hint.lib = true;
+  arts_edt_create_gpu(run_mem_tests, 0, NULL, 0, arts_from_dim3(grid),
+                      arts_from_dim3(threads), &gpu_hint);
 }
 
 extern "C" void arts_fini_per_gpu(unsigned int node_id, int dev_id,

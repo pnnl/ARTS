@@ -42,7 +42,7 @@
 extern "C" {
 #endif
 
-#include "arts/runtime/rt.h"
+#include "arts/runtime_types.h"
 
 typedef struct {
   uint64_t guid;

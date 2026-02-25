@@ -37,15 +37,15 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 
-#include "arts/runtime/compute/shad_adapter.h"
+#include "arts/compute/shad.h"
 
 #include "arts.h"
 #include "arts/counter/counter.h"
 #include "arts/gas/guid.h"
 #include "arts/gas/route_table.h"
-#include "arts/runtime/compute/edt_functions.h"
-#include "arts/runtime/runtime.h"
-#include "arts/runtime/sync/termination_detection.h"
+#include "arts/compute/edt.h"
+#include "arts/runtime_state.h"
+#include "arts/sync/termination.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/utils/atomics.h"

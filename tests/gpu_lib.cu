@@ -43,7 +43,7 @@
 #include <cuda_runtime_api.h>
 
 #include "arts.h"
-#include "arts/gpu/gpu_runtime.cuh"
+#include "arts/gpu.h"
 #include "arts/gpu/gpu_stream.h"
 
 #define IDX2C(i, j, ld) (((j) * (ld)) + (i))
@@ -213,8 +213,13 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_hint_t hint_0 = {0, 0};
   arts_guid_t done_guid = arts_edt_create(done, 0, NULL, 1, &hint_0);
-  arts_guid_t work_guid = arts_edt_create_gpu_lib(
-      work, 0, 1, (uint64_t *)&done_guid, 0, grid, threads);
+  arts_gpu_hint_t gpu_hint = {};
+  gpu_hint.gpu = -1;
+  gpu_hint.route = 0;
+  gpu_hint.lib = true;
+  arts_guid_t work_guid = arts_edt_create_gpu(
+      work, 1, (uint64_t *)&done_guid, 0, arts_from_dim3(grid),
+      arts_from_dim3(threads), &gpu_hint);
   (void)work_guid;
 }
 

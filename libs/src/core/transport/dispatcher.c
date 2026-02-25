@@ -36,15 +36,15 @@
  ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
  ** License for the specific language governing permissions and limitations   **
  ******************************************************************************/
-#include "arts/network/server.h"
+#include "arts/transport/dispatcher.h"
 
 #include <unistd.h>
 
 #include "arts.h"
-#include "arts/network/remote_protocol.h"
-#include "arts/runtime/compute/edt_functions.h"
-#include "arts/runtime/network/remote_functions.h"
-#include "arts/runtime/runtime.h"
+#include "arts/transport/protocol.h"
+#include "arts/compute/edt.h"
+#include "arts/remote/handler.h"
+#include "arts/runtime_state.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/utils/malloc.h"

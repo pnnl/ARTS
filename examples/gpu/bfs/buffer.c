@@ -39,7 +39,7 @@
 #include "buffer.h"
 
 #include "arts.h"
-#include "arts/gpu/gpu_runtime.cuh"
+#include "arts/gpu.h"
 #include <stdlib.h>
 
 #define NUMBUFFERS 2

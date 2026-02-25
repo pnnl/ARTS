@@ -46,7 +46,7 @@
 
 #include "arts.h"
 #include "arts/gas/route_table.h"
-#include "arts/runtime/runtime.h"
+#include "arts/runtime_state.h"
 #include "arts/utils/malloc.h"
 
 // Constants for memory management

@@ -39,7 +39,7 @@
 #include <stdlib.h>
 
 #include "arts.h"
-#include "arts/runtime/network/remote_functions.h"
+#include "arts/remote/handler.h"
 #include "arts/utils/malloc.h"
 
 unsigned int num_elements = 0;

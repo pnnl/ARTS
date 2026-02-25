@@ -43,7 +43,7 @@
 #include "arts.h"
 #include "arts/gpu/gpu_route_table.h"
 #include "arts/gpu/gpu_stream_buffer.h"
-#include "arts/runtime/runtime.h"
+#include "arts/runtime_state.h"
 #include "arts/system/print.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"

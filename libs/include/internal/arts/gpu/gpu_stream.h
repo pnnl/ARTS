@@ -47,7 +47,8 @@ extern "C" {
 
 #include "arts/defs.h"
 #include "arts/gas/route_table.h"
-#include "arts/runtime/rt.h"
+#include "arts/gpu.h"
+#include "arts/runtime_types.h"
 #include "arts/system/print.h"
 #include "arts/utils/array_list.h"
 
@@ -108,8 +109,8 @@ void arts_store_new_edts(void *edt);
 void arts_handle_new_edts();
 void free_gpu_item(arts_route_item_t *item);
 
-extern ARTS_THREAD_LOCAL dim3 *arts_local_grid;
-extern ARTS_THREAD_LOCAL dim3 *arts_local_block;
+extern ARTS_THREAD_LOCAL arts_dim3_t *arts_local_grid;
+extern ARTS_THREAD_LOCAL arts_dim3_t *arts_local_block;
 extern ARTS_THREAD_LOCAL cudaStream_t *arts_local_stream;
 extern ARTS_THREAD_LOCAL int arts_local_gpu_id;
 

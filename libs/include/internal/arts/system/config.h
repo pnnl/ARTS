@@ -45,7 +45,7 @@ extern "C" {
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "arts/network/remote_launcher.h"
+#include "arts/transport/launcher.h"
 
 struct arts_config_table_s {
   unsigned int rank;

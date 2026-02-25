@@ -36,13 +36,13 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef ARTS_RUNTIME_COMPUTE_EDT_FUNCTIONS_H
-#define ARTS_RUNTIME_COMPUTE_EDT_FUNCTIONS_H
+#ifndef ARTS_COMPUTE_EDT_H
+#define ARTS_COMPUTE_EDT_H
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#include "arts/runtime/rt.h"
+#include "arts/runtime_types.h"
 #include "arts/utils/array_list.h"
 #include "arts/utils/atomics.h"
 

@@ -42,7 +42,7 @@
 #include <sched.h>
 
 #include "arts.h"
-#include "arts/runtime/rt.h"
+#include "arts/runtime_types.h"
 
 void test(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
           arts_edt_dep_t depv[]) {

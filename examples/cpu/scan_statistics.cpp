@@ -47,7 +47,7 @@
 
 #include "arts.h"
 #include "arts/graph.h"
-#include "arts/runtime/compute/shad_adapter.h"
+#include "arts/compute/shad.h"
 
 arts_block_dist_t *distribution;
 csr_graph_t *graph;

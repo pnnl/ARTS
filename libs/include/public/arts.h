@@ -86,8 +86,7 @@ typedef intptr_t arts_guid_t;
  */
 typedef enum {
   ARTS_NULL = 0,     /**< Empty / untyped placeholder. */
-  ARTS_EDT = 1,      /**< Event-Driven Task (CPU). */
-  ARTS_GPU_EDT = 2,  /**< Event-Driven Task (GPU). */
+  ARTS_EDT = 1,      /**< Event-Driven Task (CPU and GPU share this tag). */
   ARTS_EVENT = 3,    /**< Latch-based synchronization event. */
   ARTS_EPOCH = 5,    /**< Termination-detection epoch. */
   ARTS_CALLBACK = 6, /**< Inline event callback. */
@@ -128,6 +127,18 @@ typedef enum {
   ARTS_DB_GPU,         /**< GPU-pinned, CDAG-managed. */
   ARTS_DB_LC,          /**< Locality-class (CPU-GPU coherence). */
 } arts_db_types_t;
+
+/**
+ * @brief EDT subtype (stored in @c arts_edt_s.edt_type, NOT in the GUID).
+ *
+ * All EDTs share the single @c ARTS_EDT tag in the GUID; the subtype is
+ * carried inside the EDT descriptor.  CPU and GPU EDTs differ in scheduling
+ * and execution but share the same GUID type.
+ */
+typedef enum {
+  ARTS_EDT_DEFAULT = 0, /**< CPU EDT (standard). */
+  ARTS_EDT_GPU = 1,     /**< GPU EDT (CUDA kernel or library host function). */
+} arts_edt_types_t;
 
 /** @} */ /* end type_enum */
 

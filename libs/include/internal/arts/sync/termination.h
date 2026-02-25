@@ -37,13 +37,13 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 
-#ifndef ARTS_TERMINATION_DETECTION_H
-#define ARTS_TERMINATION_DETECTION_H
+#ifndef ARTS_SYNC_TERMINATION_H
+#define ARTS_SYNC_TERMINATION_H
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#include "arts/runtime/rt.h"
+#include "arts/runtime_types.h"
 
 arts_epoch_t *create_epoch(arts_guid_t *guid, arts_guid_t edt_guid,
                            unsigned int slot);

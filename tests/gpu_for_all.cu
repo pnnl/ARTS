@@ -44,7 +44,7 @@
 #include <thrust/sort.h>
 
 #include "arts.h"
-#include "arts/gpu/gpu_runtime.cuh"
+#include "arts/gpu.h"
 
 #define GPULISTLEN 32
 
@@ -58,7 +58,7 @@ __global__ void temp(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramv;
   (void)depc;
   // unsigned int gpu_id = (unsigned int) paramv[0]; //The current gpu we are on
-  uint64_t gpu_id = GET_GPU_INDEX();
+  uint64_t gpu_id = ARTS_GPU_INDEX();
   unsigned int **addr =
       (unsigned int **)depv[0].ptr; // This is the dev_ptr_raw -> tells us
                                     // where current frontier is on device
@@ -167,10 +167,22 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   dim3 grid(1, 1, 1);
   for (uint64_t i = 0; i < arts_get_total_gpus(); i++) {
     uint64_t args[] = {(uint64_t)done_guid, i};
-    arts_guid_t edt_guid = arts_edt_create_gpu_lib_direct(
-        thrust_sort, node_id, i, 2, args, 1, grid, threads);
-    arts_guid_t edt_guid2 = arts_edt_create_gpu_direct(
-        temp, node_id, i, 1, &i, 1, grid, threads, edt_guid, 0, db_guid, true);
+    arts_gpu_hint_t lib_hint = {};
+    lib_hint.route = node_id;
+    lib_hint.gpu = (int)i;
+    lib_hint.lib = true;
+    arts_guid_t edt_guid =
+        arts_edt_create_gpu(thrust_sort, 2, args, 1, arts_from_dim3(grid),
+                            arts_from_dim3(threads), &lib_hint);
+    arts_gpu_hint_t kern_hint = {};
+    kern_hint.route = node_id;
+    kern_hint.gpu = (int)i;
+    kern_hint.end_guid = edt_guid;
+    kern_hint.slot = 0;
+    kern_hint.data_guid = db_guid;
+    arts_guid_t edt_guid2 =
+        arts_edt_create_gpu(temp, 1, &i, 1, arts_from_dim3(grid),
+                            arts_from_dim3(threads), &kern_hint);
     arts_signal_edt(edt_guid2, 0, db_guid, DB_MODE_EW);
   }
 }

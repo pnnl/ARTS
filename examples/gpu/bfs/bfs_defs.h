@@ -43,7 +43,7 @@
 extern "C" {
 #endif
 
-#include "arts/runtime/runtime.h"
+#include "arts/runtime_state.h"
 
 #define arts_printf(...)
 //  #define arts_printf(...) arts_printf(__VA_ARGS__)

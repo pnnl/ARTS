@@ -47,13 +47,13 @@
 #include "arts.h"
 #include "arts/defs.h"
 #include "arts/gas/guid.h"
+#include "arts/gpu/gpu_internal.h"
 #include "arts/gpu/gpu_lc_sync_functions.cuh"
 #include "arts/gpu/gpu_route_table.h"
-#include "arts/gpu/gpu_runtime.cuh"
 #include "arts/gpu/gpu_stream_buffer.h"
-#include "arts/runtime/compute/edt_functions.h"
-#include "arts/runtime/memory/db_functions.h"
-#include "arts/runtime/runtime.h"
+#include "arts/compute/edt.h"
+#include "arts/memory/db.h"
+#include "arts/runtime_state.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/utils/atomics.h"
@@ -96,8 +96,8 @@ ARTS_THREAD_LOCAL arts_array_list_t *new_edts = NULL;
 // These are for the library version of GPU EDTs
 // The user can query to get these values
 // We still want to collect them for scheduling purposes
-ARTS_THREAD_LOCAL dim3 *arts_local_grid;
-ARTS_THREAD_LOCAL dim3 *arts_local_block;
+ARTS_THREAD_LOCAL arts_dim3_t *arts_local_grid;
+ARTS_THREAD_LOCAL arts_dim3_t *arts_local_block;
 ARTS_THREAD_LOCAL cudaStream_t *arts_local_stream;
 ARTS_THREAD_LOCAL int arts_local_gpu_id;
 
@@ -227,11 +227,10 @@ void arts_handle_new_edts() {
     for (uint64_t i = 0; i < size; i++) {
       struct arts_edt_s **edt =
           (struct arts_edt_s **)arts_get_from_array_list(new_edts, i);
-      if ((*edt)->header.type == ARTS_EDT) {
-        arts_deque_push_front(arts_thread_info.my_deque, (*edt), 0);
-      }
-      if ((*edt)->header.type == ARTS_GPU_EDT) {
+      if ((*edt)->edt_type == ARTS_EDT_GPU) {
         arts_deque_push_front(arts_thread_info.my_gpu_deque, (*edt), 0);
+      } else {
+        arts_deque_push_front(arts_thread_info.my_deque, (*edt), 0);
       }
     }
     arts_reset_array_list(new_edts);
@@ -509,8 +508,10 @@ void arts_schedule_to_gpu(arts_edt_t fn_ptr, uint32_t paramc,
                           arts_edt_dep_t *depv, void *edt_ptr,
                           arts_gpu_t *arts_gpu) {
   arts_gpu_edt_t *edt = (arts_gpu_edt_t *)edt_ptr;
-  arts_schedule_to_gpu_internal(fn_ptr, paramc, paramv, depc, depv, edt->grid,
-                                edt->block, edt_ptr, arts_gpu);
+  dim3 grid(edt->grid.x, edt->grid.y, edt->grid.z);
+  dim3 block(edt->block.x, edt->block.y, edt->block.z);
+  arts_schedule_to_gpu_internal(fn_ptr, paramc, paramv, depc, depv, grid, block,
+                                edt_ptr, arts_gpu);
 }
 
 void arts_gpu_synchronize(arts_gpu_t *arts_gpu) {
@@ -524,7 +525,7 @@ void arts_gpu_stream_busy(arts_gpu_t *arts_gpu) {
 void free_gpu_item(arts_route_item_t *item) {
   arts_type_t type = arts_guid_get_type(item->key);
   arts_item_wrapper_t *wrapper = (arts_item_wrapper_t *)item->data;
-  if (type == ARTS_GPU_EDT) {
+  if (type == ARTS_EDT) {
     arts_gpu_clean_up_t *host_gc_ptr = (arts_gpu_clean_up_t *)wrapper->realData;
     ARTS_DEBUG("FREEING DEV PTR: %p\n", host_gc_ptr->devClosure);
     arts_cuda_free(host_gc_ptr->devClosure);

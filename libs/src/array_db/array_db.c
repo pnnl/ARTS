@@ -43,9 +43,9 @@
 #include <string.h>
 
 #include "arts.h"
-#include "arts/runtime/memory/db_functions.h"
-#include "arts/runtime/network/remote_functions.h"
-#include "arts/runtime/runtime.h"
+#include "arts/memory/db.h"
+#include "arts/remote/handler.h"
+#include "arts/runtime_state.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/utils/malloc.h"

@@ -40,7 +40,7 @@
 #include <stdlib.h>
 
 #include "arts.h"
-#include "arts/gpu/gpu_runtime.cuh"
+#include "arts/gpu.h"
 
 uint64_t start = 0;
 
@@ -61,7 +61,7 @@ void fib_fork(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramc;
   (void)depc;
   unsigned int next =
-      0;  //(arts_get_current_node() + 1) % arts_get_total_nodes();
+      0; //(arts_get_current_node() + 1) % arts_get_total_nodes();
   //    arts_printf("NODE: %u WORKER: %u NEXT: %u\n", arts_get_current_node(),
   //    arts_get_current_worker(), next);
 
@@ -77,21 +77,28 @@ void fib_fork(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     // Create two DB of type ARTS_DB_GPU
     unsigned int *x = NULL;
     arts_guid_t x_guid = arts_guid_reserve(ARTS_DB, 0);
-    x = (unsigned int *)arts_db_create_with_guid(x_guid, sizeof(unsigned int), ARTS_DB_GPU, NULL,
-                                                 NULL);
+    x = (unsigned int *)arts_db_create_with_guid(x_guid, sizeof(unsigned int),
+                                                 ARTS_DB_GPU, NULL, NULL);
     (*x) = (*res_ptr) - 1;
 
     unsigned int *y = NULL;
     arts_guid_t y_guid = arts_guid_reserve(ARTS_DB, 0);
-    y = (unsigned int *)arts_db_create_with_guid(y_guid, sizeof(unsigned int), ARTS_DB_GPU, NULL,
-                                                 NULL);
+    y = (unsigned int *)arts_db_create_with_guid(y_guid, sizeof(unsigned int),
+                                                 ARTS_DB_GPU, NULL, NULL);
     (*y) = (*res_ptr) - 2;
 
     // Create a continuation edt to run on the GPU
     dim3 grid(1);
     dim3 block(1);
-    arts_guid_t join_guid = arts_edt_create_gpu(
-        fib_join, next, 0, NULL, 3, grid, block, done_guid, slot, res_guid);
+    arts_gpu_hint_t gpu_hint = {};
+    gpu_hint.gpu = -1;
+    gpu_hint.route = next;
+    gpu_hint.end_guid = done_guid;
+    gpu_hint.slot = slot;
+    gpu_hint.data_guid = res_guid;
+    arts_guid_t join_guid =
+        arts_edt_create_gpu(fib_join, 0, NULL, 3, arts_from_dim3(grid),
+                            arts_from_dim3(block), &gpu_hint);
     arts_signal_edt(join_guid, 2, res_guid, DB_MODE_EW);
 
     // Create the forks which will run on the CPU
@@ -118,8 +125,8 @@ void fib_done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_shutdown();
 }
 
-extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv,
-                              uint32_t depc, arts_edt_dep_t depv[]) {
+extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                         arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;
   (void)depv;

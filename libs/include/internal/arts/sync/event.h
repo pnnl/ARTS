@@ -36,12 +36,12 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef ARTSEVENTFUNCTIONS_H
-#define ARTSEVENTFUNCTIONS_H
+#ifndef ARTS_SYNC_EVENT_H
+#define ARTS_SYNC_EVENT_H
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include "arts/runtime/rt.h"
+#include "arts/runtime_types.h"
 #define INITIAL_DEPENDENT_SIZE 4
 
 bool arts_event_create_internal(arts_guid_t *guid, unsigned int route,
@@ -59,4 +59,4 @@ bool arts_event_create_channel_internal(arts_guid_t *guid, unsigned int route,
 }
 #endif
 
-#endif /* ARTSEVENTFUNCTIONS_H */
+#endif /* ARTS_SYNC_EVENT_H */

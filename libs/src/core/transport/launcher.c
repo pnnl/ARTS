@@ -37,13 +37,16 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 
-#include "arts/network/remote_launcher.h"
+#include "arts/transport/launcher.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include "arts/system/config.h"
@@ -143,6 +146,13 @@ void arts_remote_launcher_ssh_startup_processes(
   char quoted_command[(sizeof(command) * 6) + 8];
   char wrapped_command[(sizeof(command) * 6) + 16];
   pid_t child;
+
+  // Allocate PID tracking array for non-kill-mode launches
+  if (!kill_mode) {
+    unsigned int num_remotes = config->table_length - 1;
+    launcher->child_pids = (pid_t *)arts_calloc(num_remotes, sizeof(pid_t));
+    launcher->child_count = 0;
+  }
 
   for (k = start_node + 1; k < (int)config->table_length + start_node; k++) {
     i = k % (int)config->table_length;
@@ -263,16 +273,29 @@ void arts_remote_launcher_ssh_startup_processes(
     child = fork();
 
     if (child == 0) {
-      // Child process: execute SSH command
-      // Use a non-interactive ssh invocation and run the command via a shell
-      // Passing the command to `sh -c` avoids fragile local quoting
-      execlp("ssh", "ssh", "-f", "-o", "StrictHostKeyChecking=no", "-o",
-             "ConnectTimeout=10", "-o", "ServerAliveInterval=5", "-o",
-             "ServerAliveCountMax=3", config->table[i].ip_address,
-             wrapped_command, (char *)NULL);
+      // Redirect stdout/stderr to /dev/null so the SSH child does not
+      // keep CTest's capture pipe open after the master process exits.
+      int devnull = open("/dev/null", O_RDWR);
+      if (devnull >= 0) {
+        dup2(devnull, STDOUT_FILENO);
+        dup2(devnull, STDERR_FILENO);
+        if (devnull > STDERR_FILENO) {
+          close(devnull);
+        }
+      }
+
+      // No -f flag — child stays alive as the SSH process, allowing the
+      // master to waitpid during cleanup to ensure remote exits.
+      // -n redirects stdin from /dev/null; BatchMode=yes prevents prompts.
+      execlp("ssh", "ssh", "-n", "-o", "BatchMode=yes", "-o",
+             "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10", "-o",
+             "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3",
+             config->table[i].ip_address, wrapped_command, (char *)NULL);
 
       // If execlp fails
-      ARTS_ERROR("SSH execlp failed: %s", strerror(errno));
+      _exit(127);
+    } else if (child > 0 && !kill_mode) {
+      launcher->child_pids[launcher->child_count++] = child;
     }
   }
 
@@ -283,8 +306,37 @@ void arts_remote_launcher_ssh_startup_processes(
 
 void arts_remote_launcher_ssh_cleanup_processes(
     struct arts_remote_launcher_s *launcher) {
-  // if (launcher && launcher->launcherMemory) {
-  //   arts_free(launcher->launcherMemory);
-  //   launcher->launcherMemory = NULL;
-  // }
+  if (!launcher || !launcher->child_pids) {
+    return;
+  }
+
+  // Wait for SSH children to exit naturally. Without -f, the SSH process
+  // stays alive until the remote ARTS process exits. This ensures remote
+  // processes have fully released their ports before the master returns.
+  // (Killing SSH does NOT kill the remote — no PTY means no SIGHUP.)
+  for (unsigned int i = 0; i < launcher->child_count; i++) {
+    if (launcher->child_pids[i] <= 0) {
+      continue;
+    }
+    int status;
+    bool exited = false;
+    // Give remote up to 15 seconds to exit after shutdown (remote may
+    // spend up to 5 seconds in the time-sync timeout during cleanup).
+    for (int ms = 0; ms < 15000; ms += 10) {
+      if (waitpid(launcher->child_pids[i], &status, WNOHANG) != 0) {
+        exited = true;
+        break;
+      }
+      usleep(10000);
+    }
+    if (!exited) {
+      // Remote didn't exit in time — force-kill the SSH session
+      kill(launcher->child_pids[i], SIGKILL);
+      waitpid(launcher->child_pids[i], &status, 0);
+    }
+  }
+
+  arts_free(launcher->child_pids);
+  launcher->child_pids = NULL;
+  launcher->child_count = 0;
 }

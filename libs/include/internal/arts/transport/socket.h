@@ -37,8 +37,8 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 
-#ifndef ARTS_NETWORK_SOCKETSERVER_H
-#define ARTS_NETWORK_SOCKETSERVER_H
+#ifndef ARTS_TRANSPORT_SOCKET_H
+#define ARTS_TRANSPORT_SOCKET_H
 #ifdef __cplusplus
 extern "C" {
 #endif

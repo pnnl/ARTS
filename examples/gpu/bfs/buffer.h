@@ -47,7 +47,7 @@ extern "C" {
 #include <stdint.h>
 #include <stdlib.h>
 
-#include "arts/runtime/rt.h"
+#include "arts/runtime_types.h"
 
 void create_buffers_on_cpu(unsigned int size);
 void create_buffers_on_gpu(unsigned int gpu, unsigned int size);

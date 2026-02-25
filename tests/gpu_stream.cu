@@ -39,7 +39,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "arts/gpu/gpu_runtime.cuh"
+#include "arts/gpu.h"
+#include "arts/runtime_types.h"
 
 #define SOMEARGS 10
 

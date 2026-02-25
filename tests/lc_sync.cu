@@ -40,14 +40,14 @@
 #include <stdlib.h>
 
 #include "arts.h"
-#include "arts/gpu/gpu_runtime.cuh"
+#include "arts/gpu.h"
 
 __global__ void temp(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                      arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
-  uint64_t gpu_id = GET_GPU_INDEX();
+  uint64_t gpu_id = ARTS_GPU_INDEX();
   // printf("Hello from %lu\n", gpu_id);
   unsigned int *addr = (unsigned int *)depv[0].ptr;
   unsigned int index = threadIdx.x + (blockIdx.x * blockDim.x);
@@ -112,9 +112,15 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   for (uint64_t i = 0; i < arts_get_total_gpus(); i++) {
     if (i == 0 || i == 3 || i == 4 || i == 7) {
       arts_printf("CREATING EDT for GPU: %lu\n", i);
-      arts_guid_t edt_guid = arts_edt_create_gpu_direct(
-          temp, node_id, i, 0, NULL, 1, grid, threads, done_guid, i + 1,
-          NULL_GUID, true);
+      arts_gpu_hint_t gpu_hint = {};
+      gpu_hint.route = node_id;
+      gpu_hint.gpu = (int)i;
+      gpu_hint.end_guid = done_guid;
+      gpu_hint.slot = (uint32_t)(i + 1);
+      gpu_hint.data_guid = NULL_GUID;
+      arts_guid_t edt_guid =
+          arts_edt_create_gpu(temp, 0, NULL, 1, arts_from_dim3(grid),
+                              arts_from_dim3(threads), &gpu_hint);
       arts_signal_edt(edt_guid, 0, db_guid, DB_MODE_EW);
     } else {
       arts_signal_edt(done_guid, i + 1, NULL_GUID, DB_MODE_EW);

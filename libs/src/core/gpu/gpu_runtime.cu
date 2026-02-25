@@ -42,17 +42,18 @@
 // https://github.com/NVIDIA-developer-blog/code-samples/blob/master/series/cuda-cpp/overlap-data-transfers/async.cu
 // Once this *class* works we will put a stream(s) in create a thread local
 // stream.  Then we will push stuff!
-#include "arts/gpu/gpu_runtime.cuh"
+#include "arts/gpu/gpu_internal.h"
 
 #include "arts/gas/out_of_order.h"
+#include "arts/gpu.h"
 #include "arts/gpu/gpu_lc_sync_functions.cuh"
 #include "arts/gpu/gpu_route_table.h"
 #include "arts/gpu/gpu_stream.h"
 #include "arts/gpu/gpu_stream_buffer.h"
-#include "arts/runtime/compute/edt_functions.h"
-#include "arts/runtime/memory/db_functions.h"
-#include "arts/runtime/runtime.h"
-#include "arts/runtime/sync/termination_detection.h"
+#include "arts/compute/edt.h"
+#include "arts/memory/db.h"
+#include "arts/runtime_state.h"
+#include "arts/sync/termination.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/utils/atomics.h"
@@ -133,23 +134,21 @@ void arts_cuda_mem_cpy_to_dev(void *dst, void *src, size_t count) {
   CHECKCORRECT(cudaMemcpy(dst, src, count, cudaMemcpyHostToDevice));
 }
 
-dim3 *arts_get_gpu_grid() { return arts_local_grid; }
+arts_dim3_t *arts_get_gpu_grid() { return arts_local_grid; }
 
-dim3 *arts_get_gpu_block() { return arts_local_block; }
+arts_dim3_t *arts_get_gpu_block() { return arts_local_block; }
 
-cudaStream_t *arts_get_gpu_stream() { return arts_local_stream; }
+void *arts_get_gpu_stream() { return arts_local_stream; }
 
 int arts_get_gpu_id() { return arts_local_gpu_id; }
 
 unsigned int arts_get_num_gpus() { return arts_node_info.gpu; }
 
-arts_guid_t internal_edt_create_gpu(arts_edt_t func_ptr, arts_guid_t *guid,
-                                    unsigned int route, uint32_t paramc,
-                                    const uint64_t *paramv, uint32_t depc,
-                                    dim3 grid, dim3 block, arts_guid_t end_guid,
-                                    uint32_t slot, arts_guid_t data_guid,
-                                    bool has_depv, bool pass_through, bool lib,
-                                    int gpu_to_run_on) {
+arts_guid_t internal_edt_create_gpu(
+    arts_edt_t func_ptr, arts_guid_t *guid, unsigned int route, uint32_t paramc,
+    const uint64_t *paramv, uint32_t depc, arts_dim3_t grid, arts_dim3_t block,
+    arts_guid_t end_guid, uint32_t slot, arts_guid_t data_guid, bool has_depv,
+    bool pass_through, bool lib, int gpu_to_run_on) {
   //    ARTSEDTCOUNTERTIMERSTART(EDT_CREATE_COUNTER);
   unsigned int dep_space = (has_depv) ? depc * sizeof(arts_edt_dep_t) : 0;
   unsigned int mode_space =
@@ -168,8 +167,9 @@ arts_guid_t internal_edt_create_gpu(arts_edt_t func_ptr, arts_guid_t *guid,
   edt->passthrough = pass_through;
   edt->lib = lib;
 
+  edt->wrapperEdt.edt_type = ARTS_EDT_GPU;
   // artsIntrospectionEdtCreateBegin();
-  (void)arts_edt_create_internal((struct arts_edt_s *)edt, ARTS_GPU_EDT, guid,
+  (void)arts_edt_create_internal((struct arts_edt_s *)edt, ARTS_EDT, guid,
                                  route, arts_thread_info.numa_domain_id,
                                  edt_space, NULL_GUID, func_ptr, paramc, paramv,
                                  depc, true, NULL_GUID, has_depv, 0);
@@ -178,104 +178,47 @@ arts_guid_t internal_edt_create_gpu(arts_edt_t func_ptr, arts_guid_t *guid,
   return *guid;
 }
 
-arts_guid_t arts_edt_create_gpu_dep(arts_edt_t func_ptr, unsigned int route,
-                                    uint32_t paramc, const uint64_t *paramv,
-                                    uint32_t depc, dim3 grid, dim3 block,
-                                    arts_guid_t end_guid, uint32_t slot,
-                                    arts_guid_t data_guid, bool has_depv) {
+/* ======================================================================== */
+/* Unified GPU EDT creation API                                             */
+/* ======================================================================== */
+
+arts_guid_t arts_edt_create_gpu(arts_edt_t func_ptr, uint32_t paramc,
+                                const uint64_t *paramv, uint32_t depc,
+                                arts_dim3_t grid, arts_dim3_t block,
+                                const arts_gpu_hint_t *hint) {
+  unsigned int route =
+      (hint && hint->route != ARTS_HINT_CURRENT_NODE) ? hint->route : 0;
+  if (!hint || hint->route == ARTS_HINT_CURRENT_NODE) {
+    route = arts_global_rank_id;
+  }
+  arts_guid_t end_guid = hint ? hint->end_guid : NULL_GUID;
+  uint32_t slot = hint ? hint->slot : 0;
+  arts_guid_t data_guid = hint ? hint->data_guid : NULL_GUID;
+  bool passthrough = hint ? hint->passthrough : false;
+  bool lib = hint ? hint->lib : false;
+  int gpu = hint ? hint->gpu : -1;
+
   arts_guid_t guid = NULL_GUID;
   return internal_edt_create_gpu(func_ptr, &guid, route, paramc, paramv, depc,
-                                 grid, block, end_guid, slot, data_guid,
-                                 has_depv, false, false, -1);
-}
-
-arts_guid_t arts_edt_create_gpu_pt_dep(arts_edt_t func_ptr, unsigned int route,
-                                       uint32_t paramc, const uint64_t *paramv,
-                                       uint32_t depc, dim3 grid, dim3 block,
-                                       arts_guid_t end_guid, uint32_t slot,
-                                       unsigned int pass_slot, bool has_depv) {
-  arts_guid_t guid = NULL_GUID;
-  return internal_edt_create_gpu(
-      func_ptr, &guid, route, paramc, paramv, depc, grid, block, end_guid, slot,
-      (arts_guid_t)pass_slot, has_depv, true, false, -1);
-}
-
-arts_guid_t arts_edt_create_gpu(arts_edt_t func_ptr, unsigned int route,
-                                uint32_t paramc, const uint64_t *paramv,
-                                uint32_t depc, dim3 grid, dim3 block,
-                                arts_guid_t end_guid, uint32_t slot,
-                                arts_guid_t data_guid) {
-  return arts_edt_create_gpu_dep(func_ptr, route, paramc, paramv, depc, grid,
-                                 block, end_guid, slot, data_guid, true);
+                                 grid, block, end_guid, slot, data_guid, true,
+                                 passthrough, lib, gpu);
 }
 
 arts_guid_t arts_edt_create_gpu_with_guid(arts_edt_t func_ptr, arts_guid_t guid,
                                           uint32_t paramc,
                                           const uint64_t *paramv, uint32_t depc,
-                                          dim3 grid, dim3 block,
-                                          arts_guid_t end_guid, uint32_t slot,
-                                          arts_guid_t data_guid) {
+                                          arts_dim3_t grid, arts_dim3_t block,
+                                          const arts_gpu_hint_t *hint) {
+  arts_guid_t end_guid = hint ? hint->end_guid : NULL_GUID;
+  uint32_t slot = hint ? hint->slot : 0;
+  arts_guid_t data_guid = hint ? hint->data_guid : NULL_GUID;
+  bool passthrough = hint ? hint->passthrough : false;
+  bool lib = hint ? hint->lib : false;
+  int gpu = hint ? hint->gpu : -1;
+
   return internal_edt_create_gpu(func_ptr, &guid, arts_guid_get_rank(guid),
                                  paramc, paramv, depc, grid, block, end_guid,
-                                 slot, data_guid, true, false, false, -1);
-}
-
-arts_guid_t arts_edt_create_gpu_pt(arts_edt_t func_ptr, unsigned int route,
-                                   uint32_t paramc, const uint64_t *paramv,
-                                   uint32_t depc, dim3 grid, dim3 block,
-                                   arts_guid_t end_guid, uint32_t slot,
-                                   unsigned int pass_slot) {
-  return arts_edt_create_gpu_pt_dep(func_ptr, route, paramc, paramv, depc, grid,
-                                    block, end_guid, slot, pass_slot, true);
-}
-
-arts_guid_t arts_edt_create_gpu_pt_with_guid(
-    arts_edt_t func_ptr, arts_guid_t guid, uint32_t paramc,
-    const uint64_t *paramv, uint32_t depc, dim3 grid, dim3 block,
-    arts_guid_t end_guid, uint32_t slot, unsigned int pass_slot) {
-  return internal_edt_create_gpu(
-      func_ptr, &guid, arts_guid_get_rank(guid), paramc, paramv, depc, grid,
-      block, end_guid, slot, (arts_guid_t)pass_slot, true, true, false, -1);
-}
-
-arts_guid_t arts_edt_create_gpu_lib(arts_edt_t func_ptr, unsigned int route,
-                                    uint32_t paramc, const uint64_t *paramv,
-                                    uint32_t depc, dim3 grid, dim3 block) {
-  arts_guid_t guid = NULL_GUID;
-  return internal_edt_create_gpu(func_ptr, &guid, route, paramc, paramv, depc,
-                                 grid, block, NULL_GUID, 0, NULL_GUID, true,
-                                 false, true, -1);
-}
-
-arts_guid_t arts_edt_create_gpu_lib_with_guid(arts_edt_t func_ptr,
-                                              arts_guid_t guid, uint32_t paramc,
-                                              const uint64_t *paramv,
-                                              uint32_t depc, dim3 grid,
-                                              dim3 block) {
-  return internal_edt_create_gpu(func_ptr, &guid, arts_guid_get_rank(guid),
-                                 paramc, paramv, depc, grid, block, NULL_GUID,
-                                 0, NULL_GUID, true, false, true, -1);
-}
-
-arts_guid_t arts_edt_create_gpu_direct(arts_edt_t func_ptr, unsigned int route,
-                                       unsigned int gpu, uint32_t paramc,
-                                       const uint64_t *paramv, uint32_t depc,
-                                       dim3 grid, dim3 block,
-                                       arts_guid_t end_guid, uint32_t slot,
-                                       arts_guid_t data_guid, bool has_depv) {
-  arts_guid_t guid = NULL_GUID;
-  return internal_edt_create_gpu(func_ptr, &guid, route, paramc, paramv, depc,
-                                 grid, block, end_guid, slot, data_guid,
-                                 has_depv, false, false, (int)gpu);
-}
-
-arts_guid_t arts_edt_create_gpu_lib_direct(
-    arts_edt_t func_ptr, unsigned int route, unsigned int gpu, uint32_t paramc,
-    const uint64_t *paramv, uint32_t depc, dim3 grid, dim3 block) {
-  arts_guid_t guid = NULL_GUID;
-  return internal_edt_create_gpu(func_ptr, &guid, route, paramc, paramv, depc,
-                                 grid, block, NULL_GUID, 0, NULL_GUID, true,
-                                 false, true, (int)gpu);
+                                 slot, data_guid, true, passthrough, lib, gpu);
 }
 
 void arts_run_gpu(void *edt_packet, arts_gpu_t *arts_gpu) {
@@ -333,7 +276,7 @@ void arts_gpu_host_wrap_up(void *edt_packet, arts_guid_t to_signal,
       arts_signal_edt(to_signal, slot, depv[data_guid].guid, DB_MODE_EW);
     } else {
       arts_type_t mode = arts_guid_get_type(to_signal);
-      if (mode == ARTS_EDT || mode == ARTS_GPU_EDT) {
+      if (mode == ARTS_EDT) {
         arts_signal_edt(to_signal, slot, data_guid, DB_MODE_EW);
       }
       if (mode == ARTS_EVENT) {

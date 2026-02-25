@@ -47,8 +47,8 @@
 
 #include "arts.h"
 #include "arts/counter/json.h"
-#include "arts/runtime/network/remote_functions.h"
-#include "arts/runtime/runtime.h"
+#include "arts/remote/handler.h"
+#include "arts/runtime_state.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/utils/atomics.h"
@@ -222,7 +222,7 @@ void arts_counter_capture_start() {
     } else {
       // Worker nodes: send sync request and wait for response
       arts_remote_time_sync_request();
-      uint64_t timeout = arts_get_time_stamp() + 5000000000ULL; // 5 seconds
+      uint64_t timeout = arts_get_time_stamp() + 500000000ULL; // 500ms
       while (!arts_counter_time_sync_received &&
              arts_get_time_stamp() < timeout) {
         usleep(1000); // Wait 1ms

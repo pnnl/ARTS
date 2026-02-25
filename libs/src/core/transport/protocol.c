@@ -36,14 +36,14 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include "arts/network/remote_protocol.h"
+#include "arts/transport/protocol.h"
 
 #include <string.h>
 #include <unistd.h>
 
 #include "arts.h"
-#include "arts/network/socket_server.h"
-#include "arts/runtime/runtime.h"
+#include "arts/transport/socket.h"
+#include "arts/runtime_state.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/utils/atomics.h"

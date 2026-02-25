@@ -36,7 +36,7 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include "arts/runtime/compute/edt_functions.h"
+#include "arts/compute/edt.h"
 #include "arts/utils/malloc.h"
 
 #include <string.h>
@@ -44,17 +44,17 @@
 #include "arts/gas/guid.h"
 #include "arts/gas/out_of_order.h"
 #include "arts/gas/route_table.h"
-#include "arts/runtime/memory/db_functions.h"
-#include "arts/runtime/network/remote_functions.h"
-#include "arts/runtime/runtime.h"
-#include "arts/runtime/sync/termination_detection.h"
+#include "arts/memory/db.h"
+#include "arts/remote/handler.h"
+#include "arts/runtime_state.h"
+#include "arts/sync/termination.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/utils/array_list.h"
 #include "arts/utils/atomics.h"
 
 #ifdef ARTS_USE_GPU
-#include "arts/gpu/gpu_runtime.cuh"
+#include "arts/gpu/gpu_internal.h"
 #endif
 
 #define MAX_EPOCH_ARRAY_LIST 32
@@ -465,16 +465,15 @@ void arts_edt_destroy(arts_guid_t guid) {
 void *arts_get_depv(void *edt_ptr) {
   struct arts_edt_s *edt = (struct arts_edt_s *)edt_ptr;
   unsigned int paramc = edt->paramc;
-  if (edt->header.type == ARTS_EDT) {
-    return (void *)((uint64_t *)(edt + 1) + paramc);
-  }
+  if (edt->edt_type == ARTS_EDT_GPU) {
 #ifdef ARTS_USE_GPU
-  if (edt->header.type == ARTS_GPU_EDT) {
     arts_gpu_edt_t *edtGpu = (arts_gpu_edt_t *)edt_ptr;
     return (void *)((uint64_t *)(edtGpu + 1) + paramc);
-  }
+#else
+    return NULL;
 #endif
-  return NULL;
+  }
+  return (void *)((uint64_t *)(edt + 1) + paramc);
 }
 
 arts_db_access_mode_t *arts_get_dep_modes(void *edt_ptr) {

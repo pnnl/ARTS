@@ -85,9 +85,9 @@
 #include <stdlib.h>
 
 #include "arts.h"
-#include "arts/gpu/gpu_runtime.cuh"
+#include "arts/gpu.h"
 #include "arts/gpu/gpu_stream.h"
-#include "arts/runtime/runtime.h"
+#include "arts/runtime_state.h"
 
 #include "random_access_defs.h"
 
@@ -325,9 +325,14 @@ void random_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
         dim3 grid(MAXTHREADBLOCKSPERSM * NUMBEROFSM, 1, 1);
         arts_printf("Launching for i: %lu count: %lu tileGuid: %lu\n", i,
                     count[i], arts_guid_from_index(tile_guids, i));
+        arts_gpu_hint_t gpu_hint_upd = {};
+        gpu_hint_upd.gpu = -1;
+        gpu_hint_upd.route = arts_get_current_node();
+        gpu_hint_upd.end_guid = next_random_guid;
+        gpu_hint_upd.slot = (uint32_t)(i + 1);
         arts_guid_t update_guid = arts_edt_create_gpu(
-            update_edt, arts_get_current_node(), 5, update_args, 2, grid, block,
-            next_random_guid, i + 1, NULL_GUID);
+            update_edt, 5, update_args, 2, arts_from_dim3(grid),
+            arts_from_dim3(block), &gpu_hint_upd);
         arts_gpu_signal_edt_memset(update_guid, 0,
                                    arts_guid_from_index(tile_guids, i));
         // arts_signal_edt(update_guid, 0, arts_guid_from_index(tile_guids, i),
@@ -343,8 +348,14 @@ void random_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     // Create next random_edt
     uint64_t next_random = num_rem_updates - num_random;
     uint64_t args[] = {next_random, step + 1, index};
-    arts_edt_create_gpu_lib_with_guid(random_edt, next_random_guid, 3, args,
-                                      next_random_deps, grid, block);
+    {
+      arts_gpu_hint_t gpu_hint_lib = {};
+      gpu_hint_lib.gpu = -1;
+      gpu_hint_lib.lib = true;
+      arts_edt_create_gpu_with_guid(random_edt, next_random_guid, 3, args,
+                                    next_random_deps, arts_from_dim3(grid),
+                                    arts_from_dim3(block), &gpu_hint_lib);
+    }
     arts_gpu_signal_edt_memset(next_random_guid, 0, depv[0].guid);
     // arts_signal_edt(next_random_guid, 0, depv[0].guid, DB_MODE_EW);
   } else {
@@ -479,8 +490,13 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   uint64_t args[] = {num_updates_per_gpu, 0, 0};
   for (unsigned int i = 0; i < num_gpus; i++) {
     args[2] = i;
+    arts_gpu_hint_t gpu_hint_lib = {};
+    gpu_hint_lib.gpu = -1;
+    gpu_hint_lib.route = 0;
+    gpu_hint_lib.lib = true;
     arts_guid_t update_guid =
-        arts_edt_create_gpu_lib(random_edt, 0, 3, args, 1, grid, block);
+        arts_edt_create_gpu(random_edt, 3, args, 1, arts_from_dim3(grid),
+                            arts_from_dim3(block), &gpu_hint_lib);
     arts_gpu_signal_edt_memset(update_guid, 0,
                                arts_guid_from_index(update_frontier_guids, i));
   }

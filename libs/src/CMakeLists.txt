@@ -51,8 +51,8 @@ add_subdirectory(core)
 add_subdirectory(graph)
 add_subdirectory(array_db)
 
-# Main source files (main.c lives in core/)
-file(GLOB ARTS_MAIN_SOURCES "core/*.c")
+# Main source file (main.c lives in core/; scheduler.c is an OBJECT library)
+set(ARTS_MAIN_SOURCES "core/main.c")
 
 #
 # Standard ARTS Library (always built, no CUDA)
@@ -76,13 +76,13 @@ if(ARTS_BUILD_STATIC)
     # Add object library contents directly to avoid export issues
     target_sources(arts_static PRIVATE
         $<TARGET_OBJECTS:arts_gas>
-        $<TARGET_OBJECTS:arts_network>
+        $<TARGET_OBJECTS:arts_transport>
         $<TARGET_OBJECTS:arts_counter>
-        $<TARGET_OBJECTS:arts_runtime>
-        $<TARGET_OBJECTS:arts_runtime_compute>
-        $<TARGET_OBJECTS:arts_runtime_memory>
-        $<TARGET_OBJECTS:arts_runtime_sync>
-        $<TARGET_OBJECTS:arts_runtime_network>
+        $<TARGET_OBJECTS:arts_scheduler>
+        $<TARGET_OBJECTS:arts_compute>
+        $<TARGET_OBJECTS:arts_memory>
+        $<TARGET_OBJECTS:arts_sync>
+        $<TARGET_OBJECTS:arts_remote>
         $<TARGET_OBJECTS:arts_system>
         $<TARGET_OBJECTS:arts_utils>
         $<TARGET_OBJECTS:arts_graph_datastructures>
@@ -137,13 +137,13 @@ if(ARTS_BUILD_SHARED)
     # Add object library contents directly to avoid export issues
     target_sources(arts_shared PRIVATE
         $<TARGET_OBJECTS:arts_gas>
-        $<TARGET_OBJECTS:arts_network>
+        $<TARGET_OBJECTS:arts_transport>
         $<TARGET_OBJECTS:arts_counter>
-        $<TARGET_OBJECTS:arts_runtime>
-        $<TARGET_OBJECTS:arts_runtime_compute>
-        $<TARGET_OBJECTS:arts_runtime_memory>
-        $<TARGET_OBJECTS:arts_runtime_sync>
-        $<TARGET_OBJECTS:arts_runtime_network>
+        $<TARGET_OBJECTS:arts_scheduler>
+        $<TARGET_OBJECTS:arts_compute>
+        $<TARGET_OBJECTS:arts_memory>
+        $<TARGET_OBJECTS:arts_sync>
+        $<TARGET_OBJECTS:arts_remote>
         $<TARGET_OBJECTS:arts_system>
         $<TARGET_OBJECTS:arts_utils>
         $<TARGET_OBJECTS:arts_graph_datastructures>
@@ -210,13 +210,13 @@ if(BUILD_CUDA_LIBRARY)
         # Add object library contents directly to avoid export issues
         target_sources(arts_cuda_static PRIVATE
             $<TARGET_OBJECTS:arts_gas>
-            $<TARGET_OBJECTS:arts_network>
+            $<TARGET_OBJECTS:arts_transport>
             $<TARGET_OBJECTS:arts_counter>
-            $<TARGET_OBJECTS:arts_runtime_gpu>
-            $<TARGET_OBJECTS:arts_runtime_compute_gpu>
-            $<TARGET_OBJECTS:arts_runtime_memory_gpu>
-            $<TARGET_OBJECTS:arts_runtime_sync>
-            $<TARGET_OBJECTS:arts_runtime_network>
+            $<TARGET_OBJECTS:arts_scheduler_gpu>
+            $<TARGET_OBJECTS:arts_compute_gpu>
+            $<TARGET_OBJECTS:arts_memory_gpu>
+            $<TARGET_OBJECTS:arts_sync>
+            $<TARGET_OBJECTS:arts_remote>
             $<TARGET_OBJECTS:arts_system>
             $<TARGET_OBJECTS:arts_utils>
             $<TARGET_OBJECTS:arts_gpu>
@@ -278,13 +278,13 @@ if(BUILD_CUDA_LIBRARY)
         # Add object library contents directly to avoid export issues
         target_sources(arts_cuda_shared PRIVATE
             $<TARGET_OBJECTS:arts_gas>
-            $<TARGET_OBJECTS:arts_network>
+            $<TARGET_OBJECTS:arts_transport>
             $<TARGET_OBJECTS:arts_counter>
-            $<TARGET_OBJECTS:arts_runtime_gpu>
-            $<TARGET_OBJECTS:arts_runtime_compute_gpu>
-            $<TARGET_OBJECTS:arts_runtime_memory_gpu>
-            $<TARGET_OBJECTS:arts_runtime_sync>
-            $<TARGET_OBJECTS:arts_runtime_network>
+            $<TARGET_OBJECTS:arts_scheduler_gpu>
+            $<TARGET_OBJECTS:arts_compute_gpu>
+            $<TARGET_OBJECTS:arts_memory_gpu>
+            $<TARGET_OBJECTS:arts_sync>
+            $<TARGET_OBJECTS:arts_remote>
             $<TARGET_OBJECTS:arts_system>
             $<TARGET_OBJECTS:arts_utils>
             $<TARGET_OBJECTS:arts_gpu>

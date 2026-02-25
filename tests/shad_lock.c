@@ -37,7 +37,7 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 #include "arts.h"
-#include "arts/runtime/compute/shad_adapter.h"
+#include "arts/compute/shad.h"
 
 #define EDTCOUNT 100
 uint64_t lock = 0;
