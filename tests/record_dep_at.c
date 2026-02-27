@@ -146,7 +146,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_guid_t e1 = arts_edt_create_with_epoch(
       check_record_dep_ro, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_record_dep(db1, e1, 0, DB_MODE_RO);
+  arts_add_dependence(db1, e1, 0, DB_MODE_RO);
 
   // Test 2: EW → RO ordering via record_dep.
   void *ptr2 = NULL;
@@ -159,11 +159,11 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_guid_t ew_edt = arts_edt_create_with_epoch(writer_ew, 0, NULL, 1, epoch,
                                                   &(arts_hint_t){.route = 0});
-  arts_record_dep(db2, ew_edt, 0, DB_MODE_EW);
+  arts_add_dependence(db2, ew_edt, 0, DB_MODE_EW);
 
   arts_guid_t ro_edt = arts_edt_create_with_epoch(
       reader_after_ew, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_record_dep(db2, ro_edt, 0, DB_MODE_RO);
+  arts_add_dependence(db2, ro_edt, 0, DB_MODE_RO);
 
   // Test 3: record_dep_at with byte offset.
   void *ptr3 = NULL;
@@ -178,13 +178,13 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_guid_t e3 = arts_edt_create_with_epoch(check_slice, 0, NULL, 1, epoch,
                                               &(arts_hint_t){.route = 0});
-  arts_record_dep_at(db3, e3, 0, DB_MODE_RO, 2 * sizeof(int), 2 * sizeof(int));
+  arts_add_dependence_at(db3, e3, 0, DB_MODE_RO, 2 * sizeof(int), 2 * sizeof(int));
 
   // Test 4: record_dep_at preserves DB GUID.
   uint64_t guid_param = (uint64_t)db3;
   arts_guid_t e4 = arts_edt_create_with_epoch(
       check_slice_guid, 1, &guid_param, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_record_dep_at(db3, e4, 0, DB_MODE_RO, sizeof(int), sizeof(int));
+  arts_add_dependence_at(db3, e4, 0, DB_MODE_RO, sizeof(int), sizeof(int));
 
   arts_wait_on_handle(epoch);
   arts_shutdown();

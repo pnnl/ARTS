@@ -392,7 +392,6 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
   }
 
   arts_gpu_edt_t *gpu_edt = (arts_gpu_edt_t *)host_gc_ptr->edt;
-  arts_db_access_mode_t *modes = arts_get_dep_modes(edt_ptr);
 
   // Allocate space for DB on GPU and Move Data
   for (unsigned int i = 0; i < depc; ++i) {
@@ -414,13 +413,13 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
         if (successful_add) // We won, so allocate and move data
         {
           ARTS_DEBUG("Adding %lu %u id: %d mode: %s\n", depv[i].guid,
-                     alloc_size, arts_gpu->device, db_mode_name[modes[i]]);
+                     alloc_size, arts_gpu->device, db_mode_name[depv[i].mode]);
           data_ptr = arts_cuda_malloc(alloc_size);
           void *src = (void *)db;
           if (db_subtype == ARTS_DB_LC) {
             src = make_lc_shadow_copy(db);
           }
-          if (modes[i] == DB_MODE_LC_NO_COPY || modes[i] == DB_MODE_MEMSET) {
+          if (depv[i].mode == DB_MODE_LC_NO_COPY || depv[i].mode == DB_MODE_MEMSET) {
             src = NULL;
           }
           push_data_to_stream(arts_gpu->device, data_ptr, src, size,
@@ -437,7 +436,7 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
               !arts_atomic_fetch_add_u64((uint64_t *)&wrapper->realData, 0)) {
           } // Spin till the data memcpy is launched
           data_ptr = (void *)wrapper->realData;
-          if (db_subtype == ARTS_DB_GPU && modes[i] == DB_MODE_MEMSET) {
+          if (db_subtype == ARTS_DB_GPU && depv[i].mode == DB_MODE_MEMSET) {
             push_data_to_stream(arts_gpu->device, data_ptr, NULL, size,
                                 arts_node_info.gpu_buff_on && !gpu_edt->lib);
           }
@@ -491,7 +490,7 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
     if (depv[i].ptr) {
       struct arts_db_s *cb_db = (struct arts_db_s *)depv[i].ptr - 1;
       if (cb_db->db_type == ARTS_DB_GPU &&
-          (modes[i] == DB_MODE_EW || modes[i] == DB_MODE_MEMSET)) {
+          (depv[i].mode == DB_MODE_EW || depv[i].mode == DB_MODE_MEMSET)) {
         size_t size = (size_t)(cb_db->header.size - sizeof(struct arts_db_s));
         get_data_from_stream(arts_gpu->device, depv[i].ptr, host_depv[i].ptr,
                              size, arts_node_info.gpu_buff_on && !gpu_edt->lib);

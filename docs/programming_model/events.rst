@@ -82,8 +82,8 @@ time delivering updated data via a coupled DataBlock.
    arts_add_dependence(ch, edt_guid, slot);
 
    /* Increment and decrement the latch to control fire cycles */
-   arts_event_increment_latch(ch);
-   arts_event_decrement_latch(ch);
+   arts_event_satisfy_slot(ch, NULL_GUID, ARTS_EVENT_LATCH_INCR_SLOT);
+   arts_event_satisfy_slot(ch, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
 
 Use cases include iterative algorithms (e.g., graph analytics) where
 data is updated in rounds and dependents need to be re-notified.

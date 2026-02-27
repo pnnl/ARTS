@@ -150,17 +150,17 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     uint64_t val1 = 100;
     arts_guid_t w1 = arts_edt_create_with_epoch(cdag_writer, 1, &val1, 1, epoch,
                                                 &(arts_hint_t){.route = 0});
-    arts_record_dep(db, w1, 0, DB_MODE_EW);
+    arts_add_dependence(db, w1, 0, DB_MODE_EW);
 
     uint64_t val2 = 200;
     arts_guid_t w2 = arts_edt_create_with_epoch(cdag_writer, 1, &val2, 1, epoch,
                                                 &(arts_hint_t){.route = 1});
-    arts_record_dep(db, w2, 0, DB_MODE_EW);
+    arts_add_dependence(db, w2, 0, DB_MODE_EW);
 
     uint64_t rparams[2] = {200, 1};
     arts_guid_t r = arts_edt_create_with_epoch(
         cdag_reader, 2, rparams, 1, epoch, &(arts_hint_t){.route = 0});
-    arts_record_dep(db, r, 0, DB_MODE_RO);
+    arts_add_dependence(db, r, 0, DB_MODE_RO);
   }
 
   // Test 2: Cross-node concurrent RO readers after remote EW writer.
@@ -177,17 +177,17 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
     arts_guid_t w = arts_edt_create_with_epoch(cdag_writer_3, 0, NULL, 1, epoch,
                                                &(arts_hint_t){.route = 1});
-    arts_record_dep(db2, w, 0, DB_MODE_EW);
+    arts_add_dependence(db2, w, 0, DB_MODE_EW);
 
     uint64_t id0 = 0;
     arts_guid_t ra = arts_edt_create_with_epoch(
         cdag_reader_3, 1, &id0, 1, epoch, &(arts_hint_t){.route = 0});
-    arts_record_dep(db2, ra, 0, DB_MODE_RO);
+    arts_add_dependence(db2, ra, 0, DB_MODE_RO);
 
     uint64_t id1 = 1;
     arts_guid_t rb = arts_edt_create_with_epoch(
         cdag_reader_3, 1, &id1, 1, epoch, &(arts_hint_t){.route = 1});
-    arts_record_dep(db2, rb, 0, DB_MODE_RO);
+    arts_add_dependence(db2, rb, 0, DB_MODE_RO);
   }
 
   // Test 3: EW ping-pong across nodes.
@@ -202,20 +202,20 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
     arts_guid_t ia = arts_edt_create_with_epoch(
         cdag_incrementer, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-    arts_record_dep(db3, ia, 0, DB_MODE_EW);
+    arts_add_dependence(db3, ia, 0, DB_MODE_EW);
 
     arts_guid_t ib = arts_edt_create_with_epoch(
         cdag_incrementer, 0, NULL, 1, epoch, &(arts_hint_t){.route = 1});
-    arts_record_dep(db3, ib, 0, DB_MODE_EW);
+    arts_add_dependence(db3, ib, 0, DB_MODE_EW);
 
     arts_guid_t ic = arts_edt_create_with_epoch(
         cdag_incrementer, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-    arts_record_dep(db3, ic, 0, DB_MODE_EW);
+    arts_add_dependence(db3, ic, 0, DB_MODE_EW);
 
     uint64_t rparams3[2] = {3, 3};
     arts_guid_t r3 = arts_edt_create_with_epoch(
         cdag_reader, 2, rparams3, 1, epoch, &(arts_hint_t){.route = 0});
-    arts_record_dep(db3, r3, 0, DB_MODE_RO);
+    arts_add_dependence(db3, r3, 0, DB_MODE_RO);
   }
 }
 

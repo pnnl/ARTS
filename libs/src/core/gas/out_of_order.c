@@ -38,12 +38,12 @@
 ******************************************************************************/
 #include "arts/gas/out_of_order.h"
 
-#include "arts/gas/route_table.h"
 #include "arts/compute/edt.h"
+#include "arts/gas/route_table.h"
 #include "arts/memory/db.h"
 #include "arts/remote/handler.h"
-#include "arts/runtime_types.h"
 #include "arts/runtime_state.h"
+#include "arts/runtime_types.h"
 #include "arts/sync/termination.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
@@ -175,7 +175,7 @@ inline void arts_out_of_order_handler(void *handle_me, void *memory_ptr) {
   }
   case OO_ADD_DEPENDENCE: {
     struct oo_add_dependence_s *dep = (struct oo_add_dependence_s *)handle_me;
-    arts_add_dependence(dep->source, dep->destination, dep->slot);
+    arts_add_dependence(dep->source, dep->destination, dep->slot, dep->mode);
     break;
   }
   case OO_HANDLE_READY_EDT: {
@@ -321,7 +321,7 @@ void arts_out_of_order_add_dependence(arts_guid_t source,
   dep->mode = mode;
   bool res = arts_route_table_add_oo(wait_on, dep, false);
   if (!res) {
-    arts_add_dependence(source, destination, slot);
+    arts_add_dependence(source, destination, slot, mode);
     arts_free(dep);
   }
 }
@@ -352,8 +352,11 @@ void arts_out_of_order_handle_remote_db_send(int rank, arts_guid_t db_guid,
   bool res = arts_route_table_add_oo(db_guid, ready_send, false);
   if (!res) {
     struct arts_db_s *db =
-        (struct arts_db_s *)arts_route_table_lookup_item(db_guid);
+        (struct arts_db_s *)arts_route_table_lookup_db(db_guid, NULL, false);
     arts_remote_db_send_check(ready_send->rank, db, ready_send->mode);
+    if (db) {
+      arts_route_table_return_db(db_guid, false);
+    }
     arts_free(ready_send);
   }
 }
@@ -382,8 +385,11 @@ void arts_out_of_order_handle_db_request(arts_guid_t db_guid,
         "OO db_request: DB[Guid:%lu] already available — immediate callback",
         db_guid);
     struct arts_db_s *db =
-        (struct arts_db_s *)arts_route_table_lookup_item(db_guid);
+        (struct arts_db_s *)arts_route_table_lookup_db(db_guid, NULL, false);
     arts_db_request_callback(req->edt, req->slot, db);
+    if (db) {
+      arts_route_table_return_db(db_guid, false);
+    }
     arts_free(req);
   }
 }
@@ -420,9 +426,12 @@ void arts_out_of_order_handle_remote_db_full_send(arts_guid_t db_guid, int rank,
   bool res = arts_route_table_add_oo(db_guid, db_send, false);
   if (!res) {
     struct arts_db_s *db =
-        (struct arts_db_s *)arts_route_table_lookup_item(db_guid);
+        (struct arts_db_s *)arts_route_table_lookup_db(db_guid, NULL, false);
     arts_remote_db_full_send_check(db_send->rank, db, db_send->edt_guid,
                                    db_send->slot, db_send->mode);
+    if (db) {
+      arts_route_table_return_db(db_guid, false);
+    }
     arts_free(db_send);
   }
 }

@@ -152,8 +152,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_guid_t e1 = arts_edt_create_with_epoch(check_local_rw, 0, NULL, 1, epoch,
                                               &(arts_hint_t){.route = 0});
-  arts_record_dep(local_guid, e1, 0, DB_MODE_EW);
-  arts_record_dep(local_guid, e2, 0, DB_MODE_EW);
+  arts_add_dependence(local_guid, e1, 0, DB_MODE_EW);
+  arts_add_dependence(local_guid, e2, 0, DB_MODE_EW);
 
   // Test 3: arts_db_copy_to_new_type (DB -> DB_LOCAL).
   void *src_ptr = NULL;

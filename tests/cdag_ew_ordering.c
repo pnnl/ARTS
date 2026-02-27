@@ -123,16 +123,16 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_guid_t w1 = arts_edt_create_with_epoch(writer1, 0, NULL, 1, epoch,
                                               &(arts_hint_t){.route = 0});
-  arts_record_dep(db, w1, 0, DB_MODE_EW);
+  arts_add_dependence(db, w1, 0, DB_MODE_EW);
 
   arts_guid_t w2 = arts_edt_create_with_epoch(writer2, 0, NULL, 1, epoch,
                                               &(arts_hint_t){.route = 0});
-  arts_record_dep(db, w2, 0, DB_MODE_EW);
+  arts_add_dependence(db, w2, 0, DB_MODE_EW);
 
   uint64_t exp_param = 200;
   arts_guid_t r1 = arts_edt_create_with_epoch(
       reader_check, 1, &exp_param, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_record_dep(db, r1, 0, DB_MODE_RO);
+  arts_add_dependence(db, r1, 0, DB_MODE_RO);
 
   // Test 2: Multiple concurrent RO readers.
   void *ptr2 = NULL;
@@ -144,7 +144,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     uint64_t id_param = (uint64_t)i;
     arts_guid_t reader = arts_edt_create_with_epoch(
         concurrent_reader, 1, &id_param, 1, epoch, &(arts_hint_t){.route = 0});
-    arts_record_dep(db2, reader, 0, DB_MODE_RO);
+    arts_add_dependence(db2, reader, 0, DB_MODE_RO);
   }
 
   arts_wait_on_handle(epoch);

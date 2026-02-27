@@ -38,6 +38,7 @@
 ******************************************************************************/
 #include "arts/memory/frontier.h"
 #include "arts/gas/route_table.h"
+
 #include "arts/utils/malloc.h"
 
 #include "arts/compute/edt.h"
@@ -460,6 +461,9 @@ void arts_signal_frontier_local(struct arts_db_frontier_s *frontier,
       if (edt) {
         // TODO(gpu): GPU EDTs need GPU memory, not this CPU pointer.
         arts_edt_dep_t *depv = (arts_edt_dep_t *)arts_get_depv(edt);
+        /* Acquire a route table ref for this dep slot — matched by
+         * return_db in release_dbs after EDT execution. */
+        arts_route_table_lookup_db(db->guid, NULL, false);
         depv[frontier->exSlot].ptr = db + 1;
         if (arts_atomic_sub(&edt->depc_needed, 1U) == 0) {
           arts_handle_remote_stolen_edt(edt);
@@ -494,6 +498,8 @@ void arts_signal_frontier_local(struct arts_db_frontier_s *frontier,
       struct arts_edt_s *edt = current->edt[pos];
       // TODO(gpu): GPU EDTs need GPU memory, not this CPU pointer.
       arts_edt_dep_t *depv = (arts_edt_dep_t *)arts_get_depv(edt);
+      /* Acquire a route table ref for this dep slot. */
+      arts_route_table_lookup_db(db->guid, NULL, false);
       depv[current->slot[pos]].ptr = db + 1;
 
       if (arts_atomic_sub(&edt->depc_needed, 1U) == 0) {

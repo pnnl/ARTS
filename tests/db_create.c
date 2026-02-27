@@ -169,10 +169,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       check_db_with_data, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
   arts_signal_edt(e3, 0, reserved3, DB_MODE_RO);
 
-  // Test 4: arts_db_destroy.
+  // Test 4: arts_db_destroy (implicit release).
   void *ptr4 = NULL;
   arts_guid_t db4 = arts_db_create(&ptr4, 64, ARTS_DB_DEFAULT, NULL);
-  arts_db_release(db4);
   arts_db_destroy(db4);
 
   arts_edt_create_with_epoch(post_destroy_edt, 0, NULL, 0, epoch,

@@ -107,8 +107,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                                                 &(arts_hint_t){.route = 0});
 
   // Wire: ev1 fires → satisfies ev2 slot 0 → ev2 fires → satisfies edt1 slot 0.
-  arts_add_dependence(ev1, ev2, ARTS_EVENT_LATCH_DECR_SLOT);
-  arts_add_dependence(ev2, edt1, 0);
+  arts_add_dependence(ev1, ev2, ARTS_EVENT_LATCH_DECR_SLOT, DB_MODE_EW);
+  arts_add_dependence(ev2, edt1, 0, DB_MODE_EW);
 
   // Fire ev1.
   arts_event_satisfy_slot(ev1, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
@@ -121,9 +121,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t edt2 = arts_edt_create_with_epoch(fan_in_end, 0, NULL, 1, epoch,
                                                 &(arts_hint_t){.route = 0});
 
-  arts_add_dependence(ev_a, ev_c, ARTS_EVENT_LATCH_DECR_SLOT);
-  arts_add_dependence(ev_b, ev_c, ARTS_EVENT_LATCH_DECR_SLOT);
-  arts_add_dependence(ev_c, edt2, 0);
+  arts_add_dependence(ev_a, ev_c, ARTS_EVENT_LATCH_DECR_SLOT, DB_MODE_EW);
+  arts_add_dependence(ev_b, ev_c, ARTS_EVENT_LATCH_DECR_SLOT, DB_MODE_EW);
+  arts_add_dependence(ev_c, edt2, 0, DB_MODE_EW);
 
   arts_event_satisfy_slot(ev_a, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
   arts_event_satisfy_slot(ev_b, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
@@ -137,7 +137,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t ev3 = arts_event_create(0, ARTS_EVENT_LATCH, 1, NULL_GUID);
   arts_guid_t edt3 = arts_edt_create_with_epoch(
       chain_data_end, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_add_dependence(ev3, edt3, 0);
+  arts_add_dependence(ev3, edt3, 0, DB_MODE_EW);
   // Fire with data.
   arts_event_satisfy_slot(ev3, db, ARTS_EVENT_LATCH_DECR_SLOT);
 
@@ -148,7 +148,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Now wire after fire — IDEM self-signals out-of-range deps.
   arts_guid_t edt4 = arts_edt_create_with_epoch(
       already_fired_end, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_add_dependence(ev4, edt4, 0);
+  arts_add_dependence(ev4, edt4, 0, DB_MODE_EW);
   arts_event_destroy(ev4);
 
   arts_wait_on_handle(epoch);

@@ -91,13 +91,14 @@ uint64_t arts_thread_safe_random() {
 
 unsigned int arts_get_total_gpus() { return arts_node_info.gpu; }
 
-void arts_printf(const char *format, ...) {
-  va_list arglist;
+int arts_printf(const char *format, ...) {
   printf(" [%u] ", arts_global_rank_id);
+  va_list arglist;
   va_start(arglist, format);
-  vprintf(format, arglist);
+  int written = vprintf(format, arglist);
   va_end(arglist);
   (void)fflush(stdout);
+  return written >= 0 ? written : 0;
 }
 
 #define NANOSECS 1000000000

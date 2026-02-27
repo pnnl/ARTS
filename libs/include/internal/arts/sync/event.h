@@ -55,6 +55,15 @@ void arts_event_free(struct arts_event_s *event);
 bool arts_event_create_channel_internal(arts_guid_t *guid, unsigned int route,
                                         arts_guid_t data_guid);
 
+/* Internal channel-event dependence helpers (not public API). */
+void arts_event_add_dependence_with_mode(arts_guid_t event_source,
+                                         arts_guid_t edt_dest,
+                                         uint32_t edt_slot,
+                                         arts_db_access_mode_t mode);
+void arts_event_add_dependence_with_byte_offset(
+    arts_guid_t event_source, arts_guid_t edt_dest, uint32_t edt_slot,
+    arts_db_access_mode_t mode, uint64_t byte_offset, uint64_t len);
+
 #ifdef __cplusplus
 }
 #endif

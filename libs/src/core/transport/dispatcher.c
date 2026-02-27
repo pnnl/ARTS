@@ -41,12 +41,14 @@
 #include <unistd.h>
 
 #include "arts.h"
-#include "arts/transport/protocol.h"
 #include "arts/compute/edt.h"
+#include "arts/memory/db.h"
 #include "arts/remote/handler.h"
 #include "arts/runtime_state.h"
+#include "arts/sync/event.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
+#include "arts/transport/protocol.h"
 #include "arts/utils/malloc.h"
 
 #define EDT_MUG_SIZE 32
@@ -125,8 +127,8 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
   case ARTS_REMOTE_DB_ADD_DEPENDENCE_MSG: {
     struct arts_remote_db_add_dependence_packet_s *pack =
         (struct arts_remote_db_add_dependence_packet_s *)(packet);
-    arts_db_add_dependence_with_mode_and_diff(pack->db_src, pack->edt_dest,
-                                              pack->edt_slot, pack->mode);
+    arts_add_dependence(pack->db_src, pack->edt_dest, pack->edt_slot,
+                        pack->mode);
     break;
   }
   case ARTS_REMOTE_DB_ADD_DEPENDENCE_WITH_BYTE_OFFSET_MSG: {
@@ -153,23 +155,25 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
     ARTS_DEBUG("Dependence Received");
     struct arts_remote_add_dependence_packet_s *pack =
         (struct arts_remote_add_dependence_packet_s *)(packet);
-    arts_add_dependence(pack->source, pack->destination, pack->slot);
+    arts_add_dependence(pack->source, pack->destination, pack->slot,
+                        pack->mode);
     break;
   }
   case ARTS_REMOTE_CHANNEL_ADD_DEPENDENCE_MSG: {
     ARTS_DEBUG("Channel Event Dependence Received");
     struct arts_remote_add_dependence_packet_s *pack =
         (struct arts_remote_add_dependence_packet_s *)(packet);
-    arts_event_add_dependence_with_mode(pack->source, pack->destination,
-                                        pack->slot, pack->mode);
+    arts_add_dependence(pack->source, pack->destination, pack->slot,
+                        pack->mode);
     break;
   }
   case ARTS_REMOTE_CHANNEL_ADD_DEPENDENCE_WITH_BYTE_OFFSET_MSG: {
     ARTS_DEBUG("Channel Event Dependence with ByteOffset Received");
     struct arts_remote_add_dependence_with_byte_offset_packet_s *pack =
         (struct arts_remote_add_dependence_with_byte_offset_packet_s *)(packet);
+    arts_set_dep_mode(pack->destination, pack->slot, pack->mode);
     arts_event_add_dependence_with_byte_offset(pack->source, pack->destination,
-                                               pack->slot, pack->mode,
+                                               pack->slot, DB_MODE_NULL,
                                                pack->byte_offset, pack->size);
     break;
   }
@@ -307,6 +311,13 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
   case ARTS_REMOTE_TIME_SYNC_RESP_MSG: {
     ARTS_DEBUG("Time Sync Response Received");
     arts_remote_handle_time_sync_resp(packet);
+    break;
+  }
+  case ARTS_REMOTE_SET_DEP_MODE_MSG: {
+    ARTS_DEBUG("Set Dep Mode Received");
+    struct arts_remote_set_dep_mode_packet_s *pack =
+        (struct arts_remote_set_dep_mode_packet_s *)(packet);
+    arts_set_dep_mode(pack->edt, pack->slot, pack->mode);
     break;
   }
   default: {

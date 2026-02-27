@@ -143,7 +143,14 @@ void increment_active_epoch(arts_guid_t epoch_guid) {
 /*
  * increment_finished_epoch — Called when an EDT finishes execution.
  *
- * Single-node fast path: directly check if epoch can terminate.
+ * Single-node fast path: the atomic increment of finished_count returns
+ * the new value.  Because arts_atomic_add uses __sync_add_and_fetch
+ * (full barrier), the subsequent load of active_count sees all prior
+ * increments.  Exactly one thread can observe new_finished == cur_active
+ * (each new_finished value is unique), so only that thread calls
+ * check_epoch.  check_epoch's internal CAS on the phase field provides
+ * defense-in-depth against concurrent fire attempts.
+ *
  * Multi-node: owner rank collects responses; non-owner ranks decrement
  * their queued counter and, when it hits 1, send their active/finished
  * counts to the owner for global reduction.
@@ -158,8 +165,16 @@ void increment_finished_epoch(arts_guid_t epoch_guid) {
                  "active_count=%u, phase=%u",
                  epoch_guid, new_finished, epoch->active_count, epoch->phase);
       if (arts_global_rank_count == 1) {
-        if (!check_epoch(epoch, epoch->active_count, epoch->finished_count)) {
-          if (epoch->phase == PHASE_3) {
+        /*
+         * Single-node fast path: new_finished is unique per thread
+         * (from arts_atomic_add's __sync_add_and_fetch), so at most
+         * one thread sees equality with cur_active.  check_epoch's
+         * internal CAS provides defense-in-depth for the fire decision.
+         */
+        unsigned int cur_active = epoch->active_count;
+        if (new_finished > 0 && new_finished == cur_active) {
+          check_epoch(epoch, cur_active, new_finished);
+          if (epoch->phase == (unsigned int)PHASE_3) {
             delete_epoch(epoch_guid, epoch);
           }
         }
@@ -318,39 +333,62 @@ bool check_epoch(arts_epoch_t *epoch, unsigned int total_active,
             "Diff:%u, Phase:%u, LastActive:%u, LastFinished:%u]",
             epoch->guid, total_active, total_finish, diff, epoch->phase,
             epoch->last_active_count, epoch->last_finished_count);
-  // We have a zero
+
   if (total_finish && !diff) {
-    // Lets check the phase and if we have the same counts as before
-    if (epoch->phase == PHASE_2 && epoch->last_active_count == total_active &&
-        epoch->last_finished_count == total_finish) {
-      ARTS_DEBUG(
-          "check_epoch: Advancing to PHASE_3 - epoch termination complete!");
-      epoch->phase = PHASE_3;
-      if (epoch->termination_exit_guid) {
-        arts_signal_edt_value(epoch->termination_exit_guid,
-                              epoch->termination_exit_slot, total_finish);
-      } else {
-        arts_shutdown_epoch_fire(epoch->guid);
+    if (arts_global_rank_count == 1) {
+      /*
+       * Single-node: skip the two-phase confirmation protocol (no network
+       * round needed).  CAS ensures exactly one thread transitions to
+       * PHASE_3 and fires the epoch, even under concurrent callers.
+       */
+      unsigned int old_phase =
+          arts_atomic_cswap(&epoch->phase, (unsigned int)PHASE_1,
+                            (unsigned int)PHASE_3);
+      if (old_phase == (unsigned int)PHASE_1) {
+        ARTS_DEBUG(
+            "check_epoch: CAS won PHASE_1->PHASE_3, firing epoch [Guid:%lu]",
+            epoch->guid);
+        if (epoch->termination_exit_guid) {
+          arts_signal_edt_value(epoch->termination_exit_guid,
+                                epoch->termination_exit_slot, total_finish);
+        } else {
+          arts_shutdown_epoch_fire(epoch->guid);
+        }
       }
       return false;
     }
-    // We didn't match the last one so lets try again
+
+    /*
+     * Multi-node: two-phase confirmation protocol.
+     * Protected by the outstanding gate in reduce_epoch (single entrant),
+     * but CAS on the PHASE_2 -> PHASE_3 transition provides defense-in-depth.
+     */
+    if (epoch->phase == (unsigned int)PHASE_2 &&
+        epoch->last_active_count == total_active &&
+        epoch->last_finished_count == total_finish) {
+      unsigned int old_phase =
+          arts_atomic_cswap(&epoch->phase, (unsigned int)PHASE_2,
+                            (unsigned int)PHASE_3);
+      if (old_phase == (unsigned int)PHASE_2) {
+        ARTS_DEBUG(
+            "check_epoch: CAS won PHASE_2->PHASE_3, firing epoch [Guid:%lu]",
+            epoch->guid);
+        if (epoch->termination_exit_guid) {
+          arts_signal_edt_value(epoch->termination_exit_guid,
+                                epoch->termination_exit_slot, total_finish);
+        } else {
+          arts_shutdown_epoch_fire(epoch->guid);
+        }
+      }
+      return false;
+    }
+    // Counts differ from last round or first time: record and request another.
     epoch->last_active_count = total_active;
     epoch->last_finished_count = total_finish;
-    epoch->phase = PHASE_2;
-    if (arts_global_rank_count == 1) {
-      epoch->phase = PHASE_3;
-      if (epoch->termination_exit_guid) {
-        arts_signal_edt_value(epoch->termination_exit_guid,
-                              epoch->termination_exit_slot, total_finish);
-      } else {
-        arts_shutdown_epoch_fire(epoch->guid);
-      }
-      return false;
-    }
+    epoch->phase = (unsigned int)PHASE_2;
     return true;
   }
-  epoch->phase = PHASE_1;
+  epoch->phase = (unsigned int)PHASE_1;
   return (epoch->queued == 0);
 }
 

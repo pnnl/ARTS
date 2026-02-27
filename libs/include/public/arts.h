@@ -97,10 +97,11 @@ typedef enum {
 } arts_type_t;
 
 /**
- * @brief DataBlock access mode (per-dependency, stored in EDT modes[] array).
+ * @brief DataBlock access mode (per-dependency, stored in @c
+ * arts_edt_dep_t.mode).
  *
- * Specifies how an EDT accesses a datablock dependency.  Set at
- * @c arts_record_dep() / @c arts_signal_edt() time, not at DB creation.
+ * Specifies how an EDT accesses a datablock dependency.  Set via
+ * @c arts_add_dependence() / @c arts_signal_edt(), not at DB creation.
  */
 typedef enum {
   DB_MODE_NULL = 0, /**< Unset / placeholder. */
@@ -181,12 +182,13 @@ typedef struct {
 /**
  * @brief Describes a single dependency slot delivered to an EDT.
  *
- * Access mode (READ/WRITE) is specified at EDT creation or signal time,
- * stored internally, and invisible to user code.
+ * Mode is set via @c arts_add_dependence() or @c arts_signal_edt().
+ * User EDTs typically read @c guid / @c ptr and ignore @c mode.
  */
 typedef struct {
-  arts_guid_t guid; /**< GUID of the DataBlock (or encoded value). */
-  void *ptr;        /**< Pointer to the DataBlock payload. */
+  arts_guid_t guid;           /**< GUID of the DataBlock (or encoded value). */
+  void *ptr;                  /**< Pointer to the DataBlock payload. */
+  arts_db_access_mode_t mode; /**< Access mode for this dependency slot. */
 } arts_edt_dep_t;
 
 /**
@@ -266,8 +268,9 @@ typedef enum {
 
 /**
  * @brief Thread-safe printf that serializes output across ARTS workers.
+ * @return Number of characters written (excluding the rank prefix).
  */
-void arts_printf(const char *format, ...);
+int arts_printf(const char *format, ...);
 
 /* ========================================================================= */
 /** @defgroup runtime Runtime Lifecycle
@@ -701,59 +704,6 @@ arts_guid_t arts_event_create_with_guid(arts_guid_t guid,
                                         arts_guid_t data_guid);
 
 /**
- * @brief Increment the latch counter of a channel event.
- *
- * Convenience wrapper around @c arts_event_satisfy_slot with
- * @c ARTS_EVENT_LATCH_INCR_SLOT.
- *
- * @param event_guid Channel event GUID.
- */
-void arts_event_increment_latch(arts_guid_t event_guid);
-
-/**
- * @brief Decrement the latch counter of a channel event.
- *
- * Convenience wrapper around @c arts_event_satisfy_slot with
- * @c ARTS_EVENT_LATCH_DECR_SLOT.
- *
- * @param event_guid Channel event GUID.
- */
-void arts_event_decrement_latch(arts_guid_t event_guid);
-
-/**
- * @brief Add a mode-aware dependence to a channel event.
- *
- * Registers @p edt_dest at @p edt_slot on the latest version of the
- * channel event, with the given access @p mode.
- *
- * @param event_source Channel event GUID.
- * @param edt_dest     Destination EDT or event GUID.
- * @param edt_slot     Dependency slot on the destination.
- * @param mode         Access mode for signaling.
- */
-void arts_event_add_dependence_with_mode(arts_guid_t event_source,
-                                         arts_guid_t edt_dest,
-                                         uint32_t edt_slot,
-                                         arts_db_access_mode_t mode);
-
-/**
- * @brief Add a byte-slice dependence to a channel event.
- *
- * Like @c arts_event_add_dependence_with_mode but delivers a slice of the
- * DataBlock starting at @p byte_offset for @p len bytes.
- *
- * @param event_source Channel event GUID.
- * @param edt_dest     Destination EDT GUID.
- * @param edt_slot     Dependency slot on the destination.
- * @param mode         Access mode for signaling.
- * @param byte_offset  Byte offset into the DataBlock.
- * @param len          Slice size in bytes.
- */
-void arts_event_add_dependence_with_byte_offset(
-    arts_guid_t event_source, arts_guid_t edt_dest, uint32_t edt_slot,
-    arts_db_access_mode_t mode, uint64_t byte_offset, uint64_t len);
-
-/**
  * @brief Check whether the event has already fired.
  *
  * @param event Event GUID.
@@ -784,17 +734,39 @@ void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
                              uint32_t slot);
 
 /**
- * @brief Wire an event to an EDT or another event.
+ * @brief Wire a source (event or DB) to a destination (EDT or event).
  *
- * When @p source fires it will signal @p destination at @p slot.  If the
- * source has already fired the signal propagates immediately.
+ * Two-message pattern: sets @p mode on the destination's dep slot first,
+ * then registers as a dependent on the source event.  The fire loop
+ * delivers data with @c DB_MODE_NULL so mode is preserved.
  *
- * @param source      Source event GUID.
+ * Accepts @c NULL_GUID as @p source — signals the slot immediately with
+ * no data.
+ *
+ * @param source      Source event or DB GUID (or @c NULL_GUID).
  * @param destination Destination EDT or event GUID.
  * @param slot        Dependency slot on the destination.
+ * @param mode        Access mode for DB data (@c DB_MODE_RO, @c DB_MODE_EW,
+ *                    etc.).
  */
 void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
-                         uint32_t slot);
+                         uint32_t slot, arts_db_access_mode_t mode);
+
+/**
+ * @brief Wire a DB source to a destination with byte-offset slicing.
+ *
+ * Same as @c arts_add_dependence, but delivers only a byte slice of the DB.
+ *
+ * @param source      Source DB or event GUID.
+ * @param destination Destination EDT or event GUID.
+ * @param slot        Dependency slot on the destination.
+ * @param mode        Access mode.
+ * @param byte_offset Byte offset into the DB payload.
+ * @param len         Length in bytes of the slice.
+ */
+void arts_add_dependence_at(arts_guid_t source, arts_guid_t destination,
+                            uint32_t slot, arts_db_access_mode_t mode,
+                            uint64_t byte_offset, uint64_t len);
 
 /**
  * @brief Register a callback to execute when @p source fires.
@@ -873,20 +845,16 @@ void arts_db_release(arts_guid_t guid);
 /**
  * @brief Destroy all copies of a DataBlock system-wide.
  *
+ * If the calling EDT has acquired this DB (via creation auto-acquire or
+ * dependency), the acquire is implicitly released first.  The route-table
+ * entry is then marked for deletion; actual deallocation is deferred until
+ * all outstanding route-table references are returned.
+ *
  * @param guid DataBlock GUID.
  */
 void arts_db_destroy(arts_guid_t guid);
 
-/**
- * @brief Destroy the local copy of a DataBlock.
- *
- * If @p remote is @c true and the DB is not local, the request is forwarded
- * to the home node.
- *
- * @param guid   DataBlock GUID.
- * @param remote Whether to forward to the home node if not local.
- */
-void arts_db_destroy_safe(arts_guid_t guid, bool remote);
+
 
 /**
  * @brief Write data into a DataBlock on its home node and signal an EDT.
@@ -969,84 +937,6 @@ bool arts_db_rename_with_guid(arts_guid_t new_guid, arts_guid_t old_guid);
  */
 arts_guid_t arts_db_copy_to_new_type(arts_guid_t old_guid,
                                      arts_db_types_t new_type);
-
-/**
- * @brief Increment the latch on the channel event associated with a DB.
- *
- * @param guid DataBlock GUID.
- */
-void arts_db_increment_latch(arts_guid_t guid);
-
-/**
- * @brief Decrement the latch on the channel event associated with a DB.
- *
- * @param guid DataBlock GUID.
- */
-void arts_db_decrement_latch(arts_guid_t guid);
-
-/**
- * @brief Add a dependence from a DB's channel event to an EDT slot.
- *
- * @param db_src   Source DataBlock GUID.
- * @param edt_dest Destination EDT GUID.
- * @param edt_slot EDT dependency slot.
- */
-void arts_db_add_dependence(arts_guid_t db_src, arts_guid_t edt_dest,
-                            uint32_t edt_slot);
-
-/**
- * @brief Add a DB dependence with acquire mode override.
- *
- * @param db_src       Source DataBlock GUID.
- * @param edt_dest     Destination EDT GUID.
- * @param edt_slot     EDT dependency slot.
- * @param mode Acquire mode override.
- */
-void arts_db_add_dependence_with_mode(arts_guid_t db_src, arts_guid_t edt_dest,
-                                      uint32_t edt_slot,
-                                      arts_db_access_mode_t mode);
-
-/**
- * @brief Add a DB dependence with acquire mode override and diff tracking.
- *
- * @param db_src       Source DataBlock GUID.
- * @param edt_dest     Destination EDT GUID.
- * @param edt_slot     EDT dependency slot.
- * @param mode Acquire mode override.
- */
-void arts_db_add_dependence_with_mode_and_diff(arts_guid_t db_src,
-                                               arts_guid_t edt_dest,
-                                               uint32_t edt_slot,
-                                               arts_db_access_mode_t mode);
-
-/**
- * @brief Record a dependency, auto-incrementing latch for @c DB_MODE_EW.
- *
- * @param db_src       Source DataBlock GUID.
- * @param edt_dest     Destination EDT GUID.
- * @param edt_slot     EDT dependency slot.
- * @param mode Requested acquire mode.
- */
-void arts_record_dep(arts_guid_t db_src, arts_guid_t edt_dest,
-                     uint32_t edt_slot, arts_db_access_mode_t mode);
-
-/**
- * @brief Record a dependency at a byte offset within a DataBlock.
- *
- * When the DB is ready, the EDT receives a pointer to
- * (@c db_ptr + @p byte_offset) while the original DB GUID is preserved in
- * @c depv[slot].guid.  Used for stencil halo dependencies.
- *
- * @param db_src       Source DataBlock GUID.
- * @param edt_dest     Destination EDT GUID.
- * @param edt_slot     EDT dependency slot.
- * @param mode Requested acquire mode.
- * @param byte_offset  Byte offset into the DB.
- * @param len          Slice length in bytes.
- */
-void arts_record_dep_at(arts_guid_t db_src, arts_guid_t edt_dest,
-                        uint32_t edt_slot, arts_db_access_mode_t mode,
-                        uint64_t byte_offset, uint64_t len);
 
 /** @} */ /* end db */
 

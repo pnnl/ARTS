@@ -502,8 +502,12 @@ int load_graph_no_weight_csr(const char *file_path, arts_block_dist_t *dist,
 
 csr_graph_t *get_graph_from_guid(arts_guid_t guid) {
   struct arts_db_s *db_res =
-      (struct arts_db_s *)arts_route_table_lookup_item(guid);
+      (struct arts_db_s *)arts_route_table_lookup_db(guid, NULL, false);
   if (arts_guid_is_local(guid) && db_res) {
+    /* Note: caller uses the returned pointer without holding the route table
+     * ref.  This is safe because graph DBs are never destroyed during
+     * computation and callers always access data within an EDT lifetime. */
+    arts_route_table_return_db(guid, false);
     return (csr_graph_t *)(db_res + 1);
   }
   return NULL;

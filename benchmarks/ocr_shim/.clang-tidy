@@ -1,0 +1,19 @@
+---
+# ------------------------------------------------------------------------------
+# OCR Shim - Clang-Tidy Override
+# ------------------------------------------------------------------------------
+# The OCR compatibility layer must use camelCase for all public OCR API symbols
+# (ocrEdtCreate, ocrDbCreate, ocrGuid_t, etc.) to match the OCR 1.2 spec.
+# This conflicts with the project-wide snake_case naming convention, so we
+# disable readability-identifier-naming for this directory.
+#
+# We keep all other checks from the parent .clang-tidy intact.
+# ------------------------------------------------------------------------------
+InheritParentConfig: true
+
+Checks: >
+  -readability-identifier-naming,
+  -readability-identifier-length,
+  -bugprone-easily-swappable-parameters
+
+CheckOptions: []

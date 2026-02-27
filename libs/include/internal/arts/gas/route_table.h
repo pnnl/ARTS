@@ -148,6 +148,7 @@ int arts_route_table_lookup_rank(arts_guid_t key);
 bool internal_route_table_remove_item(arts_route_table_t *route_table,
                                       arts_guid_t key);
 bool arts_route_table_remove_item(arts_guid_t key);
+bool arts_route_table_mark_delete(arts_guid_t key);
 bool arts_route_table_hide_item(arts_guid_t key);
 bool arts_route_table_invalidate_item(arts_guid_t key);
 

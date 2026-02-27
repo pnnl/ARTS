@@ -39,10 +39,11 @@
 #include "arts/sync/event.h"
 
 #include "arts.h"
+#include "arts/compute/edt.h"
 #include "arts/gas/guid.h"
 #include "arts/gas/out_of_order.h"
 #include "arts/gas/route_table.h"
-#include "arts/compute/edt.h"
+#include "arts/memory/db.h"
 #include "arts/remote/handler.h"
 #include "arts/system/debug.h"
 #include "arts/system/print.h"
@@ -299,7 +300,7 @@ static void channel_fire_dependents(struct arts_event_s *event,
         if (event->data != NULL_GUID) {
           if (dependent[j].byte_offset != 0 || dependent[j].size != 0) {
             struct arts_db_s *db =
-                (struct arts_db_s *)arts_route_table_lookup_item(event->data);
+                (struct arts_db_s *)arts_route_table_lookup_db(event->data, NULL, false);
             if (db) {
               void *db_data = (void *)(db + 1);
               void *slice_ptr =
@@ -307,13 +308,11 @@ static void channel_fire_dependents(struct arts_event_s *event,
               arts_signal_edt_ptr_with_guid(
                   dependent[j].addr, dependent[j].slot, event->data, slice_ptr,
                   (unsigned int)dependent[j].size);
+              arts_route_table_return_db(event->data, false);
             }
-          } else if (dependent[j].mode != DB_MODE_NULL) {
-            internal_signal_edt_with_mode(dependent[j].addr, dependent[j].slot,
-                                          event->data, dependent[j].mode);
           } else {
             arts_signal_edt(dependent[j].addr, dependent[j].slot, event->data,
-                            DB_MODE_EW);
+                            DB_MODE_NULL);
           }
         }
       } else if (dependent[j].type == ARTS_EVENT) {
@@ -322,8 +321,11 @@ static void channel_fire_dependents(struct arts_event_s *event,
       } else if (dependent[j].type == ARTS_CALLBACK) {
         arts_edt_dep_t arg;
         arg.guid = event->data;
-        arg.ptr = arts_route_table_lookup_item(event->data);
+        arg.ptr = arts_route_table_lookup_db(event->data, NULL, false);
         dependent[j].callback_t(arg);
+        if (arg.ptr) {
+          arts_route_table_return_db(event->data, false);
+        }
       }
       j++;
       i++;
@@ -391,16 +393,6 @@ bool arts_event_create_channel_internal(arts_guid_t *guid, unsigned int route,
   bool ret = arts_event_create_internal(guid, route, INITIAL_DEPENDENT_SIZE, 0,
                                         ARTS_EVENT_CHANNEL, data_guid);
   return ret;
-}
-
-/* ── CHANNEL latch wrappers ─────────────────────────────────────────── */
-
-void arts_event_increment_latch(arts_guid_t event_guid) {
-  arts_event_satisfy_slot(event_guid, NULL_GUID, ARTS_EVENT_LATCH_INCR_SLOT);
-}
-
-void arts_event_decrement_latch(arts_guid_t event_guid) {
-  arts_event_satisfy_slot(event_guid, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
 }
 
 /* ── CHANNEL add dependence with mode ───────────────────────────────── */
@@ -610,7 +602,7 @@ void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
             }
             if (dependent[j].type == ARTS_EDT) {
               arts_signal_edt(dependent[j].addr, dependent[j].slot, event->data,
-                              DB_MODE_EW);
+                              DB_MODE_NULL);
             } else if (dependent[j].type == ARTS_EVENT) {
               TIME_EVENT_SIGNAL_STOP();
               arts_event_satisfy_slot(dependent[j].addr, event->data,
@@ -619,8 +611,11 @@ void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
             } else if (dependent[j].type == ARTS_CALLBACK) {
               arts_edt_dep_t arg;
               arg.guid = event->data;
-              arg.ptr = arts_route_table_lookup_item(event->data);
+              arg.ptr = arts_route_table_lookup_db(event->data, NULL, false);
               dependent[j].callback_t(arg);
+              if (arg.ptr) {
+                arts_route_table_return_db(event->data, false);
+              }
             }
             j++;
             i++;
@@ -683,18 +678,85 @@ struct arts_dependent_s *arts_dependent_get(struct arts_dependent_list_s *head,
   return list->dependents + position;
 }
 
+/*
+ * arts_add_dependence — Unified dependence registration (two-message pattern).
+ *
+ * Accepts Event OR DB as source, EDT or Event as destination.
+ *
+ * Two-message pattern for EDT destinations:
+ *   Step 1 (mode-set):  Write access_mode to depv[slot].mode on the EDT.
+ *   Step 2 (waiter-reg): Register as a dependent on the source event.
+ *                         The fire loop delivers data with DB_MODE_NULL,
+ *                         so internal_signal_edt preserves the mode
+ *                         already written in step 1.
+ *
+ * For DB sources: look up db->event_guid, register on that channel event,
+ * and increment the latch for DB_MODE_EW.
+ *
+ * For NULL source (NULL_GUID): signal the EDT slot immediately with NULL
+ * data and the given access_mode.
+ */
 void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
-                         uint32_t slot) {
-  ARTS_INFO("Add Dependence from %u to %u at %u", source, destination, slot);
-  arts_type_t mode = arts_guid_get_type(destination);
+                         uint32_t slot, arts_db_access_mode_t access_mode) {
+  ARTS_INFO("Add Dependence from %lu to %lu at %u mode=%u", source, destination,
+            slot, access_mode);
+
+  /* NULL source → signal immediately (slot satisfied with no data). */
+  if (source == NULL_GUID) {
+    arts_type_t dest_type = arts_guid_get_type(destination);
+    if (dest_type == ARTS_EDT) {
+      arts_signal_edt(destination, slot, NULL_GUID, access_mode);
+    } else if (dest_type == ARTS_EVENT) {
+      arts_event_satisfy_slot(destination, NULL_GUID, slot);
+    }
+    return;
+  }
+
+  arts_type_t source_type = arts_guid_get_type(source);
+
+  /* DB source → translate to channel event + EW latch increment. */
+  if (source_type == ARTS_DB) {
+    struct arts_db_s *db_res =
+        (struct arts_db_s *)arts_route_table_lookup_db(source, NULL, false);
+    if (db_res != NULL) {
+      /* Step 1: set mode on EDT (if dest is EDT). */
+      arts_type_t dest_type = arts_guid_get_type(destination);
+      if (dest_type == ARTS_EDT) {
+        arts_set_dep_mode(destination, slot, access_mode);
+      }
+      /* Step 2: register waiter on channel event (mode-less). */
+      arts_event_add_dependence_with_mode(db_res->event_guid, destination, slot,
+                                          DB_MODE_NULL);
+      /* Step 3: EW latch increment. */
+      if (access_mode == DB_MODE_EW) {
+        arts_db_increment_latch(source);
+      }
+      arts_route_table_return_db(source, false);
+    } else {
+      /* DB not local — forward to DB's owner node. */
+      arts_remote_db_add_dependence_with_hints(source, destination, slot,
+                                               access_mode);
+    }
+    return;
+  }
+
+  /* Event source (ARTS_EVENT). */
+  arts_type_t dest_type = arts_guid_get_type(destination);
+
+  /* Step 1: set mode on EDT dep slot. */
+  if (dest_type == ARTS_EDT) {
+    arts_set_dep_mode(destination, slot, access_mode);
+  }
+
+  /* Step 2: register waiter on event. */
   struct arts_header_s *source_header =
       (struct arts_header_s *)arts_route_table_lookup_item(source);
   if (source_header == NULL) {
     unsigned int rank = arts_guid_get_rank(source);
     if (rank != arts_global_rank_id) {
-      arts_remote_add_dependence(source, destination, slot, rank);
+      arts_remote_add_dependence(source, destination, slot, rank, access_mode);
     } else {
-      arts_out_of_order_add_dependence(source, destination, slot, DB_MODE_NULL,
+      arts_out_of_order_add_dependence(source, destination, slot, access_mode,
                                        source);
     }
     return;
@@ -709,7 +771,7 @@ void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
     return;
   }
 
-  if (mode == ARTS_EDT) {
+  if (dest_type == ARTS_EDT) {
     struct arts_dependent_list_s *dependent_list = &event->dependent;
     struct arts_dependent_s *dependent;
     unsigned int position = arts_atomic_fetch_add(&event->dependent_count, 1U);
@@ -717,24 +779,20 @@ void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
     dependent->type = ARTS_EDT;
     dependent->addr = destination;
     dependent->slot = slot;
+    dependent->mode = DB_MODE_NULL;
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
     dependent->done_writing = true;
 
     if (event->fired) {
-      // LATCH/ONCE/COUNTED: event may already be freed — UB per OCR semantics
-      if (event->type == ARTS_EVENT_LATCH || event->type == ARTS_EVENT_ONCE ||
-          event->type == ARTS_EVENT_COUNTED) {
-        return;
-      }
-      // STICKY/IDEM: event persists — self-signal for out-of-range deps
       while (event->pos == 0) {
         ;
       }
       if (position >= event->pos - 1) {
-        arts_signal_edt(destination, slot, event->data, DB_MODE_EW);
+        /* Self-signal: data only, mode already set on EDT. */
+        arts_signal_edt(destination, slot, event->data, DB_MODE_NULL);
       }
     }
-  } else if (mode == ARTS_EVENT) {
+  } else if (dest_type == ARTS_EVENT) {
     struct arts_dependent_list_s *dependent_list = &event->dependent;
     struct arts_dependent_s *dependent;
     unsigned int position = arts_atomic_fetch_add(&event->dependent_count, 1U);
@@ -742,16 +800,11 @@ void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
     dependent->type = ARTS_EVENT;
     dependent->addr = destination;
     dependent->slot = slot;
+    dependent->mode = DB_MODE_NULL;
     COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
     dependent->done_writing = true;
 
     if (event->fired) {
-      // LATCH/ONCE/COUNTED: event may already be freed — UB per OCR semantics
-      if (event->type == ARTS_EVENT_LATCH || event->type == ARTS_EVENT_ONCE ||
-          event->type == ARTS_EVENT_COUNTED) {
-        return;
-      }
-      // STICKY/IDEM: event persists — self-signal for out-of-range deps
       while (event->pos == 0) {
         ;
       }
@@ -759,6 +812,46 @@ void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
         arts_event_satisfy_slot(destination, event->data, slot);
       }
     }
+  }
+}
+
+void arts_add_dependence_at(arts_guid_t source, arts_guid_t destination,
+                            uint32_t slot, arts_db_access_mode_t access_mode,
+                            uint64_t byte_offset, uint64_t len) {
+  /* Delegates to the standard path when no byte-offset is needed. */
+  if (byte_offset == 0 && len == 0) {
+    arts_add_dependence(source, destination, slot, access_mode);
+    return;
+  }
+
+  /* Step 1: set mode on EDT dep slot. */
+  arts_type_t dest_type = arts_guid_get_type(destination);
+  if (dest_type == ARTS_EDT) {
+    arts_set_dep_mode(destination, slot, access_mode);
+  }
+
+  arts_type_t source_type = arts_guid_get_type(source);
+
+  if (source_type == ARTS_DB) {
+    /* DB source — look up channel event and register byte-offset waiter. */
+    struct arts_db_s *db_res =
+        (struct arts_db_s *)arts_route_table_lookup_db(source, NULL, false);
+    if (db_res != NULL) {
+      arts_event_add_dependence_with_byte_offset(
+          db_res->event_guid, destination, slot, DB_MODE_NULL, byte_offset,
+          len);
+      arts_route_table_return_db(source, false);
+    } else {
+      arts_remote_db_add_dependence_with_byte_offset(
+          source, destination, slot, access_mode, byte_offset, len);
+    }
+    if (access_mode == DB_MODE_EW) {
+      arts_db_increment_latch(source);
+    }
+  } else {
+    /* Event source — register byte-offset waiter directly. */
+    arts_event_add_dependence_with_byte_offset(source, destination, slot,
+                                               DB_MODE_NULL, byte_offset, len);
   }
 }
 
@@ -818,8 +911,11 @@ void arts_add_local_event_callback(arts_guid_t source,
       if (event->pos - 1 <= position) {
         arts_edt_dep_t arg;
         arg.guid = event->data;
-        arg.ptr = arts_route_table_lookup_item(event->data);
+        arg.ptr = arts_route_table_lookup_db(event->data, NULL, false);
         callback_t(arg);
+        if (arg.ptr) {
+          arts_route_table_return_db(event->data, false);
+        }
       }
     }
   }

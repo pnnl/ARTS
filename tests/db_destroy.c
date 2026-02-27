@@ -38,7 +38,7 @@
 ******************************************************************************/
 
 /// @file db_destroy.c
-/// @brief Tests arts_db_destroy and arts_db_destroy_safe.
+/// @brief Tests arts_db_destroy.
 
 #include "arts.h"
 
@@ -50,16 +50,6 @@ void after_destroy(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
   arts_printf("  PASS: db_destroy completed without crash\n");
-}
-
-/// Test 2: arts_db_destroy_safe.
-void after_destroy_safe(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                        arts_edt_dep_t depv[]) {
-  (void)paramc;
-  (void)paramv;
-  (void)depc;
-  (void)depv;
-  arts_printf("  PASS: db_destroy_safe completed without crash\n");
 }
 
 /// Test 3: Create, release, destroy, create new — verify GUID reuse works.
@@ -88,28 +78,18 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
 
-  // Test 1: arts_db_destroy.
+  // Test 1: arts_db_destroy (implicit release).
   void *p1 = NULL;
   arts_guid_t db1 = arts_db_create(&p1, 64, ARTS_DB_DEFAULT, NULL);
-  arts_db_release(db1);
   arts_db_destroy(db1);
   arts_edt_create_with_epoch(after_destroy, 0, NULL, 0, epoch,
                              &(arts_hint_t){.route = 0});
 
-  // Test 2: arts_db_destroy_safe (local, remote=false).
+  // Test 2: arts_db_destroy on a second DB (implicit release).
   void *p2 = NULL;
   arts_guid_t db2 = arts_db_create(&p2, 64, ARTS_DB_DEFAULT, NULL);
-  arts_db_release(db2);
-  arts_db_destroy_safe(db2, false);
-  arts_edt_create_with_epoch(after_destroy_safe, 0, NULL, 0, epoch,
-                             &(arts_hint_t){.route = 0});
-
-  // Test 3: arts_db_destroy_safe (local, remote=true).
-  void *p2b = NULL;
-  arts_guid_t db2b = arts_db_create(&p2b, 64, ARTS_DB_DEFAULT, NULL);
-  arts_db_release(db2b);
-  arts_db_destroy_safe(db2b, true);
-  arts_edt_create_with_epoch(after_destroy_safe, 0, NULL, 0, epoch,
+  arts_db_destroy(db2);
+  arts_edt_create_with_epoch(after_destroy, 0, NULL, 0, epoch,
                              &(arts_hint_t){.route = 0});
 
   // Test 4: Create new DB after destroying old one.
@@ -125,15 +105,13 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Test 5: Double destroy (should be no-op on second call, not crash).
   void *p5 = NULL;
   arts_guid_t db5 = arts_db_create(&p5, 64, ARTS_DB_DEFAULT, NULL);
-  arts_db_release(db5);
   arts_db_destroy(db5);
   arts_db_destroy(db5); // Second destroy — route table returns NULL
   arts_printf("  PASS: double destroy did not crash\n");
 
-  // Test 6: arts_db_destroy on ARTS_DB_LOCAL should warn (not crash).
+  // Test 6: arts_db_destroy on ARTS_DB_LOCAL (implicit release, should not crash).
   void *p6 = NULL;
   arts_guid_t db6 = arts_db_create(&p6, 64, ARTS_DB_LOCAL, NULL);
-  arts_db_release(db6);
   arts_db_destroy(db6); // Should log warning and return
   arts_printf("  PASS: destroy on LOCAL DB warned without crash\n");
 

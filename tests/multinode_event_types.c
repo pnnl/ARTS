@@ -84,7 +84,7 @@ void sticky_trampoline(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Event has already fired — register a late dependent.
   arts_guid_t late = arts_edt_create_with_epoch(
       sticky_late_dep, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_add_dependence(event, late, 0);
+  arts_add_dependence(event, late, 0, DB_MODE_EW);
   arts_event_destroy(event);
 }
 
@@ -147,7 +147,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_guid_t ev = arts_event_create(0, ARTS_EVENT_ONCE, 0, NULL_GUID);
     arts_guid_t dep = arts_edt_create_with_epoch(once_dep, 0, NULL, 1, epoch,
                                                  &(arts_hint_t){.route = 0});
-    arts_add_dependence(ev, dep, 0);
+    arts_add_dependence(ev, dep, 0, DB_MODE_EW);
 
     uint64_t ev_param = (uint64_t)ev;
     arts_edt_create_with_epoch(remote_satisfy, 1, &ev_param, 0, epoch,
@@ -164,7 +164,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_guid_t tramp =
         arts_edt_create_with_epoch(sticky_trampoline, 2, tramp_params, 1, epoch,
                                    &(arts_hint_t){.route = 0});
-    arts_add_dependence(ev, tramp, 0);
+    arts_add_dependence(ev, tramp, 0, DB_MODE_EW);
 
     uint64_t ev_param = (uint64_t)ev;
     arts_edt_create_with_epoch(remote_satisfy, 1, &ev_param, 0, epoch,
@@ -176,7 +176,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_guid_t ev = arts_event_create(0, ARTS_EVENT_IDEM, 0, NULL_GUID);
     arts_guid_t dep = arts_edt_create_with_epoch(idem_dep, 0, NULL, 1, epoch,
                                                  &(arts_hint_t){.route = 0});
-    arts_add_dependence(ev, dep, 0);
+    arts_add_dependence(ev, dep, 0, DB_MODE_EW);
 
     // Satisfy from node 1.
     uint64_t ev_param = (uint64_t)ev;
@@ -187,7 +187,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     uint64_t re_params[1] = {(uint64_t)ev};
     arts_guid_t re = arts_edt_create_with_epoch(
         idem_re_satisfy, 1, re_params, 1, epoch, &(arts_hint_t){.route = 0});
-    arts_add_dependence(ev, re, 0);
+    arts_add_dependence(ev, re, 0, DB_MODE_EW);
   }
 
   // Test 4: COUNTED event — fan-in from all nodes.
@@ -197,7 +197,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_guid_t dep =
         arts_edt_create_with_epoch(counted_fan_in_dep, 1, &total_param, 1,
                                    epoch, &(arts_hint_t){.route = 0});
-    arts_add_dependence(ev, dep, 0);
+    arts_add_dependence(ev, dep, 0, DB_MODE_EW);
 
     for (unsigned int r = 0; r < total; r++) {
       uint64_t ev_param = (uint64_t)ev;

@@ -41,16 +41,17 @@
 #include <string.h>
 
 #include "arts.h"
+#include "arts/compute/edt.h"
 #include "arts/gas/out_of_order.h"
 #include "arts/gas/route_table.h"
-#include "arts/transport/protocol.h"
-#include "arts/compute/edt.h"
 #include "arts/memory/db.h"
 #include "arts/memory/frontier.h"
 #include "arts/runtime_state.h"
+#include "arts/sync/event.h"
 #include "arts/sync/termination.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
+#include "arts/transport/protocol.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
 
@@ -91,10 +92,11 @@ static void send_remote_add_dependence_packet(unsigned int message_type,
 }
 
 void arts_remote_add_dependence(arts_guid_t source, arts_guid_t destination,
-                                uint32_t slot, unsigned int rank) {
+                                uint32_t slot, unsigned int rank,
+                                arts_db_access_mode_t mode) {
   ARTS_DEBUG("Remote Add dependence sent %d", rank);
   send_remote_add_dependence_packet(ARTS_REMOTE_ADD_DEPENDENCE_MSG, source,
-                                    destination, slot, rank, DB_MODE_NULL);
+                                    destination, slot, rank, mode);
 }
 
 void arts_remote_add_dependence_with_hints(arts_guid_t source,
@@ -104,6 +106,18 @@ void arts_remote_add_dependence_with_hints(arts_guid_t source,
   ARTS_DEBUG("Remote Add dependence (mode=%u) sent %d", mode, rank);
   send_remote_add_dependence_packet(ARTS_REMOTE_ADD_DEPENDENCE_MSG, source,
                                     destination, slot, rank, mode);
+}
+
+void arts_remote_set_dep_mode(arts_guid_t edt_guid, uint32_t slot,
+                              arts_db_access_mode_t mode) {
+  unsigned int rank = arts_guid_get_rank(edt_guid);
+  struct arts_remote_set_dep_mode_packet_s packet;
+  packet.edt = edt_guid;
+  packet.slot = slot;
+  packet.mode = mode;
+  arts_fill_packet_header(&packet.header, sizeof(packet),
+                          ARTS_REMOTE_SET_DEP_MODE_MSG);
+  arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
 }
 
 void arts_remote_channel_add_dependence_with_mode(arts_guid_t source,
@@ -172,7 +186,6 @@ void arts_remote_handle_update_db_guid(void *ptr) {
 void arts_remote_handle_invalidate_db(void *ptr) {
   struct arts_remote_guid_only_packet_s *packet =
       (struct arts_remote_guid_only_packet_s *)ptr;
-  void *address = arts_route_table_lookup_item(packet->guid);
   arts_route_table_invalidate_item(packet->guid);
 }
 
@@ -224,7 +237,7 @@ void arts_remote_update_db(arts_guid_t guid, bool send_db) {
     packet.guid = guid;
     struct arts_db_s *db = NULL;
     if (send_db &&
-        (db = (struct arts_db_s *)arts_route_table_lookup_item(guid))) {
+        (db = (struct arts_db_s *)arts_route_table_lookup_db(guid, NULL, false))) {
       if ((db->header.size - sizeof(struct arts_db_s)) == 176128) {
         ARTS_INFO("RemoteUpdateDb SEND DB[Id:%lu, Guid:%lu, Size:%lu] "
                   "from rank %u to rank %u",
@@ -237,6 +250,7 @@ void arts_remote_update_db(arts_guid_t guid, bool send_db) {
       arts_remote_send_request_payload_async((int)rank, (char *)&packet,
                                              sizeof(packet), (char *)db,
                                              db->header.size);
+      arts_route_table_return_db(guid, false);
     } else {
       if (send_db) {
         ARTS_INFO("RemoteUpdateDb missing local DB for Guid:%lu on rank %u",
@@ -481,12 +495,14 @@ void arts_remote_handle_db_add_dependence_with_byte_offset(void *ptr) {
 
   /// Look up the local DB
   struct arts_db_s *db_res =
-      (struct arts_db_s *)arts_route_table_lookup_item(packet->db_src);
+      (struct arts_db_s *)arts_route_table_lookup_db(packet->db_src, NULL, false);
   if (db_res != NULL) {
-    /// DB is local - add dependency to its channel event with byte offset
+    /// DB is local - set mode on EDT, then register byte-offset waiter.
+    arts_set_dep_mode(packet->edt_dest, packet->edt_slot, packet->mode);
     arts_event_add_dependence_with_byte_offset(
-        db_res->event_guid, packet->edt_dest, packet->edt_slot, packet->mode,
+        db_res->event_guid, packet->edt_dest, packet->edt_slot, DB_MODE_NULL,
         packet->byte_offset, packet->size);
+    arts_route_table_return_db(packet->db_src, false);
   } else {
     /// DB not found locally - this shouldn't happen as we routed to the owner
     ARTS_DEBUG("ESD: Remote byte-offset dep: DB %lu not found on node %u",
@@ -515,6 +531,9 @@ void arts_remote_db_decrement_latch(arts_guid_t db) {
 void arts_db_request_callback(struct arts_edt_s *edt, unsigned int slot,
                               struct arts_db_s *db_res) {
   arts_edt_dep_t *depv = (arts_edt_dep_t *)arts_get_depv(edt);
+  /* Acquire a route table ref for this dep slot — matched by
+   * return_db in release_dbs after EDT execution. */
+  arts_route_table_lookup_db(db_res->guid, NULL, false);
   depv[slot].ptr = db_res + 1;
   unsigned int temp = arts_atomic_sub(&edt->depc_needed, 1U);
   if (temp == 0) {
@@ -577,7 +596,7 @@ void arts_remote_db_send(struct arts_remote_db_request_packet_s *pack) {
                                    pack->header.size);
   } else {
     struct arts_db_s *db =
-        (struct arts_db_s *)arts_route_table_lookup_item(pack->db_guid);
+        (struct arts_db_s *)arts_route_table_lookup_db(pack->db_guid, NULL, false);
     if (db == NULL) {
       arts_out_of_order_handle_remote_db_send((int)pack->header.rank,
                                               pack->db_guid, pack->mode);
@@ -587,8 +606,10 @@ void arts_remote_db_send(struct arts_remote_db_request_packet_s *pack) {
       // the same node The arts_guid_is_local should be an extra check, maybe
       // not required
       arts_route_table_fire_oo(pack->db_guid, arts_out_of_order_handler);
+      arts_route_table_return_db(pack->db_guid, false);
     } else {
       arts_remote_db_send_check((int)pack->header.rank, db, pack->mode);
+      arts_route_table_return_db(pack->db_guid, false);
     }
   }
 }
@@ -740,7 +761,7 @@ void arts_remote_db_full_send(
                                    pack->header.size);
   } else {
     struct arts_db_s *db =
-        (struct arts_db_s *)arts_route_table_lookup_item(pack->db_guid);
+        (struct arts_db_s *)arts_route_table_lookup_db(pack->db_guid, NULL, false);
     if (db == NULL) {
       arts_out_of_order_handle_remote_db_full_send(
           pack->db_guid, (int)pack->header.rank, pack->edt_guid, pack->slot,
@@ -748,6 +769,7 @@ void arts_remote_db_full_send(
     } else {
       arts_remote_db_full_send_check((int)pack->header.rank, db, pack->edt_guid,
                                      pack->slot, pack->mode);
+      arts_route_table_return_db(pack->db_guid, false);
     }
   }
 }

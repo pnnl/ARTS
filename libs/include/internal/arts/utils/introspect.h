@@ -42,21 +42,8 @@
 extern "C" {
 #endif
 
-#include <stdint.h>
-
-#include "arts/runtime_types.h"
-
-void arts_printf(const char *format, ...);
-uint64_t arts_get_time_stamp();
-arts_guid_t arts_get_current_guid();
-unsigned int arts_get_current_node();
-unsigned int arts_get_total_nodes();
-unsigned int arts_get_current_worker();
-unsigned int arts_get_total_workers();
-unsigned int arts_get_current_numa_domain();
-unsigned int arts_get_total_numa_domains();
-unsigned int arts_get_total_gpus();
-uint64_t arts_thread_safe_random();
+/* Public introspection API (arts_printf, arts_get_*, etc.) is declared in
+   arts.h.  This internal header adds runtime-private helpers only. */
 void arts_stop_local_worker();
 void arts_stop_local_node();
 

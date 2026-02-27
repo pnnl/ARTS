@@ -346,19 +346,19 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Record writer dependencies
   for (unsigned int i = 0; i < NUM_TEST_EDTS; i++) {
     unsigned int db_index = writer_db_indices[i];
-    arts_record_dep(db_guids[db_index], writer_guids[i], 0, DB_MODE_EW);
+    arts_add_dependence(db_guids[db_index], writer_guids[i], 0, DB_MODE_EW);
   }
 
   // Record reader dependencies
   for (unsigned int i = 0; i < num_readers; i++) {
     unsigned int num_deps = reader_num_deps[i];
     for (unsigned int d = 0; d < num_deps; d++) {
-      arts_record_dep(db_guids[d], reader_guids[i], d, DB_MODE_RO);
+      arts_add_dependence(db_guids[d], reader_guids[i], d, DB_MODE_RO);
     }
   }
 
   // Record validator dependency (reads DB[0] after all writers complete)
-  arts_record_dep(db_guids[0], validator_guid, 0, DB_MODE_RO);
+  arts_add_dependence(db_guids[0], validator_guid, 0, DB_MODE_RO);
 
   // Release auto-acquired WRITE access for all created DBs before blocking.
   // Without this, consumer EDTs would deadlock waiting for our epilogue.

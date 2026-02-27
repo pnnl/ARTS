@@ -114,7 +114,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t ch1 = arts_event_create(0, ARTS_EVENT_CHANNEL, 0, db1);
   arts_guid_t e1 = arts_edt_create_with_epoch(
       pe_satisfy_check, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_add_dependence(ch1, e1, 0);
+  arts_add_dependence(ch1, e1, 0, DB_MODE_EW);
   arts_event_satisfy_slot(ch1, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
 
   // Test 2: byte-offset dependence from channel event.
@@ -131,8 +131,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t e2 =
       arts_edt_create_with_epoch(pe_byte_offset_check, 1, &guid_param, 1, epoch,
                                  &(arts_hint_t){.route = 0});
-  arts_event_add_dependence_with_byte_offset(ch2, e2, 0, DB_MODE_RO,
-                                             sizeof(int), sizeof(int));
+  arts_add_dependence_at(ch2, e2, 0, DB_MODE_RO, sizeof(int), sizeof(int));
   arts_event_satisfy_slot(ch2, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
 
   // Test 3: mode dependence.
@@ -144,7 +143,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t ch3 = arts_event_create(0, ARTS_EVENT_CHANNEL, 0, db3);
   arts_guid_t e3 = arts_edt_create_with_epoch(
       pe_mode_diff_check, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_event_add_dependence_with_mode(ch3, e3, 0, DB_MODE_RO);
+  arts_add_dependence(ch3, e3, 0, DB_MODE_RO);
   arts_event_satisfy_slot(ch3, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
 
   arts_wait_on_handle(epoch);

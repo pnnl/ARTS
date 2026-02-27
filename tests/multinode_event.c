@@ -101,7 +101,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t ev1 = arts_event_create(0, ARTS_EVENT_LATCH, 1, NULL_GUID);
   arts_guid_t done1 = arts_edt_create_with_epoch(event_done, 0, NULL, 1, epoch,
                                                  &(arts_hint_t){.route = 0});
-  arts_add_dependence(ev1, done1, 0);
+  arts_add_dependence(ev1, done1, 0, DB_MODE_EW);
 
   uint64_t ev_param = (uint64_t)ev1;
   arts_edt_create_with_epoch(remote_satisfier, 1, &ev_param, 0, epoch,
@@ -112,7 +112,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   uint64_t total_param = (uint64_t)total;
   arts_guid_t done2 = arts_edt_create_with_epoch(
       fan_in_done, 1, &total_param, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_add_dependence(ev2, done2, 0);
+  arts_add_dependence(ev2, done2, 0, DB_MODE_EW);
 
   for (unsigned int r = 0; r < total; r++) {
     uint64_t param = (uint64_t)ev2;

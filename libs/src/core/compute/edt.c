@@ -278,11 +278,15 @@ bool arts_edt_create_internal(struct arts_edt_s *edt, arts_type_t mode,
   }
   arts_shutdown_epoch_inc_active();
 
-  /* Copy inline parameter values into the EDT's trailing storage. */
+  /* Copy inline parameter values into the EDT's trailing storage.
+   * Layout: [arts_edt_s | paramv[paramc] | depv[depc]]
+   * paramv starts immediately after the struct header. */
   if (paramc) {
-    unsigned int offset =
-        edt_space - (depc * sizeof(arts_db_access_mode_t) +
-                     depc * sizeof(arts_edt_dep_t) + paramc * sizeof(uint64_t));
+    unsigned int offset = sizeof(struct arts_edt_s);
+    ARTS_DEBUG("EDT paramv copy: edt=%p offset=%u paramc=%u depc=%u "
+               "edt_space=%u dep_size=%zu",
+               (void *)edt, offset, paramc, depc, edt_space,
+               depc * sizeof(arts_edt_dep_t));
     char *tmp = (char *)edt + offset;
     memcpy(tmp, paramv, sizeof(uint64_t) * paramc);
   }
@@ -353,10 +357,8 @@ arts_guid_t arts_edt_create_dep(arts_edt_t func_ptr, uint32_t paramc,
                            : arts_global_rank_id;
   uint64_t arts_id = hint ? hint->id : 0;
   unsigned int dep_space = (has_depv) ? depc * sizeof(arts_edt_dep_t) : 0;
-  unsigned int mode_space =
-      (has_depv) ? depc * sizeof(arts_db_access_mode_t) : 0;
-  unsigned int edt_space = sizeof(struct arts_edt_s) +
-                           (paramc * sizeof(uint64_t)) + dep_space + mode_space;
+  unsigned int edt_space =
+      sizeof(struct arts_edt_s) + (paramc * sizeof(uint64_t)) + dep_space;
   arts_guid_t guid = NULL_GUID;
   arts_guid_t *guid_ptr = &guid;
   bool created = arts_edt_create_internal(
@@ -374,10 +376,8 @@ arts_guid_t arts_edt_create_with_guid_dep(arts_edt_t func_ptr, arts_guid_t guid,
   TIME_EDT_CREATE_START();
   unsigned int route = arts_guid_get_rank(guid);
   unsigned int dep_space = (has_depv) ? depc * sizeof(arts_edt_dep_t) : 0;
-  unsigned int mode_space =
-      (has_depv) ? depc * sizeof(arts_db_access_mode_t) : 0;
-  unsigned int edt_space = sizeof(struct arts_edt_s) +
-                           (paramc * sizeof(uint64_t)) + dep_space + mode_space;
+  unsigned int edt_space =
+      sizeof(struct arts_edt_s) + (paramc * sizeof(uint64_t)) + dep_space;
   bool ret = arts_edt_create_internal(
       NULL, ARTS_EDT, &guid, route, arts_thread_info.numa_domain_id, edt_space,
       NULL_GUID, func_ptr, paramc, paramv, depc, true, NULL_GUID, has_depv, 0);
@@ -394,10 +394,8 @@ arts_guid_t arts_edt_create_with_epoch_dep(
                            : arts_global_rank_id;
   uint64_t arts_id = hint ? hint->id : 0;
   unsigned int dep_space = (has_depv) ? depc * sizeof(arts_edt_dep_t) : 0;
-  unsigned int mode_space =
-      (has_depv) ? depc * sizeof(arts_db_access_mode_t) : 0;
-  unsigned int edt_space = sizeof(struct arts_edt_s) +
-                           (paramc * sizeof(uint64_t)) + dep_space + mode_space;
+  unsigned int edt_space =
+      sizeof(struct arts_edt_s) + (paramc * sizeof(uint64_t)) + dep_space;
   arts_guid_t guid = NULL_GUID;
   bool created = arts_edt_create_internal(
       NULL, ARTS_EDT, &guid, route, arts_thread_info.numa_domain_id, edt_space,
@@ -476,13 +474,41 @@ void *arts_get_depv(void *edt_ptr) {
   return (void *)((uint64_t *)(edt + 1) + paramc);
 }
 
-arts_db_access_mode_t *arts_get_dep_modes(void *edt_ptr) {
-  struct arts_edt_s *edt = (struct arts_edt_s *)edt_ptr;
-  arts_edt_dep_t *depv = (arts_edt_dep_t *)arts_get_depv(edt_ptr);
-  if (!depv) {
-    return NULL;
+/* arts_get_dep_modes removed — mode now lives in arts_edt_dep_t.mode */
+
+/*
+ * arts_set_dep_mode — Write access mode to an EDT dep slot without signaling.
+ *
+ * This is the "mode-set" half of the two-message add_dependence pattern.
+ * It sets depv[slot].mode on the target EDT.  It does NOT decrement
+ * depc_needed and does NOT deliver data.
+ *
+ * Local EDT: direct write.  Remote EDT: forward via network message.
+ * Not-yet-created EDT: queue via OOO (OO_SIGNAL_EDT with NULL data —
+ * the OOO replay will call internal_signal_edt which writes mode).
+ */
+void arts_set_dep_mode(arts_guid_t edt_guid, uint32_t slot,
+                       arts_db_access_mode_t mode) {
+  unsigned int rank = arts_guid_get_rank(edt_guid);
+  if (rank == arts_global_rank_id) {
+    struct arts_edt_s *edt =
+        (struct arts_edt_s *)arts_route_table_lookup_item(edt_guid);
+    if (edt) {
+      arts_edt_dep_t *edt_dep = (arts_edt_dep_t *)arts_get_depv(edt);
+      if (slot < edt->depc) {
+        edt_dep[slot].mode = mode;
+      }
+    }
+    /* If EDT not yet in route table, the mode will be delivered by
+       the add_dependence OOO replay, which stores mode and calls
+       arts_add_dependence → arts_set_dep_mode again when the EDT
+       exists. */
+  } else {
+    /* Remote EDT — send a lightweight mode-set message.
+       We reuse the signal packet with NULL_GUID data; the receiver
+       will call arts_set_dep_mode locally. */
+    arts_remote_set_dep_mode(edt_guid, slot, mode);
   }
-  return (arts_db_access_mode_t *)(depv + edt->depc);
 }
 
 /*
@@ -525,7 +551,6 @@ void internal_signal_edt(arts_guid_t edt_packet, uint32_t slot,
       if (edt) {
         /* EDT exists in route table — write dep slot. */
         arts_edt_dep_t *edt_dep = (arts_edt_dep_t *)arts_get_depv(edt);
-        arts_db_access_mode_t *modes = arts_get_dep_modes(edt);
         if (slot < edt->depc) {
           edt_dep[slot].guid = data_guid;
           if (mode == DB_MODE_PTR && size > 0) {
@@ -535,7 +560,9 @@ void internal_signal_edt(arts_guid_t edt_packet, uint32_t slot,
           } else {
             edt_dep[slot].ptr = ptr;
           }
-          modes[slot] = mode;
+          if (mode != DB_MODE_NULL) {
+            edt_dep[slot].mode = mode;
+          }
         }
         unsigned int res = arts_atomic_sub(&edt->depc_needed, 1U);
         ARTS_INFO("Signal EDT[Guid:%lu, Slot:%u] DB[Guid:%lu] "
@@ -600,11 +627,12 @@ void internal_signal_edt_with_mode(arts_guid_t edt_packet, uint32_t slot,
           (struct arts_edt_s *)arts_route_table_lookup_item(edt_packet);
       if (edt) {
         arts_edt_dep_t *edt_dep = (arts_edt_dep_t *)arts_get_depv(edt);
-        arts_db_access_mode_t *modes = arts_get_dep_modes(edt);
         if (slot < edt->depc) {
           edt_dep[slot].guid = data_guid;
           edt_dep[slot].ptr = NULL;
-          modes[slot] = mode;
+          if (mode != DB_MODE_NULL) {
+            edt_dep[slot].mode = mode;
+          }
         }
         unsigned int res = arts_atomic_sub(&edt->depc_needed, 1U);
         ARTS_INFO("Signal DB[Guid:%lu] to EDT[Guid:%lu, Slot:%u, "
@@ -800,9 +828,12 @@ void arts_gpu_signal_edt_memset(arts_guid_t edt_guid, uint32_t slot,
                                 arts_guid_t data_guid) {
   arts_db_access_mode_t mode = DB_MODE_MEMSET;
   struct arts_db_s *db =
-      (struct arts_db_s *)arts_route_table_lookup_item(data_guid);
+      (struct arts_db_s *)arts_route_table_lookup_db(data_guid, NULL, false);
   if (db && db->db_type == ARTS_DB_LC) {
     mode = DB_MODE_LC_NO_COPY;
+  }
+  if (db) {
+    arts_route_table_return_db(data_guid, false);
   }
   internal_signal_edt(edt_guid, slot, data_guid, mode, NULL, 0);
 }

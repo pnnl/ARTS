@@ -579,8 +579,7 @@ void arts_run_edt(struct arts_edt_s *edt) {
   ARTS_INFO("Running EDT[Id:%lu, Guid:%lu, Deps: %u, Params: %u, "
             "DepvPtr: %p]",
             edt->arts_id, edt->current_edt, depc, paramc, depv);
-  arts_db_access_mode_t *modes = arts_get_dep_modes(edt);
-  prep_dbs(depc, depv, modes, false);
+  prep_dbs(depc, depv, false);
 
   arts_set_thread_local_edt_info(edt);
 
@@ -610,7 +609,7 @@ void arts_run_edt(struct arts_edt_s *edt) {
 
   ARTS_INFO("EDT[Guid:%lu, Id:%lu] finished (exec_ns=%lu)", edt->current_edt,
             edt->arts_id, exec_ns);
-  release_dbs(depc, depv, modes, false);
+  release_dbs(depc, depv, false);
   arts_release_created_dbs();
   arts_edt_delete(edt);
   DEC_OUTSTANDING_EDTS(1);

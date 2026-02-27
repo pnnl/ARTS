@@ -42,14 +42,15 @@
 extern "C" {
 #endif
 
-#include "arts/transport/protocol.h"
 #include "arts/runtime_types.h"
+#include "arts/transport/protocol.h"
 
 void arts_remote_send(unsigned int rank, send_handler_t fun_ptr, void *args,
                       unsigned int size, bool free);
 
 void arts_remote_add_dependence(arts_guid_t source, arts_guid_t destination,
-                                uint32_t slot, unsigned int rank);
+                                uint32_t slot, unsigned int rank,
+                                arts_db_access_mode_t mode);
 void arts_remote_add_dependence_with_hints(arts_guid_t source,
                                            arts_guid_t destination,
                                            uint32_t slot, unsigned int rank,
@@ -88,6 +89,8 @@ void arts_remote_handle_db_move(void *ptr);
 void arts_remote_handle_event_move(void *ptr);
 void arts_remote_signal_edt(arts_guid_t edt, arts_guid_t db, uint32_t slot,
                             arts_db_access_mode_t mode);
+void arts_remote_set_dep_mode(arts_guid_t edt_guid, uint32_t slot,
+                              arts_db_access_mode_t mode);
 void arts_remote_event_satisfy_slot(arts_guid_t event_guid,
                                     arts_guid_t data_guid, uint32_t slot);
 void arts_remote_db_add_dependence(arts_guid_t db_src, arts_guid_t edt_dest,

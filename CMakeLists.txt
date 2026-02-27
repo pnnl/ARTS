@@ -98,6 +98,7 @@ option(ARTS_BUILD_SHARED "Build shared library" ON)
 option(ARTS_BUILD_STATIC "Build static library" ON)
 option(ARTS_BUILD_EXAMPLES "Build example programs" ON)
 option(ARTS_BUILD_TESTS "Build test programs" ON)
+option(ARTS_BUILD_BENCHMARKS "Build OCR benchmark applications (XSOCR + ARTS backends)" ON)
 
 # Feature options (can be set via command line)
 # Default log level: Debug→3 (DEBUG), Release/etc→1 (WARN).
@@ -315,6 +316,10 @@ if(ARTS_BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 
+if(ARTS_BUILD_BENCHMARKS)
+    add_subdirectory(benchmarks)
+endif()
+
 add_subdirectory(sample_configs)
 
 # Documentation (Doxygen XML → Breathe → Sphinx HTML)
@@ -494,6 +499,7 @@ else()
 endif()
 message(STATUS "  Examples:        ${ARTS_BUILD_EXAMPLES}")
 message(STATUS "  Tests:           ${ARTS_BUILD_TESTS}")
+message(STATUS "  Benchmarks:      ${ARTS_BUILD_BENCHMARKS}")
 message(STATUS "")
 message(STATUS "Installation paths:")
 message(STATUS "  Libraries:       ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}")

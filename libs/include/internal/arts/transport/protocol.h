@@ -86,6 +86,7 @@ enum artsServerMessageType {
   ARTS_REMOTE_DB_ADD_DEPENDENCE_WITH_BYTE_OFFSET_MSG = 40,
   ARTS_REMOTE_TIME_SYNC_REQ_MSG = 41,
   ARTS_REMOTE_TIME_SYNC_RESP_MSG = 42,
+  ARTS_REMOTE_SET_DEP_MODE_MSG = 43,
 };
 
 // Header
@@ -138,6 +139,13 @@ struct ARTS_PACKED arts_remote_event_satisfy_slot_packet_s {
   arts_guid_t event;
   arts_guid_t db;
   uint32_t slot;
+};
+
+struct ARTS_PACKED arts_remote_set_dep_mode_packet_s {
+  struct arts_remote_packet_s header;
+  arts_guid_t edt;
+  uint32_t slot;
+  arts_db_access_mode_t mode;
 };
 
 struct ARTS_PACKED arts_remote_db_add_dependence_packet_s {

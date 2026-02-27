@@ -39,9 +39,8 @@
 
 /// @file persistent_event.c
 /// @brief Tests channel event APIs:
-///        arts_event_create (ARTS_EVENT_CHANNEL), arts_event_increment_latch,
-///        arts_event_decrement_latch, arts_add_dependence,
-///        arts_event_add_dependence_with_mode.
+///        arts_event_create (ARTS_EVENT_CHANNEL), arts_event_satisfy_slot,
+///        arts_add_dependence, arts_event_add_dependence_with_mode.
 
 #include "arts.h"
 
@@ -110,29 +109,29 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_guid_t dep1 = arts_edt_create_with_epoch(pe_dependent, 0, NULL, 1, epoch,
                                                 &(arts_hint_t){.route = 0});
-  arts_add_dependence(ch1, dep1, 0);
+  arts_add_dependence(ch1, dep1, 0, DB_MODE_EW);
 
   arts_guid_t dep2 = arts_edt_create_with_epoch(pe_dependent, 0, NULL, 1, epoch,
                                                 &(arts_hint_t){.route = 0});
-  arts_add_dependence(ch1, dep2, 0);
+  arts_add_dependence(ch1, dep2, 0, DB_MODE_EW);
 
   // Fire: decrement latch to 0.
-  arts_event_decrement_latch(ch1);
+  arts_event_satisfy_slot(ch1, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
 
   // Test 2: Channel event with data GUID check via mode.
   arts_guid_t ch2 = arts_event_create(0, ARTS_EVENT_CHANNEL, 0, db);
   uint64_t db_param = (uint64_t)db;
   arts_guid_t dep3 = arts_edt_create_with_epoch(
       pe_data_check, 1, &db_param, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_event_add_dependence_with_mode(ch2, dep3, 0, DB_MODE_RO);
-  arts_event_decrement_latch(ch2);
+  arts_add_dependence(ch2, dep3, 0, DB_MODE_RO);
+  arts_event_satisfy_slot(ch2, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
 
   // Test 3: Increment + decrement pattern.
   arts_guid_t ch3 = arts_event_create(0, ARTS_EVENT_CHANNEL, 0, NULL_GUID);
-  arts_event_increment_latch(ch3); // latch = 1 (from 0)
-  arts_event_increment_latch(ch3); // latch = 2
-  arts_event_decrement_latch(ch3); // latch = 1
-  arts_event_decrement_latch(ch3); // latch = 0, fires
+  arts_event_satisfy_slot(ch3, NULL_GUID, ARTS_EVENT_LATCH_INCR_SLOT); // latch = 1 (from 0)
+  arts_event_satisfy_slot(ch3, NULL_GUID, ARTS_EVENT_LATCH_INCR_SLOT); // latch = 2
+  arts_event_satisfy_slot(ch3, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT); // latch = 1
+  arts_event_satisfy_slot(ch3, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT); // latch = 0, fires
   arts_printf("  PASS: increment/decrement latch did not crash\n");
 
   // Final EDT.

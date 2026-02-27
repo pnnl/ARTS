@@ -43,21 +43,21 @@
 #include <string.h>
 
 #include "arts.h"
+#include "arts/compute/edt.h"
 #include "arts/counter/Preamble.h"
 #include "arts/counter/counter.h"
 #include "arts/gas/guid.h"
 #include "arts/gas/out_of_order.h"
 #include "arts/gas/route_table.h"
-#include "arts/transport/protocol.h"
-#include "arts/compute/edt.h"
 #include "arts/memory/frontier.h"
 #include "arts/remote/handler.h"
-#include "arts/runtime_types.h"
 #include "arts/runtime_state.h"
+#include "arts/runtime_types.h"
 #include "arts/sync/event.h"
 #include "arts/sync/termination.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
+#include "arts/transport/protocol.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
 
@@ -93,7 +93,7 @@ static void arts_db_auto_acquire(struct arts_db_s *db) {
     struct arts_db_list_s *db_list = (struct arts_db_list_s *)db->db_list;
     arts_atomic_fetch_or(&db_list->head->lock, WRITE_SET);
   }
-  arts_event_increment_latch(db->event_guid);
+  arts_event_satisfy_slot(db->event_guid, NULL_GUID, ARTS_EVENT_LATCH_INCR_SLOT);
   arts_track_created_db(db->guid);
 }
 
@@ -308,14 +308,31 @@ void *arts_db_resize_ptr(struct arts_db_s *db_res, unsigned int size,
 // nonsense), otherwise will be racy...
 void *arts_db_resize(arts_guid_t guid, unsigned int size, bool copy) {
   struct arts_db_s *db_res =
-      (struct arts_db_s *)arts_route_table_lookup_item(guid);
+      (struct arts_db_s *)arts_route_table_lookup_db(guid, NULL, false);
   void *ptr = arts_db_resize_ptr(db_res, size, copy);
   if (ptr) {
     db_res = ((struct arts_db_s *)ptr) - 1;
   }
+  if (db_res) {
+    arts_route_table_return_db(guid, false);
+  }
   return ptr;
 }
 
+/*
+ * arts_db_destroy — Mark a DataBlock for deferred destruction.
+ *
+ * If the calling EDT currently holds an acquire on this DB (either via
+ * the auto-acquired created_db_list or via a dependency slot), the
+ * acquire is implicitly released first.  This matches OCR's ocrDbDestroy
+ * semantics: "If the EDT has acquired this DB, this call implicitly
+ * releases the DB."
+ *
+ * After the implicit release, the route-table entry is marked for
+ * deletion.  New acquire attempts (inc_item) will fail once DELETE_ITEM
+ * is set.  The actual memory is freed when the last outstanding
+ * route-table reference is returned (deferred deletion).
+ */
 void arts_db_destroy(arts_guid_t guid) {
   INCREMENT_NUM_DB_DESTROY_BY(1);
   arts_type_t type = arts_guid_get_type(guid);
@@ -324,14 +341,18 @@ void arts_db_destroy(arts_guid_t guid) {
               guid);
     return;
   }
+
+  /* Implicit release: release the caller's acquire if held. */
+  arts_db_release(guid);
+
   struct arts_db_s *db_res =
-      (struct arts_db_s *)arts_route_table_lookup_item(guid);
+      (struct arts_db_s *)arts_route_table_lookup_db(guid, NULL, false);
   if (db_res != NULL) {
     if (arts_db_subtype_has_frontier(db_res->db_type)) {
       arts_remote_db_destroy(guid, arts_global_rank_id);
     }
-    arts_db_free(db_res);
-    arts_route_table_remove_item(guid);
+    arts_route_table_return_db(guid, false);
+    arts_route_table_mark_delete(guid);
   } else {
     arts_remote_db_destroy(guid, arts_global_rank_id);
   }
@@ -342,7 +363,7 @@ bool arts_db_rename_with_guid(arts_guid_t new_guid, arts_guid_t old_guid) {
   unsigned int rank = arts_guid_get_rank(old_guid);
   if (rank == arts_global_rank_id) {
     struct arts_db_s *db_res =
-        (struct arts_db_s *)arts_route_table_lookup_item(old_guid);
+        (struct arts_db_s *)arts_route_table_lookup_db(old_guid, NULL, false);
     if (db_res != NULL) {
       db_res->guid = new_guid;
       // This is only being done by the owner...
@@ -351,6 +372,7 @@ bool arts_db_rename_with_guid(arts_guid_t new_guid, arts_guid_t old_guid) {
                                          false)) {
         arts_route_table_fire_oo(new_guid, arts_out_of_order_handler);
       }
+      arts_route_table_return_db(old_guid, false);
       ret = true;
     }
   } else {
@@ -366,7 +388,7 @@ arts_guid_t arts_db_copy_to_new_type(arts_guid_t old_guid,
   if (rank == arts_global_rank_id) {
     arts_guid_t new_guid = arts_guid_create_for_rank(rank, ARTS_DB);
     struct arts_db_s *db_res =
-        (struct arts_db_s *)arts_route_table_lookup_item(old_guid);
+        (struct arts_db_s *)arts_route_table_lookup_db(old_guid, NULL, false);
     if (db_res != NULL) {
       arts_atomic_add(&db_res->copy_count, 1);
       db_res->guid = new_guid;
@@ -375,6 +397,7 @@ arts_guid_t arts_db_copy_to_new_type(arts_guid_t old_guid,
                                          false)) {
         arts_route_table_fire_oo(new_guid, arts_out_of_order_handler);
       }
+      arts_route_table_return_db(old_guid, false);
       ret = new_guid;
     }
   }
@@ -388,14 +411,17 @@ arts_guid_t arts_db_rename(arts_guid_t guid) {
 }
 
 void arts_db_destroy_safe(arts_guid_t guid, bool remote) {
+  /* Implicit release: release the caller's acquire if held. */
+  arts_db_release(guid);
+
   struct arts_db_s *db_res =
-      (struct arts_db_s *)arts_route_table_lookup_item(guid);
+      (struct arts_db_s *)arts_route_table_lookup_db(guid, NULL, false);
   if (db_res != NULL) {
     if (remote && arts_db_subtype_has_frontier(db_res->db_type)) {
       arts_remote_db_destroy(guid, arts_global_rank_id);
     }
-    arts_db_free(db_res);
-    arts_route_table_remove_item(guid);
+    arts_route_table_return_db(guid, false);
+    arts_route_table_mark_delete(guid);
   } else if (remote) {
     // No local copy — forward destroy to remote if this is a DB GUID
     arts_remote_db_destroy(guid, arts_global_rank_id);
@@ -404,9 +430,10 @@ void arts_db_destroy_safe(arts_guid_t guid, bool remote) {
 
 void arts_db_increment_latch(arts_guid_t guid) {
   struct arts_db_s *db_res =
-      (struct arts_db_s *)arts_route_table_lookup_item(guid);
+      (struct arts_db_s *)arts_route_table_lookup_db(guid, NULL, false);
   if (db_res != NULL) {
-    arts_event_increment_latch(db_res->event_guid);
+    arts_event_satisfy_slot(db_res->event_guid, NULL_GUID, ARTS_EVENT_LATCH_INCR_SLOT);
+    arts_route_table_return_db(guid, false);
   } else {
     arts_remote_db_increment_latch(guid);
   }
@@ -414,84 +441,12 @@ void arts_db_increment_latch(arts_guid_t guid) {
 
 void arts_db_decrement_latch(arts_guid_t guid) {
   struct arts_db_s *db_res =
-      (struct arts_db_s *)arts_route_table_lookup_item(guid);
+      (struct arts_db_s *)arts_route_table_lookup_db(guid, NULL, false);
   if (db_res != NULL) {
-    arts_event_decrement_latch(db_res->event_guid);
+    arts_event_satisfy_slot(db_res->event_guid, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+    arts_route_table_return_db(guid, false);
   } else {
     arts_remote_db_decrement_latch(guid);
-  }
-}
-
-void arts_db_add_dependence(arts_guid_t db_src, arts_guid_t edt_dest,
-                            uint32_t edt_slot) {
-  struct arts_db_s *db_res =
-      (struct arts_db_s *)arts_route_table_lookup_item(db_src);
-  if (db_res != NULL) {
-    arts_add_dependence(db_res->event_guid, edt_dest, edt_slot);
-  } else {
-    arts_remote_db_add_dependence(db_src, edt_dest, edt_slot);
-  }
-}
-
-void arts_db_add_dependence_with_mode(arts_guid_t db_src, arts_guid_t edt_dest,
-                                      uint32_t edt_slot,
-                                      arts_db_access_mode_t mode) {
-  arts_db_add_dependence_with_mode_and_diff(db_src, edt_dest, edt_slot, mode);
-}
-
-void arts_db_add_dependence_with_mode_and_diff(arts_guid_t db_src,
-                                               arts_guid_t edt_dest,
-                                               uint32_t edt_slot,
-                                               arts_db_access_mode_t mode) {
-  struct arts_db_s *db_res =
-      (struct arts_db_s *)arts_route_table_lookup_item(db_src);
-  if (db_res != NULL) {
-    arts_event_add_dependence_with_mode(db_res->event_guid, edt_dest, edt_slot,
-                                        mode);
-  } else {
-    arts_remote_db_add_dependence_with_hints(db_src, edt_dest, edt_slot, mode);
-  }
-}
-
-/*
- * arts_record_dep — Public API to record a DB→EDT dependency with access mode.
- *
- * Registers the dependency via the channel event system, and for WRITE
- * mode, increments the DB's latch counter so that the owner knows to wait
- * for the update before progressing the frontier.
- */
-void arts_record_dep(arts_guid_t db_src, arts_guid_t edt_dest,
-                     uint32_t edt_slot, arts_db_access_mode_t mode) {
-  ARTS_DEBUG("arts_record_dep: DB[Guid:%lu] -> EDT[Guid:%lu] slot=%u mode=%u",
-             db_src, edt_dest, edt_slot, mode);
-  arts_db_add_dependence_with_mode_and_diff(db_src, edt_dest, edt_slot, mode);
-  if (mode == DB_MODE_EW) {
-    arts_db_increment_latch(db_src);
-  }
-}
-
-void arts_record_dep_at(arts_guid_t db_src, arts_guid_t edt_dest,
-                        uint32_t edt_slot, arts_db_access_mode_t mode,
-                        uint64_t byte_offset, uint64_t len) {
-  // If no byte offset, use the standard path
-  if (byte_offset == 0 && len == 0) {
-    arts_record_dep(db_src, edt_dest, edt_slot, mode);
-    return;
-  }
-
-  // Use extended dependency registration with byte offset info
-  struct arts_db_s *db_res =
-      (struct arts_db_s *)arts_route_table_lookup_item(db_src);
-  if (db_res != NULL) {
-    arts_event_add_dependence_with_byte_offset(
-        db_res->event_guid, edt_dest, edt_slot, mode, byte_offset, len);
-  } else {
-    arts_remote_db_add_dependence_with_byte_offset(db_src, edt_dest, edt_slot,
-                                                   mode, byte_offset, len);
-  }
-
-  if (mode == DB_MODE_EW) {
-    arts_db_increment_latch(db_src);
   }
 }
 
@@ -501,14 +456,22 @@ void arts_record_dep_at(arts_guid_t db_src, arts_guid_t edt_dest,
 // Returns false on out of order and true otherwise
 void acquire_dbs(struct arts_edt_s *edt) {
   arts_edt_dep_t *depv = (arts_edt_dep_t *)arts_get_depv(edt);
-  arts_db_access_mode_t *modes = arts_get_dep_modes(edt);
   edt->depc_needed = edt->depc + 1;
   ARTS_INFO("Acquiring %u DBs for EDT[Id:%lu, Guid:%lu], depc_needed "
             "initialized to %u",
             edt->depc, edt->arts_id, edt->current_edt, edt->depc_needed);
   for (int i = 0; i < edt->depc; i++) {
+    /*
+     * A slot with guid == NULL_GUID (0) but mode != DB_MODE_NULL was
+     * signaled via an event that carried no data — already satisfied,
+     * no DB to acquire.  Count it immediately.
+     */
+    if (depv[i].guid == NULL_GUID && depv[i].mode != DB_MODE_NULL) {
+      arts_atomic_sub(&edt->depc_needed, 1U);
+      continue;
+    }
     if (depv[i].guid && depv[i].ptr == NULL) {
-      arts_db_access_mode_t access_mode = modes[i];
+      arts_db_access_mode_t access_mode = depv[i].mode;
 
       /*
        * Value signals (DB_MODE_VALUE) store a raw uint64 in
@@ -545,6 +508,9 @@ void acquire_dbs(struct arts_edt_s *edt) {
         struct arts_db_s *db_temp =
             (struct arts_db_s *)arts_route_table_lookup_db(depv[i].guid,
                                                            &valid_rank, true);
+        /* Track whether lookup acquired a route table ref so we can
+         * return it if the dep is deferred (frontier/remote/OO). */
+        bool lookup_ref_held = (db_temp != NULL);
 
         if (db_temp && db_temp->db_type == ARTS_DB_LOCAL) {
           // LOCAL: direct access, no frontier
@@ -659,6 +625,13 @@ void acquire_dbs(struct arts_edt_s *edt) {
             }
           }
         }
+
+        /* If the lookup succeeded but the dep was deferred (frontier,
+         * remote request, OO), db_found is NULL and the lookup ref was
+         * never transferred to depv[i].ptr.  Return it now. */
+        if (lookup_ref_held && !db_found) {
+          arts_route_table_return_db(depv[i].guid, false);
+        }
       } else if (guid_type == ARTS_NULL) {
         arts_atomic_sub(&edt->depc_needed, 1U);
       }
@@ -686,11 +659,10 @@ void acquire_dbs(struct arts_edt_s *edt) {
  *
  * Called from arts_run_edt() after all DB pointers have been resolved.
  */
-void prep_dbs(unsigned int depc, arts_edt_dep_t *depv,
-              const arts_db_access_mode_t *modes, bool gpu) {
+void prep_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu) {
   (void)gpu;
   for (unsigned int i = 0; i < depc; i++) {
-    arts_db_access_mode_t access_mode = modes[i];
+    arts_db_access_mode_t access_mode = depv[i].mode;
     if (depv[i].guid != NULL_GUID && depv[i].ptr && access_mode == DB_MODE_EW) {
       struct arts_db_s *db = ((struct arts_db_s *)depv[i].ptr) - 1;
       if (db->db_type != ARTS_DB_LOCAL) {
@@ -726,16 +698,18 @@ void prep_dbs(unsigned int depc, arts_edt_dep_t *depv,
  * the owner node.  For READ-mode: returns the route table entry.
  * For LC DBs (GPU builds): releases the reader lock.
  */
-void release_dbs(unsigned int depc, arts_edt_dep_t *depv,
-                 const arts_db_access_mode_t *modes, bool gpu) {
+void release_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu) {
   for (int i = 0; i < depc; i++) {
-    arts_db_access_mode_t access_mode = modes[i];
-    // Get DB subtype from struct when ptr is available
+    arts_db_access_mode_t access_mode = depv[i].mode;
+    // Get DB subtype from struct when ptr is available.
+    // Guard with guid != NULL_GUID: arts_db_release may have nulled the
+    // guid while leaving ptr non-NULL (or the DB may have been freed).
     arts_db_types_t db_subtype = ARTS_DB_DEFAULT;
-    if (depv[i].ptr) {
+    if (depv[i].guid != NULL_GUID && depv[i].ptr) {
       struct arts_db_s *db_hdr = ((struct arts_db_s *)depv[i].ptr) - 1;
       db_subtype = db_hdr->db_type;
     }
+
     ARTS_DEBUG("Releasing DB[Guid:%lu] [AccessMode:%s, DbSubtype:%s]",
                depv[i].guid, GET_DB_MODE_NAME(access_mode),
                GET_DB_TYPE_NAME(db_subtype));
@@ -776,42 +750,86 @@ void release_dbs(unsigned int depc, arts_edt_dep_t *depv,
         struct arts_db_s *db = ((struct arts_db_s *)depv[i].ptr) - 1;
         arts_reader_unlock(&db->reader);
       }
-    } else {
-      if (arts_route_table_return_db(depv[i].guid,
-                                     db_subtype != ARTS_DB_LOCAL)) {
-        ARTS_DEBUG("FREED A COPY - DB[Guid:%lu]", depv[i].guid);
-      }
     }
+
+    /* Return the route table ref acquired during DB resolution.
+     * PTR mode uses a malloc'd copy (no route table ref), VALUE mode stores
+     * a raw uint64 (not a real GUID), NULL_GUID has no entry. */
+    if (depv[i].guid != NULL_GUID && access_mode != DB_MODE_PTR &&
+        access_mode != DB_MODE_VALUE && depv[i].ptr) {
+      arts_route_table_return_db(depv[i].guid, false);
+    }
+
   }
 }
 
 /*
- * arts_db_release — Release auto-acquired WRITE access for a single DB.
+ * arts_db_release — Release access to a single DB mid-EDT.
  *
- * Allows an EDT to release early (before the EDT function returns), so
- * that consumer EDTs can proceed.  Marks the entry in created_db_list
- * as NULL_GUID to prevent double-release in the epilogue.
+ * Two search paths:
+ *   1. created_db_list — DBs the current EDT created (auto-acquired WRITE).
+ *   2. depv — DBs received as dependencies (EW or RO mode).
+ *
+ * For WRITE-mode (EW) deps: progresses the CDAG frontier and decrements
+ * the channel event latch so consumer EDTs can proceed.  For READ-mode
+ * (RO) deps: no frontier/latch action needed (readers don't hold locks).
+ *
+ * Marks the released slot/entry as NULL_GUID to prevent double-release
+ * in the epilogue (release_dbs / arts_release_created_dbs).
  */
 void arts_db_release(arts_guid_t guid) {
+  /* Path 1: check created_db_list (DBs this EDT created) */
   arts_array_list_t *list = arts_get_created_db_list();
-  if (!list) {
+  if (list) {
+    uint64_t count = arts_length_array_list(list);
+    for (uint64_t i = 0; i < count; i++) {
+      arts_guid_t *g = (arts_guid_t *)arts_get_from_array_list(list, i);
+      if (*g == guid) {
+        *g = NULL_GUID;
+        struct arts_db_s *db =
+            (struct arts_db_s *)arts_route_table_lookup_db(guid, NULL, false);
+        if (db) {
+          if (db->db_list) {
+            arts_progress_frontier(db, arts_global_rank_id);
+          }
+          arts_event_satisfy_slot(db->event_guid, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+          arts_route_table_return_db(guid, false);
+        }
+        return;
+      }
+    }
+  }
+
+  /* Path 2: check current EDT's depv (dependency-acquired DBs) */
+  if (!current_edt) {
     return;
   }
-  uint64_t count = arts_length_array_list(list);
-  for (uint64_t i = 0; i < count; i++) {
-    arts_guid_t *g = (arts_guid_t *)arts_get_from_array_list(list, i);
-    if (*g == guid) {
-      *g = NULL_GUID;
-      struct arts_db_s *db =
-          (struct arts_db_s *)arts_route_table_lookup_item(guid);
-      if (db) {
-        if (db->db_list) {
-          arts_progress_frontier(db, arts_global_rank_id);
-        }
-        arts_event_decrement_latch(db->event_guid);
-      }
-      return;
+  arts_edt_dep_t *depv = (arts_edt_dep_t *)arts_get_depv(current_edt);
+  for (int i = 0; i < current_edt->depc; i++) {
+    if (depv[i].guid != guid) {
+      continue;
     }
+    arts_db_access_mode_t mode = depv[i].mode;
+    if (mode == DB_MODE_EW || mode == DB_MODE_MEMSET) {
+      struct arts_db_s *db = ((struct arts_db_s *)depv[i].ptr) - 1;
+      if (db) {
+        arts_db_types_t subtype = db->db_type;
+        if (subtype == ARTS_DB_LOCAL) {
+          arts_db_decrement_latch(guid);
+        } else if (arts_guid_get_rank(guid) == arts_global_rank_id) {
+          arts_progress_frontier(db, arts_global_rank_id);
+          arts_db_decrement_latch(guid);
+        } else {
+          arts_remote_update_db(guid, true);
+        }
+      }
+    }
+    /* RO mode: no frontier/latch action needed */
+    arts_route_table_return_db(guid, false);
+    depv[i].guid = NULL_GUID;
+    depv[i].ptr = NULL;
+    depv[i].mode = DB_MODE_NULL;
+    return;
   }
 }
 
@@ -836,12 +854,13 @@ void arts_release_created_dbs(void) {
       continue;
     }
     struct arts_db_s *db =
-        (struct arts_db_s *)arts_route_table_lookup_item(*guid);
+        (struct arts_db_s *)arts_route_table_lookup_db(*guid, NULL, false);
     if (db) {
       if (db->db_list) {
         arts_progress_frontier(db, arts_global_rank_id);
       }
-      arts_event_decrement_latch(db->event_guid);
+      arts_event_satisfy_slot(db->event_guid, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+      arts_route_table_return_db(*guid, false);
     }
   }
 }
@@ -864,13 +883,14 @@ void internal_get_from_db(arts_guid_t edt_guid, arts_guid_t db_guid,
                           unsigned int size, unsigned int rank) {
   if (rank == arts_global_rank_id) {
     struct arts_db_s *db =
-        (struct arts_db_s *)arts_route_table_lookup_item(db_guid);
+        (struct arts_db_s *)arts_route_table_lookup_db(db_guid, NULL, false);
     if (db) {
       void *data = (void *)(((char *)(db + 1)) + offset);
       ARTS_INFO("Getting DB[Guid:%lu] From: %p", db_guid, data);
       if (edt_guid != NULL_GUID) {
         arts_signal_edt_ptr(edt_guid, slot, data, size);
       }
+      arts_route_table_return_db(db_guid, false);
     } else {
       assert(edt_guid != NULL_GUID && "DB not found and no EDT to signal");
       ARTS_INFO("Getting OO-DB[Guid:%lu] From: %p", db_guid, NULL);
@@ -908,7 +928,7 @@ void internal_put_in_db(void *ptr, arts_guid_t edt_guid, arts_guid_t db_guid,
                         unsigned int rank) {
   if (rank == arts_global_rank_id) {
     struct arts_db_s *db =
-        (struct arts_db_s *)arts_route_table_lookup_item(db_guid);
+        (struct arts_db_s *)arts_route_table_lookup_db(db_guid, NULL, false);
     if (db) {
       // Do this so when we increment finished we can check the term status
       increment_queue_epoch(epoch_guid);
@@ -920,6 +940,7 @@ void internal_put_in_db(void *ptr, arts_guid_t edt_guid, arts_guid_t db_guid,
       }
       increment_finished_epoch(epoch_guid);
       arts_shutdown_epoch_inc_finished();
+      arts_route_table_return_db(db_guid, false);
     } else {
       void *cpy_ptr = arts_malloc(size);
       memcpy(cpy_ptr, ptr, size);

@@ -151,10 +151,8 @@ arts_guid_t internal_edt_create_gpu(
     bool pass_through, bool lib, int gpu_to_run_on) {
   //    ARTSEDTCOUNTERTIMERSTART(EDT_CREATE_COUNTER);
   unsigned int dep_space = (has_depv) ? depc * sizeof(arts_edt_dep_t) : 0;
-  unsigned int mode_space =
-      (has_depv) ? depc * sizeof(arts_db_access_mode_t) : 0;
   unsigned int edt_space = sizeof(arts_gpu_edt_t) +
-                           (paramc * sizeof(uint64_t)) + dep_space + mode_space;
+                           (paramc * sizeof(uint64_t)) + dep_space;
 
   arts_gpu_edt_t *edt = (arts_gpu_edt_t *)arts_calloc(1, edt_space);
   edt->wrapperEdt.invalidate_count = 1;
@@ -242,8 +240,7 @@ void arts_run_gpu(void *edt_packet, arts_gpu_t *arts_gpu) {
 
   arts_atomic_add(&arts_gpu->runningEdts, 1U);
 
-  arts_db_access_mode_t *modes = arts_get_dep_modes(edt_packet);
-  prep_dbs(depc, depv, modes, true);
+  prep_dbs(depc, depv, true);
   arts_schedule_to_gpu(func, paramc, paramv, depc, depv, edt_packet, arts_gpu);
 
   arts_cuda_restore_device();
@@ -257,8 +254,7 @@ void arts_gpu_host_wrap_up(void *edt_packet, arts_guid_t to_signal,
   const uint64_t *paramv = (uint64_t *)(edt + 1);
   arts_edt_dep_t *depv = (arts_edt_dep_t *)(paramv + paramc);
 
-  arts_db_access_mode_t *modes = arts_get_dep_modes(edt_packet);
-  release_dbs(depc, depv, modes, true);
+  release_dbs(depc, depv, true);
   arts_release_created_dbs();
 
   if (edt->lib) {
@@ -478,13 +474,13 @@ void arts_put_in_db_from_gpu(void *ptr, arts_guid_t db_guid,
   unsigned int rank = arts_guid_get_rank(db_guid);
   if (rank == arts_global_rank_id) {
     struct arts_db_s *db =
-        (struct arts_db_s *)arts_route_table_lookup_item(db_guid);
+        (struct arts_db_s *)arts_route_table_lookup_db(db_guid, NULL, false);
     if (db) {
       void *data = (void *)(((char *)(db + 1)) + offset);
       // memcpy(data, ptr, size);
       CHECKCORRECT(cudaMemcpyAsync(data, ptr, size, cudaMemcpyDeviceToHost,
                                    *arts_local_stream));
-
+      arts_route_table_return_db(db_guid, false);
     } else {
       void *cpy_ptr = arts_malloc(size);
       // memcpy(cpy_ptr, ptr, size);

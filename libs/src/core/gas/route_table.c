@@ -61,11 +61,15 @@ volatile unsigned int guid_lock[GUID_LOCK_SIZE] = {0};
 void set_item(arts_route_item_t *item, void *data) { item->data = data; }
 
 void free_item(arts_route_item_t *item) {
-  // arts_type_t type = arts_guid_get_type(item->key);
-  // if (type > ARTS_BUFFER && type < ARTS_LAST_TYPE)
-  //   arts_db_free(item->data);
-  // else
-  //   arts_free(item->data);
+  arts_type_t type = arts_guid_get_type(item->key);
+  if (type == ARTS_DB) {
+    struct arts_db_s *db = (struct arts_db_s *)item->data;
+    if (db && !arts_atomic_sub(&db->copy_count, 1)) {
+      arts_db_free(db);
+    }
+  }
+  /* Non-DB types (EDT, EVENT, EPOCH, BUFFER) have data freed by their
+   * respective subsystems — do NOT call arts_free here. */
   arts_out_of_order_list_delete(&item->ooList);
   item->data = NULL;
   item->key = 0;
@@ -657,11 +661,16 @@ unsigned int internal_inc_db_version(volatile unsigned int *touched) {
 void *arts_route_table_lookup_db(arts_guid_t key, int *rank, bool touch) {
   arts_route_table_t *route_table = arts_get_route_table(key);
   unsigned int *touched;
-  void *data = internal_route_table_lookup_db(route_table, key, rank, &touched);
+  int local_rank;
+  void *data =
+      internal_route_table_lookup_db(route_table, key, &local_rank, &touched);
   if (data) {
     if (touch) {
       internal_inc_db_version(touched);
     }
+  }
+  if (rank) {
+    *rank = local_rank;
   }
   return data;
 }
@@ -888,13 +897,9 @@ uint64_t arts_clean_up_route_table(arts_route_table_t *route_table) {
     if (type == ARTS_DB) {
       struct arts_db_s *db = (struct arts_db_s *)item->data;
       if (db) {
-        if (!arts_atomic_sub(&db->copy_count, 1)) {
-          free_size += db->header.size;
-          ARTS_DEBUG("Freeing DB[Guid:%lu] [Size:%lu]", item->key,
-                     db->header.size);
-          arts_db_free(db);
-        }
+        free_size += db->header.size;
       }
+      /* free_item handles copy_count + arts_db_free for DBs. */
       free_item(item);
     } else if (type == ARTS_EVENT) {
       struct arts_event_s *event = (struct arts_event_s *)item->data;
@@ -969,6 +974,19 @@ bool arts_route_table_update_item(arts_guid_t key, void *data,
 bool arts_route_table_invalidate_item(arts_guid_t key) {
   arts_route_table_t *route_table = arts_get_route_table(key);
   return internal_route_table_remove_item(route_table, key);
+}
+
+bool arts_route_table_mark_delete(arts_guid_t key) {
+  arts_route_table_t *route_table = arts_get_route_table(key);
+  arts_route_item_t *item =
+      arts_route_table_search_for_key(route_table, key, AVAILABLE_KEY);
+  if (item) {
+    mark_delete(item);
+    /* Decrement the initial "existence" ref (count 1 at creation).
+     * dec_item triggers free_item when the last outstanding ref drops. */
+    return dec_item(route_table, item);
+  }
+  return false;
 }
 
 void arts_route_table_add_rank_duplicate(arts_guid_t key, unsigned int rank) {}

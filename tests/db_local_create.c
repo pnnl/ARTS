@@ -167,8 +167,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       arts_edt_create_with_epoch(ew_verify, 0, NULL, 1, epoch, NULL);
   arts_guid_t e3a =
       arts_edt_create_with_epoch(ew_modify, 0, NULL, 1, epoch, NULL);
-  arts_record_dep(g3, e3a, 0, DB_MODE_EW);
-  arts_record_dep(g3, e3b, 0, DB_MODE_EW);
+  arts_add_dependence(g3, e3a, 0, DB_MODE_EW);
+  arts_add_dependence(g3, e3b, 0, DB_MODE_EW);
 }
 
 int main(int argc, char **argv) {

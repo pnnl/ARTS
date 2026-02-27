@@ -157,7 +157,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t ev1 = arts_event_create(0, ARTS_EVENT_LATCH, 2, NULL_GUID);
   arts_guid_t dep1 = arts_edt_create_with_epoch(
       dependent_edt, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_add_dependence(ev1, dep1, 0);
+  arts_add_dependence(ev1, dep1, 0, DB_MODE_EW);
 
   // Decrement twice to fire.
   arts_event_satisfy_slot(ev1, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
@@ -176,7 +176,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t ev3 = arts_event_create(0, ARTS_EVENT_LATCH, 1, NULL_GUID);
   arts_guid_t dep3 = arts_edt_create_with_epoch(
       dependent_edt, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_add_dependence(ev3, dep3, 0);
+  arts_add_dependence(ev3, dep3, 0, DB_MODE_EW);
   // Increment (+1 -> 2), then decrement twice.
   arts_event_satisfy_slot(ev3, NULL_GUID, ARTS_EVENT_LATCH_INCR_SLOT);
   arts_event_satisfy_slot(ev3, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
@@ -187,7 +187,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_event_create_with_guid(reserved_ev, ARTS_EVENT_LATCH, 1, NULL_GUID);
   arts_guid_t dep4 = arts_edt_create_with_epoch(
       guid_event_dep, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_add_dependence(reserved_ev, dep4, 0);
+  arts_add_dependence(reserved_ev, dep4, 0, DB_MODE_EW);
   arts_event_satisfy_slot(reserved_ev, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
 
   // Test 5: arts_event_destroy (destroy unfired event).
@@ -207,7 +207,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t ev7 = arts_event_create(0, ARTS_EVENT_ONCE, 0, NULL_GUID);
   arts_guid_t dep7 = arts_edt_create_with_epoch(once_dep, 0, NULL, 1, epoch,
                                                 &(arts_hint_t){.route = 0});
-  arts_add_dependence(ev7, dep7, 0);
+  arts_add_dependence(ev7, dep7, 0, DB_MODE_EW);
   arts_event_satisfy_slot(ev7, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
 
   // Test 8: STICKY — persist, late dep immediately satisfied.
@@ -215,14 +215,14 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_event_satisfy_slot(ev8, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
   arts_guid_t dep8 = arts_edt_create_with_epoch(
       sticky_late_dep, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_add_dependence(ev8, dep8, 0);
+  arts_add_dependence(ev8, dep8, 0, DB_MODE_EW);
   arts_event_destroy(ev8);
 
   // Test 9: IDEM — re-satisfy is silent no-op.
   arts_guid_t ev9 = arts_event_create(0, ARTS_EVENT_IDEM, 0, NULL_GUID);
   arts_guid_t dep9 = arts_edt_create_with_epoch(idem_dep, 0, NULL, 1, epoch,
                                                 &(arts_hint_t){.route = 0});
-  arts_add_dependence(ev9, dep9, 0);
+  arts_add_dependence(ev9, dep9, 0, DB_MODE_EW);
   arts_event_satisfy_slot(ev9, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
   // Re-satisfy should be a silent no-op (IDEM behavior).
   arts_event_satisfy_slot(ev9, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
@@ -232,7 +232,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t ev10 = arts_event_create(0, ARTS_EVENT_COUNTED, 3, NULL_GUID);
   arts_guid_t dep10 = arts_edt_create_with_epoch(counted_dep, 0, NULL, 1, epoch,
                                                  &(arts_hint_t){.route = 0});
-  arts_add_dependence(ev10, dep10, 0);
+  arts_add_dependence(ev10, dep10, 0, DB_MODE_EW);
   arts_event_satisfy_slot(ev10, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
   arts_event_satisfy_slot(ev10, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
   arts_event_satisfy_slot(ev10, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
