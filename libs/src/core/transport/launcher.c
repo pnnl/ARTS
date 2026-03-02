@@ -104,9 +104,13 @@ void arts_remote_launcher_ssh_startup_processes(
     return;
   }
 
-  // Derive the current binary name so remote nodes can execute the same program
+  // Derive the current executable path and basename.
+  // self_exe holds the absolute path (used for launch mode — `cd CWD &&
+  // /abs/path/to/exe`). binary_name holds the basename only (used for kill mode
+  // — `pkill basename`).
   char self_exe[4096];
   char binary_name[256];
+  self_exe[0] = '\0';
   binary_name[0] = '\0';
 
   // Try to get the current executable path
@@ -118,17 +122,15 @@ void arts_remote_launcher_ssh_startup_processes(
     // Fallback to argv[0] if /proc/self/exe is unavailable
     strncpy(self_exe, argv[0], sizeof(self_exe) - 1);
     self_exe[sizeof(self_exe) - 1] = '\0';
-  } else {
-    self_exe[0] = '\0';
   }
 
-  // Extract basename
-  const char *base_ptr = self_exe;
-  char *slash_ptr = (self_exe[0] != '\0') ? strrchr(self_exe, '/') : NULL;
-  if (slash_ptr) {
-    base_ptr = slash_ptr + 1;
-  }
-  if (base_ptr && base_ptr[0] != '\0') {
+  // Extract basename (for pkill in kill mode)
+  if (self_exe[0] != '\0') {
+    const char *base_ptr = self_exe;
+    char *slash_ptr = strrchr(self_exe, '/');
+    if (slash_ptr) {
+      base_ptr = slash_ptr + 1;
+    }
     size_t base_len = strlen(base_ptr);
     size_t copy_len = (base_len < sizeof(binary_name) - 1)
                           ? base_len
@@ -186,8 +188,9 @@ void arts_remote_launcher_ssh_startup_processes(
       }
     } else {
       // Launch mode: ensure the remote shell changes to the same working
-      // directory and launches the binary
-      if (binary_name[0] != '\0') {
+      // directory and launches the binary by absolute path (the binary may
+      // live in a subdirectory of CWD, so basename + "./" would fail).
+      if (self_exe[0] != '\0') {
         final_length +=
             snprintf(command + final_length, sizeof(command) - final_length,
                      "cd %s && ", cwd);
@@ -212,7 +215,7 @@ void arts_remote_launcher_ssh_startup_processes(
                      "ARTS_RANK=%d ", i);
         final_length +=
             snprintf(command + final_length, sizeof(command) - final_length,
-                     "./%s", binary_name);
+                     "%s", self_exe);
         // Pass through any arguments beyond argv[0] if provided
         for (j = 1; j < (int)argc; j++) {
           final_length +=

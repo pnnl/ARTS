@@ -85,6 +85,23 @@ log() {
     echo "$@" >> "$LOG_FILE"
 }
 
+# Kill any orphaned ARTS SSH child processes left after timeout.
+# When timeout kills the master ARTS process, the SSH-spawned child may
+# linger and hold ports 50000/50001.  Wait briefly for natural cleanup,
+# then force-kill remaining processes by name.
+cleanup_arts_children() {
+    local name="$1"
+    # Extract base binary name (e.g., "CoMD_intel_chandra_arts")
+    local base
+    base="$(basename "$name")"
+    # Give the SSH child 1s to notice the master died and exit
+    sleep 1
+    # Kill any remaining processes matching the binary name
+    pkill -f "$base" 2>/dev/null || true
+    # Wait for ports to fully release
+    sleep 1
+}
+
 run_app() {
     local name="$1"
     local dir="$2"
@@ -117,10 +134,18 @@ run_app() {
         log "--- HANG (timeout ${TIMEOUT}s) ---"
         HANG=$((HANG + 1))
         FAIL=$((FAIL + 1))
+        # Clean up SSH children that may hold ports after timeout
+        if [ "$DO_MULTINODE" -eq 1 ]; then
+            cleanup_arts_children "$name"
+        fi
     else
         printf "  ${RED}FAIL${NC}  %-45s (exit $rc)\n" "$name ${args[*]:-}"
         log "--- FAIL (exit $rc) ---"
         FAIL=$((FAIL + 1))
+        # Clean up SSH children on failure too (e.g., exit 255 from bind failure)
+        if [ "$DO_MULTINODE" -eq 1 ]; then
+            cleanup_arts_children "$name"
+        fi
     fi
 }
 
@@ -245,7 +270,11 @@ run_ocr_apps() {
     run_app "tempest_${suffix}"         "$dir"
 
     # Tier 4: Medium-complexity
+    run_app "cholesky_${suffix}"        "$dir"
     run_app "fft_${suffix}"             "$dir" 6
+    run_app "globalsum_cgShim_${suffix}"    "$dir"
+    run_app "globalsum_cgNoShim_${suffix}"  "$dir"
+    run_app "globalsum_pcg_${suffix}"       "$dir"
     run_app "graph500_${suffix}"        "$dir" 6 8 1 1
 
     # Tier 5: CoMD variants (small domain + few timesteps for smoke test)
@@ -257,6 +286,10 @@ run_ocr_apps() {
     # Tier 6: HPCG variants
     run_app "hpcg_intel_${suffix}"              "$dir"
     run_app "hpcg_intel_Eager_${suffix}"        "$dir"
+    # hpcg_intel_Eager_Collective uses collective EVTs — arts-only (XSOCR excluded from build)
+    if [ "$suffix" = "arts" ]; then
+        run_app "hpcg_intel_Eager_Collective_${suffix}" "$dir"
+    fi
 
     # Tier 7: Stencil variants
     run_app "Stencil1D_intel_chandra_${suffix}" "$dir"
@@ -298,6 +331,74 @@ run_ocr_apps() {
     # Tier 15: Stream, UTS
     run_app "stream_${suffix}"                  "$dir"
     run_app "uts_${suffix}"                     "$dir"
+
+    # Tier 16: NUMA diagnostics (needs libnuma — will SKIP if not built)
+    run_app "xeonNumaSize_${suffix}"            "$dir"
+}
+
+# ==========================================================================
+# ARTS multi-node apps (22 apps that use affinity/rank distribution)
+# ==========================================================================
+
+run_ocr_apps_multinode() {
+    local dir="apps"
+
+    echo ""
+    echo "===== OCR apps (arts backend, multi-node 2 localhost) ====="
+    log ""
+    log "===== OCR apps (arts backend, multi-node 2 localhost) ====="
+
+    # Copy multi-node config
+    if [ -f "$REPO_ROOT/sample_configs/arts_multinode.cfg" ]; then
+        cp "$REPO_ROOT/sample_configs/arts_multinode.cfg" arts.cfg
+    else
+        echo "ERROR: arts_multinode.cfg not found"
+        return 1
+    fi
+
+    # CoMD variants (affinity-aware)
+    run_app "CoMD_intel_chandra_arts"       "$dir" -x 4 -y 4 -z 4 -N 2
+    run_app "CoMD_intel_chandra_tiled_arts" "$dir" -x 4 -y 4 -z 4 -N 2
+
+    # Graph500 (affinity-aware)
+    run_app "graph500_arts"                "$dir" 6 8 1 1
+
+    # HPCG variants (reduction lib — affinity-aware)
+    run_app "hpcg_intel_arts"              "$dir"
+    run_app "hpcg_intel_Eager_arts"        "$dir"
+    run_app "hpcg_intel_Eager_Collective_arts" "$dir"
+
+    # Stencil variants (reduction/affinity-aware)
+    run_app "Stencil1D_intel_chandra_arts" "$dir"
+    run_app "stencil1D_sticky_arts"        "$dir"
+    run_app "Stencil2D_intel_chandra_arts" "$dir"
+    run_app "Stencil2D_intel_channelEVTs_arts" "$dir"
+
+    # P2P and Reduction (reduction lib — affinity-aware)
+    run_app "p2p_arts"                     "$dir"
+    run_app "reduction_intel_arts"         "$dir"
+
+    # MiniAMR variants (affinity-aware)
+    run_app "miniAMR_forkbomb_arts"        "$dir" --num_tsteps 3
+    run_app "miniAMR_intel_arts"           "$dir"
+    run_app "miniAMR_intel_bryan_arts"     "$dir"
+    run_app "miniAMR_intel_chandra_arts"   "$dir" --nx 4 --ny 4 --nz 4 --num_tsteps 2 --num_refine 3
+
+    # Nekbone (reduction lib — affinity-aware)
+    run_app "nekbone_arts"                 "$dir"
+
+    # RSBench, XSBench sharedDB variants (reduction + ocrAppUtils — affinity-aware)
+    run_app "RSBench_intel_sharedDB_arts"  "$dir" -l 100
+    run_app "XSBench_intel_sharedDB_arts"  "$dir" -s small -g 10 -l 100
+
+    # LCS distributed (reduction lib — affinity-aware)
+    run_app "LCS_distributed_ST_arts"      "$dir"
+
+    # Prodcon (labeled GUIDs — affinity-aware)
+    run_app "prodcon_arts"                 "$dir"
+
+    # Tempest (ocrAffinityGetCount — affinity-aware)
+    run_app "tempest_arts"                 "$dir"
 }
 
 # ==========================================================================
@@ -330,6 +431,33 @@ run_baseline_apps() {
     run_mpi_app "hpgmg_mpi_omp"  "$dir" 1 3
     run_mpi_app "lulesh_mpi_omp" "$dir" 1 -s 5 -i 2
     run_mpi_app "hpcg_mpi"       "$dir" 1
+    run_mpi_app "SNAP_mpi_omp"   "$dir" 1
+
+    # SAR OpenMP baseline (needs crlibm — will SKIP if not built)
+    run_app "sar_omp"            "$dir"
+}
+
+# ==========================================================================
+# Baseline multi-node apps (MPI with np=2)
+# ==========================================================================
+
+run_baseline_apps_multinode() {
+    local dir="baseline"
+
+    echo ""
+    echo "===== Baseline apps (MPI multi-node, np=2) ====="
+    log ""
+    log "===== Baseline apps (MPI multi-node, np=2) ====="
+
+    run_mpi_app "CoMD_mpi_omp"   "$dir" 2 -x 4 -y 4 -z 4 -N 2
+    run_mpi_app "miniAMR_mpi"    "$dir" 2 --nx 4 --ny 4 --nz 4 --num_tsteps 2
+    run_mpi_app "Stencil1D_mpi"  "$dir" 2 102 5
+    run_mpi_app "Stencil2D_mpi"  "$dir" 2 5 64
+    run_mpi_app "hpgmg_mpi_omp"  "$dir" 2 3
+    # lulesh np must be a perfect cube (1, 8, 27, ...); np=2 is invalid
+    run_mpi_app "lulesh_mpi_omp" "$dir" 8 -s 5 -i 2
+    run_mpi_app "hpcg_mpi"       "$dir" 2
+    run_mpi_app "SNAP_mpi_omp"   "$dir" 2
 }
 
 # ==========================================================================
@@ -357,9 +485,29 @@ log ""
 
 for backend in "${BACKENDS[@]}"; do
     case "$backend" in
-        arts)     run_ocr_apps arts ;;
-        xsocr)    run_ocr_apps xsocr ;;
-        baseline) run_baseline_apps ;;
+        arts)
+            if [ "$DO_MULTINODE" -eq 1 ]; then
+                run_ocr_apps_multinode
+            else
+                run_ocr_apps arts
+            fi
+            ;;
+        xsocr)
+            if [ "$DO_MULTINODE" -eq 1 ]; then
+                echo ""
+                echo "===== SKIP: XSOCR does not support multi-node ====="
+                log ""
+                log "===== SKIP: XSOCR does not support multi-node ====="
+            else
+                run_ocr_apps xsocr
+            fi
+            ;;
+        baseline)
+            run_baseline_apps
+            if [ "$DO_MULTINODE" -eq 1 ]; then
+                run_baseline_apps_multinode
+            fi
+            ;;
     esac
 done
 
