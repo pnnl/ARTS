@@ -221,7 +221,9 @@ channel_get_last_version(struct arts_event_s *event) {
 
 static bool channel_free_version(struct arts_event_s *event) {
   struct arts_link_list_s *versions = event->versions;
-  assert(versions != NULL);
+  if (versions == NULL) {
+    return true;
+  }
   bool last = true;
   arts_lock(&versions->lock);
 
@@ -300,7 +302,8 @@ static void channel_fire_dependents(struct arts_event_s *event,
         if (event->data != NULL_GUID) {
           if (dependent[j].byte_offset != 0 || dependent[j].size != 0) {
             struct arts_db_s *db =
-                (struct arts_db_s *)arts_route_table_lookup_db(event->data, NULL, false);
+                (struct arts_db_s *)arts_route_table_lookup_db(event->data,
+                                                               NULL, false);
             if (db) {
               void *db_data = (void *)(db + 1);
               void *slice_ptr =

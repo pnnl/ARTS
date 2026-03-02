@@ -60,7 +60,7 @@ function(add_baseline_app)
     add_executable(${APP_NAME} ${ABS_SOURCES})
     target_include_directories(${APP_NAME} PRIVATE ${APP_DIR} ${SRC_DIR} ${APP_EXTRA_INCLUDES})
     target_compile_definitions(${APP_NAME} PRIVATE ${APP_EXTRA_DEFINES})
-    target_compile_options(${APP_NAME} PRIVATE -O3 -w)
+    target_compile_options(${APP_NAME} PRIVATE ${BENCH_C_OPT} -w)
     set_target_properties(${APP_NAME} PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     )

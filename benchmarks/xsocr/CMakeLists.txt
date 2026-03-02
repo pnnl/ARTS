@@ -17,7 +17,7 @@ set_target_properties(ocr_xsocr_objects PROPERTIES
 )
 
 target_compile_options(ocr_xsocr_objects PRIVATE
-    -O3
+    ${BENCH_C_OPT}
     -Wall
     -Wno-unused-variable
     -Wno-unused-but-set-variable
@@ -54,6 +54,7 @@ target_compile_definitions(ocr_xsocr_objects PRIVATE
     GUID_PROVIDER_LOCID_SIZE=10
     ALLOW_EAGER_DB
     ENABLE_LAZY_DB
+    OCR_MAX_MULTI_SLOT=32
 )
 
 # Static library

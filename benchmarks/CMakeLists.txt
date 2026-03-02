@@ -5,6 +5,13 @@
 #   ocr_shim/  - ARTS-backed OCR compatibility shim
 #   apps/      - OCR benchmark apps built against both backends
 
+# Benchmark optimization flags — controlled by CMAKE_BUILD_TYPE
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(BENCH_C_OPT -O0 -g)
+else()
+    set(BENCH_C_OPT -O3)
+endif()
+
 add_subdirectory(xsocr)
 add_subdirectory(ocr_shim)
 add_subdirectory(apps)

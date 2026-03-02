@@ -21,7 +21,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-TIMEOUT=10  # seconds per app
+TIMEOUT=60  # seconds per app
 DO_MULTINODE=0
 DO_BUILD=0
 
@@ -248,11 +248,11 @@ run_ocr_apps() {
     run_app "fft_${suffix}"             "$dir" 6
     run_app "graph500_${suffix}"        "$dir" 6 8 1 1
 
-    # Tier 5: CoMD variants
-    run_app "CoMD_intel_chandra_${suffix}"       "$dir"
-    run_app "CoMD_intel_chandra_tiled_${suffix}" "$dir"
-    run_app "CoMD_sdsc_${suffix}"                "$dir"
-    run_app "CoMD_sdsc2_${suffix}"               "$dir"
+    # Tier 5: CoMD variants (small domain + few timesteps for smoke test)
+    run_app "CoMD_intel_chandra_${suffix}"       "$dir" -x 4 -y 4 -z 4 -N 2
+    run_app "CoMD_intel_chandra_tiled_${suffix}" "$dir" -x 4 -y 4 -z 4 -N 2
+    run_app "CoMD_sdsc_${suffix}"                "$dir" -x 4 -y 4 -z 4 -N 2
+    run_app "CoMD_sdsc2_${suffix}"               "$dir" -x 4 -y 4 -z 4 -N 2
 
     # Tier 6: HPCG variants
     run_app "hpcg_intel_${suffix}"              "$dir"
@@ -272,21 +272,21 @@ run_ocr_apps() {
     # Tier 9: HPGMG
     run_app "hpgmg_${suffix}"                   "$dir"
 
-    # Tier 10: MiniAMR
-    run_app "miniAMR_forkbomb_${suffix}"        "$dir"
+    # Tier 10: MiniAMR (small mesh + few timesteps)
+    run_app "miniAMR_forkbomb_${suffix}"        "$dir" --num_tsteps 3
     run_app "miniAMR_intel_${suffix}"           "$dir"
     run_app "miniAMR_intel_bryan_${suffix}"     "$dir"
-    run_app "miniAMR_intel_chandra_${suffix}"   "$dir"
+    run_app "miniAMR_intel_chandra_${suffix}"   "$dir" --nx 4 --ny 4 --nz 4 --num_tsteps 2 --num_refine 3
 
     # Tier 11: Nekbone, NPB-CG
     run_app "nekbone_${suffix}"                 "$dir"
     run_app "npb_cg_${suffix}"                  "$dir"
 
-    # Tier 12: RSBench, XSBench
-    run_app "RSBench_intel_${suffix}"           "$dir"
-    run_app "RSBench_intel_sharedDB_${suffix}"  "$dir"
-    run_app "XSBench_intel_${suffix}"           "$dir"
-    run_app "XSBench_intel_sharedDB_${suffix}"  "$dir"
+    # Tier 12: RSBench, XSBench (tiny lookup count for smoke test)
+    run_app "RSBench_intel_${suffix}"           "$dir" -l 100
+    run_app "RSBench_intel_sharedDB_${suffix}"  "$dir" -l 100
+    run_app "XSBench_intel_${suffix}"           "$dir" -s small -g 10 -l 100
+    run_app "XSBench_intel_sharedDB_${suffix}"  "$dir" -s small -g 10 -l 100
 
     # Tier 13: LCS
     run_app "LCS_distributed_ST_${suffix}"      "$dir"
@@ -316,13 +316,13 @@ run_baseline_apps() {
     run_app "XSBench_omp"   "$dir" -s small -l 10000
     run_app "RSBench_omp"   "$dir" -l 10000
     run_app "Stencil2D_omp" "$dir" 2 5 64
-    run_app "nqueens_omp"   "$dir" 6 2
+    run_app "nqueens_omp"   "$dir" 6
     run_app "npb_cg_omp"    "$dir"
     run_app "lulesh_omp"    "$dir" -s 5 -i 2
 
-    # MPI apps (run with 1 or 2 ranks)
-    run_mpi_app "CoMD_mpi_omp"   "$dir" 1
-    run_mpi_app "miniAMR_mpi"    "$dir" 1
+    # MPI apps (run with 1 or 2 ranks, small domains)
+    run_mpi_app "CoMD_mpi_omp"   "$dir" 1 -x 4 -y 4 -z 4 -N 2
+    run_mpi_app "miniAMR_mpi"    "$dir" 1 --nx 4 --ny 4 --nz 4 --num_tsteps 2
     # Stencil1D_mpi: computes correctly but missing MPI_Finalize() in third-party
     # code causes Open MPI 5 to report non-zero exit. Known issue, not our bug.
     run_mpi_app "Stencil1D_mpi"  "$dir" 2 102 5

@@ -353,9 +353,12 @@ void arts_out_of_order_handle_remote_db_send(int rank, arts_guid_t db_guid,
   if (!res) {
     struct arts_db_s *db =
         (struct arts_db_s *)arts_route_table_lookup_db(db_guid, NULL, false);
-    arts_remote_db_send_check(ready_send->rank, db, ready_send->mode);
     if (db) {
+      arts_remote_db_send_check(ready_send->rank, db, ready_send->mode);
       arts_route_table_return_db(db_guid, false);
+    } else {
+      ARTS_DEBUG("OO remote_db_send: DB[Guid:%lu] vanished (DELETE_ITEM race)",
+                 db_guid);
     }
     arts_free(ready_send);
   }
@@ -427,10 +430,14 @@ void arts_out_of_order_handle_remote_db_full_send(arts_guid_t db_guid, int rank,
   if (!res) {
     struct arts_db_s *db =
         (struct arts_db_s *)arts_route_table_lookup_db(db_guid, NULL, false);
-    arts_remote_db_full_send_check(db_send->rank, db, db_send->edt_guid,
-                                   db_send->slot, db_send->mode);
     if (db) {
+      arts_remote_db_full_send_check(db_send->rank, db, db_send->edt_guid,
+                                     db_send->slot, db_send->mode);
       arts_route_table_return_db(db_guid, false);
+    } else {
+      ARTS_DEBUG("OO remote_db_full_send: DB[Guid:%lu] vanished "
+                 "(DELETE_ITEM race)",
+                 db_guid);
     }
     arts_free(db_send);
   }

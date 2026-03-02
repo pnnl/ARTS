@@ -236,8 +236,8 @@ void arts_remote_update_db(arts_guid_t guid, bool send_db) {
     struct arts_remote_guid_only_packet_s packet;
     packet.guid = guid;
     struct arts_db_s *db = NULL;
-    if (send_db &&
-        (db = (struct arts_db_s *)arts_route_table_lookup_db(guid, NULL, false))) {
+    if (send_db && (db = (struct arts_db_s *)arts_route_table_lookup_db(
+                        guid, NULL, false))) {
       if ((db->header.size - sizeof(struct arts_db_s)) == 176128) {
         ARTS_INFO("RemoteUpdateDb SEND DB[Id:%lu, Guid:%lu, Size:%lu] "
                   "from rank %u to rank %u",
@@ -494,8 +494,8 @@ void arts_remote_handle_db_add_dependence_with_byte_offset(void *ptr) {
       (struct arts_remote_db_add_dependence_with_byte_offset_packet_s *)ptr;
 
   /// Look up the local DB
-  struct arts_db_s *db_res =
-      (struct arts_db_s *)arts_route_table_lookup_db(packet->db_src, NULL, false);
+  struct arts_db_s *db_res = (struct arts_db_s *)arts_route_table_lookup_db(
+      packet->db_src, NULL, false);
   if (db_res != NULL) {
     /// DB is local - set mode on EDT, then register byte-offset waiter.
     arts_set_dep_mode(packet->edt_dest, packet->edt_slot, packet->mode);
@@ -531,10 +531,20 @@ void arts_remote_db_decrement_latch(arts_guid_t db) {
 void arts_db_request_callback(struct arts_edt_s *edt, unsigned int slot,
                               struct arts_db_s *db_res) {
   arts_edt_dep_t *depv = (arts_edt_dep_t *)arts_get_depv(edt);
-  /* Acquire a route table ref for this dep slot — matched by
-   * return_db in release_dbs after EDT execution. */
-  arts_route_table_lookup_db(db_res->guid, NULL, false);
-  depv[slot].ptr = db_res + 1;
+  if (db_res) {
+    /* Acquire a route table ref for this dep slot — matched by
+     * return_db in release_dbs after EDT execution. */
+    arts_route_table_lookup_db(db_res->guid, NULL, false);
+    depv[slot].ptr = db_res + 1;
+  } else {
+    /* DB was destroyed between the OO check and the lookup (DELETE_ITEM
+     * race).  Treat this slot as a NULL dependency — the data is gone. */
+    ARTS_WARN("arts_db_request_callback: db_res is NULL for EDT[Guid:%lu] "
+              "slot=%u (DB destroyed during OO resolution)",
+              edt->current_edt, slot);
+    depv[slot].guid = NULL_GUID;
+    depv[slot].ptr = NULL;
+  }
   unsigned int temp = arts_atomic_sub(&edt->depc_needed, 1U);
   if (temp == 0) {
     arts_handle_remote_stolen_edt(edt);
@@ -595,8 +605,8 @@ void arts_remote_db_send(struct arts_remote_db_request_packet_s *pack) {
     arts_remote_send_request_async((int)redirected, (char *)pack,
                                    pack->header.size);
   } else {
-    struct arts_db_s *db =
-        (struct arts_db_s *)arts_route_table_lookup_db(pack->db_guid, NULL, false);
+    struct arts_db_s *db = (struct arts_db_s *)arts_route_table_lookup_db(
+        pack->db_guid, NULL, false);
     if (db == NULL) {
       arts_out_of_order_handle_remote_db_send((int)pack->header.rank,
                                               pack->db_guid, pack->mode);
@@ -760,8 +770,8 @@ void arts_remote_db_full_send(
     arts_remote_send_request_async((int)redirected, (char *)pack,
                                    pack->header.size);
   } else {
-    struct arts_db_s *db =
-        (struct arts_db_s *)arts_route_table_lookup_db(pack->db_guid, NULL, false);
+    struct arts_db_s *db = (struct arts_db_s *)arts_route_table_lookup_db(
+        pack->db_guid, NULL, false);
     if (db == NULL) {
       arts_out_of_order_handle_remote_db_full_send(
           pack->db_guid, (int)pack->header.rank, pack->edt_guid, pack->slot,

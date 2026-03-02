@@ -33,7 +33,7 @@ target_include_directories(ocr_lib_reduction PRIVATE
 )
 target_link_libraries(ocr_lib_reduction PRIVATE ocr_xsocr_static)
 set_target_properties(ocr_lib_reduction PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
-target_compile_options(ocr_lib_reduction PRIVATE -O3 -w)
+target_compile_options(ocr_lib_reduction PRIVATE ${BENCH_C_OPT} -w)
 target_compile_definitions(ocr_lib_reduction PRIVATE ${OCR_EXT_DEFINES})
 
 # --- reductionEager library ---
@@ -48,7 +48,7 @@ target_include_directories(ocr_lib_reductionEager PRIVATE
 )
 target_link_libraries(ocr_lib_reductionEager PRIVATE ocr_xsocr_static)
 set_target_properties(ocr_lib_reductionEager PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
-target_compile_options(ocr_lib_reductionEager PRIVATE -O3 -w)
+target_compile_options(ocr_lib_reductionEager PRIVATE ${BENCH_C_OPT} -w)
 target_compile_definitions(ocr_lib_reductionEager PRIVATE ${OCR_EXT_DEFINES})
 
 # --- timer library (x86) ---
@@ -60,7 +60,7 @@ target_include_directories(ocr_lib_timer PUBLIC
 )
 target_link_libraries(ocr_lib_timer PRIVATE ocr_xsocr_static)
 set_target_properties(ocr_lib_timer PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
-target_compile_options(ocr_lib_timer PRIVATE -O3 -w)
+target_compile_options(ocr_lib_timer PRIVATE ${BENCH_C_OPT} -w)
 target_compile_definitions(ocr_lib_timer PRIVATE ${OCR_EXT_DEFINES})
 
 # --- reduction_v1 library (used by reduction/intel-chandra) ---
@@ -72,7 +72,7 @@ target_include_directories(ocr_lib_reduction_v1 PUBLIC
 )
 target_link_libraries(ocr_lib_reduction_v1 PRIVATE ocr_xsocr_static)
 set_target_properties(ocr_lib_reduction_v1 PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
-target_compile_options(ocr_lib_reduction_v1 PRIVATE -O3 -w)
+target_compile_options(ocr_lib_reduction_v1 PRIVATE ${BENCH_C_OPT} -w)
 target_compile_definitions(ocr_lib_reduction_v1 PRIVATE ${OCR_EXT_DEFINES})
 
 # --- ocrAppUtils library ---
@@ -84,7 +84,7 @@ target_include_directories(ocr_lib_ocrAppUtils PUBLIC
 )
 target_link_libraries(ocr_lib_ocrAppUtils PRIVATE ocr_xsocr_static)
 set_target_properties(ocr_lib_ocrAppUtils PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
-target_compile_options(ocr_lib_ocrAppUtils PRIVATE -O3 -w)
+target_compile_options(ocr_lib_ocrAppUtils PRIVATE ${BENCH_C_OPT} -w)
 target_compile_definitions(ocr_lib_ocrAppUtils PRIVATE ${OCR_EXT_DEFINES})
 
 # ==========================================================================
@@ -149,7 +149,7 @@ function(add_benchmark_app)
         C_STANDARD 11 C_EXTENSIONS ON
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     )
-    target_compile_options(${APP_NAME}_xsocr PRIVATE -O3 -w)
+    target_compile_options(${APP_NAME}_xsocr PRIVATE ${BENCH_C_OPT} -w)
 
     # --- ARTS variant ---
     add_executable(${APP_NAME}_arts ${ABS_SOURCES} ${LIB_OBJECTS})
@@ -161,7 +161,7 @@ function(add_benchmark_app)
         C_STANDARD 11 C_EXTENSIONS ON
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     )
-    target_compile_options(${APP_NAME}_arts PRIVATE -O3 -w)
+    target_compile_options(${APP_NAME}_arts PRIVATE ${BENCH_C_OPT} -w)
 
     # Track for meta target
     set_property(GLOBAL APPEND PROPERTY BENCHMARK_XSOCR_TARGETS ${APP_NAME}_xsocr)
@@ -215,6 +215,7 @@ add_benchmark_app(NAME cache_offset
 add_benchmark_app(NAME highbw
     DIR examples/highbw
     SOURCES highbw.c
+    EXTRA_DEFINES NTHREADS=2 DBSIZE=1024 ITER=2
 )
 
 add_benchmark_app(NAME multigen
@@ -235,6 +236,7 @@ add_benchmark_app(NAME task_priorities
 add_benchmark_app(NAME testlibs
     DIR examples/testlibs
     SOURCES testlibs.c
+    EXTRA_LINK_LIBS m
 )
 
 add_benchmark_app(NAME xeonNumaSize
@@ -255,6 +257,7 @@ add_benchmark_app(NAME dbctrl
 add_benchmark_app(NAME prodcon
     DIR kernels/prodcon/ocr
     SOURCES prodcon.c
+    EXTRA_DEFINES NUM_THREADS=4 ARRAY_SIZE=4096 NTIMES=3
 )
 
 add_benchmark_app(NAME curvefit
@@ -280,6 +283,7 @@ add_benchmark_app(NAME tempest
 add_benchmark_app(NAME cholesky
     DIR cholesky/ocr
     SOURCES cholesky.c
+    EXTRA_LINK_LIBS m
 )
 
 add_benchmark_app(NAME fft
@@ -291,7 +295,7 @@ add_benchmark_app(NAME fft
 add_benchmark_app(NAME graph500
     DIR graph500
     SOURCES graph500.c
-    EXTRA_DEFINES NO_FILES
+    EXTRA_DEFINES NO_FILES NO_MAP
     EXTRA_LINK_LIBS m
 )
 
@@ -454,6 +458,7 @@ add_benchmark_app(NAME hpgmg
 add_benchmark_app(NAME miniAMR_forkbomb
     DIR miniAMR/refactored/ocr/forkbomb
     SOURCES mainOCR.c
+    EXTRA_DEFINES FORKBOMB_MAX_TIMESTEPS=3
     EXTRA_LINK_LIBS m
 )
 
@@ -548,6 +553,9 @@ add_benchmark_app(NAME LCS_distributed_ST
     LIBS reduction timer
     EXTRA_LINK_LIBS m
 )
+# LCS uses bare "inline" (C11 = no external def) → fails at -O0; force GNU89 semantics
+target_compile_options(LCS_distributed_ST_xsocr PRIVATE -fgnu89-inline)
+target_compile_options(LCS_distributed_ST_arts PRIVATE -fgnu89-inline)
 
 add_benchmark_app(NAME LCS_shared
     DIR LCS/refactored/ocr/intel-jesmin-lcs_shared_datablocks
@@ -555,6 +563,8 @@ add_benchmark_app(NAME LCS_shared
     LIBS reduction timer
     EXTRA_LINK_LIBS m
 )
+target_compile_options(LCS_shared_xsocr PRIVATE -fgnu89-inline)
+target_compile_options(LCS_shared_arts PRIVATE -fgnu89-inline)
 
 # Note: LCS/intel-jesmin-lcs_all_db_distributed uses C++ (lcs_distributed.cpp)
 # Skipped for now — requires C++ OCR wrapper support
@@ -685,7 +695,7 @@ if(EXISTS "${CRLIBM_DIR}/crlibm.h")
     target_include_directories(ocr_lib_crlibm PUBLIC ${CRLIBM_DIR})
     set_target_properties(ocr_lib_crlibm PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
     target_compile_definitions(ocr_lib_crlibm PRIVATE HAVE_CONFIG_H)
-    target_compile_options(ocr_lib_crlibm PRIVATE -O3 -w)
+    target_compile_options(ocr_lib_crlibm PRIVATE ${BENCH_C_OPT} -w)
     # crlibm needs scs_lib
     set(SCS_DIR "${CRLIBM_DIR}/scs_lib")
     if(EXISTS "${SCS_DIR}")
@@ -748,13 +758,27 @@ endif()
 #   datagen → .bin files → dataImage → .c files → compiled into data objects
 # All generated artifacts go into the build directory.
 #
-# Fallback: if pre-compiled .o files exist in datasets/<size>/x86/, they are
-# used directly (avoids OOM on large Data.c which requires >16GB RAM to compile).
+# Per-file data object resolution for RAG_IMPLICIT_INPUTS sizes:
+#   1. .o exists in datasets/<size>/x86/ → copy to build dir (fastest)
+#   2. .c exists but .o missing → compile once, cache .o back to datasets dir
+#   3. Neither → full pipeline: .bin → dataImage → .c → compile .o
 if(HAS_CRLIBM)
     set(SAR_IMPLICIT_SIZES tiny small medium large)
 
+    # Helper script for dataImage invocation (handles stdin/stdout redirection)
+    set(_dataimage_script "${CMAKE_CURRENT_BINARY_DIR}/sar_run_dataimage.sh")
+    file(WRITE "${_dataimage_script}"
+        "#!/bin/sh\nset -e\n"
+        "# Usage: sar_run_dataimage.sh <dataImage> <type_index> <input.bin> <output.c>\n"
+        "\"$1\" \"$2\" < \"$3\" > \"$4\"\n"
+    )
+
+    # dataImage type indices per data file
+    set(_dataimage_idx_Data 1)
+    set(_dataimage_idx_PlatformPosition 2)
+    set(_dataimage_idx_PulseTransmissionTime 3)
+
     foreach(sar_size ${SAR_IMPLICIT_SIZES})
-        set(_datagen_dir "${SAR_ROOT}/datagen-tsml/${sar_size}")
         set(_ocr_size_dir "${SAR_ROOT}/ocr/${sar_size}")
         set(_data_build_dir "${CMAKE_CURRENT_BINARY_DIR}/sar_data/${sar_size}")
         set(_datasets_dir "${SAR_DATASETS_DIR}/${sar_size}")
@@ -762,106 +786,61 @@ if(HAS_CRLIBM)
 
         file(MAKE_DIRECTORY "${_data_build_dir}")
 
-        # Check for pre-compiled .o files (fallback for large datasets)
         set(_data_names Data PlatformPosition PulseTransmissionTime)
-        set(_all_prebuilt TRUE)
+        set(_data_objects "")
+
         foreach(_name ${_data_names})
-            if(NOT EXISTS "${_prebuilt_dir}/${_name}.o")
-                set(_all_prebuilt FALSE)
+            set(_build_o "${_data_build_dir}/${_name}.o")
+
+            if(EXISTS "${_prebuilt_dir}/${_name}.o")
+                # Case 1: Pre-built .o exists → copy to build directory
+                add_custom_command(
+                    OUTPUT "${_build_o}"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${_prebuilt_dir}/${_name}.o" "${_build_o}"
+                    DEPENDS "${_prebuilt_dir}/${_name}.o"
+                    COMMENT "SAR: Copying pre-built ${sar_size}/${_name}.o"
+                )
+            elseif(EXISTS "${_prebuilt_dir}/${_name}.c")
+                # Case 2: .c exists but .o missing → compile once, cache to datasets dir
+                message(STATUS "SAR: ${sar_size}/${_name}.o missing — will compile from .c (one-time)")
+                add_custom_command(
+                    OUTPUT "${_build_o}"
+                    COMMAND ${CMAKE_C_COMPILER} -std=c11 -O0 -w -c
+                        -o "${_build_o}" "${_prebuilt_dir}/${_name}.c"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${_build_o}" "${_prebuilt_dir}/${_name}.o"
+                    DEPENDS "${_prebuilt_dir}/${_name}.c"
+                    COMMENT "SAR: Compiling ${sar_size}/${_name}.c → .o (one-time, caching to datasets dir)..."
+                )
+            else()
+                # Case 3: No prebuilt files → generate from .bin via full pipeline
+                add_custom_command(
+                    OUTPUT "${_data_build_dir}/${_name}.c"
+                    COMMAND sh "${_dataimage_script}"
+                        "$<TARGET_FILE:sar_dataImage>"
+                        "${_dataimage_idx_${_name}}"
+                        "${_datasets_dir}/${_name}.bin"
+                        "${_data_build_dir}/${_name}.c"
+                    WORKING_DIRECTORY "${_ocr_size_dir}"
+                    DEPENDS sar_dataImage "${_datasets_dir}/${_name}.bin"
+                    COMMENT "SAR: Converting ${sar_size}/${_name}.bin → .c via dataImage..."
+                )
+                add_custom_command(
+                    OUTPUT "${_build_o}"
+                    COMMAND ${CMAKE_C_COMPILER} -std=c11 -O0 -w -c
+                        -o "${_build_o}" "${_data_build_dir}/${_name}.c"
+                    DEPENDS "${_data_build_dir}/${_name}.c"
+                    COMMENT "SAR: Compiling generated ${sar_size}/${_name}.c → .o..."
+                )
             endif()
+
+            list(APPEND _data_objects "${_build_o}")
         endforeach()
 
-        if(_all_prebuilt)
-            # Use pre-compiled .o files directly (avoids OOM on large Data.c)
-            message(STATUS "SAR: Using pre-compiled data objects for ${sar_size}")
-            # Copy .o files to build dir so they can be linked
-            foreach(_name ${_data_names})
-                add_custom_command(
-                    OUTPUT "${_data_build_dir}/${_name}.o"
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${_prebuilt_dir}/${_name}.o" "${_data_build_dir}/${_name}.o"
-                    DEPENDS "${_prebuilt_dir}/${_name}.o"
-                    COMMENT "SAR: Copying pre-built ${sar_size}/${_name}.o..."
-                )
-            endforeach()
-            # Custom target to trigger the copies
-            add_custom_target(sar_data_${sar_size}_objs
-                DEPENDS
-                "${_data_build_dir}/Data.o"
-                "${_data_build_dir}/PlatformPosition.o"
-                "${_data_build_dir}/PulseTransmissionTime.o"
-            )
-            # Record paths for linking
-            set(SAR_DATA_${sar_size}_OBJECTS
-                "${_data_build_dir}/Data.o"
-                "${_data_build_dir}/PlatformPosition.o"
-                "${_data_build_dir}/PulseTransmissionTime.o"
-            )
-            set(SAR_DATA_${sar_size}_IS_PREBUILT TRUE)
-        else()
-            # Full pipeline: generate .c from .bin, compile to .o
-            message(STATUS "SAR: Building data objects from source for ${sar_size}")
-
-            # Step 3a: Copy .bin files from datasets
-            add_custom_command(
-                OUTPUT
-                "${_data_build_dir}/Data.bin"
-                "${_data_build_dir}/PlatformPosition.bin"
-                "${_data_build_dir}/PulseTransmissionTime.bin"
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${_datasets_dir}/Data.bin" "${_data_build_dir}/Data.bin"
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${_datasets_dir}/PlatformPosition.bin" "${_data_build_dir}/PlatformPosition.bin"
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${_datasets_dir}/PulseTransmissionTime.bin" "${_data_build_dir}/PulseTransmissionTime.bin"
-                DEPENDS
-                "${_datasets_dir}/Data.bin"
-                "${_datasets_dir}/PlatformPosition.bin"
-                "${_datasets_dir}/PulseTransmissionTime.bin"
-                COMMENT "SAR: Copying ${sar_size} dataset .bin files..."
-            )
-
-            # Step 3b: Convert .bin → .c via dataImage
-            set(_gen_script "${_data_build_dir}/gen_data.sh")
-            file(WRITE "${_gen_script}"
-                "#!/bin/sh\nset -e\n"
-                "DATAIMAGE=\"$1\"\nBUILD=\"$2\"\n"
-                "\"$DATAIMAGE\" 1 < \"$BUILD/Data.bin\" > \"$BUILD/Data.c\"\n"
-                "\"$DATAIMAGE\" 2 < \"$BUILD/PlatformPosition.bin\" > \"$BUILD/PlatformPosition.c\"\n"
-                "\"$DATAIMAGE\" 3 < \"$BUILD/PulseTransmissionTime.bin\" > \"$BUILD/PulseTransmissionTime.c\"\n"
-            )
-            add_custom_command(
-                OUTPUT
-                "${_data_build_dir}/Data.c"
-                "${_data_build_dir}/PlatformPosition.c"
-                "${_data_build_dir}/PulseTransmissionTime.c"
-                COMMAND sh "${_gen_script}"
-                "$<TARGET_FILE:sar_dataImage>" "${_data_build_dir}"
-                WORKING_DIRECTORY "${_ocr_size_dir}"
-                DEPENDS
-                sar_dataImage
-                "${_data_build_dir}/Data.bin"
-                "${_data_build_dir}/PlatformPosition.bin"
-                "${_data_build_dir}/PulseTransmissionTime.bin"
-                COMMENT "SAR: Converting ${sar_size} .bin → .c via dataImage..."
-            )
-
-            # Step 3c: Compile data .c → .o as OBJECT library
-            add_library(sar_data_${sar_size} OBJECT
-                "${_data_build_dir}/Data.c"
-                "${_data_build_dir}/PlatformPosition.c"
-                "${_data_build_dir}/PulseTransmissionTime.c"
-            )
-            set_source_files_properties(
-                "${_data_build_dir}/Data.c"
-                "${_data_build_dir}/PlatformPosition.c"
-                "${_data_build_dir}/PulseTransmissionTime.c"
-                PROPERTIES GENERATED TRUE
-            )
-            target_compile_options(sar_data_${sar_size} PRIVATE -O0 -w)
-            set_target_properties(sar_data_${sar_size} PROPERTIES C_STANDARD 11)
-            set(SAR_DATA_${sar_size}_IS_PREBUILT FALSE)
-        endif()
+        # Custom target to trigger all data object builds for this size
+        add_custom_target(sar_data_${sar_size}_objs DEPENDS ${_data_objects})
+        set(SAR_DATA_${sar_size}_OBJECTS ${_data_objects})
     endforeach()
 endif()
 
@@ -903,22 +882,13 @@ if(HAS_CRLIBM)
             EXTRA_DEFINES ${SAR_SIZE_DEFINES}
             EXTRA_LINK_LIBS m ocr_lib_crlibm
         )
-        # Link the compiled data objects for this size
-        if(SAR_DATA_${sar_size}_IS_PREBUILT)
-            # Pre-compiled .o files — link directly and add dependency
-            target_link_libraries(sar_${sar_size}_xsocr PRIVATE
-                ${SAR_DATA_${sar_size}_OBJECTS})
-            target_link_libraries(sar_${sar_size}_arts PRIVATE
-                ${SAR_DATA_${sar_size}_OBJECTS})
-            add_dependencies(sar_${sar_size}_xsocr sar_data_${sar_size}_objs)
-            add_dependencies(sar_${sar_size}_arts sar_data_${sar_size}_objs)
-        else()
-            # OBJECT library from compiled .c sources
-            target_link_libraries(sar_${sar_size}_xsocr PRIVATE
-                $<TARGET_OBJECTS:sar_data_${sar_size}>)
-            target_link_libraries(sar_${sar_size}_arts PRIVATE
-                $<TARGET_OBJECTS:sar_data_${sar_size}>)
-        endif()
+        # Link data objects for this size
+        target_link_libraries(sar_${sar_size}_xsocr PRIVATE
+            ${SAR_DATA_${sar_size}_OBJECTS})
+        target_link_libraries(sar_${sar_size}_arts PRIVATE
+            ${SAR_DATA_${sar_size}_OBJECTS})
+        add_dependencies(sar_${sar_size}_xsocr sar_data_${sar_size}_objs)
+        add_dependencies(sar_${sar_size}_arts sar_data_${sar_size}_objs)
     endforeach()
 
     # --- Runtime-input sizes (huge, problem_size_scaling) ---
@@ -943,6 +913,7 @@ endif()
 add_benchmark_app(NAME stream
     DIR stream/ocr
     SOURCES stream.c
+    EXTRA_DEFINES STREAM_ARRAY_SIZE=1000 NUM_THREADS=2 NTIMES=3
     EXTRA_LINK_LIBS pthread m
 )
 # stream.c has functions used before declaration (C11 error) — allow it

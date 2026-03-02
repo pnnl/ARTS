@@ -108,7 +108,7 @@ arts_guid_t *arts_check_epoch_is_root(arts_guid_t to_check) {
 
 void arts_track_created_db(arts_guid_t guid) {
   if (!created_db_list) {
-    created_db_list = arts_new_array_list(sizeof(arts_guid_t), 8);
+    created_db_list = arts_new_array_list(sizeof(arts_guid_t), 65536);
   }
   arts_push_to_array_list(created_db_list, &guid);
 }

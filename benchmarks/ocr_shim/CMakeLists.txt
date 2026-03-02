@@ -14,7 +14,7 @@ set_target_properties(ocr_arts_objects PROPERTIES
 )
 
 target_compile_options(ocr_arts_objects PRIVATE
-    -O3
+    ${BENCH_C_OPT}
     -Wall
     -Wno-unused-variable
     -Wno-unused-function

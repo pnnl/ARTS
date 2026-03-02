@@ -59,8 +59,8 @@
 
 /* --- ARTS headers second --- */
 #include "arts.h"
+#include "arts/compute/edt.h"
 #include "arts/gas/route_table.h"
-#include "arts/runtime_types.h"
 #include "arts/system/threads.h"
 #include "arts/utils/malloc.h"
 
@@ -75,7 +75,8 @@
 #undef DB_MODE_LC_NO_COPY
 #undef DB_MODE_MEMSET
 
-/* ARTS DB_MODE values we need (sequential: RO=1, EW=2) */
+/* ARTS DB_MODE values we need (sequential: NULL=0, RO=1, EW=2) */
+#define ARTS_MODE_NULL ((arts_db_access_mode_t)ARTS_DB_MODE_NULL_)
 #define ARTS_MODE_RO ((arts_db_access_mode_t)ARTS_DB_MODE_RO_)
 #define ARTS_MODE_EW ((arts_db_access_mode_t)ARTS_DB_MODE_EW_)
 
@@ -99,7 +100,7 @@ static inline void ocr_copy_paramv(uint64_t *dst, const u64 *src, u32 paramc) {
   }
 }
 
-#if defined(__SANITIZE_ADDRESS__) || \
+#if defined(__SANITIZE_ADDRESS__) ||                                           \
     (defined(__has_feature) && __has_feature(address_sanitizer))
 /* Under ASAN, suppress the harmless stack overread from struct-to-u64* casts.
  * This matches the original OCR runtime's behavior exactly.
@@ -245,8 +246,8 @@ static CollectiveMapEntry collectiveMetaMap[COLLECTIVE_HASH_SIZE] = {{0, 0}};
  * Channel Event Support
  * ========================================================================= */
 
-#define CHANNEL_HASH_SIZE 4096
-#define CHANNEL_QUEUE_SIZE 2048
+#define CHANNEL_HASH_SIZE 131072
+#define CHANNEL_DEFAULT_QUEUE_SIZE 8
 
 typedef struct {
   arts_guid_t eventGuid;
@@ -257,12 +258,14 @@ typedef struct {
   arts_guid_t channelGuid;
   volatile u32 satisfyGen;
   volatile u32 consumeGen;
-  ChannelQueueEntry queue[CHANNEL_QUEUE_SIZE];
+  ChannelQueueEntry *queue;
+  u32 queueSize;
   pthread_mutex_t lock;
 } ChannelMetadata;
 
 static ChannelMetadata channelMetaMap[CHANNEL_HASH_SIZE];
 static volatile int channelMapInitialized = 0;
+static volatile int channelMapHasEntries = 0;
 
 static void initChannelMap(void) {
   if (__sync_bool_compare_and_swap(&channelMapInitialized, 0, 1)) {
@@ -270,10 +273,8 @@ static void initChannelMap(void) {
       channelMetaMap[i].channelGuid = NULL_GUID;
       channelMetaMap[i].satisfyGen = 0;
       channelMetaMap[i].consumeGen = 0;
-      for (u32 j = 0; j < CHANNEL_QUEUE_SIZE; j++) {
-        channelMetaMap[i].queue[j].eventGuid = NULL_GUID;
-        channelMetaMap[i].queue[j].generation = (u32)-1;
-      }
+      channelMetaMap[i].queue = NULL;
+      channelMetaMap[i].queueSize = 0;
       pthread_mutex_init(&channelMetaMap[i].lock, NULL);
     }
   }
@@ -284,9 +285,12 @@ static u32 channelHash(arts_guid_t guid) {
   return (u32)(val % CHANNEL_HASH_SIZE);
 }
 
-static void registerChannelEvent(arts_guid_t channelGuid) {
+static void registerChannelEvent(arts_guid_t channelGuid, u32 maxGen) {
   initChannelMap();
   u32 idx = channelHash(channelGuid);
+  u32 qSize = (maxGen > CHANNEL_DEFAULT_QUEUE_SIZE)
+                  ? maxGen
+                  : CHANNEL_DEFAULT_QUEUE_SIZE;
   for (u32 i = 0; i < CHANNEL_HASH_SIZE; i++) {
     u32 probeIdx = (idx + i) % CHANNEL_HASH_SIZE;
     pthread_mutex_lock(&channelMetaMap[probeIdx].lock);
@@ -295,6 +299,15 @@ static void registerChannelEvent(arts_guid_t channelGuid) {
       channelMetaMap[probeIdx].channelGuid = channelGuid;
       channelMetaMap[probeIdx].satisfyGen = 0;
       channelMetaMap[probeIdx].consumeGen = 0;
+      channelMetaMap[probeIdx].queue =
+          (ChannelQueueEntry *)calloc(qSize, sizeof(ChannelQueueEntry));
+      channelMetaMap[probeIdx].queueSize = qSize;
+      for (u32 j = 0; j < qSize; j++) {
+        channelMetaMap[probeIdx].queue[j].eventGuid = NULL_GUID;
+        channelMetaMap[probeIdx].queue[j].generation = (u32)-1;
+      }
+      __sync_synchronize();
+      channelMapHasEntries = 1;
       pthread_mutex_unlock(&channelMetaMap[probeIdx].lock);
       return;
     }
@@ -322,14 +335,14 @@ static ChannelMetadata *getChannelMeta(arts_guid_t channelGuid) {
 }
 
 static bool isChannelEvent(arts_guid_t guid) {
-  if (guid == NULL_GUID) {
+  if (!channelMapHasEntries || guid == NULL_GUID) {
     return false;
   }
   return getChannelMeta(guid) != NULL;
 }
 
 static arts_guid_t ensureEventForGen(ChannelMetadata *meta, u32 gen) {
-  u32 idx = gen % CHANNEL_QUEUE_SIZE;
+  u32 idx = gen % meta->queueSize;
 
   if (meta->queue[idx].generation != gen) {
     meta->queue[idx].eventGuid =
@@ -493,6 +506,21 @@ static void ocr_edt_trampoline(uint32_t paramc, const uint64_t *paramv,
   }
 
   if (isFinishEdt && guidOrEpoch != NULL_GUID) {
+    /* Push the finish epoch onto the TLS stack and increment active_count.
+     *
+     * arts_edt_create_with_epoch() does NOT assign the finish epoch to
+     * edt->epoch_guid — because the epoch was just created in ocrEdtCreate()
+     * and is NOT on the caller's TLS stack, arts_check_epoch_is_root() fails,
+     * and the EDT gets the caller's epoch instead (often NULL_GUID).
+     *
+     * arts_start_epoch() must be called here to:
+     *   (a) push the finish epoch onto TLS so child EDTs inherit it, and
+     *   (b) increment active_count by 1, matching the +1 finished_count
+     *       that arts_increment_finished_epoch_list() adds for this entry
+     *       when the trampoline EDT completes.
+     *
+     * Net accounting: active = 1 (this call) + N (children), finished =
+     * 1 (this TLS entry) + N (children) → epoch fires when all complete. */
     arts_start_epoch(guidOrEpoch);
   }
 
@@ -518,19 +546,26 @@ static void ocr_edt_trampoline(uint32_t paramc, const uint64_t *paramv,
 }
 
 /*
- * Helper EDT for event->event dependencies.
- * ARTS's arts_add_dependence for event->event uses slot 0 which is invalid
- * for latch events. This helper receives the signal from the source event
- * and properly satisfies the destination event using LATCH_DECR_SLOT.
+ * Relay EDT for event→channel-event dependencies.
+ *
+ * When a regular event fires into a channel event destination, we cannot use
+ * raw arts_event_satisfy_slot — that bypasses the channel's generation
+ * sequencing (channelSatisfy).  This relay EDT calls channelSatisfy to
+ * properly advance the generation counter so that channel consumers see
+ * the satisfaction in the correct order.
  */
-static void event_relay_edt(uint32_t paramc, const uint64_t *paramv,
-                            uint32_t depc, arts_edt_dep_t depv[]) {
+static void channel_relay_edt(uint32_t paramc, const uint64_t *paramv,
+                              uint32_t depc, arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;
 
-  arts_guid_t destEventGuid = (arts_guid_t)paramv[0];
+  arts_guid_t channelGuid = (arts_guid_t)paramv[0];
   arts_guid_t dataGuid = (depc > 0) ? depv[0].guid : NULL_GUID;
-  arts_event_satisfy_slot(destEventGuid, dataGuid, ARTS_EVENT_LATCH_DECR_SLOT);
+
+  ChannelMetadata *meta = getChannelMeta(channelGuid);
+  if (meta != NULL) {
+    channelSatisfy(meta, dataGuid);
+  }
 }
 
 /* =========================================================================
@@ -666,7 +701,7 @@ u8 ocrEdtCreate(ocrGuid_t *guid, ocrGuid_t templateGuid, u32 paramc,
         if (guidType == ARTS_DB) {
           arts_signal_edt(edtGuid, i, depv[i].guid, ARTS_MODE_RO);
         } else {
-          arts_add_dependence(depv[i].guid, edtGuid, i, ARTS_MODE_EW);
+          arts_add_dependence(depv[i].guid, edtGuid, i, ARTS_MODE_RO);
         }
       }
     }
@@ -719,7 +754,7 @@ u8 ocrEventCreate(ocrGuid_t *guid, ocrEventTypes_t eventType, u16 properties) {
       return OCR_EGUIDEXISTS;
     }
     if (eventType == OCR_EVENT_CHANNEL_T) {
-      registerChannelEvent(guid->guid);
+      registerChannelEvent(guid->guid, CHANNEL_DEFAULT_QUEUE_SIZE);
     }
     return 0;
   }
@@ -727,7 +762,7 @@ u8 ocrEventCreate(ocrGuid_t *guid, ocrEventTypes_t eventType, u16 properties) {
   if (eventType == OCR_EVENT_CHANNEL_T) {
     guid->guid =
         arts_event_create(arts_global_rank_id, ARTS_EVENT_IDEM, 1, NULL_GUID);
-    registerChannelEvent(guid->guid);
+    registerChannelEvent(guid->guid, CHANNEL_DEFAULT_QUEUE_SIZE);
   } else {
     guid->guid = arts_event_create(arts_global_rank_id, artsEvtType, latchCount,
                                    NULL_GUID);
@@ -841,6 +876,28 @@ u8 ocrEventCreateParams(ocrGuid_t *guid, ocrEventTypes_t eventType,
 
     tryRegisterCollectiveMeta(metaDb, metaDb);
     guid->guid = metaDb;
+    return 0;
+  }
+
+  if (eventType == OCR_EVENT_CHANNEL_T && params != NULL) {
+    u32 maxGen = params->EVENT_CHANNEL.maxGen;
+    u32 qSize = (maxGen > CHANNEL_DEFAULT_QUEUE_SIZE)
+                    ? maxGen
+                    : CHANNEL_DEFAULT_QUEUE_SIZE;
+
+    if (properties & GUID_PROP_IS_LABELED) {
+      arts_guid_t result = arts_event_create_with_guid(
+          guid->guid, ARTS_EVENT_IDEM, 1, NULL_GUID);
+      if (result == NULL_GUID && (properties & GUID_PROP_CHECK)) {
+        return OCR_EGUIDEXISTS;
+      }
+      registerChannelEvent(guid->guid, qSize);
+      return 0;
+    }
+
+    guid->guid =
+        arts_event_create(arts_global_rank_id, ARTS_EVENT_IDEM, 1, NULL_GUID);
+    registerChannelEvent(guid->guid, qSize);
     return 0;
   }
 
@@ -982,8 +1039,15 @@ u8 ocrAddDependence(ocrGuid_t source, ocrGuid_t destination, u32 slot,
     if (dstType == ARTS_EDT) {
       arts_signal_edt_value(destination.guid, slot, 0);
     } else if (dstType == ARTS_EVENT) {
-      arts_event_satisfy_slot(destination.guid, NULL_GUID,
-                              ARTS_EVENT_LATCH_DECR_SLOT);
+      if (isChannelEvent(destination.guid)) {
+        ChannelMetadata *dstMeta = getChannelMeta(destination.guid);
+        if (dstMeta != NULL) {
+          channelSatisfy(dstMeta, NULL_GUID);
+        }
+      } else {
+        arts_event_satisfy_slot(destination.guid, NULL_GUID,
+                                ARTS_EVENT_LATCH_DECR_SLOT);
+      }
     }
     return 0;
   }
@@ -996,11 +1060,16 @@ u8 ocrAddDependence(ocrGuid_t source, ocrGuid_t destination, u32 slot,
     if (dstType == ARTS_EDT) {
       arts_add_dependence(evtGuid, destination.guid, slot, arts_mode);
     } else if (dstType == ARTS_EVENT) {
-      uint64_t helperParamv[1] = {(uint64_t)destination.guid};
-      arts_hint_t h = {.route = arts_global_rank_id};
-      arts_guid_t helperEdt =
-          arts_edt_create(event_relay_edt, 1, helperParamv, 1, &h);
-      arts_add_dependence(evtGuid, helperEdt, 0, arts_mode);
+      if (isChannelEvent(destination.guid)) {
+        uint64_t relayParamv[1] = {(uint64_t)destination.guid};
+        arts_hint_t h = {.route = arts_global_rank_id};
+        arts_guid_t relayEdt =
+            arts_edt_create(channel_relay_edt, 1, relayParamv, 1, &h);
+        arts_add_dependence(evtGuid, relayEdt, 0, ARTS_MODE_NULL);
+      } else {
+        arts_add_dependence(evtGuid, destination.guid,
+                            ARTS_EVENT_LATCH_DECR_SLOT, ARTS_MODE_NULL);
+      }
     }
     return 0;
   }
@@ -1010,25 +1079,46 @@ u8 ocrAddDependence(ocrGuid_t source, ocrGuid_t destination, u32 slot,
 
   if (srcType == ARTS_DB) {
     if (dstType == ARTS_EDT) {
-      arts_signal_edt(destination.guid, slot, source.guid, arts_mode);
+      /* Always use RO — OCR's access mode is a programmer hint, not a
+       * runtime enforcement directive.  Using EW here would enter the CDAG
+       * frontier during acquire_dbs(), causing resource deadlocks when
+       * multiple EDTs share overlapping DBs (e.g., CoMD schedule arrays).
+       * This matches the ocrEdtCreate depv path (line 727) which also
+       * uses ARTS_MODE_RO for DB dependencies. */
+      arts_signal_edt(destination.guid, slot, source.guid, ARTS_MODE_RO);
     } else if (dstType == ARTS_EVENT) {
-      arts_event_satisfy_slot(destination.guid, source.guid,
-                              ARTS_EVENT_LATCH_DECR_SLOT);
+      if (isChannelEvent(destination.guid)) {
+        ChannelMetadata *dstMeta = getChannelMeta(destination.guid);
+        if (dstMeta != NULL) {
+          channelSatisfy(dstMeta, source.guid);
+        }
+      } else {
+        arts_event_satisfy_slot(destination.guid, source.guid,
+                                ARTS_EVENT_LATCH_DECR_SLOT);
+      }
     }
   } else if (dstType == ARTS_EDT) {
-    arts_add_dependence(source.guid, destination.guid, slot, arts_mode);
+    /* Always use RO for event→EDT deps — same rationale as DB→EDT above.
+     * When the event fires and carries a DB GUID payload, acquire_dbs()
+     * would attempt EW access on the delivered DB if we passed arts_mode
+     * through.  Multiple EDTs sharing overlapping DBs via reduction
+     * events then deadlock in the CDAG frontier. */
+    arts_add_dependence(source.guid, destination.guid, slot, ARTS_MODE_RO);
   } else if (dstType == ARTS_EVENT) {
-    struct arts_event_s *srcEvent =
-        (struct arts_event_s *)arts_route_table_lookup_item(source.guid);
-    if (srcEvent && srcEvent->fired) {
-      arts_event_satisfy_slot(destination.guid, srcEvent->data,
-                              ARTS_EVENT_LATCH_DECR_SLOT);
-    } else {
-      uint64_t helperParamv[1] = {(uint64_t)destination.guid};
+    if (isChannelEvent(destination.guid)) {
+      /* Destination is a channel event — relay through channelSatisfy
+       * to properly advance the generation counter.  Direct
+       * arts_event_satisfy_slot would fire the root IDEM event, bypassing
+       * channel generation sequencing. */
+      uint64_t relayParamv[1] = {(uint64_t)destination.guid};
       arts_hint_t h = {.route = arts_global_rank_id};
-      arts_guid_t helperEdt =
-          arts_edt_create(event_relay_edt, 1, helperParamv, 1, &h);
-      arts_add_dependence(source.guid, helperEdt, 0, arts_mode);
+      arts_guid_t relayEdt =
+          arts_edt_create(channel_relay_edt, 1, relayParamv, 1, &h);
+      arts_add_dependence(source.guid, relayEdt, 0, ARTS_MODE_NULL);
+    } else {
+      /* Regular event→event: ARTS natively handles this. */
+      arts_add_dependence(source.guid, destination.guid,
+                          ARTS_EVENT_LATCH_DECR_SLOT, ARTS_MODE_NULL);
     }
   }
   return 0;

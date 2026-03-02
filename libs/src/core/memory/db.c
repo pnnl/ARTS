@@ -93,7 +93,8 @@ static void arts_db_auto_acquire(struct arts_db_s *db) {
     struct arts_db_list_s *db_list = (struct arts_db_list_s *)db->db_list;
     arts_atomic_fetch_or(&db_list->head->lock, WRITE_SET);
   }
-  arts_event_satisfy_slot(db->event_guid, NULL_GUID, ARTS_EVENT_LATCH_INCR_SLOT);
+  arts_event_satisfy_slot(db->event_guid, NULL_GUID,
+                          ARTS_EVENT_LATCH_INCR_SLOT);
   arts_track_created_db(db->guid);
 }
 
@@ -432,7 +433,8 @@ void arts_db_increment_latch(arts_guid_t guid) {
   struct arts_db_s *db_res =
       (struct arts_db_s *)arts_route_table_lookup_db(guid, NULL, false);
   if (db_res != NULL) {
-    arts_event_satisfy_slot(db_res->event_guid, NULL_GUID, ARTS_EVENT_LATCH_INCR_SLOT);
+    arts_event_satisfy_slot(db_res->event_guid, NULL_GUID,
+                            ARTS_EVENT_LATCH_INCR_SLOT);
     arts_route_table_return_db(guid, false);
   } else {
     arts_remote_db_increment_latch(guid);
@@ -443,7 +445,8 @@ void arts_db_decrement_latch(arts_guid_t guid) {
   struct arts_db_s *db_res =
       (struct arts_db_s *)arts_route_table_lookup_db(guid, NULL, false);
   if (db_res != NULL) {
-    arts_event_satisfy_slot(db_res->event_guid, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+    arts_event_satisfy_slot(db_res->event_guid, NULL_GUID,
+                            ARTS_EVENT_LATCH_DECR_SLOT);
     arts_route_table_return_db(guid, false);
   } else {
     arts_remote_db_decrement_latch(guid);
@@ -759,7 +762,6 @@ void release_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu) {
         access_mode != DB_MODE_VALUE && depv[i].ptr) {
       arts_route_table_return_db(depv[i].guid, false);
     }
-
   }
 }
 
@@ -782,8 +784,8 @@ void arts_db_release(arts_guid_t guid) {
   arts_array_list_t *list = arts_get_created_db_list();
   if (list) {
     uint64_t count = arts_length_array_list(list);
-    for (uint64_t i = 0; i < count; i++) {
-      arts_guid_t *g = (arts_guid_t *)arts_get_from_array_list(list, i);
+    for (uint64_t i = count; i > 0; i--) {
+      arts_guid_t *g = (arts_guid_t *)arts_get_from_array_list(list, i - 1);
       if (*g == guid) {
         *g = NULL_GUID;
         struct arts_db_s *db =
@@ -792,7 +794,8 @@ void arts_db_release(arts_guid_t guid) {
           if (db->db_list) {
             arts_progress_frontier(db, arts_global_rank_id);
           }
-          arts_event_satisfy_slot(db->event_guid, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+          arts_event_satisfy_slot(db->event_guid, NULL_GUID,
+                                  ARTS_EVENT_LATCH_DECR_SLOT);
           arts_route_table_return_db(guid, false);
         }
         return;
@@ -859,7 +862,8 @@ void arts_release_created_dbs(void) {
       if (db->db_list) {
         arts_progress_frontier(db, arts_global_rank_id);
       }
-      arts_event_satisfy_slot(db->event_guid, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+      arts_event_satisfy_slot(db->event_guid, NULL_GUID,
+                              ARTS_EVENT_LATCH_DECR_SLOT);
       arts_route_table_return_db(*guid, false);
     }
   }
