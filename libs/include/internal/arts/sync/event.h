@@ -53,6 +53,7 @@ bool arts_event_create_internal(arts_guid_t *guid, unsigned int route,
 void arts_event_free(struct arts_event_s *event);
 
 bool arts_event_create_channel_internal(arts_guid_t *guid, unsigned int route,
+                                        unsigned int latch_count,
                                         arts_guid_t data_guid);
 
 /* Internal channel-event dependence helpers (not public API). */

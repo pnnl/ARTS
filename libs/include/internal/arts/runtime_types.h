@@ -128,6 +128,7 @@ struct arts_event_version_s {
   unsigned int version;                   /**< Version sequence number. */
   volatile unsigned int latch_count;      /**< Current latch counter. */
   volatile unsigned int dependent_count;  /**< Registered dependent count. */
+  arts_guid_t data;                       /**< Per-generation data GUID. */
   struct arts_dependent_list_s dependent; /**< Inline dependent list head. */
 };
 

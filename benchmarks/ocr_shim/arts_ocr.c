@@ -244,138 +244,17 @@ static CollectiveMapEntry collectiveMetaMap[COLLECTIVE_HASH_SIZE] = {{0, 0}};
 
 /* =========================================================================
  * Channel Event Support
+ *
+ * OCR channel events map directly to ARTS CHANNEL events (latch=1).
+ * Both use generation-based re-arming: each generation has its own latch
+ * counter and dependent list.  Cross-node deps handled natively by ARTS.
+ *
+ * Protocol (satisfy-channel, latch=1 per version):
+ *   ocrEventSatisfy(ch, data)     → DECR slot (stores per-gen data)
+ *   ocrAddDependence(ch, edt, s)  → arts_add_dependence (runtime INCRs)
+ *   Consumer-first: INCR 0→1 (inside add_dep), DECR 1→0 → FIRE
+ *   Producer-first: DECR 0→-1, INCR -1→0 (inside add_dep) → UPDATE → FIRE
  * ========================================================================= */
-
-#define CHANNEL_HASH_SIZE 131072
-#define CHANNEL_DEFAULT_QUEUE_SIZE 8
-
-typedef struct {
-  arts_guid_t eventGuid;
-  u32 generation;
-} ChannelQueueEntry;
-
-typedef struct {
-  arts_guid_t channelGuid;
-  volatile u32 satisfyGen;
-  volatile u32 consumeGen;
-  ChannelQueueEntry *queue;
-  u32 queueSize;
-  pthread_mutex_t lock;
-} ChannelMetadata;
-
-static ChannelMetadata channelMetaMap[CHANNEL_HASH_SIZE];
-static volatile int channelMapInitialized = 0;
-static volatile int channelMapHasEntries = 0;
-
-static void initChannelMap(void) {
-  if (__sync_bool_compare_and_swap(&channelMapInitialized, 0, 1)) {
-    for (u32 i = 0; i < CHANNEL_HASH_SIZE; i++) {
-      channelMetaMap[i].channelGuid = NULL_GUID;
-      channelMetaMap[i].satisfyGen = 0;
-      channelMetaMap[i].consumeGen = 0;
-      channelMetaMap[i].queue = NULL;
-      channelMetaMap[i].queueSize = 0;
-      pthread_mutex_init(&channelMetaMap[i].lock, NULL);
-    }
-  }
-}
-
-static u32 channelHash(arts_guid_t guid) {
-  uint64_t val = (uint64_t)guid;
-  return (u32)(val % CHANNEL_HASH_SIZE);
-}
-
-static void registerChannelEvent(arts_guid_t channelGuid, u32 maxGen) {
-  initChannelMap();
-  u32 idx = channelHash(channelGuid);
-  u32 qSize = (maxGen > CHANNEL_DEFAULT_QUEUE_SIZE)
-                  ? maxGen
-                  : CHANNEL_DEFAULT_QUEUE_SIZE;
-  for (u32 i = 0; i < CHANNEL_HASH_SIZE; i++) {
-    u32 probeIdx = (idx + i) % CHANNEL_HASH_SIZE;
-    pthread_mutex_lock(&channelMetaMap[probeIdx].lock);
-
-    if (channelMetaMap[probeIdx].channelGuid == NULL_GUID) {
-      channelMetaMap[probeIdx].channelGuid = channelGuid;
-      channelMetaMap[probeIdx].satisfyGen = 0;
-      channelMetaMap[probeIdx].consumeGen = 0;
-      channelMetaMap[probeIdx].queue =
-          (ChannelQueueEntry *)calloc(qSize, sizeof(ChannelQueueEntry));
-      channelMetaMap[probeIdx].queueSize = qSize;
-      for (u32 j = 0; j < qSize; j++) {
-        channelMetaMap[probeIdx].queue[j].eventGuid = NULL_GUID;
-        channelMetaMap[probeIdx].queue[j].generation = (u32)-1;
-      }
-      __sync_synchronize();
-      channelMapHasEntries = 1;
-      pthread_mutex_unlock(&channelMetaMap[probeIdx].lock);
-      return;
-    }
-    if (channelMetaMap[probeIdx].channelGuid == channelGuid) {
-      pthread_mutex_unlock(&channelMetaMap[probeIdx].lock);
-      return;
-    }
-    pthread_mutex_unlock(&channelMetaMap[probeIdx].lock);
-  }
-}
-
-static ChannelMetadata *getChannelMeta(arts_guid_t channelGuid) {
-  initChannelMap();
-  u32 idx = channelHash(channelGuid);
-  for (u32 i = 0; i < CHANNEL_HASH_SIZE; i++) {
-    u32 probeIdx = (idx + i) % CHANNEL_HASH_SIZE;
-    if (channelMetaMap[probeIdx].channelGuid == channelGuid) {
-      return &channelMetaMap[probeIdx];
-    }
-    if (channelMetaMap[probeIdx].channelGuid == NULL_GUID) {
-      return NULL;
-    }
-  }
-  return NULL;
-}
-
-static bool isChannelEvent(arts_guid_t guid) {
-  if (!channelMapHasEntries || guid == NULL_GUID) {
-    return false;
-  }
-  return getChannelMeta(guid) != NULL;
-}
-
-static arts_guid_t ensureEventForGen(ChannelMetadata *meta, u32 gen) {
-  u32 idx = gen % meta->queueSize;
-
-  if (meta->queue[idx].generation != gen) {
-    meta->queue[idx].eventGuid =
-        arts_event_create(arts_global_rank_id, ARTS_EVENT_IDEM, 1, NULL_GUID);
-    meta->queue[idx].generation = gen;
-  }
-
-  return meta->queue[idx].eventGuid;
-}
-
-static void channelSatisfy(ChannelMetadata *meta, arts_guid_t dataGuid) {
-  pthread_mutex_lock(&meta->lock);
-
-  u32 gen = meta->satisfyGen;
-  arts_guid_t evtGuid = ensureEventForGen(meta, gen);
-  meta->satisfyGen++;
-
-  arts_event_satisfy_slot(evtGuid, dataGuid, ARTS_EVENT_LATCH_DECR_SLOT);
-
-  pthread_mutex_unlock(&meta->lock);
-}
-
-static arts_guid_t channelConsume(ChannelMetadata *meta) {
-  pthread_mutex_lock(&meta->lock);
-
-  u32 gen = meta->consumeGen;
-  arts_guid_t evtGuid = ensureEventForGen(meta, gen);
-  meta->consumeGen++;
-
-  pthread_mutex_unlock(&meta->lock);
-
-  return evtGuid;
-}
 
 static u32 collectiveHash(arts_guid_t guid) {
   uint64_t val = (uint64_t)guid;
@@ -545,29 +424,6 @@ static void ocr_edt_trampoline(uint32_t paramc, const uint64_t *paramv,
   }
 }
 
-/*
- * Relay EDT for event→channel-event dependencies.
- *
- * When a regular event fires into a channel event destination, we cannot use
- * raw arts_event_satisfy_slot — that bypasses the channel's generation
- * sequencing (channelSatisfy).  This relay EDT calls channelSatisfy to
- * properly advance the generation counter so that channel consumers see
- * the satisfaction in the correct order.
- */
-static void channel_relay_edt(uint32_t paramc, const uint64_t *paramv,
-                              uint32_t depc, arts_edt_dep_t depv[]) {
-  (void)paramc;
-  (void)depc;
-
-  arts_guid_t channelGuid = (arts_guid_t)paramv[0];
-  arts_guid_t dataGuid = (depc > 0) ? depv[0].guid : NULL_GUID;
-
-  ChannelMetadata *meta = getChannelMeta(channelGuid);
-  if (meta != NULL) {
-    channelSatisfy(meta, dataGuid);
-  }
-}
-
 /* =========================================================================
  * Hint Helpers
  *
@@ -699,6 +555,9 @@ u8 ocrEdtCreate(ocrGuid_t *guid, ocrGuid_t templateGuid, u32 paramc,
          * left open for later ocrAddDependence calls. */
         arts_type_t guidType = arts_guid_get_type(depv[i].guid);
         if (guidType == ARTS_DB) {
+          /* ocrEdtCreate depv has no mode field (ocrGuid_t[], not
+           * ocrEdtDep_t[]).  Default to RO; apps that need EW use
+           * ocrAddDependence which carries the mode. */
           arts_signal_edt(edtGuid, i, depv[i].guid, ARTS_MODE_RO);
         } else {
           arts_add_dependence(depv[i].guid, edtGuid, i, ARTS_MODE_RO);
@@ -741,7 +600,8 @@ u8 ocrEventCreate(ocrGuid_t *guid, ocrEventTypes_t eventType, u16 properties) {
     artsEvtType = ARTS_EVENT_LATCH;
     break;
   case OCR_EVENT_CHANNEL_T:
-    artsEvtType = ARTS_EVENT_LATCH;
+    artsEvtType = ARTS_EVENT_CHANNEL;
+    latchCount = 1; /* Satisfy-channel: needs both satisfy + addDep to fire. */
     break;
   default:
     return 1;
@@ -753,20 +613,11 @@ u8 ocrEventCreate(ocrGuid_t *guid, ocrEventTypes_t eventType, u16 properties) {
     if (result == NULL_GUID && (properties & GUID_PROP_CHECK)) {
       return OCR_EGUIDEXISTS;
     }
-    if (eventType == OCR_EVENT_CHANNEL_T) {
-      registerChannelEvent(guid->guid, CHANNEL_DEFAULT_QUEUE_SIZE);
-    }
     return 0;
   }
 
-  if (eventType == OCR_EVENT_CHANNEL_T) {
-    guid->guid =
-        arts_event_create(arts_global_rank_id, ARTS_EVENT_IDEM, 1, NULL_GUID);
-    registerChannelEvent(guid->guid, CHANNEL_DEFAULT_QUEUE_SIZE);
-  } else {
-    guid->guid = arts_event_create(arts_global_rank_id, artsEvtType, latchCount,
-                                   NULL_GUID);
-  }
+  guid->guid = arts_event_create(arts_global_rank_id, artsEvtType, latchCount,
+                                 NULL_GUID);
   return 0;
 }
 
@@ -776,12 +627,8 @@ u8 ocrEventDestroy(ocrGuid_t guid) {
 }
 
 u8 ocrEventSatisfy(ocrGuid_t eventGuid, ocrGuid_t dataGuid) {
-  ChannelMetadata *meta = getChannelMeta(eventGuid.guid);
-  if (meta != NULL) {
-    channelSatisfy(meta, dataGuid.guid);
-    return 0;
-  }
-
+  /* For non-channel events, guard against re-satisfy of already-fired events.
+   * Channel events handle re-fire natively via generations. */
   if (arts_is_event_fired(eventGuid.guid)) {
     return 0;
   }
@@ -791,12 +638,6 @@ u8 ocrEventSatisfy(ocrGuid_t eventGuid, ocrGuid_t dataGuid) {
 }
 
 u8 ocrEventSatisfySlot(ocrGuid_t eventGuid, ocrGuid_t dataGuid, u32 slot) {
-  ChannelMetadata *meta = getChannelMeta(eventGuid.guid);
-  if (meta != NULL) {
-    channelSatisfy(meta, dataGuid.guid);
-    return 0;
-  }
-
   if (arts_is_event_fired(eventGuid.guid)) {
     return 0;
   }
@@ -880,24 +721,22 @@ u8 ocrEventCreateParams(ocrGuid_t *guid, ocrEventTypes_t eventType,
   }
 
   if (eventType == OCR_EVENT_CHANNEL_T && params != NULL) {
-    u32 maxGen = params->EVENT_CHANNEL.maxGen;
-    u32 qSize = (maxGen > CHANNEL_DEFAULT_QUEUE_SIZE)
-                    ? maxGen
-                    : CHANNEL_DEFAULT_QUEUE_SIZE;
+    /* params->EVENT_CHANNEL.maxGen is informational only — ARTS channel
+     * versions grow dynamically via the linked list, so we don't need
+     * to pre-allocate a queue.  Just create a native CHANNEL event. */
+    (void)params->EVENT_CHANNEL.maxGen;
 
     if (properties & GUID_PROP_IS_LABELED) {
       arts_guid_t result = arts_event_create_with_guid(
-          guid->guid, ARTS_EVENT_IDEM, 1, NULL_GUID);
+          guid->guid, ARTS_EVENT_CHANNEL, 1, NULL_GUID);
       if (result == NULL_GUID && (properties & GUID_PROP_CHECK)) {
         return OCR_EGUIDEXISTS;
       }
-      registerChannelEvent(guid->guid, qSize);
       return 0;
     }
 
-    guid->guid =
-        arts_event_create(arts_global_rank_id, ARTS_EVENT_IDEM, 1, NULL_GUID);
-    registerChannelEvent(guid->guid, qSize);
+    guid->guid = arts_event_create(arts_global_rank_id, ARTS_EVENT_CHANNEL, 1,
+                                   NULL_GUID);
     return 0;
   }
 
@@ -1032,44 +871,16 @@ static arts_db_access_mode_t ocr_to_arts_mode(ocrDbAccessMode_t ocr_mode) {
 
 u8 ocrAddDependence(ocrGuid_t source, ocrGuid_t destination, u32 slot,
                     ocrDbAccessMode_t mode) {
-  arts_db_access_mode_t arts_mode = ocr_to_arts_mode(mode);
+  (void)mode; /* OCR access modes are advisory — see comment below. */
 
+  /* NULL source → signal immediately (slot satisfied with no data). */
   if (ocrGuidIsNull(source)) {
     arts_type_t dstType = arts_guid_get_type(destination.guid);
     if (dstType == ARTS_EDT) {
       arts_signal_edt_value(destination.guid, slot, 0);
     } else if (dstType == ARTS_EVENT) {
-      if (isChannelEvent(destination.guid)) {
-        ChannelMetadata *dstMeta = getChannelMeta(destination.guid);
-        if (dstMeta != NULL) {
-          channelSatisfy(dstMeta, NULL_GUID);
-        }
-      } else {
-        arts_event_satisfy_slot(destination.guid, NULL_GUID,
-                                ARTS_EVENT_LATCH_DECR_SLOT);
-      }
-    }
-    return 0;
-  }
-
-  ChannelMetadata *meta = getChannelMeta(source.guid);
-  if (meta != NULL) {
-    arts_guid_t evtGuid = channelConsume(meta);
-
-    arts_type_t dstType = arts_guid_get_type(destination.guid);
-    if (dstType == ARTS_EDT) {
-      arts_add_dependence(evtGuid, destination.guid, slot, arts_mode);
-    } else if (dstType == ARTS_EVENT) {
-      if (isChannelEvent(destination.guid)) {
-        uint64_t relayParamv[1] = {(uint64_t)destination.guid};
-        arts_hint_t h = {.route = arts_global_rank_id};
-        arts_guid_t relayEdt =
-            arts_edt_create(channel_relay_edt, 1, relayParamv, 1, &h);
-        arts_add_dependence(evtGuid, relayEdt, 0, ARTS_MODE_NULL);
-      } else {
-        arts_add_dependence(evtGuid, destination.guid,
-                            ARTS_EVENT_LATCH_DECR_SLOT, ARTS_MODE_NULL);
-      }
+      arts_event_satisfy_slot(destination.guid, NULL_GUID,
+                              ARTS_EVENT_LATCH_DECR_SLOT);
     }
     return 0;
   }
@@ -1078,49 +889,30 @@ u8 ocrAddDependence(ocrGuid_t source, ocrGuid_t destination, u32 slot,
   arts_type_t dstType = arts_guid_get_type(destination.guid);
 
   if (srcType == ARTS_DB) {
+    /* DB → EDT/Event: signal with the DB GUID directly.
+     * Always use RO — OCR apps routinely use EW/RW as a default even
+     * for shared reads, relying on OCR modes being advisory.  Enforcing
+     * EW would cause frontier serialization and hangs (CoMD etc.). */
     if (dstType == ARTS_EDT) {
-      /* Always use RO — OCR's access mode is a programmer hint, not a
-       * runtime enforcement directive.  Using EW here would enter the CDAG
-       * frontier during acquire_dbs(), causing resource deadlocks when
-       * multiple EDTs share overlapping DBs (e.g., CoMD schedule arrays).
-       * This matches the ocrEdtCreate depv path (line 727) which also
-       * uses ARTS_MODE_RO for DB dependencies. */
       arts_signal_edt(destination.guid, slot, source.guid, ARTS_MODE_RO);
     } else if (dstType == ARTS_EVENT) {
-      if (isChannelEvent(destination.guid)) {
-        ChannelMetadata *dstMeta = getChannelMeta(destination.guid);
-        if (dstMeta != NULL) {
-          channelSatisfy(dstMeta, source.guid);
-        }
-      } else {
-        arts_event_satisfy_slot(destination.guid, source.guid,
-                                ARTS_EVENT_LATCH_DECR_SLOT);
-      }
+      arts_event_satisfy_slot(destination.guid, source.guid,
+                              ARTS_EVENT_LATCH_DECR_SLOT);
     }
-  } else if (dstType == ARTS_EDT) {
-    /* Always use RO for event→EDT deps — same rationale as DB→EDT above.
-     * When the event fires and carries a DB GUID payload, acquire_dbs()
-     * would attempt EW access on the delivered DB if we passed arts_mode
-     * through.  Multiple EDTs sharing overlapping DBs via reduction
-     * events then deadlock in the CDAG frontier. */
-    arts_add_dependence(source.guid, destination.guid, slot, ARTS_MODE_RO);
-  } else if (dstType == ARTS_EVENT) {
-    if (isChannelEvent(destination.guid)) {
-      /* Destination is a channel event — relay through channelSatisfy
-       * to properly advance the generation counter.  Direct
-       * arts_event_satisfy_slot would fire the root IDEM event, bypassing
-       * channel generation sequencing. */
-      uint64_t relayParamv[1] = {(uint64_t)destination.guid};
-      arts_hint_t h = {.route = arts_global_rank_id};
-      arts_guid_t relayEdt =
-          arts_edt_create(channel_relay_edt, 1, relayParamv, 1, &h);
-      arts_add_dependence(source.guid, relayEdt, 0, ARTS_MODE_NULL);
-    } else {
-      /* Regular event→event: ARTS natively handles this. */
+  } else if (srcType == ARTS_EVENT) {
+    /* ARTS channels (latch=1) do INCR internally in add_dependence_with_mode.
+     * Non-channel events use direct dependent registration. Both paths
+     * are handled by arts_add_dependence. Cross-node: handled natively. */
+    if (dstType == ARTS_EDT) {
+      arts_add_dependence(source.guid, destination.guid, slot, ARTS_MODE_RO);
+    } else if (dstType == ARTS_EVENT) {
+      /* Event→event: OCR spec says "satisfy dest when source fires".
+       * Always use DECR slot regardless of the incoming slot param. */
       arts_add_dependence(source.guid, destination.guid,
                           ARTS_EVENT_LATCH_DECR_SLOT, ARTS_MODE_NULL);
     }
   }
+
   return 0;
 }
 

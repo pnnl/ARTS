@@ -123,7 +123,7 @@ arts_guid_t arts_event_create(unsigned int route, arts_event_types_t type,
                                NULL_GUID);
     break;
   case ARTS_EVENT_CHANNEL:
-    arts_event_create_channel_internal(&guid, route, data_guid);
+    arts_event_create_channel_internal(&guid, route, latch_count, data_guid);
     break;
   default: /* LATCH, COUNTED */
     arts_event_create_internal(&guid, route, INITIAL_DEPENDENT_SIZE,
@@ -150,7 +150,8 @@ arts_guid_t arts_event_create_with_guid(arts_guid_t guid,
                                      type, NULL_GUID);
     break;
   case ARTS_EVENT_CHANNEL:
-    ret = arts_event_create_channel_internal(&guid, route, data_guid);
+    ret = arts_event_create_channel_internal(&guid, route, latch_count,
+                                             data_guid);
     break;
   default: /* LATCH, COUNTED */
     ret = arts_event_create_internal(&guid, route, INITIAL_DEPENDENT_SIZE,
@@ -192,6 +193,8 @@ channel_push_version(struct arts_event_s *event) {
            (sizeof(struct arts_dependent_s) * INITIAL_DEPENDENT_SIZE)));
   next->latch_count = 0;
   next->dependent_count = 0;
+  next->data =
+      event->data; /* Inherit event-level data (DB-coupled channels). */
   next->dependent.size = INITIAL_DEPENDENT_SIZE;
   struct arts_event_version_s *last = NULL;
   if (versions && versions->tailPtr) {
@@ -247,6 +250,7 @@ static bool channel_free_version(struct arts_event_s *event) {
   if (last) {
     version->latch_count = 0;
     version->dependent_count = 0;
+    version->data = event->data; /* Re-inherit for next generation. */
   } else {
     versions->headPtr = versions->headPtr->next;
     struct arts_link_list_item_s *item =
@@ -286,6 +290,7 @@ static void channel_fire_dependents(struct arts_event_s *event,
                                     struct arts_event_version_s *version,
                                     arts_guid_t event_guid) {
   (void)event_guid;
+  arts_guid_t data = version->data;
   struct arts_dependent_list_s *dependent_list = &version->dependent;
   struct arts_dependent_s *dependent = version->dependent.dependents;
   unsigned int last_known =
@@ -299,35 +304,34 @@ static void channel_fire_dependents(struct arts_event_s *event,
         ;
       }
       if (dependent[j].type == ARTS_EDT) {
-        if (event->data != NULL_GUID) {
+        if (data != NULL_GUID) {
           if (dependent[j].byte_offset != 0 || dependent[j].size != 0) {
             struct arts_db_s *db =
-                (struct arts_db_s *)arts_route_table_lookup_db(event->data,
-                                                               NULL, false);
+                (struct arts_db_s *)arts_route_table_lookup_db(data, NULL,
+                                                               false);
             if (db) {
               void *db_data = (void *)(db + 1);
               void *slice_ptr =
                   (void *)(((char *)db_data) + dependent[j].byte_offset);
-              arts_signal_edt_ptr_with_guid(
-                  dependent[j].addr, dependent[j].slot, event->data, slice_ptr,
-                  (unsigned int)dependent[j].size);
-              arts_route_table_return_db(event->data, false);
+              arts_signal_edt_ptr_with_guid(dependent[j].addr,
+                                            dependent[j].slot, data, slice_ptr,
+                                            (unsigned int)dependent[j].size);
+              arts_route_table_return_db(data, false);
             }
           } else {
-            arts_signal_edt(dependent[j].addr, dependent[j].slot, event->data,
+            arts_signal_edt(dependent[j].addr, dependent[j].slot, data,
                             DB_MODE_NULL);
           }
         }
       } else if (dependent[j].type == ARTS_EVENT) {
-        arts_event_satisfy_slot(dependent[j].addr, event->data,
-                                dependent[j].slot);
+        arts_event_satisfy_slot(dependent[j].addr, data, dependent[j].slot);
       } else if (dependent[j].type == ARTS_CALLBACK) {
         arts_edt_dep_t arg;
-        arg.guid = event->data;
-        arg.ptr = arts_route_table_lookup_db(event->data, NULL, false);
+        arg.guid = data;
+        arg.ptr = arts_route_table_lookup_db(data, NULL, false);
         dependent[j].callback_t(arg);
         if (arg.ptr) {
-          arts_route_table_return_db(event->data, false);
+          arts_route_table_return_db(data, false);
         }
       }
       j++;
@@ -350,12 +354,9 @@ static void channel_fire_dependents(struct arts_event_s *event,
 /* ── CHANNEL satisfy ────────────────────────────────────────────────── */
 
 static void channel_satisfy_slot(struct arts_event_s *event,
-                                 arts_guid_t event_guid, uint32_t slot) {
+                                 arts_guid_t event_guid, uint32_t slot,
+                                 arts_guid_t data_guid) {
   arts_lock(&event->lock);
-
-  if (event->data == NULL_GUID) {
-    ARTS_WARN("Channel event firing without data GUID (guid=%lu)", event_guid);
-  }
 
   unsigned int res = (unsigned int)-1;
   struct arts_event_version_s *version = channel_get_front_version(event);
@@ -371,6 +372,10 @@ static void channel_satisfy_slot(struct arts_event_s *event,
     res = arts_atomic_fetch_add(&version->latch_count, 0U);
     if (res == (unsigned int)-1) {
       version = channel_push_version(event);
+    }
+    /* Store per-generation data on the TARGET version (after push check). */
+    if (data_guid != NULL_GUID) {
+      version->data = data_guid;
     }
     res = arts_atomic_sub(&version->latch_count, 1U);
   } else if (slot == ARTS_EVENT_UPDATE) {
@@ -389,12 +394,11 @@ static void channel_satisfy_slot(struct arts_event_s *event,
 /* ── CHANNEL creation ───────────────────────────────────────────────── */
 
 bool arts_event_create_channel_internal(arts_guid_t *guid, unsigned int route,
+                                        unsigned int latch_count,
                                         arts_guid_t data_guid) {
-  if (data_guid == NULL_GUID) {
-    ARTS_WARN("Channel event created without data GUID");
-  }
-  bool ret = arts_event_create_internal(guid, route, INITIAL_DEPENDENT_SIZE, 0,
-                                        ARTS_EVENT_CHANNEL, data_guid);
+  bool ret =
+      arts_event_create_internal(guid, route, INITIAL_DEPENDENT_SIZE,
+                                 latch_count, ARTS_EVENT_CHANNEL, data_guid);
   return ret;
 }
 
@@ -420,9 +424,19 @@ void arts_event_add_dependence_with_mode(arts_guid_t event_source,
   }
 
   arts_lock(&event->lock);
-  struct arts_event_version_s *version = channel_get_last_version(event);
+  struct arts_event_version_s *version = channel_get_front_version(event);
   assert(version != NULL);
-  bool needs_update = false;
+
+  if (event->latch_count > 0) {
+    /* Satisfy-channel: single-consumer per generation (OCR channel model).
+     * Each addDep represents a new generation that fires on one satisfy.
+     * If the front version already has a dependent, push a new version
+     * so the next satisfy fires exactly one consumer (FIFO order). */
+    if (version->dependent_count > 0) {
+      version = channel_push_version(event);
+    }
+    arts_atomic_add(&version->latch_count, 1U);
+  }
 
   struct arts_dependent_list_s *dependent_list = &version->dependent;
   unsigned int position = arts_atomic_fetch_add(&version->dependent_count, 1U);
@@ -438,14 +452,14 @@ void arts_event_add_dependence_with_mode(arts_guid_t event_source,
   COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
   dependent->done_writing = true;
 
+  /* Fire under the lock to prevent DECR from interleaving between the
+     latch check and the fire.  The deferred UPDATE approach had a race:
+     a DECR could slip in after unlock and before UPDATE re-locked. */
   if (arts_atomic_fetch_add(&version->latch_count, 0U) == 0) {
-    needs_update = true;
+    channel_fire_dependents(event, version, event_source);
   }
 
   arts_unlock(&event->lock);
-  if (needs_update) {
-    arts_event_satisfy_slot(event_source, NULL_GUID, ARTS_EVENT_UPDATE);
-  }
 }
 
 void arts_event_add_dependence_with_byte_offset(
@@ -467,9 +481,17 @@ void arts_event_add_dependence_with_byte_offset(
   }
 
   arts_lock(&event->lock);
-  struct arts_event_version_s *version = channel_get_last_version(event);
+  struct arts_event_version_s *version = channel_get_front_version(event);
   assert(version != NULL);
-  bool needs_update = false;
+
+  if (event->latch_count > 0) {
+    /* Single-consumer per generation — same as
+     * arts_event_add_dependence_with_mode. */
+    if (version->dependent_count > 0) {
+      version = channel_push_version(event);
+    }
+    arts_atomic_add(&version->latch_count, 1U);
+  }
 
   struct arts_dependent_list_s *dependent_list = &version->dependent;
   unsigned int position = arts_atomic_fetch_add(&version->dependent_count, 1U);
@@ -485,14 +507,13 @@ void arts_event_add_dependence_with_byte_offset(
   COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
   dependent->done_writing = true;
 
+  /* Fire under the lock — same race fix as arts_event_add_dependence_with_mode.
+   */
   if (arts_atomic_fetch_add(&version->latch_count, 0U) == 0) {
-    needs_update = true;
+    channel_fire_dependents(event, version, event_source);
   }
 
   arts_unlock(&event->lock);
-  if (needs_update) {
-    arts_event_satisfy_slot(event_source, NULL_GUID, ARTS_EVENT_UPDATE);
-  }
 }
 
 /* ── Event free / destroy ───────────────────────────────────────────── */
@@ -543,7 +564,7 @@ void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
   } else {
     // CHANNEL events use their own lock-protected version-based path
     if (event->type == ARTS_EVENT_CHANNEL) {
-      channel_satisfy_slot(event, event_guid, slot);
+      channel_satisfy_slot(event, event_guid, slot, data_guid);
       goto done;
     }
 
@@ -881,12 +902,11 @@ void arts_add_local_event_callback(arts_guid_t source,
       dep->size = 0;
       COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
       dep->done_writing = true;
-      bool needs_update =
-          (arts_atomic_fetch_add(&version->latch_count, 0U) == 0);
-      arts_unlock(&event->lock);
-      if (needs_update) {
-        arts_event_satisfy_slot(source, NULL_GUID, ARTS_EVENT_UPDATE);
+      /* Fire under the lock — same race fix as add_dependence_with_mode. */
+      if (arts_atomic_fetch_add(&version->latch_count, 0U) == 0) {
+        channel_fire_dependents(event, version, source);
       }
+      arts_unlock(&event->lock);
       return;
     }
 
