@@ -44,9 +44,6 @@ Hardware Pinning
    * - ``pin``
      - 1
      - Enable thread-to-core pinning.
-   * - ``pin_stride``
-     - 1
-     - Core spacing between pinned threads (useful for SMT).
 Scheduling
 ----------
 

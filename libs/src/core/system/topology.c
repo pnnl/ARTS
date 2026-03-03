@@ -42,6 +42,7 @@
 
 #include <hwloc.h>
 #include <hwloc/helper.h>
+#include <stdlib.h>
 
 unsigned int num_numa_domains = 1;
 
@@ -83,18 +84,58 @@ static unsigned int find_numa_for_pu(hwloc_topology_t topology,
   return 0; /* UMA or no NUMA node found */
 }
 
-/* Resolve hwloc cpuset for package p (root cpuset as fallback). */
-static hwloc_const_cpuset_t pkg_cpuset(hwloc_topology_t topology,
-                                       hwloc_obj_t pkg) {
-  return pkg ? pkg->cpuset : hwloc_get_root_obj(topology)->cpuset;
+/* Walk up from obj to the nearest ancestor of the given type. */
+static hwloc_obj_t ancestor_by_type(hwloc_obj_t obj, hwloc_obj_type_t type) {
+  for (hwloc_obj_t cur = obj->parent; cur; cur = cur->parent) {
+    if (cur->type == type) {
+      return cur;
+    }
+  }
+  return NULL;
 }
 
-/* Count objects of a type inside a package's cpuset. Returns at least 1. */
-static unsigned int count_inside(hwloc_topology_t topology,
-                                 hwloc_const_cpuset_t set,
-                                 hwloc_obj_type_t type) {
-  unsigned int n = hwloc_get_nbobjs_inside_cpuset_by_type(topology, set, type);
-  return n ? n : 1;
+/*
+ * PU entry for the collect-sort-assign algorithm.
+ * Stores enough metadata to sort PUs into NUMA-aware, HT-aware order.
+ */
+struct pu_entry_s {
+  unsigned int pu_os_index;
+  unsigned int core_os_index;
+  unsigned int pkg_os_index;
+  unsigned int numa_id;
+  unsigned int pu_rank_in_core; /* 0 = first PU in core, 1 = HT sibling, ... */
+};
+
+/* Sort by (pu_rank_in_core ASC, numa_id ASC, pu_os_index ASC).
+ * This gives: round 0 (one PU per core, NUMA 0 first), round 1 (HT siblings),
+ * etc. */
+static int pu_entry_compare(const void *a, const void *b) {
+  const struct pu_entry_s *pa = (const struct pu_entry_s *)a;
+  const struct pu_entry_s *pb = (const struct pu_entry_s *)b;
+  if (pa->pu_rank_in_core != pb->pu_rank_in_core) {
+    return (pa->pu_rank_in_core < pb->pu_rank_in_core) ? -1 : 1;
+  }
+  if (pa->numa_id != pb->numa_id) {
+    return (pa->numa_id < pb->numa_id) ? -1 : 1;
+  }
+  if (pa->pu_os_index != pb->pu_os_index) {
+    return (pa->pu_os_index < pb->pu_os_index) ? -1 : 1;
+  }
+  return 0;
+}
+
+/* Helper comparator for computing pu_rank_in_core:
+ * sort by (core_os_index ASC, pu_os_index ASC). */
+static int pu_entry_by_core(const void *a, const void *b) {
+  const struct pu_entry_s *pa = (const struct pu_entry_s *)a;
+  const struct pu_entry_s *pb = (const struct pu_entry_s *)b;
+  if (pa->core_os_index != pb->core_os_index) {
+    return (pa->core_os_index < pb->core_os_index) ? -1 : 1;
+  }
+  if (pa->pu_os_index != pb->pu_os_index) {
+    return (pa->pu_os_index < pb->pu_os_index) ? -1 : 1;
+  }
+  return 0;
 }
 
 void get_thread_mask(struct arts_config_s *config, struct thread_mask_s *flat) {
@@ -107,40 +148,50 @@ void get_thread_mask(struct arts_config_s *config, struct thread_mask_s *flat) {
     ARTS_ERROR("hwloc_topology_load() failed");
   }
 
-  /* Oversubscription check */
+  /* Oversubscription check (accounts for PU offset in local multi-node) */
   unsigned int total_pus = hwloc_get_nbobjs_by_type(topology, HWLOC_OBJ_PU);
-  if (config->thread_count > total_pus) {
-    ARTS_ERROR("Thread count (%u) exceeds available PUs (%u)",
-               config->thread_count, total_pus);
+  unsigned int pu_offset = 0;
+  if (config->shared_pu_pool) {
+    pu_offset = config->my_rank * config->thread_count;
+    ARTS_INFO("Local multi-node rank %u: PU offset %u (threads %u)",
+              config->my_rank, pu_offset, config->thread_count);
+  }
+  if (pu_offset + config->thread_count > total_pus) {
+    ARTS_ERROR("Rank %u: PU range [%u..%u) exceeds available PUs (%u)",
+               config->my_rank, pu_offset, pu_offset + config->thread_count,
+               total_pus);
   }
 
-  unsigned int np = hwloc_get_nbobjs_by_type(topology, HWLOC_OBJ_PACKAGE);
-  if (!np) {
-    np = 1;
+  /* Phase 1: Collect all PUs with topology metadata */
+  struct pu_entry_s *pus = malloc(total_pus * sizeof(*pus));
+  for (unsigned int i = 0; i < total_pus; i++) {
+    hwloc_obj_t pu = hwloc_get_obj_by_type(topology, HWLOC_OBJ_PU, i);
+    hwloc_obj_t core = ancestor_by_type(pu, HWLOC_OBJ_CORE);
+    hwloc_obj_t pkg = ancestor_by_type(pu, HWLOC_OBJ_PACKAGE);
+    pus[i].pu_os_index = pu->os_index;
+    pus[i].core_os_index = core ? core->os_index : 0;
+    pus[i].pkg_os_index = pkg ? pkg->os_index : 0;
+    pus[i].numa_id = find_numa_for_pu(topology, pu);
+    pus[i].pu_rank_in_core = 0;
   }
 
-  /* Stride-based PU assignment — walks hwloc tree via indexed access */
-  unsigned int stride = config->pin_stride;
-  unsigned int p = 0;
-  unsigned int c = 0;
-  unsigned int u = 0;
-  unsigned int offset = 0;
-  unsigned int stride_loop = 0;
+  /* Phase 2: Compute pu_rank_in_core — sort by core, assign ranks within */
+  qsort(pus, total_pus, sizeof(*pus), pu_entry_by_core);
+  unsigned int rank = 0;
+  for (unsigned int i = 0; i < total_pus; i++) {
+    if (i > 0 && pus[i].core_os_index != pus[i - 1].core_os_index) {
+      rank = 0;
+    }
+    pus[i].pu_rank_in_core = rank++;
+  }
+
+  /* Phase 3: Sort by (pu_rank_in_core, numa_id, pu_os_index) */
+  qsort(pus, total_pus, sizeof(*pus), pu_entry_compare);
+
+  /* Phase 4: Assign threads from sorted PU list (offset for local
+     multi-node so each rank gets a disjoint PU slice). */
   unsigned int role_count[ARTS_ROLE_MAX] = {0};
-
   for (unsigned int t = 0; t < config->thread_count; t++) {
-    /* Resolve [p][c][u] coordinates to hwloc objects */
-    hwloc_obj_t pkg = hwloc_get_obj_by_type(topology, HWLOC_OBJ_PACKAGE, p);
-    hwloc_const_cpuset_t pset = pkg_cpuset(topology, pkg);
-
-    hwloc_obj_t core =
-        hwloc_get_obj_inside_cpuset_by_type(topology, pset, HWLOC_OBJ_CORE, c);
-    hwloc_const_cpuset_t cset = core ? core->cpuset : pset;
-
-    hwloc_obj_t pu =
-        hwloc_get_obj_inside_cpuset_by_type(topology, cset, HWLOC_OBJ_PU, u);
-
-    /* Determine role */
     enum arts_thread_role role;
     if (t < config->worker_thread_count) {
       role = ARTS_ROLE_WORKER;
@@ -150,52 +201,18 @@ void get_thread_mask(struct arts_config_s *config, struct thread_mask_s *flat) {
       role = ARTS_ROLE_RECEIVER;
     }
 
-    /* Fill thread_mask_s directly */
+    unsigned int pi = pu_offset + t;
     flat[t].id = t;
-    flat[t].pu_id = pu ? pu->os_index : t;
-    flat[t].core_id = core ? core->os_index : c;
-    flat[t].package_id = pkg ? pkg->os_index : p;
-    flat[t].numa_domain_id = pu ? find_numa_for_pu(topology, pu) : 0;
+    flat[t].pu_id = pus[pi].pu_os_index;
+    flat[t].core_id = pus[pi].core_os_index;
+    flat[t].package_id = pus[pi].pkg_os_index;
+    flat[t].numa_domain_id = pus[pi].numa_id;
     flat[t].role = role;
     flat[t].group_pos = role_count[role]++;
     flat[t].pin = config->pin_threads;
-
-    /* Advance: stride across cores, wrap across packages, then PUs */
-    unsigned int nc = count_inside(topology, pset, HWLOC_OBJ_CORE);
-    unsigned int nu = count_inside(topology, cset, HWLOC_OBJ_PU);
-
-    c += stride;
-    if (c >= nc) {
-      p++;
-      while (p < np) {
-        hwloc_obj_t next =
-            hwloc_get_obj_by_type(topology, HWLOC_OBJ_PACKAGE, p);
-        if (next && hwloc_get_nbobjs_inside_cpuset_by_type(
-                        topology, next->cpuset, HWLOC_OBJ_CORE) > 0) {
-          break;
-        }
-        p++;
-      }
-      if (p >= np) {
-        p = 0;
-        if (stride > 1) {
-          offset++;
-          stride_loop++;
-          if (stride_loop == stride) {
-            offset = 0;
-            u++;
-            stride_loop = 0;
-          }
-        } else {
-          u++;
-        }
-        if (u >= nu) {
-          u = 0;
-        }
-      }
-      c = offset;
-    }
   }
+
+  free(pus);
 
   /* NUMA domain count for public API */
   unsigned int mem = hwloc_get_nbobjs_by_type(topology, HWLOC_OBJ_NUMANODE);

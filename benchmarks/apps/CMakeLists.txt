@@ -34,7 +34,8 @@ target_include_directories(ocr_lib_reduction PRIVATE
 target_link_libraries(ocr_lib_reduction PRIVATE ocr_xsocr_static)
 set_target_properties(ocr_lib_reduction PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
 target_compile_options(ocr_lib_reduction PRIVATE ${BENCH_C_OPT} -w)
-target_compile_definitions(ocr_lib_reduction PRIVATE ${OCR_EXT_DEFINES})
+target_compile_definitions(ocr_lib_reduction PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
+target_include_directories(ocr_lib_reduction PRIVATE ${BENCH_OCR_OPTIONS_DIR})
 
 # --- reductionEager library ---
 add_library(ocr_lib_reductionEager OBJECT
@@ -49,7 +50,8 @@ target_include_directories(ocr_lib_reductionEager PRIVATE
 target_link_libraries(ocr_lib_reductionEager PRIVATE ocr_xsocr_static)
 set_target_properties(ocr_lib_reductionEager PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
 target_compile_options(ocr_lib_reductionEager PRIVATE ${BENCH_C_OPT} -w)
-target_compile_definitions(ocr_lib_reductionEager PRIVATE ${OCR_EXT_DEFINES})
+target_compile_definitions(ocr_lib_reductionEager PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
+target_include_directories(ocr_lib_reductionEager PRIVATE ${BENCH_OCR_OPTIONS_DIR})
 
 # --- timer library (x86) ---
 add_library(ocr_lib_timer OBJECT
@@ -61,7 +63,8 @@ target_include_directories(ocr_lib_timer PUBLIC
 target_link_libraries(ocr_lib_timer PRIVATE ocr_xsocr_static)
 set_target_properties(ocr_lib_timer PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
 target_compile_options(ocr_lib_timer PRIVATE ${BENCH_C_OPT} -w)
-target_compile_definitions(ocr_lib_timer PRIVATE ${OCR_EXT_DEFINES})
+target_compile_definitions(ocr_lib_timer PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
+target_include_directories(ocr_lib_timer PRIVATE ${BENCH_OCR_OPTIONS_DIR})
 
 # --- reduction_v1 library (used by reduction/intel-chandra) ---
 add_library(ocr_lib_reduction_v1 OBJECT
@@ -73,7 +76,8 @@ target_include_directories(ocr_lib_reduction_v1 PUBLIC
 target_link_libraries(ocr_lib_reduction_v1 PRIVATE ocr_xsocr_static)
 set_target_properties(ocr_lib_reduction_v1 PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
 target_compile_options(ocr_lib_reduction_v1 PRIVATE ${BENCH_C_OPT} -w)
-target_compile_definitions(ocr_lib_reduction_v1 PRIVATE ${OCR_EXT_DEFINES})
+target_compile_definitions(ocr_lib_reduction_v1 PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
+target_include_directories(ocr_lib_reduction_v1 PRIVATE ${BENCH_OCR_OPTIONS_DIR})
 
 # --- ocrAppUtils library ---
 add_library(ocr_lib_ocrAppUtils OBJECT
@@ -85,7 +89,8 @@ target_include_directories(ocr_lib_ocrAppUtils PUBLIC
 target_link_libraries(ocr_lib_ocrAppUtils PRIVATE ocr_xsocr_static)
 set_target_properties(ocr_lib_ocrAppUtils PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
 target_compile_options(ocr_lib_ocrAppUtils PRIVATE ${BENCH_C_OPT} -w)
-target_compile_definitions(ocr_lib_ocrAppUtils PRIVATE ${OCR_EXT_DEFINES})
+target_compile_definitions(ocr_lib_ocrAppUtils PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
+target_include_directories(ocr_lib_ocrAppUtils PRIVATE ${BENCH_OCR_OPTIONS_DIR})
 
 # ==========================================================================
 # add_benchmark_app: builds an OCR app against both XSOCR and ARTS backends
@@ -137,8 +142,9 @@ function(add_benchmark_app)
         ${OCR_LIBS_ROOT}/macros/macros
         ${APP_EXTRA_INCLUDES}
         ${LIB_INCLUDES}
+        ${BENCH_OCR_OPTIONS_DIR}
     )
-    set(COMMON_DEFINES ${OCR_EXT_DEFINES} ${APP_EXTRA_DEFINES})
+    set(COMMON_DEFINES ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE} ${APP_EXTRA_DEFINES})
 
     # --- XSOCR variant ---
     add_executable(${APP_NAME}_xsocr ${ABS_SOURCES} ${LIB_OBJECTS})

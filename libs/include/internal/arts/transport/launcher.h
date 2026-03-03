@@ -58,10 +58,14 @@ struct arts_remote_launcher_s {
   unsigned int child_count;
 };
 
-// Add your launcher prototypes here
+// SSH launcher
 void arts_remote_launcher_ssh_startup_processes(
     struct arts_remote_launcher_s *launcher);
 void arts_remote_launcher_ssh_cleanup_processes(
+    struct arts_remote_launcher_s *launcher);
+
+// Local launcher (multi-node on single machine)
+void arts_remote_launcher_local_startup_processes(
     struct arts_remote_launcher_s *launcher);
 
 static inline struct arts_remote_launcher_s *arts_remote_launcher_create(

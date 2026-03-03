@@ -86,13 +86,10 @@ void multiply_mm(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   double *a_tile_dev = (double *)depv[0].ptr;
   double *b_tile_dev = (double *)depv[1].ptr;
-  double *c_tile_host = NULL;
-
   // arts_guid_t a_tile_guid = depv[0].guid;
   // arts_guid_t b_tile_guid = depv[1].guid;
   arts_guid_t c_tile_guid = arts_guid_reserve(ARTS_DB, 0);
-  c_tile_host = (double *)arts_db_create_with_guid(c_tile_guid, size,
-                                                   ARTS_DB_GPU, NULL, NULL);
+  arts_db_create_with_guid(c_tile_guid, size, ARTS_DB_GPU, NULL, NULL);
 
   double *c_tile_dev = (double *)arts_cuda_malloc(size);
 

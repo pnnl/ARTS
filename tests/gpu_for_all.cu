@@ -83,10 +83,9 @@ void thrust_sort(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       dev_ptr_raw[gpu_index]; // The corresponding dev pointer
                               // (frontier) to our gpu
 
-  unsigned int *tile = NULL; // This will hold a tile of the new frontier
   arts_guid_t tile_guid = arts_guid_reserve(ARTS_DB, 0);
-  tile = (unsigned int *)arts_db_create_with_guid(
-      tile_guid, sizeof(unsigned int) * GPULISTLEN, ARTS_DB_GPU, NULL, NULL);
+  arts_db_create_with_guid(tile_guid, sizeof(unsigned int) * GPULISTLEN,
+                           ARTS_DB_GPU, NULL, NULL);
 
   thrust::device_ptr<unsigned int> dev_thrust_ptr(raw_ptr);
   thrust::sort(dev_thrust_ptr, dev_thrust_ptr + GPULISTLEN); // Do the sorting

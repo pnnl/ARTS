@@ -85,8 +85,8 @@ struct arts_config_s {
   unsigned int auto_shutdown;
   bool master_boot;
   bool core_dump;
-  unsigned int pin_stride;
   bool pin_threads;
+  bool shared_pu_pool; /* true when all nodes share PUs (local multi-node) */
   uint64_t stack_size;
   struct arts_remote_launcher_s *launcher_data;
   unsigned int table_length;

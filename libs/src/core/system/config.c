@@ -726,7 +726,6 @@ static const struct arts_config_entry_s config_entries[] = {
     {"stack_size", CONFIG_UINT64, OFF(stack_size), "0", NULL},
     /* --- Pinning --- */
     {"pin", CONFIG_BOOL, OFF(pin_threads), "1", NULL},
-    {"pin_stride", CONFIG_UINT, OFF(pin_stride), "1", NULL},
     /* --- Scheduling --- */
     {"scheduler", CONFIG_UINT, OFF(scheduler), "0", NULL},
     {"deque_type", CONFIG_UINT, OFF(deque_type), "0", NULL},
@@ -884,8 +883,8 @@ static void config_setup_ssh(struct arts_config_s *config,
   }
 }
 
-static void config_setup_local(struct arts_config_s *config) {
-  config->master_boot = false;
+static void config_setup_local(struct arts_config_s *config,
+                               struct arts_config_variable_s **vars) {
   if (config->master_node) {
     arts_free(config->master_node);
     config->master_node = NULL;
@@ -896,9 +895,69 @@ static void config_setup_local(struct arts_config_s *config) {
     config->worker_thread_count = (unsigned int)strtol(threads_user, NULL, 10);
   }
 
-  config->nodes = 1;
-  config->table_length = 1;
-  config->master_rank = 0;
+  /* Determine node count from config file. */
+  unsigned int node_count = 1;
+  const char *node_count_value = config_lookup(vars, "node_count");
+  const char *nodes_value = config_lookup(vars, "nodes");
+
+  if (node_count_value) {
+    node_count = (unsigned int)strtol(node_count_value, NULL, 10);
+  } else if (nodes_value) {
+    char *tmp = arts_config_make_new_var(nodes_value);
+    node_count = arts_config_count_nodes(tmp);
+    arts_free(tmp);
+  }
+
+  if (node_count > 1) {
+    /* Multi-node local: simulate cluster on a single machine. */
+    config->master_boot = true;
+    config->shared_pu_pool = true;
+    config->nodes = node_count;
+
+    /* Build routing table from nodes string (preserves per-node ports)
+       or generate one with node_count entries of 127.0.0.1. */
+    char *node_list = NULL;
+    if (nodes_value) {
+      node_list = arts_config_make_new_var(nodes_value);
+    } else {
+      /* Build "127.0.0.1, 127.0.0.1, ..." for node_count entries. */
+      size_t len = (size_t)node_count * 12; /* "127.0.0.1, " per entry */
+      node_list = (char *)arts_malloc(len);
+      node_list[0] = '\0';
+      for (unsigned int i = 0; i < node_count; i++) {
+        if (i > 0) {
+          strncat(node_list, ", ", len - strlen(node_list) - 1);
+        }
+        strncat(node_list, "127.0.0.1", len - strlen(node_list) - 1);
+      }
+    }
+
+    arts_config_create_routing_table(&config, node_list);
+
+    /* Replace all hostnames with 127.0.0.1 (user may have specified
+       "localhost" or other aliases). */
+    for (unsigned int i = 0; i < config->table_length; i++) {
+      arts_free(config->table[i].ip_address);
+      config->table[i].ip_address = arts_config_make_new_var("127.0.0.1");
+      config->table[i].rank = i;
+    }
+
+    config->master_rank = 0;
+    config->master_node = arts_config_make_new_var("127.0.0.1");
+
+    config->launcher_data = arts_remote_launcher_create(
+        0, NULL, config, config->kill_mode,
+        arts_remote_launcher_local_startup_processes,
+        arts_remote_launcher_ssh_cleanup_processes);
+
+    ARTS_INFO("Local multi-node: %u nodes on 127.0.0.1", node_count);
+  } else {
+    /* Single-node local (original behavior). */
+    config->master_boot = false;
+    config->nodes = 1;
+    config->table_length = 1;
+    config->master_rank = 0;
+  }
 }
 
 static void config_setup_launcher(struct arts_config_s *config,
@@ -910,7 +969,7 @@ static void config_setup_launcher(struct arts_config_s *config,
   } else if (strcmp(config->launcher, "ssh") == 0) {
     config_setup_ssh(config, vars);
   } else if (strcmp(config->launcher, "local") == 0) {
-    config_setup_local(config);
+    config_setup_local(config, vars);
   } else {
     ARTS_ERROR("Invalid launcher: %s", config->launcher);
   }
@@ -928,28 +987,35 @@ static void config_compute_derived(struct arts_config_s *config) {
   config->route_table_entries = 1U << config->route_table_size;
   config->gpu_route_table_entries = 1U << config->gpu_route_table_size;
 
-  /* Single-node: force sender/receiver to 0 — no networking needed. */
+  /* Single-node: reclaim sender/receiver threads as workers. */
   if (config->table_length <= 1) {
     if (config->sender_thread_count || config->receiver_thread_count) {
-      ARTS_WARN("Single-node: ignoring sender_threads=%u, receiver_threads=%u",
+      ARTS_WARN("Single-node: reclaiming sender_threads=%u + "
+                "receiver_threads=%u as workers",
                 config->sender_thread_count, config->receiver_thread_count);
+      config->worker_thread_count +=
+          config->sender_thread_count + config->receiver_thread_count;
       config->sender_thread_count = 0;
       config->receiver_thread_count = 0;
     }
   }
 
-  /* Networking conditional defaults (non-local launcher only). */
-  if (strcmp(config->launcher, "local") != 0 && config->table_length > 1) {
+  /* Networking conditional defaults (any launcher with multiple nodes). */
+  if (config->table_length > 1) {
     if (!config->sender_thread_count) {
       config->sender_thread_count = 1;
+      ARTS_WARN("Multi-node: defaulting sender_threads to 1");
     }
     if (!config->receiver_thread_count) {
       config->receiver_thread_count = 1;
+      ARTS_WARN("Multi-node: defaulting receiver_threads to 1");
     }
 
     /* Port defaults: derive port_count and default_ports. */
     if (!config->port_count && config->default_ports_count > 0) {
-      /* Only default_ports specified → derive port_count */
+      /* Only default_ports specified → derive port_count.
+         For local multi-node with auto-offset, port_count = default_ports_count
+         (per-node parallel connections). */
       config->port_count = config->default_ports_count;
     } else if (config->port_count > 0 && config->default_ports_count == 0) {
       /* Only port_count specified → generate consecutive default ports */
@@ -979,8 +1045,20 @@ static void config_compute_derived(struct arts_config_s *config) {
         if (config->table[i].ports == NULL) {
           config->table[i].ports = (unsigned int *)arts_malloc(
               config->port_count * sizeof(unsigned int));
-          memcpy(config->table[i].ports, config->default_ports,
-                 config->port_count * sizeof(unsigned int));
+          if (config->shared_pu_pool) {
+            /* Local multi-node: auto-offset to avoid port conflicts on
+               127.0.0.1. Node i gets default_ports[j] + i * port_count. */
+            for (unsigned int j = 0; j < config->port_count; j++) {
+              config->table[i].ports[j] =
+                  config->default_ports[j] + (i * config->port_count);
+            }
+            ARTS_WARN("Local multi-node: node %u auto-assigned port(s) "
+                      "starting at %u",
+                      i, config->table[i].ports[0]);
+          } else {
+            memcpy(config->table[i].ports, config->default_ports,
+                   config->port_count * sizeof(unsigned int));
+          }
         }
       }
     }

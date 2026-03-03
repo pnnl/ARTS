@@ -456,9 +456,7 @@ void init_node(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramc;
   (void)depc;
   (void)depv;
-  int argc = (int)paramv[0];
   char **argv = (char **)paramv[1];
-  (void)argc;
   unsigned int node_id = arts_get_current_node();
 
   char *file_name = argv[1];

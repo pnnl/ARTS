@@ -41,14 +41,13 @@
 #define _FILE_OFFSET_BITS 64 // NOLINT(readability-identifier-naming)
 #include "arts.h"
 #include "arts/counter/counter.h"
-#include "arts/transport/launcher.h"
-#include "arts/transport/dispatcher.h"
-#include "arts/transport/socket.h"
 #include "arts/runtime_state.h"
 #include "arts/system/config.h"
 #include "arts/system/debug.h"
 #include "arts/system/threads.h"
-#include <string.h>
+#include "arts/transport/dispatcher.h"
+#include "arts/transport/launcher.h"
+#include "arts/transport/socket.h"
 
 int arts_rt(int argc, char **argv) {
   TIME_INIT_START();
@@ -63,11 +62,13 @@ int arts_rt(int argc, char **argv) {
 
   arts_global_rank_id = 0;
   arts_global_rank_count = config.table_length;
-  if (strncmp(config.launcher, "local", 5) != 0) {
+  if (config.table_length > 1) {
     arts_server_setup(&config);
   }
   arts_global_master_rank_id = config.master_rank;
   if (arts_global_rank_id == config.master_rank && config.master_boot) {
+    config.launcher_data->argc = (unsigned int)argc;
+    config.launcher_data->argv = argv;
     config.launcher_data->launch_processes(config.launcher_data);
   }
 

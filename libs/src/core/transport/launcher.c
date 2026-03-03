@@ -343,3 +343,66 @@ void arts_remote_launcher_ssh_cleanup_processes(
   launcher->child_pids = NULL;
   launcher->child_count = 0;
 }
+
+/*--- Local launcher (multi-node on single machine) -------------------------*/
+
+void arts_remote_launcher_local_startup_processes(
+    struct arts_remote_launcher_s *launcher) {
+  struct arts_config_s *config = launcher->config;
+
+  /* Resolve the current executable path. */
+  char self_exe[4096];
+  ssize_t exe_len = readlink("/proc/self/exe", self_exe, sizeof(self_exe) - 1);
+  if (exe_len < 0) {
+    ARTS_ERROR("Local launcher: readlink(/proc/self/exe) failed: %s",
+               strerror(errno));
+    return;
+  }
+  self_exe[exe_len] = '\0';
+
+  /* Build argv for child processes: [self_exe, argv[1..], NULL]. */
+  unsigned int argc = launcher->argc;
+  unsigned int new_argc = argc > 0 ? argc : 1;
+  char **new_argv = (char **)arts_malloc((new_argc + 1) * sizeof(char *));
+  new_argv[0] = self_exe;
+  for (unsigned int j = 1; j < argc; j++) {
+    new_argv[j] = launcher->argv[j];
+  }
+  new_argv[new_argc] = NULL;
+
+  /* Allocate PID tracking for non-master nodes. */
+  unsigned int num_children = config->table_length - 1;
+  launcher->child_pids = (pid_t *)arts_calloc(num_children, sizeof(pid_t));
+  launcher->child_count = 0;
+
+  for (unsigned int i = 1; i < config->table_length; i++) {
+    pid_t child = fork();
+
+    if (child == 0) {
+      /* Child: set rank via environment, redirect I/O, exec. */
+      char rank_str[16];
+      (void)snprintf(rank_str, sizeof(rank_str), "%u", i);
+      setenv("ARTS_RANK", rank_str, 1);
+
+      int devnull = open("/dev/null", O_RDWR);
+      if (devnull >= 0) {
+        dup2(devnull, STDOUT_FILENO);
+        dup2(devnull, STDERR_FILENO);
+        if (devnull > STDERR_FILENO) {
+          close(devnull);
+        }
+      }
+
+      execv(self_exe, new_argv);
+      _exit(127);
+    } else if (child > 0) {
+      launcher->child_pids[launcher->child_count++] = child;
+      ARTS_INFO("Local launcher: spawned rank %u (pid %d)", i, (int)child);
+    } else {
+      ARTS_ERROR("Local launcher: fork() failed for rank %u: %s", i,
+                 strerror(errno));
+    }
+  }
+
+  arts_free(new_argv);
+}

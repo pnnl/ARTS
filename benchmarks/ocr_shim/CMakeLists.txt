@@ -31,11 +31,13 @@ target_compile_definitions(ocr_arts_objects PRIVATE
     ENABLE_EXTENSION_RTITF
     ENABLE_EXTENSION_CHANNEL_EVT
     ENABLE_EXTENSION_COUNTED_EVT
+    ${BENCH_OCR_TYPE_DEFINE}
 )
 
 # Include: OCR public headers + extension headers
 target_include_directories(ocr_arts_objects PRIVATE
     ${OCR_ROOT}/inc                # ocr.h, ocr-types.h, etc.
+    ${BENCH_OCR_OPTIONS_DIR}       # generated ocr-options_arts.h
 )
 
 # Include: ARTS public + internal headers (shim needs route table, runtime_types)

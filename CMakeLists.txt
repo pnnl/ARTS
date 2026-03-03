@@ -284,15 +284,11 @@ endif()
 # Add third-party dependencies
 add_subdirectory(third_party)
 
-# Hardware locality (hwloc) — mandatory dependency, v2+ required
-if(HWLOC_FOUND)
-    if(HWLOC_VERSION VERSION_GREATER_EQUAL "2.0")
-        message(STATUS "Hardware topology: hwloc v${HWLOC_VERSION}")
-    else()
-        message(FATAL_ERROR "hwloc v${HWLOC_VERSION} < 2.0 — v2+ required")
-    endif()
+# Hardware locality (hwloc) — always built from source, v2+ required
+if(HWLOC_VERSION VERSION_GREATER_EQUAL "2.0")
+    message(STATUS "Hardware topology: hwloc v${HWLOC_VERSION} (source build)")
 else()
-    message(FATAL_ERROR "hwloc not found — required dependency")
+    message(FATAL_ERROR "hwloc v${HWLOC_VERSION} < 2.0 — v2+ required")
 endif()
 
 add_compile_definitions(ARTS_LOG_LEVEL=${ARTS_LOG_LEVEL})
@@ -478,7 +474,7 @@ if(ARTS_USE_RDMA AND RDMACM_FOUND)
 else()
     message(STATUS "  Network:          TCP (default)")
 endif()
-message(STATUS "  Hardware Topo:    hwloc v${HWLOC_VERSION}")
+message(STATUS "  Hardware Topo:    hwloc v${HWLOC_VERSION} (source)")
 message(STATUS "")
 message(STATUS "Build options:")
 if(ARTS_BUILD_SHARED)

@@ -12,6 +12,14 @@ else()
     set(BENCH_C_OPT -O3)
 endif()
 
+# Suppress the "#pragma message: OCR_TYPE_H not defined" note from ocr.h.
+# Defining OCR_TYPE_H causes ocr.h to #include "ocr-options_<value>.h",
+# so we generate a no-op header in the build directory.
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/ocr-options_arts.h"
+     "/* No-op OCR options for ARTS benchmark builds. */\n")
+set(BENCH_OCR_TYPE_DEFINE "OCR_TYPE_H=arts.h")
+set(BENCH_OCR_OPTIONS_DIR "${CMAKE_CURRENT_BINARY_DIR}")
+
 add_subdirectory(xsocr)
 add_subdirectory(ocr_shim)
 add_subdirectory(apps)
