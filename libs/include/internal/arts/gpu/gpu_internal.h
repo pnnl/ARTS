@@ -79,11 +79,8 @@ void arts_gpu_host_wrap_up(void *edt_packet, arts_guid_t to_signal,
 void arts_run_gpu(void *edt_packet, arts_gpu_t *arts_gpu);
 bool arts_gpu_scheduler_loop(void);
 
-/* --- LC sync / GPU signal helpers (always compiled, used from core) --- */
+/* --- LC sync helpers (internal only — public decls in arts/gpu.h) --- */
 
-void arts_lc_sync(arts_guid_t edt_guid, uint32_t slot, arts_guid_t data_guid);
-void arts_gpu_signal_edt_memset(arts_guid_t edt_guid, uint32_t slot,
-                                arts_guid_t data_guid);
 void internal_lc_sync_cpu(arts_guid_t acq_guid, struct arts_db_s *db);
 void internal_lc_sync_gpu(arts_guid_t acq_guid, struct arts_db_s *db);
 

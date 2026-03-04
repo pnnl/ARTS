@@ -220,7 +220,8 @@ static void performCollectiveReduction(CollectiveMetadata *meta) {
 
       arts_type_t dstType = arts_guid_get_type(localDeps[i]);
       if (dstType == ARTS_EDT) {
-        arts_signal_edt(localDeps[i], localSlots[i], resultDb, ARTS_MODE_RO);
+        arts_add_dependence(resultDb, localDeps[i], localSlots[i],
+                            ARTS_MODE_RO);
       } else if (dstType == ARTS_EVENT) {
         if (!arts_is_event_fired(localDeps[i])) {
           arts_event_satisfy_slot(localDeps[i], resultDb,
@@ -412,12 +413,9 @@ static void ocr_edt_trampoline(uint32_t paramc, const uint64_t *paramv,
 
   if (isFinishEdt && helperOrOutEvt != NULL_GUID) {
     if (returnGuid.guid != NULL_GUID) {
-      arts_type_t returnType = arts_guid_get_type(returnGuid.guid);
-      if (returnType == ARTS_EVENT) {
-        arts_add_dependence(returnGuid.guid, helperOrOutEvt, 1, ARTS_MODE_RO);
-      } else {
-        arts_signal_edt(helperOrOutEvt, 1, returnGuid.guid, ARTS_MODE_RO);
-      }
+      /* arts_add_dependence handles both DB (immediate satisfy) and
+       * event (register waiter) sources uniformly. */
+      arts_add_dependence(returnGuid.guid, helperOrOutEvt, 1, ARTS_MODE_RO);
     } else {
       arts_signal_edt_value(helperOrOutEvt, 1, 0);
     }
@@ -553,15 +551,9 @@ u8 ocrEdtCreate(ocrGuid_t *guid, ocrGuid_t templateGuid, u32 paramc,
       } else if (!ocrGuidIsUninitialized(depv[i])) {
         /* Valid GUID — signal now.  UNINITIALIZED_GUID slots are
          * left open for later ocrAddDependence calls. */
-        arts_type_t guidType = arts_guid_get_type(depv[i].guid);
-        if (guidType == ARTS_DB) {
-          /* ocrEdtCreate depv has no mode field (ocrGuid_t[], not
-           * ocrEdtDep_t[]).  Default to RO; apps that need EW use
-           * ocrAddDependence which carries the mode. */
-          arts_signal_edt(edtGuid, i, depv[i].guid, ARTS_MODE_RO);
-        } else {
-          arts_add_dependence(depv[i].guid, edtGuid, i, ARTS_MODE_RO);
-        }
+        /* arts_add_dependence handles both DB (immediate satisfy) and
+         * event (register waiter) sources uniformly. */
+        arts_add_dependence(depv[i].guid, edtGuid, i, ARTS_MODE_RO);
       }
     }
   }
@@ -859,11 +851,13 @@ u8 ocrDbRelease(ocrGuid_t db) {
  */
 static arts_db_access_mode_t ocr_to_arts_mode(ocrDbAccessMode_t ocr_mode) {
   switch (ocr_mode) {
-  case DB_MODE_RO: /* OCR 0x8 → ARTS RO */
-    return ARTS_MODE_RO;
-  case DB_MODE_EW: /* OCR 0x4 → ARTS EW */
-  case DB_MODE_RW: /* OCR 0x2 → ARTS EW */
+  case DB_MODE_EW: /* OCR 0x4 → ARTS EW (true exclusive write) */
     return ARTS_MODE_EW;
+  case DB_MODE_RO: /* OCR 0x8 → ARTS RO */
+  case DB_MODE_RW: /* OCR 0x2 → ARTS RO (advisory; OCR doesn't enforce RW
+                    * exclusion, and apps routinely use RW as a default even
+                    * for shared reads.  Mapping to EW causes frontier
+                    * serialization and performance collapse.) */
   default:
     return ARTS_MODE_RO;
   }
@@ -871,7 +865,6 @@ static arts_db_access_mode_t ocr_to_arts_mode(ocrDbAccessMode_t ocr_mode) {
 
 u8 ocrAddDependence(ocrGuid_t source, ocrGuid_t destination, u32 slot,
                     ocrDbAccessMode_t mode) {
-  (void)mode; /* OCR access modes are advisory — see comment below. */
 
   /* NULL source → signal immediately (slot satisfied with no data). */
   if (ocrGuidIsNull(source)) {
@@ -889,12 +882,14 @@ u8 ocrAddDependence(ocrGuid_t source, ocrGuid_t destination, u32 slot,
   arts_type_t dstType = arts_guid_get_type(destination.guid);
 
   if (srcType == ARTS_DB) {
-    /* DB → EDT/Event: signal with the DB GUID directly.
-     * Always use RO — OCR apps routinely use EW/RW as a default even
-     * for shared reads, relying on OCR modes being advisory.  Enforcing
-     * EW would cause frontier serialization and hangs (CoMD etc.). */
+    /* DB → EDT/Event: arts_add_dependence does immediate satisfy for DB
+     * sources (DBs are passive objects — no channel event, no waiting).
+     * Map OCR access modes to ARTS: RO→RO, EW/RW→EW.
+     * GUID-sorted acquisition in acquire_dbs prevents frontier deadlocks
+     * that previously required forcing all deps to RO. */
     if (dstType == ARTS_EDT) {
-      arts_signal_edt(destination.guid, slot, source.guid, ARTS_MODE_RO);
+      arts_add_dependence(source.guid, destination.guid, slot,
+                          ocr_to_arts_mode(mode));
     } else if (dstType == ARTS_EVENT) {
       arts_event_satisfy_slot(destination.guid, source.guid,
                               ARTS_EVENT_LATCH_DECR_SLOT);
@@ -980,8 +975,8 @@ u32 SNPRINTF(char *buf, u32 size, const char *fmt, ...) {
 
 void _ocrAssert(u8 val, const char *str, const char *file, u32 line) {
   if (!val) {
-    fprintf(stderr, "ASSERTION FAILED: %s at %s:%" PRIu32 "\n", str, file,
-            line);
+    (void)fprintf(stderr, "ASSERTION FAILED: %s at %s:%" PRIu32 "\n", str, file,
+                  line);
     abort();
   }
 }
@@ -1211,12 +1206,16 @@ static int getHintPropIndex(ocrHintType_t type, ocrHintProp_t prop) {
     }
     break;
   case OCR_HINT_EVT_T:
-    if (prop > OCR_HINT_EVT_PROP_START && prop < OCR_HINT_EVT_PROP_END) {
+    // OCR spec: EVT property range is empty (START == END - 1)
+    if (prop > OCR_HINT_EVT_PROP_START && // NOLINT
+        prop < OCR_HINT_EVT_PROP_END) {
       return (int)(prop - OCR_HINT_EVT_PROP_START - 1);
     }
     break;
   case OCR_HINT_GROUP_T:
-    if (prop > OCR_HINT_GROUP_PROP_START && prop < OCR_HINT_GROUP_PROP_END) {
+    // OCR spec: GROUP property range is empty (START == END - 1)
+    if (prop > OCR_HINT_GROUP_PROP_START && // NOLINT
+        prop < OCR_HINT_GROUP_PROP_END) {
       return (int)(prop - OCR_HINT_GROUP_PROP_START - 1);
     }
     break;
@@ -1374,7 +1373,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_hint_t h = {.route = arts_global_rank_id};
   arts_guid_t mainEdtGuid = arts_edt_create(mainEdtTrampoline, 0, NULL, 1, &h);
-  arts_signal_edt(mainEdtGuid, 0, argsDbGuid, ARTS_MODE_RO);
+  arts_add_dependence(argsDbGuid, mainEdtGuid, 0, ARTS_MODE_RO);
 }
 
 int main(int argc, char **argv) { return arts_rt(argc, argv); }

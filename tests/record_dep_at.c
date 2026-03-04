@@ -178,7 +178,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_guid_t e3 = arts_edt_create_with_epoch(check_slice, 0, NULL, 1, epoch,
                                               &(arts_hint_t){.route = 0});
-  arts_add_dependence_at(db3, e3, 0, DB_MODE_RO, 2 * sizeof(int), 2 * sizeof(int));
+  arts_add_dependence_at(db3, e3, 0, DB_MODE_RO, 2 * sizeof(int),
+                         2 * sizeof(int));
 
   // Test 4: record_dep_at preserves DB GUID.
   uint64_t guid_param = (uint64_t)db3;

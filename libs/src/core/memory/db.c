@@ -53,7 +53,6 @@
 #include "arts/remote/handler.h"
 #include "arts/runtime_state.h"
 #include "arts/runtime_types.h"
-#include "arts/sync/event.h"
 #include "arts/sync/termination.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
@@ -83,8 +82,7 @@ static inline bool arts_db_subtype_has_frontier(arts_db_types_t db_type) {
  * EDT.
  *
  * Called when an EDT creates a local DB.  Sets WRITE_SET on the initial
- * frontier (blocking all consumers from joining the HEAD frontier) and
- * increments the channel event latch (blocking arts_record_dep consumers).
+ * frontier (blocking all consumers from joining the HEAD frontier).
  * The DB's GUID is tracked in the thread-local created_db_list for cleanup
  * when the EDT completes.
  */
@@ -93,8 +91,6 @@ static void arts_db_auto_acquire(struct arts_db_s *db) {
     struct arts_db_list_s *db_list = (struct arts_db_list_s *)db->db_list;
     arts_atomic_fetch_or(&db_list->head->lock, WRITE_SET);
   }
-  arts_event_satisfy_slot(db->event_guid, NULL_GUID,
-                          ARTS_EVENT_LATCH_INCR_SLOT);
   arts_track_created_db(db->guid);
 }
 
@@ -117,11 +113,6 @@ void *arts_db_malloc(arts_db_types_t db_type, unsigned int size) {
 
 void arts_db_free(void *ptr) {
   struct arts_db_s *db = (struct arts_db_s *)ptr;
-  // Destroy channel event if we're the owner (non-owner copies
-  // store the GUID but the actual event lives on the owner node)
-  if (arts_guid_get_rank(db->guid) == arts_global_rank_id) {
-    arts_event_destroy(db->event_guid);
-  }
   if (db->db_list && db->db_list != (void *)1) {
     arts_delete_db_list((struct arts_db_list_s *)db->db_list);
     db->db_list = NULL;
@@ -142,8 +133,8 @@ void arts_db_free(void *ptr) {
  * arts_db_create_internal — Initialize a DB header in pre-allocated memory.
  *
  * Sets up the arts_db_s header fields (type, size, version, reader/writer
- * counts, db_list, event_guid) and records metrics.  The caller is
- * responsible for route-table registration.
+ * counts, db_list) and records metrics.  The caller is responsible for
+ * route-table registration.
  */
 void arts_db_create_internal(arts_guid_t guid, void *addr, uint64_t len,
                              uint64_t packet_size, arts_db_types_t db_type,
@@ -170,8 +161,6 @@ void arts_db_create_internal(arts_guid_t guid, void *addr, uint64_t len,
     void *shadow_copy = (void *)(((char *)addr) + packet_size);
     memcpy(shadow_copy, addr, sizeof(struct arts_db_s));
   }
-  db_res->event_guid =
-      arts_event_create(arts_guid_get_rank(guid), ARTS_EVENT_CHANNEL, 0, guid);
   // Record per-object DB metrics
   arts_object_record_db(arts_id, packet_size, 0, 0);
   arts_object_trace_db(arts_id, packet_size, 0);
@@ -429,30 +418,6 @@ void arts_db_destroy_safe(arts_guid_t guid, bool remote) {
   }
 }
 
-void arts_db_increment_latch(arts_guid_t guid) {
-  struct arts_db_s *db_res =
-      (struct arts_db_s *)arts_route_table_lookup_db(guid, NULL, false);
-  if (db_res != NULL) {
-    arts_event_satisfy_slot(db_res->event_guid, NULL_GUID,
-                            ARTS_EVENT_LATCH_INCR_SLOT);
-    arts_route_table_return_db(guid, false);
-  } else {
-    arts_remote_db_increment_latch(guid);
-  }
-}
-
-void arts_db_decrement_latch(arts_guid_t guid) {
-  struct arts_db_s *db_res =
-      (struct arts_db_s *)arts_route_table_lookup_db(guid, NULL, false);
-  if (db_res != NULL) {
-    arts_event_satisfy_slot(db_res->event_guid, NULL_GUID,
-                            ARTS_EVENT_LATCH_DECR_SLOT);
-    arts_route_table_return_db(guid, false);
-  } else {
-    arts_remote_db_decrement_latch(guid);
-  }
-}
-
 /**********************DB MEMORY MODEL*************************************/
 // Side Effects: edt depc_needed will be incremented, ptr will be updated,
 //   and launches out of order handleReadyEdt
@@ -463,7 +428,27 @@ void acquire_dbs(struct arts_edt_s *edt) {
   ARTS_INFO("Acquiring %u DBs for EDT[Id:%lu, Guid:%lu], depc_needed "
             "initialized to %u",
             edt->depc, edt->arts_id, edt->current_edt, edt->depc_needed);
-  for (int i = 0; i < edt->depc; i++) {
+
+  /* Build GUID-sorted index array for deadlock-free acquisition order.
+   * Acquiring DBs in ascending GUID order prevents circular wait when
+   * multiple EDTs need overlapping DB sets in EW mode. */
+  uint32_t sorted[edt->depc > 0 ? edt->depc : 1];
+  for (uint32_t k = 0; k < edt->depc; k++) {
+    sorted[k] = k;
+  }
+  /* Insertion sort by GUID — stable, handles duplicates, fast for small N. */
+  for (uint32_t k = 1; k < edt->depc; k++) {
+    uint32_t val = sorted[k];
+    int j = (int)k - 1;
+    while (j >= 0 && depv[sorted[j]].guid > depv[val].guid) {
+      sorted[j + 1] = sorted[j];
+      j--;
+    }
+    sorted[j + 1] = val;
+  }
+
+  for (uint32_t si = 0; si < edt->depc; si++) {
+    int i = (int)sorted[si]; /* Acquire in GUID order, not slot order. */
     /*
      * A slot with guid == NULL_GUID (0) but mode != DB_MODE_NULL was
      * signaled via an event that carried no data — already satisfied,
@@ -695,8 +680,7 @@ void prep_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu) {
 /*
  * release_dbs — Release DB dependencies after EDT execution completes.
  *
- * For WRITE-mode deps owned locally: progresses the CDAG frontier and
- * decrements the channel event latch (notifying waiting readers).
+ * For WRITE-mode deps owned locally: progresses the CDAG frontier.
  * For WRITE-mode deps on remote owners: sends the updated data back to
  * the owner node.  For READ-mode: returns the route table entry.
  * For LC DBs (GPU builds): releases the reader lock.
@@ -722,11 +706,9 @@ void release_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu) {
         (access_mode == DB_MODE_EW || access_mode == DB_MODE_MEMSET)) {
       if (db_subtype == ARTS_DB_LOCAL) {
         ARTS_DEBUG("Pinned DB write release (no frontier update)");
-        arts_db_decrement_latch(depv[i].guid);
       } else if (owner == arts_global_rank_id) {
         struct arts_db_s *db = ((struct arts_db_s *)depv[i].ptr - 1);
         arts_progress_frontier(db, arts_global_rank_id);
-        arts_db_decrement_latch(depv[i].guid);
       } else {
         struct arts_db_s *db = ((struct arts_db_s *)depv[i].ptr) - 1;
         if (db && (db->header.size - sizeof(struct arts_db_s)) == 176128) {
@@ -742,8 +724,6 @@ void release_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu) {
                  "latch decrement)",
                  depv[i].guid);
       INCREMENT_NUM_OWNER_UPDATE_SAVED_BY(1);
-    } else if (db_subtype == ARTS_DB_LOCAL && depv[i].guid != NULL_GUID) {
-      arts_db_decrement_latch(depv[i].guid);
     } else if (access_mode == DB_MODE_PTR) {
       if (depv[i].ptr) {
         arts_free(depv[i].ptr);
@@ -772,9 +752,8 @@ void release_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu) {
  *   1. created_db_list — DBs the current EDT created (auto-acquired WRITE).
  *   2. depv — DBs received as dependencies (EW or RO mode).
  *
- * For WRITE-mode (EW) deps: progresses the CDAG frontier and decrements
- * the channel event latch so consumer EDTs can proceed.  For READ-mode
- * (RO) deps: no frontier/latch action needed (readers don't hold locks).
+ * For WRITE-mode (EW) deps: progresses the CDAG frontier.  For READ-mode
+ * (RO) deps: no frontier action needed (readers don't hold locks).
  *
  * Marks the released slot/entry as NULL_GUID to prevent double-release
  * in the epilogue (release_dbs / arts_release_created_dbs).
@@ -794,8 +773,6 @@ void arts_db_release(arts_guid_t guid) {
           if (db->db_list) {
             arts_progress_frontier(db, arts_global_rank_id);
           }
-          arts_event_satisfy_slot(db->event_guid, NULL_GUID,
-                                  ARTS_EVENT_LATCH_DECR_SLOT);
           arts_route_table_return_db(guid, false);
         }
         return;
@@ -818,10 +795,9 @@ void arts_db_release(arts_guid_t guid) {
       if (db) {
         arts_db_types_t subtype = db->db_type;
         if (subtype == ARTS_DB_LOCAL) {
-          arts_db_decrement_latch(guid);
+          /* LOCAL: no frontier, ordering is programmer's responsibility. */
         } else if (arts_guid_get_rank(guid) == arts_global_rank_id) {
           arts_progress_frontier(db, arts_global_rank_id);
-          arts_db_decrement_latch(guid);
         } else {
           arts_remote_update_db(guid, true);
         }
@@ -842,7 +818,7 @@ void arts_db_release(arts_guid_t guid) {
  *
  * Mirrors release_dbs() but operates on the thread-local created_db_list
  * instead of the EDT's depv[].  For each tracked DB: progresses the frontier
- * (unblocking consumers) and decrements the channel event latch.
+ * (unblocking consumers).
  * Skips entries already released via arts_db_release() (marked NULL_GUID).
  */
 void arts_release_created_dbs(void) {
@@ -862,8 +838,6 @@ void arts_release_created_dbs(void) {
       if (db->db_list) {
         arts_progress_frontier(db, arts_global_rank_id);
       }
-      arts_event_satisfy_slot(db->event_guid, NULL_GUID,
-                              ARTS_EVENT_LATCH_DECR_SLOT);
       arts_route_table_return_db(*guid, false);
     }
   }

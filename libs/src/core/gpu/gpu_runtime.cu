@@ -44,13 +44,13 @@
 // stream.  Then we will push stuff!
 #include "arts/gpu/gpu_internal.h"
 
+#include "arts/compute/edt.h"
 #include "arts/gas/out_of_order.h"
 #include "arts/gpu.h"
 #include "arts/gpu/gpu_lc_sync_functions.cuh"
 #include "arts/gpu/gpu_route_table.h"
 #include "arts/gpu/gpu_stream.h"
 #include "arts/gpu/gpu_stream_buffer.h"
-#include "arts/compute/edt.h"
 #include "arts/memory/db.h"
 #include "arts/runtime_state.h"
 #include "arts/sync/termination.h"
@@ -151,8 +151,8 @@ arts_guid_t internal_edt_create_gpu(
     bool pass_through, bool lib, int gpu_to_run_on) {
   //    ARTSEDTCOUNTERTIMERSTART(EDT_CREATE_COUNTER);
   unsigned int dep_space = (has_depv) ? depc * sizeof(arts_edt_dep_t) : 0;
-  unsigned int edt_space = sizeof(arts_gpu_edt_t) +
-                           (paramc * sizeof(uint64_t)) + dep_space;
+  unsigned int edt_space =
+      sizeof(arts_gpu_edt_t) + (paramc * sizeof(uint64_t)) + dep_space;
 
   arts_gpu_edt_t *edt = (arts_gpu_edt_t *)arts_calloc(1, edt_space);
   edt->wrapperEdt.invalidate_count = 1;

@@ -42,10 +42,10 @@
 #include <unistd.h>
 
 #include "arts.h"
-#include "arts/transport/socket.h"
 #include "arts/runtime_state.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
+#include "arts/transport/socket.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/link_list.h"
 #include "arts/utils/malloc.h"

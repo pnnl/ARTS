@@ -40,10 +40,10 @@
 #include "arts/compute/shad.h"
 
 #include "arts.h"
+#include "arts/compute/edt.h"
 #include "arts/counter/counter.h"
 #include "arts/gas/guid.h"
 #include "arts/gas/route_table.h"
-#include "arts/compute/edt.h"
 #include "arts/runtime_state.h"
 #include "arts/sync/termination.h"
 #include "arts/system/print.h"

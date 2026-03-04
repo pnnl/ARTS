@@ -45,16 +45,9 @@ extern "C" {
 #include "arts/runtime_types.h"
 
 #define ARTS_TYPE_NAME                                                         \
-  const char *const arts_type_name[] = {"ARTS_NULL",                           \
-                                        "ARTS_EDT",                            \
-                                        "",                                    \
-                                        "ARTS_EVENT",                          \
-                                        "",                                    \
-                                        "ARTS_EPOCH",                          \
-                                        "ARTS_CALLBACK",                       \
-                                        "ARTS_BUFFER",                         \
-                                        "ARTS_DB",                             \
-                                        "ARTS_LAST_TYPE"}
+  const char *const arts_type_name[] = {                                       \
+      "ARTS_NULL",     "ARTS_EDT",    "ARTS_EVENT", "ARTS_EPOCH",              \
+      "ARTS_CALLBACK", "ARTS_BUFFER", "ARTS_DB",    "ARTS_LAST_TYPE"}
 
 #define GET_TYPE_NAME(x) arts_type_name[x]
 
@@ -95,8 +88,6 @@ void internal_put_in_db(void *ptr, arts_guid_t edt_guid, arts_guid_t db_guid,
                         unsigned int rank);
 
 void arts_db_destroy_safe(arts_guid_t guid, bool remote);
-void arts_db_increment_latch(arts_guid_t guid);
-void arts_db_decrement_latch(arts_guid_t guid);
 void *arts_db_malloc(arts_db_types_t db_type, unsigned int size);
 void arts_db_free(void *ptr);
 void *arts_db_adopt(arts_guid_t guid, struct arts_db_s *db);

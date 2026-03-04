@@ -39,10 +39,10 @@
 #include "arts/sync/termination.h"
 
 #include "arts.h"
+#include "arts/compute/edt.h"
 #include "arts/gas/guid.h"
 #include "arts/gas/out_of_order.h"
 #include "arts/gas/route_table.h"
-#include "arts/compute/edt.h"
 #include "arts/remote/handler.h"
 #include "arts/runtime_types.h"
 #include "arts/system/print.h"
@@ -341,9 +341,8 @@ bool check_epoch(arts_epoch_t *epoch, unsigned int total_active,
        * round needed).  CAS ensures exactly one thread transitions to
        * PHASE_3 and fires the epoch, even under concurrent callers.
        */
-      unsigned int old_phase =
-          arts_atomic_cswap(&epoch->phase, (unsigned int)PHASE_1,
-                            (unsigned int)PHASE_3);
+      unsigned int old_phase = arts_atomic_cswap(
+          &epoch->phase, (unsigned int)PHASE_1, (unsigned int)PHASE_3);
       if (old_phase == (unsigned int)PHASE_1) {
         ARTS_DEBUG(
             "check_epoch: CAS won PHASE_1->PHASE_3, firing epoch [Guid:%lu]",
@@ -366,9 +365,8 @@ bool check_epoch(arts_epoch_t *epoch, unsigned int total_active,
     if (epoch->phase == (unsigned int)PHASE_2 &&
         epoch->last_active_count == total_active &&
         epoch->last_finished_count == total_finish) {
-      unsigned int old_phase =
-          arts_atomic_cswap(&epoch->phase, (unsigned int)PHASE_2,
-                            (unsigned int)PHASE_3);
+      unsigned int old_phase = arts_atomic_cswap(
+          &epoch->phase, (unsigned int)PHASE_2, (unsigned int)PHASE_3);
       if (old_phase == (unsigned int)PHASE_2) {
         ARTS_DEBUG(
             "check_epoch: CAS won PHASE_2->PHASE_3, firing epoch [Guid:%lu]",

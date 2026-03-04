@@ -66,7 +66,6 @@ uint64_t arts_remote_send_request(int rank, unsigned int queue, char *message,
 uint64_t arts_remote_send_payload_request(int rank, unsigned int queue,
                                           char *message, unsigned int length,
                                           char *payload, uint64_t length2);
-void arts_server_ping_pong_test_recieve(char *in_buffer, int in_packet_size);
 void arts_remote_set_thread_inbound_queues(unsigned int start,
                                            unsigned int stop);
 void arts_remote_thread_inbound_queues_cleanup();

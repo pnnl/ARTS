@@ -85,15 +85,14 @@ typedef intptr_t arts_guid_t;
  * Access modes (read/write) are separate — see @c arts_db_access_mode_t.
  */
 typedef enum {
-  ARTS_NULL = 0,     /**< Empty / untyped placeholder. */
-  ARTS_EDT = 1,      /**< Event-Driven Task (CPU and GPU share this tag). */
-  ARTS_EVENT = 3,    /**< Latch-based synchronization event. */
-  ARTS_EPOCH = 5,    /**< Termination-detection epoch. */
-  ARTS_CALLBACK = 6, /**< Inline event callback. */
-  ARTS_BUFFER = 7,   /**< Node-local buffer accessible by GUID. */
-  ARTS_DB = 8,       /**< DataBlock (all subtypes share this tag). */
-
-  ARTS_LAST_TYPE = 9 /**< Sentinel — first invalid type value. */
+  ARTS_NULL,     /**< Empty / untyped placeholder. */
+  ARTS_EDT,      /**< Event-Driven Task (CPU and GPU share this tag). */
+  ARTS_EVENT,    /**< Latch-based synchronization event. */
+  ARTS_EPOCH,    /**< Termination-detection epoch. */
+  ARTS_CALLBACK, /**< Inline event callback. */
+  ARTS_BUFFER,   /**< Node-local buffer accessible by GUID. */
+  ARTS_DB,       /**< DataBlock (all subtypes share this tag). */
+  ARTS_LAST_TYPE /**< Sentinel — first invalid type value. */
 } arts_type_t;
 
 /**
@@ -533,7 +532,26 @@ arts_guid_t arts_edt_create_with_epoch_dep(
 void arts_edt_destroy(arts_guid_t guid);
 
 /**
+ * @warning DEPRECATED — arts_signal_edt breaks DAG analyzability.
+ *
+ * arts_signal_edt is an imperative "push" operation that delivers data
+ * to an EDT from within another EDT's body.  This makes the dependency
+ * graph invisible to the runtime (edges are hidden inside EDT code),
+ * preventing static analysis, scheduling optimization, and deadlock
+ * detection.
+ *
+ * Use arts_add_dependence(source, destination, slot, mode) instead.
+ * It is a declarative "this EDT depends on this data" statement that
+ * builds a visible, analyzable DAG.
+ *
+ * arts_signal_edt remains available for internal runtime use and
+ * backward compatibility with CARTS-generated code, but new user code
+ * should exclusively use arts_add_dependence.
+ */
+
+/**
  * @brief Signal an EDT dependency slot with a DataBlock GUID.
+ * @deprecated Use arts_add_dependence() instead.
  *
  * When all @c depc slots are satisfied the EDT is scheduled.  The
  * @c depv[slot] entry is filled with the GUID and a pointer to the DB data.
@@ -589,6 +607,7 @@ void arts_signal_edt_ptr_with_guid(arts_guid_t edt_guid, uint32_t slot,
 
 /**
  * @brief Signal an EDT slot as satisfied without any data.
+ * @deprecated Use arts_add_dependence(NULL_GUID, dest, slot, mode) instead.
  *
  * Used for boundary conditions where a dependency should be skipped
  * (e.g. stencil edges).  The slot is marked @c ARTS_NULL.
@@ -853,8 +872,6 @@ void arts_db_release(arts_guid_t guid);
  * @param guid DataBlock GUID.
  */
 void arts_db_destroy(arts_guid_t guid);
-
-
 
 /**
  * @brief Write data into a DataBlock on its home node and signal an EDT.

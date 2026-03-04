@@ -269,6 +269,9 @@ void arts_ll_server_setup(struct arts_config_s *config) {
 }
 
 void arts_ll_server_shutdown() {
+  if (!arts_global_message_table || !remote_socket_recieve_list) {
+    return;
+  }
   int count = (int)arts_global_message_table->table_length;
   for (int i = 0; i < (count - 1) * ports; i++) {
     RSHUTDOWN(remote_socket_recieve_list[i], SHUT_RDWR);
@@ -810,90 +813,6 @@ bool arts_server_try_to_receive(
     return packet_incoming_on_a_socket;
   }
   return false;
-}
-
-void arts_server_ping_pong_test_recieve(char *in_buffer, int in_packet_size) {
-  int packet_size = in_packet_size;
-  char *buf = in_buffer;
-  int i;
-  int res;
-  int res2;
-  int steal_handler_thread = 0;
-  int pos;
-  struct arts_remote_packet_s *packet = (struct arts_remote_packet_s *)buf;
-  int count = (int)(arts_global_message_table->table_length - 1);
-  fd_set temp_set;
-  int time_out = 100;
-  struct timeval sel_timeout;
-  temp_set = read_set;
-  sel_timeout.tv_sec = 10;
-  sel_timeout.tv_usec = time_out;
-  bool recieved = false;
-
-  while (!recieved) {
-    res = RPOLL(poll_incoming, count, time_out);
-    time_out = 1;
-    // if(res)
-    for (i = 0; i < count; i++) {
-      if (poll_incoming[i].revents & POLLIN) {
-        packet = (struct arts_remote_packet_s *)buf;
-        res = RRECV(remote_socket_recieve_list[i], buf, packet_size, 0);
-        if (res > 0) {
-          while (res > 0) {
-            while (res < sizeof(struct arts_remote_packet_s)) {
-              if (buf != (char *)packet) {
-                memmove(buf, packet, res);
-                packet = (struct arts_remote_packet_s *)buf;
-              }
-              res2 = RRECV(remote_socket_recieve_list[i], buf + res,
-                           packet_size - res, 0);
-              res += res2;
-              if (res2 == -1) {
-                ARTS_INFO("Error on recv return 0");
-                ARTS_INFO("error %s", strerror(errno));
-                arts_shutdown();
-                return;
-              }
-            }
-
-            while (res < packet->size) {
-              if (buf != (char *)packet) {
-                memmove(buf, packet, res);
-                packet = (struct arts_remote_packet_s *)buf;
-              }
-              res2 = RRECV(remote_socket_recieve_list[i], buf + res,
-                           packet_size - res, 0);
-              res += res2;
-              if (res2 == -1) {
-                ARTS_INFO("Error on recv return 0");
-                ARTS_INFO("error %s", strerror(errno));
-                arts_shutdown();
-                return;
-              }
-            }
-            if (packet->message_type == ARTS_REMOTE_PINGPONG_TEST_MSG) {
-              recieved = true;
-            } else {
-              ARTS_INFO("Shit Packet %d %d %d", packet->message_type,
-                        packet->size, packet->rank);
-            }
-            res -= (int)packet->size;
-            packet = (struct arts_remote_packet_s *)(((char *)packet) +
-                                                     packet->size);
-          }
-        } else if (res == -1) {
-          ARTS_INFO("Error on recv socket return 0");
-          ARTS_INFO("error %s", strerror(errno));
-          arts_shutdown();
-          return;
-        } else if (res == 0) {
-          ARTS_INFO("Hmm socket close?");
-          arts_shutdown();
-          return;
-        }
-      }
-    }
-  }
 }
 
 int arts_get_new_socket() {

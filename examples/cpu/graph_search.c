@@ -45,8 +45,8 @@
 
 #include "arts.h"
 #include "arts/array_db.h"
-#include "arts/graph.h"
 #include "arts/compute/shad.h"
+#include "arts/graph.h"
 
 unsigned int intro_start = 5;
 

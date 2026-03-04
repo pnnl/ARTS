@@ -109,7 +109,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_db_destroy(db5); // Second destroy — route table returns NULL
   arts_printf("  PASS: double destroy did not crash\n");
 
-  // Test 6: arts_db_destroy on ARTS_DB_LOCAL (implicit release, should not crash).
+  // Test 6: arts_db_destroy on ARTS_DB_LOCAL (implicit release, should not
+  // crash).
   void *p6 = NULL;
   arts_guid_t db6 = arts_db_create(&p6, 64, ARTS_DB_LOCAL, NULL);
   arts_db_destroy(db6); // Should log warning and return

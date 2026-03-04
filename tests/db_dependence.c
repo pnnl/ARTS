@@ -38,13 +38,10 @@
 ******************************************************************************/
 
 /// @file db_dependence.c
-/// @brief Tests DB channel event dependences: arts_db_add_dependence,
-///        arts_db_add_dependence_with_mode,
-///        arts_db_add_dependence_with_mode_and_diff, arts_db_increment_latch,
-///        arts_db_decrement_latch.
+/// @brief Tests DB dependence with immediate satisfy: arts_add_dependence
+///        with DB sources in various access modes.
 
 #include "arts.h"
-#include "arts/memory/db.h"
 #include <string.h>
 
 /// Test 1: arts_db_add_dependence — fire EDT when DB's internal event triggers.
@@ -77,23 +74,7 @@ void check_db_dep_mode(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 }
 
-/// Test 3: arts_db_increment_latch / arts_db_decrement_latch.
-/// Increment by 2, then decrement 2 times. EDT fires on the last decrement.
-void check_latch_done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                      arts_edt_dep_t depv[]) {
-  (void)paramc;
-  (void)paramv;
-  (void)depc;
-  int *data = (int *)depv[0].ptr;
-  bool ok = (data != NULL && data[0] == 55);
-  if (ok) {
-    arts_printf("  PASS: db_increment/decrement_latch fired EDT\n");
-  } else {
-    arts_printf("  FAIL: db_increment/decrement_latch\n");
-  }
-}
-
-/// Test 4: arts_db_add_dependence_with_mode_and_diff.
+/// Test 3: arts_db_add_dependence_with_mode_and_diff.
 void check_db_dep_mode_diff(uint32_t paramc, const uint64_t *paramv,
                             uint32_t depc, arts_edt_dep_t depv[]) {
   (void)paramc;
@@ -139,25 +120,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       check_db_dep_mode, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
   arts_add_dependence(db2, e2, 0, DB_MODE_RO);
 
-  // Test 3: increment/decrement latch.
-  void *p3 = NULL;
-  arts_guid_t db3 = arts_db_create(&p3, sizeof(int), ARTS_DB_DEFAULT, NULL);
-  ((int *)p3)[0] = 55;
-  arts_db_release(db3);
-
-  // Increment latch by 2 extra (total outstanding = 2).
-  arts_db_increment_latch(db3);
-  arts_db_increment_latch(db3);
-
-  arts_guid_t e3 = arts_edt_create_with_epoch(
-      check_latch_done, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_add_dependence(db3, e3, 0, DB_MODE_RO);
-
-  // Decrement the 2 extra latches to let the event fire.
-  arts_db_decrement_latch(db3);
-  arts_db_decrement_latch(db3);
-
-  // Test 4: arts_db_add_dependence_with_mode_and_diff.
+  // Test 3: arts_db_add_dependence_with_mode_and_diff.
   void *p4 = NULL;
   arts_guid_t db4 = arts_db_create(&p4, sizeof(int), ARTS_DB_DEFAULT, NULL);
   ((int *)p4)[0] = 33;

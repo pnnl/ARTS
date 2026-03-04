@@ -210,22 +210,13 @@ run_ocr_apps() {
     log ""
     log "===== OCR apps ($suffix backend) ====="
 
-    # Ensure arts.cfg exists for ARTS backend
+    # Ensure correct arts.cfg for ARTS backend (always overwrite to prevent
+    # stale multinode config from a previous run causing single-node crashes)
     if [ "$suffix" = "arts" ]; then
         if [ "$DO_MULTINODE" -eq 1 ]; then
-            for cfg in "$REPO_ROOT/sample_configs/arts_multinode.cfg"; do
-                if [ -f "$cfg" ]; then
-                    cp "$cfg" arts.cfg
-                    break
-                fi
-            done
-        elif [ ! -f arts.cfg ]; then
-            for cfg in "$REPO_ROOT/sample_configs/arts.cfg"; do
-                if [ -f "$cfg" ]; then
-                    cp "$cfg" .
-                    break
-                fi
-            done
+            cp "$REPO_ROOT/sample_configs/arts_multinode.cfg" arts.cfg
+        else
+            cp "$REPO_ROOT/sample_configs/arts.cfg" arts.cfg
         fi
         if [ ! -f arts.cfg ]; then
             echo "WARNING: No arts.cfg found, ARTS apps may fail"

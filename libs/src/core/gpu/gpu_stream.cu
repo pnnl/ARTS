@@ -45,13 +45,13 @@
 #include "arts/gpu/gpu_stream.h"
 
 #include "arts.h"
+#include "arts/compute/edt.h"
 #include "arts/defs.h"
 #include "arts/gas/guid.h"
 #include "arts/gpu/gpu_internal.h"
 #include "arts/gpu/gpu_lc_sync_functions.cuh"
 #include "arts/gpu/gpu_route_table.h"
 #include "arts/gpu/gpu_stream_buffer.h"
-#include "arts/compute/edt.h"
 #include "arts/memory/db.h"
 #include "arts/runtime_state.h"
 #include "arts/system/print.h"
@@ -419,7 +419,8 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
           if (db_subtype == ARTS_DB_LC) {
             src = make_lc_shadow_copy(db);
           }
-          if (depv[i].mode == DB_MODE_LC_NO_COPY || depv[i].mode == DB_MODE_MEMSET) {
+          if (depv[i].mode == DB_MODE_LC_NO_COPY ||
+              depv[i].mode == DB_MODE_MEMSET) {
             src = NULL;
           }
           push_data_to_stream(arts_gpu->device, data_ptr, src, size,

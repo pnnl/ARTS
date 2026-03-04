@@ -120,36 +120,6 @@ void arts_remote_set_dep_mode(arts_guid_t edt_guid, uint32_t slot,
   arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
 }
 
-void arts_remote_channel_add_dependence_with_mode(arts_guid_t source,
-                                                  arts_guid_t destination,
-                                                  uint32_t slot,
-                                                  unsigned int rank,
-                                                  arts_db_access_mode_t mode) {
-  ARTS_DEBUG("Remote channel add dependence (mode=%u) sent %d", mode, rank);
-  send_remote_add_dependence_packet(ARTS_REMOTE_CHANNEL_ADD_DEPENDENCE_MSG,
-                                    source, destination, slot, rank, mode);
-}
-
-void arts_remote_channel_add_dependence_with_byte_offset(
-    arts_guid_t source, arts_guid_t destination, uint32_t slot,
-    unsigned int rank, arts_db_access_mode_t mode, uint64_t byte_offset,
-    uint64_t len) {
-  ARTS_DEBUG("Remote channel add dep with byte offset "
-             "(mode=%u, offset=%lu, size=%lu) sent to rank %d",
-             mode, byte_offset, len, rank);
-  struct arts_remote_add_dependence_with_byte_offset_packet_s packet;
-  packet.source = source;
-  packet.destination = destination;
-  packet.slot = slot;
-  packet.mode = mode;
-  packet.byte_offset = byte_offset;
-  packet.size = len;
-  arts_fill_packet_header(
-      &packet.header, sizeof(packet),
-      ARTS_REMOTE_CHANNEL_ADD_DEPENDENCE_WITH_BYTE_OFFSET_MSG);
-  arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
-}
-
 void arts_remote_update_route_table(arts_guid_t guid, unsigned int rank) {
   unsigned int owner = arts_guid_get_rank(guid);
   if (owner == arts_global_rank_id) {
@@ -295,22 +265,8 @@ void arts_remote_handle_update_db(void *ptr) {
       } else {
         arts_progress_frontier(db, packet->header.rank);
       }
-      arts_db_decrement_latch(packet->guid);
     }
   }
-}
-
-void arts_remote_partial_update_db(arts_guid_t guid, struct artsDiffList *diffs,
-                                   void *working) {
-  (void)guid;
-  (void)diffs;
-  (void)working;
-  ARTS_DEBUG("arts_remote_partial_update_db: partial updates disabled");
-}
-
-void arts_remote_handle_partial_update(void *ptr) {
-  (void)ptr;
-  ARTS_DEBUG("arts_remote_handle_partial_update: partial updates disabled");
 }
 
 void arts_remote_memory_move(unsigned int route, arts_guid_t guid, void *ptr,
@@ -443,89 +399,6 @@ void arts_remote_event_satisfy_slot(arts_guid_t event_guid,
                           ARTS_REMOTE_EVENT_SATISFY_SLOT_MSG);
   arts_remote_send_request_async((int)arts_guid_get_rank(event_guid),
                                  (char *)&packet, sizeof(packet));
-}
-
-static void send_remote_db_add_dependence_packet(arts_guid_t db_src,
-                                                 arts_guid_t edt_dest,
-                                                 uint32_t edt_slot,
-                                                 arts_db_access_mode_t mode) {
-  struct arts_remote_db_add_dependence_packet_s packet;
-  packet.db_src = db_src;
-  packet.edt_dest = edt_dest;
-  packet.edt_slot = edt_slot;
-  packet.mode = mode;
-  arts_fill_packet_header(&packet.header, sizeof(packet),
-                          ARTS_REMOTE_DB_ADD_DEPENDENCE_MSG);
-  arts_remote_send_request_async((int)arts_guid_get_rank(db_src),
-                                 (char *)&packet, sizeof(packet));
-}
-
-void arts_remote_db_add_dependence(arts_guid_t db_src, arts_guid_t edt_dest,
-                                   uint32_t edt_slot) {
-  send_remote_db_add_dependence_packet(db_src, edt_dest, edt_slot,
-                                       DB_MODE_NULL);
-}
-
-void arts_remote_db_add_dependence_with_hints(arts_guid_t db_src,
-                                              arts_guid_t edt_dest,
-                                              uint32_t edt_slot,
-                                              arts_db_access_mode_t mode) {
-  send_remote_db_add_dependence_packet(db_src, edt_dest, edt_slot, mode);
-}
-
-void arts_remote_db_add_dependence_with_byte_offset(
-    arts_guid_t db_src, arts_guid_t edt_dest, uint32_t edt_slot,
-    arts_db_access_mode_t mode, uint64_t byte_offset, uint64_t len) {
-  struct arts_remote_db_add_dependence_with_byte_offset_packet_s packet;
-  packet.db_src = db_src;
-  packet.edt_dest = edt_dest;
-  packet.edt_slot = edt_slot;
-  packet.mode = mode;
-  packet.byte_offset = byte_offset;
-  packet.size = len;
-  arts_fill_packet_header(&packet.header, sizeof(packet),
-                          ARTS_REMOTE_DB_ADD_DEPENDENCE_WITH_BYTE_OFFSET_MSG);
-  arts_remote_send_request_async((int)arts_guid_get_rank(db_src),
-                                 (char *)&packet, sizeof(packet));
-}
-
-void arts_remote_handle_db_add_dependence_with_byte_offset(void *ptr) {
-  struct arts_remote_db_add_dependence_with_byte_offset_packet_s *packet =
-      (struct arts_remote_db_add_dependence_with_byte_offset_packet_s *)ptr;
-
-  /// Look up the local DB
-  struct arts_db_s *db_res = (struct arts_db_s *)arts_route_table_lookup_db(
-      packet->db_src, NULL, false);
-  if (db_res != NULL) {
-    /// DB is local - set mode on EDT, then register byte-offset waiter.
-    arts_set_dep_mode(packet->edt_dest, packet->edt_slot, packet->mode);
-    arts_event_add_dependence_with_byte_offset(
-        db_res->event_guid, packet->edt_dest, packet->edt_slot, DB_MODE_NULL,
-        packet->byte_offset, packet->size);
-    arts_route_table_return_db(packet->db_src, false);
-  } else {
-    /// DB not found locally - this shouldn't happen as we routed to the owner
-    ARTS_DEBUG("ESD: Remote byte-offset dep: DB %lu not found on node %u",
-               packet->db_src, arts_global_rank_id);
-  }
-}
-
-void arts_remote_db_increment_latch(arts_guid_t db) {
-  struct arts_remote_guid_only_packet_s packet;
-  packet.guid = db;
-  arts_fill_packet_header(&packet.header, sizeof(packet),
-                          ARTS_REMOTE_DB_INCREMENT_LATCH_MSG);
-  arts_remote_send_request_async((int)arts_guid_get_rank(db), (char *)&packet,
-                                 sizeof(packet));
-}
-
-void arts_remote_db_decrement_latch(arts_guid_t db) {
-  struct arts_remote_guid_only_packet_s packet;
-  packet.guid = db;
-  arts_fill_packet_header(&packet.header, sizeof(packet),
-                          ARTS_REMOTE_DB_DECREMENT_LATCH_MSG);
-  arts_remote_send_request_async((int)arts_guid_get_rank(db), (char *)&packet,
-                                 sizeof(packet));
 }
 
 void arts_db_request_callback(struct arts_edt_s *edt, unsigned int slot,
@@ -683,8 +556,6 @@ void arts_remote_handle_db_received(
       db_res->db_list = NULL;
     }
     db_res->copy_count = 1;
-    db_res->event_guid = arts_event_create(arts_guid_get_rank(pdb.guid),
-                                           ARTS_EVENT_CHANNEL, 0, pdb.guid);
     if (arts_route_table_add_item_race(db_res, pdb.guid, arts_global_rank_id,
                                        false)) {
       arts_route_table_fire_oo(pdb.guid, arts_out_of_order_handler);
@@ -946,20 +817,6 @@ void arts_remote_handle_signal_edt_with_ptr(void *pack) {
   void *source = (void *)(packet + 1);
   arts_signal_edt_ptr_with_guid(packet->edt_guid, packet->slot, packet->db_guid,
                                 source, packet->size);
-}
-
-void arts_remote_metric_update(int rank, int type, int level,
-                               uint64_t time_stamp, uint64_t to_add, bool sub) {
-  (void)level;
-  ARTS_DEBUG("Remote Metric Update");
-  struct arts_remote_metric_update_s packet;
-  packet.type = type;
-  packet.time_stamp = time_stamp;
-  packet.to_add = to_add;
-  packet.sub = sub;
-  arts_fill_packet_header(&packet.header, sizeof(packet),
-                          ARTS_REMOTE_METRIC_UPDATE_MSG);
-  arts_remote_send_request_async(rank, (char *)&packet, sizeof(packet));
 }
 
 void arts_remote_send(unsigned int rank, send_handler_t fun_ptr, void *args,

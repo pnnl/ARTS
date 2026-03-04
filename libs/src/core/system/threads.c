@@ -50,10 +50,10 @@
 
 #include "arts.h"
 #include "arts/counter/counter.h"
-#include "arts/transport/dispatcher.h"
 #include "arts/runtime_state.h"
 #include "arts/system/config.h"
 #include "arts/system/print.h"
+#include "arts/transport/dispatcher.h"
 #include "arts/utils/malloc.h"
 
 unsigned int arts_global_rank_id;

@@ -326,7 +326,7 @@ static void channel_fire_dependents(struct arts_event_s *event,
       } else if (dependent[j].type == ARTS_EVENT) {
         arts_event_satisfy_slot(dependent[j].addr, data, dependent[j].slot);
       } else if (dependent[j].type == ARTS_CALLBACK) {
-        arts_edt_dep_t arg;
+        arts_edt_dep_t arg = {0};
         arg.guid = data;
         arg.ptr = arts_route_table_lookup_db(data, NULL, false);
         dependent[j].callback_t(arg);
@@ -414,8 +414,7 @@ void arts_event_add_dependence_with_mode(arts_guid_t event_source,
   if (event == NULL) {
     unsigned int rank = arts_guid_get_rank(event_source);
     if (rank != arts_global_rank_id) {
-      arts_remote_channel_add_dependence_with_mode(event_source, edt_dest,
-                                                   edt_slot, rank, mode);
+      arts_remote_add_dependence(event_source, edt_dest, edt_slot, rank, mode);
     } else {
       arts_out_of_order_add_dependence(event_source, edt_dest, edt_slot,
                                        DB_MODE_NULL, event_source);
@@ -471,8 +470,9 @@ void arts_event_add_dependence_with_byte_offset(
   if (event == NULL) {
     unsigned int rank = arts_guid_get_rank(event_source);
     if (rank != arts_global_rank_id) {
-      arts_remote_channel_add_dependence_with_byte_offset(
-          event_source, edt_dest, edt_slot, rank, mode, byte_offset, len);
+      /* Byte-offset not supported for remote channels — fall back to
+       * full-DB dependence.  The byte slice is resolved at acquire time. */
+      arts_remote_add_dependence(event_source, edt_dest, edt_slot, rank, mode);
     } else {
       arts_out_of_order_add_dependence(event_source, edt_dest, edt_slot,
                                        DB_MODE_NULL, event_source);
@@ -633,7 +633,7 @@ void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
                                       dependent[j].slot);
               TIME_EVENT_SIGNAL_START();
             } else if (dependent[j].type == ARTS_CALLBACK) {
-              arts_edt_dep_t arg;
+              arts_edt_dep_t arg = {0};
               arg.guid = event->data;
               arg.ptr = arts_route_table_lookup_db(event->data, NULL, false);
               dependent[j].callback_t(arg);
@@ -738,28 +738,13 @@ void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
 
   arts_type_t source_type = arts_guid_get_type(source);
 
-  /* DB source → translate to channel event + EW latch increment. */
+  /* DB source → immediate satisfy (DBs are passive objects). */
   if (source_type == ARTS_DB) {
-    struct arts_db_s *db_res =
-        (struct arts_db_s *)arts_route_table_lookup_db(source, NULL, false);
-    if (db_res != NULL) {
-      /* Step 1: set mode on EDT (if dest is EDT). */
-      arts_type_t dest_type = arts_guid_get_type(destination);
-      if (dest_type == ARTS_EDT) {
-        arts_set_dep_mode(destination, slot, access_mode);
-      }
-      /* Step 2: register waiter on channel event (mode-less). */
-      arts_event_add_dependence_with_mode(db_res->event_guid, destination, slot,
-                                          DB_MODE_NULL);
-      /* Step 3: EW latch increment. */
-      if (access_mode == DB_MODE_EW) {
-        arts_db_increment_latch(source);
-      }
-      arts_route_table_return_db(source, false);
-    } else {
-      /* DB not local — forward to DB's owner node. */
-      arts_remote_db_add_dependence_with_hints(source, destination, slot,
-                                               access_mode);
+    arts_type_t dest_type = arts_guid_get_type(destination);
+    if (dest_type == ARTS_EDT) {
+      arts_signal_edt(destination, slot, source, access_mode);
+    } else if (dest_type == ARTS_EVENT) {
+      arts_event_satisfy_slot(destination, source, slot);
     }
     return;
   }
@@ -857,20 +842,12 @@ void arts_add_dependence_at(arts_guid_t source, arts_guid_t destination,
   arts_type_t source_type = arts_guid_get_type(source);
 
   if (source_type == ARTS_DB) {
-    /* DB source — look up channel event and register byte-offset waiter. */
-    struct arts_db_s *db_res =
-        (struct arts_db_s *)arts_route_table_lookup_db(source, NULL, false);
-    if (db_res != NULL) {
-      arts_event_add_dependence_with_byte_offset(
-          db_res->event_guid, destination, slot, DB_MODE_NULL, byte_offset,
-          len);
-      arts_route_table_return_db(source, false);
-    } else {
-      arts_remote_db_add_dependence_with_byte_offset(
-          source, destination, slot, access_mode, byte_offset, len);
-    }
-    if (access_mode == DB_MODE_EW) {
-      arts_db_increment_latch(source);
+    /* DB source — immediate satisfy (DBs are passive objects).
+     * Byte-offset slice resolution happens in acquire_dbs. */
+    if (dest_type == ARTS_EDT) {
+      arts_signal_edt(destination, slot, source, access_mode);
+    } else if (dest_type == ARTS_EVENT) {
+      arts_event_satisfy_slot(destination, source, slot);
     }
   } else {
     /* Event source — register byte-offset waiter directly. */
@@ -932,7 +909,7 @@ void arts_add_local_event_callback(arts_guid_t source,
         ;
       }
       if (event->pos - 1 <= position) {
-        arts_edt_dep_t arg;
+        arts_edt_dep_t arg = {0};
         arg.guid = event->data;
         arg.ptr = arts_route_table_lookup_db(event->data, NULL, false);
         callback_t(arg);

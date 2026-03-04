@@ -150,6 +150,10 @@ void get_thread_mask(struct arts_config_s *config, struct thread_mask_s *flat) {
 
   /* Oversubscription check (accounts for PU offset in local multi-node) */
   unsigned int total_pus = hwloc_get_nbobjs_by_type(topology, HWLOC_OBJ_PU);
+  if (total_pus == 0) {
+    ARTS_ERROR("hwloc detected 0 PUs — cannot assign thread topology");
+    return;
+  }
   unsigned int pu_offset = 0;
   if (config->shared_pu_pool) {
     pu_offset = config->my_rank * config->thread_count;
@@ -160,6 +164,7 @@ void get_thread_mask(struct arts_config_s *config, struct thread_mask_s *flat) {
     ARTS_ERROR("Rank %u: PU range [%u..%u) exceeds available PUs (%u)",
                config->my_rank, pu_offset, pu_offset + config->thread_count,
                total_pus);
+    return;
   }
 
   /* Phase 1: Collect all PUs with topology metadata */

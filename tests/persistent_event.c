@@ -128,10 +128,14 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Test 3: Increment + decrement pattern.
   arts_guid_t ch3 = arts_event_create(0, ARTS_EVENT_CHANNEL, 0, NULL_GUID);
-  arts_event_satisfy_slot(ch3, NULL_GUID, ARTS_EVENT_LATCH_INCR_SLOT); // latch = 1 (from 0)
-  arts_event_satisfy_slot(ch3, NULL_GUID, ARTS_EVENT_LATCH_INCR_SLOT); // latch = 2
-  arts_event_satisfy_slot(ch3, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT); // latch = 1
-  arts_event_satisfy_slot(ch3, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT); // latch = 0, fires
+  arts_event_satisfy_slot(ch3, NULL_GUID,
+                          ARTS_EVENT_LATCH_INCR_SLOT); // latch = 1 (from 0)
+  arts_event_satisfy_slot(ch3, NULL_GUID,
+                          ARTS_EVENT_LATCH_INCR_SLOT); // latch = 2
+  arts_event_satisfy_slot(ch3, NULL_GUID,
+                          ARTS_EVENT_LATCH_DECR_SLOT); // latch = 1
+  arts_event_satisfy_slot(ch3, NULL_GUID,
+                          ARTS_EVENT_LATCH_DECR_SLOT); // latch = 0, fires
   arts_printf("  PASS: increment/decrement latch did not crash\n");
 
   // Final EDT.

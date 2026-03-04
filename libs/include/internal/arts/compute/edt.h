@@ -73,7 +73,7 @@ void internal_signal_edt_with_mode(arts_guid_t edt_packet, uint32_t slot,
                                    arts_db_access_mode_t mode);
 
 void arts_set_dep_mode(arts_guid_t edt_guid, uint32_t slot,
-                      arts_db_access_mode_t mode);
+                       arts_db_access_mode_t mode);
 
 typedef struct {
   arts_guid_t current_edt_guid;

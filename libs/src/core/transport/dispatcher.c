@@ -112,29 +112,6 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
     arts_event_satisfy_slot(pack->event, pack->db, pack->slot);
     break;
   }
-  case ARTS_REMOTE_DB_INCREMENT_LATCH_MSG: {
-    struct arts_remote_guid_only_packet_s *pack =
-        (struct arts_remote_guid_only_packet_s *)(packet);
-    arts_db_increment_latch(pack->guid);
-    break;
-  }
-  case ARTS_REMOTE_DB_DECREMENT_LATCH_MSG: {
-    struct arts_remote_guid_only_packet_s *pack =
-        (struct arts_remote_guid_only_packet_s *)(packet);
-    arts_db_decrement_latch(pack->guid);
-    break;
-  }
-  case ARTS_REMOTE_DB_ADD_DEPENDENCE_MSG: {
-    struct arts_remote_db_add_dependence_packet_s *pack =
-        (struct arts_remote_db_add_dependence_packet_s *)(packet);
-    arts_add_dependence(pack->db_src, pack->edt_dest, pack->edt_slot,
-                        pack->mode);
-    break;
-  }
-  case ARTS_REMOTE_DB_ADD_DEPENDENCE_WITH_BYTE_OFFSET_MSG: {
-    arts_remote_handle_db_add_dependence_with_byte_offset(packet);
-    break;
-  }
   case ARTS_REMOTE_DB_REQUEST_MSG: {
     struct arts_remote_db_request_packet_s *pack =
         (struct arts_remote_db_request_packet_s *)(packet);
@@ -157,24 +134,6 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
         (struct arts_remote_add_dependence_packet_s *)(packet);
     arts_add_dependence(pack->source, pack->destination, pack->slot,
                         pack->mode);
-    break;
-  }
-  case ARTS_REMOTE_CHANNEL_ADD_DEPENDENCE_MSG: {
-    ARTS_DEBUG("Channel Event Dependence Received");
-    struct arts_remote_add_dependence_packet_s *pack =
-        (struct arts_remote_add_dependence_packet_s *)(packet);
-    arts_add_dependence(pack->source, pack->destination, pack->slot,
-                        pack->mode);
-    break;
-  }
-  case ARTS_REMOTE_CHANNEL_ADD_DEPENDENCE_WITH_BYTE_OFFSET_MSG: {
-    ARTS_DEBUG("Channel Event Dependence with ByteOffset Received");
-    struct arts_remote_add_dependence_with_byte_offset_packet_s *pack =
-        (struct arts_remote_add_dependence_with_byte_offset_packet_s *)(packet);
-    arts_set_dep_mode(pack->destination, pack->slot, pack->mode);
-    arts_event_add_dependence_with_byte_offset(pack->source, pack->destination,
-                                               pack->slot, DB_MODE_NULL,
-                                               pack->byte_offset, pack->size);
     break;
   }
   case ARTS_REMOTE_INVALIDATE_DB_MSG: {
@@ -210,10 +169,6 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
     arts_remote_handle_db_destroy_forward(packet);
     break;
   }
-  case ARTS_REMOTE_DB_CLEAN_FORWARD_MSG: {
-    ARTS_WARN("Unexpected CLEAN_FORWARD message (removed)");
-    break;
-  }
   case ARTS_REMOTE_DB_UPDATE_GUID_MSG: {
     ARTS_DEBUG("DB Guid Update Received");
     arts_remote_handle_update_db_guid(packet);
@@ -234,18 +189,9 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
     arts_remote_handle_update_db(packet);
     break;
   }
-  case ARTS_REMOTE_DB_PARTIAL_UPDATE_MSG: {
-    ARTS_DEBUG("DB Partial Update Received");
-    arts_remote_handle_partial_update(packet);
-    break;
-  }
   case ARTS_REMOTE_EVENT_MOVE_MSG: {
     ARTS_DEBUG("Event Move Received");
     arts_remote_handle_event_move(packet);
-    break;
-  }
-  case ARTS_REMOTE_METRIC_UPDATE_MSG: {
-    ARTS_DEBUG("Metric update received (no-op)");
     break;
   }
   case ARTS_REMOTE_GET_FROM_DB_MSG: {

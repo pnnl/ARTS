@@ -74,9 +74,8 @@ struct arts_header_s {
 /** Internal DataBlock descriptor. */
 struct arts_db_s {
   struct arts_header_s header;
-  uint64_t arts_id;       /**< Compiler-assigned unique id (0 = unset). */
-  arts_guid_t guid;       /**< GUID of this DataBlock. */
-  arts_guid_t event_guid; /**< Associated channel event GUID. */
+  uint64_t arts_id; /**< Compiler-assigned unique id (0 = unset). */
+  arts_guid_t guid; /**< GUID of this DataBlock. */
   volatile unsigned int copy_count; /**< Number of outstanding copies. */
   volatile unsigned int reader;     /**< Active reader count. */
   volatile unsigned int writer;     /**< Active writer count. */

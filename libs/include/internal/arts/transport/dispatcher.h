@@ -41,8 +41,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include "arts/transport/protocol.h"
 #include "arts/system/config.h"
+#include "arts/transport/protocol.h"
 
 void arts_ll_server_setup(struct arts_config_s *config);
 void arts_server_process_packet(struct arts_remote_packet_s *packet);
