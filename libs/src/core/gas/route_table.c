@@ -886,6 +886,22 @@ void arts_print_item(arts_route_item_t *item) {
   }
 }
 
+void arts_route_table_debug_guid(arts_guid_t key, const char *label) {
+  arts_route_table_t *route_table = arts_get_route_table(key);
+  arts_route_item_t *item =
+      arts_route_table_search_for_key(route_table, key, ANY_KEY);
+  if (item) {
+    uint64_t local = item->lock;
+    ARTS_INFO("[RT-DBG:%s] Guid:%lu data=%p rank=%u count=%lu "
+              "res=%u req=%u avail=%u del=%u",
+              label, key, item->data, item->rank, GET_COUNT(local),
+              IS_RES(local) != 0, IS_REQ(local) != 0,
+              IS_AVAIL(local) != 0, IS_DEL(local) != 0);
+  } else {
+    ARTS_INFO("[RT-DBG:%s] Guid:%lu NOT FOUND (any state)", label, key);
+  }
+}
+
 uint64_t arts_clean_up_route_table(arts_route_table_t *route_table) {
   uint64_t free_size = 0;
   arts_route_table_iterator_t iter;

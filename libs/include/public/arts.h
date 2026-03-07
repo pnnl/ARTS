@@ -862,6 +862,24 @@ void *arts_db_create_with_guid(arts_guid_t guid, uint64_t len,
 void arts_db_release(arts_guid_t guid);
 
 /**
+ * @brief Temporarily release frontier locks for all DBs held by the current
+ * EDT.
+ *
+ * Used inside arts_wait_on_handle to unblock consumer EDTs while the
+ * creator EDT blocks on an epoch.  Only touches frontier locks -- does not
+ * return route table entries or null tracking state.
+ */
+void arts_wait_release_dbs(void);
+
+/**
+ * @brief Re-acquire frontier locks for all DBs held by the current EDT.
+ *
+ * Used inside arts_wait_on_handle after the epoch completes.  Re-sets
+ * WRITE_SET on each DB's current frontier head.
+ */
+void arts_wait_reacquire_dbs(void);
+
+/**
  * @brief Destroy all copies of a DataBlock system-wide.
  *
  * If the calling EDT has acquired this DB (via creation auto-acquire or

@@ -546,55 +546,16 @@ void acquire_dbs(struct arts_edt_s *edt) {
           }
         } else if (db_temp) {
           // Non-owner path: cached copy management
-          ARTS_INFO("[AcquireDbs] Non-owner case for DB[Guid:%lu, "
-                    "AccessMode:%u, Owner:%d, ValidRank: %d, DbTemp: %p]",
-                    depv[i].guid, access_mode, owner, valid_rank,
-                    (void *)db_temp);
           bool local_valid = (valid_rank == arts_global_rank_id);
           if (local_valid) {
-            ARTS_INFO("[AcquireDbs] Non-owner cache state DB[Guid:%lu, "
-                      "ArtsId:%lu, AccessMode:%s, ValidRank:%d, "
-                      "LocalValid:%d, Version:%u]",
-                      depv[i].guid, db_temp->arts_id,
-                      GET_DB_MODE_NAME(access_mode), valid_rank, local_valid,
-                      db_temp->version);
-          } else {
-            ARTS_INFO("[AcquireDbs] Non-owner cache miss DB[Guid:%lu, "
-                      "AccessMode:%s, ValidRank:%d]",
-                      depv[i].guid, GET_DB_MODE_NAME(access_mode), valid_rank);
-          }
-          if (access_mode == DB_MODE_EW && local_valid) {
-            ARTS_INFO("  Non-owner WRITE acquire: invalidating local cached "
-                      "copy to avoid stale data");
-            arts_route_table_invalidate_item(depv[i].guid);
-            db_temp = NULL;
-            valid_rank = -1;
-            local_valid = false;
-          }
-          if (local_valid && access_mode != DB_MODE_EW) {
             db_found = db_temp;
             arts_atomic_sub(&edt->depc_needed, 1U);
-            ARTS_INFO("  Found local valid copy, decremented depc_needed");
-          }
-          if (access_mode == DB_MODE_EW) {
-            if (!db_found) {
-              ARTS_INFO("  WRITE mode - sending full DB request to rank %d",
-                        owner);
-              arts_remote_db_full_request(depv[i].guid, owner, edt->current_edt,
-                                          i, access_mode);
-            } else {
-              ARTS_INFO(
-                  "  WRITE mode with local valid copy - no remote request "
-                  "needed");
-            }
-          } else if (!local_valid) {
-            ARTS_INFO("  READ mode, no local copy - sending aggregated request "
-                      "to rank %d",
-                      owner);
+          } else if (access_mode == DB_MODE_EW) {
+            arts_remote_db_full_request(depv[i].guid, owner, edt->current_edt,
+                                        i, access_mode);
+          } else {
             arts_remote_db_request(depv[i].guid, owner, edt, i, access_mode,
                                    true);
-          } else {
-            ARTS_INFO("  READ mode with local copy - no remote request needed");
           }
         } else {
           // DB not in route table — out-of-order or remote
@@ -653,6 +614,7 @@ void prep_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu) {
     arts_db_access_mode_t access_mode = depv[i].mode;
     if (depv[i].guid != NULL_GUID && depv[i].ptr && access_mode == DB_MODE_EW) {
       struct arts_db_s *db = ((struct arts_db_s *)depv[i].ptr) - 1;
+      uint64_t data_size = db->header.size - sizeof(struct arts_db_s);
       if (db->db_type != ARTS_DB_LOCAL) {
         arts_remote_update_route_table(depv[i].guid, ARTS_HINT_CURRENT_NODE);
       }
@@ -710,12 +672,6 @@ void release_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu) {
         struct arts_db_s *db = ((struct arts_db_s *)depv[i].ptr - 1);
         arts_progress_frontier(db, arts_global_rank_id);
       } else {
-        struct arts_db_s *db = ((struct arts_db_s *)depv[i].ptr) - 1;
-        if (db && (db->header.size - sizeof(struct arts_db_s)) == 176128) {
-          ARTS_INFO("Release WRITE non-owner DB[Id:%lu, Guid:%lu, Size:%lu] "
-                    "sending update to owner %u",
-                    db->arts_id, depv[i].guid, db->header.size, owner);
-        }
         arts_remote_update_db(depv[i].guid, true);
         INCREMENT_NUM_OWNER_UPDATE_PERFORMED_BY(1);
       }
@@ -974,4 +930,122 @@ void arts_put_in_db_epoch(void *ptr, arts_guid_t epoch_guid,
   arts_shutdown_epoch_inc_active();
   internal_put_in_db(ptr, NULL_GUID, db_guid, 0, offset, len, epoch_guid, rank);
   TIME_DB_PUT_STOP();
+}
+
+/*
+ * arts_wait_release_dbs -- Temporarily release frontier locks for all DBs
+ * held by the current EDT, allowing consumer EDTs to proceed while this
+ * EDT blocks on arts_wait_on_handle.
+ *
+ * Handles both:
+ *   1. created_db_list (auto-acquired WRITE from arts_db_create)
+ *   2. depv (dependency-acquired EW/MEMSET)
+ *
+ * Only touches frontier locks (arts_progress_frontier). Does NOT return
+ * route table entries or null any tracking state -- this is a temporary
+ * release, not a final epilogue release.
+ */
+void arts_wait_release_dbs(void) {
+  /* Path 1: created DBs */
+  arts_array_list_t *list = arts_get_created_db_list();
+  if (list) {
+    uint64_t count = arts_length_array_list(list);
+    for (uint64_t i = 0; i < count; i++) {
+      arts_guid_t *guid = (arts_guid_t *)arts_get_from_array_list(list, i);
+      if (*guid == NULL_GUID) {
+        continue;
+      }
+      struct arts_db_s *db =
+          (struct arts_db_s *)arts_route_table_lookup_db(*guid, NULL, false);
+      if (db && db->db_list) {
+        arts_progress_frontier(db, arts_global_rank_id);
+      }
+    }
+  }
+
+  /* Path 2: depv DBs */
+  if (current_edt) {
+    arts_edt_dep_t *depv = (arts_edt_dep_t *)arts_get_depv(current_edt);
+    for (int i = 0; i < current_edt->depc; i++) {
+      if (depv[i].guid == NULL_GUID) {
+        continue;
+      }
+      if (depv[i].mode != DB_MODE_EW && depv[i].mode != DB_MODE_MEMSET) {
+        continue;
+      }
+      if (!depv[i].ptr) {
+        continue;
+      }
+      struct arts_db_s *db = ((struct arts_db_s *)depv[i].ptr) - 1;
+      if (db && db->db_list) {
+        arts_progress_frontier(db, arts_global_rank_id);
+      }
+    }
+  }
+}
+
+/*
+ * arts_wait_reacquire_dbs -- Re-acquire frontier locks for all DBs
+ * held by the current EDT after arts_wait_on_handle completes.
+ *
+ * After arts_progress_frontier in the release phase, consumers run and their
+ * epilogues also call arts_progress_frontier, consuming the entire frontier
+ * chain. By the time the epoch completes, db_list->head is typically NULL.
+ * In that case, create a fresh frontier node with WRITE_SET as the new head.
+ */
+void arts_wait_reacquire_dbs(void) {
+  /* Path 1: created DBs */
+  arts_array_list_t *list = arts_get_created_db_list();
+  if (list) {
+    uint64_t count = arts_length_array_list(list);
+    for (uint64_t i = 0; i < count; i++) {
+      arts_guid_t *guid = (arts_guid_t *)arts_get_from_array_list(list, i);
+      if (*guid == NULL_GUID) {
+        continue;
+      }
+      struct arts_db_s *db =
+          (struct arts_db_s *)arts_route_table_lookup_db(*guid, NULL, false);
+      if (db && db->db_list) {
+        struct arts_db_list_s *db_list = (struct arts_db_list_s *)db->db_list;
+        arts_writer_lock(&db_list->reader, &db_list->writer);
+        if (!db_list->head) {
+          struct arts_db_frontier_s *new_f = arts_new_db_frontier();
+          arts_atomic_fetch_or(&new_f->lock, WRITE_SET);
+          db_list->head = db_list->tail = new_f;
+        } else {
+          arts_atomic_fetch_or(&db_list->head->lock, WRITE_SET);
+        }
+        arts_writer_unlock(&db_list->writer);
+      }
+    }
+  }
+
+  /* Path 2: depv DBs */
+  if (current_edt) {
+    arts_edt_dep_t *depv = (arts_edt_dep_t *)arts_get_depv(current_edt);
+    for (int i = 0; i < current_edt->depc; i++) {
+      if (depv[i].guid == NULL_GUID) {
+        continue;
+      }
+      if (depv[i].mode != DB_MODE_EW && depv[i].mode != DB_MODE_MEMSET) {
+        continue;
+      }
+      if (!depv[i].ptr) {
+        continue;
+      }
+      struct arts_db_s *db = ((struct arts_db_s *)depv[i].ptr) - 1;
+      if (db && db->db_list) {
+        struct arts_db_list_s *db_list = (struct arts_db_list_s *)db->db_list;
+        arts_writer_lock(&db_list->reader, &db_list->writer);
+        if (!db_list->head) {
+          struct arts_db_frontier_s *new_f = arts_new_db_frontier();
+          arts_atomic_fetch_or(&new_f->lock, WRITE_SET);
+          db_list->head = db_list->tail = new_f;
+        } else {
+          arts_atomic_fetch_or(&db_list->head->lock, WRITE_SET);
+        }
+        arts_writer_unlock(&db_list->writer);
+      }
+    }
+  }
 }

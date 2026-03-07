@@ -208,12 +208,6 @@ void arts_remote_update_db(arts_guid_t guid, bool send_db) {
     struct arts_db_s *db = NULL;
     if (send_db && (db = (struct arts_db_s *)arts_route_table_lookup_db(
                         guid, NULL, false))) {
-      if ((db->header.size - sizeof(struct arts_db_s)) == 176128) {
-        ARTS_INFO("RemoteUpdateDb SEND DB[Id:%lu, Guid:%lu, Size:%lu] "
-                  "from rank %u to rank %u",
-                  db->arts_id, guid, db->header.size, arts_global_rank_id,
-                  rank);
-      }
       uint64_t size =
           sizeof(struct arts_remote_guid_only_packet_s) + db->header.size;
       arts_fill_packet_header(&packet.header, size, ARTS_REMOTE_DB_UPDATE_MSG);
@@ -247,19 +241,11 @@ void arts_remote_handle_update_db(void *ptr) {
     item_state_t state = arts_route_table_lookup_item_with_state(
         packet->guid, (void ***)&data_ptr, ALLOCATED_KEY, write);
     struct arts_db_s *db = (data_ptr) ? *data_ptr : NULL;
-    if (write && db && (db->header.size - sizeof(struct arts_db_s)) == 176128) {
-      ARTS_INFO("RemoteHandleUpdateDb WRITE DB[Id:%lu, Guid:%lu, Size:%lu] "
-                "from rank %u",
-                db->arts_id, packet->guid, db->header.size,
-                packet->header.rank);
-    } else if (!write) {
-      ARTS_DEBUG("RemoteHandleUpdateDb NO-DATA Guid:%lu from rank %u",
-                 packet->guid, packet->header.rank);
-    }
     if (db) {
       if (write) {
-        void *ptr = (void *)(db + 1);
-        memcpy(ptr, packet_payload, db->header.size - sizeof(struct arts_db_s));
+        uint64_t data_size = db->header.size - sizeof(struct arts_db_s);
+        void *dest = (void *)(db + 1);
+        memcpy(dest, packet_payload, data_size);
         arts_route_table_set_rank(packet->guid, (int)arts_global_rank_id);
         arts_progress_frontier(db, arts_global_rank_id);
       } else {

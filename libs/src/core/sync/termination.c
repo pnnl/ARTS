@@ -649,6 +649,10 @@ bool arts_wait_on_handle(arts_guid_t epoch_guid) {
     }
     increment_finished_epoch(local);
 
+    // Release all DB frontier locks before blocking so consumer EDTs can
+    // proceed while this EDT waits on the epoch.
+    arts_wait_release_dbs();
+
     INCREMENT_NUM_YIELD_BY(1);
     thread_local_t tl;
     arts_save_thread_local(&tl);
@@ -666,6 +670,9 @@ bool arts_wait_on_handle(arts_guid_t epoch_guid) {
     }
     TIME_YIELD_STOP();
     arts_restore_thread_local(&tl);
+
+    // Re-acquire all DB frontier locks after the epoch completes.
+    arts_wait_reacquire_dbs();
 
     clean_epoch_pool();
 

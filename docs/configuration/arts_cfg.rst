@@ -61,8 +61,8 @@ Scheduling
      - 4096
      - Initial size of each worker's Chase-Lev deque.
    * - ``route_table_size``
-     - 20
-     - Routing table size as power of 2 (e.g., 20 → 2\ :sup:`20`).
+     - 16
+     - Routing table size as power of 2 (e.g., 16 → 2\ :sup:`16`).
    * - ``auto_shutdown``
      - 0
      - Terminate when all EDTs complete.  Adds overhead from global EDT

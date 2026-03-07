@@ -200,6 +200,7 @@ void arts_reset_route_table_iterator(arts_route_table_iterator_t *iter,
                                      arts_route_table_t *table);
 arts_route_item_t *arts_route_table_iterate(arts_route_table_iterator_t *iter);
 void arts_print_item(arts_route_item_t *item);
+void arts_route_table_debug_guid(arts_guid_t key, const char *label);
 
 uint64_t arts_clean_up_route_table(arts_route_table_t *route_table);
 void arts_delete_route_table(arts_route_table_t *route_table);

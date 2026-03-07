@@ -599,6 +599,14 @@ void arts_run_edt(struct arts_edt_s *edt) {
 
   INCREMENT_NUM_EDT_FINISH_BY(1);
 
+  /* Release DBs BEFORE signaling epoch completion. This ensures remote
+   * DB updates (arts_remote_update_db) are queued to the sender thread
+   * before the epoch-done message. TCP FIFO ordering then guarantees
+   * the DB data arrives at the owner before the epoch-done signal,
+   * preventing stale reads in the next epoch. */
+  release_dbs(depc, depv, false);
+  arts_release_created_dbs();
+
   arts_unset_thread_local_edt_info();
 
   // This is for a synchronous path
@@ -609,8 +617,6 @@ void arts_run_edt(struct arts_edt_s *edt) {
 
   ARTS_INFO("EDT[Guid:%lu, Id:%lu] finished (exec_ns=%lu)", edt->current_edt,
             edt->arts_id, exec_ns);
-  release_dbs(depc, depv, false);
-  arts_release_created_dbs();
   arts_edt_delete(edt);
   DEC_OUTSTANDING_EDTS(1);
   ARTS_DEBUG("EDT completed, outstanding_edts decremented");

@@ -97,6 +97,7 @@ struct arts_db_frontier_iterator_s {
   struct arts_db_element_s *currentElement;
 };
 
+struct arts_db_frontier_s *arts_new_db_frontier();
 struct arts_db_list_s *arts_new_db_list();
 void arts_delete_db_list(struct arts_db_list_s *db_list);
 unsigned int arts_current_frontier_size(struct arts_db_list_s *db_list);
