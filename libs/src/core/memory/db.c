@@ -94,7 +94,7 @@ static void arts_db_auto_acquire(struct arts_db_s *db) {
   arts_track_created_db(db->guid);
 }
 
-void *arts_db_malloc(arts_db_types_t db_type, unsigned int size) {
+void *arts_db_malloc(arts_db_types_t db_type, size_t size) {
   (void)db_type;
   void *ptr = NULL;
 #ifdef ARTS_USE_GPU

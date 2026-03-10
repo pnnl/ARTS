@@ -88,7 +88,7 @@ void internal_put_in_db(void *ptr, arts_guid_t edt_guid, arts_guid_t db_guid,
                         unsigned int rank);
 
 void arts_db_destroy_safe(arts_guid_t guid, bool remote);
-void *arts_db_malloc(arts_db_types_t db_type, unsigned int size);
+void *arts_db_malloc(arts_db_types_t db_type, size_t size);
 void arts_db_free(void *ptr);
 void *arts_db_adopt(arts_guid_t guid, struct arts_db_s *db);
 

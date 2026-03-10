@@ -613,10 +613,17 @@ void arts_remote_db_full_send_check(int rank, struct arts_db_s *db,
   if (!arts_guid_is_local(db->guid)) {
     arts_route_table_return_db(db->guid, false);
     arts_remote_db_full_send_now(rank, db, edt_guid, slot, mode);
-  } else if (arts_add_db_duplicate(db, rank, NULL, edt_guid, slot, mode,
-                                   NULL)) {
-    arts_remote_db_full_send_now(rank, db, edt_guid, slot, mode);
-    arts_clear_exclusive_request(db, rank, edt_guid);
+  } else {
+    bool on_head = false;
+    if (arts_add_db_duplicate(db, rank, NULL, edt_guid, slot, mode, &on_head)) {
+      if (on_head) {
+        arts_remote_db_full_send_now(rank, db, edt_guid, slot, mode);
+        arts_clear_exclusive_request(db, rank, edt_guid);
+      }
+      /* Non-head: request is stored in the frontier (exNode/exEdtGuid/
+       * exSlot/exMode).  arts_progress_frontier will send the updated DB
+       * copy when this frontier becomes the head. */
+    }
   }
 }
 
