@@ -101,14 +101,24 @@ option(ARTS_BUILD_TESTS "Build test programs" ON)
 option(ARTS_BUILD_BENCHMARKS "Build OCR benchmark applications (XSOCR + ARTS backends)" ON)
 
 # Feature options (can be set via command line)
-# Default log level: Debug→3 (DEBUG), Release/etc→1 (WARN).
+# Default log level: Debug->3 (DEBUG), Release/etc->1 (WARN).
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(_arts_log_default 3)
 else()
     set(_arts_log_default 1)
 endif()
-set(ARTS_LOG_LEVEL "${_arts_log_default}" CACHE STRING
+if(DEFINED ARTS_LOG_LEVEL)
+    set(_arts_log_level "${ARTS_LOG_LEVEL}")
+else()
+    set(_arts_log_level "${_arts_log_default}")
+endif()
+set(ARTS_LOG_LEVEL "${_arts_log_level}" CACHE STRING
     "Log verbosity: 0=ERROR, 1=+WARN, 2=+INFO, 3=+DEBUG" FORCE)
+set_property(CACHE ARTS_LOG_LEVEL PROPERTY STRINGS 0 1 2 3)
+if(NOT ARTS_LOG_LEVEL MATCHES "^[0-3]$")
+    message(FATAL_ERROR
+        "Invalid ARTS_LOG_LEVEL='${ARTS_LOG_LEVEL}'. Expected one of: 0, 1, 2, 3")
+endif()
 option(ARTS_USE_GPU "Enable GPU support (default: ON, disable when OFF)" ON)
 option(ARTS_USE_RDMA "Use RDMA RSockets networking (default: ON, use TCP when OFF)" OFF)
 option(ARTS_USE_SANITIZERS "Enable address and undefined behavior sanitizers in Debug builds" ON)

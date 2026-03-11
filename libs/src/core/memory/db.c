@@ -525,15 +525,13 @@ void acquire_dbs(struct arts_edt_s *edt) {
                 depv[i].guid);
           }
 
-          if (valid_rank == arts_global_rank_id &&
-              (!duplicate_added || on_head)) {
+          if (valid_rank == arts_global_rank_id && on_head) {
             db_found = db_temp;
             arts_atomic_sub(&edt->depc_needed, 1U);
-          } else if (valid_rank == arts_global_rank_id && duplicate_added &&
-                     !on_head) {
+          } else if (valid_rank == arts_global_rank_id) {
             ARTS_DEBUG("EDT[Guid:%lu] deferred to frontier for "
-                       "DB[Guid:%lu] (non-head write frontier)",
-                       edt->current_edt, depv[i].guid);
+                       "DB[Guid:%lu] (non-head local frontier, unique=%d)",
+                       edt->current_edt, depv[i].guid, duplicate_added);
           } else {
             if (access_mode == DB_MODE_RO || db_temp->db_type == ARTS_DB_GPU ||
                 db_temp->db_type == ARTS_DB_LC) {

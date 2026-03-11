@@ -54,6 +54,15 @@ add_subdirectory(array_db)
 # Main source file (main.c lives in core/; scheduler.c is an OBJECT library)
 set(ARTS_MAIN_SOURCES "core/main.c")
 
+# Some platforms do not provide a standalone libatomic.
+# ARTS uses compiler atomic builtins, so link libatomic only when present.
+find_library(ARTS_ATOMIC_LIBRARY atomic)
+if(ARTS_ATOMIC_LIBRARY)
+    message(STATUS "Using libatomic: ${ARTS_ATOMIC_LIBRARY}")
+else()
+    message(STATUS "libatomic not found; relying on compiler/runtime atomics")
+endif()
+
 #
 # Standard ARTS Library (always built, no CUDA)
 #
@@ -103,8 +112,9 @@ if(ARTS_BUILD_STATIC)
         ${HWLOC_PRIVATE_LIBS}
     )
 
-    # Link with -latomic for 128-bit CAS operations
-    target_link_libraries(arts_static PRIVATE atomic)
+    if(ARTS_ATOMIC_LIBRARY)
+        target_link_libraries(arts_static PRIVATE ${ARTS_ATOMIC_LIBRARY})
+    endif()
 
     # Add macOS framework dependencies for hwloc
     if(APPLE AND HWLOC_FOUND)
@@ -172,8 +182,9 @@ if(ARTS_BUILD_SHARED)
         )
     endif()
 
-    # Link with -latomic for 128-bit CAS operations
-    target_link_libraries(arts_shared PRIVATE atomic)
+    if(ARTS_ATOMIC_LIBRARY)
+        target_link_libraries(arts_shared PRIVATE ${ARTS_ATOMIC_LIBRARY})
+    endif()
 
     # Add macOS framework dependencies for hwloc
     if(APPLE AND HWLOC_FOUND)
@@ -245,8 +256,9 @@ if(BUILD_CUDA_LIBRARY)
             CUDA::cublas
         )
 
-        # Link with -latomic for 128-bit CAS operations
-        target_link_libraries(arts_cuda_static PRIVATE atomic)
+        if(ARTS_ATOMIC_LIBRARY)
+            target_link_libraries(arts_cuda_static PRIVATE ${ARTS_ATOMIC_LIBRARY})
+        endif()
 
         # Add macOS framework dependencies for hwloc
         if(APPLE AND HWLOC_FOUND)
@@ -320,8 +332,9 @@ if(BUILD_CUDA_LIBRARY)
             )
         endif()
 
-        # Link with -latomic for 128-bit CAS operations
-        target_link_libraries(arts_cuda_shared PRIVATE atomic)
+        if(ARTS_ATOMIC_LIBRARY)
+            target_link_libraries(arts_cuda_shared PRIVATE ${ARTS_ATOMIC_LIBRARY})
+        endif()
 
         # Add macOS framework dependencies for hwloc
         if(APPLE AND HWLOC_FOUND)

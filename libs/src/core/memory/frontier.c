@@ -257,9 +257,6 @@ bool arts_push_db_to_frontier(struct arts_db_frontier_s *frontier,
     frontier->exEdt = edt;
     frontier->exSlot = slot;
     frontier->exMode = mode;
-  } else if (inserted && local) {
-    arts_push_delayed_edt(&frontier->localDelayed, frontier->localPosition++,
-                          edt, slot, mode);
   }
 
   frontier_unlock(&frontier->lock);
@@ -301,11 +298,13 @@ bool arts_push_db_to_list(struct arts_db_list_s *db_list, unsigned int data,
   bool inserted = false;
   bool unique = true;
   bool is_head = true;
+  struct arts_db_frontier_s *accepted_frontier = NULL;
   for (struct arts_db_frontier_s *frontier = db_list->head; frontier;
        frontier = frontier->next) {
     if (arts_push_db_to_frontier(frontier, data, write, local, bypass, edt,
                                  edt_guid, slot, mode, &unique)) {
       inserted = true;
+      accepted_frontier = frontier;
       break;
     }
     is_head = false;
@@ -319,6 +318,16 @@ bool arts_push_db_to_list(struct arts_db_list_s *db_list, unsigned int data,
         }
       }
     }
+  }
+  if (inserted && local && !is_head && accepted_frontier) {
+    /* Non-head local acquires are satisfied later when this frontier becomes
+     * head. Protect the delayed-EDT append with the frontier lock: the DB-list
+     * reader lock is shared and does not serialize concurrent local acquires
+     * targeting the same accepted frontier. */
+    frontier_lock(&accepted_frontier->lock);
+    arts_push_delayed_edt(&accepted_frontier->localDelayed,
+                          accepted_frontier->localPosition++, edt, slot, mode);
+    frontier_unlock(&accepted_frontier->lock);
   }
   if (on_head) {
     *on_head = inserted && is_head;
