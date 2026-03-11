@@ -100,6 +100,7 @@ if(ARTS_BUILD_STATIC)
         ${ANL_LIBRARY}
         ${RDMACM_LIBRARIES}
         $<BUILD_INTERFACE:${HWLOC_LIBRARIES}>
+        ${HWLOC_PRIVATE_LIBS}
     )
 
     # Link with -latomic for 128-bit CAS operations
@@ -161,6 +162,7 @@ if(ARTS_BUILD_SHARED)
         ${ANL_LIBRARY}
         ${RDMACM_LIBRARIES}
         $<BUILD_INTERFACE:${HWLOC_LIBRARIES}>
+        ${HWLOC_PRIVATE_LIBS}
     )
 
     # Hide hwloc symbols from shared library exports (GNU ld/lld)

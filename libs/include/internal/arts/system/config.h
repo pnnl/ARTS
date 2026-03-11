@@ -109,6 +109,11 @@ struct arts_config_s {
 
 void arts_config_load(struct arts_config_s *config);
 void arts_config_destroy(struct arts_config_s *config);
+
+/* Compiler-injected config overrides (called before arts_rt). */
+void artsSetConfigPath(const char *path);
+void artsSetConfigData(const char *data);
+
 #ifdef __cplusplus
 }
 #endif

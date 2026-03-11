@@ -290,6 +290,27 @@ int arts_printf(const char *format, ...);
 int arts_rt(int argc, char **argv);
 
 /**
+ * @brief Set the config file path before calling arts_rt().
+ *
+ * When set, arts_config_load() reads from this path instead of the
+ * default ARTS_CONFIG env var / arts.cfg fallback.
+ *
+ * @param path  Null-terminated file path.  NULL or "" clears the override.
+ */
+void artsSetConfigPath(const char *path);
+
+/**
+ * @brief Inject config data as an in-memory string before calling arts_rt().
+ *
+ * When set, arts_config_load() parses this string (same INI format as
+ * arts.cfg) instead of opening a file.  This enables self-contained binaries
+ * that embed their runtime configuration at compile time.
+ *
+ * @param data  Null-terminated config string.  NULL or "" clears the override.
+ */
+void artsSetConfigData(const char *data);
+
+/**
  * @brief Shut down the ARTS runtime.
  *
  * Triggers global termination detection.  It is possible to race to shutdown

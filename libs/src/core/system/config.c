@@ -50,6 +50,38 @@
 #include "arts/transport/launcher.h"
 #include "arts/utils/malloc.h"
 
+/*--- Compiler-injected config overrides ------------------------------------*/
+static char *arts_config_override_path = NULL;
+static char *arts_config_override_data = NULL;
+
+void artsSetConfigPath(const char *path) {
+  if (arts_config_override_path) {
+    free(arts_config_override_path);
+    arts_config_override_path = NULL;
+  }
+  if (!path || !path[0])
+    return;
+  size_t len = strlen(path);
+  arts_config_override_path = (char *)malloc(len + 1);
+  if (!arts_config_override_path)
+    return;
+  memcpy(arts_config_override_path, path, len + 1);
+}
+
+void artsSetConfigData(const char *data) {
+  if (arts_config_override_data) {
+    free(arts_config_override_data);
+    arts_config_override_data = NULL;
+  }
+  if (!data || !data[0])
+    return;
+  size_t len = strlen(data);
+  arts_config_override_data = (char *)malloc(len + 1);
+  if (!arts_config_override_data)
+    return;
+  memcpy(arts_config_override_data, data, len + 1);
+}
+
 char *extract_nodelist_lsf(const char *envr, int stride, unsigned int *cnt) {
   char *lsf_nodes;
   char *res_string;
@@ -1091,6 +1123,24 @@ static void config_print_warnings(struct arts_config_s *config) {
 /*--- Config File Open / Variable Cleanup -----------------------------------*/
 
 static FILE *config_open_file(void) {
+  /* Priority 1: Compiler-embedded config data (self-contained binary). */
+  if (arts_config_override_data && arts_config_override_data[0] != '\0') {
+    size_t len = strlen(arts_config_override_data);
+    FILE *f = fmemopen((void *)arts_config_override_data, len, "r");
+    if (f)
+      return f;
+  }
+
+  /* Priority 2: Compiler-injected config path. */
+  if (arts_config_override_path && arts_config_override_path[0] != '\0') {
+    FILE *f = fopen(arts_config_override_path, "r");
+    if (f)
+      return f;
+    ARTS_ERROR("Config file not found: %s", arts_config_override_path);
+    return NULL;
+  }
+
+  /* Priority 3: ARTS_CONFIG env var → ./arts.cfg fallback. */
   const char *location = getenv("ARTS_CONFIG");
   FILE *f = fopen(location ? location : "arts.cfg", "r");
   if (!f) {
