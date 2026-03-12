@@ -4,7 +4,7 @@
 ** nor the United States Department of Energy, nor Battelle, nor any of      **
 ** their employees, nor any jurisdiction or organization that has cooperated **
 ** in the development of these materials, makes any warranty, express or     **
-** implied, or assumes any legal liability or responsibility for the accuracy,* 
+** implied, or assumes any legal liability or responsibility for the accuracy,*
 ** completeness, or usefulness or any information, apparatus, product,       **
 ** software, or process disclosed, or represents that its use would not      **
 ** infringe privately owned rights.                                          **
@@ -36,56 +36,49 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdint.h>
-#include <inttypes.h>
-#include <string.h>
+#include "bins.h"
+
 #include <assert.h>
-#include "arts.h"
-#include "artsArrayList.h"
+#include <inttypes.h>
+#include <stdint.h>
+#include <stdio.h>
 
-artsArrayList ** list;
+#include "arts/arts.h"
+#include "arts/utils/ArrayList.h"
 
-void initListRecord()
-{
-    unsigned int size = artsGetTotalGpus() + 1;
-    list = artsCalloc(sizeof(artsArrayList*) * size);
-    for(unsigned int i=0; i<size; i++)
-        list[i] = artsNewArrayList(sizeof(unsigned int), 32);
+static artsArrayList **list;
+
+void initListRecord() {
+  unsigned int size = artsGetTotalGpus() + 1;
+  list = (artsArrayList **)artsCalloc(size, sizeof(artsArrayList *));
+  for (unsigned int i = 0; i < size; i++)
+    list[i] = artsNewArrayList(sizeof(unsigned int), 32);
 }
 
-void addToList(unsigned int frontierSize, unsigned int index)
-{
-    artsPushToArrayList(list[index], &frontierSize);
+void addToList(unsigned int frontierSize, unsigned int index) {
+  artsPushToArrayList(list[index], &frontierSize);
 }
 
-void writeBinsToFile(unsigned int index)
-{
-    //Do the CPU bins
-    if(index + 1 == artsGetTotalGpus())
-        writeBinsToFile(index+1);
+void writeBinsToFile(unsigned int index) {
+  // Do the CPU bins
+  if (index + 1 == artsGetTotalGpus())
+    writeBinsToFile(index + 1);
 
-    char filename[1024];
-    sprintf(filename,"bins_%u_%u.ct", artsGetCurrentNode(), index);          
-    if(artsLengthArrayList(list[index]))
-    {    
-        FILE * fp = fopen(filename,"w");
-        if(fp)
-        {
-            PRINTF("Writing to %s\n", filename);
-            artsArrayListIterator * iter = artsNewArrayListIterator(list[index]);
-            unsigned int * bin;
-            while(artsArrayListHasNext(iter))
-            {
-                bin = artsArrayListNext(iter);
-                fprintf(fp, "%u\n", *bin);
-
-            }
-            artsDeleteArrayListIterator(iter);
-            fclose(fp);
-        }
-        else
-            PRINTF("Couldn't open %s\n", filename);
-    }
+  char filename[1024];
+  sprintf(filename, "bins_%u_%u.ct", artsGetCurrentNode(), index);
+  if (artsLengthArrayList(list[index])) {
+    FILE *fp = fopen(filename, "w");
+    if (fp) {
+      PRINTF("Writing to %s\n", filename);
+      artsArrayListIterator *iter = artsNewArrayListIterator(list[index]);
+      unsigned int *bin;
+      while (artsArrayListHasNext(iter)) {
+        bin = (unsigned int *)artsArrayListNext(iter);
+        fprintf(fp, "%u\n", *bin);
+      }
+      artsDeleteArrayListIterator(iter);
+      fclose(fp);
+    } else
+      PRINTF("Couldn't open %s\n", filename);
+  }
 }

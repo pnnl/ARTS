@@ -4,7 +4,7 @@
 ** nor the United States Department of Energy, nor Battelle, nor any of      **
 ** their employees, nor any jurisdiction or organization that has cooperated **
 ** in the development of these materials, makes any warranty, express or     **
-** implied, or assumes any legal liability or responsibility for the accuracy,* 
+** implied, or assumes any legal liability or responsibility for the accuracy,*
 ** completeness, or usefulness or any information, apparatus, product,       **
 ** software, or process disclosed, or represents that its use would not      **
 ** infringe privately owned rights.                                          **
@@ -36,64 +36,62 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include <stdio.h>
 #include <stdlib.h>
-#include "arts.h"
-#include "shadAdapter.h"
+
+#include "arts/arts.h"
+#include "arts/runtime/compute/ShadAdapter.h"
 
 uint64_t numDummy = 0;
 
-void dummytask(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t depv[]) 
-{
-    uint64_t index = paramv[0];
-    uint64_t dep = paramv[1];
-    PRINTF("Dep: %lu ID: %lu Current Node: %u Current Worker: %u\n", dep, index, artsGetCurrentNode(), artsGetCurrentWorker());
+void dummytask(uint32_t paramc, uint64_t *paramv, uint32_t depc,
+               artsEdtDep_t depv[]) {
+  uint64_t index = paramv[0];
+  uint64_t dep = paramv[1];
+  PRINTF("Dep: %lu ID: %lu Current Node: %u Current Worker: %u\n", dep, index,
+         artsGetCurrentNode(), artsGetCurrentWorker());
 }
 
-void rootTask(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t depv[]) 
-{
-    uint64_t dep = paramv[0];
-    PRINTF("Root: %lu\n", dep);
-    if(dep)
-    {
-        artsGuid_t poolGuid = artsInitializeAndStartEpoch(NULL_GUID, 0);
-        dep--;
-        artsEdtCreateDep(rootTask, (artsGetCurrentNode()+1) % artsGetTotalNodes(), 1, &dep, 0, false);
-        
-//        uint64_t args[2];
-//        args[0] = dep;
-//        
-//        for(uint64_t i=0; i<numDummy; i++)
-//        {
-//            args[1] = i;
-//            artsEdtCreateDep(dummytask, i%numNodes, 2, args, 0, false);
-//        }
+void rootTask(uint32_t paramc, uint64_t *paramv, uint32_t depc,
+              artsEdtDep_t depv[]) {
+  uint64_t dep = paramv[0];
+  PRINTF("Root: %lu\n", dep);
+  if (dep) {
+    artsGuid_t poolGuid = artsInitializeAndStartEpoch(NULL_GUID, 0);
+    dep--;
+    artsEdtCreateDep(rootTask, (artsGetCurrentNode() + 1) % artsGetTotalNodes(),
+                     1, &dep, 0, false);
 
-        PRINTF("Waiting on %lu\n", poolGuid);
-        if(artsWaitOnHandle(poolGuid))
-            PRINTF("Done waiting on %lu dep: %lu\n", poolGuid, dep);
-    }
-    PRINTF("HERE %lu\n", numDummy);
-    if(dep+1 == numDummy)
-        artsShutdown();
+    //        uint64_t args[2];
+    //        args[0] = dep;
+    //
+    //        for(uint64_t i=0; i<numDummy; i++)
+    //        {
+    //            args[1] = i;
+    //            artsEdtCreateDep(dummytask, i%numNodes, 2, args, 0, false);
+    //        }
+
+    PRINTF("Waiting on %lu\n", poolGuid);
+    if (artsWaitOnHandle(poolGuid))
+      PRINTF("Done waiting on %lu dep: %lu\n", poolGuid, dep);
+  }
+  PRINTF("HERE %lu\n", numDummy);
+  if (dep + 1 == numDummy)
+    artsShutdown();
 }
 
-void initPerNode(unsigned int nodeId, int argc, char** argv) 
-{
-    numDummy = (uint64_t) atoi(argv[1]);
+void initPerNode(unsigned int nodeId, int argc, char **argv) {
+  numDummy = (uint64_t)atoi(argv[1]);
 }
 
-void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc, char** argv) 
-{
-    if(!nodeId && !workerId)
-    {
-        PRINTF("Starting\n");
-        artsActiveMessageShad(rootTask, 0, 1, &numDummy, NULL, 0, NULL_GUID);
-    }
+void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc,
+                   char **argv) {
+  if (!nodeId && !workerId) {
+    PRINTF("Starting\n");
+    artsActiveMessageShad(rootTask, 0, 1, &numDummy, NULL, 0, NULL_GUID);
+  }
 }
 
-int main(int argc, char** argv) 
-{
-    artsRT(argc, argv);
-    return 0;
+int main(int argc, char **argv) {
+  artsRT(argc, argv);
+  return 0;
 }

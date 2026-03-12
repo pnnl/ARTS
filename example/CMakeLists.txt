@@ -36,7 +36,14 @@
 ## WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 ## License for the specific language governing permissions and limitations
 ###############################################################################
+
+# Build CPU examples (always available)
 add_subdirectory(cpu)
-if(CUDA_FOUND)
-  add_subdirectory(gpu)
+
+# Build GPU examples only if CUDA library is being built
+if(BUILD_CUDA_LIBRARY)
+    add_subdirectory(gpu)
+    message(STATUS "GPU examples will be built")
+else()
+    message(STATUS "GPU examples will not be built (CUDA not available)")
 endif()

@@ -4,11 +4,11 @@ import configparser
 import itertools as it
 import sys
 
-if(len(sys.argv) == 1):
+if len(sys.argv) == 1:
     print(sys.argv[0], "NUM_GPU LAUNCHER")
     exit(0)
 
-if(len(sys.argv) == 3):
+if len(sys.argv) == 3:
     launcher = sys.argv[2]
 else:
     launcher = "ssh"
@@ -26,7 +26,7 @@ options["gpuLocality"] = r3
 options["gpuP2P"] = r2
 
 config = configparser.ConfigParser()
-config.optionxform=str
+config.optionxform = str
 cfgTemplate = "arts.cfg"
 config.read(cfgTemplate)
 
@@ -43,9 +43,9 @@ combinations = list(it.product(*(options[key] for key in keys)))
 i = 1
 
 for comb in combinations:
-    cfgFile = "test"+str(i)+".cfg"
+    cfgFile = "test" + str(i) + ".cfg"
     for key, ith in zip(keys, list(range(len(comb)))):
         conf[key] = comb[ith]
-    with open(cfgFile, 'w') as cFile:
+    with open(cfgFile, "w") as cFile:
         config.write(cFile)
     i += 1

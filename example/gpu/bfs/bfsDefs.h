@@ -4,7 +4,7 @@
 ** nor the United States Department of Energy, nor Battelle, nor any of      **
 ** their employees, nor any jurisdiction or organization that has cooperated **
 ** in the development of these materials, makes any warranty, express or     **
-** implied, or assumes any legal liability or responsibility for the accuracy,* 
+** implied, or assumes any legal liability or responsibility for the accuracy,*
 ** completeness, or usefulness or any information, apparatus, product,       **
 ** software, or process disclosed, or represents that its use would not      **
 ** infringe privately owned rights.                                          **
@@ -43,41 +43,47 @@
 extern "C" {
 #endif
 
-#define DPRINTF(...)
-//  #define DPRINTF(...) PRINTF(__VA_ARGS__)
-#define TURNON(...) 
+#include "arts/runtime/Globals.h"
+
+#define PRINTF(...)
+//  #define PRINTF(...) PRINTF(__VA_ARGS__)
+#define TURNON(...)
 // #define TURNON(...) __VA_ARGS__
 #define ROOT 7
 #define PARTS 8
-#define GPULISTLEN 1024UL*1024UL*256UL
-#define MAXLEVEL (unsigned int) -1
+#define GPULISTLEN 1024UL * 1024UL * 256UL
+#define MAXLEVEL (unsigned int)-1
 #define SMTILE 32
-#define GPU_THRESHOLD (unsigned int) 1024
+#define GPU_THRESHOLD (unsigned int)1024
 
 #define USE_LC 2
 #ifdef USE_LC
-#define DO_SYNC(level) (level % USE_LC == 0)  
+#define DO_SYNC(level) (level % USE_LC == 0)
 #define DB_WRITE_TYPE ARTS_DB_LC
-#define checkConsistency(workerId) \
-if(!workerId && artsLookUpConfig(gpuLCSync) != 4) \
-{ \
-    PRINTF("The gpuLCSync must be set to 4 (artsGetMinDbUnsignedInt) in arts config file.\n"); \
-    artsShutdown(); \
-    return; \
-}
+#define checkConsistency(workerId)                                             \
+  if (!workerId && artsLookUpConfig(gpuLCSync) != 4) {                         \
+    PRINTF("The gpuLCSync must be set to 4 (artsGetMinDbUnsignedInt) in arts " \
+           "config file.\n");                                                  \
+    artsShutdown();                                                            \
+    return;                                                                    \
+  }
 #else
 #define DO_SYNC(level) 0
 #define DB_WRITE_TYPE ARTS_DB_GPU_WRITE
-#define checkConsistency(workerId) \
-if(!workerId && artsLookUpConfig(gpuLocality) != 3) \
-{ \
-    PRINTF("The gpuLocality must be set to 3 (hashOnDBZero) in arts config file.\n"); \
-    artsShutdown(); \
-    return; \
-}
+#define checkConsistency(workerId)                                             \
+  if (!workerId && artsLookUpConfig(gpuLocality) != 3) {                       \
+    PRINTF("The gpuLocality must be set to 3 (hashOnDBZero) in arts config "   \
+           "file.\n");                                                         \
+    artsShutdown();                                                            \
+    return;                                                                    \
+  }
 #endif
 
-#define DASHDASHFILE(argc, argv) if(argc == 3) { argv[1] = argv[2]; argc--; }
+#define DASHDASHFILE(argc, argv)                                               \
+  if (argc == 3) {                                                             \
+    argv[1] = argv[2];                                                         \
+    argc--;                                                                    \
+  }
 
 #ifdef __cplusplus
 }

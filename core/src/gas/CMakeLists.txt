@@ -37,19 +37,23 @@
 ## License for the specific language governing permissions and limitations
 ###############################################################################
 
-set(gas_inc
-    ${CORE_INCLUDE_DIR}/artsGuid.h
-    ${CORE_INCLUDE_DIR}/artsOutOfOrder.h
-    ${CORE_INCLUDE_DIR}/artsOutOfOrderList.h
-    ${CORE_INCLUDE_DIR}/artsRouteTable.h
+# Collect all source files
+file(GLOB GAS_SOURCES "*.c")
+
+# Create object library for the gas module
+add_library(arts_gas OBJECT ${GAS_SOURCES})
+
+# Include directories
+target_include_directories(arts_gas PRIVATE
+    ${ARTS_CORE_INCLUDE_DIR} ${ARTS_CORE_BUILD_INCLUDE_DIR}
 )
 
-set(gas_src
-    artsGuid.c
-    artsOutOfOrder.c
-    artsOutOfOrderList.c
-    artsRouteTable.c
-)
+# Add hwloc include directories if available
+if(HWLOC_INCLUDE_DIRS)
+    target_include_directories(arts_gas PRIVATE ${HWLOC_INCLUDE_DIRS})
+endif()
 
-add_library(gas OBJECT ${gas_inc} ${gas_src} )
-install(FILES ${gas_inc} DESTINATION include)
+if(USE_CXL)
+    target_link_libraries(arts_gas PRIVATE rapid::rapid)
+    target_link_libraries(arts_gas PRIVATE arts_cxl_lib)
+endif()

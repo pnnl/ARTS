@@ -37,20 +37,63 @@
 ## License for the specific language governing permissions and limitations
 ###############################################################################
 
-configure_file(gpuRun.sh gpuRun.sh COPYONLY)
-configure_file(gpuRunAllConfig.sh gpuRunAll.sh COPYONLY)
-configure_file(generateConfigFiles.py generateConfigFiles.py COPYONLY)
-configure_file(arts.cfg ../example/cpu/arts.cfg COPYONLY)
-configure_file(arts.insp ../example/cpu/arts.insp COPYONLY)
-configure_file(artsGpu.cfg ../example/gpu/arts.cfg COPYONLY)
-configure_file(artsGpu.cfg ../example/gpu/mm/arts.cfg COPYONLY)
-configure_file(artsGpu.cfg ../example/gpu/stream/arts.cfg COPYONLY)
-configure_file(artsGpu.cfg ../example/gpu/randomAccess/arts.cfg COPYONLY)
-configure_file(artsGpu.cfg ../example/gpu/bfs/arts.cfg COPYONLY)
-configure_file(artsGpu.cfg ../example/gpu/histogram/arts.cfg COPYONLY)
-configure_file(arts.cfg ../example/gpu/vector/arts.cfg COPYONLY)
-configure_file(arts.insp ../example/gpu/arts.insp COPYONLY)
-configure_file(arts.cfg ../test/arts.cfg COPYONLY)
-configure_file(arts.insp ../test/arts.insp COPYONLY)
-install(FILES arts.cfg DESTINATION config)
-install(FILES arts.insp DESTINATION config)
+# Define configuration files and scripts to install
+set(CONFIG_FILES
+    arts.cfg
+    artsGpu.cfg
+)
+
+set(SCRIPTS
+    gpuRun.sh
+    gpuRunAllConfig.sh
+    generateConfigFiles.py
+)
+
+# Copy scripts to build directory (maintaining executable permissions)
+foreach(script ${SCRIPTS})
+    configure_file(${script} ${script} COPYONLY)
+endforeach()
+
+# Function to copy config files to target directories
+function(copy_config_to_target source_file target_dir target_name)
+    if(IS_DIRECTORY ${CMAKE_BINARY_DIR}/${target_dir})
+        configure_file(${source_file} ${CMAKE_BINARY_DIR}/${target_dir}/${target_name} COPYONLY)
+    endif()
+endfunction()
+
+# Copy configuration files to example directories
+copy_config_to_target(arts.cfg example/cpu arts.cfg)
+
+# Copy GPU configuration files to example GPU directories if they exist
+if(BUILD_CUDA_LIBRARY)
+    set(GPU_EXAMPLE_DIRS
+        example/gpu
+        example/gpu/mm
+        example/gpu/stream
+        example/gpu/randomAccess
+        example/gpu/bfs
+        example/gpu/histogram
+    )
+    
+    foreach(gpu_dir ${GPU_EXAMPLE_DIRS})
+        copy_config_to_target(artsGpu.cfg ${gpu_dir} arts.cfg)
+    endforeach()
+endif()
+
+# Copy configuration files to test directory
+copy_config_to_target(arts.cfg test arts.cfg)
+if(BUILD_CUDA_LIBRARY)
+    copy_config_to_target(artsGpu.cfg test artsGpu.cfg)
+endif()
+
+# Install configuration files
+install(FILES ${CONFIG_FILES}
+    DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/arts
+    COMPONENT config
+)
+
+# Install scripts
+install(PROGRAMS ${SCRIPTS}
+    DESTINATION ${CMAKE_INSTALL_BINDIR}
+    COMPONENT scripts
+)

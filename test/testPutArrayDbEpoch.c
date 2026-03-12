@@ -4,7 +4,7 @@
 ** nor the United States Department of Energy, nor Battelle, nor any of      **
 ** their employees, nor any jurisdiction or organization that has cooperated **
 ** in the development of these materials, makes any warranty, express or     **
-** implied, or assumes any legal liability or responsibility for the accuracy,* 
+** implied, or assumes any legal liability or responsibility for the accuracy,*
 ** completeness, or usefulness or any information, apparatus, product,       **
 ** software, or process disclosed, or represents that its use would not      **
 ** infringe privately owned rights.                                          **
@@ -36,65 +36,60 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include <stdio.h>
 #include <stdlib.h>
-#include "arts.h"
+
+#include "arts/arts.h"
 
 unsigned int elementsPerBlock = 0;
 unsigned int blocks = 0;
-artsArrayDb_t * array = NULL;
+artsArrayDb_t *array = NULL;
 
-void check(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t depv[])
-{
-    for(unsigned int i=0; i<blocks; i++)
-    {
-        unsigned int * data = depv[i].ptr;
-        for(unsigned int j=0; j<elementsPerBlock; j++)
-        {
-            PRINTF("i: %u\n", data[j]);
-        }
+void check(uint32_t paramc, uint64_t *paramv, uint32_t depc,
+           artsEdtDep_t depv[]) {
+  for (unsigned int i = 0; i < blocks; i++) {
+    unsigned int *data = (unsigned int *)depv[i].ptr;
+    for (unsigned int j = 0; j < elementsPerBlock; j++) {
+      PRINTF("i: %u\n", data[j]);
     }
-    artsShutdown();
+  }
+  artsShutdown();
 }
 
-void epochEnd(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t depv[])
-{    
-    artsGatherArrayDb(array, check, 0, 0, NULL, 0);
-    unsigned int numInEpoch = depv[0].guid;
-    PRINTF("%u in Epoch\n", numInEpoch);
+void epochEnd(uint32_t paramc, uint64_t *paramv, uint32_t depc,
+              artsEdtDep_t depv[]) {
+  artsGatherArrayDb(array, check, 0, 0, NULL, 0);
+  unsigned int numInEpoch = depv[0].guid;
+  PRINTF("%u in Epoch\n", numInEpoch);
 }
 
-void epochStart(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t depv[])
-{
-    PRINTF("Launching\n");
-    artsGuid_t guid = artsNewArrayDb(&array, sizeof(unsigned int), elementsPerBlock * blocks);
-    for(unsigned int i=0; i<elementsPerBlock*blocks; i++)
-    {
-        artsPutInArrayDb(&i, NULL_GUID, 0, array, i);
-    }
+void epochStart(uint32_t paramc, uint64_t *paramv, uint32_t depc,
+                artsEdtDep_t depv[]) {
+  PRINTF("Launching\n");
+  artsGuid_t guid =
+      artsNewArrayDb(&array, sizeof(unsigned int), elementsPerBlock * blocks);
+  for (unsigned int i = 0; i < elementsPerBlock * blocks; i++) {
+    artsPutInArrayDb(&i, NULL_GUID, 0, array, i);
+  }
 }
 
-void initPerNode(unsigned int nodeId, int argc, char** argv)
-{
-    elementsPerBlock = atoi(argv[1]);
-    blocks = artsGetTotalNodes();
-    if(!nodeId)
-        PRINTF("ElementsPerBlock: %u Blocks: %u\n", elementsPerBlock, blocks);
+void initPerNode(unsigned int nodeId, int argc, char **argv) {
+  elementsPerBlock = atoi(argv[1]);
+  blocks = artsGetTotalNodes();
+  if (!nodeId)
+    PRINTF("ElementsPerBlock: %u Blocks: %u\n", elementsPerBlock, blocks);
 }
 
-void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc, char** argv)
-{   
-    
-    if(!nodeId && !workerId)
-    {
-        artsGuid_t endEpochGuid = artsEdtCreate(epochEnd, 0, 0, NULL, 1);
-        artsInitializeAndStartEpoch(endEpochGuid, 0);
-        artsGuid_t startEpochGuid = artsEdtCreate(epochStart, 0, 0, NULL, 0);
-    }
+void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc,
+                   char **argv) {
+
+  if (!nodeId && !workerId) {
+    artsGuid_t endEpochGuid = artsEdtCreate(epochEnd, 0, 0, NULL, 1);
+    artsInitializeAndStartEpoch(endEpochGuid, 0);
+    artsGuid_t startEpochGuid = artsEdtCreate(epochStart, 0, 0, NULL, 0);
+  }
 }
 
-int main(int argc, char** argv)
-{
-    artsRT(argc, argv);
-    return 0;
+int main(int argc, char **argv) {
+  artsRT(argc, argv);
+  return 0;
 }

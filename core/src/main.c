@@ -4,7 +4,7 @@
 ** nor the United States Department of Energy, nor Battelle, nor any of      **
 ** their employees, nor any jurisdiction or organization that has cooperated **
 ** in the development of these materials, makes any warranty, express or     **
-** implied, or assumes any legal liability or responsibility for the accuracy,* 
+** implied, or assumes any legal liability or responsibility for the accuracy,*
 ** completeness, or usefulness or any information, apparatus, product,       **
 ** software, or process disclosed, or represents that its use would not      **
 ** infringe privately owned rights.                                          **
@@ -38,57 +38,55 @@
 ******************************************************************************/
 #define _GNU_SOURCE
 #define _FILE_OFFSET_BITS 64
-#include "arts.h"
-#include "artsThreads.h"
-#include "artsConfig.h"
-#include "artsGlobals.h"
-#include "artsRemote.h"
-#include "artsGuid.h"
-#include "artsRuntime.h"
-#include "artsRemoteLauncher.h"
-#include "artsIntrospection.h"
-#include "artsDebug.h"
+#include "arts/arts.h"
 
-extern struct artsConfig * config;
+#include "arts/network/Remote.h"
+#include "arts/network/RemoteLauncher.h"
+#include "arts/runtime/Globals.h"
+#include "arts/runtime/Runtime.h"
+#include "arts/system/ArtsPrint.h"
+#include "arts/system/Config.h"
+#include "arts/system/Debug.h"
+#include "arts/system/Threads.h"
+
+extern struct artsConfig *config;
 
 int mainArgc = 0;
-char ** mainArgv = NULL;
+char **mainArgv = NULL;
 
-int artsRT(int argc, char **argv)
-{
-    mainArgc = argc;
-    mainArgv = argv;
-    artsRemoteTryToBecomePrinter();
-    config = artsConfigLoad();
+int artsRT(int argc, char **argv) {
+  mainArgc = argc;
+  mainArgv = argv;
+  artsRemoteTryToBecomePrinter();
+  config = artsConfigLoad();
+  artsConfigPrint(config);
 
-    if(config->coreDump)
-        artsTurnOnCoreDumps();
+  if (config->coreDump)
+    artsTurnOnCoreDumps();
 
-    artsGlobalRankId = 0;
-    artsGlobalRankCount = config->tableLength;
-    if(strncmp(config->launcher, "local", 5) != 0)
-        artsServerSetup(config);
-    artsGlobalMasterRankId= config->masterRank;
-    if(artsGlobalRankId == config->masterRank && config->masterBoot)
-        config->launcherData->launchProcesses(config->launcherData);
+  artsGlobalRankId = 0;
+  artsGlobalRankCount = config->tableLength;
+  if (strncmp(config->launcher, "local", 5) != 0)
+    artsServerSetup(config);
+  artsGlobalMasterRankId = config->masterRank;
+  if (artsGlobalRankId == config->masterRank && config->masterBoot)
+    config->launcherData->launchProcesses(config->launcherData);
 
-    if(artsGlobalRankCount>1)
-    {
-        artsRemoteSetupOutgoing();
-        if(!artsRemoteSetupIncoming())
-            return -1;
-    }
+  if (artsGlobalRankCount > 1) {
+    artsRemoteSetupOutgoing();
+    if (!artsRemoteSetupIncoming())
+      return -1;
+  }
 
-    artsThreadInit(config);
-    artsThreadZeroNodeStart();
-       
-    artsThreadMainJoin();
+  artsThreadInit(config);
+  artsThreadZeroNodeStart();
 
-    if(artsGlobalRankId == config->masterRank && config->masterBoot)
-    {
-        config->launcherData->cleanupProcesses(config->launcherData);
-    }
-    artsConfigDestroy(config);
-    artsRemoteTryToClosePrinter();
-    return 0;
+  artsThreadMainJoin();
+
+  if (artsGlobalRankId == config->masterRank && config->masterBoot) {
+    config->launcherData->cleanupProcesses(config->launcherData);
+  }
+  artsConfigDestroy(config);
+  artsRemoteTryToClosePrinter();
+  return 0;
 }

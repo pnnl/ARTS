@@ -37,20 +37,28 @@
 ## License for the specific language governing permissions and limitations
 ###############################################################################
 
-set(network_inc
-    ${CORE_INCLUDE_DIR}/artsConnection.h
-    ${CORE_INCLUDE_DIR}/artsRemote.h
-    ${CORE_INCLUDE_DIR}/artsRemoteLauncher.h
-    ${CORE_INCLUDE_DIR}/artsRemoteProtocol.h
-    ${CORE_INCLUDE_DIR}/artsSocketServer.h
+# Collect all source files
+file(GLOB NETWORK_SOURCES "*.c")
+
+# Create object library for the network module
+add_library(arts_network OBJECT ${NETWORK_SOURCES})
+
+# Include directories
+target_include_directories(arts_network PRIVATE
+    ${ARTS_CORE_INCLUDE_DIR} ${ARTS_CORE_BUILD_INCLUDE_DIR}
 )
 
-set(network_src
-    artsRemoteLauncherSSH.c
-    artsSocket.c
-    artsRemoteProtocol.c
-    artsSocketServer.c
-)
+# Add RDMA include directories if available
+if(RDMACM_INCLUDE_DIRS)
+    target_include_directories(arts_network PRIVATE ${RDMACM_INCLUDE_DIRS})
+endif()
 
-add_library(network OBJECT ${network_inc} ${network_src})
-install(FILES ${network_inc} DESTINATION include)
+# Add hwloc include directories if available
+if(HWLOC_INCLUDE_DIRS)
+    target_include_directories(arts_network PRIVATE ${HWLOC_INCLUDE_DIRS})
+endif()
+
+if(USE_CXL)
+    target_link_libraries(arts_network PRIVATE rapid::rapid)
+    target_link_libraries(arts_network PRIVATE arts_cxl_lib)
+endif()

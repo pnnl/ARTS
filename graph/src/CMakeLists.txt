@@ -37,7 +37,15 @@
 ## License for the specific language governing permissions and limitations
 ###############################################################################
 
+# Add subdirectories for modular source organization
 add_subdirectory(distribution)
 add_subdirectory(datastructures)
 
-add_library(arts-graph $<TARGET_OBJECTS:distribution> $<TARGET_OBJECTS:datastructures>)
+# Create static library for internal use by examples and tests
+add_library(arts_graph STATIC)
+
+# Add source files from object libraries
+target_sources(arts_graph PRIVATE
+    $<TARGET_OBJECTS:distribution>
+    $<TARGET_OBJECTS:datastructures>
+)

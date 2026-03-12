@@ -37,135 +37,160 @@
 ## License for the specific language governing permissions and limitations
 ###############################################################################
 
-set(LIBS arts ${RT_LIB} ${PTHREAD_LIB} ${RDMACM_LIB} ${HWLOC_LIB} ${CUDA_LIBRARIES} ${CUBLAS_LIBRARIES})
+# Define test programs to build
+set(TEST_PROGRAMS
+    testMain
+    testRouteTable
+    testRouteTable2
+    testCDAG
+    testCDAG2
+    testOOList
+    testPinDB
+    testGetFromDb
+    testPutInDb
+    testArtsSend
+    testActiveMessageDb
+    testActiveMessageBuffer
+    testArrayDb
+    testForEach
+    testTerminationDetection
+    testTerminationDetection2
+    testPutArrayDbEpoch
+    testPutArrayDbEpoch2
+    testAtomicAddInArrayDb
+    testAtomicCompareAndSwapInArrayDb
+    testDbMove
+    testDbOnce
+    testRecEpoch
+    testEpochPool
+    testEpochForShad
+    testBuffer
+    testEvent
+    testShadLock
+    testOOBug
+    testRouteTableIter
+    testRouteTableIter2
+    testTMTLite
+    testTwinDiff
+    testAcquireMode
+    testArtsId
+)
 
-add_executable(testMain testMain.c)
-target_link_libraries(testMain ${LIBS})
+# Programs that require arts_graph library
+set(GRAPH_TEST_PROGRAMS
+    testCSR
+    testDistribution
+)
 
-add_executable(testRouteTable testRouteTable.c)
-target_link_libraries(testRouteTable ${LIBS})
-
-add_executable(testRouteTable2 testRouteTable2.c)
-target_link_libraries(testRouteTable2 ${LIBS})
-
-add_executable(testCDAG testCDAG.c)
-target_link_libraries(testCDAG ${LIBS})
-
-add_executable(testCDAG2 testCDAG2.c)
-target_link_libraries(testCDAG2 ${LIBS})
-
-#add_executable(testOOList testOOList.c)
-#target_link_libraries(testOOList ${LIBS})
-
-add_executable(testPinDB testPinDB.c)
-target_link_libraries(testPinDB ${LIBS})
-
-add_executable(testGetFromDb testGetFromDb.c)
-target_link_libraries(testGetFromDb ${LIBS})
-
-add_executable(testPutInDb testPutInDb.c)
-target_link_libraries(testPutInDb ${LIBS})
-
-add_executable(testArtsSend testArtsSend.c)
-target_link_libraries(testArtsSend ${LIBS})
-
-add_executable(testActiveMessageDb testActiveMessageDb.c)
-target_link_libraries(testActiveMessageDb ${LIBS})
-
-add_executable(testActiveMessageBuffer testActiveMessageBuffer.c)
-target_link_libraries(testActiveMessageBuffer ${LIBS})
-
-add_executable(testCSR testCSR.c)
-target_link_libraries(testCSR arts-graph ${LIBS})
-
-#add_executable(testDistribution testDistribution.c)
-#target_link_libraries(testDistribution ${LIBS})
-
-add_executable(testArrayDb testArrayDb.c)
-target_link_libraries(testArrayDb ${LIBS})
-
-add_executable(testForEach testForEach.c)
-target_link_libraries(testForEach ${LIBS})
-
-add_executable(testTerminationDetection testTerminationDetection.c)
-target_link_libraries(testTerminationDetection ${LIBS})
-
-add_executable(testTerminationDetection2 testTerminationDetection2.c)
-target_link_libraries(testTerminationDetection2 ${LIBS})
-
-add_executable(testPutArrayDbEpoch testPutArrayDbEpoch.c)
-target_link_libraries(testPutArrayDbEpoch ${LIBS})
-
-add_executable(testPutArrayDbEpoch2 testPutArrayDbEpoch2.c)
-target_link_libraries(testPutArrayDbEpoch2 ${LIBS})
-
-add_executable(testAtomicAddInArrayDb testAtomicAddInArrayDb.c)
-target_link_libraries(testAtomicAddInArrayDb ${LIBS})
-
-add_executable(testAtomicCompareAndSwapInArrayDb testAtomicCompareAndSwapInArrayDb.c)
-target_link_libraries(testAtomicCompareAndSwapInArrayDb ${LIBS})
-
-add_executable(testDbMove testDbMove.c)
-target_link_libraries(testDbMove ${LIBS})
-
-add_executable(testDbOnce testDbOnce.c)
-target_link_libraries(testDbOnce ${LIBS})
-
-add_executable(testRecEpoch testRecEpoch.c)
-target_link_libraries(testRecEpoch ${LIBS})
-
-add_executable(testEpochPool testEpochPool.c)
-target_link_libraries(testEpochPool ${LIBS})
-
-add_executable(testEpochForShad testEpochForShad.c)
-target_link_libraries(testEpochForShad ${LIBS})
-
-add_executable(testBuffer testBuffer.c)
-target_link_libraries(testBuffer ${LIBS})
-
-add_executable(testEvent testEvent.c)
-target_link_libraries(testEvent ${LIBS})
-
-add_executable(testShadLock testShadLock.c)
-target_link_libraries(testShadLock ${LIBS})
-if(CUDA_FOUND)
-    set_source_files_properties(testGpuStream.c PROPERTIES LANGUAGE CUDA)
-    add_executable(testGpuStream testGpuStream.c)
-    target_link_libraries(testGpuStream ${LIBS})
-
-    if(CUBLAS_FOUND)
-        set_source_files_properties(testGpuLib.c PROPERTIES LANGUAGE CUDA)
-        add_executable(testGpuLib testGpuLib.cu)
-        target_link_libraries(testGpuLib ${LIBS})
-    endif()
+# Function to create a test executable
+function(add_arts_test test_name)
+    add_executable(${test_name} ${test_name}.c)
     
-    set_source_files_properties(testGpuForAll.c PROPERTIES LANGUAGE CUDA)
-    add_executable(testGpuForAll testGpuForAll.c)
-    set_target_properties(testGpuForAll PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-    target_link_libraries(testGpuForAll ${LIBS})
+    # Set include directories
+    target_include_directories(${test_name} PRIVATE ${ARTS_CORE_INCLUDE_DIR} ${ARTS_CORE_BUILD_INCLUDE_DIR})
 
-    set_source_files_properties(testLCSync.c PROPERTIES LANGUAGE CUDA)
-    add_executable(testLCSync testLCSync.c)
-    set_target_properties(testLCSync PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-    target_link_libraries(testLCSync ${LIBS})
+    # Match CARTS launcher expectations: non-PIE binaries avoid pointer-auth
+    # failures when passing raw function pointers across nodes.
+    set_property(TARGET ${test_name} PROPERTY POSITION_INDEPENDENT_CODE OFF)
+    target_compile_options(${test_name} PRIVATE -fno-pie -fno-PIE)
+    target_link_options(${test_name} PRIVATE -no-pie -fno-pie -fno-PIE)
+    
+    # Link with runtime libraries
+    target_link_libraries(${test_name} PRIVATE Threads::Threads ${RT_LIBRARY} ${M_LIBRARY} ${ANL_LIBRARY})
+    
+    # Use the appropriate ARTS library based on availability
+    if(TARGET arts_shared)
+        target_link_libraries(${test_name} PRIVATE arts_shared)
+    elseif(TARGET arts_static)
+        target_link_libraries(${test_name} PRIVATE arts_static)
+    else()
+        message(FATAL_ERROR "No ARTS library target found")
+    endif()
+endfunction()
 
-    set_source_files_properties(testGpuRing.c PROPERTIES LANGUAGE CUDA)
-    add_executable(testGpuRing testGpuRing.c)
-    target_link_libraries(testGpuRing ${LIBS})
+# Create standard test executables
+foreach(test_program ${TEST_PROGRAMS})
+    add_arts_test(${test_program})
+endforeach()
 
-    set_source_files_properties(testGpuLCRed.c PROPERTIES LANGUAGE CUDA)
-    add_executable(testGpuLCRed testGpuLCRed.c)
-    target_link_libraries(testGpuLCRed ${LIBS})
+# Function to create a test executable that uses arts_graph
+function(add_arts_graph_test test_name)
+    add_executable(${test_name} ${test_name}.c)
+    
+    # Set include directories
+    target_include_directories(${test_name} PRIVATE ${ARTS_CORE_INCLUDE_DIR} ${ARTS_CORE_BUILD_INCLUDE_DIR} ${ARTS_GRAPH_INCLUDE_DIR})
+
+    set_property(TARGET ${test_name} PROPERTY POSITION_INDEPENDENT_CODE OFF)
+    target_compile_options(${test_name} PRIVATE -fno-pie -fno-PIE)
+    target_link_options(${test_name} PRIVATE -no-pie -fno-pie -fno-PIE)
+    
+    # Link with arts_graph and runtime libraries
+    target_link_libraries(${test_name} PRIVATE arts_graph Threads::Threads ${RT_LIBRARY} ${M_LIBRARY} ${ANL_LIBRARY})
+    
+    # Use the appropriate ARTS library based on availability
+    if(TARGET arts_shared)
+        target_link_libraries(${test_name} PRIVATE arts_shared)
+    elseif(TARGET arts_static)
+        target_link_libraries(${test_name} PRIVATE arts_static)
+    else()
+        message(FATAL_ERROR "No ARTS library target found")
+    endif()
+endfunction()
+
+# Create graph test executables
+foreach(test_program ${GRAPH_TEST_PROGRAMS})
+    add_arts_graph_test(${test_program})
+endforeach()
+
+# CUDA test programs (only built if CUDA is available)
+if(BUILD_CUDA_LIBRARY)
+    set(CUDA_TEST_PROGRAMS
+        testGpuStream
+        testGpuForAll
+        testLCSync
+        testGpuLCRed
+        testGpuLib
+        testGpuRing
+    )
+    
+    # Function to create a CUDA test executable
+    function(add_cuda_test test_name)
+        add_executable(${test_name} ${test_name}.cu)
+        
+        # Set include directories
+        target_include_directories(${test_name} PRIVATE ${ARTS_CORE_INCLUDE_DIR} ${ARTS_CORE_BUILD_INCLUDE_DIR} ${CUDA_INCLUDE_DIRS})
+
+        set_property(TARGET ${test_name} PROPERTY POSITION_INDEPENDENT_CODE OFF)
+        target_compile_options(${test_name} PRIVATE -fno-pie -fno-PIE)
+        target_link_options(${test_name} PRIVATE -no-pie -fno-pie -fno-PIE)
+        
+        # Link with CUDA libraries
+        target_link_libraries(${test_name} PRIVATE 
+            Threads::Threads 
+            ${RT_LIBRARY} 
+            ${M_LIBRARY} 
+            ${ANL_LIBRARY} 
+            CUDA::cudart 
+            CUDA::cuda_driver 
+            CUDA::cublas
+        )
+        
+        # Use the CUDA-enabled ARTS library
+        if(TARGET arts_cuda_shared)
+            target_link_libraries(${test_name} PRIVATE arts_cuda_shared)
+        elseif(TARGET arts_cuda_static)
+            target_link_libraries(${test_name} PRIVATE arts_cuda_static)
+        else()
+            message(FATAL_ERROR "No CUDA ARTS library target found")
+        endif()
+    endfunction()
+    
+    # Create CUDA test executables
+    foreach(cuda_test ${CUDA_TEST_PROGRAMS})
+        add_cuda_test(${cuda_test})
+    endforeach()
+    
+    message(STATUS "CUDA test programs will be built")
+else()
+    message(STATUS "CUDA test programs will not be built (CUDA not available)")
 endif()
-
-add_executable(testOOBug testOOBug.c)
-target_link_libraries(testOOBug ${LIBS})
-
-add_executable(testRouteTableIter testRouteTableIter.c)
-target_link_libraries(testRouteTableIter ${LIBS})
-
-add_executable(testRouteTableIter2 testRouteTableIter2.c)
-target_link_libraries(testRouteTableIter2 ${LIBS})
-
-add_executable(testTMTLite testTMTLite.c)
-target_link_libraries(testTMTLite ${LIBS})

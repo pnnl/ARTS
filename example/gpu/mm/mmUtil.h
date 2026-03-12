@@ -4,7 +4,7 @@
 ** nor the United States Department of Energy, nor Battelle, nor any of      **
 ** their employees, nor any jurisdiction or organization that has cooperated **
 ** in the development of these materials, makes any warranty, express or     **
-** implied, or assumes any legal liability or responsibility for the accuracy,* 
+** implied, or assumes any legal liability or responsibility for the accuracy,*
 ** completeness, or usefulness or any information, apparatus, product,       **
 ** software, or process disclosed, or represents that its use would not      **
 ** infringe privately owned rights.                                          **
@@ -42,9 +42,12 @@
 extern "C" {
 #endif
 
-void printMatrix(unsigned int rowSize, double * mat);
-void initMatrix(unsigned int rowSize, double * mat, bool identity, bool zero);
-void copyBlock(unsigned int x, unsigned int y, unsigned int tileRowSize, double * tile, unsigned int rowSize, double * mat, bool toTile);
+#include <stdbool.h>
+
+void printMatrix(unsigned int rowSize, double *mat);
+void initMatrix(unsigned int rowSize, double *mat, bool identity, bool zero);
+void copyBlock(unsigned int x, unsigned int y, unsigned int tileRowSize,
+               double *tile, unsigned int rowSize, double *mat, bool toTile);
 
 #ifdef __cplusplus
 }

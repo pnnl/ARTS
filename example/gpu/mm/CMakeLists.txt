@@ -37,37 +37,49 @@
 ## License for the specific language governing permissions and limitations
 ###############################################################################
 
-set(LIBS arts ${M_LIB} ${RT_LIB} ${PTHREAD_LIB} ${RDMACM_LIB} ${HWLOC_LIB} ${CUDA_LIBRARIES} ${CUBLAS_LIBRARIES})
+# Matrix multiplication CUDA examples
+set(MM_CUDA_EXAMPLES
+    mmTileNaive
+    mmTile
+    mmTileBlas
+    mmThrust
+    mmTileRed
+    mmTileRedBig
+)
 
-if(CUDA_FOUND)
-
-    add_library(mmUtil mmUtil.h mmUtil.c)
+# Function to create a matrix multiplication CUDA example
+function(add_mm_cuda_example example_name)
+    add_executable(${example_name} ${example_name}.cu mmUtil.c)
     
-    set_source_files_properties(mmTileNaive.cu PROPERTIES LANGUAGE CUDA)
-    add_executable(mmTileNaive mmTileNaive.cu)
-    target_link_libraries(mmTileNaive mmUtil ${LIBS})
-
-    set_source_files_properties(mmTile.cu PROPERTIES LANGUAGE CUDA)
-    add_executable(mmTile mmTile.cu)
-    target_link_libraries(mmTile mmUtil ${LIBS})
-
+    # Set include directories
+    target_include_directories(${example_name} PRIVATE
+        ${ARTS_CORE_INCLUDE_DIR}
+        ${ARTS_CORE_BUILD_INCLUDE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}
+    )
     
-
-    if(CUBLAS_FOUND)
-        set_source_files_properties(mmTileBlas.cu PROPERTIES LANGUAGE CUDA)
-        add_executable(mmTileBlas mmTileBlas.cu)
-        target_link_libraries(mmTileBlas mmUtil ${LIBS})
-
-        set_source_files_properties(mmThrust.cu PROPERTIES LANGUAGE CUDA)
-        add_executable(mmThrust mmThrust.cu)
-        target_link_libraries(mmThrust mmUtil ${LIBS})
-
-        set_source_files_properties(mmTileRed.cu PROPERTIES LANGUAGE CUDA)
-        add_executable(mmTileRed mmTileRed.cu)
-        target_link_libraries(mmTileRed mmUtil ${LIBS})
-
-        set_source_files_properties(mmTileRedBig.cu PROPERTIES LANGUAGE CUDA)
-        add_executable(mmTileRedBig mmTileRedBig.cu)
-        target_link_libraries(mmTileRedBig mmUtil ${LIBS})
+    # Link with CUDA libraries
+    target_link_libraries(${example_name} PRIVATE 
+        Threads::Threads 
+        ${RT_LIBRARY} 
+        ${M_LIBRARY} 
+        ${ANL_LIBRARY} 
+        CUDA::cudart 
+        CUDA::cuda_driver 
+        CUDA::cublas
+    )
+    
+    # Use the CUDA-enabled ARTS library
+    if(TARGET arts_cuda_shared)
+        target_link_libraries(${example_name} PRIVATE arts_cuda_shared)
+    elseif(TARGET arts_cuda_static)
+        target_link_libraries(${example_name} PRIVATE arts_cuda_static)
+    else()
+        message(FATAL_ERROR "No CUDA ARTS library target found for ${example_name}")
     endif()
-endif()
+endfunction()
+
+# Create standard CUDA matrix multiplication examples
+foreach(example ${MM_CUDA_EXAMPLES})
+    add_mm_cuda_example(${example})
+endforeach()

@@ -4,7 +4,7 @@
 ** nor the United States Department of Energy, nor Battelle, nor any of      **
 ** their employees, nor any jurisdiction or organization that has cooperated **
 ** in the development of these materials, makes any warranty, express or     **
-** implied, or assumes any legal liability or responsibility for the accuracy,* 
+** implied, or assumes any legal liability or responsibility for the accuracy,*
 ** completeness, or usefulness or any information, apparatus, product,       **
 ** software, or process disclosed, or represents that its use would not      **
 ** infringe privately owned rights.                                          **
@@ -36,61 +36,54 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include <stdio.h>
+#include "mmUtil.h"
+
 #include <stdlib.h>
-#include "arts.h"
+#include <string.h>
 
-void printMatrix(unsigned int rowSize, double * mat)
-{
-    unsigned int columnSize = rowSize;
-    for(unsigned int i=0; i<columnSize; i++)
-    {
-        for(unsigned int j=0; j<rowSize; j++)
-        {
-            printf("%5.2f ", mat[i*rowSize + j]);
-        }
-        printf("\n");
+#include "arts/runtime/RT.h"
+
+void printMatrix(unsigned int rowSize, double *mat) {
+  unsigned int columnSize = rowSize;
+  for (unsigned int i = 0; i < columnSize; i++) {
+    for (unsigned int j = 0; j < rowSize; j++) {
+      PRINTF("%5.2f ", mat[i * rowSize + j]);
     }
+    PRINTF("\n");
+  }
 }
 
-void initMatrix(unsigned int rowSize, double * mat, bool identity, bool zero)
-{
-    unsigned int columnSize = rowSize;
-    for(unsigned int i=0; i<columnSize; i++)
-    {
-        for(unsigned int j=0; j<rowSize; j++)
-        {
-            if(zero)
-                mat[i*rowSize + j] = 0;
-            else if(identity)
-            {
-                if(i==j)
-                    mat[i*rowSize + j] = 1;
-                else
-                    mat[i*rowSize + j] = 0;
-            }
-            else
-                mat[i*rowSize + j] = rand()%10;
-        }
+void initMatrix(unsigned int rowSize, double *mat, bool identity, bool zero) {
+  unsigned int columnSize = rowSize;
+  for (unsigned int i = 0; i < columnSize; i++) {
+    for (unsigned int j = 0; j < rowSize; j++) {
+      if (zero)
+        mat[i * rowSize + j] = 0;
+      else if (identity) {
+        if (i == j)
+          mat[i * rowSize + j] = 1;
+        else
+          mat[i * rowSize + j] = 0;
+      } else
+        mat[i * rowSize + j] = rand() % 10;
     }
+  }
 }
 
-void copyBlock(unsigned int x, unsigned int y, unsigned int tileRowSize, double * tile, unsigned int rowSize, double * mat, bool toTile)
-{
-    unsigned int tileColumnSize = tileRowSize;
-    
-    unsigned int xOffset = tileRowSize    * y;
-    unsigned int yOffset = tileColumnSize * x;
-    
-    if(toTile)
-    {
-        for(unsigned int i=0; i<tileColumnSize; i++)
-            memcpy(&tile[ i * tileRowSize ], &mat[ (i + yOffset) * rowSize + xOffset ], tileRowSize * sizeof(double));
-    }
-    else
-    {
-        for(unsigned int i=0; i<tileColumnSize; i++)
-            memcpy(&mat[ (i + yOffset) * rowSize + xOffset ], &tile[ i * tileRowSize ], tileRowSize * sizeof(double));
-    }
+void copyBlock(unsigned int x, unsigned int y, unsigned int tileRowSize,
+               double *tile, unsigned int rowSize, double *mat, bool toTile) {
+  unsigned int tileColumnSize = tileRowSize;
 
+  unsigned int xOffset = tileRowSize * y;
+  unsigned int yOffset = tileColumnSize * x;
+
+  if (toTile) {
+    for (unsigned int i = 0; i < tileColumnSize; i++)
+      memcpy(&tile[i * tileRowSize], &mat[(i + yOffset) * rowSize + xOffset],
+             tileRowSize * sizeof(double));
+  } else {
+    for (unsigned int i = 0; i < tileColumnSize; i++)
+      memcpy(&mat[(i + yOffset) * rowSize + xOffset], &tile[i * tileRowSize],
+             tileRowSize * sizeof(double));
+  }
 }

@@ -37,8 +37,15 @@
 ## License for the specific language governing permissions and limitations
 ###############################################################################
 
-set(distribution_src
-    blockDistribution.c
-)
+# Distribution module source files
+file(GLOB DISTRIBUTION_SOURCES "*.c")
 
-add_library(distribution OBJECT ${distribution_src})
+# Create object library for distribution functionality
+add_library(distribution OBJECT ${DISTRIBUTION_SOURCES})
+
+# Set include directories for the object library
+target_include_directories(distribution PRIVATE
+    ${ARTS_GRAPH_INCLUDE_DIR}
+    ${ARTS_CORE_INCLUDE_DIR}
+    ${ARTS_CORE_BUILD_INCLUDE_DIR}
+)

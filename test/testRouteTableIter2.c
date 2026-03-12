@@ -4,7 +4,7 @@
 ** nor the United States Department of Energy, nor Battelle, nor any of      **
 ** their employees, nor any jurisdiction or organization that has cooperated **
 ** in the development of these materials, makes any warranty, express or     **
-** implied, or assumes any legal liability or responsibility for the accuracy,* 
+** implied, or assumes any legal liability or responsibility for the accuracy,*
 ** completeness, or usefulness or any information, apparatus, product,       **
 ** software, or process disclosed, or represents that its use would not      **
 ** infringe privately owned rights.                                          **
@@ -38,56 +38,53 @@
 ******************************************************************************/
 
 #include <stdio.h>
-#include <stdlib.h>
-#include "arts.h"
-#include "artsRouteTable.h"
-#include "artsGlobals.h"
-#include "artsAtomics.h"
+
+#include "arts/arts.h"
+#include "arts/gas/RouteTable.h"
+#include "arts/runtime/Globals.h"
 
 #define MYSIZE 10
 
-//Run with only 1 node 1 worker!
+// Run with only 1 node 1 worker!
 
-void printRT(char * message)
-{
-    PRINTF("Start: %s\n", message);
-    artsRouteTableIterator * iter = artsNewRouteTableIterator(artsNodeInfo.routeTable[0]);
-    artsRouteItem_t * item = artsRouteTableIterate(iter);
-    while(item)
-    {
-        artsPrintItem(item);
-        item = artsRouteTableIterate(iter);
-    }
-    PRINTF("End: %s\n", message);
+void printRT(const char *message) {
+  PRINTF("Start: %s\n", message);
+  artsRouteTableIterator *iter =
+      artsNewRouteTableIterator(artsNodeInfo.routeTable[0]);
+  artsRouteItem_t *item = artsRouteTableIterate(iter);
+  while (item) {
+    artsPrintItem(item);
+    item = artsRouteTableIterate(iter);
+  }
+  PRINTF("End: %s\n", message);
 }
 
-void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc, char** argv)
-{
-    int dummyRank;
+void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc,
+                   char **argv) {
+  int dummyRank;
 
-    printf("Start\n");
-    artsGuidRange * range = artsNewGuidRangeNode(ARTS_DB_READ, MYSIZE, nodeId);
-    for(uint64_t i=0; i<MYSIZE; i++)
-        artsDbCreateWithGuid(artsGuidRangeNext(range), 1024*sizeof(char));
-    printRT("After DB Init");
+  printf("Start\n");
+  artsGuidRange *range = artsNewGuidRangeNode(ARTS_DB_READ, MYSIZE, nodeId);
+  for (uint64_t i = 0; i < MYSIZE; i++)
+    artsDbCreateWithGuid(artsGuidRangeNext(range), 1024 * sizeof(char));
+  printRT("After DB Init");
 
-    for(uint64_t i=0; i<MYSIZE; i++)
-        artsRouteTableLookupDb(artsGetGuid(range, i), &dummyRank, true);
-    printRT("After DB Lookup");
-    
-    for(uint64_t i=0; i<MYSIZE; i++)
-        internalRouteTableReturnDb(artsNodeInfo.routeTable[0], artsGetGuid(range, i), false, false);
-    printRT("After DB Return with Mark");
+  for (uint64_t i = 0; i < MYSIZE; i++)
+    artsRouteTableLookupDb(artsGetGuid(range, i), &dummyRank, true);
+  printRT("After DB Lookup");
 
-    
-    artsCleanUpRouteTable(artsNodeInfo.routeTable[0]);
-    printRT("After GC");
+  for (uint64_t i = 0; i < MYSIZE; i++)
+    internalRouteTableReturnDb(artsNodeInfo.routeTable[0],
+                               artsGetGuid(range, i), false, false);
+  printRT("After DB Return with Mark");
 
-    artsShutdown();
+  artsCleanUpRouteTable(artsNodeInfo.routeTable[0]);
+  printRT("After GC");
+
+  artsShutdown();
 }
 
-int main(int argc, char** argv)
-{
-    artsRT(argc, argv);
-    return 0;
+int main(int argc, char **argv) {
+  artsRT(argc, argv);
+  return 0;
 }

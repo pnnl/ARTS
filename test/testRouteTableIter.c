@@ -4,7 +4,7 @@
 ** nor the United States Department of Energy, nor Battelle, nor any of      **
 ** their employees, nor any jurisdiction or organization that has cooperated **
 ** in the development of these materials, makes any warranty, express or     **
-** implied, or assumes any legal liability or responsibility for the accuracy,* 
+** implied, or assumes any legal liability or responsibility for the accuracy,*
 ** completeness, or usefulness or any information, apparatus, product,       **
 ** software, or process disclosed, or represents that its use would not      **
 ** infringe privately owned rights.                                          **
@@ -36,72 +36,71 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-
 #include <stdio.h>
-#include <stdlib.h>
-#include "arts.h"
-#include "artsRouteTable.h"
-#include "artsGlobals.h"
-#include "artsAtomics.h"
+
+#include "arts/arts.h"
+#include "arts/gas/RouteTable.h"
+#include "arts/runtime/Globals.h"
+#include "arts/utils/Atomics.h"
 
 #define MYSIZE 10
 
-void printRT()
-{
-    artsRouteTableIterator * iter = artsNewRouteTableIterator(artsNodeInfo.routeTable[0]);
-    artsRouteItem_t * item = artsRouteTableIterate(iter);
-    while(item)
-    {
-        artsPrintItem(item);
-        item = artsRouteTableIterate(iter);
-    }
+void printRT() {
+  artsRouteTableIterator *iter =
+      artsNewRouteTableIterator(artsNodeInfo.routeTable[0]);
+  artsRouteItem_t *item = artsRouteTableIterate(iter);
+  while (item) {
+    artsPrintItem(item);
+    item = artsRouteTableIterate(iter);
+  }
 }
 
-void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc, char** argv)
-{
-    printf("Init per node\n");
-    artsGuidRange * range = artsNewGuidRangeNode(ARTS_EDT, MYSIZE, nodeId);
-    for(uint64_t i=0; i<MYSIZE; i++)
-    {
-        artsRouteItem_t * location = artsRouteTableAddItem((void*)range, artsGuidRangeNext(range), nodeId, 0);
-        if(!i)
-        {
-            PRINTF("SWAPPING\n");
-            artsAtomicCswapU64(&location->lock, availableItem, (availableItem | deleteItem));
-        }
+void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc,
+                   char **argv) {
+  printf("Init per node\n");
+  artsGuidRange *range = artsNewGuidRangeNode(ARTS_EDT, MYSIZE, nodeId);
+  for (uint64_t i = 0; i < MYSIZE; i++) {
+    artsRouteItem_t *location = (artsRouteItem_t *)artsRouteTableAddItem(
+        (void *)range, artsGuidRangeNext(range), nodeId, 0);
+    if (!i) {
+      PRINTF("SWAPPING\n");
+      artsAtomicCswapU64(&location->lock, availableItem,
+                         (availableItem | deleteItem));
     }
-    
-    printRT();
+  }
 
-    int rank;
-    artsGuid_t guid = artsGetGuid(range, 0);
-    artsRouteTableLookupDb(guid, &rank, true);
-    artsRouteTableReturnDb(guid, true);
+  printRT();
 
-    void * ptr = artsRouteTableLookupItem(guid);
-    PRINTF("Lookup %lu %p\n", guid, ptr);
-    artsPrintItem(getItemFromData(guid, ptr));
+  int rank;
+  artsGuid_t guid = artsGetGuid(range, 0);
+  artsRouteTableLookupDb(guid, &rank, true);
+  artsRouteTableReturnDb(guid, true);
 
-    ptr = artsRouteTableLookupDb(guid, &rank, true);
-    PRINTF("DB Lookup %lu %p\n", guid, ptr);
-    artsPrintItem(getItemFromData(guid, ptr));
+  void *ptr = artsRouteTableLookupItem(guid);
+  PRINTF("Lookup %lu %p\n", guid, ptr);
+  artsPrintItem(getItemFromData(guid, ptr));
 
-    artsRouteItem_t * location = artsRouteTableAddItem((void*)range, guid, nodeId, 0);
-    // artsAtomicCswapU64(&location->lock, availableItem, (availableItem | deleteItem));
+  ptr = artsRouteTableLookupDb(guid, &rank, true);
+  PRINTF("DB Lookup %lu %p\n", guid, ptr);
+  artsPrintItem(getItemFromData(guid, ptr));
 
-    ptr = artsRouteTableLookupItem(guid);
-    PRINTF("Lookup2 %lu %p\n", guid, ptr);
-    artsPrintItem(getItemFromData(guid, ptr));
+  artsRouteItem_t *location =
+      (artsRouteItem_t *)artsRouteTableAddItem((void *)range, guid, nodeId, 0);
+  // artsAtomicCswapU64(&location->lock, availableItem, (availableItem |
+  // deleteItem));
 
-    ptr = artsRouteTableLookupDb(guid, &rank, true);
-    PRINTF("DB Lookup2 %lu %p\n", guid, ptr);
-    artsPrintItem(getItemFromData(guid, ptr));
+  ptr = artsRouteTableLookupItem(guid);
+  PRINTF("Lookup2 %lu %p\n", guid, ptr);
+  artsPrintItem(getItemFromData(guid, ptr));
 
-    artsShutdown();
+  ptr = artsRouteTableLookupDb(guid, &rank, true);
+  PRINTF("DB Lookup2 %lu %p\n", guid, ptr);
+  artsPrintItem(getItemFromData(guid, ptr));
+
+  artsShutdown();
 }
 
-int main(int argc, char** argv)
-{
-    artsRT(argc, argv);
-    return 0;
+int main(int argc, char **argv) {
+  artsRT(argc, argv);
+  return 0;
 }

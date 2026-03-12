@@ -37,30 +37,52 @@
 ## License for the specific language governing permissions and limitations
 ###############################################################################
 
-set(runtime_inc
-    ${CORE_INCLUDE_DIR}/artsRuntime.h
-    ${CORE_INCLUDE_DIR}/artsServer.h
-    ${CORE_INCLUDE_DIR}/artsRemoteFunctions.h
-    ${CORE_INCLUDE_DIR}/artsEdtFunctions.h
-    ${CORE_INCLUDE_DIR}/artsEventFunctions.h
-    ${CORE_INCLUDE_DIR}/artsDbFunctions.h
-    ${CORE_INCLUDE_DIR}/artsDbList.h
-    ${CORE_INCLUDE_DIR}/artsArrayDb.h
-    ${CORE_INCLUDE_DIR}/artsTerminationDetection.h
-)
+# Collect main runtime source files
+file(GLOB RUNTIME_MAIN_SOURCES "*.c")
 
-set(runtime_src
-    artsRuntime.c
-    artsServer.c
-    artsRemoteFunctions.c
-    artsEdtFunctions.c
-    artsEventFunctions.c
-    artsDbFunctions.c
-    artsDbList.c
-    artsArrayDb.c
-    artsTerminationDetection.c
-    shadAdapter.c
-)
+# CPU-only object library
+add_library(arts_runtime OBJECT ${RUNTIME_MAIN_SOURCES})
+target_include_directories(arts_runtime PRIVATE ${ARTS_CORE_INCLUDE_DIR} ${ARTS_CORE_BUILD_INCLUDE_DIR})
 
-add_library(runtime OBJECT ${runtime_inc} ${runtime_src})
-install(FILES ${runtime_inc} DESTINATION include)
+# Add hwloc include directories if available
+if(HWLOC_INCLUDE_DIRS)
+    target_include_directories(arts_runtime PRIVATE ${HWLOC_INCLUDE_DIRS})
+endif()
+
+if(USE_CXL)
+    target_link_libraries(arts_runtime PRIVATE rapid::rapid)
+    target_link_libraries(arts_runtime PRIVATE arts_cxl_lib)
+endif()
+
+# GPU-specific object library (wrap Runtime.c to compile with nvcc)
+if(BUILD_CUDA_LIBRARY)
+    set(RUNTIME_SOURCE_NAME "Runtime.c")
+    set(RUNTIME_SOURCE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/${RUNTIME_SOURCE_NAME}")
+
+    set(RUNTIME_WRAPPER ${CMAKE_CURRENT_BINARY_DIR}/Runtime_gpu.cu)
+    file(WRITE ${RUNTIME_WRAPPER} "#include \"${RUNTIME_SOURCE_PATH}\"\n")
+
+    set(RUNTIME_GPU_SOURCES ${RUNTIME_MAIN_SOURCES})
+    list(REMOVE_ITEM RUNTIME_GPU_SOURCES ${RUNTIME_SOURCE_PATH})
+    list(APPEND RUNTIME_GPU_SOURCES ${RUNTIME_WRAPPER})
+
+    add_library(arts_runtime_gpu OBJECT ${RUNTIME_GPU_SOURCES})
+    target_include_directories(arts_runtime_gpu PRIVATE ${ARTS_CORE_INCLUDE_DIR} ${ARTS_CORE_BUILD_INCLUDE_DIR})
+    target_compile_definitions(arts_runtime_gpu PRIVATE USE_GPU)
+
+    # Add hwloc include directories if available
+    if(HWLOC_INCLUDE_DIRS)
+        target_include_directories(arts_runtime_gpu PRIVATE ${HWLOC_INCLUDE_DIRS})
+    endif()
+
+    if(USE_CXL)
+        target_link_libraries(arts_runtime_gpu PRIVATE rapid::rapid)
+        target_link_libraries(arts_runtime_gpu PRIVATE arts_cxl_lib)
+    endif()
+endif()
+
+# Add runtime submodules
+add_subdirectory(compute)
+add_subdirectory(memory)
+add_subdirectory(sync)
+add_subdirectory(network)

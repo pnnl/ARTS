@@ -37,21 +37,41 @@
 ## License for the specific language governing permissions and limitations
 ###############################################################################
 
-set(LIBS arts ${M_LIB} ${RT_LIB} ${PTHREAD_LIB} ${RDMACM_LIB} ${HWLOC_LIB} ${CUDA_LIBRARIES} ${CUBLAS_LIBRARIES})
+# Function to create a BFS CUDA example that uses arts_graph
+function(add_bfs_cuda_example example_name)
+    add_executable(gpu${example_name} ${ARGN})
+    
+    # Set include directories
+    target_include_directories(gpu${example_name} PRIVATE 
+        ${ARTS_CORE_INCLUDE_DIR}
+        ${ARTS_CORE_BUILD_INCLUDE_DIR}
+        ${ARTS_GRAPH_INCLUDE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    
+    # Link with arts_graph and runtime libraries
+    target_link_libraries(gpu${example_name} PRIVATE 
+        arts_graph
+        Threads::Threads 
+        ${RT_LIBRARY} 
+        ${M_LIBRARY} 
+        ${ANL_LIBRARY} 
+        CUDA::cudart 
+        CUDA::cuda_driver 
+        CUDA::cublas
+    )
+    
+    # Use the CUDA-enabled ARTS library
+    if(TARGET arts_cuda_shared)
+        target_link_libraries(gpu${example_name} PRIVATE arts_cuda_shared)
+    elseif(TARGET arts_cuda_static)
+        target_link_libraries(gpu${example_name} PRIVATE arts_cuda_static)
+    else()
+        message(FATAL_ERROR "No CUDA ARTS library target found for gpu${example_name}")
+    endif()
+endfunction()
 
-if(CUDA_FOUND)
-    set_source_files_properties(bfs.cu PROPERTIES LANGUAGE CUDA)
-    add_executable(gpuBfs bfs.cu graphUtil.cu bins.c)
-    set_target_properties(gpuBfs PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-    target_link_libraries(gpuBfs arts-graph ${LIBS})
-
-    set_source_files_properties(bfsHybrid.cu PROPERTIES LANGUAGE CUDA)
-    add_executable(gpuBfsHybrid bfsHybrid.cu graphUtil.cu bins.c)
-    set_target_properties(gpuBfsHybrid PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-    target_link_libraries(gpuBfsHybrid arts-graph ${LIBS})
-
-    set_source_files_properties(bfsHybridBuffer.cu PROPERTIES LANGUAGE CUDA)
-    add_executable(gpuBfsHybridBuffer bfsHybridBuffer.cu graphUtil.cu buffer.c bins.c)
-    set_target_properties(gpuBfsHybridBuffer PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-    target_link_libraries(gpuBfsHybridBuffer arts-graph ${LIBS})
-endif()
+# Create BFS CUDA examples
+add_bfs_cuda_example(Bfs bfs.cu graphUtil.cu bins.c)
+add_bfs_cuda_example(BfsHybrid bfsHybrid.cu graphUtil.cu bins.c)
+add_bfs_cuda_example(BfsHybridBuffer bfsHybridBuffer.cu graphUtil.cu buffer.c bins.c)

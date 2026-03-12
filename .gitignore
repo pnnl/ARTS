@@ -1,0 +1,11 @@
+# Build
+build/
+.install/
+install/
+# Dependencies
+deps/
+.cache/
+test/**/*.cfg
+test/**/*.insp
+example/**/*.cfg
+example/**/*.insp

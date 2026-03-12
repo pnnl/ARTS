@@ -37,10 +37,28 @@
 ## License for the specific language governing permissions and limitations
 ###############################################################################
 
-set(LIBS arts ${M_LIB} ${RT_LIB} ${PTHREAD_LIB} ${RDMACM_LIB} ${HWLOC_LIB} ${CUDA_LIBRARIES} ${CUBLAS_LIBRARIES})
+# Create histogram CUDA example
+add_executable(gpuHisto histo.cu)
 
-if(CUDA_FOUND)
-    set_source_files_properties(histo.cu PROPERTIES LANGUAGE CUDA)
-    add_executable(gpuHisto histo.cu)
-    target_link_libraries(gpuHisto ${LIBS})
+# Set include directories
+target_include_directories(gpuHisto PRIVATE ${ARTS_CORE_INCLUDE_DIR} ${ARTS_CORE_BUILD_INCLUDE_DIR})
+
+# Link with CUDA libraries
+target_link_libraries(gpuHisto PRIVATE 
+    Threads::Threads 
+    ${RT_LIBRARY} 
+    ${M_LIBRARY} 
+    ${ANL_LIBRARY} 
+    CUDA::cudart 
+    CUDA::cuda_driver 
+    CUDA::cublas
+)
+
+# Use the CUDA-enabled ARTS library
+if(TARGET arts_cuda_shared)
+    target_link_libraries(gpuHisto PRIVATE arts_cuda_shared)
+elseif(TARGET arts_cuda_static)
+    target_link_libraries(gpuHisto PRIVATE arts_cuda_static)
+else()
+    message(FATAL_ERROR "No CUDA ARTS library target found for gpuHisto")
 endif()

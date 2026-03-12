@@ -36,25 +36,29 @@
 ## WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 ## License for the specific language governing permissions and limitations
 ###############################################################################
-if(CUDA_FOUND)
-    set(gpu_inc 
-        ${CORE_INCLUDE_DIR}/artsGpuStream.h
-        ${CORE_INCLUDE_DIR}/artsGpuStreamBuffer.h
-        ${CORE_INCLUDE_DIR}/artsGpuRuntime.h
-        ${CORE_INCLUDE_DIR}/artsGpuRouteTable.h
-        ${CORE_INCLUDE_DIR}/artsGpuLCSyncFunctions.h
-        )
 
-    set(gpu_src
-        artsGpuStream.c
-        artsGpuStreamBuffer.c
-        artsGpuRuntime.c
-        artsGpuRouteTable.c
-        artsGpuLCSyncFunctions.c
-        )
+## Modern CMake configuration for ARTS GPU module
+## Only built when CUDA library is being created
+###############################################################################
 
-    set_source_files_properties(${gpu_src} PROPERTIES LANGUAGE CUDA)
-    add_library(gpu OBJECT ${gpu_src})
-    set_target_properties(gpu PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-    install(FILES ${gpu_inc} DESTINATION include)
+# Only build if CUDA library is being built
+if(BUILD_CUDA_LIBRARY)
+    # Collect all CUDA source files
+    file(GLOB GPU_SOURCES "*.cu")
+
+    # Create object library for the GPU module
+    add_library(arts_gpu OBJECT ${GPU_SOURCES})
+    
+    # Add USE_GPU definition for this module
+    target_compile_definitions(arts_gpu PRIVATE USE_GPU)
+    
+    # Include directories
+    target_include_directories(arts_gpu PRIVATE
+        ${ARTS_CORE_INCLUDE_DIR}
+        ${ARTS_CORE_BUILD_INCLUDE_DIR}
+    )
+    
+    message(STATUS "GPU module configured with CUDA support")
+else()
+    message(STATUS "GPU module skipped - CUDA not available or disabled")
 endif()

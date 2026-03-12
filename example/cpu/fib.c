@@ -4,7 +4,7 @@
 ** nor the United States Department of Energy, nor Battelle, nor any of      **
 ** their employees, nor any jurisdiction or organization that has cooperated **
 ** in the development of these materials, makes any warranty, express or     **
-** implied, or assumes any legal liability or responsibility for the accuracy,* 
+** implied, or assumes any legal liability or responsibility for the accuracy,*
 ** completeness, or usefulness or any information, apparatus, product,       **
 ** software, or process disclosed, or represents that its use would not      **
 ** infringe privately owned rights.                                          **
@@ -36,68 +36,65 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include <stdio.h>
 #include <stdlib.h>
-#include "arts.h"
+
+#include "arts/arts.h"
 
 uint64_t start = 0;
 
-void fibJoin(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t depv[])
-{
-    unsigned int x = depv[0].guid;
-    unsigned int y = depv[1].guid;
-    artsSignalEdtValue(paramv[0], paramv[1], x+y);
+void fibJoin(uint32_t paramc, uint64_t *paramv, uint32_t depc,
+             artsEdtDep_t depv[]) {
+  unsigned int x = depv[0].guid;
+  unsigned int y = depv[1].guid;
+  artsSignalEdtValue(paramv[0], paramv[1], x + y);
 }
 
-void fibFork(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t depv[])
-{
-    unsigned int next = (artsGetCurrentNode() + 1) % artsGetTotalNodes();
-//    PRINTF("NODE: %u WORKER: %u NEXT: %u\n", artsGetCurrentNode(), artsGetCurrentWorker(), next);
-    
-    artsGuid_t guid = paramv[0];
-    unsigned int slot = paramv[1];
-    unsigned int num = paramv[2];
-    if(num < 2)
-        artsSignalEdtValue(guid, slot, num);
-    else
-    {
-        artsGuid_t joinGuid = artsEdtCreate(fibJoin, artsGetCurrentNode(), paramc-1, paramv, 2);
-        
-        uint64_t args[3] = {joinGuid, 0, num-1};
-        artsEdtCreate(fibFork, next, 3, args, 0);
-        
-        args[1] = 1;
-        args[2] = num-2;
-        artsEdtCreate(fibFork, next, 3, args, 0);
-    }
+void fibFork(uint32_t paramc, uint64_t *paramv, uint32_t depc,
+             artsEdtDep_t depv[]) {
+  unsigned int next = (artsGetCurrentNode() + 1) % artsGetTotalNodes();
+  //    PRINTF("NODE: %u WORKER: %u NEXT: %u\n", artsGetCurrentNode(),
+  //    artsGetCurrentWorker(), next);
+
+  artsGuid_t guid = paramv[0];
+  unsigned int slot = paramv[1];
+  unsigned int num = paramv[2];
+  if (num < 2)
+    artsSignalEdtValue(guid, slot, num);
+  else {
+    artsGuid_t joinGuid =
+        artsEdtCreate(fibJoin, artsGetCurrentNode(), paramc - 1, paramv, 2);
+
+    uint64_t args[3] = {(uint64_t)joinGuid, 0, num - 1};
+    artsEdtCreate(fibFork, next, 3, args, 0);
+
+    args[1] = 1;
+    args[2] = num - 2;
+    artsEdtCreate(fibFork, next, 3, args, 0);
+  }
 }
 
-void fibDone(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t depv[])
-{
-    uint64_t time = artsGetTimeStamp() - start;
-    PRINTF("Fib %u: %u time: %lu nodes: %u workers: %u\n", paramv[0], depv[0].guid, time, artsGetTotalNodes(), artsGetTotalWorkers());
-    artsShutdown();
+void fibDone(uint32_t paramc, uint64_t *paramv, uint32_t depc,
+             artsEdtDep_t depv[]) {
+  uint64_t time = artsGetTimeStamp() - start;
+  PRINTF("Fib %u: %u time: %lu nodes: %u workers: %u\n", paramv[0],
+         depv[0].guid, time, artsGetTotalNodes(), artsGetTotalWorkers());
+  artsShutdown();
 }
 
-void initPerNode(unsigned int nodeId, int argc, char** argv)
-{
-    
+void initPerNode(unsigned int nodeId, int argc, char **argv) {}
+
+void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc,
+                   char **argv) {
+  if (!nodeId && !workerId) {
+    uint64_t num = atoi(argv[1]);
+    artsGuid_t doneGuid = artsEdtCreate(fibDone, 0, 1, &num, 1);
+    uint64_t args[3] = {(uint64_t)doneGuid, 0, num};
+    start = artsGetTimeStamp();
+    artsGuid_t guid = artsEdtCreate(fibFork, 0, 3, args, 0);
+  }
 }
 
-void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc, char** argv)
-{   
-    if(!nodeId && !workerId)
-    {
-        unsigned int num = atoi(argv[1]);
-        artsGuid_t doneGuid = artsEdtCreate(fibDone, 0, 1, (uint64_t*)&num, 1);
-        uint64_t args[3] = {doneGuid, 0, num};
-        start = artsGetTimeStamp();
-        artsGuid_t guid = artsEdtCreate(fibFork, 0, 3, args, 0);
-    }
-}
-
-int main(int argc, char** argv)
-{
-    artsRT(argc, argv);
-    return 0;
+int main(int argc, char **argv) {
+  artsRT(argc, argv);
+  return 0;
 }

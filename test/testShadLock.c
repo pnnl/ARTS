@@ -4,7 +4,7 @@
 ** nor the United States Department of Energy, nor Battelle, nor any of      **
 ** their employees, nor any jurisdiction or organization that has cooperated **
 ** in the development of these materials, makes any warranty, express or     **
-** implied, or assumes any legal liability or responsibility for the accuracy,* 
+** implied, or assumes any legal liability or responsibility for the accuracy,*
 ** completeness, or usefulness or any information, apparatus, product,       **
 ** software, or process disclosed, or represents that its use would not      **
 ** infringe privately owned rights.                                          **
@@ -36,60 +36,58 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include <stdio.h>
-#include <stdlib.h>
-#include "arts.h"
-#include "shadAdapter.h"
+#include "arts/arts.h"
+#include "arts/runtime/compute/ShadAdapter.h"
+
 #define EDTCOUNT 100
 uint64_t lock = 0;
 unsigned int count = 0;
 
-void tester(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t depv[])
-{
-    unsigned int local;
-    while(!artsShadAliasTryLock(&lock)) artsYield();
-    PRINTF("Yield %u Local: %u Lock: %lu\n", artsGetCurrentWorker(), local, lock);
+void tester(uint32_t paramc, uint64_t *paramv, uint32_t depc,
+            artsEdtDep_t depv[]) {
+  unsigned int local;
+  while (!artsShadAliasTryLock(&lock))
     artsYield();
-    local = ++count;
-    PRINTF("Done  %u Local: %u Lock: %lu\n", artsGetCurrentWorker(), local, lock);
-    artsShadAliasUnlock(&lock);
-    
-    if(local == EDTCOUNT)
-    {
-        PRINTF("SHUTTING DOWN %u\n", count);
-        artsShutdown();
-    }
+  PRINTF("Yield %u Lock: %lu\n", artsGetCurrentWorker(), lock);
+  artsYield();
+  local = ++count;
+  PRINTF("Done  %u Local: %u Lock: %lu\n", artsGetCurrentWorker(), local, lock);
+  artsShadAliasUnlock(&lock);
+
+  if (local == EDTCOUNT) {
+    PRINTF("SHUTTING DOWN %u\n", count);
+    artsShutdown();
+  }
 }
 
-void initPerNode(unsigned int nodeId, unsigned int workerId, int argc, char** argv)
-{
-    PRINTF("%u -- %u\n", artsGetTotalWorkers(), artsGetCurrentWorker());
+void initPerNode(unsigned int nodeId, unsigned int workerId, int argc,
+                 char **argv) {
+  PRINTF("%u -- %u\n", artsGetTotalWorkers(), artsGetCurrentWorker());
 }
 
-void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc, char** argv)
-{   
-    for(unsigned int i=0; i<EDTCOUNT; i++)
-    {
-        if(i % artsGetTotalWorkers() == workerId)
-            artsEdtCreate(tester, 0, 0, NULL, 0);
-    }
+void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc,
+                   char **argv) {
+  for (unsigned int i = 0; i < EDTCOUNT; i++) {
+    if (i % artsGetTotalWorkers() == workerId)
+      artsEdtCreate(tester, 0, 0, NULL, 0);
+  }
 }
 
-int main(int argc, char** argv)
-{
-    artsRT(argc, argv);
-    return 0;
+int main(int argc, char **argv) {
+  artsRT(argc, argv);
+  return 0;
 }
 
 // #include <stdio.h>
 // #include <stdlib.h>
-// #include "arts.h"
-// #include "shadAdapter.h"
+// #include "arts/arts.h"
+// #include "arts/runtime/compute/ShadAdapter.h"
 // #define EDTCOUNT 100
 // artsShadLock_t * lock;
 // unsigned int count = 0;
 
-// void tester(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t depv[])
+// void tester(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t
+// depv[])
 // {
 //     unsigned int local;
 //     artsShadLock(lock);
@@ -109,9 +107,10 @@ int main(int argc, char** argv)
 //     lock = artsShadCreateLock();
 // }
 
-// void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc, char** argv)
-// {   
-        
+// void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc,
+// char** argv)
+// {
+
 //         for(unsigned int i=0; i<EDTCOUNT; i++)
 //         {
 //             if(i % artsGetTotalWorkers() == workerId)
@@ -124,4 +123,3 @@ int main(int argc, char** argv)
 //     artsRT(argc, argv);
 //     return 0;
 // }
-

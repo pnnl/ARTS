@@ -37,15 +37,19 @@
 ## License for the specific language governing permissions and limitations
 ###############################################################################
 
-set(introspection_inc
-    ${CORE_INCLUDE_DIR}/artsCounter.h
-    ${CORE_INCLUDE_DIR}/artsIntrospection.h
+# Collect all source files
+file(GLOB INTROSPECTION_SOURCES "*.c")
+
+# Create object library for the introspection module
+add_library(arts_introspection OBJECT ${INTROSPECTION_SOURCES})
+
+# Include directories
+target_include_directories(arts_introspection PRIVATE
+    ${ARTS_CORE_INCLUDE_DIR}
+    ${ARTS_CORE_BUILD_INCLUDE_DIR}
 )
 
-set(introspection_src
-    artsCounter.c
-    artsIntrospection.c
-)
-
-add_library(introspection OBJECT ${introspection_inc} ${introspection_src})
-install(FILES ${introspection_inc} DESTINATION include)
+if(USE_CXL)
+    target_link_libraries(arts_introspection PRIVATE rapid::rapid)
+    target_link_libraries(arts_introspection PRIVATE arts_cxl_lib)
+endif()

@@ -37,12 +37,33 @@
 ## License for the specific language governing permissions and limitations
 ###############################################################################
 
-set(LIBS arts ${M_LIB} ${RT_LIB} ${PTHREAD_LIB} ${RDMACM_LIB} ${HWLOC_LIB} ${CUDA_LIBRARIES} ${CUBLAS_LIBRARIES})
-
-set_source_files_properties(fibGpu.cu PROPERTIES LANGUAGE CUDA)
+# Create main GPU example
 add_executable(fibGpu fibGpu.cu)
-target_link_libraries(fibGpu ${LIBS})
 
+# Set include directories
+target_include_directories(fibGpu PRIVATE ${ARTS_CORE_INCLUDE_DIR} ${ARTS_CORE_BUILD_INCLUDE_DIR})
+
+# Use the CUDA-enabled ARTS library
+if(TARGET arts_cuda_shared)
+    target_link_libraries(fibGpu PRIVATE arts_cuda_shared)
+elseif(TARGET arts_cuda_static)
+    target_link_libraries(fibGpu PRIVATE arts_cuda_static)
+else()
+    message(FATAL_ERROR "No CUDA ARTS library target found for fibGpu")
+endif()
+
+# Link with CUDA libraries
+target_link_libraries(fibGpu PRIVATE 
+    Threads::Threads 
+    ${RT_LIBRARY} 
+    ${M_LIBRARY} 
+    ${ANL_LIBRARY} 
+    CUDA::cudart 
+    CUDA::cuda_driver 
+    CUDA::cublas
+)
+
+# Add GPU example subdirectories
 add_subdirectory(mm)
 add_subdirectory(stream)
 add_subdirectory(randomAccess)

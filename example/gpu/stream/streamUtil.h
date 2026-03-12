@@ -4,7 +4,7 @@
 ** nor the United States Department of Energy, nor Battelle, nor any of      **
 ** their employees, nor any jurisdiction or organization that has cooperated **
 ** in the development of these materials, makes any warranty, express or     **
-** implied, or assumes any legal liability or responsibility for the accuracy,* 
+** implied, or assumes any legal liability or responsibility for the accuracy,*
 ** completeness, or usefulness or any information, apparatus, product,       **
 ** software, or process disclosed, or represents that its use would not      **
 ** infringe privately owned rights.                                          **
@@ -42,35 +42,43 @@
 extern "C" {
 #endif
 
-# include <math.h>
-# include <float.h>
-# include <limits.h>
-# include <sys/time.h>
-# include "artsGlobals.h"
+#include <float.h>
+#include <limits.h>
+#include <math.h>
 
-# define N	2000000
-# define NTIMES	10
-# define OFFSET	0
+#include <sys/time.h>
+
+#include "arts/runtime/RT.h"
+
+#define N 2000000
+#define NTIMES 10
+#define OFFSET 0
 
 #define M 20
 
 #define THREADSPERBLOCK 1
 
-# define HLINE "-------------------------------------------------------------\n"
+#define HLINE "-------------------------------------------------------------\n"
 
-# ifndef MIN
-# define MIN(x,y) ((x)<(y)?(x):(y))
-# endif
-# ifndef MAX
-# define MAX(x,y) ((x)>(y)?(x):(y))
-# endif
+#ifndef MIN
+#define MIN(x, y) ((x) < (y) ? (x) : (y))
+#endif
+#ifndef MAX
+#define MAX(x, y) ((x) > (y) ? (x) : (y))
+#endif
 
-void launch2KernelEdt(artsEdt_t funPtr, unsigned int tileSize, unsigned int totalSize, double scalar, artsGuidRange * aGuid, artsGuidRange * bGuid);
-void launch3KernelEdt(artsEdt_t funPtr, unsigned int tileSize, unsigned int totalSize, double scalar, artsGuidRange * aGuid, artsGuidRange * bGuid, artsGuidRange * cGuid);
+void launch2KernelEdt(artsEdt_t funPtr, unsigned int tileSize,
+                      unsigned int totalSize, double scalar,
+                      artsGuidRange *aGuid, artsGuidRange *bGuid);
+void launch3KernelEdt(artsEdt_t funPtr, unsigned int tileSize,
+                      unsigned int totalSize, double scalar,
+                      artsGuidRange *aGuid, artsGuidRange *bGuid,
+                      artsGuidRange *cGuid);
 
 int checktick();
 double mysecond();
-void checkSTREAMresults(unsigned int tileSize, unsigned int totalSize, double **aTiles, double **bTiles, double **cTiles);
+void checkSTREAMresults(unsigned int tileSize, unsigned int totalSize,
+                        double **aTiles, double **bTiles, double **cTiles);
 
 #ifdef __cplusplus
 }

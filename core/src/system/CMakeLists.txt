@@ -37,29 +37,23 @@
 ## License for the specific language governing permissions and limitations
 ###############################################################################
 
-set(system_inc
-    ${CORE_INCLUDE_DIR}/artsAbstractMachineModel.h
-    ${CORE_INCLUDE_DIR}/artsAtomics.h
-    ${CORE_INCLUDE_DIR}/artsDebug.h
-    ${CORE_INCLUDE_DIR}/artsThreads.h
-    ${CORE_INCLUDE_DIR}/artsTMTLite.h
+# Collect all source files
+file(GLOB SYSTEM_SOURCES "*.c")
+
+# Create object library for the system module
+add_library(arts_system OBJECT ${SYSTEM_SOURCES})
+
+# Include directories
+target_include_directories(arts_system PRIVATE
+    ${ARTS_CORE_INCLUDE_DIR} ${ARTS_CORE_BUILD_INCLUDE_DIR}
 )
 
-set(system_src
-    artsAbstractMachineModel.c
-    artsAtomics.c
-    artsMallocStandard.c
-    artsDebugFunctions.c
-    artsPrintf.c
-    artsTimer.c
-    artsPthreadLayer.c
-    artsTMT.c
-    artsTMTLite.c
-)
-
-add_library(system OBJECT ${system_src} )
-if(HWLOC)
-set(LIBS arts ${Hwloc_LIBRARIES})
-target_link_libraries(system ${LIBS})
+# Add hwloc include directories if available
+if(HWLOC_INCLUDE_DIRS)
+    target_include_directories(arts_system PRIVATE ${HWLOC_INCLUDE_DIRS})
 endif()
-install(FILES ${system_inc} DESTINATION include)
+
+if(USE_CXL)
+    target_link_libraries(arts_system PRIVATE rapid::rapid)
+    target_link_libraries(arts_system PRIVATE arts_cxl_lib)
+endif()

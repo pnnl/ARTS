@@ -4,7 +4,7 @@
 ** nor the United States Department of Energy, nor Battelle, nor any of      **
 ** their employees, nor any jurisdiction or organization that has cooperated **
 ** in the development of these materials, makes any warranty, express or     **
-** implied, or assumes any legal liability or responsibility for the accuracy,* 
+** implied, or assumes any legal liability or responsibility for the accuracy,*
 ** completeness, or usefulness or any information, apparatus, product,       **
 ** software, or process disclosed, or represents that its use would not      **
 ** infringe privately owned rights.                                          **
@@ -42,16 +42,12 @@
 extern "C" {
 #endif
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdint.h>
-#include <inttypes.h>
-#include <string.h>
 #include <assert.h>
-#include "arts.h"
-#include "artsGraph.h"
-#include "artsGlobals.h"
-#include "artsGpuRuntime.h"
+#include <inttypes.h>
+#include <stdint.h>
+#include <stdlib.h>
+
+#include "arts/runtime/RT.h"
 
 void createBuffersOnCpu(unsigned int size);
 void createBuffersOnGpu(unsigned int gpu, unsigned int size);
@@ -61,7 +57,7 @@ void printMasterBufferGuids();
 void printLocalBufferGuids();
 void printBufferPtr();
 void printRawPtr();
-unsigned int * getLocalBuffer(unsigned int index, uint64_t level);
+unsigned int *getLocalBuffer(unsigned int index, uint64_t level);
 artsGuid_t getBufferGuid(unsigned int nodeId, uint64_t level);
 void resetBuffer(uint64_t level);
 

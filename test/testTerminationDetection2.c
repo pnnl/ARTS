@@ -4,7 +4,7 @@
 ** nor the United States Department of Energy, nor Battelle, nor any of      **
 ** their employees, nor any jurisdiction or organization that has cooperated **
 ** in the development of these materials, makes any warranty, express or     **
-** implied, or assumes any legal liability or responsibility for the accuracy,* 
+** implied, or assumes any legal liability or responsibility for the accuracy,*
 ** completeness, or usefulness or any information, apparatus, product,       **
 ** software, or process disclosed, or represents that its use would not      **
 ** infringe privately owned rights.                                          **
@@ -36,54 +36,49 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include <stdio.h>
 #include <stdlib.h>
-#include "arts.h"
-#include "artsAtomics.h"
 
-artsArrayDb_t * array = NULL;
+#include "arts/arts.h"
+
+artsArrayDb_t *array = NULL;
 artsGuid_t arrayGuid = NULL_GUID;
 unsigned int elements = 32;
 
-void check(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t depv[])
-{    
-    for(unsigned int i=0; i<depc; i++)
-    {
-        unsigned int * data = depv[i].ptr;
-        PRINTF("%u: %u\n", i, *data);
+void check(uint32_t paramc, uint64_t *paramv, uint32_t depc,
+           artsEdtDep_t depv[]) {
+  for (unsigned int i = 0; i < depc; i++) {
+    unsigned int *data = (unsigned int *)depv[i].ptr;
+    PRINTF("%u: %u\n", i, *data);
+  }
+
+  artsShutdown();
+}
+
+void gatherTask(uint32_t paramc, uint64_t *paramv, uint32_t depc,
+                artsEdtDep_t depv[]) {
+  PRINTF("Gather task\n");
+  artsGuid_t edtGuid = artsEdtCreate(check, 0, 0, NULL, elements);
+  for (unsigned int i = 0; i < elements; i++)
+    artsGetFromArrayDb(edtGuid, i, array, i);
+}
+
+void initPerNode(unsigned int nodeId, int argc, char **argv) {
+  elements = (unsigned int)atoi(argv[1]);
+}
+
+void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc,
+                   char **argv) {
+  if (!nodeId && !workerId) {
+    artsGuid_t gatherGuid = artsEdtCreate(gatherTask, 0, 0, 0, 1);
+    artsInitializeAndStartEpoch(gatherGuid, 0);
+    arrayGuid = artsNewArrayDb(&array, sizeof(unsigned int), elements);
+    for (unsigned int i = 0; i < elements; i++) {
+      artsPutInArrayDb(&i, NULL_GUID, 0, array, i);
     }
-    
-    artsShutdown();
+  }
 }
 
-void gatherTask(uint32_t paramc, uint64_t * paramv, uint32_t depc, artsEdtDep_t depv[])
-{
-    PRINTF("Gather task\n");
-    artsGuid_t edtGuid = artsEdtCreate(check, 0, 0, NULL, elements);
-    for(unsigned int i=0; i<elements; i++)
-        artsGetFromArrayDb(edtGuid, i, array, i);
-}
-
-void initPerNode(unsigned int nodeId, int argc, char** argv) 
-{
-    elements = (unsigned int) atoi(argv[1]);
-}
-
-void initPerWorker(unsigned int nodeId, unsigned int workerId, int argc, char** argv) 
-{
-    if(!nodeId && !workerId) {
-        artsGuid_t gatherGuid = artsEdtCreate(gatherTask, 0, 0, 0, 1);
-        artsInitializeAndStartEpoch(gatherGuid, 0);
-        arrayGuid = artsNewArrayDb(&array, sizeof(unsigned int), elements);
-        for(unsigned int i=0; i<elements; i++)
-        {
-            artsPutInArrayDb(&i, NULL_GUID, 0, array, i);
-        }
-    }
-}
-
-int main(int argc, char** argv) 
-{
-    artsRT(argc, argv);
-    return 0;
+int main(int argc, char **argv) {
+  artsRT(argc, argv);
+  return 0;
 }

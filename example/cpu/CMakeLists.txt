@@ -37,41 +37,125 @@
 ## License for the specific language governing permissions and limitations
 ###############################################################################
 
-include (CheckIncludeFiles)
-include (CheckSymbolExists)
+# Define CPU example programs
+set(CPU_EXAMPLES
+    fib
+    fibDB
+    fibMM
+    fibYield
+    fibContextSwitch
+    simpleReduction
+)
 
-set(LIBS arts ${M_LIB} ${RT_LIB} ${PTHREAD_LIB} ${RDMACM_LIB} ${HWLOC_LIB} ${CUDA_LIBRARIES} ${CUBLAS_LIBRARIES})
+# Programs that require arts_graph library
+set(CPU_GRAPH_EXAMPLES
+    bfs
+    graphSearch
+    triangleCount
+    triangleCount2
+    triangleCountPromise
+)
 
-CHECK_INCLUDE_FILES (alloca.h HAVE_ALLOCA_H)
-check_symbol_exists (alloca alloca.h HAVE_ALLOCA)
+# C++ programs that require arts_graph library  
+set(CPU_CXX_GRAPH_EXAMPLES
+    scanStatistics
+)
 
-if(HAVE_ALLOCA)
-  add_definitions(-DHAVE_ALLOCA)
+# Function to create a CPU example executable
+function(add_cpu_example example_name)
+    add_executable(${example_name} ${example_name}.c)
+
+    # Set include directories
+    target_include_directories(${example_name} PRIVATE ${ARTS_CORE_INCLUDE_DIR} ${ARTS_CORE_BUILD_INCLUDE_DIR})
+
+    # Use the appropriate ARTS library based on availability
+    if(TARGET arts_shared)
+        target_link_libraries(${example_name} PRIVATE arts_shared)
+    elseif(TARGET arts_static)
+        target_link_libraries(${example_name} PRIVATE arts_static)
+    endif()
+
+    # Link with runtime libraries
+    target_link_libraries(${example_name} PRIVATE Threads::Threads ${RT_LIBRARY} ${M_LIBRARY} ${ANL_LIBRARY})
+endfunction()
+
+function(add_cpu_cxl_example example_name)
+    if(USE_CXL) # USE_CXL is checked outside this function, but we check this again in case
+        add_executable(${example_name} ${example_name}.c)
+
+        # Set include directories
+        target_include_directories(${example_name} PRIVATE ${ARTS_CORE_INCLUDE_DIR} ${ARTS_CORE_BUILD_INCLUDE_DIR})
+
+        # Use the appropriate ARTS library based on availability
+        if(TARGET arts_shared)
+            target_link_libraries(${example_name} PRIVATE arts_shared)
+        elseif(TARGET arts_static)
+            target_link_libraries(${example_name} PRIVATE arts_static)
+        endif()
+
+        # Link with runtime libraries
+        target_link_libraries(${example_name} PRIVATE Threads::Threads ${RT_LIBRARY} ${M_LIBRARY} ${ANL_LIBRARY})
+    endif()
+endfunction()
+
+# Function to create a CPU example executable that uses arts_graph
+function(add_cpu_graph_example example_name)
+    add_executable(${example_name} ${example_name}.c)
+
+    # Set include directories
+    target_include_directories(${example_name} PRIVATE ${ARTS_CORE_INCLUDE_DIR} ${ARTS_CORE_BUILD_INCLUDE_DIR} ${ARTS_GRAPH_INCLUDE_DIR})
+
+    # Link with arts_graph, main ARTS library, and runtime libraries
+    target_link_libraries(${example_name} PRIVATE arts_graph Threads::Threads ${RT_LIBRARY} ${M_LIBRARY} ${ANL_LIBRARY})
+
+    # Link with the appropriate ARTS library based on availability
+    if(TARGET arts_shared)
+        target_link_libraries(${example_name} PRIVATE arts_shared)
+    elseif(TARGET arts_static)
+        target_link_libraries(${example_name} PRIVATE arts_static)
+    endif()
+endfunction()
+
+# Function to create a C++ CPU example executable that uses arts_graph
+function(add_cpu_cxx_graph_example example_name)
+    add_executable(${example_name} ${example_name}.cpp)
+
+    # Set include directories
+    target_include_directories(${example_name} PRIVATE ${ARTS_CORE_INCLUDE_DIR} ${ARTS_CORE_BUILD_INCLUDE_DIR} ${ARTS_GRAPH_INCLUDE_DIR})
+
+    # Link with arts_graph, main ARTS library, and runtime libraries
+    target_link_libraries(${example_name} PRIVATE arts_graph Threads::Threads ${RT_LIBRARY} ${M_LIBRARY} ${ANL_LIBRARY})
+
+    # Link with the appropriate ARTS library based on availability
+    if(TARGET arts_shared)
+        target_link_libraries(${example_name} PRIVATE arts_shared)
+    elseif(TARGET arts_static)
+        target_link_libraries(${example_name} PRIVATE arts_static)
+    endif()
+endfunction()
+
+# Create CPU example executables
+foreach(example ${CPU_EXAMPLES})
+    add_cpu_example(${example})
+endforeach()
+
+if(USE_CXL)
+    # Link fibDB with Rapid API
+    target_link_libraries(fibDB PRIVATE rapid::rapid)
+    target_link_libraries(fibDB PRIVATE arts_cxl_lib)
 endif()
 
-add_executable(fib fib.c)
-target_link_libraries(fib ${LIBS})
+# Create CPU graph example executables
+foreach(example ${CPU_GRAPH_EXAMPLES})
+    add_cpu_graph_example(${example})
+endforeach()
 
-add_executable(fibYield fibYield.c)
-target_link_libraries(fibYield ${LIBS})
+# Create C++ CPU graph example executables
+foreach(example ${CPU_CXX_GRAPH_EXAMPLES})
+    add_cpu_cxx_graph_example(${example})
+endforeach()
 
-add_executable(fibContextSwitch fibContextSwitch.c)
-target_link_libraries(fibContextSwitch ${LIBS})
-
-add_executable(simpleReduction simpleReduction.c)
-target_link_libraries(simpleReduction ${LIBS})
-
-add_executable(bfs bfs.c)
-target_link_libraries(bfs arts-graph ${LIBS})
-
-add_executable(graphSearch graphSearch.c)
-target_link_libraries(graphSearch arts-graph ${LIBS})
-
-add_executable(scanStatistics scanStatistics.cpp)
-target_link_libraries(scanStatistics arts-graph ${LIBS})
-
-#add_executable(triangleCount triangleCount.c)
-#target_link_libraries(triangleCount arts-graph ${LIBS})
-
-#add_executable(triangleCount2 triangleCount2.c)
-#target_link_libraries(triangleCount2 arts-graph ${LIBS})
+if(USE_CXL)
+    add_subdirectory(stream)
+    add_subdirectory(randomAccess)
+endif()

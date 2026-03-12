@@ -4,7 +4,7 @@
 ** nor the United States Department of Energy, nor Battelle, nor any of      **
 ** their employees, nor any jurisdiction or organization that has cooperated **
 ** in the development of these materials, makes any warranty, express or     **
-** implied, or assumes any legal liability or responsibility for the accuracy,* 
+** implied, or assumes any legal liability or responsibility for the accuracy,*
 ** completeness, or usefulness or any information, apparatus, product,       **
 ** software, or process disclosed, or represents that its use would not      **
 ** infringe privately owned rights.                                          **
@@ -42,20 +42,9 @@
 extern "C" {
 #endif
 
-// #define WRITEBINS 1
-#ifdef WRITEBINS
-
 void initListRecord();
 void addToList(unsigned int frontierSize, unsigned int index);
 void writeBinsToFile(unsigned int index);
-
-#else
-
-#define initListRecord()
-#define addToList(x, y)
-#define writeBinsToFile(x)
-
-#endif
 
 #ifdef __cplusplus
 }

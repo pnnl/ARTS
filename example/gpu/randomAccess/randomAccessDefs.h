@@ -4,7 +4,7 @@
 ** nor the United States Department of Energy, nor Battelle, nor any of      **
 ** their employees, nor any jurisdiction or organization that has cooperated **
 ** in the development of these materials, makes any warranty, express or     **
-** implied, or assumes any legal liability or responsibility for the accuracy,* 
+** implied, or assumes any legal liability or responsibility for the accuracy,*
 ** completeness, or usefulness or any information, apparatus, product,       **
 ** software, or process disclosed, or represents that its use would not      **
 ** infringe privately owned rights.                                          **
@@ -43,9 +43,9 @@
 extern "C" {
 #endif
 
-#define DPRINTF(...)
-//  #define DPRINTF(...) PRINTF(__VA_ARGS__)
-#define TURNON(...) 
+#define PRINTF(...)
+//  #define PRINTF(...) PRINTF(__VA_ARGS__)
+#define TURNON(...)
 // #define TURNON(...) __VA_ARGS__
 
 #define TABLESIZE 32UL * 2UL * 80UL * 1024UL * 32UL
@@ -54,11 +54,11 @@ extern "C" {
 
 #define VALIDATE 1
 
-//Configured for Volta
+// Configured for Volta
 #define MAXTHREADS 32
 #define MAXTHREADBLOCKSPERSM 2
 #define NUMBEROFSM 80
-#define MAXGRID MAXTHREADBLOCKSPERSM * NUMBEROFSM
+#define MAXGRID MAXTHREADBLOCKSPERSM *NUMBEROFSM
 
 #define POLY2 0x0000000000000007UL
 #define PERIOD2 1317624576693539401L
@@ -66,11 +66,12 @@ extern "C" {
 #define POLY 0x0000000000000007ULL
 #define PERIOD 1317624576693539401LL
 
-#define MAX_TOTAL_PENDING_UPDATES 1024*16
-#define MAX_TOTAL_PENDING_UPDATES_CU 1024ULL*16ULL
+#define MAX_TOTAL_PENDING_UPDATES 1024 * 16
+#define MAX_TOTAL_PENDING_UPDATES_CU 1024ULL * 16ULL
 
 #define LOCAL_BUFFER_SIZE MAX_TOTAL_PENDING_UPDATES
-#define MAX_UPDATES_PER_GPU_STEP MAXTHREADS * MAXTHREADBLOCKSPERSM * NUMBEROFSM * LOCAL_BUFFER_SIZE
+#define MAX_UPDATES_PER_GPU_STEP                                               \
+  MAXTHREADS *MAXTHREADBLOCKSPERSM *NUMBEROFSM *LOCAL_BUFFER_SIZE
 
 typedef unsigned long long int uint64_cu_t;
 typedef long long int int64_cu_t;
