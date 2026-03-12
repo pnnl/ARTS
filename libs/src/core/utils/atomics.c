@@ -114,8 +114,7 @@ bool arts_lock(volatile unsigned int *lock) {
 }
 
 void arts_unlock(volatile unsigned int *lock) {
-  // arts_atomic_swap( lock, 0U );
-  *lock = 0U;
+  __atomic_store_n(lock, 0U, __ATOMIC_RELEASE);
 }
 
 bool arts_try_lock(volatile unsigned int *lock) {
@@ -188,5 +187,5 @@ bool arts_writer_try_lock(const volatile unsigned int *read_lock,
 }
 
 void arts_writer_unlock(volatile unsigned int *write_lock) {
-  arts_atomic_swap(write_lock, 0U);
+  __atomic_store_n(write_lock, 0U, __ATOMIC_RELEASE);
 }

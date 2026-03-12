@@ -167,6 +167,7 @@ typedef enum {
  * all work within the epoch has completed.
  */
 typedef struct {
+  volatile unsigned int local_lock; /**< Single-node active/finished lock. */
   volatile unsigned int phase;               /**< Current TD phase (PHASE_*). */
   volatile unsigned int active_count;        /**< Local active task count. */
   volatile unsigned int finished_count;      /**< Local finished task count. */

@@ -58,6 +58,20 @@
 #define GUID_LOCK_SIZE 1024
 volatile unsigned int guid_lock[GUID_LOCK_SIZE] = {0};
 
+static inline unsigned int arts_guid_lock_index(arts_guid_t key) {
+  uint64_t hash = ((uint64_t)key) * 11400714819323198485ull;
+  hash ^= hash >> 32;
+  return (unsigned int)(hash % (uint64_t)GUID_LOCK_SIZE);
+}
+
+static inline void arts_guid_lock_release(volatile unsigned int *lock) {
+  __atomic_store_n(lock, 0U, __ATOMIC_RELEASE);
+}
+
+static inline bool arts_guid_lock_is_free(volatile unsigned int *lock) {
+  return __atomic_load_n(lock, __ATOMIC_RELAXED) == 0U;
+}
+
 void set_item(arts_route_item_t *item, void *data) { item->data = data; }
 
 void free_item(arts_route_item_t *item) {
@@ -73,7 +87,7 @@ void free_item(arts_route_item_t *item) {
   arts_out_of_order_list_delete(&item->ooList);
   item->data = NULL;
   item->key = 0;
-  item->lock = 0;
+  __atomic_store_n(&item->lock, 0, __ATOMIC_RELEASE);
   item->touched = 0;
 }
 
@@ -464,11 +478,11 @@ arts_route_item_t *internal_route_table_add_item_race(
     bool *added_item, arts_route_table_t *route_table, void *item,
     arts_guid_t key, unsigned int rank, bool used_res, bool used_avail,
     unsigned int to_add_on_creation) {
-  unsigned int pos = (unsigned int)(((uint64_t)key) % (uint64_t)GUID_LOCK_SIZE);
+  unsigned int pos = arts_guid_lock_index(key);
   *added_item = false;
   arts_route_item_t *found = NULL;
   while (!found) {
-    if (guid_lock[pos] == 0) {
+    if (arts_guid_lock_is_free(&guid_lock[pos])) {
       if (!arts_atomic_cswap(&guid_lock[pos], 0U, 1U)) {
         found =
             arts_route_table_search_for_key(route_table, key, ALLOCATED_KEY);
@@ -492,7 +506,7 @@ arts_route_item_t *internal_route_table_add_item_race(
           }
           *added_item = true;
         }
-        guid_lock[pos] = 0U;
+        arts_guid_lock_release(&guid_lock[pos]);
       }
     } else {
       found = arts_route_table_search_for_key(route_table, key, AVAILABLE_KEY);
@@ -509,17 +523,17 @@ arts_route_item_t *
 internal_route_table_add_deleted_item_race(arts_route_table_t *route_table,
                                            void *item, arts_guid_t key,
                                            unsigned int rank) {
-  unsigned int pos = (unsigned int)(((uint64_t)key) % (uint64_t)GUID_LOCK_SIZE);
+  unsigned int pos = arts_guid_lock_index(key);
   arts_route_item_t *found = NULL;
   while (!found) {
-    if (guid_lock[pos] == 0) {
+    if (arts_guid_lock_is_free(&guid_lock[pos])) {
       if (!arts_atomic_cswap(&guid_lock[pos], 0U, 1U)) {
         found = arts_route_table_search_for_empty(route_table, key, false);
         route_table->setFunc(found, item);
         found->rank = rank;
         mark_delete(found);
         mark_write(found);
-        guid_lock[pos] = 0U;
+        arts_guid_lock_release(&guid_lock[pos]);
       }
     }
   }
@@ -550,11 +564,11 @@ bool arts_route_table_add_item_race(void *item, arts_guid_t key,
 bool arts_route_table_reserve_item_race(arts_guid_t key,
                                         arts_route_item_t **item, bool used) {
   arts_route_table_t *route_table = arts_get_route_table(key);
-  unsigned int pos = (unsigned int)(((uint64_t)key) % (uint64_t)GUID_LOCK_SIZE);
+  unsigned int pos = arts_guid_lock_index(key);
   bool ret = false;
   *item = NULL;
   while (!(*item)) {
-    if (guid_lock[pos] == 0) {
+    if (arts_guid_lock_is_free(&guid_lock[pos])) {
       if (!arts_atomic_cswap(&guid_lock[pos], 0U, 1U)) {
         *item =
             arts_route_table_search_for_key(route_table, key, ALLOCATED_KEY);
@@ -566,7 +580,7 @@ bool arts_route_table_reserve_item_race(arts_guid_t key,
             inc_item(*item, 1, (*item)->key, route_table);
           }
         }
-        guid_lock[pos] = 0U;
+        arts_guid_lock_release(&guid_lock[pos]);
       }
     } else {
       arts_route_item_t *temp =
@@ -842,7 +856,10 @@ arts_route_item_t *get_item_from_data(arts_guid_t key, void *data) {
 void arts_route_table_dec_item(arts_guid_t key, void *data) {
   if (data) {
     arts_route_table_t *route_table = arts_get_route_table(key);
-    dec_item(route_table, get_item_from_data(key, data));
+    arts_route_item_t *item = get_item_from_data(key, data);
+    if (item) {
+      dec_item(route_table, item);
+    }
   }
 }
 

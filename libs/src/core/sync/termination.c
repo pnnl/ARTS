@@ -134,7 +134,13 @@ void increment_active_epoch(arts_guid_t epoch_guid) {
   arts_epoch_t *epoch =
       (arts_epoch_t *)arts_route_table_lookup_item(epoch_guid);
   if (epoch) {
-    arts_atomic_add(&epoch->active_count, 1);
+    if (arts_global_rank_count == 1) {
+      arts_lock(&epoch->local_lock);
+      epoch->active_count++;
+      arts_unlock(&epoch->local_lock);
+    } else {
+      arts_atomic_add(&epoch->active_count, 1);
+    }
   } else {
     arts_out_of_order_inc_active_epoch(epoch_guid);
   }
@@ -143,13 +149,9 @@ void increment_active_epoch(arts_guid_t epoch_guid) {
 /*
  * increment_finished_epoch — Called when an EDT finishes execution.
  *
- * Single-node fast path: the atomic increment of finished_count returns
- * the new value.  Because arts_atomic_add uses __sync_add_and_fetch
- * (full barrier), the subsequent load of active_count sees all prior
- * increments.  Exactly one thread can observe new_finished == cur_active
- * (each new_finished value is unique), so only that thread calls
- * check_epoch.  check_epoch's internal CAS on the phase field provides
- * defense-in-depth against concurrent fire attempts.
+ * Single-node fast path: local_lock serializes active_count/finished_count
+ * updates so a finishing EDT cannot observe active==finished while another
+ * thread is concurrently creating new work in the same epoch.
  *
  * Multi-node: owner rank collects responses; non-owner ranks decrement
  * their queued counter and, when it hits 1, send their active/finished
@@ -160,25 +162,38 @@ void increment_finished_epoch(arts_guid_t epoch_guid) {
     arts_epoch_t *epoch =
         (arts_epoch_t *)arts_route_table_lookup_item(epoch_guid);
     if (epoch) {
-      unsigned int new_finished = arts_atomic_add(&epoch->finished_count, 1);
-      ARTS_DEBUG("increment_finished_epoch[Guid:%lu]: finished_count=%u, "
-                 "active_count=%u, phase=%u",
-                 epoch_guid, new_finished, epoch->active_count, epoch->phase);
       if (arts_global_rank_count == 1) {
-        /*
-         * Single-node fast path: new_finished is unique per thread
-         * (from arts_atomic_add's __sync_add_and_fetch), so at most
-         * one thread sees equality with cur_active.  check_epoch's
-         * internal CAS provides defense-in-depth for the fire decision.
-         */
-        unsigned int cur_active = epoch->active_count;
-        if (new_finished > 0 && new_finished == cur_active) {
-          check_epoch(epoch, cur_active, new_finished);
-          if (epoch->phase == (unsigned int)PHASE_3) {
-            delete_epoch(epoch_guid, epoch);
+        bool fire_epoch = false;
+        arts_lock(&epoch->local_lock);
+        epoch->finished_count++;
+        ARTS_DEBUG("increment_finished_epoch[Guid:%lu]: finished_count=%u, "
+                   "active_count=%u, phase=%u",
+                   epoch_guid, epoch->finished_count, epoch->active_count,
+                   epoch->phase);
+        if (epoch->finished_count > 0 &&
+            epoch->finished_count == epoch->active_count &&
+            epoch->phase == (unsigned int)PHASE_1) {
+          epoch->phase = (unsigned int)PHASE_3;
+          fire_epoch = true;
+        }
+        arts_unlock(&epoch->local_lock);
+
+        if (fire_epoch) {
+          if (epoch->termination_exit_guid) {
+            arts_signal_edt_value(epoch->termination_exit_guid,
+                                  epoch->termination_exit_slot,
+                                  epoch->finished_count);
+          } else {
+            arts_shutdown_epoch_fire(epoch->guid);
           }
+          delete_epoch(epoch_guid, epoch);
         }
       } else {
+        unsigned int new_finished = arts_atomic_add(&epoch->finished_count, 1);
+        ARTS_DEBUG("increment_finished_epoch[Guid:%lu]: finished_count=%u, "
+                   "active_count=%u, phase=%u",
+                   epoch_guid, new_finished, epoch->active_count,
+                   epoch->phase);
         unsigned int rank = arts_guid_get_rank(epoch_guid);
         if (rank == arts_global_rank_id) {
           if (!arts_atomic_sub_u64(&epoch->queued, 1)) {
@@ -622,8 +637,8 @@ void arts_yield() {
  * is removed from the route table (by delete_epoch).  Also breaks out if
  * the thread's alive flag becomes false (e.g., arts_shutdown was called).
  *
- * Uses route-table lookup instead of a volatile flag to avoid accessing
- * the epoch struct after delete_epoch frees it.
+ * Uses route-table presence instead of an in-struct completion flag so the
+ * wait loop never dereferences an epoch after delete_epoch frees it.
  */
 bool arts_wait_on_handle(arts_guid_t epoch_guid) {
   TIME_EDT_EXEC_STOP();
@@ -658,8 +673,7 @@ bool arts_wait_on_handle(arts_guid_t epoch_guid) {
     arts_save_thread_local(&tl);
     TIME_YIELD_START();
     while (arts_thread_info.alive) {
-      arts_epoch_t *e = (arts_epoch_t *)arts_route_table_lookup_item(local);
-      if (!e || e->phase == PHASE_3) {
+      if (!arts_route_table_lookup_item(local)) {
         break;
       }
       arts_node_info.scheduler();

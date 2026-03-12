@@ -71,6 +71,16 @@
 
 extern unsigned int num_numa_domains;
 
+static inline void arts_runtime_idle_pause(void) {
+#if defined(__x86_64__) || defined(__i386__)
+  __asm__ __volatile__("pause" ::: "memory");
+#elif defined(__aarch64__) || defined(__arm__)
+  __asm__ __volatile__("yield" ::: "memory");
+#else
+  __asm__ __volatile__("" ::: "memory");
+#endif
+}
+
 ARTS_WEAK void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                         arts_edt_dep_t depv[]) {
   (void)paramc;
@@ -722,6 +732,7 @@ bool arts_default_scheduler_loop() {
     return true;
   }
   CHECK_OUTSTANDING_EDTS(10000000);
+  arts_runtime_idle_pause();
   return false;
 }
 
