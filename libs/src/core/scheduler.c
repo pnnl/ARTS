@@ -71,6 +71,23 @@
 
 extern unsigned int num_numa_domains;
 
+#if defined(__APPLE__)
+extern void init_per_node(unsigned int node_id, int argc, char **argv)
+    __attribute__((weak_import));
+extern void init_per_worker(unsigned int node_id, unsigned int worker_id,
+                            int argc, char **argv)
+    __attribute__((weak_import));
+#else
+extern void init_per_node(unsigned int node_id, int argc, char **argv)
+    __attribute__((weak));
+extern void init_per_worker(unsigned int node_id, unsigned int worker_id,
+                            int argc, char **argv)
+    __attribute__((weak));
+#endif
+
+static int arts_runtime_argc = 0;
+static char **arts_runtime_argv = NULL;
+
 static inline void arts_runtime_idle_pause(void) {
 #if defined(__x86_64__) || defined(__i386__)
   __asm__ __volatile__("pause" ::: "memory");
@@ -79,6 +96,20 @@ static inline void arts_runtime_idle_pause(void) {
 #else
   __asm__ __volatile__("" ::: "memory");
 #endif
+}
+
+ARTS_WEAK void init_per_node(unsigned int node_id, int argc, char **argv) {
+  (void)node_id;
+  (void)argc;
+  (void)argv;
+}
+
+ARTS_WEAK void init_per_worker(unsigned int node_id, unsigned int worker_id,
+                               int argc, char **argv) {
+  (void)node_id;
+  (void)worker_id;
+  (void)argc;
+  (void)argv;
 }
 
 ARTS_WEAK void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -307,6 +338,8 @@ void arts_runtime_global_cleanup() {
  */
 void arts_thread_zero_node_start(int argc, char **argv) {
   ARTS_INFO("Thread 0: starting node initialization");
+  arts_runtime_argc = argc;
+  arts_runtime_argv = argv;
   set_global_guid_on();
   arts_shutdown_epoch_create();
 
@@ -314,6 +347,9 @@ void arts_thread_zero_node_start(int argc, char **argv) {
   // are running. This ensures time sync messages can be processed.
   TIME_INIT_STOP();
   TIME_TOTAL_START();
+
+  if (init_per_node)
+    init_per_node(arts_global_rank_id, argc, argv);
 
 #ifdef ARTS_USE_GPU
   arts_init_per_gpu_wrapper(argc, argv);
@@ -323,6 +359,9 @@ void arts_thread_zero_node_start(int argc, char **argv) {
   arts_atomic_sub(&arts_node_info.ready_to_parallel_start, 1U);
   while (arts_node_info.ready_to_parallel_start) {
   }
+  if (init_per_worker && arts_thread_info.role == ARTS_ROLE_WORKER)
+    init_per_worker(arts_global_rank_id, arts_thread_info.group_pos, argc,
+                    argv);
   if (!arts_global_rank_id) {
     ARTS_INFO("Thread 0: scheduling main_edt on rank 0 (argc=%d)", argc);
     uint64_t main_args[2] = {(uint64_t)argc, (uint64_t)argv};
@@ -436,6 +475,9 @@ void arts_runtime_private_init(struct thread_mask_s *thread,
     };
 
     if (arts_thread_info.role == ARTS_ROLE_WORKER) {
+      if (init_per_worker)
+        init_per_worker(arts_global_rank_id, arts_thread_info.group_pos,
+                        arts_runtime_argc, arts_runtime_argv);
       arts_increment_finished_epoch_list();
     }
 

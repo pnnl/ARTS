@@ -226,6 +226,36 @@ typedef void (*event_callback_t)(arts_edt_dep_t data);
 extern void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                      arts_edt_dep_t depv[]);
 
+/**
+ * @brief Optional per-node startup callback invoked before worker parallel
+ * startup.
+ *
+ * When defined by the application, ARTS calls this once per node on thread 0
+ * after basic runtime initialization and before the parallel-start barrier.
+ * CARTS uses this hook for distributed DB GUID reservation.
+ *
+ * @param node_id Rank of the current node.
+ * @param argc    Original process argument count.
+ * @param argv    Original process argument vector.
+ */
+extern void init_per_node(unsigned int node_id, int argc, char **argv);
+
+/**
+ * @brief Optional per-worker startup callback invoked after the parallel-start
+ * barrier.
+ *
+ * When defined by the application, ARTS calls this on each worker thread
+ * after the startup barrier and before normal scheduler execution. CARTS uses
+ * this hook for owner-local distributed DB materialization.
+ *
+ * @param node_id   Rank of the current node.
+ * @param worker_id Local worker index on the current node.
+ * @param argc      Original process argument count.
+ * @param argv      Original process argument vector.
+ */
+extern void init_per_worker(unsigned int node_id, unsigned int worker_id,
+                            int argc, char **argv);
+
 /** @} */ /* end user_callbacks */
 
 /* ========================================================================= */
