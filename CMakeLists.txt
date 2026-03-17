@@ -98,7 +98,7 @@ option(ARTS_BUILD_SHARED "Build shared library" ON)
 option(ARTS_BUILD_STATIC "Build static library" ON)
 option(ARTS_BUILD_EXAMPLES "Build example programs" ON)
 option(ARTS_BUILD_TESTS "Build test programs" ON)
-option(ARTS_BUILD_BENCHMARKS "Build OCR benchmark applications (XSOCR + ARTS backends)" ON)
+option(ARTS_BUILD_BENCHMARKS "Build OCR benchmark applications (XSOCR + ARTS backends)" OFF)
 
 # Feature options (can be set via command line)
 # Default log level: Debug->3 (DEBUG), Release/etc->1 (WARN).

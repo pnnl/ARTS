@@ -108,6 +108,13 @@ static inline void arts_cxl_arena_init(arts_cxl_arena_t **arena, size_t bytes) {
   (*arena)->max_size = memory + bytes;
 }
 
+static inline void arts_cxl_arena_free(arts_cxl_arena_t *arena) {
+  if (arena) {
+    GLOBAL_FREE(arena->base);
+    GLOBAL_FREE(arena);
+  }
+}
+
 static inline void *arts_cxl_arena_malloc(arts_cxl_arena_t *arena,
                                           size_t bytes) {
   FLUSH_FENCE_CONSUMER(arena, sizeof(arts_cxl_arena_t));
@@ -159,6 +166,8 @@ static inline arts_cxl_deque_t *arts_cxl_deque_get(void) {
 }
 
 static inline arts_cxl_deque_t *arts_cxl_deque_init(void) {
+#ifdef ARTS_CXL_NATIVE
+  /* Real CXL: rank 0 creates in shared memory, others retrieve it */
   if (!arts_global_rank_id) {
     arts_cxl_deque_t *dq = arts_cxl_deque_create();
     assert(dq != NULL && "CXL deque creation failed");
@@ -167,14 +176,30 @@ static inline arts_cxl_deque_t *arts_cxl_deque_init(void) {
   arts_cxl_deque_t *dq = arts_cxl_deque_get();
   assert(dq != NULL && "CXL deque get failed");
   return dq;
+#else
+  /* Stub mode: each rank creates its own independent deque */
+  arts_cxl_deque_t *dq = arts_cxl_deque_create();
+  assert(dq != NULL && "CXL deque creation failed");
+  return dq;
+#endif
 }
 
 static inline void arts_cxl_deque_free(arts_cxl_deque_t *dq) {
+#ifdef ARTS_CXL_NATIVE
+  /* Real CXL: only rank 0 frees shared resources */
   if (!arts_global_rank_id) {
-    GLOBAL_FREE(dq->consts.mem_arena);
-    GLOBAL_FREE(dq->consts.db_arena);
+    arts_cxl_arena_free(dq->consts.mem_arena);
+    arts_cxl_arena_free(dq->consts.db_arena);
+    arts_cxl_tournament_lock_delete(dq->consts.lock);
     SHARED_FREE(dq);
   }
+#else
+  /* Stub mode: each rank frees its own */
+  arts_cxl_arena_free(dq->consts.mem_arena);
+  arts_cxl_arena_free(dq->consts.db_arena);
+  arts_cxl_tournament_lock_delete(dq->consts.lock);
+  SHARED_FREE(dq);
+#endif
 }
 
 /* ── Deque queries ──────────────────────────────────────────────────────────

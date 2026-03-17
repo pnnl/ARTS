@@ -48,6 +48,7 @@ set(CPU_EXAMPLES
     triangle_count
     triangle_count2
     triangle_count_promise
+    stream_cpu
 )
 
 # C++ CPU examples
@@ -71,6 +72,10 @@ function(add_cpu_example example_name)
 
     # Link with runtime libraries
     target_link_libraries(${example_name} PRIVATE Threads::Threads ${RT_LIBRARY} ${M_LIBRARY} ${ANL_LIBRARY})
+
+    # Non-PIE: function pointers must match across nodes (multinode EDT dispatch)
+    target_compile_options(${example_name} PRIVATE -fno-pie -fno-PIE)
+    target_link_options(${example_name} PRIVATE -no-pie -fno-pie -fno-PIE)
 endfunction()
 
 # Function to create a C++ CPU example executable
@@ -89,6 +94,10 @@ function(add_cpu_cxx_example example_name)
 
     # Link with runtime libraries
     target_link_libraries(${example_name} PRIVATE Threads::Threads ${RT_LIBRARY} ${M_LIBRARY} ${ANL_LIBRARY})
+
+    # Non-PIE: function pointers must match across nodes (multinode EDT dispatch)
+    target_compile_options(${example_name} PRIVATE -fno-pie -fno-PIE)
+    target_link_options(${example_name} PRIVATE -no-pie -fno-pie -fno-PIE)
 endfunction()
 
 # Create CPU example executables

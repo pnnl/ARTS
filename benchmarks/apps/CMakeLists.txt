@@ -926,6 +926,15 @@ add_benchmark_app(NAME stream
 target_compile_options(stream_arts PRIVATE -Wno-error=implicit-function-declaration)
 target_compile_options(stream_xsocr PRIVATE -Wno-error=implicit-function-declaration)
 
+add_benchmark_app(NAME stream_dist
+    DIR stream/ocr
+    SOURCES stream_dist.c
+    EXTRA_DEFINES STREAM_ARRAY_SIZE=1000 NUM_THREADS=2 NTIMES=3
+    EXTRA_LINK_LIBS pthread m
+)
+target_compile_options(stream_dist_arts PRIVATE -Wno-error=implicit-function-declaration)
+target_compile_options(stream_dist_xsocr PRIVATE -Wno-error=implicit-function-declaration)
+
 add_benchmark_app(NAME uts
     DIR uts-1.1/ocr
     SOURCES uts.c brg_sha1.c

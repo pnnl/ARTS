@@ -296,6 +296,7 @@ void arts_runtime_global_cleanup() {
 
 #ifdef ARTS_USE_CXL
   arts_cxl_deque_free(arts_node_info.cxl_deque);
+  pthread_mutex_destroy(&arts_node_info.cxl_local_lock);
 #endif
 
 #ifdef ARTS_USE_GPU
