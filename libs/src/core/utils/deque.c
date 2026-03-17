@@ -139,3 +139,13 @@ void arts_deque_clear(struct arts_deque_s *deque) { ops->clear(deque); }
 unsigned int arts_deque_size(struct arts_deque_s *deque) {
   return ops->size(deque);
 }
+
+bool arts_deque_full(struct arts_deque_s *deque) {
+  /* The simple deque auto-grows on push, so "full" is a soft hint used by
+   * the CXL scheduler to decide when to overflow to the CXL shared deque.
+   * For priority deques, always return false (they don't overflow). */
+  if (ops == &simple_ops) {
+    return arts_deque_simple_full(deque);
+  }
+  return false;
+}

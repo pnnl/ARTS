@@ -46,6 +46,7 @@
 
 #include <unistd.h>
 
+#include "arts.h"
 #include "arts/system/print.h"
 #include "arts/transport/launcher.h"
 #include "arts/utils/malloc.h"
@@ -59,12 +60,14 @@ void artsSetConfigPath(const char *path) {
     free(arts_config_override_path);
     arts_config_override_path = NULL;
   }
-  if (!path || !path[0])
+  if (!path || !path[0]) {
     return;
+  }
   size_t len = strlen(path);
   arts_config_override_path = (char *)malloc(len + 1);
-  if (!arts_config_override_path)
+  if (!arts_config_override_path) {
     return;
+  }
   memcpy(arts_config_override_path, path, len + 1);
 }
 
@@ -73,12 +76,14 @@ void artsSetConfigData(const char *data) {
     free(arts_config_override_data);
     arts_config_override_data = NULL;
   }
-  if (!data || !data[0])
+  if (!data || !data[0]) {
     return;
+  }
   size_t len = strlen(data);
   arts_config_override_data = (char *)malloc(len + 1);
-  if (!arts_config_override_data)
+  if (!arts_config_override_data) {
     return;
+  }
   memcpy(arts_config_override_data, data, len + 1);
 }
 
@@ -1127,15 +1132,17 @@ static FILE *config_open_file(void) {
   if (arts_config_override_data && arts_config_override_data[0] != '\0') {
     size_t len = strlen(arts_config_override_data);
     FILE *f = fmemopen((void *)arts_config_override_data, len, "r");
-    if (f)
+    if (f) {
       return f;
+    }
   }
 
   /* Priority 2: Compiler-injected config path. */
   if (arts_config_override_path && arts_config_override_path[0] != '\0') {
     FILE *f = fopen(arts_config_override_path, "r");
-    if (f)
+    if (f) {
       return f;
+    }
     ARTS_ERROR("Config file not found: %s", arts_config_override_path);
     return NULL;
   }

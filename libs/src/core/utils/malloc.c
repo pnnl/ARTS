@@ -43,6 +43,9 @@
 
 #include "arts/defs.h"
 #include "arts/system/print.h"
+#ifdef ARTS_USE_CXL
+#include "arts/cxl/wrapper.h"
+#endif
 
 #define ALIGNMENT 16
 #define IS_POWER_OF_TWO(x) (!((x) & ((x) - 1)))
@@ -160,6 +163,11 @@ void arts_free(void *ptr) {
   if (!ptr) {
     return;
   }
+#ifdef ARTS_USE_CXL
+  if (IS_CXL_PTR(ptr)) {
+    return; /* CXL arena-managed memory, not individually freeable */
+  }
+#endif
   header_t *hdr = (header_t *)ptr - 1;
   size_t size = hdr->size;
   free(hdr->base);

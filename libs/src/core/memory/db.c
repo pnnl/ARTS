@@ -43,9 +43,11 @@
 #include <string.h>
 
 #include "arts.h"
+#ifdef ARTS_USE_CXL
+#include "arts/cxl/deque.h"
+#endif
 #include "arts/compute/edt.h"
 #include "arts/counter/Preamble.h"
-#include "arts/counter/counter.h"
 #include "arts/gas/guid.h"
 #include "arts/gas/out_of_order.h"
 #include "arts/gas/route_table.h"
@@ -72,7 +74,15 @@ extern ARTS_THREAD_LOCAL struct arts_edt_s *current_edt;
 
 // True for DB subtypes that have a CDAG frontier (remote-capable).
 static inline bool arts_db_subtype_has_frontier(arts_db_types_t db_type) {
-  return db_type != ARTS_DB_LOCAL;
+  if (db_type == ARTS_DB_LOCAL) {
+    return false;
+  }
+#ifdef ARTS_USE_CXL
+  if (db_type == ARTS_DB_CXL) {
+    return false;
+  }
+#endif
+  return true;
 }
 
 #define WRITE_SET 0x80000000
@@ -103,6 +113,12 @@ void *arts_db_malloc(arts_db_types_t db_type, size_t size) {
       ptr = arts_cuda_malloc_host(size * 2);
     else if (db_type == ARTS_DB_GPU)
       ptr = arts_cuda_malloc_host(size);
+  }
+#endif
+#ifdef ARTS_USE_CXL
+  if (db_type == ARTS_DB_CXL) {
+    ptr = arts_cxl_deque_db_malloc(arts_node_info.cxl_deque,
+                                   &arts_node_info.cxl_local_lock, size);
   }
 #endif
   if (!ptr) {
@@ -152,7 +168,7 @@ void arts_db_create_internal(arts_guid_t guid, void *addr, uint64_t len,
   db_res->writer = 0;
   db_res->copy_count = 1;
   db_res->db_type = db_type;
-  if (db_type != ARTS_DB_LOCAL) {
+  if (arts_db_subtype_has_frontier(db_type)) {
     db_res->db_list = arts_new_db_list();
   } else {
     db_res->db_list = NULL;
@@ -186,18 +202,35 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
 
   if (route == arts_global_rank_id) {
     uint64_t db_size = len + sizeof(struct arts_db_s);
-    void *ptr = arts_db_malloc(db_type, db_size);
-    if (ptr) {
-      guid = arts_guid_create_for_rank(arts_global_rank_id, ARTS_DB);
-      arts_db_create_internal(guid, ptr, len, db_size, db_type, arts_id);
-      arts_route_table_add_item(ptr, guid, arts_global_rank_id, false);
-      if (current_edt) {
-        arts_db_auto_acquire((struct arts_db_s *)ptr);
+#ifdef ARTS_USE_CXL
+    if (db_type == ARTS_DB_CXL) {
+      db_size = ALIGN_UP(db_size, CACHELINE_SIZE);
+      void *ptr = arts_db_malloc(ARTS_DB_CXL, db_size);
+      if (ptr) {
+        guid = arts_cxl_make_guid(ptr);
+        arts_db_create_internal(guid, ptr, len, db_size, ARTS_DB_CXL, arts_id);
+        /* No route table entry — GUID encodes CXL pointer directly */
+        FLUSH_FENCE_PRODUCER(ptr, db_size);
+        *addr = (void *)((struct arts_db_s *)ptr + 1);
+        ARTS_DEBUG("arts_db_create: CXL DB[Guid:%lu, Size:%lu] created", guid,
+                   len);
       }
-      *addr = (void *)((struct arts_db_s *)ptr + 1);
-      ARTS_DEBUG("arts_db_create: DB[Guid:%lu, Id:%lu, Type:%s, Size:%lu] "
-                 "created locally",
-                 guid, arts_id, GET_DB_TYPE_NAME(db_type), len);
+    } else
+#endif
+    {
+      void *ptr = arts_db_malloc(db_type, db_size);
+      if (ptr) {
+        guid = arts_guid_create_for_rank(arts_global_rank_id, ARTS_DB);
+        arts_db_create_internal(guid, ptr, len, db_size, db_type, arts_id);
+        arts_route_table_add_item(ptr, guid, arts_global_rank_id, false);
+        if (current_edt) {
+          arts_db_auto_acquire((struct arts_db_s *)ptr);
+        }
+        *addr = (void *)((struct arts_db_s *)ptr + 1);
+        ARTS_DEBUG("arts_db_create: DB[Guid:%lu, Id:%lu, Type:%s, Size:%lu] "
+                   "created locally",
+                   guid, arts_id, GET_DB_TYPE_NAME(db_type), len);
+      }
     }
   } else {
     guid = arts_guid_create_for_rank(route, ARTS_DB);
@@ -491,94 +524,107 @@ void acquire_dbs(struct arts_edt_s *edt) {
                 arts_global_rank_id, edt->arts_id, edt->current_edt, i);
 
       if (guid_type == ARTS_DB) {
-        // Look up DB first — subtype dispatch requires the struct
-        int valid_rank = -1;
-        struct arts_db_s *db_temp =
-            (struct arts_db_s *)arts_route_table_lookup_db(depv[i].guid,
-                                                           &valid_rank, true);
-        /* Track whether lookup acquired a route table ref so we can
-         * return it if the dep is deferred (frontier/remote/OO). */
-        bool lookup_ref_held = (db_temp != NULL);
-
-        if (db_temp && db_temp->db_type == ARTS_DB_LOCAL) {
-          // LOCAL: direct access, no frontier
-          db_found = db_temp;
-          arts_atomic_sub(&edt->depc_needed, 1U);
-        } else if (db_temp && access_mode == DB_MODE_LC_SYNC &&
-                   owner == arts_global_rank_id) {
-          // LC_SYNC on owner — direct lookup, skip frontier
-          ARTS_DEBUG("LC_SYNC -> %p", db_temp);
-          db_found = db_temp;
-          arts_atomic_sub(&edt->depc_needed, 1U);
-        } else if (db_temp && owner == arts_global_rank_id) {
-          // Owner path: CDAG frontier for DEFAULT/GPU/LC
-          bool on_head = false;
-          bool duplicate_added =
-              arts_add_db_duplicate(db_temp, arts_global_rank_id, edt,
-                                    edt->current_edt, i, access_mode, &on_head);
-          if (duplicate_added) {
-            ARTS_DEBUG("Adding duplicate DB[Guid:%lu] on_head=%d", depv[i].guid,
-                       on_head);
-          } else {
-            ARTS_DEBUG(
-                "Duplicate not added DB[Guid:%lu] (rank already tracked)",
-                depv[i].guid);
+#ifdef ARTS_USE_CXL
+        if (arts_guid_is_cxl(depv[i].guid)) {
+          struct arts_db_s *cxl_db =
+              (struct arts_db_s *)arts_cxl_get_ptr(depv[i].guid);
+          if (cxl_db) {
+            db_found = cxl_db;
+            arts_atomic_sub(&edt->depc_needed, 1U);
           }
+        } else
+#endif
+        {
+          // Look up DB first — subtype dispatch requires the struct
+          int valid_rank = -1;
+          struct arts_db_s *db_temp =
+              (struct arts_db_s *)arts_route_table_lookup_db(depv[i].guid,
+                                                             &valid_rank, true);
+          /* Track whether lookup acquired a route table ref so we can
+           * return it if the dep is deferred (frontier/remote/OO). */
+          bool lookup_ref_held = (db_temp != NULL);
 
-          if (valid_rank == arts_global_rank_id && on_head) {
+          if (db_temp && db_temp->db_type == ARTS_DB_LOCAL) {
+            // LOCAL: direct access, no frontier
             db_found = db_temp;
             arts_atomic_sub(&edt->depc_needed, 1U);
-          } else if (valid_rank == arts_global_rank_id) {
-            ARTS_DEBUG("EDT[Guid:%lu] deferred to frontier for "
-                       "DB[Guid:%lu] (non-head local frontier, unique=%d)",
-                       edt->current_edt, depv[i].guid, duplicate_added);
-          } else {
-            if (access_mode == DB_MODE_RO || db_temp->db_type == ARTS_DB_GPU ||
-                db_temp->db_type == ARTS_DB_LC) {
-              arts_remote_db_request(depv[i].guid, valid_rank, edt, i,
-                                     access_mode, true);
+          } else if (db_temp && access_mode == DB_MODE_LC_SYNC &&
+                     owner == arts_global_rank_id) {
+            // LC_SYNC on owner — direct lookup, skip frontier
+            ARTS_DEBUG("LC_SYNC -> %p", db_temp);
+            db_found = db_temp;
+            arts_atomic_sub(&edt->depc_needed, 1U);
+          } else if (db_temp && owner == arts_global_rank_id) {
+            // Owner path: CDAG frontier for DEFAULT/GPU/LC
+            bool on_head = false;
+            bool duplicate_added = arts_add_db_duplicate(
+                db_temp, arts_global_rank_id, edt, edt->current_edt, i,
+                access_mode, &on_head);
+            if (duplicate_added) {
+              ARTS_DEBUG("Adding duplicate DB[Guid:%lu] on_head=%d",
+                         depv[i].guid, on_head);
             } else {
-              arts_remote_db_full_request(depv[i].guid, valid_rank,
-                                          edt->current_edt, i, access_mode);
+              ARTS_DEBUG(
+                  "Duplicate not added DB[Guid:%lu] (rank already tracked)",
+                  depv[i].guid);
             }
-          }
-        } else if (db_temp) {
-          // Non-owner path: cached copy management
-          bool local_valid = (valid_rank == arts_global_rank_id);
-          if (local_valid) {
-            db_found = db_temp;
-            arts_atomic_sub(&edt->depc_needed, 1U);
-          } else if (access_mode == DB_MODE_EW) {
-            arts_remote_db_full_request(depv[i].guid, owner, edt->current_edt,
-                                        i, access_mode);
-          } else {
-            arts_remote_db_request(depv[i].guid, owner, edt, i, access_mode,
-                                   true);
-          }
-        } else {
-          // DB not in route table — out-of-order or remote
-          if (arts_guid_is_local(depv[i].guid)) {
-            ARTS_DEBUG("DB[Guid:%lu] out of order request slot %u",
-                       depv[i].guid, i);
-            arts_out_of_order_handle_db_request(depv[i].guid, edt, i, true);
-          } else {
-            // Remote DB not cached locally — request from owner
-            if (access_mode == DB_MODE_EW) {
+
+            if (valid_rank == arts_global_rank_id && on_head) {
+              db_found = db_temp;
+              arts_atomic_sub(&edt->depc_needed, 1U);
+            } else if (valid_rank == arts_global_rank_id) {
+              ARTS_DEBUG("EDT[Guid:%lu] deferred to frontier for "
+                         "DB[Guid:%lu] (non-head local frontier, unique=%d)",
+                         edt->current_edt, depv[i].guid, duplicate_added);
+            } else {
+              if (access_mode == DB_MODE_RO ||
+                  db_temp->db_type == ARTS_DB_GPU ||
+                  db_temp->db_type == ARTS_DB_LC) {
+                arts_remote_db_request(depv[i].guid, valid_rank, edt, i,
+                                       access_mode, true);
+              } else {
+                arts_remote_db_full_request(depv[i].guid, valid_rank,
+                                            edt->current_edt, i, access_mode);
+              }
+            }
+          } else if (db_temp) {
+            // Non-owner path: cached copy management
+            bool local_valid = (valid_rank == arts_global_rank_id);
+            if (local_valid) {
+              db_found = db_temp;
+              arts_atomic_sub(&edt->depc_needed, 1U);
+            } else if (access_mode == DB_MODE_EW) {
               arts_remote_db_full_request(depv[i].guid, owner, edt->current_edt,
                                           i, access_mode);
             } else {
               arts_remote_db_request(depv[i].guid, owner, edt, i, access_mode,
                                      true);
             }
+          } else {
+            // DB not in route table — out-of-order or remote
+            if (arts_guid_is_local(depv[i].guid)) {
+              ARTS_DEBUG("DB[Guid:%lu] out of order request slot %u",
+                         depv[i].guid, i);
+              arts_out_of_order_handle_db_request(depv[i].guid, edt, i, true);
+            } else {
+              // Remote DB not cached locally — request from owner
+              if (access_mode == DB_MODE_EW) {
+                arts_remote_db_full_request(depv[i].guid, owner,
+                                            edt->current_edt, i, access_mode);
+              } else {
+                arts_remote_db_request(depv[i].guid, owner, edt, i, access_mode,
+                                       true);
+              }
+            }
           }
-        }
 
-        /* If the lookup succeeded but the dep was deferred (frontier,
-         * remote request, OO), db_found is NULL and the lookup ref was
-         * never transferred to depv[i].ptr.  Return it now. */
-        if (lookup_ref_held && !db_found) {
-          arts_route_table_return_db(depv[i].guid, false);
-        }
+          /* If the lookup succeeded but the dep was deferred (frontier,
+           * remote request, OO), db_found is NULL and the lookup ref was
+           * never transferred to depv[i].ptr.  Return it now. */
+          if (lookup_ref_held && !db_found) {
+            arts_route_table_return_db(depv[i].guid, false);
+          }
+        } /* end non-CXL ARTS_DB path */
       } else if (guid_type == ARTS_NULL) {
         arts_atomic_sub(&edt->depc_needed, 1U);
       }
@@ -619,6 +665,14 @@ void prep_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu) {
       ARTS_DEBUG("[prep_dbs] DB[Id:%lu, Guid:%lu] ptr=%p, db=%p", db->arts_id,
                  depv[i].guid, depv[i].ptr, db);
     }
+#ifdef ARTS_USE_CXL
+    if (depv[i].guid != NULL_GUID && depv[i].ptr) {
+      struct arts_db_s *db_cxl = ((struct arts_db_s *)depv[i].ptr) - 1;
+      if (db_cxl->db_type == ARTS_DB_CXL) {
+        arts_cxl_consumer_flush(db_cxl->guid);
+      }
+    }
+#endif
 #ifdef ARTS_USE_GPU
     if (!gpu && depv[i].ptr && access_mode != DB_MODE_LC_SYNC) {
       struct arts_db_s *db = ((struct arts_db_s *)depv[i].ptr) - 1;
@@ -660,6 +714,16 @@ void release_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu) {
     ARTS_DEBUG("Releasing DB[Guid:%lu] [AccessMode:%s, DbSubtype:%s]",
                depv[i].guid, GET_DB_MODE_NAME(access_mode),
                GET_DB_TYPE_NAME(db_subtype));
+
+#ifdef ARTS_USE_CXL
+    if (db_subtype == ARTS_DB_CXL) {
+      if (depv[i].guid != NULL_GUID && depv[i].ptr) {
+        arts_cxl_producer_flush(depv[i].guid);
+      }
+      continue; /* CXL: no route table, no frontier */
+    }
+#endif
+
     unsigned int owner = arts_guid_get_rank(depv[i].guid);
 
     if (depv[i].guid != NULL_GUID &&
@@ -1047,3 +1111,23 @@ void arts_wait_reacquire_dbs(void) {
     }
   }
 }
+
+/* ── CXL cache-flush helpers ────────────────────────────────────────────────
+ */
+
+#ifdef ARTS_USE_CXL
+void arts_cxl_producer_flush(arts_guid_t guid) {
+  struct arts_db_s *db = (struct arts_db_s *)arts_cxl_get_ptr(guid);
+  FLUSH_FENCE_PRODUCER(db, ALIGN_UP(db->header.size, CACHELINE_SIZE));
+}
+
+void arts_cxl_consumer_flush(arts_guid_t guid) {
+  struct arts_db_s *db = (struct arts_db_s *)arts_cxl_get_ptr(guid);
+  /* First flush the header to read the actual size. */
+  FLUSH_FENCE_CONSUMER(db, ALIGN_UP(sizeof(struct arts_db_s), CACHELINE_SIZE));
+  /* Then flush the full DB (header + payload). */
+  if (db->header.size > sizeof(struct arts_db_s)) {
+    FLUSH_FENCE_CONSUMER(db, ALIGN_UP(db->header.size, CACHELINE_SIZE));
+  }
+}
+#endif /* ARTS_USE_CXL */

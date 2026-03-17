@@ -126,6 +126,7 @@ typedef enum {
   ARTS_DB_LOCAL,       /**< Node-pinned, no CDAG frontier. */
   ARTS_DB_GPU,         /**< GPU-pinned, CDAG-managed. */
   ARTS_DB_LC,          /**< Locality-class (CPU-GPU coherence). */
+  ARTS_DB_CXL,         /**< CXL shared-memory, no CDAG frontier. */
 } arts_db_types_t;
 
 /**

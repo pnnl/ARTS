@@ -63,7 +63,8 @@ extern const char *const arts_type_name[];
 
 #define ARTS_DB_TYPE_NAME                                                      \
   const char *const arts_db_type_name[] = {"ARTS_DB_DEFAULT", "ARTS_DB_LOCAL", \
-                                           "ARTS_DB_GPU", "ARTS_DB_LC"}
+                                           "ARTS_DB_GPU", "ARTS_DB_LC",        \
+                                           "ARTS_DB_CXL"}
 
 #define GET_DB_TYPE_NAME(x) arts_db_type_name[x]
 
@@ -91,6 +92,11 @@ void arts_db_destroy_safe(arts_guid_t guid, bool remote);
 void *arts_db_malloc(arts_db_types_t db_type, size_t size);
 void arts_db_free(void *ptr);
 void *arts_db_adopt(arts_guid_t guid, struct arts_db_s *db);
+
+#ifdef ARTS_USE_CXL
+void arts_cxl_producer_flush(arts_guid_t guid);
+void arts_cxl_consumer_flush(arts_guid_t guid);
+#endif
 
 #ifdef __cplusplus
 }

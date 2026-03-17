@@ -160,6 +160,36 @@ arts_guid_t arts_guid_reserve_range_hash(arts_type_t type, unsigned int size,
                                          unsigned int route,
                                          unsigned int hash_size);
 
+/* ── CXL GUID helpers ─────────────────────────────────────────────────────── */
+
+#ifdef ARTS_USE_CXL
+
+#include <stdbool.h>
+
+/** Base virtual address of the CXL FAM mapping. */
+#define ARTS_CXL_BASE_ADDR 0x200000000000ULL
+
+/** Sentinel rank value that identifies CXL-encoded GUIDs. */
+#define ARTS_CXL_RANK 0xFFFF
+
+/** Extract a CXL pointer from a CXL-encoded GUID. */
+static inline void *arts_cxl_get_ptr(arts_guid_t guid) {
+  return (void *)(ARTS_CXL_BASE_ADDR + ARTS_GUID_GET_KEY(guid));
+}
+
+/** Build a CXL-encoded GUID from a CXL pointer (type = ARTS_DB). */
+static inline arts_guid_t arts_cxl_make_guid(void *ptr) {
+  uint64_t offset = (uint64_t)(uintptr_t)ptr - ARTS_CXL_BASE_ADDR;
+  return ARTS_GUID_MAKE(ARTS_DB, ARTS_CXL_RANK, offset);
+}
+
+/** Return true if the GUID uses CXL pointer encoding. */
+static inline bool arts_guid_is_cxl(arts_guid_t guid) {
+  return ARTS_GUID_GET_RANK(guid) == ARTS_CXL_RANK;
+}
+
+#endif /* ARTS_USE_CXL */
+
 #ifdef __cplusplus
 }
 #endif

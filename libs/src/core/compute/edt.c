@@ -44,7 +44,6 @@
 #include "arts/gas/guid.h"
 #include "arts/gas/out_of_order.h"
 #include "arts/gas/route_table.h"
-#include "arts/memory/db.h"
 #include "arts/remote/handler.h"
 #include "arts/runtime_state.h"
 #include "arts/sync/termination.h"
@@ -55,6 +54,10 @@
 
 #ifdef ARTS_USE_GPU
 #include "arts/gpu/gpu_internal.h"
+#endif
+
+#ifdef ARTS_USE_CXL
+#include "arts/cxl/wrapper.h"
 #endif
 
 #define MAX_EPOCH_ARRAY_LIST 32
@@ -603,7 +606,13 @@ void arts_signal_edt(arts_guid_t edt_guid, uint32_t slot, arts_guid_t data_guid,
                      arts_db_access_mode_t mode) {
   ARTS_DEBUG("arts_signal_edt [EDT:%lu, Slot:%u, DB:%lu, Mode:%u]", edt_guid,
              slot, data_guid, mode);
-  internal_signal_edt(edt_guid, slot, data_guid, mode, NULL, 0);
+  void *db_ptr = NULL;
+#ifdef ARTS_USE_CXL
+  if (arts_guid_is_cxl(data_guid)) {
+    db_ptr = (void *)((struct arts_db_s *)arts_cxl_get_ptr(data_guid) + 1);
+  }
+#endif
+  internal_signal_edt(edt_guid, slot, data_guid, mode, db_ptr, 0);
 }
 
 // Internal function to signal EDT with explicit access mode

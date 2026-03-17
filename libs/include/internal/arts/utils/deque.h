@@ -85,6 +85,7 @@ void *arts_deque_pop_back(struct arts_deque_s *deque);
 bool arts_deque_empty(struct arts_deque_s *deque);
 void arts_deque_clear(struct arts_deque_s *deque);
 unsigned int arts_deque_size(struct arts_deque_s *deque);
+bool arts_deque_full(struct arts_deque_s *deque);
 
 /*--- Simple implementation (deque_simple.c) ---------------------------------*/
 struct arts_deque_s *arts_deque_simple_list_new(unsigned int list_size,
@@ -102,6 +103,7 @@ void *arts_deque_simple_pop_back(struct arts_deque_s *deque);
 bool arts_deque_simple_empty(struct arts_deque_s *deque);
 void arts_deque_simple_clear(struct arts_deque_s *deque);
 unsigned int arts_deque_simple_size(struct arts_deque_s *deque);
+bool arts_deque_simple_full(struct arts_deque_s *deque);
 
 /*--- Priority implementation (deque_priority.c) -----------------------------*/
 struct arts_deque_s *arts_deque_priority_list_new(unsigned int list_size,

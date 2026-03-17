@@ -121,6 +121,10 @@ if(ARTS_BUILD_STATIC)
         target_link_libraries(arts_static PRIVATE "-framework CoreFoundation" "-framework IOKit" "-framework OpenCL")
     endif()
 
+    if(ARTS_USE_CXL)
+        target_link_libraries(arts_static PUBLIC arts_cxl_lib)
+    endif()
+
     # Set library properties
     set_target_properties(arts_static PROPERTIES
         OUTPUT_NAME arts
@@ -189,6 +193,10 @@ if(ARTS_BUILD_SHARED)
     # Add macOS framework dependencies for hwloc
     if(APPLE AND HWLOC_FOUND)
         target_link_libraries(arts_shared PRIVATE "-framework CoreFoundation" "-framework IOKit" "-framework OpenCL")
+    endif()
+
+    if(ARTS_USE_CXL)
+        target_link_libraries(arts_shared PUBLIC arts_cxl_lib)
     endif()
 
     # Set library properties

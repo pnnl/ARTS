@@ -46,6 +46,10 @@ extern "C" {
 #include "arts/defs.h"
 #include "arts/runtime_types.h"
 #include "arts/system/topology.h"
+#ifdef ARTS_USE_CXL
+#include "arts/cxl/deque.h"
+#include <pthread.h>
+#endif
 
 struct atomic_create_barrier_info_s {
   volatile unsigned int wait;
@@ -63,6 +67,12 @@ struct arts_runtime_shared_s {
   struct arts_deque_s **deque;
   struct arts_deque_s **receiver_deque;
   struct arts_deque_s **gpu_deque;
+#ifdef ARTS_USE_CXL
+  arts_cxl_deque_t *cxl_deque;
+  pthread_mutex_t cxl_local_lock;
+  void *cxl_db_arena_start;
+  void *cxl_db_arena_end;
+#endif
   struct arts_route_table_s **route_table;
   struct arts_route_table_s **gpu_route_table;
   struct arts_route_table_s *remote_route_table;

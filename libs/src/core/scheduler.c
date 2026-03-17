@@ -39,6 +39,7 @@
 #include "arts/runtime_state.h"
 #include "arts/utils/malloc.h"
 
+#include <assert.h>
 #include <stdlib.h>
 #include <time.h>
 
@@ -66,24 +67,15 @@
 #include "arts/gpu/gpu_stream.h"
 #endif
 
+#ifdef ARTS_USE_CXL
+#include "arts/cxl/deque.h"
+bool arts_cxl_scheduler_loop(void);
+#endif
+
 #define PACKET_SIZE 4096
 #define NETWORK_BACKOFF_INCREMENT 0
 
 extern unsigned int num_numa_domains;
-
-#if defined(__APPLE__)
-extern void init_per_node(unsigned int node_id, int argc, char **argv)
-    __attribute__((weak_import));
-extern void init_per_worker(unsigned int node_id, unsigned int worker_id,
-                            int argc, char **argv)
-    __attribute__((weak_import));
-#else
-extern void init_per_node(unsigned int node_id, int argc, char **argv)
-    __attribute__((weak));
-extern void init_per_worker(unsigned int node_id, unsigned int worker_id,
-                            int argc, char **argv)
-    __attribute__((weak));
-#endif
 
 static int arts_runtime_argc = 0;
 static char **arts_runtime_argv = NULL;
@@ -135,6 +127,9 @@ scheduler_t scheduler_loop[] = {
 #else
 scheduler_t scheduler_loop[] = {
     (scheduler_t)arts_default_scheduler_loop,
+#ifdef ARTS_USE_CXL
+    (scheduler_t)arts_cxl_scheduler_loop,
+#endif
     (scheduler_t)arts_network_before_steal_scheduler_loop,
     (scheduler_t)arts_network_first_scheduler_loop};
 #endif
@@ -214,6 +209,16 @@ void arts_runtime_node_init(struct arts_config_s *config) {
   arts_node_info.run_gpu_gc_pre_edt = config->run_gpu_gc_pre_edt;
   arts_node_info.delete_zeros_gpu_gc = config->delete_zeros_gpu_gc;
 
+#ifdef ARTS_USE_CXL
+  /* CXL shared-memory deque and DB arena */
+  arts_node_info.cxl_deque = arts_cxl_deque_init();
+  pthread_mutex_init(&arts_node_info.cxl_local_lock, NULL);
+  assert(arts_cxl_deque_get_db_arena_range(arts_node_info.cxl_deque,
+                                           &arts_node_info.cxl_db_arena_start,
+                                           &arts_node_info.cxl_db_arena_end) &&
+         "CXL DB arena pointers must be valid");
+#endif
+
   /* GUID generation */
   arts_node_info.keys = (uint64_t **)arts_calloc(tc, sizeof(uint64_t *));
   arts_node_info.global_guid_thread_id =
@@ -289,6 +294,10 @@ void arts_runtime_global_cleanup() {
   /* Object counter cleanup */
   arts_object_cleanup_node_storage(tc);
 
+#ifdef ARTS_USE_CXL
+  arts_cxl_deque_free(arts_node_info.cxl_deque);
+#endif
+
 #ifdef ARTS_USE_GPU
   /* GPU cleanup must run BEFORE route tables are freed — free_gpu_item()
      calls arts_route_table_lookup_db() for LC DB host-side metadata. */
@@ -348,8 +357,9 @@ void arts_thread_zero_node_start(int argc, char **argv) {
   TIME_INIT_STOP();
   TIME_TOTAL_START();
 
-  if (init_per_node)
+  if (init_per_node) {
     init_per_node(arts_global_rank_id, argc, argv);
+  }
 
 #ifdef ARTS_USE_GPU
   arts_init_per_gpu_wrapper(argc, argv);
@@ -359,9 +369,10 @@ void arts_thread_zero_node_start(int argc, char **argv) {
   arts_atomic_sub(&arts_node_info.ready_to_parallel_start, 1U);
   while (arts_node_info.ready_to_parallel_start) {
   }
-  if (init_per_worker && arts_thread_info.role == ARTS_ROLE_WORKER)
+  if (init_per_worker && arts_thread_info.role == ARTS_ROLE_WORKER) {
     init_per_worker(arts_global_rank_id, arts_thread_info.group_pos, argc,
                     argv);
+  }
   if (!arts_global_rank_id) {
     ARTS_INFO("Thread 0: scheduling main_edt on rank 0 (argc=%d)", argc);
     uint64_t main_args[2] = {(uint64_t)argc, (uint64_t)argv};
@@ -475,9 +486,10 @@ void arts_runtime_private_init(struct thread_mask_s *thread,
     };
 
     if (arts_thread_info.role == ARTS_ROLE_WORKER) {
-      if (init_per_worker)
+      if (init_per_worker) {
         init_per_worker(arts_global_rank_id, arts_thread_info.group_pos,
                         arts_runtime_argc, arts_runtime_argv);
+      }
       arts_increment_finished_epoch_list();
     }
 
@@ -579,6 +591,16 @@ void arts_handle_ready_edt(struct arts_edt_s *edt) {
   ARTS_INFO("EDT[Guid:%lu, Id:%lu] ready — entering acquire_dbs "
             "(depc=%u)",
             edt->current_edt, edt->arts_id, edt->depc);
+#ifdef ARTS_USE_CXL
+  if (arts_node_info.scheduler == (void *)arts_cxl_scheduler_loop &&
+      arts_deque_full(arts_thread_info.my_deque)) {
+    while (!arts_cxl_deque_push(arts_node_info.cxl_deque,
+                                &arts_node_info.cxl_local_lock,
+                                edt->header.size, edt)) {
+    }
+    return;
+  }
+#endif
   acquire_dbs(edt);
   unsigned int remaining = arts_atomic_sub(&edt->depc_needed, 1U);
   ARTS_INFO("EDT[Guid:%lu] acquire_dbs done, sentinel removed: "
@@ -669,7 +691,13 @@ void arts_run_edt(struct arts_edt_s *edt) {
 
   ARTS_INFO("EDT[Guid:%lu, Id:%lu] finished (exec_ns=%lu)", edt->current_edt,
             edt->arts_id, exec_ns);
+#ifdef ARTS_USE_CXL
+  if (!IS_CXL_PTR(edt)) {
+    arts_edt_delete(edt);
+  }
+#else
   arts_edt_delete(edt);
+#endif
   DEC_OUTSTANDING_EDTS(1);
   ARTS_DEBUG("EDT completed, outstanding_edts decremented");
 }
@@ -777,6 +805,26 @@ bool arts_default_scheduler_loop() {
   arts_runtime_idle_pause();
   return false;
 }
+
+#ifdef ARTS_USE_CXL
+bool arts_cxl_scheduler_loop() {
+  struct arts_edt_s *edt_found = NULL;
+  if (!(edt_found = (struct arts_edt_s *)arts_deque_pop_front(
+            arts_thread_info.my_deque))) {
+    if (!(edt_found = arts_runtime_steal_from_worker())) {
+      arts_cxl_deque_pop(arts_node_info.cxl_deque,
+                         &arts_node_info.cxl_local_lock, (void **)&edt_found);
+    }
+  }
+  if (edt_found) {
+    arts_run_edt(edt_found);
+    return true;
+  }
+  CHECK_OUTSTANDING_EDTS(10000000);
+  arts_runtime_idle_pause();
+  return false;
+}
+#endif /* ARTS_USE_CXL */
 
 /*
  * arts_runtime_loop — Main per-thread dispatch loop.

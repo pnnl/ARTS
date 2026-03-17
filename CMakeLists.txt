@@ -121,6 +121,11 @@ if(NOT ARTS_LOG_LEVEL MATCHES "^[0-3]$")
 endif()
 option(ARTS_USE_GPU "Enable GPU support (default: ON, disable when OFF)" ON)
 option(ARTS_USE_RDMA "Use RDMA RSockets networking (default: ON, use TCP when OFF)" OFF)
+option(ARTS_USE_CXL "Enable CXL shared-memory support (default: OFF)" OFF)
+set(ARTS_CXL_RAPID_INCLUDE_DIR "" CACHE PATH
+    "Path to Rapid API include directory (required when ARTS_USE_CXL=ON)")
+set(ARTS_CXL_LIB_DIR "" CACHE PATH
+    "Path to arts_cxl_lib directory (required when ARTS_USE_CXL=ON)")
 option(ARTS_USE_SANITIZERS "Enable address and undefined behavior sanitizers in Debug builds" ON)
 option(ARTS_USE_LOCAL_CUDA_ARCHITECTURES "Auto-detect CUDA architectures from local GPUs using nvidia-smi" ON)
 
@@ -288,6 +293,65 @@ else()
         set(RDMACM_LIBRARIES "")
         set(RDMACM_INCLUDE_DIRS "")
     endif()
+endif()
+
+# ── CXL shared-memory support ─────────────────────────────────────────────
+if(ARTS_USE_CXL)
+    # Validate compiler support
+    if(NOT (CMAKE_C_COMPILER_ID STREQUAL "GNU" OR CMAKE_C_COMPILER_ID STREQUAL "Clang"))
+        set(ARTS_USE_CXL OFF)
+        message(STATUS "CXL: ${CMAKE_C_COMPILER_ID} not supported, disabling")
+    endif()
+endif()
+if(ARTS_USE_CXL)
+    # Validate required paths
+    if(NOT ARTS_CXL_RAPID_INCLUDE_DIR)
+        message(FATAL_ERROR
+            "ARTS_USE_CXL is ON but ARTS_CXL_RAPID_INCLUDE_DIR is not set.\n"
+            "  -DARTS_CXL_RAPID_INCLUDE_DIR=/path/to/rapid/include")
+    endif()
+    if(NOT ARTS_CXL_LIB_DIR)
+        message(FATAL_ERROR
+            "ARTS_USE_CXL is ON but ARTS_CXL_LIB_DIR is not set.\n"
+            "  -DARTS_CXL_LIB_DIR=/path/to/arts_cxl_lib")
+    endif()
+
+    # Derive library and include paths
+    set(ARTS_CXL_LIB_PATH "${ARTS_CXL_LIB_DIR}/build/src/libarts_cxl_lib.so")
+    set(ARTS_CXL_INCLUDE_DIR "${ARTS_CXL_LIB_DIR}/inc")
+
+    # Verify paths exist
+    if(NOT EXISTS "${ARTS_CXL_RAPID_INCLUDE_DIR}")
+        message(FATAL_ERROR "ARTS_CXL_RAPID_INCLUDE_DIR not found: ${ARTS_CXL_RAPID_INCLUDE_DIR}")
+    endif()
+    if(NOT EXISTS "${ARTS_CXL_LIB_PATH}")
+        message(FATAL_ERROR "CXL ARTS library not found: ${ARTS_CXL_LIB_PATH}")
+    endif()
+    if(NOT EXISTS "${ARTS_CXL_INCLUDE_DIR}")
+        message(FATAL_ERROR "CXL ARTS include dir not found: ${ARTS_CXL_INCLUDE_DIR}")
+    endif()
+
+    # Try to find Rapid API
+    list(APPEND CMAKE_PREFIX_PATH "${ARTS_CXL_RAPID_INCLUDE_DIR}/..")
+    find_package(rapid CONFIG QUIET)
+    if(rapid_FOUND)
+        add_compile_definitions(ARTS_USE_CXL ARTS_CXL_NATIVE)
+        message(STATUS "CXL: Enabled - ARTS_USE_CXL + ARTS_CXL_NATIVE defined")
+        message(STATUS "  Rapid include:    ${ARTS_CXL_RAPID_INCLUDE_DIR}")
+        message(STATUS "  ARTS CXL lib dir: ${ARTS_CXL_LIB_DIR}")
+        message(STATUS "  ARTS CXL library: ${ARTS_CXL_LIB_PATH}")
+        message(STATUS "  ARTS CXL include: ${ARTS_CXL_INCLUDE_DIR}")
+    else()
+        set(ARTS_USE_CXL OFF)
+        message(STATUS "CXL: Rapid API not found at ${ARTS_CXL_RAPID_INCLUDE_DIR}, disabling")
+    endif()
+endif()
+if(ARTS_USE_CXL)
+    add_library(arts_cxl_lib SHARED IMPORTED)
+    set_target_properties(arts_cxl_lib PROPERTIES
+        IMPORTED_LOCATION "${ARTS_CXL_LIB_PATH}"
+        INTERFACE_INCLUDE_DIRECTORIES "${ARTS_CXL_INCLUDE_DIR};${ARTS_CXL_RAPID_INCLUDE_DIR}"
+    )
 endif()
 
 # Add third-party dependencies

@@ -117,6 +117,11 @@ unsigned int arts_deque_simple_size(struct arts_deque_s *deque) {
   return deque->bottom - deque->top;
 }
 
+bool arts_deque_simple_full(struct arts_deque_s *deque) {
+  struct circular_array_s *a = deque->activeArray;
+  return (deque->bottom >= a->size - 1 + deque->top);
+}
+
 static inline void *get_circular_array(struct circular_array_s *array,
                                        uint64_t i) {
   return array->segment[i % array->size];
