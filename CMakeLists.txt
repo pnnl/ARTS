@@ -279,17 +279,25 @@ if(NOT ARTS_USE_RDMA)
     set(RDMACM_LIBRARIES "")
     set(RDMACM_INCLUDE_DIRS "")
 else()
-    # Try to use RDMA
-    find_package(PkgConfig QUIET)
-    if(PkgConfig_FOUND)
-        pkg_check_modules(RDMACM QUIET librdmacm)
-    endif()
+    # Try to use RDMA - use find_library for better compatibility
+    find_library(RDMACM_LIBRARY rdmacm)
+    find_library(IBVERBS_LIBRARY ibverbs)
 
-    if(RDMACM_FOUND)
-        add_compile_definitions(ARTS_USE_RDMA)
-        message(STATUS "Network: Using RDMA RSockets - ARTS_USE_RDMA defined")
+    if(RDMACM_LIBRARY AND IBVERBS_LIBRARY)
+        set(RDMACM_LIBRARIES ${RDMACM_LIBRARY} ${IBVERBS_LIBRARY})
+        set(RDMACM_FOUND TRUE)
+        add_compile_definitions(USE_RDMA)
+        message(STATUS "Network: Using RDMA RSockets - USE_RDMA defined")
+        message(STATUS "  RDMACM library: ${RDMACM_LIBRARY}")
+        message(STATUS "  IBVerbs library: ${IBVERBS_LIBRARY}")
     else()
         message(STATUS "Network: RDMA requested but not available, falling back to TCP")
+        if(NOT RDMACM_LIBRARY)
+            message(STATUS "  librdmacm not found")
+        endif()
+        if(NOT IBVERBS_LIBRARY)
+            message(STATUS "  libibverbs not found")
+        endif()
         set(RDMACM_LIBRARIES "")
         set(RDMACM_INCLUDE_DIRS "")
     endif()
@@ -352,7 +360,7 @@ if(ARTS_USE_CXL)
         IMPORTED_LOCATION "${ARTS_CXL_LIB_PATH}"
         INTERFACE_INCLUDE_DIRECTORIES "${ARTS_CXL_INCLUDE_DIR};${ARTS_CXL_RAPID_INCLUDE_DIR}"
     )
-    
+
     find_package(rapid CONFIG REQUIRED
         PATHS "${ARTS_CXL_RAPID_INCLUDE_DIR}/..")
         set_target_properties(arts_cxl_lib PROPERTIES
@@ -587,3 +595,4 @@ message(STATUS "")
 message(STATUS "To specify a custom install prefix, use:")
 message(STATUS "  cmake -DCMAKE_INSTALL_PREFIX=/path/to/install ..")
 message(STATUS "=================================================================")
+ 
