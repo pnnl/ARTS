@@ -48,16 +48,10 @@ if(BUILD_CUDA_LIBRARY)
 
     # Create object library for the GPU module
     add_library(arts_gpu OBJECT ${GPU_SOURCES})
-    
+    target_link_libraries(arts_gpu PRIVATE arts_interface)
+
     # Add ARTS_USE_GPU definition for this module
     target_compile_definitions(arts_gpu PRIVATE ARTS_USE_GPU)
-    
-    # Include directories
-    target_include_directories(arts_gpu PRIVATE
-        ${ARTS_PUBLIC_INCLUDE_DIR}
-        ${ARTS_INTERNAL_INCLUDE_DIR}
-        ${ARTS_BUILD_INTERNAL_INCLUDE_DIR}
-    )
 
     # Add hwloc include directories if available
     if(HWLOC_INCLUDE_DIRS)

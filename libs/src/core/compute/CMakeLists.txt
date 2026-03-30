@@ -3,7 +3,7 @@ file(GLOB COMPUTE_SOURCES "*.c")
 
 # CPU-only object library
 add_library(arts_compute OBJECT ${COMPUTE_SOURCES})
-target_include_directories(arts_compute PRIVATE ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR} ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
+target_link_libraries(arts_compute PRIVATE arts_interface)
 
 # Add hwloc include directories if available
 if(HWLOC_INCLUDE_DIRS)
@@ -24,7 +24,7 @@ if(BUILD_CUDA_LIBRARY)
   list(APPEND COMPUTE_GPU_SOURCES ${EDT_WRAPPER})
 
   add_library(arts_compute_gpu OBJECT ${COMPUTE_GPU_SOURCES})
-  target_include_directories(arts_compute_gpu PRIVATE ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR} ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
+  target_link_libraries(arts_compute_gpu PRIVATE arts_interface)
   if(HWLOC_INCLUDE_DIRS)
     target_include_directories(arts_compute_gpu PRIVATE ${HWLOC_INCLUDE_DIRS})
   endif()

@@ -126,7 +126,7 @@ set(ARTS_CXL_RAPID_INCLUDE_DIR "" CACHE PATH
     "Path to Rapid API include directory (required when ARTS_USE_CXL=ON)")
 set(ARTS_CXL_LIB_DIR "" CACHE PATH
     "Path to arts_cxl_lib directory (required when ARTS_USE_CXL=ON)")
-option(ARTS_USE_SANITIZERS "Enable address and undefined behavior sanitizers in Debug builds" ON)
+option(ARTS_USE_SANITIZERS "Enable address and undefined behavior sanitizers in Debug builds" OFF)
 option(ARTS_USE_LOCAL_CUDA_ARCHITECTURES "Auto-detect CUDA architectures from local GPUs using nvidia-smi" ON)
 
 # Compiler-specific settings
@@ -351,6 +351,14 @@ if(ARTS_USE_CXL)
     set_target_properties(arts_cxl_lib PROPERTIES
         IMPORTED_LOCATION "${ARTS_CXL_LIB_PATH}"
         INTERFACE_INCLUDE_DIRECTORIES "${ARTS_CXL_INCLUDE_DIR};${ARTS_CXL_RAPID_INCLUDE_DIR}"
+    )
+    
+    find_package(rapid CONFIG REQUIRED
+        PATHS "${ARTS_CXL_RAPID_INCLUDE_DIR}/..")
+        set_target_properties(arts_cxl_lib PROPERTIES
+        IMPORTED_LOCATION "${ARTS_CXL_LIB_PATH}"
+        INTERFACE_INCLUDE_DIRECTORIES "${ARTS_CXL_INCLUDE_DIR};${ARTS_CXL_RAPID_INCLUDE_DIR}"
+        INTERFACE_LINK_LIBRARIES "rapid::rapid"
     )
 endif()
 

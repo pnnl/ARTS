@@ -42,11 +42,7 @@ file(GLOB SYSTEM_SOURCES "*.c")
 
 # Create object library for the system module
 add_library(arts_system OBJECT ${SYSTEM_SOURCES})
-
-# Include directories
-target_include_directories(arts_system PRIVATE
-    ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR} ${ARTS_BUILD_INTERNAL_INCLUDE_DIR}
-)
+target_link_libraries(arts_system PRIVATE arts_interface)
 
 # Add hwloc include directories if available
 if(HWLOC_INCLUDE_DIRS)

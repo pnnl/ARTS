@@ -43,11 +43,7 @@ file(GLOB UTILS_SOURCES "*.c")
 
 # Create object library for the utils module
 add_library(arts_utils OBJECT ${UTILS_SOURCES})
-
-# Include directories
-target_include_directories(arts_utils PRIVATE
-    ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR} ${ARTS_BUILD_INTERNAL_INCLUDE_DIR}
-)
+target_link_libraries(arts_utils PRIVATE arts_interface)
 
 # Add hwloc include directories if available
 if(HWLOC_INCLUDE_DIRS)

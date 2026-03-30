@@ -37,9 +37,38 @@
 ## License for the specific language governing permissions and limitations
 ###############################################################################
 
-# Distribution module source files
-file(GLOB DISTRIBUTION_SOURCES "*.c")
+# Create the random_access CPU example executable
+add_executable(random_access random_access.c)
 
-# Create object library for distribution functionality
-add_library(arts_graph_distribution OBJECT ${DISTRIBUTION_SOURCES})
-target_link_libraries(arts_graph_distribution PRIVATE arts_interface)
+# Include both public and internal headers (internal needed for arts/memory/db.h)
+target_include_directories(random_access PRIVATE
+    ${ARTS_PUBLIC_INCLUDE_DIR}
+    ${ARTS_INTERNAL_INCLUDE_DIR}
+    ${ARTS_BUILD_INTERNAL_INCLUDE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+# Link with the ARTS runtime library
+if(TARGET arts_shared)
+    target_link_libraries(random_access PRIVATE arts_shared)
+elseif(TARGET arts_static)
+    target_link_libraries(random_access PRIVATE arts_static)
+endif()
+
+# Link with runtime libraries
+target_link_libraries(random_access PRIVATE
+    Threads::Threads
+    ${RT_LIBRARY}
+    ${M_LIBRARY}
+    ${ANL_LIBRARY}
+)
+
+# Optionally link with the CXL library when available
+if(ARTS_USE_CXL AND TARGET arts_cxl_lib)
+    target_link_libraries(random_access PRIVATE arts_cxl_lib)
+    target_compile_definitions(random_access PRIVATE ARTS_USE_CXL=1)
+endif()
+
+# Non-PIE: function pointers must match across nodes (multinode EDT dispatch)
+target_compile_options(random_access PRIVATE -fno-pie -fno-PIE)
+target_link_options(random_access PRIVATE -no-pie -fno-pie -fno-PIE)

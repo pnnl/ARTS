@@ -2,9 +2,7 @@
 file(GLOB TRANSPORT_SOURCES "*.c")
 
 add_library(arts_transport OBJECT ${TRANSPORT_SOURCES})
-target_include_directories(arts_transport PRIVATE
-    ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR} ${ARTS_BUILD_INTERNAL_INCLUDE_DIR}
-)
+target_link_libraries(arts_transport PRIVATE arts_interface)
 
 # Add RDMA include directories if available
 if(RDMACM_INCLUDE_DIRS)

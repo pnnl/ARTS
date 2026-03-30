@@ -41,11 +41,5 @@
 file(GLOB DATASTRUCTURES_SOURCES "*.c")
 
 add_library(arts_graph_datastructures OBJECT ${DATASTRUCTURES_SOURCES})
-
-# Set include directories for the object library
-target_include_directories(arts_graph_datastructures PRIVATE
-    ${ARTS_PUBLIC_INCLUDE_DIR}
-    ${ARTS_INTERNAL_INCLUDE_DIR}
-    ${ARTS_BUILD_INTERNAL_INCLUDE_DIR}
-)
+target_link_libraries(arts_graph_datastructures PRIVATE arts_interface)
 

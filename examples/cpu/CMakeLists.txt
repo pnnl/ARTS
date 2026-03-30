@@ -40,15 +40,17 @@
 # Define CPU example programs (C)
 set(CPU_EXAMPLES
     fib
+    fibDB
     fib_yield
     simple_reduction
     tiled_matmul
     bfs
-    graph_search
+    # graph_search
     triangle_count
     triangle_count2
     triangle_count_promise
     stream_cpu
+    cxl_stream
 )
 
 # C++ CPU examples
@@ -85,6 +87,9 @@ function(add_cpu_cxx_example example_name)
     # Set include directories
     target_include_directories(${example_name} PRIVATE ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR} ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
 
+    if(ARTS_USE_CXL AND TARGET arts_cxl_lib)
+        target_link_libraries(${example_name} PRIVATE arts_cxl_lib)
+    endif()
     # Use the appropriate ARTS library based on availability
     if(TARGET arts_shared)
         target_link_libraries(${example_name} PRIVATE arts_shared)
@@ -100,12 +105,38 @@ function(add_cpu_cxx_example example_name)
     target_link_options(${example_name} PRIVATE -no-pie -fno-pie -fno-PIE)
 endfunction()
 
-# Create CPU example executables
+# Create CPU example executables (excluding cxl_stream which needs special handling)
 foreach(example ${CPU_EXAMPLES})
-    add_cpu_example(${example})
+    if(NOT example STREQUAL "cxl_stream")
+        add_cpu_example(${example})
+    endif()
 endforeach()
+
+# cxl_stream: needs internal include dir for arts/memory/db.h (CXL flush APIs)
+add_executable(cxl_stream cxl_stream.c)
+target_include_directories(cxl_stream PRIVATE
+    ${ARTS_PUBLIC_INCLUDE_DIR}
+    ${ARTS_INTERNAL_INCLUDE_DIR}
+    ${ARTS_BUILD_INTERNAL_INCLUDE_DIR}
+)
+if(TARGET arts_shared)
+    target_link_libraries(cxl_stream PRIVATE arts_shared)
+elseif(TARGET arts_static)
+    target_link_libraries(cxl_stream PRIVATE arts_static)
+endif()
+target_link_libraries(cxl_stream PRIVATE Threads::Threads ${RT_LIBRARY} ${M_LIBRARY} ${ANL_LIBRARY})
+if(ARTS_USE_CXL AND TARGET arts_cxl_lib)
+    target_link_libraries(cxl_stream PRIVATE arts_cxl_lib)
+    target_compile_definitions(cxl_stream PRIVATE ARTS_USE_CXL=1)
+endif()
+# Non-PIE: function pointers must match across nodes (multinode EDT dispatch)
+target_compile_options(cxl_stream PRIVATE -fno-pie -fno-PIE)
+target_link_options(cxl_stream PRIVATE -no-pie -fno-pie -fno-PIE)
 
 # Create C++ CPU example executables
 foreach(example ${CPU_CXX_EXAMPLES})
     add_cpu_cxx_example(${example})
 endforeach()
+
+# random_access: needs internal include dir for arts/memory/db.h (CXL flush APIs)
+add_subdirectory(random_access)

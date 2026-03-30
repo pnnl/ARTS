@@ -46,6 +46,10 @@ target_include_directories(arts_interface INTERFACE
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
+if(ARTS_USE_CXL)
+    target_link_libraries(arts_interface INTERFACE arts_cxl_lib)
+endif()
+
 # Module subdirectories — each defines OBJECT library targets
 add_subdirectory(core)
 add_subdirectory(graph)

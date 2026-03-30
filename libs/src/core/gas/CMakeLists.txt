@@ -42,11 +42,7 @@ file(GLOB GAS_SOURCES "*.c")
 
 # Create object library for the gas module
 add_library(arts_gas OBJECT ${GAS_SOURCES})
-
-# Include directories
-target_include_directories(arts_gas PRIVATE
-    ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR} ${ARTS_BUILD_INTERNAL_INCLUDE_DIR}
-)
+target_link_libraries(arts_gas PRIVATE arts_interface)
 
 # Add hwloc include directories if available
 if(HWLOC_INCLUDE_DIRS)

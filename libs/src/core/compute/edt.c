@@ -51,6 +51,7 @@
 #include "arts/system/threads.h"
 #include "arts/utils/array_list.h"
 #include "arts/utils/atomics.h"
+#include "arts/memory/db.h"
 
 #ifdef ARTS_USE_GPU
 #include "arts/gpu/gpu_internal.h"
