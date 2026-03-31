@@ -42,7 +42,7 @@
 #include "arts.h"
 #include "arts/memory/db.h"
 
-#define CXL_DB 0
+#define CXL_DB 1
 
 uint64_t start = 0;
 

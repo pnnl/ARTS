@@ -638,11 +638,24 @@ void internal_signal_edt_with_mode(arts_guid_t edt_packet, uint32_t slot,
       if (edt) {
         arts_edt_dep_t *edt_dep = (arts_edt_dep_t *)arts_get_depv(edt);
         if (slot < edt->depc) {
-          edt_dep[slot].guid = data_guid;
-          edt_dep[slot].ptr = NULL;
-          if (mode != DB_MODE_NULL) {
+          #ifdef USE_CXL
+          void* ptr;
+          if (mode == ARTS_DB_CXL) {
+            ptr = ((struct arts_db *)arts_get_cxl_ptr(data_guid)) +1;
+            edt_dep[slot].guid = data_guid;
+            edt_dep[slot].ptr = ptr;
             edt_dep[slot].mode = mode;
           }
+          else {
+          #endif
+            edt_dep[slot].guid = data_guid;
+            edt_dep[slot].ptr = NULL;
+            if (mode != DB_MODE_NULL) {
+              edt_dep[slot].mode = mode;
+            }
+          #ifdef USE_CXL
+          }
+          #endif
         }
         unsigned int res = arts_atomic_sub(&edt->depc_needed, 1U);
         ARTS_INFO("Signal DB[Guid:%lu] to EDT[Guid:%lu, Slot:%u, "
