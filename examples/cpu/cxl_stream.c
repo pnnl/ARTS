@@ -66,7 +66,8 @@
  * ===================================================================== */
 
 #ifndef N
-#define N (1 << 20)
+// #define N (1 << 20)
+#define N 20
 #endif
 
 #ifndef TILESIZE
@@ -74,7 +75,7 @@
 #endif
 
 #ifndef NTIMES
-#define NTIMES 20
+#define NTIMES 10
 #endif
 
 #define OFFSET 0

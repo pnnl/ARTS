@@ -51,7 +51,7 @@ if (ARTS_USE_CXL)
       triangle_count2
       triangle_count_promise
       stream_cpu
-      cxl_stream
+    #   cxl_stream
   )
 else()
 set(CPU_EXAMPLES
@@ -159,5 +159,6 @@ endforeach()
 # random_access: needs internal include dir for arts/memory/db.h (CXL flush APIs)
 if (ARTS_USE_CXL)
   add_subdirectory(random_access)
+  add_subdirectory(stream)
 endif()
  
