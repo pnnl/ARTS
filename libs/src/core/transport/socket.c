@@ -478,7 +478,7 @@ bool arts_remote_setup_incoming() {
           // a previous test's remote still holds the port.
           struct pollfd accept_pfd = {.fd = local_socket_recieve[z],
                                       .events = POLLIN};
-          int poll_res = poll(&accept_pfd, 1, 20000);
+          int poll_res = poll(&accept_pfd, 1, 60000); // Increase timeout for Crete
           if (poll_res <= 0) {
             ARTS_INFO("Accept timed out waiting for remote connection "
                       "(port index %d, poll=%d, errno=%d: %s)",
