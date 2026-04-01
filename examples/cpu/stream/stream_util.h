@@ -49,13 +49,13 @@ extern "C" {
 
 #include "arts.h"
 
-#define CXL_DB 1
+// #define ARTS_USE_CXL 1
 // #define N 20000000
 #define N (1 << 20) 
 // #define N 20
 #define TILESIZE 131072
-#define NTIMES 20
-// #define NTIMES 2
+// #define NTIMES 20
+#define NTIMES 2
 // #define NTIMES 10
 #define OFFSET 0
 

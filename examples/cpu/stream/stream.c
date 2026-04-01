@@ -86,8 +86,8 @@
 #include <string.h>
 
 #include "arts.h"
-#include "internal/arts/gas/guid.h"
-#include "internal/arts/cxl/wrapper.h"
+#include "arts/gas/guid.h"
+#include "arts/cxl/wrapper.h"
 
 #include "stream_util.h"
 
@@ -212,7 +212,7 @@ void copy_kernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     b[idx] = a[idx];
   }
   
-  #if CXL_DB
+  #if ARTS_USE_CXL
   arts_cxl_producer_flush(depv[0].guid);
   arts_cxl_producer_flush(depv[1].guid);
   #endif
@@ -233,7 +233,7 @@ void scale_kernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     b[idx] = scale * a[idx];
   }
 
-  #if CXL_DB
+  #if ARTS_USE_CXL
   arts_cxl_producer_flush(depv[0].guid);
   arts_cxl_producer_flush(depv[1].guid);
   #endif
@@ -254,7 +254,7 @@ void add_kernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     c[idx] = a[idx] + b[idx];
   }
    
-  #if CXL_DB
+  #if ARTS_USE_CXL
   arts_cxl_producer_flush(depv[0].guid);
   arts_cxl_producer_flush(depv[1].guid);
   arts_cxl_producer_flush(depv[2].guid);
@@ -277,7 +277,7 @@ void triad_kernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     c[idx] = a[idx] + scale * b[idx];
   }
   
-  #if CXL_DB
+  #if ARTS_USE_CXL
   arts_cxl_producer_flush(depv[0].guid);
   arts_cxl_producer_flush(depv[1].guid);
   arts_cxl_producer_flush(depv[2].guid);
@@ -330,7 +330,7 @@ void done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf(HLINE);
   */
   
-  #if !CXL_DB
+  #if !ARTS_USE_CXL
   double** a_tile_all = malloc(sizeof(double*)*num_tiles);
   double** b_tile_all = malloc(sizeof(double*)*num_tiles);
   double** c_tile_all = malloc(sizeof(double*)*num_tiles);
@@ -347,7 +347,7 @@ void done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
  
   // Validate results on node 0
   if (!arts_get_current_node()) {
-    #if CXL_DB
+    #if ARTS_USE_CXL
     for (unsigned int i = 0; i < num_tiles; i++) {
       arts_cxl_consumer_flush(a_tile_guids[i]);
       arts_cxl_consumer_flush(b_tile_guids[i]);
@@ -366,7 +366,7 @@ void done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   free(a_tile);
   free(b_tile);
   free(c_tile);
-  #if !CXL_DB
+  #if !ARTS_USE_CXL
   for (unsigned int i=0; i<num_tiles; i++) {
     free(a_tile_all[i]);
     free(b_tile_all[i]);
@@ -390,7 +390,7 @@ void stream_driver(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   unsigned int current_node = arts_get_current_node();
   uint32_t num_deps;
   
-  // #if CXL_DB
+  // #if ARTS_USE_CXL
   num_deps = tiles;
   // #else
   // num_deps = curr_num_tiles;
@@ -448,7 +448,7 @@ void init_per_node(unsigned int node_id, int argc, char **argv) {
   b_tile_guids = malloc(sizeof(arts_guid_t)*num_tiles);
   c_tile_guids = malloc(sizeof(arts_guid_t)*num_tiles);
   
-  #if !CXL_DB
+  #if !ARTS_USE_CXL
   unsigned int owner = 0;
   for (unsigned int i = 0; i < num_tiles; i++) {
     // unsigned int owner = get_tile_owner(i);
@@ -458,18 +458,18 @@ void init_per_node(unsigned int node_id, int argc, char **argv) {
     owner = (owner+1)%arts_get_total_nodes();
   }
   #endif
- #if CXL_DB
+ #if ARTS_USE_CXL
   if (!node_id) {
   #endif
     a_tile = (double **)calloc(num_tiles, sizeof(double *));
     b_tile = (double **)calloc(num_tiles, sizeof(double *));
     c_tile = (double **)calloc(num_tiles, sizeof(double *));
     
-    #if !CXL_DB
+    #if !ARTS_USE_CXL
     owner = 0;
     #endif
     for (unsigned int i = 0; i < num_tiles; i++) {
-      #if CXL_DB
+      #if ARTS_USE_CXL
       a_tile_guids[i] = arts_db_create((void **)&(a_tile[i]), tile_size * sizeof(double),
                                   ARTS_DB_CXL, NULL);
       b_tile_guids[i] = arts_db_create((void **)&(b_tile[i]), tile_size * sizeof(double),
@@ -492,10 +492,10 @@ void init_per_node(unsigned int node_id, int argc, char **argv) {
           b_tile[i][j] = 2.0;
           c_tile[i][j] = 0.0;
         }
-      #if !CXL_DB
+      #if !ARTS_USE_CXL
       }
     #endif
-      #if CXL_DB
+      #if ARTS_USE_CXL
       arts_cxl_producer_flush(a_tile_guids[i]);
       arts_cxl_producer_flush(b_tile_guids[i]);
       arts_cxl_producer_flush(c_tile_guids[i]);
@@ -525,34 +525,34 @@ void init_per_node(unsigned int node_id, int argc, char **argv) {
       arts_printf(
           "Your clock granularity appears to be less than one microsecond.\n");
     first_kernel = arts_guid_reserve(ARTS_EDT, node_id);
-  #if CXL_DB
+  #if ARTS_USE_CXL
   }
   #endif
 }
 
 void init_per_worker(unsigned int node_id, unsigned int worker_id,
                               int argc, char **argv) {
-  #if CXL_DB
+  #if ARTS_USE_CXL
   wbinv();
   if (!node_id) {
   #endif
     double t = my_second();
-    #if !CXL_DB
+    #if !ARTS_USE_CXL
     unsigned int owner = 0;
     #endif
     for (unsigned int i = 0; i < num_tiles; i++) {
-      #if !CXL_DB
+      #if !ARTS_USE_CXL
       // if (node_id == get_tile_owner(i)) {
       if (node_id == owner) {
       #endif
       if (i % arts_get_total_workers() == worker_id) {
         for (unsigned int j = 0; j < tile_size; j++)
           a_tile[i][j] = 2.0E0 * a_tile[i][j];
-        #if CXL_DB
+        #if ARTS_USE_CXL
         arts_cxl_producer_flush(a_tile_guids[i]);
         #endif
       }
-      #if !CXL_DB
+      #if !ARTS_USE_CXL
       }
       owner = (owner+1)%arts_get_total_nodes();
       #endif
@@ -561,7 +561,7 @@ void init_per_worker(unsigned int node_id, unsigned int worker_id,
     t = 1.0E6 * (my_second() - t);
 
     if (!worker_id) {
-      #if !CXL_DB
+      #if !ARTS_USE_CXL
       if (!node_id) {
       #endif
         arts_printf("Each test below will take on the order of %d microseconds.\n",
@@ -576,7 +576,7 @@ void init_per_worker(unsigned int node_id, unsigned int worker_id,
         arts_printf("For best results, please be sure you know the\n");
         arts_printf("precision of your system timer.\n");
         arts_printf(HLINE);
-      #if !CXL_DB
+      #if !ARTS_USE_CXL
       }
       #endif
       
@@ -590,7 +590,7 @@ void init_per_worker(unsigned int node_id, unsigned int worker_id,
       if (!node_id)
         arts_edt_create(stream_driver, 0, NULL, 0, &(arts_hint_t){.route = 0});
     }
-  #if CXL_DB
+  #if ARTS_USE_CXL
   }
   #endif
 }

@@ -156,9 +156,9 @@ foreach(example ${CPU_CXX_EXAMPLES})
     add_cpu_cxx_example(${example})
 endforeach()
 
+add_subdirectory(stream)
 # random_access: needs internal include dir for arts/memory/db.h (CXL flush APIs)
 if (ARTS_USE_CXL)
   add_subdirectory(random_access)
-  add_subdirectory(stream)
 endif()
  

@@ -42,7 +42,7 @@
 #include "arts.h"
 #include "arts/memory/db.h"
 
-#define CXL_DB 1
+// #define ARTS_USE_CXL 1
 
 uint64_t start = 0;
 
@@ -61,7 +61,7 @@ void fib_join(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   /* Create a DB to store the result */
   unsigned int *result_ptr;
-#if CXL_DB
+#if ARTS_USE_CXL
   arts_guid_t result_guid = arts_db_create((void **)&result_ptr,
                                            sizeof(unsigned int),
                                            ARTS_DB_CXL, NULL);
@@ -69,13 +69,13 @@ void fib_join(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t result_guid = arts_db_create((void **)&result_ptr,
                                            sizeof(unsigned int),
                                            ARTS_DB_DEFAULT, NULL);
-#endif /* CXL_DB */
+#endif /* ARTS_USE_CXL */
   assert(result_ptr && "Result ptr not NULL");
   *result_ptr = x + y;
 
-#if CXL_DB
+#if ARTS_USE_CXL
   arts_cxl_producer_flush(result_guid);
-#endif /* CXL_DB */
+#endif /* ARTS_USE_CXL */
   /* Signal the parent EDT with the result DB */
   arts_signal_edt((arts_guid_t)paramv[0], (uint32_t)paramv[1], result_guid,
                   DB_MODE_RO);
@@ -105,7 +105,7 @@ void fib_fork(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
     /* Create DB for n-1 */
     unsigned int *n1_ptr;
-#if CXL_DB
+#if ARTS_USE_CXL
     arts_guid_t n1_guid = arts_db_create((void **)&n1_ptr,
                                          sizeof(unsigned int),
                                          ARTS_DB_CXL, NULL);
@@ -113,16 +113,16 @@ void fib_fork(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_guid_t n1_guid = arts_db_create((void **)&n1_ptr,
                                          sizeof(unsigned int),
                                          ARTS_DB_DEFAULT, NULL);
-#endif /* CXL_DB */
+#endif /* ARTS_USE_CXL */
     assert(n1_ptr && "n1_ptr not NULL");
     *n1_ptr = num - 1;
-#if CXL_DB
+#if ARTS_USE_CXL
     arts_cxl_producer_flush(n1_guid);
-#endif /* CXL_DB */
+#endif /* ARTS_USE_CXL */
 
     /* Create DB for n-2 */
     unsigned int *n2_ptr;
-#if CXL_DB
+#if ARTS_USE_CXL
     arts_guid_t n2_guid = arts_db_create((void **)&n2_ptr,
                                          sizeof(unsigned int),
                                          ARTS_DB_CXL, NULL);
@@ -130,12 +130,12 @@ void fib_fork(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_guid_t n2_guid = arts_db_create((void **)&n2_ptr,
                                          sizeof(unsigned int),
                                          ARTS_DB_DEFAULT, NULL);
-#endif /* CXL_DB */
+#endif /* ARTS_USE_CXL */
     assert(n2_ptr && "n2_ptr not NULL");
     *n2_ptr = num - 2;
-#if CXL_DB
+#if ARTS_USE_CXL
     arts_cxl_producer_flush(n2_guid);
-#endif /* CXL_DB */
+#endif /* ARTS_USE_CXL */
 
     /* Create first child task with n-1 */
     uint64_t args1[2] = {(uint64_t)join_guid, 0};
@@ -183,7 +183,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   /* Create a DB for the input number */
   unsigned int *num_ptr;
-#if CXL_DB
+#if ARTS_USE_CXL
   arts_guid_t num_guid = arts_db_create((void **)&num_ptr,
                                         sizeof(unsigned int),
                                         ARTS_DB_CXL, NULL);
@@ -191,12 +191,12 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t num_guid = arts_db_create((void **)&num_ptr,
                                         sizeof(unsigned int),
                                         ARTS_DB_DEFAULT, NULL);
-#endif /* CXL_DB */
+#endif /* ARTS_USE_CXL */
   assert(num_ptr && "main_edt num_ptr not NULL");
   *num_ptr = num;
-#if CXL_DB
+#if ARTS_USE_CXL
   arts_cxl_producer_flush(num_guid);
-#endif /* CXL_DB */
+#endif /* ARTS_USE_CXL */
 
   /* Start the computation */
   uint64_t args[2] = {(uint64_t)done_guid, 0};
