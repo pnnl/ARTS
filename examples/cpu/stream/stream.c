@@ -148,7 +148,7 @@ void populate_tile_range() {
       if (curr_node_tile_start_idx == -1)
         curr_node_tile_start_idx = i;
       curr_num_tiles += 1;
-    } 
+    }
     curr_count += 1;
     if (curr_node != (arts_get_total_nodes()-1)) {
       if (curr_count == tiles_per_node) {
@@ -166,9 +166,9 @@ void populate_tile_range() {
 }
 
 bool tile_in_range(uint64_t i) {
-  if ((i >= curr_node_tile_start_idx) && (i <= curr_node_tile_end_idx)) 
+  if ((i >= curr_node_tile_start_idx) && (i <= curr_node_tile_end_idx))
     return true;
-  else 
+  else
     return false;
 }
 
@@ -207,16 +207,16 @@ void copy_kernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   double *a = (double *)depv[0].ptr;
   double *b = (double *)depv[1].ptr;
-  
+
   for (int idx=0; idx<len; idx++) {
     b[idx] = a[idx];
   }
-  
+
   #if ARTS_USE_CXL
   arts_cxl_producer_flush(depv[0].guid);
   arts_cxl_producer_flush(depv[1].guid);
   #endif
-  arts_signal_edt_null(next_edt, slot); 
+  arts_signal_edt_null(next_edt, slot);
 }
 
 void scale_kernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -228,7 +228,7 @@ void scale_kernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   double *a = (double *)depv[0].ptr;
   double *b = (double *)depv[1].ptr;
-  
+
   for (int idx=0; idx<len; idx++) {
     b[idx] = scale * a[idx];
   }
@@ -253,7 +253,7 @@ void add_kernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   for (int idx=0; idx<len; idx++) {
     c[idx] = a[idx] + b[idx];
   }
-   
+
   #if ARTS_USE_CXL
   arts_cxl_producer_flush(depv[0].guid);
   arts_cxl_producer_flush(depv[1].guid);
@@ -272,22 +272,26 @@ void triad_kernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   double *a = (double *)depv[0].ptr;
   double *b = (double *)depv[1].ptr;
   double *c = (double *)depv[2].ptr;
-  
+
   for (int idx=0; idx<len; idx++) {
     c[idx] = a[idx] + scale * b[idx];
   }
-  
+
   #if ARTS_USE_CXL
   arts_cxl_producer_flush(depv[0].guid);
   arts_cxl_producer_flush(depv[1].guid);
   arts_cxl_producer_flush(depv[2].guid);
-  arts_signal_edt(next_edt, slot, depv[2].guid, DB_MODE_RO);
-  arts_signal_edt(next_edt, num_tiles + slot, depv[0].guid, DB_MODE_RO);
-  arts_signal_edt(next_edt, (2*num_tiles) + slot, depv[1].guid, DB_MODE_RO);
-  arts_signal_edt_null(next_edt, slot); 
+  if (next_edt != done_guid)
+    arts_signal_edt_null(next_edt, slot);
+  else {
+    arts_signal_edt(next_edt, slot, depv[2].guid, DB_MODE_RO);
+    arts_signal_edt(next_edt, num_tiles + slot, depv[0].guid, DB_MODE_RO);
+    arts_signal_edt(next_edt, (2*num_tiles) + slot, depv[1].guid, DB_MODE_RO);
+    // arts_signal_edt_null(next_edt, slot);
+  }
   #else
   if (next_edt != done_guid)
-    arts_signal_edt_null(next_edt, slot); 
+    arts_signal_edt_null(next_edt, slot);
   else {
     double* a_copy;
     double* b_copy;
@@ -298,7 +302,7 @@ void triad_kernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     memcpy(a_copy, depv[2].ptr, sizeof(double)*tile_size);
     memcpy(b_copy, depv[0].ptr, sizeof(double)*tile_size);
     memcpy(c_copy, depv[1].ptr, sizeof(double)*tile_size);
-    
+
     arts_signal_edt(next_edt, slot, a_signal, DB_MODE_RO);
     arts_signal_edt(next_edt, num_tiles + slot, b_signal, DB_MODE_RO);
     arts_signal_edt(next_edt, (2*num_tiles) + slot, c_signal, DB_MODE_RO);
@@ -329,12 +333,12 @@ void done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
   arts_printf(HLINE);
   */
-  
+
   #if !ARTS_USE_CXL
   double** a_tile_all = malloc(sizeof(double*)*num_tiles);
   double** b_tile_all = malloc(sizeof(double*)*num_tiles);
   double** c_tile_all = malloc(sizeof(double*)*num_tiles);
-  
+
   for (unsigned int i=0; i<num_tiles; i++) {
     a_tile_all[i] = malloc(sizeof(double)*tile_size);
     b_tile_all[i] = malloc(sizeof(double)*tile_size);
@@ -344,7 +348,7 @@ void done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     memcpy(c_tile_all[i], depv[(2*num_tiles) + i].ptr, sizeof(double)*tile_size);
   }
   #endif
- 
+
   // Validate results on node 0
   if (!arts_get_current_node()) {
     #if ARTS_USE_CXL
@@ -359,7 +363,7 @@ void done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     #endif
     arts_printf(HLINE);
   }
-  
+
   free(a_tile_guids);
   free(b_tile_guids);
   free(c_tile_guids);
@@ -389,32 +393,32 @@ void stream_driver(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   if (N % tile_size) tiles++;
   unsigned int current_node = arts_get_current_node();
   uint32_t num_deps;
-  
+
   // #if ARTS_USE_CXL
   num_deps = tiles;
   // #else
   // num_deps = curr_num_tiles;
   // #endif
-  
+
   arts_guid_t prev_edt = done_guid;
   for (k = NTIMES-1; k >= 0; k--) {
     uint64_t args_triad[8] = {(uint64_t)triad_kernel, tile_size, N, scalar, (uint64_t)b_tile_guids,
                            (uint64_t)c_tile_guids, (uint64_t)a_tile_guids, prev_edt};
- 
+
     prev_edt = arts_edt_create(launch_3_kernel_edt, 8, args_triad, num_deps,
                                &(arts_hint_t){.route = current_node});
-    
+
     uint64_t args_add[8] = {(uint64_t)add_kernel, tile_size, N, 0,
                           (uint64_t)a_tile_guids, (uint64_t)b_tile_guids,
                           (uint64_t)c_tile_guids, prev_edt};
     prev_edt = arts_edt_create(launch_3_kernel_edt, 8, args_add, num_deps,
                                &(arts_hint_t){.route = current_node});
-  
+
     uint64_t args_scale[7] = {(uint64_t)scale_kernel, tile_size, N, scalar,
                              (uint64_t)c_tile_guids, (uint64_t)b_tile_guids, prev_edt};
     prev_edt = arts_edt_create(launch_2_kernel_edt, 7, args_scale, num_deps,
                                &(arts_hint_t){.route = current_node});
-    
+
     uint64_t args_copy[7] = {(uint64_t)copy_kernel, tile_size, N, 0,
                        (uint64_t)a_tile_guids, (uint64_t)c_tile_guids, prev_edt};
     if (k == 0) {
@@ -435,19 +439,19 @@ void init_per_node(unsigned int node_id, int argc, char **argv) {
   num_tiles = N / tile_size;
   if (N % tile_size)
     num_tiles++;
-  
+
   done_guid = arts_guid_reserve(ARTS_EDT, 0);
-  
+
   // populate_tile_range();
 
   if (!node_id)
     arts_printf("N: %u tile_size: %u num_tiles: %u\n", N, tile_size, num_tiles);
   // }
-  
+
   a_tile_guids = malloc(sizeof(arts_guid_t)*num_tiles);
   b_tile_guids = malloc(sizeof(arts_guid_t)*num_tiles);
   c_tile_guids = malloc(sizeof(arts_guid_t)*num_tiles);
-  
+
   #if !ARTS_USE_CXL
   unsigned int owner = 0;
   for (unsigned int i = 0; i < num_tiles; i++) {
@@ -464,7 +468,7 @@ void init_per_node(unsigned int node_id, int argc, char **argv) {
     a_tile = (double **)calloc(num_tiles, sizeof(double *));
     b_tile = (double **)calloc(num_tiles, sizeof(double *));
     c_tile = (double **)calloc(num_tiles, sizeof(double *));
-    
+
     #if !ARTS_USE_CXL
     owner = 0;
     #endif
@@ -486,7 +490,7 @@ void init_per_node(unsigned int node_id, int argc, char **argv) {
         c_tile[i] = arts_db_create_with_guid(c_tile_guids[i], tile_size * sizeof(double),
                                              ARTS_DB_DEFAULT, NULL, NULL);
       #endif
-      
+
         for (unsigned int j = 0; j < tile_size; j++) {
           a_tile[i][j] = 1.0;
           b_tile[i][j] = 2.0;
@@ -579,7 +583,7 @@ void init_per_worker(unsigned int node_id, unsigned int worker_id,
       #if !ARTS_USE_CXL
       }
       #endif
-      
+
       unsigned int tiles = N / tile_size;
       if (N % tile_size) tiles++;
 
