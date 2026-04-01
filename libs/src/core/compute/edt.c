@@ -638,7 +638,7 @@ void internal_signal_edt_with_mode(arts_guid_t edt_packet, uint32_t slot,
       if (edt) {
         arts_edt_dep_t *edt_dep = (arts_edt_dep_t *)arts_get_depv(edt);
         if (slot < edt->depc) {
-          #ifdef USE_CXL
+          #ifdef ARTS_USE_CXL
           void* ptr;
           if (mode == ARTS_DB_CXL) {
             ptr = ((struct arts_db *)arts_get_cxl_ptr(data_guid)) +1;
