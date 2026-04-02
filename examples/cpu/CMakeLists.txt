@@ -51,7 +51,7 @@ if (ARTS_USE_CXL)
       triangle_count2
       triangle_count_promise
       stream_cpu
-    #   cxl_stream
+      inhibitor_raw_mem
   )
 else()
 set(CPU_EXAMPLES
@@ -121,14 +121,14 @@ function(add_cpu_cxx_example example_name)
     target_link_options(${example_name} PRIVATE -no-pie -fno-pie -fno-PIE)
 endfunction()
 
-# Create CPU example executables (excluding cxl_stream which needs special handling)
+# Create CPU example executables (excluding targets that need special CXL handling)
 foreach(example ${CPU_EXAMPLES})
-    if(NOT example STREQUAL "cxl_stream")
+    if(NOT example STREQUAL "cxl_stream" AND NOT example STREQUAL "inhibitor_raw_mem")
         add_cpu_example(${example})
     endif()
 endforeach()
 
-# cxl_stream: needs internal include dir for arts/memory/db.h (CXL flush APIs)
+# cxl_stream: needs arts_cxl_lib + ARTS_USE_CXL definition
 if (ARTS_USE_CXL)
   add_executable(cxl_stream cxl_stream.c)
   target_include_directories(cxl_stream PRIVATE
@@ -149,6 +149,29 @@ if (ARTS_USE_CXL)
   # Non-PIE: function pointers must match across nodes (multinode EDT dispatch)
   target_compile_options(cxl_stream PRIVATE -fno-pie -fno-PIE)
   target_link_options(cxl_stream PRIVATE -no-pie -fno-pie -fno-PIE)
+endif()
+
+# inhibitor_raw_mem: needs arts_cxl_lib + ARTS_USE_CXL definition
+if (ARTS_USE_CXL)
+  add_executable(inhibitor_raw_mem inhibitor_raw_mem.c)
+  target_include_directories(inhibitor_raw_mem PRIVATE
+      ${ARTS_PUBLIC_INCLUDE_DIR}
+      ${ARTS_INTERNAL_INCLUDE_DIR}
+      ${ARTS_BUILD_INTERNAL_INCLUDE_DIR}
+  )
+  if(TARGET arts_shared)
+      target_link_libraries(inhibitor_raw_mem PRIVATE arts_shared)
+  elseif(TARGET arts_static)
+      target_link_libraries(inhibitor_raw_mem PRIVATE arts_static)
+  endif()
+  target_link_libraries(inhibitor_raw_mem PRIVATE Threads::Threads ${RT_LIBRARY} ${M_LIBRARY} ${ANL_LIBRARY})
+  if(ARTS_USE_CXL AND TARGET arts_cxl_lib)
+      target_link_libraries(inhibitor_raw_mem PRIVATE arts_cxl_lib)
+      target_compile_definitions(inhibitor_raw_mem PRIVATE ARTS_USE_CXL=1)
+  endif()
+  # Non-PIE: function pointers must match across nodes (multinode EDT dispatch)
+  target_compile_options(inhibitor_raw_mem PRIVATE -fno-pie -fno-PIE)
+  target_link_options(inhibitor_raw_mem PRIVATE -no-pie -fno-pie -fno-PIE)
 endif()
 
 # Create C++ CPU example executables
