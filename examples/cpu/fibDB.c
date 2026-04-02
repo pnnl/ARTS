@@ -47,7 +47,7 @@
 
 uint64_t start = 0;
 
-void fib_join(uint32_t paramc, uint64_t *paramv, uint32_t depc,
+void fib_join(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
               arts_edt_dep_t depv[]) {
   // Validate DB pointers before accessing them
   assert(depv[0].ptr != NULL && "First DB pointer is valid");
@@ -66,7 +66,7 @@ void fib_join(uint32_t paramc, uint64_t *paramv, uint32_t depc,
       arts_db_create((void **)&result_ptr, sizeof(unsigned int), ARTS_DB_CXL, NULL);
 #else
   arts_guid_t result_guid =
-      arts_db_create((void **)&result_ptr, sizeof(unsigned int), ARTS_DB_READ, NULL);
+      arts_db_create((void **)&result_ptr, sizeof(unsigned int), ARTS_DB_DEFAULT, NULL);
 #endif /* ARTS_USE_CXL */
   assert(result_ptr && "Result ptr not NULL");
   *result_ptr = x + y;
@@ -75,10 +75,10 @@ void fib_join(uint32_t paramc, uint64_t *paramv, uint32_t depc,
   arts_cxl_producer_flush(result_guid);
 #endif /* ARTS_USE_CXL */
   // Signal the parent EDT with the result DB
-  arts_signal_edt(paramv[0], paramv[1], result_guid, DB_MODE_READ);
+  arts_signal_edt(paramv[0], paramv[1], result_guid, DB_MODE_RO);
 }
 
-void fib_fork(uint32_t paramc, uint64_t *paramv, uint32_t depc,
+void fib_fork(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
               arts_edt_dep_t depv[]) {
   unsigned int next = (arts_get_current_node() + 1) % arts_get_total_nodes();
   // unsigned int next = arts_get_current_node();
@@ -91,7 +91,7 @@ void fib_fork(uint32_t paramc, uint64_t *paramv, uint32_t depc,
   unsigned int num = ((unsigned int *)(depv[0].ptr))[0];
 
   if (num < 2) {
-    arts_signal_edt(guid, slot, depv[0].guid, DB_MODE_READ);
+    arts_signal_edt(guid, slot, depv[0].guid, DB_MODE_RO);
   } else {
     // Create a join EDT that will combine results
     arts_guid_t join_guid =
@@ -104,7 +104,7 @@ void fib_fork(uint32_t paramc, uint64_t *paramv, uint32_t depc,
         arts_db_create((void **)&n1_ptr, sizeof(unsigned int), ARTS_DB_CXL, NULL);
 #else
     arts_guid_t n1_guid =
-        arts_db_create((void **)&n1_ptr, sizeof(unsigned int), ARTS_DB_READ, NULL);
+        arts_db_create((void **)&n1_ptr, sizeof(unsigned int), ARTS_DB_DEFAULT, NULL);
 #endif /* ARTS_USE_CXL */
     assert(n1_ptr && "n1_ptr not NULL");
     *n1_ptr = num - 1;
@@ -118,7 +118,7 @@ void fib_fork(uint32_t paramc, uint64_t *paramv, uint32_t depc,
         arts_db_create((void **)&n2_ptr, sizeof(unsigned int), ARTS_DB_CXL, NULL);
 #else
     arts_guid_t n2_guid =
-        arts_db_create((void **)&n2_ptr, sizeof(unsigned int), ARTS_DB_READ, NULL);
+        arts_db_create((void **)&n2_ptr, sizeof(unsigned int), ARTS_DB_DEFAULT, NULL);
 #endif /* ARTS_USE_CXL */
     assert(n2_ptr && "n2_ptr not NULL");
     *n2_ptr = num - 2;
@@ -130,17 +130,17 @@ void fib_fork(uint32_t paramc, uint64_t *paramv, uint32_t depc,
     uint64_t args1[2] = {join_guid, 0}; // Last param not used since we pass DB
     arts_guid_t fib1 = arts_edt_create(fib_fork, 2, args1, 1,
                                        &(arts_hint_t){.route = next});
-    arts_signal_edt(fib1, 0, n1_guid, DB_MODE_READ);
+    arts_signal_edt(fib1, 0, n1_guid, DB_MODE_RO);
 
     // Create second child task with n-2
     uint64_t args2[2] = {join_guid, 1}; // Last param not used since we pass DB
     arts_guid_t fib2 = arts_edt_create(fib_fork, 2, args2, 1,
                                        &(arts_hint_t){.route = next});
-    arts_signal_edt(fib2, 0, n2_guid, DB_MODE_READ);
+    arts_signal_edt(fib2, 0, n2_guid, DB_MODE_RO);
   }
 }
 
-void fib_done(uint32_t paramc, uint64_t *paramv, uint32_t depc,
+void fib_done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
               arts_edt_dep_t depv[]) {
   uint64_t time = arts_get_time_stamp() - start;
 
@@ -175,7 +175,7 @@ void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
 // arts_cxl_producer_flush(num_guid);
 #else
     arts_guid_t num_guid =
-        arts_db_create((void **)&num_ptr, sizeof(unsigned int), ARTS_DB_READ, NULL);
+        arts_db_create((void **)&num_ptr, sizeof(unsigned int), ARTS_DB_DEFAULT, NULL);
 #endif /* ARTS_USE_CXL */
     assert(num_ptr && "init_per_worker num_ptr not NULL");
     *num_ptr = num;
@@ -188,7 +188,7 @@ void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
     start = arts_get_time_stamp();
     arts_guid_t fib_guid = arts_edt_create(fib_fork, 2, args, 1,
                                            &(arts_hint_t){.route = 0});
-    arts_signal_edt(fib_guid, 0, num_guid, DB_MODE_READ);
+    arts_signal_edt(fib_guid, 0, num_guid, DB_MODE_RO);
   }
 }
 
