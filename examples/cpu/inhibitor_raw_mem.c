@@ -46,9 +46,8 @@
 #include "arts/memory/db.h"
 #include "arts/cxl/wrapper.h"
 
-// #define MEM_SIZE 2000000000 // ~2GB
-// #define MEM_SIZE 200000000
-#define MEM_SIZE 20000000
+// #define MEM_SIZE 2000000000ULL // ~2GB
+#define MEM_SIZE 200000000ULL // ~200MB
 #define ITERATIONS 10
 
 arts_guid_t mem_guid;
@@ -61,6 +60,7 @@ uint64_t wait_time = -1;
 uint64_t stride = 0; // Default value of 0
 uint8_t scaling = 0; // 0: Strong, 1: Weak
 struct timespec global_start, global_end;
+uint64_t total_mem_size;
 
 // Print usage information
 void print_usage(const char *program_name)
@@ -74,19 +74,12 @@ void print_usage(const char *program_name)
   fprintf(stderr, "  -g : Flag to weak scale\n");
 }
 
-// Fill array with random bytes
 void fill_array(char *array, long size)
 {
-  // static int seeded = 0;
-  // if (!seeded)
-  // {
-  //   srand((unsigned int)time(NULL));
-  //   seeded = 1;
-  // }
-  for (int i = 0; i < size; i++)
-  {
-    // array[i] = (char)(rand() % 256); // random byte 0–255
-    array[i] = 1;
+  static unsigned char x = 1;
+  for (long i = 0; i < size; i++) {
+    x = (unsigned char)(x + 73);
+    array[i] = x;
   }
 }
 
@@ -103,21 +96,17 @@ void init_cxl_memory()
   mem_guid = arts_db_create((void **)&mem, MEM_SIZE, ARTS_DB_CXL, NULL);
 }
 
-// void init_cxl_memory_strided()
-// {
-//   mem_guids = (arts_guid_t *)malloc(sizeof(arts_guid_t) * num_dbs * 2); // Reserve guids for stride between each data guid
-//   mem = (char **)malloc(sizeof(char *) * num_dbs * 2);
-//   for (uint64_t i = 0; i < num_dbs * 2; i++)
-//   {
-//     // Even guids get accessed, odd guids are strides
-//     if (i % 2)
-//       mem_guids[i] = arts_db_create((void **)&(mem[i]), stride, ARTS_DB_CXL, NULL);
-//     else
-//       mem_guids[i] = arts_db_create((void **)&(mem[i]), access_size, ARTS_DB_CXL, NULL);
-//     // memset(mem[i], 0, access_size);
-//     // arts_cxl_producer_flush(mem_guids[i]);
-//   }
-// }
+void init_cxl_memory_strided()
+{
+
+  uint64_t num_gaps;
+  if (stride == 0)
+    num_gaps = 0;
+  else
+    num_gaps = MEM_SIZE/stride;
+  total_mem_size = MEM_SIZE+(num_gaps*stride);
+  mem_guid = arts_db_create((void **)&mem, total_mem_size, ARTS_DB_CXL, NULL);
+}
 
 void free_cxl_memory()
 {
@@ -132,12 +121,10 @@ void run_sequential(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t done_guid = paramv[3];
   uint32_t slot = paramv[4];
   uint64_t num_procs = paramv[5];
-  printf("Num Procs: %lu\n", num_procs);
   int mode = 0;
   char *temp = malloc(sizeof(char) * size);
   long start_idx = slot * (MEM_SIZE / num_procs);
   long area_size = MEM_SIZE / num_procs;
-  printf("Area Size: %ld \n", area_size);
   struct timespec start, end;
   clock_gettime(CLOCK_MONOTONIC, &start);
   for (uint32_t idx = 0; idx < ITERATIONS; idx++)
@@ -179,36 +166,51 @@ void run_sequential(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_signal_edt(done_guid, slot, bandwidth_guid, DB_MODE_RO);
 }
 
-/*
 void run_linear(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                arts_edt_dep_t depv[])
 {
-  uint64_t access_size = paramv[0];
-  uint64_t length = paramv[1];
+  uint64_t size = paramv[0];
+  char *mem = (char *)paramv[1];
   uint64_t wait_time = paramv[2];
   arts_guid_t done_guid = paramv[3];
   uint32_t slot = paramv[4];
-  struct timespec start, end;
+  uint64_t num_procs = paramv[5];
+  uint64_t total_mem = paramv[6];
+  uint64_t stride = paramv[7];
   int mode = 0;
-  char *temp = malloc(sizeof(char) * access_size * length);
+  char *temp = malloc(sizeof(char) * size);
+  long start_idx = slot * (total_mem/ num_procs);
+  long area_size = total_mem / num_procs;
+  struct timespec start, end;
   clock_gettime(CLOCK_MONOTONIC, &start);
   for (uint32_t idx = 0; idx < ITERATIONS; idx++)
   {
-    for (uint64_t i = 0; i < length * 2; i += 2)
+    long curr_idx = start_idx;
+    long end_idx = start_idx + area_size;
+    mode = (mode + 1) % 2;
+    while ((curr_idx + size + stride) < end_idx)
     {
       if (!mode)
       {
-        fill_array(depv[i].ptr, access_size);
-        arts_cxl_producer_flush(depv[i].guid);
+        // printf("Rank %d: Writing...\n", rank);
+        fill_array(&(mem[curr_idx]), size);
+        FLUSH_FENCE_PRODUCER((void *)&(mem[curr_idx]), ALIGN_UP(size, CACHELINE_SIZE));
+        curr_idx += size + stride;
+        // printf("Rank %d: Waiting...\n", rank);
         sleep_us(wait_time);
+        mode = (mode + 1) % 2;
       }
       else
       {
-        arts_cxl_consumer_flush(depv[i].guid);
-        memcpy(temp + i, depv[i].ptr, access_size);
+        // printf("Rank %d: Reading...\n", rank);
+        FLUSH_FENCE_CONSUMER((void *)&(mem[curr_idx]), ALIGN_UP(size, CACHELINE_SIZE));
+        memcpy(temp, &(mem[curr_idx]), size);
+        curr_idx += size + stride;
+        // printf("Rank %d: Waiting...\n", rank);
+        sleep_us(wait_time);
+        mode = (mode + 1) % 2;
       }
     }
-    mode = (mode + 1) % 2;
   }
   clock_gettime(CLOCK_MONOTONIC, &end);
   uint64_t elapsed_microseconds = (end.tv_sec - start.tv_sec) * 1000000; // Seconds to microseconds
@@ -216,10 +218,104 @@ void run_linear(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   free(temp);
   double *bandwidth;
   arts_guid_t bandwidth_guid = arts_db_create((void **)&bandwidth, sizeof(double), ARTS_DB_DEFAULT, NULL);
-  *bandwidth = ((double)(access_size * length * ITERATIONS)) / (elapsed_microseconds / 1e6);
+  *bandwidth = (((double)area_size * ITERATIONS)) / (elapsed_microseconds / 1e6);
   arts_signal_edt(done_guid, slot, bandwidth_guid, DB_MODE_RO);
 }
 
+void run_random(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                        arts_edt_dep_t depv[])
+{
+  uint64_t size = paramv[0];
+  char *mem = (char *)paramv[1];
+  uint64_t wait_time = paramv[2];
+  arts_guid_t done_guid = paramv[3];
+  uint32_t slot = paramv[4];
+  uint64_t num_procs = paramv[5];
+  int mode = 0;
+  char *temp = malloc(sizeof(char) * size);
+  long start_idx = slot * (MEM_SIZE / num_procs);
+  long area_size = MEM_SIZE / num_procs;
+
+  /* Precompute random index table to eliminate overhead from the hot loop.
+   * Each entry is a pre-aligned offset within [0, area_size - size].
+   * We use a fixed table size that is large enough to avoid pattern repetition
+   * but small enough to generate quickly. Using a power of two allows a
+   * cheap bitmask instead of modulo in the hot loop. */
+#define RAND_TABLE_BITS 14
+#define RAND_TABLE_SIZE (1 << RAND_TABLE_BITS)   /* 16384 entries */
+#define RAND_TABLE_MASK (RAND_TABLE_SIZE - 1)
+
+  long num_blocks = area_size / size;   /* number of aligned blocks in area */
+  long *rand_table = malloc(sizeof(long) * RAND_TABLE_SIZE);
+
+  /* Use xorshift64 to fill table quickly with no stdlib overhead */
+  uint64_t rng = 0xdeadbeefcafeULL ^ (uint64_t)slot; /* per-slot seed */
+  for (int i = 0; i < RAND_TABLE_SIZE; i++)
+  {
+    rng ^= rng << 13;
+    rng ^= rng >> 7;
+    rng ^= rng << 17;
+    /* Map to a block index, then scale to byte offset.
+     * % num_blocks keeps us within the area; result is already
+     * a multiple of size so no extra alignment is needed. */
+    rand_table[i] = (long)(rng % (uint64_t)num_blocks) * size;
+  }
+
+  struct timespec start, end;
+  clock_gettime(CLOCK_MONOTONIC, &start);
+
+  uint32_t tbl_idx = 0;   /* walks rand_table; stays in a register */
+
+  for (uint32_t idx = 0; idx < ITERATIONS; idx++)
+  {
+    long end_idx = start_idx + area_size;
+    long ops = area_size / size;   /* access every block once per iteration */
+    mode = (mode + 1) % 2;
+
+    for (long op = 0; op < ops; op++)
+    {
+      /* Single bitmask replaces modulo — no branch, no division */
+      long offset = rand_table[tbl_idx & RAND_TABLE_MASK];
+      tbl_idx++;
+
+      long curr_idx = start_idx + offset;
+
+      if (!mode)
+      {
+      fill_array(&(mem[curr_idx]), size);
+      FLUSH_FENCE_PRODUCER((void *)&(mem[curr_idx]),
+      ALIGN_UP(size, CACHELINE_SIZE));
+      sleep_us(wait_time);
+      mode = (mode + 1) % 2;
+      }
+      else
+      {
+      FLUSH_FENCE_CONSUMER((void *)&(mem[curr_idx]),
+      ALIGN_UP(size, CACHELINE_SIZE));
+      memcpy(temp, &(mem[curr_idx]), size);
+      sleep_us(wait_time);
+      mode = (mode + 1) % 2;
+      }
+    }
+  }
+
+  clock_gettime(CLOCK_MONOTONIC, &end);
+
+  uint64_t elapsed_microseconds = (end.tv_sec - start.tv_sec) * 1000000;
+  elapsed_microseconds += (end.tv_nsec - start.tv_nsec) / 1000;
+
+  free(temp);
+  free(rand_table);
+
+  double *bandwidth;
+  arts_guid_t bandwidth_guid = arts_db_create((void **)&bandwidth,
+  sizeof(double),
+  ARTS_DB_DEFAULT, NULL);
+  *bandwidth = (((double)area_size * ITERATIONS)) / (elapsed_microseconds / 1e6);
+  arts_signal_edt(done_guid, slot, bandwidth_guid, DB_MODE_RO);
+}
+
+/*
 void run_random(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                arts_edt_dep_t depv[])
 {
@@ -275,7 +371,7 @@ void done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     bw_sum += *((double *)depv[i].ptr);
     // printf("Received bandwidth: %f\n", *((double *)depv[i].ptr));
   }
-  printf("Average bandwidth: %f MB/s\n", ((bw_sum / 1e6) / depc));
+  printf("Average per-process bandwidth: %f MB/s\n", ((bw_sum / 1e6) / depc));
 
   uint64_t elapsed_microseconds = (global_end.tv_sec - global_start.tv_sec) * 1000000; // Seconds to microseconds
   elapsed_microseconds += (global_end.tv_nsec - global_start.tv_nsec) / 1000;          // Nanoseconds to microseconds
@@ -311,7 +407,7 @@ void init_per_node(unsigned int node_id, int argc, char **argv)
         wait_time = strtol(optarg, NULL, 10);
         break;
       case 't':
-        stride = strtol(optarg, NULL, 10);
+        stride = ALIGN_UP(strtol(optarg, NULL, 10), CACHELINE_SIZE);
         break;
       case 'g':
         scaling = 1;
@@ -349,7 +445,7 @@ void init_per_node(unsigned int node_id, int argc, char **argv)
     if (access_pattern == 'l')
     {
       printf("Initializing strided memory\n");
-      // init_cxl_memory_strided();
+      init_cxl_memory_strided();
     }
     else
     {
@@ -375,56 +471,31 @@ void init_per_node(unsigned int node_id, int argc, char **argv)
     }
     case 'l':
     {
-      /*
       printf("Linear access\n");
-      uint64_t addr_idx = 0;
-      uint64_t dbs_per_proc = num_dbs / num_procs;
       unsigned int next = arts_get_current_node();
       arts_guid_t done_guid = arts_edt_create(done, 0, NULL, num_procs, NULL);
+      clock_gettime(CLOCK_MONOTONIC, &global_start);
       for (uint32_t i = 0; i < num_procs; i++)
       {
-        uint64_t args[] = {access_size, dbs_per_proc, wait_time, done_guid, i};
-        arts_guid_t edt = arts_edt_create(run_linear, 5, args, dbs_per_proc * 2, &(arts_hint_t){.route = next});
-        uint64_t db_count = 0;
-        while (db_count < dbs_per_proc)
-        {
-          arts_signal_edt(edt, db_count * 2, mem_guids[addr_idx], DB_MODE_RO);         // data slot
-          arts_signal_edt(edt, db_count * 2 + 1, mem_guids[addr_idx + 1], DB_MODE_RO); // stride slot
-          addr_idx += 2;
-          db_count += 1;
-        }
+        uint64_t args[] = {access_size, (uint64_t)mem, wait_time, done_guid, i, num_procs, total_mem_size, stride};
+        arts_guid_t edt = arts_edt_create(run_linear, 8, args, 0, &(arts_hint_t){.route = next});
         next = (next + 1) % arts_get_total_nodes();
-        if (!i)
-          clock_gettime(CLOCK_MONOTONIC, &global_start);
       }
       break;
-      */
     }
     case 'r':
     {
-      /*
       printf("Random access\n");
-      uint64_t addr_idx = 0;
-      uint64_t dbs_per_proc = num_dbs / num_procs;
       unsigned int next = arts_get_current_node();
       arts_guid_t done_guid = arts_edt_create(done, 0, NULL, num_procs, NULL);
+      clock_gettime(CLOCK_MONOTONIC, &global_start);
       for (uint32_t i = 0; i < num_procs; i++)
       {
-        uint64_t args[] = {access_size, dbs_per_proc, wait_time, done_guid, i};
-        arts_guid_t edt = arts_edt_create(run_random, 5, args, dbs_per_proc, &(arts_hint_t){.route = next});
-        uint64_t db_count = 0;
-        while (db_count < dbs_per_proc)
-        {
-          arts_signal_edt(edt, db_count, mem_guids[addr_idx], DB_MODE_RO);
-          addr_idx += 1;
-          db_count += 1;
-        }
+        uint64_t args[] = {access_size, (uint64_t)mem, wait_time, done_guid, i, num_procs};
+        arts_guid_t edt = arts_edt_create(run_random, 6, args, 0, &(arts_hint_t){.route = next});
         next = (next + 1) % arts_get_total_nodes();
-        if (!i)
-          clock_gettime(CLOCK_MONOTONIC, &global_start);
       }
       break;
-      */
     }
     default:
       printf("Invalid access pattern. Defaulting to sequential\n");
