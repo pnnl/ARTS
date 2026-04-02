@@ -528,6 +528,7 @@ void acquire_dbs(struct arts_edt_s *edt) {
         if (arts_guid_is_cxl(depv[i].guid)) {
           struct arts_db_s *cxl_db =
               (struct arts_db_s *)arts_cxl_get_ptr(depv[i].guid);
+          arts_cxl_consumer_flush(depv[i].guid);
           if (cxl_db) {
             db_found = cxl_db;
             arts_atomic_sub(&edt->depc_needed, 1U);
