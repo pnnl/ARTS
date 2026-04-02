@@ -156,6 +156,11 @@ void fib_done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
 void init_per_node(unsigned int node_id, int argc, char **argv) {
   // Nothing to do here
+  #if ARTS_USE_CXL
+    printf("Using CXL\n");
+  #else
+    printf("Using default DBs\n");
+  #endif
 }
 
 void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
