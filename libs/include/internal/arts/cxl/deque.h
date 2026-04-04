@@ -129,6 +129,10 @@ static inline void *arts_cxl_arena_malloc(arts_cxl_arena_t *arena,
     FLUSH_FENCE_PRODUCER(arena, sizeof(arts_cxl_arena_t));
     return (void *)aligned_head;
   }
+  else {
+    printf("Ran out of space in arena!\n");
+    fflush(stdout);
+  }
   return NULL;
 }
 
@@ -147,8 +151,8 @@ static inline arts_cxl_deque_t *arts_cxl_deque_create(void) {
     dq->data[i].base.ptr = NULL;
     dq->data[i].base.size = 0;
   }
-  arts_cxl_arena_init(&dq->consts.mem_arena, 1000000000); /* ~1 GB */
-  arts_cxl_arena_init(&dq->consts.db_arena, 1000000000);  /* ~1 GB */
+  arts_cxl_arena_init(&dq->consts.mem_arena, 5000000000); /* ~5 GB */
+  arts_cxl_arena_init(&dq->consts.db_arena, 5000000000);  /* ~5 GB */
   dq->consts.lock = arts_cxl_tournament_lock_new(ARTS_CXL_NUM_NODES);
 
   assert((sizeof(arts_cxl_deque_t) % CACHELINE_SIZE) == 0 &&
