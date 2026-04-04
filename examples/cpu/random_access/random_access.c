@@ -156,7 +156,7 @@ uint64_t hpcc_starts_cpu(int64_t N) {
 // void hpcc_starts_tiled(int64_cu_t N, uint64_cu_t num_updates,
                           //  uint64_cu_t num_tiles, uint64_cu_t tile_size,
                           //  uint64_cu_t tableSize, uint64_cu_t *r_array) {
-  
+
 void hpcc_starts_tiled(uint32_t paramc, uint64_t *paramv, uint32_t depc,
                           arts_edt_dep_t depv[]) {
   uint64_cu_t N = paramv[0];
@@ -172,7 +172,7 @@ void hpcc_starts_tiled(uint32_t paramc, uint64_t *paramv, uint32_t depc,
   uint64_cu_t* table = depv[0].ptr;
   unsigned long long int* global_ran = depv[1].ptr;
   global_ran += num_tiles;
-  
+
   for (int64_cu_t local = 0; local < MAX_TOTAL_PENDING_UPDATES_CU; local++) {
     int64_cu_t local_index = index * MAX_TOTAL_PENDING_UPDATES_CU + local;
     if (local_index < num_updates) {
@@ -254,7 +254,7 @@ void update_edt(uint32_t paramc, uint64_t *paramv, uint32_t depc,
   uint64_cu_t part_index = paramv[4];
   arts_guid_t next_guid = paramv[5];
   uint32_t slot = paramv[6];
-  
+
   arts_cxl_consumer_flush(depv[0].guid);  // Flush the tile before accessing
   arts_cxl_consumer_flush(depv[1].guid);  // Flush the update_frontier before accessing
 
@@ -286,7 +286,7 @@ void update_driver(uint32_t paramc, uint64_t *paramv, uint32_t depc,
   for (unsigned int i = 0; i < num_tiles; i++) {
     arts_cxl_consumer_flush(depv[i+1].guid);
   }
-  
+
   arts_guid_t read_only = depv[0].guid;
   uint64_t update_args[] = {tile_size, num_tiles, table_size, num_random, 0, next_random_guid, 0};
   uint64_t next = arts_get_current_node();
@@ -320,7 +320,7 @@ void random_driver(uint32_t paramc, uint64_t *paramv, uint32_t depc,
 
   //TODO: Probably need to separate hpcc and update edts. Need to wait for all hpcc
   // EDTs to finish before running update
-  
+
   if (num_rem_updates) {
     // arts_guid_t next_guid = arts_guid_reserve(ARTS_EDT, 0);
     uint64_t next_random = num_rem_updates - num_random;
@@ -345,8 +345,8 @@ void random_driver(uint32_t paramc, uint64_t *paramv, uint32_t depc,
 void sync_edt(uint32_t paramc, uint64_t *paramv, uint32_t depc,
              arts_edt_dep_t depv[]) {
   uint64_t time = arts_get_time_stamp() - start;
-  PRINTF("Time %lu\n", time);
-  
+  arts_printf("Time %lu\n", time);
+
   for (unsigned int i = 0; i < num_tiles; i++) {
     arts_cxl_consumer_flush(depv[i].guid);
   }
@@ -372,7 +372,7 @@ void sync_edt(uint32_t paramc, uint64_t *paramv, uint32_t depc,
       if (tile[j] != Table[index]) {
         if (first_failure) {
           first_failure = 0;
-          PRINTF(
+          arts_printf(
               "FAILED on index:%lu Exp: %lu vs Rec: %lu updates: %lu -> %lu\n",
               index, tile[j], Table[index], tile[tile_size],
               Table[index] ^ tile[j]);
@@ -383,13 +383,13 @@ void sync_edt(uint32_t paramc, uint64_t *paramv, uint32_t depc,
     }
   }
   if (total_errors)
-    PRINTF("%lu errors of %lu!\n", total_errors, index);
+    arts_printf("%lu errors of %lu!\n", total_errors, index);
   else
-    PRINTF("Verified!\n");
+    arts_printf("Verified!\n");
 #endif
 
   double GUPS = (double)NUPDATE / time;
-  PRINTF("GUPS: %lf MB: %lu\n", GUPS,
+  arts_printf("GUPS: %lf MB: %lu\n", GUPS,
          (TABLESIZE * sizeof(uint64_t)) / (1024 * 1024));
   arts_shutdown();
 }
@@ -399,16 +399,16 @@ void init_per_node(unsigned int node_id, int argc, char **argv) {
     if (argc > 1)
       tile_size = (unsigned int)atoi(argv[1]);
     num_tiles = TABLESIZE / tile_size;
-    PRINTF("Random Access Table Size: %u Tile Size: %u Number of Tiles: %u\n",
+    arts_printf("Random Access Table Size: %u Tile Size: %u Number of Tiles: %u\n",
            TABLESIZE, tile_size, num_tiles);
 
     // Create tiled table
     tile_guids = (arts_guid_t*)calloc(num_tiles, sizeof(arts_guid_t)); // TODO: Make sure to free
     tile = (uint64_t **)calloc(num_tiles, sizeof(uint64_t *));
     uint64_t counter = 0;
-    
+
     for (unsigned int i = 0; i < num_tiles; i++) {
-      
+
       tile_guids[i] = arts_db_create((void**)&(tile[i]), (tile_size + 1)*sizeof(uint64_t),
                                  ARTS_DB_CXL, NULL);
 
@@ -417,7 +417,7 @@ void init_per_node(unsigned int node_id, int argc, char **argv) {
       tile[i][tile_size] = 0;
       arts_cxl_producer_flush(tile_guids[i]);
     }
-    
+
     // Create update frontiers.  The number of updates a frontier can hold is 1024
     // per thread
     unsigned int elems_per_frontier = num_tiles + MAX_TOTAL_PENDING_UPDATES;
@@ -436,9 +436,9 @@ void init_per_node(unsigned int node_id, int argc, char **argv) {
 void init_per_worker(unsigned int node_id, unsigned int worker_id,
                               int argc, char **argv) {
   if (!node_id && !worker_id) {
-    PRINTF("Num updates: %lu\n", NUPDATE);
+    arts_printf("Num updates: %lu\n", NUPDATE);
     uint64_t args[] = {NUPDATE, 0, 0, num_tiles};
-    arts_edt_create_with_guid(random_driver, update_guid, 4, args, 1); 
+    arts_edt_create_with_guid(random_driver, update_guid, 4, args, 1);
     arts_signal_edt(update_guid, 0, update_frontier_guid, DB_MODE_RO);
 
     arts_edt_create_with_guid(sync_edt, done_guid, 0, NULL, 1 + num_tiles);

@@ -43,18 +43,17 @@
 extern "C" {
 #endif
 
-// #define PRINTF(...)
- #define PRINTF(...) PRINTF(__VA_ARGS__)
 #define TURNON(...)
 // #define TURNON(...) __VA_ARGS__
 
 // #define TABLESIZE 32UL * 2UL * 80UL * 1024UL * 32UL
-#define TABLESIZE 32UL * 2UL * 80UL * 1024UL
+#define TABLESIZE 32UL * 1024UL * 80UL
 // #define TABLESIZE 32UL * 2UL
 // #define TILESIZE 32UL * 2UL * 80UL * 1024UL
-#define TILESIZE 32UL
+// #define TILESIZE 32UL
+#define TILESIZE 40960UL
 #define NUPDATE (16 * TABLESIZE)
-// #define NUPDATE TABLESIZE 
+// #define NUPDATE TABLESIZE
 
 #define VALIDATE 1
 
