@@ -36,47 +36,53 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef RANDOM_ACCESS_DEFS_H
-#define RANDOM_ACCESS_DEFS_H
+#ifndef RANDOMACCESSDEFS_H
+#define RANDOMACCESSDEFS_H
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* =====================================================================
- * CXL mode toggle:
- *   CXL_DB 1  — use ARTS_DB_CXL datablocks + producer/consumer flushes
- *   CXL_DB 0  — use ARTS_DB_DEFAULT datablocks (no flushes)
- * ===================================================================== */
-#ifndef CXL_DB
-#define CXL_DB 1
-#endif
+// #define PRINTF(...)
+ #define PRINTF(...) PRINTF(__VA_ARGS__)
+#define TURNON(...)
+// #define TURNON(...) __VA_ARGS__
 
-/* Table size: number of 64-bit words in the random-access table */
-#define TABLESIZE (32UL * 2UL * 80UL * 1024UL)
-
-/* Default tile size (number of uint64_t elements per tile) */
+// #define TABLESIZE 32UL * 2UL * 80UL * 1024UL * 32UL
+#define TABLESIZE 32UL * 2UL * 80UL * 1024UL
+// #define TABLESIZE 32UL * 2UL
+// #define TILESIZE 32UL * 2UL * 80UL * 1024UL
 #define TILESIZE 32UL
+#define NUPDATE (16 * TABLESIZE)
+// #define NUPDATE TABLESIZE 
 
-/* Number of updates: 4x the table size (standard HPCC ratio) */
-#define NUPDATE (4UL * TABLESIZE)
-
-/* Enable validation by default */
 #define VALIDATE 1
 
-/* LFSR polynomial and period for the random number generator */
-#define POLY  0x0000000000000007ULL
+// Configured for Volta
+#define MAXTHREADS 32
+#define MAXTHREADBLOCKSPERSM 2
+#define NUMBEROFSM 80
+#define MAXGRID MAXTHREADBLOCKSPERSM *NUMBEROFSM
+
+#define POLY2 0x0000000000000007UL
+#define PERIOD2 1317624576693539401L
+
+#define POLY 0x0000000000000007ULL
 #define PERIOD 1317624576693539401LL
 
-/* Maximum number of updates processed per CPU step (batch size) */
-#define MAX_TOTAL_PENDING_UPDATES (1024ULL * 16ULL)
-#define MAX_UPDATES_PER_CPU_STEP  MAX_TOTAL_PENDING_UPDATES
+#define MAX_TOTAL_PENDING_UPDATES 1024 * 16
+#define MAX_TOTAL_PENDING_UPDATES_CU 1024ULL * 16ULL
 
-typedef unsigned long long int uint64_ra_t;
-typedef long long int          int64_ra_t;
+#define LOCAL_BUFFER_SIZE MAX_TOTAL_PENDING_UPDATES
+#define MAX_UPDATES_PER_GPU_STEP                                               \
+  MAXTHREADS *MAXTHREADBLOCKSPERSM *NUMBEROFSM *LOCAL_BUFFER_SIZE
+#define MAX_UPDATES_PER_CPU_STEP MAX_TOTAL_PENDING_UPDATES
+
+typedef unsigned long long int uint64_cu_t;
+typedef long long int int64_cu_t;
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* RANDOM_ACCESS_DEFS_H */
+#endif
