@@ -119,6 +119,7 @@ void *arts_db_malloc(arts_db_types_t db_type, size_t size) {
   if (db_type == ARTS_DB_CXL) {
     ptr = arts_cxl_deque_db_malloc(arts_node_info.cxl_deque,
                                    &arts_node_info.cxl_local_lock, size);
+    assert(ptr && "arts_cxl_deque_db_malloc ptr is valid\n");
   }
 #endif
   if (!ptr) {
