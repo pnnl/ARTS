@@ -610,7 +610,9 @@ void arts_signal_edt(arts_guid_t edt_guid, uint32_t slot, arts_guid_t data_guid,
   void *db_ptr = NULL;
 #ifdef ARTS_USE_CXL
   if (arts_guid_is_cxl(data_guid)) {
-    db_ptr = (void *)((struct arts_db_s *)arts_cxl_get_ptr(data_guid) + 1);
+    struct arts_db_s* header = (struct arts_db_s *)arts_cxl_get_ptr(data_guid);
+    FLUSH_FENCE_CONSUMER(header, sizeof(struct arts_db_s));
+    db_ptr = (void *)(header + 1);
   }
 #endif
   internal_signal_edt(edt_guid, slot, data_guid, mode, db_ptr, 0);

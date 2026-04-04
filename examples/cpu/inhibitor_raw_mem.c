@@ -389,14 +389,15 @@ void init_per_node(unsigned int node_id, int argc, char **argv)
   if (!node_id)
   {
     int opt;
+    num_procs = arts_get_total_workers();
     // Parse command line arguments
-    while ((opt = getopt(argc, argv, "n:p:s:w:t:g")) != -1)
+    while ((opt = getopt(argc, argv, "p:s:w:t:g")) != -1)
     {
       switch (opt)
       {
-      case 'n':
-        num_procs = strtol(optarg, NULL, 10);
-        break;
+      // case 'n':
+        // num_procs = strtol(optarg, NULL, 10);
+        // break;
       case 'p':
         access_pattern = optarg[0];
         break;

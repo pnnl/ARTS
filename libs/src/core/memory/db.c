@@ -210,7 +210,8 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
         guid = arts_cxl_make_guid(ptr);
         arts_db_create_internal(guid, ptr, len, db_size, ARTS_DB_CXL, arts_id);
         /* No route table entry — GUID encodes CXL pointer directly */
-        FLUSH_FENCE_PRODUCER(ptr, db_size);
+        // FLUSH_FENCE_PRODUCER(ptr, db_size);
+        FLUSH_FENCE_PRODUCER(ptr, sizeof(struct arts_db_s));
         *addr = (void *)((struct arts_db_s *)ptr + 1);
         ARTS_DEBUG("arts_db_create: CXL DB[Guid:%lu, Size:%lu] created", guid,
                    len);
@@ -528,6 +529,7 @@ void acquire_dbs(struct arts_edt_s *edt) {
         if (arts_guid_is_cxl(depv[i].guid)) {
           struct arts_db_s *cxl_db =
               (struct arts_db_s *)arts_cxl_get_ptr(depv[i].guid);
+          arts_cxl_consumer_flush(depv[i].guid);
           if (cxl_db) {
             db_found = cxl_db;
             arts_atomic_sub(&edt->depc_needed, 1U);
@@ -658,6 +660,7 @@ void prep_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu) {
     arts_db_access_mode_t access_mode = depv[i].mode;
     if (depv[i].guid != NULL_GUID && depv[i].ptr && access_mode == DB_MODE_EW) {
       struct arts_db_s *db = ((struct arts_db_s *)depv[i].ptr) - 1;
+      FLUSH_FENCE_CONSUMER(db, sizeof(struct arts_db_s));
       uint64_t data_size = db->header.size - sizeof(struct arts_db_s);
       if (db->db_type != ARTS_DB_LOCAL) {
         arts_remote_update_route_table(depv[i].guid, ARTS_HINT_CURRENT_NODE);
