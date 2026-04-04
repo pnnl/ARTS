@@ -36,8 +36,8 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef RANDOMACCESSDEFS_H
-#define RANDOMACCESSDEFS_H
+#ifndef RANDOM_ACCESS_DEFS_H
+#define RANDOM_ACCESS_DEFS_H
 
 #ifdef __cplusplus
 extern "C" {
