@@ -50,26 +50,31 @@
 #define MEM_SIZE 200000000ULL // ~200MB
 #define ITERATIONS 10
 
-arts_guid_t mem_guid;
-char *mem;
+/* Per-DB state: each DB covers (MEM_SIZE / num_dbs) bytes of logical data.
+ * For the strided pattern the physical DB allocation is larger to accommodate
+ * the gaps; db_alloc_size[] stores the actual allocated size for each DB. */
+arts_guid_t *db_guids;   /* array[num_dbs] of DB GUIDs                  */
+char       **db_mems;    /* array[num_dbs] of base pointers              */
+uint64_t   *db_alloc_size; /* array[num_dbs] of physical allocation sizes */
+
 uint32_t num_procs = 1;
-uint64_t num_dbs = 0;
+uint64_t num_dbs   = 1;   /* default: 1 DB */
 char access_pattern = '\0';
 uint64_t access_size = -1;
 uint64_t wait_time = -1;
 uint64_t stride = 0; // Default value of 0
 uint8_t scaling = 0; // 0: Strong, 1: Weak
 struct timespec global_start, global_end;
-uint64_t total_mem_size;
 
 // Print usage information
 void print_usage(const char *program_name)
 {
-  fprintf(stderr, "Usage: %s -n <num_procs> -p <access_pattern> -s <access_size> -w <wait_time> [-t <stride> -g]\n", program_name);
+  fprintf(stderr, "Usage: %s -n <num_procs> -p <access_pattern> -s <access_size> -w <wait_time> [-d <num_dbs> -t <stride> -g]\n", program_name);
   fprintf(stderr, "  -n <num_procs>: Long integer specifying the number of inhibitor processes\n");
   fprintf(stderr, "  -p <access_pattern>: Character specifying the memory access pattern\n");
   fprintf(stderr, "  -s <access_size>: Long integer specifying the access size\n");
   fprintf(stderr, "  -w <wait_time>: Long integer specifying the wait time\n");
+  fprintf(stderr, "  -d <num_dbs>: Optional long integer specifying the number of DBs to spread MEM_SIZE across (default: 1)\n");
   fprintf(stderr, "  -t <stride>: Optional long integer specifying the stride (default: 0)\n");
   fprintf(stderr, "  -g : Flag to weak scale\n");
 }
@@ -91,74 +96,125 @@ void sleep_us(long us)
   nanosleep(&ts, NULL);
 }
 
+/* Allocate num_dbs DBs, each covering (MEM_SIZE / num_dbs) logical bytes.
+ * For the sequential and random patterns the physical size equals the logical
+ * size.  For the strided pattern use init_cxl_memory_strided() instead. */
 void init_cxl_memory()
 {
-  mem_guid = arts_db_create((void **)&mem, MEM_SIZE, ARTS_DB_CXL, NULL);
+  uint64_t db_logical_size = MEM_SIZE / num_dbs;
+
+  db_guids      = malloc(sizeof(arts_guid_t) * num_dbs);
+  db_mems       = malloc(sizeof(char *)      * num_dbs);
+  db_alloc_size = malloc(sizeof(uint64_t)    * num_dbs);
+
+  for (uint64_t d = 0; d < num_dbs; d++)
+  {
+    db_alloc_size[d] = db_logical_size;
+    db_guids[d] = arts_db_create((void **)&db_mems[d], db_logical_size, ARTS_DB_CXL, NULL);
+  }
 }
 
+/* Allocate num_dbs DBs for the strided ('l') pattern.
+ * Each DB holds (MEM_SIZE / num_dbs) bytes of real data plus the gaps
+ * introduced by the stride.  The stride is uniform across all DBs. */
 void init_cxl_memory_strided()
 {
+  uint64_t db_logical_size = MEM_SIZE / num_dbs;
 
   uint64_t num_gaps;
   if (stride == 0)
     num_gaps = 0;
   else
-    num_gaps = MEM_SIZE/stride;
-  total_mem_size = MEM_SIZE+(num_gaps*stride);
-  mem_guid = arts_db_create((void **)&mem, total_mem_size, ARTS_DB_CXL, NULL);
+    num_gaps = db_logical_size / stride;
+
+  uint64_t db_physical_size = db_logical_size + (num_gaps * stride);
+
+  db_guids      = malloc(sizeof(arts_guid_t) * num_dbs);
+  db_mems       = malloc(sizeof(char *)      * num_dbs);
+  db_alloc_size = malloc(sizeof(uint64_t)    * num_dbs);
+
+  for (uint64_t d = 0; d < num_dbs; d++)
+  {
+    db_alloc_size[d] = db_physical_size;
+    db_guids[d] = arts_db_create((void **)&db_mems[d], db_physical_size, ARTS_DB_CXL, NULL);
+  }
 }
 
 void free_cxl_memory()
 {
 }
 
+/* ---------------------------------------------------------------------------
+ * EDT implementations
+ *
+ * Each EDT receives:
+ *   paramv[0]  access_size
+ *   paramv[1]  (uint64_t) base pointer of the DB assigned to this process
+ *   paramv[2]  wait_time
+ *   paramv[3]  done_guid
+ *   paramv[4]  slot          – global process index (0 .. num_procs-1)
+ *   paramv[5]  procs_per_db  – number of processes sharing this DB
+ *   paramv[6]  local_slot    – index of this process within its DB
+ *   paramv[7]  db_alloc_size – physical (allocated) size of the DB
+ *              (for sequential/random this equals the logical size;
+ *               for linear it includes stride gaps)
+ *
+ * The per-process area is computed entirely within [0, db_alloc_size) so no
+ * process ever crosses a DB boundary.
+ *
+ * run_linear additionally receives:
+ *   paramv[8]  stride
+ * --------------------------------------------------------------------------- */
+
 void run_sequential(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                     arts_edt_dep_t depv[])
 {
-  uint64_t size = paramv[0];
-  char *mem = (char *)paramv[1];
-  uint64_t wait_time = paramv[2];
-  arts_guid_t done_guid = paramv[3];
-  uint32_t slot = paramv[4];
-  uint64_t num_procs = paramv[5];
+  uint64_t size          = paramv[0];
+  char    *db_mem        = (char *)paramv[1];
+  uint64_t wait_time     = paramv[2];
+  arts_guid_t done_guid  = paramv[3];
+  uint32_t slot          = paramv[4];
+  uint64_t procs_per_db  = paramv[5];
+  uint64_t local_slot    = paramv[6];
+  uint64_t db_alloc_size = paramv[7];
+
   int mode = 0;
   char *temp = malloc(sizeof(char) * size);
-  long start_idx = slot * (MEM_SIZE / num_procs);
-  long area_size = MEM_SIZE / num_procs;
+
+  /* Divide the DB evenly among the processes assigned to it */
+  long area_size  = (long)(db_alloc_size / procs_per_db);
+  long start_idx  = (long)(local_slot * area_size);
+
   struct timespec start, end;
   clock_gettime(CLOCK_MONOTONIC, &start);
   for (uint32_t idx = 0; idx < ITERATIONS; idx++)
   {
     long curr_idx = start_idx;
-    long end_idx = start_idx + area_size;
+    long end_idx  = start_idx + area_size;
     mode = (mode + 1) % 2;
     while ((curr_idx + size) < end_idx)
     {
       if (!mode)
       {
-        // printf("Rank %d: Writing...\n", rank);
-        fill_array(&(mem[curr_idx]), size);
-        FLUSH_FENCE_PRODUCER((void *)&(mem[curr_idx]), ALIGN_UP(size, CACHELINE_SIZE));
+        fill_array(&(db_mem[curr_idx]), size);
+        FLUSH_FENCE_PRODUCER((void *)&(db_mem[curr_idx]), ALIGN_UP(size, CACHELINE_SIZE));
         curr_idx += size;
-        // printf("Rank %d: Waiting...\n", rank);
         sleep_us(wait_time);
         mode = (mode + 1) % 2;
       }
       else
       {
-        // printf("Rank %d: Reading...\n", rank);
-        FLUSH_FENCE_CONSUMER((void *)&(mem[curr_idx]), ALIGN_UP(size, CACHELINE_SIZE));
-        memcpy(temp, &(mem[curr_idx]), size);
+        FLUSH_FENCE_CONSUMER((void *)&(db_mem[curr_idx]), ALIGN_UP(size, CACHELINE_SIZE));
+        memcpy(temp, &(db_mem[curr_idx]), size);
         curr_idx += size;
-        // printf("Rank %d: Waiting...\n", rank);
         sleep_us(wait_time);
         mode = (mode + 1) % 2;
       }
     }
   }
   clock_gettime(CLOCK_MONOTONIC, &end);
-  uint64_t elapsed_microseconds = (end.tv_sec - start.tv_sec) * 1000000; // Seconds to microseconds
-  elapsed_microseconds += (end.tv_nsec - start.tv_nsec) / 1000;          // Nanoseconds to microseconds
+  uint64_t elapsed_microseconds = (end.tv_sec - start.tv_sec) * 1000000;
+  elapsed_microseconds += (end.tv_nsec - start.tv_nsec) / 1000;
   free(temp);
   double *bandwidth;
   arts_guid_t bandwidth_guid = arts_db_create((void **)&bandwidth, sizeof(double), ARTS_DB_DEFAULT, NULL);
@@ -169,52 +225,53 @@ void run_sequential(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 void run_linear(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                arts_edt_dep_t depv[])
 {
-  uint64_t size = paramv[0];
-  char *mem = (char *)paramv[1];
-  uint64_t wait_time = paramv[2];
-  arts_guid_t done_guid = paramv[3];
-  uint32_t slot = paramv[4];
-  uint64_t num_procs = paramv[5];
-  uint64_t total_mem = paramv[6];
-  uint64_t stride = paramv[7];
+  uint64_t size          = paramv[0];
+  char    *db_mem        = (char *)paramv[1];
+  uint64_t wait_time     = paramv[2];
+  arts_guid_t done_guid  = paramv[3];
+  uint32_t slot          = paramv[4];
+  uint64_t procs_per_db  = paramv[5];
+  uint64_t local_slot    = paramv[6];
+  uint64_t db_phys_size  = paramv[7];
+  uint64_t stride        = paramv[8];
+
   int mode = 0;
   char *temp = malloc(sizeof(char) * size);
-  long start_idx = slot * (total_mem/ num_procs);
-  long area_size = total_mem / num_procs;
+
+  /* Divide the DB's physical allocation evenly among the processes in this DB */
+  long area_size = (long)(db_phys_size / procs_per_db);
+  long start_idx = (long)(local_slot * area_size);
+
   struct timespec start, end;
   clock_gettime(CLOCK_MONOTONIC, &start);
   for (uint32_t idx = 0; idx < ITERATIONS; idx++)
   {
     long curr_idx = start_idx;
-    long end_idx = start_idx + area_size;
+    long end_idx  = start_idx + area_size;
     mode = (mode + 1) % 2;
     while ((curr_idx + size + stride) < end_idx)
     {
       if (!mode)
       {
-        // printf("Rank %d: Writing...\n", rank);
-        fill_array(&(mem[curr_idx]), size);
-        FLUSH_FENCE_PRODUCER((void *)&(mem[curr_idx]), ALIGN_UP(size, CACHELINE_SIZE));
+        fill_array(&(db_mem[curr_idx]), size);
+        FLUSH_FENCE_PRODUCER((void *)&(db_mem[curr_idx]), ALIGN_UP(size, CACHELINE_SIZE));
         curr_idx += size + stride;
-        // printf("Rank %d: Waiting...\n", rank);
         sleep_us(wait_time);
         mode = (mode + 1) % 2;
       }
       else
       {
-        // printf("Rank %d: Reading...\n", rank);
-        FLUSH_FENCE_CONSUMER((void *)&(mem[curr_idx]), ALIGN_UP(size, CACHELINE_SIZE));
-        memcpy(temp, &(mem[curr_idx]), size);
+        FLUSH_FENCE_CONSUMER((void *)&(db_mem[curr_idx]), ALIGN_UP(size, CACHELINE_SIZE));
+        memcpy(temp, &(db_mem[curr_idx]), size);
         curr_idx += size + stride;
-        // printf("Rank %d: Waiting...\n", rank);
         sleep_us(wait_time);
         mode = (mode + 1) % 2;
       }
     }
   }
   clock_gettime(CLOCK_MONOTONIC, &end);
-  uint64_t elapsed_microseconds = (end.tv_sec - start.tv_sec) * 1000000; // Seconds to microseconds
-  elapsed_microseconds += (end.tv_nsec - start.tv_nsec) / 1000;          // Nanoseconds to microseconds
+  uint64_t elapsed_microseconds = (end.tv_sec - start.tv_sec) * 1000000;
+  elapsed_microseconds += (end.tv_nsec - start.tv_nsec) / 1000;
   free(temp);
   double *bandwidth;
   arts_guid_t bandwidth_guid = arts_db_create((void **)&bandwidth, sizeof(double), ARTS_DB_DEFAULT, NULL);
@@ -225,16 +282,20 @@ void run_linear(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 void run_random(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                         arts_edt_dep_t depv[])
 {
-  uint64_t size = paramv[0];
-  char *mem = (char *)paramv[1];
-  uint64_t wait_time = paramv[2];
-  arts_guid_t done_guid = paramv[3];
-  uint32_t slot = paramv[4];
-  uint64_t num_procs = paramv[5];
+  uint64_t size          = paramv[0];
+  char    *db_mem        = (char *)paramv[1];
+  uint64_t wait_time     = paramv[2];
+  arts_guid_t done_guid  = paramv[3];
+  uint32_t slot          = paramv[4];
+  uint64_t procs_per_db  = paramv[5];
+  uint64_t local_slot    = paramv[6];
+  uint64_t db_alloc_size = paramv[7];
+
   int mode = 0;
   char *temp = malloc(sizeof(char) * size);
-  long start_idx = slot * (MEM_SIZE / num_procs);
-  long area_size = MEM_SIZE / num_procs;
+
+  long area_size = (long)(db_alloc_size / procs_per_db);
+  long start_idx = (long)(local_slot * area_size);
 
   /* Precompute random index table to eliminate overhead from the hot loop.
    * Each entry is a pre-aligned offset within [0, area_size - size].
@@ -268,7 +329,6 @@ void run_random(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   for (uint32_t idx = 0; idx < ITERATIONS; idx++)
   {
-    long end_idx = start_idx + area_size;
     long ops = area_size / size;   /* access every block once per iteration */
     mode = (mode + 1) % 2;
 
@@ -282,17 +342,17 @@ void run_random(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
       if (!mode)
       {
-      fill_array(&(mem[curr_idx]), size);
-      FLUSH_FENCE_PRODUCER((void *)&(mem[curr_idx]),
+      fill_array(&(db_mem[curr_idx]), size);
+      FLUSH_FENCE_PRODUCER((void *)&(db_mem[curr_idx]),
       ALIGN_UP(size, CACHELINE_SIZE));
       sleep_us(wait_time);
       mode = (mode + 1) % 2;
       }
       else
       {
-      FLUSH_FENCE_CONSUMER((void *)&(mem[curr_idx]),
+      FLUSH_FENCE_CONSUMER((void *)&(db_mem[curr_idx]),
       ALIGN_UP(size, CACHELINE_SIZE));
-      memcpy(temp, &(mem[curr_idx]), size);
+      memcpy(temp, &(db_mem[curr_idx]), size);
       sleep_us(wait_time);
       mode = (mode + 1) % 2;
       }
@@ -315,51 +375,6 @@ void run_random(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_signal_edt(done_guid, slot, bandwidth_guid, DB_MODE_RO);
 }
 
-/*
-void run_random(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-               arts_edt_dep_t depv[])
-{
-  uint64_t access_size = paramv[0];
-  uint64_t length = paramv[1];
-  uint64_t wait_time = paramv[2];
-  arts_guid_t done_guid = paramv[3];
-  uint32_t slot = paramv[4];
-  struct timespec start, end;
-  int mode = 0;
-  char *temp = malloc(sizeof(char) * access_size * length);
-  clock_gettime(CLOCK_MONOTONIC, &start);
-
-  srand(time(NULL) + arts_get_current_worker());
-  for (uint32_t i = 0; i < ITERATIONS; i++)
-  {
-    for (uint64_t j = 0; j < length; j++)
-    {
-      uint64_t idx = (uint64_t)rand() % length;
-      if (!mode)
-      {
-        fill_array(depv[idx].ptr, access_size);
-        arts_cxl_producer_flush(depv[idx].guid);
-        sleep_us(wait_time);
-      }
-      else
-      {
-        arts_cxl_consumer_flush(depv[idx].guid);
-        memcpy(temp + j, depv[idx].ptr, access_size);
-      }
-    }
-    mode = (mode + 1) % 2;
-  }
-  clock_gettime(CLOCK_MONOTONIC, &end);
-  uint64_t elapsed_microseconds = (end.tv_sec - start.tv_sec) * 1000000; // Seconds to microseconds
-  elapsed_microseconds += (end.tv_nsec - start.tv_nsec) / 1000;          // Nanoseconds to microseconds
-  free(temp);
-  double *bandwidth;
-  arts_guid_t bandwidth_guid = arts_db_create((void **)&bandwidth, sizeof(double), ARTS_DB_DEFAULT, NULL);
-  *bandwidth = ((double)(access_size * length * ITERATIONS)) / (elapsed_microseconds / 1e6);
-  arts_signal_edt(done_guid, slot, bandwidth_guid, DB_MODE_RO);
-}
-*/
-
 void done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
           arts_edt_dep_t depv[])
 {
@@ -373,8 +388,8 @@ void done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
   printf("Average per-process bandwidth: %f MB/s\n", ((bw_sum / 1e6) / depc));
 
-  uint64_t elapsed_microseconds = (global_end.tv_sec - global_start.tv_sec) * 1000000; // Seconds to microseconds
-  elapsed_microseconds += (global_end.tv_nsec - global_start.tv_nsec) / 1000;          // Nanoseconds to microseconds
+  uint64_t elapsed_microseconds = (global_end.tv_sec - global_start.tv_sec) * 1000000;
+  elapsed_microseconds += (global_end.tv_nsec - global_start.tv_nsec) / 1000;
   double global_bandwidth;
   if (!scaling)
     global_bandwidth = ((double)((uint64_t)MEM_SIZE * (uint64_t)ITERATIONS)) / (elapsed_microseconds / 1e6);
@@ -391,7 +406,7 @@ void init_per_node(unsigned int node_id, int argc, char **argv)
     int opt;
     num_procs = arts_get_total_workers();
     // Parse command line arguments
-    while ((opt = getopt(argc, argv, "p:s:w:t:g")) != -1)
+    while ((opt = getopt(argc, argv, "p:s:w:d:t:g")) != -1)
     {
       switch (opt)
       {
@@ -406,6 +421,9 @@ void init_per_node(unsigned int node_id, int argc, char **argv)
         break;
       case 'w':
         wait_time = strtol(optarg, NULL, 10);
+        break;
+      case 'd':
+        num_dbs = strtol(optarg, NULL, 10);
         break;
       case 't':
         stride = ALIGN_UP(strtol(optarg, NULL, 10), CACHELINE_SIZE);
@@ -427,8 +445,24 @@ void init_per_node(unsigned int node_id, int argc, char **argv)
       arts_shutdown();
     }
 
+    /* num_dbs must divide num_procs evenly so every DB gets the same number
+     * of processes.  Clamp to num_procs if the user supplied a larger value. */
+    if (num_dbs > num_procs)
+    {
+      fprintf(stderr, "Warning: num_dbs (%lu) > num_procs (%u); clamping to num_procs\n",
+              num_dbs, num_procs);
+      num_dbs = num_procs;
+    }
+    if (num_procs % num_dbs != 0)
+    {
+      fprintf(stderr, "Error: num_procs (%u) must be divisible by num_dbs (%lu)\n",
+              num_procs, num_dbs);
+      arts_shutdown();
+    }
+
     // Print the parsed arguments (for verification)
     printf("Number of inhibitor processes: %d\n", num_procs);
+    printf("Number of DBs: %lu\n", num_dbs);
     printf("Access Pattern: %c\n", access_pattern);
     printf("Access Size: %ld\n", access_size);
     printf("Wait Time: %ld\n", wait_time);
@@ -445,14 +479,17 @@ void init_per_node(unsigned int node_id, int argc, char **argv)
     // Initialize CXL memory
     if (access_pattern == 'l')
     {
-      printf("Initializing strided memory\n");
+      printf("Initializing strided memory (%lu DB(s))\n", num_dbs);
       init_cxl_memory_strided();
     }
     else
     {
-      printf("Initializing sequential memory\n");
+      printf("Initializing sequential memory (%lu DB(s))\n", num_dbs);
       init_cxl_memory();
     }
+
+    /* Number of processes assigned to each DB */
+    uint64_t procs_per_db = num_procs / num_dbs;
 
     switch (access_pattern)
     {
@@ -464,8 +501,12 @@ void init_per_node(unsigned int node_id, int argc, char **argv)
       clock_gettime(CLOCK_MONOTONIC, &global_start);
       for (uint32_t i = 0; i < num_procs; i++)
       {
-        uint64_t args[] = {access_size, (uint64_t)mem, wait_time, done_guid, i, num_procs};
-        arts_guid_t edt = arts_edt_create(run_sequential, 6, args, 0, &(arts_hint_t){.route = next});
+        uint64_t db_idx     = i / procs_per_db;  /* which DB this process belongs to */
+        uint64_t local_slot = i % procs_per_db;  /* index within that DB              */
+        uint64_t args[] = {access_size, (uint64_t)db_mems[db_idx], wait_time,
+                           done_guid, i, procs_per_db, local_slot,
+                           db_alloc_size[db_idx]};
+        arts_guid_t edt = arts_edt_create(run_sequential, 8, args, 0, &(arts_hint_t){.route = next});
         next = (next + 1) % arts_get_total_nodes();
       }
       break;
@@ -478,8 +519,12 @@ void init_per_node(unsigned int node_id, int argc, char **argv)
       clock_gettime(CLOCK_MONOTONIC, &global_start);
       for (uint32_t i = 0; i < num_procs; i++)
       {
-        uint64_t args[] = {access_size, (uint64_t)mem, wait_time, done_guid, i, num_procs, total_mem_size, stride};
-        arts_guid_t edt = arts_edt_create(run_linear, 8, args, 0, &(arts_hint_t){.route = next});
+        uint64_t db_idx     = i / procs_per_db;
+        uint64_t local_slot = i % procs_per_db;
+        uint64_t args[] = {access_size, (uint64_t)db_mems[db_idx], wait_time,
+                           done_guid, i, procs_per_db, local_slot,
+                           db_alloc_size[db_idx], stride};
+        arts_guid_t edt = arts_edt_create(run_linear, 9, args, 0, &(arts_hint_t){.route = next});
         next = (next + 1) % arts_get_total_nodes();
       }
       break;
@@ -492,17 +537,20 @@ void init_per_node(unsigned int node_id, int argc, char **argv)
       clock_gettime(CLOCK_MONOTONIC, &global_start);
       for (uint32_t i = 0; i < num_procs; i++)
       {
-        uint64_t args[] = {access_size, (uint64_t)mem, wait_time, done_guid, i, num_procs};
-        arts_guid_t edt = arts_edt_create(run_random, 6, args, 0, &(arts_hint_t){.route = next});
+        uint64_t db_idx     = i / procs_per_db;
+        uint64_t local_slot = i % procs_per_db;
+        uint64_t args[] = {access_size, (uint64_t)db_mems[db_idx], wait_time,
+                           done_guid, i, procs_per_db, local_slot,
+                           db_alloc_size[db_idx]};
+        arts_guid_t edt = arts_edt_create(run_random, 8, args, 0, &(arts_hint_t){.route = next});
         next = (next + 1) % arts_get_total_nodes();
       }
       break;
     }
     default:
       printf("Invalid access pattern. Defaulting to sequential\n");
-      break;
-
       arts_shutdown();
+      break;
     }
   }
 }
