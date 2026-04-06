@@ -753,6 +753,27 @@ static void handle_default_ports(struct arts_config_s *config,
   config->default_ports = parse_port_spec(value, &config->default_ports_count);
 }
 
+#ifdef ARTS_USE_CXL
+static void handle_cxl_db_allocation_strategy(struct arts_config_s *config,
+                                               const char *value,
+                                               struct arts_config_variable_s **vars) {
+  /* Default strategy is "static". */
+  config->cxl_db_allocation_strategy = ARTS_CXL_DB_ALLOC_STATIC;
+  config->cxl_db_allocation_device = 0;
+
+  if (value && strncmp(value, "round_robin", 11) == 0) {
+    config->cxl_db_allocation_strategy = ARTS_CXL_DB_ALLOC_ROUND_ROBIN;
+  } else {
+    /* Static strategy: also read cxl_db_allocation_device. */
+    const char *dev_value = config_lookup(vars, "cxl_db_allocation_device");
+    if (dev_value) {
+      config->cxl_db_allocation_device =
+          (unsigned int)strtol(dev_value, NULL, 10);
+    }
+  }
+}
+#endif /* ARTS_USE_CXL */
+
 /*--- Config Entry Table ----------------------------------------------------*/
 
 #define OFF(f) offsetof(struct arts_config_s, f)
@@ -802,6 +823,11 @@ static const struct arts_config_entry_s config_entries[] = {
     {"launcher", CONFIG_CUSTOM, 0, NULL, handle_launcher},
     {"net_interface", CONFIG_CUSTOM, 0, NULL, handle_net_interface},
     {"default_ports", CONFIG_CUSTOM, 0, NULL, handle_default_ports},
+#ifdef ARTS_USE_CXL
+    /* --- CXL DB allocation --- */
+    {"cxl_db_allocation_strategy", CONFIG_CUSTOM, 0, NULL,
+     handle_cxl_db_allocation_strategy},
+#endif /* ARTS_USE_CXL */
     /* sentinel */
     {NULL, 0, 0, NULL, NULL}};
 

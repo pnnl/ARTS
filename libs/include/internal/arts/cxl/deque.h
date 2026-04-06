@@ -52,6 +52,9 @@ typedef union {
               (CACHELINE_SIZE / sizeof(uint8_t))];
 } arts_cxl_deque_elem_t;
 
+/* Maximum number of CXL devices supported for DB arena allocation. */
+#define ARTS_CXL_MAX_DEVICES 16
+
 /* ── Deque constants (cache-line padded) ────────────────────────────────────
  */
 
@@ -59,10 +62,13 @@ typedef union {
   struct {
     int max_size;
     arts_cxl_arena_t *mem_arena;
-    arts_cxl_arena_t *db_arena;
+    arts_cxl_arena_t *db_arenas[ARTS_CXL_MAX_DEVICES]; /**< One arena per CXL device. */
+    unsigned int db_arena_count; /**< Number of active db_arenas entries. */
     arts_cxl_tournament_lock_t *lock;
   };
-  uint8_t pad[((sizeof(int) + sizeof(arts_cxl_arena_t *) * 2 +
+  uint8_t pad[((sizeof(int) + sizeof(arts_cxl_arena_t *) +
+                sizeof(arts_cxl_arena_t *) * ARTS_CXL_MAX_DEVICES +
+                sizeof(unsigned int) +
                 sizeof(arts_cxl_tournament_lock_t *) + CACHELINE_SIZE - 1) /
                CACHELINE_SIZE) *
               (CACHELINE_SIZE / sizeof(uint8_t))];
@@ -108,6 +114,22 @@ static inline void arts_cxl_arena_init(arts_cxl_arena_t **arena, size_t bytes) {
   (*arena)->max_size = memory + bytes;
 }
 
+/**
+ * arts_cxl_arena_init_dev — Allocate a DB arena on a specific CXL device.
+ *
+ * Uses GLOBAL_MALLOC_DEV to place the backing memory on @p dev_id.
+ * The arena metadata struct itself is allocated with GLOBAL_MALLOC (any device).
+ */
+static inline void arts_cxl_arena_init_dev(arts_cxl_arena_t **arena,
+                                            size_t bytes, uint64_t dev_id) {
+  *arena = (arts_cxl_arena_t *)GLOBAL_MALLOC(sizeof(arts_cxl_arena_t));
+  char *memory = (char *)GLOBAL_MALLOC_DEV(bytes, dev_id);
+  (*arena)->base = memory;
+  (*arena)->head = memory;
+  (*arena)->initialized = true;
+  (*arena)->max_size = memory + bytes;
+}
+
 static inline void arts_cxl_arena_free(arts_cxl_arena_t *arena) {
   if (arena) {
     GLOBAL_FREE(arena->base);
@@ -139,6 +161,10 @@ static inline void *arts_cxl_arena_malloc(arts_cxl_arena_t *arena,
 /* ── Deque lifecycle ────────────────────────────────────────────────────────
  */
 
+/**
+ * arts_cxl_deque_create — Create a CXL deque with a single DB arena on
+ * device 0 (legacy / static-device-0 path).
+ */
 static inline arts_cxl_deque_t *arts_cxl_deque_create(void) {
   arts_cxl_deque_t *dq =
       (arts_cxl_deque_t *)SHARED_MALLOC(sizeof(arts_cxl_deque_t));
@@ -152,7 +178,60 @@ static inline arts_cxl_deque_t *arts_cxl_deque_create(void) {
     dq->data[i].base.size = 0;
   }
   arts_cxl_arena_init(&dq->consts.mem_arena, 5000000000); /* ~5 GB */
-  arts_cxl_arena_init(&dq->consts.db_arena, 5000000000);  /* ~5 GB */
+
+  /* Single DB arena on device 0 (default / static strategy). */
+  arts_cxl_arena_init_dev(&dq->consts.db_arenas[0], 5000000000, 0);
+  for (unsigned int i = 1; i < ARTS_CXL_MAX_DEVICES; i++) {
+    dq->consts.db_arenas[i] = NULL;
+  }
+  dq->consts.db_arena_count = 1;
+
+  dq->consts.lock = arts_cxl_tournament_lock_new(ARTS_CXL_NUM_NODES);
+
+  assert((sizeof(arts_cxl_deque_t) % CACHELINE_SIZE) == 0 &&
+         "arts_cxl_deque_t must be cache-line aligned");
+  FLUSH_FENCE_PRODUCER(dq, sizeof(arts_cxl_deque_t));
+  SHARED_MALLOC_INITIALIZED(dq);
+  return dq;
+}
+
+/**
+ * arts_cxl_deque_create_with_arenas — Create a CXL deque with DB arenas
+ * allocated on specific devices.
+ *
+ * @param dev_ids   Array of device IDs to allocate arenas on.
+ * @param dev_count Number of devices (length of dev_ids).
+ *
+ * For the static strategy, pass a single-element array with the chosen device.
+ * For round-robin, pass all device IDs.
+ */
+static inline arts_cxl_deque_t *
+arts_cxl_deque_create_with_arenas(const uint64_t *dev_ids,
+                                   unsigned int dev_count) {
+  assert(dev_count > 0 && dev_count <= ARTS_CXL_MAX_DEVICES &&
+         "dev_count must be in [1, ARTS_CXL_MAX_DEVICES]");
+
+  arts_cxl_deque_t *dq =
+      (arts_cxl_deque_t *)SHARED_MALLOC(sizeof(arts_cxl_deque_t));
+
+  dq->indices.front_idx = -1;
+  dq->indices.back_idx = 0;
+  dq->consts.max_size = ARTS_CXL_DEQUE_LENGTH;
+
+  for (unsigned int i = 0; i < ARTS_CXL_DEQUE_LENGTH; i++) {
+    dq->data[i].base.ptr = NULL;
+    dq->data[i].base.size = 0;
+  }
+  arts_cxl_arena_init(&dq->consts.mem_arena, 5000000000); /* ~5 GB */
+
+  for (unsigned int i = 0; i < dev_count; i++) {
+    arts_cxl_arena_init_dev(&dq->consts.db_arenas[i], 5000000000, dev_ids[i]);
+  }
+  for (unsigned int i = dev_count; i < ARTS_CXL_MAX_DEVICES; i++) {
+    dq->consts.db_arenas[i] = NULL;
+  }
+  dq->consts.db_arena_count = dev_count;
+
   dq->consts.lock = arts_cxl_tournament_lock_new(ARTS_CXL_NUM_NODES);
 
   assert((sizeof(arts_cxl_deque_t) % CACHELINE_SIZE) == 0 &&
@@ -193,14 +272,18 @@ static inline void arts_cxl_deque_free(arts_cxl_deque_t *dq) {
   /* Real CXL: only rank 0 frees shared resources */
   if (!arts_global_rank_id) {
     arts_cxl_arena_free(dq->consts.mem_arena);
-    arts_cxl_arena_free(dq->consts.db_arena);
+    for (unsigned int i = 0; i < dq->consts.db_arena_count; i++) {
+      arts_cxl_arena_free(dq->consts.db_arenas[i]);
+    }
     arts_cxl_tournament_lock_delete(dq->consts.lock);
     SHARED_FREE(dq);
   }
 #else
   /* Stub mode: each rank frees its own */
   arts_cxl_arena_free(dq->consts.mem_arena);
-  arts_cxl_arena_free(dq->consts.db_arena);
+  for (unsigned int i = 0; i < dq->consts.db_arena_count; i++) {
+    arts_cxl_arena_free(dq->consts.db_arenas[i]);
+  }
   arts_cxl_tournament_lock_delete(dq->consts.lock);
   SHARED_FREE(dq);
 #endif
@@ -334,34 +417,58 @@ static inline int arts_cxl_deque_push(arts_cxl_deque_t *dq,
   return 0;
 }
 
-/* ── Public: locked DB arena malloc ─────────────────────────────────────────
+/* ── Public: locked DB arena malloc (device-indexed) ────────────────────────
  */
 
-static inline void *arts_cxl_deque_db_malloc(arts_cxl_deque_t *dq,
-                                             pthread_mutex_t *local_lock,
-                                             size_t size) {
+/**
+ * arts_cxl_deque_db_malloc_dev — Allocate from a specific device's DB arena.
+ *
+ * @param dq         The CXL deque.
+ * @param local_lock Per-node pthread mutex for local serialization.
+ * @param size       Allocation size in bytes.
+ * @param dev_idx    Index into dq->consts.db_arenas[] (0-based).
+ *                   Must be < dq->consts.db_arena_count.
+ */
+static inline void *arts_cxl_deque_db_malloc_dev(arts_cxl_deque_t *dq,
+                                                  pthread_mutex_t *local_lock,
+                                                  size_t size,
+                                                  unsigned int dev_idx) {
+  assert(dev_idx < dq->consts.db_arena_count && "dev_idx out of range");
   arts_cxl_tournament_lock_acquire(dq->consts.lock, local_lock,
                                    arts_global_rank_id);
-  FLUSH_FENCE_CONSUMER(dq->consts.db_arena, sizeof(arts_cxl_arena_t));
-  void *ptr = arts_cxl_arena_malloc(dq->consts.db_arena, size);
-  FLUSH_FENCE_PRODUCER(dq->consts.db_arena, sizeof(arts_cxl_arena_t));
+  arts_cxl_arena_t *arena = dq->consts.db_arenas[dev_idx];
+  FLUSH_FENCE_CONSUMER(arena, sizeof(arts_cxl_arena_t));
+  void *ptr = arts_cxl_arena_malloc(arena, size);
+  FLUSH_FENCE_PRODUCER(arena, sizeof(arts_cxl_arena_t));
   arts_cxl_tournament_lock_release(dq->consts.lock, local_lock,
                                    arts_global_rank_id);
   return ptr;
 }
 
-/* ── Public: get DB arena address range ─────────────────────────────────────
+/**
+ * arts_cxl_deque_db_malloc — Allocate from device-0 DB arena (legacy path).
+ */
+static inline void *arts_cxl_deque_db_malloc(arts_cxl_deque_t *dq,
+                                             pthread_mutex_t *local_lock,
+                                             size_t size) {
+  return arts_cxl_deque_db_malloc_dev(dq, local_lock, size, 0);
+}
+
+/* ── Public: get DB arena address range (device 0) ──────────────────────────
  */
 
 static inline int arts_cxl_deque_get_db_arena_range(arts_cxl_deque_t *dq,
                                                     void **start, void **end) {
   FLUSH_FENCE_CONSUMER(&dq->consts, sizeof(arts_cxl_deque_consts_t));
-  FLUSH_FENCE_CONSUMER(dq->consts.db_arena, sizeof(arts_cxl_arena_t));
-  if (!dq->consts.db_arena->initialized) {
+  if (dq->consts.db_arena_count == 0 || !dq->consts.db_arenas[0]) {
     return 0;
   }
-  *start = dq->consts.db_arena->base;
-  *end = dq->consts.db_arena->max_size;
+  FLUSH_FENCE_CONSUMER(dq->consts.db_arenas[0], sizeof(arts_cxl_arena_t));
+  if (!dq->consts.db_arenas[0]->initialized) {
+    return 0;
+  }
+  *start = dq->consts.db_arenas[0]->base;
+  *end = dq->consts.db_arenas[0]->max_size;
   return 1;
 }
 

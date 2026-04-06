@@ -72,6 +72,9 @@ struct arts_runtime_shared_s {
   pthread_mutex_t cxl_local_lock;
   void *cxl_db_arena_start;
   void *cxl_db_arena_end;
+  unsigned int cxl_db_dev_count;       /**< Number of CXL DB arenas (devices). */
+  volatile unsigned int cxl_db_rr_idx; /**< Round-robin device index counter. */
+  unsigned int cxl_db_static_device;   /**< Device index for static allocation. */
 #endif
   struct arts_route_table_s **route_table;
   struct arts_route_table_s **gpu_route_table;

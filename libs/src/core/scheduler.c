@@ -210,12 +210,62 @@ void arts_runtime_node_init(struct arts_config_s *config) {
   arts_node_info.delete_zeros_gpu_gc = config->delete_zeros_gpu_gc;
 
 #ifdef ARTS_USE_CXL
-  /* CXL shared-memory deque and DB arena */
-  arts_printf("CXL FAM device count: %lu\n", GET_CXL_DEV_COUNT());
-  arts_node_info.cxl_deque = arts_cxl_deque_init();
-  arts_printf("CXL FAM device ID: %lu\n", GET_CXL_DEV_ID(arts_node_info.cxl_deque));
+  /* CXL shared-memory deque and DB arenas */
+  uint64_t cxl_total_devs = GET_CXL_DEV_COUNT();
+  arts_printf("CXL FAM device count: %lu\n", cxl_total_devs);
+
+  if (config->cxl_db_allocation_strategy == ARTS_CXL_DB_ALLOC_ROUND_ROBIN) {
+    /* Round-robin: allocate one arena per available device. */
+    unsigned int dev_count = (unsigned int)cxl_total_devs;
+    if (dev_count == 0) {
+      dev_count = 1; /* Fallback: at least one arena on device 0. */
+    }
+    if (dev_count > ARTS_CXL_MAX_DEVICES) {
+      dev_count = ARTS_CXL_MAX_DEVICES;
+    }
+    uint64_t dev_ids[ARTS_CXL_MAX_DEVICES];
+    for (unsigned int i = 0; i < dev_count; i++) {
+      dev_ids[i] = (uint64_t)i;
+    }
+    arts_printf("CXL DB allocation: round_robin across %u device(s)\n",
+                dev_count);
+#ifdef ARTS_CXL_NATIVE
+    if (!arts_global_rank_id) {
+      arts_node_info.cxl_deque =
+          arts_cxl_deque_create_with_arenas(dev_ids, dev_count);
+    } else {
+      arts_node_info.cxl_deque = arts_cxl_deque_get();
+    }
+#else
+    arts_node_info.cxl_deque =
+        arts_cxl_deque_create_with_arenas(dev_ids, dev_count);
+#endif
+    arts_node_info.cxl_db_dev_count = dev_count;
+  } else {
+    /* Static: allocate a single arena on the configured device. */
+    uint64_t dev_id = (uint64_t)config->cxl_db_allocation_device;
+    arts_printf("CXL DB allocation: static on device %lu\n", dev_id);
+    uint64_t dev_ids[1] = {dev_id};
+#ifdef ARTS_CXL_NATIVE
+    if (!arts_global_rank_id) {
+      arts_node_info.cxl_deque =
+          arts_cxl_deque_create_with_arenas(dev_ids, 1);
+    } else {
+      arts_node_info.cxl_deque = arts_cxl_deque_get();
+    }
+#else
+    arts_node_info.cxl_deque =
+        arts_cxl_deque_create_with_arenas(dev_ids, 1);
+#endif
+    arts_node_info.cxl_db_dev_count = 1;
+    arts_node_info.cxl_db_static_device = (unsigned int)dev_id;
+  }
+
+  arts_printf("CXL FAM device ID: %lu\n",
+              GET_CXL_DEV_ID(arts_node_info.cxl_deque));
   arts_printf("CXL FAM region device ID: %lu\n", GET_CXL_REGION_DEV_ID());
   pthread_mutex_init(&arts_node_info.cxl_local_lock, NULL);
+  arts_node_info.cxl_db_rr_idx = 0;
   assert(arts_cxl_deque_get_db_arena_range(arts_node_info.cxl_deque,
                                            &arts_node_info.cxl_db_arena_start,
                                            &arts_node_info.cxl_db_arena_end) &&

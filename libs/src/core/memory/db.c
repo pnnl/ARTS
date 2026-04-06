@@ -117,9 +117,19 @@ void *arts_db_malloc(arts_db_types_t db_type, size_t size) {
 #endif
 #ifdef ARTS_USE_CXL
   if (db_type == ARTS_DB_CXL) {
-    ptr = arts_cxl_deque_db_malloc(arts_node_info.cxl_deque,
-                                   &arts_node_info.cxl_local_lock, size);
-    assert(ptr && "arts_cxl_deque_db_malloc ptr is valid\n");
+    unsigned int dev_idx;
+    if (arts_node_info.cxl_db_dev_count > 1) {
+      /* Round-robin: atomically advance the index and wrap around. */
+      dev_idx = arts_atomic_fetch_add(&arts_node_info.cxl_db_rr_idx, 1U) %
+                arts_node_info.cxl_db_dev_count;
+    } else {
+      /* Static: use the configured device. */
+      dev_idx = arts_node_info.cxl_db_static_device;
+    }
+    ptr = arts_cxl_deque_db_malloc_dev(arts_node_info.cxl_deque,
+                                       &arts_node_info.cxl_local_lock,
+                                       size, dev_idx);
+    assert(ptr && "arts_cxl_deque_db_malloc_dev ptr is valid\n");
   }
 #endif
   if (!ptr) {
