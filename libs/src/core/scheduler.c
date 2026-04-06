@@ -211,7 +211,10 @@ void arts_runtime_node_init(struct arts_config_s *config) {
 
 #ifdef ARTS_USE_CXL
   /* CXL shared-memory deque and DB arena */
+  arts_printf("CXL FAM device count: %lu\n", GET_CXL_DEV_COUNT());
   arts_node_info.cxl_deque = arts_cxl_deque_init();
+  arts_printf("CXL FAM device ID: %lu\n", GET_CXL_DEV_ID(arts_node_info.cxl_deque));
+  arts_printf("CXL FAM region device ID: %lu\n", GET_CXL_REGION_DEV_ID());
   pthread_mutex_init(&arts_node_info.cxl_local_lock, NULL);
   assert(arts_cxl_deque_get_db_arena_range(arts_node_info.cxl_deque,
                                            &arts_node_info.cxl_db_arena_start,

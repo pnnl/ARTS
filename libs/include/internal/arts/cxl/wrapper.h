@@ -34,13 +34,17 @@ extern "C" {
 /* ── Real CXL library (Rapid API + arts_cxl_lib) ─────────────────────────── */
 #include <SharedAlloc.h>
 #include <MemOps.h>
-#define SHARED_MALLOC(...)              SHARED_CXL_MALLOC(__VA_ARGS__)
-#define GLOBAL_MALLOC(...)              GLOBAL_CXL_MALLOC(__VA_ARGS__)
-#define GLOBAL_FREE(...)                GLOBAL_CXL_FREE(__VA_ARGS__)
-#define SHARED_FREE(...)                SHARED_CXL_FREE(__VA_ARGS__)
+#define SHARED_MALLOC( ... )              SHARED_CXL_MALLOC(__VA_ARGS__)
+#define GLOBAL_MALLOC( ... )              GLOBAL_CXL_MALLOC(__VA_ARGS__)
+#define GLOBAL_MALLOC_DEV( ... )          GLOBAL_CXL_MALLOC_DEV(__VA_ARGS__)
+#define GLOBAL_FREE( ... )                GLOBAL_CXL_FREE(__VA_ARGS__)
+#define SHARED_FREE( ... )                SHARED_CXL_FREE(__VA_ARGS__)
 #define SHARED_MALLOC_INITIALIZED(...)  SHARED_CXL_MALLOC_INITIALIZED(__VA_ARGS__)
 #define LAST_SHARED_MALLOC(...)         LAST_SHARED_CXL_MALLOC(__VA_ARGS__)
 #define IS_CXL_PTR(...)                 IS_FAM_PTR(__VA_ARGS__)
+#define GET_CXL_DEV_ID( ... )           GET_FAM_DEV_ID( __VA_ARGS__ )
+#define GET_CXL_REGION_DEV_ID( ... )    GET_FAM_REGION_DEV_ID( __VA_ARGS__ )
+#define GET_CXL_DEV_COUNT( ... )        GET_FAM_DEV_COUNT( __VA_ARGS__ )
 #else
 /* ── Stubs (no CXL, or CXL code paths without hardware) ──────────────────── */
 #define SHARED_MALLOC(...)              malloc(__VA_ARGS__)
@@ -50,6 +54,9 @@ extern "C" {
 #define SHARED_MALLOC_INITIALIZED(...)
 #define LAST_SHARED_MALLOC(...)         malloc(__VA_ARGS__)
 #define IS_CXL_PTR(...)                 ((void)0, 0)
+#define GET_CXL_DEV_ID( ... )           ((void)0, 0)
+#define GET_CXL_DEV_COUNT( ... )        ((void)0, 0)
+#define GET_CXL_REGION_DEV_ID( ... )    ((void)0, 0)
 #ifndef FLUSH_FENCE_PRODUCER
 #define FLUSH_FENCE_PRODUCER(...)
 #endif
