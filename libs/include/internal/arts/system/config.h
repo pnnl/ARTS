@@ -47,6 +47,14 @@ extern "C" {
 
 #include "arts/transport/launcher.h"
 
+#ifdef ARTS_USE_CXL
+/** CXL DB allocation strategy. */
+typedef enum {
+  ARTS_CXL_DB_ALLOC_STATIC,     /**< Always allocate on a fixed device (default). */
+  ARTS_CXL_DB_ALLOC_ROUND_ROBIN /**< Distribute allocations across devices. */
+} arts_cxl_db_alloc_strategy_t;
+#endif /* ARTS_USE_CXL */
+
 struct arts_config_table_s {
   unsigned int rank;
   char *ip_address;
@@ -105,6 +113,10 @@ struct arts_config_s {
   bool run_gpu_gc_idle;
   bool delete_zeros_gpu_gc;
   struct arts_config_table_s *table;
+#ifdef ARTS_USE_CXL
+  arts_cxl_db_alloc_strategy_t cxl_db_allocation_strategy; /**< DB allocation strategy (static or round_robin). */
+  unsigned int cxl_db_allocation_device; /**< Device index for static allocation (default: 0). */
+#endif /* ARTS_USE_CXL */
 };
 
 void arts_config_load(struct arts_config_s *config);

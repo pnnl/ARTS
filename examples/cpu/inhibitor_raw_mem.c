@@ -488,6 +488,11 @@ void init_per_node(unsigned int node_id, int argc, char **argv)
       init_cxl_memory();
     }
 
+    for (uint32_t i = 0; i < num_dbs; i++)
+    {
+      arts_printf("DB %u hosted on FAM device: %lu\n", i, GET_CXL_DEV_ID(db_mems[i]));
+    }
+
     /* Number of processes assigned to each DB */
     uint64_t procs_per_db = num_procs / num_dbs;
 
