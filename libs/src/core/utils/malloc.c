@@ -47,7 +47,7 @@
 #include "arts/cxl/wrapper.h"
 #endif
 
-#define ALIGNMENT 64
+#define ALIGNMENT 16
 #define IS_POWER_OF_TWO(x) (!((x) & ((x) - 1)))
 
 typedef struct ARTS_ALIGNED(64) header_s {
