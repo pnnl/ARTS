@@ -43,6 +43,7 @@
 #include <string.h>
 
 #include "arts.h"
+#include "arts/cxl/wrapper.h"
 #ifdef ARTS_USE_CXL
 #include "arts/cxl/deque.h"
 #endif

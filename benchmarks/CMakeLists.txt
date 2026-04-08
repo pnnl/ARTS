@@ -20,7 +20,7 @@ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/ocr-options_arts.h"
 set(BENCH_OCR_TYPE_DEFINE "OCR_TYPE_H=arts.h")
 set(BENCH_OCR_OPTIONS_DIR "${CMAKE_CURRENT_BINARY_DIR}")
 
-add_subdirectory(xsocr)
+# add_subdirectory(xsocr)
 add_subdirectory(ocr_shim)
 add_subdirectory(apps)
-add_subdirectory(baseline)
+# add_subdirectory(baseline)

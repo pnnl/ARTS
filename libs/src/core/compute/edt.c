@@ -57,8 +57,9 @@
 #include "arts/gpu/gpu_internal.h"
 #endif
 
-#ifdef ARTS_USE_CXL
 #include "arts/cxl/wrapper.h"
+#ifdef ARTS_USE_CXL
+#include "arts/cxl/deque.h"
 #endif
 
 #define MAX_EPOCH_ARRAY_LIST 32
