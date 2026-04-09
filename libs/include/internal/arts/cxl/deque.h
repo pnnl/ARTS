@@ -214,6 +214,8 @@ arts_cxl_deque_create_with_arenas(const uint64_t *dev_ids,
   arts_cxl_deque_t *dq =
       (arts_cxl_deque_t *)SHARED_MALLOC(sizeof(arts_cxl_deque_t));
 
+  assert(dq && "Allocated CXL deque pointer is valid");
+
   dq->indices.front_idx = -1;
   dq->indices.back_idx = 0;
   dq->consts.max_size = ARTS_CXL_DEQUE_LENGTH;
