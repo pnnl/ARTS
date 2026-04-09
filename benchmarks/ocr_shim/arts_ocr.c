@@ -100,8 +100,14 @@ static inline void ocr_copy_paramv(uint64_t *dst, const u64 *src, u32 paramc) {
   }
 }
 
-#if defined(__SANITIZE_ADDRESS__) ||                                           \
-    (defined(__has_feature) && __has_feature(address_sanitizer))
+#if defined(__SANITIZE_ADDRESS__)
+#  define _ARTS_OCR_ASAN 1
+#elif defined(__clang__)
+#  if __has_feature(address_sanitizer)
+#    define _ARTS_OCR_ASAN 1
+#  endif
+#endif
+#ifdef _ARTS_OCR_ASAN
 /* Under ASAN, suppress the harmless stack overread from struct-to-u64* casts.
  * This matches the original OCR runtime's behavior exactly.
  * We use volatile byte-by-byte copy to avoid the ASAN-intercepted memcpy

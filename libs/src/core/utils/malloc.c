@@ -50,7 +50,7 @@
 #define ALIGNMENT 16
 #define IS_POWER_OF_TWO(x) (!((x) & ((x) - 1)))
 
-typedef struct ARTS_ALIGNED(16) header_s {
+typedef struct ARTS_ALIGNED(64) header_s {
   size_t size;
   size_t align; // 0 if not aligned
   void *base;
