@@ -612,9 +612,12 @@ void arts_signal_edt(arts_guid_t edt_guid, uint32_t slot, arts_guid_t data_guid,
 #ifdef ARTS_USE_CXL
   if (arts_guid_is_cxl(data_guid)) {
     struct arts_db_s* header = (struct arts_db_s *)arts_cxl_get_ptr(data_guid);
-    FLUSH_FENCE_CONSUMER(header, sizeof(struct arts_db_s));
+    FLUSH_FENCE_CONSUMER(header, ALIGN_UP(sizeof(struct arts_db_s), CACHELINE_SIZE));
     db_ptr = (void *)(header + 1);
   }
+  #ifdef ARTS_CXL_ENABLE_AUTO_FLUSH
+    arts_cxl_producer_flush(data_guid);
+  #endif
 #endif
   internal_signal_edt(edt_guid, slot, data_guid, mode, db_ptr, 0);
 }
@@ -699,12 +702,24 @@ void arts_signal_edt_value(arts_guid_t edt_guid, uint32_t slot,
 
 void arts_signal_edt_ptr(arts_guid_t edt_guid, uint32_t slot, void *ptr,
                          unsigned int size) {
+  #ifdef ARTS_CXL_ENABLE_AUTO_FLUSH
+  if (IS_CXL_PTR(ptr)) 
+  {
+    FLUSH_FENCE_PRODUCER(ptr, ALIGN_UP(ptr, CACHELINE_SIZE));
+  }
+  #endif
   internal_signal_edt(edt_guid, slot, NULL_GUID, DB_MODE_PTR, ptr, size);
 }
 
 void arts_signal_edt_ptr_with_guid(arts_guid_t edt_guid, uint32_t slot,
                                    arts_guid_t db_guid, void *ptr,
                                    unsigned int size) {
+  #ifdef ARTS_CXL_ENABLE_AUTO_FLUSH
+  if (IS_CXL_PTR(ptr)) 
+  {
+    FLUSH_FENCE_PRODUCER(ptr, ALIGN_UP(ptr, CACHELINE_SIZE));
+  } 
+  #endif
   internal_signal_edt(edt_guid, slot, db_guid, DB_MODE_PTR, ptr, size);
 }
 
