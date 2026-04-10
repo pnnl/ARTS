@@ -51,11 +51,11 @@ extern "C" {
 
 // #define ARTS_USE_CXL 1
 // #define N 20000000
-#define N (1 << 20) 
+#define N (1 << 22)
 // #define N 20
 #define TILESIZE 131072
 // #define NTIMES 20
-#define NTIMES 2
+#define NTIMES 50
 // #define NTIMES 10
 #define OFFSET 0
 
@@ -71,11 +71,10 @@ extern "C" {
 #ifndef MAX
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
 #endif
-    
-    
+
 arts_guid_t get_total_owned_tiles();
 arts_guid_t get_done_guid();
-    
+
 // void launch_2_kernel_edt(arts_edt_t fun_ptr, unsigned int tile_size,
                     //   unsigned int total_size, double scalar,
                     //   arts_guid_t *a_guid, arts_guid_t *b_guid);
@@ -91,16 +90,16 @@ void launch_2_kernel_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 void launch_3_kernel_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                   arts_edt_dep_t depv[]);
 
-void force_acquire_cxl_guids(unsigned int num_tiles, 
+void force_acquire_cxl_guids(unsigned int num_tiles,
                       arts_guid_t *a_guid, arts_guid_t *b_guid,
-                      arts_guid_t *c_guid); 
+                      arts_guid_t *c_guid);
 
 void update_kernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                             arts_edt_dep_t depv[]);
 
 void populate_tile_range();
 bool tile_in_range(uint64_t i);
-unsigned int get_tile_owner(uint64_t i);                   
+unsigned int get_tile_owner(uint64_t i);
 void start_timer();
 void end_timer(arts_edt_dep_t to_signal);
 
