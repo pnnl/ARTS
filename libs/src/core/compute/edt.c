@@ -703,9 +703,9 @@ void arts_signal_edt_value(arts_guid_t edt_guid, uint32_t slot,
 void arts_signal_edt_ptr(arts_guid_t edt_guid, uint32_t slot, void *ptr,
                          unsigned int size) {
   #ifdef ARTS_CXL_ENABLE_AUTO_FLUSH
-  if (IS_CXL_PTR(ptr)) 
+  if (IS_CXL_PTR(ptr))
   {
-    FLUSH_FENCE_PRODUCER(ptr, ALIGN_UP(ptr, CACHELINE_SIZE));
+    FLUSH_FENCE_PRODUCER(ptr, ALIGN_UP(size, CACHELINE_SIZE));
   }
   #endif
   internal_signal_edt(edt_guid, slot, NULL_GUID, DB_MODE_PTR, ptr, size);
@@ -715,10 +715,10 @@ void arts_signal_edt_ptr_with_guid(arts_guid_t edt_guid, uint32_t slot,
                                    arts_guid_t db_guid, void *ptr,
                                    unsigned int size) {
   #ifdef ARTS_CXL_ENABLE_AUTO_FLUSH
-  if (IS_CXL_PTR(ptr)) 
+  if (IS_CXL_PTR(ptr))
   {
-    FLUSH_FENCE_PRODUCER(ptr, ALIGN_UP(ptr, CACHELINE_SIZE));
-  } 
+    FLUSH_FENCE_PRODUCER(ptr, ALIGN_UP(size, CACHELINE_SIZE));
+  }
   #endif
   internal_signal_edt(edt_guid, slot, db_guid, DB_MODE_PTR, ptr, size);
 }
