@@ -44,8 +44,8 @@
 #include "arts/compute/edt.h"
 #include "arts/gas/out_of_order.h"
 #include "arts/gas/route_table.h"
+#include "arts/memory/cdag_lock.h"
 #include "arts/memory/db.h"
-#include "arts/memory/frontier.h"
 #include "arts/runtime_state.h"
 #include "arts/sync/event.h"
 #include "arts/sync/termination.h"
@@ -55,27 +55,12 @@
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
 
-static void arts_clear_exclusive_request(struct arts_db_s *db, int rank,
-                                         arts_guid_t edt_guid) {
-  if (!db || !db->db_list) {
-    return;
-  }
-
-  struct arts_db_list_s *db_list = (struct arts_db_list_s *)db->db_list;
-  arts_writer_lock(&db_list->reader, &db_list->writer);
-  for (struct arts_db_frontier_s *frontier = db_list->head; frontier;
-       frontier = frontier->next) {
-    if (frontier->exNode == (unsigned int)rank &&
-        frontier->exEdtGuid == edt_guid) {
-      frontier->exEdtGuid = NULL_GUID;
-      frontier->exEdt = NULL;
-      frontier->exSlot = 0;
-      frontier->exMode = DB_MODE_NULL;
-      break;
-    }
-  }
-  arts_writer_unlock(&db_list->writer);
-}
+/* arts_clear_exclusive_request is obsolete with cdag_lock.
+ * Rationale: in the legacy frontier, an eagerly-sent remote EW request
+ * stored its metadata in the frontier's ex* slot and clear was used to
+ * cancel redundant send on progression. cdag_lock dispatches every
+ * waiter exactly once via on_advance, so there is no duplicate-send
+ * window to guard against. */
 
 static void send_remote_add_dependence_packet(unsigned int message_type,
                                               arts_guid_t source,
@@ -120,22 +105,58 @@ void arts_remote_set_dep_mode(arts_guid_t edt_guid, uint32_t slot,
   arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
 }
 
+/* Helpers for visitor callbacks invoked inside the cdag_lock's head
+ * iteration. The visit function runs with the lock's queue_lock held
+ * (per cdag_lock_iter_head_ranks contract), so we must not perform
+ * complex ARTS operations inside. We just send async packets. */
+struct invalidate_visit_ctx_s {
+  arts_guid_t guid;
+  unsigned int exclude_rank;
+};
+
+static void invalidate_visit_cb(unsigned int node, void *ctx_) {
+  struct invalidate_visit_ctx_s *ctx = (struct invalidate_visit_ctx_s *)ctx_;
+  if (node == arts_global_rank_id || node == ctx->exclude_rank) {
+    return;
+  }
+  struct arts_remote_guid_only_packet_s out_packet;
+  out_packet.guid = ctx->guid;
+  arts_fill_packet_header(&out_packet.header, sizeof(out_packet),
+                          ARTS_REMOTE_INVALIDATE_DB_MSG);
+  arts_remote_send_request_async((int)node, (char *)&out_packet,
+                                 sizeof(out_packet));
+}
+
+struct destroy_visit_ctx_s {
+  arts_guid_t guid;
+  unsigned int origin_rank;
+};
+
+static void destroy_visit_cb(unsigned int node, void *ctx_) {
+  struct destroy_visit_ctx_s *ctx = (struct destroy_visit_ctx_s *)ctx_;
+  if (node == arts_global_rank_id || node == ctx->origin_rank) {
+    return;
+  }
+  struct arts_remote_guid_only_packet_s out_packet;
+  out_packet.guid = ctx->guid;
+  arts_fill_packet_header(&out_packet.header, sizeof(out_packet),
+                          ARTS_REMOTE_DB_DESTROY_MSG);
+  arts_remote_send_request_async((int)node, (char *)&out_packet,
+                                 sizeof(out_packet));
+}
+
 void arts_remote_update_route_table(arts_guid_t guid, unsigned int rank) {
   unsigned int owner = arts_guid_get_rank(guid);
   if (owner == arts_global_rank_id) {
-    struct arts_db_frontier_iterator_s iter;
-    if (arts_route_table_get_rank_duplicates(guid, rank, &iter)) {
-      unsigned int node;
-      while (arts_db_frontier_iter_next(&iter, &node)) {
-        if (node != arts_global_rank_id && node != rank) {
-          struct arts_remote_guid_only_packet_s out_packet;
-          out_packet.guid = guid;
-          arts_fill_packet_header(&out_packet.header, sizeof(out_packet),
-                                  ARTS_REMOTE_INVALIDATE_DB_MSG);
-          arts_remote_send_request_async((int)node, (char *)&out_packet,
-                                         sizeof(out_packet));
-        }
+    struct arts_db_s *db =
+        (struct arts_db_s *)arts_route_table_lookup_db(guid, NULL, false);
+    if (db) {
+      if (db->db_list) {
+        struct invalidate_visit_ctx_s vctx = {guid, rank};
+        cdag_lock_iter_head_ranks((struct cdag_lock_s *)db->db_list,
+                                  invalidate_visit_cb, &vctx);
       }
+      arts_route_table_return_db(guid, false);
     }
   } else {
     struct arts_remote_guid_only_packet_s packet;
@@ -162,20 +183,16 @@ void arts_remote_handle_invalidate_db(void *ptr) {
 void arts_remote_db_destroy(arts_guid_t guid, unsigned int origin_rank) {
   unsigned int owner = arts_guid_get_rank(guid);
   if (owner == arts_global_rank_id) {
-    // Owner: iterate frontier, send DESTROY to all copy holders
-    struct arts_db_frontier_iterator_s iter;
-    if (arts_route_table_get_rank_duplicates(guid, (unsigned int)-1, &iter)) {
-      unsigned int node;
-      while (arts_db_frontier_iter_next(&iter, &node)) {
-        if (node != arts_global_rank_id && node != origin_rank) {
-          struct arts_remote_guid_only_packet_s out_packet;
-          out_packet.guid = guid;
-          arts_fill_packet_header(&out_packet.header, sizeof(out_packet),
-                                  ARTS_REMOTE_DB_DESTROY_MSG);
-          arts_remote_send_request_async((int)node, (char *)&out_packet,
-                                         sizeof(out_packet));
-        }
+    // Owner: iterate cdag_lock head ranks, send DESTROY to each.
+    struct arts_db_s *db =
+        (struct arts_db_s *)arts_route_table_lookup_db(guid, NULL, false);
+    if (db) {
+      if (db->db_list) {
+        struct destroy_visit_ctx_s vctx = {guid, origin_rank};
+        cdag_lock_iter_head_ranks((struct cdag_lock_s *)db->db_list,
+                                  destroy_visit_cb, &vctx);
       }
+      arts_route_table_return_db(guid, false);
     }
   } else {
     // Non-owner: forward destroy request to owner
@@ -247,9 +264,15 @@ void arts_remote_handle_update_db(void *ptr) {
         void *dest = (void *)(db + 1);
         memcpy(dest, packet_payload, data_size);
         arts_route_table_set_rank(packet->guid, (int)arts_global_rank_id);
-        arts_progress_frontier(db, arts_global_rank_id);
-      } else {
-        arts_progress_frontier(db, packet->header.rank);
+      }
+      /* Either way, advance the cdag_lock — the previous owner has
+       * released the DB so the next generation can run. The rank
+       * argument of the old arts_progress_frontier was only used by
+       * signal_frontier_remote to decide forwarding; that logic is now
+       * per-waiter inside the dispatch callback. */
+      if (db->db_list) {
+        cdag_lock_release((struct cdag_lock_s *)db->db_list,
+                          arts_cdag_dispatch_cb, db);
       }
     }
   }
@@ -321,7 +344,7 @@ void arts_remote_handle_db_move(void *ptr) {
   // We need a local pointer for this node
   if (db_header_buf.db_list) {
     struct arts_db_s *new_db = (struct arts_db_s *)mem_packet;
-    new_db->db_list = arts_new_db_list();
+    new_db->db_list = cdag_lock_new();
   }
 
   ARTS_INFO("DB[Guid:%lu] Moved to Rank: %d", packet->guid,
@@ -499,11 +522,11 @@ void arts_remote_handle_db_received(
       pdb.guid, (void ***)&data_ptr, ALLOCATED_KEY, true);
 
   struct arts_db_s *t_ptr = (data_ptr) ? *data_ptr : NULL;
-  struct arts_db_list_s *db_list = NULL;
+  struct cdag_lock_s *db_list = NULL;
   bool needs_frontier =
       arts_guid_is_local(pdb.guid) && pdb.db_type != ARTS_DB_LOCAL;
   if (t_ptr && needs_frontier) {
-    db_list = (struct arts_db_list_s *)t_ptr->db_list;
+    db_list = (struct cdag_lock_s *)t_ptr->db_list;
   }
   ARTS_DEBUG("Rec DB State: %u", state);
   switch (state) {
@@ -525,7 +548,7 @@ void arts_remote_handle_db_received(
     db_res = (struct arts_db_s *)arts_malloc_align(pdb.header.size, 16);
     memcpy(db_res, (packet + 1), received_bytes);
     if (needs_frontier) {
-      db_res->db_list = arts_new_db_list();
+      db_res->db_list = cdag_lock_new();
     } else {
       db_res->db_list = NULL;
     }
@@ -537,7 +560,7 @@ void arts_remote_handle_db_received(
     db_res = (struct arts_db_s *)arts_malloc_align(pdb.header.size, 16);
     memcpy(db_res, (packet + 1), received_bytes);
     if (needs_frontier) {
-      db_res->db_list = arts_new_db_list();
+      db_res->db_list = cdag_lock_new();
     } else {
       db_res->db_list = NULL;
     }
@@ -614,15 +637,14 @@ void arts_remote_db_full_send_check(int rank, struct arts_db_s *db,
     arts_route_table_return_db(db->guid, false);
     arts_remote_db_full_send_now(rank, db, edt_guid, slot, mode);
   } else {
+    /* Owner path: submit the remote request to the cdag_lock. If it
+     * lands on head, send the DB immediately. If it's queued, the
+     * dispatch callback will send when the generation becomes head. */
     bool on_head = false;
     if (arts_add_db_duplicate(db, rank, NULL, edt_guid, slot, mode, &on_head)) {
       if (on_head) {
         arts_remote_db_full_send_now(rank, db, edt_guid, slot, mode);
-        arts_clear_exclusive_request(db, rank, edt_guid);
       }
-      /* Non-head: request is stored in the frontier (exNode/exEdtGuid/
-       * exSlot/exMode).  arts_progress_frontier will send the updated DB
-       * copy when this frontier becomes the head. */
     }
   }
 }
@@ -661,7 +683,7 @@ void arts_remote_handle_db_full_recieved(
   struct arts_db_s *db_res = (data_ptr) ? (struct arts_db_s *)*data_ptr : NULL;
   if (db_res) {
     if (pdb.header.size == db_res->header.size) {
-      struct arts_db_list_s *db_list = (struct arts_db_list_s *)db_res->db_list;
+      struct cdag_lock_s *db_list = (struct cdag_lock_s *)db_res->db_list;
       void *dest = (void *)(db_res + 1);
       memcpy(dest, packet_payload, pdb.header.size - sizeof(struct arts_db_s));
       db_res->db_list = db_list;
@@ -672,7 +694,7 @@ void arts_remote_handle_db_full_recieved(
     db_res = (struct arts_db_s *)arts_malloc_align(pdb.header.size, 16);
     memcpy(db_res, (packet + 1), pdb.header.size);
     if (arts_guid_is_local(pdb.guid) && pdb.db_type != ARTS_DB_LOCAL) {
-      db_res->db_list = arts_new_db_list();
+      db_res->db_list = cdag_lock_new();
     } else {
       db_res->db_list = NULL;
     }

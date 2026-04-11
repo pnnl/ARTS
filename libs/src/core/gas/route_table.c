@@ -45,8 +45,8 @@
 #include "arts.h"
 #include "arts/gas/guid.h"
 #include "arts/gas/out_of_order.h"
+#include "arts/memory/cdag_lock.h"
 #include "arts/memory/db.h"
-#include "arts/memory/frontier.h"
 #include "arts/runtime_state.h"
 #include "arts/sync/event.h"
 #include "arts/system/print.h"
@@ -912,8 +912,8 @@ void arts_route_table_debug_guid(arts_guid_t key, const char *label) {
     ARTS_INFO("[RT-DBG:%s] Guid:%lu data=%p rank=%u count=%lu "
               "res=%u req=%u avail=%u del=%u",
               label, key, item->data, item->rank, GET_COUNT(local),
-              IS_RES(local) != 0, IS_REQ(local) != 0,
-              IS_AVAIL(local) != 0, IS_DEL(local) != 0);
+              IS_RES(local) != 0, IS_REQ(local) != 0, IS_AVAIL(local) != 0,
+              IS_DEL(local) != 0);
   } else {
     ARTS_INFO("[RT-DBG:%s] Guid:%lu NOT FOUND (any state)", label, key);
   }
@@ -1022,25 +1022,7 @@ bool arts_route_table_mark_delete(arts_guid_t key) {
   return false;
 }
 
-void arts_route_table_add_rank_duplicate(arts_guid_t key, unsigned int rank) {}
-
-bool arts_route_table_get_rank_duplicates(
-    arts_guid_t key, unsigned int rank,
-    struct arts_db_frontier_iterator_s *iter) {
-  arts_route_table_t *route_table = arts_get_route_table(key);
-  arts_route_item_t *location =
-      arts_route_table_search_for_key(route_table, key, AVAILABLE_KEY);
-  if (location) {
-    if (rank != ARTS_HINT_CURRENT_NODE) {
-      // Blocks until the OO is done firing
-      arts_out_of_order_list_reset(&location->ooList);
-      location->rank = rank;
-    }
-    struct arts_db_s *db = (struct arts_db_s *)location->data;
-    if (!db->db_list) {
-      return false; // LOCAL DBs have no frontier
-    }
-    return arts_close_frontier((struct arts_db_list_s *)db->db_list, iter);
-  }
-  return false;
-}
+/* arts_route_table_get_rank_duplicates / arts_route_table_add_rank_duplicate
+ * removed: their only callers were handler.c's update/destroy broadcasts
+ * which now iterate the cdag_lock's head ranks directly via
+ * cdag_lock_iter_head_ranks. */

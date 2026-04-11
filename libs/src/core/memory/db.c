@@ -52,7 +52,7 @@
 #include "arts/gas/guid.h"
 #include "arts/gas/out_of_order.h"
 #include "arts/gas/route_table.h"
-#include "arts/memory/frontier.h"
+#include "arts/memory/cdag_lock.h"
 #include "arts/remote/handler.h"
 #include "arts/runtime_state.h"
 #include "arts/runtime_types.h"
@@ -86,21 +86,72 @@ static inline bool arts_db_subtype_has_frontier(arts_db_types_t db_type) {
   return true;
 }
 
-#define WRITE_SET 0x80000000
+/*
+ * arts_cdag_dispatch_cb — on_advance callback for cdag_lock_release.
+ *
+ * Invoked once per newly-runnable request when the head generation
+ * drains and the next one becomes head. Handles both local EDTs
+ * (decrement depc_needed, set depv[slot].ptr, kick scheduler if ready)
+ * and remote EDTs (send the DB via remote_db_full_send_now).
+ *
+ * ctx is the arts_db_s pointer that owns the lock.
+ */
+void arts_cdag_dispatch_cb(const struct cdag_lock_request_s *req, void *ctx) {
+  struct arts_db_s *db = (struct arts_db_s *)ctx;
+  if (!db) {
+    return;
+  }
+
+  if (req->origin_rank == arts_global_rank_id) {
+    /* Local dispatch: hook the waiter into its EDT's dep slot. */
+    struct arts_edt_s *edt = req->edt;
+    arts_guid_t edt_guid = req->edt_guid;
+    if (!edt && edt_guid != NULL_GUID) {
+      edt = (struct arts_edt_s *)arts_route_table_lookup_item(edt_guid);
+    }
+    if (!edt) {
+      ARTS_INFO("cdag dispatch: missing local EDT[Guid:%lu] for DB[Guid:%lu]",
+                edt_guid, db->guid);
+      return;
+    }
+    arts_edt_dep_t *depv = (arts_edt_dep_t *)arts_get_depv(edt);
+    /* Acquire a route-table ref matched by return_db in release_dbs. */
+    arts_route_table_lookup_db(db->guid, NULL, false);
+    depv[req->slot].ptr = db + 1;
+    if (arts_atomic_sub(&edt->depc_needed, 1U) == 0) {
+      arts_handle_remote_stolen_edt(edt);
+    }
+  } else {
+    /* Remote dispatch: send the full DB (with EDT/slot metadata) to the
+     * origin rank. The receiver's arts_remote_handle_db_full_recieved
+     * hooks the data into the target EDT's dep slot. */
+    arts_remote_db_full_send_now((int)req->origin_rank, db, req->edt_guid,
+                                 req->slot, req->mode);
+  }
+}
 
 /*
  * arts_db_auto_acquire — Automatically acquire WRITE access for the creator
  * EDT.
  *
- * Called when an EDT creates a local DB.  Sets WRITE_SET on the initial
- * frontier (blocking all consumers from joining the HEAD frontier).
- * The DB's GUID is tracked in the thread-local created_db_list for cleanup
- * when the EDT completes.
+ * Called when an EDT creates a local DB. Submits a phantom EW request on
+ * behalf of the creator so the cdag_lock is held at creation time; any
+ * subsequent consumer submit lands in a new generation behind this
+ * creator gen. When the creator releases (arts_release_created_dbs or
+ * arts_db_release), the gen drains and consumers are dispatched.
  */
 static void arts_db_auto_acquire(struct arts_db_s *db) {
   if (db->db_list) {
-    struct arts_db_list_s *db_list = (struct arts_db_list_s *)db->db_list;
-    arts_atomic_fetch_or(&db_list->head->lock, WRITE_SET);
+    struct cdag_lock_s *lock = (struct cdag_lock_s *)db->db_list;
+    struct cdag_lock_request_s req = {0};
+    req.edt = current_edt;
+    req.edt_guid = current_edt ? current_edt->current_edt : NULL_GUID;
+    req.origin_rank = arts_global_rank_id;
+    req.slot = 0;
+    req.mode = DB_MODE_EW;
+    (void)cdag_lock_submit(lock, &req);
+    /* The creator is already running; it doesn't need a dispatch callback.
+     * HEAD_IMMEDIATE means the lock is held from now on until release. */
   }
   arts_track_created_db(db->guid);
 }
@@ -142,7 +193,7 @@ void *arts_db_malloc(arts_db_types_t db_type, size_t size) {
 void arts_db_free(void *ptr) {
   struct arts_db_s *db = (struct arts_db_s *)ptr;
   if (db->db_list && db->db_list != (void *)1) {
-    arts_delete_db_list((struct arts_db_list_s *)db->db_list);
+    cdag_lock_free((struct cdag_lock_s *)db->db_list);
     db->db_list = NULL;
   }
 #ifdef ARTS_USE_GPU
@@ -181,7 +232,7 @@ void arts_db_create_internal(arts_guid_t guid, void *addr, uint64_t len,
   db_res->copy_count = 1;
   db_res->db_type = db_type;
   if (arts_db_subtype_has_frontier(db_type)) {
-    db_res->db_list = arts_new_db_list();
+    db_res->db_list = cdag_lock_new();
   } else {
     db_res->db_list = NULL;
   }
@@ -744,19 +795,31 @@ void release_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu) {
     if (depv[i].guid != NULL_GUID &&
         (access_mode == DB_MODE_EW || access_mode == DB_MODE_MEMSET)) {
       if (db_subtype == ARTS_DB_LOCAL) {
-        ARTS_DEBUG("Pinned DB write release (no frontier update)");
+        ARTS_DEBUG("Pinned DB write release (no cdag_lock update)");
       } else if (owner == arts_global_rank_id) {
         struct arts_db_s *db = ((struct arts_db_s *)depv[i].ptr - 1);
-        arts_progress_frontier(db, arts_global_rank_id);
+        if (db->db_list) {
+          cdag_lock_release((struct cdag_lock_s *)db->db_list,
+                            arts_cdag_dispatch_cb, db);
+        }
       } else {
         arts_remote_update_db(depv[i].guid, true);
         INCREMENT_NUM_OWNER_UPDATE_PERFORMED_BY(1);
       }
     } else if (depv[i].guid != NULL_GUID && access_mode == DB_MODE_RO) {
-      ARTS_DEBUG("DB[Guid:%lu] released in READ mode (no owner update, no "
-                 "latch decrement)",
-                 depv[i].guid);
+      ARTS_DEBUG("DB[Guid:%lu] released in READ mode", depv[i].guid);
       INCREMENT_NUM_OWNER_UPDATE_SAVED_BY(1);
+      /* Every local RO reader held a slot in the cdag_lock. Release it.
+       * If we're the last reader in the current RO generation, the lock
+       * advances to the next generation and dispatches its waiters. */
+      if (db_subtype == ARTS_DB_DEFAULT && owner == arts_global_rank_id &&
+          depv[i].ptr) {
+        struct arts_db_s *db = ((struct arts_db_s *)depv[i].ptr) - 1;
+        if (db->db_list) {
+          cdag_lock_release((struct cdag_lock_s *)db->db_list,
+                            arts_cdag_dispatch_cb, db);
+        }
+      }
     } else if (access_mode == DB_MODE_PTR) {
       if (depv[i].ptr) {
         arts_free(depv[i].ptr);
@@ -804,7 +867,8 @@ void arts_db_release(arts_guid_t guid) {
             (struct arts_db_s *)arts_route_table_lookup_db(guid, NULL, false);
         if (db) {
           if (db->db_list) {
-            arts_progress_frontier(db, arts_global_rank_id);
+            cdag_lock_release((struct cdag_lock_s *)db->db_list,
+                              arts_cdag_dispatch_cb, db);
           }
           arts_route_table_return_db(guid, false);
         }
@@ -828,15 +892,19 @@ void arts_db_release(arts_guid_t guid) {
       if (db) {
         arts_db_types_t subtype = db->db_type;
         if (subtype == ARTS_DB_LOCAL) {
-          /* LOCAL: no frontier, ordering is programmer's responsibility. */
+          /* LOCAL: no cdag_lock, ordering is programmer's responsibility. */
         } else if (arts_guid_get_rank(guid) == arts_global_rank_id) {
-          arts_progress_frontier(db, arts_global_rank_id);
+          if (db->db_list) {
+            cdag_lock_release((struct cdag_lock_s *)db->db_list,
+                              arts_cdag_dispatch_cb, db);
+          }
         } else {
           arts_remote_update_db(guid, true);
         }
       }
     }
-    /* RO mode: no frontier/latch action needed */
+    /* RO mode: no lock-level action needed here; release_dbs will
+     * perform the actual cdag_lock_release on the owner path. */
     arts_route_table_return_db(guid, false);
     depv[i].guid = NULL_GUID;
     depv[i].ptr = NULL;
@@ -869,7 +937,8 @@ void arts_release_created_dbs(void) {
         (struct arts_db_s *)arts_route_table_lookup_db(*guid, NULL, false);
     if (db) {
       if (db->db_list) {
-        arts_progress_frontier(db, arts_global_rank_id);
+        cdag_lock_release((struct cdag_lock_s *)db->db_list,
+                          arts_cdag_dispatch_cb, db);
       }
       arts_route_table_return_db(*guid, false);
     }
@@ -880,13 +949,32 @@ bool arts_add_db_duplicate(struct arts_db_s *db, unsigned int rank,
                            struct arts_edt_s *edt, arts_guid_t edt_guid,
                            unsigned int slot, arts_db_access_mode_t mode,
                            bool *on_head) {
-  bool write = (mode == DB_MODE_EW || mode == DB_MODE_MEMSET);
   if (edt && edt_guid == NULL_GUID) {
     edt_guid = edt->current_edt;
   }
-  return arts_push_db_to_list((struct arts_db_list_s *)db->db_list, rank, write,
-                              arts_guid_get_rank(db->guid) == rank, false, edt,
-                              edt_guid, slot, mode, on_head);
+  if (!db->db_list) {
+    if (on_head) {
+      *on_head = false;
+    }
+    return false;
+  }
+  struct cdag_lock_request_s req = {0};
+  req.edt = edt;
+  req.edt_guid = edt_guid;
+  req.origin_rank = rank;
+  req.slot = slot;
+  req.mode = mode;
+  enum cdag_submit_result res =
+      cdag_lock_submit((struct cdag_lock_s *)db->db_list, &req);
+  if (on_head) {
+    *on_head = (res == CDAG_SUBMIT_HEAD_IMMEDIATE);
+  }
+  /* Historically this returned "true if this was the first copy for this
+   * rank in the current frontier", to avoid duplicate remote sends.
+   * cdag_lock does not deduplicate at the lock layer — every submit
+   * succeeds. Return true unconditionally; caller should dedup at a
+   * higher level if needed. */
+  return true;
 }
 
 void internal_get_from_db(arts_guid_t edt_guid, arts_guid_t db_guid,
@@ -1035,7 +1123,8 @@ void arts_wait_release_dbs(void) {
       struct arts_db_s *db =
           (struct arts_db_s *)arts_route_table_lookup_db(*guid, NULL, false);
       if (db && db->db_list) {
-        arts_progress_frontier(db, arts_global_rank_id);
+        cdag_lock_release((struct cdag_lock_s *)db->db_list,
+                          arts_cdag_dispatch_cb, db);
       }
     }
   }
@@ -1055,20 +1144,19 @@ void arts_wait_release_dbs(void) {
       }
       struct arts_db_s *db = ((struct arts_db_s *)depv[i].ptr) - 1;
       if (db && db->db_list) {
-        arts_progress_frontier(db, arts_global_rank_id);
+        cdag_lock_release((struct cdag_lock_s *)db->db_list,
+                          arts_cdag_dispatch_cb, db);
       }
     }
   }
 }
 
 /*
- * arts_wait_reacquire_dbs -- Re-acquire frontier locks for all DBs
- * held by the current EDT after arts_wait_on_handle completes.
- *
- * After arts_progress_frontier in the release phase, consumers run and their
- * epilogues also call arts_progress_frontier, consuming the entire frontier
- * chain. By the time the epoch completes, db_list->head is typically NULL.
- * In that case, create a fresh frontier node with WRITE_SET as the new head.
+ * arts_wait_reacquire_dbs -- Re-acquire cdag_locks for all DBs held by
+ * the current EDT after arts_wait_on_handle completes. For each held
+ * DB, submit a new creator-owner EW request — because this EDT is still
+ * the conceptual owner and will be doing more work with the DB after
+ * the wait returns.
  */
 void arts_wait_reacquire_dbs(void) {
   /* Path 1: created DBs */
@@ -1083,16 +1171,13 @@ void arts_wait_reacquire_dbs(void) {
       struct arts_db_s *db =
           (struct arts_db_s *)arts_route_table_lookup_db(*guid, NULL, false);
       if (db && db->db_list) {
-        struct arts_db_list_s *db_list = (struct arts_db_list_s *)db->db_list;
-        arts_writer_lock(&db_list->reader, &db_list->writer);
-        if (!db_list->head) {
-          struct arts_db_frontier_s *new_f = arts_new_db_frontier();
-          arts_atomic_fetch_or(&new_f->lock, WRITE_SET);
-          db_list->head = db_list->tail = new_f;
-        } else {
-          arts_atomic_fetch_or(&db_list->head->lock, WRITE_SET);
-        }
-        arts_writer_unlock(&db_list->writer);
+        struct cdag_lock_request_s req = {0};
+        req.edt = current_edt;
+        req.edt_guid = current_edt ? current_edt->current_edt : NULL_GUID;
+        req.origin_rank = arts_global_rank_id;
+        req.slot = 0;
+        req.mode = DB_MODE_EW;
+        (void)cdag_lock_submit((struct cdag_lock_s *)db->db_list, &req);
       }
     }
   }
@@ -1112,16 +1197,13 @@ void arts_wait_reacquire_dbs(void) {
       }
       struct arts_db_s *db = ((struct arts_db_s *)depv[i].ptr) - 1;
       if (db && db->db_list) {
-        struct arts_db_list_s *db_list = (struct arts_db_list_s *)db->db_list;
-        arts_writer_lock(&db_list->reader, &db_list->writer);
-        if (!db_list->head) {
-          struct arts_db_frontier_s *new_f = arts_new_db_frontier();
-          arts_atomic_fetch_or(&new_f->lock, WRITE_SET);
-          db_list->head = db_list->tail = new_f;
-        } else {
-          arts_atomic_fetch_or(&db_list->head->lock, WRITE_SET);
-        }
-        arts_writer_unlock(&db_list->writer);
+        struct cdag_lock_request_s req = {0};
+        req.edt = current_edt;
+        req.edt_guid = current_edt->current_edt;
+        req.origin_rank = arts_global_rank_id;
+        req.slot = (unsigned int)i;
+        req.mode = depv[i].mode;
+        (void)cdag_lock_submit((struct cdag_lock_s *)db->db_list, &req);
       }
     }
   }

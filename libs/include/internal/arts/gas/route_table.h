@@ -157,12 +157,8 @@ arts_route_table_search_for_key(arts_route_table_t *route_table,
                                 arts_guid_t key, item_state_t state);
 bool arts_route_table_update_item(arts_guid_t key, void *data,
                                   unsigned int rank, item_state_t state);
-bool arts_route_table_get_rank_duplicates(
-    arts_guid_t key, unsigned int rank,
-    struct arts_db_frontier_iterator_s *iter);
 bool arts_route_table_add_sent(arts_guid_t key, void *edt, unsigned int slot,
                                bool aggregate);
-void arts_route_table_add_rank_duplicate(arts_guid_t key, unsigned int rank);
 
 item_state_t arts_route_table_lookup_item_with_state(arts_guid_t key,
                                                      void ***data,

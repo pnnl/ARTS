@@ -184,4 +184,6 @@ add_subdirectory(stream)
 if (ARTS_USE_CXL)
   add_subdirectory(random_access)
 endif()
- 
+
+# Subdirectory-based examples
+add_subdirectory(lulesh)

@@ -46,6 +46,11 @@ set(TEST_PROGRAMS
     cdag
     cdag_ew_chain
     cdag_ew_ordering
+    cdag_ew_ro_ew
+    cdag_ew_ew_chain_seal
+    cdag_ro_accumulation
+    cdag_mixed_local_remote
+    cdag_lock_unit
     out_of_order_list
     pin_db
     get_from_db
@@ -352,6 +357,10 @@ register_single_node_test(shad_lock)
 register_single_node_test(cdag ARGS 32 0 0 0)
 register_single_node_test(cdag_ew_chain ARGS 4)
 register_single_node_test(cdag_ew_ordering)
+register_single_node_test(cdag_ew_ro_ew)
+register_single_node_test(cdag_ew_ew_chain_seal)
+register_single_node_test(cdag_ro_accumulation)
+register_single_node_test(cdag_lock_unit)
 
 # Graph tests
 register_single_node_test(csr)
@@ -374,6 +383,7 @@ register_multinode_test(multinode_cdag)
 register_multinode_test(multinode_event_types)
 register_multinode_test(multinode_array_db)
 register_multinode_test(multinode_db_advanced)
+register_multinode_test(cdag_mixed_local_remote)
 
 # --- GPU tests ---
 
