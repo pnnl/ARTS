@@ -50,7 +50,7 @@ void arts_ll_server_shutdown();
 void arts_ll_server_cleanup();
 
 void arts_server_setup(struct arts_config_s *config);
-void arts_remote_shutdown();
+void arts_remote_send_shutdown_broadcast(void);
 void arts_server_cleanup(void);
 #ifdef __cplusplus
 }

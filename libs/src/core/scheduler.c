@@ -162,6 +162,8 @@ void arts_runtime_node_init(struct arts_config_s *config) {
   arts_node_info.remote_route_table = arts_new_route_table(
       config->route_table_entries, config->route_table_size);
   arts_node_info.local_spin = (volatile bool **)arts_calloc(tc, sizeof(bool *));
+  arts_node_info.thread_roles =
+      (unsigned int *)arts_calloc(tc, sizeof(unsigned int));
   arts_node_info.memory_moves =
       (unsigned int **)arts_calloc(tc, sizeof(unsigned int *));
   arts_node_info.atomic_waits =
@@ -187,6 +189,8 @@ void arts_runtime_node_init(struct arts_config_s *config) {
   arts_node_info.steal_request_lock = 1U;
   arts_node_info.shutdown_count = arts_global_rank_count - 1;
   arts_node_info.ready_to_shutdown = arts_global_rank_count - 1;
+  arts_node_info.shutdown_state = 0U;
+  arts_node_info.outbox_pending = 0U;
   arts_node_info.auto_shutdown_guid = config->auto_shutdown ? 1 : NULL_GUID;
 
   /* Network buffer */
@@ -373,6 +377,7 @@ void arts_runtime_global_cleanup() {
   arts_free(arts_node_info.gpu_deque);
   arts_free(arts_node_info.gpu_route_table);
   arts_free((void *)arts_node_info.local_spin);
+  arts_free(arts_node_info.thread_roles);
   arts_free(arts_node_info.memory_moves);
   arts_free(arts_node_info.atomic_waits);
   arts_free(arts_node_info.buf);
@@ -499,6 +504,7 @@ void arts_runtime_private_init(struct thread_mask_s *thread,
     }
   }
   arts_node_info.local_spin[thread->id] = &arts_thread_info.alive;
+  arts_node_info.thread_roles[thread->id] = (unsigned int)thread->role;
   arts_thread_info.alive = true;
   arts_node_info.memory_moves[thread->id] =
       (unsigned int *)&arts_thread_info.outstanding_memory_moves;
@@ -590,18 +596,68 @@ void arts_runtime_private_cleanup() {
  *   2. Set *local_spin[i] = false, which clears arts_thread_info.alive for
  *      that thread, causing it to exit its scheduler/network loop.
  */
-void arts_runtime_stop() {
-  ARTS_INFO("arts_runtime_stop: stopping %u threads",
-            arts_node_info.total_thread_count);
+/*
+ * Helper: walk the thread table and clear alive=false for every thread
+ * whose role matches `role_mask`. The registration spin is bounded to
+ * avoid an infinite busy-wait if a thread crashed during init.
+ */
+static void arts_runtime_stop_by_role(unsigned int role_mask,
+                                      const char *role_label) {
+  const unsigned int MAX_SPIN = 10000000; /* ~sub-second upper bound */
   unsigned int i;
   for (i = 0; i < arts_node_info.total_thread_count; i++) {
-    ARTS_DEBUG("arts_runtime_stop: waiting for thread %u to register", i);
-    while (!arts_node_info.local_spin[i]) {
-      ;
+    /* Skip threads whose role is not in the mask. Thread 0 is the main
+     * thread and always has WORKER role. */
+    if ((1U << arts_node_info.thread_roles[i]) & role_mask) {
+      unsigned int spin = 0;
+      while (!arts_node_info.local_spin[i]) {
+        if (++spin >= MAX_SPIN) {
+          ARTS_WARN("arts_runtime_stop_%s: thread %u never registered "
+                    "local_spin — giving up (may leak)",
+                    role_label, i);
+          goto next;
+        }
+      }
+      (*arts_node_info.local_spin[i]) = false;
+      ARTS_DEBUG("arts_runtime_stop_%s: thread %u signaled to stop", role_label,
+                 i);
     }
-    (*arts_node_info.local_spin[i]) = false;
-    ARTS_DEBUG("arts_runtime_stop: thread %u signaled to stop", i);
+  next:
+    continue;
   }
+}
+
+/*
+ * arts_runtime_stop_workers — clear alive on worker threads only.
+ * Network threads (senders/receivers) stay alive so they can keep
+ * handling shutdown-related traffic.
+ */
+void arts_runtime_stop_workers() {
+  arts_node_info.shutdown_state = 1U;
+  ARTS_INFO("arts_runtime_stop_workers");
+  arts_runtime_stop_by_role(1U << ARTS_ROLE_WORKER, "workers");
+}
+
+/*
+ * arts_runtime_stop_network — clear alive on sender and receiver threads.
+ * Call AFTER arts_runtime_stop_workers and the associated worker loop
+ * exits, once no more network traffic is expected.
+ */
+void arts_runtime_stop_network() {
+  ARTS_INFO("arts_runtime_stop_network");
+  arts_runtime_stop_by_role(
+      (1U << ARTS_ROLE_RECEIVER) | (1U << ARTS_ROLE_SENDER), "network");
+}
+
+void arts_runtime_stop() {
+  /* Legacy entry point: stop everything in one call. Preserved for the
+   * few call sites (e.g. receiver-thread EOF handling in socket.c) that
+   * the shutdown protocol refactor has not yet migrated to the cleaner
+   * arts_enter_shutdown_state(false) path. */
+  arts_node_info.shutdown_state = 1U;
+  ARTS_INFO("arts_runtime_stop: stopping %u threads",
+            arts_node_info.total_thread_count);
+  arts_runtime_stop_by_role(0xFFFFFFFFU, "all");
   ARTS_INFO("arts_runtime_stop: all threads signaled");
 }
 

@@ -41,6 +41,7 @@
 
 #include <limits.h>
 #include <stdlib.h>
+#include <time.h>
 
 #include <pthread.h>
 #include <unistd.h>
@@ -54,6 +55,7 @@
 #include "arts/system/config.h"
 #include "arts/system/print.h"
 #include "arts/transport/dispatcher.h"
+#include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
 
 unsigned int arts_global_rank_id;
@@ -101,6 +103,20 @@ void arts_thread_main_join() {
              "%u threads",
              arts_node_info.total_thread_count - 1);
   TIME_TOTAL_STOP();
+
+  /* Phase C: close the network layer so receivers wake up from RPOLL
+   * (they would otherwise block up to 300 s). Uses SHUT_WR on send
+   * sockets so any buffered SHUTDOWN_MSG broadcast bytes still get
+   * delivered via FIN, and SHUT_RD on recv sockets. Receivers see EOF
+   * on the next RPOLL iteration and exit their loop. */
+  if (arts_global_rank_count > 1) {
+    arts_ll_server_shutdown();
+  }
+  /* Belt-and-braces: explicitly clear alive on network threads too, so
+   * any sender that is not currently inside a socket call also exits
+   * promptly. Idempotent with respect to the EOF/EPIPE path. */
+  arts_runtime_stop_network();
+
   arts_runtime_private_cleanup();
 
   // Save main thread's final counter values before joining other threads
@@ -115,11 +131,48 @@ void arts_thread_main_join() {
 
   // File-based counter aggregation: no socket synchronization needed
   // Each node writes its own JSON file independently, master polls filesystem
-  // Join ALL threads (workers and network threads)
-  for (int i = 1; i < arts_node_info.total_thread_count; i++) {
-    pthread_join(node_thread_list[i], NULL);
+  // Join ALL threads (workers and network threads) with timeout + cancel
+  // escalation, so a single stuck thread never wedges the entire process.
+  //
+  // Budget (from the shutdown protocol plan):
+  //   JOIN_DEADLINE_MS   = 1500  per-thread cooperative join deadline
+  //   CANCEL_DEADLINE_MS = 500   post-cancel grace window
+  //
+  // Escalation: timed join → pthread_cancel → timed join → give up and
+  // move on (we are about to exit the process anyway).
+  {
+    const long JOIN_DEADLINE_NS = 1500L * 1000000L;  /* 1.5 s */
+    const long CANCEL_DEADLINE_NS = 500L * 1000000L; /* 0.5 s */
+    for (int i = 1; i < arts_node_info.total_thread_count; i++) {
+      struct timespec deadline;
+      clock_gettime(CLOCK_REALTIME, &deadline);
+      deadline.tv_nsec += JOIN_DEADLINE_NS;
+      while (deadline.tv_nsec >= 1000000000L) {
+        deadline.tv_nsec -= 1000000000L;
+        deadline.tv_sec += 1;
+      }
+      int rc = pthread_timedjoin_np(node_thread_list[i], NULL, &deadline);
+      if (rc == 0) {
+        continue;
+      }
+      ARTS_INFO("arts_thread_main_join: thread %d did not join within "
+                "%ld ms (rc=%d), cancelling",
+                i, JOIN_DEADLINE_NS / 1000000L, rc);
+      pthread_cancel(node_thread_list[i]);
+      clock_gettime(CLOCK_REALTIME, &deadline);
+      deadline.tv_nsec += CANCEL_DEADLINE_NS;
+      while (deadline.tv_nsec >= 1000000000L) {
+        deadline.tv_nsec -= 1000000000L;
+        deadline.tv_sec += 1;
+      }
+      rc = pthread_timedjoin_np(node_thread_list[i], NULL, &deadline);
+      if (rc != 0) {
+        ARTS_INFO("arts_thread_main_join: thread %d did not join after "
+                  "cancel (rc=%d); leaking and continuing",
+                  i, rc);
+      }
+    }
   }
-
   arts_runtime_global_cleanup();
   // arts_free(args);
   arts_free(mask);
@@ -217,14 +270,9 @@ void arts_thread_init(struct arts_config_s *config) {
 void arts_shutdown() {
   ARTS_INFO("arts_shutdown: rank_count=%u, rank_id=%u", arts_global_rank_count,
             arts_global_rank_id);
-  if (arts_global_rank_count > 1) {
-    arts_remote_shutdown();
-  }
-
-  if (arts_global_rank_count == 1) {
-    arts_runtime_stop();
-  }
-
+  /* Phase A entry — arts_enter_shutdown_state handles both the
+   * multi-node broadcast + drain and the local worker-thread stop. */
+  arts_enter_shutdown_state(/* initiator = */ true);
   (void)fflush(stdout);
 }
 
@@ -232,4 +280,71 @@ _Noreturn void arts_abort(uint8_t error_code) {
   (void)fflush(stdout);
   (void)fflush(stderr);
   exit(error_code);
+}
+
+/*
+ * wait_for_outbox_drain — Phase A helper.
+ *
+ * Poll arts_node_info.outbox_pending until it reaches zero or the
+ * deadline elapses. Used by the initiator of a shutdown to guarantee
+ * that the broadcast ARTS_REMOTE_SHUTDOWN_MSG packets have been fully
+ * handed off to the kernel TCP buffer before the initiator tears down
+ * sockets during cleanup.
+ */
+static void wait_for_outbox_drain(unsigned int deadline_ms) {
+  struct timespec start, now;
+  clock_gettime(CLOCK_MONOTONIC, &start);
+  for (;;) {
+    unsigned int pending =
+        arts_atomic_fetch_add(&arts_node_info.outbox_pending, 0U);
+    if (pending == 0U) {
+      return;
+    }
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    long elapsed_ms = (now.tv_sec - start.tv_sec) * 1000L +
+                      (now.tv_nsec - start.tv_nsec) / 1000000L;
+    if ((unsigned long)elapsed_ms >= (unsigned long)deadline_ms) {
+      ARTS_INFO("shutdown drain timeout: %u messages still pending", pending);
+      return;
+    }
+    /* Short backoff so we don't hog the CPU while the sender thread
+     * drains the outbox. */
+    struct timespec ts = {.tv_sec = 0, .tv_nsec = 1000000L /* 1 ms */};
+    nanosleep(&ts, NULL);
+  }
+}
+
+/*
+ * arts_enter_shutdown_state — the single internal entry point for
+ * transitioning a rank into SHUTTING_DOWN state.
+ *
+ * Called from:
+ *   - arts_shutdown() on the user EDT path (initiator = true)
+ *   - the ARTS_REMOTE_SHUTDOWN_MSG handler in dispatcher.c
+ *     (initiator = false)
+ *   - legacy EOF-detection paths in socket.c's recv logic
+ *     (initiator = false) — defense in depth
+ *
+ * Idempotent: repeated calls after the first are no-ops. The CAS on
+ * shutdown_state ensures exactly one caller performs the broadcast and
+ * stop-workers step.
+ */
+void arts_enter_shutdown_state(bool initiator) {
+  if (arts_atomic_cswap(&arts_node_info.shutdown_state, 0U, 1U) != 0U) {
+    return; /* another thread / handler already started shutdown */
+  }
+  ARTS_INFO("arts_enter_shutdown_state: rank=%u initiator=%d",
+            arts_global_rank_id, (int)initiator);
+  if (initiator && arts_global_rank_count > 1) {
+    /* Phase A.1: broadcast SHUTDOWN_MSG to every other rank. */
+    arts_remote_send_shutdown_broadcast();
+    /* Phase A.2: wait for our own outbox to drain so the broadcast
+     * bytes are in the kernel TCP buffer before we tear down. */
+    wait_for_outbox_drain(500U /* SHUTDOWN_DRAIN_MS */);
+  }
+  /* Phase A.3: stop worker threads. Network threads (senders,
+   * receivers) remain alive so they can flush any in-flight traffic
+   * and deliver any inbound SHUTDOWN_MSG that helps with defense in
+   * depth. */
+  arts_runtime_stop_workers();
 }

@@ -61,6 +61,7 @@
 #include "arts/transport/connection.h"
 #include "arts/transport/dispatcher.h"
 #include "arts/transport/protocol.h"
+#include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
 
 struct arts_config_s *arts_global_message_table;
@@ -273,15 +274,19 @@ void arts_ll_server_shutdown() {
     return;
   }
   int count = (int)arts_global_message_table->table_length;
+  /* Receive sockets: just drop the read half (we will not read any
+   * more incoming data after this). */
   for (int i = 0; i < (count - 1) * ports; i++) {
-    RSHUTDOWN(remote_socket_recieve_list[i], SHUT_RDWR);
-    // RCLOSE(remote_socket_recieve_list[i]);
+    RSHUTDOWN(remote_socket_recieve_list[i], SHUT_RD);
   }
 
+  /* Send sockets: close the write half gracefully (SHUT_WR sends FIN
+   * rather than RST) so the kernel delivers any already-buffered bytes
+   * — including the SHUTDOWN_MSG broadcast we enqueued earlier — before
+   * the connection is torn down. */
   for (int i = 0; i < count * ports; i++) {
     if (i / ports != arts_global_rank_id) {
-      RSHUTDOWN(remote_socket_send_list[i], SHUT_RDWR);
-      //            RCLOSE(remote_socket_send_list[i]);
+      RSHUTDOWN(remote_socket_send_list[i], SHUT_WR);
     }
   }
 }
@@ -323,6 +328,14 @@ static inline bool arts_remote_connect(int rank, unsigned int port) {
                       (struct sockaddr *)(remote_server_send_list +
                                           ((size_t)rank * ports) + port),
                       sizeof(struct sockaddr_in)) < 0) {
+        /* Abort the retry loop promptly if a shutdown has been signaled
+         * while we were spinning here. Without this check, a sender
+         * thread caught in the retry loop during shutdown blocks for up
+         * to 300 * 100 ms = 30 s, far longer than the launcher's
+         * timeout. */
+        if (arts_node_info.shutdown_state) {
+          return false;
+        }
         if (++retry_count >= max_retries) {
           struct sockaddr_in *addr =
               remote_server_send_list + ((size_t)rank * ports) + port;
@@ -377,9 +390,19 @@ uint64_t arts_actual_send(char *message, uint64_t length, int rank, int port) {
           "arts_remote_send_request %u Socket appears to be closed to rank %d: "
           " %s",
           pk->message_type, rank, strerror(errno));
+      /* Broken socket: drop the send. Decrement outbox_pending so the
+       * shutdown drain does not wait forever on a dead peer, then signal
+       * local shutdown via the usual path. */
+      arts_atomic_sub(&arts_node_info.outbox_pending, 1U);
       arts_runtime_stop();
       return -1;
     }
+    /* EAGAIN: socket buffer full, partial send. Caller will retry via
+     * out_resend mechanism; do NOT decrement outbox_pending yet. */
+  } else {
+    /* Success — the message has been fully handed off to the kernel
+     * TCP buffer. Matched with the out_insert_node increment. */
+    arts_atomic_sub(&arts_node_info.outbox_pending, 1U);
   }
   INCREMENT_BYTES_REMOTE_SENT_BY(total);
   INCREMENT_NUM_REMOTE_SEND_BY(1);
@@ -595,7 +618,7 @@ bool max_out_buffs(unsigned int ignore) {
   unsigned int pos;
 
   if (res == -1) {
-    arts_shutdown();
+    arts_enter_shutdown_state(false);
     arts_runtime_stop();
   }
   if (res > 0) {
@@ -603,7 +626,8 @@ bool max_out_buffs(unsigned int ignore) {
     time_out = 1;
     for (int i = (int)thread_start; i < (int)thread_stop; i++) {
       pos = i - (int)thread_start;
-      if (i != ignore && poll_incoming[i].revents & POLLIN) {
+      if (i != ignore &&
+          poll_incoming[i].revents & (POLLIN | POLLHUP | POLLERR)) {
         max_out_working = true;
         if (re_recieve_res[pos] == 0) {
           packet = (struct arts_remote_packet_s *)bypass_buf[pos];
@@ -627,7 +651,7 @@ bool max_out_buffs(unsigned int ignore) {
             if (res2 < 0) {
               if (errno != EAGAIN) {
                 ARTS_INFO("Error on recv return 0 %d %d", errno, EAGAIN);
-                arts_shutdown();
+                arts_enter_shutdown_state(false);
                 arts_runtime_stop();
               }
 
@@ -642,11 +666,11 @@ bool max_out_buffs(unsigned int ignore) {
         } else if (res == -1) {
           ARTS_INFO("Error on recv socket return 0");
           ARTS_INFO("error %s", strerror(errno));
-          arts_shutdown();
+          arts_enter_shutdown_state(false);
           arts_runtime_stop();
           return false;
         } else if (res == 0) {
-          arts_shutdown();
+          arts_enter_shutdown_state(false);
           arts_runtime_stop();
           return false;
         }
@@ -676,7 +700,7 @@ bool arts_server_try_to_receive(
       RPOLL(poll_incoming + thread_start, thread_stop - thread_start, time_out);
 
   if (res == -1) {
-    arts_shutdown();
+    arts_enter_shutdown_state(false);
     arts_runtime_stop();
   }
 
@@ -696,7 +720,7 @@ bool arts_server_try_to_receive(
         // if(!max_out_buffs(-1))
         //     return false;
         // if( max_incoming[pos] )
-        if (poll_incoming[i].revents & POLLIN) {
+        if (poll_incoming[i].revents & (POLLIN | POLLHUP | POLLERR)) {
           // ARTS_INFO("Here2");
           max_incoming[pos] = false;
           if (re_recieve_res[pos] == 0) {
@@ -731,7 +755,7 @@ bool arts_server_try_to_receive(
                 if (res2 < 0) {
                   if (errno != EAGAIN) {
                     ARTS_INFO("Error on recv return 0 %d %d", errno, EAGAIN);
-                    arts_shutdown();
+                    arts_enter_shutdown_state(false);
                     arts_runtime_stop();
                   }
 
@@ -779,7 +803,7 @@ bool arts_server_try_to_receive(
                   if (errno != EAGAIN) {
                     ARTS_INFO("Error on recv return 0 %d %d", errno, EAGAIN);
                     ARTS_INFO("error %s", strerror(errno));
-                    arts_shutdown();
+                    arts_enter_shutdown_state(false);
                     arts_runtime_stop();
                   }
                   re_recieve_res[pos] = res;
@@ -799,11 +823,11 @@ bool arts_server_try_to_receive(
                                                        packet->size);
             }
           } else if (res == -1) {
-            arts_shutdown();
+            arts_enter_shutdown_state(false);
             arts_runtime_stop();
             return false;
           } else if (res == 0) {
-            arts_shutdown();
+            arts_enter_shutdown_state(false);
             arts_runtime_stop();
             return false;
           }

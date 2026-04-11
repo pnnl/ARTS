@@ -80,6 +80,10 @@ struct arts_runtime_shared_s {
   struct arts_route_table_s **gpu_route_table;
   struct arts_route_table_s *remote_route_table;
   volatile bool **local_spin;
+  /* Per-thread role, indexed by thread_id (0..total_thread_count-1).
+   * Populated during arts_runtime_private_init so that shutdown paths
+   * can filter threads by role (workers vs. network). */
+  unsigned int *thread_roles;
   unsigned int **memory_moves;
   struct atomic_create_barrier_info_s **atomic_waits;
   unsigned int worker_thread_count;
@@ -92,6 +96,15 @@ struct arts_runtime_shared_s {
   volatile unsigned int ready_to_execute;
   volatile unsigned int ready_to_clean;
   volatile unsigned int ready_to_shutdown;
+  /* Global shutdown flag. 0 = running normally, 1 = shutting down.
+   * Set by arts_runtime_stop() and checked by long-running loops
+   * (e.g. arts_remote_connect retry) so they can bail out promptly. */
+  volatile unsigned int shutdown_state;
+  /* Count of in-flight async sends (enqueued but not yet written to
+   * kernel TCP buffer). Incremented in out_insert_node, decremented at
+   * the end of arts_actual_send (both success and error paths). Used by
+   * the shutdown protocol to drain the outbox before tearing down. */
+  volatile unsigned int outbox_pending;
   char *buf;
   int packet_size;
   volatile unsigned int shutdown_count;
@@ -155,6 +168,8 @@ void arts_runtime_node_init(struct arts_config_s *config);
 void arts_runtime_global_cleanup();
 void arts_runtime_private_cleanup();
 void arts_runtime_stop();
+void arts_runtime_stop_workers();
+void arts_runtime_stop_network();
 void arts_handle_ready_edt(struct arts_edt_s *edt);
 void arts_rehandle_ready_edt(struct arts_edt_s *edt);
 void arts_run_edt(struct arts_edt_s *edt);

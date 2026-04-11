@@ -59,7 +59,27 @@ extern bool server_end;
 uint64_t *rec_seq_numbers;
 #endif
 
-void arts_remote_shutdown() { arts_ll_server_shutdown(); }
+/*
+ * arts_remote_send_shutdown_broadcast — Phase A of the shutdown protocol.
+ *
+ * Enqueue a header-only ARTS_REMOTE_SHUTDOWN_MSG to every other rank.
+ * The sender thread drains the outbox; the caller should then wait for
+ * arts_node_info.outbox_pending to reach zero (see wait_for_outbox_drain
+ * in threads.c) before proceeding to local shutdown.
+ */
+void arts_remote_send_shutdown_broadcast(void) {
+  if (arts_global_rank_count <= 1) {
+    return;
+  }
+  for (unsigned int r = 0; r < arts_global_rank_count; r++) {
+    if (r == arts_global_rank_id) {
+      continue;
+    }
+    struct arts_remote_packet_s packet;
+    arts_fill_packet_header(&packet, sizeof(packet), ARTS_REMOTE_SHUTDOWN_MSG);
+    arts_remote_send_request_async((int)r, (char *)&packet, sizeof(packet));
+  }
+}
 
 void arts_server_cleanup(void) {
   out_cleanup();
@@ -97,7 +117,11 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
   case ARTS_REMOTE_SHUTDOWN_MSG: {
     ARTS_INFO("Node %u: Received shutdown message from node %u",
               arts_global_rank_id, packet->rank);
-    arts_runtime_stop();
+    /* Passive shutdown entry — we received SHUTDOWN_MSG from another
+     * rank, so we enter SHUTTING_DOWN locally (idempotent CAS, no
+     * re-broadcast). The main thread will handle network stop and
+     * bounded join after the worker loop exits. */
+    arts_enter_shutdown_state(/* initiator = */ false);
     break;
   }
   case ARTS_REMOTE_EDT_SIGNAL_MSG: {

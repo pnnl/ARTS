@@ -302,6 +302,10 @@ static inline void out_insert_node(struct out_list_s *node,
 #ifdef SEQUENCENUMBERS
   arts_unlock(&seq_num_lock[list_id]);
 #endif
+  /* Track in-flight sends for the shutdown-protocol outbox drain.
+   * Matched by a decrement at the end of arts_actual_send (both the
+   * success and error paths). */
+  arts_atomic_add(&arts_node_info.outbox_pending, 1U);
 }
 
 static inline struct out_list_s *out_pop_node(unsigned int thread_id,

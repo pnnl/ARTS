@@ -43,10 +43,19 @@
 extern "C" {
 #endif
 
+#include <stdbool.h>
+
 #include "arts/system/config.h"
 
 void arts_thread_init(struct arts_config_s *config);
 void arts_thread_main_join(void);
+
+/* Shutdown protocol entry points. See libs/src/core/system/threads.c
+ * (or shutdown.c if split out later) for the implementation.
+ *   initiator = true  → broadcast ARTS_REMOTE_SHUTDOWN_MSG to all peers,
+ *                       wait for local outbox drain, then stop workers.
+ *   initiator = false → just stop workers (passive receiver path). */
+void arts_enter_shutdown_state(bool initiator);
 
 extern unsigned int arts_global_rank_id;
 extern unsigned int arts_global_rank_count;

@@ -148,6 +148,9 @@ SINGLE_NODE_TESTS=(
   "cdag|32 0 0 0|$TIMEOUT_DEFAULT|CDAG (32R)"
   "cdag_ew_chain|4|$TIMEOUT_DEFAULT|CDAG EW chain"
   "cdag_ew_ordering||$TIMEOUT_DEFAULT|CDAG EW ordering"
+  "cdag_ew_ro_ew||$TIMEOUT_DEFAULT|CDAG EW-RO-EW stress"
+  "cdag_ew_ew_chain_seal||$TIMEOUT_DEFAULT|CDAG EW-EW chain sealing"
+  "cdag_ro_accumulation||$TIMEOUT_DEFAULT|CDAG pure RO accumulation"
   # --- Graph tests ---
   "csr||$TIMEOUT_DEFAULT|CSR graph"
   "distribution||$TIMEOUT_DEFAULT|Distribution"
@@ -169,6 +172,7 @@ MULTI_NODE_TESTS=(
   "multinode_event_types||$TIMEOUT_LONG|Multi-node event types"
   "multinode_array_db||$TIMEOUT_LONG|Multi-node array DB"
   "multinode_db_advanced||$TIMEOUT_LONG|Multi-node DB advanced"
+  "cdag_mixed_local_remote||$TIMEOUT_LONG|CDAG mixed local+remote"
 )
 
 GPU_TESTS=(
