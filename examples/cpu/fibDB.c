@@ -72,7 +72,9 @@ void fib_join(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   *result_ptr = x + y;
 
 #if ARTS_USE_CXL
+#if !ARTS_CXL_ENABLE_AUTO_FLUSH
   arts_cxl_producer_flush(result_guid);
+#endif
 #endif /* ARTS_USE_CXL */
   // Signal the parent EDT with the result DB
   arts_signal_edt(paramv[0], paramv[1], result_guid, DB_MODE_RO);
@@ -109,7 +111,9 @@ void fib_fork(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     assert(n1_ptr && "n1_ptr not NULL");
     *n1_ptr = num - 1;
 #if ARTS_USE_CXL
+#if !ARTS_CXL_ENABLE_AUTO_FLUSH
     arts_cxl_producer_flush(n1_guid);
+#endif
 #endif /* ARTS_USE_CXL */
 
     int *n2_ptr;
@@ -123,7 +127,9 @@ void fib_fork(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     assert(n2_ptr && "n2_ptr not NULL");
     *n2_ptr = num - 2;
 #if ARTS_USE_CXL
+#if !ARTS_CXL_ENABLE_AUTO_FLUSH
     arts_cxl_producer_flush(n2_guid);
+#endif
 #endif /* ARTS_USE_CXL */
 
     // Create first child task with n-1
@@ -185,7 +191,9 @@ void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
     assert(num_ptr && "init_per_worker num_ptr not NULL");
     *num_ptr = num;
 #if ARTS_USE_CXL
+#if !ARTS_CXL_ENABLE_AUTO_FLUSH
     arts_cxl_producer_flush(num_guid);
+#endif
 #endif /* ARTS_USE_CXL */
 
     // Start the computation

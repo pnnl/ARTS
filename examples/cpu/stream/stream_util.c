@@ -64,10 +64,9 @@ void launch_2_kernel_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   
   arts_guid_t timer_event;
   timer_event = arts_event_create(0, ARTS_EVENT_LATCH, tiles, NULL_GUID);
-  // arts_add_local_event_callback(timer_event, end_timer);
-  // arts_add_dependence(timer_event, next_guid, 0);
+  arts_add_local_event_callback(timer_event, end_timer);
+  arts_add_dependence(timer_event, next_guid, 0, DB_MODE_NULL);
 
-  // uint64_t args[] = {0, (uint64_t)scalar};
   uint64_t args[] = {timer_event, next_guid, tile_size, 0, (uint64_t)scalar};
   uint64_t num_args = (scalar == 0) ? 4 : 5;
   unsigned int next = 0;
@@ -80,7 +79,7 @@ void launch_2_kernel_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       next = (next + 1) % arts_get_total_nodes();
       arts_signal_edt(edt_guids[i], 0, a_guid[i], DB_MODE_RO);
   }
-  // start_timer();
+  start_timer();
   for (unsigned int i = 0; i < tiles; ++i) {
     arts_signal_edt(edt_guids[i], 1, b_guid[i], DB_MODE_RO);
   }
@@ -103,6 +102,7 @@ void launch_3_kernel_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t* b_guid = (arts_guid_t*) paramv[5];
   arts_guid_t* c_guid = (arts_guid_t*) paramv[6];
   arts_guid_t next_guid = (arts_guid_t) paramv[7];
+  arts_guid_t done_guid = get_done_guid();
                         
   unsigned int tiles = total_size / tile_size;
   if (total_size % tile_size)
@@ -110,8 +110,11 @@ void launch_3_kernel_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_guid_t timer_event;
   timer_event = arts_event_create(0, ARTS_EVENT_LATCH, tiles, NULL_GUID);
-  // arts_add_local_event_callback(timer_event, end_timer);
-  // arts_add_dependence(timer_event, next_guid, 0);
+  arts_add_local_event_callback(timer_event, end_timer);
+  // Only chain timer_event -> next_guid when next_guid is not done_guid.
+  // For the last triad, the triad kernels signal done_guid directly with data.
+  if (next_guid != done_guid)
+    arts_add_dependence(timer_event, next_guid, 0, DB_MODE_NULL);
 
   uint64_t args[] = {timer_event, next_guid, tile_size, 0, (uint64_t)scalar};
   uint64_t num_args = (scalar == 0) ? 4 : 5;
@@ -127,7 +130,7 @@ void launch_3_kernel_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       arts_signal_edt(edt_guids[i], 0, a_guid[i], DB_MODE_RO);
       arts_signal_edt(edt_guids[i], 1, b_guid[i], DB_MODE_RO);
   }
-  // start_timer();
+  start_timer();
   for (unsigned int i = 0; i < tiles; ++i) {
     arts_signal_edt(edt_guids[i], 2, c_guid[i], DB_MODE_RO);
   }
