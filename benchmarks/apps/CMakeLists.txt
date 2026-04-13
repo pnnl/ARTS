@@ -159,15 +159,19 @@ function(add_benchmark_app)
     set(COMMON_DEFINES ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE} ${APP_EXTRA_DEFINES})
 
     # --- XSOCR variant ---
-    # add_executable(${APP_NAME}_xsocr ${ABS_SOURCES} ${LIB_OBJECTS})
-    # target_include_directories(${APP_NAME}_xsocr PRIVATE ${COMMON_INCLUDES})
-    # target_compile_definitions(${APP_NAME}_xsocr PRIVATE ${COMMON_DEFINES})
-    # target_link_libraries(${APP_NAME}_xsocr PRIVATE ocr_xsocr_static pthread ${APP_EXTRA_LINK_LIBS})
-    # set_target_properties(${APP_NAME}_xsocr PROPERTIES
-    #     C_STANDARD 11 C_EXTENSIONS ON
-    #     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-    # )
-    # target_compile_options(${APP_NAME}_xsocr PRIVATE ${BENCH_C_OPT} -w)
+    add_executable(${APP_NAME}_xsocr ${ABS_SOURCES} ${LIB_OBJECTS})
+    target_include_directories(${APP_NAME}_xsocr PRIVATE ${COMMON_INCLUDES})
+    target_compile_definitions(${APP_NAME}_xsocr PRIVATE ${COMMON_DEFINES})
+    target_link_libraries(${APP_NAME}_xsocr PRIVATE ocr_xsocr_static pthread ${APP_EXTRA_LINK_LIBS})
+    # Non-PIE: OCR's distributed mode serializes function pointers as raw
+    # addresses across MPI ranks.  With PIE + ASLR each rank gets a
+    # different base address and deserialized funcPtrs become invalid.
+    target_link_options(${APP_NAME}_xsocr PRIVATE -no-pie -fno-pie)
+    set_target_properties(${APP_NAME}_xsocr PROPERTIES
+        C_STANDARD 11 C_EXTENSIONS ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    target_compile_options(${APP_NAME}_xsocr PRIVATE ${BENCH_C_OPT} -w)
 
     # --- ARTS variant ---
     add_executable(${APP_NAME}_arts ${ABS_SOURCES} ${LIB_OBJECTS})
@@ -386,9 +390,10 @@ add_benchmark_app(NAME hpcg_intel_Eager
     EXTRA_LINK_LIBS m
 )
 
-# hpcg Eager-Collective uses ocrAddDependenceSlot and ocrEventCollectiveSatisfySlot
-# which require MULTI_OUTPUT_SLOT extension. XSOCR is not compiled with this extension,
-# so we only build the _arts variant (the shim provides these functions).
+# hpcg Eager-Collective uses ocrAddDependenceSlot and ocrEventCollectiveSatisfySlot.
+# These rely on MULTI_OUTPUT_SLOT + COLLECTIVE_EVT OCR extensions.  Both are
+# now enabled in the xsocr config (ocr_config_x86.h) and the oddContribs
+# vendor bug in hc-event.c is fixed, so both backends build and run this app.
 add_benchmark_app(NAME hpcg_intel_Eager_Collective
     DIR hpcg/refactored/ocr/intel-Eager-Collective
     SOURCES hpcgEagerRedevt.c timers.c
@@ -396,10 +401,6 @@ add_benchmark_app(NAME hpcg_intel_Eager_Collective
     EXTRA_DEFINES ENABLE_EXTENSION_COLLECTIVE_EVT ENABLE_EXTENSION_MULTI_OUTPUT_SLOT
     EXTRA_LINK_LIBS m
 )
-# set_target_properties(hpcg_intel_Eager_Collective_xsocr PROPERTIES EXCLUDE_FROM_ALL TRUE)
-# get_property(_xsocr_list GLOBAL PROPERTY BENCHMARK_XSOCR_TARGETS)
-# list(REMOVE_ITEM _xsocr_list hpcg_intel_Eager_Collective_xsocr)
-# set_property(GLOBAL PROPERTY BENCHMARK_XSOCR_TARGETS ${_xsocr_list})
 
 # ==========================================================================
 # Tier 7: Stencil variants
@@ -923,6 +924,191 @@ target_compile_options(LCS_shared_arts PRIVATE -fgnu89-inline)
 #         endif()
 #     endforeach()
 # endif()
+# Per-file data object resolution for RAG_IMPLICIT_INPUTS sizes:
+#   1. .o exists in datasets/<size>/x86/ → copy to build dir (fastest)
+#   2. .c exists but .o missing → compile once, cache .o back to datasets dir
+#   3. Neither → full pipeline: .bin → dataImage → .c → compile .o
+if(HAS_CRLIBM)
+    set(SAR_IMPLICIT_SIZES tiny small medium large)
+
+    # Helper script for dataImage invocation (handles stdin/stdout redirection)
+    set(_dataimage_script "${CMAKE_CURRENT_BINARY_DIR}/sar_run_dataimage.sh")
+    file(WRITE "${_dataimage_script}"
+        "#!/bin/sh\nset -e\n"
+        "# Usage: sar_run_dataimage.sh <dataImage> <type_index> <input.bin> <output.c>\n"
+        "\"$1\" \"$2\" < \"$3\" > \"$4\"\n"
+    )
+
+    # dataImage type indices per data file (legacy path — Case 2 only)
+    set(_dataimage_idx_Data 1)
+    set(_dataimage_idx_PlatformPosition 2)
+    set(_dataimage_idx_PulseTransmissionTime 3)
+
+    # Symbol prefix per data file (for .incbin Case 3 path)
+    set(_sym_prefix_Data image)
+    set(_sym_prefix_PlatformPosition platform)
+    set(_sym_prefix_PulseTransmissionTime pulse)
+
+    # .incbin wrapper generator script — bypasses sar_dataImage's C-source
+    # output for Case 3 (too large for gcc on medium/large sizes).
+    set(_sar_incbin_script "${CMAKE_SOURCE_DIR}/benchmarks/apps/sar_make_incbin_wrapper.sh")
+
+    foreach(sar_size ${SAR_IMPLICIT_SIZES})
+        set(_ocr_size_dir "${SAR_ROOT}/ocr/${sar_size}")
+        set(_data_build_dir "${CMAKE_CURRENT_BINARY_DIR}/sar_data/${sar_size}")
+        set(_datasets_dir "${SAR_DATASETS_DIR}/${sar_size}")
+        set(_prebuilt_dir "${_datasets_dir}/x86")
+        set(_datagen_src_dir "${SAR_ROOT}/datagen-tsml/${sar_size}")
+
+        file(MAKE_DIRECTORY "${_data_build_dir}")
+        file(MAKE_DIRECTORY "${_datasets_dir}")
+
+        # Run sar_datagen once per size to produce the three .bin files
+        # into the datasets directory (cached on subsequent builds).
+        # The datagen program reads Parameters.txt + Targets.txt from its
+        # current working directory, so we stage them next to the .bin
+        # outputs before invoking the tool.
+        if(NOT EXISTS "${_datasets_dir}/Data.bin")
+            add_custom_command(
+                OUTPUT
+                    "${_datasets_dir}/Data.bin"
+                    "${_datasets_dir}/PlatformPosition.bin"
+                    "${_datasets_dir}/PulseTransmissionTime.bin"
+                    "${_datasets_dir}/Radar.txt"
+                COMMAND ${CMAKE_COMMAND} -E copy
+                    "${_datagen_src_dir}/Parameters.txt"
+                    "${_datagen_src_dir}/Targets.txt"
+                    "${_datasets_dir}/"
+                COMMAND $<TARGET_FILE:sar_datagen>
+                    "Data.bin"
+                    "PlatformPosition.bin"
+                    "PulseTransmissionTime.bin"
+                    "Radar.txt"
+                WORKING_DIRECTORY "${_datasets_dir}"
+                DEPENDS sar_datagen
+                    "${_datagen_src_dir}/Parameters.txt"
+                    "${_datagen_src_dir}/Targets.txt"
+                COMMENT "SAR: Generating ${sar_size} dataset via sar_datagen..."
+                VERBATIM
+            )
+        endif()
+
+        set(_data_names Data PlatformPosition PulseTransmissionTime)
+        set(_data_objects "")
+
+        foreach(_name ${_data_names})
+            set(_build_o "${_data_build_dir}/${_name}.o")
+
+            if(EXISTS "${_prebuilt_dir}/${_name}.o")
+                # Case 1: Pre-built .o exists → copy to build directory
+                add_custom_command(
+                    OUTPUT "${_build_o}"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_prebuilt_dir}/${_name}.o" "${_build_o}"
+                    DEPENDS "${_prebuilt_dir}/${_name}.o"
+                    COMMENT "SAR: Copying pre-built ${sar_size}/${_name}.o"
+                )
+            elseif(EXISTS "${_prebuilt_dir}/${_name}.c")
+                # Case 2: .c exists but .o missing → compile once, cache to datasets dir
+                message(STATUS "SAR: ${sar_size}/${_name}.o missing — will compile from .c (one-time)")
+                add_custom_command(
+                    OUTPUT "${_build_o}"
+                    COMMAND ${CMAKE_C_COMPILER} -std=c11 -O0 -w -c
+                    -o "${_build_o}" "${_prebuilt_dir}/${_name}.c"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_build_o}" "${_prebuilt_dir}/${_name}.o"
+                    DEPENDS "${_prebuilt_dir}/${_name}.c"
+                    COMMENT "SAR: Compiling ${sar_size}/${_name}.c → .o (one-time, caching to datasets dir)..."
+                )
+            else()
+                # Case 3: No prebuilt files → go straight from .bin to .o via
+                # a .incbin-based assembly wrapper.  This bypasses the
+                # sar_dataImage C-source output entirely because the C
+                # front-end cannot parse the 770+ MB hex-literal .c files
+                # that medium/large produce (OOM on a 12 GB box).  The GNU
+                # assembler's .incbin directive copies bytes directly with
+                # ~0 MB of memory overhead.
+                set(_wrapper_s "${_data_build_dir}/${_name}_incbin.S")
+                add_custom_command(
+                    OUTPUT "${_wrapper_s}"
+                    COMMAND sh "${_sar_incbin_script}"
+                    "${_datasets_dir}/${_name}.bin"
+                    "${_wrapper_s}"
+                    "${_sym_prefix_${_name}}"
+                    DEPENDS "${_sar_incbin_script}"
+                            "${_datasets_dir}/${_name}.bin"
+                    COMMENT "SAR: Generating incbin wrapper for ${sar_size}/${_name}.bin..."
+                    VERBATIM
+                )
+                add_custom_command(
+                    OUTPUT "${_build_o}"
+                    COMMAND ${CMAKE_C_COMPILER} -c -o "${_build_o}" "${_wrapper_s}"
+                    DEPENDS "${_wrapper_s}"
+                    COMMENT "SAR: Assembling ${sar_size}/${_name}_incbin.S → .o (memory-light)..."
+                    VERBATIM
+                )
+            endif()
+
+            list(APPEND _data_objects "${_build_o}")
+        endforeach()
+
+        # Custom target to trigger all data object builds for this size
+        add_custom_target(sar_data_${sar_size}_objs DEPENDS ${_data_objects})
+        set(SAR_DATA_${sar_size}_OBJECTS ${_data_objects})
+    endforeach()
+endif()
+
+# ---------------------------------------------------------------------------
+# Step 4: Build SAR executables
+# ---------------------------------------------------------------------------
+set(SAR_SOURCES
+    main.c inputs.c digspot.c registration.c cfar.c sinc_interp.c sinc.c
+    image_formation.c back_proj.c ccd.c fftw3.c rag_ocr.c
+)
+
+set(SAR_DEFINES
+    DEBUG_SSCP
+    RAG_TG_ARCH_NULL_GUID_WORKAROUND
+    RAG_NEW_BLK_SIZE=32
+    TRACE
+    RAG_DIG_SPOT_ON=0
+    RAG_AFFINE_ON=1
+    RAG_QSORT_ON=0
+    RAG_PURE_FLOAT
+    RAG_SINCOS
+    RAG_CRLIBM
+    RAG_PETER_DIST_AND_TRIG
+    RAG_SPAD
+    RAG_DRAM
+    GANESH_STRENGTH_RED_OPT
+)
+
+if(HAS_CRLIBM)
+    # --- RAG_IMPLICIT_INPUTS sizes (tiny/small/medium/large) ---
+    foreach(sar_size ${SAR_IMPLICIT_SIZES})
+        set(SAR_SIZE_DEFINES ${SAR_DEFINES} RAG_IMPLICIT_INPUTS)
+
+        add_benchmark_app(NAME sar_${sar_size}
+            DIR sar/ocr/${sar_size}
+            SRC_SUBDIR ../src
+            SOURCES ${SAR_SOURCES}
+            EXTRA_INCLUDES ${SAR_SRC_DIR} ${CRLIBM_DIR}
+            EXTRA_DEFINES ${SAR_SIZE_DEFINES}
+            EXTRA_LINK_LIBS m ocr_lib_crlibm
+        )
+        # Link data objects for this size
+        target_link_libraries(sar_${sar_size}_xsocr PRIVATE
+            ${SAR_DATA_${sar_size}_OBJECTS})
+        target_link_libraries(sar_${sar_size}_arts PRIVATE
+            ${SAR_DATA_${sar_size}_OBJECTS})
+        add_dependencies(sar_${sar_size}_xsocr sar_data_${sar_size}_objs)
+        add_dependencies(sar_${sar_size}_arts sar_data_${sar_size}_objs)
+    endforeach()
+
+    # huge / problem_size_scaling intentionally excluded: datagen for these
+    # sizes takes far too long, and they're outside the scope of the
+    # correctness harness on a 12 GB laptop.
+endif()
 
 # ==========================================================================
 # Tier 15: STREAM memory bandwidth, UTS tree search
@@ -950,7 +1136,7 @@ target_compile_options(stream_dist_arts PRIVATE -Wno-error=implicit-function-dec
 add_benchmark_app(NAME uts
     DIR uts-1.1/ocr
     SOURCES uts.c brg_sha1.c
-    EXTRA_DEFINES BRG_RNG
+    EXTRA_DEFINES BRG_RNG STATS
     EXTRA_LINK_LIBS m
 )
 

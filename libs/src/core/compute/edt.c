@@ -37,6 +37,7 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 #include "arts/compute/edt.h"
+#include "arts/memory/db.h"
 #include "arts/utils/malloc.h"
 
 #include <string.h>

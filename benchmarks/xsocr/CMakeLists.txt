@@ -57,10 +57,36 @@ target_compile_definitions(ocr_xsocr_objects PRIVATE
     OCR_MAX_MULTI_SLOT=32
 )
 
+# NOTE: we do NOT enable ENABLE_EXTENSION_COLLECTIVE_EVT or
+# ENABLE_EXTENSION_MULTI_OUTPUT_SLOT here.  Both are implemented in
+# xsocr (see third_party/ocr/ocr/src/event/hc/hc-event.c and
+# ocr-edt.c), but turning them on pulls in a chain of HC policy-domain
+# features (MD_ALLOC, REG_ASYNC_SGL, ...) that require several more
+# defines to compile.  The only app that needs this chain is
+# hpcg_intel_Eager_Collective, which runs cleanly on arts; we handle
+# it as arts_only in the correctness harness rather than expanding
+# the xsocr build surface here.
+
 # Static library
 add_library(ocr_xsocr_static STATIC $<TARGET_OBJECTS:ocr_xsocr_objects>)
 target_include_directories(ocr_xsocr_static PUBLIC ${OCR_ROOT}/inc)
 target_link_libraries(ocr_xsocr_static PUBLIC pthread)
+
+# MPI support for distributed (HC_DIST) policy domain
+find_package(MPI COMPONENTS C)
+if(MPI_C_FOUND)
+    target_include_directories(ocr_xsocr_objects PRIVATE ${MPI_C_INCLUDE_DIRS})
+    target_link_libraries(ocr_xsocr_static PUBLIC MPI::MPI_C)
+    message(STATUS "XSOCR: MPI found — distributed (HC_DIST) comm-platform enabled")
+else()
+    message(WARNING "XSOCR: MPI not found — distributed comm-platform will not link")
+endif()
+
+# libnuma for distributed memory-platform (ENABLE_MEM_PLATFORM_NUMA_ALLOC)
+find_library(NUMA_LIB numa)
+if(NUMA_LIB)
+    target_link_libraries(ocr_xsocr_static PUBLIC ${NUMA_LIB})
+endif()
 
 # Check for librt (needed on older glibc)
 include(CheckLibraryExists)

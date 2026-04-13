@@ -350,7 +350,7 @@ void arts_remote_handle_db_move(void *ptr) {
   ARTS_INFO("DB[Guid:%lu] Moved to Rank: %d", packet->guid,
             arts_global_rank_id);
   if (arts_route_table_add_item_race(mem_packet, packet->guid,
-                                     arts_global_rank_id, false)) {
+                                     arts_global_rank_id, true)) {
     arts_route_table_fire_oo(packet->guid, arts_out_of_order_handler);
   }
 }
@@ -471,11 +471,37 @@ void arts_remote_db_send_now(int rank, struct arts_db_s *db) {
 
 void arts_remote_db_send_check(int rank, struct arts_db_s *db,
                                arts_db_access_mode_t mode) {
+  /* Reference contract: the caller (arts_remote_db_send) holds the route
+   * table lookup ref end-to-end and drops it via arts_route_table_return_db
+   * after this function returns.  We never call return_db internally —
+   * doing so would double-decrement the ref and risk a UAF when our own
+   * arts_remote_db_send_now reads db->header.size below. */
   if (!arts_guid_is_local(db->guid)) {
-    arts_route_table_return_db(db->guid, false);
+    /* Non-owner path: we have a cached copy, forward to the requester. */
     arts_remote_db_send_now(rank, db);
-  } else if (arts_add_db_duplicate(db, rank, NULL, NULL_GUID, 0, mode, NULL)) {
-    arts_remote_db_send_now(rank, db);
+    return;
+  }
+  /* Owner path: serialize the remote snapshot through the cdag_lock so
+   * concurrent local EWs cannot race with the read.  Submit with
+   * edt_guid=NULL_GUID as a sentinel: this identifies the request as
+   * originating from arts_remote_db_send_check (vs. full_send_check,
+   * which passes a real edt_guid).  arts_cdag_dispatch_cb uses that
+   * sentinel to choose between the snapshot-style release (this path)
+   * and the ownership-transfer release (full_send, released later via
+   * arts_remote_handle_update_db).
+   *
+   * HEAD_IMMEDIATE: no prior writer is active; read+send+release now.
+   * QUEUED: dispatch_cb fires when our generation becomes head; at
+   * that point dispatch_cb issues arts_remote_db_send_now + release.
+   */
+  bool on_head = false;
+  if (arts_add_db_duplicate(db, (unsigned)rank, NULL, NULL_GUID, 0, mode,
+                            &on_head)) {
+    if (on_head) {
+      arts_remote_db_send_now(rank, db);
+      cdag_lock_release((struct cdag_lock_s *)db->db_list,
+                        arts_cdag_dispatch_cb, db);
+    }
   }
 }
 
@@ -566,7 +592,7 @@ void arts_remote_handle_db_received(
     }
     db_res->copy_count = 1;
     if (arts_route_table_add_item_race(db_res, pdb.guid, arts_global_rank_id,
-                                       false)) {
+                                       true)) {
       arts_route_table_fire_oo(pdb.guid, arts_out_of_order_handler);
     }
     return;
@@ -633,18 +659,20 @@ void arts_remote_db_full_send_now(int rank, struct arts_db_s *db,
 void arts_remote_db_full_send_check(int rank, struct arts_db_s *db,
                                     arts_guid_t edt_guid, unsigned int slot,
                                     arts_db_access_mode_t mode) {
+  /* Reference contract: the caller (arts_remote_db_full_send) holds the
+   * route table lookup ref end-to-end and drops it after this returns.
+   * Same rule as arts_remote_db_send_check — never call return_db here. */
   if (!arts_guid_is_local(db->guid)) {
-    arts_route_table_return_db(db->guid, false);
     arts_remote_db_full_send_now(rank, db, edt_guid, slot, mode);
-  } else {
-    /* Owner path: submit the remote request to the cdag_lock. If it
-     * lands on head, send the DB immediately. If it's queued, the
-     * dispatch callback will send when the generation becomes head. */
-    bool on_head = false;
-    if (arts_add_db_duplicate(db, rank, NULL, edt_guid, slot, mode, &on_head)) {
-      if (on_head) {
-        arts_remote_db_full_send_now(rank, db, edt_guid, slot, mode);
-      }
+    return;
+  }
+  /* Owner path: submit the remote request to the cdag_lock. If it
+   * lands on head, send the DB immediately. If it's queued, the
+   * dispatch callback will send when the generation becomes head. */
+  bool on_head = false;
+  if (arts_add_db_duplicate(db, rank, NULL, edt_guid, slot, mode, &on_head)) {
+    if (on_head) {
+      arts_remote_db_full_send_now(rank, db, edt_guid, slot, mode);
     }
   }
 }
@@ -679,20 +707,41 @@ void arts_remote_handle_db_full_recieved(
   void *packet_payload = (char *)(packet + 1) + sizeof(struct arts_db_s);
   ARTS_DEBUG("Handle Full DB Received [Guid:%lu, Slot:%u, Mode:%u]", pdb.guid,
              packet->slot, packet->mode);
+
+  /* Validate that the packet actually carries the full DB payload it
+   * claims to: header.size of arts_db_s says how many user bytes follow
+   * the header.  Other receivers in this file rely on the implicit size
+   * match; we make it explicit so a truncated/malformed packet logs a
+   * warning instead of silently OOB-reading. */
+  uint64_t expected_payload =
+      pdb.header.size > sizeof(struct arts_db_s)
+          ? pdb.header.size - sizeof(struct arts_db_s)
+          : 0;
+  uint64_t received_payload =
+      packet->header.size > sizeof(*packet) + sizeof(struct arts_db_s)
+          ? packet->header.size - sizeof(*packet) - sizeof(struct arts_db_s)
+          : 0;
+  if (received_payload < expected_payload) {
+    ARTS_INFO(
+        "Truncated DB_FULL_SEND payload for Guid:%lu (expected=%lu got=%lu)",
+        pdb.guid, expected_payload, received_payload);
+    expected_payload = received_payload;
+  }
+
   void **data_ptr = arts_route_table_reserve(pdb.guid, &dec, &state);
   struct arts_db_s *db_res = (data_ptr) ? (struct arts_db_s *)*data_ptr : NULL;
   if (db_res) {
     if (pdb.header.size == db_res->header.size) {
       struct cdag_lock_s *db_list = (struct cdag_lock_s *)db_res->db_list;
       void *dest = (void *)(db_res + 1);
-      memcpy(dest, packet_payload, pdb.header.size - sizeof(struct arts_db_s));
+      memcpy(dest, packet_payload, expected_payload);
       db_res->db_list = db_list;
     } else {
       ARTS_INFO("Did the DB do a remote resize...");
     }
   } else {
     db_res = (struct arts_db_s *)arts_malloc_align(pdb.header.size, 16);
-    memcpy(db_res, (packet + 1), pdb.header.size);
+    memcpy(db_res, (packet + 1), sizeof(struct arts_db_s) + expected_payload);
     if (arts_guid_is_local(pdb.guid) && pdb.db_type != ARTS_DB_LOCAL) {
       db_res->db_list = cdag_lock_new();
     } else {
@@ -703,6 +752,13 @@ void arts_remote_handle_db_full_recieved(
                                    arts_global_rank_id, state)) {
     arts_route_table_fire_oo(pdb.guid, arts_out_of_order_handler);
   }
+  /* Balance the inc_item that arts_route_table_reserve performed when
+   * the entry was already present (dec=true means "caller must release
+   * the inc'd ref later"). */
+  if (dec) {
+    arts_route_table_return_db(pdb.guid, false);
+  }
+
   struct arts_edt_s *edt =
       (struct arts_edt_s *)arts_route_table_lookup_item(packet->edt_guid);
   if (!edt) {
@@ -710,10 +766,18 @@ void arts_remote_handle_db_full_recieved(
     item_state_t edt_state = arts_route_table_lookup_item_with_state(
         packet->edt_guid, &edt_data, ANY_KEY, false);
     ARTS_INFO("Full DB received for missing EDT[Guid:%lu] on rank %u "
-              "(state=%u, data=%p) [DbGuid:%lu, Slot:%u, Mode:%u]",
+              "(state=%u, data=%p) [DbGuid:%lu, Slot:%u, Mode:%u] - "
+              "sending release-only update_db to owner to unblock cdag_lock",
               packet->edt_guid, arts_global_rank_id, edt_state,
               edt_data ? *edt_data : NULL, pdb.guid, packet->slot,
               packet->mode);
+    /* Recovery: the EW was delivered but no taker exists locally.  Send a
+     * payload-less update_db back to the owner so its cdag_lock_release
+     * fires (handle_update_db calls cdag_lock_release unconditionally on
+     * any UPDATE_MSG, regardless of whether write payload is present).
+     * This prevents the owner-side EW slot from becoming a permanent
+     * zombie that wedges every subsequent acquisition of this DB. */
+    arts_remote_update_db(pdb.guid, false);
     return;
   }
   arts_db_request_callback(edt, packet->slot, db_res);
@@ -736,6 +800,10 @@ void arts_remote_handle_send_already_local(void *pack) {
   struct arts_remote_db_full_request_packet_s *packet =
       (struct arts_remote_db_full_request_packet_s *)pack;
   int rank;
+  /* lookup_db inc's the ref via inc_item; arts_db_request_callback inside
+   * the success path takes its own separate ref for the EDT's slot, so
+   * the lookup ref here must be balanced with a return_db.  Otherwise we
+   * leak one ref per ALREADY_LOCAL_MSG. */
   struct arts_db_s *db_res = (struct arts_db_s *)arts_route_table_lookup_db(
       packet->db_guid, &rank, true);
   struct arts_edt_s *edt =
@@ -749,9 +817,15 @@ void arts_remote_handle_send_already_local(void *pack) {
               packet->edt_guid, arts_global_rank_id, edt_state,
               edt_data ? *edt_data : NULL, packet->db_guid, packet->slot,
               packet->mode);
+    if (db_res) {
+      arts_route_table_return_db(packet->db_guid, false);
+    }
     return;
   }
   arts_db_request_callback(edt, packet->slot, db_res);
+  if (db_res) {
+    arts_route_table_return_db(packet->db_guid, false);
+  }
 }
 
 void arts_remote_get_from_db(arts_guid_t edt_guid, arts_guid_t db_guid,

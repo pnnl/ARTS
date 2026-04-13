@@ -304,24 +304,26 @@ static void channel_fire_dependents(struct arts_event_s *event,
         ;
       }
       if (dependent[j].type == ARTS_EDT) {
-        if (data != NULL_GUID) {
-          if (dependent[j].byte_offset != 0 || dependent[j].size != 0) {
-            struct arts_db_s *db =
-                (struct arts_db_s *)arts_route_table_lookup_db(data, NULL,
-                                                               false);
-            if (db) {
-              void *db_data = (void *)(db + 1);
-              void *slice_ptr =
-                  (void *)(((char *)db_data) + dependent[j].byte_offset);
-              arts_signal_edt_ptr_with_guid(dependent[j].addr,
-                                            dependent[j].slot, data, slice_ptr,
-                                            (unsigned int)dependent[j].size);
-              arts_route_table_return_db(data, false);
-            }
-          } else {
-            arts_signal_edt(dependent[j].addr, dependent[j].slot, data,
-                            DB_MODE_NULL);
+        if ((dependent[j].byte_offset != 0 || dependent[j].size != 0) &&
+            data != NULL_GUID) {
+          struct arts_db_s *db =
+              (struct arts_db_s *)arts_route_table_lookup_db(data, NULL,
+                                                             false);
+          if (db) {
+            void *db_data = (void *)(db + 1);
+            void *slice_ptr =
+                (void *)(((char *)db_data) + dependent[j].byte_offset);
+            arts_signal_edt_ptr_with_guid(dependent[j].addr, dependent[j].slot,
+                                          data, slice_ptr,
+                                          (unsigned int)dependent[j].size);
+            arts_route_table_return_db(data, false);
           }
+        } else {
+          /* Match STICKY fire semantics: always signal the slot, even when
+           * data is NULL_GUID (OCR allows satisfy with NULL_GUID to mean
+           * "just fire the slot, no DB attached"). */
+          arts_signal_edt(dependent[j].addr, dependent[j].slot, data,
+                          DB_MODE_NULL);
         }
       } else if (dependent[j].type == ARTS_EVENT) {
         arts_event_satisfy_slot(dependent[j].addr, data, dependent[j].slot);

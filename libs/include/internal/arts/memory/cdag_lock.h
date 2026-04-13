@@ -64,6 +64,13 @@ struct cdag_lock_request_s {
   unsigned int origin_rank;
   unsigned int slot;
   arts_db_access_mode_t mode;
+  /* Optional dispatch-completion signal.  When non-NULL, arts_cdag_dispatch_cb
+   * sets *ready = true (with a release fence) instead of touching depc_needed.
+   * Used by arts_wait_reacquire_dbs to spin-wait until our submitted request
+   * actually reaches head — the EDT is already running, so the depc_needed
+   * counter is meaningless for this case.  Submitters that don't care must
+   * leave this NULL (zero-init via {0} is fine). */
+  volatile bool *ready;
 };
 
 /* Submit outcome. */
@@ -147,8 +154,9 @@ void cdag_lock_release(struct cdag_lock_s *lock, cdag_on_advance_cb on_advance,
 /* -------- Introspection helpers (used by remote signaling paths) -------- */
 
 /* Visit every request's origin_rank in the head generation. Returns false
- * if head is empty. The visit callback is invoked with the internal lock
- * held, so it must not reenter cdag_lock APIs. */
+ * if head is empty. The implementation snapshots the head ranks under the
+ * internal lock, then invokes visit() OUTSIDE the lock — so the callback
+ * may safely call back into cdag_lock APIs, enqueue network sends, etc. */
 bool cdag_lock_iter_head_ranks(struct cdag_lock_s *lock,
                                void (*visit)(unsigned int rank, void *ctx),
                                void *ctx);

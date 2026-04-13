@@ -27,11 +27,15 @@
 #define ENABLE_ALLOCATOR_QUICK
 #define ENABLE_ALLOCATOR_MALLOCPROXY
 
-// Comm-api
+// Comm-api (single-node: handleless; distributed: delegate + simple)
 #define ENABLE_COMM_API_HANDLELESS
+#define ENABLE_COMM_API_DELEGATE
+#define ENABLE_COMM_API_SIMPLE
 
-// Comm-platform
+// Comm-platform (single-node: null; distributed: MPI)
 #define ENABLE_COMM_PLATFORM_NULL
+#define ENABLE_COMM_PLATFORM_MPI
+#define ENABLE_COMM_PLATFORM_MPI_PROBE
 
 // Comp-platform
 #define ENABLE_COMP_PLATFORM_PTHREAD
@@ -68,12 +72,14 @@
 
 // Mem-platform
 #define ENABLE_MEM_PLATFORM_MALLOC
+#define ENABLE_MEM_PLATFORM_NUMA_ALLOC
 
 // Mem-target
 #define ENABLE_MEM_TARGET_SHARED
 
-// Policy domain
+// Policy domain (single-node: HC; distributed: HC_DIST)
 #define ENABLE_POLICY_DOMAIN_HC
+#define ENABLE_POLICY_DOMAIN_HC_DIST
 
 // Resiliency
 // #define ENABLE_RESILIENCY
@@ -81,11 +87,14 @@
 // Scheduler
 #define ENABLE_SCHEDULER_COMMON
 #define ENABLE_SCHEDULER_HC
+#define ENABLE_SCHEDULER_HC_COMM_DELEGATE
 #define ENABLE_SCHEDULER_BLOCKING_SUPPORT
 
 // Scheduler Heuristic
 #define ENABLE_SCHEDULER_HEURISTIC_NULL
 #define ENABLE_SCHEDULER_HEURISTIC_HC
+#define ENABLE_SCHEDULER_HEURISTIC_HC_COMM_DELEGATE
+#define ENABLE_SCHEDULER_HEURISTIC_PLACEMENT_AFFINITY
 #define ENABLE_SCHEDULER_HEURISTIC_ST
 #define ENABLE_SCHEDULER_HEURISTIC_PRIORITY
 #define ENABLE_SCHEDULER_HEURISTIC_STATIC
@@ -111,8 +120,10 @@
 // Task template
 #define ENABLE_TASKTEMPLATE_HC
 
-// Worker
+// Worker (distributed: HC_COMM for master rank worker)
 #define ENABLE_WORKER_HC
+#define ENABLE_WORKER_HC_COMM
+#define ENABLE_WORKER_HC_COMM_MT
 #define ENABLE_WORKER_SYSTEM
 // Workpile
 #define ENABLE_WORKPILE_HC
@@ -135,11 +146,36 @@
 // Runtime extension support
 #define ENABLE_EXTENSION_RTITF
 
+// MPIlite blocking operations (required by HC_DIST policy domain)
+#ifndef DISABLE_EXTENSION_BLOCKING_SUPPORT
+#define ENABLE_EXTENSION_BLOCKING_SUPPORT
+#endif
+
 // Build pause/resume support
 // #define ENABLE_EXTENSION_PAUSE
 
 // GUID labeling extension
 #define ENABLE_EXTENSION_LABELING
+
+// Disable round-robin auto-placement of user EDTs.  With this defined,
+// hint-less EDTs stay on the creator's rank — matching ARTS's behavior
+// and preventing single-node-designed apps (process-local globals) from
+// breaking in distributed mode.
+#define LOAD_BALANCING_TEST
+
+// Multi-output slot extension (ocrAddDependenceSlot,
+// ocrEventCollectiveSatisfySlot)
+#define ENABLE_EXTENSION_MULTI_OUTPUT_SLOT
+
+// Collective event extension (OCR_EVENT_COLLECTIVE_T)
+#define ENABLE_EXTENSION_COLLECTIVE_EVT
+
+// Distributed labeled GUIDs (required for collective event metadata)
+#define ENABLE_EXTENSION_DISTRIBUTED_LABELED
+
+// Slot-based register/unregister with access mode (must be 1, not empty,
+// because hc-policy.c uses it in `#if (REG_ASYNC_SGL)` without `defined`)
+#define REG_ASYNC_SGL 1
 
 // Performance monitoring
 // #define ENABLE_EXTENSION_PERF

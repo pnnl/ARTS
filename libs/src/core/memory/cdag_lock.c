@@ -344,18 +344,46 @@ void cdag_lock_release(struct cdag_lock_s *lock, cdag_on_advance_cb on_advance,
 bool cdag_lock_iter_head_ranks(struct cdag_lock_s *lock,
                                void (*visit)(unsigned int rank, void *ctx),
                                void *ctx) {
+  /* Snapshot the head ranks under the lock, then dispatch the visitor
+   * outside the lock.  Mirrors the snapshot pattern in cdag_lock_release.
+   * Holding queue_lock while visit() runs would (a) make any visit() that
+   * enqueues to a transport ring buffer hold a spinlock across an I/O
+   * path, creating a tail-latency cliff and a deadlock hazard if the
+   * transport ever calls back, and (b) is the kind of "must-not-reenter"
+   * constraint that breaks at the next refactor.  Snapshot first. */
+  unsigned int *ranks = NULL;
+  unsigned int n = 0;
+  bool had_head = false;
+
   arts_lock(&lock->queue_lock);
   struct cdag_gen_s *h = lock->head;
-  if (!h) {
-    arts_unlock(&lock->queue_lock);
-    return false;
-  }
-  struct cdag_waiter_node_s *w = h->waiters_head;
-  while (w) {
-    visit(w->req.origin_rank, ctx);
-    w = w->next;
+  if (h) {
+    had_head = true;
+    unsigned int cap = h->waiter_count;
+    if (cap > 0) {
+      ranks =
+          (unsigned int *)arts_calloc(cap, sizeof(unsigned int));
+      if (ranks) {
+        struct cdag_waiter_node_s *w = h->waiters_head;
+        while (w && n < cap) {
+          ranks[n++] = w->req.origin_rank;
+          w = w->next;
+        }
+      }
+    }
   }
   arts_unlock(&lock->queue_lock);
+
+  if (!had_head) {
+    return false;
+  }
+
+  if (ranks) {
+    for (unsigned int i = 0; i < n; i++) {
+      visit(ranks[i], ctx);
+    }
+    arts_free(ranks);
+  }
   return true;
 }
 

@@ -602,8 +602,7 @@ static void calc_elem_forces_pq(const_db_header_t *ch, pos_vel_db_header_t *pvh,
                                            dvdz[i] * hmz[j]);
     double coef = -hgc * 0.01 * ss_val * em / cbrt(determ);
     double hfx[8], hfy[8], hfz[8];
-    calc_fb_hg_force(xd, yd, zd, (const double (*)[4])hgam, coef, hfx, hfy,
-                     hfz);
+    calc_fb_hg_force(xd, yd, zd, (const double(*)[4])hgam, coef, hfx, hfy, hfz);
     for (int c = 0; c < 8; c++) {
       fx[c] += hfx[c];
       fy[c] += hfy[c];

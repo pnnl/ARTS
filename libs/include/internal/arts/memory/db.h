@@ -61,6 +61,8 @@ extern const char *const arts_type_name[];
 
 #define GET_DB_MODE_NAME(x) db_mode_name[x]
 
+extern const char *const db_mode_name[];
+
 #define ARTS_DB_TYPE_NAME                                                      \
   const char *const arts_db_type_name[] = {"ARTS_DB_DEFAULT", "ARTS_DB_LOCAL", \
                                            "ARTS_DB_GPU", "ARTS_DB_LC",        \
@@ -69,8 +71,6 @@ extern const char *const arts_type_name[];
 #define GET_DB_TYPE_NAME(x) arts_db_type_name[x]
 
 extern const char *const arts_db_type_name[];
-
-extern const char *const db_mode_name[];
 
 void arts_db_create_internal(arts_guid_t guid, void *addr, uint64_t len,
                              uint64_t packet_size, arts_db_types_t db_type,

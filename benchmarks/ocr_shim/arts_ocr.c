@@ -125,22 +125,6 @@ ocr_copy_paramv_safe(uint64_t *dst, const u64 *src, u32 paramc) {
 #endif
 
 /* =========================================================================
- * Helper: get datablock data pointer from its GUID.
- * The DB structure is: [struct arts_db_s header][actual data]
- * ========================================================================= */
-static void *arts_db_data_from_guid(arts_guid_t db_guid) {
-  void *ptr = arts_route_table_lookup_db(db_guid, NULL, false);
-  if (ptr == NULL) {
-    return NULL;
-  }
-  /* Note: caller uses the data pointer without holding the route table ref.
-   * Safe because OCR semantics guarantee the DB is acquired by the calling
-   * EDT and will not be destroyed until released. */
-  arts_route_table_return_db(db_guid, false);
-  return (void *)((struct arts_db_s *)ptr + 1);
-}
-
-/* =========================================================================
  * Collective Event Support
  *
  * OCR collective events are implemented using a metadata DB + mutex.
@@ -242,12 +226,40 @@ static void performCollectiveReduction(CollectiveMetadata *meta) {
 
 #define COLLECTIVE_HASH_SIZE 4096
 
+/*
+ * Collective metadata registry — open-addressed linear-probing hash map
+ * keyed by event GUID (the OCR-visible identifier) → metadata DB GUID
+ * (the per-collective state struct).
+ *
+ * Concurrency model:
+ *   - `edtGuid` is published via __sync_bool_compare_and_swap (full
+ *     barrier).  `metaDbGuid` is a plain store BEFORE the CAS so the
+ *     CAS itself is the publication point: any thread that observes the
+ *     edtGuid is guaranteed (by the CAS's full barrier) to see the
+ *     paired metaDbGuid.  This eliminates the previous lookup-side
+ *     spin loop on metaDbGuid==NULL.
+ *   - The TOMBSTONE marker lets unregister clear an entry without
+ *     breaking the probe chain — subsequent lookups skip past
+ *     tombstones, and inserts may reuse them.
+ *
+ * Result codes from tryRegisterCollectiveMeta let the caller distinguish
+ * "newly registered", "already exists", and "table full" — instead of
+ * collapsing the latter two into a single 0 return.
+ */
+#define COLLECTIVE_TOMBSTONE ((arts_guid_t)~(uint64_t)0)
+
 typedef struct {
   volatile arts_guid_t edtGuid;
-  volatile arts_guid_t metaDbGuid;
+  arts_guid_t metaDbGuid;
 } CollectiveMapEntry;
 
 static CollectiveMapEntry collectiveMetaMap[COLLECTIVE_HASH_SIZE] = {{0, 0}};
+
+enum collective_register_result {
+  COLLECTIVE_REGISTER_OK = 0,
+  COLLECTIVE_REGISTER_EXISTS = 1,
+  COLLECTIVE_REGISTER_FULL = 2,
+};
 
 /* =========================================================================
  * Channel Event Support
@@ -268,36 +280,76 @@ static u32 collectiveHash(arts_guid_t guid) {
   return (u32)(val % COLLECTIVE_HASH_SIZE);
 }
 
-static int tryRegisterCollectiveMeta(arts_guid_t key, arts_guid_t metaDbGuid) {
+static enum collective_register_result
+tryRegisterCollectiveMeta(arts_guid_t key, arts_guid_t metaDbGuid) {
   u32 idx = collectiveHash(key);
   for (u32 i = 0; i < COLLECTIVE_HASH_SIZE; i++) {
     u32 probeIdx = (idx + i) % COLLECTIVE_HASH_SIZE;
-    arts_guid_t expected = NULL_GUID;
+    arts_guid_t cur = collectiveMetaMap[probeIdx].edtGuid;
 
-    if (__sync_bool_compare_and_swap(&collectiveMetaMap[probeIdx].edtGuid,
-                                     expected, key)) {
+    if (cur == NULL_GUID || cur == COLLECTIVE_TOMBSTONE) {
+      /* Publish metaDbGuid BEFORE the CAS that publishes edtGuid.
+       * The CAS is a full barrier, so any thread observing edtGuid
+       * after the CAS is guaranteed to see this metaDbGuid write. */
       collectiveMetaMap[probeIdx].metaDbGuid = metaDbGuid;
-      return 1;
+      if (__sync_bool_compare_and_swap(&collectiveMetaMap[probeIdx].edtGuid,
+                                       cur, key)) {
+        return COLLECTIVE_REGISTER_OK;
+      }
+      /* CAS lost the race; the slot is now occupied by some other key.
+       * The metaDbGuid we just wrote is harmless because the next
+       * probe iteration will check (and possibly overwrite) it before
+       * its own CAS. */
     }
 
+    /* Plain volatile read is fine here because we only check equality
+     * against `key`, and the writer published edtGuid via CAS. */
     if (collectiveMetaMap[probeIdx].edtGuid == key) {
-      return 0;
+      return COLLECTIVE_REGISTER_EXISTS;
     }
   }
-  return 0;
+  return COLLECTIVE_REGISTER_FULL;
 }
 
 static arts_guid_t lookupCollectiveMeta(arts_guid_t edtGuid) {
   u32 idx = collectiveHash(edtGuid);
   for (u32 i = 0; i < COLLECTIVE_HASH_SIZE; i++) {
     u32 probeIdx = (idx + i) % COLLECTIVE_HASH_SIZE;
-    if (collectiveMetaMap[probeIdx].edtGuid == edtGuid) {
-      while (collectiveMetaMap[probeIdx].metaDbGuid == NULL_GUID) {
-        __sync_synchronize();
-      }
+    arts_guid_t cur = collectiveMetaMap[probeIdx].edtGuid;
+    if (cur == edtGuid) {
+      /* metaDbGuid was published BEFORE the CAS that set edtGuid; the
+       * CAS's full barrier means our read of edtGuid synchronizes with
+       * that prior write.  No spin needed. */
       return collectiveMetaMap[probeIdx].metaDbGuid;
     }
-    if (collectiveMetaMap[probeIdx].edtGuid == NULL_GUID) {
+    if (cur == NULL_GUID) {
+      /* End of probe chain — entry definitively not present. */
+      return NULL_GUID;
+    }
+    /* TOMBSTONE: skip past, the chain continues. */
+  }
+  return NULL_GUID;
+}
+
+/*
+ * Mark the entry for `edtGuid` as a tombstone so its slot can be reused
+ * by future inserts while preserving the probe chain.  Used by
+ * ocrEventDestroy to clean up after a collective event.  Returns the
+ * removed metaDbGuid (or NULL_GUID if not found) so the caller can
+ * destroy the metadata DB.
+ */
+static arts_guid_t unregisterCollectiveMeta(arts_guid_t edtGuid) {
+  u32 idx = collectiveHash(edtGuid);
+  for (u32 i = 0; i < COLLECTIVE_HASH_SIZE; i++) {
+    u32 probeIdx = (idx + i) % COLLECTIVE_HASH_SIZE;
+    arts_guid_t cur = collectiveMetaMap[probeIdx].edtGuid;
+    if (cur == edtGuid) {
+      arts_guid_t metaDb = collectiveMetaMap[probeIdx].metaDbGuid;
+      collectiveMetaMap[probeIdx].metaDbGuid = NULL_GUID;
+      collectiveMetaMap[probeIdx].edtGuid = COLLECTIVE_TOMBSTONE;
+      return metaDb;
+    }
+    if (cur == NULL_GUID) {
       return NULL_GUID;
     }
   }
@@ -335,6 +387,15 @@ u8 ocrEdtTemplateDestroy(ocrGuid_t guid) {
   return 0;
 }
 
+/* Forward declaration: defined alongside ocr_to_arts_mode further down. */
+static u32 arts_to_ocr_mode(arts_db_access_mode_t arts_mode);
+
+/* Forward declaration: defined alongside the ELS storage further down.
+ * Called at the start of every trampoline so ELS truly is "EDT-local"
+ * (zero-initialized at the start of each EDT) instead of leaking
+ * stale values from the previous EDT that ran on the same worker. */
+static void ocr_els_reset(void);
+
 /* =========================================================================
  * EDT_PROP_FINISH Support via ARTS Epochs
  *
@@ -367,6 +428,9 @@ static void ocr_edt_trampoline(uint32_t paramc, const uint64_t *paramv,
                                uint32_t depc, arts_edt_dep_t depv[]) {
   (void)paramc;
 
+  /* Restore EDT-local semantics for the OCR ELS array — see ocr_els_reset. */
+  ocr_els_reset();
+
   ocrEdt_t func = (ocrEdt_t)paramv[0];
   u32 origParamc = (u32)paramv[1];
   arts_guid_t guidOrEpoch = (arts_guid_t)paramv[2];
@@ -382,13 +446,17 @@ static void ocr_edt_trampoline(uint32_t paramc, const uint64_t *paramv,
 
   bool isFinishEdt = (flags & FINISH_EDT_FLAG) != 0;
 
-  /* Convert arts_edt_dep_t to ocrEdtDep_t */
+  /* Convert arts_edt_dep_t to ocrEdtDep_t.  Preserve the mode that ARTS
+   * resolved during acquire_dbs (RO vs EW vs NULL) — the OCR EDT body
+   * may inspect depv[i].mode for assertions or behavior, and surfacing
+   * the actual ARTS-resolved mode is more honest than the previous
+   * DB_DEFAULT_MODE hardcode. */
   ocrEdtDep_t ocrDepv[depc > 0 ? depc : 1];
 
   for (u32 i = 0; i < depc; i++) {
     ocrDepv[i].guid.guid = depv[i].guid;
     ocrDepv[i].ptr = depv[i].ptr;
-    ocrDepv[i].mode = DB_DEFAULT_MODE;
+    ocrDepv[i].mode = arts_to_ocr_mode(depv[i].mode);
   }
 
   if (isFinishEdt && guidOrEpoch != NULL_GUID) {
@@ -437,6 +505,20 @@ static void ocr_edt_trampoline(uint32_t paramc, const uint64_t *paramv,
  * where ocrAffinityToHintValue() returns the node rank as u64.
  * ========================================================================= */
 
+/* One-shot warning when an affinity hint exceeds the available rank
+ * count.  Modulo wrap is preserved for compatibility, but the silent
+ * wrap can mask app affinity bugs (a typo'd hint silently maps to a
+ * different rank).  Warn once globally so the developer notices. */
+static void warn_oversized_affinity_once(const char *what, u64 val) {
+  static volatile u32 warned = 0;
+  if (__sync_bool_compare_and_swap(&warned, 0, 1)) {
+    fprintf(stderr,
+            "[ocr_shim] %s affinity hint %lu exceeds rank count %u, "
+            "wrapping via modulo.  Subsequent oversized hints suppressed.\n",
+            what, (unsigned long)val, arts_global_rank_count);
+  }
+}
+
 static unsigned int extract_edt_route_from_hint(ocrHint_t *hint) {
   if (hint == NULL || hint->type != OCR_HINT_EDT_T) {
     return arts_global_rank_id;
@@ -449,6 +531,9 @@ static unsigned int extract_edt_route_from_hint(ocrHint_t *hint) {
     return arts_global_rank_id;
   }
   u64 val = hint->args.propEDT[idx];
+  if (val >= arts_global_rank_count) {
+    warn_oversized_affinity_once("EDT", val);
+  }
   return (unsigned int)(val % arts_global_rank_count);
 }
 
@@ -464,6 +549,9 @@ static unsigned int extract_db_route_from_hint(ocrHint_t *hint) {
     return arts_global_rank_id;
   }
   u64 val = hint->args.propDB[idx];
+  if (val >= arts_global_rank_count) {
+    warn_oversized_affinity_once("DB", val);
+  }
   return (unsigned int)(val % arts_global_rank_count);
 }
 
@@ -476,7 +564,7 @@ u8 ocrEdtCreate(ocrGuid_t *guid, ocrGuid_t templateGuid, u32 paramc,
                 ocrHint_t *hint, ocrGuid_t *outputEvent) {
   OcrEdtTemplate *templ = (OcrEdtTemplate *)templateGuid.guid;
   if (!templ) {
-    return 1;
+    return OCR_EINVAL;
   }
 
   u32 actualParamc = (paramc == EDT_PARAM_DEF) ? templ->paramc : paramc;
@@ -493,6 +581,9 @@ u8 ocrEdtCreate(ocrGuid_t *guid, ocrGuid_t templateGuid, u32 paramc,
       outEvt = outputEvent->guid;
     } else {
       outEvt = arts_event_create(route, ARTS_EVENT_IDEM, 1, NULL_GUID);
+      if (outEvt == NULL_GUID) {
+        return OCR_ENOMEM;
+      }
       outputEvent->guid = outEvt;
     }
   }
@@ -543,6 +634,13 @@ u8 ocrEdtCreate(ocrGuid_t *guid, ocrGuid_t templateGuid, u32 paramc,
   }
 
   arts_free(artsParamv);
+
+  if (edtGuid == NULL_GUID) {
+    /* ARTS could not create the EDT (route invalid, OOM, etc.).  Surface
+     * the failure as OCR_ENOMEM rather than silently returning success
+     * with a bogus GUID. */
+    return OCR_ENOMEM;
+  }
 
   if (guid != NULL) {
     guid->guid = edtGuid;
@@ -616,17 +714,47 @@ u8 ocrEventCreate(ocrGuid_t *guid, ocrEventTypes_t eventType, u16 properties) {
 
   guid->guid = arts_event_create(arts_global_rank_id, artsEvtType, latchCount,
                                  NULL_GUID);
+  if (guid->guid == NULL_GUID) {
+    return OCR_ENOMEM;
+  }
   return 0;
 }
 
 u8 ocrEventDestroy(ocrGuid_t guid) {
+  /* If this GUID was used as a key for a collective event metadata
+   * entry, drop the entry and destroy the metadata DB.  Two cases:
+   *   - Labeled collective: the entry key is the labeled GUID, and the
+   *     OCR-visible event GUID equals the labeled GUID; arts_event_destroy
+   *     handles the user-visible event side.
+   *   - Unlabeled collective: the entry key IS the metadata DB GUID,
+   *     and the OCR-visible event GUID is also the metadata DB GUID
+   *     (it's not a real ARTS event, but arts_event_destroy on a
+   *     non-event GUID is harmless / a no-op).
+   * In either case, unregisterCollectiveMeta is the safe lookup that
+   * also clears the hash entry via tombstone marker. */
+  arts_guid_t metaDb = unregisterCollectiveMeta(guid.guid);
+  if (metaDb != NULL_GUID) {
+    arts_db_destroy(metaDb);
+  }
   arts_event_destroy(guid.guid);
   return 0;
 }
 
+/*
+ * Re-satisfy guard:
+ *
+ * OCR STICKY/IDEM/ONCE/COUNTED events all fire once and treat subsequent
+ * satisfies as no-ops (per OCR spec).  ARTS handles this correctly for
+ * IDEM (silent drop) and STICKY (warn + drop) inside arts_event_satisfy_slot
+ * itself, but raises ARTS_ERROR for LATCH on a re-satisfy of an already-fired
+ * latch.
+ *
+ * The guard below maps OCR's "extra satisfies are no-ops" semantics onto
+ * ARTS LATCH (which would otherwise abort the program).  For IDEM/STICKY
+ * the guard is redundant with ARTS but harmless.  Channel events bypass
+ * the guard because they have native generation-based re-fire support.
+ */
 u8 ocrEventSatisfy(ocrGuid_t eventGuid, ocrGuid_t dataGuid) {
-  /* For non-channel events, guard against re-satisfy of already-fired events.
-   * Channel events handle re-fire natively via generations. */
   if (arts_is_event_fired(eventGuid.guid)) {
     return 0;
   }
@@ -667,6 +795,9 @@ u8 ocrEventCreateParams(ocrGuid_t *guid, ocrEventTypes_t eventType,
 
     guid->guid =
         arts_event_create(arts_global_rank_id, ARTS_EVENT_IDEM, 1, NULL_GUID);
+    if (guid->guid == NULL_GUID) {
+      return OCR_ENOMEM;
+    }
     return 0;
   }
 
@@ -674,16 +805,22 @@ u8 ocrEventCreateParams(ocrGuid_t *guid, ocrEventTypes_t eventType,
     u32 nbContribs = params->EVENT_COLLECTIVE.nbContribs;
     arts_guid_t labeledGuid = guid->guid;
 
+    /* Labeled fast-path: if a metadata entry already exists for this
+     * GUID, surface OCR_EGUIDEXISTS when the caller asked via
+     * GUID_PROP_CHECK; otherwise treat the second create as a no-op. */
     if ((properties & GUID_PROP_IS_LABELED) && labeledGuid != NULL_GUID) {
       arts_guid_t existingMeta = lookupCollectiveMeta(labeledGuid);
       if (existingMeta != NULL_GUID) {
-        return 0;
+        return (properties & GUID_PROP_CHECK) ? OCR_EGUIDEXISTS : 0;
       }
     }
 
     void *metaPtr;
     arts_guid_t metaDb = arts_db_create(&metaPtr, sizeof(CollectiveMetadata),
                                         ARTS_DB_DEFAULT, NULL);
+    if (metaDb == NULL_GUID) {
+      return OCR_ENOMEM;
+    }
     CollectiveMetadata *meta = (CollectiveMetadata *)metaPtr;
 
     meta->op = params->EVENT_COLLECTIVE.op;
@@ -706,15 +843,28 @@ u8 ocrEventCreateParams(ocrGuid_t *guid, ocrEventTypes_t eventType,
       meta->dependentSlots[i] = 0;
     }
 
-    if ((properties & GUID_PROP_IS_LABELED) && labeledGuid != NULL_GUID) {
-      if (!tryRegisterCollectiveMeta(labeledGuid, metaDb)) {
-        return 0;
-      }
-      return 0;
+    arts_guid_t key =
+        ((properties & GUID_PROP_IS_LABELED) && labeledGuid != NULL_GUID)
+            ? labeledGuid
+            : metaDb;
+
+    enum collective_register_result reg =
+        tryRegisterCollectiveMeta(key, metaDb);
+    if (reg == COLLECTIVE_REGISTER_FULL) {
+      arts_db_destroy(metaDb);
+      return OCR_ENOSPC;
+    }
+    if (reg == COLLECTIVE_REGISTER_EXISTS) {
+      arts_db_destroy(metaDb);
+      return (properties & GUID_PROP_CHECK) ? OCR_EGUIDEXISTS : 0;
     }
 
-    tryRegisterCollectiveMeta(metaDb, metaDb);
-    guid->guid = metaDb;
+    /* For unlabeled collective events the OCR-visible event GUID is
+     * the metadata DB GUID itself.  For labeled events, the user-
+     * provided GUID is the public identity. */
+    if (!((properties & GUID_PROP_IS_LABELED) && labeledGuid != NULL_GUID)) {
+      guid->guid = metaDb;
+    }
     return 0;
   }
 
@@ -735,6 +885,9 @@ u8 ocrEventCreateParams(ocrGuid_t *guid, ocrEventTypes_t eventType,
 
     guid->guid = arts_event_create(arts_global_rank_id, ARTS_EVENT_CHANNEL, 1,
                                    NULL_GUID);
+    if (guid->guid == NULL_GUID) {
+      return OCR_ENOMEM;
+    }
     return 0;
   }
 
@@ -747,7 +900,7 @@ u8 ocrEventCollectiveSatisfySlot(ocrGuid_t eventGuid, void *dataPtr,
 
   if (metaDbGuid == NULL_GUID) {
     if (arts_is_event_fired(eventGuid.guid)) {
-      return 1;
+      return OCR_ENOP;
     }
     arts_guid_t dataGuid =
         (dataPtr != NULL) ? (arts_guid_t)(uintptr_t)dataPtr : NULL_GUID;
@@ -755,11 +908,16 @@ u8 ocrEventCollectiveSatisfySlot(ocrGuid_t eventGuid, void *dataPtr,
     return 0;
   }
 
-  CollectiveMetadata *meta =
-      (CollectiveMetadata *)arts_db_data_from_guid(metaDbGuid);
-  if (meta == NULL) {
-    return 1;
+  /* Hold the route table lookup ref for the entire critical section so
+   * the metadata DB cannot be destroyed (e.g., by a concurrent
+   * ocrEventDestroy) while we're touching its fields.  Pair with the
+   * matching return_db at every exit. */
+  void *raw = arts_route_table_lookup_db(metaDbGuid, NULL, false);
+  if (raw == NULL) {
+    return OCR_EFAULT;
   }
+  CollectiveMetadata *meta =
+      (CollectiveMetadata *)((struct arts_db_s *)raw + 1);
 
   double value = 0.0;
   if (dataPtr != NULL) {
@@ -781,6 +939,7 @@ u8 ocrEventCollectiveSatisfySlot(ocrGuid_t eventGuid, void *dataPtr,
   }
 
   pthread_mutex_unlock(&meta->lock);
+  arts_route_table_return_db(metaDbGuid, false);
 
   return 0;
 }
@@ -799,13 +958,17 @@ u8 ocrDbCreate(ocrGuid_t *db, void **addr, u64 len, u16 flags, ocrHint_t *hint,
     void *data =
         arts_db_create_with_guid(labeledGuid, len, ARTS_DB_DEFAULT, NULL, NULL);
     if (data == NULL) {
+      /* Labeled GUID already taken — fall back to looking it up so the
+       * caller still gets a valid pointer. */
       data = arts_route_table_lookup_db(labeledGuid, NULL, false);
       if (data != NULL) {
         *addr = (void *)((struct arts_db_s *)data + 1);
         arts_route_table_return_db(labeledGuid, false);
-        return 0;
+        /* Match ocrEventCreate's labeling convention: only surface
+         * EGUIDEXISTS when the caller asked to be told via GUID_PROP_CHECK. */
+        return (flags & GUID_PROP_CHECK) ? OCR_EGUIDEXISTS : 0;
       }
-      return 1;
+      return OCR_ENOMEM;
     }
     *addr = data;
     return 0;
@@ -814,6 +977,9 @@ u8 ocrDbCreate(ocrGuid_t *db, void **addr, u64 len, u16 flags, ocrHint_t *hint,
   unsigned int route = extract_db_route_from_hint(hint);
   arts_hint_t artsHint = {.route = route};
   db->guid = arts_db_create(addr, len, ARTS_DB_DEFAULT, &artsHint);
+  if (db->guid == NULL_GUID) {
+    return OCR_ENOMEM;
+  }
 
   return 0;
 }
@@ -859,6 +1025,8 @@ static arts_db_access_mode_t ocr_to_arts_mode(ocrDbAccessMode_t ocr_mode) {
   switch (ocr_mode) {
   case DB_MODE_EW: /* OCR 0x4 → ARTS EW (true exclusive write) */
     return ARTS_MODE_EW;
+  case DB_MODE_NULL: /* OCR 0x0 → ARTS NULL (control-only dependence) */
+    return ARTS_MODE_NULL;
   case DB_MODE_RO: /* OCR 0x8 → ARTS RO */
   case DB_MODE_RW: /* OCR 0x2 → ARTS RO (advisory; OCR doesn't enforce RW
                     * exclusion, and apps routinely use RW as a default even
@@ -866,6 +1034,31 @@ static arts_db_access_mode_t ocr_to_arts_mode(ocrDbAccessMode_t ocr_mode) {
                     * serialization and performance collapse.) */
   default:
     return ARTS_MODE_RO;
+  }
+}
+
+/*
+ * Inverse mapping for what the EDT body sees in depv[i].mode.
+ *
+ * ARTS resolves the actual access mode during acquire_dbs.  We surface
+ * that to the OCR EDT body so user code (and OCR helper libraries that
+ * read depv[i].mode for assertions or branching) sees the truth.
+ *
+ * RO is reported as DB_MODE_RO rather than DB_DEFAULT_MODE (RW) because
+ * the OCR-RW-mapped-to-ARTS-RO path doesn't survive the round trip and
+ * we have no way to distinguish "originally RW" from "originally RO".
+ * Reporting RO is conservative and matches what acquire_dbs actually did.
+ */
+static u32 arts_to_ocr_mode(arts_db_access_mode_t arts_mode) {
+  switch (arts_mode) {
+  case ARTS_DB_MODE_EW_:
+  case ARTS_DB_MODE_MEMSET_:
+    return DB_MODE_EW;
+  case ARTS_DB_MODE_NULL_:
+    return DB_MODE_NULL;
+  case ARTS_DB_MODE_RO_:
+  default:
+    return DB_MODE_RO;
   }
 }
 
@@ -903,9 +1096,15 @@ u8 ocrAddDependence(ocrGuid_t source, ocrGuid_t destination, u32 slot,
   } else if (srcType == ARTS_EVENT) {
     /* ARTS channels (latch=1) do INCR internally in add_dependence_with_mode.
      * Non-channel events use direct dependent registration. Both paths
-     * are handled by arts_add_dependence. Cross-node: handled natively. */
+     * are handled by arts_add_dependence. Cross-node: handled natively.
+     *
+     * Pass the user's access mode through ocr_to_arts_mode so the EDT slot
+     * is registered with the correct ARTS mode (RO/EW).  Previously this
+     * was hardcoded to ARTS_MODE_RO, silently downgrading every Event→EDT
+     * dependence to read-only access. */
     if (dstType == ARTS_EDT) {
-      arts_add_dependence(source.guid, destination.guid, slot, ARTS_MODE_RO);
+      arts_add_dependence(source.guid, destination.guid, slot,
+                          ocr_to_arts_mode(mode));
     } else if (dstType == ARTS_EVENT) {
       /* Event→event: OCR spec says "satisfy dest when source fires".
        * Always use DECR slot regardless of the incoming slot param. */
@@ -924,15 +1123,25 @@ u8 ocrAddDependenceSlot(ocrGuid_t source, u32 sslot, ocrGuid_t destination,
   arts_guid_t metaDbGuid = lookupCollectiveMeta(source.guid);
 
   if (metaDbGuid != NULL_GUID) {
-    CollectiveMetadata *meta =
-        (CollectiveMetadata *)arts_db_data_from_guid(metaDbGuid);
-    if (meta != NULL) {
-      u32 idx = __sync_fetch_and_add(&meta->numDependents, 1);
-      if (idx < MAX_COLLECTIVE_DEPENDENTS) {
-        meta->dependents[idx] = destination.guid;
-        meta->dependentSlots[idx] = dslot;
-      }
+    /* Hold the route table ref for the duration we touch the metadata.
+     * Pair with return_db at every exit. */
+    void *raw = arts_route_table_lookup_db(metaDbGuid, NULL, false);
+    if (raw == NULL) {
+      return OCR_EFAULT;
     }
+    CollectiveMetadata *meta =
+        (CollectiveMetadata *)((struct arts_db_s *)raw + 1);
+    u32 idx = __sync_fetch_and_add(&meta->numDependents, 1);
+    if (idx >= MAX_COLLECTIVE_DEPENDENTS) {
+      /* Roll back the increment so future ocrEventDestroy / fire-time
+       * iteration sees the correct count. */
+      __sync_fetch_and_sub(&meta->numDependents, 1);
+      arts_route_table_return_db(metaDbGuid, false);
+      return OCR_ENOSPC;
+    }
+    meta->dependents[idx] = destination.guid;
+    meta->dependentSlots[idx] = dslot;
+    arts_route_table_return_db(metaDbGuid, false);
     return 0;
   }
 
@@ -997,6 +1206,15 @@ void _ocrAssert(u8 val, const char *str, const char *file, u32 line) {
 
 static _Thread_local ocrGuid_t els_storage[OCR_ELS_SIZE] = {{0}};
 
+/* OCR EDT-Local Storage is supposed to be EDT-scoped: each EDT sees a
+ * fresh, zeroed array.  We back it with _Thread_local for performance,
+ * which is per-worker, so a stale value from a previously-finished EDT
+ * on the same worker would otherwise leak into the next EDT.
+ * Trampolines call this at entry to restore EDT-local semantics. */
+static void ocr_els_reset(void) {
+  memset((void *)els_storage, 0, sizeof(els_storage));
+}
+
 ocrGuid_t ocrElsUserGet(u8 offset) {
   if (offset >= OCR_ELS_SIZE) {
     ocrGuid_t null_guid = {0};
@@ -1049,6 +1267,15 @@ u8 ocrGuidRangeCreate(ocrGuid_t *rangeGuid, u64 numberGuid,
   return 0;
 }
 
+/*
+ * ocrGuidMapDestroy: OCR releases a previously-reserved GUID range/map.
+ * ARTS exposes arts_guid_reserve_range but no matching unreserve API,
+ * so this is a no-op.  Long-running apps that repeatedly create+destroy
+ * GUID ranges will leak ARTS GUID space.  See plan finding L3.
+ *
+ * TODO: implement arts_guid_unreserve_range in core ARTS, then plumb
+ * it through here.
+ */
 u8 ocrGuidMapDestroy(ocrGuid_t mapGuid) {
   (void)mapGuid;
   return 0;
@@ -1310,6 +1537,18 @@ u8 ocrGetHintValue(ocrHint_t *hint, ocrHintProp_t hintProp, u64 *value) {
   return 0;
 }
 
+/*
+ * ocrSetHint / ocrGetHint apply hints to existing GUIDs (post-creation).
+ * ARTS treats EDTs as immutable after creation: the route/hint passed at
+ * arts_edt_create time is final.  DBs in principle could be relocated via
+ * arts_db_move, but the current shim doesn't translate ocrSetHint to it.
+ *
+ * Returning 0 means "success" — apps that depend on dynamic hint changes
+ * will silently get suboptimal placement.  See plan finding I3.
+ *
+ * TODO: implement DB hint changes via arts_db_move when an OCR app
+ * actually exercises this path.
+ */
 u8 ocrSetHint(ocrGuid_t guid, ocrHint_t *hint) {
   (void)guid;
   (void)hint;
@@ -1333,11 +1572,13 @@ static void mainEdtTrampoline(uint32_t paramc, const uint64_t *paramv,
   (void)paramc;
   (void)paramv;
 
+  ocr_els_reset();
+
   ocrEdtDep_t ocrDepv[depc > 0 ? depc : 1];
   for (u32 i = 0; i < depc; i++) {
     ocrDepv[i].guid.guid = depv[i].guid;
     ocrDepv[i].ptr = depv[i].ptr;
-    ocrDepv[i].mode = DB_DEFAULT_MODE;
+    ocrDepv[i].mode = arts_to_ocr_mode(depv[i].mode);
   }
 
   mainEdt(0, NULL, depc, ocrDepv);
