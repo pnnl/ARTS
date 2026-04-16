@@ -37,11 +37,11 @@
 ## License for the specific language governing permissions and limitations
 ###############################################################################
 
-# Create stream CUDA example
-add_executable(stream stream.cu stream_util.c)
+# Create stream_gpu CUDA example
+add_executable(stream_gpu stream.cu stream_util.c)
 
 # Set include directories
-target_include_directories(stream PRIVATE
+target_include_directories(stream_gpu PRIVATE
     ${ARTS_PUBLIC_INCLUDE_DIR}
     ${ARTS_INTERNAL_INCLUDE_DIR}
     ${ARTS_BUILD_INTERNAL_INCLUDE_DIR}
@@ -49,7 +49,7 @@ target_include_directories(stream PRIVATE
 )
 
 # Link with CUDA libraries
-target_link_libraries(stream PRIVATE 
+target_link_libraries(stream_gpu PRIVATE 
     Threads::Threads 
     ${RT_LIBRARY} 
     ${M_LIBRARY} 
@@ -61,9 +61,9 @@ target_link_libraries(stream PRIVATE
 
 # Use the CUDA-enabled ARTS library
 if(TARGET arts_cuda_shared)
-    target_link_libraries(stream PRIVATE arts_cuda_shared)
+    target_link_libraries(stream_gpu PRIVATE arts_cuda_shared)
 elseif(TARGET arts_cuda_static)
-    target_link_libraries(stream PRIVATE arts_cuda_static)
+    target_link_libraries(stream_gpu PRIVATE arts_cuda_static)
 else()
-    message(FATAL_ERROR "No CUDA ARTS library target found for stream")
+    message(FATAL_ERROR "No CUDA ARTS library target found for stream (GPU)")
 endif()

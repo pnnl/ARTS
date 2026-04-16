@@ -209,8 +209,8 @@ void *arts_db_malloc(arts_db_types_t db_type, size_t size) {
       dev_idx = arts_node_info.cxl_db_static_device;
     }
     ptr = arts_cxl_deque_db_malloc_dev(arts_node_info.cxl_deque,
-                                       &arts_node_info.cxl_local_lock,
-                                       size, dev_idx);
+                                       &arts_node_info.cxl_local_lock, size,
+                                       dev_idx);
     assert(ptr && "arts_cxl_deque_db_malloc_dev ptr is valid\n");
   }
 #endif
@@ -648,7 +648,8 @@ void acquire_dbs(struct arts_edt_s *edt) {
         if (arts_guid_is_cxl(depv[i].guid)) {
           struct arts_db_s *cxl_db =
               (struct arts_db_s *)arts_cxl_get_ptr(depv[i].guid);
-          arts_cxl_consumer_flush(depv[i].guid);
+          /* Consumer flush deferred to prep_dbs (just before user func)
+           * to avoid stale reads after deque wait. */
           if (cxl_db) {
             db_found = cxl_db;
             arts_atomic_sub(&edt->depc_needed, 1U);
@@ -799,8 +800,6 @@ void prep_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu) {
     arts_db_access_mode_t access_mode = depv[i].mode;
     if (depv[i].guid != NULL_GUID && depv[i].ptr && access_mode == DB_MODE_EW) {
       struct arts_db_s *db = ((struct arts_db_s *)depv[i].ptr) - 1;
-      FLUSH_FENCE_CONSUMER(db, sizeof(struct arts_db_s));
-      uint64_t data_size = db->header.size - sizeof(struct arts_db_s);
       if (db->db_type != ARTS_DB_LOCAL) {
         arts_remote_update_route_table(depv[i].guid, ARTS_HINT_CURRENT_NODE);
       }
@@ -875,7 +874,8 @@ static void release_one_dep(arts_edt_dep_t *dep, bool gpu) {
 
 #ifdef ARTS_USE_CXL
   if (db_subtype == ARTS_DB_CXL) {
-    if (dep->guid != NULL_GUID && dep->ptr) {
+    if (dep->guid != NULL_GUID && dep->ptr &&
+        (access_mode == DB_MODE_EW || access_mode == DB_MODE_MEMSET)) {
       arts_cxl_producer_flush(dep->guid);
     }
     return; /* CXL: no route table, no frontier */

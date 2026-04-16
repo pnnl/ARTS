@@ -104,7 +104,7 @@ static const char *label[4] = {
     "Copy:      ", "Scale:     ", "Add:       ", "Triad:     "};
 
 static double bytes[4] = {2 * sizeof(double) * N, 2 * sizeof(double) * N,
-                           3 * sizeof(double) * N, 3 * sizeof(double) * N};
+                          3 * sizeof(double) * N, 3 * sizeof(double) * N};
 
 /* =====================================================================
  * Global state (set during init_per_node / init_per_worker)
@@ -138,87 +138,87 @@ static int quantum = 0;
  * ===================================================================== */
 
 static double mysecond(void) {
-    struct timeval tp;
-    gettimeofday(&tp, NULL);
-    return ((double)tp.tv_sec + (double)tp.tv_usec * 1.e-6);
+  struct timeval tp;
+  gettimeofday(&tp, NULL);
+  return ((double)tp.tv_sec + (double)tp.tv_usec * 1.e-6);
 }
 
 static int checktick(void) {
-    int i, minDelta, Delta;
-    double t1, t2, timesfound[M];
+  int i, minDelta, Delta;
+  double t1, t2, timesfound[M];
 
-    for (i = 0; i < M; i++) {
-        t1 = mysecond();
-        while (((t2 = mysecond()) - t1) < 1.0E-6)
-            ;
-        timesfound[i] = t1 = t2;
-    }
+  for (i = 0; i < M; i++) {
+    t1 = mysecond();
+    while (((t2 = mysecond()) - t1) < 1.0E-6)
+      ;
+    timesfound[i] = t1 = t2;
+  }
 
-    minDelta = 1000000;
-    for (i = 1; i < M; i++) {
-        Delta = (int)(1.0E6 * (timesfound[i] - timesfound[i - 1]));
-        minDelta = MIN(minDelta, MAX(Delta, 0));
-    }
-    return minDelta;
+  minDelta = 1000000;
+  for (i = 1; i < M; i++) {
+    Delta = (int)(1.0E6 * (timesfound[i] - timesfound[i - 1]));
+    minDelta = MIN(minDelta, MAX(Delta, 0));
+  }
+  return minDelta;
 }
 
 static void checkSTREAMresults(unsigned int tSz, unsigned int totalSize,
-                                double **aT, double **bT, double **cT) {
-    double aj, bj, cj, scalar;
-    double asum, bsum, csum;
-    double epsilon;
-    int k;
+                               double **aT, double **bT, double **cT) {
+  double aj, bj, cj, scalar;
+  double asum, bsum, csum;
+  double epsilon;
+  int k;
 
-    aj = 1.0;
-    bj = 2.0;
-    cj = 0.0;
-    aj = 2.0E0 * aj;
-    scalar = 3.0;
-    for (k = 0; k < NTIMES; k++) {
-        cj = aj;
-        bj = scalar * cj;
-        cj = aj + bj;
-        aj = bj + scalar * cj;
+  aj = 1.0;
+  bj = 2.0;
+  cj = 0.0;
+  aj = 2.0E0 * aj;
+  scalar = 3.0;
+  for (k = 0; k < NTIMES; k++) {
+    cj = aj;
+    bj = scalar * cj;
+    cj = aj + bj;
+    aj = bj + scalar * cj;
+  }
+  aj = aj * (double)(N);
+  bj = bj * (double)(N);
+  cj = cj * (double)(N);
+
+  asum = 0.0;
+  bsum = 0.0;
+  csum = 0.0;
+
+  unsigned int nTiles = totalSize / tSz;
+  if (totalSize % tSz)
+    nTiles++;
+
+  for (unsigned int i = 0; i < nTiles; i++) {
+    unsigned int end = (i + 1 < nTiles) ? tSz : totalSize - i * tSz;
+    for (unsigned int j = 0; j < end; j++) {
+      asum += aT[i][j];
+      bsum += bT[i][j];
+      csum += cT[i][j];
     }
-    aj = aj * (double)(N);
-    bj = bj * (double)(N);
-    cj = cj * (double)(N);
-
-    asum = 0.0;
-    bsum = 0.0;
-    csum = 0.0;
-
-    unsigned int nTiles = totalSize / tSz;
-    if (totalSize % tSz)
-        nTiles++;
-
-    for (unsigned int i = 0; i < nTiles; i++) {
-        unsigned int end = (i + 1 < nTiles) ? tSz : totalSize - i * tSz;
-        for (unsigned int j = 0; j < end; j++) {
-            asum += aT[i][j];
-            bsum += bT[i][j];
-            csum += cT[i][j];
-        }
-    }
+  }
 
 #define abs_val(a) ((a) >= 0 ? (a) : -(a))
-    epsilon = 1.e-8;
+  epsilon = 1.e-8;
 
-    if (abs_val(aj - asum) / asum > epsilon) {
-        arts_printf("Failed Validation on array a[]\n");
-        arts_printf("        Expected  : %f \n", aj);
-        arts_printf("        Observed  : %f \n", asum);
-    } else if (abs_val(bj - bsum) / bsum > epsilon) {
-        arts_printf("Failed Validation on array b[]\n");
-        arts_printf("        Expected  : %f \n", bj);
-        arts_printf("        Observed  : %f \n", bsum);
-    } else if (abs_val(cj - csum) / csum > epsilon) {
-        arts_printf("Failed Validation on array c[]\n");
-        arts_printf("        Expected  : %f \n", cj);
-        arts_printf("        Observed  : %f \n", csum);
-    } else {
-        arts_printf("Solution Validates\n");
-    }
+  if (abs_val(aj - asum) / asum > epsilon) {
+    arts_printf("Failed Validation on array a[]\n");
+    arts_printf("        Expected  : %f \n", aj);
+    arts_printf("        Observed  : %f \n", asum);
+  } else if (abs_val(bj - bsum) / bsum > epsilon) {
+    arts_printf("Failed Validation on array b[]\n");
+    arts_printf("        Expected  : %f \n", bj);
+    arts_printf("        Observed  : %f \n", bsum);
+  } else if (abs_val(cj - csum) / csum > epsilon) {
+    arts_printf("Failed Validation on array c[]\n");
+    arts_printf("        Expected  : %f \n", cj);
+    arts_printf("        Observed  : %f \n", csum);
+  } else {
+    arts_printf("Solution Validates\n");
+  }
 }
 
 /* =====================================================================
@@ -245,24 +245,20 @@ void launch3KernelEdt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
 void copyKernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                 arts_edt_dep_t depv[]) {
-    (void)paramc;
-    (void)depc;
+  (void)paramc;
+  (void)depc;
 
-    unsigned int len    = (unsigned int)paramv[2];
-    arts_guid_t nextEdt = (arts_guid_t)paramv[1];
-    uint32_t slot       = (uint32_t)paramv[3];
+  unsigned int len = (unsigned int)paramv[2];
+  arts_guid_t nextEdt = (arts_guid_t)paramv[1];
+  uint32_t slot = (uint32_t)paramv[3];
 
-    double *a = (double *)depv[0].ptr;
-    double *b = (double *)depv[1].ptr;
+  double *a = (double *)depv[0].ptr;
+  double *b = (double *)depv[1].ptr;
 
-    for (unsigned int idx = 0; idx < len; idx++)
-        b[idx] = a[idx];
+  for (unsigned int idx = 0; idx < len; idx++)
+    b[idx] = a[idx];
 
-#if CXL_DB
-    arts_cxl_producer_flush(depv[0].guid);
-    arts_cxl_producer_flush(depv[1].guid);
-#endif
-    arts_signal_edt(nextEdt, slot, NULL_GUID, DB_MODE_NULL);
+  arts_signal_edt(nextEdt, slot, NULL_GUID, DB_MODE_NULL);
 }
 
 /* =====================================================================
@@ -281,26 +277,22 @@ void copyKernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
 void scaleKernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                  arts_edt_dep_t depv[]) {
-    (void)paramc;
-    (void)depc;
+  (void)paramc;
+  (void)depc;
 
-    unsigned int len    = (unsigned int)paramv[2];
-    arts_guid_t nextEdt = (arts_guid_t)paramv[1];
-    uint32_t slot       = (uint32_t)paramv[3];
-    double scale;
-    memcpy(&scale, &paramv[4], sizeof(double));
+  unsigned int len = (unsigned int)paramv[2];
+  arts_guid_t nextEdt = (arts_guid_t)paramv[1];
+  uint32_t slot = (uint32_t)paramv[3];
+  double scale;
+  memcpy(&scale, &paramv[4], sizeof(double));
 
-    double *a = (double *)depv[0].ptr;
-    double *b = (double *)depv[1].ptr;
+  double *a = (double *)depv[0].ptr;
+  double *b = (double *)depv[1].ptr;
 
-    for (unsigned int idx = 0; idx < len; idx++)
-        b[idx] = scale * a[idx];
+  for (unsigned int idx = 0; idx < len; idx++)
+    b[idx] = scale * a[idx];
 
-#if CXL_DB
-    arts_cxl_producer_flush(depv[0].guid);
-    arts_cxl_producer_flush(depv[1].guid);
-#endif
-    arts_signal_edt(nextEdt, slot, NULL_GUID, DB_MODE_NULL);
+  arts_signal_edt(nextEdt, slot, NULL_GUID, DB_MODE_NULL);
 }
 
 /* =====================================================================
@@ -319,26 +311,21 @@ void scaleKernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
 void addKernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                arts_edt_dep_t depv[]) {
-    (void)paramc;
-    (void)depc;
+  (void)paramc;
+  (void)depc;
 
-    unsigned int len    = (unsigned int)paramv[2];
-    arts_guid_t nextEdt = (arts_guid_t)paramv[1];
-    uint32_t slot       = (uint32_t)paramv[3];
+  unsigned int len = (unsigned int)paramv[2];
+  arts_guid_t nextEdt = (arts_guid_t)paramv[1];
+  uint32_t slot = (uint32_t)paramv[3];
 
-    double *a = (double *)depv[0].ptr;
-    double *b = (double *)depv[1].ptr;
-    double *c = (double *)depv[2].ptr;
+  double *a = (double *)depv[0].ptr;
+  double *b = (double *)depv[1].ptr;
+  double *c = (double *)depv[2].ptr;
 
-    for (unsigned int idx = 0; idx < len; idx++)
-        c[idx] = a[idx] + b[idx];
+  for (unsigned int idx = 0; idx < len; idx++)
+    c[idx] = a[idx] + b[idx];
 
-#if CXL_DB
-    arts_cxl_producer_flush(depv[0].guid);
-    arts_cxl_producer_flush(depv[1].guid);
-    arts_cxl_producer_flush(depv[2].guid);
-#endif
-    arts_signal_edt(nextEdt, slot, NULL_GUID, DB_MODE_NULL);
+  arts_signal_edt(nextEdt, slot, NULL_GUID, DB_MODE_NULL);
 }
 
 /* =====================================================================
@@ -365,53 +352,48 @@ void addKernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
 void triadKernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                  arts_edt_dep_t depv[]) {
-    (void)paramc;
-    (void)depc;
+  (void)paramc;
+  (void)depc;
 
-    unsigned int len    = (unsigned int)paramv[2];
-    arts_guid_t nextEdt = (arts_guid_t)paramv[1];
-    uint32_t slot       = (uint32_t)paramv[3];
-    double scale;
-    memcpy(&scale, &paramv[4], sizeof(double));
+  unsigned int len = (unsigned int)paramv[2];
+  arts_guid_t nextEdt = (arts_guid_t)paramv[1];
+  uint32_t slot = (uint32_t)paramv[3];
+  double scale;
+  memcpy(&scale, &paramv[4], sizeof(double));
 
-    double *b = (double *)depv[0].ptr;
-    double *c = (double *)depv[1].ptr;
-    double *a = (double *)depv[2].ptr;
+  double *b = (double *)depv[0].ptr;
+  double *c = (double *)depv[1].ptr;
+  double *a = (double *)depv[2].ptr;
 
-    for (unsigned int idx = 0; idx < len; idx++)
-        a[idx] = b[idx] + scale * c[idx];
+  for (unsigned int idx = 0; idx < len; idx++)
+    a[idx] = b[idx] + scale * c[idx];
 
 #if CXL_DB
-    arts_cxl_producer_flush(depv[0].guid);  /* b tile */
-    arts_cxl_producer_flush(depv[1].guid);  /* c tile */
-    arts_cxl_producer_flush(depv[2].guid);  /* a tile (result) */
-    /* Signal done with the actual tile GUIDs so done can validate */
-    arts_signal_edt(nextEdt, slot,                  depv[2].guid, DB_MODE_RO); /* a */
-    arts_signal_edt(nextEdt, numTiles + slot,        depv[0].guid, DB_MODE_RO); /* b */
-    arts_signal_edt(nextEdt, (2 * numTiles) + slot,  depv[1].guid, DB_MODE_RO); /* c */
+  /* Signal done with the actual tile GUIDs so done can validate */
+  arts_signal_edt(nextEdt, slot, depv[2].guid, DB_MODE_RO);            /* a */
+  arts_signal_edt(nextEdt, numTiles + slot, depv[0].guid, DB_MODE_RO); /* b */
+  arts_signal_edt(nextEdt, (2 * numTiles) + slot, depv[1].guid,
+                  DB_MODE_RO); /* c */
 #else
-    if (nextEdt != doneGuid) {
-        arts_signal_edt(nextEdt, slot, NULL_GUID, DB_MODE_NULL);
-    } else {
-        /* Last triad iteration: copy tile data into read-only DBs for done EDT */
-        double *aCopy, *bCopy, *cCopy;
-        arts_guid_t aSignal = arts_db_create((void **)&aCopy,
-                                             tileSize * sizeof(double),
-                                             ARTS_DB_DEFAULT, NULL);
-        arts_guid_t bSignal = arts_db_create((void **)&bCopy,
-                                             tileSize * sizeof(double),
-                                             ARTS_DB_DEFAULT, NULL);
-        arts_guid_t cSignal = arts_db_create((void **)&cCopy,
-                                             tileSize * sizeof(double),
-                                             ARTS_DB_DEFAULT, NULL);
-        memcpy(aCopy, depv[2].ptr, sizeof(double) * tileSize);
-        memcpy(bCopy, depv[0].ptr, sizeof(double) * tileSize);
-        memcpy(cCopy, depv[1].ptr, sizeof(double) * tileSize);
+  if (nextEdt != doneGuid) {
+    arts_signal_edt(nextEdt, slot, NULL_GUID, DB_MODE_NULL);
+  } else {
+    /* Last triad iteration: copy tile data into read-only DBs for done EDT */
+    double *aCopy, *bCopy, *cCopy;
+    arts_guid_t aSignal = arts_db_create(
+        (void **)&aCopy, tileSize * sizeof(double), ARTS_DB_DEFAULT, NULL);
+    arts_guid_t bSignal = arts_db_create(
+        (void **)&bCopy, tileSize * sizeof(double), ARTS_DB_DEFAULT, NULL);
+    arts_guid_t cSignal = arts_db_create(
+        (void **)&cCopy, tileSize * sizeof(double), ARTS_DB_DEFAULT, NULL);
+    memcpy(aCopy, depv[2].ptr, sizeof(double) * tileSize);
+    memcpy(bCopy, depv[0].ptr, sizeof(double) * tileSize);
+    memcpy(cCopy, depv[1].ptr, sizeof(double) * tileSize);
 
-        arts_signal_edt(nextEdt, slot,                    aSignal, DB_MODE_RO);
-        arts_signal_edt(nextEdt, numTiles + slot,         bSignal, DB_MODE_RO);
-        arts_signal_edt(nextEdt, (2 * numTiles) + slot,   cSignal, DB_MODE_RO);
-    }
+    arts_signal_edt(nextEdt, slot, aSignal, DB_MODE_RO);
+    arts_signal_edt(nextEdt, numTiles + slot, bSignal, DB_MODE_RO);
+    arts_signal_edt(nextEdt, (2 * numTiles) + slot, cSignal, DB_MODE_RO);
+  }
 #endif
 }
 
@@ -432,76 +414,72 @@ void triadKernel(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
 void done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
           arts_edt_dep_t depv[]) {
-    (void)paramc;
-    (void)paramv;
-    (void)depc;
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
 
-    int j, k;
+  int j, k;
 
-    /* --- SUMMARY --- */
-    double avgtime[4] = {0};
-    double maxtime[4] = {0};
-    double mintime[4] = {FLT_MAX, FLT_MAX, FLT_MAX, FLT_MAX};
+  /* --- SUMMARY --- */
+  double avgtime[4] = {0};
+  double maxtime[4] = {0};
+  double mintime[4] = {FLT_MAX, FLT_MAX, FLT_MAX, FLT_MAX};
 
-    for (k = 1; k < NTIMES; k++) {
-        for (j = 0; j < 4; j++) {
-            avgtime[j] += times[j][k];
-            mintime[j] = MIN(mintime[j], times[j][k]);
-            maxtime[j] = MAX(maxtime[j], times[j][k]);
-        }
-    }
-
-    arts_printf("Function      Rate (MB/s)   Avg time     Min time     Max time\n");
+  for (k = 1; k < NTIMES; k++) {
     for (j = 0; j < 4; j++) {
-        avgtime[j] = avgtime[j] / (double)(NTIMES - 1);
-        arts_printf("%s%11.4f  %11.4f  %11.4f  %11.4f\n", label[j],
-                    1.0E-06 * bytes[j] / mintime[j],
-                    avgtime[j], mintime[j], maxtime[j]);
+      avgtime[j] += times[j][k];
+      mintime[j] = MIN(mintime[j], times[j][k]);
+      maxtime[j] = MAX(maxtime[j], times[j][k]);
     }
+  }
+
+  arts_printf(
+      "Function      Rate (MB/s)   Avg time     Min time     Max time\n");
+  for (j = 0; j < 4; j++) {
+    avgtime[j] = avgtime[j] / (double)(NTIMES - 1);
+    arts_printf("%s%11.4f  %11.4f  %11.4f  %11.4f\n", label[j],
+                1.0E-06 * bytes[j] / mintime[j], avgtime[j], mintime[j],
+                maxtime[j]);
+  }
+  arts_printf(HLINE);
+
+  /* --- Validation --- */
+  double **aTileAll = malloc(sizeof(double *) * numTiles);
+  double **bTileAll = malloc(sizeof(double *) * numTiles);
+  double **cTileAll = malloc(sizeof(double *) * numTiles);
+
+  for (unsigned int i = 0; i < numTiles; i++) {
+    aTileAll[i] = malloc(sizeof(double) * tileSize);
+    bTileAll[i] = malloc(sizeof(double) * tileSize);
+    cTileAll[i] = malloc(sizeof(double) * tileSize);
+    memcpy(aTileAll[i], depv[i].ptr, sizeof(double) * tileSize);
+    memcpy(bTileAll[i], depv[numTiles + i].ptr, sizeof(double) * tileSize);
+    memcpy(cTileAll[i], depv[(2 * numTiles) + i].ptr,
+           sizeof(double) * tileSize);
+  }
+
+  if (!arts_get_current_node()) {
+    checkSTREAMresults(tileSize, N, aTileAll, bTileAll, cTileAll);
     arts_printf(HLINE);
+  }
 
-    /* --- Validation --- */
-    double **aTileAll = malloc(sizeof(double *) * numTiles);
-    double **bTileAll = malloc(sizeof(double *) * numTiles);
-    double **cTileAll = malloc(sizeof(double *) * numTiles);
+  for (unsigned int i = 0; i < numTiles; i++) {
+    free(aTileAll[i]);
+    free(bTileAll[i]);
+    free(cTileAll[i]);
+  }
+  free(aTileAll);
+  free(bTileAll);
+  free(cTileAll);
 
-    for (unsigned int i = 0; i < numTiles; i++) {
-        aTileAll[i] = malloc(sizeof(double) * tileSize);
-        bTileAll[i] = malloc(sizeof(double) * tileSize);
-        cTileAll[i] = malloc(sizeof(double) * tileSize);
-#if CXL_DB
-        /* Flush CXL cache lines before reading tile data from depv */
-        arts_cxl_consumer_flush(depv[i].guid);
-        arts_cxl_consumer_flush(depv[numTiles + i].guid);
-        arts_cxl_consumer_flush(depv[(2 * numTiles) + i].guid);
-#endif
-        memcpy(aTileAll[i], depv[i].ptr,                    sizeof(double) * tileSize);
-        memcpy(bTileAll[i], depv[numTiles + i].ptr,         sizeof(double) * tileSize);
-        memcpy(cTileAll[i], depv[(2 * numTiles) + i].ptr,   sizeof(double) * tileSize);
-    }
+  free(aTileGuids);
+  free(bTileGuids);
+  free(cTileGuids);
+  free(aTile);
+  free(bTile);
+  free(cTile);
 
-    if (!arts_get_current_node()) {
-        checkSTREAMresults(tileSize, N, aTileAll, bTileAll, cTileAll);
-        arts_printf(HLINE);
-    }
-
-    for (unsigned int i = 0; i < numTiles; i++) {
-        free(aTileAll[i]);
-        free(bTileAll[i]);
-        free(cTileAll[i]);
-    }
-    free(aTileAll);
-    free(bTileAll);
-    free(cTileAll);
-
-    free(aTileGuids);
-    free(bTileGuids);
-    free(cTileGuids);
-    free(aTile);
-    free(bTile);
-    free(cTile);
-
-    arts_shutdown();
+  arts_shutdown();
 }
 
 /* =====================================================================
@@ -523,41 +501,41 @@ void done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
 void launch2KernelEdt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                       arts_edt_dep_t depv[]) {
-    (void)paramc;
-    (void)depc;
-    (void)depv;
+  (void)paramc;
+  (void)depc;
+  (void)depv;
 
-    arts_edt_t funPtr       = (arts_edt_t)paramv[0];
-    unsigned int tSz        = (unsigned int)paramv[1];
-    unsigned int totalSize  = (unsigned int)paramv[2];
-    uint64_t scalarBits     = paramv[3];
-    arts_guid_t *aGuid      = (arts_guid_t *)paramv[4];
-    arts_guid_t *bGuid      = (arts_guid_t *)paramv[5];
-    arts_guid_t nextGuid    = (arts_guid_t)paramv[6];
+  arts_edt_t funPtr = (arts_edt_t)paramv[0];
+  unsigned int tSz = (unsigned int)paramv[1];
+  unsigned int totalSize = (unsigned int)paramv[2];
+  uint64_t scalarBits = paramv[3];
+  arts_guid_t *aGuid = (arts_guid_t *)paramv[4];
+  arts_guid_t *bGuid = (arts_guid_t *)paramv[5];
+  arts_guid_t nextGuid = (arts_guid_t)paramv[6];
 
-    unsigned int tiles = totalSize / tSz;
-    if (totalSize % tSz)
-        tiles++;
+  unsigned int tiles = totalSize / tSz;
+  if (totalSize % tSz)
+    tiles++;
 
-    unsigned int next = 0;
-    arts_guid_t *edtGuids = (arts_guid_t *)malloc(sizeof(arts_guid_t) * tiles);
+  unsigned int next = 0;
+  arts_guid_t *edtGuids = (arts_guid_t *)malloc(sizeof(arts_guid_t) * tiles);
 
-    /* Build per-tile args: [unused, nextGuid, tileLen, slotIdx, scalarBits] */
-    uint64_t args[5] = {0, (uint64_t)nextGuid, tSz, 0, scalarBits};
-    uint64_t numArgs = (scalarBits != 0) ? 5 : 4;
+  /* Build per-tile args: [unused, nextGuid, tileLen, slotIdx, scalarBits] */
+  uint64_t args[5] = {0, (uint64_t)nextGuid, tSz, 0, scalarBits};
+  uint64_t numArgs = (scalarBits != 0) ? 5 : 4;
 
-    for (unsigned int i = 0; i < tiles; ++i) {
-        args[2] = (i + 1 < tiles) ? tSz : totalSize - i * tSz;
-        args[3] = i;
-        edtGuids[i] = arts_edt_create(funPtr, (uint32_t)numArgs, args, 2,
-                                      &(arts_hint_t){.route = next});
-        next = (next + 1) % arts_get_total_nodes();
-        arts_signal_edt(edtGuids[i], 0, aGuid[i], DB_MODE_RO);
-    }
-    for (unsigned int i = 0; i < tiles; ++i) {
-        arts_signal_edt(edtGuids[i], 1, bGuid[i], DB_MODE_RO);
-    }
-    free(edtGuids);
+  for (unsigned int i = 0; i < tiles; ++i) {
+    args[2] = (i + 1 < tiles) ? tSz : totalSize - i * tSz;
+    args[3] = i;
+    edtGuids[i] = arts_edt_create(funPtr, (uint32_t)numArgs, args, 2,
+                                  &(arts_hint_t){.route = next});
+    next = (next + 1) % arts_get_total_nodes();
+    arts_signal_edt(edtGuids[i], 0, aGuid[i], DB_MODE_RO);
+  }
+  for (unsigned int i = 0; i < tiles; ++i) {
+    arts_signal_edt(edtGuids[i], 1, bGuid[i], DB_MODE_RO);
+  }
+  free(edtGuids);
 }
 
 /* =====================================================================
@@ -579,42 +557,42 @@ void launch2KernelEdt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
 void launch3KernelEdt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                       arts_edt_dep_t depv[]) {
-    (void)paramc;
-    (void)depc;
-    (void)depv;
+  (void)paramc;
+  (void)depc;
+  (void)depv;
 
-    arts_edt_t funPtr       = (arts_edt_t)paramv[0];
-    unsigned int tSz        = (unsigned int)paramv[1];
-    unsigned int totalSize  = (unsigned int)paramv[2];
-    uint64_t scalarBits     = paramv[3];
-    arts_guid_t *aGuid      = (arts_guid_t *)paramv[4];
-    arts_guid_t *bGuid      = (arts_guid_t *)paramv[5];
-    arts_guid_t *cGuid      = (arts_guid_t *)paramv[6];
-    arts_guid_t nextGuid    = (arts_guid_t)paramv[7];
+  arts_edt_t funPtr = (arts_edt_t)paramv[0];
+  unsigned int tSz = (unsigned int)paramv[1];
+  unsigned int totalSize = (unsigned int)paramv[2];
+  uint64_t scalarBits = paramv[3];
+  arts_guid_t *aGuid = (arts_guid_t *)paramv[4];
+  arts_guid_t *bGuid = (arts_guid_t *)paramv[5];
+  arts_guid_t *cGuid = (arts_guid_t *)paramv[6];
+  arts_guid_t nextGuid = (arts_guid_t)paramv[7];
 
-    unsigned int tiles = totalSize / tSz;
-    if (totalSize % tSz)
-        tiles++;
+  unsigned int tiles = totalSize / tSz;
+  if (totalSize % tSz)
+    tiles++;
 
-    unsigned int next = 0;
-    arts_guid_t *edtGuids = (arts_guid_t *)malloc(sizeof(arts_guid_t) * tiles);
+  unsigned int next = 0;
+  arts_guid_t *edtGuids = (arts_guid_t *)malloc(sizeof(arts_guid_t) * tiles);
 
-    uint64_t args[5] = {0, (uint64_t)nextGuid, tSz, 0, scalarBits};
-    uint64_t numArgs = (scalarBits != 0) ? 5 : 4;
+  uint64_t args[5] = {0, (uint64_t)nextGuid, tSz, 0, scalarBits};
+  uint64_t numArgs = (scalarBits != 0) ? 5 : 4;
 
-    for (unsigned int i = 0; i < tiles; ++i) {
-        args[2] = (i + 1 < tiles) ? tSz : totalSize - i * tSz;
-        args[3] = i;
-        edtGuids[i] = arts_edt_create(funPtr, (uint32_t)numArgs, args, 3,
-                                      &(arts_hint_t){.route = next});
-        next = (next + 1) % arts_get_total_nodes();
-        arts_signal_edt(edtGuids[i], 0, aGuid[i], DB_MODE_RO);
-        arts_signal_edt(edtGuids[i], 1, bGuid[i], DB_MODE_RO);
-    }
-    for (unsigned int i = 0; i < tiles; ++i) {
-        arts_signal_edt(edtGuids[i], 2, cGuid[i], DB_MODE_RO);
-    }
-    free(edtGuids);
+  for (unsigned int i = 0; i < tiles; ++i) {
+    args[2] = (i + 1 < tiles) ? tSz : totalSize - i * tSz;
+    args[3] = i;
+    edtGuids[i] = arts_edt_create(funPtr, (uint32_t)numArgs, args, 3,
+                                  &(arts_hint_t){.route = next});
+    next = (next + 1) % arts_get_total_nodes();
+    arts_signal_edt(edtGuids[i], 0, aGuid[i], DB_MODE_RO);
+    arts_signal_edt(edtGuids[i], 1, bGuid[i], DB_MODE_RO);
+  }
+  for (unsigned int i = 0; i < tiles; ++i) {
+    arts_signal_edt(edtGuids[i], 2, cGuid[i], DB_MODE_RO);
+  }
+  free(edtGuids);
 }
 
 /* =====================================================================
@@ -629,13 +607,13 @@ void launch3KernelEdt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
  * ===================================================================== */
 
 void timerLaunch2KernelEdt(uint32_t paramc, const uint64_t *paramv,
-                            uint32_t depc, arts_edt_dep_t depv[]) {
-    uint64_t kernelIdx = paramv[7];
-    uint64_t iterIdx   = paramv[8];
+                           uint32_t depc, arts_edt_dep_t depv[]) {
+  uint64_t kernelIdx = paramv[7];
+  uint64_t iterIdx = paramv[8];
 
-    times[kernelIdx][iterIdx] = mysecond();
-    launch2KernelEdt(paramc, paramv, depc, depv);
-    times[kernelIdx][iterIdx] = mysecond() - times[kernelIdx][iterIdx];
+  times[kernelIdx][iterIdx] = mysecond();
+  launch2KernelEdt(paramc, paramv, depc, depv);
+  times[kernelIdx][iterIdx] = mysecond() - times[kernelIdx][iterIdx];
 }
 
 /* =====================================================================
@@ -649,13 +627,13 @@ void timerLaunch2KernelEdt(uint32_t paramc, const uint64_t *paramv,
  * ===================================================================== */
 
 void timerLaunch3KernelEdt(uint32_t paramc, const uint64_t *paramv,
-                            uint32_t depc, arts_edt_dep_t depv[]) {
-    uint64_t kernelIdx = paramv[8];
-    uint64_t iterIdx   = paramv[9];
+                           uint32_t depc, arts_edt_dep_t depv[]) {
+  uint64_t kernelIdx = paramv[8];
+  uint64_t iterIdx = paramv[9];
 
-    times[kernelIdx][iterIdx] = mysecond();
-    launch3KernelEdt(paramc, paramv, depc, depv);
-    times[kernelIdx][iterIdx] = mysecond() - times[kernelIdx][iterIdx];
+  times[kernelIdx][iterIdx] = mysecond();
+  launch3KernelEdt(paramc, paramv, depc, depv);
+  times[kernelIdx][iterIdx] = mysecond() - times[kernelIdx][iterIdx];
 }
 
 /* =====================================================================
@@ -674,78 +652,87 @@ void timerLaunch3KernelEdt(uint32_t paramc, const uint64_t *paramv,
 
 void streamDriver(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                   arts_edt_dep_t depv[]) {
-    (void)paramc;
-    (void)paramv;
-    (void)depc;
-    (void)depv;
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
 
-    double scalar = 3.0;
-    uint64_t scalarBits;
-    memcpy(&scalarBits, &scalar, sizeof(double));
+  double scalar = 3.0;
+  uint64_t scalarBits;
+  memcpy(&scalarBits, &scalar, sizeof(double));
 
-    unsigned int tiles = N / tileSize;
-    if (N % tileSize)
-        tiles++;
+  unsigned int tiles = N / tileSize;
+  if (N % tileSize)
+    tiles++;
 
-    unsigned int currentNode = arts_get_current_node();
-    unsigned int numDeps     = tiles;
+  unsigned int currentNode = arts_get_current_node();
+  unsigned int numDeps = tiles;
 
-    arts_guid_t prevEdt = doneGuid;
+  arts_guid_t prevEdt = doneGuid;
 
-    for (int k = NTIMES - 1; k >= 0; k--) {
-        /* --- Triad: a[i] = b[i] + scalar * c[i] --- */
-        /* paramv: [funPtr, tileSize, N, scalarBits, bGuids, cGuids, aGuids,
-         *          nextGuid, kernelIdx=3, iterIdx=k] */
-        uint64_t argsTriad[10] = {
-            (uint64_t)triadKernel, tileSize, N, scalarBits,
-            (uint64_t)bTileGuids, (uint64_t)cTileGuids, (uint64_t)aTileGuids,
-            (uint64_t)prevEdt,
-            3, (uint64_t)k
-        };
-        prevEdt = arts_edt_create(timerLaunch3KernelEdt, 10, argsTriad,
-                                  numDeps,
-                                  &(arts_hint_t){.route = currentNode});
+  for (int k = NTIMES - 1; k >= 0; k--) {
+    /* --- Triad: a[i] = b[i] + scalar * c[i] --- */
+    /* paramv: [funPtr, tileSize, N, scalarBits, bGuids, cGuids, aGuids,
+     *          nextGuid, kernelIdx=3, iterIdx=k] */
+    uint64_t argsTriad[10] = {(uint64_t)triadKernel,
+                              tileSize,
+                              N,
+                              scalarBits,
+                              (uint64_t)bTileGuids,
+                              (uint64_t)cTileGuids,
+                              (uint64_t)aTileGuids,
+                              (uint64_t)prevEdt,
+                              3,
+                              (uint64_t)k};
+    prevEdt = arts_edt_create(timerLaunch3KernelEdt, 10, argsTriad, numDeps,
+                              &(arts_hint_t){.route = currentNode});
 
-        /* --- Add: c[i] = a[i] + b[i] --- */
-        uint64_t argsAdd[10] = {
-            (uint64_t)addKernel, tileSize, N, 0,
-            (uint64_t)aTileGuids, (uint64_t)bTileGuids, (uint64_t)cTileGuids,
-            (uint64_t)prevEdt,
-            2, (uint64_t)k
-        };
-        prevEdt = arts_edt_create(timerLaunch3KernelEdt, 10, argsAdd,
-                                  numDeps,
-                                  &(arts_hint_t){.route = currentNode});
+    /* --- Add: c[i] = a[i] + b[i] --- */
+    uint64_t argsAdd[10] = {(uint64_t)addKernel,
+                            tileSize,
+                            N,
+                            0,
+                            (uint64_t)aTileGuids,
+                            (uint64_t)bTileGuids,
+                            (uint64_t)cTileGuids,
+                            (uint64_t)prevEdt,
+                            2,
+                            (uint64_t)k};
+    prevEdt = arts_edt_create(timerLaunch3KernelEdt, 10, argsAdd, numDeps,
+                              &(arts_hint_t){.route = currentNode});
 
-        /* --- Scale: b[i] = scalar * c[i] --- */
-        uint64_t argsScale[9] = {
-            (uint64_t)scaleKernel, tileSize, N, scalarBits,
-            (uint64_t)cTileGuids, (uint64_t)bTileGuids,
-            (uint64_t)prevEdt,
-            1, (uint64_t)k
-        };
-        prevEdt = arts_edt_create(timerLaunch2KernelEdt, 9, argsScale,
-                                  numDeps,
-                                  &(arts_hint_t){.route = currentNode});
+    /* --- Scale: b[i] = scalar * c[i] --- */
+    uint64_t argsScale[9] = {(uint64_t)scaleKernel,
+                             tileSize,
+                             N,
+                             scalarBits,
+                             (uint64_t)cTileGuids,
+                             (uint64_t)bTileGuids,
+                             (uint64_t)prevEdt,
+                             1,
+                             (uint64_t)k};
+    prevEdt = arts_edt_create(timerLaunch2KernelEdt, 9, argsScale, numDeps,
+                              &(arts_hint_t){.route = currentNode});
 
-        /* --- Copy: c[i] = a[i] --- */
-        uint64_t argsCopy[9] = {
-            (uint64_t)copyKernel, tileSize, N, 0,
-            (uint64_t)aTileGuids, (uint64_t)cTileGuids,
-            (uint64_t)prevEdt,
-            0, (uint64_t)k
-        };
-        if (k == 0) {
-            /* First copy launcher is the firstKernel; signaled by workers */
-            arts_edt_create_with_guid(timerLaunch2KernelEdt, firstKernel,
-                                      9, argsCopy,
-                                      arts_get_total_workers());
-        } else {
-            prevEdt = arts_edt_create(timerLaunch2KernelEdt, 9, argsCopy,
-                                      numDeps,
-                                      &(arts_hint_t){.route = currentNode});
-        }
+    /* --- Copy: c[i] = a[i] --- */
+    uint64_t argsCopy[9] = {(uint64_t)copyKernel,
+                            tileSize,
+                            N,
+                            0,
+                            (uint64_t)aTileGuids,
+                            (uint64_t)cTileGuids,
+                            (uint64_t)prevEdt,
+                            0,
+                            (uint64_t)k};
+    if (k == 0) {
+      /* First copy launcher is the firstKernel; signaled by workers */
+      arts_edt_create_with_guid(timerLaunch2KernelEdt, firstKernel, 9, argsCopy,
+                                arts_get_total_workers());
+    } else {
+      prevEdt = arts_edt_create(timerLaunch2KernelEdt, 9, argsCopy, numDeps,
+                                &(arts_hint_t){.route = currentNode});
     }
+  }
 }
 
 /* =====================================================================
@@ -756,115 +743,109 @@ void streamDriver(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
  * ===================================================================== */
 
 void init_per_node(unsigned int nodeId, int argc, char **argv) {
-    if (argc > 1)
-        tileSize = (unsigned int)atoi(argv[1]);
+  if (argc > 1)
+    tileSize = (unsigned int)atoi(argv[1]);
 
-    numTiles = N / tileSize;
-    if (N % tileSize)
-        numTiles++;
+  numTiles = N / tileSize;
+  if (N % tileSize)
+    numTiles++;
 
-    /* Reserve the done EDT GUID on node 0 */
-    doneGuid = arts_guid_reserve(ARTS_EDT, 0);
+  /* Reserve the done EDT GUID on node 0 */
+  doneGuid = arts_guid_reserve(ARTS_EDT, 0);
 
-    if (!nodeId)
-        arts_printf("N: %u tileSize: %u numTiles: %u\n", N, tileSize, numTiles);
+  if (!nodeId)
+    arts_printf("N: %u tileSize: %u numTiles: %u\n", N, tileSize, numTiles);
 
-    aTileGuids = malloc(sizeof(arts_guid_t) * numTiles);
-    bTileGuids = malloc(sizeof(arts_guid_t) * numTiles);
-    cTileGuids = malloc(sizeof(arts_guid_t) * numTiles);
+  aTileGuids = malloc(sizeof(arts_guid_t) * numTiles);
+  bTileGuids = malloc(sizeof(arts_guid_t) * numTiles);
+  cTileGuids = malloc(sizeof(arts_guid_t) * numTiles);
 
 #if !CXL_DB
-    /* Reserve GUIDs round-robin across nodes for non-CXL mode */
-    unsigned int owner = 0;
+  /* Reserve GUIDs round-robin across nodes for non-CXL mode */
+  unsigned int owner = 0;
+  for (unsigned int i = 0; i < numTiles; i++) {
+    aTileGuids[i] = arts_guid_reserve(ARTS_DB, owner);
+    bTileGuids[i] = arts_guid_reserve(ARTS_DB, owner);
+    cTileGuids[i] = arts_guid_reserve(ARTS_DB, owner);
+    owner = (owner + 1) % arts_get_total_nodes();
+  }
+#endif
+
+#if CXL_DB
+  /* CXL mode: all tiles created on node 0 */
+  if (!nodeId) {
+#endif
+    aTile = (double **)calloc(numTiles, sizeof(double *));
+    bTile = (double **)calloc(numTiles, sizeof(double *));
+    cTile = (double **)calloc(numTiles, sizeof(double *));
+
+#if !CXL_DB
+    owner = 0;
+#endif
     for (unsigned int i = 0; i < numTiles; i++) {
-        aTileGuids[i] = arts_guid_reserve(ARTS_DB, owner);
-        bTileGuids[i] = arts_guid_reserve(ARTS_DB, owner);
-        cTileGuids[i] = arts_guid_reserve(ARTS_DB, owner);
-        owner = (owner + 1) % arts_get_total_nodes();
+#if CXL_DB
+      aTileGuids[i] = arts_db_create(
+          (void **)&aTile[i], tileSize * sizeof(double), ARTS_DB_CXL, NULL);
+      bTileGuids[i] = arts_db_create(
+          (void **)&bTile[i], tileSize * sizeof(double), ARTS_DB_CXL, NULL);
+      cTileGuids[i] = arts_db_create(
+          (void **)&cTile[i], tileSize * sizeof(double), ARTS_DB_CXL, NULL);
+#else
+    if (nodeId == owner) {
+      aTile[i] =
+          arts_db_create_with_guid(aTileGuids[i], tileSize * sizeof(double),
+                                   ARTS_DB_DEFAULT, NULL, NULL);
+      bTile[i] =
+          arts_db_create_with_guid(bTileGuids[i], tileSize * sizeof(double),
+                                   ARTS_DB_DEFAULT, NULL, NULL);
+      cTile[i] =
+          arts_db_create_with_guid(cTileGuids[i], tileSize * sizeof(double),
+                                   ARTS_DB_DEFAULT, NULL, NULL);
     }
 #endif
-
+      /* Initialize tile data */
 #if CXL_DB
-    /* CXL mode: all tiles created on node 0 */
-    if (!nodeId) {
-#endif
-        aTile = (double **)calloc(numTiles, sizeof(double *));
-        bTile = (double **)calloc(numTiles, sizeof(double *));
-        cTile = (double **)calloc(numTiles, sizeof(double *));
-
-#if !CXL_DB
-        owner = 0;
-#endif
-        for (unsigned int i = 0; i < numTiles; i++) {
-#if CXL_DB
-            aTileGuids[i] = arts_db_create((void **)&aTile[i],
-                                           tileSize * sizeof(double),
-                                           ARTS_DB_CXL, NULL);
-            bTileGuids[i] = arts_db_create((void **)&bTile[i],
-                                           tileSize * sizeof(double),
-                                           ARTS_DB_CXL, NULL);
-            cTileGuids[i] = arts_db_create((void **)&cTile[i],
-                                           tileSize * sizeof(double),
-                                           ARTS_DB_CXL, NULL);
+      for (unsigned int j = 0; j < tileSize; j++) {
+        aTile[i][j] = 1.0;
+        bTile[i][j] = 2.0;
+        cTile[i][j] = 0.0;
+      }
 #else
-            if (nodeId == owner) {
-                aTile[i] = arts_db_create_with_guid(aTileGuids[i],
-                                                    tileSize * sizeof(double),
-                                                    ARTS_DB_DEFAULT, NULL, NULL);
-                bTile[i] = arts_db_create_with_guid(bTileGuids[i],
-                                                    tileSize * sizeof(double),
-                                                    ARTS_DB_DEFAULT, NULL, NULL);
-                cTile[i] = arts_db_create_with_guid(cTileGuids[i],
-                                                    tileSize * sizeof(double),
-                                                    ARTS_DB_DEFAULT, NULL, NULL);
-            }
-#endif
-            /* Initialize tile data */
-#if CXL_DB
-            for (unsigned int j = 0; j < tileSize; j++) {
-                aTile[i][j] = 1.0;
-                bTile[i][j] = 2.0;
-                cTile[i][j] = 0.0;
-            }
-            arts_cxl_producer_flush(aTileGuids[i]);
-            arts_cxl_producer_flush(bTileGuids[i]);
-            arts_cxl_producer_flush(cTileGuids[i]);
-#else
-            if (nodeId == owner) {
-                for (unsigned int j = 0; j < tileSize; j++) {
-                    aTile[i][j] = 1.0;
-                    bTile[i][j] = 2.0;
-                    cTile[i][j] = 0.0;
-                }
-            }
-            owner = (owner + 1) % arts_get_total_nodes();
-#endif
-        }
-
-        arts_printf(HLINE);
-        int BytesPerWord = sizeof(double);
-        arts_printf("This system uses %d bytes per DOUBLE PRECISION word.\n",
-                    BytesPerWord);
-        arts_printf(HLINE);
-        arts_printf("Array size = %d, Offset = %d\n", N, OFFSET);
-        arts_printf("Total memory required = %.1f MB.\n",
-                    (3.0 * BytesPerWord) * ((double)N / 1048576.0));
-        arts_printf("Each test is run %d times, but only\n", NTIMES);
-        arts_printf("the *best* time for each is used.\n");
-        arts_printf(HLINE);
-
-        if ((quantum = checktick()) >= 1)
-            arts_printf(
-                "Your clock granularity/precision appears to be %d microseconds.\n",
-                quantum);
-        else
-            arts_printf(
-                "Your clock granularity appears to be less than one microsecond.\n");
-
-        /* Reserve firstKernel GUID on this node */
-        firstKernel = arts_guid_reserve(ARTS_EDT, nodeId);
-#if CXL_DB
+    if (nodeId == owner) {
+      for (unsigned int j = 0; j < tileSize; j++) {
+        aTile[i][j] = 1.0;
+        bTile[i][j] = 2.0;
+        cTile[i][j] = 0.0;
+      }
     }
+    owner = (owner + 1) % arts_get_total_nodes();
+#endif
+    }
+
+    arts_printf(HLINE);
+    int BytesPerWord = sizeof(double);
+    arts_printf("This system uses %d bytes per DOUBLE PRECISION word.\n",
+                BytesPerWord);
+    arts_printf(HLINE);
+    arts_printf("Array size = %d, Offset = %d\n", N, OFFSET);
+    arts_printf("Total memory required = %.1f MB.\n",
+                (3.0 * BytesPerWord) * ((double)N / 1048576.0));
+    arts_printf("Each test is run %d times, but only\n", NTIMES);
+    arts_printf("the *best* time for each is used.\n");
+    arts_printf(HLINE);
+
+    if ((quantum = checktick()) >= 1)
+      arts_printf(
+          "Your clock granularity/precision appears to be %d microseconds.\n",
+          quantum);
+    else
+      arts_printf(
+          "Your clock granularity appears to be less than one microsecond.\n");
+
+    /* Reserve firstKernel GUID on this node */
+    firstKernel = arts_guid_reserve(ARTS_EDT, nodeId);
+#if CXL_DB
+  }
 #endif
 }
 
@@ -876,76 +857,71 @@ void init_per_node(unsigned int nodeId, int argc, char **argv) {
  * Worker 0 on node 0 also creates the done EDT and launches streamDriver.
  * ===================================================================== */
 
-void init_per_worker(unsigned int nodeId, unsigned int workerId,
-                     int argc, char **argv) {
-    (void)argc;
-    (void)argv;
+void init_per_worker(unsigned int nodeId, unsigned int workerId, int argc,
+                     char **argv) {
+  (void)argc;
+  (void)argv;
 
 #if CXL_DB
-    if (!nodeId) {
+  if (!nodeId) {
 #endif
-        double t = mysecond();
+    double t = mysecond();
 #if !CXL_DB
-        unsigned int owner = 0;
+    unsigned int owner = 0;
 #endif
-        for (unsigned int i = 0; i < numTiles; i++) {
+    for (unsigned int i = 0; i < numTiles; i++) {
 #if !CXL_DB
-            if (nodeId == owner) {
+      if (nodeId == owner) {
 #endif
-                if (i % arts_get_total_workers() == workerId) {
-                    for (unsigned int j = 0; j < tileSize; j++)
-                        aTile[i][j] = 2.0E0 * aTile[i][j];
-#if CXL_DB
-                    arts_cxl_producer_flush(aTileGuids[i]);
-#endif
-                }
-#if !CXL_DB
-            }
-            owner = (owner + 1) % arts_get_total_nodes();
-#endif
+        if (i % arts_get_total_workers() == workerId) {
+          for (unsigned int j = 0; j < tileSize; j++)
+            aTile[i][j] = 2.0E0 * aTile[i][j];
         }
-
-        /* Signal firstKernel with this worker's slot */
-        arts_signal_edt(firstKernel, arts_get_current_worker(),
-                        NULL_GUID, DB_MODE_NULL);
-
-        t = 1.0E6 * (mysecond() - t);
-
-        if (!workerId) {
 #if !CXL_DB
-            if (!nodeId) {
+      }
+      owner = (owner + 1) % arts_get_total_nodes();
 #endif
-                arts_printf(
-                    "Each test below will take on the order of %d microseconds.\n",
-                    (int)t);
-                arts_printf("   (= %d clock ticks)\n", (int)(t / quantum));
-                arts_printf("Increase the size of the arrays if this shows that\n");
-                arts_printf("you are not getting at least 20 clock ticks per test.\n");
-                arts_printf(HLINE);
-                arts_printf("WARNING -- The above is only a rough guideline.\n");
-                arts_printf("For best results, please be sure you know the\n");
-                arts_printf("precision of your system timer.\n");
-                arts_printf(HLINE);
-#if !CXL_DB
-            }
-#endif
-
-            if (!nodeId) {
-                /* done EDT has 3*numTiles deps in both CXL and non-CXL modes */
-                arts_edt_create_with_guid(done, doneGuid, 0, NULL,
-                                          numTiles * 3);
-                arts_edt_create(streamDriver, 0, NULL, 0,
-                                &(arts_hint_t){.route = 0});
-            }
-        }
-#if CXL_DB
     }
+
+    /* Signal firstKernel with this worker's slot */
+    arts_signal_edt(firstKernel, arts_get_current_worker(), NULL_GUID,
+                    DB_MODE_NULL);
+
+    t = 1.0E6 * (mysecond() - t);
+
+    if (!workerId) {
+#if !CXL_DB
+      if (!nodeId) {
+#endif
+        arts_printf(
+            "Each test below will take on the order of %d microseconds.\n",
+            (int)t);
+        arts_printf("   (= %d clock ticks)\n", (int)(t / quantum));
+        arts_printf("Increase the size of the arrays if this shows that\n");
+        arts_printf("you are not getting at least 20 clock ticks per test.\n");
+        arts_printf(HLINE);
+        arts_printf("WARNING -- The above is only a rough guideline.\n");
+        arts_printf("For best results, please be sure you know the\n");
+        arts_printf("precision of your system timer.\n");
+        arts_printf(HLINE);
+#if !CXL_DB
+      }
+#endif
+
+      if (!nodeId) {
+        /* done EDT has 3*numTiles deps in both CXL and non-CXL modes */
+        arts_edt_create_with_guid(done, doneGuid, 0, NULL, numTiles * 3);
+        arts_edt_create(streamDriver, 0, NULL, 0, &(arts_hint_t){.route = 0});
+      }
+    }
+#if CXL_DB
+  }
 #endif
 }
 
 /* ===================================================================== */
 
 int main(int argc, char **argv) {
-    arts_rt(argc, argv);
-    return 0;
+  arts_rt(argc, argv);
+  return 0;
 }

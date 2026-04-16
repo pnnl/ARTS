@@ -45,6 +45,7 @@
 #include "arts/gas/guid.h"
 #include "arts/gas/out_of_order.h"
 #include "arts/gas/route_table.h"
+#include "arts/memory/db.h"
 #include "arts/remote/handler.h"
 #include "arts/runtime_state.h"
 #include "arts/sync/termination.h"
@@ -52,7 +53,6 @@
 #include "arts/system/threads.h"
 #include "arts/utils/array_list.h"
 #include "arts/utils/atomics.h"
-#include "arts/memory/db.h"
 
 #ifdef ARTS_USE_GPU
 #include "arts/gpu/gpu_internal.h"
@@ -612,13 +612,11 @@ void arts_signal_edt(arts_guid_t edt_guid, uint32_t slot, arts_guid_t data_guid,
   void *db_ptr = NULL;
 #ifdef ARTS_USE_CXL
   if (arts_guid_is_cxl(data_guid)) {
-    struct arts_db_s* header = (struct arts_db_s *)arts_cxl_get_ptr(data_guid);
-    FLUSH_FENCE_CONSUMER(header, ALIGN_UP(sizeof(struct arts_db_s), CACHELINE_SIZE));
-    db_ptr = (void *)(header + 1);
+    /* CXL GUID encodes the pointer directly — no flush needed here.
+     * Consumer flush happens in prep_dbs just before user func;
+     * producer flush happens in release_dbs after user func. */
+    db_ptr = (void *)((struct arts_db_s *)arts_cxl_get_ptr(data_guid) + 1);
   }
-  #ifdef ARTS_CXL_ENABLE_AUTO_FLUSH
-    arts_cxl_producer_flush(data_guid);
-  #endif
 #endif
   internal_signal_edt(edt_guid, slot, data_guid, mode, db_ptr, 0);
 }
@@ -645,25 +643,24 @@ void internal_signal_edt_with_mode(arts_guid_t edt_packet, uint32_t slot,
       if (edt) {
         arts_edt_dep_t *edt_dep = (arts_edt_dep_t *)arts_get_depv(edt);
         if (slot < edt->depc) {
-          #ifdef ARTS_USE_CXL
-          void* ptr;
+#ifdef ARTS_USE_CXL
+          void *ptr;
           // if (mode == ARTS_DB_CXL) {
           if (arts_guid_is_cxl(data_guid)) {
-            ptr = ((struct arts_db_s *)arts_cxl_get_ptr(data_guid)) +1;
+            ptr = ((struct arts_db_s *)arts_cxl_get_ptr(data_guid)) + 1;
             edt_dep[slot].guid = data_guid;
             edt_dep[slot].ptr = ptr;
             edt_dep[slot].mode = mode;
-          }
-          else {
-          #endif
+          } else {
+#endif
             edt_dep[slot].guid = data_guid;
             edt_dep[slot].ptr = NULL;
             if (mode != DB_MODE_NULL) {
               edt_dep[slot].mode = mode;
             }
-          #ifdef ARTS_USE_CXL
+#ifdef ARTS_USE_CXL
           }
-          #endif
+#endif
         }
         unsigned int res = arts_atomic_sub(&edt->depc_needed, 1U);
         ARTS_INFO("Signal DB[Guid:%lu] to EDT[Guid:%lu, Slot:%u, "
@@ -703,24 +700,14 @@ void arts_signal_edt_value(arts_guid_t edt_guid, uint32_t slot,
 
 void arts_signal_edt_ptr(arts_guid_t edt_guid, uint32_t slot, void *ptr,
                          unsigned int size) {
-  #ifdef ARTS_CXL_ENABLE_AUTO_FLUSH
-  if (IS_CXL_PTR(ptr))
-  {
-    FLUSH_FENCE_PRODUCER(ptr, ALIGN_UP(size, CACHELINE_SIZE));
-  }
-  #endif
+  /* Producer flush handled by release_dbs after EDT execution. */
   internal_signal_edt(edt_guid, slot, NULL_GUID, DB_MODE_PTR, ptr, size);
 }
 
 void arts_signal_edt_ptr_with_guid(arts_guid_t edt_guid, uint32_t slot,
                                    arts_guid_t db_guid, void *ptr,
                                    unsigned int size) {
-  #ifdef ARTS_CXL_ENABLE_AUTO_FLUSH
-  if (IS_CXL_PTR(ptr))
-  {
-    FLUSH_FENCE_PRODUCER(ptr, ALIGN_UP(size, CACHELINE_SIZE));
-  }
-  #endif
+  /* Producer flush handled by release_dbs after EDT execution. */
   internal_signal_edt(edt_guid, slot, db_guid, DB_MODE_PTR, ptr, size);
 }
 

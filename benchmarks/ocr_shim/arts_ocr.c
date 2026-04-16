@@ -101,11 +101,11 @@ static inline void ocr_copy_paramv(uint64_t *dst, const u64 *src, u32 paramc) {
 }
 
 #if defined(__SANITIZE_ADDRESS__)
-#  define _ARTS_OCR_ASAN 1
+#define _ARTS_OCR_ASAN 1
 #elif defined(__clang__)
-#  if __has_feature(address_sanitizer)
-#    define _ARTS_OCR_ASAN 1
-#  endif
+#if __has_feature(address_sanitizer)
+#define _ARTS_OCR_ASAN 1
+#endif
 #endif
 #ifdef _ARTS_OCR_ASAN
 /* Under ASAN, suppress the harmless stack overread from struct-to-u64* casts.
@@ -246,7 +246,7 @@ static void performCollectiveReduction(CollectiveMetadata *meta) {
  * "newly registered", "already exists", and "table full" — instead of
  * collapsing the latter two into a single 0 return.
  */
-#define COLLECTIVE_TOMBSTONE ((arts_guid_t)~(uint64_t)0)
+#define COLLECTIVE_TOMBSTONE ((arts_guid_t) ~(uint64_t)0)
 
 typedef struct {
   volatile arts_guid_t edtGuid;
@@ -1023,15 +1023,13 @@ u8 ocrDbRelease(ocrGuid_t db) {
  */
 static arts_db_access_mode_t ocr_to_arts_mode(ocrDbAccessMode_t ocr_mode) {
   switch (ocr_mode) {
-  case DB_MODE_EW: /* OCR 0x4 → ARTS EW (true exclusive write) */
+  case DB_MODE_EW: /* OCR 0x4 → ARTS EW */
+    return ARTS_MODE_EW;
+  case DB_MODE_RW: /* OCR 0x2 → ARTS EW (EXPERIMENT) */
     return ARTS_MODE_EW;
   case DB_MODE_NULL: /* OCR 0x0 → ARTS NULL (control-only dependence) */
     return ARTS_MODE_NULL;
   case DB_MODE_RO: /* OCR 0x8 → ARTS RO */
-  case DB_MODE_RW: /* OCR 0x2 → ARTS RO (advisory; OCR doesn't enforce RW
-                    * exclusion, and apps routinely use RW as a default even
-                    * for shared reads.  Mapping to EW causes frontier
-                    * serialization and performance collapse.) */
   default:
     return ARTS_MODE_RO;
   }
