@@ -1,5 +1,7 @@
 # Memory submodule (DataBlock lifecycle, frontier management)
 file(GLOB MEMORY_SOURCES "*.c")
+# Exclude v3 coherence sources (pending build integration; see future Phase F)
+list(FILTER MEMORY_SOURCES EXCLUDE REGEX "/coherence_.*\\.c$")
 
 # CPU-only object library
 add_library(arts_memory OBJECT ${MEMORY_SOURCES})
