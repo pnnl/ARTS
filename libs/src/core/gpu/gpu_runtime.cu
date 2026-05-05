@@ -269,11 +269,11 @@ void arts_gpu_host_wrap_up(void *edt_packet, arts_guid_t to_signal,
   // Signal next
   if (to_signal) {
     if (edt->passthrough) {
-      arts_signal_edt(to_signal, slot, depv[data_guid].guid, DB_MODE_EW);
+      arts_signal_edt(to_signal, slot, depv[data_guid].guid, DB_MODE_RW);
     } else {
       arts_type_t mode = arts_guid_get_type(to_signal);
       if (mode == ARTS_EDT) {
-        arts_signal_edt(to_signal, slot, data_guid, DB_MODE_EW);
+        arts_signal_edt(to_signal, slot, data_guid, DB_MODE_RW);
       }
       if (mode == ARTS_EVENT) {
         arts_event_satisfy_slot(to_signal, data_guid, slot);
@@ -480,7 +480,7 @@ void arts_put_in_db_from_gpu(void *ptr, arts_guid_t db_guid,
       // memcpy(data, ptr, size);
       CHECKCORRECT(cudaMemcpyAsync(data, ptr, size, cudaMemcpyDeviceToHost,
                                    *arts_local_stream));
-      arts_route_table_return_db(db_guid, false);
+      /* No ref count: lookup no longer takes a ref to balance. */
     } else {
       void *cpy_ptr = arts_malloc(size);
       // memcpy(cpy_ptr, ptr, size);

@@ -69,24 +69,23 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
         (arts_route_item_t *)arts_route_table_add_item(
             (void *)(uintptr_t)range_start,
             arts_guid_from_index(range_start, i), node_id, 0);
-    if (!i) {
-      arts_printf("SWAPPING\n");
-      arts_atomic_cswap_u64(&location->lock, AVAILABLE_ITEM,
-                            (AVAILABLE_ITEM | DELETE_ITEM));
-    }
+    /* Legacy item->lock / AVAILABLE_ITEM / DELETE_ITEM removed in new
+     * route_item model.  Phase 3 will reintroduce a proper lifecycle
+     * mechanism; this test no longer exercises mark-for-delete. */
+    (void)location;
   }
 
   print_rt();
 
   int rank;
   arts_guid_t guid = arts_guid_from_index(range_start, 0);
-  arts_route_table_lookup_db(guid, &rank, true);
-  arts_route_table_return_db(guid, true);
+  arts_route_table_lookup_db(guid, &rank, false);
+  /* arts_route_table_return_db removed (no ref count). */
 
   void *ptr = arts_route_table_lookup_item(guid);
   arts_printf("Lookup %lu %p\n", guid, ptr);
 
-  ptr = arts_route_table_lookup_db(guid, &rank, true);
+  ptr = arts_route_table_lookup_db(guid, &rank, false);
   arts_printf("DB Lookup %lu %p\n", guid, ptr);
 
   arts_route_item_t *location = (arts_route_item_t *)arts_route_table_add_item(
@@ -96,7 +95,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   ptr = arts_route_table_lookup_item(guid);
   arts_printf("Lookup2 %lu %p\n", guid, ptr);
 
-  ptr = arts_route_table_lookup_db(guid, &rank, true);
+  ptr = arts_route_table_lookup_db(guid, &rank, false);
   arts_printf("DB Lookup2 %lu %p\n", guid, ptr);
 
   arts_shutdown();

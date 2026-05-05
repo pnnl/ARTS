@@ -49,6 +49,17 @@
 #include "arts/system/threads.h"
 #include "arts/utils/malloc.h"
 
+#ifdef ARTS_COHERENCE_INTEGRATED
+/* Phase 2.2 will define ARTS_COHERENCE_INTEGRATED, include the
+ * coherence_handlers.c sources in the build, and add the missing
+ * arts_remote_lock_req_packet_s / arts_remote_get_data_packet_s /
+ * arts_remote_destroy_req_packet_s / arts_remote_writeback_packet_s
+ * declarations to arts/transport/protocol.h.  Until then the OO_COH_*
+ * dispatch arms below are guarded out so the runtime build stays
+ * clean.  See spec §4.8 and the Phase 2 task list. */
+#include "arts/memory/coherence_handlers.h"
+#endif
+
 #include <string.h>
 
 struct oo_signal_edt_s {
@@ -85,21 +96,6 @@ struct oo_event_satisfy_slot_s {
 struct oo_handle_ready_edt_s {
   enum arts_out_of_order_type type;
   struct arts_edt_s *edt;
-};
-
-struct oo_remote_db_send_s {
-  enum arts_out_of_order_type type;
-  int rank;
-  arts_db_access_mode_t mode;
-  arts_guid_t data_guid;
-};
-
-struct oo_remote_db_full_send_s {
-  enum arts_out_of_order_type type;
-  int rank;
-  arts_guid_t edt_guid;
-  unsigned int slot;
-  arts_db_access_mode_t mode;
 };
 
 struct oo_get_from_db_s {
@@ -184,27 +180,12 @@ inline void arts_out_of_order_handler(void *handle_me, void *memory_ptr) {
     arts_handle_ready_edt(ready_edt->edt);
     break;
   }
-  case OO_REMOTE_DB_SEND: {
-    struct oo_remote_db_send_s *db_send =
-        (struct oo_remote_db_send_s *)handle_me;
-    arts_remote_db_send_check(db_send->rank, (struct arts_db_s *)memory_ptr,
-                              db_send->mode);
-    break;
-  }
   case OO_DB_REQUEST_SATISFY: {
     struct oo_db_request_satisfy_s *req =
         (struct oo_db_request_satisfy_s *)handle_me;
     ARTS_DEBUG("FILL %lu %u %p", req->edt, req->slot, memory_ptr);
     arts_db_request_callback(req->edt, req->slot,
                              (struct arts_db_s *)memory_ptr);
-    break;
-  }
-  case OO_DB_FULL_SEND: {
-    struct oo_remote_db_full_send_s *db_send =
-        (struct oo_remote_db_full_send_s *)handle_me;
-    arts_remote_db_full_send_check(
-        db_send->rank, (struct arts_db_s *)memory_ptr, db_send->edt_guid,
-        db_send->slot, db_send->mode);
     break;
   }
   case OO_GET_FROM_DB: {
@@ -250,6 +231,57 @@ inline void arts_out_of_order_handler(void *handle_me, void *memory_ptr) {
     increment_queue_epoch(req->guid);
     break;
   }
+#ifdef ARTS_COHERENCE_INTEGRATED
+  case OO_COH_LOCK_REQ: {
+    /* Re-issue handler — cache is now installed (DB_CREATE arrived
+     * after the original race-arrived LOCK_REQ was deferred). */
+    struct oo_coh_lock_req_s *req = (struct oo_coh_lock_req_s *)handle_me;
+    struct arts_remote_lock_req_packet_s p;
+    p.header.rank = req->requester;
+    p.db_guid = req->db_guid;
+    arts_coh_handle_lock_req(&p);
+    break;
+  }
+  case OO_COH_GET_DATA: {
+    struct oo_coh_get_data_s *req = (struct oo_coh_get_data_s *)handle_me;
+    struct arts_remote_get_data_packet_s p;
+    p.header.rank = req->requester;
+    p.db_guid = req->db_guid;
+    p.waiter_addr = req->waiter_addr;
+    arts_coh_handle_get_data(&p);
+    break;
+  }
+  case OO_COH_DESTROY_REQ: {
+    struct oo_coh_destroy_req_s *req = (struct oo_coh_destroy_req_s *)handle_me;
+    struct arts_remote_destroy_req_packet_s p;
+    p.header.rank = req->requester;
+    p.db_guid = req->db_guid;
+    arts_coh_handle_destroy_req(&p);
+    break;
+  }
+  case OO_COH_WRITEBACK: {
+    struct oo_coh_writeback_s *req = (struct oo_coh_writeback_s *)handle_me;
+    struct arts_remote_writeback_packet_s p;
+    p.header.rank = req->releaser;
+    p.db_guid = req->db_guid;
+    p.version = req->version;
+    p.seq = req->seq;
+    p.flag = req->flag;
+    arts_coh_handle_writeback(&p, req->data, req->data_size);
+    break;
+  }
+#else
+  case OO_COH_LOCK_REQ:
+  case OO_COH_GET_DATA:
+  case OO_COH_DESTROY_REQ:
+  case OO_COH_WRITEBACK:
+    /* Coherence handlers not yet wired into the build (Phase 2.2 work).
+     * Producers gated by the same ifdef in coherence_handlers.c, so we
+     * should never observe these tags here.  Fall through to the error
+     * branch if they ever arrive. */
+    ARTS_INFO("OO Handler: OO_COH_* tag observed without coherence build");
+    break;
+#endif
   default:
     ARTS_INFO("OO Handler Error");
   }
@@ -340,30 +372,6 @@ void arts_out_of_order_handle_ready_edt(arts_guid_t trigger_guid,
   }
 }
 
-void arts_out_of_order_handle_remote_db_send(int rank, arts_guid_t db_guid,
-                                             arts_db_access_mode_t mode) {
-  struct oo_remote_db_send_s *ready_send =
-      (struct oo_remote_db_send_s *)arts_malloc(
-          sizeof(struct oo_remote_db_send_s));
-  ready_send->type = OO_REMOTE_DB_SEND;
-  ready_send->rank = rank;
-  ready_send->data_guid = db_guid;
-  ready_send->mode = mode;
-  bool res = arts_route_table_add_oo(db_guid, ready_send, false);
-  if (!res) {
-    struct arts_db_s *db =
-        (struct arts_db_s *)arts_route_table_lookup_db(db_guid, NULL, false);
-    if (db) {
-      arts_remote_db_send_check(ready_send->rank, db, ready_send->mode);
-      arts_route_table_return_db(db_guid, false);
-    } else {
-      ARTS_DEBUG("OO remote_db_send: DB[Guid:%lu] vanished (DELETE_ITEM race)",
-                 db_guid);
-    }
-    arts_free(ready_send);
-  }
-}
-
 /*
  * arts_out_of_order_handle_db_request — Queue a DB acquisition for deferred
  *   resolution when the DB does not yet exist in the route table.
@@ -391,57 +399,14 @@ void arts_out_of_order_handle_db_request(arts_guid_t db_guid,
         (struct arts_db_s *)arts_route_table_lookup_db(db_guid, NULL, false);
     arts_db_request_callback(req->edt, req->slot, db);
     if (db) {
-      arts_route_table_return_db(db_guid, false);
     }
     arts_free(req);
   }
 }
 
-// This should save one lookup compared to the function above...
-void arts_out_of_order_handle_db_request_with_oo_list(
-    struct arts_out_of_order_list_s *add_to_me, void **data,
-    struct arts_edt_s *edt, unsigned int slot) {
-  struct oo_db_request_satisfy_s *req =
-      (struct oo_db_request_satisfy_s *)arts_malloc(
-          sizeof(struct oo_db_request_satisfy_s));
-  req->type = OO_DB_REQUEST_SATISFY;
-  req->edt = edt;
-  req->slot = slot;
-  bool res = arts_out_of_order_list_add_item(add_to_me, req);
-  if (!res) {
-    arts_db_request_callback(req->edt, req->slot, (struct arts_db_s *)(*data));
-    arts_free(req);
-  }
-}
-
-void arts_out_of_order_handle_remote_db_full_send(arts_guid_t db_guid, int rank,
-                                                  arts_guid_t edt_guid,
-                                                  unsigned int slot,
-                                                  arts_db_access_mode_t mode) {
-  struct oo_remote_db_full_send_s *db_send =
-      (struct oo_remote_db_full_send_s *)arts_malloc(
-          sizeof(struct oo_remote_db_full_send_s));
-  db_send->type = OO_DB_FULL_SEND;
-  db_send->rank = rank;
-  db_send->edt_guid = edt_guid;
-  db_send->slot = slot;
-  db_send->mode = mode;
-  bool res = arts_route_table_add_oo(db_guid, db_send, false);
-  if (!res) {
-    struct arts_db_s *db =
-        (struct arts_db_s *)arts_route_table_lookup_db(db_guid, NULL, false);
-    if (db) {
-      arts_remote_db_full_send_check(db_send->rank, db, db_send->edt_guid,
-                                     db_send->slot, db_send->mode);
-      arts_route_table_return_db(db_guid, false);
-    } else {
-      ARTS_DEBUG("OO remote_db_full_send: DB[Guid:%lu] vanished "
-                 "(DELETE_ITEM race)",
-                 db_guid);
-    }
-    arts_free(db_send);
-  }
-}
+/* arts_out_of_order_handle_db_request_with_oo_list removed: legacy
+ * arts_out_of_order_list_s + arts_route_table_get_oo_list path is gone,
+ * no callers, replaced by arts_route_table_add_oo_ex. */
 
 void arts_out_of_order_get_from_db(arts_guid_t edt_guid, arts_guid_t db_guid,
                                    unsigned int slot, unsigned int offset,

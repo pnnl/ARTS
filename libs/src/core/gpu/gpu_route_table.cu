@@ -82,8 +82,8 @@ arts_route_table_t *arts_gpu_new_route_table(unsigned int route_table_size,
       total_elems, sizeof(arts_route_item_t), 16);
   gpu_route_table->routingTable.size = route_table_size;
   gpu_route_table->routingTable.shift = shift;
-  gpu_route_table->routingTable.setFunc = set_gpu_item;
-  gpu_route_table->routingTable.freeFunc = free_gpu_item;
+  /* setFunc/freeFunc fields removed in new route_table model -- task 1a.4
+   * will revisit GPU route_table integration. */
   gpu_route_table->routingTable.newFunc = arts_gpu_new_route_table;
 
   gpu_route_table->wrappers = (arts_item_wrapper_t *)arts_calloc(
@@ -100,7 +100,7 @@ uint64_t arts_gpu_lookup_db(arts_guid_t key) {
   for (unsigned int i = 0; i < arts_node_info.gpu; ++i) {
     arts_route_table_t *gpu_route_table = arts_node_info.gpu_route_table[i];
     arts_route_item_t *location =
-        arts_route_table_search_for_key(gpu_route_table, key, AVAILABLE_KEY);
+        arts_route_table_search_for_key(gpu_route_table, key);
     if (location) {
       ret |= (1 << i);
     }
@@ -112,11 +112,16 @@ unsigned int arts_gpu_lookup_db_fix(arts_guid_t key) {
   unsigned int ret = 0;
   for (unsigned int i = 0; i < arts_node_info.gpu; ++i) {
     arts_route_table_t *gpu_route_table = arts_node_info.gpu_route_table[i];
+#if 0 /* FIXME: internal_route_table_lookup_db removed -- task 1a.4 */
     int dummy_rank;
     unsigned int *internal_touched;
     arts_route_item_t *location = NULL;
     location = (arts_route_item_t *)internal_route_table_lookup_db(
         gpu_route_table, key, &dummy_rank, &internal_touched);
+#else
+    arts_route_item_t *location =
+        arts_route_table_search_for_key(gpu_route_table, key);
+#endif
     if (location) {
       // arts_item_wrapper_t *wrapper = (arts_item_wrapper_t *)location;
       ret |= (1 << i);
@@ -171,27 +176,20 @@ void *arts_gpu_route_table_lookup_db_res(arts_guid_t key, int gpu_id,
                                          unsigned int *touched,
                                          unsigned int *time_stamp, bool res) {
   void *ret = NULL;
-  int dummy_rank;
-  unsigned int *internal_touched;
   arts_route_table_t *route_table = arts_node_info.gpu_route_table[gpu_id];
   arts_item_wrapper_t *wrapper = NULL;
-  if (res) {
-    wrapper = (arts_item_wrapper_t *)internal_route_table_lookup_db(
-        route_table, key, &dummy_rank, &internal_touched);
-  } else {
-    arts_route_item_t *temp =
-        arts_route_table_search_for_key(route_table, key, AVAILABLE_KEY);
-    wrapper = (temp) ? (arts_item_wrapper_t *)temp->data : NULL;
-  }
+  /* New model: data ptr lookup (legacy state machine removed). */
+  arts_route_item_t *temp = arts_route_table_search_for_key(route_table, key);
+  wrapper = (temp) ? (arts_item_wrapper_t *)temp->data : NULL;
 
   if (wrapper) {
     if (res) {
       if (time_stamp) {
         *time_stamp = set_gpu_timestamp(&wrapper->time_stamp);
       }
-      if (touched) {
-        *touched = internal_inc_db_version(internal_touched);
-      }
+      /* touched (per-item version) removed in new route_item model --
+       * task 1a.4 will revisit GPU LC versioning. */
+      (void)touched;
     }
     ret = (void *)wrapper->realData;
     ARTS_DEBUG("Wrapper: %p %p", wrapper, wrapper->realData);
@@ -208,26 +206,27 @@ void *arts_gpu_route_table_lookup_db(arts_guid_t key, int gpu_id,
 
 bool arts_gpu_route_table_return_db(arts_guid_t key, bool mark_to_delete,
                                     unsigned int gpu_id) {
-  arts_route_table_t *route_table = arts_node_info.gpu_route_table[gpu_id];
-  return internal_route_table_return_db(route_table, key, mark_to_delete,
-                                        false);
+  /* No ref count: route_table no longer takes refs.  task 1a.4 will
+   * revisit GPU lifecycle. */
+  (void)key;
+  (void)mark_to_delete;
+  (void)gpu_id;
+  return false;
 }
 
 bool arts_gpu_invalidate_route_tables(arts_guid_t key,
                                       unsigned int keep_on_this_gpu) {
-  bool ret = 0;
-  for (unsigned int i = 0; i < arts_node_info.gpu; i++) {
-    if (i != keep_on_this_gpu) {
-      ret |= internal_route_table_remove_item(arts_node_info.gpu_route_table[i],
-                                              key);
-    }
-  }
-  return ret;
+  /* internal_route_table_remove_item removed -- task 1a.4 will revisit. */
+  (void)key;
+  (void)keep_on_this_gpu;
+  return false;
 }
 
 bool arts_gpu_invalidate_on_route_table(arts_guid_t key, unsigned int gpu_id) {
-  return internal_route_table_remove_item(
-      arts_node_info.gpu_route_table[gpu_id], key);
+  /* internal_route_table_remove_item removed -- task 1a.4 will revisit. */
+  (void)key;
+  (void)gpu_id;
+  return false;
 }
 
 volatile unsigned int gpu_reader = 0;
@@ -281,26 +280,13 @@ uint64_t arts_gpu_clean_up_route_table(unsigned int size_to_clean,
 
     arts_route_item_t *item = arts_route_table_iterate(&iter);
     while (item && freed_size < size_to_clean) {
-      // arts_print_item(item);
+      /* FIXME: GPU GC sweep needs new model -- task 1a.4
+       * Legacy used item->lock bitfield (DELETE_ITEM/AVAILABLE_ITEM/count)
+       * + dec_item(); both removed.  GC is a no-op until rewritten. */
+      (void)clean_zeros;
+      (void)route_table;
       arts_item_wrapper_t *wrapper = (arts_item_wrapper_t *)item->data;
-      uint64_t size = wrapper->size;
-      if (IS_DEL(item->lock)) {
-        uint64_t comp_val = (AVAILABLE_ITEM | DELETE_ITEM);
-        uint64_t new_val = (AVAILABLE_ITEM | DELETE_ITEM) + 1;
-        uint64_t old_val =
-            arts_atomic_cswap_u64(&item->lock, comp_val, new_val);
-        if ((comp_val == old_val) && dec_item(route_table, item)) {
-          freed_size += size;
-        }
-      } else if (clean_zeros && !GET_COUNT(item->lock)) {
-        uint64_t comp_val = AVAILABLE_ITEM;
-        uint64_t new_val = (AVAILABLE_ITEM | DELETE_ITEM) + 1;
-        uint64_t old_val =
-            arts_atomic_cswap_u64(&item->lock, comp_val, new_val);
-        if ((comp_val == old_val) && dec_item(route_table, item)) {
-          freed_size += size;
-        }
-      }
+      (void)wrapper;
       item = arts_route_table_iterate(&iter);
     }
     arts_unlock(&gpu_route_table->gcLock);

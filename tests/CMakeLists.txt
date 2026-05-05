@@ -43,15 +43,21 @@ set(TEST_PROGRAMS
     edt_epoch_wait
     route_table
     route_table_remote_guid
-    cdag
-    cdag_ew_chain
-    cdag_ew_ordering
-    cdag_ew_ro_ew
-    cdag_ew_ew_chain_seal
-    cdag_ro_accumulation
-    cdag_mixed_local_remote
-    cdag_lock_unit
+    coherence_basic
+    coherence_rw_chain
+    coherence_rw_ordering
+    coherence_rw_ro_rw
+    coherence_rw_rw_chain_seal
+    coherence_ro_accumulation
+    coherence_mixed_local_remote
     out_of_order_list
+    coherence_ooo_concurrent_drain
+    coherence_lock_req_before_create
+    coherence_destroy_during_acquire
+    coherence_stress_single_node
+    coherence_stress_dist
+    coherence_multi_writer_same_addr
+    coherence_ro_acquire_stress
     pin_db
     get_from_db
     put_in_db
@@ -106,7 +112,7 @@ set(TEST_PROGRAMS
     multinode_edt
     multinode_epoch
     multinode_event
-    multinode_cdag
+    multinode_coherence
     multinode_event_types
     multinode_array_db
     multinode_db_advanced
@@ -349,18 +355,20 @@ register_single_node_test(route_table_iter_destroy)
 register_single_node_test(acquire_mode)
 register_single_node_test(arts_id)
 register_single_node_test(out_of_order_list)
+register_single_node_test(coherence_ooo_concurrent_drain TIMEOUT 60)
+set_property(TEST coherence_ooo_concurrent_drain APPEND PROPERTY
+    LABELS "coherence_stress")
 register_single_node_test(buffer)
 register_single_node_test(buffer_basic)
 register_single_node_test(shad_lock)
 
-# CDAG tests
-register_single_node_test(cdag ARGS 32 0 0 0)
-register_single_node_test(cdag_ew_chain ARGS 4)
-register_single_node_test(cdag_ew_ordering)
-register_single_node_test(cdag_ew_ro_ew)
-register_single_node_test(cdag_ew_ew_chain_seal)
-register_single_node_test(cdag_ro_accumulation)
-register_single_node_test(cdag_lock_unit)
+# Coherence tests (formerly CDAG — names track the v3 RC protocol naming)
+register_single_node_test(coherence_basic ARGS 32 0 0 0)
+register_single_node_test(coherence_rw_chain ARGS 4)
+register_single_node_test(coherence_rw_ordering)
+register_single_node_test(coherence_rw_ro_rw)
+register_single_node_test(coherence_rw_rw_chain_seal)
+register_single_node_test(coherence_ro_accumulation)
 
 # Graph tests
 register_single_node_test(csr)
@@ -379,11 +387,56 @@ register_multinode_test(route_table_remote_guid)
 register_multinode_test(db_put_get_at)
 register_multinode_test(db_remote)
 register_multinode_test(remote_db_event)
-register_multinode_test(multinode_cdag)
+register_multinode_test(multinode_coherence)
 register_multinode_test(multinode_event_types)
 register_multinode_test(multinode_array_db)
 register_multinode_test(multinode_db_advanced)
-register_multinode_test(cdag_mixed_local_remote)
+register_multinode_test(coherence_mixed_local_remote)
+
+# 3-rank coherence stress: B.3 LOCK_REQ-before-DB_CREATE race regression.
+# Uses arts_4node.cfg (the test SKIPs cleanly if rank_count < 3).  The 4-node
+# config is copied into the tests build dir by sample_configs/CMakeLists.txt.
+add_test(
+    NAME coherence_lock_req_before_create
+    COMMAND coherence_lock_req_before_create
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+)
+set_tests_properties(coherence_lock_req_before_create PROPERTIES
+    LABELS "coherence_stress;multinode"
+    TIMEOUT 120
+    RESOURCE_LOCK "arts_runtime"
+    ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_4node.cfg"
+)
+
+# Coherence stress test suite (Spec section 6 B.1/B.4/B.5/B.6 single-node).
+# Each adds the "coherence_stress" label on top of "single_node" so the suite
+# can be filtered with `ctest -L coherence_stress`.
+register_single_node_test(coherence_destroy_during_acquire TIMEOUT 60)
+set_property(TEST coherence_destroy_during_acquire APPEND PROPERTY
+    LABELS "coherence_stress")
+register_single_node_test(coherence_stress_single_node TIMEOUT 120)
+set_property(TEST coherence_stress_single_node APPEND PROPERTY
+    LABELS "coherence_stress")
+register_single_node_test(coherence_multi_writer_same_addr TIMEOUT 60)
+set_property(TEST coherence_multi_writer_same_addr APPEND PROPERTY
+    LABELS "coherence_stress")
+register_single_node_test(coherence_ro_acquire_stress TIMEOUT 60)
+set_property(TEST coherence_ro_acquire_stress APPEND PROPERTY
+    LABELS "coherence_stress")
+
+# Distributed coherence stress: B.2.  Uses arts_4node.cfg (the test SKIPs
+# cleanly if rank_count < 2).  Same scaffolding as B.3 above.
+add_test(
+    NAME coherence_stress_dist
+    COMMAND coherence_stress_dist
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+)
+set_tests_properties(coherence_stress_dist PROPERTIES
+    LABELS "coherence_stress;multinode"
+    TIMEOUT 120
+    RESOURCE_LOCK "arts_runtime"
+    ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_4node.cfg"
+)
 
 # --- GPU tests ---
 

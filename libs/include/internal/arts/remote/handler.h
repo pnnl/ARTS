@@ -55,14 +55,6 @@ void arts_remote_add_dependence_with_hints(arts_guid_t source,
                                            arts_guid_t destination,
                                            uint32_t slot, unsigned int rank,
                                            arts_db_access_mode_t mode);
-void arts_remote_update_route_table(arts_guid_t guid, unsigned int rank);
-void arts_remote_handle_update_db_guid(void *ptr);
-void arts_remote_handle_invalidate_db(void *ptr);
-void arts_remote_db_destroy(arts_guid_t guid, unsigned int origin_rank);
-void arts_remote_handle_db_destroy_forward(void *ptr);
-void arts_remote_handle_db_destroy(void *ptr);
-void arts_remote_update_db(arts_guid_t guid, bool send_db);
-void arts_remote_handle_update_db(void *ptr);
 
 void arts_remote_memory_move(unsigned int route, arts_guid_t guid, void *ptr,
                              unsigned int mem_size, unsigned message_type,
@@ -81,37 +73,6 @@ void arts_remote_event_satisfy_slot(arts_guid_t event_guid,
                                     arts_guid_t data_guid, uint32_t slot);
 void arts_db_request_callback(struct arts_edt_s *edt, unsigned int slot,
                               struct arts_db_s *db_res);
-bool arts_remote_db_request(arts_guid_t data_guid, int rank,
-                            struct arts_edt_s *edt, int pos,
-                            arts_db_access_mode_t mode, bool agg_request);
-void arts_remote_db_forward(int dest_rank, int source_rank,
-                            arts_guid_t data_guid, arts_db_access_mode_t mode);
-void arts_remote_db_send_now(int rank, struct arts_db_s *db);
-void arts_remote_db_send_check(int rank, struct arts_db_s *db,
-                               arts_db_access_mode_t mode);
-void arts_remote_db_send(struct arts_remote_db_request_packet_s *pack);
-void arts_remote_handle_db_received(
-    struct arts_remote_db_send_packet_s *packet);
-void arts_remote_db_full_request(arts_guid_t data_guid, int rank,
-                                 arts_guid_t edt_guid, int pos,
-                                 arts_db_access_mode_t mode);
-void arts_remote_db_forward_full(int dest_rank, int source_rank,
-                                 arts_guid_t data_guid, arts_guid_t edt_guid,
-                                 int pos, arts_db_access_mode_t mode);
-void arts_remote_db_full_send_now(int rank, struct arts_db_s *db,
-                                  arts_guid_t edt_guid, unsigned int slot,
-                                  arts_db_access_mode_t mode);
-void arts_remote_db_full_send_check(int rank, struct arts_db_s *db,
-                                    arts_guid_t edt_guid, unsigned int slot,
-                                    arts_db_access_mode_t mode);
-void arts_remote_db_full_send(
-    struct arts_remote_db_full_request_packet_s *pack);
-void arts_remote_handle_db_full_recieved(
-    struct arts_remote_db_full_send_packet_s *packet);
-void arts_remote_send_already_local(int rank, arts_guid_t guid,
-                                    arts_guid_t edt_guid, unsigned int slot,
-                                    arts_db_access_mode_t mode);
-void arts_remote_handle_send_already_local(void *pack);
 void arts_remote_get_from_db(arts_guid_t edt_guid, arts_guid_t db_guid,
                              unsigned int slot, unsigned int offset,
                              unsigned int len, unsigned int rank);

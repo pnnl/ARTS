@@ -105,29 +105,44 @@ typedef enum {
 typedef enum {
   DB_MODE_NULL = 0, /**< Unset / placeholder. */
   DB_MODE_RO,       /**< Read-Only (shared readers, no writeback). */
-  DB_MODE_EW,    /**< Exclusive Write (single writer, frontier progression). */
-  DB_MODE_RW,    /**< Read-Write, no ordering (LOCAL DBs only). */
-  DB_MODE_VALUE, /**< Dependency carries a raw uint64 value (not a GUID). */
-  DB_MODE_PTR,   /**< Dependency carries a copied pointer buffer. */
-  DB_MODE_LC_SYNC,    /**< LC with synchronous GPU-to-CPU copy. */
+  DB_MODE_RW,       /**< Read-Write (per-node exclusive, OCR RW semantics). */
+  DB_MODE_VALUE,    /**< Dependency carries a raw uint64 value (not a GUID). */
+  DB_MODE_PTR,      /**< Dependency carries a copied pointer buffer. */
+  DB_MODE_LC_SYNC,  /**< LC with synchronous GPU-to-CPU copy. */
   DB_MODE_LC_NO_COPY, /**< LC without data copy (just allocate on GPU). */
   DB_MODE_MEMSET,     /**< GPU zero-initialization. */
 } arts_db_access_mode_t;
+
+/* Legacy alias — DB_MODE_EW was the old "exclusive write" mode that
+ * mapped to per-node exclusive in the v3 RC protocol.  Maintained for
+ * source compatibility with examples / benchmarks / OCR shim. */
+#define DB_MODE_EW DB_MODE_RW
 
 /**
  * @brief DataBlock subtype (stored in @c arts_db_s.db_type, NOT in the GUID).
  *
  * Specifies the storage and coherence class of a DataBlock.  All subtypes
  * share the same @c ARTS_DB tag in the GUID; the subtype is carried inside
- * the DB descriptor.
+ * the DB descriptor.  Naming convention: ARTS_DB_<storage>_<coherence>.
+ * Coherence suffix = RC | LC | PIN.  Storage prefix omitted = regular DRAM.
  */
 typedef enum {
-  ARTS_DB_DEFAULT = 0, /**< Distributed, CDAG-managed (OCR spec DB). */
-  ARTS_DB_LOCAL,       /**< Node-pinned, no CDAG frontier. */
-  ARTS_DB_GPU,         /**< GPU-pinned, CDAG-managed. */
-  ARTS_DB_LC,          /**< Locality-class (CPU-GPU coherence). */
-  ARTS_DB_CXL,         /**< CXL shared-memory, no CDAG frontier. */
+  ARTS_DB_RC = 0, /**< Release Consistency (regular DRAM, distributed v3 RC). */
+  ARTS_DB_PIN,    /**< Node-pinned regular DRAM, no DB-level coherence. */
+  ARTS_DB_GPU_PIN, /**< GPU staging (host pinned + per-device replica). */
+  ARTS_DB_GPU_LC,  /**< GPU staging, Location Consistency (multi-GPU + reduce).
+                    */
+  ARTS_DB_CXL_LC,  /**< CXL shared, Location Consistency (compiled w/ CXL). */
 } arts_db_types_t;
+
+/* Legacy aliases — old enum names kept so external callers (examples,
+ * benchmarks, OCR shim) compile unchanged.  See memory/MEMORY.md
+ * "naming-convention-final" (2026-05-03). */
+#define ARTS_DB_DEFAULT ARTS_DB_RC
+#define ARTS_DB_LOCAL ARTS_DB_PIN
+#define ARTS_DB_GPU ARTS_DB_GPU_PIN
+#define ARTS_DB_LC ARTS_DB_GPU_LC
+#define ARTS_DB_CXL ARTS_DB_CXL_LC
 
 /**
  * @brief EDT subtype (stored in @c arts_edt_s.edt_type, NOT in the GUID).
@@ -611,7 +626,7 @@ void arts_edt_destroy(arts_guid_t guid);
  * @param edt_guid  GUID of the target EDT.
  * @param slot      Dependency slot index.
  * @param data_guid GUID of the DataBlock to deliver.
- * @param mode      Access mode (@c DB_MODE_RO or @c DB_MODE_EW).
+ * @param mode      Access mode (@c DB_MODE_RO or @c DB_MODE_RW).
  */
 void arts_signal_edt(arts_guid_t edt_guid, uint32_t slot, arts_guid_t data_guid,
                      arts_db_access_mode_t mode);
@@ -817,7 +832,7 @@ void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
  * @param source      Source event or DB GUID (or @c NULL_GUID).
  * @param destination Destination EDT or event GUID.
  * @param slot        Dependency slot on the destination.
- * @param mode        Access mode for DB data (@c DB_MODE_RO, @c DB_MODE_EW,
+ * @param mode        Access mode for DB data (@c DB_MODE_RO, @c DB_MODE_RW,
  *                    etc.).
  */
 void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
@@ -868,7 +883,8 @@ void arts_add_local_event_callback(arts_guid_t source,
  * @param[out] addr    Receives a pointer to the DB payload.  Set to @c NULL
  *                     when @c hint->route targets a remote node.
  * @param      len     Length in bytes.
- * @param      db_type Storage/coherence class (DEFAULT, LOCAL, GPU, LC).
+ * @param      db_type Storage/coherence class (RC, PIN, GPU_PIN, GPU_LC,
+ *                     CXL_LC).
  * @param      hint    Advisory metadata.  @c hint->route selects the target
  *                     node; NULL or ARTS_HINT_CURRENT_NODE = current node.
  * @return GUID of the created DB.
@@ -885,7 +901,7 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
  *
  * @param guid    Pre-reserved GUID (must be local).
  * @param len     Length in bytes.
- * @param db_type Storage/coherence class (DEFAULT, LOCAL, GPU, LC).
+ * @param db_type Storage/coherence class (RC, PIN, GPU_PIN, GPU_LC, CXL_LC).
  * @param data    Optional source data to copy into the DB (NULL = uninit).
  * @param hint    Advisory metadata (profiling id). NULL = defaults.
  * @return Pointer to the DB payload.

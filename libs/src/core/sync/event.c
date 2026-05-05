@@ -307,8 +307,7 @@ static void channel_fire_dependents(struct arts_event_s *event,
         if ((dependent[j].byte_offset != 0 || dependent[j].size != 0) &&
             data != NULL_GUID) {
           struct arts_db_s *db =
-              (struct arts_db_s *)arts_route_table_lookup_db(data, NULL,
-                                                             false);
+              (struct arts_db_s *)arts_route_table_lookup_db(data, NULL, false);
           if (db) {
             void *db_data = (void *)(db + 1);
             void *slice_ptr =
@@ -316,7 +315,6 @@ static void channel_fire_dependents(struct arts_event_s *event,
             arts_signal_edt_ptr_with_guid(dependent[j].addr, dependent[j].slot,
                                           data, slice_ptr,
                                           (unsigned int)dependent[j].size);
-            arts_route_table_return_db(data, false);
           }
         } else {
           /* Match STICKY fire semantics: always signal the slot, even when
@@ -332,9 +330,6 @@ static void channel_fire_dependents(struct arts_event_s *event,
         arg.guid = data;
         arg.ptr = arts_route_table_lookup_db(data, NULL, false);
         dependent[j].callback_t(arg);
-        if (arg.ptr) {
-          arts_route_table_return_db(data, false);
-        }
       }
       j++;
       i++;
@@ -538,7 +533,6 @@ void arts_event_destroy(arts_guid_t guid) {
   struct arts_event_s *event =
       (struct arts_event_s *)arts_route_table_lookup_item(guid);
   if (event != NULL) {
-    arts_route_table_remove_item(guid);
     arts_event_free(event);
   }
 }
@@ -639,9 +633,6 @@ void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
               arg.guid = event->data;
               arg.ptr = arts_route_table_lookup_db(event->data, NULL, false);
               dependent[j].callback_t(arg);
-              if (arg.ptr) {
-                arts_route_table_return_db(event->data, false);
-              }
             }
             j++;
             i++;
@@ -659,7 +650,6 @@ void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
         // Auto-destroy for LATCH/ONCE/COUNTED; STICKY/IDEM persist
         if (event->type == ARTS_EVENT_LATCH || event->type == ARTS_EVENT_ONCE ||
             event->type == ARTS_EVENT_COUNTED) {
-          arts_route_table_remove_item(event_guid);
           arts_event_free(event);
         }
       }
@@ -915,9 +905,6 @@ void arts_add_local_event_callback(arts_guid_t source,
         arg.guid = event->data;
         arg.ptr = arts_route_table_lookup_db(event->data, NULL, false);
         callback_t(arg);
-        if (arg.ptr) {
-          arts_route_table_return_db(event->data, false);
-        }
       }
     }
   }

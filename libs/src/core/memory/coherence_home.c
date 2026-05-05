@@ -118,6 +118,10 @@ struct arts_db_home_s *arts_db_home_create(unsigned int rw_holder,
   home->rw_holder = rw_holder;
   home->pending_rw = arts_pending_rw_create();
   home->last_sent_version = arts_rank_u64_map_create(nranks);
+  /* No INVALIDATE round is in flight at home creation; calloc already
+   * zeroed this but we set it explicitly to make the invariant
+   * obvious. */
+  home->invalidate_in_flight = 0;
   return home;
 }
 

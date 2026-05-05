@@ -427,7 +427,15 @@ uint64_t arts_remote_send_payload_request(int rank, unsigned int queue,
     if (temp_length) {
       return temp_length + length2;
     }
-
+    /* Header was sent fully -- arts_actual_send decremented outbox_pending
+     * once.  But the caller (out_insert_node) only incremented ONCE for
+     * the whole logical message (header + payload).  The payload send
+     * below will decrement again, underflowing the counter.  Pre-increment
+     * here to keep the invariant: one increment per logical message,
+     * one decrement per arts_actual_send call.  Without this fix the
+     * shutdown-protocol drain races a wrap-around pending count and
+     * forces premature peer-disconnect shutdown. */
+    arts_atomic_add(&arts_node_info.outbox_pending, 1U);
     return arts_actual_send(payload, length2, rank, port);
   }
   return length + length2;
@@ -501,7 +509,8 @@ bool arts_remote_setup_incoming() {
           // a previous test's remote still holds the port.
           struct pollfd accept_pfd = {.fd = local_socket_recieve[z],
                                       .events = POLLIN};
-          int poll_res = poll(&accept_pfd, 1, 60000); // Increase timeout for Crete
+          int poll_res =
+              poll(&accept_pfd, 1, 60000); // Increase timeout for Crete
           if (poll_res <= 0) {
             ARTS_INFO("Accept timed out waiting for remote connection "
                       "(port index %d, poll=%d, errno=%d: %s)",

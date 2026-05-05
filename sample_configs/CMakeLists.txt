@@ -48,6 +48,7 @@ endfunction()
 copy_config_to_target(arts.cfg examples/cpu arts.cfg)
 copy_config_to_target(arts.cfg tests arts.cfg)
 copy_config_to_target(arts_multinode.cfg tests arts_multinode.cfg)
+copy_config_to_target(arts_4node.cfg tests arts_4node.cfg)
 copy_config_to_target(arts_gpu.cfg tests arts_gpu.cfg)
 
 # Install configuration file

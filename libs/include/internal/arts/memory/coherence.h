@@ -71,15 +71,77 @@ struct arts_db_buffer_s {
  * actually set.
  */
 /* edt_guid + slot together identify the parked EDT's dep slot to
- * fill on trigger.  Both fields are passed via the marked-list
- * payload because the protocol's "trigger an EDT" semantics require
- * both — slot index decides which depv entry to populate with the
- * acquired buffer pointer. */
+ * fill on trigger.  Both fields are passed via the queue payload
+ * because the protocol's "trigger an EDT" semantics require both —
+ * slot index decides which depv entry to populate with the acquired
+ * buffer pointer.
+ *
+ * RW path uses Vyukov MPSC: the embedded `next` pointer is owned by
+ * the queue (init/push/pop manage it).  Producers are foreign-rank
+ * acquire_remote_rw paths; the single consumer is the home-side
+ * dispatcher (drain_pending_rw_after_grant / fail_trigger_pending /
+ * destroy fan-out).  See arts/memory/coherence_pending_rw.h. */
+#ifdef __cplusplus
 struct arts_db_rw_waiter_s {
-  arts_marked_list_node_t link; /* FIRST — required by marked-list */
+  struct arts_db_rw_waiter_s *next;
   arts_guid_t edt_guid;
   unsigned int slot;
 };
+#else
+#include <stdatomic.h>
+struct arts_db_rw_waiter_s {
+  _Atomic(struct arts_db_rw_waiter_s *) next;
+  arts_guid_t edt_guid;
+  unsigned int slot;
+};
+#endif
+
+/* Per-cache RW waiter queue (Vyukov MPSC).  Embedded in struct
+ * arts_db_cache_s.  The stub waiter never carries a payload — it is
+ * the permanent sentinel required by the algorithm. */
+#ifdef __cplusplus
+struct arts_pending_rw_queue_s {
+  struct arts_db_rw_waiter_s *head;
+  struct arts_db_rw_waiter_s *tail;
+  struct arts_db_rw_waiter_s stub;
+};
+#else
+struct arts_pending_rw_queue_s {
+  _Atomic(struct arts_db_rw_waiter_s *) head;
+  _Atomic(struct arts_db_rw_waiter_s *) tail;
+  struct arts_db_rw_waiter_s stub;
+};
+#endif
+
+/* Lifecycle helpers. */
+void arts_pending_rw_queue_init(struct arts_pending_rw_queue_s *q);
+/* Push a waiter (multi-producer).  Caller fills edt_guid/slot before
+ * calling.  Waiter must be heap-allocated; queue takes ownership and
+ * frees it during pop or destroy. */
+void arts_pending_rw_queue_push(struct arts_pending_rw_queue_s *q,
+                                struct arts_db_rw_waiter_s *w);
+/* Pop the head waiter (single consumer).  On success, *out_edt and
+ * *out_slot are populated and the function returns true; the popped
+ * node has been freed (or is the embedded stub on first call) before
+ * return.  Returns false on empty.
+ *
+ * Why copy-out instead of returning the waiter pointer: in Vyukov's
+ * algorithm the popped node is freed on the NEXT pop (it becomes the
+ * "old head" we walk past).  Returning a pointer that becomes a
+ * dangling reference one call later is footgun-prone, so we copy
+ * fields here and free immediately. */
+bool arts_pending_rw_queue_pop(struct arts_pending_rw_queue_s *q,
+                               arts_guid_t *out_edt, unsigned int *out_slot);
+/* Drain everything (single consumer); invokes cb(edt_guid, slot, ctx)
+ * on each popped waiter in FIFO order.  cb must NOT block — drain
+ * holds no lock but is intended for short tasks (mark-EDT-ready). */
+void arts_pending_rw_queue_drain(struct arts_pending_rw_queue_s *q,
+                                 void (*cb)(arts_guid_t edt_guid,
+                                            unsigned int slot, void *ctx),
+                                 void *ctx);
+/* Destroy: free every queued waiter.  Stub is embedded in the queue
+ * and not freed. */
+void arts_pending_rw_queue_destroy(struct arts_pending_rw_queue_s *q);
 
 struct arts_db_ro_waiter_s {
   arts_marked_list_node_t link; /* FIRST — required by marked-list */
@@ -115,6 +177,16 @@ struct arts_db_home_s {
   unsigned int rw_holder;
   struct arts_lockfree_mpsc_s *pending_rw;
   struct arts_rank_to_u64_map_s *last_sent_version;
+  /* Active-directory in-flight tracking for INVALIDATE_NOTICE.  Set by
+   * the home-side LOCK_REQ handler (CAS 0->1) when it dispatches an
+   * INVALIDATE to the current rw_holder; cleared by the matching
+   * WRITEBACK (WB_AND_TRANSFER branch) or RELEASE_OWNERSHIP handler
+   * once the ownership transfer round completes.  Ensures EXACTLY ONE
+   * INVALIDATE_NOTICE is in flight to the rw_holder per round, even
+   * under concurrent foreign LOCK_REQs that all observe a non-empty
+   * pending_rw queue.  Per-cache (home metadata) so the gate is local
+   * to the directory entry. */
+  volatile unsigned int invalidate_in_flight;
 };
 
 /*--- Destroy state -------------------------------------------------------
@@ -152,10 +224,14 @@ typedef enum {
  *                       node RW EDTs piggyback on the in-flight one
  *                       and are picked up by GRANT's drain.  Cleared
  *                       by the GRANT handler.
- *   pending_rw          Harris marked-next list of RW waiters parked
- *                       on this rank.
+ *   pending_rw          Vyukov MPSC queue of RW waiters parked on this
+ *                       rank.  Multi-producer (foreign acquires);
+ *                       single consumer (home-side dispatcher).  Pure
+ *                       FIFO LOCK_REQ ordering.
  *   pending_ro          Harris marked-next list of RO waiters parked
- *                       on this rank.
+ *                       on this rank.  RO retains marked-list because
+ *                       its drain is selective (target_version filter)
+ *                       and does not match pure FIFO MPSC semantics.
  *   pending_count       unified live-waiter counter (RW + RO summed).
  *                       Maintained: +1 on every push, -1 on every
  *                       successful mark.  Consulted only by destroy
@@ -210,13 +286,19 @@ struct arts_db_cache_s *arts_coh_alloc_cache_s(arts_guid_t db_guid,
  * fan-out and finalize.  Defined in coherence_destroy.c. */
 void arts_coh_db_destroy(arts_guid_t db_guid);
 
+/* Cache_s destructor: drains the buffer pool and frees home_s.  Called
+ * from arts_db_free when db->coherence_cache is non-NULL (Phase 3.1).
+ * The caller (arts_db_free) frees the cache_s struct itself after this
+ * routine returns.  Defined in coherence_destroy.c. */
+void arts_coh_cache_destructor(struct arts_db_cache_s *cache);
+
 struct arts_db_cache_s {
   volatile unsigned int writer_count;
   /* buffer is read/written via arts_atomic_swap_ptr; declare as
    * `volatile void *` so the helper signature matches. */
   volatile struct arts_db_buffer_s *buffer;
   volatile unsigned int lock_req_in_flight;
-  arts_marked_list_t pending_rw;
+  struct arts_pending_rw_queue_s pending_rw;
   arts_marked_list_t pending_ro;
   volatile unsigned int pending_count;
   volatile unsigned int destroy_state;
@@ -237,6 +319,13 @@ struct arts_db_cache_s {
    * holds a unique seq. */
   volatile uint64_t writeback_seq;
   volatile uint64_t writeback_acked_seq;
+  /* Back-pointer to the wrapping struct arts_db_s (Phase 3.1).  Set by
+   * arts_db_create_internal (and equivalent install paths) right after
+   * cache_s is allocated.  Used by arts_coh_try_finalize_destroy to free
+   * the db_s + cache_s + buffers in one call (arts_db_free), eliminating
+   * the legacy route_table-managed lifecycle.  Stored as void * to avoid
+   * a circular include between coherence.h and runtime_types.h. */
+  void *db_owner;
 };
 
 #ifdef __cplusplus

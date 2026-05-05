@@ -41,15 +41,12 @@ void arts_coh_try_finalize_destroy(struct arts_db_cache_s *cache);
  * route_table entry doesn't exist or the entry has no cache_s
  * (e.g. PIN/CXL DBs). */
 struct arts_db_cache_s *arts_coh_route_table_lookup_cache(arts_guid_t db_guid) {
-  struct arts_db_s *db =
-      (struct arts_db_s *)arts_route_table_lookup_db(db_guid, NULL, false);
-  if (db == NULL) {
+  void *data = arts_route_table_lookup_data(db_guid);
+  if (data == NULL) {
     return NULL;
   }
+  struct arts_db_s *db = (struct arts_db_s *)data;
   if (db->coherence_cache == NULL) {
-    /* Coherence cache absent — drop the route_table ref and signal
-     * caller to use a different path (or lazy install). */
-    arts_route_table_return_db(db_guid, false);
     return NULL;
   }
   return (struct arts_db_cache_s *)db->coherence_cache;
@@ -99,10 +96,6 @@ static void mark_edt_ready_by_guid(arts_guid_t edt_guid, unsigned int slot) {
        * payload (design plan §Buffer). */
       struct arts_db_buffer_s *buf = arts_coherence_acquire_buf(cache);
       depv[slot].ptr = buf ? buf->data : NULL;
-      /* coh_lookup_cache (== arts_coh_route_table_lookup_cache) bumps
-       * the route_table ref.  Drop it; the EDT's release_one_dep
-       * holds the canonical ref via the original acquire_dbs lookup. */
-      arts_route_table_return_db(db_guid, false);
     }
   }
   if (arts_atomic_sub(&edt->depc_needed, 1U) == 0) {
@@ -143,8 +136,7 @@ struct arts_db_cache_s *arts_coh_lazy_install_cache_s(arts_guid_t db_guid,
   stub->header.type = ARTS_DB;
   stub->header.size = sizeof(struct arts_db_s);
   stub->guid = db_guid;
-  stub->db_type = ARTS_DB_DIST;
-  stub->copy_count = 1;
+  stub->db_type = ARTS_DB_RC;
 
   /* db_size==0 ⇒ lazy install: buffer alloc deferred until first wire
    * arrival (install_buffer with the actual db_size).  No home struct
@@ -152,6 +144,8 @@ struct arts_db_cache_s *arts_coh_lazy_install_cache_s(arts_guid_t db_guid,
    * arrives (with the proper rw_holder = creator_rank). */
   stub->coherence_cache = arts_coh_alloc_cache_s(
       db_guid, /*db_size=*/db_size, ARTS_COH_INIT_LAZY, /*creator_rank=*/0);
+  /* Phase 3.1: back-pointer for try_finalize_destroy direct-free. */
+  ((struct arts_db_cache_s *)stub->coherence_cache)->db_owner = stub;
 
   if (arts_route_table_add_item_race(stub, db_guid, arts_global_rank_id,
                                      /*used=*/true)) {
@@ -200,55 +194,34 @@ static case26_result_t acquire_rw_local_fast(struct arts_db_cache_s *cache) {
 static arts_db_acquire_result_t acquire_remote_rw(struct arts_db_cache_s *cache,
                                                   arts_guid_t edt_guid,
                                                   unsigned int slot) {
-  if (arts_atomic_read(&cache->destroy_state) != ARTS_DB_DESTROY_NONE) {
-    return ARTS_DB_ACQUIRE_DESTROYED;
-  }
-  /* Allocate + push waiter. */
+  /* No destroy_state precheck: per spec 4.11, handle_destroy_req NULL-stores
+   * route_item->data BEFORE flipping destroy_state, so route_table_lookup_db
+   * already misses and the caller's OoO defer handles "DB destroyed".  If
+   * we did get here with destroy_state advancing concurrently, the
+   * fail_trigger_pending pop/wake-with-NULL chain will catch our waiter.
+   */
+  /* Allocate + push waiter into MPSC queue. */
   struct arts_db_rw_waiter_s *w =
-      (struct arts_db_rw_waiter_s *)arts_marked_list_alloc(&cache->pending_rw);
+      (struct arts_db_rw_waiter_s *)arts_malloc(sizeof(*w));
   w->edt_guid = edt_guid;
   w->slot = slot;
   /* IMPORTANT: bump pending_count BEFORE push.  Reversing this order
    * opens an underflow window: a DESTROY_REQ that arrives between
-   * push and fetch_add could mark our waiter and fetch_sub before
-   * our increment, sending pending_count to UINT_MAX. */
+   * push and fetch_add could pop our waiter and fetch_sub before our
+   * increment, sending pending_count to UINT_MAX.
+   *
+   * Note: under MPSC there is no per-node "mark" — the consumer simply
+   * pops in FIFO order and decrements pending_count once per popped
+   * waiter (in drain_pending_rw_after_grant / fail_trigger_pending /
+   * destroy fan-out).  The post-push destroy re-check is folded into
+   * the consumer path: if destroy_state advances past NONE while we
+   * are pushing, fail_trigger_pending will pop us and wake the EDT
+   * with NULL ptr; pending_count is decremented there. */
   arts_atomic_add(&cache->pending_count, 1);
-  arts_marked_list_push(&cache->pending_rw, &w->link);
+  arts_pending_rw_queue_push(&cache->pending_rw, w);
 
-  /* Post-push destroy re-check: closes the TOCTOU window between
-   * the entry precheck and our push. */
-  if (arts_atomic_read(&cache->destroy_state) != ARTS_DB_DESTROY_NONE) {
-    if (arts_marked_list_mark(&w->link)) {
-      if (arts_atomic_sub(&cache->pending_count, 1) == 0) {
-        arts_coh_try_finalize_destroy(cache);
-      }
-    }
-    return ARTS_DB_ACQUIRE_DESTROYED;
-  }
-
-  /* Self-check: ownership may already be here (case 6 raced ahead, or
-   * a GRANT was being processed while we were pushing).  Self-claim
-   * to avoid a redundant LOCK_REQ. */
-  if (cache->writer_count > 0) {
-    if (arts_marked_list_mark(&w->link)) {
-      arts_guid_t edt_local = w->edt_guid; /* read BEFORE module recycles w */
-      unsigned int slot_local = w->slot;
-      arts_atomic_add(&cache->writer_count, 1);
-      struct arts_db_buffer_s *buf = arts_coherence_acquire_buf(cache);
-      if (buf != NULL) {
-        mark_edt_ready_by_guid(edt_local, slot_local);
-        arts_coherence_release_buf(cache, buf);
-      }
-      if (arts_atomic_sub(&cache->pending_count, 1) == 0) {
-        arts_coh_try_finalize_destroy(cache);
-      }
-    }
-    /* Whether we won or lost the mark CAS, do not touch w again. */
-    return ARTS_DB_ACQUIRE_PARK;
-  }
-
-  /* Ownership not present; become the LOCK_REQ sender if no one
-   * else is.  Same-node RW EDTs piggyback on the in-flight LOCK_REQ. */
+  /* Kick LOCK_REQ if no one else has — GRANT is what eventually
+   * triggers our drain in FIFO order. */
   if (arts_atomic_cswap(&cache->lock_req_in_flight, 0, 1) == 0) {
     unsigned int home_rank = arts_guid_get_rank(cache->db_guid);
     arts_coh_send_lock_req(home_rank, cache->db_guid);
@@ -261,9 +234,11 @@ static arts_db_acquire_result_t acquire_remote_rw(struct arts_db_cache_s *cache,
 static arts_db_acquire_result_t acquire_remote_ro(struct arts_db_cache_s *cache,
                                                   arts_guid_t edt_guid,
                                                   unsigned int slot) {
-  if (arts_atomic_read(&cache->destroy_state) != ARTS_DB_DESTROY_NONE) {
-    return ARTS_DB_ACQUIRE_DESTROYED;
-  }
+  /* No destroy_state precheck (same rationale as acquire_remote_rw):
+   * route_item NULL-store happens before destroy_state CAS, so caller's
+   * lookup miss + OoO defer is the destroyed-DB path.  We push the waiter
+   * unconditionally; fail_trigger_pending handles any concurrent destroy
+   * by marking the waiter and waking the EDT with NULL ptr. */
   struct arts_db_ro_waiter_s *w =
       (struct arts_db_ro_waiter_s *)arts_marked_list_alloc(&cache->pending_ro);
   w->edt_guid = edt_guid;
@@ -271,15 +246,6 @@ static arts_db_acquire_result_t acquire_remote_ro(struct arts_db_cache_s *cache,
   w->target_version = UINT64_MAX;
   arts_atomic_add(&cache->pending_count, 1);
   arts_marked_list_push(&cache->pending_ro, &w->link);
-
-  if (arts_atomic_read(&cache->destroy_state) != ARTS_DB_DESTROY_NONE) {
-    if (arts_marked_list_mark(&w->link)) {
-      if (arts_atomic_sub(&cache->pending_count, 1) == 0) {
-        arts_coh_try_finalize_destroy(cache);
-      }
-    }
-    return ARTS_DB_ACQUIRE_DESTROYED;
-  }
 
   unsigned int home_rank = arts_guid_get_rank(cache->db_guid);
   arts_coh_send_get_data(home_rank, cache->db_guid, w);
@@ -294,13 +260,31 @@ arts_db_acquire_result_t arts_coh_db_acquire(struct arts_db_cache_s *cache,
                                              arts_db_access_mode_t mode,
                                              void **out_data) {
   /* Caller is responsible for the route_table ref on the underlying
-   * arts_db_s entry — this function does not acquire or release it.
-   * Caller passes the cache_s extracted from db->coherence_cache. */
+   * arts_db_s entry -- this function does not acquire or release it.
+   * Caller passes the cache_s extracted from db->coherence_cache.
+   *
+   * Return contract:
+   *   ARTS_DB_ACQUIRE_OK    -- ownership/visibility established; *out_data
+   *                            is buf->data if a buffer is installed, or
+   *                            NULL when only metadata exists (sentinel
+   *                            db_size==0, or version-0 pre-install on
+   *                            home for cross-rank create).  In the NULL
+   *                            case the caller's body must treat the dep
+   *                            as "no payload"; writer_count was bumped
+   *                            (RW path) and release_rw will balance.
+   *   ARTS_DB_ACQUIRE_PARK  -- waiter pushed to cache.pending_*; the
+   *                            protocol's GRANT/DATA_RESPONSE drain will
+   *                            wake the EDT.
+   *
+   * Per the route_item NULL/AVAILABLE invariant (spec 3.1), "DB does not
+   * exist" means route_item->data == NULL, in which case the caller
+   * (acquire_dbs) defers via the OoO list -- arts_coh_db_acquire is
+   * never called with a non-existent DB.  Therefore there is no
+   * DESTROYED return: a cache_s being passed in implies the DB exists.
+   * cache->buffer == NULL is just "no payload yet", not destruction. */
   if (cache == NULL) {
-    return ARTS_DB_ACQUIRE_DESTROYED;
-  }
-  if (arts_atomic_read(&cache->destroy_state) != ARTS_DB_DESTROY_NONE) {
-    return ARTS_DB_ACQUIRE_DESTROYED;
+    /* Defensive: caller misuse.  Park (caller can recover via OoO). */
+    return ARTS_DB_ACQUIRE_PARK;
   }
 
   bool is_home = (arts_guid_get_rank(cache->db_guid) == arts_global_rank_id);
@@ -308,11 +292,10 @@ arts_db_acquire_result_t arts_coh_db_acquire(struct arts_db_cache_s *cache,
 
   if (mode == DB_MODE_RO) {
     if (is_home || is_owner) {
-      void *data = acquire_local(cache);
-      if (data == NULL) {
-        return ARTS_DB_ACQUIRE_DESTROYED;
-      }
-      *out_data = data;
+      /* acquire_local returns NULL when buffer is not installed (sentinel
+       * or version-0 pre-install).  That is OK -- caller treats NULL as
+       * "no payload".  No DESTROYED claim. */
+      *out_data = acquire_local(cache);
       return ARTS_DB_ACQUIRE_OK;
     }
     /* Case 7: remote-RO. */
@@ -322,14 +305,10 @@ arts_db_acquire_result_t arts_coh_db_acquire(struct arts_db_cache_s *cache,
   /* mode == DB_MODE_RW (or RW-equivalent) */
   if (is_owner) {
     if (acquire_rw_local_fast(cache) == CASE26_OK) {
-      void *data = acquire_local(cache);
-      if (data == NULL) {
-        /* destroy raced past the fast-path CAS.  Undo our writer_count
-         * contribution. */
-        arts_atomic_sub(&cache->writer_count, 1);
-        return ARTS_DB_ACQUIRE_DESTROYED;
-      }
-      *out_data = data;
+      /* writer_count bumped.  acquire_local NULL is fine (sentinel /
+       * version-0); release_rw will decrement the matching bump.  No
+       * undo, no DESTROYED. */
+      *out_data = acquire_local(cache);
       return ARTS_DB_ACQUIRE_OK;
     }
     /* FAIL_FALLBACK: writer_count went to 0 between dispatch and CAS;
@@ -340,27 +319,22 @@ arts_db_acquire_result_t arts_coh_db_acquire(struct arts_db_cache_s *cache,
 
 /* ===== Drain helpers (called from coherence_handlers.c) ============= */
 
-/* Visit context for the RW drain. */
+/* Drain callback context for the RW MPSC pop loop. */
 struct rw_drain_ctx_s {
   struct arts_db_cache_s *cache;
 };
 
-static void rw_drain_visit(arts_marked_list_node_t *node, void *vctx) {
+static void rw_drain_cb(arts_guid_t edt_guid, unsigned int slot, void *vctx) {
   struct rw_drain_ctx_s *ctx = (struct rw_drain_ctx_s *)vctx;
-  struct arts_db_rw_waiter_s *w = (struct arts_db_rw_waiter_s *)node;
-  /* Read payload BEFORE mark — module may recycle w soon after. */
-  arts_guid_t edt_local = w->edt_guid;
-  unsigned int slot_local = w->slot;
-  if (arts_marked_list_mark(node)) {
-    arts_atomic_add(&ctx->cache->writer_count, 1);
-    struct arts_db_buffer_s *buf = arts_coherence_acquire_buf(ctx->cache);
-    if (buf != NULL) {
-      mark_edt_ready_by_guid(edt_local, slot_local);
-      arts_coherence_release_buf(ctx->cache, buf);
-    }
-    if (arts_atomic_sub(&ctx->cache->pending_count, 1) == 0) {
-      arts_coh_try_finalize_destroy(ctx->cache);
-    }
+  /* Each popped waiter claims exactly one writer_count slot (FIFO),
+   * wakes its parked EDT, and decrements pending_count. */
+  arts_atomic_add(&ctx->cache->writer_count, 1);
+  /* Sentinel DBs (db_size==0) have cache->buffer==NULL by design;
+   * mark_edt_ready_by_guid handles that cleanly (depv[slot].ptr=NULL,
+   * still decrements depc_needed). */
+  mark_edt_ready_by_guid(edt_guid, slot);
+  if (arts_atomic_sub(&ctx->cache->pending_count, 1) == 0) {
+    arts_coh_try_finalize_destroy(ctx->cache);
   }
 }
 
@@ -368,7 +342,7 @@ void arts_coh_drain_pending_rw_after_grant(struct arts_db_cache_s *cache,
                                            uint64_t version, bool has_next) {
   (void)version;
   struct rw_drain_ctx_s ctx = {.cache = cache};
-  arts_marked_list_traverse(&cache->pending_rw, rw_drain_visit, &ctx);
+  arts_pending_rw_queue_drain(&cache->pending_rw, rw_drain_cb, &ctx);
 
   /* Withdraw the install-time sentinel iff has_next.  If withdraw
    * brings writer_count to 0, no local waiters were drained — emit
@@ -408,11 +382,9 @@ static void ro_drain_visit(arts_marked_list_node_t *node, void *vctx) {
   arts_guid_t edt_local = w->edt_guid;
   unsigned int slot_local = w->slot;
   if (arts_marked_list_mark(node)) {
-    struct arts_db_buffer_s *buf = arts_coherence_acquire_buf(ctx->cache);
-    if (buf != NULL) {
-      mark_edt_ready_by_guid(edt_local, slot_local);
-      arts_coherence_release_buf(ctx->cache, buf);
-    }
+    /* Always wake the parked EDT — see rw_drain_visit comment for the
+     * sentinel-DB rationale. */
+    mark_edt_ready_by_guid(edt_local, slot_local);
     if (arts_atomic_sub(&ctx->cache->pending_count, 1) == 0) {
       arts_coh_try_finalize_destroy(ctx->cache);
     }
@@ -437,13 +409,15 @@ void arts_coh_trigger_ro_waiter(struct arts_db_cache_s *cache,
   w->target_version = version;
   struct arts_db_buffer_s *buf = arts_coherence_acquire_buf(cache);
   uint64_t buf_v = buf ? buf->version : 0;
-  if (buf_v >= version) {
+  /* Sentinel DBs (db_size==0) carry no buffer; treat the version gate as
+   * satisfied so the waiter still fires (mark_edt_ready_by_guid handles
+   * the NULL buf cleanly). */
+  bool ready = (buf == NULL) || (buf_v >= version);
+  if (ready) {
     arts_guid_t edt_local = w->edt_guid;
     unsigned int slot_local = w->slot;
     if (arts_marked_list_mark(&w->link)) {
-      if (buf != NULL) {
-        mark_edt_ready_by_guid(edt_local, slot_local);
-      }
+      mark_edt_ready_by_guid(edt_local, slot_local);
       if (arts_atomic_sub(&cache->pending_count, 1) == 0) {
         arts_coh_try_finalize_destroy(cache);
       }

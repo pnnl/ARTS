@@ -36,86 +36,109 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include <stdlib.h>
+
+/// @file coherence_ro_acquire_stress.c
+/// @brief B.6 — RO concurrent acquire stress (cache install correctness).
+///
+/// Single DB initialized to a known sentinel value (42).  N RO-acquiring
+/// EDTs are spawned concurrently; each verifies that *data == 42.
+/// Exercises v3 RC cases 1/3/7 (concurrent local RO + RO snapshot install
+/// + cached RO version pull).  If any reader sees a corrupted value the
+/// cache install path itself is wrong — that is a real v3 RC bug.
+///
+/// Adaptations vs. plan description (line 1882 of plan):
+///   - 4-arg arts_db_create (no ARTS_DB_PROP_NONE in HEAD).
+///   - arts_init_main does not exist; arts_rt() invokes main_edt
+///     automatically on rank 0.
+///   - g_clean_shutdown / non-zero exit propagation so ctest sees FAIL on
+///     any reader abort.
+///
+/// Spec section 6 B.6.
 
 #include "arts.h"
 
-unsigned int num_writes = 0;
-arts_guid_t db_guid;
-arts_guid_t *write_guids;
+#include <stdatomic.h>
+#include <stdint.h>
+#include <stdio.h>
 
-void write_test(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                arts_edt_dep_t depv[]) {
+#define N_READERS 100
+#define SENTINEL 42
+
+static atomic_int g_completed = 0;
+static atomic_int g_clean_shutdown = 0;
+
+static void reader_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                       arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
   (void)depc;
-  unsigned int index = paramv[0];
-  unsigned int *array = (unsigned int *)depv[0].ptr;
-  //    if(array)
-  //    {
-  for (unsigned int i = index; i < num_writes; i++) {
-    array[i] = index;
+  const int *data = (const int *)depv[0].ptr;
+  if (data == NULL) {
+    arts_printf("FAIL: reader got NULL ptr\n");
+    arts_abort(1);
   }
-  //    }
-  if (paramc > 1) {
-    arts_printf("-----------------SIGNALLING NEXT %u\n", index);
-    arts_signal_edt_value((arts_guid_t)paramv[1], -1, 0);
-  } else {
-    for (unsigned int i = 0; i < num_writes; i++) {
-      arts_printf("i: %u %u\n", i, array[i]);
-    }
-    arts_shutdown();
+  if (*data != SENTINEL) {
+    fprintf(stderr, "FAIL: reader saw %d (expected %d) — bad cache install\n",
+            *data, SENTINEL);
+    arts_abort(1);
   }
+  atomic_fetch_add(&g_completed, 1);
 }
 
-void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                arts_edt_dep_t depv[]) {
+static void shutdown_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                         arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
   (void)depv;
-  uint64_t args[2];
-  for (uint64_t i = 0; i < num_writes; i++) {
-    if (arts_guid_is_local(write_guids[i])) {
-      args[0] = i;
-
-      if (i < num_writes - 1) {
-        args[1] = write_guids[i + 1];
-        arts_edt_create_with_guid(write_test, write_guids[i], 2, args, 2);
-      } else {
-        arts_edt_create_with_guid(write_test, write_guids[i], 1, args, 2);
-      }
-      arts_signal_edt(write_guids[i], 0, db_guid, DB_MODE_EW);
-    }
+  int got = atomic_load(&g_completed);
+  if (got != N_READERS) {
+    fprintf(stderr, "FAIL: only %d of %d readers completed\n", got, N_READERS);
+    arts_abort(1);
   }
+  atomic_store(&g_clean_shutdown, 1);
+  arts_printf("PASS: %d concurrent RO readers all observed sentinel %d\n", got,
+              SENTINEL);
+  arts_shutdown();
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
               arts_edt_dep_t depv[]) {
   (void)paramc;
+  (void)paramv;
   (void)depc;
   (void)depv;
-  char **argv = (char **)paramv[1];
-  db_guid = arts_guid_reserve(ARTS_DB, 0);
 
-  num_writes = strtol(argv[1], NULL, 10);
-  write_guids = (arts_guid_t *)malloc(sizeof(arts_guid_t) * num_writes);
-  for (unsigned int i = 0; i < num_writes; i++) {
-    write_guids[i] = arts_guid_reserve(ARTS_EDT, i % arts_get_total_nodes());
+  arts_printf("=== coherence_ro_acquire_stress (N=%d, sentinel=%d) ===\n",
+              N_READERS, SENTINEL);
+
+  int *data;
+  arts_guid_t db =
+      arts_db_create((void **)&data, sizeof(int), ARTS_DB_RC, NULL);
+  *data = SENTINEL;
+
+  /* Outer epoch ensures shutdown_edt runs only after every reader has
+   * finished — a peer-disconnect SHUTDOWN_MSG would otherwise let the
+   * runtime exit while readers are still in flight.  The finish-EDT
+   * must have depc >= 1 so the epoch's slot-0 satisfy actually gates
+   * it; depc=0 would let it fire before any reader. */
+  arts_guid_t shut = arts_edt_create(shutdown_edt, 0, NULL, 1, NULL);
+  arts_guid_t epoch = arts_initialize_and_start_epoch(shut, 0);
+
+  for (int i = 0; i < N_READERS; i++) {
+    arts_guid_t r =
+        arts_edt_create_with_epoch(reader_edt, 0, NULL, 1, epoch, NULL);
+    arts_add_dependence(db, r, 0, DB_MODE_RO);
   }
-
-  unsigned int *ptr = (unsigned int *)arts_db_create_with_guid(
-      db_guid, sizeof(unsigned int) * num_writes, ARTS_DB_DEFAULT, NULL, NULL);
-  for (unsigned int i = 0; i < num_writes; i++) {
-    ptr[i] = 0;
-  }
-
-  for (unsigned int n = 0; n < arts_get_total_nodes(); n++) {
-    arts_edt_create(node_setup, 0, NULL, 0, &(arts_hint_t){.route = n});
-  }
-
-  arts_signal_edt_value(write_guids[0], -1, 0);
 }
 
 int main(int argc, char **argv) {
   arts_rt(argc, argv);
+  if (arts_get_current_node() == 0 && !atomic_load(&g_clean_shutdown)) {
+    fprintf(stderr,
+            "FAIL: shutdown_edt did not fire — reader abort or premature "
+            "shutdown\n");
+    return 1;
+  }
   return 0;
 }

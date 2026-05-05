@@ -66,9 +66,9 @@ extern "C" {
 
 /** Common header prepended to every runtime object (EDT, DB, event). */
 struct arts_header_s {
-  uint8_t type : 8; /**< Type tag (@ref arts_type_t). */
-  uint64_t size
-      : 56; /**< Total allocation size in bytes (includes struct metadata). */
+  uint8_t type : 8;   /**< Type tag (@ref arts_type_t). */
+  uint64_t size : 56; /**< Total allocation size in bytes (includes struct
+                         metadata). */
 } ARTS_ALIGNED_MAX;
 
 /** Internal DataBlock descriptor. */
@@ -83,6 +83,11 @@ struct arts_db_s {
   unsigned int time_stamp;          /**< Creation timestamp (relative). */
   arts_db_types_t db_type; /**< Storage subtype (DEFAULT/LOCAL/GPU/LC). */
   void *db_list;           /**< Node in the per-node DB tracking list. */
+  /* v3 RC coherence per-DB state.  NULL when the DB has no DB-level
+   * coherence (PIN/CXL) or before lazy install; otherwise points to a
+   * struct arts_db_cache_s.  Phase 2.2 added this field so the
+   * coherence_*.c sources compile under ARTS_COHERENCE_INTEGRATED. */
+  void *coherence_cache;
 } ARTS_ALIGNED_MAX;
 
 /** Internal EDT descriptor. */
@@ -167,9 +172,9 @@ typedef enum {
  * all work within the epoch has completed.
  */
 typedef struct {
-  volatile unsigned int local_lock; /**< Single-node active/finished lock. */
-  volatile unsigned int phase;               /**< Current TD phase (PHASE_*). */
-  volatile unsigned int active_count;        /**< Local active task count. */
+  volatile unsigned int local_lock;   /**< Single-node active/finished lock. */
+  volatile unsigned int phase;        /**< Current TD phase (PHASE_*). */
+  volatile unsigned int active_count; /**< Local active task count. */
   volatile unsigned int finished_count;      /**< Local finished task count. */
   volatile unsigned int global_active_count; /**< Cluster-wide active count. */
   volatile unsigned int

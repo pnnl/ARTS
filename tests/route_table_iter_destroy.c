@@ -82,11 +82,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
   print_rt("After DB Lookup");
 
-  for (uint64_t i = 0; i < MYSIZE; i++) {
-    internal_route_table_return_db(arts_node_info.route_table[0],
-                                   arts_guid_from_index(range_start, i), false,
-                                   false);
-  }
+  /* internal_route_table_return_db removed (no ref count) -- Phase 3
+   * will reintroduce a proper lifecycle mechanism. */
   print_rt("After DB Return with Mark");
 
   arts_clean_up_route_table(arts_node_info.route_table[0]);

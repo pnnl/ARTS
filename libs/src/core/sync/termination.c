@@ -192,8 +192,7 @@ void increment_finished_epoch(arts_guid_t epoch_guid) {
         unsigned int new_finished = arts_atomic_add(&epoch->finished_count, 1);
         ARTS_DEBUG("increment_finished_epoch[Guid:%lu]: finished_count=%u, "
                    "active_count=%u, phase=%u",
-                   epoch_guid, new_finished, epoch->active_count,
-                   epoch->phase);
+                   epoch_guid, new_finished, epoch->active_count, epoch->phase);
         unsigned int rank = arts_guid_get_rank(epoch_guid);
         if (rank == arts_global_rank_id) {
           if (!arts_atomic_sub_u64(&epoch->queued, 1)) {
@@ -495,6 +494,20 @@ arts_epoch_pool_t *create_epoch_pool(arts_guid_t *epoch_pool_guid,
   return epoch_pool;
 }
 
+/* Phase 2.2 helper: atomically NULL the route_table data slot for `key`.
+ * Required because Task 2.1 dropped arts_route_table_remove_item but
+ * arts_wait_on_handle still polls `!arts_route_table_lookup_item(key)` to
+ * detect epoch completion.  Without the NULL store the lookup keeps
+ * returning the (freed) ptr and the wait loop spins forever. */
+static void epoch_route_table_null_data(arts_guid_t key) {
+  arts_route_item_t *item = NULL;
+  arts_route_table_reserve_or_lookup(key, &item);
+  if (item == NULL) {
+    return;
+  }
+  (void)atomic_exchange_explicit(&item->data, NULL, memory_order_acq_rel);
+}
+
 void delete_epoch(arts_guid_t epoch_guid, arts_epoch_t *epoch) {
   // Can't call delete unless we already hit two barriers thus it must exit
   if (!epoch) {
@@ -504,10 +517,12 @@ void delete_epoch(arts_guid_t epoch_guid, arts_epoch_t *epoch) {
   if (epoch->pool_guid) {
     arts_epoch_pool_t *pool =
         (arts_epoch_pool_t *)arts_route_table_lookup_item(epoch->pool_guid);
+    /* Drop the route_table slot for this individual epoch instance so
+     * arts_wait_on_handle's lookup-poll exits. */
+    epoch_route_table_null_data(epoch_guid);
     if (arts_guid_is_local(epoch->pool_guid)) {
-      arts_route_table_remove_item(epoch_guid);
       if (!arts_atomic_sub(&pool->outstanding, 1)) {
-        arts_route_table_remove_item(epoch->pool_guid);
+        epoch_route_table_null_data(epoch->pool_guid);
         //                arts_free(pool);  //Free in the next get_pool_epoch
         for (unsigned int i = 0; i < arts_global_rank_count; i++) {
           if (i != arts_global_rank_id) {
@@ -517,13 +532,13 @@ void delete_epoch(arts_guid_t epoch_guid, arts_epoch_t *epoch) {
       }
     } else {
       for (unsigned int i = 0; i < pool->size; i++) {
-        arts_route_table_remove_item(pool->pool[i].guid);
+        epoch_route_table_null_data(pool->pool[i].guid);
       }
-      arts_route_table_remove_item(epoch->pool_guid);
+      epoch_route_table_null_data(epoch->pool_guid);
       arts_free(pool);
     }
   } else {
-    arts_route_table_remove_item(epoch_guid);
+    epoch_route_table_null_data(epoch_guid);
     arts_free(epoch);
 
     if (arts_guid_is_local(epoch_guid)) {

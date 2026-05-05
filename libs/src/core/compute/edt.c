@@ -447,7 +447,7 @@ void arts_edt_delete(struct arts_edt_s *edt) {
   ARTS_INFO("EDT delete [Guid:%lu, Id:%lu, Depc:%u, DepcNeeded:%u] on rank %u",
             edt->current_edt, edt->arts_id, edt->depc, edt->depc_needed,
             arts_global_rank_id);
-  arts_route_table_remove_item(edt->current_edt);
+  /* route_table slot now persists; Phase 3 will redesign EDT lifecycle. */
   arts_edt_free(edt);
 }
 
@@ -462,7 +462,7 @@ void arts_edt_destroy(arts_guid_t guid) {
   ARTS_INFO("EDT destroy [Guid:%lu, Id:%lu, Depc:%u, DepcNeeded:%u] on rank %u",
             edt->current_edt, edt->arts_id, edt->depc, edt->depc_needed,
             arts_global_rank_id);
-  arts_route_table_remove_item(guid);
+  /* route_table slot now persists; Phase 3 will redesign EDT lifecycle. */
   arts_edt_free(edt);
 }
 
@@ -645,7 +645,7 @@ void internal_signal_edt_with_mode(arts_guid_t edt_packet, uint32_t slot,
         if (slot < edt->depc) {
 #ifdef ARTS_USE_CXL
           void *ptr;
-          // if (mode == ARTS_DB_CXL) {
+          // if (mode == ARTS_DB_CXL_LC) {
           if (arts_guid_is_cxl(data_guid)) {
             ptr = ((struct arts_db_s *)arts_cxl_get_ptr(data_guid)) + 1;
             edt_dep[slot].guid = data_guid;
@@ -784,7 +784,8 @@ void *arts_set_buffer(arts_guid_t buffer_guid, void *buffer,
       }
 
       if (!arts_atomic_sub(&stub->uses, 1)) {
-        arts_route_table_remove_item(buffer_guid);
+        /* route_table slot now persists; Phase 3 will redesign buffer
+         * lifecycle. */
         arts_free(stub);
       }
 
@@ -812,7 +813,8 @@ void *arts_get_buffer(arts_guid_t buffer_guid) {
     }
     buffer = stub->buffer;
     if (!arts_atomic_sub(&stub->uses, 1)) {
-      arts_route_table_remove_item(buffer_guid);
+      /* route_table slot now persists; Phase 3 will redesign buffer
+       * lifecycle. */
       arts_free(stub);
     }
   }
@@ -833,7 +835,8 @@ void *arts_block_for_buffer(arts_guid_t buffer_guid) {
     }
     buffer = stub->buffer;
     if (!arts_atomic_sub(&stub->uses, 1)) {
-      arts_route_table_remove_item(buffer_guid);
+      /* route_table slot now persists; Phase 3 will redesign buffer
+       * lifecycle. */
       arts_free(stub);
     }
   }
@@ -859,11 +862,9 @@ void arts_gpu_signal_edt_memset(arts_guid_t edt_guid, uint32_t slot,
   arts_db_access_mode_t mode = DB_MODE_MEMSET;
   struct arts_db_s *db =
       (struct arts_db_s *)arts_route_table_lookup_db(data_guid, NULL, false);
-  if (db && db->db_type == ARTS_DB_LC) {
+  if (db && db->db_type == ARTS_DB_GPU_LC) {
     mode = DB_MODE_LC_NO_COPY;
   }
-  if (db) {
-    arts_route_table_return_db(data_guid, false);
-  }
+  /* No ref count: lookup no longer takes a ref to balance. */
   internal_signal_edt(edt_guid, slot, data_guid, mode, NULL, 0);
 }

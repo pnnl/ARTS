@@ -39,13 +39,14 @@
 
 #include "arts/gas/route_table.h"
 
+#include <stdatomic.h>
 #include <stddef.h>
 #include <stdlib.h>
 
 #include "arts.h"
 #include "arts/gas/guid.h"
 #include "arts/gas/out_of_order.h"
-#include "arts/memory/cdag_lock.h"
+#include "arts/gas/out_of_order_list.h"
 #include "arts/memory/db.h"
 #include "arts/runtime_state.h"
 #include "arts/sync/event.h"
@@ -70,204 +71,6 @@ static inline void arts_guid_lock_release(volatile unsigned int *lock) {
 
 static inline bool arts_guid_lock_is_free(volatile unsigned int *lock) {
   return __atomic_load_n(lock, __ATOMIC_RELAXED) == 0U;
-}
-
-void set_item(arts_route_item_t *item, void *data) { item->data = data; }
-
-void free_item(arts_route_item_t *item) {
-  arts_type_t type = arts_guid_get_type(item->key);
-  if (type == ARTS_DB) {
-    struct arts_db_s *db = (struct arts_db_s *)item->data;
-    if (db && !arts_atomic_sub(&db->copy_count, 1)) {
-      arts_db_free(db);
-    }
-  }
-  /* Non-DB types (EDT, EVENT, EPOCH, BUFFER) have data freed by their
-   * respective subsystems — do NOT call arts_free here. */
-  arts_out_of_order_list_delete(&item->ooList);
-  item->data = NULL;
-  item->key = 0;
-  __atomic_store_n(&item->lock, 0, __ATOMIC_RELEASE);
-  item->touched = 0;
-}
-
-bool mark_reserve(arts_route_item_t *item, bool mark_use) {
-  if (mark_use) {
-    uint64_t mask = RESERVED_ITEM + 1;
-    return !arts_atomic_cswap_u64(&item->lock, 0, mask);
-  }
-  return !arts_atomic_fetch_or_u64(&item->lock, RESERVED_ITEM);
-}
-
-bool mark_requested(arts_route_item_t *item) {
-  uint64_t local;
-  uint64_t temp;
-  while (1) {
-    local = item->lock;
-    if ((local & RESERVED_ITEM) || (local & DELETE_ITEM)) {
-      return false;
-    }
-    temp = local | RESERVED_ITEM;
-    if (local == arts_atomic_cswap_u64(&item->lock, local, temp)) {
-      return true;
-    }
-  }
-}
-
-bool mark_write(arts_route_item_t *item) {
-  uint64_t local;
-  uint64_t temp;
-  while (1) {
-    local = item->lock;
-    if (local & RESERVED_ITEM) {
-      temp = (local & ~RESERVED_ITEM) | AVAILABLE_ITEM;
-      if (local == arts_atomic_cswap_u64(&item->lock, local, temp)) {
-        return true;
-      }
-    } else {
-      return false;
-    }
-  }
-}
-
-bool mark_delete(arts_route_item_t *item) {
-  uint64_t res = arts_atomic_fetch_or_u64(&item->lock, DELETE_ITEM);
-  return (res & DELETE_ITEM) != 0;
-}
-
-bool try_mark_delete(arts_route_item_t *item, uint64_t count_val) {
-  uint64_t comp_val = AVAILABLE_ITEM + count_val;
-  uint64_t new_val = (AVAILABLE_ITEM | DELETE_ITEM);
-  uint64_t old_val = arts_atomic_cswap_u64(&item->lock, comp_val, new_val);
-  return (comp_val == old_val);
-}
-
-void print_state(arts_route_item_t *item) {
-  if (item) {
-    uint64_t local = item->lock;
-    if (IS_REQ(local)) {
-      ARTS_INFO("%lu: reserved-available %p %s", item->key, local,
-                GET_TYPE_NAME(arts_guid_get_type(item->key)));
-    } else if (IS_RES(local)) {
-      ARTS_INFO("%lu: reserved %p %s", item->key, local,
-                GET_TYPE_NAME(arts_guid_get_type(item->key)));
-    } else if (IS_AVAIL(local)) {
-      ARTS_INFO("%lu: available %p %s", item->key, local,
-                GET_TYPE_NAME(arts_guid_get_type(item->key)));
-    } else if (IS_DEL(local)) {
-      ARTS_INFO("%lu: deleted %p %s", item->key, local,
-                GET_TYPE_NAME(arts_guid_get_type(item->key)));
-    }
-  } else {
-    ARTS_INFO("NULL ITEM");
-  }
-}
-
-// 11000 & 11100 = 11000, 10000 & 11100 = 10000, 11100 & 11100 = 11100
-bool check_item_state(arts_route_item_t *item, item_state_t state) {
-  if (item) {
-    uint64_t local = item->lock;
-    switch (state) {
-    case RESERVED_KEY:
-      return IS_RES(local);
-
-    case REQUESTED_KEY:
-      return IS_REQ(local);
-
-    case AVAILABLE_KEY:
-      return IS_AVAIL(local);
-
-    case ALLOCATED_KEY:
-      return IS_RES(local) || IS_AVAIL(local) || IS_REQ(local);
-
-    case DELETED_KEY:
-      return IS_DEL(local);
-
-    case ANY_KEY:
-      return local != 0;
-
-    default:
-      return false;
-    }
-  }
-  return false;
-}
-
-inline bool check_min_item_state(arts_route_item_t *item, item_state_t state) {
-  if (item) {
-    uint64_t local = item->lock;
-    item_state_t actual_state = NO_KEY;
-
-    if (IS_DEL(local)) {
-      actual_state = DELETED_KEY;
-
-    } else if (IS_RES(local)) {
-      actual_state = RESERVED_KEY;
-
-    } else if (IS_REQ(local)) {
-      actual_state = REQUESTED_KEY;
-
-    } else if (IS_AVAIL(local)) {
-      actual_state = AVAILABLE_KEY;
-    }
-
-    return (actual_state && actual_state >= state);
-  }
-  return false;
-}
-
-item_state_t get_item_state(arts_route_item_t *item) {
-  if (item) {
-    uint64_t local = item->lock;
-
-    if (IS_RES(local)) {
-      return RESERVED_KEY;
-    }
-    if (IS_AVAIL(local)) {
-      return AVAILABLE_KEY;
-    }
-
-    if (IS_REQ(local)) {
-      return REQUESTED_KEY;
-    }
-
-    if (IS_DEL(local)) {
-      return DELETED_KEY;
-    }
-  }
-  return NO_KEY;
-}
-
-bool inc_item(arts_route_item_t *item, unsigned int count, arts_guid_t key,
-              arts_route_table_t *route_table) {
-  while (1) {
-    uint64_t local = item->lock;
-    if (!(local & DELETE_ITEM) && CHECK_MAX_ITEM(local) && item->key == key) {
-      if (local == arts_atomic_cswap_u64(&item->lock, local, local + count)) {
-        if (item->key != key) // This is for an ABA problem
-        {
-          ARTS_DEBUG("The key changed on us from %lu -> %lu", key, item->key);
-          dec_item(route_table, item);
-          return false;
-        }
-        return true;
-      }
-    } else {
-      break;
-    }
-  }
-  return false;
-}
-
-bool dec_item(arts_route_table_t *route_table, arts_route_item_t *item) {
-  uint64_t local = arts_atomic_sub_u64(&item->lock, 1);
-  if (GET_COUNT(local) == 0) {
-    if (SHOULD_DELETE(local)) {
-      route_table->freeFunc(item);
-      return true;
-    }
-  }
-  return false;
 }
 
 uint64_t urand64() {
@@ -356,25 +159,34 @@ arts_route_table_t *arts_new_route_table(unsigned int route_table_size,
       16);
   route_table->size = route_table_size;
   route_table->shift = shift;
-  route_table->setFunc = set_item;
-  route_table->freeFunc = free_item;
   route_table->newFunc = arts_new_route_table;
+  /* Vyukov MPSC OO list cannot be zero-initialized (head/tail must point
+   * at the embedded stub).  Initialize every slot up front; slot reuse
+   * across the table's lifetime is fine because the list is fully drained
+   * by destroy/cleanup paths before any new push could land. */
+  uint64_t total_slots = (uint64_t)COLLISION_RESOLVES * route_table_size;
+  for (uint64_t i = 0; i < total_slots; i++) {
+    arts_oo_list_init(&route_table->data[i].ooList);
+  }
   return route_table;
 }
 
+/* Slot is empty when key == 0 (ARTS GUIDs never have key value 0).  This is
+ * the new model: no lock bitfield, no reserved/available state -- only "key
+ * claimed or not".  Once claimed, slot is permanent for that key. */
 arts_route_item_t *
 arts_route_table_search_for_key(arts_route_table_t *route_table,
-                                arts_guid_t key, item_state_t state) {
+                                arts_guid_t key) {
   arts_route_table_t *current = route_table;
   arts_route_table_t *next;
   uint64_t key_val;
   while (current) {
     key_val = get_route_table_key((uint64_t)key, current->shift);
     for (int i = 0; i < COLLISION_RESOLVES; i++) {
-      if (check_item_state(&current->data[key_val], state)) {
-        if (current->data[key_val].key == key) {
-          return &current->data[key_val];
-        }
+      arts_guid_t slot_key =
+          __atomic_load_n(&current->data[key_val].key, __ATOMIC_ACQUIRE);
+      if (slot_key == key) {
+        return &current->data[key_val];
       }
       key_val++;
     }
@@ -386,20 +198,25 @@ arts_route_table_search_for_key(arts_route_table_t *route_table,
   return NULL;
 }
 
+/* Linearly scan for an empty slot (key == 0) and atomically claim it for
+ * `key` via CAS.  Caller (reserve_or_lookup) holds the per-GUID guid_lock,
+ * but other threads may be claiming neighboring slots concurrently for
+ * different GUIDs that hash into the same chunk -- hence the CAS. */
 arts_route_item_t *
 arts_route_table_search_for_empty(arts_route_table_t *route_table,
                                   arts_guid_t key, bool mark_used) {
+  (void)mark_used; /* legacy: caller used to request "available + 1 ref" */
   arts_route_table_t *current = route_table;
   arts_route_table_t *next;
   uint64_t key_val;
   while (current != NULL) {
     key_val = get_route_table_key((uint64_t)key, current->shift);
     for (int i = 0; i < COLLISION_RESOLVES; i++) {
-      if (!current->data[key_val].lock) {
-        if (mark_reserve(&current->data[key_val], mark_used)) {
-          current->data[key_val].key = key;
-          return &current->data[key_val];
-        }
+      arts_guid_t expected = (arts_guid_t)0;
+      if (__atomic_compare_exchange_n(&current->data[key_val].key, &expected,
+                                      key, false, __ATOMIC_ACQ_REL,
+                                      __ATOMIC_ACQUIRE)) {
+        return &current->data[key_val];
       }
       key_val++;
     }
@@ -425,421 +242,234 @@ arts_route_table_search_for_empty(arts_route_table_t *route_table,
              (void *)route_table);
 }
 
-void *internal_route_table_add_item(arts_route_table_t *route_table, void *item,
-                                    arts_guid_t key, unsigned int rank,
-                                    bool used) {
-  arts_route_item_t *location =
-      arts_route_table_search_for_empty(route_table, key, used);
-  route_table->setFunc(location, item);
-  location->rank = rank;
-  mark_write(location);
-  return location;
-}
-
-void *arts_route_table_add_item(void *item, arts_guid_t key, unsigned int rank,
-                                bool used) {
+/* Reserve a slot for `key` (or look it up if already present).  Coordinates
+ * concurrent reservers via the per-GUID guid_lock array so only one thread
+ * actually creates the slot.  On return, *out points to the slot (key set,
+ * data may be NULL). */
+void arts_route_table_reserve_or_lookup(arts_guid_t key,
+                                        arts_route_item_t **out) {
   arts_route_table_t *route_table = arts_get_route_table(key);
-  return internal_route_table_add_item(route_table, item, key, rank, used);
-}
-
-bool internal_route_table_remove_item(arts_route_table_t *route_table,
-                                      arts_guid_t key) {
-  arts_route_item_t *item =
-      arts_route_table_search_for_key(route_table, key, AVAILABLE_KEY);
-  if (item) {
-    mark_delete(item);
-    if (SHOULD_DELETE(item->lock)) {
-      route_table->freeFunc(item);
-    }
-  }
-  return 0;
-}
-
-bool arts_route_table_remove_item(arts_guid_t key) {
-  // arts_route_table_t *route_table = arts_get_route_table(key);
-  // return internal_route_table_remove_item(route_table, key);
-  return arts_route_table_invalidate_item(key);
-}
-
-// This just doesn't delete the item itself... It is for DB rename
-bool arts_route_table_hide_item(arts_guid_t key) {
-  arts_route_table_t *route_table = arts_get_route_table(key);
-  arts_route_item_t *item =
-      arts_route_table_search_for_key(route_table, key, AVAILABLE_KEY);
-  if (item) {
-    item->data = NULL;
-  }
-  return 0;
-}
-
-// This locks the guid so it is useful when multiple people have the guid ahead
-// of time The guid doesn't need to be locked if no one knows about it
-arts_route_item_t *internal_route_table_add_item_race(
-    bool *added_item, arts_route_table_t *route_table, void *item,
-    arts_guid_t key, unsigned int rank, bool used_res, bool used_avail,
-    unsigned int to_add_on_creation) {
   unsigned int pos = arts_guid_lock_index(key);
-  *added_item = false;
-  arts_route_item_t *found = NULL;
-  while (!found) {
+  arts_route_item_t *item = NULL;
+  while (item == NULL) {
     if (arts_guid_lock_is_free(&guid_lock[pos])) {
       if (!arts_atomic_cswap(&guid_lock[pos], 0U, 1U)) {
-        found =
-            arts_route_table_search_for_key(route_table, key, ALLOCATED_KEY);
-        if (found) {
-          if (check_item_state(found, RESERVED_KEY)) {
-            route_table->setFunc(found, item);
-            found->rank = rank;
-            mark_write(found);
-            if (used_res) {
-              inc_item(found, 1, found->key, route_table);
-            }
-            *added_item = true;
-          } else if (used_avail && check_item_state(found, AVAILABLE_KEY)) {
-            inc_item(found, 1, found->key, route_table);
-          }
-        } else {
-          found = (arts_route_item_t *)internal_route_table_add_item(
-              route_table, item, key, rank, used_res);
-          if (to_add_on_creation) {
-            inc_item(found, to_add_on_creation, found->key, route_table);
-          }
-          *added_item = true;
+        /* search by key first */
+        item = arts_route_table_search_for_key(route_table, key);
+        if (item == NULL) {
+          /* allocate empty slot (search_for_empty installs key via CAS) */
+          item = arts_route_table_search_for_empty(route_table, key,
+                                                   /*mark_used*/ false);
+          /* data is already NULL from calloc; ooList head is also NULL. */
         }
         arts_guid_lock_release(&guid_lock[pos]);
       }
     } else {
-      found = arts_route_table_search_for_key(route_table, key, AVAILABLE_KEY);
-      if (found && used_avail) {
-        inc_item(found, 1, found->key, route_table);
-      }
+      /* spin briefly; lock holder will release soon and may have published */
+      item = arts_route_table_search_for_key(route_table, key);
     }
   }
-  //    ARTS_INFO("found: %lu %p", key, found);
-  return found;
+  *out = item;
+}
+
+void *arts_route_table_lookup_data(arts_guid_t key) {
+  arts_route_table_t *route_table = arts_get_route_table(key);
+  arts_route_item_t *item = arts_route_table_search_for_key(route_table, key);
+  if (item == NULL) {
+    return NULL;
+  }
+  return atomic_load_explicit(&item->data, memory_order_acquire);
+}
+
+void *arts_route_table_lookup_item(arts_guid_t key) {
+  return arts_route_table_lookup_data(key);
+}
+
+void *arts_route_table_lookup_db(arts_guid_t key, int *rank, bool touch) {
+  (void)touch; /* legacy touched field removed */
+  if (rank) {
+    *rank = (int)arts_guid_get_rank(key);
+  }
+  return arts_route_table_lookup_data(key);
+}
+
+int arts_route_table_lookup_rank(arts_guid_t key) {
+  /* rank is now derivable directly from the GUID -- no need to consult the
+   * route table. */
+  return (int)arts_guid_get_rank(key);
+}
+
+int arts_route_table_set_rank(arts_guid_t key, int rank) {
+  /* Rank is fixed by GUID encoding; legacy callers that "moved" entries are
+   * being phased out in Task 1a.3.  No-op. */
+  (void)key;
+  (void)rank;
+  return -1;
+}
+
+/* Install `data` into the slot for `key` and fire any pending OoO entries.
+ * No-op if data is already non-NULL (idempotent). */
+void *arts_route_table_add_item(void *data, arts_guid_t key, unsigned int rank,
+                                bool used) {
+  (void)rank; /* extractable from key */
+  (void)used; /* ref_count removed */
+  arts_route_item_t *item;
+  arts_route_table_reserve_or_lookup(key, &item);
+  atomic_store_explicit(&item->data, data, memory_order_release);
+  /* Fire pending OoO entries -- installer fires after data store. */
+  arts_route_table_fire_oo(key, arts_out_of_order_handler);
+  return item;
+}
+
+/* CAS-install `data` (NULL -> data); returns true only if this caller won.
+ * On win, fire pending OoO entries. */
+bool arts_route_table_add_item_race(void *data, arts_guid_t key,
+                                    unsigned int rank, bool used) {
+  (void)rank;
+  (void)used;
+  arts_route_item_t *item;
+  arts_route_table_reserve_or_lookup(key, &item);
+  void *expected = NULL;
+  bool installed = atomic_compare_exchange_strong_explicit(
+      &item->data, &expected, data, memory_order_release, memory_order_acquire);
+  if (installed) {
+    arts_route_table_fire_oo(key, arts_out_of_order_handler);
+  }
+  return installed;
+}
+
+/* Legacy wrapper retained for the few internal call sites that pre-date the
+ * `add_item_race` simplification.  used_res / used_avail / to_add_on_creation
+ * referred to ref_count behavior that no longer exists. */
+arts_route_item_t *internal_route_table_add_item_race(
+    bool *added_item, arts_route_table_t *route_table, void *data,
+    arts_guid_t key, unsigned int rank, bool used_res, bool used_avail,
+    unsigned int to_add_on_creation) {
+  (void)route_table;
+  (void)rank;
+  (void)used_res;
+  (void)used_avail;
+  (void)to_add_on_creation;
+  arts_route_item_t *item;
+  arts_route_table_reserve_or_lookup(key, &item);
+  void *expected = NULL;
+  bool installed = atomic_compare_exchange_strong_explicit(
+      &item->data, &expected, data, memory_order_release, memory_order_acquire);
+  if (added_item) {
+    *added_item = installed;
+  }
+  if (installed) {
+    arts_route_table_fire_oo(key, arts_out_of_order_handler);
+  }
+  return item;
 }
 
 arts_route_item_t *
 internal_route_table_add_deleted_item_race(arts_route_table_t *route_table,
-                                           void *item, arts_guid_t key,
+                                           void *data, arts_guid_t key,
                                            unsigned int rank) {
-  unsigned int pos = arts_guid_lock_index(key);
-  arts_route_item_t *found = NULL;
-  while (!found) {
-    if (arts_guid_lock_is_free(&guid_lock[pos])) {
-      if (!arts_atomic_cswap(&guid_lock[pos], 0U, 1U)) {
-        found = arts_route_table_search_for_empty(route_table, key, false);
-        route_table->setFunc(found, item);
-        found->rank = rank;
-        mark_delete(found);
-        mark_write(found);
-        arts_guid_lock_release(&guid_lock[pos]);
-      }
-    }
-  }
-  return found;
+  /* Legacy path used to mark a slot DELETED on creation so subsequent
+   * lookups would skip it.  In the new model there is no DELETE bit -- the
+   * caller must consult the cache_s/v3 RC state machine instead.  Provide
+   * a permissive install so existing callers still link. */
+  (void)route_table;
+  (void)rank;
+  arts_route_item_t *item;
+  arts_route_table_reserve_or_lookup(key, &item);
+  atomic_store_explicit(&item->data, data, memory_order_release);
+  return item;
 }
 
-/*
- * arts_route_table_add_item_race — Insert or find an item under a global lock.
+/* OoO-integrated push.  Returns ENQUEUED if data was NULL (push deferred)
+ * or AVAILABLE_NOW if data is/became non-NULL during the push. */
+oo_add_result_t arts_route_table_add_oo_ex(arts_guid_t key, void *payload) {
+  arts_route_item_t *item;
+  arts_route_table_reserve_or_lookup(key, &item);
+
+  /* Step 1: pre-push data check (fast path). */
+  void *cur = atomic_load_explicit(&item->data, memory_order_acquire);
+  if (cur != NULL) {
+    return OO_RESULT_AVAILABLE_NOW;
+  }
+
+  /* Step 2: push to OO list.  MPSC push always succeeds (no
+   * DRAIN_HAPPENED race window). */
+  (void)arts_oo_list_push(&item->ooList, payload);
+
+  /* Step 3: post-push data recheck (TOCTOU rescue).
+   *
+   * Installer's data store + fire_oo may have happened in the window
+   * between our Step-1 lookup and the push.  In that case our entry is
+   * stranded -- the installer's fire already ran and drained whatever was
+   * in the list at that moment, but our payload landed afterwards and
+   * will sit forever unless we trigger another drain.  Calling fire_oo
+   * here drains our entry plus any other late arrivals. */
+  cur = atomic_load_explicit(&item->data, memory_order_acquire);
+  if (cur != NULL) {
+    arts_route_table_fire_oo(key, arts_out_of_order_handler);
+    return OO_RESULT_FIRED_BY_DRAIN;
+  }
+  return OO_RESULT_ENQUEUED;
+}
+
+/* Boolean wrapper for legacy 12 OoO callers in out_of_order.c.
  *
- * If the GUID already has a RESERVED slot, transitions it to AVAILABLE
- * (the item was pre-reserved by arts_guid_reserve).  Otherwise, creates
- * a new entry.
+ * Returns true when the caller should do nothing (the deferred handler
+ * has been or will be invoked elsewhere): ENQUEUED or FIRED_BY_DRAIN.
  *
- * Returns true if this call actually added (or filled) the entry, false if
- * the entry already existed in AVAILABLE state.
- */
-bool arts_route_table_add_item_race(void *item, arts_guid_t key,
-                                    unsigned int rank, bool used) {
-  bool ret;
-  arts_route_table_t *route_table = arts_get_route_table(key);
-  internal_route_table_add_item_race(&ret, route_table, item, key, rank, used,
-                                     false, 0);
-  ARTS_DEBUG("add_item_race: Key=%lu, added=%d", key, ret);
-  return ret;
+ * Returns false only on AVAILABLE_NOW, where the payload was never
+ * pushed and the caller must invoke the handler inline + free the
+ * payload itself (legacy semantics). */
+bool arts_route_table_add_oo(arts_guid_t key, void *payload, bool inc) {
+  (void)inc; /* ref_count removed */
+  return arts_route_table_add_oo_ex(key, payload) != OO_RESULT_AVAILABLE_NOW;
 }
 
-// This is used for the send aggregation
-bool arts_route_table_reserve_item_race(arts_guid_t key,
-                                        arts_route_item_t **item, bool used) {
-  arts_route_table_t *route_table = arts_get_route_table(key);
-  unsigned int pos = arts_guid_lock_index(key);
-  bool ret = false;
-  *item = NULL;
-  while (!(*item)) {
-    if (arts_guid_lock_is_free(&guid_lock[pos])) {
-      if (!arts_atomic_cswap(&guid_lock[pos], 0U, 1U)) {
-        *item =
-            arts_route_table_search_for_key(route_table, key, ALLOCATED_KEY);
-        if (!(*item)) {
-          *item = arts_route_table_search_for_empty(route_table, key, used);
-          ret = true;
-        } else {
-          if (used) {
-            inc_item(*item, 1, (*item)->key, route_table);
-          }
-        }
-        arts_guid_lock_release(&guid_lock[pos]);
-      }
-    } else {
-      arts_route_item_t *temp =
-          arts_route_table_search_for_key(route_table, key, ALLOCATED_KEY);
-      if (temp && used) {
-        inc_item(temp, 1, temp->key, route_table);
-      }
-      *item = temp;
-    }
-  }
-  //    print_state(arts_route_table_search_for_key(route_table, key, ANY_KEY));
-  return ret;
+bool arts_route_table_add_oo_existing(arts_guid_t key, void *payload,
+                                      bool inc) {
+  (void)inc;
+  return arts_route_table_add_oo_ex(key, payload) != OO_RESULT_AVAILABLE_NOW;
 }
 
-// This does the send aggregation
-bool arts_route_table_add_sent(arts_guid_t key, void *edt, unsigned int slot,
-                               bool aggregate) {
-  arts_route_item_t *item = NULL;
-  bool send_req;
-  arts_route_table_t *route_table = arts_get_route_table(key);
-  // I shouldn't be able to get to here if the db hasn't already been created
-  // and I am the owner node thus item can't be null... or so it should be
-  if (arts_guid_get_rank(key) == arts_global_rank_id) {
-    item = arts_route_table_search_for_key(route_table, key, ALLOCATED_KEY);
-    send_req = mark_requested(item);
-  } else {
-    send_req = arts_route_table_reserve_item_race(key, &item, true);
-    if (!send_req && !inc_item(item, 1, item->key, route_table)) {
-      ARTS_INFO("Item marked for deletion before it has arrived %u...",
-                send_req);
-    }
-  }
-  arts_out_of_order_handle_db_request_with_oo_list(
-      &item->ooList, &item->data, (struct arts_edt_s *)edt, slot);
-  return send_req || !aggregate;
-}
-
-void *arts_route_table_lookup_item(arts_guid_t key) {
-  void *ret = NULL;
-  arts_route_table_t *route_table = arts_get_route_table(key);
-  arts_route_item_t *location =
-      arts_route_table_search_for_key(route_table, key, AVAILABLE_KEY);
-  if (location) {
-    ret = location->data;
-  }
-  return ret;
-}
-
-item_state_t arts_route_table_lookup_item_with_state(arts_guid_t key,
-                                                     void ***data,
-                                                     item_state_t min,
-                                                     bool inc) {
-  void *ret = NULL;
-  arts_route_table_t *route_table = arts_get_route_table(key);
-  arts_route_item_t *location =
-      arts_route_table_search_for_key(route_table, key, min);
-  if (location) {
-    if (inc) {
-      if (!inc_item(location, 1, location->key, route_table)) {
-        *data = NULL;
-        return NO_KEY;
-      }
-    }
-    *data = &location->data;
-    return get_item_state(location);
-  }
-  return NO_KEY;
-}
-
-void *internal_route_table_lookup_db(arts_route_table_t *route_table,
-                                     arts_guid_t key, int *rank,
-                                     unsigned int **touched) {
-  *rank = -1;
-  void *ret = NULL;
-  *touched = NULL;
-  arts_route_item_t *location =
-      arts_route_table_search_for_key(route_table, key, AVAILABLE_KEY);
-  if (location) {
-    *rank = (int)location->rank;
-    if (inc_item(location, 1, location->key, route_table)) {
-      ret = location->data;
-      *touched = &location->touched;
-    }
-  }
-  return ret;
-}
-
-unsigned int internal_inc_db_version(volatile unsigned int *touched) {
-  return arts_atomic_add(touched, 1);
-}
-
-void *arts_route_table_lookup_db(arts_guid_t key, int *rank, bool touch) {
-  arts_route_table_t *route_table = arts_get_route_table(key);
-  unsigned int *touched;
-  int local_rank;
-  void *data =
-      internal_route_table_lookup_db(route_table, key, &local_rank, &touched);
-  if (data) {
-    if (touch) {
-      internal_inc_db_version(touched);
-    }
-  }
-  if (rank) {
-    *rank = local_rank;
-  }
-  return data;
-}
-
-bool internal_route_table_return_db(arts_route_table_t *route_table,
-                                    arts_guid_t key, bool mark_to_delete,
-                                    bool do_delete) {
-  arts_route_item_t *location =
-      arts_route_table_search_for_key(route_table, key, AVAILABLE_KEY);
-  if (location) {
-    // Only mark it for deletion if it is the last one
-    // Why make it unusable to other if there is still other
-    // tasks that may benifit
-    // True True
-    if (mark_to_delete && do_delete) {
-      // This should work if there is only one outstanding left... me.  The
-      // dec_item needs to sub 1 to delete
-      try_mark_delete(location, 1);
-      return dec_item(route_table, location);
-    }
-    // True False
-    if (mark_to_delete && !do_delete) {
-      dec_item(route_table, location);
-      try_mark_delete(location, 0);
-      return false;
-    }
-    // False True || False False
-    return dec_item(route_table, location);
-  }
-  return false;
-}
-
-bool arts_route_table_return_db(arts_guid_t key, bool mark_to_delete) {
-  arts_route_table_t *route_table = arts_get_route_table(key);
-  bool is_remote = arts_guid_get_rank(key) != arts_global_rank_id;
-  return internal_route_table_return_db(route_table, key, mark_to_delete,
-                                        is_remote);
-}
-
-int arts_route_table_lookup_rank(arts_guid_t key) {
-  arts_route_table_t *route_table = arts_get_route_table(key);
-  arts_route_item_t *location =
-      arts_route_table_search_for_key(route_table, key, AVAILABLE_KEY);
-  if (location) {
-    return (int)location->rank;
-  }
-  return -1;
-}
-
-int arts_route_table_set_rank(arts_guid_t key, int rank) {
-  int ret = -1;
-  arts_route_table_t *route_table = arts_get_route_table(key);
-  arts_route_item_t *location =
-      arts_route_table_search_for_key(route_table, key, AVAILABLE_KEY);
-  if (location) {
-    ret = (int)location->rank;
-    location->rank = rank;
-  }
-  return ret;
-}
-
-/*
- * arts_route_table_fire_oo — Replay all queued OO operations for a GUID.
- *
- * Called immediately after an item transitions to AVAILABLE state (e.g.,
- * after arts_route_table_add_item_race marks it writable).  Each OO entry
- * is dispatched via callback_t (typically arts_out_of_order_handler).
- */
 void arts_route_table_fire_oo(arts_guid_t key,
-                              void (*callback_t)(void *, void *)) {
+                              void (*callback)(void *data, void *ctx)) {
   arts_route_table_t *route_table = arts_get_route_table(key);
-  arts_route_item_t *item =
-      arts_route_table_search_for_key(route_table, key, AVAILABLE_KEY);
-  if (item != NULL) {
-    ARTS_DEBUG("fire_oo: Key=%lu, ooList=%p, data=%p", key,
-               (void *)&item->ooList, item->data);
-    arts_out_of_order_list_fire_callback(&item->ooList, item->data, callback_t);
+  arts_route_item_t *item = arts_route_table_search_for_key(route_table, key);
+  if (item == NULL) {
+    return;
   }
+  void *data = atomic_load_explicit(&item->data, memory_order_acquire);
+  /* Installer always calls fire after storing data, so data is non-NULL. */
+  arts_oo_list_drain(&item->ooList, callback, data);
 }
 
-bool arts_route_table_add_oo(arts_guid_t key, void *data, bool inc) {
-  arts_route_item_t *item = NULL;
-  if (arts_route_table_reserve_item_race(key, &item, true) ||
-      check_item_state(item, RESERVED_KEY)) {
-    if (inc) {
-      inc_item(item, 1, item->key, arts_get_route_table(key));
-    }
-    bool res = arts_out_of_order_list_add_item(&item->ooList, data);
-    if (res) {
-      INCREMENT_NUM_OO_ENQUEUE_BY(1);
-    }
-    return res;
-  }
-  if (inc) {
-    inc_item(item, 1, item->key, arts_get_route_table(key));
-  }
-  return false;
-}
-
-bool arts_route_table_add_oo_existing(arts_guid_t key, void *data, bool inc) {
+void arts_route_table_drop_oo(arts_guid_t key) {
   arts_route_table_t *route_table = arts_get_route_table(key);
-  arts_route_item_t *item =
-      arts_route_table_search_for_key(route_table, key, AVAILABLE_KEY);
-  if (item) {
-    if (inc) {
-      inc_item(item, 1, item->key, route_table);
-    }
-    bool res = arts_out_of_order_list_add_item(&item->ooList, data);
-    return res;
+  arts_route_item_t *item = arts_route_table_search_for_key(route_table, key);
+  if (item == NULL) {
+    return;
   }
-  return false;
+  /* No destroy callback -- only payload free. */
+  arts_oo_list_drop_all(&item->ooList);
 }
 
-void arts_route_table_reset_oo(arts_guid_t key) {
+bool arts_route_table_mark_delete(arts_guid_t key) {
+  /* In the new model, the cache_s / v3 RC layer is the source of truth for
+   * DB destruction.  Clearing the route table's data ptr lets pending OoO
+   * pushers see a NULL slot.  Slot itself remains permanent. */
   arts_route_table_t *route_table = arts_get_route_table(key);
-  arts_route_item_t *item =
-      arts_route_table_search_for_key(route_table, key, ANY_KEY);
-  arts_out_of_order_list_reset(&item->ooList);
+  arts_route_item_t *item = arts_route_table_search_for_key(route_table, key);
+  if (item == NULL) {
+    return false;
+  }
+  atomic_store_explicit(&item->data, (void *)NULL, memory_order_release);
+  return true;
 }
 
-void **arts_route_table_get_oo_list(arts_guid_t key,
-                                    struct arts_out_of_order_list_s **list) {
-  arts_route_table_t *route_table = arts_get_route_table(key);
-  arts_route_item_t *item =
-      arts_route_table_search_for_key(route_table, key, AVAILABLE_KEY);
-  if (item != NULL) {
-    *list = &item->ooList;
-    return &item->data;
-  }
-  return NULL;
-}
-
-// This is just a wrapper for outside consumption...
-void **arts_route_table_reserve(arts_guid_t key, bool *dec,
-                                item_state_t *state) {
-  bool res;
-  *dec = false;
-  arts_route_item_t *item = NULL;
-  while (1) {
-    res = arts_route_table_reserve_item_race(key, &item, true);
-    if (!res) {
-      // Check to make sure we can use it
-      if (inc_item(item, 1, item->key, arts_get_route_table(key))) {
-        *dec = true;
-        break;
-      }
-      // If we were not keep trying...
-    } else { // we were successful in reserving
-      break;
-    }
-  }
-  if (item) {
-    *state = get_item_state(item);
-  }
-  return &item->data;
+bool arts_route_table_hide_item(arts_guid_t key) {
+  /* Hide is the same operation as mark_delete in the new model: clear the
+   * data ptr without disturbing the slot. */
+  return arts_route_table_mark_delete(key);
 }
 
 arts_route_item_t *get_item_from_data(arts_guid_t key, void *data) {
@@ -851,16 +481,6 @@ arts_route_item_t *get_item_from_data(arts_guid_t key, void *data) {
     }
   }
   return NULL;
-}
-
-void arts_route_table_dec_item(arts_guid_t key, void *data) {
-  if (data) {
-    arts_route_table_t *route_table = arts_get_route_table(key);
-    arts_route_item_t *item = get_item_from_data(key, data);
-    if (item) {
-      dec_item(route_table, item);
-    }
-  }
 }
 
 void arts_reset_route_table_iterator(arts_route_table_iterator_t *iter,
@@ -875,8 +495,9 @@ arts_route_item_t *arts_route_table_iterate(arts_route_table_iterator_t *iter) {
   while (current != NULL) {
     for (uint64_t i = iter->index;
          i < (uint64_t)current->size * COLLISION_RESOLVES; i++) {
-      // arts_print_item(&current->data[i]);
-      if (current->data[i].lock) {
+      arts_guid_t slot_key =
+          __atomic_load_n(&current->data[i].key, __ATOMIC_ACQUIRE);
+      if (slot_key != 0) {
         iter->index = i + 1;
         iter->table = current;
         return &current->data[i];
@@ -893,29 +514,21 @@ arts_route_item_t *arts_route_table_iterate(arts_route_table_iterator_t *iter) {
 
 void arts_print_item(arts_route_item_t *item) {
   if (item) {
-    uint64_t local = item->lock;
-    ARTS_INFO(
-        "GUID: %lu DATA: %p RANK: %u LOCK: %p COUNTERS: %lu Res: %u Req: %u "
-        "Avail: %u Del: %u",
-        item->key, item->data, item->rank, local, GET_COUNT(local),
-        IS_RES(local) != 0, IS_REQ(local) != 0, IS_AVAIL(local) != 0,
-        IS_DEL(local) != 0);
+    void *data = atomic_load_explicit(&item->data, memory_order_acquire);
+    ARTS_INFO("GUID: %lu DATA: %p RANK: %u", item->key, data,
+              arts_guid_get_rank(item->key));
   }
 }
 
 void arts_route_table_debug_guid(arts_guid_t key, const char *label) {
   arts_route_table_t *route_table = arts_get_route_table(key);
-  arts_route_item_t *item =
-      arts_route_table_search_for_key(route_table, key, ANY_KEY);
+  arts_route_item_t *item = arts_route_table_search_for_key(route_table, key);
   if (item) {
-    uint64_t local = item->lock;
-    ARTS_INFO("[RT-DBG:%s] Guid:%lu data=%p rank=%u count=%lu "
-              "res=%u req=%u avail=%u del=%u",
-              label, key, item->data, item->rank, GET_COUNT(local),
-              IS_RES(local) != 0, IS_REQ(local) != 0, IS_AVAIL(local) != 0,
-              IS_DEL(local) != 0);
+    void *data = atomic_load_explicit(&item->data, memory_order_acquire);
+    ARTS_INFO("[RT-DBG:%s] Guid:%lu data=%p rank=%u", label, key, data,
+              arts_guid_get_rank(item->key));
   } else {
-    ARTS_INFO("[RT-DBG:%s] Guid:%lu NOT FOUND (any state)", label, key);
+    ARTS_INFO("[RT-DBG:%s] Guid:%lu NOT FOUND", label, key);
   }
 }
 
@@ -927,33 +540,27 @@ uint64_t arts_clean_up_route_table(arts_route_table_t *route_table) {
   arts_route_item_t *item = arts_route_table_iterate(&iter);
   while (item) {
     arts_type_t type = arts_guid_get_type(item->key);
+    /* Phase 2.2 (baseline regression repair): use atomic_exchange to claim
+     * the data ptr.  EVENT / BUFFER lifecycle paths free their structs at
+     * fire/destroy time WITHOUT NULLing the route_table slot (Task 2.1
+     * removed arts_route_table_remove_item).  If we re-free those here
+     * we get a tcache double-free.  Skip lifecycle-owned types and let
+     * the per-type owner reclaim memory; cleanup only handles types whose
+     * data ptr survives until shutdown (DBs in v2 dual-stack mode). */
+    void *data = atomic_exchange_explicit(&item->data, (void *)NULL,
+                                          memory_order_acq_rel);
     if (type == ARTS_DB) {
-      struct arts_db_s *db = (struct arts_db_s *)item->data;
+      struct arts_db_s *db = (struct arts_db_s *)data;
       if (db) {
         free_size += db->header.size;
+        arts_db_free(db);
       }
-      /* free_item handles copy_count + arts_db_free for DBs. */
-      free_item(item);
-    } else if (type == ARTS_EVENT) {
-      struct arts_event_s *event = (struct arts_event_s *)item->data;
-      if (event) {
-        arts_event_free(event);
-      }
-      free_item(item);
-    } else if (type == ARTS_BUFFER) {
-      arts_buffer_t *buf = (arts_buffer_t *)item->data;
-      if (buf) {
-        arts_free(buf);
-      }
-      free_item(item);
-    } else if (type != ARTS_NULL) {
-      /* EDT, EPOCH — data is managed by execution path or epoch pools.
-       * EDT data is freed by arts_edt_delete after execution.  Epoch pool
-       * entries share ARTS_EDT GUIDs but are bulk-allocated and freed by
-       * arts_cleanup_epoch_pools — cannot safely distinguish from individual
-       * EDTs, so only clean OOO list via free_item. */
-      free_item(item);
     }
+    /* ARTS_EVENT / ARTS_BUFFER / ARTS_EDT / ARTS_EPOCH: data is owned by
+     * the execution / lifecycle path and freed there.  Cleanup just
+     * drops the route_table reference (already done by atomic_exchange
+     * above) plus the OoO list.  Re-freeing here would tcache-corrupt. */
+    arts_oo_list_drop_all(&item->ooList);
     item = arts_route_table_iterate(&iter);
   }
   return free_size;
@@ -964,12 +571,11 @@ void arts_delete_route_table(arts_route_table_t *route_table) {
     return;
   }
   arts_delete_route_table(route_table->next);
-  /* Safety sweep: clean up any OOO lists that arts_clean_up_route_table
-   * missed (e.g., entries that were fully deleted and had lock reset to 0,
-   * or entries in unexpected states). */
+  /* Safety sweep: drop any OO list memory that arts_clean_up_route_table
+   * missed (e.g. entries claimed but never installed). */
   for (uint64_t i = 0; i < (uint64_t)route_table->size * COLLISION_RESOLVES;
        i++) {
-    arts_out_of_order_list_delete(&route_table->data[i].ooList);
+    arts_oo_list_drop_all(&route_table->data[i].ooList);
   }
   arts_free(route_table->data);
   arts_free(route_table);
@@ -983,46 +589,3 @@ void arts_clean_up_dbs() {
   free_size += arts_clean_up_route_table(arts_node_info.remote_route_table);
   ARTS_INFO("Cleaned %lu bytes", free_size);
 }
-
-// To cleanup
-// --------------------------------------------------------------------------->
-
-bool arts_route_table_update_item(arts_guid_t key, void *data,
-                                  unsigned int rank, item_state_t state) {
-  arts_route_table_t *route_table = arts_get_route_table(key);
-  bool ret = false;
-  arts_route_item_t *found = NULL;
-  while (!found) {
-    found = arts_route_table_search_for_key(route_table, key, state);
-    if (found) {
-      found->data = data;
-      found->rank = rank;
-      mark_write(found);
-      ret = true;
-    }
-  }
-  return ret;
-}
-
-bool arts_route_table_invalidate_item(arts_guid_t key) {
-  arts_route_table_t *route_table = arts_get_route_table(key);
-  return internal_route_table_remove_item(route_table, key);
-}
-
-bool arts_route_table_mark_delete(arts_guid_t key) {
-  arts_route_table_t *route_table = arts_get_route_table(key);
-  arts_route_item_t *item =
-      arts_route_table_search_for_key(route_table, key, AVAILABLE_KEY);
-  if (item) {
-    mark_delete(item);
-    /* Decrement the initial "existence" ref (count 1 at creation).
-     * dec_item triggers free_item when the last outstanding ref drops. */
-    return dec_item(route_table, item);
-  }
-  return false;
-}
-
-/* arts_route_table_get_rank_duplicates / arts_route_table_add_rank_duplicate
- * removed: their only callers were handler.c's update/destroy broadcasts
- * which now iterate the cdag_lock's head ranks directly via
- * cdag_lock_iter_head_ranks. */

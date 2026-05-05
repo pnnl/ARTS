@@ -1,12 +1,12 @@
 /*
- * cdag_mixed_local_remote.c — Multi-node CDAG with mixed local + remote
- * readers.
+ * coherence_mixed_local_remote.c — Multi-node v3 RC with mixed local +
+ * remote readers.
  *
  * Dynamically adapts to the node count (1..N):
  *   - DB is owned by node 0 (route=0).
- *   - EW writer w1 on node 0 writes VAL1.
+ *   - RW writer w1 on node 0 writes VAL1.
  *   - READERS_PER_NODE RO readers on EACH node (including node 0).
- *   - EW writer w2 on node 0 writes VAL2.
+ *   - RW writer w2 on node 0 writes VAL2.
  *   - Final RO reader on node 0 verifies VAL2.
  *
  * Correctness invariant: writer2 must observe VAL1 (checked on node 0).
@@ -122,15 +122,15 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
 
   void *ptr = NULL;
-  arts_guid_t db = arts_db_create(&ptr, sizeof(int), ARTS_DB_DEFAULT,
-                                  &(arts_hint_t){.route = 0});
+  arts_guid_t db =
+      arts_db_create(&ptr, sizeof(int), ARTS_DB_RC, &(arts_hint_t){.route = 0});
   ((int *)ptr)[0] = 0;
   arts_db_release(db);
 
   /* W1: EW on node 0 */
   arts_guid_t w1 = arts_edt_create_with_epoch(writer1_edt, 0, NULL, 1, epoch,
                                               &(arts_hint_t){.route = 0});
-  arts_add_dependence(db, w1, 0, DB_MODE_EW);
+  arts_add_dependence(db, w1, 0, DB_MODE_RW);
 
   /* Mixed RO generation: READERS_PER_NODE readers on EACH node. */
   unsigned int nnodes = arts_get_total_nodes();
@@ -145,7 +145,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   /* W2: EW on node 0 (must wait for all 2*READERS_PER_NODE readers to drain) */
   arts_guid_t w2 = arts_edt_create_with_epoch(writer2_edt, 0, NULL, 1, epoch,
                                               &(arts_hint_t){.route = 0});
-  arts_add_dependence(db, w2, 0, DB_MODE_EW);
+  arts_add_dependence(db, w2, 0, DB_MODE_RW);
 
   /* Final RO reader verifies VAL2 */
   arts_guid_t fr = arts_edt_create_with_epoch(

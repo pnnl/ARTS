@@ -252,14 +252,12 @@ void arts_runtime_node_init(struct arts_config_s *config) {
     uint64_t dev_ids[1] = {dev_id};
 #ifdef ARTS_CXL_NATIVE
     if (!arts_global_rank_id) {
-      arts_node_info.cxl_deque =
-          arts_cxl_deque_create_with_arenas(dev_ids, 1);
+      arts_node_info.cxl_deque = arts_cxl_deque_create_with_arenas(dev_ids, 1);
     } else {
       arts_node_info.cxl_deque = arts_cxl_deque_get();
     }
 #else
-    arts_node_info.cxl_deque =
-        arts_cxl_deque_create_with_arenas(dev_ids, 1);
+    arts_node_info.cxl_deque = arts_cxl_deque_create_with_arenas(dev_ids, 1);
 #endif
     arts_node_info.cxl_db_dev_count = 1;
     arts_node_info.cxl_db_static_device = (unsigned int)dev_id;
@@ -783,11 +781,11 @@ void arts_run_edt(struct arts_edt_s *edt) {
 
   INCREMENT_NUM_EDT_FINISH_BY(1);
 
-  /* Release DBs BEFORE signaling epoch completion. This ensures remote
-   * DB updates (arts_remote_update_db) are queued to the sender thread
-   * before the epoch-done message. TCP FIFO ordering then guarantees
-   * the DB data arrives at the owner before the epoch-done signal,
-   * preventing stale reads in the next epoch. */
+  /* Release DBs BEFORE signaling epoch completion. This ensures any
+   * RC writeback messages (arts_coh_release_rw -> WRITEBACK) are
+   * queued to the sender thread before the epoch-done message. TCP
+   * FIFO ordering then guarantees the DB data arrives at home before
+   * the epoch-done signal, preventing stale reads in the next epoch. */
   release_dbs(depc, depv, false);
   arts_release_created_dbs();
 

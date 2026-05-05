@@ -48,26 +48,16 @@ extern "C" {
 
 struct arts_db_frontier_iterator_s;
 
-// These are for the lock for each item in the RT
-#define RESERVED_ITEM 0x8000000000000000
-#define AVAILABLE_ITEM 0x4000000000000000
-#define DELETE_ITEM 0x2000000000000000
-#define STATUS_MASK (RESERVED_ITEM | AVAILABLE_ITEM | DELETE_ITEM)
-
-#define MAX_ITEM 0x1FFFFFFFFFFFFFFF
-#define COUNT_MASK ~(RESERVED_ITEM | AVAILABLE_ITEM | DELETE_ITEM)
-#define CHECK_MAX_ITEM(x) ((((x) & COUNT_MASK) + 1) < MAX_ITEM)
-#define GET_COUNT(x) ((x) & COUNT_MASK)
-
-#define IS_DEL(x) ((x) & DELETE_ITEM)
-#define IS_RES(x)                                                              \
-  (((x) & RESERVED_ITEM) && !((x) & AVAILABLE_ITEM) && !((x) & DELETE_ITEM))
-#define IS_AVAIL(x)                                                            \
-  (((x) & AVAILABLE_ITEM) && !((x) & RESERVED_ITEM) && !((x) & DELETE_ITEM))
-#define IS_REQ(x)                                                              \
-  (((x) & RESERVED_ITEM) && ((x) & AVAILABLE_ITEM) && !((x) & DELETE_ITEM))
-
-#define SHOULD_DELETE(x) (IS_DEL(x) && !GET_COUNT(x))
+/* Portable atomic-void-pointer typedef.  C uses _Atomic; C++/nvcc uses a
+ * plain pointer accessed via __atomic_* builtins (which gcc/clang/nvcc all
+ * support via the host compiler).  Wire-compatible -- both sides see the
+ * same bit layout (sizeof(void *) on both compilers). */
+#ifdef __cplusplus
+typedef void *arts_atomic_voidp_t;
+#else
+#include <stdatomic.h>
+typedef _Atomic(void *) arts_atomic_voidp_t;
+#endif
 
 #define COLLISION_RESOLVES 8
 
@@ -78,32 +68,37 @@ struct arts_route_invalidate_s {
   unsigned int data[];
 };
 
+/* add_oo_ex return enum — caller decides branch.
+ *
+ * AVAILABLE_NOW: data was non-NULL on the pre-push or push-time check, so the
+ *   payload was never inserted into the OO list.  Caller handles inline and
+ *   frees the payload itself.
+ *
+ * ENQUEUED: data was NULL throughout; payload sits in the OO list and a
+ *   future installer's fire_oo will dispatch it.  Caller does nothing.
+ *
+ * FIRED_BY_DRAIN: payload was successfully pushed, but the post-push
+ *   recheck found data non-NULL (installer raced past us).  add_oo_ex
+ *   then called fire_oo itself, which drained the list and invoked the
+ *   handler on every entry, including ours, and freed each payload.
+ *   Caller MUST NOT free the payload and MUST NOT re-issue the handler. */
 typedef enum {
-  NO_KEY = 0,
-  ANY_KEY,
-  DELETED_KEY,   // deleted only
-  ALLOCATED_KEY, // reserved, available, or requested
-  AVAILABLE_KEY, // available only
-  REQUESTED_KEY, // available but reserved (means so one else has the valid
-                 // copy)
-  RESERVED_KEY,  // reserved only
-} item_state_t;
+  OO_RESULT_ENQUEUED,
+  OO_RESULT_AVAILABLE_NOW,
+  OO_RESULT_FIRED_BY_DRAIN,
+} oo_add_result_t;
 
+/* Route_item: 3 fields only. Slot is permanent (init-array, never freed). */
 struct arts_route_item_s {
   arts_guid_t key;
-  void *data;
-  volatile uint64_t lock;
-  unsigned int rank;
-  unsigned int touched;
-  struct arts_out_of_order_list_s ooList;
+  arts_atomic_voidp_t data;     /* NULL = pending OoO, else = AVAILABLE */
+  struct arts_oo_list_s ooList; /* lock-free list */
 } ARTS_ALIGNED_MAX;
 
 typedef struct arts_route_item_s arts_route_item_t;
 
 typedef struct arts_route_table_s arts_route_table_t;
 
-typedef void (*set_route_item_t)(arts_route_item_t *item, void *data);
-typedef void (*free_route_item_t)(arts_route_item_t *item);
 typedef arts_route_table_t *(*new_route_table_t)(unsigned int route_table_size,
                                                  unsigned int shift);
 
@@ -115,8 +110,6 @@ struct arts_route_table_s {
   struct arts_route_table_s *next;
   volatile unsigned readerLock;
   volatile unsigned writerLock;
-  set_route_item_t setFunc;
-  free_route_item_t freeFunc;
   new_route_table_t newFunc;
 }; // __attribute__ ((aligned));
 
@@ -124,8 +117,6 @@ typedef struct {
   uint64_t index;
   arts_route_table_t *table;
 } arts_route_table_iterator_t;
-
-bool dec_item(arts_route_table_t *route_table, arts_route_item_t *item);
 
 arts_route_table_t *arts_new_route_table(unsigned int route_table_size,
                                          unsigned int shift);
@@ -143,54 +134,50 @@ internal_route_table_add_deleted_item_race(arts_route_table_t *route_table,
                                            void *item, arts_guid_t key,
                                            unsigned int rank);
 
+/* Lookup: returns data ptr directly (atomic_load_acquire). NULL means
+ * not-yet-created or destroyed. */
+void *arts_route_table_lookup_data(arts_guid_t key);
+
+/* Item lookup — returns data ptr. Replaces legacy lookup_item. */
 void *arts_route_table_lookup_item(arts_guid_t key);
+
+/* DB-specific lookup — returns data cast to arts_db_s *. Replaces legacy
+ * lookup_db. */
+void *arts_route_table_lookup_db(arts_guid_t key, int *rank, bool touch);
+
 int arts_route_table_lookup_rank(arts_guid_t key);
-bool internal_route_table_remove_item(arts_route_table_t *route_table,
-                                      arts_guid_t key);
-bool arts_route_table_remove_item(arts_guid_t key);
 bool arts_route_table_mark_delete(arts_guid_t key);
 bool arts_route_table_hide_item(arts_guid_t key);
-bool arts_route_table_invalidate_item(arts_guid_t key);
 
 arts_route_item_t *
 arts_route_table_search_for_key(arts_route_table_t *route_table,
-                                arts_guid_t key, item_state_t state);
-bool arts_route_table_update_item(arts_guid_t key, void *data,
-                                  unsigned int rank, item_state_t state);
-bool arts_route_table_add_sent(arts_guid_t key, void *edt, unsigned int slot,
-                               bool aggregate);
-
-item_state_t arts_route_table_lookup_item_with_state(arts_guid_t key,
-                                                     void ***data,
-                                                     item_state_t min,
-                                                     bool inc);
-item_state_t getitem_state(arts_route_item_t *item);
-
+                                arts_guid_t key);
 int arts_route_table_set_rank(arts_guid_t key, int rank);
 
-void **arts_route_table_reserve(arts_guid_t key, bool *dec,
-                                item_state_t *state);
+/* Slot reserve or lookup — used internally by add_oo_ex. New entries are
+ * initialized with data=NULL. */
+void arts_route_table_reserve_or_lookup(arts_guid_t key,
+                                        arts_route_item_t **out);
 
-void arts_route_table_dec_item(arts_guid_t key, void *data);
 arts_route_item_t *get_item_from_data(arts_guid_t key, void *data);
 
-unsigned int internal_inc_db_version(volatile unsigned int *touched);
-void *internal_route_table_lookup_db(arts_route_table_t *route_table,
-                                     arts_guid_t key, int *rank,
-                                     unsigned int **touched);
-void *arts_route_table_lookup_db(arts_guid_t key, int *rank, bool touch);
-bool internal_route_table_return_db(arts_route_table_t *route_table,
-                                    arts_guid_t key, bool mark_to_delete,
-                                    bool do_delete);
-bool arts_route_table_return_db(arts_guid_t key, bool mark_to_delete);
+/* OoO-integrated add — returns enum */
+oo_add_result_t arts_route_table_add_oo_ex(arts_guid_t key, void *payload);
 
-bool arts_route_table_add_oo(arts_guid_t key, void *data, bool inc);
-bool arts_route_table_add_oo_existing(arts_guid_t key, void *data, bool inc);
+/* Compatibility wrapper for the 5 existing callers
+ * (signal_edt / event_satisfy / add_dep / ready_edt / db_request). */
+bool arts_route_table_add_oo(arts_guid_t key, void *payload, bool inc);
+
+/* Compatibility wrapper for the legacy "_existing" variant
+ * (route_table.c:786). */
+bool arts_route_table_add_oo_existing(arts_guid_t key, void *payload, bool inc);
+
+/* Fire the OO list — called by the installer (e.g. DB_CREATE). Idempotent. */
 void arts_route_table_fire_oo(arts_guid_t key,
-                              void (*callback_t)(void *, void *));
-void arts_route_table_reset_oo(arts_guid_t key);
-void **arts_route_table_get_oo_list(arts_guid_t key,
-                                    struct arts_out_of_order_list_s **list);
+                              void (*callback)(void *data, void *ctx));
+
+/* Free OO list memory at destroy time — no callback, payload is freed. */
+void arts_route_table_drop_oo(arts_guid_t key);
 
 void arts_reset_route_table_iterator(arts_route_table_iterator_t *iter,
                                      arts_route_table_t *table);

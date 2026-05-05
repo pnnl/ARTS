@@ -36,65 +36,86 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef ARTS_MEMORY_DB_H
-#define ARTS_MEMORY_DB_H
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include <stdlib.h>
 
-#include "arts/runtime_types.h"
+#include "arts.h"
 
-#define ARTS_TYPE_NAME                                                         \
-  const char *const arts_type_name[] = {                                       \
-      "ARTS_NULL",     "ARTS_EDT",    "ARTS_EVENT", "ARTS_EPOCH",              \
-      "ARTS_CALLBACK", "ARTS_BUFFER", "ARTS_DB",    "ARTS_LAST_TYPE"}
+unsigned int num_writes = 0;
+arts_guid_t db_guid;
+arts_guid_t *write_guids;
 
-#define GET_TYPE_NAME(x) arts_type_name[x]
-
-extern const char *const arts_type_name[];
-
-#define DB_MODE_NAME                                                           \
-  const char *const db_mode_name[] = {"DB_MODE_NULL",       "DB_MODE_RO",      \
-                                      "DB_MODE_RW",         "DB_MODE_VALUE",   \
-                                      "DB_MODE_PTR",        "DB_MODE_LC_SYNC", \
-                                      "DB_MODE_LC_NO_COPY", "DB_MODE_MEMSET"}
-
-#define GET_DB_MODE_NAME(x) db_mode_name[x]
-
-extern const char *const db_mode_name[];
-
-#define ARTS_DB_TYPE_NAME                                                      \
-  const char *const arts_db_type_name[] = {"ARTS_DB_RC", "ARTS_DB_PIN",        \
-                                           "ARTS_DB_GPU_PIN",                  \
-                                           "ARTS_DB_GPU_LC", "ARTS_DB_CXL_LC"}
-
-#define GET_DB_TYPE_NAME(x) arts_db_type_name[x]
-
-extern const char *const arts_db_type_name[];
-
-void arts_db_create_internal(arts_guid_t guid, void *addr, uint64_t len,
-                             uint64_t packet_size, arts_db_types_t db_type,
-                             uint64_t arts_id);
-void acquire_dbs(struct arts_edt_s *edt);
-void release_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu);
-void arts_release_created_dbs(void);
-void prep_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu);
-void internal_put_in_db(void *ptr, arts_guid_t edt_guid, arts_guid_t db_guid,
-                        unsigned int slot, unsigned int offset,
-                        unsigned int size, arts_guid_t epoch_guid,
-                        unsigned int rank);
-
-void arts_db_destroy_safe(arts_guid_t guid, bool remote);
-void *arts_db_malloc(arts_db_types_t db_type, size_t size);
-void arts_db_free(void *ptr);
-void *arts_db_adopt(arts_guid_t guid, struct arts_db_s *db);
-
-#ifdef ARTS_USE_CXL
-void arts_cxl_producer_flush(arts_guid_t guid);
-void arts_cxl_consumer_flush(arts_guid_t guid);
-#endif
-
-#ifdef __cplusplus
+void write_test(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                arts_edt_dep_t depv[]) {
+  (void)depc;
+  unsigned int index = paramv[0];
+  unsigned int *array = (unsigned int *)depv[0].ptr;
+  //    if(array)
+  //    {
+  for (unsigned int i = index; i < num_writes; i++) {
+    array[i] = index;
+  }
+  //    }
+  if (paramc > 1) {
+    arts_printf("-----------------SIGNALLING NEXT %u\n", index);
+    arts_signal_edt_value((arts_guid_t)paramv[1], -1, 0);
+  } else {
+    for (unsigned int i = 0; i < num_writes; i++) {
+      arts_printf("i: %u %u\n", i, array[i]);
+    }
+    arts_shutdown();
+  }
 }
-#endif
-#endif /* artsDBFUNCTIONS_H */
+
+void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
+  uint64_t args[2];
+  for (uint64_t i = 0; i < num_writes; i++) {
+    if (arts_guid_is_local(write_guids[i])) {
+      args[0] = i;
+
+      if (i < num_writes - 1) {
+        args[1] = write_guids[i + 1];
+        arts_edt_create_with_guid(write_test, write_guids[i], 2, args, 2);
+      } else {
+        arts_edt_create_with_guid(write_test, write_guids[i], 1, args, 2);
+      }
+      arts_signal_edt(write_guids[i], 0, db_guid, DB_MODE_RW);
+    }
+  }
+}
+
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+              arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  (void)depv;
+  char **argv = (char **)paramv[1];
+  db_guid = arts_guid_reserve(ARTS_DB, 0);
+
+  num_writes = strtol(argv[1], NULL, 10);
+  write_guids = (arts_guid_t *)malloc(sizeof(arts_guid_t) * num_writes);
+  for (unsigned int i = 0; i < num_writes; i++) {
+    write_guids[i] = arts_guid_reserve(ARTS_EDT, i % arts_get_total_nodes());
+  }
+
+  unsigned int *ptr = (unsigned int *)arts_db_create_with_guid(
+      db_guid, sizeof(unsigned int) * num_writes, ARTS_DB_RC, NULL, NULL);
+  for (unsigned int i = 0; i < num_writes; i++) {
+    ptr[i] = 0;
+  }
+
+  for (unsigned int n = 0; n < arts_get_total_nodes(); n++) {
+    arts_edt_create(node_setup, 0, NULL, 0, &(arts_hint_t){.route = n});
+  }
+
+  arts_signal_edt_value(write_guids[0], -1, 0);
+}
+
+int main(int argc, char **argv) {
+  arts_rt(argc, argv);
+  return 0;
+}

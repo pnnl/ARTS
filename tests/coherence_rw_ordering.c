@@ -37,10 +37,10 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 
-/// @file cdag_ew_ordering.c
-/// @brief Tests CDAG EW (Exclusive Write) ordering: multiple EW → RO
-///        readers should all see the final writer's data.
-///        Also tests sequential EW writers with correct ordering.
+/// @file coherence_rw_ordering.c
+/// @brief Tests v3 RC RW ordering: multiple RW writers → RO readers
+///        should all see the final writer's data.  Also exercises
+///        sequential RW writers with correct ordering.
 
 #include "arts.h"
 
@@ -109,7 +109,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
 
-  arts_printf("=== cdag_ew_ordering ===\n");
+  arts_printf("=== coherence_rw_ordering ===\n");
 
   arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
 
@@ -117,17 +117,17 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // record_dep with EW ensures writer1 runs before writer2, and writer2
   // before reader.
   void *ptr = NULL;
-  arts_guid_t db = arts_db_create(&ptr, sizeof(int), ARTS_DB_DEFAULT, NULL);
+  arts_guid_t db = arts_db_create(&ptr, sizeof(int), ARTS_DB_RC, NULL);
   ((int *)ptr)[0] = 0;
   arts_db_release(db);
 
   arts_guid_t w1 = arts_edt_create_with_epoch(writer1, 0, NULL, 1, epoch,
                                               &(arts_hint_t){.route = 0});
-  arts_add_dependence(db, w1, 0, DB_MODE_EW);
+  arts_add_dependence(db, w1, 0, DB_MODE_RW);
 
   arts_guid_t w2 = arts_edt_create_with_epoch(writer2, 0, NULL, 1, epoch,
                                               &(arts_hint_t){.route = 0});
-  arts_add_dependence(db, w2, 0, DB_MODE_EW);
+  arts_add_dependence(db, w2, 0, DB_MODE_RW);
 
   uint64_t exp_param = 200;
   arts_guid_t r1 = arts_edt_create_with_epoch(
@@ -136,7 +136,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Test 2: Multiple concurrent RO readers.
   void *ptr2 = NULL;
-  arts_guid_t db2 = arts_db_create(&ptr2, sizeof(int), ARTS_DB_DEFAULT, NULL);
+  arts_guid_t db2 = arts_db_create(&ptr2, sizeof(int), ARTS_DB_RC, NULL);
   ((int *)ptr2)[0] = 555;
   arts_db_release(db2);
 

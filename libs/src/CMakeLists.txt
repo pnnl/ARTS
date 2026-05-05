@@ -46,6 +46,13 @@ target_include_directories(arts_interface INTERFACE
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
+# Phase 2.2: enable v3 RC coherence-message OoO defer.  Activates the
+# OO_COH_* dispatcher arms in out_of_order.c and lets coherence_handlers.c
+# use the new home_lookup_or_defer path (instead of the old NOTIFY-only
+# helper).  Build-integration of coherence_*.c is gated separately via
+# libs/src/core/memory/CMakeLists.txt.
+target_compile_definitions(arts_interface INTERFACE ARTS_COHERENCE_INTEGRATED)
+
 if(ARTS_USE_CXL)
     target_link_libraries(arts_interface INTERFACE arts_cxl_lib)
 endif()

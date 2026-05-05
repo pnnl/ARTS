@@ -36,35 +36,70 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef ARTS_GAS_OUTOFORDERLIST_H
-#define ARTS_GAS_OUTOFORDERLIST_H
+#ifndef ARTS_GAS_OUT_OF_ORDER_LIST_H
+#define ARTS_GAS_OUT_OF_ORDER_LIST_H
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #include <stdbool.h>
-#define OOPERELEMENT 4
 
-struct arts_out_of_order_element_s {
-  volatile struct arts_out_of_order_element_s *next;
-  volatile void *array[OOPERELEMENT];
+/* Vyukov MPSC queue (intrusive node, embedded permanent stub).
+ *
+ * Producers: lock-free atomic_xchg on tail + store_release on prev->next.
+ * Consumer:  exactly one — single thread pops via plain head advance.
+ *
+ * Replaces the previous Treiber-stack-with-reverse design.  Pure FIFO,
+ * no CAS loop on producer side, no reverse step on the consumer side.
+ *
+ * Init contract: arts_oo_list_s contains an embedded sentinel `stub`.
+ * The struct is NOT safe to use after zero-initialization — callers
+ * MUST invoke arts_oo_list_init() before push/drain/drop_all.  Sites:
+ *   - route_table.c::arts_route_table_search_for_empty (slot first claim)
+ *   - tests that allocate arts_oo_list_s on the stack/static storage
+ */
+
+#ifdef __cplusplus
+struct arts_oo_node_s {
+  struct arts_oo_node_s *next;
+  void *data;
 };
-
-struct arts_out_of_order_list_s {
-  volatile unsigned int readerLock;
-  volatile unsigned int writerLock;
-  volatile unsigned int count;
-  bool isFired;
-  struct arts_out_of_order_element_s head;
+struct arts_oo_list_s {
+  struct arts_oo_node_s *head;
+  struct arts_oo_node_s *tail;
+  struct arts_oo_node_s stub;
 };
+#else
+#include <stdatomic.h>
+struct arts_oo_node_s {
+  _Atomic(struct arts_oo_node_s *) next;
+  void *data;
+};
+struct arts_oo_list_s {
+  _Atomic(struct arts_oo_node_s *) head;
+  _Atomic(struct arts_oo_node_s *) tail;
+  struct arts_oo_node_s stub;
+};
+#endif
 
-bool arts_out_of_order_list_add_item(struct arts_out_of_order_list_s *add_to_me,
-                                     void *item);
-void arts_out_of_order_list_fire_callback(
-    struct arts_out_of_order_list_s *fire_me, void *local_guid_address,
-    void (*callback_t)(void *, void *));
-void arts_out_of_order_list_reset(struct arts_out_of_order_list_s *list);
-void arts_out_of_order_list_delete(struct arts_out_of_order_list_s *list);
+/* push always succeeds in MPSC (no DRAIN_HAPPENED race window).  The
+ * enum is retained as a single OK value so existing call sites keep
+ * compiling without churn; it can be folded into a void return in a
+ * follow-up cleanup. */
+typedef enum {
+  OO_PUSH_OK,
+} oo_push_result_t;
+
+/* MUST be called once on every arts_oo_list_s before first use. */
+void arts_oo_list_init(struct arts_oo_list_s *list);
+
+oo_push_result_t arts_oo_list_push(struct arts_oo_list_s *list, void *data);
+
+void arts_oo_list_drain(struct arts_oo_list_s *list,
+                        void (*callback)(void *data, void *ctx), void *ctx);
+
+void arts_oo_list_drop_all(struct arts_oo_list_s *list);
+
 #ifdef __cplusplus
 }
 #endif

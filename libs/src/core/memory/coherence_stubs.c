@@ -10,10 +10,16 @@
  * Forward-decls match coherence_handlers.c's `extern` references. */
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "arts/memory/coherence.h"
+#include "arts/memory/coherence_buffer.h"
+#include "arts/memory/coherence_home.h"
 #include "arts/system/print.h"
+#include "arts/system/threads.h"
+#include "arts/utils/malloc.h"
 
 /* Acquire path (B4): drain visible pending_rw waiters after GRANT. */
 __attribute__((weak)) void
@@ -76,4 +82,47 @@ __attribute__((weak)) void
 arts_coh_local_transfer_now(struct arts_db_cache_s *cache) {
   (void)cache;
   ARTS_INFO("coherence stub: local_transfer_now (B5)");
+}
+
+/* Phase 2.2 stub: cache_s allocator.  The full version (per coherence
+ * design plan §1006-1031 / §968-988) wires up writer_count / home /
+ * buffer based on `kind`.  Until the strong definition lands (Phase 3),
+ * this weak stub provides a minimal cache_s with an empty home struct
+ * sized to arts_global_rank_count so home->last_sent_version /
+ * home->pending_rw / home->rw_holder are at least well-defined.  Does
+ * NOT install a buffer (callers that need one go through
+ * arts_coherence_install_buffer separately). */
+__attribute__((weak)) struct arts_db_cache_s *
+arts_coh_alloc_cache_s(arts_guid_t db_guid, uint64_t db_size,
+                       arts_coh_init_kind_t kind, unsigned int creator_rank) {
+  struct arts_db_cache_s *c =
+      (struct arts_db_cache_s *)arts_calloc(1, sizeof(struct arts_db_cache_s));
+  c->db_guid = db_guid;
+  c->db_size = db_size;
+  c->destroy_state = ARTS_DB_DESTROY_NONE;
+  /* Vyukov MPSC queue cannot be zero-initialized: head and tail must
+   * point at the embedded stub.  Initialize before any push could
+   * land. */
+  arts_pending_rw_queue_init(&c->pending_rw);
+  /* Phase 3.1: caller wires db_owner right after install (e.g.
+   * arts_db_create_internal, arts_coh_lazy_install_cache_s).  arts_calloc
+   * already zeroed the field, but make the contract explicit. */
+  c->db_owner = NULL;
+  /* Allocate home metadata only on the rank that owns this DB's GUID
+   * home; non-home ranks leave c->home == NULL.  init_kind selects the
+   * initial rw_holder. */
+  unsigned int self = arts_global_rank_id;
+  unsigned int n = arts_global_rank_count;
+  if (n == 0) {
+    n = 1;
+  }
+  if (kind == ARTS_COH_INIT_HOME_RECV) {
+    c->home = arts_db_home_create(creator_rank, n);
+  } else if (kind == ARTS_COH_INIT_CREATOR_HOME) {
+    c->home = arts_db_home_create(self, n);
+    c->writer_count = 2; /* sentinel + creator EDT */
+  } else if (kind == ARTS_COH_INIT_CREATOR_REMOTE) {
+    c->writer_count = 2;
+  }
+  return c;
 }

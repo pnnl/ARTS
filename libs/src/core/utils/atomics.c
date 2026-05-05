@@ -137,6 +137,14 @@ uint64_t arts_atomic_fetch_x_or_u64(volatile uint64_t *destination,
   return __sync_fetch_and_xor(destination, add_val);
 }
 
+unsigned int arts_atomic_read(volatile unsigned int *destination) {
+  return __atomic_load_n(destination, __ATOMIC_ACQUIRE);
+}
+
+uint64_t arts_atomic_read_u64(volatile uint64_t *destination) {
+  return __atomic_load_n(destination, __ATOMIC_ACQUIRE);
+}
+
 unsigned int arts_atomic_fetch_or(volatile unsigned int *destination,
                                   unsigned int add_val) {
   return __sync_fetch_and_or(destination, add_val);

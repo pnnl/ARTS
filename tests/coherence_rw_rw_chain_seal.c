@@ -1,10 +1,11 @@
 /*
- * cdag_ew_ew_chain_seal.c — Stress test for back-to-back EW writers.
+ * coherence_rw_rw_chain_seal.c — Stress test for back-to-back RW writers
+ * under v3 RC.
  *
- * Pattern: writer(0) reads init → writes 0; writer(1) reads 0 → writes 1; ...
- * Each writer must observe EXACTLY the previous writer's value. This catches
- * any sealing bug where an EW is allowed to run before the previous EW has
- * released.
+ * Pattern: writer(0) reads init -> writes 0; writer(1) reads 0 -> writes 1;
+ * ...  Each writer must observe EXACTLY the previous writer's value.  This
+ * catches any sealing bug where a RW writer is allowed to run before the
+ * previous one has released.
  */
 
 #include "arts.h"
@@ -54,8 +55,8 @@ void writer_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   int *data = (int *)depv[0].ptr;
   if (!data || data[0] != expected_prev) {
     atomic_fetch_add(&g_writer_fail, 1);
-    fprintf(stderr, "writer %d: expected prev=%d got %d\n", iter,
-            expected_prev, data ? data[0] : -999);
+    fprintf(stderr, "writer %d: expected prev=%d got %d\n", iter, expected_prev,
+            data ? data[0] : -999);
     fflush(stderr);
   }
   if (data) {
@@ -86,22 +87,22 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
 
-  arts_printf("=== cdag_ew_ew_chain_seal ===\n");
+  arts_printf("=== coherence_rw_rw_chain_seal ===\n");
   arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
 
   void *ptr = NULL;
-  arts_guid_t db = arts_db_create(&ptr, sizeof(int), ARTS_DB_DEFAULT, NULL);
+  arts_guid_t db = arts_db_create(&ptr, sizeof(int), ARTS_DB_RC, NULL);
   ((int *)ptr)[0] = -1;
   arts_db_release(db);
 
   for (int i = 0; i < NUM_ITERS; i++) {
     uint64_t p = (uint64_t)i;
-    arts_guid_t w = arts_edt_create_with_epoch(
-        writer_edt, 1, &p, 1, epoch, &(arts_hint_t){.route = 0});
-    arts_add_dependence(db, w, 0, DB_MODE_EW);
+    arts_guid_t w = arts_edt_create_with_epoch(writer_edt, 1, &p, 1, epoch,
+                                               &(arts_hint_t){.route = 0});
+    arts_add_dependence(db, w, 0, DB_MODE_RW);
   }
-  arts_guid_t fc = arts_edt_create_with_epoch(final_check_edt, 0, NULL, 1,
-                                              epoch, &(arts_hint_t){.route = 0});
+  arts_guid_t fc = arts_edt_create_with_epoch(
+      final_check_edt, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
   arts_add_dependence(db, fc, 0, DB_MODE_RO);
 
   {

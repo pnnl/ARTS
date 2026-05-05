@@ -42,6 +42,7 @@
 
 #include "arts.h"
 #include "arts/compute/edt.h"
+#include "arts/memory/coherence_handlers.h"
 #include "arts/memory/db.h"
 #include "arts/remote/handler.h"
 #include "arts/runtime_state.h"
@@ -136,66 +137,12 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
     arts_event_satisfy_slot(pack->event, pack->db, pack->slot);
     break;
   }
-  case ARTS_REMOTE_DB_REQUEST_MSG: {
-    struct arts_remote_db_request_packet_s *pack =
-        (struct arts_remote_db_request_packet_s *)(packet);
-    if (packet->size != sizeof(*pack)) {
-      ARTS_INFO("Error dbpacket insanity");
-    }
-    arts_remote_db_send(pack);
-    break;
-  }
-  case ARTS_REMOTE_DB_SEND_MSG: {
-    ARTS_DEBUG("Remote Db Received");
-    struct arts_remote_db_send_packet_s *pack =
-        (struct arts_remote_db_send_packet_s *)(packet);
-    arts_remote_handle_db_received(pack);
-    break;
-  }
   case ARTS_REMOTE_ADD_DEPENDENCE_MSG: {
     ARTS_DEBUG("Dependence Received");
     struct arts_remote_add_dependence_packet_s *pack =
         (struct arts_remote_add_dependence_packet_s *)(packet);
     arts_add_dependence(pack->source, pack->destination, pack->slot,
                         pack->mode);
-    break;
-  }
-  case ARTS_REMOTE_INVALIDATE_DB_MSG: {
-    ARTS_DEBUG("DB Invalidate Received");
-    arts_remote_handle_invalidate_db(packet);
-    break;
-  }
-  case ARTS_REMOTE_DB_FULL_REQUEST_MSG: {
-    struct arts_remote_db_full_request_packet_s *pack =
-        (struct arts_remote_db_full_request_packet_s *)(packet);
-    arts_remote_db_full_send(pack);
-    break;
-  }
-  case ARTS_REMOTE_DB_FULL_SEND_MSG: {
-    ARTS_DEBUG("DB Full Send Received");
-    struct arts_remote_db_full_send_packet_s *pack =
-        (struct arts_remote_db_full_send_packet_s *)(packet);
-    arts_remote_handle_db_full_recieved(pack);
-    break;
-  }
-  case ARTS_REMOTE_DB_FULL_SEND_ALREADY_LOCAL_MSG: {
-    ARTS_DEBUG("DB Full Send Already Local Received");
-    arts_remote_handle_send_already_local(packet);
-    break;
-  }
-  case ARTS_REMOTE_DB_DESTROY_MSG: {
-    ARTS_DEBUG("DB Destroy Received");
-    arts_remote_handle_db_destroy(packet);
-    break;
-  }
-  case ARTS_REMOTE_DB_DESTROY_FORWARD_MSG: {
-    ARTS_DEBUG("DB Destroy Forward Received");
-    arts_remote_handle_db_destroy_forward(packet);
-    break;
-  }
-  case ARTS_REMOTE_DB_UPDATE_GUID_MSG: {
-    ARTS_DEBUG("DB Guid Update Received");
-    arts_remote_handle_update_db_guid(packet);
     break;
   }
   case ARTS_REMOTE_EDT_MOVE_MSG: {
@@ -206,11 +153,6 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
   case ARTS_REMOTE_DB_MOVE_MSG: {
     ARTS_DEBUG("DB Move Received");
     arts_remote_handle_db_move(packet);
-    break;
-  }
-  case ARTS_REMOTE_DB_UPDATE_MSG: {
-    ARTS_DEBUG("DB Update Received");
-    arts_remote_handle_update_db(packet);
     break;
   }
   case ARTS_REMOTE_EVENT_MOVE_MSG: {
@@ -288,6 +230,85 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
     struct arts_remote_set_dep_mode_packet_s *pack =
         (struct arts_remote_set_dep_mode_packet_s *)(packet);
     arts_set_dep_mode(pack->edt, pack->slot, pack->mode);
+    break;
+  }
+  /* ===== v3 coherence wire-message dispatch (Phase 2.2) =============
+   * Three handlers (GRANT / WRITEBACK / DATA_RESPONSE) carry trailing
+   * payload right after sizeof(struct ...); pass that pointer + size as
+   * the data/data_size arguments. */
+  case ARTS_REMOTE_LOCK_REQ_MSG: {
+    ARTS_DEBUG("Coh LOCK_REQ Received");
+    struct arts_remote_lock_req_packet_s *pack =
+        (struct arts_remote_lock_req_packet_s *)(packet);
+    arts_coh_handle_lock_req(pack);
+    break;
+  }
+  case ARTS_REMOTE_GRANT_MSG: {
+    ARTS_DEBUG("Coh GRANT Received");
+    struct arts_remote_grant_packet_s *pack =
+        (struct arts_remote_grant_packet_s *)(packet);
+    const void *data = (const char *)pack + sizeof(*pack);
+    uint64_t data_size = pack->header.size - sizeof(*pack);
+    arts_coh_handle_grant(pack, data_size > 0 ? data : NULL, data_size);
+    break;
+  }
+  case ARTS_REMOTE_WRITEBACK_MSG: {
+    ARTS_DEBUG("Coh WRITEBACK Received");
+    struct arts_remote_writeback_packet_s *pack =
+        (struct arts_remote_writeback_packet_s *)(packet);
+    const void *data = (const char *)pack + sizeof(*pack);
+    uint64_t data_size = pack->header.size - sizeof(*pack);
+    arts_coh_handle_writeback(pack, data_size > 0 ? data : NULL, data_size);
+    break;
+  }
+  case ARTS_REMOTE_WRITEBACK_ACK_MSG: {
+    ARTS_DEBUG("Coh WRITEBACK_ACK Received");
+    arts_coh_handle_writeback_ack(
+        (struct arts_remote_writeback_ack_packet_s *)(packet));
+    break;
+  }
+  case ARTS_REMOTE_INVALIDATE_NOTICE_MSG: {
+    ARTS_DEBUG("Coh INVALIDATE_NOTICE Received");
+    arts_coh_handle_invalidate_notice(
+        (struct arts_remote_invalidate_notice_packet_s *)(packet));
+    break;
+  }
+  case ARTS_REMOTE_RELEASE_OWNERSHIP_MSG: {
+    ARTS_DEBUG("Coh RELEASE_OWNERSHIP Received");
+    arts_coh_handle_release_ownership(
+        (struct arts_remote_release_ownership_packet_s *)(packet));
+    break;
+  }
+  case ARTS_REMOTE_GET_DATA_MSG: {
+    ARTS_DEBUG("Coh GET_DATA Received");
+    arts_coh_handle_get_data((struct arts_remote_get_data_packet_s *)(packet));
+    break;
+  }
+  case ARTS_REMOTE_DATA_RESPONSE_MSG: {
+    ARTS_DEBUG("Coh DATA_RESPONSE Received");
+    struct arts_remote_data_response_packet_s *pack =
+        (struct arts_remote_data_response_packet_s *)(packet);
+    const void *data = (const char *)pack + sizeof(*pack);
+    uint64_t data_size = pack->header.size - sizeof(*pack);
+    arts_coh_handle_data_response(pack, data_size > 0 ? data : NULL, data_size);
+    break;
+  }
+  case ARTS_REMOTE_DB_CREATE_COHERENT_MSG: {
+    ARTS_DEBUG("Coh DB_CREATE_COHERENT Received");
+    arts_coh_handle_db_create_coherent(
+        (struct arts_remote_db_create_coherent_packet_s *)(packet));
+    break;
+  }
+  case ARTS_REMOTE_DESTROY_REQ_MSG: {
+    ARTS_DEBUG("Coh DESTROY_REQ Received");
+    arts_coh_handle_destroy_req(
+        (struct arts_remote_destroy_req_packet_s *)(packet));
+    break;
+  }
+  case ARTS_REMOTE_DESTROY_NOTIFY_MSG: {
+    ARTS_DEBUG("Coh DESTROY_NOTIFY Received");
+    arts_coh_handle_destroy_notify(
+        (struct arts_remote_destroy_notify_packet_s *)(packet));
     break;
   }
   default: {

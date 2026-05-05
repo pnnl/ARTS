@@ -36,225 +36,143 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
+/* Vyukov MPSC queue.  Replaces the prior Treiber-stack-with-reverse OO
+ * list.  Pure FIFO, lock-free producer side, single consumer.
+ *
+ * Algorithm (Vyukov, intrusive single-linked list with permanent stub):
+ *
+ *   init():
+ *     stub.next = NULL
+ *     head = tail = &stub
+ *
+ *   push(data):                            // multi-producer
+ *     node = malloc; node->data = data; node->next = NULL
+ *     prev = atomic_xchg_acq_rel(tail, node)
+ *     atomic_store_release(prev->next, node)
+ *
+ *   pop()/drain():                         // single consumer
+ *     head = list->head
+ *     next = atomic_load_acquire(head->next)
+ *     if next == NULL:
+ *       if atomic_load_acquire(tail) == head: empty -> done
+ *       else: producer mid-push -> spin briefly + retry
+ *     // process next->data
+ *     list->head = next                    // plain store: single consumer
+ *     if head != &list->stub: free(head)   // first iteration's old head IS
+ *                                          // the embedded stub — never free
+ *
+ * The stub is "consumed" on the first push: after the xchg, tail points
+ * at the new node, and the next pop sees stub.next pointing at it.  The
+ * old head (the stub) is then advanced past, and from then on every
+ * "old head" we walk past is a malloc'd node — which we DO free.
+ *
+ * Memory ordering proof sketch:
+ *   - producer: xchg(tail) is acq_rel — the prev pointer it returns is
+ *     an exclusive handle no one else has.  store_release on prev->next
+ *     publishes the link.
+ *   - consumer: load_acquire on head->next pairs with the producer's
+ *     store_release on prev->next.  After observing a non-NULL next,
+ *     the data field of *next was written before the producer's
+ *     atomic_xchg (program order on the producer), and the xchg
+ *     synchronizes-with the chain of acquire loads, so the consumer
+ *     sees data correctly.
+ *   - tail-equality empty check: load_acquire pairs with the producer's
+ *     atomic_xchg on tail.  If we observe tail == head AFTER a NULL
+ *     head->next, no producer has begun a push since head was last
+ *     advanced — truly empty.
+ */
 #include "arts/gas/out_of_order_list.h"
 
-#include <time.h>
+#include <sched.h>
+#include <stdatomic.h>
+#include <stddef.h>
 
-#include "arts/system/print.h"
-#include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
 
-#define FIRE_LOCK 1U
-#define RESET_LOCK 2U
-
-bool reader_oo_try_lock(struct arts_out_of_order_list_s *list) {
-  while (1) {
-    if (list->writerLock == FIRE_LOCK) {
-      return false;
-    }
-    while (list->writerLock == RESET_LOCK) {
-      ;
-    }
-    arts_atomic_fetch_add(&list->readerLock, 1U);
-    if (list->writerLock == 0) {
-      break;
-    }
-    arts_atomic_sub(&list->readerLock, 1U);
-  }
-  return true;
+void arts_oo_list_init(struct arts_oo_list_s *list) {
+  atomic_store_explicit(&list->stub.next, (struct arts_oo_node_s *)NULL,
+                        memory_order_relaxed);
+  list->stub.data = NULL;
+  atomic_store_explicit(&list->head, &list->stub, memory_order_relaxed);
+  atomic_store_explicit(&list->tail, &list->stub, memory_order_relaxed);
 }
 
-inline void reader_oo_lock(struct arts_out_of_order_list_s *list) {
-  while (1) {
-    while (list->writerLock) {
-      ;
+oo_push_result_t arts_oo_list_push(struct arts_oo_list_s *list, void *data) {
+  struct arts_oo_node_s *node =
+      (struct arts_oo_node_s *)arts_malloc(sizeof(*node));
+  node->data = data;
+  atomic_store_explicit(&node->next, (struct arts_oo_node_s *)NULL,
+                        memory_order_relaxed);
+  /* Multi-producer: claim a slot in the chain via atomic_xchg on tail.
+   * The previous tail value is our exclusive predecessor — no other
+   * producer can observe it again (since tail now points to us). */
+  struct arts_oo_node_s *prev =
+      atomic_exchange_explicit(&list->tail, node, memory_order_acq_rel);
+  /* Publish the link.  The store_release pairs with the consumer's
+   * atomic_load_acquire on head->next when it walks past `prev`. */
+  atomic_store_explicit(&prev->next, node, memory_order_release);
+  return OO_PUSH_OK;
+}
+
+/* Helper: advance the consumer's head by one step; returns the data
+ * payload via *out_data, or false if the queue is observed empty (or
+ * a producer is mid-push and we've spun out our retry budget).
+ *
+ * The "mid-push" case is handled by a brief sched_yield-driven retry
+ * loop — drain is called from a single consumer thread and producer
+ * windows close in nanoseconds, so a tight retry suffices.
+ */
+static bool oo_pop_step(struct arts_oo_list_s *list, void **out_data,
+                        struct arts_oo_node_s **out_old_head) {
+  for (;;) {
+    struct arts_oo_node_s *head =
+        atomic_load_explicit(&list->head, memory_order_relaxed);
+    struct arts_oo_node_s *next =
+        atomic_load_explicit(&head->next, memory_order_acquire);
+    if (next == NULL) {
+      struct arts_oo_node_s *tail =
+          atomic_load_explicit(&list->tail, memory_order_acquire);
+      if (tail == head) {
+        return false; /* truly empty */
+      }
+      /* Producer mid-push: yield and retry.  Window is the gap between
+       * xchg(tail) and store_release(prev->next) on the producer. */
+      sched_yield();
+      continue;
     }
-    arts_atomic_fetch_add(&list->readerLock, 1U);
-    if (list->writerLock == 0) {
-      break;
-    }
-    arts_atomic_sub(&list->readerLock, 1U);
-  }
-}
-
-void reader_oo_unlock(struct arts_out_of_order_list_s *list) {
-  arts_atomic_sub(&list->readerLock, 1U);
-}
-
-void writer_oo_lock(struct arts_out_of_order_list_s *list,
-                    unsigned int lock_type) {
-  while (arts_atomic_cswap(&list->writerLock, 0U, lock_type) != 0U) {
-    ;
-  }
-  while (list->readerLock) {
-    ;
-  }
-}
-
-void writer_oo_unlock(struct arts_out_of_order_list_s *list) {
-  arts_atomic_swap(&list->writerLock, 0U);
-}
-
-bool writer_try_oo_lock(struct arts_out_of_order_list_s *list,
-                        unsigned int lock_type) {
-  // Attempt to acquire the writer lock atomically
-  unsigned int temp = arts_atomic_cswap(&list->writerLock, 0U, lock_type);
-
-  if (temp == 0U) {
-    // We got the writer lock - now check for readers
-    unsigned int reader_count = list->readerLock;
-    if (reader_count) {
-      // Readers are present - release lock and fail immediately
-      writer_oo_unlock(list);
-      return false;
-    }
-    // No readers - we have exclusive access
+    *out_data = next->data;
+    /* Single consumer: plain store on head is correct.  We use a
+     * relaxed atomic store so other consumers (none in steady state, but
+     * potential debug paths) at least see a consistent value.  Memory
+     * ordering on data was already established by load_acquire on next. */
+    atomic_store_explicit(&list->head, next, memory_order_relaxed);
+    *out_old_head = head;
     return true;
   }
-
-  if (temp == lock_type) {
-    // We already hold this lock type - prevent re-entry
-    return false;
-  }
-
-  // Lock is held by someone else - fail immediately
-  return false;
 }
 
-bool arts_o_ois_fired(struct arts_out_of_order_list_s *list) {
-  return list->isFired;
-}
-
-bool arts_out_of_order_list_add_item(struct arts_out_of_order_list_s *add_to_me,
-                                     void *item) {
-  if (!reader_oo_try_lock(add_to_me)) {
-    return false;
-  }
-
-  if (arts_o_ois_fired(add_to_me)) {
-    reader_oo_unlock(add_to_me);
-    return false;
-  }
-  unsigned int pos = arts_atomic_fetch_add(&add_to_me->count, 1U);
-  unsigned int num_elements = pos / OOPERELEMENT;
-  unsigned int element_pos = pos % OOPERELEMENT;
-
-  volatile struct arts_out_of_order_element_s *current = &add_to_me->head;
-  for (unsigned int i = 0; i < num_elements; i++) {
-    if (!current->next) {
-      if (i + 1 == num_elements && element_pos == 0) {
-        current->next = (struct arts_out_of_order_element_s *)arts_calloc(
-            1, sizeof(struct arts_out_of_order_element_s));
-      } else {
-        while (!current->next) {
-          ;
-        }
-      }
-    }
-    current = current->next;
-  }
-
-  // Always insert and always release lock
-  // The CAS is used to wait for slot availability, but we should still unlock
-  while (arts_atomic_cswap_ptr((volatile void **)&current->array[element_pos],
-                               (void *)0, item)) {
-    // Slot was occupied - this shouldn't happen in normal operation
-    // but we need to wait for it to become available
-  }
-
-  reader_oo_unlock(add_to_me);
-  return true;
-}
-
-void arts_out_of_order_list_reset(struct arts_out_of_order_list_s *list) {
-  if (writer_try_oo_lock(list, RESET_LOCK)) {
-    list->isFired = false;
-    writer_oo_unlock(list);
-  }
-}
-
-void delete_oo_elements(struct arts_out_of_order_element_s *current) {
-  struct arts_out_of_order_element_s *trail = NULL;
-  while (current) {
-    for (unsigned int i = 0; i < OOPERELEMENT; i++) {
-      arts_free((void *)current->array[i]);
-      current->array[i] = NULL;
-    }
-    trail = current;
-    current = (struct arts_out_of_order_element_s *)current->next;
-    arts_free(trail);
-  }
-}
-
-// Not threadsafe
-void arts_out_of_order_list_delete(struct arts_out_of_order_list_s *list) {
-  /* Free any unconsumed items in the head element */
-  for (unsigned int i = 0; i < OOPERELEMENT; i++) {
-    arts_free((void *)list->head.array[i]);
-    list->head.array[i] = NULL;
-  }
-  delete_oo_elements((struct arts_out_of_order_element_s *)list->head.next);
-  list->head.next = NULL;
-  list->isFired = false;
-  list->count = 0;
-}
-
-void arts_out_of_order_list_fire_callback(
-    struct arts_out_of_order_list_s *fire_me, void *local_guid_address,
-    void (*callback_t)(void *, void *)) {
-  // Retry mechanism: Try multiple times with brief delays
-  // This allows readers to complete and release locks
-  // 1000 attempts: first 6 are busy-spin, remaining ~994 × 10μs ≈ 10ms
-  const int max_retries = 1000;
-
-  for (int attempt = 0; attempt < max_retries; attempt++) {
-    if (writer_try_oo_lock(fire_me, FIRE_LOCK)) {
-      fire_me->isFired = true;
-      unsigned int pos = fire_me->count;
-      unsigned int j = 0;
-      for (volatile struct arts_out_of_order_element_s *current =
-               &fire_me->head;
-           current; current = current->next) {
-        for (unsigned int i = 0; i < OOPERELEMENT; i++) {
-          if (j < pos) {
-            volatile void *item = NULL;
-            while (!item) {
-              item = arts_atomic_swap_ptr((volatile void **)&current->array[i],
-                                          (void *)0);
-            }
-            callback_t((void *)item, local_guid_address);
-            j++;
-          }
-        }
-        if (j == pos) {
-          break;
-        }
-        while (!current->next) {
-          ;
-        }
-      }
-      fire_me->count = 0;
-      struct arts_out_of_order_element_s *p =
-          (struct arts_out_of_order_element_s *)fire_me->head.next;
-      fire_me->head.next = NULL;
-      writer_oo_unlock(fire_me);
-      delete_oo_elements(p);
-      return;
-    }
-
-    // Failed to get lock - YIELD CPU briefly to let readers finish
-    // Only YIELD on attempts after the first few quick tries
-    if (attempt > 5) {
-      // Use nanosleep for 10 microseconds
-      struct timespec ts = {0, 10000};
-      nanosleep(&ts, NULL);
+void arts_oo_list_drain(struct arts_oo_list_s *list,
+                        void (*callback)(void *data, void *ctx), void *ctx) {
+  void *data;
+  struct arts_oo_node_s *old_head;
+  while (oo_pop_step(list, &data, &old_head)) {
+    callback(data, ctx);
+    /* The very first pop's old head is the embedded stub — never free
+     * that.  Every subsequent old head is a malloc'd node from a
+     * previous push and must be freed here. */
+    if (old_head != &list->stub) {
+      arts_free(old_head);
     }
   }
+}
 
-  // If we get here, we failed after max_retries attempts
-  // This should be very rare, but log it for debugging
-  ARTS_WARN(
-      "arts_out_of_order_list_fire_callback: failed to acquire lock after %d "
-      "attempts",
-      max_retries);
+void arts_oo_list_drop_all(struct arts_oo_list_s *list) {
+  void *data;
+  struct arts_oo_node_s *old_head;
+  while (oo_pop_step(list, &data, &old_head)) {
+    arts_free(data); /* destroy path: payload free */
+    if (old_head != &list->stub) {
+      arts_free(old_head);
+    }
+  }
 }

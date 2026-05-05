@@ -1,9 +1,9 @@
 /*
- * cdag_ro_accumulation.c — Pure RO accumulation stress test.
+ * coherence_ro_accumulation.c — Pure RO accumulation stress test.
  *
- * Pattern: one EW sets value V, then NUM_READERS RO readers verify V.
- * No writers between readers. Catches bugs where RO readers fail to join
- * an OPEN RO generation or where RO→RO transitions drop readers.
+ * Pattern: one RW writer sets value V, then NUM_READERS RO readers verify
+ * V.  No writers between readers.  Catches bugs where RO readers fail to
+ * join an open RO generation or where RO -> RO transitions drop readers.
  */
 
 #include "arts.h"
@@ -75,18 +75,17 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
 
-  arts_printf("=== cdag_ro_accumulation ===\n");
+  arts_printf("=== coherence_ro_accumulation ===\n");
   arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
 
   void *ptr = NULL;
-  arts_guid_t db =
-      arts_db_create(&ptr, sizeof(unsigned int), ARTS_DB_DEFAULT, NULL);
+  arts_guid_t db = arts_db_create(&ptr, sizeof(unsigned int), ARTS_DB_RC, NULL);
   ((unsigned int *)ptr)[0] = 0;
   arts_db_release(db);
 
   arts_guid_t w = arts_edt_create_with_epoch(writer_edt, 0, NULL, 1, epoch,
                                              &(arts_hint_t){.route = 0});
-  arts_add_dependence(db, w, 0, DB_MODE_EW);
+  arts_add_dependence(db, w, 0, DB_MODE_RW);
 
   for (int r = 0; r < NUM_READERS; r++) {
     arts_guid_t rd = arts_edt_create_with_epoch(reader_edt, 0, NULL, 1, epoch,
@@ -104,7 +103,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   int wdone = atomic_load(&g_writer_done);
   int ok = atomic_load(&g_reader_ok);
   int fail = atomic_load(&g_reader_fail);
-  fprintf(stderr, "writer_done=%d readers_ok=%d readers_fail=%d (expect 1/%d/0)\n",
+  fprintf(stderr,
+          "writer_done=%d readers_ok=%d readers_fail=%d (expect 1/%d/0)\n",
           wdone, ok, fail, NUM_READERS);
   if (wdone == 1 && ok == NUM_READERS && fail == 0) {
     fprintf(stderr, "TEST PASS\n");

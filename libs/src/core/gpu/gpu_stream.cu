@@ -288,13 +288,13 @@ void arts_wrap_up(cudaStream_t stream, cudaError_t status, void *data) {
   for (unsigned int i = 0; i < depc; i++) {
     if (depv[i].ptr) {
       struct arts_db_s *db_hdr = (struct arts_db_s *)depv[i].ptr - 1;
-      if (db_hdr->db_type == ARTS_DB_GPU) {
+      if (db_hdr->db_type == ARTS_DB_GPU_PIN) {
         arts_gpu_invalidate_route_tables(depv[i].guid, gc->gpu_id);
       }
       // True says to mark it for deletion... Change this to false to further
       // delay delete!
       //  bool mark_delete = (arts_guid_get_type(depv[i].guid) !=
-      //  ARTS_DB_GPU)
+      //  ARTS_DB_GPU_PIN)
       //  && arts_node_info.free_db_after_gpu_run;
       bool mark_delete = arts_node_info.free_db_after_gpu_run;
       bool res =
@@ -403,7 +403,7 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
       void *data_ptr = arts_gpu_route_table_lookup_db(
           depv[i].guid, arts_gpu->device, &gpu_version, &time_stamp);
       uint64_t size = db->header.size;
-      uint64_t alloc_size = (db_subtype == ARTS_DB_LC) ? (size * 2) : size;
+      uint64_t alloc_size = (db_subtype == ARTS_DB_GPU_LC) ? (size * 2) : size;
       if (!data_ptr) {
         bool successful_add = false;
         ARTS_DEBUG("WRAPPER SIZE: %lu\n", alloc_size);
@@ -416,7 +416,7 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
                      alloc_size, arts_gpu->device, db_mode_name[depv[i].mode]);
           data_ptr = arts_cuda_malloc(alloc_size);
           void *src = (void *)db;
-          if (db_subtype == ARTS_DB_LC) {
+          if (db_subtype == ARTS_DB_GPU_LC) {
             src = make_lc_shadow_copy(db);
           }
           if (depv[i].mode == DB_MODE_LC_NO_COPY ||
@@ -437,7 +437,7 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
               !arts_atomic_fetch_add_u64((uint64_t *)&wrapper->realData, 0)) {
           } // Spin till the data memcpy is launched
           data_ptr = (void *)wrapper->realData;
-          if (db_subtype == ARTS_DB_GPU && depv[i].mode == DB_MODE_MEMSET) {
+          if (db_subtype == ARTS_DB_GPU_PIN && depv[i].mode == DB_MODE_MEMSET) {
             push_data_to_stream(arts_gpu->device, data_ptr, NULL, size,
                                 arts_node_info.gpu_buff_on && !gpu_edt->lib);
           }
@@ -471,7 +471,8 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
     arts_local_stream = &arts_gpu->stream;
     arts_local_gpu_id = arts_gpu->device;
     arts_set_thread_local_edt_info(host_gc_ptr->edt);
-    arts_route_table_reset_oo(host_gc_ptr->edt->current_edt);
+    /* arts_route_table_reset_oo removed: OO list is now lock-free and
+     * drained per-installer; no separate reset step needed. */
 
     host_gc_ptr->edt->func_ptr(paramc, host_paramv, depc, host_depv);
 
@@ -490,8 +491,8 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
   for (unsigned int i = 0; i < depc; i++) {
     if (depv[i].ptr) {
       struct arts_db_s *cb_db = (struct arts_db_s *)depv[i].ptr - 1;
-      if (cb_db->db_type == ARTS_DB_GPU &&
-          (depv[i].mode == DB_MODE_EW || depv[i].mode == DB_MODE_MEMSET)) {
+      if (cb_db->db_type == ARTS_DB_GPU_PIN &&
+          (depv[i].mode == DB_MODE_RW || depv[i].mode == DB_MODE_MEMSET)) {
         size_t size = (size_t)(cb_db->header.size - sizeof(struct arts_db_s));
         get_data_from_stream(arts_gpu->device, depv[i].ptr, host_depv[i].ptr,
                              size, arts_node_info.gpu_buff_on && !gpu_edt->lib);
@@ -535,7 +536,7 @@ void free_gpu_item(arts_route_item_t *item) {
     int valid_rank = -1;
     struct arts_db_s *db = (struct arts_db_s *)arts_route_table_lookup_db(
         item->key, &valid_rank, false);
-    if (db && db->db_type == ARTS_DB_LC) {
+    if (db && db->db_type == ARTS_DB_GPU_LC) {
       unsigned int size = db->header.size;
       struct arts_db_s *temp_space =
           (struct arts_db_s *)arts_malloc_align(size, 16);
@@ -557,6 +558,7 @@ void free_gpu_item(arts_route_item_t *item) {
       get_data_from_stream_now(arts_get_current_gpu(), temp_space,
                                (void *)wrapper->realData, size, false);
 
+#if 0 /* FIXME: GPU LC sync needs new model -- task 1a.4 */
       arts_lc_meta_t dev;
       dev.guid = item->key;
       dev.data = (void *)(temp_space + 1);
@@ -570,8 +572,9 @@ void free_gpu_item(arts_route_item_t *item) {
       dev.write_lock = NULL;
 
       lc_sync_function[arts_node_info.gpu_lc_sync](&host, &dev);
+#endif
+      (void)host;
 
-      arts_route_table_return_db(item->key, false);
       arts_free(temp_space);
       arts_cuda_free((void *)wrapper->realData);
 
@@ -584,8 +587,7 @@ void free_gpu_item(arts_route_item_t *item) {
   wrapper->realData = NULL;
   wrapper->time_stamp = 0;
   item->key = 0;
-  item->lock = 0;
-  item->touched = 0;
+  /* item->lock and item->touched fields removed in new route_item model. */
 }
 
 ARTS_THREAD_LOCAL unsigned int run_gc_flag = 0;
@@ -709,7 +711,7 @@ uint64_t get_db_size_needed(uint32_t depc, arts_edt_dep_t *depv) {
     if (depv[i].ptr) {
       struct arts_db_s *db = (struct arts_db_s *)depv[i].ptr - 1;
       size += db->header.size;
-      if (db->db_type == ARTS_DB_LC) {
+      if (db->db_type == ARTS_DB_GPU_LC) {
         size += db->header.size;
       }
     }

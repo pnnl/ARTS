@@ -66,7 +66,7 @@ csr_graph_t *init_csr(partition_t part_index, graph_sz_t localv,
     unsigned int db_size = sizeof(csr_graph_t) + (totsz * sizeof(vertex_t));
 
     csr = (csr_graph_t *)arts_db_create_with_guid(block_guid, db_size,
-                                                  ARTS_DB_LOCAL, NULL, NULL);
+                                                  ARTS_DB_PIN, NULL, NULL);
     csr->partGuid = block_guid;
     csr->num_local_vertices = localv;
     csr->num_local_edges = locale;
@@ -507,7 +507,6 @@ csr_graph_t *get_graph_from_guid(arts_guid_t guid) {
     /* Note: caller uses the returned pointer without holding the route table
      * ref.  This is safe because graph DBs are never destroyed during
      * computation and callers always access data within an EDT lifetime. */
-    arts_route_table_return_db(guid, false);
     return (csr_graph_t *)(db_res + 1);
   }
   return NULL;
