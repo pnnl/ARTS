@@ -71,6 +71,60 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|amd64|AMD64")
     add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-mcx16>)
 endif()
 
+# DWCAS feature detection (cmpxchg16b on x86_64, casp on ARMv8.1+).
+# Required by Task 4m / 4m-2 (lockfree_pool, tiered_pool).  GCC and Clang
+# emit a libcall (`__atomic_compare_exchange_16`) for 16-byte atomics
+# even when -mcx16 is set, so we link against libatomic.  Detection
+# probes the linker pipeline (compile + link) by running CheckCSourceCompiles
+# with -latomic in CMAKE_REQUIRED_LIBRARIES.
+include(CheckCSourceCompiles)
+set(_arts_saved_required_flags "${CMAKE_REQUIRED_FLAGS}")
+set(_arts_saved_required_libs  "${CMAKE_REQUIRED_LIBRARIES}")
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|amd64|AMD64")
+    set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -mcx16")
+endif()
+# Some distributions (e.g., Debian without libatomic-dev) ship only
+# `libatomic.so.1` without the canonical `libatomic.so` symlink, which
+# defeats `find_library(NAMES atomic)`.  Probe for the SONAME directly
+# as a fallback.
+find_library(ATOMIC_LIBRARY NAMES atomic)
+if(NOT ATOMIC_LIBRARY)
+    find_file(ATOMIC_LIBRARY_SONAME libatomic.so.1
+        PATHS /usr/lib/x86_64-linux-gnu /usr/lib /usr/local/lib /usr/lib64
+        NO_DEFAULT_PATH)
+    if(ATOMIC_LIBRARY_SONAME)
+        set(ATOMIC_LIBRARY "${ATOMIC_LIBRARY_SONAME}" CACHE FILEPATH
+            "Path to libatomic" FORCE)
+    endif()
+endif()
+if(ATOMIC_LIBRARY)
+    set(CMAKE_REQUIRED_LIBRARIES "${ATOMIC_LIBRARY}" ${CMAKE_REQUIRED_LIBRARIES})
+endif()
+check_c_source_compiles("
+  #include <stdint.h>
+  int main(void) {
+    __int128 a __attribute__((aligned(16))) = 0;
+    __int128 b __attribute__((aligned(16))) = 0;
+    return __atomic_compare_exchange_n(&a, &b, (__int128)1,
+                                       0, __ATOMIC_SEQ_CST,
+                                       __ATOMIC_SEQ_CST);
+  }
+" ARTS_HAVE_DWCAS)
+set(CMAKE_REQUIRED_FLAGS "${_arts_saved_required_flags}")
+set(CMAKE_REQUIRED_LIBRARIES "${_arts_saved_required_libs}")
+unset(_arts_saved_required_flags)
+unset(_arts_saved_required_libs)
+if(NOT ARTS_HAVE_DWCAS)
+    message(FATAL_ERROR
+        "ARTS requires DWCAS (cmpxchg16b/casp).  "
+        "Compile with -mcx16 (x86_64) or ARMv8.1+.")
+endif()
+# Make libatomic available to all targets that may emit 16-byte atomic
+# libcalls (lockfree_pool.h / tiered_pool.h users).
+if(ATOMIC_LIBRARY)
+    link_libraries(${ATOMIC_LIBRARY})
+endif()
+
 # Set global properties for all targets
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
@@ -122,6 +176,24 @@ endif()
 option(ARTS_USE_GPU "Enable GPU support (default: ON, disable when OFF)" ON)
 option(ARTS_USE_RDMA "Use RDMA RSockets networking (default: ON, use TCP when OFF)" OFF)
 option(ARTS_USE_CXL "Enable CXL shared-memory support (default: OFF)" OFF)
+
+# Default DB kind that benchmarks select via ARTS_DB_DEFAULT.
+# Flip this one variable to retarget every benchmark in one shot
+# (e.g. -DARTS_DB_DEFAULT_KIND=ARTS_DB_CXL_LC) — no source edits needed.
+set(ARTS_DB_DEFAULT_KIND "ARTS_DB_RC" CACHE STRING
+    "DB kind that ARTS_DB_DEFAULT expands to (ARTS_DB_RC / ARTS_DB_PIN / ARTS_DB_GPU_PIN / ARTS_DB_GPU_LC / ARTS_DB_CXL_LC)")
+set_property(CACHE ARTS_DB_DEFAULT_KIND PROPERTY STRINGS
+    ARTS_DB_RC ARTS_DB_PIN ARTS_DB_GPU_PIN ARTS_DB_GPU_LC ARTS_DB_CXL_LC)
+add_compile_definitions(ARTS_DB_DEFAULT=${ARTS_DB_DEFAULT_KIND})
+
+# Default EDT kind (mirrors ARTS_DB_DEFAULT pattern).  Flip this one
+# variable to retarget the EDT default in one shot.
+set(ARTS_EDT_DEFAULT_KIND "ARTS_EDT_CPU" CACHE STRING
+    "EDT kind that ARTS_EDT_DEFAULT expands to (ARTS_EDT_CPU / ARTS_EDT_GPU)")
+set_property(CACHE ARTS_EDT_DEFAULT_KIND PROPERTY STRINGS
+    ARTS_EDT_CPU ARTS_EDT_GPU)
+add_compile_definitions(ARTS_EDT_DEFAULT=${ARTS_EDT_DEFAULT_KIND})
+
 set(ARTS_CXL_RAPID_INCLUDE_DIR "" CACHE PATH
     "Path to Rapid API include directory (required when ARTS_USE_CXL=ON)")
 set(ARTS_CXL_LIB_DIR "" CACHE PATH
@@ -384,7 +456,7 @@ add_compile_definitions(ARTS_LOG_LEVEL=${ARTS_LOG_LEVEL})
 message(STATUS "Log level: ${ARTS_LOG_LEVEL} (0=ERROR, 1=+WARN, 2=+INFO, 3=+DEBUG)")
 
 set(COUNTER_CONFIG_PATH
-    "${CMAKE_CURRENT_SOURCE_DIR}/sample_configs/counters.cfg"
+    "${CMAKE_CURRENT_SOURCE_DIR}/configs/counters.cfg"
     CACHE FILEPATH "ARTS counter configuration file (parsed to generate introspection macros)")
 set(COUNTER_CONFIG_FILE "${COUNTER_CONFIG_PATH}")
 
@@ -405,7 +477,7 @@ if(ARTS_BUILD_BENCHMARKS)
     add_subdirectory(benchmarks)
 endif()
 
-add_subdirectory(sample_configs)
+add_subdirectory(configs)
 
 # Documentation (Doxygen XML → Breathe → Sphinx HTML)
 option(ARTS_BUILD_DOCS "Build documentation (requires Doxygen + Sphinx)" OFF)

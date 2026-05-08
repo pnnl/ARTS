@@ -130,10 +130,11 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== array_db_advanced ===\n");
 
-  unsigned int num_nodes = arts_get_total_nodes();
+  unsigned int num_nodes = arts_get_total_ranks();
   unsigned int total_elems = ELEMS_PER_NODE * num_nodes;
 
-  arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+  arts_epoch_start(epoch);
 
   // Create array DB.
   arts_guid_t arr_guid =
@@ -152,17 +153,15 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Test 3: arts_signal_array_db — signal an EDT with all blocks.
   unsigned int num_blocks = array->num_blocks;
   arts_guid_t sig_edt =
-      arts_edt_create_with_epoch(signal_array_check, 0, NULL, num_blocks, epoch,
-                                 &(arts_hint_t){.route = 0});
+      arts_edt_create(signal_array_check, 0, NULL, num_blocks, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   arts_signal_array_db(array, sig_edt, 0);
 
   // Test 4: arts_gather_array_db_in_edt.
   arts_guid_t gather_edt =
-      arts_edt_create_with_epoch(gather_in_edt_check, 0, NULL, num_blocks,
-                                 epoch, &(arts_hint_t){.route = 0});
+      arts_edt_create(gather_in_edt_check, 0, NULL, num_blocks, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   arts_gather_array_db_in_edt(array, gather_edt, 0);
 
-  arts_wait_on_handle(epoch);
+  arts_epoch_wait(epoch);
   arts_shutdown();
 }
 

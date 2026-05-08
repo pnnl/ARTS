@@ -1,4 +1,4 @@
-# Compute submodule (EDT creation, scheduling, SHAD adapter)
+# Compute submodule (EDT creation, scheduling)
 file(GLOB COMPUTE_SOURCES "*.c")
 
 # CPU-only object library

@@ -50,16 +50,28 @@ uint64_t global_guid_on = 0;
 uint64_t min_global_guid_thread = 0;
 uint64_t max_global_guid_thread = 0;
 
-void set_global_guid_on() { global_guid_on = ((uint64_t)1) << 40; }
-
-uint64_t *arts_guid_generator_get_key(unsigned int route, unsigned int type) {
-  return &arts_node_info.keys[arts_thread_info.thread_id]
-                             [(route * ARTS_LAST_TYPE) + type];
+void set_global_guid_on() {
+  global_guid_on = ((uint64_t)1) << ARTS_GUID_KEY_BITS;
 }
 
-arts_guid_t arts_guid_create_for_rank_internal(unsigned int route,
+uint64_t *arts_guid_generator_get_key(unsigned int rank, unsigned int type) {
+  return &arts_node_info
+              .keys[arts_thread_info.thread_id][(rank * ARTS_LAST_TYPE) + type];
+}
+
+arts_guid_t arts_guid_create_for_rank_internal(unsigned int rank,
                                                unsigned int type,
                                                unsigned int guid_count) {
+  /* Sentinel rank values (ARTS_HINT_CURRENT_RANK, ARTS_HINT_ROUND_ROBIN)
+   * must be resolved to a real rank by the caller before reaching the
+   * encoder.  They are stored in 32-bit hint fields and would not fit in
+   * the 14-bit GUID rank field (silent truncation).  Guard explicitly so
+   * mis-routed sentinels fail loudly. */
+  if (rank > ARTS_GUID_RANK_MASK) {
+    ARTS_ERROR("GUID encode: rank %u exceeds 14-bit field "
+               "(max %lu) — caller must resolve sentinel ranks first",
+               rank, (unsigned long)ARTS_GUID_RANK_MASK);
+  }
   uint64_t key = 0;
   if (global_guid_on) {
     // Safeguard against wrap around
@@ -70,7 +82,7 @@ arts_guid_t arts_guid_create_for_rank_internal(unsigned int route,
       ARTS_ERROR("GUID generation failed: parallel start out of keys");
     }
   } else {
-    uint64_t *key_ptr = arts_guid_generator_get_key(route, type);
+    uint64_t *key_ptr = arts_guid_generator_get_key(rank, type);
     uint64_t value = *key_ptr;
     if (value + guid_count < keys_per_thread) {
       key = value +
@@ -81,11 +93,11 @@ arts_guid_t arts_guid_create_for_rank_internal(unsigned int route,
       ARTS_ERROR("GUID generation failed: out of keys");
     }
   }
-  return ARTS_GUID_MAKE(type, route, key);
+  return ARTS_GUID_MAKE(type, rank, key);
 }
 
-arts_guid_t arts_guid_create_for_rank(unsigned int route, unsigned int type) {
-  return arts_guid_create_for_rank_internal(route, type, 1);
+arts_guid_t arts_guid_create_for_rank(unsigned int rank, unsigned int type) {
+  return arts_guid_create_for_rank_internal(rank, type, 1);
 }
 
 void set_guid_generator_after_parallel_start() {
@@ -137,14 +149,14 @@ bool arts_guid_is_local(arts_guid_t guid) {
 
 uint64_t arts_guid_get_key(arts_guid_t guid) { return ARTS_GUID_GET_KEY(guid); }
 
-arts_guid_t arts_guid_reserve(arts_type_t type, unsigned int route) {
+arts_guid_t arts_guid_reserve(arts_type_t type, unsigned int rank) {
   arts_guid_t guid = NULL_GUID;
-  if (route == ARTS_HINT_CURRENT_NODE) {
-    route = arts_global_rank_id;
+  if (rank == ARTS_HINT_CURRENT_RANK) {
+    rank = arts_global_rank_id;
   }
-  route = route % arts_global_rank_count;
-  if (type > ARTS_NULL && type < ARTS_LAST_TYPE) {
-    guid = arts_guid_create_for_rank_internal(route, (unsigned int)type, 1);
+  rank = rank % arts_global_rank_count;
+  if ((unsigned int)type < ARTS_LAST_TYPE) {
+    guid = arts_guid_create_for_rank_internal(rank, (unsigned int)type, 1);
     // ARTS_INFO("Allocation Guid %u", guid);
   } else {
     ARTS_INFO("Invalid type %u", type);
@@ -154,36 +166,43 @@ arts_guid_t arts_guid_reserve(arts_type_t type, unsigned int route) {
   return guid;
 }
 
-arts_guid_t *arts_guid_reserve_round_robin(unsigned int size,
-                                           arts_type_t type) {
-  arts_guid_t *guids = NULL;
-  if (type > ARTS_NULL && type < ARTS_LAST_TYPE) {
-    guids = (arts_guid_t *)arts_malloc(size * sizeof(arts_guid_t));
-    for (unsigned int i = 0; i < size; i++) {
-      unsigned int route = i % arts_global_rank_count;
-      guids[i] = arts_guid_create_for_rank(route, (unsigned int)type);
-    }
-  }
-  return guids;
-}
-
 arts_guid_t arts_guid_reserve_range(arts_type_t type, unsigned int size,
-                                    unsigned int route) {
-  if (route == ARTS_HINT_CURRENT_NODE) {
-    route = arts_global_rank_id;
+                                    unsigned int rank) {
+  if (!size || type >= ARTS_LAST_TYPE) {
+    return NULL_GUID;
   }
-  if (size && type > ARTS_NULL && type < ARTS_LAST_TYPE) {
-    return arts_guid_create_for_rank_internal(route, (unsigned int)type, size);
+  if (rank == ARTS_HINT_ROUND_ROBIN) {
+    /* Reserve enough keys on the local rank to cover all idx. With
+     * stride = arts_global_rank_count we need ceil(size/nrank) keys per
+     * rank, but we only need a single base_key on this rank because
+     * arts_guid_from_index synthesizes (home, base+idx/nrank)
+     * deterministically. Stamp the rank field with the DISTRIBUTED sentinel so
+     * callers and arts_guid_from_index can recognize the range. */
+    unsigned int nrank = arts_global_rank_count ? arts_global_rank_count : 1;
+    unsigned int stride = (size + nrank - 1) / nrank; /* ceil(size/nrank) */
+    if (stride == 0) {
+      stride = 1;
+    }
+    arts_guid_t local = arts_guid_create_for_rank_internal(
+        arts_global_rank_id, (unsigned int)type, stride);
+    if (local == NULL_GUID) {
+      return NULL_GUID;
+    }
+    return ARTS_GUID_MAKE((unsigned int)type, ARTS_DISTRIBUTED_RANK,
+                          ARTS_GUID_GET_KEY(local));
   }
-  return NULL_GUID;
+  if (rank == ARTS_HINT_CURRENT_RANK) {
+    rank = arts_global_rank_id;
+  }
+  return arts_guid_create_for_rank_internal(rank, (unsigned int)type, size);
 }
 
 arts_guid_t arts_guid_reserve_range_hash(arts_type_t type, unsigned int size,
-                                         unsigned int route,
+                                         unsigned int rank,
                                          unsigned int hash_size) {
-  if (size && type > ARTS_NULL && type < ARTS_LAST_TYPE) {
+  if (size && (unsigned int)type < ARTS_LAST_TYPE) {
     arts_guid_t start = arts_guid_create_for_rank_internal(
-        route, (unsigned int)type, size + hash_size);
+        rank, (unsigned int)type, size + hash_size);
     for (unsigned int i = 0; i < hash_size; i++) {
       if (ARTS_GUID_GET_KEY(start) % hash_size == 0) {
         break;
@@ -196,12 +215,35 @@ arts_guid_t arts_guid_reserve_range_hash(arts_type_t type, unsigned int size,
 }
 
 arts_guid_t arts_guid_from_index(arts_guid_t range_guid, unsigned int idx) {
+  if (ARTS_GUID_GET_RANK(range_guid) == ARTS_DISTRIBUTED_RANK) {
+    /* Round-robin distribution: home = idx % nrank, key offset = idx / nrank.
+     * Same (range, idx) on every rank yields the same GUID. */
+    unsigned int nrank = arts_global_rank_count ? arts_global_rank_count : 1;
+    unsigned int home = idx % nrank;
+    uint64_t base_key = ARTS_GUID_GET_KEY(range_guid);
+    uint64_t key = base_key + (idx / nrank);
+    return ARTS_GUID_MAKE(ARTS_GUID_GET_TYPE(range_guid), home, key);
+  }
   return range_guid + idx;
 }
 
 int arts_guid_index_from(arts_guid_t range_guid, arts_guid_t guid) {
   if (ARTS_GUID_GET_TYPE(range_guid) != ARTS_GUID_GET_TYPE(guid)) {
     return -1;
+  }
+  if (ARTS_GUID_GET_RANK(range_guid) == ARTS_DISTRIBUTED_RANK) {
+    /* Inverse of round-robin: idx = key_offset * nrank + home. */
+    unsigned int nrank = arts_global_rank_count ? arts_global_rank_count : 1;
+    uint64_t base_key = ARTS_GUID_GET_KEY(range_guid);
+    uint64_t guid_key = ARTS_GUID_GET_KEY(guid);
+    if (guid_key < base_key) {
+      return -1;
+    }
+    unsigned int home = (unsigned int)ARTS_GUID_GET_RANK(guid);
+    if (home >= nrank) {
+      return -1;
+    }
+    return (int)(((guid_key - base_key) * nrank) + home);
   }
   if (ARTS_GUID_GET_RANK(range_guid) != ARTS_GUID_GET_RANK(guid)) {
     return -1;
@@ -213,8 +255,6 @@ int arts_guid_index_from(arts_guid_t range_guid, arts_guid_t guid) {
   }
   return (int)(check_key - start_key);
 }
-
-void arts_guid_round_robin_destroy(arts_guid_t *guids) { arts_free(guids); }
 
 uint64_t arts_guid_hash_key(arts_guid_t guid) {
   uint64_t key = arts_guid_get_key(guid);

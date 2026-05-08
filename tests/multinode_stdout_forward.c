@@ -29,9 +29,9 @@ void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
     return;
   }
   /* Spawn the sentinel EDT on rank 1 if nodes >= 2, else rank 0. */
-  unsigned int target = (arts_get_total_nodes() > 1) ? 1u : 0u;
+  unsigned int target = (arts_get_total_ranks() > 1) ? 1u : 0u;
   uint64_t paramv[1] = {42};
-  arts_edt_create(remote_edt, 1, paramv, 0, &(arts_hint_t){.route = target});
+  arts_edt_create(remote_edt, 1, paramv, 0, &(arts_edt_hint_t){.rank = target});
 }
 
 int main(int argc, char **argv) {

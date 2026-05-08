@@ -52,7 +52,7 @@ void stress_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramc;
   arts_guid_t collector = (arts_guid_t)paramv[0];
   uint32_t slot = (uint32_t)paramv[1];
-  arts_signal_edt_value(collector, slot, 1);
+  arts_add_dependence((arts_guid_t)(1), collector, slot, DB_MODE_VAL);
 }
 
 /// Collector: depc = NUM_EDTS, each slot holds value 1.
@@ -83,7 +83,7 @@ void chain_stage(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramc;
   uint64_t stage = (uint64_t)depv[0].guid;
   arts_guid_t next = (arts_guid_t)paramv[0];
-  arts_signal_edt_value(next, 0, stage + 1);
+  arts_add_dependence((arts_guid_t)(stage + 1), next, 0, DB_MODE_VAL);
 }
 
 void chain_final(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -110,34 +110,31 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== stress_edt ===\n");
 
-  arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+  arts_epoch_start(epoch);
 
   // Test 1: Fan-out stress with NUM_EDTS.
-  arts_guid_t collector = arts_edt_create_with_epoch(
-      stress_collector, 0, NULL, NUM_EDTS, epoch, &(arts_hint_t){.route = 0});
+  arts_guid_t collector = arts_edt_create(stress_collector, 0, NULL, NUM_EDTS, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
 
   for (uint32_t i = 0; i < NUM_EDTS; i++) {
     uint64_t params[2];
     params[0] = (uint64_t)collector;
     params[1] = (uint64_t)i;
-    arts_edt_create_with_epoch(stress_task, 2, params, 0, epoch,
-                               &(arts_hint_t){.route = 0});
+    arts_edt_create(stress_task, 2, params, 0, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   }
 
   // Test 2: Chain stress — CHAIN_LEN stages.
   // Build chain in reverse: final ← stage[N-1] ← ... ← stage[0].
-  arts_guid_t final_edt = arts_edt_create_with_epoch(
-      chain_final, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
+  arts_guid_t final_edt = arts_edt_create(chain_final, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   arts_guid_t prev = final_edt;
   for (int i = CHAIN_LEN - 1; i >= 0; i--) {
     uint64_t param = (uint64_t)prev;
-    prev = arts_edt_create_with_epoch(chain_stage, 1, &param, 1, epoch,
-                                      &(arts_hint_t){.route = 0});
+    prev = arts_edt_create(chain_stage, 1, &param, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   }
   // Seed first stage.
-  arts_signal_edt_value(prev, 0, 0);
+  arts_add_dependence((arts_guid_t)(0), prev, 0, DB_MODE_VAL);
 
-  arts_wait_on_handle(epoch);
+  arts_epoch_wait(epoch);
   arts_shutdown();
 }
 

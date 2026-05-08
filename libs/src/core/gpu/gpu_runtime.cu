@@ -53,7 +53,7 @@
 #include "arts/gpu/gpu_stream_buffer.h"
 #include "arts/memory/db.h"
 #include "arts/runtime_state.h"
-#include "arts/sync/termination.h"
+#include "arts/sync/epoch.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/utils/atomics.h"
@@ -144,15 +144,17 @@ int arts_get_gpu_id() { return arts_local_gpu_id; }
 
 unsigned int arts_get_num_gpus() { return arts_node_info.gpu; }
 
-arts_guid_t internal_edt_create_gpu(
-    arts_edt_t func_ptr, arts_guid_t *guid, unsigned int route, uint32_t paramc,
-    const uint64_t *paramv, uint32_t depc, arts_dim3_t grid, arts_dim3_t block,
-    arts_guid_t end_guid, uint32_t slot, arts_guid_t data_guid, bool has_depv,
-    bool pass_through, bool lib, int gpu_to_run_on) {
+arts_guid_t internal_edt_create_gpu(arts_edt_t func_ptr, arts_guid_t *guid,
+                                    unsigned int rank, uint32_t paramc,
+                                    const uint64_t *paramv, uint32_t depc,
+                                    arts_dim3_t grid, arts_dim3_t block,
+                                    arts_guid_t end_guid, uint32_t slot,
+                                    arts_guid_t data_guid, bool pass_through,
+                                    bool lib, int gpu_to_run_on) {
   //    ARTSEDTCOUNTERTIMERSTART(EDT_CREATE_COUNTER);
-  unsigned int dep_space = (has_depv) ? depc * sizeof(arts_edt_dep_t) : 0;
-  unsigned int edt_space =
-      sizeof(arts_gpu_edt_t) + (paramc * sizeof(uint64_t)) + dep_space;
+  unsigned int edt_space = sizeof(arts_gpu_edt_t) +
+                           (paramc * sizeof(uint64_t)) +
+                           (depc * sizeof(arts_edt_dep_t));
 
   arts_gpu_edt_t *edt = (arts_gpu_edt_t *)arts_calloc(1, edt_space);
   edt->wrapperEdt.invalidate_count = 1;
@@ -167,10 +169,10 @@ arts_guid_t internal_edt_create_gpu(
 
   edt->wrapperEdt.edt_type = ARTS_EDT_GPU;
   // artsIntrospectionEdtCreateBegin();
-  (void)arts_edt_create_internal((struct arts_edt_s *)edt, ARTS_EDT, guid,
-                                 route, arts_thread_info.numa_domain_id,
-                                 edt_space, NULL_GUID, func_ptr, paramc, paramv,
-                                 depc, true, NULL_GUID, has_depv, 0);
+  (void)arts_edt_create_internal((struct arts_edt_s *)edt, ARTS_EDT, guid, rank,
+                                 arts_thread_info.numa_domain_id, edt_space,
+                                 func_ptr, paramc, paramv, depc, true,
+                                 NULL_GUID, 0);
   // artsIntrospectionEdtCreateFinish(created);
   //    ARTSEDTCOUNTERTIMERENDINCREMENT(EDT_CREATE_COUNTER);
   return *guid;
@@ -184,10 +186,10 @@ arts_guid_t arts_edt_create_gpu(arts_edt_t func_ptr, uint32_t paramc,
                                 const uint64_t *paramv, uint32_t depc,
                                 arts_dim3_t grid, arts_dim3_t block,
                                 const arts_gpu_hint_t *hint) {
-  unsigned int route =
-      (hint && hint->route != ARTS_HINT_CURRENT_NODE) ? hint->route : 0;
-  if (!hint || hint->route == ARTS_HINT_CURRENT_NODE) {
-    route = arts_global_rank_id;
+  unsigned int rank =
+      (hint && hint->rank != ARTS_HINT_CURRENT_RANK) ? hint->rank : 0;
+  if (!hint || hint->rank == ARTS_HINT_CURRENT_RANK) {
+    rank = arts_global_rank_id;
   }
   arts_guid_t end_guid = hint ? hint->end_guid : NULL_GUID;
   uint32_t slot = hint ? hint->slot : 0;
@@ -197,8 +199,8 @@ arts_guid_t arts_edt_create_gpu(arts_edt_t func_ptr, uint32_t paramc,
   int gpu = hint ? hint->gpu : -1;
 
   arts_guid_t guid = NULL_GUID;
-  return internal_edt_create_gpu(func_ptr, &guid, route, paramc, paramv, depc,
-                                 grid, block, end_guid, slot, data_guid, true,
+  return internal_edt_create_gpu(func_ptr, &guid, rank, paramc, paramv, depc,
+                                 grid, block, end_guid, slot, data_guid,
                                  passthrough, lib, gpu);
 }
 
@@ -216,7 +218,7 @@ arts_guid_t arts_edt_create_gpu_with_guid(arts_edt_t func_ptr, arts_guid_t guid,
 
   return internal_edt_create_gpu(func_ptr, &guid, arts_guid_get_rank(guid),
                                  paramc, paramv, depc, grid, block, end_guid,
-                                 slot, data_guid, true, passthrough, lib, gpu);
+                                 slot, data_guid, passthrough, lib, gpu);
 }
 
 void arts_run_gpu(void *edt_packet, arts_gpu_t *arts_gpu) {
@@ -269,18 +271,15 @@ void arts_gpu_host_wrap_up(void *edt_packet, arts_guid_t to_signal,
   // Signal next
   if (to_signal) {
     if (edt->passthrough) {
-      arts_signal_edt(to_signal, slot, depv[data_guid].guid, DB_MODE_RW);
+      internal_signal_edt(to_signal, slot, depv[data_guid].guid, DB_MODE_RW,
+                          NULL, 0);
     } else {
       arts_type_t mode = arts_guid_get_type(to_signal);
       if (mode == ARTS_EDT) {
-        arts_signal_edt(to_signal, slot, data_guid, DB_MODE_RW);
+        internal_signal_edt(to_signal, slot, data_guid, DB_MODE_RW, NULL, 0);
       }
       if (mode == ARTS_EVENT) {
         arts_event_satisfy_slot(to_signal, data_guid, slot);
-      }
-      if (mode ==
-          ARTS_BUFFER) { // This is for us to be able to block in a host edt
-        arts_set_buffer(to_signal, 0, 0);
       }
     }
   }
@@ -473,14 +472,13 @@ void arts_put_in_db_from_gpu(void *ptr, arts_guid_t db_guid,
                              bool free_data) {
   unsigned int rank = arts_guid_get_rank(db_guid);
   if (rank == arts_global_rank_id) {
-    struct arts_db_s *db =
-        (struct arts_db_s *)arts_route_table_lookup_db(db_guid, NULL, false);
+    struct arts_db_s *db = arts_route_table_lookup_db_safe(db_guid);
     if (db) {
       void *data = (void *)(((char *)(db + 1)) + offset);
       // memcpy(data, ptr, size);
       CHECKCORRECT(cudaMemcpyAsync(data, ptr, size, cudaMemcpyDeviceToHost,
                                    *arts_local_stream));
-      /* No ref count: lookup no longer takes a ref to balance. */
+      arts_route_table_release(db_guid);
     } else {
       void *cpy_ptr = arts_malloc(size);
       // memcpy(cpy_ptr, ptr, size);

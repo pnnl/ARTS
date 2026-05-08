@@ -57,7 +57,7 @@ void write_test(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   //    }
   if (paramc > 1) {
     arts_printf("-----------------SIGNALLING NEXT %u\n", index);
-    arts_signal_edt_value((arts_guid_t)paramv[1], -1, 0);
+    arts_add_dependence((arts_guid_t)(0), (arts_guid_t)paramv[1], -1, DB_MODE_VAL);
   } else {
     for (unsigned int i = 0; i < num_writes; i++) {
       arts_printf("i: %u %u\n", i, array[i]);
@@ -79,11 +79,11 @@ void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
       if (i < num_writes - 1) {
         args[1] = write_guids[i + 1];
-        arts_edt_create_with_guid(write_test, write_guids[i], 2, args, 2);
+        arts_edt_create(write_test, 2, args, 2, &(arts_edt_hint_t){.guid = write_guids[i]});
       } else {
-        arts_edt_create_with_guid(write_test, write_guids[i], 1, args, 2);
+        arts_edt_create(write_test, 1, args, 2, &(arts_edt_hint_t){.guid = write_guids[i]});
       }
-      arts_signal_edt(write_guids[i], 0, db_guid, DB_MODE_RW);
+      arts_add_dependence(db_guid, write_guids[i], 0, DB_MODE_RW);
     }
   }
 }
@@ -99,20 +99,20 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   num_writes = strtol(argv[1], NULL, 10);
   write_guids = (arts_guid_t *)malloc(sizeof(arts_guid_t) * num_writes);
   for (unsigned int i = 0; i < num_writes; i++) {
-    write_guids[i] = arts_guid_reserve(ARTS_EDT, i % arts_get_total_nodes());
+    write_guids[i] = arts_guid_reserve(ARTS_EDT, i % arts_get_total_ranks());
   }
 
   unsigned int *ptr = (unsigned int *)arts_db_create_with_guid(
-      db_guid, sizeof(unsigned int) * num_writes, ARTS_DB_RC, NULL, NULL);
+      db_guid, sizeof(unsigned int) * num_writes, ARTS_DB_RC, ARTS_DB_PROP_NONE, NULL);
   for (unsigned int i = 0; i < num_writes; i++) {
     ptr[i] = 0;
   }
 
-  for (unsigned int n = 0; n < arts_get_total_nodes(); n++) {
-    arts_edt_create(node_setup, 0, NULL, 0, &(arts_hint_t){.route = n});
+  for (unsigned int n = 0; n < arts_get_total_ranks(); n++) {
+    arts_edt_create(node_setup, 0, NULL, 0, &(arts_edt_hint_t){.rank = n});
   }
 
-  arts_signal_edt_value(write_guids[0], -1, 0);
+  arts_add_dependence((arts_guid_t)(0), write_guids[0], -1, DB_MODE_VAL);
 }
 
 int main(int argc, char **argv) {

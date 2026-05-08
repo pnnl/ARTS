@@ -56,15 +56,17 @@ void check_out_edts(uint64_t threshold);
 #define CHECK_OUTSTANDING_EDTS(threshold) check_out_edts(threshold)
 
 bool arts_edt_create_internal(struct arts_edt_s *edt, arts_type_t mode,
-                              arts_guid_t *guid, unsigned int route,
+                              arts_guid_t *guid, unsigned int rank,
                               unsigned int numa_domain, unsigned int edt_space,
-                              arts_guid_t output_buffer, arts_edt_t func_ptr,
-                              uint32_t paramc, const uint64_t *paramv,
-                              uint32_t depc, bool use_epoch,
-                              arts_guid_t epoch_guid, bool has_depv,
+                              arts_edt_t func_ptr, uint32_t paramc,
+                              const uint64_t *paramv, uint32_t depc,
+                              bool use_epoch, arts_guid_t epoch_guid,
                               uint64_t arts_id);
 void arts_edt_free(struct arts_edt_s *edt);
 void arts_edt_delete(struct arts_edt_s *edt);
+/* deleter pointer for foreign TUs that allocate arts_edt_s stubs
+ * (e.g. remote handler.c arts_remote_handle_edt_move's race-loser cleanup). */
+void (*arts_edt_get_deleter(void))(void *);
 void internal_signal_edt(arts_guid_t edt_packet, uint32_t slot,
                          arts_guid_t data_guid, arts_db_access_mode_t mode,
                          void *ptr, unsigned int size);

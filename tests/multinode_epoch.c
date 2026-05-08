@@ -56,8 +56,8 @@ void node_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramc;
   arts_guid_t collector = (arts_guid_t)paramv[0];
   uint32_t slot = (uint32_t)paramv[1];
-  unsigned int my_rank = arts_get_current_node();
-  arts_signal_edt_value(collector, slot, (uint64_t)my_rank);
+  unsigned int my_rank = arts_get_current_rank();
+  arts_add_dependence((arts_guid_t)((uint64_t)my_rank), collector, slot, DB_MODE_VAL);
 }
 
 /// Collector: verify that each rank appears TASKS_PER_NODE times.
@@ -112,19 +112,18 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== multinode_epoch ===\n");
 
-  unsigned int total = arts_get_total_nodes();
+  unsigned int total = arts_get_total_ranks();
 
   // Create epoch with finish EDT.
   arts_guid_t fin =
-      arts_edt_create(epoch_finish, 0, NULL, 1, &(arts_hint_t){.route = 0});
-  arts_guid_t epoch = arts_initialize_and_start_epoch(fin, 0);
+      arts_edt_create(epoch_finish, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0});
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), fin, 0);
+  arts_epoch_start(epoch);
 
   // Create collector EDT that receives one signal per task.
   unsigned int total_tasks = TASKS_PER_NODE * total;
   uint64_t total_param = (uint64_t)total;
-  arts_guid_t collector = arts_edt_create_with_epoch(
-      check_epoch_results, 1, &total_param, total_tasks, epoch,
-      &(arts_hint_t){.route = 0});
+  arts_guid_t collector = arts_edt_create(check_epoch_results, 1, &total_param, total_tasks, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
 
   // Launch TASKS_PER_NODE tasks on each node.
   uint32_t slot = 0;
@@ -133,8 +132,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       uint64_t params[2];
       params[0] = (uint64_t)collector;
       params[1] = (uint64_t)slot;
-      arts_edt_create_with_epoch(node_task, 2, params, 0, epoch,
-                                 &(arts_hint_t){.route = r});
+      arts_edt_create(node_task, 2, params, 0, &(arts_edt_hint_t){.rank = r, .epoch = epoch});
       slot++;
     }
   }

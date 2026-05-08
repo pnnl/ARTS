@@ -432,6 +432,7 @@ add_benchmark_app(NAME Stencil2D_intel_channelEVTs
     DIR Stencil2D/refactored/ocr/intel-channelEVTs
     SOURCES stencil_2d.c timers.c
     LIBS reduction ocrAppUtils timer
+    EXTRA_DEFINES STENCIL_WITH_DBUF_CHRECV CHANNEL_EVENTS_AT_RECEIVER
     EXTRA_LINK_LIBS m
 )
 
@@ -573,7 +574,7 @@ add_benchmark_app(NAME LCS_distributed_ST
     EXTRA_LINK_LIBS m
 )
 # LCS uses bare "inline" (C11 = no external def) → fails at -O0; force GNU89 semantics
-# target_compile_options(LCS_distributed_ST_xsocr PRIVATE -fgnu89-inline)
+target_compile_options(LCS_distributed_ST_xsocr PRIVATE -fgnu89-inline)
 target_compile_options(LCS_distributed_ST_arts PRIVATE -fgnu89-inline)
 
 add_benchmark_app(NAME LCS_shared
@@ -582,7 +583,7 @@ add_benchmark_app(NAME LCS_shared
     LIBS reduction timer
     EXTRA_LINK_LIBS m
 )
-# target_compile_options(LCS_shared_xsocr PRIVATE -fgnu89-inline)
+target_compile_options(LCS_shared_xsocr PRIVATE -fgnu89-inline)
 target_compile_options(LCS_shared_arts PRIVATE -fgnu89-inline)
 
 # Note: LCS/intel-jesmin-lcs_all_db_distributed uses C++ (lcs_distributed.cpp)
@@ -603,327 +604,180 @@ target_compile_options(LCS_shared_arts PRIVATE -fgnu89-inline)
 # Sizes tiny/small/medium/large use RAG_IMPLICIT_INPUTS (compile-time data).
 # Sizes huge/problem_size_scaling read data files at runtime.
 
-# set(SAR_ROOT "${OCR_APPS_ROOT}/sar")
-# set(SAR_SRC_DIR "${SAR_ROOT}/ocr/src")
-# set(SAR_DATASETS_DIR "${SAR_ROOT}/datasets")
-# set(CRLIBM_PKG_DIR "${OCR_LIBS_ROOT}/crlibm-1.0beta5")
-# set(CRLIBM_TARBALL "${CRLIBM_PKG_DIR}/tar/crlibm-1.0beta5.tgz")
-# set(CRLIBM_DIR "${CMAKE_CURRENT_BINARY_DIR}/crlibm")
+set(SAR_ROOT "${OCR_APPS_ROOT}/sar")
+set(SAR_SRC_DIR "${SAR_ROOT}/ocr/src")
+set(SAR_DATASETS_DIR "${SAR_ROOT}/datasets")
+set(CRLIBM_PKG_DIR "${OCR_LIBS_ROOT}/crlibm-1.0beta5")
+set(CRLIBM_TARBALL "${CRLIBM_PKG_DIR}/tar/crlibm-1.0beta5.tgz")
+set(CRLIBM_DIR "${CMAKE_CURRENT_BINARY_DIR}/crlibm")
+
+# ---------------------------------------------------------------------------
+# Step 1: Extract and configure crlibm at configure time
+# ---------------------------------------------------------------------------
+# The tarball is in the submodule; x86_64/ only has RAG-install.sh tracked.
+# We extract into the build directory so the source tree stays clean.
+if(EXISTS "${CRLIBM_TARBALL}")
+    if(NOT EXISTS "${CRLIBM_DIR}/crlibm.h")
+        message(STATUS "SAR: Extracting crlibm tarball...")
+        file(MAKE_DIRECTORY "${CRLIBM_DIR}")
+        execute_process(
+            COMMAND tar --gzip --extract --strip-components=1
+            --file=${CRLIBM_TARBALL}
+            WORKING_DIRECTORY "${CRLIBM_DIR}"
+            RESULT_VARIABLE _tar_result
+        )
+        if(NOT _tar_result EQUAL 0)
+            message(FATAL_ERROR "SAR: Failed to extract crlibm tarball")
+        endif()
+
+        # Run autotools configure (generates crlibm_config.h)
+        message(STATUS "SAR: Configuring crlibm...")
+        execute_process(
+            COMMAND ./configure
+            --without-gmp --without-mpfr --without-ultim --without-mcr
+            --disable-gmp --disable-mpfr --disable-ultim --disable-mcr
+            --enable-sse2 --disable-dependency-tracking
+            --disable-double-extended --prefix=/dev/null
+            WORKING_DIRECTORY "${CRLIBM_DIR}"
+            RESULT_VARIABLE _cfg_result
+        )
+        if(NOT _cfg_result EQUAL 0)
+            message(FATAL_ERROR "SAR: Failed to configure crlibm")
+        endif()
+
+        # Apply RAG patches to crlibm_config.h (disable system headers for
+        # portability — matches x86_64/RAG-install.sh)
+        message(STATUS "SAR: Applying RAG patches to crlibm_config.h...")
+        set(_config_h "${CRLIBM_DIR}/crlibm_config.h")
+        file(READ "${_config_h}" _cfg_content)
+        string(REPLACE "#define CRLIBM_HAS_FPU_CONTROL 1" "/* #undef CRLIBM_HAS_FPU_CONTROL -- RAG */" _cfg_content "${_cfg_content}")
+        string(REPLACE "#define HAS_SSE2 1" "/* #undef HAS_SSE2 -- RAG */" _cfg_content "${_cfg_content}")
+        string(REPLACE "#define HAVE_FENV_H 1" "/* #undef HAVE_FENV_H -- RAG */" _cfg_content "${_cfg_content}")
+        string(REPLACE "#define HAVE_FLOAT_H 1" "/* #undef HAVE_FLOAT_H -- RAG */" _cfg_content "${_cfg_content}")
+        string(REPLACE "#define HAVE_LIBM 1" "/* #undef HAVE_LIBM -- RAG */" _cfg_content "${_cfg_content}")
+        string(REPLACE "#define HAVE_LONG_DOUBLE 1" "/* #undef HAVE_LONG_DOUBLE -- RAG */" _cfg_content "${_cfg_content}")
+        string(REPLACE "#define HAVE_LONG_DOUBLE_WIDER 1" "/* #undef HAVE_LONG_DOUBLE_WIDER -- RAG */" _cfg_content "${_cfg_content}")
+        string(REPLACE "#define HAVE_MEMORY_H 1" "/* #undef HAVE_MEMORY_H -- RAG */" _cfg_content "${_cfg_content}")
+        string(REPLACE "#define HAVE_STRINGS_H 1" "/* #undef HAVE_STRINGS_H -- RAG */" _cfg_content "${_cfg_content}")
+        string(REPLACE "#define HAVE_STRING_H 1" "/* #undef HAVE_STRING_H -- RAG */" _cfg_content "${_cfg_content}")
+        string(REPLACE "#define HAVE_SYS_STAT_H 1" "/* #undef HAVE_SYS_STAT_H -- RAG */" _cfg_content "${_cfg_content}")
+        string(REPLACE "#define HAVE_SYS_TYPES_H 1" "/* #undef HAVE_SYS_TYPES_H -- RAG */" _cfg_content "${_cfg_content}")
+        string(REPLACE "#define HAVE_UNISTD_H 1" "/* #undef HAVE_UNISTD_H -- RAG */" _cfg_content "${_cfg_content}")
+        file(WRITE "${_config_h}" "${_cfg_content}")
+
+        # Patch crlibm_private.c: guard FPU control with CRLIBM_HAS_FPU_CONTROL
+        set(_priv_c "${CRLIBM_DIR}/crlibm_private.c")
+        file(READ "${_priv_c}" _priv_content)
+        string(REPLACE
+            "#if (defined(CRLIBM_TYPECPU_X86) || defined(CRLIBM_TYPECPU_AMD64))"
+            "#if defined(CRLIBM_HAS_FPU_CONTROL) && (defined(CRLIBM_TYPECPU_X86) || defined(CRLIBM_TYPECPU_AMD64)) // RAG -- added CRLIBM_HAS_FPU_CONTROL"
+            _priv_content "${_priv_content}")
+        file(WRITE "${_priv_c}" "${_priv_content}")
+
+        # Patch asincos.c: silence unused variable warning
+        set(_asin_c "${CRLIBM_DIR}/asincos.c")
+        file(READ "${_asin_c}" _asin_content)
+        string(REPLACE
+            "  double deltatemp, deltah, deltal;"
+            "  double deltatemp,deltah, __attribute__ ((unused)) deltal; // RAG -- avoid fatal warning"
+            _asin_content "${_asin_content}")
+        file(WRITE "${_asin_c}" "${_asin_content}")
+
+        message(STATUS "SAR: crlibm extraction and patching complete")
+    endif()
+endif()
+
+# ---------------------------------------------------------------------------
+# Step 1b: Build crlibm static library
+# ---------------------------------------------------------------------------
+if(EXISTS "${CRLIBM_DIR}/crlibm.h")
+    # Explicit source list — file(GLOB) picks up Itanium/double-extended files
+    set(CRLIBM_SRCS
+        ${CRLIBM_DIR}/crlibm_private.c
+        ${CRLIBM_DIR}/triple-double.c
+        ${CRLIBM_DIR}/exp-td.c
+        ${CRLIBM_DIR}/exp-td-standalone.c
+        ${CRLIBM_DIR}/expm1-standalone.c
+        ${CRLIBM_DIR}/expm1.c
+        ${CRLIBM_DIR}/log.c
+        ${CRLIBM_DIR}/log1p.c
+        ${CRLIBM_DIR}/rem_pio2_accurate.c
+        ${CRLIBM_DIR}/trigo_fast.c
+        ${CRLIBM_DIR}/trigo_accurate.c
+        ${CRLIBM_DIR}/trigpi.c
+        ${CRLIBM_DIR}/asincos.c
+        ${CRLIBM_DIR}/pow.c
+        ${CRLIBM_DIR}/atan_fast.c
+        ${CRLIBM_DIR}/atan_accurate.c
+        ${CRLIBM_DIR}/csh_fast.c
+    )
+    add_library(ocr_lib_crlibm STATIC ${CRLIBM_SRCS})
+    target_include_directories(ocr_lib_crlibm PUBLIC ${CRLIBM_DIR})
+    set_target_properties(ocr_lib_crlibm PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
+    target_compile_definitions(ocr_lib_crlibm PRIVATE HAVE_CONFIG_H)
+    target_compile_options(ocr_lib_crlibm PRIVATE ${BENCH_C_OPT} -w)
+    # crlibm needs scs_lib
+    set(SCS_DIR "${CRLIBM_DIR}/scs_lib")
+    if(EXISTS "${SCS_DIR}")
+        file(GLOB SCS_SRCS "${SCS_DIR}/*.c")
+        target_sources(ocr_lib_crlibm PRIVATE ${SCS_SRCS})
+        target_include_directories(ocr_lib_crlibm PRIVATE ${SCS_DIR})
+    endif()
+    set(HAS_CRLIBM TRUE)
+else()
+    message(WARNING "SAR: crlibm tarball not found at ${CRLIBM_TARBALL} — "
+        "SAR benchmarks will be skipped")
+    set(HAS_CRLIBM FALSE)
+endif()
+
+# ---------------------------------------------------------------------------
+# Step 2: Build host utilities (datagen + dataImage)
+# ---------------------------------------------------------------------------
+if(HAS_CRLIBM)
+    # datagen: generates .bin datasets from Parameters.txt + Targets.txt
+    set(DATAGEN_SRC_DIR "${SAR_ROOT}/datagen-tsml/src")
+    add_executable(sar_datagen
+        ${DATAGEN_SRC_DIR}/main.c
+        ${DATAGEN_SRC_DIR}/inputs.c
+        ${DATAGEN_SRC_DIR}/fir_filter.c
+        ${DATAGEN_SRC_DIR}/gen_rand.c
+        ${DATAGEN_SRC_DIR}/fftw3.c
+    )
+    target_include_directories(sar_datagen PRIVATE ${DATAGEN_SRC_DIR})
+    target_compile_definitions(sar_datagen PRIVATE RAG_ADD_ERROR=1)
+    target_compile_options(sar_datagen PRIVATE -O2 -w -fopenmp)
+    target_link_libraries(sar_datagen PRIVATE m gomp)
+    set_target_properties(sar_datagen PROPERTIES
+        C_STANDARD 99 C_EXTENSIONS ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+
+    # dataImage: converts .bin → .c source with embedded data arrays
+    set(DATAIMAGE_SRC_DIR "${SAR_ROOT}/utils")
+    add_executable(sar_dataImage
+        ${DATAIMAGE_SRC_DIR}/dataImage.c
+        ${DATAIMAGE_SRC_DIR}/inputs.c
+    )
+    target_include_directories(sar_dataImage PRIVATE
+        ${DATAIMAGE_SRC_DIR}
+        ${SAR_SRC_DIR}
+    )
+    target_compile_definitions(sar_dataImage PRIVATE RAG)
+    target_compile_options(sar_dataImage PRIVATE -O2 -w)
+    target_link_libraries(sar_dataImage PRIVATE m)
+    set_target_properties(sar_dataImage PROPERTIES
+        C_STANDARD 99 C_EXTENSIONS ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+endif()
+
+# ---------------------------------------------------------------------------
+# Step 3: Data generation pipeline for RAG_IMPLICIT_INPUTS sizes
+# ---------------------------------------------------------------------------
+# For each size (tiny/small/medium/large):
+#   datagen → .bin files → dataImage → .c files → compiled into data objects
+# All generated artifacts go into the build directory.
 #
-# # ---------------------------------------------------------------------------
-# # Step 1: Extract and configure crlibm at configure time
-# # ---------------------------------------------------------------------------
-# # The tarball is in the submodule; x86_64/ only has RAG-install.sh tracked.
-# # We extract into the build directory so the source tree stays clean.
-# if(EXISTS "${CRLIBM_TARBALL}")
-#     if(NOT EXISTS "${CRLIBM_DIR}/crlibm.h")
-#         message(STATUS "SAR: Extracting crlibm tarball...")
-#         file(MAKE_DIRECTORY "${CRLIBM_DIR}")
-#         execute_process(
-#             COMMAND tar --gzip --extract --strip-components=1
-#             --file=${CRLIBM_TARBALL}
-#             WORKING_DIRECTORY "${CRLIBM_DIR}"
-#             RESULT_VARIABLE _tar_result
-#         )
-#         if(NOT _tar_result EQUAL 0)
-#             message(FATAL_ERROR "SAR: Failed to extract crlibm tarball")
-#         endif()
-#
-#         # Run autotools configure (generates crlibm_config.h)
-#         message(STATUS "SAR: Configuring crlibm...")
-#         execute_process(
-#             COMMAND ./configure
-#             --without-gmp --without-mpfr --without-ultim --without-mcr
-#             --disable-gmp --disable-mpfr --disable-ultim --disable-mcr
-#             --enable-sse2 --disable-dependency-tracking
-#             --disable-double-extended --prefix=/dev/null
-#             WORKING_DIRECTORY "${CRLIBM_DIR}"
-#             RESULT_VARIABLE _cfg_result
-#         )
-#         if(NOT _cfg_result EQUAL 0)
-#             message(FATAL_ERROR "SAR: Failed to configure crlibm")
-#         endif()
-#
-#         # Apply RAG patches to crlibm_config.h (disable system headers for
-#         # portability — matches x86_64/RAG-install.sh)
-#         message(STATUS "SAR: Applying RAG patches to crlibm_config.h...")
-#         set(_config_h "${CRLIBM_DIR}/crlibm_config.h")
-#         file(READ "${_config_h}" _cfg_content)
-#         string(REPLACE "#define CRLIBM_HAS_FPU_CONTROL 1" "/* #undef CRLIBM_HAS_FPU_CONTROL -- RAG */" _cfg_content "${_cfg_content}")
-#         string(REPLACE "#define HAS_SSE2 1" "/* #undef HAS_SSE2 -- RAG */" _cfg_content "${_cfg_content}")
-#         string(REPLACE "#define HAVE_FENV_H 1" "/* #undef HAVE_FENV_H -- RAG */" _cfg_content "${_cfg_content}")
-#         string(REPLACE "#define HAVE_FLOAT_H 1" "/* #undef HAVE_FLOAT_H -- RAG */" _cfg_content "${_cfg_content}")
-#         string(REPLACE "#define HAVE_LIBM 1" "/* #undef HAVE_LIBM -- RAG */" _cfg_content "${_cfg_content}")
-#         string(REPLACE "#define HAVE_LONG_DOUBLE 1" "/* #undef HAVE_LONG_DOUBLE -- RAG */" _cfg_content "${_cfg_content}")
-#         string(REPLACE "#define HAVE_LONG_DOUBLE_WIDER 1" "/* #undef HAVE_LONG_DOUBLE_WIDER -- RAG */" _cfg_content "${_cfg_content}")
-#         string(REPLACE "#define HAVE_MEMORY_H 1" "/* #undef HAVE_MEMORY_H -- RAG */" _cfg_content "${_cfg_content}")
-#         string(REPLACE "#define HAVE_STRINGS_H 1" "/* #undef HAVE_STRINGS_H -- RAG */" _cfg_content "${_cfg_content}")
-#         string(REPLACE "#define HAVE_STRING_H 1" "/* #undef HAVE_STRING_H -- RAG */" _cfg_content "${_cfg_content}")
-#         string(REPLACE "#define HAVE_SYS_STAT_H 1" "/* #undef HAVE_SYS_STAT_H -- RAG */" _cfg_content "${_cfg_content}")
-#         string(REPLACE "#define HAVE_SYS_TYPES_H 1" "/* #undef HAVE_SYS_TYPES_H -- RAG */" _cfg_content "${_cfg_content}")
-#         string(REPLACE "#define HAVE_UNISTD_H 1" "/* #undef HAVE_UNISTD_H -- RAG */" _cfg_content "${_cfg_content}")
-#         file(WRITE "${_config_h}" "${_cfg_content}")
-#
-#         # Patch crlibm_private.c: guard FPU control with CRLIBM_HAS_FPU_CONTROL
-#         set(_priv_c "${CRLIBM_DIR}/crlibm_private.c")
-#         file(READ "${_priv_c}" _priv_content)
-#         string(REPLACE
-#             "#if (defined(CRLIBM_TYPECPU_X86) || defined(CRLIBM_TYPECPU_AMD64))"
-#             "#if defined(CRLIBM_HAS_FPU_CONTROL) && (defined(CRLIBM_TYPECPU_X86) || defined(CRLIBM_TYPECPU_AMD64)) // RAG -- added CRLIBM_HAS_FPU_CONTROL"
-#             _priv_content "${_priv_content}")
-#         file(WRITE "${_priv_c}" "${_priv_content}")
-#
-#         # Patch asincos.c: silence unused variable warning
-#         set(_asin_c "${CRLIBM_DIR}/asincos.c")
-#         file(READ "${_asin_c}" _asin_content)
-#         string(REPLACE
-#             "  double deltatemp, deltah, deltal;"
-#             "  double deltatemp,deltah, __attribute__ ((unused)) deltal; // RAG -- avoid fatal warning"
-#             _asin_content "${_asin_content}")
-#         file(WRITE "${_asin_c}" "${_asin_content}")
-#
-#         message(STATUS "SAR: crlibm extraction and patching complete")
-#     endif()
-# endif()
-#
-# # ---------------------------------------------------------------------------
-# # Step 1b: Build crlibm static library
-# # ---------------------------------------------------------------------------
-# if(EXISTS "${CRLIBM_DIR}/crlibm.h")
-#     # Explicit source list — file(GLOB) picks up Itanium/double-extended files
-#     set(CRLIBM_SRCS
-#         ${CRLIBM_DIR}/crlibm_private.c
-#         ${CRLIBM_DIR}/triple-double.c
-#         ${CRLIBM_DIR}/exp-td.c
-#         ${CRLIBM_DIR}/exp-td-standalone.c
-#         ${CRLIBM_DIR}/expm1-standalone.c
-#         ${CRLIBM_DIR}/expm1.c
-#         ${CRLIBM_DIR}/log.c
-#         ${CRLIBM_DIR}/log1p.c
-#         ${CRLIBM_DIR}/rem_pio2_accurate.c
-#         ${CRLIBM_DIR}/trigo_fast.c
-#         ${CRLIBM_DIR}/trigo_accurate.c
-#         ${CRLIBM_DIR}/trigpi.c
-#         ${CRLIBM_DIR}/asincos.c
-#         ${CRLIBM_DIR}/pow.c
-#         ${CRLIBM_DIR}/atan_fast.c
-#         ${CRLIBM_DIR}/atan_accurate.c
-#         ${CRLIBM_DIR}/csh_fast.c
-#     )
-#     add_library(ocr_lib_crlibm STATIC ${CRLIBM_SRCS})
-#     target_include_directories(ocr_lib_crlibm PUBLIC ${CRLIBM_DIR})
-#     set_target_properties(ocr_lib_crlibm PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
-#     target_compile_definitions(ocr_lib_crlibm PRIVATE HAVE_CONFIG_H)
-#     target_compile_options(ocr_lib_crlibm PRIVATE ${BENCH_C_OPT} -w)
-#     # crlibm needs scs_lib
-#     set(SCS_DIR "${CRLIBM_DIR}/scs_lib")
-#     if(EXISTS "${SCS_DIR}")
-#         file(GLOB SCS_SRCS "${SCS_DIR}/*.c")
-#         target_sources(ocr_lib_crlibm PRIVATE ${SCS_SRCS})
-#         target_include_directories(ocr_lib_crlibm PRIVATE ${SCS_DIR})
-#     endif()
-#     set(HAS_CRLIBM TRUE)
-# else()
-#     message(WARNING "SAR: crlibm tarball not found at ${CRLIBM_TARBALL} — "
-#         "SAR benchmarks will be skipped")
-#     set(HAS_CRLIBM FALSE)
-# endif()
-#
-# # ---------------------------------------------------------------------------
-# # Step 2: Build host utilities (datagen + dataImage)
-# # ---------------------------------------------------------------------------
-# if(HAS_CRLIBM)
-#     # datagen: generates .bin datasets from Parameters.txt + Targets.txt
-#     set(DATAGEN_SRC_DIR "${SAR_ROOT}/datagen-tsml/src")
-#     add_executable(sar_datagen
-#         ${DATAGEN_SRC_DIR}/main.c
-#         ${DATAGEN_SRC_DIR}/inputs.c
-#         ${DATAGEN_SRC_DIR}/fir_filter.c
-#         ${DATAGEN_SRC_DIR}/gen_rand.c
-#         ${DATAGEN_SRC_DIR}/fftw3.c
-#     )
-#     target_include_directories(sar_datagen PRIVATE ${DATAGEN_SRC_DIR})
-#     target_compile_definitions(sar_datagen PRIVATE RAG_ADD_ERROR=1)
-#     target_compile_options(sar_datagen PRIVATE -O2 -w -fopenmp)
-#     target_link_libraries(sar_datagen PRIVATE m gomp)
-#     set_target_properties(sar_datagen PROPERTIES
-#         C_STANDARD 99 C_EXTENSIONS ON
-#         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-#     )
-#
-#     # dataImage: converts .bin → .c source with embedded data arrays
-#     set(DATAIMAGE_SRC_DIR "${SAR_ROOT}/utils")
-#     add_executable(sar_dataImage
-#         ${DATAIMAGE_SRC_DIR}/dataImage.c
-#         ${DATAIMAGE_SRC_DIR}/inputs.c
-#     )
-#     target_include_directories(sar_dataImage PRIVATE
-#         ${DATAIMAGE_SRC_DIR}
-#         ${SAR_SRC_DIR}
-#     )
-#     target_compile_definitions(sar_dataImage PRIVATE RAG)
-#     target_compile_options(sar_dataImage PRIVATE -O2 -w)
-#     target_link_libraries(sar_dataImage PRIVATE m)
-#     set_target_properties(sar_dataImage PROPERTIES
-#         C_STANDARD 99 C_EXTENSIONS ON
-#         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-#     )
-# endif()
-#
-# # ---------------------------------------------------------------------------
-# # Step 3: Data generation pipeline for RAG_IMPLICIT_INPUTS sizes
-# # ---------------------------------------------------------------------------
-# # For each size (tiny/small/medium/large):
-# #   datagen → .bin files → dataImage → .c files → compiled into data objects
-# # All generated artifacts go into the build directory.
-# #
-# # Per-file data object resolution for RAG_IMPLICIT_INPUTS sizes:
-# #   1. .o exists in datasets/<size>/x86/ → copy to build dir (fastest)
-# #   2. .c exists but .o missing → compile once, cache .o back to datasets dir
-# #   3. Neither → full pipeline: .bin → dataImage → .c → compile .o
-# if(HAS_CRLIBM)
-#     set(SAR_IMPLICIT_SIZES tiny small medium large)
-#
-#     # Helper script for dataImage invocation (handles stdin/stdout redirection)
-#     set(_dataimage_script "${CMAKE_CURRENT_BINARY_DIR}/sar_run_dataimage.sh")
-#     file(WRITE "${_dataimage_script}"
-#         "#!/bin/sh\nset -e\n"
-#         "# Usage: sar_run_dataimage.sh <dataImage> <type_index> <input.bin> <output.c>\n"
-#         "\"$1\" \"$2\" < \"$3\" > \"$4\"\n"
-#     )
-#
-#     # dataImage type indices per data file
-#     set(_dataimage_idx_Data 1)
-#     set(_dataimage_idx_PlatformPosition 2)
-#     set(_dataimage_idx_PulseTransmissionTime 3)
-#
-#     foreach(sar_size ${SAR_IMPLICIT_SIZES})
-#         set(_ocr_size_dir "${SAR_ROOT}/ocr/${sar_size}")
-#         set(_data_build_dir "${CMAKE_CURRENT_BINARY_DIR}/sar_data/${sar_size}")
-#         set(_datasets_dir "${SAR_DATASETS_DIR}/${sar_size}")
-#         set(_prebuilt_dir "${_datasets_dir}/x86")
-#
-#         file(MAKE_DIRECTORY "${_data_build_dir}")
-#
-#         set(_data_names Data PlatformPosition PulseTransmissionTime)
-#         set(_data_objects "")
-#
-#         foreach(_name ${_data_names})
-#             set(_build_o "${_data_build_dir}/${_name}.o")
-#
-#             if(EXISTS "${_prebuilt_dir}/${_name}.o")
-#                 # Case 1: Pre-built .o exists → copy to build directory
-#                 add_custom_command(
-#                     OUTPUT "${_build_o}"
-#                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-#                         "${_prebuilt_dir}/${_name}.o" "${_build_o}"
-#                     DEPENDS "${_prebuilt_dir}/${_name}.o"
-#                     COMMENT "SAR: Copying pre-built ${sar_size}/${_name}.o"
-#                 )
-#             elseif(EXISTS "${_prebuilt_dir}/${_name}.c")
-#                 # Case 2: .c exists but .o missing → compile once, cache to datasets dir
-#                 message(STATUS "SAR: ${sar_size}/${_name}.o missing — will compile from .c (one-time)")
-#                 add_custom_command(
-#                     OUTPUT "${_build_o}"
-#                     COMMAND ${CMAKE_C_COMPILER} -std=c11 -O0 -w -c
-#                         -o "${_build_o}" "${_prebuilt_dir}/${_name}.c"
-#                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-#                         "${_build_o}" "${_prebuilt_dir}/${_name}.o"
-#                     DEPENDS "${_prebuilt_dir}/${_name}.c"
-#                     COMMENT "SAR: Compiling ${sar_size}/${_name}.c → .o (one-time, caching to datasets dir)..."
-#                 )
-#             else()
-#                 # Case 3: No prebuilt files → generate from .bin via full pipeline
-#                 add_custom_command(
-#                     OUTPUT "${_data_build_dir}/${_name}.c"
-#                     COMMAND sh "${_dataimage_script}"
-#                         "$<TARGET_FILE:sar_dataImage>"
-#                         "${_dataimage_idx_${_name}}"
-#                         "${_datasets_dir}/${_name}.bin"
-#                         "${_data_build_dir}/${_name}.c"
-#                     WORKING_DIRECTORY "${_ocr_size_dir}"
-#                     DEPENDS sar_dataImage "${_datasets_dir}/${_name}.bin"
-#                     COMMENT "SAR: Converting ${sar_size}/${_name}.bin → .c via dataImage..."
-#                 )
-#                 add_custom_command(
-#                     OUTPUT "${_build_o}"
-#                     COMMAND ${CMAKE_C_COMPILER} -std=c11 -O0 -w -c
-#                         -o "${_build_o}" "${_data_build_dir}/${_name}.c"
-#                     DEPENDS "${_data_build_dir}/${_name}.c"
-#                     COMMENT "SAR: Compiling generated ${sar_size}/${_name}.c → .o..."
-#                 )
-#             endif()
-#
-#             list(APPEND _data_objects "${_build_o}")
-#         endforeach()
-#
-#         # Custom target to trigger all data object builds for this size
-#         add_custom_target(sar_data_${sar_size}_objs DEPENDS ${_data_objects})
-#         set(SAR_DATA_${sar_size}_OBJECTS ${_data_objects})
-#     endforeach()
-# endif()
-#
-# # ---------------------------------------------------------------------------
-# # Step 4: Build SAR executables
-# # ---------------------------------------------------------------------------
-# set(SAR_SOURCES
-#     main.c inputs.c digspot.c registration.c cfar.c sinc_interp.c sinc.c
-#     image_formation.c back_proj.c ccd.c fftw3.c rag_ocr.c
-# )
-#
-# set(SAR_DEFINES
-#     DEBUG_SSCP
-#     RAG_TG_ARCH_NULL_GUID_WORKAROUND
-#     RAG_NEW_BLK_SIZE=32
-#     TRACE
-#     RAG_DIG_SPOT_ON=0
-#     RAG_AFFINE_ON=1
-#     RAG_QSORT_ON=0
-#     RAG_PURE_FLOAT
-#     RAG_SINCOS
-#     RAG_CRLIBM
-#     RAG_PETER_DIST_AND_TRIG
-#     RAG_SPAD
-#     RAG_DRAM
-#     GANESH_STRENGTH_RED_OPT
-# )
-#
-# if(HAS_CRLIBM)
-#     # --- RAG_IMPLICIT_INPUTS sizes (tiny/small/medium/large) ---
-#     foreach(sar_size ${SAR_IMPLICIT_SIZES})
-#         set(SAR_SIZE_DEFINES ${SAR_DEFINES} RAG_IMPLICIT_INPUTS)
-#
-#         add_benchmark_app(NAME sar_${sar_size}
-#             DIR sar/ocr/${sar_size}
-#             SRC_SUBDIR ../src
-#             SOURCES ${SAR_SOURCES}
-#             EXTRA_INCLUDES ${SAR_SRC_DIR} ${CRLIBM_DIR}
-#             EXTRA_DEFINES ${SAR_SIZE_DEFINES}
-#             EXTRA_LINK_LIBS m ocr_lib_crlibm
-#         )
-#         # Link data objects for this size
-#         # target_link_libraries(sar_${sar_size}_xsocr PRIVATE
-#         #     ${SAR_DATA_${sar_size}_OBJECTS})
-#         # target_link_libraries(sar_${sar_size}_arts PRIVATE
-#         #     ${SAR_DATA_${sar_size}_OBJECTS})
-#         # add_dependencies(sar_${sar_size}_xsocr sar_data_${sar_size}_objs)
-#         # add_dependencies(sar_${sar_size}_arts sar_data_${sar_size}_objs)
-#     endforeach()
-#
-#     # --- Runtime-input sizes (huge, problem_size_scaling) ---
-#     foreach(sar_size huge problem_size_scaling)
-#         if(EXISTS "${SAR_ROOT}/ocr/${sar_size}")
-#             add_benchmark_app(NAME sar_${sar_size}
-#                 DIR sar/ocr/${sar_size}
-#                 SRC_SUBDIR ../src
-#                 SOURCES ${SAR_SOURCES}
-#                 EXTRA_INCLUDES ${SAR_SRC_DIR} ${CRLIBM_DIR}
-#                 EXTRA_DEFINES ${SAR_DEFINES}
-#                 EXTRA_LINK_LIBS m ocr_lib_crlibm
-#             )
-#         endif()
-#     endforeach()
-# endif()
 # Per-file data object resolution for RAG_IMPLICIT_INPUTS sizes:
 #   1. .o exists in datasets/<size>/x86/ → copy to build dir (fastest)
 #   2. .c exists but .o missing → compile once, cache .o back to datasets dir
@@ -939,59 +793,32 @@ if(HAS_CRLIBM)
         "\"$1\" \"$2\" < \"$3\" > \"$4\"\n"
     )
 
-    # dataImage type indices per data file (legacy path — Case 2 only)
+    # dataImage type indices per data file (legacy Case 2 path)
     set(_dataimage_idx_Data 1)
     set(_dataimage_idx_PlatformPosition 2)
     set(_dataimage_idx_PulseTransmissionTime 3)
 
-    # Symbol prefix per data file (for .incbin Case 3 path)
+    # Symbol prefix per data file — used by the .incbin wrapper script
+    # (Case 3 path).  These match what app code extern-declares in
+    # third_party/ocr-apps/apps/sar/ocr/src/inputs.c.
     set(_sym_prefix_Data image)
     set(_sym_prefix_PlatformPosition platform)
     set(_sym_prefix_PulseTransmissionTime pulse)
 
-    # .incbin wrapper generator script — bypasses sar_dataImage's C-source
-    # output for Case 3 (too large for gcc on medium/large sizes).
-    set(_sar_incbin_script "${CMAKE_SOURCE_DIR}/benchmarks/apps/sar_make_incbin_wrapper.sh")
+    # .incbin wrapper script — bypasses the cc1 OOM that sar_dataImage's
+    # giant C-source output causes on medium/large datasets (~10 GB+ peak
+    # compiler memory).  The assembler's .incbin copies bytes directly
+    # in O(1) memory regardless of dataset size.
+    set(_sar_incbin_script
+        "${CMAKE_SOURCE_DIR}/benchmarks/apps/sar_make_incbin_wrapper.sh")
 
     foreach(sar_size ${SAR_IMPLICIT_SIZES})
         set(_ocr_size_dir "${SAR_ROOT}/ocr/${sar_size}")
         set(_data_build_dir "${CMAKE_CURRENT_BINARY_DIR}/sar_data/${sar_size}")
         set(_datasets_dir "${SAR_DATASETS_DIR}/${sar_size}")
         set(_prebuilt_dir "${_datasets_dir}/x86")
-        set(_datagen_src_dir "${SAR_ROOT}/datagen-tsml/${sar_size}")
 
         file(MAKE_DIRECTORY "${_data_build_dir}")
-        file(MAKE_DIRECTORY "${_datasets_dir}")
-
-        # Run sar_datagen once per size to produce the three .bin files
-        # into the datasets directory (cached on subsequent builds).
-        # The datagen program reads Parameters.txt + Targets.txt from its
-        # current working directory, so we stage them next to the .bin
-        # outputs before invoking the tool.
-        if(NOT EXISTS "${_datasets_dir}/Data.bin")
-            add_custom_command(
-                OUTPUT
-                    "${_datasets_dir}/Data.bin"
-                    "${_datasets_dir}/PlatformPosition.bin"
-                    "${_datasets_dir}/PulseTransmissionTime.bin"
-                    "${_datasets_dir}/Radar.txt"
-                COMMAND ${CMAKE_COMMAND} -E copy
-                    "${_datagen_src_dir}/Parameters.txt"
-                    "${_datagen_src_dir}/Targets.txt"
-                    "${_datasets_dir}/"
-                COMMAND $<TARGET_FILE:sar_datagen>
-                    "Data.bin"
-                    "PlatformPosition.bin"
-                    "PulseTransmissionTime.bin"
-                    "Radar.txt"
-                WORKING_DIRECTORY "${_datasets_dir}"
-                DEPENDS sar_datagen
-                    "${_datagen_src_dir}/Parameters.txt"
-                    "${_datagen_src_dir}/Targets.txt"
-                COMMENT "SAR: Generating ${sar_size} dataset via sar_datagen..."
-                VERBATIM
-            )
-        endif()
 
         set(_data_names Data PlatformPosition PulseTransmissionTime)
         set(_data_objects "")
@@ -1004,7 +831,7 @@ if(HAS_CRLIBM)
                 add_custom_command(
                     OUTPUT "${_build_o}"
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${_prebuilt_dir}/${_name}.o" "${_build_o}"
+                        "${_prebuilt_dir}/${_name}.o" "${_build_o}"
                     DEPENDS "${_prebuilt_dir}/${_name}.o"
                     COMMENT "SAR: Copying pre-built ${sar_size}/${_name}.o"
                 )
@@ -1014,38 +841,34 @@ if(HAS_CRLIBM)
                 add_custom_command(
                     OUTPUT "${_build_o}"
                     COMMAND ${CMAKE_C_COMPILER} -std=c11 -O0 -w -c
-                    -o "${_build_o}" "${_prebuilt_dir}/${_name}.c"
+                        -o "${_build_o}" "${_prebuilt_dir}/${_name}.c"
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${_build_o}" "${_prebuilt_dir}/${_name}.o"
+                        "${_build_o}" "${_prebuilt_dir}/${_name}.o"
                     DEPENDS "${_prebuilt_dir}/${_name}.c"
                     COMMENT "SAR: Compiling ${sar_size}/${_name}.c → .o (one-time, caching to datasets dir)..."
                 )
             else()
-                # Case 3: No prebuilt files → go straight from .bin to .o via
-                # a .incbin-based assembly wrapper.  This bypasses the
-                # sar_dataImage C-source output entirely because the C
-                # front-end cannot parse the 770+ MB hex-literal .c files
-                # that medium/large produce (OOM on a 12 GB box).  The GNU
-                # assembler's .incbin directive copies bytes directly with
-                # ~0 MB of memory overhead.
-                set(_wrapper_s "${_data_build_dir}/${_name}_incbin.S")
+                # Case 3: No prebuilt files → emit .S via .incbin and
+                # assemble.  This path uses ~0 KB of compiler memory
+                # because the assembler embeds the bytes directly,
+                # bypassing the cc1 OOM that sar_dataImage's gigantic
+                # C-source output triggers on medium/large datasets.
+                set(_build_S "${_data_build_dir}/${_name}.S")
                 add_custom_command(
-                    OUTPUT "${_wrapper_s}"
+                    OUTPUT "${_build_S}"
                     COMMAND sh "${_sar_incbin_script}"
-                    "${_datasets_dir}/${_name}.bin"
-                    "${_wrapper_s}"
-                    "${_sym_prefix_${_name}}"
+                        "${_datasets_dir}/${_name}.bin"
+                        "${_build_S}"
+                        "${_sym_prefix_${_name}}"
                     DEPENDS "${_sar_incbin_script}"
                             "${_datasets_dir}/${_name}.bin"
-                    COMMENT "SAR: Generating incbin wrapper for ${sar_size}/${_name}.bin..."
-                    VERBATIM
+                    COMMENT "SAR: Generating ${sar_size}/${_name}.S (.incbin wrapper)..."
                 )
                 add_custom_command(
                     OUTPUT "${_build_o}"
-                    COMMAND ${CMAKE_C_COMPILER} -c -o "${_build_o}" "${_wrapper_s}"
-                    DEPENDS "${_wrapper_s}"
-                    COMMENT "SAR: Assembling ${sar_size}/${_name}_incbin.S → .o (memory-light)..."
-                    VERBATIM
+                    COMMAND ${CMAKE_C_COMPILER} -c -o "${_build_o}" "${_build_S}"
+                    DEPENDS "${_build_S}"
+                    COMMENT "SAR: Assembling ${sar_size}/${_name}.S → .o..."
                 )
             endif()
 
@@ -1096,7 +919,10 @@ if(HAS_CRLIBM)
             EXTRA_DEFINES ${SAR_SIZE_DEFINES}
             EXTRA_LINK_LIBS m ocr_lib_crlibm
         )
-        # Link data objects for this size
+        # Link the per-size data objects (image_*, platform_*, pulse_*
+        # symbols emitted from the sar_dataImage / .incbin pipeline) into
+        # the executable.  Without this the link fails with "undefined
+        # reference to image_0/platform_0/pulse_0/...". */
         target_link_libraries(sar_${sar_size}_xsocr PRIVATE
             ${SAR_DATA_${sar_size}_OBJECTS})
         target_link_libraries(sar_${sar_size}_arts PRIVATE
@@ -1105,10 +931,21 @@ if(HAS_CRLIBM)
         add_dependencies(sar_${sar_size}_arts sar_data_${sar_size}_objs)
     endforeach()
 
-    # huge / problem_size_scaling intentionally excluded: datagen for these
-    # sizes takes far too long, and they're outside the scope of the
-    # correctness harness on a 12 GB laptop.
+    # --- Runtime-input sizes (huge, problem_size_scaling) ---
+    foreach(sar_size huge problem_size_scaling)
+        if(EXISTS "${SAR_ROOT}/ocr/${sar_size}")
+            add_benchmark_app(NAME sar_${sar_size}
+                DIR sar/ocr/${sar_size}
+                SRC_SUBDIR ../src
+                SOURCES ${SAR_SOURCES}
+                EXTRA_INCLUDES ${SAR_SRC_DIR} ${CRLIBM_DIR}
+                EXTRA_DEFINES ${SAR_DEFINES}
+                EXTRA_LINK_LIBS m ocr_lib_crlibm
+            )
+        endif()
+    endforeach()
 endif()
+
 
 # ==========================================================================
 # Tier 15: STREAM memory bandwidth, UTS tree search

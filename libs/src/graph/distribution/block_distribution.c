@@ -60,10 +60,10 @@ arts_block_dist_t *init_block_distribution_block(graph_sz_t n, graph_sz_t m,
                                                  arts_type_t db_type) {
   arts_block_dist_t *dist = (arts_block_dist_t *)arts_malloc(
       sizeof(arts_block_dist_t) + (sizeof(arts_guid_t) * num_blocks));
-  unsigned int blocks_per_node = num_blocks / arts_get_total_nodes();
-  unsigned int mod = num_blocks % arts_get_total_nodes();
+  unsigned int blocks_per_node = num_blocks / arts_get_total_ranks();
+  unsigned int mod = num_blocks % arts_get_total_ranks();
   unsigned int current = 0;
-  for (unsigned int i = 0; i < arts_get_total_nodes(); i++) {
+  for (unsigned int i = 0; i < arts_get_total_ranks(); i++) {
     for (unsigned int j = 0; j < blocks_per_node; j++) {
       dist->graphGuid[current++] = arts_guid_reserve(db_type, i);
     }
@@ -78,7 +78,7 @@ arts_block_dist_t *init_block_distribution_block(graph_sz_t n, graph_sz_t m,
 }
 
 arts_block_dist_t *init_block_distribution(graph_sz_t n, graph_sz_t m) {
-  unsigned int num_blocks = arts_get_total_nodes();
+  unsigned int num_blocks = arts_get_total_ranks();
   arts_block_dist_t *dist = (arts_block_dist_t *)arts_malloc(
       sizeof(arts_block_dist_t) + (sizeof(arts_guid_t) * num_blocks));
   for (unsigned int i = 0; i < num_blocks; i++) {
@@ -102,7 +102,7 @@ arts_block_dist_t *init_block_distribution_with_cmd_line_args(int argc,
   }
 
   if (n && m) {
-    unsigned int num_blocks = arts_get_total_nodes();
+    unsigned int num_blocks = arts_get_total_ranks();
     arts_block_dist_t *dist = (arts_block_dist_t *)arts_malloc(
         sizeof(arts_block_dist_t) + (sizeof(arts_guid_t) * num_blocks));
     for (unsigned int i = 0; i < num_blocks; i++) {

@@ -39,8 +39,8 @@
 
 /// @file node_query.c
 /// @brief Tests runtime query utility functions:
-///        arts_get_current_node, arts_get_total_nodes,
-///        arts_get_current_worker, arts_get_total_workers,
+///        arts_get_current_rank, arts_get_total_ranks,
+///        arts_get_current_worker, arts_get_workers_per_rank,
 ///        arts_get_total_gpus, arts_get_current_numa_domain,
 ///        arts_get_total_numa_domains.
 
@@ -54,10 +54,10 @@ void check_queries(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
 
-  unsigned int node = arts_get_current_node();
-  unsigned int total_nodes = arts_get_total_nodes();
+  unsigned int node = arts_get_current_rank();
+  unsigned int total_nodes = arts_get_total_ranks();
   unsigned int worker = arts_get_current_worker();
-  unsigned int total_workers = arts_get_total_workers();
+  unsigned int total_workers = arts_get_workers_per_rank();
   unsigned int numa = arts_get_current_numa_domain();
   unsigned int total_numa = arts_get_total_numa_domains();
   unsigned int total_gpus = arts_get_total_gpus();
@@ -112,7 +112,7 @@ void check_worker_id(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   uint32_t expected_slot = (uint32_t)paramv[0];
   arts_guid_t collector = (arts_guid_t)paramv[1];
   unsigned int worker = arts_get_current_worker();
-  arts_signal_edt_value(collector, expected_slot, (uint64_t)worker);
+  arts_add_dependence((arts_guid_t)((uint64_t)worker), collector, expected_slot, DB_MODE_VAL);
 }
 
 void collect_worker_ids(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -123,7 +123,7 @@ void collect_worker_ids(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   bool ok = true;
   for (uint32_t i = 0; i < depc; i++) {
     uint64_t wid = (uint64_t)depv[i].guid;
-    unsigned int total = arts_get_total_workers();
+    unsigned int total = arts_get_workers_per_rank();
     if (wid >= total) {
       ok = false;
     }
@@ -144,26 +144,24 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== node_query ===\n");
 
-  arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+  arts_epoch_start(epoch);
 
   // Test 1: Query functions in EDT.
-  arts_edt_create_with_epoch(check_queries, 0, NULL, 0, epoch,
-                             &(arts_hint_t){.route = 0});
+  arts_edt_create(check_queries, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
 
   // Test 2: Launch multiple EDTs and collect worker IDs.
-  unsigned int total = arts_get_total_workers();
+  unsigned int total = arts_get_workers_per_rank();
   unsigned int count = (total > 8) ? 8 : total;
-  arts_guid_t coll = arts_edt_create_with_epoch(
-      collect_worker_ids, 0, NULL, count, epoch, &(arts_hint_t){.route = 0});
+  arts_guid_t coll = arts_edt_create(collect_worker_ids, 0, NULL, count, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   for (unsigned int i = 0; i < count; i++) {
     uint64_t params[2];
     params[0] = (uint64_t)i;
     params[1] = (uint64_t)coll;
-    arts_edt_create_with_epoch(check_worker_id, 2, params, 0, epoch,
-                               &(arts_hint_t){.route = 0});
+    arts_edt_create(check_worker_id, 2, params, 0, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   }
 
-  arts_wait_on_handle(epoch);
+  arts_epoch_wait(epoch);
   arts_shutdown();
 }
 

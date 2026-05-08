@@ -44,19 +44,19 @@
 #include "arts/remote/handler.h"
 #include "arts/runtime_state.h"
 #include "arts/runtime_types.h"
-#include "arts/sync/termination.h"
+#include "arts/sync/epoch.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/utils/malloc.h"
 
 #ifdef ARTS_COHERENCE_INTEGRATED
-/* Phase 2.2 will define ARTS_COHERENCE_INTEGRATED, include the
+/* Future work will define ARTS_COHERENCE_INTEGRATED, include the
  * coherence_handlers.c sources in the build, and add the missing
  * arts_remote_lock_req_packet_s / arts_remote_get_data_packet_s /
  * arts_remote_destroy_req_packet_s / arts_remote_writeback_packet_s
  * declarations to arts/transport/protocol.h.  Until then the OO_COH_*
  * dispatch arms below are guarded out so the runtime build stays
- * clean.  See spec §4.8 and the Phase 2 task list. */
+ * clean.  See spec §4.8 and the OoO design notes. */
 #include "arts/memory/coherence_handlers.h"
 #endif
 
@@ -190,13 +190,15 @@ inline void arts_out_of_order_handler(void *handle_me, void *memory_ptr) {
   }
   case OO_GET_FROM_DB: {
     struct oo_get_from_db_s *req = (struct oo_get_from_db_s *)handle_me;
-    arts_get_from_db_at(req->edt_guid, req->db_guid, req->slot, req->offset,
-                        req->size, arts_global_rank_id);
+    arts_db_get(
+        req->edt_guid, req->db_guid, req->slot, req->offset, req->size,
+        &(arts_db_op_hint_t){.rank = arts_global_rank_id, .epoch = NULL_GUID});
     break;
   }
   case OO_SIGNAL_EDT_PTR: {
     struct oo_signal_edt_ptr_s *req = (struct oo_signal_edt_ptr_s *)handle_me;
-    arts_signal_edt_ptr(req->edt_guid, req->slot, req->ptr, req->size);
+    internal_signal_edt(req->edt_guid, req->slot, NULL_GUID, DB_MODE_PTR,
+                        req->ptr, req->size);
     arts_free(req->ptr);
     break;
   }
@@ -275,7 +277,7 @@ inline void arts_out_of_order_handler(void *handle_me, void *memory_ptr) {
   case OO_COH_GET_DATA:
   case OO_COH_DESTROY_REQ:
   case OO_COH_WRITEBACK:
-    /* Coherence handlers not yet wired into the build (Phase 2.2 work).
+    /* Coherence handlers not yet wired into the build.
      * Producers gated by the same ifdef in coherence_handlers.c, so we
      * should never observe these tags here.  Fall through to the error
      * branch if they ever arrive. */
@@ -286,6 +288,38 @@ inline void arts_out_of_order_handler(void *handle_me, void *memory_ptr) {
     ARTS_INFO("OO Handler Error");
   }
   arts_free(handle_me);
+}
+
+/*
+ * arts_oo_dispatch_destroyed_cb — drain callback used by
+ * arts_route_table_drop_oo when a DB is being destroyed.  Wakes parked
+ * EDT waiters with NULL_DB so the destroyed-DB semantic propagates
+ * (depv[slot].guid = NULL_GUID, ptr = NULL, depc_needed--), then frees
+ * the payload.
+ *
+ * Without this wake, EDTs that called arts_out_of_order_handle_db_request
+ * before the destroy sit in the OoO list forever (their DB will never be
+ * installed because destroy happened first).  Other OoO types reference
+ * the destroyed DB indirectly; for those, the payload is freed but no
+ * waiter wake is needed (their consumer is itself blocked on the same
+ * DB and reaches the same destroyed state via its own dispatch).
+ */
+void arts_oo_dispatch_destroyed_cb(void *data, void *ctx) {
+  (void)ctx;
+  oo_type_t *type = (oo_type_t *)data;
+  switch (*type) {
+  case OO_DB_REQUEST_SATISFY: {
+    struct oo_db_request_satisfy_s *req =
+        (struct oo_db_request_satisfy_s *)data;
+    arts_db_request_callback(req->edt, req->slot, NULL);
+    break;
+  }
+  default:
+    /* Drop other types silently -- their consumers are app bugs (use
+     * after destroy) and waking them with NULL would deliver wrong data. */
+    break;
+  }
+  arts_free(data);
 }
 
 /*
@@ -395,10 +429,10 @@ void arts_out_of_order_handle_db_request(arts_guid_t db_guid,
     ARTS_DEBUG(
         "OO db_request: DB[Guid:%lu] already available — immediate callback",
         db_guid);
-    struct arts_db_s *db =
-        (struct arts_db_s *)arts_route_table_lookup_db(db_guid, NULL, false);
+    struct arts_db_s *db = arts_route_table_lookup_db_safe(db_guid);
     arts_db_request_callback(req->edt, req->slot, db);
     if (db) {
+      arts_route_table_release(db_guid);
     }
     arts_free(req);
   }
@@ -421,8 +455,9 @@ void arts_out_of_order_get_from_db(arts_guid_t edt_guid, arts_guid_t db_guid,
   req->size = size;
   bool res = arts_route_table_add_oo(db_guid, req, false);
   if (!res) {
-    arts_get_from_db_at(req->edt_guid, req->db_guid, req->slot, req->offset,
-                        req->size, arts_global_rank_id);
+    arts_db_get(
+        req->edt_guid, req->db_guid, req->slot, req->offset, req->size,
+        &(arts_db_op_hint_t){.rank = arts_global_rank_id, .epoch = NULL_GUID});
     arts_free(req);
   }
 }
@@ -446,7 +481,8 @@ void arts_out_of_order_signal_edt_with_ptr(arts_guid_t edt_guid,
   }
   bool res = arts_route_table_add_oo(edt_guid, req, false);
   if (!res) {
-    arts_signal_edt_ptr(req->edt_guid, req->slot, req->ptr, req->size);
+    internal_signal_edt(req->edt_guid, req->slot, NULL_GUID, DB_MODE_PTR,
+                        req->ptr, req->size);
     arts_free(req->ptr);
     arts_free(req);
   }

@@ -98,60 +98,61 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== event_chain ===\n");
 
-  arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+  arts_epoch_start(epoch);
 
   // Test 1: Event1(latch=1) → Event2(latch=1) → EDT.
-  arts_guid_t ev1 = arts_event_create(0, ARTS_EVENT_LATCH, 1, NULL_GUID);
-  arts_guid_t ev2 = arts_event_create(0, ARTS_EVENT_LATCH, 1, NULL_GUID);
-  arts_guid_t edt1 = arts_edt_create_with_epoch(chain_end, 0, NULL, 1, epoch,
-                                                &(arts_hint_t){.route = 0});
+  arts_guid_t ev1 = arts_event_create(NULL);
+  arts_guid_t ev2 = arts_event_create(NULL);
+  arts_guid_t edt1 = arts_edt_create(chain_end, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
 
   // Wire: ev1 fires → satisfies ev2 slot 0 → ev2 fires → satisfies edt1 slot 0.
-  arts_add_dependence(ev1, ev2, ARTS_EVENT_LATCH_DECR_SLOT, DB_MODE_EW);
-  arts_add_dependence(ev2, edt1, 0, DB_MODE_EW);
+  arts_add_dependence(ev1, ev2, ARTS_EVENT_LATCH_DECR_SLOT, DB_MODE_RW);
+  arts_add_dependence(ev2, edt1, 0, DB_MODE_RW);
 
   // Fire ev1.
   arts_event_satisfy_slot(ev1, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
 
-  // Test 2: Fan-in: ev_a + ev_b → ev_c → EDT.
-  arts_guid_t ev_a = arts_event_create(0, ARTS_EVENT_LATCH, 1, NULL_GUID);
-  arts_guid_t ev_b = arts_event_create(0, ARTS_EVENT_LATCH, 1, NULL_GUID);
-  arts_guid_t ev_c = arts_event_create(0, ARTS_EVENT_LATCH, 2,
-                                       NULL_GUID); // latch=2 needs both.
-  arts_guid_t edt2 = arts_edt_create_with_epoch(fan_in_end, 0, NULL, 1, epoch,
-                                                &(arts_hint_t){.route = 0});
+  // Test 2: Fan-in: ev_a + ev_b → ev_c → EDT.  ev_c needs both decrements.
+  arts_guid_t ev_a = arts_event_create(NULL);
+  arts_guid_t ev_b = arts_event_create(NULL);
+  arts_event_hint_t fan_in_hint = ARTS_EVENT_HINT_DEFAULTS;
+  fan_in_hint.latch = 2;
+  arts_guid_t ev_c = arts_event_create(&fan_in_hint);
+  arts_guid_t edt2 = arts_edt_create(fan_in_end, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
 
-  arts_add_dependence(ev_a, ev_c, ARTS_EVENT_LATCH_DECR_SLOT, DB_MODE_EW);
-  arts_add_dependence(ev_b, ev_c, ARTS_EVENT_LATCH_DECR_SLOT, DB_MODE_EW);
-  arts_add_dependence(ev_c, edt2, 0, DB_MODE_EW);
+  arts_add_dependence(ev_a, ev_c, ARTS_EVENT_LATCH_DECR_SLOT, DB_MODE_RW);
+  arts_add_dependence(ev_b, ev_c, ARTS_EVENT_LATCH_DECR_SLOT, DB_MODE_RW);
+  arts_add_dependence(ev_c, edt2, 0, DB_MODE_RW);
 
   arts_event_satisfy_slot(ev_a, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
   arts_event_satisfy_slot(ev_b, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
 
   // Test 3: Event chain with DB data propagation.
   void *dbptr = NULL;
-  arts_guid_t db = arts_db_create(&dbptr, sizeof(int), ARTS_DB_DEFAULT, NULL);
+  arts_guid_t db = arts_db_create(&dbptr, sizeof(int), ARTS_DB_DEFAULT,
+                                  ARTS_DB_PROP_NONE, NULL);
   ((int *)dbptr)[0] = 12345;
   arts_db_release(db);
 
-  arts_guid_t ev3 = arts_event_create(0, ARTS_EVENT_LATCH, 1, NULL_GUID);
-  arts_guid_t edt3 = arts_edt_create_with_epoch(
-      chain_data_end, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_add_dependence(ev3, edt3, 0, DB_MODE_EW);
+  arts_guid_t ev3 = arts_event_create(NULL);
+  arts_guid_t edt3 = arts_edt_create(chain_data_end, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_add_dependence(ev3, edt3, 0, DB_MODE_RW);
   // Fire with data.
   arts_event_satisfy_slot(ev3, db, ARTS_EVENT_LATCH_DECR_SLOT);
 
-  // Test 4: Already-fired IDEM event → wire EDT after fire → immediate signal.
-  // Uses IDEM behavior (persists after fire, late deps immediately satisfied).
-  arts_guid_t ev4 = arts_event_create(0, ARTS_EVENT_IDEM, 0, NULL_GUID);
+  // Test 4: Already-fired IDEM-equivalent event → wire EDT after fire →
+  // add_dependence fast path delivers immediate signal.
+  arts_event_hint_t idem_hint = ARTS_EVENT_HINT_DEFAULTS;
+  idem_hint.auto_destroy = false;
+  arts_guid_t ev4 = arts_event_create(&idem_hint);
   arts_event_satisfy_slot(ev4, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
-  // Now wire after fire — IDEM self-signals out-of-range deps.
-  arts_guid_t edt4 = arts_edt_create_with_epoch(
-      already_fired_end, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_add_dependence(ev4, edt4, 0, DB_MODE_EW);
+  // Now wire after fire — fast path self-signals.
+  arts_guid_t edt4 = arts_edt_create(already_fired_end, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_add_dependence(ev4, edt4, 0, DB_MODE_RW);
   arts_event_destroy(ev4);
 
-  arts_wait_on_handle(epoch);
+  arts_epoch_wait(epoch);
   arts_shutdown();
 }
 

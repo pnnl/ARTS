@@ -81,7 +81,7 @@ void inner_finish(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
   arts_guid_t outer_finish_edt = (arts_guid_t)paramv[0];
   arts_printf("  PASS: inner epoch finish EDT fired\n");
-  arts_signal_edt_null(outer_finish_edt, 0);
+  arts_add_dependence(NULL_GUID, outer_finish_edt, 0, DB_MODE_NULL);
 }
 
 void outer_finish(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -105,12 +105,12 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Test 1: Epoch with finish EDT.
   arts_guid_t fin =
-      arts_edt_create(finish_edt, 0, NULL, 1, &(arts_hint_t){.route = 0});
-  arts_guid_t epoch = arts_initialize_and_start_epoch(fin, 0);
+      arts_edt_create(finish_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0});
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), fin, 0);
+  arts_epoch_start(epoch);
 
   for (int i = 0; i < NUM_TASKS; i++) {
-    arts_edt_create_with_epoch(dummy_task, 0, NULL, 0, epoch,
-                               &(arts_hint_t){.route = 0});
+    arts_edt_create(dummy_task, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   }
 }
 

@@ -40,8 +40,8 @@
 /*
  * gpu_lc_sync_basic.cu
  *
- * Tests ARTS_DB_LC (Locality Class) datablock with arts_lc_sync:
- *   - Create an ARTS_DB_LC datablock (CPU-GPU coherence)
+ * Tests ARTS_DB_GPU_LC (Locality Class) datablock with arts_lc_sync:
+ *   - Create an ARTS_DB_GPU_LC datablock (CPU-GPU coherence)
  *   - GPU kernel modifies the LC DB
  *   - arts_lc_sync synchronizes the data back from GPU to CPU
  *   - Host EDT verifies the LC DB has correct data
@@ -86,7 +86,7 @@ void verify_lc(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     }
   }
   if (pass) {
-    arts_printf("PASS: ARTS_DB_LC + arts_lc_sync basic test\n");
+    arts_printf("PASS: ARTS_DB_GPU_LC + arts_lc_sync basic test\n");
   }
   arts_shutdown();
 }
@@ -107,19 +107,19 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
 
-  unsigned int node_id = arts_get_current_node();
+  unsigned int node_id = arts_get_current_rank();
 
   /* Create an LC datablock */
   arts_guid_t lc_guid = arts_guid_reserve(ARTS_DB, 0);
   unsigned int *addr = (unsigned int *)arts_db_create_with_guid(
-      lc_guid, sizeof(unsigned int) * N_ELEMENTS, ARTS_DB_LC, NULL, NULL);
+      lc_guid, sizeof(unsigned int) * N_ELEMENTS, ARTS_DB_GPU_LC, NULL, NULL);
 
   /* Initialize to sentinel values */
   for (unsigned int i = 0; i < N_ELEMENTS; i++) {
     addr[i] = (unsigned int)-1;
   }
 
-  arts_hint_t hint_0 = {0, 0};
+  arts_edt_hint_t hint_0 = {0, 0};
 
   /*
    * done_guid has 2 deps:
@@ -136,7 +136,7 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   /* Create GPU EDT targeting GPU 0, signals done_guid slot 1 on completion */
   arts_gpu_hint_t gpu_hint = {};
-  gpu_hint.route = node_id;
+  gpu_hint.rank = node_id;
   gpu_hint.gpu = 0;
   gpu_hint.end_guid = done_guid;
   gpu_hint.slot = 1;
@@ -144,7 +144,7 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t gpu_edt =
       arts_edt_create_gpu(lc_write_kernel, 0, NULL, 1, arts_from_dim3(grid),
                           arts_from_dim3(threads), &gpu_hint);
-  arts_signal_edt(gpu_edt, 0, lc_guid, DB_MODE_EW);
+  arts_add_dependence(lc_guid, gpu_edt, 0, DB_MODE_RW);
 }
 
 extern "C" void arts_fini_per_gpu(unsigned int node_id, int dev_id,

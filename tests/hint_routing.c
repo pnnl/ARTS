@@ -38,7 +38,7 @@
 ******************************************************************************/
 
 /// @file hint_routing.c
-/// @brief Tests arts_hint_t routing: ARTS_HINT_CURRENT_NODE, explicit route,
+/// @brief Tests arts_edt_hint_t routing: ARTS_HINT_CURRENT_RANK, explicit route,
 ///        NULL hint = defaults.
 
 #include "arts.h"
@@ -50,7 +50,7 @@ void null_hint_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramv;
   (void)depc;
   (void)depv;
-  unsigned int my_rank = arts_get_current_node();
+  unsigned int my_rank = arts_get_current_rank();
   arts_printf("  PASS: NULL hint -> ran on node %u\n", my_rank);
 }
 
@@ -61,7 +61,7 @@ void explicit_route_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramv;
   (void)depc;
   (void)depv;
-  unsigned int my_rank = arts_get_current_node();
+  unsigned int my_rank = arts_get_current_rank();
   if (my_rank == 0) {
     arts_printf("  PASS: explicit route=0 -> ran on node 0\n");
   } else {
@@ -69,16 +69,16 @@ void explicit_route_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 }
 
-/// EDT created with ARTS_HINT_CURRENT_NODE.
+/// EDT created with ARTS_HINT_CURRENT_RANK.
 void current_node_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                        arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
   (void)depv;
-  unsigned int my_rank = arts_get_current_node();
-  // ARTS_HINT_CURRENT_NODE means wherever the creator runs.
-  arts_printf("  PASS: ARTS_HINT_CURRENT_NODE -> ran on node %u\n", my_rank);
+  unsigned int my_rank = arts_get_current_rank();
+  // ARTS_HINT_CURRENT_RANK means wherever the creator runs.
+  arts_printf("  PASS: ARTS_HINT_CURRENT_RANK -> ran on node %u\n", my_rank);
 }
 
 /// DB created with NULL hint — should be on current node.
@@ -88,7 +88,7 @@ void check_db_hint(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   arts_guid_t db_guid = (arts_guid_t)paramv[0];
   unsigned int db_rank = arts_guid_get_rank(db_guid);
-  unsigned int my_rank = arts_get_current_node();
+  unsigned int my_rank = arts_get_current_rank();
   bool ok = (db_rank == my_rank || db_rank == 0);
   if (ok) {
     arts_printf("  PASS: DB NULL hint on rank %u\n", db_rank);
@@ -117,32 +117,29 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== hint_routing ===\n");
 
-  arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+  arts_epoch_start(epoch);
 
   // Test 1: NULL hint.
-  arts_edt_create_with_epoch(null_hint_task, 0, NULL, 0, epoch, NULL);
+  arts_edt_create(null_hint_task, 0, NULL, 0, &(arts_edt_hint_t){.epoch = epoch});
 
   // Test 2: Explicit route=0.
-  arts_edt_create_with_epoch(explicit_route_task, 0, NULL, 0, epoch,
-                             &(arts_hint_t){.route = 0});
+  arts_edt_create(explicit_route_task, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
 
-  // Test 3: ARTS_HINT_CURRENT_NODE.
-  arts_edt_create_with_epoch(current_node_task, 0, NULL, 0, epoch,
-                             &(arts_hint_t){.route = ARTS_HINT_CURRENT_NODE});
+  // Test 3: ARTS_HINT_CURRENT_RANK.
+  arts_edt_create(current_node_task, 0, NULL, 0, &(arts_edt_hint_t){.rank = ARTS_HINT_CURRENT_RANK, .epoch = epoch});
 
   // Test 4: DB with NULL hint.
   void *dbptr = NULL;
-  arts_guid_t db = arts_db_create(&dbptr, 16, ARTS_DB_DEFAULT, NULL);
+  arts_guid_t db = arts_db_create(&dbptr, 16, ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
   arts_db_release(db);
   uint64_t param = (uint64_t)db;
-  arts_edt_create_with_epoch(check_db_hint, 1, &param, 0, epoch,
-                             &(arts_hint_t){.route = 0});
+  arts_edt_create(check_db_hint, 1, &param, 0, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
 
   // Test 5: Hint with profiling id.
-  arts_edt_create_with_epoch(profiled_task, 0, NULL, 0, epoch,
-                             &(arts_hint_t){.route = 0, .id = 42});
+  arts_edt_create(profiled_task, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0, .edt_id = 42, .epoch = epoch});
 
-  arts_wait_on_handle(epoch);
+  arts_epoch_wait(epoch);
   arts_shutdown();
 }
 

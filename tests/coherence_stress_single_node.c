@@ -45,7 +45,7 @@
 ///   - spawns N EDTs, each RO- or RW-acquiring one of the DBs,
 ///   - reaches a per-iteration finish EDT that verifies all workers ran.
 /// Iteration N+1 only starts after iteration N's finish EDT has fired —
-/// this gives v3 RC many back-to-back acquire/release cycles per DB.
+/// this gives RC many back-to-back acquire/release cycles per DB.
 ///
 /// Adaptations vs. plan code:
 ///   - 4-arg arts_db_create (no ARTS_DB_PROP_NONE in HEAD).
@@ -127,13 +127,14 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   /* Finish-EDT must have depc >= 1 so the epoch's slot-0 satisfy
    * actually gates it; depc=0 would let it fire before any worker. */
   arts_guid_t shut = arts_edt_create(shutdown_edt, 0, NULL, 1, NULL);
-  arts_guid_t epoch = arts_initialize_and_start_epoch(shut, 0);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), shut, 0);
+  arts_epoch_start(epoch);
 
   for (int iter = 0; iter < K_ITERS; iter++) {
     arts_guid_t dbs[M_DBS];
     for (int i = 0; i < M_DBS; i++) {
       int *data;
-      dbs[i] = arts_db_create((void **)&data, sizeof(int), ARTS_DB_RC, NULL);
+      dbs[i] = arts_db_create((void **)&data, sizeof(int), ARTS_DB_RC, ARTS_DB_PROP_NONE, NULL);
       *data = i;
     }
 
@@ -142,7 +143,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       int db_idx = i % M_DBS;
       arts_db_access_mode_t mode = (i & 1) ? DB_MODE_RW : DB_MODE_RO;
       arts_guid_t w =
-          arts_edt_create_with_epoch(worker_edt, 0, NULL, 1, epoch, NULL);
+          arts_edt_create(worker_edt, 0, NULL, 1, &(arts_edt_hint_t){.epoch = epoch});
       arts_add_dependence(dbs[db_idx], w, 0, mode);
     }
   }
@@ -150,7 +151,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
 int main(int argc, char **argv) {
   arts_rt(argc, argv);
-  if (arts_get_current_node() == 0 && !atomic_load(&g_clean_shutdown)) {
+  if (arts_get_current_rank() == 0 && !atomic_load(&g_clean_shutdown)) {
     fprintf(stderr,
             "FAIL: shutdown_edt did not fire — epoch never completed\n");
     return 1;

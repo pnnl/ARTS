@@ -100,34 +100,34 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== db_create_with_data ===\n");
 
-  arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+  arts_epoch_start(epoch);
 
-  // Test 1: Create DB with initial data.
-  int src[8];
-  for (int i = 0; i < 8; i++) {
-    src[i] = (i + 1) * 11;
-  }
+  // Test 1: Create DB and populate the returned buffer directly.
   arts_guid_t g1 = arts_guid_reserve(ARTS_DB, 0);
-  arts_db_create_with_guid(g1, 8 * sizeof(int), ARTS_DB_DEFAULT, src, NULL);
+  int *p1 = (int *)arts_db_create_with_guid(
+      g1, 8 * sizeof(int), ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
+  for (int i = 0; i < 8; i++) {
+    p1[i] = (i + 1) * 11;
+  }
   arts_db_release(g1);
 
-  arts_guid_t e1 = arts_edt_create_with_epoch(
-      check_initial_data, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_signal_edt(e1, 0, g1, DB_MODE_RO);
+  arts_guid_t e1 = arts_edt_create(check_initial_data, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_add_dependence(g1, e1, 0, DB_MODE_RO);
 
-  // Test 2: Modify source after creation — DB should be independent.
-  int src2[2] = {100, 200};
+  // Test 2: Same pattern — the caller writes directly into the DB buffer,
+  // so there is no separate source array to diverge from.
   arts_guid_t g2 = arts_guid_reserve(ARTS_DB, 0);
-  arts_db_create_with_guid(g2, 2 * sizeof(int), ARTS_DB_DEFAULT, src2, NULL);
+  int *p2 = (int *)arts_db_create_with_guid(
+      g2, 2 * sizeof(int), ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
+  p2[0] = 100;
+  p2[1] = 200;
   arts_db_release(g2);
-  // Zero out source.
-  memset(src2, 0, sizeof(src2));
 
-  arts_guid_t e2 = arts_edt_create_with_epoch(
-      check_source_independence, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_signal_edt(e2, 0, g2, DB_MODE_RO);
+  arts_guid_t e2 = arts_edt_create(check_source_independence, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_add_dependence(g2, e2, 0, DB_MODE_RO);
 
-  arts_wait_on_handle(epoch);
+  arts_epoch_wait(epoch);
   arts_shutdown();
 }
 

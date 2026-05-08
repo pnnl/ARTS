@@ -39,7 +39,6 @@
 #include <stdlib.h>
 
 #include "arts.h"
-#include "arts/compute/shad.h"
 
 uint64_t num_dummy = 0;
 
@@ -51,7 +50,7 @@ void dummytask(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   uint64_t index = paramv[0];
   uint64_t dep = paramv[1];
   arts_printf("Dep: %lu ID: %lu Current Node: %u Current Worker: %u\n", dep,
-              index, arts_get_current_node(), arts_get_current_worker());
+              index, arts_get_current_rank(), arts_get_current_worker());
 }
 
 void root_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -62,15 +61,12 @@ void root_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   uint64_t dep = paramv[0];
   arts_printf("Root: %lu\n", dep);
   if (dep) {
-    arts_guid_t pool_guid = arts_initialize_and_start_epoch(NULL_GUID, 0);
+    arts_guid_t pool_guid = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+    arts_epoch_start(pool_guid);
 
     dep--;
-    unsigned int num_nodes = arts_get_total_nodes();
-    //        arts_edt_create_shad(root_task,
-    //        (arts_get_current_node()+1)%num_nodes, 1, &dep);
-    arts_edt_create_dep(
-        root_task, 1, &dep, 0, false,
-        &(arts_hint_t){.route = (arts_get_current_node() + 1) % num_nodes});
+    unsigned int num_nodes = arts_get_total_ranks();
+    arts_edt_create(root_task, 1, &dep, 0, &(arts_edt_hint_t){.rank = (arts_get_current_rank() + 1) % num_nodes});
 
     //        uint64_t args[2];
     //        args[0] = dep;
@@ -78,11 +74,10 @@ void root_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     //        for(uint64_t i=0; i<num_dummy; i++)
     //        {
     //            args[1] = i;
-    //            arts_edt_create_dep(dummytask, 2, args, 0, false,
-    //            &(arts_hint_t){.route = i%num_nodes});
+    //            arts_edt_create(dummytask, 2, args, 0, //            &(arts_edt_hint_t){.rank = i%num_nodes});
     //        }
     arts_printf("Waiting on %lu\n", pool_guid);
-    if (arts_wait_on_handle(pool_guid)) {
+    if (arts_epoch_wait(pool_guid)) {
       arts_printf("Done waiting on %lu dep: %lu\n", pool_guid, dep);
     }
   }
@@ -101,7 +96,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   num_dummy = (uint64_t)strtol(argv[1], NULL, 10);
   arts_printf("Starting\n");
   uint64_t arg = num_dummy;
-  arts_edt_create_shad(root_task, 0, 1, &arg);
+  arts_edt_create(root_task, 1, &arg, 0, &(arts_edt_hint_t){.rank = 0});
 }
 
 int main(int argc, char **argv) {

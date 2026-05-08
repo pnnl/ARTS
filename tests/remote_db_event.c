@@ -56,14 +56,13 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramv;
   (void)depc;
   (void)depv;
-  unsigned int last_node = arts_get_total_nodes() - 1;
+  unsigned int last_node = arts_get_total_ranks() - 1;
   void *tmp;
-  db_guid = arts_db_create(&tmp, sizeof(unsigned int), ARTS_DB_DEFAULT,
-                           &(arts_hint_t){.route = last_node});
+  db_guid = arts_db_create(&tmp, sizeof(unsigned int), ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, &(arts_db_hint_t){.rank = last_node});
   for (unsigned int n = 0; n < last_node; n++) {
     arts_guid_t am = arts_edt_create(edt_func, 0, NULL, 1,
-                                     &(arts_hint_t){.route = last_node});
-    arts_signal_edt(am, 0, db_guid, DB_MODE_EW);
+                                     &(arts_edt_hint_t){.rank = last_node});
+    arts_add_dependence(db_guid, am, 0, DB_MODE_RW);
   }
 }
 

@@ -55,7 +55,7 @@
 static char *arts_config_override_path = NULL;
 static char *arts_config_override_data = NULL;
 
-void artsSetConfigPath(const char *path) {
+void arts_set_config_path(const char *path) {
   if (arts_config_override_path) {
     free(arts_config_override_path);
     arts_config_override_path = NULL;
@@ -71,7 +71,7 @@ void artsSetConfigPath(const char *path) {
   memcpy(arts_config_override_path, path, len + 1);
 }
 
-void artsSetConfigData(const char *data) {
+void arts_set_config_data(const char *data) {
   if (arts_config_override_data) {
     free(arts_config_override_data);
     arts_config_override_data = NULL;
@@ -754,9 +754,10 @@ static void handle_default_ports(struct arts_config_s *config,
 }
 
 #ifdef ARTS_USE_CXL
-static void handle_cxl_db_allocation_strategy(struct arts_config_s *config,
-                                               const char *value,
-                                               struct arts_config_variable_s **vars) {
+static void
+handle_cxl_db_allocation_strategy(struct arts_config_s *config,
+                                  const char *value,
+                                  struct arts_config_variable_s **vars) {
   /* Default strategy is "static". */
   config->cxl_db_allocation_strategy = ARTS_CXL_DB_ALLOC_STATIC;
   config->cxl_db_allocation_device = 0;
@@ -1011,7 +1012,7 @@ static void config_setup_local(struct arts_config_s *config,
     config->launcher_data = arts_remote_launcher_create(
         0, NULL, config, config->kill_mode,
         arts_remote_launcher_local_startup_processes,
-        arts_remote_launcher_ssh_cleanup_processes);
+        arts_remote_launcher_local_cleanup_processes);
 
     ARTS_INFO("Local multi-node: %u nodes on 127.0.0.1", node_count);
   } else {
@@ -1193,30 +1194,30 @@ static void config_free_variables(struct arts_config_variable_s *vars) {
 /*=============================================================================
  * arts_config_load — Phased config loading
  *
- * Phase 1: Open file, parse key=value pairs into linked list
- * Phase 2: Allocate config, set non-zero pre-defaults
- * Phase 3: Table-driven parse (replaces ~280 lines of if-else)
- * Phase 4: Launcher-specific setup (nodes, routing table, master)
- * Phase 5: Computed fields, warnings
+ * Open file, parse key=value pairs into linked list
+ * Allocate config, set non-zero pre-defaults
+ * Table-driven parse (replaces ~280 lines of if-else)
+ * Launcher-specific setup (nodes, routing table, master)
+ * Computed fields, warnings
  *===========================================================================*/
 
 void arts_config_load(struct arts_config_s *config) {
-  /* Phase 1: Open config file, parse key=value pairs. */
+  /* Open config file, parse key=value pairs. */
   FILE *fp = config_open_file();
   struct arts_config_variable_s *vars = arts_config_get_variables(fp);
   (void)fclose(fp);
 
-  /* Phase 2: Zero-init and set non-zero pre-defaults. */
+  /* Zero-init and set non-zero pre-defaults. */
   memset(config, 0, sizeof(*config));
   config_set_pre_defaults(config);
 
-  /* Phase 3: Table-driven parse. */
+  /* Table-driven parse. */
   config_parse_table(config, &vars);
 
-  /* Phase 4: Launcher-specific setup (nodes, routing table, master). */
+  /* Launcher-specific setup (nodes, routing table, master). */
   config_setup_launcher(config, &vars);
 
-  /* Phase 5: Computed fields, warnings. */
+  /* Computed fields, warnings. */
   config_compute_derived(config);
   config_print_warnings(config);
 

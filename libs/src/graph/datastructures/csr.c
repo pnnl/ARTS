@@ -65,8 +65,8 @@ csr_graph_t *init_csr(partition_t part_index, graph_sz_t localv,
     graph_sz_t totsz = (localv + 1) + locale;
     unsigned int db_size = sizeof(csr_graph_t) + (totsz * sizeof(vertex_t));
 
-    csr = (csr_graph_t *)arts_db_create_with_guid(block_guid, db_size,
-                                                  ARTS_DB_PIN, NULL, NULL);
+    csr = (csr_graph_t *)arts_db_create_with_guid(
+        block_guid, db_size, ARTS_DB_PIN, ARTS_DB_PROP_NONE, NULL);
     csr->partGuid = block_guid;
     csr->num_local_vertices = localv;
     csr->num_local_edges = locale;
@@ -346,7 +346,7 @@ int load_graph_no_weight(const char *file_path, arts_block_dist_t *dist,
       /*else {
           printf("src = %" PRIu64 ", owner = %d, global rank : %d", src,
           getOwner(src, dist),
-          arts_get_current_node());
+          arts_get_current_rank());
           assert(false); //TODO remove
       }*/
     }
@@ -501,13 +501,19 @@ int load_graph_no_weight_csr(const char *file_path, arts_block_dist_t *dist,
 }
 
 csr_graph_t *get_graph_from_guid(arts_guid_t guid) {
-  struct arts_db_s *db_res =
-      (struct arts_db_s *)arts_route_table_lookup_db(guid, NULL, false);
+  struct arts_db_s *db_res = arts_route_table_lookup_db_safe(guid);
   if (arts_guid_is_local(guid) && db_res) {
     /* Note: caller uses the returned pointer without holding the route table
      * ref.  This is safe because graph DBs are never destroyed during
-     * computation and callers always access data within an EDT lifetime. */
-    return (csr_graph_t *)(db_res + 1);
+     * computation and callers always access data within an EDT lifetime.
+     * drop the ref immediately under the same invariant — the
+     * descriptor outlives this function call. */
+    csr_graph_t *out = (csr_graph_t *)(db_res + 1);
+    arts_route_table_release(guid);
+    return out;
+  }
+  if (db_res != NULL) {
+    arts_route_table_release(guid);
   }
   return NULL;
 }

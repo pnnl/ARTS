@@ -40,7 +40,7 @@
 /// @file guid_basic.c
 /// @brief Tests GUID management: arts_guid_reserve, arts_guid_is_local,
 ///        arts_guid_get_rank, arts_guid_get_type,
-///        arts_guid_reserve_round_robin.
+///        arts_guid_reserve_range with ARTS_HINT_ROUND_ROBIN.
 
 #include "arts.h"
 #include <stdlib.h>
@@ -53,8 +53,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
 
   arts_printf("=== guid_basic ===\n");
-  unsigned int num_nodes = arts_get_total_nodes();
-  unsigned int my_node = arts_get_current_node();
+  unsigned int num_nodes = arts_get_total_ranks();
+  unsigned int my_node = arts_get_current_rank();
   bool all_pass = true;
 
   // Test 1: Reserve local GUID — is_local should be true.
@@ -85,9 +85,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 
   // Test 4: Reserve GUIDs for multiple types, verify get_type.
-  arts_type_t types[] = {ARTS_DB, ARTS_EVENT, ARTS_EPOCH, ARTS_BUFFER};
-  const char *names[] = {"ARTS_DB", "ARTS_EVENT", "ARTS_EPOCH", "ARTS_BUFFER"};
-  for (unsigned int i = 0; i < 4; i++) {
+  arts_type_t types[] = {ARTS_DB, ARTS_EVENT, ARTS_EPOCH};
+  const char *names[] = {"ARTS_DB", "ARTS_EVENT", "ARTS_EPOCH"};
+  for (unsigned int i = 0; i < 3; i++) {
     arts_guid_t g = arts_guid_reserve(types[i], my_node);
     arts_type_t got = arts_guid_get_type(g);
     if (got != types[i]) {
@@ -120,17 +120,19 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     all_pass = false;
   }
 
-  // Test 6: arts_guid_reserve_round_robin.
+  // Test 6: arts_guid_reserve_range with ARTS_HINT_ROUND_ROBIN.
   unsigned int rr_count = num_nodes * 3;
-  arts_guid_t *rr = arts_guid_reserve_round_robin(rr_count, ARTS_DB);
-  if (rr == NULL) {
-    arts_printf("  FAIL: round_robin returned NULL\n");
+  arts_guid_t rr_range =
+      arts_guid_reserve_range(ARTS_DB, rr_count, ARTS_HINT_ROUND_ROBIN);
+  if (rr_range == NULL_GUID) {
+    arts_printf("  FAIL: round_robin range returned NULL_GUID\n");
     all_pass = false;
   } else {
     bool rr_ok = true;
     for (unsigned int i = 0; i < rr_count; i++) {
       unsigned int expected_rank = i % num_nodes;
-      unsigned int actual_rank = arts_guid_get_rank(rr[i]);
+      arts_guid_t guid_i = arts_guid_from_index(rr_range, i);
+      unsigned int actual_rank = arts_guid_get_rank(guid_i);
       if (actual_rank != expected_rank) {
         arts_printf("  FAIL: round_robin[%u] rank=%u, expected=%u\n", i,
                     actual_rank, expected_rank);
@@ -145,7 +147,6 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     if (!rr_ok) {
       all_pass = false;
     }
-    arts_guid_round_robin_destroy(rr);
   }
 
   arts_printf("=== guid_basic: %s ===\n", all_pass ? "ALL PASSED" : "FAILED");

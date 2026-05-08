@@ -50,10 +50,10 @@
 /// cross-node EW request).  Different sources, no FIFO ordering across the
 /// pair.
 ///
-/// Pre-Phase 2.2 (legacy / dormant v3 RC): home-side LOCK_REQ may arrive
+/// Legacy: home-side LOCK_REQ may arrive
 /// before the cache_s is installed -> NULL cache -> DESTROY_NOTIFY ->
 /// consumer sees NULL ptr -> SIGSEGV.
-/// Post-Phase 2.2: LOCK_REQ deferred via OoO list -> DB_CREATE arrives ->
+/// Post-LOCK_REQ deferred via OoO list -> DB_CREATE arrives ->
 /// fire_oo re-issues LOCK_REQ -> consumer sees correct data.
 ///
 /// Adaptations vs. plan code:
@@ -61,7 +61,7 @@
 ///     names the same enum value.
 ///   - arts_db_create has a 4-arg signature (no ARTS_DB_PROP_NONE).
 ///   - DB_MODE_RW is documented as LOCAL-DB-only in arts.h; the cross-node
-///     ordered-write mode in HEAD is DB_MODE_EW.
+///     ordered-write mode in HEAD is DB_MODE_RW.
 ///   - arts_db_create on a remote route returns *addr = NULL, so the data
 ///     initialization is performed by a writer EDT pinned on the home rank
 ///     (acquires DB in EW mode, writes the sentinel, releases).
@@ -163,7 +163,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
 
-  unsigned int rank_count = arts_get_total_nodes();
+  unsigned int rank_count = arts_get_total_ranks();
   if (rank_count < 3) {
     arts_printf("SKIP: requires 3+ ranks (got %u)\n", rank_count);
     arts_shutdown();
@@ -178,30 +178,30 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
    * consumer have run AND released their DB refs.  Without this fence we
    * would race shutdown against the in-flight cross-node EW transfers. */
   arts_guid_t shut =
-      arts_edt_create(shutdown_edt, 0, NULL, 1, &(arts_hint_t){.route = 0});
-  arts_guid_t epoch = arts_initialize_and_start_epoch(shut, 0);
+      arts_edt_create(shutdown_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0});
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), shut, 0);
+  arts_epoch_start(epoch);
 
   for (int iter = 0; iter < N_ITERATIONS; iter++) {
     /* Step 1: rank 0 creates DB on rank 1 (home).  Wire message
      * DB_CREATE_COHERENT travels rank 0 -> 1.  arts_db_create returns
      * *addr = NULL on remote create (data init is via writer EDT). */
     void *raw = NULL;
-    arts_guid_t db = arts_db_create(&raw, sizeof(int), ARTS_DB_RC,
-                                    &(arts_hint_t){.route = 1});
+    arts_guid_t db =
+        arts_db_create(&raw, sizeof(int), ARTS_DB_RC, ARTS_DB_PROP_NONE,
+                       &(arts_db_hint_t){.rank = 1});
 
-    /* Step 2: LATCH event with count=1 -- writer satisfies, consumer
-     * waits.  Carries no data (NULL_GUID).  Hosted on rank 0 so the
+    /* Step 2: ONCE-equivalent (defaults: latch=1, auto_destroy=true) --
+     * writer satisfies, consumer waits.  Hosted on rank 0 so the
      * decrement-on-satisfy round-trip is short. */
-    arts_guid_t evt =
-        arts_event_create(/*route=*/0, ARTS_EVENT_LATCH, /*latch_count=*/1,
-                          /*data_guid=*/NULL_GUID);
+    arts_event_hint_t evt_hint = ARTS_EVENT_HINT_DEFAULTS;
+    evt_hint.rank = 0;
+    arts_guid_t evt = arts_event_create(&evt_hint);
 
     /* Step 3: writer on rank 1.  Slot 0 = DB (RW); paramv[0] = event
      * GUID so writer can satisfy after writing. */
     uint64_t writer_paramv[1] = {(uint64_t)evt};
-    arts_guid_t writer = arts_edt_create_with_epoch(
-        writer_edt, /*paramc=*/1, writer_paramv, /*depc=*/1, epoch,
-        &(arts_hint_t){.route = 1});
+    arts_guid_t writer = arts_edt_create(writer_edt, /*paramc=*/1, writer_paramv, /*depc=*/1, &(arts_edt_hint_t){.rank = 1, .epoch = epoch});
     arts_add_dependence(db, writer, /*slot=*/0, DB_MODE_RW);
 
     /* Step 4: consumer on rank 2.  Slot 0 = DB (RW), slot 1 = LATCH
@@ -210,12 +210,11 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
      * at home -- without it, consumer's LOCK_REQ could arrive at home
      * BEFORE writer's, and home's strict-arrival FIFO grants ownership
      * to consumer first.  This is the LOCK_REQ-before-DB_CREATE race
-     * regression test (Phase 2.2 OoO defer must keep the consumer from
+     * regression test (OoO defer must keep the consumer from
      * SIGSEGV'ing on a NULL ptr in that ordering); the data check below
      * verifies that the OCR happens-before chain is honored end-to-end. */
     arts_guid_t consumer =
-        arts_edt_create_with_epoch(consumer_edt, /*paramc=*/0, NULL, /*depc=*/2,
-                                   epoch, &(arts_hint_t){.route = 2});
+        arts_edt_create(consumer_edt, /*paramc=*/0, NULL, /*depc=*/2, &(arts_edt_hint_t){.rank = 2, .epoch = epoch});
     arts_add_dependence(db, consumer, /*slot=*/0, DB_MODE_RW);
     arts_add_dependence(evt, consumer, /*slot=*/1, DB_MODE_NULL);
   }
@@ -231,7 +230,7 @@ int main(int argc, char **argv) {
    * relevant rank.  Children that did not abort reach this point with
    * the flag unset; reporting non-zero from a child is harmless because
    * the master rank's exit code is what ctest observes. */
-  if (arts_get_current_node() == 0 && !atomic_load(&g_clean_shutdown)) {
+  if (arts_get_current_rank() == 0 && !atomic_load(&g_clean_shutdown)) {
     fprintf(stderr, "FAIL: shutdown_edt did not fire - epoch never completed "
                     "(consumer abort or premature peer-disconnect shutdown)\n");
     return 1;

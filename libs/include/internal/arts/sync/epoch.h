@@ -36,71 +36,58 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include <stdlib.h>
 
-#include "arts.h"
-#include "arts/compute/shad.h"
+#ifndef ARTS_SYNC_EPOCH_H
+#define ARTS_SYNC_EPOCH_H
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-uint64_t num_dummy = 0;
+#include "arts/runtime_types.h"
 
-void dummytask(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-               arts_edt_dep_t depv[]) {
-  (void)depc;
-  (void)depv;
-  (void)paramc;
-  uint64_t index = paramv[0];
-  uint64_t dep = paramv[1];
-  arts_printf("Dep: %lu ID: %lu Current Node: %u Current Worker: %u\n", dep,
-              index, arts_get_current_node(), arts_get_current_worker());
+arts_epoch_t *create_epoch(arts_guid_t *guid, arts_guid_t edt_guid,
+                           unsigned int slot);
+/* shared_t deleter accessor for foreign TUs that allocate
+ * epoch storage (currently none — kept for symmetry with the DB / EDT
+ * pattern in Phases 6/7). */
+void (*arts_epoch_get_deleter(void))(void *);
+void increment_queue_epoch(arts_guid_t epoch_guid);
+void increment_active_epoch(arts_guid_t epoch_guid);
+void increment_finished_epoch(arts_guid_t epoch_guid);
+void send_epoch(arts_guid_t epoch_guid, unsigned int source, unsigned int dest);
+void broadcast_epoch_request(arts_guid_t epoch_guid);
+bool check_epoch(arts_epoch_t *epoch, unsigned int total_active,
+                 unsigned int total_finish);
+void reduce_epoch(arts_guid_t epoch_guid, unsigned int active,
+                  unsigned int finish);
+void delete_epoch(arts_guid_t epoch_guid, arts_epoch_t *epoch);
+
+typedef struct arts_epoch_pool_s {
+  struct arts_epoch_pool_s *next;
+  unsigned int size;
+  unsigned int index;
+  volatile unsigned int outstanding;
+  arts_epoch_t pool[];
+} arts_epoch_pool_t;
+
+arts_epoch_pool_t *create_epoch_pool(arts_guid_t *epoch_pool_guid,
+                                     unsigned int pool_size,
+                                     arts_guid_t *start_guid);
+void arts_link_epoch_pool_to_tls(arts_epoch_pool_t *pool);
+arts_epoch_t *get_pool_epoch(arts_guid_t edt_guid, unsigned int slot);
+void arts_cleanup_epoch_pools(void);
+
+void arts_shutdown_epoch_inc_active();
+void arts_shutdown_epoch_inc_queue();
+void arts_shutdown_epoch_inc_finished();
+bool arts_shutdown_epoch_create();
+
+/** Internal: yield the current EDT and run another scheduling round.
+ *  Used by tests/utility_api.c and runtime-internal sync paths.  Not part
+ *  of the public ARTS API. */
+void arts_yield(void);
+
+#ifdef __cplusplus
 }
-
-void root_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-               arts_edt_dep_t depv[]) {
-  (void)depc;
-  (void)depv;
-  (void)paramc;
-  uint64_t dep = paramv[0];
-  arts_printf("Root: %lu\n", dep);
-  if (dep) {
-    arts_guid_t pool_guid = arts_initialize_and_start_epoch(NULL_GUID, 0);
-    dep--;
-    arts_edt_create_dep(root_task, 1, &dep, 0, false,
-                        &(arts_hint_t){.route = (arts_get_current_node() + 1) %
-                                                arts_get_total_nodes()});
-
-    //        uint64_t args[2];
-    //        args[0] = dep;
-    //
-    //        for(uint64_t i=0; i<num_dummy; i++)
-    //        {
-    //            args[1] = i;
-    //            arts_edt_create_dep(dummytask, 2, args, 0, false,
-    //            &(arts_hint_t){.route = i%num_nodes});
-    //        }
-
-    arts_printf("Waiting on %lu\n", pool_guid);
-    if (arts_wait_on_handle(pool_guid)) {
-      arts_printf("Done waiting on %lu dep: %lu\n", pool_guid, dep);
-    }
-  }
-  arts_printf("HERE %lu\n", num_dummy);
-  if (dep + 1 == num_dummy) {
-    arts_shutdown();
-  }
-}
-
-void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-              arts_edt_dep_t depv[]) {
-  (void)paramc;
-  (void)depc;
-  (void)depv;
-  char **argv = (char **)paramv[1];
-  num_dummy = (uint64_t)strtol(argv[1], NULL, 10);
-  arts_printf("Starting\n");
-  arts_active_message_shad(root_task, 0, 1, &num_dummy, NULL, 0, NULL_GUID);
-}
-
-int main(int argc, char **argv) {
-  arts_rt(argc, argv);
-  return 0;
-}
+#endif
+#endif

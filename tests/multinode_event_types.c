@@ -82,9 +82,8 @@ void sticky_trampoline(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t event = (arts_guid_t)paramv[0];
   arts_guid_t epoch = (arts_guid_t)paramv[1];
   // Event has already fired — register a late dependent.
-  arts_guid_t late = arts_edt_create_with_epoch(
-      sticky_late_dep, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_add_dependence(event, late, 0, DB_MODE_EW);
+  arts_guid_t late = arts_edt_create(sticky_late_dep, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_add_dependence(event, late, 0, DB_MODE_RW);
   arts_event_destroy(event);
 }
 
@@ -138,71 +137,78 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== multinode_event_types ===\n");
 
-  unsigned int total = arts_get_total_nodes();
+  unsigned int total = arts_get_total_ranks();
   arts_guid_t shut = arts_edt_create(shutdown_edt, 0, NULL, 1, NULL);
-  arts_guid_t epoch = arts_initialize_and_start_epoch(shut, 0);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), shut, 0);
+  arts_epoch_start(epoch);
 
-  // Test 1: ONCE event — create on node 0, satisfy from node 1.
+  // Test 1: ONCE-equivalent (defaults) — create on node 0, satisfy from node 1.
   {
-    arts_guid_t ev = arts_event_create(0, ARTS_EVENT_ONCE, 0, NULL_GUID);
-    arts_guid_t dep = arts_edt_create_with_epoch(once_dep, 0, NULL, 1, epoch,
-                                                 &(arts_hint_t){.route = 0});
-    arts_add_dependence(ev, dep, 0, DB_MODE_EW);
+    arts_event_hint_t h = ARTS_EVENT_HINT_DEFAULTS;
+    h.rank = 0;
+    arts_guid_t ev = arts_event_create(&h);
+    arts_guid_t dep = arts_edt_create(once_dep, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+    arts_add_dependence(ev, dep, 0, DB_MODE_RW);
 
     uint64_t ev_param = (uint64_t)ev;
-    arts_edt_create_with_epoch(remote_satisfy, 1, &ev_param, 0, epoch,
-                               &(arts_hint_t){.route = 1});
+    arts_edt_create(remote_satisfy, 1, &ev_param, 0, &(arts_edt_hint_t){.rank = 1, .epoch = epoch});
   }
 
-  // Test 2: STICKY event — satisfy from node 1, then register late dep.
-  // The trampoline EDT depends on the event (fires when event fires),
-  // and then registers a SECOND late-dependent on the same (persisted) event.
+  // Test 2: STICKY-equivalent — auto_destroy=false,
+  // negative_latch_allowed=false. The trampoline EDT depends on the event
+  // (fires when event fires), and then registers a SECOND late-dependent on the
+  // same (persisted) event.
   {
-    arts_guid_t ev = arts_event_create(0, ARTS_EVENT_STICKY, 0, NULL_GUID);
+    arts_event_hint_t h = ARTS_EVENT_HINT_DEFAULTS;
+    h.rank = 0;
+    h.auto_destroy = false;
+    h.negative_latch_allowed = false;
+    arts_guid_t ev = arts_event_create(&h);
 
     uint64_t tramp_params[2] = {(uint64_t)ev, (uint64_t)epoch};
     arts_guid_t tramp =
-        arts_edt_create_with_epoch(sticky_trampoline, 2, tramp_params, 1, epoch,
-                                   &(arts_hint_t){.route = 0});
-    arts_add_dependence(ev, tramp, 0, DB_MODE_EW);
+        arts_edt_create(sticky_trampoline, 2, tramp_params, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+    arts_add_dependence(ev, tramp, 0, DB_MODE_RW);
 
     uint64_t ev_param = (uint64_t)ev;
-    arts_edt_create_with_epoch(remote_satisfy, 1, &ev_param, 0, epoch,
-                               &(arts_hint_t){.route = 1});
+    arts_edt_create(remote_satisfy, 1, &ev_param, 0, &(arts_edt_hint_t){.rank = 1, .epoch = epoch});
   }
 
-  // Test 3: IDEM event — satisfy from node 1, re-satisfy from node 0.
+  // Test 3: IDEM-equivalent — auto_destroy=false (latch=1 default).
   {
-    arts_guid_t ev = arts_event_create(0, ARTS_EVENT_IDEM, 0, NULL_GUID);
-    arts_guid_t dep = arts_edt_create_with_epoch(idem_dep, 0, NULL, 1, epoch,
-                                                 &(arts_hint_t){.route = 0});
-    arts_add_dependence(ev, dep, 0, DB_MODE_EW);
+    arts_event_hint_t h = ARTS_EVENT_HINT_DEFAULTS;
+    h.rank = 0;
+    h.auto_destroy = false;
+    arts_guid_t ev = arts_event_create(&h);
+    arts_guid_t dep = arts_edt_create(idem_dep, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+    arts_add_dependence(ev, dep, 0, DB_MODE_RW);
 
     // Satisfy from node 1.
     uint64_t ev_param = (uint64_t)ev;
-    arts_edt_create_with_epoch(remote_satisfy, 1, &ev_param, 0, epoch,
-                               &(arts_hint_t){.route = 1});
+    arts_edt_create(remote_satisfy, 1, &ev_param, 0, &(arts_edt_hint_t){.rank = 1, .epoch = epoch});
 
     // Re-satisfy from node 0 (trampoline after the event fires via dep).
     uint64_t re_params[1] = {(uint64_t)ev};
-    arts_guid_t re = arts_edt_create_with_epoch(
-        idem_re_satisfy, 1, re_params, 1, epoch, &(arts_hint_t){.route = 0});
-    arts_add_dependence(ev, re, 0, DB_MODE_EW);
+    arts_guid_t re = arts_edt_create(idem_re_satisfy, 1, re_params, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+    arts_add_dependence(ev, re, 0, DB_MODE_RW);
   }
 
-  // Test 4: COUNTED event — fan-in from all nodes.
+  // Test 4: COUNTED-equivalent — latch=total, auto_destroy=false (each node
+  // satisfies once; the dep fires after the latch hits zero).
   {
-    arts_guid_t ev = arts_event_create(0, ARTS_EVENT_COUNTED, total, NULL_GUID);
+    arts_event_hint_t h = ARTS_EVENT_HINT_DEFAULTS;
+    h.rank = 0;
+    h.latch = total;
+    h.auto_destroy = false;
+    arts_guid_t ev = arts_event_create(&h);
     uint64_t total_param = (uint64_t)total;
     arts_guid_t dep =
-        arts_edt_create_with_epoch(counted_fan_in_dep, 1, &total_param, 1,
-                                   epoch, &(arts_hint_t){.route = 0});
-    arts_add_dependence(ev, dep, 0, DB_MODE_EW);
+        arts_edt_create(counted_fan_in_dep, 1, &total_param, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+    arts_add_dependence(ev, dep, 0, DB_MODE_RW);
 
     for (unsigned int r = 0; r < total; r++) {
       uint64_t ev_param = (uint64_t)ev;
-      arts_edt_create_with_epoch(remote_satisfy, 1, &ev_param, 0, epoch,
-                                 &(arts_hint_t){.route = r});
+      arts_edt_create(remote_satisfy, 1, &ev_param, 0, &(arts_edt_hint_t){.rank = r, .epoch = epoch});
     }
   }
 }

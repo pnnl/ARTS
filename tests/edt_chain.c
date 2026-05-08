@@ -55,7 +55,7 @@ void chain_stage(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   uint64_t value = (uint64_t)depv[0].guid;
 
   arts_printf("  Stage %lu: received value %lu\n", stage, value);
-  arts_signal_edt_value(next_guid, 0, value + 1);
+  arts_add_dependence((arts_guid_t)(value + 1), next_guid, 0, DB_MODE_VAL);
 }
 
 /// Final stage verifies the accumulated value.
@@ -86,18 +86,18 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Build the chain backwards: final <- stage[N-1] <- ... <- stage[0].
   arts_guid_t final_edt =
-      arts_edt_create(chain_final, 0, NULL, 1, &(arts_hint_t){.route = 0});
+      arts_edt_create(chain_final, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0});
 
   arts_guid_t next = final_edt;
   for (int i = CHAIN_LEN - 1; i >= 0; i--) {
     uint64_t args[2];
     args[0] = (uint64_t)i;
     args[1] = (uint64_t)next;
-    next = arts_edt_create(chain_stage, 2, args, 1, &(arts_hint_t){.route = 0});
+    next = arts_edt_create(chain_stage, 2, args, 1, &(arts_edt_hint_t){.rank = 0});
   }
 
   // Kick off chain with value 0.
-  arts_signal_edt_value(next, 0, 0);
+  arts_add_dependence((arts_guid_t)(0), next, 0, DB_MODE_VAL);
 }
 
 int main(int argc, char **argv) {

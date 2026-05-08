@@ -58,7 +58,8 @@ void getter(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       sum += data[j];
     }
   }
-  arts_signal_edt_value(shutdown_guid, arts_get_current_node(), sum);
+  arts_add_dependence((arts_guid_t)(sum), shutdown_guid,
+                      arts_get_current_rank(), DB_MODE_VAL);
 }
 
 void creater(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -67,14 +68,12 @@ void creater(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
   (void)paramc;
   (void)paramv;
-  unsigned int *data =
-      (unsigned int *)malloc(sizeof(unsigned int) * num_elements);
+  unsigned int *data = (unsigned int *)arts_db_create_with_guid(
+      db_guid, sizeof(unsigned int) * num_elements, ARTS_DB_DEFAULT,
+      ARTS_DB_PROP_NONE, NULL);
   for (unsigned int i = 0; i < num_elements; i++) {
     data[i] = i;
   }
-  arts_db_create_with_guid(db_guid, sizeof(unsigned int) * num_elements,
-                           ARTS_DB_DEFAULT, data, NULL);
-  free(data);
 }
 
 void shut_down_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -83,7 +82,7 @@ void shut_down_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramc;
   (void)paramv;
   unsigned int sum = 0;
-  for (unsigned int i = 0; i < arts_get_total_nodes(); i++) {
+  for (unsigned int i = 0; i < arts_get_total_ranks(); i++) {
     sum += (unsigned int)depv[i].guid;
   }
 
@@ -110,7 +109,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   shutdown_guid = arts_guid_reserve(ARTS_EDT, 0);
   edt_guid_fixed = arts_guid_reserve(ARTS_EDT, 0);
   num_elements = strtol(argv[1], NULL, 10);
-  block_size = num_elements / arts_get_total_nodes();
+  block_size = num_elements / arts_get_total_ranks();
   stride = strtol(argv[2], NULL, 10);
   arts_printf("num_elements: %u block_size: %u stride: %u\n", num_elements,
               block_size, stride);
@@ -120,24 +119,25 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     return;
   }
 
-  arts_edt_create(creater, 0, NULL, 0, &(arts_hint_t){.route = 0});
-  arts_edt_create_with_guid(shut_down_edt, shutdown_guid, 0, NULL,
-                            arts_get_total_nodes());
+  arts_edt_create(creater, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0});
+  arts_edt_create(shut_down_edt, 0, NULL, arts_get_total_ranks(),
+                  &(arts_edt_hint_t){.guid = shutdown_guid});
 
   unsigned int deps = block_size / stride;
-  for (unsigned int n = 0; n < arts_get_total_nodes(); n++) {
+  for (unsigned int n = 0; n < arts_get_total_ranks(); n++) {
     arts_guid_t edt_guid;
     if (!n) {
-      arts_edt_create_with_guid(getter, edt_guid_fixed, 0, NULL, deps);
+      arts_edt_create(getter, 0, NULL, deps,
+                      &(arts_edt_hint_t){.guid = edt_guid_fixed});
       edt_guid = edt_guid_fixed;
     } else {
       edt_guid =
-          arts_edt_create(getter, 0, NULL, deps, &(arts_hint_t){.route = n});
+          arts_edt_create(getter, 0, NULL, deps, &(arts_edt_hint_t){.rank = n});
     }
     for (unsigned int j = 0; j < deps; j++) {
-      arts_get_from_db(edt_guid, db_guid, j,
-                       sizeof(unsigned int) * (n * block_size + j * stride),
-                       sizeof(unsigned int) * stride);
+      arts_db_get(edt_guid, db_guid, j,
+                  sizeof(unsigned int) * (n * block_size + j * stride),
+                  sizeof(unsigned int) * stride, NULL);
     }
   }
 }

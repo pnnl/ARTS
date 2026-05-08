@@ -76,47 +76,45 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== db_destroy ===\n");
 
-  arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+  arts_epoch_start(epoch);
 
   // Test 1: arts_db_destroy (implicit release).
   void *p1 = NULL;
-  arts_guid_t db1 = arts_db_create(&p1, 64, ARTS_DB_DEFAULT, NULL);
+  arts_guid_t db1 = arts_db_create(&p1, 64, ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
   arts_db_destroy(db1);
-  arts_edt_create_with_epoch(after_destroy, 0, NULL, 0, epoch,
-                             &(arts_hint_t){.route = 0});
+  arts_edt_create(after_destroy, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
 
   // Test 2: arts_db_destroy on a second DB (implicit release).
   void *p2 = NULL;
-  arts_guid_t db2 = arts_db_create(&p2, 64, ARTS_DB_DEFAULT, NULL);
+  arts_guid_t db2 = arts_db_create(&p2, 64, ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
   arts_db_destroy(db2);
-  arts_edt_create_with_epoch(after_destroy, 0, NULL, 0, epoch,
-                             &(arts_hint_t){.route = 0});
+  arts_edt_create(after_destroy, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
 
   // Test 4: Create new DB after destroying old one.
   void *p3 = NULL;
-  arts_guid_t db3 = arts_db_create(&p3, sizeof(int), ARTS_DB_DEFAULT, NULL);
+  arts_guid_t db3 = arts_db_create(&p3, sizeof(int), ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
   ((int *)p3)[0] = 777;
   arts_db_release(db3);
 
-  arts_guid_t e3 = arts_edt_create_with_epoch(verify_new_db, 0, NULL, 1, epoch,
-                                              &(arts_hint_t){.route = 0});
-  arts_signal_edt(e3, 0, db3, DB_MODE_RO);
+  arts_guid_t e3 = arts_edt_create(verify_new_db, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_add_dependence(db3, e3, 0, DB_MODE_RO);
 
   // Test 5: Double destroy (should be no-op on second call, not crash).
   void *p5 = NULL;
-  arts_guid_t db5 = arts_db_create(&p5, 64, ARTS_DB_DEFAULT, NULL);
+  arts_guid_t db5 = arts_db_create(&p5, 64, ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
   arts_db_destroy(db5);
   arts_db_destroy(db5); // Second destroy — route table returns NULL
   arts_printf("  PASS: double destroy did not crash\n");
 
-  // Test 6: arts_db_destroy on ARTS_DB_LOCAL (implicit release, should not
+  // Test 6: arts_db_destroy on ARTS_DB_PIN (implicit release, should not
   // crash).
   void *p6 = NULL;
-  arts_guid_t db6 = arts_db_create(&p6, 64, ARTS_DB_LOCAL, NULL);
+  arts_guid_t db6 = arts_db_create(&p6, 64, ARTS_DB_PIN, ARTS_DB_PROP_NONE, NULL);
   arts_db_destroy(db6); // Should log warning and return
   arts_printf("  PASS: destroy on LOCAL DB warned without crash\n");
 
-  arts_wait_on_handle(epoch);
+  arts_epoch_wait(epoch);
   arts_shutdown();
 }
 

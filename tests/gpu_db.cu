@@ -41,7 +41,7 @@
  * gpu_db.cu
  *
  * Tests GPU datablock operations:
- *   - ARTS_DB_GPU type creation with arts_guid_reserve +
+ *   - ARTS_DB_GPU_PIN type creation with arts_guid_reserve +
  * arts_db_create_with_guid
  *   - arts_put_in_db_from_gpu: copy GPU device memory into a host DB
  *   - GPU kernel writes to device memory, then arts_put_in_db_from_gpu
@@ -83,14 +83,14 @@ void transfer_to_db(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   /* Create host DB to receive the data */
   unsigned int *host = NULL;
   arts_guid_t db_guid = arts_db_create(
-      (void **)&host, sizeof(unsigned int) * N_ELEMENTS, ARTS_DB_DEFAULT, NULL);
+      (void **)&host, sizeof(unsigned int) * N_ELEMENTS, ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
 
   /* Copy from GPU device memory into the host DB */
   arts_put_in_db_from_gpu(dev_data, db_guid, 0,
                           sizeof(unsigned int) * N_ELEMENTS, false);
 
   /* Signal done EDT with the host DB */
-  arts_signal_edt(done_guid, 0, db_guid, DB_MODE_EW);
+  arts_add_dependence(db_guid, done_guid, 0, DB_MODE_RW);
 }
 
 /* Verify the data transferred correctly */
@@ -134,21 +134,21 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
 
-  unsigned int node_id = arts_get_current_node();
+  unsigned int node_id = arts_get_current_rank();
 
-  /* Test 1: ARTS_DB_GPU creation */
+  /* Test 1: ARTS_DB_GPU_PIN creation */
   unsigned int *addr = NULL;
   arts_guid_t gpu_db = arts_guid_reserve(ARTS_DB, 0);
   addr = (unsigned int *)arts_db_create_with_guid(
-      gpu_db, sizeof(unsigned int) * N_ELEMENTS, ARTS_DB_GPU, NULL, NULL);
+      gpu_db, sizeof(unsigned int) * N_ELEMENTS, ARTS_DB_GPU_PIN, ARTS_DB_PROP_NONE, NULL);
   if (addr != NULL) {
-    arts_printf("PASS test1: ARTS_DB_GPU created with non-NULL addr\n");
+    arts_printf("PASS test1: ARTS_DB_GPU_PIN created with non-NULL addr\n");
   } else {
-    arts_printf("FAIL test1: ARTS_DB_GPU addr is NULL\n");
+    arts_printf("FAIL test1: ARTS_DB_GPU_PIN addr is NULL\n");
   }
 
   /* Test 2: GPU kernel writes to device buffer, then transfer to host DB */
-  arts_hint_t hint_0 = {0, 0};
+  arts_edt_hint_t hint_0 = {0, 0};
   arts_guid_t done_guid = arts_edt_create(verify_transfer, 0, NULL, 1, &hint_0);
 
   uint64_t args[] = {(uint64_t)dev_buffer, (uint64_t)done_guid};
@@ -157,14 +157,14 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   /* Chain: kernel -> lib_transfer -> done */
   arts_gpu_hint_t lib_hint = {};
-  lib_hint.route = node_id;
+  lib_hint.rank = node_id;
   lib_hint.gpu = 0;
   lib_hint.lib = true;
   arts_guid_t lib_edt =
       arts_edt_create_gpu(transfer_to_db, 2, args, 0, arts_from_dim3(grid),
                           arts_from_dim3(threads), &lib_hint);
   arts_gpu_hint_t kern_hint = {};
-  kern_hint.route = node_id;
+  kern_hint.rank = node_id;
   kern_hint.gpu = 0;
   kern_hint.end_guid = lib_edt;
   kern_hint.slot = 0;

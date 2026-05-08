@@ -119,37 +119,34 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   fprintf(stderr, "=== coh_mixed_local_remote ===\n");
   fflush(stderr);
-  arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+  arts_epoch_start(epoch);
 
   void *ptr = NULL;
-  arts_guid_t db = arts_db_create(&ptr, sizeof(int), ARTS_DB_DIST,
-                                  ARTS_DB_PROP_NONE, &(arts_hint_t){.route = 0});
+  arts_guid_t db = arts_db_create(&ptr, sizeof(int), ARTS_DB_RC,
+                                  ARTS_DB_PROP_NONE, &(arts_db_hint_t){.rank = 0});
   ((int *)ptr)[0] = 0;
   arts_db_release(db);
 
   /* W1: RW on node 0 */
-  arts_guid_t w1 = arts_edt_create_with_epoch(writer1_edt, 0, NULL, 1, epoch,
-                                              &(arts_hint_t){.route = 0});
+  arts_guid_t w1 = arts_edt_create(writer1_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   arts_add_dependence(db, w1, 0, DB_MODE_RW);
 
   /* Mixed RO generation: READERS_PER_NODE readers on EACH node. */
-  unsigned int nnodes = arts_get_total_nodes();
+  unsigned int nnodes = arts_get_total_ranks();
   for (unsigned int n = 0; n < nnodes; n++) {
     for (int i = 0; i < READERS_PER_NODE; i++) {
-      arts_guid_t r = arts_edt_create_with_epoch(
-          v1_reader_edt, 0, NULL, 1, epoch, &(arts_hint_t){.route = n});
+      arts_guid_t r = arts_edt_create(v1_reader_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = n, .epoch = epoch});
       arts_add_dependence(db, r, 0, DB_MODE_RO);
     }
   }
 
   /* W2: RW on node 0 (must wait for all 2*READERS_PER_NODE readers to drain) */
-  arts_guid_t w2 = arts_edt_create_with_epoch(writer2_edt, 0, NULL, 1, epoch,
-                                              &(arts_hint_t){.route = 0});
+  arts_guid_t w2 = arts_edt_create(writer2_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   arts_add_dependence(db, w2, 0, DB_MODE_RW);
 
   /* Final RO reader verifies VAL2 */
-  arts_guid_t fr = arts_edt_create_with_epoch(
-      final_reader_edt, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
+  arts_guid_t fr = arts_edt_create(final_reader_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   arts_add_dependence(db, fr, 0, DB_MODE_RO);
 
   {
@@ -157,7 +154,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     pthread_create(&wdt, NULL, wd_thread, NULL);
     pthread_detach(wdt);
   }
-  arts_wait_on_handle(epoch);
+  arts_epoch_wait(epoch);
   atomic_store(&g_epoch_done, 1);
 
   int w1d = atomic_load(&g_w1_done);

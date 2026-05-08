@@ -36,50 +36,20 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include "arts.h"
-#include "arts/compute/shad.h"
+#ifndef ARTS_UTILS_RANDOM_H
+#define ARTS_UTILS_RANDOM_H
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-#define EDTCOUNT 100
-uint64_t lock = 0;
-unsigned int count = 0;
+#include <stdint.h>
 
-void tester(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-            arts_edt_dep_t depv[]) {
-  (void)depc;
-  (void)depv;
-  (void)paramc;
-  (void)paramv;
-  unsigned int local;
-  while (!arts_shad_alias_try_lock(&lock)) {
-    arts_yield();
-  }
-  arts_printf("Yield %u Lock: %lu\n", arts_get_current_worker(), lock);
-  arts_yield();
-  local = ++count;
-  arts_printf("Done  %u Local: %u Lock: %lu\n", arts_get_current_worker(),
-              local, lock);
-  arts_shad_alias_unlock(&lock);
+/** Internal: thread-safe pseudo-random number.  Used by GPU LC sync paths
+ *  and by tests that exercise the runtime PRNG.  Not part of the public
+ *  ARTS API; do not call from user code. */
+uint64_t arts_thread_safe_random(void);
 
-  if (local == EDTCOUNT) {
-    arts_printf("SHUTTING DOWN %u\n", count);
-    arts_shutdown();
-  }
+#ifdef __cplusplus
 }
-
-void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-              arts_edt_dep_t depv[]) {
-  (void)paramc;
-  (void)paramv;
-  (void)depc;
-  (void)depv;
-  arts_printf("%u -- %u\n", arts_get_total_workers(),
-              arts_get_current_worker());
-  for (unsigned int i = 0; i < EDTCOUNT; i++) {
-    arts_edt_create(tester, 0, NULL, 0, &(arts_hint_t){.route = 0});
-  }
-}
-
-int main(int argc, char **argv) {
-  arts_rt(argc, argv);
-  return 0;
-}
+#endif
+#endif

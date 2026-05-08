@@ -36,13 +36,14 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include "arts/sync/termination.h"
+#include "arts/sync/epoch.h"
 
 #include "arts.h"
 #include "arts/compute/edt.h"
 #include "arts/gas/guid.h"
 #include "arts/gas/out_of_order.h"
 #include "arts/gas/route_table.h"
+#include "arts/memory/db.h"
 #include "arts/remote/handler.h"
 #include "arts/runtime_types.h"
 #include "arts/system/print.h"
@@ -55,6 +56,38 @@
 
 #define DEFAULT_EPOCH_POOL_SIZE 4096
 ARTS_THREAD_LOCAL arts_epoch_pool_t *epoch_thread_pool;
+
+/*
+ * arts_epoch_deleter — shared_t deleter.
+ *
+ * Invoked by route_table free_item once the slot's lock count hits 0 with
+ * DELETE set.  Mirrors the DB / EDT pattern (Phases 6/7).
+ *
+ * Two ownership models for epoch storage:
+ *   - Stand-alone heap epochs (created by create_epoch / shutdown epoch /
+ *     arts_epoch_create on a cross-rank create): malloc'd on their own,
+ *     so the deleter just frees the struct.
+ *   - Pool-backed epochs (entries inside arts_epoch_pool_t.pool[]): the
+ *     epoch_pool itself owns the storage and is freed when its outstanding
+ *     count hits 0.  Individual pool entries must NOT be freed here — only
+ *     the route_table slot is dropped via mark_delete.  pool_guid != 0
+ *     distinguishes pool-backed entries.
+ *
+ * After the deleter returns, route_table free_item bumps the slot's gen
+ * counter and clears DELETE + count.
+ */
+static void arts_epoch_deleter(void *self) {
+  arts_epoch_t *epoch = (arts_epoch_t *)self;
+  if (epoch->pool_guid != NULL_GUID) {
+    /* Pool-backed: storage lives inside arts_epoch_pool_t.pool[].  The
+     * pool itself is freed in delete_epoch once outstanding hits 0.  No
+     * per-entry free needed. */
+    return;
+  }
+  arts_free(epoch);
+}
+
+void (*arts_epoch_get_deleter(void))(void *) { return arts_epoch_deleter; }
 
 /*
  * Shutdown-epoch helpers.
@@ -120,10 +153,11 @@ bool decrement_queue_epoch(arts_epoch_t *epoch) {
 
 void increment_queue_epoch(arts_guid_t epoch_guid) {
   if (epoch_guid != NULL_GUID) {
-    arts_epoch_t *epoch =
-        (arts_epoch_t *)arts_route_table_lookup_item(epoch_guid);
+    /* lookup_epoch_safe pairs with release on the success path. */
+    arts_epoch_t *epoch = arts_route_table_lookup_epoch_safe(epoch_guid);
     if (epoch) {
       arts_atomic_add_u64(&epoch->queued, 1);
+      arts_route_table_release(epoch_guid);
     } else {
       arts_out_of_order_inc_queue_epoch(epoch_guid);
     }
@@ -131,8 +165,8 @@ void increment_queue_epoch(arts_guid_t epoch_guid) {
 }
 
 void increment_active_epoch(arts_guid_t epoch_guid) {
-  arts_epoch_t *epoch =
-      (arts_epoch_t *)arts_route_table_lookup_item(epoch_guid);
+  /* lookup_epoch_safe pairs with release on the success path. */
+  arts_epoch_t *epoch = arts_route_table_lookup_epoch_safe(epoch_guid);
   if (epoch) {
     if (arts_global_rank_count == 1) {
       arts_lock(&epoch->local_lock);
@@ -141,6 +175,7 @@ void increment_active_epoch(arts_guid_t epoch_guid) {
     } else {
       arts_atomic_add(&epoch->active_count, 1);
     }
+    arts_route_table_release(epoch_guid);
   } else {
     arts_out_of_order_inc_active_epoch(epoch_guid);
   }
@@ -159,8 +194,9 @@ void increment_active_epoch(arts_guid_t epoch_guid) {
  */
 void increment_finished_epoch(arts_guid_t epoch_guid) {
   if (epoch_guid != NULL_GUID) {
-    arts_epoch_t *epoch =
-        (arts_epoch_t *)arts_route_table_lookup_item(epoch_guid);
+    /* lookup_epoch_safe pairs with release before any delete_epoch
+     * call (which itself re-acquires).  Release on every exit path. */
+    arts_epoch_t *epoch = arts_route_table_lookup_epoch_safe(epoch_guid);
     if (epoch) {
       if (arts_global_rank_count == 1) {
         bool fire_epoch = false;
@@ -180,13 +216,18 @@ void increment_finished_epoch(arts_guid_t epoch_guid) {
 
         if (fire_epoch) {
           if (epoch->termination_exit_guid) {
-            arts_signal_edt_value(epoch->termination_exit_guid,
-                                  epoch->termination_exit_slot,
-                                  epoch->finished_count);
+            internal_signal_edt(
+                epoch->termination_exit_guid, epoch->termination_exit_slot,
+                (arts_guid_t)(epoch->finished_count), DB_MODE_VAL, NULL, 0);
           } else {
             arts_shutdown_epoch_fire(epoch->guid);
           }
-          delete_epoch(epoch_guid, epoch);
+          /* Release our lookup ref before delete_epoch, which re-acquires
+           * via lookup_epoch_safe and finally calls mark_delete to drop
+           * the install-existence ref. */
+          arts_route_table_release(epoch_guid);
+          delete_epoch(epoch_guid, NULL);
+          return;
         }
       } else {
         unsigned int new_finished = arts_atomic_add(&epoch->finished_count, 1);
@@ -196,9 +237,17 @@ void increment_finished_epoch(arts_guid_t epoch_guid) {
         unsigned int rank = arts_guid_get_rank(epoch_guid);
         if (rank == arts_global_rank_id) {
           if (!arts_atomic_sub_u64(&epoch->queued, 1)) {
-            if (!arts_atomic_cswap_u64(&epoch->outstanding, 0,
-                                       arts_global_rank_count)) {
+            uint64_t old_out = arts_atomic_cswap_u64(
+                &epoch->outstanding, 0, arts_global_rank_count);
+            if (old_out == 0) {
+              ARTS_DEBUG("increment_finished_epoch[Guid:%lu]: CAS outstanding "
+                         "SUCCESS (was 0) → broadcasting",
+                         epoch_guid);
               broadcast_epoch_request(epoch_guid);
+            } else {
+              ARTS_DEBUG("increment_finished_epoch[Guid:%lu]: CAS outstanding "
+                         "FAIL (was %lu, not 0) — reduce_epoch fix must rescue",
+                         epoch_guid, old_out);
             }
           }
         } else {
@@ -208,6 +257,7 @@ void increment_finished_epoch(arts_guid_t epoch_guid) {
           }
         }
       }
+      arts_route_table_release(epoch_guid);
     } else {
       arts_out_of_order_inc_finished_epoch(epoch_guid);
     }
@@ -216,8 +266,8 @@ void increment_finished_epoch(arts_guid_t epoch_guid) {
 
 void send_epoch(arts_guid_t epoch_guid, unsigned int source,
                 unsigned int dest) {
-  arts_epoch_t *epoch =
-      (arts_epoch_t *)arts_route_table_lookup_item(epoch_guid);
+  /* lookup_epoch_safe pairs with release on the success path. */
+  arts_epoch_t *epoch = arts_route_table_lookup_epoch_safe(epoch_guid);
   if (epoch) {
     ARTS_DEBUG("Sending epoch [Guid:%lu] to rank %u", epoch_guid, dest);
     arts_atomic_fetch_and_u64(&epoch->queued, EPOCH_MASK);
@@ -225,6 +275,7 @@ void send_epoch(arts_guid_t epoch_guid, unsigned int source,
       arts_remote_epoch_send(dest, epoch_guid, epoch->active_count,
                              epoch->finished_count);
     }
+    arts_route_table_release(epoch_guid);
   } else {
     arts_out_of_order_send_epoch(epoch_guid, source, dest);
   }
@@ -234,10 +285,14 @@ arts_epoch_t *create_epoch(arts_guid_t *guid, arts_guid_t edt_guid,
                            unsigned int slot) {
   INCREMENT_NUM_EPOCH_CREATE_BY(1);
   if (*guid == NULL_GUID) {
-    *guid = arts_guid_create_for_rank(arts_global_rank_id, ARTS_EDT);
+    *guid = arts_guid_create_for_rank(arts_global_rank_id, ARTS_EPOCH);
   }
 
   arts_epoch_t *epoch = (arts_epoch_t *)arts_calloc(1, sizeof(arts_epoch_t));
+  /* ARTS_SHARED_FIELD is the first member; route_table free_item
+   * dispatches to epoch->shared.deleter once the slot's lock count hits 0
+   * with DELETE set. */
+  arts_shared_init(&epoch->shared, arts_epoch_deleter);
   epoch->phase = PHASE_1;
   epoch->termination_exit_guid = edt_guid;
   epoch->termination_exit_slot = slot;
@@ -258,10 +313,11 @@ arts_epoch_t *create_epoch(arts_guid_t *guid, arts_guid_t edt_guid,
  */
 bool arts_shutdown_epoch_create() {
   if (arts_node_info.auto_shutdown_guid) {
-    arts_node_info.auto_shutdown_guid = arts_guid_create_for_rank(0, ARTS_EDT);
+    arts_node_info.auto_shutdown_guid =
+        arts_guid_create_for_rank(0, ARTS_EPOCH);
     arts_epoch_t *epoch =
         create_epoch(&arts_node_info.auto_shutdown_guid, NULL_GUID, 0);
-    unsigned int total_workers = arts_get_total_workers();
+    unsigned int total_workers = arts_get_workers_per_rank();
     arts_atomic_add(&epoch->active_count, total_workers);
     arts_atomic_add_u64(&epoch->queued, total_workers);
     ARTS_INFO(
@@ -272,12 +328,13 @@ bool arts_shutdown_epoch_create() {
   return false;
 }
 
-void arts_add_edt_to_epoch(arts_guid_t edt_guid, arts_guid_t epoch_guid) {
-  struct arts_edt_s *edt =
-      (struct arts_edt_s *)arts_route_table_lookup_item(edt_guid);
+void arts_epoch_add_edt(arts_guid_t edt_guid, arts_guid_t epoch_guid) {
+  /* lookup_edt_safe pairs with release on the success path. */
+  struct arts_edt_s *edt = arts_route_table_lookup_edt_safe(edt_guid);
   if (edt) {
     edt->epoch_guid = epoch_guid;
     increment_active_epoch(epoch_guid);
+    arts_route_table_release(edt_guid);
     return;
   }
 }
@@ -291,27 +348,15 @@ void broadcast_epoch_request(arts_guid_t epoch_guid) {
   }
 }
 
-arts_guid_t arts_initialize_and_start_epoch(arts_guid_t finish_edt_guid,
-                                            unsigned int slot) {
-  arts_epoch_t *epoch = get_pool_epoch(finish_edt_guid, slot);
-
-  arts_set_current_epoch_guid(epoch->guid);
-  arts_atomic_add(&epoch->active_count, 1);
-  arts_atomic_add_u64(&epoch->queued, 1);
-  ARTS_INFO("Creating and Initializing Epoch [Guid:%lu]", epoch->guid);
-  return epoch->guid;
-}
-
-arts_guid_t arts_initialize_epoch(unsigned int rank,
-                                  arts_guid_t finish_edt_guid,
-                                  unsigned int slot) {
+arts_guid_t arts_epoch_create(unsigned int rank, arts_guid_t finish_edt_guid,
+                              unsigned int slot) {
   arts_guid_t guid = NULL_GUID;
   // I think the idea is this is that during parallel start
   // (arts_node_info.ready_to_execute > 0) This means that the epoch will be
   // created on all nodes assuming that each node goes through the
   // initializeEpoch code path. Pool assume the current host...
   if (!arts_node_info.ready_to_execute || rank != arts_global_rank_id) {
-    guid = arts_guid_create_for_rank(rank, ARTS_EDT);
+    guid = arts_guid_create_for_rank(rank, ARTS_EPOCH);
     create_epoch(&guid, finish_edt_guid, slot);
     if (!arts_node_info.ready_to_execute) {
       for (unsigned int i = 0; i < arts_global_rank_count; i++) {
@@ -328,13 +373,14 @@ arts_guid_t arts_initialize_epoch(unsigned int rank,
   return guid;
 }
 
-void arts_start_epoch(arts_guid_t epoch_guid) {
-  arts_epoch_t *epoch =
-      (arts_epoch_t *)arts_route_table_lookup_item(epoch_guid);
+void arts_epoch_start(arts_guid_t epoch_guid) {
+  /* lookup_epoch_safe pairs with release on the success path. */
+  arts_epoch_t *epoch = arts_route_table_lookup_epoch_safe(epoch_guid);
   if (epoch) {
     arts_set_current_epoch_guid(epoch->guid);
     arts_atomic_add(&epoch->active_count, 1);
     arts_atomic_add_u64(&epoch->queued, 1);
+    arts_route_table_release(epoch_guid);
   } else {
     ARTS_WARN("Epoch [Guid:%lu] doesn't exist in the Route table", epoch_guid);
   }
@@ -362,8 +408,9 @@ bool check_epoch(arts_epoch_t *epoch, unsigned int total_active,
             "check_epoch: CAS won PHASE_1->PHASE_3, firing epoch [Guid:%lu]",
             epoch->guid);
         if (epoch->termination_exit_guid) {
-          arts_signal_edt_value(epoch->termination_exit_guid,
-                                epoch->termination_exit_slot, total_finish);
+          internal_signal_edt(
+              epoch->termination_exit_guid, epoch->termination_exit_slot,
+              (arts_guid_t)(total_finish), DB_MODE_VAL, NULL, 0);
         } else {
           arts_shutdown_epoch_fire(epoch->guid);
         }
@@ -386,8 +433,9 @@ bool check_epoch(arts_epoch_t *epoch, unsigned int total_active,
             "check_epoch: CAS won PHASE_2->PHASE_3, firing epoch [Guid:%lu]",
             epoch->guid);
         if (epoch->termination_exit_guid) {
-          arts_signal_edt_value(epoch->termination_exit_guid,
-                                epoch->termination_exit_slot, total_finish);
+          internal_signal_edt(
+              epoch->termination_exit_guid, epoch->termination_exit_slot,
+              (arts_guid_t)(total_finish), DB_MODE_VAL, NULL, 0);
         } else {
           arts_shutdown_epoch_fire(epoch->guid);
         }
@@ -406,8 +454,9 @@ bool check_epoch(arts_epoch_t *epoch, unsigned int total_active,
 
 void reduce_epoch(arts_guid_t epoch_guid, unsigned int active,
                   unsigned int finish) {
-  arts_epoch_t *epoch =
-      (arts_epoch_t *)arts_route_table_lookup_item(epoch_guid);
+  /* lookup_epoch_safe pairs with release before any delete_epoch
+   * call (which itself re-acquires) and on every other exit path. */
+  arts_epoch_t *epoch = arts_route_table_lookup_epoch_safe(epoch_guid);
   if (epoch) {
     unsigned int total_active =
         arts_atomic_add(&epoch->global_active_count, active);
@@ -441,31 +490,63 @@ void reduce_epoch(arts_guid_t epoch_guid, unsigned int active,
             "to phase %u",
             epoch->phase);
         arts_atomic_sub_u64(&epoch->outstanding, 1);
+        /* Race fix: increment_finished_epoch (home rank) sets queued→0
+         * and tries CAS outstanding 0→rank_count.  If outstanding was
+         * still 1 at that moment the CAS fails and nobody restarts the
+         * broadcast.  Re-check here after we brought outstanding to 0. */
+        uint64_t queued_now = epoch->queued;
+        ARTS_DEBUG("reduce_epoch FALSE [Guid:%lu]: inner-sub done, "
+                   "outstanding now 0, queued=%lu, phase=%u",
+                   epoch_guid, queued_now, epoch->phase);
+        if (queued_now == 0 && epoch->phase != (unsigned int)PHASE_3) {
+          uint64_t old_out = arts_atomic_cswap_u64(&epoch->outstanding, 0,
+                                                    arts_global_rank_count);
+          if (old_out == 0) {
+            ARTS_DEBUG("reduce_epoch: restarting broadcast — queued=0 race "
+                       "caught, CAS SUCCESS");
+            broadcast_epoch_request(epoch_guid);
+          } else {
+            ARTS_DEBUG("reduce_epoch: queued=0 but CAS FAIL (outstanding=%lu) "
+                       "— increment_finished_epoch already restarted",
+                       old_out);
+          }
+        }
       }
 
       if (epoch->phase == PHASE_3) {
         ARTS_DEBUG("  Deleting epoch [Guid:%lu] - termination complete",
                    epoch_guid);
-        delete_epoch(epoch_guid, epoch);
+        /* Release our lookup ref before delete_epoch, which re-acquires
+         * via lookup_epoch_safe and finally calls mark_delete to drop
+         * the install-existence ref. */
+        arts_route_table_release(epoch_guid);
+        delete_epoch(epoch_guid, NULL);
+        return;
       }
     } else {
       ARTS_DEBUG("reduce_epoch [Guid:%lu]: outstanding=%lu (still waiting for "
                  "more responses)",
                  epoch_guid, outstanding_before - 1);
     }
+    arts_route_table_release(epoch_guid);
   }
 }
 
 arts_epoch_pool_t *create_epoch_pool(arts_guid_t *epoch_pool_guid,
                                      unsigned int pool_size,
                                      arts_guid_t *start_guid) {
+  /* the pool_guid still uses ARTS_EDT since arts_epoch_pool_t is
+   * a different struct (no ARTS_SHARED_FIELD).  Only individual epoch
+   * entries get the ARTS_EPOCH tag so lookup_epoch_safe + the route_table
+   * free_item dispatcher route them correctly.  The pool itself is freed
+   * explicitly in delete_epoch / clean_epoch_pool. */
   if (*epoch_pool_guid == NULL_GUID) {
     *epoch_pool_guid = arts_guid_create_for_rank(arts_global_rank_id, ARTS_EDT);
   }
 
   if (*start_guid == NULL_GUID) {
     *start_guid =
-        arts_guid_reserve_range(ARTS_EDT, pool_size, arts_global_rank_id);
+        arts_guid_reserve_range(ARTS_EPOCH, pool_size, arts_global_rank_id);
   }
 
   arts_epoch_pool_t *epoch_pool = (arts_epoch_pool_t *)arts_calloc(
@@ -477,6 +558,12 @@ arts_epoch_pool_t *create_epoch_pool(arts_guid_t *epoch_pool_guid,
   arts_route_table_add_item(epoch_pool, *epoch_pool_guid, arts_global_rank_id,
                             false);
   for (unsigned int i = 0; i < pool_size; i++) {
+    /* each pool entry needs its own shared.deleter pointer so the
+     * route_table free_item dispatcher (when the slot's lock count drops
+     * to 0 with DELETE set) finds the correct deleter.  Pool entries are
+     * NOT individually heap-allocated — arts_epoch_deleter detects this
+     * via pool_guid != NULL_GUID and skips the free. */
+    arts_shared_init(&epoch_pool->pool[i].shared, arts_epoch_deleter);
     epoch_pool->pool[i].phase = PHASE_1;
     epoch_pool->pool[i].pool_guid = *epoch_pool_guid;
     epoch_pool->pool[i].guid = arts_guid_from_index(*start_guid, i);
@@ -494,36 +581,49 @@ arts_epoch_pool_t *create_epoch_pool(arts_guid_t *epoch_pool_guid,
   return epoch_pool;
 }
 
-/* Phase 2.2 helper: atomically NULL the route_table data slot for `key`.
- * Required because Task 2.1 dropped arts_route_table_remove_item but
- * arts_wait_on_handle still polls `!arts_route_table_lookup_item(key)` to
- * detect epoch completion.  Without the NULL store the lookup keeps
- * returning the (freed) ptr and the wait loop spins forever. */
-static void epoch_route_table_null_data(arts_guid_t key) {
-  arts_route_item_t *item = NULL;
-  arts_route_table_reserve_or_lookup(key, &item);
-  if (item == NULL) {
-    return;
-  }
-  (void)atomic_exchange_explicit(&item->data, NULL, memory_order_acq_rel);
-}
-
 void delete_epoch(arts_guid_t epoch_guid, arts_epoch_t *epoch) {
   // Can't call delete unless we already hit two barriers thus it must exit
-  if (!epoch) {
-    epoch = (arts_epoch_t *)arts_route_table_lookup_item(epoch_guid);
+  /* re-acquire via lookup_epoch_safe whenever the caller did not
+   * pass an already-owned pointer.  The epoch parameter is now treated as
+   * advisory only — we always lookup to read pool_guid safely.  Mark_delete
+   * (below) is the canonical drop path; the route_table free_item
+   * dispatcher invokes arts_epoch_deleter once the slot's lock count hits
+   * 0 with DELETE set.  For pool-backed entries the deleter is a no-op
+   * (storage lives inside arts_epoch_pool_t), and the pool struct itself
+   * is freed explicitly here when its outstanding count reaches 0. */
+  (void)epoch;
+  arts_epoch_t *e = arts_route_table_lookup_epoch_safe(epoch_guid);
+  if (!e) {
+    return;
   }
+  arts_guid_t pool_guid = e->pool_guid;
+  arts_route_table_release(epoch_guid);
 
-  if (epoch->pool_guid) {
+  if (pool_guid) {
+    /* Pool wrapper still uses ARTS_EDT type tag (arts_epoch_pool_t is a
+     * different struct that does NOT embed ARTS_SHARED_FIELD), so the
+     * type-aware lookup_*_safe variants do not apply.  Documented
+     * exception: pool storage is freed explicitly here / clean_epoch_pool
+     * rather than via the route_table free_item dispatcher.  Migration
+     * would require also embedding shared_t in arts_epoch_pool_t; deferred
+     * since the pool object has no concurrent destroy race. */
     arts_epoch_pool_t *pool =
-        (arts_epoch_pool_t *)arts_route_table_lookup_item(epoch->pool_guid);
+        (arts_epoch_pool_t *)arts_route_table_lookup_item(pool_guid);
     /* Drop the route_table slot for this individual epoch instance so
-     * arts_wait_on_handle's lookup-poll exits. */
-    epoch_route_table_null_data(epoch_guid);
-    if (arts_guid_is_local(epoch->pool_guid)) {
+     * arts_epoch_wait's lookup-poll exits.  mark_delete consumes the
+     * install-existence ref injected by add_item_race. */
+    arts_route_table_mark_delete(epoch_guid);
+    if (arts_guid_is_local(pool_guid)) {
       if (!arts_atomic_sub(&pool->outstanding, 1)) {
-        epoch_route_table_null_data(epoch->pool_guid);
-        //                arts_free(pool);  //Free in the next get_pool_epoch
+        /* Pool's last outstanding entry is gone; clear its slot.  The
+         * arts_epoch_pool_t storage itself is freed in the next
+         * get_pool_epoch / clean_epoch_pool sweep. */
+        arts_route_item_t *item = NULL;
+        arts_route_table_reserve_or_lookup(pool_guid, &item);
+        if (item) {
+          (void)atomic_exchange_explicit(&item->data, NULL,
+                                         memory_order_acq_rel);
+        }
         for (unsigned int i = 0; i < arts_global_rank_count; i++) {
           if (i != arts_global_rank_id) {
             arts_remote_epoch_delete(i, epoch_guid);
@@ -532,14 +632,22 @@ void delete_epoch(arts_guid_t epoch_guid, arts_epoch_t *epoch) {
       }
     } else {
       for (unsigned int i = 0; i < pool->size; i++) {
-        epoch_route_table_null_data(pool->pool[i].guid);
+        arts_route_table_mark_delete(pool->pool[i].guid);
       }
-      epoch_route_table_null_data(epoch->pool_guid);
+      /* Drop the pool's own route_table slot (ARTS_EDT-tagged, no
+       * shared.deleter) and free the storage. */
+      arts_route_item_t *item = NULL;
+      arts_route_table_reserve_or_lookup(pool_guid, &item);
+      if (item) {
+        (void)atomic_exchange_explicit(&item->data, NULL, memory_order_acq_rel);
+      }
       arts_free(pool);
     }
   } else {
-    epoch_route_table_null_data(epoch_guid);
-    arts_free(epoch);
+    /* Stand-alone heap epoch: mark_delete drops the install-existence ref;
+     * once count hits 0 the dispatcher calls arts_epoch_deleter which
+     * frees the struct. */
+    arts_route_table_mark_delete(epoch_guid);
 
     if (arts_guid_is_local(epoch_guid)) {
       for (unsigned int i = 0; i < arts_global_rank_count; i++) {
@@ -645,7 +753,7 @@ void arts_yield() {
 }
 
 /*
- * arts_wait_on_handle — Block current EDT until the given epoch completes.
+ * arts_epoch_wait — Block current EDT until the given epoch completes.
  *
  * Increments the epoch's finished counter (this EDT is now "done" from the
  * epoch's perspective), then spin-polls the scheduler loop until the epoch
@@ -655,28 +763,34 @@ void arts_yield() {
  * Uses route-table presence instead of an in-struct completion flag so the
  * wait loop never dereferences an epoch after delete_epoch frees it.
  */
-bool arts_wait_on_handle(arts_guid_t epoch_guid) {
+bool arts_epoch_wait(arts_guid_t epoch_guid) {
   TIME_EDT_EXEC_STOP();
   arts_guid_t *guid = arts_check_epoch_is_root(epoch_guid);
-  ARTS_INFO("arts_wait_on_handle: Waiting on epoch [Guid:%lu]", epoch_guid);
+  ARTS_INFO("arts_epoch_wait: Waiting on epoch [Guid:%lu]", epoch_guid);
   // For now lets leave this rule here
   if (guid) {
     arts_guid_t local = *guid;
     *guid = NULL_GUID; // Unset
-    arts_epoch_t *epoch = (arts_epoch_t *)arts_route_table_lookup_item(local);
+    /* lookup_epoch_safe + paired release.  Spin briefly while the
+     * slot is still RESERVED (epoch GUID was promised but add_item_race
+     * has not yet stored the data ptr).  Release immediately — we only
+     * need confirmation that the epoch exists; subsequent loops poll
+     * presence via lookup_epoch_safe again. */
+    arts_epoch_t *epoch = arts_route_table_lookup_epoch_safe(local);
     if (!epoch) {
       // Epoch may still be in reserved state in route table; spin briefly
       for (int retries = 0; !epoch && retries < 1000; retries++) {
-        epoch = (arts_epoch_t *)arts_route_table_lookup_item(local);
+        epoch = arts_route_table_lookup_epoch_safe(local);
       }
       if (!epoch) {
         ARTS_WARN(
-            "arts_wait_on_handle: Epoch [Guid:%lu] not found in route table",
+            "arts_epoch_wait: Epoch [Guid:%lu] not found in route table",
             local);
         TIME_EDT_EXEC_START();
         return false;
       }
     }
+    arts_route_table_release(local);
     increment_finished_epoch(local);
 
     // Release all DB frontier locks before blocking so consumer EDTs can
@@ -688,9 +802,15 @@ bool arts_wait_on_handle(arts_guid_t epoch_guid) {
     arts_save_thread_local(&tl);
     TIME_YIELD_START();
     while (arts_thread_info.alive) {
-      if (!arts_route_table_lookup_item(local)) {
+      /* Poll: when delete_epoch -> mark_delete fires, the route_table
+       * dispatcher invokes arts_epoch_deleter, then NULLs the data ptr;
+       * lookup_epoch_safe returns NULL and we exit.  Use lookup_epoch_safe
+       * (acquire/release pair) so we never read freed memory. */
+      arts_epoch_t *e = arts_route_table_lookup_epoch_safe(local);
+      if (!e) {
         break;
       }
+      arts_route_table_release(local);
       arts_node_info.scheduler();
     }
     // Continue running until the scheduler reports no more ready work

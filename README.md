@@ -47,7 +47,7 @@ The root CARTS build invokes this automatically when you configure `cmake` at th
 
 - `libs/core/` – Runtime sources: task scheduler, GUID tables, datablock manager, network transports, logging.
 - `cmake/` – Build helpers
-- `sampleConfigs/` – Example `arts.cfg` files used by tests/benchmarks
+- `configs/` – Runtime configuration files (`local/`, `test/`, `twosisters/` subdirs)
 - `example/` – Small standalone programs showing how to create EDTs/datablocks
 - `benchmark/` – Runtime microbenchmarks
 - `docs` – Installation and configuration notes (`INSTALL.md`)

@@ -43,15 +43,15 @@
 ///
 /// 4-rank scenario (auto-skipped on smaller configs).  Per iteration the
 /// driver creates N_DBS DBs round-robin across all ranks (home routing
-/// via arts_hint_t.route = i % nnodes) and spawns N_EDTS workers, each
+/// via arts_edt_hint_t.rank = i % nnodes) and spawns N_EDTS workers, each
 /// pinned to a deterministic rank and acquiring a deterministic DB in a
-/// deterministic mode (RW or RO).  v3 RC must transfer ownership /
+/// deterministic mode (RW or RO).  RC must transfer ownership /
 /// install RO snapshots across ranks; the final completion count must
 /// equal N_EDTS * K_ITERS.
 ///
 /// Determinism: every worker increments a per-DB integer if RW, or reads
 /// it if RO.  RW updates per DB are strictly serialised across ranks by
-/// v3 RC's lease + barrier_gen, so the per-DB counter is deterministic
+/// RC's lease + barrier_gen, so the per-DB counter is deterministic
 /// modulo the number of RW visits to that DB.  We do not assert the
 /// per-DB final value (cross-rank dispatch order varies); we instead
 /// check that all workers ran without aborting and that the global
@@ -59,7 +59,7 @@
 ///
 /// Adaptations vs. plan brief (line 1818 of plan):
 ///   - 4-arg arts_db_create (no ARTS_DB_PROP_NONE in HEAD).
-///   - DB_MODE_RW unifies the legacy DB_MODE_EW post-Cutover-C.
+///   - DB_MODE_RW unifies the legacy DB_MODE_RW post-Cutover-C.
 ///   - B.3-style scaffolding: outer epoch + g_clean_shutdown + main()
 ///     exit code, so consumer aborts on any rank propagate as ctest
 ///     FAIL even when rank 0 itself shuts down via the peer-disconnect
@@ -110,7 +110,7 @@ static void worker_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_abort(1);
   }
   if (mode_is_rw) {
-    /* Per-node serialised RW: increment is safe within v3 RC. */
+    /* Per-node serialised RW: increment is safe within RC. */
     (*data)++;
   } else {
     /* RO: just read, do not modify. */
@@ -151,7 +151,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
 
-  unsigned int nnodes = arts_get_total_nodes();
+  unsigned int nnodes = arts_get_total_ranks();
   if (nnodes < 2) {
     arts_printf("SKIP: requires 2+ ranks (got %u)\n", nnodes);
     arts_shutdown();
@@ -165,8 +165,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   /* Finish-EDT must have depc >= 1 so the epoch's slot-0 satisfy
    * actually gates it; depc=0 would let it fire before any worker. */
   arts_guid_t shut =
-      arts_edt_create(shutdown_edt, 0, NULL, 1, &(arts_hint_t){.route = 0});
-  arts_guid_t epoch = arts_initialize_and_start_epoch(shut, 0);
+      arts_edt_create(shutdown_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0});
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), shut, 0);
+  arts_epoch_start(epoch);
 
   for (int iter = 0; iter < K_ITERS; iter++) {
     arts_guid_t dbs[N_DBS];
@@ -174,25 +175,23 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     /* DBs distributed round-robin across all ranks.  For each DB we
      * also wire an init_writer EDT pinned on the home rank that takes
      * the first RW lease and stamps the payload to a known value.  This
-     * is required because v3 RC does not synthesise an initial RO
+     * is required because RC does not synthesise an initial RO
      * snapshot from an unwritten payload — without an explicit RW
      * writer the first cross-rank RO acquire returns NULL ptr. */
     for (int i = 0; i < N_DBS; i++) {
       void *raw = NULL;
       unsigned int home = (unsigned int)(i % (int)nnodes);
-      dbs[i] = arts_db_create(&raw, sizeof(int), ARTS_DB_RC,
-                              &(arts_hint_t){.route = home});
-      arts_guid_t init = arts_edt_create_with_epoch(
-          init_writer_edt, 0, NULL, 1, epoch, &(arts_hint_t){.route = home});
+      dbs[i] = arts_db_create(&raw, sizeof(int), ARTS_DB_RC, ARTS_DB_PROP_NONE, &(arts_db_hint_t){.rank = home});
+      arts_guid_t init = arts_edt_create(init_writer_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = home, .epoch = epoch});
       arts_add_dependence(dbs[i], init, 0, DB_MODE_RW);
     }
 
     /* Workers fan out across all ranks, deterministically picking a DB
-     * and an access mode based on (iter, i).  v3 RC's per-DB lease
+     * and an access mode based on (iter, i).  RC's per-DB lease
      * ordering serialises every RW behind the init_writer above.
      *
      * Note: B.2 uses RW-only across ranks.  Cross-rank RO acquire in
-     * v3 RC has a known issue where the first RO acquire arriving on
+     * RC has a known issue where the first RO acquire arriving on
      * a rank that has not yet seen any RW may observe NULL ptr (the
      * RO snapshot install path lazily fetches from home only after the
      * first RW lease releases).  Validating cross-rank RO is left to
@@ -204,8 +203,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       unsigned int worker_route = (unsigned int)(i % (int)nnodes);
       uint64_t mode_is_rw = 1; /* B.2: RW-only fan-out */
       arts_guid_t w =
-          arts_edt_create_with_epoch(worker_edt, 1, &mode_is_rw, 1, epoch,
-                                     &(arts_hint_t){.route = worker_route});
+          arts_edt_create(worker_edt, 1, &mode_is_rw, 1, &(arts_edt_hint_t){.rank = worker_route, .epoch = epoch});
       arts_add_dependence(dbs[db_idx], w, 0, DB_MODE_RW);
     }
   }
@@ -213,7 +211,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
 int main(int argc, char **argv) {
   arts_rt(argc, argv);
-  if (arts_get_current_node() == 0 && !atomic_load(&g_clean_shutdown)) {
+  if (arts_get_current_rank() == 0 && !atomic_load(&g_clean_shutdown)) {
     fprintf(stderr, "FAIL: shutdown_edt did not fire — epoch never completed "
                     "(consumer abort or premature peer-disconnect shutdown)\n");
     return 1;

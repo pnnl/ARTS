@@ -43,10 +43,10 @@
 ///        Requires multi-node (node_count > 1).
 
 #include "arts.h"
+#include "arts/memory/db.h" /* arts_db_rename */
 #include <string.h>
 
 #define DB_ELEMS 8
-#define PTR_SIZE 256
 
 // ---------------------------------------------------------------------------
 // Test 1: arts_db_create_with_guid + initial data on remote node.
@@ -69,30 +69,6 @@ void check_create_with_data(uint32_t paramc, const uint64_t *paramv,
     arts_printf("  PASS: create_with_guid + data on remote node\n");
   } else {
     arts_printf("  FAIL: create_with_guid data mismatch\n");
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Test 2: arts_signal_edt_ptr cross-node data verification.
-// ---------------------------------------------------------------------------
-
-/// Remote EDT: verifies byte pattern.
-void check_signal_ptr(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                      arts_edt_dep_t depv[]) {
-  (void)paramc;
-  (void)depc;
-  unsigned int size = (unsigned int)paramv[0];
-  uint8_t *data = (uint8_t *)depv[0].ptr;
-  bool ok = (data != NULL);
-  for (unsigned int i = 0; i < size && ok; i++) {
-    if (data[i] != (uint8_t)(i & 0xFF)) {
-      ok = false;
-    }
-  }
-  if (ok) {
-    arts_printf("  PASS: cross-node signal_edt_ptr %u bytes\n", size);
-  } else {
-    arts_printf("  FAIL: cross-node signal_edt_ptr data mismatch\n");
   }
 }
 
@@ -141,35 +117,25 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("=== multinode_db_advanced ===\n");
 
   arts_guid_t shut = arts_edt_create(shutdown_edt, 0, NULL, 1, NULL);
-  arts_guid_t epoch = arts_initialize_and_start_epoch(shut, 0);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), shut, 0);
+  arts_epoch_start(epoch);
 
   // Test 1: Create DB locally with GUID + initial data, read from remote node.
   // arts_db_create_with_guid is local-only, so create on node 0 and get
   // from node 1 via arts_get_from_db.
   {
-    int init_data[DB_ELEMS];
+    arts_guid_t reserved = arts_guid_reserve(ARTS_DB, 0);
+    int *init_data = (int *)arts_db_create_with_guid(
+        reserved, DB_ELEMS * sizeof(int), ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE,
+        NULL);
     for (int i = 0; i < DB_ELEMS; i++) {
       init_data[i] = i * 7;
     }
-    arts_guid_t reserved = arts_guid_reserve(ARTS_DB, 0);
-    arts_db_create_with_guid(reserved, DB_ELEMS * sizeof(int), ARTS_DB_DEFAULT,
-                             init_data, NULL);
     arts_db_release(reserved);
-    arts_guid_t reader = arts_edt_create_with_epoch(
-        check_create_with_data, 0, NULL, 1, epoch, &(arts_hint_t){.route = 1});
-    arts_get_from_db(reader, reserved, 0, 0, DB_ELEMS * sizeof(int));
-  }
-
-  // Test 2: Signal ptr (256 bytes) from node 0 to EDT on node 1.
-  {
-    uint8_t buf[PTR_SIZE];
-    for (unsigned int i = 0; i < PTR_SIZE; i++) {
-      buf[i] = (uint8_t)(i & 0xFF);
-    }
-    uint64_t size_param = PTR_SIZE;
-    arts_guid_t reader = arts_edt_create_with_epoch(
-        check_signal_ptr, 1, &size_param, 1, epoch, &(arts_hint_t){.route = 1});
-    arts_signal_edt_ptr(reader, 0, buf, PTR_SIZE);
+    arts_guid_t reader =
+        arts_edt_create(check_create_with_data, 0, NULL, 1,
+                        &(arts_edt_hint_t){.rank = 1, .epoch = epoch});
+    arts_db_get(reader, reserved, 0, 0, DB_ELEMS * sizeof(int), NULL);
   }
 
   // Test 3: Create DB on node 0, fill, rename, then get from node 1.
@@ -177,7 +143,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     void *ptr = NULL;
     arts_guid_t db =
         arts_db_create(&ptr, DB_ELEMS * sizeof(int), ARTS_DB_DEFAULT,
-                       &(arts_hint_t){.route = 0});
+                       ARTS_DB_PROP_NONE, &(arts_db_hint_t){.rank = 0});
     int *data = (int *)ptr;
     for (int i = 0; i < DB_ELEMS; i++) {
       data[i] = i * 13;
@@ -187,9 +153,10 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_guid_t renamed = arts_db_rename(db);
     arts_db_release(renamed);
 
-    arts_guid_t reader = arts_edt_create_with_epoch(
-        check_rename_get, 0, NULL, 1, epoch, &(arts_hint_t){.route = 1});
-    arts_get_from_db(reader, renamed, 0, 0, DB_ELEMS * sizeof(int));
+    arts_guid_t reader =
+        arts_edt_create(check_rename_get, 0, NULL, 1,
+                        &(arts_edt_hint_t){.rank = 1, .epoch = epoch});
+    arts_db_get(reader, renamed, 0, 0, DB_ELEMS * sizeof(int), NULL);
   }
 }
 

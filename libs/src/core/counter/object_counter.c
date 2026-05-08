@@ -197,7 +197,7 @@ void arts_object_trace_edt(uint64_t arts_id, uint64_t exec_ns,
                                    .timestamp_ns = arts_object_get_time_ns(),
                                    .exec_ns = exec_ns,
                                    .stall_ns = stall_ns,
-                                   .node = arts_get_current_node(),
+                                   .node = arts_get_current_rank(),
                                    .thread = arts_thread_info.thread_id};
 
   arts_push_to_array_list(arts_object_tls_edt_traces, &trace);
@@ -218,7 +218,7 @@ void arts_object_trace_db(uint64_t arts_id, uint64_t bytes_accessed,
   arts_object_db_trace_t trace = {.arts_id = arts_id,
                                   .timestamp_ns = arts_object_get_time_ns(),
                                   .bytes_accessed = bytes_accessed,
-                                  .node = arts_get_current_node(),
+                                  .node = arts_get_current_rank(),
                                   .access_type = access_type};
 
   arts_push_to_array_list(arts_object_tls_db_traces, &trace);

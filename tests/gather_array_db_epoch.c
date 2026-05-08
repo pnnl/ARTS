@@ -89,7 +89,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // The gather callback will call arts_shutdown. Don't wait in main_edt because
   // the array DB blocks are auto-acquired by main_edt; waiting here would
   // deadlock since the gather EDT needs to read them.
-  arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+  arts_epoch_start(epoch);
   arts_gather_array_db_epoch(arr, gather_epoch_check, 0, 0, NULL, 0, epoch);
 }
 

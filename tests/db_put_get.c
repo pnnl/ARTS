@@ -119,12 +119,13 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== db_put_get ===\n");
 
-  arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+  arts_epoch_start(epoch);
 
   // Create a DB and fill with known data.
   arts_guid_t db_guid = arts_guid_reserve(ARTS_DB, 0);
   unsigned int *db_data = (unsigned int *)arts_db_create_with_guid(
-      db_guid, DB_SIZE, ARTS_DB_DEFAULT, NULL, NULL);
+      db_guid, DB_SIZE, ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
   for (unsigned int i = 0; i < DB_SIZE / sizeof(unsigned int); i++) {
     db_data[i] = i * 7;
   }
@@ -132,35 +133,39 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Test 1: arts_get_from_db with offset = 3 * sizeof(unsigned int).
   uint64_t get_param = db_data[3]; // i.e., 3 * 7 = 21
-  arts_guid_t e1 = arts_edt_create_with_epoch(
-      check_get, 1, &get_param, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_get_from_db(e1, db_guid, 0, 3 * sizeof(unsigned int),
-                   sizeof(unsigned int));
+  arts_guid_t e1 =
+      arts_edt_create(check_get, 1, &get_param, 1,
+                      &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_db_get(e1, db_guid, 0, 3 * sizeof(unsigned int), sizeof(unsigned int),
+              NULL);
 
   // Test 2: arts_put_in_db — write a value at offset, then signal a checker.
   unsigned int val2 = 9999;
   unsigned int offset2 = 5 * sizeof(unsigned int);
   uint64_t put_params[2] = {offset2, val2};
-  arts_guid_t e2 = arts_edt_create_with_epoch(
-      check_put, 2, put_params, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_put_in_db(&val2, e2, db_guid, 0, offset2, sizeof(unsigned int));
+  arts_guid_t e2 =
+      arts_edt_create(check_put, 2, put_params, 1,
+                      &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_db_put(&val2, e2, db_guid, 0, offset2, sizeof(unsigned int), NULL);
 
   // Test 3: arts_put_in_db_epoch.
   arts_guid_t db2_guid = arts_guid_reserve(ARTS_DB, 0);
   unsigned int *db2 = (unsigned int *)arts_db_create_with_guid(
-      db2_guid, DB_SIZE, ARTS_DB_DEFAULT, NULL, NULL);
+      db2_guid, DB_SIZE, ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
   memset(db2, 0, DB_SIZE);
   arts_db_release(db2_guid);
 
   unsigned int epoch_data[4] = {100, 101, 102, 103};
-  arts_put_in_db_epoch(epoch_data, epoch, db2_guid, 0,
-                       4 * sizeof(unsigned int));
+  arts_db_put(
+      epoch_data, NULL_GUID, db2_guid, 0, 0, 4 * sizeof(unsigned int),
+      &(arts_db_op_hint_t){.rank = ARTS_HINT_CURRENT_RANK, .epoch = epoch});
 
-  arts_guid_t e3 = arts_edt_create_with_epoch(
-      check_put_epoch, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_signal_edt(e3, 0, db2_guid, DB_MODE_RO);
+  arts_guid_t e3 =
+      arts_edt_create(check_put_epoch, 0, NULL, 1,
+                      &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_add_dependence(db2_guid, e3, 0, DB_MODE_RO);
 
-  arts_wait_on_handle(epoch);
+  arts_epoch_wait(epoch);
   arts_shutdown();
 }
 

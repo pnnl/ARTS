@@ -74,13 +74,13 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Create an EDT with 1 dep that will never be satisfied.
   arts_guid_t doomed =
-      arts_edt_create(should_not_run, 0, NULL, 1, &(arts_hint_t){.route = 0});
+      arts_edt_create(should_not_run, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0});
 
   // Destroy it before signaling.
   arts_edt_destroy(doomed);
 
   // Create a normal EDT that shuts down.
-  arts_edt_create(verify_edt, 0, NULL, 0, &(arts_hint_t){.route = 0});
+  arts_edt_create(verify_edt, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0});
 }
 
 int main(int argc, char **argv) {

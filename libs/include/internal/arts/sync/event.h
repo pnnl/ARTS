@@ -42,28 +42,33 @@
 extern "C" {
 #endif
 #include "arts/runtime_types.h"
+#include "arts/utils/lockfree_lifo.h" /* arts_lf_link_t */
+#include <stddef.h>                   /* offsetof */
 #define INITIAL_DEPENDENT_SIZE 4
 
-bool arts_event_create_internal(arts_guid_t *guid, unsigned int route,
-                                unsigned int dependent_count,
-                                unsigned int latch_count,
-                                arts_event_types_t event_type,
-                                arts_guid_t event_data);
+/** Dep node — one per registered EDT or chained event waiting on this
+ *  source event.  Allocated from arts_node_info.event_dep_pool.
+ *  After drain, the firing thread releases each dep back to that pool
+ *  via arts_lf_pool_release. */
+struct arts_event_dep_s {
+  arts_lf_link_t link;        /* MUST be first (link = node addr) */
+  arts_type_t kind;           /* ARTS_EDT or ARTS_EVENT */
+  arts_guid_t target;         /* destination GUID */
+  uint32_t slot;              /* destination slot */
+  arts_db_access_mode_t mode; /* dep mode (preserved across signal) */
+};
+_Static_assert(offsetof(struct arts_event_dep_s, link) == 0,
+               "link must be first for arts_lf_link_t round-tripping");
 
-void arts_event_free(struct arts_event_s *event);
+bool arts_event_create_internal(arts_guid_t *guid,
+                                const arts_event_hint_t *h_in);
 
-bool arts_event_create_channel_internal(arts_guid_t *guid, unsigned int route,
-                                        unsigned int latch_count,
-                                        arts_guid_t data_guid);
-
-/* Internal channel-event dependence helpers (not public API). */
-void arts_event_add_dependence_with_mode(arts_guid_t event_source,
-                                         arts_guid_t edt_dest,
-                                         uint32_t edt_slot,
-                                         arts_db_access_mode_t mode);
-void arts_event_add_dependence_with_byte_offset(
-    arts_guid_t event_source, arts_guid_t edt_dest, uint32_t edt_slot,
-    arts_db_access_mode_t mode, uint64_t byte_offset, uint64_t len);
+/* External forwarder around the static event_deleter in event.c.  Used by
+ * the cross-rank EVENT_MOVE handler to free a freshly-unmarshaled event
+ * buffer when the install loses the add_item_race against another rank.
+ * Drains any (likely empty, since the buffer was just allocated) dep
+ * stack, returns nodes to the per-rank pool, and frees the struct. */
+void arts_event_free_internal(struct arts_event_s *e);
 
 #ifdef __cplusplus
 }

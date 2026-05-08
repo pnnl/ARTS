@@ -52,7 +52,7 @@ void writer_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)paramc;
   (void)paramv;
-  unsigned int node_id = arts_get_current_node();
+  unsigned int node_id = arts_get_current_rank();
   uint64_t *data = (uint64_t *)depv[0].ptr;
 
   arts_printf("Writer (Node %u): Initializing array with sequential values\n",
@@ -74,7 +74,7 @@ void reader_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)paramc;
   unsigned int reader_id = (unsigned int)paramv[0];
-  unsigned int node_id = arts_get_current_node();
+  unsigned int node_id = arts_get_current_rank();
   uint64_t *data = (uint64_t *)depv[0].ptr;
 
   arts_printf("Reader %u (Node %u): Reading array (mode=READ)\n", reader_id,
@@ -193,7 +193,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
               ((unsigned long)array_size * sizeof(uint64_t)) /
                   (1024UL * 1024UL));
   arts_printf("- Readers: %u concurrent reader EDTs\n", num_readers);
-  arts_printf("- Nodes:   %u\n", arts_get_total_nodes());
+  arts_printf("- Nodes:   %u\n", arts_get_total_ranks());
 
   /// Reserve GUID for data DB
 
@@ -203,7 +203,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("Creating Data DB (guid: %lu, size: %zu bytes = %.2lf MB)\n",
               data_guid, db_size, (double)db_size / (1024.0 * 1024.0));
   uint64_t *data_ptr = (uint64_t *)arts_db_create_with_guid(
-      data_guid, db_size, ARTS_DB_DEFAULT, NULL, NULL);
+      data_guid, db_size, ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
   for (size_t i = 0; i < array_size; i++) {
     data_ptr[i] = 0;
   }
@@ -214,23 +214,22 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   *validation_result = 0;
 
   /// Start epoch
-  arts_guid_t epoch_guid = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  arts_guid_t epoch_guid = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+  arts_epoch_start(epoch_guid);
   arts_printf("[Step 1] Started epoch (guid: %lu)\n", epoch_guid);
 
   /// Create writer EDT
-  arts_guid_t writer_edt_guid = arts_edt_create_with_epoch(
-      writer_edt, 0, NULL, 1, epoch_guid, &(arts_hint_t){.route = 0});
+  arts_guid_t writer_edt_guid = arts_edt_create(writer_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch_guid});
   arts_printf("[Step 2] Created writer EDT (guid: %lu)\n", writer_edt_guid);
 
   /// Create reader EDTs
   arts_guid_t *reader_edt_guids =
       (arts_guid_t *)calloc(num_readers, sizeof(arts_guid_t));
   for (unsigned int i = 0; i < num_readers; i++) {
-    unsigned int target_node = (i % arts_get_total_nodes());
+    unsigned int target_node = (i % arts_get_total_ranks());
     uint64_t param = i;
     reader_edt_guids[i] =
-        arts_edt_create_with_epoch(reader_edt, 1, &param, 1, epoch_guid,
-                                   &(arts_hint_t){.route = target_node});
+        arts_edt_create(reader_edt, 1, &param, 1, &(arts_edt_hint_t){.rank = target_node, .epoch = epoch_guid});
 
     if ((i + 1) % 4 == 0 || i == num_readers - 1) {
       unsigned int range_start = (i / 4) * 4;
@@ -239,8 +238,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     }
   }
 
-  arts_guid_t validator_edt_guid = arts_edt_create_with_epoch(
-      validator_edt, 0, NULL, 1, epoch_guid, &(arts_hint_t){.route = 0});
+  arts_guid_t validator_edt_guid = arts_edt_create(validator_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch_guid});
   arts_printf("[Step 4] Created validator EDT (guid: %lu)\n",
               validator_edt_guid);
 
@@ -249,7 +247,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       "[Step 5] Recording dependencies: 1 writer (WRITE) + %u readers \n"
       "(READ) + 1 validator (READ)",
       num_readers);
-  arts_add_dependence(data_guid, writer_edt_guid, 0, DB_MODE_EW);
+  arts_add_dependence(data_guid, writer_edt_guid, 0, DB_MODE_RW);
   for (unsigned int i = 0; i < num_readers; i++) {
     arts_add_dependence(data_guid, reader_edt_guids[i], 0, DB_MODE_RO);
   }
@@ -263,7 +261,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   /// Wait for epoch to complete
   arts_printf("[Step 6] Waiting for epoch to complete\n");
-  arts_wait_on_handle(epoch_guid);
+  arts_epoch_wait(epoch_guid);
 
   /// Free reader EDTs
   free(reader_edt_guids);

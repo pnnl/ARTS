@@ -41,7 +41,7 @@
 /* ===== Sender helpers ============================================== */
 
 /* Single-node note: arts_remote_send_request_async drops messages
- * whose destination is the local rank (self_send_check rejects).  v3
+ * whose destination is the local rank (self_send_check rejects). The RC
  * uses uniform "send to home" semantics including home == self, so
  * we dispatch handlers directly when rank == self instead of going
  * over the network. */
@@ -250,7 +250,7 @@ void arts_coh_trigger_ro_waiter(struct arts_db_cache_s *cache,
 void arts_coh_fail_trigger_pending(struct arts_db_cache_s *cache);
 void arts_coh_try_finalize_destroy(struct arts_db_cache_s *cache);
 
-/* ===== home_lookup_or_defer helper (Phase 2.2 OoO defer) ============ */
+/* ===== home_lookup_or_defer helper ============ */
 
 /* Reply kind selector for the helper.  Mirrors the design spec's
  * REPLY_DESTROY_NOTIFY / REPLY_WB_ACK / REPLY_NONE. */
@@ -461,7 +461,7 @@ void arts_coh_handle_writeback(struct arts_remote_writeback_packet_s *p,
 
   struct arts_db_cache_s *cache = arts_coh_route_table_lookup_cache(p->db_guid);
 
-  /* Phase 2.2: defer-on-no-cache.  WRITEBACK can race ahead of DB_CREATE
+  /* defer-on-no-cache.  WRITEBACK can race ahead of DB_CREATE
    * on the home rank when the producer EDT releases very early; we must
    * (a) preserve the trailing data payload in the OoO entry and (b) ACK
    * the releaser immediately so its await_writeback_ack returns instead
@@ -564,7 +564,7 @@ void arts_coh_handle_writeback(struct arts_remote_writeback_packet_s *p,
 void arts_coh_handle_release_ownership(
     struct arts_remote_release_ownership_packet_s *p) {
   /* RELEASE_OWNERSHIP is one-way; on destroy the silent drop is fine
-   * (caller doesn't await any reply).  Phase 2.2: no OoO defer either —
+   * (caller doesn't await any reply).  no OoO defer either —
    * RELEASE_OWNERSHIP only flows from a current owner whose acquire
    * implied DB_CREATE already landed at home, so cache==NULL here means
    * the DB was already torn down. */
@@ -602,7 +602,7 @@ void arts_coh_handle_release_ownership(
 }
 
 void arts_coh_handle_destroy_req(struct arts_remote_destroy_req_packet_s *p) {
-  /* Phase 2.2 / spec §4.11-4.12: home-side DESTROY_REQ.
+  /* Spec §4.11-4.12: home-side DESTROY_REQ.
    *
    * Symmetric with LOCK_REQ / GET_DATA / WRITEBACK: when the cache_s
    * has not yet been installed on home (DB_CREATE_COHERENT raced behind
@@ -653,6 +653,14 @@ void arts_coh_handle_destroy_req(struct arts_remote_destroy_req_packet_s *p) {
   if (prev == NULL) {
     return; /* concurrent destroyer already advanced past step 1. */
   }
+  /* [1.5] set DELETE bit so subsequent acquire_item / add_oo_ex observe
+   * destroyed state and short-circuit (lookup → NULL, add_oo →
+   * AVAILABLE_NOW → NULL-callback inline).  Without this, a late
+   * arts_add_dependence racing AFTER our NULL-store would push to
+   * ooList and stall forever — the entry's data is gone but the
+   * ooList is still walkable, so the request lands in a queue with
+   * no future drainer. */
+  arts_route_table_set_destroyed(p->db_guid);
   if (db->coherence_cache == NULL) {
     /* PIN/CXL — coherence-irrelevant.  But we should not have reached
      * this branch via the home_lookup_or_defer fast path: that helper
@@ -667,8 +675,9 @@ void arts_coh_handle_destroy_req(struct arts_remote_destroy_req_packet_s *p) {
    * db->coherence_cache pointer must match by construction (cache_s
    * back-pointer invariant).  Re-asserting via an assignment would
    * shadow the outer variable, so we just sanity-check identity. */
-  /* [2] cleanup ooList memory (silent — destroy after enqueue is user
-   * error and graceful-fail is out of scope per spec §4.7). */
+  /* [2] drain ooList — wake parked EDT-DB-request waiters with
+   * NULL_DB (destroyed semantic) and free their payloads.  Silently
+   * dropping the queue would leave the waiters parked forever. */
   arts_route_table_drop_oo(p->db_guid);
 
   /* [3-5] cache_s self-destroy protocol — single-flight via destroy_state
@@ -716,8 +725,7 @@ void arts_coh_handle_db_create_coherent(
   /* Race against lazy_install or another path that already set up an
    * empty cache_s on this rank — coalesce by promoting the existing
    * lazy entry rather than allocating a duplicate. */
-  struct arts_db_s *existing = (struct arts_db_s *)arts_route_table_lookup_db(
-      db_guid, NULL, /*aquire=*/false);
+  struct arts_db_s *existing = arts_route_table_lookup_db_safe(db_guid);
   if (existing != NULL && existing->coherence_cache != NULL) {
     struct arts_db_cache_s *cache =
         (struct arts_db_cache_s *)existing->coherence_cache;
@@ -732,7 +740,13 @@ void arts_coh_handle_db_create_coherent(
     } else {
       cache->home->rw_holder = creator_rank;
     }
+    arts_route_table_release(db_guid);
     return;
+  }
+  if (existing != NULL) {
+    /* existing without coherence_cache (race with a stub install) — drop
+     * the ref and proceed to the install/coalesce branch below. */
+    arts_route_table_release(db_guid);
   }
 
   /* No existing entry -- allocate stub + cache_s, install in route_table.
@@ -750,13 +764,14 @@ void arts_coh_handle_db_create_coherent(
   struct arts_db_s *stub =
       (struct arts_db_s *)arts_malloc_align(sizeof(struct arts_db_s), 16);
   memset(stub, 0, sizeof(struct arts_db_s));
+  arts_shared_init(&stub->shared, arts_db_get_deleter());
   stub->header.type = ARTS_DB;
   stub->header.size = sizeof(struct arts_db_s);
   stub->guid = db_guid;
   stub->db_type = (arts_db_types_t)p->db_type;
   stub->coherence_cache = arts_coh_alloc_cache_s(
       db_guid, db_size, ARTS_COH_INIT_HOME_RECV, creator_rank);
-  /* Phase 3.1: back-pointer for try_finalize_destroy direct-free. */
+  /* back-pointer for try_finalize_destroy direct-free. */
   ((struct arts_db_cache_s *)stub->coherence_cache)->db_owner = stub;
 
   if (arts_route_table_add_item_race(stub, db_guid, arts_global_rank_id,
@@ -769,8 +784,7 @@ void arts_coh_handle_db_create_coherent(
   struct arts_db_cache_s *new_cache =
       (struct arts_db_cache_s *)stub->coherence_cache;
   arts_db_free(stub);
-  struct arts_db_s *winner =
-      (struct arts_db_s *)arts_route_table_lookup_db(db_guid, NULL, false);
+  struct arts_db_s *winner = arts_route_table_lookup_db_safe(db_guid);
   if (winner != NULL && winner->coherence_cache != NULL) {
     struct arts_db_cache_s *cache =
         (struct arts_db_cache_s *)winner->coherence_cache;
@@ -785,6 +799,9 @@ void arts_coh_handle_db_create_coherent(
     } else {
       cache->home->rw_holder = creator_rank;
     }
+  }
+  if (winner != NULL) {
+    arts_route_table_release(db_guid);
   }
   (void)new_cache;
 }
@@ -884,6 +901,22 @@ void arts_coh_handle_destroy_notify(
                         ARTS_DB_DESTROY_MARKED) != ARTS_DB_DESTROY_NONE) {
     return; /* already marked; idempotent. */
   }
+  /* Clear the route_table slot's data pointer before chaining into
+   * try_finalize_destroy.  try_finalize_destroy frees db_owner directly
+   * via arts_db_free; without this NULL-store the slot keeps pointing
+   * at the freed stub, and once the malloc pool reuses that address
+   * for a fresh stub on a different GUID two route_table slots end up
+   * holding the same pointer.  Shutdown's arts_clean_up_route_table
+   * would then arts_db_free the reused memory, dereferencing garbage
+   * in coherence_cache.  The home-side handle_destroy_req does the
+   * same NULL-store; destroy_notify must be symmetric on non-home
+   * ranks.  Use claim_item (lookup + atomic_exchange → NULL); it does
+   * not allocate or grow the table. */
+  (void)arts_route_table_claim_item(p->db_guid);
+  /* Symmetric with handle_destroy_req: set the DELETE bit so a late
+   * acquire_item / add_oo_ex on this DB short-circuits instead of
+   * parking on a queue with no future drainer. */
+  arts_route_table_set_destroyed(p->db_guid);
   arts_coh_fail_trigger_pending(cache);
   arts_coh_try_finalize_destroy(cache);
 }

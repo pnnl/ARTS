@@ -28,17 +28,17 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   char **argv = (char **)paramv[1];
   unsigned int origin =
       (argc > 1) ? (unsigned int)strtoul(argv[1], NULL, 10) : 0;
-  if (origin >= arts_get_total_nodes()) {
+  if (origin >= arts_get_total_ranks()) {
     arts_printf("origin_rank %u >= total_nodes %u — cfg mismatch\n", origin,
-                arts_get_total_nodes());
+                arts_get_total_ranks());
     arts_shutdown();
     return;
   }
-  arts_edt_create(trigger_edt, 0, NULL, 0, &(arts_hint_t){.route = origin});
+  arts_edt_create(trigger_edt, 0, NULL, 0, &(arts_edt_hint_t){.rank = origin});
 }
 
 int main(int argc, char **argv) {
   arts_rt(argc, argv);
-  printf("[rank %u] TERM_TEST_EXIT\n", arts_get_current_node());
+  printf("[rank %u] TERM_TEST_EXIT\n", arts_get_current_rank());
   return 0;
 }

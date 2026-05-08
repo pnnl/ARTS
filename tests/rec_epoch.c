@@ -51,7 +51,7 @@ void sync_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                arts_edt_dep_t depv[]) {
   (void)depc;
   (void)paramc;
-  arts_printf("Guid:%lu Sync %lu: %lu\n", arts_get_current_guid(), paramv[0],
+  arts_printf("Guid:%lu Sync %lu: %lu\n", arts_edt_get_current_guid(), paramv[0],
               depv[0].guid);
 }
 
@@ -73,25 +73,28 @@ void root_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   if (dep) {
     dep--;
     //        arts_guid_t guid = arts_edt_create(sync_task, 1,
-    //        &dep, 1, &(arts_hint_t){.route = arts_get_current_node()});
-    //        arts_guid_t epoch_guid = arts_initialize_and_start_epoch(guid,
-    //        0);
-    arts_guid_t epoch_guid = arts_initialize_and_start_epoch(NULL_GUID, 0);
+    //        &dep, 1, &(arts_edt_hint_t){.rank = arts_get_current_rank()});
+    //        arts_guid_t epoch_guid =
+    //            arts_epoch_create(arts_get_current_rank(), guid, 0);
+    //        arts_epoch_start(epoch_guid);
+    arts_guid_t epoch_guid =
+        arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+    arts_epoch_start(epoch_guid);
     arts_printf("Guid:%lu Root: %lu sync: %lu epoch: %lu\n",
-                arts_get_current_guid(), dep, NULL_GUID, epoch_guid);
+                arts_edt_get_current_guid(), dep, NULL_GUID, epoch_guid);
 
-    unsigned int num_nodes = arts_get_total_nodes();
+    unsigned int num_nodes = arts_get_total_ranks();
     for (unsigned int rank = 0; rank < num_nodes; rank++) {
       arts_edt_create(root_task, 1, &dep, 0,
-                      &(arts_hint_t){.route = rank % num_nodes});
+                      &(arts_edt_hint_t){.rank = rank % num_nodes});
     }
 
     for (uint64_t rank = 0; rank < num_nodes * num_dummy; rank++) {
       arts_edt_create(dummytask, 0, NULL, 0,
-                      &(arts_hint_t){.route = rank % num_nodes});
+                      &(arts_edt_hint_t){.rank = rank % num_nodes});
     }
 
-    arts_wait_on_handle(epoch_guid);
+    arts_epoch_wait(epoch_guid);
   }
 }
 
@@ -104,9 +107,13 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   num_dummy = (uint64_t)strtol(argv[1], NULL, 10);
   exit_guid = arts_guid_reserve(ARTS_EDT, 0);
   arts_printf("Starting\n");
-  arts_edt_create_with_guid(exit_program, exit_guid, 0, NULL, 1);
-  arts_initialize_and_start_epoch(exit_guid, 0);
-  arts_edt_create(root_task, 1, &num_dummy, 0, &(arts_hint_t){.route = 0});
+  arts_edt_create(exit_program, 0, NULL, 1,
+                  &(arts_edt_hint_t){.guid = exit_guid});
+  {
+    arts_guid_t __ep = arts_epoch_create(arts_get_current_rank(), exit_guid, 0);
+    arts_epoch_start(__ep);
+  }
+  arts_edt_create(root_task, 1, &num_dummy, 0, &(arts_edt_hint_t){.rank = 0});
 }
 
 int main(int argc, char **argv) {

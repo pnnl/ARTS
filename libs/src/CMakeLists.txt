@@ -46,7 +46,7 @@ target_include_directories(arts_interface INTERFACE
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
-# Phase 2.2: enable v3 RC coherence-message OoO defer.  Activates the
+# enable RC coherence-message OoO defer.  Activates the
 # OO_COH_* dispatcher arms in out_of_order.c and lets coherence_handlers.c
 # use the new home_lookup_or_defer path (instead of the old NOTIFY-only
 # helper).  Build-integration of coherence_*.c is gated separately via
@@ -67,7 +67,14 @@ set(ARTS_MAIN_SOURCES "core/main.c")
 
 # Some platforms do not provide a standalone libatomic.
 # ARTS uses compiler atomic builtins, so link libatomic only when present.
-find_library(ARTS_ATOMIC_LIBRARY atomic)
+# Reuse the top-level ATOMIC_LIBRARY (probed for DWCAS support); fall
+# back to a local find_library if it wasn't set (e.g., older configurations).
+if(ATOMIC_LIBRARY)
+    set(ARTS_ATOMIC_LIBRARY "${ATOMIC_LIBRARY}" CACHE FILEPATH
+        "libatomic path (shared with top-level DWCAS probe)" FORCE)
+else()
+    find_library(ARTS_ATOMIC_LIBRARY atomic)
+endif()
 if(ARTS_ATOMIC_LIBRARY)
     message(STATUS "Using libatomic: ${ARTS_ATOMIC_LIBRARY}")
 else()

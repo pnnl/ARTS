@@ -36,70 +36,54 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
+
+/// @file multinode_labeled_guid.c
+/// @brief Tests that a DB created with a pre-reserved GUID on rank 0 can be
+///        read by an EDT on rank 1.  Requires multi-node (rank_count >= 2).
+///        Prints SKIP if running single-node.
+
 #include "arts.h"
-#include <stdlib.h>
-#include <string.h>
+#include <stdint.h>
+#include <stdio.h>
 
-arts_guid_t db_dest_guid = NULL_GUID;
-arts_guid_t shutdown_guid = NULL_GUID;
-unsigned int num_elements = 0;
-unsigned int block_size = 0;
+#define SENTINEL 0xFEEDFACEULL
 
-void dummy(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-           arts_edt_dep_t depv[]) {
-  (void)depc;
+/// Creator EDT: runs on rank 0 inside the inner epoch.
+/// Creates the DB with the reserved GUID and writes the sentinel value.
+static void creator_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                        arts_edt_dep_t depv[]) {
   (void)paramc;
-  arts_guid_t result_guid = (arts_guid_t)paramv[0];
-  unsigned int result_size = paramv[1];
-  unsigned int buffer_size = paramv[2] / sizeof(unsigned int);
-  unsigned int *buffer = (unsigned int *)depv[0].ptr;
-  arts_printf("%lu %u %u %p\n", result_guid, result_size, buffer_size, buffer);
-  unsigned int *sum = (unsigned int *)calloc(1, result_size);
-  for (unsigned int i = 0; i < buffer_size; i++) {
-    arts_printf("%u\n", buffer[i]);
-    *sum += buffer[i];
-  }
-  arts_printf("Sum before: %u\n", *sum);
-  arts_set_buffer(result_guid, sum, result_size);
-  free(sum);
-}
-
-void start_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-               arts_edt_dep_t depv[]) {
   (void)depc;
   (void)depv;
+  arts_guid_t reserved = (arts_guid_t)paramv[0];
+  uint64_t *ptr = (uint64_t *)arts_db_create_with_guid(
+      reserved, sizeof(uint64_t), ARTS_DB_RC, ARTS_DB_PROP_NONE, NULL);
+  if (ptr) {
+    ptr[0] = SENTINEL;
+  }
+  arts_db_release(reserved);
+}
+
+/// Reader EDT: runs on rank 1, receives the DB via slot 0 (RO dep).
+/// Slot 1 carries the inner-epoch completion signal ensuring ordering.
+static void reader_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                       arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
-  uint64_t args[3];
+  (void)depc;
+  const uint64_t *data = (const uint64_t *)depv[0].ptr;
+  bool ok = (data != NULL && data[0] == SENTINEL);
+  arts_printf("  %s: cross-rank labeled-GUID DB read (got 0x%lx)\n",
+              ok ? "PASS" : "FAIL", data ? (unsigned long)data[0] : 0UL);
+}
 
-  unsigned int result = 0;
-  unsigned int *data_ptr = &result;
-  args[0] = arts_allocate_local_buffer((void **)&data_ptr, sizeof(unsigned int),
-                                       1, NULL_GUID);
-  args[1] = sizeof(unsigned int);
-
-  unsigned int buffer_size = sizeof(unsigned int) * 5;
-  unsigned int *data = (unsigned int *)calloc(1, buffer_size);
-  for (unsigned int i = 0; i < 5; i++) {
-    data[i] = i;
-  }
-  args[2] = buffer_size;
-
-  void *data_copy = malloc(buffer_size);
-  memcpy(data_copy, data, buffer_size);
-  unsigned int target = (arts_get_current_node() + 1) % arts_get_total_nodes();
-  arts_guid_t am =
-      arts_edt_create(dummy, 3, args, 1, &(arts_hint_t){.route = target});
-  arts_signal_edt_ptr(am, 0, data_copy, buffer_size);
-  free(data);
-  free(data_copy);
-
-  while (!result) {
-    arts_yield();
-    arts_printf("Did a YIELD\n");
-  }
-
-  arts_printf("Sum: %u\n", result);
+/// Shutdown EDT: fires after the outer epoch completes.
+static void shutdown_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                         arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
   arts_shutdown();
 }
 
@@ -109,8 +93,40 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramv;
   (void)depc;
   (void)depv;
-  arts_printf("Starting\n");
-  arts_edt_create(start_edt, 0, NULL, 0, &(arts_hint_t){.route = 0});
+
+  unsigned int ranks = arts_get_total_ranks();
+  if (ranks < 2) {
+    arts_printf("SKIP: multinode_labeled_guid requires node_count >= 2\n");
+    arts_shutdown();
+    return;
+  }
+
+  arts_printf("=== multinode_labeled_guid (%u ranks) ===\n", ranks);
+
+  /* Reserve the DB GUID on rank 0 (home = 0). */
+  arts_guid_t reserved = arts_guid_reserve(ARTS_DB, 0);
+
+  /* Outer epoch: fires shutdown_edt when all work completes. */
+  arts_guid_t shut = arts_edt_create(shutdown_edt, 0, NULL, 1, NULL);
+  arts_guid_t outer = arts_epoch_create(arts_get_current_rank(), shut, 0);
+  arts_epoch_start(outer);
+
+  /* Reader EDT on rank 1: depc=2.
+   *   slot 0 — DB RO dependence (delivers data pointer)
+   *   slot 1 — inner epoch completion signal (ensures DB is created first) */
+  uint64_t rparam = (uint64_t)reserved;
+  arts_guid_t reader = arts_edt_create(
+      reader_edt, 1, &rparam, 2, &(arts_edt_hint_t){.rank = 1, .epoch = outer});
+  arts_add_dependence(reserved, reader, 0, DB_MODE_RO);
+
+  /* Inner epoch: creator EDT runs here; reader_edt slot 1 is the finish slot.
+   * When all EDTs in the inner epoch complete, slot 1 of reader fires. */
+  arts_guid_t inner = arts_epoch_create(arts_get_current_rank(), reader, 1);
+  arts_epoch_start(inner);
+
+  /* Creator EDT on rank 0 inside the inner epoch. */
+  arts_edt_create(creator_edt, 1, &rparam, 0,
+                  &(arts_edt_hint_t){.rank = 0, .epoch = inner});
 }
 
 int main(int argc, char **argv) {

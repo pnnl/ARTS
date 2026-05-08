@@ -1,126 +1,99 @@
 /******************************************************************************
-** This material was prepared as an account of work sponsored by an agency   **
-** of the United States Government.  Neither the United States Government    **
-** nor the United States Department of Energy, nor Battelle, nor any of      **
-** their employees, nor any jurisdiction or organization that has cooperated **
-** in the development of these materials, makes any warranty, express or     **
-** implied, or assumes any legal liability or responsibility for the accuracy,*
-** completeness, or usefulness or any information, apparatus, product,       **
-** software, or process disclosed, or represents that its use would not      **
-** infringe privately owned rights.                                          **
-**                                                                           **
-** Reference herein to any specific commercial product, process, or service  **
-** by trade name, trademark, manufacturer, or otherwise does not necessarily **
-** constitute or imply its endorsement, recommendation, or favoring by the   **
-** United States Government or any agency thereof, or Battelle Memorial      **
-** Institute. The views and opinions of authors expressed herein do not      **
-** necessarily state or reflect those of the United States Government or     **
-** any agency thereof.                                                       **
-**                                                                           **
-**                      PACIFIC NORTHWEST NATIONAL LABORATORY                **
-**                                  operated by                              **
-**                                    BATTELLE                               **
-**                                     for the                               **
-**                      UNITED STATES DEPARTMENT OF ENERGY                   **
-**                         under Contract DE-AC05-76RL01830                  **
-**                                                                           **
-** Copyright 2019 Battelle Memorial Institute                                **
-** Licensed under the Apache License, Version 2.0 (the "License");           **
-** you may not use this file except in compliance with the License.          **
-** You may obtain a copy of the License at                                   **
-**                                                                           **
-**    https://www.apache.org/licenses/LICENSE-2.0                            **
-**                                                                           **
-** Unless required by applicable law or agreed to in writing, software       **
-** distributed under the License is distributed on an "AS IS" BASIS, WITHOUT **
-** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
-** License for the specific language governing permissions and limitations   **
+** Copyright 2019 Battelle Memorial Institute
+** Licensed under the Apache License, Version 2.0
 ******************************************************************************/
 
-/// @file edt_dep_variants.c
-/// @brief Tests EDT creation with has_depv=false variants:
-///        arts_edt_create_dep (no depv), arts_edt_create_with_guid_dep,
-///        arts_edt_create_with_epoch_dep.
-
 #include "arts.h"
+#include <stdint.h>
+#include <stdio.h>
 
-/// EDT with has_depv=false: receives signal_edt_value but depv is NULL.
-void no_depv_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                  arts_edt_dep_t depv[]) {
-  (void)paramc;
-  (void)paramv;
-  (void)depv;
-  // depc still counts the signals needed, but depv is NULL.
-  arts_printf("  PASS: edt_create_dep (has_depv=false) ran, depc=%u\n", depc);
+#define DB_SIZE (sizeof(uint64_t) * 4)
+
+static void ro_reader(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                      arts_edt_dep_t depv[]) {
+  (void)paramc; (void)paramv; (void)depc;
+  const uint64_t *data = (const uint64_t *)depv[0].ptr;
+  bool ok = (data != NULL && data[0] == 0xDEADULL && data[1] == 0xBEEFULL);
+  arts_printf("  %s: RO dep sees written values\n", ok ? "PASS" : "FAIL");
 }
 
-/// EDT with has_depv=true: depv is allocated and filled.
-void with_depv_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                    arts_edt_dep_t depv[]) {
-  (void)paramc;
-  (void)paramv;
-  uint64_t val = (uint64_t)depv[0].guid;
-  bool ok = (depc == 1 && val == 999);
-  if (ok) {
-    arts_printf("  PASS: edt_create_dep (has_depv=true) depv[0]=%lu\n",
-                (unsigned long)val);
-  } else {
-    arts_printf("  FAIL: edt_create_dep depv[0] mismatch\n");
-  }
+static void rw_writer(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                      arts_edt_dep_t depv[]) {
+  (void)paramc; (void)paramv; (void)depc;
+  uint64_t *data = (uint64_t *)depv[0].ptr;
+  if (data) { data[0] = 0xCAFEULL; data[1] = 0xBABEULL; }
 }
 
-/// Test with_guid_dep.
-void guid_dep_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                   arts_edt_dep_t depv[]) {
-  (void)paramc;
-  (void)paramv;
-  (void)depv;
-  arts_printf("  PASS: edt_create_with_guid_dep ran, depc=%u\n", depc);
+static void rw_verifier(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                        arts_edt_dep_t depv[]) {
+  (void)paramc; (void)paramv; (void)depc;
+  const uint64_t *data = (const uint64_t *)depv[0].ptr;
+  bool ok = (data != NULL && data[0] == 0xCAFEULL && data[1] == 0xBABEULL);
+  arts_printf("  %s: RW modification visible via RO after RW releases\n",
+              ok ? "PASS" : "FAIL");
 }
 
-/// Test with_epoch_dep.
-void epoch_dep_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                    arts_edt_dep_t depv[]) {
-  (void)paramc;
-  (void)paramv;
-  (void)depv;
-  arts_printf("  PASS: edt_create_with_epoch_dep ran, depc=%u\n", depc);
+static void val_receiver(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                         arts_edt_dep_t depv[]) {
+  (void)paramc; (void)paramv; (void)depc;
+  uint64_t received = (uint64_t)depv[0].guid;
+  bool ok = (received == 0x42ULL);
+  arts_printf("  %s: VAL dep delivers raw value (got 0x%lx)\n",
+              ok ? "PASS" : "FAIL", (unsigned long)received);
+}
+
+static void shutdown_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                         arts_edt_dep_t depv[]) {
+  (void)paramc; (void)paramv; (void)depc; (void)depv;
+  arts_shutdown();
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
               arts_edt_dep_t depv[]) {
-  (void)paramc;
-  (void)paramv;
-  (void)depc;
-  (void)depv;
+  (void)paramc; (void)paramv; (void)depc; (void)depv;
 
   arts_printf("=== edt_dep_variants ===\n");
 
-  arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  arts_guid_t shut = arts_edt_create(shutdown_edt, 0, NULL, 1, NULL);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), shut, 0);
+  arts_epoch_start(epoch);
 
-  // Test 1: arts_edt_create_dep with has_depv=false.
-  arts_guid_t e1 = arts_edt_create_dep(no_depv_task, 0, NULL, 2, false,
-                                       &(arts_hint_t){.route = 0});
-  arts_signal_edt_value(e1, 0, 1);
-  arts_signal_edt_value(e1, 1, 2);
+  /* Test 1: RO */
+  void *ptr1 = NULL;
+  arts_guid_t db1 = arts_db_create(&ptr1, DB_SIZE, ARTS_DB_RC,
+                                   ARTS_DB_PROP_NONE, NULL);
+  ((uint64_t *)ptr1)[0] = 0xDEADULL;
+  ((uint64_t *)ptr1)[1] = 0xBEEFULL;
+  arts_db_release(db1);
 
-  // Test 2: arts_edt_create_dep with has_depv=true.
-  arts_guid_t e2 = arts_edt_create_dep(with_depv_task, 0, NULL, 1, true,
-                                       &(arts_hint_t){.route = 0});
-  arts_signal_edt_value(e2, 0, 999);
+  arts_guid_t r1 = arts_edt_create(ro_reader, 0, NULL, 1,
+                                   &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_add_dependence(db1, r1, 0, DB_MODE_RO);
 
-  // Test 3: arts_edt_create_with_guid_dep.
-  arts_guid_t pre_guid = arts_guid_reserve(ARTS_EDT, 0);
-  arts_edt_create_with_guid_dep(guid_dep_task, pre_guid, 0, NULL, 1, false);
-  arts_signal_edt_value(pre_guid, 0, 1);
+  /* Test 2: RW chain — writer modifies, verifier (inner-epoch finish) reads */
+  void *ptr2 = NULL;
+  arts_guid_t db2 = arts_db_create(&ptr2, DB_SIZE, ARTS_DB_RC,
+                                   ARTS_DB_PROP_NONE, NULL);
+  ((uint64_t *)ptr2)[0] = 0ULL;
+  arts_db_release(db2);
 
-  // Test 4: arts_edt_create_with_epoch_dep.
-  arts_guid_t e4 = arts_edt_create_with_epoch_dep(
-      epoch_dep_task, 0, NULL, 1, epoch, false, &(arts_hint_t){.route = 0});
-  arts_signal_edt_value(e4, 0, 1);
+  /* verifier: depc=2 (slot 0=DB RO dep, slot 1=inner epoch signal) */
+  arts_guid_t v2 = arts_edt_create(rw_verifier, 0, NULL, 2,
+                                   &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_add_dependence(db2, v2, 0, DB_MODE_RO);
 
-  arts_wait_on_handle(epoch);
-  arts_shutdown();
+  arts_guid_t inner2 = arts_epoch_create(arts_get_current_rank(), v2, 1);
+  arts_epoch_start(inner2);
+
+  arts_guid_t w2 = arts_edt_create(rw_writer, 0, NULL, 1,
+                                   &(arts_edt_hint_t){.rank = 0, .epoch = inner2});
+  arts_add_dependence(db2, w2, 0, DB_MODE_RW);
+  (void)w2;
+
+  /* Test 3: VAL — raw value 0x42 as dependency */
+  arts_guid_t v3 = arts_edt_create(val_receiver, 0, NULL, 1,
+                                   &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_add_dependence((arts_guid_t)(0x42ULL), v3, 0, DB_MODE_VAL);
 }
 
 int main(int argc, char **argv) {

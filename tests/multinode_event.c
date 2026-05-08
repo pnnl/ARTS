@@ -93,31 +93,32 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== multinode_event ===\n");
 
-  unsigned int total = arts_get_total_nodes();
+  unsigned int total = arts_get_total_ranks();
 
-  arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+  arts_epoch_start(epoch);
 
-  // Test 1: Event on node 0, satisfied from node 1.
-  arts_guid_t ev1 = arts_event_create(0, ARTS_EVENT_LATCH, 1, NULL_GUID);
-  arts_guid_t done1 = arts_edt_create_with_epoch(event_done, 0, NULL, 1, epoch,
-                                                 &(arts_hint_t){.route = 0});
-  arts_add_dependence(ev1, done1, 0, DB_MODE_EW);
+  // Test 1: Event on node 0, satisfied from node 1.  Default hint = ONCE
+  // (latch=1, auto_destroy=true), home rank 0 by default.
+  arts_guid_t ev1 = arts_event_create(NULL);
+  arts_guid_t done1 = arts_edt_create(event_done, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_add_dependence(ev1, done1, 0, DB_MODE_RW);
 
   uint64_t ev_param = (uint64_t)ev1;
-  arts_edt_create_with_epoch(remote_satisfier, 1, &ev_param, 0, epoch,
-                             &(arts_hint_t){.route = 1});
+  arts_edt_create(remote_satisfier, 1, &ev_param, 0, &(arts_edt_hint_t){.rank = 1, .epoch = epoch});
 
   // Test 2: Event with latch = total_nodes, each node satisfies once.
-  arts_guid_t ev2 = arts_event_create(0, ARTS_EVENT_LATCH, total, NULL_GUID);
+  arts_event_hint_t fan_in_hint = ARTS_EVENT_HINT_DEFAULTS;
+  fan_in_hint.latch = total;
+  fan_in_hint.rank = 0;
+  arts_guid_t ev2 = arts_event_create(&fan_in_hint);
   uint64_t total_param = (uint64_t)total;
-  arts_guid_t done2 = arts_edt_create_with_epoch(
-      fan_in_done, 1, &total_param, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_add_dependence(ev2, done2, 0, DB_MODE_EW);
+  arts_guid_t done2 = arts_edt_create(fan_in_done, 1, &total_param, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_add_dependence(ev2, done2, 0, DB_MODE_RW);
 
   for (unsigned int r = 0; r < total; r++) {
     uint64_t param = (uint64_t)ev2;
-    arts_edt_create_with_epoch(node_satisfier, 1, &param, 0, epoch,
-                               &(arts_hint_t){.route = r});
+    arts_edt_create(node_satisfier, 1, &param, 0, &(arts_edt_hint_t){.rank = r, .epoch = epoch});
   }
 }
 

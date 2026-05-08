@@ -61,7 +61,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramv;
   (void)depc;
   (void)depv;
-  unsigned int node_id = arts_get_current_node();
+  unsigned int node_id = arts_get_current_rank();
   printf("Init per node\n");
   arts_guid_t range_start = arts_guid_reserve_range(ARTS_EDT, MYSIZE, node_id);
   for (uint64_t i = 0; i < MYSIZE; i++) {
@@ -70,22 +70,27 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
             (void *)(uintptr_t)range_start,
             arts_guid_from_index(range_start, i), node_id, 0);
     /* Legacy item->lock / AVAILABLE_ITEM / DELETE_ITEM removed in new
-     * route_item model.  Phase 3 will reintroduce a proper lifecycle
+     * route_item model.  Lifecycle redesign is follow-up work,
      * mechanism; this test no longer exercises mark-for-delete. */
     (void)location;
   }
 
   print_rt();
 
-  int rank;
   arts_guid_t guid = arts_guid_from_index(range_start, 0);
-  arts_route_table_lookup_db(guid, &rank, false);
-  /* arts_route_table_return_db removed (no ref count). */
+
+  /* Legacy arts_route_table_lookup_db(guid, &rank, mark_to_delete) is gone
+   * post-Phase-6.  The replacement split: lookup_item / lookup_data return
+   * the data pointer atomically; lookup_rank returns the rank.  Neither
+   * carries a "mark to delete" flag — destruction lives on the
+   * acquire_item / release_item / mark_delete API.  The iterator-walk and
+   * post-walk add_item exercise here verifies the data path only. */
 
   void *ptr = arts_route_table_lookup_item(guid);
-  arts_printf("Lookup %lu %p\n", guid, ptr);
+  int rank = arts_route_table_lookup_rank(guid);
+  arts_printf("Lookup %lu %p (rank %d)\n", guid, ptr, rank);
 
-  ptr = arts_route_table_lookup_db(guid, &rank, false);
+  ptr = arts_route_table_lookup_data(guid);
   arts_printf("DB Lookup %lu %p\n", guid, ptr);
 
   arts_route_item_t *location = (arts_route_item_t *)arts_route_table_add_item(
@@ -95,7 +100,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   ptr = arts_route_table_lookup_item(guid);
   arts_printf("Lookup2 %lu %p\n", guid, ptr);
 
-  ptr = arts_route_table_lookup_db(guid, &rank, false);
+  ptr = arts_route_table_lookup_data(guid);
   arts_printf("DB Lookup2 %lu %p\n", guid, ptr);
 
   arts_shutdown();

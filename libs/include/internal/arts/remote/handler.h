@@ -56,10 +56,10 @@ void arts_remote_add_dependence_with_hints(arts_guid_t source,
                                            uint32_t slot, unsigned int rank,
                                            arts_db_access_mode_t mode);
 
-void arts_remote_memory_move(unsigned int route, arts_guid_t guid, void *ptr,
+void arts_remote_memory_move(unsigned int rank, arts_guid_t guid, void *ptr,
                              unsigned int mem_size, unsigned message_type,
                              void (*free_method)(void *));
-void arts_remote_memory_move_no_free(unsigned int route, arts_guid_t guid,
+void arts_remote_memory_move_no_free(unsigned int rank, arts_guid_t guid,
                                      void *ptr, unsigned int mem_size,
                                      unsigned message_type);
 void arts_remote_handle_edt_move(void *ptr);
@@ -71,6 +71,13 @@ void arts_remote_set_dep_mode(arts_guid_t edt_guid, uint32_t slot,
                               arts_db_access_mode_t mode);
 void arts_remote_event_satisfy_slot(arts_guid_t event_guid,
                                     arts_guid_t data_guid, uint32_t slot);
+void arts_remote_handle_event_satisfy_slot(void *ptr);
+/* Cross-rank arts_event_destroy: forwarder + handler.
+ * Forwarder serializes the GUID into ARTS_REMOTE_EVENT_DESTROY_MSG;
+ * handler runs arts_route_table_mark_delete on the home rank.  mark_delete
+ * is idempotent (DELETE is sticky), so duplicate messages are safe. */
+void arts_remote_event_destroy(arts_guid_t guid);
+void arts_remote_handle_event_destroy(void *ptr);
 void arts_db_request_callback(struct arts_edt_s *edt, unsigned int slot,
                               struct arts_db_s *db_res);
 void arts_remote_get_from_db(arts_guid_t edt_guid, arts_guid_t db_guid,
@@ -101,7 +108,6 @@ void arts_remote_epoch_send(unsigned int rank, arts_guid_t guid,
 void arts_remote_handle_epoch_send(void *pack);
 void arts_remote_epoch_delete(unsigned int rank, arts_guid_t epoch_guid);
 void arts_remote_handle_epoch_delete(void *pack);
-void arts_remote_handle_buffer_send(void *pack);
 void arts_remote_db_rename(arts_guid_t new_guid, arts_guid_t old_guid);
 void arts_remote_handle_db_rename(void *pack);
 

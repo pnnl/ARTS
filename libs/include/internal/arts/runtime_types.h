@@ -56,7 +56,13 @@ extern "C" {
 #include "arts.h"
 
 #include "arts/defs.h"
-#include "arts/utils/link_list.h"
+#include "arts/sync/shared.h"         /* arts_shared_t, ARTS_SHARED_FIELD */
+#include "arts/utils/lockfree_lifo.h" /* arts_lf_stack_t */
+#include "arts/utils/mpsc.h"          /* arts_mpsc_t */
+#include <stdbool.h>
+#ifndef __cplusplus
+#include <stdatomic.h>
+#endif
 
 /* ========================================================================= */
 /** @defgroup internal_structs Internal Runtime Structures
@@ -73,6 +79,7 @@ struct arts_header_s {
 
 /** Internal DataBlock descriptor. */
 struct arts_db_s {
+  ARTS_SHARED_FIELD; /* shared_t — first member, always */
   struct arts_header_s header;
   uint64_t arts_id; /**< Compiler-assigned unique id (0 = unset). */
   arts_guid_t guid; /**< GUID of this DataBlock. */
@@ -83,22 +90,22 @@ struct arts_db_s {
   unsigned int time_stamp;          /**< Creation timestamp (relative). */
   arts_db_types_t db_type; /**< Storage subtype (DEFAULT/LOCAL/GPU/LC). */
   void *db_list;           /**< Node in the per-node DB tracking list. */
-  /* v3 RC coherence per-DB state.  NULL when the DB has no DB-level
+  /* RC coherence per-DB state.  NULL when the DB has no DB-level
    * coherence (PIN/CXL) or before lazy install; otherwise points to a
-   * struct arts_db_cache_s.  Phase 2.2 added this field so the
+   * struct arts_db_cache_s.  This field was added later so the
    * coherence_*.c sources compile under ARTS_COHERENCE_INTEGRATED. */
   void *coherence_cache;
 } ARTS_ALIGNED_MAX;
 
 /** Internal EDT descriptor. */
 struct arts_edt_s {
+  ARTS_SHARED_FIELD; /* shared_t — first member, always */
   struct arts_header_s header;
   uint64_t arts_id;          /**< Compiler-assigned unique id (0 = unset). */
   arts_edt_t func_ptr;       /**< User function to execute. */
   uint32_t paramc;           /**< Number of static parameters. */
   uint32_t depc;             /**< Number of dependency slots. */
   arts_guid_t current_edt;   /**< GUID of this EDT. */
-  arts_guid_t output_buffer; /**< Optional output buffer GUID. */
   arts_guid_t epoch_guid;    /**< Enclosing epoch GUID. */
   unsigned int numa_domain;  /**< NUMA domain assignment. */
   unsigned int node;         /**< Target node rank. */
@@ -108,16 +115,16 @@ struct arts_edt_s {
       invalidate_count; /**< Outstanding cache invalidations. */
 } ARTS_ALIGNED_MAX;
 
-/** An individual dependent registered on an event. */
+/** An individual dependent registered on an event (legacy structure;
+ *  retained only for the legacy event.c body until follow-up). */
 struct arts_dependent_s {
-  uint8_t type;                         /**< Dependent kind (EDT or event). */
-  volatile unsigned int slot;           /**< Target dependency slot. */
-  volatile arts_guid_t addr;            /**< GUID of the dependent EDT/event. */
-  volatile event_callback_t callback_t; /**< Inline callback (if any). */
-  volatile bool done_writing;           /**< Write completion flag. */
-  arts_db_access_mode_t mode;           /**< Access mode for signaling. */
-  uint64_t byte_offset; /**< Byte offset for slice dependencies. */
-  uint64_t size;        /**< Slice size in bytes. */
+  uint8_t type;               /**< Dependent kind (EDT or event). */
+  volatile unsigned int slot; /**< Target dependency slot. */
+  volatile arts_guid_t addr;  /**< GUID of the dependent EDT/event. */
+  volatile bool done_writing; /**< Write completion flag. */
+  arts_db_access_mode_t mode; /**< Access mode for signaling. */
+  uint64_t byte_offset;       /**< Byte offset for slice dependencies. */
+  uint64_t size;              /**< Slice size in bytes. */
 };
 
 /** Linked list node containing an array of dependents. */
@@ -127,30 +134,100 @@ struct arts_dependent_list_s {
   struct arts_dependent_s dependents[];        /**< Flexible array. */
 };
 
-/** Version record for a channel event (one per re-arm cycle). */
-struct arts_event_version_s {
-  unsigned int version;                   /**< Version sequence number. */
-  volatile unsigned int latch_count;      /**< Current latch counter. */
-  volatile unsigned int dependent_count;  /**< Registered dependent count. */
-  arts_guid_t data;                       /**< Per-generation data GUID. */
-  struct arts_dependent_list_s dependent; /**< Inline dependent list head. */
-};
+/** Forward-declared dep node (definition in arts/sync/event.h, Task 8). */
+struct arts_event_dep_s;
 
-/** Internal event descriptor (supports LATCH, ONCE, COUNTED, STICKY, IDEM,
- * CHANNEL). */
+/** Internal event descriptor — single generic type, hint-driven behavior.
+ *  Configuration fields are immutable after init; dynamic fields are
+ *  atomics.
+ *
+ *  Two declarations: the C path uses C11 `_Atomic`; the C++/nvcc path
+ *  (this header is reached transitively from .cu files via arts_db_s)
+ *  drops the qualifier so the layout is visible without requiring C11
+ *  atomics — same approach as memory/coherence.h. */
+#ifdef __cplusplus
 struct arts_event_s {
-  struct arts_header_s header;
-  volatile bool fired;        /**< Whether the event has fired. */
-  arts_event_types_t type;    /**< Event type (LATCH/ONCE/.../CHANNEL). */
-  volatile unsigned int lock; /**< Spin-lock (CHANNEL only, 0 otherwise). */
-  volatile unsigned int latch_count; /**< Current latch counter. */
-  volatile unsigned int pos;         /**< Allocation cursor for dependents. */
-  volatile unsigned int dependent_count; /**< Registered dependent count. */
-  arts_guid_t data; /**< DataBlock GUID to deliver on fire. */
-  struct arts_link_list_s
-      *versions; /**< Version list (CHANNEL only, else NULL). */
-  struct arts_dependent_list_s dependent; /**< Inline dependent list head. */
+  ARTS_SHARED_FIELD;           /* shared_t — first member, always */
+  struct arts_header_s header; /* type=ARTS_EVENT */
+
+  /* Configuration snapshot (immutable after arts_event_create_internal). */
+  int32_t init_latch; /* signed; LATCH may start negative */
+  uint32_t init_nb_deps_required;
+  uint32_t max_nb_deps;
+  uint8_t auto_destroy;
+  uint8_t negative_latch_allowed;
+  uint8_t multiple_fire;
+  uint8_t _pad0;
+
+  /* Dynamic counters. */
+  int32_t curr_latch;
+  int32_t nb_deps_left;
+  uint32_t max_deps_left;
+  bool fired;
+
+  /* Discriminated storage by `multiple_fire` (see docs/event-refactor/spec.md
+   * §2.1 / §3).  In C++ TUs the atomic / mpsc qualifiers are dropped so
+   * struct layout is visible to nvcc — same trick used elsewhere. */
+  union {
+    struct {
+      arts_guid_t data;
+      arts_lf_stack_t deps_stack;
+    } simple;
+    struct {
+      arts_mpsc_t data_queue;
+      arts_mpsc_t dep_queue;
+      uint8_t draining;
+    } channel;
+  };
 } ARTS_ALIGNED_MAX;
+#else
+struct arts_event_s {
+  ARTS_SHARED_FIELD;           /* shared_t — first member, always */
+  struct arts_header_s header; /* type=ARTS_EVENT */
+
+  /* Configuration snapshot (immutable after arts_event_create_internal). */
+  int32_t init_latch;             /* signed; LATCH may start negative */
+  uint32_t init_nb_deps_required; /* deps consumed per fire (CHANNEL spec=1) */
+  uint32_t max_nb_deps;           /* lifetime cap on total registrations */
+  uint8_t auto_destroy;
+  uint8_t negative_latch_allowed;
+  uint8_t multiple_fire;
+  uint8_t _pad0;
+
+  /* Dynamic counters (atomic).
+   *   curr_latch  : satisfy decrements; non-CHANNEL fire trigger when
+   *                 prev==1; CHANNEL fire trigger when curr_latch <= 0.
+   *   nb_deps_left: addDep decrements; CHANNEL fire-pair counter (paired
+   *                 with curr_latch).  Recharged by += init_nb_deps_required
+   *                 inside CHANNEL drain.  For non-CHANNEL this is unused
+   *                 (the non-CHANNEL fire condition is `prev==1` in
+   *                 curr_latch alone).
+   *   max_deps_left: monotonically decreasing total-lifetime cap.
+   *                  When it reaches 0 and auto_destroy is set, the
+   *                  event mark_deletes itself.
+   *   fired       : non-CHANNEL single-fire CAS gate. */
+  _Atomic(int32_t) curr_latch;
+  _Atomic(int32_t) nb_deps_left;
+  _Atomic(uint32_t) max_deps_left;
+  _Atomic(bool) fired;
+
+  /* Discriminated storage by `multiple_fire` — see
+   * docs/event-refactor/spec.md §2.1 / §3.  union saves space on
+   * CHANNEL events that don't need a single data slot, and on
+   * non-CHANNEL events that don't need two FIFO queues. */
+  union {
+    struct {
+      arts_guid_t data; /* last satisfy data; late binders read here */
+      arts_lf_stack_t deps_stack; /* Treiber stack of pending consumers */
+    } simple;
+    struct {
+      arts_mpsc_t data_queue;    /* satisfy FIFO */
+      arts_mpsc_t dep_queue;     /* dep FIFO */
+      _Atomic(uint8_t) draining; /* single-flight drainer gate */
+    } channel;
+  };
+} ARTS_ALIGNED_MAX;
+#endif
 
 /** @} */ /* end internal_structs */
 
@@ -171,7 +248,13 @@ typedef enum {
  * Tracks active/finished task counts across nodes to determine when
  * all work within the epoch has completed.
  */
-typedef struct {
+struct arts_epoch_s {
+  ARTS_SHARED_FIELD; /* shared_t — first member, always. The
+                        route_table free_item dispatcher reads this
+                        offset-0 field to invoke the per-object deleter
+                        once the slot's lock count drops to 0 with
+                        DELETE set.  See libs/src/core/sync/epoch.c
+                        arts_epoch_deleter. */
   volatile unsigned int local_lock;   /**< Single-node active/finished lock. */
   volatile unsigned int phase;        /**< Current TD phase (PHASE_*). */
   volatile unsigned int active_count; /**< Local active task count. */
@@ -188,25 +271,12 @@ typedef struct {
   arts_guid_t termination_exit_guid;  /**< EDT to signal on completion. */
   arts_guid_t guid;                   /**< GUID of this epoch. */
   arts_guid_t pool_guid;              /**< Associated resource pool GUID. */
-} arts_epoch_t;
+};
+typedef struct arts_epoch_s arts_epoch_t;
 
 /** @} */ /* end td_types */
 
 /* ========================================================================= */
-/** @defgroup buffer_type Buffer Type
- *  @{ */
-
-/** Node-local buffer accessible by GUID. */
-typedef struct {
-  void *buffer;               /**< Pointer to the buffer data. */
-  uint32_t *size_to_write;    /**< Pointer to the write-size counter. */
-  unsigned int size;          /**< Buffer size in bytes. */
-  arts_guid_t epoch_guid;     /**< Enclosing epoch GUID. */
-  volatile unsigned int uses; /**< Remaining access count before auto-free. */
-} arts_buffer_t;
-
-/** @} */ /* end buffer_type */
-
 #ifdef __cplusplus
 }
 #endif

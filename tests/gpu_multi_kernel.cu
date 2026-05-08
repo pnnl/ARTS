@@ -107,7 +107,7 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
 
   unsigned int total_gpus = arts_get_total_gpus();
-  unsigned int node_id = arts_get_current_node();
+  unsigned int node_id = arts_get_current_rank();
 
   if (total_gpus == 0) {
     arts_printf("SKIP: no GPUs available\n");
@@ -121,12 +121,12 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   /* Create an LC DB large enough for all GPUs */
   arts_guid_t lc_guid = arts_guid_reserve(ARTS_DB, 0);
   unsigned int *addr = (unsigned int *)arts_db_create_with_guid(
-      lc_guid, sizeof(unsigned int) * total_gpus, ARTS_DB_LC, NULL, NULL);
+      lc_guid, sizeof(unsigned int) * total_gpus, ARTS_DB_GPU_LC, NULL, NULL);
   for (unsigned int i = 0; i < total_gpus; i++) {
     addr[i] = 0;
   }
 
-  arts_hint_t hint_0 = {0, 0};
+  arts_edt_hint_t hint_0 = {0, 0};
 
   /*
    * done EDT: slot 0 = LC sync result, slots 1..total_gpus = GPU EDT signals
@@ -144,7 +144,7 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   /* Launch one kernel per GPU */
   for (unsigned int i = 0; i < total_gpus; i++) {
     arts_gpu_hint_t gpu_hint = {};
-    gpu_hint.route = node_id;
+    gpu_hint.rank = node_id;
     gpu_hint.gpu = (int)i;
     gpu_hint.end_guid = done_guid;
     gpu_hint.slot = i + 1;
@@ -152,7 +152,7 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_guid_t gpu_edt =
         arts_edt_create_gpu(tag_kernel, 0, NULL, 1, arts_from_dim3(grid),
                             arts_from_dim3(threads), &gpu_hint);
-    arts_signal_edt(gpu_edt, 0, lc_guid, DB_MODE_EW);
+    arts_add_dependence(lc_guid, gpu_edt, 0, DB_MODE_RW);
   }
 }
 

@@ -38,7 +38,11 @@
 ******************************************************************************/
 
 /// @file record_dep_at.c
-/// @brief Tests arts_record_dep and arts_record_dep_at (byte-offset slicing).
+/// @brief Tests arts_add_dependence with DB_MODE_RO/RW.  Byte-offset slicing
+///        (formerly arts_add_dependence_at) is a future feature reserved on
+///        arts_db_hint_t.access_offset/_size; this test now exercises full-DB
+///        delivery and verifies the receiving EDT can index into the payload
+///        directly.
 
 #include "arts.h"
 #include <string.h>
@@ -58,7 +62,7 @@ void check_record_dep_ro(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 }
 
-/// Test 2: arts_record_dep with DB_MODE_EW (exclusive write).
+/// Test 2: arts_record_dep with DB_MODE_RW (exclusive write).
 /// After the first writer finishes, the second reader sees modified data.
 void writer_ew(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                arts_edt_dep_t depv[]) {
@@ -87,39 +91,40 @@ void reader_after_ew(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 }
 
-/// Test 3: arts_record_dep_at - byte offset slicing.
-/// DB layout: [int a, int b, int c, int d] (16 bytes)
-/// Slice at offset=8, len=8 gives pointer to c,d.
+/// Test 3: full-DB delivery; receiver indexes into payload directly.
+/// DB layout: [int a, int b, int c, int d] (16 bytes); read c, d.
 void check_slice(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                  arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
-  // depv[0].ptr should point to offset 8 within the DB.
-  int *slice = (int *)depv[0].ptr;
-  bool ok = (slice != NULL && slice[0] == 300 && slice[1] == 400);
+  /* depv[0].ptr is the full DB.  Apply the byte offset on the receiver
+   * side until DB-level slicing is wired through arts_db_hint_t. */
+  int *full = (int *)depv[0].ptr;
+  bool ok = (full != NULL && full[2] == 300 && full[3] == 400);
   if (ok) {
-    arts_printf("  PASS: record_dep_at byte offset slice correct\n");
+    arts_printf("  PASS: full-DB delivery, indexed slice correct\n");
   } else {
-    if (slice) {
-      arts_printf("  FAIL: record_dep_at got [%d, %d] expected [300, 400]\n",
-                  slice[0], slice[1]);
+    if (full) {
+      arts_printf("  FAIL: full-DB indexed slice got [%d, %d] expected "
+                  "[300, 400]\n",
+                  full[2], full[3]);
     } else {
-      arts_printf("  FAIL: record_dep_at null pointer\n");
+      arts_printf("  FAIL: full-DB delivery null pointer\n");
     }
   }
 }
 
-/// Test 4: arts_record_dep_at preserves the original DB GUID.
+/// Test 4: full-DB delivery preserves the original DB GUID.
 void check_slice_guid(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                       arts_edt_dep_t depv[]) {
   (void)depc;
   arts_guid_t expected_guid = (arts_guid_t)paramv[0];
   bool ok = (depv[0].guid == expected_guid && depv[0].ptr != NULL);
   if (ok) {
-    arts_printf("  PASS: record_dep_at preserves DB GUID\n");
+    arts_printf("  PASS: full-DB delivery preserves DB GUID\n");
   } else {
-    arts_printf("  FAIL: record_dep_at GUID mismatch\n");
+    arts_printf("  FAIL: full-DB delivery GUID mismatch\n");
   }
   (void)paramc;
 }
@@ -133,42 +138,40 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== record_dep_at ===\n");
 
-  arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+  arts_epoch_start(epoch);
 
   // Test 1: Basic RO record_dep.
   void *ptr1 = NULL;
-  arts_guid_t db1 =
-      arts_db_create(&ptr1, 2 * sizeof(int), ARTS_DB_DEFAULT, NULL);
+  arts_guid_t db1 = arts_db_create(&ptr1, 2 * sizeof(int), ARTS_DB_DEFAULT,
+                                   ARTS_DB_PROP_NONE, NULL);
   int *d1 = (int *)ptr1;
   d1[0] = 42;
   d1[1] = 99;
   arts_db_release(db1);
 
-  arts_guid_t e1 = arts_edt_create_with_epoch(
-      check_record_dep_ro, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
+  arts_guid_t e1 = arts_edt_create(check_record_dep_ro, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   arts_add_dependence(db1, e1, 0, DB_MODE_RO);
 
   // Test 2: EW → RO ordering via record_dep.
   void *ptr2 = NULL;
-  arts_guid_t db2 =
-      arts_db_create(&ptr2, 2 * sizeof(int), ARTS_DB_DEFAULT, NULL);
+  arts_guid_t db2 = arts_db_create(&ptr2, 2 * sizeof(int), ARTS_DB_DEFAULT,
+                                   ARTS_DB_PROP_NONE, NULL);
   int *d2 = (int *)ptr2;
   d2[0] = 0;
   d2[1] = 0;
   arts_db_release(db2);
 
-  arts_guid_t ew_edt = arts_edt_create_with_epoch(writer_ew, 0, NULL, 1, epoch,
-                                                  &(arts_hint_t){.route = 0});
-  arts_add_dependence(db2, ew_edt, 0, DB_MODE_EW);
+  arts_guid_t ew_edt = arts_edt_create(writer_ew, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_add_dependence(db2, ew_edt, 0, DB_MODE_RW);
 
-  arts_guid_t ro_edt = arts_edt_create_with_epoch(
-      reader_after_ew, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
+  arts_guid_t ro_edt = arts_edt_create(reader_after_ew, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   arts_add_dependence(db2, ro_edt, 0, DB_MODE_RO);
 
   // Test 3: record_dep_at with byte offset.
   void *ptr3 = NULL;
-  arts_guid_t db3 =
-      arts_db_create(&ptr3, 4 * sizeof(int), ARTS_DB_DEFAULT, NULL);
+  arts_guid_t db3 = arts_db_create(&ptr3, 4 * sizeof(int), ARTS_DB_DEFAULT,
+                                   ARTS_DB_PROP_NONE, NULL);
   int *d3 = (int *)ptr3;
   d3[0] = 100;
   d3[1] = 200;
@@ -176,18 +179,19 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   d3[3] = 400;
   arts_db_release(db3);
 
-  arts_guid_t e3 = arts_edt_create_with_epoch(check_slice, 0, NULL, 1, epoch,
-                                              &(arts_hint_t){.route = 0});
-  arts_add_dependence_at(db3, e3, 0, DB_MODE_RO, 2 * sizeof(int),
-                         2 * sizeof(int));
+  arts_guid_t e3 = arts_edt_create(check_slice, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  /* Slicing is a future feature reserved on arts_db_hint_t.access_offset/
+   * _size.  The full DB is delivered for now; the receiver indexes into
+   * the payload at offset 2 to read elements c, d. */
+  arts_add_dependence(db3, e3, 0, DB_MODE_RO);
 
   // Test 4: record_dep_at preserves DB GUID.
   uint64_t guid_param = (uint64_t)db3;
-  arts_guid_t e4 = arts_edt_create_with_epoch(
-      check_slice_guid, 1, &guid_param, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_add_dependence_at(db3, e4, 0, DB_MODE_RO, sizeof(int), sizeof(int));
+  arts_guid_t e4 =
+      arts_edt_create(check_slice_guid, 1, &guid_param, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_add_dependence(db3, e4, 0, DB_MODE_RO);
 
-  arts_wait_on_handle(epoch);
+  arts_epoch_wait(epoch);
   arts_shutdown();
 }
 

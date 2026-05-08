@@ -41,6 +41,7 @@
 /// @brief Tests arts_db_rename and arts_db_rename_with_guid.
 
 #include "arts.h"
+#include "arts/memory/db.h" /* arts_db_rename, arts_db_rename_with_guid */
 #include <string.h>
 
 #define DB_SIZE 64
@@ -101,11 +102,13 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== db_rename ===\n");
 
-  arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+  arts_epoch_start(epoch);
 
   // Test 1: arts_db_rename.
   void *ptr1 = NULL;
-  arts_guid_t db1 = arts_db_create(&ptr1, DB_SIZE, ARTS_DB_DEFAULT, NULL);
+  arts_guid_t db1 =
+      arts_db_create(&ptr1, DB_SIZE, ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
   uint64_t *d1 = (uint64_t *)ptr1;
   for (unsigned int i = 0; i < DB_SIZE / sizeof(uint64_t); i++) {
     d1[i] = i + 42;
@@ -116,13 +119,13 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("  Renamed %lu -> %lu\n", db1, new_guid1);
 
   uint64_t old_param = (uint64_t)db1;
-  arts_guid_t e1 = arts_edt_create_with_epoch(
-      check_renamed, 1, &old_param, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_signal_edt(e1, 0, new_guid1, DB_MODE_RO);
+  arts_guid_t e1 = arts_edt_create(check_renamed, 1, &old_param, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_add_dependence(new_guid1, e1, 0, DB_MODE_RO);
 
   // Test 2: arts_db_rename_with_guid.
   void *ptr2 = NULL;
-  arts_guid_t db2 = arts_db_create(&ptr2, DB_SIZE, ARTS_DB_DEFAULT, NULL);
+  arts_guid_t db2 =
+      arts_db_create(&ptr2, DB_SIZE, ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
   uint64_t *d2 = (uint64_t *)ptr2;
   for (unsigned int i = 0; i < DB_SIZE / sizeof(uint64_t); i++) {
     d2[i] = (uint64_t)i * 5;
@@ -135,11 +138,10 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   uint64_t target_param = (uint64_t)target;
   arts_guid_t e2 =
-      arts_edt_create_with_epoch(check_renamed_guid, 1, &target_param, 1, epoch,
-                                 &(arts_hint_t){.route = 0});
-  arts_signal_edt(e2, 0, target, DB_MODE_RO);
+      arts_edt_create(check_renamed_guid, 1, &target_param, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_add_dependence(target, e2, 0, DB_MODE_RO);
 
-  arts_wait_on_handle(epoch);
+  arts_epoch_wait(epoch);
   arts_shutdown();
 }
 

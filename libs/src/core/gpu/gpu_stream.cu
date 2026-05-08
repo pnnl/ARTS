@@ -533,9 +533,7 @@ void free_gpu_item(arts_route_item_t *item) {
     ARTS_DEBUG("FREEING HOST PTR: %p\n", host_gc_ptr);
     arts_cuda_free_host(host_gc_ptr);
   } else if (type == ARTS_DB) {
-    int valid_rank = -1;
-    struct arts_db_s *db = (struct arts_db_s *)arts_route_table_lookup_db(
-        item->key, &valid_rank, false);
+    struct arts_db_s *db = arts_route_table_lookup_db_safe(item->key);
     if (db && db->db_type == ARTS_DB_GPU_LC) {
       unsigned int size = db->header.size;
       struct arts_db_s *temp_space =
@@ -581,6 +579,9 @@ void free_gpu_item(arts_route_item_t *item) {
     } else {
       // Non-LC DB (DEFAULT/GPU) or LC DB not found — just free GPU memory
       arts_cuda_free((void *)wrapper->realData);
+    }
+    if (db) {
+      arts_route_table_release(item->key);
     }
   }
 

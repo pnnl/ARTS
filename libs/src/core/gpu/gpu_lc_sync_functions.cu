@@ -47,6 +47,7 @@
 #include "arts/system/print.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
+#include "arts/utils/random.h"
 
 // To use this lock the unlock must be an even number
 unsigned int version_lock(arts_lc_meta_t *meta) {

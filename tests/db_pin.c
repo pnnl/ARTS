@@ -42,6 +42,7 @@
 ///        rank, modification persistence, and arts_db_copy_to_new_type.
 
 #include "arts.h"
+#include "arts/memory/db.h" /* arts_db_copy_to_new_type */
 #include <string.h>
 
 #define DB_SIZE 128
@@ -131,7 +132,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== db_pin ===\n");
 
-  arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+  arts_epoch_start(epoch);
 
   // Test 1: Create ARTS_DB_PIN and use DB_MODE_RW.  PIN home == this
   // rank by default; route hint forces it explicitly here so the test
@@ -147,19 +149,17 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Test 2: Verify RW modifications persisted.
   // Chain: e1 (modify) -> e2 (verify) using RW per-node-exclusive
   // ordering through the DB.  Both EDTs registered on home rank (0).
-  arts_guid_t e2 = arts_edt_create_with_epoch(check_modified, 0, NULL, 1, epoch,
-                                              &(arts_hint_t){.route = 0});
+  arts_guid_t e2 = arts_edt_create(check_modified, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
 
-  arts_guid_t e1 = arts_edt_create_with_epoch(check_pin_rw, 0, NULL, 1, epoch,
-                                              &(arts_hint_t){.route = 0});
+  arts_guid_t e1 = arts_edt_create(check_pin_rw, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   arts_add_dependence(pin_guid, e1, 0, DB_MODE_RW);
   arts_add_dependence(pin_guid, e2, 0, DB_MODE_RW);
 
   // Test 3: arts_db_copy_to_new_type (DIST -> PIN).
   void *src_ptr = NULL;
-  arts_guid_t src_db = arts_db_create(&src_ptr, DB_SIZE, ARTS_DB_DIST,
-                                      ARTS_DB_PROP_NONE,
-                                      &(arts_hint_t){.route = 0});
+  arts_guid_t src_db =
+      arts_db_create(&src_ptr, DB_SIZE, ARTS_DB_RC, ARTS_DB_PROP_NONE,
+                     &(arts_db_hint_t){.rank = 0});
   uint64_t *src = (uint64_t *)src_ptr;
   for (unsigned int i = 0; i < DB_SIZE / sizeof(uint64_t); i++) {
     src[i] = i + 100;
@@ -168,11 +168,10 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_guid_t copied = arts_db_copy_to_new_type(src_db, ARTS_DB_PIN);
   uint64_t copy_param = (uint64_t)copied;
-  arts_guid_t e3 = arts_edt_create_with_epoch(
-      check_copy_type, 1, &copy_param, 1, epoch, &(arts_hint_t){.route = 0});
+  arts_guid_t e3 = arts_edt_create(check_copy_type, 1, &copy_param, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   arts_add_dependence(copied, e3, 0, DB_MODE_RO);
 
-  arts_wait_on_handle(epoch);
+  arts_epoch_wait(epoch);
   arts_shutdown();
 }
 

@@ -61,7 +61,7 @@ static void report(const char *name, bool ok, unsigned int slot) {
     __sync_fetch_and_add((unsigned int *)&failed, 1);
     arts_printf("  FAIL: %s\n", name);
   }
-  arts_signal_edt_value(coll_guid, slot, 1);
+  arts_add_dependence((arts_guid_t)(1), coll_guid, slot, DB_MODE_VAL);
 }
 
 /// 1) EDT with zero params and zero deps fires immediately.
@@ -88,7 +88,7 @@ void guid_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
   (void)depc;
   (void)paramc;
-  arts_guid_t my_guid = arts_get_current_guid();
+  arts_guid_t my_guid = arts_edt_get_current_guid();
   arts_guid_t expected = (arts_guid_t)paramv[0];
   report("create_with_guid matches", my_guid == expected, 2);
 }
@@ -138,31 +138,31 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Collector: each subtest signals one slot when done.
   coll_guid = arts_edt_create(collector_edt, 0, NULL, NUM_SUBTESTS,
-                              &(arts_hint_t){.route = 0});
+                              &(arts_edt_hint_t){.rank = 0});
 
   // 1) Zero deps — fires immediately.
-  arts_edt_create(zero_dep_edt, 0, NULL, 0, &(arts_hint_t){.route = 0});
+  arts_edt_create(zero_dep_edt, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0});
 
   // 2) Param delivery.
   uint64_t params[3] = {42, 0xDEADBEEF, 99};
-  arts_edt_create(param_edt, 3, params, 0, &(arts_hint_t){.route = 0});
+  arts_edt_create(param_edt, 3, params, 0, &(arts_edt_hint_t){.rank = 0});
 
   // 3) Create with pre-reserved GUID.
   arts_guid_t reserved = arts_guid_reserve(ARTS_EDT, 0);
   uint64_t guid_param = (uint64_t)reserved;
-  arts_edt_create_with_guid(guid_edt, reserved, 1, &guid_param, 0);
+  arts_edt_create(guid_edt, 1, &guid_param, 0, &(arts_edt_hint_t){.guid = reserved});
 
   // 4) Create with epoch.
-  arts_guid_t epoch_guid = arts_initialize_and_start_epoch(NULL_GUID, 0);
-  arts_edt_create_with_epoch(epoch_edt, 0, NULL, 0, epoch_guid,
-                             &(arts_hint_t){.route = 0});
+  arts_guid_t epoch_guid = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+  arts_epoch_start(epoch_guid);
+  arts_edt_create(epoch_edt, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0, .epoch = epoch_guid});
 
   // 5) Create dep with has_depv=true — signal with DB.
   void *db_ptr = NULL;
-  arts_guid_t db = arts_db_create(&db_ptr, 64, ARTS_DB_DEFAULT, NULL);
+  arts_guid_t db = arts_db_create(&db_ptr, 64, ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
   arts_guid_t dep_t =
-      arts_edt_create(dep_true_edt, 0, NULL, 1, &(arts_hint_t){.route = 0});
-  arts_signal_edt(dep_t, 0, db, DB_MODE_RO);
+      arts_edt_create(dep_true_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0});
+  arts_add_dependence(db, dep_t, 0, DB_MODE_RO);
 }
 
 int main(int argc, char **argv) {

@@ -155,9 +155,9 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   /* Run the memory tests from a GPU lib EDT so we have CUDA context */
   dim3 threads(1, 1, 1);
   dim3 grid(1, 1, 1);
-  unsigned int node_id = arts_get_current_node();
+  unsigned int node_id = arts_get_current_rank();
   arts_gpu_hint_t gpu_hint = {};
-  gpu_hint.route = node_id;
+  gpu_hint.rank = node_id;
   gpu_hint.gpu = 0;
   gpu_hint.lib = true;
   arts_edt_create_gpu(run_mem_tests, 0, NULL, 0, arts_from_dim3(grid),

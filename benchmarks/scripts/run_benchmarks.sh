@@ -214,9 +214,9 @@ run_ocr_apps() {
     # stale multinode config from a previous run causing single-node crashes)
     if [ "$suffix" = "arts" ]; then
         if [ "$DO_MULTINODE" -eq 1 ]; then
-            cp "$REPO_ROOT/sample_configs/arts_multinode.cfg" arts.cfg
+            cp "$REPO_ROOT/configs/local/2n.cfg" arts.cfg
         else
-            cp "$REPO_ROOT/sample_configs/arts.cfg" arts.cfg
+            cp "$REPO_ROOT/configs/local/1n.cfg" arts.cfg
         fi
         if [ ! -f arts.cfg ]; then
             echo "WARNING: No arts.cfg found, ARTS apps may fail"
@@ -225,7 +225,11 @@ run_ocr_apps() {
 
     # Set OCR_CONFIG for XSOCR backend
     if [ "$suffix" = "xsocr" ]; then
-        export OCR_CONFIG="${REPO_ROOT}/benchmarks/xsocr/default.cfg"
+        if [ "$DO_MULTINODE" -eq 1 ]; then
+            export OCR_CONFIG="${REPO_ROOT}/configs/mpi/2n.cfg"
+        else
+            export OCR_CONFIG="${REPO_ROOT}/configs/mpi/1n.cfg"
+        fi
     fi
 
     # Tier 1: Simple apps (minimal parameters for smoke testing)
@@ -335,8 +339,13 @@ run_ocr_apps() {
     run_app "LCS_distributed_ST_${suffix}"      "$dir"
     run_app "LCS_shared_${suffix}"              "$dir"
 
-    # Tier 14: SAR (tiny only for smoke test)
+    # Tier 14: SAR (tiny/small/medium/large; huge intentionally excluded —
+    # huge dataset generation alone is far longer than this script's
+    # per-app timeout, and the runtime test is outside the laptop budget).
     run_app "sar_tiny_${suffix}"                "$dir"
+    run_app "sar_small_${suffix}"               "$dir"
+    run_app "sar_medium_${suffix}"              "$dir"
+    run_app "sar_large_${suffix}"               "$dir"
 
     # Tier 15: Stream, UTS
     # stream: Known SIGSEGV on XSOCR (runtime race in scheduler/memory mgmt)
@@ -362,12 +371,7 @@ run_ocr_apps_multinode() {
     log "===== OCR apps (arts backend, multi-node 2 localhost) ====="
 
     # Copy multi-node config
-    if [ -f "$REPO_ROOT/sample_configs/arts_multinode.cfg" ]; then
-        cp "$REPO_ROOT/sample_configs/arts_multinode.cfg" arts.cfg
-    else
-        echo "ERROR: arts_multinode.cfg not found"
-        return 1
-    fi
+    cp "$REPO_ROOT/configs/local/2n.cfg" arts.cfg
 
     # CoMD variants (affinity-aware)
     # CoMD_intel_chandra: Known HANG — FINISH EDT + affinity deadlock

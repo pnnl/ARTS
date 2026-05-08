@@ -37,22 +37,26 @@
 ## License for the specific language governing permissions and limitations
 ###############################################################################
 
-# Function to copy config files to target directories
+# Copy a config file into a build-tree directory under a conventional name.
 function(copy_config_to_target source_file target_dir target_name)
     if(IS_DIRECTORY ${CMAKE_BINARY_DIR}/${target_dir})
         configure_file(${source_file} ${CMAKE_BINARY_DIR}/${target_dir}/${target_name} COPYONLY)
     endif()
 endfunction()
 
-# Copy config files to examples and tests directories
-copy_config_to_target(arts.cfg examples/cpu arts.cfg)
-copy_config_to_target(arts.cfg tests arts.cfg)
-copy_config_to_target(arts_multinode.cfg tests arts_multinode.cfg)
-copy_config_to_target(arts_4node.cfg tests arts_4node.cfg)
-copy_config_to_target(arts_gpu.cfg tests arts_gpu.cfg)
+# ── single-node (default for tests + cpu examples) ─────────────────────────
+copy_config_to_target(local/1n.cfg examples/cpu arts.cfg)
+copy_config_to_target(local/1n.cfg tests         arts.cfg)
 
-# Install configuration file
-install(FILES arts.cfg
+# ── multi-node localhost config ─────────────────────────────────────────────
+copy_config_to_target(local/2n.cfg  tests arts_2node.cfg)
+
+# ── GPU config ──────────────────────────────────────────────────────────────
+copy_config_to_target(local/gpu/1n.cfg tests arts_gpu.cfg)
+
+# Install the canonical single-node config alongside the ARTS runtime.
+install(FILES local/1n.cfg
     DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/arts
+    RENAME arts.cfg
     COMPONENT config
 )

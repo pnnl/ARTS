@@ -98,18 +98,20 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   unsigned int target = 1; // Remote node.
 
-  arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+  arts_epoch_start(epoch);
 
   // Test 1: arts_db_create_remote on node 1.
   void *tmp;
-  arts_guid_t remote_db = arts_db_create(&tmp, DATA_SIZE, ARTS_DB_DEFAULT,
-                                         &(arts_hint_t){.route = target});
+  arts_guid_t remote_db =
+      arts_db_create(&tmp, DATA_SIZE, ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE,
+                     &(arts_db_hint_t){.rank = target});
 
   uint64_t params[2];
   params[0] = (uint64_t)remote_db;
   params[1] = (uint64_t)target;
-  arts_edt_create_with_epoch(check_remote_db, 2, params, 0, epoch,
-                             &(arts_hint_t){.route = 0});
+  arts_edt_create(check_remote_db, 2, params, 0,
+                  &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
 
   // Test 2: Put data to remote DB, then get it back.
   unsigned char send_buf[DATA_SIZE];
@@ -117,12 +119,13 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     send_buf[i] = (unsigned char)(i & 0xFF);
   }
 
-  arts_guid_t read_edt = arts_edt_create_with_epoch(
-      check_remote_put_get, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_put_in_db(send_buf, NULL_GUID, remote_db, 0, 0, DATA_SIZE);
+  arts_guid_t read_edt =
+      arts_edt_create(check_remote_put_get, 0, NULL, 1,
+                      &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_db_put(send_buf, NULL_GUID, remote_db, 0, 0, DATA_SIZE, NULL);
 
   // Get the data back.
-  arts_get_from_db(read_edt, remote_db, 0, 0, DATA_SIZE);
+  arts_db_get(read_edt, remote_db, 0, 0, DATA_SIZE, NULL);
 }
 
 int main(int argc, char **argv) {

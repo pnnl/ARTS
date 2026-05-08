@@ -41,13 +41,16 @@
 #define _FILE_OFFSET_BITS 64 // NOLINT(readability-identifier-naming)
 #include "arts.h"
 #include "arts/counter/counter.h"
+#include "arts/gas/guid.h"
 #include "arts/runtime_state.h"
 #include "arts/system/config.h"
 #include "arts/system/debug.h"
+#include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/transport/dispatcher.h"
 #include "arts/transport/launcher.h"
 #include "arts/transport/socket.h"
+#include "arts/transport/stdio_forward.h"
 
 int arts_rt(int argc, char **argv) {
   TIME_INIT_START();
@@ -56,12 +59,28 @@ int arts_rt(int argc, char **argv) {
   arts_config_load(&config);
 
   arts_install_signal_handlers();
+  /* Start the dedicated SIGTERM/SIGINT/SIGHUP/SIGALRM watcher thread BEFORE
+   * any worker/sender/receiver thread is spawned, so the SIG_BLOCK mask is
+   * inherited by every downstream thread.  Watcher then drives graceful
+   * shutdown via arts_enter_shutdown_state on signal arrival. */
+  arts_install_signal_watcher_thread();
   if (config.core_dump) {
     arts_turn_on_core_dumps();
   }
 
   arts_global_rank_id = 0;
   arts_global_rank_count = config.table_length;
+  /* GUID layout encodes rank in 14 bits, with the top two values reserved
+   * (ARTS_DISTRIBUTED_RANK = 0x3FFE, ARTS_CXL_RANK = 0x3FFF).  Cap the
+   * usable range at 2^14 - 2 = 16382 so encoded ranks never collide with
+   * the sentinels.  Anything higher than the field width would silently
+   * truncate during encoding. */
+  if (arts_global_rank_count > (ARTS_GUID_RANK_MASK - 1U)) {
+    ARTS_ERROR("Rank count %u exceeds GUID layout limit %u "
+               "(14-bit rank field, two values reserved). "
+               "Reduce node count or widen ARTS_GUID_RANK_BITS.",
+               arts_global_rank_count, ARTS_GUID_RANK_MASK - 1U);
+  }
   if (config.table_length > 1) {
     arts_server_setup(&config);
   }
@@ -91,7 +110,9 @@ int arts_rt(int argc, char **argv) {
   }
   if (arts_global_rank_id == config.master_rank && config.master_boot) {
     config.launcher_data->cleanup_processes(config.launcher_data);
+    arts_stdio_forwarder_shutdown_all();
   }
+  arts_stop_signal_watcher_thread();
   arts_config_destroy(&config);
   return 0;
 }

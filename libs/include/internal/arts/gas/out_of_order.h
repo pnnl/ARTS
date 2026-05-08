@@ -143,6 +143,10 @@ void arts_out_of_order_inc_queue_epoch(arts_guid_t epoch_guid);
 
 void arts_out_of_order_handler(void *handle_me, void *memory_ptr);
 
+/* Drain callback used by arts_route_table_drop_oo: wakes parked EDT
+ * waiters with NULL_DB on destroy and frees the payload. */
+void arts_oo_dispatch_destroyed_cb(void *data, void *ctx);
+
 #ifdef __cplusplus
 }
 #endif

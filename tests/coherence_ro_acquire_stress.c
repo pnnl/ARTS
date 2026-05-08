@@ -42,9 +42,9 @@
 ///
 /// Single DB initialized to a known sentinel value (42).  N RO-acquiring
 /// EDTs are spawned concurrently; each verifies that *data == 42.
-/// Exercises v3 RC cases 1/3/7 (concurrent local RO + RO snapshot install
+/// Exercises RC cases 1/3/7 (concurrent local RO + RO snapshot install
 /// + cached RO version pull).  If any reader sees a corrupted value the
-/// cache install path itself is wrong — that is a real v3 RC bug.
+/// cache install path itself is wrong — that is a real RC bug.
 ///
 /// Adaptations vs. plan description (line 1882 of plan):
 ///   - 4-arg arts_db_create (no ARTS_DB_PROP_NONE in HEAD).
@@ -114,7 +114,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   int *data;
   arts_guid_t db =
-      arts_db_create((void **)&data, sizeof(int), ARTS_DB_RC, NULL);
+      arts_db_create((void **)&data, sizeof(int), ARTS_DB_RC, ARTS_DB_PROP_NONE, NULL);
   *data = SENTINEL;
 
   /* Outer epoch ensures shutdown_edt runs only after every reader has
@@ -123,18 +123,19 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
    * must have depc >= 1 so the epoch's slot-0 satisfy actually gates
    * it; depc=0 would let it fire before any reader. */
   arts_guid_t shut = arts_edt_create(shutdown_edt, 0, NULL, 1, NULL);
-  arts_guid_t epoch = arts_initialize_and_start_epoch(shut, 0);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), shut, 0);
+  arts_epoch_start(epoch);
 
   for (int i = 0; i < N_READERS; i++) {
     arts_guid_t r =
-        arts_edt_create_with_epoch(reader_edt, 0, NULL, 1, epoch, NULL);
+        arts_edt_create(reader_edt, 0, NULL, 1, &(arts_edt_hint_t){.epoch = epoch});
     arts_add_dependence(db, r, 0, DB_MODE_RO);
   }
 }
 
 int main(int argc, char **argv) {
   arts_rt(argc, argv);
-  if (arts_get_current_node() == 0 && !atomic_load(&g_clean_shutdown)) {
+  if (arts_get_current_rank() == 0 && !atomic_load(&g_clean_shutdown)) {
     fprintf(stderr,
             "FAIL: shutdown_edt did not fire — reader abort or premature "
             "shutdown\n");

@@ -12,7 +12,7 @@
  * destroy_state, the marked-list head/tail, the buffer pool).
  *
  * Drop discipline (every handler):
- *   1. arts_route_table_lookup_db — bumps the route_table lock-field
+ *   1. arts_route_table_lookup_db_safe — bumps the route_table lock-field
  *      ref so the cache cannot be torn down underneath us.
  *   2. cache.destroy_state precheck.
  *   3. If lookup returned NULL, or destroy_state != NONE: send the
@@ -20,7 +20,7 @@
  *      GET_DATA, WRITEBACK_ACK for WRITEBACK), drop the route_table
  *      ref, return.  (Silent drop would deadlock the requester.)
  *   4. Body.
- *   5. arts_route_table_return_db.
+ *   5. arts_route_table_release.
  *
  * Handlers receive the full wire packet; size and rank are accessed
  * via the embedded arts_remote_packet_s header. */

@@ -157,7 +157,7 @@ void work(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   float *final_data;
   arts_guid_t final_guid =
       arts_db_create((void **)&final_data, sizeof(float) * (size_t)M * N,
-                     ARTS_DB_DEFAULT, NULL);
+                     ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
   arts_put_in_db_from_gpu(d_c, final_guid, 0, sizeof(float) * (size_t)M * N,
                           true);
   // stat = cublasGetMatrix(M, N, sizeof(*c), d_c, M, c, M);    // cp d_c - >c
@@ -171,7 +171,7 @@ void work(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   free(c); // free host memory
 
   arts_guid_t to_signal = (arts_guid_t)paramv[0];
-  arts_signal_edt(to_signal, 0, final_guid, DB_MODE_EW);
+  arts_add_dependence(final_guid, to_signal, 0, DB_MODE_RW);
 }
 
 void done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -211,11 +211,11 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   dim3 threads(1, 1);
   dim3 grid(1, 1);
 
-  arts_hint_t hint_0 = {0, 0};
+  arts_edt_hint_t hint_0 = {0, 0};
   arts_guid_t done_guid = arts_edt_create(done, 0, NULL, 1, &hint_0);
   arts_gpu_hint_t gpu_hint = {};
   gpu_hint.gpu = -1;
-  gpu_hint.route = 0;
+  gpu_hint.rank = 0;
   gpu_hint.lib = true;
   arts_guid_t work_guid = arts_edt_create_gpu(
       work, 1, (uint64_t *)&done_guid, 0, arts_from_dim3(grid),

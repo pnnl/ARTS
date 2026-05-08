@@ -65,26 +65,32 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramv;
   (void)depc;
   (void)depv;
-  unsigned int node_id = arts_get_current_node();
-  int dummy_rank;
+  unsigned int node_id = arts_get_current_rank();
 
   printf("Start\n");
   arts_guid_t range_start = arts_guid_reserve_range(ARTS_DB, MYSIZE, node_id);
   for (uint64_t i = 0; i < MYSIZE; i++) {
     arts_db_create_with_guid(arts_guid_from_index(range_start, i),
-                             1024 * sizeof(char), ARTS_DB_DEFAULT, NULL, NULL);
+                             1024 * sizeof(char), ARTS_DB_DEFAULT,
+                             ARTS_DB_PROP_NONE, NULL);
   }
   print_rt("After DB Init");
 
+  /* Walk the table for each installed DB.  Legacy lookup_db(guid,&rank,
+   * mark_to_delete=true) is gone; the new lifecycle separates "look up
+   * the data pointer" from "mark for delete".  Use lookup_data + an
+   * explicit mark_delete to exercise the same teardown path. */
   for (uint64_t i = 0; i < MYSIZE; i++) {
-    arts_route_table_lookup_db(arts_guid_from_index(range_start, i),
-                               &dummy_rank, true);
+    arts_guid_t g = arts_guid_from_index(range_start, i);
+    void *ptr = arts_route_table_lookup_data(g);
+    (void)ptr;
   }
   print_rt("After DB Lookup");
 
-  /* internal_route_table_return_db removed (no ref count) -- Phase 3
-   * will reintroduce a proper lifecycle mechanism. */
-  print_rt("After DB Return with Mark");
+  for (uint64_t i = 0; i < MYSIZE; i++) {
+    arts_route_table_mark_delete(arts_guid_from_index(range_start, i));
+  }
+  print_rt("After DB Mark Delete");
 
   arts_clean_up_route_table(arts_node_info.route_table[0]);
   print_rt("After GC");

@@ -38,9 +38,9 @@
 ******************************************************************************/
 
 /// @file epoch_basic.c
-/// @brief Tests epoch APIs: arts_initialize_epoch, arts_start_epoch,
-///        arts_initialize_and_start_epoch, arts_wait_on_handle,
-///        arts_get_current_epoch_guid, arts_add_edt_to_epoch.
+/// @brief Tests epoch APIs: arts_epoch_create, arts_epoch_start,
+///        arts_epoch_wait, arts_epoch_get_current_guid,
+///        arts_epoch_add_edt.
 
 #include "arts.h"
 
@@ -62,7 +62,7 @@ void epoch_check(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
   (void)paramc;
   arts_guid_t expected = (arts_guid_t)paramv[0];
-  arts_guid_t current = arts_get_current_epoch_guid();
+  arts_guid_t current = arts_epoch_get_current_guid();
   if (current == expected) {
     arts_printf("  PASS: get_current_epoch_guid matches expected\n");
   } else {
@@ -80,14 +80,15 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== epoch_basic ===\n");
 
-  // Test 1: arts_initialize_and_start_epoch + wait.
+  // Test 1: arts_epoch_create + arts_epoch_start + wait.
   task_count = 0;
-  arts_guid_t epoch1 = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  arts_guid_t epoch1 = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+  arts_epoch_start(epoch1);
   for (unsigned int i = 0; i < 10; i++) {
-    arts_edt_create_with_epoch(dummy_task, 0, NULL, 0, epoch1,
-                               &(arts_hint_t){.route = 0});
+    arts_edt_create(dummy_task, 0, NULL, 0,
+                    &(arts_edt_hint_t){.rank = 0, .epoch = epoch1});
   }
-  arts_wait_on_handle(epoch1);
+  arts_epoch_wait(epoch1);
   arts_printf("  Test 1: epoch completed, task_count=%u\n", task_count);
   if (task_count == 10) {
     arts_printf("  PASS: all 10 tasks ran in epoch\n");
@@ -95,12 +96,13 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_printf("  FAIL: expected 10, got %u\n", task_count);
   }
 
-  // Test 2: arts_get_current_epoch_guid inside epoch.
-  arts_guid_t epoch3 = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  // Test 2: arts_epoch_get_current_guid inside epoch.
+  arts_guid_t epoch3 = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+  arts_epoch_start(epoch3);
   uint64_t ep3_param = (uint64_t)epoch3;
-  arts_edt_create_with_epoch(epoch_check, 1, &ep3_param, 0, epoch3,
-                             &(arts_hint_t){.route = 0});
-  arts_wait_on_handle(epoch3);
+  arts_edt_create(epoch_check, 1, &ep3_param, 0,
+                  &(arts_edt_hint_t){.rank = 0, .epoch = epoch3});
+  arts_epoch_wait(epoch3);
 
   arts_printf("=== epoch_basic complete ===\n");
   arts_shutdown();

@@ -36,39 +36,63 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef ARTS_COMPUTE_SHAD_H
-#define ARTS_COMPUTE_SHAD_H
-#ifdef __cplusplus
-extern "C" {
-#endif
+
+/// @file event_add_dep_idem_fastpath.c
+/// @brief Single-node test for the IDEM late-add fast path: a waiter
+/// registered via arts_add_dependence AFTER the event has fired must run
+/// immediately (no hang, no lost wakeup).
 
 #include "arts.h"
+#include <assert.h>
+#include <stdio.h>
 
-arts_guid_t arts_edt_create_shad(arts_edt_t func_ptr, unsigned int route,
-                                 uint32_t paramc, const uint64_t *paramv);
-arts_guid_t arts_active_message_shad(arts_edt_t func_ptr, unsigned int route,
-                                     uint32_t paramc, const uint64_t *paramv,
-                                     void *data, unsigned int size,
-                                     arts_guid_t epoch_guid);
-void arts_synchronous_active_message_shad(arts_edt_t func_ptr,
-                                          unsigned int route, uint32_t paramc,
-                                          const uint64_t *paramv, void *data,
-                                          unsigned int size);
-
-void arts_inc_lock_shad();
-void arts_dec_lock_shad();
-void arts_check_lock_shad();
-void arts_start_intro_shad(unsigned int start);
-void arts_stop_intro_shad();
-arts_guid_t arts_allocate_local_buffer_shad(void **buffer,
-                                            uint32_t *size_to_write,
-                                            arts_guid_t epoch_guid);
-
-bool arts_shad_alias_try_lock(volatile uint64_t *lock);
-void arts_shad_alias_unlock(volatile uint64_t *lock);
-
-#ifdef __cplusplus
+void late_waiter_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                     arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
+  arts_printf("  PASS: late_waiter_edt fired via add_dependence fast path\n");
 }
-#endif
 
-#endif /* SHADADAPTER_H */
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+              arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
+
+  arts_printf("=== event_add_dep_idem_fastpath ===\n");
+
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+  arts_epoch_start(epoch);
+
+  /* IDEM-equivalent: latch=1, auto_destroy=false.  The event survives
+   * the first fire so a late add_dependence can observe `fired=true`
+   * and take the fast-path: data delivered immediately, no enqueue. */
+  arts_event_hint_t hint = ARTS_EVENT_HINT_DEFAULTS;
+  hint.auto_destroy = false;
+  arts_guid_t ev = arts_event_create(&hint);
+  assert(ev != NULL_GUID);
+
+  /* Fire the event before any waiter exists. */
+  arts_event_satisfy(ev, NULL_GUID);
+
+  /* Register the waiter AFTER the satisfy.  The IDEM fast path in
+   * arts_add_dependence must observe fired=true and signal slot 0
+   * inline, so the waiter EDT runs with no hang. */
+  arts_guid_t waiter = arts_edt_create(late_waiter_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_add_dependence(ev, waiter, 0, DB_MODE_RW);
+
+  arts_epoch_wait(epoch);
+
+  /* Cleanup the IDEM-style event we kept alive. */
+  arts_event_destroy(ev);
+
+  arts_shutdown();
+}
+
+int main(int argc, char **argv) {
+  arts_rt(argc, argv);
+  return 0;
+}

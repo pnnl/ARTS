@@ -58,7 +58,7 @@ void exit_program(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                   arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
-  unsigned int num_nodes = arts_get_total_nodes();
+  unsigned int num_nodes = arts_get_total_ranks();
   for (unsigned int i = 0; i < depc; i++) {
     unsigned int num_edts = depv[i].guid;
     if (num_edts != (num_nodes * num_dummy) + 2) {
@@ -75,12 +75,12 @@ void root_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
   (void)paramc;
   (void)paramv;
-  arts_guid_t guid = arts_get_current_epoch_guid();
+  arts_guid_t guid = arts_epoch_get_current_guid();
   arts_printf("Starting %lu %u\n", guid, arts_guid_get_rank(guid));
-  unsigned int num_nodes = arts_get_total_nodes();
+  unsigned int num_nodes = arts_get_total_ranks();
   for (unsigned int rank = 0; rank < num_nodes * num_dummy; rank++) {
     arts_edt_create(dummytask, 0, 0, 0,
-                    &(arts_hint_t){.route = rank % num_nodes});
+                    &(arts_edt_hint_t){.rank = rank % num_nodes});
   }
 }
 
@@ -90,8 +90,11 @@ void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
   unsigned int node_id = (unsigned int)paramv[0];
-  arts_initialize_and_start_epoch(exit_guid, node_id);
-  arts_edt_create(root_task, 0, NULL, 0, &(arts_hint_t){.route = node_id});
+  {
+    arts_guid_t __ep = arts_epoch_create(arts_get_current_rank(), exit_guid, node_id);
+    arts_epoch_start(__ep);
+  }
+  arts_edt_create(root_task, 0, NULL, 0, &(arts_edt_hint_t){.rank = node_id});
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -102,12 +105,11 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   char **argv = (char **)paramv[1];
   num_dummy = (unsigned int)strtol(argv[1], NULL, 10);
   exit_guid = arts_guid_reserve(ARTS_EDT, 0);
-  arts_edt_create_with_guid(exit_program, exit_guid, 0, NULL,
-                            arts_get_total_nodes());
+  arts_edt_create(exit_program, 0, NULL, arts_get_total_ranks(), &(arts_edt_hint_t){.guid = exit_guid});
 
-  for (unsigned int n = 0; n < arts_get_total_nodes(); n++) {
+  for (unsigned int n = 0; n < arts_get_total_ranks(); n++) {
     uint64_t args = n;
-    arts_edt_create(node_setup, 1, &args, 0, &(arts_hint_t){.route = n});
+    arts_edt_create(node_setup, 1, &args, 0, &(arts_edt_hint_t){.rank = n});
   }
 }
 

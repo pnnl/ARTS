@@ -85,7 +85,7 @@ void thrust_sort(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_guid_t tile_guid = arts_guid_reserve(ARTS_DB, 0);
   arts_db_create_with_guid(tile_guid, sizeof(unsigned int) * GPULISTLEN,
-                           ARTS_DB_GPU, NULL, NULL);
+                           ARTS_DB_GPU_PIN, NULL, NULL);
 
   thrust::device_ptr<unsigned int> dev_thrust_ptr(raw_ptr);
   thrust::sort(dev_thrust_ptr, dev_thrust_ptr + GPULISTLEN); // Do the sorting
@@ -96,9 +96,7 @@ void thrust_sort(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Probably should make some new edts and signal them with the data!
   // Or signal the end if we are done
-  arts_signal_edt(
-      done_guid, gpu_index, tile_guid,
-      DB_MODE_EW); // don't really need tile_guid just doing it for testing
+  arts_add_dependence(tile_guid, done_guid, gpu_index, DB_MODE_RW); // don't really need tile_guid just doing it for testing
 }
 
 void done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -148,17 +146,17 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramv;
   (void)depc;
   (void)depv;
-  unsigned int node_id = arts_get_current_node();
+  unsigned int node_id = arts_get_current_rank();
   unsigned int **addr;
   arts_guid_t db_guid = arts_guid_reserve(ARTS_DB, 0);
   addr = (unsigned int **)arts_db_create_with_guid(
-      db_guid, sizeof(unsigned int *) * arts_get_total_gpus(), ARTS_DB_GPU,
+      db_guid, sizeof(unsigned int *) * arts_get_total_gpus(), ARTS_DB_GPU_PIN,
       NULL, NULL);
   for (uint64_t i = 0; i < arts_get_total_gpus(); i++) {
     addr[i] = dev_ptr_raw[i];
   }
 
-  arts_hint_t hint_0 = {0, 0};
+  arts_edt_hint_t hint_0 = {0, 0};
   arts_guid_t done_guid =
       arts_edt_create(done, 0, NULL, arts_get_total_gpus(), &hint_0);
 
@@ -167,14 +165,14 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   for (uint64_t i = 0; i < arts_get_total_gpus(); i++) {
     uint64_t args[] = {(uint64_t)done_guid, i};
     arts_gpu_hint_t lib_hint = {};
-    lib_hint.route = node_id;
+    lib_hint.rank = node_id;
     lib_hint.gpu = (int)i;
     lib_hint.lib = true;
     arts_guid_t edt_guid =
         arts_edt_create_gpu(thrust_sort, 2, args, 1, arts_from_dim3(grid),
                             arts_from_dim3(threads), &lib_hint);
     arts_gpu_hint_t kern_hint = {};
-    kern_hint.route = node_id;
+    kern_hint.rank = node_id;
     kern_hint.gpu = (int)i;
     kern_hint.end_guid = edt_guid;
     kern_hint.slot = 0;
@@ -182,7 +180,7 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_guid_t edt_guid2 =
         arts_edt_create_gpu(temp, 1, &i, 1, arts_from_dim3(grid),
                             arts_from_dim3(threads), &kern_hint);
-    arts_signal_edt(edt_guid2, 0, db_guid, DB_MODE_EW);
+    arts_add_dependence(db_guid, edt_guid2, 0, DB_MODE_RW);
   }
 }
 

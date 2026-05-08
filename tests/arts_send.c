@@ -53,11 +53,11 @@ void send_handler(void *args) {
     }
   }
   if (pass) {
-    arts_printf("CHECK %u of %u\n", arts_get_current_node(),
-                arts_get_total_nodes());
+    arts_printf("CHECK %u of %u\n", arts_get_current_rank(),
+                arts_get_total_ranks());
   }
 
-  if (arts_get_current_node() + 1 == arts_get_total_nodes()) {
+  if (arts_get_current_rank() + 1 == arts_get_total_ranks()) {
     arts_printf("Shutdown\n");
     arts_shutdown();
   }
@@ -71,7 +71,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   char **argv = (char **)paramv[1];
   num_elements = strtol(argv[1], NULL, 10);
   unsigned int size = sizeof(unsigned int) * num_elements;
-  for (unsigned int i = 0; i < arts_get_total_nodes(); i++) {
+  for (unsigned int i = 0; i < arts_get_total_ranks(); i++) {
     unsigned int *data = (unsigned int *)arts_malloc(size);
     for (unsigned int j = 0; j < num_elements; j++) {
       data[j] = j;

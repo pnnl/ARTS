@@ -44,12 +44,21 @@ extern "C" {
 #include "arts/counter/counter.h"
 #include "arts/counter/object_counter.h"
 #include "arts/defs.h"
+#include "arts/gas/route_table.h"
 #include "arts/runtime_types.h"
 #include "arts/system/topology.h"
 #ifdef ARTS_USE_CXL
 #include "arts/cxl/deque.h"
 #include <pthread.h>
 #endif
+
+/* Forward declaration: arts_tiered_pool_t is defined in
+ * arts/utils/tiered_pool.h.  We cannot include tiered_pool.h here because
+ * its inline functions depend on arts_thread_info / arts_node_info defined
+ * below.  arts_node_info therefore stores a pointer to the pool; the
+ * concrete allocation lives in scheduler.c (init) and is freed in
+ * arts_runtime_global_cleanup. */
+typedef struct arts_tiered_pool_s arts_tiered_pool_t;
 
 struct atomic_create_barrier_info_s {
   volatile unsigned int wait;
@@ -72,13 +81,13 @@ struct arts_runtime_shared_s {
   pthread_mutex_t cxl_local_lock;
   void *cxl_db_arena_start;
   void *cxl_db_arena_end;
-  unsigned int cxl_db_dev_count;       /**< Number of CXL DB arenas (devices). */
+  unsigned int cxl_db_dev_count; /**< Number of CXL DB arenas (devices). */
   volatile unsigned int cxl_db_rr_idx; /**< Round-robin device index counter. */
-  unsigned int cxl_db_static_device;   /**< Device index for static allocation. */
+  unsigned int cxl_db_static_device; /**< Device index for static allocation. */
 #endif
   struct arts_route_table_s **route_table;
   struct arts_route_table_s **gpu_route_table;
-  struct arts_route_table_s *remote_route_table;
+  struct arts_route_table_s *remote_route_table[ARTS_REMOTE_ROUTE_SHARDS];
   volatile bool **local_spin;
   /* Per-thread role, indexed by thread_id (0..total_thread_count-1).
    * Populated during arts_runtime_private_init so that shutdown paths
@@ -105,6 +114,10 @@ struct arts_runtime_shared_s {
    * the end of arts_actual_send (both success and error paths). Used by
    * the shutdown protocol to drain the outbox before tearing down. */
   volatile unsigned int outbox_pending;
+  /* Round-robin counter used by arts_db_create when the caller passes
+   * NULL hint (no node preference) — distributes home rank across all
+   * nodes so DBs aren't all pinned to the creator. */
+  volatile unsigned int db_rr_route;
   char *buf;
   int packet_size;
   volatile unsigned int shutdown_count;
@@ -137,6 +150,13 @@ struct arts_runtime_shared_s {
   arts_object_table_t **object_tables;   // [thread_id]
   arts_array_list_t **object_edt_traces; // [thread_id]
   arts_array_list_t **object_db_traces;  // [thread_id]
+  /* Per-rank pool of struct arts_event_dep_s nodes (Task 4o).  Allocated
+   * heap-side because arts_tiered_pool_t cannot be embedded by value here
+   * (its inline alloc/release reference arts_thread_info / arts_node_info
+   * defined below this struct, creating a circular include).  Lifetime
+   * matches arts_node_info: init in arts_runtime_node_init, destroy in
+   * arts_runtime_global_cleanup. */
+  arts_tiered_pool_t *event_dep_pool;
 } ARTS_ALIGNED(64);
 
 struct arts_runtime_private_s {
@@ -155,7 +175,6 @@ struct arts_runtime_private_s {
   arts_guid_t current_edt_guid;
   int edt_free;
   int local_counting;
-  unsigned int shad_lock;
   unsigned short drand_buf[3];
 };
 

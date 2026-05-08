@@ -109,11 +109,12 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== multinode_array_db ===\n");
 
-  unsigned int total = arts_get_total_nodes();
+  unsigned int total = arts_get_total_ranks();
   unsigned int total_elems = ELEMS_PER_NODE * total;
 
   arts_guid_t shut = arts_edt_create(shutdown_edt, 0, NULL, 1, NULL);
-  arts_guid_t epoch = arts_initialize_and_start_epoch(shut, 0);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), shut, 0);
+  arts_epoch_start(epoch);
 
   // Create distributed array — blocks spread across all nodes.
   arts_array_db_t *array = NULL;
@@ -131,8 +132,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     unsigned int remote_idx = ELEMS_PER_NODE; // first element on node 1
     uint64_t expected_param = (uint64_t)remote_idx * 10;
     arts_guid_t checker =
-        arts_edt_create_with_epoch(check_remote_get, 1, &expected_param, 1,
-                                   epoch, &(arts_hint_t){.route = 0});
+        arts_edt_create(check_remote_get, 1, &expected_param, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
     arts_get_from_array_db(checker, 0, array, remote_idx);
   }
 

@@ -125,13 +125,14 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== db_local_create ===\n");
 
-  arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+  arts_epoch_start(epoch);
 
   // Test 1: Local creation with explicit route = current node.
   void *ptr1 = NULL;
-  arts_hint_t hint1 = {.route = arts_get_current_node(), .id = 0};
+  arts_db_hint_t hint1 = {.rank = arts_get_current_rank()};
   arts_guid_t g1 = arts_db_create(&ptr1, NUM_ELEMS * sizeof(unsigned int),
-                                  ARTS_DB_LOCAL, &hint1);
+                                  ARTS_DB_PIN, ARTS_DB_PROP_NONE, &hint1);
   unsigned int *d1 = (unsigned int *)ptr1;
   for (unsigned int i = 0; i < NUM_ELEMS; i++) {
     d1[i] = i + 1;
@@ -139,24 +140,24 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_db_release(g1);
   uint64_t p1 = (uint64_t)g1;
   arts_guid_t e1 =
-      arts_edt_create_with_epoch(check_local, 1, &p1, 1, epoch, NULL);
-  arts_signal_edt(e1, 0, g1, DB_MODE_RO);
+      arts_edt_create(check_local, 1, &p1, 1, &(arts_edt_hint_t){.epoch = epoch});
+  arts_add_dependence(g1, e1, 0, DB_MODE_RO);
 
   // Test 2: NULL hint.
   void *ptr2 = NULL;
-  arts_guid_t g2 =
-      arts_db_create(&ptr2, sizeof(unsigned int), ARTS_DB_LOCAL, NULL);
+  arts_guid_t g2 = arts_db_create(&ptr2, sizeof(unsigned int), ARTS_DB_PIN,
+                                  ARTS_DB_PROP_NONE, NULL);
   *(unsigned int *)ptr2 = 42;
   arts_db_release(g2);
   uint64_t p2 = (uint64_t)g2;
   arts_guid_t e2 =
-      arts_edt_create_with_epoch(check_null_hint, 1, &p2, 1, epoch, NULL);
-  arts_signal_edt(e2, 0, g2, DB_MODE_RO);
+      arts_edt_create(check_null_hint, 1, &p2, 1, &(arts_edt_hint_t){.epoch = epoch});
+  arts_add_dependence(g2, e2, 0, DB_MODE_RO);
 
   // Test 3: EW ordering — writer then verifier.
   void *ptr3 = NULL;
   arts_guid_t g3 = arts_db_create(&ptr3, NUM_ELEMS * sizeof(unsigned int),
-                                  ARTS_DB_LOCAL, NULL);
+                                  ARTS_DB_PIN, ARTS_DB_PROP_NONE, NULL);
   unsigned int *d3 = (unsigned int *)ptr3;
   for (unsigned int i = 0; i < NUM_ELEMS; i++) {
     d3[i] = i + 1;
@@ -164,11 +165,11 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_db_release(g3);
 
   arts_guid_t e3b =
-      arts_edt_create_with_epoch(ew_verify, 0, NULL, 1, epoch, NULL);
+      arts_edt_create(ew_verify, 0, NULL, 1, &(arts_edt_hint_t){.epoch = epoch});
   arts_guid_t e3a =
-      arts_edt_create_with_epoch(ew_modify, 0, NULL, 1, epoch, NULL);
-  arts_add_dependence(g3, e3a, 0, DB_MODE_EW);
-  arts_add_dependence(g3, e3b, 0, DB_MODE_EW);
+      arts_edt_create(ew_modify, 0, NULL, 1, &(arts_edt_hint_t){.epoch = epoch});
+  arts_add_dependence(g3, e3a, 0, DB_MODE_RW);
+  arts_add_dependence(g3, e3b, 0, DB_MODE_RW);
 }
 
 int main(int argc, char **argv) {

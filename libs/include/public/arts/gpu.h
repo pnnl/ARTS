@@ -84,7 +84,7 @@ typedef struct {
  * @endcode
  */
 typedef struct {
-  unsigned int route;    /**< Target node rank. ARTS_HINT_CURRENT_NODE = current
+  unsigned int rank;     /**< Target node rank. ARTS_HINT_CURRENT_RANK = current
                               node (default when NULL hint). */
   uint64_t id;           /**< Compiler-assigned profiling ID. 0 = disabled. */
   int gpu;               /**< GPU device index. -1 = auto-select (default). */

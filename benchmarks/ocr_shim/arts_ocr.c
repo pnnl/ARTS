@@ -1,7 +1,7 @@
 /*
  * OCR-to-ARTS Compatibility Shim
  *
- * Implements the OCR v1.2.0 API using ARTS v2 primitives. OCR applications
+ * Implements the OCR v1.2.0 API using ARTS primitives. OCR applications
  * call ocrEdtCreate(), ocrDbCreate(), etc., and this shim translates those
  * calls into the corresponding arts_edt_create(), arts_db_create(), etc.
  *
@@ -18,10 +18,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 /*
  * Both ARTS and OCR define enum values with identical names but different
- * semantics (DB_MODE_NULL, DB_MODE_RO, DB_MODE_EW, DB_MODE_RW).
+ * semantics (DB_MODE_NULL, DB_MODE_RO, DB_MODE_RW, DB_MODE_RW).
  * ARTS: sequential (0,1,2,3...).  OCR: bitmask (0x0,0x1,0x2,0x4,0x8).
  *
  * Strategy: include OCR headers first (get the real OCR names), then redirect
@@ -43,13 +44,8 @@
 /* --- Redirect ARTS enum names so they don't collide with OCR's --- */
 #define DB_MODE_NULL ARTS_DB_MODE_NULL_
 #define DB_MODE_RO ARTS_DB_MODE_RO_
-#define DB_MODE_EW ARTS_DB_MODE_EW_
 #define DB_MODE_RW ARTS_DB_MODE_RW_
-#define DB_MODE_VALUE ARTS_DB_MODE_VALUE_
-#define DB_MODE_PTR ARTS_DB_MODE_PTR_
-#define DB_MODE_LC_SYNC ARTS_DB_MODE_LC_SYNC_
-#define DB_MODE_LC_NO_COPY ARTS_DB_MODE_LC_NO_COPY_
-#define DB_MODE_MEMSET ARTS_DB_MODE_MEMSET_
+#define DB_MODE_VAL ARTS_DB_MODE_VAL_
 
 /* OCR defined NULL_GUID as ocrGuid_t struct; save and undef for ARTS */
 #undef NULL_GUID
@@ -67,18 +63,15 @@
 /* Clean up the redirects */
 #undef DB_MODE_NULL
 #undef DB_MODE_RO
-#undef DB_MODE_EW
 #undef DB_MODE_RW
-#undef DB_MODE_VALUE
-#undef DB_MODE_PTR
-#undef DB_MODE_LC_SYNC
-#undef DB_MODE_LC_NO_COPY
-#undef DB_MODE_MEMSET
+#undef DB_MODE_VAL
 
-/* ARTS DB_MODE values we need (sequential: NULL=0, RO=1, EW=2) */
+/* ARTS DB_MODE values used by the shim (sequential: NULL=0, RO=1, RW=2,
+ * VAL=3). */
 #define ARTS_MODE_NULL ((arts_db_access_mode_t)ARTS_DB_MODE_NULL_)
 #define ARTS_MODE_RO ((arts_db_access_mode_t)ARTS_DB_MODE_RO_)
-#define ARTS_MODE_EW ((arts_db_access_mode_t)ARTS_DB_MODE_EW_)
+#define ARTS_MODE_RW ((arts_db_access_mode_t)ARTS_DB_MODE_RW_)
+#define ARTS_MODE_VAL ((arts_db_access_mode_t)ARTS_DB_MODE_VAL_)
 
 /* NULL GUID helpers */
 #define ARTS_NULL_GUID ((arts_guid_t)0x0)
@@ -199,13 +192,16 @@ static void performCollectiveReduction(CollectiveMetadata *meta) {
     meta->contribFlags[i] = 0;
   }
 
-  pthread_mutex_unlock(&meta->lock);
-
+  /* Fan out under lock so the next generation's add/satisfy cannot race
+   * with our reset/fan-out.  External callbacks (arts_db_create,
+   * arts_add_dependence, arts_event_satisfy_slot) only schedule work for
+   * other threads; they never re-enter this collective's lock on the
+   * current thread, so this cannot self-deadlock. */
   for (u32 i = 0; i < numDeps && i < MAX_COLLECTIVE_DEPENDENTS; i++) {
     if (localDeps[i] != NULL_GUID) {
       void *resultPtr;
-      arts_guid_t resultDb =
-          arts_db_create(&resultPtr, sizeof(double), ARTS_DB_DEFAULT, NULL);
+      arts_guid_t resultDb = arts_db_create(
+          &resultPtr, sizeof(double), ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
       *(double *)resultPtr = result;
 
       arts_type_t dstType = arts_guid_get_type(localDeps[i]);
@@ -213,15 +209,11 @@ static void performCollectiveReduction(CollectiveMetadata *meta) {
         arts_add_dependence(resultDb, localDeps[i], localSlots[i],
                             ARTS_MODE_RO);
       } else if (dstType == ARTS_EVENT) {
-        if (!arts_is_event_fired(localDeps[i])) {
-          arts_event_satisfy_slot(localDeps[i], resultDb,
-                                  ARTS_EVENT_LATCH_DECR_SLOT);
-        }
+        arts_event_satisfy_slot(localDeps[i], resultDb,
+                                ARTS_EVENT_LATCH_DECR_SLOT);
       }
     }
   }
-
-  pthread_mutex_lock(&meta->lock);
 }
 
 #define COLLECTIVE_HASH_SIZE 4096
@@ -366,24 +358,90 @@ typedef struct {
   u32 depc;
 } OcrEdtTemplate;
 
+/* Cross-rank-portable template GUID encoding.
+ *
+ * The OCR shim previously stored ocrEdtTemplate as a malloc'd struct
+ * and used the heap pointer as the "GUID".  That works under
+ * single-node OCR but breaks under fork-launched multinode: one
+ * rank's heap pointer is meaningless on another, so any cross-rank
+ * EDT_MOVE that carries a template GUID dereferences garbage.
+ *
+ * Benchmarks build non-PIE, so every funcPtr is a fixed absolute
+ * address — identical across forked ranks.  Pack the entire template
+ * into the GUID itself:
+ *
+ *   bits 63-48 (16) = depc   (0xFFFF = EDT_PARAM_UNK; max non-UNK 65534)
+ *   bits 47-32 (16) = paramc (0xFFFF = EDT_PARAM_UNK; max non-UNK 65534)
+ *   bits 31-0  (32) = funcPtr (4 GiB; non-PIE x86-64 .text segments
+ *                     are well below this in practice)
+ *
+ * 16 bits each for paramc/depc gives headroom for templates that
+ * dynamically size depc to thousands; a narrower split silently
+ * truncates those and strands the consumer.
+ *
+ * No magic tag is needed: callers always know the GUID came from
+ * ocrEdtTemplateCreate when they pass it to ocrEdtCreate or
+ * ocrEdtTemplateDestroy, so a runtime distinction from "other"
+ * GUIDs is unnecessary. */
+#define ARTS_TPL_FUNCPTR_BITS 32
+#define ARTS_TPL_FUNCPTR_MASK ((1ULL << ARTS_TPL_FUNCPTR_BITS) - 1)
+#define ARTS_TPL_PARAMC_SHIFT ARTS_TPL_FUNCPTR_BITS
+#define ARTS_TPL_DEPC_SHIFT (ARTS_TPL_PARAMC_SHIFT + 16)
+#define ARTS_TPL_COUNT_UNK 0xFFFFu
+#define ARTS_TPL_COUNT_MAX 0xFFFEu
+
+static inline OcrEdtTemplate arts_tpl_decode(ocrGuid_t g) {
+  uint64_t v = (uint64_t)g.guid;
+  OcrEdtTemplate t;
+  t.funcPtr = (ocrEdt_t)(uintptr_t)(v & ARTS_TPL_FUNCPTR_MASK);
+  uint32_t enc_paramc = (uint32_t)((v >> ARTS_TPL_PARAMC_SHIFT) & 0xFFFFu);
+  uint32_t enc_depc = (uint32_t)((v >> ARTS_TPL_DEPC_SHIFT) & 0xFFFFu);
+  /* 0xFFFF sentinel = EDT_PARAM_UNK (caller MUST provide explicit value
+   * at ocrEdtCreate; passing EDT_PARAM_DEF here is an OCR-app bug). */
+  t.paramc = (enc_paramc == ARTS_TPL_COUNT_UNK) ? EDT_PARAM_UNK : enc_paramc;
+  t.depc = (enc_depc == ARTS_TPL_COUNT_UNK) ? EDT_PARAM_UNK : enc_depc;
+  return t;
+}
+
 u8 ocrEdtTemplateCreate_internal(ocrGuid_t *guid, ocrEdt_t funcPtr, u32 paramc,
                                  u32 depc, const char *funcName) {
   (void)funcName;
-  OcrEdtTemplate *templ = malloc(sizeof(OcrEdtTemplate));
-  if (!templ) {
-    return 1;
+  uint64_t fp = (uint64_t)(uintptr_t)funcPtr;
+  if ((fp & ~ARTS_TPL_FUNCPTR_MASK) != 0) {
+    /* funcPtr beyond 32 bits — non-PIE x86-64 .text never reaches this
+     * boundary in practice; treat as a build-time invariant violation. */
+    return OCR_EINVAL;
   }
-  templ->funcPtr = funcPtr;
-  templ->paramc = paramc;
-  templ->depc = depc;
-
-  guid->guid = (intptr_t)templ;
+  /* OCR allows EDT_PARAM_UNK ((u32)-1) for paramc/depc when the count is
+   * dynamic at template creation but provided explicitly at every
+   * ocrEdtCreate call (reductionLaunch is the canonical user).  Encode
+   * EDT_PARAM_UNK as the 0xFFFF sentinel; non-UNK values must fit in 16
+   * bits (max 65534, i.e. ARTS_TPL_COUNT_MAX). */
+  uint16_t enc_paramc;
+  if (paramc == EDT_PARAM_UNK) {
+    enc_paramc = ARTS_TPL_COUNT_UNK;
+  } else if (paramc > ARTS_TPL_COUNT_MAX) {
+    return OCR_EINVAL;
+  } else {
+    enc_paramc = (uint16_t)paramc;
+  }
+  uint16_t enc_depc;
+  if (depc == EDT_PARAM_UNK) {
+    enc_depc = ARTS_TPL_COUNT_UNK;
+  } else if (depc > ARTS_TPL_COUNT_MAX) {
+    return OCR_EINVAL;
+  } else {
+    enc_depc = (uint16_t)depc;
+  }
+  uint64_t v = fp | ((uint64_t)enc_paramc << ARTS_TPL_PARAMC_SHIFT) |
+               ((uint64_t)enc_depc << ARTS_TPL_DEPC_SHIFT);
+  guid->guid = (intptr_t)v;
   return 0;
 }
 
 u8 ocrEdtTemplateDestroy(ocrGuid_t guid) {
-  OcrEdtTemplate *templ = (OcrEdtTemplate *)guid.guid;
-  free(templ);
+  /* Encoded GUID has no backing allocation. */
+  (void)guid;
   return 0;
 }
 
@@ -436,7 +494,7 @@ static void ocr_edt_trampoline(uint32_t paramc, const uint64_t *paramv,
   arts_guid_t guidOrEpoch = (arts_guid_t)paramv[2];
   arts_guid_t helperOrOutEvt = (arts_guid_t)paramv[3];
   u64 flags = paramv[4];
-  /* ARTS v2 paramv is const; copy original params for OCR's non-const API */
+  /* ARTS paramv is const; copy original params for OCR's non-const API */
   u64 *origParamv = NULL;
   u64 origParamBuf[origParamc > 0 ? origParamc : 1];
   if (origParamc > 0) {
@@ -467,7 +525,7 @@ static void ocr_edt_trampoline(uint32_t paramc, const uint64_t *paramv,
      * and is NOT on the caller's TLS stack, arts_check_epoch_is_root() fails,
      * and the EDT gets the caller's epoch instead (often NULL_GUID).
      *
-     * arts_start_epoch() must be called here to:
+     * arts_epoch_start() must be called here to:
      *   (a) push the finish epoch onto TLS so child EDTs inherit it, and
      *   (b) increment active_count by 1, matching the +1 finished_count
      *       that arts_increment_finished_epoch_list() adds for this entry
@@ -475,7 +533,7 @@ static void ocr_edt_trampoline(uint32_t paramc, const uint64_t *paramv,
      *
      * Net accounting: active = 1 (this call) + N (children), finished =
      * 1 (this TLS entry) + N (children) → epoch fires when all complete. */
-    arts_start_epoch(guidOrEpoch);
+    arts_epoch_start(guidOrEpoch);
   }
 
   ocrGuid_t returnGuid = func(origParamc, origParamv, depc, ocrDepv);
@@ -487,11 +545,9 @@ static void ocr_edt_trampoline(uint32_t paramc, const uint64_t *paramv,
 
   if (isFinishEdt && helperOrOutEvt != NULL_GUID) {
     if (returnGuid.guid != NULL_GUID) {
-      /* arts_add_dependence handles both DB (immediate satisfy) and
-       * event (register waiter) sources uniformly. */
       arts_add_dependence(returnGuid.guid, helperOrOutEvt, 1, ARTS_MODE_RO);
     } else {
-      arts_signal_edt_value(helperOrOutEvt, 1, 0);
+      arts_add_dependence((arts_guid_t)(0), helperOrOutEvt, 1, ARTS_MODE_VAL);
     }
   }
 }
@@ -519,40 +575,46 @@ static void warn_oversized_affinity_once(const char *what, u64 val) {
   }
 }
 
-static unsigned int extract_edt_route_from_hint(ocrHint_t *hint) {
+/* Route extraction for OCR EDT/DB creation.
+ *
+ * The shim is a thin wrapper: distribution decisions belong to ARTS
+ * runtime, not here.  These helpers only translate an explicit
+ * OCR_HINT_*_AFFINITY value into an ARTS rank.  When no affinity hint
+ * is set, callers fall back to ARTS's own defaults:
+ *   - arts_edt_create: hint=NULL → self-rank (caller-local EDT)
+ *   - arts_db_create:  hint=NULL → round-robin starting at self-rank
+ *                                  (atomic counter, see db.c)
+ *
+ * Both helpers return -1 when no affinity hint is set, signaling to the
+ * caller "no override; let ARTS decide". */
+static int extract_edt_affinity(ocrHint_t *hint) {
   if (hint == NULL || hint->type != OCR_HINT_EDT_T) {
-    return arts_global_rank_id;
+    return -1;
   }
   int idx = OCR_HINT_EDT_AFFINITY - OCR_HINT_EDT_PROP_START - 1;
-  if (idx < 0) {
-    return arts_global_rank_id;
-  }
-  if (!(hint->propMask & (1ULL << idx))) {
-    return arts_global_rank_id;
+  if (idx < 0 || !(hint->propMask & (1ULL << idx))) {
+    return -1;
   }
   u64 val = hint->args.propEDT[idx];
   if (val >= arts_global_rank_count) {
     warn_oversized_affinity_once("EDT", val);
   }
-  return (unsigned int)(val % arts_global_rank_count);
+  return (int)(val % arts_global_rank_count);
 }
 
-static unsigned int extract_db_route_from_hint(ocrHint_t *hint) {
+static int extract_db_affinity(ocrHint_t *hint) {
   if (hint == NULL || hint->type != OCR_HINT_DB_T) {
-    return arts_global_rank_id;
+    return -1;
   }
   int idx = OCR_HINT_DB_AFFINITY - OCR_HINT_DB_PROP_START - 1;
-  if (idx < 0) {
-    return arts_global_rank_id;
-  }
-  if (!(hint->propMask & (1ULL << idx))) {
-    return arts_global_rank_id;
+  if (idx < 0 || !(hint->propMask & (1ULL << idx))) {
+    return -1;
   }
   u64 val = hint->args.propDB[idx];
   if (val >= arts_global_rank_count) {
     warn_oversized_affinity_once("DB", val);
   }
-  return (unsigned int)(val % arts_global_rank_count);
+  return (int)(val % arts_global_rank_count);
 }
 
 /* =========================================================================
@@ -562,15 +624,26 @@ static unsigned int extract_db_route_from_hint(ocrHint_t *hint) {
 u8 ocrEdtCreate(ocrGuid_t *guid, ocrGuid_t templateGuid, u32 paramc,
                 u64 *paramv, u32 depc, ocrGuid_t *depv, u16 properties,
                 ocrHint_t *hint, ocrGuid_t *outputEvent) {
-  OcrEdtTemplate *templ = (OcrEdtTemplate *)templateGuid.guid;
-  if (!templ) {
+  /* Decode the cross-rank-portable template GUID (see arts_tpl_*
+   * helpers above).  templateGuid carries the full (funcPtr, paramc,
+   * depc) tuple and is identical on every rank thanks to non-PIE
+   * binary loading.  Reject NULL_GUID early so funcPtr=NULL never
+   * reaches the EDT trampoline. */
+  if (templateGuid.guid == 0) {
     return OCR_EINVAL;
   }
+  OcrEdtTemplate templ_local = arts_tpl_decode(templateGuid);
+  OcrEdtTemplate *templ = &templ_local;
 
   u32 actualParamc = (paramc == EDT_PARAM_DEF) ? templ->paramc : paramc;
   u32 actualDepc = (depc == EDT_PARAM_DEF) ? templ->depc : depc;
 
-  unsigned int route = extract_edt_route_from_hint(hint);
+  /* hint affinity → ARTS rank, else self-rank (matches arts_edt_create's
+   * hint=NULL fallback).  ARTS does NOT round-robin EDTs by default — the
+   * intended policy is "EDT runs on the calling rank unless the user asks
+   * otherwise." */
+  int aff = extract_edt_affinity(hint);
+  unsigned int rank = (aff < 0) ? arts_global_rank_id : (unsigned int)aff;
   arts_guid_t outEvt = NULL_GUID;
   arts_guid_t epochGuid = NULL_GUID;
   bool isFinishEdt = (properties & EDT_PROP_FINISH) != 0;
@@ -580,7 +653,10 @@ u8 ocrEdtCreate(ocrGuid_t *guid, ocrGuid_t templateGuid, u32 paramc,
     if (oevtValid) {
       outEvt = outputEvent->guid;
     } else {
-      outEvt = arts_event_create(route, ARTS_EVENT_IDEM, 1, NULL_GUID);
+      arts_event_hint_t h = ARTS_EVENT_HINT_DEFAULTS;
+      h.rank = rank;
+      h.auto_destroy = false; /* IDEM: persist for late ocrAddDependence */
+      outEvt = arts_event_create(&h);
       if (outEvt == NULL_GUID) {
         return OCR_ENOMEM;
       }
@@ -593,11 +669,11 @@ u8 ocrEdtCreate(ocrGuid_t *guid, ocrGuid_t templateGuid, u32 paramc,
     uint64_t helperParams[1];
     helperParams[0] = (uint64_t)outEvt;
 
-    arts_hint_t h = {.route = route};
+    arts_edt_hint_t h = {.rank = rank};
     helperEdtGuid =
         arts_edt_create(epoch_termination_edt, 1, helperParams, 2, &h);
 
-    epochGuid = arts_initialize_epoch(route, helperEdtGuid, 0);
+    epochGuid = arts_epoch_create(rank, helperEdtGuid, 0);
   }
   /* When EDT_PROP_FINISH is set but there is no output event, we
    * intentionally do NOT create a child epoch.  Without a child epoch the
@@ -622,16 +698,13 @@ u8 ocrEdtCreate(ocrGuid_t *guid, ocrGuid_t templateGuid, u32 paramc,
   ocr_copy_paramv_safe(&artsParamv[5], paramv, actualParamc);
 
   arts_guid_t edtGuid;
-  arts_hint_t edtHint = {.route = route};
+  arts_edt_hint_t edtHint = {.rank = rank};
 
   if (isFinishEdt && epochGuid != NULL_GUID) {
-    edtGuid =
-        arts_edt_create_with_epoch(ocr_edt_trampoline, artsParamc, artsParamv,
-                                   actualDepc, epochGuid, &edtHint);
-  } else {
-    edtGuid = arts_edt_create(ocr_edt_trampoline, artsParamc, artsParamv,
-                              actualDepc, &edtHint);
+    edtHint.epoch = epochGuid;
   }
+  edtGuid = arts_edt_create(ocr_edt_trampoline, artsParamc, artsParamv,
+                            actualDepc, &edtHint);
 
   arts_free(artsParamv);
 
@@ -651,7 +724,7 @@ u8 ocrEdtCreate(ocrGuid_t *guid, ocrGuid_t templateGuid, u32 paramc,
       if (ocrGuidIsNull(depv[i])) {
         /* NULL_GUID = pre-satisfied slot (OCR spec §2.4.3).
          * Signal immediately so the EDT doesn't wait forever. */
-        arts_signal_edt_value(edtGuid, i, 0);
+        arts_add_dependence((arts_guid_t)(0), edtGuid, i, ARTS_MODE_VAL);
       } else if (!ocrGuidIsUninitialized(depv[i])) {
         /* Valid GUID — signal now.  UNINITIALIZED_GUID slots are
          * left open for later ocrAddDependence calls. */
@@ -674,49 +747,60 @@ u8 ocrEdtDestroy(ocrGuid_t guid) {
  * Event Management
  * ========================================================================= */
 
-u8 ocrEventCreate(ocrGuid_t *guid, ocrEventTypes_t eventType, u16 properties) {
-  unsigned int latchCount = 1;
-
-  if (eventType == OCR_EVENT_LATCH_T) {
-    latchCount = 0;
-  }
-
-  arts_event_types_t artsEvtType;
-  switch (eventType) {
-  case OCR_EVENT_ONCE_T:
-    artsEvtType = ARTS_EVENT_IDEM;
-    break;
-  case OCR_EVENT_STICKY_T:
-    artsEvtType = ARTS_EVENT_STICKY;
+/*
+ * Map an OCR event flavor + property bits onto a hint snapshot for the
+ * unified arts_event_create API.  All OCR
+ * flavors collapse onto a single ARTS event type; behavior is selected
+ * entirely via hint fields (latch / auto_destroy / multiple_fire / etc.).
+ *
+ * Default hint = OCR ONCE_T (latch=1, auto_destroy=true, single fire).
+ * Each case overrides only the fields that diverge.
+ */
+static arts_event_hint_t ocr_event_kind_to_hint(ocrEventTypes_t kind,
+                                                u16 properties) {
+  (void)properties;
+  arts_event_hint_t h = ARTS_EVENT_HINT_DEFAULTS;
+  switch (kind) {
+  case OCR_EVENT_ONCE_T: /* defaults */
     break;
   case OCR_EVENT_IDEM_T:
-    artsEvtType = ARTS_EVENT_IDEM;
+    h.auto_destroy = false;
+    break;
+  case OCR_EVENT_STICKY_T:
+    h.auto_destroy = false;
+    h.negative_latch_allowed = false;
     break;
   case OCR_EVENT_LATCH_T:
-    artsEvtType = ARTS_EVENT_LATCH;
+    h.latch = 0; /* caller may override via params */
+    break;
+  case OCR_EVENT_COUNTED_T:
+    h.auto_destroy = false;
     break;
   case OCR_EVENT_CHANNEL_T:
-    artsEvtType = ARTS_EVENT_CHANNEL;
-    latchCount = 1; /* Satisfy-channel: needs both satisfy + addDep to fire. */
+    h.multiple_fire = true;
+    h.latch = 1;
+    h.nb_deps_required = 1;
     break;
   default:
-    return 1;
+    break;
   }
+  return h;
+}
 
+u8 ocrEventCreate(ocrGuid_t *guid, ocrEventTypes_t eventType, u16 properties) {
+  arts_event_hint_t h = ocr_event_kind_to_hint(eventType, properties);
   if (properties & GUID_PROP_IS_LABELED) {
-    arts_guid_t result = arts_event_create_with_guid(guid->guid, artsEvtType,
-                                                     latchCount, NULL_GUID);
+    h.guid = guid->guid;
+    arts_guid_t result = arts_event_create(&h);
     if (result == NULL_GUID && (properties & GUID_PROP_CHECK)) {
       return OCR_EGUIDEXISTS;
     }
     return 0;
   }
-
-  guid->guid = arts_event_create(arts_global_rank_id, artsEvtType, latchCount,
-                                 NULL_GUID);
-  if (guid->guid == NULL_GUID) {
+  arts_guid_t g = arts_event_create(&h);
+  if (g == NULL_GUID)
     return OCR_ENOMEM;
-  }
+  guid->guid = g;
   return 0;
 }
 
@@ -740,66 +824,19 @@ u8 ocrEventDestroy(ocrGuid_t guid) {
   return 0;
 }
 
-/*
- * Re-satisfy guard:
- *
- * OCR STICKY/IDEM/ONCE/COUNTED events all fire once and treat subsequent
- * satisfies as no-ops (per OCR spec).  ARTS handles this correctly for
- * IDEM (silent drop) and STICKY (warn + drop) inside arts_event_satisfy_slot
- * itself, but raises ARTS_ERROR for LATCH on a re-satisfy of an already-fired
- * latch.
- *
- * The guard below maps OCR's "extra satisfies are no-ops" semantics onto
- * ARTS LATCH (which would otherwise abort the program).  For IDEM/STICKY
- * the guard is redundant with ARTS but harmless.  Channel events bypass
- * the guard because they have native generation-based re-fire support.
- */
 u8 ocrEventSatisfy(ocrGuid_t eventGuid, ocrGuid_t dataGuid) {
-  if (arts_is_event_fired(eventGuid.guid)) {
-    return 0;
-  }
   arts_event_satisfy_slot(eventGuid.guid, dataGuid.guid,
                           ARTS_EVENT_LATCH_DECR_SLOT);
   return 0;
 }
 
 u8 ocrEventSatisfySlot(ocrGuid_t eventGuid, ocrGuid_t dataGuid, u32 slot) {
-  if (arts_is_event_fired(eventGuid.guid)) {
-    return 0;
-  }
   arts_event_satisfy_slot(eventGuid.guid, dataGuid.guid, slot);
   return 0;
 }
 
 u8 ocrEventCreateParams(ocrGuid_t *guid, ocrEventTypes_t eventType,
                         u16 properties, ocrEventParams_t *params) {
-
-  if (eventType == OCR_EVENT_COUNTED_T && params != NULL) {
-    /*
-     * OCR COUNTED events fire on ONE satisfy call (like ONCE).  The
-     * params->EVENT_COUNTED.nbDeps value tracks expected downstream
-     * registrations for auto-destruction — it is NOT the number of
-     * satisfies needed to fire.  Map to ARTS IDEM (latch=1, persist,
-     * silent re-satisfy) so late-arriving ocrAddDependence callers
-     * get signaled immediately.
-     */
-
-    if (properties & GUID_PROP_IS_LABELED) {
-      arts_guid_t result = arts_event_create_with_guid(
-          guid->guid, ARTS_EVENT_IDEM, 1, NULL_GUID);
-      if (result == NULL_GUID && (properties & GUID_PROP_CHECK)) {
-        return OCR_EGUIDEXISTS;
-      }
-      return 0;
-    }
-
-    guid->guid =
-        arts_event_create(arts_global_rank_id, ARTS_EVENT_IDEM, 1, NULL_GUID);
-    if (guid->guid == NULL_GUID) {
-      return OCR_ENOMEM;
-    }
-    return 0;
-  }
 
   if (eventType == OCR_EVENT_COLLECTIVE_T && params != NULL) {
     u32 nbContribs = params->EVENT_COLLECTIVE.nbContribs;
@@ -816,8 +853,14 @@ u8 ocrEventCreateParams(ocrGuid_t *guid, ocrEventTypes_t eventType,
     }
 
     void *metaPtr;
+    /* PIN: Collective metadata is node-local shared state accessed by all
+     * contributing EDTs without going through RC acquire/release cycles.
+     * RC type would give each EDT its own working-copy view, so writes
+     * from the creator EDT (nbContribs etc.) would not be visible to
+     * subsequent satisfy/addDep callers — they would see zeros and the
+     * reduction would never fire (count == nbContribs == 0). */
     arts_guid_t metaDb = arts_db_create(&metaPtr, sizeof(CollectiveMetadata),
-                                        ARTS_DB_DEFAULT, NULL);
+                                        ARTS_DB_PIN, ARTS_DB_PROP_NONE, NULL);
     if (metaDb == NULL_GUID) {
       return OCR_ENOMEM;
     }
@@ -868,30 +911,43 @@ u8 ocrEventCreateParams(ocrGuid_t *guid, ocrEventTypes_t eventType,
     return 0;
   }
 
+  arts_event_hint_t h = ocr_event_kind_to_hint(eventType, properties);
+
+  if (eventType == OCR_EVENT_LATCH_T && params != NULL) {
+    h.latch = (int32_t)params->EVENT_LATCH.counter;
+  }
+  if (eventType == OCR_EVENT_COUNTED_T && params != NULL) {
+    h.nb_deps_required = 1;
+    h.max_nb_deps = (uint32_t)params->EVENT_COUNTED.nbDeps;
+  }
   if (eventType == OCR_EVENT_CHANNEL_T && params != NULL) {
-    /* params->EVENT_CHANNEL.maxGen is informational only — ARTS channel
-     * versions grow dynamically via the linked list, so we don't need
-     * to pre-allocate a queue.  Just create a native CHANNEL event. */
-    (void)params->EVENT_CHANNEL.maxGen;
-
-    if (properties & GUID_PROP_IS_LABELED) {
-      arts_guid_t result = arts_event_create_with_guid(
-          guid->guid, ARTS_EVENT_CHANNEL, 1, NULL_GUID);
-      if (result == NULL_GUID && (properties & GUID_PROP_CHECK)) {
-        return OCR_EGUIDEXISTS;
-      }
-      return 0;
+    /* OCR 1.2 §B.5.2: nbSat and nbDeps are restricted to 1.  ARTS enforces
+     * that constraint at the shim — generalized values would require a
+     * non-trivial change to the channel drain loop (currently fires one
+     * data-dep pair per generation). */
+    if (params->EVENT_CHANNEL.nbSat != 1 || params->EVENT_CHANNEL.nbDeps != 1) {
+      fprintf(stderr,
+              "[ARTS] CHANNEL nbSat=%u nbDeps=%u: only nbSat=nbDeps=1 "
+              "supported (OCR 1.2 §B.5.2)\n",
+              params->EVENT_CHANNEL.nbSat, params->EVENT_CHANNEL.nbDeps);
+      return OCR_EINVAL;
     }
+    /* maxGen is implementation-driven — ARTS scales unbounded via mpsc. */
+  }
 
-    guid->guid = arts_event_create(arts_global_rank_id, ARTS_EVENT_CHANNEL, 1,
-                                   NULL_GUID);
-    if (guid->guid == NULL_GUID) {
-      return OCR_ENOMEM;
+  if (properties & GUID_PROP_IS_LABELED) {
+    h.guid = guid->guid;
+    arts_guid_t result = arts_event_create(&h);
+    if (result == NULL_GUID && (properties & GUID_PROP_CHECK)) {
+      return OCR_EGUIDEXISTS;
     }
     return 0;
   }
-
-  return ocrEventCreate(guid, eventType, properties);
+  arts_guid_t g = arts_event_create(&h);
+  if (g == NULL_GUID)
+    return OCR_ENOMEM;
+  guid->guid = g;
+  return 0;
 }
 
 u8 ocrEventCollectiveSatisfySlot(ocrGuid_t eventGuid, void *dataPtr,
@@ -899,9 +955,6 @@ u8 ocrEventCollectiveSatisfySlot(ocrGuid_t eventGuid, void *dataPtr,
   arts_guid_t metaDbGuid = lookupCollectiveMeta(eventGuid.guid);
 
   if (metaDbGuid == NULL_GUID) {
-    if (arts_is_event_fired(eventGuid.guid)) {
-      return OCR_ENOP;
-    }
     arts_guid_t dataGuid =
         (dataPtr != NULL) ? (arts_guid_t)(uintptr_t)dataPtr : NULL_GUID;
     arts_event_satisfy_slot(eventGuid.guid, dataGuid, islot);
@@ -910,14 +963,13 @@ u8 ocrEventCollectiveSatisfySlot(ocrGuid_t eventGuid, void *dataPtr,
 
   /* Hold the route table lookup ref for the entire critical section so
    * the metadata DB cannot be destroyed (e.g., by a concurrent
-   * ocrEventDestroy) while we're touching its fields.  Pair with the
-   * matching return_db at every exit. */
-  void *raw = arts_route_table_lookup_db(metaDbGuid, NULL, false);
+   * ocrEventDestroy) while we're touching its fields.  paired
+   * arts_route_table_release at every exit. */
+  struct arts_db_s *raw = arts_route_table_lookup_db_safe(metaDbGuid);
   if (raw == NULL) {
     return OCR_EFAULT;
   }
-  CollectiveMetadata *meta =
-      (CollectiveMetadata *)((struct arts_db_s *)raw + 1);
+  CollectiveMetadata *meta = (CollectiveMetadata *)(raw + 1);
 
   double value = 0.0;
   if (dataPtr != NULL) {
@@ -939,7 +991,7 @@ u8 ocrEventCollectiveSatisfySlot(ocrGuid_t eventGuid, void *dataPtr,
   }
 
   pthread_mutex_unlock(&meta->lock);
-  arts_route_table_return_db(metaDbGuid, false);
+  arts_route_table_release(metaDbGuid);
 
   return 0;
 }
@@ -951,19 +1003,24 @@ u8 ocrEventCollectiveSatisfySlot(ocrGuid_t eventGuid, void *dataPtr,
 u8 ocrDbCreate(ocrGuid_t *db, void **addr, u64 len, u16 flags, ocrHint_t *hint,
                ocrInDbAllocator_t allocator) {
   (void)allocator;
+  int aff = extract_db_affinity(hint);
 
   if (flags & GUID_PROP_IS_LABELED) {
     arts_guid_t labeledGuid = db->guid;
 
-    void *data =
-        arts_db_create_with_guid(labeledGuid, len, ARTS_DB_DEFAULT, NULL, NULL);
+    void *data = arts_db_create_with_guid(labeledGuid, len, ARTS_DB_DEFAULT,
+                                          ARTS_DB_PROP_NONE, NULL);
     if (data == NULL) {
       /* Labeled GUID already taken — fall back to looking it up so the
-       * caller still gets a valid pointer. */
-      data = arts_route_table_lookup_db(labeledGuid, NULL, false);
-      if (data != NULL) {
-        *addr = (void *)((struct arts_db_s *)data + 1);
-        arts_route_table_return_db(labeledGuid, false);
+       * caller still gets a valid pointer.  lookup_db_safe pairs
+       * with release immediately (the descriptor lifetime is owned by
+       * route_table; the user data pointer remains valid because the DB
+       * itself wasn't destroyed). */
+      struct arts_db_s *db_existing =
+          arts_route_table_lookup_db_safe(labeledGuid);
+      if (db_existing != NULL) {
+        *addr = (void *)(db_existing + 1);
+        arts_route_table_release(labeledGuid);
         /* Match ocrEventCreate's labeling convention: only surface
          * EGUIDEXISTS when the caller asked to be told via GUID_PROP_CHECK. */
         return (flags & GUID_PROP_CHECK) ? OCR_EGUIDEXISTS : 0;
@@ -974,9 +1031,17 @@ u8 ocrDbCreate(ocrGuid_t *db, void **addr, u64 len, u16 flags, ocrHint_t *hint,
     return 0;
   }
 
-  unsigned int route = extract_db_route_from_hint(hint);
-  arts_hint_t artsHint = {.route = route};
-  db->guid = arts_db_create(addr, len, ARTS_DB_DEFAULT, &artsHint);
+  /* No affinity hint → pass NULL to arts_db_create so its built-in
+   * round-robin (atomic counter starting at self-rank, see db.c) takes
+   * effect.  Explicit affinity → wrap in arts_db_hint_t. */
+  arts_db_hint_t artsHint;
+  const arts_db_hint_t *hintp = NULL;
+  if (aff >= 0) {
+    artsHint = (arts_db_hint_t){.rank = (unsigned int)aff};
+    hintp = &artsHint;
+  }
+  db->guid =
+      arts_db_create(addr, len, ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, hintp);
   if (db->guid == NULL_GUID) {
     return OCR_ENOMEM;
   }
@@ -985,13 +1050,23 @@ u8 ocrDbCreate(ocrGuid_t *db, void **addr, u64 len, u16 flags, ocrHint_t *hint,
 }
 
 u8 ocrDbDestroy(ocrGuid_t db) {
-  /* OCR spec: ocrDbDestroy marks the DB for destruction.  If the calling
-   * EDT has acquired this DB, arts_db_destroy implicitly releases it.
-   * The route table's deferred deletion keeps the DB alive while other
-   * EDTs still hold route table references. */
-  if (!ocrGuidIsNull(db)) {
-    arts_db_destroy(db.guid);
-  }
+  /* OCR spec: ocrDbDestroy marks the DB for destruction.
+   *
+   * Several real-world OCR apps call ocrDbDestroy on intermediate DBs
+   * while later sibling EDTs still hold add_dependence wirings to the
+   * same GUIDs.  That is use-after-destroy by OCR spec, but the
+   * pattern is entrenched in shipped apps.  The underlying runtime
+   * propagates the destroyed state correctly (NULL data in the route
+   * entry, DB_DESTROYED waking parked waiters), but app bodies that
+   * dereference depv[slot].ptr unconditionally would still segfault.
+   *
+   * For pragmatic shim compatibility, skip the destroy and let the DB
+   * live until process-exit cleanup.  This trades a bounded memory
+   * leak (sized to the app's working set) for OCR-app correctness.
+   * arts_db_destroy is still reachable from the collective reduction
+   * path in this file, where the lifecycle is shim-internal and
+   * well-formed. */
+  (void)db;
   return 0;
 }
 
@@ -1019,14 +1094,14 @@ u8 ocrDbRelease(ocrGuid_t db) {
  *
  * IMPORTANT: After the macro cleanup in the header section, bare
  * DB_MODE_RO/EW/RW names resolve to OCR enum constants (0x8/0x4/0x2),
- * NOT ARTS values.  Always use ARTS_MODE_RO/ARTS_MODE_EW for ARTS values.
+ * NOT ARTS values.  Always use ARTS_MODE_RO/ARTS_MODE_RW for ARTS values.
  */
 static arts_db_access_mode_t ocr_to_arts_mode(ocrDbAccessMode_t ocr_mode) {
   switch (ocr_mode) {
-  case DB_MODE_EW: /* OCR 0x4 → ARTS EW */
-    return ARTS_MODE_EW;
-  case DB_MODE_RW: /* OCR 0x2 → ARTS EW (EXPERIMENT) */
-    return ARTS_MODE_EW;
+  case DB_MODE_EW: /* OCR 0x4 → ARTS RW */
+    return ARTS_MODE_RW;
+  case DB_MODE_RW: /* OCR 0x2 → ARTS RW */
+    return ARTS_MODE_RW;
   case DB_MODE_NULL: /* OCR 0x0 → ARTS NULL (control-only dependence) */
     return ARTS_MODE_NULL;
   case DB_MODE_RO: /* OCR 0x8 → ARTS RO */
@@ -1049,9 +1124,8 @@ static arts_db_access_mode_t ocr_to_arts_mode(ocrDbAccessMode_t ocr_mode) {
  */
 static u32 arts_to_ocr_mode(arts_db_access_mode_t arts_mode) {
   switch (arts_mode) {
-  case ARTS_DB_MODE_EW_:
-  case ARTS_DB_MODE_MEMSET_:
-    return DB_MODE_EW;
+  case ARTS_DB_MODE_RW_:
+    return DB_MODE_RW;
   case ARTS_DB_MODE_NULL_:
     return DB_MODE_NULL;
   case ARTS_DB_MODE_RO_:
@@ -1067,7 +1141,8 @@ u8 ocrAddDependence(ocrGuid_t source, ocrGuid_t destination, u32 slot,
   if (ocrGuidIsNull(source)) {
     arts_type_t dstType = arts_guid_get_type(destination.guid);
     if (dstType == ARTS_EDT) {
-      arts_signal_edt_value(destination.guid, slot, 0);
+      arts_add_dependence((arts_guid_t)(0), destination.guid, slot,
+                          ARTS_MODE_VAL);
     } else if (dstType == ARTS_EVENT) {
       arts_event_satisfy_slot(destination.guid, NULL_GUID,
                               ARTS_EVENT_LATCH_DECR_SLOT);
@@ -1122,24 +1197,29 @@ u8 ocrAddDependenceSlot(ocrGuid_t source, u32 sslot, ocrGuid_t destination,
 
   if (metaDbGuid != NULL_GUID) {
     /* Hold the route table ref for the duration we touch the metadata.
-     * Pair with return_db at every exit. */
-    void *raw = arts_route_table_lookup_db(metaDbGuid, NULL, false);
+     * paired arts_route_table_release at every exit. */
+    struct arts_db_s *raw = arts_route_table_lookup_db_safe(metaDbGuid);
     if (raw == NULL) {
       return OCR_EFAULT;
     }
-    CollectiveMetadata *meta =
-        (CollectiveMetadata *)((struct arts_db_s *)raw + 1);
-    u32 idx = __sync_fetch_and_add(&meta->numDependents, 1);
+    CollectiveMetadata *meta = (CollectiveMetadata *)(raw + 1);
+    /* Hold meta->lock so the (numDependents++, dependents[idx]=guid) pair is
+     * atomic w.r.t. performCollectiveReduction, which reads numDependents
+     * and dependents[] under the same lock.  Without this, the last
+     * contributor could observe an incremented count but a not-yet-written
+     * dependents[idx]==NULL_GUID slot and skip that rank in the fan-out. */
+    pthread_mutex_lock(&meta->lock);
+    u32 idx = meta->numDependents;
     if (idx >= MAX_COLLECTIVE_DEPENDENTS) {
-      /* Roll back the increment so future ocrEventDestroy / fire-time
-       * iteration sees the correct count. */
-      __sync_fetch_and_sub(&meta->numDependents, 1);
-      arts_route_table_return_db(metaDbGuid, false);
+      pthread_mutex_unlock(&meta->lock);
+      arts_route_table_release(metaDbGuid);
       return OCR_ENOSPC;
     }
     meta->dependents[idx] = destination.guid;
     meta->dependentSlots[idx] = dslot;
-    arts_route_table_return_db(metaDbGuid, false);
+    meta->numDependents = idx + 1;
+    pthread_mutex_unlock(&meta->lock);
+    arts_route_table_release(metaDbGuid);
     return 0;
   }
 
@@ -1169,13 +1249,31 @@ u32 PRINTF(const char *fmt, ...) {
 }
 
 u32 ocrPrintf(const char *fmt, ...) {
-  printf(" [%u] ", arts_global_rank_id);
+  /* Use a stack buffer + single write() syscall so concurrent threads
+   * cannot interleave mid-line and we never touch glibc's internal
+   * FILE* locks, which can deadlock when fflush(0) runs concurrently
+   * with another thread holding the FILE* lock (observed under heavy
+   * multinode I/O in forked children). */
+  char buffer[4096];
+  int prefix_len =
+      snprintf(buffer, sizeof(buffer), " [%u] ", arts_global_rank_id);
+  if (prefix_len < 0 || prefix_len >= (int)sizeof(buffer)) {
+    return 0;
+  }
   va_list args;
   va_start(args, fmt);
-  int written = vprintf(fmt, args);
+  int body_len =
+      vsnprintf(buffer + prefix_len, sizeof(buffer) - prefix_len, fmt, args);
   va_end(args);
-  (void)fflush(stdout);
-  return (u32)(written >= 0 ? written : 0);
+  if (body_len < 0) {
+    return 0;
+  }
+  int total = prefix_len + body_len;
+  if (total > (int)sizeof(buffer)) {
+    total = (int)sizeof(buffer);
+  }
+  (void)write(STDOUT_FILENO, buffer, (size_t)total);
+  return (u32)body_len;
 }
 
 u32 SNPRINTF(char *buf, u32 size, const char *fmt, ...) {
@@ -1248,7 +1346,11 @@ static arts_type_t kindToArtsType(ocrGuidUserKind kind) {
   case GUID_USER_EVENT_COLLECTIVE:
     return ARTS_EVENT;
   default:
-    return ARTS_NULL;
+    /* Unknown OCR GUID kind.  Return ARTS_LAST_TYPE (out-of-range
+     * sentinel) so the downstream arts_guid_reserve_range() rejects it
+     * via its `type >= ARTS_LAST_TYPE` validation rather than silently
+     * producing a range with type bits 0 (which is now ARTS_EDT). */
+    return ARTS_LAST_TYPE;
   }
 }
 
@@ -1259,8 +1361,14 @@ u8 ocrGuidRangeCreate(ocrGuid_t *rangeGuid, u64 numberGuid,
   }
   arts_type_t artsType = kindToArtsType(kind);
 
+  /* OCR semantics: any EDT calling this with the same input must end up with
+   * the same range GUID, and ocrGuidFromIndex(range, idx) must yield the same
+   * GUID on every rank.  Use ARTS's distributed-range mode so that (a) homes
+   * are spread across ranks (idx % nrank) and (b) ocrGuidFromIndex is
+   * deterministic across ranks once the range GUID is broadcast (the typical
+   * mainEdt-creates-and-distributes-via-DB pattern). */
   arts_guid_t range = arts_guid_reserve_range(
-      artsType, (unsigned int)numberGuid, arts_global_rank_id);
+      artsType, (unsigned int)numberGuid, ARTS_HINT_ROUND_ROBIN);
   rangeGuid->guid = range;
   return 0;
 }
@@ -1319,7 +1427,7 @@ u8 ocrAffinityCount(ocrAffinityKind kind, u64 *count) {
   }
   switch (kind) {
   case AFFINITY_PD:
-    *count = (u64)arts_get_total_nodes();
+    *count = (u64)arts_get_total_ranks();
     break;
   case AFFINITY_CURRENT:
     *count = 1;
@@ -1582,7 +1690,7 @@ static void mainEdtTrampoline(uint32_t paramc, const uint64_t *paramv,
   mainEdt(0, NULL, depc, ocrDepv);
 }
 
-/* ARTS v2 main_edt entry point */
+/* ARTS main_edt entry point */
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
               arts_edt_dep_t depv[]) {
   (void)paramc;
@@ -1602,8 +1710,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   size_t totalSize = headerSize + stringsSize;
 
   void *dbPtr;
-  arts_guid_t argsDbGuid =
-      arts_db_create(&dbPtr, totalSize, ARTS_DB_DEFAULT, NULL);
+  arts_guid_t argsDbGuid = arts_db_create(&dbPtr, totalSize, ARTS_DB_DEFAULT,
+                                          ARTS_DB_PROP_NONE, NULL);
 
   u64 *header = (u64 *)dbPtr;
   header[0] = (u64)argc;
@@ -1616,7 +1724,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     currentOffset += len;
   }
 
-  arts_hint_t h = {.route = arts_global_rank_id};
+  arts_edt_hint_t h = {.rank = arts_global_rank_id};
   arts_guid_t mainEdtGuid = arts_edt_create(mainEdtTrampoline, 0, NULL, 1, &h);
   arts_add_dependence(argsDbGuid, mainEdtGuid, 0, ARTS_MODE_RO);
 }

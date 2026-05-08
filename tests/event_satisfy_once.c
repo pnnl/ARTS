@@ -37,48 +37,54 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 
-#ifndef ARTS_SYNC_TERMINATION_H
-#define ARTS_SYNC_TERMINATION_H
-#ifdef __cplusplus
-extern "C" {
-#endif
+/// @file event_satisfy_once.c
+/// @brief Single-node test for arts_event_satisfy on a default
+/// (ONCE-equivalent)
+///        event: register one waiter, satisfy slot 0, waiter EDT must run.
 
-#include "arts/runtime_types.h"
+#include "arts.h"
+#include <assert.h>
+#include <stdio.h>
 
-arts_epoch_t *create_epoch(arts_guid_t *guid, arts_guid_t edt_guid,
-                           unsigned int slot);
-void increment_queue_epoch(arts_guid_t epoch_guid);
-void increment_active_epoch(arts_guid_t epoch_guid);
-void increment_finished_epoch(arts_guid_t epoch_guid);
-void send_epoch(arts_guid_t epoch_guid, unsigned int source, unsigned int dest);
-void broadcast_epoch_request(arts_guid_t epoch_guid);
-bool check_epoch(arts_epoch_t *epoch, unsigned int total_active,
-                 unsigned int total_finish);
-void reduce_epoch(arts_guid_t epoch_guid, unsigned int active,
-                  unsigned int finish);
-void delete_epoch(arts_guid_t epoch_guid, arts_epoch_t *epoch);
-
-typedef struct arts_epoch_pool_s {
-  struct arts_epoch_pool_s *next;
-  unsigned int size;
-  unsigned int index;
-  volatile unsigned int outstanding;
-  arts_epoch_t pool[];
-} arts_epoch_pool_t;
-
-arts_epoch_pool_t *create_epoch_pool(arts_guid_t *epoch_pool_guid,
-                                     unsigned int pool_size,
-                                     arts_guid_t *start_guid);
-void arts_link_epoch_pool_to_tls(arts_epoch_pool_t *pool);
-arts_epoch_t *get_pool_epoch(arts_guid_t edt_guid, unsigned int slot);
-void arts_cleanup_epoch_pools(void);
-
-void arts_shutdown_epoch_inc_active();
-void arts_shutdown_epoch_inc_queue();
-void arts_shutdown_epoch_inc_finished();
-bool arts_shutdown_epoch_create();
-
-#ifdef __cplusplus
+void waiter_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
+  arts_printf("  PASS: waiter EDT fired from event_satisfy\n");
 }
-#endif
-#endif
+
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+              arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
+
+  arts_printf("=== event_satisfy_once ===\n");
+
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+  arts_epoch_start(epoch);
+
+  /* Default hint = OCR ONCE_T: latch=1, auto_destroy=true,
+   * nb_deps_required=1, single-fire. */
+  arts_guid_t ev = arts_event_create(NULL);
+  assert(ev != NULL_GUID);
+
+  /* Register one waiter EDT.  Wired via arts_add_dependence — when the
+   * event fires, the waiter slot 0 is satisfied and the EDT runs. */
+  arts_guid_t waiter = arts_edt_create(waiter_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_add_dependence(ev, waiter, 0, DB_MODE_RW);
+
+  /* Slot-0 satisfy via the OCR-aligned wrapper. */
+  arts_event_satisfy(ev, NULL_GUID);
+
+  arts_epoch_wait(epoch);
+  arts_shutdown();
+}
+
+int main(int argc, char **argv) {
+  arts_rt(argc, argv);
+  return 0;
+}

@@ -1,8 +1,8 @@
 /*
- * coherence_rw_ro_rw.c — Stress test for RW -> RO -> RW v3 RC transitions.
+ * coherence_rw_ro_rw.c — Stress test for RW -> RO -> RW RC transitions.
  *
  * Pattern per iteration: writer(RW) -> N readers(RO) -> writer(RW) -> ...
- * Exercises the sealed RO generation progression path under v3 RC.
+ * Exercises the sealed RO generation progression path under RC.
  */
 
 #include "arts.h"
@@ -76,22 +76,21 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
 
   arts_printf("=== coherence_rw_ro_rw (stress) ===\n");
-  arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+  arts_epoch_start(epoch);
 
   void *ptr = NULL;
-  arts_guid_t db = arts_db_create(&ptr, sizeof(int), ARTS_DB_RC, NULL);
+  arts_guid_t db = arts_db_create(&ptr, sizeof(int), ARTS_DB_RC, ARTS_DB_PROP_NONE, NULL);
   ((int *)ptr)[0] = -1;
   arts_db_release(db);
 
   for (int i = 0; i < NUM_ITERS; i++) {
     uint64_t p = (uint64_t)i;
-    arts_guid_t w = arts_edt_create_with_epoch(writer_edt, 1, &p, 1, epoch,
-                                               &(arts_hint_t){.route = 0});
+    arts_guid_t w = arts_edt_create(writer_edt, 1, &p, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
     arts_add_dependence(db, w, 0, DB_MODE_RW);
 
     for (int r = 0; r < NUM_READERS; r++) {
-      arts_guid_t rd = arts_edt_create_with_epoch(reader_edt, 1, &p, 1, epoch,
-                                                  &(arts_hint_t){.route = 0});
+      arts_guid_t rd = arts_edt_create(reader_edt, 1, &p, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
       arts_add_dependence(db, rd, 0, DB_MODE_RO);
     }
   }
@@ -103,7 +102,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     pthread_create(&wdt, NULL, wd_thread, NULL);
     pthread_detach(wdt);
   }
-  arts_wait_on_handle(epoch);
+  arts_epoch_wait(epoch);
   int w = atomic_load(&g_writer_count);
   int r = atomic_load(&g_reader_count);
   int f = atomic_load(&g_reader_fail);

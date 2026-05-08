@@ -49,13 +49,13 @@ extern "C" {
  *
  * A GUID is a 64-bit value composed of three packed fields:
  *
- * | Bits 63–56 | Bits 55–40 | Bits 39–0  |
+ * | Bits 63–62 | Bits 61–48 | Bits 47–0  |
  * |:----------:|:----------:|:----------:|
- * | type  (8)  | rank (16)  | key  (40)  |
+ * | type  (2)  | rank (14)  | key  (48)  |
  *
  * - **type** — @ref arts_type_t tag identifying the object kind.
- * - **rank** — Node rank that owns the object (up to 65 535 nodes).
- * - **key**  — Node-local key (up to ~1 trillion unique objects per node).
+ * - **rank** — Node rank that owns the object (up to 16 384 nodes).
+ * - **key**  — Node-local key (up to ~281 trillion unique objects per node).
  *
  * Key occupies the least-significant bits so that GUID-range arithmetic
  * reduces to plain integer addition: @c start_guid+i yields the i-th GUID.
@@ -68,16 +68,16 @@ extern "C" {
 
 /* ── GUID field dimensions ─────────────────────────────────────────────── */
 
-#define ARTS_GUID_KEY_BITS 40
-#define ARTS_GUID_RANK_BITS 16
-#define ARTS_GUID_TYPE_BITS 8
+#define ARTS_GUID_KEY_BITS 48
+#define ARTS_GUID_RANK_BITS 14
+#define ARTS_GUID_TYPE_BITS 2
 
 /* ── Field positions (bit offset from LSB) ─────────────────────────────── */
 
 #define ARTS_GUID_KEY_SHIFT 0
-#define ARTS_GUID_RANK_SHIFT ARTS_GUID_KEY_BITS /* 40 */
+#define ARTS_GUID_RANK_SHIFT ARTS_GUID_KEY_BITS /* 48 */
 #define ARTS_GUID_TYPE_SHIFT                                                   \
-  (ARTS_GUID_KEY_BITS + ARTS_GUID_RANK_BITS) /* 56                             \
+  (ARTS_GUID_KEY_BITS + ARTS_GUID_RANK_BITS) /* 62                             \
                                               */
 
 /* ── Per-field masks (in field-local position) ─────────────────────────── */
@@ -88,14 +88,14 @@ extern "C" {
 
 /* ── Extraction macros ─────────────────────────────────────────────────── */
 
-/** Extract the 40-bit key from a GUID (bits 39–0). */
+/** Extract the 48-bit key from a GUID (bits 47–0). */
 #define ARTS_GUID_GET_KEY(g) ((uint64_t)(g) & ARTS_GUID_KEY_MASK)
 
-/** Extract the 16-bit rank from a GUID (bits 55–40). */
+/** Extract the 14-bit rank from a GUID (bits 61–48). */
 #define ARTS_GUID_GET_RANK(g)                                                  \
   (((uint64_t)(g) >> ARTS_GUID_RANK_SHIFT) & ARTS_GUID_RANK_MASK)
 
-/** Extract the 8-bit type tag from a GUID (bits 63–56). */
+/** Extract the 2-bit type tag from a GUID (bits 63–62). */
 #define ARTS_GUID_GET_TYPE(g)                                                  \
   (((uint64_t)(g) >> ARTS_GUID_TYPE_SHIFT) & ARTS_GUID_TYPE_MASK)
 
@@ -118,7 +118,7 @@ extern "C" {
  * @param type  Object type tag (@ref arts_type_t).
  * @return A new GUID.
  */
-arts_guid_t arts_guid_create_for_rank(unsigned int route, unsigned int type);
+arts_guid_t arts_guid_create_for_rank(unsigned int rank, unsigned int type);
 
 /** Initialize the per-node GUID key generator. */
 void arts_guid_key_generator_init();
@@ -130,7 +130,7 @@ void set_global_guid_on();
 void set_guid_generator_after_parallel_start();
 
 /**
- * @brief Extract the 40-bit key portion of a GUID.
+ * @brief Extract the 48-bit key portion of a GUID.
  *
  * @param guid GUID to query.
  * @return The node-local key value.
@@ -157,10 +157,20 @@ uint64_t arts_guid_hash_key(arts_guid_t guid);
  * @return The hash-aligned start GUID, or @c NULL_GUID on failure.
  */
 arts_guid_t arts_guid_reserve_range_hash(arts_type_t type, unsigned int size,
-                                         unsigned int route,
+                                         unsigned int rank,
                                          unsigned int hash_size);
 
-/* ── CXL GUID helpers ─────────────────────────────────────────────────────── */
+/** Sentinel rank value marking a "distributed" GUID range.  Stored in the
+ *  rank field of a range GUID returned by
+ *  @c arts_guid_reserve_range(type, size, ARTS_HINT_ROUND_ROBIN).
+ *  @c arts_guid_from_index / @c arts_guid_index_from detect this marker
+ *  and place individual GUIDs round-robin across ranks (home = idx % nrank).
+ *  Must not collide with @ref ARTS_CXL_RANK (0x3FFF).
+ *  14-bit rank field => max real rank = 16382 (0x3FFE - 1). */
+#define ARTS_DISTRIBUTED_RANK 0x3FFE
+
+/* ── CXL GUID helpers ───────────────────────────────────────────────────────
+ */
 
 #ifdef ARTS_USE_CXL
 
@@ -169,8 +179,9 @@ arts_guid_t arts_guid_reserve_range_hash(arts_type_t type, unsigned int size,
 /** Base virtual address of the CXL FAM mapping. */
 #define ARTS_CXL_BASE_ADDR 0x200000000000ULL
 
-/** Sentinel rank value that identifies CXL-encoded GUIDs. */
-#define ARTS_CXL_RANK 0xFFFF
+/** Sentinel rank value that identifies CXL-encoded GUIDs.
+ *  14-bit rank field => use top value (0x3FFF). */
+#define ARTS_CXL_RANK 0x3FFF
 
 /** Extract a CXL pointer from a CXL-encoded GUID. */
 static inline void *arts_cxl_get_ptr(arts_guid_t guid) {

@@ -44,24 +44,44 @@ extern "C" {
 
 #include "arts/runtime_types.h"
 
+/* arts_type_t is 0-based (ARTS_EDT = 0, ARTS_LAST_TYPE = 4).  This array
+ * is sized to ARTS_LAST_TYPE so GET_TYPE_NAME(t) works for every valid
+ * type value. */
 #define ARTS_TYPE_NAME                                                         \
-  const char *const arts_type_name[] = {                                       \
-      "ARTS_NULL",     "ARTS_EDT",    "ARTS_EVENT", "ARTS_EPOCH",              \
-      "ARTS_CALLBACK", "ARTS_BUFFER", "ARTS_DB",    "ARTS_LAST_TYPE"}
+  const char *const arts_type_name[] = {"ARTS_EDT", "ARTS_EVENT",              \
+                                        "ARTS_EPOCH", "ARTS_DB"}
 
 #define GET_TYPE_NAME(x) arts_type_name[x]
 
 extern const char *const arts_type_name[];
 
-#define DB_MODE_NAME                                                           \
-  const char *const db_mode_name[] = {"DB_MODE_NULL",       "DB_MODE_RO",      \
-                                      "DB_MODE_RW",         "DB_MODE_VALUE",   \
-                                      "DB_MODE_PTR",        "DB_MODE_LC_SYNC", \
-                                      "DB_MODE_LC_NO_COPY", "DB_MODE_MEMSET"}
+/* Internal-only access modes used by runtime dispatch.  These are NOT
+ * part of the public arts_db_access_mode_t enum (see arts.h) but reuse
+ * the same underlying integer type so they can be stored in
+ * arts_edt_dep_t.mode.  Reserved range starts at DB_MODE_INTERNAL_BASE
+ * to avoid collision with public values. */
+#define DB_MODE_INTERNAL_BASE 64
+enum {
+  DB_MODE_PTR = DB_MODE_INTERNAL_BASE, /**< Copied pointer buffer slice. */
+  DB_MODE_LC_SYNC,                     /**< GPU LC \-> CPU synchronous copy. */
+  DB_MODE_LC_NO_COPY, /**< Allocate on GPU, no host \-> GPU copy. */
+  DB_MODE_MEMSET,     /**< GPU zero-initialization. */
+};
 
-#define GET_DB_MODE_NAME(x) db_mode_name[x]
+#define DB_MODE_NAME                                                           \
+  const char *const db_mode_name[] = {"DB_MODE_NULL", "DB_MODE_RO",            \
+                                      "DB_MODE_RW", "DB_MODE_VAL"};            \
+  const char *const db_mode_internal_name[] = {                                \
+      "DB_MODE_PTR", "DB_MODE_LC_SYNC", "DB_MODE_LC_NO_COPY",                  \
+      "DB_MODE_MEMSET"}
+
+#define GET_DB_MODE_NAME(x)                                                    \
+  ((x) >= DB_MODE_INTERNAL_BASE                                                \
+       ? db_mode_internal_name[(x) - DB_MODE_INTERNAL_BASE]                    \
+       : db_mode_name[x])
 
 extern const char *const db_mode_name[];
+extern const char *const db_mode_internal_name[];
 
 #define ARTS_DB_TYPE_NAME                                                      \
   const char *const arts_db_type_name[] = {"ARTS_DB_RC", "ARTS_DB_PIN",        \
@@ -88,6 +108,29 @@ void arts_db_destroy_safe(arts_guid_t guid, bool remote);
 void *arts_db_malloc(arts_db_types_t db_type, size_t size);
 void arts_db_free(void *ptr);
 void *arts_db_adopt(arts_guid_t guid, struct arts_db_s *db);
+
+/* Internal pre/post-yield helpers used by arts_epoch_wait.  Not part
+ * of the public ARTS API. */
+void arts_wait_release_dbs(void);
+void arts_wait_reacquire_dbs(void);
+
+/* Internal: rename a DataBlock, returning a new GUID pointing at the same
+ * data.  Not part of the public ARTS API; used by GPU buffer rotation
+ * (examples/gpu/bfs/buffer.c) and tests. */
+arts_guid_t arts_db_rename(arts_guid_t guid);
+
+/* Internal: rename a DataBlock to @p new_guid from @p old_guid. */
+bool arts_db_rename_with_guid(arts_guid_t new_guid, arts_guid_t old_guid);
+
+/* Internal: copy a DataBlock to a new GUID with a different DB subtype. */
+arts_guid_t arts_db_copy_to_new_type(arts_guid_t old_guid,
+                                     arts_db_types_t new_type);
+
+/* getter for the DB shared_t deleter so other TUs that allocate
+ * arts_db_s stubs (coherence_acquire.c lazy install, coherence_handlers.c
+ * DB_CREATE_COHERENT recv) can install the same deleter without exposing
+ * a function pointer at file scope. */
+void (*arts_db_get_deleter(void))(void *);
 
 #ifdef ARTS_USE_CXL
 void arts_cxl_producer_flush(arts_guid_t guid);

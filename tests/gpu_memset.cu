@@ -107,17 +107,17 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
 
-  unsigned int node_id = arts_get_current_node();
+  unsigned int node_id = arts_get_current_rank();
 
   /* Create a GPU DB with non-zero initial data */
   arts_guid_t db_guid = arts_guid_reserve(ARTS_DB, 0);
   unsigned int *addr = (unsigned int *)arts_db_create_with_guid(
-      db_guid, sizeof(unsigned int) * N_ELEMENTS, ARTS_DB_GPU, NULL, NULL);
+      db_guid, sizeof(unsigned int) * N_ELEMENTS, ARTS_DB_GPU_PIN, NULL, NULL);
   for (unsigned int i = 0; i < N_ELEMENTS; i++) {
     addr[i] = 0xDEADBEEF;
   }
 
-  arts_hint_t hint_0 = {0, 0};
+  arts_edt_hint_t hint_0 = {0, 0};
 
   /* Create done EDT */
   arts_guid_t done_guid = arts_edt_create(verify_memset, 0, NULL, 1, &hint_0);
@@ -128,7 +128,7 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   /* Create GPU EDT to check if memset zeroed the data.
    * data_guid = db_guid so the result is delivered to done EDT. */
   arts_gpu_hint_t gpu_hint = {};
-  gpu_hint.route = node_id;
+  gpu_hint.rank = node_id;
   gpu_hint.gpu = 0;
   gpu_hint.end_guid = done_guid;
   gpu_hint.slot = 0;

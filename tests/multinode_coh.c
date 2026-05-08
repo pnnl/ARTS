@@ -135,7 +135,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("=== multinode_coh ===\n");
 
   arts_guid_t shut = arts_edt_create(shutdown_edt, 0, NULL, 1, NULL);
-  arts_guid_t epoch = arts_initialize_and_start_epoch(shut, 0);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), shut, 0);
+  arts_epoch_start(epoch);
 
   // Each sub-test uses a nested epoch with the reader as the
   // finish-EDT.  OCR spec §1.7: finish-EDT triggers only after all
@@ -149,26 +150,24 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   {
     void *ptr = NULL;
     arts_guid_t db =
-        arts_db_create(&ptr, sizeof(int), ARTS_DB_DIST, ARTS_DB_PROP_NONE,
-                       &(arts_hint_t){.route = 0});
+        arts_db_create(&ptr, sizeof(int), ARTS_DB_RC, ARTS_DB_PROP_NONE,
+                       &(arts_db_hint_t){.rank = 0});
     ((int *)ptr)[0] = 0;
     arts_db_release(db);
 
     uint64_t rparams[2] = {200, 1};
-    arts_guid_t r = arts_edt_create_with_epoch(coh_reader, 2, rparams, 2, epoch,
-                                               &(arts_hint_t){.route = 0});
+    arts_guid_t r = arts_edt_create(coh_reader, 2, rparams, 2, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
     arts_add_dependence(db, r, 0, DB_MODE_RO);
 
-    arts_guid_t inner = arts_initialize_and_start_epoch(r, 1);
+    arts_guid_t inner = arts_epoch_create(arts_get_current_rank(), r, 1);
+    arts_epoch_start(inner);
 
     uint64_t val1 = 100;
-    arts_guid_t w1 = arts_edt_create_with_epoch(coh_writer, 1, &val1, 1, inner,
-                                                &(arts_hint_t){.route = 0});
+    arts_guid_t w1 = arts_edt_create(coh_writer, 1, &val1, 1, &(arts_edt_hint_t){.rank = 0, .epoch = inner});
     arts_add_dependence(db, w1, 0, DB_MODE_RW);
 
     uint64_t val2 = 200;
-    arts_guid_t w2 = arts_edt_create_with_epoch(coh_writer, 1, &val2, 1, inner,
-                                                &(arts_hint_t){.route = 1});
+    arts_guid_t w2 = arts_edt_create(coh_writer, 1, &val2, 1, &(arts_edt_hint_t){.rank = 1, .epoch = inner});
     arts_add_dependence(db, w2, 0, DB_MODE_RW);
     (void)w1;
     (void)w2;
@@ -179,8 +178,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   {
     void *ptr2 = NULL;
     arts_guid_t db2 =
-        arts_db_create(&ptr2, 3 * sizeof(int), ARTS_DB_DIST, ARTS_DB_PROP_NONE,
-                       &(arts_hint_t){.route = 0});
+        arts_db_create(&ptr2, 3 * sizeof(int), ARTS_DB_RC, ARTS_DB_PROP_NONE,
+                       &(arts_db_hint_t){.rank = 0});
     ((int *)ptr2)[0] = 0;
     ((int *)ptr2)[1] = 0;
     ((int *)ptr2)[2] = 0;
@@ -192,14 +191,12 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
      * simplicity we make a single combined verifier as finish-EDT and
      * verify both reader-id paths within it. */
     uint64_t id0 = 0;
-    arts_guid_t ra = arts_edt_create_with_epoch(coh_reader_3, 1, &id0, 2, epoch,
-                                                &(arts_hint_t){.route = 0});
+    arts_guid_t ra = arts_edt_create(coh_reader_3, 1, &id0, 2, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
     arts_add_dependence(db2, ra, 0, DB_MODE_RO);
 
-    arts_guid_t inner_a = arts_initialize_and_start_epoch(ra, 1);
-    arts_guid_t w = arts_edt_create_with_epoch(coh_writer_3, 0, NULL, 1,
-                                               inner_a,
-                                               &(arts_hint_t){.route = 1});
+    arts_guid_t inner_a = arts_epoch_create(arts_get_current_rank(), ra, 1);
+    arts_epoch_start(inner_a);
+    arts_guid_t w = arts_edt_create(coh_writer_3, 0, NULL, 1, &(arts_edt_hint_t){.rank = 1, .epoch = inner_a});
     arts_add_dependence(db2, w, 0, DB_MODE_RW);
     (void)w;
 
@@ -216,29 +213,25 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   {
     void *ptr3 = NULL;
     arts_guid_t db3 =
-        arts_db_create(&ptr3, sizeof(int), ARTS_DB_DIST, ARTS_DB_PROP_NONE,
-                       &(arts_hint_t){.route = 0});
+        arts_db_create(&ptr3, sizeof(int), ARTS_DB_RC, ARTS_DB_PROP_NONE,
+                       &(arts_db_hint_t){.rank = 0});
     ((int *)ptr3)[0] = 0;
     arts_db_release(db3);
 
     uint64_t rparams3[2] = {3, 3};
-    arts_guid_t r3 = arts_edt_create_with_epoch(coh_reader, 2, rparams3, 2,
-                                                epoch,
-                                                &(arts_hint_t){.route = 0});
+    arts_guid_t r3 = arts_edt_create(coh_reader, 2, rparams3, 2, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
     arts_add_dependence(db3, r3, 0, DB_MODE_RO);
 
-    arts_guid_t inner3 = arts_initialize_and_start_epoch(r3, 1);
+    arts_guid_t inner3 = arts_epoch_create(arts_get_current_rank(), r3, 1);
+    arts_epoch_start(inner3);
 
-    arts_guid_t ia = arts_edt_create_with_epoch(
-        coh_incrementer, 0, NULL, 1, inner3, &(arts_hint_t){.route = 0});
+    arts_guid_t ia = arts_edt_create(coh_incrementer, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = inner3});
     arts_add_dependence(db3, ia, 0, DB_MODE_RW);
 
-    arts_guid_t ib = arts_edt_create_with_epoch(
-        coh_incrementer, 0, NULL, 1, inner3, &(arts_hint_t){.route = 1});
+    arts_guid_t ib = arts_edt_create(coh_incrementer, 0, NULL, 1, &(arts_edt_hint_t){.rank = 1, .epoch = inner3});
     arts_add_dependence(db3, ib, 0, DB_MODE_RW);
 
-    arts_guid_t ic = arts_edt_create_with_epoch(
-        coh_incrementer, 0, NULL, 1, inner3, &(arts_hint_t){.route = 0});
+    arts_guid_t ic = arts_edt_create(coh_incrementer, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = inner3});
     arts_add_dependence(db3, ic, 0, DB_MODE_RW);
     (void)ia;
     (void)ib;

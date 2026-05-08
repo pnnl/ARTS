@@ -61,7 +61,7 @@ uint64_t *rec_seq_numbers;
 #endif
 
 /*
- * arts_remote_send_shutdown_broadcast — Phase A of the shutdown protocol.
+ * arts_remote_send_shutdown_broadcast — First step of the shutdown protocol.
  *
  * Enqueue a header-only ARTS_REMOTE_SHUTDOWN_MSG to every other rank.
  * The sender thread drains the outbox; the caller should then wait for
@@ -114,6 +114,11 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
 //        arts_global_rank_id, packet->seq_num);
 #endif
 
+  /* Catch-all dispatcher entry trace (multinode-receive diagnostic) */
+  fprintf(stderr, "[DBG-RX rank %u] dispatch type=%d from_rank=%d\n",
+          arts_global_rank_id, (int)packet->message_type, (int)packet->rank);
+  fflush(stderr);
+
   switch (packet->message_type) {
   case ARTS_REMOTE_SHUTDOWN_MSG: {
     ARTS_INFO("Node %u: Received shutdown message from node %u",
@@ -128,13 +133,16 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
   case ARTS_REMOTE_EDT_SIGNAL_MSG: {
     struct arts_remote_edt_signal_packet_s *pack =
         (struct arts_remote_edt_signal_packet_s *)(packet);
+    fprintf(stderr,
+            "[DBG-RX rank %u] EDT_SIGNAL: edt=%lu slot=%u db=%lu mode=%d\n",
+            arts_global_rank_id, (uint64_t)pack->edt, pack->slot,
+            (uint64_t)pack->db, pack->mode);
+    fflush(stderr);
     internal_signal_edt_with_mode(pack->edt, pack->slot, pack->db, pack->mode);
     break;
   }
   case ARTS_REMOTE_EVENT_SATISFY_SLOT_MSG: {
-    struct arts_remote_event_satisfy_slot_packet_s *pack =
-        (struct arts_remote_event_satisfy_slot_packet_s *)(packet);
-    arts_event_satisfy_slot(pack->event, pack->db, pack->slot);
+    arts_remote_handle_event_satisfy_slot(packet);
     break;
   }
   case ARTS_REMOTE_ADD_DEPENDENCE_MSG: {
@@ -147,6 +155,9 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
   }
   case ARTS_REMOTE_EDT_MOVE_MSG: {
     ARTS_DEBUG("EDT Move Received");
+    fprintf(stderr, "[DBG-RX rank %u] EDT_MOVE received\n",
+            arts_global_rank_id);
+    fflush(stderr);
     arts_remote_handle_edt_move(packet);
     break;
   }
@@ -205,11 +216,6 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
     arts_remote_handle_epoch_delete(packet);
     break;
   }
-  case ARTS_REMOTE_BUFFER_SEND_MSG: {
-    ARTS_DEBUG("Buffer Send Received");
-    arts_remote_handle_buffer_send(packet);
-    break;
-  }
   case ARTS_REMOTE_DB_RENAME_MSG: {
     ARTS_DEBUG("DB Rename Received");
     arts_remote_handle_db_rename(packet);
@@ -232,7 +238,7 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
     arts_set_dep_mode(pack->edt, pack->slot, pack->mode);
     break;
   }
-  /* ===== v3 coherence wire-message dispatch (Phase 2.2) =============
+  /* ===== coherence wire-message dispatch =============
    * Three handlers (GRANT / WRITEBACK / DATA_RESPONSE) carry trailing
    * payload right after sizeof(struct ...); pass that pointer + size as
    * the data/data_size arguments. */
@@ -309,6 +315,11 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
     ARTS_DEBUG("Coh DESTROY_NOTIFY Received");
     arts_coh_handle_destroy_notify(
         (struct arts_remote_destroy_notify_packet_s *)(packet));
+    break;
+  }
+  case ARTS_REMOTE_EVENT_DESTROY_MSG: {
+    ARTS_DEBUG("Event Destroy Received");
+    arts_remote_handle_event_destroy(packet);
     break;
   }
   default: {

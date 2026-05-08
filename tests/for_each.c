@@ -74,7 +74,7 @@ void edt_func(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   unsigned int *value = (unsigned int *)depv[0].ptr;
   *value = index;
   arts_printf("%u:  %u %p\n", index, *value, value);
-  arts_signal_edt_value(check_guid, 0, 0);
+  arts_add_dependence((arts_guid_t)(0), check_guid, 0, DB_MODE_VAL);
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -84,10 +84,10 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
   arts_guid_t check_guid =
-      arts_edt_create(check, 0, NULL, elems_per_node * arts_get_total_nodes(),
-                      &(arts_hint_t){.route = 0});
+      arts_edt_create(check, 0, NULL, elems_per_node * arts_get_total_ranks(),
+                      &(arts_edt_hint_t){.rank = 0});
   arts_guid_t guid = arts_new_array_db(&array, sizeof(unsigned int),
-                                       elems_per_node * arts_get_total_nodes());
+                                       elems_per_node * arts_get_total_ranks());
   arts_for_each_in_array_db_at_data(array, 1, edt_func, 1,
                                     (uint64_t *)&check_guid);
   //        arts_for_each_in_array_db(array, edt_func, 1, &check_guid);

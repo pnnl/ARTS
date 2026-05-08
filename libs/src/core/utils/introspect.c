@@ -53,23 +53,28 @@
 #include "arts.h"
 #include "arts/runtime_state.h"
 #include "arts/system/threads.h"
+#include "arts/utils/random.h"
 
 extern ARTS_THREAD_LOCAL struct arts_edt_s *current_edt;
 extern unsigned int num_numa_domains;
 
-arts_guid_t arts_get_current_guid() {
+arts_guid_t arts_edt_get_current_guid() {
   if (current_edt) {
     return current_edt->current_edt;
   }
   return NULL_GUID;
 }
 
-unsigned int arts_get_current_node() { return arts_global_rank_id; }
+unsigned int arts_get_current_rank() { return arts_global_rank_id; }
 
-unsigned int arts_get_total_nodes() { return arts_global_rank_count; }
+unsigned int arts_get_total_ranks() { return arts_global_rank_count; }
+
+unsigned int arts_get_workers_per_rank() {
+  return arts_node_info.worker_thread_count;
+}
 
 unsigned int arts_get_total_workers() {
-  return arts_node_info.worker_thread_count;
+  return arts_get_workers_per_rank() * arts_get_total_ranks();
 }
 
 unsigned int arts_get_current_worker() { return arts_thread_info.group_pos; }
@@ -84,7 +89,7 @@ void arts_stop_local_worker() { arts_thread_info.alive = false; }
 
 void arts_stop_local_node() { arts_runtime_stop(); }
 
-uint64_t arts_thread_safe_random() {
+uint64_t arts_thread_safe_random(void) {
   long int temp = jrand48(arts_thread_info.drand_buf);
   return (uint64_t)temp;
 }

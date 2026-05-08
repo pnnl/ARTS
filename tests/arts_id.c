@@ -72,7 +72,7 @@ void test_edt_worker(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 
   uint64_t expected_arts_id = paramv[0];
-  unsigned int node_id = arts_get_current_node();
+  unsigned int node_id = arts_get_current_rank();
 
   arts_printf("Node %u - EDT with expected arts_id=%lu executing\n", node_id,
               expected_arts_id);
@@ -108,7 +108,7 @@ void test_edt_reader(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 
   uint64_t expected_arts_id = paramv[0];
-  unsigned int node_id = arts_get_current_node();
+  unsigned int node_id = arts_get_current_rank();
 
   arts_printf("Node %u - Reader EDT %lu accessing %u DBs\n", node_id,
               expected_arts_id, depc);
@@ -234,7 +234,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("Test Configuration:\n");
   arts_printf("- Test EDTs: %u\n", NUM_TEST_EDTS);
   arts_printf("- Test DBs:  %u\n", NUM_TEST_DBS);
-  arts_printf("- Nodes:     %u\n", arts_get_total_nodes());
+  arts_printf("- Nodes:     %u\n", arts_get_total_ranks());
   arts_printf("- Threads:   %u\n", arts_node_info.total_thread_count);
   arts_printf("═══════════════════════════════════════\n");
 
@@ -243,7 +243,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   *test_result = 0;
 
   // Start epoch for coordination
-  arts_guid_t epoch_guid = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  arts_guid_t epoch_guid = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+  arts_epoch_start(epoch_guid);
   arts_printf("[Step 1] Started epoch (guid: %lu)\n", epoch_guid);
 
   // Create test DBs with arts_id values
@@ -260,8 +261,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     uint64_t arts_id =
         TEST_ARTS_ID_BASE + 100 + i; // DB arts_id: 1100, 1101, ...
 
-    db_guids[i] = arts_db_create(&db_ptrs[i], matrix_size, ARTS_DB_DEFAULT,
-                                 &(arts_hint_t){.id = arts_id});
+    db_guids[i] = arts_db_create(&db_ptrs[i], matrix_size, ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, &(arts_db_hint_t){});
 
     // Initialize matrix to zeros
     double *matrix = (double *)db_ptrs[i];
@@ -277,8 +277,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Create validator EDT first
   arts_printf("[Step 4] Creating validator EDT (will run last)...\n");
-  arts_guid_t validator_guid = arts_edt_create_with_epoch(
-      validator, 0, NULL, 1, epoch_guid, &(arts_hint_t){.route = 0});
+  arts_guid_t validator_guid = arts_edt_create(validator, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch_guid});
 
   // Create writer EDTs with arts_id values
   arts_printf("[Step 5] Creating %u writer EDTs with arts_id values:\n",
@@ -293,7 +292,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     uint64_t param = arts_id;
 
     // Distribute EDTs across nodes (round-robin)
-    unsigned int target_node = i % arts_get_total_nodes();
+    unsigned int target_node = i % arts_get_total_ranks();
 
     // Each EDT will use one DB
     unsigned int db_index = i % NUM_TEST_DBS;
@@ -301,7 +300,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
     writer_guids[i] =
         arts_edt_create(test_edt_worker, 1, &param, 1,
-                        &(arts_hint_t){.route = target_node, .id = arts_id});
+                        &(arts_edt_hint_t){.rank = target_node, .edt_id = arts_id});
 
     arts_printf("  - EDT[%u]: guid=%lu, arts_id=%lu, node=%u, using DB[%u]\n",
                 i, writer_guids[i], arts_id, target_node, db_index);
@@ -323,7 +322,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
         TEST_ARTS_ID_BASE + 200 + i; // Reader arts_id: 1200, 1201, ...
     uint64_t param = arts_id;
 
-    unsigned int target_node = i % arts_get_total_nodes();
+    unsigned int target_node = i % arts_get_total_ranks();
 
     // Readers will depend on multiple DBs
     unsigned int num_deps =
@@ -332,7 +331,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
     reader_guids[i] =
         arts_edt_create(test_edt_reader, 1, &param, num_deps,
-                        &(arts_hint_t){.route = target_node, .id = arts_id});
+                        &(arts_edt_hint_t){.rank = target_node, .edt_id = arts_id});
 
     arts_printf("  - Reader[%u]: guid=%lu, arts_id=%lu, node=%u, deps=%u\n", i,
                 reader_guids[i], arts_id, target_node, num_deps);
@@ -346,7 +345,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Record writer dependencies
   for (unsigned int i = 0; i < NUM_TEST_EDTS; i++) {
     unsigned int db_index = writer_db_indices[i];
-    arts_add_dependence(db_guids[db_index], writer_guids[i], 0, DB_MODE_EW);
+    arts_add_dependence(db_guids[db_index], writer_guids[i], 0, DB_MODE_RW);
   }
 
   // Record reader dependencies
@@ -369,7 +368,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("[Step 8] Waiting for epoch to complete...\n");
 
   // Wait for all EDTs to complete
-  arts_wait_on_handle(epoch_guid);
+  arts_epoch_wait(epoch_guid);
 
   arts_printf("[Step 9] Epoch completed\n");
 

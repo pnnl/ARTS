@@ -61,12 +61,11 @@ enum artsServerMessageType {
   ARTS_EPOCH_REQ_MSG,
   ARTS_EPOCH_SEND_MSG,
   ARTS_EPOCH_DELETE_MSG,
-  ARTS_REMOTE_BUFFER_SEND_MSG,
   ARTS_REMOTE_DB_RENAME_MSG,
   ARTS_REMOTE_TIME_SYNC_REQ_MSG,
   ARTS_REMOTE_TIME_SYNC_RESP_MSG,
   ARTS_REMOTE_SET_DEP_MODE_MSG,
-  /* v3 coherence protocol messages.  The dispatcher routes these to
+  /* coherence protocol messages.  The dispatcher routes these to
    * arts_coh_handle_* in libs/src/core/memory/coherence_handlers.c.
    * Sequential append (CLAUDE.md rule: NO gaps in this enum). */
   ARTS_REMOTE_LOCK_REQ_MSG,
@@ -80,6 +79,10 @@ enum artsServerMessageType {
   ARTS_REMOTE_DB_CREATE_COHERENT_MSG,
   ARTS_REMOTE_DESTROY_REQ_MSG,
   ARTS_REMOTE_DESTROY_NOTIFY_MSG,
+  /* Event subsystem rewrite: cross-rank
+   * arts_event_destroy → mark_delete on the home rank.  Sequential append,
+   * no gaps. */
+  ARTS_REMOTE_EVENT_DESTROY_MSG,
 };
 
 /* WRITEBACK packet flag — selects normal write-back vs. write-back +
@@ -207,7 +210,7 @@ struct ARTS_PACKED arts_remote_time_sync_resp_packet_s {
   uint64_t master_recv_time; // T2: master's local time when receiving request
 };
 
-/* ===== v3 coherence wire packets (Phase 2.2) =======================
+/* ===== coherence wire packets =======================
  * Pad-fields exist to keep the trailing payload (when present) on an
  * 8-byte boundary; coherence_handlers.c fires arts_remote_send_request_
  * payload_async right after sizeof(packet_struct) bytes, so the payload

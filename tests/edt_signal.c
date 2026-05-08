@@ -38,15 +38,16 @@
 ******************************************************************************/
 
 /// @file edt_signal.c
-/// @brief Tests all EDT signaling variants: arts_signal_edt, _value, _ptr,
-///        _ptr_with_guid, _null.
+/// @brief Tests all EDT signaling variants now expressed via
+///        arts_add_dependence: DB source (RO/RW), raw value (DB_MODE_VAL),
+///        and NULL_GUID source (DB_MODE_NULL).
 
 #include "arts.h"
 #include <string.h>
 
 #define MAGIC 0xCAFEBABE12345678ULL
 
-/// 1) arts_signal_edt: deliver DB with RO mode.
+/// 1) arts_add_dependence(db, edt, slot, DB_MODE_RO): deliver DB read-only.
 void signal_db_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
@@ -59,7 +60,7 @@ void signal_db_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 }
 
-/// 2) arts_signal_edt_value: deliver raw uint64 value.
+/// 2) arts_add_dependence(value, ..., DB_MODE_VAL): deliver raw uint64.
 void signal_value_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                       arts_edt_dep_t depv[]) {
   (void)paramc;
@@ -74,44 +75,7 @@ void signal_value_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 }
 
-/// 3) arts_signal_edt_ptr: deliver data copy.
-void signal_ptr_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                    arts_edt_dep_t depv[]) {
-  (void)paramc;
-  (void)paramv;
-  unsigned int *data = (unsigned int *)depv[0].ptr;
-  bool ok = (depc == 1 && data != NULL);
-  if (ok) {
-    for (unsigned int i = 0; i < 8; i++) {
-      if (data[i] != i * 10) {
-        ok = false;
-        break;
-      }
-    }
-  }
-  if (ok) {
-    arts_printf("  PASS: signal_edt_ptr delivers correct data copy\n");
-  } else {
-    arts_printf("  FAIL: signal_edt_ptr data mismatch\n");
-  }
-}
-
-/// 4) arts_signal_edt_ptr_with_guid: delivers ptr + original DB GUID.
-void signal_ptr_guid_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                         arts_edt_dep_t depv[]) {
-  (void)depc;
-  arts_guid_t expected_guid = (arts_guid_t)paramv[0];
-  unsigned int expected_val = (unsigned int)paramv[1];
-  unsigned int *data = (unsigned int *)depv[0].ptr;
-  if (paramc == 2 && depv[0].guid == expected_guid && data != NULL &&
-      *data == expected_val) {
-    arts_printf("  PASS: signal_edt_ptr_with_guid delivers ptr + GUID\n");
-  } else {
-    arts_printf("  FAIL: signal_edt_ptr_with_guid mismatch\n");
-  }
-}
-
-/// 5) arts_signal_edt_null: satisfies slot with no data.
+/// 3) NULL source via arts_add_dependence(NULL_GUID, ...).
 void signal_null_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                      arts_edt_dep_t depv[]) {
   (void)paramc;
@@ -145,54 +109,29 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== edt_signal ===\n");
 
-  arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+  arts_epoch_start(epoch);
 
   // 1) signal_edt with DB.
   void *db_ptr = NULL;
-  arts_guid_t db =
-      arts_db_create(&db_ptr, sizeof(uint64_t), ARTS_DB_DEFAULT, NULL);
+  arts_guid_t db = arts_db_create(&db_ptr, sizeof(uint64_t), ARTS_DB_DEFAULT,
+                                  ARTS_DB_PROP_NONE, NULL);
   *(uint64_t *)db_ptr = MAGIC;
   arts_db_release(db);
-  arts_guid_t e1 = arts_edt_create_with_epoch(signal_db_edt, 0, NULL, 1, epoch,
-                                              &(arts_hint_t){.route = 0});
-  arts_signal_edt(e1, 0, db, DB_MODE_RO);
+  arts_guid_t e1 = arts_edt_create(signal_db_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_add_dependence(db, e1, 0, DB_MODE_RO);
 
   // 2) signal_edt_value.
-  arts_guid_t e2 = arts_edt_create_with_epoch(
-      signal_value_edt, 0, NULL, 2, epoch, &(arts_hint_t){.route = 0});
-  arts_signal_edt_value(e2, 0, 42);
-  arts_signal_edt_value(e2, 1, 0xDEADULL);
+  arts_guid_t e2 = arts_edt_create(signal_value_edt, 0, NULL, 2, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_add_dependence((arts_guid_t)(42), e2, 0, DB_MODE_VAL);
+  arts_add_dependence((arts_guid_t)(0xDEADULL), e2, 1, DB_MODE_VAL);
 
-  // 3) signal_edt_ptr.
-  unsigned int buf[8];
-  for (unsigned int i = 0; i < 8; i++) {
-    buf[i] = i * 10;
-  }
-  arts_guid_t e3 = arts_edt_create_with_epoch(signal_ptr_edt, 0, NULL, 1, epoch,
-                                              &(arts_hint_t){.route = 0});
-  arts_signal_edt_ptr(e3, 0, buf, sizeof(buf));
+  // 3) NULL source + raw value via arts_add_dependence.
+  arts_guid_t e5 = arts_edt_create(signal_null_edt, 0, NULL, 2, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_add_dependence(NULL_GUID, e5, 0, DB_MODE_NULL);
+  arts_add_dependence((arts_guid_t)(77), e5, 1, DB_MODE_VAL);
 
-  // 4) signal_edt_ptr_with_guid.
-  void *db2_ptr = NULL;
-  arts_guid_t db2 =
-      arts_db_create(&db2_ptr, sizeof(unsigned int) * 4, ARTS_DB_DEFAULT, NULL);
-  unsigned int *db2_data = (unsigned int *)db2_ptr;
-  db2_data[0] = 9999;
-  arts_db_release(db2);
-  uint64_t args4[2];
-  args4[0] = (uint64_t)db2;
-  args4[1] = 9999;
-  arts_guid_t e4 = arts_edt_create_with_epoch(
-      signal_ptr_guid_edt, 2, args4, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_signal_edt_ptr_with_guid(e4, 0, db2, db2_data, sizeof(unsigned int));
-
-  // 5) signal_edt_null.
-  arts_guid_t e5 = arts_edt_create_with_epoch(
-      signal_null_edt, 0, NULL, 2, epoch, &(arts_hint_t){.route = 0});
-  arts_signal_edt_null(e5, 0);
-  arts_signal_edt_value(e5, 1, 77);
-
-  arts_wait_on_handle(epoch);
+  arts_epoch_wait(epoch);
   arts_printf("=== edt_signal complete ===\n");
   arts_shutdown();
 }

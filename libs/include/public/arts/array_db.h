@@ -67,7 +67,7 @@ arts_guid_t arts_new_array_db(arts_array_db_t **addr, unsigned int element_size,
 /**
  * @brief Create a distributed array DB with a pre-reserved @p guid.
  *
- * The GUID can target any node but must be of type @c ARTS_DB_LOCAL.
+ * The GUID can target any node but must be of type @c ARTS_DB_PIN.
  *
  * @param guid         Pre-reserved GUID.
  * @param element_size Size of each element in bytes.
@@ -105,7 +105,7 @@ void arts_signal_array_db(arts_array_db_t *array, arts_guid_t edt_guid,
 /**
  * @brief Read an element from an array DB at @p index.
  *
- * Delivered to @p edt_guid at @p slot via arts_signal_edt_ptr().
+ * Delivered to @p edt_guid at @p slot as a pointer dependency.
  *
  * @param edt_guid Destination EDT.
  * @param slot     Dependency slot.
@@ -132,7 +132,7 @@ void arts_put_in_array_db(void *ptr, arts_guid_t edt_guid, unsigned int slot,
 /**
  * @brief Launch an EDT for each element locally.
  *
- * Data is acquired read-only via arts_signal_edt_ptr().
+ * Data is acquired read-only as a pointer dependency.
  *
  * @param array    Array DB.
  * @param func_ptr Function to execute per element.
@@ -145,7 +145,7 @@ void arts_for_each_in_array_db(arts_array_db_t *array, arts_edt_t func_ptr,
 /**
  * @brief Launch an EDT for each element across all nodes.
  *
- * Data is acquired read-only via arts_signal_edt_ptr().
+ * Data is acquired read-only as a pointer dependency.
  *
  * @param array    Array DB.
  * @param stride   Number of elements per EDT.
@@ -168,12 +168,12 @@ void arts_for_each_in_array_db_at_data(arts_array_db_t *array,
  * @param depc     Number of dependency slots (usually num_blocks).
  */
 void arts_gather_array_db(arts_array_db_t *array, arts_edt_t func_ptr,
-                          unsigned int route, uint32_t paramc,
+                          unsigned int rank, uint32_t paramc,
                           const uint64_t *paramv, uint32_t depc);
 
 /** @brief Gather array DB within a specific epoch. */
 void arts_gather_array_db_epoch(arts_array_db_t *array, arts_edt_t func_ptr,
-                                unsigned int route, uint32_t paramc,
+                                unsigned int rank, uint32_t paramc,
                                 const uint64_t *paramv, uint32_t depc,
                                 arts_guid_t epoch_guid);
 

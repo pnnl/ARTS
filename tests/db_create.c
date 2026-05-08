@@ -129,55 +129,53 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
 
   arts_printf("=== db_create ===\n");
-  arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+  arts_epoch_start(epoch);
 
   // Test 1: arts_db_create + arts_db_release.
   void *ptr1 = NULL;
-  arts_guid_t db1 = arts_db_create(&ptr1, DB_SIZE, ARTS_DB_DEFAULT, NULL);
+  arts_guid_t db1 =
+      arts_db_create(&ptr1, DB_SIZE, ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
   uint64_t *d1 = (uint64_t *)ptr1;
   for (unsigned int i = 0; i < DB_ELEMS; i++) {
     d1[i] = i + 1;
   }
   arts_db_release(db1);
-  arts_guid_t e1 = arts_edt_create_with_epoch(
-      check_db_create, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_signal_edt(e1, 0, db1, DB_MODE_EW);
+  arts_guid_t e1 = arts_edt_create(check_db_create, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_add_dependence(db1, e1, 0, DB_MODE_RW);
 
   // Test 2: arts_db_create_with_guid.
   arts_guid_t reserved = arts_guid_reserve(ARTS_DB, 0);
   uint64_t *d2 = (uint64_t *)arts_db_create_with_guid(
-      reserved, DB_SIZE, ARTS_DB_DEFAULT, NULL, NULL);
+      reserved, DB_SIZE, ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
   for (unsigned int i = 0; i < DB_ELEMS; i++) {
     d2[i] = (uint64_t)i * 3;
   }
   arts_db_release(reserved);
   uint64_t param2 = (uint64_t)reserved;
-  arts_guid_t e2 = arts_edt_create_with_epoch(
-      check_db_with_guid, 1, &param2, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_signal_edt(e2, 0, reserved, DB_MODE_RO);
+  arts_guid_t e2 = arts_edt_create(check_db_with_guid, 1, &param2, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_add_dependence(reserved, e2, 0, DB_MODE_RO);
 
-  // Test 3: arts_db_create_with_guid_and_data.
-  uint64_t init_data[DB_ELEMS];
-  for (unsigned int i = 0; i < DB_ELEMS; i++) {
-    init_data[i] = 0xBEEF + i;
-  }
+  // Test 3: arts_db_create_with_guid + caller-side initial data fill.
   arts_guid_t reserved3 = arts_guid_reserve(ARTS_DB, 0);
-  arts_db_create_with_guid(reserved3, DB_SIZE, ARTS_DB_DEFAULT, init_data,
-                           NULL);
+  uint64_t *d3 = (uint64_t *)arts_db_create_with_guid(
+      reserved3, DB_SIZE, ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
+  for (unsigned int i = 0; i < DB_ELEMS; i++) {
+    d3[i] = 0xBEEF + i;
+  }
   arts_db_release(reserved3);
-  arts_guid_t e3 = arts_edt_create_with_epoch(
-      check_db_with_data, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_signal_edt(e3, 0, reserved3, DB_MODE_RO);
+  arts_guid_t e3 = arts_edt_create(check_db_with_data, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_add_dependence(reserved3, e3, 0, DB_MODE_RO);
 
   // Test 4: arts_db_destroy (implicit release).
   void *ptr4 = NULL;
-  arts_guid_t db4 = arts_db_create(&ptr4, 64, ARTS_DB_DEFAULT, NULL);
+  arts_guid_t db4 =
+      arts_db_create(&ptr4, 64, ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
   arts_db_destroy(db4);
 
-  arts_edt_create_with_epoch(post_destroy_edt, 0, NULL, 0, epoch,
-                             &(arts_hint_t){.route = 0});
+  arts_edt_create(post_destroy_edt, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
 
-  arts_wait_on_handle(epoch);
+  arts_epoch_wait(epoch);
   arts_shutdown();
 }
 

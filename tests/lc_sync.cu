@@ -95,14 +95,14 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
               sizeof(unsigned int) * arts_get_total_gpus());
   arts_guid_t db_guid = arts_guid_reserve(ARTS_DB, 0);
   addr = (unsigned int *)arts_db_create_with_guid(
-      db_guid, sizeof(unsigned int) * arts_get_total_gpus(), ARTS_DB_LC, NULL,
+      db_guid, sizeof(unsigned int) * arts_get_total_gpus(), ARTS_DB_GPU_LC, NULL,
       NULL);
   for (uint64_t i = 0; i < arts_get_total_gpus(); i++) {
     addr[i] = (unsigned int)-1;
   }
 
-  unsigned int node_id = arts_get_current_node();
-  arts_hint_t hint_0 = {0, 0};
+  unsigned int node_id = arts_get_current_rank();
+  arts_edt_hint_t hint_0 = {0, 0};
   arts_guid_t done_guid =
       arts_edt_create(done, 0, NULL, arts_get_total_gpus() + 1, &hint_0);
   arts_lc_sync(done_guid, 0, db_guid);
@@ -113,7 +113,7 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     if (i == 0 || i == 3 || i == 4 || i == 7) {
       arts_printf("CREATING EDT for GPU: %lu\n", i);
       arts_gpu_hint_t gpu_hint = {};
-      gpu_hint.route = node_id;
+      gpu_hint.rank = node_id;
       gpu_hint.gpu = (int)i;
       gpu_hint.end_guid = done_guid;
       gpu_hint.slot = (uint32_t)(i + 1);
@@ -121,9 +121,9 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       arts_guid_t edt_guid =
           arts_edt_create_gpu(temp, 0, NULL, 1, arts_from_dim3(grid),
                               arts_from_dim3(threads), &gpu_hint);
-      arts_signal_edt(edt_guid, 0, db_guid, DB_MODE_EW);
+      arts_add_dependence(db_guid, edt_guid, 0, DB_MODE_RW);
     } else {
-      arts_signal_edt(done_guid, i + 1, NULL_GUID, DB_MODE_EW);
+      arts_add_dependence(NULL_GUID, done_guid, i + 1, DB_MODE_RW);
     }
   }
 }

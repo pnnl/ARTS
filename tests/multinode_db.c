@@ -42,8 +42,6 @@
 ///        another. Requires multi-node (node_count > 1).
 
 #include "arts.h"
-#include "arts/utils/malloc.h"
-#include <string.h>
 
 /// Verify data received via cross-node get.
 void check_cross_get(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -81,7 +79,7 @@ void remote_writer(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   for (int i = 0; i < 8; i++) {
     data[i] = i * 100;
   }
-  arts_put_in_db(data, reader_edt, db_guid, 0, 0, 8 * sizeof(int));
+  arts_db_put(data, reader_edt, db_guid, 0, 0, 8 * sizeof(int), NULL);
 }
 
 void shutdown_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -130,34 +128,48 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== multinode_db ===\n");
 
-  unsigned int total = arts_get_total_nodes();
+  unsigned int total = arts_get_total_ranks();
   arts_guid_t shut = arts_edt_create(shutdown_edt, 0, NULL, 1, NULL);
-  arts_guid_t epoch = arts_initialize_and_start_epoch(shut, 0);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), shut, 0);
+  arts_epoch_start(epoch);
 
   // Test 1: Create DB on node 0, have node 1 write data, then read on node 0.
   void *db_ptr;
-  arts_guid_t db = arts_db_create(&db_ptr, 8 * sizeof(int), ARTS_DB_DEFAULT,
-                                  &(arts_hint_t){.route = 0});
-  arts_guid_t reader = arts_edt_create_with_epoch(
-      check_cross_get, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
+  arts_guid_t db =
+      arts_db_create(&db_ptr, 8 * sizeof(int), ARTS_DB_DEFAULT,
+                     ARTS_DB_PROP_NONE, &(arts_db_hint_t){.rank = 0});
+  arts_guid_t reader =
+      arts_edt_create(check_cross_get, 0, NULL, 1,
+                      &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   uint64_t params[2];
   params[0] = (uint64_t)db;
   params[1] = (uint64_t)reader;
-  arts_edt_create_with_epoch(remote_writer, 2, params, 0, epoch,
-                             &(arts_hint_t){.route = 1});
+  arts_edt_create(remote_writer, 2, params, 0,
+                  &(arts_edt_hint_t){.rank = 1, .epoch = epoch});
 
-  // Test 2: arts_guid_reserve_round_robin across nodes.
+  // Test 2: arts_guid_reserve_range with ARTS_HINT_ROUND_ROBIN across
+  // nodes.  Stash the GUID array in a DB so the checker EDT receives it
+  // via dependency wiring (cross-node ptr delivery is not a thing).
   unsigned int count = total * 4;
-  arts_guid_t *rr_guids = arts_guid_reserve_round_robin(count, ARTS_DB);
+  arts_guid_t rr_range =
+      arts_guid_reserve_range(ARTS_DB, count, ARTS_HINT_ROUND_ROBIN);
 
-  // Pass GUIDs via ptr signal.
   uint64_t rr_params[2];
   rr_params[0] = (uint64_t)total;
   rr_params[1] = (uint64_t)count;
-  arts_guid_t rr_checker = arts_edt_create_with_epoch(
-      check_round_robin, 2, rr_params, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_signal_edt_ptr(rr_checker, 0, rr_guids, count * sizeof(arts_guid_t));
-  arts_free(rr_guids);
+  arts_guid_t rr_checker =
+      arts_edt_create(check_round_robin, 2, rr_params, 1,
+                      &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+
+  arts_guid_t *rr_db_ptr = NULL;
+  arts_guid_t rr_db =
+      arts_db_create((void **)&rr_db_ptr, count * sizeof(arts_guid_t),
+                     ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
+  for (unsigned int i = 0; i < count; i++) {
+    rr_db_ptr[i] = arts_guid_from_index(rr_range, i);
+  }
+  arts_db_release(rr_db);
+  arts_add_dependence(rr_db, rr_checker, 0, DB_MODE_RO);
 }
 
 int main(int argc, char **argv) {

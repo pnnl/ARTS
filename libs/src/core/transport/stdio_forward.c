@@ -33,24 +33,45 @@ static pthread_mutex_t g_forwarders_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static void *forwarder_thread_main(void *arg) {
   forwarder_slot_t *f = (forwarder_slot_t *)arg;
-  FILE *in = fdopen(f->read_fd, "r");
-  if (!in) {
+  /* Use raw read(2)/write(2) instead of fdopen+fgets/fputs.  fdopen
+   * registers the new FILE* in glibc's global stream chain; while the
+   * forwarder is blocked in fgets→read it holds that FILE*'s internal
+   * lock, so any worker thread on rank 0 (the master process) that
+   * calls fflush(NULL) — e.g. graph500's FLUSH macro = fflush(0) —
+   * deadlocks iterating the chain.  Children avoid this only because
+   * execv() wipes glibc's stream chain; rank 0 owns the forwarder FILE*
+   * itself and hangs.  Raw fd I/O keeps the pipes outside the FILE*
+   * chain entirely. */
+  int sink_fd = fileno(f->sink);
+  if (sink_fd < 0) {
     close(f->read_fd);
     f->read_fd = -1;
     return NULL;
   }
   char buf[4096];
-  /* Pass child's lines through unchanged: remote stdout → master stdout,
-   * remote stderr → master stderr.  Source-side arts_printf / ARTS_*
-   * already include the rank in their own prefix, so no additional
-   * tagging is done here.  Line-buffered fgets + single fputs keeps
-   * concurrent threads from interleaving mid-line (glibc per-FILE
-   * lock). */
-  while (fgets(buf, sizeof(buf), in)) {
-    fputs(buf, f->sink);
-    fflush(f->sink);
+  for (;;) {
+    ssize_t n = read(f->read_fd, buf, sizeof(buf));
+    if (n <= 0) {
+      if (n < 0 && errno == EINTR) {
+        continue;
+      }
+      break; /* EOF or unrecoverable error */
+    }
+    /* Drain to sink_fd; loop in case of partial writes / EINTR. */
+    size_t off = 0;
+    while (off < (size_t)n) {
+      ssize_t w = write(sink_fd, buf + off, (size_t)n - off);
+      if (w < 0) {
+        if (errno == EINTR) {
+          continue;
+        }
+        goto done;
+      }
+      off += (size_t)w;
+    }
   }
-  fclose(in); /* closes read_fd */
+done:
+  close(f->read_fd);
   f->read_fd = -1;
   return NULL;
 }

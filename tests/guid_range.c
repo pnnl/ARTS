@@ -50,7 +50,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
 
   arts_printf("=== guid_range ===\n");
-  unsigned int my_node = arts_get_current_node();
+  unsigned int my_node = arts_get_current_rank();
   bool all_pass = true;
 
 #define RANGE_SIZE 16
@@ -120,6 +120,44 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   } else {
     arts_printf("  FAIL: arts_guid_index_from did not detect type mismatch\n");
     all_pass = false;
+  }
+
+  // Test 4: ARTS_HINT_ROUND_ROBIN — distributed range.
+  // home should cycle idx % nrank; round-trip via index_from should recover
+  // idx.
+  unsigned int nrank = arts_get_total_ranks();
+  arts_guid_t dist_start =
+      arts_guid_reserve_range(ARTS_DB, RANGE_SIZE, ARTS_HINT_ROUND_ROBIN);
+  if (dist_start == NULL_GUID) {
+    arts_printf("  FAIL: distributed reserve_range returned NULL_GUID\n");
+    all_pass = false;
+  } else {
+    bool dist_ok = true;
+    for (unsigned int i = 0; i < RANGE_SIZE; i++) {
+      arts_guid_t g = arts_guid_from_index(dist_start, i);
+      unsigned int expect_home = i % nrank;
+      if (arts_guid_get_rank(g) != expect_home) {
+        arts_printf("  FAIL: distributed[%u] rank=%u expected=%u\n", i,
+                    arts_guid_get_rank(g), expect_home);
+        dist_ok = false;
+      }
+      if (arts_guid_get_type(g) != ARTS_DB) {
+        arts_printf("  FAIL: distributed[%u] type mismatch\n", i);
+        dist_ok = false;
+      }
+      int round = arts_guid_index_from(dist_start, g);
+      if (round != (int)i) {
+        arts_printf("  FAIL: index_from(distributed[%u])=%d expected %u\n", i,
+                    round, i);
+        dist_ok = false;
+      }
+    }
+    if (dist_ok) {
+      arts_printf("  PASS: ARTS_HINT_ROUND_ROBIN distributes home idx %% nrank "
+                  "and round-trips via index_from\n");
+    } else {
+      all_pass = false;
+    }
   }
 
   arts_printf("=== guid_range: %s ===\n", all_pass ? "ALL PASSED" : "FAILED");

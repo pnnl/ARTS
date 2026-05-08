@@ -51,12 +51,12 @@ void test(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramc;
   (void)paramv;
 #ifdef __linux__
-  arts_printf("Running edt %u on %u %u, %u\n", arts_get_current_guid(),
-              arts_get_current_node(), arts_get_current_worker(),
+  arts_printf("Running edt %u on %u %u, %u\n", arts_edt_get_current_guid(),
+              arts_get_current_rank(), arts_get_current_worker(),
               sched_getcpu());
 #else
-  arts_printf("Running edt %u on %u %u\n", arts_get_current_guid(),
-              arts_get_current_node(), arts_get_current_worker());
+  arts_printf("Running edt %u on %u %u\n", arts_edt_get_current_guid(),
+              arts_get_current_rank(), arts_get_current_worker());
 #endif
 }
 
@@ -75,17 +75,17 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramv;
   (void)depc;
   (void)depv;
-  arts_printf("Main EDT %u\n", arts_get_current_guid());
+  arts_printf("Main EDT %u\n", arts_edt_get_current_guid());
   arts_printf("Starting\n");
   arts_guid_t exit_guid = arts_guid_reserve(ARTS_EDT, 0);
-  arts_edt_create_with_guid(exit_program, exit_guid, 0, NULL, 1);
-  arts_guid_t epoch_guid = arts_initialize_and_start_epoch(exit_guid, 0);
+  arts_edt_create(exit_program, 0, NULL, 1, &(arts_edt_hint_t){.guid = exit_guid});
+  arts_guid_t epoch_guid = arts_epoch_create(arts_get_current_rank(), exit_guid, 0);
+  arts_epoch_start(epoch_guid);
 
-  int number_of_workers = (int)arts_get_total_workers();
+  int number_of_workers = (int)arts_get_workers_per_rank();
   for (int i = 0; i < number_of_workers; i++) {
     uint64_t args[3];
-    arts_guid_t guid = arts_edt_create_with_epoch(test, 3, args, 0, epoch_guid,
-                                                  &(arts_hint_t){.route = 0});
+    arts_guid_t guid = arts_edt_create(test, 3, args, 0, &(arts_edt_hint_t){.rank = 0, .epoch = epoch_guid});
   }
   for (int i = 0; i < 100000000; i++) {
     // Simulate some work
@@ -94,7 +94,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
              arts_get_current_worker(), i);
     }
   }
-  arts_wait_on_handle(epoch_guid);
+  arts_epoch_wait(epoch_guid);
 }
 
 int main(int argc, char **argv) {

@@ -38,7 +38,7 @@
 ******************************************************************************/
 
 /// @file coherence_rw_ordering.c
-/// @brief Tests v3 RC RW ordering: multiple RW writers → RO readers
+/// @brief Tests RC RW ordering: multiple RW writers → RO readers
 ///        should all see the final writer's data.  Also exercises
 ///        sequential RW writers with correct ordering.
 
@@ -111,43 +111,40 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== coherence_rw_ordering ===\n");
 
-  arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+  arts_epoch_start(epoch);
 
   // Test 1: Sequential EW ordering: writer1(EW) → writer2(EW) → reader(RO).
   // record_dep with EW ensures writer1 runs before writer2, and writer2
   // before reader.
   void *ptr = NULL;
-  arts_guid_t db = arts_db_create(&ptr, sizeof(int), ARTS_DB_RC, NULL);
+  arts_guid_t db = arts_db_create(&ptr, sizeof(int), ARTS_DB_RC, ARTS_DB_PROP_NONE, NULL);
   ((int *)ptr)[0] = 0;
   arts_db_release(db);
 
-  arts_guid_t w1 = arts_edt_create_with_epoch(writer1, 0, NULL, 1, epoch,
-                                              &(arts_hint_t){.route = 0});
+  arts_guid_t w1 = arts_edt_create(writer1, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   arts_add_dependence(db, w1, 0, DB_MODE_RW);
 
-  arts_guid_t w2 = arts_edt_create_with_epoch(writer2, 0, NULL, 1, epoch,
-                                              &(arts_hint_t){.route = 0});
+  arts_guid_t w2 = arts_edt_create(writer2, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   arts_add_dependence(db, w2, 0, DB_MODE_RW);
 
   uint64_t exp_param = 200;
-  arts_guid_t r1 = arts_edt_create_with_epoch(
-      reader_check, 1, &exp_param, 1, epoch, &(arts_hint_t){.route = 0});
+  arts_guid_t r1 = arts_edt_create(reader_check, 1, &exp_param, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   arts_add_dependence(db, r1, 0, DB_MODE_RO);
 
   // Test 2: Multiple concurrent RO readers.
   void *ptr2 = NULL;
-  arts_guid_t db2 = arts_db_create(&ptr2, sizeof(int), ARTS_DB_RC, NULL);
+  arts_guid_t db2 = arts_db_create(&ptr2, sizeof(int), ARTS_DB_RC, ARTS_DB_PROP_NONE, NULL);
   ((int *)ptr2)[0] = 555;
   arts_db_release(db2);
 
   for (uint32_t i = 0; i < 4; i++) {
     uint64_t id_param = (uint64_t)i;
-    arts_guid_t reader = arts_edt_create_with_epoch(
-        concurrent_reader, 1, &id_param, 1, epoch, &(arts_hint_t){.route = 0});
+    arts_guid_t reader = arts_edt_create(concurrent_reader, 1, &id_param, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
     arts_add_dependence(db2, reader, 0, DB_MODE_RO);
   }
 
-  arts_wait_on_handle(epoch);
+  arts_epoch_wait(epoch);
   arts_shutdown();
 }
 

@@ -77,17 +77,20 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Create DB on remote rank.
   void *tmp;
-  arts_guid_t db = arts_db_create(&tmp, 2 * sizeof(int), ARTS_DB_DEFAULT,
-                                  &(arts_hint_t){.route = target});
+  arts_guid_t db =
+      arts_db_create(&tmp, 2 * sizeof(int), ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE,
+                     &(arts_db_hint_t){.rank = target});
 
   // Put data at rank=target.
   int send[2] = {42, 43};
-  arts_put_in_db_at(send, NULL_GUID, db, 0, 0, 2 * sizeof(int), target);
+  arts_db_put(send, NULL_GUID, db, 0, 0, 2 * sizeof(int),
+              &(arts_db_op_hint_t){.rank = target, .epoch = NULL_GUID});
 
   // Get data from rank=target.
   arts_guid_t reader =
-      arts_edt_create(check_get_at, 0, NULL, 1, &(arts_hint_t){.route = 0});
-  arts_get_from_db_at(reader, db, 0, 0, 2 * sizeof(int), target);
+      arts_edt_create(check_get_at, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0});
+  arts_db_get(reader, db, 0, 0, 2 * sizeof(int),
+              &(arts_db_op_hint_t){.rank = target, .epoch = NULL_GUID});
 }
 
 int main(int argc, char **argv) {

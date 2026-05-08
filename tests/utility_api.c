@@ -38,13 +38,15 @@
 ******************************************************************************/
 
 /// @file utility_api.c
-/// @brief Tests utility APIs: arts_get_current_node, arts_get_total_nodes,
-///        arts_get_current_worker, arts_get_total_workers, arts_get_time_stamp,
-///        arts_thread_safe_random, arts_get_current_guid,
+/// @brief Tests utility APIs: arts_get_current_rank, arts_get_total_ranks,
+///        arts_get_current_worker, arts_get_workers_per_rank,
+///        arts_get_time_stamp, arts_thread_safe_random, arts_edt_get_current_guid,
 ///        arts_get_current_numa_domain, arts_get_total_numa_domains,
 ///        arts_yield.
 
 #include "arts.h"
+#include "arts/sync/epoch.h"
+#include "arts/utils/random.h"
 
 /// EDT that checks utility functions from within an EDT context.
 void check_utils(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -56,8 +58,8 @@ void check_utils(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   bool all_pass = true;
 
-  // arts_get_current_guid should return a non-NULL GUID.
-  arts_guid_t my_guid = arts_get_current_guid();
+  // arts_edt_get_current_guid should return a non-NULL GUID.
+  arts_guid_t my_guid = arts_edt_get_current_guid();
   if (my_guid != NULL_GUID) {
     arts_printf("  PASS: get_current_guid = %lu (non-NULL)\n",
                 (uint64_t)my_guid);
@@ -68,7 +70,7 @@ void check_utils(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // arts_get_current_worker should be < total workers.
   unsigned int worker = arts_get_current_worker();
-  unsigned int total_workers = arts_get_total_workers();
+  unsigned int total_workers = arts_get_workers_per_rank();
   if (worker < total_workers) {
     arts_printf("  PASS: current_worker=%u < total_workers=%u\n", worker,
                 total_workers);
@@ -146,9 +148,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("=== utility_api ===\n");
 
   // Node/count queries from main EDT.
-  unsigned int node = arts_get_current_node();
-  unsigned int total = arts_get_total_nodes();
-  unsigned int workers = arts_get_total_workers();
+  unsigned int node = arts_get_current_rank();
+  unsigned int total = arts_get_total_ranks();
+  unsigned int workers = arts_get_workers_per_rank();
   arts_printf("  Node %u / %u, workers=%u\n", node, total, workers);
 
   if (node == 0 && total >= 1 && workers >= 1) {
@@ -157,14 +159,13 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_printf("  FAIL: unexpected node/worker values\n");
   }
 
-  arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+  arts_epoch_start(epoch);
 
-  arts_edt_create_with_epoch(check_utils, 0, NULL, 0, epoch,
-                             &(arts_hint_t){.route = 0});
-  arts_edt_create_with_epoch(yield_waiter, 0, NULL, 0, epoch,
-                             &(arts_hint_t){.route = 0});
+  arts_edt_create(check_utils, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_edt_create(yield_waiter, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
 
-  arts_wait_on_handle(epoch);
+  arts_epoch_wait(epoch);
   arts_shutdown();
 }
 

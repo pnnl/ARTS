@@ -63,12 +63,12 @@ TIMESTAMP="$(date +%Y-%m-%d_%H-%M-%S)"
 LOG_FILE="$LOG_DIR/${TIMESTAMP}.log"
 
 # Copy config files
-cp "$PROJECT_ROOT/sample_configs/arts.cfg" "$TEST_BIN_DIR/arts.cfg"
-if [ -f "$PROJECT_ROOT/sample_configs/arts_multinode.cfg" ]; then
-  cp "$PROJECT_ROOT/sample_configs/arts_multinode.cfg" "$TEST_BIN_DIR/arts_multinode.cfg"
+cp "$PROJECT_ROOT/configs/local/1n.cfg"       "$TEST_BIN_DIR/arts.cfg"
+if [ -f "$PROJECT_ROOT/configs/local/2n.cfg" ]; then
+  cp "$PROJECT_ROOT/configs/local/2n.cfg"       "$TEST_BIN_DIR/arts_2node.cfg"
 fi
-if [ -f "$PROJECT_ROOT/sample_configs/arts_gpu.cfg" ]; then
-  cp "$PROJECT_ROOT/sample_configs/arts_gpu.cfg" "$TEST_BIN_DIR/arts_gpu.cfg"
+if [ -f "$PROJECT_ROOT/configs/local/gpu/1n.cfg" ]; then
+  cp "$PROJECT_ROOT/configs/local/gpu/1n.cfg"  "$TEST_BIN_DIR/arts_gpu.cfg"
 fi
 
 # Counters
@@ -119,7 +119,6 @@ SINGLE_NODE_TESTS=(
   "epoch_deferred_start||$TIMEOUT_DEFAULT|Epoch deferred start"
   "epoch_finish_edt||$TIMEOUT_DEFAULT|Epoch finish EDT"
   "epoch_pool|3|$TIMEOUT_DEFAULT|Epoch pool"
-  "epoch_shad_adapter|3|$TIMEOUT_DEFAULT|Epoch shad adapter"
   "rec_epoch|3|$TIMEOUT_DEFAULT|Recursive epoch"
   "termination_detection|3|$TIMEOUT_DEFAULT|Termination detection"
   # --- Event tests ---
@@ -141,16 +140,6 @@ SINGLE_NODE_TESTS=(
   "acquire_mode||$TIMEOUT_DEFAULT|Acquire mode"
   "arts_id||$TIMEOUT_DEFAULT|Arts ID (object counters)"
   "out_of_order_list||$TIMEOUT_DEFAULT|Out-of-order list"
-  "buffer||$TIMEOUT_DEFAULT|Buffer"
-  "buffer_basic||$TIMEOUT_DEFAULT|Buffer basic"
-  "shad_lock||$TIMEOUT_DEFAULT|SHAD lock"
-  # --- CDAG tests ---
-  "cdag|32 0 0 0|$TIMEOUT_DEFAULT|CDAG (32R)"
-  "cdag_ew_chain|4|$TIMEOUT_DEFAULT|CDAG EW chain"
-  "cdag_ew_ordering||$TIMEOUT_DEFAULT|CDAG EW ordering"
-  "cdag_ew_ro_ew||$TIMEOUT_DEFAULT|CDAG EW-RO-EW stress"
-  "cdag_ew_ew_chain_seal||$TIMEOUT_DEFAULT|CDAG EW-EW chain sealing"
-  "cdag_ro_accumulation||$TIMEOUT_DEFAULT|CDAG pure RO accumulation"
   # --- Graph tests ---
   "csr||$TIMEOUT_DEFAULT|CSR graph"
   "distribution||$TIMEOUT_DEFAULT|Distribution"
@@ -162,17 +151,14 @@ MULTI_NODE_TESTS=(
   "multinode_epoch||$TIMEOUT_LONG|Multi-node epoch"
   "multinode_event||$TIMEOUT_LONG|Multi-node event"
   "active_message_db|64|$TIMEOUT_LONG|Active message DB"
-  "active_message_buffer|64|$TIMEOUT_LONG|Active message buffer"
   "arts_send|16|$TIMEOUT_LONG|arts_send"
   "route_table_remote_guid||$TIMEOUT_LONG|Route table remote GUID"
   "db_put_get_at||$TIMEOUT_LONG|DB put/get at"
   "db_remote||$TIMEOUT_LONG|DB remote"
   "remote_db_event||$TIMEOUT_LONG|Remote DB event"
-  "multinode_cdag||$TIMEOUT_LONG|Multi-node CDAG"
   "multinode_event_types||$TIMEOUT_LONG|Multi-node event types"
   "multinode_array_db||$TIMEOUT_LONG|Multi-node array DB"
   "multinode_db_advanced||$TIMEOUT_LONG|Multi-node DB advanced"
-  "cdag_mixed_local_remote||$TIMEOUT_LONG|CDAG mixed local+remote"
 )
 
 GPU_TESTS=(
@@ -288,19 +274,22 @@ done
 
 if [ "$DO_MULTINODE" -eq 1 ]; then
   echo ""
-  echo "--- Multi-node tests (2 nodes on localhost) ---"
   echo "" >> "$LOG_FILE"
   echo "=== Multi-node tests ===" >> "$LOG_FILE"
 
-  MULTINODE_CFG="$TEST_BIN_DIR/arts_multinode.cfg"
-  if [ ! -f "$MULTINODE_CFG" ]; then
-    echo "  ERROR: arts_multinode.cfg not found at $MULTINODE_CFG"
-  else
+  for variant in 2n 4n 5n; do
+    MULTINODE_CFG="$TEST_BIN_DIR/arts_${variant}ode.cfg"
+    if [ ! -f "$MULTINODE_CFG" ]; then
+      echo "  WARNING: arts_${variant}ode.cfg not found, skipping ${variant} multi-node tests"
+      continue
+    fi
+    echo ""
+    echo "--- Multi-node tests (${variant} on localhost) ---"
     for entry in "${MULTI_NODE_TESTS[@]}"; do
       IFS='|' read -r binary args tout desc <<< "$entry"
-      run_test "$binary" "$args" "$tout" "$desc" "$MULTINODE_CFG"
+      run_test "$binary" "$args" "$tout" "${desc} (${variant})" "$MULTINODE_CFG"
     done
-  fi
+  done
 fi
 
 if [ "$DO_GPU" -eq 1 ]; then

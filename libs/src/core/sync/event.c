@@ -36,6 +36,25 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
+
+/*
+ * arts_event_s redesign — see docs/event-refactor/spec.md.
+ *
+ * Single struct, hint-discriminated.  Two storage flavors share a union:
+ *
+ *   - simple (non-CHANNEL): one data slot + Treiber stack of pending deps.
+ *     ONCE / IDEM / STICKY / COUNTED / LATCH all use this branch.  fire is
+ *     gated by a fired flag CAS; late add_dependence after fire reads
+ *     simple.data and delivers immediately.
+ *
+ *   - channel (CHANNEL only): two mpsc FIFO queues (data_queue, dep_queue)
+ *     + a single-flight drainer sentinel.  satisfy / addDep push their
+ *     payload onto the matching queue and decrement the matching counter;
+ *     the drainer fires generations until either queue is empty.
+ *
+ * Race analysis and lock-freedom argument: spec §3.6 / §4.
+ */
+
 #include "arts/sync/event.h"
 
 #include "arts.h"
@@ -43,512 +62,356 @@
 #include "arts/gas/guid.h"
 #include "arts/gas/out_of_order.h"
 #include "arts/gas/route_table.h"
-#include "arts/memory/db.h"
 #include "arts/remote/handler.h"
-#include "arts/system/debug.h"
+#include "arts/runtime_state.h" /* arts_node_info, event_dep_pool */
+#include "arts/sync/shared.h"   /* arts_shared_init */
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
-#include "arts/utils/atomics.h"
-#include "arts/utils/link_list.h"
+#include "arts/utils/lockfree_lifo.h" /* arts_lf_stack_init / drain */
 #include "arts/utils/malloc.h"
+#include "arts/utils/mpsc.h"        /* arts_mpsc_t */
+#include "arts/utils/tiered_pool.h" /* arts_tiered_pool_release */
 
 #include <assert.h>
 #include <time.h>
 
 extern ARTS_THREAD_LOCAL struct arts_edt_s *current_edt;
 
-bool arts_event_create_internal(arts_guid_t *guid, unsigned int route,
-                                unsigned int dependent_count,
-                                unsigned int latch_count,
-                                arts_event_types_t event_type,
-                                arts_guid_t event_data) {
-  unsigned int event_size = sizeof(struct arts_event_s) +
-                            (sizeof(struct arts_dependent_s) * dependent_count);
-  void *event_packet = arts_calloc(1, event_size);
+/* --- Hint snapshot helpers ----------------------------------------------- */
 
-  if (event_size) {
-    struct arts_event_s *event = (struct arts_event_s *)event_packet;
-    event->header.type = ARTS_EVENT;
-    event->header.size = event_size;
-    event->dependent_count = 0;
-    event->dependent.size = dependent_count;
-    event->latch_count = latch_count;
-    event->type = event_type;
-    event->lock = 0;
-    event->versions = NULL;
-    event->data = event_data;
+static inline arts_event_hint_t hint_or_defaults(const arts_event_hint_t *h) {
+  return h ? *h : ARTS_EVENT_HINT_DEFAULTS;
+}
 
-    if (route == arts_global_rank_id) {
-      if (*guid) {
-        /* For labeled GUIDs, use race-safe addition since multiple
-         * threads/ranks may try to create the same labeled event concurrently.
-         * This matches the behavior in arts_remote_handle_event_move which also
-         * uses arts_route_table_add_item_race for consistency. */
-        if (arts_route_table_add_item_race(event_packet, *guid,
-                                           arts_global_rank_id, false)) {
-          arts_route_table_fire_oo(*guid, arts_out_of_order_handler);
-        } else {
-          /* Event already exists - free the allocated memory */
-          arts_free(event_packet);
-          return false;
-        }
-      } else {
-        *guid = arts_guid_create_for_rank(route, ARTS_EVENT);
-        arts_route_table_add_item(event_packet, *guid, arts_global_rank_id,
-                                  false);
-      }
-    } else {
-      arts_remote_memory_move(route, *guid, event_packet, event_size,
-                              ARTS_REMOTE_EVENT_MOVE_MSG, arts_free);
+/* --- Per-flavor node free helpers ---------------------------------------- */
+
+/* Free a single mpsc node back to the per-rank dep pool.  CHANNEL queue
+ * payload is intrusive: the node IS arts_event_dep_s for both data and
+ * dep entries (data uses target=guid, kind=ARTS_NULL marker). */
+static inline void event_node_free(arts_lf_link_t *node) {
+  arts_tiered_pool_release(arts_node_info.event_dep_pool,
+                           (struct arts_event_dep_s *)node);
+}
+
+/* --- shared_t deleter (called by route_table.c free_item) ---------------- */
+
+static void event_deleter(void *p) {
+  struct arts_event_s *e = (struct arts_event_s *)p;
+  /* Drain any leftover queued nodes and return them to the per-rank pool.
+   * shared_t.count == 0 by precondition: no producer can push after this
+   * point (every producer must hold a lookup ref while pushing). */
+  if (e->multiple_fire) {
+    arts_lf_link_t *chain = arts_mpsc_drain_remaining(&e->channel.data_queue);
+    while (chain) {
+      arts_lf_link_t *next =
+          atomic_load_explicit(&chain->next, memory_order_relaxed);
+      event_node_free(chain);
+      chain = next;
     }
+    chain = arts_mpsc_drain_remaining(&e->channel.dep_queue);
+    while (chain) {
+      arts_lf_link_t *next =
+          atomic_load_explicit(&chain->next, memory_order_relaxed);
+      event_node_free(chain);
+      chain = next;
+    }
+  } else {
+    arts_lf_link_t *chain = arts_lf_stack_drain(&e->simple.deps_stack);
+    while (chain) {
+      arts_lf_link_t *next =
+          atomic_load_explicit(&chain->next, memory_order_relaxed);
+      event_node_free(chain);
+      chain = next;
+    }
+  }
+  arts_free(e);
+}
 
+/* External forwarder — see event.h for rationale. */
+void arts_event_free_internal(struct arts_event_s *e) { event_deleter(e); }
+
+/* --- Internal allocation / install --------------------------------------- */
+
+static struct arts_event_s *event_alloc(const arts_event_hint_t *h) {
+  struct arts_event_s *e = arts_calloc(1, sizeof(struct arts_event_s));
+  if (!e) {
+    return NULL;
+  }
+  arts_shared_init(&e->shared, event_deleter);
+  e->header.type = ARTS_EVENT;
+  e->header.size = sizeof(*e);
+  e->init_latch = h->latch;
+  e->init_nb_deps_required = h->nb_deps_required;
+  e->max_nb_deps = h->max_nb_deps;
+  e->auto_destroy = h->auto_destroy ? 1 : 0;
+  e->negative_latch_allowed = h->negative_latch_allowed ? 1 : 0;
+  e->multiple_fire = h->multiple_fire ? 1 : 0;
+
+  atomic_store_explicit(&e->curr_latch, h->latch, memory_order_relaxed);
+  /* nb_deps_left starts at init_nb_deps_required for CHANNEL (counts down
+   * to <=0 to fire, then recharges).  For non-CHANNEL it is unused — fire
+   * is gated by `fired` CAS, not by deps counter. */
+  atomic_store_explicit(&e->nb_deps_left, (int32_t)h->nb_deps_required,
+                        memory_order_relaxed);
+  atomic_store_explicit(&e->max_deps_left, h->max_nb_deps,
+                        memory_order_relaxed);
+  atomic_store_explicit(&e->fired, false, memory_order_relaxed);
+
+  if (h->multiple_fire) {
+    arts_mpsc_init(&e->channel.data_queue);
+    arts_mpsc_init(&e->channel.dep_queue);
+    atomic_store_explicit(&e->channel.draining, 0, memory_order_relaxed);
+  } else {
+    e->simple.data = NULL_GUID;
+    arts_lf_stack_init(&e->simple.deps_stack);
+  }
+  return e;
+}
+
+bool arts_event_create_internal(arts_guid_t *guid,
+                                const arts_event_hint_t *h_in) {
+  arts_event_hint_t h = hint_or_defaults(h_in);
+  unsigned int rank = h.rank;
+  if (rank == ARTS_HINT_CURRENT_RANK) {
+    rank = arts_global_rank_id;
+  }
+
+  struct arts_event_s *event = event_alloc(&h);
+  if (!event) {
+    return false;
+  }
+
+  if (rank == arts_global_rank_id) {
+    if (*guid) {
+      /* add_item_race: install only if slot is empty.  On success the
+       * route_item lock starts at (gen<<32)|1 (Task 4e — install also
+       * counts as one existence ref). */
+      if (!arts_route_table_add_item_race(event, *guid, rank, false)) {
+        /* Another caller won the race; silent no-op. */
+        event_deleter(event);
+        return false;
+      }
+      arts_route_table_fire_oo(*guid, arts_out_of_order_handler);
+    } else {
+      *guid = arts_guid_create_for_rank(rank, ARTS_EVENT);
+      arts_route_table_add_item(event, *guid, rank, false);
+    }
     return true;
   }
-  return false;
+  /* Cross-rank: forward as a marshaled buffer.  Receiver
+   * arts_remote_handle_event_move performs add_item_race.  Discard the
+   * local allocation since the remote will materialise its own copy. */
+  arts_remote_memory_move(rank, *guid, event, sizeof(*event),
+                          ARTS_REMOTE_EVENT_MOVE_MSG, event_deleter);
+  return true;
 }
 
-arts_guid_t arts_event_create(unsigned int route, arts_event_types_t type,
-                              unsigned int latch_count, arts_guid_t data_guid) {
+arts_guid_t arts_event_create(const arts_event_hint_t *hint) {
   TIME_EVENT_CREATE_START();
   INCREMENT_NUM_EVENT_CREATE_BY(1);
-  if (route == ARTS_HINT_CURRENT_NODE) {
-    route = arts_global_rank_id;
+  arts_event_hint_t h = hint_or_defaults(hint);
+  arts_guid_t g = h.guid;
+  if (g != NULL_GUID) {
+    h.rank = arts_guid_get_rank(g);
   }
-  arts_guid_t guid = NULL_GUID;
-  switch (type) {
-  case ARTS_EVENT_ONCE:
-  case ARTS_EVENT_STICKY:
-  case ARTS_EVENT_IDEM:
-    arts_event_create_internal(&guid, route, INITIAL_DEPENDENT_SIZE, 1, type,
-                               NULL_GUID);
-    break;
-  case ARTS_EVENT_CHANNEL:
-    arts_event_create_channel_internal(&guid, route, latch_count, data_guid);
-    break;
-  default: /* LATCH, COUNTED */
-    arts_event_create_internal(&guid, route, INITIAL_DEPENDENT_SIZE,
-                               latch_count, type, NULL_GUID);
-    break;
-  }
+  bool ok = arts_event_create_internal(&g, &h);
   TIME_EVENT_CREATE_STOP();
-  return guid;
+  if (h.guid != NULL_GUID) {
+    return ok ? g : NULL_GUID;
+  }
+  return g;
 }
 
-arts_guid_t arts_event_create_with_guid(arts_guid_t guid,
-                                        arts_event_types_t type,
-                                        unsigned int latch_count,
-                                        arts_guid_t data_guid) {
-  TIME_EVENT_CREATE_START();
-  INCREMENT_NUM_EVENT_CREATE_BY(1);
-  unsigned int route = arts_guid_get_rank(guid);
-  bool ret = false;
-  switch (type) {
-  case ARTS_EVENT_ONCE:
-  case ARTS_EVENT_STICKY:
-  case ARTS_EVENT_IDEM:
-    ret = arts_event_create_internal(&guid, route, INITIAL_DEPENDENT_SIZE, 1,
-                                     type, NULL_GUID);
-    break;
-  case ARTS_EVENT_CHANNEL:
-    ret = arts_event_create_channel_internal(&guid, route, latch_count,
-                                             data_guid);
-    break;
-  default: /* LATCH, COUNTED */
-    ret = arts_event_create_internal(&guid, route, INITIAL_DEPENDENT_SIZE,
-                                     latch_count, type, NULL_GUID);
-    break;
-  }
-  TIME_EVENT_CREATE_STOP();
-  return (ret) ? guid : NULL_GUID;
-}
-
-/* ── Forward declarations ──────────────────────────────────────────── */
-
-static struct arts_event_version_s *
-channel_push_version(struct arts_event_s *event);
-
-struct arts_dependent_s *arts_dependent_get(struct arts_dependent_list_s *head,
-                                            int position);
-
-/* ── CHANNEL version helpers ─────────────────────────────────────────── */
-
-static struct arts_link_list_s *
-channel_get_versions(struct arts_event_s *event) {
-  if (event->versions != NULL) {
-    return event->versions;
-  }
-  event->versions = arts_link_list_group_new(1);
-  struct arts_event_version_s *version = channel_push_version(event);
-  version->dependent.next = NULL;
-  assert(version != NULL);
-  return event->versions;
-}
-
-static struct arts_event_version_s *
-channel_push_version(struct arts_event_s *event) {
-  struct arts_link_list_s *versions = channel_get_versions(event);
-  struct arts_event_version_s *next =
-      (struct arts_event_version_s *)arts_link_list_new_item(
-          (sizeof(struct arts_event_version_s) +
-           (sizeof(struct arts_dependent_s) * INITIAL_DEPENDENT_SIZE)));
-  next->latch_count = 0;
-  next->dependent_count = 0;
-  next->data =
-      event->data; /* Inherit event-level data (DB-coupled channels). */
-  next->dependent.size = INITIAL_DEPENDENT_SIZE;
-  struct arts_event_version_s *last = NULL;
-  if (versions && versions->tailPtr) {
-    last =
-        (struct arts_event_version_s *)arts_link_list_get_tail_data(versions);
-  }
-  if (last) {
-    next->version = last->version + 1;
-  } else {
-    next->version = 0;
-  }
-  arts_link_list_push_back(versions, next);
-  return next;
-}
-
-static struct arts_event_version_s *
-channel_get_front_version(struct arts_event_s *event) {
-  return (struct arts_event_version_s *)arts_link_list_get_front_data(
-      channel_get_versions(event));
-}
-
-static struct arts_event_version_s *
-channel_get_last_version(struct arts_event_s *event) {
-  return (struct arts_event_version_s *)arts_link_list_get_tail_data(
-      channel_get_versions(event));
-}
-
-static bool channel_free_version(struct arts_event_s *event) {
-  struct arts_link_list_s *versions = event->versions;
-  if (versions == NULL) {
-    return true;
-  }
-  bool last = true;
-  arts_lock(&versions->lock);
-
-  if (versions->headPtr != versions->tailPtr) {
-    last = false;
-  }
-
-  struct arts_event_version_s *version =
-      (struct arts_event_version_s *)(versions->headPtr + 1);
-  assert(version != NULL);
-
-  struct arts_dependent_list_s *trail;
-  struct arts_dependent_list_s *current = version->dependent.next;
-  while (current) {
-    trail = current;
-    current = current->next;
-    arts_free(trail);
-  }
-  version->dependent.next = NULL;
-
-  if (last) {
-    version->latch_count = 0;
-    version->dependent_count = 0;
-    version->data = event->data; /* Re-inherit for next generation. */
-  } else {
-    versions->headPtr = versions->headPtr->next;
-    struct arts_link_list_item_s *item =
-        ((struct arts_link_list_item_s *)version) - 1;
-    arts_free(item);
-  }
-
-  arts_unlock(&versions->lock);
-  return last;
-}
-
-static void channel_free_all_versions(struct arts_event_s *event) {
-  if (event->versions) {
-    struct arts_link_list_item_s *item = event->versions->headPtr;
-    while (item) {
-      struct arts_link_list_item_s *next = item->next;
-      struct arts_event_version_s *version =
-          (struct arts_event_version_s *)(item + 1);
-      struct arts_dependent_list_s *trail;
-      struct arts_dependent_list_s *current = version->dependent.next;
-      while (current) {
-        trail = current;
-        current = current->next;
-        arts_free(trail);
-      }
-      arts_free(item);
-      item = next;
-    }
-    arts_free(event->versions);
-    event->versions = NULL;
-  }
-}
-
-/* ── CHANNEL fire loop ──────────────────────────────────────────────── */
-
-static void channel_fire_dependents(struct arts_event_s *event,
-                                    struct arts_event_version_s *version,
-                                    arts_guid_t event_guid) {
-  (void)event_guid;
-  arts_guid_t data = version->data;
-  struct arts_dependent_list_s *dependent_list = &version->dependent;
-  struct arts_dependent_s *dependent = version->dependent.dependents;
-  unsigned int last_known =
-      arts_atomic_fetch_add(&version->dependent_count, 0U);
-  int i = 0;
-  int total_size = 0;
-  while (i < (int)last_known) {
-    int j = i - total_size;
-    while (i < (int)last_known && j < (int)dependent_list->size) {
-      while (!dependent[j].done_writing) {
-        ;
-      }
-      if (dependent[j].type == ARTS_EDT) {
-        if ((dependent[j].byte_offset != 0 || dependent[j].size != 0) &&
-            data != NULL_GUID) {
-          struct arts_db_s *db =
-              (struct arts_db_s *)arts_route_table_lookup_db(data, NULL, false);
-          if (db) {
-            void *db_data = (void *)(db + 1);
-            void *slice_ptr =
-                (void *)(((char *)db_data) + dependent[j].byte_offset);
-            arts_signal_edt_ptr_with_guid(dependent[j].addr, dependent[j].slot,
-                                          data, slice_ptr,
-                                          (unsigned int)dependent[j].size);
-          }
-        } else {
-          /* Match STICKY fire semantics: always signal the slot, even when
-           * data is NULL_GUID (OCR allows satisfy with NULL_GUID to mean
-           * "just fire the slot, no DB attached"). */
-          arts_signal_edt(dependent[j].addr, dependent[j].slot, data,
-                          DB_MODE_NULL);
-        }
-      } else if (dependent[j].type == ARTS_EVENT) {
-        arts_event_satisfy_slot(dependent[j].addr, data, dependent[j].slot);
-      } else if (dependent[j].type == ARTS_CALLBACK) {
-        arts_edt_dep_t arg = {0};
-        arg.guid = data;
-        arg.ptr = arts_route_table_lookup_db(data, NULL, false);
-        dependent[j].callback_t(arg);
-      }
-      j++;
-      i++;
-    }
-    total_size += (int)dependent_list->size;
-    if (i >= (int)last_known) {
-      break;
-    }
-    while (dependent_list->next == NULL) {
-      ;
-    }
-    dependent_list = dependent_list->next;
-    dependent = dependent_list->dependents;
-  }
-
-  channel_free_version(event);
-}
-
-/* ── CHANNEL satisfy ────────────────────────────────────────────────── */
-
-static void channel_satisfy_slot(struct arts_event_s *event,
-                                 arts_guid_t event_guid, uint32_t slot,
-                                 arts_guid_t data_guid) {
-  arts_lock(&event->lock);
-
-  unsigned int res = (unsigned int)-1;
-  struct arts_event_version_s *version = channel_get_front_version(event);
-  assert(version != NULL);
-
-  if (slot == ARTS_EVENT_LATCH_INCR_SLOT) {
-    res = arts_atomic_fetch_add(&version->latch_count, 0U);
-    if (res == 1) {
-      version = channel_push_version(event);
-    }
-    res = arts_atomic_add(&version->latch_count, 1U);
-  } else if (slot == ARTS_EVENT_LATCH_DECR_SLOT) {
-    res = arts_atomic_fetch_add(&version->latch_count, 0U);
-    if (res == (unsigned int)-1) {
-      version = channel_push_version(event);
-    }
-    /* Store per-generation data on the TARGET version (after push check). */
-    if (data_guid != NULL_GUID) {
-      version->data = data_guid;
-    }
-    res = arts_atomic_sub(&version->latch_count, 1U);
-  } else if (slot == ARTS_EVENT_UPDATE) {
-    res = arts_atomic_fetch_add(&version->latch_count, 0U);
-  } else {
-    ARTS_ERROR("Channel event invalid slot %u (guid=%lu)", slot, event_guid);
-  }
-
-  if (res == 0) {
-    channel_fire_dependents(event, version, event_guid);
-  }
-
-  arts_unlock(&event->lock);
-}
-
-/* ── CHANNEL creation ───────────────────────────────────────────────── */
-
-bool arts_event_create_channel_internal(arts_guid_t *guid, unsigned int route,
-                                        unsigned int latch_count,
-                                        arts_guid_t data_guid) {
-  bool ret =
-      arts_event_create_internal(guid, route, INITIAL_DEPENDENT_SIZE,
-                                 latch_count, ARTS_EVENT_CHANNEL, data_guid);
-  return ret;
-}
-
-/* ── CHANNEL add dependence with mode ───────────────────────────────── */
-
-void arts_event_add_dependence_with_mode(arts_guid_t event_source,
-                                         arts_guid_t edt_dest,
-                                         uint32_t edt_slot,
-                                         arts_db_access_mode_t mode) {
-  arts_type_t dest_type = arts_guid_get_type(edt_dest);
-  struct arts_event_s *event =
-      (struct arts_event_s *)arts_route_table_lookup_item(event_source);
-  if (event == NULL) {
-    unsigned int rank = arts_guid_get_rank(event_source);
-    if (rank != arts_global_rank_id) {
-      arts_remote_add_dependence(event_source, edt_dest, edt_slot, rank, mode);
-    } else {
-      arts_out_of_order_add_dependence(event_source, edt_dest, edt_slot,
-                                       DB_MODE_NULL, event_source);
-    }
-    return;
-  }
-
-  arts_lock(&event->lock);
-  struct arts_event_version_s *version = channel_get_front_version(event);
-  assert(version != NULL);
-
-  if (event->latch_count > 0) {
-    /* Satisfy-channel: single-consumer per generation (OCR channel model).
-     * Each addDep represents a new generation that fires on one satisfy.
-     * If the front version already has a dependent, push a new version
-     * so the next satisfy fires exactly one consumer (FIFO order). */
-    if (version->dependent_count > 0) {
-      version = channel_push_version(event);
-    }
-    arts_atomic_add(&version->latch_count, 1U);
-  }
-
-  struct arts_dependent_list_s *dependent_list = &version->dependent;
-  unsigned int position = arts_atomic_fetch_add(&version->dependent_count, 1U);
-  struct arts_dependent_s *dependent =
-      arts_dependent_get(dependent_list, (int)position);
-  assert(dependent != NULL);
-  dependent->type = (dest_type == ARTS_EVENT) ? ARTS_EVENT : ARTS_EDT;
-  dependent->addr = edt_dest;
-  dependent->slot = edt_slot;
-  dependent->mode = mode;
-  dependent->byte_offset = 0;
-  dependent->size = 0;
-  COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
-  dependent->done_writing = true;
-
-  /* Fire under the lock to prevent DECR from interleaving between the
-     latch check and the fire.  The deferred UPDATE approach had a race:
-     a DECR could slip in after unlock and before UPDATE re-locked. */
-  if (arts_atomic_fetch_add(&version->latch_count, 0U) == 0) {
-    channel_fire_dependents(event, version, event_source);
-  }
-
-  arts_unlock(&event->lock);
-}
-
-void arts_event_add_dependence_with_byte_offset(
-    arts_guid_t event_source, arts_guid_t edt_dest, uint32_t edt_slot,
-    arts_db_access_mode_t mode, uint64_t byte_offset, uint64_t len) {
-  arts_type_t dest_type = arts_guid_get_type(edt_dest);
-  struct arts_event_s *event =
-      (struct arts_event_s *)arts_route_table_lookup_item(event_source);
-  if (event == NULL) {
-    unsigned int rank = arts_guid_get_rank(event_source);
-    if (rank != arts_global_rank_id) {
-      /* Byte-offset not supported for remote channels — fall back to
-       * full-DB dependence.  The byte slice is resolved at acquire time. */
-      arts_remote_add_dependence(event_source, edt_dest, edt_slot, rank, mode);
-    } else {
-      arts_out_of_order_add_dependence(event_source, edt_dest, edt_slot,
-                                       DB_MODE_NULL, event_source);
-    }
-    return;
-  }
-
-  arts_lock(&event->lock);
-  struct arts_event_version_s *version = channel_get_front_version(event);
-  assert(version != NULL);
-
-  if (event->latch_count > 0) {
-    /* Single-consumer per generation — same as
-     * arts_event_add_dependence_with_mode. */
-    if (version->dependent_count > 0) {
-      version = channel_push_version(event);
-    }
-    arts_atomic_add(&version->latch_count, 1U);
-  }
-
-  struct arts_dependent_list_s *dependent_list = &version->dependent;
-  unsigned int position = arts_atomic_fetch_add(&version->dependent_count, 1U);
-  struct arts_dependent_s *dependent =
-      arts_dependent_get(dependent_list, (int)position);
-  assert(dependent != NULL);
-  dependent->type = (dest_type == ARTS_EVENT) ? ARTS_EVENT : ARTS_EDT;
-  dependent->addr = edt_dest;
-  dependent->slot = edt_slot;
-  dependent->mode = mode;
-  dependent->byte_offset = byte_offset;
-  dependent->size = len;
-  COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
-  dependent->done_writing = true;
-
-  /* Fire under the lock — same race fix as arts_event_add_dependence_with_mode.
-   */
-  if (arts_atomic_fetch_add(&version->latch_count, 0U) == 0) {
-    channel_fire_dependents(event, version, event_source);
-  }
-
-  arts_unlock(&event->lock);
-}
-
-/* ── Event free / destroy ───────────────────────────────────────────── */
-
-void arts_event_free(struct arts_event_s *event) {
-  if (event->type == ARTS_EVENT_CHANNEL) {
-    channel_free_all_versions(event);
-  }
-  struct arts_dependent_list_s *trail;
-  struct arts_dependent_list_s *current = event->dependent.next;
-  while (current) {
-    trail = current;
-    current = current->next;
-    arts_free(trail);
-  }
-  arts_free(event);
-}
+/* ── Event destroy ──────────────────────────────────────────────────── */
 
 void arts_event_destroy(arts_guid_t guid) {
-  struct arts_event_s *event =
-      (struct arts_event_s *)arts_route_table_lookup_item(guid);
-  if (event != NULL) {
-    arts_event_free(event);
+  unsigned int rank = arts_guid_get_rank(guid);
+  if (rank != arts_global_rank_id) {
+    arts_remote_event_destroy(guid);
+    return;
+  }
+  arts_route_table_mark_delete(guid);
+}
+
+/* ── Signal one queued dep ─────────────────────────────────────────────
+ * For CHANNEL the data argument comes from the matching data_queue pop;
+ * for non-CHANNEL it is e->simple.data. */
+static void event_signal_one(struct arts_event_dep_s *d, arts_guid_t data) {
+  if (d->kind == ARTS_EDT) {
+    internal_signal_edt(d->target, d->slot, data, d->mode, NULL, 0);
+  } else if (d->kind == ARTS_EVENT) {
+    arts_event_satisfy_slot(d->target, data, d->slot);
   }
 }
+
+/* Allocate and populate an mpsc node from the per-rank pool. */
+static struct arts_event_dep_s *event_node_alloc(arts_type_t kind,
+                                                 arts_guid_t target,
+                                                 uint32_t slot,
+                                                 arts_db_access_mode_t mode) {
+  struct arts_event_dep_s *node =
+      (struct arts_event_dep_s *)arts_tiered_pool_alloc(
+          arts_node_info.event_dep_pool);
+  node->kind = kind;
+  node->target = target;
+  node->slot = slot;
+  node->mode = mode;
+  return node;
+}
+
+/* ── Non-CHANNEL drain ───────────────────────────────────────────────── */
+
+/*
+ * drain_simple_chain — idempotent, multi-caller drain of simple.deps_stack
+ * after fired==true.  Invoked by:
+ *   (a) the unique satisfy thread that just CAS-set fired (drain_simple).
+ *   (b) any addDep thread that pushed onto the stack and then observed
+ *       fired==true (race rescue for spec §4.1 R3-R4: addDep's push lands
+ *       *after* satisfy's reverse_drain finished).
+ *
+ * Concurrent callers self-serialise inside arts_lf_stack_reverse_drain's
+ * `atomic_exchange(&head, NULL)` — only one caller per chain, others see
+ * NULL and exit.  The outer loop catches pushes that landed during a
+ * caller's iteration.
+ */
+static void drain_simple_chain(struct arts_event_s *e, arts_guid_t event_guid) {
+  arts_guid_t data = e->simple.data;
+  for (;;) {
+    arts_lf_link_t *fifo = arts_lf_stack_reverse_drain(&e->simple.deps_stack);
+    if (!fifo) {
+      return;
+    }
+    while (fifo) {
+      arts_lf_link_t *next =
+          atomic_load_explicit(&fifo->next, memory_order_relaxed);
+      struct arts_event_dep_s *dep = (struct arts_event_dep_s *)fifo;
+      event_signal_one(dep, data);
+      event_node_free(fifo);
+      if (atomic_fetch_sub_explicit(&e->max_deps_left, 1u,
+                                    memory_order_acq_rel) == 1u) {
+        if (e->auto_destroy) {
+          /* Free the rest of this chain — they'd be delivered to a
+           * destroyed event.  Other concurrent drainers see the stack
+           * empty (or get a fresh chain that will also short-circuit
+           * here). */
+          fifo = next;
+          while (fifo) {
+            next = atomic_load_explicit(&fifo->next, memory_order_relaxed);
+            event_node_free(fifo);
+            fifo = next;
+          }
+          arts_route_table_mark_delete(event_guid);
+          return;
+        }
+      }
+      fifo = next;
+    }
+  }
+}
+
+/*
+ * drain_simple — satisfy-side single-fire dispatcher.  CAS fired 0→1
+ * gates the unique fire winner; the winner runs drain_simple_chain.
+ * Caller has already written simple.data (if any); the CAS release
+ * publishes the data store to late binders.
+ */
+static void drain_simple(struct arts_event_s *e, arts_guid_t event_guid) {
+  int32_t latch = atomic_load_explicit(&e->curr_latch, memory_order_acquire);
+  if (latch > 0) {
+    return;
+  }
+  if (latch < 0 && !e->negative_latch_allowed) {
+    ARTS_ERROR("negative latch on event with negative_latch_allowed=false");
+  }
+  bool fexp = false;
+  if (!atomic_compare_exchange_strong_explicit(
+          &e->fired, &fexp, true, memory_order_acq_rel, memory_order_acquire)) {
+    return; /* another thread already won the single fire */
+  }
+  drain_simple_chain(e, event_guid);
+}
+
+/* ── CHANNEL drain (lock-free, single-flight via `draining` sentinel) ── */
+
+static void try_drain_channel(struct arts_event_s *e, arts_guid_t event_guid) {
+  /* Outer rescue loop: re-check the fire condition after we release
+   * `draining` because a concurrent push may have arrived in the
+   * window between our last queue-pop and the sentinel-clear. */
+  for (;;) {
+    int32_t latch = atomic_load_explicit(&e->curr_latch, memory_order_acquire);
+    int32_t deps = atomic_load_explicit(&e->nb_deps_left, memory_order_acquire);
+    if (latch > 0 || deps > 0) {
+      return; /* condition not met */
+    }
+    if (atomic_load_explicit(&e->channel.draining, memory_order_acquire) == 1) {
+      return; /* another thread already drains */
+    }
+    uint8_t expected = 0;
+    if (!atomic_compare_exchange_strong_explicit(
+            &e->channel.draining, &expected, (uint8_t)1, memory_order_acq_rel,
+            memory_order_acquire)) {
+      return; /* lost the CAS race */
+    }
+    /* Inner fire loop: keep firing while both counters are <= 0. */
+    while (atomic_load_explicit(&e->curr_latch, memory_order_acquire) <= 0 &&
+           atomic_load_explicit(&e->nb_deps_left, memory_order_acquire) <= 0) {
+      arts_lf_link_t *data_node = arts_mpsc_pop(&e->channel.data_queue);
+      arts_lf_link_t *dep_node = arts_mpsc_pop(&e->channel.dep_queue);
+      if (data_node == NULL || dep_node == NULL) {
+        /* Queue empty mid-fire — should not happen if counters and
+         * queues are in lockstep, but bail safely. */
+        if (data_node) {
+          event_node_free(data_node);
+        }
+        if (dep_node) {
+          event_node_free(dep_node);
+        }
+        break;
+      }
+      /* Data node carries the satisfy data in `target` (kind == ARTS_NULL
+       * marker). */
+      arts_guid_t data = ((struct arts_event_dep_s *)data_node)->target;
+      struct arts_event_dep_s *dep = (struct arts_event_dep_s *)dep_node;
+      event_signal_one(dep, data);
+      event_node_free(data_node);
+      event_node_free(dep_node);
+      /* Recharge counters: each fire consumed init_latch satisfies and
+       * init_nb_deps_required deps. */
+      atomic_fetch_add_explicit(&e->curr_latch, e->init_latch,
+                                memory_order_acq_rel);
+      atomic_fetch_add_explicit(&e->nb_deps_left,
+                                (int32_t)e->init_nb_deps_required,
+                                memory_order_acq_rel);
+      /* Lifetime cap: max_deps_left counts total deliveries. */
+      if (atomic_fetch_sub_explicit(&e->max_deps_left, 1u,
+                                    memory_order_acq_rel) == 1u) {
+        if (e->auto_destroy) {
+          atomic_store_explicit(&e->channel.draining, 0, memory_order_release);
+          arts_route_table_mark_delete(event_guid);
+          return;
+        }
+      }
+    }
+    atomic_store_explicit(&e->channel.draining, 0, memory_order_release);
+    /* Outer-while will re-check the fire condition for missed pushes. */
+  }
+}
+
+/* ── arts_event_satisfy_slot ───────────────────────────────────────── */
 
 void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
                              uint32_t slot) {
   TIME_EVENT_SIGNAL_START();
   INCREMENT_NUM_EVENT_SIGNAL_BY(1);
+
   if (current_edt && current_edt->invalidate_count > 0) {
     arts_out_of_order_event_satisfy_slot(current_edt->current_edt, event_guid,
                                          data_guid, slot, true);
+    TIME_EVENT_SIGNAL_STOP();
     return;
   }
-  ARTS_INFO("Signal Event:%u, Data:%u at %u", event_guid, data_guid, slot);
-  struct arts_event_s *event =
-      (struct arts_event_s *)arts_route_table_lookup_item(event_guid);
+
+  struct arts_event_s *event = arts_route_table_lookup_event_safe(event_guid);
   if (!event) {
     unsigned int rank = arts_guid_get_rank(event_guid);
     if (rank != arts_global_rank_id) {
@@ -557,171 +420,94 @@ void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
       arts_out_of_order_event_satisfy_slot(event_guid, event_guid, data_guid,
                                            slot, false);
     }
-  } else {
-    // CHANNEL events use their own lock-protected version-based path
-    if (event->type == ARTS_EVENT_CHANNEL) {
-      channel_satisfy_slot(event, event_guid, slot, data_guid);
-      goto done;
-    }
-
-    // Re-satisfy guard: type-aware handling for already-fired events
-    if (event->fired) {
-      if (event->type == ARTS_EVENT_IDEM) {
-        goto done;
-      } else if (event->type == ARTS_EVENT_STICKY) {
-        ARTS_WARN("Sticky event %lu: re-satisfy rejected", event_guid);
-        goto done;
-      } else {
-        ARTS_ERROR("Event latch already fired (guid=%lu, data=%lu, slot=%u)",
-                   event_guid, data_guid, slot);
-      }
-    }
-
-    unsigned int res = 0U;
-    if (slot == ARTS_EVENT_LATCH_INCR_SLOT) {
-      if (event->type == ARTS_EVENT_ONCE || event->type == ARTS_EVENT_COUNTED) {
-        ARTS_ERROR("INCR_SLOT rejected for %s event (guid=%lu)",
-                   event->type == ARTS_EVENT_ONCE ? "ONCE" : "COUNTED",
-                   event_guid);
-      }
-      res = arts_atomic_add(&event->latch_count, 1U);
-    } else if (slot == ARTS_EVENT_LATCH_DECR_SLOT) {
-      if (data_guid != NULL_GUID) {
-        event->data = data_guid;
-      }
-      res = arts_atomic_sub(&event->latch_count, 1U);
-    } else {
-      ARTS_ERROR("Event latch invalid slot %u", slot);
-    }
-
-    /// When the latch count reaches 0, fire the event
-    if (!res) {
-      /// If the event is already fired, we should not fire it again
-      if (arts_atomic_swap_bool(&event->fired, true)) {
-        ARTS_ERROR("Event latch already fired (guid=%lu, data=%lu, slot=%u)",
-                   event_guid, data_guid, slot);
-      }
-      /// If the event is not fired, we need to fire it
-      else {
-        struct arts_dependent_list_s *dependent_list = &event->dependent;
-        struct arts_dependent_s *dependent = event->dependent.dependents;
-        int i;
-        int j;
-        /// Capture current state
-        unsigned int last_known =
-            arts_atomic_fetch_add(&event->dependent_count, 0U);
-        event->pos = last_known + 1;
-        i = 0;
-        int total_size = 0;
-        /// Process all dependents up to last_known
-        while (i < last_known) {
-          j = i - total_size;
-          while (i < last_known && j < dependent_list->size) {
-            while (!dependent[j].done_writing) {
-              ;
-            }
-            if (dependent[j].type == ARTS_EDT) {
-              arts_signal_edt(dependent[j].addr, dependent[j].slot, event->data,
-                              DB_MODE_NULL);
-            } else if (dependent[j].type == ARTS_EVENT) {
-              TIME_EVENT_SIGNAL_STOP();
-              arts_event_satisfy_slot(dependent[j].addr, event->data,
-                                      dependent[j].slot);
-              TIME_EVENT_SIGNAL_START();
-            } else if (dependent[j].type == ARTS_CALLBACK) {
-              arts_edt_dep_t arg = {0};
-              arg.guid = event->data;
-              arg.ptr = arts_route_table_lookup_db(event->data, NULL, false);
-              dependent[j].callback_t(arg);
-            }
-            j++;
-            i++;
-          }
-          total_size += (int)dependent_list->size;
-          if (i >= last_known) {
-            break;
-          }
-          while (dependent_list->next == NULL) {
-            ;
-          }
-          dependent_list = dependent_list->next;
-          dependent = dependent_list->dependents;
-        }
-        // Auto-destroy for LATCH/ONCE/COUNTED; STICKY/IDEM persist
-        if (event->type == ARTS_EVENT_LATCH || event->type == ARTS_EVENT_ONCE ||
-            event->type == ARTS_EVENT_COUNTED) {
-          arts_event_free(event);
-        }
-      }
-    }
+    TIME_EVENT_SIGNAL_STOP();
+    return;
   }
-done:
+
+  if (event->multiple_fire) {
+    /* CHANNEL path: push data into FIFO, decrement latch counter, drain.
+     * INCR_SLOT is non-sensical for CHANNEL (latch isn't a counter
+     * threshold but a fire trigger; spec assertion). */
+    if (slot != ARTS_EVENT_LATCH_DECR_SLOT) {
+      ARTS_ERROR("CHANNEL: only DECR (slot 0) satisfy supported");
+    }
+    struct arts_event_dep_s *node =
+        event_node_alloc(ARTS_LAST_TYPE, data_guid, 0, DB_MODE_NULL);
+    arts_mpsc_push(&event->channel.data_queue, &node->link);
+    atomic_fetch_sub_explicit(&event->curr_latch, 1, memory_order_acq_rel);
+    try_drain_channel(event, event_guid);
+    arts_route_table_release(event_guid);
+    TIME_EVENT_SIGNAL_STOP();
+    return;
+  }
+
+  /* Non-CHANNEL path: ONCE / IDEM / STICKY / COUNTED / LATCH. */
+  if (slot == ARTS_EVENT_LATCH_INCR_SLOT) {
+    /* LATCH only: increment counter; no fire trigger here. */
+    atomic_fetch_add_explicit(&event->curr_latch, 1, memory_order_acq_rel);
+    arts_route_table_release(event_guid);
+    TIME_EVENT_SIGNAL_STOP();
+    return;
+  }
+  if (slot != ARTS_EVENT_LATCH_DECR_SLOT) {
+    ARTS_ERROR("Event latch invalid slot %u", slot);
+  }
+
+  /* DECR satisfy: dec counter, check for unique fire trigger
+   * (prev == 1).  Only that thread writes simple.data and runs drain. */
+  int32_t prev =
+      atomic_fetch_sub_explicit(&event->curr_latch, 1, memory_order_acq_rel);
+  if (!event->negative_latch_allowed && prev <= 0) {
+    arts_route_table_release(event_guid);
+    ARTS_ERROR("over-satisfy on event with negative_latch_allowed=false");
+  }
+  if (prev == 1) {
+    /* Unique fire trigger.  Write data BEFORE the fired CAS so the
+     * release on the CAS publishes the data store to late binders. */
+    if (data_guid != NULL_GUID) {
+      event->simple.data = data_guid;
+      atomic_thread_fence(memory_order_release);
+    }
+    /* CAS fired 0→1 here always succeeds (prev==1 is unique among
+     * concurrent satisfies); race with addDep's drain_simple_chain
+     * is benign because reverse_drain self-serialises. */
+    bool fexp = false;
+    (void)atomic_compare_exchange_strong_explicit(
+        &event->fired, &fexp, true, memory_order_acq_rel, memory_order_acquire);
+    drain_simple_chain(event, event_guid);
+  }
+  arts_route_table_release(event_guid);
   TIME_EVENT_SIGNAL_STOP();
 }
 
-struct arts_dependent_s *arts_dependent_get(struct arts_dependent_list_s *head,
-                                            int position) {
-  struct arts_dependent_list_s *list = head;
-  volatile struct arts_dependent_list_s *temp;
-
-  while (1) {
-    /// If the position is greater than the size of the list, we need to
-    /// allocate a new list
-    if (position >= list->size) {
-      if (position - list->size == 0) {
-        if (list->next == NULL) {
-          temp = (volatile struct arts_dependent_list_s *)arts_calloc(
-              1, sizeof(struct arts_dependent_list_s) +
-                     (sizeof(struct arts_dependent_s) * list->size * 2));
-          if (temp == NULL) {
-            ARTS_ERROR("Event dependent list allocation failed");
-          }
-          temp->size = list->size * 2;
-          list->next = (struct arts_dependent_list_s *)temp;
-        }
-      }
-
-      // EXPONENTIONAL BACK OFF THIS
-      while (list->next == NULL) {
-      }
-
-      position -= (int)list->size;
-      list = list->next;
-    } else {
-      break;
-    }
-  }
-  return list->dependents + position;
+/* OCR-aligned convenience wrapper: satisfy slot 0 (LATCH_DECR). */
+void arts_event_satisfy(arts_guid_t event_guid, arts_guid_t data_guid) {
+  arts_event_satisfy_slot(event_guid, data_guid, ARTS_EVENT_LATCH_DECR_SLOT);
 }
 
-/*
- * arts_add_dependence — Unified dependence registration (two-message pattern).
- *
- * Accepts Event OR DB as source, EDT or Event as destination.
- *
- * Two-message pattern for EDT destinations:
- *   Step 1 (mode-set):  Write access_mode to depv[slot].mode on the EDT.
- *   Step 2 (waiter-reg): Register as a dependent on the source event.
- *                         The fire loop delivers data with DB_MODE_NULL,
- *                         so internal_signal_edt preserves the mode
- *                         already written in step 1.
- *
- * For DB sources: look up db->event_guid, register on that channel event,
- * and increment the latch for DB_MODE_EW.
- *
- * For NULL source (NULL_GUID): signal the EDT slot immediately with NULL
- * data and the given access_mode.
- */
+/* ── arts_add_dependence ──────────────────────────────────────────── */
+
 void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
                          uint32_t slot, arts_db_access_mode_t access_mode) {
   ARTS_INFO("Add Dependence from %lu to %lu at %u mode=%u", source, destination,
             slot, access_mode);
 
-  /* NULL source → signal immediately (slot satisfied with no data). */
+  /* DB_MODE_VAL: source is a raw 64-bit value. */
+  if (access_mode == DB_MODE_VAL) {
+    arts_type_t dest_type = arts_guid_get_type(destination);
+    if (dest_type == ARTS_EDT) {
+      internal_signal_edt(destination, slot, source, DB_MODE_VAL, NULL, 0);
+    } else if (dest_type == ARTS_EVENT) {
+      arts_event_satisfy_slot(destination, source, slot);
+    }
+    return;
+  }
+
+  /* NULL source: signal immediately with no data. */
   if (source == NULL_GUID) {
     arts_type_t dest_type = arts_guid_get_type(destination);
     if (dest_type == ARTS_EDT) {
-      arts_signal_edt(destination, slot, NULL_GUID, access_mode);
+      internal_signal_edt(destination, slot, NULL_GUID, access_mode, NULL, 0);
     } else if (dest_type == ARTS_EVENT) {
       arts_event_satisfy_slot(destination, NULL_GUID, slot);
     }
@@ -730,18 +516,18 @@ void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
 
   arts_type_t source_type = arts_guid_get_type(source);
 
-  /* DB source → immediate satisfy (DBs are passive objects). */
+  /* DB source: immediate satisfy. */
   if (source_type == ARTS_DB) {
     arts_type_t dest_type = arts_guid_get_type(destination);
     if (dest_type == ARTS_EDT) {
-      arts_signal_edt(destination, slot, source, access_mode);
+      internal_signal_edt(destination, slot, source, access_mode, NULL, 0);
     } else if (dest_type == ARTS_EVENT) {
       arts_event_satisfy_slot(destination, source, slot);
     }
     return;
   }
 
-  /* Event source (ARTS_EVENT). */
+  /* Event source. */
   arts_type_t dest_type = arts_guid_get_type(destination);
 
   /* Step 1: set mode on EDT dep slot. */
@@ -749,10 +535,9 @@ void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
     arts_set_dep_mode(destination, slot, access_mode);
   }
 
-  /* Step 2: register waiter on event. */
-  struct arts_header_s *source_header =
-      (struct arts_header_s *)arts_route_table_lookup_item(source);
-  if (source_header == NULL) {
+  /* Step 2: lookup + register. */
+  struct arts_event_s *event = arts_route_table_lookup_event_safe(source);
+  if (!event) {
     unsigned int rank = arts_guid_get_rank(source);
     if (rank != arts_global_rank_id) {
       arts_remote_add_dependence(source, destination, slot, rank, access_mode);
@@ -763,159 +548,62 @@ void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
     return;
   }
 
-  struct arts_event_s *event = (struct arts_event_s *)source_header;
-
-  // CHANNEL events use lock-protected version-based dependence
-  if (event->type == ARTS_EVENT_CHANNEL) {
-    arts_event_add_dependence_with_mode(source, destination, slot,
-                                        DB_MODE_NULL);
+  if (event->multiple_fire) {
+    /* CHANNEL path: push dep into FIFO, decrement deps counter, drain. */
+    struct arts_event_dep_s *node =
+        event_node_alloc(dest_type, destination, slot, DB_MODE_NULL);
+    arts_mpsc_push(&event->channel.dep_queue, &node->link);
+    atomic_fetch_sub_explicit(&event->nb_deps_left, 1, memory_order_acq_rel);
+    /* Lifetime cap check: max_deps_left tracks total deps registered. */
+    if (atomic_fetch_sub_explicit(&event->max_deps_left, 1u,
+                                  memory_order_acq_rel) == 0u) {
+      ARTS_INFO("event dep count exceeds max_nb_deps — dropping");
+    }
+    try_drain_channel(event, source);
+    arts_route_table_release(source);
     return;
   }
 
-  if (dest_type == ARTS_EDT) {
-    struct arts_dependent_list_s *dependent_list = &event->dependent;
-    struct arts_dependent_s *dependent;
-    unsigned int position = arts_atomic_fetch_add(&event->dependent_count, 1U);
-    dependent = arts_dependent_get(dependent_list, (int)position);
-    dependent->type = ARTS_EDT;
-    dependent->addr = destination;
-    dependent->slot = slot;
-    dependent->mode = DB_MODE_NULL;
-    COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
-    dependent->done_writing = true;
-
-    if (event->fired) {
-      while (event->pos == 0) {
-        ;
-      }
-      if (position >= event->pos - 1) {
-        /* Self-signal: data only, mode already set on EDT. */
-        arts_signal_edt(destination, slot, event->data, DB_MODE_NULL);
-      }
+  /* Non-CHANNEL: already-fired ⇒ deliver immediately from simple.data. */
+  if (atomic_load_explicit(&event->fired, memory_order_acquire)) {
+    arts_guid_t data = event->simple.data;
+    /* Decrement max_deps_left; if exhaustion + auto_destroy, mark_delete. */
+    bool destroy_now = false;
+    if (atomic_fetch_sub_explicit(&event->max_deps_left, 1u,
+                                  memory_order_acq_rel) == 1u &&
+        event->auto_destroy) {
+      destroy_now = true;
     }
-  } else if (dest_type == ARTS_EVENT) {
-    struct arts_dependent_list_s *dependent_list = &event->dependent;
-    struct arts_dependent_s *dependent;
-    unsigned int position = arts_atomic_fetch_add(&event->dependent_count, 1U);
-    dependent = arts_dependent_get(dependent_list, (int)position);
-    dependent->type = ARTS_EVENT;
-    dependent->addr = destination;
-    dependent->slot = slot;
-    dependent->mode = DB_MODE_NULL;
-    COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
-    dependent->done_writing = true;
-
-    if (event->fired) {
-      while (event->pos == 0) {
-        ;
-      }
-      if (event->pos - 1 <= position) {
-        arts_event_satisfy_slot(destination, event->data, slot);
-      }
-    }
-  }
-}
-
-void arts_add_dependence_at(arts_guid_t source, arts_guid_t destination,
-                            uint32_t slot, arts_db_access_mode_t access_mode,
-                            uint64_t byte_offset, uint64_t len) {
-  /* Delegates to the standard path when no byte-offset is needed. */
-  if (byte_offset == 0 && len == 0) {
-    arts_add_dependence(source, destination, slot, access_mode);
-    return;
-  }
-
-  /* Step 1: set mode on EDT dep slot. */
-  arts_type_t dest_type = arts_guid_get_type(destination);
-  if (dest_type == ARTS_EDT) {
-    arts_set_dep_mode(destination, slot, access_mode);
-  }
-
-  arts_type_t source_type = arts_guid_get_type(source);
-
-  if (source_type == ARTS_DB) {
-    /* DB source — immediate satisfy (DBs are passive objects).
-     * Byte-offset slice resolution happens in acquire_dbs. */
+    arts_route_table_release(source);
     if (dest_type == ARTS_EDT) {
-      arts_signal_edt(destination, slot, source, access_mode);
+      internal_signal_edt(destination, slot, data, DB_MODE_NULL, NULL, 0);
     } else if (dest_type == ARTS_EVENT) {
-      arts_event_satisfy_slot(destination, source, slot);
+      arts_event_satisfy_slot(destination, data, slot);
     }
-  } else {
-    /* Event source — register byte-offset waiter directly. */
-    arts_event_add_dependence_with_byte_offset(source, destination, slot,
-                                               DB_MODE_NULL, byte_offset, len);
-  }
-}
-
-void arts_add_local_event_callback(arts_guid_t source,
-                                   event_callback_t callback_t) {
-  struct arts_event_s *event =
-      (struct arts_event_s *)arts_route_table_lookup_item(source);
-  if (event && arts_guid_get_type(source) == ARTS_EVENT) {
-    // CHANNEL events: register callback on latest version (lock-protected)
-    if (event->type == ARTS_EVENT_CHANNEL) {
-      arts_lock(&event->lock);
-      struct arts_event_version_s *version = channel_get_last_version(event);
-      assert(version != NULL);
-      struct arts_dependent_list_s *dep_list = &version->dependent;
-      unsigned int pos = arts_atomic_fetch_add(&version->dependent_count, 1U);
-      struct arts_dependent_s *dep = arts_dependent_get(dep_list, (int)pos);
-      assert(dep != NULL);
-      dep->type = ARTS_CALLBACK;
-      dep->callback_t = callback_t;
-      dep->addr = NULL_GUID;
-      dep->slot = 0;
-      dep->mode = DB_MODE_NULL;
-      dep->byte_offset = 0;
-      dep->size = 0;
-      COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
-      dep->done_writing = true;
-      /* Fire under the lock — same race fix as add_dependence_with_mode. */
-      if (arts_atomic_fetch_add(&version->latch_count, 0U) == 0) {
-        channel_fire_dependents(event, version, source);
-      }
-      arts_unlock(&event->lock);
-      return;
+    if (destroy_now) {
+      arts_route_table_mark_delete(source);
     }
-
-    struct arts_dependent_list_s *dependent_list = &event->dependent;
-    struct arts_dependent_s *dependent;
-    unsigned int position = arts_atomic_fetch_add(&event->dependent_count, 1U);
-    dependent = arts_dependent_get(dependent_list, (int)position);
-    dependent->type = ARTS_CALLBACK;
-    dependent->callback_t = callback_t;
-    dependent->addr = NULL_GUID;
-    dependent->slot = 0;
-    COMPILER_DO_NOT_REORDER_WRITES_BETWEEN_THIS_POINT();
-    dependent->done_writing = true;
-
-    if (event->fired) {
-      // LATCH/ONCE/COUNTED: event may already be freed — UB per OCR semantics
-      if (event->type == ARTS_EVENT_LATCH || event->type == ARTS_EVENT_ONCE ||
-          event->type == ARTS_EVENT_COUNTED) {
-        return;
-      }
-      // STICKY/IDEM: event persists — self-signal for out-of-range callbacks
-      while (event->pos == 0) {
-        ;
-      }
-      if (event->pos - 1 <= position) {
-        arts_edt_dep_t arg = {0};
-        arg.guid = event->data;
-        arg.ptr = arts_route_table_lookup_db(event->data, NULL, false);
-        callback_t(arg);
-      }
-    }
+    return;
   }
-}
 
-bool arts_is_event_fired(arts_guid_t event) {
-  bool fired = false;
-  struct arts_event_s *actual_event =
-      (struct arts_event_s *)arts_route_table_lookup_item(event);
-  if (actual_event) {
-    fired = actual_event->fired;
+  /* Enqueue dep onto Treiber stack. */
+  struct arts_event_dep_s *dep =
+      event_node_alloc(dest_type, destination, slot, DB_MODE_NULL);
+  arts_lf_stack_push(&event->simple.deps_stack, &dep->link);
+
+  /* Race rescue (spec §4.1 R3-R4): if the event fired between our
+   * fired-check above and our push, the firing thread's drain may have
+   * observed an empty stack and finished without our dep.  Re-load
+   * fired with acquire and run drain_simple_chain to pick up the push.
+   *
+   * Critical: addDep MUST NOT call drain_simple (the CAS-fired path).
+   * Only the unique satisfy thread that observed prev==1 may win CAS,
+   * because only that thread has written simple.data.  An addDep
+   * winning CAS would call drain_simple_chain → read simple.data
+   * before the satisfier had published it, delivering NULL_GUID to
+   * every consumer (race observed in event_once_storm @ iter=25). */
+  if (atomic_load_explicit(&event->fired, memory_order_acquire)) {
+    drain_simple_chain(event, source);
   }
-  return fired;
+  arts_route_table_release(source);
 }

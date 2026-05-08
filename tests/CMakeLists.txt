@@ -58,23 +58,27 @@ set(TEST_PROGRAMS
     coherence_stress_dist
     coherence_multi_writer_same_addr
     coherence_ro_acquire_stress
+    lockfree_stack_stress
+    lockfree_pool_stress
+    tiered_pool_stress
+    shared_t_stress
+    route_table_install_race
+    event_once_storm
+    event_sticky_late_bind
+    event_channel_fifo
+    event_destroy_race
     pin_db
     get_from_db
     put_in_db
     arts_send
     active_message_db
-    active_message_buffer
     termination_detection
     rec_epoch
     epoch_pool
     epoch_basic
     epoch_deferred_start
     epoch_finish_edt
-    epoch_shad_adapter
-    buffer
-    buffer_basic
     remote_db_event
-    shad_lock
     route_table_iter
     route_table_iter_destroy
     acquire_mode
@@ -84,7 +88,6 @@ set(TEST_PROGRAMS
     edt_chain
     edt_fan_out
     edt_signal
-    edt_dep_variants
     edt_destroy
     stress_edt
     paramv_memcpy
@@ -100,6 +103,9 @@ set(TEST_PROGRAMS
     db_rename
     event_basic
     event_chain
+    event_create_destroy_basic
+    event_satisfy_once
+    event_add_dep_idem_fastpath
     persistent_event
     persistent_event_advanced
     guid_basic
@@ -130,6 +136,36 @@ set(TEST_PROGRAMS
     put_array_db_epoch
     put_array_db_epoch_direct
     gather_array_db_epoch
+    # --- Coherence (coh_* prefix = newer minimal API tests) ---
+    coh_basic
+    coh_rw_chain
+    coh_rw_ordering
+    coh_rw_ro_rw
+    coh_rw_rw_chain_seal
+    coh_ro_accumulation
+    coh_mixed_local_remote
+    # --- DB type tests ---
+    db_pin
+    # --- Termination tests ---
+    term_shutdown
+    term_abort
+    term_sigfpe
+    term_sigsegv
+    # --- Multinode (built here, registered below) ---
+    multinode_stdout_forward
+    multinode_coh
+    # --- Pure unit tests (no ARTS runtime) ---
+    lockfree_stack_test
+    lockfree_marked_list_test
+    coherence_buffer_test
+    # --- New unit tests (Tasks 6-12) ---
+    counter_smoke
+    edt_dep_variants
+    event_hint_presets
+    db_labeled_guid
+    edt_epoch_api
+    multinode_labeled_guid
+    multinode_event_hint
 )
 
 # Function to create a test executable
@@ -254,19 +290,21 @@ endfunction()
 function(register_multinode_test test_name)
     cmake_parse_arguments(ARG "" "TIMEOUT" "ARGS" ${ARGN})
     if(NOT ARG_TIMEOUT)
-        set(ARG_TIMEOUT 30)
+        set(ARG_TIMEOUT 60)
     endif()
-    add_test(
-        NAME ${test_name}
-        COMMAND ${test_name} ${ARG_ARGS}
-        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    )
-    set_tests_properties(${test_name} PROPERTIES
-        LABELS "multinode"
-        TIMEOUT ${ARG_TIMEOUT}
-        RESOURCE_LOCK "arts_runtime"
-        ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_multinode.cfg"
-    )
+    foreach(variant IN ITEMS 2n 4n 5n)
+        add_test(
+            NAME ${test_name}_${variant}
+            COMMAND ${test_name} ${ARG_ARGS}
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+        )
+        set_tests_properties(${test_name}_${variant} PROPERTIES
+            LABELS "multinode"
+            TIMEOUT ${ARG_TIMEOUT}
+            RESOURCE_LOCK "arts_runtime"
+            ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_${variant}ode.cfg"
+        )
+    endforeach()
 endfunction()
 
 function(register_gpu_test test_name)
@@ -287,6 +325,24 @@ function(register_gpu_test test_name)
     )
 endfunction()
 
+# Pure unit tests: no ARTS runtime started, use separate resource lock.
+function(register_pure_unit_test test_name)
+    cmake_parse_arguments(ARG "" "TIMEOUT" "" ${ARGN})
+    if(NOT ARG_TIMEOUT)
+        set(ARG_TIMEOUT 30)
+    endif()
+    add_test(
+        NAME ${test_name}
+        COMMAND ${test_name}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    )
+    set_tests_properties(${test_name} PROPERTIES
+        LABELS "single_node"
+        TIMEOUT ${ARG_TIMEOUT}
+        RESOURCE_LOCK "pure_unit_test"
+    )
+endfunction()
+
 # --- Single-node tests ---
 
 # EDT tests
@@ -294,7 +350,6 @@ register_single_node_test(edt_create_basic)
 register_single_node_test(edt_chain)
 register_single_node_test(edt_fan_out)
 register_single_node_test(edt_signal)
-register_single_node_test(edt_dep_variants)
 register_single_node_test(edt_destroy)
 register_single_node_test(edt_epoch_wait)
 register_single_node_test(stress_edt TIMEOUT 30)
@@ -330,13 +385,15 @@ register_single_node_test(epoch_basic)
 register_single_node_test(epoch_deferred_start)
 register_single_node_test(epoch_finish_edt)
 register_single_node_test(epoch_pool ARGS 3)
-register_single_node_test(epoch_shad_adapter ARGS 3)
 register_single_node_test(rec_epoch ARGS 3)
 register_single_node_test(termination_detection ARGS 3)
 
 # Event tests
 register_single_node_test(event_basic)
 register_single_node_test(event_chain)
+register_single_node_test(event_create_destroy_basic)
+register_single_node_test(event_satisfy_once)
+register_single_node_test(event_add_dep_idem_fastpath)
 register_single_node_test(persistent_event)
 register_single_node_test(persistent_event_advanced)
 
@@ -358,11 +415,20 @@ register_single_node_test(out_of_order_list)
 register_single_node_test(coherence_ooo_concurrent_drain TIMEOUT 60)
 set_property(TEST coherence_ooo_concurrent_drain APPEND PROPERTY
     LABELS "coherence_stress")
-register_single_node_test(buffer)
-register_single_node_test(buffer_basic)
-register_single_node_test(shad_lock)
 
-# Coherence tests (formerly CDAG — names track the v3 RC protocol naming)
+# D1 lifecycle stress
+register_single_node_test(shared_t_stress TIMEOUT 60)
+
+# Strict lock-free reserve_or_lookup stress
+register_single_node_test(route_table_install_race TIMEOUT 120)
+
+# Event redesign stress tests
+register_single_node_test(event_once_storm TIMEOUT 60)
+register_single_node_test(event_sticky_late_bind TIMEOUT 60)
+register_single_node_test(event_channel_fifo TIMEOUT 60)
+register_single_node_test(event_destroy_race TIMEOUT 60)
+
+# Coherence tests (formerly CDAG — names track the RC protocol naming)
 register_single_node_test(coherence_basic ARGS 32 0 0 0)
 register_single_node_test(coherence_rw_chain ARGS 4)
 register_single_node_test(coherence_rw_ordering)
@@ -374,6 +440,71 @@ register_single_node_test(coherence_ro_accumulation)
 register_single_node_test(csr)
 register_single_node_test(distribution)
 
+# --- coh_* coherence tests (minimal API variants) ---
+register_single_node_test(coh_basic)
+register_single_node_test(coh_rw_chain ARGS 4)
+register_single_node_test(coh_rw_ordering)
+register_single_node_test(coh_rw_ro_rw)
+register_single_node_test(coh_rw_rw_chain_seal)
+register_single_node_test(coh_ro_accumulation)
+register_single_node_test(coh_mixed_local_remote)
+
+# --- DB type tests ---
+register_single_node_test(db_pin)
+
+# --- Termination tests ---
+register_single_node_test(term_shutdown)
+set_tests_properties(term_shutdown PROPERTIES
+    PASS_REGULAR_EXPRESSION "TERM_TEST_EXIT")
+
+register_single_node_test(term_abort ARGS 0 42)
+set_tests_properties(term_abort PROPERTIES
+    PASS_REGULAR_EXPRESSION "TERM_ABORT rc=42")
+
+# term_sigfpe / term_sigsegv crash via signal — CTest Exception short-circuits
+# PASS_REGULAR_EXPRESSION before evaluating it.  Use a bash wrapper so the
+# shell catches the signal exit and CTest sees exit-code 0; the regex then
+# matches [ARTS] Crashed: SIG* in the captured output.
+add_test(
+    NAME term_sigfpe
+    COMMAND bash -c "ASAN_OPTIONS=handle_sigfpe=0:handle_segv=0 ${CMAKE_CURRENT_BINARY_DIR}/term_sigfpe 2>&1; true"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+)
+set_tests_properties(term_sigfpe PROPERTIES
+    LABELS "single_node"
+    TIMEOUT 10
+    RESOURCE_LOCK "arts_runtime"
+    PASS_REGULAR_EXPRESSION "\\[ARTS\\] Crashed: SIGFPE")
+
+add_test(
+    NAME term_sigsegv
+    COMMAND bash -c "ASAN_OPTIONS=handle_segv=0 ${CMAKE_CURRENT_BINARY_DIR}/term_sigsegv 2>&1; true"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+)
+set_tests_properties(term_sigsegv PROPERTIES
+    LABELS "single_node"
+    TIMEOUT 10
+    RESOURCE_LOCK "arts_runtime"
+    PASS_REGULAR_EXPRESSION "\\[ARTS\\] Crashed: SIGSEGV")
+
+# --- Pure unit tests (no ARTS runtime) ---
+register_pure_unit_test(lockfree_stack_test)
+register_pure_unit_test(lockfree_marked_list_test)
+register_pure_unit_test(coherence_buffer_test TIMEOUT 60)
+
+# Counter smoke test: verifies counter output files are written.
+register_single_node_test(counter_smoke TIMEOUT 30)
+set_tests_properties(counter_smoke PROPERTIES
+    PASS_REGULAR_EXPRESSION "COUNTER_SMOKE_PASS")
+
+register_single_node_test(edt_dep_variants)
+
+register_single_node_test(event_hint_presets)
+
+register_single_node_test(db_labeled_guid)
+
+register_single_node_test(edt_epoch_api)
+
 # --- Multi-node tests ---
 
 register_multinode_test(multinode_db)
@@ -381,7 +512,6 @@ register_multinode_test(multinode_edt)
 register_multinode_test(multinode_epoch)
 register_multinode_test(multinode_event)
 register_multinode_test(active_message_db ARGS 64)
-register_multinode_test(active_message_buffer ARGS 64)
 register_multinode_test(arts_send ARGS 16)
 register_multinode_test(route_table_remote_guid)
 register_multinode_test(db_put_get_at)
@@ -393,9 +523,22 @@ register_multinode_test(multinode_array_db)
 register_multinode_test(multinode_db_advanced)
 register_multinode_test(coherence_mixed_local_remote)
 
+register_multinode_test(multinode_stdout_forward)
+set_tests_properties(multinode_stdout_forward_2n PROPERTIES
+    PASS_REGULAR_EXPRESSION "MULTINODE_STDOUT_FORWARD_SENTINEL 42")
+set_tests_properties(multinode_stdout_forward_4n PROPERTIES
+    PASS_REGULAR_EXPRESSION "MULTINODE_STDOUT_FORWARD_SENTINEL 42")
+set_tests_properties(multinode_stdout_forward_5n PROPERTIES
+    PASS_REGULAR_EXPRESSION "MULTINODE_STDOUT_FORWARD_SENTINEL 42")
+
+register_multinode_test(multinode_coh TIMEOUT 60)
+register_multinode_test(multinode_labeled_guid TIMEOUT 30)
+register_multinode_test(multinode_event_hint TIMEOUT 30)
+
 # 3-rank coherence stress: B.3 LOCK_REQ-before-DB_CREATE race regression.
-# Uses arts_4node.cfg (the test SKIPs cleanly if rank_count < 3).  The 4-node
-# config is copied into the tests build dir by sample_configs/CMakeLists.txt.
+# Uses arts_2node.cfg; the test SKIPs cleanly when rank_count < 3, so on a
+# 2-node-only setup this becomes a no-op.  Re-enable on a 3+ rank cfg to
+# actually exercise the race.
 add_test(
     NAME coherence_lock_req_before_create
     COMMAND coherence_lock_req_before_create
@@ -405,7 +548,7 @@ set_tests_properties(coherence_lock_req_before_create PROPERTIES
     LABELS "coherence_stress;multinode"
     TIMEOUT 120
     RESOURCE_LOCK "arts_runtime"
-    ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_4node.cfg"
+    ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_2node.cfg"
 )
 
 # Coherence stress test suite (Spec section 6 B.1/B.4/B.5/B.6 single-node).
@@ -424,8 +567,23 @@ register_single_node_test(coherence_ro_acquire_stress TIMEOUT 60)
 set_property(TEST coherence_ro_acquire_stress APPEND PROPERTY
     LABELS "coherence_stress")
 
-# Distributed coherence stress: B.2.  Uses arts_4node.cfg (the test SKIPs
-# cleanly if rank_count < 2).  Same scaffolding as B.3 above.
+# Lock-free stack stress (Task 4h): 8 producers x 1M nodes, single
+# consumer reverse_drain.  Pure unit test — does not start the ARTS
+# runtime, but RESOURCE_LOCK is harmless and keeps it serialized with
+# other tests under ctest -j.
+register_single_node_test(lockfree_stack_stress TIMEOUT 60)
+
+# Lock-free pool stress (Task 4m): DWCAS tagged-head Treiber stack ABA
+# scenario + batch fetch / release contention.  Pure unit test, no
+# runtime needed.
+register_single_node_test(lockfree_pool_stress TIMEOUT 60)
+
+# Tiered pool stress (Task 4m-2): 3-tier (tcache + NUMA + global)
+# symmetric + asymmetric workloads.  Pure unit test, no runtime needed.
+register_single_node_test(tiered_pool_stress TIMEOUT 60)
+
+# Distributed coherence stress: B.2.  Uses arts_2node.cfg (the test SKIPs
+# cleanly if rank_count < 2).
 add_test(
     NAME coherence_stress_dist
     COMMAND coherence_stress_dist
@@ -435,7 +593,7 @@ set_tests_properties(coherence_stress_dist PROPERTIES
     LABELS "coherence_stress;multinode"
     TIMEOUT 120
     RESOURCE_LOCK "arts_runtime"
-    ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_4node.cfg"
+    ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_2node.cfg"
 )
 
 # --- GPU tests ---

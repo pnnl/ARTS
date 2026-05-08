@@ -79,10 +79,10 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t *write_guids =
       (arts_guid_t *)malloc(sizeof(arts_guid_t) * num_writes);
   for (unsigned int i = 0; i < num_writes; i++) {
-    write_guids[i] = arts_guid_reserve(ARTS_EDT, i % arts_get_total_nodes());
+    write_guids[i] = arts_guid_reserve(ARTS_EDT, i % arts_get_total_ranks());
   }
 
-  unsigned int *ptr = (unsigned int *)arts_db_create_with_guid(db_guid, sizeof(unsigned int) * num_writes, ARTS_DB_DIST, ARTS_DB_PROP_NONE, NULL);
+  unsigned int *ptr = (unsigned int *)arts_db_create_with_guid(db_guid, sizeof(unsigned int) * num_writes, ARTS_DB_RC, ARTS_DB_PROP_NONE, NULL);
   for (unsigned int i = 0; i < num_writes; i++) {
     ptr[i] = 0;
   }
@@ -93,7 +93,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   for (unsigned int i = 0; i < num_writes; i++) {
     arts_guid_t next = (i + 1 < num_writes) ? write_guids[i + 1] : NULL_GUID;
     uint64_t args[3] = {(uint64_t)i, (uint64_t)num_writes, (uint64_t)next};
-    arts_edt_create_with_guid(write_test, write_guids[i], 3, args, 2);
+    arts_edt_create(write_test, 3, args, 2, &(arts_edt_hint_t){.guid = write_guids[i]});
     arts_add_dependence(db_guid, write_guids[i], 0, DB_MODE_RW);
   }
 

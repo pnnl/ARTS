@@ -90,12 +90,15 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
   char **argv = (char **)paramv[1];
   elements_per_block = strtol(argv[1], NULL, 10);
-  blocks = arts_get_total_nodes();
+  blocks = arts_get_total_ranks();
   arts_printf("ElementsPerBlock: %u Blocks: %u\n", elements_per_block, blocks);
   arts_guid_t end_epoch_guid =
-      arts_edt_create(epoch_end, 0, NULL, 1, &(arts_hint_t){.route = 0});
-  arts_initialize_and_start_epoch(end_epoch_guid, 0);
-  arts_edt_create(epoch_start, 0, NULL, 0, &(arts_hint_t){.route = 0});
+      arts_edt_create(epoch_end, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0});
+  {
+    arts_guid_t __ep = arts_epoch_create(arts_get_current_rank(), end_epoch_guid, 0);
+    arts_epoch_start(__ep);
+  }
+  arts_edt_create(epoch_start, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0});
 }
 
 int main(int argc, char **argv) {

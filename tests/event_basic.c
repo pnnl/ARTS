@@ -38,20 +38,11 @@
 ******************************************************************************/
 
 /// @file event_basic.c
-/// @brief Single-node test for latch events: arts_event_create,
-///        arts_event_create_with_guid, arts_event_satisfy_slot,
-///        arts_add_dependence, arts_is_event_fired, arts_event_destroy,
-///        arts_add_local_event_callback.
+/// @brief Single-node test for event hint variants: defaults (ONCE-equivalent),
+///        LATCH, IDEM, STICKY, COUNTED, plus pre-reserved GUID (hint->guid) and
+///        arts_event_destroy on an unfired event.
 
 #include "arts.h"
-
-volatile unsigned int callback_ran = 0;
-
-/// Callback for arts_add_local_event_callback.
-void my_callback(arts_edt_dep_t data) {
-  (void)data;
-  __sync_fetch_and_add((unsigned int *)&callback_ran, 1);
-}
 
 /// EDT wired via arts_add_dependence from an event.
 void dependent_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -63,20 +54,6 @@ void dependent_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("  PASS: dependent EDT fired from event\n");
 }
 
-/// Check arts_is_event_fired.
-void check_fired_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                     arts_edt_dep_t depv[]) {
-  (void)paramc;
-  (void)depc;
-  (void)depv;
-  arts_guid_t event = (arts_guid_t)paramv[0];
-  if (arts_is_event_fired(event)) {
-    arts_printf("  PASS: is_event_fired returns true after fire\n");
-  } else {
-    arts_printf("  FAIL: is_event_fired returns false after fire\n");
-  }
-}
-
 /// EDT to verify event_create_with_guid.
 void guid_event_dep(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                     arts_edt_dep_t depv[]) {
@@ -85,21 +62,6 @@ void guid_event_dep(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
   arts_printf("  PASS: event_create_with_guid fires dependent correctly\n");
-}
-
-/// EDT that checks the callback ran.
-void check_callback_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                        arts_edt_dep_t depv[]) {
-  (void)paramc;
-  (void)paramv;
-  (void)depc;
-  (void)depv;
-  if (callback_ran > 0) {
-    arts_printf("  PASS: local event callback was invoked (%u times)\n",
-                callback_ran);
-  } else {
-    arts_printf("  FAIL: local event callback was NOT invoked\n");
-  }
 }
 
 /// EDT for ONCE event test.
@@ -151,93 +113,126 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== event_basic ===\n");
 
-  arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+  arts_epoch_start(epoch);
 
   // Test 1: Basic latch event with initial count=2.
-  arts_guid_t ev1 = arts_event_create(0, ARTS_EVENT_LATCH, 2, NULL_GUID);
-  arts_guid_t dep1 = arts_edt_create_with_epoch(
-      dependent_edt, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_add_dependence(ev1, dep1, 0, DB_MODE_EW);
+  {
+    arts_event_hint_t h = ARTS_EVENT_HINT_DEFAULTS;
+    h.latch = 2;
+    arts_guid_t ev1 = arts_event_create(&h);
+    arts_guid_t dep1 =
+        arts_edt_create(dependent_edt, 0, NULL, 1,
+                        &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+    arts_add_dependence(ev1, dep1, 0, DB_MODE_RW);
 
-  // Decrement twice to fire.
-  arts_event_satisfy_slot(ev1, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
-  arts_event_satisfy_slot(ev1, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+    // Decrement twice to fire.
+    arts_event_satisfy_slot(ev1, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+    arts_event_satisfy_slot(ev1, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+  }
 
-  // Test 2: arts_is_event_fired on a pre-fired IDEM event.
-  // Uses IDEM so the event persists after fire for inspection.
-  // Cleaned up at shutdown by route table cleanup.
-  arts_guid_t ev2 = arts_event_create(0, ARTS_EVENT_IDEM, 0, NULL_GUID);
-  arts_event_satisfy_slot(ev2, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
-  uint64_t ev2_param = (uint64_t)ev2;
-  arts_edt_create_with_epoch(check_fired_edt, 1, &ev2_param, 0, epoch,
-                             &(arts_hint_t){.route = 0});
+  // Test 2: (removed) — arts_is_event_fired no longer exists in the new API.
+  // The "did the event fire" check is now expressed by chaining a dependent
+  // EDT off the event; firing is observable by that EDT running.
 
-  // Test 3: Increment then decrement.
-  arts_guid_t ev3 = arts_event_create(0, ARTS_EVENT_LATCH, 1, NULL_GUID);
-  arts_guid_t dep3 = arts_edt_create_with_epoch(
-      dependent_edt, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_add_dependence(ev3, dep3, 0, DB_MODE_EW);
-  // Increment (+1 -> 2), then decrement twice.
-  arts_event_satisfy_slot(ev3, NULL_GUID, ARTS_EVENT_LATCH_INCR_SLOT);
-  arts_event_satisfy_slot(ev3, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
-  arts_event_satisfy_slot(ev3, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+  // Test 3: Increment then decrement — exercises ARTS_EVENT_LATCH_INCR_SLOT.
+  {
+    arts_event_hint_t h = ARTS_EVENT_HINT_DEFAULTS;
+    h.latch = 1;
+    arts_guid_t ev3 = arts_event_create(&h);
+    arts_guid_t dep3 =
+        arts_edt_create(dependent_edt, 0, NULL, 1,
+                        &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+    arts_add_dependence(ev3, dep3, 0, DB_MODE_RW);
+    // Increment (1 -> 2), then decrement twice.
+    arts_event_satisfy_slot(ev3, NULL_GUID, ARTS_EVENT_LATCH_INCR_SLOT);
+    arts_event_satisfy_slot(ev3, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+    arts_event_satisfy_slot(ev3, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+  }
 
-  // Test 4: arts_event_create_with_guid.
-  arts_guid_t reserved_ev = arts_guid_reserve(ARTS_EVENT, 0);
-  arts_event_create_with_guid(reserved_ev, ARTS_EVENT_LATCH, 1, NULL_GUID);
-  arts_guid_t dep4 = arts_edt_create_with_epoch(
-      guid_event_dep, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_add_dependence(reserved_ev, dep4, 0, DB_MODE_EW);
-  arts_event_satisfy_slot(reserved_ev, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+  // Test 4: pre-reserved GUID via hint->guid (defaults = ONCE-equivalent).
+  {
+    arts_guid_t reserved_ev = arts_guid_reserve(ARTS_EVENT, 0);
+    arts_event_hint_t h4 = ARTS_EVENT_HINT_DEFAULTS;
+    h4.guid = reserved_ev;
+    arts_event_create(&h4);
+    arts_guid_t dep4 =
+        arts_edt_create(guid_event_dep, 0, NULL, 1,
+                        &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+    arts_add_dependence(reserved_ev, dep4, 0, DB_MODE_RW);
+    arts_event_satisfy_slot(reserved_ev, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+  }
 
-  // Test 5: arts_event_destroy (destroy unfired event).
-  arts_guid_t ev5 = arts_event_create(0, ARTS_EVENT_LATCH, 100, NULL_GUID);
-  arts_event_destroy(ev5);
-  arts_printf("  PASS: event_destroy did not crash\n");
+  // Test 5: arts_event_destroy on an unfired event.
+  {
+    arts_event_hint_t h = ARTS_EVENT_HINT_DEFAULTS;
+    h.latch = 100;
+    arts_guid_t ev5 = arts_event_create(&h);
+    arts_event_destroy(ev5);
+    arts_printf("  PASS: event_destroy did not crash\n");
+  }
 
-  // Test 6: arts_add_local_event_callback.
-  arts_guid_t ev6 = arts_event_create(0, ARTS_EVENT_LATCH, 1, NULL_GUID);
-  arts_add_local_event_callback(ev6, my_callback);
-  arts_event_satisfy_slot(ev6, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
-  // Schedule a check after a brief delay.
-  arts_edt_create_with_epoch(check_callback_edt, 0, NULL, 0, epoch,
-                             &(arts_hint_t){.route = 0});
+  // Test 6: (removed) — the legacy local event callback API was deleted.
 
-  // Test 7: ONCE event — fires on single decrement.
-  arts_guid_t ev7 = arts_event_create(0, ARTS_EVENT_ONCE, 0, NULL_GUID);
-  arts_guid_t dep7 = arts_edt_create_with_epoch(once_dep, 0, NULL, 1, epoch,
-                                                &(arts_hint_t){.route = 0});
-  arts_add_dependence(ev7, dep7, 0, DB_MODE_EW);
-  arts_event_satisfy_slot(ev7, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+  // Test 7: ONCE-equivalent (defaults: latch=1, auto_destroy=true).
+  {
+    arts_guid_t ev7 = arts_event_create(NULL);
+    arts_guid_t dep7 = arts_edt_create(
+        once_dep, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+    arts_add_dependence(ev7, dep7, 0, DB_MODE_RW);
+    arts_event_satisfy_slot(ev7, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+  }
 
-  // Test 8: STICKY — persist, late dep immediately satisfied.
-  arts_guid_t ev8 = arts_event_create(0, ARTS_EVENT_STICKY, 0, NULL_GUID);
-  arts_event_satisfy_slot(ev8, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
-  arts_guid_t dep8 = arts_edt_create_with_epoch(
-      sticky_late_dep, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_add_dependence(ev8, dep8, 0, DB_MODE_EW);
-  arts_event_destroy(ev8);
+  // Test 8: STICKY-equivalent — auto_destroy=false,
+  // negative_latch_allowed=false. Late dep registered after fire is satisfied
+  // immediately by add_dependence fast path.
+  {
+    arts_event_hint_t h = ARTS_EVENT_HINT_DEFAULTS;
+    h.auto_destroy = false;
+    h.negative_latch_allowed = false;
+    arts_guid_t ev8 = arts_event_create(&h);
+    arts_event_satisfy_slot(ev8, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+    arts_guid_t dep8 =
+        arts_edt_create(sticky_late_dep, 0, NULL, 1,
+                        &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+    arts_add_dependence(ev8, dep8, 0, DB_MODE_RW);
+    arts_event_destroy(ev8);
+  }
 
-  // Test 9: IDEM — re-satisfy is silent no-op.
-  arts_guid_t ev9 = arts_event_create(0, ARTS_EVENT_IDEM, 0, NULL_GUID);
-  arts_guid_t dep9 = arts_edt_create_with_epoch(idem_dep, 0, NULL, 1, epoch,
-                                                &(arts_hint_t){.route = 0});
-  arts_add_dependence(ev9, dep9, 0, DB_MODE_EW);
-  arts_event_satisfy_slot(ev9, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
-  // Re-satisfy should be a silent no-op (IDEM behavior).
-  arts_event_satisfy_slot(ev9, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
-  arts_event_destroy(ev9);
+  // Test 9: IDEM-equivalent — auto_destroy=false, latch=1.  Re-satisfy is
+  // tolerated (negative_latch_allowed=true is the default).
+  {
+    arts_event_hint_t h = ARTS_EVENT_HINT_DEFAULTS;
+    h.auto_destroy = false;
+    arts_guid_t ev9 = arts_event_create(&h);
+    arts_guid_t dep9 = arts_edt_create(
+        idem_dep, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+    arts_add_dependence(ev9, dep9, 0, DB_MODE_RW);
+    arts_event_satisfy_slot(ev9, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+    // Re-satisfy: with the default hint this just decrements past zero; the
+    // already-fired event keeps the dependent silent.
+    arts_event_satisfy_slot(ev9, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+    arts_event_destroy(ev9);
+  }
 
-  // Test 10: COUNTED event — N-counter, auto-destroy, no INCR.
-  arts_guid_t ev10 = arts_event_create(0, ARTS_EVENT_COUNTED, 3, NULL_GUID);
-  arts_guid_t dep10 = arts_edt_create_with_epoch(counted_dep, 0, NULL, 1, epoch,
-                                                 &(arts_hint_t){.route = 0});
-  arts_add_dependence(ev10, dep10, 0, DB_MODE_EW);
-  arts_event_satisfy_slot(ev10, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
-  arts_event_satisfy_slot(ev10, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
-  arts_event_satisfy_slot(ev10, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+  // Test 10: COUNTED-equivalent — latch=N, auto_destroy=false.  Multiple
+  // decrements drain the counter; max_nb_deps left unlimited so the dep
+  // remains valid.
+  {
+    arts_event_hint_t h = ARTS_EVENT_HINT_DEFAULTS;
+    h.latch = 3;
+    h.auto_destroy = false;
+    arts_guid_t ev10 = arts_event_create(&h);
+    arts_guid_t dep10 = arts_edt_create(
+        counted_dep, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+    arts_add_dependence(ev10, dep10, 0, DB_MODE_RW);
+    arts_event_satisfy_slot(ev10, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+    arts_event_satisfy_slot(ev10, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+    arts_event_satisfy_slot(ev10, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+    arts_event_destroy(ev10);
+  }
 
-  arts_wait_on_handle(epoch);
+  arts_epoch_wait(epoch);
   arts_shutdown();
 }
 

@@ -104,19 +104,19 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
 
-  unsigned int node_id = arts_get_current_node();
+  unsigned int node_id = arts_get_current_rank();
 
   /* Create a DB with initial zeros */
   unsigned int *addr = NULL;
   arts_guid_t db_guid = arts_guid_reserve(ARTS_DB, 0);
   addr = (unsigned int *)arts_db_create_with_guid(
-      db_guid, sizeof(unsigned int) * N_ELEMENTS, ARTS_DB_GPU, NULL, NULL);
+      db_guid, sizeof(unsigned int) * N_ELEMENTS, ARTS_DB_GPU_PIN, NULL, NULL);
   for (unsigned int i = 0; i < N_ELEMENTS; i++) {
     addr[i] = 0;
   }
 
   /* Create final verify EDT with 1 dep */
-  arts_hint_t hint_0 = {0, 0};
+  arts_edt_hint_t hint_0 = {0, 0};
   arts_guid_t verify_guid =
       arts_edt_create(verify_passthrough, 0, NULL, 1, &hint_0);
 
@@ -130,7 +130,7 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
    */
   arts_gpu_hint_t gpu_hint = {};
   gpu_hint.gpu = -1;
-  gpu_hint.route = node_id;
+  gpu_hint.rank = node_id;
   gpu_hint.end_guid = verify_guid;
   gpu_hint.slot = 0;
   gpu_hint.data_guid = (arts_guid_t)0;
@@ -138,7 +138,7 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t gpu_edt =
       arts_edt_create_gpu(increment_kernel, 0, NULL, 1, arts_from_dim3(grid),
                           arts_from_dim3(threads), &gpu_hint);
-  arts_signal_edt(gpu_edt, 0, db_guid, DB_MODE_EW);
+  arts_add_dependence(db_guid, gpu_edt, 0, DB_MODE_RW);
 }
 
 extern "C" void arts_fini_per_gpu(unsigned int node_id, int dev_id,

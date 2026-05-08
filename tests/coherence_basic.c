@@ -73,7 +73,7 @@ void read_test(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       arts_printf("BAD VALUE i: %u %u\n", i, array[i]);
     }
   }
-  arts_signal_edt_value(shutdown_guid, -1, 0);
+  arts_add_dependence((arts_guid_t)(0), shutdown_guid, -1, DB_MODE_VAL);
 }
 
 void write_test(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -88,8 +88,8 @@ void write_test(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   for (unsigned int i = 0; i < num_dynamic_reads; i++) {
     arts_guid_t guid =
         arts_edt_create(read_test, 0, NULL, 1,
-                        &(arts_hint_t){.route = arts_get_current_node()});
-    arts_signal_edt(guid, 0, db_guid, DB_MODE_RW);
+                        &(arts_edt_hint_t){.rank = arts_get_current_rank()});
+    arts_add_dependence(db_guid, guid, 0, DB_MODE_RW);
   }
 
   uint64_t idx = paramv[0];
@@ -97,14 +97,14 @@ void write_test(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     idx = (idx + 1) % num_writes;
     arts_guid_t guid =
         arts_edt_create(read_test, 0, NULL, 1,
-                        &(arts_hint_t){.route = arts_get_current_node()});
-    arts_signal_edt(guid, 0, db_guid, DB_MODE_RW);
+                        &(arts_edt_hint_t){.rank = arts_get_current_rank()});
+    arts_add_dependence(db_guid, guid, 0, DB_MODE_RW);
   }
 
   if (!index) {
-    arts_signal_edt(shutdown_guid, 0, db_guid, DB_MODE_RW);
+    arts_add_dependence(db_guid, shutdown_guid, 0, DB_MODE_RW);
   } else {
-    arts_signal_edt_value(shutdown_guid, -1, 0);
+    arts_add_dependence((arts_guid_t)(0), shutdown_guid, -1, DB_MODE_VAL);
   }
 }
 
@@ -116,15 +116,15 @@ void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
   for (uint64_t i = 0; i < num_reads; i++) {
     if (arts_guid_is_local(read_guids[i])) {
-      arts_edt_create_with_guid(read_test, read_guids[i], 0, NULL, 1);
-      arts_signal_edt(read_guids[i], 0, db_guid, DB_MODE_RW);
+      arts_edt_create(read_test, 0, NULL, 1, &(arts_edt_hint_t){.guid = read_guids[i]});
+      arts_add_dependence(db_guid, read_guids[i], 0, DB_MODE_RW);
     }
   }
 
   for (uint64_t i = 0; i < num_writes; i++) {
     if (arts_guid_is_local(write_guids[i])) {
-      arts_edt_create_with_guid(write_test, write_guids[i], 1, &i, 1);
-      arts_signal_edt(write_guids[i], 0, db_guid, DB_MODE_RW);
+      arts_edt_create(write_test, 1, &i, 1, &(arts_edt_hint_t){.guid = write_guids[i]});
+      arts_add_dependence(db_guid, write_guids[i], 0, DB_MODE_RW);
     }
   }
 }
@@ -151,27 +151,26 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   db_guid = arts_guid_reserve(ARTS_DB, 0);
 
   for (unsigned int i = 0; i < num_reads; i++) {
-    read_guids[i] = arts_guid_reserve(ARTS_EDT, i % arts_get_total_nodes());
+    read_guids[i] = arts_guid_reserve(ARTS_EDT, i % arts_get_total_ranks());
   }
   for (unsigned int i = 0; i < num_writes; i++) {
-    write_guids[i] = arts_guid_reserve(ARTS_EDT, i % arts_get_total_nodes());
+    write_guids[i] = arts_guid_reserve(ARTS_EDT, i % arts_get_total_ranks());
   }
 
   shutdown_guid = arts_guid_reserve(ARTS_EDT, 0);
 
   unsigned int *ptr = (unsigned int *)arts_db_create_with_guid(
-      db_guid, sizeof(unsigned int) * num_writes, ARTS_DB_RC, NULL, NULL);
+      db_guid, sizeof(unsigned int) * num_writes, ARTS_DB_RC, ARTS_DB_PROP_NONE, NULL);
   for (unsigned int i = 0; i < num_writes; i++) {
     ptr[i] = 0;
   }
 
-  arts_edt_create_with_guid(shutdown_edt, shutdown_guid, 0, NULL,
-                            (num_dynamic_reads * num_writes) +
+  arts_edt_create(shutdown_edt, 0, NULL, (num_dynamic_reads * num_writes) +
                                 (num_dynamic_writes * num_writes) + num_reads +
-                                num_writes);
+                                num_writes, &(arts_edt_hint_t){.guid = shutdown_guid});
 
-  for (unsigned int n = 0; n < arts_get_total_nodes(); n++) {
-    arts_edt_create(node_setup, 0, NULL, 0, &(arts_hint_t){.route = n});
+  for (unsigned int n = 0; n < arts_get_total_ranks(); n++) {
+    arts_edt_create(node_setup, 0, NULL, 0, &(arts_edt_hint_t){.rank = n});
   }
 }
 

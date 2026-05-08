@@ -61,20 +61,22 @@ void pe_satisfy_check(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 }
 
-/// Test 2: arts_event_add_dependence_with_byte_offset.
-/// DB = [int a, int b, int c]. Offset=sizeof(int), len=sizeof(int) -> b.
+/// Test 2: full-DB delivery via channel event; receiver indexes into
+/// payload directly.  DB = [int a, int b, int c]; read element b.
+/// (Byte-offset slicing is reserved for arts_db_hint_t.access_offset/_size.)
 void pe_byte_offset_check(uint32_t paramc, const uint64_t *paramv,
                           uint32_t depc, arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;
-  int *slice = (int *)depv[0].ptr;
+  int *full = (int *)depv[0].ptr;
   arts_guid_t expected_guid = (arts_guid_t)paramv[0];
-  bool ok = (slice != NULL && slice[0] == 200);
+  bool ok = (full != NULL && full[1] == 200);
   bool guid_ok = (depv[0].guid == expected_guid);
   if (ok && guid_ok) {
-    arts_printf("  PASS: channel event byte_offset slice correct\n");
+    arts_printf("  PASS: channel event full-DB delivery indexed correctly\n");
   } else {
-    arts_printf("  FAIL: channel event byte_offset (data_ok=%d, guid_ok=%d)\n",
+    arts_printf("  FAIL: channel event full-DB delivery (data_ok=%d, "
+                "guid_ok=%d)\n",
                 ok, guid_ok);
   }
 }
@@ -103,50 +105,60 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== persistent_event_advanced ===\n");
 
-  arts_guid_t epoch = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+  arts_epoch_start(epoch);
 
-  // Test 1: arts_event_satisfy_slot on CHANNEL.
+  // Channel-equivalent hint: multiple_fire=true, latch=1, nb_deps_required=1.
+  // Each successful DECR drains exactly one waiter.  Data is supplied at
+  // satisfy time (the legacy data-at-create field no longer exists).
+  arts_event_hint_t channel_hint = ARTS_EVENT_HINT_DEFAULTS;
+  channel_hint.multiple_fire = true;
+  channel_hint.latch = 1;
+  channel_hint.nb_deps_required = 1;
+
+  // Test 1: arts_event_satisfy_slot on CHANNEL — data delivered via satisfy.
   void *p1 = NULL;
-  arts_guid_t db1 = arts_db_create(&p1, sizeof(int), ARTS_DB_DEFAULT, NULL);
+  arts_guid_t db1 = arts_db_create(&p1, sizeof(int), ARTS_DB_DEFAULT,
+                                   ARTS_DB_PROP_NONE, NULL);
   ((int *)p1)[0] = 111;
   arts_db_release(db1);
 
-  arts_guid_t ch1 = arts_event_create(0, ARTS_EVENT_CHANNEL, 0, db1);
-  arts_guid_t e1 = arts_edt_create_with_epoch(
-      pe_satisfy_check, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
-  arts_add_dependence(ch1, e1, 0, DB_MODE_EW);
-  arts_event_satisfy_slot(ch1, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+  arts_guid_t ch1 = arts_event_create(&channel_hint);
+  arts_guid_t e1 = arts_edt_create(pe_satisfy_check, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_add_dependence(ch1, e1, 0, DB_MODE_RW);
+  arts_event_satisfy_slot(ch1, db1, ARTS_EVENT_LATCH_DECR_SLOT);
 
   // Test 2: byte-offset dependence from channel event.
   void *p2 = NULL;
-  arts_guid_t db2 = arts_db_create(&p2, 3 * sizeof(int), ARTS_DB_DEFAULT, NULL);
+  arts_guid_t db2 = arts_db_create(&p2, 3 * sizeof(int), ARTS_DB_DEFAULT,
+                                   ARTS_DB_PROP_NONE, NULL);
   int *d2 = (int *)p2;
   d2[0] = 100;
   d2[1] = 200;
   d2[2] = 300;
   arts_db_release(db2);
 
-  arts_guid_t ch2 = arts_event_create(0, ARTS_EVENT_CHANNEL, 0, db2);
+  arts_guid_t ch2 = arts_event_create(&channel_hint);
   uint64_t guid_param = (uint64_t)db2;
   arts_guid_t e2 =
-      arts_edt_create_with_epoch(pe_byte_offset_check, 1, &guid_param, 1, epoch,
-                                 &(arts_hint_t){.route = 0});
-  arts_add_dependence_at(ch2, e2, 0, DB_MODE_RO, sizeof(int), sizeof(int));
-  arts_event_satisfy_slot(ch2, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+      arts_edt_create(pe_byte_offset_check, 1, &guid_param, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  /* Slicing reserved for arts_db_hint_t; receiver indexes into full DB. */
+  arts_add_dependence(ch2, e2, 0, DB_MODE_RO);
+  arts_event_satisfy_slot(ch2, db2, ARTS_EVENT_LATCH_DECR_SLOT);
 
   // Test 3: mode dependence.
   void *p3 = NULL;
-  arts_guid_t db3 = arts_db_create(&p3, sizeof(int), ARTS_DB_DEFAULT, NULL);
+  arts_guid_t db3 = arts_db_create(&p3, sizeof(int), ARTS_DB_DEFAULT,
+                                   ARTS_DB_PROP_NONE, NULL);
   ((int *)p3)[0] = 999;
   arts_db_release(db3);
 
-  arts_guid_t ch3 = arts_event_create(0, ARTS_EVENT_CHANNEL, 0, db3);
-  arts_guid_t e3 = arts_edt_create_with_epoch(
-      pe_mode_diff_check, 0, NULL, 1, epoch, &(arts_hint_t){.route = 0});
+  arts_guid_t ch3 = arts_event_create(&channel_hint);
+  arts_guid_t e3 = arts_edt_create(pe_mode_diff_check, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   arts_add_dependence(ch3, e3, 0, DB_MODE_RO);
-  arts_event_satisfy_slot(ch3, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+  arts_event_satisfy_slot(ch3, db3, ARTS_EVENT_LATCH_DECR_SLOT);
 
-  arts_wait_on_handle(epoch);
+  arts_epoch_wait(epoch);
   arts_shutdown();
 }
 

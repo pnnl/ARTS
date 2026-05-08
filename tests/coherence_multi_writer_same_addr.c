@@ -41,7 +41,7 @@
 /// @brief B.5 -- Multi-writer same-address RC determinism check.
 ///
 /// N RW EDTs increment the same int in the same DB, then a single RO EDT
-/// verifies the final count.  Tests that v3 RC delivers a coherent view
+/// verifies the final count.  Tests that RC delivers a coherent view
 /// of the buffer to every RW acquirer regardless of cross-rank GRANT
 /// timing.
 ///
@@ -56,7 +56,7 @@
 /// EDT-graph happens-before."
 ///
 /// What this test verifies (post-atomic-increment):
-///   1. v3 RC routes every RW acquirer to a buffer that becomes visible
+///   1. RC routes every RW acquirer to a buffer that becomes visible
 ///      to subsequent acquirers (cache->buffer + writer_count handoff).
 ///   2. The final RO acquirer observes the stable post-all-RW value.
 ///   3. No EDTs are stranded (all N + 1 finish; outer epoch shutdown
@@ -85,7 +85,7 @@ static void inc_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   /* ARTS RW = per-node exclusive (cross-rank LOCK_REQ chain) but NOT
    * per-EDT exclusive on the same node.  Use atomic_fetch_add so
    * concurrent same-node EDTs serialize the read-modify-write
-   * themselves; v3 RC's job is buffer visibility, not per-EDT
+   * themselves; RC's job is buffer visibility, not per-EDT
    * mutual exclusion. */
   _Atomic int *data = (_Atomic int *)depv[0].ptr;
   if (data == NULL) {
@@ -130,8 +130,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("=== coherence_multi_writer_same_addr (N=%d) ===\n", N);
 
   int *data;
-  arts_guid_t db =
-      arts_db_create((void **)&data, sizeof(int), ARTS_DB_RC, NULL);
+  arts_guid_t db = arts_db_create((void **)&data, sizeof(int), ARTS_DB_RC,
+                                  ARTS_DB_PROP_NONE, NULL);
   *data = 0;
 
   /* LATCH event with count = N: each inc_edt decrements once, so the
@@ -139,9 +139,10 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
    * This is the canonical "fan-in barrier" producer -> event ->
    * consumer happens-before that ARTS RW does NOT enforce on its own
    * (RW is per-NODE exclusive, not per-EDT). */
-  arts_guid_t latch =
-      arts_event_create(/*route=*/0, ARTS_EVENT_LATCH, /*latch_count=*/N,
-                        /*data_guid=*/NULL_GUID);
+  arts_event_hint_t latch_hint = ARTS_EVENT_HINT_DEFAULTS;
+  latch_hint.rank = 0;
+  latch_hint.latch = N;
+  arts_guid_t latch = arts_event_create(&latch_hint);
 
   uint64_t inc_paramv[1] = {(uint64_t)latch};
   for (int i = 0; i < N; i++) {
@@ -162,7 +163,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
 int main(int argc, char **argv) {
   arts_rt(argc, argv);
-  if (arts_get_current_node() == 0 && !atomic_load(&g_clean_shutdown)) {
+  if (arts_get_current_rank() == 0 && !atomic_load(&g_clean_shutdown)) {
     fprintf(stderr,
             "FAIL: verify_edt did not fire cleanly — abort or premature "
             "shutdown\n");

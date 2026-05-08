@@ -38,7 +38,7 @@
 ******************************************************************************/
 
 /// @file epoch_deferred_start.c
-/// @brief Tests arts_initialize_epoch + arts_start_epoch (deferred start).
+/// @brief Tests arts_epoch_create + arts_epoch_start (deferred start).
 
 #include "arts.h"
 
@@ -63,24 +63,24 @@ void deferred_finish(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("  PASS: deferred start epoch completed\n");
 }
 
-/// Test 2: Start epoch, then use arts_add_edt_to_epoch.
+/// Test 2: Start epoch, then use arts_epoch_add_edt.
 void added_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                 arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
   (void)depv;
-  arts_printf("  PASS: EDT added to epoch via arts_add_edt_to_epoch\n");
+  arts_printf("  PASS: EDT added to epoch via arts_epoch_add_edt\n");
 }
 
-/// Test 3: arts_get_current_epoch_guid inside an epoch.
+/// Test 3: arts_epoch_get_current_guid inside an epoch.
 void check_current_epoch(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                          arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)depc;
   (void)depv;
   arts_guid_t expected = (arts_guid_t)paramv[0];
-  arts_guid_t current = arts_get_current_epoch_guid();
+  arts_guid_t current = arts_epoch_get_current_guid();
   bool ok = (current == expected);
   if (ok) {
     arts_printf("  PASS: get_current_epoch_guid matches expected\n");
@@ -99,26 +99,27 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("=== epoch_deferred_start ===\n");
 
   // Test 1: Initialize epoch with finish EDT, create tasks, start, wait.
-  arts_guid_t fin1 =
-      arts_edt_create(deferred_finish, 0, NULL, 1, &(arts_hint_t){.route = 0});
-  arts_guid_t epoch1 = arts_initialize_epoch(0, fin1, 0);
+  arts_guid_t fin1 = arts_edt_create(deferred_finish, 0, NULL, 1,
+                                     &(arts_edt_hint_t){.rank = 0});
+  arts_guid_t epoch1 = arts_epoch_create(0, fin1, 0);
 
   // Create tasks using arts_edt_create_with_epoch (proper epoch enrollment).
   for (int i = 0; i < NUM_TASKS; i++) {
-    arts_edt_create_with_epoch(deferred_task, 0, NULL, 0, epoch1,
-                               &(arts_hint_t){.route = 0});
+    arts_edt_create(deferred_task, 0, NULL, 0,
+                    &(arts_edt_hint_t){.rank = 0, .epoch = epoch1});
   }
 
   // Now start — epoch begins tracking completion.
-  arts_start_epoch(epoch1);
-  arts_wait_on_handle(epoch1);
+  arts_epoch_start(epoch1);
+  arts_epoch_wait(epoch1);
 
   // Test 2: get_current_epoch_guid inside an epoch.
-  arts_guid_t epoch2 = arts_initialize_and_start_epoch(NULL_GUID, 0);
+  arts_guid_t epoch2 = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
+  arts_epoch_start(epoch2);
   uint64_t ep_param = (uint64_t)epoch2;
-  arts_edt_create_with_epoch(check_current_epoch, 1, &ep_param, 0, epoch2,
-                             &(arts_hint_t){.route = 0});
-  arts_wait_on_handle(epoch2);
+  arts_edt_create(check_current_epoch, 1, &ep_param, 0,
+                  &(arts_edt_hint_t){.rank = 0, .epoch = epoch2});
+  arts_epoch_wait(epoch2);
 
   arts_printf("=== epoch_deferred_start complete ===\n");
   arts_shutdown();

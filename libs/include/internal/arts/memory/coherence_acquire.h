@@ -35,7 +35,7 @@ typedef enum {
 } arts_db_acquire_result_t;
 
 /* Lazy first-touch: allocate cache_s on this rank if absent.  Used
- * by the dispatcher when arts_route_table_lookup_db returns NULL.
+ * by the dispatcher when arts_route_table_lookup_db_safe returns NULL.
  * Returns NULL only if a concurrent destroy raced ahead. */
 struct arts_db_cache_s *arts_coh_lazy_install_cache_s(arts_guid_t db_guid,
                                                       uint64_t db_size);

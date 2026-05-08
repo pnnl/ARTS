@@ -46,8 +46,9 @@
 #include "arts/gas/route_table.h"
 #include "arts/memory/db.h"
 #include "arts/runtime_state.h"
-#include "arts/sync/event.h"
-#include "arts/sync/termination.h"
+#include "arts/sync/epoch.h"
+#include "arts/sync/event.h"  /* arts_event_free_internal */
+#include "arts/sync/shared.h" /* arts_shared_init */
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/transport/protocol.h"
@@ -97,7 +98,7 @@ void arts_remote_set_dep_mode(arts_guid_t edt_guid, uint32_t slot,
   arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
 }
 
-void arts_remote_memory_move(unsigned int route, arts_guid_t guid, void *ptr,
+void arts_remote_memory_move(unsigned int rank, arts_guid_t guid, void *ptr,
                              unsigned int mem_size, unsigned message_type,
                              void (*free_method)(void *)) {
   TIME_REMOTE_MOVE_START();
@@ -105,22 +106,22 @@ void arts_remote_memory_move(unsigned int route, arts_guid_t guid, void *ptr,
   arts_fill_packet_header(&packet.header, sizeof(packet) + mem_size,
                           message_type);
   packet.guid = guid;
-  arts_remote_send_request_payload_async_free((int)route, (char *)&packet,
+  arts_remote_send_request_payload_async_free((int)rank, (char *)&packet,
                                               sizeof(packet), (char *)ptr, 0,
                                               mem_size, free_method);
-  /* route_table slot now persists; Phase 3 will redesign lifecycle. */
+  /* route_table slot now persists; Lifecycle redesign is follow-up work. */
   (void)guid;
   TIME_REMOTE_MOVE_STOP();
 }
 
-void arts_remote_memory_move_no_free(unsigned int route, arts_guid_t guid,
+void arts_remote_memory_move_no_free(unsigned int rank, arts_guid_t guid,
                                      void *ptr, unsigned int mem_size,
                                      unsigned message_type) {
   struct arts_remote_guid_only_packet_s packet;
   arts_fill_packet_header(&packet.header, sizeof(packet) + mem_size,
                           message_type);
   packet.guid = guid;
-  arts_remote_send_request_payload_async((int)route, (char *)&packet,
+  arts_remote_send_request_payload_async((int)rank, (char *)&packet,
                                          sizeof(packet), (char *)ptr, mem_size);
 }
 
@@ -132,7 +133,21 @@ void arts_remote_handle_edt_move(void *ptr) {
   struct arts_edt_s *edt = (struct arts_edt_s *)arts_malloc_align(size, 16);
 
   memcpy(edt, packet + 1, size);
-  arts_route_table_add_item_race(edt, packet->guid, arts_global_rank_id, false);
+  /* re-stamp the deleter pointer.  The wire image was copied
+   * verbatim from the sender's process, so edt->shared.deleter contains
+   * the sender-side function pointer — non-PIE binaries make that valid
+   * here, but reinstalling defensively keeps the lifecycle ownership
+   * symmetric with edt_create_internal. */
+  arts_shared_init(&edt->shared, arts_edt_get_deleter());
+  /* add_item_race installs the EDT under the route_table lock.  On
+   * rejection (another thread won the install race) free the freshly
+   * unmarshaled buffer through the deleter — mirrors event_move's
+   * race-loser cleanup pattern. */
+  if (!arts_route_table_add_item_race(edt, packet->guid, arts_global_rank_id,
+                                      false)) {
+    arts_edt_get_deleter()(edt);
+    return;
+  }
   ARTS_INFO("EDT[Guid:%lu] Moved to Rank: %d", packet->guid,
             arts_global_rank_id);
   if (edt->depc_needed == 0) {
@@ -161,7 +176,7 @@ void arts_remote_handle_db_move(void *ptr) {
     mem_packet->type = (unsigned int)arts_guid_get_type(packet->guid);
     mem_packet->size = db_size;
   }
-  /* DB-level coherence (v3 RC) is owned by ARTS_DB_RC's coherence_cache,
+  /* DB-level coherence (RC) is owned by ARTS_DB_RC's coherence_cache,
    * not by db_list.  After the move, the moved DB does not carry an
    * RC cache (state is rebuilt lazily on first acquire); other subtypes
    * have no DB-level coherence at all.  Just clear db_list. */
@@ -184,13 +199,53 @@ void arts_remote_handle_event_move(void *ptr) {
   uint64_t size =
       packet->header.size - sizeof(struct arts_remote_guid_only_packet_s);
 
-  struct arts_header_s *mem_packet =
-      (struct arts_header_s *)arts_malloc_align(size, 16);
+  struct arts_event_s *mem_packet =
+      (struct arts_event_s *)arts_malloc_align(size, 16);
 
   memcpy(mem_packet, packet + 1, size);
-  arts_route_table_add_item_race(mem_packet, packet->guid, arts_global_rank_id,
-                                 false);
-  arts_route_table_fire_oo(packet->guid, arts_out_of_order_handler);
+  /* add_item_race installs the event under the route_table lock; on
+   * success it also fires OoO replay internally, so no extra fire_oo
+   * is required.  On rejection (another rank won the install race),
+   * release the freshly-unmarshaled buffer through event_deleter (via
+   * arts_event_free_internal) — raw arts_free would skip the dep-stack
+   * drain.  In practice the dep stack is empty at this point (nothing
+   * has been pushed locally yet), but using the proper deleter keeps
+   * lifecycle ownership symmetric with event_alloc. */
+  if (!arts_route_table_add_item_race(mem_packet, packet->guid,
+                                      arts_global_rank_id, false)) {
+    arts_event_free_internal(mem_packet);
+  }
+}
+
+void arts_remote_handle_event_satisfy_slot(void *ptr) {
+  struct arts_remote_event_satisfy_slot_packet_s *pack =
+      (struct arts_remote_event_satisfy_slot_packet_s *)ptr;
+  /* Delegate to the local entry point.  arts_event_satisfy_slot itself
+   * already performs the safe-lookup pair (lookup_event_safe + release)
+   * and runs event_drain on DECR.  The event GUID's rank equals the
+   * local rank by construction (the sender forwarded here precisely
+   * because arts_guid_get_rank == us), so the `rank != arts_global_rank_id`
+   * branch never re-enters arts_remote_event_satisfy_slot — no loop.
+   * The OoO miss path is the same as the local one (event not yet
+   * installed → enqueue via arts_out_of_order_event_satisfy_slot). */
+  arts_event_satisfy_slot(pack->event, pack->db, pack->slot);
+}
+
+void arts_remote_event_destroy(arts_guid_t guid) {
+  unsigned int rank = arts_guid_get_rank(guid);
+  struct arts_remote_guid_only_packet_s packet;
+  packet.guid = guid;
+  arts_fill_packet_header(&packet.header, sizeof(packet),
+                          ARTS_REMOTE_EVENT_DESTROY_MSG);
+  arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
+}
+
+void arts_remote_handle_event_destroy(void *ptr) {
+  struct arts_remote_guid_only_packet_s *packet =
+      (struct arts_remote_guid_only_packet_s *)ptr;
+  /* mark_delete is idempotent (DELETE bit sticky); receiving the message
+   * twice is safe.  free_item runs via the route table once count==0. */
+  arts_route_table_mark_delete(packet->guid);
 }
 
 static void send_remote_edt_signal_packet(arts_guid_t edt, arts_guid_t db,
@@ -239,16 +294,16 @@ void arts_remote_event_satisfy_slot(arts_guid_t event_guid,
  * an EDT dependency arrives in the route table after the EDT was
  * registered.  Fills the EDT's dep slot with the freshly-installed
  * DB pointer and drops one depc_needed.  For ARTS_DB_RC types the
- * v3 RC acquire path replaces this; for non-RC pinned types the OoO
+ * RC acquire path replaces this; for non-RC pinned types the OoO
  * replay covers the local-create-after-consumer race.
  */
 void arts_db_request_callback(struct arts_edt_s *edt, unsigned int slot,
                               struct arts_db_s *db_res) {
   arts_edt_dep_t *depv = (arts_edt_dep_t *)arts_get_depv(edt);
   if (db_res) {
-    /* Acquire a route table ref for this dep slot — matched by
-     * return_db in release_dbs after EDT execution. */
-    arts_route_table_lookup_db(db_res->guid, NULL, false);
+    /* legacy "no-op acquire to balance return_db" is gone.
+     * The slot ptr is filled directly; ownership of the DB lifetime is
+     * driven by the route_table lifecycle (mark_delete + free_item). */
     depv[slot].ptr = db_res + 1;
   } else {
     /* DB was destroyed between the OO check and the lookup (DELETE_ITEM
@@ -282,8 +337,10 @@ void arts_remote_get_from_db(arts_guid_t edt_guid, arts_guid_t db_guid,
 void arts_remote_handle_get_from_db(void *pack) {
   struct arts_remote_get_put_packet_s *packet =
       (struct arts_remote_get_put_packet_s *)pack;
-  arts_get_from_db_at(packet->edt_guid, packet->db_guid, packet->slot,
-                      packet->offset, packet->size, arts_global_rank_id);
+  arts_db_get(
+      packet->edt_guid, packet->db_guid, packet->slot, packet->offset,
+      packet->size,
+      &(arts_db_op_hint_t){.rank = arts_global_rank_id, .epoch = NULL_GUID});
 }
 
 void arts_remote_put_in_db(void *ptr, arts_guid_t edt_guid, arts_guid_t db_guid,
@@ -341,8 +398,8 @@ void arts_remote_handle_signal_edt_with_ptr(void *pack) {
   struct arts_remote_signal_edt_with_ptr_packet_s *packet =
       (struct arts_remote_signal_edt_with_ptr_packet_s *)pack;
   void *source = (void *)(packet + 1);
-  arts_signal_edt_ptr_with_guid(packet->edt_guid, packet->slot, packet->db_guid,
-                                source, packet->size);
+  internal_signal_edt(packet->edt_guid, packet->slot, packet->db_guid,
+                      DB_MODE_PTR, source, packet->size);
 }
 
 void arts_remote_send(unsigned int rank, send_handler_t fun_ptr, void *args,
@@ -462,15 +519,6 @@ void arts_remote_handle_epoch_delete(void *pack) {
   struct arts_remote_guid_only_packet_s *packet =
       (struct arts_remote_guid_only_packet_s *)pack;
   delete_epoch(packet->guid, NULL);
-}
-
-void arts_remote_handle_buffer_send(void *pack) {
-  struct arts_remote_guid_only_packet_s *packet =
-      (struct arts_remote_guid_only_packet_s *)pack;
-  uint64_t size =
-      packet->header.size - sizeof(struct arts_remote_guid_only_packet_s);
-  void *buffer = (void *)(packet + 1);
-  arts_set_buffer(packet->guid, buffer, size);
 }
 
 void arts_remote_db_rename(arts_guid_t new_guid, arts_guid_t old_guid) {

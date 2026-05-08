@@ -37,6 +37,13 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 #include "arts/runtime_state.h"
+#ifndef __cplusplus
+/* tiered_pool.h relies on C11 _Atomic and is C-only; scheduler.c is also
+ * compiled as scheduler_gpu.cu (C++) — only pull these on the C side and
+ * guard the corresponding init/destroy calls below with the same macro. */
+#include "arts/sync/event.h"        /* struct arts_event_dep_s */
+#include "arts/utils/tiered_pool.h" /* arts_tiered_pool_init / destroy */
+#endif
 #include "arts/utils/malloc.h"
 
 #include <assert.h>
@@ -51,7 +58,7 @@
 #include "arts/gas/guid.h"
 #include "arts/gas/route_table.h"
 #include "arts/memory/db.h"
-#include "arts/sync/termination.h"
+#include "arts/sync/epoch.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/system/topology.h"
@@ -159,8 +166,20 @@ void arts_runtime_node_init(struct arts_config_s *config) {
       config->gpu ? (arts_route_table_t **)arts_calloc(
                         config->gpu, sizeof(arts_route_table_t *))
                   : NULL;
-  arts_node_info.remote_route_table = arts_new_route_table(
-      config->route_table_entries, config->route_table_size);
+  {
+    unsigned int shard_entries =
+        config->route_table_entries / ARTS_REMOTE_ROUTE_SHARDS;
+    if (shard_entries < 1) {
+      shard_entries = 1;
+    }
+    unsigned int shard_shift = (config->route_table_size >= 3)
+                                   ? config->route_table_size - 3
+                                   : config->route_table_size;
+    for (int s = 0; s < ARTS_REMOTE_ROUTE_SHARDS; s++) {
+      arts_node_info.remote_route_table[s] =
+          arts_new_route_table(shard_entries, shard_shift);
+    }
+  }
   arts_node_info.local_spin = (volatile bool **)arts_calloc(tc, sizeof(bool *));
   arts_node_info.thread_roles =
       (unsigned int *)arts_calloc(tc, sizeof(unsigned int));
@@ -191,6 +210,10 @@ void arts_runtime_node_init(struct arts_config_s *config) {
   arts_node_info.ready_to_shutdown = arts_global_rank_count - 1;
   arts_node_info.shutdown_state = 0U;
   arts_node_info.outbox_pending = 0U;
+  /* Seed at our own rank so different ranks pick different first targets;
+   * across ranks the round-robin then walks the cluster evenly instead of
+   * hammering rank 0. */
+  arts_node_info.db_rr_route = arts_global_rank_id;
   arts_node_info.auto_shutdown_guid = config->auto_shutdown ? 1 : NULL_GUID;
 
   /* Network buffer */
@@ -309,6 +332,20 @@ void arts_runtime_node_init(struct arts_config_s *config) {
   /* Object counter storage (per-arts_id tracking) */
   arts_object_alloc_node_storage(tc);
 
+#ifndef __cplusplus
+  /* Per-rank pool of arts_event_dep_s nodes (Task 4o).  Allocate the
+   * tiered_pool struct on the heap because runtime_state.h forward-declares
+   * arts_tiered_pool_t (full definition lives in arts/utils/tiered_pool.h
+   * which cannot be included from runtime_state.h without a circular
+   * dependency).  Future work will make event.c consume this pool. */
+  arts_node_info.event_dep_pool =
+      (arts_tiered_pool_t *)arts_calloc(1, sizeof(arts_tiered_pool_t));
+  arts_tiered_pool_cfg_t event_dep_cfg = {
+      .H_local = 128, .B_local = 64, .H_numa = 1024, .B_numa = 256};
+  arts_tiered_pool_init(arts_node_info.event_dep_pool,
+                        sizeof(struct arts_event_dep_s), event_dep_cfg);
+#endif
+
 #ifdef ARTS_USE_GPU
   if (arts_node_info.gpu) {
     arts_node_init_gpus();
@@ -356,7 +393,7 @@ void arts_runtime_global_cleanup() {
 
 #ifdef ARTS_USE_GPU
   /* GPU cleanup must run BEFORE route tables are freed — free_gpu_item()
-     calls arts_route_table_lookup_db() for LC DB host-side metadata. */
+     calls arts_route_table_lookup_db_safe() for LC DB host-side metadata. */
   if (arts_node_info.gpu) {
     arts_cleanup_gpus();
   }
@@ -367,7 +404,9 @@ void arts_runtime_global_cleanup() {
     arts_delete_route_table(arts_node_info.route_table[i]);
   }
   arts_free(arts_node_info.route_table);
-  arts_delete_route_table(arts_node_info.remote_route_table);
+  for (int s = 0; s < ARTS_REMOTE_ROUTE_SHARDS; s++) {
+    arts_delete_route_table(arts_node_info.remote_route_table[s]);
+  }
 
   /* Per-thread indexed arrays */
   arts_free(arts_node_info.deque);
@@ -384,6 +423,15 @@ void arts_runtime_global_cleanup() {
   }
   arts_free(arts_node_info.keys);
   arts_free(arts_node_info.global_guid_thread_id);
+
+#ifndef __cplusplus
+  /* Tear down event_dep_pool (paired with init in arts_runtime_node_init). */
+  if (arts_node_info.event_dep_pool) {
+    arts_tiered_pool_destroy(arts_node_info.event_dep_pool);
+    arts_free(arts_node_info.event_dep_pool);
+    arts_node_info.event_dep_pool = NULL;
+  }
+#endif
 
   /* Network outbound queues and sequence tracking arrays */
   arts_server_cleanup();
@@ -433,7 +481,7 @@ void arts_thread_zero_node_start(int argc, char **argv) {
   if (!arts_global_rank_id) {
     ARTS_INFO("Thread 0: scheduling main_edt on rank 0 (argc=%d)", argc);
     uint64_t main_args[2] = {(uint64_t)argc, (uint64_t)argv};
-    arts_hint_t main_hint = {0, 0};
+    arts_edt_hint_t main_hint = ARTS_EDT_HINT_DEFAULTS;
     arts_edt_create(main_edt, 2, main_args, 0, &main_hint);
   }
 
@@ -517,7 +565,6 @@ void arts_runtime_private_init(struct thread_mask_s *thread,
   arts_thread_info.back_off = 1;
   arts_thread_info.current_edt_guid = 0;
   arts_thread_info.local_counting = 1;
-  arts_thread_info.shad_lock = 0;
 
   // Register thread-local counter storage with nodeInfo
   arts_node_info.live_counters[thread->id] = arts_thread_local_counters;
@@ -687,11 +734,11 @@ void arts_handle_remote_stolen_edt(struct arts_edt_s *edt) {
  * sentinel is removed during creation.
  *
  * Two phases:
- *   Phase 1 (acquire_dbs): Re-initialize depc_needed = depc + 1 (sentinel)
+ *   acquire_dbs: Re-initialize depc_needed = depc + 1 (sentinel)
  *     and attempt to acquire each DB dependency locally.  If a DB is not
  *     available, an OOO request is issued; when it resolves later, it will
  *     decrement depc_needed and potentially push the EDT to the deque.
- *   Phase 2 (sentinel removal): Atomically decrement the sentinel.  If all
+ *   Sentinel removal: Atomically decrement the sentinel.  If all
  *     DBs were acquired synchronously, depc_needed hits 0 here and the EDT
  *     is pushed to the worker deque for execution.
  */
@@ -718,30 +765,31 @@ void arts_handle_ready_edt(struct arts_edt_s *edt) {
     INCREMENT_NUM_EDT_ACQUIRE_BY(1);
     increment_queue_epoch(edt->epoch_guid);
     arts_shutdown_epoch_inc_queue();
+    /* Worker thread: push to own deque.  Non-worker callers (sender,
+     * receiver, main coordinator, CUDA callback) have a NULL my_deque
+     * — without a fallback the push silently writes to NULL and the
+     * EDT is lost.  Fall back to worker 0's deque so any cross-rank
+     * signal that drives an EDT to the ready state actually schedules
+     * it instead of stranding the EDT. */
 #ifdef ARTS_USE_GPU
-    if (arts_node_info.gpu &&
-        (!arts_thread_info.my_deque || !arts_thread_info.my_gpu_deque)) {
-      if (!arts_thread_info.my_deque) {
-        /* CUDA callback thread: new_edts/new_edt_lock set from closure */
-        arts_store_new_edts(edt);
-      } else {
-        /* Non-worker thread (sender/receiver): push to worker 0's deque */
-        if (edt->edt_type == ARTS_EDT_GPU) {
-          arts_deque_push_front(arts_node_info.gpu_deque[0], edt, 0);
-        } else {
-          arts_deque_push_front(arts_node_info.deque[0], edt, 0);
-        }
-      }
+    if (arts_node_info.gpu && !arts_thread_info.my_gpu_deque &&
+        edt->edt_type == ARTS_EDT_GPU) {
+      /* CUDA callback thread, GPU EDT: deferred via new_edts. */
+      arts_store_new_edts(edt);
     } else
 #endif
-    {
-      if (edt->edt_type == ARTS_EDT_GPU) {
-        ARTS_INFO("EDT[Guid:%lu] pushed to GPU deque", edt->current_edt);
-        arts_deque_push_front(arts_thread_info.my_gpu_deque, edt, 0);
-      } else {
-        ARTS_INFO("EDT[Guid:%lu] pushed to worker deque", edt->current_edt);
-        arts_deque_push_front(arts_thread_info.my_deque, edt, 0);
-      }
+        if (edt->edt_type == ARTS_EDT_GPU) {
+      struct arts_deque_s *q = arts_thread_info.my_gpu_deque
+                                   ? arts_thread_info.my_gpu_deque
+                                   : arts_node_info.gpu_deque[0];
+      ARTS_INFO("EDT[Guid:%lu] pushed to GPU deque", edt->current_edt);
+      arts_deque_push_front(q, edt, 0);
+    } else {
+      struct arts_deque_s *q = arts_thread_info.my_deque
+                                   ? arts_thread_info.my_deque
+                                   : arts_node_info.deque[0];
+      ARTS_INFO("EDT[Guid:%lu] pushed to worker deque", edt->current_edt);
+      arts_deque_push_front(q, edt, 0);
     }
   } else {
     ARTS_DEBUG("EDT[Guid:%lu] waiting for %u more DB acquisitions",
@@ -790,12 +838,6 @@ void arts_run_edt(struct arts_edt_s *edt) {
   arts_release_created_dbs();
 
   arts_unset_thread_local_edt_info();
-
-  // This is for a synchronous path
-  if (edt->output_buffer != NULL_GUID) {
-    arts_set_buffer(edt->output_buffer, arts_calloc(1, sizeof(unsigned int)),
-                    sizeof(unsigned int));
-  }
 
   ARTS_INFO("EDT[Guid:%lu, Id:%lu] finished (exec_ns=%lu)", edt->current_edt,
             edt->arts_id, exec_ns);

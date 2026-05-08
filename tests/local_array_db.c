@@ -127,7 +127,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   uint64_t count_param = (uint64_t)num_elems;
   arts_guid_t e1 = arts_edt_create(check_local_array, 1, &count_param, 1, NULL);
-  arts_signal_edt(e1, 0, local_guid, DB_MODE_RO);
+  arts_add_dependence(local_guid, e1, 0, DB_MODE_RO);
 
   // NOTE: Test 2 (local array DB with NULL data) skipped — core passes NULL to
   // memcpy in arts_new_local_array_db_with_guid. That's a core bug.

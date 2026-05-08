@@ -30,16 +30,26 @@
 #include "arts/system/threads.h"
 #include "arts/utils/atomics.h"
 
-/* Forward decls — strong defs in coherence_destroy.c (B11), weak
- * stubs in coherence_stubs.c until then. */
+/* Forward decl — strong def in coherence_destroy.c. */
 void arts_coh_try_finalize_destroy(struct arts_db_cache_s *cache);
 
-/* Adapter: route_table stores arts_db_s* (v2's data layout); v3
- * cache_s lives inside db->coherence_cache.  All v3 paths look up
+/* Adapter: route_table stores arts_db_s* (the previous data layout); the new RC
+ * cache_s lives inside db->coherence_cache.  All RC paths look up
  * cache via this helper, so when the cutover removes arts_db_s the
  * change is local to one function.  Returns NULL if either the
  * route_table entry doesn't exist or the entry has no cache_s
- * (e.g. PIN/CXL DBs). */
+ * (e.g. PIN/CXL DBs).
+ *
+ * this is the last surviving raw arts_route_table_lookup_data
+ * caller in libs/.  Migrating it to lookup_db_safe + release would require
+ * rewriting all ~15 callers across coherence_acquire.c / coherence_release.c
+ * / coherence_handlers.c / db.c to balance the ref — out of scope for the
+ * event subsystem rewrite.  Safe in practice because the returned cache_s
+ * is heap-allocated separately from arts_db_s (it lives in
+ * db->coherence_cache as its own malloc'd struct), and the RC protocol
+ * keeps cache_s alive via its own destroy gate (arts_coh_try_finalize_destroy)
+ * independent of the route_table slot's lifetime.  Documented as a known
+ * exception. */
 struct arts_db_cache_s *arts_coh_route_table_lookup_cache(arts_guid_t db_guid) {
   void *data = arts_route_table_lookup_data(db_guid);
   if (data == NULL) {
@@ -61,7 +71,7 @@ extern void arts_handle_remote_stolen_edt(struct arts_edt_s *edt);
 /* Trigger the parked EDT identified by (edt_guid, slot) by writing
  * the dep slot's data pointer and decrementing depc_needed.
  *
- * v3-only: the canonical user data pointer lives in cache->user_data,
+ * RC-only: the canonical user data pointer lives in cache->user_data,
  * regardless of whether cache_s was created in-place with arts_db_s
  * (user_data == (db+1)) or lazy-installed standalone (user_data ==
  * malloc'd buffer).  We look up the cache via the GUID of the dep
@@ -79,8 +89,8 @@ static void mark_edt_ready_by_guid(arts_guid_t edt_guid, unsigned int slot) {
   if (edt_guid == NULL_GUID) {
     return;
   }
-  struct arts_edt_s *edt =
-      (struct arts_edt_s *)arts_route_table_lookup_item(edt_guid);
+  /* lookup_edt_safe pairs with release at function exit. */
+  struct arts_edt_s *edt = arts_route_table_lookup_edt_safe(edt_guid);
   if (edt == NULL) {
     ARTS_INFO("coherence: edt_guid %lu not found at trigger time", edt_guid);
     return;
@@ -101,6 +111,7 @@ static void mark_edt_ready_by_guid(arts_guid_t edt_guid, unsigned int slot) {
   if (arts_atomic_sub(&edt->depc_needed, 1U) == 0) {
     arts_handle_remote_stolen_edt(edt);
   }
+  arts_route_table_release(edt_guid);
 }
 
 /* ===== Lazy first-touch =========================================== */
@@ -127,12 +138,13 @@ struct arts_db_cache_s *arts_coh_lazy_install_cache_s(arts_guid_t db_guid,
   }
 
   /* Allocate stub arts_db_s with no payload (sizeof header only).
-   * coherence_cache holds the v3 state.  arts_db_s exists purely to
+   * coherence_cache holds the RC protocol state.  arts_db_s exists purely to
    * satisfy the route_table's typed-entry contract during the
    * dual-stack period. */
   struct arts_db_s *stub =
       (struct arts_db_s *)arts_malloc_align(sizeof(struct arts_db_s), 16);
   memset(stub, 0, sizeof(struct arts_db_s));
+  arts_shared_init(&stub->shared, arts_db_get_deleter());
   stub->header.type = ARTS_DB;
   stub->header.size = sizeof(struct arts_db_s);
   stub->guid = db_guid;
@@ -144,7 +156,7 @@ struct arts_db_cache_s *arts_coh_lazy_install_cache_s(arts_guid_t db_guid,
    * arrives (with the proper rw_holder = creator_rank). */
   stub->coherence_cache = arts_coh_alloc_cache_s(
       db_guid, /*db_size=*/db_size, ARTS_COH_INIT_LAZY, /*creator_rank=*/0);
-  /* Phase 3.1: back-pointer for try_finalize_destroy direct-free. */
+  /* back-pointer for try_finalize_destroy direct-free. */
   ((struct arts_db_cache_s *)stub->coherence_cache)->db_owner = stub;
 
   if (arts_route_table_add_item_race(stub, db_guid, arts_global_rank_id,

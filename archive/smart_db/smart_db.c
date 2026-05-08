@@ -126,7 +126,7 @@ arts_smart_db_t *arts_smart_db_create(uint64_t size, arts_type_t type,
   smart_db->memRef = NULL;
   smart_db->memRefSize = 0;
   smart_db->isMigrating = false;
-  smart_db->homeNode = arts_get_current_node();
+  smart_db->homeNode = arts_get_current_rank();
   memset(smart_db->accessOffsets, 0, sizeof(smart_db->accessOffsets));
   smart_db->accessHistoryIdx = 0;
   smart_db->accessHistoryCount = 0;
@@ -187,7 +187,7 @@ arts_smart_db_t *arts_smart_db_create_with_guid(arts_guid_t guid, uint64_t size,
   smart_db->memRef = NULL;
   smart_db->memRefSize = 0;
   smart_db->isMigrating = false;
-  smart_db->homeNode = arts_get_current_node();
+  smart_db->homeNode = arts_get_current_rank();
   memset(smart_db->accessOffsets, 0, sizeof(smart_db->accessOffsets));
   smart_db->accessHistoryIdx = 0;
   smart_db->accessHistoryCount = 0;
@@ -599,7 +599,7 @@ void arts_smart_db_migration_handler(void *args) {
   smart_db->gpuDevice = msg->gpuDevice;
   smart_db->accessCost = msg->accessCost;
   smart_db->memRefSize = msg->memRefSize;
-  smart_db->homeNode = arts_get_current_node();
+  smart_db->homeNode = arts_get_current_rank();
 
   // Copy data
   void *db_data = arts_smart_db_get_data(smart_db);
