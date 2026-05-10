@@ -256,13 +256,13 @@ void arts_coh_send_transfer_ownership(unsigned int new_owner_rank,
                                       const void *map_buf, size_t map_size,
                                       const void *data, size_t data_size) {
   struct arts_remote_transfer_ownership_packet_s hdr;
-  uint32_t entry_count =
-      (map_buf != NULL && map_size >= sizeof(uint32_t) * 2)
-          ? ((const uint32_t *)map_buf)[0]
-          : 0u;
-  uint64_t total = (uint64_t)sizeof(hdr) + (uint64_t)map_size +
-                   (uint64_t)data_size;
-  arts_fill_packet_header(&hdr.header, total, ARTS_REMOTE_TRANSFER_OWNERSHIP_MSG);
+  uint32_t entry_count = (map_buf != NULL && map_size >= sizeof(uint32_t) * 2)
+                             ? ((const uint32_t *)map_buf)[0]
+                             : 0u;
+  uint64_t total =
+      (uint64_t)sizeof(hdr) + (uint64_t)map_size + (uint64_t)data_size;
+  arts_fill_packet_header(&hdr.header, total,
+                          ARTS_REMOTE_TRANSFER_OWNERSHIP_MSG);
   hdr.header.rank = arts_global_rank_id;
   hdr.db_guid = db_guid;
   hdr.version = version;
@@ -297,8 +297,8 @@ void arts_coh_send_transfer_ownership(unsigned int new_owner_rank,
       memcpy((char *)payload + map_size, data, data_size);
     }
     arts_remote_send_request_payload_async_free(
-        (int)new_owner_rank, (char *)&hdr, sizeof(hdr),
-        (char *)payload, /*offset=*/0, (uint64_t)payload_size, arts_free);
+        (int)new_owner_rank, (char *)&hdr, sizeof(hdr), (char *)payload,
+        /*offset=*/0, (uint64_t)payload_size, arts_free);
   } else {
     arts_remote_send_request_async((int)new_owner_rank, (char *)&hdr,
                                    sizeof(hdr));
@@ -335,9 +335,8 @@ void arts_coh_lrc_ship_transfer(struct arts_db_cache_s *cache) {
 
   /* Serialize the owner-side dedup map for transfer. */
   size_t map_max =
-      sizeof(uint32_t) * 2 +
-      (size_t)arts_global_rank_count *
-          sizeof(struct arts_remote_rank_version_pair_s);
+      sizeof(uint32_t) * 2 + (size_t)arts_global_rank_count *
+                                 sizeof(struct arts_remote_rank_version_pair_s);
   void *map_buf = arts_malloc(map_max);
   size_t map_size;
   if (cache->last_sent_version != NULL) {
@@ -351,8 +350,8 @@ void arts_coh_lrc_ship_transfer(struct arts_db_cache_s *cache) {
   }
 
   arts_coh_send_transfer_ownership(new_owner, cache->db_guid, buf->version,
-                                   map_buf, map_size,
-                                   buf->data, cache->db_size);
+                                   map_buf, map_size, buf->data,
+                                   cache->db_size);
   arts_free(map_buf);
 
   /* Release buffer ref (sentinel was withdrawn by INVALIDATE_NOTICE
@@ -367,7 +366,7 @@ void arts_coh_lrc_ship_transfer(struct arts_db_cache_s *cache) {
 }
 
 void arts_coh_lrc_start_invalidate_round(struct arts_db_cache_s *cache,
-                                          unsigned int new_owner) {
+                                         unsigned int new_owner) {
   unsigned int current_owner =
       atomic_load_explicit(&cache->home->rw_holder, memory_order_acquire);
   arts_coh_send_invalidate_notice(current_owner, cache->db_guid, new_owner);
@@ -393,9 +392,9 @@ void arts_coh_handle_transfer_ownership(void *payload, size_t size) {
 
   /* Wire layout: header | map (count pairs) | data bytes */
   char *map_start = (char *)payload + sizeof(*hdr);
-  size_t map_size = sizeof(uint32_t) * 2 +
-                    (size_t)hdr->map_entry_count *
-                        sizeof(struct arts_remote_rank_version_pair_s);
+  size_t map_size =
+      sizeof(uint32_t) * 2 + (size_t)hdr->map_entry_count *
+                                 sizeof(struct arts_remote_rank_version_pair_s);
   char *data_start = map_start + map_size;
   size_t data_size = size - sizeof(*hdr) - map_size;
 
@@ -405,9 +404,8 @@ void arts_coh_handle_transfer_ownership(void *payload, size_t size) {
   if (cache->last_sent_version != NULL) {
     arts_rank_u64_map_destroy(cache->last_sent_version);
   }
-  cache->last_sent_version =
-      arts_rank_u64_map_deserialize(map_start, map_size,
-                                    arts_global_rank_count);
+  cache->last_sent_version = arts_rank_u64_map_deserialize(
+      map_start, map_size, arts_global_rank_count);
 
   /* Install the transferred buffer. */
   if (data_size > 0) {
@@ -425,7 +423,8 @@ void arts_coh_handle_transfer_ownership(void *payload, size_t size) {
 
   /* Drain local RW waiters and RO waiters that were parked before we
    * held the buffer. */
-  arts_coh_drain_pending_rw_after_grant(cache, hdr->version, /*has_next=*/false);
+  arts_coh_drain_pending_rw_after_grant(cache, hdr->version,
+                                        /*has_next=*/false);
   arts_coh_drain_pending_ro(cache, hdr->version);
 
   /* Confirm installation to home so home can update rw_holder and
@@ -437,8 +436,7 @@ void arts_coh_handle_transfer_ownership(void *payload, size_t size) {
 /* ===== LRC INSTALL_ACK handler (home A) =============================== */
 
 void arts_coh_handle_install_ack(struct arts_remote_install_ack_packet_s *p) {
-  struct arts_db_cache_s *cache =
-      arts_coh_route_table_lookup_cache(p->db_guid);
+  struct arts_db_cache_s *cache = arts_coh_route_table_lookup_cache(p->db_guid);
   if (cache == NULL) {
     return;
   }
@@ -651,6 +649,11 @@ static void grant_to(struct arts_db_cache_s *cache, unsigned int new_owner,
 /* ===== Home-side handlers ========================================== */
 
 void arts_coh_handle_lock_req(struct arts_remote_lock_req_packet_s *p) {
+  /* LOCK_REQ is only sent in RC and LRC builds (LC routes all acquires
+   * through GET_DATA / DATA_RESPONSE instead of LOCK_REQ / GRANT).  The
+   * handler is still compiled in LC to satisfy the wire dispatcher table,
+   * but it will never be called at runtime. */
+#ifndef ARTS_MEMORY_MODEL_LC
   unsigned int requester = p->header.rank;
 
   /* Stack-built OoO defer payload — heap-copied by home_lookup_or_defer
@@ -725,6 +728,9 @@ void arts_coh_handle_lock_req(struct arts_remote_lock_req_packet_s *p) {
       atomic_load_explicit(&cache->home->rw_holder, memory_order_acquire),
       p->db_guid, /*new_owner_rank=*/0u);
 #endif /* ARTS_MEMORY_MODEL_LRC */
+#else  /* ARTS_MEMORY_MODEL_LC */
+  (void)p; /* LC: LOCK_REQ is never sent; stub for completeness. */
+#endif /* !ARTS_MEMORY_MODEL_LC */
 }
 
 void arts_coh_handle_get_data(struct arts_remote_get_data_packet_s *p) {
@@ -768,8 +774,8 @@ void arts_coh_handle_get_data(struct arts_remote_get_data_packet_s *p) {
   if (atomic_load_explicit(&cache->home->invalidate_in_flight,
                            memory_order_acquire) != 0) {
     arts_home_pending_ro_queue_push(&cache->home->pending_ro_forwards,
-                                   requester,
-                                   (void *)(uintptr_t)p->waiter_addr);
+                                    requester,
+                                    (void *)(uintptr_t)p->waiter_addr);
     return;
   }
   unsigned int owner =
@@ -863,6 +869,9 @@ void arts_coh_handle_writeback(struct arts_remote_writeback_packet_s *p,
   /* No pending_ro drain here: home's RO acquires hit case 1/3 and
    * never park.  Foreign ROs are served by GET_DATA, not by drain. */
 
+  /* WB_AND_TRANSFER: ownership-chain relay.  LC uses WRITEBACK_NORMAL only
+   * (no exclusive owner to transfer to), so this branch is RC/LRC-only. */
+#ifndef ARTS_MEMORY_MODEL_LC
   if (p->flag == ARTS_WB_AND_TRANSFER) {
     unsigned int new_owner;
     if (!arts_home_lockreq_queue_pop(&cache->home->pending_rw, &new_owner)) {
@@ -916,10 +925,15 @@ void arts_coh_handle_writeback(struct arts_remote_writeback_packet_s *p,
     atomic_store_explicit(&cache->home->invalidate_in_flight, 0,
                           memory_order_release);
   }
+#endif /* !ARTS_MEMORY_MODEL_LC */
 }
 
 void arts_coh_handle_release_ownership(
     struct arts_remote_release_ownership_packet_s *p) {
+  /* RELEASE_OWNERSHIP is only sent in RC and LRC builds.  In LC there is
+   * no exclusive ownership chain, so this handler is never called at
+   * runtime.  Stub it for LC to satisfy the dispatcher table. */
+#ifndef ARTS_MEMORY_MODEL_LC
   /* RELEASE_OWNERSHIP is one-way; on destroy the silent drop is fine
    * (caller doesn't await any reply).  no OoO defer either —
    * RELEASE_OWNERSHIP only flows from a current owner whose acquire
@@ -967,6 +981,9 @@ void arts_coh_handle_release_ownership(
    * to the next queued requester. */
   atomic_store_explicit(&cache->home->invalidate_in_flight, 0,
                         memory_order_release);
+#else
+  (void)p; /* LC: RELEASE_OWNERSHIP is never sent. */
+#endif /* !ARTS_MEMORY_MODEL_LC */
 }
 
 #ifdef ARTS_MEMORY_MODEL_LRC
@@ -1081,24 +1098,27 @@ void arts_coh_handle_destroy_req(struct arts_remote_destroy_req_packet_s *p) {
    * handler: check destroy_in_flight BEFORE readers_bits_set). */
   unsigned int dif_zero = 0;
   if (!atomic_compare_exchange_strong_explicit(
-          &cache->home->destroy_in_flight, &dif_zero, 1u,
-          memory_order_acq_rel, memory_order_acquire)) {
+          &cache->home->destroy_in_flight, &dif_zero, 1u, memory_order_acq_rel,
+          memory_order_acquire)) {
     /* Another destroy already claimed the baton — idempotent drop. */
     return;
   }
 
-#ifndef ARTS_MEMORY_MODEL_LRC
-  unsigned int n = arts_global_rank_count;
-  for (unsigned int r = 0; r < n; r++) {
-    if (r == self) {
-      continue;
-    }
-    /* RC: use home->last_sent_version as the readers roster. */
-    if (arts_rank_u64_map_get(cache->home->last_sent_version, r) > 0) {
-      arts_coh_send_destroy_notify(r, p->db_guid);
+#if defined(ARTS_MEMORY_MODEL_LC)
+  /* LC: use home->last_sent_version as the readers roster (same as RC). */
+  {
+    unsigned int n = arts_global_rank_count;
+    for (unsigned int r = 0; r < n; r++) {
+      if (r == self) {
+        continue;
+      }
+      if (arts_rank_u64_map_get(cache->home->last_sent_version, r) > 0) {
+        arts_coh_send_destroy_notify(r, p->db_guid);
+      }
     }
   }
-#else
+  /* LC has no pending_rw queue: skip the lockreq drain. */
+#elif defined(ARTS_MEMORY_MODEL_LRC)
   /* LRC: notify the current RW owner first (tracked by rw_holder, not
    * the readers bit-set), then iterate the RO readers bit-set.  The
    * destroy_in_flight baton (claimed above) prevents new bits from
@@ -1111,15 +1131,38 @@ void arts_coh_handle_destroy_req(struct arts_remote_destroy_req_packet_s *p) {
       arts_coh_send_destroy_notify(holder, p->db_guid);
     }
   }
-  arts_readers_bits_for_each(&cache->home->readers,
-                             lrc_destroy_fanout_cb, (void *)(uintptr_t)p->db_guid);
-#endif
-  unsigned int q_rank;
-  while (arts_home_lockreq_queue_pop(&cache->home->pending_rw, &q_rank)) {
-    if (q_rank != self) {
-      arts_coh_send_destroy_notify(q_rank, p->db_guid);
+  arts_readers_bits_for_each(&cache->home->readers, lrc_destroy_fanout_cb,
+                             (void *)(uintptr_t)p->db_guid);
+  {
+    unsigned int q_rank;
+    while (arts_home_lockreq_queue_pop(&cache->home->pending_rw, &q_rank)) {
+      if (q_rank != self) {
+        arts_coh_send_destroy_notify(q_rank, p->db_guid);
+      }
     }
   }
+#else
+  /* RC: use home->last_sent_version as the readers roster. */
+  {
+    unsigned int n = arts_global_rank_count;
+    for (unsigned int r = 0; r < n; r++) {
+      if (r == self) {
+        continue;
+      }
+      if (arts_rank_u64_map_get(cache->home->last_sent_version, r) > 0) {
+        arts_coh_send_destroy_notify(r, p->db_guid);
+      }
+    }
+  }
+  {
+    unsigned int q_rank;
+    while (arts_home_lockreq_queue_pop(&cache->home->pending_rw, &q_rank)) {
+      if (q_rank != self) {
+        arts_coh_send_destroy_notify(q_rank, p->db_guid);
+      }
+    }
+  }
+#endif
 
   arts_coh_fail_trigger_pending(cache);
   arts_coh_try_finalize_destroy(cache);
@@ -1150,8 +1193,10 @@ void arts_coh_handle_db_create_coherent(
     if (cache->home == NULL) {
       cache->home = arts_db_home_create(creator_rank, arts_global_rank_count);
     } else {
+#ifndef ARTS_MEMORY_MODEL_LC
       atomic_store_explicit(&cache->home->rw_holder, creator_rank,
                             memory_order_release);
+#endif
     }
     arts_route_table_release(db_guid);
     return;
@@ -1210,8 +1255,10 @@ void arts_coh_handle_db_create_coherent(
     if (cache->home == NULL) {
       cache->home = arts_db_home_create(creator_rank, arts_global_rank_count);
     } else {
+#ifndef ARTS_MEMORY_MODEL_LC
       atomic_store_explicit(&cache->home->rw_holder, creator_rank,
                             memory_order_release);
+#endif
     }
   }
   if (winner != NULL) {
@@ -1234,13 +1281,17 @@ void arts_coh_handle_grant(struct arts_remote_grant_packet_s *p,
   if (p->data_present) {
     arts_coherence_install_buffer(cache, p->version, data, data_size);
   }
-  /* Always install sentinel = 1; post-drain withdraw if has_next. */
+  /* Always install sentinel = 1; post-drain withdraw if has_next.
+   * GRANT is only sent in RC and LRC builds; LC uses DATA_RESPONSE for
+   * all acquires.  lock_req_in_flight and pending_rw are RC/LRC fields. */
   cache->writer_count = 1;
+#ifndef ARTS_MEMORY_MODEL_LC
   cache->lock_req_in_flight = 0;
   /* Drain pending_rw — pop every queued waiter in FIFO order via the
    * Vyukov MPSC consumer path.  Implementation lives in the acquire
    * module (B4). */
   arts_coh_drain_pending_rw_after_grant(cache, p->version, p->has_next != 0);
+#endif
   /* Drain pending_ro: any RO whose target_version is now satisfied. */
   arts_coh_drain_pending_ro(cache, p->version);
 }
@@ -1304,13 +1355,17 @@ void arts_coh_handle_invalidate_notice(
   }
   /* rest == 0: we are the unique transfer actor. */
   arts_coh_lrc_ship_transfer(cache);
+#elif defined(ARTS_MEMORY_MODEL_LC)
+  /* LC: INVALIDATE_NOTICE is never sent.  This handler should not be
+   * reachable in LC; stub to satisfy the dispatcher table. */
+  (void)p;
 #else  /* RC */
   unsigned int rest = arts_atomic_sub(&cache->writer_count, 1);
   if (rest == 0) {
     extern void arts_coh_invalidate_transfer(struct arts_db_cache_s * cache);
     arts_coh_invalidate_transfer(cache);
   }
-#endif /* ARTS_MEMORY_MODEL_LRC */
+#endif /* ARTS_MEMORY_MODEL_LRC / ARTS_MEMORY_MODEL_LC */
 }
 
 void arts_coh_handle_writeback_ack(
@@ -1387,8 +1442,7 @@ void arts_coh_handle_redirect_ro(struct arts_remote_redirect_ro_packet_s *p) {
 
   /* Lazy-allocate last_sent_version on first ownership. */
   if (cache->last_sent_version == NULL) {
-    cache->last_sent_version =
-        arts_rank_u64_map_create(arts_global_rank_count);
+    cache->last_sent_version = arts_rank_u64_map_create(arts_global_rank_count);
   }
 
   uint64_t cur_v = (uint64_t)buf->version;
@@ -1397,8 +1451,8 @@ void arts_coh_handle_redirect_ro(struct arts_remote_redirect_ro_packet_s *p) {
 
   if (last_sent >= cur_v) {
     /* Requester already holds this version — send no-data response. */
-    arts_coh_send_data_response(requester, p->db_guid, cur_v, waiter_addr,
-                                NULL, 0);
+    arts_coh_send_data_response(requester, p->db_guid, cur_v, waiter_addr, NULL,
+                                0);
   } else {
     /* Advance dedup watermark (monotonic max) then send data. */
     arts_rank_u64_map_advance(cache->last_sent_version, requester, cur_v);

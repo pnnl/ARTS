@@ -1,36 +1,49 @@
 #!/bin/bash
-# Launches rank 0 from build_release_rc and rank 1 from build_release_lrc.
-# Expects a fatal error within 30s due to wire-protocol mode mismatch.
+# Cross-mode binary mismatch detection — exercises 3 build pairs.
 set -uo pipefail
 ROOT=$(git rev-parse --show-toplevel)
-RC_BIN="${ROOT}/build_release_rc/tests/coherence_mode_mismatch"
-LRC_BIN="${ROOT}/build_release_lrc/tests/coherence_mode_mismatch"
 
-if [ ! -x "$RC_BIN" ] || [ ! -x "$LRC_BIN" ]; then
-  echo "Both RC + LRC builds must exist first.  Run run_both_builds.sh."
-  exit 1
-fi
+declare -A BIN
+BIN[RC]="${ROOT}/build_release_rc/tests/coherence_mode_mismatch"
+BIN[LRC]="${ROOT}/build_release_lrc/tests/coherence_mode_mismatch"
+BIN[LC]="${ROOT}/build_release_lc/tests/coherence_mode_mismatch"
 
-# Use 2-node config in cwd
-WORKDIR=$(mktemp -d)
-trap 'rm -rf "$WORKDIR"' EXIT
-cp "${ROOT}/configs/local/2n.cfg" "${WORKDIR}/arts.cfg"
+for mode in RC LRC LC; do
+  if [ ! -x "${BIN[$mode]}" ]; then
+    echo "Build for ${mode} missing — run run_three_builds.sh first."
+    exit 1
+  fi
+done
 
-echo "Launching rank 0 (RC) and rank 1 (LRC) — expect FATAL within 30s..."
-( cd "${WORKDIR}" && timeout 30s "$RC_BIN" ) &
-PID0=$!
-sleep 1
-( cd "${WORKDIR}" && timeout 30s "$LRC_BIN" ) &
-PID1=$!
+PAIRS=(
+  "RC LRC"
+  "RC LC"
+  "LRC LC"
+)
 
-set +e
-wait $PID0; RC0=$?
-wait $PID1; RC1=$?
-set -e
+OVERALL=0
+for pair in "${PAIRS[@]}"; do
+  A=$(echo "$pair" | awk '{print $1}')
+  B=$(echo "$pair" | awk '{print $2}')
+  echo "=== Pair: rank0=${A}, rank1=${B} ==="
+  WORKDIR=$(mktemp -d)
+  trap 'rm -rf "$WORKDIR"' EXIT
+  cp "${ROOT}/configs/local/2n.cfg" "${WORKDIR}/arts.cfg"
+  ( cd "${WORKDIR}" && timeout 30s "${BIN[$A]}" ) &
+  P0=$!
+  sleep 1
+  ( cd "${WORKDIR}" && timeout 30s "${BIN[$B]}" ) &
+  P1=$!
+  set +e
+  wait $P0; R0=$?
+  wait $P1; R1=$?
+  set -e
+  if [ "${R0}" != 0 ] || [ "${R1}" != 0 ]; then
+    echo "  PASS: mismatch detected (${A}<->${B}: rank0=${R0} rank1=${R1})"
+  else
+    echo "  FAIL: ${A}<->${B} ranks completed normally"
+    OVERALL=1
+  fi
+done
 
-if [ "${RC0}" != 0 ] || [ "${RC1}" != 0 ]; then
-  echo "PASS: mismatch detected (rank0=$RC0, rank1=$RC1)"
-  exit 0
-fi
-echo "FAIL: ranks completed normally despite mode mismatch"
-exit 1
+exit $OVERALL

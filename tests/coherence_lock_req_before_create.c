@@ -166,6 +166,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   unsigned int rank_count = arts_get_total_ranks();
   if (rank_count < 3) {
     arts_printf("SKIP: requires 3+ ranks (got %u)\n", rank_count);
+    /* SKIP is a clean exit, not an abort: set the flag so main()'s
+     * post-arts_rt() check does not flag a false FAIL. */
+    atomic_store(&g_clean_shutdown, 1);
     arts_shutdown();
     return;
   }

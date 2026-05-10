@@ -185,16 +185,22 @@ option(ARTS_USE_CXL "Enable CXL shared-memory support (default: OFF)" OFF)
 # is caught at runtime via ARTS_FATAL stub handlers for opposite-mode
 # wire messages).
 set(ARTS_MEMORY_MODEL "RC" CACHE STRING
-    "Host memory consistency model for ARTS_DB: RC (default) or LRC")
-set_property(CACHE ARTS_MEMORY_MODEL PROPERTY STRINGS RC LRC)
+    "Host memory consistency model for ARTS_DB: RC (default), LRC, or LC")
+set_property(CACHE ARTS_MEMORY_MODEL PROPERTY STRINGS RC LRC LC)
+
 if(NOT ARTS_MEMORY_MODEL STREQUAL "RC" AND
-   NOT ARTS_MEMORY_MODEL STREQUAL "LRC")
+   NOT ARTS_MEMORY_MODEL STREQUAL "LRC" AND
+   NOT ARTS_MEMORY_MODEL STREQUAL "LC")
   message(FATAL_ERROR
-          "ARTS_MEMORY_MODEL must be RC or LRC, got: ${ARTS_MEMORY_MODEL}")
+          "ARTS_MEMORY_MODEL must be RC, LRC, or LC, got: ${ARTS_MEMORY_MODEL}")
 endif()
+
 if(ARTS_MEMORY_MODEL STREQUAL "LRC")
   add_compile_definitions(ARTS_MEMORY_MODEL_LRC=1)
   message(STATUS "ARTS memory model: LRC (Lazy Release Consistency)")
+elseif(ARTS_MEMORY_MODEL STREQUAL "LC")
+  add_compile_definitions(ARTS_MEMORY_MODEL_LC=1)
+  message(STATUS "ARTS memory model: LC (Location Consistency)")
 else()
   message(STATUS "ARTS memory model: RC (Release Consistency, default)")
 endif()

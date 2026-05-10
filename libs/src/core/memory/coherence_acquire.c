@@ -110,8 +110,8 @@ static void mark_edt_ready_by_guid(arts_guid_t edt_guid, unsigned int slot) {
                 "[COH-DBG rank %u] mark_edt_ready: NULL buf for db=%lu "
                 "edt=%lu slot=%u wc=%u db_size=%lu\n",
                 arts_global_rank_id, (unsigned long)db_guid,
-                (unsigned long)edt_guid, slot,
-                cache->writer_count, (unsigned long)cache->db_size);
+                (unsigned long)edt_guid, slot, cache->writer_count,
+                (unsigned long)cache->db_size);
         fflush(stderr);
       }
       depv[slot].ptr = buf ? buf->data : NULL;
@@ -201,6 +201,7 @@ static void *acquire_local(struct arts_db_cache_s *cache) {
 
 /* ===== Case 2/6: RW local fast path ================================ */
 
+#ifndef ARTS_MEMORY_MODEL_LC
 typedef enum { CASE26_OK = 0, CASE26_FAIL_FALLBACK } case26_result_t;
 
 static case26_result_t acquire_rw_local_fast(struct arts_db_cache_s *cache) {
@@ -255,6 +256,7 @@ static arts_db_acquire_result_t acquire_remote_rw(struct arts_db_cache_s *cache,
   }
   return ARTS_DB_ACQUIRE_PARK;
 }
+#endif /* !ARTS_MEMORY_MODEL_LC */
 
 /* ===== Case 7: remote-RO path ====================================== */
 
@@ -317,6 +319,29 @@ arts_db_acquire_result_t arts_coh_db_acquire(struct arts_db_cache_s *cache,
   bool is_home = (arts_guid_get_rank(cache->db_guid) == arts_global_rank_id);
   bool is_owner = (cache->writer_count > 0);
 
+#if defined(ARTS_MEMORY_MODEL_LC)
+  /* LC: home rank holds the canonical buffer (maintained by sync
+   * WRITEBACK from every non-home writer).  RW and RO are unified —
+   * non-home acquires go through acquire_remote_ro in both modes so
+   * the EDT parks on pending_ro and is woken by DATA_RESPONSE once home
+   * delivers its current buffer.  There is no LOCK_REQ / INVALIDATE /
+   * GRANT round, no per-cache pending_rw queue.
+   *
+   * RW acquires bump writer_count BEFORE parking (or before acquire_local
+   * on home).  release_rw balances this decrement; without the bump,
+   * release_rw's writer_count == 0 guard silently skips the WRITEBACK,
+   * breaking cross-rank RW visibility.  RO acquires do not bump because
+   * release_ro is a no-op. */
+  (void)is_owner;
+  if (mode == DB_MODE_RW) {
+    arts_atomic_add(&cache->writer_count, 1);
+  }
+  if (is_home) {
+    *out_data = acquire_local(cache);
+    return ARTS_DB_ACQUIRE_OK;
+  }
+  return acquire_remote_ro(cache, edt_guid, slot);
+#else
   if (mode == DB_MODE_RO) {
 #ifdef ARTS_MEMORY_MODEL_LRC
     /* LRC: the home rank does not hold the canonical data copy; only the
@@ -356,9 +381,15 @@ arts_db_acquire_result_t arts_coh_db_acquire(struct arts_db_cache_s *cache,
      * fall through to remote-RW. */
   }
   return acquire_remote_rw(cache, edt_guid, slot);
+#endif /* ARTS_MEMORY_MODEL_LC */
 }
 
 /* ===== Drain helpers (called from coherence_handlers.c) ============= */
+
+/* arts_coh_drain_pending_rw_after_grant: RC/LRC only.  LC has no
+ * pending_rw queue and no GRANT message — non-home writers acquire via
+ * acquire_remote_ro and are woken by DATA_RESPONSE. */
+#ifndef ARTS_MEMORY_MODEL_LC
 
 /* Drain callback context for the RW MPSC pop loop. */
 struct rw_drain_ctx_s {
@@ -406,6 +437,8 @@ void arts_coh_drain_pending_rw_after_grant(struct arts_db_cache_s *cache,
     }
   }
 }
+
+#endif /* !ARTS_MEMORY_MODEL_LC */
 
 /* Visit context for the RO drain. */
 struct ro_drain_ctx_s {

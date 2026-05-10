@@ -30,9 +30,10 @@
 #include "arts/utils/malloc.h"
 #include "arts/utils/marked_list.h"
 
-struct arts_db_cache_s *
-arts_coh_alloc_cache_s(arts_guid_t db_guid, uint64_t db_size,
-                       arts_coh_init_kind_t kind, unsigned int creator_rank) {
+struct arts_db_cache_s *arts_coh_alloc_cache_s(arts_guid_t db_guid,
+                                               uint64_t db_size,
+                                               arts_coh_init_kind_t kind,
+                                               unsigned int creator_rank) {
   struct arts_db_cache_s *c =
       (struct arts_db_cache_s *)arts_calloc(1, sizeof(struct arts_db_cache_s));
   c->db_guid = db_guid;
@@ -40,14 +41,16 @@ arts_coh_alloc_cache_s(arts_guid_t db_guid, uint64_t db_size,
   c->destroy_state = ARTS_DB_DESTROY_NONE;
   /* Vyukov MPSC queue cannot be zero-initialized: head and tail must
    * point at the embedded stub.  Initialize before any push could
-   * land. */
+   * land.  LC routes all RW acquires through the RO path and never
+   * pushes to pending_rw, so skip in LC builds. */
+#ifndef ARTS_MEMORY_MODEL_LC
   arts_pending_rw_queue_init(&c->pending_rw);
+#endif
   /* Marked-list pending_ro queue: element_size MUST equal
    * sizeof(arts_db_ro_waiter_s) so arts_marked_list_alloc returns a
    * buffer big enough to hold the waiter struct (not a 1-byte stub
    * from calloc(1, 0) which would smash the heap on first acquire). */
-  arts_marked_list_init(&c->pending_ro,
-                        sizeof(struct arts_db_ro_waiter_s));
+  arts_marked_list_init(&c->pending_ro, sizeof(struct arts_db_ro_waiter_s));
   /* Caller wires db_owner right after install (e.g. arts_db_create_internal,
    * arts_coh_lazy_install_cache_s).  arts_calloc already zeroed the field,
    * but make the contract explicit. */
@@ -68,7 +71,12 @@ arts_coh_alloc_cache_s(arts_guid_t db_guid, uint64_t db_size,
   } else if (kind == ARTS_COH_INIT_CREATOR_REMOTE) {
     c->writer_count = 2;
   }
-#ifdef ARTS_MEMORY_MODEL_LRC
+#if defined(ARTS_MEMORY_MODEL_LC)
+  /* LC: writeback rendezvous fields; arts_calloc already zeroed them,
+   * but make the contract explicit. */
+  c->writeback_seq = 0;
+  c->writeback_acked_seq = 0;
+#elif defined(ARTS_MEMORY_MODEL_LRC)
   /* LRC owner-side fields: dedup map allocated lazily on first ownership
    * grant; arts_calloc already zeroed last_sent_version / incoming_new_owner,
    * but make the contract explicit. */

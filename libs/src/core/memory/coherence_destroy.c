@@ -78,8 +78,11 @@ static void fail_trigger_visit_ro(arts_marked_list_node_t *node, void *vctx) {
 void arts_coh_fail_trigger_pending(struct arts_db_cache_s *cache) {
   struct fail_trigger_ctx_s ctx = {.cache = cache};
   /* Pure FIFO drain: pop every queued RW waiter and wake.  No mark/
-   * traverse needed — single consumer, no concurrent claims. */
+   * traverse needed — single consumer, no concurrent claims.
+   * LC has no pending_rw queue (RW acquires use pending_ro). */
+#ifndef ARTS_MEMORY_MODEL_LC
   arts_pending_rw_queue_drain(&cache->pending_rw, fail_trigger_rw_cb, &ctx);
+#endif
   arts_marked_list_traverse(&cache->pending_ro, fail_trigger_visit_ro, &ctx);
 }
 
@@ -188,8 +191,11 @@ void arts_coh_cache_destructor(struct arts_db_cache_s *cache) {
   /* 3. Walk pending_rw / pending_ro chains + private pool, freeing
    *    every node and the sentinels (sentinels live in the queue/list
    *    struct so they're freed implicitly).  RW uses Vyukov MPSC; RO
-   *    still uses the marked-list (selective drain semantics). */
+   *    still uses the marked-list (selective drain semantics).
+   *    LC has no pending_rw queue. */
+#ifndef ARTS_MEMORY_MODEL_LC
   arts_pending_rw_queue_destroy(&cache->pending_rw);
+#endif
   arts_marked_list_destroy(&cache->pending_ro);
   /* 4. Home metadata. */
   if (cache->home != NULL) {

@@ -243,9 +243,20 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
    * payload right after sizeof(struct ...); pass that pointer + size as
    * the data/data_size arguments.
    *
-   * Shared messages compile in both RC and LRC builds — Phase 6 will add
-   * #ifdef branches inside the individual handlers as LRC diverges.
-   * RC-only messages fatal in LRC builds to catch binary mode mismatch. */
+   * LOCK_REQ / INVALIDATE_NOTICE / RELEASE_OWNERSHIP: shared between RC and
+   * LRC (both use per-DB exclusive ownership), but LC has no such concept.
+   * Fatal in LC builds to catch binary mode mismatch. */
+#if defined(ARTS_MEMORY_MODEL_LC)
+  case ARTS_REMOTE_LOCK_REQ_MSG:
+  case ARTS_REMOTE_INVALIDATE_NOTICE_MSG:
+  case ARTS_REMOTE_RELEASE_OWNERSHIP_MSG: {
+    ARTS_ERROR("LC build received exclusivity message type %d from rank %u "
+               "— LC has no LOCK_REQ / INVALIDATE / RELEASE_OWNERSHIP; "
+               "binary mode mismatch?",
+               packet->message_type, packet->rank);
+    break;
+  }
+#else  /* RC and LRC: full handlers */
   case ARTS_REMOTE_LOCK_REQ_MSG: {
     ARTS_DEBUG("Coh LOCK_REQ Received");
     struct arts_remote_lock_req_packet_s *pack =
@@ -265,6 +276,7 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
         (struct arts_remote_release_ownership_packet_s *)(packet));
     break;
   }
+#endif /* ARTS_MEMORY_MODEL_LC */
   case ARTS_REMOTE_GET_DATA_MSG: {
     ARTS_DEBUG("Coh GET_DATA Received");
     arts_coh_handle_get_data((struct arts_remote_get_data_packet_s *)(packet));
@@ -297,8 +309,16 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
         (struct arts_remote_destroy_notify_packet_s *)(packet));
     break;
   }
-  /* RC-only messages — fatal in LRC builds to catch binary mode mismatch */
-#ifndef ARTS_MEMORY_MODEL_LRC
+  /* GRANT: RC-only — fatal in LRC and LC builds to catch binary mode mismatch.
+   */
+#if defined(ARTS_MEMORY_MODEL_LRC) || defined(ARTS_MEMORY_MODEL_LC)
+  case ARTS_REMOTE_GRANT_MSG: {
+    ARTS_ERROR("Non-RC build received RC-only GRANT message from rank %u — "
+               "binary mode mismatch?",
+               packet->rank);
+    break;
+  }
+#else  /* RC build */
   case ARTS_REMOTE_GRANT_MSG: {
     ARTS_DEBUG("Coh GRANT Received");
     struct arts_remote_grant_packet_s *pack =
@@ -308,6 +328,18 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
     arts_coh_handle_grant(pack, data_size > 0 ? data : NULL, data_size);
     break;
   }
+#endif /* ARTS_MEMORY_MODEL_LRC || ARTS_MEMORY_MODEL_LC */
+  /* WRITEBACK + WRITEBACK_ACK: used by RC and LC (sync release writeback).
+   * Fatal in LRC only — LRC uses async transfer, not synchronous writeback. */
+#if defined(ARTS_MEMORY_MODEL_LRC)
+  case ARTS_REMOTE_WRITEBACK_MSG:
+  case ARTS_REMOTE_WRITEBACK_ACK_MSG: {
+    ARTS_ERROR("LRC build received writeback message type %d from rank %u — "
+               "LRC has no synchronous writeback; binary mode mismatch?",
+               packet->message_type, packet->rank);
+    break;
+  }
+#else  /* RC and LC: full handlers */
   case ARTS_REMOTE_WRITEBACK_MSG: {
     ARTS_DEBUG("Coh WRITEBACK Received");
     struct arts_remote_writeback_packet_s *pack =
@@ -321,15 +353,6 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
     ARTS_DEBUG("Coh WRITEBACK_ACK Received");
     arts_coh_handle_writeback_ack(
         (struct arts_remote_writeback_ack_packet_s *)(packet));
-    break;
-  }
-#else  /* ARTS_MEMORY_MODEL_LRC */
-  case ARTS_REMOTE_GRANT_MSG:
-  case ARTS_REMOTE_WRITEBACK_MSG:
-  case ARTS_REMOTE_WRITEBACK_ACK_MSG: {
-    ARTS_ERROR("LRC build received RC-only message type %d from rank %u — "
-               "binary mode mismatch?",
-               packet->message_type, packet->rank);
     break;
   }
 #endif /* ARTS_MEMORY_MODEL_LRC */
@@ -353,8 +376,7 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
   case ARTS_REMOTE_TRANSFER_OWNERSHIP_MSG: {
     ARTS_DEBUG("LRC TRANSFER_OWNERSHIP Received");
     /* Payload immediately follows the header in the contiguous wire buffer. */
-    arts_coh_handle_transfer_ownership((void *)packet,
-                                       (size_t)packet->size);
+    arts_coh_handle_transfer_ownership((void *)packet, (size_t)packet->size);
     break;
   }
   case ARTS_REMOTE_INSTALL_ACK_MSG: {

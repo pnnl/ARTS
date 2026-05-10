@@ -620,6 +620,69 @@ set_tests_properties(coherence_stress_dist PROPERTIES
     ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_2node.cfg"
 )
 
+# --- LC-specific test binaries ---
+# These tests target the LC memory model.  They are built unconditionally
+# so the binary exists in all three build trees; CTest entries are only
+# registered when ARTS_MEMORY_MODEL is LC.
+
+add_arts_test(lc_multi_writer_concurrent)
+add_arts_test(lc_drf_invariant)
+add_arts_test(lc_local_hit_dedup)
+add_arts_test(lc_counter_race)
+
+if(ARTS_MEMORY_MODEL STREQUAL "LC")
+    # lc_drf_invariant (single-node): home-rank writer and home-rank reader;
+    # no WRITEBACK round-trip.  Validates epoch happens-before ordering.
+    add_test(
+        NAME lc_drf_invariant
+        COMMAND lc_drf_invariant
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    )
+    set_tests_properties(lc_drf_invariant PROPERTIES
+        LABELS "single_node"
+        TIMEOUT 30
+        RESOURCE_LOCK "arts_runtime"
+        PASS_REGULAR_EXPRESSION "LC_DRF: PASS"
+    )
+
+    # lc_drf_invariant (2-node): writer on rank 1, reader on rank 0 (home).
+    # Exercises the cross-rank RW WRITEBACK path: writer_count bump on
+    # acquire ensures release_rw sends WRITEBACK; home delivers updated
+    # data to the RO reader.
+    add_test(
+        NAME lc_drf_invariant_2n
+        COMMAND lc_drf_invariant
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    )
+    set_tests_properties(lc_drf_invariant_2n PROPERTIES
+        LABELS "multinode"
+        TIMEOUT 60
+        RESOURCE_LOCK "arts_runtime"
+        ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_2node.cfg"
+        PASS_REGULAR_EXPRESSION "LC_DRF: PASS"
+    )
+
+    # lc_local_hit_dedup: N concurrent same-rank RO acquires on a DB homed
+    # at a different rank — exercises the GET_DATA / STILL_VALID dedup
+    # code path under LC.  Requires 2-node config.
+    add_test(
+        NAME lc_local_hit_dedup_2n
+        COMMAND lc_local_hit_dedup
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    )
+    set_tests_properties(lc_local_hit_dedup_2n PROPERTIES
+        LABELS "multinode"
+        TIMEOUT 60
+        RESOURCE_LOCK "arts_runtime"
+        ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_2node.cfg"
+        PASS_REGULAR_EXPRESSION "LC_LOCAL_HIT_DEDUP: PASS"
+    )
+
+    # lc_multi_writer_concurrent: manual test only — non-deterministic
+    # last-writer-wins outcome cannot be expressed as a fixed regex.
+    # Run directly with: build_lc/tests/lc_multi_writer_concurrent
+endif()
+
 # --- Mode-mismatch detection binary (no CTest entry — driven by run_mode_mismatch.sh) ---
 add_executable(coherence_mode_mismatch coherence_mode_mismatch.c)
 target_include_directories(coherence_mode_mismatch PRIVATE

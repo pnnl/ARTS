@@ -283,21 +283,30 @@ struct arts_db_home_s *arts_db_home_create(unsigned int rw_holder,
                                            unsigned int nranks) {
   struct arts_db_home_s *home =
       (struct arts_db_home_s *)calloc(1, sizeof(*home));
-  atomic_store_explicit(&home->rw_holder, rw_holder, memory_order_relaxed);
-  arts_home_lockreq_queue_init(&home->pending_rw);
-  /* No INVALIDATE or DESTROY round is in flight at home creation; calloc
-   * already zeroed these but we set explicitly to make the invariant
-   * obvious. */
-  atomic_store_explicit(&home->invalidate_in_flight, 0, memory_order_relaxed);
+  /* Common fields: destroy baton + ack counter.  calloc already zeroed
+   * them but set explicitly to document the invariant. */
   atomic_store_explicit(&home->destroy_in_flight, 0, memory_order_relaxed);
-  /* RO forward queue: Vyukov MPSC in LRC builds; no-op in RC builds. */
-  arts_home_pending_ro_queue_init(&home->pending_ro_forwards);
-#ifdef ARTS_MEMORY_MODEL_LRC
-  arts_readers_bits_init(&home->readers, nranks);
-  home->pending_install_owner = 0;
   atomic_store_explicit(&home->destroy_ack_outstanding, 0,
                         memory_order_relaxed);
+#if defined(ARTS_MEMORY_MODEL_LRC)
+  atomic_store_explicit(&home->rw_holder, rw_holder, memory_order_relaxed);
+  arts_home_lockreq_queue_init(&home->pending_rw);
+  atomic_store_explicit(&home->invalidate_in_flight, 0, memory_order_relaxed);
+  arts_home_pending_ro_queue_init(&home->pending_ro_forwards);
+  arts_readers_bits_init(&home->readers, nranks);
+  home->pending_install_owner = 0;
+#elif defined(ARTS_MEMORY_MODEL_LC)
+  /* LC: only last_sent_version.  rw_holder param is unused in LC —
+   * DB has no exclusive owner. */
+  (void)rw_holder;
+  home->last_sent_version = arts_rank_u64_map_create(nranks);
 #else
+  /* RC */
+  atomic_store_explicit(&home->rw_holder, rw_holder, memory_order_relaxed);
+  arts_home_lockreq_queue_init(&home->pending_rw);
+  atomic_store_explicit(&home->invalidate_in_flight, 0, memory_order_relaxed);
+  /* RO forward queue: Vyukov MPSC in LRC builds; no-op stub in RC. */
+  arts_home_pending_ro_queue_init(&home->pending_ro_forwards);
   home->last_sent_version = arts_rank_u64_map_create(nranks);
 #endif
   return home;
@@ -307,11 +316,16 @@ void arts_db_home_destroy(struct arts_db_home_s *home) {
   if (home == NULL) {
     return;
   }
+#if defined(ARTS_MEMORY_MODEL_LRC)
   arts_home_lockreq_queue_destroy(&home->pending_rw);
   arts_home_pending_ro_queue_destroy(&home->pending_ro_forwards);
-#ifdef ARTS_MEMORY_MODEL_LRC
   arts_readers_bits_destroy(&home->readers);
+#elif defined(ARTS_MEMORY_MODEL_LC)
+  arts_rank_u64_map_destroy(home->last_sent_version);
 #else
+  /* RC */
+  arts_home_lockreq_queue_destroy(&home->pending_rw);
+  arts_home_pending_ro_queue_destroy(&home->pending_ro_forwards);
   arts_rank_u64_map_destroy(home->last_sent_version);
 #endif
   free(home);
@@ -320,15 +334,15 @@ void arts_db_home_destroy(struct arts_db_home_s *home) {
 #ifdef ARTS_MEMORY_MODEL_LRC
 /*--- last_sent_version map serialization / deserialization ---------------*/
 
-#include <string.h>
 #include "arts/transport/protocol.h"
+#include <string.h>
 
 size_t arts_rank_u64_map_serialize(const struct arts_rank_to_u64_map_s *m,
                                    void *out) {
   uint32_t *count_field = (uint32_t *)out;
   struct arts_remote_rank_version_pair_s *entries =
-      (struct arts_remote_rank_version_pair_s *)
-      ((char *)out + sizeof(uint32_t) * 2);
+      (struct arts_remote_rank_version_pair_s *)((char *)out +
+                                                 sizeof(uint32_t) * 2);
   uint32_t n = 0;
   for (unsigned int r = 0; r < m->nranks; r++) {
     uint64_t v = atomic_load_explicit(&m->slots[r], memory_order_acquire);
@@ -345,15 +359,16 @@ size_t arts_rank_u64_map_serialize(const struct arts_rank_to_u64_map_s *m,
   return sizeof(uint32_t) * 2 + (size_t)n * sizeof(*entries);
 }
 
-struct arts_rank_to_u64_map_s *arts_rank_u64_map_deserialize(
-    const void *in, size_t size, unsigned int nranks) {
+struct arts_rank_to_u64_map_s *
+arts_rank_u64_map_deserialize(const void *in, size_t size,
+                              unsigned int nranks) {
   (void)size; /* used by debug assertions; production ignores it */
   struct arts_rank_to_u64_map_s *m = arts_rank_u64_map_create(nranks);
   const uint32_t *count_field = (const uint32_t *)in;
   uint32_t n = count_field[0];
   const struct arts_remote_rank_version_pair_s *entries =
-      (const struct arts_remote_rank_version_pair_s *)
-      ((const char *)in + sizeof(uint32_t) * 2);
+      (const struct arts_remote_rank_version_pair_s *)((const char *)in +
+                                                       sizeof(uint32_t) * 2);
   for (uint32_t i = 0; i < n; i++) {
     arts_rank_u64_map_set(m, (unsigned int)entries[i].rank, entries[i].version);
   }

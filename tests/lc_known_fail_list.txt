@@ -1,0 +1,12 @@
+# Tier M tests / ctest cases that may fail in LC build because the
+# underlying app or stress test relies on the per-node-exclusive RW
+# invariant (RC/LRC) and has not yet been refactored for DB-level DRF.
+#
+# Reviewed each release cycle.  Apps migrate off this list as they are
+# refactored.
+
+# ctest cases:
+coherence_stress_dist  # exercises cross-rank RW exclusivity (LOCK_REQ/GRANT/INVALIDATE chain)
+
+# Tier M (OCR-shim correctness harness) — to be populated empirically
+# after first LC harness run completes.

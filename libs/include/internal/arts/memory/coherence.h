@@ -249,38 +249,55 @@ struct arts_home_pending_ro_queue_s {
 #endif /* ARTS_MEMORY_MODEL_LRC */
 
 struct arts_db_home_s {
+  /* Common across all three coherence models. */
+  /* Destroy fan-out single-flight gate.  Set (CAS 0→1) by handle_destroy_req
+   * before it iterates the readers roster; cleared only implicitly when the
+   * home_s struct is freed.  Ensures at most one destroy fan-out runs per DB
+   * lifetime, even under concurrent DESTROY_REQ arrivals. */
+  _Atomic(unsigned int) destroy_in_flight;
+  /* Outstanding DESTROY_DONE ack count; finalize when it reaches 0.  Used by
+   * all three models during destroy fan-out. */
+  _Atomic(unsigned int) destroy_ack_outstanding;
+
+#if defined(ARTS_MEMORY_MODEL_LRC)
+  /* LRC: includes exclusivity machinery (LOCK_REQ ownership rounds) +
+   * RO-forward deferral queue + per-RO-reader bit-set for destroy fan-out. */
   _Atomic(unsigned int) rw_holder;
   struct arts_home_lockreq_queue_s pending_rw; /* embedded Vyukov MPSC */
   /* Active-directory in-flight tracking for INVALIDATE_NOTICE.  Set by
    * the home-side LOCK_REQ handler (acq_rel CAS 0->1) when it dispatches
-   * an INVALIDATE to the current rw_holder; cleared by the matching
-   * WRITEBACK (WB_AND_TRANSFER branch) or RELEASE_OWNERSHIP handler
-   * once the ownership transfer round completes.  Ensures EXACTLY ONE
-   * INVALIDATE_NOTICE is in flight to the rw_holder per round, even
-   * under concurrent foreign LOCK_REQs that all observe a non-empty
-   * pending_rw queue.  Per-cache (home metadata) so the gate is local
-   * to the directory entry. */
+   * an INVALIDATE to the current rw_holder; cleared once the ownership
+   * transfer round completes. */
   _Atomic(unsigned int) invalidate_in_flight;
-  /* Destroy fan-out baton.  Unused in Phase 0; wired in Phase 7 when
-   * the destroy path needs a single-flight gate symmetric to
-   * invalidate_in_flight. */
-  _Atomic(unsigned int) destroy_in_flight;
-  /* RO_REQs deferred while an ownership-transfer gate is set; real impl
-   * added when the LRC RO forward path is wired. */
+  /* RO_REQs deferred while an ownership-transfer gate is set. */
   struct arts_home_pending_ro_queue_s pending_ro_forwards;
-#ifdef ARTS_MEMORY_MODEL_LRC
-  /* LRC destroy fan-out: bit per reader rank.  Set when a DATA_RESPONSE
-   * (RO grant) is sent to a rank; iterated during DESTROY fan-out to
-   * reach all ranks that ever held a cached copy. */
+  /* Bit per reader rank set when a DATA_RESPONSE (RO grant) is sent; iterated
+   * during DESTROY fan-out to reach all ranks that held a cached copy. */
   struct arts_readers_bits_s readers;
   /* Set by the LOCK_REQ handler when it kicks off an invalidate round;
-   * read by the INSTALL_ACK handler to know who to set rw_holder to.
-   * Only the baton holder writes; single-threaded within the handler. */
+   * read by the INSTALL_ACK handler.  Written only by the baton holder. */
   unsigned int pending_install_owner;
-  /* Outstanding DESTROY_DONE ack count; finalize when it reaches 0. */
-  _Atomic(unsigned int) destroy_ack_outstanding;
+#elif defined(ARTS_MEMORY_MODEL_LC)
+  /* LC: thin canonical-data home.  No per-node exclusive owner, no
+   * LOCK_REQ / INVALIDATE machinery.  master_version is implicit in the
+   * home rank's own cache_s.buffer.version.  last_sent_version is a
+   * per-rank dedup watermark used by the DESTROY fan-out (same as RC) and
+   * by the WRITEBACK handler to skip redundant installs. */
+  struct arts_rank_to_u64_map_s *last_sent_version;
 #else
-  /* RC: per-rank watermark of the latest DB version sent to each rank.
+  /* RC: includes exclusivity machinery (LOCK_REQ ownership rounds) and
+   * per-rank dedup watermark for GRANT / DATA_RESPONSE. */
+  _Atomic(unsigned int) rw_holder;
+  struct arts_home_lockreq_queue_s pending_rw; /* embedded Vyukov MPSC */
+  /* Active-directory in-flight tracking for INVALIDATE_NOTICE.  Set by
+   * the home-side LOCK_REQ handler (acq_rel CAS 0->1) when it dispatches
+   * an INVALIDATE to the current rw_holder; cleared once the ownership
+   * transfer round completes. */
+  _Atomic(unsigned int) invalidate_in_flight;
+  /* RO_REQs deferred while an ownership-transfer gate is set (no-op stub
+   * in RC; real queue in LRC). */
+  struct arts_home_pending_ro_queue_s pending_ro_forwards;
+  /* Per-rank watermark of the latest DB version sent to each rank.
    * Used by GRANT / DATA_RESPONSE to skip redundant data transfers when
    * the receiver's cached version is already current. */
   struct arts_rank_to_u64_map_s *last_sent_version;
@@ -395,8 +412,6 @@ struct arts_db_cache_s {
   /* buffer is read/written via arts_atomic_swap_ptr; declare as
    * `volatile void *` so the helper signature matches. */
   volatile struct arts_db_buffer_s *buffer;
-  volatile unsigned int lock_req_in_flight;
-  struct arts_pending_rw_queue_s pending_rw;
   arts_marked_list_t pending_ro;
   volatile unsigned int pending_count;
   volatile unsigned int destroy_state;
@@ -415,11 +430,22 @@ struct arts_db_cache_s {
    * the legacy route_table-managed lifecycle.  Stored as void * to avoid
    * a circular include between coherence.h and runtime_types.h. */
   void *db_owner;
-#ifdef ARTS_MEMORY_MODEL_LRC
-  /* Owner-side dedup map: watermark of the latest DB version forwarded to
-   * each rank under this ownership epoch.  Allocated lazily on first
-   * ownership; preserved across ownership transfer (TRANSFER_OWNERSHIP
-   * serializes it). */
+#if defined(ARTS_MEMORY_MODEL_LC)
+  /* LC: writer_count is a pure ref count (no exclusive ownership; every
+   * writer is a non-home node that writes then pushes back to home).
+   * No LOCK_REQ coalescing flag, no per-cache RW waiter queue — LC routes
+   * RW acquires through acquire_remote_ro so RW waiters use pending_ro.
+   *
+   * Per-cache WRITEBACK ACK rendezvous: release_rw atomically claims a
+   * fresh seq via fetch_add on writeback_seq, embeds it in the WRITEBACK
+   * packet, then spin-waits on writeback_acked_seq >= my_seq.  The ACK
+   * handler does an atomic monotonic-max on writeback_acked_seq. */
+  volatile uint64_t writeback_seq;
+  volatile uint64_t writeback_acked_seq;
+#elif defined(ARTS_MEMORY_MODEL_LRC)
+  /* LRC: owner-side dedup map.  Allocated lazily on first ownership;
+   * preserved across ownership transfer (TRANSFER_OWNERSHIP serializes
+   * it). */
   struct arts_rank_to_u64_map_s *last_sent_version;
   /* Set by the INVALIDATE_NOTICE handler when writers are still live;
    * release_rw observes this flag and ships TRANSFER_OWNERSHIP when
@@ -428,16 +454,30 @@ struct arts_db_cache_s {
   /* New owner rank extracted from the INVALIDATE_NOTICE message payload;
    * read by the transfer-ship path when transfer_pending is observed. */
   unsigned int incoming_new_owner;
+  /* LRC per-cache RW exclusivity machinery. */
+  /* RW LOCK_REQ coalescing flag — only the actor that CASes false→true
+   * sends LOCK_REQ; same-node RW EDTs piggyback on the in-flight one and
+   * are picked up by GRANT's drain.  Cleared by the GRANT handler. */
+  volatile unsigned int lock_req_in_flight;
+  /* Vyukov MPSC queue of RW waiters parked on this rank. */
+  struct arts_pending_rw_queue_s pending_rw;
 #else
   /* RC: per-cache WRITEBACK ACK rendezvous.  release_rw on a non-home
    * owner atomically claims a fresh seq via fetch_add on writeback_seq,
    * embeds it in the WRITEBACK packet, then spin-waits on
    * writeback_acked_seq >= my_seq.  ACK handler does an atomic
-   * monotonic-max on writeback_acked_seq.  Multiple concurrent
-   * releases on the same cache rendezvous independently because each
-   * holds a unique seq. */
+   * monotonic-max on writeback_acked_seq.  Multiple concurrent releases
+   * on the same cache rendezvous independently because each holds a
+   * unique seq. */
   volatile uint64_t writeback_seq;
   volatile uint64_t writeback_acked_seq;
+  /* RC per-cache RW exclusivity machinery. */
+  /* RW LOCK_REQ coalescing flag — only the actor that CASes false→true
+   * sends LOCK_REQ; same-node RW EDTs piggyback on the in-flight one and
+   * are picked up by GRANT's drain.  Cleared by the GRANT handler. */
+  volatile unsigned int lock_req_in_flight;
+  /* Vyukov MPSC queue of RW waiters parked on this rank. */
+  struct arts_pending_rw_queue_s pending_rw;
 #endif
 };
 

@@ -154,6 +154,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   unsigned int nnodes = arts_get_total_ranks();
   if (nnodes < 2) {
     arts_printf("SKIP: requires 2+ ranks (got %u)\n", nnodes);
+    /* SKIP is a clean exit, not an abort: set the flag so main()'s
+     * post-arts_rt() check does not flag a false FAIL. */
+    atomic_store(&g_clean_shutdown, 1);
     arts_shutdown();
     return;
   }
