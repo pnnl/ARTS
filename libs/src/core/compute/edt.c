@@ -48,8 +48,8 @@
 #include "arts/remote/handler.h"
 #include "arts/runtime_state.h"
 #include "arts/runtime_types.h"
-#include "arts/sync/shared.h" /* arts_shared_init */
 #include "arts/sync/epoch.h"
+#include "arts/sync/shared.h" /* arts_shared_init */
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/utils/array_list.h"
@@ -206,6 +206,16 @@ void arts_increment_finished_epoch_list() {
 
 void arts_unset_thread_local_edt_info() {
   arts_increment_finished_epoch_list();
+  /* finish_event tracking: emit DECR on completion of the current EDT.
+   * - Inherited finish_event: balances the INCR emitted at create time.
+   * - Own (ARTS_EDT_FLAG_FINISH or cross-node proxy) finish_event:
+   *   counter==0 fires the latch, propagating DECR to the parent's
+   *   finish_event via the dep registered at allocation.
+   * `current_edt` is still valid here (cleared on the next line). */
+  if (current_edt && current_edt->finish_event != NULL_GUID) {
+    arts_event_satisfy_slot(current_edt->finish_event, NULL_GUID,
+                            ARTS_EVENT_LATCH_DECR_SLOT);
+  }
   arts_thread_info.current_edt_guid = NULL_GUID;
   current_edt = NULL;
 }
@@ -260,7 +270,7 @@ bool arts_edt_create_internal(struct arts_edt_s *edt, arts_type_t mode,
                               arts_edt_t func_ptr, uint32_t paramc,
                               const uint64_t *paramv, uint32_t depc,
                               bool use_epoch, arts_guid_t epoch_guid,
-                              uint64_t arts_id) {
+                              uint64_t arts_id, uint32_t flags) {
   if (!edt) {
     edt = (struct arts_edt_s *)arts_calloc_align(1, edt_space, 16);
   }
@@ -292,6 +302,50 @@ bool arts_edt_create_internal(struct arts_edt_s *edt, arts_type_t mode,
   edt->epoch_guid = NULL_GUID;
   edt->numa_domain = numa_domain;
   edt->depc_needed = depc;
+
+  /* Determine finish-scope for this EDT.
+   *
+   * `current_edt` is the file-static thread-local pointer maintained by
+   * arts_set/unset_thread_local_edt_info — direct access, no route_table
+   * lookup needed (same TU).
+   *
+   * Two cases:
+   *   ARTS_EDT_FLAG_FINISH set: allocate a fresh LATCH event as this EDT's
+   *     own finish-scope and chain it into the caller's finish-scope (if any).
+   *     counter_init=1 is the self-alive token; it is released by the
+   *     DECR emitted in arts_unset_thread_local_edt_info on completion.
+   *     Spawned children each INCR this event
+   *     via the plain-inheritance path below, and DECR it on completion.
+   *     When the counter reaches 0, the LATCH fires and propagates DECR to
+   *     the parent finish-scope.
+   *
+   *   Otherwise: plain inheritance — adopt the caller's finish_event and
+   *     INCR it to register as a descendant. */
+  edt->finish_event = NULL_GUID;
+  arts_guid_t parent_fe = current_edt ? current_edt->finish_event : NULL_GUID;
+
+  bool need_new_finish_event = (flags & ARTS_EDT_FLAG_FINISH) != 0;
+
+  if (need_new_finish_event) {
+    arts_event_hint_t latch_hint = ARTS_EVENT_HINT_LATCH(1);
+    arts_guid_t new_fe = arts_event_create(&latch_hint);
+
+    if (parent_fe != NULL_GUID) {
+      /* Chain: when new_fe fires it satisfies one DECR slot of parent_fe.
+       * INCR parent_fe first to register this finish-scope as a descendant.
+       * Both ops are local-sync (parent runs on this node). */
+      arts_event_satisfy_slot(parent_fe, NULL_GUID, ARTS_EVENT_LATCH_INCR_SLOT);
+      arts_add_dependence(new_fe, parent_fe, ARTS_EVENT_LATCH_DECR_SLOT,
+                          DB_MODE_NULL);
+    }
+    edt->finish_event = new_fe;
+  } else if (parent_fe != NULL_GUID) {
+    /* Plain inheritance — adopt enclosing finish-scope and INCR it.
+     * INCR completes before the new EDT can reach its own DECR (which runs
+     * only after the EDT executes — strictly later in this thread). */
+    edt->finish_event = parent_fe;
+    arts_event_satisfy_slot(parent_fe, NULL_GUID, ARTS_EVENT_LATCH_INCR_SLOT);
+  }
 
   if (use_epoch) {
     arts_guid_t current_epoch_guid = NULL_GUID;
@@ -408,9 +462,10 @@ arts_guid_t arts_edt_create(arts_edt_t func_ptr, uint32_t paramc,
   unsigned int edt_space = sizeof(struct arts_edt_s) +
                            (paramc * sizeof(uint64_t)) +
                            (depc * sizeof(arts_edt_dep_t));
-  bool ok = arts_edt_create_internal(
-      NULL, ARTS_EDT, &guid, rank, arts_thread_info.numa_domain_id, edt_space,
-      func_ptr, paramc, paramv, depc, true, snap.epoch, snap.edt_id);
+  bool ok = arts_edt_create_internal(NULL, ARTS_EDT, &guid, rank,
+                                     arts_thread_info.numa_domain_id, edt_space,
+                                     func_ptr, paramc, paramv, depc, true,
+                                     snap.epoch, snap.edt_id, snap.flags);
   TIME_EDT_CREATE_STOP();
   return ok ? guid : NULL_GUID;
 }
@@ -732,4 +787,22 @@ void arts_gpu_signal_edt_memset(arts_guid_t edt_guid, uint32_t slot,
     arts_route_table_release(data_guid);
   }
   internal_signal_edt(edt_guid, slot, data_guid, mode, NULL, 0);
+}
+
+arts_guid_t arts_edt_get_finish_event(arts_guid_t edt_guid) {
+  /* Single lookup → read field → release.  Same pattern as the rest of
+   * edt.c (e.g. arts_edt_destroy).  Returns NULL_GUID when edt_guid is not
+   * registered in this rank's route table — i.e., when the EDT is homed on
+   * another rank.  Cross-node queries require a remote handler; that path is
+   * deferred to a future extension. */
+  if (edt_guid == NULL_GUID) {
+    return NULL_GUID;
+  }
+  struct arts_edt_s *edt = arts_route_table_lookup_edt_safe(edt_guid);
+  if (!edt) {
+    return NULL_GUID;
+  }
+  arts_guid_t fe = edt->finish_event;
+  arts_route_table_release(edt_guid);
+  return fe;
 }

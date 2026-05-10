@@ -107,6 +107,8 @@ struct arts_edt_s {
   uint32_t depc;             /**< Number of dependency slots. */
   arts_guid_t current_edt;   /**< GUID of this EDT. */
   arts_guid_t epoch_guid;    /**< Enclosing epoch GUID. */
+  arts_guid_t finish_event;  /**< LATCH event for finish-scope tracking.
+                                  NULL_GUID = no finish-scope (legacy path). */
   unsigned int numa_domain;  /**< NUMA domain assignment. */
   unsigned int node;         /**< Target node rank. */
   arts_edt_types_t edt_type; /**< EDT subtype (DEFAULT=CPU, GPU). */
@@ -249,12 +251,12 @@ typedef enum {
  * all work within the epoch has completed.
  */
 struct arts_epoch_s {
-  ARTS_SHARED_FIELD; /* shared_t — first member, always. The
-                        route_table free_item dispatcher reads this
-                        offset-0 field to invoke the per-object deleter
-                        once the slot's lock count drops to 0 with
-                        DELETE set.  See libs/src/core/sync/epoch.c
-                        arts_epoch_deleter. */
+  ARTS_SHARED_FIELD;                  /* shared_t — first member, always. The
+                                         route_table free_item dispatcher reads this
+                                         offset-0 field to invoke the per-object deleter
+                                         once the slot's lock count drops to 0 with
+                                         DELETE set.  See libs/src/core/sync/epoch.c
+                                         arts_epoch_deleter. */
   volatile unsigned int local_lock;   /**< Single-node active/finished lock. */
   volatile unsigned int phase;        /**< Current TD phase (PHASE_*). */
   volatile unsigned int active_count; /**< Local active task count. */

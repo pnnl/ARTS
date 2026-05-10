@@ -139,12 +139,44 @@ void arts_remote_handle_edt_move(void *ptr) {
    * here, but reinstalling defensively keeps the lifecycle ownership
    * symmetric with edt_create_internal. */
   arts_shared_init(&edt->shared, arts_edt_get_deleter());
+  /* finish-scope chain: if the EDT arrived with a non-NULL finish_event,
+   * the field currently holds the *parent* finish_event GUID (which lives
+   * on the source rank).  Allocate a local proxy LATCH and rewrite the
+   * field so this EDT's finish_event is local-home.  Register a dep so
+   * that proxy fire emits DECR on the remote parent.
+   *
+   * The matching INCR on the remote parent was already emitted on the
+   * source rank inside arts_edt_create_internal before the EDT was
+   * shipped — race-free under source-rank local sync ordering. */
+  if (edt->finish_event != NULL_GUID) {
+    arts_guid_t parent_fe = edt->finish_event;
+    arts_event_hint_t latch_hint = ARTS_EVENT_HINT_LATCH(1);
+    arts_guid_t proxy = arts_event_create(&latch_hint);
+    /* add_dependence registers the proxy in its own waiter list (local op).
+     * The cross-node satisfy-on-fire is emitted automatically by the
+     * LATCH fire path when proxy.counter reaches 0. */
+    arts_add_dependence(proxy, parent_fe, ARTS_EVENT_LATCH_DECR_SLOT,
+                        DB_MODE_NULL);
+    edt->finish_event = proxy;
+  }
   /* add_item_race installs the EDT under the route_table lock.  On
    * rejection (another thread won the install race) free the freshly
    * unmarshaled buffer through the deleter — mirrors event_move's
    * race-loser cleanup pattern. */
   if (!arts_route_table_add_item_race(edt, packet->guid, arts_global_rank_id,
                                       false)) {
+    /* race-loser cleanup: if we allocated a proxy LATCH for the
+     * finish-scope chain, drain it.  proxy.counter == 1 (self-alive
+     * token, just allocated above).  DECR drives counter to 0 → fire,
+     * which emits the cross-node DECR to the remote parent_fe via the
+     * dep we just registered.  This cancels the source-rank INCR that
+     * was emitted before this EDT was shipped, keeping the parent
+     * finish-scope balanced.  proxy itself self-destroys on fire (LATCH
+     * auto_destroy semantics). */
+    if (edt->finish_event != NULL_GUID) {
+      arts_event_satisfy_slot(edt->finish_event, NULL_GUID,
+                              ARTS_EVENT_LATCH_DECR_SLOT);
+    }
     arts_edt_get_deleter()(edt);
     return;
   }

@@ -61,7 +61,7 @@ bool arts_edt_create_internal(struct arts_edt_s *edt, arts_type_t mode,
                               arts_edt_t func_ptr, uint32_t paramc,
                               const uint64_t *paramv, uint32_t depc,
                               bool use_epoch, arts_guid_t epoch_guid,
-                              uint64_t arts_id);
+                              uint64_t arts_id, uint32_t flags);
 void arts_edt_free(struct arts_edt_s *edt);
 void arts_edt_delete(struct arts_edt_s *edt);
 /* deleter pointer for foreign TUs that allocate arts_edt_s stubs

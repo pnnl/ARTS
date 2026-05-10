@@ -119,8 +119,8 @@ typedef enum {
  * Coherence suffix = RC | LC | PIN.  Storage prefix omitted = regular DRAM.
  */
 typedef enum {
-  ARTS_DB_RC = 0, /**< Release Consistency (regular DRAM, distributed RC). */
-  ARTS_DB_PIN,    /**< Node-pinned regular DRAM, no DB-level coherence. */
+  ARTS_DB_RC = 0,  /**< Release Consistency (regular DRAM, distributed RC). */
+  ARTS_DB_PIN,     /**< Node-pinned regular DRAM, no DB-level coherence. */
   ARTS_DB_GPU_PIN, /**< GPU staging (host pinned + per-device replica). */
   ARTS_DB_GPU_LC,  /**< GPU staging, Location Consistency (multi-GPU + reduce).
                     */
@@ -205,6 +205,12 @@ typedef enum {
  *                              no functional code consumed it)
  *  @{ */
 
+/** Bit flags for arts_edt_hint_t.flags. */
+#define ARTS_EDT_FLAG_NONE 0x0000u
+#define ARTS_EDT_FLAG_FINISH                                                   \
+  0x0001u /**< Make this EDT a finish-EDT: runtime allocates a fresh LATCH as  \
+             its finish_event and chains it into the caller's finish-scope. */
+
 /** Hint passed to @c arts_edt_create.  Optional fields collapse the legacy
  *  six EDT-create variants into a single entry point:
  *    - @c rank   selects the home node (default current rank).
@@ -212,7 +218,8 @@ typedef enum {
  *    - @c guid   when non-NULL_GUID pre-reserves the EDT GUID; the home
  *                rank is then taken from that GUID and @c rank is ignored.
  *    - @c epoch  when non-NULL_GUID assigns the EDT to that epoch; otherwise
- *                the runtime uses the caller's current epoch (if any). */
+ *                the runtime uses the caller's current epoch (if any).
+ *    - @c flags  bitfield of ARTS_EDT_FLAG_* (default ARTS_EDT_FLAG_NONE). */
 typedef struct {
   /** Target node rank.  ARTS_HINT_CURRENT_RANK = current node (default). */
   unsigned int rank;
@@ -222,13 +229,28 @@ typedef struct {
   arts_guid_t guid;
   /** Owning epoch.  NULL_GUID = inherit caller's current epoch (default). */
   arts_guid_t epoch;
+  /** Bitfield of ARTS_EDT_FLAG_*.  uint32_t for future flag growth.  Default
+   * ARTS_EDT_FLAG_NONE (0). */
+  uint32_t flags;
 } arts_edt_hint_t;
 
 #define ARTS_EDT_HINT_DEFAULTS                                                 \
   ((arts_edt_hint_t){.rank = ARTS_HINT_CURRENT_RANK,                           \
                      .edt_id = 0,                                              \
                      .guid = NULL_GUID,                                        \
-                     .epoch = NULL_GUID})
+                     .epoch = NULL_GUID,                                       \
+                     .flags = ARTS_EDT_FLAG_NONE})
+
+/** Convenience: same as DEFAULTS but with the finish flag set.  Use this
+ *  when creating a finish-EDT without other hint customizations:
+ *    arts_edt_hint_t hint = ARTS_EDT_HINT_FINISH;
+ *    arts_edt_create(func, 0, NULL, 0, &hint); */
+#define ARTS_EDT_HINT_FINISH                                                   \
+  ((arts_edt_hint_t){.rank = ARTS_HINT_CURRENT_RANK,                           \
+                     .edt_id = 0,                                              \
+                     .guid = NULL_GUID,                                        \
+                     .epoch = NULL_GUID,                                       \
+                     .flags = ARTS_EDT_FLAG_FINISH})
 
 /** Hint passed to @c arts_db_create.
  *
@@ -654,6 +676,12 @@ arts_guid_t arts_edt_create(arts_edt_t func_ptr, uint32_t paramc,
  * @param guid GUID of the EDT to destroy.
  */
 void arts_edt_destroy(arts_guid_t guid);
+
+/** Return the finish_event GUID of the given EDT.  Returns NULL_GUID if
+ *  the EDT has no finish-scope (legacy or non-finish EDT).  Used by user
+ *  code to attach a termination listener via arts_add_dependence on the
+ *  returned GUID. */
+arts_guid_t arts_edt_get_finish_event(arts_guid_t edt_guid);
 
 /** @} */ /* end edt */
 

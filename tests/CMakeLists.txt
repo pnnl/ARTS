@@ -166,6 +166,11 @@ set(TEST_PROGRAMS
     edt_epoch_api
     multinode_labeled_guid
     multinode_event_hint
+    # --- Finish-EDT mechanism tests ---
+    finish_event_basic
+    finish_event_inherit
+    finish_event_multinode
+    finish_event_stress
 )
 
 # Function to create a test executable
@@ -504,6 +509,25 @@ register_single_node_test(event_hint_presets)
 register_single_node_test(db_labeled_guid)
 
 register_single_node_test(edt_epoch_api)
+
+# --- Finish-EDT mechanism tests ---
+register_single_node_test(finish_event_basic)
+register_single_node_test(finish_event_inherit)
+register_multinode_test(finish_event_multinode TIMEOUT 30)
+set_tests_properties(finish_event_multinode_2n PROPERTIES
+    PASS_REGULAR_EXPRESSION "PASS: cross-node finish-scope drained")
+set_tests_properties(finish_event_multinode_4n PROPERTIES
+    PASS_REGULAR_EXPRESSION "PASS: cross-node finish-scope drained")
+set_tests_properties(finish_event_multinode_5n PROPERTIES
+    PASS_REGULAR_EXPRESSION "PASS: cross-node finish-scope drained")
+
+register_multinode_test(finish_event_stress TIMEOUT 300)
+set_tests_properties(finish_event_stress_2n PROPERTIES
+    PASS_REGULAR_EXPRESSION "PASS: 100 iterations of recursive cross-node finish-EDT")
+set_tests_properties(finish_event_stress_4n PROPERTIES
+    PASS_REGULAR_EXPRESSION "PASS: 100 iterations of recursive cross-node finish-EDT")
+set_tests_properties(finish_event_stress_5n PROPERTIES
+    PASS_REGULAR_EXPRESSION "PASS: 100 iterations of recursive cross-node finish-EDT")
 
 # --- Multi-node tests ---
 

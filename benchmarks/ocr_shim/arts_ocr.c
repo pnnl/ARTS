@@ -455,32 +455,19 @@ static u32 arts_to_ocr_mode(arts_db_access_mode_t arts_mode);
 static void ocr_els_reset(void);
 
 /* =========================================================================
- * EDT_PROP_FINISH Support via ARTS Epochs
+ * OCR EDT Trampoline
  *
  * Layout of ARTS paramv for OCR EDTs:
  *   paramv[0] = function pointer (ocrEdt_t)
  *   paramv[1] = original paramc
- *   paramv[2] = epoch GUID (for finish EDTs) or NULL_GUID
- *   paramv[3] = output event GUID or helper EDT GUID
- *   paramv[4] = flags: bit 0 = isFinishEdt
- *   paramv[5..5+paramc-1] = original paramv values
+ *   paramv[2] = output event GUID (for non-finish EDTs) or NULL_GUID
+ *   paramv[3..3+paramc-1] = original paramv values
+ *
+ * For finish EDTs (EDT_PROP_FINISH), the runtime manages the finish-scope
+ * via ARTS_EDT_FLAG_FINISH: a LATCH finish_event is allocated at create
+ * time and chained to the OCR outputEvent directly from ocrEdtCreate.
+ * The trampoline itself is scope-agnostic.
  * ========================================================================= */
-
-#define FINISH_EDT_FLAG 0x1
-
-static void epoch_termination_edt(uint32_t paramc, const uint64_t *paramv,
-                                  uint32_t depc, arts_edt_dep_t depv[]) {
-  (void)paramc;
-  (void)depc;
-
-  arts_guid_t outputEventGuid = (arts_guid_t)paramv[0];
-  arts_guid_t returnGuid = (depc > 1) ? depv[1].guid : NULL_GUID;
-
-  if (outputEventGuid != NULL_GUID) {
-    arts_event_satisfy_slot(outputEventGuid, returnGuid,
-                            ARTS_EVENT_LATCH_DECR_SLOT);
-  }
-}
 
 static void ocr_edt_trampoline(uint32_t paramc, const uint64_t *paramv,
                                uint32_t depc, arts_edt_dep_t depv[]) {
@@ -491,18 +478,14 @@ static void ocr_edt_trampoline(uint32_t paramc, const uint64_t *paramv,
 
   ocrEdt_t func = (ocrEdt_t)paramv[0];
   u32 origParamc = (u32)paramv[1];
-  arts_guid_t guidOrEpoch = (arts_guid_t)paramv[2];
-  arts_guid_t helperOrOutEvt = (arts_guid_t)paramv[3];
-  u64 flags = paramv[4];
+  arts_guid_t outEvt = (arts_guid_t)paramv[2];
   /* ARTS paramv is const; copy original params for OCR's non-const API */
   u64 *origParamv = NULL;
   u64 origParamBuf[origParamc > 0 ? origParamc : 1];
   if (origParamc > 0) {
-    memcpy(origParamBuf, &paramv[5], origParamc * sizeof(u64));
+    memcpy(origParamBuf, &paramv[3], origParamc * sizeof(u64));
     origParamv = origParamBuf;
   }
-
-  bool isFinishEdt = (flags & FINISH_EDT_FLAG) != 0;
 
   /* Convert arts_edt_dep_t to ocrEdtDep_t.  Preserve the mode that ARTS
    * resolved during acquire_dbs (RO vs EW vs NULL) — the OCR EDT body
@@ -517,38 +500,14 @@ static void ocr_edt_trampoline(uint32_t paramc, const uint64_t *paramv,
     ocrDepv[i].mode = arts_to_ocr_mode(depv[i].mode);
   }
 
-  if (isFinishEdt && guidOrEpoch != NULL_GUID) {
-    /* Push the finish epoch onto the TLS stack and increment active_count.
-     *
-     * arts_edt_create_with_epoch() does NOT assign the finish epoch to
-     * edt->epoch_guid — because the epoch was just created in ocrEdtCreate()
-     * and is NOT on the caller's TLS stack, arts_check_epoch_is_root() fails,
-     * and the EDT gets the caller's epoch instead (often NULL_GUID).
-     *
-     * arts_epoch_start() must be called here to:
-     *   (a) push the finish epoch onto TLS so child EDTs inherit it, and
-     *   (b) increment active_count by 1, matching the +1 finished_count
-     *       that arts_increment_finished_epoch_list() adds for this entry
-     *       when the trampoline EDT completes.
-     *
-     * Net accounting: active = 1 (this call) + N (children), finished =
-     * 1 (this TLS entry) + N (children) → epoch fires when all complete. */
-    arts_epoch_start(guidOrEpoch);
-  }
-
   ocrGuid_t returnGuid = func(origParamc, origParamv, depc, ocrDepv);
 
-  if (!isFinishEdt && helperOrOutEvt != NULL_GUID) {
-    arts_event_satisfy_slot(helperOrOutEvt, returnGuid.guid,
+  /* Non-finish EDTs satisfy the output event directly with the return value.
+   * Finish EDTs have their output event satisfied by the runtime when the
+   * finish-scope (this EDT + all descendants) drains via finish_event. */
+  if (outEvt != NULL_GUID) {
+    arts_event_satisfy_slot(outEvt, returnGuid.guid,
                             ARTS_EVENT_LATCH_DECR_SLOT);
-  }
-
-  if (isFinishEdt && helperOrOutEvt != NULL_GUID) {
-    if (returnGuid.guid != NULL_GUID) {
-      arts_add_dependence(returnGuid.guid, helperOrOutEvt, 1, ARTS_MODE_RO);
-    } else {
-      arts_add_dependence((arts_guid_t)(0), helperOrOutEvt, 1, ARTS_MODE_VAL);
-    }
   }
 }
 
@@ -645,7 +604,6 @@ u8 ocrEdtCreate(ocrGuid_t *guid, ocrGuid_t templateGuid, u32 paramc,
   int aff = extract_edt_affinity(hint);
   unsigned int rank = (aff < 0) ? arts_global_rank_id : (unsigned int)aff;
   arts_guid_t outEvt = NULL_GUID;
-  arts_guid_t epochGuid = NULL_GUID;
   bool isFinishEdt = (properties & EDT_PROP_FINISH) != 0;
   bool oevtValid = (properties & EDT_PROP_OEVT_VALID) != 0;
 
@@ -664,47 +622,47 @@ u8 ocrEdtCreate(ocrGuid_t *guid, ocrGuid_t templateGuid, u32 paramc,
     }
   }
 
-  arts_guid_t helperEdtGuid = NULL_GUID;
-  if (isFinishEdt && outEvt != NULL_GUID) {
-    uint64_t helperParams[1];
-    helperParams[0] = (uint64_t)outEvt;
-
-    arts_edt_hint_t h = {.rank = rank};
-    helperEdtGuid =
-        arts_edt_create(epoch_termination_edt, 1, helperParams, 2, &h);
-
-    epochGuid = arts_epoch_create(rank, helperEdtGuid, 0);
-  }
-  /* When EDT_PROP_FINISH is set but there is no output event, we
-   * intentionally do NOT create a child epoch.  Without a child epoch the
-   * sub-task inherits its parent's epoch via the TLS epoch stack, so ALL
-   * descendants at every depth are tracked by the root finish-epoch.
-   * Creating a per-sub-task epoch here would intercept the TLS current
-   * epoch, causing the root epoch to miss deeply-nested descendants and
-   * fire prematurely (the nqueens bug: variable solution count + heap
-   * corruption on shutdown). */
-
-  u32 artsParamc = 5 + actualParamc;
-  /* arts_calloc zero-initializes, so trailing padding bytes beyond
-   * the actual struct size are safe (OCR apps pass struct pointers
-   * cast to u64* with paramc = ceil(sizeof(struct)/sizeof(u64)),
-   * which may overread the source by up to 7 bytes). */
+  /* paramv layout passed to ocr_edt_trampoline:
+   *   [0] = function pointer, [1] = original paramc,
+   *   [2] = outEvt (non-finish only; finish outEvt is wired via finish_event),
+   *   [3..3+N-1] = user paramv.
+   * arts_calloc zero-initialises, so trailing padding beyond the last user
+   * word is safe when OCR apps cast structs to u64* with overshoot. */
+  u32 artsParamc = 3 + actualParamc;
   uint64_t *artsParamv = (uint64_t *)arts_calloc(artsParamc, sizeof(uint64_t));
   artsParamv[0] = (uint64_t)(uintptr_t)templ->funcPtr;
   artsParamv[1] = (uint64_t)actualParamc;
-  artsParamv[2] = (uint64_t)epochGuid;
-  artsParamv[3] = isFinishEdt ? (uint64_t)helperEdtGuid : (uint64_t)outEvt;
-  artsParamv[4] = isFinishEdt ? FINISH_EDT_FLAG : 0;
-  ocr_copy_paramv_safe(&artsParamv[5], paramv, actualParamc);
+  artsParamv[2] = isFinishEdt ? (uint64_t)NULL_GUID : (uint64_t)outEvt;
+  ocr_copy_paramv_safe(&artsParamv[3], paramv, actualParamc);
 
-  arts_guid_t edtGuid;
   arts_edt_hint_t edtHint = {.rank = rank};
-
-  if (isFinishEdt && epochGuid != NULL_GUID) {
-    edtHint.epoch = epochGuid;
+  if (isFinishEdt) {
+    edtHint.flags |= ARTS_EDT_FLAG_FINISH;
   }
-  edtGuid = arts_edt_create(ocr_edt_trampoline, artsParamc, artsParamv,
-                            actualDepc, &edtHint);
+  arts_guid_t edtGuid =
+      arts_edt_create(ocr_edt_trampoline, artsParamc, artsParamv,
+                      actualDepc, &edtHint);
+
+  /* For finish EDTs, chain finish_event → outEvt so that the OCR output
+   * event is satisfied when the finish-scope (this EDT + all descendants)
+   * drains.  The finish_event carries no payload (it fires as a scope-drain
+   * signal only), so ARTS_MODE_NULL is the correct dependency mode. */
+  if (isFinishEdt && outEvt != NULL_GUID && edtGuid != NULL_GUID) {
+    arts_guid_t fe = arts_edt_get_finish_event(edtGuid);
+    if (fe != NULL_GUID) {
+      arts_add_dependence(fe, outEvt, 0, ARTS_MODE_NULL);
+    } else {
+      /* Defensive: ARTS_EDT_FLAG_FINISH should always allocate a
+       * finish_event, so fe == NULL_GUID indicates a runtime invariant
+       * violation.  Satisfy outEvt directly with NULL data so the
+       * dependent EDT can still make progress, and warn. */
+      fprintf(stderr,
+              "finish-EDT %" PRIu64 " has NULL finish_event; satisfying "
+              "outEvt directly to avoid orphaned dependency\n",
+              (uint64_t)edtGuid);
+      arts_event_satisfy_slot(outEvt, NULL_GUID, 0);
+    }
+  }
 
   arts_free(artsParamv);
 
