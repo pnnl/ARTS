@@ -104,7 +104,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
   char **argv = (char **)paramv[1];
   num_dummy = (unsigned int)strtol(argv[1], NULL, 10);
-  exit_guid = arts_guid_reserve(ARTS_EDT, 0);
+  exit_guid = arts_guid_reserve(ARTS_GUID_EDT, 0);
   arts_edt_create(exit_program, 0, NULL, arts_get_total_ranks(), &(arts_edt_hint_t){.guid = exit_guid});
 
   for (unsigned int n = 0; n < arts_get_total_ranks(); n++) {

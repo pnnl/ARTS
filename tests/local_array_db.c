@@ -120,7 +120,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   for (unsigned int i = 0; i < num_elems; i++) {
     init_data[i] = (int)(i * 3);
   }
-  arts_guid_t local_guid = arts_guid_reserve(ARTS_DB, 0);
+  arts_guid_t local_guid = arts_guid_reserve(ARTS_GUID_DB, 0);
   arts_array_db_t *local_arr = arts_new_local_array_db_with_guid(
       local_guid, sizeof(int), num_elems, init_data);
   (void)local_arr;

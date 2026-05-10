@@ -109,7 +109,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     }
 
     void *dbp = NULL;
-    arts_guid_t db = arts_db_create(&dbp, sizeof(uint64_t), ARTS_DB_RC,
+    arts_guid_t db = arts_db_create(&dbp, sizeof(uint64_t), ARTS_DB,
                                     ARTS_DB_PROP_NONE, NULL);
     if (db == NULL_GUID) {
       fprintf(stderr, "FAIL [iter=%d]: arts_db_create returned NULL_GUID\n",

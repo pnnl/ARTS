@@ -181,7 +181,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     for (int i = 0; i < N_DBS; i++) {
       void *raw = NULL;
       unsigned int home = (unsigned int)(i % (int)nnodes);
-      dbs[i] = arts_db_create(&raw, sizeof(int), ARTS_DB_RC, ARTS_DB_PROP_NONE, &(arts_db_hint_t){.rank = home});
+      dbs[i] = arts_db_create(&raw, sizeof(int), ARTS_DB, ARTS_DB_PROP_NONE, &(arts_db_hint_t){.rank = home});
       arts_guid_t init = arts_edt_create(init_writer_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = home, .epoch = epoch});
       arts_add_dependence(dbs[i], init, 0, DB_MODE_RW);
     }

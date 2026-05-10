@@ -40,8 +40,8 @@
 /*
  * gpu_lc_sync_basic.cu
  *
- * Tests ARTS_DB_GPU_LC (Locality Class) datablock with arts_lc_sync:
- *   - Create an ARTS_DB_GPU_LC datablock (CPU-GPU coherence)
+ * Tests ARTS_DB_GPU (Locality Class) datablock with arts_lc_sync:
+ *   - Create an ARTS_DB_GPU datablock (CPU-GPU coherence)
  *   - GPU kernel modifies the LC DB
  *   - arts_lc_sync synchronizes the data back from GPU to CPU
  *   - Host EDT verifies the LC DB has correct data
@@ -86,7 +86,7 @@ void verify_lc(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     }
   }
   if (pass) {
-    arts_printf("PASS: ARTS_DB_GPU_LC + arts_lc_sync basic test\n");
+    arts_printf("PASS: ARTS_DB_GPU + arts_lc_sync basic test\n");
   }
   arts_shutdown();
 }
@@ -110,9 +110,9 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   unsigned int node_id = arts_get_current_rank();
 
   /* Create an LC datablock */
-  arts_guid_t lc_guid = arts_guid_reserve(ARTS_DB, 0);
+  arts_guid_t lc_guid = arts_guid_reserve(ARTS_GUID_DB, 0);
   unsigned int *addr = (unsigned int *)arts_db_create_with_guid(
-      lc_guid, sizeof(unsigned int) * N_ELEMENTS, ARTS_DB_GPU_LC, NULL, NULL);
+      lc_guid, sizeof(unsigned int) * N_ELEMENTS, ARTS_DB_GPU, NULL, NULL);
 
   /* Initialize to sentinel values */
   for (unsigned int i = 0; i < N_ELEMENTS; i++) {

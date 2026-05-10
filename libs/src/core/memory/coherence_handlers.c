@@ -125,12 +125,15 @@ void arts_coh_send_writeback_ack(unsigned int releaser_rank,
 }
 
 void arts_coh_send_invalidate_notice(unsigned int owner_rank,
-                                     arts_guid_t db_guid) {
+                                     arts_guid_t db_guid,
+                                     unsigned int new_owner_rank) {
   struct arts_remote_invalidate_notice_packet_s p;
   arts_fill_packet_header(&p.header, sizeof(p),
                           ARTS_REMOTE_INVALIDATE_NOTICE_MSG);
   p.header.rank = arts_global_rank_id;
   p.db_guid = db_guid;
+  p.new_owner_rank = new_owner_rank;
+  memset(p.pad, 0, sizeof(p.pad));
   if (owner_rank == arts_global_rank_id) {
     arts_coh_handle_invalidate_notice(&p);
     return;
@@ -235,6 +238,270 @@ void arts_coh_send_destroy_notify(unsigned int sharer_rank,
   arts_remote_send_request_async((int)sharer_rank, (char *)&p, sizeof(p));
 }
 
+#ifdef ARTS_MEMORY_MODEL_LRC
+
+/* Forward declarations for handlers called inline (self-transfer fast path)
+ * and for acquire/destroy helpers defined in other translation units. */
+void arts_coh_handle_transfer_ownership(void *payload, size_t size);
+void arts_coh_handle_install_ack(struct arts_remote_install_ack_packet_s *p);
+void arts_coh_drain_pending_rw_after_grant(struct arts_db_cache_s *cache,
+                                           uint64_t version, bool has_next);
+void arts_coh_drain_pending_ro(struct arts_db_cache_s *cache, uint64_t version);
+void arts_coh_try_finalize_destroy(struct arts_db_cache_s *cache);
+
+/* ===== LRC sender helpers (TRANSFER_OWNERSHIP, INSTALL_ACK) ============ */
+
+void arts_coh_send_transfer_ownership(unsigned int new_owner_rank,
+                                      arts_guid_t db_guid, uint64_t version,
+                                      const void *map_buf, size_t map_size,
+                                      const void *data, size_t data_size) {
+  struct arts_remote_transfer_ownership_packet_s hdr;
+  uint32_t entry_count =
+      (map_buf != NULL && map_size >= sizeof(uint32_t) * 2)
+          ? ((const uint32_t *)map_buf)[0]
+          : 0u;
+  uint64_t total = (uint64_t)sizeof(hdr) + (uint64_t)map_size +
+                   (uint64_t)data_size;
+  arts_fill_packet_header(&hdr.header, total, ARTS_REMOTE_TRANSFER_OWNERSHIP_MSG);
+  hdr.header.rank = arts_global_rank_id;
+  hdr.db_guid = db_guid;
+  hdr.version = version;
+  hdr.map_entry_count = entry_count;
+  hdr.pad = 0;
+
+  if (new_owner_rank == arts_global_rank_id) {
+    /* Self-transfer: construct a contiguous buffer and call handler inline. */
+    void *buf = arts_malloc((size_t)total);
+    memcpy(buf, &hdr, sizeof(hdr));
+    if (map_buf != NULL && map_size > 0) {
+      memcpy((char *)buf + sizeof(hdr), map_buf, map_size);
+    }
+    if (data != NULL && data_size > 0) {
+      memcpy((char *)buf + sizeof(hdr) + map_size, data, data_size);
+    }
+    arts_coh_handle_transfer_ownership(buf, (size_t)total);
+    arts_free(buf);
+    return;
+  }
+
+  /* Remote path: send header + optional map payload + optional data payload.
+   * Use the two-part payload helper so we avoid an extra memcpy. */
+  if ((map_size > 0 || data_size > 0) && (map_buf != NULL || data != NULL)) {
+    /* Combine map + data into one contiguous payload for the send helper. */
+    size_t payload_size = map_size + data_size;
+    void *payload = arts_malloc(payload_size);
+    if (map_buf != NULL && map_size > 0) {
+      memcpy(payload, map_buf, map_size);
+    }
+    if (data != NULL && data_size > 0) {
+      memcpy((char *)payload + map_size, data, data_size);
+    }
+    arts_remote_send_request_payload_async_free(
+        (int)new_owner_rank, (char *)&hdr, sizeof(hdr),
+        (char *)payload, /*offset=*/0, (uint64_t)payload_size, arts_free);
+  } else {
+    arts_remote_send_request_async((int)new_owner_rank, (char *)&hdr,
+                                   sizeof(hdr));
+  }
+}
+
+void arts_coh_send_install_ack(unsigned int home_rank, arts_guid_t db_guid,
+                               uint64_t version) {
+  struct arts_remote_install_ack_packet_s p;
+  arts_fill_packet_header(&p.header, sizeof(p), ARTS_REMOTE_INSTALL_ACK_MSG);
+  p.header.rank = arts_global_rank_id;
+  p.db_guid = db_guid;
+  p.version = version;
+  if (home_rank == arts_global_rank_id) {
+    arts_coh_handle_install_ack(&p);
+    return;
+  }
+  arts_remote_send_request_async((int)home_rank, (char *)&p, sizeof(p));
+}
+
+/* ===== LRC ship_transfer / start_invalidate_round ==================== */
+
+void arts_coh_lrc_ship_transfer(struct arts_db_cache_s *cache) {
+  unsigned int new_owner = cache->incoming_new_owner;
+  struct arts_db_buffer_s *buf = arts_coherence_acquire_buf(cache);
+  if (buf == NULL) {
+    /* Sentinel DB (db_size==0) or pre-publication: send empty transfer. */
+    arts_coh_send_transfer_ownership(new_owner, cache->db_guid,
+                                     /*version=*/0,
+                                     /*map_buf=*/NULL, /*map_size=*/0,
+                                     /*data=*/NULL, /*data_size=*/0);
+    return;
+  }
+
+  /* Serialize the owner-side dedup map for transfer. */
+  size_t map_max =
+      sizeof(uint32_t) * 2 +
+      (size_t)arts_global_rank_count *
+          sizeof(struct arts_remote_rank_version_pair_s);
+  void *map_buf = arts_malloc(map_max);
+  size_t map_size;
+  if (cache->last_sent_version != NULL) {
+    map_size = arts_rank_u64_map_serialize(cache->last_sent_version, map_buf);
+  } else {
+    /* No map yet: emit an empty map (count=0, pad=0). */
+    uint32_t *p = (uint32_t *)map_buf;
+    p[0] = 0u;
+    p[1] = 0u;
+    map_size = sizeof(uint32_t) * 2;
+  }
+
+  arts_coh_send_transfer_ownership(new_owner, cache->db_guid, buf->version,
+                                   map_buf, map_size,
+                                   buf->data, cache->db_size);
+  arts_free(map_buf);
+
+  /* Release buffer ref (sentinel was withdrawn by INVALIDATE_NOTICE
+   * handler's atomic_sub); the buffer recycles once all readers drop. */
+  arts_coherence_release_buf(cache, buf);
+
+  /* Destroy local ownership-tracking map: new owner will reconstruct. */
+  if (cache->last_sent_version != NULL) {
+    arts_rank_u64_map_destroy(cache->last_sent_version);
+    cache->last_sent_version = NULL;
+  }
+}
+
+void arts_coh_lrc_start_invalidate_round(struct arts_db_cache_s *cache,
+                                          unsigned int new_owner) {
+  unsigned int current_owner =
+      atomic_load_explicit(&cache->home->rw_holder, memory_order_acquire);
+  arts_coh_send_invalidate_notice(current_owner, cache->db_guid, new_owner);
+}
+
+/* ===== LRC TRANSFER_OWNERSHIP handler (new owner C) =================== */
+
+void arts_coh_handle_transfer_ownership(void *payload, size_t size) {
+  struct arts_remote_transfer_ownership_packet_s *hdr =
+      (struct arts_remote_transfer_ownership_packet_s *)payload;
+  arts_guid_t db_guid = hdr->db_guid;
+
+  struct arts_db_cache_s *cache = arts_coh_route_table_lookup_cache(db_guid);
+  if (cache == NULL) {
+    cache = arts_coh_lazy_install_cache_s(db_guid, /*db_size=*/0);
+    if (cache == NULL) {
+      return; /* DB destroyed before we became owner — drop. */
+    }
+  }
+  if (arts_atomic_read(&cache->destroy_state) != ARTS_DB_DESTROY_NONE) {
+    return;
+  }
+
+  /* Wire layout: header | map (count pairs) | data bytes */
+  char *map_start = (char *)payload + sizeof(*hdr);
+  size_t map_size = sizeof(uint32_t) * 2 +
+                    (size_t)hdr->map_entry_count *
+                        sizeof(struct arts_remote_rank_version_pair_s);
+  char *data_start = map_start + map_size;
+  size_t data_size = size - sizeof(*hdr) - map_size;
+
+  /* Reconstruct the owner-side dedup map so this rank can skip
+   * redundant DATA_RESPONSE sends to readers that already hold a
+   * sufficiently fresh copy. */
+  if (cache->last_sent_version != NULL) {
+    arts_rank_u64_map_destroy(cache->last_sent_version);
+  }
+  cache->last_sent_version =
+      arts_rank_u64_map_deserialize(map_start, map_size,
+                                    arts_global_rank_count);
+
+  /* Install the transferred buffer. */
+  if (data_size > 0) {
+    arts_coherence_install_buffer(cache, hdr->version, data_start, data_size);
+    if (cache->db_size == 0) {
+      cache->db_size = data_size;
+    }
+  }
+
+  /* Install ownership sentinel: writer_count = 1. */
+  arts_atomic_swap(&cache->writer_count, 1u);
+  /* Clear lock_req_in_flight so subsequent RW acquires can kick new
+   * LOCK_REQ rounds if needed. */
+  cache->lock_req_in_flight = 0;
+
+  /* Drain local RW waiters and RO waiters that were parked before we
+   * held the buffer. */
+  arts_coh_drain_pending_rw_after_grant(cache, hdr->version, /*has_next=*/false);
+  arts_coh_drain_pending_ro(cache, hdr->version);
+
+  /* Confirm installation to home so home can update rw_holder and
+   * serve pending_ro_forwards. */
+  unsigned int home_rank = (unsigned int)arts_guid_get_rank(db_guid);
+  arts_coh_send_install_ack(home_rank, db_guid, hdr->version);
+}
+
+/* ===== LRC INSTALL_ACK handler (home A) =============================== */
+
+void arts_coh_handle_install_ack(struct arts_remote_install_ack_packet_s *p) {
+  struct arts_db_cache_s *cache =
+      arts_coh_route_table_lookup_cache(p->db_guid);
+  if (cache == NULL) {
+    return;
+  }
+  if (arts_atomic_read(&cache->destroy_state) != ARTS_DB_DESTROY_NONE) {
+    return;
+  }
+
+  /* Publish the new rw_holder (visible to GET_DATA redirect path). */
+  unsigned int new_owner = cache->home->pending_install_owner;
+  atomic_store_explicit(&cache->home->rw_holder, new_owner,
+                        memory_order_release);
+
+  /* Forward any RO acquires that were deferred while the transfer was
+   * in progress. */
+  arts_coh_drain_pending_ro_forwards(cache);
+
+  /* Drain-or-release retry loop: try to start the next transfer round
+   * if there are pending_rw requests, otherwise release the baton. */
+  while (1) {
+    unsigned int next_owner;
+    if (arts_home_lockreq_queue_pop(&cache->home->pending_rw, &next_owner)) {
+      cache->home->pending_install_owner = next_owner;
+      arts_coh_lrc_start_invalidate_round(cache, next_owner);
+      return;
+    }
+    /* No pending requester — release the baton. */
+    atomic_store_explicit(&cache->home->invalidate_in_flight, 0u,
+                          memory_order_release);
+    /* Re-check for a freshly-enqueued requester that raced the baton
+     * release.  If the queue is still empty, we're done. */
+    if (arts_home_lockreq_queue_empty(&cache->home->pending_rw)) {
+      return;
+    }
+    /* There is a new requester; try to re-acquire the baton. */
+    unsigned int expected = 0u;
+    if (!atomic_compare_exchange_strong_explicit(
+            &cache->home->invalidate_in_flight, &expected, 1u,
+            memory_order_acq_rel, memory_order_acquire)) {
+      /* Another LOCK_REQ handler already picked up the baton (race);
+       * that thread will drain the queue. */
+      return;
+    }
+    /* Re-acquired the baton; loop to pop and start the next round. */
+  }
+}
+
+void arts_coh_send_redirect_ro(unsigned int owner_rank, arts_guid_t db_guid,
+                               unsigned int requester_rank, void *waiter_addr) {
+  struct arts_remote_redirect_ro_packet_s p;
+  arts_fill_packet_header(&p.header, sizeof(p), ARTS_REMOTE_REDIRECT_RO_MSG);
+  p.header.rank = arts_global_rank_id;
+  p.db_guid = db_guid;
+  p.requester_rank = requester_rank;
+  p.pad = 0;
+  p.waiter_addr = (uint64_t)(uintptr_t)waiter_addr;
+  if (owner_rank == arts_global_rank_id) {
+    arts_coh_handle_redirect_ro(&p);
+    return;
+  }
+  arts_remote_send_request_async((int)owner_rank, (char *)&p, sizeof(p));
+}
+#endif /* ARTS_MEMORY_MODEL_LRC */
+
 /* ===== Forward decls: handler wiring with B4/B5/B11 ================= */
 
 /* These are implemented in the acquire/release/destroy modules and
@@ -333,7 +600,8 @@ home_lookup_or_defer(arts_guid_t guid, unsigned int requester,
   return NULL;
 }
 
-/* ===== home.last_sent_version atomic-monotonic helpers ============== */
+/* ===== home.last_sent_version atomic-monotonic helpers (RC only) ==== */
+#ifndef ARTS_MEMORY_MODEL_LRC
 
 /* update_last_sent_max: the GET_DATA reply path.  Decide send-with-
  * data vs send-no-data based on the home watermark, then advance the
@@ -345,10 +613,9 @@ static void update_last_sent_max(struct arts_db_cache_s *cache,
                                  unsigned int requester, uint64_t master_v,
                                  const void *data, uint64_t data_size,
                                  void *waiter_addr) {
-  /* Design plan §update_last_sent_max line 919-928: monotonic dedup —
-   * if the requester already received this version (cur >= master_v),
-   * send NO_DATA.  Cache_s lifetime invariant guarantees user_data
-   * persists until destroy (route_table ref tracking). */
+  /* Monotonic dedup — if the requester already received this version
+   * (cur >= master_v), send NO_DATA.  Cache_s lifetime invariant
+   * guarantees user_data persists until destroy (route_table ref). */
   uint64_t cur =
       arts_rank_u64_map_get(cache->home->last_sent_version, requester);
   if (cur >= master_v) {
@@ -366,10 +633,9 @@ static void update_last_sent_max(struct arts_db_cache_s *cache,
 static void grant_to(struct arts_db_cache_s *cache, unsigned int new_owner,
                      uint64_t master_v, bool has_next, const void *data,
                      uint64_t data_size) {
-  /* Design plan §grant_to line 930-939: monotonic dedup.  Cache_s
-   * persistence (route_table ref) ensures user_data stays valid until
-   * destroy, so NO_DATA is safe when the receiver already has the
-   * version. */
+  /* Monotonic dedup.  Cache_s persistence (route_table ref) ensures
+   * user_data stays valid until destroy, so NO_DATA is safe when the
+   * receiver already has the version. */
   uint64_t cur =
       arts_rank_u64_map_get(cache->home->last_sent_version, new_owner);
   if (cur >= master_v) {
@@ -380,6 +646,7 @@ static void grant_to(struct arts_db_cache_s *cache, unsigned int new_owner,
   arts_coh_send_grant(new_owner, cache->db_guid, master_v, has_next, data,
                       data_size);
 }
+#endif /* !ARTS_MEMORY_MODEL_LRC */
 
 /* ===== Home-side handlers ========================================== */
 
@@ -400,7 +667,27 @@ void arts_coh_handle_lock_req(struct arts_remote_lock_req_packet_s *p) {
   if (cache == NULL) {
     return;
   }
-  arts_pending_rw_enqueue(cache->home->pending_rw, requester);
+  arts_home_lockreq_queue_push(&cache->home->pending_rw, requester);
+
+#ifdef ARTS_MEMORY_MODEL_LRC
+  /* LRC: guard against the narrow window between destroy_state CAS
+   * (NONE→MARKED) and the destroy fan-out that drains pending_rw.
+   * If destroy_in_flight is already set the LOCK_REQ requester will
+   * never receive a GRANT; send DESTROY_NOTIFY so the requester can
+   * surface ARTS_DB_DESTROYED to its EDT. */
+  if (atomic_load_explicit(&cache->home->destroy_in_flight,
+                           memory_order_acquire) != 0) {
+    /* Note: the requester was just pushed to pending_rw.  The destroy
+     * fan-out path (handle_destroy_req) drains pending_rw after setting
+     * destroy_in_flight; if it already ran we must notify here.  If it
+     * has not yet drained, our push is harmless — the drain will pick it
+     * up and send DESTROY_NOTIFY then.  Send unconditionally here to
+     * cover the "drain already finished before our push" race. */
+    arts_coh_send_destroy_notify(requester, p->db_guid);
+    return;
+  }
+#endif /* ARTS_MEMORY_MODEL_LRC */
+
   /* Active-directory invariant: AT MOST ONE INVALIDATE_NOTICE in flight
    * to the current rw_holder per ownership-transfer round.  CAS 0->1
    * gates the dispatch — only the thread that flips the bit sends.
@@ -411,9 +698,33 @@ void arts_coh_handle_lock_req(struct arts_remote_lock_req_packet_s *p) {
    * handle_writeback (WB_AND_TRANSFER), handle_release_ownership, or
    * local_transfer_now once the round completes.  Replaces the pre-fix
    * `was_empty` heuristic which over-sent on concurrent enqueues. */
-  if (arts_atomic_cswap(&cache->home->invalidate_in_flight, 0, 1) == 0) {
-    arts_coh_send_invalidate_notice(cache->home->rw_holder, p->db_guid);
+  unsigned int iif_zero = 0;
+  if (!atomic_compare_exchange_strong_explicit(
+          &cache->home->invalidate_in_flight, &iif_zero, 1u,
+          memory_order_acq_rel, memory_order_acquire)) {
+    return; /* another round is in flight; requester stays queued */
   }
+#ifdef ARTS_MEMORY_MODEL_LRC
+  /* LRC: pop the OLDEST requester (FIFO) to be the transfer target and
+   * embed its rank in the INVALIDATE_NOTICE so the current holder ships
+   * TRANSFER_OWNERSHIP directly, without a home round-trip.
+   * pending_install_owner is only written by the baton holder (single
+   * writer invariant), so no atomic needed. */
+  unsigned int next_owner;
+  if (!arts_home_lockreq_queue_pop(&cache->home->pending_rw, &next_owner)) {
+    /* Defensive: we just pushed, so empty is impossible under correct
+     * usage.  Release the baton and return. */
+    atomic_store_explicit(&cache->home->invalidate_in_flight, 0u,
+                          memory_order_release);
+    return;
+  }
+  cache->home->pending_install_owner = next_owner;
+  arts_coh_lrc_start_invalidate_round(cache, next_owner);
+#else  /* RC */
+  arts_coh_send_invalidate_notice(
+      atomic_load_explicit(&cache->home->rw_holder, memory_order_acquire),
+      p->db_guid, /*new_owner_rank=*/0u);
+#endif /* ARTS_MEMORY_MODEL_LRC */
 }
 
 void arts_coh_handle_get_data(struct arts_remote_get_data_packet_s *p) {
@@ -432,6 +743,40 @@ void arts_coh_handle_get_data(struct arts_remote_get_data_packet_s *p) {
   if (cache == NULL) {
     return;
   }
+
+#ifdef ARTS_MEMORY_MODEL_LRC
+  /* LRC home-side RO routing.
+   *
+   * Home does not hold the canonical data copy under LRC — the current
+   * owner does.  Home's job is to redirect the requester to the owner
+   * (via REDIRECT_RO) so the owner can send DATA_RESPONSE directly,
+   * applying the owner-side last_sent_version dedup.
+   *
+   * Gate ordering (must be stable): check destroy_in_flight BEFORE
+   * recording the requester in the readers set; if destroy is already
+   * in flight the requester should receive DESTROY_NOTIFY and NOT be
+   * added to the readers roster (it will never receive data).  Once
+   * recorded, check invalidate_in_flight: if an ownership transfer
+   * round is in progress, defer to pending_ro_forwards; the drain that
+   * follows INSTALL_ACK will re-issue the redirect to the new owner. */
+  if (atomic_load_explicit(&cache->home->destroy_in_flight,
+                           memory_order_acquire) != 0) {
+    arts_coh_send_destroy_notify(requester, cache->db_guid);
+    return;
+  }
+  arts_readers_bits_set(&cache->home->readers, requester);
+  if (atomic_load_explicit(&cache->home->invalidate_in_flight,
+                           memory_order_acquire) != 0) {
+    arts_home_pending_ro_queue_push(&cache->home->pending_ro_forwards,
+                                   requester,
+                                   (void *)(uintptr_t)p->waiter_addr);
+    return;
+  }
+  unsigned int owner =
+      atomic_load_explicit(&cache->home->rw_holder, memory_order_acquire);
+  arts_coh_send_redirect_ro(owner, cache->db_guid, requester,
+                            (void *)(uintptr_t)p->waiter_addr);
+#else  /* !ARTS_MEMORY_MODEL_LRC */
   struct arts_db_buffer_s *master = arts_coherence_acquire_buf(cache);
   if (master == NULL) {
     /* Two cases produce master==NULL post-precheck:
@@ -453,6 +798,7 @@ void arts_coh_handle_get_data(struct arts_remote_get_data_packet_s *p) {
   update_last_sent_max(cache, requester, master_v, master->data, cache->db_size,
                        (void *)(uintptr_t)p->waiter_addr);
   arts_coherence_release_buf(cache, master);
+#endif /* ARTS_MEMORY_MODEL_LRC */
 }
 
 void arts_coh_handle_writeback(struct arts_remote_writeback_packet_s *p,
@@ -519,19 +865,22 @@ void arts_coh_handle_writeback(struct arts_remote_writeback_packet_s *p,
 
   if (p->flag == ARTS_WB_AND_TRANSFER) {
     unsigned int new_owner;
-    if (!arts_pending_rw_dequeue(cache->home->pending_rw, &new_owner)) {
+    if (!arts_home_lockreq_queue_pop(&cache->home->pending_rw, &new_owner)) {
       /* No queued waiter — home becomes the new owner.  Set the
        * sentinel so any subsequent foreign LOCK_REQ has a real
        * rw_holder to invalidate. */
       cache->writer_count = 1;
-      cache->home->rw_holder = arts_global_rank_id;
+      atomic_store_explicit(&cache->home->rw_holder, arts_global_rank_id,
+                            memory_order_release);
       /* Round complete with no successor; clear the in-flight gate so
        * the next foreign LOCK_REQ can re-arm it. */
-      arts_atomic_swap(&cache->home->invalidate_in_flight, 0);
+      atomic_store_explicit(&cache->home->invalidate_in_flight, 0,
+                            memory_order_release);
       return;
     }
-    cache->home->rw_holder = new_owner;
-    bool has_next = !arts_pending_rw_empty(cache->home->pending_rw);
+    atomic_store_explicit(&cache->home->rw_holder, new_owner,
+                          memory_order_release);
+    bool has_next = !arts_home_lockreq_queue_empty(&cache->home->pending_rw);
     struct arts_db_buffer_s *master = arts_coherence_acquire_buf(cache);
     if (master == NULL) {
       /* master==NULL has two distinct causes: destroy raced past
@@ -545,8 +894,15 @@ void arts_coh_handle_writeback(struct arts_remote_writeback_packet_s *p,
                             NULL, 0);
       }
     } else {
+#ifndef ARTS_MEMORY_MODEL_LRC
       grant_to(cache, new_owner, master->version, has_next, master->data,
                cache->db_size);
+#else
+      /* LRC: grant without home-side dedup (owner-side dedup via
+       * cache->last_sent_version handles redundant sends). */
+      arts_coh_send_grant(new_owner, cache->db_guid, master->version, has_next,
+                          master->data, cache->db_size);
+#endif
       arts_coherence_release_buf(cache, master);
     }
     /* Round complete: rw_holder has been advanced to new_owner and the
@@ -557,7 +913,8 @@ void arts_coh_handle_writeback(struct arts_remote_writeback_packet_s *p,
      * forwards ownership to the next queued requester via its own
      * release path.  We do NOT send a fresh INVALIDATE_NOTICE here:
      * the chain is self-driving from this point. */
-    arts_atomic_swap(&cache->home->invalidate_in_flight, 0);
+    atomic_store_explicit(&cache->home->invalidate_in_flight, 0,
+                          memory_order_release);
   }
 }
 
@@ -575,31 +932,55 @@ void arts_coh_handle_release_ownership(
     return;
   }
   unsigned int new_owner;
-  if (!arts_pending_rw_dequeue(cache->home->pending_rw, &new_owner)) {
+  if (!arts_home_lockreq_queue_pop(&cache->home->pending_rw, &new_owner)) {
     /* RELEASE_OWNERSHIP arrived with no queued waiter — home reclaims
      * ownership so a future foreign LOCK_REQ has a holder to invalidate. */
     cache->writer_count = 1;
-    cache->home->rw_holder = arts_global_rank_id;
+    atomic_store_explicit(&cache->home->rw_holder, arts_global_rank_id,
+                          memory_order_release);
     /* Round complete with no successor; clear the in-flight gate. */
-    arts_atomic_swap(&cache->home->invalidate_in_flight, 0);
+    atomic_store_explicit(&cache->home->invalidate_in_flight, 0,
+                          memory_order_release);
     return;
   }
-  cache->home->rw_holder = new_owner;
-  bool has_next = !arts_pending_rw_empty(cache->home->pending_rw);
+  atomic_store_explicit(&cache->home->rw_holder, new_owner,
+                        memory_order_release);
+  bool has_next = !arts_home_lockreq_queue_empty(&cache->home->pending_rw);
   struct arts_db_buffer_s *master = arts_coherence_acquire_buf(cache);
   if (master == NULL) {
     arts_coh_send_destroy_notify(new_owner, p->db_guid);
   } else {
+#ifndef ARTS_MEMORY_MODEL_LRC
     grant_to(cache, new_owner, master->version, has_next, master->data,
              cache->db_size);
+#else
+    /* LRC: grant without home-side dedup (owner-side dedup via
+     * cache->last_sent_version handles redundant sends). */
+    arts_coh_send_grant(new_owner, cache->db_guid, master->version, has_next,
+                        master->data, cache->db_size);
+#endif
     arts_coherence_release_buf(cache, master);
   }
   /* Round complete: rw_holder advanced, GRANT dispatched.  Clear the
    * in-flight gate.  When has_next was true the GRANT carries the
    * relay instruction; the new owner's drain self-forwards ownership
    * to the next queued requester. */
-  arts_atomic_swap(&cache->home->invalidate_in_flight, 0);
+  atomic_store_explicit(&cache->home->invalidate_in_flight, 0,
+                        memory_order_release);
 }
+
+#ifdef ARTS_MEMORY_MODEL_LRC
+/* Fan-out callback for arts_readers_bits_for_each during destroy.
+ * ctx carries the db_guid encoded as uintptr_t (no heap allocation
+ * needed since the callback is synchronous). */
+static void lrc_destroy_fanout_cb(unsigned int rank, void *ctx) {
+  arts_guid_t db_guid = (arts_guid_t)(uintptr_t)ctx;
+  unsigned int self = arts_global_rank_id;
+  if (rank != self) {
+    arts_coh_send_destroy_notify(rank, db_guid);
+  }
+}
+#endif /* ARTS_MEMORY_MODEL_LRC */
 
 void arts_coh_handle_destroy_req(struct arts_remote_destroy_req_packet_s *p) {
   /* Spec §4.11-4.12: home-side DESTROY_REQ.
@@ -689,21 +1070,52 @@ void arts_coh_handle_destroy_req(struct arts_remote_destroy_req_packet_s *p) {
   }
 
   /* Notify ranks with cached copies + queued LOCK_REQ requesters so
-   * remote sharers wake up and observe DB_DESTROYED (legacy roster
-   * build preserved from prior destroy_req — necessary for foreign-rank
-   * progress, the spec's home-only protocol assumes this fan-out). */
+   * remote sharers wake up and observe DB_DESTROYED (necessary for
+   * foreign-rank progress). */
   unsigned int self = arts_global_rank_id;
+
+  /* Claim destroy_in_flight before iterating readers so that any
+   * concurrent GET_DATA (RO_REQ) handler that arrives after the CAS
+   * sees destroy_in_flight=1 and returns DESTROY_NOTIFY instead of
+   * adding itself to the readers set (per gate-ordering in GET_DATA
+   * handler: check destroy_in_flight BEFORE readers_bits_set). */
+  unsigned int dif_zero = 0;
+  if (!atomic_compare_exchange_strong_explicit(
+          &cache->home->destroy_in_flight, &dif_zero, 1u,
+          memory_order_acq_rel, memory_order_acquire)) {
+    /* Another destroy already claimed the baton — idempotent drop. */
+    return;
+  }
+
+#ifndef ARTS_MEMORY_MODEL_LRC
   unsigned int n = arts_global_rank_count;
   for (unsigned int r = 0; r < n; r++) {
     if (r == self) {
       continue;
     }
+    /* RC: use home->last_sent_version as the readers roster. */
     if (arts_rank_u64_map_get(cache->home->last_sent_version, r) > 0) {
       arts_coh_send_destroy_notify(r, p->db_guid);
     }
   }
+#else
+  /* LRC: notify the current RW owner first (tracked by rw_holder, not
+   * the readers bit-set), then iterate the RO readers bit-set.  The
+   * destroy_in_flight baton (claimed above) prevents new bits from
+   * being set after this scan, and ensures incoming LOCK_REQs see
+   * destroy_in_flight=1 and are rejected rather than queued. */
+  {
+    unsigned int holder =
+        atomic_load_explicit(&cache->home->rw_holder, memory_order_acquire);
+    if (holder != self) {
+      arts_coh_send_destroy_notify(holder, p->db_guid);
+    }
+  }
+  arts_readers_bits_for_each(&cache->home->readers,
+                             lrc_destroy_fanout_cb, (void *)(uintptr_t)p->db_guid);
+#endif
   unsigned int q_rank;
-  while (arts_pending_rw_dequeue(cache->home->pending_rw, &q_rank)) {
+  while (arts_home_lockreq_queue_pop(&cache->home->pending_rw, &q_rank)) {
     if (q_rank != self) {
       arts_coh_send_destroy_notify(q_rank, p->db_guid);
     }
@@ -718,7 +1130,7 @@ void arts_coh_handle_db_create_coherent(
   /* Home-side init for non-home creator.  Per coherence design plan
    * §968-988: install zero-init buffer, home struct with rw_holder =
    * creator_rank, writer_count = 0 (home is non-owner). */
-  unsigned int creator_rank = (unsigned int)p->header.rank;
+  unsigned int creator_rank = p->header.rank;
   arts_guid_t db_guid = p->db_guid;
   uint64_t db_size = p->db_size;
 
@@ -738,7 +1150,8 @@ void arts_coh_handle_db_create_coherent(
     if (cache->home == NULL) {
       cache->home = arts_db_home_create(creator_rank, arts_global_rank_count);
     } else {
-      cache->home->rw_holder = creator_rank;
+      atomic_store_explicit(&cache->home->rw_holder, creator_rank,
+                            memory_order_release);
     }
     arts_route_table_release(db_guid);
     return;
@@ -765,7 +1178,7 @@ void arts_coh_handle_db_create_coherent(
       (struct arts_db_s *)arts_malloc_align(sizeof(struct arts_db_s), 16);
   memset(stub, 0, sizeof(struct arts_db_s));
   arts_shared_init(&stub->shared, arts_db_get_deleter());
-  stub->header.type = ARTS_DB;
+  stub->header.type = ARTS_GUID_DB;
   stub->header.size = sizeof(struct arts_db_s);
   stub->guid = db_guid;
   stub->db_type = (arts_db_types_t)p->db_type;
@@ -797,7 +1210,8 @@ void arts_coh_handle_db_create_coherent(
     if (cache->home == NULL) {
       cache->home = arts_db_home_create(creator_rank, arts_global_rank_count);
     } else {
-      cache->home->rw_holder = creator_rank;
+      atomic_store_explicit(&cache->home->rw_holder, creator_rank,
+                            memory_order_release);
     }
   }
   if (winner != NULL) {
@@ -876,19 +1290,41 @@ void arts_coh_handle_invalidate_notice(
    * the unique transfer actor.  Otherwise (rest > 0), the last local
    * writer's release will see rest=0 in release_rw and drive the
    * transfer instead. */
+#ifdef ARTS_MEMORY_MODEL_LRC
+  /* LRC: record the new owner before decrementing.  This is safe because
+   * only one INVALIDATE_NOTICE is ever in flight per round (baton gate
+   * at home), so there is no concurrent writer to incoming_new_owner. */
+  cache->incoming_new_owner = p->new_owner_rank;
+  unsigned int rest = arts_atomic_sub(&cache->writer_count, 1);
+  if (rest > 0) {
+    /* Local writers still active; set transfer_pending so that the last
+     * release_rw picks it up and ships TRANSFER_OWNERSHIP. */
+    atomic_store_explicit(&cache->transfer_pending, 1u, memory_order_release);
+    return;
+  }
+  /* rest == 0: we are the unique transfer actor. */
+  arts_coh_lrc_ship_transfer(cache);
+#else  /* RC */
   unsigned int rest = arts_atomic_sub(&cache->writer_count, 1);
   if (rest == 0) {
     extern void arts_coh_invalidate_transfer(struct arts_db_cache_s * cache);
     arts_coh_invalidate_transfer(cache);
   }
+#endif /* ARTS_MEMORY_MODEL_LRC */
 }
 
 void arts_coh_handle_writeback_ack(
     struct arts_remote_writeback_ack_packet_s *p) {
+#ifndef ARTS_MEMORY_MODEL_LRC
   /* Wakes any release_rw thread parked on await-WRITEBACK_ACK whose
    * outstanding seq <= p->seq.  Implementation in coherence_release.c. */
   extern void arts_coh_writeback_ack_signal(arts_guid_t db_guid, uint64_t seq);
   arts_coh_writeback_ack_signal(p->db_guid, p->seq);
+#else
+  /* LRC does not use WRITEBACK_ACK; this message type is not sent in
+   * LRC builds.  Drop silently. */
+  (void)p;
+#endif
 }
 
 void arts_coh_handle_destroy_notify(
@@ -920,3 +1356,70 @@ void arts_coh_handle_destroy_notify(
   arts_coh_fail_trigger_pending(cache);
   arts_coh_try_finalize_destroy(cache);
 }
+
+/* ===== LRC-only: REDIRECT_RO handler (owner side) ==================== */
+
+#ifdef ARTS_MEMORY_MODEL_LRC
+void arts_coh_handle_redirect_ro(struct arts_remote_redirect_ro_packet_s *p) {
+  unsigned int requester = p->requester_rank;
+  void *waiter_addr = (void *)(uintptr_t)p->waiter_addr;
+
+  struct arts_db_cache_s *cache = arts_coh_route_table_lookup_cache(p->db_guid);
+  if (cache == NULL) {
+    /* DB has been destroyed or not yet installed on this rank. */
+    arts_coh_send_destroy_notify(requester, p->db_guid);
+    return;
+  }
+  if (arts_atomic_read(&cache->destroy_state) != ARTS_DB_DESTROY_NONE) {
+    arts_coh_send_destroy_notify(requester, p->db_guid);
+    return;
+  }
+
+  struct arts_db_buffer_s *buf = arts_coherence_acquire_buf(cache);
+  if (buf == NULL) {
+    /* No buffer installed yet (pre-publication or sentinel DB).
+     * Respond with version=0, no data — requester's RO waiter fires
+     * with undefined content (per spec). */
+    arts_coh_send_data_response(requester, p->db_guid, /*version=*/0,
+                                waiter_addr, /*data=*/NULL, /*data_size=*/0);
+    return;
+  }
+
+  /* Lazy-allocate last_sent_version on first ownership. */
+  if (cache->last_sent_version == NULL) {
+    cache->last_sent_version =
+        arts_rank_u64_map_create(arts_global_rank_count);
+  }
+
+  uint64_t cur_v = (uint64_t)buf->version;
+  uint64_t last_sent =
+      arts_rank_u64_map_get(cache->last_sent_version, requester);
+
+  if (last_sent >= cur_v) {
+    /* Requester already holds this version — send no-data response. */
+    arts_coh_send_data_response(requester, p->db_guid, cur_v, waiter_addr,
+                                NULL, 0);
+  } else {
+    /* Advance dedup watermark (monotonic max) then send data. */
+    arts_rank_u64_map_advance(cache->last_sent_version, requester, cur_v);
+    arts_coh_send_data_response(requester, p->db_guid, cur_v, waiter_addr,
+                                buf->data, cache->db_size);
+  }
+  arts_coherence_release_buf(cache, buf);
+}
+
+/* Drain all deferred GET_DATA requests from the home-side RO forward queue.
+ * Called by the INSTALL_ACK handler (Task 14) once invalidate_in_flight
+ * is cleared and rw_holder reflects the new owner.  Single consumer. */
+void arts_coh_drain_pending_ro_forwards(struct arts_db_cache_s *cache) {
+  unsigned int requester;
+  void *waiter_addr;
+  while (arts_home_pending_ro_queue_pop(&cache->home->pending_ro_forwards,
+                                        &requester, &waiter_addr)) {
+    arts_readers_bits_set(&cache->home->readers, requester);
+    unsigned int owner =
+        atomic_load_explicit(&cache->home->rw_holder, memory_order_acquire);
+    arts_coh_send_redirect_ro(owner, cache->db_guid, requester, waiter_addr);
+  }
+}
+#endif /* ARTS_MEMORY_MODEL_LRC */

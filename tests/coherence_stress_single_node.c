@@ -134,7 +134,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_guid_t dbs[M_DBS];
     for (int i = 0; i < M_DBS; i++) {
       int *data;
-      dbs[i] = arts_db_create((void **)&data, sizeof(int), ARTS_DB_RC, ARTS_DB_PROP_NONE, NULL);
+      dbs[i] = arts_db_create((void **)&data, sizeof(int), ARTS_DB, ARTS_DB_PROP_NONE, NULL);
       *data = i;
     }
 

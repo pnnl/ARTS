@@ -60,7 +60,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   /* Test 1: RO */
   void *ptr1 = NULL;
-  arts_guid_t db1 = arts_db_create(&ptr1, DB_SIZE, ARTS_DB_RC,
+  arts_guid_t db1 = arts_db_create(&ptr1, DB_SIZE, ARTS_DB,
                                    ARTS_DB_PROP_NONE, NULL);
   ((uint64_t *)ptr1)[0] = 0xDEADULL;
   ((uint64_t *)ptr1)[1] = 0xBEEFULL;
@@ -72,7 +72,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   /* Test 2: RW chain — writer modifies, verifier (inner-epoch finish) reads */
   void *ptr2 = NULL;
-  arts_guid_t db2 = arts_db_create(&ptr2, DB_SIZE, ARTS_DB_RC,
+  arts_guid_t db2 = arts_db_create(&ptr2, DB_SIZE, ARTS_DB,
                                    ARTS_DB_PROP_NONE, NULL);
   ((uint64_t *)ptr2)[0] = 0ULL;
   arts_db_release(db2);

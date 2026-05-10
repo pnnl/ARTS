@@ -83,7 +83,7 @@ void thrust_sort(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       dev_ptr_raw[gpu_index]; // The corresponding dev pointer
                               // (frontier) to our gpu
 
-  arts_guid_t tile_guid = arts_guid_reserve(ARTS_DB, 0);
+  arts_guid_t tile_guid = arts_guid_reserve(ARTS_GUID_DB, 0);
   arts_db_create_with_guid(tile_guid, sizeof(unsigned int) * GPULISTLEN,
                            ARTS_DB_GPU_PIN, NULL, NULL);
 
@@ -148,7 +148,7 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
   unsigned int node_id = arts_get_current_rank();
   unsigned int **addr;
-  arts_guid_t db_guid = arts_guid_reserve(ARTS_DB, 0);
+  arts_guid_t db_guid = arts_guid_reserve(ARTS_GUID_DB, 0);
   addr = (unsigned int **)arts_db_create_with_guid(
       db_guid, sizeof(unsigned int *) * arts_get_total_gpus(), ARTS_DB_GPU_PIN,
       NULL, NULL);

@@ -57,7 +57,7 @@ static void creator_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
   arts_guid_t reserved = (arts_guid_t)paramv[0];
   uint64_t *ptr = (uint64_t *)arts_db_create_with_guid(
-      reserved, sizeof(uint64_t), ARTS_DB_RC, ARTS_DB_PROP_NONE, NULL);
+      reserved, sizeof(uint64_t), ARTS_DB, ARTS_DB_PROP_NONE, NULL);
   if (ptr) {
     ptr[0] = SENTINEL;
   }
@@ -104,7 +104,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("=== multinode_labeled_guid (%u ranks) ===\n", ranks);
 
   /* Reserve the DB GUID on rank 0 (home = 0). */
-  arts_guid_t reserved = arts_guid_reserve(ARTS_DB, 0);
+  arts_guid_t reserved = arts_guid_reserve(ARTS_GUID_DB, 0);
 
   /* Outer epoch: fires shutdown_edt when all work completes. */
   arts_guid_t shut = arts_edt_create(shutdown_edt, 0, NULL, 1, NULL);

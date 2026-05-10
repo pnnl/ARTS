@@ -119,9 +119,9 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 
   /* Create an LC DB large enough for all GPUs */
-  arts_guid_t lc_guid = arts_guid_reserve(ARTS_DB, 0);
+  arts_guid_t lc_guid = arts_guid_reserve(ARTS_GUID_DB, 0);
   unsigned int *addr = (unsigned int *)arts_db_create_with_guid(
-      lc_guid, sizeof(unsigned int) * total_gpus, ARTS_DB_GPU_LC, NULL, NULL);
+      lc_guid, sizeof(unsigned int) * total_gpus, ARTS_DB_GPU, NULL, NULL);
   for (unsigned int i = 0; i < total_gpus; i++) {
     addr[i] = 0;
   }

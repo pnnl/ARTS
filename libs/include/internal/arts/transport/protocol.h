@@ -83,6 +83,14 @@ enum artsServerMessageType {
    * arts_event_destroy → mark_delete on the home rank.  Sequential append,
    * no gaps. */
   ARTS_REMOTE_EVENT_DESTROY_MSG,
+  /* LRC (Location-Consistency) coherence messages.  Only sent/received when
+   * both ranks are compiled with ARTS_MEMORY_MODEL=LRC.  Sequential append,
+   * no gaps. */
+  ARTS_REMOTE_REDIRECT_RO_MSG,
+  ARTS_REMOTE_TRANSFER_OWNERSHIP_MSG,
+  ARTS_REMOTE_INSTALL_ACK_MSG,
+
+  ARTS_REMOTE_MSG_COUNT, /* sentinel — keep last; used for array sizing */
 };
 
 /* WRITEBACK packet flag — selects normal write-back vs. write-back +
@@ -252,9 +260,16 @@ struct ARTS_PACKED arts_remote_writeback_ack_packet_s {
   uint64_t seq;
 };
 
+/* INVALIDATE_NOTICE: body = db_guid(8) + new_owner_rank(4) + pad(4) = 16.
+ * Total = 44 + 16 = 60 (not 8-aligned; add pad4[] → 64).
+ * RC builds send new_owner_rank=0 (ignored by the handler).
+ * LRC builds set new_owner_rank so the current holder knows where to send
+ * TRANSFER_OWNERSHIP without a round-trip to home. */
 struct ARTS_PACKED arts_remote_invalidate_notice_packet_s {
   struct arts_remote_packet_s header;
   arts_guid_t db_guid;
+  uint32_t new_owner_rank;
+  uint8_t pad[4];
 };
 
 struct ARTS_PACKED arts_remote_release_ownership_packet_s {
@@ -302,6 +317,53 @@ struct ARTS_PACKED arts_remote_destroy_req_packet_s {
 struct ARTS_PACKED arts_remote_destroy_notify_packet_s {
   struct arts_remote_packet_s header;
   arts_guid_t db_guid;
+};
+
+/* ===== LRC (Location-Consistency) wire packets ==============================
+ * Sent only between ranks compiled with ARTS_MEMORY_MODEL=LRC.
+ * A rank compiled with the opposite mode that receives these messages fatals
+ * immediately (see dispatcher.c). */
+
+/* REDIRECT_RO — home forwards an RO grant request to the current owner.
+ * The owner will send data directly to requester_rank using INSTALL_ACK. */
+struct ARTS_PACKED arts_remote_redirect_ro_packet_s {
+  struct arts_remote_packet_s header;
+  arts_guid_t db_guid;
+  uint32_t requester_rank;
+  uint32_t pad;
+  uint64_t waiter_addr; /* opaque; valid only at requester_rank */
+};
+
+/* TRANSFER_OWNERSHIP — owner sends data + version + reader-map to new owner.
+ * Followed by:
+ *   arts_remote_rank_version_pair_s pairs[map_entry_count];
+ *   uint8_t                         data[db_size];
+ */
+struct ARTS_PACKED arts_remote_rank_version_pair_s {
+  uint32_t rank;
+  uint32_t pad;
+  uint64_t version;
+};
+
+struct ARTS_PACKED arts_remote_transfer_ownership_packet_s {
+  struct arts_remote_packet_s header;
+  arts_guid_t db_guid;
+  uint64_t version;
+  uint32_t map_entry_count; /* number of arts_remote_rank_version_pair_s entries
+                               that follow */
+  uint32_t pad;
+  /* followed by:
+   *   arts_remote_rank_version_pair_s pairs[map_entry_count];
+   *   uint8_t data[db_size];
+   */
+};
+
+/* INSTALL_ACK — new owner (or forwarder) confirms installation to requester.
+ * Carries a fresh version number so the requester can track its RO snapshot. */
+struct ARTS_PACKED arts_remote_install_ack_packet_s {
+  struct arts_remote_packet_s header;
+  arts_guid_t db_guid;
+  uint64_t version;
 };
 
 #include "arts/system/threads.h"

@@ -53,7 +53,7 @@ extern "C" {
  * |:----------:|:----------:|:----------:|
  * | type  (2)  | rank (14)  | key  (48)  |
  *
- * - **type** — @ref arts_type_t tag identifying the object kind.
+ * - **type** — @ref arts_guid_kind_t tag identifying the object kind.
  * - **rank** — Node rank that owns the object (up to 16 384 nodes).
  * - **key**  — Node-local key (up to ~281 trillion unique objects per node).
  *
@@ -115,7 +115,8 @@ extern "C" {
  * Allocates a new key on @p route and packs it with @p type.
  *
  * @param route Target node rank.
- * @param type  Object type tag (@ref arts_type_t).
+ * @param type  Object kind tag (@ref arts_guid_kind_t), passed as unsigned int
+ *              for internal flexibility (callers may supply pre-cast values).
  * @return A new GUID.
  */
 arts_guid_t arts_guid_create_for_rank(unsigned int rank, unsigned int type);
@@ -150,19 +151,19 @@ uint64_t arts_guid_hash_key(arts_guid_t guid);
  *
  * Over-allocates by @p hash_size to find a hash-aligned start GUID.
  *
- * @param type      Type tag for every GUID in the range.
+ * @param kind      Kind tag for every GUID in the range.
  * @param size      Number of GUIDs to allocate.
- * @param route     Target node rank.
+ * @param rank      Target node rank.
  * @param hash_size Hash-table bucket count for alignment.
  * @return The hash-aligned start GUID, or @c NULL_GUID on failure.
  */
-arts_guid_t arts_guid_reserve_range_hash(arts_type_t type, unsigned int size,
-                                         unsigned int rank,
+arts_guid_t arts_guid_reserve_range_hash(arts_guid_kind_t kind,
+                                         unsigned int size, unsigned int rank,
                                          unsigned int hash_size);
 
 /** Sentinel rank value marking a "distributed" GUID range.  Stored in the
  *  rank field of a range GUID returned by
- *  @c arts_guid_reserve_range(type, size, ARTS_HINT_ROUND_ROBIN).
+ *  @c arts_guid_reserve_range(kind, size, ARTS_HINT_ROUND_ROBIN).
  *  @c arts_guid_from_index / @c arts_guid_index_from detect this marker
  *  and place individual GUIDs round-robin across ranks (home = idx % nrank).
  *  Must not collide with @ref ARTS_CXL_RANK (0x3FFF).
@@ -188,10 +189,10 @@ static inline void *arts_cxl_get_ptr(arts_guid_t guid) {
   return (void *)(ARTS_CXL_BASE_ADDR + ARTS_GUID_GET_KEY(guid));
 }
 
-/** Build a CXL-encoded GUID from a CXL pointer (type = ARTS_DB). */
+/** Build a CXL-encoded GUID from a CXL pointer (kind = ARTS_GUID_DB). */
 static inline arts_guid_t arts_cxl_make_guid(void *ptr) {
   uint64_t offset = (uint64_t)(uintptr_t)ptr - ARTS_CXL_BASE_ADDR;
-  return ARTS_GUID_MAKE(ARTS_DB, ARTS_CXL_RANK, offset);
+  return ARTS_GUID_MAKE(ARTS_GUID_DB, ARTS_CXL_RANK, offset);
 }
 
 /** Return true if the GUID uses CXL pointer encoding. */

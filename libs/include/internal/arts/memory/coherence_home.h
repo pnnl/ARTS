@@ -2,32 +2,16 @@
  *
  * Home-side metadata helpers for the coherence protocol.
  *
- * The two helpers backing arts_db_home_s.pending_rw and
- * .last_sent_version are deliberately simple — under the pinned
- * single-threaded handler dispatch model (one network thread per
- * rank), home.* is touched by exactly one writer.  We therefore
- * implement:
- *
- *   pending_rw queue:
- *     A trivially-allocated FIFO (head/tail linked list) holding
- *     foreign LOCK_REQ requester ranks awaiting transfer.  Single-
- *     producer, single-consumer in the strict sense — the same
- *     handler thread enqueues on LOCK_REQ arrival and dequeues at
- *     WRITEBACK_AND_TRANSFER / RELEASE_OWNERSHIP / DESTROY_REQ
- *     handler entry.  No locks needed.
- *
- *   last_sent_version map [rank → uint64]:
- *     Dense array sized to arts_global_rank_count.  Per-rank slot
- *     accessed only by the home handler thread.  Cheap, O(1) read
- *     and write, no synchronization needed.  Memory cost per DB =
- *     8 bytes × ranks (≈ 80 KB at 10 K ranks).
- *
- * If we ever lift the single-threaded handler restriction (open
- * question in the plan), both helpers will need an atomic upgrade —
- * the queue to MPMC (Treiber-style or Michael-Scott) and the map to
- * either CAS-loop monotonic update per slot (the per-rank slot
- * already maps to a single 8-byte word) or a hashmap with per-bucket
- * locks.  Today we keep the trivial path. */
+ * Concurrency model:
+ *   - pending_rw queue: Vyukov MPSC.  Multi-producer (any handler thread
+ * enqueues on LOCK_REQ); single-consumer in time (the unique actor holding the
+ *     invalidate_in_flight = 1 baton).  Lock-free queue ops.
+ *   - last_sent_version map: per-slot atomic.  Each rank slot is an independent
+ *     _Atomic(uint64_t) accessed via atomic load/store and CAS-loop
+ * monotonic-max for advance.  No cross-slot invariant.
+ *   - rw_holder, invalidate_in_flight, destroy_in_flight: _Atomic.  rw_holder
+ *     uses acquire/release; gates use acq_rel CAS for the baton.
+ */
 
 #ifndef ARTS_MEMORY_COHERENCE_HOME_H
 #define ARTS_MEMORY_COHERENCE_HOME_H
@@ -37,34 +21,47 @@ extern "C" {
 #endif
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "arts/memory/coherence.h"
 
-/*--- pending_rw FIFO -----------------------------------------------------*/
+/* arts_home_lockreq_node_s and arts_home_lockreq_queue_s are defined in
+ * coherence.h (included above), where arts_db_home_s embeds the queue. */
 
-struct arts_pending_rank_node_s {
-  struct arts_pending_rank_node_s *next;
-  unsigned int rank;
-};
+void arts_home_lockreq_queue_init(struct arts_home_lockreq_queue_s *q);
+void arts_home_lockreq_queue_destroy(struct arts_home_lockreq_queue_s *q);
+void arts_home_lockreq_queue_push(struct arts_home_lockreq_queue_s *q,
+                                  unsigned int rank);
+/* Pop the front rank (single consumer).  Returns true and sets *out_rank
+ * on success; returns false when the queue is empty. */
+bool arts_home_lockreq_queue_pop(struct arts_home_lockreq_queue_s *q,
+                                 unsigned int *out_rank);
+bool arts_home_lockreq_queue_empty(const struct arts_home_lockreq_queue_s *q);
 
-struct arts_lockfree_mpsc_s {
-  struct arts_pending_rank_node_s *head;
-  struct arts_pending_rank_node_s *tail;
-};
-
-struct arts_lockfree_mpsc_s *arts_pending_rw_create(void);
-void arts_pending_rw_destroy(struct arts_lockfree_mpsc_s *q);
-void arts_pending_rw_enqueue(struct arts_lockfree_mpsc_s *q, unsigned int rank);
-/* Dequeue.  Returns true and writes *out_rank on success; false on empty. */
-bool arts_pending_rw_dequeue(struct arts_lockfree_mpsc_s *q,
-                             unsigned int *out_rank);
-bool arts_pending_rw_empty(const struct arts_lockfree_mpsc_s *q);
+/*--- pending_ro_forwards queue ------------------------------------------
+ *
+ * Deferred RO_REQ (GET_DATA) messages parked while invalidate_in_flight
+ * is set.  The queue is Vyukov MPSC in LRC builds; in RC builds the
+ * init/destroy are no-ops and push/pop are never called. */
+void arts_home_pending_ro_queue_init(struct arts_home_pending_ro_queue_s *q);
+void arts_home_pending_ro_queue_destroy(struct arts_home_pending_ro_queue_s *q);
+#ifdef ARTS_MEMORY_MODEL_LRC
+void arts_home_pending_ro_queue_push(struct arts_home_pending_ro_queue_s *q,
+                                     unsigned int requester_rank,
+                                     void *waiter_addr);
+/* Pop the front entry (single consumer).  Returns true and sets *out_rank /
+ * *out_waiter_addr on success; returns false when the queue is empty. */
+bool arts_home_pending_ro_queue_pop(struct arts_home_pending_ro_queue_s *q,
+                                    unsigned int *out_rank,
+                                    void **out_waiter_addr);
+#endif /* ARTS_MEMORY_MODEL_LRC */
 
 /*--- last_sent_version dense map ----------------------------------------*/
 
 struct arts_rank_to_u64_map_s {
-  uint64_t *slots; /* sized to nranks */
+  _Atomic(uint64_t)
+      *slots; /* sized to nranks; each slot is independent atomic */
   unsigned int nranks;
 };
 
@@ -74,10 +71,10 @@ uint64_t arts_rank_u64_map_get(const struct arts_rank_to_u64_map_s *m,
                                unsigned int rank);
 void arts_rank_u64_map_set(struct arts_rank_to_u64_map_s *m, unsigned int rank,
                            uint64_t value);
-/* Monotonic max update — sets m[rank] = max(m[rank], value); returns true if
- * the slot advanced (i.e. value was strictly greater than the old slot).
- * Under single-threaded dispatch this is just `if (v > m[r]) m[r]=v` but
- * keeping the contract tight makes the upgrade-to-CAS path one-line. */
+/* Monotonic max update — sets m[rank] = max(m[rank], value) via CAS-loop;
+ * returns true if the slot advanced (i.e. value was strictly greater than the
+ * old slot).  Safe for concurrent callers on the same slot: loses are
+ * harmless because a higher value will have won the CAS. */
 bool arts_rank_u64_map_advance(struct arts_rank_to_u64_map_s *m,
                                unsigned int rank, uint64_t value);
 
@@ -89,6 +86,36 @@ bool arts_rank_u64_map_advance(struct arts_rank_to_u64_map_s *m,
 struct arts_db_home_s *arts_db_home_create(unsigned int rw_holder,
                                            unsigned int nranks);
 void arts_db_home_destroy(struct arts_db_home_s *home);
+
+#ifdef ARTS_MEMORY_MODEL_LRC
+/*--- last_sent_version map serialization (LRC only) ---------------------
+ *
+ * Used to piggyback the owner-side dedup map onto TRANSFER_OWNERSHIP
+ * messages so the new owner can continue skipping redundant DATA_RESPONSE
+ * sends without re-learning which ranks already hold a fresh copy.
+ *
+ * Wire layout (in out buffer, starting at byte 0):
+ *   uint32_t count;        number of non-zero (rank, version) pairs
+ *   uint32_t pad;          alignment pad
+ *   arts_remote_rank_version_pair_s pairs[count];
+ *
+ * Caller must allocate at least:
+ *   sizeof(uint32_t) * 2 + nranks * sizeof(arts_remote_rank_version_pair_s)
+ * bytes for the output buffer.
+ *
+ * NOT thread-safe with concurrent arts_rank_u64_map_advance calls on the
+ * same map.  Caller must establish exclusion (writer_count == 0 + handler
+ * serialization) before invoking. */
+size_t arts_rank_u64_map_serialize(const struct arts_rank_to_u64_map_s *m,
+                                   void *out);
+
+/* Build a fresh map from the wire-format buffer produced by
+ * arts_rank_u64_map_serialize.  `nranks` sizes the new map's slot array.
+ * `size` is the byte length of the buffer (used for bounds assertions in
+ * debug builds only; pass the actual received length). */
+struct arts_rank_to_u64_map_s *arts_rank_u64_map_deserialize(
+    const void *in, size_t size, unsigned int nranks);
+#endif /* ARTS_MEMORY_MODEL_LRC */
 
 #ifdef __cplusplus
 }

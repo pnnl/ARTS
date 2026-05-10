@@ -204,11 +204,11 @@ static void performCollectiveReduction(CollectiveMetadata *meta) {
           &resultPtr, sizeof(double), ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
       *(double *)resultPtr = result;
 
-      arts_type_t dstType = arts_guid_get_type(localDeps[i]);
-      if (dstType == ARTS_EDT) {
+      arts_guid_kind_t dstType = arts_guid_get_kind(localDeps[i]);
+      if (dstType == ARTS_GUID_EDT) {
         arts_add_dependence(resultDb, localDeps[i], localSlots[i],
                             ARTS_MODE_RO);
-      } else if (dstType == ARTS_EVENT) {
+      } else if (dstType == ARTS_GUID_EVENT) {
         arts_event_satisfy_slot(localDeps[i], resultDb,
                                 ARTS_EVENT_LATCH_DECR_SLOT);
       }
@@ -1097,34 +1097,34 @@ u8 ocrAddDependence(ocrGuid_t source, ocrGuid_t destination, u32 slot,
 
   /* NULL source → signal immediately (slot satisfied with no data). */
   if (ocrGuidIsNull(source)) {
-    arts_type_t dstType = arts_guid_get_type(destination.guid);
-    if (dstType == ARTS_EDT) {
+    arts_guid_kind_t dstType = arts_guid_get_kind(destination.guid);
+    if (dstType == ARTS_GUID_EDT) {
       arts_add_dependence((arts_guid_t)(0), destination.guid, slot,
                           ARTS_MODE_VAL);
-    } else if (dstType == ARTS_EVENT) {
+    } else if (dstType == ARTS_GUID_EVENT) {
       arts_event_satisfy_slot(destination.guid, NULL_GUID,
                               ARTS_EVENT_LATCH_DECR_SLOT);
     }
     return 0;
   }
 
-  arts_type_t srcType = arts_guid_get_type(source.guid);
-  arts_type_t dstType = arts_guid_get_type(destination.guid);
+  arts_guid_kind_t srcType = arts_guid_get_kind(source.guid);
+  arts_guid_kind_t dstType = arts_guid_get_kind(destination.guid);
 
-  if (srcType == ARTS_DB) {
+  if (srcType == ARTS_GUID_DB) {
     /* DB → EDT/Event: arts_add_dependence does immediate satisfy for DB
      * sources (DBs are passive objects — no channel event, no waiting).
      * Map OCR access modes to ARTS: RO→RO, EW/RW→EW.
      * GUID-sorted acquisition in acquire_dbs prevents frontier deadlocks
      * that previously required forcing all deps to RO. */
-    if (dstType == ARTS_EDT) {
+    if (dstType == ARTS_GUID_EDT) {
       arts_add_dependence(source.guid, destination.guid, slot,
                           ocr_to_arts_mode(mode));
-    } else if (dstType == ARTS_EVENT) {
+    } else if (dstType == ARTS_GUID_EVENT) {
       arts_event_satisfy_slot(destination.guid, source.guid,
                               ARTS_EVENT_LATCH_DECR_SLOT);
     }
-  } else if (srcType == ARTS_EVENT) {
+  } else if (srcType == ARTS_GUID_EVENT) {
     /* ARTS channels (latch=1) do INCR internally in add_dependence_with_mode.
      * Non-channel events use direct dependent registration. Both paths
      * are handled by arts_add_dependence. Cross-node: handled natively.
@@ -1133,10 +1133,10 @@ u8 ocrAddDependence(ocrGuid_t source, ocrGuid_t destination, u32 slot,
      * is registered with the correct ARTS mode (RO/EW).  Previously this
      * was hardcoded to ARTS_MODE_RO, silently downgrading every Event→EDT
      * dependence to read-only access. */
-    if (dstType == ARTS_EDT) {
+    if (dstType == ARTS_GUID_EDT) {
       arts_add_dependence(source.guid, destination.guid, slot,
                           ocr_to_arts_mode(mode));
-    } else if (dstType == ARTS_EVENT) {
+    } else if (dstType == ARTS_GUID_EVENT) {
       /* Event→event: OCR spec says "satisfy dest when source fires".
        * Always use DECR slot regardless of the incoming slot param. */
       arts_add_dependence(source.guid, destination.guid,
@@ -1289,26 +1289,26 @@ void ocrElsUserSet(u8 offset, ocrGuid_t data) {
 
 #include "extensions/ocr-labeling.h"
 
-static arts_type_t kindToArtsType(ocrGuidUserKind kind) {
+static arts_guid_kind_t kindToArtsType(ocrGuidUserKind kind) {
   switch (kind) {
   case GUID_USER_DB:
-    return ARTS_DB;
+    return ARTS_GUID_DB;
   case GUID_USER_EDT:
   case GUID_USER_EDT_TEMPLATE:
-    return ARTS_EDT;
+    return ARTS_GUID_EDT;
   case GUID_USER_EVENT_ONCE:
   case GUID_USER_EVENT_COUNTED:
   case GUID_USER_EVENT_IDEM:
   case GUID_USER_EVENT_STICKY:
   case GUID_USER_EVENT_LATCH:
   case GUID_USER_EVENT_COLLECTIVE:
-    return ARTS_EVENT;
+    return ARTS_GUID_EVENT;
   default:
-    /* Unknown OCR GUID kind.  Return ARTS_LAST_TYPE (out-of-range
+    /* Unknown OCR GUID kind.  Return ARTS_GUID_LAST (out-of-range
      * sentinel) so the downstream arts_guid_reserve_range() rejects it
-     * via its `type >= ARTS_LAST_TYPE` validation rather than silently
-     * producing a range with type bits 0 (which is now ARTS_EDT). */
-    return ARTS_LAST_TYPE;
+     * via its `type >= ARTS_GUID_LAST` validation rather than silently
+     * producing a range with type bits 0 (which is now ARTS_GUID_EDT). */
+    return ARTS_GUID_LAST;
   }
 }
 
@@ -1317,7 +1317,7 @@ u8 ocrGuidRangeCreate(ocrGuid_t *rangeGuid, u64 numberGuid,
   if (!rangeGuid || numberGuid == 0) {
     return 1;
   }
-  arts_type_t artsType = kindToArtsType(kind);
+  arts_guid_kind_t artsType = kindToArtsType(kind);
 
   /* OCR semantics: any EDT calling this with the same input must end up with
    * the same range GUID, and ocrGuidFromIndex(range, idx) must yield the same

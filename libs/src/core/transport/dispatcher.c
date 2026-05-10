@@ -241,36 +241,16 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
   /* ===== coherence wire-message dispatch =============
    * Three handlers (GRANT / WRITEBACK / DATA_RESPONSE) carry trailing
    * payload right after sizeof(struct ...); pass that pointer + size as
-   * the data/data_size arguments. */
+   * the data/data_size arguments.
+   *
+   * Shared messages compile in both RC and LRC builds — Phase 6 will add
+   * #ifdef branches inside the individual handlers as LRC diverges.
+   * RC-only messages fatal in LRC builds to catch binary mode mismatch. */
   case ARTS_REMOTE_LOCK_REQ_MSG: {
     ARTS_DEBUG("Coh LOCK_REQ Received");
     struct arts_remote_lock_req_packet_s *pack =
         (struct arts_remote_lock_req_packet_s *)(packet);
     arts_coh_handle_lock_req(pack);
-    break;
-  }
-  case ARTS_REMOTE_GRANT_MSG: {
-    ARTS_DEBUG("Coh GRANT Received");
-    struct arts_remote_grant_packet_s *pack =
-        (struct arts_remote_grant_packet_s *)(packet);
-    const void *data = (const char *)pack + sizeof(*pack);
-    uint64_t data_size = pack->header.size - sizeof(*pack);
-    arts_coh_handle_grant(pack, data_size > 0 ? data : NULL, data_size);
-    break;
-  }
-  case ARTS_REMOTE_WRITEBACK_MSG: {
-    ARTS_DEBUG("Coh WRITEBACK Received");
-    struct arts_remote_writeback_packet_s *pack =
-        (struct arts_remote_writeback_packet_s *)(packet);
-    const void *data = (const char *)pack + sizeof(*pack);
-    uint64_t data_size = pack->header.size - sizeof(*pack);
-    arts_coh_handle_writeback(pack, data_size > 0 ? data : NULL, data_size);
-    break;
-  }
-  case ARTS_REMOTE_WRITEBACK_ACK_MSG: {
-    ARTS_DEBUG("Coh WRITEBACK_ACK Received");
-    arts_coh_handle_writeback_ack(
-        (struct arts_remote_writeback_ack_packet_s *)(packet));
     break;
   }
   case ARTS_REMOTE_INVALIDATE_NOTICE_MSG: {
@@ -317,11 +297,82 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
         (struct arts_remote_destroy_notify_packet_s *)(packet));
     break;
   }
+  /* RC-only messages — fatal in LRC builds to catch binary mode mismatch */
+#ifndef ARTS_MEMORY_MODEL_LRC
+  case ARTS_REMOTE_GRANT_MSG: {
+    ARTS_DEBUG("Coh GRANT Received");
+    struct arts_remote_grant_packet_s *pack =
+        (struct arts_remote_grant_packet_s *)(packet);
+    const void *data = (const char *)pack + sizeof(*pack);
+    uint64_t data_size = pack->header.size - sizeof(*pack);
+    arts_coh_handle_grant(pack, data_size > 0 ? data : NULL, data_size);
+    break;
+  }
+  case ARTS_REMOTE_WRITEBACK_MSG: {
+    ARTS_DEBUG("Coh WRITEBACK Received");
+    struct arts_remote_writeback_packet_s *pack =
+        (struct arts_remote_writeback_packet_s *)(packet);
+    const void *data = (const char *)pack + sizeof(*pack);
+    uint64_t data_size = pack->header.size - sizeof(*pack);
+    arts_coh_handle_writeback(pack, data_size > 0 ? data : NULL, data_size);
+    break;
+  }
+  case ARTS_REMOTE_WRITEBACK_ACK_MSG: {
+    ARTS_DEBUG("Coh WRITEBACK_ACK Received");
+    arts_coh_handle_writeback_ack(
+        (struct arts_remote_writeback_ack_packet_s *)(packet));
+    break;
+  }
+#else  /* ARTS_MEMORY_MODEL_LRC */
+  case ARTS_REMOTE_GRANT_MSG:
+  case ARTS_REMOTE_WRITEBACK_MSG:
+  case ARTS_REMOTE_WRITEBACK_ACK_MSG: {
+    ARTS_ERROR("LRC build received RC-only message type %d from rank %u — "
+               "binary mode mismatch?",
+               packet->message_type, packet->rank);
+    break;
+  }
+#endif /* ARTS_MEMORY_MODEL_LRC */
   case ARTS_REMOTE_EVENT_DESTROY_MSG: {
     ARTS_DEBUG("Event Destroy Received");
     arts_remote_handle_event_destroy(packet);
     break;
   }
+  /* ===== LRC-only message dispatch
+   * ============================================ These slots are only sent
+   * between ranks compiled with ARTS_MEMORY_MODEL=LRC.  Real handlers are wired
+   * in later tasks; for now the LRC build accepts them as stubs, and the RC
+   * build fatals immediately to catch a binary mode mismatch between ranks. */
+#ifdef ARTS_MEMORY_MODEL_LRC
+  case ARTS_REMOTE_REDIRECT_RO_MSG: {
+    ARTS_DEBUG("LRC REDIRECT_RO Received");
+    arts_coh_handle_redirect_ro(
+        (struct arts_remote_redirect_ro_packet_s *)(packet));
+    break;
+  }
+  case ARTS_REMOTE_TRANSFER_OWNERSHIP_MSG: {
+    ARTS_DEBUG("LRC TRANSFER_OWNERSHIP Received");
+    /* Payload immediately follows the header in the contiguous wire buffer. */
+    arts_coh_handle_transfer_ownership((void *)packet,
+                                       (size_t)packet->size);
+    break;
+  }
+  case ARTS_REMOTE_INSTALL_ACK_MSG: {
+    ARTS_DEBUG("LRC INSTALL_ACK Received");
+    arts_coh_handle_install_ack(
+        (struct arts_remote_install_ack_packet_s *)(packet));
+    break;
+  }
+#else  /* !ARTS_MEMORY_MODEL_LRC */
+  case ARTS_REMOTE_REDIRECT_RO_MSG:
+  case ARTS_REMOTE_TRANSFER_OWNERSHIP_MSG:
+  case ARTS_REMOTE_INSTALL_ACK_MSG: {
+    ARTS_ERROR("RC build received LRC-only message type %d from rank %u — "
+               "binary mode mismatch?",
+               packet->message_type, packet->rank);
+    break;
+  }
+#endif /* ARTS_MEMORY_MODEL_LRC */
   default: {
     ARTS_INFO("Unknown Packet %d %d %d", packet->message_type, packet->size,
               packet->rank);

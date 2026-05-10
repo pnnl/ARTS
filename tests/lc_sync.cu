@@ -93,9 +93,9 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   unsigned int *addr = NULL;
   arts_printf("creating size: %u\n",
               sizeof(unsigned int) * arts_get_total_gpus());
-  arts_guid_t db_guid = arts_guid_reserve(ARTS_DB, 0);
+  arts_guid_t db_guid = arts_guid_reserve(ARTS_GUID_DB, 0);
   addr = (unsigned int *)arts_db_create_with_guid(
-      db_guid, sizeof(unsigned int) * arts_get_total_gpus(), ARTS_DB_GPU_LC, NULL,
+      db_guid, sizeof(unsigned int) * arts_get_total_gpus(), ARTS_DB_GPU, NULL,
       NULL);
   for (uint64_t i = 0; i < arts_get_total_gpus(); i++) {
     addr[i] = (unsigned int)-1;

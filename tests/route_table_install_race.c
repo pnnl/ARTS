@@ -118,7 +118,7 @@ static void *a_worker(void *vp) {
 static void scenario_a_same_guid_storm(void) {
   printf("[A] same-GUID storm: %d threads x %u iters\n", A_THREADS,
          A_ITERS_PER_THREAD);
-  arts_guid_t g = arts_guid_reserve(ARTS_DB, 0);
+  arts_guid_t g = arts_guid_reserve(ARTS_GUID_DB, 0);
 
   pthread_t tids[A_THREADS];
   a_ctx_t ctx[A_THREADS];
@@ -204,7 +204,7 @@ static void scenario_b_collision_bucket(void) {
          B_ITERS_PER_THREAD, B_DISTINCT_GUIDS);
   arts_guid_t guids[B_DISTINCT_GUIDS];
   for (int i = 0; i < B_DISTINCT_GUIDS; i++) {
-    guids[i] = arts_guid_reserve(ARTS_DB, 0);
+    guids[i] = arts_guid_reserve(ARTS_GUID_DB, 0);
   }
 
   pthread_t tids[B_THREADS];

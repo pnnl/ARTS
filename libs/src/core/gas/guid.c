@@ -56,7 +56,7 @@ void set_global_guid_on() {
 
 uint64_t *arts_guid_generator_get_key(unsigned int rank, unsigned int type) {
   return &arts_node_info
-              .keys[arts_thread_info.thread_id][(rank * ARTS_LAST_TYPE) + type];
+              .keys[arts_thread_info.thread_id][(rank * ARTS_GUID_LAST) + type];
 }
 
 arts_guid_t arts_guid_create_for_rank_internal(unsigned int rank,
@@ -126,17 +126,17 @@ void arts_guid_key_generator_init() {
   //    max_global_guid_thread: %lu global_guid_thread_id: %lu", num_tables,
   //    local_id, min_global_guid_thread, max_global_guid_thread,
   //    global_guid_thread_id); keys = arts_malloc(sizeof(uint64_t) *
-  //    ARTS_LAST_TYPE * arts_global_rank_count);
+  //    ARTS_GUID_LAST * arts_global_rank_count);
   arts_node_info.keys[arts_thread_info.thread_id] = (uint64_t *)arts_malloc(
-      sizeof(uint64_t) * ARTS_LAST_TYPE * arts_global_rank_count);
-  for (unsigned int i = 0; i < ARTS_LAST_TYPE * arts_global_rank_count; i++) {
+      sizeof(uint64_t) * ARTS_GUID_LAST * arts_global_rank_count);
+  for (unsigned int i = 0; i < ARTS_GUID_LAST * arts_global_rank_count; i++) {
     arts_node_info.keys[arts_thread_info.thread_id][i] = 1;
   }
   //        keys[i] = 1;
 }
 
-arts_type_t arts_guid_get_type(arts_guid_t guid) {
-  return (arts_type_t)ARTS_GUID_GET_TYPE(guid);
+arts_guid_kind_t arts_guid_get_kind(arts_guid_t guid) {
+  return (arts_guid_kind_t)ARTS_GUID_GET_TYPE(guid);
 }
 
 unsigned int arts_guid_get_rank(arts_guid_t guid) {
@@ -149,13 +149,13 @@ bool arts_guid_is_local(arts_guid_t guid) {
 
 uint64_t arts_guid_get_key(arts_guid_t guid) { return ARTS_GUID_GET_KEY(guid); }
 
-arts_guid_t arts_guid_reserve(arts_type_t type, unsigned int rank) {
+arts_guid_t arts_guid_reserve(arts_guid_kind_t type, unsigned int rank) {
   arts_guid_t guid = NULL_GUID;
   if (rank == ARTS_HINT_CURRENT_RANK) {
     rank = arts_global_rank_id;
   }
   rank = rank % arts_global_rank_count;
-  if ((unsigned int)type < ARTS_LAST_TYPE) {
+  if ((unsigned int)type < ARTS_GUID_LAST) {
     guid = arts_guid_create_for_rank_internal(rank, (unsigned int)type, 1);
     // ARTS_INFO("Allocation Guid %u", guid);
   } else {
@@ -166,9 +166,9 @@ arts_guid_t arts_guid_reserve(arts_type_t type, unsigned int rank) {
   return guid;
 }
 
-arts_guid_t arts_guid_reserve_range(arts_type_t type, unsigned int size,
+arts_guid_t arts_guid_reserve_range(arts_guid_kind_t type, unsigned int size,
                                     unsigned int rank) {
-  if (!size || type >= ARTS_LAST_TYPE) {
+  if (!size || type >= ARTS_GUID_LAST) {
     return NULL_GUID;
   }
   if (rank == ARTS_HINT_ROUND_ROBIN) {
@@ -197,10 +197,10 @@ arts_guid_t arts_guid_reserve_range(arts_type_t type, unsigned int size,
   return arts_guid_create_for_rank_internal(rank, (unsigned int)type, size);
 }
 
-arts_guid_t arts_guid_reserve_range_hash(arts_type_t type, unsigned int size,
+arts_guid_t arts_guid_reserve_range_hash(arts_guid_kind_t type, unsigned int size,
                                          unsigned int rank,
                                          unsigned int hash_size) {
-  if (size && (unsigned int)type < ARTS_LAST_TYPE) {
+  if (size && (unsigned int)type < ARTS_GUID_LAST) {
     arts_guid_t start = arts_guid_create_for_rank_internal(
         rank, (unsigned int)type, size + hash_size);
     for (unsigned int i = 0; i < hash_size; i++) {

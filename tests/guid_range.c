@@ -56,7 +56,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 #define RANGE_SIZE 16
 
   // Test 1: Reserve range and verify GUIDs via arts_guid_from_index.
-  arts_guid_t start = arts_guid_reserve_range(ARTS_DB, RANGE_SIZE, my_node);
+  arts_guid_t start = arts_guid_reserve_range(ARTS_GUID_DB, RANGE_SIZE, my_node);
   if (start == NULL_GUID) {
     arts_printf("  FAIL: guid_reserve_range returned NULL_GUID\n");
     arts_shutdown();
@@ -68,7 +68,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t gotten[RANGE_SIZE];
   for (unsigned int i = 0; i < RANGE_SIZE; i++) {
     gotten[i] = arts_guid_from_index(start, i);
-    if (arts_guid_get_type(gotten[i]) != ARTS_DB) {
+    if (arts_guid_get_kind(gotten[i]) != ARTS_GUID_DB) {
       arts_printf("  FAIL: range[%u] type mismatch\n", i);
       all_pass = false;
     }
@@ -113,7 +113,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     }
   }
   // Mismatch: a GUID from a different-type range should return -1.
-  arts_guid_t edt_start = arts_guid_reserve_range(ARTS_EDT, 1, my_node);
+  arts_guid_t edt_start = arts_guid_reserve_range(ARTS_GUID_EDT, 1, my_node);
   arts_guid_t bad = arts_guid_from_index(edt_start, 0);
   if (arts_guid_index_from(start, bad) == -1) {
     arts_printf("  PASS: arts_guid_index_from returns -1 on type mismatch\n");
@@ -127,7 +127,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // idx.
   unsigned int nrank = arts_get_total_ranks();
   arts_guid_t dist_start =
-      arts_guid_reserve_range(ARTS_DB, RANGE_SIZE, ARTS_HINT_ROUND_ROBIN);
+      arts_guid_reserve_range(ARTS_GUID_DB, RANGE_SIZE, ARTS_HINT_ROUND_ROBIN);
   if (dist_start == NULL_GUID) {
     arts_printf("  FAIL: distributed reserve_range returned NULL_GUID\n");
     all_pass = false;
@@ -141,7 +141,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                     arts_guid_get_rank(g), expect_home);
         dist_ok = false;
       }
-      if (arts_guid_get_type(g) != ARTS_DB) {
+      if (arts_guid_get_kind(g) != ARTS_GUID_DB) {
         arts_printf("  FAIL: distributed[%u] type mismatch\n", i);
         dist_ok = false;
       }

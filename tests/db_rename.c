@@ -132,7 +132,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
   arts_db_release(db2);
 
-  arts_guid_t target = arts_guid_reserve(ARTS_DB, 0);
+  arts_guid_t target = arts_guid_reserve(ARTS_GUID_DB, 0);
   bool ok = arts_db_rename_with_guid(target, db2);
   arts_printf("  rename_with_guid returned %s\n", ok ? "true" : "false");
 

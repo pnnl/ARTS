@@ -63,7 +63,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
   unsigned int node_id = arts_get_current_rank();
   printf("Init per node\n");
-  arts_guid_t range_start = arts_guid_reserve_range(ARTS_EDT, MYSIZE, node_id);
+  arts_guid_t range_start = arts_guid_reserve_range(ARTS_GUID_EDT, MYSIZE, node_id);
   for (uint64_t i = 0; i < MYSIZE; i++) {
     arts_route_item_t *location =
         (arts_route_item_t *)arts_route_table_add_item(

@@ -145,7 +145,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_add_dependence(db1, e1, 0, DB_MODE_RW);
 
   // Test 2: arts_db_create_with_guid.
-  arts_guid_t reserved = arts_guid_reserve(ARTS_DB, 0);
+  arts_guid_t reserved = arts_guid_reserve(ARTS_GUID_DB, 0);
   uint64_t *d2 = (uint64_t *)arts_db_create_with_guid(
       reserved, DB_SIZE, ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
   for (unsigned int i = 0; i < DB_ELEMS; i++) {
@@ -157,7 +157,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_add_dependence(reserved, e2, 0, DB_MODE_RO);
 
   // Test 3: arts_db_create_with_guid + caller-side initial data fill.
-  arts_guid_t reserved3 = arts_guid_reserve(ARTS_DB, 0);
+  arts_guid_t reserved3 = arts_guid_reserve(ARTS_GUID_DB, 0);
   uint64_t *d3 = (uint64_t *)arts_db_create_with_guid(
       reserved3, DB_SIZE, ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
   for (unsigned int i = 0; i < DB_ELEMS; i++) {

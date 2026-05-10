@@ -147,7 +147,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Test 2: DB-mode fan-out/fan-in.
   arts_guid_t db_coll = arts_edt_create(db_collector, 0, NULL, FAN_WIDTH, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
-  arts_guid_t range_start = arts_guid_reserve_range(ARTS_DB, FAN_WIDTH, 0);
+  arts_guid_t range_start = arts_guid_reserve_range(ARTS_GUID_DB, FAN_WIDTH, 0);
   for (uint32_t i = 0; i < FAN_WIDTH; i++) {
     arts_guid_t db_guid = arts_guid_from_index(range_start, i);
     uint64_t params[3];

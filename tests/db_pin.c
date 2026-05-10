@@ -104,9 +104,9 @@ void check_copy_type(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramc;
   (void)depc;
   arts_guid_t new_guid = (arts_guid_t)paramv[0];
-  arts_type_t new_type = arts_guid_get_type(new_guid);
+  arts_guid_kind_t new_type = arts_guid_get_kind(new_guid);
   uint64_t *data = (uint64_t *)depv[0].ptr;
-  bool ok = (data != NULL && new_type == ARTS_DB);
+  bool ok = (data != NULL && new_type == ARTS_GUID_DB);
   if (ok) {
     for (unsigned int i = 0; i < DB_SIZE / sizeof(uint64_t); i++) {
       if (data[i] != (i + 100)) {
@@ -138,7 +138,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Test 1: Create ARTS_DB_PIN and use DB_MODE_RW.  PIN home == this
   // rank by default; route hint forces it explicitly here so the test
   // is robust to hint-default changes.
-  arts_guid_t pin_guid = arts_guid_reserve(ARTS_DB, 0);
+  arts_guid_t pin_guid = arts_guid_reserve(ARTS_GUID_DB, 0);
   unsigned int *pin_data = (unsigned int *)arts_db_create_with_guid(
       pin_guid, DB_SIZE, ARTS_DB_PIN, ARTS_DB_PROP_NONE, NULL);
   for (unsigned int i = 0; i < DB_SIZE / sizeof(unsigned int); i++) {
@@ -158,7 +158,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Test 3: arts_db_copy_to_new_type (DIST -> PIN).
   void *src_ptr = NULL;
   arts_guid_t src_db =
-      arts_db_create(&src_ptr, DB_SIZE, ARTS_DB_RC, ARTS_DB_PROP_NONE,
+      arts_db_create(&src_ptr, DB_SIZE, ARTS_DB, ARTS_DB_PROP_NONE,
                      &(arts_db_hint_t){.rank = 0});
   uint64_t *src = (uint64_t *)src_ptr;
   for (unsigned int i = 0; i < DB_SIZE / sizeof(uint64_t); i++) {

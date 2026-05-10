@@ -80,7 +80,7 @@ void arts_dump_pending_edts(void) {
     arts_reset_route_table_iterator(&iter, rt);
     arts_route_item_t *item;
     while ((item = arts_route_table_iterate(&iter)) != NULL) {
-      if (arts_guid_get_type(item->key) != ARTS_EDT)
+      if (arts_guid_get_kind(item->key) != ARTS_GUID_EDT)
         continue;
       void *data = atomic_load_explicit(&item->data, memory_order_acquire);
       if (!data)
@@ -116,7 +116,7 @@ void arts_dump_pending_edts(void) {
           unsigned int g_type = 0;
           if (depv[s].guid != 0) {
             g_home = arts_guid_get_rank(depv[s].guid);
-            g_type = arts_guid_get_type(depv[s].guid);
+            g_type = arts_guid_get_kind(depv[s].guid);
           }
           const char *state = "NULL_GUID";
           if (depv[s].guid != 0) {

@@ -4,6 +4,7 @@ install/
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
+__pycache__/
 
 # Documentation build artifacts
 docs/_build/

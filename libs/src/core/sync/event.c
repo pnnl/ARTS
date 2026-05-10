@@ -138,7 +138,7 @@ static struct arts_event_s *event_alloc(const arts_event_hint_t *h) {
     return NULL;
   }
   arts_shared_init(&e->shared, event_deleter);
-  e->header.type = ARTS_EVENT;
+  e->header.type = ARTS_GUID_EVENT;
   e->header.size = sizeof(*e);
   e->init_latch = h->latch;
   e->init_nb_deps_required = h->nb_deps_required;
@@ -193,7 +193,7 @@ bool arts_event_create_internal(arts_guid_t *guid,
       }
       arts_route_table_fire_oo(*guid, arts_out_of_order_handler);
     } else {
-      *guid = arts_guid_create_for_rank(rank, ARTS_EVENT);
+      *guid = arts_guid_create_for_rank(rank, ARTS_GUID_EVENT);
       arts_route_table_add_item(event, *guid, rank, false);
     }
     return true;
@@ -237,15 +237,15 @@ void arts_event_destroy(arts_guid_t guid) {
  * For CHANNEL the data argument comes from the matching data_queue pop;
  * for non-CHANNEL it is e->simple.data. */
 static void event_signal_one(struct arts_event_dep_s *d, arts_guid_t data) {
-  if (d->kind == ARTS_EDT) {
+  if (d->kind == ARTS_GUID_EDT) {
     internal_signal_edt(d->target, d->slot, data, d->mode, NULL, 0);
-  } else if (d->kind == ARTS_EVENT) {
+  } else if (d->kind == ARTS_GUID_EVENT) {
     arts_event_satisfy_slot(d->target, data, d->slot);
   }
 }
 
 /* Allocate and populate an mpsc node from the per-rank pool. */
-static struct arts_event_dep_s *event_node_alloc(arts_type_t kind,
+static struct arts_event_dep_s *event_node_alloc(arts_guid_kind_t kind,
                                                  arts_guid_t target,
                                                  uint32_t slot,
                                                  arts_db_access_mode_t mode) {
@@ -432,7 +432,7 @@ void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
       ARTS_ERROR("CHANNEL: only DECR (slot 0) satisfy supported");
     }
     struct arts_event_dep_s *node =
-        event_node_alloc(ARTS_LAST_TYPE, data_guid, 0, DB_MODE_NULL);
+        event_node_alloc(ARTS_GUID_LAST, data_guid, 0, DB_MODE_NULL);
     arts_mpsc_push(&event->channel.data_queue, &node->link);
     atomic_fetch_sub_explicit(&event->curr_latch, 1, memory_order_acq_rel);
     try_drain_channel(event, event_guid);
@@ -494,10 +494,10 @@ void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
 
   /* DB_MODE_VAL: source is a raw 64-bit value. */
   if (access_mode == DB_MODE_VAL) {
-    arts_type_t dest_type = arts_guid_get_type(destination);
-    if (dest_type == ARTS_EDT) {
+    arts_guid_kind_t dest_type = arts_guid_get_kind(destination);
+    if (dest_type == ARTS_GUID_EDT) {
       internal_signal_edt(destination, slot, source, DB_MODE_VAL, NULL, 0);
-    } else if (dest_type == ARTS_EVENT) {
+    } else if (dest_type == ARTS_GUID_EVENT) {
       arts_event_satisfy_slot(destination, source, slot);
     }
     return;
@@ -505,33 +505,33 @@ void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
 
   /* NULL source: signal immediately with no data. */
   if (source == NULL_GUID) {
-    arts_type_t dest_type = arts_guid_get_type(destination);
-    if (dest_type == ARTS_EDT) {
+    arts_guid_kind_t dest_type = arts_guid_get_kind(destination);
+    if (dest_type == ARTS_GUID_EDT) {
       internal_signal_edt(destination, slot, NULL_GUID, access_mode, NULL, 0);
-    } else if (dest_type == ARTS_EVENT) {
+    } else if (dest_type == ARTS_GUID_EVENT) {
       arts_event_satisfy_slot(destination, NULL_GUID, slot);
     }
     return;
   }
 
-  arts_type_t source_type = arts_guid_get_type(source);
+  arts_guid_kind_t source_type = arts_guid_get_kind(source);
 
   /* DB source: immediate satisfy. */
-  if (source_type == ARTS_DB) {
-    arts_type_t dest_type = arts_guid_get_type(destination);
-    if (dest_type == ARTS_EDT) {
+  if (source_type == ARTS_GUID_DB) {
+    arts_guid_kind_t dest_type = arts_guid_get_kind(destination);
+    if (dest_type == ARTS_GUID_EDT) {
       internal_signal_edt(destination, slot, source, access_mode, NULL, 0);
-    } else if (dest_type == ARTS_EVENT) {
+    } else if (dest_type == ARTS_GUID_EVENT) {
       arts_event_satisfy_slot(destination, source, slot);
     }
     return;
   }
 
   /* Event source. */
-  arts_type_t dest_type = arts_guid_get_type(destination);
+  arts_guid_kind_t dest_type = arts_guid_get_kind(destination);
 
   /* Step 1: set mode on EDT dep slot. */
-  if (dest_type == ARTS_EDT) {
+  if (dest_type == ARTS_GUID_EDT) {
     arts_set_dep_mode(destination, slot, access_mode);
   }
 
@@ -575,9 +575,9 @@ void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
       destroy_now = true;
     }
     arts_route_table_release(source);
-    if (dest_type == ARTS_EDT) {
+    if (dest_type == ARTS_GUID_EDT) {
       internal_signal_edt(destination, slot, data, DB_MODE_NULL, NULL, 0);
-    } else if (dest_type == ARTS_EVENT) {
+    } else if (dest_type == ARTS_GUID_EVENT) {
       arts_event_satisfy_slot(destination, data, slot);
     }
     if (destroy_now) {

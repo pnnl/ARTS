@@ -68,5 +68,13 @@ arts_coh_alloc_cache_s(arts_guid_t db_guid, uint64_t db_size,
   } else if (kind == ARTS_COH_INIT_CREATOR_REMOTE) {
     c->writer_count = 2;
   }
+#ifdef ARTS_MEMORY_MODEL_LRC
+  /* LRC owner-side fields: dedup map allocated lazily on first ownership
+   * grant; arts_calloc already zeroed last_sent_version / incoming_new_owner,
+   * but make the contract explicit. */
+  c->last_sent_version = NULL;
+  atomic_store_explicit(&c->transfer_pending, 0, memory_order_relaxed);
+  c->incoming_new_owner = 0;
+#endif
   return c;
 }

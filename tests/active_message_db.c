@@ -133,8 +133,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   unsigned int num_elements = block_size * arts_get_total_ranks();
   unsigned int last_node = arts_get_total_ranks() - 1;
 
-  arts_guid_t db_source_guid = arts_guid_reserve(ARTS_DB, 0);
-  arts_guid_t shutdown_guid = arts_guid_reserve(ARTS_EDT, last_node);
+  arts_guid_t db_source_guid = arts_guid_reserve(ARTS_GUID_DB, 0);
+  arts_guid_t shutdown_guid = arts_guid_reserve(ARTS_GUID_EDT, last_node);
 
   unsigned int *db_data = (unsigned int *)arts_db_create_with_guid(
       db_source_guid, sizeof(unsigned int) * num_elements, ARTS_DB_DEFAULT,

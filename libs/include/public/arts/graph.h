@@ -91,7 +91,7 @@ typedef struct {
 
 arts_block_dist_t *init_block_distribution_block(graph_sz_t n, graph_sz_t m,
                                                  unsigned int num_blocks,
-                                                 arts_type_t db_type);
+                                                 arts_guid_kind_t db_type);
 arts_block_dist_t *init_block_distribution(graph_sz_t n, graph_sz_t m);
 arts_block_dist_t *init_block_distribution_with_cmd_line_args(int argc,
                                                               char **argv);

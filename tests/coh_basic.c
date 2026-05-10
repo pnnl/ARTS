@@ -93,7 +93,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
    * released its RW slot. */
   void *ptr = NULL;
   arts_guid_t db =
-      arts_db_create(&ptr, sizeof(unsigned int), ARTS_DB_RC, ARTS_DB_PROP_NONE,
+      arts_db_create(&ptr, sizeof(unsigned int), ARTS_DB, ARTS_DB_PROP_NONE,
                      &(arts_db_hint_t){.rank = 0});
   ((unsigned int *)ptr)[0] = 0;
   arts_db_release(db);

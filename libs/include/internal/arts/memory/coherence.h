@@ -25,12 +25,16 @@
 extern "C" {
 #endif
 
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 
 #include "arts/runtime_types.h"
 #include "arts/utils/lockfree_stack.h"
 #include "arts/utils/marked_list.h"
+#ifdef ARTS_MEMORY_MODEL_LRC
+#include "arts/memory/coherence_readers.h"
+#endif
 
 /*--- Buffer ---------------------------------------------------------------
  *
@@ -88,7 +92,6 @@ struct arts_db_rw_waiter_s {
   unsigned int slot;
 };
 #else
-#include <stdatomic.h>
 struct arts_db_rw_waiter_s {
   _Atomic(struct arts_db_rw_waiter_s *) next;
   arts_guid_t edt_guid;
@@ -166,27 +169,122 @@ struct arts_db_ro_waiter_s {
  *                       rank.  Used by GRANT / DATA_RESPONSE to skip
  *                       redundant data when last_sent[R] >= master_v.
  *
- * The MPSC queue and sparse map are referred to here by opaque
- * forward-decl; their concrete implementations live in their own
- * modules and only the home metadata struct needs to embed them.
+ * The sparse map is referred to by opaque forward-decl; the MPSC queue
+ * is defined inline below (needed for struct embedding in arts_db_home_s).
  */
-struct arts_lockfree_mpsc_s;   /* forward decl; defined alongside the impl */
 struct arts_rank_to_u64_map_s; /* forward decl; sparse rank-keyed u64 map */
 
+/* Vyukov MPSC queue node carrying a requester rank.  Used by
+ * arts_home_lockreq_queue_s.  The embedded `next` pointer is owned by
+ * the queue (push/pop manage it).  Producers are foreign-rank LOCK_REQ
+ * handlers; the single consumer is the home-side dispatcher holding the
+ * invalidate_in_flight baton. */
+#ifdef __cplusplus
+struct arts_home_lockreq_node_s {
+  struct arts_home_lockreq_node_s *next;
+  unsigned int rank;
+};
+
+struct arts_home_lockreq_queue_s {
+  struct arts_home_lockreq_node_s
+      *tail; /* producer end (push exchanges here) */
+  struct arts_home_lockreq_node_s *head; /* consumer end (pop advances here) */
+  struct arts_home_lockreq_node_s stub;
+};
+#else
+struct arts_home_lockreq_node_s {
+  _Atomic(struct arts_home_lockreq_node_s *) next;
+  unsigned int rank;
+};
+
+struct arts_home_lockreq_queue_s {
+  _Atomic(struct arts_home_lockreq_node_s *)
+      tail; /* producer end (push exchanges here) */
+  _Atomic(struct arts_home_lockreq_node_s *)
+      head;                             /* consumer end (pop advances here) */
+  struct arts_home_lockreq_node_s stub; /* permanent sentinel */
+};
+#endif
+
+/* RO_REQ queue deferred while a gate is set.  Each entry carries the
+ * requester rank and the opaque waiter pointer (valid only at the
+ * requester's address space).  Drained when invalidate_in_flight clears.
+ *
+ * LRC builds use a full Vyukov MPSC queue (multi-producer: any network
+ * handler thread may enqueue while the gate is set; single consumer:
+ * the INSTALL_ACK handler that clears the gate drains it).
+ * RC builds keep a no-op stub because the RC GET_DATA path serves RO
+ * acquires directly from home without deferral. */
+#ifdef ARTS_MEMORY_MODEL_LRC
+#ifdef __cplusplus
+struct arts_home_ro_node_s {
+  struct arts_home_ro_node_s *next;
+  unsigned int requester_rank;
+  void *waiter_addr;
+};
+
+struct arts_home_pending_ro_queue_s {
+  struct arts_home_ro_node_s *tail;
+  struct arts_home_ro_node_s *head;
+  struct arts_home_ro_node_s stub;
+};
+#else
+struct arts_home_ro_node_s {
+  _Atomic(struct arts_home_ro_node_s *) next;
+  unsigned int requester_rank;
+  void *waiter_addr;
+};
+
+struct arts_home_pending_ro_queue_s {
+  _Atomic(struct arts_home_ro_node_s *) tail; /* producer end */
+  _Atomic(struct arts_home_ro_node_s *) head; /* consumer end */
+  struct arts_home_ro_node_s stub;            /* permanent sentinel */
+};
+#endif /* __cplusplus */
+#else  /* !ARTS_MEMORY_MODEL_LRC */
+/* RC: no RO deferral queue needed — stub keeps the struct layout neutral. */
+struct arts_home_pending_ro_queue_s {
+  void *_reserved;
+};
+#endif /* ARTS_MEMORY_MODEL_LRC */
+
 struct arts_db_home_s {
-  unsigned int rw_holder;
-  struct arts_lockfree_mpsc_s *pending_rw;
-  struct arts_rank_to_u64_map_s *last_sent_version;
+  _Atomic(unsigned int) rw_holder;
+  struct arts_home_lockreq_queue_s pending_rw; /* embedded Vyukov MPSC */
   /* Active-directory in-flight tracking for INVALIDATE_NOTICE.  Set by
-   * the home-side LOCK_REQ handler (CAS 0->1) when it dispatches an
-   * INVALIDATE to the current rw_holder; cleared by the matching
+   * the home-side LOCK_REQ handler (acq_rel CAS 0->1) when it dispatches
+   * an INVALIDATE to the current rw_holder; cleared by the matching
    * WRITEBACK (WB_AND_TRANSFER branch) or RELEASE_OWNERSHIP handler
    * once the ownership transfer round completes.  Ensures EXACTLY ONE
    * INVALIDATE_NOTICE is in flight to the rw_holder per round, even
    * under concurrent foreign LOCK_REQs that all observe a non-empty
    * pending_rw queue.  Per-cache (home metadata) so the gate is local
    * to the directory entry. */
-  volatile unsigned int invalidate_in_flight;
+  _Atomic(unsigned int) invalidate_in_flight;
+  /* Destroy fan-out baton.  Unused in Phase 0; wired in Phase 7 when
+   * the destroy path needs a single-flight gate symmetric to
+   * invalidate_in_flight. */
+  _Atomic(unsigned int) destroy_in_flight;
+  /* RO_REQs deferred while an ownership-transfer gate is set; real impl
+   * added when the LRC RO forward path is wired. */
+  struct arts_home_pending_ro_queue_s pending_ro_forwards;
+#ifdef ARTS_MEMORY_MODEL_LRC
+  /* LRC destroy fan-out: bit per reader rank.  Set when a DATA_RESPONSE
+   * (RO grant) is sent to a rank; iterated during DESTROY fan-out to
+   * reach all ranks that ever held a cached copy. */
+  struct arts_readers_bits_s readers;
+  /* Set by the LOCK_REQ handler when it kicks off an invalidate round;
+   * read by the INSTALL_ACK handler to know who to set rw_holder to.
+   * Only the baton holder writes; single-threaded within the handler. */
+  unsigned int pending_install_owner;
+  /* Outstanding DESTROY_DONE ack count; finalize when it reaches 0. */
+  _Atomic(unsigned int) destroy_ack_outstanding;
+#else
+  /* RC: per-rank watermark of the latest DB version sent to each rank.
+   * Used by GRANT / DATA_RESPONSE to skip redundant data transfers when
+   * the receiver's cached version is already current. */
+  struct arts_rank_to_u64_map_s *last_sent_version;
+#endif
 };
 
 /*--- Destroy state -------------------------------------------------------
@@ -310,7 +408,28 @@ struct arts_db_cache_s {
   arts_guid_t db_guid;
   uint64_t db_size;
   struct arts_db_home_s *home;
-  /* Per-cache WRITEBACK ACK rendezvous.  release_rw on a non-home
+  /* Back-pointer to the wrapping struct arts_db_s (Phase 3.1).  Set by
+   * arts_db_create_internal (and equivalent install paths) right after
+   * cache_s is allocated.  Used by arts_coh_try_finalize_destroy to free
+   * the db_s + cache_s + buffers in one call (arts_db_free), eliminating
+   * the legacy route_table-managed lifecycle.  Stored as void * to avoid
+   * a circular include between coherence.h and runtime_types.h. */
+  void *db_owner;
+#ifdef ARTS_MEMORY_MODEL_LRC
+  /* Owner-side dedup map: watermark of the latest DB version forwarded to
+   * each rank under this ownership epoch.  Allocated lazily on first
+   * ownership; preserved across ownership transfer (TRANSFER_OWNERSHIP
+   * serializes it). */
+  struct arts_rank_to_u64_map_s *last_sent_version;
+  /* Set by the INVALIDATE_NOTICE handler when writers are still live;
+   * release_rw observes this flag and ships TRANSFER_OWNERSHIP when
+   * writer_count reaches 0. */
+  _Atomic(unsigned int) transfer_pending;
+  /* New owner rank extracted from the INVALIDATE_NOTICE message payload;
+   * read by the transfer-ship path when transfer_pending is observed. */
+  unsigned int incoming_new_owner;
+#else
+  /* RC: per-cache WRITEBACK ACK rendezvous.  release_rw on a non-home
    * owner atomically claims a fresh seq via fetch_add on writeback_seq,
    * embeds it in the WRITEBACK packet, then spin-waits on
    * writeback_acked_seq >= my_seq.  ACK handler does an atomic
@@ -319,13 +438,7 @@ struct arts_db_cache_s {
    * holds a unique seq. */
   volatile uint64_t writeback_seq;
   volatile uint64_t writeback_acked_seq;
-  /* Back-pointer to the wrapping struct arts_db_s (Phase 3.1).  Set by
-   * arts_db_create_internal (and equivalent install paths) right after
-   * cache_s is allocated.  Used by arts_coh_try_finalize_destroy to free
-   * the db_s + cache_s + buffers in one call (arts_db_free), eliminating
-   * the legacy route_table-managed lifecycle.  Stored as void * to avoid
-   * a circular include between coherence.h and runtime_types.h. */
-  void *db_owner;
+#endif
 };
 
 #ifdef __cplusplus

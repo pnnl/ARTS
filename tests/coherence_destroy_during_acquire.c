@@ -143,7 +143,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   for (int iter = 0; iter < N_ITERATIONS; iter++) {
     int *data;
     arts_guid_t db_guid =
-        arts_db_create((void **)&data, sizeof(int), ARTS_DB_RC, ARTS_DB_PROP_NONE, NULL);
+        arts_db_create((void **)&data, sizeof(int), ARTS_DB, ARTS_DB_PROP_NONE, NULL);
     *data = 0;
 
     /* Spawn N workers all RW-acquiring the same DB. */

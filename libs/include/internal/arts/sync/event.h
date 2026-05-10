@@ -52,7 +52,7 @@ extern "C" {
  *  via arts_lf_pool_release. */
 struct arts_event_dep_s {
   arts_lf_link_t link;        /* MUST be first (link = node addr) */
-  arts_type_t kind;           /* ARTS_EDT or ARTS_EVENT */
+  arts_guid_kind_t kind;      /* ARTS_GUID_EDT or ARTS_GUID_EVENT */
   arts_guid_t target;         /* destination GUID */
   uint32_t slot;              /* destination slot */
   arts_db_access_mode_t mode; /* dep mode (preserved across signal) */

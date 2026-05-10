@@ -205,10 +205,10 @@ void arts_remote_handle_db_move(void *ptr) {
   if (size == db_size) {
     memcpy(mem_packet, packet + 1, size);
   } else {
-    mem_packet->type = (unsigned int)arts_guid_get_type(packet->guid);
+    mem_packet->type = (unsigned int)arts_guid_get_kind(packet->guid);
     mem_packet->size = db_size;
   }
-  /* DB-level coherence (RC) is owned by ARTS_DB_RC's coherence_cache,
+  /* DB-level coherence (RC) is owned by ARTS_DB's coherence_cache,
    * not by db_list.  After the move, the moved DB does not carry an
    * RC cache (state is rebuilt lazily on first acquire); other subtypes
    * have no DB-level coherence at all.  Just clear db_list. */
@@ -325,7 +325,7 @@ void arts_remote_event_satisfy_slot(arts_guid_t event_guid,
  * (arts_out_of_order_handle_db_request) when a local DB referenced by
  * an EDT dependency arrives in the route table after the EDT was
  * registered.  Fills the EDT's dep slot with the freshly-installed
- * DB pointer and drops one depc_needed.  For ARTS_DB_RC types the
+ * DB pointer and drops one depc_needed.  For ARTS_DB types the
  * RC acquire path replaces this; for non-RC pinned types the OoO
  * replay covers the local-create-after-consumer race.
  */

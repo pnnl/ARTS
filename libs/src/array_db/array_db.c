@@ -141,7 +141,7 @@ arts_array_db_t *arts_new_local_array_db_with_guid(arts_guid_t guid,
 
 arts_guid_t arts_new_array_db(arts_array_db_t **addr, unsigned int element_size,
                               unsigned int num_elements) {
-  arts_guid_t guid = arts_guid_reserve(ARTS_DB, arts_global_rank_id);
+  arts_guid_t guid = arts_guid_reserve(ARTS_GUID_DB, arts_global_rank_id);
   *addr = arts_new_array_db_with_guid(guid, element_size, num_elements);
   return guid;
 }

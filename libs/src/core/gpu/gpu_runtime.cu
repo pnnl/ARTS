@@ -169,7 +169,7 @@ arts_guid_t internal_edt_create_gpu(arts_edt_t func_ptr, arts_guid_t *guid,
 
   edt->wrapperEdt.edt_type = ARTS_EDT_GPU;
   // artsIntrospectionEdtCreateBegin();
-  (void)arts_edt_create_internal((struct arts_edt_s *)edt, ARTS_EDT, guid, rank,
+  (void)arts_edt_create_internal((struct arts_edt_s *)edt, ARTS_GUID_EDT, guid, rank,
                                  arts_thread_info.numa_domain_id, edt_space,
                                  func_ptr, paramc, paramv, depc, true,
                                  NULL_GUID, 0, 0);
@@ -274,11 +274,11 @@ void arts_gpu_host_wrap_up(void *edt_packet, arts_guid_t to_signal,
       internal_signal_edt(to_signal, slot, depv[data_guid].guid, DB_MODE_RW,
                           NULL, 0);
     } else {
-      arts_type_t mode = arts_guid_get_type(to_signal);
-      if (mode == ARTS_EDT) {
+      arts_guid_kind_t mode = arts_guid_get_kind(to_signal);
+      if (mode == ARTS_GUID_EDT) {
         internal_signal_edt(to_signal, slot, data_guid, DB_MODE_RW, NULL, 0);
       }
-      if (mode == ARTS_EVENT) {
+      if (mode == ARTS_GUID_EVENT) {
         arts_event_satisfy_slot(to_signal, data_guid, slot);
       }
     }
@@ -614,7 +614,7 @@ void internal_lc_sync_cpu(arts_guid_t acq_guid, struct arts_db_s *db) {
       unsigned int gpu_version;
       unsigned int time_stamp;
       ARTS_DEBUG("acq_guid: %lu type: %u i: %u\n", acq_guid,
-                 arts_guid_get_type(acq_guid), i);
+                 arts_guid_get_kind(acq_guid), i);
       void *data_ptr = arts_gpu_route_table_lookup_db(
           acq_guid, (int)i, &gpu_version, &time_stamp);
       if (data_ptr) {

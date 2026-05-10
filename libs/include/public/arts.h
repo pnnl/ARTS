@@ -73,24 +73,27 @@ typedef intptr_t arts_guid_t;
 
 /* ========================================================================= */
 /** @defgroup type_enum Type / Access-Mode Enumeration
- *  Every GUID carries a type tag from this enum.
+ *  Every GUID carries a kind tag from this enum.
  *  @{ */
 
 /**
- * @brief Runtime object type tag (stored in GUID bits 63–56).
+ * @brief GUID object kind tag.
  *
- * Identifies what kind of object a GUID refers to: EDT, event, datablock, etc.
- * All datablocks share the single @c ARTS_DB tag; the DB subtype is specified
- * via @c arts_db_types_t at creation time.
- * Access modes (read/write) are separate — see @c arts_db_access_mode_t.
+ * Identifies what kind of object a GUID refers to.  Encoded in the
+ * GUID's 2-bit kind field (ARTS_GUID_TYPE_BITS = 2 → 4 valid values
+ * + sentinel).  Order matches XSOCR's ocrGuidKind: DB < EDT < EVENT.
+ *
+ * All datablocks share the single ARTS_GUID_DB tag; the DB storage
+ * subtype is specified via arts_db_types_t at creation time.
+ * Access modes (read/write) are separate — see arts_db_access_mode_t.
  */
 typedef enum {
-  ARTS_EDT = 0,  /**< Event-Driven Task (CPU and GPU share this tag). */
-  ARTS_EVENT,    /**< Latch-based synchronization event. */
-  ARTS_EPOCH,    /**< Termination-detection epoch. */
-  ARTS_DB,       /**< DataBlock (all subtypes share this tag). */
-  ARTS_LAST_TYPE /**< Sentinel — first invalid type value (= 4). */
-} arts_type_t;
+  ARTS_GUID_DB = 0, /**< DataBlock (all storage subtypes share this tag). */
+  ARTS_GUID_EDT,    /**< Event-Driven Task (CPU and GPU share this tag). */
+  ARTS_GUID_EVENT,  /**< Latch-based synchronization event. */
+  ARTS_GUID_EPOCH,  /**< Termination-detection epoch. */
+  ARTS_GUID_LAST    /**< Sentinel — first invalid kind value (= 4). */
+} arts_guid_kind_t;
 
 /**
  * @brief DataBlock access mode (per-dependency, stored in @c
@@ -113,27 +116,32 @@ typedef enum {
 /**
  * @brief DataBlock subtype (stored in @c arts_db_s.db_type, NOT in the GUID).
  *
- * Specifies the storage and coherence class of a DataBlock.  All subtypes
- * share the same @c ARTS_DB tag in the GUID; the subtype is carried inside
- * the DB descriptor.  Naming convention: ARTS_DB_<storage>_<coherence>.
- * Coherence suffix = RC | LC | PIN.  Storage prefix omitted = regular DRAM.
+ * Specifies the storage class of a DataBlock.  All subtypes share the same
+ * @c ARTS_GUID_DB kind tag; the subtype is carried inside the DB descriptor.
+ * Naming convention: ARTS_DB_<storage>.  Consistency model for ARTS_DB
+ * is selected at compile time (RC or LRC); other subtypes carry no DB-level
+ * coherence (hardware coherence only).
+ *
+ *   ARTS_DB         — regular DRAM, RC or LRC (compile-time switch)
+ *   ARTS_DB_PIN     — regular DRAM, node-pinned, no DB-level coherence
+ *   ARTS_DB_CXL     — CXL shared, Location Consistency
+ *   ARTS_DB_GPU     — GPU staging, Location Consistency
+ *   ARTS_DB_GPU_PIN — GPU staging, no DB-level coherence
  */
 typedef enum {
-  ARTS_DB_RC = 0,  /**< Release Consistency (regular DRAM, distributed RC). */
-  ARTS_DB_PIN,     /**< Node-pinned regular DRAM, no DB-level coherence. */
+  ARTS_DB = 0, /**< Regular DRAM; consistency model selected at compile time. */
+  ARTS_DB_PIN, /**< Node-pinned regular DRAM, no DB-level coherence. */
+  ARTS_DB_CXL, /**< CXL shared, Location Consistency (compiled w/ CXL). */
+  ARTS_DB_GPU, /**< GPU staging, Location Consistency (multi-GPU + reduce). */
   ARTS_DB_GPU_PIN, /**< GPU staging (host pinned + per-device replica). */
-  ARTS_DB_GPU_LC,  /**< GPU staging, Location Consistency (multi-GPU + reduce).
-                    */
-  ARTS_DB_CXL_LC,  /**< CXL shared, Location Consistency (compiled w/ CXL). */
 } arts_db_types_t;
 
-/* @c ARTS_DB_DEFAULT is the experiment-wide DB kind every benchmark uses
- * — its concrete value is decided by CMake (see ARTS_DB_DEFAULT_KIND in
- * the top-level CMakeLists.txt).  Locally we ship RC so the build works
- * without CXL hardware; flip the cmake variable to ARTS_DB_CXL_LC (or
- * any other kind) to retarget every benchmark in one place. */
+/* @c ARTS_DB_DEFAULT is the experiment-wide DB storage subtype every benchmark
+ * uses.  Its concrete value is decided by the CMake build configuration.
+ * Ships as ARTS_DB so the build works without special hardware; flip the cmake
+ * option to retarget every benchmark in one place. */
 #ifndef ARTS_DB_DEFAULT
-#define ARTS_DB_DEFAULT ARTS_DB_RC
+#define ARTS_DB_DEFAULT ARTS_DB
 #endif
 
 /**
@@ -156,9 +164,9 @@ typedef enum {
 /**
  * @brief EDT subtype (stored in @c arts_edt_s.edt_type, NOT in the GUID).
  *
- * All EDTs share the single @c ARTS_EDT tag in the GUID; the subtype is
- * carried inside the EDT descriptor.  CPU and GPU EDTs differ in scheduling
- * and execution but share the same GUID type.
+ * All EDTs share the single @c ARTS_GUID_EDT kind tag in the GUID; the subtype
+ * is carried inside the EDT descriptor.  CPU and GPU EDTs differ in scheduling
+ * and execution but share the same GUID kind.
  */
 typedef enum {
   ARTS_EDT_CPU = 0, /**< CPU EDT (standard). */
@@ -560,13 +568,13 @@ void arts_abort(uint8_t error_code);
  *  @{ */
 
 /**
- * @brief Reserve a GUID of the given @p type on node @p route.
+ * @brief Reserve a GUID of the given @p kind on node @p rank.
  *
- * @param type  Type tag for the GUID (e.g. @c ARTS_EDT, @c ARTS_DB).
- * @param route Target node rank.
+ * @param kind  Kind tag for the GUID (e.g. @c ARTS_GUID_EDT, @c ARTS_GUID_DB).
+ * @param rank  Target node rank.
  * @return A new GUID.
  */
-arts_guid_t arts_guid_reserve(arts_type_t type, unsigned int rank);
+arts_guid_t arts_guid_reserve(arts_guid_kind_t kind, unsigned int rank);
 
 /**
  * @brief Check whether @p guid is local to this node.
@@ -585,12 +593,12 @@ bool arts_guid_is_local(arts_guid_t guid);
 unsigned int arts_guid_get_rank(arts_guid_t guid);
 
 /**
- * @brief Return the type tag encoded in @p guid.
+ * @brief Return the kind tag encoded in @p guid.
  *
  * @param guid GUID to query.
- * @return The arts_type_t stored in the GUID.
+ * @return The arts_guid_kind_t stored in the GUID.
  */
-arts_type_t arts_guid_get_type(arts_guid_t guid);
+arts_guid_kind_t arts_guid_get_kind(arts_guid_t guid);
 
 /**
  * @brief Reserve a contiguous range of @p size GUIDs on node @p route.
@@ -598,9 +606,9 @@ arts_type_t arts_guid_get_type(arts_guid_t guid);
  * Returns the start GUID of the range.  Use @c arts_guid_from_index() to
  * access individual GUIDs within the range.
  *
- * @param type  Type tag for every GUID in the range.
+ * @param kind  Kind tag for every GUID in the range.
  * @param size  Number of GUIDs to allocate.
- * @param route Target node rank.  Special values:
+ * @param rank  Target node rank.  Special values:
  *              - @c ARTS_HINT_CURRENT_RANK — pin all GUIDs to the calling rank
  *              - @c ARTS_HINT_ROUND_ROBIN — distribute homes across ranks
  *                (`home = idx % nrank` in @c arts_guid_from_index).  The
@@ -611,7 +619,7 @@ arts_type_t arts_guid_get_type(arts_guid_t guid);
  * @return The start GUID of the range, or @c NULL_GUID on failure.
  * @see arts_guid_from_index, arts_guid_index_from
  */
-arts_guid_t arts_guid_reserve_range(arts_type_t type, unsigned int size,
+arts_guid_t arts_guid_reserve_range(arts_guid_kind_t kind, unsigned int size,
                                     unsigned int rank);
 
 /**

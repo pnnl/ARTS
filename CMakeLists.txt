@@ -177,14 +177,36 @@ option(ARTS_USE_GPU "Enable GPU support (default: ON, disable when OFF)" ON)
 option(ARTS_USE_RDMA "Use RDMA RSockets networking (default: ON, use TCP when OFF)" OFF)
 option(ARTS_USE_CXL "Enable CXL shared-memory support (default: OFF)" OFF)
 
-# Default DB kind that benchmarks select via ARTS_DB_DEFAULT.
+# Host memory consistency model for ARTS_DB.  RC (default) uses
+# the existing eager Release Consistency protocol; LRC uses Lazy
+# Release Consistency (no synchronous home write-back, owner-direct
+# data flow).  Compile-time switch — one binary is exactly one mode.
+# Both ranks in a multinode run must use the same build (mode-mismatch
+# is caught at runtime via ARTS_FATAL stub handlers for opposite-mode
+# wire messages).
+set(ARTS_MEMORY_MODEL "RC" CACHE STRING
+    "Host memory consistency model for ARTS_DB: RC (default) or LRC")
+set_property(CACHE ARTS_MEMORY_MODEL PROPERTY STRINGS RC LRC)
+if(NOT ARTS_MEMORY_MODEL STREQUAL "RC" AND
+   NOT ARTS_MEMORY_MODEL STREQUAL "LRC")
+  message(FATAL_ERROR
+          "ARTS_MEMORY_MODEL must be RC or LRC, got: ${ARTS_MEMORY_MODEL}")
+endif()
+if(ARTS_MEMORY_MODEL STREQUAL "LRC")
+  add_compile_definitions(ARTS_MEMORY_MODEL_LRC=1)
+  message(STATUS "ARTS memory model: LRC (Lazy Release Consistency)")
+else()
+  message(STATUS "ARTS memory model: RC (Release Consistency, default)")
+endif()
+
+# Default DB storage subtype that benchmarks select via ARTS_DB_DEFAULT.
 # Flip this one variable to retarget every benchmark in one shot
-# (e.g. -DARTS_DB_DEFAULT_KIND=ARTS_DB_CXL_LC) — no source edits needed.
-set(ARTS_DB_DEFAULT_KIND "ARTS_DB_RC" CACHE STRING
-    "DB kind that ARTS_DB_DEFAULT expands to (ARTS_DB_RC / ARTS_DB_PIN / ARTS_DB_GPU_PIN / ARTS_DB_GPU_LC / ARTS_DB_CXL_LC)")
-set_property(CACHE ARTS_DB_DEFAULT_KIND PROPERTY STRINGS
-    ARTS_DB_RC ARTS_DB_PIN ARTS_DB_GPU_PIN ARTS_DB_GPU_LC ARTS_DB_CXL_LC)
-add_compile_definitions(ARTS_DB_DEFAULT=${ARTS_DB_DEFAULT_KIND})
+# (e.g. -DARTS_DB_DEFAULT=ARTS_DB_CXL) — no source edits needed.
+set(ARTS_DB_DEFAULT "ARTS_DB" CACHE STRING
+    "DB subtype that ARTS_DB_DEFAULT expands to (ARTS_DB / ARTS_DB_PIN / ARTS_DB_GPU_PIN / ARTS_DB_GPU / ARTS_DB_CXL)")
+set_property(CACHE ARTS_DB_DEFAULT PROPERTY STRINGS
+    ARTS_DB ARTS_DB_PIN ARTS_DB_GPU_PIN ARTS_DB_GPU ARTS_DB_CXL)
+add_compile_definitions(ARTS_DB_DEFAULT=${ARTS_DB_DEFAULT})
 
 # Default EDT kind (mirrors ARTS_DB_DEFAULT pattern).  Flip this one
 # variable to retarget the EDT default in one shot.
@@ -476,6 +498,9 @@ endif()
 if(ARTS_BUILD_BENCHMARKS)
     add_subdirectory(benchmarks)
 endif()
+
+# LRC microbenchmarks are always built (independent of ARTS_BUILD_BENCHMARKS).
+add_subdirectory(benchmarks/lrc_microbench)
 
 add_subdirectory(configs)
 

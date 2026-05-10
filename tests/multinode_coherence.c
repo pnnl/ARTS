@@ -143,7 +143,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // -> reader(RO, node 0) asserts 200.
   {
     void *ptr = NULL;
-    arts_guid_t db = arts_db_create(&ptr, sizeof(int), ARTS_DB_RC, ARTS_DB_PROP_NONE, &(arts_db_hint_t){.rank = 0});
+    arts_guid_t db = arts_db_create(&ptr, sizeof(int), ARTS_DB, ARTS_DB_PROP_NONE, &(arts_db_hint_t){.rank = 0});
     ((int *)ptr)[0] = 0;
     arts_db_release(db);
 
@@ -165,7 +165,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // -> reader_a(RO, node 0) and reader_b(RO, node 1) both verify.
   {
     void *ptr2 = NULL;
-    arts_guid_t db2 = arts_db_create(&ptr2, 3 * sizeof(int), ARTS_DB_RC, ARTS_DB_PROP_NONE, &(arts_db_hint_t){.rank = 0});
+    arts_guid_t db2 = arts_db_create(&ptr2, 3 * sizeof(int), ARTS_DB, ARTS_DB_PROP_NONE, &(arts_db_hint_t){.rank = 0});
     ((int *)ptr2)[0] = 0;
     ((int *)ptr2)[1] = 0;
     ((int *)ptr2)[2] = 0;
@@ -188,7 +188,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // -> inc_c(EW, node 0, +1) -> reader(RO, node 0) asserts value == 3.
   {
     void *ptr3 = NULL;
-    arts_guid_t db3 = arts_db_create(&ptr3, sizeof(int), ARTS_DB_RC, ARTS_DB_PROP_NONE, &(arts_db_hint_t){.rank = 0});
+    arts_guid_t db3 = arts_db_create(&ptr3, sizeof(int), ARTS_DB, ARTS_DB_PROP_NONE, &(arts_db_hint_t){.rank = 0});
     ((int *)ptr3)[0] = 0;
     arts_db_release(db3);
 

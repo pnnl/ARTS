@@ -568,12 +568,12 @@ void arts_route_table_set_destroyed(arts_guid_t key) {
  * Kept as a function (rather than inlining into arts_route_item_free) so a
  * future regression — e.g. an object stored under a non-migrated tag — is
  * caught by the false branch instead of crashing on a wild deleter ptr. */
-static inline bool object_has_shared_field(arts_type_t t) {
+static inline bool object_has_shared_field(arts_guid_kind_t t) {
   switch (t) {
-  case ARTS_EVENT: /* arts_event_s embeds shared. */
-  case ARTS_DB:    /* arts_db_s embeds shared. */
-  case ARTS_EDT:   /* arts_edt_s embeds shared. */
-  case ARTS_EPOCH: /* arts_epoch_s embeds shared. */
+  case ARTS_GUID_EVENT: /* arts_event_s embeds shared. */
+  case ARTS_GUID_DB:  /* arts_db_s embeds shared. */
+  case ARTS_GUID_EDT:   /* arts_edt_s embeds shared. */
+  case ARTS_GUID_EPOCH: /* arts_epoch_s embeds shared. */
     return true;
   default:
     return false;
@@ -596,7 +596,7 @@ static void arts_route_item_free(arts_route_item_t *item) {
   void *data =
       atomic_exchange_explicit(&item->data, (void *)NULL, memory_order_acq_rel);
   if (data) {
-    arts_type_t t = arts_guid_get_type(item->key);
+    arts_guid_kind_t t = arts_guid_get_kind(item->key);
     if (object_has_shared_field(t)) {
       arts_shared_t *s = (arts_shared_t *)data;
       s->deleter(data);
@@ -731,8 +731,8 @@ bool arts_route_table_mark_delete(arts_guid_t key) {
 
 /* Type-aware safe lookups: search_for_key + acquire_item + DELETE check. */
 static inline void *arts_route_table_lookup_safe_typed(arts_guid_t guid,
-                                                       arts_type_t expected) {
-  if (arts_guid_get_type(guid) != expected) {
+                                                       arts_guid_kind_t expected) {
+  if (arts_guid_get_kind(guid) != expected) {
     return NULL;
   }
   arts_route_table_t *route_table = arts_get_route_table(guid);
@@ -756,21 +756,21 @@ static inline void *arts_route_table_lookup_safe_typed(arts_guid_t guid,
 
 struct arts_event_s *arts_route_table_lookup_event_safe(arts_guid_t guid) {
   return (struct arts_event_s *)arts_route_table_lookup_safe_typed(guid,
-                                                                   ARTS_EVENT);
+                                                                   ARTS_GUID_EVENT);
 }
 
 struct arts_db_s *arts_route_table_lookup_db_safe(arts_guid_t guid) {
-  return (struct arts_db_s *)arts_route_table_lookup_safe_typed(guid, ARTS_DB);
+  return (struct arts_db_s *)arts_route_table_lookup_safe_typed(guid, ARTS_GUID_DB);
 }
 
 struct arts_edt_s *arts_route_table_lookup_edt_safe(arts_guid_t guid) {
   return (struct arts_edt_s *)arts_route_table_lookup_safe_typed(guid,
-                                                                 ARTS_EDT);
+                                                                 ARTS_GUID_EDT);
 }
 
 struct arts_epoch_s *arts_route_table_lookup_epoch_safe(arts_guid_t guid) {
   return (struct arts_epoch_s *)arts_route_table_lookup_safe_typed(guid,
-                                                                   ARTS_EPOCH);
+                                                                   ARTS_GUID_EPOCH);
 }
 
 void *arts_route_table_claim_item(arts_guid_t key) {
@@ -859,7 +859,7 @@ uint64_t arts_clean_up_route_table(arts_route_table_t *route_table) {
 
   arts_route_item_t *item = arts_route_table_iterate(&iter);
   while (item) {
-    arts_type_t type = arts_guid_get_type(item->key);
+    arts_guid_kind_t type = arts_guid_get_kind(item->key);
     /* use atomic_exchange to claim
      * the data ptr.  EVENT / BUFFER lifecycle paths free their structs at
      * fire/destroy time WITHOUT NULLing the route_table slot (Task 2.1
@@ -869,14 +869,14 @@ uint64_t arts_clean_up_route_table(arts_route_table_t *route_table) {
      * data ptr survives until shutdown (DBs that share a route entry until shutdown). */
     void *data = atomic_exchange_explicit(&item->data, (void *)NULL,
                                           memory_order_acq_rel);
-    if (type == ARTS_DB) {
+    if (type == ARTS_GUID_DB) {
       struct arts_db_s *db = (struct arts_db_s *)data;
       if (db) {
         free_size += db->header.size;
         arts_db_free(db);
       }
     }
-    /* ARTS_EVENT / ARTS_EDT / ARTS_EPOCH: data is owned by the execution
+    /* ARTS_GUID_EVENT / ARTS_GUID_EDT / ARTS_GUID_EPOCH: data is owned by the execution
      * / lifecycle path and freed there.  Cleanup just drops the
      * route_table reference (already done by atomic_exchange above) plus
      * the OoO list.  Re-freeing here would tcache-corrupt. */

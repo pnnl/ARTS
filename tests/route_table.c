@@ -100,10 +100,10 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
   guids = (arts_guid_t *)malloc(sizeof(arts_guid_t) * arts_get_total_ranks());
   for (unsigned int i = 0; i < arts_get_total_ranks(); i++) {
-    guids[i] = arts_guid_reserve(ARTS_DB, i);
+    guids[i] = arts_guid_reserve(ARTS_GUID_DB, i);
     arts_printf("i: %u guid: %ld\n", i, guids[i]);
   }
-  shutdown_guid = arts_guid_reserve(ARTS_EDT, 0);
+  shutdown_guid = arts_guid_reserve(ARTS_GUID_EDT, 0);
 
   arts_edt_create(shutdown_edt, 0, NULL, arts_get_total_workers(), &(arts_edt_hint_t){.guid = shutdown_guid});
 

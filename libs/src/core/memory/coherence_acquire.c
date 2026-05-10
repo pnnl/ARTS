@@ -105,6 +105,15 @@ static void mark_edt_ready_by_guid(arts_guid_t edt_guid, unsigned int slot) {
        * depv[slot].ptr aliases buf->data — the canonical user-visible
        * payload (design plan §Buffer). */
       struct arts_db_buffer_s *buf = arts_coherence_acquire_buf(cache);
+      if (buf == NULL) {
+        fprintf(stderr,
+                "[COH-DBG rank %u] mark_edt_ready: NULL buf for db=%lu "
+                "edt=%lu slot=%u wc=%u db_size=%lu\n",
+                arts_global_rank_id, (unsigned long)db_guid,
+                (unsigned long)edt_guid, slot,
+                cache->writer_count, (unsigned long)cache->db_size);
+        fflush(stderr);
+      }
       depv[slot].ptr = buf ? buf->data : NULL;
     }
   }
@@ -145,10 +154,10 @@ struct arts_db_cache_s *arts_coh_lazy_install_cache_s(arts_guid_t db_guid,
       (struct arts_db_s *)arts_malloc_align(sizeof(struct arts_db_s), 16);
   memset(stub, 0, sizeof(struct arts_db_s));
   arts_shared_init(&stub->shared, arts_db_get_deleter());
-  stub->header.type = ARTS_DB;
+  stub->header.type = ARTS_GUID_DB;
   stub->header.size = sizeof(struct arts_db_s);
   stub->guid = db_guid;
-  stub->db_type = ARTS_DB_RC;
+  stub->db_type = ARTS_DB;
 
   /* db_size==0 ⇒ lazy install: buffer alloc deferred until first wire
    * arrival (install_buffer with the actual db_size).  No home struct
@@ -179,6 +188,12 @@ static void *acquire_local(struct arts_db_cache_s *cache) {
    * (called from release_one_dep's DIST branch). */
   struct arts_db_buffer_s *buf = arts_coherence_acquire_buf(cache);
   if (buf == NULL) {
+    fprintf(stderr,
+            "[COH-DBG rank %u] acquire_local: NULL buf for db=%lu "
+            "wc=%u db_size=%lu\n",
+            arts_global_rank_id, (unsigned long)cache->db_guid,
+            cache->writer_count, (unsigned long)cache->db_size);
+    fflush(stderr);
     return NULL;
   }
   return buf->data;
@@ -303,7 +318,21 @@ arts_db_acquire_result_t arts_coh_db_acquire(struct arts_db_cache_s *cache,
   bool is_owner = (cache->writer_count > 0);
 
   if (mode == DB_MODE_RO) {
-    if (is_home || is_owner) {
+#ifdef ARTS_MEMORY_MODEL_LRC
+    /* LRC: the home rank does not hold the canonical data copy; only the
+     * current owner (writer_count > 0) has an installed buffer.  A home-
+     * but-not-owner rank has cache->buffer == NULL until TRANSFER_OWNERSHIP
+     * arrives, so acquire_local would deliver NULL to the EDT.  Go through
+     * acquire_remote_ro so that home forwards the request to the owner via
+     * REDIRECT_RO and the owner sends the buffer back via DATA_RESPONSE. */
+    bool has_local_data = is_owner;
+#else
+    /* RC: WRITEBACK is synchronous (sender spins on ACK), so home always
+     * holds current data before any RO acquire can execute.  is_home is
+     * sufficient to guarantee a non-NULL buffer. */
+    bool has_local_data = is_home || is_owner;
+#endif
+    if (has_local_data) {
       /* acquire_local returns NULL when buffer is not installed (sentinel
        * or version-0 pre-install).  That is OK -- caller treats NULL as
        * "no payload".  No DESTROYED claim. */

@@ -48,7 +48,7 @@ extern "C" {
  *
  * This header defines internal types used by the runtime implementation:
  * EDT and DataBlock descriptors, event structures, and termination-detection
- * state.  Public types (arts_guid_t, arts_type_t, etc.) live in arts.h.
+ * state.  Public types (arts_guid_t, arts_guid_kind_t, etc.) live in arts.h.
  *
  * @note This is an internal header.  User code should include @c arts.h.
  */
@@ -72,7 +72,7 @@ extern "C" {
 
 /** Common header prepended to every runtime object (EDT, DB, event). */
 struct arts_header_s {
-  uint8_t type : 8;   /**< Type tag (@ref arts_type_t). */
+  uint8_t type : 8;   /**< Kind tag (@ref arts_guid_kind_t). */
   uint64_t size : 56; /**< Total allocation size in bytes (includes struct
                          metadata). */
 } ARTS_ALIGNED_MAX;
@@ -150,7 +150,7 @@ struct arts_event_dep_s;
 #ifdef __cplusplus
 struct arts_event_s {
   ARTS_SHARED_FIELD;           /* shared_t — first member, always */
-  struct arts_header_s header; /* type=ARTS_EVENT */
+  struct arts_header_s header; /* type=ARTS_GUID_EVENT */
 
   /* Configuration snapshot (immutable after arts_event_create_internal). */
   int32_t init_latch; /* signed; LATCH may start negative */
@@ -185,7 +185,7 @@ struct arts_event_s {
 #else
 struct arts_event_s {
   ARTS_SHARED_FIELD;           /* shared_t — first member, always */
-  struct arts_header_s header; /* type=ARTS_EVENT */
+  struct arts_header_s header; /* type=ARTS_GUID_EVENT */
 
   /* Configuration snapshot (immutable after arts_event_create_internal). */
   int32_t init_latch;             /* signed; LATCH may start negative */

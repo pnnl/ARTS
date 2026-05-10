@@ -106,7 +106,7 @@ static inline void *arts_db_user_ptr(struct arts_db_s *db) {
 /*
  * arts_db_auto_acquire — Track the creator EDT's hold on a DB.
  *
- * For ARTS_DB_RC: the RC cache_s was allocated with writer_count=2
+ * For ARTS_DB: the RC cache_s was allocated with writer_count=2
  * (sentinel + creator EDT) via ARTS_COH_INIT_CREATOR_HOME or
  * ARTS_COH_INIT_CREATOR_REMOTE, so the creator's hold is already
  * counted in the RC state machine.  release_rw drops it at EDT
@@ -128,14 +128,14 @@ void *arts_db_malloc(arts_db_types_t db_type, size_t size) {
   void *ptr = NULL;
 #ifdef ARTS_USE_GPU
   if (arts_node_info.gpu) {
-    if (db_type == ARTS_DB_GPU_LC)
+    if (db_type == ARTS_DB_GPU)
       ptr = arts_cuda_malloc_host(size * 2);
     else if (db_type == ARTS_DB_GPU_PIN)
       ptr = arts_cuda_malloc_host(size);
   }
 #endif
 #ifdef ARTS_USE_CXL
-  if (db_type == ARTS_DB_CXL_LC) {
+  if (db_type == ARTS_DB_CXL) {
     unsigned int dev_idx;
     if (arts_node_info.cxl_db_dev_count > 1) {
       /* Round-robin: atomically advance the index and wrap around. */
@@ -160,7 +160,7 @@ void *arts_db_malloc(arts_db_types_t db_type, size_t size) {
 void arts_db_free(void *ptr) {
   struct arts_db_s *db = (struct arts_db_s *)ptr;
   /* Chain into RC cache teardown if this DB has one.  Only
-   * ARTS_DB_RC carries a coherence_cache; other subtypes leave it
+   * ARTS_DB carries a coherence_cache; other subtypes leave it
    * NULL.  cache_destructor drains the buffer pool and frees home_s;
    * we then free the cache_s itself. */
   if (db->coherence_cache != NULL) {
@@ -171,7 +171,7 @@ void arts_db_free(void *ptr) {
   db->db_list = NULL;
 #ifdef ARTS_USE_GPU
   if (arts_node_info.gpu &&
-      (db->db_type == ARTS_DB_GPU_PIN || db->db_type == ARTS_DB_GPU_LC)) {
+      (db->db_type == ARTS_DB_GPU_PIN || db->db_type == ARTS_DB_GPU)) {
     arts_cuda_free_host(ptr);
     ptr = NULL;
   }
@@ -211,7 +211,7 @@ void arts_db_create_internal(arts_guid_t guid, void *addr, uint64_t len,
    * dispatches to db->shared.deleter once the slot's lock count hits 0
    * with DELETE set. */
   arts_shared_init(&db_res->shared, arts_db_deleter);
-  db_res->header.type = ARTS_DB; // All DB subtypes share one GUID type tag
+  db_res->header.type = ARTS_GUID_DB; // All DB subtypes share one GUID type tag
   db_res->header.size = packet_size;
 
   db_res->arts_id = arts_id;
@@ -220,7 +220,7 @@ void arts_db_create_internal(arts_guid_t guid, void *addr, uint64_t len,
   db_res->reader = 0;
   db_res->writer = 0;
   db_res->db_type = db_type;
-  /* ARTS_DB_RC enters the RC protocol at create time.  Allocate
+  /* ARTS_DB enters the RC protocol at create time.  Allocate
    * cache_s with CREATOR_HOME init — arts_db_create only routes here
    * when the local rank is the creator (route == arts_global_rank_id),
    * which for round-robin home is also the home rank.  Other paths
@@ -233,7 +233,7 @@ void arts_db_create_internal(arts_guid_t guid, void *addr, uint64_t len,
    * stub directly and does NOT invoke this routine. */
   db_res->coherence_cache = NULL;
   db_res->db_list = NULL;
-  if (db_type == ARTS_DB_RC) {
+  if (db_type == ARTS_DB) {
     /* User payload size = packet_size minus the header struct.  The
      * cache_s db_size convention matches the size cached in
      * arts_coh_handle_db_create_coherent / arts_coh_lazy_install_cache_s. */
@@ -258,7 +258,7 @@ void arts_db_create_internal(arts_guid_t guid, void *addr, uint64_t len,
   /* Non-RC subtypes: PIN, GPU_PIN, GPU_LC, CXL_LC are pinned to the
    * creator rank and have no DB-level coherence.  coherence_cache and
    * db_list both stay NULL. */
-  if (db_type == ARTS_DB_GPU_LC) {
+  if (db_type == ARTS_DB_GPU) {
     void *shadow_copy = (void *)(((char *)addr) + packet_size);
     memcpy(shadow_copy, addr, sizeof(struct arts_db_s));
   }
@@ -273,7 +273,7 @@ void arts_db_create_internal(arts_guid_t guid, void *addr, uint64_t len,
  * arts_db_create — Unified DataBlock creation.
  *
  * Handles all DB subtypes (RC, PIN, GPU_PIN, GPU_LC, CXL_LC).  When
- * hint->rank targets a remote node, only ARTS_DB_RC is supported:
+ * hint->rank targets a remote node, only ARTS_DB is supported:
  * a coherent home stub is installed via DB_CREATE_COHERENT.  Pinned
  * subtypes return NULL_GUID with a warning.
  */
@@ -311,12 +311,12 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
   if (rank == arts_global_rank_id) {
     uint64_t db_size = len + sizeof(struct arts_db_s);
 #ifdef ARTS_USE_CXL
-    if (db_type == ARTS_DB_CXL_LC) {
+    if (db_type == ARTS_DB_CXL) {
       db_size = ALIGN_UP(db_size, CACHELINE_SIZE);
-      void *ptr = arts_db_malloc(ARTS_DB_CXL_LC, db_size);
+      void *ptr = arts_db_malloc(ARTS_DB_CXL, db_size);
       if (ptr) {
         guid = arts_cxl_make_guid(ptr);
-        arts_db_create_internal(guid, ptr, len, db_size, ARTS_DB_CXL_LC,
+        arts_db_create_internal(guid, ptr, len, db_size, ARTS_DB_CXL,
                                 arts_id);
         /* No route table entry — GUID encodes CXL pointer directly */
         // FLUSH_FENCE_PRODUCER(ptr, db_size);
@@ -344,7 +344,7 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
             arts_route_table_fire_oo(guid, arts_out_of_order_handler);
           }
         } else {
-          guid = arts_guid_create_for_rank(arts_global_rank_id, ARTS_DB);
+          guid = arts_guid_create_for_rank(arts_global_rank_id, ARTS_GUID_DB);
           arts_db_create_internal(guid, ptr, len, db_size, db_type, arts_id);
           arts_route_table_add_item(ptr, guid, arts_global_rank_id, true);
           if (current_edt && !no_acquire) {
@@ -363,8 +363,8 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
       }
     }
   } else {
-    guid = arts_guid_create_for_rank(rank, ARTS_DB);
-    if (db_type == ARTS_DB_RC) {
+    guid = arts_guid_create_for_rank(rank, ARTS_GUID_DB);
+    if (db_type == ARTS_DB) {
       /* For RC type, ask the home rank to install a coherent cache_s
        * via DB_CREATE_COHERENT.  The home handler
        * (arts_coh_handle_db_create_coherent) allocates its own stub +
@@ -416,10 +416,10 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
             (struct arts_db_s *)arts_malloc_align(sizeof(struct arts_db_s), 16);
         memset(creator_stub, 0, sizeof(struct arts_db_s));
         arts_shared_init(&creator_stub->shared, arts_db_deleter);
-        creator_stub->header.type = ARTS_DB;
+        creator_stub->header.type = ARTS_GUID_DB;
         creator_stub->header.size = sizeof(struct arts_db_s);
         creator_stub->guid = guid;
-        creator_stub->db_type = ARTS_DB_RC;
+        creator_stub->db_type = ARTS_DB;
         creator_stub->coherence_cache = creator_cache;
         creator_cache->db_owner = creator_stub;
         if (!arts_route_table_add_item_race(creator_stub, guid,
@@ -458,9 +458,9 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
       /* Non-RC types (PIN, GPU_PIN, GPU_LC, CXL_LC) are pinned to the
        * creator rank.  Creating one on a different rank is a
        * programming error — return NULL_GUID.  Cross-rank distribution
-       * for these subtypes must use ARTS_DB_RC instead. */
+       * for these subtypes must use ARTS_DB instead. */
       ARTS_WARN("arts_db_create: cannot remote-create non-RC DB type %s on "
-                "rank %u (only ARTS_DB_RC is internode relocatable). "
+                "rank %u (only ARTS_DB is internode relocatable). "
                 "Returning NULL_GUID.",
                 GET_DB_TYPE_NAME(db_type), rank);
       *addr = NULL;
@@ -537,8 +537,8 @@ void *arts_db_resize(arts_guid_t guid, unsigned int size, bool copy) {
  */
 void arts_db_destroy(arts_guid_t guid) {
   INCREMENT_NUM_DB_DESTROY_BY(1);
-  arts_type_t type = arts_guid_get_type(guid);
-  if (type != ARTS_DB) {
+  arts_guid_kind_t type = arts_guid_get_kind(guid);
+  if (type != ARTS_GUID_DB) {
     ARTS_WARN("arts_db_destroy called with non-DB type %u (GUID %lu)", type,
               guid);
     return;
@@ -612,7 +612,7 @@ arts_guid_t arts_db_copy_to_new_type(arts_guid_t old_guid,
   arts_guid_t ret = NULL_GUID;
   unsigned int rank = arts_guid_get_rank(old_guid);
   if (rank == arts_global_rank_id) {
-    arts_guid_t new_guid = arts_guid_create_for_rank(rank, ARTS_DB);
+    arts_guid_t new_guid = arts_guid_create_for_rank(rank, ARTS_GUID_DB);
     struct arts_db_s *db_res = arts_route_table_lookup_db_safe(old_guid);
     if (db_res != NULL) {
       db_res->guid = new_guid;
@@ -648,7 +648,7 @@ arts_guid_t arts_db_copy_to_new_type(arts_guid_t old_guid,
 
 arts_guid_t arts_db_rename(arts_guid_t guid) {
   arts_guid_t new_guid = arts_guid_create_for_rank(arts_guid_get_rank(guid),
-                                                   arts_guid_get_type(guid));
+                                                   arts_guid_get_kind(guid));
   return (arts_db_rename_with_guid(new_guid, guid)) ? new_guid : NULL_GUID;
 }
 
@@ -656,7 +656,7 @@ arts_guid_t arts_db_rename(arts_guid_t guid) {
  * arts_db_destroy_safe — Local-only destroy entry.
  *
  * Called by paths that already know they are on the rank that owns the
- * local copy (e.g. coherence destroy finalize).  Routes ARTS_DB_RC
+ * local copy (e.g. coherence destroy finalize).  Routes ARTS_DB
  * through arts_coh_db_destroy; for pinned subtypes, atomically detaches
  * the route table slot and frees.  The `remote` parameter is retained
  * for ABI continuity but no longer triggers any wire fan-out — RC
@@ -739,7 +739,7 @@ void acquire_dbs(struct arts_edt_s *edt) {
 
       struct arts_db_s *db_found = NULL;
       int owner = (int)arts_guid_get_rank(depv[i].guid);
-      arts_type_t guid_type = arts_guid_get_type(depv[i].guid);
+      arts_guid_kind_t guid_type = arts_guid_get_kind(depv[i].guid);
 
       // Update access-mode counters
       if (access_mode == DB_MODE_RO) {
@@ -756,7 +756,7 @@ void acquire_dbs(struct arts_edt_s *edt) {
                 depv[i].guid, guid_type, access_mode, owner,
                 arts_global_rank_id, edt->arts_id, edt->current_edt, i);
 
-      if (guid_type == ARTS_DB) {
+      if (guid_type == ARTS_GUID_DB) {
 #ifdef ARTS_USE_CXL
         if (arts_guid_is_cxl(depv[i].guid)) {
           struct arts_db_s *cxl_db =
@@ -776,7 +776,7 @@ void acquire_dbs(struct arts_edt_s *edt) {
           struct arts_db_s *db_temp =
               arts_route_table_lookup_db_safe(depv[i].guid);
 
-          /* RC path for ARTS_DB_RC.
+          /* RC path for ARTS_DB.
            *
            * Two entry points:
            *   - Existing local cache_s: arts_route_table_lookup_db_safe
@@ -837,7 +837,7 @@ void acquire_dbs(struct arts_edt_s *edt) {
             if (owner != arts_global_rank_id) {
               ARTS_WARN("acquire_dbs: pinned DB[Guid:%lu, Type:%s] referenced "
                         "from non-creator rank %u (owner=%u). "
-                        "Only ARTS_DB_RC is internode relocatable.",
+                        "Only ARTS_DB is internode relocatable.",
                         depv[i].guid, GET_DB_TYPE_NAME(db_temp->db_type),
                         arts_global_rank_id, owner);
             }
@@ -850,7 +850,7 @@ void acquire_dbs(struct arts_edt_s *edt) {
             arts_out_of_order_handle_db_request(depv[i].guid, edt, i, true);
           } else {
             /* Remote-owned non-RC DB: not legal for pinned subtypes
-             * but may legitimately occur for ARTS_DB_RC when no cache
+             * but may legitimately occur for ARTS_DB when no cache
              * has been installed yet — we already handled that above
              * via lazy_install_cache_s, so anything reaching here is
              * a non-RC remote reference.  Defer via OoO; if the DB is
@@ -865,7 +865,7 @@ void acquire_dbs(struct arts_edt_s *edt) {
       } else if (depv[i].guid == NULL_GUID) {
         /* Whole-GUID compare: NULL_GUID has all bits zero, including type
          * bits.  After the layout change, type bits = 0 corresponds to
-         * ARTS_EDT (a valid type), so we can't dispatch on type alone.
+         * ARTS_GUID_EDT (a valid type), so we can't dispatch on type alone.
          * The condition we actually want is "this slot has no real DB"
          * — which is exactly NULL_GUID. */
         arts_atomic_sub(&edt->depc_needed, 1U);
@@ -913,7 +913,7 @@ void prep_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu) {
 #ifdef ARTS_USE_CXL
     {
       struct arts_db_s *db_cxl = ((struct arts_db_s *)depv[i].ptr) - 1;
-      if (db_cxl->db_type == ARTS_DB_CXL_LC) {
+      if (db_cxl->db_type == ARTS_DB_CXL) {
         arts_cxl_consumer_flush(db_cxl->guid);
       }
     }
@@ -921,7 +921,7 @@ void prep_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu) {
 #ifdef ARTS_USE_GPU
     if (!gpu && access_mode != DB_MODE_LC_SYNC) {
       struct arts_db_s *db = ((struct arts_db_s *)depv[i].ptr) - 1;
-      if (db->db_type == ARTS_DB_GPU_LC) {
+      if (db->db_type == ARTS_DB_GPU) {
         arts_reader_lock(&db->reader, &db->writer);
         arts_atomic_add(&db->version, 1);
       }
@@ -946,7 +946,7 @@ void prep_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu) {
  *     dep built from a created_db_list entry)
  *
  * Per access mode:
- *   - DB_MODE_RO / DB_MODE_RW: only ARTS_DB_RC needs DB-level coherence
+ *   - DB_MODE_RO / DB_MODE_RW: only ARTS_DB needs DB-level coherence
  *     work; route through the RC release entry points
  *     (arts_coh_release_ro / arts_coh_release_rw).  Non-RC pinned
  *     subtypes have no DB-level coherence — release is a no-op.
@@ -961,7 +961,7 @@ void prep_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu) {
 static void release_one_dep(arts_edt_dep_t *dep, bool gpu) {
   arts_db_access_mode_t access_mode = dep->mode;
 
-  /* RC release path for ARTS_DB_RC.  For RC DBs, dep->ptr is
+  /* RC release path for ARTS_DB.  For RC DBs, dep->ptr is
    * cache->buffer->data (NOT (db+1)), so we cannot recover the
    * arts_db_s by pointer arithmetic.  Look up by GUID via the
    * coherence adapter; if it returns a cache_s, route through the RC
@@ -997,7 +997,7 @@ static void release_one_dep(arts_edt_dep_t *dep, bool gpu) {
    * Reaching this point means the dep is for a non-RC pinned subtype
    * (PIN, GPU_PIN, GPU_LC, CXL_LC) or a special access mode (PTR,
    * VALUE, LC_*, MEMSET) — none of which carry DB-level coherence. */
-  arts_db_types_t db_subtype = ARTS_DB_RC;
+  arts_db_types_t db_subtype = ARTS_DB;
   if (dep->guid != NULL_GUID && dep->ptr) {
     struct arts_db_s *db_hdr = ((struct arts_db_s *)dep->ptr) - 1;
     db_subtype = db_hdr->db_type;
@@ -1007,7 +1007,7 @@ static void release_one_dep(arts_edt_dep_t *dep, bool gpu) {
              GET_DB_MODE_NAME(access_mode), GET_DB_TYPE_NAME(db_subtype));
 
 #ifdef ARTS_USE_CXL
-  if (db_subtype == ARTS_DB_CXL_LC) {
+  if (db_subtype == ARTS_DB_CXL) {
     if (dep->guid != NULL_GUID && dep->ptr &&
         (access_mode == DB_MODE_RW || access_mode == DB_MODE_MEMSET)) {
       arts_cxl_producer_flush(dep->guid);
@@ -1020,7 +1020,7 @@ static void release_one_dep(arts_edt_dep_t *dep, bool gpu) {
     if (dep->ptr) {
       arts_free(dep->ptr);
     }
-  } else if (!gpu && db_subtype == ARTS_DB_GPU_LC) {
+  } else if (!gpu && db_subtype == ARTS_DB_GPU) {
     if (dep->ptr) {
       struct arts_db_s *db = ((struct arts_db_s *)dep->ptr) - 1;
       arts_reader_unlock(&db->reader);
@@ -1044,7 +1044,7 @@ void release_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu) {
 /*
  * release_one_created — Release a single created DB by GUID.
  *
- * Looks up the DB struct via the route table; for ARTS_DB_RC the
+ * Looks up the DB struct via the route table; for ARTS_DB the
  * creator's hold is the writer_count=2 sentinel set by
  * ARTS_COH_INIT_CREATOR_HOME / ARTS_COH_INIT_CREATOR_REMOTE —
  * release_rw decrements it directly with NO buffer ref to drop

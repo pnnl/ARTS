@@ -95,6 +95,7 @@ void arts_oo_list_init(struct arts_oo_list_s *list) {
   list->stub.data = NULL;
   atomic_store_explicit(&list->head, &list->stub, memory_order_relaxed);
   atomic_store_explicit(&list->tail, &list->stub, memory_order_relaxed);
+  atomic_store_explicit(&list->drain_lock, 0u, memory_order_relaxed);
 }
 
 oo_push_result_t arts_oo_list_push(struct arts_oo_list_s *list, void *data) {
@@ -153,6 +154,21 @@ static bool oo_pop_step(struct arts_oo_list_s *list, void **out_data,
 
 void arts_oo_list_drain(struct arts_oo_list_s *list,
                         void (*callback)(void *data, void *ctx), void *ctx) {
+  /* Serialize concurrent drain callers: the Vyukov pop loop is single-consumer
+   * only.  Multiple callers (e.g., installer and a late-pusher recheck) can
+   * race here; only one may run the pop loop at a time.  The winner drains
+   * all available items, then releases the lock; losers simply return.
+   *
+   * Using exchange (not CAS-loop) on the acquire side: a loser returning early
+   * is correct because the winner will drain all items in the list, including
+   * any that the loser would have handled.  The winner re-reads the list after
+   * each pop, so items pushed after the lock was acquired are also caught. */
+  unsigned int expected = 0u;
+  if (!atomic_compare_exchange_strong_explicit(
+          &list->drain_lock, &expected, 1u,
+          memory_order_acquire, memory_order_relaxed)) {
+    return; /* another thread is draining — it will consume all items */
+  }
   void *data;
   struct arts_oo_node_s *old_head;
   while (oo_pop_step(list, &data, &old_head)) {
@@ -164,6 +180,7 @@ void arts_oo_list_drain(struct arts_oo_list_s *list,
       arts_free(old_head);
     }
   }
+  atomic_store_explicit(&list->drain_lock, 0u, memory_order_release);
 }
 
 void arts_oo_list_drop_all(struct arts_oo_list_s *list) {

@@ -264,7 +264,7 @@ void (*arts_edt_get_deleter(void))(void *) { return arts_edt_deleter; }
  *   - The EDT must NOT be visible (in the route table) while its fields
  *     are still being written.
  */
-bool arts_edt_create_internal(struct arts_edt_s *edt, arts_type_t mode,
+bool arts_edt_create_internal(struct arts_edt_s *edt, arts_guid_kind_t mode,
                               arts_guid_t *guid, unsigned int rank,
                               unsigned int numa_domain, unsigned int edt_space,
                               arts_edt_t func_ptr, uint32_t paramc,
@@ -462,7 +462,7 @@ arts_guid_t arts_edt_create(arts_edt_t func_ptr, uint32_t paramc,
   unsigned int edt_space = sizeof(struct arts_edt_s) +
                            (paramc * sizeof(uint64_t)) +
                            (depc * sizeof(arts_edt_dep_t));
-  bool ok = arts_edt_create_internal(NULL, ARTS_EDT, &guid, rank,
+  bool ok = arts_edt_create_internal(NULL, ARTS_GUID_EDT, &guid, rank,
                                      arts_thread_info.numa_domain_id, edt_space,
                                      func_ptr, paramc, paramv, depc, true,
                                      snap.epoch, snap.edt_id, snap.flags);
@@ -715,7 +715,7 @@ void internal_signal_edt_with_mode(arts_guid_t edt_packet, uint32_t slot,
         if (slot < edt->depc) {
 #ifdef ARTS_USE_CXL
           void *ptr;
-          // if (mode == ARTS_DB_CXL_LC) {
+          // if (mode == ARTS_DB_CXL) {
           if (arts_guid_is_cxl(data_guid)) {
             ptr = ((struct arts_db_s *)arts_cxl_get_ptr(data_guid)) + 1;
             edt_dep[slot].guid = data_guid;
@@ -770,7 +770,7 @@ void check_out_edts(uint64_t threshold) {
 }
 
 void arts_lc_sync(arts_guid_t edt_guid, uint32_t slot, arts_guid_t data_guid) {
-  arts_type_t type = arts_guid_get_type(data_guid);
+  arts_guid_kind_t type = arts_guid_get_kind(data_guid);
   (void)type;
   internal_signal_edt(edt_guid, slot, data_guid,
                       (arts_db_access_mode_t)DB_MODE_LC_SYNC, NULL, 0);
@@ -780,7 +780,7 @@ void arts_gpu_signal_edt_memset(arts_guid_t edt_guid, uint32_t slot,
                                 arts_guid_t data_guid) {
   arts_db_access_mode_t mode = (arts_db_access_mode_t)DB_MODE_MEMSET;
   struct arts_db_s *db = arts_route_table_lookup_db_safe(data_guid);
-  if (db && db->db_type == ARTS_DB_GPU_LC) {
+  if (db && db->db_type == ARTS_DB_GPU) {
     mode = (arts_db_access_mode_t)DB_MODE_LC_NO_COPY;
   }
   if (db) {

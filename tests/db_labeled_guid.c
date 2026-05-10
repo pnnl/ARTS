@@ -31,10 +31,10 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== db_labeled_guid ===\n");
 
-  arts_guid_t reserved = arts_guid_reserve(ARTS_DB, 0);
+  arts_guid_t reserved = arts_guid_reserve(ARTS_GUID_DB, 0);
 
   uint64_t *ptr = (uint64_t *)arts_db_create_with_guid(
-      reserved, DB_SIZE, ARTS_DB_RC, ARTS_DB_PROP_NONE, NULL);
+      reserved, DB_SIZE, ARTS_DB, ARTS_DB_PROP_NONE, NULL);
   ptr[0] = SENTINEL;
   arts_db_release(reserved);
 

@@ -138,7 +138,7 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   /* Test 1: ARTS_DB_GPU_PIN creation */
   unsigned int *addr = NULL;
-  arts_guid_t gpu_db = arts_guid_reserve(ARTS_DB, 0);
+  arts_guid_t gpu_db = arts_guid_reserve(ARTS_GUID_DB, 0);
   addr = (unsigned int *)arts_db_create_with_guid(
       gpu_db, sizeof(unsigned int) * N_ELEMENTS, ARTS_DB_GPU_PIN, ARTS_DB_PROP_NONE, NULL);
   if (addr != NULL) {

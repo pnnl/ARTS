@@ -110,7 +110,7 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   unsigned int node_id = arts_get_current_rank();
 
   /* Create a GPU DB with non-zero initial data */
-  arts_guid_t db_guid = arts_guid_reserve(ARTS_DB, 0);
+  arts_guid_t db_guid = arts_guid_reserve(ARTS_GUID_DB, 0);
   unsigned int *addr = (unsigned int *)arts_db_create_with_guid(
       db_guid, sizeof(unsigned int) * N_ELEMENTS, ARTS_DB_GPU_PIN, NULL, NULL);
   for (unsigned int i = 0; i < N_ELEMENTS; i++) {

@@ -24,3 +24,5 @@ add_subdirectory(xsocr)
 add_subdirectory(ocr_shim)
 add_subdirectory(apps)
 add_subdirectory(baseline)
+# lrc_microbench is added from the root CMakeLists.txt so it builds
+# regardless of ARTS_BUILD_BENCHMARKS; skip here to avoid duplicate targets.

@@ -62,7 +62,7 @@ void check_local(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     }
   }
   if (ok) {
-    ok = (arts_guid_get_type(guid) == ARTS_DB);
+    ok = (arts_guid_get_kind(guid) == ARTS_GUID_DB);
   }
   arts_printf("  %s: arts_db_local_create local path\n", ok ? "PASS" : "FAIL");
 }
@@ -74,7 +74,7 @@ void check_null_hint(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   arts_guid_t guid = (arts_guid_t)paramv[0];
   unsigned int *data = (unsigned int *)depv[0].ptr;
-  bool ok = (data != NULL && arts_guid_get_type(guid) == ARTS_DB);
+  bool ok = (data != NULL && arts_guid_get_kind(guid) == ARTS_GUID_DB);
   if (ok) {
     ok = (*data == 42);
   }

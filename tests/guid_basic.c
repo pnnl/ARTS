@@ -39,7 +39,7 @@
 
 /// @file guid_basic.c
 /// @brief Tests GUID management: arts_guid_reserve, arts_guid_is_local,
-///        arts_guid_get_rank, arts_guid_get_type,
+///        arts_guid_get_rank, arts_guid_get_kind,
 ///        arts_guid_reserve_range with ARTS_HINT_ROUND_ROBIN.
 
 #include "arts.h"
@@ -58,7 +58,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   bool all_pass = true;
 
   // Test 1: Reserve local GUID — is_local should be true.
-  arts_guid_t g1 = arts_guid_reserve(ARTS_EDT, my_node);
+  arts_guid_t g1 = arts_guid_reserve(ARTS_GUID_EDT, my_node);
   if (!arts_guid_is_local(g1)) {
     arts_printf("  FAIL: guid_is_local returned false for local GUID\n");
     all_pass = false;
@@ -76,20 +76,21 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 
   // Test 3: get_type matches reservation type.
-  arts_type_t type = arts_guid_get_type(g1);
-  if (type != ARTS_EDT) {
-    arts_printf("  FAIL: guid_get_type = %d, expected %d\n", type, ARTS_EDT);
+  arts_guid_kind_t type = arts_guid_get_kind(g1);
+  if (type != ARTS_GUID_EDT) {
+    arts_printf("  FAIL: guid_get_type = %d, expected %d\n", type,
+                ARTS_GUID_EDT);
     all_pass = false;
   } else {
-    arts_printf("  PASS: guid_get_type correct for ARTS_EDT\n");
+    arts_printf("  PASS: guid_get_type correct for ARTS_GUID_EDT\n");
   }
 
   // Test 4: Reserve GUIDs for multiple types, verify get_type.
-  arts_type_t types[] = {ARTS_DB, ARTS_EVENT, ARTS_EPOCH};
-  const char *names[] = {"ARTS_DB", "ARTS_EVENT", "ARTS_EPOCH"};
+  arts_guid_kind_t types[] = {ARTS_GUID_DB, ARTS_GUID_EVENT, ARTS_GUID_EPOCH};
+  const char *names[] = {"ARTS_GUID_DB", "ARTS_GUID_EVENT", "ARTS_GUID_EPOCH"};
   for (unsigned int i = 0; i < 3; i++) {
     arts_guid_t g = arts_guid_reserve(types[i], my_node);
-    arts_type_t got = arts_guid_get_type(g);
+    arts_guid_kind_t got = arts_guid_get_kind(g);
     if (got != types[i]) {
       arts_printf("  FAIL: type for %s: got %d, expected %d\n", names[i], got,
                   types[i]);
@@ -103,7 +104,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 #define N_GUIDS 100
   arts_guid_t guids[N_GUIDS];
   for (unsigned int i = 0; i < N_GUIDS; i++) {
-    guids[i] = arts_guid_reserve(ARTS_DB, my_node);
+    guids[i] = arts_guid_reserve(ARTS_GUID_DB, my_node);
   }
   bool unique = true;
   for (unsigned int i = 0; i < N_GUIDS && unique; i++) {
@@ -123,7 +124,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Test 6: arts_guid_reserve_range with ARTS_HINT_ROUND_ROBIN.
   unsigned int rr_count = num_nodes * 3;
   arts_guid_t rr_range =
-      arts_guid_reserve_range(ARTS_DB, rr_count, ARTS_HINT_ROUND_ROBIN);
+      arts_guid_reserve_range(ARTS_GUID_DB, rr_count, ARTS_HINT_ROUND_ROBIN);
   if (rr_range == NULL_GUID) {
     arts_printf("  FAIL: round_robin range returned NULL_GUID\n");
     all_pass = false;

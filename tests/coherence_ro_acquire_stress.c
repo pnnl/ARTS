@@ -114,7 +114,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   int *data;
   arts_guid_t db =
-      arts_db_create((void **)&data, sizeof(int), ARTS_DB_RC, ARTS_DB_PROP_NONE, NULL);
+      arts_db_create((void **)&data, sizeof(int), ARTS_DB, ARTS_DB_PROP_NONE, NULL);
   *data = SENTINEL;
 
   /* Outer epoch ensures shutdown_edt runs only after every reader has

@@ -57,7 +57,7 @@ void internal_init_block_distribution(arts_block_dist_t *dist, graph_sz_t n,
 
 arts_block_dist_t *init_block_distribution_block(graph_sz_t n, graph_sz_t m,
                                                  unsigned int num_blocks,
-                                                 arts_type_t db_type) {
+                                                 arts_guid_kind_t db_type) {
   arts_block_dist_t *dist = (arts_block_dist_t *)arts_malloc(
       sizeof(arts_block_dist_t) + (sizeof(arts_guid_t) * num_blocks));
   unsigned int blocks_per_node = num_blocks / arts_get_total_ranks();
@@ -82,7 +82,7 @@ arts_block_dist_t *init_block_distribution(graph_sz_t n, graph_sz_t m) {
   arts_block_dist_t *dist = (arts_block_dist_t *)arts_malloc(
       sizeof(arts_block_dist_t) + (sizeof(arts_guid_t) * num_blocks));
   for (unsigned int i = 0; i < num_blocks; i++) {
-    dist->graphGuid[i] = arts_guid_reserve(ARTS_DB, i);
+    dist->graphGuid[i] = arts_guid_reserve(ARTS_GUID_DB, i);
   }
   internal_init_block_distribution(dist, n, m, num_blocks);
   return dist;
@@ -106,7 +106,7 @@ arts_block_dist_t *init_block_distribution_with_cmd_line_args(int argc,
     arts_block_dist_t *dist = (arts_block_dist_t *)arts_malloc(
         sizeof(arts_block_dist_t) + (sizeof(arts_guid_t) * num_blocks));
     for (unsigned int i = 0; i < num_blocks; i++) {
-      dist->graphGuid[i] = arts_guid_reserve(ARTS_DB, i);
+      dist->graphGuid[i] = arts_guid_reserve(ARTS_GUID_DB, i);
     }
     internal_init_block_distribution(dist, n, m, num_blocks);
     return dist;

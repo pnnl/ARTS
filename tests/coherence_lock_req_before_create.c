@@ -57,7 +57,7 @@
 /// fire_oo re-issues LOCK_REQ -> consumer sees correct data.
 ///
 /// Adaptations vs. plan code:
-///   - ARTS_DB_RC (final) is not defined in HEAD; legacy ARTS_DB_DEFAULT
+///   - ARTS_DB (final) is not defined in HEAD; legacy ARTS_DB_DEFAULT
 ///     names the same enum value.
 ///   - arts_db_create has a 4-arg signature (no ARTS_DB_PROP_NONE).
 ///   - DB_MODE_RW is documented as LOCAL-DB-only in arts.h; the cross-node
@@ -188,7 +188,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
      * *addr = NULL on remote create (data init is via writer EDT). */
     void *raw = NULL;
     arts_guid_t db =
-        arts_db_create(&raw, sizeof(int), ARTS_DB_RC, ARTS_DB_PROP_NONE,
+        arts_db_create(&raw, sizeof(int), ARTS_DB, ARTS_DB_PROP_NONE,
                        &(arts_db_hint_t){.rank = 1});
 
     /* Step 2: ONCE-equivalent (defaults: latch=1, auto_destroy=true) --

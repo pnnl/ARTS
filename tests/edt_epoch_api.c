@@ -51,7 +51,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   /* Test 1: Pre-reserve GUID, create EDT with that GUID, verify self-GUID. */
   {
-    arts_guid_t reserved = arts_guid_reserve(ARTS_EDT, 0);
+    arts_guid_t reserved = arts_guid_reserve(ARTS_GUID_EDT, 0);
     uint64_t param = (uint64_t)reserved;
     arts_guid_t epoch1 =
         arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);

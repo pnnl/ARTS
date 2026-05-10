@@ -70,7 +70,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_guid_t data_dbs[K_GENS];
     for (int g = 0; g < K_GENS; g++) {
       void *dbp = NULL;
-      data_dbs[g] = arts_db_create(&dbp, sizeof(uint64_t), ARTS_DB_RC,
+      data_dbs[g] = arts_db_create(&dbp, sizeof(uint64_t), ARTS_DB,
                                    ARTS_DB_PROP_NONE, NULL);
       arts_event_satisfy(ev, data_dbs[g]);
     }

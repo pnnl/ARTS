@@ -106,9 +106,9 @@ void check_copy_type(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramc;
   (void)depc;
   arts_guid_t new_guid = (arts_guid_t)paramv[0];
-  arts_type_t new_type = arts_guid_get_type(new_guid);
+  arts_guid_kind_t new_type = arts_guid_get_kind(new_guid);
   uint64_t *data = (uint64_t *)depv[0].ptr;
-  bool ok = (data != NULL && new_type == ARTS_DB);
+  bool ok = (data != NULL && new_type == ARTS_GUID_DB);
   if (ok) {
     for (unsigned int i = 0; i < DB_SIZE / sizeof(uint64_t); i++) {
       if (data[i] != (i + 100)) {
@@ -138,7 +138,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_epoch_start(epoch);
 
   // Test 1: Create ARTS_DB_PIN and use DB_MODE_RW.
-  arts_guid_t local_guid = arts_guid_reserve(ARTS_DB, 0);
+  arts_guid_t local_guid = arts_guid_reserve(ARTS_GUID_DB, 0);
   unsigned int *local_data = (unsigned int *)arts_db_create_with_guid(
       local_guid, DB_SIZE, ARTS_DB_PIN, ARTS_DB_PROP_NONE, NULL);
   for (unsigned int i = 0; i < DB_SIZE / sizeof(unsigned int); i++) {

@@ -43,7 +43,31 @@ from pathlib import Path
 from typing import Any
 
 REPO = Path(__file__).resolve().parent.parent.parent
-BUILD = REPO / "build_release"
+
+# ---------------------------------------------------------------------------
+# Build directory: selectable via --build-dir (default: build_release_rc).
+# Resolved early so module-level Path constants can reference it.
+# ---------------------------------------------------------------------------
+_arg_parser = argparse.ArgumentParser(add_help=False)
+_arg_parser.add_argument('--build-dir', default='build_release_rc')
+_pre_args, _ = _arg_parser.parse_known_args()
+BUILD = Path(_pre_args.build_dir)
+if not BUILD.is_absolute():
+    BUILD = REPO / BUILD
+
+_mode = 'unknown'
+try:
+    _cache_path = BUILD / 'CMakeCache.txt'
+    with open(_cache_path) as _f:
+        for _line in _f:
+            _m = re.match(r'ARTS_MEMORY_MODEL:STRING=(\w+)', _line)
+            if _m:
+                _mode = _m.group(1)
+                break
+except FileNotFoundError:
+    pass
+print(f'[harness] Build dir: {BUILD} (mode: {_mode})')
+
 APPS_DIR = BUILD / "benchmarks" / "apps"
 BASE_DIR = BUILD / "benchmarks" / "baseline"
 LOGS_ROOT = REPO / "benchmarks" / "scripts" / "logs" / "correctness"
@@ -697,6 +721,8 @@ def tier_b(xsocr: RunResult, arts: RunResult, base: RunResult, case: Case) -> Ve
 # ---------------------------------------------------------------------------
 def main():
     p = argparse.ArgumentParser()
+    p.add_argument("--build-dir", default="build_release_rc",
+                   help="Build directory containing apps and configs")
     p.add_argument("--no-baseline", action="store_true")
     p.add_argument("--only", type=str, default="")
     p.add_argument("--mem-gb", type=int, default=4)

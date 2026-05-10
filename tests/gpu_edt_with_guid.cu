@@ -103,7 +103,7 @@ void lib_work(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   /* Proceed to test 1 */
   unsigned int *addr = NULL;
-  arts_guid_t db_guid = arts_guid_reserve(ARTS_DB, 0);
+  arts_guid_t db_guid = arts_guid_reserve(ARTS_GUID_DB, 0);
   addr = (unsigned int *)arts_db_create_with_guid(
       db_guid, sizeof(unsigned int) * N_ELEMENTS, ARTS_DB_GPU_PIN, NULL, NULL);
   for (unsigned int i = 0; i < N_ELEMENTS; i++) {
@@ -117,7 +117,7 @@ void lib_work(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   dim3 grid(1, 1, 1);
 
   /* Use pre-reserved GUID for GPU EDT */
-  arts_guid_t edt_guid = arts_guid_reserve(ARTS_EDT, 0);
+  arts_guid_t edt_guid = arts_guid_reserve(ARTS_GUID_EDT, 0);
   arts_gpu_hint_t gpu_hint = {};
   gpu_hint.gpu = -1;
   gpu_hint.end_guid = verify_guid;
@@ -148,7 +148,7 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
 
   /* Test 2: create a GPU lib EDT with a pre-reserved GUID */
-  arts_guid_t lib_guid = arts_guid_reserve(ARTS_EDT, 0);
+  arts_guid_t lib_guid = arts_guid_reserve(ARTS_GUID_EDT, 0);
   arts_edt_hint_t hint_0 = {0, 0};
   arts_guid_t placeholder_guid =
       arts_edt_create(verify_fill, 0, NULL, 1, &hint_0);

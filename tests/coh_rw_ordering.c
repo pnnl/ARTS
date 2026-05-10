@@ -118,7 +118,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // record_dep with RW ensures writer1 runs before writer2, and writer2
   // before reader.
   void *ptr = NULL;
-  arts_guid_t db = arts_db_create(&ptr, sizeof(int), ARTS_DB_RC, ARTS_DB_PROP_NONE, NULL);
+  arts_guid_t db = arts_db_create(&ptr, sizeof(int), ARTS_DB, ARTS_DB_PROP_NONE, NULL);
   ((int *)ptr)[0] = 0;
   arts_db_release(db);
 
@@ -134,7 +134,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Test 2: Multiple concurrent RO readers.
   void *ptr2 = NULL;
-  arts_guid_t db2 = arts_db_create(&ptr2, sizeof(int), ARTS_DB_RC, ARTS_DB_PROP_NONE, NULL);
+  arts_guid_t db2 = arts_db_create(&ptr2, sizeof(int), ARTS_DB, ARTS_DB_PROP_NONE, NULL);
   ((int *)ptr2)[0] = 555;
   arts_db_release(db2);
 

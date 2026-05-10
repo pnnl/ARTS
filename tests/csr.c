@@ -72,7 +72,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_block_dist_t *dist = init_block_distribution_block(8,  // global vertices
                                                           11, // global edges
                                                           1,  // partitions
-                                                          ARTS_DB);
+                                                          ARTS_GUID_DB);
 
   // Create a list of edges, use arts_edge_vector_t
   arts_edge_vector_t vec;

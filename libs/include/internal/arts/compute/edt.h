@@ -55,7 +55,7 @@ void check_out_edts(uint64_t threshold);
   arts_atomic_fetch_sub_u64(&outstanding_edts, num_edts)
 #define CHECK_OUTSTANDING_EDTS(threshold) check_out_edts(threshold)
 
-bool arts_edt_create_internal(struct arts_edt_s *edt, arts_type_t mode,
+bool arts_edt_create_internal(struct arts_edt_s *edt, arts_guid_kind_t mode,
                               arts_guid_t *guid, unsigned int rank,
                               unsigned int numa_domain, unsigned int edt_space,
                               arts_edt_t func_ptr, uint32_t paramc,

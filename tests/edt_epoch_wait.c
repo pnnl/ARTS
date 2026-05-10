@@ -77,7 +77,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
   arts_printf("Main EDT %u\n", arts_edt_get_current_guid());
   arts_printf("Starting\n");
-  arts_guid_t exit_guid = arts_guid_reserve(ARTS_EDT, 0);
+  arts_guid_t exit_guid = arts_guid_reserve(ARTS_GUID_EDT, 0);
   arts_edt_create(exit_program, 0, NULL, 1, &(arts_edt_hint_t){.guid = exit_guid});
   arts_guid_t epoch_guid = arts_epoch_create(arts_get_current_rank(), exit_guid, 0);
   arts_epoch_start(epoch_guid);

@@ -105,9 +105,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
   char **argv = (char **)paramv[1];
-  db_guid = arts_guid_reserve(ARTS_DB, 0);
-  shutdown_guid = arts_guid_reserve(ARTS_EDT, 0);
-  edt_guid_fixed = arts_guid_reserve(ARTS_EDT, 0);
+  db_guid = arts_guid_reserve(ARTS_GUID_DB, 0);
+  shutdown_guid = arts_guid_reserve(ARTS_GUID_EDT, 0);
+  edt_guid_fixed = arts_guid_reserve(ARTS_GUID_EDT, 0);
   num_elements = strtol(argv[1], NULL, 10);
   block_size = num_elements / arts_get_total_ranks();
   stride = strtol(argv[2], NULL, 10);

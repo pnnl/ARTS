@@ -194,7 +194,7 @@ static void scenario_b_concurrent(void) {
    * detect free completion via the lock field's gen bump.  (Once
    * migrates DB to embed ARTS_SHARED_FIELD, this same test will additionally
    * verify the deleter fires.) */
-  arts_guid_t guid = arts_guid_reserve(ARTS_DB, 0);
+  arts_guid_t guid = arts_guid_reserve(ARTS_GUID_DB, 0);
   test_obj_t *obj = (test_obj_t *)calloc(1, sizeof(*obj));
   arts_shared_init(&obj->shared, scenario_b_deleter);
   obj->magic = 0xDEADBEEFCAFEBABEull;
@@ -335,7 +335,7 @@ static void *scenario_c_reader(void *vp) {
 
 static void scenario_c_reinstall(void) {
   printf("[C] same-GUID re-install + ABA boundary\n");
-  arts_guid_t guid = arts_guid_reserve(ARTS_DB, 0);
+  arts_guid_t guid = arts_guid_reserve(ARTS_GUID_DB, 0);
 
   uint32_t prev_gen = 0;
   arts_route_item_t *prev_item = NULL;

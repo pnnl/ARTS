@@ -104,7 +104,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_epoch_start(epoch);
 
   // Test 1: Create DB and populate the returned buffer directly.
-  arts_guid_t g1 = arts_guid_reserve(ARTS_DB, 0);
+  arts_guid_t g1 = arts_guid_reserve(ARTS_GUID_DB, 0);
   int *p1 = (int *)arts_db_create_with_guid(
       g1, 8 * sizeof(int), ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
   for (int i = 0; i < 8; i++) {
@@ -117,7 +117,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Test 2: Same pattern — the caller writes directly into the DB buffer,
   // so there is no separate source array to diverge from.
-  arts_guid_t g2 = arts_guid_reserve(ARTS_DB, 0);
+  arts_guid_t g2 = arts_guid_reserve(ARTS_GUID_DB, 0);
   int *p2 = (int *)arts_db_create_with_guid(
       g2, 2 * sizeof(int), ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
   p2[0] = 100;

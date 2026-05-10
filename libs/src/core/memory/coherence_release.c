@@ -30,7 +30,7 @@
 
 void arts_coh_local_transfer_now(struct arts_db_cache_s *cache) {
   unsigned int new_owner;
-  if (!arts_pending_rw_dequeue(cache->home->pending_rw, &new_owner)) {
+  if (!arts_home_lockreq_queue_pop(&cache->home->pending_rw, &new_owner)) {
     /* No queued waiter — home keeps the buffer.  Restore ownership
      * sentinel so the next local-rank acquire hits the fast path
      * (is_owner=true) and any foreign LOCK_REQ correctly drives an
@@ -38,12 +38,15 @@ void arts_coh_local_transfer_now(struct arts_db_cache_s *cache) {
      * complete with no successor — clear the in-flight gate so future
      * LOCK_REQs can re-arm. */
     cache->writer_count = 1;
-    cache->home->rw_holder = arts_global_rank_id;
-    arts_atomic_swap(&cache->home->invalidate_in_flight, 0);
+    atomic_store_explicit(&cache->home->rw_holder, arts_global_rank_id,
+                          memory_order_release);
+    atomic_store_explicit(&cache->home->invalidate_in_flight, 0,
+                          memory_order_release);
     return;
   }
-  cache->home->rw_holder = new_owner;
-  bool has_next = !arts_pending_rw_empty(cache->home->pending_rw);
+  atomic_store_explicit(&cache->home->rw_holder, new_owner,
+                        memory_order_release);
+  bool has_next = !arts_home_lockreq_queue_empty(&cache->home->pending_rw);
   struct arts_db_buffer_s *master = arts_coherence_acquire_buf(cache);
   /* master == NULL has two distinct causes: (a) a destroy raced past
    * the precheck and detached the buffer, or (b) sentinel DBs
@@ -54,7 +57,8 @@ void arts_coh_local_transfer_now(struct arts_db_cache_s *cache) {
     if (arts_atomic_read(&cache->destroy_state) != ARTS_DB_DESTROY_NONE) {
       arts_coh_send_destroy_notify(new_owner, cache->db_guid);
       /* Round terminated by destroy — clear gate; no successor to arm. */
-      arts_atomic_swap(&cache->home->invalidate_in_flight, 0);
+      atomic_store_explicit(&cache->home->invalidate_in_flight, 0,
+                            memory_order_release);
       return;
     }
     /* Sentinel DB: send GRANT with no data; receiver's drain still
@@ -62,8 +66,8 @@ void arts_coh_local_transfer_now(struct arts_db_cache_s *cache) {
     arts_coh_send_grant(new_owner, cache->db_guid, /*version=*/0, has_next,
                         NULL, 0);
   } else {
-    /* Design plan §local_transfer (inline grant_to): monotonic dedup.
-     * Source bytes from master->data (canonical FAM payload). */
+#ifndef ARTS_MEMORY_MODEL_LRC
+    /* RC: monotonic dedup via home->last_sent_version watermark. */
     uint64_t cur =
         arts_rank_u64_map_get(cache->home->last_sent_version, new_owner);
     if (cur >= master->version) {
@@ -75,6 +79,12 @@ void arts_coh_local_transfer_now(struct arts_db_cache_s *cache) {
       arts_coh_send_grant(new_owner, cache->db_guid, master->version, has_next,
                           master->data, cache->db_size);
     }
+#else
+    /* LRC: grant without home-side dedup; owner-side dedup via
+     * cache->last_sent_version handles redundant sends. */
+    arts_coh_send_grant(new_owner, cache->db_guid, master->version, has_next,
+                        master->data, cache->db_size);
+#endif
     arts_coherence_release_buf(cache, master);
   }
   /* Round complete: rw_holder advanced, GRANT dispatched.  Clear the
@@ -84,7 +94,8 @@ void arts_coh_local_transfer_now(struct arts_db_cache_s *cache) {
    * its own release path (local_transfer_now on home, RELEASE_OWNERSHIP
    * on a remote owner).  We do NOT send a fresh INVALIDATE_NOTICE
    * here: the chain is self-driving from this point. */
-  arts_atomic_swap(&cache->home->invalidate_in_flight, 0);
+  atomic_store_explicit(&cache->home->invalidate_in_flight, 0,
+                        memory_order_release);
 }
 
 void arts_coh_invalidate_transfer(struct arts_db_cache_s *cache) {
@@ -98,7 +109,8 @@ void arts_coh_invalidate_transfer(struct arts_db_cache_s *cache) {
   }
 }
 
-/* ===== writeback_ack_signal: monotonic-max on acked_seq =========== */
+/* ===== writeback_ack_signal: monotonic-max on acked_seq (RC only) === */
+#ifndef ARTS_MEMORY_MODEL_LRC
 
 void arts_coh_writeback_ack_signal(arts_guid_t db_guid, uint64_t seq) {
   /* The ACK handler runs on the network thread; the spinner is on a
@@ -146,6 +158,7 @@ static void await_writeback_ack(struct arts_db_cache_s *cache, uint64_t seq) {
     }
   }
 }
+#endif /* !ARTS_MEMORY_MODEL_LRC */
 
 /* ===== release_rw =================================================== */
 
@@ -169,6 +182,26 @@ void arts_coh_release_rw(struct arts_db_cache_s *cache) {
     new_v = arts_atomic_read_u64(&buf->version);
   }
 
+#ifdef ARTS_MEMORY_MODEL_LRC
+  /* LRC: drop our buffer ref BEFORE decrementing writer_count.
+   *
+   * Invariant: when writer_count reaches 0, no thread may hold an
+   * outstanding buffer ref acquired in this call, because a concurrent
+   * try_finalize_destroy (triggered by writer_count == 0) will free
+   * cache->buffer_pool.  Any subsequent release_buf write to that pool
+   * would corrupt freed memory.
+   *
+   * In RC this window does not exist because local_transfer_now restores
+   * the sentinel (writer_count = 1) when no pending waiter is queued,
+   * keeping writer_count above 0 until the next proper acquire.  LRC has
+   * no such sentinel restoration, so we must close the window here by
+   * releasing the ref before exposing writer_count == 0. */
+  if (buf != NULL) {
+    arts_coherence_release_buf(cache, buf);
+    buf = NULL;
+  }
+#endif
+
   unsigned int rest =
       arts_atomic_sub(&cache->writer_count, 1); /* post-decrement value */
 
@@ -179,28 +212,69 @@ void arts_coh_release_rw(struct arts_db_cache_s *cache) {
   if (rest == 0) {
     if (is_home) {
       if (!skip_network) {
+#ifdef ARTS_MEMORY_MODEL_LRC
+        /* LRC home-owner release: check if an INVALIDATE_NOTICE arrived while
+         * local writers were active and set transfer_pending.  If so, ship
+         * TRANSFER_OWNERSHIP now that we are the last releaser. */
+        if (atomic_load_explicit(&cache->transfer_pending,
+                                 memory_order_acquire) == 1u) {
+          atomic_store_explicit(&cache->transfer_pending, 0u,
+                                memory_order_release);
+          arts_coh_lrc_ship_transfer(cache);
+        }
+        /* If transfer_pending == 0: no INVALIDATE arrived yet; home retains
+         * ownership (rw_holder stays self) until a future LOCK_REQ arrives. */
+#else
         arts_coh_local_transfer_now(cache);
+#endif
       }
-    } else if (!skip_network && buf != NULL) {
-      /* R4: WRITEBACK_AND_TRANSFER + await ACK (design plan §release_rw). */
-      uint64_t my_seq = arts_atomic_add_u64(&cache->writeback_seq, 1);
-      unsigned int home_rank = arts_guid_get_rank(cache->db_guid);
-      arts_coh_send_writeback(home_rank, cache->db_guid, new_v, my_seq,
-                              ARTS_WB_AND_TRANSFER, buf->data, cache->db_size);
-      await_writeback_ack(cache, my_seq);
+    } else if (!skip_network) {
+#ifdef ARTS_MEMORY_MODEL_LRC
+      /* LRC R4 (non-home owner, rest == 0): the INVALIDATE_NOTICE handler set
+       * transfer_pending when writers were still active; now that we are the
+       * last releaser we must ship TRANSFER_OWNERSHIP if the flag is set.
+       * buf is always NULL here (dropped above before decrement), so the
+       * condition must not gate on buf != NULL. */
+      if (atomic_load_explicit(&cache->transfer_pending,
+                               memory_order_acquire) == 1u) {
+        atomic_store_explicit(&cache->transfer_pending, 0u,
+                              memory_order_release);
+        arts_coh_lrc_ship_transfer(cache);
+      }
+      /* If transfer_pending == 0: no INVALIDATE has arrived yet; this rank
+       * retains ownership (home's rw_holder still points here) until home
+       * sends the next INVALIDATE_NOTICE. */
+#else
+      if (buf != NULL) {
+        /* RC R4: WRITEBACK_AND_TRANSFER + await ACK. */
+        uint64_t my_seq = arts_atomic_add_u64(&cache->writeback_seq, 1);
+        unsigned int home_rank = arts_guid_get_rank(cache->db_guid);
+        arts_coh_send_writeback(home_rank, cache->db_guid, new_v, my_seq,
+                                ARTS_WB_AND_TRANSFER, buf->data, cache->db_size);
+        await_writeback_ack(cache, my_seq);
+      }
+#endif
     }
   } else if (!is_home && !skip_network && buf != NULL) {
-    /* R3: intermediate writeback so remote ROs see fresh data + await ACK. */
+#ifndef ARTS_MEMORY_MODEL_LRC
+    /* RC R3: intermediate writeback so remote ROs see fresh data + await ACK. */
     uint64_t my_seq = arts_atomic_add_u64(&cache->writeback_seq, 1);
     unsigned int home_rank = arts_guid_get_rank(cache->db_guid);
     arts_coh_send_writeback(home_rank, cache->db_guid, new_v, my_seq,
                             ARTS_WB_NORMAL, buf->data, cache->db_size);
     await_writeback_ack(cache, my_seq);
+#else
+    /* LRC R3: unreachable (buf == NULL after early release above). */
+    (void)new_v;
+#endif
   }
 
+#ifndef ARTS_MEMORY_MODEL_LRC
+  /* RC: release buffer ref after the writeback (which reads buf->data). */
   if (buf != NULL) {
     arts_coherence_release_buf(cache, buf);
   }
+#endif
 
   if (skip_network) {
     extern void arts_coh_try_finalize_destroy(struct arts_db_cache_s * cache);

@@ -86,9 +86,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramv;
   (void)depc;
   (void)depv;
-  arts_guid_t local_edt_guid = arts_guid_reserve(ARTS_EDT, 0);
-  arts_guid_t local_shutdown_guid = arts_guid_reserve(ARTS_EDT, 0);
-  arts_guid_t local_db_guid = arts_guid_reserve(ARTS_DB, 1);
+  arts_guid_t local_edt_guid = arts_guid_reserve(ARTS_GUID_EDT, 0);
+  arts_guid_t local_shutdown_guid = arts_guid_reserve(ARTS_GUID_EDT, 0);
+  arts_guid_t local_db_guid = arts_guid_reserve(ARTS_GUID_DB, 1);
 
   uint64_t acq_params[1];
   acq_params[0] = (uint64_t)local_shutdown_guid;

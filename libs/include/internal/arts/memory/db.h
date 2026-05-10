@@ -44,12 +44,12 @@ extern "C" {
 
 #include "arts/runtime_types.h"
 
-/* arts_type_t is 0-based (ARTS_EDT = 0, ARTS_LAST_TYPE = 4).  This array
- * is sized to ARTS_LAST_TYPE so GET_TYPE_NAME(t) works for every valid
- * type value. */
+/* arts_guid_kind_t is 0-based (ARTS_GUID_DB = 0, ARTS_GUID_LAST = 4).  This
+ * array is sized to ARTS_GUID_LAST so GET_TYPE_NAME(t) works for every valid
+ * kind value. */
 #define ARTS_TYPE_NAME                                                         \
-  const char *const arts_type_name[] = {"ARTS_EDT", "ARTS_EVENT",              \
-                                        "ARTS_EPOCH", "ARTS_DB"}
+  const char *const arts_type_name[] = {"ARTS_GUID_DB", "ARTS_GUID_EDT",       \
+                                        "ARTS_GUID_EVENT", "ARTS_GUID_EPOCH"}
 
 #define GET_TYPE_NAME(x) arts_type_name[x]
 
@@ -84,9 +84,9 @@ extern const char *const db_mode_name[];
 extern const char *const db_mode_internal_name[];
 
 #define ARTS_DB_TYPE_NAME                                                      \
-  const char *const arts_db_type_name[] = {"ARTS_DB_RC", "ARTS_DB_PIN",        \
-                                           "ARTS_DB_GPU_PIN",                  \
-                                           "ARTS_DB_GPU_LC", "ARTS_DB_CXL_LC"}
+  const char *const arts_db_type_name[] = {"ARTS_DB", "ARTS_DB_PIN",           \
+                                           "ARTS_DB_GPU_PIN", "ARTS_DB_GPU",   \
+                                           "ARTS_DB_CXL"}
 
 #define GET_DB_TYPE_NAME(x) arts_db_type_name[x]
 

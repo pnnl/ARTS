@@ -124,7 +124,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // arts_db_create_with_guid is local-only, so create on node 0 and get
   // from node 1 via arts_get_from_db.
   {
-    arts_guid_t reserved = arts_guid_reserve(ARTS_DB, 0);
+    arts_guid_t reserved = arts_guid_reserve(ARTS_GUID_DB, 0);
     int *init_data = (int *)arts_db_create_with_guid(
         reserved, DB_ELEMS * sizeof(int), ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE,
         NULL);

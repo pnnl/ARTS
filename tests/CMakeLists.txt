@@ -620,6 +620,22 @@ set_tests_properties(coherence_stress_dist PROPERTIES
     ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_2node.cfg"
 )
 
+# --- Mode-mismatch detection binary (no CTest entry — driven by run_mode_mismatch.sh) ---
+add_executable(coherence_mode_mismatch coherence_mode_mismatch.c)
+target_include_directories(coherence_mode_mismatch PRIVATE
+    ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR}
+    ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
+set_property(TARGET coherence_mode_mismatch PROPERTY POSITION_INDEPENDENT_CODE OFF)
+target_compile_options(coherence_mode_mismatch PRIVATE -fno-pie -fno-PIE)
+target_link_options(coherence_mode_mismatch PRIVATE -no-pie -fno-pie -fno-PIE)
+target_link_libraries(coherence_mode_mismatch PRIVATE
+    Threads::Threads ${RT_LIBRARY} ${M_LIBRARY} ${ANL_LIBRARY})
+if(TARGET arts_shared)
+    target_link_libraries(coherence_mode_mismatch PRIVATE arts_shared)
+elseif(TARGET arts_static)
+    target_link_libraries(coherence_mode_mismatch PRIVATE arts_static)
+endif()
+
 # --- GPU tests ---
 
 if(BUILD_CUDA_LIBRARY)

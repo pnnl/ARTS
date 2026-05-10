@@ -72,7 +72,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   /* Test 4: labeled-GUID event */
   {
-    arts_guid_t reserved = arts_guid_reserve(ARTS_EVENT, 0);
+    arts_guid_t reserved = arts_guid_reserve(ARTS_GUID_EVENT, 0);
     arts_event_hint_t h = ARTS_EVENT_HINT_ONCE;
     h.guid = reserved;
     arts_guid_t ev = arts_event_create(&h);

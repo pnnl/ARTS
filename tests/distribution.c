@@ -52,7 +52,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("[WARN] asserts are disabled. Verification will not run.\n");
 #endif
 
-  arts_block_dist_t *dist = init_block_distribution_block(64, 0, 2, ARTS_DB);
+  arts_block_dist_t *dist = init_block_distribution_block(64, 0, 2, ARTS_GUID_DB);
   assert(dist->num_vertices == 64);
   assert(dist->num_blocks == 2);
   assert(dist->block_sz == 32);
@@ -65,7 +65,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   assert(partition_end_distr(1, dist) == 63);
   free_distribution(dist);
 
-  dist = init_block_distribution_block(8, 0, 3, ARTS_DB);
+  dist = init_block_distribution_block(8, 0, 3, ARTS_GUID_DB);
   assert(dist->num_vertices == 8);
   assert(dist->num_blocks == 3);
   assert(dist->block_sz == 3);

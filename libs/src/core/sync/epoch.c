@@ -285,7 +285,7 @@ arts_epoch_t *create_epoch(arts_guid_t *guid, arts_guid_t edt_guid,
                            unsigned int slot) {
   INCREMENT_NUM_EPOCH_CREATE_BY(1);
   if (*guid == NULL_GUID) {
-    *guid = arts_guid_create_for_rank(arts_global_rank_id, ARTS_EPOCH);
+    *guid = arts_guid_create_for_rank(arts_global_rank_id, ARTS_GUID_EPOCH);
   }
 
   arts_epoch_t *epoch = (arts_epoch_t *)arts_calloc(1, sizeof(arts_epoch_t));
@@ -314,7 +314,7 @@ arts_epoch_t *create_epoch(arts_guid_t *guid, arts_guid_t edt_guid,
 bool arts_shutdown_epoch_create() {
   if (arts_node_info.auto_shutdown_guid) {
     arts_node_info.auto_shutdown_guid =
-        arts_guid_create_for_rank(0, ARTS_EPOCH);
+        arts_guid_create_for_rank(0, ARTS_GUID_EPOCH);
     arts_epoch_t *epoch =
         create_epoch(&arts_node_info.auto_shutdown_guid, NULL_GUID, 0);
     unsigned int total_workers = arts_get_workers_per_rank();
@@ -356,7 +356,7 @@ arts_guid_t arts_epoch_create(unsigned int rank, arts_guid_t finish_edt_guid,
   // created on all nodes assuming that each node goes through the
   // initializeEpoch code path. Pool assume the current host...
   if (!arts_node_info.ready_to_execute || rank != arts_global_rank_id) {
-    guid = arts_guid_create_for_rank(rank, ARTS_EPOCH);
+    guid = arts_guid_create_for_rank(rank, ARTS_GUID_EPOCH);
     create_epoch(&guid, finish_edt_guid, slot);
     if (!arts_node_info.ready_to_execute) {
       for (unsigned int i = 0; i < arts_global_rank_count; i++) {
@@ -535,18 +535,18 @@ void reduce_epoch(arts_guid_t epoch_guid, unsigned int active,
 arts_epoch_pool_t *create_epoch_pool(arts_guid_t *epoch_pool_guid,
                                      unsigned int pool_size,
                                      arts_guid_t *start_guid) {
-  /* the pool_guid still uses ARTS_EDT since arts_epoch_pool_t is
+  /* the pool_guid still uses ARTS_GUID_EDT since arts_epoch_pool_t is
    * a different struct (no ARTS_SHARED_FIELD).  Only individual epoch
-   * entries get the ARTS_EPOCH tag so lookup_epoch_safe + the route_table
+   * entries get the ARTS_GUID_EPOCH tag so lookup_epoch_safe + the route_table
    * free_item dispatcher route them correctly.  The pool itself is freed
    * explicitly in delete_epoch / clean_epoch_pool. */
   if (*epoch_pool_guid == NULL_GUID) {
-    *epoch_pool_guid = arts_guid_create_for_rank(arts_global_rank_id, ARTS_EDT);
+    *epoch_pool_guid = arts_guid_create_for_rank(arts_global_rank_id, ARTS_GUID_EDT);
   }
 
   if (*start_guid == NULL_GUID) {
     *start_guid =
-        arts_guid_reserve_range(ARTS_EPOCH, pool_size, arts_global_rank_id);
+        arts_guid_reserve_range(ARTS_GUID_EPOCH, pool_size, arts_global_rank_id);
   }
 
   arts_epoch_pool_t *epoch_pool = (arts_epoch_pool_t *)arts_calloc(
@@ -600,7 +600,7 @@ void delete_epoch(arts_guid_t epoch_guid, arts_epoch_t *epoch) {
   arts_route_table_release(epoch_guid);
 
   if (pool_guid) {
-    /* Pool wrapper still uses ARTS_EDT type tag (arts_epoch_pool_t is a
+    /* Pool wrapper still uses ARTS_GUID_EDT type tag (arts_epoch_pool_t is a
      * different struct that does NOT embed ARTS_SHARED_FIELD), so the
      * type-aware lookup_*_safe variants do not apply.  Documented
      * exception: pool storage is freed explicitly here / clean_epoch_pool
@@ -634,7 +634,7 @@ void delete_epoch(arts_guid_t epoch_guid, arts_epoch_t *epoch) {
       for (unsigned int i = 0; i < pool->size; i++) {
         arts_route_table_mark_delete(pool->pool[i].guid);
       }
-      /* Drop the pool's own route_table slot (ARTS_EDT-tagged, no
+      /* Drop the pool's own route_table slot (ARTS_GUID_EDT-tagged, no
        * shared.deleter) and free the storage. */
       arts_route_item_t *item = NULL;
       arts_route_table_reserve_or_lookup(pool_guid, &item);

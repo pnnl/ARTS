@@ -198,7 +198,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   /// Reserve GUID for data DB
 
   /// Create data DB and initialize to zeros
-  data_guid = arts_guid_reserve(ARTS_DB, 0);
+  data_guid = arts_guid_reserve(ARTS_GUID_DB, 0);
   size_t db_size = array_size * sizeof(uint64_t);
   arts_printf("Creating Data DB (guid: %lu, size: %zu bytes = %.2lf MB)\n",
               data_guid, db_size, (double)db_size / (1024.0 * 1024.0));

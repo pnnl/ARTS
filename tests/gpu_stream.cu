@@ -44,7 +44,7 @@
 
 #define SOMEARGS 10
 
-arts_guid_t local_db_create(void **addr, uint64_t size, arts_type_t mode,
+arts_guid_t local_db_create(void **addr, uint64_t size, arts_guid_kind_t mode,
                             arts_guid_t guid) {
   size_t db_size = size + sizeof(struct arts_db_s);
   //    void * ptr = malloc(db_size);

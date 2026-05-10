@@ -67,6 +67,7 @@ struct arts_oo_node_s {
 struct arts_oo_list_s {
   struct arts_oo_node_s *head;
   struct arts_oo_node_s *tail;
+  unsigned int drain_lock; /* serialize concurrent drain callers */
   struct arts_oo_node_s stub;
 };
 #else
@@ -78,6 +79,11 @@ struct arts_oo_node_s {
 struct arts_oo_list_s {
   _Atomic(struct arts_oo_node_s *) head;
   _Atomic(struct arts_oo_node_s *) tail;
+  /* Drain serialization: multiple callers (installer + late-pusher recheck)
+   * may race to call arts_oo_list_drain on the same list.  Only one winner
+   * runs the single-consumer pop loop at a time; all others return early.
+   * 0 = unlocked, 1 = a drainer is running. */
+  _Atomic(unsigned int) drain_lock;
   struct arts_oo_node_s stub;
 };
 #endif

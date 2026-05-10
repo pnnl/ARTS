@@ -148,7 +148,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_edt_create(param_edt, 3, params, 0, &(arts_edt_hint_t){.rank = 0});
 
   // 3) Create with pre-reserved GUID.
-  arts_guid_t reserved = arts_guid_reserve(ARTS_EDT, 0);
+  arts_guid_t reserved = arts_guid_reserve(ARTS_GUID_EDT, 0);
   uint64_t guid_param = (uint64_t)reserved;
   arts_edt_create(guid_edt, 1, &guid_param, 0, &(arts_edt_hint_t){.guid = reserved});
 

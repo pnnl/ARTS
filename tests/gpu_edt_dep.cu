@@ -120,7 +120,7 @@ void verify_nodep(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   /* Now run test 1 */
   unsigned int node_id = arts_get_current_rank();
   unsigned int *addr = NULL;
-  arts_guid_t db_guid = arts_guid_reserve(ARTS_DB, 0);
+  arts_guid_t db_guid = arts_guid_reserve(ARTS_GUID_DB, 0);
   addr = (unsigned int *)arts_db_create_with_guid(
       db_guid, sizeof(unsigned int) * N_ELEMENTS, ARTS_DB_GPU_PIN, NULL, NULL);
   for (unsigned int i = 0; i < N_ELEMENTS; i++) {

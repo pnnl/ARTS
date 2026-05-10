@@ -152,7 +152,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Test 4: pre-reserved GUID via hint->guid (defaults = ONCE-equivalent).
   {
-    arts_guid_t reserved_ev = arts_guid_reserve(ARTS_EVENT, 0);
+    arts_guid_t reserved_ev = arts_guid_reserve(ARTS_GUID_EVENT, 0);
     arts_event_hint_t h4 = ARTS_EVENT_HINT_DEFAULTS;
     h4.guid = reserved_ev;
     arts_event_create(&h4);

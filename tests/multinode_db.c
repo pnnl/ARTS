@@ -152,7 +152,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // via dependency wiring (cross-node ptr delivery is not a thing).
   unsigned int count = total * 4;
   arts_guid_t rr_range =
-      arts_guid_reserve_range(ARTS_DB, count, ARTS_HINT_ROUND_ROBIN);
+      arts_guid_reserve_range(ARTS_GUID_DB, count, ARTS_HINT_ROUND_ROBIN);
 
   uint64_t rr_params[2];
   rr_params[0] = (uint64_t)total;

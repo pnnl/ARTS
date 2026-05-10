@@ -77,14 +77,14 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // This is the node we are going to pin to
   node = strtol(argv[1], NULL, 10);
   // Allocate some DB to test arts_db_create_with_guid
-  some_db_guid = arts_guid_reserve(ARTS_DB, node);
+  some_db_guid = arts_guid_reserve(ARTS_GUID_DB, node);
 
   unsigned int node_id = arts_get_current_rank();
   if (node_id == node) {
     int *ptr = NULL;
     // Set pin to true to pin to node given by command line
     // It is pinned to the node creating the DB
-    arts_guid_t db_guid = arts_guid_reserve(ARTS_DB, 0);
+    arts_guid_t db_guid = arts_guid_reserve(ARTS_GUID_DB, 0);
     ptr = (int *)arts_db_create_with_guid(db_guid, sizeof(unsigned int),
                                           ARTS_DB_PIN, ARTS_DB_PROP_NONE, NULL);
     *ptr = 1234;

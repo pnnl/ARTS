@@ -130,7 +130,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("=== coherence_multi_writer_same_addr (N=%d) ===\n", N);
 
   int *data;
-  arts_guid_t db = arts_db_create((void **)&data, sizeof(int), ARTS_DB_RC,
+  arts_guid_t db = arts_db_create((void **)&data, sizeof(int), ARTS_DB,
                                   ARTS_DB_PROP_NONE, NULL);
   *data = 0;
 

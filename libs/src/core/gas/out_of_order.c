@@ -362,7 +362,6 @@ void arts_out_of_order_event_satisfy_slot(arts_guid_t wait_on,
   event->event_guid = event_guid;
   event->data_guid = data_guid;
   event->slot = slot;
-  bool res;
   if (force) {
     arts_route_table_add_oo_existing(wait_on, event, false);
   } else {

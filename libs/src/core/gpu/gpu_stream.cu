@@ -293,7 +293,7 @@ void arts_wrap_up(cudaStream_t stream, cudaError_t status, void *data) {
       }
       // True says to mark it for deletion... Change this to false to further
       // delay delete!
-      //  bool mark_delete = (arts_guid_get_type(depv[i].guid) !=
+      //  bool mark_delete = (arts_guid_get_kind(depv[i].guid) !=
       //  ARTS_DB_GPU_PIN)
       //  && arts_node_info.free_db_after_gpu_run;
       bool mark_delete = arts_node_info.free_db_after_gpu_run;
@@ -403,7 +403,7 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
       void *data_ptr = arts_gpu_route_table_lookup_db(
           depv[i].guid, arts_gpu->device, &gpu_version, &time_stamp);
       uint64_t size = db->header.size;
-      uint64_t alloc_size = (db_subtype == ARTS_DB_GPU_LC) ? (size * 2) : size;
+      uint64_t alloc_size = (db_subtype == ARTS_DB_GPU) ? (size * 2) : size;
       if (!data_ptr) {
         bool successful_add = false;
         ARTS_DEBUG("WRAPPER SIZE: %lu\n", alloc_size);
@@ -416,7 +416,7 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
                      alloc_size, arts_gpu->device, db_mode_name[depv[i].mode]);
           data_ptr = arts_cuda_malloc(alloc_size);
           void *src = (void *)db;
-          if (db_subtype == ARTS_DB_GPU_LC) {
+          if (db_subtype == ARTS_DB_GPU) {
             src = make_lc_shadow_copy(db);
           }
           if (depv[i].mode == DB_MODE_LC_NO_COPY ||
@@ -524,17 +524,17 @@ void arts_gpu_stream_busy(arts_gpu_t *arts_gpu) {
 }
 
 void free_gpu_item(arts_route_item_t *item) {
-  arts_type_t type = arts_guid_get_type(item->key);
+  arts_guid_kind_t type = arts_guid_get_kind(item->key);
   arts_item_wrapper_t *wrapper = (arts_item_wrapper_t *)item->data;
-  if (type == ARTS_EDT) {
+  if (type == ARTS_GUID_EDT) {
     arts_gpu_clean_up_t *host_gc_ptr = (arts_gpu_clean_up_t *)wrapper->realData;
     ARTS_DEBUG("FREEING DEV PTR: %p\n", host_gc_ptr->devClosure);
     arts_cuda_free(host_gc_ptr->devClosure);
     ARTS_DEBUG("FREEING HOST PTR: %p\n", host_gc_ptr);
     arts_cuda_free_host(host_gc_ptr);
-  } else if (type == ARTS_DB) {
+  } else if (type == ARTS_GUID_DB) {
     struct arts_db_s *db = arts_route_table_lookup_db_safe(item->key);
-    if (db && db->db_type == ARTS_DB_GPU_LC) {
+    if (db && db->db_type == ARTS_DB_GPU) {
       unsigned int size = db->header.size;
       struct arts_db_s *temp_space =
           (struct arts_db_s *)arts_malloc_align(size, 16);
@@ -712,7 +712,7 @@ uint64_t get_db_size_needed(uint32_t depc, arts_edt_dep_t *depv) {
     if (depv[i].ptr) {
       struct arts_db_s *db = (struct arts_db_s *)depv[i].ptr - 1;
       size += db->header.size;
-      if (db->db_type == ARTS_DB_GPU_LC) {
+      if (db->db_type == ARTS_DB_GPU) {
         size += db->header.size;
       }
     }
