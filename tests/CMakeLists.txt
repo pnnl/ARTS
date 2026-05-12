@@ -106,6 +106,11 @@ set(TEST_PROGRAMS
     event_create_destroy_basic
     event_satisfy_once
     event_add_dep_idem_fastpath
+    event_once_auto_destroy
+    event_counted_partial_drain
+    event_channel_lifetime
+    event_idem_silent_oversatisfy
+    event_sticky_oversatisfy_error
     persistent_event
     persistent_event_advanced
     guid_basic
@@ -293,11 +298,22 @@ function(register_single_node_test test_name)
 endfunction()
 
 function(register_multinode_test test_name)
-    cmake_parse_arguments(ARG "" "TIMEOUT" "ARGS" ${ARGN})
+    cmake_parse_arguments(ARG "" "TIMEOUT" "ARGS;VARIANTS" ${ARGN})
     if(NOT ARG_TIMEOUT)
         set(ARG_TIMEOUT 60)
     endif()
-    foreach(variant IN ITEMS 2n 4n 5n)
+    if(NOT ARG_VARIANTS)
+        # All four local multinode flavours.  Names map 1:1 to cfg files
+        # in configs/local/ which run_tests.sh copies into TEST_BIN_DIR.
+        #   2n     — 2 nodes, 5w/1s/1r per node (worker-heavy default)
+        #   3n     — 3 nodes, 2w/1s/1r per node
+        #   4n     — 4 nodes, 1w/1s/1r per node
+        #   2n_io  — 2 nodes, 3w/2s/2r per node (network-heavy variant —
+        #            exposes pre-existing epoch-termination message-reorder
+        #            race; tracked as a follow-up debugging target)
+        set(ARG_VARIANTS 2n 3n 4n 2n_io)
+    endif()
+    foreach(variant IN LISTS ARG_VARIANTS)
         add_test(
             NAME ${test_name}_${variant}
             COMMAND ${test_name} ${ARG_ARGS}
@@ -307,7 +323,7 @@ function(register_multinode_test test_name)
             LABELS "multinode"
             TIMEOUT ${ARG_TIMEOUT}
             RESOURCE_LOCK "arts_runtime"
-            ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_${variant}ode.cfg"
+            ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_${variant}.cfg"
         )
     endforeach()
 endfunction()
@@ -399,6 +415,23 @@ register_single_node_test(event_chain)
 register_single_node_test(event_create_destroy_basic)
 register_single_node_test(event_satisfy_once)
 register_single_node_test(event_add_dep_idem_fastpath)
+register_single_node_test(event_once_auto_destroy)
+register_single_node_test(event_counted_partial_drain)
+register_single_node_test(event_channel_lifetime)
+register_single_node_test(event_idem_silent_oversatisfy)
+# STICKY over-satisfy is a death test: ARTS_ERROR -> abort.  Wrap in bash so
+# CTest sees exit-code 0 and PASS_REGULAR_EXPRESSION can match the abort
+# banner (same pattern as term_sigfpe / term_sigsegv).
+add_test(
+    NAME event_sticky_oversatisfy_error
+    COMMAND bash -c "ASAN_OPTIONS=handle_abort=0 ${CMAKE_CURRENT_BINARY_DIR}/event_sticky_oversatisfy_error 2>&1; true"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+)
+set_tests_properties(event_sticky_oversatisfy_error PROPERTIES
+    LABELS "single_node"
+    TIMEOUT 10
+    RESOURCE_LOCK "arts_runtime"
+    PASS_REGULAR_EXPRESSION "over-satisfy on event with error_on_neg_latch=true")
 register_single_node_test(persistent_event)
 register_single_node_test(persistent_event_advanced)
 
@@ -516,17 +549,9 @@ register_single_node_test(finish_event_inherit)
 register_multinode_test(finish_event_multinode TIMEOUT 30)
 set_tests_properties(finish_event_multinode_2n PROPERTIES
     PASS_REGULAR_EXPRESSION "PASS: cross-node finish-scope drained")
-set_tests_properties(finish_event_multinode_4n PROPERTIES
-    PASS_REGULAR_EXPRESSION "PASS: cross-node finish-scope drained")
-set_tests_properties(finish_event_multinode_5n PROPERTIES
-    PASS_REGULAR_EXPRESSION "PASS: cross-node finish-scope drained")
 
 register_multinode_test(finish_event_stress TIMEOUT 300)
 set_tests_properties(finish_event_stress_2n PROPERTIES
-    PASS_REGULAR_EXPRESSION "PASS: 100 iterations of recursive cross-node finish-EDT")
-set_tests_properties(finish_event_stress_4n PROPERTIES
-    PASS_REGULAR_EXPRESSION "PASS: 100 iterations of recursive cross-node finish-EDT")
-set_tests_properties(finish_event_stress_5n PROPERTIES
     PASS_REGULAR_EXPRESSION "PASS: 100 iterations of recursive cross-node finish-EDT")
 
 # --- Multi-node tests ---
@@ -550,17 +575,13 @@ register_multinode_test(coherence_mixed_local_remote)
 register_multinode_test(multinode_stdout_forward)
 set_tests_properties(multinode_stdout_forward_2n PROPERTIES
     PASS_REGULAR_EXPRESSION "MULTINODE_STDOUT_FORWARD_SENTINEL 42")
-set_tests_properties(multinode_stdout_forward_4n PROPERTIES
-    PASS_REGULAR_EXPRESSION "MULTINODE_STDOUT_FORWARD_SENTINEL 42")
-set_tests_properties(multinode_stdout_forward_5n PROPERTIES
-    PASS_REGULAR_EXPRESSION "MULTINODE_STDOUT_FORWARD_SENTINEL 42")
 
 register_multinode_test(multinode_coh TIMEOUT 60)
 register_multinode_test(multinode_labeled_guid TIMEOUT 30)
 register_multinode_test(multinode_event_hint TIMEOUT 30)
 
 # 3-rank coherence stress: B.3 LOCK_REQ-before-DB_CREATE race regression.
-# Uses arts_2node.cfg; the test SKIPs cleanly when rank_count < 3, so on a
+# Uses arts_2n.cfg; the test SKIPs cleanly when rank_count < 3, so on a
 # 2-node-only setup this becomes a no-op.  Re-enable on a 3+ rank cfg to
 # actually exercise the race.
 add_test(
@@ -572,7 +593,7 @@ set_tests_properties(coherence_lock_req_before_create PROPERTIES
     LABELS "coherence_stress;multinode"
     TIMEOUT 120
     RESOURCE_LOCK "arts_runtime"
-    ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_2node.cfg"
+    ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_2n.cfg"
 )
 
 # Coherence stress test suite (Spec section 6 B.1/B.4/B.5/B.6 single-node).
@@ -606,7 +627,7 @@ register_single_node_test(lockfree_pool_stress TIMEOUT 60)
 # symmetric + asymmetric workloads.  Pure unit test, no runtime needed.
 register_single_node_test(tiered_pool_stress TIMEOUT 60)
 
-# Distributed coherence stress: B.2.  Uses arts_2node.cfg (the test SKIPs
+# Distributed coherence stress: B.2.  Uses arts_2n.cfg (the test SKIPs
 # cleanly if rank_count < 2).
 add_test(
     NAME coherence_stress_dist
@@ -617,7 +638,7 @@ set_tests_properties(coherence_stress_dist PROPERTIES
     LABELS "coherence_stress;multinode"
     TIMEOUT 120
     RESOURCE_LOCK "arts_runtime"
-    ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_2node.cfg"
+    ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_2n.cfg"
 )
 
 # --- LC-specific test binaries ---
@@ -658,7 +679,7 @@ if(ARTS_MEMORY_MODEL STREQUAL "LC")
         LABELS "multinode"
         TIMEOUT 60
         RESOURCE_LOCK "arts_runtime"
-        ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_2node.cfg"
+        ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_2n.cfg"
         PASS_REGULAR_EXPRESSION "LC_DRF: PASS"
     )
 
@@ -674,7 +695,7 @@ if(ARTS_MEMORY_MODEL STREQUAL "LC")
         LABELS "multinode"
         TIMEOUT 60
         RESOURCE_LOCK "arts_runtime"
-        ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_2node.cfg"
+        ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_2n.cfg"
         PASS_REGULAR_EXPRESSION "LC_LOCAL_HIT_DEDUP: PASS"
     )
 

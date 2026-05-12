@@ -104,7 +104,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Test 1: Event1(latch=1) → Event2(latch=1) → EDT.
   arts_guid_t ev1 = arts_event_create(NULL);
   arts_guid_t ev2 = arts_event_create(NULL);
-  arts_guid_t edt1 = arts_edt_create(chain_end, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_guid_t edt1 = arts_edt_create(
+      chain_end, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
 
   // Wire: ev1 fires → satisfies ev2 slot 0 → ev2 fires → satisfies edt1 slot 0.
   arts_add_dependence(ev1, ev2, ARTS_EVENT_LATCH_DECR_SLOT, DB_MODE_RW);
@@ -119,7 +120,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_event_hint_t fan_in_hint = ARTS_EVENT_HINT_DEFAULTS;
   fan_in_hint.latch = 2;
   arts_guid_t ev_c = arts_event_create(&fan_in_hint);
-  arts_guid_t edt2 = arts_edt_create(fan_in_end, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_guid_t edt2 = arts_edt_create(
+      fan_in_end, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
 
   arts_add_dependence(ev_a, ev_c, ARTS_EVENT_LATCH_DECR_SLOT, DB_MODE_RW);
   arts_add_dependence(ev_b, ev_c, ARTS_EVENT_LATCH_DECR_SLOT, DB_MODE_RW);
@@ -136,19 +138,22 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_db_release(db);
 
   arts_guid_t ev3 = arts_event_create(NULL);
-  arts_guid_t edt3 = arts_edt_create(chain_data_end, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_guid_t edt3 =
+      arts_edt_create(chain_data_end, 0, NULL, 1,
+                      &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   arts_add_dependence(ev3, edt3, 0, DB_MODE_RW);
   // Fire with data.
   arts_event_satisfy_slot(ev3, db, ARTS_EVENT_LATCH_DECR_SLOT);
 
   // Test 4: Already-fired IDEM-equivalent event → wire EDT after fire →
   // add_dependence fast path delivers immediate signal.
-  arts_event_hint_t idem_hint = ARTS_EVENT_HINT_DEFAULTS;
-  idem_hint.auto_destroy = false;
+  arts_event_hint_t idem_hint = ARTS_EVENT_HINT_IDEMPOTENT;
   arts_guid_t ev4 = arts_event_create(&idem_hint);
   arts_event_satisfy_slot(ev4, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
   // Now wire after fire — fast path self-signals.
-  arts_guid_t edt4 = arts_edt_create(already_fired_end, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_guid_t edt4 =
+      arts_edt_create(already_fired_end, 0, NULL, 1,
+                      &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   arts_add_dependence(ev4, edt4, 0, DB_MODE_RW);
   arts_event_destroy(ev4);
 

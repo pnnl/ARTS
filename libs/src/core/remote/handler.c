@@ -53,7 +53,9 @@
 #include "arts/system/threads.h"
 #include "arts/transport/protocol.h"
 #include "arts/utils/atomics.h"
+#include "arts/utils/lockfree_lifo.h" /* arts_lf_stack_init */
 #include "arts/utils/malloc.h"
+#include "arts/utils/mpsc.h" /* arts_mpsc_init */
 
 static void send_remote_add_dependence_packet(unsigned int message_type,
                                               arts_guid_t source,
@@ -235,6 +237,25 @@ void arts_remote_handle_event_move(void *ptr) {
       (struct arts_event_s *)arts_malloc_align(size, 16);
 
   memcpy(mem_packet, packet + 1, size);
+  /* Re-init local-only pointer state.  Event move only happens at create
+   * time (queues / stack always empty at source), so re-initing to empty
+   * is correct.  The sender-rank heap pointers in the wire image are
+   * meaningless here. */
+  if (mem_packet->is_channel) {
+    arts_mpsc_init(&mem_packet->channel.data_queue);
+    arts_mpsc_init(&mem_packet->channel.dep_queue);
+    atomic_store_explicit(&mem_packet->channel.nb_sat, 0u,
+                          memory_order_relaxed);
+    atomic_store_explicit(&mem_packet->channel.nb_deps, 0u,
+                          memory_order_relaxed);
+    atomic_store_explicit(&mem_packet->channel.draining, 0,
+                          memory_order_relaxed);
+  } else {
+    arts_lf_stack_init(&mem_packet->simple.deps_stack);
+    /* latch / life_count / fired / data preserved from sender's
+     * post-init state. */
+  }
+
   /* add_item_race installs the event under the route_table lock; on
    * success it also fires OoO replay internally, so no extra fire_oo
    * is required.  On rejection (another rank won the install race),

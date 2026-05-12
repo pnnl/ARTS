@@ -404,87 +404,100 @@ typedef enum {
  * @defgroup event_hint Event creation hint
  *
  * Every ARTS event is a single generic type whose behavior is determined by
- * the hint passed at create time.  Defaults compose into the OCR ONCE_T
- * semantic (latch=1, fire-and-destroy).  All other OCR flavors (IDEM,
- * STICKY, LATCH, COUNTED, CHANNEL) are realized by overriding individual
- * fields.  See docs/event-refactor/spec.md for the complete mapping.
+ * the hint passed at create time.  Two orthogonal counters drive the
+ * lifecycle:
+ *
+ *   - `latch` — initial trigger counter.  Decrements per LATCH_DECR satisfy;
+ *     when it reaches <= 0 the event fires.  Default 1 (ONCE-style).
+ *   - `life_count` — initial life counter.  Decrements (saturating at 0)
+ *     per `add_dependence`.  When both `latch <= 0 && life_count <= 0`,
+ *     the event is destroyed.  Default 0 (destroy immediately on fire).
+ *
+ *   - `error_on_neg_latch` — strict mode.  If true, a satisfy that would
+ *     drive latch below zero raises ARTS_ERROR (STICKY).  If false, the
+ *     extra satisfy is a silent no-op (IDEM).
+ *   - `channel` — multi-fire FIFO mode.  All other fields except `rank` and
+ *     `guid` are ignored.
  *  @{ */
 typedef struct {
   /** Target node rank.  ARTS_HINT_CURRENT_RANK = current node (default). */
   unsigned int rank;
-  /** Initial latch counter.  Default 1 (OCR ONCE/IDEM/STICKY); 0 for an
-   *  immediately-firing event; LATCH events may use any signed integer
-   *  (counter is decremented on DECR satisfies, incremented on INCR; fire
-   *  occurs when the counter reaches zero). */
+  /** Initial latch counter.  Default 1.  Fires at <= 0 after LATCH_DECR
+   *  satisfies (one decrement per satisfy). */
   int32_t latch;
-  /** Deps consumed per fire round.  Default 1.  CHANNEL events spec-clamped
-   *  to 1 (OCR 1.2 §B.5.2). */
-  uint32_t nb_deps_required;
-  /** Hard ceiling on total waiter registrations.  When the count reaches 0,
-   *  the event is destroyed regardless of @c auto_destroy.  Default
-   *  UINT32_MAX (effectively unlimited).  COUNTED uses params.nbDeps. */
-  uint32_t max_nb_deps;
-  /** If true, destroy the event after the terminal fire+drain.  Default
-   *  true (OCR ONCE_T).  IDEM/STICKY set false. */
-  bool auto_destroy;
-  /** If false, a satisfy that would push curr_latch below zero raises
-   *  ARTS_ERROR.  Default true.  STICKY sets false. */
-  bool negative_latch_allowed;
-  /** If true, the event re-fires whenever (latch<=0 && deps<=0); satisfies
-   *  and deps are buffered in FIFO mpsc queues so producer-before-consumer
-   *  ordering is preserved.  Default false.  CHANNEL sets true. */
-  bool multiple_fire;
+  /** Initial life counter.  Default 0.  Decrements (saturating at 0) per
+   *  `arts_add_dependence`.  Event destroyed when both latch <= 0 AND
+   *  life_count <= 0. */
+  int32_t life_count;
+  /** If true, a satisfy that would drive curr_latch below zero raises
+   *  ARTS_ERROR (STICKY-style strict over-satisfy detection).  If false,
+   *  such satisfies are silent no-ops (IDEM-style tolerance).  Default
+   *  false. */
+  bool error_on_neg_latch;
+  /** If true, this is a CHANNEL event: multi-fire FIFO with paired
+   *  satisfy/dep queues, no auto-destroy.  All other hint fields except
+   *  `rank` and `guid` are ignored.  Default false. */
+  bool channel;
   /** Pre-reserved GUID.  NULL_GUID = auto-allocate (default).  When non-zero,
    *  the GUID's rank field is authoritative and overrides @c rank above. */
   arts_guid_t guid;
 } arts_event_hint_t;
 
-/** Internal helper — full-field designated initializer used by every
- *  specialization below.  Six positional args correspond to the fields
- *  that vary across event flavors (rank/guid stay at defaults). */
-#define ARTS_EVENT_HINT_BASE(latch_, deps_, max_, ad_, neg_, mf_)              \
+/** Default values: ONCE semantic (single satisfy fires + destroys). */
+#define ARTS_EVENT_HINT_DEFAULTS                                               \
   ((arts_event_hint_t){.rank = ARTS_HINT_CURRENT_RANK,                         \
-                       .latch = (latch_),                                      \
-                       .nb_deps_required = (deps_),                            \
-                       .max_nb_deps = (max_),                                  \
-                       .auto_destroy = (ad_),                                  \
-                       .negative_latch_allowed = (neg_),                       \
-                       .multiple_fire = (mf_),                                 \
+                       .latch = 1,                                             \
+                       .life_count = 0,                                        \
+                       .error_on_neg_latch = false,                            \
+                       .channel = false,                                       \
                        .guid = NULL_GUID})
 
-/** OCR ONCE_T — fire-and-destroy.  Single satisfy fires + auto-destroys. */
-#define ARTS_EVENT_HINT_ONCE                                                   \
-  ARTS_EVENT_HINT_BASE(1, 1, UINT32_MAX, true, true, false)
+/** OCR ONCE_T — single fire, auto-destroy.  Default hint. */
+#define ARTS_EVENT_HINT_ONCE ARTS_EVENT_HINT_DEFAULTS
 
-/** Default hint == ONCE semantic. */
-#define ARTS_EVENT_HINT_DEFAULTS ARTS_EVENT_HINT_ONCE
-
-/** OCR IDEM_T — once-fire, persistent.  Late add_dependence delivers
- *  immediately from the stored data slot.  Subsequent satisfies are
- *  silent no-ops. */
+/** OCR IDEM_T — persistent; late binders deliver from stored data,
+ *  subsequent satisfies are silent no-ops. */
 #define ARTS_EVENT_HINT_IDEMPOTENT                                             \
-  ARTS_EVENT_HINT_BASE(1, 1, UINT32_MAX, false, true, false)
+  ((arts_event_hint_t){.rank = ARTS_HINT_CURRENT_RANK,                         \
+                       .latch = 1,                                             \
+                       .life_count = INT32_MAX,                                \
+                       .error_on_neg_latch = false,                            \
+                       .channel = false,                                       \
+                       .guid = NULL_GUID})
 
-/** OCR STICKY_T — like IDEM but over-satisfy (latch below zero) aborts. */
+/** OCR STICKY_T — like IDEM but over-satisfy aborts via ARTS_ERROR. */
 #define ARTS_EVENT_HINT_STICKY                                                 \
-  ARTS_EVENT_HINT_BASE(1, 1, UINT32_MAX, false, false, false)
+  ((arts_event_hint_t){.rank = ARTS_HINT_CURRENT_RANK,                         \
+                       .latch = 1,                                             \
+                       .life_count = INT32_MAX,                                \
+                       .error_on_neg_latch = true,                             \
+                       .channel = false,                                       \
+                       .guid = NULL_GUID})
 
-/** OCR LATCH_T — counter event.  Argument is the initial counter value
- *  (signed); negative values are legal and represent prefires.  Fire
- *  occurs when the counter reaches zero via DECR satisfies. */
+/** OCR LATCH_T — counter event.  Argument is the initial counter value;
+ *  fires when curr_latch reaches <= 0 via DECR satisfies. */
 #define ARTS_EVENT_HINT_LATCH(counter_init)                                    \
-  ARTS_EVENT_HINT_BASE((counter_init), 1, UINT32_MAX, true, true, false)
+  ((arts_event_hint_t){.rank = ARTS_HINT_CURRENT_RANK,                         \
+                       .latch = (counter_init),                                \
+                       .life_count = 0,                                        \
+                       .error_on_neg_latch = false,                            \
+                       .channel = false,                                       \
+                       .guid = NULL_GUID})
 
-/** OCR COUNTED_T — fire once after exactly @c nb_deps_max consumers have
- *  registered + satisfy has occurred.  Argument is the lifetime cap. */
-#define ARTS_EVENT_HINT_COUNTED(nb_deps_max)                                   \
-  ARTS_EVENT_HINT_BASE(1, 1, (nb_deps_max), true, true, false)
+/** OCR COUNTED_T — fires once, then waits for `nb_deps` add_dependence
+ *  registrations before auto-destroying.  Argument is the dep count. */
+#define ARTS_EVENT_HINT_COUNTED(nb_deps)                                       \
+  ((arts_event_hint_t){.rank = ARTS_HINT_CURRENT_RANK,                         \
+                       .latch = 1,                                             \
+                       .life_count = (nb_deps),                                \
+                       .error_on_neg_latch = false,                            \
+                       .channel = false,                                       \
+                       .guid = NULL_GUID})
 
-/** OCR CHANNEL_T — multi-fire FIFO event.  nbSat/nbDeps are spec-clamped
- *  to 1 (OCR 1.2 §B.5.2 limitation).  maxGen is implementation-driven —
- *  ARTS scales unbounded via mpsc linked lists. */
+/** OCR CHANNEL_T — multi-fire FIFO event.  No auto-destroy. */
 #define ARTS_EVENT_HINT_CHANNEL                                                \
-  ARTS_EVENT_HINT_BASE(1, 1, UINT32_MAX, false, true, true)
+  ((arts_event_hint_t){                                                        \
+      .rank = ARTS_HINT_CURRENT_RANK, .channel = true, .guid = NULL_GUID})
 /** @} */
 
 /* ========================================================================= */

@@ -140,11 +140,20 @@ struct arts_dependent_list_s {
 struct arts_event_dep_s;
 
 /** Internal event descriptor — single generic type, hint-driven behavior.
- *  Configuration fields are immutable after init; dynamic fields are
- *  atomics.
+ *  The `is_channel` discriminator selects which union arm is active.
+ *
+ *  Non-CHANNEL semantics (`is_channel == 0`):
+ *    - `latch` decrements per LATCH_DECR satisfy; fires at <= 0.
+ *    - `life_count` decrements (saturating at 0) per add_dependence.
+ *    - Destroy when latch <= 0 AND life_count <= 0.
+ *    - `error_on_neg_latch`: strict over-satisfy mode (STICKY).
+ *
+ *  CHANNEL semantics (`is_channel == 1`):
+ *    - `nb_sat` increments per satisfy; `nb_deps` increments per add_dep.
+ *    - Drainer pops one from each queue, decrements both counters, signals.
+ *    - No auto-destroy; only explicit `arts_event_destroy`.
  *
  *  Two declarations: the C path uses C11 `_Atomic`; the C++/nvcc path
- *  (this header is reached transitively from .cu files via arts_db_s)
  *  drops the qualifier so the layout is visible without requiring C11
  *  atomics — same approach as memory/coherence.h. */
 #ifdef __cplusplus
@@ -152,30 +161,20 @@ struct arts_event_s {
   ARTS_SHARED_FIELD;           /* shared_t — first member, always */
   struct arts_header_s header; /* type=ARTS_GUID_EVENT */
 
-  /* Configuration snapshot (immutable after arts_event_create_internal). */
-  int32_t init_latch; /* signed; LATCH may start negative */
-  uint32_t init_nb_deps_required;
-  uint32_t max_nb_deps;
-  uint8_t auto_destroy;
-  uint8_t negative_latch_allowed;
-  uint8_t multiple_fire;
-  uint8_t _pad0;
+  uint8_t is_channel; /* discriminator: 0=simple, 1=channel */
 
-  /* Dynamic counters. */
-  int32_t curr_latch;
-  int32_t nb_deps_left;
-  uint32_t max_deps_left;
-  bool fired;
-
-  /* Discriminated storage by `multiple_fire` (see docs/event-refactor/spec.md
-   * §2.1 / §3).  In C++ TUs the atomic / mpsc qualifiers are dropped so
-   * struct layout is visible to nvcc — same trick used elsewhere. */
   union {
     struct {
+      uint8_t error_on_neg_latch; /* immutable hint flag */
+      int32_t latch;
+      int32_t life_count;
+      bool fired;
       arts_guid_t data;
       arts_lf_stack_t deps_stack;
     } simple;
     struct {
+      uint32_t nb_sat;
+      uint32_t nb_deps;
       arts_mpsc_t data_queue;
       arts_mpsc_t dep_queue;
       uint8_t draining;
@@ -187,42 +186,20 @@ struct arts_event_s {
   ARTS_SHARED_FIELD;           /* shared_t — first member, always */
   struct arts_header_s header; /* type=ARTS_GUID_EVENT */
 
-  /* Configuration snapshot (immutable after arts_event_create_internal). */
-  int32_t init_latch;             /* signed; LATCH may start negative */
-  uint32_t init_nb_deps_required; /* deps consumed per fire (CHANNEL spec=1) */
-  uint32_t max_nb_deps;           /* lifetime cap on total registrations */
-  uint8_t auto_destroy;
-  uint8_t negative_latch_allowed;
-  uint8_t multiple_fire;
-  uint8_t _pad0;
+  uint8_t is_channel; /* discriminator: 0=simple, 1=channel */
 
-  /* Dynamic counters (atomic).
-   *   curr_latch  : satisfy decrements; non-CHANNEL fire trigger when
-   *                 prev==1; CHANNEL fire trigger when curr_latch <= 0.
-   *   nb_deps_left: addDep decrements; CHANNEL fire-pair counter (paired
-   *                 with curr_latch).  Recharged by += init_nb_deps_required
-   *                 inside CHANNEL drain.  For non-CHANNEL this is unused
-   *                 (the non-CHANNEL fire condition is `prev==1` in
-   *                 curr_latch alone).
-   *   max_deps_left: monotonically decreasing total-lifetime cap.
-   *                  When it reaches 0 and auto_destroy is set, the
-   *                  event mark_deletes itself.
-   *   fired       : non-CHANNEL single-fire CAS gate. */
-  _Atomic(int32_t) curr_latch;
-  _Atomic(int32_t) nb_deps_left;
-  _Atomic(uint32_t) max_deps_left;
-  _Atomic(bool) fired;
-
-  /* Discriminated storage by `multiple_fire` — see
-   * docs/event-refactor/spec.md §2.1 / §3.  union saves space on
-   * CHANNEL events that don't need a single data slot, and on
-   * non-CHANNEL events that don't need two FIFO queues. */
   union {
     struct {
-      arts_guid_t data; /* last satisfy data; late binders read here */
-      arts_lf_stack_t deps_stack; /* Treiber stack of pending consumers */
+      uint8_t error_on_neg_latch;  /* immutable hint flag */
+      _Atomic(int32_t) latch;      /* fires at <= 0 */
+      _Atomic(int32_t) life_count; /* destroys when this + latch both <= 0 */
+      _Atomic(bool) fired;         /* single-fire CAS gate */
+      arts_guid_t data;            /* last satisfy data; late binders read */
+      arts_lf_stack_t deps_stack;  /* Treiber stack of pending consumers */
     } simple;
     struct {
+      _Atomic(uint32_t) nb_sat;  /* incremented per satisfy */
+      _Atomic(uint32_t) nb_deps; /* incremented per add_dep */
       arts_mpsc_t data_queue;    /* satisfy FIFO */
       arts_mpsc_t dep_queue;     /* dep FIFO */
       _Atomic(uint8_t) draining; /* single-flight drainer gate */

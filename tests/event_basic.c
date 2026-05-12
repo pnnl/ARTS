@@ -44,6 +44,8 @@
 
 #include "arts.h"
 
+#include <stdint.h>
+
 /// EDT wired via arts_add_dependence from an event.
 void dependent_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
@@ -183,13 +185,11 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_event_satisfy_slot(ev7, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
   }
 
-  // Test 8: STICKY-equivalent — auto_destroy=false,
-  // negative_latch_allowed=false. Late dep registered after fire is satisfied
+  // Test 8: STICKY-equivalent — persistent (life_count=INT32_MAX),
+  // error_on_neg_latch=true.  Late dep registered after fire is satisfied
   // immediately by add_dependence fast path.
   {
-    arts_event_hint_t h = ARTS_EVENT_HINT_DEFAULTS;
-    h.auto_destroy = false;
-    h.negative_latch_allowed = false;
+    arts_event_hint_t h = ARTS_EVENT_HINT_STICKY;
     arts_guid_t ev8 = arts_event_create(&h);
     arts_event_satisfy_slot(ev8, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
     arts_guid_t dep8 =
@@ -199,11 +199,10 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_event_destroy(ev8);
   }
 
-  // Test 9: IDEM-equivalent — auto_destroy=false, latch=1.  Re-satisfy is
-  // tolerated (negative_latch_allowed=true is the default).
+  // Test 9: IDEM-equivalent — persistent (life_count=INT32_MAX), latch=1.
+  // Re-satisfy is tolerated (error_on_neg_latch=false default).
   {
-    arts_event_hint_t h = ARTS_EVENT_HINT_DEFAULTS;
-    h.auto_destroy = false;
+    arts_event_hint_t h = ARTS_EVENT_HINT_IDEMPOTENT;
     arts_guid_t ev9 = arts_event_create(&h);
     arts_guid_t dep9 = arts_edt_create(
         idem_dep, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
@@ -215,13 +214,12 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_event_destroy(ev9);
   }
 
-  // Test 10: COUNTED-equivalent — latch=N, auto_destroy=false.  Multiple
-  // decrements drain the counter; max_nb_deps left unlimited so the dep
-  // remains valid.
+  // Test 10: multi-decrement LATCH, persistent — latch=3,
+  // life_count=INT32_MAX so the event is not destroyed before
+  // arts_event_destroy below.
   {
-    arts_event_hint_t h = ARTS_EVENT_HINT_DEFAULTS;
-    h.latch = 3;
-    h.auto_destroy = false;
+    arts_event_hint_t h = ARTS_EVENT_HINT_LATCH(3);
+    h.life_count = INT32_MAX;
     arts_guid_t ev10 = arts_event_create(&h);
     arts_guid_t dep10 = arts_edt_create(
         counted_dep, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});

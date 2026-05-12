@@ -100,7 +100,14 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       atomic_store_explicit(&consumer_data[i], 0ul, memory_order_relaxed);
     }
 
-    arts_event_hint_t h = ARTS_EVENT_HINT_ONCE;
+    /* Use IDEMPOTENT instead of ONCE.  Under the new
+     * latch+life_count invariant, ONCE auto-destroys on fire, so late
+     * add_dependence after the destroy is user-error per OCR §1.4.3.
+     * The single-fire satisfy↔addDep race rescue path (spec §4.1
+     * R1-R7) is identical for IDEM, but the event persists so the
+     * test's "all consumers must observe the same data" assertion is
+     * well-defined regardless of race ordering. */
+    arts_event_hint_t h = ARTS_EVENT_HINT_IDEMPOTENT;
     arts_guid_t ev = arts_event_create(&h);
     if (ev == NULL_GUID) {
       fprintf(stderr, "FAIL [iter=%d]: arts_event_create returned NULL_GUID\n",

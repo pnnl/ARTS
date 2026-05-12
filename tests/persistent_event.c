@@ -111,23 +111,23 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
    * arts_shutdown which then strands the remaining dependents. */
   arts_guid_t pe_final_edt =
       arts_edt_create(pe_final, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0});
-  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), pe_final_edt, 0);
+  arts_guid_t epoch =
+      arts_epoch_create(arts_get_current_rank(), pe_final_edt, 0);
   arts_epoch_start(epoch);
 
-  // Channel-equivalent hint: multiple_fire=true, latch=1, nb_deps_required=1.
-  // Each successful DECR drains exactly one waiter and re-arms the latch.
-  arts_event_hint_t channel_hint = ARTS_EVENT_HINT_DEFAULTS;
-  channel_hint.multiple_fire = true;
-  channel_hint.latch = 1;
-  channel_hint.nb_deps_required = 1;
+  // Channel-equivalent hint: channel=true.  Each satisfy/add_dep increments
+  // its own counter; the drainer pops one satisfy and one dep per fire pair.
+  arts_event_hint_t channel_hint = ARTS_EVENT_HINT_CHANNEL;
 
   // Test 1: Channel event with 2 dependents — fire twice, each fire drains one.
   arts_guid_t ch1 = arts_event_create(&channel_hint);
 
-  arts_guid_t dep1 = arts_edt_create(pe_dependent, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_guid_t dep1 = arts_edt_create(
+      pe_dependent, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   arts_add_dependence(ch1, dep1, 0, DB_MODE_RW);
 
-  arts_guid_t dep2 = arts_edt_create(pe_dependent, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_guid_t dep2 = arts_edt_create(
+      pe_dependent, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   arts_add_dependence(ch1, dep2, 0, DB_MODE_RW);
 
   arts_event_satisfy_slot(ch1, db, ARTS_EVENT_LATCH_DECR_SLOT);
@@ -136,14 +136,15 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Test 2: Channel event delivers the data GUID to a dependent.
   arts_guid_t ch2 = arts_event_create(&channel_hint);
   uint64_t db_param = (uint64_t)db;
-  arts_guid_t dep3 = arts_edt_create(pe_data_check, 1, &db_param, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_guid_t dep3 =
+      arts_edt_create(pe_data_check, 1, &db_param, 1,
+                      &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   arts_add_dependence(ch2, dep3, 0, DB_MODE_RO);
   arts_event_satisfy_slot(ch2, db, ARTS_EVENT_LATCH_DECR_SLOT);
 
-  // Test 3: Multiple DECRs on the same channel re-arm the latch.  This
-  // replaces the legacy INCR/DECR pattern (INCR is not allowed on
-  // multiple_fire events in the new API).  No dependents → only verifies
-  // the latch math does not crash.
+  // Test 3: Multiple satisfies on the same channel accumulate in the
+  // data_queue (nb_sat increments).  No dependents → only verifies the
+  // counter does not crash.
   arts_guid_t ch3 = arts_event_create(&channel_hint);
   arts_event_satisfy_slot(ch3, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
   arts_event_satisfy_slot(ch3, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);

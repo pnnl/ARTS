@@ -8,14 +8,17 @@
 #   ../../benchmarks/scripts/run_benchmarks.sh [options] [backend ...]
 #
 # Options:
-#   --multinode   Run apps in 2-node mode (simulated via 2 localhost processes)
+#   --multinode   Run apps in multi-node mode (simulated via N localhost processes)
 #   --no-build    Skip the build step
 #
 # Backends: arts, xsocr, baseline (default: all three, run sequentially)
 #
 # Environment variables:
-#   BENCH_MEM_LIMIT_KB  - Virtual memory limit per process in KB (default: 8388608 = 8GB)
-#                         Set to 0 to disable. Prevents OOM from apps with huge allocations.
+#   BENCH_MEM_LIMIT_KB   - Virtual memory limit per process in KB (default: 8388608 = 8GB)
+#                          Set to 0 to disable. Prevents OOM from apps with huge allocations.
+#   MULTINODE_VARIANT    - Multinode config variant to use when --multinode is set.
+#                          Valid values: 2n (default), 3n, 4n, 2n_io.
+#                          Maps to configs/local/${VARIANT}.cfg + configs/mpi/${VARIANT}.cfg.
 
 set -euo pipefail
 
@@ -24,6 +27,9 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TIMEOUT=60  # seconds per app
 DO_MULTINODE=0
 DO_BUILD=0
+# Multinode config variant: 2n (default), 3n, 4n, 2n_io.
+# Override via env: MULTINODE_VARIANT=3n run_benchmarks.sh --multinode arts
+MULTINODE_VARIANT="${MULTINODE_VARIANT:-2n}"
 
 # Parse options and backends
 BACKENDS=()
@@ -214,7 +220,7 @@ run_ocr_apps() {
     # stale multinode config from a previous run causing single-node crashes)
     if [ "$suffix" = "arts" ]; then
         if [ "$DO_MULTINODE" -eq 1 ]; then
-            cp "$REPO_ROOT/configs/local/2n.cfg" arts.cfg
+            cp "$REPO_ROOT/configs/local/${MULTINODE_VARIANT}.cfg" arts.cfg
         else
             cp "$REPO_ROOT/configs/local/1n.cfg" arts.cfg
         fi
@@ -226,7 +232,7 @@ run_ocr_apps() {
     # Set OCR_CONFIG for XSOCR backend
     if [ "$suffix" = "xsocr" ]; then
         if [ "$DO_MULTINODE" -eq 1 ]; then
-            export OCR_CONFIG="${REPO_ROOT}/configs/mpi/2n.cfg"
+            export OCR_CONFIG="${REPO_ROOT}/configs/mpi/${MULTINODE_VARIANT}.cfg"
         else
             export OCR_CONFIG="${REPO_ROOT}/configs/mpi/1n.cfg"
         fi
@@ -366,12 +372,12 @@ run_ocr_apps_multinode() {
     local dir="apps"
 
     echo ""
-    echo "===== OCR apps (arts backend, multi-node 2 localhost) ====="
+    echo "===== OCR apps (arts backend, multi-node ${MULTINODE_VARIANT} localhost) ====="
     log ""
-    log "===== OCR apps (arts backend, multi-node 2 localhost) ====="
+    log "===== OCR apps (arts backend, multi-node ${MULTINODE_VARIANT} localhost) ====="
 
     # Copy multi-node config
-    cp "$REPO_ROOT/configs/local/2n.cfg" arts.cfg
+    cp "$REPO_ROOT/configs/local/${MULTINODE_VARIANT}.cfg" arts.cfg
 
     # CoMD variants (affinity-aware)
     # CoMD_intel_chandra: Known HANG — FINISH EDT + affinity deadlock

@@ -316,8 +316,7 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
       void *ptr = arts_db_malloc(ARTS_DB_CXL, db_size);
       if (ptr) {
         guid = arts_cxl_make_guid(ptr);
-        arts_db_create_internal(guid, ptr, len, db_size, ARTS_DB_CXL,
-                                arts_id);
+        arts_db_create_internal(guid, ptr, len, db_size, ARTS_DB_CXL, arts_id);
         /* No route table entry — GUID encodes CXL pointer directly */
         // FLUSH_FENCE_PRODUCER(ptr, db_size);
         FLUSH_FENCE_PRODUCER(ptr, sizeof(struct arts_db_s));
@@ -363,7 +362,13 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
       }
     }
   } else {
-    guid = arts_guid_create_for_rank(rank, ARTS_GUID_DB);
+    /* Pre-reserved (labeled) GUID with remote home: use it verbatim so the
+     * remote install lands at the application-visible GUID.  Otherwise
+     * (NULL hint round-robin / explicit-rank hint) generate a fresh
+     * auto-GUID on the home rank's key counter. */
+    guid = (pre_guid != NULL_GUID)
+               ? pre_guid
+               : arts_guid_create_for_rank(rank, ARTS_GUID_DB);
     if (db_type == ARTS_DB) {
       /* For RC type, ask the home rank to install a coherent cache_s
        * via DB_CREATE_COHERENT.  The home handler

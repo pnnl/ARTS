@@ -64,9 +64,13 @@ LOG_FILE="$LOG_DIR/${TIMESTAMP}.log"
 
 # Copy config files
 cp "$PROJECT_ROOT/configs/local/1n.cfg"       "$TEST_BIN_DIR/arts.cfg"
-if [ -f "$PROJECT_ROOT/configs/local/2n.cfg" ]; then
-  cp "$PROJECT_ROOT/configs/local/2n.cfg"       "$TEST_BIN_DIR/arts_2node.cfg"
-fi
+# Multinode variants — names align with CMakeLists register_multinode_test
+# (ARTS_CONFIG=${BUILD_DIR}/arts_<variant>.cfg, see tests/CMakeLists.txt).
+for v in 2n 3n 4n 2n_io; do
+  if [ -f "$PROJECT_ROOT/configs/local/${v}.cfg" ]; then
+    cp "$PROJECT_ROOT/configs/local/${v}.cfg"  "$TEST_BIN_DIR/arts_${v}.cfg"
+  fi
+done
 if [ -f "$PROJECT_ROOT/configs/local/gpu/1n.cfg" ]; then
   cp "$PROJECT_ROOT/configs/local/gpu/1n.cfg"  "$TEST_BIN_DIR/arts_gpu.cfg"
 fi

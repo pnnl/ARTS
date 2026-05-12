@@ -553,9 +553,13 @@ class Runner:
 
     _ARTS_MN_CFGS = {
         2: "local/2n.cfg",
+        3: "local/3n.cfg",
+        4: "local/4n.cfg",
     }
     _XSOCR_MN_CFGS = {
         2: "mpi/2n.cfg",
+        3: "mpi/3n.cfg",
+        4: "mpi/4n.cfg",
     }
 
     def run_arts_mn(self, case_name: str, bin_name: str, args: list[str],
@@ -793,7 +797,7 @@ def main():
     # For each eligible Tier-A app, run arts and xsocr at 2 nodes.  Scalars
     # must match the single-node result.
     skip_tier_m = os.environ.get("SKIP_TIER_M", "")
-    MN_RANKS = [2]
+    MN_RANKS = [2, 3, 4]
     results_m: list[dict[str, Any]] = []
     for c in TIER_A:
         if skip_tier_m or not c.multinode:

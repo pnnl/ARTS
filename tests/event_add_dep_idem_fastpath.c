@@ -67,11 +67,11 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
   arts_epoch_start(epoch);
 
-  /* IDEM-equivalent: latch=1, auto_destroy=false.  The event survives
-   * the first fire so a late add_dependence can observe `fired=true`
-   * and take the fast-path: data delivered immediately, no enqueue. */
-  arts_event_hint_t hint = ARTS_EVENT_HINT_DEFAULTS;
-  hint.auto_destroy = false;
+  /* IDEM-equivalent: persistent (life_count=INT32_MAX).  The event
+   * survives the first fire so a late add_dependence can observe
+   * `fired=true` and take the fast-path: data delivered immediately,
+   * no enqueue. */
+  arts_event_hint_t hint = ARTS_EVENT_HINT_IDEMPOTENT;
   arts_guid_t ev = arts_event_create(&hint);
   assert(ev != NULL_GUID);
 
@@ -81,7 +81,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   /* Register the waiter AFTER the satisfy.  The IDEM fast path in
    * arts_add_dependence must observe fired=true and signal slot 0
    * inline, so the waiter EDT runs with no hang. */
-  arts_guid_t waiter = arts_edt_create(late_waiter_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_guid_t waiter =
+      arts_edt_create(late_waiter_edt, 0, NULL, 1,
+                      &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   arts_add_dependence(ev, waiter, 0, DB_MODE_RW);
 
   arts_epoch_wait(epoch);

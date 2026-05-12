@@ -138,10 +138,16 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
    * Nth decrement fires the event and unblocks verify_edt's slot 1.
    * This is the canonical "fan-in barrier" producer -> event ->
    * consumer happens-before that ARTS RW does NOT enforce on its own
-   * (RW is per-NODE exclusive, not per-EDT). */
+   * (RW is per-NODE exclusive, not per-EDT).
+   *
+   * life_count=INT32_MAX makes the event persistent so verify_edt's
+   * add_dep can race with the Nth satisfy: even if the event already
+   * fired (and auto-destroy would have triggered for a non-persistent
+   * LATCH), the late-binder fast-path delivers the stored data. */
   arts_event_hint_t latch_hint = ARTS_EVENT_HINT_DEFAULTS;
   latch_hint.rank = 0;
   latch_hint.latch = N;
+  latch_hint.life_count = INT32_MAX;
   arts_guid_t latch = arts_event_create(&latch_hint);
 
   uint64_t inc_paramv[1] = {(uint64_t)latch};

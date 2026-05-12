@@ -172,24 +172,44 @@ arts_guid_t arts_guid_reserve_range(arts_guid_kind_t type, unsigned int size,
     return NULL_GUID;
   }
   if (rank == ARTS_HINT_ROUND_ROBIN) {
-    /* Reserve enough keys on the local rank to cover all idx. With
-     * stride = arts_global_rank_count we need ceil(size/nrank) keys per
-     * rank, but we only need a single base_key on this rank because
-     * arts_guid_from_index synthesizes (home, base+idx/nrank)
-     * deterministically. Stamp the rank field with the DISTRIBUTED sentinel so
-     * callers and arts_guid_from_index can recognize the range. */
+    /* arts_guid_from_index plants labeled GUIDs at (idx%nrank,
+     * base_value + idx/nrank) on every rank.  Per-rank auto-counters on
+     * this thread advance independently, so an auto-allocation from THIS
+     * thread targeting a remote rank can land at base_value+offset and
+     * collide with a labeled GUID.  The pre-existing auto-counter values
+     * on other ranks may already be at or below base_value when the
+     * range is reserved.
+     *
+     * Cure: pick base_value = max(thread's per-rank counter values),
+     * then advance every rank's counter (including local) past
+     * base_value+stride.  This both reserves the labeled span on the
+     * local rank (consuming our `stride` keys) and bumps remote
+     * counters so future auto-allocations skip the labeled range. */
     unsigned int nrank = arts_global_rank_count ? arts_global_rank_count : 1;
     unsigned int stride = (size + nrank - 1) / nrank; /* ceil(size/nrank) */
     if (stride == 0) {
       stride = 1;
     }
-    arts_guid_t local = arts_guid_create_for_rank_internal(
-        arts_global_rank_id, (unsigned int)type, stride);
-    if (local == NULL_GUID) {
-      return NULL_GUID;
+    uint64_t base_value = 1;
+    for (unsigned int r = 0; r < nrank; r++) {
+      uint64_t v = *arts_guid_generator_get_key(r, (unsigned int)type);
+      if (v > base_value) {
+        base_value = v;
+      }
     }
+    if (base_value + stride >= keys_per_thread) {
+      ARTS_ERROR("GUID range reservation failed: thread key space exhausted");
+    }
+    for (unsigned int r = 0; r < nrank; r++) {
+      *arts_guid_generator_get_key(r, (unsigned int)type) =
+          base_value + stride;
+    }
+    uint64_t encoded_key =
+        base_value +
+        (keys_per_thread *
+         arts_node_info.global_guid_thread_id[arts_thread_info.thread_id]);
     return ARTS_GUID_MAKE((unsigned int)type, ARTS_DISTRIBUTED_RANK,
-                          ARTS_GUID_GET_KEY(local));
+                          encoded_key);
   }
   if (rank == ARTS_HINT_CURRENT_RANK) {
     rank = arts_global_rank_id;

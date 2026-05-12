@@ -611,9 +611,8 @@ u8 ocrEdtCreate(ocrGuid_t *guid, ocrGuid_t templateGuid, u32 paramc,
     if (oevtValid) {
       outEvt = outputEvent->guid;
     } else {
-      arts_event_hint_t h = ARTS_EVENT_HINT_DEFAULTS;
+      arts_event_hint_t h = ARTS_EVENT_HINT_IDEMPOTENT;
       h.rank = rank;
-      h.auto_destroy = false; /* IDEM: persist for late ocrAddDependence */
       outEvt = arts_event_create(&h);
       if (outEvt == NULL_GUID) {
         return OCR_ENOMEM;
@@ -639,9 +638,8 @@ u8 ocrEdtCreate(ocrGuid_t *guid, ocrGuid_t templateGuid, u32 paramc,
   if (isFinishEdt) {
     edtHint.flags |= ARTS_EDT_FLAG_FINISH;
   }
-  arts_guid_t edtGuid =
-      arts_edt_create(ocr_edt_trampoline, artsParamc, artsParamv,
-                      actualDepc, &edtHint);
+  arts_guid_t edtGuid = arts_edt_create(ocr_edt_trampoline, artsParamc,
+                                        artsParamv, actualDepc, &edtHint);
 
   /* For finish EDTs, chain finish_event → outEvt so that the OCR output
    * event is satisfied when the finish-scope (this EDT + all descendants)
@@ -717,27 +715,30 @@ u8 ocrEdtDestroy(ocrGuid_t guid) {
 static arts_event_hint_t ocr_event_kind_to_hint(ocrEventTypes_t kind,
                                                 u16 properties) {
   (void)properties;
-  arts_event_hint_t h = ARTS_EVENT_HINT_DEFAULTS;
+  arts_event_hint_t h = ARTS_EVENT_HINT_DEFAULTS; /* ONCE */
   switch (kind) {
   case OCR_EVENT_ONCE_T: /* defaults */
     break;
   case OCR_EVENT_IDEM_T:
-    h.auto_destroy = false;
+    h = ARTS_EVENT_HINT_IDEMPOTENT;
     break;
   case OCR_EVENT_STICKY_T:
-    h.auto_destroy = false;
-    h.negative_latch_allowed = false;
+    h = ARTS_EVENT_HINT_STICKY;
     break;
   case OCR_EVENT_LATCH_T:
-    h.latch = 0; /* caller may override via params */
+    /* counter init defaults to 0; caller may override via params. */
+    h.latch = 0;
+    h.life_count = 0;
+    h.error_on_neg_latch = false;
     break;
   case OCR_EVENT_COUNTED_T:
-    h.auto_destroy = false;
+    /* life_count set from params.nbDeps in ocrEventCreateParams; default 1. */
+    h.latch = 1;
+    h.life_count = 1;
+    h.error_on_neg_latch = false;
     break;
   case OCR_EVENT_CHANNEL_T:
-    h.multiple_fire = true;
-    h.latch = 1;
-    h.nb_deps_required = 1;
+    h = ARTS_EVENT_HINT_CHANNEL;
     break;
   default:
     break;
@@ -875,8 +876,7 @@ u8 ocrEventCreateParams(ocrGuid_t *guid, ocrEventTypes_t eventType,
     h.latch = (int32_t)params->EVENT_LATCH.counter;
   }
   if (eventType == OCR_EVENT_COUNTED_T && params != NULL) {
-    h.nb_deps_required = 1;
-    h.max_nb_deps = (uint32_t)params->EVENT_COUNTED.nbDeps;
+    h.life_count = (int32_t)params->EVENT_COUNTED.nbDeps;
   }
   if (eventType == OCR_EVENT_CHANNEL_T && params != NULL) {
     /* OCR 1.2 §B.5.2: nbSat and nbDeps are restricted to 1.  ARTS enforces
