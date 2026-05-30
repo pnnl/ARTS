@@ -65,7 +65,7 @@ void version_unlock(arts_lc_meta_t *meta) {
 }
 
 void *make_lc_shadow_copy(struct arts_db_s *db) {
-  unsigned int size = db->header.size;
+  unsigned int size = arts_db_total_size(db);
   void *dest = (void *)(((char *)db) + size);
   struct arts_db_s *shadow_copy = (struct arts_db_s *)dest;
 
@@ -485,7 +485,7 @@ unsigned int gpu_depth_first_rec(unsigned int vertex, unsigned int cycle_size,
                                  unsigned int mask, unsigned int current,
                                  unsigned int *visited, unsigned int *max_size,
                                  unsigned int *max_visited) {
-  unsigned int order = arts_get_total_gpus();
+  unsigned int order = arts_get_gpus_per_rank();
   visited[current++] = vertex; // Record order visited
 
   bool ret = check_max(current, visited, max_size, max_visited, cycle_size);
@@ -526,7 +526,7 @@ unsigned int *gpu_depth_first(unsigned int mask, unsigned int *max_size) {
       (unsigned int *)arts_calloc(cycle_size, sizeof(unsigned int));
   unsigned int *max_visited =
       (unsigned int *)arts_calloc(cycle_size, sizeof(unsigned int));
-  for (unsigned int i = 0; i < arts_get_total_gpus(); i++) {
+  for (unsigned int i = 0; i < arts_get_gpus_per_rank(); i++) {
     if (mask & (1 << i)) {
       ARTS_INFO("i: %u", i);
       if (gpu_depth_first_rec(i, cycle_size, mask, 0, visited, max_size,
@@ -568,7 +568,7 @@ bool gpu_ring_reduction(unsigned int mask, unsigned int guid,
 }
 
 void gpu_lc_invalidate(unsigned int mask, arts_guid_t guid) {
-  for (unsigned int i = 0; i < arts_get_total_gpus(); i++) {
+  for (unsigned int i = 0; i < arts_get_gpus_per_rank(); i++) {
     if (mask & (1 << i)) {
       arts_gpu_invalidate_on_route_table(guid, i);
       arts_gpu_route_table_return_db(guid, true, i);
@@ -578,7 +578,7 @@ void gpu_lc_invalidate(unsigned int mask, arts_guid_t guid) {
 
 unsigned int gpu_lc_return_db(unsigned int mask, arts_guid_t guid) {
   unsigned int rem_mask = 0;
-  for (unsigned int i = 0; i < arts_get_total_gpus(); i++) {
+  for (unsigned int i = 0; i < arts_get_gpus_per_rank(); i++) {
     if (mask & (1 << i)) {
       if (!rem_mask && i == 2) {
         rem_mask = 1 << i;
@@ -594,7 +594,7 @@ unsigned int gpu_lc_reduce(arts_guid_t guid, struct arts_db_s *db,
                            arts_lc_sync_function_gpu_t db_fn, bool *copy_only) {
   *copy_only = false;
   unsigned int rem_mask = 0;
-  unsigned int size = db->header.size;
+  unsigned int size = arts_db_total_size(db);
   // struct arts_db_s *shadow_copy = (struct arts_db_s *)(((char *)db) + size);
 
   arts_writer_lock(&db->reader, &db->writer);

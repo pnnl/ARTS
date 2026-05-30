@@ -221,7 +221,7 @@ void arts_counter_capture_start() {
                 arts_global_master_rank_id);
     } else {
       // Worker nodes: send sync request and wait for response
-      arts_remote_time_sync_request();
+      arts_send_time_sync_request();
       uint64_t timeout = arts_get_time_stamp() + 500000000ULL; // 500ms
       while (!arts_counter_time_sync_received &&
              arts_get_time_stamp() < timeout) {

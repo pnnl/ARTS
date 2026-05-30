@@ -82,7 +82,12 @@ void arts_dump_pending_edts(void) {
     while ((item = arts_route_table_iterate(&iter)) != NULL) {
       if (arts_guid_get_kind(item->key) != ARTS_GUID_EDT)
         continue;
-      void *data = atomic_load_explicit(&item->data, memory_order_acquire);
+      /* Debug dump: peek the cb (unsafe-by-design, sanity-filtered below). */
+      arts_shared_ptr_t h = arts_atomic_shared_load(&item->value);
+      if (!h)
+        continue;
+      void *data = arts_shared_get(h);
+      arts_shared_release(&h);
       if (!data)
         continue;
       struct arts_edt_s *edt = (struct arts_edt_s *)data;
@@ -90,9 +95,9 @@ void arts_dump_pending_edts(void) {
       unsigned int depc = edt->depc;
       /* Sanity-filter stale entries: route_table slots persist after EDT
        * free, so atomic_load can return a pointer into freed memory. */
-      if (edt->current_edt != item->key)
+      if (edt->guid != item->key)
         continue;
-      if (edt->current_edt == 0)
+      if (edt->guid == 0)
         continue;
       if (depc > 100)
         continue;
@@ -102,8 +107,8 @@ void arts_dump_pending_edts(void) {
         fprintf(stderr,
                 "  [PENDING] guid=%lu home=%u depc=%u depc_needed=%u "
                 "epoch=%lu arts_id=%lu func=%p (table=%u)\n",
-                (uint64_t)edt->current_edt,
-                arts_guid_get_rank(edt->current_edt), edt->depc, needed,
+                (uint64_t)edt->guid,
+                arts_guid_get_rank(edt->guid), edt->depc, needed,
                 (uint64_t)edt->epoch_guid, edt->arts_id, (void *)edt->func_ptr,
                 t);
         /* depv layout: [arts_edt_s header | paramv u64s | depv

@@ -60,7 +60,7 @@ void done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramv;
   (void)depc;
   unsigned int *tile = (unsigned int *)depv[0].ptr;
-  unsigned int total = arts_get_total_gpus();
+  unsigned int total = arts_get_gpus_per_rank();
   bool any_modified = false;
   for (unsigned int j = 0; j < total; j++) {
     if (tile[j] != (unsigned int)-1) {
@@ -92,24 +92,24 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
   unsigned int *addr = NULL;
   arts_printf("creating size: %u\n",
-              sizeof(unsigned int) * arts_get_total_gpus());
+              sizeof(unsigned int) * arts_get_gpus_per_rank());
   arts_guid_t db_guid = arts_guid_reserve(ARTS_GUID_DB, 0);
   addr = (unsigned int *)arts_db_create_with_guid(
-      db_guid, sizeof(unsigned int) * arts_get_total_gpus(), ARTS_DB_GPU, NULL,
+      db_guid, sizeof(unsigned int) * arts_get_gpus_per_rank(), ARTS_DB_GPU, NULL,
       NULL);
-  for (uint64_t i = 0; i < arts_get_total_gpus(); i++) {
+  for (uint64_t i = 0; i < arts_get_gpus_per_rank(); i++) {
     addr[i] = (unsigned int)-1;
   }
 
   unsigned int node_id = arts_get_current_rank();
   arts_edt_hint_t hint_0 = {0, 0};
   arts_guid_t done_guid =
-      arts_edt_create(done, 0, NULL, arts_get_total_gpus() + 1, &hint_0);
+      arts_edt_create(done, 0, NULL, arts_get_gpus_per_rank() + 1, &hint_0);
   arts_lc_sync(done_guid, 0, db_guid);
 
-  dim3 threads(arts_get_total_gpus(), 1, 1);
+  dim3 threads(arts_get_gpus_per_rank(), 1, 1);
   dim3 grid(1, 1, 1);
-  for (uint64_t i = 0; i < arts_get_total_gpus(); i++) {
+  for (uint64_t i = 0; i < arts_get_gpus_per_rank(); i++) {
     if (i == 0 || i == 3 || i == 4 || i == 7) {
       arts_printf("CREATING EDT for GPU: %lu\n", i);
       arts_gpu_hint_t gpu_hint = {};

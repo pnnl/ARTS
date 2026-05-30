@@ -76,8 +76,9 @@ bool arts_home_lockreq_queue_pop(struct arts_home_lockreq_queue_s *q,
       if (head == tail) {
         return false; /* truly empty */
       }
-      /* Producer mid-push: brief spin until next appears. */
-      sched_yield();
+      /* Producer mid-link: tight retry until the in-flight
+       * store_release(prev->next) lands (single consumer, ns window).
+       * Lock-free — no scheduler yield. */
       continue;
     }
 
@@ -207,8 +208,9 @@ bool arts_home_pending_ro_queue_pop(struct arts_home_pending_ro_queue_s *q,
       if (head == tail) {
         return false; /* truly empty */
       }
-      /* Producer mid-push: spin until next appears. */
-      sched_yield();
+      /* Producer mid-link: tight retry until the in-flight
+       * store_release(prev->next) lands (single consumer, ns window).
+       * Lock-free — no scheduler yield. */
       continue;
     }
 
@@ -279,12 +281,10 @@ bool arts_rank_u64_map_advance(struct arts_rank_to_u64_map_s *m,
 
 /*--- arts_db_home_s lifecycle -------------------------------------------*/
 
-struct arts_db_home_s *arts_db_home_create(unsigned int rw_holder,
-                                           unsigned int nranks) {
-  struct arts_db_home_s *home =
-      (struct arts_db_home_s *)calloc(1, sizeof(*home));
-  /* Common fields: destroy baton + ack counter.  calloc already zeroed
-   * them but set explicitly to document the invariant. */
+void arts_db_home_init(struct arts_db_home_s *home, unsigned int rw_holder,
+                       unsigned int nranks) {
+  /* Embedded by value in the cache: the caller zeroed it via calloc.
+   * Common fields: destroy baton + ack counter. */
   atomic_store_explicit(&home->destroy_in_flight, 0, memory_order_relaxed);
   atomic_store_explicit(&home->destroy_ack_outstanding, 0,
                         memory_order_relaxed);
@@ -309,10 +309,9 @@ struct arts_db_home_s *arts_db_home_create(unsigned int rw_holder,
   arts_home_pending_ro_queue_init(&home->pending_ro_forwards);
   home->last_sent_version = arts_rank_u64_map_create(nranks);
 #endif
-  return home;
 }
 
-void arts_db_home_destroy(struct arts_db_home_s *home) {
+void arts_db_home_teardown(struct arts_db_home_s *home) {
   if (home == NULL) {
     return;
   }
@@ -328,7 +327,7 @@ void arts_db_home_destroy(struct arts_db_home_s *home) {
   arts_home_pending_ro_queue_destroy(&home->pending_ro_forwards);
   arts_rank_u64_map_destroy(home->last_sent_version);
 #endif
-  free(home);
+  /* No free: the home block is embedded by value in the cache. */
 }
 
 #ifdef ARTS_MEMORY_MODEL_LRC

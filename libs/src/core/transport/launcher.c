@@ -285,24 +285,33 @@ void arts_remote_launcher_ssh_startup_processes(
     child = fork();
 
     if (child == 0) {
-      if (forward_out_wfd >= 0 && forward_err_wfd >= 0) {
-        /* Pipe to master: SSH inherits these fds as its stdout/stderr,
-         * transparently forwarding the remote ARTS process's output. */
-        dup2(forward_out_wfd, STDOUT_FILENO);
-        dup2(forward_err_wfd, STDERR_FILENO);
-        if (forward_out_wfd > STDERR_FILENO) {
-          close(forward_out_wfd);
-        }
-        if (forward_err_wfd > STDERR_FILENO) {
-          close(forward_err_wfd);
-        }
-      } else {
+      if (kill_mode) {
+        /* Kill mode runs a remote pkill whose output carries no useful
+         * information — silence it so it never clutters the launch point. */
         int devnull = open("/dev/null", O_RDWR);
         if (devnull >= 0) {
           dup2(devnull, STDOUT_FILENO);
           dup2(devnull, STDERR_FILENO);
           if (devnull > STDERR_FILENO) {
             close(devnull);
+          }
+        }
+      } else {
+        /* Pipe to master: SSH inherits these fds as its stdout/stderr and
+         * relays the remote ARTS process's output.  If a forwarder is
+         * missing, leave that stream on the fd inherited from the master so
+         * the remote output still reaches the launch point — never discard.
+         * Streams are handled independently. */
+        if (forward_out_wfd >= 0) {
+          dup2(forward_out_wfd, STDOUT_FILENO);
+          if (forward_out_wfd > STDERR_FILENO) {
+            close(forward_out_wfd);
+          }
+        }
+        if (forward_err_wfd >= 0) {
+          dup2(forward_err_wfd, STDERR_FILENO);
+          if (forward_err_wfd > STDERR_FILENO) {
+            close(forward_err_wfd);
           }
         }
       }
@@ -432,42 +441,22 @@ void arts_remote_launcher_local_startup_processes(
       (void)snprintf(rank_str, sizeof(rank_str), "%u", i);
       setenv("ARTS_RANK", rank_str, 1);
 
-      if (forward_out_wfd >= 0 && forward_err_wfd >= 0) {
-        /* Pipe forwarder path: child stdout/stderr go into the pipes
-         * that the master's reader threads drain. */
+      /* Forward each stream to the master through its pipe (the master's
+       * reader threads drain them).  If a forwarder could not be created,
+       * leave that stream on the fd this child inherited from the master so
+       * its output still reaches the launch point — a rank's stdout/stderr
+       * is never discarded.  Streams are handled independently so one
+       * failed forwarder does not take the other down. */
+      if (forward_out_wfd >= 0) {
         dup2(forward_out_wfd, STDOUT_FILENO);
-        dup2(forward_err_wfd, STDERR_FILENO);
         if (forward_out_wfd > STDERR_FILENO) {
           close(forward_out_wfd);
         }
+      }
+      if (forward_err_wfd >= 0) {
+        dup2(forward_err_wfd, STDERR_FILENO);
         if (forward_err_wfd > STDERR_FILENO) {
           close(forward_err_wfd);
-        }
-      } else {
-        /* Legacy redirect: per-rank log files or /dev/null. */
-        const char *log_env = getenv("ARTS_LOG_LEVEL");
-        long log_level = log_env ? strtol(log_env, NULL, 10) : 0;
-        if (log_level >= 2) {
-          char log_path[128];
-          (void)snprintf(log_path, sizeof(log_path), "/tmp/arts_rank_%u.log",
-                         i);
-          int logfd = open(log_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-          if (logfd >= 0) {
-            dup2(logfd, STDOUT_FILENO);
-            dup2(logfd, STDERR_FILENO);
-            if (logfd > STDERR_FILENO) {
-              close(logfd);
-            }
-          }
-        } else {
-          int devnull = open("/dev/null", O_RDWR);
-          if (devnull >= 0) {
-            dup2(devnull, STDOUT_FILENO);
-            dup2(devnull, STDERR_FILENO);
-            if (devnull > STDERR_FILENO) {
-              close(devnull);
-            }
-          }
         }
       }
 

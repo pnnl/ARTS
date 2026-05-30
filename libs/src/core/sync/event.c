@@ -41,11 +41,13 @@
  * arts_event_s — single struct, is_channel-discriminated union.
  * See docs/superpowers/plans/2026-05-11-event-hint-redesign.md.
  *
- *   - simple (non-CHANNEL): latch + life_count + Treiber dep stack.
- *     ONCE / IDEM / STICKY / COUNTED / LATCH all use this branch.
- *     Fire trigger: latch reaches <= 0 (unique winner observes prev==1
- *     in the atomic_fetch_sub).  Destroy trigger: latch <= 0 AND
- *     life_count <= 0 (checked at every dec via maybe_destroy).
+ *   - simple (non-CHANNEL): latch + Treiber dep stack.  All single-fire
+ *     OCR flavors (ONCE / IDEM / STICKY / COUNTED) and LATCH(N) use this
+ *     branch.  Fire trigger: latch reaches <= 0 (unique winner observes
+ *     prev==1 in the atomic_fetch_sub).  Fire is a pure state transition
+ *     and never destroys (fire-and-linger) — the event stays addressable
+ *     to serve late binders from the stored data until an explicit
+ *     arts_event_destroy.  Over-satisfy past the fire is silently absorbed.
  *
  *   - channel (CHANNEL only): nb_sat / nb_deps monotonic counters +
  *     two mpsc FIFO queues (data_queue, dep_queue) + single-flight
@@ -63,12 +65,12 @@
 #include "arts/gas/route_table.h"
 #include "arts/remote/handler.h"
 #include "arts/runtime_state.h" /* arts_node_info, event_dep_pool */
-#include "arts/sync/shared.h"   /* arts_shared_init */
+#include "arts/sync/mpsc.h"     /* arts_mpsc_t */
+#include "arts/sync/shared.h"   /* arts_shared_ptr_t, get/release */
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/utils/lockfree_lifo.h" /* arts_lf_stack_init / drain */
 #include "arts/utils/malloc.h"
-#include "arts/utils/mpsc.h"        /* arts_mpsc_t */
 #include "arts/utils/tiered_pool.h" /* arts_tiered_pool_release */
 
 #include <assert.h>
@@ -92,13 +94,15 @@ static inline void event_node_free(arts_lf_link_t *node) {
                            (struct arts_event_dep_s *)node);
 }
 
-/* --- shared_t deleter (called by route_table.c free_item) ---------------- */
+/* --- cb deleter (route_table deleter-by-kind for ARTS_GUID_EVENT) --------- */
 
-static void event_deleter(void *p) {
+/* External linkage so route_table.c references it directly.  Runs once the
+ * cb's strong refcount hits 0 (last holder released). */
+void arts_event_deleter(void *p) {
   struct arts_event_s *e = (struct arts_event_s *)p;
   /* Drain any leftover queued nodes and return them to the per-rank pool.
-   * shared_t.count == 0 by precondition: no producer can push after this
-   * point (every producer must hold a lookup ref while pushing). */
+   * strong == 0 by precondition: no producer can push after this point
+   * (every producer must hold a lookup ref while pushing). */
   if (e->is_channel) {
     arts_lf_link_t *chain = arts_mpsc_drain_remaining(&e->channel.data_queue);
     while (chain) {
@@ -126,8 +130,14 @@ static void event_deleter(void *p) {
   arts_free(e);
 }
 
+/* Publish the event cb deleter into the route_table's per-kind table at startup
+ * (decoupled registration — see arts_route_table_register_deleter). */
+__attribute__((constructor)) static void arts_event_register_cb_deleter(void) {
+  arts_route_table_register_deleter(ARTS_GUID_EVENT, arts_event_deleter);
+}
+
 /* External forwarder — see event.h for rationale. */
-void arts_event_free_internal(struct arts_event_s *e) { event_deleter(e); }
+void arts_event_free_internal(struct arts_event_s *e) { arts_event_deleter(e); }
 
 /* --- Internal allocation / install --------------------------------------- */
 
@@ -136,9 +146,8 @@ static struct arts_event_s *event_alloc(const arts_event_hint_t *h) {
   if (!e) {
     return NULL;
   }
-  arts_shared_init(&e->shared, event_deleter);
-  e->header.type = ARTS_GUID_EVENT;
-  e->header.size = sizeof(*e);
+  /* lifecycle/deleter handled by the route_table cb (deleter-by-kind) on
+   * install — no per-object shared field to initialize. */
   e->is_channel = h->channel ? 1 : 0;
 
   if (e->is_channel) {
@@ -148,10 +157,7 @@ static struct arts_event_s *event_alloc(const arts_event_hint_t *h) {
     arts_mpsc_init(&e->channel.dep_queue);
     atomic_store_explicit(&e->channel.draining, 0, memory_order_relaxed);
   } else {
-    e->simple.error_on_neg_latch = h->error_on_neg_latch ? 1 : 0;
     atomic_store_explicit(&e->simple.latch, h->latch, memory_order_relaxed);
-    atomic_store_explicit(&e->simple.life_count, h->life_count,
-                          memory_order_relaxed);
     atomic_store_explicit(&e->simple.fired, false, memory_order_relaxed);
     e->simple.data = NULL_GUID;
     arts_lf_stack_init(&e->simple.deps_stack);
@@ -174,15 +180,13 @@ bool arts_event_create_internal(arts_guid_t *guid,
 
   if (rank == arts_global_rank_id) {
     if (*guid) {
-      /* add_item_race: install only if slot is empty.  On success the
-       * route_item lock starts at (gen<<32)|1 (Task 4e — install also
-       * counts as one existence ref). */
+      /* add_item_race wraps `event` in a cb and CAS-installs it (firing the
+       * OoO list on win).  Insert-or-fail: on loss the object stays ours, so
+       * we free it. */
       if (!arts_route_table_add_item_race(event, *guid, rank, false)) {
-        /* Another caller won the race; silent no-op. */
-        event_deleter(event);
+        arts_event_deleter(event);
         return false;
       }
-      arts_route_table_fire_oo(*guid, arts_out_of_order_handler);
     } else {
       *guid = arts_guid_create_for_rank(rank, ARTS_GUID_EVENT);
       arts_route_table_add_item(event, *guid, rank, false);
@@ -190,10 +194,10 @@ bool arts_event_create_internal(arts_guid_t *guid,
     return true;
   }
   /* Cross-rank: forward as a marshaled buffer.  Receiver
-   * arts_remote_handle_event_move performs add_item_race.  Discard the
+   * arts_handler_event_create performs add_item_race.  Discard the
    * local allocation since the remote will materialise its own copy. */
-  arts_remote_memory_move(rank, *guid, event, sizeof(*event),
-                          ARTS_REMOTE_EVENT_MOVE_MSG, event_deleter);
+  arts_send_memory_move(rank, *guid, event, sizeof(*event), MSG_EVENT_CREATE,
+                        arts_event_deleter);
   return true;
 }
 
@@ -218,7 +222,7 @@ arts_guid_t arts_event_create(const arts_event_hint_t *hint) {
 void arts_event_destroy(arts_guid_t guid) {
   unsigned int rank = arts_guid_get_rank(guid);
   if (rank != arts_global_rank_id) {
-    arts_remote_event_destroy(guid);
+    arts_send_event_destroy(guid);
     return;
   }
   arts_route_table_mark_delete(guid);
@@ -229,7 +233,7 @@ void arts_event_destroy(arts_guid_t guid) {
  * for non-CHANNEL it is e->simple.data. */
 static void event_signal_one(struct arts_event_dep_s *d, arts_guid_t data) {
   if (d->kind == ARTS_GUID_EDT) {
-    internal_signal_edt(d->target, d->slot, data, d->mode, NULL, 0);
+    arts_edt_satisfy_slot(d->target, d->slot, data, d->mode, NULL, 0);
   } else if (d->kind == ARTS_GUID_EVENT) {
     arts_event_satisfy_slot(d->target, data, d->slot);
   }
@@ -253,25 +257,9 @@ static struct arts_event_dep_s *event_node_alloc(arts_guid_kind_t kind,
 /* ── Non-CHANNEL drain ───────────────────────────────────────────────── */
 
 /*
- * maybe_destroy — non-CHANNEL destroy invariant: latch <= 0 AND
- * life_count <= 0.  Idempotent — mark_delete is safe to call repeatedly.
- * Called after every operation that can move either counter toward 0.
- */
-static inline void maybe_destroy(struct arts_event_s *e,
-                                 arts_guid_t event_guid) {
-  if (e->is_channel) {
-    return;
-  }
-  if (atomic_load_explicit(&e->simple.latch, memory_order_acquire) <= 0 &&
-      atomic_load_explicit(&e->simple.life_count, memory_order_acquire) <= 0) {
-    arts_route_table_mark_delete(event_guid);
-  }
-}
-
-/*
  * drain_simple_chain — idempotent, multi-caller drain of simple.deps_stack
  * after fired==true.  Invoked by:
- *   (a) the unique satisfy thread that just CAS-set fired (drain_simple).
+ *   (a) the unique satisfy thread that just CAS-set fired.
  *   (b) any addDep thread that pushed onto the stack and then observed
  *       fired==true (race rescue: addDep's push lands *after* satisfy's
  *       reverse_drain finished).
@@ -279,20 +267,16 @@ static inline void maybe_destroy(struct arts_event_s *e,
  * Concurrent callers self-serialise inside arts_lf_stack_reverse_drain's
  * `atomic_exchange(&head, NULL)` — only one caller per chain, others see
  * NULL and exit.  The outer loop catches pushes that landed during a
- * caller's iteration.  Destroy is gated by the latch+life_count
- * invariant rather than a counter-exhaustion predicate.
+ * caller's iteration.  Fire never destroys (fire-and-linger): the event
+ * stays addressable to serve late binders until an explicit destroy.
  */
 static void drain_simple_chain(struct arts_event_s *e, arts_guid_t event_guid) {
+  (void)event_guid; /* simple events never auto-destroy */
   arts_guid_t data = e->simple.data;
   for (;;) {
     arts_lf_link_t *fifo = arts_lf_stack_reverse_drain(&e->simple.deps_stack);
     if (!fifo) {
-      /* Drain complete.  Check destroy invariant once after each empty
-       * detach so ONCE/LATCH (life_count=0) destroy on terminal fire and
-       * COUNTED (life_count=N) destroys when its Nth dep arrives via the
-       * late-binder path. */
-      maybe_destroy(e, event_guid);
-      return;
+      return; /* drain complete */
     }
     while (fifo) {
       arts_lf_link_t *next =
@@ -303,26 +287,6 @@ static void drain_simple_chain(struct arts_event_s *e, arts_guid_t event_guid) {
       fifo = next;
     }
   }
-}
-
-/*
- * drain_simple — satisfy-side single-fire dispatcher.  CAS fired 0→1
- * gates the unique fire winner; the winner runs drain_simple_chain.
- * Caller has already written simple.data (if any); the CAS release
- * publishes the data store to late binders.
- */
-static void drain_simple(struct arts_event_s *e, arts_guid_t event_guid) {
-  int32_t latch = atomic_load_explicit(&e->simple.latch, memory_order_acquire);
-  if (latch > 0) {
-    return;
-  }
-  bool fexp = false;
-  if (!atomic_compare_exchange_strong_explicit(&e->simple.fired, &fexp, true,
-                                               memory_order_acq_rel,
-                                               memory_order_acquire)) {
-    return; /* another thread already won the single fire */
-  }
-  drain_simple_chain(e, event_guid);
 }
 
 /* ── CHANNEL drain (lock-free, single-flight via `draining` sentinel) ── */
@@ -353,18 +317,19 @@ static void try_drain_channel(struct arts_event_s *e, arts_guid_t event_guid) {
     while (atomic_load_explicit(&e->channel.nb_sat, memory_order_acquire) > 0 &&
            atomic_load_explicit(&e->channel.nb_deps, memory_order_acquire) >
                0) {
-      arts_lf_link_t *data_node = arts_mpsc_pop(&e->channel.data_queue);
-      arts_lf_link_t *dep_node = arts_mpsc_pop(&e->channel.dep_queue);
-      if (data_node == NULL || dep_node == NULL) {
-        /* Queue empty mid-fire — should not happen if counters and
-         * queues are in lockstep, but bail safely. */
-        if (data_node) {
-          event_node_free(data_node);
-        }
-        if (dep_node) {
-          event_node_free(dep_node);
-        }
-        break;
+      /* Both counters > 0 ⇒ a producer has fully committed one node to each
+       * queue (the push links the node before its counter bump).  A *different*
+       * concurrent producer that has swapped the queue head but not yet stored
+       * its predecessor's next pointer makes the MPSC pop transiently return
+       * NULL even though the committed node is present — the queue contract is
+       * "retry later".  Spin on each pop until the in-flight link resolves;
+       * never drop the already-popped partner (doing so desyncs the
+       * counter/queue pair and strands the consumer EDT forever). */
+      arts_lf_link_t *data_node;
+      while ((data_node = arts_mpsc_pop(&e->channel.data_queue)) == NULL) {
+      }
+      arts_lf_link_t *dep_node;
+      while ((dep_node = arts_mpsc_pop(&e->channel.dep_queue)) == NULL) {
       }
       /* Data node carries the satisfy data in `target` (kind == ARTS_NULL
        * marker). */
@@ -383,30 +348,15 @@ static void try_drain_channel(struct arts_event_s *e, arts_guid_t event_guid) {
 
 /* ── arts_event_satisfy_slot ───────────────────────────────────────── */
 
-void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
-                             uint32_t slot) {
-  TIME_EVENT_SIGNAL_START();
-  INCREMENT_NUM_EVENT_SIGNAL_BY(1);
-
-  if (current_edt && current_edt->invalidate_count > 0) {
-    arts_out_of_order_event_satisfy_slot(current_edt->current_edt, event_guid,
-                                         data_guid, slot, true);
-    TIME_EVENT_SIGNAL_STOP();
-    return;
-  }
-
-  struct arts_event_s *event = arts_route_table_lookup_event_safe(event_guid);
-  if (!event) {
-    unsigned int rank = arts_guid_get_rank(event_guid);
-    if (rank != arts_global_rank_id) {
-      arts_remote_event_satisfy_slot(event_guid, data_guid, slot);
-    } else {
-      arts_out_of_order_event_satisfy_slot(event_guid, event_guid, data_guid,
-                                           slot, false);
-    }
-    TIME_EVENT_SIGNAL_STOP();
-    return;
-  }
+/* Home-routed handler (OOO_EVENT_SATISFY_SLOT): item is the installed event,
+ * ref-held by dispatch_or_defer.  Pure core — no lookup / acquire / release. */
+void arts_handler_event_satisfy_slot(void *item, void *vargs) {
+  struct arts_event_s *event = (struct arts_event_s *)item;
+  struct arts_ooo_args_event_satisfy_s *a =
+      (struct arts_ooo_args_event_satisfy_s *)vargs;
+  arts_guid_t event_guid = a->event_guid;
+  arts_guid_t data_guid = a->data_guid;
+  uint32_t slot = a->slot;
 
   if (event->is_channel) {
     /* CHANNEL path: push data, increment nb_sat, drain. */
@@ -418,8 +368,6 @@ void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
     arts_mpsc_push(&event->channel.data_queue, &node->link);
     atomic_fetch_add_explicit(&event->channel.nb_sat, 1u, memory_order_acq_rel);
     try_drain_channel(event, event_guid);
-    arts_route_table_release(event_guid);
-    TIME_EVENT_SIGNAL_STOP();
     return;
   }
 
@@ -427,8 +375,6 @@ void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
   if (slot == ARTS_EVENT_LATCH_INCR_SLOT) {
     /* LATCH only: increment counter; no fire trigger here. */
     atomic_fetch_add_explicit(&event->simple.latch, 1, memory_order_acq_rel);
-    arts_route_table_release(event_guid);
-    TIME_EVENT_SIGNAL_STOP();
     return;
   }
   if (slot != ARTS_EVENT_LATCH_DECR_SLOT) {
@@ -440,15 +386,7 @@ void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
   int32_t prev =
       atomic_fetch_sub_explicit(&event->simple.latch, 1, memory_order_acq_rel);
   if (prev <= 0) {
-    /* Over-satisfy (past the unique fire).  STICKY raises ARTS_ERROR;
-     * IDEM / LATCH silently absorb. */
-    if (event->simple.error_on_neg_latch) {
-      arts_route_table_release(event_guid);
-      ARTS_ERROR("over-satisfy on event with error_on_neg_latch=true");
-    }
-    arts_route_table_release(event_guid);
-    TIME_EVENT_SIGNAL_STOP();
-    return;
+    return; /* over-satisfy past the unique fire: silently absorbed */
   }
   if (prev == 1) {
     /* Unique fire trigger.  Write data BEFORE the fired CAS so the
@@ -463,13 +401,102 @@ void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
                                                   memory_order_acquire);
     drain_simple_chain(event, event_guid);
   }
-  arts_route_table_release(event_guid);
+}
+
+/* arts_event_satisfy_slot — entity-specific API: satisfy an event's slot.
+ *   home == self → dispatch_or_defer (acquire → arts_handler_event_satisfy_slot
+ *                  or defer until the event installs);
+ *   home != self → MSG_EVENT_SATISFY_SLOT wire;
+ *   CDAG → force-defer on the GPU wrapper's slot. */
+void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
+                             uint32_t slot) {
+  TIME_EVENT_SIGNAL_START();
+  INCREMENT_NUM_EVENT_SIGNAL_BY(1);
+
+  struct arts_ooo_args_event_satisfy_s a = {
+      .event_guid = event_guid, .data_guid = data_guid, .slot = slot};
+  if (current_edt && current_edt->invalidate_count > 0) {
+    arts_ooo_push_guid(current_edt->guid, OOO_EVENT_SATISFY_SLOT, &a,
+                       sizeof(a));
+  } else if (arts_guid_get_rank(event_guid) != arts_global_rank_id) {
+    arts_send_event_satisfy_slot(event_guid, data_guid, slot);
+  } else {
+    arts_ooo_dispatch_or_defer_guid(event_guid, OOO_EVENT_SATISFY_SLOT, &a,
+                                    sizeof(a));
+  }
   TIME_EVENT_SIGNAL_STOP();
 }
 
 /* OCR-aligned convenience wrapper: satisfy slot 0 (LATCH_DECR). */
 void arts_event_satisfy(arts_guid_t event_guid, arts_guid_t data_guid) {
   arts_event_satisfy_slot(event_guid, data_guid, ARTS_EVENT_LATCH_DECR_SLOT);
+}
+
+/* ── arts_event_add_dependence ─────────────────────────────────────── */
+
+/* Home-routed handler (OOO_EVENT_ADD_DEPENDENCE): item is the installed source
+ * event, ref-held by dispatch_or_defer.  Pure core — register the dependent on
+ * the event (CHANNEL queue / fire-and-linger immediate deliver / Treiber
+ * waiter).  No lookup / acquire / release. */
+void arts_handler_event_add_dependence(void *item, void *vargs) {
+  struct arts_event_s *event = (struct arts_event_s *)item;
+  struct arts_ooo_args_event_add_dep_s *a =
+      (struct arts_ooo_args_event_add_dep_s *)vargs;
+  arts_guid_t source = a->source;
+  arts_guid_t destination = a->destination;
+  uint32_t slot = a->slot;
+  arts_db_access_mode_t access_mode = a->mode;
+  arts_guid_kind_t dest_type = arts_guid_get_kind(destination);
+
+  if (event->is_channel) {
+    /* CHANNEL path: push dep, increment nb_deps, drain. */
+    struct arts_event_dep_s *node =
+        event_node_alloc(dest_type, destination, slot, access_mode);
+    arts_mpsc_push(&event->channel.dep_queue, &node->link);
+    atomic_fetch_add_explicit(&event->channel.nb_deps, 1u,
+                              memory_order_acq_rel);
+    try_drain_channel(event, source);
+    return;
+  }
+
+  /* Already-fired ⇒ deliver immediately from simple.data (fire-and-linger). */
+  if (atomic_load_explicit(&event->simple.fired, memory_order_acquire)) {
+    arts_guid_t data = event->simple.data;
+    if (dest_type == ARTS_GUID_EDT) {
+      arts_edt_satisfy_slot(destination, slot, data, access_mode, NULL, 0);
+    } else if (dest_type == ARTS_GUID_EVENT) {
+      arts_event_satisfy_slot(destination, data, slot);
+    }
+    return;
+  }
+
+  /* Not yet fired: enqueue dep onto the Treiber stack. */
+  struct arts_event_dep_s *dep =
+      event_node_alloc(dest_type, destination, slot, access_mode);
+  arts_lf_stack_push(&event->simple.deps_stack, &dep->link);
+
+  /* Race rescue: the event may have fired between our fired-check and our
+   * push; re-load fired and drain so our dep is not stranded.  addDep MUST NOT
+   * CAS `fired` — only the unique satisfy thread that wrote simple.data may. */
+  if (atomic_load_explicit(&event->simple.fired, memory_order_acquire)) {
+    drain_simple_chain(event, source);
+  }
+}
+
+/* arts_event_add_dependence — entity-specific API: register a dependent on an
+ * event source.  home==self → dispatch_or_defer (acquire → handler, or defer
+ * until the event installs); home!=self → MSG_EVENT_ADD_DEPENDENCE wire. */
+void arts_event_add_dependence(arts_guid_t source, arts_guid_t destination,
+                               uint32_t slot, arts_db_access_mode_t mode) {
+  unsigned int rank = arts_guid_get_rank(source);
+  if (rank != arts_global_rank_id) {
+    arts_send_event_add_dependence(source, destination, slot, rank, mode);
+    return;
+  }
+  struct arts_ooo_args_event_add_dep_s a = {
+      .source = source, .destination = destination, .slot = slot, .mode = mode};
+  arts_ooo_dispatch_or_defer_guid(source, OOO_EVENT_ADD_DEPENDENCE, &a,
+                                  sizeof(a));
 }
 
 /* ── arts_add_dependence ──────────────────────────────────────────── */
@@ -483,7 +510,7 @@ void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
   if (access_mode == DB_MODE_VAL) {
     arts_guid_kind_t dest_type = arts_guid_get_kind(destination);
     if (dest_type == ARTS_GUID_EDT) {
-      internal_signal_edt(destination, slot, source, DB_MODE_VAL, NULL, 0);
+      arts_edt_satisfy_slot(destination, slot, source, DB_MODE_VAL, NULL, 0);
     } else if (dest_type == ARTS_GUID_EVENT) {
       arts_event_satisfy_slot(destination, source, slot);
     }
@@ -494,7 +521,7 @@ void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
   if (source == NULL_GUID) {
     arts_guid_kind_t dest_type = arts_guid_get_kind(destination);
     if (dest_type == ARTS_GUID_EDT) {
-      internal_signal_edt(destination, slot, NULL_GUID, access_mode, NULL, 0);
+      arts_edt_satisfy_slot(destination, slot, NULL_GUID, access_mode, NULL, 0);
     } else if (dest_type == ARTS_GUID_EVENT) {
       arts_event_satisfy_slot(destination, NULL_GUID, slot);
     }
@@ -507,89 +534,15 @@ void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
   if (source_type == ARTS_GUID_DB) {
     arts_guid_kind_t dest_type = arts_guid_get_kind(destination);
     if (dest_type == ARTS_GUID_EDT) {
-      internal_signal_edt(destination, slot, source, access_mode, NULL, 0);
+      arts_edt_satisfy_slot(destination, slot, source, access_mode, NULL, 0);
     } else if (dest_type == ARTS_GUID_EVENT) {
       arts_event_satisfy_slot(destination, source, slot);
     }
     return;
   }
 
-  /* Event source. */
-  arts_guid_kind_t dest_type = arts_guid_get_kind(destination);
-
-  /* Step 1: set mode on EDT dep slot. */
-  if (dest_type == ARTS_GUID_EDT) {
-    arts_set_dep_mode(destination, slot, access_mode);
-  }
-
-  /* Step 2: lookup + register. */
-  struct arts_event_s *event = arts_route_table_lookup_event_safe(source);
-  if (!event) {
-    unsigned int rank = arts_guid_get_rank(source);
-    if (rank != arts_global_rank_id) {
-      arts_remote_add_dependence(source, destination, slot, rank, access_mode);
-    } else {
-      arts_out_of_order_add_dependence(source, destination, slot, access_mode,
-                                       source);
-    }
-    return;
-  }
-
-  if (event->is_channel) {
-    /* CHANNEL path: push dep, increment nb_deps, drain. */
-    struct arts_event_dep_s *node =
-        event_node_alloc(dest_type, destination, slot, DB_MODE_NULL);
-    arts_mpsc_push(&event->channel.dep_queue, &node->link);
-    atomic_fetch_add_explicit(&event->channel.nb_deps, 1u,
-                              memory_order_acq_rel);
-    try_drain_channel(event, source);
-    arts_route_table_release(source);
-    return;
-  }
-
-  /* Non-CHANNEL: saturating decrement of life_count (clamp at 0).  Done
-   * BEFORE the fired check so the destroy invariant `latch<=0 &&
-   * life_count<=0` can be observed by maybe_destroy in either path. */
-  int32_t cur =
-      atomic_load_explicit(&event->simple.life_count, memory_order_acquire);
-  while (cur > 0) {
-    if (atomic_compare_exchange_weak_explicit(&event->simple.life_count, &cur,
-                                              cur - 1, memory_order_acq_rel,
-                                              memory_order_acquire)) {
-      break;
-    }
-  }
-
-  /* Already-fired ⇒ deliver immediately from simple.data. */
-  if (atomic_load_explicit(&event->simple.fired, memory_order_acquire)) {
-    arts_guid_t data = event->simple.data;
-    arts_route_table_release(source);
-    if (dest_type == ARTS_GUID_EDT) {
-      internal_signal_edt(destination, slot, data, DB_MODE_NULL, NULL, 0);
-    } else if (dest_type == ARTS_GUID_EVENT) {
-      arts_event_satisfy_slot(destination, data, slot);
-    }
-    /* Check destroy invariant after a late-binder delivery (may have
-     * driven life_count to 0 — COUNTED terminal case). */
-    maybe_destroy(event, source);
-    return;
-  }
-
-  /* Not yet fired: enqueue dep onto Treiber stack. */
-  struct arts_event_dep_s *dep =
-      event_node_alloc(dest_type, destination, slot, DB_MODE_NULL);
-  arts_lf_stack_push(&event->simple.deps_stack, &dep->link);
-
-  /* Race rescue: if the event fired between our fired-check above and
-   * our push, the firing thread's drain may have observed an empty stack
-   * and finished without our dep.  Re-load fired with acquire and run
-   * drain_simple_chain to pick up the push.
-   *
-   * Critical: addDep MUST NOT call drain_simple (the CAS-fired path).
-   * Only the unique satisfy thread that observed prev==1 may win CAS,
-   * because only that thread has written simple.data. */
-  if (atomic_load_explicit(&event->simple.fired, memory_order_acquire)) {
-    drain_simple_chain(event, source);
-  }
-  arts_route_table_release(source);
+  /* Event source — delegate to the entity-specific API.  The dep mode rides
+   * on the satisfy at fire time (stored in the waiter node, replayed through
+   * arts_edt_satisfy_slot), so no eager mode-set to the destination. */
+  arts_event_add_dependence(source, destination, slot, access_mode);
 }

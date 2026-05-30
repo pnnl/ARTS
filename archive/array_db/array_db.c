@@ -59,7 +59,7 @@ void *copy_db(void *ptr, unsigned int size, arts_guid_t guid) {
   struct arts_db_s *db = ((struct arts_db_s *)ptr) - 1;
   struct arts_db_s *new_db = (struct arts_db_s *)arts_calloc_align(1, size, 16);
   memcpy(new_db, db, size);
-  new_db->guid = guid;
+  new_db->cache.db_guid = guid;
   return (void *)(new_db + 1);
 }
 
@@ -148,7 +148,7 @@ arts_guid_t arts_new_array_db(arts_array_db_t **addr, unsigned int element_size,
 
 arts_guid_t get_array_db_guid(arts_array_db_t *array) {
   struct arts_db_s *db = ((struct arts_db_s *)array) - 1;
-  return db->guid;
+  return db->cache.db_guid;
 }
 
 unsigned int get_offset_from_index(arts_array_db_t *array, unsigned int index) {

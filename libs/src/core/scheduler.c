@@ -145,6 +145,18 @@ void arts_runtime_node_init(struct arts_config_s *config) {
   unsigned int tc = config->thread_count;
 
   /* Scheduler */
+#ifdef ARTS_USE_GPU
+  /* GPU EDTs are pushed onto per-worker GPU deques that only a GPU scheduler
+   * loop drains; under the default (CPU-only) scheduler they are never popped,
+   * so any program that spawns a GPU EDT hangs.  When GPU support is enabled
+   * but the scheduler is still at its default selection, promote to the GPU
+   * scheduler loop.  An explicit non-default choice (e.g. a GPU backoff/demand
+   * variant) is respected.  Index 3 is arts_gpu_scheduler_loop in the GPU
+   * build's scheduler_loop[] table above. */
+  if (config->gpu > 0 && config->scheduler == 0) {
+    config->scheduler = 3;
+  }
+#endif
   arts_node_info.scheduler = scheduler_loop[config->scheduler];
 
   /* Deque implementation selection (0=simple, 1=priority) */
@@ -708,7 +720,7 @@ void arts_runtime_stop() {
 
 void arts_handle_remote_stolen_edt(struct arts_edt_s *edt) {
   ARTS_DEBUG("Processing stolen EDT[Id:%lu, Guid:%lu] on PU %u", edt->arts_id,
-             edt->current_edt, arts_thread_info.pu_id);
+             edt->guid, arts_thread_info.pu_id);
   increment_queue_epoch(edt->epoch_guid);
   arts_shutdown_epoch_inc_queue();
 #ifdef ARTS_USE_GPU
@@ -745,13 +757,13 @@ void arts_handle_remote_stolen_edt(struct arts_edt_s *edt) {
 void arts_handle_ready_edt(struct arts_edt_s *edt) {
   ARTS_INFO("EDT[Guid:%lu, Id:%lu] ready — entering acquire_dbs "
             "(depc=%u)",
-            edt->current_edt, edt->arts_id, edt->depc);
+            edt->guid, edt->arts_id, edt->depc);
 #ifdef ARTS_USE_CXL
   if (arts_node_info.scheduler == (void *)arts_cxl_scheduler_loop &&
       arts_deque_full(arts_thread_info.my_deque)) {
     while (!arts_cxl_deque_push(arts_node_info.cxl_deque,
                                 &arts_node_info.cxl_local_lock,
-                                edt->header.size, edt)) {
+                                arts_edt_total_size(edt), edt)) {
     }
     return;
   }
@@ -760,7 +772,7 @@ void arts_handle_ready_edt(struct arts_edt_s *edt) {
   unsigned int remaining = arts_atomic_sub(&edt->depc_needed, 1U);
   ARTS_INFO("EDT[Guid:%lu] acquire_dbs done, sentinel removed: "
             "depc_needed=%u",
-            edt->current_edt, remaining);
+            edt->guid, remaining);
   if (remaining == 0) {
     INCREMENT_NUM_EDT_ACQUIRE_BY(1);
     increment_queue_epoch(edt->epoch_guid);
@@ -782,18 +794,18 @@ void arts_handle_ready_edt(struct arts_edt_s *edt) {
       struct arts_deque_s *q = arts_thread_info.my_gpu_deque
                                    ? arts_thread_info.my_gpu_deque
                                    : arts_node_info.gpu_deque[0];
-      ARTS_INFO("EDT[Guid:%lu] pushed to GPU deque", edt->current_edt);
+      ARTS_INFO("EDT[Guid:%lu] pushed to GPU deque", edt->guid);
       arts_deque_push_front(q, edt, 0);
     } else {
       struct arts_deque_s *q = arts_thread_info.my_deque
                                    ? arts_thread_info.my_deque
                                    : arts_node_info.deque[0];
-      ARTS_INFO("EDT[Guid:%lu] pushed to worker deque", edt->current_edt);
+      ARTS_INFO("EDT[Guid:%lu] pushed to worker deque", edt->guid);
       arts_deque_push_front(q, edt, 0);
     }
   } else {
     ARTS_DEBUG("EDT[Guid:%lu] waiting for %u more DB acquisitions",
-               edt->current_edt, remaining);
+               edt->guid, remaining);
   }
 }
 
@@ -808,7 +820,7 @@ void arts_run_edt(struct arts_edt_s *edt) {
 
   ARTS_INFO("Running EDT[Id:%lu, Guid:%lu, Deps: %u, Params: %u, "
             "DepvPtr: %p]",
-            edt->arts_id, edt->current_edt, depc, paramc, depv);
+            edt->arts_id, edt->guid, depc, paramc, depv);
   prep_dbs(depc, depv, false);
 
   arts_set_thread_local_edt_info(edt);
@@ -839,7 +851,7 @@ void arts_run_edt(struct arts_edt_s *edt) {
 
   arts_unset_thread_local_edt_info();
 
-  ARTS_INFO("EDT[Guid:%lu, Id:%lu] finished (exec_ns=%lu)", edt->current_edt,
+  ARTS_INFO("EDT[Guid:%lu, Id:%lu] finished (exec_ns=%lu)", edt->guid,
             edt->arts_id, exec_ns);
 #ifdef ARTS_USE_CXL
   if (!IS_CXL_PTR(edt)) {

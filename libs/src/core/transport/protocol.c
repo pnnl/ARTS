@@ -142,17 +142,17 @@ void arts_remote_thread_outbound_queues_cleanup() {
 
 void out_cleanup(void) {
   if (out_head) {
+    /* Quiescent teardown (senders stopped): pop every remaining message from
+     * each lock-free queue, free its payload + node. */
     for (unsigned int i = 0; i < node_list_size; i++) {
       struct arts_link_list_s *list = arts_link_list_get(out_head, i);
-      struct arts_link_list_item_s *cur = list->headPtr;
-      while (cur) {
-        struct arts_link_list_item_s *next = cur->next;
-        struct out_list_s *out = (struct out_list_s *)(cur + 1);
+      struct out_list_s *out;
+      while ((out = (struct out_list_s *)arts_link_list_pop_front(
+                  list, NULL)) != NULL) {
         if (out->payload && out->free_method) {
           out->free_method(out->payload);
         }
-        arts_free(cur);
-        cur = next;
+        arts_link_list_delete_item(out);
       }
     }
     arts_free(out_head);

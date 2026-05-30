@@ -134,7 +134,7 @@ extern "C" void arts_init_per_gpu(unsigned int node_id, int dev_id,
   (void)argv;
   if (!dev_id) {
     dev_ptr_raw =
-        (unsigned int **)calloc(arts_get_total_gpus(), sizeof(unsigned int *));
+        (unsigned int **)calloc(arts_get_gpus_per_rank(), sizeof(unsigned int *));
   }
   dev_ptr_raw[dev_id] =
       (unsigned int *)arts_cuda_malloc(sizeof(unsigned int) * GPULISTLEN);
@@ -150,19 +150,19 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   unsigned int **addr;
   arts_guid_t db_guid = arts_guid_reserve(ARTS_GUID_DB, 0);
   addr = (unsigned int **)arts_db_create_with_guid(
-      db_guid, sizeof(unsigned int *) * arts_get_total_gpus(), ARTS_DB_GPU_PIN,
+      db_guid, sizeof(unsigned int *) * arts_get_gpus_per_rank(), ARTS_DB_GPU_PIN,
       NULL, NULL);
-  for (uint64_t i = 0; i < arts_get_total_gpus(); i++) {
+  for (uint64_t i = 0; i < arts_get_gpus_per_rank(); i++) {
     addr[i] = dev_ptr_raw[i];
   }
 
   arts_edt_hint_t hint_0 = {0, 0};
   arts_guid_t done_guid =
-      arts_edt_create(done, 0, NULL, arts_get_total_gpus(), &hint_0);
+      arts_edt_create(done, 0, NULL, arts_get_gpus_per_rank(), &hint_0);
 
   dim3 threads(GPULISTLEN, 1, 1);
   dim3 grid(1, 1, 1);
-  for (uint64_t i = 0; i < arts_get_total_gpus(); i++) {
+  for (uint64_t i = 0; i < arts_get_gpus_per_rank(); i++) {
     uint64_t args[] = {(uint64_t)done_guid, i};
     arts_gpu_hint_t lib_hint = {};
     lib_hint.rank = node_id;

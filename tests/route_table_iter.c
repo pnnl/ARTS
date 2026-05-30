@@ -63,15 +63,15 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
   unsigned int node_id = arts_get_current_rank();
   printf("Init per node\n");
-  arts_guid_t range_start = arts_guid_reserve_range(ARTS_GUID_EDT, MYSIZE, node_id);
+  arts_guid_t range_start =
+      arts_guid_reserve_range(ARTS_GUID_EDT, MYSIZE, node_id);
   for (uint64_t i = 0; i < MYSIZE; i++) {
-    arts_route_item_t *location =
-        (arts_route_item_t *)arts_route_table_add_item(
-            (void *)(uintptr_t)range_start,
-            arts_guid_from_index(range_start, i), node_id, 0);
-    /* Legacy item->lock / AVAILABLE_ITEM / DELETE_ITEM removed in new
-     * route_item model.  Lifecycle redesign is follow-up work,
-     * mechanism; this test no longer exercises mark-for-delete. */
+    /* Install a non-owned sentinel (fake integer ptr) for the iterator-walk
+     * exercise.  NULL deleter so the cb does not free this bogus address at
+     * shutdown (deleter-by-kind would pick arts_edt_deleter and crash). */
+    void *location = arts_route_table_add_item_with_deleter(
+        (void *)(uintptr_t)range_start, arts_guid_from_index(range_start, i),
+        NULL);
     (void)location;
   }
 
@@ -86,18 +86,23 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
    * acquire_item / release_item / mark_delete API.  The iterator-walk and
    * post-walk add_item exercise here verifies the data path only. */
 
-  void *ptr = arts_route_table_lookup_item(guid);
+  void *ptr = arts_route_table_lookup_data(guid);
   int rank = arts_route_table_lookup_rank(guid);
   arts_printf("Lookup %lu %p (rank %d)\n", guid, ptr, rank);
 
   ptr = arts_route_table_lookup_data(guid);
   arts_printf("DB Lookup %lu %p\n", guid, ptr);
 
-  arts_route_item_t *location = (arts_route_item_t *)arts_route_table_add_item(
-      (void *)(uintptr_t)range_start, guid, node_id, 0);
+  /* Install a sentinel (non-owned integer) for the data-path exercise.  Use
+   * the explicit-deleter install with NULL so the cb does NOT try to free this
+   * fake pointer as a real DB at shutdown (deleter-by-kind would pick
+   * arts_db_deleter and crash on the bogus address). */
+  (void)node_id;
+  void *location = arts_route_table_add_item_with_deleter(
+      (void *)(uintptr_t)range_start, guid, NULL);
   (void)location;
 
-  ptr = arts_route_table_lookup_item(guid);
+  ptr = arts_route_table_lookup_data(guid);
   arts_printf("Lookup2 %lu %p\n", guid, ptr);
 
   ptr = arts_route_table_lookup_data(guid);

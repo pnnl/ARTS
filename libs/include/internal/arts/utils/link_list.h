@@ -43,24 +43,38 @@ extern "C" {
 #endif
 
 #include <stdint.h>
+
+/* Lock-free Vyukov MPSC queue (multi-producer push_back, single-consumer
+ * pop_front).  The transport outbound queues use one per (rank,port) slot —
+ * workers append; a dedicated sender thread (or, at shutdown, the flush path
+ * once senders have stopped) drains.  pop_front returns NULL while a producer
+ * is mid-link (claimed the tail but not yet linked it); the drain loops
+ * re-poll, so no message is lost.  The C++/nvcc layout-mirror drops _Atomic
+ * (the helpers are C-only). */
 struct arts_link_list_s;
 struct arts_link_list_item_s {
+#ifdef __cplusplus
   struct arts_link_list_item_s *next;
+#else
+  _Atomic(struct arts_link_list_item_s *) next;
+#endif
 };
 
 struct arts_link_list_s {
-  struct arts_link_list_item_s *headPtr;
-  struct arts_link_list_item_s *tailPtr;
-  volatile unsigned int lock;
+#ifdef __cplusplus
+  struct arts_link_list_item_s *head;
+#else
+  _Atomic(struct arts_link_list_item_s *) head; /* producers xchg-append */
+#endif
+  struct arts_link_list_item_s *tail; /* single consumer reads/advances */
+  struct arts_link_list_item_s stub;  /* embedded sentinel */
 };
 
+void arts_link_list_new(struct arts_link_list_s *list);
 struct arts_link_list_s *arts_link_list_group_new(unsigned int list_size);
 struct arts_link_list_s *arts_link_list_get(struct arts_link_list_s *link_list,
                                             unsigned int position);
-unsigned arts_link_list_get_size(struct arts_link_list_s *link_list);
 uint8_t arts_link_list_is_empty(struct arts_link_list_s *link_list);
-void *arts_link_list_get_front_data(struct arts_link_list_s *link_list);
-void *arts_link_list_get_tail_data(struct arts_link_list_s *link_list);
 void arts_link_list_delete(void *link_list);
 void arts_link_list_push_back(struct arts_link_list_s *list, void *item);
 void *arts_link_list_pop_front(struct arts_link_list_s *list, void **free_pos);

@@ -287,7 +287,7 @@ _Noreturn void arts_abort(uint8_t error_code) {
  *
  * Poll arts_node_info.outbox_pending until it reaches zero or the
  * deadline elapses. Used by the initiator of a shutdown to guarantee
- * that the broadcast ARTS_REMOTE_SHUTDOWN_MSG packets have been fully
+ * that the broadcast MSG_SHUTDOWN packets have been fully
  * handed off to the kernel TCP buffer before the initiator tears down
  * sockets during cleanup.
  */
@@ -320,7 +320,7 @@ static void wait_for_outbox_drain(unsigned int deadline_ms) {
  *
  * Called from:
  *   - arts_shutdown() on the user EDT path (initiator = true)
- *   - the ARTS_REMOTE_SHUTDOWN_MSG handler in dispatcher.c
+ *   - the MSG_SHUTDOWN handler in dispatcher.c
  *     (initiator = false)
  *   - legacy EOF-detection paths in socket.c's recv logic
  *     (initiator = false) — defense in depth

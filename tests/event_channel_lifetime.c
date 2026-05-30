@@ -50,27 +50,31 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   usleep(50000);
 
   /* Event must still be alive after N fires. */
-  struct arts_event_s *e = arts_route_table_lookup_event_safe(ch);
+  arts_shared_ptr_t h = arts_route_table_lookup_event(ch);
+  struct arts_event_s *e = (struct arts_event_s *)arts_shared_get(h);
   if (!e) {
     arts_printf(
         "FAIL: CHANNEL destroyed after %d fires (expected persistent)\n",
         N_GENS);
+    arts_shared_release(&h);
     arts_shutdown();
     return;
   }
-  arts_route_table_release(ch);
+  arts_shared_release(&h);
 
   /* Explicit destroy releases it. */
   arts_event_destroy(ch);
   usleep(50000);
 
-  e = arts_route_table_lookup_event_safe(ch);
+  h = arts_route_table_lookup_event(ch);
+  e = (struct arts_event_s *)arts_shared_get(h);
   if (e) {
     arts_printf("FAIL: CHANNEL still alive after explicit destroy\n");
-    arts_route_table_release(ch);
+    arts_shared_release(&h);
     arts_shutdown();
     return;
   }
+  arts_shared_release(&h);
 
   arts_printf(
       "  PASS: CHANNEL persistent across %d fires; destroyed explicitly\n",

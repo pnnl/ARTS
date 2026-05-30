@@ -99,10 +99,6 @@ void acquire_dbs(struct arts_edt_s *edt);
 void release_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu);
 void arts_release_created_dbs(void);
 void prep_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu);
-void internal_put_in_db(void *ptr, arts_guid_t edt_guid, arts_guid_t db_guid,
-                        unsigned int slot, unsigned int offset,
-                        unsigned int size, arts_guid_t epoch_guid,
-                        unsigned int rank);
 
 void arts_db_destroy_safe(arts_guid_t guid, bool remote);
 void *arts_db_malloc(arts_db_types_t db_type, size_t size);
@@ -114,15 +110,8 @@ void *arts_db_adopt(arts_guid_t guid, struct arts_db_s *db);
 void arts_wait_release_dbs(void);
 void arts_wait_reacquire_dbs(void);
 
-/* Internal: rename a DataBlock, returning a new GUID pointing at the same
- * data.  Not part of the public ARTS API; used by GPU buffer rotation
- * (examples/gpu/bfs/buffer.c) and tests. */
-arts_guid_t arts_db_rename(arts_guid_t guid);
-
-/* Internal: rename a DataBlock to @p new_guid from @p old_guid. */
-bool arts_db_rename_with_guid(arts_guid_t new_guid, arts_guid_t old_guid);
-
-/* Internal: copy a DataBlock to a new GUID with a different DB subtype. */
+/* Internal: copy a DataBlock to a new GUID with a different DB subtype.
+ * (Pure GUID rename — arts_db_rename — was removed as dispensable legacy.) */
 arts_guid_t arts_db_copy_to_new_type(arts_guid_t old_guid,
                                      arts_db_types_t new_type);
 

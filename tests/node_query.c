@@ -41,7 +41,7 @@
 /// @brief Tests runtime query utility functions:
 ///        arts_get_current_rank, arts_get_total_ranks,
 ///        arts_get_current_worker, arts_get_workers_per_rank,
-///        arts_get_total_gpus, arts_get_current_numa_domain,
+///        arts_get_gpus_per_rank, arts_get_current_numa_domain,
 ///        arts_get_total_numa_domains.
 
 #include "arts.h"
@@ -60,7 +60,7 @@ void check_queries(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   unsigned int total_workers = arts_get_workers_per_rank();
   unsigned int numa = arts_get_current_numa_domain();
   unsigned int total_numa = arts_get_total_numa_domains();
-  unsigned int total_gpus = arts_get_total_gpus();
+  unsigned int total_gpus = arts_get_gpus_per_rank();
 
   bool ok = true;
 

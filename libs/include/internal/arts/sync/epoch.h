@@ -55,6 +55,17 @@ void increment_queue_epoch(arts_guid_t epoch_guid);
 void increment_active_epoch(arts_guid_t epoch_guid);
 void increment_finished_epoch(arts_guid_t epoch_guid);
 void send_epoch(arts_guid_t epoch_guid, unsigned int source, unsigned int dest);
+
+/* OoO replay handlers (g_ooo_table) — pure cores invoked on the
+ * dispatch-acquired epoch item; never look up or release the route entry.
+ * inc_* : local broadcast-install race (self-rank epoch not yet installed).
+ * request : reply side — read counts and forward to dest.
+ * send    : reduce side — fold received counts into the home tally. */
+void arts_handler_epoch_inc_queue(void *item, void *args);
+void arts_handler_epoch_inc_active(void *item, void *args);
+void arts_handler_epoch_inc_finished(void *item, void *args);
+void arts_handler_epoch_request(void *item, void *args);
+void arts_handler_epoch_send(void *item, void *args);
 void broadcast_epoch_request(arts_guid_t epoch_guid);
 bool check_epoch(arts_epoch_t *epoch, unsigned int total_active,
                  unsigned int total_finish);

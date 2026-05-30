@@ -58,9 +58,9 @@ bool arts_pending_rw_queue_pop(struct arts_pending_rw_queue_s *q,
       if (tail == head) {
         return false; /* truly empty */
       }
-      /* Producer mid-push between xchg(tail) and store_release(prev->next).
-       * Yield and retry — single consumer, brief window. */
-      sched_yield();
+      /* Producer mid-link between xchg(tail) and store_release(prev->next).
+       * Tight retry until the in-flight link lands (single consumer, ns
+       * window).  Lock-free — no scheduler yield. */
       continue;
     }
     /* Copy payload out of `next` (it stays alive as the new head).

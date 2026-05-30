@@ -80,12 +80,14 @@ bool arts_rank_u64_map_advance(struct arts_rank_to_u64_map_s *m,
 
 /*--- arts_db_home_s lifecycle -------------------------------------------*/
 
-/* Allocate + initialize a home metadata block.  rw_holder is set by
- * the caller (typically creator_rank under PROP_NONE, or self_rank
- * under NO_ACQUIRE). */
-struct arts_db_home_s *arts_db_home_create(unsigned int rw_holder,
-                                           unsigned int nranks);
-void arts_db_home_destroy(struct arts_db_home_s *home);
+/* Initialize a home metadata block in place (embedded by value in the
+ * cache, no separate allocation).  rw_holder is set by the caller
+ * (typically creator_rank under PROP_NONE, or self_rank under NO_ACQUIRE). */
+void arts_db_home_init(struct arts_db_home_s *home, unsigned int rw_holder,
+                       unsigned int nranks);
+/* Release a home block's owned sub-resources (queues / maps) in place.
+ * Does NOT free the block itself (it lives inside the cache). */
+void arts_db_home_teardown(struct arts_db_home_s *home);
 
 #ifdef ARTS_MEMORY_MODEL_LRC
 /*--- last_sent_version map serialization (LRC only) ---------------------
@@ -113,8 +115,8 @@ size_t arts_rank_u64_map_serialize(const struct arts_rank_to_u64_map_s *m,
  * arts_rank_u64_map_serialize.  `nranks` sizes the new map's slot array.
  * `size` is the byte length of the buffer (used for bounds assertions in
  * debug builds only; pass the actual received length). */
-struct arts_rank_to_u64_map_s *arts_rank_u64_map_deserialize(
-    const void *in, size_t size, unsigned int nranks);
+struct arts_rank_to_u64_map_s *
+arts_rank_u64_map_deserialize(const void *in, size_t size, unsigned int nranks);
 #endif /* ARTS_MEMORY_MODEL_LRC */
 
 #ifdef __cplusplus

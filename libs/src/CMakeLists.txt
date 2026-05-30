@@ -47,7 +47,7 @@ target_include_directories(arts_interface INTERFACE
 )
 
 # enable RC coherence-message OoO defer.  Activates the
-# OO_COH_* dispatcher arms in out_of_order.c and lets coherence_handlers.c
+# OOO_DB_* dispatcher arms in out_of_order.c and lets coherence_handlers.c
 # use the new home_lookup_or_defer path (instead of the old NOTIFY-only
 # helper).  Build-integration of coherence_*.c is gated separately via
 # libs/src/core/memory/CMakeLists.txt.
@@ -60,7 +60,6 @@ endif()
 # Module subdirectories — each defines OBJECT library targets
 add_subdirectory(core)
 add_subdirectory(graph)
-add_subdirectory(array_db)
 
 # Main source file (main.c lives in core/; scheduler.c is an OBJECT library)
 set(ARTS_MAIN_SOURCES "core/main.c")
@@ -114,7 +113,6 @@ if(ARTS_BUILD_STATIC)
         $<TARGET_OBJECTS:arts_utils>
         $<TARGET_OBJECTS:arts_graph_datastructures>
         $<TARGET_OBJECTS:arts_graph_distribution>
-        $<TARGET_OBJECTS:arts_array_db>
     )
 
     target_link_libraries(arts_static PUBLIC arts_interface)
@@ -181,7 +179,6 @@ if(ARTS_BUILD_SHARED)
         $<TARGET_OBJECTS:arts_utils>
         $<TARGET_OBJECTS:arts_graph_datastructures>
         $<TARGET_OBJECTS:arts_graph_distribution>
-        $<TARGET_OBJECTS:arts_array_db>
     )
 
     target_link_libraries(arts_shared PUBLIC arts_interface)
@@ -261,7 +258,6 @@ if(BUILD_CUDA_LIBRARY)
             $<TARGET_OBJECTS:arts_gpu>
             $<TARGET_OBJECTS:arts_graph_datastructures>
             $<TARGET_OBJECTS:arts_graph_distribution>
-            $<TARGET_OBJECTS:arts_array_db>
         )
 
         target_link_libraries(arts_cuda_static PUBLIC arts_interface)
@@ -330,7 +326,6 @@ if(BUILD_CUDA_LIBRARY)
             $<TARGET_OBJECTS:arts_gpu>
             $<TARGET_OBJECTS:arts_graph_datastructures>
             $<TARGET_OBJECTS:arts_graph_distribution>
-            $<TARGET_OBJECTS:arts_array_db>
         )
 
         target_link_libraries(arts_cuda_shared PUBLIC arts_interface)

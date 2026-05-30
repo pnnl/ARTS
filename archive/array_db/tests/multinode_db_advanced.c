@@ -36,78 +36,85 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#ifndef ARTS_GAS_OUT_OF_ORDER_LIST_H
-#define ARTS_GAS_OUT_OF_ORDER_LIST_H
-#ifdef __cplusplus
-extern "C" {
-#endif
 
-#include <stdbool.h>
+/// @file multinode_db_advanced.c
+/// @brief Tests advanced DB operations across nodes: create_with_guid + data,
+///        signal_edt_ptr cross-node.
+///        Requires multi-node (node_count > 1).
 
-/* Vyukov MPSC queue (intrusive node, embedded permanent stub).
- *
- * Producers: lock-free atomic_xchg on tail + store_release on prev->next.
- * Consumer:  exactly one — single thread pops via plain head advance.
- *
- * Replaces the previous Treiber-stack-with-reverse design.  Pure FIFO,
- * no CAS loop on producer side, no reverse step on the consumer side.
- *
- * Init contract: arts_oo_list_s contains an embedded sentinel `stub`.
- * The struct is NOT safe to use after zero-initialization — callers
- * MUST invoke arts_oo_list_init() before push/drain/drop_all.  Sites:
- *   - route_table.c::arts_route_table_search_for_empty (slot first claim)
- *   - tests that allocate arts_oo_list_s on the stack/static storage
- */
+#include "arts.h"
+#include <string.h>
 
-#ifdef __cplusplus
-struct arts_oo_node_s {
-  struct arts_oo_node_s *next;
-  void *data;
-};
-struct arts_oo_list_s {
-  struct arts_oo_node_s *head;
-  struct arts_oo_node_s *tail;
-  unsigned int drain_lock; /* serialize concurrent drain callers */
-  struct arts_oo_node_s stub;
-};
-#else
-#include <stdatomic.h>
-struct arts_oo_node_s {
-  _Atomic(struct arts_oo_node_s *) next;
-  void *data;
-};
-struct arts_oo_list_s {
-  _Atomic(struct arts_oo_node_s *) head;
-  _Atomic(struct arts_oo_node_s *) tail;
-  /* Drain serialization: multiple callers (installer + late-pusher recheck)
-   * may race to call arts_oo_list_drain on the same list.  Only one winner
-   * runs the single-consumer pop loop at a time; all others return early.
-   * 0 = unlocked, 1 = a drainer is running. */
-  _Atomic(unsigned int) drain_lock;
-  struct arts_oo_node_s stub;
-};
-#endif
+#define DB_ELEMS 8
 
-/* push always succeeds in MPSC (no DRAIN_HAPPENED race window).  The
- * enum is retained as a single OK value so existing call sites keep
- * compiling without churn; it can be folded into a void return in a
- * follow-up cleanup. */
-typedef enum {
-  OO_PUSH_OK,
-} oo_push_result_t;
+// ---------------------------------------------------------------------------
+// Test 1: arts_db_create_with_guid + initial data on remote node.
+// ---------------------------------------------------------------------------
 
-/* MUST be called once on every arts_oo_list_s before first use. */
-void arts_oo_list_init(struct arts_oo_list_s *list);
-
-oo_push_result_t arts_oo_list_push(struct arts_oo_list_s *list, void *data);
-
-void arts_oo_list_drain(struct arts_oo_list_s *list,
-                        void (*callback)(void *data, void *ctx), void *ctx);
-
-void arts_oo_list_drop_all(struct arts_oo_list_s *list);
-
-#ifdef __cplusplus
+/// Reader on node 1: verifies initial data pattern.
+void check_create_with_data(uint32_t paramc, const uint64_t *paramv,
+                            uint32_t depc, arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  int *data = (int *)depv[0].ptr;
+  bool ok = (data != NULL);
+  for (int i = 0; i < DB_ELEMS && ok; i++) {
+    if (data[i] != i * 7) {
+      ok = false;
+    }
+  }
+  if (ok) {
+    arts_printf("  PASS: create_with_guid + data on remote node\n");
+  } else {
+    arts_printf("  FAIL: create_with_guid data mismatch\n");
+  }
 }
-#endif
 
-#endif
+// ---------------------------------------------------------------------------
+
+void shutdown_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                  arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
+  arts_shutdown();
+}
+
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+              arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
+
+  arts_printf("=== multinode_db_advanced ===\n");
+
+  arts_guid_t shut = arts_edt_create(shutdown_edt, 0, NULL, 1, NULL);
+  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), shut, 0);
+  arts_epoch_start(epoch);
+
+  // Test 1: Create DB locally with GUID + initial data, read from remote node.
+  // arts_db_create_with_guid is local-only, so create on node 0 and get
+  // from node 1 via arts_get_from_db.
+  {
+    arts_guid_t reserved = arts_guid_reserve(ARTS_GUID_DB, 0);
+    int *init_data = (int *)arts_db_create_with_guid(
+        reserved, DB_ELEMS * sizeof(int), ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE,
+        NULL);
+    for (int i = 0; i < DB_ELEMS; i++) {
+      init_data[i] = i * 7;
+    }
+    arts_db_release(reserved);
+    arts_guid_t reader =
+        arts_edt_create(check_create_with_data, 0, NULL, 1,
+                        &(arts_edt_hint_t){.rank = 1, .epoch = epoch});
+    arts_db_get(reader, reserved, 0, 0, DB_ELEMS * sizeof(int), NULL);
+  }
+}
+
+int main(int argc, char **argv) {
+  arts_rt(argc, argv);
+  return 0;
+}

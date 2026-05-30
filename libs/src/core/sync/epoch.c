@@ -46,6 +46,7 @@
 #include "arts/memory/db.h"
 #include "arts/remote/handler.h"
 #include "arts/runtime_types.h"
+#include "arts/sync/shared.h" /* arts_shared_ptr_t, get/release */
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/utils/atomics.h"
@@ -58,10 +59,10 @@
 ARTS_THREAD_LOCAL arts_epoch_pool_t *epoch_thread_pool;
 
 /*
- * arts_epoch_deleter — shared_t deleter.
+ * arts_epoch_deleter — cb deleter for ARTS_GUID_EPOCH.
  *
- * Invoked by route_table free_item once the slot's lock count hits 0 with
- * DELETE set.  Mirrors the DB / EDT pattern (Phases 6/7).
+ * Invoked by the cb once the last strong ref is dropped (install ref +
+ * outstanding reader refs).  Mirrors the DB / EDT pattern.
  *
  * Two ownership models for epoch storage:
  *   - Stand-alone heap epochs (created by create_epoch / shutdown epoch /
@@ -72,11 +73,10 @@ ARTS_THREAD_LOCAL arts_epoch_pool_t *epoch_thread_pool;
  *     count hits 0.  Individual pool entries must NOT be freed here — only
  *     the route_table slot is dropped via mark_delete.  pool_guid != 0
  *     distinguishes pool-backed entries.
- *
- * After the deleter returns, route_table free_item bumps the slot's gen
- * counter and clears DELETE + count.
  */
-static void arts_epoch_deleter(void *self) {
+/* External linkage so route_table.c references it directly as the
+ * deleter-by-kind for ARTS_GUID_EPOCH. */
+void arts_epoch_deleter(void *self) {
   arts_epoch_t *epoch = (arts_epoch_t *)self;
   if (epoch->pool_guid != NULL_GUID) {
     /* Pool-backed: storage lives inside arts_epoch_pool_t.pool[].  The
@@ -85,6 +85,12 @@ static void arts_epoch_deleter(void *self) {
     return;
   }
   arts_free(epoch);
+}
+
+/* Publish the epoch cb deleter into the route_table's per-kind table at startup
+ * (decoupled registration — see arts_route_table_register_deleter). */
+__attribute__((constructor)) static void arts_epoch_register_cb_deleter(void) {
+  arts_route_table_register_deleter(ARTS_GUID_EPOCH, arts_epoch_deleter);
 }
 
 void (*arts_epoch_get_deleter(void))(void *) { return arts_epoch_deleter; }
@@ -151,34 +157,39 @@ bool decrement_queue_epoch(arts_epoch_t *epoch) {
   }
 }
 
+/* Home-routed handlers (OOO_EPOCH_*) — item is the installed epoch, ref-held
+ * by dispatch_or_defer.  Pure cores: no lookup / acquire / release.  Epoch is
+ * broadcast-installed on every rank at create, so the local rank's copy is the
+ * target; the OoO defer covers the create-broadcast-not-yet-arrived window. */
+void arts_handler_epoch_inc_queue(void *item, void *vargs) {
+  (void)vargs;
+  arts_atomic_add_u64(&((arts_epoch_t *)item)->queued, 1);
+}
+
+void arts_handler_epoch_inc_active(void *item, void *vargs) {
+  (void)vargs;
+  arts_epoch_t *epoch = (arts_epoch_t *)item;
+  if (arts_global_rank_count == 1) {
+    arts_lock(&epoch->local_lock);
+    epoch->active_count++;
+    arts_unlock(&epoch->local_lock);
+  } else {
+    arts_atomic_add(&epoch->active_count, 1);
+  }
+}
+
 void increment_queue_epoch(arts_guid_t epoch_guid) {
   if (epoch_guid != NULL_GUID) {
-    /* lookup_epoch_safe pairs with release on the success path. */
-    arts_epoch_t *epoch = arts_route_table_lookup_epoch_safe(epoch_guid);
-    if (epoch) {
-      arts_atomic_add_u64(&epoch->queued, 1);
-      arts_route_table_release(epoch_guid);
-    } else {
-      arts_out_of_order_inc_queue_epoch(epoch_guid);
-    }
+    struct arts_ooo_args_epoch_s a = {.epoch_guid = epoch_guid};
+    arts_ooo_dispatch_or_defer_guid(epoch_guid, OOO_EPOCH_INC_QUEUE, &a,
+                                    sizeof(a));
   }
 }
 
 void increment_active_epoch(arts_guid_t epoch_guid) {
-  /* lookup_epoch_safe pairs with release on the success path. */
-  arts_epoch_t *epoch = arts_route_table_lookup_epoch_safe(epoch_guid);
-  if (epoch) {
-    if (arts_global_rank_count == 1) {
-      arts_lock(&epoch->local_lock);
-      epoch->active_count++;
-      arts_unlock(&epoch->local_lock);
-    } else {
-      arts_atomic_add(&epoch->active_count, 1);
-    }
-    arts_route_table_release(epoch_guid);
-  } else {
-    arts_out_of_order_inc_active_epoch(epoch_guid);
-  }
+  struct arts_ooo_args_epoch_s a = {.epoch_guid = epoch_guid};
+  arts_ooo_dispatch_or_defer_guid(epoch_guid, OOO_EPOCH_INC_ACTIVE, &a,
+                                  sizeof(a));
 }
 
 /*
@@ -192,93 +203,82 @@ void increment_active_epoch(arts_guid_t epoch_guid) {
  * their queued counter and, when it hits 1, send their active/finished
  * counts to the owner for global reduction.
  */
+/* Home-routed handler (OOO_EPOCH_INC_FINISHED) — pure core on the acquired
+ * epoch.  The single-node fire path calls delete_epoch (mark_delete drops the
+ * install ref); dispatch_or_defer's ref keeps the epoch alive until this
+ * returns, so the deleter runs as a deferred free afterward. */
+void arts_handler_epoch_inc_finished(void *item, void *vargs) {
+  arts_epoch_t *epoch = (arts_epoch_t *)item;
+  arts_guid_t epoch_guid = ((struct arts_ooo_args_epoch_s *)vargs)->epoch_guid;
+  if (arts_global_rank_count == 1) {
+    bool fire_epoch = false;
+    arts_lock(&epoch->local_lock);
+    epoch->finished_count++;
+    if (epoch->finished_count > 0 &&
+        epoch->finished_count == epoch->active_count &&
+        epoch->phase == (unsigned int)PHASE_1) {
+      epoch->phase = (unsigned int)PHASE_3;
+      fire_epoch = true;
+    }
+    arts_unlock(&epoch->local_lock);
+
+    if (fire_epoch) {
+      if (epoch->termination_exit_guid) {
+        arts_edt_satisfy_slot(
+            epoch->termination_exit_guid, epoch->termination_exit_slot,
+            (arts_guid_t)(epoch->finished_count), DB_MODE_VAL, NULL, 0);
+      } else {
+        arts_shutdown_epoch_fire(epoch->guid);
+      }
+      delete_epoch(epoch_guid, NULL);
+    }
+    return;
+  }
+  arts_atomic_add(&epoch->finished_count, 1);
+  unsigned int rank = arts_guid_get_rank(epoch_guid);
+  if (rank == arts_global_rank_id) {
+    if (!arts_atomic_sub_u64(&epoch->queued, 1)) {
+      uint64_t old_out =
+          arts_atomic_cswap_u64(&epoch->outstanding, 0, arts_global_rank_count);
+      if (old_out == 0) {
+        broadcast_epoch_request(epoch_guid);
+      }
+    }
+  } else {
+    if (decrement_queue_epoch(epoch)) {
+      arts_send_epoch_send(rank, epoch_guid, epoch->active_count,
+                             epoch->finished_count);
+    }
+  }
+}
+
 void increment_finished_epoch(arts_guid_t epoch_guid) {
   if (epoch_guid != NULL_GUID) {
-    /* lookup_epoch_safe pairs with release before any delete_epoch
-     * call (which itself re-acquires).  Release on every exit path. */
-    arts_epoch_t *epoch = arts_route_table_lookup_epoch_safe(epoch_guid);
-    if (epoch) {
-      if (arts_global_rank_count == 1) {
-        bool fire_epoch = false;
-        arts_lock(&epoch->local_lock);
-        epoch->finished_count++;
-        ARTS_DEBUG("increment_finished_epoch[Guid:%lu]: finished_count=%u, "
-                   "active_count=%u, phase=%u",
-                   epoch_guid, epoch->finished_count, epoch->active_count,
-                   epoch->phase);
-        if (epoch->finished_count > 0 &&
-            epoch->finished_count == epoch->active_count &&
-            epoch->phase == (unsigned int)PHASE_1) {
-          epoch->phase = (unsigned int)PHASE_3;
-          fire_epoch = true;
-        }
-        arts_unlock(&epoch->local_lock);
+    struct arts_ooo_args_epoch_s a = {.epoch_guid = epoch_guid};
+    arts_ooo_dispatch_or_defer_guid(epoch_guid, OOO_EPOCH_INC_FINISHED, &a,
+                                    sizeof(a));
+  }
+}
 
-        if (fire_epoch) {
-          if (epoch->termination_exit_guid) {
-            internal_signal_edt(
-                epoch->termination_exit_guid, epoch->termination_exit_slot,
-                (arts_guid_t)(epoch->finished_count), DB_MODE_VAL, NULL, 0);
-          } else {
-            arts_shutdown_epoch_fire(epoch->guid);
-          }
-          /* Release our lookup ref before delete_epoch, which re-acquires
-           * via lookup_epoch_safe and finally calls mark_delete to drop
-           * the install-existence ref. */
-          arts_route_table_release(epoch_guid);
-          delete_epoch(epoch_guid, NULL);
-          return;
-        }
-      } else {
-        unsigned int new_finished = arts_atomic_add(&epoch->finished_count, 1);
-        ARTS_DEBUG("increment_finished_epoch[Guid:%lu]: finished_count=%u, "
-                   "active_count=%u, phase=%u",
-                   epoch_guid, new_finished, epoch->active_count, epoch->phase);
-        unsigned int rank = arts_guid_get_rank(epoch_guid);
-        if (rank == arts_global_rank_id) {
-          if (!arts_atomic_sub_u64(&epoch->queued, 1)) {
-            uint64_t old_out = arts_atomic_cswap_u64(
-                &epoch->outstanding, 0, arts_global_rank_count);
-            if (old_out == 0) {
-              ARTS_DEBUG("increment_finished_epoch[Guid:%lu]: CAS outstanding "
-                         "SUCCESS (was 0) → broadcasting",
-                         epoch_guid);
-              broadcast_epoch_request(epoch_guid);
-            } else {
-              ARTS_DEBUG("increment_finished_epoch[Guid:%lu]: CAS outstanding "
-                         "FAIL (was %lu, not 0) — reduce_epoch fix must rescue",
-                         epoch_guid, old_out);
-            }
-          }
-        } else {
-          if (decrement_queue_epoch(epoch)) {
-            arts_remote_epoch_send(rank, epoch_guid, epoch->active_count,
-                                   epoch->finished_count);
-          }
-        }
-      }
-      arts_route_table_release(epoch_guid);
-    } else {
-      arts_out_of_order_inc_finished_epoch(epoch_guid);
-    }
+/* Home-routed reply core (OOO_EPOCH_REQUEST): a non-home rank, having received
+ * an epoch query, forwards its local active/finished counts to dest.  Pure
+ * core on the dispatch-acquired epoch; the OoO defer covers the window where
+ * the self-rank epoch broadcast-install has not yet arrived. */
+void arts_handler_epoch_request(void *item, void *vargs) {
+  arts_epoch_t *epoch = (arts_epoch_t *)item;
+  struct arts_ooo_args_epoch_request_s *a = vargs;
+  arts_atomic_fetch_and_u64(&epoch->queued, EPOCH_MASK);
+  if (!arts_atomic_cswap_u64(&epoch->queued, 0, EPOCH_BIT)) {
+    arts_send_epoch_send(a->dest, a->epoch_guid, epoch->active_count,
+                           epoch->finished_count);
   }
 }
 
 void send_epoch(arts_guid_t epoch_guid, unsigned int source,
                 unsigned int dest) {
-  /* lookup_epoch_safe pairs with release on the success path. */
-  arts_epoch_t *epoch = arts_route_table_lookup_epoch_safe(epoch_guid);
-  if (epoch) {
-    ARTS_DEBUG("Sending epoch [Guid:%lu] to rank %u", epoch_guid, dest);
-    arts_atomic_fetch_and_u64(&epoch->queued, EPOCH_MASK);
-    if (!arts_atomic_cswap_u64(&epoch->queued, 0, EPOCH_BIT)) {
-      arts_remote_epoch_send(dest, epoch_guid, epoch->active_count,
-                             epoch->finished_count);
-    }
-    arts_route_table_release(epoch_guid);
-  } else {
-    arts_out_of_order_send_epoch(epoch_guid, source, dest);
-  }
+  struct arts_ooo_args_epoch_request_s a = {
+      .epoch_guid = epoch_guid, .source = source, .dest = dest};
+  arts_ooo_dispatch_or_defer_guid(epoch_guid, OOO_EPOCH_REQUEST, &a, sizeof(a));
 }
 
 arts_epoch_t *create_epoch(arts_guid_t *guid, arts_guid_t edt_guid,
@@ -289,18 +289,15 @@ arts_epoch_t *create_epoch(arts_guid_t *guid, arts_guid_t edt_guid,
   }
 
   arts_epoch_t *epoch = (arts_epoch_t *)arts_calloc(1, sizeof(arts_epoch_t));
-  /* ARTS_SHARED_FIELD is the first member; route_table free_item
-   * dispatches to epoch->shared.deleter once the slot's lock count hits 0
-   * with DELETE set. */
-  arts_shared_init(&epoch->shared, arts_epoch_deleter);
   epoch->phase = PHASE_1;
   epoch->termination_exit_guid = edt_guid;
   epoch->termination_exit_slot = slot;
   epoch->guid = *guid;
   epoch->pool_guid = NULL_GUID;
   epoch->queued = (arts_guid_is_local(*guid)) ? 0 : EPOCH_BIT;
+  /* add_item_race wraps epoch in a cb (deleter-by-kind) and fires the
+   * OoO list internally on a successful install. */
   arts_route_table_add_item_race(epoch, *guid, arts_global_rank_id, false);
-  arts_route_table_fire_oo(*guid, arts_out_of_order_handler);
   return epoch;
 }
 
@@ -329,12 +326,13 @@ bool arts_shutdown_epoch_create() {
 }
 
 void arts_epoch_add_edt(arts_guid_t edt_guid, arts_guid_t epoch_guid) {
-  /* lookup_edt_safe pairs with release on the success path. */
-  struct arts_edt_s *edt = arts_route_table_lookup_edt_safe(edt_guid);
+  /* lookup_edt pairs with release on the success path. */
+  arts_shared_ptr_t edt_h = arts_route_table_lookup_edt(edt_guid);
+  struct arts_edt_s *edt = (struct arts_edt_s *)arts_shared_get(edt_h);
   if (edt) {
     edt->epoch_guid = epoch_guid;
     increment_active_epoch(epoch_guid);
-    arts_route_table_release(edt_guid);
+    arts_shared_release(&edt_h);
     return;
   }
 }
@@ -343,7 +341,7 @@ void broadcast_epoch_request(arts_guid_t epoch_guid) {
   unsigned int origin_rank = arts_guid_get_rank(epoch_guid);
   for (unsigned int i = 0; i < arts_global_rank_count; i++) {
     if (i != origin_rank) {
-      arts_remote_epoch_req(i, epoch_guid);
+      arts_send_epoch_request(i, epoch_guid);
     }
   }
 }
@@ -361,7 +359,7 @@ arts_guid_t arts_epoch_create(unsigned int rank, arts_guid_t finish_edt_guid,
     if (!arts_node_info.ready_to_execute) {
       for (unsigned int i = 0; i < arts_global_rank_count; i++) {
         if (i != arts_global_rank_id) {
-          arts_remote_epoch_init_send(i, guid, finish_edt_guid, slot);
+          arts_send_epoch_create(i, guid, finish_edt_guid, slot);
         }
       }
     }
@@ -374,13 +372,14 @@ arts_guid_t arts_epoch_create(unsigned int rank, arts_guid_t finish_edt_guid,
 }
 
 void arts_epoch_start(arts_guid_t epoch_guid) {
-  /* lookup_epoch_safe pairs with release on the success path. */
-  arts_epoch_t *epoch = arts_route_table_lookup_epoch_safe(epoch_guid);
+  /* lookup_epoch pairs with release on the success path. */
+  arts_shared_ptr_t epoch_h = arts_route_table_lookup_epoch(epoch_guid);
+  arts_epoch_t *epoch = (arts_epoch_t *)arts_shared_get(epoch_h);
   if (epoch) {
     arts_set_current_epoch_guid(epoch->guid);
     arts_atomic_add(&epoch->active_count, 1);
     arts_atomic_add_u64(&epoch->queued, 1);
-    arts_route_table_release(epoch_guid);
+    arts_shared_release(&epoch_h);
   } else {
     ARTS_WARN("Epoch [Guid:%lu] doesn't exist in the Route table", epoch_guid);
   }
@@ -408,7 +407,7 @@ bool check_epoch(arts_epoch_t *epoch, unsigned int total_active,
             "check_epoch: CAS won PHASE_1->PHASE_3, firing epoch [Guid:%lu]",
             epoch->guid);
         if (epoch->termination_exit_guid) {
-          internal_signal_edt(
+          arts_edt_satisfy_slot(
               epoch->termination_exit_guid, epoch->termination_exit_slot,
               (arts_guid_t)(total_finish), DB_MODE_VAL, NULL, 0);
         } else {
@@ -433,7 +432,7 @@ bool check_epoch(arts_epoch_t *epoch, unsigned int total_active,
             "check_epoch: CAS won PHASE_2->PHASE_3, firing epoch [Guid:%lu]",
             epoch->guid);
         if (epoch->termination_exit_guid) {
-          internal_signal_edt(
+          arts_edt_satisfy_slot(
               epoch->termination_exit_guid, epoch->termination_exit_slot,
               (arts_guid_t)(total_finish), DB_MODE_VAL, NULL, 0);
         } else {
@@ -452,101 +451,106 @@ bool check_epoch(arts_epoch_t *epoch, unsigned int total_active,
   return (epoch->queued == 0);
 }
 
-void reduce_epoch(arts_guid_t epoch_guid, unsigned int active,
-                  unsigned int finish) {
-  /* lookup_epoch_safe pairs with release before any delete_epoch
-   * call (which itself re-acquires) and on every other exit path. */
-  arts_epoch_t *epoch = arts_route_table_lookup_epoch_safe(epoch_guid);
-  if (epoch) {
-    unsigned int total_active =
-        arts_atomic_add(&epoch->global_active_count, active);
-    unsigned int total_finish =
-        arts_atomic_add(&epoch->global_finished_count, finish);
-    uint64_t outstanding_before = epoch->outstanding;
-    if (arts_atomic_sub_u64(&epoch->outstanding, 1) == 1) {
-      total_active += epoch->active_count;
-      total_finish += epoch->finished_count;
+/* Home-routed reduce core (OOO_EPOCH_SEND): fold a remote rank's reported
+ * active/finished counts into the home epoch's global tally and drive the
+ * Mattern two-phase termination check.  Pure core on the dispatch-acquired
+ * epoch — the engine's ref keeps the epoch alive across the PHASE_3
+ * delete_epoch (which re-acquires + mark_delete; the deferred free runs after
+ * this returns). */
+void arts_handler_epoch_send(void *item, void *vargs) {
+  arts_epoch_t *epoch = (arts_epoch_t *)item;
+  struct arts_ooo_args_epoch_send_s *a = vargs;
+  arts_guid_t epoch_guid = a->epoch_guid;
+  unsigned int total_active =
+      arts_atomic_add(&epoch->global_active_count, a->active);
+  unsigned int total_finish =
+      arts_atomic_add(&epoch->global_finished_count, a->finish);
+  uint64_t outstanding_before = epoch->outstanding;
+  if (arts_atomic_sub_u64(&epoch->outstanding, 1) == 1) {
+    total_active += epoch->active_count;
+    total_finish += epoch->finished_count;
 
-      ARTS_DEBUG("reduce_epoch [Guid:%lu]: total_active=%u, total_finish=%u, "
-                 "phase=%u, outstanding_before=%lu, queued=%lu",
-                 epoch_guid, total_active, total_finish, epoch->phase,
-                 outstanding_before, epoch->queued);
+    ARTS_DEBUG("reduce_epoch [Guid:%lu]: total_active=%u, total_finish=%u, "
+               "phase=%u, outstanding_before=%lu, queued=%lu",
+               epoch_guid, total_active, total_finish, epoch->phase,
+               outstanding_before, epoch->queued);
 
-      // Reset for the next round
-      epoch->global_active_count = 0;
-      epoch->global_finished_count = 0;
+    // Reset for the next round
+    epoch->global_active_count = 0;
+    epoch->global_finished_count = 0;
 
-      if (check_epoch(epoch, total_active, total_finish)) {
-        ARTS_DEBUG("  check_epoch returned TRUE - broadcasting new request");
-        arts_atomic_add_u64(&epoch->outstanding, arts_global_rank_count - 1);
-        broadcast_epoch_request(epoch_guid);
-        // A better idea will be to know when to kick off a new round
-        // the checkinCount == 0 indicates there is a new round can be kicked
-        // off
-        //                arts_atomic_sub(&epoch->checkinCount, 1);
-      } else {
-        ARTS_DEBUG(
-            "  check_epoch returned FALSE - epoch completed or advancing "
-            "to phase %u",
-            epoch->phase);
-        arts_atomic_sub_u64(&epoch->outstanding, 1);
-        /* Race fix: increment_finished_epoch (home rank) sets queued→0
-         * and tries CAS outstanding 0→rank_count.  If outstanding was
-         * still 1 at that moment the CAS fails and nobody restarts the
-         * broadcast.  Re-check here after we brought outstanding to 0. */
-        uint64_t queued_now = epoch->queued;
-        ARTS_DEBUG("reduce_epoch FALSE [Guid:%lu]: inner-sub done, "
-                   "outstanding now 0, queued=%lu, phase=%u",
-                   epoch_guid, queued_now, epoch->phase);
-        if (queued_now == 0 && epoch->phase != (unsigned int)PHASE_3) {
-          uint64_t old_out = arts_atomic_cswap_u64(&epoch->outstanding, 0,
-                                                    arts_global_rank_count);
-          if (old_out == 0) {
-            ARTS_DEBUG("reduce_epoch: restarting broadcast — queued=0 race "
-                       "caught, CAS SUCCESS");
-            broadcast_epoch_request(epoch_guid);
-          } else {
-            ARTS_DEBUG("reduce_epoch: queued=0 but CAS FAIL (outstanding=%lu) "
-                       "— increment_finished_epoch already restarted",
-                       old_out);
-          }
+    if (check_epoch(epoch, total_active, total_finish)) {
+      ARTS_DEBUG("  check_epoch returned TRUE - broadcasting new request");
+      arts_atomic_add_u64(&epoch->outstanding, arts_global_rank_count - 1);
+      broadcast_epoch_request(epoch_guid);
+      // A better idea will be to know when to kick off a new round
+      // the checkinCount == 0 indicates there is a new round can be kicked
+      // off
+      //                arts_atomic_sub(&epoch->checkinCount, 1);
+    } else {
+      ARTS_DEBUG("  check_epoch returned FALSE - epoch completed or advancing "
+                 "to phase %u",
+                 epoch->phase);
+      arts_atomic_sub_u64(&epoch->outstanding, 1);
+      /* Race fix: increment_finished_epoch (home rank) sets queued→0
+       * and tries CAS outstanding 0→rank_count.  If outstanding was
+       * still 1 at that moment the CAS fails and nobody restarts the
+       * broadcast.  Re-check here after we brought outstanding to 0. */
+      uint64_t queued_now = epoch->queued;
+      ARTS_DEBUG("reduce_epoch FALSE [Guid:%lu]: inner-sub done, "
+                 "outstanding now 0, queued=%lu, phase=%u",
+                 epoch_guid, queued_now, epoch->phase);
+      if (queued_now == 0 && epoch->phase != (unsigned int)PHASE_3) {
+        uint64_t old_out = arts_atomic_cswap_u64(&epoch->outstanding, 0,
+                                                 arts_global_rank_count);
+        if (old_out == 0) {
+          ARTS_DEBUG("reduce_epoch: restarting broadcast — queued=0 race "
+                     "caught, CAS SUCCESS");
+          broadcast_epoch_request(epoch_guid);
+        } else {
+          ARTS_DEBUG("reduce_epoch: queued=0 but CAS FAIL (outstanding=%lu) "
+                     "— increment_finished_epoch already restarted",
+                     old_out);
         }
       }
-
-      if (epoch->phase == PHASE_3) {
-        ARTS_DEBUG("  Deleting epoch [Guid:%lu] - termination complete",
-                   epoch_guid);
-        /* Release our lookup ref before delete_epoch, which re-acquires
-         * via lookup_epoch_safe and finally calls mark_delete to drop
-         * the install-existence ref. */
-        arts_route_table_release(epoch_guid);
-        delete_epoch(epoch_guid, NULL);
-        return;
-      }
-    } else {
-      ARTS_DEBUG("reduce_epoch [Guid:%lu]: outstanding=%lu (still waiting for "
-                 "more responses)",
-                 epoch_guid, outstanding_before - 1);
     }
-    arts_route_table_release(epoch_guid);
+
+    if (epoch->phase == PHASE_3) {
+      ARTS_DEBUG("  Deleting epoch [Guid:%lu] - termination complete",
+                 epoch_guid);
+      delete_epoch(epoch_guid, NULL);
+      return;
+    }
+  } else {
+    ARTS_DEBUG("reduce_epoch [Guid:%lu]: outstanding=%lu (still waiting for "
+               "more responses)",
+               epoch_guid, outstanding_before - 1);
   }
+}
+
+void reduce_epoch(arts_guid_t epoch_guid, unsigned int active,
+                  unsigned int finish) {
+  struct arts_ooo_args_epoch_send_s a = {
+      .epoch_guid = epoch_guid, .active = active, .finish = finish};
+  arts_ooo_dispatch_or_defer_guid(epoch_guid, OOO_EPOCH_SEND, &a, sizeof(a));
 }
 
 arts_epoch_pool_t *create_epoch_pool(arts_guid_t *epoch_pool_guid,
                                      unsigned int pool_size,
                                      arts_guid_t *start_guid) {
   /* the pool_guid still uses ARTS_GUID_EDT since arts_epoch_pool_t is
-   * a different struct (no ARTS_SHARED_FIELD).  Only individual epoch
-   * entries get the ARTS_GUID_EPOCH tag so lookup_epoch_safe + the route_table
-   * free_item dispatcher route them correctly.  The pool itself is freed
-   * explicitly in delete_epoch / clean_epoch_pool. */
+   * a different struct.  Only individual epoch entries get the
+   * ARTS_GUID_EPOCH tag so lookup_epoch + the cb deleter-by-kind route them
+   * correctly.  The pool itself is freed explicitly in delete_epoch /
+   * clean_epoch_pool. */
   if (*epoch_pool_guid == NULL_GUID) {
-    *epoch_pool_guid = arts_guid_create_for_rank(arts_global_rank_id, ARTS_GUID_EDT);
+    *epoch_pool_guid =
+        arts_guid_create_for_rank(arts_global_rank_id, ARTS_GUID_EDT);
   }
 
   if (*start_guid == NULL_GUID) {
-    *start_guid =
-        arts_guid_reserve_range(ARTS_GUID_EPOCH, pool_size, arts_global_rank_id);
+    *start_guid = arts_guid_reserve_range(ARTS_GUID_EPOCH, pool_size,
+                                          arts_global_rank_id);
   }
 
   arts_epoch_pool_t *epoch_pool = (arts_epoch_pool_t *)arts_calloc(
@@ -555,26 +559,24 @@ arts_epoch_pool_t *create_epoch_pool(arts_guid_t *epoch_pool_guid,
   epoch_pool->outstanding = pool_size;
   epoch_pool->size = pool_size;
 
-  arts_route_table_add_item(epoch_pool, *epoch_pool_guid, arts_global_rank_id,
-                            false);
+  /* Pool wrapper: install with a NULL deleter (deleter-by-kind would pick
+   * arts_edt_deleter for the EDT-tagged guid and type-confuse the pool).  The
+   * route_table holds it for lookup only; delete_epoch frees the storage. */
+  arts_route_table_add_item_with_deleter(epoch_pool, *epoch_pool_guid, NULL);
   for (unsigned int i = 0; i < pool_size; i++) {
-    /* each pool entry needs its own shared.deleter pointer so the
-     * route_table free_item dispatcher (when the slot's lock count drops
-     * to 0 with DELETE set) finds the correct deleter.  Pool entries are
-     * NOT individually heap-allocated — arts_epoch_deleter detects this
-     * via pool_guid != NULL_GUID and skips the free. */
-    arts_shared_init(&epoch_pool->pool[i].shared, arts_epoch_deleter);
+    /* Pool entries are NOT individually heap-allocated — arts_epoch_deleter
+     * detects this via pool_guid != NULL_GUID and skips the free.  The cb
+     * (with deleter-by-kind) is created at install time by add_item_race. */
     epoch_pool->pool[i].phase = PHASE_1;
     epoch_pool->pool[i].pool_guid = *epoch_pool_guid;
     epoch_pool->pool[i].guid = arts_guid_from_index(*start_guid, i);
     epoch_pool->pool[i].queued =
         (arts_guid_is_local(*epoch_pool_guid)) ? 0 : EPOCH_BIT;
     if (!arts_guid_is_local(*epoch_pool_guid)) {
+      /* add_item_race fires the OoO list internally on a successful install. */
       arts_route_table_add_item_race(&epoch_pool->pool[i],
                                      epoch_pool->pool[i].guid,
                                      arts_global_rank_id, false);
-      arts_route_table_fire_oo(epoch_pool->pool[i].guid,
-                               arts_out_of_order_handler);
     }
   }
 
@@ -583,21 +585,21 @@ arts_epoch_pool_t *create_epoch_pool(arts_guid_t *epoch_pool_guid,
 
 void delete_epoch(arts_guid_t epoch_guid, arts_epoch_t *epoch) {
   // Can't call delete unless we already hit two barriers thus it must exit
-  /* re-acquire via lookup_epoch_safe whenever the caller did not
+  /* re-acquire via lookup_epoch whenever the caller did not
    * pass an already-owned pointer.  The epoch parameter is now treated as
    * advisory only — we always lookup to read pool_guid safely.  Mark_delete
-   * (below) is the canonical drop path; the route_table free_item
-   * dispatcher invokes arts_epoch_deleter once the slot's lock count hits
-   * 0 with DELETE set.  For pool-backed entries the deleter is a no-op
-   * (storage lives inside arts_epoch_pool_t), and the pool struct itself
-   * is freed explicitly here when its outstanding count reaches 0. */
+   * (below) is the canonical drop path; the cb deleter (arts_epoch_deleter)
+   * runs once the last ref is released.  For pool-backed entries the deleter
+   * is a no-op (storage lives inside arts_epoch_pool_t), and the pool struct
+   * itself is freed explicitly here when its outstanding count reaches 0. */
   (void)epoch;
-  arts_epoch_t *e = arts_route_table_lookup_epoch_safe(epoch_guid);
+  arts_shared_ptr_t e_h = arts_route_table_lookup_epoch(epoch_guid);
+  arts_epoch_t *e = (arts_epoch_t *)arts_shared_get(e_h);
   if (!e) {
     return;
   }
   arts_guid_t pool_guid = e->pool_guid;
-  arts_route_table_release(epoch_guid);
+  arts_shared_release(&e_h);
 
   if (pool_guid) {
     /* Pool wrapper still uses ARTS_GUID_EDT type tag (arts_epoch_pool_t is a
@@ -608,39 +610,31 @@ void delete_epoch(arts_guid_t epoch_guid, arts_epoch_t *epoch) {
      * would require also embedding shared_t in arts_epoch_pool_t; deferred
      * since the pool object has no concurrent destroy race. */
     arts_epoch_pool_t *pool =
-        (arts_epoch_pool_t *)arts_route_table_lookup_item(pool_guid);
+        (arts_epoch_pool_t *)arts_route_table_lookup_data(pool_guid);
     /* Drop the route_table slot for this individual epoch instance so
      * arts_epoch_wait's lookup-poll exits.  mark_delete consumes the
      * install-existence ref injected by add_item_race. */
     arts_route_table_mark_delete(epoch_guid);
     if (arts_guid_is_local(pool_guid)) {
-      if (!arts_atomic_sub(&pool->outstanding, 1)) {
-        /* Pool's last outstanding entry is gone; clear its slot.  The
+      if (pool && !arts_atomic_sub(&pool->outstanding, 1)) {
+        /* Pool's last outstanding entry is gone; detach its slot (NULL cb
+         * deleter ⇒ mark_delete does not free the pool).  The
          * arts_epoch_pool_t storage itself is freed in the next
          * get_pool_epoch / clean_epoch_pool sweep. */
-        arts_route_item_t *item = NULL;
-        arts_route_table_reserve_or_lookup(pool_guid, &item);
-        if (item) {
-          (void)atomic_exchange_explicit(&item->data, NULL,
-                                         memory_order_acq_rel);
-        }
+        arts_route_table_mark_delete(pool_guid);
         for (unsigned int i = 0; i < arts_global_rank_count; i++) {
           if (i != arts_global_rank_id) {
-            arts_remote_epoch_delete(i, epoch_guid);
+            arts_send_epoch_delete(i, epoch_guid);
           }
         }
       }
-    } else {
+    } else if (pool) {
       for (unsigned int i = 0; i < pool->size; i++) {
         arts_route_table_mark_delete(pool->pool[i].guid);
       }
-      /* Drop the pool's own route_table slot (ARTS_GUID_EDT-tagged, no
-       * shared.deleter) and free the storage. */
-      arts_route_item_t *item = NULL;
-      arts_route_table_reserve_or_lookup(pool_guid, &item);
-      if (item) {
-        (void)atomic_exchange_explicit(&item->data, NULL, memory_order_acq_rel);
-      }
+      /* Detach the pool's own route_table slot (NULL cb deleter ⇒ no free
+       * here) and free the storage explicitly. */
+      arts_route_table_mark_delete(pool_guid);
       arts_free(pool);
     }
   } else {
@@ -652,7 +646,7 @@ void delete_epoch(arts_guid_t epoch_guid, arts_epoch_t *epoch) {
     if (arts_guid_is_local(epoch_guid)) {
       for (unsigned int i = 0; i < arts_global_rank_count; i++) {
         if (i != arts_global_rank_id) {
-          arts_remote_epoch_delete(i, epoch_guid);
+          arts_send_epoch_delete(i, epoch_guid);
         }
       }
     }
@@ -718,7 +712,7 @@ arts_epoch_t *get_pool_epoch(arts_guid_t edt_guid, unsigned int slot) {
 
       for (unsigned int i = 0; i < arts_global_rank_count; i++) {
         if (i != arts_global_rank_id) {
-          arts_remote_epoch_init_pool_send(i, DEFAULT_EPOCH_POOL_SIZE,
+          arts_send_epoch_init_pool(i, DEFAULT_EPOCH_POOL_SIZE,
                                            start_guid, pool_guid);
         }
       }
@@ -734,9 +728,9 @@ arts_epoch_t *get_pool_epoch(arts_guid_t edt_guid, unsigned int slot) {
 
   epoch->termination_exit_guid = edt_guid;
   epoch->termination_exit_slot = slot;
+  /* add_item_race fires the OoO list internally on a successful install. */
   arts_route_table_add_item_race(epoch, epoch->guid, arts_global_rank_id,
                                  false);
-  arts_route_table_fire_oo(epoch->guid, arts_out_of_order_handler);
   return epoch;
 }
 
@@ -771,26 +765,26 @@ bool arts_epoch_wait(arts_guid_t epoch_guid) {
   if (guid) {
     arts_guid_t local = *guid;
     *guid = NULL_GUID; // Unset
-    /* lookup_epoch_safe + paired release.  Spin briefly while the
-     * slot is still RESERVED (epoch GUID was promised but add_item_race
-     * has not yet stored the data ptr).  Release immediately — we only
-     * need confirmation that the epoch exists; subsequent loops poll
-     * presence via lookup_epoch_safe again. */
-    arts_epoch_t *epoch = arts_route_table_lookup_epoch_safe(local);
+    /* lookup_epoch + paired release.  Spin briefly while the slot is still
+     * absent (epoch GUID was promised but add_item_race has not yet stored
+     * the cb).  Release immediately — we only need confirmation that the
+     * epoch exists; subsequent loops poll presence via lookup_epoch again. */
+    arts_shared_ptr_t epoch_h = arts_route_table_lookup_epoch(local);
+    arts_epoch_t *epoch = (arts_epoch_t *)arts_shared_get(epoch_h);
     if (!epoch) {
-      // Epoch may still be in reserved state in route table; spin briefly
+      // Epoch may still be absent in route table; spin briefly
       for (int retries = 0; !epoch && retries < 1000; retries++) {
-        epoch = arts_route_table_lookup_epoch_safe(local);
+        epoch_h = arts_route_table_lookup_epoch(local);
+        epoch = (arts_epoch_t *)arts_shared_get(epoch_h);
       }
       if (!epoch) {
-        ARTS_WARN(
-            "arts_epoch_wait: Epoch [Guid:%lu] not found in route table",
-            local);
+        ARTS_WARN("arts_epoch_wait: Epoch [Guid:%lu] not found in route table",
+                  local);
         TIME_EDT_EXEC_START();
         return false;
       }
     }
-    arts_route_table_release(local);
+    arts_shared_release(&epoch_h);
     increment_finished_epoch(local);
 
     // Release all DB frontier locks before blocking so consumer EDTs can
@@ -802,15 +796,15 @@ bool arts_epoch_wait(arts_guid_t epoch_guid) {
     arts_save_thread_local(&tl);
     TIME_YIELD_START();
     while (arts_thread_info.alive) {
-      /* Poll: when delete_epoch -> mark_delete fires, the route_table
-       * dispatcher invokes arts_epoch_deleter, then NULLs the data ptr;
-       * lookup_epoch_safe returns NULL and we exit.  Use lookup_epoch_safe
-       * (acquire/release pair) so we never read freed memory. */
-      arts_epoch_t *e = arts_route_table_lookup_epoch_safe(local);
+      /* Poll: when delete_epoch -> mark_delete fires, the cb is detached
+       * from the slot; lookup_epoch returns NULL and we exit.  Use
+       * lookup_epoch (acquire/release pair) so we never read freed memory. */
+      arts_shared_ptr_t e_h = arts_route_table_lookup_epoch(local);
+      arts_epoch_t *e = (arts_epoch_t *)arts_shared_get(e_h);
       if (!e) {
         break;
       }
-      arts_route_table_release(local);
+      arts_shared_release(&e_h);
       arts_node_info.scheduler();
     }
     // Continue running until the scheduler reports no more ready work

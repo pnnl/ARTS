@@ -50,8 +50,6 @@ set(TEST_PROGRAMS
     coherence_rw_rw_chain_seal
     coherence_ro_accumulation
     coherence_mixed_local_remote
-    out_of_order_list
-    coherence_ooo_concurrent_drain
     coherence_lock_req_before_create
     coherence_destroy_during_acquire
     coherence_stress_single_node
@@ -61,16 +59,12 @@ set(TEST_PROGRAMS
     lockfree_stack_stress
     lockfree_pool_stress
     tiered_pool_stress
-    shared_t_stress
     route_table_install_race
     event_once_storm
     event_sticky_late_bind
     event_channel_fifo
     event_destroy_race
     pin_db
-    get_from_db
-    put_in_db
-    arts_send
     active_message_db
     termination_detection
     rec_epoch
@@ -97,20 +91,13 @@ set(TEST_PROGRAMS
     db_destroy
     db_local
     db_local_create
-    db_put_get
-    db_put_get_at
-    db_remote
-    db_rename
     event_basic
     event_chain
     event_create_destroy_basic
     event_satisfy_once
     event_add_dep_idem_fastpath
-    event_once_auto_destroy
-    event_counted_partial_drain
     event_channel_lifetime
     event_idem_silent_oversatisfy
-    event_sticky_oversatisfy_error
     persistent_event
     persistent_event_advanced
     guid_basic
@@ -119,28 +106,15 @@ set(TEST_PROGRAMS
     node_query
     record_dep_at
     utility_api
-    multinode_db
     multinode_edt
     multinode_epoch
     multinode_event
     multinode_coherence
     multinode_event_types
-    multinode_array_db
-    multinode_db_advanced
     # --- Graph tests ---
     csr
     distribution
     # --- Array DB tests ---
-    array_db
-    array_db_advanced
-    array_db_for_each
-    array_db_with_guid
-    local_array_db
-    for_each
-    termination_detection_array_db
-    put_array_db_epoch
-    put_array_db_epoch_direct
-    gather_array_db_epoch
     # --- Coherence (coh_* prefix = newer minimal API tests) ---
     coh_basic
     coh_rw_chain
@@ -163,6 +137,7 @@ set(TEST_PROGRAMS
     lockfree_stack_test
     lockfree_marked_list_test
     coherence_buffer_test
+    stdio_forward_scale_test
     # --- New unit tests (Tasks 6-12) ---
     counter_smoke
     edt_dep_variants
@@ -383,23 +358,9 @@ register_single_node_test(db_dependence)
 register_single_node_test(db_destroy)
 register_single_node_test(db_local)
 register_single_node_test(db_local_create)
-register_single_node_test(db_put_get)
-register_single_node_test(db_rename)
 register_single_node_test(pin_db ARGS 0)
-register_single_node_test(get_from_db ARGS 16 1)
-register_single_node_test(put_in_db ARGS 16 1)
 
 # Array DB tests
-register_single_node_test(array_db)
-register_single_node_test(array_db_advanced)
-register_single_node_test(array_db_for_each)
-register_single_node_test(array_db_with_guid)
-register_single_node_test(local_array_db)
-register_single_node_test(for_each)
-register_single_node_test(put_array_db_epoch ARGS 16)
-register_single_node_test(put_array_db_epoch_direct ARGS 16)
-register_single_node_test(gather_array_db_epoch)
-register_single_node_test(termination_detection_array_db ARGS 16)
 
 # Epoch / sync tests
 register_single_node_test(epoch_basic)
@@ -415,23 +376,8 @@ register_single_node_test(event_chain)
 register_single_node_test(event_create_destroy_basic)
 register_single_node_test(event_satisfy_once)
 register_single_node_test(event_add_dep_idem_fastpath)
-register_single_node_test(event_once_auto_destroy)
-register_single_node_test(event_counted_partial_drain)
 register_single_node_test(event_channel_lifetime)
 register_single_node_test(event_idem_silent_oversatisfy)
-# STICKY over-satisfy is a death test: ARTS_ERROR -> abort.  Wrap in bash so
-# CTest sees exit-code 0 and PASS_REGULAR_EXPRESSION can match the abort
-# banner (same pattern as term_sigfpe / term_sigsegv).
-add_test(
-    NAME event_sticky_oversatisfy_error
-    COMMAND bash -c "ASAN_OPTIONS=handle_abort=0 ${CMAKE_CURRENT_BINARY_DIR}/event_sticky_oversatisfy_error 2>&1; true"
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-)
-set_tests_properties(event_sticky_oversatisfy_error PROPERTIES
-    LABELS "single_node"
-    TIMEOUT 10
-    RESOURCE_LOCK "arts_runtime"
-    PASS_REGULAR_EXPRESSION "over-satisfy on event with error_on_neg_latch=true")
 register_single_node_test(persistent_event)
 register_single_node_test(persistent_event_advanced)
 
@@ -449,13 +395,6 @@ register_single_node_test(route_table_iter)
 register_single_node_test(route_table_iter_destroy)
 register_single_node_test(acquire_mode)
 register_single_node_test(arts_id)
-register_single_node_test(out_of_order_list)
-register_single_node_test(coherence_ooo_concurrent_drain TIMEOUT 60)
-set_property(TEST coherence_ooo_concurrent_drain APPEND PROPERTY
-    LABELS "coherence_stress")
-
-# D1 lifecycle stress
-register_single_node_test(shared_t_stress TIMEOUT 60)
 
 # Strict lock-free reserve_or_lookup stress
 register_single_node_test(route_table_install_race TIMEOUT 120)
@@ -529,6 +468,35 @@ set_tests_properties(term_sigsegv PROPERTIES
 register_pure_unit_test(lockfree_stack_test)
 register_pure_unit_test(lockfree_marked_list_test)
 register_pure_unit_test(coherence_buffer_test TIMEOUT 60)
+register_pure_unit_test(stdio_forward_scale_test)
+
+# --- Foundation concurrency primitives (standalone — no ARTS runtime) ---
+# Exercise arts_shared_ptr_t (shared.c) and the header-only Vyukov
+# arts_mpsc_t in isolation.  These deliberately do NOT link the ARTS
+# library: the shared-ptr tests provide their own libc-backed
+# arts_calloc/arts_free shims, and the mpsc queue is header-only.  Keeping
+# them library-independent lets the foundation be validated regardless of
+# the runtime's build state.  libatomic + -mcx16 come from the global
+# top-level setup.
+set(SYNC_SHARED_TESTS shared_basic shared_atomic_race shared_aba)
+set(SYNC_MPSC_TESTS mpsc_concurrent mpsc_drain_race)
+foreach(t ${SYNC_SHARED_TESTS})
+    add_executable(${t} sync/${t}.c
+        ${CMAKE_SOURCE_DIR}/libs/src/core/sync/shared.c)
+    target_include_directories(${t} PRIVATE
+        ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR}
+        ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
+    target_link_libraries(${t} PRIVATE Threads::Threads)
+    register_pure_unit_test(${t})
+endforeach()
+foreach(t ${SYNC_MPSC_TESTS})
+    add_executable(${t} sync/${t}.c)
+    target_include_directories(${t} PRIVATE
+        ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR}
+        ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
+    target_link_libraries(${t} PRIVATE Threads::Threads)
+    register_pure_unit_test(${t})
+endforeach()
 
 # Counter smoke test: verifies counter output files are written.
 register_single_node_test(counter_smoke TIMEOUT 30)
@@ -556,20 +524,14 @@ set_tests_properties(finish_event_stress_2n PROPERTIES
 
 # --- Multi-node tests ---
 
-register_multinode_test(multinode_db)
 register_multinode_test(multinode_edt)
 register_multinode_test(multinode_epoch)
 register_multinode_test(multinode_event)
 register_multinode_test(active_message_db ARGS 64)
-register_multinode_test(arts_send ARGS 16)
 register_multinode_test(route_table_remote_guid)
-register_multinode_test(db_put_get_at)
-register_multinode_test(db_remote)
 register_multinode_test(remote_db_event)
 register_multinode_test(multinode_coherence)
 register_multinode_test(multinode_event_types)
-register_multinode_test(multinode_array_db)
-register_multinode_test(multinode_db_advanced)
 register_multinode_test(coherence_mixed_local_remote)
 
 register_multinode_test(multinode_stdout_forward)

@@ -38,39 +38,54 @@
 ******************************************************************************/
 #include "arts/utils/link_list.h"
 
+#include <stdatomic.h>
+
 #include "arts.h"
-#include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
 
-void arts_link_list_new(struct arts_link_list_s *list) {
-  list->headPtr = list->tailPtr = NULL;
+/* Lock-free Vyukov MPSC.  Mirrors arts/sync/mpsc.h exactly; kept inline here
+ * so the transport's per-(rank,port) outbound queues stay a self-contained
+ * utility (multi-producer push_back, single-consumer pop_front). */
+
+static inline void push_node(struct arts_link_list_s *list,
+                             struct arts_link_list_item_s *n) {
+  atomic_store_explicit(&n->next, NULL, memory_order_relaxed);
+  struct arts_link_list_item_s *prev =
+      atomic_exchange_explicit(&list->head, n, memory_order_acq_rel);
+  atomic_store_explicit(&prev->next, n, memory_order_release);
 }
 
-void arts_link_list_delete(void *link_list) {
-  struct arts_link_list_s *list = (struct arts_link_list_s *)link_list;
-  struct arts_link_list_item_s *last;
-  while (list->headPtr != NULL) {
-    last = list->headPtr;
-    list->headPtr = list->headPtr->next;
-    arts_free(last);
-  }
-  arts_free(link_list);
+void arts_link_list_new(struct arts_link_list_s *list) {
+  atomic_store_explicit(&list->stub.next, NULL, memory_order_relaxed);
+  atomic_store_explicit(&list->head, &list->stub, memory_order_relaxed);
+  list->tail = &list->stub;
 }
 
 struct arts_link_list_s *arts_link_list_group_new(unsigned int list_size) {
   struct arts_link_list_s *link_list = (struct arts_link_list_s *)arts_calloc(
       list_size, sizeof(struct arts_link_list_s));
-  for (int i = 0; i < list_size; i++) {
+  for (unsigned int i = 0; i < list_size; i++) {
     arts_link_list_new(&link_list[i]);
   }
   return link_list;
+}
+
+/* Drain (single-consumer / quiescent) + free every heap node, then free the
+ * list array itself.  The embedded stub is never heap-freed. */
+void arts_link_list_delete(void *link_list) {
+  struct arts_link_list_s *list = (struct arts_link_list_s *)link_list;
+  void *data;
+  while ((data = arts_link_list_pop_front(list, NULL)) != NULL) {
+    arts_link_list_delete_item(data);
+  }
+  arts_free(link_list);
 }
 
 void *arts_link_list_new_item(unsigned int size) {
   struct arts_link_list_item_s *new_item =
       (struct arts_link_list_item_s *)arts_calloc(
           1, sizeof(struct arts_link_list_item_s) + size);
-  new_item->next = NULL;
+  atomic_store_explicit(&new_item->next, NULL, memory_order_relaxed);
   if (size) {
     return (void *)(new_item + 1);
   }
@@ -88,66 +103,54 @@ arts_link_list_get(struct arts_link_list_s *link_list, unsigned int position) {
   return (struct arts_link_list_s *)(link_list + position);
 }
 
-inline unsigned arts_link_list_get_size(struct arts_link_list_s *link_list) {
-  unsigned size = 0;
-  struct arts_link_list_item_s *head = NULL;
-  arts_lock(&link_list->lock);
-  head = link_list->headPtr;
-  while (head != NULL) {
-    size++;
-    head = head->next;
-  }
-  arts_unlock(&link_list->lock);
-  return size;
+/* Conservative single-consumer emptiness: true only once the consumer has
+ * caught up to the producer head.  Returns false while a producer has appended
+ * (or is mid-link), so a drain loop keeps polling. */
+uint8_t arts_link_list_is_empty(struct arts_link_list_s *link_list) {
+  struct arts_link_list_item_s *head =
+      atomic_load_explicit(&link_list->head, memory_order_acquire);
+  return (head == link_list->tail) ? 1u : 0u;
 }
 
-inline uint8_t arts_link_list_is_empty(struct arts_link_list_s *link_list) {
-  struct arts_link_list_item_s *head = NULL;
-  arts_lock(&link_list->lock);
-  head = link_list->headPtr;
-  arts_unlock(&link_list->lock);
-  return (head == NULL);
-}
-
-void *arts_link_list_get_front_data(struct arts_link_list_s *link_list) {
-  void *data = NULL;
-  arts_lock(&link_list->lock);
-  data = link_list->headPtr + 1;
-  arts_unlock(&link_list->lock);
-  return data;
-}
-
-void *arts_link_list_get_tail_data(struct arts_link_list_s *link_list) {
-  void *data = NULL;
-  arts_lock(&link_list->lock);
-  data = link_list->tailPtr + 1;
-  arts_unlock(&link_list->lock);
-  return data;
-}
-
+/* Lock-free; any number of producers concurrently.  `item` is the data ptr
+ * returned by new_item; the node header precedes it. */
 void arts_link_list_push_back(struct arts_link_list_s *list, void *item) {
-  struct arts_link_list_item_s *new_item = (struct arts_link_list_item_s *)item;
-  new_item -= 1;
-  arts_lock(&list->lock);
-  if (list->headPtr == NULL) {
-    list->headPtr = list->tailPtr = new_item;
-  } else {
-    list->tailPtr->next = new_item;
-    list->tailPtr = new_item;
-  }
-  arts_unlock(&list->lock);
+  push_node(list, ((struct arts_link_list_item_s *)item) - 1);
 }
 
+/* Single-consumer pop; returns the data ptr or NULL when empty / transiently
+ * inconsistent (a producer is mid-link — caller re-polls).  `free_pos` is a
+ * legacy out-param, always set NULL (the caller frees via delete_item). */
 void *arts_link_list_pop_front(struct arts_link_list_s *list, void **free_pos) {
-  void *data = NULL;
   if (free_pos) {
     *free_pos = NULL;
   }
-  arts_lock(&list->lock);
-  if (list->headPtr) {
-    data = (void *)(list->headPtr + 1);
-    list->headPtr = list->headPtr->next;
+  struct arts_link_list_item_s *tail = list->tail;
+  struct arts_link_list_item_s *next =
+      atomic_load_explicit(&tail->next, memory_order_acquire);
+  if (tail == &list->stub) {
+    if (!next) {
+      return NULL; /* empty */
+    }
+    list->tail = next;
+    tail = next;
+    next = atomic_load_explicit(&tail->next, memory_order_acquire);
   }
-  arts_unlock(&list->lock);
-  return data;
+  if (next) {
+    list->tail = next;
+    return (void *)(tail + 1);
+  }
+  struct arts_link_list_item_s *head =
+      atomic_load_explicit(&list->head, memory_order_acquire);
+  if (tail != head) {
+    return NULL; /* producer mid-link — retry later */
+  }
+  /* Re-thread the stub so the single remaining node becomes poppable. */
+  push_node(list, &list->stub);
+  next = atomic_load_explicit(&tail->next, memory_order_acquire);
+  if (next) {
+    list->tail = next;
+    return (void *)(tail + 1);
+  }
+  return NULL;
 }

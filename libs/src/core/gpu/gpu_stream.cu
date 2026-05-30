@@ -307,7 +307,7 @@ void arts_wrap_up(cudaStream_t stream, cudaError_t status, void *data) {
   }
 
   // Definitely mark the dev closure to be deleted as there is no reuse!
-  arts_gpu_route_table_return_db(edt->wrapperEdt.current_edt, true, gc->gpu_id);
+  arts_gpu_route_table_return_db(edt->wrapperEdt.guid, true, gc->gpu_id);
   new_edt_lock = gc->newEdtLock;
   new_edts = gc->newEdts;
   arts_gpu_host_wrap_up(gc->edt, edt->end_guid, edt->slot, edt->data_guid);
@@ -382,7 +382,7 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
     }
     ARTS_DEBUG("Filled host closure\n");
 
-    arts_guid_t edt_guid = host_gc_ptr->edt->current_edt;
+    arts_guid_t edt_guid = host_gc_ptr->edt->guid;
     // arts_gpu_route_table_add_item_race(host_gc_ptr, host_closure_size,
     // edt_guid, arts_gpu->device);
     arts_gpu_route_table_add_item_race(host_gc_ptr, dev_closure_size, edt_guid,
@@ -402,7 +402,7 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
       unsigned int time_stamp;
       void *data_ptr = arts_gpu_route_table_lookup_db(
           depv[i].guid, arts_gpu->device, &gpu_version, &time_stamp);
-      uint64_t size = db->header.size;
+      uint64_t size = arts_db_total_size(db);
       uint64_t alloc_size = (db_subtype == ARTS_DB_GPU) ? (size * 2) : size;
       if (!data_ptr) {
         bool successful_add = false;
@@ -452,7 +452,7 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
       host_depv[i].ptr = (void *)(new_db + 1);
     } else {
       ARTS_DEBUG("Depv: %u is null edt: %lu\n", i,
-                 gpu_edt->wrapperEdt.current_edt);
+                 gpu_edt->wrapperEdt.guid);
       host_depv[i].ptr = NULL;
     }
 
@@ -493,7 +493,7 @@ void arts_schedule_to_gpu_internal(arts_edt_t fn_ptr, uint32_t paramc,
       struct arts_db_s *cb_db = (struct arts_db_s *)depv[i].ptr - 1;
       if (cb_db->db_type == ARTS_DB_GPU_PIN &&
           (depv[i].mode == DB_MODE_RW || depv[i].mode == DB_MODE_MEMSET)) {
-        size_t size = (size_t)(cb_db->header.size - sizeof(struct arts_db_s));
+        size_t size = (size_t)(cb_db->cache.db_size);
         get_data_from_stream(arts_gpu->device, depv[i].ptr, host_depv[i].ptr,
                              size, arts_node_info.gpu_buff_on && !gpu_edt->lib);
       }
@@ -525,7 +525,11 @@ void arts_gpu_stream_busy(arts_gpu_t *arts_gpu) {
 
 void free_gpu_item(arts_route_item_t *item) {
   arts_guid_kind_t type = arts_guid_get_kind(item->key);
-  arts_item_wrapper_t *wrapper = (arts_item_wrapper_t *)item->data;
+  arts_item_wrapper_t *wrapper =
+      (arts_item_wrapper_t *)arts_route_item_peek_data(item);
+  if (!wrapper) {
+    return;
+  }
   if (type == ARTS_GUID_EDT) {
     arts_gpu_clean_up_t *host_gc_ptr = (arts_gpu_clean_up_t *)wrapper->realData;
     ARTS_DEBUG("FREEING DEV PTR: %p\n", host_gc_ptr->devClosure);
@@ -533,16 +537,17 @@ void free_gpu_item(arts_route_item_t *item) {
     ARTS_DEBUG("FREEING HOST PTR: %p\n", host_gc_ptr);
     arts_cuda_free_host(host_gc_ptr);
   } else if (type == ARTS_GUID_DB) {
-    struct arts_db_s *db = arts_route_table_lookup_db_safe(item->key);
+    arts_shared_ptr_t db_h = arts_route_table_lookup_db(item->key);
+    struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(db_h);
     if (db && db->db_type == ARTS_DB_GPU) {
-      unsigned int size = db->header.size;
+      unsigned int size = arts_db_total_size(db);
       struct arts_db_s *temp_space =
           (struct arts_db_s *)arts_malloc_align(size, 16);
 
       arts_lc_meta_t host;
       host.guid = item->key;
       host.data = (void *)(db + 1);
-      host.data_size = db->header.size - sizeof(struct arts_db_s);
+      host.data_size = db->cache.db_size;
       host.host_version = &db->version;
       host.host_time_stamp = &db->time_stamp;
       host.gpu_version = 0;
@@ -560,7 +565,7 @@ void free_gpu_item(arts_route_item_t *item) {
       arts_lc_meta_t dev;
       dev.guid = item->key;
       dev.data = (void *)(temp_space + 1);
-      dev.data_size = temp_space->header.size - sizeof(struct arts_db_s);
+      dev.data_size = temp_space->cache.db_size;
       dev.host_version = &temp_space->version;
       dev.host_time_stamp = &temp_space->time_stamp;
       dev.gpu_version = item->touched;
@@ -581,7 +586,7 @@ void free_gpu_item(arts_route_item_t *item) {
       arts_cuda_free((void *)wrapper->realData);
     }
     if (db) {
-      arts_route_table_release(item->key);
+      arts_shared_release(&db_h);
     }
   }
 
@@ -711,9 +716,9 @@ uint64_t get_db_size_needed(uint32_t depc, arts_edt_dep_t *depv) {
   for (unsigned int i = 0; i < depc; i++) {
     if (depv[i].ptr) {
       struct arts_db_s *db = (struct arts_db_s *)depv[i].ptr - 1;
-      size += db->header.size;
+      size += arts_db_total_size(db);
       if (db->db_type == ARTS_DB_GPU) {
-        size += db->header.size;
+        size += arts_db_total_size(db);
       }
     }
   }

@@ -48,6 +48,7 @@
 #include "arts/runtime_state.h"
 #include "arts/sync/epoch.h"
 #include "arts/sync/event.h"  /* arts_event_free_internal */
+#include "arts/sync/mpsc.h"   /* arts_mpsc_init */
 #include "arts/sync/shared.h" /* arts_shared_init */
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
@@ -55,7 +56,6 @@
 #include "arts/utils/atomics.h"
 #include "arts/utils/lockfree_lifo.h" /* arts_lf_stack_init */
 #include "arts/utils/malloc.h"
-#include "arts/utils/mpsc.h" /* arts_mpsc_init */
 
 static void send_remote_add_dependence_packet(unsigned int message_type,
                                               arts_guid_t source,
@@ -71,38 +71,17 @@ static void send_remote_add_dependence_packet(unsigned int message_type,
   arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
 }
 
-void arts_remote_add_dependence(arts_guid_t source, arts_guid_t destination,
-                                uint32_t slot, unsigned int rank,
-                                arts_db_access_mode_t mode) {
+void arts_send_event_add_dependence(arts_guid_t source, arts_guid_t destination,
+                                    uint32_t slot, unsigned int rank,
+                                    arts_db_access_mode_t mode) {
   ARTS_DEBUG("Remote Add dependence sent %d", rank);
-  send_remote_add_dependence_packet(ARTS_REMOTE_ADD_DEPENDENCE_MSG, source,
+  send_remote_add_dependence_packet(MSG_EVENT_ADD_DEPENDENCE, source,
                                     destination, slot, rank, mode);
 }
 
-void arts_remote_add_dependence_with_hints(arts_guid_t source,
-                                           arts_guid_t destination,
-                                           uint32_t slot, unsigned int rank,
-                                           arts_db_access_mode_t mode) {
-  ARTS_DEBUG("Remote Add dependence (mode=%u) sent %d", mode, rank);
-  send_remote_add_dependence_packet(ARTS_REMOTE_ADD_DEPENDENCE_MSG, source,
-                                    destination, slot, rank, mode);
-}
-
-void arts_remote_set_dep_mode(arts_guid_t edt_guid, uint32_t slot,
-                              arts_db_access_mode_t mode) {
-  unsigned int rank = arts_guid_get_rank(edt_guid);
-  struct arts_remote_set_dep_mode_packet_s packet;
-  packet.edt = edt_guid;
-  packet.slot = slot;
-  packet.mode = mode;
-  arts_fill_packet_header(&packet.header, sizeof(packet),
-                          ARTS_REMOTE_SET_DEP_MODE_MSG);
-  arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
-}
-
-void arts_remote_memory_move(unsigned int rank, arts_guid_t guid, void *ptr,
-                             unsigned int mem_size, unsigned message_type,
-                             void (*free_method)(void *)) {
+void arts_send_memory_move(unsigned int rank, arts_guid_t guid, void *ptr,
+                           unsigned int mem_size, unsigned message_type,
+                           void (*free_method)(void *)) {
   TIME_REMOTE_MOVE_START();
   struct arts_remote_guid_only_packet_s packet;
   arts_fill_packet_header(&packet.header, sizeof(packet) + mem_size,
@@ -116,18 +95,7 @@ void arts_remote_memory_move(unsigned int rank, arts_guid_t guid, void *ptr,
   TIME_REMOTE_MOVE_STOP();
 }
 
-void arts_remote_memory_move_no_free(unsigned int rank, arts_guid_t guid,
-                                     void *ptr, unsigned int mem_size,
-                                     unsigned message_type) {
-  struct arts_remote_guid_only_packet_s packet;
-  arts_fill_packet_header(&packet.header, sizeof(packet) + mem_size,
-                          message_type);
-  packet.guid = guid;
-  arts_remote_send_request_payload_async((int)rank, (char *)&packet,
-                                         sizeof(packet), (char *)ptr, mem_size);
-}
-
-void arts_remote_handle_edt_move(void *ptr) {
+void arts_handler_edt_create(void *ptr) {
   struct arts_remote_guid_only_packet_s *packet =
       (struct arts_remote_guid_only_packet_s *)ptr;
   uint64_t size =
@@ -135,12 +103,8 @@ void arts_remote_handle_edt_move(void *ptr) {
   struct arts_edt_s *edt = (struct arts_edt_s *)arts_malloc_align(size, 16);
 
   memcpy(edt, packet + 1, size);
-  /* re-stamp the deleter pointer.  The wire image was copied
-   * verbatim from the sender's process, so edt->shared.deleter contains
-   * the sender-side function pointer — non-PIE binaries make that valid
-   * here, but reinstalling defensively keeps the lifecycle ownership
-   * symmetric with edt_create_internal. */
-  arts_shared_init(&edt->shared, arts_edt_get_deleter());
+  /* lifecycle/deleter handled by the route_table cb (deleter-by-kind) when
+   * this EDT is installed below — no per-object shared field to stamp. */
   /* finish-scope chain: if the EDT arrived with a non-NULL finish_event,
    * the field currently holds the *parent* finish_event GUID (which lives
    * on the source rank).  Allocate a local proxy LATCH and rewrite the
@@ -187,47 +151,11 @@ void arts_remote_handle_edt_move(void *ptr) {
   if (edt->depc_needed == 0) {
     arts_handle_ready_edt(edt);
   } else {
-    arts_route_table_fire_oo(packet->guid, arts_out_of_order_handler);
+    arts_ooo_drain_guid(packet->guid);
   }
 }
 
-void arts_remote_handle_db_move(void *ptr) {
-  struct arts_remote_guid_only_packet_s *packet =
-      (struct arts_remote_guid_only_packet_s *)ptr;
-  uint64_t size =
-      packet->header.size - sizeof(struct arts_remote_guid_only_packet_s);
-
-  struct arts_db_s db_header_buf;
-  memcpy(&db_header_buf, (packet + 1), sizeof(struct arts_db_s));
-  uint64_t db_size = db_header_buf.header.size;
-
-  struct arts_header_s *mem_packet =
-      (struct arts_header_s *)arts_malloc_align(db_size, 16);
-
-  if (size == db_size) {
-    memcpy(mem_packet, packet + 1, size);
-  } else {
-    mem_packet->type = (unsigned int)arts_guid_get_kind(packet->guid);
-    mem_packet->size = db_size;
-  }
-  /* DB-level coherence (RC) is owned by ARTS_DB's coherence_cache,
-   * not by db_list.  After the move, the moved DB does not carry an
-   * RC cache (state is rebuilt lazily on first acquire); other subtypes
-   * have no DB-level coherence at all.  Just clear db_list. */
-  {
-    struct arts_db_s *new_db = (struct arts_db_s *)mem_packet;
-    new_db->db_list = NULL;
-  }
-
-  ARTS_INFO("DB[Guid:%lu] Moved to Rank: %d", packet->guid,
-            arts_global_rank_id);
-  if (arts_route_table_add_item_race(mem_packet, packet->guid,
-                                     arts_global_rank_id, true)) {
-    arts_route_table_fire_oo(packet->guid, arts_out_of_order_handler);
-  }
-}
-
-void arts_remote_handle_event_move(void *ptr) {
+void arts_handler_event_create(void *ptr) {
   struct arts_remote_guid_only_packet_s *packet =
       (struct arts_remote_guid_only_packet_s *)ptr;
   uint64_t size =
@@ -252,8 +180,7 @@ void arts_remote_handle_event_move(void *ptr) {
                           memory_order_relaxed);
   } else {
     arts_lf_stack_init(&mem_packet->simple.deps_stack);
-    /* latch / life_count / fired / data preserved from sender's
-     * post-init state. */
+    /* latch / fired / data preserved from sender's post-init state. */
   }
 
   /* add_item_race installs the event under the route_table lock; on
@@ -270,30 +197,15 @@ void arts_remote_handle_event_move(void *ptr) {
   }
 }
 
-void arts_remote_handle_event_satisfy_slot(void *ptr) {
-  struct arts_remote_event_satisfy_slot_packet_s *pack =
-      (struct arts_remote_event_satisfy_slot_packet_s *)ptr;
-  /* Delegate to the local entry point.  arts_event_satisfy_slot itself
-   * already performs the safe-lookup pair (lookup_event_safe + release)
-   * and runs event_drain on DECR.  The event GUID's rank equals the
-   * local rank by construction (the sender forwarded here precisely
-   * because arts_guid_get_rank == us), so the `rank != arts_global_rank_id`
-   * branch never re-enters arts_remote_event_satisfy_slot — no loop.
-   * The OoO miss path is the same as the local one (event not yet
-   * installed → enqueue via arts_out_of_order_event_satisfy_slot). */
-  arts_event_satisfy_slot(pack->event, pack->db, pack->slot);
-}
-
-void arts_remote_event_destroy(arts_guid_t guid) {
+void arts_send_event_destroy(arts_guid_t guid) {
   unsigned int rank = arts_guid_get_rank(guid);
   struct arts_remote_guid_only_packet_s packet;
   packet.guid = guid;
-  arts_fill_packet_header(&packet.header, sizeof(packet),
-                          ARTS_REMOTE_EVENT_DESTROY_MSG);
+  arts_fill_packet_header(&packet.header, sizeof(packet), MSG_EVENT_DESTROY);
   arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
 }
 
-void arts_remote_handle_event_destroy(void *ptr) {
+void arts_handler_event_destroy(void *ptr) {
   struct arts_remote_guid_only_packet_s *packet =
       (struct arts_remote_guid_only_packet_s *)ptr;
   /* mark_delete is idempotent (DELETE bit sticky); receiving the message
@@ -301,42 +213,59 @@ void arts_remote_handle_event_destroy(void *ptr) {
   arts_route_table_mark_delete(packet->guid);
 }
 
-static void send_remote_edt_signal_packet(arts_guid_t edt, arts_guid_t db,
-                                          uint32_t slot,
-                                          arts_db_access_mode_t mode) {
-  struct arts_remote_edt_signal_packet_s packet;
+void arts_send_edt_satisfy_slot(arts_guid_t edt, arts_guid_t db, uint32_t slot,
+                                arts_db_access_mode_t mode, void *ptr,
+                                unsigned int size) {
   unsigned int rank = arts_guid_get_rank(edt);
-
   if (rank == arts_global_rank_id) {
+    /* EDT GUID claims a local home but may have migrated — resolve the
+     * true owning rank through the route table. */
     rank = arts_route_table_lookup_rank(edt);
   }
+  ARTS_INFO(
+      "Remote Signal from DB[Guid:%lu] to EDT[Guid:%lu, Slot:%d, Rank:%u]", db,
+      edt, slot, rank);
 
-  packet.db = db;
-  packet.edt = edt;
-  packet.slot = slot;
-  packet.mode = mode;
-  packet.db_route = arts_guid_get_rank(db);
-  arts_fill_packet_header(&packet.header, sizeof(packet),
-                          ARTS_REMOTE_EDT_SIGNAL_MSG);
-  arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
+  if (size == 0) {
+    /* Reference-only satisfy (GUID / value / NULL): fixed-size header on the
+     * stack, no trailing payload. */
+    struct arts_remote_edt_signal_packet_s packet;
+    packet.edt = edt;
+    packet.db = db;
+    packet.slot = slot;
+    packet.mode = mode;
+    packet.size = 0;
+    arts_fill_packet_header(&packet.header, sizeof(packet),
+                            MSG_EDT_SATISFY_SLOT);
+    arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
+    return;
+  }
+
+  /* DB_MODE_PTR delivery: header + inline payload copied contiguously so the
+   * receiver materializes the data without a follow-up fetch. */
+  uint64_t total = sizeof(struct arts_remote_edt_signal_packet_s) + size;
+  char *buf = (char *)arts_malloc((size_t)total);
+  struct arts_remote_edt_signal_packet_s *packet =
+      (struct arts_remote_edt_signal_packet_s *)buf;
+  packet->edt = edt;
+  packet->db = db;
+  packet->slot = slot;
+  packet->mode = mode;
+  packet->size = size;
+  arts_fill_packet_header(&packet->header, total, MSG_EDT_SATISFY_SLOT);
+  memcpy(buf + sizeof(*packet), ptr, size);
+  arts_remote_send_request_async((int)rank, buf, (unsigned int)total);
+  arts_free(buf);
 }
 
-void arts_remote_signal_edt(arts_guid_t edt, arts_guid_t db, uint32_t slot,
-                            arts_db_access_mode_t mode) {
-  ARTS_INFO("Remote Signal from DB[Guid:%lu] to EDT[Guid:%lu, Slot:%d, Rank: "
-            "%d]",
-            db, edt, slot, arts_guid_get_rank(edt));
-  send_remote_edt_signal_packet(edt, db, slot, mode);
-}
-
-void arts_remote_event_satisfy_slot(arts_guid_t event_guid,
-                                    arts_guid_t data_guid, uint32_t slot) {
+void arts_send_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
+                                  uint32_t slot) {
   struct arts_remote_event_satisfy_slot_packet_s packet;
   packet.event = event_guid;
   packet.db = data_guid;
   packet.slot = slot;
   arts_fill_packet_header(&packet.header, sizeof(packet),
-                          ARTS_REMOTE_EVENT_SATISFY_SLOT_MSG);
+                          MSG_EVENT_SATISFY_SLOT);
   arts_remote_send_request_async((int)arts_guid_get_rank(event_guid),
                                  (char *)&packet, sizeof(packet));
 }
@@ -363,7 +292,7 @@ void arts_db_request_callback(struct arts_edt_s *edt, unsigned int slot,
      * race).  Treat this slot as a NULL dependency — the data is gone. */
     ARTS_WARN("arts_db_request_callback: db_res is NULL for EDT[Guid:%lu] "
               "slot=%u (DB destroyed during OO resolution)",
-              edt->current_edt, slot);
+              edt->guid, slot);
     depv[slot].guid = NULL_GUID;
     depv[slot].ptr = NULL;
   }
@@ -373,129 +302,17 @@ void arts_db_request_callback(struct arts_edt_s *edt, unsigned int slot,
   }
 }
 
-void arts_remote_get_from_db(arts_guid_t edt_guid, arts_guid_t db_guid,
-                             unsigned int slot, unsigned int offset,
-                             unsigned int len, unsigned int rank) {
-  struct arts_remote_get_put_packet_s packet;
-  packet.edt_guid = edt_guid;
-  packet.db_guid = db_guid;
-  packet.slot = slot;
-  packet.offset = offset;
-  packet.size = len;
-  arts_fill_packet_header(&packet.header, sizeof(packet),
-                          ARTS_REMOTE_GET_FROM_DB_MSG);
-  arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
-}
-
-void arts_remote_handle_get_from_db(void *pack) {
-  struct arts_remote_get_put_packet_s *packet =
-      (struct arts_remote_get_put_packet_s *)pack;
-  arts_db_get(
-      packet->edt_guid, packet->db_guid, packet->slot, packet->offset,
-      packet->size,
-      &(arts_db_op_hint_t){.rank = arts_global_rank_id, .epoch = NULL_GUID});
-}
-
-void arts_remote_put_in_db(void *ptr, arts_guid_t edt_guid, arts_guid_t db_guid,
-                           unsigned int slot, unsigned int offset,
-                           unsigned int len, arts_guid_t epoch_guid,
-                           unsigned int rank) {
-  struct arts_remote_get_put_packet_s packet;
-  packet.edt_guid = edt_guid;
-  packet.db_guid = db_guid;
-  packet.epoch_guid = epoch_guid;
-  packet.slot = slot;
-  packet.offset = offset;
-  packet.size = len;
-  uint64_t total_size = sizeof(struct arts_remote_get_put_packet_s) + len;
-  arts_fill_packet_header(&packet.header, total_size,
-                          ARTS_REMOTE_PUT_IN_DB_MSG);
-  //    arts_remote_send_request_payload_async(rank, (char *)&packet,
-  //    sizeof(packet), (char *)ptr, len);
-  arts_remote_send_request_payload_async_free((int)rank, (char *)&packet,
-                                              sizeof(packet), (char *)ptr, 0,
-                                              len, arts_free);
-}
-
-void arts_remote_handle_put_in_db(void *pack) {
-  struct arts_remote_get_put_packet_s *packet =
-      (struct arts_remote_get_put_packet_s *)pack;
-  void *data = (void *)(packet + 1);
-  internal_put_in_db(data, packet->edt_guid, packet->db_guid, packet->slot,
-                     packet->offset, packet->size, packet->epoch_guid,
-                     arts_global_rank_id);
-}
-
-void arts_remote_signal_edt_with_ptr(arts_guid_t edt_guid, arts_guid_t db_guid,
-                                     void *ptr, unsigned int size,
-                                     unsigned int slot) {
-  unsigned int rank = arts_guid_get_rank(edt_guid);
-  ARTS_DEBUG("SEND NOW: %u -> %u", arts_global_rank_id, rank);
-  uint64_t total_size =
-      sizeof(struct arts_remote_signal_edt_with_ptr_packet_s) + size;
-  char *buf = (char *)arts_malloc((size_t)total_size);
-  struct arts_remote_signal_edt_with_ptr_packet_s *packet =
-      (struct arts_remote_signal_edt_with_ptr_packet_s *)buf;
-  packet->edt_guid = edt_guid;
-  packet->db_guid = db_guid;
-  packet->size = size;
-  packet->slot = slot;
-  arts_fill_packet_header(&packet->header, total_size,
-                          ARTS_REMOTE_SIGNAL_EDT_WITH_PTR_MSG);
-  memcpy(buf + sizeof(*packet), ptr, size);
-  arts_remote_send_request_async((int)rank, buf, (unsigned int)total_size);
-  arts_free(buf);
-}
-
-void arts_remote_handle_signal_edt_with_ptr(void *pack) {
-  struct arts_remote_signal_edt_with_ptr_packet_s *packet =
-      (struct arts_remote_signal_edt_with_ptr_packet_s *)pack;
-  void *source = (void *)(packet + 1);
-  internal_signal_edt(packet->edt_guid, packet->slot, packet->db_guid,
-                      DB_MODE_PTR, source, packet->size);
-}
-
-void arts_remote_send(unsigned int rank, send_handler_t fun_ptr, void *args,
-                      unsigned int size, bool free) {
-  if (rank == arts_global_rank_id) {
-    fun_ptr(args);
-    if (free) {
-      arts_free(args);
-    }
-    return;
-  }
-  struct arts_remote_send_s packet;
-  packet.fun_ptr = fun_ptr;
-  int total_size = (int)(sizeof(struct arts_remote_send_s) + size);
-  arts_fill_packet_header(&packet.header, total_size, ARTS_REMOTE_SEND_MSG);
-
-  if (free) {
-    arts_remote_send_request_payload_async_free((int)rank, (char *)&packet,
-                                                sizeof(packet), (char *)args, 0,
-                                                size, arts_free);
-  } else {
-    arts_remote_send_request_payload_async((int)rank, (char *)&packet,
-                                           sizeof(packet), (char *)args, size);
-  }
-}
-
-void arts_remote_handle_send(void *pack) {
-  struct arts_remote_send_s *packet = (struct arts_remote_send_s *)pack;
-  void *args = (void *)(packet + 1);
-  packet->fun_ptr(args);
-}
-
-void arts_remote_epoch_init_send(unsigned int rank, arts_guid_t epoch_guid,
-                                 arts_guid_t edt_guid, unsigned int slot) {
+void arts_send_epoch_create(unsigned int rank, arts_guid_t epoch_guid,
+                            arts_guid_t edt_guid, unsigned int slot) {
   struct arts_remote_epoch_init_packet_s packet;
   packet.epoch_guid = epoch_guid;
   packet.edt_guid = edt_guid;
   packet.slot = slot;
-  arts_fill_packet_header(&packet.header, sizeof(packet), ARTS_EPOCH_INIT_MSG);
+  arts_fill_packet_header(&packet.header, sizeof(packet), MSG_EPOCH_CREATE);
   arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
 }
 
-void arts_remote_handle_epoch_init_send(void *pack) {
+void arts_handler_epoch_create(void *pack) {
   ARTS_DEBUG("Net Epoch Init Rec");
   struct arts_remote_epoch_init_packet_s *packet =
       (struct arts_remote_epoch_init_packet_s *)pack;
@@ -504,21 +321,19 @@ void arts_remote_handle_epoch_init_send(void *pack) {
   packet->epoch_guid = local_epoch_guid;
 }
 
-void arts_remote_epoch_init_pool_send(unsigned int rank, unsigned int pool_size,
-                                      arts_guid_t start_guid,
-                                      arts_guid_t pool_guid) {
+void arts_send_epoch_init_pool(unsigned int rank, unsigned int pool_size,
+                               arts_guid_t start_guid, arts_guid_t pool_guid) {
   //    ARTS_INFO("Net Epoch Init Pool Send: %u %lu %lu", rank, start_guid,
   //    pool_guid);
   struct arts_remote_epoch_init_pool_packet_s packet;
   packet.pool_size = pool_size;
   packet.start_guid = start_guid;
   packet.pool_guid = pool_guid;
-  arts_fill_packet_header(&packet.header, sizeof(packet),
-                          ARTS_EPOCH_INIT_POOL_MSG);
+  arts_fill_packet_header(&packet.header, sizeof(packet), MSG_EPOCH_INIT_POOL);
   arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
 }
 
-void arts_remote_handle_epoch_init_pool_send(void *pack) {
+void arts_handler_epoch_init_pool(void *pack) {
   struct arts_remote_epoch_init_pool_packet_s *packet =
       (struct arts_remote_epoch_init_pool_packet_s *)pack;
   arts_guid_t local_pool_guid = packet->pool_guid;
@@ -530,67 +345,42 @@ void arts_remote_handle_epoch_init_pool_send(void *pack) {
   packet->start_guid = local_start_guid;
 }
 
-void arts_remote_epoch_req(unsigned int rank, arts_guid_t guid) {
+void arts_send_epoch_request(unsigned int rank, arts_guid_t guid) {
   struct arts_remote_guid_only_packet_s packet;
   packet.guid = guid;
-  arts_fill_packet_header(&packet.header, sizeof(packet), ARTS_EPOCH_REQ_MSG);
+  arts_fill_packet_header(&packet.header, sizeof(packet), MSG_EPOCH_REQUEST);
   arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
 }
 
-void arts_remote_handle_epoch_req(void *pack) {
-  struct arts_remote_guid_only_packet_s *packet =
-      (struct arts_remote_guid_only_packet_s *)pack;
-  // For now the source and dest are the same...
-  send_epoch(packet->guid, packet->header.rank, packet->header.rank);
-}
+/* MSG_EPOCH_REQUEST RX is inline-decoded in the dispatcher → send_epoch. */
 
-void arts_remote_epoch_send(unsigned int rank, arts_guid_t guid,
-                            unsigned int active, unsigned int finish) {
+void arts_send_epoch_send(unsigned int rank, arts_guid_t guid,
+                          unsigned int active, unsigned int finish) {
   struct arts_remote_epoch_send_packet_s packet;
   packet.epoch_guid = guid;
   packet.active = active;
   packet.finish = finish;
-  arts_fill_packet_header(&packet.header, sizeof(packet), ARTS_EPOCH_SEND_MSG);
+  arts_fill_packet_header(&packet.header, sizeof(packet), MSG_EPOCH_SEND);
   arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
 }
 
-void arts_remote_handle_epoch_send(void *pack) {
-  struct arts_remote_epoch_send_packet_s *packet =
-      (struct arts_remote_epoch_send_packet_s *)pack;
-  reduce_epoch(packet->epoch_guid, packet->active, packet->finish);
-}
+/* MSG_EPOCH_SEND RX is inline-decoded in the dispatcher → reduce_epoch. */
 
-void arts_remote_epoch_delete(unsigned int rank, arts_guid_t epoch_guid) {
+void arts_send_epoch_delete(unsigned int rank, arts_guid_t epoch_guid) {
   struct arts_remote_guid_only_packet_s packet;
   packet.guid = epoch_guid;
-  arts_fill_packet_header(&packet.header, sizeof(packet),
-                          ARTS_EPOCH_DELETE_MSG);
+  arts_fill_packet_header(&packet.header, sizeof(packet), MSG_EPOCH_DELETE);
   arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
 }
 
-void arts_remote_handle_epoch_delete(void *pack) {
+void arts_handler_epoch_delete(void *pack) {
   struct arts_remote_guid_only_packet_s *packet =
       (struct arts_remote_guid_only_packet_s *)pack;
   delete_epoch(packet->guid, NULL);
 }
 
-void arts_remote_db_rename(arts_guid_t new_guid, arts_guid_t old_guid) {
-  unsigned int dest_rank = arts_guid_get_rank(old_guid);
-  struct arts_remote_db_rename_s packet;
-  packet.old_guid = old_guid;
-  packet.new_guid = new_guid;
-  packet.header.size = sizeof(packet);
-  packet.header.message_type = ARTS_REMOTE_DB_RENAME_MSG;
-  packet.header.rank = dest_rank;
-  arts_remote_send_request_async((int)dest_rank, (char *)&packet,
-                                 sizeof(packet));
-}
-
-void arts_remote_handle_db_rename(void *pack) {
-  struct arts_remote_db_rename_s *packet =
-      (struct arts_remote_db_rename_s *)pack;
-  arts_db_rename_with_guid(packet->new_guid, packet->old_guid);
-}
+/* arts_db_rename (pure GUID rename) was liquidated as dispensable legacy;
+ * its DB_RENAME wire handler is gone with it. */
 
 // RTT-based time synchronization for counter capture alignment
 // External declarations for time sync state (defined in Counter.c)
@@ -598,11 +388,11 @@ extern volatile int64_t arts_counter_time_offset;
 extern volatile bool arts_counter_time_sync_received;
 
 // Worker sends sync request to master with its current timestamp (T1)
-void arts_remote_time_sync_request(void) {
+void arts_send_time_sync_request(void) {
   struct arts_remote_time_sync_req_packet_s packet;
   packet.worker_send_time = arts_get_time_stamp(); // T1
   arts_fill_packet_header(&packet.header, sizeof(packet),
-                          ARTS_REMOTE_TIME_SYNC_REQ_MSG);
+                          MSG_TIME_SYNC_REQUEST);
 
   // Send to master
   arts_remote_send_request_async((int)arts_global_master_rank_id,
@@ -613,7 +403,7 @@ void arts_remote_time_sync_request(void) {
 }
 
 // Master handles sync request: records T2 and sends response with T1, T2
-void arts_remote_handle_time_sync_req(void *pack) {
+void arts_handler_time_sync_request(void *pack) {
   struct arts_remote_time_sync_req_packet_s *req =
       (struct arts_remote_time_sync_req_packet_s *)pack;
   uint64_t master_recv_time = arts_get_time_stamp(); // T2
@@ -621,8 +411,7 @@ void arts_remote_handle_time_sync_req(void *pack) {
   struct arts_remote_time_sync_resp_packet_s resp;
   resp.worker_send_time = req->worker_send_time; // Echo T1
   resp.master_recv_time = master_recv_time;      // T2
-  arts_fill_packet_header(&resp.header, sizeof(resp),
-                          ARTS_REMOTE_TIME_SYNC_RESP_MSG);
+  arts_fill_packet_header(&resp.header, sizeof(resp), MSG_TIME_SYNC_RESPONSE);
 
   // Send response back to the requesting worker
   arts_remote_send_request_async((int)req->header.rank, (char *)&resp,
@@ -632,7 +421,7 @@ void arts_remote_handle_time_sync_req(void *pack) {
 }
 
 // Worker handles sync response: calculates offset using RTT
-void arts_remote_handle_time_sync_resp(void *pack) {
+void arts_handler_time_sync_response(void *pack) {
   struct arts_remote_time_sync_resp_packet_s *resp =
       (struct arts_remote_time_sync_resp_packet_s *)pack;
   uint64_t worker_recv_time = arts_get_time_stamp(); // T3

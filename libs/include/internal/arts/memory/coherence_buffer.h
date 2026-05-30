@@ -50,32 +50,33 @@ extern "C" {
 #include <stdint.h>
 
 #include "arts/memory/coherence.h"
+#include "arts/sync/shared.h" /* arts_shared_ptr_t */
 
-/* Allocate a fresh buffer (sized for db_size payload + header) and
- * initialize it.  Caller fills ref_count via the install path —
- * arts_coherence_install_buffer publishes the buffer to cache.buffer
- * via CAS; before that, the buffer is private to the caller. */
+/* Allocate a fresh, uninitialized buffer (header + db_size payload), 64-byte
+ * aligned.  install_buffer fills + wraps it in a control block; before that
+ * the buffer is private to the caller. */
+struct arts_db_buffer_s *arts_coherence_buffer_alloc(uint64_t db_size);
+
+/* Race-safe acquire: returns a caller-owned strong ref to the installed
+ * buffer (keeping it alive against a concurrent destroy), or NULL if no
+ * buffer is currently installed.  Recover the buffer via arts_shared_get;
+ * release via arts_coherence_release_buf when done. */
+arts_shared_ptr_t arts_coherence_acquire_buf(struct arts_db_cache_s *cache);
+
+/* Drop a strong ref taken via acquire_buf.  On the last drop the cb deleter
+ * frees the buffer.  Sets *h = NULL. */
+void arts_coherence_release_buf(arts_shared_ptr_t *h);
+
+/* Unsafe non-refcounted peek of the installed buffer — valid only in
+ * create-time / single-owner windows where no concurrent destroy can free
+ * it.  Returns NULL if no buffer is installed. */
 struct arts_db_buffer_s *
-arts_coherence_buffer_alloc(struct arts_db_cache_s *cache, uint64_t db_size);
+arts_coherence_buffer_peek(struct arts_db_cache_s *cache);
 
-/* Race-safe acquire.  Returns the live buffer with ref_count
- * incremented, or NULL if no buffer is currently installed (only
- * possible during pre-publication or post-destroy NULL-swap). */
-struct arts_db_buffer_s *
-arts_coherence_acquire_buf(struct arts_db_cache_s *cache);
-
-/* Drop a single ref previously taken via acquire_buf / install (the
- * sentinel).  When the decrement returns 1 (i.e. brings the count to
- * 0), the buffer is pushed to cache.buffer_pool — recycle, NOT free. */
-void arts_coherence_release_buf(struct arts_db_cache_s *cache,
-                                struct arts_db_buffer_s *buf);
-
-/* Recover the enclosing arts_db_buffer_s from a data pointer (which
- * aliases buf->data, the FAM canonical payload).  Used by
- * release_one_dep to drop the EDT's buf ref without having to track
- * the buf pointer separately — the EDT only sees buf->data via
- * depv[slot].ptr, and cache.buffer may have been replaced since
- * acquire time, so we recover the original buf via container_of. */
+/* Recover the enclosing arts_db_buffer_s from a data pointer (which aliases
+ * buf->data, the FAM canonical payload).  Pointer arithmetic only — does NOT
+ * touch the buffer, so it is safe even if the buffer has since been freed
+ * (the caller must already hold a ref or know the buffer is alive). */
 static inline struct arts_db_buffer_s *
 arts_coherence_buf_from_data(void *data) {
   if (data == NULL) {
@@ -92,13 +93,11 @@ arts_coherence_buf_from_data(void *data) {
  *           backing store starts predictable).
  *   non-NULL ⇒ memcpy db_size bytes from data_payload.
  *
- * Returns the buffer that became (or remains) cache.buffer.  Stale
- * installs (new_version <= old->version) retreat and return the old
- * buffer unchanged.  Callers typically ignore the return — what
- * matters is that cache.buffer afterward holds a buffer at >= new_version.
- *
- * This call may pop from cache.buffer_pool on the hot path; on a cold-
- * start miss it falls through to malloc. */
+ * Returns the buffer that became (or remains) cache.buffer.  Stale installs
+ * (new_version <= old->version) retreat and return the old buffer unchanged.
+ * Publishes via a version-conditional shared-ptr compare-exchange; the slot
+ * takes the cache-hold ref and the retired buffer's ref is dropped (its cb
+ * deleter frees it once the last in-flight acquirer releases). */
 struct arts_db_buffer_s *
 arts_coherence_install_buffer(struct arts_db_cache_s *cache,
                               uint64_t new_version, const void *data_payload,

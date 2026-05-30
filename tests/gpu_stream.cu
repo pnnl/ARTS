@@ -50,12 +50,10 @@ arts_guid_t local_db_create(void **addr, uint64_t size, arts_guid_kind_t mode,
   //    void * ptr = malloc(db_size);
   void *ptr = arts_cuda_malloc_host(db_size);
   if (ptr) {
-    struct arts_header_s *header = (struct arts_header_s *)ptr;
-    header->type = mode;
-    header->size = db_size;
-    struct arts_db_s *db_res = (struct arts_db_s *)header;
-    db_res->guid = guid;
-    db_res->db_list = NULL;
+    (void)mode;
+    struct arts_db_s *db_res = (struct arts_db_s *)ptr;
+    db_res->cache.db_guid = guid; /* guid + size live in the cache */
+    db_res->cache.db_size = size;
     *addr = (void *)((struct arts_db_s *)ptr + 1);
   }
   return guid;

@@ -287,22 +287,6 @@ typedef struct {
                     .access_size = UINT64_MAX,                                 \
                     .guid = NULL_GUID})
 
-/** Hint passed to @c arts_db_put / @c arts_db_get.
- *
- *  Use @c ARTS_DB_OP_HINT_DEFAULTS to obtain a default-initialized value;
- *  pass @c NULL to the put/get call to use the defaults directly. */
-typedef struct {
-  /** Target rank for the operation.  ARTS_HINT_CURRENT_RANK = current node
-   *  (default).  Other values: specific rank where the put/get is applied. */
-  unsigned int rank;
-  /** Epoch the operation belongs to.  NULL_GUID = current epoch (default).
-   *  When set, the put is associated with the given epoch and signals
-   *  via the epoch (no edt_guid is needed; pass NULL_GUID for edt_guid). */
-  arts_guid_t epoch;
-} arts_db_op_hint_t;
-
-#define ARTS_DB_OP_HINT_DEFAULTS                                               \
-  ((arts_db_op_hint_t){.rank = ARTS_HINT_CURRENT_RANK, .epoch = NULL_GUID})
 /** @} */
 
 /** @} */ /* end hint_type */
@@ -403,20 +387,16 @@ typedef enum {
 /**
  * @defgroup event_hint Event creation hint
  *
- * Every ARTS event is a single generic type whose behavior is determined by
- * the hint passed at create time.  Two orthogonal counters drive the
- * lifecycle:
+ * Every ARTS event is one of two kinds, selected by `channel`:
  *
- *   - `latch` — initial trigger counter.  Decrements per LATCH_DECR satisfy;
- *     when it reaches <= 0 the event fires.  Default 1 (ONCE-style).
- *   - `life_count` — initial life counter.  Decrements (saturating at 0)
- *     per `add_dependence`.  When both `latch <= 0 && life_count <= 0`,
- *     the event is destroyed.  Default 0 (destroy immediately on fire).
- *
- *   - `error_on_neg_latch` — strict mode.  If true, a satisfy that would
- *     drive latch below zero raises ARTS_ERROR (STICKY).  If false, the
- *     extra satisfy is a silent no-op (IDEM).
- *   - `channel` — multi-fire FIFO mode.  All other fields except `rank` and
+ *   - simple (latch) — `latch` is the initial trigger counter; each
+ *     LATCH_DECR satisfy decrements it and the event fires when it reaches
+ *     <= 0.  Default 1 (single satisfy fires).  Firing is a pure state
+ *     transition: the event lingers (`fire ≠ destroy`), serving every later
+ *     `add_dependence` from the stored fire data until an explicit
+ *     `arts_event_destroy`.  A satisfy past the fire is silently absorbed.
+ *   - channel — multi-fire FIFO; each satisfy is paired with one
+ *     `add_dependence` in arrival order.  All fields except `rank` and
  *     `guid` are ignored.
  *  @{ */
 typedef struct {
@@ -425,76 +405,36 @@ typedef struct {
   /** Initial latch counter.  Default 1.  Fires at <= 0 after LATCH_DECR
    *  satisfies (one decrement per satisfy). */
   int32_t latch;
-  /** Initial life counter.  Default 0.  Decrements (saturating at 0) per
-   *  `arts_add_dependence`.  Event destroyed when both latch <= 0 AND
-   *  life_count <= 0. */
-  int32_t life_count;
-  /** If true, a satisfy that would drive curr_latch below zero raises
-   *  ARTS_ERROR (STICKY-style strict over-satisfy detection).  If false,
-   *  such satisfies are silent no-ops (IDEM-style tolerance).  Default
-   *  false. */
-  bool error_on_neg_latch;
   /** If true, this is a CHANNEL event: multi-fire FIFO with paired
-   *  satisfy/dep queues, no auto-destroy.  All other hint fields except
-   *  `rank` and `guid` are ignored.  Default false. */
+   *  satisfy/dep queues.  All other hint fields except `rank` and `guid`
+   *  are ignored.  Default false. */
   bool channel;
   /** Pre-reserved GUID.  NULL_GUID = auto-allocate (default).  When non-zero,
    *  the GUID's rank field is authoritative and overrides @c rank above. */
   arts_guid_t guid;
 } arts_event_hint_t;
 
-/** Default values: ONCE semantic (single satisfy fires + destroys). */
-#define ARTS_EVENT_HINT_DEFAULTS                                               \
-  ((arts_event_hint_t){.rank = ARTS_HINT_CURRENT_RANK,                         \
-                       .latch = 1,                                             \
-                       .life_count = 0,                                        \
-                       .error_on_neg_latch = false,                            \
-                       .channel = false,                                       \
-                       .guid = NULL_GUID})
-
-/** OCR ONCE_T — single fire, auto-destroy.  Default hint. */
-#define ARTS_EVENT_HINT_ONCE ARTS_EVENT_HINT_DEFAULTS
-
-/** OCR IDEM_T — persistent; late binders deliver from stored data,
- *  subsequent satisfies are silent no-ops. */
-#define ARTS_EVENT_HINT_IDEMPOTENT                                             \
-  ((arts_event_hint_t){.rank = ARTS_HINT_CURRENT_RANK,                         \
-                       .latch = 1,                                             \
-                       .life_count = INT32_MAX,                                \
-                       .error_on_neg_latch = false,                            \
-                       .channel = false,                                       \
-                       .guid = NULL_GUID})
-
-/** OCR STICKY_T — like IDEM but over-satisfy aborts via ARTS_ERROR. */
-#define ARTS_EVENT_HINT_STICKY                                                 \
-  ((arts_event_hint_t){.rank = ARTS_HINT_CURRENT_RANK,                         \
-                       .latch = 1,                                             \
-                       .life_count = INT32_MAX,                                \
-                       .error_on_neg_latch = true,                             \
-                       .channel = false,                                       \
-                       .guid = NULL_GUID})
-
 /** OCR LATCH_T — counter event.  Argument is the initial counter value;
  *  fires when curr_latch reaches <= 0 via DECR satisfies. */
 #define ARTS_EVENT_HINT_LATCH(counter_init)                                    \
   ((arts_event_hint_t){.rank = ARTS_HINT_CURRENT_RANK,                         \
                        .latch = (counter_init),                                \
-                       .life_count = 0,                                        \
-                       .error_on_neg_latch = false,                            \
                        .channel = false,                                       \
                        .guid = NULL_GUID})
 
-/** OCR COUNTED_T — fires once, then waits for `nb_deps` add_dependence
- *  registrations before auto-destroying.  Argument is the dep count. */
-#define ARTS_EVENT_HINT_COUNTED(nb_deps)                                       \
-  ((arts_event_hint_t){.rank = ARTS_HINT_CURRENT_RANK,                         \
-                       .latch = 1,                                             \
-                       .life_count = (nb_deps),                                \
-                       .error_on_neg_latch = false,                            \
-                       .channel = false,                                       \
-                       .guid = NULL_GUID})
+/** Default values: single satisfy fires, then fire-and-linger. */
+#define ARTS_EVENT_HINT_DEFAULTS ARTS_EVENT_HINT_LATCH(1)
 
-/** OCR CHANNEL_T — multi-fire FIFO event.  No auto-destroy. */
+/* Single-fire OCR event flavors all collapse to LATCH(1): the distinct
+ * ONCE/IDEM/STICKY/COUNTED semantics (auto-destroy, over-satisfy error,
+ * exact-N dep count) are subsumed by the unified fire-and-linger +
+ * silent-over-satisfy model.  Aliases kept for source compatibility. */
+#define ARTS_EVENT_HINT_ONCE ARTS_EVENT_HINT_LATCH(1)
+#define ARTS_EVENT_HINT_IDEMPOTENT ARTS_EVENT_HINT_LATCH(1)
+#define ARTS_EVENT_HINT_STICKY ARTS_EVENT_HINT_LATCH(1)
+#define ARTS_EVENT_HINT_COUNTED(nb_deps) ARTS_EVENT_HINT_LATCH(1)
+
+/** OCR CHANNEL_T — multi-fire FIFO event. */
 #define ARTS_EVENT_HINT_CHANNEL                                                \
   ((arts_event_hint_t){                                                        \
       .rank = ARTS_HINT_CURRENT_RANK, .channel = true, .guid = NULL_GUID})
@@ -719,7 +659,7 @@ arts_guid_t arts_edt_get_finish_event(arts_guid_t edt_guid);
  *
  * When @c hint->guid is non-zero the GUID is pre-reserved (labeled-GUID
  * path): the GUID's rank is the event home, cross-rank creates are
- * forwarded via ARTS_REMOTE_EVENT_MOVE_MSG, and concurrent installs with
+ * forwarded via MSG_EVENT_CREATE, and concurrent installs with
  * the same GUID are race-safe (first install wins, others are silent
  * no-ops per OCR labeled-event spec).
  *
@@ -750,11 +690,42 @@ void arts_event_satisfy(arts_guid_t event_guid, arts_guid_t data_guid);
  * curr_latch reaches 0.
  *
  * Cross-rank: the call is forwarded to the event's home rank via
- * ARTS_REMOTE_EVENT_SATISFY_SLOT_MSG.  Callers MUST NOT attempt to
+ * MSG_EVENT_SATISFY_SLOT.  Callers MUST NOT attempt to
  * inspect fire state locally (no public API exposes it).
  */
 void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
                              uint32_t slot);
+
+/**
+ * @brief Supply a dependency slot on an EDT directly (OCR-standard).
+ *
+ * Writes @p db / @p mode into @p edt_guid's @p slot and decrements its
+ * pending-dependency count, scheduling the EDT once the last dependency
+ * lands.  Home-routed: the home rank's handler does the work (forwarded via
+ * MSG_EDT_SATISFY_SLOT when @p edt_guid is remote).  @p ptr / @p size carry an
+ * inline payload for @c DB_MODE_PTR delivery (otherwise NULL / 0).
+ */
+void arts_edt_satisfy_slot(arts_guid_t edt_guid, uint32_t slot, arts_guid_t db,
+                           arts_db_access_mode_t mode, void *ptr,
+                           unsigned int size);
+
+/** Deprecated alias of @c arts_edt_satisfy_slot (backward-compat). */
+static inline void arts_signal_edt(arts_guid_t edt_guid, uint32_t slot,
+                                   arts_guid_t db, arts_db_access_mode_t mode,
+                                   void *ptr, unsigned int size) {
+  arts_edt_satisfy_slot(edt_guid, slot, db, mode, ptr, size);
+}
+
+/**
+ * @brief Register a dependent on an event source (OCR-standard).
+ *
+ * Entity-specific counterpart of @c arts_event_satisfy_slot: when @p source
+ * (an event) fires, its data is delivered to @p destination's @p slot with
+ * @p mode.  Home-routed (forwarded via MSG_EVENT_ADD_DEPENDENCE when @p source
+ * is remote).  @c arts_add_dependence dispatches here for an event source.
+ */
+void arts_event_add_dependence(arts_guid_t source, arts_guid_t destination,
+                               uint32_t slot, arts_db_access_mode_t mode);
 
 /**
  * @brief Release a generic event.
@@ -770,12 +741,15 @@ void arts_event_destroy(arts_guid_t guid);
 /**
  * @brief Wire a source (event or DB) to a destination (EDT or event).
  *
- * Two-message pattern: sets @p mode on the destination's dep slot first,
- * then registers as a dependent on the source event.  The fire loop
- * delivers data with @c DB_MODE_NULL so mode is preserved.
- *
- * Accepts @c NULL_GUID as @p source — signals the slot immediately with
- * no data.
+ * OCR-standard convenience: a pure dispatcher over the entity-specific APIs,
+ * branching on source/destination kind — no own wire or handler:
+ *   - @c source is an event  → @c arts_event_add_dependence;
+ *   - @c source is NULL / DB / a raw value, @c destination is an EDT
+ *                            → @c arts_edt_satisfy_slot;
+ *   - @c source is NULL / DB / a raw value, @c destination is an event
+ *                            → @c arts_event_satisfy_slot.
+ * The dep mode rides on the satisfy at fire time (stored in the event's
+ * waiter metadata), so there is no separate eager mode-set message.
  *
  * @param source      Source event or DB GUID (or @c NULL_GUID).
  * @param destination Destination EDT or event GUID.
@@ -864,50 +838,6 @@ void arts_db_release(arts_guid_t guid);
  * @param guid DataBlock GUID.
  */
 void arts_db_destroy(arts_guid_t guid);
-
-/**
- * @brief Write data into a DataBlock and signal an EDT (or epoch).
- *
- * Default behavior (@p hint == NULL or @c ARTS_DB_OP_HINT_DEFAULTS):
- * the write is routed to the DB's home rank (derived from @p db_guid) and
- * tracked under the current epoch.  Override via @p hint:
- *   - @c hint->rank: target a specific rank where the write is applied.
- *   - @c hint->epoch: associate the put with a non-current epoch; in this
- *     mode @p edt_guid may be @c NULL_GUID and @p slot is ignored — the
- *     operation signals via the epoch instead of an EDT slot.
- *
- * @param ptr      Source data.
- * @param edt_guid EDT to signal upon completion (or @c NULL_GUID when the
- *                 put is epoch-driven).
- * @param db_guid  Target DataBlock.
- * @param slot     EDT dependency slot to satisfy (ignored when epoch-driven).
- * @param offset   Byte offset within the DB.
- * @param len      Number of bytes to write.
- * @param hint     Optional hint; pass @c NULL for defaults.
- */
-void arts_db_put(void *ptr, arts_guid_t edt_guid, arts_guid_t db_guid,
-                 unsigned int slot, unsigned int offset, unsigned int len,
-                 const arts_db_op_hint_t *hint);
-
-/**
- * @brief Read data from a DataBlock and deliver it to an EDT.
- *
- * A copy of @p len bytes at @p offset is delivered to @p edt_guid as a
- * pointer dependency.  Default behavior (@p hint == NULL): the read is
- * routed to the DB's home rank (derived from @p db_guid).  Override
- * @c hint->rank to read from a specific rank.  The @c epoch field of
- * the hint is currently unused for reads.
- *
- * @param edt_guid Destination EDT.
- * @param db_guid  Source DataBlock.
- * @param slot     EDT dependency slot.
- * @param offset   Byte offset within the DB.
- * @param len      Number of bytes to read.
- * @param hint     Optional hint; pass @c NULL for defaults.
- */
-void arts_db_get(arts_guid_t edt_guid, arts_guid_t db_guid, unsigned int slot,
-                 unsigned int offset, unsigned int len,
-                 const arts_db_op_hint_t *hint);
 
 /** @} */ /* end db */
 
@@ -1015,7 +945,19 @@ unsigned int arts_get_current_numa_domain();
  */
 unsigned int arts_get_total_numa_domains();
 
-/** @brief Return the number of GPUs per node. */
+/**
+ * @brief GPUs visible to this rank (per-rank count).
+ *
+ * Per-rank count.  Equivalent to the previous semantic of
+ * @c arts_get_total_gpus().
+ */
+unsigned int arts_get_gpus_per_rank();
+
+/**
+ * @brief Total GPUs across all ranks.
+ *
+ * Equals @c arts_get_gpus_per_rank() * @c arts_get_total_ranks().
+ */
 unsigned int arts_get_total_gpus();
 
 /** @brief Return a monotonic timestamp in nanoseconds. */

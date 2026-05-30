@@ -60,7 +60,7 @@ extern unsigned int num_numa_domains;
 
 arts_guid_t arts_edt_get_current_guid() {
   if (current_edt) {
-    return current_edt->current_edt;
+    return current_edt->guid;
   }
   return NULL_GUID;
 }
@@ -94,7 +94,11 @@ uint64_t arts_thread_safe_random(void) {
   return (uint64_t)temp;
 }
 
-unsigned int arts_get_total_gpus() { return arts_node_info.gpu; }
+unsigned int arts_get_gpus_per_rank() { return arts_node_info.gpu; }
+
+unsigned int arts_get_total_gpus() {
+  return arts_get_gpus_per_rank() * arts_get_total_ranks();
+}
 
 int arts_printf(const char *format, ...) {
   printf(" [%u] ", arts_global_rank_id);

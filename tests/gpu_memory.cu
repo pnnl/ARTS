@@ -45,7 +45,7 @@
  *   - arts_cuda_malloc_host / arts_cuda_free_host (pinned host memory)
  *   - arts_cuda_mem_cpy_to_dev / arts_cuda_mem_cpy_from_dev (host<->device)
  *   - arts_get_num_gpus
- *   - arts_get_total_gpus
+ *   - arts_get_gpus_per_rank
  */
 
 #include <stdio.h>
@@ -127,10 +127,10 @@ void run_mem_tests(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_printf("PASS test4: arts_cuda_mem_cpy_from_dev round-trip\n");
   }
 
-  /* Test 5: arts_get_num_gpus, arts_get_total_gpus */
+  /* Test 5: arts_get_num_gpus, arts_get_gpus_per_rank */
   unsigned int num_gpus = arts_get_num_gpus();
-  unsigned int total_gpus = arts_get_total_gpus();
-  arts_printf("INFO: arts_get_num_gpus=%u, arts_get_total_gpus=%u\n", num_gpus,
+  unsigned int total_gpus = arts_get_gpus_per_rank();
+  arts_printf("INFO: arts_get_num_gpus=%u, arts_get_gpus_per_rank=%u\n", num_gpus,
               total_gpus);
   if (num_gpus > 0 && total_gpus >= num_gpus) {
     arts_printf("PASS test5: GPU count queries valid\n");

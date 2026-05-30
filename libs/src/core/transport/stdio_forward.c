@@ -13,23 +13,24 @@
 
 #include "arts/system/print.h"
 
-/* Per-pipe forwarder state: owned by the module, kept in a fixed-size
- * array to avoid dynamic resize locking.  MAX_FORWARDERS = 2 streams
- * (stdout, stderr) * MAX_CHILDREN.  Node count is bounded by ARTS's
- * routing-table size; 64 is ample for foreseeable runs. */
-#define ARTS_MAX_FORWARDERS 128
-
-typedef struct {
-  bool active;
+/* Per-stream forwarder state, one heap node per forwarded stream, pushed onto
+ * a lock-free Treiber stack.  A launcher forwards both stdout and stderr for
+ * every non-master rank, so the live forwarder count grows with the node
+ * count.  Heap nodes (rather than a fixed array) keep each node's address
+ * stable for the lifetime of its reader thread — the thread holds a pointer
+ * to its own node — and impose no ceiling, so a rank's output is never
+ * silently dropped once some fixed bound is exceeded.  Nodes are only ever
+ * pushed (make_pipe) and drained exactly once at teardown (shutdown_all via
+ * a single atomic exchange), so the stack is ABA-free without a lock; reader
+ * threads touch their own node only, never the stack head. */
+typedef struct forwarder_slot_s {
+  struct forwarder_slot_s *next;
   int read_fd;
   pthread_t thread;
-  unsigned int rank;
-  const char *stream_label;
   FILE *sink;
 } forwarder_slot_t;
 
-static forwarder_slot_t g_forwarders[ARTS_MAX_FORWARDERS];
-static pthread_mutex_t g_forwarders_lock = PTHREAD_MUTEX_INITIALIZER;
+static forwarder_slot_t *g_forwarders;
 
 static void *forwarder_thread_main(void *arg) {
   forwarder_slot_t *f = (forwarder_slot_t *)arg;
@@ -85,62 +86,61 @@ int arts_stdio_forwarder_make_pipe(unsigned int rank, const char *stream_label,
     return -1;
   }
 
-  pthread_mutex_lock(&g_forwarders_lock);
-  forwarder_slot_t *slot = NULL;
-  for (int i = 0; i < ARTS_MAX_FORWARDERS; i++) {
-    if (!g_forwarders[i].active) {
-      slot = &g_forwarders[i];
-      break;
-    }
-  }
+  forwarder_slot_t *slot = (forwarder_slot_t *)malloc(sizeof(*slot));
   if (!slot) {
-    pthread_mutex_unlock(&g_forwarders_lock);
-    ARTS_WARN("stdio_forward: no free slot (max=%d) for rank %u %s",
-              ARTS_MAX_FORWARDERS, rank, stream_label);
+    ARTS_WARN("stdio_forward: out of memory for rank %u %s", rank,
+              stream_label);
     close(pipefd[0]);
     close(pipefd[1]);
     return -1;
   }
-  slot->active = true;
+  slot->next = NULL;
   slot->read_fd = pipefd[0];
-  slot->rank = rank;
-  slot->stream_label = stream_label;
   slot->sink = sink;
 
+  /* Start the reader before publishing the node: the thread only touches its
+   * own node (never the list), so it needs no list membership to run, and
+   * keeping an unstarted node off the list means shutdown never joins a
+   * thread that was never created. */
   int err = pthread_create(&slot->thread, NULL, forwarder_thread_main, slot);
   if (err != 0) {
     ARTS_WARN("stdio_forward: pthread_create failed for rank %u %s: %s", rank,
               stream_label, strerror(err));
-    slot->active = false;
-    slot->read_fd = -1;
-    pthread_mutex_unlock(&g_forwarders_lock);
+    free(slot);
     close(pipefd[0]);
     close(pipefd[1]);
     return -1;
   }
-  pthread_mutex_unlock(&g_forwarders_lock);
+
+  /* Treiber push: publish the fully-built node with a release CAS so a
+   * concurrent drain that acquires it sees the node complete. */
+  forwarder_slot_t *head = __atomic_load_n(&g_forwarders, __ATOMIC_RELAXED);
+  do {
+    slot->next = head;
+  } while (!__atomic_compare_exchange_n(&g_forwarders, &head, slot, false,
+                                        __ATOMIC_RELEASE, __ATOMIC_RELAXED));
 
   return pipefd[1];
 }
 
 void arts_stdio_forwarder_shutdown_all(void) {
-  pthread_mutex_lock(&g_forwarders_lock);
-  for (int i = 0; i < ARTS_MAX_FORWARDERS; i++) {
-    if (!g_forwarders[i].active) {
-      continue;
+  /* Detach the whole stack with one acquire exchange, then join + free: the
+   * reader threads touch only their own node, and our caller guarantees all
+   * children have exited (so every pipe is at EOF and every reader has left
+   * its loop) before calling this.  Idempotent — a second call exchanges out
+   * an already-NULL head and the drain loop runs zero times. */
+  forwarder_slot_t *list = __atomic_exchange_n(&g_forwarders, NULL, __ATOMIC_ACQUIRE);
+
+  while (list) {
+    forwarder_slot_t *next = list->next;
+    /* EOF arrives when the child's write-end closes (child process exit or
+     * explicit close); our caller guarantees that happened before calling
+     * this function, so the reader has already left its read loop. */
+    (void)pthread_join(list->thread, NULL);
+    if (list->read_fd >= 0) {
+      close(list->read_fd);
     }
-    pthread_t thread = g_forwarders[i].thread;
-    pthread_mutex_unlock(&g_forwarders_lock);
-    /* Join without holding the lock — thread is reading its own slot
-     * (rank/stream_label/sink) which we don't touch; and the loop
-     * variable `i` is stack-local so re-taking the lock after join is
-     * safe.  EOF arrives when the child's write-end closes (child
-     * process exit or explicit close); our caller guarantees that
-     * happened before calling this function. */
-    (void)pthread_join(thread, NULL);
-    pthread_mutex_lock(&g_forwarders_lock);
-    g_forwarders[i].active = false;
-    g_forwarders[i].read_fd = -1;
+    free(list);
+    list = next;
   }
-  pthread_mutex_unlock(&g_forwarders_lock);
 }

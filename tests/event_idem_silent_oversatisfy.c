@@ -36,13 +36,15 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   usleep(20000);
 
   /* Event still alive (life_count = INT32_MAX - 0 since no add_dep ran). */
-  struct arts_event_s *e = arts_route_table_lookup_event_safe(ev);
+  arts_shared_ptr_t h = arts_route_table_lookup_event(ev);
+  struct arts_event_s *e = (struct arts_event_s *)arts_shared_get(h);
   if (!e) {
     arts_printf("FAIL: IDEM destroyed after over-satisfy\n");
+    arts_shared_release(&h);
     arts_shutdown();
     return;
   }
-  arts_route_table_release(ev);
+  arts_shared_release(&h);
   arts_event_destroy(ev);
 
   arts_printf("  PASS: IDEM tolerated 5 satisfies, no error\n");

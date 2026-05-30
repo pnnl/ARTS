@@ -1,11 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * arts_coh_alloc_cache_s — cache_s allocator + initializer.
+ * arts_coh_init_cache_s — in-place cache_s initializer.
  *
  * One-stop constructor for arts_db_cache_s.  Wires writer_count / home /
- * pending_rw / pending_ro / db_owner based on `kind` (creator-home,
- * creator-remote, home-recv, lazy).  Buffer install is a separate step:
- * callers that need one go through arts_coherence_install_buffer.
+ * pending_rw / pending_ro based on `kind` (creator-home, creator-remote,
+ * home-recv, lazy).  The cache is embedded by value as the first member of
+ * struct arts_db_s; callers allocate the db_s and pass &db->cache here.
+ * Buffer install is a separate step: callers that need one go through
+ * arts_coherence_install_buffer.
  *
  * Called from:
  *   db.c                  — DB_CREATE local (creator == home / remote)
@@ -30,15 +32,14 @@
 #include "arts/utils/malloc.h"
 #include "arts/utils/marked_list.h"
 
-struct arts_db_cache_s *arts_coh_alloc_cache_s(arts_guid_t db_guid,
-                                               uint64_t db_size,
-                                               arts_coh_init_kind_t kind,
-                                               unsigned int creator_rank) {
-  struct arts_db_cache_s *c =
-      (struct arts_db_cache_s *)arts_calloc(1, sizeof(struct arts_db_cache_s));
+void arts_coh_init_cache_s(struct arts_db_cache_s *c, arts_guid_t db_guid,
+                           uint64_t db_size, arts_coh_init_kind_t kind,
+                           unsigned int creator_rank) {
+  /* Caller provides a zeroed cache (embedded in a zeroed/calloc'd db_s, or
+   * memset by the stub path).  We do not zero it here — the embedding db_s
+   * owns the storage. */
   c->db_guid = db_guid;
   c->db_size = db_size;
-  c->destroy_state = ARTS_DB_DESTROY_NONE;
   /* Vyukov MPSC queue cannot be zero-initialized: head and tail must
    * point at the embedded stub.  Initialize before any push could
    * land.  LC routes all RW acquires through the RO path and never
@@ -51,32 +52,27 @@ struct arts_db_cache_s *arts_coh_alloc_cache_s(arts_guid_t db_guid,
    * buffer big enough to hold the waiter struct (not a 1-byte stub
    * from calloc(1, 0) which would smash the heap on first acquire). */
   arts_marked_list_init(&c->pending_ro, sizeof(struct arts_db_ro_waiter_s));
-  /* Caller wires db_owner right after install (e.g. arts_db_create_internal,
-   * arts_coh_lazy_install_cache_s).  arts_calloc already zeroed the field,
-   * but make the contract explicit. */
-  c->db_owner = NULL;
-  /* Allocate home metadata only on the rank that owns this DB's GUID
-   * home; non-home ranks leave c->home == NULL.  init_kind selects the
-   * initial rw_holder. */
+  /* Initialize the embedded home metadata only on the rank that owns this
+   * DB's GUID home; non-home ranks leave it zeroed (home_initialized stays
+   * false).  init_kind selects the initial rw_holder. */
   unsigned int self = arts_global_rank_id;
   unsigned int n = arts_global_rank_count;
   if (n == 0) {
     n = 1;
   }
   if (kind == ARTS_COH_INIT_HOME_RECV) {
-    c->home = arts_db_home_create(creator_rank, n);
+    arts_db_home_init(&c->home, creator_rank, n);
+    c->home_initialized = true;
   } else if (kind == ARTS_COH_INIT_CREATOR_HOME) {
-    c->home = arts_db_home_create(self, n);
+    arts_db_home_init(&c->home, self, n);
+    c->home_initialized = true;
     c->writer_count = 2; /* sentinel + creator EDT */
   } else if (kind == ARTS_COH_INIT_CREATOR_REMOTE) {
     c->writer_count = 2;
   }
-#if defined(ARTS_MEMORY_MODEL_LC)
-  /* LC: writeback rendezvous fields; arts_calloc already zeroed them,
-   * but make the contract explicit. */
-  c->writeback_seq = 0;
-  c->writeback_acked_seq = 0;
-#elif defined(ARTS_MEMORY_MODEL_LRC)
+  /* RC/LC WRITEBACK ACK rendezvous is now a stack-local sem_t per release_rw
+   * (pointer-identity match) — no per-cache seq fields to initialize. */
+#if defined(ARTS_MEMORY_MODEL_LRC)
   /* LRC owner-side fields: dedup map allocated lazily on first ownership
    * grant; arts_calloc already zeroed last_sent_version / incoming_new_owner,
    * but make the contract explicit. */
@@ -84,5 +80,4 @@ struct arts_db_cache_s *arts_coh_alloc_cache_s(arts_guid_t db_guid,
   atomic_store_explicit(&c->transfer_pending, 0, memory_order_relaxed);
   c->incoming_new_owner = 0;
 #endif
-  return c;
 }

@@ -45,52 +45,45 @@ extern "C" {
 #define SEQUENCENUMBERS 1
 
 enum artsServerMessageType {
-  ARTS_REMOTE_SHUTDOWN_MSG,
-  ARTS_REMOTE_EDT_SIGNAL_MSG,
-  ARTS_REMOTE_SIGNAL_EDT_WITH_PTR_MSG,
-  ARTS_REMOTE_EVENT_SATISFY_SLOT_MSG,
-  ARTS_REMOTE_ADD_DEPENDENCE_MSG,
-  ARTS_REMOTE_EDT_MOVE_MSG,
-  ARTS_REMOTE_EVENT_MOVE_MSG,
-  ARTS_REMOTE_DB_MOVE_MSG,
-  ARTS_REMOTE_GET_FROM_DB_MSG,
-  ARTS_REMOTE_PUT_IN_DB_MSG,
-  ARTS_REMOTE_SEND_MSG,
-  ARTS_EPOCH_INIT_MSG,
-  ARTS_EPOCH_INIT_POOL_MSG,
-  ARTS_EPOCH_REQ_MSG,
-  ARTS_EPOCH_SEND_MSG,
-  ARTS_EPOCH_DELETE_MSG,
-  ARTS_REMOTE_DB_RENAME_MSG,
-  ARTS_REMOTE_TIME_SYNC_REQ_MSG,
-  ARTS_REMOTE_TIME_SYNC_RESP_MSG,
-  ARTS_REMOTE_SET_DEP_MODE_MSG,
+  MSG_SHUTDOWN,
+  MSG_EDT_SATISFY_SLOT,
+  MSG_EVENT_SATISFY_SLOT,
+  MSG_EVENT_ADD_DEPENDENCE,
+  MSG_EDT_CREATE,
+  MSG_EVENT_CREATE,
+  MSG_EPOCH_CREATE,
+  MSG_EPOCH_INIT_POOL,
+  MSG_EPOCH_REQUEST,
+  MSG_EPOCH_SEND,
+  MSG_EPOCH_DELETE,
+  MSG_TIME_SYNC_REQUEST,
+  MSG_TIME_SYNC_RESPONSE,
   /* coherence protocol messages.  The dispatcher routes these to
-   * arts_coh_handle_* in libs/src/core/memory/coherence_handlers.c.
+   * arts_handler_db_* in libs/src/core/memory/coherence_handlers.c.
    * Sequential append (CLAUDE.md rule: NO gaps in this enum). */
-  ARTS_REMOTE_LOCK_REQ_MSG,
-  ARTS_REMOTE_GRANT_MSG,
-  ARTS_REMOTE_WRITEBACK_MSG,
-  ARTS_REMOTE_WRITEBACK_ACK_MSG,
-  ARTS_REMOTE_INVALIDATE_NOTICE_MSG,
-  ARTS_REMOTE_RELEASE_OWNERSHIP_MSG,
-  ARTS_REMOTE_GET_DATA_MSG,
-  ARTS_REMOTE_DATA_RESPONSE_MSG,
-  ARTS_REMOTE_DB_CREATE_COHERENT_MSG,
-  ARTS_REMOTE_DESTROY_REQ_MSG,
-  ARTS_REMOTE_DESTROY_NOTIFY_MSG,
+  MSG_DB_OWNERSHIP_REQUEST,
+  MSG_DB_OWNERSHIP_RESPONSE,
+  MSG_DB_WRITEBACK,
+  MSG_DB_WRITEBACK_ACK,
+  MSG_DB_OWNERSHIP_INVALIDATE,
+  MSG_DB_OWNERSHIP_RETURN,
+  MSG_DB_SNAPSHOT_REQUEST,
+  MSG_DB_SNAPSHOT_RESPONSE,
+  MSG_DB_CREATE,
+  MSG_DB_DESTROY,
+  MSG_DB_CACHE_DESTROY,
   /* Event subsystem rewrite: cross-rank
    * arts_event_destroy → mark_delete on the home rank.  Sequential append,
    * no gaps. */
-  ARTS_REMOTE_EVENT_DESTROY_MSG,
+  MSG_EVENT_DESTROY,
   /* LRC (Location-Consistency) coherence messages.  Only sent/received when
    * both ranks are compiled with ARTS_MEMORY_MODEL=LRC.  Sequential append,
    * no gaps. */
-  ARTS_REMOTE_REDIRECT_RO_MSG,
-  ARTS_REMOTE_TRANSFER_OWNERSHIP_MSG,
-  ARTS_REMOTE_INSTALL_ACK_MSG,
+  MSG_DB_SNAPSHOT_REDIRECT,
+  MSG_DB_OWNERSHIP_RESPONSE_LRC,
+  MSG_DB_OWNERSHIP_RESPONSE_ACK,
 
-  ARTS_REMOTE_MSG_COUNT, /* sentinel — keep last; used for array sizing */
+  MSG_COUNT, /* sentinel — keep last; used for array sizing */
 };
 
 /* WRITEBACK packet flag — selects normal write-back vs. write-back +
@@ -135,7 +128,9 @@ struct ARTS_PACKED arts_remote_edt_signal_packet_s {
   arts_guid_t db;
   uint32_t slot;
   arts_db_access_mode_t mode;
-  unsigned int db_route;
+  /* Inline payload byte count following the header (DB_MODE_PTR delivery);
+   * zero when the satisfy carries only a GUID/value reference. */
+  unsigned int size;
 };
 
 struct ARTS_PACKED arts_remote_event_satisfy_slot_packet_s {
@@ -143,38 +138,6 @@ struct ARTS_PACKED arts_remote_event_satisfy_slot_packet_s {
   arts_guid_t event;
   arts_guid_t db;
   uint32_t slot;
-};
-
-struct ARTS_PACKED arts_remote_set_dep_mode_packet_s {
-  struct arts_remote_packet_s header;
-  arts_guid_t edt;
-  uint32_t slot;
-  arts_db_access_mode_t mode;
-};
-
-struct ARTS_PACKED arts_remote_get_put_packet_s {
-  struct arts_remote_packet_s header;
-  arts_guid_t edt_guid;
-  arts_guid_t db_guid;
-  arts_guid_t epoch_guid;
-  unsigned int slot;
-  unsigned int offset;
-  unsigned int size;
-};
-
-struct ARTS_PACKED arts_remote_signal_edt_with_ptr_packet_s {
-  struct arts_remote_packet_s header;
-  arts_guid_t edt_guid;
-  arts_guid_t db_guid;
-  unsigned int size;
-  unsigned int slot;
-};
-
-typedef void (*send_handler_t)(void *args);
-
-struct ARTS_PACKED arts_remote_send_s {
-  struct arts_remote_packet_s header;
-  send_handler_t fun_ptr;
 };
 
 struct ARTS_PACKED arts_remote_epoch_init_packet_s {
@@ -196,12 +159,6 @@ struct ARTS_PACKED arts_remote_epoch_send_packet_s {
   arts_guid_t epoch_guid;
   unsigned int active;
   unsigned int finish;
-};
-
-struct ARTS_PACKED arts_remote_db_rename_s {
-  struct arts_remote_packet_s header;
-  arts_guid_t old_guid;
-  arts_guid_t new_guid;
 };
 
 // Time synchronization packets for RTT-based clock sync
@@ -243,13 +200,16 @@ struct ARTS_PACKED arts_remote_grant_packet_s {
 };
 
 /* WRITEBACK carries optional trailing buffer payload.
- * Body: db_guid(8) + version(8) + seq(8) + flag(1) = 25,
- * total = 44 + 25 = 69; pad[3] -> 72 (8-aligned). */
+ * Body: db_guid(8) + version(8) + cv(8) + flag(1) = 25,
+ * total = 44 + 25 = 69; pad[3] -> 72 (8-aligned).
+ * cv: opaque address of the releaser's stack-local sem_t, valid only at the
+ * releaser rank; the home forwards it verbatim in the ACK so the releaser
+ * matches by pointer identity (no seq tracking). */
 struct ARTS_PACKED arts_remote_writeback_packet_s {
   struct arts_remote_packet_s header;
   arts_guid_t db_guid;
   uint64_t version;
-  uint64_t seq;
+  uint64_t cv;
   uint8_t flag;
   uint8_t pad[3];
 };
@@ -257,7 +217,7 @@ struct ARTS_PACKED arts_remote_writeback_packet_s {
 struct ARTS_PACKED arts_remote_writeback_ack_packet_s {
   struct arts_remote_packet_s header;
   arts_guid_t db_guid;
-  uint64_t seq;
+  uint64_t cv; /* releaser's sem_t address, forwarded verbatim from WRITEBACK */
 };
 
 /* INVALIDATE_NOTICE: body = db_guid(8) + new_owner_rank(4) + pad(4) = 16.

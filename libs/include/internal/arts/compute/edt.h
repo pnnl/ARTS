@@ -65,17 +65,19 @@ bool arts_edt_create_internal(struct arts_edt_s *edt, arts_guid_kind_t mode,
 void arts_edt_free(struct arts_edt_s *edt);
 void arts_edt_delete(struct arts_edt_s *edt);
 /* deleter pointer for foreign TUs that allocate arts_edt_s stubs
- * (e.g. remote handler.c arts_remote_handle_edt_move's race-loser cleanup). */
+ * (e.g. remote handler.c arts_handler_edt_create's race-loser cleanup). */
 void (*arts_edt_get_deleter(void))(void *);
-void internal_signal_edt(arts_guid_t edt_packet, uint32_t slot,
-                         arts_guid_t data_guid, arts_db_access_mode_t mode,
-                         void *ptr, unsigned int size);
-void internal_signal_edt_with_mode(arts_guid_t edt_packet, uint32_t slot,
-                                   arts_guid_t data_guid,
-                                   arts_db_access_mode_t mode);
 
-void arts_set_dep_mode(arts_guid_t edt_guid, uint32_t slot,
-                       arts_db_access_mode_t mode);
+/* arts_edt_satisfy_slot — OCR-standard API: supply depv[slot] on an EDT
+ * (home-routed: local→dispatch_or_defer, remote→MSG_EDT_SATISFY_SLOT).
+ * arts_signal_edt is a deprecated alias of the same signature. */
+void arts_edt_satisfy_slot(arts_guid_t edt_packet, uint32_t slot,
+                           arts_guid_t data_guid, arts_db_access_mode_t mode,
+                           void *ptr, unsigned int size);
+
+/* OoO replay handlers (g_ooo_table) — operate on the acquired EDT. */
+void arts_handler_edt_satisfy_slot(void *item, void *args);
+void arts_handler_edt_satisfy_slot_ptr(void *item, void *args);
 
 typedef struct {
   arts_guid_t current_edt_guid;

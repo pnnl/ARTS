@@ -52,9 +52,43 @@ volatile unsigned int gpu_node_order = 0;
 // Must be thread local
 ARTS_THREAD_LOCAL uint64_t gpu_item_size_bypass = 0;
 
+/* Peek the persistent wrapper published in a GPU-mirror slot's cb.  The GPU
+ * table's wrappers live in the persistent wrappers[] array and are installed
+ * with a NULL-deleter cb, so releasing the handle immediately is safe — the
+ * wrapper is never freed by the cb. */
+static arts_item_wrapper_t *gpu_slot_wrapper(arts_route_item_t *item) {
+  return (arts_item_wrapper_t *)arts_route_item_peek_data(item);
+}
+
+/* Claim (or look up) the slot for `key` in `route_table` and install its
+ * persistent wrapper into the slot cb (NULL deleter — the wrapper is owned by
+ * the persistent wrappers[] array, never freed by the cb).  Returns the
+ * wrapper; sets *installed to whether this caller performed the install. */
+static arts_item_wrapper_t *gpu_install_wrapper(arts_route_table_t *route_table,
+                                                arts_guid_t key,
+                                                bool *installed) {
+  arts_route_item_t *entry =
+      arts_route_table_search_for_empty(route_table, key, false);
+  size_t idx = (size_t)(entry - route_table->data);
+  arts_gpu_route_table_t *gpu_route_table =
+      (arts_gpu_route_table_t *)((char *)route_table -
+                                 offsetof(arts_gpu_route_table_t,
+                                          routingTable));
+  arts_item_wrapper_t *wrapper = &gpu_route_table->wrappers[idx];
+  /* Publish the persistent wrapper into THIS slot's cb (NULL deleter — the
+   * wrapper lives in the persistent wrappers[] array, never freed by the cb).
+   * Must target the located slot directly: the key→table map would resolve to
+   * the global route table, not this per-device mirror table. */
+  bool did_install = arts_route_item_install_data(entry, wrapper, NULL);
+  if (installed) {
+    *installed = did_install;
+  }
+  return wrapper;
+}
+
 void set_gpu_item(arts_route_item_t *item, void *data) {
   ARTS_DEBUG("gpu_item_size_bypass: %lu", gpu_item_size_bypass);
-  arts_item_wrapper_t *wrapper = (arts_item_wrapper_t *)item->data;
+  arts_item_wrapper_t *wrapper = gpu_slot_wrapper(item);
   wrapper->realData = data;
   wrapper->size = gpu_item_size_bypass;
   gpu_item_size_bypass = 0;
@@ -86,11 +120,12 @@ arts_route_table_t *arts_gpu_new_route_table(unsigned int route_table_size,
    * will revisit GPU route_table integration. */
   gpu_route_table->routingTable.newFunc = arts_gpu_new_route_table;
 
+  /* Persistent per-slot wrapper array (parallel to routingTable.data[]).  The
+   * slot's cb (value) starts NULL; the wrapper is installed into the slot cb on
+   * first add via a NULL-deleter cb (the wrapper is never freed by the cb — it
+   * lives in this persistent array). */
   gpu_route_table->wrappers = (arts_item_wrapper_t *)arts_calloc(
       total_elems, sizeof(arts_item_wrapper_t));
-  for (unsigned int i = 0; i < total_elems; i++) {
-    gpu_route_table->routingTable.data[i].data = &gpu_route_table->wrappers[i];
-  }
 
   return &gpu_route_table->routingTable;
 }
@@ -135,10 +170,13 @@ void *arts_gpu_route_table_add_item_race(void *item, uint64_t size,
   // This is a bypass thread local variable to make the api nice...
   gpu_item_size_bypass = size;
   arts_route_table_t *route_table = arts_node_info.gpu_route_table[gpu_id];
-  bool ret;
-  arts_route_item_t *entry = internal_route_table_add_item_race(
-      &ret, route_table, item, key, arts_global_rank_id, true, true, 1);
-  arts_item_wrapper_t *wrapper = (arts_item_wrapper_t *)entry->data;
+  bool added;
+  arts_item_wrapper_t *wrapper = gpu_install_wrapper(route_table, key, &added);
+  if (added) {
+    wrapper->realData = item;
+    wrapper->size = size;
+  }
+  gpu_item_size_bypass = 0;
   set_gpu_timestamp(&wrapper->time_stamp);
   return (void *)wrapper->realData;
 }
@@ -149,12 +187,19 @@ arts_item_wrapper_t *arts_gpu_route_table_reserve_item_race(bool *added,
                                                             unsigned int gpu_id,
                                                             bool add_to_use) {
   // This is a bypass thread local variable to make the api nice...
+  (void)add_to_use;
   gpu_item_size_bypass = size;
   arts_route_table_t *route_table = arts_node_info.gpu_route_table[gpu_id];
-  arts_route_item_t *entry = internal_route_table_add_item_race(
-      added, route_table, NULL, key, arts_global_rank_id, true, true,
-      add_to_use ? 1 : 0);
-  arts_item_wrapper_t *wrapper = (arts_item_wrapper_t *)entry->data;
+  bool installed = false;
+  arts_item_wrapper_t *wrapper =
+      gpu_install_wrapper(route_table, key, &installed);
+  if (installed) {
+    wrapper->size = size;
+  }
+  gpu_item_size_bypass = 0;
+  if (added) {
+    *added = installed;
+  }
   set_gpu_timestamp(&wrapper->time_stamp);
   return wrapper;
 }
@@ -165,9 +210,14 @@ void *arts_gpu_route_table_add_item_to_delete_race(void *item, uint64_t size,
   // This is a bypass thread local variable to make the api nice...
   gpu_item_size_bypass = size;
   arts_route_table_t *route_table = arts_node_info.gpu_route_table[gpu_id];
-  arts_route_item_t *entry = internal_route_table_add_deleted_item_race(
-      route_table, item, key, arts_global_rank_id);
-  arts_item_wrapper_t *wrapper = (arts_item_wrapper_t *)entry->data;
+  bool installed = false;
+  arts_item_wrapper_t *wrapper =
+      gpu_install_wrapper(route_table, key, &installed);
+  if (installed) {
+    wrapper->realData = item;
+    wrapper->size = size;
+  }
+  gpu_item_size_bypass = 0;
   set_gpu_timestamp(&wrapper->time_stamp);
   return (void *)wrapper->realData;
 }
@@ -180,7 +230,8 @@ void *arts_gpu_route_table_lookup_db_res(arts_guid_t key, int gpu_id,
   arts_item_wrapper_t *wrapper = NULL;
   /* New model: data ptr lookup (legacy state machine removed). */
   arts_route_item_t *temp = arts_route_table_search_for_key(route_table, key);
-  wrapper = (temp) ? (arts_item_wrapper_t *)temp->data : NULL;
+  wrapper =
+      (temp) ? (arts_item_wrapper_t *)arts_route_item_peek_data(temp) : NULL;
 
   if (wrapper) {
     if (res) {
@@ -285,7 +336,7 @@ uint64_t arts_gpu_clean_up_route_table(unsigned int size_to_clean,
        * + dec_item(); both removed.  GC is a no-op until rewritten. */
       (void)clean_zeros;
       (void)route_table;
-      arts_item_wrapper_t *wrapper = (arts_item_wrapper_t *)item->data;
+      arts_item_wrapper_t *wrapper = gpu_slot_wrapper(item);
       (void)wrapper;
       item = arts_route_table_iterate(&iter);
     }
@@ -304,7 +355,7 @@ uint64_t arts_gpu_free_all(unsigned int gpu_id) {
 
   arts_route_item_t *item = arts_route_table_iterate(&iter);
   while (item) {
-    arts_item_wrapper_t *wrapper = (arts_item_wrapper_t *)item->data;
+    arts_item_wrapper_t *wrapper = gpu_slot_wrapper(item);
     freed_size += wrapper->size;
     free_gpu_item(item);
     item = arts_route_table_iterate(&iter);

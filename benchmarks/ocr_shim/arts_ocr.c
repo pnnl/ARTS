@@ -715,27 +715,20 @@ u8 ocrEdtDestroy(ocrGuid_t guid) {
 static arts_event_hint_t ocr_event_kind_to_hint(ocrEventTypes_t kind,
                                                 u16 properties) {
   (void)properties;
-  arts_event_hint_t h = ARTS_EVENT_HINT_DEFAULTS; /* ONCE */
+  /* The distinct single-fire OCR flavors (ONCE/IDEM/STICKY/COUNTED) all map
+   * to the unified LATCH(1) fire-and-linger event; their old auto-destroy /
+   * over-satisfy-error / exact-N-dep semantics are subsumed (silent
+   * over-satisfy, linger until explicit destroy).  CHANNEL is preserved. */
+  arts_event_hint_t h = ARTS_EVENT_HINT_LATCH(1);
   switch (kind) {
-  case OCR_EVENT_ONCE_T: /* defaults */
-    break;
+  case OCR_EVENT_ONCE_T:
   case OCR_EVENT_IDEM_T:
-    h = ARTS_EVENT_HINT_IDEMPOTENT;
-    break;
   case OCR_EVENT_STICKY_T:
-    h = ARTS_EVENT_HINT_STICKY;
-    break;
-  case OCR_EVENT_LATCH_T:
-    /* counter init defaults to 0; caller may override via params. */
-    h.latch = 0;
-    h.life_count = 0;
-    h.error_on_neg_latch = false;
-    break;
   case OCR_EVENT_COUNTED_T:
-    /* life_count set from params.nbDeps in ocrEventCreateParams; default 1. */
-    h.latch = 1;
-    h.life_count = 1;
-    h.error_on_neg_latch = false;
+    break; /* LATCH(1) */
+  case OCR_EVENT_LATCH_T:
+    /* Counter event; init 0 (caller may override via params). */
+    h.latch = 0;
     break;
   case OCR_EVENT_CHANNEL_T:
     h = ARTS_EVENT_HINT_CHANNEL;
@@ -875,9 +868,8 @@ u8 ocrEventCreateParams(ocrGuid_t *guid, ocrEventTypes_t eventType,
   if (eventType == OCR_EVENT_LATCH_T && params != NULL) {
     h.latch = (int32_t)params->EVENT_LATCH.counter;
   }
-  if (eventType == OCR_EVENT_COUNTED_T && params != NULL) {
-    h.life_count = (int32_t)params->EVENT_COUNTED.nbDeps;
-  }
+  /* OCR_EVENT_COUNTED_T params.nbDeps ignored: COUNTED collapses to LATCH(1)
+   * (exact-N-dep auto-destroy semantics dropped — fire-and-linger). */
   if (eventType == OCR_EVENT_CHANNEL_T && params != NULL) {
     /* OCR 1.2 §B.5.2: nbSat and nbDeps are restricted to 1.  ARTS enforces
      * that constraint at the shim — generalized values would require a
@@ -922,8 +914,9 @@ u8 ocrEventCollectiveSatisfySlot(ocrGuid_t eventGuid, void *dataPtr,
   /* Hold the route table lookup ref for the entire critical section so
    * the metadata DB cannot be destroyed (e.g., by a concurrent
    * ocrEventDestroy) while we're touching its fields.  paired
-   * arts_route_table_release at every exit. */
-  struct arts_db_s *raw = arts_route_table_lookup_db_safe(metaDbGuid);
+   * arts_shared_release at every exit. */
+  arts_shared_ptr_t meta_h = arts_route_table_lookup_db(metaDbGuid);
+  struct arts_db_s *raw = (struct arts_db_s *)arts_shared_get(meta_h);
   if (raw == NULL) {
     return OCR_EFAULT;
   }
@@ -949,7 +942,7 @@ u8 ocrEventCollectiveSatisfySlot(ocrGuid_t eventGuid, void *dataPtr,
   }
 
   pthread_mutex_unlock(&meta->lock);
-  arts_route_table_release(metaDbGuid);
+  arts_shared_release(&meta_h);
 
   return 0;
 }
@@ -970,15 +963,15 @@ u8 ocrDbCreate(ocrGuid_t *db, void **addr, u64 len, u16 flags, ocrHint_t *hint,
                                           ARTS_DB_PROP_NONE, NULL);
     if (data == NULL) {
       /* Labeled GUID already taken — fall back to looking it up so the
-       * caller still gets a valid pointer.  lookup_db_safe pairs
-       * with release immediately (the descriptor lifetime is owned by
-       * route_table; the user data pointer remains valid because the DB
-       * itself wasn't destroyed). */
-      struct arts_db_s *db_existing =
-          arts_route_table_lookup_db_safe(labeledGuid);
+       * caller still gets a valid pointer.  The lookup handle is released
+       * immediately (the descriptor lifetime is owned by route_table; the
+       * user data pointer remains valid because the DB itself wasn't
+       * destroyed). */
+      arts_shared_ptr_t ex_h = arts_route_table_lookup_db(labeledGuid);
+      struct arts_db_s *db_existing = (struct arts_db_s *)arts_shared_get(ex_h);
       if (db_existing != NULL) {
         *addr = (void *)(db_existing + 1);
-        arts_route_table_release(labeledGuid);
+        arts_shared_release(&ex_h);
         /* Match ocrEventCreate's labeling convention: only surface
          * EGUIDEXISTS when the caller asked to be told via GUID_PROP_CHECK. */
         return (flags & GUID_PROP_CHECK) ? OCR_EGUIDEXISTS : 0;
@@ -1155,8 +1148,9 @@ u8 ocrAddDependenceSlot(ocrGuid_t source, u32 sslot, ocrGuid_t destination,
 
   if (metaDbGuid != NULL_GUID) {
     /* Hold the route table ref for the duration we touch the metadata.
-     * paired arts_route_table_release at every exit. */
-    struct arts_db_s *raw = arts_route_table_lookup_db_safe(metaDbGuid);
+     * paired arts_shared_release at every exit. */
+    arts_shared_ptr_t meta_h = arts_route_table_lookup_db(metaDbGuid);
+    struct arts_db_s *raw = (struct arts_db_s *)arts_shared_get(meta_h);
     if (raw == NULL) {
       return OCR_EFAULT;
     }
@@ -1170,14 +1164,14 @@ u8 ocrAddDependenceSlot(ocrGuid_t source, u32 sslot, ocrGuid_t destination,
     u32 idx = meta->numDependents;
     if (idx >= MAX_COLLECTIVE_DEPENDENTS) {
       pthread_mutex_unlock(&meta->lock);
-      arts_route_table_release(metaDbGuid);
+      arts_shared_release(&meta_h);
       return OCR_ENOSPC;
     }
     meta->dependents[idx] = destination.guid;
     meta->dependentSlots[idx] = dslot;
     meta->numDependents = idx + 1;
     pthread_mutex_unlock(&meta->lock);
-    arts_route_table_release(metaDbGuid);
+    arts_shared_release(&meta_h);
     return 0;
   }
 

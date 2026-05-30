@@ -202,6 +202,10 @@ elseif(ARTS_MEMORY_MODEL STREQUAL "LC")
   add_compile_definitions(ARTS_MEMORY_MODEL_LC=1)
   message(STATUS "ARTS memory model: LC (Location Consistency)")
 else()
+  # Define RC explicitly (not just the absence of LRC/LC) so the spec's
+  # `#if defined(ARTS_MEMORY_MODEL_RC) || defined(ARTS_MEMORY_MODEL_LRC)`
+  # field guards select correctly.  Legacy `#else` RC branches still work.
+  add_compile_definitions(ARTS_MEMORY_MODEL_RC=1)
   message(STATUS "ARTS memory model: RC (Release Consistency, default)")
 endif()
 
@@ -529,7 +533,6 @@ if(ARTS_BUILD_DOCS)
     set(DOXYGEN_INPUT_DIRS
         "${CMAKE_SOURCE_DIR}/libs/include/public/arts.h \
          ${CMAKE_SOURCE_DIR}/libs/include/public/arts/graph.h \
-         ${CMAKE_SOURCE_DIR}/libs/include/public/arts/array_db.h \
          ${CMAKE_SOURCE_DIR}/libs/include/internal/arts/runtime/rt.h \
          ${CMAKE_SOURCE_DIR}/libs/include/internal/arts/gas/guid.h \
          ${CMAKE_SOURCE_DIR}/libs/include/internal/arts/defs.h"
@@ -569,7 +572,7 @@ endif()
 
 # Installation configuration
 # Install public headers — all other headers are internal.
-# External users: #include "arts.h", #include "arts/graph.h", #include "arts/array_db.h"
+# External users: #include "arts.h", #include "arts/graph.h"
 install(FILES libs/include/public/arts.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )

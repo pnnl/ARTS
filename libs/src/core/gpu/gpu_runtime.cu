@@ -169,10 +169,10 @@ arts_guid_t internal_edt_create_gpu(arts_edt_t func_ptr, arts_guid_t *guid,
 
   edt->wrapperEdt.edt_type = ARTS_EDT_GPU;
   // artsIntrospectionEdtCreateBegin();
-  (void)arts_edt_create_internal((struct arts_edt_s *)edt, ARTS_GUID_EDT, guid, rank,
-                                 arts_thread_info.numa_domain_id, edt_space,
-                                 func_ptr, paramc, paramv, depc, true,
-                                 NULL_GUID, 0, 0);
+  (void)arts_edt_create_internal((struct arts_edt_s *)edt, ARTS_GUID_EDT, guid,
+                                 rank, arts_thread_info.numa_domain_id,
+                                 edt_space, func_ptr, paramc, paramv, depc,
+                                 true, NULL_GUID, 0, 0);
   // artsIntrospectionEdtCreateFinish(created);
   //    ARTSEDTCOUNTERTIMERENDINCREMENT(EDT_CREATE_COUNTER);
   return *guid;
@@ -261,22 +261,20 @@ void arts_gpu_host_wrap_up(void *edt_packet, arts_guid_t to_signal,
 
   if (edt->lib) {
     edt->wrapperEdt.invalidate_count = 0;
-    arts_route_table_fire_oo(edt->wrapperEdt.current_edt,
-                             arts_out_of_order_handler);
+    arts_ooo_drain_guid(edt->wrapperEdt.guid);
   } else if (edt->wrapperEdt.epoch_guid) {
     increment_finished_epoch(edt->wrapperEdt.epoch_guid);
   }
 
-  ARTS_DEBUG("TO SIGNAL: %lu -> %lu slot: %u\n", to_signal, data_guid, slot);
   // Signal next
   if (to_signal) {
     if (edt->passthrough) {
-      internal_signal_edt(to_signal, slot, depv[data_guid].guid, DB_MODE_RW,
+      arts_edt_satisfy_slot(to_signal, slot, depv[data_guid].guid, DB_MODE_RW,
                           NULL, 0);
     } else {
       arts_guid_kind_t mode = arts_guid_get_kind(to_signal);
       if (mode == ARTS_GUID_EDT) {
-        internal_signal_edt(to_signal, slot, data_guid, DB_MODE_RW, NULL, 0);
+        arts_edt_satisfy_slot(to_signal, slot, data_guid, DB_MODE_RW, NULL, 0);
       }
       if (mode == ARTS_GUID_EVENT) {
         arts_event_satisfy_slot(to_signal, data_guid, slot);
@@ -472,20 +470,21 @@ void arts_put_in_db_from_gpu(void *ptr, arts_guid_t db_guid,
                              bool free_data) {
   unsigned int rank = arts_guid_get_rank(db_guid);
   if (rank == arts_global_rank_id) {
-    struct arts_db_s *db = arts_route_table_lookup_db_safe(db_guid);
+    arts_shared_ptr_t db_h = arts_route_table_lookup_db(db_guid);
+    struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(db_h);
     if (db) {
       void *data = (void *)(((char *)(db + 1)) + offset);
       // memcpy(data, ptr, size);
       CHECKCORRECT(cudaMemcpyAsync(data, ptr, size, cudaMemcpyDeviceToHost,
                                    *arts_local_stream));
-      arts_route_table_release(db_guid);
+      arts_shared_release(&db_h);
     } else {
-      void *cpy_ptr = arts_malloc(size);
-      // memcpy(cpy_ptr, ptr, size);
-      CHECKCORRECT(cudaMemcpyAsync(cpy_ptr, ptr, size, cudaMemcpyDeviceToHost,
-                                   *arts_local_stream));
-      arts_out_of_order_put_in_db(cpy_ptr, NULL_GUID, db_guid, 0, offset, size,
-                                  NULL_GUID);
+      /* GUID homed on this rank but the DB is not yet installed in the route
+       * table.  A GPU stage-out targets a DB that must already exist on its
+       * home rank, so surface this rather than deferring. */
+      ARTS_ERROR("arts_put_in_db_from_gpu: DB[Guid:%lu] not installed on its "
+                 "home rank",
+                 db_guid);
     }
     if (free_data) {
       arts_gpu_route_table_add_item_to_delete_race(ptr, 0, db_guid,
@@ -522,7 +521,7 @@ void internal_lc_sync_gpu(arts_guid_t acq_guid, struct arts_db_s *db) {
     arts_lc_meta_t dev;
     host.guid = acq_guid;
     host.data = (void *)(db + 1);
-    host.data_size = db->header.size - sizeof(struct arts_db_s);
+    host.data_size = db->cache.db_size;
     host.host_version = &db->version;
     host.host_time_stamp = &db->time_stamp;
     host.gpu_version = 0;
@@ -534,7 +533,7 @@ void internal_lc_sync_gpu(arts_guid_t acq_guid, struct arts_db_s *db) {
     arts_cuda_set_device(-1, true);
 
     bool copy_only = false;
-    unsigned int size = db->header.size;
+    unsigned int size = arts_db_total_size(db);
     struct arts_db_s *temp_space =
         (struct arts_db_s *)arts_malloc_align(size, 16);
 
@@ -562,7 +561,7 @@ void internal_lc_sync_gpu(arts_guid_t acq_guid, struct arts_db_s *db) {
 
           dev.guid = acq_guid;
           dev.data = (void *)(temp_space + 1);
-          dev.data_size = temp_space->header.size - sizeof(struct arts_db_s);
+          dev.data_size = temp_space->cache.db_size;
           dev.host_version = &temp_space->version;
           dev.host_time_stamp = &temp_space->time_stamp;
           dev.gpu_version = gpu_version;
@@ -595,7 +594,7 @@ void internal_lc_sync_cpu(arts_guid_t acq_guid, struct arts_db_s *db) {
     arts_lc_meta_t dev;
     host.guid = acq_guid;
     host.data = (void *)(db + 1);
-    host.data_size = db->header.size - sizeof(struct arts_db_s);
+    host.data_size = db->cache.db_size;
     host.host_version = &db->version;
     host.host_time_stamp = &db->time_stamp;
     host.gpu_version = 0;
@@ -606,7 +605,7 @@ void internal_lc_sync_cpu(arts_guid_t acq_guid, struct arts_db_s *db) {
 
     // arts_cuda_set_device(-1, true);
 
-    unsigned int size = db->header.size;
+    unsigned int size = arts_db_total_size(db);
     struct arts_db_s *temp_space =
         (struct arts_db_s *)arts_malloc_align(size, 16);
     gpu_gc_write_lock(); // Don't let the gc take our copies...
@@ -628,7 +627,7 @@ void internal_lc_sync_cpu(arts_guid_t acq_guid, struct arts_db_s *db) {
 
         dev.guid = acq_guid;
         dev.data = (void *)(temp_space + 1);
-        dev.data_size = temp_space->header.size - sizeof(struct arts_db_s);
+        dev.data_size = temp_space->cache.db_size;
         dev.host_version = &temp_space->version;
         dev.host_time_stamp = &temp_space->time_stamp;
         dev.gpu_version = gpu_version;

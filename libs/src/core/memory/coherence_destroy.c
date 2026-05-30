@@ -2,7 +2,7 @@
  *
  * Coherence destroy lifecycle.
  *
- * Three primitives, plus the user-visible destroy entry:
+ * Two primitives, plus the user-visible destroy entry:
  *
  *   arts_coh_db_destroy(g)         — public API.  Forwards
  *                                    DESTROY_REQ to home (uniform
@@ -10,21 +10,14 @@
  *
  *   fail_trigger_pending(cache)    — wake every still-unmarked
  *                                    waiter so the parked EDT can
- *                                    resume, observe destroy_state
- *                                    != NONE on retry, and surface
+ *                                    resume and surface
  *                                    ARTS_DB_DESTROYED.  Also
  *                                    decrements pending_count once
  *                                    per successful mark.
  *
- *   try_finalize_destroy(cache)    — single-flight cleanup gated by
- *                                    destroy_state.CAS(MARKED → CLEANING).
- *                                    Detaches cache.buffer (NULL-
- *                                    swap), then directly frees the
- *                                    db_s + cache_s + buffers via
- *                                    cache->db_owner → arts_db_free
- *                                    (Phase 3.1 — replaces the legacy
- *                                    route_table mark_delete + ref-
- *                                    count → destructor flow).
+ * Final teardown is driven by the cb (shared-ptr) deferred-free model:
+ * destroy fans out, then arts_route_table_mark_delete frees the cache_s
+ * via arts_coh_cache_destructor once all refs drain.
  *
  * The full design (race table, drop discipline, etc.) lives in the
  * coherence design plan; this file realizes the algorithm. */
@@ -86,56 +79,6 @@ void arts_coh_fail_trigger_pending(struct arts_db_cache_s *cache) {
   arts_marked_list_traverse(&cache->pending_ro, fail_trigger_visit_ro, &ctx);
 }
 
-/* ===== try_finalize_destroy (strong override) ===================== */
-
-void arts_coh_try_finalize_destroy(struct arts_db_cache_s *cache) {
-  /* Cheap reject: live waiters must drain (mark + pending_count--) before
-   * cleanup, and any in-flight RW owners must release first.  Saves the
-   * CAS in the common case. */
-  if (cache->pending_count != 0) {
-    return;
-  }
-  if (cache->writer_count != 0) {
-    return;
-  }
-  /* CAS(MARKED → CLEANING).  Forward-only: only one thread wins;
-   * losers see CLEANING and bail.  item->data was already NULL-stored
-   * in arts_coh_handle_destroy_req (Phase 2.2) so no new lookups can
-   * reach this cache_s. */
-  if (arts_atomic_cswap(&cache->destroy_state, ARTS_DB_DESTROY_MARKED,
-                        ARTS_DB_DESTROY_CLEANING) != ARTS_DB_DESTROY_MARKED) {
-    return;
-  }
-
-  /* 1. Detach the buffer.  Outstanding readers retire via release_buf;
-   *    no synchronous wait here. */
-  struct arts_db_buffer_s *old =
-      (struct arts_db_buffer_s *)arts_atomic_swap_ptr(
-          (volatile void **)&cache->buffer, NULL);
-  if (old != NULL && arts_atomic_sub(&old->ref_count, 1) == 0) {
-    arts_lockfree_stack_push(&cache->buffer_pool, &old->pool_link);
-  }
-
-  /* 2. Direct-free path (Phase 3.1).  Replaces the legacy
-   *    arts_route_table_mark_delete + ref-count → destructor flow.
-   *    cache->db_owner is set by every install path (creator side in
-   *    arts_db_create_internal; home receive in coh_handle_db_create_
-   *    coherent; lazy path in coh_lazy_install_cache_s).  arts_db_free
-   *    chains into arts_coh_cache_destructor when coherence_cache is
-   *    non-NULL, draining the buffer pool, freeing home_s, then freeing
-   *    the cache_s and finally the db_s itself. */
-  struct arts_db_s *db_owner = (struct arts_db_s *)cache->db_owner;
-  if (db_owner != NULL) {
-    arts_db_free(db_owner);
-  } else {
-    /* Defensive: legacy ranks that hit a v3 cache without a back-
-     * pointer (should not happen post-Phase-3.1) — at least drain the
-     * cache itself so we don't leak the home_s/buffer_pool. */
-    arts_coh_cache_destructor(cache);
-    arts_free(cache);
-  }
-}
-
 /* ===== arts_coh_db_destroy public API ============================= */
 
 /* Public destroy: forward DESTROY_REQ to home (uniform path; home ==
@@ -143,51 +86,28 @@ void arts_coh_try_finalize_destroy(struct arts_db_cache_s *cache) {
  * the OCR-spec contract: no concurrent acquires/uses in flight. */
 void arts_coh_db_destroy(arts_guid_t db_guid) {
   unsigned int home_rank = (unsigned int)arts_guid_get_rank(db_guid);
-  arts_coh_send_destroy_req(home_rank, db_guid);
+  arts_send_db_destroy(home_rank, db_guid);
 }
 
 /* ===== cache_s destructor (chained from arts_db_free, Phase 3.1) === */
 
-/* Called from arts_db_free when db->coherence_cache is non-NULL.
- * Drains the recycle pool, frees home_s; the caller (arts_db_free)
- * frees the cache_s and db_s structs themselves.  Order matters
- * because step 1 covers the rare race where a wire handler installed
- * a buffer past try_finalize_destroy's NULL-swap. */
+/* Called from arts_db_free for ARTS_DB descriptors.  Drains the recycle pool
+ * and tears down home_s in place; the cache is embedded by value as the first
+ * member of db_s, so the caller (arts_db_free) frees the wrapping db_s — the
+ * cache is not freed separately.  Order matters because step 1 covers the
+ * rare race where a wire handler installed a buffer past
+ * try_finalize_destroy's NULL-swap. */
 void arts_coh_cache_destructor(struct arts_db_cache_s *cache) {
   if (cache == NULL) {
     return;
   }
-  /* 1. Detach cache.buffer (NULL-swap).  We do NOT free it here yet —
-   *    in some races the same buffer ends up in the pool too, and freeing
-   *    it twice would be a use-after-free.  We capture it as `leftover`
-   *    and free at the end if and only if the pool drain didn't already
-   *    free it. */
-  struct arts_db_buffer_s *leftover =
-      (struct arts_db_buffer_s *)arts_atomic_swap_ptr(
-          (volatile void **)&cache->buffer, NULL);
-  /* 2. Drain buffer_pool — frees every recycled buffer.
-   *    Single-threaded at this point (cache_destructor runs only after
-   *    the route_table ref count hits 0, i.e. no in-flight acquires).
-   *    Walk the chain directly via node->next (stable: we are the only
-   *    writer) instead of CAS-popping, which would race against arts_free. */
-  arts_lockfree_stack_node_t *link =
-      (arts_lockfree_stack_node_t *)(uintptr_t)(arts_atomic_swap_u64(
-                                                    &cache->buffer_pool.top,
-                                                    0) &
-                                                ((1ULL << 48) - 1));
-  bool leftover_in_pool = false;
-  while (link != NULL) {
-    arts_lockfree_stack_node_t *next = link->next;
-    struct arts_db_buffer_s *buf = (struct arts_db_buffer_s *)link;
-    if (buf == leftover) {
-      leftover_in_pool = true;
-    }
-    arts_free(buf);
-    link = next;
-  }
-  if (leftover != NULL && !leftover_in_pool) {
-    arts_free(leftover);
-  }
+  /* 1. Release the cache-hold on the buffer (store NULL into the shared
+   *    slot).  If no acquirer holds a ref the cb deleter frees the buffer
+   *    now; otherwise the buffer survives until the last in-flight acquirer
+   *    releases (deferred free via the cb).  The buffer carries no back-ref
+   *    to this cache, so it safely outlives us — eliminating the old
+   *    destroy-vs-release use-after-free without a recycle pool. */
+  arts_atomic_shared_store(&cache->buffer, NULL);
   /* 3. Walk pending_rw / pending_ro chains + private pool, freeing
    *    every node and the sentinels (sentinels live in the queue/list
    *    struct so they're freed implicitly).  RW uses Vyukov MPSC; RO
@@ -197,10 +117,10 @@ void arts_coh_cache_destructor(struct arts_db_cache_s *cache) {
   arts_pending_rw_queue_destroy(&cache->pending_rw);
 #endif
   arts_marked_list_destroy(&cache->pending_ro);
-  /* 4. Home metadata. */
-  if (cache->home != NULL) {
-    arts_db_home_destroy(cache->home);
-    cache->home = NULL;
+  /* 4. Home metadata (embedded by value; tear down sub-resources in place). */
+  if (cache->home_initialized) {
+    arts_db_home_teardown(&cache->home);
+    cache->home_initialized = false;
   }
   /* 5. cache_s itself is freed by the route_table after this routine
    *    returns.  Buffers (FAM data lives there) are recycled to the

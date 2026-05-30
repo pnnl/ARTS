@@ -202,14 +202,12 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_add_dependence(ev, re, 0, DB_MODE_RW);
   }
 
-  // Test 4: multi-decrement LATCH, persistent — latch=total,
-  // life_count=INT32_MAX (each node satisfies once; the dep fires after the
-  // latch hits zero, event then persists for additional late binders).
+  // Test 4: multi-decrement LATCH — latch=total (each node satisfies once;
+  // the dep fires after the latch hits zero, event then lingers for
+  // additional late binders via fire-and-linger).
   {
-    arts_event_hint_t h = ARTS_EVENT_HINT_DEFAULTS;
+    arts_event_hint_t h = ARTS_EVENT_HINT_LATCH(total);
     h.rank = 0;
-    h.latch = total;
-    h.life_count = INT32_MAX;
     arts_guid_t ev = arts_event_create(&h);
     uint64_t total_param = (uint64_t)total;
     arts_guid_t dep =

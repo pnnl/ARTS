@@ -176,7 +176,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Test 6: (removed) — the legacy local event callback API was deleted.
 
-  // Test 7: ONCE-equivalent (defaults: latch=1, auto_destroy=true).
+  // Test 7: single-fire (defaults: latch=1).  Fires once, then lingers.
   {
     arts_guid_t ev7 = arts_event_create(NULL);
     arts_guid_t dep7 = arts_edt_create(
@@ -185,11 +185,11 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_event_satisfy_slot(ev7, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
   }
 
-  // Test 8: STICKY-equivalent — persistent (life_count=INT32_MAX),
-  // error_on_neg_latch=true.  Late dep registered after fire is satisfied
-  // immediately by add_dependence fast path.
+  // Test 8: fire-and-linger late bind — a dep registered after the event
+  // fires is satisfied immediately from stored data via the add_dependence
+  // fast path, then the event is explicitly destroyed.
   {
-    arts_event_hint_t h = ARTS_EVENT_HINT_STICKY;
+    arts_event_hint_t h = ARTS_EVENT_HINT_LATCH(1);
     arts_guid_t ev8 = arts_event_create(&h);
     arts_event_satisfy_slot(ev8, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
     arts_guid_t dep8 =
@@ -199,10 +199,11 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_event_destroy(ev8);
   }
 
-  // Test 9: IDEM-equivalent — persistent (life_count=INT32_MAX), latch=1.
-  // Re-satisfy is tolerated (error_on_neg_latch=false default).
+  // Test 9: over-satisfy tolerance — latch=1, a second satisfy past the
+  // fire is silently absorbed; the already-fired event keeps the dependent
+  // silent.
   {
-    arts_event_hint_t h = ARTS_EVENT_HINT_IDEMPOTENT;
+    arts_event_hint_t h = ARTS_EVENT_HINT_LATCH(1);
     arts_guid_t ev9 = arts_event_create(&h);
     arts_guid_t dep9 = arts_edt_create(
         idem_dep, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
@@ -214,12 +215,10 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_event_destroy(ev9);
   }
 
-  // Test 10: multi-decrement LATCH, persistent — latch=3,
-  // life_count=INT32_MAX so the event is not destroyed before
-  // arts_event_destroy below.
+  // Test 10: multi-decrement LATCH, latch=3 — fire-and-linger keeps the
+  // event addressable until arts_event_destroy below.
   {
     arts_event_hint_t h = ARTS_EVENT_HINT_LATCH(3);
-    h.life_count = INT32_MAX;
     arts_guid_t ev10 = arts_event_create(&h);
     arts_guid_t dep10 = arts_edt_create(
         counted_dep, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});

@@ -26,40 +26,32 @@
 #include "arts/memory/coherence_home.h"
 #include "arts/memory/db.h"
 #include "arts/runtime_types.h"
+#include "arts/sync/shared.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/utils/atomics.h"
 
-/* Forward decl — strong def in coherence_destroy.c. */
-void arts_coh_try_finalize_destroy(struct arts_db_cache_s *cache);
-
-/* Adapter: route_table stores arts_db_s* (the previous data layout); the new RC
- * cache_s lives inside db->coherence_cache.  All RC paths look up
- * cache via this helper, so when the cutover removes arts_db_s the
- * change is local to one function.  Returns NULL if either the
- * route_table entry doesn't exist or the entry has no cache_s
- * (e.g. PIN/CXL DBs).
+/* Adapter: route_table stores arts_db_s*; the coherence cache_s is embedded
+ * by value as the first member of db_s.  All coherence paths look up cache
+ * via this helper.  Returns NULL if either the route_table entry doesn't
+ * exist or the entry has no DB-level coherence (e.g. PIN/CXL DBs, which keep
+ * the embedded cache zeroed).
  *
- * this is the last surviving raw arts_route_table_lookup_data
- * caller in libs/.  Migrating it to lookup_db_safe + release would require
- * rewriting all ~15 callers across coherence_acquire.c / coherence_release.c
- * / coherence_handlers.c / db.c to balance the ref — out of scope for the
- * event subsystem rewrite.  Safe in practice because the returned cache_s
- * is heap-allocated separately from arts_db_s (it lives in
- * db->coherence_cache as its own malloc'd struct), and the RC protocol
- * keeps cache_s alive via its own destroy gate (arts_coh_try_finalize_destroy)
- * independent of the route_table slot's lifetime.  Documented as a known
- * exception. */
+ * This is the last surviving raw arts_route_table_lookup_data caller in
+ * libs/.  Migrating it to a typed handle lookup (arts_route_table_lookup_db +
+ * arts_shared_release) would require rewriting all ~15 callers across
+ * coherence_acquire.c / coherence_release.c / coherence_handlers.c / db.c to
+ * balance the ref — out of scope here.  Documented as a known exception. */
 struct arts_db_cache_s *arts_coh_route_table_lookup_cache(arts_guid_t db_guid) {
   void *data = arts_route_table_lookup_data(db_guid);
   if (data == NULL) {
     return NULL;
   }
   struct arts_db_s *db = (struct arts_db_s *)data;
-  if (db->coherence_cache == NULL) {
+  if (db->db_type != ARTS_DB) {
     return NULL;
   }
-  return (struct arts_db_cache_s *)db->coherence_cache;
+  return &db->cache;
 }
 #define coh_lookup_cache arts_coh_route_table_lookup_cache
 
@@ -89,10 +81,12 @@ static void mark_edt_ready_by_guid(arts_guid_t edt_guid, unsigned int slot) {
   if (edt_guid == NULL_GUID) {
     return;
   }
-  /* lookup_edt_safe pairs with release at function exit. */
-  struct arts_edt_s *edt = arts_route_table_lookup_edt_safe(edt_guid);
+  /* lookup_edt handle pairs with release at function exit. */
+  arts_shared_ptr_t edt_h = arts_route_table_lookup_edt(edt_guid);
+  struct arts_edt_s *edt = (struct arts_edt_s *)arts_shared_get(edt_h);
   if (edt == NULL) {
     ARTS_INFO("coherence: edt_guid %lu not found at trigger time", edt_guid);
+    arts_shared_release(&edt_h);
     return;
   }
   arts_edt_dep_t *depv = (arts_edt_dep_t *)arts_get_depv(edt);
@@ -100,27 +94,20 @@ static void mark_edt_ready_by_guid(arts_guid_t edt_guid, unsigned int slot) {
   if (db_guid != NULL_GUID) {
     struct arts_db_cache_s *cache = coh_lookup_cache(db_guid);
     if (cache != NULL) {
-      /* Acquire a fresh buf ref for this EDT; release_one_dep's DIST
-       * branch calls release_buf on its dep slot when the EDT finishes.
-       * depv[slot].ptr aliases buf->data — the canonical user-visible
-       * payload (design plan §Buffer). */
-      struct arts_db_buffer_s *buf = arts_coherence_acquire_buf(cache);
-      if (buf == NULL) {
-        fprintf(stderr,
-                "[COH-DBG rank %u] mark_edt_ready: NULL buf for db=%lu "
-                "edt=%lu slot=%u wc=%u db_size=%lu\n",
-                arts_global_rank_id, (unsigned long)db_guid,
-                (unsigned long)edt_guid, slot, cache->writer_count,
-                (unsigned long)cache->db_size);
-        fflush(stderr);
-      }
+      /* Acquire the EDT's strong ref on the buffer; release_one_dep drops it
+       * (via buf_from_data(ptr)->cb) when the EDT finishes.  The handle is not
+       * released here — the ref is the EDT's hold.  depv[slot].ptr aliases
+       * buf->data, the canonical user-visible payload. */
+      arts_shared_ptr_t buf_h = arts_coherence_acquire_buf(cache);
+      struct arts_db_buffer_s *buf =
+          (struct arts_db_buffer_s *)arts_shared_get(buf_h);
       depv[slot].ptr = buf ? buf->data : NULL;
     }
   }
   if (arts_atomic_sub(&edt->depc_needed, 1U) == 0) {
     arts_handle_remote_stolen_edt(edt);
   }
-  arts_route_table_release(edt_guid);
+  arts_shared_release(&edt_h);
 }
 
 /* ===== Lazy first-touch =========================================== */
@@ -146,32 +133,25 @@ struct arts_db_cache_s *arts_coh_lazy_install_cache_s(arts_guid_t db_guid,
     return cache;
   }
 
-  /* Allocate stub arts_db_s with no payload (sizeof header only).
-   * coherence_cache holds the RC protocol state.  arts_db_s exists purely to
-   * satisfy the route_table's typed-entry contract during the
-   * dual-stack period. */
+  /* Allocate stub arts_db_s; the coherence cache_s is embedded by value as
+   * its first member and holds the RC protocol state.  The trailing payload
+   * is empty (lazy buffer alloc on first wire arrival). */
   struct arts_db_s *stub =
       (struct arts_db_s *)arts_malloc_align(sizeof(struct arts_db_s), 16);
   memset(stub, 0, sizeof(struct arts_db_s));
-  arts_shared_init(&stub->shared, arts_db_get_deleter());
-  stub->header.type = ARTS_GUID_DB;
-  stub->header.size = sizeof(struct arts_db_s);
-  stub->guid = db_guid;
   stub->db_type = ARTS_DB;
 
   /* db_size==0 ⇒ lazy install: buffer alloc deferred until first wire
    * arrival (install_buffer with the actual db_size).  No home struct
    * yet — even for is_home, the home struct is created when DB_CREATE
    * arrives (with the proper rw_holder = creator_rank). */
-  stub->coherence_cache = arts_coh_alloc_cache_s(
-      db_guid, /*db_size=*/db_size, ARTS_COH_INIT_LAZY, /*creator_rank=*/0);
-  /* back-pointer for try_finalize_destroy direct-free. */
-  ((struct arts_db_cache_s *)stub->coherence_cache)->db_owner = stub;
+  arts_coh_init_cache_s(&stub->cache, db_guid, /*db_size=*/db_size,
+                        ARTS_COH_INIT_LAZY, /*creator_rank=*/0);
 
   if (arts_route_table_add_item_race(stub, db_guid, arts_global_rank_id,
                                      /*used=*/true)) {
-    arts_route_table_fire_oo(db_guid, arts_out_of_order_handler);
-    return (struct arts_db_cache_s *)stub->coherence_cache;
+    arts_ooo_drain_guid(db_guid);
+    return &stub->cache;
   }
 
   /* Lost the race — another thread already installed.  Tear down our
@@ -183,18 +163,14 @@ struct arts_db_cache_s *arts_coh_lazy_install_cache_s(arts_guid_t db_guid,
 /* ===== Case 1/3/5: local-buffer acquire ============================= */
 
 static void *acquire_local(struct arts_db_cache_s *cache) {
-  /* Design plan §acquire_local: return buf->data with ref held.
-   * release happens in arts_db_release → arts_coherence_release_buf
-   * (called from release_one_dep's DIST branch). */
-  struct arts_db_buffer_s *buf = arts_coherence_acquire_buf(cache);
+  /* Take the EDT's strong ref on the buffer and return buf->data.  The handle
+   * is intentionally NOT released here — the ref is the EDT's hold for its
+   * whole lifetime; release_one_dep drops it via buf_from_data(ptr)->cb.  The
+   * ref keeps the buffer alive against a concurrent destroy. */
+  arts_shared_ptr_t h = arts_coherence_acquire_buf(cache);
+  struct arts_db_buffer_s *buf = (struct arts_db_buffer_s *)arts_shared_get(h);
   if (buf == NULL) {
-    fprintf(stderr,
-            "[COH-DBG rank %u] acquire_local: NULL buf for db=%lu "
-            "wc=%u db_size=%lu\n",
-            arts_global_rank_id, (unsigned long)cache->db_guid,
-            cache->writer_count, (unsigned long)cache->db_size);
-    fflush(stderr);
-    return NULL;
+    return NULL; /* h is NULL — nothing installed, nothing held */
   }
   return buf->data;
 }
@@ -252,7 +228,7 @@ static arts_db_acquire_result_t acquire_remote_rw(struct arts_db_cache_s *cache,
    * triggers our drain in FIFO order. */
   if (arts_atomic_cswap(&cache->lock_req_in_flight, 0, 1) == 0) {
     unsigned int home_rank = arts_guid_get_rank(cache->db_guid);
-    arts_coh_send_lock_req(home_rank, cache->db_guid);
+    arts_send_db_ownership_request(home_rank, cache->db_guid);
   }
   return ARTS_DB_ACQUIRE_PARK;
 }
@@ -277,7 +253,7 @@ static arts_db_acquire_result_t acquire_remote_ro(struct arts_db_cache_s *cache,
   arts_marked_list_push(&cache->pending_ro, &w->link);
 
   unsigned int home_rank = arts_guid_get_rank(cache->db_guid);
-  arts_coh_send_get_data(home_rank, cache->db_guid, w);
+  arts_send_db_snapshot_request(home_rank, cache->db_guid, w);
   return ARTS_DB_ACQUIRE_PARK;
 }
 
@@ -290,7 +266,7 @@ arts_db_acquire_result_t arts_coh_db_acquire(struct arts_db_cache_s *cache,
                                              void **out_data) {
   /* Caller is responsible for the route_table ref on the underlying
    * arts_db_s entry -- this function does not acquire or release it.
-   * Caller passes the cache_s extracted from db->coherence_cache.
+   * Caller passes the cache_s embedded in the db_s (db->cache).
    *
    * Return contract:
    *   ARTS_DB_ACQUIRE_OK    -- ownership/visibility established; *out_data
@@ -405,9 +381,7 @@ static void rw_drain_cb(arts_guid_t edt_guid, unsigned int slot, void *vctx) {
    * mark_edt_ready_by_guid handles that cleanly (depv[slot].ptr=NULL,
    * still decrements depc_needed). */
   mark_edt_ready_by_guid(edt_guid, slot);
-  if (arts_atomic_sub(&ctx->cache->pending_count, 1) == 0) {
-    arts_coh_try_finalize_destroy(ctx->cache);
-  }
+  arts_atomic_sub(&ctx->cache->pending_count, 1);
 }
 
 void arts_coh_drain_pending_rw_after_grant(struct arts_db_cache_s *cache,
@@ -432,7 +406,7 @@ void arts_coh_drain_pending_rw_after_grant(struct arts_db_cache_s *cache,
       } else {
         unsigned int home_rank =
             (unsigned int)arts_guid_get_rank(cache->db_guid);
-        arts_coh_send_release_ownership(home_rank, cache->db_guid);
+        arts_send_db_ownership_return(home_rank, cache->db_guid);
       }
     }
   }
@@ -459,9 +433,7 @@ static void ro_drain_visit(arts_marked_list_node_t *node, void *vctx) {
     /* Always wake the parked EDT — see rw_drain_visit comment for the
      * sentinel-DB rationale. */
     mark_edt_ready_by_guid(edt_local, slot_local);
-    if (arts_atomic_sub(&ctx->cache->pending_count, 1) == 0) {
-      arts_coh_try_finalize_destroy(ctx->cache);
-    }
+    arts_atomic_sub(&ctx->cache->pending_count, 1);
   }
 }
 
@@ -481,7 +453,9 @@ void arts_coh_trigger_ro_waiter(struct arts_db_cache_s *cache,
    * already at >= version we trigger now; otherwise the next install
    * will pick it up via drain_pending_ro. */
   w->target_version = version;
-  struct arts_db_buffer_s *buf = arts_coherence_acquire_buf(cache);
+  arts_shared_ptr_t buf_h = arts_coherence_acquire_buf(cache);
+  struct arts_db_buffer_s *buf =
+      (struct arts_db_buffer_s *)arts_shared_get(buf_h);
   uint64_t buf_v = buf ? buf->version : 0;
   /* Sentinel DBs (db_size==0) carry no buffer; treat the version gate as
    * satisfied so the waiter still fires (mark_edt_ready_by_guid handles
@@ -492,12 +466,10 @@ void arts_coh_trigger_ro_waiter(struct arts_db_cache_s *cache,
     unsigned int slot_local = w->slot;
     if (arts_marked_list_mark(&w->link)) {
       mark_edt_ready_by_guid(edt_local, slot_local);
-      if (arts_atomic_sub(&cache->pending_count, 1) == 0) {
-        arts_coh_try_finalize_destroy(cache);
-      }
+      arts_atomic_sub(&cache->pending_count, 1);
     }
   }
   if (buf != NULL) {
-    arts_coherence_release_buf(cache, buf);
+    arts_coherence_release_buf(&buf_h);
   }
 }

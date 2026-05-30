@@ -501,19 +501,19 @@ int load_graph_no_weight_csr(const char *file_path, arts_block_dist_t *dist,
 }
 
 csr_graph_t *get_graph_from_guid(arts_guid_t guid) {
-  struct arts_db_s *db_res = arts_route_table_lookup_db_safe(guid);
+  arts_shared_ptr_t h = arts_route_table_lookup_db(guid);
+  struct arts_db_s *db_res = (struct arts_db_s *)arts_shared_get(h);
   if (arts_guid_is_local(guid) && db_res) {
-    /* Note: caller uses the returned pointer without holding the route table
-     * ref.  This is safe because graph DBs are never destroyed during
-     * computation and callers always access data within an EDT lifetime.
-     * drop the ref immediately under the same invariant — the
-     * descriptor outlives this function call. */
+    /* Note: caller uses the returned pointer without holding the cb ref.
+     * Safe because graph DBs are never destroyed during computation and
+     * callers always access data within an EDT lifetime — the descriptor
+     * outlives this call, so we drop the ref immediately. */
     csr_graph_t *out = (csr_graph_t *)(db_res + 1);
-    arts_route_table_release(guid);
+    arts_shared_release(&h);
     return out;
   }
   if (db_res != NULL) {
-    arts_route_table_release(guid);
+    arts_shared_release(&h);
   }
   return NULL;
 }

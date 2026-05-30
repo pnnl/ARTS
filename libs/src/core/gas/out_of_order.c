@@ -36,527 +36,256 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
+/* OoO engine — unified dispatch_or_defer.
+ *
+ * One Treiber stack (oooList) per route_table slot accumulates deferred
+ * operations that arrived before their target object was installed.  A single
+ * arts_ooo_payload_s node type (link first, kind tag, trailing args blob)
+ * replaces the former per-kind structs + oo_node wrapper.
+ *
+ * Two roles, cleanly split:
+ *   - Create handler (Cat A) installs the object then calls arts_ooo_drain as
+ *     its last step.
+ *   - Non-create handler (Cat B/C) receives an already-acquired, valid item
+ *     from dispatch_or_defer and operates on it — no lookup/acquire/push in
+ *     the handler body.  The g_ooo_table[kind] entries are these handler
+ *     bodies, defined in each subsystem TU.
+ *
+ * Concurrency (lock-free, per-call acquire):
+ *   - A producer's dispatch_or_defer reloads slot.value every call.  HIT
+ *     (value != NULL) → run the handler with a ref pinned across the call.
+ *     MISS (value == NULL) → push the payload; then re-check value and, if an
+ *     installer raced in, drain (so the node is not stranded).
+ *   - A producer only ever pushes while value == NULL.  Once value is
+ *     installed, every producer HITs and dispatches inline (never pushes), so
+ *     no push races a create handler's drain.  Pre-install pushes are caught
+ *     by the install's drain snapshot; a push that loses that race triggers
+ *     its own drain via the post-push re-check.  No drain lock is needed.
+ *   - drain takes ONE reverse_drain snapshot and walks it once.  A node that
+ *     MISSes mid-walk (a destroy earlier in the same walk NULLed the slot)
+ *     re-pushes onto a fresh chain to await the next install (labeled-GUID
+ *     reuse) — it is not re-walked in this pass, so no spin.
+ */
 #include "arts/gas/out_of_order.h"
 
-#include "arts/compute/edt.h"
-#include "arts/gas/route_table.h"
-#include "arts/memory/db.h"
-#include "arts/remote/handler.h"
-#include "arts/runtime_state.h"
-#include "arts/runtime_types.h"
-#include "arts/sync/epoch.h"
-#include "arts/system/print.h"
-#include "arts/system/threads.h"
-#include "arts/utils/malloc.h"
-
-#ifdef ARTS_COHERENCE_INTEGRATED
-/* Future work will define ARTS_COHERENCE_INTEGRATED, include the
- * coherence_handlers.c sources in the build, and add the missing
- * arts_remote_lock_req_packet_s / arts_remote_get_data_packet_s /
- * arts_remote_destroy_req_packet_s / arts_remote_writeback_packet_s
- * declarations to arts/transport/protocol.h.  Until then the OO_COH_*
- * dispatch arms below are guarded out so the runtime build stays
- * clean.  See spec §4.8 and the OoO design notes. */
-#include "arts/memory/coherence_handlers.h"
-#endif
-
+#include <stdatomic.h>
 #include <string.h>
 
-struct oo_signal_edt_s {
-  enum arts_out_of_order_type type;
-  arts_guid_t edt_packet;
-  arts_guid_t data_guid;
-  uint32_t slot;
-  arts_db_access_mode_t mode;
-};
+#include "arts.h" /* arts_add_dependence, arts_db_access_mode_t */
+#include "arts/compute/edt.h"
+#include "arts/gas/route_table.h"
+#include "arts/memory/coherence_handlers.h"
+#include "arts/memory/db.h"      /* DB_MODE_PTR (internal access mode) */
+#include "arts/remote/handler.h" /* arts_db_request_callback */
+#include "arts/runtime_state.h"  /* arts_handle_ready_edt */
+#include "arts/sync/epoch.h"     /* increment_*_epoch, send_epoch */
+#include "arts/sync/event.h"     /* arts_event_satisfy_slot */
+#include "arts/sync/shared.h"
+#include "arts/transport/protocol.h" /* coherence packet structs */
+#include "arts/utils/lockfree_lifo.h"
+#include "arts/utils/malloc.h"
 
-struct oo_db_request_satisfy_s {
-  enum arts_out_of_order_type type;
-  struct arts_edt_s *edt;
-  uint32_t slot;
-  bool inc;
-};
+/* ===== g_ooo_table — kind → replay handler ================================
+ * Each handler replays the operation against the now-installed target by
+ * re-issuing the original entry (internal_signal_edt, arts_event_satisfy_slot,
+ * arts_handler_db_*, ...).  The entry's own lookup HITs during a drain
+ * (drain runs post-install), takes its inline hit path, and does NOT re-enter
+ * dispatch_or_defer — so re-issue is one level deep, never recursive.  `item`
+ * (the acquired object) is passed through for the one handler (db_acquire)
+ * that consumes it directly. */
 
-struct oo_add_dependence_s {
-  enum arts_out_of_order_type type;
-  arts_guid_t source;
-  arts_guid_t destination;
-  uint32_t slot;
-  arts_guid_t data;
-  arts_db_access_mode_t mode;
-};
+/* EDT satisfy handlers live in edt.c (arts_handler_edt_satisfy_slot[_ptr]) —
+ * pure cores that write the acquired EDT's dep slot. */
 
-struct oo_event_satisfy_slot_s {
-  enum arts_out_of_order_type type;
-  arts_guid_t event_guid;
-  arts_guid_t data_guid;
-  uint32_t slot;
-};
+/* Event satisfy / add-dependence handlers live in event.c
+ * (arts_handler_event_satisfy_slot / arts_handler_event_add_dependence) —
+ * pure cores that operate on the acquired event. */
 
-struct oo_handle_ready_edt_s {
-  enum arts_out_of_order_type type;
-  struct arts_edt_s *edt;
-};
-
-struct oo_get_from_db_s {
-  enum arts_out_of_order_type type;
-  arts_guid_t edt_guid;
-  arts_guid_t db_guid;
-  unsigned int slot;
-  unsigned int offset;
-  unsigned int size;
-};
-
-struct oo_signal_edt_ptr_s {
-  enum arts_out_of_order_type type;
-  arts_guid_t edt_guid;
-  arts_guid_t db_guid;
-  void *ptr;
-  unsigned int size;
-  unsigned int slot;
-};
-
-struct oo_put_in_db_s {
-  enum arts_out_of_order_type type;
-  void *ptr;
-  arts_guid_t edt_guid;
-  arts_guid_t db_guid;
-  arts_guid_t epoch_guid;
-  unsigned int slot;
-  unsigned int offset;
-  unsigned int size;
-};
-
-struct oo_epoch_s {
-  enum arts_out_of_order_type type;
-  arts_guid_t guid;
-};
-
-struct oo_epoch_send_s {
-  enum arts_out_of_order_type type;
-  arts_guid_t guid;
-  unsigned int source;
-  unsigned int dest;
-};
-
-struct oo_generic_s {
-  enum arts_out_of_order_type type;
-};
-
-/*
- * arts_out_of_order_handler — Replay a deferred operation.
- *
- * When an operation arrives before its target object exists in the route
- * table (e.g., signal to an EDT that hasn't been created yet), it is
- * queued as an OO entry.  Once the target is inserted, this handler
- * replays each queued operation.
- *
- * The switch dispatches by OO type to the appropriate runtime function.
- */
-inline void arts_out_of_order_handler(void *handle_me, void *memory_ptr) {
-  struct oo_generic_s *type_ptr = (struct oo_generic_s *)handle_me;
-  ARTS_DEBUG("OO handler: dispatching type=%d", type_ptr->type);
-  switch (type_ptr->type) {
-  case OO_SIGNAL_EDT: {
-    struct oo_signal_edt_s *edt = (struct oo_signal_edt_s *)handle_me;
-    internal_signal_edt(edt->edt_packet, edt->slot, edt->data_guid, edt->mode,
-                        NULL, 0);
-    break;
-  }
-  case OO_EVENT_SATISFY_SLOT: {
-    struct oo_event_satisfy_slot_s *event =
-        (struct oo_event_satisfy_slot_s *)handle_me;
-    arts_event_satisfy_slot(event->event_guid, event->data_guid, event->slot);
-    break;
-  }
-  case OO_ADD_DEPENDENCE: {
-    struct oo_add_dependence_s *dep = (struct oo_add_dependence_s *)handle_me;
-    arts_add_dependence(dep->source, dep->destination, dep->slot, dep->mode);
-    break;
-  }
-  case OO_HANDLE_READY_EDT: {
-    struct oo_handle_ready_edt_s *ready_edt =
-        (struct oo_handle_ready_edt_s *)handle_me;
-    arts_handle_ready_edt(ready_edt->edt);
-    break;
-  }
-  case OO_DB_REQUEST_SATISFY: {
-    struct oo_db_request_satisfy_s *req =
-        (struct oo_db_request_satisfy_s *)handle_me;
-    ARTS_DEBUG("FILL %lu %u %p", req->edt, req->slot, memory_ptr);
-    arts_db_request_callback(req->edt, req->slot,
-                             (struct arts_db_s *)memory_ptr);
-    break;
-  }
-  case OO_GET_FROM_DB: {
-    struct oo_get_from_db_s *req = (struct oo_get_from_db_s *)handle_me;
-    arts_db_get(
-        req->edt_guid, req->db_guid, req->slot, req->offset, req->size,
-        &(arts_db_op_hint_t){.rank = arts_global_rank_id, .epoch = NULL_GUID});
-    break;
-  }
-  case OO_SIGNAL_EDT_PTR: {
-    struct oo_signal_edt_ptr_s *req = (struct oo_signal_edt_ptr_s *)handle_me;
-    internal_signal_edt(req->edt_guid, req->slot, NULL_GUID, DB_MODE_PTR,
-                        req->ptr, req->size);
-    arts_free(req->ptr);
-    break;
-  }
-  case OO_PUT_IN_DB: {
-    struct oo_put_in_db_s *req = (struct oo_put_in_db_s *)handle_me;
-    internal_put_in_db(req->ptr, req->edt_guid, req->db_guid, req->slot,
-                       req->offset, req->size, req->epoch_guid,
-                       arts_global_rank_id);
-    arts_free(req->ptr);
-    break;
-  }
-  case OO_EPOCH_ACTIVE: {
-    //            ARTS_INFO("ooActveFire");
-    struct oo_epoch_s *req = (struct oo_epoch_s *)handle_me;
-    increment_active_epoch(req->guid);
-    break;
-  }
-  case OO_EPOCH_FINISH: {
-    //            ARTS_INFO("ooFinishFire");
-    struct oo_epoch_s *req = (struct oo_epoch_s *)handle_me;
-    increment_finished_epoch(req->guid);
-    break;
-  }
-  case OO_EPOCH_SEND: {
-    //            ARTS_INFO("ooEpochSendFire");
-    struct oo_epoch_send_s *req = (struct oo_epoch_send_s *)handle_me;
-    send_epoch(req->guid, req->source, req->dest);
-    break;
-  }
-  case OO_EPOCH_INC_QUEUE: {
-    struct oo_epoch_s *req = (struct oo_epoch_s *)handle_me;
-    increment_queue_epoch(req->guid);
-    break;
-  }
-#ifdef ARTS_COHERENCE_INTEGRATED
-  case OO_COH_LOCK_REQ: {
-    /* Re-issue handler — cache is now installed (DB_CREATE arrived
-     * after the original race-arrived LOCK_REQ was deferred). */
-    struct oo_coh_lock_req_s *req = (struct oo_coh_lock_req_s *)handle_me;
-    struct arts_remote_lock_req_packet_s p;
-    p.header.rank = req->requester;
-    p.db_guid = req->db_guid;
-    arts_coh_handle_lock_req(&p);
-    break;
-  }
-  case OO_COH_GET_DATA: {
-    struct oo_coh_get_data_s *req = (struct oo_coh_get_data_s *)handle_me;
-    struct arts_remote_get_data_packet_s p;
-    p.header.rank = req->requester;
-    p.db_guid = req->db_guid;
-    p.waiter_addr = req->waiter_addr;
-    arts_coh_handle_get_data(&p);
-    break;
-  }
-  case OO_COH_DESTROY_REQ: {
-    struct oo_coh_destroy_req_s *req = (struct oo_coh_destroy_req_s *)handle_me;
-    struct arts_remote_destroy_req_packet_s p;
-    p.header.rank = req->requester;
-    p.db_guid = req->db_guid;
-    arts_coh_handle_destroy_req(&p);
-    break;
-  }
-  case OO_COH_WRITEBACK: {
-    struct oo_coh_writeback_s *req = (struct oo_coh_writeback_s *)handle_me;
-    struct arts_remote_writeback_packet_s p;
-    p.header.rank = req->releaser;
-    p.db_guid = req->db_guid;
-    p.version = req->version;
-    p.seq = req->seq;
-    p.flag = req->flag;
-    arts_coh_handle_writeback(&p, req->data, req->data_size);
-    break;
-  }
-#else
-  case OO_COH_LOCK_REQ:
-  case OO_COH_GET_DATA:
-  case OO_COH_DESTROY_REQ:
-  case OO_COH_WRITEBACK:
-    /* Coherence handlers not yet wired into the build.
-     * Producers gated by the same ifdef in coherence_handlers.c, so we
-     * should never observe these tags here.  Fall through to the error
-     * branch if they ever arrive. */
-    ARTS_INFO("OO Handler: OO_COH_* tag observed without coherence build");
-    break;
-#endif
-  default:
-    ARTS_INFO("OO Handler Error");
-  }
-  arts_free(handle_me);
+static void ooo_h_handle_ready_edt(void *item, void *vargs) {
+  (void)item;
+  struct arts_ooo_args_handle_ready_s *a = vargs;
+  arts_handle_ready_edt(a->edt);
 }
 
-/*
- * arts_oo_dispatch_destroyed_cb — drain callback used by
- * arts_route_table_drop_oo when a DB is being destroyed.  Wakes parked
- * EDT waiters with NULL_DB so the destroyed-DB semantic propagates
- * (depv[slot].guid = NULL_GUID, ptr = NULL, depc_needed--), then frees
- * the payload.
- *
- * Without this wake, EDTs that called arts_out_of_order_handle_db_request
- * before the destroy sit in the OoO list forever (their DB will never be
- * installed because destroy happened first).  Other OoO types reference
- * the destroyed DB indirectly; for those, the payload is freed but no
- * waiter wake is needed (their consumer is itself blocked on the same
- * DB and reaches the same destroyed state via its own dispatch).
- */
-void arts_oo_dispatch_destroyed_cb(void *data, void *ctx) {
-  (void)ctx;
-  oo_type_t *type = (oo_type_t *)data;
-  switch (*type) {
-  case OO_DB_REQUEST_SATISFY: {
-    struct oo_db_request_satisfy_s *req =
-        (struct oo_db_request_satisfy_s *)data;
-    arts_db_request_callback(req->edt, req->slot, NULL);
-    break;
-  }
-  default:
-    /* Drop other types silently -- their consumers are app bugs (use
-     * after destroy) and waking them with NULL would deliver wrong data. */
-    break;
-  }
-  arts_free(data);
+static void ooo_h_db_acquire(void *item, void *vargs) {
+  struct arts_ooo_args_db_acquire_s *a = vargs;
+  arts_db_request_callback(a->edt, a->slot, (struct arts_db_s *)item);
 }
 
-/*
- * arts_out_of_order_signal_edt — Queue an EDT signal for deferred delivery.
- *
- * If the target EDT's GUID is still in RESERVED state in the route table,
- * the signal is stored in the OO list.  If the item is already AVAILABLE
- * (race: created between our check and now), the signal is delivered
- * immediately and the OO entry is freed.
- */
-void arts_out_of_order_signal_edt(arts_guid_t wait_on, arts_guid_t edt_packet,
-                                  arts_guid_t data_guid, uint32_t slot,
-                                  arts_db_access_mode_t mode, bool force) {
-  struct oo_signal_edt_s *edt =
-      (struct oo_signal_edt_s *)arts_malloc(sizeof(struct oo_signal_edt_s));
-  edt->type = OO_SIGNAL_EDT;
-  edt->edt_packet = edt_packet;
-  edt->data_guid = data_guid;
-  edt->slot = slot;
-  edt->mode = mode;
-  if (force) {
-    arts_route_table_add_oo_existing(wait_on, edt, false);
-  } else {
-    bool res = arts_route_table_add_oo(wait_on, edt, false);
-    if (!res) {
-      internal_signal_edt(edt_packet, slot, data_guid, mode, NULL, 0);
-      arts_free(edt);
+/* Epoch handlers (inc_*, request, send) live in epoch.c as pure cores on the
+ * acquired epoch — no re-issue wrappers here. */
+
+static void ooo_h_db_ownership_request(void *item, void *vargs) {
+  (void)item;
+  struct arts_ooo_args_db_ownership_request_s *a = vargs;
+  struct arts_remote_lock_req_packet_s p;
+  p.header.rank = a->requester;
+  p.db_guid = a->db_guid;
+  arts_handler_db_ownership_request(&p);
+}
+
+static void ooo_h_db_snapshot_request(void *item, void *vargs) {
+  (void)item;
+  struct arts_ooo_args_db_snapshot_request_s *a = vargs;
+  struct arts_remote_get_data_packet_s p;
+  p.header.rank = a->requester;
+  p.db_guid = a->db_guid;
+  p.waiter_addr = a->waiter_addr;
+  arts_handler_db_snapshot_request(&p);
+}
+
+static void ooo_h_db_destroy(void *item, void *vargs) {
+  (void)item;
+  struct arts_ooo_args_db_destroy_s *a = vargs;
+  struct arts_remote_destroy_req_packet_s p;
+  p.header.rank = a->requester;
+  p.db_guid = a->db_guid;
+  arts_handler_db_destroy(&p);
+}
+
+static void ooo_h_db_writeback(void *item, void *vargs) {
+  (void)item;
+  struct arts_ooo_args_db_writeback_s *a = vargs;
+  struct arts_remote_writeback_packet_s p;
+  p.header.rank = a->releaser;
+  p.db_guid = a->db_guid;
+  p.version = a->version;
+  p.cv = a->cv;
+  p.flag = a->flag;
+  const void *data = a->data_size > 0 ? (const void *)(a + 1) : NULL;
+  arts_handler_db_writeback(&p, data, a->data_size);
+}
+
+static const arts_ooo_handler_fn g_ooo_table[OOO_KIND_COUNT] = {
+    [OOO_EDT_SATISFY_SLOT] = arts_handler_edt_satisfy_slot,
+    [OOO_EVENT_SATISFY_SLOT] = arts_handler_event_satisfy_slot,
+    [OOO_EVENT_ADD_DEPENDENCE] = arts_handler_event_add_dependence,
+    [OOO_HANDLE_READY_EDT] = ooo_h_handle_ready_edt,
+    [OOO_DB_ACQUIRE] = ooo_h_db_acquire,
+    [OOO_EDT_SATISFY_SLOT_PTR] = arts_handler_edt_satisfy_slot_ptr,
+    [OOO_EPOCH_REQUEST] = arts_handler_epoch_request,
+    [OOO_EPOCH_SEND] = arts_handler_epoch_send,
+    [OOO_EPOCH_INC_ACTIVE] = arts_handler_epoch_inc_active,
+    [OOO_EPOCH_INC_FINISHED] = arts_handler_epoch_inc_finished,
+    [OOO_EPOCH_INC_QUEUE] = arts_handler_epoch_inc_queue,
+    [OOO_DB_OWNERSHIP_REQUEST] = ooo_h_db_ownership_request,
+    [OOO_DB_SNAPSHOT_REQUEST] = ooo_h_db_snapshot_request,
+    [OOO_DB_DESTROY] = ooo_h_db_destroy,
+    [OOO_DB_WRITEBACK] = ooo_h_db_writeback,
+};
+
+/* ===== payload alloc ====================================================== */
+
+static struct arts_ooo_payload_s *
+arts_ooo_payload_alloc(ooo_kind_t kind, const void *args, uint32_t args_size) {
+  struct arts_ooo_payload_s *p = (struct arts_ooo_payload_s *)arts_malloc(
+      sizeof(struct arts_ooo_payload_s) + args_size);
+  p->kind = kind;
+  p->args_size = args_size;
+  if (args_size > 0 && args != NULL) {
+    memcpy(arts_ooo_payload_args(p), args, args_size);
+  }
+  return p;
+}
+
+/* ===== dispatch_or_defer ================================================== */
+
+void arts_ooo_dispatch_or_defer(struct arts_route_item_s *slot,
+                                struct arts_ooo_payload_s *payload,
+                                ooo_kind_t kind, const void *args,
+                                uint32_t args_size) {
+  /* Per-call acquire: (re)load the slot value every entry so a destroy that
+   * NULLed it earlier in the same drain walk is observed here. */
+  arts_shared_ptr_t h = arts_atomic_shared_load(&slot->value);
+  if (h) {
+    void *item = arts_shared_get(h);
+    /* Ref pinned across the whole handler call — a concurrent destroy's
+     * exchange-to-NULL drops only the install ref; `h` keeps the object alive
+     * until we release below. */
+    g_ooo_table[kind](item, (void *)args);
+    arts_shared_release(&h);
+    if (payload != NULL) {
+      arts_free(payload); /* drain context: the popped node is consumed */
     }
+    return;
+  }
+
+  /* Miss — defer. */
+  if (payload == NULL) {
+    payload = arts_ooo_payload_alloc(kind, args, args_size); /* fresh entry */
+  }
+  /* else: drain re-entry — reuse the same payload (no alloc/free).
+   *
+   * The oooList is consumed ONLY by whole-chain reverse_drain (a single
+   * atomic_exchange of the head); there is deliberately NO single-node pop.
+   * That is what makes re-pushing a node back onto the same stack ABA-safe
+   * under allocator address reuse — a push only links to "whatever is on top
+   * now" and never caches a head->next for a CAS.  Do NOT add a single-node
+   * pop on this stack. */
+  arts_lf_stack_push(&slot->oooList, &payload->link);
+
+  /* TOCTOU rescue: an installer may have published value between our initial
+   * load and the push above.  A full fence before the re-check guarantees we
+   * observe that install rather than a stale pre-install NULL: the installer's
+   * value-store is sequenced before its reverse_drain (an atomic_exchange of
+   * the very head our push just CAS'd), so without the fence a node pushed
+   * just after the installer's drain snapshot could be stranded on weak memory
+   * models.  If installed, drain so our node is not left waiting. */
+  atomic_thread_fence(memory_order_seq_cst);
+  h = arts_atomic_shared_load(&slot->value);
+  if (h) {
+    arts_shared_release(&h);
+    arts_ooo_drain(slot);
   }
 }
 
-void arts_out_of_order_event_satisfy_slot(arts_guid_t wait_on,
-                                          arts_guid_t event_guid,
-                                          arts_guid_t data_guid, uint32_t slot,
-                                          bool force) {
-  struct oo_event_satisfy_slot_s *event =
-      (struct oo_event_satisfy_slot_s *)arts_malloc(
-          sizeof(struct oo_event_satisfy_slot_s));
-  event->type = OO_EVENT_SATISFY_SLOT;
-  event->event_guid = event_guid;
-  event->data_guid = data_guid;
-  event->slot = slot;
-  if (force) {
-    arts_route_table_add_oo_existing(wait_on, event, false);
-  } else {
-    bool res = arts_route_table_add_oo(wait_on, event, false);
-    if (!res) {
-      arts_event_satisfy_slot(event_guid, data_guid, slot);
-      arts_free(event);
-    }
+void arts_ooo_dispatch_or_defer_guid(arts_guid_t guid, ooo_kind_t kind,
+                                     const void *args, uint32_t args_size) {
+  arts_route_item_t *slot;
+  arts_route_table_reserve_or_lookup(guid, &slot);
+  arts_ooo_dispatch_or_defer(slot, NULL, kind, args, args_size);
+}
+
+void arts_ooo_push_guid(arts_guid_t guid, ooo_kind_t kind, const void *args,
+                        uint32_t args_size) {
+  arts_route_item_t *slot;
+  arts_route_table_reserve_or_lookup(guid, &slot);
+  struct arts_ooo_payload_s *payload =
+      arts_ooo_payload_alloc(kind, args, args_size);
+  arts_lf_stack_push(&slot->oooList, &payload->link);
+}
+
+/* ===== drain ============================================================== */
+
+void arts_ooo_drain(struct arts_route_item_s *slot) {
+  /* One snapshot, walked once.  Re-pushed misses land on a fresh chain and
+   * await the next install's drain. */
+  arts_lf_link_t *head = arts_lf_stack_reverse_drain(&slot->oooList);
+  while (head != NULL) {
+    /* Save next first: dispatch_or_defer may re-push this node (re-setting its
+     * link->next) on a miss. */
+    arts_lf_link_t *next =
+        atomic_load_explicit(&head->next, memory_order_relaxed);
+    struct arts_ooo_payload_s *payload = (struct arts_ooo_payload_s *)head;
+    arts_ooo_dispatch_or_defer(slot, payload, payload->kind,
+                               arts_ooo_payload_args(payload),
+                               payload->args_size);
+    head = next;
   }
 }
 
-void arts_out_of_order_add_dependence(arts_guid_t source,
-                                      arts_guid_t destination, uint32_t slot,
-                                      arts_db_access_mode_t mode,
-                                      arts_guid_t wait_on) {
-  struct oo_add_dependence_s *dep = (struct oo_add_dependence_s *)arts_malloc(
-      sizeof(struct oo_add_dependence_s));
-  dep->type = OO_ADD_DEPENDENCE;
-  dep->source = source;
-  dep->destination = destination;
-  dep->slot = slot;
-  dep->mode = mode;
-  bool res = arts_route_table_add_oo(wait_on, dep, false);
-  if (!res) {
-    arts_add_dependence(source, destination, slot, mode);
-    arts_free(dep);
-  }
+void arts_ooo_drain_guid(arts_guid_t guid) {
+  arts_route_item_t *slot;
+  arts_route_table_reserve_or_lookup(guid, &slot);
+  arts_ooo_drain(slot);
 }
 
-void arts_out_of_order_handle_ready_edt(arts_guid_t trigger_guid,
-                                        struct arts_edt_s *edt) {
-  struct oo_handle_ready_edt_s *ready_edt =
-      (struct oo_handle_ready_edt_s *)arts_malloc(
-          sizeof(struct oo_handle_ready_edt_s));
-  ready_edt->type = OO_HANDLE_READY_EDT;
-  ready_edt->edt = edt;
-  bool res = arts_route_table_add_oo(trigger_guid, ready_edt, false);
-  if (!res) {
-    arts_handle_ready_edt(edt);
-    arts_free(ready_edt);
-  }
-}
-
-/*
- * arts_out_of_order_handle_db_request — Queue a DB acquisition for deferred
- *   resolution when the DB does not yet exist in the route table.
- *
- * If the DB becomes available before the OO entry is added (race), the
- * callback fires immediately.
- */
-void arts_out_of_order_handle_db_request(arts_guid_t db_guid,
-                                         struct arts_edt_s *edt,
-                                         unsigned int slot, bool inc) {
-  ARTS_DEBUG("OO db_request: DB[Guid:%lu] -> EDT[Guid:%lu] slot=%u inc=%d",
-             db_guid, edt->current_edt, slot, inc);
-  struct oo_db_request_satisfy_s *req =
-      (struct oo_db_request_satisfy_s *)arts_malloc(
-          sizeof(struct oo_db_request_satisfy_s));
-  req->type = OO_DB_REQUEST_SATISFY;
-  req->edt = edt;
-  req->slot = slot;
-  bool res = arts_route_table_add_oo(db_guid, req, inc);
-  if (!res) {
-    ARTS_DEBUG(
-        "OO db_request: DB[Guid:%lu] already available — immediate callback",
-        db_guid);
-    struct arts_db_s *db = arts_route_table_lookup_db_safe(db_guid);
-    arts_db_request_callback(req->edt, req->slot, db);
-    if (db) {
-      arts_route_table_release(db_guid);
-    }
-    arts_free(req);
-  }
-}
-
-/* arts_out_of_order_handle_db_request_with_oo_list removed: legacy
- * arts_out_of_order_list_s + arts_route_table_get_oo_list path is gone,
- * no callers, replaced by arts_route_table_add_oo_ex. */
-
-void arts_out_of_order_get_from_db(arts_guid_t edt_guid, arts_guid_t db_guid,
-                                   unsigned int slot, unsigned int offset,
-                                   unsigned int size) {
-  struct oo_get_from_db_s *req =
-      (struct oo_get_from_db_s *)arts_malloc(sizeof(struct oo_get_from_db_s));
-  req->type = OO_GET_FROM_DB;
-  req->edt_guid = edt_guid;
-  req->db_guid = db_guid;
-  req->slot = slot;
-  req->offset = offset;
-  req->size = size;
-  bool res = arts_route_table_add_oo(db_guid, req, false);
-  if (!res) {
-    arts_db_get(
-        req->edt_guid, req->db_guid, req->slot, req->offset, req->size,
-        &(arts_db_op_hint_t){.rank = arts_global_rank_id, .epoch = NULL_GUID});
-    arts_free(req);
-  }
-}
-
-void arts_out_of_order_signal_edt_with_ptr(arts_guid_t edt_guid,
-                                           arts_guid_t db_guid, void *ptr,
-                                           unsigned int size,
-                                           unsigned int slot) {
-  struct oo_signal_edt_ptr_s *req = (struct oo_signal_edt_ptr_s *)arts_malloc(
-      sizeof(struct oo_signal_edt_ptr_s));
-  req->type = OO_SIGNAL_EDT_PTR;
-  req->edt_guid = edt_guid;
-  req->db_guid = db_guid;
-  req->size = size;
-  req->slot = slot;
-  if (size > 0) {
-    req->ptr = arts_malloc(size);
-    memcpy(req->ptr, ptr, size);
-  } else {
-    req->ptr = ptr;
-  }
-  bool res = arts_route_table_add_oo(edt_guid, req, false);
-  if (!res) {
-    internal_signal_edt(req->edt_guid, req->slot, NULL_GUID, DB_MODE_PTR,
-                        req->ptr, req->size);
-    arts_free(req->ptr);
-    arts_free(req);
-  }
-}
-
-void arts_out_of_order_put_in_db(void *ptr, arts_guid_t edt_guid,
-                                 arts_guid_t db_guid, unsigned int slot,
-                                 unsigned int offset, unsigned int size,
-                                 arts_guid_t epoch_guid) {
-  struct oo_put_in_db_s *req =
-      (struct oo_put_in_db_s *)arts_malloc(sizeof(struct oo_put_in_db_s));
-  req->type = OO_PUT_IN_DB;
-  req->ptr = ptr;
-  req->edt_guid = edt_guid;
-  req->db_guid = db_guid;
-  req->slot = slot;
-  req->offset = offset;
-  req->size = size;
-  req->epoch_guid = epoch_guid;
-  bool res = arts_route_table_add_oo(db_guid, req, false);
-  if (!res) {
-    internal_put_in_db(req->ptr, req->edt_guid, req->db_guid, req->slot,
-                       req->offset, req->size, req->epoch_guid,
-                       arts_global_rank_id);
-    arts_free(req->ptr);
-    arts_free(req);
-  }
-}
-
-void arts_out_of_order_inc_active_epoch(arts_guid_t epoch_guid) {
-  struct oo_epoch_s *req =
-      (struct oo_epoch_s *)arts_malloc(sizeof(struct oo_epoch_s));
-  req->type = OO_EPOCH_ACTIVE;
-  req->guid = epoch_guid;
-  bool res = arts_route_table_add_oo(epoch_guid, req, false);
-  if (!res) {
-    increment_active_epoch(epoch_guid);
-    arts_free(req);
-  }
-}
-
-void arts_out_of_order_inc_finished_epoch(arts_guid_t epoch_guid) {
-  struct oo_epoch_s *req =
-      (struct oo_epoch_s *)arts_malloc(sizeof(struct oo_epoch_s));
-  req->type = OO_EPOCH_FINISH;
-  req->guid = epoch_guid;
-  bool res = arts_route_table_add_oo(epoch_guid, req, false);
-  if (!res) {
-    increment_finished_epoch(epoch_guid);
-    arts_free(req);
-  }
-}
-
-void arts_out_of_order_send_epoch(arts_guid_t epoch_guid, unsigned int source,
-                                  unsigned int dest) {
-  struct oo_epoch_send_s *req =
-      (struct oo_epoch_send_s *)arts_malloc(sizeof(struct oo_epoch_send_s));
-  req->type = OO_EPOCH_SEND;
-  req->source = source;
-  req->dest = dest;
-  bool res = arts_route_table_add_oo(epoch_guid, req, false);
-  if (!res) {
-    send_epoch(epoch_guid, source, dest);
-    arts_free(req);
-  }
-}
-
-void arts_out_of_order_inc_queue_epoch(arts_guid_t epoch_guid) {
-  struct oo_epoch_s *req =
-      (struct oo_epoch_s *)arts_malloc(sizeof(struct oo_epoch_s));
-  req->type = OO_EPOCH_INC_QUEUE;
-  req->guid = epoch_guid;
-  bool res = arts_route_table_add_oo(epoch_guid, req, false);
-  if (!res) {
-    increment_queue_epoch(epoch_guid);
-    arts_free(req);
+void arts_ooo_free_all(struct arts_route_item_s *slot) {
+  arts_lf_link_t *head = arts_lf_stack_reverse_drain(&slot->oooList);
+  while (head != NULL) {
+    arts_lf_link_t *next =
+        atomic_load_explicit(&head->next, memory_order_relaxed);
+    arts_free((struct arts_ooo_payload_s *)head);
+    head = next;
   }
 }

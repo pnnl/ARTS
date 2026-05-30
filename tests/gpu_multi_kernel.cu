@@ -106,7 +106,7 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
 
-  unsigned int total_gpus = arts_get_total_gpus();
+  unsigned int total_gpus = arts_get_gpus_per_rank();
   unsigned int node_id = arts_get_current_rank();
 
   if (total_gpus == 0) {

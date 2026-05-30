@@ -70,6 +70,16 @@ bool arts_event_create_internal(arts_guid_t *guid,
  * stack, returns nodes to the per-rank pool, and frees the struct. */
 void arts_event_free_internal(struct arts_event_s *e);
 
+/* arts_event_add_dependence — entity-specific API (src=event): register a
+ * dependent on an event source.  arts_add_dependence's event-source branch
+ * delegates here. */
+void arts_event_add_dependence(arts_guid_t source, arts_guid_t destination,
+                               uint32_t slot, arts_db_access_mode_t mode);
+
+/* OoO replay handlers (g_ooo_table) — operate on the acquired event. */
+void arts_handler_event_satisfy_slot(void *item, void *args);
+void arts_handler_event_add_dependence(void *item, void *args);
+
 #ifdef __cplusplus
 }
 #endif
