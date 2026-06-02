@@ -95,7 +95,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   void *p3 = NULL;
   arts_guid_t db3 = arts_db_create(&p3, sizeof(int), ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
   ((int *)p3)[0] = 777;
-  arts_db_release(db3);
+  arts_db_release(db3, DB_MODE_RW);
 
   arts_guid_t e3 = arts_edt_create(verify_new_db, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   arts_add_dependence(db3, e3, 0, DB_MODE_RO);

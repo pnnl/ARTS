@@ -43,7 +43,6 @@ extern "C" {
 #endif
 
 #include "arts/runtime_types.h"
-#include "arts/utils/array_list.h"
 #include "arts/utils/atomics.h"
 
 extern volatile uint64_t outstanding_edts;
@@ -55,14 +54,12 @@ void check_out_edts(uint64_t threshold);
   arts_atomic_fetch_sub_u64(&outstanding_edts, num_edts)
 #define CHECK_OUTSTANDING_EDTS(threshold) check_out_edts(threshold)
 
-bool arts_edt_create_internal(struct arts_edt_s *edt, arts_guid_kind_t mode,
-                              arts_guid_t *guid, unsigned int rank,
-                              unsigned int numa_domain, unsigned int edt_space,
-                              arts_edt_t func_ptr, uint32_t paramc,
-                              const uint64_t *paramv, uint32_t depc,
-                              bool use_epoch, arts_guid_t epoch_guid,
-                              uint64_t arts_id, uint32_t flags);
-void arts_edt_free(struct arts_edt_s *edt);
+bool arts_edt_create_core(struct arts_edt_s *edt, arts_guid_kind_t guid_kind,
+                          arts_guid_t *guid, unsigned int rank,
+                          unsigned int edt_space, arts_edt_t func_ptr,
+                          uint32_t paramc, const uint64_t *paramv,
+                          uint32_t depc, bool use_epoch, arts_guid_t epoch_guid,
+                          uint64_t arts_id, uint32_t flags);
 void arts_edt_delete(struct arts_edt_s *edt);
 /* deleter pointer for foreign TUs that allocate arts_edt_s stubs
  * (e.g. remote handler.c arts_handler_edt_create's race-loser cleanup). */
@@ -71,7 +68,7 @@ void (*arts_edt_get_deleter(void))(void *);
 /* arts_edt_satisfy_slot — OCR-standard API: supply depv[slot] on an EDT
  * (home-routed: local→dispatch_or_defer, remote→MSG_EDT_SATISFY_SLOT).
  * arts_signal_edt is a deprecated alias of the same signature. */
-void arts_edt_satisfy_slot(arts_guid_t edt_packet, uint32_t slot,
+void arts_edt_satisfy_slot(arts_guid_t edt_guid, uint32_t slot,
                            arts_guid_t data_guid, arts_db_access_mode_t mode,
                            void *ptr, unsigned int size);
 
@@ -79,27 +76,26 @@ void arts_edt_satisfy_slot(arts_guid_t edt_packet, uint32_t slot,
 void arts_handler_edt_satisfy_slot(void *item, void *args);
 void arts_handler_edt_satisfy_slot_ptr(void *item, void *args);
 
-typedef struct {
-  arts_guid_t current_edt_guid;
-  struct arts_edt_s *current_edt;
-  void *epoch_list;
-  void *created_db_list;
-} thread_local_t;
+/* Cross-rank wire TX/RX for EDT create + slot satisfy.
+ * arts_send_memory_move is the generic create-marshaller (also used by the
+ * event-create path), so it lives here and is declared for that caller. */
+void arts_send_memory_move(unsigned int rank, arts_guid_t guid, void *ptr,
+                           unsigned int mem_size, unsigned message_type,
+                           void (*free_method)(void *));
+void arts_handler_edt_create(void *ptr);
+/* Cross-rank EDT destroy: forward to home (arts_send_edt_destroy) + home-rank
+ * wire handler (arts_handler_edt_destroy, OoO-deferred on before-create). */
+void arts_send_edt_destroy(unsigned int home_rank, arts_guid_t guid);
+void arts_handler_edt_destroy(void *ptr);
+void arts_send_edt_satisfy_slot(arts_guid_t edt, arts_guid_t db, uint32_t slot,
+                                arts_db_access_mode_t mode, void *ptr,
+                                unsigned int size);
 
-void arts_set_thread_local_edt_info(struct arts_edt_s *edt);
-void arts_unset_thread_local_edt_info();
-void arts_save_thread_local(thread_local_t *tl);
-void arts_restore_thread_local(thread_local_t *tl);
-
-bool arts_set_current_epoch_guid(arts_guid_t epoch_guid);
-arts_guid_t *arts_check_epoch_is_root(arts_guid_t to_check);
-void arts_increment_finished_epoch_list();
+/* Per-worker EDT-execution context (current_edt, epoch stack, created-DB
+ * tracking, ctx save/restore) is declared in arts/sync/edt_context.h. */
 
 void *arts_get_depv(void *edt_ptr);
 
-void arts_track_created_db(arts_guid_t guid);
-arts_array_list_t *arts_get_created_db_list(void);
-void arts_cleanup_edt_tls(void);
 #ifdef __cplusplus
 }
 #endif

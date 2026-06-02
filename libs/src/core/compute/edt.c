@@ -43,17 +43,17 @@
 #include <string.h>
 
 #include "arts/gas/guid.h"
-#include "arts/gas/out_of_order.h"
 #include "arts/gas/route_table.h"
-#include "arts/remote/handler.h"
 #include "arts/runtime_state.h"
 #include "arts/runtime_types.h"
+#include "arts/sync/edt_context.h" /* current_edt + run-start/end ctx hooks */
 #include "arts/sync/epoch.h"
-#include "arts/sync/shared.h" /* arts_shared_ptr_t, get/release */
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
-#include "arts/utils/array_list.h"
+#include "arts/transport/outbox.h"   /* outbound send helpers */
+#include "arts/transport/protocol.h" /* wire packet structs */
 #include "arts/utils/atomics.h"
+#include "arts/utils/shared.h" /* arts_shared_ptr_t, get/release */
 
 #ifdef ARTS_USE_GPU
 #include "arts/gpu/gpu_internal.h"
@@ -64,161 +64,10 @@
 #include "arts/cxl/deque.h"
 #endif
 
-#define MAX_EPOCH_ARRAY_LIST 32
-
-extern unsigned int num_numa_domains;
-
-ARTS_THREAD_LOCAL arts_array_list_t *epoch_list = NULL;
-ARTS_THREAD_LOCAL struct arts_edt_s *current_edt = NULL;
-ARTS_THREAD_LOCAL arts_array_list_t *created_db_list = NULL;
-
-bool arts_set_current_epoch_guid(arts_guid_t epoch_guid) {
-  if (epoch_guid) {
-    if (!epoch_list) {
-      epoch_list = arts_new_array_list(sizeof(arts_guid_t), 8);
-    }
-    arts_push_to_array_list(epoch_list, &epoch_guid);
-    if (current_edt) {
-      current_edt->epoch_guid = epoch_guid;
-      return true;
-    }
-  }
-  return false;
-}
-
-arts_guid_t arts_epoch_get_current_guid() {
-  if (epoch_list) {
-    uint64_t length = arts_length_array_list(epoch_list);
-    if (length) {
-      arts_guid_t *guid =
-          (arts_guid_t *)arts_get_from_array_list(epoch_list, length - 1);
-      return *guid;
-    }
-  }
-  return NULL_GUID;
-}
-
-arts_guid_t *arts_check_epoch_is_root(arts_guid_t to_check) {
-  if (epoch_list) {
-    uint64_t length = arts_length_array_list(epoch_list);
-    for (uint64_t i = 0; i < length; i++) {
-      arts_guid_t *guid =
-          (arts_guid_t *)arts_get_from_array_list(epoch_list, i);
-      if (*guid == to_check) {
-        return guid;
-      }
-    }
-  }
-  ARTS_INFO("ERROR %lu is not a valid epoch", to_check);
-  return NULL;
-}
-
-void arts_track_created_db(arts_guid_t guid) {
-  if (!created_db_list) {
-    created_db_list = arts_new_array_list(sizeof(arts_guid_t), 65536);
-  }
-  arts_push_to_array_list(created_db_list, &guid);
-}
-
-arts_array_list_t *arts_get_created_db_list(void) { return created_db_list; }
-
-void arts_set_thread_local_edt_info(struct arts_edt_s *edt) {
-  arts_thread_info.current_edt_guid = edt->guid;
-  current_edt = edt;
-
-  if (epoch_list) {
-    arts_reset_array_list(epoch_list);
-  }
-
-  if (created_db_list) {
-    arts_reset_array_list(created_db_list);
-  }
-
-  arts_set_current_epoch_guid(current_edt->epoch_guid);
-}
-
-void arts_save_thread_local(thread_local_t *tl) {
-  TIME_CONTEXT_SWITCH_START();
-  tl->current_edt_guid = arts_thread_info.current_edt_guid;
-  tl->current_edt = current_edt;
-  tl->epoch_list = (void *)epoch_list;
-  tl->created_db_list = (void *)created_db_list;
-
-  arts_thread_info.current_edt_guid = NULL_GUID;
-  current_edt = NULL;
-  epoch_list = NULL;
-  created_db_list = NULL;
-  TIME_CONTEXT_SWITCH_STOP();
-}
-
-void arts_restore_thread_local(thread_local_t *tl) {
-  TIME_CONTEXT_SWITCH_START();
-  arts_thread_info.current_edt_guid = tl->current_edt_guid;
-  current_edt = tl->current_edt;
-  if (epoch_list) {
-    arts_delete_array_list(epoch_list);
-  }
-  epoch_list = (arts_array_list_t *)tl->epoch_list;
-  if (created_db_list) {
-    arts_delete_array_list(created_db_list);
-  }
-  created_db_list = (arts_array_list_t *)tl->created_db_list;
-  TIME_CONTEXT_SWITCH_STOP();
-}
-
-void arts_cleanup_edt_tls() {
-  if (epoch_list) {
-    arts_delete_array_list(epoch_list);
-    epoch_list = NULL;
-  }
-  if (created_db_list) {
-    arts_delete_array_list(created_db_list);
-    created_db_list = NULL;
-  }
-}
-
-void arts_increment_finished_epoch_list() {
-  if (epoch_list) {
-
-    unsigned int epoch_array_length = arts_length_array_list(epoch_list);
-    for (unsigned int i = 0; i < epoch_array_length; i++) {
-      arts_guid_t *guid =
-          (arts_guid_t *)arts_get_from_array_list(epoch_list, i);
-#if ARTS_LOG_LEVEL >= 2
-      uint64_t current_id = current_edt ? current_edt->arts_id : 0;
-      ARTS_INFO("Current EDT[Id:%lu, Guid:%lu] - Unsetting Epoch [Guid:%lu]",
-                current_id, arts_thread_info.current_edt_guid, *guid);
-#endif
-      if (*guid) {
-        increment_finished_epoch(*guid);
-      }
-    }
-
-    if (epoch_array_length > MAX_EPOCH_ARRAY_LIST) {
-      arts_delete_array_list(epoch_list);
-      epoch_list = NULL;
-    } else {
-      arts_reset_array_list(epoch_list);
-    }
-  }
-  arts_shutdown_epoch_inc_finished();
-}
-
-void arts_unset_thread_local_edt_info() {
-  arts_increment_finished_epoch_list();
-  /* finish_event tracking: emit DECR on completion of the current EDT.
-   * - Inherited finish_event: balances the INCR emitted at create time.
-   * - Own (ARTS_EDT_FLAG_FINISH or cross-node proxy) finish_event:
-   *   counter==0 fires the latch, propagating DECR to the parent's
-   *   finish_event via the dep registered at allocation.
-   * `current_edt` is still valid here (cleared on the next line). */
-  if (current_edt && current_edt->finish_event != NULL_GUID) {
-    arts_event_satisfy_slot(current_edt->finish_event, NULL_GUID,
-                            ARTS_EVENT_LATCH_DECR_SLOT);
-  }
-  arts_thread_info.current_edt_guid = NULL_GUID;
-  current_edt = NULL;
-}
+/* Per-worker EDT-execution context (current_edt, epoch stack, created-DB
+ * tracking + save/restore snapshot) lives in sync/edt_context.c.  edt.c reads
+ * `current_edt` directly and calls the run-start/run-end context hooks below
+ * via that header. */
 
 /*
  * arts_edt_deleter — shared_t deleter.
@@ -231,6 +80,9 @@ void arts_unset_thread_local_edt_info() {
  * Static-file-scope; remote handler.c reaches the same pointer via
  * arts_edt_get_deleter() so there's a single source of truth.
  */
+/* canonical struct-free path; sole caller is arts_edt_deleter in this TU. */
+static void arts_edt_free(struct arts_edt_s *edt);
+
 /* cb deleter (route_table deleter-by-kind for ARTS_GUID_EDT).  External
  * linkage so route_table.c can reference it directly. */
 void arts_edt_deleter(void *self) { arts_edt_free((struct arts_edt_s *)self); }
@@ -246,7 +98,7 @@ __attribute__((constructor)) static void arts_edt_register_cb_deleter(void) {
 void (*arts_edt_get_deleter(void))(void *) { return arts_edt_deleter; }
 
 /*
- * arts_edt_create_internal — Core EDT allocation and registration.
+ * arts_edt_create_core — Core EDT allocation and registration.
  *
  * Allocates the EDT struct (header + paramv + depv + modes), assigns its GUID,
  * copies parameters, registers with the epoch system, and places the EDT into
@@ -254,7 +106,7 @@ void (*arts_edt_get_deleter(void))(void *) { return arts_edt_deleter; }
  *
  * Two paths exist depending on whether a GUID was pre-reserved:
  *   1. New GUID (created_guid == true):
- *        - arts_route_table_add_item (no race — nobody else knows the GUID
+ *        - arts_route_table_install (no race — nobody else knows the GUID
  * yet).
  *        - If depc == 0, the EDT is immediately ready.
  *   2. Pre-reserved GUID (created_guid == false):
@@ -270,13 +122,12 @@ void (*arts_edt_get_deleter(void))(void *) { return arts_edt_deleter; }
  *   - The EDT must NOT be visible (in the route table) while its fields
  *     are still being written.
  */
-bool arts_edt_create_internal(struct arts_edt_s *edt, arts_guid_kind_t mode,
-                              arts_guid_t *guid, unsigned int rank,
-                              unsigned int numa_domain, unsigned int edt_space,
-                              arts_edt_t func_ptr, uint32_t paramc,
-                              const uint64_t *paramv, uint32_t depc,
-                              bool use_epoch, arts_guid_t epoch_guid,
-                              uint64_t arts_id, uint32_t flags) {
+bool arts_edt_create_core(struct arts_edt_s *edt, arts_guid_kind_t guid_kind,
+                          arts_guid_t *guid, unsigned int rank,
+                          unsigned int edt_space, arts_edt_t func_ptr,
+                          uint32_t paramc, const uint64_t *paramv,
+                          uint32_t depc, bool use_epoch, arts_guid_t epoch_guid,
+                          uint64_t arts_id, uint32_t flags) {
   if (!edt) {
     edt = (struct arts_edt_s *)arts_calloc_align(1, edt_space, 16);
   }
@@ -294,7 +145,7 @@ bool arts_edt_create_internal(struct arts_edt_s *edt, arts_guid_kind_t mode,
   bool created_guid = false;
   if (*guid == NULL_GUID) {
     created_guid = true;
-    edt->guid = *guid = arts_guid_create_for_rank(rank, mode);
+    edt->guid = *guid = arts_guid_create_for_rank(rank, guid_kind);
   } else {
     edt->guid = *guid;
   }
@@ -359,7 +210,7 @@ bool arts_edt_create_internal(struct arts_edt_s *edt, arts_guid_kind_t mode,
 
     if (current_epoch_guid) {
       edt->epoch_guid = current_epoch_guid;
-      increment_active_epoch(current_epoch_guid);
+      arts_epoch_inc_active(current_epoch_guid);
     }
   }
   arts_shutdown_epoch_inc_active();
@@ -404,7 +255,7 @@ bool arts_edt_create_internal(struct arts_edt_s *edt, arts_guid_kind_t mode,
     INC_OUTSTANDING_EDTS(1);
     if (created_guid) {
       /* New GUID path — no race, safe non-atomic insert. */
-      arts_route_table_add_item(edt, *guid, arts_global_rank_id, false);
+      arts_route_table_install(edt, *guid, arts_global_rank_id, false);
       if (edt->depc_needed == 0) {
         ARTS_INFO("EDT[Guid:%lu] immediately ready (depc=0)", *guid);
         arts_handle_ready_edt(edt);
@@ -430,10 +281,14 @@ bool arts_edt_create_internal(struct arts_edt_s *edt, arts_guid_kind_t mode,
       edt->depc_needed = depc + 1;
       ARTS_INFO("EDT[Guid:%lu] pre-reserved path: sentinel depc_needed=%u",
                 *guid, edt->depc_needed);
-      /* add_item_race installs the cb and fires the OoO list internally
-       * (replaying queued signals) — the sentinel set above guarantees those
-       * replays cannot drive depc_needed to 0 before we remove it below. */
-      arts_route_table_add_item_race(edt, *guid, arts_global_rank_id, false);
+      /* add_item installs the cb unconditionally and fires the OoO list
+       * internally (replaying queued signals) — the sentinel set above
+       * guarantees those replays cannot drive depc_needed to 0 before we
+       * remove it below.  An EDT GUID has a single creator (no rendezvous), so
+       * the unconditional install matches the default create contract; on the
+       * normal empty slot it is a plain install, and a (UB) re-create replaces
+       * the prior generation rather than leaking the new object. */
+      arts_route_table_install(edt, *guid, arts_global_rank_id, false);
       unsigned int remaining = arts_atomic_sub(&edt->depc_needed, 1U);
       ARTS_INFO("EDT[Guid:%lu] sentinel removed: depc_needed=%u", *guid,
                 remaining);
@@ -456,7 +311,7 @@ arts_guid_t arts_edt_create(arts_edt_t func_ptr, uint32_t paramc,
    * optional fields are well-defined and follow the documented precedence:
    *   - if .guid != NULL_GUID, the GUID's rank field overrides .rank
    *   - if .epoch == NULL_GUID, the runtime inherits the caller's current
-   *     epoch (handled inside arts_edt_create_internal). */
+   *     epoch (handled inside arts_edt_create_core). */
   arts_edt_hint_t snap = hint
                              ? *hint
                              : (arts_edt_hint_t){.rank = ARTS_HINT_CURRENT_RANK,
@@ -477,15 +332,14 @@ arts_guid_t arts_edt_create(arts_edt_t func_ptr, uint32_t paramc,
   unsigned int edt_space = sizeof(struct arts_edt_s) +
                            (paramc * sizeof(uint64_t)) +
                            (depc * sizeof(arts_edt_dep_t));
-  bool ok = arts_edt_create_internal(NULL, ARTS_GUID_EDT, &guid, rank,
-                                     arts_thread_info.numa_domain_id, edt_space,
-                                     func_ptr, paramc, paramv, depc, true,
-                                     snap.epoch, snap.edt_id, snap.flags);
+  bool ok = arts_edt_create_core(NULL, ARTS_GUID_EDT, &guid, rank, edt_space,
+                                 func_ptr, paramc, paramv, depc, true,
+                                 snap.epoch, snap.edt_id, snap.flags);
   TIME_EDT_CREATE_STOP();
   return ok ? guid : NULL_GUID;
 }
 
-void arts_edt_free(struct arts_edt_s *edt) {
+static void arts_edt_free(struct arts_edt_s *edt) {
   arts_thread_info.edt_free = 1;
   arts_free(edt);
   arts_thread_info.edt_free = 0;
@@ -512,14 +366,53 @@ void arts_edt_delete(struct arts_edt_s *edt) {
   arts_route_table_mark_delete(guid);
 }
 
+/* Destroy a found, pre-runnable EDT (the home-local body shared by the local
+ * API path and the cross-rank wire handler).  `h` is the caller's pin on edt
+ * and is released here.  OCR restricts ocrEdtDestroy to pre-runnable EDTs
+ * (depc_needed > 0); destroying a runnable/queued/running EDT is UB and would
+ * corrupt epoch accounting, so it is skipped.  For a pre-runnable EDT we mirror
+ * the finish path's epoch balancing: the EDT was charged active_count++ at
+ * creation and will never run, so increment finished_count to keep the epoch
+ * fire condition (finished == active) reachable. */
+static void edt_destroy_resolved(struct arts_edt_s *edt, arts_guid_t guid,
+                                 arts_shared_ptr_t h) {
+  if (edt->depc_needed == 0) {
+    ARTS_INFO("EDT destroy on runnable/queued EDT [Guid:%lu] — UB; ignoring",
+              guid);
+    arts_shared_release(&h);
+    return;
+  }
+  arts_guid_t epoch_guid = edt->epoch_guid;
+  arts_shared_release(&h);
+  arts_route_table_mark_delete(guid);
+  if (epoch_guid != NULL_GUID) {
+    arts_epoch_inc_finished(epoch_guid);
+  }
+}
+
+/* Cross-rank send: forward the destroy to the EDT's home rank (symmetric with
+ * arts_send_event_destroy / arts_send_db_destroy). */
+void arts_send_edt_destroy(unsigned int home_rank, arts_guid_t guid) {
+  struct arts_remote_guid_only_packet_s packet;
+  packet.guid = guid;
+  arts_fill_packet_header(&packet.header, sizeof(packet), MSG_EDT_DESTROY);
+  arts_remote_send_request_async((int)home_rank, (char *)&packet,
+                                 sizeof(packet));
+}
+
 void arts_edt_destroy(arts_guid_t guid) {
-  /* read needed fields under a paired safe lookup, then route
-   * the destruction through arts_route_table_mark_delete.  The deleter
-   * (arts_edt_deleter) handles the actual struct free once the install
-   * ref + any outstanding acquire refs are returned. */
+  /* A GUID's home rank is authoritative; an EDT homed elsewhere is destroyed
+   * at its home (the route_table entry + epoch accounting live there). */
+  unsigned int home = arts_guid_get_rank(guid);
+  if (home != arts_global_rank_id) {
+    arts_send_edt_destroy(home, guid);
+    return;
+  }
   arts_shared_ptr_t h = arts_route_table_lookup_edt(guid);
   struct arts_edt_s *edt = (struct arts_edt_s *)arts_shared_get(h);
   if (!edt) {
+    /* Home-local destroy of an absent GUID: genuinely never-created or already
+     * destroyed (no before-create reorder possible for a local create). */
     ARTS_INFO("EDT destroy missing [Guid:%lu] on rank %u", guid,
               arts_global_rank_id);
     return;
@@ -527,28 +420,26 @@ void arts_edt_destroy(arts_guid_t guid) {
   ARTS_INFO("EDT destroy [Guid:%lu, Id:%lu, Depc:%u, DepcNeeded:%u] on rank %u",
             edt->guid, edt->arts_id, edt->depc, edt->depc_needed,
             arts_global_rank_id);
-  /* OCR spec restricts ocrEdtDestroy to pre-runnable EDTs (depc_needed > 0
-   * means dependences are not yet all met).  Calling on a runnable/queued/
-   * running EDT is undefined behavior; we additionally would corrupt epoch
-   * accounting (queued/finished_count would double-count).  Skip free in
-   * that case — the EDT is owned by a worker now. */
-  if (edt->depc_needed == 0) {
-    ARTS_INFO("EDT destroy on runnable/queued EDT [Guid:%lu] — UB; ignoring",
-              guid);
-    arts_shared_release(&h);
+  edt_destroy_resolved(edt, guid, h);
+}
+
+/* Home-rank wire handler for MSG_EDT_DESTROY.  Symmetric with
+ * arts_handler_event_destroy / arts_handler_db_destroy: if the EDT create
+ * raced behind this destroy (before-create wire reorder), defer via the OoO
+ * list (OOO_EDT_DESTROY) and replay once the create handler installs + drains;
+ * otherwise run the destroy body directly. */
+void arts_handler_edt_destroy(void *ptr) {
+  struct arts_remote_guid_only_packet_s *packet =
+      (struct arts_remote_guid_only_packet_s *)ptr;
+  arts_guid_t guid = packet->guid;
+  arts_shared_ptr_t h = arts_route_table_lookup_edt(guid);
+  struct arts_edt_s *edt = (struct arts_edt_s *)arts_shared_get(h);
+  if (!edt) {
+    struct arts_ooo_args_edt_destroy_s args = {.guid = guid};
+    arts_ooo_dispatch_or_defer_guid(guid, OOO_EDT_DESTROY, &args, sizeof(args));
     return;
   }
-  /* Mirror the epoch counter balancing that the normal finish path does:
-   * the EDT was registered with active_count++ at creation time, but will
-   * never run, so we increment finished_count to keep the epoch fire
-   * condition (finished_count == active_count) reachable.  Pre-runnable
-   * EDTs were never queued, so the queued counter does not need touching. */
-  arts_guid_t epoch_guid = edt->epoch_guid;
-  arts_shared_release(&h);
-  arts_route_table_mark_delete(guid);
-  if (epoch_guid != NULL_GUID) {
-    increment_finished_epoch(epoch_guid);
-  }
+  edt_destroy_resolved(edt, guid, h);
 }
 
 void *arts_get_depv(void *edt_ptr) {
@@ -670,7 +561,7 @@ void arts_handler_edt_satisfy_slot_ptr(void *item, void *vargs) {
  *                  wrapper's slot; the replay re-signals this EDT after drain.
  * The satisfy logic lives once in edt_apply_satisfy (the handler); this entry
  * only routes.  arts_signal_edt is a deprecated alias of the same signature. */
-void arts_edt_satisfy_slot(arts_guid_t edt_packet, uint32_t slot,
+void arts_edt_satisfy_slot(arts_guid_t edt_guid, uint32_t slot,
                            arts_guid_t data_guid, arts_db_access_mode_t mode,
                            void *ptr, unsigned int size) {
   TIME_EDT_SIGNAL_START();
@@ -689,25 +580,25 @@ void arts_edt_satisfy_slot(arts_guid_t edt_packet, uint32_t slot,
     /* CDAG: hold the satisfy until the GPU wrapper EDT's invalidations drain.
      */
     if (mode == DB_MODE_PTR) {
-      edt_defer_satisfy_ptr(edt_packet, data_guid, slot, ptr, size);
+      edt_defer_satisfy_ptr(edt_guid, data_guid, slot, ptr, size);
     } else {
-      struct arts_ooo_args_edt_satisfy_s a = {.edt_guid = edt_packet,
+      struct arts_ooo_args_edt_satisfy_s a = {.edt_guid = edt_guid,
                                               .data_guid = data_guid,
                                               .slot = slot,
                                               .mode = mode};
       arts_ooo_push_guid(current_edt->guid, OOO_EDT_SATISFY_SLOT, &a,
                          sizeof(a));
     }
-  } else if (arts_guid_get_rank(edt_packet) == arts_global_rank_id) {
+  } else if (arts_guid_get_rank(edt_guid) == arts_global_rank_id) {
     /* Local home: acquire-or-defer; the handler supplies the dep slot. */
     if (mode == DB_MODE_PTR) {
-      edt_defer_satisfy_ptr(edt_packet, data_guid, slot, ptr, size);
+      edt_defer_satisfy_ptr(edt_guid, data_guid, slot, ptr, size);
     } else {
-      edt_defer_satisfy(edt_packet, data_guid, slot, mode);
+      edt_defer_satisfy(edt_guid, data_guid, slot, mode);
     }
   } else {
     /* Remote home: one satisfy message carries mode + (DB_MODE_PTR) payload. */
-    arts_send_edt_satisfy_slot(edt_packet, data_guid, slot, mode, ptr, size);
+    arts_send_edt_satisfy_slot(edt_guid, data_guid, slot, mode, ptr, size);
   }
   TIME_EDT_SIGNAL_STOP();
 }
@@ -721,8 +612,6 @@ void check_out_edts(uint64_t threshold) {
 }
 
 void arts_lc_sync(arts_guid_t edt_guid, uint32_t slot, arts_guid_t data_guid) {
-  arts_guid_kind_t type = arts_guid_get_kind(data_guid);
-  (void)type;
   arts_edt_satisfy_slot(edt_guid, slot, data_guid,
                         (arts_db_access_mode_t)DB_MODE_LC_SYNC, NULL, 0);
 }
@@ -758,4 +647,138 @@ arts_guid_t arts_edt_get_finish_event(arts_guid_t edt_guid) {
   arts_guid_t fe = edt->finish_event;
   arts_shared_release(&h);
   return fe;
+}
+
+void arts_send_memory_move(unsigned int rank, arts_guid_t guid, void *ptr,
+                           unsigned int mem_size, unsigned message_type,
+                           void (*free_method)(void *)) {
+  TIME_REMOTE_MOVE_START();
+  struct arts_remote_guid_only_packet_s packet;
+  arts_fill_packet_header(&packet.header, sizeof(packet) + mem_size,
+                          message_type);
+  packet.guid = guid;
+  arts_remote_send_request_payload_async_free((int)rank, (char *)&packet,
+                                              sizeof(packet), (char *)ptr, 0,
+                                              mem_size, free_method);
+  /* route_table slot now persists; Lifecycle redesign is follow-up work. */
+  (void)guid;
+  TIME_REMOTE_MOVE_STOP();
+}
+
+void arts_handler_edt_create(void *ptr) {
+  struct arts_remote_guid_only_packet_s *packet =
+      (struct arts_remote_guid_only_packet_s *)ptr;
+  uint64_t size =
+      packet->header.size - sizeof(struct arts_remote_guid_only_packet_s);
+  struct arts_edt_s *edt = (struct arts_edt_s *)arts_malloc_align(size, 16);
+
+  memcpy(edt, packet + 1, size);
+  /* lifecycle/deleter handled by the route_table cb (deleter-by-kind) when
+   * this EDT is installed below — no per-object shared field to stamp. */
+  /* finish-scope chain: if the EDT arrived with a non-NULL finish_event,
+   * the field currently holds the *parent* finish_event GUID (which lives
+   * on the source rank).  Allocate a local proxy LATCH and rewrite the
+   * field so this EDT's finish_event is local-home.  Register a dep so
+   * that proxy fire emits DECR on the remote parent.
+   *
+   * The matching INCR on the remote parent was already emitted on the
+   * source rank inside arts_edt_create_core before the EDT was
+   * shipped — race-free under source-rank local sync ordering. */
+  if (edt->finish_event != NULL_GUID) {
+    arts_guid_t parent_fe = edt->finish_event;
+    arts_event_hint_t latch_hint = ARTS_EVENT_HINT_LATCH(1);
+    arts_guid_t proxy = arts_event_create(&latch_hint);
+    /* add_dependence registers the proxy in its own waiter list (local op).
+     * The cross-node satisfy-on-fire is emitted automatically by the
+     * LATCH fire path when proxy.counter reaches 0. */
+    arts_add_dependence(proxy, parent_fe, ARTS_EVENT_LATCH_DECR_SLOT,
+                        DB_MODE_NULL);
+    edt->finish_event = proxy;
+  }
+  /* Sentinel protocol (mirrors the pre-reserved path in
+   * arts_edt_create_core): bump depc_needed by 1 before the EDT becomes
+   * globally visible.  add_item_race installs the EDT and replays any queued
+   * dependency satisfies, and once installed a satisfy may also land
+   * concurrently on another receiver thread.  Without the sentinel both that
+   * satisfy (observing depc_needed hit 0) and this handler's own readiness
+   * check would fire arts_handle_ready_edt for the same EDT — a double
+   * dispatch.  The sentinel keeps depc_needed >= 1 across install + replay, so
+   * exactly one party observes the 0 transition: the sentinel removal below,
+   * or the last satisfy after we return. */
+  edt->depc_needed += 1;
+  /* add_item_race installs the EDT under the route_table lock.  On
+   * rejection (another thread won the install race) free the freshly
+   * unmarshaled buffer through the deleter — mirrors event_move's
+   * race-loser cleanup pattern. */
+  if (!arts_route_table_install_if_absent(edt, packet->guid,
+                                          arts_global_rank_id, false)) {
+    /* race-loser cleanup: if we allocated a proxy LATCH for the
+     * finish-scope chain, drain it.  proxy.counter == 1 (self-alive
+     * token, just allocated above).  DECR drives counter to 0 → fire,
+     * which emits the cross-node DECR to the remote parent_fe via the
+     * dep we just registered.  This cancels the source-rank INCR that
+     * was emitted before this EDT was shipped, keeping the parent
+     * finish-scope balanced.  proxy itself self-destroys on fire (LATCH
+     * auto_destroy semantics). */
+    if (edt->finish_event != NULL_GUID) {
+      arts_event_satisfy_slot(edt->finish_event, NULL_GUID,
+                              ARTS_EVENT_LATCH_DECR_SLOT);
+    }
+    arts_edt_get_deleter()(edt);
+    return;
+  }
+  ARTS_INFO("EDT[Guid:%lu] Moved to Rank: %d", packet->guid,
+            arts_global_rank_id);
+  /* Remove the sentinel.  add_item_race already replayed queued satisfies and
+   * any concurrent satisfy decremented too; the unique observer of the 0
+   * transition fires the EDT exactly once (here, or the last late satisfy). */
+  unsigned int remaining = arts_atomic_sub(&edt->depc_needed, 1U);
+  if (remaining == 0) {
+    arts_handle_ready_edt(edt);
+  }
+}
+
+void arts_send_edt_satisfy_slot(arts_guid_t edt, arts_guid_t db, uint32_t slot,
+                                arts_db_access_mode_t mode, void *ptr,
+                                unsigned int size) {
+  unsigned int rank = arts_guid_get_rank(edt);
+  if (rank == arts_global_rank_id) {
+    /* EDT GUID claims a local home but may have migrated — resolve the
+     * true owning rank through the route table. */
+    rank = arts_route_table_lookup_rank(edt);
+  }
+  ARTS_INFO(
+      "Remote Signal from DB[Guid:%lu] to EDT[Guid:%lu, Slot:%d, Rank:%u]", db,
+      edt, slot, rank);
+
+  if (size == 0) {
+    /* Reference-only satisfy (GUID / value / NULL): fixed-size header on the
+     * stack, no trailing payload. */
+    struct arts_remote_edt_satisfy_slot_packet_s packet;
+    packet.edt = edt;
+    packet.db = db;
+    packet.slot = slot;
+    packet.mode = mode;
+    packet.size = 0;
+    arts_fill_packet_header(&packet.header, sizeof(packet),
+                            MSG_EDT_SATISFY_SLOT);
+    arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
+    return;
+  }
+
+  /* DB_MODE_PTR delivery: header + inline payload copied contiguously so the
+   * receiver materializes the data without a follow-up fetch. */
+  uint64_t total = sizeof(struct arts_remote_edt_satisfy_slot_packet_s) + size;
+  char *buf = (char *)arts_malloc((size_t)total);
+  struct arts_remote_edt_satisfy_slot_packet_s *packet =
+      (struct arts_remote_edt_satisfy_slot_packet_s *)buf;
+  packet->edt = edt;
+  packet->db = db;
+  packet->slot = slot;
+  packet->mode = mode;
+  packet->size = size;
+  arts_fill_packet_header(&packet->header, total, MSG_EDT_SATISFY_SLOT);
+  memcpy(buf + sizeof(*packet), ptr, size);
+  arts_remote_send_request_async((int)rank, buf, (unsigned int)total);
+  arts_free(buf);
 }

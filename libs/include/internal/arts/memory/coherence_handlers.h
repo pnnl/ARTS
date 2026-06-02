@@ -39,29 +39,38 @@ struct arts_db_cache_s;
 
 /* ===== Home-side handlers ============================================ */
 
-void arts_handler_db_ownership_request(struct arts_remote_lock_req_packet_s *p);
-void arts_handler_db_snapshot_request(struct arts_remote_get_data_packet_s *p);
+void arts_handler_db_ownership_request(
+    struct arts_remote_ownership_request_packet_s *p);
+void arts_handler_db_snapshot_request(
+    struct arts_remote_snapshot_request_packet_s *p);
 void arts_handler_db_writeback(struct arts_remote_writeback_packet_s *p,
                                const void *data, uint64_t data_size);
 void arts_handler_db_ownership_return(
-    struct arts_remote_release_ownership_packet_s *p);
-void arts_handler_db_destroy(struct arts_remote_destroy_req_packet_s *p);
-void arts_handler_db_create_coherent(
+    struct arts_remote_ownership_return_packet_s *p);
+void arts_handler_db_destroy(struct arts_remote_destroy_packet_s *p);
+void arts_handler_db_create(
     struct arts_remote_db_create_coherent_packet_s *p);
 
 /* ===== Sharer-side (response) handlers =============================== */
 
-void arts_handler_db_ownership_response(struct arts_remote_grant_packet_s *p,
-                                        const void *data, uint64_t data_size);
+#ifdef ARTS_MEMORY_MODEL_LRC
+/* LRC TRANSFER_OWNERSHIP at new owner C: payload = full contiguous wire buffer
+ * (header + map + data); size is total bytes. */
+void arts_handler_db_ownership_response(void *payload, size_t size);
+#else
+void arts_handler_db_ownership_response(
+    struct arts_remote_ownership_response_packet_s *p, const void *data,
+    uint64_t data_size);
+#endif
 void arts_handler_db_snapshot_response(
-    struct arts_remote_data_response_packet_s *p, const void *data,
+    struct arts_remote_snapshot_response_packet_s *p, const void *data,
     uint64_t data_size);
 void arts_handler_db_ownership_invalidate(
-    struct arts_remote_invalidate_notice_packet_s *p);
+    struct arts_remote_ownership_invalidate_packet_s *p);
 void arts_handler_db_writeback_ack(
     struct arts_remote_writeback_ack_packet_s *p);
 void arts_handler_db_cache_destroy(
-    struct arts_remote_destroy_notify_packet_s *p);
+    struct arts_remote_cache_destroy_packet_s *p);
 
 /* ===== LRC-only handlers ============================================== */
 
@@ -69,21 +78,10 @@ void arts_handler_db_cache_destroy(
 /* Handles REDIRECT_RO at the current owner: look up the local cache and
  * send DATA_RESPONSE directly to the requester. */
 void arts_handler_db_snapshot_redirect(
-    struct arts_remote_redirect_ro_packet_s *p);
+    struct arts_remote_snapshot_redirect_packet_s *p);
 
-/* Drain all deferred GET_DATA requests from the home-side RO forward
- * queue.  Called by the INSTALL_ACK handler once the new owner's
- * writer_count sentinel is published and invalidate_in_flight is
- * cleared.  No other consumer runs concurrently. */
-void arts_coh_drain_pending_ro_forwards(struct arts_db_cache_s *cache);
-
-/* Handles TRANSFER_OWNERSHIP at new owner C.  payload points to the
- * full contiguous wire buffer (header + map + data); size is total bytes. */
-void arts_handler_db_ownership_response_lrc(void *payload, size_t size);
-
-/* Handles INSTALL_ACK at home A: records the new rw_holder and drains
- * pending_ro_forwards; then starts the next transfer round or releases
- * the invalidate_in_flight baton. */
+/* Handles INSTALL_ACK at home A: records the new rw_holder, then starts
+ * the next transfer round or releases the invalidate_in_flight baton. */
 void arts_handler_db_ownership_response_ack(
     struct arts_remote_install_ack_packet_s *p);
 #endif /* ARTS_MEMORY_MODEL_LRC */
@@ -95,10 +93,19 @@ void arts_handler_db_ownership_response_ack(
  * Used by handlers that emit replies and by acquire/release in B4/B5. */
 void arts_send_db_ownership_request(unsigned int home_rank,
                                     arts_guid_t db_guid);
+#ifdef ARTS_MEMORY_MODEL_LRC
+/* LRC OWNERSHIP_RESPONSE = TRANSFER_OWNERSHIP: carries the serialized
+ * last_sent_version map + buffer payload. */
+void arts_send_db_ownership_response(unsigned int new_owner_rank,
+                                     arts_guid_t db_guid, uint64_t version,
+                                     const void *map_buf, size_t map_size,
+                                     const void *data, size_t data_size);
+#else
 void arts_send_db_ownership_response(unsigned int requester_rank,
                                      arts_guid_t db_guid, uint64_t version,
                                      bool has_next, const void *data,
                                      uint64_t data_size);
+#endif
 /* cv: address of the releaser's stack-local sem_t (as uint64_t), forwarded
  * verbatim to the home and echoed back in the ACK for pointer-identity wakeup.
  */
@@ -116,11 +123,11 @@ void arts_send_db_ownership_invalidate(unsigned int owner_rank,
                                        unsigned int new_owner_rank);
 void arts_send_db_ownership_return(unsigned int home_rank, arts_guid_t db_guid);
 void arts_send_db_snapshot_request(unsigned int home_rank, arts_guid_t db_guid,
-                                   void *waiter_addr);
+                                   arts_guid_t edt_guid, uint32_t slot);
 void arts_send_db_snapshot_response(unsigned int requester_rank,
                                     arts_guid_t db_guid, uint64_t version,
-                                    void *waiter_addr, const void *data,
-                                    uint64_t data_size);
+                                    arts_guid_t edt_guid, uint32_t slot,
+                                    const void *data, uint64_t data_size);
 void arts_send_db_create_coherent(unsigned int home_rank, arts_guid_t db_guid,
                                   uint64_t db_size, uint16_t flags,
                                   uint16_t db_type);
@@ -133,25 +140,17 @@ void arts_send_db_cache_destroy(unsigned int sharer_rank, arts_guid_t db_guid);
 void arts_send_db_snapshot_redirect(unsigned int owner_rank,
                                     arts_guid_t db_guid,
                                     unsigned int requester_rank,
-                                    void *waiter_addr);
-
-/* Send TRANSFER_OWNERSHIP from current owner B to new owner C.
- * map_buf/map_size: serialized last_sent_version map (may be NULL/0 for
- * sentinel DBs).  data/data_size: current buffer payload (may be NULL/0). */
-void arts_send_db_ownership_response_lrc(unsigned int new_owner_rank,
-                                         arts_guid_t db_guid, uint64_t version,
-                                         const void *map_buf, size_t map_size,
-                                         const void *data, size_t data_size);
+                                    arts_guid_t edt_guid, uint32_t slot);
 
 /* Send INSTALL_ACK from new owner C back to home A once the ownership
  * transfer is complete. */
 void arts_send_db_ownership_response_ack(unsigned int home_rank,
                                          arts_guid_t db_guid, uint64_t version);
 
-/* Ship TRANSFER_OWNERSHIP to cache->incoming_new_owner.  Called either
- * from the INVALIDATE_NOTICE handler (when writer_count reaches 0
- * immediately) or from release_rw (when transfer_pending was set). */
-void arts_coh_lrc_ship_transfer(struct arts_db_cache_s *cache);
+/* Send the LRC OWNERSHIP_RESPONSE (TRANSFER_OWNERSHIP) to
+ * cache->incoming_new_owner: serialize last_sent_version + buffer and fire.
+ * Called inline from the INVALIDATE_NOTICE handler and release_rw rest==0. */
+void arts_coh_lrc_send_ownership_response(struct arts_db_cache_s *cache);
 
 /* Kick a new INVALIDATE_NOTICE round: read rw_holder, send notice to
  * holder carrying new_owner as the TRANSFER_OWNERSHIP target. */

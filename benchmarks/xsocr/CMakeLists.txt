@@ -57,15 +57,19 @@ target_compile_definitions(ocr_xsocr_objects PRIVATE
     OCR_MAX_MULTI_SLOT=32
 )
 
-# NOTE: we do NOT enable ENABLE_EXTENSION_COLLECTIVE_EVT or
-# ENABLE_EXTENSION_MULTI_OUTPUT_SLOT here.  Both are implemented in
-# xsocr (see third_party/ocr/ocr/src/event/hc/hc-event.c and
-# ocr-edt.c), but turning them on pulls in a chain of HC policy-domain
-# features (MD_ALLOC, REG_ASYNC_SGL, ...) that require several more
-# defines to compile.  The only app that needs this chain is
-# hpcg_intel_Eager_Collective, which runs cleanly on arts; we handle
-# it as arts_only in the correctness harness rather than expanding
-# the xsocr build surface here.
+# NOTE: the collective-event / distributed-labeled extension chain
+# (ENABLE_EXTENSION_COLLECTIVE_EVT, ENABLE_EXTENSION_MULTI_OUTPUT_SLOT,
+# ENABLE_EXTENSION_DISTRIBUTED_LABELED, REG_ASYNC_SGL) is enabled in the
+# libocr build via ocr_config_x86.h (the config header included by every
+# libocr translation unit through the generated ocr-config.h wrapper), not
+# here on the command line.  Apps that exercise these primitives pass the
+# matching app-side extension defines via their per-app EXTRA_DEFINES (e.g.
+# hpcg_intel_Eager_Collective adds COLLECTIVE_EVT + MULTI_OUTPUT_SLOT) so
+# the app and runtime headers agree.  Enabling the chain on the libocr build
+# alone (config header) is enough for the runtime to handle the collective
+# event cross-rank; it does NOT, however, implement remote metadata cloning
+# for reserved-GUID (labeled) datablocks — that path is stubbed in the
+# labeled-GUID provider ("Labeled Limitation").
 
 # Static library
 add_library(ocr_xsocr_static STATIC $<TARGET_OBJECTS:ocr_xsocr_objects>)

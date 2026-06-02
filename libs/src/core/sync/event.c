@@ -61,22 +61,22 @@
 #include "arts.h"
 #include "arts/compute/edt.h"
 #include "arts/gas/guid.h"
-#include "arts/gas/out_of_order.h"
 #include "arts/gas/route_table.h"
-#include "arts/remote/handler.h"
-#include "arts/runtime_state.h" /* arts_node_info, event_dep_pool */
-#include "arts/sync/mpsc.h"     /* arts_mpsc_t */
-#include "arts/sync/shared.h"   /* arts_shared_ptr_t, get/release */
+#include "arts/runtime_state.h"    /* arts_node_info, event_dep_pool */
+#include "arts/sync/edt_context.h" /* current_edt */
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
+#include "arts/transport/outbox.h"    /* outbound send helpers */
+#include "arts/transport/protocol.h"  /* wire packet structs */
 #include "arts/utils/lockfree_lifo.h" /* arts_lf_stack_init / drain */
 #include "arts/utils/malloc.h"
+#include "arts/utils/mpsc.h"        /* arts_mpsc_t */
+#include "arts/utils/shared.h"      /* arts_shared_ptr_t, get/release */
 #include "arts/utils/tiered_pool.h" /* arts_tiered_pool_release */
 
 #include <assert.h>
+#include <string.h>
 #include <time.h>
-
-extern ARTS_THREAD_LOCAL struct arts_edt_s *current_edt;
 
 /* --- Hint snapshot helpers ----------------------------------------------- */
 
@@ -137,7 +137,7 @@ __attribute__((constructor)) static void arts_event_register_cb_deleter(void) {
 }
 
 /* External forwarder — see event.h for rationale. */
-void arts_event_free_internal(struct arts_event_s *e) { arts_event_deleter(e); }
+static void event_free_typed(struct arts_event_s *e) { arts_event_deleter(e); }
 
 /* --- Internal allocation / install --------------------------------------- */
 
@@ -165,8 +165,7 @@ static struct arts_event_s *event_alloc(const arts_event_hint_t *h) {
   return e;
 }
 
-bool arts_event_create_internal(arts_guid_t *guid,
-                                const arts_event_hint_t *h_in) {
+static bool event_install(arts_guid_t *guid, const arts_event_hint_t *h_in) {
   arts_event_hint_t h = hint_or_defaults(h_in);
   unsigned int rank = h.rank;
   if (rank == ARTS_HINT_CURRENT_RANK) {
@@ -180,16 +179,25 @@ bool arts_event_create_internal(arts_guid_t *guid,
 
   if (rank == arts_global_rank_id) {
     if (*guid) {
-      /* add_item_race wraps `event` in a cb and CAS-installs it (firing the
-       * OoO list on win).  Insert-or-fail: on loss the object stays ours, so
-       * we free it. */
-      if (!arts_route_table_add_item_race(event, *guid, rank, false)) {
-        arts_event_deleter(event);
-        return false;
+      if (h.check) {
+        /* CHECK / rendezvous (e.g. OCR GUID_PROP_CHECK): fail if the GUID
+         * already exists so the first creator wins and a later one observes
+         * the collision.  add_item_race CAS-installs (firing the OoO list on
+         * win); on loss the object stays ours, so we free it and return
+         * NULL_GUID via the caller. */
+        if (!arts_route_table_install_if_absent(event, *guid, rank, false)) {
+          arts_event_deleter(event);
+          return false;
+        }
+      } else {
+        /* Default: unconditional install — a labeled-GUID reuse REPLACES the
+         * prior generation (the displaced cb is released).  Drains the OoO
+         * list internally. */
+        arts_route_table_install(event, *guid, rank, false);
       }
     } else {
       *guid = arts_guid_create_for_rank(rank, ARTS_GUID_EVENT);
-      arts_route_table_add_item(event, *guid, rank, false);
+      arts_route_table_install(event, *guid, rank, false);
     }
     return true;
   }
@@ -209,7 +217,7 @@ arts_guid_t arts_event_create(const arts_event_hint_t *hint) {
   if (g != NULL_GUID) {
     h.rank = arts_guid_get_rank(g);
   }
-  bool ok = arts_event_create_internal(&g, &h);
+  bool ok = event_install(&g, &h);
   TIME_EVENT_CREATE_STOP();
   if (h.guid != NULL_GUID) {
     return ok ? g : NULL_GUID;
@@ -545,4 +553,103 @@ void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
    * on the satisfy at fire time (stored in the waiter node, replayed through
    * arts_edt_satisfy_slot), so no eager mode-set to the destination. */
   arts_event_add_dependence(source, destination, slot, access_mode);
+}
+
+static void send_remote_add_dependence_packet(unsigned int message_type,
+                                              arts_guid_t source,
+                                              arts_guid_t destination,
+                                              uint32_t slot, unsigned int rank,
+                                              arts_db_access_mode_t mode) {
+  struct arts_remote_add_dependence_packet_s packet;
+  packet.source = source;
+  packet.destination = destination;
+  packet.slot = slot;
+  packet.mode = mode;
+  arts_fill_packet_header(&packet.header, sizeof(packet), message_type);
+  arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
+}
+
+void arts_send_event_add_dependence(arts_guid_t source, arts_guid_t destination,
+                                    uint32_t slot, unsigned int rank,
+                                    arts_db_access_mode_t mode) {
+  ARTS_DEBUG("Remote Add dependence sent %d", rank);
+  send_remote_add_dependence_packet(MSG_EVENT_ADD_DEPENDENCE, source,
+                                    destination, slot, rank, mode);
+}
+
+void arts_handler_event_create(void *ptr) {
+  struct arts_remote_guid_only_packet_s *packet =
+      (struct arts_remote_guid_only_packet_s *)ptr;
+  uint64_t size =
+      packet->header.size - sizeof(struct arts_remote_guid_only_packet_s);
+
+  struct arts_event_s *mem_packet =
+      (struct arts_event_s *)arts_malloc_align(size, 16);
+
+  memcpy(mem_packet, packet + 1, size);
+  /* Re-init local-only pointer state.  Event move only happens at create
+   * time (queues / stack always empty at source), so re-initing to empty
+   * is correct.  The sender-rank heap pointers in the wire image are
+   * meaningless here. */
+  if (mem_packet->is_channel) {
+    arts_mpsc_init(&mem_packet->channel.data_queue);
+    arts_mpsc_init(&mem_packet->channel.dep_queue);
+    atomic_store_explicit(&mem_packet->channel.nb_sat, 0u,
+                          memory_order_relaxed);
+    atomic_store_explicit(&mem_packet->channel.nb_deps, 0u,
+                          memory_order_relaxed);
+    atomic_store_explicit(&mem_packet->channel.draining, 0,
+                          memory_order_relaxed);
+  } else {
+    arts_lf_stack_init(&mem_packet->simple.deps_stack);
+    /* latch / fired / data preserved from sender's post-init state. */
+  }
+
+  /* add_item_race installs the event under the route_table lock; on
+   * success it also fires OoO replay internally, so no extra fire_oo
+   * is required.  On rejection (another rank won the install race),
+   * release the freshly-unmarshaled buffer through event_deleter (via
+   * event_free_typed) — raw arts_free would skip the dep-stack
+   * drain.  In practice the dep stack is empty at this point (nothing
+   * has been pushed locally yet), but using the proper deleter keeps
+   * lifecycle ownership symmetric with event_alloc. */
+  if (!arts_route_table_install_if_absent(mem_packet, packet->guid,
+                                          arts_global_rank_id, false)) {
+    event_free_typed(mem_packet);
+  }
+}
+
+void arts_send_event_destroy(arts_guid_t guid) {
+  unsigned int rank = arts_guid_get_rank(guid);
+  struct arts_remote_guid_only_packet_s packet;
+  packet.guid = guid;
+  arts_fill_packet_header(&packet.header, sizeof(packet), MSG_EVENT_DESTROY);
+  arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
+}
+
+void arts_handler_event_destroy(void *ptr) {
+  struct arts_remote_guid_only_packet_s *packet =
+      (struct arts_remote_guid_only_packet_s *)ptr;
+  /* Before-create wire reorder (symmetric with arts_handler_db_destroy): a
+   * DESTROY that reaches the event's home ahead of its CREATE must defer via
+   * the OoO list (OOO_EVENT_DESTROY) and replay once the create handler
+   * installs + drains, rather than mark_delete'ing an absent slot (which would
+   * lose the destroy and leak the later-created event).  dispatch_or_defer's
+   * hit path runs the replay (mark_delete) inline when the event already
+   * exists; mark_delete is itself idempotent (exchange slot value -> NULL). */
+  struct arts_ooo_args_event_destroy_s args = {.guid = packet->guid};
+  arts_ooo_dispatch_or_defer_guid(packet->guid, OOO_EVENT_DESTROY, &args,
+                                  sizeof(args));
+}
+
+void arts_send_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
+                                  uint32_t slot) {
+  struct arts_remote_event_satisfy_slot_packet_s packet;
+  packet.event = event_guid;
+  packet.db = data_guid;
+  packet.slot = slot;
+  arts_fill_packet_header(&packet.header, sizeof(packet),
+                          MSG_EVENT_SATISFY_SLOT);
+  arts_remote_send_request_async((int)arts_guid_get_rank(event_guid),
+                                 (char *)&packet, sizeof(packet));
 }

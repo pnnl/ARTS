@@ -135,7 +135,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t db = arts_db_create(&dbptr, sizeof(int), ARTS_DB_DEFAULT,
                                   ARTS_DB_PROP_NONE, NULL);
   ((int *)dbptr)[0] = 12345;
-  arts_db_release(db);
+  arts_db_release(db, DB_MODE_RW);
 
   arts_guid_t ev3 = arts_event_create(NULL);
   arts_guid_t edt3 =

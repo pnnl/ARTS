@@ -64,7 +64,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                                    ARTS_DB_PROP_NONE, NULL);
   ((uint64_t *)ptr1)[0] = 0xDEADULL;
   ((uint64_t *)ptr1)[1] = 0xBEEFULL;
-  arts_db_release(db1);
+  arts_db_release(db1, DB_MODE_RW);
 
   arts_guid_t r1 = arts_edt_create(ro_reader, 0, NULL, 1,
                                    &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
@@ -75,7 +75,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t db2 = arts_db_create(&ptr2, DB_SIZE, ARTS_DB,
                                    ARTS_DB_PROP_NONE, NULL);
   ((uint64_t *)ptr2)[0] = 0ULL;
-  arts_db_release(db2);
+  arts_db_release(db2, DB_MODE_RW);
 
   /* verifier: depc=2 (slot 0=DB RO dep, slot 1=inner epoch signal) */
   arts_guid_t v2 = arts_edt_create(rw_verifier, 0, NULL, 2,

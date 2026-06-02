@@ -153,7 +153,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
         arts_db_create(&ptr, sizeof(int), ARTS_DB, ARTS_DB_PROP_NONE,
                        &(arts_db_hint_t){.rank = 0});
     ((int *)ptr)[0] = 0;
-    arts_db_release(db);
+    arts_db_release(db, DB_MODE_RW);
 
     uint64_t rparams[2] = {200, 1};
     arts_guid_t r = arts_edt_create(coh_reader, 2, rparams, 2, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
@@ -183,7 +183,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     ((int *)ptr2)[0] = 0;
     ((int *)ptr2)[1] = 0;
     ((int *)ptr2)[2] = 0;
-    arts_db_release(db2);
+    arts_db_release(db2, DB_MODE_RW);
 
     /* Two finish-EDTs aren't supported by a single epoch, so use a
      * single chained reader that runs after the writer epoch and then
@@ -216,7 +216,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
         arts_db_create(&ptr3, sizeof(int), ARTS_DB, ARTS_DB_PROP_NONE,
                        &(arts_db_hint_t){.rank = 0});
     ((int *)ptr3)[0] = 0;
-    arts_db_release(db3);
+    arts_db_release(db3, DB_MODE_RW);
 
     uint64_t rparams3[2] = {3, 3};
     arts_guid_t r3 = arts_edt_create(coh_reader, 2, rparams3, 2, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});

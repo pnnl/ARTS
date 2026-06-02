@@ -8,7 +8,7 @@
  * Standalone — the queue is header-only inline, so this needs no library.
  */
 
-#include "arts/sync/mpsc.h"
+#include "arts/utils/mpsc.h"
 
 #include <assert.h>
 #include <pthread.h>

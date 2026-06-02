@@ -69,47 +69,47 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                     6, 1, 3, 1, 7, 1, 4, 3, 5, 1, 5};
 
   // Create a block distribution
-  arts_block_dist_t *dist = init_block_distribution_block(8,  // global vertices
+  arts_block_dist_t *dist = arts_block_dist_init(8,  // global vertices
                                                           11, // global edges
                                                           1,  // partitions
                                                           ARTS_GUID_DB);
 
   // Create a list of edges, use arts_edge_vector_t
   arts_edge_vector_t vec;
-  init_edge_vector(&vec, 100);
+  arts_edge_vector_init(&vec, 100);
   for (int i = 0; i < 11; ++i) {
-    push_back_edge(&vec, edge_arr[(ptrdiff_t)i * 2],
+    arts_edge_vector_push_back(&vec, edge_arr[(ptrdiff_t)i * 2],
                    edge_arr[((ptrdiff_t)i * 2) + 1], 0);
   }
-  sort_by_source_and_target(&vec);
+  arts_edge_vector_sort_by_source_and_target(&vec);
 
   // Create the CSR graph, graphGuid is used to allocate
   // row indices and column array
-  csr_graph_t *graph = init_csr(0,
+  arts_csr_graph_t *graph = arts_csr_init(0,
                                 8,    // number of "local" vertices
                                 11,   // number of "local" edges
                                 dist, // distribution
                                 &vec, // edges
                                 true, /*are edges sorted ?*/
-                                get_guid_for_partition_distr(dist, 0));
+                                arts_block_dist_guid_for_partition(dist, 0));
 
   // Edge list not needed after creating the CSR
-  free_edge_vector(&vec);
+  arts_edge_vector_free(&vec);
 
-  print_csr(graph);
+  arts_csr_print(graph);
 
-  vertex_t *neighbors = NULL;
-  graph_sz_t nbrcnt = 0;
-  get_neighbors(graph, (vertex_t)1, &neighbors, &nbrcnt);
+  arts_vertex_t *neighbors = NULL;
+  arts_graph_sz_t nbrcnt = 0;
+  arts_csr_get_neighbors(graph, (arts_vertex_t)1, &neighbors, &nbrcnt);
   assert(nbrcnt == 6);
 
   arts_printf("Neighbors of 1 : {");
-  for (graph_sz_t i = 0; i < nbrcnt; ++i) {
+  for (arts_graph_sz_t i = 0; i < nbrcnt; ++i) {
     printf("%" PRIu64 ", ", neighbors[i]);
   }
   printf("}\n");
-  free_csr(graph);
-  free_distribution(dist);
+  arts_csr_free(graph);
+  arts_block_dist_free(dist);
 
   arts_shutdown();
 }

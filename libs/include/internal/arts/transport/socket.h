@@ -48,19 +48,16 @@ extern "C" {
 #include <stdint.h>
 
 int arts_get_new_socket();
-void arts_server_set_socket_options_sender(unsigned int socket);
-void arts_server_set_socket_options_reciever(unsigned int socket);
 int arts_get_socket_listening(struct sockaddr_in *listening_socket,
                               unsigned int port);
 int arts_get_socket_outgoing(struct sockaddr_in *outgoing_socket,
                              unsigned int port, in_addr_t s_addr);
 
-void arts_remote_set_message_table(struct arts_config_s *table);
+void arts_transport_set_config(struct arts_config_s *config);
 void arts_remote_setup_outgoing();
 bool arts_remote_setup_incoming();
 unsigned int arts_remote_get_my_rank();
-bool arts_server_try_to_receive(char **in_buffer, const int *in_packet_size,
-                                const volatile unsigned int *remote_steal_lock);
+bool arts_transport_receive(void);
 uint64_t arts_remote_send_request(int rank, unsigned int queue, char *message,
                                   uint64_t length);
 uint64_t arts_remote_send_payload_request(int rank, unsigned int queue,

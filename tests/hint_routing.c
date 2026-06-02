@@ -132,7 +132,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Test 4: DB with NULL hint.
   void *dbptr = NULL;
   arts_guid_t db = arts_db_create(&dbptr, 16, ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
-  arts_db_release(db);
+  arts_db_release(db, DB_MODE_RW);
   uint64_t param = (uint64_t)db;
   arts_edt_create(check_db_hint, 1, &param, 0, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
 

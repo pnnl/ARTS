@@ -56,6 +56,8 @@ set(TEST_PROGRAMS
     coherence_stress_dist
     coherence_multi_writer_same_addr
     coherence_ro_acquire_stress
+    coherence_home_producer_ro
+    coherence_zero_size_xfer
     lockfree_stack_stress
     lockfree_pool_stress
     tiered_pool_stress
@@ -283,9 +285,9 @@ function(register_multinode_test test_name)
         #   2n     — 2 nodes, 5w/1s/1r per node (worker-heavy default)
         #   3n     — 3 nodes, 2w/1s/1r per node
         #   4n     — 4 nodes, 1w/1s/1r per node
-        #   2n_io  — 2 nodes, 3w/2s/2r per node (network-heavy variant —
-        #            exposes pre-existing epoch-termination message-reorder
-        #            race; tracked as a follow-up debugging target)
+        #   2n_io  — 2 nodes, 3w/2s/2r per node (network-heavy variant:
+        #            multiple sender/receiver threads break per-peer message
+        #            FIFO, exercising concurrent cross-rank handler dispatch)
         set(ARG_VARIANTS 2n 3n 4n 2n_io)
     endif()
     foreach(variant IN LISTS ARG_VARIANTS)
@@ -482,7 +484,7 @@ set(SYNC_SHARED_TESTS shared_basic shared_atomic_race shared_aba)
 set(SYNC_MPSC_TESTS mpsc_concurrent mpsc_drain_race)
 foreach(t ${SYNC_SHARED_TESTS})
     add_executable(${t} sync/${t}.c
-        ${CMAKE_SOURCE_DIR}/libs/src/core/sync/shared.c)
+        ${CMAKE_SOURCE_DIR}/libs/src/core/utils/shared.c)
     target_include_directories(${t} PRIVATE
         ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR}
         ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
@@ -533,6 +535,8 @@ register_multinode_test(remote_db_event)
 register_multinode_test(multinode_coherence)
 register_multinode_test(multinode_event_types)
 register_multinode_test(coherence_mixed_local_remote)
+register_multinode_test(coherence_home_producer_ro TIMEOUT 30)
+register_multinode_test(coherence_zero_size_xfer TIMEOUT 30)
 
 register_multinode_test(multinode_stdout_forward)
 set_tests_properties(multinode_stdout_forward_2n PROPERTIES

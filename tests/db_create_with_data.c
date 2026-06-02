@@ -110,7 +110,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   for (int i = 0; i < 8; i++) {
     p1[i] = (i + 1) * 11;
   }
-  arts_db_release(g1);
+  arts_db_release(g1, DB_MODE_RW);
 
   arts_guid_t e1 = arts_edt_create(check_initial_data, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   arts_add_dependence(g1, e1, 0, DB_MODE_RO);
@@ -122,7 +122,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       g2, 2 * sizeof(int), ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
   p2[0] = 100;
   p2[1] = 200;
-  arts_db_release(g2);
+  arts_db_release(g2, DB_MODE_RW);
 
   arts_guid_t e2 = arts_edt_create(check_source_independence, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   arts_add_dependence(g2, e2, 0, DB_MODE_RO);

@@ -1,22 +1,31 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * Home metadata helper implementations.  See coherence_home.h.
+ * Home-side coherence state implementations.  See coherence_home.h.
+ *
+ * Consolidates three home-side concerns:
+ *   - home metadata queues / maps / lifecycle (lockreq queue,
+ *     last_sent_version dense map, home-directory init/teardown)
+ *   - the per-cache pending_rw Vyukov MPSC queue (cache-side RW waiter chain)
+ *   - the bit-packed atomic rank bit-set (LRC destroy fan-out roster)
  */
 
 #include "arts/memory/coherence_home.h"
 
 #include <sched.h>
+#include <stdatomic.h>
+#include <stddef.h>
 #include <stdlib.h>
-#ifdef ARTS_MEMORY_MODEL_LRC
-#include "arts/memory/coherence_readers.h"
-#endif
+
+#include "arts/memory/coherence.h"
+#include "arts/utils/malloc.h"
 
 /*--- pending_rw home FIFO (Vyukov MPSC) ---------------------------------
  *
- * Algorithm mirrors coherence_pending_rw.c (cache-side) but stores only
- * an unsigned int rank instead of edt_guid+slot.  The embedded stub
- * sentinel in arts_home_lockreq_queue_s is the permanent queue sentinel;
- * it is never malloc'd or free'd separately.
+ * Algorithm mirrors the cache-side pending_rw queue (see
+ * arts_pending_rw_queue_* below) but stores only an unsigned int rank
+ * instead of edt_guid+slot.  The embedded stub sentinel in
+ * arts_home_lockreq_queue_s is the permanent queue sentinel; it is never
+ * malloc'd or free'd separately.
  *
  * Field convention (standard Vyukov MPSC naming, matching cache-side):
  *   tail — producer end; push() swaps the new node in here (acq_rel).
@@ -131,100 +140,6 @@ void arts_home_lockreq_queue_destroy(struct arts_home_lockreq_queue_s *q) {
                         memory_order_relaxed);
 }
 
-/*--- pending_ro_forwards queue (Vyukov MPSC, LRC only) ------------------
- *
- * Algorithm mirrors arts_home_lockreq_queue_* above but carries both a
- * requester_rank and an opaque waiter_addr.  The embedded stub sentinel in
- * arts_home_pending_ro_queue_s is permanent; it is never malloc'd or free'd
- * separately.
- *
- * Memory ordering: identical discipline to arts_home_lockreq_queue_*:
- *   push  — acq_rel on tail exchange, release on prev->next store.
- *   pop   — acquire on head load, acquire on head->next load.
- */
-
-void arts_home_pending_ro_queue_init(struct arts_home_pending_ro_queue_s *q) {
-#ifdef ARTS_MEMORY_MODEL_LRC
-  atomic_store_explicit(&q->stub.next, (struct arts_home_ro_node_s *)NULL,
-                        memory_order_relaxed);
-  q->stub.requester_rank = 0;
-  q->stub.waiter_addr = NULL;
-  atomic_store_explicit(&q->tail, &q->stub, memory_order_relaxed);
-  atomic_store_explicit(&q->head, &q->stub, memory_order_relaxed);
-#else
-  q->_reserved = NULL;
-#endif
-}
-
-void arts_home_pending_ro_queue_destroy(
-    struct arts_home_pending_ro_queue_s *q) {
-#ifdef ARTS_MEMORY_MODEL_LRC
-  struct arts_home_ro_node_s *cur =
-      atomic_load_explicit(&q->head, memory_order_relaxed);
-  while (cur != NULL) {
-    struct arts_home_ro_node_s *nxt =
-        atomic_load_explicit(&cur->next, memory_order_relaxed);
-    if (cur != &q->stub) {
-      free(cur);
-    }
-    cur = nxt;
-  }
-  atomic_store_explicit(&q->tail, (struct arts_home_ro_node_s *)NULL,
-                        memory_order_relaxed);
-  atomic_store_explicit(&q->head, (struct arts_home_ro_node_s *)NULL,
-                        memory_order_relaxed);
-#else
-  (void)q;
-#endif
-}
-
-#ifdef ARTS_MEMORY_MODEL_LRC
-void arts_home_pending_ro_queue_push(struct arts_home_pending_ro_queue_s *q,
-                                     unsigned int requester_rank,
-                                     void *waiter_addr) {
-  struct arts_home_ro_node_s *n =
-      (struct arts_home_ro_node_s *)malloc(sizeof(*n));
-  n->requester_rank = requester_rank;
-  n->waiter_addr = waiter_addr;
-  atomic_store_explicit(&n->next, (struct arts_home_ro_node_s *)NULL,
-                        memory_order_relaxed);
-  struct arts_home_ro_node_s *prev =
-      atomic_exchange_explicit(&q->tail, n, memory_order_acq_rel);
-  atomic_store_explicit(&prev->next, n, memory_order_release);
-}
-
-bool arts_home_pending_ro_queue_pop(struct arts_home_pending_ro_queue_s *q,
-                                    unsigned int *out_rank,
-                                    void **out_waiter_addr) {
-  for (;;) {
-    struct arts_home_ro_node_s *head =
-        atomic_load_explicit(&q->head, memory_order_acquire);
-    struct arts_home_ro_node_s *next =
-        atomic_load_explicit(&head->next, memory_order_acquire);
-
-    if (next == NULL) {
-      struct arts_home_ro_node_s *tail =
-          atomic_load_explicit(&q->tail, memory_order_acquire);
-      if (head == tail) {
-        return false; /* truly empty */
-      }
-      /* Producer mid-link: tight retry until the in-flight
-       * store_release(prev->next) lands (single consumer, ns window).
-       * Lock-free — no scheduler yield. */
-      continue;
-    }
-
-    *out_rank = next->requester_rank;
-    *out_waiter_addr = next->waiter_addr;
-    atomic_store_explicit(&q->head, next, memory_order_release);
-    if (head != &q->stub) {
-      free(head);
-    }
-    return true;
-  }
-}
-#endif /* ARTS_MEMORY_MODEL_LRC */
-
 /*--- last_sent_version dense map ----------------------------------------*/
 
 struct arts_rank_to_u64_map_s *arts_rank_u64_map_create(unsigned int nranks) {
@@ -279,55 +194,48 @@ bool arts_rank_u64_map_advance(struct arts_rank_to_u64_map_s *m,
   }
 }
 
-/*--- arts_db_home_s lifecycle -------------------------------------------*/
+/*--- home-directory lifecycle (inlined in arts_db_s) --------------------*/
 
-void arts_db_home_init(struct arts_db_home_s *home, unsigned int rw_holder,
+void arts_db_home_init(struct arts_db_s *db, unsigned int rw_holder,
                        unsigned int nranks) {
-  /* Embedded by value in the cache: the caller zeroed it via calloc.
-   * Common fields: destroy baton + ack counter. */
-  atomic_store_explicit(&home->destroy_in_flight, 0, memory_order_relaxed);
-  atomic_store_explicit(&home->destroy_ack_outstanding, 0,
-                        memory_order_relaxed);
+  /* Home-directory fields inlined in struct arts_db_s: the caller zeroed the
+   * whole descriptor before this runs.  No destroy baton (m12: the route_table
+   * atomic_exchange(slot.value,NULL) is the destroy single-flight gate). */
 #if defined(ARTS_MEMORY_MODEL_LRC)
-  atomic_store_explicit(&home->rw_holder, rw_holder, memory_order_relaxed);
-  arts_home_lockreq_queue_init(&home->pending_rw);
-  atomic_store_explicit(&home->invalidate_in_flight, 0, memory_order_relaxed);
-  arts_home_pending_ro_queue_init(&home->pending_ro_forwards);
-  arts_readers_bits_init(&home->readers, nranks);
-  home->pending_install_owner = 0;
+  atomic_store_explicit(&db->rw_holder, rw_holder, memory_order_relaxed);
+  arts_home_lockreq_queue_init(&db->pending_rw);
+  atomic_store_explicit(&db->invalidate_in_flight, 0, memory_order_relaxed);
+  arts_rank_bitset_init(&db->cached_ranks, nranks);
+  db->pending_install_owner = 0;
 #elif defined(ARTS_MEMORY_MODEL_LC)
-  /* LC: only last_sent_version.  rw_holder param is unused in LC —
-   * DB has no exclusive owner. */
+  /* LC: only last_sent_version.  rw_holder param is unused — no exclusive
+   * owner. */
   (void)rw_holder;
-  home->last_sent_version = arts_rank_u64_map_create(nranks);
+  db->last_sent_version = arts_rank_u64_map_create(nranks);
 #else
   /* RC */
-  atomic_store_explicit(&home->rw_holder, rw_holder, memory_order_relaxed);
-  arts_home_lockreq_queue_init(&home->pending_rw);
-  atomic_store_explicit(&home->invalidate_in_flight, 0, memory_order_relaxed);
-  /* RO forward queue: Vyukov MPSC in LRC builds; no-op stub in RC. */
-  arts_home_pending_ro_queue_init(&home->pending_ro_forwards);
-  home->last_sent_version = arts_rank_u64_map_create(nranks);
+  atomic_store_explicit(&db->rw_holder, rw_holder, memory_order_relaxed);
+  arts_home_lockreq_queue_init(&db->pending_rw);
+  atomic_store_explicit(&db->invalidate_in_flight, 0, memory_order_relaxed);
+  db->last_sent_version = arts_rank_u64_map_create(nranks);
 #endif
 }
 
-void arts_db_home_teardown(struct arts_db_home_s *home) {
-  if (home == NULL) {
+void arts_db_home_teardown(struct arts_db_s *db) {
+  if (db == NULL) {
     return;
   }
 #if defined(ARTS_MEMORY_MODEL_LRC)
-  arts_home_lockreq_queue_destroy(&home->pending_rw);
-  arts_home_pending_ro_queue_destroy(&home->pending_ro_forwards);
-  arts_readers_bits_destroy(&home->readers);
+  arts_home_lockreq_queue_destroy(&db->pending_rw);
+  arts_rank_bitset_destroy(&db->cached_ranks);
 #elif defined(ARTS_MEMORY_MODEL_LC)
-  arts_rank_u64_map_destroy(home->last_sent_version);
+  arts_rank_u64_map_destroy(db->last_sent_version);
 #else
   /* RC */
-  arts_home_lockreq_queue_destroy(&home->pending_rw);
-  arts_home_pending_ro_queue_destroy(&home->pending_ro_forwards);
-  arts_rank_u64_map_destroy(home->last_sent_version);
+  arts_home_lockreq_queue_destroy(&db->pending_rw);
+  arts_rank_u64_map_destroy(db->last_sent_version);
 #endif
-  /* No free: the home block is embedded by value in the cache. */
+  /* No free: home fields are inlined in the arts_db_s. */
 }
 
 #ifdef ARTS_MEMORY_MODEL_LRC
@@ -374,3 +282,147 @@ arts_rank_u64_map_deserialize(const void *in, size_t size,
   return m;
 }
 #endif /* ARTS_MEMORY_MODEL_LRC */
+
+/*--- rank bit-set ----------------------------------------------------
+ *
+ * Bit-packed atomic rank bit-set.  See coherence_home.h / rank_bitset.h.
+ * Used only in LRC builds — RC reuses the per-rank version map for the same
+ * purpose (set membership = nonzero entry). */
+
+void arts_rank_bitset_init(struct arts_rank_bitset_s *r,
+                            unsigned int nranks) {
+  r->nranks = nranks;
+  r->nwords = (nranks + 63) / 64;
+  r->words = (_Atomic(uint64_t) *)calloc(r->nwords, sizeof(_Atomic(uint64_t)));
+}
+
+void arts_rank_bitset_destroy(struct arts_rank_bitset_s *r) {
+  free(r->words);
+  r->words = NULL;
+  r->nwords = 0;
+}
+
+bool arts_rank_bitset_set(struct arts_rank_bitset_s *r, unsigned int rank) {
+  if (rank >= r->nranks) {
+    return false;
+  }
+  unsigned int word_idx = rank / 64;
+  uint64_t bit = (uint64_t)1 << (rank % 64);
+  uint64_t prev =
+      atomic_fetch_or_explicit(&r->words[word_idx], bit, memory_order_acq_rel);
+  return (prev & bit) == 0;
+}
+
+void arts_rank_bitset_for_each(const struct arts_rank_bitset_s *r,
+                                void (*cb)(unsigned int rank, void *ctx),
+                                void *ctx) {
+  for (unsigned int w = 0; w < r->nwords; w++) {
+    uint64_t snap = atomic_load_explicit((_Atomic(uint64_t) *)&r->words[w],
+                                         memory_order_acquire);
+    while (snap) {
+      unsigned int b = (unsigned int)__builtin_ctzll(snap);
+      cb(w * 64 + b, ctx);
+      snap &= snap - 1;
+    }
+  }
+}
+
+/*--- per-cache pending_rw queue (Vyukov MPSC) ---------------------------
+ *
+ * The per-cache RW waiter chain.  Replaces the prior Harris-style
+ * marked-list.
+ *
+ * Algorithm: the same lock-free MPSC enqueue / single-consumer drain used by
+ * the route-table OoO list, specialized to a typed waiter
+ * (arts_db_rw_waiter_s) instead of a generic (data, next) node.
+ *
+ * Concurrency model:
+ *   Producers — foreign-rank acquire_remote_rw, multi-threaded.
+ *   Consumer  — single home-side dispatcher
+ *               (drain_pending_rw_after_grant / fail_trigger_pending /
+ *                handle_destroy_req).  Pop is plain head advance.
+ *
+ * Memory: heap-allocated waiters (one malloc per producer).  Vyukov
+ * pop frees the OLD head on each step; the popped item lives on the
+ * new head until the NEXT pop or destroy.  We expose pop as a
+ * copy-out API (edt_guid + slot) so callers never see the
+ * about-to-be-freed pointer. */
+
+void arts_pending_rw_queue_init(struct arts_pending_rw_queue_s *q) {
+  atomic_store_explicit(&q->stub.next, (struct arts_db_rw_waiter_s *)NULL,
+                        memory_order_relaxed);
+  q->stub.edt_guid = 0;
+  q->stub.slot = 0;
+  atomic_store_explicit(&q->head, &q->stub, memory_order_relaxed);
+  atomic_store_explicit(&q->tail, &q->stub, memory_order_relaxed);
+}
+
+void arts_pending_rw_queue_push(struct arts_pending_rw_queue_s *q,
+                                struct arts_db_rw_waiter_s *w) {
+  atomic_store_explicit(&w->next, (struct arts_db_rw_waiter_s *)NULL,
+                        memory_order_relaxed);
+  struct arts_db_rw_waiter_s *prev =
+      atomic_exchange_explicit(&q->tail, w, memory_order_acq_rel);
+  atomic_store_explicit(&prev->next, w, memory_order_release);
+}
+
+bool arts_pending_rw_queue_pop(struct arts_pending_rw_queue_s *q,
+                               arts_guid_t *out_edt, unsigned int *out_slot) {
+  for (;;) {
+    struct arts_db_rw_waiter_s *head =
+        atomic_load_explicit(&q->head, memory_order_relaxed);
+    struct arts_db_rw_waiter_s *next =
+        atomic_load_explicit(&head->next, memory_order_acquire);
+    if (next == NULL) {
+      struct arts_db_rw_waiter_s *tail =
+          atomic_load_explicit(&q->tail, memory_order_acquire);
+      if (tail == head) {
+        return false; /* truly empty */
+      }
+      /* Producer mid-link between xchg(tail) and store_release(prev->next).
+       * Tight retry until the in-flight link lands (single consumer, ns
+       * window).  Lock-free — no scheduler yield. */
+      continue;
+    }
+    /* Copy payload out of `next` (it stays alive as the new head).
+     * Then advance head to `next` and free the old head — except on
+     * the first pop where the old head IS the embedded stub. */
+    *out_edt = next->edt_guid;
+    *out_slot = next->slot;
+    atomic_store_explicit(&q->head, next, memory_order_relaxed);
+    if (head != &q->stub) {
+      arts_free(head);
+    }
+    return true;
+  }
+}
+
+void arts_pending_rw_queue_drain(struct arts_pending_rw_queue_s *q,
+                                 void (*cb)(arts_guid_t edt_guid,
+                                            unsigned int slot, void *ctx),
+                                 void *ctx) {
+  arts_guid_t edt;
+  unsigned int slot;
+  while (arts_pending_rw_queue_pop(q, &edt, &slot)) {
+    cb(edt, slot, ctx);
+  }
+}
+
+void arts_pending_rw_queue_destroy(struct arts_pending_rw_queue_s *q) {
+  /* Single-threaded at destroy: no concurrent producer/consumer.  Walk
+   * head chain and free everything except the embedded stub. */
+  struct arts_db_rw_waiter_s *h =
+      atomic_load_explicit(&q->head, memory_order_relaxed);
+  while (h != NULL) {
+    struct arts_db_rw_waiter_s *n =
+        atomic_load_explicit(&h->next, memory_order_relaxed);
+    if (h != &q->stub) {
+      arts_free(h);
+    }
+    h = n;
+  }
+  atomic_store_explicit(&q->head, (struct arts_db_rw_waiter_s *)NULL,
+                        memory_order_relaxed);
+  atomic_store_explicit(&q->tail, (struct arts_db_rw_waiter_s *)NULL,
+                        memory_order_relaxed);
+}

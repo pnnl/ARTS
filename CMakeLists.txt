@@ -177,15 +177,17 @@ option(ARTS_USE_GPU "Enable GPU support (default: ON, disable when OFF)" ON)
 option(ARTS_USE_RDMA "Use RDMA RSockets networking (default: ON, use TCP when OFF)" OFF)
 option(ARTS_USE_CXL "Enable CXL shared-memory support (default: OFF)" OFF)
 
-# Host memory consistency model for ARTS_DB.  RC (default) uses
-# the existing eager Release Consistency protocol; LRC uses Lazy
-# Release Consistency (no synchronous home write-back, owner-direct
-# data flow).  Compile-time switch — one binary is exactly one mode.
-# Both ranks in a multinode run must use the same build (mode-mismatch
-# is caught at runtime via ARTS_FATAL stub handlers for opposite-mode
-# wire messages).
-set(ARTS_MEMORY_MODEL "RC" CACHE STRING
-    "Host memory consistency model for ARTS_DB: RC (default), LRC, or LC")
+# Host memory consistency model for ARTS_DB.  LRC (default) uses Lazy
+# Release Consistency (no synchronous home write-back, owner-direct data
+# flow) — it avoids the per-release write-back/ACK round-trip that makes
+# the eager RC protocol scale poorly when one rank produces many remotely
+# homed datablocks.  RC is the eager Release Consistency protocol; LC is
+# the weak Location Consistency model.  Compile-time switch — one binary is
+# exactly one mode.  Both ranks in a multinode run must use the same build
+# (mode-mismatch is caught at runtime via ARTS_FATAL stub handlers for
+# opposite-mode wire messages).
+set(ARTS_MEMORY_MODEL "LRC" CACHE STRING
+    "Host memory consistency model for ARTS_DB: LRC (default), RC, or LC")
 set_property(CACHE ARTS_MEMORY_MODEL PROPERTY STRINGS RC LRC LC)
 
 if(NOT ARTS_MEMORY_MODEL STREQUAL "RC" AND
@@ -197,7 +199,7 @@ endif()
 
 if(ARTS_MEMORY_MODEL STREQUAL "LRC")
   add_compile_definitions(ARTS_MEMORY_MODEL_LRC=1)
-  message(STATUS "ARTS memory model: LRC (Lazy Release Consistency)")
+  message(STATUS "ARTS memory model: LRC (Lazy Release Consistency, default)")
 elseif(ARTS_MEMORY_MODEL STREQUAL "LC")
   add_compile_definitions(ARTS_MEMORY_MODEL_LC=1)
   message(STATUS "ARTS memory model: LC (Location Consistency)")
@@ -206,7 +208,7 @@ else()
   # `#if defined(ARTS_MEMORY_MODEL_RC) || defined(ARTS_MEMORY_MODEL_LRC)`
   # field guards select correctly.  Legacy `#else` RC branches still work.
   add_compile_definitions(ARTS_MEMORY_MODEL_RC=1)
-  message(STATUS "ARTS memory model: RC (Release Consistency, default)")
+  message(STATUS "ARTS memory model: RC (Release Consistency)")
 endif()
 
 # Default DB storage subtype that benchmarks select via ARTS_DB_DEFAULT.
@@ -496,9 +498,11 @@ set(COUNTER_CONFIG_FILE "${COUNTER_CONFIG_PATH}")
 add_subdirectory(libs)
 
 # Optional components
-if(ARTS_BUILD_EXAMPLES)
-    add_subdirectory(examples)
-endif()
+# NOTE: examples/ is temporarily relocated out of the tree during refactoring.
+# Re-enable this block once the directory is restored.
+# if(ARTS_BUILD_EXAMPLES)
+#     add_subdirectory(examples)
+# endif()
 
 if(ARTS_BUILD_TESTS)
     enable_testing()

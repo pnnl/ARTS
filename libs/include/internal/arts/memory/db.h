@@ -83,27 +83,25 @@ enum {
 extern const char *const db_mode_name[];
 extern const char *const db_mode_internal_name[];
 
+/* Order MUST match the arts_db_types_t enum in arts.h:
+ * ARTS_DB(0), ARTS_DB_PIN(1), ARTS_DB_CXL(2), ARTS_DB_GPU(3),
+ * ARTS_DB_GPU_PIN(4). */
 #define ARTS_DB_TYPE_NAME                                                      \
   const char *const arts_db_type_name[] = {"ARTS_DB", "ARTS_DB_PIN",           \
-                                           "ARTS_DB_GPU_PIN", "ARTS_DB_GPU",   \
-                                           "ARTS_DB_CXL"}
+                                           "ARTS_DB_CXL", "ARTS_DB_GPU",       \
+                                           "ARTS_DB_GPU_PIN"}
 
 #define GET_DB_TYPE_NAME(x) arts_db_type_name[x]
 
 extern const char *const arts_db_type_name[];
 
-void arts_db_create_internal(arts_guid_t guid, void *addr, uint64_t len,
-                             uint64_t packet_size, arts_db_types_t db_type,
-                             uint64_t arts_id);
-void acquire_dbs(struct arts_edt_s *edt);
+void arts_db_acquire_all(struct arts_edt_s *edt);
 void release_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu);
 void arts_release_created_dbs(void);
 void prep_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu);
 
-void arts_db_destroy_safe(arts_guid_t guid, bool remote);
 void *arts_db_malloc(arts_db_types_t db_type, size_t size);
 void arts_db_free(void *ptr);
-void *arts_db_adopt(arts_guid_t guid, struct arts_db_s *db);
 
 /* Internal pre/post-yield helpers used by arts_epoch_wait.  Not part
  * of the public ARTS API. */
@@ -114,12 +112,6 @@ void arts_wait_reacquire_dbs(void);
  * (Pure GUID rename — arts_db_rename — was removed as dispensable legacy.) */
 arts_guid_t arts_db_copy_to_new_type(arts_guid_t old_guid,
                                      arts_db_types_t new_type);
-
-/* getter for the DB shared_t deleter so other TUs that allocate
- * arts_db_s stubs (coherence_acquire.c lazy install, coherence_handlers.c
- * DB_CREATE_COHERENT recv) can install the same deleter without exposing
- * a function pointer at file scope. */
-void (*arts_db_get_deleter(void))(void *);
 
 #ifdef ARTS_USE_CXL
 void arts_cxl_producer_flush(arts_guid_t guid);

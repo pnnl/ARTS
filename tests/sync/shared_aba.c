@@ -12,7 +12,7 @@
  * Standalone — links shared.c directly with libc-backed alloc shims.
  */
 
-#include "arts/sync/shared.h"
+#include "arts/utils/shared.h"
 
 #include <assert.h>
 #include <pthread.h>

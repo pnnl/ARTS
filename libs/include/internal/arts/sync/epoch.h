@@ -45,48 +45,46 @@ extern "C" {
 
 #include "arts/runtime_types.h"
 
-arts_epoch_t *create_epoch(arts_guid_t *guid, arts_guid_t edt_guid,
-                           unsigned int slot);
-/* shared_t deleter accessor for foreign TUs that allocate
- * epoch storage (currently none — kept for symmetry with the DB / EDT
- * pattern in Phases 6/7). */
-void (*arts_epoch_get_deleter(void))(void *);
-void increment_queue_epoch(arts_guid_t epoch_guid);
-void increment_active_epoch(arts_guid_t epoch_guid);
-void increment_finished_epoch(arts_guid_t epoch_guid);
-void send_epoch(arts_guid_t epoch_guid, unsigned int source, unsigned int dest);
+arts_epoch_t *arts_epoch_alloc(arts_guid_t *guid, arts_guid_t edt_guid,
+                               unsigned int slot);
+void arts_epoch_inc_queue(arts_guid_t epoch_guid);
+void arts_epoch_inc_active(arts_guid_t epoch_guid);
+void arts_epoch_inc_finished(arts_guid_t epoch_guid);
+void arts_epoch_reply(arts_guid_t epoch_guid, unsigned int source,
+                      unsigned int dest);
 
 /* OoO replay handlers (g_ooo_table) — pure cores invoked on the
  * dispatch-acquired epoch item; never look up or release the route entry.
  * inc_* : local broadcast-install race (self-rank epoch not yet installed).
  * request : reply side — read counts and forward to dest.
- * send    : reduce side — fold received counts into the home tally. */
+ * reduce  : reduce side — fold received counts into the home tally. */
 void arts_handler_epoch_inc_queue(void *item, void *args);
 void arts_handler_epoch_inc_active(void *item, void *args);
 void arts_handler_epoch_inc_finished(void *item, void *args);
 void arts_handler_epoch_request(void *item, void *args);
 void arts_handler_epoch_send(void *item, void *args);
-void broadcast_epoch_request(arts_guid_t epoch_guid);
-bool check_epoch(arts_epoch_t *epoch, unsigned int total_active,
-                 unsigned int total_finish);
-void reduce_epoch(arts_guid_t epoch_guid, unsigned int active,
-                  unsigned int finish);
-void delete_epoch(arts_guid_t epoch_guid, arts_epoch_t *epoch);
+void arts_epoch_request_broadcast(arts_guid_t epoch_guid);
+bool arts_epoch_check(arts_epoch_t *epoch, unsigned int total_active,
+                      unsigned int total_finish);
+void arts_epoch_reduce_submit(arts_guid_t epoch_guid, unsigned int active,
+                              unsigned int finish);
+void arts_epoch_delete(arts_guid_t epoch_guid, arts_epoch_t *epoch);
 
-typedef struct arts_epoch_pool_s {
-  struct arts_epoch_pool_s *next;
-  unsigned int size;
-  unsigned int index;
-  volatile unsigned int outstanding;
-  arts_epoch_t pool[];
-} arts_epoch_pool_t;
-
-arts_epoch_pool_t *create_epoch_pool(arts_guid_t *epoch_pool_guid,
-                                     unsigned int pool_size,
-                                     arts_guid_t *start_guid);
-void arts_link_epoch_pool_to_tls(arts_epoch_pool_t *pool);
-arts_epoch_t *get_pool_epoch(arts_guid_t edt_guid, unsigned int slot);
-void arts_cleanup_epoch_pools(void);
+/* Cross-rank wire TX/RX for the epoch protocol.  RX for REQUEST/SEND is
+ * inline-decoded in the dispatcher (→ arts_epoch_reply /
+ * arts_epoch_reduce_submit); the handlers below decode CREATE / INIT_POOL /
+ * DELETE. */
+void arts_send_epoch_create(unsigned int rank, arts_guid_t epoch_guid,
+                            arts_guid_t edt_guid, unsigned int slot);
+void arts_handler_epoch_create(void *pack);
+void arts_send_epoch_init_pool(unsigned int rank, unsigned int pool_size,
+                               arts_guid_t start_guid, arts_guid_t pool_guid);
+void arts_handler_epoch_init_pool(void *pack);
+void arts_send_epoch_request(unsigned int rank, arts_guid_t guid);
+void arts_send_epoch_send(unsigned int rank, arts_guid_t guid,
+                          unsigned int active, unsigned int finish);
+void arts_send_epoch_delete(unsigned int rank, arts_guid_t epoch_guid);
+void arts_handler_epoch_delete(void *pack);
 
 void arts_shutdown_epoch_inc_active();
 void arts_shutdown_epoch_inc_queue();

@@ -196,6 +196,13 @@ void arts_counter_write(const char *output_folder, unsigned int node_id,
 void arts_counter_write_cluster(const char *output_folder,
                                 unsigned int node_count);
 
+// RTT-based time synchronization for precise epoch alignment.
+// Worker initiates sync request, master responds, worker calculates offset.
+// The time-offset state lives in counter.c (co-located with these handlers).
+void arts_send_time_sync_request(void); // Worker sends request to master
+void arts_handler_time_sync_request(void *pack);  // Master handles request
+void arts_handler_time_sync_response(void *pack); // Worker handles response
+
 #ifdef __cplusplus
 }
 #endif

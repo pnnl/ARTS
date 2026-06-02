@@ -47,7 +47,7 @@ extern "C" {
 typedef struct {
   uint64_t size;
   volatile unsigned int time_stamp;
-  volatile void *realData;
+  volatile void *real_data;
 } arts_item_wrapper_t;
 
 typedef struct {
@@ -60,15 +60,14 @@ arts_route_table_t *arts_gpu_new_route_table(unsigned int route_table_size,
                                              unsigned int shift);
 
 uint64_t arts_gpu_lookup_db(arts_guid_t key);
-unsigned int arts_gpu_lookup_db_fix(arts_guid_t key);
-void *arts_gpu_route_table_add_item_race(void *item, uint64_t size,
+void *arts_gpu_route_table_add_item(void *item, uint64_t size,
                                          arts_guid_t key, unsigned int gpu_id);
-arts_item_wrapper_t *arts_gpu_route_table_reserve_item_race(bool *added,
+arts_item_wrapper_t *arts_gpu_route_table_reserve_item(bool *added,
                                                             uint64_t size,
                                                             arts_guid_t key,
                                                             unsigned int gpu_id,
                                                             bool add_to_use);
-void *arts_gpu_route_table_add_item_to_delete_race(void *item, uint64_t size,
+void *arts_gpu_route_table_add_item_to_delete(void *item, uint64_t size,
                                                    arts_guid_t key,
                                                    unsigned int gpu_id);
 void *arts_gpu_route_table_lookup_db(arts_guid_t key, int gpu_id,

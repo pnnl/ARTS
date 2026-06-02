@@ -44,7 +44,6 @@ extern "C" {
 #include "arts/runtime_types.h"
 #include "arts/utils/lockfree_lifo.h" /* arts_lf_link_t */
 #include <stddef.h>                   /* offsetof */
-#define INITIAL_DEPENDENT_SIZE 4
 
 /** Dep node — one per registered EDT or chained event waiting on this
  *  source event.  Allocated from arts_node_info.event_dep_pool.
@@ -60,16 +59,6 @@ struct arts_event_dep_s {
 _Static_assert(offsetof(struct arts_event_dep_s, link) == 0,
                "link must be first for arts_lf_link_t round-tripping");
 
-bool arts_event_create_internal(arts_guid_t *guid,
-                                const arts_event_hint_t *h_in);
-
-/* External forwarder around the static event_deleter in event.c.  Used by
- * the cross-rank EVENT_MOVE handler to free a freshly-unmarshaled event
- * buffer when the install loses the add_item_race against another rank.
- * Drains any (likely empty, since the buffer was just allocated) dep
- * stack, returns nodes to the per-rank pool, and frees the struct. */
-void arts_event_free_internal(struct arts_event_s *e);
-
 /* arts_event_add_dependence — entity-specific API (src=event): register a
  * dependent on an event source.  arts_add_dependence's event-source branch
  * delegates here. */
@@ -79,6 +68,20 @@ void arts_event_add_dependence(arts_guid_t source, arts_guid_t destination,
 /* OoO replay handlers (g_ooo_table) — operate on the acquired event. */
 void arts_handler_event_satisfy_slot(void *item, void *args);
 void arts_handler_event_add_dependence(void *item, void *args);
+
+/* Cross-rank wire TX/RX for event ops. */
+void arts_send_event_add_dependence(arts_guid_t source, arts_guid_t destination,
+                                    uint32_t slot, unsigned int rank,
+                                    arts_db_access_mode_t mode);
+void arts_send_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
+                                  uint32_t slot);
+void arts_handler_event_create(void *ptr);
+/* Cross-rank arts_event_destroy: forwarder + handler.
+ * Forwarder serializes the GUID into MSG_EVENT_DESTROY;
+ * handler runs arts_route_table_mark_delete on the home rank.  mark_delete
+ * is idempotent (DELETE is sticky), so duplicate messages are safe. */
+void arts_send_event_destroy(arts_guid_t guid);
+void arts_handler_event_destroy(void *ptr);
 
 #ifdef __cplusplus
 }

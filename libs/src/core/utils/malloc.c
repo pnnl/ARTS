@@ -50,11 +50,11 @@
 #define ALIGNMENT 16
 #define IS_POWER_OF_TWO(x) (!((x) & ((x) - 1)))
 
-typedef struct ARTS_ALIGNED(64) header_s {
+typedef struct ARTS_ALIGNED(64) arts_alloc_header_s {
   size_t size;
   size_t align; // 0 if not aligned
   void *base;
-} header_t;
+} arts_alloc_header_t;
 
 static inline void *align_pointer(void *ptr, size_t align) {
   return (void *)(((uintptr_t)ptr + align - 1) & ~(align - 1));
@@ -65,7 +65,7 @@ void *arts_malloc(size_t size) {
     return NULL;
   }
 
-  header_t *base = (header_t *)malloc(size + sizeof(header_t));
+  arts_alloc_header_t *base = (arts_alloc_header_t *)malloc(size + sizeof(arts_alloc_header_t));
   if (!base) {
     ARTS_ERROR("arts_malloc: system malloc failed (size=%zu)", size);
   }
@@ -84,15 +84,15 @@ void *arts_malloc_align(size_t size, size_t align) {
                align);
   }
 
-  void *base = malloc(size + align - 1 + sizeof(header_t));
+  void *base = malloc(size + align - 1 + sizeof(arts_alloc_header_t));
   if (!base) {
     ARTS_ERROR("arts_malloc_align: system malloc failed (size=%zu, align=%zu)",
                size, align);
   }
   INCREMENT_BYTES_MEMORY_FOOTPRINT_BY(size);
 
-  void *aligned = align_pointer((char *)base + sizeof(header_t), align);
-  header_t *hdr = (header_t *)aligned - 1;
+  void *aligned = align_pointer((char *)base + sizeof(arts_alloc_header_t), align);
+  arts_alloc_header_t *hdr = (arts_alloc_header_t *)aligned - 1;
 
   hdr->size = size;
   hdr->align = align;
@@ -144,7 +144,7 @@ void *arts_realloc(void *ptr, size_t size) {
     return NULL;
   }
 
-  header_t *old_hdr = (header_t *)ptr - 1;
+  arts_alloc_header_t *old_hdr = (arts_alloc_header_t *)ptr - 1;
   size_t old_size = old_hdr->size;
   if (size <= old_size) {
     old_hdr->size = size;
@@ -168,7 +168,7 @@ void arts_free(void *ptr) {
     return; /* CXL arena-managed memory, not individually freeable */
   }
 #endif
-  header_t *hdr = (header_t *)ptr - 1;
+  arts_alloc_header_t *hdr = (arts_alloc_header_t *)ptr - 1;
   size_t size = hdr->size;
   free(hdr->base);
   DECREMENT_BYTES_MEMORY_FOOTPRINT_BY(size);

@@ -42,20 +42,17 @@
 
 #include "arts.h"
 #include "arts/compute/edt.h"
+#include "arts/counter/counter.h" /* arts_handler_time_sync_* */
 #include "arts/memory/coherence_handlers.h"
 #include "arts/memory/db.h"
-#include "arts/remote/handler.h"
 #include "arts/runtime_state.h"
 #include "arts/sync/epoch.h"
 #include "arts/sync/event.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
+#include "arts/transport/outbox.h"
 #include "arts/transport/protocol.h"
 #include "arts/utils/malloc.h"
-
-#define EDT_MUG_SIZE 32
-
-extern bool server_end;
 
 #ifdef SEQUENCENUMBERS
 uint64_t *rec_seq_numbers;
@@ -83,25 +80,25 @@ void arts_remote_send_shutdown_broadcast(void) {
   }
 }
 
-void arts_server_cleanup(void) {
-  out_cleanup();
+void arts_transport_cleanup(void) {
+  arts_outbox_cleanup();
 #ifdef SEQUENCENUMBERS
   arts_free(rec_seq_numbers);
   rec_seq_numbers = NULL;
 #endif
 }
 
-void arts_server_setup(struct arts_config_s *config) {
+void arts_transport_setup(struct arts_config_s *config) {
   // ASYNC Message Queue Init
-  arts_ll_server_setup(config);
-  out_init(arts_global_rank_count * config->port_count);
+  arts_socket_setup(config);
+  arts_outbox_init(arts_global_rank_count * config->port_count);
 #ifdef SEQUENCENUMBERS
   rec_seq_numbers =
       (uint64_t *)arts_calloc(arts_global_rank_count, sizeof(uint64_t));
 #endif
 }
 
-void arts_server_process_packet(struct arts_remote_packet_s *packet) {
+void arts_transport_dispatch_packet(struct arts_remote_packet_s *packet) {
 #ifdef SEQUENCENUMBERS
   uint64_t exp_seq_number =
       __sync_fetch_and_add(&rec_seq_numbers[packet->seq_rank], 1U);
@@ -127,8 +124,8 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
     break;
   }
   case MSG_EDT_SATISFY_SLOT: {
-    struct arts_remote_edt_signal_packet_s *pack =
-        (struct arts_remote_edt_signal_packet_s *)(packet);
+    struct arts_remote_edt_satisfy_slot_packet_s *pack =
+        (struct arts_remote_edt_satisfy_slot_packet_s *)(packet);
     /* DB_MODE_PTR carries an inline payload right after the header; other
      * modes deliver a GUID/value reference only (size == 0). */
     void *source = pack->size > 0 ? (void *)(pack + 1) : NULL;
@@ -170,14 +167,14 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
     struct arts_remote_guid_only_packet_s *pack =
         (struct arts_remote_guid_only_packet_s *)(packet);
     /* source and dest are the requester rank (the query origin). */
-    send_epoch(pack->guid, pack->header.rank, pack->header.rank);
+    arts_epoch_reply(pack->guid, pack->header.rank, pack->header.rank);
     break;
   }
   case MSG_EPOCH_SEND: {
     ARTS_DEBUG("Epoch Send Received");
     struct arts_remote_epoch_send_packet_s *pack =
         (struct arts_remote_epoch_send_packet_s *)(packet);
-    reduce_epoch(pack->epoch_guid, pack->active, pack->finish);
+    arts_epoch_reduce_submit(pack->epoch_guid, pack->active, pack->finish);
     break;
   }
   case MSG_EPOCH_INIT_POOL: {
@@ -221,34 +218,34 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
 #else  /* RC and LRC: full handlers */
   case MSG_DB_OWNERSHIP_REQUEST: {
     ARTS_DEBUG("Coh LOCK_REQ Received");
-    struct arts_remote_lock_req_packet_s *pack =
-        (struct arts_remote_lock_req_packet_s *)(packet);
+    struct arts_remote_ownership_request_packet_s *pack =
+        (struct arts_remote_ownership_request_packet_s *)(packet);
     arts_handler_db_ownership_request(pack);
     break;
   }
   case MSG_DB_OWNERSHIP_INVALIDATE: {
     ARTS_DEBUG("Coh INVALIDATE_NOTICE Received");
     arts_handler_db_ownership_invalidate(
-        (struct arts_remote_invalidate_notice_packet_s *)(packet));
+        (struct arts_remote_ownership_invalidate_packet_s *)(packet));
     break;
   }
   case MSG_DB_OWNERSHIP_RETURN: {
     ARTS_DEBUG("Coh RELEASE_OWNERSHIP Received");
     arts_handler_db_ownership_return(
-        (struct arts_remote_release_ownership_packet_s *)(packet));
+        (struct arts_remote_ownership_return_packet_s *)(packet));
     break;
   }
 #endif /* ARTS_MEMORY_MODEL_LC */
   case MSG_DB_SNAPSHOT_REQUEST: {
     ARTS_DEBUG("Coh GET_DATA Received");
     arts_handler_db_snapshot_request(
-        (struct arts_remote_get_data_packet_s *)(packet));
+        (struct arts_remote_snapshot_request_packet_s *)(packet));
     break;
   }
   case MSG_DB_SNAPSHOT_RESPONSE: {
     ARTS_DEBUG("Coh DATA_RESPONSE Received");
-    struct arts_remote_data_response_packet_s *pack =
-        (struct arts_remote_data_response_packet_s *)(packet);
+    struct arts_remote_snapshot_response_packet_s *pack =
+        (struct arts_remote_snapshot_response_packet_s *)(packet);
     const void *data = (const char *)pack + sizeof(*pack);
     uint64_t data_size = pack->header.size - sizeof(*pack);
     arts_handler_db_snapshot_response(pack, data_size > 0 ? data : NULL,
@@ -257,43 +254,51 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
   }
   case MSG_DB_CREATE: {
     ARTS_DEBUG("Coh DB_CREATE_COHERENT Received");
-    arts_handler_db_create_coherent(
+    arts_handler_db_create(
         (struct arts_remote_db_create_coherent_packet_s *)(packet));
     break;
   }
   case MSG_DB_DESTROY: {
     ARTS_DEBUG("Coh DESTROY_REQ Received");
-    arts_handler_db_destroy(
-        (struct arts_remote_destroy_req_packet_s *)(packet));
+    arts_handler_db_destroy((struct arts_remote_destroy_packet_s *)(packet));
     break;
   }
   case MSG_DB_CACHE_DESTROY: {
     ARTS_DEBUG("Coh DESTROY_NOTIFY Received");
     arts_handler_db_cache_destroy(
-        (struct arts_remote_destroy_notify_packet_s *)(packet));
+        (struct arts_remote_cache_destroy_packet_s *)(packet));
     break;
   }
-  /* GRANT: RC-only — fatal in LRC and LC builds to catch binary mode mismatch.
-   */
-#if defined(ARTS_MEMORY_MODEL_LRC) || defined(ARTS_MEMORY_MODEL_LC)
+  /* OWNERSHIP_RESPONSE: the single ownership-transfer wire message.  RC = GRANT
+   * (buffer payload); LRC = TRANSFER_OWNERSHIP (map + buffer); LC has no
+   * ownership transfer and fatals to catch a binary mode mismatch. */
+#if defined(ARTS_MEMORY_MODEL_LC)
   case MSG_DB_OWNERSHIP_RESPONSE: {
-    ARTS_ERROR("Non-RC build received RC-only GRANT message from rank %u — "
-               "binary mode mismatch?",
+    ARTS_ERROR("LC build received OWNERSHIP_RESPONSE from rank %u — LC has no "
+               "ownership transfer; binary mode mismatch?",
                packet->rank);
+    break;
+  }
+#elif defined(ARTS_MEMORY_MODEL_LRC)
+  case MSG_DB_OWNERSHIP_RESPONSE: {
+    ARTS_DEBUG("LRC TRANSFER_OWNERSHIP Received");
+    /* Payload (map + data) immediately follows the header in the contiguous
+     * wire buffer; the handler parses it from the full packet. */
+    arts_handler_db_ownership_response((void *)packet, (size_t)packet->size);
     break;
   }
 #else  /* RC build */
   case MSG_DB_OWNERSHIP_RESPONSE: {
     ARTS_DEBUG("Coh GRANT Received");
-    struct arts_remote_grant_packet_s *pack =
-        (struct arts_remote_grant_packet_s *)(packet);
+    struct arts_remote_ownership_response_packet_s *pack =
+        (struct arts_remote_ownership_response_packet_s *)(packet);
     const void *data = (const char *)pack + sizeof(*pack);
     uint64_t data_size = pack->header.size - sizeof(*pack);
     arts_handler_db_ownership_response(pack, data_size > 0 ? data : NULL,
                                        data_size);
     break;
   }
-#endif /* ARTS_MEMORY_MODEL_LRC || ARTS_MEMORY_MODEL_LC */
+#endif /* model dispatch for MSG_DB_OWNERSHIP_RESPONSE */
   /* WRITEBACK + WRITEBACK_ACK: used by RC and LC (sync release writeback).
    * Fatal in LRC only — LRC uses async transfer, not synchronous writeback. */
 #if defined(ARTS_MEMORY_MODEL_LRC)
@@ -326,6 +331,11 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
     arts_handler_event_destroy(packet);
     break;
   }
+  case MSG_EDT_DESTROY: {
+    ARTS_DEBUG("EDT Destroy Received");
+    arts_handler_edt_destroy(packet);
+    break;
+  }
   /* ===== LRC-only message dispatch
    * ============================================ These slots are only sent
    * between ranks compiled with ARTS_MEMORY_MODEL=LRC.  Real handlers are wired
@@ -335,14 +345,7 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
   case MSG_DB_SNAPSHOT_REDIRECT: {
     ARTS_DEBUG("LRC REDIRECT_RO Received");
     arts_handler_db_snapshot_redirect(
-        (struct arts_remote_redirect_ro_packet_s *)(packet));
-    break;
-  }
-  case MSG_DB_OWNERSHIP_RESPONSE_LRC: {
-    ARTS_DEBUG("LRC TRANSFER_OWNERSHIP Received");
-    /* Payload immediately follows the header in the contiguous wire buffer. */
-    arts_handler_db_ownership_response_lrc((void *)packet,
-                                           (size_t)packet->size);
+        (struct arts_remote_snapshot_redirect_packet_s *)(packet));
     break;
   }
   case MSG_DB_OWNERSHIP_RESPONSE_ACK: {
@@ -353,7 +356,6 @@ void arts_server_process_packet(struct arts_remote_packet_s *packet) {
   }
 #else  /* !ARTS_MEMORY_MODEL_LRC */
   case MSG_DB_SNAPSHOT_REDIRECT:
-  case MSG_DB_OWNERSHIP_RESPONSE_LRC:
   case MSG_DB_OWNERSHIP_RESPONSE_ACK: {
     ARTS_ERROR("RC build received LRC-only message type %d from rank %u — "
                "binary mode mismatch?",

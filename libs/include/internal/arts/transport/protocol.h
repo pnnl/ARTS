@@ -44,7 +44,7 @@ extern "C" {
 #include "arts/runtime_types.h"
 #define SEQUENCENUMBERS 1
 
-enum artsServerMessageType {
+enum arts_msg_type {
   MSG_SHUTDOWN,
   MSG_EDT_SATISFY_SLOT,
   MSG_EVENT_SATISFY_SLOT,
@@ -76,11 +76,14 @@ enum artsServerMessageType {
    * arts_event_destroy → mark_delete on the home rank.  Sequential append,
    * no gaps. */
   MSG_EVENT_DESTROY,
+  /* Cross-rank arts_edt_destroy → home-rank destroy (symmetric with
+   * MSG_EVENT_DESTROY / MSG_DB_DESTROY; OoO-deferred on before-create
+   * reorder).  Sequential append, no gaps. */
+  MSG_EDT_DESTROY,
   /* LRC (Location-Consistency) coherence messages.  Only sent/received when
    * both ranks are compiled with ARTS_MEMORY_MODEL=LRC.  Sequential append,
    * no gaps. */
   MSG_DB_SNAPSHOT_REDIRECT,
-  MSG_DB_OWNERSHIP_RESPONSE_LRC,
   MSG_DB_OWNERSHIP_RESPONSE_ACK,
 
   MSG_COUNT, /* sentinel — keep last; used for array sizing */
@@ -105,8 +108,6 @@ struct ARTS_PACKED arts_remote_packet_s {
   unsigned int seq_rank;
   uint64_t seq_num;
 #endif
-  uint64_t time_stamp;
-  uint64_t proc_time_stamp;
 };
 
 struct ARTS_PACKED arts_remote_guid_only_packet_s {
@@ -122,7 +123,7 @@ struct ARTS_PACKED arts_remote_add_dependence_packet_s {
   arts_db_access_mode_t mode;
 };
 
-struct ARTS_PACKED arts_remote_edt_signal_packet_s {
+struct ARTS_PACKED arts_remote_edt_satisfy_slot_packet_s {
   struct arts_remote_packet_s header;
   arts_guid_t edt;
   arts_guid_t db;
@@ -182,15 +183,30 @@ struct ARTS_PACKED arts_remote_time_sync_resp_packet_s {
  * starts at sizeof() — that offset must be 8-aligned.  Header is packed
  * (44 bytes), so each struct's body fields determine the pad. */
 
-struct ARTS_PACKED arts_remote_lock_req_packet_s {
+struct ARTS_PACKED arts_remote_ownership_request_packet_s {
   struct arts_remote_packet_s header;
   arts_guid_t db_guid;
 };
 
-/* GRANT carries optional trailing buffer payload (data_present == 1).
- * Body: db_guid(8) + version(8) + has_next(4) + data_present(4) = 24,
- * total = 44 + 24 = 68; pad[4] -> 72 (8-aligned). */
-struct ARTS_PACKED arts_remote_grant_packet_s {
+/* OWNERSHIP_RESPONSE — the single ownership-transfer wire message.
+ * RC carries an optional trailing buffer payload (data_present == 1).
+ * LRC carries a serialized last_sent_version map + buffer payload (the old
+ * model-prefixed MSG_DB_OWNERSHIP_RESPONSE_LRC collapsed into this). */
+#ifdef ARTS_MEMORY_MODEL_LRC
+struct ARTS_PACKED arts_remote_ownership_response_packet_s {
+  struct arts_remote_packet_s header;
+  arts_guid_t db_guid;
+  uint64_t version;
+  uint32_t map_entry_count; /* arts_remote_rank_version_pair_s entries that
+                               follow the header */
+  uint32_t pad;
+  /* followed by:
+   *   arts_remote_rank_version_pair_s pairs[map_entry_count];
+   *   uint8_t data[db_size];
+   */
+};
+#else /* RC */
+struct ARTS_PACKED arts_remote_ownership_response_packet_s {
   struct arts_remote_packet_s header;
   arts_guid_t db_guid;
   uint64_t version;
@@ -198,6 +214,7 @@ struct ARTS_PACKED arts_remote_grant_packet_s {
   uint32_t data_present;
   uint8_t pad[4];
 };
+#endif
 
 /* WRITEBACK carries optional trailing buffer payload.
  * Body: db_guid(8) + version(8) + cv(8) + flag(1) = 25,
@@ -225,35 +242,36 @@ struct ARTS_PACKED arts_remote_writeback_ack_packet_s {
  * RC builds send new_owner_rank=0 (ignored by the handler).
  * LRC builds set new_owner_rank so the current holder knows where to send
  * TRANSFER_OWNERSHIP without a round-trip to home. */
-struct ARTS_PACKED arts_remote_invalidate_notice_packet_s {
+struct ARTS_PACKED arts_remote_ownership_invalidate_packet_s {
   struct arts_remote_packet_s header;
   arts_guid_t db_guid;
   uint32_t new_owner_rank;
   uint8_t pad[4];
 };
 
-struct ARTS_PACKED arts_remote_release_ownership_packet_s {
+struct ARTS_PACKED arts_remote_ownership_return_packet_s {
   struct arts_remote_packet_s header;
   arts_guid_t db_guid;
 };
 
-struct ARTS_PACKED arts_remote_get_data_packet_s {
+struct ARTS_PACKED arts_remote_snapshot_request_packet_s {
   struct arts_remote_packet_s header;
   arts_guid_t db_guid;
-  uint64_t waiter_addr;
+  arts_guid_t edt_guid; /* parked EDT to resume on the requester rank */
+  uint32_t slot;        /* dep slot index in the parked EDT */
+  uint8_t pad[4];
 };
 
-/* DATA_RESPONSE carries optional trailing buffer payload.
- * Body: db_guid(8) + version(8) + waiter_addr(8) + data_present(4) = 28,
- * total = 44 + 28 = 72 (already 8-aligned). pad[0] not portable, use
- * pad[4] for symmetry; payload offset becomes 76 — round up to 80. */
-struct ARTS_PACKED arts_remote_data_response_packet_s {
+/* DATA_RESPONSE carries optional trailing buffer payload.  Echoes the parked
+ * EDT (edt_guid + slot) back so the requester's response handler resumes it
+ * directly — no acquire-time list registration (the reorder-buffer design). */
+struct ARTS_PACKED arts_remote_snapshot_response_packet_s {
   struct arts_remote_packet_s header;
   arts_guid_t db_guid;
   uint64_t version;
-  uint64_t waiter_addr;
+  arts_guid_t edt_guid; /* parked EDT to resume (echoed from request) */
+  uint32_t slot;        /* dep slot index (echoed from request) */
   uint32_t data_present;
-  uint8_t pad[4];
 };
 
 /* DB_CREATE_COHERENT — no trailing payload (zero-init buffer at home).
@@ -269,12 +287,12 @@ struct ARTS_PACKED arts_remote_db_create_coherent_packet_s {
   uint8_t pad[4];
 };
 
-struct ARTS_PACKED arts_remote_destroy_req_packet_s {
+struct ARTS_PACKED arts_remote_destroy_packet_s {
   struct arts_remote_packet_s header;
   arts_guid_t db_guid;
 };
 
-struct ARTS_PACKED arts_remote_destroy_notify_packet_s {
+struct ARTS_PACKED arts_remote_cache_destroy_packet_s {
   struct arts_remote_packet_s header;
   arts_guid_t db_guid;
 };
@@ -286,12 +304,12 @@ struct ARTS_PACKED arts_remote_destroy_notify_packet_s {
 
 /* REDIRECT_RO — home forwards an RO grant request to the current owner.
  * The owner will send data directly to requester_rank using INSTALL_ACK. */
-struct ARTS_PACKED arts_remote_redirect_ro_packet_s {
+struct ARTS_PACKED arts_remote_snapshot_redirect_packet_s {
   struct arts_remote_packet_s header;
   arts_guid_t db_guid;
+  arts_guid_t edt_guid; /* parked EDT at requester_rank to resume */
   uint32_t requester_rank;
-  uint32_t pad;
-  uint64_t waiter_addr; /* opaque; valid only at requester_rank */
+  uint32_t slot; /* dep slot index in the parked EDT */
 };
 
 /* TRANSFER_OWNERSHIP — owner sends data + version + reader-map to new owner.
@@ -303,19 +321,6 @@ struct ARTS_PACKED arts_remote_rank_version_pair_s {
   uint32_t rank;
   uint32_t pad;
   uint64_t version;
-};
-
-struct ARTS_PACKED arts_remote_transfer_ownership_packet_s {
-  struct arts_remote_packet_s header;
-  arts_guid_t db_guid;
-  uint64_t version;
-  uint32_t map_entry_count; /* number of arts_remote_rank_version_pair_s entries
-                               that follow */
-  uint32_t pad;
-  /* followed by:
-   *   arts_remote_rank_version_pair_s pairs[map_entry_count];
-   *   uint8_t data[db_size];
-   */
 };
 
 /* INSTALL_ACK — new owner (or forwarder) confirms installation to requester.
@@ -336,21 +341,6 @@ static inline void arts_fill_packet_header(struct arts_remote_packet_s *header,
   header->rank = arts_global_rank_id;
 }
 
-void out_init(unsigned int size);
-void out_cleanup(void);
-void arts_remote_flush_outbound(void);
-bool arts_remote_async_send();
-void arts_remote_send_request_async(int rank, char *message,
-                                    unsigned int length);
-void arts_remote_send_request_payload_async(int rank, char *message,
-                                            unsigned int length, char *payload,
-                                            uint64_t size);
-void arts_remote_send_request_payload_async_free(
-    int rank, char *message, unsigned int length, char *payload,
-    unsigned int offset, uint64_t size, void (*free_method)(void *));
-void arts_remote_set_thread_outbound_queues(unsigned int start,
-                                            unsigned int stop);
-void arts_remote_thread_outbound_queues_cleanup();
 #ifdef __cplusplus
 }
 #endif

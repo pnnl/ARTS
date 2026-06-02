@@ -140,7 +140,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   for (unsigned int i = 0; i < DB_ELEMS; i++) {
     d1[i] = i + 1;
   }
-  arts_db_release(db1);
+  arts_db_release(db1, DB_MODE_RW);
   arts_guid_t e1 = arts_edt_create(check_db_create, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   arts_add_dependence(db1, e1, 0, DB_MODE_RW);
 
@@ -151,7 +151,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   for (unsigned int i = 0; i < DB_ELEMS; i++) {
     d2[i] = (uint64_t)i * 3;
   }
-  arts_db_release(reserved);
+  arts_db_release(reserved, DB_MODE_RW);
   uint64_t param2 = (uint64_t)reserved;
   arts_guid_t e2 = arts_edt_create(check_db_with_guid, 1, &param2, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   arts_add_dependence(reserved, e2, 0, DB_MODE_RO);
@@ -163,7 +163,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   for (unsigned int i = 0; i < DB_ELEMS; i++) {
     d3[i] = 0xBEEF + i;
   }
-  arts_db_release(reserved3);
+  arts_db_release(reserved3, DB_MODE_RW);
   arts_guid_t e3 = arts_edt_create(check_db_with_data, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   arts_add_dependence(reserved3, e3, 0, DB_MODE_RO);
 

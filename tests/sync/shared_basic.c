@@ -6,7 +6,7 @@
  * this file), so it needs no ARTS runtime.
  */
 
-#include "arts/sync/shared.h"
+#include "arts/utils/shared.h"
 
 #include <assert.h>
 #include <stdatomic.h>

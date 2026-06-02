@@ -88,7 +88,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       arts_db_create(&addr, sizeof(uint64_t), ARTS_DB, ARTS_DB_PROP_NONE,
                      &(arts_db_hint_t){.rank = 0});
   *(uint64_t *)addr = 0;
-  arts_db_release(db);
+  arts_db_release(db, DB_MODE_RW);
 
   /* Outer epoch → shutdown_edt (depc=1, slot 0 = outer epoch VAL). */
   arts_guid_t shut = arts_edt_create(shutdown_edt, 0, NULL, 1, NULL);

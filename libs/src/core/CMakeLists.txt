@@ -40,7 +40,6 @@
 # Core runtime modules — each defines its own OBJECT library target
 add_subdirectory(compute)
 add_subdirectory(memory)
-add_subdirectory(remote)
 add_subdirectory(sync)
 add_subdirectory(transport)
 add_subdirectory(gas)

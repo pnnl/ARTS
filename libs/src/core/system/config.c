@@ -55,38 +55,6 @@
 static char *arts_config_override_path = NULL;
 static char *arts_config_override_data = NULL;
 
-void arts_set_config_path(const char *path) {
-  if (arts_config_override_path) {
-    free(arts_config_override_path);
-    arts_config_override_path = NULL;
-  }
-  if (!path || !path[0]) {
-    return;
-  }
-  size_t len = strlen(path);
-  arts_config_override_path = (char *)malloc(len + 1);
-  if (!arts_config_override_path) {
-    return;
-  }
-  memcpy(arts_config_override_path, path, len + 1);
-}
-
-void arts_set_config_data(const char *data) {
-  if (arts_config_override_data) {
-    free(arts_config_override_data);
-    arts_config_override_data = NULL;
-  }
-  if (!data || !data[0]) {
-    return;
-  }
-  size_t len = strlen(data);
-  arts_config_override_data = (char *)malloc(len + 1);
-  if (!arts_config_override_data) {
-    return;
-  }
-  memcpy(arts_config_override_data, data, len + 1);
-}
-
 char *extract_nodelist_lsf(const char *envr, int stride, unsigned int *cnt) {
   char *lsf_nodes;
   char *res_string;

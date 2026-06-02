@@ -51,7 +51,7 @@ struct arts_remote_launcher_s {
   unsigned int argc;
   char **argv;
   struct arts_config_s *config;
-  unsigned int killStuckProcesses;
+  unsigned int kill_stuck_processes;
   void (*launch_processes)(struct arts_remote_launcher_s *);
   void (*cleanup_processes)(struct arts_remote_launcher_s *);
   pid_t *child_pids;
@@ -82,7 +82,7 @@ static inline struct arts_remote_launcher_s *arts_remote_launcher_create(
   launcher->argc = argc;
   launcher->argv = argv;
   launcher->config = config;
-  launcher->killStuckProcesses = kill_mode;
+  launcher->kill_stuck_processes = kill_mode;
   launcher->child_pids = NULL;
   launcher->child_count = 0;
   launcher->launch_processes = launch_processes;

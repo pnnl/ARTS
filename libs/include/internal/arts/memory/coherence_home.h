@@ -9,8 +9,9 @@
  *   - last_sent_version map: per-slot atomic.  Each rank slot is an independent
  *     _Atomic(uint64_t) accessed via atomic load/store and CAS-loop
  * monotonic-max for advance.  No cross-slot invariant.
- *   - rw_holder, invalidate_in_flight, destroy_in_flight: _Atomic.  rw_holder
- *     uses acquire/release; gates use acq_rel CAS for the baton.
+ *   - rw_holder, invalidate_in_flight: _Atomic.  rw_holder uses
+ *     acquire/release; the invalidate_in_flight gate uses acq_rel CAS for the
+ *     baton.
  */
 
 #ifndef ARTS_MEMORY_COHERENCE_HOME_H
@@ -25,9 +26,14 @@ extern "C" {
 #include <stdint.h>
 
 #include "arts/memory/coherence.h"
+/* struct arts_rank_bitset_s definition (embedded by value in arts_db_s).
+ * The rank-bitset FUNCTION declarations are folded into this header below;
+ * the STRUCT lives in rank_bitset.h because coherence_types.h includes
+ * it directly to lay out arts_db_s and must not depend on this header. */
+#include "arts/memory/rank_bitset.h"
 
 /* arts_home_lockreq_node_s and arts_home_lockreq_queue_s are defined in
- * coherence.h (included above), where arts_db_home_s embeds the queue. */
+ * coherence.h (included above), where arts_db_s embeds the queue. */
 
 void arts_home_lockreq_queue_init(struct arts_home_lockreq_queue_s *q);
 void arts_home_lockreq_queue_destroy(struct arts_home_lockreq_queue_s *q);
@@ -38,24 +44,6 @@ void arts_home_lockreq_queue_push(struct arts_home_lockreq_queue_s *q,
 bool arts_home_lockreq_queue_pop(struct arts_home_lockreq_queue_s *q,
                                  unsigned int *out_rank);
 bool arts_home_lockreq_queue_empty(const struct arts_home_lockreq_queue_s *q);
-
-/*--- pending_ro_forwards queue ------------------------------------------
- *
- * Deferred RO_REQ (GET_DATA) messages parked while invalidate_in_flight
- * is set.  The queue is Vyukov MPSC in LRC builds; in RC builds the
- * init/destroy are no-ops and push/pop are never called. */
-void arts_home_pending_ro_queue_init(struct arts_home_pending_ro_queue_s *q);
-void arts_home_pending_ro_queue_destroy(struct arts_home_pending_ro_queue_s *q);
-#ifdef ARTS_MEMORY_MODEL_LRC
-void arts_home_pending_ro_queue_push(struct arts_home_pending_ro_queue_s *q,
-                                     unsigned int requester_rank,
-                                     void *waiter_addr);
-/* Pop the front entry (single consumer).  Returns true and sets *out_rank /
- * *out_waiter_addr on success; returns false when the queue is empty. */
-bool arts_home_pending_ro_queue_pop(struct arts_home_pending_ro_queue_s *q,
-                                    unsigned int *out_rank,
-                                    void **out_waiter_addr);
-#endif /* ARTS_MEMORY_MODEL_LRC */
 
 /*--- last_sent_version dense map ----------------------------------------*/
 
@@ -78,16 +66,39 @@ void arts_rank_u64_map_set(struct arts_rank_to_u64_map_s *m, unsigned int rank,
 bool arts_rank_u64_map_advance(struct arts_rank_to_u64_map_s *m,
                                unsigned int rank, uint64_t value);
 
-/*--- arts_db_home_s lifecycle -------------------------------------------*/
+/*--- rank bit-set ----------------------------------------------------
+ *
+ * Bit-packed atomic rank bit-set, sized to the cluster's rank count.  Used
+ * only in LRC builds — RC reuses the per-rank version map for the same
+ * purpose (set membership = nonzero entry).  The struct
+ * arts_rank_bitset_s definition lives in rank_bitset.h (included
+ * directly by coherence_types.h, which embeds it by value in
+ * arts_db_s). */
 
-/* Initialize a home metadata block in place (embedded by value in the
- * cache, no separate allocation).  rw_holder is set by the caller
- * (typically creator_rank under PROP_NONE, or self_rank under NO_ACQUIRE). */
-void arts_db_home_init(struct arts_db_home_s *home, unsigned int rw_holder,
+void arts_rank_bitset_init(struct arts_rank_bitset_s *r, unsigned int nranks);
+void arts_rank_bitset_destroy(struct arts_rank_bitset_s *r);
+/* Set bit for rank; returns true if the bit was previously clear (first-time
+ * set), false if already set.  Safe for concurrent callers. */
+bool arts_rank_bitset_set(struct arts_rank_bitset_s *r, unsigned int rank);
+/* Iterate over all set bits, invoking cb(rank, ctx) for each.  The snapshot
+ * is acquired per-word; callers must ensure no concurrent set() during
+ * iteration.  The destroy fan-out satisfies this as the home-side single
+ * actor: by the time it scans, the DB's route-table slot is already absent,
+ * so no later acquire can register a new reader. */
+void arts_rank_bitset_for_each(const struct arts_rank_bitset_s *r,
+                                void (*cb)(unsigned int rank, void *ctx),
+                                void *ctx);
+
+/*--- home-directory lifecycle (inlined in arts_db_s) --------------------*/
+
+/* Initialize the home-directory fields inlined in struct arts_db_s (no separate
+ * allocation).  rw_holder is set by the caller (typically creator_rank under
+ * PROP_NONE, or self_rank under NO_ACQUIRE). */
+void arts_db_home_init(struct arts_db_s *db, unsigned int rw_holder,
                        unsigned int nranks);
-/* Release a home block's owned sub-resources (queues / maps) in place.
- * Does NOT free the block itself (it lives inside the cache). */
-void arts_db_home_teardown(struct arts_db_home_s *home);
+/* Release the home-directory owned sub-resources (queues / maps) in place.
+ * Does NOT free the descriptor (the fields live inside the arts_db_s). */
+void arts_db_home_teardown(struct arts_db_s *db);
 
 #ifdef ARTS_MEMORY_MODEL_LRC
 /*--- last_sent_version map serialization (LRC only) ---------------------

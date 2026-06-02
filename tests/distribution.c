@@ -52,31 +52,31 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("[WARN] asserts are disabled. Verification will not run.\n");
 #endif
 
-  arts_block_dist_t *dist = init_block_distribution_block(64, 0, 2, ARTS_GUID_DB);
+  arts_block_dist_t *dist = arts_block_dist_init(64, 0, 2, ARTS_GUID_DB);
   assert(dist->num_vertices == 64);
   assert(dist->num_blocks == 2);
   assert(dist->block_sz == 32);
-  assert(get_owner_distr(5, dist) == 0);
-  assert(get_owner_distr(31, dist) == 0);
-  assert(get_owner_distr(45, dist) == 1);
-  assert(partition_start_distr(0, dist) == 0);
-  assert(partition_end_distr(0, dist) == 31);
-  assert(partition_start_distr(1, dist) == 32);
-  assert(partition_end_distr(1, dist) == 63);
-  free_distribution(dist);
+  assert(arts_block_dist_get_owner(5, dist) == 0);
+  assert(arts_block_dist_get_owner(31, dist) == 0);
+  assert(arts_block_dist_get_owner(45, dist) == 1);
+  assert(arts_block_dist_partition_start(0, dist) == 0);
+  assert(arts_block_dist_partition_end(0, dist) == 31);
+  assert(arts_block_dist_partition_start(1, dist) == 32);
+  assert(arts_block_dist_partition_end(1, dist) == 63);
+  arts_block_dist_free(dist);
 
-  dist = init_block_distribution_block(8, 0, 3, ARTS_GUID_DB);
+  dist = arts_block_dist_init(8, 0, 3, ARTS_GUID_DB);
   assert(dist->num_vertices == 8);
   assert(dist->num_blocks == 3);
   assert(dist->block_sz == 3);
-  assert(get_owner_distr(5, dist) == 1);
-  assert(get_owner_distr(6, dist) == 2);
-  assert(get_owner_distr(2, dist) == 0);
-  assert(partition_start_distr(0, dist) == 0);
-  assert(partition_end_distr(0, dist) == 2);
-  assert(partition_start_distr(2, dist) == 6);
-  assert(partition_end_distr(2, dist) == 7);
-  free_distribution(dist);
+  assert(arts_block_dist_get_owner(5, dist) == 1);
+  assert(arts_block_dist_get_owner(6, dist) == 2);
+  assert(arts_block_dist_get_owner(2, dist) == 0);
+  assert(arts_block_dist_partition_start(0, dist) == 0);
+  assert(arts_block_dist_partition_end(0, dist) == 2);
+  assert(arts_block_dist_partition_start(2, dist) == 6);
+  assert(arts_block_dist_partition_end(2, dist) == 7);
+  arts_block_dist_free(dist);
 
   arts_printf("distribution: ALL PASSED\n");
   arts_shutdown();

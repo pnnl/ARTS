@@ -69,7 +69,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     /* Install a non-owned sentinel (fake integer ptr) for the iterator-walk
      * exercise.  NULL deleter so the cb does not free this bogus address at
      * shutdown (deleter-by-kind would pick arts_edt_deleter and crash). */
-    void *location = arts_route_table_add_item_with_deleter(
+    void *location = arts_route_table_install_with_deleter(
         (void *)(uintptr_t)range_start, arts_guid_from_index(range_start, i),
         NULL);
     (void)location;
@@ -98,7 +98,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
    * fake pointer as a real DB at shutdown (deleter-by-kind would pick
    * arts_db_deleter and crash on the bogus address). */
   (void)node_id;
-  void *location = arts_route_table_add_item_with_deleter(
+  void *location = arts_route_table_install_with_deleter(
       (void *)(uintptr_t)range_start, guid, NULL);
   (void)location;
 

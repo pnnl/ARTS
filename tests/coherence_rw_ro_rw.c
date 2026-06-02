@@ -82,7 +82,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   void *ptr = NULL;
   arts_guid_t db = arts_db_create(&ptr, sizeof(int), ARTS_DB, ARTS_DB_PROP_NONE, NULL);
   ((int *)ptr)[0] = -1;
-  arts_db_release(db);
+  arts_db_release(db, DB_MODE_RW);
 
   for (int i = 0; i < NUM_ITERS; i++) {
     uint64_t p = (uint64_t)i;

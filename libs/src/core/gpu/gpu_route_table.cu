@@ -86,14 +86,6 @@ static arts_item_wrapper_t *gpu_install_wrapper(arts_route_table_t *route_table,
   return wrapper;
 }
 
-void set_gpu_item(arts_route_item_t *item, void *data) {
-  ARTS_DEBUG("gpu_item_size_bypass: %lu", gpu_item_size_bypass);
-  arts_item_wrapper_t *wrapper = gpu_slot_wrapper(item);
-  wrapper->realData = data;
-  wrapper->size = gpu_item_size_bypass;
-  gpu_item_size_bypass = 0;
-}
-
 unsigned int set_gpu_timestamp(volatile unsigned int *time_stamp) {
   unsigned int new_time_stamp = arts_atomic_add(&gpu_node_order, 1);
   unsigned int old_time_stamp = *time_stamp;
@@ -143,29 +135,7 @@ uint64_t arts_gpu_lookup_db(arts_guid_t key) {
   return ret;
 }
 
-unsigned int arts_gpu_lookup_db_fix(arts_guid_t key) {
-  unsigned int ret = 0;
-  for (unsigned int i = 0; i < arts_node_info.gpu; ++i) {
-    arts_route_table_t *gpu_route_table = arts_node_info.gpu_route_table[i];
-#if 0 /* FIXME: internal_route_table_lookup_db removed -- task 1a.4 */
-    int dummy_rank;
-    unsigned int *internal_touched;
-    arts_route_item_t *location = NULL;
-    location = (arts_route_item_t *)internal_route_table_lookup_db(
-        gpu_route_table, key, &dummy_rank, &internal_touched);
-#else
-    arts_route_item_t *location =
-        arts_route_table_search_for_key(gpu_route_table, key);
-#endif
-    if (location) {
-      // arts_item_wrapper_t *wrapper = (arts_item_wrapper_t *)location;
-      ret |= (1 << i);
-    }
-  }
-  return ret;
-}
-
-void *arts_gpu_route_table_add_item_race(void *item, uint64_t size,
+void *arts_gpu_route_table_add_item(void *item, uint64_t size,
                                          arts_guid_t key, unsigned int gpu_id) {
   // This is a bypass thread local variable to make the api nice...
   gpu_item_size_bypass = size;
@@ -173,15 +143,15 @@ void *arts_gpu_route_table_add_item_race(void *item, uint64_t size,
   bool added;
   arts_item_wrapper_t *wrapper = gpu_install_wrapper(route_table, key, &added);
   if (added) {
-    wrapper->realData = item;
+    wrapper->real_data = item;
     wrapper->size = size;
   }
   gpu_item_size_bypass = 0;
   set_gpu_timestamp(&wrapper->time_stamp);
-  return (void *)wrapper->realData;
+  return (void *)wrapper->real_data;
 }
 
-arts_item_wrapper_t *arts_gpu_route_table_reserve_item_race(bool *added,
+arts_item_wrapper_t *arts_gpu_route_table_reserve_item(bool *added,
                                                             uint64_t size,
                                                             arts_guid_t key,
                                                             unsigned int gpu_id,
@@ -204,7 +174,7 @@ arts_item_wrapper_t *arts_gpu_route_table_reserve_item_race(bool *added,
   return wrapper;
 }
 
-void *arts_gpu_route_table_add_item_to_delete_race(void *item, uint64_t size,
+void *arts_gpu_route_table_add_item_to_delete(void *item, uint64_t size,
                                                    arts_guid_t key,
                                                    unsigned int gpu_id) {
   // This is a bypass thread local variable to make the api nice...
@@ -214,12 +184,12 @@ void *arts_gpu_route_table_add_item_to_delete_race(void *item, uint64_t size,
   arts_item_wrapper_t *wrapper =
       gpu_install_wrapper(route_table, key, &installed);
   if (installed) {
-    wrapper->realData = item;
+    wrapper->real_data = item;
     wrapper->size = size;
   }
   gpu_item_size_bypass = 0;
   set_gpu_timestamp(&wrapper->time_stamp);
-  return (void *)wrapper->realData;
+  return (void *)wrapper->real_data;
 }
 
 void *arts_gpu_route_table_lookup_db_res(arts_guid_t key, int gpu_id,
@@ -242,8 +212,8 @@ void *arts_gpu_route_table_lookup_db_res(arts_guid_t key, int gpu_id,
        * task 1a.4 will revisit GPU LC versioning. */
       (void)touched;
     }
-    ret = (void *)wrapper->realData;
-    ARTS_DEBUG("Wrapper: %p %p", wrapper, wrapper->realData);
+    ret = (void *)wrapper->real_data;
+    ARTS_DEBUG("Wrapper: %p %p", wrapper, wrapper->real_data);
   }
   return ret;
 }

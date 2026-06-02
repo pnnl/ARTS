@@ -279,6 +279,11 @@ typedef struct {
    *  non-zero, the GUID's rank field is authoritative for routing and
    *  overrides @c rank above. */
   arts_guid_t guid;
+  /** If true, a create at an already-occupied (home-local) GUID FAILS instead
+   * of overwriting — OCR GUID_PROP_CHECK / rendezvous semantics.  Default
+   * false = unconditional replace (a labeled-GUID reuse overwrites the prior
+   * generation, releasing it). */
+  bool check;
 } arts_db_hint_t;
 
 #define ARTS_DB_HINT_DEFAULTS                                                  \
@@ -412,6 +417,12 @@ typedef struct {
   /** Pre-reserved GUID.  NULL_GUID = auto-allocate (default).  When non-zero,
    *  the GUID's rank field is authoritative and overrides @c rank above. */
   arts_guid_t guid;
+  /** If true, a create at an already-occupied (home-local) GUID FAILS (returns
+   * NULL_GUID) instead of overwriting — OCR GUID_PROP_CHECK / rendezvous
+   * semantics (the first creator wins; a later one observes the collision).
+   * Default false = unconditional replace (a labeled-GUID reuse overwrites the
+   * prior generation, releasing it). */
+  bool check;
 } arts_event_hint_t;
 
 /** OCR LATCH_T — counter event.  Argument is the initial counter value;
@@ -465,27 +476,6 @@ int arts_printf(const char *format, ...);
  * @see arts_shutdown
  */
 int arts_rt(int argc, char **argv);
-
-/**
- * @brief Set the config file path before calling arts_rt().
- *
- * When set, arts_config_load() reads from this path instead of the
- * default ARTS_CONFIG env var / arts.cfg fallback.
- *
- * @param path  Null-terminated file path.  NULL or "" clears the override.
- */
-void arts_set_config_path(const char *path);
-
-/**
- * @brief Inject config data as an in-memory string before calling arts_rt().
- *
- * When set, arts_config_load() parses this string (same INI format as
- * arts.cfg) instead of opening a file.  This enables self-contained binaries
- * that embed their runtime configuration at compile time.
- *
- * @param data  Null-terminated config string.  NULL or "" clears the override.
- */
-void arts_set_config_data(const char *data);
 
 /**
  * @brief Shut down the ARTS runtime.
@@ -824,8 +814,10 @@ static inline void *arts_db_create_with_guid(arts_guid_t guid, uint64_t len,
  * released) is a no-op.
  *
  * @param guid GUID of the DataBlock to release.
+ * @param mode Access mode the DB was acquired/created with (DB_MODE_RW for
+ *             created or written DBs, DB_MODE_RO for a read-only dep).
  */
-void arts_db_release(arts_guid_t guid);
+void arts_db_release(arts_guid_t guid, arts_db_access_mode_t mode);
 
 /**
  * @brief Destroy all copies of a DataBlock system-wide.
@@ -947,18 +939,8 @@ unsigned int arts_get_total_numa_domains();
 
 /**
  * @brief GPUs visible to this rank (per-rank count).
- *
- * Per-rank count.  Equivalent to the previous semantic of
- * @c arts_get_total_gpus().
  */
 unsigned int arts_get_gpus_per_rank();
-
-/**
- * @brief Total GPUs across all ranks.
- *
- * Equals @c arts_get_gpus_per_rank() * @c arts_get_total_ranks().
- */
-unsigned int arts_get_total_gpus();
 
 /** @brief Return a monotonic timestamp in nanoseconds. */
 uint64_t arts_get_time_stamp();

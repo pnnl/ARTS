@@ -46,7 +46,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv,
     hint.rank = 0;
     arts_guid_t edt = arts_edt_create(hop_edt, 2, param, 1, &hint);
     arts_add_dependence(db, edt, 0, DB_MODE_RW);
-    arts_db_release(db);
+    arts_db_release(db, DB_MODE_RW);
   }
 }
 

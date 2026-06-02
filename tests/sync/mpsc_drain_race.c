@@ -10,7 +10,7 @@
  * Standalone — header-only queue, no library needed.
  */
 
-#include "arts/sync/mpsc.h"
+#include "arts/utils/mpsc.h"
 
 #include <assert.h>
 #include <pthread.h>

@@ -93,7 +93,7 @@ void arts_remote_launcher_ssh_startup_processes(
   unsigned int argc = launcher->argc;
   char **argv = launcher->argv;
   struct arts_config_s *config = launcher->config;
-  unsigned int kill_mode = launcher->killStuckProcesses;
+  unsigned int kill_mode = launcher->kill_stuck_processes;
 
   FILE **ssh_executions = NULL;
   int i;

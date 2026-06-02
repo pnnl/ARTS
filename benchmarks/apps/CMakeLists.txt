@@ -586,8 +586,15 @@ add_benchmark_app(NAME LCS_shared
 target_compile_options(LCS_shared_xsocr PRIVATE -fgnu89-inline)
 target_compile_options(LCS_shared_arts PRIVATE -fgnu89-inline)
 
-# Note: LCS/intel-jesmin-lcs_all_db_distributed uses C++ (lcs_distributed.cpp)
-# Skipped for now — requires C++ OCR wrapper support
+# LCS C++ variant: standard OCR API written in C++.  mainEdt is declared
+# extern "C" and ocr.h is extern "C"-guarded, so CMake compiles the .cpp with
+# the C++ toolchain (project enables CXX17) and links the C OCR libraries.
+# cilktime.h here is a plain gettimeofday timer, not the Cilk runtime.
+add_benchmark_app(NAME LCS_all_db_distributed
+    DIR LCS/refactored/ocr/intel-jesmin-lcs_all_db_distributed
+    SOURCES lcs_distributed.cpp
+    EXTRA_LINK_LIBS m
+)
 
 # ==========================================================================
 # Tier 14: SAR (all sizes share same sources from sar/ocr/src/)

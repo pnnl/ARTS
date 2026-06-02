@@ -30,7 +30,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv,
   hint.rank = 1;
   arts_guid_t edt = arts_edt_create(reader_edt, 0, NULL, 1, &hint);
   arts_add_dependence(db, edt, 0, DB_MODE_RO);
-  arts_db_release(db);
+  arts_db_release(db, DB_MODE_RW);
 }
 
 int main(int argc, char **argv) {

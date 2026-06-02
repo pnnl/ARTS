@@ -61,10 +61,10 @@ extern "C" {
  * modes].
  */
 typedef struct {
-  struct arts_edt_s wrapperEdt;
+  struct arts_edt_s wrapper_edt;
   arts_dim3_t grid;
   arts_dim3_t block;
-  int gpuToRunOn;
+  int gpu_to_run_on;
   arts_guid_t end_guid;
   arts_guid_t data_guid;
   uint32_t slot;
@@ -79,9 +79,24 @@ void arts_gpu_host_wrap_up(void *edt_packet, arts_guid_t to_signal,
 void arts_run_gpu(void *edt_packet, arts_gpu_t *arts_gpu);
 bool arts_gpu_scheduler_loop(void);
 
+/* --- GPU-placement policy (gpu_placement.cu) --- */
+
+typedef int (*locality_t)(void *edt);
+typedef int (*fit_t)(uint64_t mask, uint64_t size, unsigned int total_threads);
+
+extern locality_t locality_scheme[];
+extern locality_t locality; /* selected locality scheme */
+extern fit_t fit_scheme[];
+extern fit_t fit; /* selected fit scheme */
+
+/* Per-worker GC backpressure flag: set by a failed reservation in
+ * gpu_placement.cu, consumed by the demand scheduler loop. */
+extern ARTS_THREAD_LOCAL unsigned int run_gc_flag;
+
+int arts_reserve_edt_required_gpu(int *gpu, void *edt_packet);
+
 /* --- LC sync helpers (internal only — public decls in arts/gpu.h) --- */
 
-void internal_lc_sync_cpu(arts_guid_t acq_guid, struct arts_db_s *db);
 void internal_lc_sync_gpu(arts_guid_t acq_guid, struct arts_db_s *db);
 
 #ifdef __cplusplus

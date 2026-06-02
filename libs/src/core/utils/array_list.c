@@ -96,23 +96,6 @@ uint64_t arts_push_to_array_list(arts_array_list_t *a_list, void *element) {
   return index;
 }
 
-void *arts_next_free_from_array_list(arts_array_list_t *a_list) {
-  uint64_t index = a_list->index;
-  if (!(a_list->index % a_list->array_length) && a_list->index) {
-    if (!a_list->current->next) {
-      a_list->current->next = arts_new_array_list_element(
-          a_list->current->start + a_list->array_length, a_list->element_size,
-          a_list->array_length);
-    }
-    a_list->current = a_list->current->next;
-  }
-  uint64_t offset = a_list->index - a_list->current->start;
-  void *ptr = (void *)((char *)a_list->current->array +
-                       (offset * a_list->element_size));
-  a_list->index++;
-  return ptr;
-}
-
 void arts_reset_array_list(arts_array_list_t *a_list) {
   a_list->current = a_list->head;
   a_list->index = 0;

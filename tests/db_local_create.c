@@ -137,7 +137,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   for (unsigned int i = 0; i < NUM_ELEMS; i++) {
     d1[i] = i + 1;
   }
-  arts_db_release(g1);
+  arts_db_release(g1, DB_MODE_RW);
   uint64_t p1 = (uint64_t)g1;
   arts_guid_t e1 =
       arts_edt_create(check_local, 1, &p1, 1, &(arts_edt_hint_t){.epoch = epoch});
@@ -148,7 +148,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t g2 = arts_db_create(&ptr2, sizeof(unsigned int), ARTS_DB_PIN,
                                   ARTS_DB_PROP_NONE, NULL);
   *(unsigned int *)ptr2 = 42;
-  arts_db_release(g2);
+  arts_db_release(g2, DB_MODE_RW);
   uint64_t p2 = (uint64_t)g2;
   arts_guid_t e2 =
       arts_edt_create(check_null_hint, 1, &p2, 1, &(arts_edt_hint_t){.epoch = epoch});
@@ -162,7 +162,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   for (unsigned int i = 0; i < NUM_ELEMS; i++) {
     d3[i] = i + 1;
   }
-  arts_db_release(g3);
+  arts_db_release(g3, DB_MODE_RW);
 
   arts_guid_t e3b =
       arts_edt_create(ew_verify, 0, NULL, 1, &(arts_edt_hint_t){.epoch = epoch});

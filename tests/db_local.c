@@ -144,7 +144,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   for (unsigned int i = 0; i < DB_SIZE / sizeof(unsigned int); i++) {
     local_data[i] = i;
   }
-  arts_db_release(local_guid);
+  arts_db_release(local_guid, DB_MODE_RW);
 
   // Test 2: Verify RW modifications persisted.
   // Chain: e1 (modify) -> e2 (verify) using EW ordering through the DB.
@@ -163,7 +163,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   for (unsigned int i = 0; i < DB_SIZE / sizeof(uint64_t); i++) {
     src[i] = i + 100;
   }
-  arts_db_release(src_db);
+  arts_db_release(src_db, DB_MODE_RW);
 
   arts_guid_t copied = arts_db_copy_to_new_type(src_db, ARTS_DB_PIN);
   uint64_t copy_param = (uint64_t)copied;

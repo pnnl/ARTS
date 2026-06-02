@@ -50,35 +50,35 @@ extern "C" {
 #include <stdint.h>
 
 #include "arts/memory/coherence.h"
-#include "arts/sync/shared.h" /* arts_shared_ptr_t */
+#include "arts/utils/shared.h" /* arts_shared_ptr_t */
 
 /* Allocate a fresh, uninitialized buffer (header + db_size payload), 64-byte
  * aligned.  install_buffer fills + wraps it in a control block; before that
  * the buffer is private to the caller. */
-struct arts_db_buffer_s *arts_coherence_buffer_alloc(uint64_t db_size);
+struct arts_db_buffer_s *arts_coh_buffer_alloc(uint64_t db_size);
 
 /* Race-safe acquire: returns a caller-owned strong ref to the installed
  * buffer (keeping it alive against a concurrent destroy), or NULL if no
  * buffer is currently installed.  Recover the buffer via arts_shared_get;
- * release via arts_coherence_release_buf when done. */
-arts_shared_ptr_t arts_coherence_acquire_buf(struct arts_db_cache_s *cache);
+ * release via arts_coh_release_buf when done. */
+arts_shared_ptr_t arts_coh_acquire_buf(struct arts_db_cache_s *cache);
 
 /* Drop a strong ref taken via acquire_buf.  On the last drop the cb deleter
  * frees the buffer.  Sets *h = NULL. */
-void arts_coherence_release_buf(arts_shared_ptr_t *h);
+void arts_coh_release_buf(arts_shared_ptr_t *h);
 
 /* Unsafe non-refcounted peek of the installed buffer — valid only in
  * create-time / single-owner windows where no concurrent destroy can free
  * it.  Returns NULL if no buffer is installed. */
 struct arts_db_buffer_s *
-arts_coherence_buffer_peek(struct arts_db_cache_s *cache);
+arts_coh_buffer_peek(struct arts_db_cache_s *cache);
 
 /* Recover the enclosing arts_db_buffer_s from a data pointer (which aliases
  * buf->data, the FAM canonical payload).  Pointer arithmetic only — does NOT
  * touch the buffer, so it is safe even if the buffer has since been freed
  * (the caller must already hold a ref or know the buffer is alive). */
 static inline struct arts_db_buffer_s *
-arts_coherence_buf_from_data(void *data) {
+arts_coh_buf_from_data(void *data) {
   if (data == NULL) {
     return NULL;
   }
@@ -99,7 +99,7 @@ arts_coherence_buf_from_data(void *data) {
  * takes the cache-hold ref and the retired buffer's ref is dropped (its cb
  * deleter frees it once the last in-flight acquirer releases). */
 struct arts_db_buffer_s *
-arts_coherence_install_buffer(struct arts_db_cache_s *cache,
+arts_coh_install_buffer(struct arts_db_cache_s *cache,
                               uint64_t new_version, const void *data_payload,
                               uint64_t db_size);
 

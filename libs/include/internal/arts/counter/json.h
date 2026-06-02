@@ -52,7 +52,7 @@ typedef struct {
   FILE *fp;
   unsigned indent_size;
   unsigned depth;
-  uint8_t needComma[ARTS_JSON_MAX_DEPTH];
+  uint8_t need_comma[ARTS_JSON_MAX_DEPTH];
 } arts_json_writer_t;
 
 void arts_json_writer_init(arts_json_writer_t *writer, FILE *fp,
@@ -67,7 +67,6 @@ void arts_json_writer_write_double(arts_json_writer_t *writer, const char *key,
                                    double value);
 void arts_json_writer_write_string(arts_json_writer_t *writer, const char *key,
                                    const char *value);
-void arts_json_writer_write_null(arts_json_writer_t *writer, const char *key);
 void arts_json_writer_write_raw_array(arts_json_writer_t *writer,
                                       const char *key, const char *raw_json);
 void arts_json_writer_finish(arts_json_writer_t *writer);

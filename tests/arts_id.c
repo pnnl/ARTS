@@ -362,7 +362,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Release auto-acquired WRITE access for all created DBs before blocking.
   // Without this, consumer EDTs would deadlock waiting for our epilogue.
   for (unsigned int i = 0; i < NUM_TEST_DBS; i++) {
-    arts_db_release(db_guids[i]);
+    arts_db_release(db_guids[i], DB_MODE_RW);
   }
 
   arts_printf("[Step 8] Waiting for epoch to complete...\n");

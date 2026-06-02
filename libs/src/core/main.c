@@ -37,14 +37,13 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 #include "arts/counter/Preamble.h"
-#define GNU_SOURCE
 #define _FILE_OFFSET_BITS 64 // NOLINT(readability-identifier-naming)
 #include "arts.h"
 #include "arts/counter/counter.h"
 #include "arts/gas/guid.h"
 #include "arts/runtime_state.h"
 #include "arts/system/config.h"
-#include "arts/system/debug.h"
+#include "arts/system/signals.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/transport/dispatcher.h"
@@ -82,7 +81,7 @@ int arts_rt(int argc, char **argv) {
                arts_global_rank_count, ARTS_GUID_RANK_MASK - 1U);
   }
   if (config.table_length > 1) {
-    arts_server_setup(&config);
+    arts_transport_setup(&config);
   }
   arts_global_master_rank_id = config.master_rank;
   if (arts_global_rank_id == config.master_rank && config.master_boot) {

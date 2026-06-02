@@ -87,7 +87,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t db = arts_db_create(&addr, DB_SIZE, ARTS_DB, ARTS_DB_PROP_NONE,
                                   &(arts_db_hint_t){.rank = 0});
   memset(addr, 0xff, DB_SIZE);
-  arts_db_release(db);
+  arts_db_release(db, DB_MODE_RW);
 
   /* verifier_edt is the finish-EDT of an epoch that contains the two
    * concurrent writers.  The epoch guarantees the verifier runs only

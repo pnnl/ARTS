@@ -47,16 +47,13 @@
 
 #include "arts.h"
 #include "arts/counter/json.h"
-#include "arts/remote/handler.h"
 #include "arts/runtime_state.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
+#include "arts/transport/outbox.h"   /* outbound send helpers */
+#include "arts/transport/protocol.h" /* wire packet structs */
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
-
-// Access to network ports for setting up inbound queues during counter
-// collection
-extern unsigned int ports;
 
 // Arrays are defined as static const in Preamble.h (included via arts.h)
 
@@ -1178,4 +1175,65 @@ void arts_counter_write_cluster(const char *output_folder,
 
   ARTS_INFO("Cluster counter aggregation complete: %s/cluster.json",
             output_folder);
+}
+
+// RTT-based time synchronization for counter capture alignment
+
+// Worker sends sync request to master with its current timestamp (T1)
+void arts_send_time_sync_request(void) {
+  struct arts_remote_time_sync_req_packet_s packet;
+  packet.worker_send_time = arts_get_time_stamp(); // T1
+  arts_fill_packet_header(&packet.header, sizeof(packet),
+                          MSG_TIME_SYNC_REQUEST);
+
+  // Send to master
+  arts_remote_send_request_async((int)arts_global_master_rank_id,
+                                 (char *)&packet, sizeof(packet));
+  ARTS_INFO("Time sync: Worker %u sent request to master %u at T1=%lu",
+            arts_global_rank_id, arts_global_master_rank_id,
+            packet.worker_send_time);
+}
+
+// Master handles sync request: records T2 and sends response with T1, T2
+void arts_handler_time_sync_request(void *pack) {
+  struct arts_remote_time_sync_req_packet_s *req =
+      (struct arts_remote_time_sync_req_packet_s *)pack;
+  uint64_t master_recv_time = arts_get_time_stamp(); // T2
+
+  struct arts_remote_time_sync_resp_packet_s resp;
+  resp.worker_send_time = req->worker_send_time; // Echo T1
+  resp.master_recv_time = master_recv_time;      // T2
+  arts_fill_packet_header(&resp.header, sizeof(resp), MSG_TIME_SYNC_RESPONSE);
+
+  // Send response back to the requesting worker
+  arts_remote_send_request_async((int)req->header.rank, (char *)&resp,
+                                 sizeof(resp));
+  ARTS_INFO("Time sync: Master received request from rank %u, T1=%lu, T2=%lu",
+            req->header.rank, req->worker_send_time, master_recv_time);
+}
+
+// Worker handles sync response: calculates offset using RTT
+void arts_handler_time_sync_response(void *pack) {
+  struct arts_remote_time_sync_resp_packet_s *resp =
+      (struct arts_remote_time_sync_resp_packet_s *)pack;
+  uint64_t worker_recv_time = arts_get_time_stamp(); // T3
+
+  uint64_t ntp_t1 = resp->worker_send_time;
+  uint64_t ntp_t2 = resp->master_recv_time;
+  uint64_t ntp_t3 = worker_recv_time;
+
+  // RTT = T3 - T1 (round-trip time in worker's clock)
+  // One-way delay estimate = RTT / 2 (assuming symmetric network)
+  // At T2 (master clock), worker clock was approximately T1 + RTT/2
+  // offset = workerTime - masterTime = (T1 + RTT/2) - T2 = (T1 + T3)/2 - T2
+  int64_t offset = (int64_t)((ntp_t1 + ntp_t3) / 2) - (int64_t)ntp_t2;
+
+  __atomic_store_n(&arts_counter_time_offset, offset, __ATOMIC_RELAXED);
+  __atomic_store_n(&arts_counter_time_sync_received, true, __ATOMIC_RELEASE);
+
+  uint64_t rtt = ntp_t3 - ntp_t1;
+  ARTS_INFO("Time sync: Worker %u received response, T1=%lu, T2=%lu, T3=%lu, "
+            "RTT=%lu ns (%.3f ms), offset=%ld ns (%.3f ms)",
+            arts_global_rank_id, ntp_t1, ntp_t2, ntp_t3, rtt,
+            (double)rtt / 1000000.0, offset, (double)offset / 1000000.0);
 }

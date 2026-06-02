@@ -117,7 +117,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t db = arts_db_create(&db_ptr, sizeof(uint64_t), ARTS_DB_DEFAULT,
                                   ARTS_DB_PROP_NONE, NULL);
   *(uint64_t *)db_ptr = MAGIC;
-  arts_db_release(db);
+  arts_db_release(db, DB_MODE_RW);
   arts_guid_t e1 = arts_edt_create(signal_db_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   arts_add_dependence(db, e1, 0, DB_MODE_RO);
 

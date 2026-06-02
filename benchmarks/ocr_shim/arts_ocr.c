@@ -11,7 +11,6 @@
  */
 
 #include <inttypes.h>
-#include <pthread.h>
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -56,6 +55,7 @@
 /* --- ARTS headers second --- */
 #include "arts.h"
 #include "arts/compute/edt.h"
+#include "arts/gas/guid.h"
 #include "arts/gas/route_table.h"
 #include "arts/system/threads.h"
 #include "arts/utils/malloc.h"
@@ -118,127 +118,305 @@ ocr_copy_paramv_safe(uint64_t *dst, const u64 *src, u32 paramc) {
 #endif
 
 /* =========================================================================
- * Collective Event Support
+ * Collective Event Support — cross-rank ARITY=2 reduction tree
  *
- * OCR collective events are implemented using a metadata DB + mutex.
- * When all contributions arrive, the last contributor triggers reduction.
+ * OCR collective events (OCR_EVENT_COLLECTIVE_T) emulate an MPI-style
+ * Allreduce/Reduce/Broadcast over `nbContribs` contributors, each
+ * identified by a contributor index (its `islot` in the satisfy call).
+ * The single-event-per-process registry of the previous implementation
+ * could not work across nodes: each rank only saw its own contributions,
+ * so the reduction never reached the global count.  This implementation
+ * builds a binary reduction tree whose edges are cross-rank ARTS events,
+ * so contributions flow up to the root and the result broadcasts back
+ * down regardless of which node hosts which contributor.
+ *
+ * Tree topology (ARITY=2, indices 0..nrank-1):
+ *   parent(r)   = (r-1)/2
+ *   children(r) = { 2r+1, 2r+2 } that are < nrank
+ *   root        = 0
+ *
+ * Up-phase   : each node reduces its own datum with each child's partial
+ *              (delivered via that child's up-edge event) and forwards the
+ *              partial to its parent's up-edge event.  The root ends with
+ *              the full reduction.
+ * Down-phase : (ALLREDUCE / BROADCAST) the root seeds its own down-edge
+ *              with the result; each node forwards the result to its
+ *              children's down-edges and delivers it to the locally-
+ *              registered dependent for that generation.
+ *
+ * Re-arm: hpcg reuses the SAME labeled redEvtGuid across every CG phase of
+ * every timestep, so the event must support an unbounded number of
+ * generations.  Each contributor maintains a node-local generation counter
+ * (its k-th satisfy == generation k); because every contributor takes part
+ * in every reduction exactly once, the same generation number denotes the
+ * same logical reduction on every rank.  Edge event GUIDs are derived from
+ * (coll_guid, generation, contributor index, direction) so they are
+ * identical on every rank with no explicit GUID exchange (see G1 below).
+ *
+ * G1 — cross-rank-consistent edge GUIDs:
+ *   coll_guid is cross-rank-consistent (the app derives it via a LABELED
+ *   GUID-range index, so all ranks agree).  Edge GUIDs are built directly
+ *   from coll_guid with ARTS_GUID_MAKE.  coll_guid carries a concrete
+ *   home rank (not the round-robin sentinel), so arts_guid_from_index would
+ *   collapse to plain addition and collide with sibling GUIDs; instead we
+ *   compute a deterministic key in a far-away region of the key space,
+ *   keyed by the coll_guid's own (rank,key) plus a per-edge offset, and
+ *   spread homes round-robin across ranks.  This is collision-free with
+ *   the app's other GUIDs because the offset jumps well past any range the
+ *   app reserves, and disjoint per collective event (the coll_guid rank is
+ *   folded into the offset so the reduce event and the timer event never
+ *   share edge GUIDs).
  * ========================================================================= */
 
-#define MAX_COLLECTIVE_DEPENDENTS 256
-#define MAX_COLLECTIVE_CONTRIBS 256
-
-typedef struct {
-  redOp_t op;
-  collectiveType_t type;
-  u32 nbContribs;
-  u32 nbDatum;
-  u32 generation;
-  volatile u32 numDependents;
-  volatile u32 contribCount;
-  volatile double contributions[MAX_COLLECTIVE_CONTRIBS];
-  volatile u8 contribFlags[MAX_COLLECTIVE_CONTRIBS];
-  arts_guid_t dependents[MAX_COLLECTIVE_DEPENDENTS];
-  u32 dependentSlots[MAX_COLLECTIVE_DEPENDENTS];
-  arts_guid_t metaDbGuid;
-  arts_guid_t edtGuid;
-  pthread_mutex_t lock;
-} CollectiveMetadata;
-
-static double performReductionOp(double a, double b, redOp_t op) {
-  u32 opType = (op >> 7) & 0x7;
-  switch (opType) {
+/* Datum payload decode from the redOp_t bitfield (see
+ * extensions/ocr-reduction-event.h):
+ *   datum size  = (op>>2)&0x7 → 0:1B 1:2B 3:4B 7:8B
+ *   signed      = (op>>5)&0x1
+ *   real (FP)   = (op>>6)&0x1
+ *   operator    = (op>>7)&0x7 → 0 ADD 1 MUL 2 MIN 3 MAX 4 AND 5 OR 6 XOR
+ */
+static u32 redop_datum_bytes(redOp_t op) {
+  u32 code = (u32)((op >> 2) & 0x7);
+  switch (code) {
   case 0:
-    return a + b;
+    return 1;
   case 1:
-    return a * b;
-  case 2:
-    return (a < b) ? a : b;
+    return 2;
   case 3:
-    return (a > b) ? a : b;
+    return 4;
+  case 7:
+    return 8;
   default:
-    return a + b;
+    return 8;
   }
 }
 
-static void performCollectiveReduction(CollectiveMetadata *meta) {
-  double result = 0.0;
-  u32 firstValid = 1;
+/* Reduce `b` into `a` element-wise over `nbDatum` elements of the type and
+ * operator encoded in `op`.  Both buffers hold nbDatum * datum_bytes bytes. */
+static void redop_reduce(void *aBuf, const void *bBuf, u32 nbDatum,
+                         redOp_t op) {
+  u32 bytes = redop_datum_bytes(op);
+  u32 oper = (u32)((op >> 7) & 0x7);
+  u32 isReal = (u32)((op >> 6) & 0x1);
+  u32 isSigned = (u32)((op >> 5) & 0x1);
 
-  for (u32 i = 0; i < meta->nbContribs && i < MAX_COLLECTIVE_CONTRIBS; i++) {
-    if (meta->contribFlags[i]) {
-      if (firstValid) {
-        result = meta->contributions[i];
-        firstValid = 0;
-      } else {
-        result = performReductionOp(result, meta->contributions[i], meta->op);
+  for (u32 i = 0; i < nbDatum; i++) {
+    void *ap = (char *)aBuf + (size_t)i * bytes;
+    const void *bp = (const char *)bBuf + (size_t)i * bytes;
+
+    if (isReal) {
+      if (bytes == 8) {
+        double a = *(double *)ap, b = *(const double *)bp, r;
+        switch (oper) {
+        case 1:
+          r = a * b;
+          break;
+        case 2:
+          r = (a < b) ? a : b;
+          break;
+        case 3:
+          r = (a > b) ? a : b;
+          break;
+        default:
+          r = a + b;
+          break;
+        }
+        *(double *)ap = r;
+      } else { /* 4-byte float */
+        float a = *(float *)ap, b = *(const float *)bp, r;
+        switch (oper) {
+        case 1:
+          r = a * b;
+          break;
+        case 2:
+          r = (a < b) ? a : b;
+          break;
+        case 3:
+          r = (a > b) ? a : b;
+          break;
+        default:
+          r = a + b;
+          break;
+        }
+        *(float *)ap = r;
       }
+      continue;
     }
-  }
 
-  u32 numDeps = meta->numDependents;
-  arts_guid_t localDeps[MAX_COLLECTIVE_DEPENDENTS];
-  u32 localSlots[MAX_COLLECTIVE_DEPENDENTS];
-  for (u32 i = 0; i < numDeps && i < MAX_COLLECTIVE_DEPENDENTS; i++) {
-    localDeps[i] = meta->dependents[i];
-    localSlots[i] = meta->dependentSlots[i];
-    meta->dependents[i] = NULL_GUID;
-    meta->dependentSlots[i] = 0;
-  }
-
-  meta->generation++;
-  meta->contribCount = 0;
-  meta->numDependents = 0;
-  for (u32 i = 0; i < MAX_COLLECTIVE_CONTRIBS; i++) {
-    meta->contribFlags[i] = 0;
-  }
-
-  /* Fan out under lock so the next generation's add/satisfy cannot race
-   * with our reset/fan-out.  External callbacks (arts_db_create,
-   * arts_add_dependence, arts_event_satisfy_slot) only schedule work for
-   * other threads; they never re-enter this collective's lock on the
-   * current thread, so this cannot self-deadlock. */
-  for (u32 i = 0; i < numDeps && i < MAX_COLLECTIVE_DEPENDENTS; i++) {
-    if (localDeps[i] != NULL_GUID) {
-      void *resultPtr;
-      arts_guid_t resultDb = arts_db_create(
-          &resultPtr, sizeof(double), ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
-      *(double *)resultPtr = result;
-
-      arts_guid_kind_t dstType = arts_guid_get_kind(localDeps[i]);
-      if (dstType == ARTS_GUID_EDT) {
-        arts_add_dependence(resultDb, localDeps[i], localSlots[i],
-                            ARTS_MODE_RO);
-      } else if (dstType == ARTS_GUID_EVENT) {
-        arts_event_satisfy_slot(localDeps[i], resultDb,
-                                ARTS_EVENT_LATCH_DECR_SLOT);
-      }
+    /* Integer path: load both operands widened to 64 bits, reduce, store. */
+    int64_t sa = 0, sb = 0;
+    uint64_t ua = 0, ub = 0;
+    switch (bytes) {
+    case 1:
+      ua = *(uint8_t *)ap;
+      ub = *(const uint8_t *)bp;
+      sa = *(int8_t *)ap;
+      sb = *(const int8_t *)bp;
+      break;
+    case 2:
+      ua = *(uint16_t *)ap;
+      ub = *(const uint16_t *)bp;
+      sa = *(int16_t *)ap;
+      sb = *(const int16_t *)bp;
+      break;
+    case 4:
+      ua = *(uint32_t *)ap;
+      ub = *(const uint32_t *)bp;
+      sa = *(int32_t *)ap;
+      sb = *(const int32_t *)bp;
+      break;
+    default:
+      ua = *(uint64_t *)ap;
+      ub = *(const uint64_t *)bp;
+      sa = *(int64_t *)ap;
+      sb = *(const int64_t *)bp;
+      break;
+    }
+    uint64_t ur;
+    switch (oper) {
+    case 0:
+      ur = ua + ub;
+      break;
+    case 1:
+      ur = ua * ub;
+      break;
+    case 2:
+      ur = isSigned ? (uint64_t)((sa < sb) ? sa : sb) : ((ua < ub) ? ua : ub);
+      break;
+    case 3:
+      ur = isSigned ? (uint64_t)((sa > sb) ? sa : sb) : ((ua > ub) ? ua : ub);
+      break;
+    case 4:
+      ur = ua & ub;
+      break;
+    case 5:
+      ur = ua | ub;
+      break;
+    case 6:
+      ur = ua ^ ub;
+      break;
+    default:
+      ur = ua + ub;
+      break;
+    }
+    switch (bytes) {
+    case 1:
+      *(uint8_t *)ap = (uint8_t)ur;
+      break;
+    case 2:
+      *(uint16_t *)ap = (uint16_t)ur;
+      break;
+    case 4:
+      *(uint32_t *)ap = (uint32_t)ur;
+      break;
+    default:
+      *(uint64_t *)ap = ur;
+      break;
     }
   }
 }
 
-#define COLLECTIVE_HASH_SIZE 4096
+/* ── Deterministic edge-event GUID derivation (G1) ───────────────────────── */
 
-/*
+/* Edge GUIDs are laid out in a high region of the 48-bit key space, far from
+ * any range a host app reserves.  The key space is partitioned so that:
+ *   - each distinct collective event gets its own large per-event block
+ *     (indexed by a hash of the coll_guid's rank+key), so the reduce event
+ *     and the timer event — which share a key but differ in rank — never
+ *     alias even across unbounded generations;
+ *   - within a block, each generation gets a fixed slot stride that holds
+ *     all up- and down-edge keys for that generation.
+ */
+#define COLLECTIVE_EDGE_KEY_BASE ((uint64_t)1 << 40) /* 2^40 .. 2^48 */
+/* Per-event block: 2^32 keys ⇒ at the default per-generation stride below,
+ * far more generations than any real run consumes. */
+#define COLLECTIVE_EDGE_BLOCK_BITS 32
+#define COLLECTIVE_EDGE_BLOCK ((uint64_t)1 << COLLECTIVE_EDGE_BLOCK_BITS)
+/* Per-generation key stride: must exceed 2 * (max nrank + 1) so up- and
+ * down-edge keys for one generation never alias the next. */
+#define COLLECTIVE_EDGE_GEN_STRIDE ((uint64_t)1 << 16)
+
+/* Mix the coll_guid into a per-event block index in [0, blocks).  The number
+ * of available blocks is large enough that practical collision is impossible
+ * for the small number of collective events an app creates. */
+static uint64_t collective_event_block(arts_guid_t coll_guid) {
+  uint64_t blocks = (ARTS_GUID_KEY_MASK + 1 - COLLECTIVE_EDGE_KEY_BASE) /
+                    COLLECTIVE_EDGE_BLOCK;
+  uint64_t coll_rank = (uint64_t)ARTS_GUID_GET_RANK(coll_guid);
+  uint64_t coll_key = ARTS_GUID_GET_KEY(coll_guid);
+  uint64_t h = coll_key * 0x9E3779B97F4A7C15ULL + coll_rank;
+  h ^= h >> 29;
+  return h % blocks;
+}
+
+/* direction: 0 = up-edge (carries r's partial to parent),
+ *            1 = down-edge (carries the broadcast result to r). */
+static arts_guid_t collective_edge_guid(arts_guid_t coll_guid, u32 nrank,
+                                        u64 gen, u32 r, u32 direction) {
+  unsigned int n = nrank ? nrank : 1u;
+  uint64_t coll_rank = (uint64_t)ARTS_GUID_GET_RANK(coll_guid);
+  uint64_t blockBase =
+      COLLECTIVE_EDGE_KEY_BASE +
+      collective_event_block(coll_guid) * COLLECTIVE_EDGE_BLOCK;
+  uint64_t key = (blockBase + gen * COLLECTIVE_EDGE_GEN_STRIDE +
+                  (uint64_t)direction * ((uint64_t)n + 1) + (uint64_t)r) &
+                 ARTS_GUID_KEY_MASK;
+  /* Home the edge round-robin across the actual ARTS ranks (NOT the
+   * contributor count, which may exceed or undershoot the node count) so
+   * no single rank homes every edge event and every home is a live rank. */
+  unsigned int nodes = arts_global_rank_count ? arts_global_rank_count : 1u;
+  unsigned int home = (unsigned int)((coll_rank + r + direction) % nodes);
+  return ARTS_GUID_MAKE(ARTS_GUID_EVENT, home, key);
+}
+
+/* Create (idempotently, first-create-wins) a labeled STICKY ARTS event at
+ * the given pre-derived GUID.  Concurrent creators on any rank converge on
+ * the same single event; losers are silent no-ops. */
+static void collective_edge_event_ensure(arts_guid_t edge) {
+  arts_event_hint_t h = ARTS_EVENT_HINT_STICKY;
+  h.guid = edge;
+  (void)arts_event_create(&h);
+}
+
+/* =========================================================================
  * Collective metadata registry — open-addressed linear-probing hash map
- * keyed by event GUID (the OCR-visible identifier) → metadata DB GUID
- * (the per-collective state struct).
+ * keyed by the collective event GUID (the OCR-visible identifier) → the
+ * metadata DB GUID holding this node's per-collective state.
  *
  * Concurrency model:
  *   - `edtGuid` is published via __sync_bool_compare_and_swap (full
- *     barrier).  `metaDbGuid` is a plain store BEFORE the CAS so the
- *     CAS itself is the publication point: any thread that observes the
- *     edtGuid is guaranteed (by the CAS's full barrier) to see the
- *     paired metaDbGuid.  This eliminates the previous lookup-side
- *     spin loop on metaDbGuid==NULL.
- *   - The TOMBSTONE marker lets unregister clear an entry without
- *     breaking the probe chain — subsequent lookups skip past
- *     tombstones, and inserts may reuse them.
- *
- * Result codes from tryRegisterCollectiveMeta let the caller distinguish
- * "newly registered", "already exists", and "table full" — instead of
- * collapsing the latter two into a single 0 return.
- */
+ *     barrier).  `metaDbGuid` is a plain store BEFORE the CAS so the CAS
+ *     itself is the publication point: any thread observing edtGuid is
+ *     guaranteed to see the paired metaDbGuid.
+ *   - A TOMBSTONE marker lets unregister clear an entry without breaking
+ *     the probe chain.
+ * ========================================================================= */
+
+#define COLLECTIVE_HASH_SIZE 4096
 #define COLLECTIVE_TOMBSTONE ((arts_guid_t) ~(uint64_t)0)
+
+/* Per-contributor node-local state.  A node only ever touches the entries
+ * for the contributor indices whose EDTs run on it, but the array is sized
+ * to nbContribs so any index is addressable.  `pendingDep`/`pendingSlot`
+ * hold the dependent registered by ocrAddDependenceSlot for the NEXT
+ * generation of this contributor; the matching satisfy consumes it. */
+typedef struct {
+  arts_guid_t pendingDep; /* registered result receiver for next gen */
+  u32 pendingSlot;
+  u32 hasPending;
+  u64 nextGen; /* generation of this contributor's next satisfy */
+} CollectiveContribState;
+
+typedef struct {
+  arts_guid_t collGuid; /* the cross-rank-consistent OCR event GUID */
+  redOp_t op;
+  collectiveType_t type;
+  u32 nbContribs; /* == nrank, number of tree nodes */
+  u32 nbDatum;
+  u32 datumBytes;
+  arts_guid_t metaDbGuid;
+  CollectiveContribState contrib[]; /* nbContribs entries (flexible array) */
+} CollectiveMetadata;
 
 typedef struct {
   volatile arts_guid_t edtGuid;
@@ -253,20 +431,6 @@ enum collective_register_result {
   COLLECTIVE_REGISTER_FULL = 2,
 };
 
-/* =========================================================================
- * Channel Event Support
- *
- * OCR channel events map directly to ARTS CHANNEL events (latch=1).
- * Both use generation-based re-arming: each generation has its own latch
- * counter and dependent list.  Cross-node deps handled natively by ARTS.
- *
- * Protocol (satisfy-channel, latch=1 per version):
- *   ocrEventSatisfy(ch, data)     → DECR slot (stores per-gen data)
- *   ocrAddDependence(ch, edt, s)  → arts_add_dependence (runtime INCRs)
- *   Consumer-first: INCR 0→1 (inside add_dep), DECR 1→0 → FIRE
- *   Producer-first: DECR 0→-1, INCR -1→0 (inside add_dep) → UPDATE → FIRE
- * ========================================================================= */
-
 static u32 collectiveHash(arts_guid_t guid) {
   uint64_t val = (uint64_t)guid;
   return (u32)(val % COLLECTIVE_HASH_SIZE);
@@ -280,22 +444,13 @@ tryRegisterCollectiveMeta(arts_guid_t key, arts_guid_t metaDbGuid) {
     arts_guid_t cur = collectiveMetaMap[probeIdx].edtGuid;
 
     if (cur == NULL_GUID || cur == COLLECTIVE_TOMBSTONE) {
-      /* Publish metaDbGuid BEFORE the CAS that publishes edtGuid.
-       * The CAS is a full barrier, so any thread observing edtGuid
-       * after the CAS is guaranteed to see this metaDbGuid write. */
       collectiveMetaMap[probeIdx].metaDbGuid = metaDbGuid;
       if (__sync_bool_compare_and_swap(&collectiveMetaMap[probeIdx].edtGuid,
                                        cur, key)) {
         return COLLECTIVE_REGISTER_OK;
       }
-      /* CAS lost the race; the slot is now occupied by some other key.
-       * The metaDbGuid we just wrote is harmless because the next
-       * probe iteration will check (and possibly overwrite) it before
-       * its own CAS. */
     }
 
-    /* Plain volatile read is fine here because we only check equality
-     * against `key`, and the writer published edtGuid via CAS. */
     if (collectiveMetaMap[probeIdx].edtGuid == key) {
       return COLLECTIVE_REGISTER_EXISTS;
     }
@@ -309,27 +464,15 @@ static arts_guid_t lookupCollectiveMeta(arts_guid_t edtGuid) {
     u32 probeIdx = (idx + i) % COLLECTIVE_HASH_SIZE;
     arts_guid_t cur = collectiveMetaMap[probeIdx].edtGuid;
     if (cur == edtGuid) {
-      /* metaDbGuid was published BEFORE the CAS that set edtGuid; the
-       * CAS's full barrier means our read of edtGuid synchronizes with
-       * that prior write.  No spin needed. */
       return collectiveMetaMap[probeIdx].metaDbGuid;
     }
     if (cur == NULL_GUID) {
-      /* End of probe chain — entry definitively not present. */
       return NULL_GUID;
     }
-    /* TOMBSTONE: skip past, the chain continues. */
   }
   return NULL_GUID;
 }
 
-/*
- * Mark the entry for `edtGuid` as a tombstone so its slot can be reused
- * by future inserts while preserving the probe chain.  Used by
- * ocrEventDestroy to clean up after a collective event.  Returns the
- * removed metaDbGuid (or NULL_GUID if not found) so the caller can
- * destroy the metadata DB.
- */
 static arts_guid_t unregisterCollectiveMeta(arts_guid_t edtGuid) {
   u32 idx = collectiveHash(edtGuid);
   for (u32 i = 0; i < COLLECTIVE_HASH_SIZE; i++) {
@@ -346,6 +489,198 @@ static arts_guid_t unregisterCollectiveMeta(arts_guid_t edtGuid) {
     }
   }
   return NULL_GUID;
+}
+
+/* ── Tree reducer / forwarder EDTs ───────────────────────────────────────── */
+
+/* paramv layout shared by both collective tree EDTs (one uint64_t per slot,
+ * indexed by the CP_* enum below). CP_DEP / CP_DEPSLOT are meaningful only for
+ * the down forwarder, which delivers the result to a locally-registered
+ * dependent; the up reducer ignores them. */
+enum {
+  CP_COLL = 0,
+  CP_OP,
+  CP_TYPE,
+  CP_NBDATUM,
+  CP_DATUMBYTES,
+  CP_NRANK,
+  CP_GEN,
+  CP_R,
+  CP_DEP,
+  CP_DEPSLOT,
+  CP_COUNT
+};
+
+static u32 collective_num_children(u32 r, u32 nrank) {
+  u32 n = 0;
+  if (2u * r + 1u < nrank)
+    n++;
+  if (2u * r + 2u < nrank)
+    n++;
+  return n;
+}
+
+/* Up-phase reducer for contributor r at one generation.
+ * depv slots: [0] own datum, [1..numChildren] children up-edge partials.
+ * Produces r's partial; forwards it to parent's up-edge, or — at the root —
+ * seeds the down-phase by satisfying the root's own down-edge. */
+static void collective_up_edt(uint32_t paramc, const uint64_t *paramv,
+                              uint32_t depc, arts_edt_dep_t depv[]) {
+  (void)paramc;
+  arts_guid_t coll = (arts_guid_t)paramv[CP_COLL];
+  redOp_t op = (redOp_t)paramv[CP_OP];
+  u32 nbDatum = (u32)paramv[CP_NBDATUM];
+  u32 datumBytes = (u32)paramv[CP_DATUMBYTES];
+  u32 nrank = (u32)paramv[CP_NRANK];
+  u64 gen = (u64)paramv[CP_GEN];
+  u32 r = (u32)paramv[CP_R];
+
+  size_t payload = (size_t)nbDatum * datumBytes;
+
+  /* Accumulate own datum (slot 0) with each child's partial (slots 1..). */
+  void *partialPtr;
+  arts_guid_t partialDb = arts_db_create(&partialPtr, payload, ARTS_DB_DEFAULT,
+                                         ARTS_DB_PROP_NONE, NULL);
+  memcpy(partialPtr, depv[0].ptr, payload);
+  for (uint32_t i = 1; i < depc; i++) {
+    if (depv[i].ptr != NULL) {
+      redop_reduce(partialPtr, depv[i].ptr, nbDatum, op);
+    }
+  }
+
+  /* Release WRITE access on the partial so its bytes are written back to the
+   * DB's home and become visible to the cross-rank consumer acquiring it RO.
+   * Without this the consumer would acquire before the EDT-epilogue writeback
+   * and observe stale / unpopulated data. */
+  arts_db_release(partialDb, ARTS_MODE_RW);
+
+  if (r == 0) {
+    /* Root: seed the broadcast.  The full reduction is the root's partial. */
+    arts_guid_t down = collective_edge_guid(coll, nrank, gen, 0, 1);
+    collective_edge_event_ensure(down);
+    arts_event_satisfy_slot(down, partialDb, ARTS_EVENT_LATCH_DECR_SLOT);
+  } else {
+    arts_guid_t up = collective_edge_guid(coll, nrank, gen, r, 0);
+    collective_edge_event_ensure(up);
+    arts_event_satisfy_slot(up, partialDb, ARTS_EVENT_LATCH_DECR_SLOT);
+  }
+}
+
+/* Down-phase forwarder for contributor r at one generation.
+ * depv slot [0] = the broadcast result (from r's down-edge).
+ * Forwards the result to each child's down-edge and delivers it to the
+ * locally-registered dependent (an EDT slot or a channel event). */
+static void collective_down_edt(uint32_t paramc, const uint64_t *paramv,
+                                uint32_t depc, arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  arts_guid_t coll = (arts_guid_t)paramv[CP_COLL];
+  u32 nbDatum = (u32)paramv[CP_NBDATUM];
+  u32 datumBytes = (u32)paramv[CP_DATUMBYTES];
+  u32 nrank = (u32)paramv[CP_NRANK];
+  u64 gen = (u64)paramv[CP_GEN];
+  u32 r = (u32)paramv[CP_R];
+  arts_guid_t dep = (arts_guid_t)paramv[CP_DEP];
+  u32 depSlot = (u32)paramv[CP_DEPSLOT];
+
+  size_t payload = (size_t)nbDatum * datumBytes;
+  const void *resultPtr = depv[0].ptr;
+
+  /* Forward to children's down-edges. */
+  for (u32 c = 0; c < 2; c++) {
+    u32 child = 2u * r + 1u + c;
+    if (child < nrank) {
+      void *fwdPtr;
+      arts_guid_t fwdDb = arts_db_create(&fwdPtr, payload, ARTS_DB_DEFAULT,
+                                         ARTS_DB_PROP_NONE, NULL);
+      if (resultPtr != NULL) {
+        memcpy(fwdPtr, resultPtr, payload);
+      }
+      arts_db_release(fwdDb, ARTS_MODE_RW);
+      arts_guid_t cdown = collective_edge_guid(coll, nrank, gen, child, 1);
+      collective_edge_event_ensure(cdown);
+      arts_event_satisfy_slot(cdown, fwdDb, ARTS_EVENT_LATCH_DECR_SLOT);
+    }
+  }
+
+  /* Deliver the result to the locally-registered dependent for this gen. */
+  if (dep != NULL_GUID) {
+    void *outPtr;
+    arts_guid_t outDb = arts_db_create(&outPtr, payload, ARTS_DB_DEFAULT,
+                                       ARTS_DB_PROP_NONE, NULL);
+    if (resultPtr != NULL) {
+      memcpy(outPtr, resultPtr, payload);
+    }
+    arts_db_release(outDb, ARTS_MODE_RW);
+    arts_guid_kind_t dstType = arts_guid_get_kind(dep);
+    if (dstType == ARTS_GUID_EDT) {
+      arts_add_dependence(outDb, dep, depSlot, ARTS_MODE_RO);
+    } else if (dstType == ARTS_GUID_EVENT) {
+      arts_event_satisfy_slot(dep, outDb, ARTS_EVENT_LATCH_DECR_SLOT);
+    }
+  }
+}
+
+/* Launch the up-reducer and down-forwarder EDTs for contributor r at one
+ * generation, wiring their cross-rank edge dependencies, then contribute
+ * r's own datum.  Runs on r's node (the contributor's EDT calls satisfy). */
+static void collective_launch_generation(CollectiveMetadata *meta, u32 r,
+                                         u64 gen, const void *dataPtr,
+                                         arts_guid_t dep, u32 depSlot) {
+  arts_guid_t coll = meta->collGuid;
+  u32 nrank = meta->nbContribs;
+  u32 nbDatum = meta->nbDatum;
+  u32 datumBytes = meta->datumBytes;
+  size_t payload = (size_t)nbDatum * datumBytes;
+
+  uint64_t pv[CP_COUNT];
+  pv[CP_COLL] = (uint64_t)coll;
+  pv[CP_OP] = (uint64_t)meta->op;
+  pv[CP_TYPE] = (uint64_t)meta->type;
+  pv[CP_NBDATUM] = nbDatum;
+  pv[CP_DATUMBYTES] = datumBytes;
+  pv[CP_NRANK] = nrank;
+  pv[CP_GEN] = gen;
+  pv[CP_R] = r;
+  pv[CP_DEP] = (uint64_t)dep;
+  pv[CP_DEPSLOT] = depSlot;
+
+  u32 numChildren = collective_num_children(r, nrank);
+
+  /* --- Up reducer: own datum + each child up-edge. --- */
+  arts_edt_hint_t upHint = ARTS_EDT_HINT_DEFAULTS;
+  arts_guid_t upEdt = arts_edt_create(collective_up_edt, CP_COUNT, pv,
+                                      1u + numChildren, &upHint);
+
+  /* slot 0: own datum DB.  Release WRITE access so the (possibly cross-rank)
+   * up reducer reads the populated bytes; the up reducer for r runs on r's
+   * node, which is this node, but a release keeps the RC state well-formed. */
+  void *ownPtr;
+  arts_guid_t ownDb = arts_db_create(&ownPtr, payload, ARTS_DB_DEFAULT,
+                                     ARTS_DB_PROP_NONE, NULL);
+  memcpy(ownPtr, dataPtr, payload);
+  arts_db_release(ownDb, ARTS_MODE_RW);
+  arts_add_dependence(ownDb, upEdt, 0, ARTS_MODE_RO);
+
+  /* slots 1..: children up-edges. */
+  u32 slot = 1;
+  for (u32 c = 0; c < 2; c++) {
+    u32 child = 2u * r + 1u + c;
+    if (child < nrank) {
+      arts_guid_t up = collective_edge_guid(coll, nrank, gen, child, 0);
+      collective_edge_event_ensure(up);
+      arts_add_dependence(up, upEdt, slot, ARTS_MODE_RO);
+      slot++;
+    }
+  }
+
+  /* --- Down forwarder: waits on r's down-edge, fans out + delivers. --- */
+  arts_edt_hint_t downHint = ARTS_EDT_HINT_DEFAULTS;
+  arts_guid_t downEdt =
+      arts_edt_create(collective_down_edt, CP_COUNT, pv, 1u, &downHint);
+  arts_guid_t myDown = collective_edge_guid(coll, nrank, gen, r, 1);
+  collective_edge_event_ensure(myDown);
+  arts_add_dependence(myDown, downEdt, 0, ARTS_MODE_RO);
 }
 
 /* =========================================================================
@@ -488,7 +823,7 @@ static void ocr_edt_trampoline(uint32_t paramc, const uint64_t *paramv,
   }
 
   /* Convert arts_edt_dep_t to ocrEdtDep_t.  Preserve the mode that ARTS
-   * resolved during acquire_dbs (RO vs EW vs NULL) — the OCR EDT body
+   * resolved during arts_db_acquire_all (RO vs EW vs NULL) — the OCR EDT body
    * may inspect depv[i].mode for assertions or behavior, and surfacing
    * the actual ARTS-resolved mode is more honest than the previous
    * DB_DEFAULT_MODE hardcode. */
@@ -743,6 +1078,11 @@ u8 ocrEventCreate(ocrGuid_t *guid, ocrEventTypes_t eventType, u16 properties) {
   arts_event_hint_t h = ocr_event_kind_to_hint(eventType, properties);
   if (properties & GUID_PROP_IS_LABELED) {
     h.guid = guid->guid;
+    /* GUID_PROP_CHECK → fail-if-exists install so the first creator wins and a
+     * later rendezvous create observes the collision (arts_event_create
+     * returns NULL_GUID).  Without CHECK the install replaces unconditionally.
+     */
+    h.check = (properties & GUID_PROP_CHECK) != 0;
     arts_guid_t result = arts_event_create(&h);
     if (result == NULL_GUID && (properties & GUID_PROP_CHECK)) {
       return OCR_EGUIDEXISTS;
@@ -794,9 +1134,11 @@ u8 ocrEventCreateParams(ocrGuid_t *guid, ocrEventTypes_t eventType,
     u32 nbContribs = params->EVENT_COLLECTIVE.nbContribs;
     arts_guid_t labeledGuid = guid->guid;
 
-    /* Labeled fast-path: if a metadata entry already exists for this
-     * GUID, surface OCR_EGUIDEXISTS when the caller asked via
-     * GUID_PROP_CHECK; otherwise treat the second create as a no-op. */
+    /* Each node independently creates its own node-local metadata for the
+     * (labeled) collective event.  The labeled fast-path check below only
+     * matches within this node, so every node ends up with exactly one
+     * metadata entry — the cross-rank reduction itself flows through ARTS
+     * edge events, not this struct. */
     if ((properties & GUID_PROP_IS_LABELED) && labeledGuid != NULL_GUID) {
       arts_guid_t existingMeta = lookupCollectiveMeta(labeledGuid);
       if (existingMeta != NULL_GUID) {
@@ -804,38 +1146,47 @@ u8 ocrEventCreateParams(ocrGuid_t *guid, ocrEventTypes_t eventType,
       }
     }
 
+    if (nbContribs == 0) {
+      return OCR_EINVAL;
+    }
+
     void *metaPtr;
-    /* PIN: Collective metadata is node-local shared state accessed by all
-     * contributing EDTs without going through RC acquire/release cycles.
-     * RC type would give each EDT its own working-copy view, so writes
-     * from the creator EDT (nbContribs etc.) would not be visible to
-     * subsequent satisfy/addDep callers — they would see zeros and the
-     * reduction would never fire (count == nbContribs == 0). */
-    arts_guid_t metaDb = arts_db_create(&metaPtr, sizeof(CollectiveMetadata),
-                                        ARTS_DB_PIN, ARTS_DB_PROP_NONE, NULL);
+    /* PIN, homed on the current rank: collective metadata is node-local
+     * shared state accessed by this node's contributing EDTs without going
+     * through RC acquire/release cycles.  A PIN DB is not internode
+     * relocatable, so it must be created locally (round-robin placement
+     * would try to home it on a remote rank and fail). */
+    size_t metaBytes = sizeof(CollectiveMetadata) +
+                       (size_t)nbContribs * sizeof(CollectiveContribState);
+    arts_db_hint_t metaHint = {.rank = ARTS_HINT_CURRENT_RANK};
+    arts_guid_t metaDb = arts_db_create(&metaPtr, metaBytes, ARTS_DB_PIN,
+                                        ARTS_DB_PROP_NONE, &metaHint);
     if (metaDb == NULL_GUID) {
       return OCR_ENOMEM;
     }
     CollectiveMetadata *meta = (CollectiveMetadata *)metaPtr;
 
+    arts_guid_t collGuid =
+        ((properties & GUID_PROP_IS_LABELED) && labeledGuid != NULL_GUID)
+            ? labeledGuid
+            : metaDb;
+
+    meta->collGuid = collGuid;
     meta->op = params->EVENT_COLLECTIVE.op;
     meta->type = params->EVENT_COLLECTIVE.type;
     meta->nbContribs = nbContribs;
     meta->nbDatum = params->EVENT_COLLECTIVE.nbDatum;
-    meta->generation = 0;
-    meta->numDependents = 0;
-    meta->contribCount = 0;
-    meta->metaDbGuid = metaDb;
-    meta->edtGuid = NULL_GUID;
-    pthread_mutex_init(&meta->lock, NULL);
-
-    for (u32 i = 0; i < MAX_COLLECTIVE_CONTRIBS; i++) {
-      meta->contributions[i] = 0.0;
-      meta->contribFlags[i] = 0;
+    if (meta->nbDatum == 0) {
+      meta->nbDatum = 1;
     }
-    for (u32 i = 0; i < MAX_COLLECTIVE_DEPENDENTS; i++) {
-      meta->dependents[i] = NULL_GUID;
-      meta->dependentSlots[i] = 0;
+    meta->datumBytes = redop_datum_bytes(meta->op);
+    meta->metaDbGuid = metaDb;
+
+    for (u32 i = 0; i < nbContribs; i++) {
+      meta->contrib[i].pendingDep = NULL_GUID;
+      meta->contrib[i].pendingSlot = 0;
+      meta->contrib[i].hasPending = 0;
+      meta->contrib[i].nextGen = 0;
     }
 
     arts_guid_t key =
@@ -887,6 +1238,8 @@ u8 ocrEventCreateParams(ocrGuid_t *guid, ocrEventTypes_t eventType,
 
   if (properties & GUID_PROP_IS_LABELED) {
     h.guid = guid->guid;
+    /* GUID_PROP_CHECK → fail-if-exists (first creator wins); else replace. */
+    h.check = (properties & GUID_PROP_CHECK) != 0;
     arts_guid_t result = arts_event_create(&h);
     if (result == NULL_GUID && (properties & GUID_PROP_CHECK)) {
       return OCR_EGUIDEXISTS;
@@ -911,10 +1264,8 @@ u8 ocrEventCollectiveSatisfySlot(ocrGuid_t eventGuid, void *dataPtr,
     return 0;
   }
 
-  /* Hold the route table lookup ref for the entire critical section so
-   * the metadata DB cannot be destroyed (e.g., by a concurrent
-   * ocrEventDestroy) while we're touching its fields.  paired
-   * arts_shared_release at every exit. */
+  /* Hold the route table lookup ref for the entire critical section so the
+   * metadata DB cannot be destroyed underneath us.  Paired release at exit. */
   arts_shared_ptr_t meta_h = arts_route_table_lookup_db(metaDbGuid);
   struct arts_db_s *raw = (struct arts_db_s *)arts_shared_get(meta_h);
   if (raw == NULL) {
@@ -922,28 +1273,32 @@ u8 ocrEventCollectiveSatisfySlot(ocrGuid_t eventGuid, void *dataPtr,
   }
   CollectiveMetadata *meta = (CollectiveMetadata *)(raw + 1);
 
-  double value = 0.0;
-  if (dataPtr != NULL) {
-    value = *(double *)dataPtr;
+  if (islot >= meta->nbContribs) {
+    arts_shared_release(&meta_h);
+    return OCR_EINVAL;
   }
 
-  pthread_mutex_lock(&meta->lock);
-
-  if (islot < MAX_COLLECTIVE_CONTRIBS) {
-    meta->contributions[islot] = value;
-    meta->contribFlags[islot] = 1;
+  /* contributor `islot`'s k-th satisfy is global generation k.  Pair it with
+   * the dependent registered by the preceding ocrAddDependenceSlot for this
+   * contributor (recorded as "pending" for the upcoming generation), then
+   * launch this generation's tree EDTs.  __sync barriers serialize multiple
+   * worker threads contributing different islots on the same node. */
+  CollectiveContribState *cs = &meta->contrib[islot];
+  arts_guid_t dep = NULL_GUID;
+  u32 depSlot = 0;
+  if (cs->hasPending) {
+    dep = cs->pendingDep;
+    depSlot = cs->pendingSlot;
+    cs->pendingDep = NULL_GUID;
+    cs->pendingSlot = 0;
+    cs->hasPending = 0;
   }
+  u64 gen = cs->nextGen;
+  cs->nextGen = gen + 1;
 
-  u32 newCount = ++meta->contribCount;
-  u32 isLast = (newCount == meta->nbContribs);
+  collective_launch_generation(meta, islot, gen, dataPtr, dep, depSlot);
 
-  if (isLast) {
-    performCollectiveReduction(meta);
-  }
-
-  pthread_mutex_unlock(&meta->lock);
   arts_shared_release(&meta_h);
-
   return 0;
 }
 
@@ -959,8 +1314,13 @@ u8 ocrDbCreate(ocrGuid_t *db, void **addr, u64 len, u16 flags, ocrHint_t *hint,
   if (flags & GUID_PROP_IS_LABELED) {
     arts_guid_t labeledGuid = db->guid;
 
+    /* GUID_PROP_CHECK → fail-if-exists install (first creator wins; a later
+     * one is told via EGUIDEXISTS, returning NULL here).  Without CHECK the
+     * install replaces unconditionally. */
+    arts_db_hint_t lh = ARTS_DB_HINT_DEFAULTS;
+    lh.check = (flags & GUID_PROP_CHECK) != 0;
     void *data = arts_db_create_with_guid(labeledGuid, len, ARTS_DB_DEFAULT,
-                                          ARTS_DB_PROP_NONE, NULL);
+                                          ARTS_DB_PROP_NONE, &lh);
     if (data == NULL) {
       /* Labeled GUID already taken — fall back to looking it up so the
        * caller still gets a valid pointer.  The lookup handle is released
@@ -991,8 +1351,14 @@ u8 ocrDbCreate(ocrGuid_t *db, void **addr, u64 len, u16 flags, ocrHint_t *hint,
     artsHint = (arts_db_hint_t){.rank = (unsigned int)aff};
     hintp = &artsHint;
   }
-  db->guid =
-      arts_db_create(addr, len, ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, hintp);
+  /* DB_PROP_NO_ACQUIRE: the creating EDT does not acquire the block (it is
+   * created for a later consumer).  The runtime leaves the home as the sole
+   * idle owner and returns a NULL pointer, so no release is required.  Any
+   * other property bit maps to the default acquire-on-create behavior. */
+  unsigned int arts_flags = (flags & DB_PROP_NO_ACQUIRE)
+                                ? ARTS_DB_PROP_NO_ACQUIRE
+                                : ARTS_DB_PROP_NONE;
+  db->guid = arts_db_create(addr, len, ARTS_DB_DEFAULT, arts_flags, hintp);
   if (db->guid == NULL_GUID) {
     return OCR_ENOMEM;
   }
@@ -1023,7 +1389,7 @@ u8 ocrDbDestroy(ocrGuid_t db) {
 
 u8 ocrDbRelease(ocrGuid_t db) {
   if (!ocrGuidIsNull(db)) {
-    arts_db_release(db.guid);
+    arts_db_release(db.guid, ARTS_MODE_RW);
   }
   return 0;
 }
@@ -1035,13 +1401,13 @@ u8 ocrDbRelease(ocrGuid_t db) {
 /*
  * Map OCR access mode → ARTS access mode.
  *
- * ARTS CDAG model supports RO (shared read) and EW (exclusive write) for
- * normal datablocks.  OCR RW and EW both imply exclusive access, so both
- * map to ARTS EW.  OCR RO maps to ARTS RO.
+ * ARTS datablocks support RO (shared read) and RW (per-node exclusive write).
+ * OCR RW and EW both imply exclusive access, so both map to ARTS RW.  OCR RO
+ * maps to ARTS RO.
  *
- * ocrDbRelease() calls arts_db_release() to release frontier locks early
- * for EW deps, allowing consumer EDTs to proceed before the current EDT
- * completes.  For RO deps, no frontier action is needed.
+ * ocrDbRelease() calls arts_db_release() to release a RW DB early, allowing
+ * consumer EDTs to proceed before the current EDT completes.  For RO deps, no
+ * early release is needed.
  *
  * IMPORTANT: After the macro cleanup in the header section, bare
  * DB_MODE_RO/EW/RW names resolve to OCR enum constants (0x8/0x4/0x2),
@@ -1064,14 +1430,15 @@ static arts_db_access_mode_t ocr_to_arts_mode(ocrDbAccessMode_t ocr_mode) {
 /*
  * Inverse mapping for what the EDT body sees in depv[i].mode.
  *
- * ARTS resolves the actual access mode during acquire_dbs.  We surface
+ * ARTS resolves the actual access mode during arts_db_acquire_all.  We surface
  * that to the OCR EDT body so user code (and OCR helper libraries that
  * read depv[i].mode for assertions or branching) sees the truth.
  *
  * RO is reported as DB_MODE_RO rather than DB_DEFAULT_MODE (RW) because
  * the OCR-RW-mapped-to-ARTS-RO path doesn't survive the round trip and
  * we have no way to distinguish "originally RW" from "originally RO".
- * Reporting RO is conservative and matches what acquire_dbs actually did.
+ * Reporting RO is conservative and matches what arts_db_acquire_all actually
+ * did.
  */
 static u32 arts_to_ocr_mode(arts_db_access_mode_t arts_mode) {
   switch (arts_mode) {
@@ -1108,8 +1475,8 @@ u8 ocrAddDependence(ocrGuid_t source, ocrGuid_t destination, u32 slot,
     /* DB → EDT/Event: arts_add_dependence does immediate satisfy for DB
      * sources (DBs are passive objects — no channel event, no waiting).
      * Map OCR access modes to ARTS: RO→RO, EW/RW→EW.
-     * GUID-sorted acquisition in acquire_dbs prevents frontier deadlocks
-     * that previously required forcing all deps to RO. */
+     * GUID-sorted acquisition in arts_db_acquire_all prevents acquisition-order
+     * deadlocks that previously required forcing all deps to RO. */
     if (dstType == ARTS_GUID_EDT) {
       arts_add_dependence(source.guid, destination.guid, slot,
                           ocr_to_arts_mode(mode));
@@ -1142,35 +1509,29 @@ u8 ocrAddDependence(ocrGuid_t source, ocrGuid_t destination, u32 slot,
 
 u8 ocrAddDependenceSlot(ocrGuid_t source, u32 sslot, ocrGuid_t destination,
                         u32 dslot, ocrDbAccessMode_t mode) {
-  (void)sslot;
-
   arts_guid_t metaDbGuid = lookupCollectiveMeta(source.guid);
 
   if (metaDbGuid != NULL_GUID) {
-    /* Hold the route table ref for the duration we touch the metadata.
-     * paired arts_shared_release at every exit. */
+    /* Collective: `sslot` is the contributor index whose reduced result
+     * `destination`/`dslot` will receive on this node.  Record it as the
+     * pending dependent for that contributor's upcoming generation; the
+     * matching ocrEventCollectiveSatisfySlot (called right after, in the
+     * same EDT body) consumes it and pins it to a concrete generation.
+     * Hold the route table ref for the duration we touch the metadata. */
     arts_shared_ptr_t meta_h = arts_route_table_lookup_db(metaDbGuid);
     struct arts_db_s *raw = (struct arts_db_s *)arts_shared_get(meta_h);
     if (raw == NULL) {
       return OCR_EFAULT;
     }
     CollectiveMetadata *meta = (CollectiveMetadata *)(raw + 1);
-    /* Hold meta->lock so the (numDependents++, dependents[idx]=guid) pair is
-     * atomic w.r.t. performCollectiveReduction, which reads numDependents
-     * and dependents[] under the same lock.  Without this, the last
-     * contributor could observe an incremented count but a not-yet-written
-     * dependents[idx]==NULL_GUID slot and skip that rank in the fan-out. */
-    pthread_mutex_lock(&meta->lock);
-    u32 idx = meta->numDependents;
-    if (idx >= MAX_COLLECTIVE_DEPENDENTS) {
-      pthread_mutex_unlock(&meta->lock);
+    if (sslot >= meta->nbContribs) {
       arts_shared_release(&meta_h);
-      return OCR_ENOSPC;
+      return OCR_EINVAL;
     }
-    meta->dependents[idx] = destination.guid;
-    meta->dependentSlots[idx] = dslot;
-    meta->numDependents = idx + 1;
-    pthread_mutex_unlock(&meta->lock);
+    CollectiveContribState *cs = &meta->contrib[sslot];
+    cs->pendingDep = destination.guid;
+    cs->pendingSlot = dslot;
+    cs->hasPending = 1;
     arts_shared_release(&meta_h);
     return 0;
   }

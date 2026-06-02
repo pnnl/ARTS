@@ -79,7 +79,6 @@ arts_array_list_t *arts_new_array_list(size_t element_size,
                                        size_t array_length);
 void arts_delete_array_list(arts_array_list_t *a_list);
 uint64_t arts_push_to_array_list(arts_array_list_t *a_list, void *element);
-void *arts_next_free_from_array_list(arts_array_list_t *a_list);
 void arts_reset_array_list(arts_array_list_t *a_list);
 uint64_t arts_length_array_list(arts_array_list_t *a_list);
 void *arts_get_from_array_list(arts_array_list_t *a_list, uint64_t index);

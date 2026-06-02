@@ -60,16 +60,7 @@ extern "C" {
  * arts_runtime_global_cleanup. */
 typedef struct arts_tiered_pool_s arts_tiered_pool_t;
 
-struct atomic_create_barrier_info_s {
-  volatile unsigned int wait;
-  volatile unsigned int result;
-};
-
 struct arts_runtime_shared_s {
-  volatile unsigned int send_lock;
-  char pad1[56];
-  volatile unsigned int recv_lock;
-  char pad2[56];
   volatile unsigned int steal_request_lock;
   char pad3[56];
   bool (*scheduler)();
@@ -93,8 +84,6 @@ struct arts_runtime_shared_s {
    * Populated during arts_runtime_private_init so that shutdown paths
    * can filter threads by role (workers vs. network). */
   unsigned int *thread_roles;
-  unsigned int **memory_moves;
-  struct atomic_create_barrier_info_s **atomic_waits;
   unsigned int worker_thread_count;
   unsigned int sender_thread_count;
   unsigned int receiver_thread_count;
@@ -104,13 +93,12 @@ struct arts_runtime_shared_s {
   volatile unsigned int ready_to_inspect;
   volatile unsigned int ready_to_execute;
   volatile unsigned int ready_to_clean;
-  volatile unsigned int ready_to_shutdown;
   /* Global shutdown flag. 0 = running normally, 1 = shutting down.
    * Set by arts_runtime_stop() and checked by long-running loops
    * (e.g. arts_remote_connect retry) so they can bail out promptly. */
   volatile unsigned int shutdown_state;
   /* Count of in-flight async sends (enqueued but not yet written to
-   * kernel TCP buffer). Incremented in out_insert_node, decremented at
+   * kernel TCP buffer). Incremented in arts_outbox_insert_node, decremented at
    * the end of arts_actual_send (both success and error paths). Used by
    * the shutdown protocol to drain the outbox before tearing down. */
   volatile unsigned int outbox_pending;
@@ -120,7 +108,6 @@ struct arts_runtime_shared_s {
   volatile unsigned int db_rr_route;
   char *buf;
   int packet_size;
-  volatile unsigned int shutdown_count;
   arts_guid_t auto_shutdown_guid;
   unsigned int gpu;
   unsigned int gpu_locality;
@@ -161,20 +148,15 @@ struct arts_runtime_shared_s {
 
 struct arts_runtime_private_s {
   struct arts_deque_s *my_deque;
-  struct arts_deque_s *my_node_deque;
   struct arts_deque_s *my_gpu_deque;
   unsigned int pu_id;
   unsigned int thread_id;
   unsigned int group_pos;
   unsigned int numa_domain_id;
-  unsigned int back_off;
-  volatile unsigned int outstanding_memory_moves;
-  struct atomic_create_barrier_info_s atomic_wait;
   volatile bool alive;
   enum arts_thread_role role;
   arts_guid_t current_edt_guid;
   int edt_free;
-  int local_counting;
   unsigned short drand_buf[3];
 };
 
@@ -183,43 +165,17 @@ extern ARTS_THREAD_LOCAL struct arts_runtime_private_s arts_thread_info;
 
 #define ARTS_LOOK_UP_CONFIG(name) arts_node_info.name
 
-void arts_runtime_node_init(struct arts_config_s *config);
-void arts_runtime_global_cleanup();
-void arts_runtime_private_cleanup();
-void arts_runtime_stop();
-void arts_runtime_stop_workers();
-void arts_runtime_stop_network();
-void arts_handle_ready_edt(struct arts_edt_s *edt);
-void arts_rehandle_ready_edt(struct arts_edt_s *edt);
-void arts_run_edt(struct arts_edt_s *edt);
-void arts_handle_remote_stolen_edt(struct arts_edt_s *edt);
-bool arts_runtime_scheduler_loop();
-void arts_thread_zero_node_start(int argc, char **argv);
-void arts_runtime_private_init(struct thread_mask_s *thread,
-                               struct arts_config_s *config);
-int arts_runtime_loop();
-int arts_runtime_scheduler_loop_wait(volatile bool *wait_for_me);
-bool arts_default_scheduler_loop();
-struct arts_edt_s *arts_find_edt();
-
-bool arts_runtime_edt_lock_db(arts_guid_t db_guid, struct arts_db_s *db,
-                              void *edt_packet, bool shared);
-void arts_runtime_edt_lock_db_signal_next(struct arts_db_s *db,
-                                          arts_guid_t db_guid, bool remote);
-struct arts_edt_s *arts_runtime_steal_from_worker();
-struct arts_edt_s *arts_runtime_steal_from_network();
-void arts_db_unlock(struct arts_db_s *db, arts_guid_t db_guid, bool write);
-bool arts_db_lock_all_dbs(struct arts_edt_s *edt);
-bool arts_db_lock(arts_guid_t db_guid, void *edt_packet, unsigned int rank,
-                  bool shared);
-
-bool arts_network_first_scheduler_loop();
-bool arts_network_before_steal_scheduler_loop();
-bool arts_gpu_scheduler_backoff_loop();
-bool arts_gpu_scheduler_demand_loop();
-
 #ifdef __cplusplus
 }
 #endif
+
+/* Back-compat: the runtime function prototypes (and the scheduler_t typedef /
+ * scheduler_loop extern) used to live here.  They now live in arts/runtime.h.
+ * Include it at the end so every existing runtime_state.h includer still
+ * transitively sees them without source churn.  This header must be included
+ * AFTER the struct layouts above so the include direction stays one-way
+ * (runtime_state.h -> runtime.h); runtime.h itself only forward-declares the
+ * struct types it references, never including this header back. */
+#include "arts/runtime.h"
 
 #endif

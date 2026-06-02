@@ -1,8 +1,8 @@
-# Memory submodule (DataBlock lifecycle, frontier management)
+# Memory submodule (DataBlock lifecycle, coherence)
 file(GLOB MEMORY_SOURCES "*.c")
 # Phase 2.2: v3 coherence sources are now build-integrated.  The
 # ARTS_COHERENCE_INTEGRATED define is set on arts_interface (libs/src/CMakeLists.txt)
-# so the OOO_DB_* dispatcher arms in out_of_order.c become live.
+# so the OOO_DB_* dispatcher arms in the OoO engine (gas/route_table.c) become live.
 
 # CPU-only object library
 add_library(arts_memory OBJECT ${MEMORY_SOURCES})

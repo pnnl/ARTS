@@ -80,7 +80,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t db = arts_db_create(&addr, DB_SIZE, ARTS_DB, ARTS_DB_PROP_NONE,
                                   &(arts_db_hint_t){.rank = 0});
   memset(addr, 0x42, DB_SIZE);
-  arts_db_release(db);
+  arts_db_release(db, DB_MODE_RW);
 
   g_expected_sum = 0x42ULL * DB_SIZE;
 

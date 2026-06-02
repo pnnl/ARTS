@@ -126,7 +126,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t db = arts_db_create(&ptr, sizeof(int), ARTS_DB,
                                   ARTS_DB_PROP_NONE, &(arts_db_hint_t){.rank = 0});
   ((int *)ptr)[0] = 0;
-  arts_db_release(db);
+  arts_db_release(db, DB_MODE_RW);
 
   /* W1: RW on node 0 */
   arts_guid_t w1 = arts_edt_create(writer1_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});

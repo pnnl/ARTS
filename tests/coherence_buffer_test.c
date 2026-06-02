@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
  * Stress + correctness test for the buffer lifecycle primitives:
- *   arts_coherence_buffer_alloc / install_buffer / acquire_buf / release_buf.
+ *   arts_coh_buffer_alloc / install_buffer / acquire_buf / release_buf.
  *
  * The buffer is managed as an arts_shared_ptr_t (cache.buffer is the atomic
  * slot; each acquirer holds a strong ref; the cb deleter frees on last drop),
@@ -19,7 +19,7 @@
  */
 
 #include "arts/memory/coherence_buffer.h"
-#include "arts/sync/shared.h"
+#include "arts/utils/shared.h"
 #include "arts/utils/malloc.h"
 
 #include <inttypes.h>
@@ -54,14 +54,14 @@ static int phase1_basic(void) {
   cache_init(&g_cache);
   /* Install version 1, zero-init. */
   struct arts_db_buffer_s *b1 =
-      arts_coherence_install_buffer(&g_cache, 1, NULL, DB_SIZE);
+      arts_coh_install_buffer(&g_cache, 1, NULL, DB_SIZE);
   if (b1 == NULL || b1->version != 1 ||
-      arts_coherence_buffer_peek(&g_cache) != b1) {
+      arts_coh_buffer_peek(&g_cache) != b1) {
     fprintf(stderr, "Phase 1 install: bad state\n");
     return 1;
   }
   /* Acquire — returns a live ref to the same buffer. */
-  arts_shared_ptr_t h = arts_coherence_acquire_buf(&g_cache);
+  arts_shared_ptr_t h = arts_coh_acquire_buf(&g_cache);
   struct arts_db_buffer_s *got = (struct arts_db_buffer_s *)arts_shared_get(h);
   if (got != b1) {
     fprintf(stderr, "Phase 1 acquire: got %p (expected %p)\n", (void *)got,
@@ -69,8 +69,8 @@ static int phase1_basic(void) {
     return 1;
   }
   /* Release the acquire ref; the slot still holds the cache-hold. */
-  arts_coherence_release_buf(&h);
-  if (arts_coherence_buffer_peek(&g_cache) != b1) {
+  arts_coh_release_buf(&h);
+  if (arts_coh_buffer_peek(&g_cache) != b1) {
     fprintf(stderr, "Phase 1 release: buffer changed\n");
     return 1;
   }
@@ -78,16 +78,16 @@ static int phase1_basic(void) {
   /* Install a newer version 2, displacing v1.  v1's cache-hold drops; its cb
    * deleter frees it once no acquirer holds a ref. */
   struct arts_db_buffer_s *b2 =
-      arts_coherence_install_buffer(&g_cache, 2, NULL, DB_SIZE);
+      arts_coh_install_buffer(&g_cache, 2, NULL, DB_SIZE);
   if (b2 == b1 || b2->version != 2 ||
-      arts_coherence_buffer_peek(&g_cache) != b2) {
+      arts_coh_buffer_peek(&g_cache) != b2) {
     fprintf(stderr, "Phase 1 v2 install: bad state\n");
     return 1;
   }
   /* Stale install (version 1) must retreat and leave b2 in place. */
   struct arts_db_buffer_s *retreat =
-      arts_coherence_install_buffer(&g_cache, 1, NULL, DB_SIZE);
-  if (retreat != b2 || arts_coherence_buffer_peek(&g_cache) != b2) {
+      arts_coh_install_buffer(&g_cache, 1, NULL, DB_SIZE);
+  if (retreat != b2 || arts_coh_buffer_peek(&g_cache) != b2) {
     fprintf(stderr, "Phase 1 stale install: did not retreat\n");
     return 1;
   }
@@ -99,7 +99,7 @@ static int phase1_basic(void) {
 static void *phase2_reader(void *arg) {
   (void)arg;
   for (int i = 0; i < READER_ITERS; i++) {
-    arts_shared_ptr_t h = arts_coherence_acquire_buf(&g_cache);
+    arts_shared_ptr_t h = arts_coh_acquire_buf(&g_cache);
     struct arts_db_buffer_s *b = (struct arts_db_buffer_s *)arts_shared_get(h);
     if (b == NULL) {
       fprintf(stderr, "Phase 2 reader: acquire returned NULL\n");
@@ -108,14 +108,14 @@ static void *phase2_reader(void *arg) {
     /* Touch payload to ensure the buffer is real + alive. */
     volatile uint64_t v = b->version;
     (void)v;
-    arts_coherence_release_buf(&h);
+    arts_coh_release_buf(&h);
   }
   return NULL;
 }
 
 static int phase2_acquire_release(void) {
   cache_init(&g_cache);
-  arts_coherence_install_buffer(&g_cache, 1, NULL, DB_SIZE);
+  arts_coh_install_buffer(&g_cache, 1, NULL, DB_SIZE);
 
   pthread_t threads[READERS];
   for (int i = 0; i < READERS; i++) {
@@ -125,7 +125,7 @@ static int phase2_acquire_release(void) {
     pthread_join(threads[i], NULL);
   }
   /* All readers finished; the installed buffer is still live (sentinel). */
-  struct arts_db_buffer_s *cur = arts_coherence_buffer_peek(&g_cache);
+  struct arts_db_buffer_s *cur = arts_coh_buffer_peek(&g_cache);
   if (cur == NULL || cur->version != 1) {
     fprintf(stderr, "Phase 2 final: cur=%p\n", (void *)cur);
     return 1;
@@ -140,14 +140,14 @@ static void *phase3_installer(void *arg) {
   uint64_t base = (uint64_t)(uintptr_t)arg;
   for (int i = 0; i < INSTALL_ITERS; i++) {
     uint64_t v = base * (uint64_t)INSTALL_ITERS + (uint64_t)(i + 1);
-    arts_coherence_install_buffer(&g_cache, v, NULL, DB_SIZE);
+    arts_coh_install_buffer(&g_cache, v, NULL, DB_SIZE);
   }
   return NULL;
 }
 
 static int phase3_install_race(void) {
   cache_init(&g_cache);
-  arts_coherence_install_buffer(&g_cache, 0, NULL, DB_SIZE);
+  arts_coh_install_buffer(&g_cache, 0, NULL, DB_SIZE);
 
   pthread_t threads[INSTALLERS];
   for (int i = 0; i < INSTALLERS; i++) {
@@ -158,7 +158,7 @@ static int phase3_install_race(void) {
     pthread_join(threads[i], NULL);
   }
 
-  struct arts_db_buffer_s *cur = arts_coherence_buffer_peek(&g_cache);
+  struct arts_db_buffer_s *cur = arts_coh_buffer_peek(&g_cache);
   /* Each installer i ∈ [1, INSTALLERS] pushes versions
    * (i*INSTALL_ITERS + 1) … (i*INSTALL_ITERS + INSTALL_ITERS); global max is
    * (INSTALLERS+1)*INSTALL_ITERS. */
@@ -179,21 +179,21 @@ static int phase3_install_race(void) {
 static void *phase4_reader(void *arg) {
   (void)arg;
   while (!atomic_load_explicit(&g_phase4_stop, memory_order_acquire)) {
-    arts_shared_ptr_t h = arts_coherence_acquire_buf(&g_cache);
+    arts_shared_ptr_t h = arts_coh_acquire_buf(&g_cache);
     struct arts_db_buffer_s *b = (struct arts_db_buffer_s *)arts_shared_get(h);
     if (b == NULL) {
       continue; /* transient — installer mid-publish. */
     }
     volatile uint64_t v = b->version;
     (void)v;
-    arts_coherence_release_buf(&h);
+    arts_coh_release_buf(&h);
   }
   return NULL;
 }
 
 static int phase4_mixed(void) {
   cache_init(&g_cache);
-  arts_coherence_install_buffer(&g_cache, 0, NULL, DB_SIZE);
+  arts_coh_install_buffer(&g_cache, 0, NULL, DB_SIZE);
   atomic_init(&g_phase4_stop, 0);
 
   pthread_t readers[READERS];
@@ -213,7 +213,7 @@ static int phase4_mixed(void) {
     pthread_join(readers[i], NULL);
   }
 
-  struct arts_db_buffer_s *cur = arts_coherence_buffer_peek(&g_cache);
+  struct arts_db_buffer_s *cur = arts_coh_buffer_peek(&g_cache);
   uint64_t expected_max = (uint64_t)(INSTALLERS + 1) * (uint64_t)INSTALL_ITERS;
   if (cur == NULL || cur->version != expected_max) {
     fprintf(stderr, "Phase 4 mixed final: cur=%p version=%" PRIu64 "\n",

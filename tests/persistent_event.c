@@ -101,7 +101,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t db =
       arts_db_create(&db_ptr, 64, ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
   *(uint64_t *)db_ptr = 0xABCDULL;
-  arts_db_release(db);
+  arts_db_release(db, DB_MODE_RW);
 
   /* pe_final must run only after every contributing EDT has finished.
    * Wire it as the epoch's finish_edt callback (depc=1, slot 0 satisfied

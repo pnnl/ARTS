@@ -44,7 +44,7 @@
 #include <unistd.h>
 
 #include "arts/runtime_state.h"
-#include "arts/system/threads.h"
+#include "arts/system/identity.h" /* arts_global_rank_id for the log prefix */
 
 #ifdef __cplusplus
 extern "C" {

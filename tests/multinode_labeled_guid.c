@@ -61,7 +61,7 @@ static void creator_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   if (ptr) {
     ptr[0] = SENTINEL;
   }
-  arts_db_release(reserved);
+  arts_db_release(reserved, DB_MODE_RW);
 }
 
 /// Reader EDT: runs on rank 1, receives the DB via slot 0 (RO dep).

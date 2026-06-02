@@ -36,7 +36,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   uint64_t *ptr = (uint64_t *)arts_db_create_with_guid(
       reserved, DB_SIZE, ARTS_DB, ARTS_DB_PROP_NONE, NULL);
   ptr[0] = SENTINEL;
-  arts_db_release(reserved);
+  arts_db_release(reserved, DB_MODE_RW);
 
   arts_guid_t shut = arts_edt_create(shutdown_edt, 0, NULL, 1, NULL);
   arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), shut, 0);

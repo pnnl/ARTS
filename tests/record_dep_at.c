@@ -148,7 +148,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   int *d1 = (int *)ptr1;
   d1[0] = 42;
   d1[1] = 99;
-  arts_db_release(db1);
+  arts_db_release(db1, DB_MODE_RW);
 
   arts_guid_t e1 = arts_edt_create(check_record_dep_ro, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   arts_add_dependence(db1, e1, 0, DB_MODE_RO);
@@ -160,7 +160,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   int *d2 = (int *)ptr2;
   d2[0] = 0;
   d2[1] = 0;
-  arts_db_release(db2);
+  arts_db_release(db2, DB_MODE_RW);
 
   arts_guid_t ew_edt = arts_edt_create(writer_ew, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   arts_add_dependence(db2, ew_edt, 0, DB_MODE_RW);
@@ -177,7 +177,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   d3[1] = 200;
   d3[2] = 300;
   d3[3] = 400;
-  arts_db_release(db3);
+  arts_db_release(db3, DB_MODE_RW);
 
   arts_guid_t e3 = arts_edt_create(check_slice, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
   /* Slicing is a future feature reserved on arts_db_hint_t.access_offset/

@@ -48,6 +48,7 @@ extern "C" {
 #include "arts/defs.h"
 #include "arts/gas/route_table.h"
 #include "arts/gpu.h"
+#include "arts/gpu/gpu_lc.h"
 #include "arts/runtime_types.h"
 #include "arts/system/print.h"
 #include "arts/utils/array_list.h"
@@ -63,23 +64,23 @@ extern "C" {
 
 typedef struct {
   unsigned int gpu_id;
-  volatile unsigned int *newEdtLock;
-  arts_array_list_t *newEdts;
-  void *devClosure;
+  volatile unsigned int *new_edt_lock;
+  arts_array_list_t *new_edts;
+  void *dev_closure;
   struct arts_edt_s *edt;
 } arts_gpu_clean_up_t;
 
 typedef struct {
   int device;
-  volatile uint64_t availGlobalMem;
-  volatile uint64_t totalGlobalMem;
+  volatile uint64_t avail_global_mem;
+  volatile uint64_t total_global_mem;
   struct cudaDeviceProp prop;
   volatile float occupancy;
-  volatile unsigned int deviceLock;
-  volatile unsigned int totalEdts;
-  volatile unsigned int availableEdtSlots;
-  volatile unsigned int runningEdts;
-  volatile unsigned int availableThreads;
+  volatile unsigned int device_lock;
+  volatile unsigned int total_edts;
+  volatile unsigned int available_edt_slots;
+  volatile unsigned int running_edts;
+  volatile unsigned int available_threads;
   cudaStream_t stream;
 } arts_gpu_t;
 
@@ -101,13 +102,18 @@ void arts_schedule_to_gpu(arts_edt_t fn_ptr, uint32_t paramc,
                           arts_gpu_t *arts_gpu);
 void arts_wrap_up(cudaStream_t stream, cudaError_t status, void *data);
 void arts_wrap_up_host_func(void *data);
-void arts_gpu_synchronize(arts_gpu_t *arts_gpu);
-void arts_gpu_stream_busy(arts_gpu_t *arts_gpu);
-arts_gpu_t *arts_gpu_scheduled(unsigned id);
 
 void arts_store_new_edts(void *edt);
 void arts_handle_new_edts();
 void free_gpu_item(arts_route_item_t *item);
+
+/* Multi-GPU peer copy + reduce: launches a cudaMemcpyPeer followed by the
+ * given reduction kernel.  Defined in gpu_stream.cu; called cross-TU from the
+ * LC sync path. */
+void reduce_datafrom_gpus(void *dst, unsigned int dst_gpu_id, void *src,
+                          unsigned int src_gpu_id, unsigned int size,
+                          arts_lc_sync_function_gpu_t fn_ptr,
+                          unsigned int element_size, void *db_data);
 
 extern ARTS_THREAD_LOCAL arts_dim3_t *arts_local_grid;
 extern ARTS_THREAD_LOCAL arts_dim3_t *arts_local_block;

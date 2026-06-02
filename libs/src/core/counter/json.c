@@ -48,7 +48,7 @@ static void json_writer_write_indent(const arts_json_writer_t *writer) {
 }
 
 static void json_writer_prepare_entry(arts_json_writer_t *writer) {
-  if (writer->depth && writer->needComma[writer->depth]) {
+  if (writer->depth && writer->need_comma[writer->depth]) {
     (void)fputs(",\n", writer->fp);
   } else if (writer->depth) {
     (void)fputc('\n', writer->fp);
@@ -59,7 +59,7 @@ static void json_writer_prepare_entry(arts_json_writer_t *writer) {
   }
 
   if (writer->depth < ARTS_JSON_MAX_DEPTH) {
-    writer->needComma[writer->depth] = 1;
+    writer->need_comma[writer->depth] = 1;
   }
 }
 
@@ -68,7 +68,7 @@ static void json_writer_push(arts_json_writer_t *writer) {
     return;
   }
   writer->depth++;
-  writer->needComma[writer->depth] = 0;
+  writer->need_comma[writer->depth] = 0;
 }
 
 static void json_writer_pop(arts_json_writer_t *writer, char closing) {
@@ -76,8 +76,8 @@ static void json_writer_pop(arts_json_writer_t *writer, char closing) {
     return;
   }
 
-  int had_entries = writer->needComma[writer->depth];
-  writer->needComma[writer->depth] = 0;
+  int had_entries = writer->need_comma[writer->depth];
+  writer->need_comma[writer->depth] = 0;
   writer->depth--;
 
   if (had_entries) {
@@ -94,7 +94,7 @@ void arts_json_writer_init(arts_json_writer_t *writer, FILE *fp,
   writer->fp = fp;
   writer->indent_size = indent_size;
   writer->depth = 0;
-  memset(writer->needComma, 0, sizeof(writer->needComma));
+  memset(writer->need_comma, 0, sizeof(writer->need_comma));
 }
 
 void arts_json_writer_begin_object(arts_json_writer_t *writer,
@@ -192,11 +192,6 @@ void arts_json_writer_write_string(arts_json_writer_t *writer, const char *key,
                                    const char *value) {
   json_writer_write_key(writer, key);
   json_writer_write_escaped(value ? value : "", writer->fp);
-}
-
-void arts_json_writer_write_null(arts_json_writer_t *writer, const char *key) {
-  json_writer_write_key(writer, key);
-  (void)fputs("null", writer->fp);
 }
 
 void arts_json_writer_write_raw_array(arts_json_writer_t *writer,

@@ -43,7 +43,7 @@
 #include "arts.h"
 #include "arts/utils/malloc.h"
 
-/* Lock-free Vyukov MPSC.  Mirrors arts/sync/mpsc.h exactly; kept inline here
+/* Lock-free Vyukov MPSC.  Mirrors arts/utils/mpsc.h exactly; kept inline here
  * so the transport's per-(rank,port) outbound queues stay a self-contained
  * utility (multi-producer push_back, single-consumer pop_front). */
 

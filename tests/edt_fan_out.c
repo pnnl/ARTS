@@ -95,7 +95,7 @@ void db_fan_child(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Write index * 10 into our DB.
   void *db_ptr = arts_db_create_with_guid(db_guid, sizeof(int), ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
   ((int *)db_ptr)[0] = (int)(index * 10);
-  arts_db_release(db_guid);
+  arts_db_release(db_guid, DB_MODE_RW);
   arts_add_dependence(db_guid, coll_guid, index, DB_MODE_RO);
 }
 

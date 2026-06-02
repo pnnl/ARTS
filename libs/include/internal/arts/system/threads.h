@@ -57,9 +57,15 @@ void arts_thread_main_join(void);
  *   initiator = false → just stop workers (passive receiver path). */
 void arts_enter_shutdown_state(bool initiator);
 
-extern unsigned int arts_global_rank_id;
-extern unsigned int arts_global_rank_count;
-extern unsigned int arts_global_master_rank_id;
+/* Local lifecycle controls (runtime-state mutators, not introspection).
+ *   arts_stop_local_worker — retire only the calling worker thread.
+ *   arts_stop_local_node   — stop the whole local runtime. */
+void arts_stop_local_worker(void);
+void arts_stop_local_node(void);
+
+/* Rank-identity externs live in arts/system/identity.h (kept here for
+ * back-compat of threads.h includers). */
+#include "arts/system/identity.h"
 
 #ifdef __cplusplus
 }

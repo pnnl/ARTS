@@ -62,8 +62,8 @@ extern "C" {
 /* Thread roles.  A thread has exactly one role. */
 enum arts_thread_role {
   ARTS_ROLE_WORKER = 0, /* Executes EDTs from work-stealing deque */
-  ARTS_ROLE_RECEIVER,   /* Processes inbound network messages */
   ARTS_ROLE_SENDER,     /* Drains outbound network messages */
+  ARTS_ROLE_RECEIVER,   /* Processes inbound network messages */
   ARTS_ROLE_MAX
 };
 

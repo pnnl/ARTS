@@ -44,22 +44,14 @@ extern "C" {
 
 #include "arts.h"
 #include "arts/defs.h"
-#include "arts/sync/shared.h" /* arts_shared_ptr_t, arts_atomic_shared_ptr_t */
-#include "arts/utils/lockfree_lifo.h" /* arts_lf_stack_t (per-slot OoO chain) */
-
-struct arts_db_frontier_iterator_s;
+#include "arts/runtime_types.h" /* struct arts_edt_s / arts_db_s (OoO args) */
+#include "arts/utils/lockfree_lifo.h" /* arts_lf_stack_t (per-slot OoO chain) + arts_lf_link_t */
+#include "arts/utils/shared.h" /* arts_shared_ptr_t, arts_atomic_shared_ptr_t */
 
 #define COLLISION_RESOLVES 8
 /* Number of independent shards for the remote_route_table.  Must be a
  * power of 2 so (key & (N-1)) is the shard selector. */
 #define ARTS_REMOTE_ROUTE_SHARDS 8
-
-struct arts_route_invalidate_s {
-  int size;
-  int used;
-  struct arts_route_invalidate_s *next;
-  unsigned int data[];
-};
 
 /* Route_item: GUID slot.  Permanent (init-array, never freed).
  *
@@ -81,7 +73,7 @@ struct arts_route_item_s {
    * Cat C response/ack silent-drops on absent), not by a per-slot state bit. */
   arts_atomic_shared_ptr_t value; /* cb: event/db/edt/epoch (NULL = absent) */
   arts_lf_stack_t
-      oooList; /* OoO defer chain (Treiber; preserved across free) */
+      ooo_list; /* OoO defer chain (Treiber; preserved across free) */
 } ARTS_ALIGNED_MAX;
 
 typedef struct arts_route_item_s arts_route_item_t;
@@ -133,22 +125,22 @@ void arts_route_table_register_deleter(arts_guid_kind_t kind,
  * the GUID kind (registered via arts_route_table_register_deleter). Idempotent:
  * if the slot already holds a cb, the existing object is returned and `obj` is
  * NOT wrapped (caller still owns it).  Returns the object now installed. */
-void *arts_route_table_add_item(void *obj, arts_guid_t key, unsigned int rank,
-                                bool used);
+void *arts_route_table_install(void *obj, arts_guid_t key, unsigned int rank,
+                               bool used);
 
 /* Race install: CAS the cb into an empty slot.  Returns true only if this
  * caller won (and fired the OoO list).  On loss, `obj` is left untouched
  * (caller owns it).  On win, the slot owns the object via its cb. */
-bool arts_route_table_add_item_race(void *obj, arts_guid_t key,
-                                    unsigned int rank, bool used);
+bool arts_route_table_install_if_absent(void *obj, arts_guid_t key,
+                                        unsigned int rank, bool used);
 
 /* Idempotent install with an EXPLICIT deleter, bypassing deleter-by-kind.
  * For objects that don't map to a GUID kind's deleter (e.g. the epoch pool
  * wrapper, which is freed by its owner) — pass NULL to install a cb that
  * never frees the object (route_table holds it for lookup only; the caller
  * frees it manually).  Returns the object now installed. */
-void *arts_route_table_add_item_with_deleter(void *obj, arts_guid_t key,
-                                             void (*deleter)(void *));
+void *arts_route_table_install_with_deleter(void *obj, arts_guid_t key,
+                                            void (*deleter)(void *));
 
 /* Unsafe peek: raw object pointer WITHOUT holding a ref (load + get + drop).
  * Valid only when the caller has an external liveness guarantee for `key`
@@ -214,11 +206,9 @@ void *arts_route_item_peek_data(arts_route_item_t *item);
 bool arts_route_item_install_data(arts_route_item_t *item, void *obj,
                                   void (*deleter)(void *));
 
-int arts_route_table_set_rank(arts_guid_t key, int rank);
-
 /* Slot reserve or lookup — returns the permanent route_item for `key`,
- * creating it (value == NULL) if absent.  The OoO engine (out_of_order.c)
- * uses this to reach a slot's oooList. */
+ * creating it (value == NULL) if absent.  The OoO engine (below) uses this to
+ * reach a slot's ooo_list. */
 void arts_route_table_reserve_or_lookup(arts_guid_t key,
                                         arts_route_item_t **out);
 
@@ -226,11 +216,234 @@ void arts_reset_route_table_iterator(arts_route_table_iterator_t *iter,
                                      arts_route_table_t *table);
 arts_route_item_t *arts_route_table_iterate(arts_route_table_iterator_t *iter);
 void arts_print_item(arts_route_item_t *item);
-void arts_route_table_debug_guid(arts_guid_t key, const char *label);
 
 uint64_t arts_clean_up_route_table(arts_route_table_t *route_table);
 void arts_delete_route_table(arts_route_table_t *route_table);
 void arts_clean_up_dbs();
+
+/* ===========================================================================
+ * Out-of-order (OoO) deferred-op engine.
+ *
+ * The OoO engine owns no data structure of its own: it operates on the
+ * arts_route_item_s.ooo_list Treiber stack declared above.  A slot accumulates
+ * deferred operations that arrived before their target object was installed;
+ * the create handler drains them once the object is published.  Declarations
+ * below live in the same subsystem as the GUID directory they replay against.
+ * ===========================================================================*/
+
+/* OoO replay kind.  Identifies which g_ooo_table[] handler replays a deferred
+ * operation once its target object is installed in the route table. */
+enum arts_ooo_kind {
+  OOO_EDT_SATISFY_SLOT,
+  OOO_EVENT_SATISFY_SLOT,
+  OOO_EVENT_ADD_DEPENDENCE,
+  OOO_HANDLE_READY_EDT,
+  OOO_DB_ACQUIRE,
+  OOO_EDT_SATISFY_SLOT_PTR,
+  OOO_EPOCH_REQUEST,
+  OOO_EPOCH_SEND,
+  OOO_EPOCH_INC_ACTIVE,
+  OOO_EPOCH_INC_FINISHED,
+  OOO_EPOCH_INC_QUEUE,
+  /* Coherence-protocol replay kinds: re-issue the wire-message handler once
+   * the home-side db_s/cache is installed (DB_CREATE arrives after a
+   * race-arrived OWNERSHIP_REQUEST / SNAPSHOT_REQUEST / DESTROY / WRITEBACK).
+   */
+  OOO_DB_OWNERSHIP_REQUEST,
+  OOO_DB_SNAPSHOT_REQUEST,
+  OOO_DB_DESTROY,
+  OOO_DB_WRITEBACK,
+  /* Lifecycle destroy replay kinds (before-create wire reorder): a DESTROY that
+   * reaches home ahead of the object's CREATE defers here and replays once the
+   * create handler installs+drains.  (There is deliberately no ownership-
+   * invalidate replay kind: INVALIDATE is a sharer-side message addressed to
+   * the current DB holder, which always has a cache; a missing cache means the
+   * DB was destroyed, where the sentinel withdrawal is moot and dropping — not
+   * deferring — is correct.) */
+  OOO_EVENT_DESTROY,
+  OOO_EDT_DESTROY,
+  OOO_KIND_COUNT /* sentinel — g_ooo_table size */
+};
+typedef enum arts_ooo_kind ooo_kind_t;
+
+/* Unified OoO payload.  The link is the FIRST member so a node address equals
+ * its link address (Treiber stack contract).  A variable-size args blob trails
+ * the header (heap-allocated as sizeof(payload) + args_size); each kind casts
+ * the blob back to its own args struct.  This single type replaces the former
+ * per-kind node structs and the separate oo_node wrapper. */
+struct arts_ooo_payload_s {
+  arts_lf_link_t link; /* MUST be first */
+  ooo_kind_t kind;
+  uint32_t args_size;
+  /* args blob follows here */
+};
+
+static inline void *arts_ooo_payload_args(struct arts_ooo_payload_s *p) {
+  return (void *)(p + 1);
+}
+
+/* ===== per-kind args =====================================================
+ * The deferring entry copies one of these into the payload blob; the
+ * g_ooo_table[kind] handler casts the blob back and replays the operation
+ * against the now-installed target (re-issuing the entry, so the install
+ * race / fire-and-linger logic stays in one place). */
+
+struct arts_ooo_args_edt_satisfy_s {
+  arts_guid_t edt_guid; /* re-signal target (may differ from the deferred-on
+                           slot, e.g. GPU CDAG defers on the wrapper) */
+  arts_guid_t data_guid;
+  uint32_t slot;
+  arts_db_access_mode_t mode;
+};
+
+/* DB_MODE_PTR delivery: inline payload trails this header in the blob
+ * (args_size == sizeof(this) + size). */
+struct arts_ooo_args_edt_satisfy_ptr_s {
+  arts_guid_t edt_guid;
+  arts_guid_t data_guid;
+  uint32_t slot;
+  uint32_t size;
+};
+
+struct arts_ooo_args_event_satisfy_s {
+  arts_guid_t event_guid;
+  arts_guid_t data_guid;
+  uint32_t slot;
+};
+
+struct arts_ooo_args_event_add_dep_s {
+  arts_guid_t source;
+  arts_guid_t destination;
+  uint32_t slot;
+  arts_db_access_mode_t mode;
+};
+
+struct arts_ooo_args_handle_ready_s {
+  struct arts_edt_s *edt;
+};
+
+struct arts_ooo_args_db_acquire_s {
+  struct arts_edt_s *edt;
+  arts_guid_t db_guid;
+  uint32_t slot;
+};
+
+struct arts_ooo_args_epoch_s {
+  arts_guid_t epoch_guid;
+};
+
+/* EPOCH_REQUEST replay (reply side): a non-home rank replies to an epoch
+ * query by sending its local counts to dest.  Deferred when the local epoch
+ * broadcast-install has not yet arrived. */
+struct arts_ooo_args_epoch_request_s {
+  arts_guid_t epoch_guid;
+  unsigned int source;
+  unsigned int dest;
+};
+
+/* EPOCH_SEND replay (reduce side): the home rank reduces received counts into
+ * the epoch's global tally.  Deferred when the home epoch is not yet installed
+ * (theoretical; home always owns its epoch). */
+struct arts_ooo_args_epoch_send_s {
+  arts_guid_t epoch_guid;
+  unsigned int active;
+  unsigned int finish;
+};
+
+/* Coherence replay args — re-issue the wire handler once the home db_s/cache
+ * is installed.  First-class fields are reconstructed into a stack packet by
+ * the handler. */
+struct arts_ooo_args_db_ownership_request_s {
+  unsigned int requester;
+  arts_guid_t db_guid;
+};
+
+struct arts_ooo_args_db_snapshot_request_s {
+  unsigned int requester;
+  arts_guid_t db_guid;
+  arts_guid_t edt_guid;
+  uint32_t slot;
+};
+
+struct arts_ooo_args_db_destroy_s {
+  unsigned int requester;
+  arts_guid_t db_guid;
+};
+
+/* DB writeback: inline write-back payload trails this header. */
+struct arts_ooo_args_db_writeback_s {
+  unsigned int releaser;
+  arts_guid_t db_guid;
+  uint64_t version;
+  uint64_t cv; /* releaser's sem_t address, echoed in the ACK */
+  uint16_t flag;
+  uint64_t data_size;
+};
+
+/* Event / EDT destroy replay (before-create reorder): the guid is enough to
+ * re-issue the destroy once the object installs. */
+struct arts_ooo_args_event_destroy_s {
+  arts_guid_t guid;
+};
+struct arts_ooo_args_edt_destroy_s {
+  arts_guid_t guid;
+};
+
+/* g_ooo_table handler: operate on an already-acquired, valid item with the
+ * decoded args.  The handler performs NO route-table lookup / NULL-check /
+ * acquire / push — dispatch_or_defer guarantees `item` is live and ref-pinned
+ * for the duration of the call. */
+typedef void (*arts_ooo_handler_fn)(void *item, void *args);
+
+/* Universal non-create entry — wire RX dispatcher, API drivers, and the drain
+ * walk all enter here.
+ *
+ *   payload == NULL : fresh entry (wire RX / API).  On miss a payload is
+ *                     allocated (args copied) and pushed.
+ *   payload != NULL : drain re-entry.  On miss the SAME payload is re-pushed
+ *                     (no alloc/free) to await a future install.
+ *
+ * Per-call acquire: the slot value is (re)loaded on every call so that a
+ * destroy that NULLed the slot earlier in the same drain walk is observed and
+ * the node re-defers (labeled-reuse: a later create re-installs and re-drains).
+ */
+void arts_ooo_dispatch_or_defer(struct arts_route_item_s *slot,
+                                struct arts_ooo_payload_s *payload,
+                                ooo_kind_t kind, const void *args,
+                                uint32_t args_size);
+
+/* Convenience fresh entry: reserve/lookup the slot for `guid`, then
+ * dispatch_or_defer with payload == NULL. */
+void arts_ooo_dispatch_or_defer_guid(arts_guid_t guid, ooo_kind_t kind,
+                                     const void *args, uint32_t args_size);
+
+/* Unconditional defer (force-push) keyed on `guid` — used by the GPU
+ * CDAG-invalidation path which must hold a signal until the wrapper EDT's
+ * outstanding invalidations drain, regardless of the destination's install
+ * state. */
+void arts_ooo_push_guid(arts_guid_t guid, ooo_kind_t kind, const void *args,
+                        uint32_t args_size);
+
+/* Create handler's last step: replay accumulated payloads against the
+ * just-installed item.  Detaches one snapshot of the slot's OoO chain
+ * (reverse_drain → FIFO) and runs each through dispatch_or_defer.  Lock-free:
+ * concurrent drains detach disjoint snapshots. */
+void arts_ooo_drain(struct arts_route_item_s *slot);
+
+/* Convenience: look up the slot for `guid` and drain it.  Used by create
+ * handlers that hold only the GUID (e.g. coherence DB_CREATE). */
+void arts_ooo_drain_guid(arts_guid_t guid);
+
+/* Free every payload still queued on a slot's chain without dispatching —
+ * route-table teardown only (the chain is otherwise preserved across
+ * destroy/reinstall). */
+void arts_ooo_free_all(struct arts_route_item_s *slot);
+
+/* OoO replay continuation for a local DB→EDT dependency that resolved after
+ * the EDT was registered: fills the EDT's dep slot with the installed DB and
+ * drops one depc_needed, dispatching the EDT when it reaches zero. */
+void arts_ooo_resolve_db_dep(struct arts_edt_s *edt, unsigned int slot,
+                             struct arts_db_s *db_res);
 
 #ifdef __cplusplus
 }

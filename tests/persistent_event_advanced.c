@@ -118,7 +118,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t db1 = arts_db_create(&p1, sizeof(int), ARTS_DB_DEFAULT,
                                    ARTS_DB_PROP_NONE, NULL);
   ((int *)p1)[0] = 111;
-  arts_db_release(db1);
+  arts_db_release(db1, DB_MODE_RW);
 
   arts_guid_t ch1 = arts_event_create(&channel_hint);
   arts_guid_t e1 =
@@ -135,7 +135,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   d2[0] = 100;
   d2[1] = 200;
   d2[2] = 300;
-  arts_db_release(db2);
+  arts_db_release(db2, DB_MODE_RW);
 
   arts_guid_t ch2 = arts_event_create(&channel_hint);
   uint64_t guid_param = (uint64_t)db2;
@@ -151,7 +151,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t db3 = arts_db_create(&p3, sizeof(int), ARTS_DB_DEFAULT,
                                    ARTS_DB_PROP_NONE, NULL);
   ((int *)p3)[0] = 999;
-  arts_db_release(db3);
+  arts_db_release(db3, DB_MODE_RW);
 
   arts_guid_t ch3 = arts_event_create(&channel_hint);
   arts_guid_t e3 =
