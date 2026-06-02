@@ -58,6 +58,7 @@ set(TEST_PROGRAMS
     coherence_ro_acquire_stress
     coherence_home_producer_ro
     coherence_zero_size_xfer
+    coherence_rw_multihop
     lockfree_stack_stress
     lockfree_pool_stress
     tiered_pool_stress
@@ -537,6 +538,7 @@ register_multinode_test(multinode_event_types)
 register_multinode_test(coherence_mixed_local_remote)
 register_multinode_test(coherence_home_producer_ro TIMEOUT 30)
 register_multinode_test(coherence_zero_size_xfer TIMEOUT 30)
+register_multinode_test(coherence_rw_multihop TIMEOUT 30)
 
 register_multinode_test(multinode_stdout_forward)
 set_tests_properties(multinode_stdout_forward_2n PROPERTIES

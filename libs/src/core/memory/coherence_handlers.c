@@ -488,7 +488,13 @@ void arts_handler_db_writeback(struct arts_remote_writeback_packet_s *p,
   }
 
   arts_coh_install_buffer(cache, p->version, data, data_size);
-  arts_send_db_writeback_ack(releaser, p->db_guid, p->cv);
+  /* cv==0 marks a fire-and-forget writeback (the INVALIDATE-driven
+   * WB_AND_TRANSFER, sent from a network handler that cannot block on an ACK):
+   * install the data but send no ACK — there is no semaphore waiting, and
+   * posting to a null cv would be a wild write. */
+  if (p->cv != 0) {
+    arts_send_db_writeback_ack(releaser, p->db_guid, p->cv);
+  }
   /* No snapshot drain here: home's RO acquires hit case 1 (resume self) and
    * never park.  Foreign ROs are served by GET_DATA, not by drain. */
 
@@ -821,10 +827,17 @@ void arts_handler_db_ownership_response(
   if (p->data_present) {
     arts_coh_install_buffer(cache, p->version, data, data_size);
   }
-  /* Always install sentinel = 1; post-drain withdraw if has_next.
-   * GRANT is only sent in RC and LRC builds; LC uses DATA_RESPONSE for
-   * all acquires.  ownership_req_in_flight and pending_rw are RC/LRC fields. */
-  cache->writer_count = 1;
+  /* ADD the ownership sentinel (+1), do NOT set.  With a single receiver thread
+   * the follow-up INVALIDATE is delivered to this owner after the GRANT (same
+   * per-destination outbox, program order), so writer_count is 0 here and +=1
+   * equals the old =1.  The additive form does not DEPEND on that ordering: if
+   * the GRANT/INVALIDATE pair is ever reordered (e.g. multiple receiver
+   * threads), an INVALIDATE arriving first pre-decrements writer_count to
+   * (signed) -1, and the additive sentinel commutes with it — interpreted
+   * signed, INVALIDATE(-1)+GRANT(+1)+drain(+1)+release(-1) settle to 0 in any
+   * order, and the op that drives writer_count from positive to 0 returns
+   * ownership.  GRANT is RC/LRC only (LC uses DATA_RESPONSE). */
+  arts_atomic_add(&cache->writer_count, 1u);
 #ifndef ARTS_MEMORY_MODEL_LC
   cache->ownership_req_in_flight = 0;
   /* Drain pending_rw — pop every queued waiter in FIFO order via the
@@ -921,22 +934,13 @@ void arts_handler_db_ownership_invalidate(
      * re-creation and underflow that fresh DB's writer_count. */
     return;
   }
-  /* Plain sentinel withdrawal: writer_count -= 1.
-   *
-   * Architectural invariant (post-fix): home's invalidate_in_flight gate
-   * guarantees AT MOST ONE INVALIDATE_NOTICE is in flight to this rank
-   * per ownership-transfer round.  Because home only sends INVALIDATE
-   * after rw_holder is set to a rank that holds the sentinel +1, the
-   * holder's writer_count is always >= 1 when the notice arrives.
-   * Underflow is therefore impossible by construction.
-   *
-   * If wc==0 ever observed here, it is a real bug (lost release-notice
-   * pair, double-INVALIDATE, etc.) — investigate, do not paper over.
-   *
-   * The thread whose fetch_sub returns 1 (post-decrement value 0) is
-   * the unique transfer actor.  Otherwise (rest > 0), the last local
-   * writer's release will see rest=0 in release_rw and drive the
-   * transfer instead. */
+  /* Sentinel withdrawal (writer_count -= 1).  Home's invalidate_in_flight gate
+   * sends AT MOST ONE INVALIDATE_NOTICE to this rank per transfer round, after
+   * rw_holder has been advanced to a rank that already holds the sentinel (+1).
+   * The decrement that drives writer_count to 0 is the unique actor that
+   * performs the ownership transfer; while local writers are still active
+   * (rest > 0) the last release_rw drives it instead.  Per-model handling — and
+   * how RC tolerates a reordered GRANT/INVALIDATE pair — differs below. */
 #ifdef ARTS_MEMORY_MODEL_LRC
   /* LRC: publish the transfer target BEFORE withdrawing the sentinel.  This
    * ordering is the dedup (no separate transfer_pending flag): a concurrent
@@ -958,18 +962,15 @@ void arts_handler_db_ownership_invalidate(
    * reachable in LC; stub to satisfy the dispatcher table. */
   (void)p;
 #else  /* RC */
-  /* The chain-lifetime baton (home.invalidate_in_flight, held at 1 across the
-   * whole has_next chain and cleared only at the single queue-empty
-   * race-recovery point) guarantees AT MOST ONE INVALIDATE reaches this holder
-   * per transfer round, and only after home advanced rw_holder to a rank that
-   * already holds the sentinel (+1).  So writer_count >= 1 on arrival; a wrap
-   * to UINT_MAX is a real protocol defect (lost release pair / double-
-   * INVALIDATE), caught here in debug builds rather than silently corrupting
-   * the count. */
-  unsigned int rest = arts_atomic_sub(&cache->writer_count, 1);
-  assert(rest != (unsigned int)-1 &&
-         "OWNERSHIP_INVALIDATE underflowed writer_count — ownership-transfer "
-         "chain baton invariant violated");
+  /* Commutative signed counter.  The baton gate above makes GRANT-then-
+   * INVALIDATE the order this holder normally sees (the sentinel +1 is already
+   * installed when the notice arrives).  The signed counter additionally
+   * tolerates the reordered case: an INVALIDATE that races ahead of its GRANT
+   * leaves writer_count transiently negative, which is not a defect — hence no
+   * underflow assert.  Only the decrement that drives writer_count from a
+   * positive value to exactly 0 owns the transfer; a transient 0 -> -1 reads as
+   * rest<0 and does NOT trigger. */
+  int rest = (int)arts_atomic_sub(&cache->writer_count, 1);
   if (rest == 0) {
     extern void arts_coh_invalidate_transfer(struct arts_db_cache_s * cache);
     arts_coh_invalidate_transfer(cache);

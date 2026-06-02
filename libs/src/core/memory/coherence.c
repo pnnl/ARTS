@@ -465,27 +465,12 @@ static void rw_drain_cb(arts_guid_t edt_guid, unsigned int slot, void *vctx) {
 void arts_coh_drain_pending_rw_after_grant(struct arts_db_cache_s *cache,
                                            uint64_t version, bool has_next) {
   (void)version;
+  (void)
+      has_next; /* chain continuation is home-driven (advance_chain INVALIDATEs
+                 * the new owner when the queue is still non-empty); the owner
+                 * no longer self-withdraws its sentinel. */
   struct rw_drain_ctx_s ctx = {.cache = cache};
   arts_pending_rw_queue_drain(&cache->pending_rw, rw_drain_cb, &ctx);
-
-  /* Withdraw the install-time sentinel iff has_next.  If withdraw
-   * brings writer_count to 0, no local waiters were drained — emit
-   * RELEASE_OWNERSHIP (one-way) instead of WRITEBACK_AND_TRANSFER
-   * to avoid blocking the network handler thread on ACK. */
-  if (has_next) {
-    unsigned int rest = arts_atomic_sub(&cache->writer_count, 1);
-    if (rest == 0) {
-      bool is_home = ((unsigned int)arts_guid_get_rank(cache->db_guid) ==
-                      arts_global_rank_id);
-      if (is_home) {
-        arts_coh_local_transfer_now(cache);
-      } else {
-        unsigned int home_rank =
-            (unsigned int)arts_guid_get_rank(cache->db_guid);
-        arts_send_db_ownership_return(home_rank, cache->db_guid);
-      }
-    }
-  }
 }
 
 #endif /* !ARTS_MEMORY_MODEL_LC */
@@ -526,13 +511,16 @@ void arts_coh_drain_pending_snapshot(struct arts_db_cache_s *cache) {
 
 #if defined(ARTS_MEMORY_MODEL_RC)
 /* RC ownership-transfer chain advance.  Caller guarantees the baton
- * (home.invalidate_in_flight) is held (==1): the chain is in progress and this
- * call owns it.  Implements the pop→publish→has_next→(grant | race-recovery)
- * tail shared by the three RC GRANT drivers.  The baton is held at 1 for the
- * entire has_next chain so no fresh OWNERSHIP_REQUEST can CAS 0->1 and fire a
- * second INVALIDATE concurrently with the chain's sentinel withdrawal — the
- * writer_count-underflow race this eliminates.  It is cleared at exactly one
- * point: when the queue drains empty AND the race-recheck confirms no successor
+ * (home.invalidate_in_flight) is held (==1): a transfer round is in progress
+ * and this call owns it.  Pops the next waiter, publishes it as rw_holder and
+ * GRANTs it, then drives the chain home-side: if more waiters remain it
+ * INVALIDATEs the just-granted owner (baton stays 1; the chain continues when
+ * that owner's writer_count falls back to 0 and it ownership_returns);
+ * otherwise the owner retains ownership and the baton is cleared.  Holding the
+ * baton across the whole chain serializes transfers so no fresh
+ * OWNERSHIP_REQUEST can CAS 0->1 and fire a second INVALIDATE concurrently. The
+ * baton is cleared at the two chain-end points — the queue-empty reclaim and
+ * the terminal grant — each followed by a race-recheck for a requester that
  * enqueued after the clear. */
 void arts_coh_rc_advance_chain(struct arts_db_cache_s *cache) {
   struct arts_db_s *db =
@@ -602,12 +590,40 @@ void arts_coh_rc_advance_chain(struct arts_db_cache_s *cache) {
       }
       arts_coh_release_buf(&master_h);
     }
-    /* GRANT with has_next=true encodes the relay: the new owner withdraws the
-     * sentinel after its drain and forwards ownership to the next queued
-     * requester via its own release path.  The chain is self-driving from here,
-     * so the baton stays 1 and we return WITHOUT clearing it — it is cleared at
-     * the single race-recovery point when a future ownership_return / writeback
-     * / local_transfer drains the queue to empty. */
+    /* Home-driven chain (replaces the old has_next self-relay, which raced a
+     * late LOCK_REQ): the new owner does NOT self-withdraw its sentinel.
+     * Re-read the queue AFTER the GRANT — if a waiter remains (incl. one that
+     * raced in after the pop above), drive the next transfer by INVALIDATEing
+     * the owner we just granted.  The commutative signed writer_count makes
+     * this GRANT-then-INVALIDATE pair reorder-safe (the INVALIDATE's -1
+     * commutes with the GRANT's +1 and the owner's drain/release; whichever
+     * decrement drives writer_count from positive to 0 ownership_returns,
+     * re-entering this chain). The baton stays 1 across the chain. */
+    if (!arts_home_lockreq_queue_empty(&db->pending_rw)) {
+      arts_send_db_ownership_invalidate(new_owner, cache->db_guid,
+                                        /*new_owner_rank=*/0u);
+      return;
+    }
+    /* Terminal grant: no waiter — the new owner retains ownership (sentinel
+     * kept).  Clear the baton so a later LOCK_REQ can start a fresh round, then
+     * re-check for one that raced the clear (same recovery as the queue-empty
+     * reclaim path above, but ownership is held by new_owner, so drive the
+     * transfer by INVALIDATEing it rather than re-popping). */
+    atomic_store_explicit(&db->invalidate_in_flight, 0, memory_order_release);
+    if (arts_home_lockreq_queue_empty(&db->pending_rw)) {
+      return;
+    }
+    {
+      unsigned int expected = 0u;
+      if (!atomic_compare_exchange_strong_explicit(
+              &db->invalidate_in_flight, &expected, 1u, memory_order_acq_rel,
+              memory_order_acquire)) {
+        return; /* a LOCK_REQ producer re-took the baton; it INVALIDATEs
+                   rw_holder */
+      }
+      arts_send_db_ownership_invalidate(new_owner, cache->db_guid,
+                                        /*new_owner_rank=*/0u);
+    }
     return;
   }
 }
@@ -631,8 +647,31 @@ void arts_coh_invalidate_transfer(struct arts_db_cache_s *cache) {
       ((unsigned int)arts_guid_get_rank(cache->db_guid) == arts_global_rank_id);
   if (is_home) {
     arts_coh_local_transfer_now(cache);
+    return;
+  }
+  unsigned int home_rank = (unsigned int)arts_guid_get_rank(cache->db_guid);
+  /* The transfer trigger MUST carry the owner's data.  A data-less
+   * ownership_return could overtake the releasing worker's in-flight WRITEBACK
+   * (release_rw decrements writer_count BEFORE it sends its writeback, so this
+   * INVALIDATE-driven decrement can bring the count to 0 while that data is
+   * still in flight) and make home GRANT the next owner a stale version.  Ship
+   * the current buffer as a one-way WB_AND_TRANSFER instead: home installs it
+   * before advancing the chain, so the next owner always sees this owner's
+   * write regardless of arrival order vs the worker's own WRITEBACK (identical
+   * version => idempotent install).  cv==0 marks it fire-and-forget: home skips
+   * the ACK, so the network receiver thread running this handler does not block
+   * on an ACK it would itself have to dispatch (a self-deadlock under a single
+   * receiver thread). */
+  arts_shared_ptr_t buf_h = arts_coh_acquire_buf(cache);
+  struct arts_db_buffer_s *buf =
+      (struct arts_db_buffer_s *)arts_shared_get(buf_h);
+  if (buf != NULL) {
+    arts_send_db_writeback(home_rank, cache->db_guid, buf->version, /*cv=*/0,
+                           ARTS_WB_AND_TRANSFER, buf->data, cache->db_size);
+    arts_coh_release_buf(&buf_h);
   } else {
-    unsigned int home_rank = (unsigned int)arts_guid_get_rank(cache->db_guid);
+    /* Zero-size sentinel DB (no buffer): no data can be stale, so the data-less
+     * ownership_return is correct. */
     arts_send_db_ownership_return(home_rank, cache->db_guid);
   }
 }
