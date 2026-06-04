@@ -109,11 +109,11 @@ void arts_thread_main_join() {
              arts_node_info.total_thread_count - 1);
   TIME_TOTAL_STOP();
 
-  /* Phase C: close the network layer so receivers wake up from RPOLL
+  /* Phase C: close the network layer so receivers wake up from poll()
    * (they would otherwise block up to 300 s). Uses SHUT_WR on send
    * sockets so any buffered SHUTDOWN_MSG broadcast bytes still get
    * delivered via FIN, and SHUT_RD on recv sockets. Receivers see EOF
-   * on the next RPOLL iteration and exit their loop. */
+   * on the next poll() iteration and exit their loop. */
   if (arts_global_rank_count > 1) {
     arts_socket_shutdown();
   }

@@ -385,11 +385,7 @@ TIER_A: list[Case] = [
          multinode=True,
          multinode_args={2: ["2", "1", "1", "16", "5"],
                          3: ["3", "1", "1", "16", "5"],
-                         4: ["4", "1", "1", "16", "5"]},
-         # arts hangs (rc=124 timeout) on the collective-event variant, single
-         # and multinode; xsocr completes.  Pre-existing ARTS-side issue in the
-         # collective-event / multi-output-slot path, tracked separately.
-         expected_known_bug="arts collective-event path hang (rc=124 timeout); xsocr passes"),
+                         4: ["4", "1", "1", "16", "5"]}),
 
     Case("stream", "stream", [],
          scalar_re=r"STREAM_RESULT a\[0\] = ([0-9.eE+-]+)", scalar_kind="float", scalar_tol=1e-3,

@@ -12,7 +12,7 @@ concepts.
 - **DataBlocks (DBs)** — explicit data objects identified by globally unique
   identifiers (GUIDs) and managed through the CDAG memory model.
 - **Distributed Scheduling** — decentralised scheduler with support for
-  multi-node execution via TCP or RDMA networking.
+  multi-node execution via TCP networking.
 - **GPU Support** — optional CUDA-based EDT and DataBlock operations.
 
 .. toctree::

@@ -38,25 +38,6 @@
 ******************************************************************************/
 #include "arts/transport/socket.h"
 
-/* RDMA-vs-TCP socket-call shim.  The RXXX macros let the rest of this file use
- * a single set of names; when ARTS_USE_RDMA is set they bind to the RSockets
- * verbs API, otherwise to the POSIX BSD-socket calls. */
-#ifdef ARTS_USE_RDMA
-#include <rdma/RSOCKET.h>
-#else
-#include <sys/poll.h>
-#define RRECV recv
-#define RSEND send
-#define RLISTEN listen
-#define RPOLL poll
-#define RBIND bind
-#define RCLOSE close
-#define RACCEPT accept
-#define RCONNECT connect
-#define RSOCKET socket
-#define RSHUTDOWN shutdown
-#endif
-
 #include <errno.h>
 #include <inttypes.h>
 #include <stdlib.h>
@@ -84,15 +65,10 @@
 /* Disable Nagle on a connected TCP data socket.  ARTS's cross-rank protocol is
  * dominated by small synchronous request/ACK round-trips (DB writeback ACK,
  * epoch reduction, lock requests); Nagle's coalescing delay compounds with the
- * peer's delayed-ACK to inflate every such round-trip.  No-op under RDMA, where
- * the byte-stream framing differs and Nagle does not apply. */
+ * peer's delayed-ACK to inflate every such round-trip. */
 static inline void arts_socket_set_nodelay(int fd) {
-#ifndef ARTS_USE_RDMA
   int one = 1;
   setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
-#else
-  (void)fd;
-#endif
 }
 
 struct arts_config_s *arts_global_message_table;
@@ -299,7 +275,7 @@ void arts_socket_shutdown() {
   /* Receive sockets: just drop the read half (we will not read any
    * more incoming data after this). */
   for (int i = 0; i < (count - 1) * ports; i++) {
-    RSHUTDOWN(remote_socket_receive_list[i], SHUT_RD);
+    shutdown(remote_socket_receive_list[i], SHUT_RD);
   }
 
   /* Send sockets: close the write half gracefully (SHUT_WR sends FIN
@@ -308,7 +284,7 @@ void arts_socket_shutdown() {
    * the connection is torn down. */
   for (int i = 0; i < count * ports; i++) {
     if (i / ports != arts_global_rank_id) {
-      RSHUTDOWN(remote_socket_send_list[i], SHUT_WR);
+      shutdown(remote_socket_send_list[i], SHUT_WR);
     }
   }
 }
@@ -332,21 +308,21 @@ unsigned int arts_remote_get_my_rank() {
 static inline bool arts_remote_connect(int rank, unsigned int port) {
 
   if (!remote_connection_alive[(rank * ports) + port]) {
-    int res = RCONNECT(remote_socket_send_list[(rank * ports) + port],
+    int res = connect(remote_socket_send_list[(rank * ports) + port],
                        (struct sockaddr *)(remote_server_send_list +
                                            ((size_t)rank * ports) + port),
                        sizeof(struct sockaddr_in));
     if (res < 0) {
       remote_connection_alive[(rank * ports) + port] = false;
 
-      RCLOSE(remote_socket_send_list[(rank * ports) + port]);
+      close(remote_socket_send_list[(rank * ports) + port]);
       remote_socket_send_list[(rank * ports) + port] = arts_get_new_socket();
 
       // Retry with delay to handle SLURM startup skew (srun starts all
       // processes simultaneously, so the remote may not be listening yet)
       int max_retries = 300;
       int retry_count = 0;
-      while (RCONNECT(remote_socket_send_list[(rank * ports) + port],
+      while (connect(remote_socket_send_list[(rank * ports) + port],
                       (struct sockaddr *)(remote_server_send_list +
                                           ((size_t)rank * ports) + port),
                       sizeof(struct sockaddr_in)) < 0) {
@@ -367,7 +343,7 @@ static inline bool arts_remote_connect(int rank, unsigned int port) {
                     ntohs(addr->sin_port), errno, strerror(errno));
           return false;
         }
-        RCLOSE(remote_socket_send_list[(rank * ports) + port]);
+        close(remote_socket_send_list[(rank * ports) + port]);
         remote_socket_send_list[(rank * ports) + port] = arts_get_new_socket();
         usleep(100000);
       }
@@ -390,7 +366,7 @@ uint64_t arts_actual_send(char *message, uint64_t length, int rank, int port) {
   uint64_t total = 0;
   int iterations = 0;
   while (length != 0 && res >= 0) {
-    res = RSEND(remote_socket_send_list[(rank * ports) + port], message + total,
+    res = send(remote_socket_send_list[(rank * ports) + port], message + total,
                 length, MSG_DONTWAIT);
     if (res >= 0) {
       total += res;
@@ -498,7 +474,7 @@ bool arts_remote_setup_incoming() {
                (char *)&i_set_option, sizeof(i_set_option));
 
     int res =
-        RBIND(local_socket_receive[i], (struct sockaddr *)&local_server_addr[i],
+        bind(local_socket_receive[i], (struct sockaddr *)&local_server_addr[i],
               sizeof(local_server_addr[i]));
 
     if (res < 0) {
@@ -507,7 +483,7 @@ bool arts_remote_setup_incoming() {
       return false;
     }
 
-    res = RLISTEN(local_socket_receive[i], 2 * count);
+    res = listen(local_socket_receive[i], 2 * count);
 
     if (res < 0) {
       ARTS_INFO("Listening Failed");
@@ -540,7 +516,7 @@ bool arts_remote_setup_incoming() {
             return false;
           }
 
-          remote_socket_receive_list[z + (j * ports)] = RACCEPT(
+          remote_socket_receive_list[z + (j * ports)] = accept(
               local_socket_receive[z], (struct sockaddr *)&test, &s_length);
           if (remote_socket_receive_list[z + (j * ports)] < 0) {
             ARTS_INFO("Accept failed: %s", strerror(errno));
@@ -638,7 +614,7 @@ bool arts_transport_receive(void) {
   struct timeval sel_timeout;
   unsigned int pos;
   res =
-      RPOLL(poll_incoming + thread_start, thread_stop - thread_start, time_out);
+      poll(poll_incoming + thread_start, thread_stop - thread_start, time_out);
 
   if (res == -1) {
     arts_enter_shutdown_state(false);
@@ -661,7 +637,7 @@ bool arts_transport_receive(void) {
           if (re_receive_res[pos] == 0) {
             // ARTS_INFO("Here3a");
             packet = (struct arts_remote_packet_s *)bypass_buf[pos];
-            res = RRECV(remote_socket_receive_list[i], bypass_buf[pos],
+            res = recv(remote_socket_receive_list[i], bypass_buf[pos],
                         bypass_packet_size[pos], MSG_DONTWAIT);
             if (res > 0) {
               INCREMENT_BYTES_REMOTE_RECEIVED_BY(res);
@@ -680,7 +656,7 @@ bool arts_transport_receive(void) {
                   packet = (struct arts_remote_packet_s *)bypass_buf[pos];
                 }
                 res2 =
-                    RRECV(remote_socket_receive_list[i], bypass_buf[pos] + res,
+                    recv(remote_socket_receive_list[i], bypass_buf[pos] + res,
                           bypass_packet_size[pos] - res, MSG_DONTWAIT);
                 if (res2 > 0) {
                   INCREMENT_BYTES_REMOTE_RECEIVED_BY(res2);
@@ -728,7 +704,7 @@ bool arts_transport_receive(void) {
                   packet = (struct arts_remote_packet_s *)bypass_buf[pos];
                 }
                 res2 =
-                    RRECV(remote_socket_receive_list[i], bypass_buf[pos] + res,
+                    recv(remote_socket_receive_list[i], bypass_buf[pos] + res,
                           bypass_packet_size[pos] - res, MSG_DONTWAIT);
                 if (res2 > 0) {
                   INCREMENT_BYTES_REMOTE_RECEIVED_BY(res2);
@@ -774,7 +750,7 @@ bool arts_transport_receive(void) {
 }
 
 int arts_get_new_socket() {
-  int socket_out = RSOCKET(PF_INET, SOCK_STREAM, 0);
+  int socket_out = socket(PF_INET, SOCK_STREAM, 0);
   if (socket_out < 0) {
     ARTS_ERROR("socket() failed: %s", strerror(errno));
   }
@@ -785,7 +761,7 @@ int arts_get_new_socket() {
 int arts_get_socket_listening(struct sockaddr_in *listening_socket,
                               unsigned int port) {
   memset((char *)listening_socket, 0, sizeof(*listening_socket));
-  int socket_out = RSOCKET(PF_INET, SOCK_STREAM, 0);
+  int socket_out = socket(PF_INET, SOCK_STREAM, 0);
   if (socket_out < 0) {
     ARTS_ERROR("socket() failed: %s", strerror(errno));
   }
@@ -798,7 +774,7 @@ int arts_get_socket_listening(struct sockaddr_in *listening_socket,
 int arts_get_socket_outgoing(struct sockaddr_in *outgoing_socket,
                              unsigned int port, in_addr_t s_addr) {
   memset((char *)outgoing_socket, 0, sizeof(*outgoing_socket));
-  int socket_out = RSOCKET(PF_INET, SOCK_STREAM, 0);
+  int socket_out = socket(PF_INET, SOCK_STREAM, 0);
   if (socket_out < 0) {
     ARTS_ERROR("socket() failed: %s", strerror(errno));
   }

@@ -19,7 +19,6 @@ Optional:
 
 - **CUDA toolkit** for GPU support
 - **hwloc** for hardware-topology-aware pinning
-- **RDMA libraries** (libibverbs) for InfiniBand networking
 
 Obtaining the Source
 --------------------
@@ -61,9 +60,6 @@ CMake Options
      - ON
      - Enable GPU / CUDA support (requires CUDA toolkit; set to OFF to
        disable).
-   * - ``ARTS_USE_RDMA``
-     - OFF
-     - Use RDMA (InfiniBand) instead of TCP sockets.
    * - ``ARTS_BUILD_EXAMPLES``
      - ON
      - Build example programs in ``examples/``.

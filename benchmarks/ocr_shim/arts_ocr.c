@@ -375,6 +375,12 @@ static arts_guid_t collective_edge_guid(arts_guid_t coll_guid, u32 nrank,
 static void collective_edge_event_ensure(arts_guid_t edge) {
   arts_event_hint_t h = ARTS_EVENT_HINT_STICKY;
   h.guid = edge;
+  /* install-if-absent: this ensure is idempotent (first-create-wins).  A
+   * concurrent or repeat create of the same edge GUID must NOT replace the live
+   * event, which would orphan dependents already registered on the displaced
+   * instance and strand the reduction.  Without this, the default unconditional
+   * install replaces the prior generation. */
+  h.check = true;
   (void)arts_event_create(&h);
 }
 
