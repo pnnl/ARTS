@@ -36,18 +36,18 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include "arts/compute/edt.h"
-#include "arts/memory/db.h"
+#include "arts/db.h"
+#include "arts/edt.h"
 #include "arts/utils/malloc.h"
 
 #include <string.h>
 
+#include "arts/edt_context.h" /* current_edt + run-start/end ctx hooks */
+#include "arts/epoch.h"
 #include "arts/gas/guid.h"
 #include "arts/gas/route_table.h"
 #include "arts/runtime_state.h"
 #include "arts/runtime_types.h"
-#include "arts/sync/edt_context.h" /* current_edt + run-start/end ctx hooks */
-#include "arts/sync/epoch.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/transport/outbox.h"   /* outbound send helpers */

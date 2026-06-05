@@ -36,12 +36,12 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include "arts/sync/epoch_pool.h"
+#include "arts/epoch_pool.h"
 
 #include "arts/gas/guid.h"
 #include "arts/gas/route_table.h"
 #include "arts/runtime_types.h"
-#include "arts/sync/epoch.h" /* arts_send_epoch_init_pool */
+#include "arts/epoch.h" /* arts_send_epoch_init_pool */
 #include "arts/system/threads.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"

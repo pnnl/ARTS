@@ -43,8 +43,8 @@
 #include <string.h>
 
 #include "arts.h"
-#include "arts/compute/edt.h"
-#include "arts/memory/db.h"
+#include "arts/edt.h"
+#include "arts/db.h"
 #include "arts/remote/handler.h"
 #include "arts/runtime_state.h"
 #include "arts/system/print.h"

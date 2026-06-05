@@ -101,23 +101,32 @@ arts_guid_t arts_guid_create_for_rank(unsigned int rank, unsigned int type) {
 }
 
 void set_guid_generator_after_parallel_start() {
-  unsigned int num_of_tables = arts_node_info.worker_thread_count + 1;
+  /* One GUID key partition PER THREAD (workers + senders + receivers).  Any
+   * thread that may mint GUIDs concurrently needs a DISJOINT key block.  In
+   * particular, with receiver_threads > 1 several receiver threads run
+   * arts_handler_edt_create (and create finish-event proxy LATCHes) at the same
+   * time; collapsing every non-worker thread onto a single shared slot made
+   * those threads emit IDENTICAL GUID sequences (same offset, both counters
+   * starting at 0), so two unrelated objects could receive the same GUID. */
+  unsigned int num_of_tables = arts_node_info.total_thread_count;
   keys_per_thread =
       global_guid_on / ((uint64_t)num_of_tables * arts_global_rank_count);
   global_guid_on = 0;
 }
 
 void arts_guid_key_generator_init() {
-  num_tables = (arts_global_rank_count == 1)
-                   ? arts_node_info.worker_thread_count
-                   : arts_node_info.worker_thread_count + 1;
-  uint64_t local_id = (arts_thread_info.role == ARTS_ROLE_WORKER)
-                          ? arts_thread_info.thread_id
-                          : arts_node_info.worker_thread_count;
+  /* Per-thread key partition: num_tables slots per rank, one per thread,
+   * indexed by the thread's globally-unique id so concurrent minters never
+   * overlap. Must agree with set_guid_generator_after_parallel_start's
+   * num_of_tables. */
+  num_tables = arts_node_info.total_thread_count;
+  uint64_t local_id = arts_thread_info.thread_id;
   min_global_guid_thread = num_tables * arts_global_rank_id;
-  max_global_guid_thread = (arts_global_rank_count == 1)
-                               ? min_global_guid_thread + num_tables
-                               : min_global_guid_thread + num_tables - 1;
+  /* Exclusive upper bound: every local thread slot [0, num_tables) now owns a
+   * route table (allocated for all roles in arts_runtime_thread_init), so local
+   * GUIDs from any thread resolve to route_table[global_thread - min] rather
+   * than falling through to the shared remote table. */
+  max_global_guid_thread = min_global_guid_thread + num_tables;
   //    global_guid_thread_id  = min_global_guid_thread + local_id;
   arts_node_info.global_guid_thread_id[arts_thread_info.thread_id] =
       min_global_guid_thread + local_id;
@@ -201,8 +210,7 @@ arts_guid_t arts_guid_reserve_range(arts_guid_kind_t type, unsigned int size,
       ARTS_ERROR("GUID range reservation failed: thread key space exhausted");
     }
     for (unsigned int r = 0; r < nrank; r++) {
-      *arts_guid_generator_get_key(r, (unsigned int)type) =
-          base_value + stride;
+      *arts_guid_generator_get_key(r, (unsigned int)type) = base_value + stride;
     }
     uint64_t encoded_key =
         base_value +
@@ -217,8 +225,8 @@ arts_guid_t arts_guid_reserve_range(arts_guid_kind_t type, unsigned int size,
   return arts_guid_create_for_rank_internal(rank, (unsigned int)type, size);
 }
 
-arts_guid_t arts_guid_reserve_range_hash(arts_guid_kind_t type, unsigned int size,
-                                         unsigned int rank,
+arts_guid_t arts_guid_reserve_range_hash(arts_guid_kind_t type,
+                                         unsigned int size, unsigned int rank,
                                          unsigned int hash_size) {
   if (size && (unsigned int)type < ARTS_GUID_LAST) {
     arts_guid_t start = arts_guid_create_for_rank_internal(

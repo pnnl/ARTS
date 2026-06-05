@@ -49,7 +49,7 @@ extern "C" {
 #include <stddef.h>
 #include <stdint.h>
 
-#include "arts/memory/coherence.h"
+#include "arts/db_coherence.h"
 #include "arts/utils/shared.h" /* arts_shared_ptr_t */
 
 /* Allocate a fresh, uninitialized buffer (header + db_size payload), 64-byte

@@ -36,12 +36,12 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include "arts/sync/edt_context.h"
+#include "arts/edt_context.h"
 
 #include "arts.h"
 #include "arts/counter/Preamble.h" /* TIME_CONTEXT_SWITCH_START/STOP */
+#include "arts/epoch.h"            /* arts_epoch_inc_finished, shutdown */
 #include "arts/runtime_state.h"    /* arts_thread_info */
-#include "arts/sync/epoch.h"       /* arts_epoch_inc_finished, shutdown */
 #include "arts/system/print.h"
 #include "arts/utils/array_list.h"
 

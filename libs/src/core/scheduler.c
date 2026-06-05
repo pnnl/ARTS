@@ -41,7 +41,7 @@
 /* tiered_pool.h relies on C11 _Atomic and is C-only; scheduler.c is also
  * compiled as scheduler_gpu.cu (C++) — only pull these on the C side and
  * guard the corresponding init/destroy calls below with the same macro. */
-#include "arts/sync/event.h"        /* struct arts_event_dep_s */
+#include "arts/event.h"        /* struct arts_event_dep_s */
 #include "arts/utils/tiered_pool.h" /* arts_tiered_pool_init / destroy */
 #endif
 #include "arts/utils/malloc.h"
@@ -50,17 +50,17 @@
 #include <stdlib.h>
 #include <time.h>
 
-#include "arts/compute/edt.h"
+#include "arts/edt.h"
 #include "arts/counter/Preamble.h"
 #include "arts/counter/counter.h"
 #include "arts/counter/object_counter.h"
 #include "arts/defs.h"
 #include "arts/gas/guid.h"
 #include "arts/gas/route_table.h"
-#include "arts/memory/db.h"
-#include "arts/sync/edt_context.h" /* arts_set/unset_thread_local_edt_info */
-#include "arts/sync/epoch.h"
-#include "arts/sync/epoch_pool.h" /* arts_cleanup_epoch_pools */
+#include "arts/db.h"
+#include "arts/edt_context.h" /* arts_set/unset_thread_local_edt_info */
+#include "arts/epoch.h"
+#include "arts/epoch_pool.h" /* arts_cleanup_epoch_pools */
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/system/topology.h"

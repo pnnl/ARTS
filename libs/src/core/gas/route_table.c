@@ -44,13 +44,13 @@
 #include <stdlib.h>
 
 #include "arts.h"
-#include "arts/compute/edt.h" /* arts_handler_edt_satisfy_slot[_ptr] */
+#include "arts/db.h"
+#include "arts/db_coherence_handlers.h"
+#include "arts/edt.h"   /* arts_handler_edt_satisfy_slot[_ptr] */
+#include "arts/epoch.h" /* arts_handler_epoch_* */
+#include "arts/event.h"
 #include "arts/gas/guid.h"
-#include "arts/memory/coherence_handlers.h"
-#include "arts/memory/db.h"
 #include "arts/runtime_state.h" /* arts_handle_ready_edt */
-#include "arts/sync/epoch.h"    /* arts_handler_epoch_* */
-#include "arts/sync/event.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/transport/protocol.h" /* coherence packet structs */
@@ -640,14 +640,9 @@ static void ooo_h_db_acquire(void *item, void *vargs) {
 /* Epoch handlers (inc_*, request, send) live in epoch.c as pure cores on the
  * acquired epoch — no re-issue wrappers here. */
 
-static void ooo_h_db_ownership_request(void *item, void *vargs) {
-  (void)item;
-  struct arts_ooo_args_db_ownership_request_s *a = vargs;
-  struct arts_remote_ownership_request_packet_s p;
-  p.header.rank = a->requester;
-  p.db_guid = a->db_guid;
-  arts_handler_db_ownership_request(&p);
-}
+/* OOO_DB_OWNERSHIP_REQUEST replay is provided by the coherence model TU
+ * (arts_coh_ooo_replay_ownership_request) because LOCK_REQ exists only in the
+ * release-consistency family; LC provides a no-op definition. */
 
 static void ooo_h_db_snapshot_request(void *item, void *vargs) {
   (void)item;
@@ -712,7 +707,7 @@ static const arts_ooo_handler_fn g_ooo_table[OOO_KIND_COUNT] = {
     [OOO_EPOCH_INC_ACTIVE] = arts_handler_epoch_inc_active,
     [OOO_EPOCH_INC_FINISHED] = arts_handler_epoch_inc_finished,
     [OOO_EPOCH_INC_QUEUE] = arts_handler_epoch_inc_queue,
-    [OOO_DB_OWNERSHIP_REQUEST] = ooo_h_db_ownership_request,
+    [OOO_DB_OWNERSHIP_REQUEST] = arts_coh_ooo_replay_ownership_request,
     [OOO_DB_SNAPSHOT_REQUEST] = ooo_h_db_snapshot_request,
     [OOO_DB_DESTROY] = ooo_h_db_destroy,
     [OOO_DB_WRITEBACK] = ooo_h_db_writeback,

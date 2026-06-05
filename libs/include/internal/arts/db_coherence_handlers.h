@@ -48,8 +48,16 @@ void arts_handler_db_writeback(struct arts_remote_writeback_packet_s *p,
 void arts_handler_db_ownership_return(
     struct arts_remote_ownership_return_packet_s *p);
 void arts_handler_db_destroy(struct arts_remote_destroy_packet_s *p);
-void arts_handler_db_create(
-    struct arts_remote_db_create_coherent_packet_s *p);
+void arts_handler_db_create(struct arts_remote_db_create_coherent_packet_s *p);
+
+/* OoO replay wrapper for a deferred LOCK_REQ (OOO_DB_OWNERSHIP_REQUEST):
+ * rebuild the packet from the OoO args and re-issue
+ * arts_handler_db_ownership_request. Registered in the route_table OoO dispatch
+ * table.  Defined for the release-consistency family (db_coherence_release.c)
+ * where LOCK_REQ exists; LC never enqueues this kind, so its definition
+ * (db_coherence_lc.c) is a no-op. The void* signature matches the OoO dispatch
+ * table entry type. */
+void arts_coh_ooo_replay_ownership_request(void *item, void *vargs);
 
 /* ===== Sharer-side (response) handlers =============================== */
 

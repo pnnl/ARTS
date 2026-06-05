@@ -41,13 +41,13 @@
 #include <unistd.h>
 
 #include "arts.h"
-#include "arts/compute/edt.h"
+#include "arts/edt.h"
 #include "arts/counter/counter.h" /* arts_handler_time_sync_* */
-#include "arts/memory/coherence_handlers.h"
-#include "arts/memory/db.h"
+#include "arts/db_coherence_handlers.h"
+#include "arts/db.h"
 #include "arts/runtime_state.h"
-#include "arts/sync/epoch.h"
-#include "arts/sync/event.h"
+#include "arts/epoch.h"
+#include "arts/event.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/transport/outbox.h"

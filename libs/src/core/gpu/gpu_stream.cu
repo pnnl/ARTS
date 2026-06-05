@@ -45,7 +45,7 @@
 #include "arts/gpu/gpu_stream.h"
 
 #include "arts.h"
-#include "arts/compute/edt.h"
+#include "arts/edt.h"
 #include "arts/defs.h"
 #include "arts/gas/guid.h"
 #include "arts/gas/route_table.h"
@@ -53,10 +53,10 @@
 #include "arts/gpu/gpu_internal.h"
 #include "arts/gpu/gpu_lc.h"
 #include "arts/gpu/gpu_route_table.h"
-#include "arts/memory/db.h"
+#include "arts/db.h"
 #include "arts/runtime_state.h"
-#include "arts/sync/edt_context.h" /* arts_set/unset_thread_local_edt_info */
-#include "arts/sync/epoch.h"
+#include "arts/edt_context.h" /* arts_set/unset_thread_local_edt_info */
+#include "arts/epoch.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/utils/atomics.h"

@@ -41,7 +41,7 @@
 /* tiered_pool.h relies on C11 _Atomic and is C-only; pull these on the C
  * side and guard the corresponding init/destroy calls below with the same
  * macro. */
-#include "arts/sync/event.h"        /* struct arts_event_dep_s */
+#include "arts/event.h"             /* struct arts_event_dep_s */
 #include "arts/utils/tiered_pool.h" /* arts_tiered_pool_init / destroy */
 #endif
 #include "arts/utils/malloc.h"
@@ -49,17 +49,17 @@
 #include <assert.h>
 #include <stdlib.h>
 
-#include "arts/compute/edt.h"
 #include "arts/counter/Preamble.h"
 #include "arts/counter/counter.h"
 #include "arts/counter/object_counter.h"
+#include "arts/db.h"
 #include "arts/defs.h"
+#include "arts/edt.h"
+#include "arts/edt_context.h" /* arts_epoch_list_mark_finished, ctx tls */
+#include "arts/epoch.h"
+#include "arts/epoch_pool.h" /* arts_cleanup_epoch_pools */
 #include "arts/gas/guid.h"
 #include "arts/gas/route_table.h"
-#include "arts/memory/db.h"
-#include "arts/sync/edt_context.h" /* arts_epoch_list_mark_finished, ctx tls */
-#include "arts/sync/epoch.h"
-#include "arts/sync/epoch_pool.h" /* arts_cleanup_epoch_pools */
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/system/topology.h"
@@ -476,9 +476,14 @@ void arts_runtime_private_init(struct thread_mask_s *thread,
       (config->gpu && thread->role == ARTS_ROLE_WORKER)
           ? arts_deque_new(config->deque_size)
           : NULL;
+  /* Every thread owns a local route table at its own slot: any thread (workers
+   * AND network threads — multiple receivers run arts_handler_edt_create
+   * concurrently) mints GUIDs into a disjoint key partition keyed by
+   * thread->id, and arts_get_route_table resolves those local GUIDs to
+   * route_table[id]. */
+  arts_node_info.route_table[thread->id] = arts_new_route_table(
+      config->route_table_entries, config->route_table_size);
   if (thread->role == ARTS_ROLE_WORKER) {
-    arts_node_info.route_table[thread->id] = arts_new_route_table(
-        config->route_table_entries, config->route_table_size);
 #ifdef ARTS_USE_GPU
     if (config->gpu) {
       arts_worker_init_gpus();

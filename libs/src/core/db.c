@@ -37,7 +37,7 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 
-#include "arts/memory/db.h"
+#include "arts/db.h"
 
 #include <assert.h>
 #include <string.h>
@@ -47,17 +47,17 @@
 #ifdef ARTS_USE_CXL
 #include "arts/cxl/deque.h"
 #endif
-#include "arts/compute/edt.h"
+#include "arts/edt.h"
 #include "arts/counter/Preamble.h"
 #include "arts/gas/guid.h"
 #include "arts/gas/route_table.h"
-#include "arts/memory/coherence.h"
-#include "arts/memory/coherence_buffer.h"
-#include "arts/memory/coherence_handlers.h"
+#include "arts/db_coherence.h"
+#include "arts/db_coherence_buffer.h"
+#include "arts/db_coherence_handlers.h"
 #include "arts/runtime_state.h"
 #include "arts/runtime_types.h"
-#include "arts/sync/edt_context.h" /* current_edt + created-DB tracking */
-#include "arts/sync/epoch.h"
+#include "arts/edt_context.h" /* current_edt + created-DB tracking */
+#include "arts/epoch.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/transport/protocol.h"

@@ -60,7 +60,7 @@ extern "C" {
  * plus the arts_coh_atomic_uint typedef) live in the coherence module's own
  * header; pulled in here so existing includers of runtime_types.h still see
  * the DB types unchanged. */
-#include "arts/memory/coherence_types.h"
+#include "arts/db_coherence_types.h"
 #include "arts/utils/lockfree_lifo.h" /* arts_lf_stack_t (event simple deps) */
 #include "arts/utils/mpsc.h"          /* arts_mpsc_t (event channel) */
 #include <stdbool.h>
@@ -114,7 +114,7 @@ static inline uint64_t arts_edt_total_size(const struct arts_edt_s *edt) {
          ((uint64_t)edt->depc * sizeof(arts_edt_dep_t));
 }
 
-/** Forward-declared dep node (definition in arts/sync/event.h, Task 8). */
+/** Forward-declared dep node (definition in arts/event.h, Task 8). */
 struct arts_event_dep_s;
 
 /** Internal event descriptor — single generic type, hint-driven behavior.

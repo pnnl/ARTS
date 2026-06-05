@@ -56,14 +56,14 @@
  *     generation, decrements both counters.  No auto-destroy.
  */
 
-#include "arts/sync/event.h"
+#include "arts/event.h"
 
 #include "arts.h"
-#include "arts/compute/edt.h"
+#include "arts/edt.h"
+#include "arts/edt_context.h" /* current_edt */
 #include "arts/gas/guid.h"
 #include "arts/gas/route_table.h"
-#include "arts/runtime_state.h"    /* arts_node_info, event_dep_pool */
-#include "arts/sync/edt_context.h" /* current_edt */
+#include "arts/runtime_state.h" /* arts_node_info, event_dep_pool */
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/transport/outbox.h"    /* outbound send helpers */

@@ -51,7 +51,7 @@ extern "C" {
  * struct arts_db_s embeds the per-rank cache (struct arts_db_cache_s) by value
  * as its FIRST member, so db_s requires the complete cache type; the whole
  * buffer/home/cache/db_s chain is therefore defined together here.
- * arts/memory/coherence.h keeps the protocol function declarations and
+ * arts/db_coherence.h keeps the protocol function declarations and
  * includes this header for the layouts.
  *
  * @note This is an internal header.  User code should include @c arts.h.
@@ -72,7 +72,7 @@ extern "C" {
 #endif
 /* LRC home metadata embeds a per-rank reader bit-set by value. */
 #ifdef ARTS_MEMORY_MODEL_LRC
-#include "arts/memory/rank_bitset.h"
+#include "arts/rank_bitset.h"
 #endif
 
 /* Sentinel for arts_db_cache_s.incoming_new_owner meaning "no ownership
@@ -100,7 +100,7 @@ typedef _Atomic(unsigned int) arts_coh_atomic_uint;
 /* DB coherence layout (home-directory + node-cache protocol).
  *
  * These struct definitions live here — rather than in
- * arts/memory/coherence.h — because struct arts_db_s embeds the per-rank
+ * arts/db_coherence.h — because struct arts_db_s embeds the per-rank
  * cache (struct arts_db_cache_s) by value as its FIRST member, so db_s
  * requires the complete cache type.  coherence.h keeps the protocol
  * function declarations and includes this header for the layouts.

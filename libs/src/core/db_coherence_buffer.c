@@ -12,7 +12,7 @@
  * never a possibly-freed buffer.
  */
 
-#include "arts/memory/coherence_buffer.h"
+#include "arts/db_coherence_buffer.h"
 
 #include <stdatomic.h>
 #include <stdlib.h>

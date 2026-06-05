@@ -9,14 +9,14 @@
  *   - the bit-packed atomic rank bit-set (LRC destroy fan-out roster)
  */
 
-#include "arts/memory/coherence_home.h"
+#include "arts/db_coherence_home.h"
 
 #include <sched.h>
 #include <stdatomic.h>
 #include <stddef.h>
 #include <stdlib.h>
 
-#include "arts/memory/coherence.h"
+#include "arts/db_coherence.h"
 #include "arts/utils/malloc.h"
 
 /*--- pending_rw home FIFO (Vyukov MPSC) ---------------------------------
@@ -194,94 +194,6 @@ bool arts_rank_u64_map_advance(struct arts_rank_to_u64_map_s *m,
   }
 }
 
-/*--- home-directory lifecycle (inlined in arts_db_s) --------------------*/
-
-void arts_db_home_init(struct arts_db_s *db, unsigned int rw_holder,
-                       unsigned int nranks) {
-  /* Home-directory fields inlined in struct arts_db_s: the caller zeroed the
-   * whole descriptor before this runs.  No destroy baton (m12: the route_table
-   * atomic_exchange(slot.value,NULL) is the destroy single-flight gate). */
-#if defined(ARTS_MEMORY_MODEL_LRC)
-  atomic_store_explicit(&db->rw_holder, rw_holder, memory_order_relaxed);
-  arts_home_lockreq_queue_init(&db->pending_rw);
-  atomic_store_explicit(&db->invalidate_in_flight, 0, memory_order_relaxed);
-  arts_rank_bitset_init(&db->cached_ranks, nranks);
-  db->pending_install_owner = 0;
-#elif defined(ARTS_MEMORY_MODEL_LC)
-  /* LC: only last_sent_version.  rw_holder param is unused — no exclusive
-   * owner. */
-  (void)rw_holder;
-  db->last_sent_version = arts_rank_u64_map_create(nranks);
-#else
-  /* RC */
-  atomic_store_explicit(&db->rw_holder, rw_holder, memory_order_relaxed);
-  arts_home_lockreq_queue_init(&db->pending_rw);
-  atomic_store_explicit(&db->invalidate_in_flight, 0, memory_order_relaxed);
-  db->last_sent_version = arts_rank_u64_map_create(nranks);
-#endif
-}
-
-void arts_db_home_teardown(struct arts_db_s *db) {
-  if (db == NULL) {
-    return;
-  }
-#if defined(ARTS_MEMORY_MODEL_LRC)
-  arts_home_lockreq_queue_destroy(&db->pending_rw);
-  arts_rank_bitset_destroy(&db->cached_ranks);
-#elif defined(ARTS_MEMORY_MODEL_LC)
-  arts_rank_u64_map_destroy(db->last_sent_version);
-#else
-  /* RC */
-  arts_home_lockreq_queue_destroy(&db->pending_rw);
-  arts_rank_u64_map_destroy(db->last_sent_version);
-#endif
-  /* No free: home fields are inlined in the arts_db_s. */
-}
-
-#ifdef ARTS_MEMORY_MODEL_LRC
-/*--- last_sent_version map serialization / deserialization ---------------*/
-
-#include "arts/transport/protocol.h"
-#include <string.h>
-
-size_t arts_rank_u64_map_serialize(const struct arts_rank_to_u64_map_s *m,
-                                   void *out) {
-  uint32_t *count_field = (uint32_t *)out;
-  struct arts_remote_rank_version_pair_s *entries =
-      (struct arts_remote_rank_version_pair_s *)((char *)out +
-                                                 sizeof(uint32_t) * 2);
-  uint32_t n = 0;
-  for (unsigned int r = 0; r < m->nranks; r++) {
-    uint64_t v = atomic_load_explicit(&m->slots[r], memory_order_acquire);
-    if (v == 0) {
-      continue;
-    }
-    entries[n].rank = (uint32_t)r;
-    entries[n].pad = 0;
-    entries[n].version = v;
-    n++;
-  }
-  count_field[0] = n;
-  count_field[1] = 0; /* alignment pad */
-  return sizeof(uint32_t) * 2 + (size_t)n * sizeof(*entries);
-}
-
-struct arts_rank_to_u64_map_s *
-arts_rank_u64_map_deserialize(const void *in, size_t size,
-                              unsigned int nranks) {
-  (void)size; /* used by debug assertions; production ignores it */
-  struct arts_rank_to_u64_map_s *m = arts_rank_u64_map_create(nranks);
-  const uint32_t *count_field = (const uint32_t *)in;
-  uint32_t n = count_field[0];
-  const struct arts_remote_rank_version_pair_s *entries =
-      (const struct arts_remote_rank_version_pair_s *)((const char *)in +
-                                                       sizeof(uint32_t) * 2);
-  for (uint32_t i = 0; i < n; i++) {
-    arts_rank_u64_map_set(m, (unsigned int)entries[i].rank, entries[i].version);
-  }
-  return m;
-}
-#endif /* ARTS_MEMORY_MODEL_LRC */
 
 /*--- rank bit-set ----------------------------------------------------
  *

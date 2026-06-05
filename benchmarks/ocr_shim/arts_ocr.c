@@ -54,7 +54,7 @@
 
 /* --- ARTS headers second --- */
 #include "arts.h"
-#include "arts/compute/edt.h"
+#include "arts/edt.h"
 #include "arts/gas/guid.h"
 #include "arts/gas/route_table.h"
 #include "arts/system/threads.h"

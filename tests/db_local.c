@@ -42,7 +42,7 @@
 ///        and arts_db_copy_to_new_type.
 
 #include "arts.h"
-#include "arts/memory/db.h" /* arts_db_copy_to_new_type */
+#include "arts/db.h" /* arts_db_copy_to_new_type */
 #include <string.h>
 
 #define DB_SIZE 128

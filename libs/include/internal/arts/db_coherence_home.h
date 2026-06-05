@@ -25,12 +25,12 @@ extern "C" {
 #include <stddef.h>
 #include <stdint.h>
 
-#include "arts/memory/coherence.h"
+#include "arts/db_coherence.h"
 /* struct arts_rank_bitset_s definition (embedded by value in arts_db_s).
  * The rank-bitset FUNCTION declarations are folded into this header below;
  * the STRUCT lives in rank_bitset.h because coherence_types.h includes
  * it directly to lay out arts_db_s and must not depend on this header. */
-#include "arts/memory/rank_bitset.h"
+#include "arts/rank_bitset.h"
 
 /* arts_home_lockreq_node_s and arts_home_lockreq_queue_s are defined in
  * coherence.h (included above), where arts_db_s embeds the queue. */
@@ -86,8 +86,8 @@ bool arts_rank_bitset_set(struct arts_rank_bitset_s *r, unsigned int rank);
  * actor: by the time it scans, the DB's route-table slot is already absent,
  * so no later acquire can register a new reader. */
 void arts_rank_bitset_for_each(const struct arts_rank_bitset_s *r,
-                                void (*cb)(unsigned int rank, void *ctx),
-                                void *ctx);
+                               void (*cb)(unsigned int rank, void *ctx),
+                               void *ctx);
 
 /*--- home-directory lifecycle (inlined in arts_db_s) --------------------*/
 
@@ -100,12 +100,13 @@ void arts_db_home_init(struct arts_db_s *db, unsigned int rw_holder,
  * Does NOT free the descriptor (the fields live inside the arts_db_s). */
 void arts_db_home_teardown(struct arts_db_s *db);
 
-#ifdef ARTS_MEMORY_MODEL_LRC
-/*--- last_sent_version map serialization (LRC only) ---------------------
+/*--- last_sent_version map serialization (defined in db_coherence_lrc.c) -
  *
  * Used to piggyback the owner-side dedup map onto TRANSFER_OWNERSHIP
  * messages so the new owner can continue skipping redundant DATA_RESPONSE
- * sends without re-learning which ranks already hold a fresh copy.
+ * sends without re-learning which ranks already hold a fresh copy.  Only the
+ * LRC model TU defines these; the declarations are unconditional so this
+ * header carries no consistency-model preprocessor logic.
  *
  * Wire layout (in out buffer, starting at byte 0):
  *   uint32_t count;        number of non-zero (rank, version) pairs
@@ -128,7 +129,6 @@ size_t arts_rank_u64_map_serialize(const struct arts_rank_to_u64_map_s *m,
  * debug builds only; pass the actual received length). */
 struct arts_rank_to_u64_map_s *
 arts_rank_u64_map_deserialize(const void *in, size_t size, unsigned int nranks);
-#endif /* ARTS_MEMORY_MODEL_LRC */
 
 #ifdef __cplusplus
 }

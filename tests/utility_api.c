@@ -45,7 +45,7 @@
 ///        arts_yield.
 
 #include "arts.h"
-#include "arts/sync/epoch.h"
+#include "arts/epoch.h"
 #include "arts/utils/random.h"
 
 /// EDT that checks utility functions from within an EDT context.

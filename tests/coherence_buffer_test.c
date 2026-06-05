@@ -18,7 +18,7 @@
  * Phase 4 (mixed): installers + readers concurrently; final version == max.
  */
 
-#include "arts/memory/coherence_buffer.h"
+#include "arts/db_coherence_buffer.h"
 #include "arts/utils/shared.h"
 #include "arts/utils/malloc.h"
 
