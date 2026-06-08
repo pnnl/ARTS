@@ -63,7 +63,7 @@ void arts_handle_ready_edt(struct arts_edt_s *edt);
 void arts_run_edt(struct arts_edt_s *edt);
 /* Schedule a fully DB-acquired EDT onto a work-stealing deque (deque[0]
  * fallback for non-worker completing threads).  Reached when the sequential
- * acquire walk in arts_db_acquire_all completes (resume_k == depc). */
+ * acquire walk in arts_db_acquire_all completes (rw_cursor == depc). */
 void arts_schedule_ready_edt(struct arts_edt_s *edt);
 void arts_thread_zero_node_start(int argc, char **argv);
 void arts_runtime_private_init(struct thread_mask_s *thread,

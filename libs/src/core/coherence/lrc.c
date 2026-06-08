@@ -7,6 +7,7 @@
  * libs/src/core/CMakeLists.txt). Contains NO ARTS_MEMORY_MODEL_* preprocessor
  * logic.
  */
+#include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -38,28 +39,38 @@ void arts_db_local_transfer_now(struct arts_db_cache_s *cache) { (void)cache; }
  * hold the canonical copy; only the current owner has an installed buffer, so a
  * home-but-not-owner rank goes through acquire_remote_ro and home forwards to
  * the owner via REDIRECT_RO). */
-arts_db_acquire_result_t arts_handler_db_acquire(struct arts_db_cache_s *cache,
-                                                 arts_edt_dep_t *dep,
-                                                 arts_guid_t edt_guid,
-                                                 unsigned int slot) {
-  if (cache == NULL) {
-    return ARTS_DB_ACQUIRE_PARK; /* defensive: caller can recover via OoO */
-  }
+void arts_handler_db_acquire(void *item, void *args) {
+  struct arts_db_s *db = (struct arts_db_s *)item;
+  struct arts_ooo_args_db_acquire_s *a =
+      (struct arts_ooo_args_db_acquire_s *)args;
+  struct arts_edt_s *edt = a->edt;
+  unsigned int slot = a->slot;
+  struct arts_db_cache_s *cache = &db->cache;
+  arts_edt_dep_t *dep = &((arts_edt_dep_t *)arts_get_depv(edt))[slot];
   arts_db_access_mode_t mode = dep->mode;
   bool is_owner = (cache->writer_count > 0);
 
   if (mode == DB_MODE_RO) {
-    if (is_owner) {
+    if (is_owner) { /* LRC RO predicate (only the owner holds the canonical
+                       copy) */
       dep->ptr = arts_db_acquire_local(cache);
-      return ARTS_DB_ACQUIRE_OK;
+      arts_db_acquire_resolved(edt, slot);
+      return;
     }
-    return arts_db_acquire_remote_ro(cache, edt_guid, slot); /* case 7 */
+    arts_db_acquire_remote_ro(cache, edt->guid, slot); /* parks (SNAPSHOT) */
+    return;
   }
-  /* mode == DB_MODE_RW (or RW-equivalent) */
+  /* RW */
   if (is_owner && arts_db_acquire_rw_local_fast(cache, dep)) {
-    return ARTS_DB_ACQUIRE_OK; /* case 2/6: writer_count bumped, dep->ptr set */
+    arts_db_acquire_resolved(edt, slot); /* data here, writer_count bumped */
+    return;
   }
-  return arts_db_acquire_remote_rw(cache, edt_guid, slot); /* case 4/8 */
+  arts_db_acquire_remote_rw(cache, edt->guid,
+                            slot); /* parks (OWNERSHIP_REQUEST) */
+}
+
+bool arts_db_acquire_is_serialized(arts_db_access_mode_t mode) {
+  return mode == DB_MODE_RW;
 }
 
 /* ===== release_rw (LRC arm) =======================================
@@ -99,7 +110,7 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
      * were live, this (last) releaser is the unique actor that ships
      * TRANSFER_OWNERSHIP — sentinel invariant, no flag.  Identical for home and
      * non-home owners.  Otherwise no transfer is pending: home retains
-     * ownership until a future LOCK_REQ; a non-home owner quiesces. */
+     * ownership until a future OWNERSHIP_REQUEST; a non-home owner quiesces. */
     if (cache->incoming_new_owner != ARTS_LRC_NO_PENDING_OWNER) {
       arts_db_lrc_send_ownership_response(cache);
     }
@@ -314,7 +325,7 @@ void arts_handler_db_ownership_response(void *payload, size_t size) {
    * (distributed hang). */
   arts_atomic_add(&cache->writer_count, 2u);
   /* Clear ownership_req_in_flight so subsequent RW acquires can kick new
-   * LOCK_REQ rounds if needed. */
+   * OWNERSHIP_REQUEST rounds if needed. */
   cache->ownership_req_in_flight = 0;
 
   /* Drain local RW waiters + any case-3 snapshot reorder-buffer waiters that
@@ -373,6 +384,9 @@ void arts_handler_db_ownership_response_ack(void *item_v, void *args_v) {
     if (arts_home_lockreq_queue_pop(&db->pending_rw, &next_owner)) {
       db->pending_install_owner = next_owner;
       arts_db_lrc_start_invalidate_round(cache, next_owner);
+      /* Pipeline: the popped next_owner is the genuine next owner — PROCEED it
+       * so it overlaps its RW acquire with the in-flight invalidate round. */
+      arts_send_db_ownership_proceed(next_owner, cache->db_guid);
       return;
     }
     /* No pending requester — release the baton. */
@@ -387,7 +401,7 @@ void arts_handler_db_ownership_response_ack(void *item_v, void *args_v) {
     if (!atomic_compare_exchange_strong_explicit(
             &db->invalidate_in_flight, &expected, 1u, memory_order_acq_rel,
             memory_order_acquire)) {
-      /* Another LOCK_REQ handler already picked up the baton (race);
+      /* Another OWNERSHIP_REQUEST handler already picked up the baton (race);
        * that thread will drain the queue. */
       return;
     }
@@ -488,8 +502,8 @@ void arts_db_create_publish_holder(struct arts_db_s *db,
 }
 
 /* ===== Ownership-round seams (called from coherence/release.c) ===
- * family→model: the release-family LOCK_REQ / RELEASE_OWNERSHIP handlers
- * delegate the RC/LRC-divergent steps here. */
+ * family→model: the release-family OWNERSHIP_REQUEST / RELEASE_OWNERSHIP
+ * handlers delegate the RC/LRC-divergent steps here. */
 
 void arts_db_start_ownership_round(struct arts_db_cache_s *cache,
                                    struct arts_db_s *db,
@@ -509,6 +523,9 @@ void arts_db_start_ownership_round(struct arts_db_cache_s *cache,
   }
   db->pending_install_owner = next_owner;
   arts_db_lrc_start_invalidate_round(cache, next_owner);
+  /* Pipeline: the popped next_owner is the genuine next owner — PROCEED it so
+   * it overlaps its RW acquire with the in-flight initial invalidate round. */
+  arts_send_db_ownership_proceed(next_owner, cache->db_guid);
 }
 
 void arts_db_ownership_return(struct arts_db_cache_s *cache) {

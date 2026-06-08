@@ -58,6 +58,7 @@ set(TEST_PROGRAMS
     coherence_home_producer_ro
     coherence_zero_size_xfer
     coherence_rw_multihop
+    coherence_rw_pipeline
     coherence_lrc_ownership_reorder
     lockfree_stack_stress
     lockfree_pool_stress
@@ -269,6 +270,7 @@ function(register_single_node_test test_name)
         LABELS "single_node"
         TIMEOUT ${ARG_TIMEOUT}
         RESOURCE_LOCK "arts_runtime"
+        ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/1n.cfg"
     )
 endfunction()
 
@@ -278,8 +280,9 @@ function(register_multinode_test test_name)
         set(ARG_TIMEOUT 60)
     endif()
     if(NOT ARG_VARIANTS)
-        # All four local multinode flavours.  Names map 1:1 to cfg files
-        # in configs/local/ which run_tests.sh copies into TEST_BIN_DIR.
+        # All four local multinode flavours.  Names map 1:1 to the cfg files in
+        # configs/local/; each test's ARTS_CONFIG env points straight at the
+        # source cfg (no copy), so ctest runs standalone.
         #   2n     — 2 nodes, 5w/1s/1r per node (worker-heavy default)
         #   3n     — 3 nodes, 2w/1s/1r per node
         #   4n     — 4 nodes, 1w/1s/1r per node
@@ -298,7 +301,7 @@ function(register_multinode_test test_name)
             LABELS "multinode"
             TIMEOUT ${ARG_TIMEOUT}
             RESOURCE_LOCK "arts_runtime"
-            ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_${variant}.cfg"
+            ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/${variant}.cfg"
         )
     endforeach()
 endfunction()
@@ -317,7 +320,7 @@ function(register_gpu_test test_name)
         LABELS "gpu"
         TIMEOUT ${ARG_TIMEOUT}
         RESOURCE_LOCK "arts_runtime"
-        ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_gpu.cfg;ASAN_OPTIONS=protect_shadow_gap=0:detect_leaks=0:alloc_dealloc_mismatch=0"
+        ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/gpu/1n.cfg;ASAN_OPTIONS=protect_shadow_gap=0:detect_leaks=0:alloc_dealloc_mismatch=0"
     )
 endfunction()
 
@@ -536,6 +539,7 @@ register_multinode_test(coherence_mixed_local_remote)
 register_multinode_test(coherence_home_producer_ro TIMEOUT 30)
 register_multinode_test(coherence_zero_size_xfer TIMEOUT 30)
 register_multinode_test(coherence_rw_multihop TIMEOUT 30)
+register_multinode_test(coherence_rw_pipeline TIMEOUT 40)
 
 register_multinode_test(multinode_stdout_forward)
 set_tests_properties(multinode_stdout_forward_2n PROPERTIES
@@ -558,7 +562,7 @@ set_tests_properties(coherence_lock_req_before_create PROPERTIES
     LABELS "coherence_stress;multinode"
     TIMEOUT 120
     RESOURCE_LOCK "arts_runtime"
-    ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_2n.cfg"
+    ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/2n.cfg"
 )
 
 # Coherence stress test suite (Spec section 6 B.1/B.4/B.5/B.6 single-node).
@@ -603,7 +607,7 @@ set_tests_properties(coherence_stress_dist PROPERTIES
     LABELS "coherence_stress;multinode"
     TIMEOUT 120
     RESOURCE_LOCK "arts_runtime"
-    ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_2n.cfg"
+    ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/2n.cfg"
 )
 
 # LRC ownership-transfer TRANSFER/INVALIDATE two-wire reorder stress.  MUST use
@@ -627,7 +631,7 @@ set_tests_properties(coherence_lrc_ownership_reorder PROPERTIES
     LABELS "coherence_stress;multinode"
     TIMEOUT 120
     RESOURCE_LOCK "arts_runtime"
-    ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_2n_io.cfg"
+    ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/2n_io.cfg"
 )
 
 # --- LC-specific test binaries ---
@@ -668,7 +672,7 @@ if(ARTS_MEMORY_MODEL STREQUAL "LC")
         LABELS "multinode"
         TIMEOUT 60
         RESOURCE_LOCK "arts_runtime"
-        ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_2n.cfg"
+        ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/2n.cfg"
         PASS_REGULAR_EXPRESSION "LC_DRF: PASS"
     )
 
@@ -684,7 +688,7 @@ if(ARTS_MEMORY_MODEL STREQUAL "LC")
         LABELS "multinode"
         TIMEOUT 60
         RESOURCE_LOCK "arts_runtime"
-        ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_2n.cfg"
+        ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/2n.cfg"
         PASS_REGULAR_EXPRESSION "LC_LOCAL_HIT_DEDUP: PASS"
     )
 

@@ -174,13 +174,11 @@ void mark_edt_ready_by_guid(arts_guid_t edt_guid, unsigned int slot) {
       depv[slot].ptr = buf ? buf->data : NULL;
     }
   }
-  /* Frontier dep satisfied — advance past it and resume the strict sequential
-   * acquire walk.  arts_db_acquire_all schedules the EDT (via
-   * arts_schedule_ready_edt) once all deps are held.  The edt_h ref held across
-   * this call keeps the EDT alive even if arts_db_acquire_all schedules it and
-   * another worker runs it. */
-  edt->resume_k++;
-  arts_db_acquire_all(edt);
+  /* Data resolved for this dep — count it down; the actor that reaches 0
+   * schedules. The edt_h ref held across this call keeps the EDT alive even if
+   * the schedule lets another worker run (and free) it; do NOT touch edt after
+   * arts_db_acquire_account returns. */
+  arts_db_acquire_account(edt);
   arts_shared_release(&edt_h);
 }
 
@@ -274,10 +272,11 @@ arts_db_acquire_remote_ro(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
 
 /* The 8-case acquire dispatcher arts_handler_db_acquire is model-specific: RC
  * and LRC define it in coherence/release.c-backed coherence/{rc,lrc}.c
- * (single-owner LOCK_REQ / GRANT path, differing only on the RO-has-local-data
- * predicate); LC defines its unified home-canonical body in coherence/lc.c.
- * The shared remote-RO path (arts_db_acquire_remote_ro) and the local-buffer
- * fast read (arts_db_acquire_local) above are reused by all three. */
+ * (single-owner OWNERSHIP_REQUEST / GRANT path, differing only on the
+ * RO-has-local-data predicate); LC defines its unified home-canonical body in
+ * coherence/lc.c. The shared remote-RO path (arts_db_acquire_remote_ro) and the
+ * local-buffer fast read (arts_db_acquire_local) above are reused by all three.
+ */
 
 /* Drain the snapshot reorder buffer in one atomic_exchange.  Monotonic version
  * guarantees every parked node's target_version <= the buffer version that

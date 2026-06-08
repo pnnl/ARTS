@@ -12,7 +12,7 @@
  * destroy_state, the marked-list head/tail, the buffer pool).
  *
  * Drop discipline — two categories:
- *   Cat-B (deferrable: LOCK_REQ / GET_DATA / WRITEBACK / DESTROY /
+ *   Cat-B (deferrable: OWNERSHIP_REQUEST / GET_DATA / WRITEBACK / DESTROY /
  *     OWNERSHIP_INVALIDATE): the wire dispatcher routes through
  *     arts_ooo_dispatch_or_defer_guid, which acquires the home db_s
  *     ref-pinned and hands the pure (item, args) body a live cache on
@@ -97,9 +97,9 @@ struct arts_db_ownership_response_ack_args_s {
 
 /* Cat-B pure body (OoO g_ooo_table[OOO_DB_OWNERSHIP_REQUEST]): item_v is the
  * home db_s the engine acquired (cache is its first member); args_v is an
- * arts_ooo_args_db_ownership_request_s.  The wire dispatcher decodes LOCK_REQ
+ * arts_ooo_args_db_ownership_request_s.  The wire dispatcher decodes OWNERSHIP_REQUEST
  * into those args and routes through arts_ooo_dispatch_or_defer_guid.  Defined
- * for the release-consistency family (coherence/release.c) where LOCK_REQ
+ * for the release-consistency family (coherence/release.c) where OWNERSHIP_REQUEST
  * exists; LC provides a no-op body (coherence/lc.c) — LC never enqueues this
  * kind. */
 void arts_handler_db_ownership_request(void *item_v, void *args_v);

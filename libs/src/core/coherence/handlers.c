@@ -8,7 +8,7 @@
  *
  * Lookup discipline.  Two handler categories, both lookup-then-operate but
  * differing on the MISS action:
- *   - Cat-B (deferrable home-side: LOCK_REQ / GET_DATA / WRITEBACK / DESTROY):
+ *   - Cat-B (deferrable home-side: OWNERSHIP_REQUEST / GET_DATA / WRITEBACK / DESTROY):
  *     the wire dispatcher routes through the OoO engine, which acquires the
  *     home db_s (ref-pinned) and hands a pure (item, args) body the live cache
  *     on a HIT, or DEFERS the args and replays them once DB_CREATE installs.
@@ -56,7 +56,7 @@
 /* ===== Home-side handlers ========================================== */
 
 /* arts_handler_db_ownership_request lives in coherence/release.c (RC+LRC
- * only — LC has no LOCK_REQ / GRANT round). */
+ * only — LC has no OWNERSHIP_REQUEST / GRANT round). */
 
 /* arts_handler_db_snapshot_request (GET_DATA) is model-specific — RC/LC serve
  * from home's canonical buffer (dedup), LRC records the sharer + REDIRECTs to

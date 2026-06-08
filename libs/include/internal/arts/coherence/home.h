@@ -4,8 +4,8 @@
  *
  * Concurrency model:
  *   - pending_rw queue: Vyukov MPSC.  Multi-producer (any handler thread
- * enqueues on LOCK_REQ); single-consumer in time (the unique actor holding the
- *     invalidate_in_flight = 1 baton).  Lock-free queue ops.
+ * enqueues on OWNERSHIP_REQUEST); single-consumer in time (the unique actor
+ * holding the invalidate_in_flight = 1 baton).  Lock-free queue ops.
  *   - last_sent_version map: per-slot atomic.  Each rank slot is an independent
  *     _Atomic(uint64_t) accessed via atomic load/store and CAS-loop
  * monotonic-max for advance.  No cross-slot invariant.
@@ -43,6 +43,10 @@ void arts_home_lockreq_queue_push(struct arts_home_lockreq_queue_s *q,
  * on success; returns false when the queue is empty. */
 bool arts_home_lockreq_queue_pop(struct arts_home_lockreq_queue_s *q,
                                  unsigned int *out_rank);
+/* Peek the front (oldest) requester rank without popping. Single consumer (the
+ * baton holder). Returns true + sets *out_rank when non-empty. */
+bool arts_home_lockreq_queue_peek(const struct arts_home_lockreq_queue_s *q,
+                                  unsigned int *out_rank);
 bool arts_home_lockreq_queue_empty(const struct arts_home_lockreq_queue_s *q);
 
 /*--- last_sent_version dense map ----------------------------------------*/

@@ -118,18 +118,18 @@ void arts_db_cache_destructor(struct arts_db_cache_s *cache);
 /*--- Acquire path --------------------------------------------------------
  *
  * Implements the 8-case dispatcher (HOME × OWNER × {RO, RW}), the remote
- * acquire helpers (LOCK_REQ for RW, GET_DATA for RO), the
+ * acquire helpers (OWNERSHIP_REQUEST for RW, GET_DATA for RO), the
  * GRANT/DATA_RESPONSE-side drain routines, and the lazy first-touch cache_s
  * allocation for foreign ranks.
  *
- * Return contract:
- *   On success the call returns ARTS_DB_ACQUIRE_OK and writes the
- *   buffer-data pointer into dep->ptr.  Cases 1/3/5/6/2-fast-path take the
- *   synchronous path and finish before returning.  ARTS_DB_ACQUIRE_PARK
- *   indicates the EDT was parked (cases 4/7/8 + case 6 fall-through).  The
- *   caller leaves the dep slot in the "depc_needed not yet decremented"
- *   state; the protocol's trigger path will fill the slot and decrement when
- *   the ownership/data lands. */
+ * Result enum, returned by the remote acquire helpers
+ * (arts_db_acquire_remote_ro / arts_db_acquire_remote_rw): OK means data was
+ * resolved synchronously into dep->ptr; PARK means the EDT was parked on the
+ * coherence protocol and a later wake (DATA_RESPONSE / GRANT / TRANSFER) will
+ * deliver it.  The acquire handler itself (arts_handler_db_acquire, below) is a
+ * void self-accounting body: a synchronous resolve calls
+ * arts_db_acquire_resolved (count the dep + advance the RW cursor); a remote
+ * request parks. */
 typedef enum {
   ARTS_DB_ACQUIRE_OK = 0,
   ARTS_DB_ACQUIRE_PARK,
@@ -141,14 +141,31 @@ typedef enum {
 struct arts_db_cache_s *arts_db_cache_lazy_install(arts_guid_t db_guid,
                                                    uint64_t db_size);
 
-/* 8-case acquire dispatcher.  edt_guid and slot identify the parked
- * EDT's dep slot if the path requires parking.  The caller is
- * responsible for the route_table ref on the underlying DB entry —
- * this function neither acquires nor releases it. */
-arts_db_acquire_result_t arts_handler_db_acquire(struct arts_db_cache_s *cache,
-                                                 arts_edt_dep_t *dep,
-                                                 arts_guid_t edt_guid,
-                                                 unsigned int slot);
+/* OOO_DB_ACQUIRE Cat-B body (per model). item = the installed db_s; args =
+ * arts_ooo_args_db_acquire_s {edt, db_guid, slot}. Attempts the one dep's
+ * acquire (mode x ownership dispatch); on a synchronous resolve calls
+ * arts_db_acquire_resolved; on a remote request, parks. Used by BOTH the driver
+ * (acquire_one_dep) and the OoO drain — this IS the OOO_DB_ACQUIRE handler. */
+void arts_handler_db_acquire(void *item, void *args);
+
+/* Decrement acquire_remaining; schedule the EDT if it reaches 0. Caller must
+ * not touch the EDT afterward (it may have been scheduled + run). */
+void arts_db_acquire_account(struct arts_edt_s *edt);
+
+/* A dep resolved locally (data now in dep->ptr): count it down, and if it is a
+ * serialized (RW) dep advance the cursor + fire the next serialized dep. */
+void arts_db_acquire_resolved(struct arts_edt_s *edt, unsigned int slot);
+
+/* Secured wake (position-idempotent): advance the RW cursor past `slot` if it
+ * still points there, then fire the next serialized dep. Does NOT touch
+ * acquire_remaining. Callers: PROCEED handler + GRANT/TRANSFER drain. */
+void mark_edt_secured_by_guid(arts_guid_t edt_guid, unsigned int slot);
+
+/* Per-model classification used by the arts_db_acquire_all driver: returns true
+ * for deps that take exclusive ownership through the home directory and must be
+ * GUID-serialized (RC/LRC RW). RO is never serialized; LC serializes nothing
+ * (every acquire is a home snapshot). Defined in coherence/{rc,lrc,lc}.c. */
+bool arts_db_acquire_is_serialized(arts_db_access_mode_t mode);
 
 /*--- Release path --------------------------------------------------------
  *
@@ -248,20 +265,36 @@ void arts_db_create_install_home_buffer(struct arts_db_cache_s *cache,
 bool arts_db_acquire_rw_local_fast(struct arts_db_cache_s *cache,
                                    arts_edt_dep_t *dep);
 /* arts_db_acquire_remote_rw: the case-4/8 remote-RW path.  Pushes a pending_rw
- * waiter and kicks a LOCK_REQ if none is in flight; returns PARK. */
+ * waiter and kicks a OWNERSHIP_REQUEST if none is in flight; returns PARK. */
 arts_db_acquire_result_t
 arts_db_acquire_remote_rw(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
                           unsigned int slot);
 
 /* Per-model ownership-round seams (defined in coherence/{rc,lrc}.c, called
- * from the release-family LOCK_REQ / RELEASE_OWNERSHIP handlers — family→model,
- * the sanctioned RC↔LRC divergence).  start: RC INVALIDATEs the current holder,
- * LRC pops the FIFO target + starts the invalidate round.  return: RC advances
- * the chain, LRC never receives RELEASE_OWNERSHIP (no-op). */
+ * from the release-family OWNERSHIP_REQUEST / RELEASE_OWNERSHIP handlers —
+ * family→model, the sanctioned RC↔LRC divergence).  start: RC INVALIDATEs the
+ * current holder, LRC pops the FIFO target + starts the invalidate round.
+ * return: RC advances the chain, LRC never receives RELEASE_OWNERSHIP (no-op).
+ */
 void arts_db_start_ownership_round(struct arts_db_cache_s *cache,
                                    struct arts_db_s *db,
                                    unsigned int requester);
 void arts_db_ownership_return(struct arts_db_cache_s *cache);
+
+/* RW-pipelining PROCEED (home → secured next owner). Sender self-dispatches the
+ * handler when new_owner == self. The handler advances the cursors of all RW
+ * waiters parked on db_guid at this rank (no OoO defer: the requester
+ * lazy-installed the cache before it sent OWNERSHIP_REQUEST). RC/LRC only. */
+void arts_send_db_ownership_proceed(unsigned int new_owner,
+                                    arts_guid_t db_guid);
+void arts_handler_db_ownership_proceed(arts_guid_t db_guid);
+
+/* Non-destructive enumeration of a cache pending_rw queue (single consumer):
+ * invokes cb(edt_guid, slot, ctx) for each parked waiter without popping. */
+void arts_pending_rw_queue_for_each(struct arts_pending_rw_queue_s *q,
+                                    void (*cb)(arts_guid_t edt_guid,
+                                               unsigned int slot, void *ctx),
+                                    void *ctx);
 
 /* RC/LRC GRANT drain: pop pending_rw FIFO, bump writer_count per waiter, wake
  * each parked EDT.  Defined in coherence/release.c; called from the RC GRANT

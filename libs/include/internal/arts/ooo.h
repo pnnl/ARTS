@@ -96,7 +96,9 @@ enum arts_ooo_kind {
  * that DB's home CREATE arrives, so the message reaches home with db_s not yet
  * installed ⇒ OoO push, replayed on the CREATE handler's drain. */
 #if defined(ARTS_MEMORY_MODEL_RC)
-  OOO_DB_ACQUIRE, /* → arts_handler_db_acquire (push: arts_db_acquire_all) */
+  OOO_DB_ACQUIRE, /* → arts_db_acquire_replay_dep (re-attempts the one deferred
+                     local dep; pushed by arts_db_acquire_all's per-dep 3-way)
+                   */
   OOO_DB_SNAPSHOT_REQUEST,  /* → arts_handler_db_snapshot_request @ home */
   OOO_DB_OWNERSHIP_REQUEST, /* → arts_handler_db_ownership_request @ home */
   /* INVALIDATE replay — RC.  A GRANT/INVALIDATE reorder on two wires, or a
@@ -109,7 +111,9 @@ enum arts_ooo_kind {
                                 */
   OOO_DB_WRITEBACK,            /* → arts_handler_db_writeback @ home */
 #elif defined(ARTS_MEMORY_MODEL_LRC)
-  OOO_DB_ACQUIRE, /* → arts_handler_db_acquire (push: arts_db_acquire_all) */
+  OOO_DB_ACQUIRE, /* → arts_db_acquire_replay_dep (re-attempts the one deferred
+                     local dep; pushed by arts_db_acquire_all's per-dep 3-way)
+                   */
   OOO_DB_SNAPSHOT_REQUEST,  /* → arts_handler_db_snapshot_request @ home */
   OOO_DB_OWNERSHIP_REQUEST, /* → arts_handler_db_ownership_request @ home */
 /* NO OOO_DB_OWNERSHIP_INVALIDATE — LRC never defers INVALIDATE (home publishes
@@ -118,7 +122,9 @@ enum arts_ooo_kind {
  * NO OOO_DB_WRITEBACK — LRC has no synchronous writeback (the dispatcher fatals
  * on the WRITEBACK wire message). */
 #elif defined(ARTS_MEMORY_MODEL_LC)
-  OOO_DB_ACQUIRE, /* → arts_handler_db_acquire (push: arts_db_acquire_all) */
+  OOO_DB_ACQUIRE, /* → arts_db_acquire_replay_dep (re-attempts the one deferred
+                     local dep; pushed by arts_db_acquire_all's per-dep 3-way)
+                   */
   OOO_DB_SNAPSHOT_REQUEST, /* → arts_handler_db_snapshot_request @ home */
   OOO_DB_WRITEBACK,        /* → arts_handler_db_writeback @ home (no ownership
                               transfer) */
@@ -288,12 +294,6 @@ void arts_ooo_drain_guid(arts_guid_t guid);
  * route-table teardown only (the chain is otherwise preserved across
  * destroy/reinstall). */
 void arts_ooo_free_all(struct arts_route_item_s *slot);
-
-/* OoO replay continuation for a local DB→EDT dependency that resolved after
- * the EDT was registered: fills the EDT's dep slot with the installed DB and
- * drops one depc_needed, dispatching the EDT when it reaches zero. */
-void arts_ooo_resolve_db_dep(struct arts_edt_s *edt, unsigned int slot,
-                             struct arts_db_s *db_res);
 
 #ifdef __cplusplus
 }

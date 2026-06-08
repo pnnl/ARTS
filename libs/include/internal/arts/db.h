@@ -95,6 +95,13 @@ extern const char *const db_mode_internal_name[];
 extern const char *const arts_db_type_name[];
 
 void arts_db_acquire_all(struct arts_edt_s *edt);
+/* OOO_DB_ACQUIRE replay (table entry): re-dispatch the ONE deferred local dep
+ * through the per-dep 3-way (subtype-aware — ARTS_DB → arts_handler_db_acquire,
+ * PIN/GPU/CXL → pinned ptr path, still-absent → re-defer).  item = the
+ * just-installed db_s (ignored; the 3-way re-looks-it-up under the drain's
+ * pinned ref); args = arts_ooo_args_db_acquire_s {edt, db_guid, slot}.  NOT the
+ * coherent handler directly — that would mishandle non-coherent subtypes. */
+void arts_db_acquire_replay_dep(void *item, void *args);
 void release_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu);
 void arts_release_created_dbs(void);
 void prep_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu);

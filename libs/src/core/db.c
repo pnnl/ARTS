@@ -378,14 +378,14 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
        * Also lazy-install a creator-side cache_s on this (non-home)
        * rank via arts_db_cache_lazy_install.  This is necessary so
        * that home's first INVALIDATE_NOTICE (sent to
-       * rw_holder = creator_rank when a foreign LOCK_REQ arrives) finds
-       * a cache_s on this rank to drop the sentinel and trigger
+       * rw_holder = creator_rank when a foreign OWNERSHIP_REQUEST arrives)
+       * finds a cache_s on this rank to drop the sentinel and trigger
        * invalidate_transfer.  Without it, home's invalidation goes to a
        * phantom holder and the first foreign acquirer stalls forever. */
       /* Use ARTS_DB_INIT_CREATOR_REMOTE (writer_count = 2: sentinel +
        * creator EDT) so that the home-side INVALIDATE_NOTICE round-trip
-       * works correctly.  When a foreign LOCK_REQ arrives at home, home
-       * sends INVALIDATE_NOTICE to rw_holder = creator; creator's
+       * works correctly.  When a foreign OWNERSHIP_REQUEST arrives at home,
+       * home sends INVALIDATE_NOTICE to rw_holder = creator; creator's
        * fetch_sub takes wc 2 -> 1 (no transfer yet -- creator EDT may
        * still be using the buffer).  Creator EDT release_rw drops wc
        * 1 -> 0, triggering R4 WRITEBACK_AND_TRANSFER with the creator's
@@ -405,7 +405,7 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
       if (no_acquire) {
         /* NO_ACQUIRE: do NOT lazy-install a creator-side cache_s.  The
          * home is the sole idle owner; first consumer EDT triggers a
-         * normal LOCK_REQ to acquire ownership.  Wire only carries
+         * normal OWNERSHIP_REQUEST to acquire ownership.  Wire only carries
          * metadata (no payload bytes). */
         arts_send_db_create_coherent(rank, guid, len, ARTS_DB_PROP_NO_ACQUIRE,
                                      (uint16_t)db_type);
@@ -560,23 +560,24 @@ arts_guid_t arts_db_copy_to_new_type(arts_guid_t old_guid,
 
 /* acquire_one_dep — attempt the single DB dependency depv[i].
  *
- * Returns ARTS_DB_ACQUIRE_OK with depv[i].ptr filled (NULL is valid: a
- * sentinel / version-0 / no-payload DB) when visibility/ownership is
- * established synchronously, or ARTS_DB_ACQUIRE_PARK when the EDT has been
- * parked on a coherence waiter (or the OoO list) and the protocol's wake will
- * resume the acquire walk.  The 3-way route_table dispatch (local entry /
- * remote-home lazy install / home==self-but-not-created → OoO push) lives
- * here, inlined from the old single-DB arts_db_acquire API.  The caller
- * (arts_db_acquire_all) has already filtered NULL_GUID / DB_MODE_VAL /
- * pre-filled slots, so depv[i] is a real, not-yet-acquired DB dependency. */
-static arts_db_acquire_result_t
-acquire_one_dep(struct arts_edt_s *edt, arts_edt_dep_t *depv, uint32_t i) {
+ * On a synchronous resolve it writes depv[i].ptr (NULL is valid: a sentinel /
+ * version-0 / no-payload DB) and self-accounts via arts_db_acquire_resolved;
+ * when the EDT must park (remote ownership/data round, or OoO defer of a
+ * not-yet-installed local DB) it leaves the slot for the protocol wake / OoO
+ * drain replay and does NOT account.  The 3-way route_table dispatch (local
+ * entry / remote-home lazy install / home==self-but-not-created → OoO push)
+ * lives here, inlined from the old single-DB arts_db_acquire API.  The caller
+ * (arts_db_acquire_all / rw_fire_from_cursor) has already filtered NULL_GUID /
+ * DB_MODE_VAL / pre-filled slots, so depv[i] is a real, not-yet-acquired DB
+ * dependency. */
+static void acquire_one_dep(struct arts_edt_s *edt, arts_edt_dep_t *depv,
+                            uint32_t i) {
   arts_db_access_mode_t access_mode = depv[i].mode;
   int owner = (int)arts_guid_get_rank(depv[i].guid);
   arts_guid_kind_t guid_type = arts_guid_get_kind(depv[i].guid);
 
   if (guid_type != ARTS_GUID_DB) {
-    return ARTS_DB_ACQUIRE_OK; /* not a DB GUID — nothing to acquire */
+    return; /* not a DB GUID — nothing to acquire */
   }
 
   // Update access-mode counters
@@ -602,11 +603,19 @@ acquire_one_dep(struct arts_edt_s *edt, arts_edt_dep_t *depv, uint32_t i) {
      * stale reads after deque wait. */
     if (cxl_db) {
       depv[i].ptr = cxl_db + 1;
-      return ARTS_DB_ACQUIRE_OK;
+      arts_db_acquire_resolved(edt, i);
+      return;
     }
-    /* Not yet allocated in the shared segment — park; the CXL deque ordering
-     * makes the producer's allocation visible before the consumer runs. */
-    return ARTS_DB_ACQUIRE_PARK;
+    /* Not yet allocated in the shared segment — OoO defer (park); the CXL deque
+     * ordering makes the producer's allocation visible before the consumer
+     * runs.  Data/cursor arrive on the drain replay; no resolved here. */
+    {
+      struct arts_ooo_args_db_acquire_s a = {
+          .edt = edt, .db_guid = depv[i].guid, .slot = i};
+      arts_ooo_dispatch_or_defer_guid(depv[i].guid, OOO_DB_ACQUIRE, &a,
+                                      sizeof(a));
+    }
+    return;
   }
 #endif
 
@@ -633,15 +642,15 @@ acquire_one_dep(struct arts_edt_s *edt, arts_edt_dep_t *depv, uint32_t i) {
   }
   if (cache != NULL &&
       (access_mode == DB_MODE_RO || access_mode == DB_MODE_RW)) {
-    arts_db_acquire_result_t r =
-        arts_handler_db_acquire(cache, &depv[i], edt->guid, i);
-    /* ARTS_DB_ACQUIRE_OK leaves depv[i].ptr written by the handler (it may be
-     * NULL for a sentinel db_size==0 / version-0 metadata-only DB; writer_count
-     * was bumped on the RW path and release_rw will balance it). */
+    /* The handler self-resolves (writes depv[i].ptr + arts_db_acquire_resolved)
+     * on a local hit, or parks on a remote ownership/data round; no return. */
+    struct arts_ooo_args_db_acquire_s a = {
+        .edt = edt, .db_guid = depv[i].guid, .slot = i};
+    arts_handler_db_acquire(arts_db_of_cache(cache), &a);
     if (db_temp != NULL) {
       arts_shared_release(&db_temp_h);
     }
-    return r;
+    return;
   }
 
   /* Non-RC pinned subtypes (PIN, GPU_PIN, GPU_LC, CXL_LC): the DB lives only
@@ -657,13 +666,15 @@ acquire_one_dep(struct arts_edt_s *edt, arts_edt_dep_t *depv, uint32_t i) {
     }
     depv[i].ptr = db_temp + 1;
     arts_shared_release(&db_temp_h);
-    return ARTS_DB_ACQUIRE_OK;
+    arts_db_acquire_resolved(edt, i);
+    return;
   }
 
-  /* DB absent locally.  Defer via OoO keyed on the DB GUID and PARK: when
-   * DB_CREATE installs it (home==self case) the drain re-attempts this dep
-   * via arts_ooo_resolve_db_dep.  A remote non-RC reference can never resolve
-   * locally (pinned-subtype contract) and waits here. */
+  /* DB absent locally.  OoO defer keyed on the DB GUID (park): when DB_CREATE
+   * installs it (home==self case) the drain re-attempts this dep through
+   * arts_handler_db_acquire.  A remote non-RC reference can never resolve
+   * locally (pinned-subtype contract) and waits here.  No resolved — the data
+   * and cursor advance arrive on the drain replay. */
   if (arts_guid_is_local(depv[i].guid)) {
     ARTS_DEBUG("DB[Guid:%lu] out of order request slot %u", depv[i].guid, i);
   } else {
@@ -678,36 +689,28 @@ acquire_one_dep(struct arts_edt_s *edt, arts_edt_dep_t *depv, uint32_t i) {
     arts_ooo_dispatch_or_defer_guid(depv[i].guid, OOO_DB_ACQUIRE, &a,
                                     sizeof(a));
   }
-  return ARTS_DB_ACQUIRE_PARK;
 }
 
-/* arts_db_acquire_all — the arts_db_acquire_all driver.  Acquires the EDT's DB
- * deps in ascending-GUID order, STRICTLY ONE AT A TIME: it advances
- * edt->resume_k over locally-satisfiable deps and, on the first cross-rank dep,
- * PARKs (returns) WITHOUT touching any higher-GUID dep.  The coherence wake
- * (mark_edt_ready_by_guid) or the OoO drain (arts_ooo_resolve_db_dep) advances
- * resume_k and re-enters here; when resume_k == depc all deps are held and the
- * EDT is scheduled.  This strict sequential acquire is what prevents cyclic
- * cross-rank acquire: no two ranks can hold-and-wait on each other's DBs,
- * because each holds at most the prefix below its single outstanding request.
- *
- * Re-entrant + concurrency: at most ONE dep is outstanding (parked) per EDT,
- * so there is at most one wake driving the resume — single-threaded per EDT.
- * After a PARK return the function MUST NOT touch edt (a wake may already be
- * resuming, and may even have scheduled it). */
-void arts_db_acquire_all(struct arts_edt_s *edt) {
-  arts_edt_dep_t *depv = (arts_edt_dep_t *)arts_get_depv(edt);
-  uint32_t depc = edt->depc;
+/* OOO_DB_ACQUIRE replay table entry — see db.h.  Re-attempts the single
+ * deferred dep through acquire_one_dep's subtype-aware 3-way: for an ARTS_DB
+ * this lands in arts_handler_db_acquire (coherent), for a PIN/GPU/CXL DB in the
+ * pinned ptr path, and a still-absent DB re-defers.  Mapping OOO_DB_ACQUIRE
+ * straight to arts_handler_db_acquire would mishandle non-coherent subtypes
+ * (their embedded cache is zeroed — its pending_rw queue is uninitialised, so
+ * the coherent RW path would push onto a NULL-headed queue and crash). */
+void arts_db_acquire_replay_dep(void *item, void *args) {
+  (void)item; /* the 3-way re-looks-up the installed db_s; the drain pins it */
+  struct arts_ooo_args_db_acquire_s *a =
+      (struct arts_ooo_args_db_acquire_s *)args;
+  acquire_one_dep(a->edt, (arts_edt_dep_t *)arts_get_depv(a->edt), a->slot);
+}
 
-  /* GUID-sorted index.  Deterministic + stable across re-entries: the only
-   * field that mutates mid-acquire is a destroyed dep's guid (→ NULL_GUID),
-   * which only moves an already-processed dep further into the processed
-   * prefix, so the resume_k boundary is preserved. */
-  uint32_t sorted[depc > 0 ? depc : 1];
+/* GUID-sorted index array — identical on every (re)entry. */
+static void sort_dep_indices(arts_edt_dep_t *depv, uint32_t depc,
+                             uint32_t *sorted) {
   for (uint32_t k = 0; k < depc; k++) {
     sorted[k] = k;
   }
-  /* Insertion sort by GUID — stable, handles duplicates, fast for small N. */
   for (uint32_t k = 1; k < depc; k++) {
     uint32_t val = sorted[k];
     int j = (int)k - 1;
@@ -717,33 +720,139 @@ void arts_db_acquire_all(struct arts_edt_s *edt) {
     }
     sorted[j + 1] = val;
   }
+}
 
-  while (edt->resume_k < depc) {
-    uint32_t i = sorted[edt->resume_k];
+/* A real DB dep still needing acquisition (not NULL / not a raw value / not
+ * pre-filled / actually a DB GUID). */
+static bool dep_needs_acquire(arts_edt_dep_t *depv, uint32_t i) {
+  return depv[i].guid != NULL_GUID && depv[i].mode != DB_MODE_VAL &&
+         depv[i].ptr == NULL &&
+         arts_guid_get_kind(depv[i].guid) == ARTS_GUID_DB;
+}
 
-    /* Skip deps that need no DB acquire here:
-     *  - guid == NULL_GUID: signaled with no data, or a destroyed dep.
-     *  - DB_MODE_VAL: depv[i].guid holds a raw uint64, not a real GUID.
-     *  - ptr already set: filled during the satisfy phase (or a prior wake). */
-    if (depv[i].guid == NULL_GUID || depv[i].mode == DB_MODE_VAL ||
-        depv[i].ptr != NULL) {
-      edt->resume_k++;
+/* Ownership-serialized (RW cursor) dep? CXL DBs bypass DB coherence (no
+ * ownership round), so they are never serialized — they fire in Pass 1. */
+static bool dep_is_serialized(arts_edt_dep_t *depv, uint32_t i) {
+#ifdef ARTS_USE_CXL
+  if (arts_guid_is_cxl(depv[i].guid)) {
+    return false;
+  }
+#endif
+  return arts_db_acquire_is_serialized(depv[i].mode);
+}
+
+/* Decrement-and-maybe-schedule. Caller must not touch the EDT afterward. */
+void arts_db_acquire_account(struct arts_edt_s *edt) {
+  if (arts_atomic_sub(&edt->acquire_remaining, 1) == 0) {
+    arts_schedule_ready_edt(edt);
+  }
+}
+
+/* Fire the serialized (RW) dep at the cursor (skipping non-serialized/resolved
+ * deps). Fires exactly one dep; the handler's resolved path (rw_secure) drives
+ * the next one, so the walk continues by bounded recursion over the serialized
+ * dep set. */
+static void rw_fire_from_cursor(struct arts_edt_s *edt) {
+  arts_edt_dep_t *depv = (arts_edt_dep_t *)arts_get_depv(edt);
+  uint32_t depc = edt->depc;
+  uint32_t sorted[depc > 0 ? depc : 1];
+  sort_dep_indices(depv, depc, sorted);
+  while (edt->rw_cursor < depc) {
+    uint32_t i = sorted[edt->rw_cursor];
+    if (!dep_needs_acquire(depv, i) || !dep_is_serialized(depv, i)) {
+      edt->rw_cursor++;
       continue;
     }
+    acquire_one_dep(edt, depv,
+                    i); /* handler self-resolves / parks / continues */
+    return;
+  }
+}
 
-    arts_db_acquire_result_t rc = acquire_one_dep(edt, depv, i);
-    if (rc == ARTS_DB_ACQUIRE_PARK) {
-      /* Outstanding cross-rank dep at the resume_k frontier — stop the walk.
-       * Its wake advances resume_k and re-enters.  Do NOT touch edt below. */
-      return;
+/* Position-idempotent: advance past `slot` if the cursor still points there,
+ * then fire the next serialized dep. */
+static void rw_secure(struct arts_edt_s *edt, unsigned int slot) {
+  arts_edt_dep_t *depv = (arts_edt_dep_t *)arts_get_depv(edt);
+  uint32_t depc = edt->depc;
+  uint32_t sorted[depc > 0 ? depc : 1];
+  sort_dep_indices(depv, depc, sorted);
+  if (edt->rw_cursor < depc && sorted[edt->rw_cursor] == slot) {
+    edt->rw_cursor++;
+  }
+  rw_fire_from_cursor(edt);
+}
+
+/* A dep resolved locally (dep->ptr already set by the handler). Count it; for a
+ * serialized (RW) dep, advance the cursor + fire the next serialized dep FIRST,
+ * then account THIS dep LAST. Ordering: the recursive fire accounts deeper deps
+ * before this one, so only the OUTERMOST account can reach 0 — and only after
+ * the +1 bias is gone (initial fire) or on a re-entry where this truly is the
+ * last dep. The upstream caller (acquire_one_dep / mark_edt_secured / the OoO
+ * drain) keeps an EDT ref across the whole recursion, so a mid-recursion
+ * schedule cannot free the EDT under us; do not touch edt after the final
+ * arts_db_acquire_account. */
+void arts_db_acquire_resolved(struct arts_edt_s *edt, unsigned int slot) {
+  arts_edt_dep_t *depv = (arts_edt_dep_t *)arts_get_depv(edt);
+  if (dep_is_serialized(depv, slot)) {
+    rw_secure(edt,
+              slot); /* advance + fire next serialized (bounded recursion) */
+  }
+  arts_db_acquire_account(
+      edt); /* count THIS dep's data; outermost may schedule */
+}
+
+/* Driver: fire all non-serialized deps (Pass 1), then fire the serialized ones
+ * from the cursor (Pass 2; the handler's resolved path self-continues the RW
+ * chain). acquire_remaining is +1-biased so data arrivals during the fire
+ * cannot schedule before the fire completes. Called once per EDT from
+ * arts_handle_ready_edt. */
+void arts_db_acquire_all(struct arts_edt_s *edt) {
+  arts_edt_dep_t *depv = (arts_edt_dep_t *)arts_get_depv(edt);
+  uint32_t depc = edt->depc;
+  uint32_t sorted[depc > 0 ? depc : 1];
+  sort_dep_indices(depv, depc, sorted);
+
+  uint32_t n = 0;
+  for (uint32_t k = 0; k < depc; k++) {
+    if (dep_needs_acquire(depv, sorted[k])) {
+      n++;
     }
-    ARTS_DEBUG("DB[Guid:%lu, Ptr:%p] acquired", depv[i].guid, depv[i].ptr);
-    edt->resume_k++;
+  }
+  arts_atomic_add(&edt->acquire_remaining, n); /* now (1 + n) with the bias */
+
+  /* Pass 1: every non-serialized real DB dep, order-independent (handler
+   * self-accounts via arts_db_acquire_resolved on a local hit; remote parks).
+   */
+  for (uint32_t k = 0; k < depc; k++) {
+    uint32_t i = sorted[k];
+    if (!dep_needs_acquire(depv, i) || dep_is_serialized(depv, i)) {
+      continue;
+    }
+    acquire_one_dep(edt, depv, i);
   }
 
-  ARTS_INFO("EDT[Id:%lu, Guid:%lu] has finished acquiring DBs", edt->arts_id,
-            edt->guid);
-  arts_schedule_ready_edt(edt);
+  /* Pass 2: fire the serialized (RW) deps from the cursor (no-op under LC). */
+  rw_fire_from_cursor(edt);
+
+  /* Remove the +1 bias; this decrement may be the one that reaches 0. */
+  arts_db_acquire_account(edt);
+}
+
+/* Secured wake (PROCEED / GRANT drain): position-idempotent cursor advance +
+ * fire next serialized dep. Holds an EDT ref across rw_secure (which may
+ * schedule deep in the recursion). */
+void mark_edt_secured_by_guid(arts_guid_t edt_guid, unsigned int slot) {
+  if (edt_guid == NULL_GUID) {
+    return;
+  }
+  arts_shared_ptr_t edt_h = arts_route_table_lookup_edt(edt_guid);
+  struct arts_edt_s *edt = (struct arts_edt_s *)arts_shared_get(edt_h);
+  if (edt == NULL) {
+    arts_shared_release(&edt_h);
+    return;
+  }
+  rw_secure(edt, slot);
+  arts_shared_release(&edt_h);
 }
 
 /*
@@ -767,7 +876,7 @@ void prep_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu) {
     /* For RC DBs, dep->ptr is buf->data and pointer arithmetic to
      * recover db_s would land in the buffer header, NOT a db_s.  Detect
      * via the coherence adapter and skip — RC drives invalidation
-     * via LOCK_REQ inside the coherence layer.  Non-RC pinned subtypes
+     * via OWNERSHIP_REQUEST inside the coherence layer.  Non-RC pinned subtypes
      * (PIN, GPU_PIN, GPU_LC, CXL_LC) have no DB-level coherence and
      * therefore no inter-rank invalidation step at prep time. */
     if (arts_db_cache_lookup(depv[i].guid) != NULL) {

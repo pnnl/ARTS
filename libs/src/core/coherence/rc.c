@@ -8,6 +8,7 @@
  * logic.
  */
 #include <semaphore.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -31,32 +32,38 @@
  * current data via synchronous WRITEBACK).  The remote-RO, RW-local-fast, and
  * remote-RW paths are the shared helpers (coherence/coherence.c /
  * coherence/release.c). */
-arts_db_acquire_result_t arts_handler_db_acquire(struct arts_db_cache_s *cache,
-                                                 arts_edt_dep_t *dep,
-                                                 arts_guid_t edt_guid,
-                                                 unsigned int slot) {
-  if (cache == NULL) {
-    return ARTS_DB_ACQUIRE_PARK; /* defensive: caller can recover via OoO */
-  }
+void arts_handler_db_acquire(void *item, void *args) {
+  struct arts_db_s *db = (struct arts_db_s *)item;
+  struct arts_ooo_args_db_acquire_s *a =
+      (struct arts_ooo_args_db_acquire_s *)args;
+  struct arts_edt_s *edt = a->edt;
+  unsigned int slot = a->slot;
+  struct arts_db_cache_s *cache = &db->cache;
+  arts_edt_dep_t *dep = &((arts_edt_dep_t *)arts_get_depv(edt))[slot];
   arts_db_access_mode_t mode = dep->mode;
   bool is_home = (arts_guid_get_rank(cache->db_guid) == arts_global_rank_id);
   bool is_owner = (cache->writer_count > 0);
 
   if (mode == DB_MODE_RO) {
-    /* RC: home always holds current data (sync WRITEBACK) -> is_home||is_owner.
-     * acquire_local returns NULL when no buffer is installed (sentinel /
-     * version-0) — OK, caller treats NULL as "no payload". */
-    if (is_home || is_owner) {
+    if (is_home || is_owner) { /* RC RO predicate (home holds current data) */
       dep->ptr = arts_db_acquire_local(cache);
-      return ARTS_DB_ACQUIRE_OK;
+      arts_db_acquire_resolved(edt, slot);
+      return;
     }
-    return arts_db_acquire_remote_ro(cache, edt_guid, slot); /* case 7 */
+    arts_db_acquire_remote_ro(cache, edt->guid, slot); /* parks (SNAPSHOT) */
+    return;
   }
-  /* mode == DB_MODE_RW (or RW-equivalent) */
+  /* RW */
   if (is_owner && arts_db_acquire_rw_local_fast(cache, dep)) {
-    return ARTS_DB_ACQUIRE_OK; /* case 2/6: writer_count bumped, dep->ptr set */
+    arts_db_acquire_resolved(edt, slot); /* data here, writer_count bumped */
+    return;
   }
-  return arts_db_acquire_remote_rw(cache, edt_guid, slot); /* case 4/8 */
+  arts_db_acquire_remote_rw(cache, edt->guid,
+                            slot); /* parks (OWNERSHIP_REQUEST) */
+}
+
+bool arts_db_acquire_is_serialized(arts_db_access_mode_t mode) {
+  return mode == DB_MODE_RW;
 }
 
 /* ===== release_rw (RC arm) ========================================
@@ -144,7 +151,7 @@ void arts_db_rc_advance_chain(struct arts_db_cache_s *cache) {
     unsigned int new_owner;
     if (!arts_home_lockreq_queue_pop(&db->pending_rw, &new_owner)) {
       /* Queue empty — chain-end candidate.  Home reclaims ownership so the
-       * next foreign LOCK_REQ has a holder to invalidate.
+       * next foreign OWNERSHIP_REQUEST has a holder to invalidate.
        *
        * Ordering invariant: the reclaim (writer_count sentinel + rw_holder)
        * MUST be published BEFORE the baton clear.  A concurrent
@@ -206,24 +213,31 @@ void arts_db_rc_advance_chain(struct arts_db_cache_s *cache) {
       arts_db_buf_release(&master_h);
     }
     /* Home-driven chain (replaces the old has_next self-relay, which raced a
-     * late LOCK_REQ): the new owner does NOT self-withdraw its sentinel.
-     * Re-read the queue AFTER the GRANT — if a waiter remains (incl. one that
-     * raced in after the pop above), drive the next transfer by INVALIDATEing
-     * the owner we just granted.  The commutative signed writer_count makes
-     * this GRANT-then-INVALIDATE pair reorder-safe (the INVALIDATE's -1
-     * commutes with the GRANT's +1 and the owner's drain/release; whichever
-     * decrement drives writer_count from positive to 0 ownership_returns,
-     * re-entering this chain). The baton stays 1 across the chain. */
+     * late OWNERSHIP_REQUEST): the new owner does NOT self-withdraw its
+     * sentinel. Re-read the queue AFTER the GRANT — if a waiter remains (incl.
+     * one that raced in after the pop above), drive the next transfer by
+     * INVALIDATEing the owner we just granted.  The commutative signed
+     * writer_count makes this GRANT-then-INVALIDATE pair reorder-safe (the
+     * INVALIDATE's -1 commutes with the GRANT's +1 and the owner's
+     * drain/release; whichever decrement drives writer_count from positive to 0
+     * ownership_returns, re-entering this chain). The baton stays 1 across the
+     * chain. */
     if (!arts_home_lockreq_queue_empty(&db->pending_rw)) {
       arts_send_db_ownership_invalidate(new_owner, cache->db_guid,
                                         /*new_owner_rank=*/0u);
+      /* Pipeline: tell the genuine next owner (FIFO front, post-pop) to advance
+       * its RW cursor while the transfer toward it is in flight. */
+      unsigned int front;
+      if (arts_home_lockreq_queue_peek(&db->pending_rw, &front)) {
+        arts_send_db_ownership_proceed(front, cache->db_guid);
+      }
       return;
     }
     /* Terminal grant: no waiter — the new owner retains ownership (sentinel
-     * kept).  Clear the baton so a later LOCK_REQ can start a fresh round, then
-     * re-check for one that raced the clear (same recovery as the queue-empty
-     * reclaim path above, but ownership is held by new_owner, so drive the
-     * transfer by INVALIDATEing it rather than re-popping). */
+     * kept).  Clear the baton so a later OWNERSHIP_REQUEST can start a fresh
+     * round, then re-check for one that raced the clear (same recovery as the
+     * queue-empty reclaim path above, but ownership is held by new_owner, so
+     * drive the transfer by INVALIDATEing it rather than re-popping). */
     atomic_store_explicit(&db->invalidate_in_flight, 0, memory_order_release);
     if (arts_home_lockreq_queue_empty(&db->pending_rw)) {
       return;
@@ -233,11 +247,17 @@ void arts_db_rc_advance_chain(struct arts_db_cache_s *cache) {
       if (!atomic_compare_exchange_strong_explicit(
               &db->invalidate_in_flight, &expected, 1u, memory_order_acq_rel,
               memory_order_acquire)) {
-        return; /* a LOCK_REQ producer re-took the baton; it INVALIDATEs
-                   rw_holder */
+        return; /* a OWNERSHIP_REQUEST producer re-took the baton; it
+                   INVALIDATEs rw_holder */
       }
       arts_send_db_ownership_invalidate(new_owner, cache->db_guid,
                                         /*new_owner_rank=*/0u);
+      /* Pipeline: PROCEED the genuine next owner (FIFO front) of the
+       * race-recovery transfer we just drove. */
+      unsigned int front;
+      if (arts_home_lockreq_queue_peek(&db->pending_rw, &front)) {
+        arts_send_db_ownership_proceed(front, cache->db_guid);
+      }
     }
     return;
   }
@@ -456,8 +476,8 @@ void arts_db_create_publish_holder(struct arts_db_s *db,
 }
 
 /* ===== Ownership-round seams (called from coherence/release.c) ===
- * family→model: the release-family LOCK_REQ / RELEASE_OWNERSHIP handlers
- * delegate the RC/LRC-divergent steps here. */
+ * family→model: the release-family OWNERSHIP_REQUEST / RELEASE_OWNERSHIP
+ * handlers delegate the RC/LRC-divergent steps here. */
 
 void arts_db_start_ownership_round(struct arts_db_cache_s *cache,
                                    struct arts_db_s *db,
@@ -467,6 +487,12 @@ void arts_db_start_ownership_round(struct arts_db_cache_s *cache,
       atomic_load_explicit(&db->rw_holder, memory_order_acquire),
       cache->db_guid,
       /*new_owner_rank=*/0u);
+  /* Pipeline: PROCEED the genuine next owner (FIFO front) so it overlaps its RW
+   * acquire with the in-flight initial transfer. */
+  unsigned int front;
+  if (arts_home_lockreq_queue_peek(&db->pending_rw, &front)) {
+    arts_send_db_ownership_proceed(front, cache->db_guid);
+  }
 }
 
 void arts_db_ownership_return(struct arts_db_cache_s *cache) {

@@ -112,7 +112,8 @@ scheduler_t scheduler_loop[] = {
 #endif
 
 /* Schedule a fully DB-acquired EDT onto a work-stealing deque.  Reached when
- * the strict sequential acquire walk in arts_db_acquire_all completes (resume_k
+ * the strict sequential acquire walk in arts_db_acquire_all completes
+ * (rw_cursor
  * == depc) — either synchronously (initial arts_handle_ready_edt on a worker)
  * or asynchronously (a coherence wake / OoO drain resumes the walk on a
  * receiver or drain thread).  Hence the deque[0] fallback: the completing
@@ -144,10 +145,12 @@ void arts_schedule_ready_edt(struct arts_edt_s *edt) {
 /*
  * arts_handle_ready_edt — Transition an EDT from "all deps signaled" to DB
  * acquisition.  Called when depc_needed reaches 0 (the satisfy phase
- * completes).  Starts the strict sequential DB-acquire walk at resume_k = 0;
- * arts_db_acquire_all advances one dep at a time, parks (returns) on the first
- * cross-rank dep, and schedules the EDT (via arts_schedule_ready_edt) once
- * resume_k == depc.
+ * completes).  Seeds the two acquire counters (rw_cursor = 0, the readiness
+ * counter acquire_remaining = 1 as a +1 bias) and enters arts_db_acquire_all,
+ * which fires all non-serialized (RO) deps at once and walks the serialized
+ * (RW) deps by GUID-ordered cursor.  The EDT is scheduled (via
+ * arts_schedule_ready_edt) when acquire_remaining reaches 0 — i.e. when every
+ * DB dep's data has resolved at this rank.
  */
 void arts_handle_ready_edt(struct arts_edt_s *edt) {
   ARTS_INFO("EDT[Guid:%lu, Id:%lu] ready — entering sequential DB acquire "
@@ -163,7 +166,9 @@ void arts_handle_ready_edt(struct arts_edt_s *edt) {
     return;
   }
 #endif
-  edt->resume_k = 0;
+  edt->rw_cursor = 0;
+  edt->acquire_remaining =
+      1; /* +1 bias; arts_db_acquire_all adds the dep count */
   arts_db_acquire_all(edt);
 }
 

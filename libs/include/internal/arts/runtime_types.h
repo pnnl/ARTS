@@ -93,13 +93,15 @@ struct arts_edt_s {
   volatile unsigned int depc_needed; /**< Remaining unsatisfied deps (satisfy
                                           phase — driven to 0 by event/signal
                                           delivery before DB acquisition). */
-  uint32_t resume_k; /**< Strict-sequential DB-acquire resume index: the
-                          position in the GUID-sorted dep order up to which
-                          DBs have been acquired.  0 at acquire start; advances
-                          one dep at a time.  A parked (cross-rank) dep stops
-                          the walk here until its wake resumes — never attempts
-                          a higher-GUID lock while a lower one is outstanding,
-                          which is what prevents cyclic cross-rank acquire. */
+  uint32_t rw_cursor; /**< GUID-sorted index over the EDT's serialized (RW)
+                           deps, up to which they have been *secured* (owned or
+                           guaranteed next-owner). Advanced at the secured point
+                           (PROCEED / local-fast), NOT at data install. */
+  volatile unsigned int acquire_remaining; /**< Count of real DB deps (RO+RW)
+                           whose data is not yet resolved at this rank;
+                           decremented on each data arrival, the actor driving
+                           it to 0 schedules the EDT. +1-biased during the
+                           initial fire. */
   volatile unsigned int
       invalidate_count; /**< Outstanding cache invalidations. */
 } ARTS_ALIGNED_MAX;

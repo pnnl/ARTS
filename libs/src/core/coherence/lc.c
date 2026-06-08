@@ -8,6 +8,7 @@
  * logic.
  */
 #include <semaphore.h>
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "arts/coherence/buffer.h"
@@ -27,30 +28,36 @@
  * canonical buffer (maintained by sync WRITEBACK from every non-home writer).
  * RW and RO are unified — non-home acquires go through acquire_remote_ro in
  * both modes so the EDT parks (no list registration) and is woken by
- * DATA_RESPONSE once home delivers its current buffer.  There is no LOCK_REQ /
- * INVALIDATE / GRANT round, no per-cache pending_rw queue.
+ * DATA_RESPONSE once home delivers its current buffer.  There is no
+ * OWNERSHIP_REQUEST / INVALIDATE / GRANT round, no per-cache pending_rw queue.
  *
  * RW acquires bump writer_count BEFORE parking (or before acquire_local on
  * home).  release_rw balances this decrement; without the bump, release_rw's
  * writer_count == 0 guard silently skips the WRITEBACK, breaking cross-rank RW
  * visibility.  RO acquires do not bump because release_ro is a no-op. */
-arts_db_acquire_result_t arts_handler_db_acquire(struct arts_db_cache_s *cache,
-                                                 arts_edt_dep_t *dep,
-                                                 arts_guid_t edt_guid,
-                                                 unsigned int slot) {
-  if (cache == NULL) {
-    return ARTS_DB_ACQUIRE_PARK; /* defensive: caller can recover via OoO */
-  }
-  arts_db_access_mode_t mode = dep->mode;
+void arts_handler_db_acquire(void *item, void *args) {
+  struct arts_db_s *db = (struct arts_db_s *)item;
+  struct arts_ooo_args_db_acquire_s *a =
+      (struct arts_ooo_args_db_acquire_s *)args;
+  struct arts_edt_s *edt = a->edt;
+  unsigned int slot = a->slot;
+  struct arts_db_cache_s *cache = &db->cache;
+  arts_edt_dep_t *dep = &((arts_edt_dep_t *)arts_get_depv(edt))[slot];
   bool is_home = (arts_guid_get_rank(cache->db_guid) == arts_global_rank_id);
-  if (mode == DB_MODE_RW) {
-    arts_atomic_add(&cache->writer_count, 1);
+  if (dep->mode == DB_MODE_RW) {
+    arts_atomic_add(&cache->writer_count, 1); /* balanced by release_rw */
   }
   if (is_home) {
     dep->ptr = arts_db_acquire_local(cache);
-    return ARTS_DB_ACQUIRE_OK;
+    arts_db_acquire_resolved(edt, slot);
+    return;
   }
-  return arts_db_acquire_remote_ro(cache, edt_guid, slot);
+  arts_db_acquire_remote_ro(cache, edt->guid, slot); /* parks (GET_DATA) */
+}
+
+bool arts_db_acquire_is_serialized(arts_db_access_mode_t mode) {
+  (void)mode;
+  return false; /* LC: no ownership round; nothing is serialized */
 }
 
 /* LC has no pending_rw queue (all modes park on pending_snapshot), so the
@@ -273,12 +280,13 @@ void arts_db_create_publish_holder(struct arts_db_s *db,
   (void)creator_rank;
 }
 
-/* LC has no exclusive-ownership protocol (no LOCK_REQ, no INVALIDATE_NOTICE —
- * its dispatcher fatals on both wire messages), so its ooo_kind enum omits
- * OOO_DB_OWNERSHIP_REQUEST and OOO_DB_OWNERSHIP_INVALIDATE entirely.  The LC
- * build therefore defines no arts_handler_db_ownership_request /
- * _ownership_invalidate body — the real bodies live in coherence/release.c /
- * coherence/{rc,lrc}.c, which LC does not compile. */
+/* LC has no exclusive-ownership protocol (no OWNERSHIP_REQUEST, no
+ * INVALIDATE_NOTICE — its dispatcher fatals on both wire messages), so its
+ * ooo_kind enum omits OOO_DB_OWNERSHIP_REQUEST and OOO_DB_OWNERSHIP_INVALIDATE
+ * entirely.  The LC build therefore defines no
+ * arts_handler_db_ownership_request / _ownership_invalidate body — the real
+ * bodies live in coherence/release.c / coherence/{rc,lrc}.c, which LC does not
+ * compile. */
 
 /* ===== create-time home buffer (LC home is canonical) ============== */
 

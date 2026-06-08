@@ -104,6 +104,22 @@ bool arts_home_lockreq_queue_pop(struct arts_home_lockreq_queue_s *q,
   }
 }
 
+bool arts_home_lockreq_queue_peek(const struct arts_home_lockreq_queue_s *q,
+                                  unsigned int *out_rank) {
+  /* Cast away const for atomic load — the queue isn't mutated (no head
+   * advance, no node free).  Single consumer (the baton holder). */
+  struct arts_home_lockreq_node_s *head = atomic_load_explicit(
+      (_Atomic(struct arts_home_lockreq_node_s *) *)&q->head,
+      memory_order_acquire);
+  struct arts_home_lockreq_node_s *next =
+      atomic_load_explicit(&head->next, memory_order_acquire);
+  if (next == NULL) {
+    return false; /* empty, or a producer mid-link — treat as no front yet */
+  }
+  *out_rank = next->rank;
+  return true;
+}
+
 bool arts_home_lockreq_queue_empty(const struct arts_home_lockreq_queue_s *q) {
   /* Cast away const for atomic load — the value isn't modified. */
   struct arts_home_lockreq_node_s *head = atomic_load_explicit(
@@ -314,6 +330,26 @@ void arts_pending_rw_queue_drain(struct arts_pending_rw_queue_s *q,
   unsigned int slot;
   while (arts_pending_rw_queue_pop(q, &edt, &slot)) {
     cb(edt, slot, ctx);
+  }
+}
+
+void arts_pending_rw_queue_for_each(struct arts_pending_rw_queue_s *q,
+                                    void (*cb)(arts_guid_t edt_guid,
+                                               unsigned int slot, void *ctx),
+                                    void *ctx) {
+  /* Non-destructive walk of the head→next chain (payload lives in the
+   * post-head nodes, exactly as pop reads `next`).  Single consumer; no
+   * head advance, no free. */
+  struct arts_db_rw_waiter_s *cur =
+      atomic_load_explicit(&q->head, memory_order_acquire);
+  for (;;) {
+    struct arts_db_rw_waiter_s *next =
+        atomic_load_explicit(&cur->next, memory_order_acquire);
+    if (next == NULL) {
+      return; /* end, or a producer mid-link (in-flight push caught at GRANT) */
+    }
+    cb(next->edt_guid, next->slot, ctx);
+    cur = next;
   }
 }
 

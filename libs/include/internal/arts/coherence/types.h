@@ -188,9 +188,9 @@ struct arts_db_snapshot_waiter_s {
  * inline below (needed for struct embedding in arts_db_s). */
 struct arts_rank_to_u64_map_s; /* forward decl; sparse rank-keyed u64 map */
 
-/* Vyukov MPSC queue node carrying a requester rank (home LOCK_REQ queue).
+/* Vyukov MPSC queue node carrying a requester rank (home OWNERSHIP_REQUEST queue).
  * The embedded `next` pointer is owned by the queue (push/pop manage it).
- * Producers are foreign-rank LOCK_REQ handlers; the single consumer is the
+ * Producers are foreign-rank OWNERSHIP_REQUEST handlers; the single consumer is the
  * home-side dispatcher holding the invalidate_in_flight baton. */
 #ifdef __cplusplus
 struct arts_home_lockreq_node_s {
@@ -271,8 +271,8 @@ struct arts_db_cache_s {
    * (last) releaser ships TRANSFER_OWNERSHIP.  Single writer per round (home
    * baton gate), so no atomic needed. */
   unsigned int incoming_new_owner;
-  /* LRC per-cache RW exclusivity machinery.  RW LOCK_REQ coalescing flag —
-   * only the actor that CASes false->true sends LOCK_REQ; same-node RW EDTs
+  /* LRC per-cache RW exclusivity machinery.  RW OWNERSHIP_REQUEST coalescing flag —
+   * only the actor that CASes false->true sends OWNERSHIP_REQUEST; same-node RW EDTs
    * piggyback on the in-flight one and are picked up by GRANT's drain. */
   volatile unsigned int ownership_req_in_flight;
   /* Vyukov MPSC queue of RW waiters parked on this rank. */
@@ -282,8 +282,8 @@ struct arts_db_cache_s {
    * release_rw, matched by pointer identity (the &sem address rides the
    * WRITEBACK packet and is echoed verbatim in the ACK).  Multiple concurrent
    * releases each get their own sem — no per-cache seq state. */
-  /* RC per-cache RW exclusivity machinery.  RW LOCK_REQ coalescing flag —
-   * only the actor that CASes false->true sends LOCK_REQ; same-node RW EDTs
+  /* RC per-cache RW exclusivity machinery.  RW OWNERSHIP_REQUEST coalescing flag —
+   * only the actor that CASes false->true sends OWNERSHIP_REQUEST; same-node RW EDTs
    * piggyback on the in-flight one and are picked up by GRANT's drain. */
   volatile unsigned int ownership_req_in_flight;
   /* Vyukov MPSC queue of RW waiters parked on this rank. */

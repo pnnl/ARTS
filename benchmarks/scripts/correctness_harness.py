@@ -173,18 +173,14 @@ TIER_A: list[Case] = [
     Case("CoMD_sdsc2", "CoMD_sdsc2", ["-x","4","-y","4","-z","4","-N","2"],
          scalar_re=r"Final energy\s*:\s*([\-+0-9.eE]+)", scalar_kind="float",
          scalar_tol=1e-6,
-         multinode=True,
-         # xsocr passes at every rank count: the former np4 home-MD race was
-         # fixed app-side by creating the remote-homed per-box handle and
-         # schedule blocks with DB_PROP_NO_ACQUIRE, so each block exists at its
-         # home before its GUID is handed to a consumer.  arts currently hangs
-         # in that same affinity-DB create path at multinode -- a transient
-         # casualty of the ongoing runtime refactor -- so Tier M checks xsocr
-         # only; Tier A still compares both runtimes single-node.
-         multinode_xsocr_only=True,
-         # Residual pre-existing xsocr np2/3 intermittent hang (~15%, reproduces
-         # on pristine OCR, unrelated to the MD-fetch work); tolerate it.
-         expected_known_bug="xsocr np2/3 intermittent startup hang (~15%, pre-existing/pristine-OCR)"),
+         multinode=True),
+         # xsocr passes at every rank count (the np4 home-MD race + the residual
+         # np2/3 startup hang were fixed app/xsocr-side).  arts is KNOWN to hang
+         # at multinode in the affinity-DB create path here = an arts bug to
+         # debug.  The arts-block flag (multinode_xsocr_only) and the stale
+         # xsocr-hang mask (expected_known_bug) were REMOVED 2026-06-08 so the
+         # harness reports the true verdict — do NOT re-mask to go green; fix
+         # the arts multinode affinity-DB-create hang.
     Case("hpcg_intel", "hpcg_intel", ["1","1","1","16","5"],
          scalar_re=r"final deviation:\s*([\-+0-9.eE]+)", scalar_kind="float",
          scalar_tol=1e-4,
@@ -210,11 +206,11 @@ TIER_A: list[Case] = [
     Case("npb_cg", "npb_cg", ["-t", "T"],
          scalar_re=r"zeta\s*=\s*([\-+0-9.eE]+)", scalar_kind="float",
          scalar_tol=1e-10,
-         multinode=True,
-         # xsocr passes at every rank count; arts currently times out at
-         # multinode (transient runtime-refactor casualty), so Tier M checks
-         # xsocr only while Tier A still compares both single-node.
-         multinode_xsocr_only=True),
+         multinode=True),
+         # xsocr passes at every rank count (xsocr bug fixed).  arts is KNOWN to
+         # time out at multinode here = an arts bug to debug.  The arts-block
+         # flag (multinode_xsocr_only) was REMOVED 2026-06-08 so Tier M reports
+         # the true arts verdict — do NOT re-mask; fix the arts multinode timeout.
          # class T (tiny: size=50, 3 iters) runs in <1s, so it stays fast enough
          # for xsocr at multinode and runs full 3-way.  (class S — the default —
          # made the multinode run ~36K small remote DBs/iter of synchronous

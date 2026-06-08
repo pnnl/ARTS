@@ -210,23 +210,32 @@ void arts_transport_dispatch_packet(struct arts_msg_header_s *packet) {
    * payload right after sizeof(struct ...); pass that pointer + size as
    * the data/data_size arguments.
    *
-   * LOCK_REQ / RELEASE_OWNERSHIP: shared between RC and LRC (both use per-DB
-   * exclusive ownership), but LC has no such concept.  Fatal in LC builds to
-   * catch binary mode mismatch.  INVALIDATE_NOTICE is handled in its own
-   * three-model block below (RC = Cat-B defer; LRC = direct, never deferred).
+   * OWNERSHIP_REQUEST / RELEASE_OWNERSHIP: shared between RC and LRC (both use
+   * per-DB exclusive ownership), but LC has no such concept.  Fatal in LC
+   * builds to catch binary mode mismatch.  INVALIDATE_NOTICE is handled in its
+   * own three-model block below (RC = Cat-B defer; LRC = direct, never
+   * deferred).
    */
 #if defined(ARTS_MEMORY_MODEL_LC)
   case MSG_DB_OWNERSHIP_REQUEST:
+  case MSG_DB_OWNERSHIP_PROCEED:
   case MSG_DB_OWNERSHIP_RETURN: {
     ARTS_ERROR("LC build received exclusivity message type %d from rank %u "
-               "— LC has no LOCK_REQ / RELEASE_OWNERSHIP; "
+               "— LC has no OWNERSHIP_REQUEST / RELEASE_OWNERSHIP / PROCEED; "
                "binary mode mismatch?",
                packet->message_type, packet->rank);
     break;
   }
 #else  /* RC and LRC: full handlers */
+  case MSG_DB_OWNERSHIP_PROCEED: {
+    ARTS_DEBUG("Coh OWNERSHIP_PROCEED Received");
+    struct arts_msg_ownership_proceed_packet_s *pack =
+        (struct arts_msg_ownership_proceed_packet_s *)(packet);
+    arts_handler_db_ownership_proceed(pack->db_guid);
+    break;
+  }
   case MSG_DB_OWNERSHIP_REQUEST: {
-    ARTS_DEBUG("Coh LOCK_REQ Received");
+    ARTS_DEBUG("Coh OWNERSHIP_REQUEST Received");
     struct arts_msg_ownership_request_packet_s *pack =
         (struct arts_msg_ownership_request_packet_s *)(packet);
     struct arts_ooo_args_db_ownership_request_s args = {

@@ -44,8 +44,9 @@
 #include <string.h> /* memcpy (OoO payload alloc) */
 
 #include "arts.h"
-#include "arts/coherence/handlers.h" /* coherence wire handlers + replay */
-#include "arts/db.h"                 /* arts_db_acquire_all */
+#include "arts/coherence/coherence.h" /* arts_handler_db_acquire */
+#include "arts/coherence/handlers.h"  /* coherence wire handlers + replay */
+#include "arts/db.h"                  /* arts_db_acquire_all */
 #include "arts/edt.h"   /* arts_handler_edt_satisfy_slot[_ptr], arts_get_depv */
 #include "arts/event.h" /* arts_handler_event_satisfy_slot / add_dependence */
 #include "arts/gas/route_table.h"
@@ -104,41 +105,12 @@
  * arts_handler_event_destroy) — pure cores that operate on the acquired
  * event. */
 
-/*
- * arts_ooo_resolve_db_dep — Used by the OoO replay path
- * (ooo_h_db_acquire) when a local DB referenced by an EDT dependency
- * arrives in the route table after the EDT was registered.  Fills the
- * EDT's dep slot with the freshly-installed DB pointer and drops one
- * depc_needed.  For ARTS_DB types the RC acquire path replaces this; for
- * non-RC pinned types the OoO replay covers the local-create-after-consumer
- * race.
- */
-void arts_ooo_resolve_db_dep(struct arts_edt_s *edt, unsigned int slot,
-                             struct arts_db_s *db_res) {
-  arts_edt_dep_t *depv = (arts_edt_dep_t *)arts_get_depv(edt);
-  if (db_res == NULL) {
-    /* DB was destroyed between the OoO defer and this drain (DELETE_ITEM
-     * race).  Treat this slot as a NULL dependency — the data is gone — and
-     * advance the resume index past the dead dep. */
-    ARTS_WARN("arts_ooo_resolve_db_dep: db_res is NULL for EDT[Guid:%lu] "
-              "slot=%u (DB destroyed during OO resolution)",
-              edt->guid, slot);
-    depv[slot].guid = NULL_GUID;
-    depv[slot].ptr = NULL;
-    edt->resume_k++;
-  }
-  /* The DB now exists locally (db_res != NULL) — re-enter the strict
-   * sequential acquire walk, which re-attempts this frontier dep through the
-   * coherence acquire (proper writer_count / buffer-ref handling) and then
-   * continues, scheduling the EDT once all deps are held.  On the destroy
-   * branch above, resume_k already advanced past the dead dep. */
-  arts_db_acquire_all(edt);
-}
-
-static void ooo_h_db_acquire(void *item, void *vargs) {
-  struct arts_ooo_args_db_acquire_s *a = vargs;
-  arts_ooo_resolve_db_dep(a->edt, a->slot, (struct arts_db_s *)item);
-}
+/* The OoO replay of a deferred local DB→EDT dependency is the coherence acquire
+ * handler itself: arts_handler_db_acquire(item = installed db_s, args). The
+ * drain only fires when the slot value is non-NULL (DB installed), so `item` is
+ * always a valid db_s; the handler re-attempts the single dep through the
+ * proper coherence path (writer_count / buffer-ref handling) and self-accounts
+ * / parks. No whole-driver re-run. */
 
 /* The coherence replay bodies are the wire handlers themselves
  * (arts_handler_db_ownership_request / _snapshot_request / _writeback /
@@ -171,17 +143,17 @@ static const arts_ooo_handler_fn_t g_ooo_table[OOO_KIND_COUNT] = {
     [OOO_EVENT_DESTROY] = arts_handler_event_destroy,
     [OOO_DB_DESTROY] = arts_handler_db_destroy,
 #if defined(ARTS_MEMORY_MODEL_RC)
-    [OOO_DB_ACQUIRE] = ooo_h_db_acquire,
+    [OOO_DB_ACQUIRE] = arts_db_acquire_replay_dep,
     [OOO_DB_SNAPSHOT_REQUEST] = arts_handler_db_snapshot_request,
     [OOO_DB_OWNERSHIP_REQUEST] = arts_handler_db_ownership_request,
     [OOO_DB_OWNERSHIP_INVALIDATE] = arts_handler_db_ownership_invalidate,
     [OOO_DB_WRITEBACK] = arts_handler_db_writeback,
 #elif defined(ARTS_MEMORY_MODEL_LRC)
-    [OOO_DB_ACQUIRE] = ooo_h_db_acquire,
+    [OOO_DB_ACQUIRE] = arts_db_acquire_replay_dep,
     [OOO_DB_SNAPSHOT_REQUEST] = arts_handler_db_snapshot_request,
     [OOO_DB_OWNERSHIP_REQUEST] = arts_handler_db_ownership_request,
 #elif defined(ARTS_MEMORY_MODEL_LC)
-    [OOO_DB_ACQUIRE] = ooo_h_db_acquire,
+    [OOO_DB_ACQUIRE] = arts_db_acquire_replay_dep,
     [OOO_DB_SNAPSHOT_REQUEST] = arts_handler_db_snapshot_request,
     [OOO_DB_WRITEBACK] = arts_handler_db_writeback,
 #endif

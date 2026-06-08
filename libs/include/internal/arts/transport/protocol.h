@@ -80,6 +80,10 @@ enum arts_msg_type {
    * no gaps. */
   MSG_DB_SNAPSHOT_REDIRECT,
   MSG_DB_OWNERSHIP_RESPONSE_ACK,
+  /* RW-acquire pipelining: home → designated next owner. "You are the secured
+   * next owner of this DB; advance your RW acquire cursor." Sent alongside the
+   * ownership INVALIDATE. RC/LRC only. Sequential append, no gaps. */
+  MSG_DB_OWNERSHIP_PROCEED,
 
   MSG_COUNT, /* sentinel — keep last; used for array sizing */
 };
@@ -224,6 +228,11 @@ struct ARTS_PACKED arts_msg_ownership_invalidate_packet_s {
 };
 
 struct ARTS_PACKED arts_msg_ownership_return_packet_s {
+  struct arts_msg_header_s header;
+  arts_guid_t db_guid;
+};
+
+struct ARTS_PACKED arts_msg_ownership_proceed_packet_s {
   struct arts_msg_header_s header;
   arts_guid_t db_guid;
 };
