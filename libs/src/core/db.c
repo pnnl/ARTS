@@ -778,8 +778,14 @@ static void rw_secure(struct arts_edt_s *edt, unsigned int slot) {
   sort_dep_indices(depv, depc, sorted);
   if (edt->rw_cursor < depc && sorted[edt->rw_cursor] == slot) {
     edt->rw_cursor++;
+    /* Fire the next serialized dep ONLY when this secure actually advanced the
+     * cursor.  mark_edt_secured fires twice per dep (PROCEED handler + GRANT
+     * drain rw_drain_cb); a redundant secure for a slot the cursor has already
+     * passed must NOT re-fire the in-flight cursor dep — doing so would re-send
+     * its OWNERSHIP_REQUEST and double-account on the duplicate GRANT, driving
+     * acquire_remaining to 0 before every RW dep's data arrives. */
+    rw_fire_from_cursor(edt);
   }
-  rw_fire_from_cursor(edt);
 }
 
 /* A dep resolved locally (dep->ptr already set by the handler). Count it; for a
