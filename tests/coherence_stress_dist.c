@@ -60,7 +60,7 @@
 /// Adaptations vs. plan brief (line 1818 of plan):
 ///   - 4-arg arts_db_create (no ARTS_DB_PROP_NONE in HEAD).
 ///   - DB_MODE_RW unifies the legacy DB_MODE_RW post-Cutover-C.
-///   - B.3-style scaffolding: outer epoch + g_clean_shutdown + main()
+///   - B.3-style scaffolding: outer finish scope + g_clean_shutdown + main()
 ///     exit code, so consumer aborts on any rank propagate as ctest
 ///     FAIL even when rank 0 itself shuts down via the peer-disconnect
 ///     SHUTDOWN path.
@@ -132,7 +132,7 @@ static void shutdown_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
    * counter is rank-local in this address space — we only assert from
    * rank 0 that *its* worker share completed.  Cross-rank workers tally
    * locally on their own rank; the run still reaches this finish-EDT
-   * only if every rank's epoch chain drained without aborting. */
+   * only if every rank's finish scope chain drained without aborting. */
   if (got <= 0) {
     fprintf(stderr, "FAIL: rank-0 worker count is %d (expected > 0)\n", got);
     arts_abort(1);
@@ -165,12 +165,12 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
               "%u ranks) ===\n",
               K_ITERS, N_DBS, N_EDTS, nnodes);
 
-  /* Finish-EDT must have depc >= 1 so the epoch's slot-0 satisfy
+  /* Finish-EDT must have depc >= 1 so the finish scope's slot-0 satisfy
    * actually gates it; depc=0 would let it fire before any worker. */
   arts_guid_t shut =
       arts_edt_create(shutdown_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0});
-  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), shut, 0);
-  arts_epoch_start(epoch);
+  arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+  arts_add_dependence(fe, shut, 0, DB_MODE_NULL);
 
   for (int iter = 0; iter < K_ITERS; iter++) {
     arts_guid_t dbs[N_DBS];
@@ -185,7 +185,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       void *raw = NULL;
       unsigned int home = (unsigned int)(i % (int)nnodes);
       dbs[i] = arts_db_create(&raw, sizeof(int), ARTS_DB, ARTS_DB_PROP_NONE, &(arts_db_hint_t){.rank = home});
-      arts_guid_t init = arts_edt_create(init_writer_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = home, .epoch = epoch});
+      arts_guid_t init = arts_edt_create(init_writer_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = home, .finish_event = fe});
       arts_add_dependence(dbs[i], init, 0, DB_MODE_RW);
     }
 
@@ -206,7 +206,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       unsigned int worker_route = (unsigned int)(i % (int)nnodes);
       uint64_t mode_is_rw = 1; /* B.2: RW-only fan-out */
       arts_guid_t w =
-          arts_edt_create(worker_edt, 1, &mode_is_rw, 1, &(arts_edt_hint_t){.rank = worker_route, .epoch = epoch});
+          arts_edt_create(worker_edt, 1, &mode_is_rw, 1, &(arts_edt_hint_t){.rank = worker_route, .finish_event = fe});
       arts_add_dependence(dbs[db_idx], w, 0, DB_MODE_RW);
     }
   }
@@ -215,7 +215,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 int main(int argc, char **argv) {
   arts_rt(argc, argv);
   if (arts_get_current_rank() == 0 && !atomic_load(&g_clean_shutdown)) {
-    fprintf(stderr, "FAIL: shutdown_edt did not fire — epoch never completed "
+    fprintf(stderr, "FAIL: shutdown_edt did not fire — finish scope never completed "
                     "(consumer abort or premature peer-disconnect shutdown)\n");
     return 1;
   }

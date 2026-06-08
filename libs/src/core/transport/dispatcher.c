@@ -46,7 +46,6 @@
 #include "arts/db_coherence_handlers.h"
 #include "arts/db.h"
 #include "arts/runtime_state.h"
-#include "arts/epoch.h"
 #include "arts/event.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
@@ -155,36 +154,6 @@ void arts_transport_dispatch_packet(struct arts_remote_packet_s *packet) {
   case MSG_EVENT_CREATE: {
     ARTS_DEBUG("Event Move Received");
     arts_handler_event_create(packet);
-    break;
-  }
-  case MSG_EPOCH_CREATE: {
-    ARTS_DEBUG("Epoch Init Received");
-    arts_handler_epoch_create(packet);
-    break;
-  }
-  case MSG_EPOCH_REQUEST: {
-    ARTS_DEBUG("Epoch Req Received");
-    struct arts_remote_guid_only_packet_s *pack =
-        (struct arts_remote_guid_only_packet_s *)(packet);
-    /* source and dest are the requester rank (the query origin). */
-    arts_epoch_reply(pack->guid, pack->header.rank, pack->header.rank);
-    break;
-  }
-  case MSG_EPOCH_SEND: {
-    ARTS_DEBUG("Epoch Send Received");
-    struct arts_remote_epoch_send_packet_s *pack =
-        (struct arts_remote_epoch_send_packet_s *)(packet);
-    arts_epoch_reduce_submit(pack->epoch_guid, pack->active, pack->finish);
-    break;
-  }
-  case MSG_EPOCH_INIT_POOL: {
-    ARTS_DEBUG("Epoch Init Pool Received");
-    arts_handler_epoch_init_pool(packet);
-    break;
-  }
-  case MSG_EPOCH_DELETE: {
-    ARTS_DEBUG("Epoch Delete Received");
-    arts_handler_epoch_delete(packet);
     break;
   }
   case MSG_TIME_SYNC_REQUEST: {

@@ -59,7 +59,7 @@
 ///   1. RC routes every RW acquirer to a buffer that becomes visible
 ///      to subsequent acquirers (cache->buffer + writer_count handoff).
 ///   2. The final RO acquirer observes the stable post-all-RW value.
-///   3. No EDTs are stranded (all N + 1 finish; outer epoch shutdown
+///   3. No EDTs are stranded (all N + 1 finish; outer finish scope shutdown
 ///      fires cleanly).
 ///
 /// Spec section 6 B.5.

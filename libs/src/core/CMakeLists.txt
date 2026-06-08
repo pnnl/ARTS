@@ -48,7 +48,7 @@ add_subdirectory(counter)
 # Object sources now live directly under core/ with object-name prefixes. The
 # CPU/GPU build decomposition is preserved exactly: edt.c and db.c carry the
 # CUDA paths and are recompiled via NVCC for the GPU library, the coherence TUs
-# compile as .c with ARTS_USE_GPU, and event/epoch/edt-context stay CPU-only
+# compile as .c with ARTS_USE_GPU, and event/edt-context stay CPU-only
 # (reused as-is in GPU builds).
 
 # EDT compute (edt.c carries CUDA EDT launch paths -> GPU wrapper).
@@ -83,8 +83,8 @@ if(HWLOC_INCLUDE_DIRS)
     target_include_directories(arts_memory PRIVATE ${HWLOC_INCLUDE_DIRS})
 endif()
 
-# Event + epoch + EDT execution context (CPU-only; reused as-is in GPU builds).
-add_library(arts_sync OBJECT event.c epoch.c epoch_pool.c edt_context.c)
+# Event + EDT execution context (CPU-only; reused as-is in GPU builds).
+add_library(arts_sync OBJECT event.c edt_context.c)
 target_link_libraries(arts_sync PRIVATE arts_interface)
 if(HWLOC_INCLUDE_DIRS)
     target_include_directories(arts_sync PRIVATE ${HWLOC_INCLUDE_DIRS})

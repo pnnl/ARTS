@@ -75,7 +75,7 @@ void root_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
   (void)paramc;
   (void)paramv;
-  arts_guid_t guid = arts_epoch_get_current_guid();
+  arts_guid_t guid = arts_current_finish_event();
   arts_printf("Starting %lu %u\n", guid, arts_guid_get_rank(guid));
   unsigned int num_nodes = arts_get_total_ranks();
   for (unsigned int rank = 0; rank < num_nodes * num_dummy; rank++) {
@@ -91,8 +91,8 @@ void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
   unsigned int node_id = (unsigned int)paramv[0];
   {
-    arts_guid_t __ep = arts_epoch_create(arts_get_current_rank(), exit_guid, node_id);
-    arts_epoch_start(__ep);
+    arts_guid_t __ep = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+    arts_add_dependence(__ep, exit_guid, node_id, DB_MODE_NULL);
   }
   arts_edt_create(root_task, 0, NULL, 0, &(arts_edt_hint_t){.rank = node_id});
 }

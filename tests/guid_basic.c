@@ -86,8 +86,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 
   // Test 4: Reserve GUIDs for multiple types, verify get_type.
-  arts_guid_kind_t types[] = {ARTS_GUID_DB, ARTS_GUID_EVENT, ARTS_GUID_EPOCH};
-  const char *names[] = {"ARTS_GUID_DB", "ARTS_GUID_EVENT", "ARTS_GUID_EPOCH"};
+  arts_guid_kind_t types[] = {ARTS_GUID_DB, ARTS_GUID_EVENT, ARTS_GUID_EDT};
+  const char *names[] = {"ARTS_GUID_DB", "ARTS_GUID_EVENT", "ARTS_GUID_EDT"};
   for (unsigned int i = 0; i < 3; i++) {
     arts_guid_t g = arts_guid_reserve(types[i], my_node);
     arts_guid_kind_t got = arts_guid_get_kind(g);

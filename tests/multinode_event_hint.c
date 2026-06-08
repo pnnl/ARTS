@@ -110,10 +110,10 @@ static void idem_setup_on_rank1(uint32_t paramc, const uint64_t *paramv,
   (void)depc;
   (void)depv;
   arts_guid_t ev = (arts_guid_t)paramv[0];
-  arts_guid_t epoch = (arts_guid_t)paramv[1];
+  arts_guid_t fe = (arts_guid_t)paramv[1];
   arts_guid_t late =
       arts_edt_create(idem_late_waiter, 0, NULL, 1,
-                      &(arts_edt_hint_t){.rank = 1, .epoch = epoch});
+                      &(arts_edt_hint_t){.rank = 1, .finish_event = fe});
   arts_add_dependence(ev, late, 0, DB_MODE_RW);
 }
 
@@ -147,8 +147,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("=== multinode_event_hint (%u ranks) ===\n", ranks);
 
   arts_guid_t shut = arts_edt_create(shutdown_edt, 0, NULL, 1, NULL);
-  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), shut, 0);
-  arts_epoch_start(epoch);
+  arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+  arts_add_dependence(fe, shut, 0, DB_MODE_NULL);
 
   /* Sub-test A: ONCE — rank-1 waiter dep registered before satisfier fires. */
   {
@@ -158,12 +158,12 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
     /* Register waiter on rank 1 first (before dispatching satisfier). */
     arts_guid_t waiter = arts_edt_create(
-        once_waiter, 0, NULL, 1, &(arts_edt_hint_t){.rank = 1, .epoch = epoch});
+        once_waiter, 0, NULL, 1, &(arts_edt_hint_t){.rank = 1, .finish_event = fe});
     arts_add_dependence(ev_a, waiter, 0, DB_MODE_RW);
 
     /* Satisfier on rank 0 fires the event. */
     arts_edt_create(once_satisfier, 1, &ev_param, 0,
-                    &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+                    &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   }
 
   /* Sub-test B: IDEMPOTENT — setup EDT on rank 1 wired as dep on IDEM event,
@@ -171,18 +171,18 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   {
     arts_event_hint_t h = ARTS_EVENT_HINT_IDEMPOTENT;
     arts_guid_t ev_b = arts_event_create(&h);
-    uint64_t params[2] = {(uint64_t)ev_b, (uint64_t)epoch};
+    uint64_t params[2] = {(uint64_t)ev_b, (uint64_t)fe};
 
     /* idem_setup_on_rank1 itself depends on the IDEM event (slot 0), so it
      * is guaranteed to run only after idem_satisfier has fired ev_b. */
     arts_guid_t setup =
         arts_edt_create(idem_setup_on_rank1, 2, params, 1,
-                        &(arts_edt_hint_t){.rank = 1, .epoch = epoch});
+                        &(arts_edt_hint_t){.rank = 1, .finish_event = fe});
     arts_add_dependence(ev_b, setup, 0, DB_MODE_RW);
 
     /* Satisfier on rank 0 fires the IDEM event. */
     arts_edt_create(idem_satisfier, 1, params, 0,
-                    &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+                    &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   }
 }
 

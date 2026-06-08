@@ -58,7 +58,7 @@ bool arts_edt_create_core(struct arts_edt_s *edt, arts_guid_kind_t guid_kind,
                           arts_guid_t *guid, unsigned int rank,
                           unsigned int edt_space, arts_edt_t func_ptr,
                           uint32_t paramc, const uint64_t *paramv,
-                          uint32_t depc, bool use_epoch, arts_guid_t epoch_guid,
+                          uint32_t depc, arts_guid_t hint_finish_event,
                           uint64_t arts_id, uint32_t flags);
 void arts_edt_delete(struct arts_edt_s *edt);
 /* deleter pointer for foreign TUs that allocate arts_edt_s stubs
@@ -91,8 +91,8 @@ void arts_send_edt_satisfy_slot(arts_guid_t edt, arts_guid_t db, uint32_t slot,
                                 arts_db_access_mode_t mode, void *ptr,
                                 unsigned int size);
 
-/* Per-worker EDT-execution context (current_edt, epoch stack, created-DB
- * tracking, ctx save/restore) is declared in arts/sync/edt_context.h. */
+/* Per-worker EDT-execution context (current_edt, owned-finish-events list,
+ * created-DB tracking, ctx save/restore) is declared in arts/edt_context.h. */
 
 void *arts_get_depv(void *edt_ptr);
 

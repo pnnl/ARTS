@@ -39,11 +39,11 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_db_release(reserved, DB_MODE_RW);
 
   arts_guid_t shut = arts_edt_create(shutdown_edt, 0, NULL, 1, NULL);
-  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), shut, 0);
-  arts_epoch_start(epoch);
+  arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+  arts_add_dependence(fe, shut, 0, DB_MODE_NULL);
 
   arts_guid_t r = arts_edt_create(reader_edt, 0, NULL, 1,
-                                  &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+                                  &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(reserved, r, 0, DB_MODE_RO);
 }
 

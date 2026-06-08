@@ -56,14 +56,27 @@ struct arts_event_dep_s {
   uint32_t slot;              /* destination slot */
   arts_db_access_mode_t mode; /* dep mode (preserved across signal) */
 };
+/* event.h is included from C (.c) and, via edt.c's #include into edt_gpu.cu,
+ * from CUDA C++ (nvcc).  C++ spells the static assertion `static_assert`; C
+ * uses `_Static_assert`.  Guard so both front-ends accept this header. */
+#ifdef __cplusplus
+static_assert(offsetof(struct arts_event_dep_s, link) == 0,
+              "link must be first for arts_lf_link_t round-tripping");
+#else
 _Static_assert(offsetof(struct arts_event_dep_s, link) == 0,
                "link must be first for arts_lf_link_t round-tripping");
+#endif
 
 /* arts_event_add_dependence — entity-specific API (src=event): register a
  * dependent on an event source.  arts_add_dependence's event-source branch
  * delegates here. */
 void arts_event_add_dependence(arts_guid_t source, arts_guid_t destination,
                                uint32_t slot, arts_db_access_mode_t mode);
+
+/* Mark a simple (non-channel) event single-shot: it marks itself for deletion
+ * on fire.  Used for cross-rank finish proxies so they are reclaimed instead of
+ * lingering.  No-op for channel events or an absent GUID. */
+void arts_event_set_auto_destroy(arts_guid_t guid);
 
 /* OoO replay handlers (g_ooo_table) — operate on the acquired event. */
 void arts_handler_event_satisfy_slot(void *item, void *args);

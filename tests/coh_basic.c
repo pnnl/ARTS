@@ -40,7 +40,7 @@
 /// @file coh_basic.c
 /// @brief Basic coherence smoke test: a chain of writers feeds a reader
 ///        that verifies the final value.  Uses arts_add_dependence + an
-///        epoch finish-EDT for ordering.
+///        finish scope finish-EDT for ordering.
 
 #include "arts.h"
 
@@ -89,7 +89,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   /* Create a single DIST DB on rank 0; chain writes ordered by RW
    * per-node-exclusive (each writer sees previous writer's value);
-   * reader as inner-epoch finish-EDT runs only after every writer has
+   * reader as inner-finish scope finish-EDT runs only after every writer has
    * released its RW slot. */
   void *ptr = NULL;
   arts_guid_t db =
@@ -99,17 +99,17 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_db_release(db, DB_MODE_RW);
 
   arts_guid_t shut = arts_edt_create(shutdown_edt, 0, NULL, 1, NULL);
-  arts_guid_t outer = arts_epoch_create(arts_get_current_rank(), shut, 0);
-  arts_epoch_start(outer);
+  arts_guid_t outer = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+  arts_add_dependence(outer, shut, 0, DB_MODE_NULL);
 
-  arts_guid_t reader = arts_edt_create(reader_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = outer});
+  arts_guid_t reader = arts_edt_create(reader_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = outer});
   arts_add_dependence(db, reader, 0, DB_MODE_RO);
 
-  arts_guid_t inner = arts_epoch_create(arts_get_current_rank(), reader, 1);
-  arts_epoch_start(inner);
+  arts_guid_t inner = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+  arts_add_dependence(inner, reader, 1, DB_MODE_NULL);
   for (unsigned int i = 0; i < CHAIN_LEN; i++) {
     uint64_t param = (uint64_t)i;
-    arts_guid_t w = arts_edt_create(writer_edt, 1, &param, 1, &(arts_edt_hint_t){.rank = 0, .epoch = inner});
+    arts_guid_t w = arts_edt_create(writer_edt, 1, &param, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = inner});
     arts_add_dependence(db, w, 0, DB_MODE_RW);
   }
 }

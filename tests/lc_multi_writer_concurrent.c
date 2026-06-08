@@ -17,7 +17,7 @@
 ///        rank-id into a shared DB.  Under LC per-node-exclusive semantics
 ///        the DB accepts concurrent RW requests from different nodes; the
 ///        last writer's value wins.  The verifier (run after both writes
-///        complete via an epoch) accepts any value in {0, 1} as long as
+///        complete via a finish scope) accepts any value in {0, 1} as long as
 ///        the buffer is internally consistent.
 ///
 ///        Manual test — not added to CTest because the non-deterministic
@@ -89,18 +89,18 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   memset(addr, 0xff, DB_SIZE);
   arts_db_release(db, DB_MODE_RW);
 
-  /* verifier_edt is the finish-EDT of an epoch that contains the two
-   * concurrent writers.  The epoch guarantees the verifier runs only
+  /* verifier_edt is the finish-EDT of a finish scope that contains the two
+   * concurrent writers.  The finish scope guarantees the verifier runs only
    * after both writers have released the DB. */
   arts_guid_t ver = arts_edt_create(verifier_edt, 0, NULL, 1, NULL);
-  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), ver, 1);
-  arts_epoch_start(epoch);
+  arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+  arts_add_dependence(fe, ver, 1, DB_MODE_NULL);
 
   for (unsigned int r = 0; r < 2; r++) {
     uint64_t param = (uint64_t)r;
     arts_guid_t edt =
         arts_edt_create(writer_edt, 1, &param, 1,
-                        &(arts_edt_hint_t){.rank = r, .epoch = epoch});
+                        &(arts_edt_hint_t){.rank = r, .finish_event = fe});
     arts_add_dependence(db, edt, 0, DB_MODE_RW);
     (void)edt;
   }

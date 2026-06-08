@@ -135,12 +135,12 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("=== multinode_coh ===\n");
 
   arts_guid_t shut = arts_edt_create(shutdown_edt, 0, NULL, 1, NULL);
-  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), shut, 0);
-  arts_epoch_start(epoch);
+  arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+  arts_add_dependence(fe, shut, 0, DB_MODE_NULL);
 
-  // Each sub-test uses a nested epoch with the reader as the
+  // Each sub-test uses a nested finish scope with the reader as the
   // finish-EDT.  OCR spec §1.7: finish-EDT triggers only after all
-  // EDTs (recursively) created in the epoch have released their DBs.
+  // EDTs (recursively) created in the finish scope have released their DBs.
   // This gives the reader a happens-before relation with every writer.
   // RW writers ordering each other is automatic (RW per-node exclusive
   // serializes cross-rank ownership).
@@ -156,18 +156,18 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_db_release(db, DB_MODE_RW);
 
     uint64_t rparams[2] = {200, 1};
-    arts_guid_t r = arts_edt_create(coh_reader, 2, rparams, 2, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+    arts_guid_t r = arts_edt_create(coh_reader, 2, rparams, 2, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(db, r, 0, DB_MODE_RO);
 
-    arts_guid_t inner = arts_epoch_create(arts_get_current_rank(), r, 1);
-    arts_epoch_start(inner);
+    arts_guid_t inner = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+    arts_add_dependence(inner, r, 1, DB_MODE_NULL);
 
     uint64_t val1 = 100;
-    arts_guid_t w1 = arts_edt_create(coh_writer, 1, &val1, 1, &(arts_edt_hint_t){.rank = 0, .epoch = inner});
+    arts_guid_t w1 = arts_edt_create(coh_writer, 1, &val1, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = inner});
     arts_add_dependence(db, w1, 0, DB_MODE_RW);
 
     uint64_t val2 = 200;
-    arts_guid_t w2 = arts_edt_create(coh_writer, 1, &val2, 1, &(arts_edt_hint_t){.rank = 1, .epoch = inner});
+    arts_guid_t w2 = arts_edt_create(coh_writer, 1, &val2, 1, &(arts_edt_hint_t){.rank = 1, .finish_event = inner});
     arts_add_dependence(db, w2, 0, DB_MODE_RW);
     (void)w1;
     (void)w2;
@@ -185,23 +185,23 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     ((int *)ptr2)[2] = 0;
     arts_db_release(db2, DB_MODE_RW);
 
-    /* Two finish-EDTs aren't supported by a single epoch, so use a
-     * single chained reader that runs after the writer epoch and then
-     * spawns/waits for the parallel readers via a second epoch.  For
+    /* Two finish-EDTs aren't supported by a single finish scope, so use a
+     * single chained reader that runs after the writer finish scope and then
+     * spawns/waits for the parallel readers via a second finish scope.  For
      * simplicity we make a single combined verifier as finish-EDT and
      * verify both reader-id paths within it. */
     uint64_t id0 = 0;
-    arts_guid_t ra = arts_edt_create(coh_reader_3, 1, &id0, 2, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+    arts_guid_t ra = arts_edt_create(coh_reader_3, 1, &id0, 2, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(db2, ra, 0, DB_MODE_RO);
 
-    arts_guid_t inner_a = arts_epoch_create(arts_get_current_rank(), ra, 1);
-    arts_epoch_start(inner_a);
-    arts_guid_t w = arts_edt_create(coh_writer_3, 0, NULL, 1, &(arts_edt_hint_t){.rank = 1, .epoch = inner_a});
+    arts_guid_t inner_a = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+    arts_add_dependence(inner_a, ra, 1, DB_MODE_NULL);
+    arts_guid_t w = arts_edt_create(coh_writer_3, 0, NULL, 1, &(arts_edt_hint_t){.rank = 1, .finish_event = inner_a});
     arts_add_dependence(db2, w, 0, DB_MODE_RW);
     (void)w;
 
     /* Note: original test had a parallel rb on node 1.  ARTS finish-EDT
-     * is single-target per epoch and EDTs cannot belong to two epochs,
+     * is single-target per finish scope and EDTs cannot belong to two finish scopes,
      * so verifying both reader_id paths in one shot would require a
      * fan-out post-finish helper — beyond the scope of this test.  ra
      * alone covers the cross-node RW→RO visibility invariant. */
@@ -209,7 +209,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Test 3: inc_a → inc_b → inc_c → reader.  Three same-address RW
   // increments serialize via RW per-node exclusive; reader as the
-  // inner-epoch finish-EDT sees value == 3.
+  // inner-finish scope finish-EDT sees value == 3.
   {
     void *ptr3 = NULL;
     arts_guid_t db3 =
@@ -219,19 +219,19 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_db_release(db3, DB_MODE_RW);
 
     uint64_t rparams3[2] = {3, 3};
-    arts_guid_t r3 = arts_edt_create(coh_reader, 2, rparams3, 2, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+    arts_guid_t r3 = arts_edt_create(coh_reader, 2, rparams3, 2, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(db3, r3, 0, DB_MODE_RO);
 
-    arts_guid_t inner3 = arts_epoch_create(arts_get_current_rank(), r3, 1);
-    arts_epoch_start(inner3);
+    arts_guid_t inner3 = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+    arts_add_dependence(inner3, r3, 1, DB_MODE_NULL);
 
-    arts_guid_t ia = arts_edt_create(coh_incrementer, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = inner3});
+    arts_guid_t ia = arts_edt_create(coh_incrementer, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = inner3});
     arts_add_dependence(db3, ia, 0, DB_MODE_RW);
 
-    arts_guid_t ib = arts_edt_create(coh_incrementer, 0, NULL, 1, &(arts_edt_hint_t){.rank = 1, .epoch = inner3});
+    arts_guid_t ib = arts_edt_create(coh_incrementer, 0, NULL, 1, &(arts_edt_hint_t){.rank = 1, .finish_event = inner3});
     arts_add_dependence(db3, ib, 0, DB_MODE_RW);
 
-    arts_guid_t ic = arts_edt_create(coh_incrementer, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = inner3});
+    arts_guid_t ic = arts_edt_create(coh_incrementer, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = inner3});
     arts_add_dependence(db3, ic, 0, DB_MODE_RW);
     (void)ia;
     (void)ib;

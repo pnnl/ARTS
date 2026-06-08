@@ -36,9 +36,11 @@ void finish_root(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
               arts_edt_dep_t depv[]) {
   arts_guid_t term = arts_edt_create(term_edt, 0, NULL, 1, NULL);
-  arts_edt_hint_t hint = ARTS_EDT_HINT_FINISH;
-  arts_guid_t root = arts_edt_create(finish_root, 0, NULL, 0, &hint);
-  arts_guid_t fe = arts_edt_get_finish_event(root);
+  arts_event_hint_t fh = ARTS_EVENT_HINT_FINISH;
+  arts_guid_t fe = arts_event_create(&fh);
+  arts_edt_hint_t hint = ARTS_EDT_HINT_DEFAULTS;
+  hint.finish_event = fe;
+  arts_edt_create(finish_root, 0, NULL, 0, &hint);
   arts_add_dependence(fe, term, 0, DB_MODE_NULL);
 }
 

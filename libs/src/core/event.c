@@ -59,6 +59,7 @@
 #include "arts/event.h"
 
 #include "arts.h"
+#include "arts/db.h" /* arts_wait_release_dbs / arts_wait_reacquire_dbs */
 #include "arts/edt.h"
 #include "arts/edt_context.h" /* current_edt */
 #include "arts/gas/guid.h"
@@ -157,8 +158,11 @@ static struct arts_event_s *event_alloc(const arts_event_hint_t *h) {
     arts_mpsc_init(&e->channel.dep_queue);
     atomic_store_explicit(&e->channel.draining, 0, memory_order_relaxed);
   } else {
-    atomic_store_explicit(&e->simple.latch, h->latch, memory_order_relaxed);
+    atomic_store_explicit(&e->simple.latch, h->finish ? 1 : h->latch,
+                          memory_order_relaxed);
     atomic_store_explicit(&e->simple.fired, false, memory_order_relaxed);
+    atomic_store_explicit(&e->simple.auto_destroy, h->finish ? true : false,
+                          memory_order_relaxed);
     e->simple.data = NULL_GUID;
     arts_lf_stack_init(&e->simple.deps_stack);
   }
@@ -213,11 +217,30 @@ arts_guid_t arts_event_create(const arts_event_hint_t *hint) {
   TIME_EVENT_CREATE_START();
   INCREMENT_NUM_EVENT_CREATE_BY(1);
   arts_event_hint_t h = hint_or_defaults(hint);
+  if (h.finish) {
+    /* finish overrides everything: simple latch=1 on current rank, auto-GUID.
+     */
+    h.channel = false;
+    h.check = false;
+    h.guid = NULL_GUID;
+    h.rank = ARTS_HINT_CURRENT_RANK;
+    h.latch = 1;
+  }
   arts_guid_t g = h.guid;
   if (g != NULL_GUID) {
     h.rank = arts_guid_get_rank(g);
   }
   bool ok = event_install(&g, &h);
+  if (ok && h.finish && g != NULL_GUID) {
+    /* Mechanism A — auto-chain to the ambient finish scope (if any). */
+    arts_guid_t ambient = arts_current_finish_event();
+    if (ambient != NULL_GUID) {
+      arts_event_satisfy_slot(ambient, NULL_GUID, ARTS_EVENT_LATCH_INCR_SLOT);
+      arts_add_dependence(g, ambient, ARTS_EVENT_LATCH_DECR_SLOT, DB_MODE_NULL);
+    }
+    /* Mechanism B — register creator-token for completion cleanup. */
+    arts_owned_finish_register(g);
+  }
   TIME_EVENT_CREATE_STOP();
   if (h.guid != NULL_GUID) {
     return ok ? g : NULL_GUID;
@@ -234,6 +257,15 @@ void arts_event_destroy(arts_guid_t guid) {
     return;
   }
   arts_route_table_mark_delete(guid);
+}
+
+void arts_event_set_auto_destroy(arts_guid_t guid) {
+  arts_shared_ptr_t h = arts_route_table_lookup_event(guid);
+  struct arts_event_s *e = (struct arts_event_s *)arts_shared_get(h);
+  if (e && !e->is_channel) {
+    atomic_store_explicit(&e->simple.auto_destroy, true, memory_order_release);
+  }
+  arts_shared_release(&h);
 }
 
 /* ── Signal one queued dep ─────────────────────────────────────────────
@@ -408,6 +440,13 @@ void arts_handler_event_satisfy_slot(void *item, void *vargs) {
                                                   true, memory_order_acq_rel,
                                                   memory_order_acquire);
     drain_simple_chain(event, event_guid);
+    if (atomic_load_explicit(&event->simple.auto_destroy,
+                             memory_order_acquire)) {
+      /* Single-shot: detach the cb from the route_table slot so a waiter
+       * polling presence observes the drain, and per-remote-EDT proxies are
+       * reclaimed instead of lingering. */
+      arts_route_table_mark_delete(event_guid);
+    }
   }
 }
 
@@ -652,4 +691,56 @@ void arts_send_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
                           MSG_EVENT_SATISFY_SLOT);
   arts_remote_send_request_async((int)arts_guid_get_rank(event_guid),
                                  (char *)&packet, sizeof(packet));
+}
+
+/*
+ * arts_event_wait — Block current EDT until a finish (auto_destroy) event
+ * drains.
+ *
+ * Consumes the creator-token so EDT completion cleanup skips it, then
+ * decrements the latch (mirrors the creator's own INCR at create time).
+ * Spin-polls the scheduler loop until the event fires, auto-destroys, and
+ * is detached from the route table — at which point lookup returns NULL and
+ * we resume.  Absence is monotonic, so there is no missed-wakeup risk.
+ *
+ * DB release/reacquire hooks are called around the wait to allow member EDTs
+ * to make progress on the same data; the stubs are no-ops until the DB
+ * handoff feature lands.
+ */
+bool arts_event_wait(arts_guid_t event_guid) {
+  TIME_EDT_EXEC_STOP();
+  /* Consume the creator-token: skip it in completion cleanup, then decrement
+   * the latch to close the scope (mirrors the paired INCR issued at create). */
+  arts_owned_finish_consume(event_guid);
+  arts_event_satisfy_slot(event_guid, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+
+  /* Release acquired DBs so member EDTs can progress while we wait. */
+  arts_wait_release_dbs();
+
+  INCREMENT_NUM_YIELD_BY(1);
+  arts_edt_ctx_t tl;
+  arts_edt_ctx_save(&tl);
+  TIME_YIELD_START();
+  while (arts_thread_info.alive) {
+    /* Fire -> auto_destroy -> mark_delete detaches the slot; lookup returns
+     * NULL and we exit.  Use the lookup/release pair so we never read freed
+     * memory after the deleter runs. */
+    arts_shared_ptr_t e_h = arts_route_table_lookup_event(event_guid);
+    struct arts_event_s *e = (struct arts_event_s *)arts_shared_get(e_h);
+    if (!e) {
+      break;
+    }
+    arts_shared_release(&e_h);
+    arts_node_info.scheduler();
+  }
+  /* Drain any remaining ready work before restoring context. */
+  while (arts_node_info.scheduler()) {
+    ;
+  }
+  TIME_YIELD_STOP();
+  arts_edt_ctx_restore(&tl);
+
+  arts_wait_reacquire_dbs();
+  TIME_EDT_EXEC_START();
+  return true;
 }

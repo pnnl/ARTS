@@ -117,29 +117,28 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== hint_routing ===\n");
 
-  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
-  arts_epoch_start(epoch);
+  arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
 
   // Test 1: NULL hint.
-  arts_edt_create(null_hint_task, 0, NULL, 0, &(arts_edt_hint_t){.epoch = epoch});
+  arts_edt_create(null_hint_task, 0, NULL, 0, &(arts_edt_hint_t){.finish_event = fe});
 
   // Test 2: Explicit route=0.
-  arts_edt_create(explicit_route_task, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_edt_create(explicit_route_task, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
 
   // Test 3: ARTS_HINT_CURRENT_RANK.
-  arts_edt_create(current_node_task, 0, NULL, 0, &(arts_edt_hint_t){.rank = ARTS_HINT_CURRENT_RANK, .epoch = epoch});
+  arts_edt_create(current_node_task, 0, NULL, 0, &(arts_edt_hint_t){.rank = ARTS_HINT_CURRENT_RANK, .finish_event = fe});
 
   // Test 4: DB with NULL hint.
   void *dbptr = NULL;
   arts_guid_t db = arts_db_create(&dbptr, 16, ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
   arts_db_release(db, DB_MODE_RW);
   uint64_t param = (uint64_t)db;
-  arts_edt_create(check_db_hint, 1, &param, 0, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_edt_create(check_db_hint, 1, &param, 0, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
 
   // Test 5: Hint with profiling id.
-  arts_edt_create(profiled_task, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0, .edt_id = 42, .epoch = epoch});
+  arts_edt_create(profiled_task, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0, .edt_id = 42, .finish_event = fe});
 
-  arts_epoch_wait(epoch);
+  arts_event_wait(fe);
   arts_shutdown();
 }
 

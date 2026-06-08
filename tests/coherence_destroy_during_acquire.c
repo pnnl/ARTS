@@ -52,7 +52,7 @@
 ///   - DB_MODE_RW unifies the legacy DB_MODE_RW post-Cutover-C.
 ///   - arts_init_main does not exist; arts_rt() invokes main_edt
 ///     automatically on rank 0.
-///   - Outer epoch + finish-EDT shuts down only after all iterations'
+///   - Outer finish scope + finish-EDT shuts down only after all iterations'
 ///     workers + destroyer have completed — keeps arts_rt() alive across
 ///     all 20 iterations.
 ///
@@ -133,12 +133,12 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
               "===\n",
               N_ITERATIONS, N_EDTS);
 
-  /* Outer epoch covers all workers + destroyers across all iterations.
-   * The finish-EDT must have depc >= 1 so the epoch's slot-0 satisfy
+  /* Outer finish scope covers all workers + destroyers across all iterations.
+   * The finish-EDT must have depc >= 1 so the finish scope's slot-0 satisfy
    * actually gates it; depc=0 would let it fire before any worker. */
   arts_guid_t shut = arts_edt_create(shutdown_edt, 0, NULL, 1, NULL);
-  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), shut, 0);
-  arts_epoch_start(epoch);
+  arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+  arts_add_dependence(fe, shut, 0, DB_MODE_NULL);
 
   for (int iter = 0; iter < N_ITERATIONS; iter++) {
     int *data;
@@ -149,7 +149,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     /* Spawn N workers all RW-acquiring the same DB. */
     for (int i = 0; i < N_EDTS; i++) {
       arts_guid_t w =
-          arts_edt_create(worker_edt, 0, NULL, 1, &(arts_edt_hint_t){.epoch = epoch});
+          arts_edt_create(worker_edt, 0, NULL, 1, &(arts_edt_hint_t){.finish_event = fe});
       arts_add_dependence(db_guid, w, 0, DB_MODE_RW);
     }
 
@@ -158,7 +158,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
      * or after some workers' acquires.  cache_s's writer_count +
      * pending_count + buffer.ref_count are the safety net under test. */
     uint64_t prm = (uint64_t)db_guid;
-    arts_edt_create(destroyer_edt, 1, &prm, 0, &(arts_edt_hint_t){.epoch = epoch});
+    arts_edt_create(destroyer_edt, 1, &prm, 0, &(arts_edt_hint_t){.finish_event = fe});
   }
 }
 
@@ -166,7 +166,7 @@ int main(int argc, char **argv) {
   arts_rt(argc, argv);
   if (arts_get_current_rank() == 0 && !atomic_load(&g_clean_shutdown)) {
     fprintf(stderr,
-            "FAIL: shutdown_edt did not fire — epoch never completed\n");
+            "FAIL: shutdown_edt did not fire — finish scope never completed\n");
     return 1;
   }
   return 0;

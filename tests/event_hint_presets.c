@@ -37,15 +37,15 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("=== event_hint_presets ===\n");
 
   arts_guid_t shut = arts_edt_create(shutdown_edt, 0, NULL, 1, NULL);
-  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), shut, 0);
-  arts_epoch_start(epoch);
+  arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+  arts_add_dependence(fe, shut, 0, DB_MODE_NULL);
 
   /* Test 1: ONCE — add dep first, then satisfy */
   {
     arts_event_hint_t h = ARTS_EVENT_HINT_ONCE;
     arts_guid_t ev = arts_event_create(&h);
     arts_guid_t waiter = arts_edt_create(once_receiver, 0, NULL, 1,
-                                         &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+                                         &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(ev, waiter, 0, DB_MODE_RW);
     arts_event_satisfy(ev, NULL_GUID);
   }
@@ -56,7 +56,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_guid_t ev = arts_event_create(&h);
     arts_event_satisfy(ev, NULL_GUID);
     arts_guid_t late = arts_edt_create(idem_late_receiver, 0, NULL, 1,
-                                        &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+                                        &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(ev, late, 0, DB_MODE_RW);
   }
 
@@ -66,7 +66,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_guid_t ev = arts_event_create(&h);
     arts_event_satisfy(ev, NULL_GUID);
     arts_guid_t late = arts_edt_create(sticky_late_receiver, 0, NULL, 1,
-                                        &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+                                        &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(ev, late, 0, DB_MODE_RW);
   }
 

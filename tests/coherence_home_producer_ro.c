@@ -122,8 +122,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 
   arts_guid_t shut = arts_edt_create(shutdown_edt, 0, NULL, 1, NULL);
-  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), shut, 0);
-  arts_epoch_start(epoch);
+  arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+  arts_add_dependence(fe, shut, 0, DB_MODE_NULL);
 
   /* DB homed on rank 0; the producer also runs on rank 0, so the home rank is
    * the sole creator-owner and never ships ownership to anyone. */
@@ -135,20 +135,20 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   /* Producer on home (rank 0), RW. */
   arts_guid_t prod = arts_edt_create(
-      producer_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+      producer_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(db, prod, 0, DB_MODE_RW);
 
   /* Foreign reader (rank 1), RO — must see the producer's value. */
   arts_guid_t rdr =
       arts_edt_create(foreign_reader_edt, 0, NULL, 1,
-                      &(arts_edt_hint_t){.rank = 1, .epoch = epoch});
+                      &(arts_edt_hint_t){.rank = 1, .finish_event = fe});
   arts_add_dependence(db, rdr, 0, DB_MODE_RO);
 }
 
 int main(int argc, char **argv) {
   arts_rt(argc, argv);
   if (arts_get_current_rank() == 0 && !atomic_load(&g_clean_shutdown)) {
-    fprintf(stderr, "FAIL: shutdown_edt did not fire — epoch never completed "
+    fprintf(stderr, "FAIL: shutdown_edt did not fire — finish scope never completed "
                     "(consumer abort or premature shutdown)\n");
     return 1;
   }

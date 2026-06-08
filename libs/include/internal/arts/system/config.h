@@ -90,7 +90,6 @@ struct arts_config_s {
   unsigned int counter_capture_interval;
   unsigned int scheduler;
   unsigned int deque_type;
-  unsigned int auto_shutdown;
   bool master_boot;
   bool core_dump;
   bool pin_threads;

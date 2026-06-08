@@ -115,8 +115,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== event_basic ===\n");
 
-  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
-  arts_epoch_start(epoch);
+  arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
 
   // Test 1: Basic latch event with initial count=2.
   {
@@ -125,7 +124,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_guid_t ev1 = arts_event_create(&h);
     arts_guid_t dep1 =
         arts_edt_create(dependent_edt, 0, NULL, 1,
-                        &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+                        &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(ev1, dep1, 0, DB_MODE_RW);
 
     // Decrement twice to fire.
@@ -144,7 +143,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_guid_t ev3 = arts_event_create(&h);
     arts_guid_t dep3 =
         arts_edt_create(dependent_edt, 0, NULL, 1,
-                        &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+                        &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(ev3, dep3, 0, DB_MODE_RW);
     // Increment (1 -> 2), then decrement twice.
     arts_event_satisfy_slot(ev3, NULL_GUID, ARTS_EVENT_LATCH_INCR_SLOT);
@@ -160,7 +159,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_event_create(&h4);
     arts_guid_t dep4 =
         arts_edt_create(guid_event_dep, 0, NULL, 1,
-                        &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+                        &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(reserved_ev, dep4, 0, DB_MODE_RW);
     arts_event_satisfy_slot(reserved_ev, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
   }
@@ -180,7 +179,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   {
     arts_guid_t ev7 = arts_event_create(NULL);
     arts_guid_t dep7 = arts_edt_create(
-        once_dep, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+        once_dep, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(ev7, dep7, 0, DB_MODE_RW);
     arts_event_satisfy_slot(ev7, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
   }
@@ -194,7 +193,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_event_satisfy_slot(ev8, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
     arts_guid_t dep8 =
         arts_edt_create(sticky_late_dep, 0, NULL, 1,
-                        &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+                        &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(ev8, dep8, 0, DB_MODE_RW);
     arts_event_destroy(ev8);
   }
@@ -206,7 +205,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_event_hint_t h = ARTS_EVENT_HINT_LATCH(1);
     arts_guid_t ev9 = arts_event_create(&h);
     arts_guid_t dep9 = arts_edt_create(
-        idem_dep, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+        idem_dep, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(ev9, dep9, 0, DB_MODE_RW);
     arts_event_satisfy_slot(ev9, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
     // Re-satisfy: with the default hint this just decrements past zero; the
@@ -221,7 +220,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_event_hint_t h = ARTS_EVENT_HINT_LATCH(3);
     arts_guid_t ev10 = arts_event_create(&h);
     arts_guid_t dep10 = arts_edt_create(
-        counted_dep, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+        counted_dep, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(ev10, dep10, 0, DB_MODE_RW);
     arts_event_satisfy_slot(ev10, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
     arts_event_satisfy_slot(ev10, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
@@ -229,7 +228,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_event_destroy(ev10);
   }
 
-  arts_epoch_wait(epoch);
+  arts_event_wait(fe);
   arts_shutdown();
 }
 

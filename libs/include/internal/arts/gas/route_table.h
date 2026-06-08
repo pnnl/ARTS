@@ -71,7 +71,7 @@ struct arts_route_item_s {
    * uniformly; create-vs-destroy semantics are resolved by handler category
    * (Cat B request/writeback defers + drains on the next install or shutdown;
    * Cat C response/ack silent-drops on absent), not by a per-slot state bit. */
-  arts_atomic_shared_ptr_t value; /* cb: event/db/edt/epoch (NULL = absent) */
+  arts_atomic_shared_ptr_t value; /* cb: event/db/edt (NULL = absent) */
   arts_lf_stack_t
       ooo_list; /* OoO defer chain (Treiber; preserved across free) */
 } ARTS_ALIGNED_MAX;
@@ -135,10 +135,9 @@ bool arts_route_table_install_if_absent(void *obj, arts_guid_t key,
                                         unsigned int rank, bool used);
 
 /* Idempotent install with an EXPLICIT deleter, bypassing deleter-by-kind.
- * For objects that don't map to a GUID kind's deleter (e.g. the epoch pool
- * wrapper, which is freed by its owner) — pass NULL to install a cb that
- * never frees the object (route_table holds it for lookup only; the caller
- * frees it manually).  Returns the object now installed. */
+ * Pass NULL to install a cb that never frees the object (route_table holds it
+ * for lookup only; the caller frees it manually).  Returns the object now
+ * installed. */
 void *arts_route_table_install_with_deleter(void *obj, arts_guid_t key,
                                             void (*deleter)(void *));
 
@@ -162,7 +161,6 @@ bool arts_route_table_mark_delete(arts_guid_t key);
 arts_shared_ptr_t arts_route_table_lookup_event(arts_guid_t guid);
 arts_shared_ptr_t arts_route_table_lookup_db(arts_guid_t guid);
 arts_shared_ptr_t arts_route_table_lookup_edt(arts_guid_t guid);
-arts_shared_ptr_t arts_route_table_lookup_epoch(arts_guid_t guid);
 
 /* Kind-agnostic handle lookup (no kind validation). */
 arts_shared_ptr_t arts_route_table_lookup(arts_guid_t key);
@@ -240,11 +238,6 @@ enum arts_ooo_kind {
   OOO_HANDLE_READY_EDT,
   OOO_DB_ACQUIRE,
   OOO_EDT_SATISFY_SLOT_PTR,
-  OOO_EPOCH_REQUEST,
-  OOO_EPOCH_SEND,
-  OOO_EPOCH_INC_ACTIVE,
-  OOO_EPOCH_INC_FINISHED,
-  OOO_EPOCH_INC_QUEUE,
   /* Coherence-protocol replay kinds: re-issue the wire-message handler once
    * the home-side db_s/cache is installed (DB_CREATE arrives after a
    * race-arrived OWNERSHIP_REQUEST / SNAPSHOT_REQUEST / DESTROY / WRITEBACK).
@@ -326,28 +319,6 @@ struct arts_ooo_args_db_acquire_s {
   struct arts_edt_s *edt;
   arts_guid_t db_guid;
   uint32_t slot;
-};
-
-struct arts_ooo_args_epoch_s {
-  arts_guid_t epoch_guid;
-};
-
-/* EPOCH_REQUEST replay (reply side): a non-home rank replies to an epoch
- * query by sending its local counts to dest.  Deferred when the local epoch
- * broadcast-install has not yet arrived. */
-struct arts_ooo_args_epoch_request_s {
-  arts_guid_t epoch_guid;
-  unsigned int source;
-  unsigned int dest;
-};
-
-/* EPOCH_SEND replay (reduce side): the home rank reduces received counts into
- * the epoch's global tally.  Deferred when the home epoch is not yet installed
- * (theoretical; home always owns its epoch). */
-struct arts_ooo_args_epoch_send_s {
-  arts_guid_t epoch_guid;
-  unsigned int active;
-  unsigned int finish;
 };
 
 /* Coherence replay args — re-issue the wire handler once the home db_s/cache

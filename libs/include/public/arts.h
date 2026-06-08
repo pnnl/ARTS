@@ -81,18 +81,20 @@ typedef intptr_t arts_guid_t;
  *
  * Identifies what kind of object a GUID refers to.  Encoded in the
  * GUID's 2-bit kind field (ARTS_GUID_TYPE_BITS = 2 → 4 valid values
- * + sentinel).  Order matches XSOCR's ocrGuidKind: DB < EDT < EVENT.
+ * + sentinel).  Bit encoding: RESERVED=00, DB=01, EVENT=10, EDT=11.
+ * Zero-initialized GUIDs decode to RESERVED (never a valid object),
+ * which is more correct than the legacy DB=0 assignment.
  *
  * All datablocks share the single ARTS_GUID_DB tag; the DB storage
  * subtype is specified via arts_db_types_t at creation time.
  * Access modes (read/write) are separate — see arts_db_access_mode_t.
  */
 typedef enum {
-  ARTS_GUID_DB = 0, /**< DataBlock (all storage subtypes share this tag). */
-  ARTS_GUID_EDT,    /**< Event-Driven Task (CPU and GPU share this tag). */
-  ARTS_GUID_EVENT,  /**< Latch-based synchronization event. */
-  ARTS_GUID_EPOCH,  /**< Termination-detection epoch. */
-  ARTS_GUID_LAST    /**< Sentinel — first invalid kind value (= 4). */
+  ARTS_GUID_RESERVED = 0, /**< Reserved sentinel; never produced.  NULL = 0. */
+  ARTS_GUID_DB = 1,       /**< DataBlock (kind bits 01). */
+  ARTS_GUID_EVENT = 2, /**< Latch-based synchronization event (kind bits 10). */
+  ARTS_GUID_EDT = 3,   /**< Event-Driven Task (kind bits 11). */
+  ARTS_GUID_LAST = 4   /**< Sentinel — first invalid kind value (= 4). */
 } arts_guid_kind_t;
 
 /**
@@ -213,11 +215,10 @@ typedef enum {
  *                              no functional code consumed it)
  *  @{ */
 
-/** Bit flags for arts_edt_hint_t.flags. */
+/** Bit flags for arts_edt_hint_t.flags.  Reserved for future EDT-create flags;
+ *  finish scopes are no longer a flag (use ARTS_EVENT_HINT_FINISH +
+ *  arts_edt_hint_t.finish_event instead). */
 #define ARTS_EDT_FLAG_NONE 0x0000u
-#define ARTS_EDT_FLAG_FINISH                                                   \
-  0x0001u /**< Make this EDT a finish-EDT: runtime allocates a fresh LATCH as  \
-             its finish_event and chains it into the caller's finish-scope. */
 
 /** Hint passed to @c arts_edt_create.  Optional fields collapse the legacy
  *  six EDT-create variants into a single entry point:
@@ -225,8 +226,7 @@ typedef enum {
  *    - @c edt_id is the compiler-assigned profiling id (default 0).
  *    - @c guid   when non-NULL_GUID pre-reserves the EDT GUID; the home
  *                rank is then taken from that GUID and @c rank is ignored.
- *    - @c epoch  when non-NULL_GUID assigns the EDT to that epoch; otherwise
- *                the runtime uses the caller's current epoch (if any).
+ *    - @c finish_event when non-NULL_GUID joins this EDT to that finish scope.
  *    - @c flags  bitfield of ARTS_EDT_FLAG_* (default ARTS_EDT_FLAG_NONE). */
 typedef struct {
   /** Target node rank.  ARTS_HINT_CURRENT_RANK = current node (default). */
@@ -235,8 +235,10 @@ typedef struct {
   uint64_t edt_id;
   /** Pre-reserved GUID.  NULL_GUID = auto-allocate (default). */
   arts_guid_t guid;
-  /** Owning epoch.  NULL_GUID = inherit caller's current epoch (default). */
-  arts_guid_t epoch;
+  /** Finish event to join (bulk sync).  NULL_GUID = inherit the caller's
+   *  ambient finish scope (default).  When set, this EDT (and its descendants)
+   *  join that finish event: INCR at create, DECR at completion. */
+  arts_guid_t finish_event;
   /** Bitfield of ARTS_EDT_FLAG_*.  uint32_t for future flag growth.  Default
    * ARTS_EDT_FLAG_NONE (0). */
   uint32_t flags;
@@ -246,19 +248,8 @@ typedef struct {
   ((arts_edt_hint_t){.rank = ARTS_HINT_CURRENT_RANK,                           \
                      .edt_id = 0,                                              \
                      .guid = NULL_GUID,                                        \
-                     .epoch = NULL_GUID,                                       \
+                     .finish_event = NULL_GUID,                                \
                      .flags = ARTS_EDT_FLAG_NONE})
-
-/** Convenience: same as DEFAULTS but with the finish flag set.  Use this
- *  when creating a finish-EDT without other hint customizations:
- *    arts_edt_hint_t hint = ARTS_EDT_HINT_FINISH;
- *    arts_edt_create(func, 0, NULL, 0, &hint); */
-#define ARTS_EDT_HINT_FINISH                                                   \
-  ((arts_edt_hint_t){.rank = ARTS_HINT_CURRENT_RANK,                           \
-                     .edt_id = 0,                                              \
-                     .guid = NULL_GUID,                                        \
-                     .epoch = NULL_GUID,                                       \
-                     .flags = ARTS_EDT_FLAG_FINISH})
 
 /** Hint passed to @c arts_db_create.
  *
@@ -334,7 +325,7 @@ typedef void (*arts_edt_t)(uint32_t paramc, const uint64_t *paramv,
  *   - @c paramv[0] = @c argc (cast to @c uint64_t)
  *   - @c paramv[1] = @c argv (cast to @c uint64_t)
  *
- * The EDT can call blocking operations like arts_epoch_wait().
+ * The EDT can call blocking operations like arts_event_wait().
  *
  * @param paramc Number of static parameters (2 when called by the runtime).
  * @param paramv Parameter array: paramv[0]=argc, paramv[1]=(uint64_t)argv.
@@ -423,6 +414,13 @@ typedef struct {
    * Default false = unconditional replace (a labeled-GUID reuse overwrites the
    * prior generation, releasing it). */
   bool check;
+  /** If true, this is a FINISH event: a bulk-synchronization latch. All other
+   *  fields (latch, channel, guid, check) are ignored — forced to a simple
+   *  latch=1 (creator-token), current rank, auto-allocated GUID, auto_destroy.
+   *  The runtime auto-chains it to the ambient finish scope and tracks its
+   *  creator-token for cleanup. Wait on it with arts_event_wait. Default false.
+   */
+  bool finish;
 } arts_event_hint_t;
 
 /** OCR LATCH_T — counter event.  Argument is the initial counter value;
@@ -449,6 +447,9 @@ typedef struct {
 #define ARTS_EVENT_HINT_CHANNEL                                                \
   ((arts_event_hint_t){                                                        \
       .rank = ARTS_HINT_CURRENT_RANK, .channel = true, .guid = NULL_GUID})
+/** Bulk-synchronization finish event (latch=1 creator-token, auto_destroy). */
+#define ARTS_EVENT_HINT_FINISH                                                 \
+  ((arts_event_hint_t){.rank = ARTS_HINT_CURRENT_RANK, .finish = true})
 /** @} */
 
 /* ========================================================================= */
@@ -601,18 +602,18 @@ int arts_guid_index_from(arts_guid_t range_guid, arts_guid_t guid);
  *
  * The EDT will execute @p func_ptr once all @p depc dependency slots have
  * been satisfied via arts_add_dependence().  All optional fields (target
- * rank, pre-reserved GUID, owning epoch, profiling id) are carried in the
+ * rank, pre-reserved GUID, finish scope, profiling id) are carried in the
  * hint struct.  Pass @c NULL for ARTS_EDT_HINT_DEFAULTS, which auto-allocates
- * a GUID on the current rank and inherits the caller's current epoch.
+ * a GUID on the current rank and inherits the caller's ambient finish scope.
  *
  * @param func_ptr Function to execute.
  * @param paramc   Number of static parameters.
  * @param paramv   Array of @p paramc uint64_t values copied into the closure.
  * @param depc     Number of dependency slots.
- * @param hint     Advisory metadata (rank, edt_id, guid, epoch).  NULL =
+ * @param hint     Advisory metadata (rank, edt_id, guid, finish_event).  NULL =
  *                 defaults.
  * @return GUID of the newly created EDT.
- * @see arts_add_dependence, arts_edt_destroy, arts_epoch_create
+ * @see arts_add_dependence, arts_edt_destroy
  */
 arts_guid_t arts_edt_create(arts_edt_t func_ptr, uint32_t paramc,
                             const uint64_t *paramv, uint32_t depc,
@@ -627,12 +628,6 @@ arts_guid_t arts_edt_create(arts_edt_t func_ptr, uint32_t paramc,
  * @param guid GUID of the EDT to destroy.
  */
 void arts_edt_destroy(arts_guid_t guid);
-
-/** Return the finish_event GUID of the given EDT.  Returns NULL_GUID if
- *  the EDT has no finish-scope (legacy or non-finish EDT).  Used by user
- *  code to attach a termination listener via arts_add_dependence on the
- *  returned GUID. */
-arts_guid_t arts_edt_get_finish_event(arts_guid_t edt_guid);
 
 /** @} */ /* end edt */
 
@@ -729,6 +724,26 @@ void arts_event_add_dependence(arts_guid_t source, arts_guid_t destination,
 void arts_event_destroy(arts_guid_t guid);
 
 /**
+ * @brief Block the calling EDT until a FINISH event drains (bulk sync).
+ *
+ * Releases the finish event's creator-token, releases the caller's acquired
+ * DBs, context-switches into the scheduler until the event fires and
+ * auto-destroys, then reacquires DBs and resumes. Intended for the carts
+ * compiler fallback; idiomatic code uses a continuation (arts_add_dependence
+ * on the finish event) instead. Only meaningful for finish (auto_destroy)
+ * events. Returns true on success.
+ */
+bool arts_event_wait(arts_guid_t event_guid);
+
+/**
+ * @brief Return the finish event the calling EDT currently belongs to.
+ *
+ * Returns the ambient finish-scope GUID inherited or joined by the running
+ * EDT, or NULL_GUID if it belongs to no finish scope.
+ */
+arts_guid_t arts_current_finish_event(void);
+
+/**
  * @brief Wire a source (event or DB) to a destination (EDT or event).
  *
  * OCR-standard convenience: a pure dispatcher over the entity-specific APIs,
@@ -807,7 +822,7 @@ static inline void *arts_db_create_with_guid(arts_guid_t guid, uint64_t len,
  * the DB can proceed.
  *
  * This is required when an EDT creates DBs and then blocks inside its
- * body (e.g. via arts_epoch_wait), because the automatic release
+ * body (e.g. via arts_event_wait), because the automatic release
  * in the EDT epilogue cannot run until the function returns.
  *
  * Calling this on a DB that was not auto-acquired (or was already
@@ -832,65 +847,6 @@ void arts_db_release(arts_guid_t guid, arts_db_access_mode_t mode);
 void arts_db_destroy(arts_guid_t guid);
 
 /** @} */ /* end db */
-
-/* ========================================================================= */
-/** @defgroup epoch Epochs / Termination Detection
- *  Nested termination detection scopes.
- *  @{ */
-
-/**
- * @brief Return the GUID of the currently active epoch.
- *
- * @return Current epoch GUID.
- */
-arts_guid_t arts_epoch_get_current_guid();
-
-/**
- * @brief Assign an EDT to a specific epoch.
- *
- * The caller must ensure the EDT has not yet run and the epoch is still live.
- *
- * @param edt_guid   EDT to assign.
- * @param epoch_guid Target epoch.
- */
-void arts_epoch_add_edt(arts_guid_t edt_guid, arts_guid_t epoch_guid);
-
-/**
- * @brief Create an epoch without starting it.
- *
- * Use arts_epoch_start() to begin the epoch later. Any EDTs created by the
- * currently running EDT (after the epoch is started) will belong to this
- * epoch. When the epoch completes, @p finish_edt_guid is signaled at @p slot
- * with the number of EDTs, buffer ops, get/puts, etc. executed.
- *
- * @param rank            Source node rank.
- * @param finish_edt_guid EDT to signal when the epoch finishes.
- * @param slot            Dependency slot for the epoch summary.
- * @return GUID of the new epoch.
- * @see arts_epoch_start, arts_epoch_wait
- */
-arts_guid_t arts_epoch_create(unsigned int rank, arts_guid_t finish_edt_guid,
-                              unsigned int slot);
-
-/**
- * @brief Start an epoch previously created with arts_epoch_create().
- *
- * @param epoch_guid Epoch GUID.
- */
-void arts_epoch_start(arts_guid_t epoch_guid);
-
-/**
- * @brief Block until @p epoch_guid finishes.
- *
- * The calling thread runs another scheduling round while waiting.
- * Only valid from the EDT that created the epoch.
- *
- * @param epoch_guid Epoch to wait for.
- * @return @c true on success.
- */
-bool arts_epoch_wait(arts_guid_t epoch_guid);
-
-/** @} */ /* end epoch */
 
 /* ========================================================================= */
 /** @defgroup util Utility Functions

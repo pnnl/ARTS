@@ -47,11 +47,11 @@
 ///
 ///        Structure (two phases so the value check is race-free):
 ///          Phase 1: N concurrent RW incrementers, gated ONLY on the DB, all in
-///                   one epoch.  Concurrency is essential — it produces
+///                   one finish scope.  Concurrency is essential — it produces
 ///                   multiple simultaneous LOCK_REQs at home, which is what
-///                   exercises the chain.  arts_epoch_wait blocks until every
+///                   exercises the chain.  arts_event_wait blocks until every
 ///                   incrementer has run AND written back; a stranded waiter
-///                   therefore shows up as the epoch never quiescing (caught by
+///                   therefore shows up as the finish scope never quiescing (caught by
 ///                   the watchdog).
 ///          Phase 2: a single RO reader, created only AFTER phase 1 has fully
 ///                   quiesced, so its snapshot deterministically observes every
@@ -70,8 +70,8 @@ static atomic_int g_check_result = 0;
 /// Set once both phases finish so the watchdog exits quietly on success.
 static atomic_int g_finished = 0;
 
-/// Watchdog: if the multi-hop chain strands a waiter, phase 1's epoch never
-/// quiesces and arts_epoch_wait blocks forever.  Fail loudly rather than hang.
+/// Watchdog: if the multi-hop chain strands a waiter, phase 1's finish scope never
+/// quiesces and arts_event_wait blocks forever.  Fail loudly rather than hang.
 static void *wd_thread(void *arg) {
   unsigned int nranks = (unsigned int)(uintptr_t)arg;
   for (int slept = 0; slept < 20; slept++) {
@@ -163,24 +163,22 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
    * coherence layer serializes them into a multi-hop ownership-transfer chain.
    * They are mutually unordered (gated only on the DB), so multiple LOCK_REQs
    * reach home concurrently — exactly the chain-contention the bug needs. */
-  arts_guid_t e1 = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
-  arts_epoch_start(e1);
+  arts_guid_t e1 = arts_event_create(&ARTS_EVENT_HINT_FINISH);
   for (unsigned int r = 0; r < nranks; r++) {
     arts_guid_t w = arts_edt_create(inc_edt, 0, NULL, 1,
-                                    &(arts_edt_hint_t){.rank = r, .epoch = e1});
+                                    &(arts_edt_hint_t){.rank = r, .finish_event = e1});
     arts_add_dependence(db, w, 0, DB_MODE_RW);
   }
-  arts_epoch_wait(e1); /* blocks until ALL incs ran + wrote back */
+  arts_event_wait(e1); /* blocks until ALL incs ran + wrote back */
 
   /* Phase 2: RO reader, created only now that phase 1 has fully quiesced, so
    * its snapshot deterministically observes every increment. */
   uint64_t expected = (uint64_t)nranks;
-  arts_guid_t e2 = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
-  arts_epoch_start(e2);
+  arts_guid_t e2 = arts_event_create(&ARTS_EVENT_HINT_FINISH);
   arts_guid_t chk = arts_edt_create(check_edt, 1, &expected, 1,
-                                    &(arts_edt_hint_t){.rank = 0, .epoch = e2});
+                                    &(arts_edt_hint_t){.rank = 0, .finish_event = e2});
   arts_add_dependence(db, chk, 0, DB_MODE_RO);
-  arts_epoch_wait(e2);
+  arts_event_wait(e2);
 
   atomic_store(&g_finished, 1);
   arts_shutdown();

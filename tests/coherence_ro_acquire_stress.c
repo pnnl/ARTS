@@ -117,18 +117,18 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       arts_db_create((void **)&data, sizeof(int), ARTS_DB, ARTS_DB_PROP_NONE, NULL);
   *data = SENTINEL;
 
-  /* Outer epoch ensures shutdown_edt runs only after every reader has
+  /* Outer finish scope ensures shutdown_edt runs only after every reader has
    * finished — a peer-disconnect SHUTDOWN_MSG would otherwise let the
    * runtime exit while readers are still in flight.  The finish-EDT
-   * must have depc >= 1 so the epoch's slot-0 satisfy actually gates
+   * must have depc >= 1 so the finish scope's slot-0 satisfy actually gates
    * it; depc=0 would let it fire before any reader. */
   arts_guid_t shut = arts_edt_create(shutdown_edt, 0, NULL, 1, NULL);
-  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), shut, 0);
-  arts_epoch_start(epoch);
+  arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+  arts_add_dependence(fe, shut, 0, DB_MODE_NULL);
 
   for (int i = 0; i < N_READERS; i++) {
     arts_guid_t r =
-        arts_edt_create(reader_edt, 0, NULL, 1, &(arts_edt_hint_t){.epoch = epoch});
+        arts_edt_create(reader_edt, 0, NULL, 1, &(arts_edt_hint_t){.finish_event = fe});
     arts_add_dependence(db, r, 0, DB_MODE_RO);
   }
 }

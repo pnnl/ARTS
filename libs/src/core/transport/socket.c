@@ -64,7 +64,8 @@
 
 /* Disable Nagle on a connected TCP data socket.  ARTS's cross-rank protocol is
  * dominated by small synchronous request/ACK round-trips (DB writeback ACK,
- * epoch reduction, lock requests); Nagle's coalescing delay compounds with the
+ * finish-event signals, lock requests); Nagle's coalescing delay compounds with
+ * the
  * peer's delayed-ACK to inflate every such round-trip. */
 static inline void arts_socket_set_nodelay(int fd) {
   int one = 1;
@@ -309,9 +310,9 @@ static inline bool arts_remote_connect(int rank, unsigned int port) {
 
   if (!remote_connection_alive[(rank * ports) + port]) {
     int res = connect(remote_socket_send_list[(rank * ports) + port],
-                       (struct sockaddr *)(remote_server_send_list +
-                                           ((size_t)rank * ports) + port),
-                       sizeof(struct sockaddr_in));
+                      (struct sockaddr *)(remote_server_send_list +
+                                          ((size_t)rank * ports) + port),
+                      sizeof(struct sockaddr_in));
     if (res < 0) {
       remote_connection_alive[(rank * ports) + port] = false;
 
@@ -323,9 +324,9 @@ static inline bool arts_remote_connect(int rank, unsigned int port) {
       int max_retries = 300;
       int retry_count = 0;
       while (connect(remote_socket_send_list[(rank * ports) + port],
-                      (struct sockaddr *)(remote_server_send_list +
-                                          ((size_t)rank * ports) + port),
-                      sizeof(struct sockaddr_in)) < 0) {
+                     (struct sockaddr *)(remote_server_send_list +
+                                         ((size_t)rank * ports) + port),
+                     sizeof(struct sockaddr_in)) < 0) {
         /* Abort the retry loop promptly if a shutdown has been signaled
          * while we were spinning here. Without this check, a sender
          * thread caught in the retry loop during shutdown blocks for up
@@ -367,7 +368,7 @@ uint64_t arts_actual_send(char *message, uint64_t length, int rank, int port) {
   int iterations = 0;
   while (length != 0 && res >= 0) {
     res = send(remote_socket_send_list[(rank * ports) + port], message + total,
-                length, MSG_DONTWAIT);
+               length, MSG_DONTWAIT);
     if (res >= 0) {
       total += res;
       length -= res;
@@ -475,7 +476,7 @@ bool arts_remote_setup_incoming() {
 
     int res =
         bind(local_socket_receive[i], (struct sockaddr *)&local_server_addr[i],
-              sizeof(local_server_addr[i]));
+             sizeof(local_server_addr[i]));
 
     if (res < 0) {
       ARTS_INFO("Bind Failed");
@@ -638,7 +639,7 @@ bool arts_transport_receive(void) {
             // ARTS_INFO("Here3a");
             packet = (struct arts_remote_packet_s *)bypass_buf[pos];
             res = recv(remote_socket_receive_list[i], bypass_buf[pos],
-                        bypass_packet_size[pos], MSG_DONTWAIT);
+                       bypass_packet_size[pos], MSG_DONTWAIT);
             if (res > 0) {
               INCREMENT_BYTES_REMOTE_RECEIVED_BY(res);
             }
@@ -657,7 +658,7 @@ bool arts_transport_receive(void) {
                 }
                 res2 =
                     recv(remote_socket_receive_list[i], bypass_buf[pos] + res,
-                          bypass_packet_size[pos] - res, MSG_DONTWAIT);
+                         bypass_packet_size[pos] - res, MSG_DONTWAIT);
                 if (res2 > 0) {
                   INCREMENT_BYTES_REMOTE_RECEIVED_BY(res2);
                 }
@@ -705,7 +706,7 @@ bool arts_transport_receive(void) {
                 }
                 res2 =
                     recv(remote_socket_receive_list[i], bypass_buf[pos] + res,
-                          bypass_packet_size[pos] - res, MSG_DONTWAIT);
+                         bypass_packet_size[pos] - res, MSG_DONTWAIT);
                 if (res2 > 0) {
                   INCREMENT_BYTES_REMOTE_RECEIVED_BY(res2);
                 }

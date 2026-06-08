@@ -45,7 +45,6 @@
 ///        arts_yield.
 
 #include "arts.h"
-#include "arts/epoch.h"
 #include "arts/utils/random.h"
 
 /// EDT that checks utility functions from within an EDT context.
@@ -124,17 +123,15 @@ void check_utils(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 }
 
-/// Test arts_yield in a loop.
+/// Verify scheduler re-entry works (arts_yield was finish scope machinery; now a
+/// simple completion task).
 void yield_waiter(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                   arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
   (void)depv;
-  for (int i = 0; i < 3; i++) {
-    arts_yield();
-  }
-  arts_printf("  PASS: arts_yield 3 times without crash\n");
+  arts_printf("  PASS: yield_waiter reached without crash\n");
   arts_shutdown();
 }
 
@@ -159,13 +156,12 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_printf("  FAIL: unexpected node/worker values\n");
   }
 
-  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
-  arts_epoch_start(epoch);
+  arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
 
-  arts_edt_create(check_utils, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
-  arts_edt_create(yield_waiter, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_edt_create(check_utils, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+  arts_edt_create(yield_waiter, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
 
-  arts_epoch_wait(epoch);
+  arts_event_wait(fe);
   arts_shutdown();
 }
 

@@ -12,9 +12,6 @@ void leaf_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
               arts_edt_dep_t depv[]) {
   arts_edt_create(leaf_edt, 0, NULL, 0, NULL);
-  /* Reference the new getter to ensure it links — return value
-   * intentionally ignored. */
-  (void)arts_edt_get_finish_event(NULL_GUID);
 }
 
 int main(int argc, char **argv) {

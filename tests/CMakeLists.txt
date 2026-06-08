@@ -40,7 +40,6 @@
 # Define test programs to build
 set(TEST_PROGRAMS
     # --- Original tests ---
-    edt_epoch_wait
     route_table
     route_table_remote_guid
     coherence_basic
@@ -70,11 +69,7 @@ set(TEST_PROGRAMS
     pin_db
     active_message_db
     termination_detection
-    rec_epoch
-    epoch_pool
-    epoch_basic
-    epoch_deferred_start
-    epoch_finish_edt
+    finish_event_recursive
     remote_db_event
     route_table_iter
     route_table_iter_destroy
@@ -110,7 +105,7 @@ set(TEST_PROGRAMS
     record_dep_at
     utility_api
     multinode_edt
-    multinode_epoch
+    finish_event_mn_termination
     multinode_event
     multinode_coherence
     multinode_event_types
@@ -146,7 +141,6 @@ set(TEST_PROGRAMS
     edt_dep_variants
     event_hint_presets
     db_labeled_guid
-    edt_epoch_api
     multinode_labeled_guid
     multinode_event_hint
     # --- Finish-EDT mechanism tests ---
@@ -154,6 +148,8 @@ set(TEST_PROGRAMS
     finish_event_inherit
     finish_event_multinode
     finish_event_stress
+    finish_event_wait
+    finish_event_nested
 )
 
 # Function to create a test executable
@@ -350,7 +346,6 @@ register_single_node_test(edt_chain)
 register_single_node_test(edt_fan_out)
 register_single_node_test(edt_signal)
 register_single_node_test(edt_destroy)
-register_single_node_test(edt_epoch_wait)
 register_single_node_test(stress_edt TIMEOUT 30)
 register_single_node_test(paramv_memcpy)
 
@@ -365,12 +360,8 @@ register_single_node_test(pin_db ARGS 0)
 
 # Array DB tests
 
-# Epoch / sync tests
-register_single_node_test(epoch_basic)
-register_single_node_test(epoch_deferred_start)
-register_single_node_test(epoch_finish_edt)
-register_single_node_test(epoch_pool ARGS 3)
-register_single_node_test(rec_epoch ARGS 3)
+# Finish-event / sync tests
+register_single_node_test(finish_event_recursive ARGS 3)
 register_single_node_test(termination_detection ARGS 3)
 
 # Event tests
@@ -512,11 +503,16 @@ register_single_node_test(event_hint_presets)
 
 register_single_node_test(db_labeled_guid)
 
-register_single_node_test(edt_epoch_api)
 
 # --- Finish-EDT mechanism tests ---
 register_single_node_test(finish_event_basic)
 register_single_node_test(finish_event_inherit)
+register_single_node_test(finish_event_wait TIMEOUT 30)
+set_tests_properties(finish_event_wait PROPERTIES
+    PASS_REGULAR_EXPRESSION "OK wait-style")
+register_single_node_test(finish_event_nested)
+set_tests_properties(finish_event_nested PROPERTIES
+    PASS_REGULAR_EXPRESSION "OK nested")
 register_multinode_test(finish_event_multinode TIMEOUT 30)
 set_tests_properties(finish_event_multinode_2n PROPERTIES
     PASS_REGULAR_EXPRESSION "PASS: cross-node finish-scope drained")
@@ -528,7 +524,7 @@ set_tests_properties(finish_event_stress_2n PROPERTIES
 # --- Multi-node tests ---
 
 register_multinode_test(multinode_edt)
-register_multinode_test(multinode_epoch)
+register_multinode_test(finish_event_mn_termination)
 register_multinode_test(multinode_event)
 register_multinode_test(active_message_db ARGS 64)
 register_multinode_test(route_table_remote_guid)
@@ -621,7 +617,7 @@ add_arts_test(lc_counter_race)
 
 if(ARTS_MEMORY_MODEL STREQUAL "LC")
     # lc_drf_invariant (single-node): home-rank writer and home-rank reader;
-    # no WRITEBACK round-trip.  Validates epoch happens-before ordering.
+    # no WRITEBACK round-trip.  Validates finish-event happens-before ordering.
     add_test(
         NAME lc_drf_invariant
         COMMAND lc_drf_invariant

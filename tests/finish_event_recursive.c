@@ -36,32 +36,80 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
+#include <stdlib.h>
 
-#ifndef ARTS_SYNC_EPOCH_POOL_H
-#define ARTS_SYNC_EPOCH_POOL_H
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include "arts.h"
 
-#include "arts/runtime_types.h"
+unsigned int counter = 0;
+uint64_t num_dummy = 0;
+arts_guid_t exit_guid = NULL_GUID;
 
-typedef struct arts_epoch_pool_s {
-  struct arts_epoch_pool_s *next;
-  unsigned int size;
-  unsigned int index;
-  volatile unsigned int outstanding;
-  arts_epoch_t pool[];
-} arts_epoch_pool_t;
+void dummytask(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+               arts_edt_dep_t depv[]) {}
 
-arts_epoch_pool_t *arts_epoch_pool_create(arts_guid_t *epoch_pool_guid,
-                                          unsigned int pool_size,
-                                          arts_guid_t *start_guid);
-void arts_link_epoch_pool_to_tls(arts_epoch_pool_t *pool);
-arts_epoch_t *arts_epoch_pool_get(arts_guid_t edt_guid, unsigned int slot);
-void arts_epoch_pool_clean();
-void arts_cleanup_epoch_pools(void);
-
-#ifdef __cplusplus
+void sync_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+               arts_edt_dep_t depv[]) {
+  (void)depc;
+  (void)paramc;
+  arts_printf("Guid:%lu Sync %lu: %lu\n", arts_edt_get_current_guid(),
+              paramv[0], depv[0].guid);
 }
-#endif
-#endif
+
+void exit_program(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                  arts_edt_dep_t depv[]) {
+  (void)depc;
+  (void)paramc;
+  (void)paramv;
+  arts_printf("Exit: %lu\n", depv[0].guid);
+  arts_shutdown();
+}
+
+void root_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+               arts_edt_dep_t depv[]) {
+  (void)depc;
+  (void)depv;
+  (void)paramc;
+  uint64_t dep = paramv[0];
+  if (dep) {
+    dep--;
+    arts_guid_t fe_guid = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+    arts_printf("Guid:%lu Root: %lu sync: %lu finish: %lu\n",
+                arts_edt_get_current_guid(), dep, NULL_GUID, fe_guid);
+
+    unsigned int num_nodes = arts_get_total_ranks();
+    for (unsigned int rank = 0; rank < num_nodes; rank++) {
+      arts_edt_create(root_task, 1, &dep, 0,
+                      &(arts_edt_hint_t){.rank = rank % num_nodes});
+    }
+
+    for (uint64_t rank = 0; rank < num_nodes * num_dummy; rank++) {
+      arts_edt_create(dummytask, 0, NULL, 0,
+                      &(arts_edt_hint_t){.rank = rank % num_nodes});
+    }
+
+    arts_event_wait(fe_guid);
+  }
+}
+
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+              arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  (void)depv;
+  char **argv = (char **)paramv[1];
+  num_dummy = (uint64_t)strtol(argv[1], NULL, 10);
+  exit_guid = arts_guid_reserve(ARTS_GUID_EDT, 0);
+  arts_printf("Starting\n");
+  arts_edt_create(exit_program, 0, NULL, 1,
+                  &(arts_edt_hint_t){.guid = exit_guid});
+  {
+    arts_guid_t __ep = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+    arts_add_dependence(__ep, exit_guid, 0, DB_MODE_NULL);
+  }
+  arts_edt_create(root_task, 1, &num_dummy, 0, &(arts_edt_hint_t){.rank = 0});
+}
+
+int main(int argc, char **argv) {
+  arts_rt(argc, argv);
+  return 0;
+}

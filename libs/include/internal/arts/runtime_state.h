@@ -108,7 +108,6 @@ struct arts_runtime_shared_s {
   volatile unsigned int db_rr_route;
   char *buf;
   int packet_size;
-  arts_guid_t auto_shutdown_guid;
   unsigned int gpu;
   unsigned int gpu_locality;
   unsigned int gpu_fit;

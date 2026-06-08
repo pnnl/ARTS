@@ -104,16 +104,15 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_db_release(db, DB_MODE_RW);
 
   /* pe_final must run only after every contributing EDT has finished.
-   * Wire it as the epoch's finish_edt callback (depc=1, slot 0 satisfied
-   * by epoch fire). Without this, pe_final has depc=0 and races with
+   * Wire it as the finish scope's finish_edt callback (depc=1, slot 0 satisfied
+   * by finish scope fire). Without this, pe_final has depc=0 and races with
    * dep1/dep2/dep3 — worker scheduling can run pe_final before all
    * pe_dependent fires land, reading pe_fire_count<2 and triggering
    * arts_shutdown which then strands the remaining dependents. */
   arts_guid_t pe_final_edt =
       arts_edt_create(pe_final, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0});
-  arts_guid_t epoch =
-      arts_epoch_create(arts_get_current_rank(), pe_final_edt, 0);
-  arts_epoch_start(epoch);
+  arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+  arts_add_dependence(fe, pe_final_edt, 0, DB_MODE_NULL);
 
   // Channel-equivalent hint: channel=true.  Each satisfy/add_dep increments
   // its own counter; the drainer pops one satisfy and one dep per fire pair.
@@ -122,12 +121,14 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Test 1: Channel event with 2 dependents — fire twice, each fire drains one.
   arts_guid_t ch1 = arts_event_create(&channel_hint);
 
-  arts_guid_t dep1 = arts_edt_create(
-      pe_dependent, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_guid_t dep1 =
+      arts_edt_create(pe_dependent, 0, NULL, 1,
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(ch1, dep1, 0, DB_MODE_RW);
 
-  arts_guid_t dep2 = arts_edt_create(
-      pe_dependent, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_guid_t dep2 =
+      arts_edt_create(pe_dependent, 0, NULL, 1,
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(ch1, dep2, 0, DB_MODE_RW);
 
   arts_event_satisfy_slot(ch1, db, ARTS_EVENT_LATCH_DECR_SLOT);
@@ -138,7 +139,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   uint64_t db_param = (uint64_t)db;
   arts_guid_t dep3 =
       arts_edt_create(pe_data_check, 1, &db_param, 1,
-                      &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(ch2, dep3, 0, DB_MODE_RO);
   arts_event_satisfy_slot(ch2, db, ARTS_EVENT_LATCH_DECR_SLOT);
 
@@ -150,7 +151,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_event_satisfy_slot(ch3, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
   arts_printf("  PASS: channel re-arm pattern did not crash\n");
 
-  /* pe_final fires after the epoch completes (all dep1/dep2/dep3 done)
+  /* pe_final fires after the finish scope completes (all dep1/dep2/dep3 done)
    * and calls arts_shutdown. main_edt does not wait or shutdown. */
 }
 

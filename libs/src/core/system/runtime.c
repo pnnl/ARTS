@@ -55,9 +55,7 @@
 #include "arts/db.h"
 #include "arts/defs.h"
 #include "arts/edt.h"
-#include "arts/edt_context.h" /* arts_epoch_list_mark_finished, ctx tls */
-#include "arts/epoch.h"
-#include "arts/epoch_pool.h" /* arts_cleanup_epoch_pools */
+#include "arts/edt_context.h" /* arts_owned_finish_cleanup, ctx tls */
 #include "arts/gas/guid.h"
 #include "arts/gas/route_table.h"
 #include "arts/system/print.h"
@@ -185,7 +183,6 @@ void arts_runtime_node_init(struct arts_config_s *config) {
    * across ranks the round-robin then walks the cluster evenly instead of
    * hammering rank 0. */
   arts_node_info.db_rr_route = arts_global_rank_id;
-  arts_node_info.auto_shutdown_guid = config->auto_shutdown ? 1 : NULL_GUID;
 
   /* Network buffer */
   arts_node_info.buf = (char *)arts_malloc(PACKET_SIZE);
@@ -414,9 +411,8 @@ void arts_runtime_global_cleanup() {
  *
  * After all threads have registered (ready_to_push barrier), thread 0:
  *   1. Enables global GUID generation.
- *   2. Creates the shutdown epoch (termination detection).
- *   3. Schedules main_edt on rank 0 (if defined by the application).
- *   4. Waits for all threads through a series of barriers before entering
+ *   2. Schedules main_edt on rank 0 (if defined by the application).
+ *   3. Waits for all threads through a series of barriers before entering
  *      the main scheduler loop.
  */
 void arts_thread_zero_node_start(int argc, char **argv) {
@@ -424,7 +420,6 @@ void arts_thread_zero_node_start(int argc, char **argv) {
   arts_runtime_argc = argc;
   arts_runtime_argv = argv;
   set_global_guid_on();
-  arts_shutdown_epoch_create();
 
   // Note: Counter capture starts AFTER barriers below, when receiver threads
   // are running. This ensures time sync messages can be processed.
@@ -454,7 +449,7 @@ void arts_thread_zero_node_start(int argc, char **argv) {
     arts_edt_create(main_edt, 2, main_args, 0, &main_hint);
   }
 
-  arts_epoch_list_mark_finished();
+  arts_owned_finish_cleanup();
 
   arts_atomic_sub(&arts_node_info.ready_to_inspect, 1U);
   while (arts_node_info.ready_to_inspect) {
@@ -562,7 +557,7 @@ void arts_runtime_private_init(struct thread_mask_s *thread,
         init_per_worker(arts_global_rank_id, arts_thread_info.group_pos,
                         arts_runtime_argc, arts_runtime_argv);
       }
-      arts_epoch_list_mark_finished();
+      arts_owned_finish_cleanup();
     }
 
     arts_atomic_sub(&arts_node_info.ready_to_inspect, 1U);
@@ -589,7 +584,6 @@ void arts_runtime_private_cleanup() {
   if (arts_thread_info.my_gpu_deque) {
     arts_deque_delete(arts_thread_info.my_gpu_deque);
   }
-  arts_cleanup_epoch_pools();
   arts_cleanup_edt_tls();
 }
 

@@ -213,13 +213,12 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   validation_result = (volatile unsigned int *)malloc(sizeof(unsigned int));
   *validation_result = 0;
 
-  /// Start epoch
-  arts_guid_t epoch_guid = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
-  arts_epoch_start(epoch_guid);
-  arts_printf("[Step 1] Started epoch (guid: %lu)\n", epoch_guid);
+  /// Start finish scope
+  arts_guid_t fe_guid = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+  arts_printf("[Step 1] Started finish scope (guid: %lu)\n", fe_guid);
 
   /// Create writer EDT
-  arts_guid_t writer_edt_guid = arts_edt_create(writer_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch_guid});
+  arts_guid_t writer_edt_guid = arts_edt_create(writer_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe_guid});
   arts_printf("[Step 2] Created writer EDT (guid: %lu)\n", writer_edt_guid);
 
   /// Create reader EDTs
@@ -229,7 +228,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     unsigned int target_node = (i % arts_get_total_ranks());
     uint64_t param = i;
     reader_edt_guids[i] =
-        arts_edt_create(reader_edt, 1, &param, 1, &(arts_edt_hint_t){.rank = target_node, .epoch = epoch_guid});
+        arts_edt_create(reader_edt, 1, &param, 1, &(arts_edt_hint_t){.rank = target_node, .finish_event = fe_guid});
 
     if ((i + 1) % 4 == 0 || i == num_readers - 1) {
       unsigned int range_start = (i / 4) * 4;
@@ -238,7 +237,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     }
   }
 
-  arts_guid_t validator_edt_guid = arts_edt_create(validator_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch_guid});
+  arts_guid_t validator_edt_guid = arts_edt_create(validator_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe_guid});
   arts_printf("[Step 4] Created validator EDT (guid: %lu)\n",
               validator_edt_guid);
 
@@ -256,12 +255,12 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("  All dependencies recorded (latch=1, only writer)\n");
 
-  // Release auto-acquired WRITE access before blocking on epoch.
+  // Release auto-acquired WRITE access before blocking on finish scope.
   arts_db_release(data_guid, DB_MODE_RW);
 
-  /// Wait for epoch to complete
-  arts_printf("[Step 6] Waiting for epoch to complete\n");
-  arts_epoch_wait(epoch_guid);
+  /// Wait for finish scope to complete
+  arts_printf("[Step 6] Waiting for finish scope to complete\n");
+  arts_event_wait(fe_guid);
 
   /// Free reader EDTs
   free(reader_edt_guids);

@@ -57,7 +57,6 @@
 #include "arts/runtime_state.h"
 #include "arts/runtime_types.h"
 #include "arts/edt_context.h" /* current_edt + created-DB tracking */
-#include "arts/epoch.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/transport/protocol.h"
@@ -1014,7 +1013,7 @@ void arts_release_created_dbs(void) {
 
 /*
  * arts_wait_release_dbs / arts_wait_reacquire_dbs -- Pre-/post-yield
- * hooks invoked around arts_epoch_wait.
+ * hooks invoked around arts_event_wait.
  *
  * No-op under RC: multi-EDT same-rank concurrent acquire is allowed
  * (writer_count CAS-loop), so the creator's hold persists across the

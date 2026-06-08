@@ -135,8 +135,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("=== multinode_coherence ===\n");
 
   arts_guid_t shut = arts_edt_create(shutdown_edt, 0, NULL, 1, NULL);
-  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), shut, 0);
-  arts_epoch_start(epoch);
+  arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+  arts_add_dependence(fe, shut, 0, DB_MODE_NULL);
 
   // Test 1: Cross-node EW chain.
   // writer1(EW, node 0) writes 100 -> writer2(EW, node 1) writes 200
@@ -148,15 +148,15 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_db_release(db, DB_MODE_RW);
 
     uint64_t val1 = 100;
-    arts_guid_t w1 = arts_edt_create(coh_writer, 1, &val1, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+    arts_guid_t w1 = arts_edt_create(coh_writer, 1, &val1, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(db, w1, 0, DB_MODE_RW);
 
     uint64_t val2 = 200;
-    arts_guid_t w2 = arts_edt_create(coh_writer, 1, &val2, 1, &(arts_edt_hint_t){.rank = 1, .epoch = epoch});
+    arts_guid_t w2 = arts_edt_create(coh_writer, 1, &val2, 1, &(arts_edt_hint_t){.rank = 1, .finish_event = fe});
     arts_add_dependence(db, w2, 0, DB_MODE_RW);
 
     uint64_t rparams[2] = {200, 1};
-    arts_guid_t r = arts_edt_create(coh_reader, 2, rparams, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+    arts_guid_t r = arts_edt_create(coh_reader, 2, rparams, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(db, r, 0, DB_MODE_RO);
   }
 
@@ -171,15 +171,15 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     ((int *)ptr2)[2] = 0;
     arts_db_release(db2, DB_MODE_RW);
 
-    arts_guid_t w = arts_edt_create(coh_writer_3, 0, NULL, 1, &(arts_edt_hint_t){.rank = 1, .epoch = epoch});
+    arts_guid_t w = arts_edt_create(coh_writer_3, 0, NULL, 1, &(arts_edt_hint_t){.rank = 1, .finish_event = fe});
     arts_add_dependence(db2, w, 0, DB_MODE_RW);
 
     uint64_t id0 = 0;
-    arts_guid_t ra = arts_edt_create(coh_reader_3, 1, &id0, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+    arts_guid_t ra = arts_edt_create(coh_reader_3, 1, &id0, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(db2, ra, 0, DB_MODE_RO);
 
     uint64_t id1 = 1;
-    arts_guid_t rb = arts_edt_create(coh_reader_3, 1, &id1, 1, &(arts_edt_hint_t){.rank = 1, .epoch = epoch});
+    arts_guid_t rb = arts_edt_create(coh_reader_3, 1, &id1, 1, &(arts_edt_hint_t){.rank = 1, .finish_event = fe});
     arts_add_dependence(db2, rb, 0, DB_MODE_RO);
   }
 
@@ -192,17 +192,17 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     ((int *)ptr3)[0] = 0;
     arts_db_release(db3, DB_MODE_RW);
 
-    arts_guid_t ia = arts_edt_create(coh_incrementer, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+    arts_guid_t ia = arts_edt_create(coh_incrementer, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(db3, ia, 0, DB_MODE_RW);
 
-    arts_guid_t ib = arts_edt_create(coh_incrementer, 0, NULL, 1, &(arts_edt_hint_t){.rank = 1, .epoch = epoch});
+    arts_guid_t ib = arts_edt_create(coh_incrementer, 0, NULL, 1, &(arts_edt_hint_t){.rank = 1, .finish_event = fe});
     arts_add_dependence(db3, ib, 0, DB_MODE_RW);
 
-    arts_guid_t ic = arts_edt_create(coh_incrementer, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+    arts_guid_t ic = arts_edt_create(coh_incrementer, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(db3, ic, 0, DB_MODE_RW);
 
     uint64_t rparams3[2] = {3, 3};
-    arts_guid_t r3 = arts_edt_create(coh_reader, 2, rparams3, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+    arts_guid_t r3 = arts_edt_create(coh_reader, 2, rparams3, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(db3, r3, 0, DB_MODE_RO);
   }
 }

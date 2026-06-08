@@ -59,8 +59,6 @@
 #include "arts/gas/route_table.h"
 #include "arts/db.h"
 #include "arts/edt_context.h" /* arts_set/unset_thread_local_edt_info */
-#include "arts/epoch.h"
-#include "arts/epoch_pool.h" /* arts_cleanup_epoch_pools */
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/system/topology.h"
@@ -121,8 +119,6 @@ scheduler_t scheduler_loop[] = {
  * have no my_deque. */
 void arts_schedule_ready_edt(struct arts_edt_s *edt) {
   INCREMENT_NUM_EDT_ACQUIRE_BY(1);
-  arts_epoch_inc_queue(edt->epoch_guid);
-  arts_shutdown_epoch_inc_queue();
 #ifdef ARTS_USE_GPU
   if (arts_node_info.gpu && !arts_thread_info.my_gpu_deque &&
       edt->edt_type == ARTS_EDT_GPU) {
@@ -203,11 +199,9 @@ void arts_run_edt(struct arts_edt_s *edt) {
 
   INCREMENT_NUM_EDT_FINISH_BY(1);
 
-  /* Release DBs BEFORE signaling epoch completion. This ensures any
-   * RC writeback messages (arts_coh_release_rw -> WRITEBACK) are
-   * queued to the sender thread before the epoch-done message. TCP
-   * FIFO ordering then guarantees the DB data arrives at home before
-   * the epoch-done signal, preventing stale reads in the next epoch. */
+  /* Release DBs before signaling finish-event completion: any RC writeback
+   * messages (WRITEBACK) are queued to the sender thread before the finish
+   * DECR message, so TCP FIFO ordering guarantees data arrives at home first. */
   release_dbs(depc, depv, false);
   arts_release_created_dbs();
 

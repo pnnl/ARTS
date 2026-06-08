@@ -181,26 +181,26 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   unsigned int total = arts_get_total_ranks();
   arts_guid_t shut = arts_edt_create(shutdown_edt, 0, NULL, 1, NULL);
-  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), shut, 0);
-  arts_epoch_start(epoch);
+  arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+  arts_add_dependence(fe, shut, 0, DB_MODE_NULL);
 
   // Test 1: Create EDT on remote node 1, have it signal back.
   {
     uint64_t expected_param = 1;
     arts_guid_t checker =
-        arts_edt_create(check_remote_edt, 1, &expected_param, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+        arts_edt_create(check_remote_edt, 1, &expected_param, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     uint64_t coll_param = (uint64_t)checker;
-    arts_edt_create(remote_task, 1, &coll_param, 0, &(arts_edt_hint_t){.rank = 1, .epoch = epoch});
+    arts_edt_create(remote_task, 1, &coll_param, 0, &(arts_edt_hint_t){.rank = 1, .finish_event = fe});
   }
 
   // Test 2: Create one EDT per node, each reports its rank.
   {
-    arts_guid_t all_coll = arts_edt_create(check_all_nodes, 0, NULL, total, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+    arts_guid_t all_coll = arts_edt_create(check_all_nodes, 0, NULL, total, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     for (unsigned int r = 0; r < total; r++) {
       uint64_t params[2];
       params[0] = (uint64_t)all_coll;
       params[1] = (uint64_t)r;
-      arts_edt_create(all_nodes_task, 2, params, 0, &(arts_edt_hint_t){.rank = r, .epoch = epoch});
+      arts_edt_create(all_nodes_task, 2, params, 0, &(arts_edt_hint_t){.rank = r, .finish_event = fe});
     }
   }
 
@@ -209,18 +209,18 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // C asserts value == 120.
   {
     uint64_t exp3 = 120;
-    arts_guid_t c = arts_edt_create(chain_check, 1, &exp3, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+    arts_guid_t c = arts_edt_create(chain_check, 1, &exp3, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     uint64_t c_param = (uint64_t)c;
-    arts_guid_t b = arts_edt_create(chain_hop, 1, &c_param, 1, &(arts_edt_hint_t){.rank = 1, .epoch = epoch});
+    arts_guid_t b = arts_edt_create(chain_hop, 1, &c_param, 1, &(arts_edt_hint_t){.rank = 1, .finish_event = fe});
     uint64_t b_param = (uint64_t)b;
-    arts_guid_t a = arts_edt_create(chain_hop, 1, &b_param, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+    arts_guid_t a = arts_edt_create(chain_hop, 1, &b_param, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence((arts_guid_t)(100), a, 0, DB_MODE_VAL);
   }
 
   // Test 4: Paramv delivery to remote node.
   {
     uint64_t pv[4] = {0xDEAD, 0xBEEF, 0xCAFE, 0xF00D};
-    arts_edt_create(check_paramv, 4, pv, 0, &(arts_edt_hint_t){.rank = 1, .epoch = epoch});
+    arts_edt_create(check_paramv, 4, pv, 0, &(arts_edt_hint_t){.rank = 1, .finish_event = fe});
   }
 }
 

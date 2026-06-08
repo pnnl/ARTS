@@ -50,10 +50,10 @@ extern "C" {
  * Per-worker EDT-execution context.
  *
  * Each worker thread maintains, while it runs an EDT, a small set of
- * thread-local pieces of state: which EDT is currently running, the stack of
- * enclosing epoch GUIDs, and the list of DBs the running EDT has created.
- * These are owned by the worker and are saved/restored around any nested
- * EDT-like execution (e.g. an epoch waiter that re-enters the runtime).
+ * thread-local pieces of state: which EDT is currently running and the list
+ * of DBs the running EDT has created.  These are owned by the worker and are
+ * saved/restored around any nested EDT-like execution (e.g. an event waiter
+ * that re-enters the runtime).
  *
  * The running-EDT pointer has external linkage so foreign TUs that consult
  * the current EDT directly (memory/coherence, event satisfy fast-path,
@@ -66,8 +66,8 @@ extern ARTS_THREAD_LOCAL struct arts_edt_s *current_edt;
 typedef struct {
   arts_guid_t current_edt_guid;
   struct arts_edt_s *current_edt;
-  void *epoch_list;
   void *created_db_list;
+  void *owned_finish_list;
 } arts_edt_ctx_t;
 
 /* Run-start / run-end context management (called from the EDT run path). */
@@ -77,14 +77,15 @@ void arts_edt_ctx_save(arts_edt_ctx_t *tl);
 void arts_edt_ctx_restore(arts_edt_ctx_t *tl);
 void arts_cleanup_edt_tls(void);
 
-/* Epoch stack tracking on the current worker. */
-void arts_set_current_epoch_guid(arts_guid_t epoch_guid);
-arts_guid_t *arts_check_epoch_is_root(arts_guid_t to_check);
-void arts_epoch_list_mark_finished();
-
 /* Created-DB tracking on the current worker (auto-acquire / release path). */
 void arts_track_created_db(arts_guid_t guid);
 arts_array_list_t *arts_get_created_db_list(void);
+
+/* Finish-event owned-list: register creator-token, consume on wait, cleanup. */
+void arts_owned_finish_register(arts_guid_t fe_guid);
+void arts_owned_finish_consume(arts_guid_t fe_guid);
+void arts_owned_finish_cleanup(void);
+arts_guid_t arts_current_finish_event(void);
 
 #ifdef __cplusplus
 }

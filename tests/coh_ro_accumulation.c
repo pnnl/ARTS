@@ -76,8 +76,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
 
   arts_printf("=== coh_ro_accumulation ===\n");
-  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
-  arts_epoch_start(epoch);
+  arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
 
   void *ptr = NULL;
   arts_guid_t db =
@@ -85,11 +84,11 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   ((unsigned int *)ptr)[0] = 0;
   arts_db_release(db, DB_MODE_RW);
 
-  arts_guid_t w = arts_edt_create(writer_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_guid_t w = arts_edt_create(writer_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(db, w, 0, DB_MODE_RW);
 
   for (int r = 0; r < NUM_READERS; r++) {
-    arts_guid_t rd = arts_edt_create(reader_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+    arts_guid_t rd = arts_edt_create(reader_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(db, rd, 0, DB_MODE_RO);
   }
 
@@ -98,7 +97,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     pthread_create(&wdt, NULL, wd_thread, NULL);
     pthread_detach(wdt);
   }
-  arts_epoch_wait(epoch);
+  arts_event_wait(fe);
 
   int wdone = atomic_load(&g_writer_done);
   int ok = atomic_load(&g_reader_ok);

@@ -79,14 +79,14 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_db_release(db, DB_MODE_RW);
 
   arts_guid_t ver = arts_edt_create(verifier_edt, 0, NULL, 1, NULL);
-  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), ver, 1);
-  arts_epoch_start(epoch);
+  arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+  arts_add_dependence(fe, ver, 1, DB_MODE_NULL);
 
   /* Exactly ONE EDT per rank — cross-rank race only. */
   for (unsigned int rank = 0; rank < 2; rank++) {
     arts_guid_t edt = arts_edt_create(
         incrementer_edt, 0, NULL, 1,
-        &(arts_edt_hint_t){.rank = rank, .epoch = epoch});
+        &(arts_edt_hint_t){.rank = rank, .finish_event = fe});
     arts_add_dependence(db, edt, 0, DB_MODE_RW);
     (void)edt;
   }

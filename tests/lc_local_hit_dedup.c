@@ -85,12 +85,12 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   g_expected_sum = 0x42ULL * DB_SIZE;
 
   arts_guid_t ver = arts_edt_create(verifier_edt, 0, NULL, 0, NULL);
-  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), ver, 0);
-  arts_epoch_start(epoch);
+  arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+  arts_add_dependence(fe, ver, 0, DB_MODE_NULL);
 
   for (uint64_t i = 0; i < N_READERS; i++) {
     arts_guid_t edt = arts_edt_create(
-        reader_edt, 1, &i, 1, &(arts_edt_hint_t){.rank = 1, .epoch = epoch});
+        reader_edt, 1, &i, 1, &(arts_edt_hint_t){.rank = 1, .finish_event = fe});
     arts_add_dependence(db, edt, 0, DB_MODE_RO);
     (void)edt;
   }

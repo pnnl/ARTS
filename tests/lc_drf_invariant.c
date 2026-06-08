@@ -17,17 +17,17 @@
 ///        (home rank).  The writer increments a counter N times; the reader
 ///        verifies the expected value.
 ///
-///        Uses a two-level epoch pattern:
-///          outer epoch  → shutdown_edt (finish-EDT, depc=1: outer VAL)
-///          inner epoch  → reader_edt  (finish-EDT, depc=2: DB RO + inner VAL)
-///          writer_edt in inner epoch
+///        Uses a two-level finish scope pattern:
+///          outer finish scope  → shutdown_edt (finish-EDT, depc=1: outer VAL)
+///          inner finish scope  → reader_edt  (finish-EDT, depc=2: DB RO + inner VAL)
+///          writer_edt in inner finish scope
 ///
-///        Under DRF the inner epoch guarantees reader_edt executes only
+///        Under DRF the inner finish scope guarantees reader_edt executes only
 ///        after writer_edt has released the DB.  When writer and reader are
 ///        both on the home rank no WRITEBACK round-trip is needed — the
 ///        home buffer is updated in-place — so the DRF guarantee holds.
 ///        Registered as a single-node ctest; the single-rank path exercises
-///        the epoch ordering invariant without depending on multi-node
+///        the finish scope ordering invariant without depending on multi-node
 ///        writeback delivery.
 
 #include <stdint.h>
@@ -50,7 +50,7 @@ static void writer_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
 static void reader_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                        arts_edt_dep_t depv[]) {
-  /* depv[0] = DB RO; depv[1] = inner epoch VAL */
+  /* depv[0] = DB RO; depv[1] = inner finish scope VAL */
   (void)paramc;
   (void)paramv;
   (void)depc;
@@ -90,25 +90,25 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   *(uint64_t *)addr = 0;
   arts_db_release(db, DB_MODE_RW);
 
-  /* Outer epoch → shutdown_edt (depc=1, slot 0 = outer epoch VAL). */
+  /* Outer finish scope → shutdown_edt (depc=1, slot 0 = outer finish scope VAL). */
   arts_guid_t shut = arts_edt_create(shutdown_edt, 0, NULL, 1, NULL);
-  arts_guid_t outer = arts_epoch_create(arts_get_current_rank(), shut, 0);
-  arts_epoch_start(outer);
+  arts_guid_t outer = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+  arts_add_dependence(outer, shut, 0, DB_MODE_NULL);
 
-  /* reader_edt is the finish-EDT of the inner epoch.
-   * depc=2: slot 0 = DB RO dep, slot 1 = inner epoch VAL.
-   * It lives in the outer epoch so shutdown waits for it. */
+  /* reader_edt is the finish-EDT of the inner finish scope.
+   * depc=2: slot 0 = DB RO dep, slot 1 = inner finish scope VAL.
+   * It lives in the outer finish scope so shutdown waits for it. */
   arts_guid_t rdr = arts_edt_create(
-      reader_edt, 0, NULL, 2, &(arts_edt_hint_t){.rank = 0, .epoch = outer});
+      reader_edt, 0, NULL, 2, &(arts_edt_hint_t){.rank = 0, .finish_event = outer});
   arts_add_dependence(db, rdr, 0, DB_MODE_RO);
 
-  /* Inner epoch: writer runs inside it, reader is the finish-EDT. */
-  arts_guid_t inner = arts_epoch_create(arts_get_current_rank(), rdr, 1);
-  arts_epoch_start(inner);
+  /* Inner finish scope: writer runs inside it, reader is the finish-EDT. */
+  arts_guid_t inner = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+  arts_add_dependence(inner, rdr, 1, DB_MODE_NULL);
 
   arts_guid_t wtr =
       arts_edt_create(writer_edt, 0, NULL, 1,
-                      &(arts_edt_hint_t){.rank = writer_rank, .epoch = inner});
+                      &(arts_edt_hint_t){.rank = writer_rank, .finish_event = inner});
   arts_add_dependence(db, wtr, 0, DB_MODE_RW);
   (void)wtr;
 }

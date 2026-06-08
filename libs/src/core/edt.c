@@ -36,14 +36,14 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include "arts/db.h"
 #include "arts/edt.h"
+#include "arts/db.h"
 #include "arts/utils/malloc.h"
 
 #include <string.h>
 
 #include "arts/edt_context.h" /* current_edt + run-start/end ctx hooks */
-#include "arts/epoch.h"
+#include "arts/event.h"       /* arts_event_set_auto_destroy (finish proxy) */
 #include "arts/gas/guid.h"
 #include "arts/gas/route_table.h"
 #include "arts/runtime_state.h"
@@ -64,10 +64,10 @@
 #include "arts/cxl/deque.h"
 #endif
 
-/* Per-worker EDT-execution context (current_edt, epoch stack, created-DB
- * tracking + save/restore snapshot) lives in sync/edt_context.c.  edt.c reads
- * `current_edt` directly and calls the run-start/run-end context hooks below
- * via that header. */
+/* Per-worker EDT-execution context (current_edt, owned-finish-events list,
+ * created-DB tracking + save/restore snapshot) lives in sync/edt_context.c.
+ * edt.c reads `current_edt` directly and calls the run-start/run-end context
+ * hooks below via that header. */
 
 /*
  * arts_edt_deleter — shared_t deleter.
@@ -101,7 +101,7 @@ void (*arts_edt_get_deleter(void))(void *) { return arts_edt_deleter; }
  * arts_edt_create_core — Core EDT allocation and registration.
  *
  * Allocates the EDT struct (header + paramv + depv + modes), assigns its GUID,
- * copies parameters, registers with the epoch system, and places the EDT into
+ * copies parameters, joins its finish scope (if any), and places the EDT into
  * the route table so that incoming signals can find it.
  *
  * Two paths exist depending on whether a GUID was pre-reserved:
@@ -126,7 +126,7 @@ bool arts_edt_create_core(struct arts_edt_s *edt, arts_guid_kind_t guid_kind,
                           arts_guid_t *guid, unsigned int rank,
                           unsigned int edt_space, arts_edt_t func_ptr,
                           uint32_t paramc, const uint64_t *paramv,
-                          uint32_t depc, bool use_epoch, arts_guid_t epoch_guid,
+                          uint32_t depc, arts_guid_t hint_finish_event,
                           uint64_t arts_id, uint32_t flags) {
   if (!edt) {
     edt = (struct arts_edt_s *)arts_calloc_align(1, edt_space, 16);
@@ -153,67 +153,33 @@ bool arts_edt_create_core(struct arts_edt_s *edt, arts_guid_kind_t guid_kind,
   edt->func_ptr = func_ptr;
   edt->depc = depc;
   edt->paramc = paramc;
-  edt->epoch_guid = NULL_GUID;
   edt->depc_needed = depc;
 
   /* Determine finish-scope for this EDT.
    *
-   * `current_edt` is the file-static thread-local pointer maintained by
-   * arts_set/unset_thread_local_edt_info — direct access, no route_table
-   * lookup needed (same TU).
-   *
-   * Two cases:
-   *   ARTS_EDT_FLAG_FINISH set: allocate a fresh LATCH event as this EDT's
-   *     own finish-scope and chain it into the caller's finish-scope (if any).
-   *     counter_init=1 is the self-alive token; it is released by the
-   *     DECR emitted in arts_unset_thread_local_edt_info on completion.
-   *     Spawned children each INCR this event
-   *     via the plain-inheritance path below, and DECR it on completion.
-   *     When the counter reaches 0, the LATCH fires and propagates DECR to
-   *     the parent finish-scope.
-   *
-   *   Otherwise: plain inheritance — adopt the caller's finish_event and
-   *     INCR it to register as a descendant. */
-  edt->finish_event = NULL_GUID;
-  arts_guid_t parent_fe = current_edt ? current_edt->finish_event : NULL_GUID;
-
-  bool need_new_finish_event = (flags & ARTS_EDT_FLAG_FINISH) != 0;
-
-  if (need_new_finish_event) {
-    arts_event_hint_t latch_hint = ARTS_EVENT_HINT_LATCH(1);
-    arts_guid_t new_fe = arts_event_create(&latch_hint);
-
-    if (parent_fe != NULL_GUID) {
-      /* Chain: when new_fe fires it satisfies one DECR slot of parent_fe.
-       * INCR parent_fe first to register this finish-scope as a descendant.
-       * Both ops are local-sync (parent runs on this node). */
-      arts_event_satisfy_slot(parent_fe, NULL_GUID, ARTS_EVENT_LATCH_INCR_SLOT);
-      arts_add_dependence(new_fe, parent_fe, ARTS_EVENT_LATCH_DECR_SLOT,
-                          DB_MODE_NULL);
-    }
-    edt->finish_event = new_fe;
-  } else if (parent_fe != NULL_GUID) {
-    /* Plain inheritance — adopt enclosing finish-scope and INCR it.
-     * INCR completes before the new EDT can reach its own DECR (which runs
-     * only after the EDT executes — strictly later in this thread). */
-    edt->finish_event = parent_fe;
+   * Finish scopes are created explicitly via arts_event_create(FINISH); an EDT
+   * joins one by passing it in hint.finish_event, otherwise it inherits the
+   * caller's ambient finish_event (transitive membership).  Either way the EDT
+   * INCRs the scope at create and DECRs it on completion (in
+   * arts_unset_thread_local_edt_info).  `current_edt` is the file-static
+   * thread-local maintained by arts_set/unset_thread_local_edt_info — direct
+   * access, no route_table lookup needed (same TU). */
+  arts_guid_t parent_fe;
+  if (hint_finish_event != NULL_GUID) {
+    parent_fe = hint_finish_event;
+  } else if (current_edt) {
+    parent_fe = current_edt->finish_event;
+  } else {
+    parent_fe = NULL_GUID;
+  }
+  edt->finish_event = parent_fe;
+  if (parent_fe != NULL_GUID) {
+    /* Join/inherit: INCR completes before the new EDT can reach its own DECR
+     * (which runs only after the EDT executes — strictly later in this
+     * thread). */
     arts_event_satisfy_slot(parent_fe, NULL_GUID, ARTS_EVENT_LATCH_INCR_SLOT);
   }
-
-  if (use_epoch) {
-    arts_guid_t current_epoch_guid = NULL_GUID;
-    if (epoch_guid && arts_check_epoch_is_root(epoch_guid)) {
-      current_epoch_guid = epoch_guid;
-    } else {
-      current_epoch_guid = arts_epoch_get_current_guid();
-    }
-
-    if (current_epoch_guid) {
-      edt->epoch_guid = current_epoch_guid;
-      arts_epoch_inc_active(current_epoch_guid);
-    }
-  }
-  arts_shutdown_epoch_inc_active();
+  (void)flags;
 
   /* Copy inline parameter values into the EDT's trailing storage.
    * Layout: [<edt header> | paramv[paramc] | depv[depc]].
@@ -240,9 +206,9 @@ bool arts_edt_create_core(struct arts_edt_s *edt, arts_guid_kind_t guid_kind,
   }
 
   ARTS_INFO("EDT create [Guid:%lu, Id:%lu, Depc:%u, Route:%u, "
-            "PreReserved:%s, Epoch:%lu, FuncPtr:%p]",
+            "PreReserved:%s, FuncPtr:%p]",
             *guid, edt->arts_id, edt->depc, rank, created_guid ? "no" : "yes",
-            edt->epoch_guid, (void *)func_ptr);
+            (void *)func_ptr);
 
   if (rank != arts_global_rank_id) {
     /* Remote EDT: serialise and send to the target node. */
@@ -307,17 +273,16 @@ arts_guid_t arts_edt_create(arts_edt_t func_ptr, uint32_t paramc,
                             const arts_edt_hint_t *hint) {
   TIME_EDT_CREATE_START();
 
-  /* Snapshot hint (NULL = ARTS_EDT_HINT_DEFAULTS).  After this all four
-   * optional fields are well-defined and follow the documented precedence:
+  /* Snapshot hint (NULL = ARTS_EDT_HINT_DEFAULTS).  After this all optional
+   * fields are well-defined and follow the documented precedence:
    *   - if .guid != NULL_GUID, the GUID's rank field overrides .rank
-   *   - if .epoch == NULL_GUID, the runtime inherits the caller's current
-   *     epoch (handled inside arts_edt_create_core). */
+   *   - if .finish_event == NULL_GUID, the EDT inherits the caller's ambient
+   *     finish scope (handled inside arts_edt_create_core). */
   arts_edt_hint_t snap = hint
                              ? *hint
                              : (arts_edt_hint_t){.rank = ARTS_HINT_CURRENT_RANK,
                                                  .edt_id = 0,
-                                                 .guid = NULL_GUID,
-                                                 .epoch = NULL_GUID};
+                                                 .guid = NULL_GUID};
 
   arts_guid_t guid = snap.guid;
   unsigned int rank;
@@ -333,8 +298,8 @@ arts_guid_t arts_edt_create(arts_edt_t func_ptr, uint32_t paramc,
                            (paramc * sizeof(uint64_t)) +
                            (depc * sizeof(arts_edt_dep_t));
   bool ok = arts_edt_create_core(NULL, ARTS_GUID_EDT, &guid, rank, edt_space,
-                                 func_ptr, paramc, paramv, depc, true,
-                                 snap.epoch, snap.edt_id, snap.flags);
+                                 func_ptr, paramc, paramv, depc,
+                                 snap.finish_event, snap.edt_id, snap.flags);
   TIME_EDT_CREATE_STOP();
   return ok ? guid : NULL_GUID;
 }
@@ -369,11 +334,8 @@ void arts_edt_delete(struct arts_edt_s *edt) {
 /* Destroy a found, pre-runnable EDT (the home-local body shared by the local
  * API path and the cross-rank wire handler).  `h` is the caller's pin on edt
  * and is released here.  OCR restricts ocrEdtDestroy to pre-runnable EDTs
- * (depc_needed > 0); destroying a runnable/queued/running EDT is UB and would
- * corrupt epoch accounting, so it is skipped.  For a pre-runnable EDT we mirror
- * the finish path's epoch balancing: the EDT was charged active_count++ at
- * creation and will never run, so increment finished_count to keep the epoch
- * fire condition (finished == active) reachable. */
+ * (depc_needed > 0); destroying a runnable/queued/running EDT is UB, so it is
+ * skipped. */
 static void edt_destroy_resolved(struct arts_edt_s *edt, arts_guid_t guid,
                                  arts_shared_ptr_t h) {
   if (edt->depc_needed == 0) {
@@ -382,12 +344,8 @@ static void edt_destroy_resolved(struct arts_edt_s *edt, arts_guid_t guid,
     arts_shared_release(&h);
     return;
   }
-  arts_guid_t epoch_guid = edt->epoch_guid;
   arts_shared_release(&h);
   arts_route_table_mark_delete(guid);
-  if (epoch_guid != NULL_GUID) {
-    arts_epoch_inc_finished(epoch_guid);
-  }
 }
 
 /* Cross-rank send: forward the destroy to the EDT's home rank (symmetric with
@@ -402,7 +360,8 @@ void arts_send_edt_destroy(unsigned int home_rank, arts_guid_t guid) {
 
 void arts_edt_destroy(arts_guid_t guid) {
   /* A GUID's home rank is authoritative; an EDT homed elsewhere is destroyed
-   * at its home (the route_table entry + epoch accounting live there). */
+   * at its home (the route_table entry + finish-scope accounting live there).
+   */
   unsigned int home = arts_guid_get_rank(guid);
   if (home != arts_global_rank_id) {
     arts_send_edt_destroy(home, guid);
@@ -630,25 +589,6 @@ void arts_gpu_signal_edt_memset(arts_guid_t edt_guid, uint32_t slot,
   arts_edt_satisfy_slot(edt_guid, slot, data_guid, mode, NULL, 0);
 }
 
-arts_guid_t arts_edt_get_finish_event(arts_guid_t edt_guid) {
-  /* Single lookup → read field → release.  Same pattern as the rest of
-   * edt.c (e.g. arts_edt_destroy).  Returns NULL_GUID when edt_guid is not
-   * registered in this rank's route table — i.e., when the EDT is homed on
-   * another rank.  Cross-node queries require a remote handler; that path is
-   * deferred to a future extension. */
-  if (edt_guid == NULL_GUID) {
-    return NULL_GUID;
-  }
-  arts_shared_ptr_t h = arts_route_table_lookup_edt(edt_guid);
-  struct arts_edt_s *edt = (struct arts_edt_s *)arts_shared_get(h);
-  if (!edt) {
-    return NULL_GUID;
-  }
-  arts_guid_t fe = edt->finish_event;
-  arts_shared_release(&h);
-  return fe;
-}
-
 void arts_send_memory_move(unsigned int rank, arts_guid_t guid, void *ptr,
                            unsigned int mem_size, unsigned message_type,
                            void (*free_method)(void *)) {
@@ -694,6 +634,9 @@ void arts_handler_edt_create(void *ptr) {
     arts_add_dependence(proxy, parent_fe, ARTS_EVENT_LATCH_DECR_SLOT,
                         DB_MODE_NULL);
     edt->finish_event = proxy;
+    /* Single-shot: the proxy fires once (its scope drains), forwards the DECR
+     * to the remote parent, and is reclaimed instead of lingering. */
+    arts_event_set_auto_destroy(proxy);
   }
   /* Sentinel protocol (mirrors the pre-reserved path in
    * arts_edt_create_core): bump depc_needed by 1 before the EDT becomes

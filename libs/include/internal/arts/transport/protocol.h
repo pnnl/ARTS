@@ -51,11 +51,6 @@ enum arts_msg_type {
   MSG_EVENT_ADD_DEPENDENCE,
   MSG_EDT_CREATE,
   MSG_EVENT_CREATE,
-  MSG_EPOCH_CREATE,
-  MSG_EPOCH_INIT_POOL,
-  MSG_EPOCH_REQUEST,
-  MSG_EPOCH_SEND,
-  MSG_EPOCH_DELETE,
   MSG_TIME_SYNC_REQUEST,
   MSG_TIME_SYNC_RESPONSE,
   /* coherence protocol messages.  The dispatcher routes these to
@@ -139,27 +134,6 @@ struct ARTS_PACKED arts_remote_event_satisfy_slot_packet_s {
   arts_guid_t event;
   arts_guid_t db;
   uint32_t slot;
-};
-
-struct ARTS_PACKED arts_remote_epoch_init_packet_s {
-  struct arts_remote_packet_s header;
-  arts_guid_t epoch_guid;
-  arts_guid_t edt_guid;
-  unsigned int slot;
-};
-
-struct ARTS_PACKED arts_remote_epoch_init_pool_packet_s {
-  struct arts_remote_packet_s header;
-  unsigned int pool_size;
-  arts_guid_t start_guid;
-  arts_guid_t pool_guid;
-};
-
-struct ARTS_PACKED arts_remote_epoch_send_packet_s {
-  struct arts_remote_packet_s header;
-  arts_guid_t epoch_guid;
-  unsigned int active;
-  unsigned int finish;
 };
 
 // Time synchronization packets for RTT-based clock sync

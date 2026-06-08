@@ -44,12 +44,11 @@ extern "C" {
 
 #include "arts/runtime_types.h"
 
-/* arts_guid_kind_t is 0-based (ARTS_GUID_DB = 0, ARTS_GUID_LAST = 4).  This
- * array is sized to ARTS_GUID_LAST so GET_TYPE_NAME(t) works for every valid
- * kind value. */
+/* Indexed by arts_guid_kind_t value (RESERVED=0, DB=1, EVENT=2, EDT=3).
+ * Array size == ARTS_GUID_LAST (4); slot 0 is the reserved/NULL sentinel. */
 #define ARTS_TYPE_NAME                                                         \
-  const char *const arts_type_name[] = {"ARTS_GUID_DB", "ARTS_GUID_EDT",       \
-                                        "ARTS_GUID_EVENT", "ARTS_GUID_EPOCH"}
+  const char *const arts_type_name[] = {"ARTS_GUID_RESERVED", "ARTS_GUID_DB",  \
+                                        "ARTS_GUID_EVENT", "ARTS_GUID_EDT"}
 
 #define GET_TYPE_NAME(x) arts_type_name[x]
 
@@ -103,8 +102,8 @@ void prep_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu);
 void *arts_db_malloc(arts_db_types_t db_type, size_t size);
 void arts_db_free(void *ptr);
 
-/* Internal pre/post-yield helpers used by arts_epoch_wait.  Not part
- * of the public ARTS API. */
+/* Internal pre/post-yield helpers used when an EDT yields (e.g.
+ * arts_event_wait). Not part of the public ARTS API. */
 void arts_wait_release_dbs(void);
 void arts_wait_reacquire_dbs(void);
 

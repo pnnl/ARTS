@@ -24,16 +24,15 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
 
-  arts_guid_t epoch =
-      arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
-  arts_epoch_start(epoch);
+  arts_guid_t fe =
+      arts_event_create(&ARTS_EVENT_HINT_FINISH);
 
   for (unsigned int i = 0; i < NUM_TASKS; i++) {
     arts_edt_create(worker_edt, 0, NULL, 0,
-                    &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+                    &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   }
 
-  arts_epoch_wait(epoch);
+  arts_event_wait(fe);
   arts_shutdown();
 }
 

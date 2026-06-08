@@ -33,8 +33,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== event_channel_lifetime ===\n");
 
-  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
-  arts_epoch_start(epoch);
+  arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
 
   arts_event_hint_t hint = ARTS_EVENT_HINT_CHANNEL;
   arts_guid_t ch = arts_event_create(&hint);
@@ -42,7 +41,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   /* Drive N fire generations: pair add_dep + satisfy each iteration. */
   for (int i = 0; i < N_GENS; i++) {
     arts_guid_t edt = arts_edt_create(
-        noop_dep, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+        noop_dep, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(ch, edt, 0, DB_MODE_RW);
     arts_event_satisfy_slot(ch, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
   }
@@ -79,7 +78,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf(
       "  PASS: CHANNEL persistent across %d fires; destroyed explicitly\n",
       N_GENS);
-  arts_epoch_wait(epoch);
+  arts_event_wait(fe);
   arts_shutdown();
 }
 

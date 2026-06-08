@@ -242,10 +242,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   test_result = (volatile unsigned int *)malloc(sizeof(unsigned int));
   *test_result = 0;
 
-  // Start epoch for coordination
-  arts_guid_t epoch_guid = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
-  arts_epoch_start(epoch_guid);
-  arts_printf("[Step 1] Started epoch (guid: %lu)\n", epoch_guid);
+  // Start finish scope for coordination
+  arts_guid_t fe_guid = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+  arts_printf("[Step 1] Started finish scope (guid: %lu)\n", fe_guid);
 
   // Create test DBs with arts_id values
   arts_printf("[Step 3] Creating %u test DBs with arts_id values:\n",
@@ -277,7 +276,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Create validator EDT first
   arts_printf("[Step 4] Creating validator EDT (will run last)...\n");
-  arts_guid_t validator_guid = arts_edt_create(validator, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch_guid});
+  arts_guid_t validator_guid = arts_edt_create(validator, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe_guid});
 
   // Create writer EDTs with arts_id values
   arts_printf("[Step 5] Creating %u writer EDTs with arts_id values:\n",
@@ -365,12 +364,12 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_db_release(db_guids[i], DB_MODE_RW);
   }
 
-  arts_printf("[Step 8] Waiting for epoch to complete...\n");
+  arts_printf("[Step 8] Waiting for finish scope to complete...\n");
 
   // Wait for all EDTs to complete
-  arts_epoch_wait(epoch_guid);
+  arts_event_wait(fe_guid);
 
-  arts_printf("[Step 9] Epoch completed\n");
+  arts_printf("[Step 9] Finish scope completed\n");
 
   // Check test result
   if (*test_result == 1) {

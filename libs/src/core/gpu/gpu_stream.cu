@@ -45,18 +45,17 @@
 #include "arts/gpu/gpu_stream.h"
 
 #include "arts.h"
-#include "arts/edt.h"
+#include "arts/db.h"
 #include "arts/defs.h"
+#include "arts/edt.h"
+#include "arts/edt_context.h" /* arts_set/unset_thread_local_edt_info */
 #include "arts/gas/guid.h"
 #include "arts/gas/route_table.h"
 #include "arts/gpu.h"
 #include "arts/gpu/gpu_internal.h"
 #include "arts/gpu/gpu_lc.h"
 #include "arts/gpu/gpu_route_table.h"
-#include "arts/db.h"
 #include "arts/runtime_state.h"
-#include "arts/edt_context.h" /* arts_set/unset_thread_local_edt_info */
-#include "arts/epoch.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/utils/atomics.h"
@@ -724,8 +723,8 @@ arts_guid_t internal_edt_create_gpu(arts_edt_t func_ptr, arts_guid_t *guid,
   edt->wrapper_edt.edt_type = ARTS_EDT_GPU;
   // artsIntrospectionEdtCreateBegin();
   (void)arts_edt_create_core((struct arts_edt_s *)edt, ARTS_GUID_EDT, guid,
-                                 rank, edt_space, func_ptr, paramc, paramv,
-                                 depc, true, NULL_GUID, 0, 0);
+                             rank, edt_space, func_ptr, paramc, paramv, depc,
+                             NULL_GUID, 0, 0);
   // artsIntrospectionEdtCreateFinish(created);
   //    ARTSEDTCOUNTERTIMERENDINCREMENT(EDT_CREATE_COUNTER);
   return *guid;
@@ -815,8 +814,6 @@ void arts_gpu_host_wrap_up(void *edt_packet, arts_guid_t to_signal,
   if (edt->lib) {
     edt->wrapper_edt.invalidate_count = 0;
     arts_ooo_drain_guid(edt->wrapper_edt.guid);
-  } else if (edt->wrapper_edt.epoch_guid) {
-    arts_epoch_inc_finished(edt->wrapper_edt.epoch_guid);
   }
 
   // Signal next

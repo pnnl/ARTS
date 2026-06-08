@@ -58,7 +58,6 @@
  * Single-node: directly calls arts_runtime_stop() to signal all threads.
  *
  * Called from:
- *   - arts_shutdown_epoch_fire() when the shutdown epoch completes.
  *   - User code via the arts_shutdown() public API.
  */
 void arts_shutdown() {

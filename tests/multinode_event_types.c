@@ -82,11 +82,11 @@ void sticky_trampoline(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
   (void)paramc;
   arts_guid_t event = (arts_guid_t)paramv[0];
-  arts_guid_t epoch = (arts_guid_t)paramv[1];
+  arts_guid_t fe = (arts_guid_t)paramv[1];
   // Event has already fired — register a late dependent.
   arts_guid_t late =
       arts_edt_create(sticky_late_dep, 0, NULL, 1,
-                      &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(event, late, 0, DB_MODE_RW);
   arts_event_destroy(event);
 }
@@ -143,8 +143,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   unsigned int total = arts_get_total_ranks();
   arts_guid_t shut = arts_edt_create(shutdown_edt, 0, NULL, 1, NULL);
-  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), shut, 0);
-  arts_epoch_start(epoch);
+  arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+  arts_add_dependence(fe, shut, 0, DB_MODE_NULL);
 
   // Test 1: ONCE-equivalent (defaults) — create on node 0, satisfy from node 1.
   {
@@ -152,12 +152,12 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     h.rank = 0;
     arts_guid_t ev = arts_event_create(&h);
     arts_guid_t dep = arts_edt_create(
-        once_dep, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+        once_dep, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(ev, dep, 0, DB_MODE_RW);
 
     uint64_t ev_param = (uint64_t)ev;
     arts_edt_create(remote_satisfy, 1, &ev_param, 0,
-                    &(arts_edt_hint_t){.rank = 1, .epoch = epoch});
+                    &(arts_edt_hint_t){.rank = 1, .finish_event = fe});
   }
 
   // Test 2: STICKY-equivalent — persistent (life_count=INT32_MAX),
@@ -169,15 +169,15 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     h.rank = 0;
     arts_guid_t ev = arts_event_create(&h);
 
-    uint64_t tramp_params[2] = {(uint64_t)ev, (uint64_t)epoch};
+    uint64_t tramp_params[2] = {(uint64_t)ev, (uint64_t)fe};
     arts_guid_t tramp =
         arts_edt_create(sticky_trampoline, 2, tramp_params, 1,
-                        &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+                        &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(ev, tramp, 0, DB_MODE_RW);
 
     uint64_t ev_param = (uint64_t)ev;
     arts_edt_create(remote_satisfy, 1, &ev_param, 0,
-                    &(arts_edt_hint_t){.rank = 1, .epoch = epoch});
+                    &(arts_edt_hint_t){.rank = 1, .finish_event = fe});
   }
 
   // Test 3: IDEM-equivalent — persistent (life_count=INT32_MAX), latch=1.
@@ -186,19 +186,19 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     h.rank = 0;
     arts_guid_t ev = arts_event_create(&h);
     arts_guid_t dep = arts_edt_create(
-        idem_dep, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+        idem_dep, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(ev, dep, 0, DB_MODE_RW);
 
     // Satisfy from node 1.
     uint64_t ev_param = (uint64_t)ev;
     arts_edt_create(remote_satisfy, 1, &ev_param, 0,
-                    &(arts_edt_hint_t){.rank = 1, .epoch = epoch});
+                    &(arts_edt_hint_t){.rank = 1, .finish_event = fe});
 
     // Re-satisfy from node 0 (trampoline after the event fires via dep).
     uint64_t re_params[1] = {(uint64_t)ev};
     arts_guid_t re =
         arts_edt_create(idem_re_satisfy, 1, re_params, 1,
-                        &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+                        &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(ev, re, 0, DB_MODE_RW);
   }
 
@@ -212,13 +212,13 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     uint64_t total_param = (uint64_t)total;
     arts_guid_t dep =
         arts_edt_create(counted_fan_in_dep, 1, &total_param, 1,
-                        &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+                        &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(ev, dep, 0, DB_MODE_RW);
 
     for (unsigned int r = 0; r < total; r++) {
       uint64_t ev_param = (uint64_t)ev;
       arts_edt_create(remote_satisfy, 1, &ev_param, 0,
-                      &(arts_edt_hint_t){.rank = r, .epoch = epoch});
+                      &(arts_edt_hint_t){.rank = r, .finish_event = fe});
     }
   }
 }

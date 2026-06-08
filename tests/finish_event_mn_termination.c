@@ -36,84 +36,106 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
-#include <stdlib.h>
+
+/// @file finish_event_mn_termination.c
+/// @brief Tests finish-event termination detection across nodes with result
+///        verification: each task reports its rank, collector verifies
+///        all tasks ran on the correct nodes.
+///        Requires multi-node (node_count > 1).
 
 #include "arts.h"
 
-unsigned int counter = 0;
-uint64_t num_dummy = 0;
-arts_guid_t exit_guid = NULL_GUID;
+#define TASKS_PER_NODE 10
+#define MAX_NODES 64
 
-void dummytask(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-               arts_edt_dep_t depv[]) {}
-
-void sync_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-               arts_edt_dep_t depv[]) {
-  (void)depc;
-  (void)paramc;
-  arts_printf("Guid:%lu Sync %lu: %lu\n", arts_edt_get_current_guid(), paramv[0],
-              depv[0].guid);
-}
-
-void exit_program(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                  arts_edt_dep_t depv[]) {
-  (void)depc;
-  (void)paramc;
-  (void)paramv;
-  arts_printf("Exit: %lu\n", depv[0].guid);
-  arts_shutdown();
-}
-
-void root_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+/// Task on each node: reports rank to collector.
+void node_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                arts_edt_dep_t depv[]) {
   (void)depc;
   (void)depv;
   (void)paramc;
-  uint64_t dep = paramv[0];
-  if (dep) {
-    dep--;
-    //        arts_guid_t guid = arts_edt_create(sync_task, 1,
-    //        &dep, 1, &(arts_edt_hint_t){.rank = arts_get_current_rank()});
-    //        arts_guid_t epoch_guid =
-    //            arts_epoch_create(arts_get_current_rank(), guid, 0);
-    //        arts_epoch_start(epoch_guid);
-    arts_guid_t epoch_guid =
-        arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
-    arts_epoch_start(epoch_guid);
-    arts_printf("Guid:%lu Root: %lu sync: %lu epoch: %lu\n",
-                arts_edt_get_current_guid(), dep, NULL_GUID, epoch_guid);
+  arts_guid_t collector = (arts_guid_t)paramv[0];
+  uint32_t slot = (uint32_t)paramv[1];
+  unsigned int my_rank = arts_get_current_rank();
+  arts_add_dependence((arts_guid_t)((uint64_t)my_rank), collector, slot, DB_MODE_VAL);
+}
 
-    unsigned int num_nodes = arts_get_total_ranks();
-    for (unsigned int rank = 0; rank < num_nodes; rank++) {
-      arts_edt_create(root_task, 1, &dep, 0,
-                      &(arts_edt_hint_t){.rank = rank % num_nodes});
+/// Collector: verify that each rank appears TASKS_PER_NODE times.
+void check_results(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                         arts_edt_dep_t depv[]) {
+  (void)paramc;
+  unsigned int total_nodes = (unsigned int)paramv[0];
+  unsigned int counts[MAX_NODES] = {0};
+  bool ok = true;
+
+  for (uint32_t i = 0; i < depc; i++) {
+    unsigned int rank = (unsigned int)(uint64_t)depv[i].guid;
+    if (rank >= total_nodes) {
+      arts_printf("  FAIL: task %u reported invalid rank %u\n", i, rank);
+      ok = false;
+    } else {
+      counts[rank]++;
     }
-
-    for (uint64_t rank = 0; rank < num_nodes * num_dummy; rank++) {
-      arts_edt_create(dummytask, 0, NULL, 0,
-                      &(arts_edt_hint_t){.rank = rank % num_nodes});
-    }
-
-    arts_epoch_wait(epoch_guid);
   }
+
+  for (unsigned int r = 0; r < total_nodes && ok; r++) {
+    if (counts[r] != TASKS_PER_NODE) {
+      arts_printf("  FAIL: rank %u ran %u tasks, expected %u\n", r, counts[r],
+                  (unsigned int)TASKS_PER_NODE);
+      ok = false;
+    }
+  }
+
+  if (ok) {
+    arts_printf("  PASS: all %u tasks ran across %u nodes (%u per node)\n",
+                depc, total_nodes, (unsigned int)TASKS_PER_NODE);
+  }
+}
+
+/// Finish EDT: finish scope completed across all nodes.
+void scope_finish(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                  arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
+  arts_printf("  PASS: multi-node finish scope completed\n");
+  arts_shutdown();
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
               arts_edt_dep_t depv[]) {
   (void)paramc;
+  (void)paramv;
   (void)depc;
   (void)depv;
-  char **argv = (char **)paramv[1];
-  num_dummy = (uint64_t)strtol(argv[1], NULL, 10);
-  exit_guid = arts_guid_reserve(ARTS_GUID_EDT, 0);
-  arts_printf("Starting\n");
-  arts_edt_create(exit_program, 0, NULL, 1,
-                  &(arts_edt_hint_t){.guid = exit_guid});
-  {
-    arts_guid_t __ep = arts_epoch_create(arts_get_current_rank(), exit_guid, 0);
-    arts_epoch_start(__ep);
+
+  arts_printf("=== finish_event_mn_termination ===\n");
+
+  unsigned int total = arts_get_total_ranks();
+
+  // Create finish event + completion EDT.
+  arts_guid_t fin =
+      arts_edt_create(scope_finish, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0});
+  arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+  arts_add_dependence(fe, fin, 0, DB_MODE_NULL);
+
+  // Create collector EDT that receives one signal per task.
+  unsigned int total_tasks = TASKS_PER_NODE * total;
+  uint64_t total_param = (uint64_t)total;
+  arts_guid_t collector = arts_edt_create(check_results, 1, &total_param, total_tasks, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+
+  // Launch TASKS_PER_NODE tasks on each node.
+  uint32_t slot = 0;
+  for (unsigned int r = 0; r < total; r++) {
+    for (unsigned int i = 0; i < TASKS_PER_NODE; i++) {
+      uint64_t params[2];
+      params[0] = (uint64_t)collector;
+      params[1] = (uint64_t)slot;
+      arts_edt_create(node_task, 2, params, 0, &(arts_edt_hint_t){.rank = r, .finish_event = fe});
+      slot++;
+    }
   }
-  arts_edt_create(root_task, 1, &num_dummy, 0, &(arts_edt_hint_t){.rank = 0});
 }
 
 int main(int argc, char **argv) {

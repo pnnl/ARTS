@@ -109,8 +109,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== edt_signal ===\n");
 
-  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
-  arts_epoch_start(epoch);
+  arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
 
   // 1) signal_edt with DB.
   void *db_ptr = NULL;
@@ -118,20 +117,20 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                                   ARTS_DB_PROP_NONE, NULL);
   *(uint64_t *)db_ptr = MAGIC;
   arts_db_release(db, DB_MODE_RW);
-  arts_guid_t e1 = arts_edt_create(signal_db_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_guid_t e1 = arts_edt_create(signal_db_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(db, e1, 0, DB_MODE_RO);
 
   // 2) signal_edt_value.
-  arts_guid_t e2 = arts_edt_create(signal_value_edt, 0, NULL, 2, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_guid_t e2 = arts_edt_create(signal_value_edt, 0, NULL, 2, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence((arts_guid_t)(42), e2, 0, DB_MODE_VAL);
   arts_add_dependence((arts_guid_t)(0xDEADULL), e2, 1, DB_MODE_VAL);
 
   // 3) NULL source + raw value via arts_add_dependence.
-  arts_guid_t e5 = arts_edt_create(signal_null_edt, 0, NULL, 2, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_guid_t e5 = arts_edt_create(signal_null_edt, 0, NULL, 2, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(NULL_GUID, e5, 0, DB_MODE_NULL);
   arts_add_dependence((arts_guid_t)(77), e5, 1, DB_MODE_VAL);
 
-  arts_epoch_wait(epoch);
+  arts_event_wait(fe);
   arts_printf("=== edt_signal complete ===\n");
   arts_shutdown();
 }

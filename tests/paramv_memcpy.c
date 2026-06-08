@@ -143,38 +143,37 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== paramv_memcpy ===\n");
 
-  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
-  arts_epoch_start(epoch);
+  arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
 
   // Test 1: double.
   double d = 3.14159265358979;
   uint64_t d_param = 0;
   memcpy(&d_param, &d, sizeof(double));
-  arts_edt_create(check_double, 1, &d_param, 0, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_edt_create(check_double, 1, &d_param, 0, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
 
   // Test 2: float.
   float f = 2.71828f;
   uint64_t f_param = 0;
   memcpy(&f_param, &f, sizeof(float));
-  arts_edt_create(check_float, 1, &f_param, 0, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_edt_create(check_float, 1, &f_param, 0, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
 
   // Test 3: int32_t.
   int32_t i = -12345;
   uint64_t i_param = 0;
   memcpy(&i_param, &i, sizeof(int32_t));
-  arts_edt_create(check_int32, 1, &i_param, 0, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_edt_create(check_int32, 1, &i_param, 0, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
 
   // Test 4: struct.
   struct test_struct_s s = {.a = 0xDEADBEEF, .b = 0x1234, .c = 0xAB, .d = 0xCD};
   uint64_t s_param = 0;
   memcpy(&s_param, &s, sizeof(struct test_struct_s));
-  arts_edt_create(check_struct, 1, &s_param, 0, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_edt_create(check_struct, 1, &s_param, 0, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
 
   // Test 5: Multiple uint64_t values.
   uint64_t multi[3] = {100, 200, 300};
-  arts_edt_create(check_multi, 3, multi, 0, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_edt_create(check_multi, 3, multi, 0, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
 
-  arts_epoch_wait(epoch);
+  arts_event_wait(fe);
   arts_shutdown();
 }
 

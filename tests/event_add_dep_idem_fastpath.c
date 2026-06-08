@@ -64,8 +64,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== event_add_dep_idem_fastpath ===\n");
 
-  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
-  arts_epoch_start(epoch);
+  arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
 
   /* IDEM-equivalent: persistent (life_count=INT32_MAX).  The event
    * survives the first fire so a late add_dependence can observe
@@ -83,10 +82,10 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
    * inline, so the waiter EDT runs with no hang. */
   arts_guid_t waiter =
       arts_edt_create(late_waiter_edt, 0, NULL, 1,
-                      &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(ev, waiter, 0, DB_MODE_RW);
 
-  arts_epoch_wait(epoch);
+  arts_event_wait(fe);
 
   /* Cleanup the IDEM-style event we kept alive. */
   arts_event_destroy(ev);

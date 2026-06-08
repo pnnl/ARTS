@@ -138,8 +138,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== record_dep_at ===\n");
 
-  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
-  arts_epoch_start(epoch);
+  arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
 
   // Test 1: Basic RO record_dep.
   void *ptr1 = NULL;
@@ -150,7 +149,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   d1[1] = 99;
   arts_db_release(db1, DB_MODE_RW);
 
-  arts_guid_t e1 = arts_edt_create(check_record_dep_ro, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_guid_t e1 = arts_edt_create(check_record_dep_ro, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(db1, e1, 0, DB_MODE_RO);
 
   // Test 2: EW → RO ordering via record_dep.
@@ -162,10 +161,10 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   d2[1] = 0;
   arts_db_release(db2, DB_MODE_RW);
 
-  arts_guid_t ew_edt = arts_edt_create(writer_ew, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_guid_t ew_edt = arts_edt_create(writer_ew, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(db2, ew_edt, 0, DB_MODE_RW);
 
-  arts_guid_t ro_edt = arts_edt_create(reader_after_ew, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_guid_t ro_edt = arts_edt_create(reader_after_ew, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(db2, ro_edt, 0, DB_MODE_RO);
 
   // Test 3: record_dep_at with byte offset.
@@ -179,7 +178,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   d3[3] = 400;
   arts_db_release(db3, DB_MODE_RW);
 
-  arts_guid_t e3 = arts_edt_create(check_slice, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_guid_t e3 = arts_edt_create(check_slice, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   /* Slicing is a future feature reserved on arts_db_hint_t.access_offset/
    * _size.  The full DB is delivered for now; the receiver indexes into
    * the payload at offset 2 to read elements c, d. */
@@ -188,10 +187,10 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Test 4: record_dep_at preserves DB GUID.
   uint64_t guid_param = (uint64_t)db3;
   arts_guid_t e4 =
-      arts_edt_create(check_slice_guid, 1, &guid_param, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+      arts_edt_create(check_slice_guid, 1, &guid_param, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(db3, e4, 0, DB_MODE_RO);
 
-  arts_epoch_wait(epoch);
+  arts_event_wait(fe);
   arts_shutdown();
 }
 

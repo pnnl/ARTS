@@ -105,8 +105,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== persistent_event_advanced ===\n");
 
-  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
-  arts_epoch_start(epoch);
+  arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
 
   // Channel-equivalent hint: channel=true.  Each satisfy/add_dep pushes
   // into its queue and increments its counter; the drainer pops one of
@@ -123,7 +122,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t ch1 = arts_event_create(&channel_hint);
   arts_guid_t e1 =
       arts_edt_create(pe_satisfy_check, 0, NULL, 1,
-                      &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(ch1, e1, 0, DB_MODE_RW);
   arts_event_satisfy_slot(ch1, db1, ARTS_EVENT_LATCH_DECR_SLOT);
 
@@ -141,7 +140,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   uint64_t guid_param = (uint64_t)db2;
   arts_guid_t e2 =
       arts_edt_create(pe_byte_offset_check, 1, &guid_param, 1,
-                      &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   /* Slicing reserved for arts_db_hint_t; receiver indexes into full DB. */
   arts_add_dependence(ch2, e2, 0, DB_MODE_RO);
   arts_event_satisfy_slot(ch2, db2, ARTS_EVENT_LATCH_DECR_SLOT);
@@ -156,11 +155,11 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t ch3 = arts_event_create(&channel_hint);
   arts_guid_t e3 =
       arts_edt_create(pe_mode_diff_check, 0, NULL, 1,
-                      &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(ch3, e3, 0, DB_MODE_RO);
   arts_event_satisfy_slot(ch3, db3, ARTS_EVENT_LATCH_DECR_SLOT);
 
-  arts_epoch_wait(epoch);
+  arts_event_wait(fe);
   arts_shutdown();
 }
 

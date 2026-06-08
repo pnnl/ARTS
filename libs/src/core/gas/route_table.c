@@ -46,8 +46,7 @@
 #include "arts.h"
 #include "arts/db.h"
 #include "arts/db_coherence_handlers.h"
-#include "arts/edt.h"   /* arts_handler_edt_satisfy_slot[_ptr] */
-#include "arts/epoch.h" /* arts_handler_epoch_* */
+#include "arts/edt.h" /* arts_handler_edt_satisfy_slot[_ptr] */
 #include "arts/event.h"
 #include "arts/gas/guid.h"
 #include "arts/runtime_state.h" /* arts_handle_ready_edt */
@@ -123,7 +122,7 @@ static inline arts_route_table_t *arts_get_route_table(arts_guid_t guid) {
  * Install wraps the object in a shared cb; the cb's deleter is chosen by GUID
  * kind so create call sites keep the (obj, key, ...) signature.  Each object
  * type REGISTERS its deleter here at startup (a constructor in db.c / edt.c /
- * sync/event.c / sync/epoch.c).  route_table does NOT reference the per-type
+ * sync/event.c).  route_table does NOT reference the per-type
  * deleter symbols by name — that would create a backward cross-object-library
  * link dependency (arts_gas → arts_memory/arts_compute) that breaks the CUDA
  * lib's separate-object-library structure.  Registration decouples it: each
@@ -432,10 +431,6 @@ arts_shared_ptr_t arts_route_table_lookup_edt(arts_guid_t guid) {
   return arts_route_table_lookup_typed(guid, ARTS_GUID_EDT);
 }
 
-arts_shared_ptr_t arts_route_table_lookup_epoch(arts_guid_t guid) {
-  return arts_route_table_lookup_typed(guid, ARTS_GUID_EPOCH);
-}
-
 bool arts_route_table_move_item(arts_guid_t old_key, arts_guid_t new_key) {
   arts_route_item_t *new_item;
   arts_route_table_reserve_or_lookup(new_key, &new_item);
@@ -637,9 +632,6 @@ static void ooo_h_db_acquire(void *item, void *vargs) {
   arts_ooo_resolve_db_dep(a->edt, a->slot, (struct arts_db_s *)item);
 }
 
-/* Epoch handlers (inc_*, request, send) live in epoch.c as pure cores on the
- * acquired epoch — no re-issue wrappers here. */
-
 /* OOO_DB_OWNERSHIP_REQUEST replay is provided by the coherence model TU
  * (arts_coh_ooo_replay_ownership_request) because LOCK_REQ exists only in the
  * release-consistency family; LC provides a no-op definition. */
@@ -702,11 +694,6 @@ static const arts_ooo_handler_fn g_ooo_table[OOO_KIND_COUNT] = {
     [OOO_HANDLE_READY_EDT] = ooo_h_handle_ready_edt,
     [OOO_DB_ACQUIRE] = ooo_h_db_acquire,
     [OOO_EDT_SATISFY_SLOT_PTR] = arts_handler_edt_satisfy_slot_ptr,
-    [OOO_EPOCH_REQUEST] = arts_handler_epoch_request,
-    [OOO_EPOCH_SEND] = arts_handler_epoch_send,
-    [OOO_EPOCH_INC_ACTIVE] = arts_handler_epoch_inc_active,
-    [OOO_EPOCH_INC_FINISHED] = arts_handler_epoch_inc_finished,
-    [OOO_EPOCH_INC_QUEUE] = arts_handler_epoch_inc_queue,
     [OOO_DB_OWNERSHIP_REQUEST] = arts_coh_ooo_replay_ownership_request,
     [OOO_DB_SNAPSHOT_REQUEST] = ooo_h_db_snapshot_request,
     [OOO_DB_DESTROY] = ooo_h_db_destroy,

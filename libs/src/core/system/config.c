@@ -758,7 +758,6 @@ static const struct arts_config_entry_s config_entries[] = {
     {"deque_type", CONFIG_UINT, OFF(deque_type), "0", NULL},
     {"worker_init_deque_size", CONFIG_UINT, OFF(deque_size), "4096", NULL},
     {"route_table_size", CONFIG_UINT, OFF(route_table_size), "16", NULL},
-    {"auto_shutdown", CONFIG_UINT, OFF(auto_shutdown), "0", NULL},
     /* --- GPU --- */
     {"gpu", CONFIG_UINT, OFF(gpu), "0", NULL},
     {"gpu_locality", CONFIG_UINT, OFF(gpu_locality), "0", NULL},

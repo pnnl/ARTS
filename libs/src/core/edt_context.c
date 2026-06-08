@@ -40,54 +40,58 @@
 
 #include "arts.h"
 #include "arts/counter/Preamble.h" /* TIME_CONTEXT_SWITCH_START/STOP */
-#include "arts/epoch.h"            /* arts_epoch_inc_finished, shutdown */
 #include "arts/runtime_state.h"    /* arts_thread_info */
-#include "arts/system/print.h"
 #include "arts/utils/array_list.h"
 
-#define MAX_EPOCH_ARRAY_LIST 32
-
-ARTS_THREAD_LOCAL arts_array_list_t *epoch_list = NULL;
 ARTS_THREAD_LOCAL struct arts_edt_s *current_edt = NULL;
 ARTS_THREAD_LOCAL arts_array_list_t *created_db_list = NULL;
+ARTS_THREAD_LOCAL arts_array_list_t *owned_finish_list = NULL;
 
-void arts_set_current_epoch_guid(arts_guid_t epoch_guid) {
-  if (epoch_guid) {
-    if (!epoch_list) {
-      epoch_list = arts_new_array_list(sizeof(arts_guid_t), 8);
-    }
-    arts_push_to_array_list(epoch_list, &epoch_guid);
-    if (current_edt) {
-      current_edt->epoch_guid = epoch_guid;
+void arts_owned_finish_register(arts_guid_t fe_guid) {
+  if (!fe_guid) {
+    return;
+  }
+  if (!owned_finish_list) {
+    owned_finish_list = arts_new_array_list(sizeof(arts_guid_t), 8);
+  }
+  arts_push_to_array_list(owned_finish_list, &fe_guid);
+}
+
+/* Mark fe_guid consumed (by arts_event_wait) so completion cleanup skips it.
+ * Linear scan + zero-out (lists here are tiny — orchestrator EDTs only). */
+void arts_owned_finish_consume(arts_guid_t fe_guid) {
+  if (!owned_finish_list) {
+    return;
+  }
+  uint64_t n = arts_length_array_list(owned_finish_list);
+  for (uint64_t i = 0; i < n; i++) {
+    arts_guid_t *g =
+        (arts_guid_t *)arts_get_from_array_list(owned_finish_list, i);
+    if (*g == fe_guid) {
+      *g = NULL_GUID;
+      return;
     }
   }
 }
 
-arts_guid_t arts_epoch_get_current_guid() {
-  if (epoch_list) {
-    uint64_t length = arts_length_array_list(epoch_list);
-    if (length) {
-      arts_guid_t *guid =
-          (arts_guid_t *)arts_get_from_array_list(epoch_list, length - 1);
-      return *guid;
+/* Completion: DECR creator-token of every finish event not consumed by wait. */
+void arts_owned_finish_cleanup(void) {
+  if (!owned_finish_list) {
+    return;
+  }
+  uint64_t n = arts_length_array_list(owned_finish_list);
+  for (uint64_t i = 0; i < n; i++) {
+    arts_guid_t *g =
+        (arts_guid_t *)arts_get_from_array_list(owned_finish_list, i);
+    if (*g != NULL_GUID) {
+      arts_event_satisfy_slot(*g, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
     }
   }
-  return NULL_GUID;
+  arts_reset_array_list(owned_finish_list);
 }
 
-arts_guid_t *arts_check_epoch_is_root(arts_guid_t to_check) {
-  if (epoch_list) {
-    uint64_t length = arts_length_array_list(epoch_list);
-    for (uint64_t i = 0; i < length; i++) {
-      arts_guid_t *guid =
-          (arts_guid_t *)arts_get_from_array_list(epoch_list, i);
-      if (*guid == to_check) {
-        return guid;
-      }
-    }
-  }
-  ARTS_INFO("ERROR %lu is not a valid epoch", to_check);
-  return NULL;
+arts_guid_t arts_current_finish_event(void) {
+  return current_edt ? current_edt->finish_event : NULL_GUID;
 }
 
 void arts_track_created_db(arts_guid_t guid) {
@@ -103,28 +107,22 @@ void arts_set_thread_local_edt_info(struct arts_edt_s *edt) {
   arts_thread_info.current_edt_guid = edt->guid;
   current_edt = edt;
 
-  if (epoch_list) {
-    arts_reset_array_list(epoch_list);
-  }
-
   if (created_db_list) {
     arts_reset_array_list(created_db_list);
   }
-
-  arts_set_current_epoch_guid(current_edt->epoch_guid);
 }
 
 void arts_edt_ctx_save(arts_edt_ctx_t *tl) {
   TIME_CONTEXT_SWITCH_START();
   tl->current_edt_guid = arts_thread_info.current_edt_guid;
   tl->current_edt = current_edt;
-  tl->epoch_list = (void *)epoch_list;
   tl->created_db_list = (void *)created_db_list;
+  tl->owned_finish_list = (void *)owned_finish_list;
 
   arts_thread_info.current_edt_guid = NULL_GUID;
   current_edt = NULL;
-  epoch_list = NULL;
   created_db_list = NULL;
+  owned_finish_list = NULL;
   TIME_CONTEXT_SWITCH_STOP();
 }
 
@@ -132,67 +130,39 @@ void arts_edt_ctx_restore(arts_edt_ctx_t *tl) {
   TIME_CONTEXT_SWITCH_START();
   arts_thread_info.current_edt_guid = tl->current_edt_guid;
   current_edt = tl->current_edt;
-  if (epoch_list) {
-    arts_delete_array_list(epoch_list);
-  }
-  epoch_list = (arts_array_list_t *)tl->epoch_list;
   if (created_db_list) {
     arts_delete_array_list(created_db_list);
   }
   created_db_list = (arts_array_list_t *)tl->created_db_list;
+  if (owned_finish_list) {
+    arts_delete_array_list(owned_finish_list);
+  }
+  owned_finish_list = (arts_array_list_t *)tl->owned_finish_list;
   TIME_CONTEXT_SWITCH_STOP();
 }
 
 void arts_cleanup_edt_tls() {
-  if (epoch_list) {
-    arts_delete_array_list(epoch_list);
-    epoch_list = NULL;
-  }
   if (created_db_list) {
     arts_delete_array_list(created_db_list);
     created_db_list = NULL;
   }
-}
-
-void arts_epoch_list_mark_finished() {
-  if (epoch_list) {
-
-    unsigned int epoch_array_length = arts_length_array_list(epoch_list);
-    for (unsigned int i = 0; i < epoch_array_length; i++) {
-      arts_guid_t *guid =
-          (arts_guid_t *)arts_get_from_array_list(epoch_list, i);
-#if ARTS_LOG_LEVEL >= 2
-      uint64_t current_id = current_edt ? current_edt->arts_id : 0;
-      ARTS_INFO("Current EDT[Id:%lu, Guid:%lu] - Unsetting Epoch [Guid:%lu]",
-                current_id, arts_thread_info.current_edt_guid, *guid);
-#endif
-      if (*guid) {
-        arts_epoch_inc_finished(*guid);
-      }
-    }
-
-    if (epoch_array_length > MAX_EPOCH_ARRAY_LIST) {
-      arts_delete_array_list(epoch_list);
-      epoch_list = NULL;
-    } else {
-      arts_reset_array_list(epoch_list);
-    }
+  if (owned_finish_list) {
+    arts_delete_array_list(owned_finish_list);
+    owned_finish_list = NULL;
   }
-  arts_shutdown_epoch_inc_finished();
 }
 
 void arts_unset_thread_local_edt_info() {
-  arts_epoch_list_mark_finished();
   /* finish_event tracking: emit DECR on completion of the current EDT.
-   * - Inherited finish_event: balances the INCR emitted at create time.
-   * - Own (ARTS_EDT_FLAG_FINISH or cross-node proxy) finish_event:
-   *   counter==0 fires the latch, propagating DECR to the parent's
-   *   finish_event via the dep registered at allocation.
+   * - Joined/inherited finish_event: balances the INCR emitted at create time.
+   * - Cross-node proxy finish_event: counter==0 fires the latch, propagating
+   *   DECR to the parent's finish_event via the dep registered at allocation.
    * `current_edt` is still valid here (cleared on the next line). */
   if (current_edt && current_edt->finish_event != NULL_GUID) {
     arts_event_satisfy_slot(current_edt->finish_event, NULL_GUID,
                             ARTS_EVENT_LATCH_DECR_SLOT);
   }
+  arts_owned_finish_cleanup(); /* DECR creator-token of un-waited finish events */
   arts_thread_info.current_edt_guid = NULL_GUID;
   current_edt = NULL;
 }

@@ -133,20 +133,19 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== edt_fan_out ===\n");
 
-  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
-  arts_epoch_start(epoch);
+  arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
 
   // Test 1: Value-mode fan-out/fan-in.
-  arts_guid_t coll = arts_edt_create(collector, 0, NULL, FAN_WIDTH, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_guid_t coll = arts_edt_create(collector, 0, NULL, FAN_WIDTH, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   for (uint32_t i = 0; i < FAN_WIDTH; i++) {
     uint64_t params[2];
     params[0] = (uint64_t)i;
     params[1] = (uint64_t)coll;
-    arts_edt_create(fan_child, 2, params, 0, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+    arts_edt_create(fan_child, 2, params, 0, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   }
 
   // Test 2: DB-mode fan-out/fan-in.
-  arts_guid_t db_coll = arts_edt_create(db_collector, 0, NULL, FAN_WIDTH, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_guid_t db_coll = arts_edt_create(db_collector, 0, NULL, FAN_WIDTH, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_guid_t range_start = arts_guid_reserve_range(ARTS_GUID_DB, FAN_WIDTH, 0);
   for (uint32_t i = 0; i < FAN_WIDTH; i++) {
     arts_guid_t db_guid = arts_guid_from_index(range_start, i);
@@ -154,10 +153,10 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     params[0] = (uint64_t)i;
     params[1] = (uint64_t)db_coll;
     params[2] = (uint64_t)db_guid;
-    arts_edt_create(db_fan_child, 3, params, 0, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+    arts_edt_create(db_fan_child, 3, params, 0, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   }
 
-  arts_epoch_wait(epoch);
+  arts_event_wait(fe);
   arts_shutdown();
 }
 

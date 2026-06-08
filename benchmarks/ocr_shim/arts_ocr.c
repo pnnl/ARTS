@@ -804,10 +804,9 @@ static void ocr_els_reset(void);
  *   paramv[2] = output event GUID (for non-finish EDTs) or NULL_GUID
  *   paramv[3..3+paramc-1] = original paramv values
  *
- * For finish EDTs (EDT_PROP_FINISH), the runtime manages the finish-scope
- * via ARTS_EDT_FLAG_FINISH: a LATCH finish_event is allocated at create
- * time and chained to the OCR outputEvent directly from ocrEdtCreate.
- * The trampoline itself is scope-agnostic.
+ * For finish EDTs (EDT_PROP_FINISH), ocrEdtCreate pre-creates a FINISH event
+ * (via ARTS_EVENT_HINT_FINISH), passes it to the EDT via hint.finish_event, and
+ * chains it to the OCR outputEvent.  The trampoline itself is scope-agnostic.
  * ========================================================================= */
 
 static void ocr_edt_trampoline(uint32_t paramc, const uint64_t *paramv,
@@ -975,32 +974,30 @@ u8 ocrEdtCreate(ocrGuid_t *guid, ocrGuid_t templateGuid, u32 paramc,
   artsParamv[2] = isFinishEdt ? (uint64_t)NULL_GUID : (uint64_t)outEvt;
   ocr_copy_paramv_safe(&artsParamv[3], paramv, actualParamc);
 
+  /* For finish EDTs, create the finish event explicitly so the shim owns it
+   * and can chain it to outEvt immediately — without querying the EDT after
+   * creation.  The finish event's latch is pre-decremented by the EDT itself
+   * (creator-token); when all descendants complete it drains to zero and fires,
+   * satisfying outEvt and signalling the OCR scope boundary.  ARTS_MODE_NULL is
+   * the correct dependency mode: the scope-drain signal carries no data payload.
+   */
+  arts_guid_t fe = NULL_GUID;
+  if (isFinishEdt) {
+    arts_event_hint_t feh = ARTS_EVENT_HINT_FINISH;
+    feh.rank = rank;
+    fe = arts_event_create(&feh);
+  }
+
   arts_edt_hint_t edtHint = {.rank = rank};
   if (isFinishEdt) {
-    edtHint.flags |= ARTS_EDT_FLAG_FINISH;
+    edtHint.finish_event = fe;
   }
   arts_guid_t edtGuid = arts_edt_create(ocr_edt_trampoline, artsParamc,
                                         artsParamv, actualDepc, &edtHint);
 
-  /* For finish EDTs, chain finish_event → outEvt so that the OCR output
-   * event is satisfied when the finish-scope (this EDT + all descendants)
-   * drains.  The finish_event carries no payload (it fires as a scope-drain
-   * signal only), so ARTS_MODE_NULL is the correct dependency mode. */
-  if (isFinishEdt && outEvt != NULL_GUID && edtGuid != NULL_GUID) {
-    arts_guid_t fe = arts_edt_get_finish_event(edtGuid);
-    if (fe != NULL_GUID) {
-      arts_add_dependence(fe, outEvt, 0, ARTS_MODE_NULL);
-    } else {
-      /* Defensive: ARTS_EDT_FLAG_FINISH should always allocate a
-       * finish_event, so fe == NULL_GUID indicates a runtime invariant
-       * violation.  Satisfy outEvt directly with NULL data so the
-       * dependent EDT can still make progress, and warn. */
-      fprintf(stderr,
-              "finish-EDT %" PRIu64 " has NULL finish_event; satisfying "
-              "outEvt directly to avoid orphaned dependency\n",
-              (uint64_t)edtGuid);
-      arts_event_satisfy_slot(outEvt, NULL_GUID, 0);
-    }
+  if (isFinishEdt && outEvt != NULL_GUID && edtGuid != NULL_GUID &&
+      fe != NULL_GUID) {
+    arts_add_dependence(fe, outEvt, 0, ARTS_MODE_NULL);
   }
 
   arts_free(artsParamv);

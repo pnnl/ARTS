@@ -81,14 +81,12 @@ struct arts_edt_s {
   arts_edt_t func_ptr; /**< User function to execute. */
   uint32_t paramc;     /**< Number of static parameters. */
   uint32_t depc;       /**< Number of dependency slots. */
-  /* The EDT's own GUID.  Unlike DB/Event/Epoch (always reached via a
-   * route_table lookup whose key already IS the GUID), an EDT is dispatched
-   * by raw pointer through the lock-free work-stealing deques — at dispatch
-   * there is no key and no handler args, so the GUID must travel inside the
-   * struct.  This is a load-bearing identity carrier, NOT a redundant
-   * self-GUID: do not remove it. */
+  /* The EDT's own GUID.  Unlike DB/Event (always reached via a route_table
+   * lookup whose key already IS the GUID), an EDT is dispatched by raw pointer
+   * through the lock-free work-stealing deques — at dispatch there is no key
+   * and no handler args, so the GUID must travel inside the struct.  This is a
+   * load-bearing identity carrier, NOT a redundant self-GUID: do not remove. */
   arts_guid_t guid;
-  arts_guid_t epoch_guid;    /**< Enclosing epoch GUID (NULL_GUID = none). */
   arts_guid_t finish_event;  /**< LATCH event for finish-scope tracking.
                                   NULL_GUID = no finish-scope (legacy path). */
   arts_edt_types_t edt_type; /**< EDT subtype (DEFAULT=CPU, GPU). */
@@ -143,6 +141,7 @@ struct arts_event_s {
     struct {
       int32_t latch;
       bool fired;
+      bool auto_destroy; /* single-shot: mark_delete on fire (finish/proxy) */
       arts_guid_t data;
       arts_lf_stack_t deps_stack;
     } simple;
@@ -163,6 +162,7 @@ struct arts_event_s {
     struct {
       _Atomic(int32_t) latch;     /* fires at <= 0 */
       _Atomic(bool) fired;        /* single-fire CAS gate */
+      _Atomic(bool) auto_destroy; /* single-shot: mark_delete on fire */
       arts_guid_t data;           /* last satisfy data; late binders read */
       arts_lf_stack_t deps_stack; /* Treiber stack of pending consumers */
     } simple;
@@ -178,45 +178,6 @@ struct arts_event_s {
 #endif
 
 /** @} */ /* end internal_structs */
-
-/* ========================================================================= */
-/** @defgroup td_types Termination Detection
- *  @{ */
-
-/** Three-phase termination detection state machine. */
-typedef enum {
-  PHASE_1, /**< Initial quiescence check. */
-  PHASE_2, /**< Counter stabilization. */
-  PHASE_3  /**< Termination confirmed. */
-} termination_detection_phase_t;
-
-/**
- * @brief Per-epoch termination detection state.
- *
- * Tracks active/finished task counts across nodes to determine when
- * all work within the epoch has completed.
- */
-struct arts_epoch_s {
-  volatile unsigned int local_lock;   /**< Single-node active/finished lock. */
-  volatile unsigned int phase;        /**< Current TD phase (PHASE_*). */
-  volatile unsigned int active_count; /**< Local active task count. */
-  volatile unsigned int finished_count;      /**< Local finished task count. */
-  volatile unsigned int global_active_count; /**< Cluster-wide active count. */
-  volatile unsigned int
-      global_finished_count;               /**< Cluster-wide finished count. */
-  volatile unsigned int last_active_count; /**< Previous-round active count. */
-  volatile unsigned int
-      last_finished_count;            /**< Previous-round finished count. */
-  volatile uint64_t queued;           /**< Number of queued operations. */
-  volatile uint64_t outstanding;      /**< Number of outstanding remote ops. */
-  unsigned int termination_exit_slot; /**< EDT slot to signal on completion. */
-  arts_guid_t termination_exit_guid;  /**< EDT to signal on completion. */
-  arts_guid_t guid;                   /**< GUID of this epoch. */
-  arts_guid_t pool_guid;              /**< Associated resource pool GUID. */
-};
-typedef struct arts_epoch_s arts_epoch_t;
-
-/** @} */ /* end td_types */
 
 /* ========================================================================= */
 #ifdef __cplusplus

@@ -48,7 +48,7 @@
 
 #define SENTINEL 0xFEEDFACEULL
 
-/// Creator EDT: runs on rank 0 inside the inner epoch.
+/// Creator EDT: runs on rank 0 inside the inner finish scope.
 /// Creates the DB with the reserved GUID and writes the sentinel value.
 static void creator_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                         arts_edt_dep_t depv[]) {
@@ -65,7 +65,7 @@ static void creator_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 /// Reader EDT: runs on rank 1, receives the DB via slot 0 (RO dep).
-/// Slot 1 carries the inner-epoch completion signal ensuring ordering.
+/// Slot 1 carries the inner-finish scope completion signal ensuring ordering.
 static void reader_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                        arts_edt_dep_t depv[]) {
   (void)paramc;
@@ -77,7 +77,7 @@ static void reader_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
               ok ? "PASS" : "FAIL", data ? (unsigned long)data[0] : 0UL);
 }
 
-/// Shutdown EDT: fires after the outer epoch completes.
+/// Shutdown EDT: fires after the outer finish scope completes.
 static void shutdown_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                          arts_edt_dep_t depv[]) {
   (void)paramc;
@@ -106,27 +106,27 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   /* Reserve the DB GUID on rank 0 (home = 0). */
   arts_guid_t reserved = arts_guid_reserve(ARTS_GUID_DB, 0);
 
-  /* Outer epoch: fires shutdown_edt when all work completes. */
+  /* Outer finish scope: fires shutdown_edt when all work completes. */
   arts_guid_t shut = arts_edt_create(shutdown_edt, 0, NULL, 1, NULL);
-  arts_guid_t outer = arts_epoch_create(arts_get_current_rank(), shut, 0);
-  arts_epoch_start(outer);
+  arts_guid_t outer = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+  arts_add_dependence(outer, shut, 0, DB_MODE_NULL);
 
   /* Reader EDT on rank 1: depc=2.
    *   slot 0 — DB RO dependence (delivers data pointer)
-   *   slot 1 — inner epoch completion signal (ensures DB is created first) */
+   *   slot 1 — inner finish scope completion signal (ensures DB is created first) */
   uint64_t rparam = (uint64_t)reserved;
   arts_guid_t reader = arts_edt_create(
-      reader_edt, 1, &rparam, 2, &(arts_edt_hint_t){.rank = 1, .epoch = outer});
+      reader_edt, 1, &rparam, 2, &(arts_edt_hint_t){.rank = 1, .finish_event = outer});
   arts_add_dependence(reserved, reader, 0, DB_MODE_RO);
 
-  /* Inner epoch: creator EDT runs here; reader_edt slot 1 is the finish slot.
-   * When all EDTs in the inner epoch complete, slot 1 of reader fires. */
-  arts_guid_t inner = arts_epoch_create(arts_get_current_rank(), reader, 1);
-  arts_epoch_start(inner);
+  /* Inner finish scope: creator EDT runs here; reader_edt slot 1 is the finish slot.
+   * When all EDTs in the inner finish scope complete, slot 1 of reader fires. */
+  arts_guid_t inner = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+  arts_add_dependence(inner, reader, 1, DB_MODE_NULL);
 
-  /* Creator EDT on rank 0 inside the inner epoch. */
+  /* Creator EDT on rank 0 inside the inner finish scope. */
   arts_edt_create(creator_edt, 1, &rparam, 0,
-                  &(arts_edt_hint_t){.rank = 0, .epoch = inner});
+                  &(arts_edt_hint_t){.rank = 0, .finish_event = inner});
 }
 
 int main(int argc, char **argv) {

@@ -144,24 +144,23 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== node_query ===\n");
 
-  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
-  arts_epoch_start(epoch);
+  arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
 
   // Test 1: Query functions in EDT.
-  arts_edt_create(check_queries, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_edt_create(check_queries, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
 
   // Test 2: Launch multiple EDTs and collect worker IDs.
   unsigned int total = arts_get_workers_per_rank();
   unsigned int count = (total > 8) ? 8 : total;
-  arts_guid_t coll = arts_edt_create(collect_worker_ids, 0, NULL, count, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_guid_t coll = arts_edt_create(collect_worker_ids, 0, NULL, count, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   for (unsigned int i = 0; i < count; i++) {
     uint64_t params[2];
     params[0] = (uint64_t)i;
     params[1] = (uint64_t)coll;
-    arts_edt_create(check_worker_id, 2, params, 0, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+    arts_edt_create(check_worker_id, 2, params, 0, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   }
 
-  arts_epoch_wait(epoch);
+  arts_event_wait(fe);
   arts_shutdown();
 }
 

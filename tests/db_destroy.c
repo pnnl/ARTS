@@ -76,20 +76,19 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== db_destroy ===\n");
 
-  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
-  arts_epoch_start(epoch);
+  arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
 
   // Test 1: arts_db_destroy (implicit release).
   void *p1 = NULL;
   arts_guid_t db1 = arts_db_create(&p1, 64, ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
   arts_db_destroy(db1);
-  arts_edt_create(after_destroy, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_edt_create(after_destroy, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
 
   // Test 2: arts_db_destroy on a second DB (implicit release).
   void *p2 = NULL;
   arts_guid_t db2 = arts_db_create(&p2, 64, ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
   arts_db_destroy(db2);
-  arts_edt_create(after_destroy, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_edt_create(after_destroy, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
 
   // Test 4: Create new DB after destroying old one.
   void *p3 = NULL;
@@ -97,7 +96,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   ((int *)p3)[0] = 777;
   arts_db_release(db3, DB_MODE_RW);
 
-  arts_guid_t e3 = arts_edt_create(verify_new_db, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_guid_t e3 = arts_edt_create(verify_new_db, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(db3, e3, 0, DB_MODE_RO);
 
   // Test 5: Double destroy (should be no-op on second call, not crash).
@@ -114,7 +113,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_db_destroy(db6); // Should log warning and return
   arts_printf("  PASS: destroy on LOCAL DB warned without crash\n");
 
-  arts_epoch_wait(epoch);
+  arts_event_wait(fe);
   arts_shutdown();
 }
 

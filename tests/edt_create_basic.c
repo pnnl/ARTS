@@ -39,7 +39,7 @@
 
 /// @file edt_create_basic.c
 /// @brief Tests basic EDT creation variants: arts_edt_create, with_guid,
-///        with_epoch, _dep, with multiple paramv sizes, zero depc, etc.
+///        with finish scope, _dep, with multiple paramv sizes, zero depc, etc.
 
 #include "arts.h"
 #include <string.h>
@@ -93,14 +93,14 @@ void guid_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   report("create_with_guid matches", my_guid == expected, 2);
 }
 
-/// 4) EDT created in an epoch.
-void epoch_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+/// 4) EDT created in a finish scope.
+void scope_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                arts_edt_dep_t depv[]) {
   (void)depv;
   (void)depc;
   (void)paramc;
   (void)paramv;
-  report("epoch_edt fires in epoch", true, 3);
+  report("scope_edt fires in finish scope", true, 3);
 }
 
 /// 5) EDT with has_depv=true — verify depv storage exists.
@@ -152,10 +152,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   uint64_t guid_param = (uint64_t)reserved;
   arts_edt_create(guid_edt, 1, &guid_param, 0, &(arts_edt_hint_t){.guid = reserved});
 
-  // 4) Create with epoch.
-  arts_guid_t epoch_guid = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
-  arts_epoch_start(epoch_guid);
-  arts_edt_create(epoch_edt, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0, .epoch = epoch_guid});
+  // 4) Create with finish scope.
+  arts_guid_t fe_guid = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+  arts_edt_create(scope_edt, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0, .finish_event = fe_guid});
 
   // 5) Create dep with has_depv=true — signal with DB.
   void *db_ptr = NULL;

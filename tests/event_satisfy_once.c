@@ -64,8 +64,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== event_satisfy_once ===\n");
 
-  arts_guid_t epoch = arts_epoch_create(arts_get_current_rank(), NULL_GUID, 0);
-  arts_epoch_start(epoch);
+  arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
 
   /* Default hint = OCR ONCE_T: latch=1, auto_destroy=true,
    * nb_deps_required=1, single-fire. */
@@ -74,13 +73,13 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   /* Register one waiter EDT.  Wired via arts_add_dependence — when the
    * event fires, the waiter slot 0 is satisfied and the EDT runs. */
-  arts_guid_t waiter = arts_edt_create(waiter_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .epoch = epoch});
+  arts_guid_t waiter = arts_edt_create(waiter_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(ev, waiter, 0, DB_MODE_RW);
 
   /* Slot-0 satisfy via the OCR-aligned wrapper. */
   arts_event_satisfy(ev, NULL_GUID);
 
-  arts_epoch_wait(epoch);
+  arts_event_wait(fe);
   arts_shutdown();
 }
 
