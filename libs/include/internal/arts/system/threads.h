@@ -50,12 +50,23 @@ extern "C" {
 void arts_thread_init(struct arts_config_s *config);
 void arts_thread_main_join(void);
 
-/* Shutdown protocol entry points. See libs/src/core/system/threads.c
- * (or shutdown.c if split out later) for the implementation.
- *   initiator = true  → broadcast MSG_SHUTDOWN to all peers,
- *                       wait for local outbox drain, then stop workers.
- *   initiator = false → just stop workers (passive receiver path). */
+/* Shutdown protocol entry points (see libs/src/core/system/shutdown.c).
+ *
+ * Responsibility split (spec Cat E — state-less, no route_table):
+ *   - arts_shutdown (public API, the initiator side): owns the cluster
+ *     broadcast (MSG_SHUTDOWN × N-1) + wait_for_outbox_drain, then enters the
+ *     local stop state.  The drain wait is the initiator's responsibility only.
+ *   - arts_handler_shutdown (the passive RX side): the lightweight gate the
+ *     wire dispatcher calls directly on MSG_SHUTDOWN — idempotent CAS (0→1) +
+ *     worker-thread stop signal.  NO rebroadcast, NO drain-wait.  Sender/
+ *     receiver shutdown + thread join are the main-thread epilogue's job.
+ *
+ * arts_enter_shutdown_state is the shared CAS-gated mechanism both sides reach
+ * (initiator = true adds the broadcast + drain before the worker stop); the CAS
+ * keeps exactly one caller doing the broadcast/stop even under concurrent
+ * initiation. */
 void arts_enter_shutdown_state(bool initiator);
+void arts_handler_shutdown(void);
 
 /* Local lifecycle controls (runtime-state mutators, not introspection).
  *   arts_stop_local_worker — retire only the calling worker thread.

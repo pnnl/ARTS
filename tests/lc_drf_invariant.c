@@ -19,8 +19,8 @@
 ///
 ///        Uses a two-level finish scope pattern:
 ///          outer finish scope  → shutdown_edt (finish-EDT, depc=1: outer VAL)
-///          inner finish scope  → reader_edt  (finish-EDT, depc=2: DB RO + inner VAL)
-///          writer_edt in inner finish scope
+///          inner finish scope  → reader_edt  (finish-EDT, depc=2: DB RO +
+///          inner VAL) writer_edt in inner finish scope
 ///
 ///        Under DRF the inner finish scope guarantees reader_edt executes only
 ///        after writer_edt has released the DB.  When writer and reader are
@@ -43,8 +43,9 @@ static void writer_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   uint64_t *db = (uint64_t *)depv[0].ptr;
   if (db) {
-    for (int i = 0; i < N_ITERS; i++)
+    for (int i = 0; i < N_ITERS; i++) {
       (*db)++;
+    }
   }
 }
 
@@ -90,7 +91,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   *(uint64_t *)addr = 0;
   arts_db_release(db, DB_MODE_RW);
 
-  /* Outer finish scope → shutdown_edt (depc=1, slot 0 = outer finish scope VAL). */
+  /* Outer finish scope → shutdown_edt (depc=1, slot 0 = outer finish scope
+   * VAL). */
   arts_guid_t shut = arts_edt_create(shutdown_edt, 0, NULL, 1, NULL);
   arts_guid_t outer = arts_event_create(&ARTS_EVENT_HINT_FINISH);
   arts_add_dependence(outer, shut, 0, DB_MODE_NULL);
@@ -98,17 +100,18 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   /* reader_edt is the finish-EDT of the inner finish scope.
    * depc=2: slot 0 = DB RO dep, slot 1 = inner finish scope VAL.
    * It lives in the outer finish scope so shutdown waits for it. */
-  arts_guid_t rdr = arts_edt_create(
-      reader_edt, 0, NULL, 2, &(arts_edt_hint_t){.rank = 0, .finish_event = outer});
+  arts_guid_t rdr =
+      arts_edt_create(reader_edt, 0, NULL, 2,
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = outer});
   arts_add_dependence(db, rdr, 0, DB_MODE_RO);
 
   /* Inner finish scope: writer runs inside it, reader is the finish-EDT. */
   arts_guid_t inner = arts_event_create(&ARTS_EVENT_HINT_FINISH);
   arts_add_dependence(inner, rdr, 1, DB_MODE_NULL);
 
-  arts_guid_t wtr =
-      arts_edt_create(writer_edt, 0, NULL, 1,
-                      &(arts_edt_hint_t){.rank = writer_rank, .finish_event = inner});
+  arts_guid_t wtr = arts_edt_create(
+      writer_edt, 0, NULL, 1,
+      &(arts_edt_hint_t){.rank = writer_rank, .finish_event = inner});
   arts_add_dependence(db, wtr, 0, DB_MODE_RW);
   (void)wtr;
 }

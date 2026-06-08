@@ -82,18 +82,20 @@ int arts_edge_compare_by_source_and_target(const void *e1, const void *e2) {
 
 // end comparators
 
-void arts_edge_vector_init(arts_edge_vector_t *v, arts_graph_sz_t initial_size) {
-  v->edge_array = (arts_edge_t *)arts_malloc(initial_size * sizeof(arts_edge_t));
+void arts_edge_vector_init(arts_edge_vector_t *v,
+                           arts_graph_sz_t initial_size) {
+  v->edge_array =
+      (arts_edge_t *)arts_malloc(initial_size * sizeof(arts_edge_t));
   v->used = 0;
   v->size = initial_size;
 }
 
-void arts_edge_vector_push_back(arts_edge_vector_t *v, arts_vertex_t s, arts_vertex_t t,
-                    arts_edge_data_t d) {
+void arts_edge_vector_push_back(arts_edge_vector_t *v, arts_vertex_t s,
+                                arts_vertex_t t, arts_edge_data_t d) {
   if (v->used == v->size) {
     v->size *= INCREASE_SZ_BY;
-    arts_edge_t *new_edge_array =
-        (arts_edge_t *)arts_realloc(v->edge_array, v->size * sizeof(arts_edge_t));
+    arts_edge_t *new_edge_array = (arts_edge_t *)arts_realloc(
+        v->edge_array, v->size * sizeof(arts_edge_t));
     if (!new_edge_array) {
       ARTS_INFO("[ERROR] Unable to reallocate memory. Cannot continue.");
       assert(false);
@@ -115,7 +117,8 @@ void arts_edge_vector_free(arts_edge_vector_t *v) {
 }
 
 void arts_edge_vector_sort_by_source(arts_edge_vector_t *v) {
-  qsort((void *)v->edge_array, v->used, sizeof(arts_edge_t), arts_edge_compare_by_source);
+  qsort((void *)v->edge_array, v->used, sizeof(arts_edge_t),
+        arts_edge_compare_by_source);
 }
 
 void arts_edge_vector_sort_by_source_and_target(arts_edge_vector_t *v) {

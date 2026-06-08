@@ -91,8 +91,8 @@ void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
   unsigned int node_id = (unsigned int)paramv[0];
   {
-    arts_guid_t __ep = arts_event_create(&ARTS_EVENT_HINT_FINISH);
-    arts_add_dependence(__ep, exit_guid, node_id, DB_MODE_NULL);
+    arts_guid_t ep_scope = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+    arts_add_dependence(ep_scope, exit_guid, node_id, DB_MODE_NULL);
   }
   arts_edt_create(root_task, 0, NULL, 0, &(arts_edt_hint_t){.rank = node_id});
 }
@@ -105,7 +105,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   char **argv = (char **)paramv[1];
   num_dummy = (unsigned int)strtol(argv[1], NULL, 10);
   exit_guid = arts_guid_reserve(ARTS_GUID_EDT, 0);
-  arts_edt_create(exit_program, 0, NULL, arts_get_total_ranks(), &(arts_edt_hint_t){.guid = exit_guid});
+  arts_edt_create(exit_program, 0, NULL, arts_get_total_ranks(),
+                  &(arts_edt_hint_t){.guid = exit_guid});
 
   for (unsigned int n = 0; n < arts_get_total_ranks(); n++) {
     uint64_t args = n;

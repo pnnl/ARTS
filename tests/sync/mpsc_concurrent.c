@@ -47,15 +47,17 @@ int main(void) {
   arts_mpsc_init(&g_q);
 
   pthread_t prod[PRODUCERS];
-  for (int i = 0; i < PRODUCERS; ++i)
+  for (int i = 0; i < PRODUCERS; ++i) {
     pthread_create(&prod[i], NULL, producer, (void *)(uintptr_t)i);
+  }
 
   /* Single drainer: hold the gate, pop until we have every message.  pop()
    * may transiently return NULL while a producer is mid-link, so loop until
    * the full count is collected. */
   uint32_t next_seq[PRODUCERS];
-  for (int i = 0; i < PRODUCERS; ++i)
+  for (int i = 0; i < PRODUCERS; ++i) {
     next_seq[i] = 0;
+  }
   size_t got = 0;
   int idle_after_done = 0;
   while (got < TOTAL) {
@@ -64,8 +66,9 @@ int main(void) {
     size_t before = got;
     for (;;) {
       arts_lf_link_t *n = arts_mpsc_pop(&g_q);
-      if (!n)
+      if (!n) {
         break;
+      }
       msg_t *m = (msg_t *)n; /* link is first member */
       assert(m->producer < PRODUCERS);
       assert(m->seq == next_seq[m->producer]); /* per-producer FIFO */
@@ -79,16 +82,18 @@ int main(void) {
      * final tally assertion fails instead of spinning forever. */
     if (atomic_load_explicit(&g_prod_done, memory_order_acquire) == PRODUCERS) {
       if (got == before) {
-        if (++idle_after_done > 1000)
+        if (++idle_after_done > 1000) {
           break;
+        }
       } else {
         idle_after_done = 0;
       }
     }
   }
 
-  for (int i = 0; i < PRODUCERS; ++i)
+  for (int i = 0; i < PRODUCERS; ++i) {
     pthread_join(prod[i], NULL);
+  }
 
   /* Nothing left behind. */
   assert(arts_mpsc_try_drain_begin(&g_q));
@@ -96,8 +101,9 @@ int main(void) {
   arts_mpsc_drain_end(&g_q);
 
   assert(got == TOTAL); /* no lost or duplicated messages */
-  for (int i = 0; i < PRODUCERS; ++i)
+  for (int i = 0; i < PRODUCERS; ++i) {
     assert(next_seq[i] == PER_PRODUCER);
+  }
 
   printf("mpsc_concurrent: drained %zu messages, per-producer FIFO OK\n", got);
   printf("mpsc_concurrent: OK\n");

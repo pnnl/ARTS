@@ -39,8 +39,9 @@ static void writer_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   uint8_t my_rank = (uint8_t)paramv[0];
   uint8_t *p = (uint8_t *)depv[0].ptr;
   if (p) {
-    for (size_t i = 0; i < DB_SIZE; i++)
+    for (size_t i = 0; i < DB_SIZE; i++) {
       p[i] = my_rank;
+    }
   }
 }
 

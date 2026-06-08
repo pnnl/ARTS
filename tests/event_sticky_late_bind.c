@@ -70,7 +70,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_event_hint_t h = ARTS_EVENT_HINT_STICKY;
     arts_guid_t ev = arts_event_create(&h);
     if (ev == NULL_GUID) {
-      fprintf(stderr, "FAIL [iter=%d]: arts_event_create\n", it);
+      (void)fprintf(stderr, "FAIL [iter=%d]: arts_event_create\n", it);
       abort();
     }
 
@@ -78,7 +78,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_guid_t db = arts_db_create(&dbp, sizeof(uint64_t), ARTS_DB,
                                     ARTS_DB_PROP_NONE, NULL);
     if (db == NULL_GUID) {
-      fprintf(stderr, "FAIL [iter=%d]: arts_db_create\n", it);
+      (void)fprintf(stderr, "FAIL [iter=%d]: arts_db_create\n", it);
       abort();
     }
 
@@ -93,27 +93,26 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     }
 
     /* Spin until all consumer EDTs ran. */
-    for (int spin = 0;
-         spin < 100000000 && atomic_load_explicit(&signaled_count,
-                                                  memory_order_acquire) <
-                                  N_CONSUMERS;
+    for (int spin = 0; spin < 100000000 &&
+                       atomic_load_explicit(&signaled_count,
+                                            memory_order_acquire) < N_CONSUMERS;
          spin++) {
     }
 
     unsigned int got =
         atomic_load_explicit(&signaled_count, memory_order_acquire);
     if (got != N_CONSUMERS) {
-      fprintf(stderr, "FAIL [iter=%d]: signaled_count=%u (want %u)\n", it, got,
-              N_CONSUMERS);
+      (void)fprintf(stderr, "FAIL [iter=%d]: signaled_count=%u (want %u)\n", it,
+                    got, N_CONSUMERS);
       abort();
     }
     for (int i = 0; i < N_CONSUMERS; i++) {
-      arts_guid_t cd = (arts_guid_t)atomic_load_explicit(
-          &consumer_data[i], memory_order_acquire);
+      arts_guid_t cd = (arts_guid_t)atomic_load_explicit(&consumer_data[i],
+                                                         memory_order_acquire);
       if (cd != db) {
-        fprintf(stderr,
-                "FAIL [iter=%d]: consumer %d got %lu (want %lu)\n", it, i,
-                (uint64_t)cd, (uint64_t)db);
+        (void)fprintf(stderr,
+                      "FAIL [iter=%d]: consumer %d got %lu (want %lu)\n", it, i,
+                      (uint64_t)cd, (uint64_t)db);
         abort();
       }
     }
@@ -122,9 +121,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_event_destroy(ev);
   }
 
-  printf(
-      "event_sticky_late_bind: %d iters x %d consumers = %d deliveries — PASS\n",
-      M_ITERS, N_CONSUMERS, M_ITERS * N_CONSUMERS);
+  printf("event_sticky_late_bind: %d iters x %d consumers = %d deliveries — "
+         "PASS\n",
+         M_ITERS, N_CONSUMERS, M_ITERS * N_CONSUMERS);
   arts_shutdown();
 }
 

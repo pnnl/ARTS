@@ -139,8 +139,9 @@ static void consumer_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 }
 
-/// Finish-EDT for the outer finish scope — runs on rank 0 after every iteration's
-/// EDTs have completed and released their DB references.  Clean shutdown.
+/// Finish-EDT for the outer finish scope — runs on rank 0 after every
+/// iteration's EDTs have completed and released their DB references.  Clean
+/// shutdown.
 static void shutdown_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                          arts_edt_dep_t depv[]) {
   (void)paramc;
@@ -148,9 +149,9 @@ static void shutdown_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
   /* Only flag clean termination here.  If a consumer aborts mid-run, this
-   * EDT never fires (the finish scope never completes); rank 0 will instead exit
-   * arts_rt() through the peer-disconnect SHUTDOWN_MSG path with the
-   * flag still 0, and main() will return non-zero so ctest sees FAIL. */
+   * EDT never fires (the finish scope never completes); rank 0 will instead
+   * exit arts_rt() through the peer-disconnect SHUTDOWN_MSG path with the flag
+   * still 0, and main() will return non-zero so ctest sees FAIL. */
   atomic_store(&g_clean_shutdown, 1);
   arts_printf("PASS: %d iterations completed\n", N_ITERATIONS);
   arts_shutdown();
@@ -177,8 +178,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
               " ===\n",
               N_ITERATIONS, rank_count);
 
-  /* Outer finish scope: shutdown_edt fires only after every iteration's writer +
-   * consumer have run AND released their DB refs.  Without this fence we
+  /* Outer finish scope: shutdown_edt fires only after every iteration's writer
+   * + consumer have run AND released their DB refs.  Without this fence we
    * would race shutdown against the in-flight cross-node EW transfers. */
   arts_guid_t shut =
       arts_edt_create(shutdown_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0});
@@ -204,7 +205,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     /* Step 3: writer on rank 1.  Slot 0 = DB (RW); paramv[0] = event
      * GUID so writer can satisfy after writing. */
     uint64_t writer_paramv[1] = {(uint64_t)evt};
-    arts_guid_t writer = arts_edt_create(writer_edt, /*paramc=*/1, writer_paramv, /*depc=*/1, &(arts_edt_hint_t){.rank = 1, .finish_event = fe});
+    arts_guid_t writer =
+        arts_edt_create(writer_edt, /*paramc=*/1, writer_paramv, /*depc=*/1,
+                        &(arts_edt_hint_t){.rank = 1, .finish_event = fe});
     arts_add_dependence(db, writer, /*slot=*/0, DB_MODE_RW);
 
     /* Step 4: consumer on rank 2.  Slot 0 = DB (RW), slot 1 = LATCH
@@ -217,7 +220,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
      * SIGSEGV'ing on a NULL ptr in that ordering); the data check below
      * verifies that the OCR happens-before chain is honored end-to-end. */
     arts_guid_t consumer =
-        arts_edt_create(consumer_edt, /*paramc=*/0, NULL, /*depc=*/2, &(arts_edt_hint_t){.rank = 2, .finish_event = fe});
+        arts_edt_create(consumer_edt, /*paramc=*/0, NULL, /*depc=*/2,
+                        &(arts_edt_hint_t){.rank = 2, .finish_event = fe});
     arts_add_dependence(db, consumer, /*slot=*/0, DB_MODE_RW);
     arts_add_dependence(evt, consumer, /*slot=*/1, DB_MODE_NULL);
   }
@@ -234,8 +238,10 @@ int main(int argc, char **argv) {
    * the flag unset; reporting non-zero from a child is harmless because
    * the master rank's exit code is what ctest observes. */
   if (arts_get_current_rank() == 0 && !atomic_load(&g_clean_shutdown)) {
-    fprintf(stderr, "FAIL: shutdown_edt did not fire - finish scope never completed "
-                    "(consumer abort or premature peer-disconnect shutdown)\n");
+    (void)fprintf(
+        stderr,
+        "FAIL: shutdown_edt did not fire - finish scope never completed "
+        "(consumer abort or premature peer-disconnect shutdown)\n");
     return 1;
   }
   return 0;

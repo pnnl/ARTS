@@ -1181,14 +1181,14 @@ void arts_counter_write_cluster(const char *output_folder,
 
 // Worker sends sync request to master with its current timestamp (T1)
 void arts_send_time_sync_request(void) {
-  struct arts_remote_time_sync_req_packet_s packet;
+  struct arts_msg_time_sync_req_packet_s packet;
   packet.worker_send_time = arts_get_time_stamp(); // T1
   arts_fill_packet_header(&packet.header, sizeof(packet),
                           MSG_TIME_SYNC_REQUEST);
 
   // Send to master
-  arts_remote_send_request_async((int)arts_global_master_rank_id,
-                                 (char *)&packet, sizeof(packet));
+  arts_transport_send_async((int)arts_global_master_rank_id, (char *)&packet,
+                            sizeof(packet));
   ARTS_INFO("Time sync: Worker %u sent request to master %u at T1=%lu",
             arts_global_rank_id, arts_global_master_rank_id,
             packet.worker_send_time);
@@ -1196,26 +1196,25 @@ void arts_send_time_sync_request(void) {
 
 // Master handles sync request: records T2 and sends response with T1, T2
 void arts_handler_time_sync_request(void *pack) {
-  struct arts_remote_time_sync_req_packet_s *req =
-      (struct arts_remote_time_sync_req_packet_s *)pack;
+  struct arts_msg_time_sync_req_packet_s *req =
+      (struct arts_msg_time_sync_req_packet_s *)pack;
   uint64_t master_recv_time = arts_get_time_stamp(); // T2
 
-  struct arts_remote_time_sync_resp_packet_s resp;
+  struct arts_msg_time_sync_resp_packet_s resp;
   resp.worker_send_time = req->worker_send_time; // Echo T1
   resp.master_recv_time = master_recv_time;      // T2
   arts_fill_packet_header(&resp.header, sizeof(resp), MSG_TIME_SYNC_RESPONSE);
 
   // Send response back to the requesting worker
-  arts_remote_send_request_async((int)req->header.rank, (char *)&resp,
-                                 sizeof(resp));
+  arts_transport_send_async((int)req->header.rank, (char *)&resp, sizeof(resp));
   ARTS_INFO("Time sync: Master received request from rank %u, T1=%lu, T2=%lu",
             req->header.rank, req->worker_send_time, master_recv_time);
 }
 
 // Worker handles sync response: calculates offset using RTT
 void arts_handler_time_sync_response(void *pack) {
-  struct arts_remote_time_sync_resp_packet_s *resp =
-      (struct arts_remote_time_sync_resp_packet_s *)pack;
+  struct arts_msg_time_sync_resp_packet_s *resp =
+      (struct arts_msg_time_sync_resp_packet_s *)pack;
   uint64_t worker_recv_time = arts_get_time_stamp(); // T3
 
   uint64_t ntp_t1 = resp->worker_send_time;

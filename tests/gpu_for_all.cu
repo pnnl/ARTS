@@ -96,7 +96,9 @@ void thrust_sort(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Probably should make some new edts and signal them with the data!
   // Or signal the end if we are done
-  arts_add_dependence(tile_guid, done_guid, gpu_index, DB_MODE_RW); // don't really need tile_guid just doing it for testing
+  arts_add_dependence(
+      tile_guid, done_guid, gpu_index,
+      DB_MODE_RW); // don't really need tile_guid just doing it for testing
 }
 
 void done(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -133,8 +135,8 @@ extern "C" void arts_init_per_gpu(unsigned int node_id, int dev_id,
   (void)argc;
   (void)argv;
   if (!dev_id) {
-    dev_ptr_raw =
-        (unsigned int **)calloc(arts_get_gpus_per_rank(), sizeof(unsigned int *));
+    dev_ptr_raw = (unsigned int **)calloc(arts_get_gpus_per_rank(),
+                                          sizeof(unsigned int *));
   }
   dev_ptr_raw[dev_id] =
       (unsigned int *)arts_cuda_malloc(sizeof(unsigned int) * GPULISTLEN);
@@ -150,8 +152,8 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   unsigned int **addr;
   arts_guid_t db_guid = arts_guid_reserve(ARTS_GUID_DB, 0);
   addr = (unsigned int **)arts_db_create_with_guid(
-      db_guid, sizeof(unsigned int *) * arts_get_gpus_per_rank(), ARTS_DB_GPU_PIN,
-      NULL, NULL);
+      db_guid, sizeof(unsigned int *) * arts_get_gpus_per_rank(),
+      ARTS_DB_GPU_PIN, NULL, NULL);
   for (uint64_t i = 0; i < arts_get_gpus_per_rank(); i++) {
     addr[i] = dev_ptr_raw[i];
   }

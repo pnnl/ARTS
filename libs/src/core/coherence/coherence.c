@@ -6,9 +6,9 @@
  * coherence cache_s:
  *
  *   1. Cache construction / destruction
- *      - arts_coh_init_cache_s: in-place cache_s initializer (creator-home,
+ *      - arts_db_cache_init: in-place cache_s initializer (creator-home,
  *        creator-remote, home-recv, lazy).
- *      - arts_coh_cache_destructor: chained from arts_db_free.
+ *      - arts_db_cache_destructor: chained from arts_db_free.
  *
  *   2. Acquire path (8-case dispatcher + supporting routines).  See the
  *      design plan for the full algorithm; inline comments highlight the
@@ -27,11 +27,11 @@
  *      releaser rank, where the post runs) — no per-cache seq state, no
  *      busy-wait.
  *
- *   4. Destroy lifecycle (arts_coh_db_destroy public entry +
+ *   4. Destroy lifecycle (arts_db_destroy_remote public entry +
  *      fail_trigger_pending).  Final teardown is driven by the cb
  *      (shared-ptr) deferred-free model: destroy fans out, then
- *      arts_route_table_mark_delete frees the cache_s via
- *      arts_coh_cache_destructor once all refs drain.
+ *      arts_route_table_set_destroyed frees the cache_s via
+ *      arts_db_cache_destructor once all refs drain.
  */
 
 #include <errno.h>
@@ -43,14 +43,14 @@
 #include <string.h>
 #include <time.h>
 
+#include "arts/coherence/buffer.h"
+#include "arts/coherence/coherence.h"
+#include "arts/coherence/handlers.h"
+#include "arts/coherence/home.h"
 #include "arts/db.h"
-#include "arts/db_coherence.h"
-#include "arts/db_coherence_buffer.h"
-#include "arts/db_coherence_handlers.h"
-#include "arts/db_coherence_home.h"
-#include "arts/db_coherence_model.h"
 #include "arts/edt.h"
 #include "arts/gas/route_table.h"
+#include "arts/ooo.h"
 #include "arts/runtime_state.h"
 #include "arts/runtime_types.h"
 #include "arts/system/print.h"
@@ -63,20 +63,18 @@
 /* ===== Cache lifecycle ============================================ */
 /* ================================================================== */
 
-void arts_coh_init_cache_s(struct arts_db_cache_s *c, arts_guid_t db_guid,
-                           uint64_t db_size, arts_coh_init_kind_t kind,
-                           unsigned int creator_rank) {
+/* Model-agnostic cache_s field init.  The per-model arts_db_cache_init
+ * wrapper (coherence/<model>.c) runs its model-specific field-init (RC/LRC
+ * pending_rw queue + LRC dedup-map/sentinel; LC none) BEFORE calling this, so
+ * the Vyukov MPSC stub is wired before any push could land. */
+void arts_db_cache_common_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
+                               uint64_t db_size, arts_db_init_kind_t kind,
+                               unsigned int creator_rank) {
   /* Caller provides a zeroed cache (embedded in a zeroed/calloc'd db_s, or
    * memset by the stub path).  We do not zero it here — the embedding db_s
    * owns the storage. */
   c->db_guid = db_guid;
   c->db_size = db_size;
-  /* Model-specific cache-field init: RC/LRC initialize the Vyukov MPSC
-   * pending_rw queue (cannot be zero-initialized — head/tail must point at the
-   * embedded stub) before any push could land; LRC additionally arms its
-   * owner-side dedup map + transfer sentinel.  LC has no pending_rw queue (all
-   * RW acquires route through the RO path) so its hook is a no-op. */
-  arts_coh_model_init_cache_s(c);
   /* Snapshot reorder-buffer: a Treiber stack (zero-initializable, but init
    * explicitly for clarity).  Nodes are heap-allocated on the case-3 push path
    * and freed when drained by the next install. */
@@ -91,14 +89,14 @@ void arts_coh_init_cache_s(struct arts_db_cache_s *c, arts_guid_t db_guid,
     n = 1;
   }
   struct arts_db_s *db_self = arts_db_of_cache(c);
-  if (kind == ARTS_COH_INIT_HOME_RECV) {
+  if (kind == ARTS_DB_INIT_HOME_RECV) {
     arts_db_home_init(db_self, creator_rank, n);
     db_self->home_initialized = true;
-  } else if (kind == ARTS_COH_INIT_CREATOR_HOME) {
+  } else if (kind == ARTS_DB_INIT_CREATOR_HOME) {
     arts_db_home_init(db_self, self, n);
     db_self->home_initialized = true;
     c->writer_count = 2; /* sentinel + creator EDT */
-  } else if (kind == ARTS_COH_INIT_CREATOR_REMOTE) {
+  } else if (kind == ARTS_DB_INIT_CREATOR_REMOTE) {
     c->writer_count = 2;
   }
   /* RC/LC WRITEBACK ACK rendezvous is now a stack-local sem_t per release_rw
@@ -122,7 +120,7 @@ void arts_coh_init_cache_s(struct arts_db_cache_s *c, arts_guid_t db_guid,
  * arts_shared_release) would require rewriting all ~15 callers across
  * coherence.c / coherence_handlers.c / db.c to balance the ref — out of scope
  * here.  Documented as a known exception. */
-struct arts_db_cache_s *arts_coh_route_table_lookup_cache(arts_guid_t db_guid) {
+struct arts_db_cache_s *arts_db_cache_lookup(arts_guid_t db_guid) {
   void *data = arts_route_table_lookup_data(db_guid);
   if (data == NULL) {
     return NULL;
@@ -133,7 +131,6 @@ struct arts_db_cache_s *arts_coh_route_table_lookup_cache(arts_guid_t db_guid) {
   }
   return &db->cache;
 }
-#define coh_lookup_cache arts_coh_route_table_lookup_cache
 
 /* ===== EDT wake helper ============================================== */
 
@@ -165,13 +162,13 @@ void mark_edt_ready_by_guid(arts_guid_t edt_guid, unsigned int slot) {
   arts_edt_dep_t *depv = (arts_edt_dep_t *)arts_get_depv(edt);
   arts_guid_t db_guid = depv[slot].guid;
   if (db_guid != NULL_GUID) {
-    struct arts_db_cache_s *cache = coh_lookup_cache(db_guid);
+    struct arts_db_cache_s *cache = arts_db_cache_lookup(db_guid);
     if (cache != NULL) {
       /* Acquire the EDT's strong ref on the buffer; release_one_dep drops it
        * (via buf_from_data(ptr)->cb) when the EDT finishes.  The handle is not
        * released here — the ref is the EDT's hold.  depv[slot].ptr aliases
        * buf->data, the canonical user-visible payload. */
-      arts_shared_ptr_t buf_h = arts_coh_acquire_buf(cache);
+      arts_shared_ptr_t buf_h = arts_db_buf_acquire(cache);
       struct arts_db_buffer_s *buf =
           (struct arts_db_buffer_s *)arts_shared_get(buf_h);
       depv[slot].ptr = buf ? buf->data : NULL;
@@ -201,11 +198,11 @@ void mark_edt_ready_by_guid(arts_guid_t edt_guid, unsigned int slot) {
  * Caller invariant: returns with the route_table ref bumped (via
  * lookup) so subsequent arts_db_acquire_all flow can balance with the
  * usual return_db at release_one_dep time. */
-struct arts_db_cache_s *arts_coh_lazy_install_cache_s(arts_guid_t db_guid,
-                                                      uint64_t db_size) {
+struct arts_db_cache_s *arts_db_cache_lazy_install(arts_guid_t db_guid,
+                                                   uint64_t db_size) {
   /* First check if it already exists (someone else lazy-installed or
    * a wire-receive fired). */
-  struct arts_db_cache_s *cache = coh_lookup_cache(db_guid);
+  struct arts_db_cache_s *cache = arts_db_cache_lookup(db_guid);
   if (cache != NULL) {
     return cache;
   }
@@ -222,8 +219,9 @@ struct arts_db_cache_s *arts_coh_lazy_install_cache_s(arts_guid_t db_guid,
    * arrival (install_buffer with the actual db_size).  No home struct
    * yet — even for is_home, the home struct is created when DB_CREATE
    * arrives (with the proper rw_holder = creator_rank). */
-  arts_coh_init_cache_s(&stub->cache, db_guid, /*db_size=*/db_size,
-                        ARTS_COH_INIT_LAZY, /*creator_rank=*/0);
+  arts_db_cache_init(&stub->cache, db_guid, /*db_size=*/db_size,
+                     ARTS_DB_INIT_LAZY,
+                     /*creator_rank=*/0);
 
   if (arts_route_table_install_if_absent(stub, db_guid, arts_global_rank_id,
                                          /*used=*/true)) {
@@ -234,17 +232,17 @@ struct arts_db_cache_s *arts_coh_lazy_install_cache_s(arts_guid_t db_guid,
   /* Lost the race — another thread already installed.  Tear down our
    * stub and return the established cache. */
   arts_db_free(stub);
-  return coh_lookup_cache(db_guid);
+  return arts_db_cache_lookup(db_guid);
 }
 
 /* ===== Case 1/3/5: local-buffer acquire ============================= */
 
-void *arts_coh_acquire_local(struct arts_db_cache_s *cache) {
+void *arts_db_acquire_local(struct arts_db_cache_s *cache) {
   /* Take the EDT's strong ref on the buffer and return buf->data.  The handle
    * is intentionally NOT released here — the ref is the EDT's hold for its
    * whole lifetime; release_one_dep drops it via buf_from_data(ptr)->cb.  The
    * ref keeps the buffer alive against a concurrent destroy. */
-  arts_shared_ptr_t h = arts_coh_acquire_buf(cache);
+  arts_shared_ptr_t h = arts_db_buf_acquire(cache);
   struct arts_db_buffer_s *buf = (struct arts_db_buffer_s *)arts_shared_get(h);
   if (buf == NULL) {
     return NULL; /* h is NULL — nothing installed, nothing held */
@@ -253,15 +251,15 @@ void *arts_coh_acquire_local(struct arts_db_cache_s *cache) {
 }
 
 /* Case 2/6 (RW local fast path) and Case 4/8 (remote-RW path) live in
- * db_coherence_release.c — they touch the RC/LRC home-directory cache fields
+ * coherence/release.c — they touch the RC/LRC home-directory cache fields
  * (pending_rw, ownership_req_in_flight) that the LC cache layout does not have.
  */
 
 /* ===== Case 7: remote-RO / remote-snapshot path =================== */
 
 arts_db_acquire_result_t
-arts_coh_acquire_remote_ro(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
-                           unsigned int slot) {
+arts_db_acquire_remote_ro(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
+                          unsigned int slot) {
   /* No list registration (plan: "acquire 시 list 등록 안 함").  Fire
    * SNAPSHOT_REQUEST carrying edt_guid + slot and PARK; the matching
    * SNAPSHOT_RESPONSE at this rank resumes the EDT directly (case 1/2),
@@ -274,58 +272,19 @@ arts_coh_acquire_remote_ro(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
   return ARTS_DB_ACQUIRE_PARK;
 }
 
-/* ===== 8-case dispatcher ========================================== */
-
-arts_db_acquire_result_t arts_handler_db_acquire(struct arts_db_cache_s *cache,
-                                                 arts_edt_dep_t *dep,
-                                                 arts_guid_t edt_guid,
-                                                 unsigned int slot) {
-  /* Caller is responsible for the route_table ref on the underlying
-   * arts_db_s entry -- this function does not acquire or release it.
-   * Caller passes the cache_s embedded in the db_s (db->cache) and the dep
-   * slot to fill; the handler owns the dep->ptr write on the OK path.
-   *
-   * Return contract:
-   *   ARTS_DB_ACQUIRE_OK    -- ownership/visibility established; dep->ptr
-   *                            is buf->data if a buffer is installed, or
-   *                            NULL when only metadata exists (sentinel
-   *                            db_size==0, or version-0 pre-install on
-   *                            home for cross-rank create).  In the NULL
-   *                            case the caller's body must treat the dep
-   *                            as "no payload"; writer_count was bumped
-   *                            (RW path) and release_rw will balance.
-   *   ARTS_DB_ACQUIRE_PARK  -- waiter pushed to cache.pending_*; the
-   *                            protocol's GRANT/DATA_RESPONSE drain will
-   *                            wake the EDT.
-   *
-   * Per the route_item NULL/AVAILABLE invariant (spec 3.1), "DB does not
-   * exist" means route_item->data == NULL, in which case the caller
-   * (arts_db_acquire_all) defers via the OoO list -- arts_handler_db_acquire
-   * is never called with a non-existent DB.  Therefore there is no
-   * DESTROYED return: a cache_s being passed in implies the DB exists.
-   * cache->buffer == NULL is just "no payload yet", not destruction. */
-  if (cache == NULL) {
-    /* Defensive: caller misuse.  Park (caller can recover via OoO). */
-    return ARTS_DB_ACQUIRE_PARK;
-  }
-
-  arts_db_access_mode_t mode = dep->mode;
-  bool is_home = (arts_guid_get_rank(cache->db_guid) == arts_global_rank_id);
-  bool is_owner = (cache->writer_count > 0);
-
-  /* The 8-case body is model-specific: RC/LRC run the single-owner LOCK_REQ /
-   * GRANT path (db_coherence_release.c), LC runs the unified home-canonical
-   * path (db_coherence_lc.c). */
-  return arts_coh_model_acquire_dispatch(cache, dep, edt_guid, slot, mode,
-                                         is_home, is_owner);
-}
+/* The 8-case acquire dispatcher arts_handler_db_acquire is model-specific: RC
+ * and LRC define it in coherence/release.c-backed coherence/{rc,lrc}.c
+ * (single-owner LOCK_REQ / GRANT path, differing only on the RO-has-local-data
+ * predicate); LC defines its unified home-canonical body in coherence/lc.c.
+ * The shared remote-RO path (arts_db_acquire_remote_ro) and the local-buffer
+ * fast read (arts_db_acquire_local) above are reused by all three. */
 
 /* Drain the snapshot reorder buffer in one atomic_exchange.  Monotonic version
  * guarantees every parked node's target_version <= the buffer version that
  * triggers the drain, so a full drain (no partial pop) is always correct
  * (plan: "install 시 전체 drain").  Called from the case-2 install path, the
  * GRANT install, the LRC TRANSFER_OWNERSHIP install, and destroy fan-out. */
-void arts_coh_drain_pending_snapshot(struct arts_db_cache_s *cache) {
+void arts_db_drain_pending_snapshot(struct arts_db_cache_s *cache) {
   arts_lf_link_t *node = arts_lf_stack_drain(&cache->pending_snapshot);
   while (node != NULL) {
     struct arts_db_snapshot_waiter_s *w =
@@ -349,9 +308,9 @@ void arts_coh_drain_pending_snapshot(struct arts_db_cache_s *cache) {
 /* ===== writeback ACK wait (shared coherence service) =================
  *
  * Synchronous WRITEBACK with a stack-local semaphore matched by pointer
- * identity.  Called by the RC and LC release-tail hooks (the LRC tail uses
+ * identity.  Called by the RC and LC release-tail bodies (the LRC tail uses
  * TRANSFER_OWNERSHIP and never waits on a WRITEBACK_ACK).  Declared in
- * db_coherence_model.h so the model TUs can invoke it. */
+ * coherence/coherence.h so the model TUs can invoke it. */
 void await_writeback_ack(sem_t *cv) {
   /* Block on the stack-local semaphore until arts_handler_db_writeback_ack
    * posts it.  No busy-wait: sem_timedwait sleeps the worker.  We re-arm on a
@@ -360,7 +319,7 @@ void await_writeback_ack(sem_t *cv) {
    * epilogue must not block forever (returning lets the worker exit). */
   for (;;) {
     struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
+    (void)clock_gettime(CLOCK_REALTIME, &ts);
     ts.tv_sec += 1; /* shutdown re-check cadence, not a timeout on the ACK */
     if (sem_timedwait(cv, &ts) == 0) {
       return; /* ACK arrived (pointer-identity post) */
@@ -373,47 +332,13 @@ void await_writeback_ack(sem_t *cv) {
   }
 }
 
-/* ===== release_rw =================================================== */
+/* arts_db_release_rw is model-specific (the version bump is shared, but the
+ * pre-decrement buffer-ref drop and the post-decrement transfer/writeback
+ * decision differ per model), so its whole body lives in
+ * coherence/{rc,lrc,lc}.c.  All three call await_writeback_ack above for the
+ * synchronous-WRITEBACK rendezvous (RC/LC). */
 
-void arts_coh_release_rw(struct arts_db_cache_s *cache) {
-  /* Defensive: writer_count==0 means our acquire never bumped
-   * ownership (e.g. an RC-style call against a cache that's already
-   * been torn down by a destroy fan-out).  Decrementing would
-   * underflow; bail.  Atomic acquire-load avoids a TSan race against
-   * concurrent writer_count writes. */
-  if (arts_atomic_read(&cache->writer_count) == 0) {
-    return;
-  }
-
-  /* Acquire current buffer for version bump + WRITEBACK send.  This is
-   * a local ref scoped to release_rw — the EDT's own ref (from acquire)
-   * is dropped separately by release_one_dep. */
-  arts_shared_ptr_t buf_h = arts_coh_acquire_buf(cache);
-  struct arts_db_buffer_s *buf =
-      (struct arts_db_buffer_s *)arts_shared_get(buf_h);
-  uint64_t new_v = 0;
-  if (buf != NULL) {
-    arts_atomic_add_u64(&buf->version, 1);
-    new_v = arts_atomic_read_u64(&buf->version);
-  }
-
-  /* Pre-decrement model hook: a model may drop its buffer ref before
-   * writer_count is decremented (LRC closes the teardown window here; RC/LC are
-   * no-ops).  May NULL out buf to signal "already released". */
-  arts_coh_model_release_rw_pre_decrement(cache, &buf_h, &buf);
-
-  unsigned int rest =
-      arts_atomic_sub(&cache->writer_count, 1); /* post-decrement value */
-
-  bool is_home = (arts_guid_get_rank(cache->db_guid) == arts_global_rank_id);
-
-  /* Post-decrement model hook: owns the transfer/writeback decision and the
-   * final buffer-ref release.  Per-model body lives in db_coherence_<model>.c.
-   */
-  arts_coh_model_release_rw_tail(cache, &buf_h, buf, new_v, rest, is_home);
-}
-
-void arts_coh_release_ro(struct arts_db_cache_s *cache) {
+void arts_db_release_ro(struct arts_db_cache_s *cache) {
   /* RO release is also no-op here — the EDT's buf ref is dropped by
    * release_one_dep's DIST branch via release_buf (matching the
    * acquire_buf in mark_edt_ready_by_guid / acquire_local). */
@@ -424,52 +349,50 @@ void arts_coh_release_ro(struct arts_db_cache_s *cache) {
 /* ===== Destroy lifecycle ========================================== */
 /* ================================================================== */
 
-/* ===== fail_trigger_pending ======================================= */
+/* arts_db_fail_trigger_pending (destroy/fail wake of parked waiters) is
+ * model-specific: RC/LRC drain the pending_rw FIFO (coherence/release.c), LC
+ * has no pending_rw (coherence/lc.c).  Both arms then drain the snapshot
+ * reorder buffer via arts_db_drain_pending_snapshot above. */
 
-void arts_coh_fail_trigger_pending(struct arts_db_cache_s *cache) {
-  /* Destroy fan-out: wake every parked waiter with NULL ptr so the EDT
-   * observes the destroyed DB (mark_edt_ready_by_guid delivers NULL when the
-   * cache buffer is gone).  RW uses the Vyukov MPSC FIFO drain; the snapshot
-   * reorder buffer drains via the same atomic_exchange (waking any case-3 nodes
-   * that would otherwise never be satisfied).  LC has no pending_rw queue (all
-   * modes park on pending_snapshot) so its hook is a no-op. */
-  arts_coh_model_fail_trigger_pending_rw(cache);
-  arts_coh_drain_pending_snapshot(cache);
-}
-
-/* ===== arts_coh_db_destroy public API ============================= */
+/* ===== arts_db_destroy_remote public API ============================= */
 
 /* Public destroy: forward DESTROY_REQ to home (uniform path; home ==
  * self gets the message via self-loop).  Caller is responsible for
  * the OCR-spec contract: no concurrent acquires/uses in flight. */
-void arts_coh_db_destroy(arts_guid_t db_guid) {
-  unsigned int home_rank = (unsigned int)arts_guid_get_rank(db_guid);
+void arts_db_destroy_remote(arts_guid_t db_guid) {
+  unsigned int home_rank = arts_guid_get_rank(db_guid);
   arts_send_db_destroy(home_rank, db_guid);
 }
 
-/* ===== cache_s destructor (chained from arts_db_free) ============= */
+/* ===== cache_s destructor (chained from arts_db_free) =============
+ *
+ * The full destructor arts_db_cache_destructor is model-specific (it sequences
+ * the model field-destroy between these two shared steps) and lives in
+ * coherence/{rc,lrc,lc}.c.  The agnostic steps are split into pre (the
+ * buffer-NULL that must run first) and post (snapshot drain + home teardown);
+ * the per-model wrapper runs pre → model-destroy → post.  cache_s itself is
+ * freed by the route_table after the wrapper returns; buffers (FAM data) are
+ * recycled / freed by the cb deleter chain once outstanding refs drain. */
 
-/* Called from arts_db_free for ARTS_DB descriptors.  Drains the recycle pool
- * and tears down home_s in place; the cache is embedded by value as the first
- * member of db_s, so the caller (arts_db_free) frees the wrapping db_s — the
- * cache is not freed separately.  Order matters because step 1 covers the
- * rare race where a wire handler installed a buffer past
+/* Step 1: release the cache-hold on the buffer (store NULL into the shared
+ * slot).  If no acquirer holds a ref the cb deleter frees the buffer now;
+ * otherwise it survives until the last in-flight acquirer releases.  Runs
+ * FIRST so it covers the rare race where a wire handler installed a buffer past
  * try_finalize_destroy's NULL-swap. */
-void arts_coh_cache_destructor(struct arts_db_cache_s *cache) {
+void arts_db_cache_common_destroy_pre(struct arts_db_cache_s *cache) {
   if (cache == NULL) {
     return;
   }
-  /* 1. Release the cache-hold on the buffer (store NULL into the shared
-   *    slot).  If no acquirer holds a ref the cb deleter frees the buffer
-   *    now; otherwise the buffer survives until the last in-flight acquirer
-   *    releases (deferred free via the cb).  The buffer carries no back-ref
-   *    to this cache, so it safely outlives us — eliminating the old
-   *    destroy-vs-release use-after-free without a recycle pool. */
   arts_atomic_shared_store(&cache->buffer, NULL);
-  /* 3. Free queued waiters.  RW uses the Vyukov MPSC (torn down by the model
-   *    hook — RC/LRC destroy pending_rw, LC is a no-op since it has none); the
-   *    snapshot reorder buffer is a Treiber stack drained and freed below. */
-  arts_coh_model_cache_destructor(cache);
+}
+
+/* Steps 3b+4: drain+free the snapshot reorder buffer (a Treiber stack), then
+ * tear down the inlined home-directory sub-resources.  Runs AFTER the model
+ * field-destroy (pending_rw, RC/LRC). */
+void arts_db_cache_common_destroy_post(struct arts_db_cache_s *cache) {
+  if (cache == NULL) {
+    return;
+  }
   {
     arts_lf_link_t *n = arts_lf_stack_drain(&cache->pending_snapshot);
     while (n != NULL) {
@@ -479,8 +402,6 @@ void arts_coh_cache_destructor(struct arts_db_cache_s *cache) {
       n = next;
     }
   }
-  /* 4. Home-directory fields (inlined in arts_db_s; tear down sub-resources).
-   */
   {
     struct arts_db_s *db_self = arts_db_of_cache(cache);
     if (db_self->home_initialized) {
@@ -488,7 +409,4 @@ void arts_coh_cache_destructor(struct arts_db_cache_s *cache) {
       db_self->home_initialized = false;
     }
   }
-  /* 5. cache_s itself is freed by the route_table after this routine
-   *    returns.  Buffers (FAM data lives there) are recycled to the
-   *    pool / freed in step 1-3. */
 }

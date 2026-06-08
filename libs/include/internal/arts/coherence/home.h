@@ -25,7 +25,7 @@ extern "C" {
 #include <stddef.h>
 #include <stdint.h>
 
-#include "arts/db_coherence.h"
+#include "arts/coherence/coherence.h"
 /* struct arts_rank_bitset_s definition (embedded by value in arts_db_s).
  * The rank-bitset FUNCTION declarations are folded into this header below;
  * the STRUCT lives in rank_bitset.h because coherence_types.h includes
@@ -100,7 +100,7 @@ void arts_db_home_init(struct arts_db_s *db, unsigned int rw_holder,
  * Does NOT free the descriptor (the fields live inside the arts_db_s). */
 void arts_db_home_teardown(struct arts_db_s *db);
 
-/*--- last_sent_version map serialization (defined in db_coherence_lrc.c) -
+/*--- last_sent_version map serialization (defined in coherence/lrc.c) -
  *
  * Used to piggyback the owner-side dedup map onto TRANSFER_OWNERSHIP
  * messages so the new owner can continue skipping redundant DATA_RESPONSE
@@ -111,10 +111,10 @@ void arts_db_home_teardown(struct arts_db_s *db);
  * Wire layout (in out buffer, starting at byte 0):
  *   uint32_t count;        number of non-zero (rank, version) pairs
  *   uint32_t pad;          alignment pad
- *   arts_remote_rank_version_pair_s pairs[count];
+ *   arts_msg_rank_version_pair_s pairs[count];
  *
  * Caller must allocate at least:
- *   sizeof(uint32_t) * 2 + nranks * sizeof(arts_remote_rank_version_pair_s)
+ *   sizeof(uint32_t) * 2 + nranks * sizeof(arts_msg_rank_version_pair_s)
  * bytes for the output buffer.
  *
  * NOT thread-safe with concurrent arts_rank_u64_map_advance calls on the

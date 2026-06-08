@@ -99,15 +99,16 @@ static void *a_worker(void *vp) {
     arts_route_item_t *item = NULL;
     arts_route_table_reserve_or_lookup(ctx->guid, &item);
     if (item == NULL) {
-      fprintf(stderr, "FAIL [A]: NULL item from reserve_or_lookup\n");
+      (void)fprintf(stderr, "FAIL [A]: NULL item from reserve_or_lookup\n");
       abort();
     }
     if (first == NULL) {
       first = item;
     } else if (first != item) {
-      fprintf(stderr,
-              "FAIL [A]: divergent slot pointers within thread (%p vs %p)\n",
-              (void *)first, (void *)item);
+      (void)fprintf(
+          stderr,
+          "FAIL [A]: divergent slot pointers within thread (%p vs %p)\n",
+          (void *)first, (void *)item);
       abort();
     }
   }
@@ -130,7 +131,7 @@ static void scenario_a_same_guid_storm(void) {
     ctx[i].observed = NULL;
     ctx[i].start_gate = &start_gate;
     if (pthread_create(&tids[i], NULL, a_worker, &ctx[i]) != 0) {
-      fprintf(stderr, "FAIL [A]: pthread_create %d\n", i);
+      (void)fprintf(stderr, "FAIL [A]: pthread_create %d\n", i);
       abort();
     }
   }
@@ -142,20 +143,20 @@ static void scenario_a_same_guid_storm(void) {
   /* All threads must agree on the slot pointer. */
   arts_route_item_t *winner = ctx[0].observed;
   if (winner == NULL) {
-    fprintf(stderr, "FAIL [A]: thread 0 saw NULL slot\n");
+    (void)fprintf(stderr, "FAIL [A]: thread 0 saw NULL slot\n");
     abort();
   }
   for (int i = 1; i < A_THREADS; i++) {
     if (ctx[i].observed != winner) {
-      fprintf(stderr, "FAIL [A]: thread %d slot %p != thread 0 slot %p\n", i,
-              (void *)ctx[i].observed, (void *)winner);
+      (void)fprintf(stderr, "FAIL [A]: thread %d slot %p != thread 0 slot %p\n",
+                    i, (void *)ctx[i].observed, (void *)winner);
       abort();
     }
   }
   /* Exactly one slot for `g` in the route_table. */
   unsigned hits = count_slots_for_guid(g);
   if (hits != 1u) {
-    fprintf(stderr, "FAIL [A]: %u slots claim guid (want 1)\n", hits);
+    (void)fprintf(stderr, "FAIL [A]: %u slots claim guid (want 1)\n", hits);
     abort();
   }
   printf("[A] PASS  (single slot=%p)\n", (void *)winner);
@@ -182,14 +183,14 @@ static void *b_worker(void *vp) {
     arts_route_item_t *item = NULL;
     arts_route_table_reserve_or_lookup(ctx->guids[idx], &item);
     if (item == NULL) {
-      fprintf(stderr, "FAIL [B]: NULL item idx=%d\n", idx);
+      (void)fprintf(stderr, "FAIL [B]: NULL item idx=%d\n", idx);
       abort();
     }
     arts_route_item_t *prev = ctx->observed[idx];
     if (prev == NULL) {
       ctx->observed[idx] = item;
     } else if (prev != item) {
-      fprintf(
+      (void)fprintf(
           stderr,
           "FAIL [B]: divergent slot for guid[%d] within thread (%p vs %p)\n",
           idx, (void *)prev, (void *)item);
@@ -213,7 +214,7 @@ static void scenario_b_collision_bucket(void) {
   arts_route_item_t **observed_storage = (arts_route_item_t **)calloc(
       (size_t)B_THREADS * B_DISTINCT_GUIDS, sizeof(arts_route_item_t *));
   if (!observed_storage) {
-    fprintf(stderr, "FAIL [B]: calloc\n");
+    (void)fprintf(stderr, "FAIL [B]: calloc\n");
     abort();
   }
   atomic_int start_gate;
@@ -225,7 +226,7 @@ static void scenario_b_collision_bucket(void) {
     ctx[i].observed = observed_storage + (size_t)i * B_DISTINCT_GUIDS;
     ctx[i].start_gate = &start_gate;
     if (pthread_create(&tids[i], NULL, b_worker, &ctx[i]) != 0) {
-      fprintf(stderr, "FAIL [B]: pthread_create %d\n", i);
+      (void)fprintf(stderr, "FAIL [B]: pthread_create %d\n", i);
       abort();
     }
   }
@@ -239,27 +240,30 @@ static void scenario_b_collision_bucket(void) {
   for (int g = 0; g < B_DISTINCT_GUIDS; g++) {
     arts_route_item_t *winner = NULL;
     for (int t = 0; t < B_THREADS; t++) {
-      arts_route_item_t *p = observed_storage[(size_t)t * B_DISTINCT_GUIDS + g];
+      arts_route_item_t *p =
+          observed_storage[((size_t)t * B_DISTINCT_GUIDS) + g];
       if (p == NULL) {
         continue; /* this thread happened to never touch this guid -- fine */
       }
       if (winner == NULL) {
         winner = p;
       } else if (winner != p) {
-        fprintf(stderr,
-                "FAIL [B]: thread %d guid[%d] slot %p disagrees with %p\n", t,
-                g, (void *)p, (void *)winner);
+        (void)fprintf(
+            stderr, "FAIL [B]: thread %d guid[%d] slot %p disagrees with %p\n",
+            t, g, (void *)p, (void *)winner);
         abort();
       }
     }
     if (winner == NULL) {
-      fprintf(stderr, "FAIL [B]: guid[%d] never observed (impossible)\n", g);
+      (void)fprintf(stderr, "FAIL [B]: guid[%d] never observed (impossible)\n",
+                    g);
       abort();
     }
     /* Exactly one slot for this guid in the route_table. */
     unsigned hits = count_slots_for_guid(guids[g]);
     if (hits != 1u) {
-      fprintf(stderr, "FAIL [B]: %u slots claim guid[%d] (want 1)\n", hits, g);
+      (void)fprintf(stderr, "FAIL [B]: %u slots claim guid[%d] (want 1)\n",
+                    hits, g);
       abort();
     }
   }

@@ -194,8 +194,8 @@ void arts_install_signal_handlers(void) {
  * Wake-on-stop: arts_stop_signal_watcher_thread sets stop_flag and
  * sends SIGRTMIN to break out of sigwait. */
 static pthread_t arts_signal_watcher;
-static atomic_bool arts_signal_watcher_started = ATOMIC_VAR_INIT(false);
-static atomic_bool arts_signal_watcher_stop = ATOMIC_VAR_INIT(false);
+static atomic_bool arts_signal_watcher_started = false;
+static atomic_bool arts_signal_watcher_stop = false;
 
 static void *arts_signal_watcher_main(void *arg) {
   (void)arg;

@@ -142,14 +142,14 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   for (int iter = 0; iter < N_ITERATIONS; iter++) {
     int *data;
-    arts_guid_t db_guid =
-        arts_db_create((void **)&data, sizeof(int), ARTS_DB, ARTS_DB_PROP_NONE, NULL);
+    arts_guid_t db_guid = arts_db_create((void **)&data, sizeof(int), ARTS_DB,
+                                         ARTS_DB_PROP_NONE, NULL);
     *data = 0;
 
     /* Spawn N workers all RW-acquiring the same DB. */
     for (int i = 0; i < N_EDTS; i++) {
-      arts_guid_t w =
-          arts_edt_create(worker_edt, 0, NULL, 1, &(arts_edt_hint_t){.finish_event = fe});
+      arts_guid_t w = arts_edt_create(worker_edt, 0, NULL, 1,
+                                      &(arts_edt_hint_t){.finish_event = fe});
       arts_add_dependence(db_guid, w, 0, DB_MODE_RW);
     }
 
@@ -158,15 +158,17 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
      * or after some workers' acquires.  cache_s's writer_count +
      * pending_count + buffer.ref_count are the safety net under test. */
     uint64_t prm = (uint64_t)db_guid;
-    arts_edt_create(destroyer_edt, 1, &prm, 0, &(arts_edt_hint_t){.finish_event = fe});
+    arts_edt_create(destroyer_edt, 1, &prm, 0,
+                    &(arts_edt_hint_t){.finish_event = fe});
   }
 }
 
 int main(int argc, char **argv) {
   arts_rt(argc, argv);
   if (arts_get_current_rank() == 0 && !atomic_load(&g_clean_shutdown)) {
-    fprintf(stderr,
-            "FAIL: shutdown_edt did not fire — finish scope never completed\n");
+    (void)fprintf(
+        stderr,
+        "FAIL: shutdown_edt did not fire — finish scope never completed\n");
     return 1;
   }
   return 0;

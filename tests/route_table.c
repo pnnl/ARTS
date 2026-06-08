@@ -105,7 +105,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
   shutdown_guid = arts_guid_reserve(ARTS_GUID_EDT, 0);
 
-  arts_edt_create(shutdown_edt, 0, NULL, arts_get_total_workers(), &(arts_edt_hint_t){.guid = shutdown_guid});
+  arts_edt_create(shutdown_edt, 0, NULL, arts_get_total_workers(),
+                  &(arts_edt_hint_t){.guid = shutdown_guid});
 
   for (unsigned int n = 0; n < arts_get_total_ranks(); n++) {
     uint64_t args = n;

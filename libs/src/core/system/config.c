@@ -875,10 +875,9 @@ static void config_setup_lsf(struct arts_config_s *config) {
 
 static void config_setup_ssh(struct arts_config_s *config,
                              struct arts_config_variable_s **vars) {
-  config->launcher_data =
-      arts_remote_launcher_create(0, NULL, config, config->kill_mode,
-                                  arts_remote_launcher_ssh_startup_processes,
-                                  arts_remote_launcher_ssh_cleanup_processes);
+  config->launcher_data = arts_launcher_create(
+      0, NULL, config, config->kill_mode, arts_launcher_ssh_startup_processes,
+      arts_launcher_ssh_cleanup_processes);
   config->master_boot = true;
 
   char *node_list = NULL;
@@ -976,10 +975,10 @@ static void config_setup_local(struct arts_config_s *config,
     config->master_rank = 0;
     config->master_node = arts_config_make_new_var("127.0.0.1");
 
-    config->launcher_data = arts_remote_launcher_create(
-        0, NULL, config, config->kill_mode,
-        arts_remote_launcher_local_startup_processes,
-        arts_remote_launcher_local_cleanup_processes);
+    config->launcher_data =
+        arts_launcher_create(0, NULL, config, config->kill_mode,
+                             arts_launcher_local_startup_processes,
+                             arts_launcher_local_cleanup_processes);
 
     ARTS_INFO("Local multi-node: %u nodes on 127.0.0.1", node_count);
   } else {

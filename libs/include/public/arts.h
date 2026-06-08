@@ -684,15 +684,15 @@ void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
 /**
  * @brief Supply a dependency slot on an EDT directly (OCR-standard).
  *
- * Writes @p db / @p mode into @p edt_guid's @p slot and decrements its
+ * Writes @p data_guid / @p mode into @p edt_guid's @p slot and decrements its
  * pending-dependency count, scheduling the EDT once the last dependency
  * lands.  Home-routed: the home rank's handler does the work (forwarded via
  * MSG_EDT_SATISFY_SLOT when @p edt_guid is remote).  @p ptr / @p size carry an
  * inline payload for @c DB_MODE_PTR delivery (otherwise NULL / 0).
  */
-void arts_edt_satisfy_slot(arts_guid_t edt_guid, uint32_t slot, arts_guid_t db,
-                           arts_db_access_mode_t mode, void *ptr,
-                           unsigned int size);
+void arts_edt_satisfy_slot(arts_guid_t edt_guid, uint32_t slot,
+                           arts_guid_t data_guid, arts_db_access_mode_t mode,
+                           void *ptr, unsigned int size);
 
 /** Deprecated alias of @c arts_edt_satisfy_slot (backward-compat). */
 static inline void arts_signal_edt(arts_guid_t edt_guid, uint32_t slot,

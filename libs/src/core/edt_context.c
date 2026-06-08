@@ -162,7 +162,8 @@ void arts_unset_thread_local_edt_info() {
     arts_event_satisfy_slot(current_edt->finish_event, NULL_GUID,
                             ARTS_EVENT_LATCH_DECR_SLOT);
   }
-  arts_owned_finish_cleanup(); /* DECR creator-token of un-waited finish events */
+  arts_owned_finish_cleanup(); /* DECR creator-token of un-waited finish events
+                                */
   arts_thread_info.current_edt_guid = NULL_GUID;
   current_edt = NULL;
 }

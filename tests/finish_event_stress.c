@@ -21,6 +21,9 @@ void start_iter(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
 void recursive_spawn(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                      arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  (void)depv;
   /* Children inherit the enclosing finish scope automatically (ARTS
    * runtime semantics).  No explicit finish-scope wiring needed here. */
   unsigned int depth = (unsigned int)paramv[0];
@@ -41,6 +44,10 @@ void recursive_spawn(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
 void iter_term(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
   unsigned int iter =
       arts_atomic_add(&iters_done, 1U); /* returns new value, 1..ITERATIONS */
   if ((iter % 10) == 0) {
@@ -57,6 +64,10 @@ void iter_term(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
 void start_iter(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                 arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
   arts_guid_t term = arts_edt_create(iter_term, 0, NULL, 1, NULL);
   arts_event_hint_t fh = ARTS_EVENT_HINT_FINISH;
   arts_guid_t fe = arts_event_create(&fh);
@@ -69,6 +80,10 @@ void start_iter(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
               arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
   arts_edt_create(start_iter, 0, NULL, 0, NULL);
 }
 

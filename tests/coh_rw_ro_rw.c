@@ -20,16 +20,18 @@ static atomic_int g_reader_fail = 0;
 
 static void *wd_thread(void *a) {
   (void)a;
-  int last_w = -1, last_r = -1, stuck = 0;
+  int last_w = -1;
+  int last_r = -1;
+  int stuck = 0;
   for (;;) {
     sleep(2);
     int w = atomic_load(&g_writer_count);
     int r = atomic_load(&g_reader_count);
     if (w == last_w && r == last_r) {
       if (++stuck >= 2) {
-        fprintf(stderr, "HANG: w=%d r=%d (expect %d/%d)\n", w, r, NUM_ITERS,
-                NUM_ITERS * NUM_READERS);
-        fflush(stderr);
+        (void)fprintf(stderr, "HANG: w=%d r=%d (expect %d/%d)\n", w, r,
+                      NUM_ITERS, NUM_ITERS * NUM_READERS);
+        (void)fflush(stderr);
         _exit(1);
       }
     } else {
@@ -86,17 +88,21 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   for (int i = 0; i < NUM_ITERS; i++) {
     uint64_t p = (uint64_t)i;
-    arts_guid_t w = arts_edt_create(writer_edt, 1, &p, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+    arts_guid_t w =
+        arts_edt_create(writer_edt, 1, &p, 1,
+                        &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(db, w, 0, DB_MODE_RW);
 
     for (int r = 0; r < NUM_READERS; r++) {
-      arts_guid_t rd = arts_edt_create(reader_edt, 1, &p, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+      arts_guid_t rd =
+          arts_edt_create(reader_edt, 1, &p, 1,
+                          &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
       arts_add_dependence(db, rd, 0, DB_MODE_RO);
     }
   }
 
-  fprintf(stderr, "ALL_DEPS_ISSUED, waiting\n");
-  fflush(stderr);
+  (void)fprintf(stderr, "ALL_DEPS_ISSUED, waiting\n");
+  (void)fflush(stderr);
   {
     pthread_t wdt;
     pthread_create(&wdt, NULL, wd_thread, NULL);
@@ -106,14 +112,14 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   int w = atomic_load(&g_writer_count);
   int r = atomic_load(&g_reader_count);
   int f = atomic_load(&g_reader_fail);
-  fprintf(stderr, "writers=%d readers=%d fail=%d (expect %d/%d)\n", w, r, f,
-          NUM_ITERS, NUM_ITERS * NUM_READERS);
+  (void)fprintf(stderr, "writers=%d readers=%d fail=%d (expect %d/%d)\n", w, r,
+                f, NUM_ITERS, NUM_ITERS * NUM_READERS);
   if (w != NUM_ITERS || r != NUM_ITERS * NUM_READERS || f != 0) {
-    fprintf(stderr, "TEST FAIL\n");
+    (void)fprintf(stderr, "TEST FAIL\n");
   } else {
-    fprintf(stderr, "TEST PASS\n");
+    (void)fprintf(stderr, "TEST PASS\n");
   }
-  fflush(stderr);
+  (void)fflush(stderr);
   arts_shutdown();
 }
 

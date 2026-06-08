@@ -111,7 +111,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
   arts_db_release(g1, DB_MODE_RW);
 
-  arts_guid_t e1 = arts_edt_create(check_initial_data, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+  arts_guid_t e1 =
+      arts_edt_create(check_initial_data, 0, NULL, 1,
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(g1, e1, 0, DB_MODE_RO);
 
   // Test 2: Same pattern — the caller writes directly into the DB buffer,
@@ -123,7 +125,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   p2[1] = 200;
   arts_db_release(g2, DB_MODE_RW);
 
-  arts_guid_t e2 = arts_edt_create(check_source_independence, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+  arts_guid_t e2 =
+      arts_edt_create(check_source_independence, 0, NULL, 1,
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(g2, e2, 0, DB_MODE_RO);
 
   arts_event_wait(fe);

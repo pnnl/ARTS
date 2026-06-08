@@ -40,8 +40,8 @@ static void counter_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   uint64_t expected_idx = paramv[0];
   if (expected_idx < K_GENS) {
-    atomic_store_explicit(&recovered_seq[expected_idx],
-                          (uint64_t)depv[0].guid, memory_order_release);
+    atomic_store_explicit(&recovered_seq[expected_idx], (uint64_t)depv[0].guid,
+                          memory_order_release);
   }
   atomic_fetch_add_explicit(&received_count, 1u, memory_order_acq_rel);
 }
@@ -62,7 +62,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_event_hint_t h = ARTS_EVENT_HINT_CHANNEL;
     arts_guid_t ev = arts_event_create(&h);
     if (ev == NULL_GUID) {
-      fprintf(stderr, "FAIL [iter=%d]: arts_event_create CHANNEL\n", it);
+      (void)fprintf(stderr, "FAIL [iter=%d]: arts_event_create CHANNEL\n", it);
       abort();
     }
 
@@ -87,17 +87,16 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
     /* Spin until all K consumers fired. */
     for (int spin = 0;
-         spin < 200000000 && atomic_load_explicit(&received_count,
-                                                  memory_order_acquire) <
-                                  K_GENS;
+         spin < 200000000 &&
+         atomic_load_explicit(&received_count, memory_order_acquire) < K_GENS;
          spin++) {
     }
 
     unsigned int got =
         atomic_load_explicit(&received_count, memory_order_acquire);
     if (got != K_GENS) {
-      fprintf(stderr, "FAIL [iter=%d]: received_count=%u (want %u)\n", it, got,
-              K_GENS);
+      (void)fprintf(stderr, "FAIL [iter=%d]: received_count=%u (want %u)\n", it,
+                    got, K_GENS);
       abort();
     }
 
@@ -106,10 +105,11 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       arts_guid_t r = (arts_guid_t)atomic_load_explicit(&recovered_seq[i],
                                                         memory_order_acquire);
       if (r != data_dbs[i]) {
-        fprintf(stderr,
-                "FAIL [iter=%d]: gen %d recovered=%lu, expected=%lu (FIFO "
-                "broken)\n",
-                it, i, (uint64_t)r, (uint64_t)data_dbs[i]);
+        (void)fprintf(
+            stderr,
+            "FAIL [iter=%d]: gen %d recovered=%lu, expected=%lu (FIFO "
+            "broken)\n",
+            it, i, (uint64_t)r, (uint64_t)data_dbs[i]);
         abort();
       }
     }
@@ -117,7 +117,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_event_destroy(ev);
   }
 
-  printf("event_channel_fifo: %d iters x %d gens = %d deliveries (FIFO ordered) — PASS\n",
+  printf("event_channel_fifo: %d iters x %d gens = %d deliveries (FIFO "
+         "ordered) — PASS\n",
          M_ITERS, K_GENS, M_ITERS * K_GENS);
   arts_shutdown();
 }

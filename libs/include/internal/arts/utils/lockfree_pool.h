@@ -135,16 +135,19 @@ static inline void arts_lf_pool_release(arts_lockfree_pool_t *p, void *node) {
 static inline arts_lf_link_t *arts_lf_pool_batch_fetch(arts_lockfree_pool_t *p,
                                                        uint32_t want,
                                                        uint32_t *got) {
-  if (got)
+  if (got) {
     *got = 0;
-  if (want == 0)
+  }
+  if (want == 0) {
     return NULL;
+  }
   arts_lf_pool_head_t cur =
       atomic_load_explicit(&p->head, memory_order_acquire);
   for (;;) {
     if (!cur.ptr) {
-      if (got)
+      if (got) {
         *got = 0;
+      }
       return NULL;
     }
     /* Walk up to `want` nodes; safe due to lifetime invariant (pool
@@ -165,8 +168,9 @@ static inline arts_lf_link_t *arts_lf_pool_batch_fetch(arts_lockfree_pool_t *p,
        * remaining pool nodes). */
       atomic_store_explicit(&tail->next, NULL, memory_order_relaxed);
       atomic_fetch_sub_explicit(&p->count, taken, memory_order_relaxed);
-      if (got)
+      if (got) {
         *got = taken;
+      }
       return cur.ptr;
     }
     /* cur reloaded — retry walk from new top. */
@@ -180,8 +184,9 @@ static inline void arts_lf_pool_batch_release(arts_lockfree_pool_t *p,
                                               arts_lf_link_t *batch_head,
                                               arts_lf_link_t *batch_tail,
                                               uint32_t batch_n) {
-  if (!batch_head || !batch_tail || batch_n == 0)
+  if (!batch_head || !batch_tail || batch_n == 0) {
     return;
+  }
   arts_lf_pool_head_t cur =
       atomic_load_explicit(&p->head, memory_order_relaxed);
   for (;;) {
@@ -204,12 +209,15 @@ static inline void arts_lf_pool_batch_drain(arts_lockfree_pool_t *p,
                                             uint32_t want,
                                             arts_lf_link_t **out_head,
                                             arts_lf_link_t **out_tail) {
-  if (out_head)
+  if (out_head) {
     *out_head = NULL;
-  if (out_tail)
+  }
+  if (out_tail) {
     *out_tail = NULL;
-  if (want == 0)
+  }
+  if (want == 0) {
     return;
+  }
   arts_lf_pool_head_t cur =
       atomic_load_explicit(&p->head, memory_order_acquire);
   for (;;) {
@@ -230,10 +238,12 @@ static inline void arts_lf_pool_batch_drain(arts_lockfree_pool_t *p,
             &p->head, &cur, newh, memory_order_acquire, memory_order_acquire)) {
       atomic_store_explicit(&tail->next, NULL, memory_order_relaxed);
       atomic_fetch_sub_explicit(&p->count, taken, memory_order_relaxed);
-      if (out_head)
+      if (out_head) {
         *out_head = cur.ptr;
-      if (out_tail)
+      }
+      if (out_tail) {
         *out_tail = tail;
+      }
       return;
     }
   }

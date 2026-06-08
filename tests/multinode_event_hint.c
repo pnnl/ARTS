@@ -157,8 +157,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     uint64_t ev_param = (uint64_t)ev_a;
 
     /* Register waiter on rank 1 first (before dispatching satisfier). */
-    arts_guid_t waiter = arts_edt_create(
-        once_waiter, 0, NULL, 1, &(arts_edt_hint_t){.rank = 1, .finish_event = fe});
+    arts_guid_t waiter =
+        arts_edt_create(once_waiter, 0, NULL, 1,
+                        &(arts_edt_hint_t){.rank = 1, .finish_event = fe});
     arts_add_dependence(ev_a, waiter, 0, DB_MODE_RW);
 
     /* Satisfier on rank 0 fires the event. */

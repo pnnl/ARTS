@@ -361,7 +361,7 @@ void arts_runtime_global_cleanup() {
 
 #ifdef ARTS_USE_GPU
   /* GPU cleanup must run BEFORE route tables are freed — free_gpu_item()
-     calls arts_route_table_lookup_db_safe() for LC DB host-side metadata. */
+     calls arts_route_table_lookup_db() for LC DB host-side metadata. */
   if (arts_node_info.gpu) {
     arts_cleanup_gpus();
   }
@@ -495,10 +495,10 @@ void arts_runtime_private_init(struct thread_mask_s *thread,
       unsigned int start;
       if (thread->group_pos < rem) {
         start = thread->group_pos * (size + 1);
-        arts_remote_set_thread_outbound_queues(start, start + size + 1);
+        arts_transport_set_thread_outbound_queues(start, start + size + 1);
       } else {
         start = (rem * (size + 1)) + ((thread->group_pos - rem) * size);
-        arts_remote_set_thread_outbound_queues(start, start + size);
+        arts_transport_set_thread_outbound_queues(start, start + size);
       }
     }
     if (thread->role == ARTS_ROLE_RECEIVER) {
@@ -511,10 +511,10 @@ void arts_runtime_private_init(struct thread_mask_s *thread,
       unsigned int start;
       if (thread->group_pos < rem) {
         start = thread->group_pos * (size + 1);
-        arts_remote_set_thread_inbound_queues(start, start + size + 1);
+        arts_transport_set_thread_inbound_queues(start, start + size + 1);
       } else {
         start = (rem * (size + 1)) + ((thread->group_pos - rem) * size);
-        arts_remote_set_thread_inbound_queues(start, start + size);
+        arts_transport_set_thread_inbound_queues(start, start + size);
       }
     }
   }
@@ -576,8 +576,8 @@ void arts_runtime_private_cleanup() {
   arts_atomic_sub(&arts_node_info.ready_to_clean, 1U);
   while (arts_node_info.ready_to_clean) {
   };
-  arts_remote_thread_outbound_queues_cleanup();
-  arts_remote_thread_inbound_queues_cleanup();
+  arts_transport_thread_outbound_queues_cleanup();
+  arts_transport_thread_inbound_queues_cleanup();
   if (arts_thread_info.my_deque) {
     arts_deque_delete(arts_thread_info.my_deque);
   }
@@ -606,7 +606,7 @@ void arts_runtime_private_cleanup() {
  */
 static void arts_runtime_stop_by_role(unsigned int role_mask,
                                       const char *role_label) {
-  const unsigned int MAX_SPIN = 10000000; /* ~sub-second upper bound */
+  const unsigned int max_spin = 10000000; /* ~sub-second upper bound */
   unsigned int i;
   for (i = 0; i < arts_node_info.total_thread_count; i++) {
     /* Skip threads whose role is not in the mask. Thread 0 is the main
@@ -614,7 +614,7 @@ static void arts_runtime_stop_by_role(unsigned int role_mask,
     if ((1U << arts_node_info.thread_roles[i]) & role_mask) {
       unsigned int spin = 0;
       while (!arts_node_info.local_spin[i]) {
-        if (++spin >= MAX_SPIN) {
+        if (++spin >= max_spin) {
           ARTS_WARN("arts_runtime_stop_%s: thread %u never registered "
                     "local_spin — giving up (may leak)",
                     role_label, i);
@@ -687,7 +687,7 @@ int arts_runtime_loop() {
     break;
   case ARTS_ROLE_SENDER:
     while (arts_thread_info.alive) {
-      arts_remote_async_send();
+      arts_transport_pump_outbound();
     }
     break;
   case ARTS_ROLE_WORKER:

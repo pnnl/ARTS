@@ -51,7 +51,7 @@ extern "C" {
  * struct arts_db_s embeds the per-rank cache (struct arts_db_cache_s) by value
  * as its FIRST member, so db_s requires the complete cache type; the whole
  * buffer/home/cache/db_s chain is therefore defined together here.
- * arts/db_coherence.h keeps the protocol function declarations and
+ * arts/coherence/coherence.h keeps the protocol function declarations and
  * includes this header for the layouts.
  *
  * @note This is an internal header.  User code should include @c arts.h.
@@ -85,9 +85,9 @@ extern "C" {
  * C++/nvcc layout-only TUs (which cannot parse C11 _Atomic).  C accesses these
  * via arts_atomic_* on the underlying uint; nvcc only needs the layout. */
 #ifdef __cplusplus
-typedef unsigned int arts_coh_atomic_uint;
+typedef unsigned int arts_db_atomic_uint_t;
 #else
-typedef _Atomic(unsigned int) arts_coh_atomic_uint;
+typedef _Atomic(unsigned int) arts_db_atomic_uint_t;
 #endif
 
 /* ========================================================================= */
@@ -100,14 +100,14 @@ typedef _Atomic(unsigned int) arts_coh_atomic_uint;
 /* DB coherence layout (home-directory + node-cache protocol).
  *
  * These struct definitions live here — rather than in
- * arts/db_coherence.h — because struct arts_db_s embeds the per-rank
+ * arts/coherence/coherence.h — because struct arts_db_s embeds the per-rank
  * cache (struct arts_db_cache_s) by value as its FIRST member, so db_s
  * requires the complete cache type.  coherence.h keeps the protocol
  * function declarations and includes this header for the layouts.
  *
  * Atomic discipline: fields the runtime reads/writes concurrently are
  * declared `volatile` and accessed exclusively through arts_atomic_*
- * (or arts_coh_atomic_uint for the C11 _Atomic / C++-layout split).
+ * (or arts_db_atomic_uint_t for the C11 _Atomic / C++-layout split).
  * The per-model #if defined(ARTS_MEMORY_MODEL_{RC,LRC,LC}) selects which
  * machinery is compiled in for each consistency model.
  */
@@ -319,18 +319,18 @@ struct arts_db_s {
   bool home_initialized; /**< one-shot init sentinel (set by arts_db_home_init).
                           */
 #if defined(ARTS_MEMORY_MODEL_LRC)
-  arts_coh_atomic_uint rw_holder;
+  arts_db_atomic_uint_t rw_holder;
   struct arts_home_lockreq_queue_s pending_rw; /* embedded Vyukov MPSC */
-  arts_coh_atomic_uint invalidate_in_flight;
+  arts_db_atomic_uint_t invalidate_in_flight;
   struct arts_rank_bitset_s
       cached_ranks; /* RO cached-rank roster, destroy fan-out */
   unsigned int pending_install_owner; /* baton-holder-written transfer target */
 #elif defined(ARTS_MEMORY_MODEL_LC)
   struct arts_rank_to_u64_map_s *last_sent_version;
 #else /* RC */
-  arts_coh_atomic_uint rw_holder;
+  arts_db_atomic_uint_t rw_holder;
   struct arts_home_lockreq_queue_s pending_rw; /* embedded Vyukov MPSC */
-  arts_coh_atomic_uint invalidate_in_flight;
+  arts_db_atomic_uint_t invalidate_in_flight;
   struct arts_rank_to_u64_map_s *last_sent_version;
 #endif
   /* GPU staging locks / version stamps (GPU DB path; full arts_db_s alloc). */
@@ -344,15 +344,15 @@ struct arts_db_s {
  * is the FIRST member of arts_db_s; container_of degenerates to the cache
  * address but is written as container_of for correctness-by-construction (and
  * to match the master plan's home-access idiom).  NULL-safe. */
-#ifndef arts_container_of
-#define arts_container_of(ptr, type, member)                                   \
+#ifndef ARTS_CONTAINER_OF
+#define ARTS_CONTAINER_OF(ptr, type, member)                                   \
   ((type *)((char *)(ptr) - offsetof(type, member)))
 #endif
 static inline struct arts_db_s *arts_db_of_cache(struct arts_db_cache_s *c) {
   if (c == NULL) {
     return NULL;
   }
-  return arts_container_of(c, struct arts_db_s, cache);
+  return ARTS_CONTAINER_OF(c, struct arts_db_s, cache);
 }
 
 /* Total allocation size of a DB = wrapping struct + user payload.  A DB always

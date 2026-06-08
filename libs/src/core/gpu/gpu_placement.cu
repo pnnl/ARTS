@@ -42,10 +42,10 @@
 // the actual data movement and kernel launch.
 #include "arts/gpu/gpu_stream.h"
 
+#include "arts/db.h"
 #include "arts/gas/guid.h"
 #include "arts/gpu/gpu_internal.h"
 #include "arts/gpu/gpu_route_table.h"
-#include "arts/db.h"
 #include "arts/runtime_state.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"

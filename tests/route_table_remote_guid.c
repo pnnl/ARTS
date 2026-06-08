@@ -74,7 +74,8 @@ void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t local_db_guid = (arts_guid_t)paramv[2];
   if (node_id) {
     unsigned int *ptr = (unsigned int *)arts_db_create_with_guid(
-        local_db_guid, sizeof(unsigned int), ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
+        local_db_guid, sizeof(unsigned int), ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE,
+        NULL);
     *ptr = 999;
     arts_add_dependence(local_db_guid, local_edt_guid, 0, DB_MODE_RW);
   }
@@ -92,8 +93,10 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   uint64_t acq_params[1];
   acq_params[0] = (uint64_t)local_shutdown_guid;
-  arts_edt_create(acquire_test, 1, acq_params, 1, &(arts_edt_hint_t){.guid = local_edt_guid});
-  arts_edt_create(shutdown_edt, 0, NULL, 1, &(arts_edt_hint_t){.guid = local_shutdown_guid});
+  arts_edt_create(acquire_test, 1, acq_params, 1,
+                  &(arts_edt_hint_t){.guid = local_edt_guid});
+  arts_edt_create(shutdown_edt, 0, NULL, 1,
+                  &(arts_edt_hint_t){.guid = local_shutdown_guid});
 
   for (unsigned int n = 0; n < arts_get_total_ranks(); n++) {
     uint64_t args[3];

@@ -73,14 +73,21 @@ static void *symmetric_thread(void *arg) {
    * "random" (per-thread seed). */
   pool_node_t *stash[32];
   int top = 0;
-  uint32_t lcg = ctx->tid * 2654435761u + 1;
+  uint32_t lcg = (ctx->tid * 2654435761u) + 1;
   for (uint32_t i = 0; i < OPS_PER_THREAD; i++) {
     lcg = lcg * 1103515245u + 12345u;
-    int do_alloc = (top == 0) ? 1 : (top == 32 ? 0 : (int)(lcg & 1));
+    int do_alloc;
+    if (top == 0) {
+      do_alloc = 1;
+    } else if (top == 32) {
+      do_alloc = 0;
+    } else {
+      do_alloc = (int)(lcg & 1);
+    }
     if (do_alloc) {
       pool_node_t *n = (pool_node_t *)arts_tiered_pool_alloc(&g_pool);
       if (!n) {
-        fprintf(stderr, "alloc returned NULL\n");
+        (void)fprintf(stderr, "alloc returned NULL\n");
         abort();
       }
       atomic_init(&n->link.next, NULL);
@@ -121,7 +128,7 @@ static int run_symmetric(void) {
     ctx[t].allocs = 0;
     ctx[t].releases = 0;
     if (pthread_create(&th[t], NULL, symmetric_thread, &ctx[t]) != 0) {
-      fprintf(stderr, "pthread_create failed\n");
+      (void)fprintf(stderr, "pthread_create failed\n");
       return 1;
     }
   }
@@ -130,16 +137,17 @@ static int run_symmetric(void) {
     pthread_join(th[t], NULL);
   }
 
-  uint64_t total_allocs = 0, total_releases = 0;
+  uint64_t total_allocs = 0;
+  uint64_t total_releases = 0;
   for (uint32_t t = 0; t < NUM_THREADS; t++) {
     total_allocs += ctx[t].allocs;
     total_releases += ctx[t].releases;
   }
   if (total_allocs != total_releases) {
-    fprintf(stderr,
-            "symmetric: alloc/release imbalance (allocs=%" PRIu64
-            " releases=%" PRIu64 ")\n",
-            total_allocs, total_releases);
+    (void)fprintf(stderr,
+                  "symmetric: alloc/release imbalance (allocs=%" PRIu64
+                  " releases=%" PRIu64 ")\n",
+                  total_allocs, total_releases);
     return 1;
   }
 
@@ -211,8 +219,9 @@ static void *asym_producer(void *arg) {
   }
   for (uint32_t i = 0; i < ASYM_OPS; i++) {
     pool_node_t *n = (pool_node_t *)arts_tiered_pool_alloc(&g_pool);
-    if (!n)
+    if (!n) {
       abort();
+    }
     atomic_init(&n->link.next, NULL);
     n->sentinel = ((uint64_t)ctx->tid << 32) | i;
     ring_push(n);
@@ -273,16 +282,18 @@ static int run_asymmetric(void) {
     ctx[i].tid = (uint32_t)i;
     ctx[i].allocs = 0;
     ctx[i].releases = 0;
-    if (pthread_create(&th[i], NULL, asym_producer, &ctx[i]) != 0)
+    if (pthread_create(&th[i], NULL, asym_producer, &ctx[i]) != 0) {
       abort();
+    }
   }
   for (int i = 0; i < ASYM_CONSUMERS; i++) {
     int idx = ASYM_PRODUCERS + i;
     ctx[idx].tid = (uint32_t)idx;
     ctx[idx].allocs = 0;
     ctx[idx].releases = 0;
-    if (pthread_create(&th[idx], NULL, asym_consumer, &ctx[idx]) != 0)
+    if (pthread_create(&th[idx], NULL, asym_consumer, &ctx[idx]) != 0) {
       abort();
+    }
   }
   atomic_store_explicit(&g_start, 1, memory_order_release);
   for (int i = 0; i < ASYM_PRODUCERS + ASYM_CONSUMERS; i++) {
@@ -292,8 +303,8 @@ static int run_asymmetric(void) {
   uint64_t produced = atomic_load(&g_asym_produced);
   uint64_t consumed = atomic_load(&g_asym_consumed);
   if (produced != consumed) {
-    fprintf(stderr, "asym: produced=%" PRIu64 " consumed=%" PRIu64 "\n",
-            produced, consumed);
+    (void)fprintf(stderr, "asym: produced=%" PRIu64 " consumed=%" PRIu64 "\n",
+                  produced, consumed);
     return 1;
   }
   arts_tiered_pool_destroy(&g_pool);
@@ -303,10 +314,12 @@ static int run_asymmetric(void) {
 }
 
 int main(void) {
-  if (run_symmetric() != 0)
+  if (run_symmetric() != 0) {
     return 1;
-  if (run_asymmetric() != 0)
+  }
+  if (run_asymmetric() != 0) {
     return 1;
+  }
   printf("PASS tiered_pool_stress\n");
   return 0;
 }

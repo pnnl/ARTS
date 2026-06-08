@@ -130,8 +130,8 @@ void run_mem_tests(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   /* Test 5: arts_get_num_gpus, arts_get_gpus_per_rank */
   unsigned int num_gpus = arts_get_num_gpus();
   unsigned int total_gpus = arts_get_gpus_per_rank();
-  arts_printf("INFO: arts_get_num_gpus=%u, arts_get_gpus_per_rank=%u\n", num_gpus,
-              total_gpus);
+  arts_printf("INFO: arts_get_num_gpus=%u, arts_get_gpus_per_rank=%u\n",
+              num_gpus, total_gpus);
   if (num_gpus > 0 && total_gpus >= num_gpus) {
     arts_printf("PASS test5: GPU count queries valid\n");
   } else {

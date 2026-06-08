@@ -76,8 +76,9 @@ static inline arts_lf_link_t *arts_mpsc_pop(arts_mpsc_t *q) {
   arts_lf_link_t *next =
       atomic_load_explicit(&tail->next, memory_order_acquire);
   if (tail == &q->stub) {
-    if (!next)
+    if (!next) {
       return NULL; /* empty */
+    }
     q->tail = next;
     tail = next;
     next = atomic_load_explicit(&tail->next, memory_order_acquire);
@@ -87,8 +88,9 @@ static inline arts_lf_link_t *arts_mpsc_pop(arts_mpsc_t *q) {
     return tail;
   }
   arts_lf_link_t *head = atomic_load_explicit(&q->head, memory_order_acquire);
-  if (tail != head)
+  if (tail != head) {
     return NULL; /* producer mid-link — retry later */
+  }
   /* Re-thread the stub to make the single remaining node poppable. */
   arts_mpsc_push(q, &q->stub);
   next = atomic_load_explicit(&tail->next, memory_order_acquire);

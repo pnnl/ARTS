@@ -73,11 +73,11 @@ int main(void) {
     popped++;
   }
   if (popped != NODES) {
-    fprintf(stderr, "Phase 1: expected %d, got %d\n", NODES, popped);
+    (void)fprintf(stderr, "Phase 1: expected %d, got %d\n", NODES, popped);
     return 1;
   }
   if (!arts_lockfree_stack_empty(&g_stack)) {
-    fprintf(stderr, "Phase 1: stack should be empty\n");
+    (void)fprintf(stderr, "Phase 1: stack should be empty\n");
     return 1;
   }
 
@@ -97,8 +97,8 @@ int main(void) {
 
   uint64_t total = atomic_load_explicit(&g_total_bounces, memory_order_relaxed);
   if (total != (uint64_t)THREADS * ITERS) {
-    fprintf(stderr, "Phase 2: expected %d bounces, got %" PRIu64 "\n",
-            THREADS * ITERS, total);
+    (void)fprintf(stderr, "Phase 2: expected %d bounces, got %" PRIu64 "\n",
+                  THREADS * ITERS, total);
     return 1;
   }
 
@@ -108,18 +108,19 @@ int main(void) {
   while ((n = arts_lockfree_stack_pop(&g_stack)) != NULL) {
     test_node_t *t = (test_node_t *)n;
     if (t->id >= NODES) {
-      fprintf(stderr, "Phase 3: bogus id %u\n", t->id);
+      (void)fprintf(stderr, "Phase 3: bogus id %u\n", t->id);
       return 1;
     }
     if (seen[t->id]) {
-      fprintf(stderr, "Phase 3: duplicate id %u\n", t->id);
+      (void)fprintf(stderr, "Phase 3: duplicate id %u\n", t->id);
       return 1;
     }
     seen[t->id] = 1;
     drained++;
   }
   if (drained != NODES) {
-    fprintf(stderr, "Phase 3: expected %d nodes, drained %d\n", NODES, drained);
+    (void)fprintf(stderr, "Phase 3: expected %d nodes, drained %d\n", NODES,
+                  drained);
     return 1;
   }
 

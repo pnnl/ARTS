@@ -100,24 +100,30 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Test 1: Event on node 0, satisfied from node 1.  Default hint = ONCE
   // (latch=1, auto_destroy=true), home rank 0 by default.
   arts_guid_t ev1 = arts_event_create(NULL);
-  arts_guid_t done1 = arts_edt_create(event_done, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+  arts_guid_t done1 =
+      arts_edt_create(event_done, 0, NULL, 1,
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(ev1, done1, 0, DB_MODE_RW);
 
   uint64_t ev_param = (uint64_t)ev1;
-  arts_edt_create(remote_satisfier, 1, &ev_param, 0, &(arts_edt_hint_t){.rank = 1, .finish_event = fe});
+  arts_edt_create(remote_satisfier, 1, &ev_param, 0,
+                  &(arts_edt_hint_t){.rank = 1, .finish_event = fe});
 
   // Test 2: Event with latch = total_nodes, each node satisfies once.
   arts_event_hint_t fan_in_hint = ARTS_EVENT_HINT_DEFAULTS;
-  fan_in_hint.latch = total;
+  fan_in_hint.latch = (int32_t)total;
   fan_in_hint.rank = 0;
   arts_guid_t ev2 = arts_event_create(&fan_in_hint);
   uint64_t total_param = (uint64_t)total;
-  arts_guid_t done2 = arts_edt_create(fan_in_done, 1, &total_param, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+  arts_guid_t done2 =
+      arts_edt_create(fan_in_done, 1, &total_param, 1,
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(ev2, done2, 0, DB_MODE_RW);
 
   for (unsigned int r = 0; r < total; r++) {
     uint64_t param = (uint64_t)ev2;
-    arts_edt_create(node_satisfier, 1, &param, 0, &(arts_edt_hint_t){.rank = r, .finish_event = fe});
+    arts_edt_create(node_satisfier, 1, &param, 0,
+                    &(arts_edt_hint_t){.rank = r, .finish_event = fe});
   }
 }
 

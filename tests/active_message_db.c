@@ -96,9 +96,9 @@ void getter(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   for (unsigned int i = 0; i < bs; i++) {
     buffer[i] = source[(id * bs) + i];
   }
-  arts_guid_t am =
-      arts_edt_create(setter, paramc, paramv, 2,
-                      &(arts_edt_hint_t){.rank = arts_guid_get_rank(dest_guid)});
+  arts_guid_t am = arts_edt_create(
+      setter, paramc, paramv, 2,
+      &(arts_edt_hint_t){.rank = arts_guid_get_rank(dest_guid)});
   arts_add_dependence(dest_guid, am, 0, DB_MODE_RW);
   arts_add_dependence(cpy_db, am, 1, DB_MODE_RW);
 }
@@ -149,7 +149,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                      ARTS_DB_PROP_NONE, &(arts_db_hint_t){.rank = last_node});
 
   uint64_t ne = num_elements;
-  arts_edt_create(shut_down_edt, 1, &ne, arts_get_total_ranks(), &(arts_edt_hint_t){.guid = shutdown_guid});
+  arts_edt_create(shut_down_edt, 1, &ne, arts_get_total_ranks(),
+                  &(arts_edt_hint_t){.guid = shutdown_guid});
 
   for (unsigned int r = 0; r < arts_get_total_ranks(); r++) {
     uint64_t getter_params[4] = {r, shutdown_guid, block_size, db_dest_guid};

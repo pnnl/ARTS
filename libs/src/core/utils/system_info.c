@@ -39,8 +39,8 @@
 #include <stdint.h>
 
 #include "arts.h"
-#include "arts/runtime_state.h"
 #include "arts/edt_context.h" /* current_edt (per-worker running EDT) */
+#include "arts/runtime_state.h"
 #include "arts/system/threads.h"
 
 /* num_numa_domains is the topology global (defined in system/topology.c). */

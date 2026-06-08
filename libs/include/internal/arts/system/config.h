@@ -50,7 +50,7 @@ extern "C" {
 #ifdef ARTS_USE_CXL
 /** CXL DB allocation strategy. */
 typedef enum {
-  ARTS_CXL_DB_ALLOC_STATIC,     /**< Always allocate on a fixed device (default). */
+  ARTS_CXL_DB_ALLOC_STATIC, /**< Always allocate on a fixed device (default). */
   ARTS_CXL_DB_ALLOC_ROUND_ROBIN /**< Distribute allocations across devices. */
 } arts_cxl_db_alloc_strategy_t;
 #endif /* ARTS_USE_CXL */
@@ -95,7 +95,7 @@ struct arts_config_s {
   bool pin_threads;
   bool shared_pu_pool; /* true when all nodes share PUs (local multi-node) */
   uint64_t stack_size;
-  struct arts_remote_launcher_s *launcher_data;
+  struct arts_launcher_s *launcher_data;
   unsigned int table_length;
   unsigned int gpu;
   unsigned int gpu_locality;
@@ -113,9 +113,12 @@ struct arts_config_s {
   bool delete_zeros_gpu_gc;
   struct arts_config_table_s *table;
 #ifdef ARTS_USE_CXL
-  arts_cxl_db_alloc_strategy_t cxl_db_allocation_strategy; /**< DB allocation strategy (static or round_robin). */
-  unsigned int cxl_db_allocation_device; /**< Device index for static allocation (default: 0). */
-#endif /* ARTS_USE_CXL */
+  arts_cxl_db_alloc_strategy_t
+      cxl_db_allocation_strategy;        /**< DB allocation strategy (static or
+                                            round_robin). */
+  unsigned int cxl_db_allocation_device; /**< Device index for static allocation
+                                            (default: 0). */
+#endif                                   /* ARTS_USE_CXL */
 };
 
 void arts_config_load(struct arts_config_s *config);

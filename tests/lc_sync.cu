@@ -95,8 +95,8 @@ extern "C" void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
               sizeof(unsigned int) * arts_get_gpus_per_rank());
   arts_guid_t db_guid = arts_guid_reserve(ARTS_GUID_DB, 0);
   addr = (unsigned int *)arts_db_create_with_guid(
-      db_guid, sizeof(unsigned int) * arts_get_gpus_per_rank(), ARTS_DB_GPU, NULL,
-      NULL);
+      db_guid, sizeof(unsigned int) * arts_get_gpus_per_rank(), ARTS_DB_GPU,
+      NULL, NULL);
   for (uint64_t i = 0; i < arts_get_gpus_per_rank(); i++) {
     addr[i] = (unsigned int)-1;
   }

@@ -57,7 +57,8 @@ void write_test(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   //    }
   if (paramc > 1) {
     arts_printf("-----------------SIGNALLING NEXT %u\n", index);
-    arts_add_dependence((arts_guid_t)(0), (arts_guid_t)paramv[1], -1, DB_MODE_VAL);
+    arts_add_dependence((arts_guid_t)(0), (arts_guid_t)paramv[1], -1,
+                        DB_MODE_VAL);
   } else {
     for (unsigned int i = 0; i < num_writes; i++) {
       arts_printf("i: %u %u\n", i, array[i]);
@@ -79,9 +80,11 @@ void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
       if (i < num_writes - 1) {
         args[1] = write_guids[i + 1];
-        arts_edt_create(write_test, 2, args, 2, &(arts_edt_hint_t){.guid = write_guids[i]});
+        arts_edt_create(write_test, 2, args, 2,
+                        &(arts_edt_hint_t){.guid = write_guids[i]});
       } else {
-        arts_edt_create(write_test, 1, args, 2, &(arts_edt_hint_t){.guid = write_guids[i]});
+        arts_edt_create(write_test, 1, args, 2,
+                        &(arts_edt_hint_t){.guid = write_guids[i]});
       }
       arts_add_dependence(db_guid, write_guids[i], 0, DB_MODE_RW);
     }
@@ -99,11 +102,13 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   num_writes = strtol(argv[1], NULL, 10);
   write_guids = (arts_guid_t *)malloc(sizeof(arts_guid_t) * num_writes);
   for (unsigned int i = 0; i < num_writes; i++) {
-    write_guids[i] = arts_guid_reserve(ARTS_GUID_EDT, i % arts_get_total_ranks());
+    write_guids[i] =
+        arts_guid_reserve(ARTS_GUID_EDT, i % arts_get_total_ranks());
   }
 
   unsigned int *ptr = (unsigned int *)arts_db_create_with_guid(
-      db_guid, sizeof(unsigned int) * num_writes, ARTS_DB, ARTS_DB_PROP_NONE, NULL);
+      db_guid, sizeof(unsigned int) * num_writes, ARTS_DB, ARTS_DB_PROP_NONE,
+      NULL);
   for (unsigned int i = 0; i < num_writes; i++) {
     ptr[i] = 0;
   }

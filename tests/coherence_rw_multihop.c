@@ -51,8 +51,8 @@
 ///                   multiple simultaneous LOCK_REQs at home, which is what
 ///                   exercises the chain.  arts_event_wait blocks until every
 ///                   incrementer has run AND written back; a stranded waiter
-///                   therefore shows up as the finish scope never quiescing (caught by
-///                   the watchdog).
+///                   therefore shows up as the finish scope never quiescing
+///                   (caught by the watchdog).
 ///          Phase 2: a single RO reader, created only AFTER phase 1 has fully
 ///                   quiesced, so its snapshot deterministically observes every
 ///                   increment (sum == rank count).
@@ -70,8 +70,9 @@ static atomic_int g_check_result = 0;
 /// Set once both phases finish so the watchdog exits quietly on success.
 static atomic_int g_finished = 0;
 
-/// Watchdog: if the multi-hop chain strands a waiter, phase 1's finish scope never
-/// quiesces and arts_event_wait blocks forever.  Fail loudly rather than hang.
+/// Watchdog: if the multi-hop chain strands a waiter, phase 1's finish scope
+/// never quiesces and arts_event_wait blocks forever.  Fail loudly rather than
+/// hang.
 static void *wd_thread(void *arg) {
   unsigned int nranks = (unsigned int)(uintptr_t)arg;
   for (int slept = 0; slept < 20; slept++) {
@@ -80,11 +81,12 @@ static void *wd_thread(void *arg) {
       return NULL;
     }
   }
-  fprintf(stderr,
-          "HANG: multi-hop RW chain over %u ranks did not complete in 20s "
-          "(ownership-transfer waiter stranded)\n",
-          nranks);
-  fflush(stderr);
+  (void)fprintf(
+      stderr,
+      "HANG: multi-hop RW chain over %u ranks did not complete in 20s "
+      "(ownership-transfer waiter stranded)\n",
+      nranks);
+  (void)fflush(stderr);
   _exit(1);
 }
 
@@ -96,7 +98,7 @@ void inc_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   int *data = (int *)depv[0].ptr;
   if (data == NULL) {
-    fprintf(stderr, "FAIL: inc_edt got NULL ptr\n");
+    (void)fprintf(stderr, "FAIL: inc_edt got NULL ptr\n");
     arts_abort(1);
   }
   data[0] = data[0] + 1;
@@ -115,8 +117,8 @@ void check_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                 expected, expected);
   } else {
     atomic_store(&g_check_result, -1);
-    fprintf(stderr, "FAIL: multi-hop RW chain expected %d got %d\n", expected,
-            data ? data[0] : -1);
+    (void)fprintf(stderr, "FAIL: multi-hop RW chain expected %d got %d\n",
+                  expected, data ? data[0] : -1);
   }
 }
 
@@ -165,8 +167,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
    * reach home concurrently — exactly the chain-contention the bug needs. */
   arts_guid_t e1 = arts_event_create(&ARTS_EVENT_HINT_FINISH);
   for (unsigned int r = 0; r < nranks; r++) {
-    arts_guid_t w = arts_edt_create(inc_edt, 0, NULL, 1,
-                                    &(arts_edt_hint_t){.rank = r, .finish_event = e1});
+    arts_guid_t w = arts_edt_create(
+        inc_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = r, .finish_event = e1});
     arts_add_dependence(db, w, 0, DB_MODE_RW);
   }
   arts_event_wait(e1); /* blocks until ALL incs ran + wrote back */
@@ -175,8 +177,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
    * its snapshot deterministically observes every increment. */
   uint64_t expected = (uint64_t)nranks;
   arts_guid_t e2 = arts_event_create(&ARTS_EVENT_HINT_FINISH);
-  arts_guid_t chk = arts_edt_create(check_edt, 1, &expected, 1,
-                                    &(arts_edt_hint_t){.rank = 0, .finish_event = e2});
+  arts_guid_t chk =
+      arts_edt_create(check_edt, 1, &expected, 1,
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = e2});
   arts_add_dependence(db, chk, 0, DB_MODE_RO);
   arts_event_wait(e2);
 
@@ -187,8 +190,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 int main(int argc, char **argv) {
   arts_rt(argc, argv);
   if (arts_get_current_rank() == 0 && atomic_load(&g_check_result) != 1) {
-    fprintf(stderr, "FAIL: multi-hop RW chain check did not pass (result=%d)\n",
-            atomic_load(&g_check_result));
+    (void)fprintf(stderr,
+                  "FAIL: multi-hop RW chain check did not pass (result=%d)\n",
+                  atomic_load(&g_check_result));
     return 1;
   }
   return 0;

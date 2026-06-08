@@ -58,24 +58,26 @@ if(HWLOC_INCLUDE_DIRS)
     target_include_directories(arts_compute PRIVATE ${HWLOC_INCLUDE_DIRS})
 endif()
 
-# DB coherence model TU: exactly one selected by ARTS_MEMORY_MODEL (link-time
-# hook selection -- the shared db_coherence.c declares extern hooks that the one
-# selected model TU defines). No ARTS_MEMORY_MODEL_* #ifdef in the model TUs.
+# DB coherence model TU: exactly one selected by ARTS_MEMORY_MODEL.  Each model
+# TU defines the model-specific arts_handler_db_* / arts_coh_* bodies directly
+# (the shared coherence/coherence.c declares them in coherence/coherence.h and
+# provides the model-agnostic sub-helpers); the linker resolves the single
+# compiled model.  No ARTS_MEMORY_MODEL_* #ifdef in the model TUs.
 if(ARTS_MEMORY_MODEL STREQUAL "RC")
     # RC and LRC share the release-consistency ownership machinery
-    # (db_coherence_release.c); LC does not compile it.
-    set(DB_COHERENCE_MODEL_TU db_coherence_rc.c db_coherence_release.c)
+    # (coherence/release.c); LC does not compile it.
+    set(DB_COHERENCE_MODEL_TU coherence/rc.c coherence/release.c)
 elseif(ARTS_MEMORY_MODEL STREQUAL "LC")
-    set(DB_COHERENCE_MODEL_TU db_coherence_lc.c)
+    set(DB_COHERENCE_MODEL_TU coherence/lc.c)
 else() # LRC (default)
-    set(DB_COHERENCE_MODEL_TU db_coherence_lrc.c db_coherence_release.c)
+    set(DB_COHERENCE_MODEL_TU coherence/lrc.c coherence/release.c)
 endif()
 
 # DB + coherence (db.c carries CUDA staging paths -> GPU wrapper).
 set(ARTS_MEMORY_SOURCES
     db.c
-    db_coherence.c db_coherence_home.c db_coherence_buffer.c
-    db_coherence_handlers.c db_coherence_senders.c
+    coherence/coherence.c coherence/home.c coherence/buffer.c
+    coherence/handlers.c coherence/senders.c
     ${DB_COHERENCE_MODEL_TU})
 add_library(arts_memory OBJECT ${ARTS_MEMORY_SOURCES})
 target_link_libraries(arts_memory PRIVATE arts_interface)
@@ -88,6 +90,15 @@ add_library(arts_sync OBJECT event.c edt_context.c)
 target_link_libraries(arts_sync PRIVATE arts_interface)
 if(HWLOC_INCLUDE_DIRS)
     target_include_directories(arts_sync PRIVATE ${HWLOC_INCLUDE_DIRS})
+endif()
+
+# Out-of-order deferred-op engine (replays operations that arrived before
+# their target object was installed in the route table).  CPU-only; reused
+# as-is in GPU builds (plain C, no CUDA paths).
+add_library(arts_ooo OBJECT ooo.c)
+target_link_libraries(arts_ooo PRIVATE arts_interface)
+if(HWLOC_INCLUDE_DIRS)
+    target_include_directories(arts_ooo PRIVATE ${HWLOC_INCLUDE_DIRS})
 endif()
 
 # Scheduler (scheduler.c at core/ top level, needs GPU wrapper for CUDA builds)

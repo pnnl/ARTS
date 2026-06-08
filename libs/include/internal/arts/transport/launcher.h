@@ -47,37 +47,32 @@ extern "C" {
 #include "arts/system/config.h"
 #include "arts/utils/malloc.h"
 
-struct arts_remote_launcher_s {
+struct arts_launcher_s {
   unsigned int argc;
   char **argv;
   struct arts_config_s *config;
   unsigned int kill_stuck_processes;
-  void (*launch_processes)(struct arts_remote_launcher_s *);
-  void (*cleanup_processes)(struct arts_remote_launcher_s *);
+  void (*launch_processes)(struct arts_launcher_s *);
+  void (*cleanup_processes)(struct arts_launcher_s *);
   pid_t *child_pids;
   unsigned int child_count;
 };
 
 // SSH launcher
-void arts_remote_launcher_ssh_startup_processes(
-    struct arts_remote_launcher_s *launcher);
-void arts_remote_launcher_ssh_cleanup_processes(
-    struct arts_remote_launcher_s *launcher);
+void arts_launcher_ssh_startup_processes(struct arts_launcher_s *launcher);
+void arts_launcher_ssh_cleanup_processes(struct arts_launcher_s *launcher);
 
 // Local launcher (multi-node on single machine)
-void arts_remote_launcher_local_startup_processes(
-    struct arts_remote_launcher_s *launcher);
-void arts_remote_launcher_local_cleanup_processes(
-    struct arts_remote_launcher_s *launcher);
+void arts_launcher_local_startup_processes(struct arts_launcher_s *launcher);
+void arts_launcher_local_cleanup_processes(struct arts_launcher_s *launcher);
 
-static inline struct arts_remote_launcher_s *arts_remote_launcher_create(
-    unsigned int argc, char **argv, struct arts_config_s *config,
-    unsigned int kill_mode,
-    void (*launch_processes)(struct arts_remote_launcher_s *),
-    void (*cleanup_processes)(struct arts_remote_launcher_s *)) {
-  struct arts_remote_launcher_s *launcher =
-      (struct arts_remote_launcher_s *)arts_malloc(
-          sizeof(struct arts_remote_launcher_s));
+static inline struct arts_launcher_s *
+arts_launcher_create(unsigned int argc, char **argv,
+                     struct arts_config_s *config, unsigned int kill_mode,
+                     void (*launch_processes)(struct arts_launcher_s *),
+                     void (*cleanup_processes)(struct arts_launcher_s *)) {
+  struct arts_launcher_s *launcher =
+      (struct arts_launcher_s *)arts_malloc(sizeof(struct arts_launcher_s));
 
   launcher->argc = argc;
   launcher->argv = argv;

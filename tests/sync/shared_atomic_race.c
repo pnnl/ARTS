@@ -77,16 +77,21 @@ static void *consumer(void *arg) {
 int main(void) {
   atomic_store(&g_slot, (arts_shared_ptr_t)NULL);
 
-  pthread_t prod[PRODUCERS], cons[CONSUMERS];
-  for (int i = 0; i < CONSUMERS; ++i)
+  pthread_t prod[PRODUCERS];
+  pthread_t cons[CONSUMERS];
+  for (int i = 0; i < CONSUMERS; ++i) {
     pthread_create(&cons[i], NULL, consumer, NULL);
-  for (int i = 0; i < PRODUCERS; ++i)
+  }
+  for (int i = 0; i < PRODUCERS; ++i) {
     pthread_create(&prod[i], NULL, producer, NULL);
+  }
 
-  for (int i = 0; i < PRODUCERS; ++i)
+  for (int i = 0; i < PRODUCERS; ++i) {
     pthread_join(prod[i], NULL);
-  for (int i = 0; i < CONSUMERS; ++i)
+  }
+  for (int i = 0; i < CONSUMERS; ++i) {
     pthread_join(cons[i], NULL);
+  }
 
   /* Drop the final occupant. */
   arts_atomic_shared_store(&g_slot, (arts_shared_ptr_t)NULL);

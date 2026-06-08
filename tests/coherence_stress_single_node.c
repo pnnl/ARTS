@@ -104,7 +104,8 @@ static void shutdown_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   int got = atomic_load(&g_completed);
   int expected = K_ITERS * N_EDTS;
   if (got != expected) {
-    fprintf(stderr, "FAIL: completed %d of %d worker EDTs\n", got, expected);
+    (void)fprintf(stderr, "FAIL: completed %d of %d worker EDTs\n", got,
+                  expected);
     arts_abort(1);
   }
   atomic_store(&g_clean_shutdown, 1);
@@ -134,7 +135,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_guid_t dbs[M_DBS];
     for (int i = 0; i < M_DBS; i++) {
       int *data;
-      dbs[i] = arts_db_create((void **)&data, sizeof(int), ARTS_DB, ARTS_DB_PROP_NONE, NULL);
+      dbs[i] = arts_db_create((void **)&data, sizeof(int), ARTS_DB,
+                              ARTS_DB_PROP_NONE, NULL);
       *data = i;
     }
 
@@ -142,8 +144,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     for (int i = 0; i < N_EDTS; i++) {
       int db_idx = i % M_DBS;
       arts_db_access_mode_t mode = (i & 1) ? DB_MODE_RW : DB_MODE_RO;
-      arts_guid_t w =
-          arts_edt_create(worker_edt, 0, NULL, 1, &(arts_edt_hint_t){.finish_event = fe});
+      arts_guid_t w = arts_edt_create(worker_edt, 0, NULL, 1,
+                                      &(arts_edt_hint_t){.finish_event = fe});
       arts_add_dependence(dbs[db_idx], w, 0, mode);
     }
   }
@@ -152,8 +154,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 int main(int argc, char **argv) {
   arts_rt(argc, argv);
   if (arts_get_current_rank() == 0 && !atomic_load(&g_clean_shutdown)) {
-    fprintf(stderr,
-            "FAIL: shutdown_edt did not fire — finish scope never completed\n");
+    (void)fprintf(
+        stderr,
+        "FAIL: shutdown_edt did not fire — finish scope never completed\n");
     return 1;
   }
   return 0;

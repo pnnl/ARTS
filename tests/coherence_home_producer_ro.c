@@ -71,7 +71,7 @@ void producer_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   int *data = (int *)depv[0].ptr;
   if (data == NULL) {
-    fprintf(stderr, "FAIL: producer on home got NULL ptr\n");
+    (void)fprintf(stderr, "FAIL: producer on home got NULL ptr\n");
     arts_abort(1);
   }
   data[0] = PRODUCER_VALUE;
@@ -86,8 +86,8 @@ void foreign_reader_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   int *data = (int *)depv[0].ptr;
   if (data == NULL || data[0] != PRODUCER_VALUE) {
-    fprintf(stderr, "FAIL: foreign RO expected %d got %d (ptr=%p)\n",
-            PRODUCER_VALUE, data ? data[0] : -1, (void *)data);
+    (void)fprintf(stderr, "FAIL: foreign RO expected %d got %d (ptr=%p)\n",
+                  PRODUCER_VALUE, data ? data[0] : -1, (void *)data);
     arts_abort(1);
   }
   arts_printf("PASS: foreign RO read %d from a home-producer DB\n",
@@ -134,8 +134,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_db_release(db, DB_MODE_RW);
 
   /* Producer on home (rank 0), RW. */
-  arts_guid_t prod = arts_edt_create(
-      producer_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+  arts_guid_t prod =
+      arts_edt_create(producer_edt, 0, NULL, 1,
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(db, prod, 0, DB_MODE_RW);
 
   /* Foreign reader (rank 1), RO — must see the producer's value. */
@@ -148,8 +149,10 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 int main(int argc, char **argv) {
   arts_rt(argc, argv);
   if (arts_get_current_rank() == 0 && !atomic_load(&g_clean_shutdown)) {
-    fprintf(stderr, "FAIL: shutdown_edt did not fire — finish scope never completed "
-                    "(consumer abort or premature shutdown)\n");
+    (void)fprintf(
+        stderr,
+        "FAIL: shutdown_edt did not fire — finish scope never completed "
+        "(consumer abort or premature shutdown)\n");
     return 1;
   }
   return 0;

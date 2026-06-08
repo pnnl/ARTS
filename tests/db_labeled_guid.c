@@ -4,15 +4,17 @@
 ******************************************************************************/
 
 #include "arts.h"
-#include <stdio.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #define SENTINEL 0xABCD1234ULL
 #define DB_SIZE (sizeof(uint64_t))
 
 static void reader_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                        arts_edt_dep_t depv[]) {
-  (void)paramc; (void)paramv; (void)depc;
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
   const uint64_t *data = (const uint64_t *)depv[0].ptr;
   bool ok = (data != NULL && data[0] == SENTINEL);
   arts_printf("  %s: labeled-GUID DB data accessible via reserved GUID\n",
@@ -21,13 +23,19 @@ static void reader_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
 static void shutdown_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                          arts_edt_dep_t depv[]) {
-  (void)paramc; (void)paramv; (void)depc; (void)depv;
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
   arts_shutdown();
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
               arts_edt_dep_t depv[]) {
-  (void)paramc; (void)paramv; (void)depc; (void)depv;
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
 
   arts_printf("=== db_labeled_guid ===\n");
 
@@ -42,8 +50,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
   arts_add_dependence(fe, shut, 0, DB_MODE_NULL);
 
-  arts_guid_t r = arts_edt_create(reader_edt, 0, NULL, 1,
-                                  &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+  arts_guid_t r =
+      arts_edt_create(reader_edt, 0, NULL, 1,
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(reserved, r, 0, DB_MODE_RO);
 }
 

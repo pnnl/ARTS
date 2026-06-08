@@ -58,6 +58,7 @@ set(TEST_PROGRAMS
     coherence_home_producer_ro
     coherence_zero_size_xfer
     coherence_rw_multihop
+    coherence_lrc_ownership_reorder
     lockfree_stack_stress
     lockfree_pool_stress
     tiered_pool_stress
@@ -603,6 +604,30 @@ set_tests_properties(coherence_stress_dist PROPERTIES
     TIMEOUT 120
     RESOURCE_LOCK "arts_runtime"
     ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_2n.cfg"
+)
+
+# LRC ownership-transfer TRANSFER/INVALIDATE two-wire reorder stress.  MUST use
+# a receiver_threads>=2 config (arts_2n_io.cfg = 2 nodes, 3w/2s/2r) so the
+# TRANSFER_OWNERSHIP(+1) and follow-up INVALIDATE(-1) to the same just-granted
+# owner can be dispatched out of order by different receiver threads — the
+# window the commutative-signed writer_count fix closes.  Drives a few thousand
+# ownership transfers and PASSES on chain completion (no transfer lost = no
+# stranded RW acquirer); a lost transfer would strand a queued acquirer and hang
+# (the regression), caught by the test's watchdog under this TIMEOUT.  The exact
+# end-sum is a diagnostic only, not a gate (a cross-rank writeback can be dropped
+# by a separate FIFO-ordering defect orthogonal to writer_count — see the test
+# file header).  SKIPs cleanly when rank_count < 2 or under LC (no
+# exclusive-RW chain).
+add_test(
+    NAME coherence_lrc_ownership_reorder
+    COMMAND coherence_lrc_ownership_reorder
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+)
+set_tests_properties(coherence_lrc_ownership_reorder PROPERTIES
+    LABELS "coherence_stress;multinode"
+    TIMEOUT 120
+    RESOURCE_LOCK "arts_runtime"
+    ENVIRONMENT "ARTS_CONFIG=${CMAKE_CURRENT_BINARY_DIR}/arts_2n_io.cfg"
 )
 
 # --- LC-specific test binaries ---

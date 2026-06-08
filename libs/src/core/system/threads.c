@@ -146,12 +146,12 @@ void arts_thread_main_join() {
   // Escalation: timed join → pthread_cancel → timed join → give up and
   // move on (we are about to exit the process anyway).
   {
-    const long JOIN_DEADLINE_NS = 1500L * 1000000L;  /* 1.5 s */
-    const long CANCEL_DEADLINE_NS = 500L * 1000000L; /* 0.5 s */
+    const long join_deadline_ns = 1500L * 1000000L;  /* 1.5 s */
+    const long cancel_deadline_ns = 500L * 1000000L; /* 0.5 s */
     for (int i = 1; i < arts_node_info.total_thread_count; i++) {
       struct timespec deadline;
-      clock_gettime(CLOCK_REALTIME, &deadline);
-      deadline.tv_nsec += JOIN_DEADLINE_NS;
+      (void)clock_gettime(CLOCK_REALTIME, &deadline);
+      deadline.tv_nsec += join_deadline_ns;
       while (deadline.tv_nsec >= 1000000000L) {
         deadline.tv_nsec -= 1000000000L;
         deadline.tv_sec += 1;
@@ -162,10 +162,10 @@ void arts_thread_main_join() {
       }
       ARTS_INFO("arts_thread_main_join: thread %d did not join within "
                 "%ld ms (rc=%d), cancelling",
-                i, JOIN_DEADLINE_NS / 1000000L, rc);
+                i, join_deadline_ns / 1000000L, rc);
       pthread_cancel(node_thread_list[i]);
-      clock_gettime(CLOCK_REALTIME, &deadline);
-      deadline.tv_nsec += CANCEL_DEADLINE_NS;
+      (void)clock_gettime(CLOCK_REALTIME, &deadline);
+      deadline.tv_nsec += cancel_deadline_ns;
       while (deadline.tv_nsec >= 1000000000L) {
         deadline.tv_nsec -= 1000000000L;
         deadline.tv_sec += 1;

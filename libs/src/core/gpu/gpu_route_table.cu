@@ -135,8 +135,8 @@ uint64_t arts_gpu_lookup_db(arts_guid_t key) {
   return ret;
 }
 
-void *arts_gpu_route_table_add_item(void *item, uint64_t size,
-                                         arts_guid_t key, unsigned int gpu_id) {
+void *arts_gpu_route_table_add_item(void *item, uint64_t size, arts_guid_t key,
+                                    unsigned int gpu_id) {
   // This is a bypass thread local variable to make the api nice...
   gpu_item_size_bypass = size;
   arts_route_table_t *route_table = arts_node_info.gpu_route_table[gpu_id];
@@ -151,11 +151,9 @@ void *arts_gpu_route_table_add_item(void *item, uint64_t size,
   return (void *)wrapper->real_data;
 }
 
-arts_item_wrapper_t *arts_gpu_route_table_reserve_item(bool *added,
-                                                            uint64_t size,
-                                                            arts_guid_t key,
-                                                            unsigned int gpu_id,
-                                                            bool add_to_use) {
+arts_item_wrapper_t *
+arts_gpu_route_table_reserve_item(bool *added, uint64_t size, arts_guid_t key,
+                                  unsigned int gpu_id, bool add_to_use) {
   // This is a bypass thread local variable to make the api nice...
   (void)add_to_use;
   gpu_item_size_bypass = size;
@@ -175,8 +173,8 @@ arts_item_wrapper_t *arts_gpu_route_table_reserve_item(bool *added,
 }
 
 void *arts_gpu_route_table_add_item_to_delete(void *item, uint64_t size,
-                                                   arts_guid_t key,
-                                                   unsigned int gpu_id) {
+                                              arts_guid_t key,
+                                              unsigned int gpu_id) {
   // This is a bypass thread local variable to make the api nice...
   gpu_item_size_bypass = size;
   arts_route_table_t *route_table = arts_node_info.gpu_route_table[gpu_id];
@@ -193,7 +191,7 @@ void *arts_gpu_route_table_add_item_to_delete(void *item, uint64_t size,
 }
 
 void *arts_gpu_route_table_lookup_db_res(arts_guid_t key, int gpu_id,
-                                         unsigned int *touched,
+                                         const unsigned int *touched,
                                          unsigned int *time_stamp, bool res) {
   void *ret = NULL;
   arts_route_table_t *route_table = arts_node_info.gpu_route_table[gpu_id];

@@ -73,8 +73,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("=== edt_destroy ===\n");
 
   // Create an EDT with 1 dep that will never be satisfied.
-  arts_guid_t doomed =
-      arts_edt_create(should_not_run, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0});
+  arts_guid_t doomed = arts_edt_create(should_not_run, 0, NULL, 1,
+                                       &(arts_edt_hint_t){.rank = 0});
 
   // Destroy it before signaling.
   arts_edt_destroy(doomed);

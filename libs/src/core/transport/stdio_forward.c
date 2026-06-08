@@ -129,7 +129,8 @@ void arts_stdio_forwarder_shutdown_all(void) {
    * children have exited (so every pipe is at EOF and every reader has left
    * its loop) before calling this.  Idempotent — a second call exchanges out
    * an already-NULL head and the drain loop runs zero times. */
-  forwarder_slot_t *list = __atomic_exchange_n(&g_forwarders, NULL, __ATOMIC_ACQUIRE);
+  forwarder_slot_t *list =
+      __atomic_exchange_n(&g_forwarders, NULL, __ATOMIC_ACQUIRE);
 
   while (list) {
     forwarder_slot_t *next = list->next;

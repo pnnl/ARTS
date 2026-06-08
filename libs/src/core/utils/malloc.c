@@ -65,7 +65,8 @@ void *arts_malloc(size_t size) {
     return NULL;
   }
 
-  arts_alloc_header_t *base = (arts_alloc_header_t *)malloc(size + sizeof(arts_alloc_header_t));
+  arts_alloc_header_t *base =
+      (arts_alloc_header_t *)malloc(size + sizeof(arts_alloc_header_t));
   if (!base) {
     ARTS_ERROR("arts_malloc: system malloc failed (size=%zu)", size);
   }
@@ -91,7 +92,8 @@ void *arts_malloc_align(size_t size, size_t align) {
   }
   INCREMENT_BYTES_MEMORY_FOOTPRINT_BY(size);
 
-  void *aligned = align_pointer((char *)base + sizeof(arts_alloc_header_t), align);
+  void *aligned =
+      align_pointer((char *)base + sizeof(arts_alloc_header_t), align);
   arts_alloc_header_t *hdr = (arts_alloc_header_t *)aligned - 1;
 
   hdr->size = size;

@@ -88,8 +88,7 @@ static int arts_shell_quote(const char *input, char *output,
   return 0;
 }
 
-void arts_remote_launcher_ssh_startup_processes(
-    struct arts_remote_launcher_s *launcher) {
+void arts_launcher_ssh_startup_processes(struct arts_launcher_s *launcher) {
   unsigned int argc = launcher->argc;
   char **argv = launcher->argv;
   struct arts_config_s *config = launcher->config;
@@ -352,8 +351,7 @@ void arts_remote_launcher_ssh_startup_processes(
   }
 }
 
-void arts_remote_launcher_ssh_cleanup_processes(
-    struct arts_remote_launcher_s *launcher) {
+void arts_launcher_ssh_cleanup_processes(struct arts_launcher_s *launcher) {
   if (!launcher || !launcher->child_pids) {
     return;
   }
@@ -391,8 +389,7 @@ void arts_remote_launcher_ssh_cleanup_processes(
 
 /*--- Local launcher (multi-node on single machine) -------------------------*/
 
-void arts_remote_launcher_local_startup_processes(
-    struct arts_remote_launcher_s *launcher) {
+void arts_launcher_local_startup_processes(struct arts_launcher_s *launcher) {
   struct arts_config_s *config = launcher->config;
 
   /* Resolve the current executable path. */
@@ -488,8 +485,7 @@ void arts_remote_launcher_local_startup_processes(
   arts_free(new_argv);
 }
 
-void arts_remote_launcher_local_cleanup_processes(
-    struct arts_remote_launcher_s *launcher) {
+void arts_launcher_local_cleanup_processes(struct arts_launcher_s *launcher) {
   if (!launcher || !launcher->child_pids) {
     return;
   }

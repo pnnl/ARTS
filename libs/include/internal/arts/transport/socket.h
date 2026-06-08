@@ -54,18 +54,18 @@ int arts_get_socket_outgoing(struct sockaddr_in *outgoing_socket,
                              unsigned int port, in_addr_t s_addr);
 
 void arts_transport_set_config(struct arts_config_s *config);
-void arts_remote_setup_outgoing();
-bool arts_remote_setup_incoming();
-unsigned int arts_remote_get_my_rank();
+void arts_transport_setup_outgoing();
+bool arts_transport_setup_incoming();
+unsigned int arts_transport_get_my_rank();
 bool arts_transport_receive(void);
-uint64_t arts_remote_send_request(int rank, unsigned int queue, char *message,
-                                  uint64_t length);
-uint64_t arts_remote_send_payload_request(int rank, unsigned int queue,
-                                          char *message, unsigned int length,
-                                          char *payload, uint64_t length2);
-void arts_remote_set_thread_inbound_queues(unsigned int start,
-                                           unsigned int stop);
-void arts_remote_thread_inbound_queues_cleanup();
+uint64_t arts_transport_send(int rank, unsigned int queue, char *message,
+                             uint64_t length);
+uint64_t arts_transport_send_payload(int rank, unsigned int queue,
+                                     char *message, unsigned int length,
+                                     char *payload, uint64_t length2);
+void arts_transport_set_thread_inbound_queues(unsigned int start,
+                                              unsigned int stop);
+void arts_transport_thread_inbound_queues_cleanup();
 #ifdef __cplusplus
 }
 #endif

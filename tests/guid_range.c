@@ -56,7 +56,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 #define RANGE_SIZE 16
 
   // Test 1: Reserve range and verify GUIDs via arts_guid_from_index.
-  arts_guid_t start = arts_guid_reserve_range(ARTS_GUID_DB, RANGE_SIZE, my_node);
+  arts_guid_t start =
+      arts_guid_reserve_range(ARTS_GUID_DB, RANGE_SIZE, my_node);
   if (start == NULL_GUID) {
     arts_printf("  FAIL: guid_reserve_range returned NULL_GUID\n");
     arts_shutdown();

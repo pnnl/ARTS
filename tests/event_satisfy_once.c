@@ -73,7 +73,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   /* Register one waiter EDT.  Wired via arts_add_dependence — when the
    * event fires, the waiter slot 0 is satisfied and the EDT runs. */
-  arts_guid_t waiter = arts_edt_create(waiter_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+  arts_guid_t waiter =
+      arts_edt_create(waiter_edt, 0, NULL, 1,
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(ev, waiter, 0, DB_MODE_RW);
 
   /* Slot-0 satisfy via the OCR-aligned wrapper. */

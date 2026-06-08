@@ -110,8 +110,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_event_hint_t h = ARTS_EVENT_HINT_IDEMPOTENT;
     arts_guid_t ev = arts_event_create(&h);
     if (ev == NULL_GUID) {
-      fprintf(stderr, "FAIL [iter=%d]: arts_event_create returned NULL_GUID\n",
-              it);
+      (void)fprintf(
+          stderr, "FAIL [iter=%d]: arts_event_create returned NULL_GUID\n", it);
       abort();
     }
 
@@ -119,8 +119,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_guid_t db = arts_db_create(&dbp, sizeof(uint64_t), ARTS_DB,
                                     ARTS_DB_PROP_NONE, NULL);
     if (db == NULL_GUID) {
-      fprintf(stderr, "FAIL [iter=%d]: arts_db_create returned NULL_GUID\n",
-              it);
+      (void)fprintf(stderr,
+                    "FAIL [iter=%d]: arts_db_create returned NULL_GUID\n", it);
       abort();
     }
 
@@ -136,39 +136,39 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     }
 
     /* Spin until all consumer EDTs have run. */
-    for (int spin = 0;
-         spin < 100000000 && atomic_load_explicit(&signaled_count,
-                                                  memory_order_acquire) <
-                                  N_CONSUMERS;
+    for (int spin = 0; spin < 100000000 &&
+                       atomic_load_explicit(&signaled_count,
+                                            memory_order_acquire) < N_CONSUMERS;
          spin++) {
     }
 
     unsigned int got =
         atomic_load_explicit(&signaled_count, memory_order_acquire);
     if (got != N_CONSUMERS) {
-      fprintf(stderr, "FAIL [iter=%d]: signaled_count=%u (want %u)\n", it, got,
-              N_CONSUMERS);
+      (void)fprintf(stderr, "FAIL [iter=%d]: signaled_count=%u (want %u)\n", it,
+                    got, N_CONSUMERS);
       abort();
     }
     /* All consumers must observe the same data GUID — the unique winner
      * of the satisfy race wrote simple.data, every late binder reads from
      * that slot via the fired==true short-circuit. */
-    arts_guid_t first =
-        (arts_guid_t)atomic_load_explicit(&consumer_data[0], memory_order_acquire);
+    arts_guid_t first = (arts_guid_t)atomic_load_explicit(&consumer_data[0],
+                                                          memory_order_acquire);
     for (int i = 1; i < N_CONSUMERS; i++) {
       arts_guid_t got = (arts_guid_t)atomic_load_explicit(&consumer_data[i],
                                                           memory_order_acquire);
       if (got != first) {
-        fprintf(stderr,
-                "FAIL [iter=%d]: consumer %d got data=%lu, consumer 0 got %lu\n",
-                it, i, (uint64_t)got, (uint64_t)first);
+        (void)fprintf(
+            stderr,
+            "FAIL [iter=%d]: consumer %d got data=%lu, consumer 0 got %lu\n",
+            it, i, (uint64_t)got, (uint64_t)first);
         abort();
       }
     }
     if (first != db) {
-      fprintf(stderr,
-              "FAIL [iter=%d]: consumer data=%lu != satisfier db=%lu\n", it,
-              (uint64_t)first, (uint64_t)db);
+      (void)fprintf(stderr,
+                    "FAIL [iter=%d]: consumer data=%lu != satisfier db=%lu\n",
+                    it, (uint64_t)first, (uint64_t)db);
       abort();
     }
   }

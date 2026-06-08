@@ -99,8 +99,9 @@ static inline void arts_tiered_pool_tcache_push(arts_pool_tcache_t *c,
 static inline arts_lf_link_t *
 arts_tiered_pool_tcache_pop(arts_pool_tcache_t *c) {
   arts_lf_link_t *n = c->head;
-  if (!n)
+  if (!n) {
     return NULL;
+  }
   c->head = atomic_load_explicit(&n->next, memory_order_relaxed);
   c->count--;
   return n;
@@ -115,10 +116,12 @@ static inline void arts_tiered_pool_tcache_detach(arts_pool_tcache_t *c,
                                                   uint32_t *out_n) {
   *out_head = NULL;
   *out_tail = NULL;
-  if (out_n)
+  if (out_n) {
     *out_n = 0;
-  if (n == 0 || !c->head)
+  }
+  if (n == 0 || !c->head) {
     return;
+  }
   arts_lf_link_t *head = c->head;
   arts_lf_link_t *tail = head;
   uint32_t taken = 1;
@@ -135,8 +138,9 @@ static inline void arts_tiered_pool_tcache_detach(arts_pool_tcache_t *c,
   atomic_store_explicit(&tail->next, NULL, memory_order_relaxed);
   *out_head = head;
   *out_tail = tail;
-  if (out_n)
+  if (out_n) {
     *out_n = taken;
+  }
 }
 
 /** Install a chain of `n` nodes [head .. ?] into the tcache by walking
@@ -145,15 +149,17 @@ static inline void arts_tiered_pool_tcache_detach(arts_pool_tcache_t *c,
 static inline void arts_tiered_pool_tcache_install(arts_pool_tcache_t *c,
                                                    arts_lf_link_t *head,
                                                    uint32_t n) {
-  if (!head || n == 0)
+  if (!head || n == 0) {
     return;
+  }
   arts_lf_link_t *tail = head;
   uint32_t walked = 1;
   while (walked < n) {
     arts_lf_link_t *next =
         atomic_load_explicit(&tail->next, memory_order_relaxed);
-    if (!next)
+    if (!next) {
       break;
+    }
     tail = next;
     walked++;
   }
@@ -173,10 +179,12 @@ static inline void arts_tiered_pool_init_explicit(arts_tiered_pool_t *p,
                                                   uint32_t num_threads,
                                                   uint32_t num_numa_nodes,
                                                   arts_tiered_pool_cfg_t cfg) {
-  if (num_threads == 0)
+  if (num_threads == 0) {
     num_threads = 1;
-  if (num_numa_nodes == 0)
+  }
+  if (num_numa_nodes == 0) {
     num_numa_nodes = 1;
+  }
   p->num_threads = num_threads;
   p->num_numa_nodes = num_numa_nodes;
   p->node_size = node_size;
@@ -198,8 +206,9 @@ static inline void arts_tiered_pool_init(arts_tiered_pool_t *p,
                                          size_t node_size,
                                          arts_tiered_pool_cfg_t cfg) {
   uint32_t nt = (uint32_t)arts_node_info.total_thread_count;
-  if (nt == 0)
+  if (nt == 0) {
     nt = 1;
+  }
   /* single NUMA shard.  Replace with hwloc lookup
    * (arts_node_info-cached num_numa_nodes) when migrating the consumer. */
   uint32_t nn = 1;
@@ -241,8 +250,9 @@ static inline void arts_tiered_pool_destroy(arts_tiered_pool_t *p) {
 
 static inline void *arts_tiered_pool_alloc(arts_tiered_pool_t *p) {
   uint32_t tid = arts_tiered_pool_worker_id();
-  if (tid >= p->num_threads)
+  if (tid >= p->num_threads) {
     tid = 0; /* defensive */
+  }
   arts_pool_tcache_t *c = &p->tcache[tid];
 
   /* Tier 0 — thread-private cache, zero atomics on hit. */
@@ -252,8 +262,9 @@ static inline void *arts_tiered_pool_alloc(arts_tiered_pool_t *p) {
   }
 
   uint32_t numa_id = arts_tiered_pool_numa_id(tid);
-  if (numa_id >= p->num_numa_nodes)
+  if (numa_id >= p->num_numa_nodes) {
     numa_id = 0;
+  }
 
   /* Tier 1 — NUMA shard, batch-fetch B_local nodes. */
   uint32_t got = 0;
@@ -281,8 +292,9 @@ static inline void *arts_tiered_pool_alloc(arts_tiered_pool_t *p) {
 
     /* Move up to (B_local - 1) into tcache. */
     uint32_t to_tcache = (p->cfg.B_local > 0) ? (p->cfg.B_local - 1) : 0;
-    if (to_tcache > remaining)
+    if (to_tcache > remaining) {
       to_tcache = remaining;
+    }
 
     if (rest && to_tcache > 0) {
       /* Walk to find the split tail. */
@@ -291,8 +303,9 @@ static inline void *arts_tiered_pool_alloc(arts_tiered_pool_t *p) {
       while (walked < to_tcache) {
         arts_lf_link_t *next =
             atomic_load_explicit(&split_tail->next, memory_order_relaxed);
-        if (!next)
+        if (!next) {
           break;
+        }
         split_tail = next;
         walked++;
       }
@@ -313,8 +326,9 @@ static inline void *arts_tiered_pool_alloc(arts_tiered_pool_t *p) {
         while (numa_walked < remaining) {
           arts_lf_link_t *next =
               atomic_load_explicit(&numa_tail->next, memory_order_relaxed);
-          if (!next)
+          if (!next) {
             break;
+          }
           numa_tail = next;
           numa_walked++;
         }
@@ -328,8 +342,9 @@ static inline void *arts_tiered_pool_alloc(arts_tiered_pool_t *p) {
       while (numa_walked < remaining) {
         arts_lf_link_t *next =
             atomic_load_explicit(&numa_tail->next, memory_order_relaxed);
-        if (!next)
+        if (!next) {
           break;
+        }
         numa_tail = next;
         numa_walked++;
       }
@@ -349,8 +364,9 @@ static inline void arts_tiered_pool_release(arts_tiered_pool_t *p, void *node) {
   /* Use current-thread cache (not alloc-thread cache).  Cross-thread
    * alloc/release cycles balance through tier 1/2. */
   uint32_t tid = arts_tiered_pool_worker_id();
-  if (tid >= p->num_threads)
+  if (tid >= p->num_threads) {
     tid = 0;
+  }
   arts_pool_tcache_t *c = &p->tcache[tid];
   arts_lf_link_t *n = (arts_lf_link_t *)node;
 
@@ -362,8 +378,9 @@ static inline void arts_tiered_pool_release(arts_tiered_pool_t *p, void *node) {
 
   /* Tier 0 full → spill B_local to NUMA, then push the new node. */
   uint32_t numa_id = arts_tiered_pool_numa_id(tid);
-  if (numa_id >= p->num_numa_nodes)
+  if (numa_id >= p->num_numa_nodes) {
     numa_id = 0;
+  }
 
   arts_lf_link_t *spill_head = NULL;
   arts_lf_link_t *spill_tail = NULL;
@@ -379,7 +396,8 @@ static inline void arts_tiered_pool_release(arts_tiered_pool_t *p, void *node) {
   uint32_t numa_count =
       atomic_load_explicit(&p->numa[numa_id].pool.count, memory_order_relaxed);
   if (numa_count > p->cfg.H_numa) {
-    arts_lf_link_t *gh = NULL, *gt = NULL;
+    arts_lf_link_t *gh = NULL;
+    arts_lf_link_t *gt = NULL;
     arts_lf_pool_batch_drain(&p->numa[numa_id].pool, p->cfg.B_numa, &gh, &gt);
     if (gh && gt) {
       /* batch_drain doesn't report count, walk to compute (chain tail

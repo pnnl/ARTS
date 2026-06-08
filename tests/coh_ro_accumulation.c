@@ -21,7 +21,8 @@ static atomic_int g_reader_fail = 0;
 
 static void *wd_thread(void *a) {
   (void)a;
-  int last_ok = -1, stuck = 0;
+  int last_ok = -1;
+  int stuck = 0;
   for (;;) {
     sleep(2);
     int ok = atomic_load(&g_reader_ok);
@@ -31,9 +32,9 @@ static void *wd_thread(void *a) {
     }
     if (ok == last_ok) {
       if (++stuck >= 3) {
-        fprintf(stderr, "HANG: ok=%d fail=%d (expect %d total)\n", ok, fail,
-                NUM_READERS);
-        fflush(stderr);
+        (void)fprintf(stderr, "HANG: ok=%d fail=%d (expect %d total)\n", ok,
+                      fail, NUM_READERS);
+        (void)fflush(stderr);
         _exit(1);
       }
     } else {
@@ -79,16 +80,20 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
 
   void *ptr = NULL;
-  arts_guid_t db =
-      arts_db_create(&ptr, sizeof(unsigned int), ARTS_DB, ARTS_DB_PROP_NONE, NULL);
+  arts_guid_t db = arts_db_create(&ptr, sizeof(unsigned int), ARTS_DB,
+                                  ARTS_DB_PROP_NONE, NULL);
   ((unsigned int *)ptr)[0] = 0;
   arts_db_release(db, DB_MODE_RW);
 
-  arts_guid_t w = arts_edt_create(writer_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+  arts_guid_t w =
+      arts_edt_create(writer_edt, 0, NULL, 1,
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(db, w, 0, DB_MODE_RW);
 
   for (int r = 0; r < NUM_READERS; r++) {
-    arts_guid_t rd = arts_edt_create(reader_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+    arts_guid_t rd =
+        arts_edt_create(reader_edt, 0, NULL, 1,
+                        &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(db, rd, 0, DB_MODE_RO);
   }
 
@@ -102,14 +107,15 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   int wdone = atomic_load(&g_writer_done);
   int ok = atomic_load(&g_reader_ok);
   int fail = atomic_load(&g_reader_fail);
-  fprintf(stderr, "writer_done=%d readers_ok=%d readers_fail=%d (expect 1/%d/0)\n",
-          wdone, ok, fail, NUM_READERS);
+  (void)fprintf(
+      stderr, "writer_done=%d readers_ok=%d readers_fail=%d (expect 1/%d/0)\n",
+      wdone, ok, fail, NUM_READERS);
   if (wdone == 1 && ok == NUM_READERS && fail == 0) {
-    fprintf(stderr, "TEST PASS\n");
+    (void)fprintf(stderr, "TEST PASS\n");
   } else {
-    fprintf(stderr, "TEST FAIL\n");
+    (void)fprintf(stderr, "TEST FAIL\n");
   }
-  fflush(stderr);
+  (void)fflush(stderr);
   arts_shutdown();
 }
 

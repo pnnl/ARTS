@@ -140,7 +140,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     d1[i] = i + 1;
   }
   arts_db_release(db1, DB_MODE_RW);
-  arts_guid_t e1 = arts_edt_create(check_db_create, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+  arts_guid_t e1 =
+      arts_edt_create(check_db_create, 0, NULL, 1,
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(db1, e1, 0, DB_MODE_RW);
 
   // Test 2: arts_db_create_with_guid.
@@ -152,7 +154,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
   arts_db_release(reserved, DB_MODE_RW);
   uint64_t param2 = (uint64_t)reserved;
-  arts_guid_t e2 = arts_edt_create(check_db_with_guid, 1, &param2, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+  arts_guid_t e2 =
+      arts_edt_create(check_db_with_guid, 1, &param2, 1,
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(reserved, e2, 0, DB_MODE_RO);
 
   // Test 3: arts_db_create_with_guid + caller-side initial data fill.
@@ -163,7 +167,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     d3[i] = 0xBEEF + i;
   }
   arts_db_release(reserved3, DB_MODE_RW);
-  arts_guid_t e3 = arts_edt_create(check_db_with_data, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+  arts_guid_t e3 =
+      arts_edt_create(check_db_with_data, 0, NULL, 1,
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(reserved3, e3, 0, DB_MODE_RO);
 
   // Test 4: arts_db_destroy (implicit release).
@@ -172,7 +178,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       arts_db_create(&ptr4, 64, ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
   arts_db_destroy(db4);
 
-  arts_edt_create(post_destroy_edt, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+  arts_edt_create(post_destroy_edt, 0, NULL, 0,
+                  &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
 
   arts_event_wait(fe);
   arts_shutdown();

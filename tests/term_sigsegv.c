@@ -18,6 +18,9 @@ void trigger_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
   volatile int *p = (int *)0;
+  /* Intentional null dereference: raises SIGSEGV to exercise the
+   * signal/backtrace handler. */
+  // NOLINTNEXTLINE(clang-analyzer-core.NullDereference)
   *p = 1;
 }
 

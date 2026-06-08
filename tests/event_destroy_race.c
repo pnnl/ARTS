@@ -81,7 +81,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_event_hint_t h = ARTS_EVENT_HINT_IDEMPOTENT;
     arts_guid_t ev = arts_event_create(&h);
     if (ev == NULL_GUID) {
-      fprintf(stderr, "FAIL [iter=%d]: arts_event_create\n", it);
+      (void)fprintf(stderr, "FAIL [iter=%d]: arts_event_create\n", it);
       abort();
     }
 
@@ -96,18 +96,17 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     }
 
     /* Spin until all workers ran (event may be destroyed mid-flight). */
-    for (int spin = 0;
-         spin < 100000000 && atomic_load_explicit(&completed_workers,
-                                                  memory_order_acquire) <
-                                  N_WORKERS;
+    for (int spin = 0; spin < 100000000 &&
+                       atomic_load_explicit(&completed_workers,
+                                            memory_order_acquire) < N_WORKERS;
          spin++) {
     }
 
     unsigned int wc =
         atomic_load_explicit(&completed_workers, memory_order_acquire);
     if (wc != N_WORKERS) {
-      fprintf(stderr, "FAIL [iter=%d]: workers completed=%u (want %u)\n", it,
-              wc, N_WORKERS);
+      (void)fprintf(stderr, "FAIL [iter=%d]: workers completed=%u (want %u)\n",
+                    it, wc, N_WORKERS);
       abort();
     }
     /* signaled_count is ≤ number of consumers that arrived before destroy
@@ -115,10 +114,10 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
      * bounded — never exceeds the number of consumers spawned. */
     unsigned int sc =
         atomic_load_explicit(&signaled_count, memory_order_acquire);
-    if (sc > (unsigned)(N_WORKERS / 3 + 1)) {
-      fprintf(stderr,
-              "FAIL [iter=%d]: signaled_count=%u exceeds consumer cap %d\n",
-              it, sc, N_WORKERS / 3 + 1);
+    if (sc > (unsigned)((N_WORKERS / 3) + 1)) {
+      (void)fprintf(
+          stderr, "FAIL [iter=%d]: signaled_count=%u exceeds consumer cap %d\n",
+          it, sc, (N_WORKERS / 3) + 1);
       abort();
     }
   }

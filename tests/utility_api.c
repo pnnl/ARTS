@@ -40,9 +40,9 @@
 /// @file utility_api.c
 /// @brief Tests utility APIs: arts_get_current_rank, arts_get_total_ranks,
 ///        arts_get_current_worker, arts_get_workers_per_rank,
-///        arts_get_time_stamp, arts_thread_safe_random, arts_edt_get_current_guid,
-///        arts_get_current_numa_domain, arts_get_total_numa_domains,
-///        arts_yield.
+///        arts_get_time_stamp, arts_thread_safe_random,
+///        arts_edt_get_current_guid, arts_get_current_numa_domain,
+///        arts_get_total_numa_domains, arts_yield.
 
 #include "arts.h"
 #include "arts/utils/random.h"
@@ -123,8 +123,8 @@ void check_utils(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 }
 
-/// Verify scheduler re-entry works (arts_yield was finish scope machinery; now a
-/// simple completion task).
+/// Verify scheduler re-entry works (arts_yield was finish scope machinery; now
+/// a simple completion task).
 void yield_waiter(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                   arts_edt_dep_t depv[]) {
   (void)paramc;
@@ -158,8 +158,10 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
 
-  arts_edt_create(check_utils, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
-  arts_edt_create(yield_waiter, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+  arts_edt_create(check_utils, 0, NULL, 0,
+                  &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+  arts_edt_create(yield_waiter, 0, NULL, 0,
+                  &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
 
   arts_event_wait(fe);
   arts_shutdown();

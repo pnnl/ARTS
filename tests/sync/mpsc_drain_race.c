@@ -53,10 +53,12 @@ static void *contender(void *arg) {
   (void)arg;
   for (;;) {
     if (atomic_load_explicit(&g_got, memory_order_acquire) >= TOTAL &&
-        atomic_load_explicit(&g_prod_done, memory_order_acquire) == PRODUCERS)
+        atomic_load_explicit(&g_prod_done, memory_order_acquire) == PRODUCERS) {
       break;
-    if (!arts_mpsc_try_drain_begin(&g_q))
+    }
+    if (!arts_mpsc_try_drain_begin(&g_q)) {
       continue; /* lost the gate — do NOT spin in the critical section */
+    }
 
     /* Critical section: exactly one drainer here. */
     int prev = atomic_fetch_add_explicit(&g_active, 1, memory_order_acq_rel);
@@ -66,8 +68,9 @@ static void *contender(void *arg) {
 
     for (;;) {
       arts_lf_link_t *n = arts_mpsc_pop(&g_q);
-      if (!n)
+      if (!n) {
         break;
+      }
       msg_t *m = (msg_t *)n;
       free(m);
       atomic_fetch_add_explicit(&g_got, 1, memory_order_relaxed);
@@ -84,24 +87,30 @@ static void *contender(void *arg) {
 int main(void) {
   arts_mpsc_init(&g_q);
 
-  pthread_t prod[PRODUCERS], cont[CONTENDERS];
-  for (int i = 0; i < CONTENDERS; ++i)
+  pthread_t prod[PRODUCERS];
+  pthread_t cont[CONTENDERS];
+  for (int i = 0; i < CONTENDERS; ++i) {
     pthread_create(&cont[i], NULL, contender, NULL);
-  for (int i = 0; i < PRODUCERS; ++i)
+  }
+  for (int i = 0; i < PRODUCERS; ++i) {
     pthread_create(&prod[i], NULL, producer, (void *)(uintptr_t)i);
+  }
 
-  for (int i = 0; i < PRODUCERS; ++i)
+  for (int i = 0; i < PRODUCERS; ++i) {
     pthread_join(prod[i], NULL);
-  for (int i = 0; i < CONTENDERS; ++i)
+  }
+  for (int i = 0; i < CONTENDERS; ++i) {
     pthread_join(cont[i], NULL);
+  }
 
   /* Final sweep in case the last messages landed after every contender's
    * exit check (producers-done observed before the final links were seen). */
   assert(arts_mpsc_try_drain_begin(&g_q));
   for (;;) {
     arts_lf_link_t *n = arts_mpsc_pop(&g_q);
-    if (!n)
+    if (!n) {
       break;
+    }
     free((msg_t *)n);
     atomic_fetch_add_explicit(&g_got, 1, memory_order_relaxed);
   }

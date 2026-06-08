@@ -7,48 +7,58 @@
  * ownership machinery that RC and LRC share but LC does not have (LC keeps the
  * canonical buffer at home via synchronous WRITEBACK and has no LOCK_REQ /
  * GRANT / pending_rw round).  The small points where RC and LRC themselves
- * differ are delegated to per-model hooks defined in db_coherence_rc.c /
- * db_coherence_lrc.c.  Contains NO ARTS_MEMORY_MODEL_* preprocessor logic.
+ * differ are delegated to per-model seams (arts_db_start_ownership_round /
+ * arts_db_ownership_return) defined in coherence/rc.c / coherence/lrc.c —
+ * family→model calls.  Contains NO ARTS_MEMORY_MODEL_* preprocessor logic.
  */
+#include <assert.h> /* LRC INVALIDATE direct-call invariant assert */
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 
+#include "arts/coherence/buffer.h" /* arts_db_buf_acquire (invalidate xfer) */
+#include "arts/coherence/coherence.h"
+#include "arts/coherence/handlers.h"
+#include "arts/coherence/home.h" /* arts_home_lockreq_queue_push */
 #include "arts/db.h"
-#include "arts/db_coherence.h"
-#include "arts/db_coherence_handlers.h"
-#include "arts/db_coherence_home.h" /* arts_home_lockreq_queue_push */
-#include "arts/db_coherence_model.h"
 #include "arts/edt.h"
+#include "arts/gas/route_table.h" /* arts_route_table_lookup_db (Cat-C self-send) */
+#include "arts/ooo.h"
 #include "arts/runtime_state.h"
 #include "arts/runtime_types.h"
 #include "arts/system/threads.h"     /* arts_global_rank_id */
-#include "arts/transport/outbox.h"   /* arts_remote_send_request_async */
+#include "arts/transport/outbox.h"   /* arts_transport_send_async */
 #include "arts/transport/protocol.h" /* arts_fill_packet_header, MSG_* */
 
-/* ===== Case 2/6: RW local fast path ================================ */
-
-typedef enum { CASE26_OK = 0, CASE26_FAIL_FALLBACK } case26_result_t;
-
-static case26_result_t acquire_rw_local_fast(struct arts_db_cache_s *cache) {
+/* ===== Case 2/6: RW local fast path ================================
+ * Shared by the RC and LRC arts_handler_db_acquire bodies (coherence/rc.c /
+ * coherence/lrc.c).  CAS-increments writer_count "if positive"; on success
+ * writes dep->ptr (acquire_local) and returns true; returns false when
+ * writer_count went to 0 (ownership invalidated) so the caller falls through to
+ * arts_db_acquire_remote_rw. */
+bool arts_db_acquire_rw_local_fast(struct arts_db_cache_s *cache,
+                                   arts_edt_dep_t *dep) {
   /* CAS-loop "increment if positive": never bump from 0. */
   while (1) {
     unsigned int wc = cache->writer_count;
     if (wc == 0) {
-      return CASE26_FAIL_FALLBACK; /* ownership invalidated. */
+      return false; /* ownership invalidated — fall through to remote-RW. */
     }
     if (arts_atomic_cswap(&cache->writer_count, wc, wc + 1) == wc) {
-      return CASE26_OK;
+      /* writer_count bumped.  acquire_local NULL is fine (sentinel /
+       * version-0); release_rw will decrement the matching bump. */
+      dep->ptr = arts_db_acquire_local(cache);
+      return true;
     }
   }
 }
 
 /* ===== Case 4/8: remote-RW path ==================================== */
 
-static arts_db_acquire_result_t acquire_remote_rw(struct arts_db_cache_s *cache,
-                                                  arts_guid_t edt_guid,
-                                                  unsigned int slot) {
+arts_db_acquire_result_t
+arts_db_acquire_remote_rw(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
+                          unsigned int slot) {
   /* No destroy_state precheck: per spec 4.11, handle_destroy_req NULL-stores
    * route_item->data BEFORE flipping destroy_state, so route_table_lookup_db
    * already misses and the caller's OoO defer handles "DB destroyed".  If
@@ -78,45 +88,15 @@ static arts_db_acquire_result_t acquire_remote_rw(struct arts_db_cache_s *cache,
   return ARTS_DB_ACQUIRE_PARK;
 }
 
-/* ===== 8-case dispatch (RC/LRC arm) ================================ */
+/* The RC/LRC arts_handler_db_acquire 8-case body lives per-model in
+ * coherence/{rc,lrc}.c — the two builds differ only on the RO-has-local-data
+ * predicate (RC is_home||is_owner; LRC is_owner), which the C-preprocessor seam
+ * forbids in a shared TU.  Both call the shared arts_db_acquire_rw_local_fast /
+ * arts_db_acquire_remote_rw above and arts_db_acquire_remote_ro
+ * (coherence/coherence.c).
+ */
 
-arts_db_acquire_result_t
-arts_coh_model_acquire_dispatch(struct arts_db_cache_s *cache,
-                                arts_edt_dep_t *dep, arts_guid_t edt_guid,
-                                unsigned int slot, arts_db_access_mode_t mode,
-                                bool is_home, bool is_owner) {
-  if (mode == DB_MODE_RO) {
-    /* RC: home always holds current data (sync WRITEBACK) -> is_home||is_owner.
-     * LRC: only the current owner has an installed buffer -> is_owner.  A
-     * home-but-not-owner LRC rank goes through acquire_remote_ro so home
-     * forwards to the owner via REDIRECT_RO. */
-    if (arts_coh_model_ro_has_local_data(is_home, is_owner)) {
-      /* acquire_local returns NULL when buffer is not installed (sentinel or
-       * version-0 pre-install).  That is OK -- caller treats NULL as "no
-       * payload".  No DESTROYED claim. */
-      dep->ptr = arts_coh_acquire_local(cache);
-      return ARTS_DB_ACQUIRE_OK;
-    }
-    /* Case 7: remote-RO. */
-    return arts_coh_acquire_remote_ro(cache, edt_guid, slot);
-  }
-
-  /* mode == DB_MODE_RW (or RW-equivalent) */
-  if (is_owner) {
-    if (acquire_rw_local_fast(cache) == CASE26_OK) {
-      /* writer_count bumped.  acquire_local NULL is fine (sentinel /
-       * version-0); release_rw will decrement the matching bump.  No undo, no
-       * DESTROYED. */
-      dep->ptr = arts_coh_acquire_local(cache);
-      return ARTS_DB_ACQUIRE_OK;
-    }
-    /* FAIL_FALLBACK: writer_count went to 0 between dispatch and CAS; fall
-     * through to remote-RW. */
-  }
-  return acquire_remote_rw(cache, edt_guid, slot);
-}
-
-/* ===== GRANT drain (called from db_coherence_handlers.c) =========== */
+/* ===== GRANT drain (called from coherence/{rc,lrc}.c) =========== */
 
 /* Drain callback context for the RW MPSC pop loop. */
 struct rw_drain_ctx_s {
@@ -134,8 +114,8 @@ static void rw_drain_cb(arts_guid_t edt_guid, unsigned int slot, void *vctx) {
   mark_edt_ready_by_guid(edt_guid, slot);
 }
 
-void arts_coh_drain_pending_rw_after_grant(struct arts_db_cache_s *cache,
-                                           uint64_t version, bool has_next) {
+void arts_db_drain_pending_rw_after_grant(struct arts_db_cache_s *cache,
+                                          uint64_t version, bool has_next) {
   (void)version;
   (void)
       has_next; /* chain continuation is home-driven (advance_chain INVALIDATEs
@@ -147,14 +127,13 @@ void arts_coh_drain_pending_rw_after_grant(struct arts_db_cache_s *cache,
 
 /* ===== ownership-transfer trigger ================================== */
 
-void arts_coh_invalidate_transfer(struct arts_db_cache_s *cache) {
-  bool is_home =
-      ((unsigned int)arts_guid_get_rank(cache->db_guid) == arts_global_rank_id);
+void arts_db_invalidate_transfer(struct arts_db_cache_s *cache) {
+  bool is_home = (arts_guid_get_rank(cache->db_guid) == arts_global_rank_id);
   if (is_home) {
-    arts_coh_local_transfer_now(cache);
+    arts_db_local_transfer_now(cache);
     return;
   }
-  unsigned int home_rank = (unsigned int)arts_guid_get_rank(cache->db_guid);
+  unsigned int home_rank = arts_guid_get_rank(cache->db_guid);
   /* The transfer trigger MUST carry the owner's data.  A data-less
    * ownership_return could overtake the releasing worker's in-flight WRITEBACK
    * (release_rw decrements writer_count BEFORE it sends its writeback, so this
@@ -167,13 +146,13 @@ void arts_coh_invalidate_transfer(struct arts_db_cache_s *cache) {
    * the ACK, so the network receiver thread running this handler does not block
    * on an ACK it would itself have to dispatch (a self-deadlock under a single
    * receiver thread). */
-  arts_shared_ptr_t buf_h = arts_coh_acquire_buf(cache);
+  arts_shared_ptr_t buf_h = arts_db_buf_acquire(cache);
   struct arts_db_buffer_s *buf =
       (struct arts_db_buffer_s *)arts_shared_get(buf_h);
   if (buf != NULL) {
     arts_send_db_writeback(home_rank, cache->db_guid, buf->version, /*cv=*/0,
                            ARTS_WB_AND_TRANSFER, buf->data, cache->db_size);
-    arts_coh_release_buf(&buf_h);
+    arts_db_buf_release(&buf_h);
   } else {
     /* Zero-size sentinel DB (no buffer): no data can be stale, so the data-less
      * ownership_return is correct. */
@@ -181,7 +160,12 @@ void arts_coh_invalidate_transfer(struct arts_db_cache_s *cache) {
   }
 }
 
-/* ===== destroy/fail fan-out of pending_rw ========================== */
+/* ===== destroy/fail wake of parked waiters (RC+LRC) ================
+ * Wake every parked waiter with a NULL ptr so the EDT observes the destroyed
+ * DB (mark_edt_ready_by_guid delivers NULL when the cache buffer is gone): the
+ * RW Vyukov MPSC FIFO first, then the snapshot reorder buffer.  LC has no
+ * pending_rw queue so it defines its own arts_db_fail_trigger_pending
+ * (coherence/lc.c) draining only pending_snapshot. */
 
 static void fail_trigger_rw_cb(arts_guid_t edt_guid, unsigned int slot,
                                void *vctx) {
@@ -189,8 +173,9 @@ static void fail_trigger_rw_cb(arts_guid_t edt_guid, unsigned int slot,
   mark_edt_ready_by_guid(edt_guid, slot);
 }
 
-void arts_coh_model_fail_trigger_pending_rw(struct arts_db_cache_s *cache) {
+void arts_db_fail_trigger_pending(struct arts_db_cache_s *cache) {
   arts_pending_rw_queue_drain(&cache->pending_rw, fail_trigger_rw_cb, NULL);
+  arts_db_drain_pending_snapshot(cache);
 }
 
 /* ===== Home-side ownership handlers (RC+LRC; moved from handlers.c) ==
@@ -199,38 +184,23 @@ void arts_coh_model_fail_trigger_pending_rw(struct arts_db_cache_s *cache) {
  * only in the release-consistency family.  The home-directory machinery they
  * touch (pending_rw, invalidate_in_flight, rw_holder) is RC+LRC-shared; the
  * point where RC and LRC diverge is delegated to per-model seams in
- * db_coherence_rc.c / db_coherence_lrc.c. */
+ * coherence/rc.c / coherence/lrc.c. */
 
-/* OoO replay wrapper for a deferred LOCK_REQ: rebuild the packet from the OoO
- * args and re-issue the handler.  Registered in the route_table OoO dispatch
- * table for OOO_DB_OWNERSHIP_REQUEST (RC/LRC only). */
-void arts_coh_ooo_replay_ownership_request(void *item, void *vargs) {
-  (void)item;
+/* Cat-B pure body (OoO g_ooo_table[OOO_DB_OWNERSHIP_REQUEST]): the OoO engine
+ * has already acquired the home db_s for db_guid and pinned a ref across this
+ * call, so there is no lookup / NULL-check / defer here.  cache is the FIRST
+ * member of arts_db_s (offset 0), so the slot object the engine hands us IS the
+ * cache.  The wire dispatcher decodes LOCK_REQ into the args struct and routes
+ * through the engine via OOO_DB_OWNERSHIP_REQUEST; a missing home db_s defers
+ * the args and re-issues this body once DB_CREATE installs and drains.  (LC
+ * never enqueues this kind — coherence/lc.c provides a no-op definition that
+ * satisfies the single g_ooo_table slot in the LC build.) */
+void arts_handler_db_ownership_request(void *item_v, void *args_v) {
+  struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
   struct arts_ooo_args_db_ownership_request_s *a =
-      (struct arts_ooo_args_db_ownership_request_s *)vargs;
-  struct arts_remote_ownership_request_packet_s p;
-  p.header.rank = a->requester;
-  p.db_guid = a->db_guid;
-  arts_handler_db_ownership_request(&p);
-}
+      (struct arts_ooo_args_db_ownership_request_s *)args_v;
+  unsigned int requester = a->requester;
 
-void arts_handler_db_ownership_request(
-    struct arts_remote_ownership_request_packet_s *p) {
-  unsigned int requester = p->header.rank;
-
-  /* Stack-built OoO defer payload — heap-copied by
-   * arts_coh_home_lookup_or_defer if it actually has to defer. */
-  struct arts_ooo_args_db_ownership_request_s oo_payload = {
-      .requester = requester,
-      .db_guid = p->db_guid,
-  };
-
-  struct arts_db_cache_s *cache = arts_coh_home_lookup_or_defer(
-      p->db_guid, requester, OOO_DB_OWNERSHIP_REQUEST, &oo_payload,
-      sizeof(oo_payload), COH_REPLY_DESTROY_NOTIFY);
-  if (cache == NULL) {
-    return;
-  }
   struct arts_db_s *db = arts_db_of_cache(cache);
   arts_home_lockreq_queue_push(&db->pending_rw, requester);
 
@@ -253,27 +223,24 @@ void arts_handler_db_ownership_request(
   /* Baton won: RC INVALIDATEs the current rw_holder; LRC pops the FIFO transfer
    * target, publishes pending_install_owner, and starts the invalidate round.
    */
-  arts_coh_model_start_ownership_round(cache, db, requester);
+  arts_db_start_ownership_round(cache, db, requester);
 }
 
-void arts_handler_db_ownership_return(
-    struct arts_remote_ownership_return_packet_s *p) {
-  /* RELEASE_OWNERSHIP is one-way; on destroy the silent drop is fine
-   * (caller doesn't await any reply).  no OoO defer either —
-   * RELEASE_OWNERSHIP only flows from a current owner whose acquire
-   * implied DB_CREATE already landed at home, so cache==NULL here means
-   * the DB was already torn down. */
-  struct arts_db_cache_s *cache = arts_coh_home_lookup_or_defer(
-      p->db_guid, p->header.rank, OOO_DB_OWNERSHIP_REQUEST /*unused*/, NULL, 0,
-      COH_REPLY_NONE);
-  if (cache == NULL) {
-    return;
-  }
-  /* RC advances the transfer chain; LRC never receives this message (no-op). */
-  arts_coh_model_ownership_return(cache);
+/* Cat-C pure body (RELEASE_OWNERSHIP).  The wire dispatcher / self-send
+ * shortcut has already looked the home db_s up with a held ref and passes it as
+ * item_v (cache is its FIRST member, offset 0).  No lookup/NULL-check here —
+ * the dispatcher's MISS branch SILENTLY DROPS: RELEASE_OWNERSHIP is one-way and
+ * only flows from a current owner whose acquire implied DB_CREATE already
+ * landed at home, so a missing cache means the DB was already torn down (caller
+ * awaits no reply, and there is no OoO defer — this message is never deferred).
+ * RC advances the transfer chain; LRC never receives this message (no-op). */
+void arts_handler_db_ownership_return(void *item_v, void *args_v) {
+  (void)args_v;
+  struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
+  arts_db_ownership_return(cache);
 }
 
-/* ===== Ownership wire senders (RC+LRC; moved from db_coherence_senders.c) ===
+/* ===== Ownership wire senders (RC+LRC; moved from coherence/senders.c) ===
  * LOCK_REQ / RELEASE_OWNERSHIP / INVALIDATE_NOTICE exist only under the
  * release-consistency family.  Self-sends dispatch the matching handler inline
  * (request/return defined above; invalidate defined per model in rc.c/lrc.c).
@@ -281,42 +248,75 @@ void arts_handler_db_ownership_return(
 
 void arts_send_db_ownership_request(unsigned int home_rank,
                                     arts_guid_t db_guid) {
-  struct arts_remote_ownership_request_packet_s p;
+  struct arts_msg_ownership_request_packet_s p;
   arts_fill_packet_header(&p.header, sizeof(p), MSG_DB_OWNERSHIP_REQUEST);
   p.header.rank = arts_global_rank_id;
   p.db_guid = db_guid;
   if (home_rank == arts_global_rank_id) {
-    arts_handler_db_ownership_request(&p);
+    /* Self-send: route through the OoO engine exactly as the wire RX
+     * dispatcher does — HIT runs the LOCK_REQ body inline, MISS defers the args
+     * and replays once the home db_s is installed + drained.  (The handler is
+     * now a pure (item, args) body; it no longer does its own lookup-or-defer,
+     * so the inline shortcut must enter through dispatch_or_defer.) */
+    struct arts_ooo_args_db_ownership_request_s args = {
+        .requester = p.header.rank,
+        .db_guid = db_guid,
+    };
+    arts_ooo_dispatch_or_defer_guid(db_guid, OOO_DB_OWNERSHIP_REQUEST, &args,
+                                    sizeof(args));
     return;
   }
-  arts_remote_send_request_async((int)home_rank, (char *)&p, sizeof(p));
+  arts_transport_send_async((int)home_rank, (char *)&p, sizeof(p));
 }
 
 void arts_send_db_ownership_invalidate(unsigned int owner_rank,
                                        arts_guid_t db_guid,
                                        unsigned int new_owner_rank) {
-  struct arts_remote_ownership_invalidate_packet_s p;
+  struct arts_msg_ownership_invalidate_packet_s p;
   arts_fill_packet_header(&p.header, sizeof(p), MSG_DB_OWNERSHIP_INVALIDATE);
   p.header.rank = arts_global_rank_id;
   p.db_guid = db_guid;
   p.new_owner_rank = new_owner_rank;
   memset(p.pad, 0, sizeof(p.pad));
   if (owner_rank == arts_global_rank_id) {
-    arts_handler_db_ownership_invalidate(&p);
+    /* Self-send: mirror the wire RX dispatcher's model-split exactly. */
+    struct arts_ooo_args_db_ownership_invalidate_s args = {
+        .db_guid = db_guid,
+        .new_owner_rank = new_owner_rank,
+    };
+#if defined(ARTS_MEMORY_MODEL_LRC)
+    /* LRC never defers INVALIDATE: home publishes rw_holder (the target) only
+     * after that rank's cache install, so the cache is provably present here.
+     * Call the pure handler body directly. */
+    struct arts_db_cache_s *cache = arts_db_cache_lookup(db_guid);
+    assert(cache != NULL); /* target is rw_holder, published post-install */
+    arts_handler_db_ownership_invalidate(arts_db_of_cache(cache), &args);
+#else /* RC: Cat-B — defer on miss, replay on the install's drain. */
+    arts_ooo_dispatch_or_defer_guid(db_guid, OOO_DB_OWNERSHIP_INVALIDATE, &args,
+                                    sizeof(args));
+#endif
     return;
   }
-  arts_remote_send_request_async((int)owner_rank, (char *)&p, sizeof(p));
+  arts_transport_send_async((int)owner_rank, (char *)&p, sizeof(p));
 }
 
 void arts_send_db_ownership_return(unsigned int home_rank,
                                    arts_guid_t db_guid) {
-  struct arts_remote_ownership_return_packet_s p;
+  struct arts_msg_ownership_return_packet_s p;
   arts_fill_packet_header(&p.header, sizeof(p), MSG_DB_OWNERSHIP_RETURN);
   p.header.rank = arts_global_rank_id;
   p.db_guid = db_guid;
   if (home_rank == arts_global_rank_id) {
-    arts_handler_db_ownership_return(&p);
+    /* Self-send: mirror the wire RX dispatcher's Cat-C lookup-acquire-or-drop.
+     * HIT advances the transfer chain on the ref-pinned home db_s; MISS (DB
+     * already torn down) silently drops (RELEASE_OWNERSHIP awaits no reply). */
+    arts_shared_ptr_t h = arts_route_table_lookup_db(db_guid);
+    struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(h);
+    if (db != NULL) {
+      arts_handler_db_ownership_return(db, NULL);
+    }
+    arts_shared_release(&h);
     return;
   }
-  arts_remote_send_request_async((int)home_rank, (char *)&p, sizeof(p));
+  arts_transport_send_async((int)home_rank, (char *)&p, sizeof(p));
 }

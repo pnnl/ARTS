@@ -67,11 +67,9 @@ _Static_assert(offsetof(struct arts_event_dep_s, link) == 0,
                "link must be first for arts_lf_link_t round-tripping");
 #endif
 
-/* arts_event_add_dependence — entity-specific API (src=event): register a
- * dependent on an event source.  arts_add_dependence's event-source branch
- * delegates here. */
-void arts_event_add_dependence(arts_guid_t source, arts_guid_t destination,
-                               uint32_t slot, arts_db_access_mode_t mode);
+/* arts_event_add_dependence (event-source branch of arts_add_dependence) is
+ * declared once in the public header (arts.h); callers include that.  Not
+ * re-declared here to avoid a redundant declaration. */
 
 /* Mark a simple (non-channel) event single-shot: it marks itself for deletion
  * on fire.  Used for cross-rank finish proxies so they are reclaimed instead of
@@ -81,6 +79,7 @@ void arts_event_set_auto_destroy(arts_guid_t guid);
 /* OoO replay handlers (g_ooo_table) — operate on the acquired event. */
 void arts_handler_event_satisfy_slot(void *item, void *args);
 void arts_handler_event_add_dependence(void *item, void *args);
+void arts_handler_event_destroy(void *item, void *args);
 
 /* Cross-rank wire TX/RX for event ops. */
 void arts_send_event_add_dependence(arts_guid_t source, arts_guid_t destination,
@@ -89,12 +88,14 @@ void arts_send_event_add_dependence(arts_guid_t source, arts_guid_t destination,
 void arts_send_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
                                   uint32_t slot);
 void arts_handler_event_create(void *ptr);
-/* Cross-rank arts_event_destroy: forwarder + handler.
- * Forwarder serializes the GUID into MSG_EVENT_DESTROY;
- * handler runs arts_route_table_mark_delete on the home rank.  mark_delete
- * is idempotent (DELETE is sticky), so duplicate messages are safe. */
+/* Cross-rank arts_event_destroy forwarder: serializes the GUID into
+ * MSG_EVENT_DESTROY.  The home-rank RX handler is arts_handler_event_destroy
+ * (declared above as the Cat-B OoO body): the dispatcher decodes the GUID and
+ * routes through arts_ooo_dispatch_or_defer_guid(OOO_EVENT_DESTROY), so a
+ * DESTROY that races ahead of the event's CREATE defers and replays on the
+ * create handler's drain.  The body's arts_route_table_set_destroyed is
+ * idempotent (slot value exchange -> NULL), so duplicate messages are safe. */
 void arts_send_event_destroy(arts_guid_t guid);
-void arts_handler_event_destroy(void *ptr);
 
 #ifdef __cplusplus
 }

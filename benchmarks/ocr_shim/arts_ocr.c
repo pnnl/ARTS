@@ -201,12 +201,14 @@ static void redop_reduce(void *aBuf, const void *bBuf, u32 nbDatum,
   u32 isSigned = (u32)((op >> 5) & 0x1);
 
   for (u32 i = 0; i < nbDatum; i++) {
-    void *ap = (char *)aBuf + (size_t)i * bytes;
-    const void *bp = (const char *)bBuf + (size_t)i * bytes;
+    void *ap = (char *)aBuf + ((size_t)i * bytes);
+    const void *bp = (const char *)bBuf + ((size_t)i * bytes);
 
     if (isReal) {
       if (bytes == 8) {
-        double a = *(double *)ap, b = *(const double *)bp, r;
+        double a = *(double *)ap;
+        double b = *(const double *)bp;
+        double r;
         switch (oper) {
         case 1:
           r = a * b;
@@ -223,7 +225,9 @@ static void redop_reduce(void *aBuf, const void *bBuf, u32 nbDatum,
         }
         *(double *)ap = r;
       } else { /* 4-byte float */
-        float a = *(float *)ap, b = *(const float *)bp, r;
+        float a = *(float *)ap;
+        float b = *(const float *)bp;
+        float r;
         switch (oper) {
         case 1:
           r = a * b;
@@ -244,14 +248,18 @@ static void redop_reduce(void *aBuf, const void *bBuf, u32 nbDatum,
     }
 
     /* Integer path: load both operands widened to 64 bits, reduce, store. */
-    int64_t sa = 0, sb = 0;
-    uint64_t ua = 0, ub = 0;
+    int64_t sa = 0;
+    int64_t sb = 0;
+    uint64_t ua = 0;
+    uint64_t ub = 0;
     switch (bytes) {
     case 1:
       ua = *(uint8_t *)ap;
       ub = *(const uint8_t *)bp;
-      sa = *(int8_t *)ap;
-      sb = *(const int8_t *)bp;
+      /* Explicit widening: the signed byte is sign-extended on purpose for the
+       * signed min/max path; casting through unsigned char would corrupt it. */
+      sa = (int64_t)*(int8_t *)ap;
+      sb = (int64_t)*(const int8_t *)bp;
       break;
     case 2:
       ua = *(uint16_t *)ap;
@@ -281,10 +289,18 @@ static void redop_reduce(void *aBuf, const void *bBuf, u32 nbDatum,
       ur = ua * ub;
       break;
     case 2:
-      ur = isSigned ? (uint64_t)((sa < sb) ? sa : sb) : ((ua < ub) ? ua : ub);
+      if (isSigned) {
+        ur = (uint64_t)((sa < sb) ? sa : sb);
+      } else {
+        ur = (ua < ub) ? ua : ub;
+      }
       break;
     case 3:
-      ur = isSigned ? (uint64_t)((sa > sb) ? sa : sb) : ((ua > ub) ? ua : ub);
+      if (isSigned) {
+        ur = (uint64_t)((sa > sb) ? sa : sb);
+      } else {
+        ur = (ua > ub) ? ua : ub;
+      }
       break;
     case 4:
       ur = ua & ub;
@@ -344,7 +360,7 @@ static uint64_t collective_event_block(arts_guid_t coll_guid) {
                     COLLECTIVE_EDGE_BLOCK;
   uint64_t coll_rank = (uint64_t)ARTS_GUID_GET_RANK(coll_guid);
   uint64_t coll_key = ARTS_GUID_GET_KEY(coll_guid);
-  uint64_t h = coll_key * 0x9E3779B97F4A7C15ULL + coll_rank;
+  uint64_t h = (coll_key * 0x9E3779B97F4A7C15ULL) + coll_rank;
   h ^= h >> 29;
   return h % blocks;
 }
@@ -357,7 +373,7 @@ static arts_guid_t collective_edge_guid(arts_guid_t coll_guid, u32 nrank,
   uint64_t coll_rank = (uint64_t)ARTS_GUID_GET_RANK(coll_guid);
   uint64_t blockBase =
       COLLECTIVE_EDGE_KEY_BASE +
-      collective_event_block(coll_guid) * COLLECTIVE_EDGE_BLOCK;
+      (collective_event_block(coll_guid) * COLLECTIVE_EDGE_BLOCK);
   uint64_t key = (blockBase + gen * COLLECTIVE_EDGE_GEN_STRIDE +
                   (uint64_t)direction * ((uint64_t)n + 1) + (uint64_t)r) &
                  ARTS_GUID_KEY_MASK;
@@ -519,10 +535,12 @@ enum {
 
 static u32 collective_num_children(u32 r, u32 nrank) {
   u32 n = 0;
-  if (2u * r + 1u < nrank)
+  if (2u * r + 1u < nrank) {
     n++;
-  if (2u * r + 2u < nrank)
+  }
+  if (2u * r + 2u < nrank) {
     n++;
+  }
   return n;
 }
 
@@ -594,7 +612,7 @@ static void collective_down_edt(uint32_t paramc, const uint64_t *paramv,
 
   /* Forward to children's down-edges. */
   for (u32 c = 0; c < 2; c++) {
-    u32 child = 2u * r + 1u + c;
+    u32 child = (2u * r) + 1u + c;
     if (child < nrank) {
       void *fwdPtr;
       arts_guid_t fwdDb = arts_db_create(&fwdPtr, payload, ARTS_DB_DEFAULT,
@@ -671,7 +689,7 @@ static void collective_launch_generation(CollectiveMetadata *meta, u32 r,
   /* slots 1..: children up-edges. */
   u32 slot = 1;
   for (u32 c = 0; c < 2; c++) {
-    u32 child = 2u * r + 1u + c;
+    u32 child = (2u * r) + 1u + c;
     if (child < nrank) {
       arts_guid_t up = collective_edge_guid(coll, nrank, gen, child, 0);
       collective_edge_event_ensure(up);
@@ -867,10 +885,11 @@ static void ocr_edt_trampoline(uint32_t paramc, const uint64_t *paramv,
 static void warn_oversized_affinity_once(const char *what, u64 val) {
   static volatile u32 warned = 0;
   if (__sync_bool_compare_and_swap(&warned, 0, 1)) {
-    fprintf(stderr,
-            "[ocr_shim] %s affinity hint %lu exceeds rank count %u, "
-            "wrapping via modulo.  Subsequent oversized hints suppressed.\n",
-            what, (unsigned long)val, arts_global_rank_count);
+    (void)fprintf(
+        stderr,
+        "[ocr_shim] %s affinity hint %lu exceeds rank count %u, "
+        "wrapping via modulo.  Subsequent oversized hints suppressed.\n",
+        what, (unsigned long)val, arts_global_rank_count);
   }
 }
 
@@ -979,7 +998,8 @@ u8 ocrEdtCreate(ocrGuid_t *guid, ocrGuid_t templateGuid, u32 paramc,
    * creation.  The finish event's latch is pre-decremented by the EDT itself
    * (creator-token); when all descendants complete it drains to zero and fires,
    * satisfying outEvt and signalling the OCR scope boundary.  ARTS_MODE_NULL is
-   * the correct dependency mode: the scope-drain signal carries no data payload.
+   * the correct dependency mode: the scope-drain signal carries no data
+   * payload.
    */
   arts_guid_t fe = NULL_GUID;
   if (isFinishEdt) {
@@ -1093,8 +1113,9 @@ u8 ocrEventCreate(ocrGuid_t *guid, ocrEventTypes_t eventType, u16 properties) {
     return 0;
   }
   arts_guid_t g = arts_event_create(&h);
-  if (g == NULL_GUID)
+  if (g == NULL_GUID) {
     return OCR_ENOMEM;
+  }
   guid->guid = g;
   return 0;
 }
@@ -1160,7 +1181,7 @@ u8 ocrEventCreateParams(ocrGuid_t *guid, ocrEventTypes_t eventType,
      * relocatable, so it must be created locally (round-robin placement
      * would try to home it on a remote rank and fail). */
     size_t metaBytes = sizeof(CollectiveMetadata) +
-                       (size_t)nbContribs * sizeof(CollectiveContribState);
+                       ((size_t)nbContribs * sizeof(CollectiveContribState));
     arts_db_hint_t metaHint = {.rank = ARTS_HINT_CURRENT_RANK};
     arts_guid_t metaDb = arts_db_create(&metaPtr, metaBytes, ARTS_DB_PIN,
                                         ARTS_DB_PROP_NONE, &metaHint);
@@ -1230,10 +1251,10 @@ u8 ocrEventCreateParams(ocrGuid_t *guid, ocrEventTypes_t eventType,
      * non-trivial change to the channel drain loop (currently fires one
      * data-dep pair per generation). */
     if (params->EVENT_CHANNEL.nbSat != 1 || params->EVENT_CHANNEL.nbDeps != 1) {
-      fprintf(stderr,
-              "[ARTS] CHANNEL nbSat=%u nbDeps=%u: only nbSat=nbDeps=1 "
-              "supported (OCR 1.2 §B.5.2)\n",
-              params->EVENT_CHANNEL.nbSat, params->EVENT_CHANNEL.nbDeps);
+      (void)fprintf(stderr,
+                    "[ARTS] CHANNEL nbSat=%u nbDeps=%u: only nbSat=nbDeps=1 "
+                    "supported (OCR 1.2 §B.5.2)\n",
+                    params->EVENT_CHANNEL.nbSat, params->EVENT_CHANNEL.nbDeps);
       return OCR_EINVAL;
     }
     /* maxGen is implementation-driven — ARTS scales unbounded via mpsc. */
@@ -1250,8 +1271,9 @@ u8 ocrEventCreateParams(ocrGuid_t *guid, ocrEventTypes_t eventType,
     return 0;
   }
   arts_guid_t g = arts_event_create(&h);
-  if (g == NULL_GUID)
+  if (g == NULL_GUID) {
     return OCR_ENOMEM;
+  }
   guid->guid = g;
   return 0;
 }

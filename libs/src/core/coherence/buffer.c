@@ -12,38 +12,35 @@
  * never a possibly-freed buffer.
  */
 
-#include "arts/db_coherence_buffer.h"
+#include "arts/coherence/buffer.h"
 
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "arts/utils/shared.h"
 #include "arts/utils/malloc.h"
+#include "arts/utils/shared.h"
 
 /* cb deleter — runs once, on the last strong drop. */
-static void arts_coh_buffer_deleter(void *obj) { arts_free(obj); }
+static void buffer_deleter(void *obj) { arts_free(obj); }
 
-struct arts_db_buffer_s *arts_coh_buffer_alloc(uint64_t db_size) {
+struct arts_db_buffer_s *arts_db_buf_alloc(uint64_t db_size) {
   /* 64-byte aligned so buf->data (offset 64) lands on a cache-line / CXL
    * boundary.  Freed by the cb deleter (arts_free), never recycled. */
   return (struct arts_db_buffer_s *)arts_malloc_align(
       sizeof(struct arts_db_buffer_s) + db_size, 64);
 }
 
-arts_shared_ptr_t arts_coh_acquire_buf(struct arts_db_cache_s *cache) {
+arts_shared_ptr_t arts_db_buf_acquire(struct arts_db_cache_s *cache) {
   /* Acquire-and-validate load: returns a caller-owned strong ref (keeps the
    * buffer alive) or NULL if no buffer is installed.  Caller releases via
-   * arts_coh_release_buf. */
+   * arts_db_buf_release. */
   return arts_atomic_shared_load(&cache->buffer);
 }
 
-void arts_coh_release_buf(arts_shared_ptr_t *h) {
-  arts_shared_release(h);
-}
+void arts_db_buf_release(arts_shared_ptr_t *h) { arts_shared_release(h); }
 
-struct arts_db_buffer_s *
-arts_coh_buffer_peek(struct arts_db_cache_s *cache) {
+struct arts_db_buffer_s *arts_db_buf_peek(struct arts_db_cache_s *cache) {
   /* Unsafe non-refcounted peek — valid only in create-time / single-owner
    * windows where no concurrent destroy can free the buffer.  Used to read
    * the freshly-installed payload pointer at DB create. */
@@ -52,11 +49,11 @@ arts_coh_buffer_peek(struct arts_db_cache_s *cache) {
   return (struct arts_db_buffer_s *)arts_shared_get(cb);
 }
 
-struct arts_db_buffer_s *
-arts_coh_install_buffer(struct arts_db_cache_s *cache,
-                              uint64_t new_version, const void *data_payload,
-                              uint64_t db_size) {
-  struct arts_db_buffer_s *new_buf = arts_coh_buffer_alloc(db_size);
+struct arts_db_buffer_s *arts_db_buf_install(struct arts_db_cache_s *cache,
+                                             uint64_t new_version,
+                                             const void *data_payload,
+                                             uint64_t db_size) {
+  struct arts_db_buffer_s *new_buf = arts_db_buf_alloc(db_size);
   if (new_buf == NULL) {
     return NULL; /* OOM — caller decides how to surface. */
   }
@@ -80,8 +77,7 @@ arts_coh_install_buffer(struct arts_db_cache_s *cache,
    * take this ref as the cache-hold on a successful publish.  Stash the cb in
    * the buffer so a holder can recover it (buf->cb) to release without
    * threading the handle through the acquire call chain. */
-  arts_shared_ptr_t new_cb =
-      arts_shared_make(new_buf, arts_coh_buffer_deleter);
+  arts_shared_ptr_t new_cb = arts_shared_make(new_buf, buffer_deleter);
   new_buf->cb = new_cb;
 
   for (;;) {

@@ -93,7 +93,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     uint64_t args[2];
     args[0] = (uint64_t)i;
     args[1] = (uint64_t)next;
-    next = arts_edt_create(chain_stage, 2, args, 1, &(arts_edt_hint_t){.rank = 0});
+    next =
+        arts_edt_create(chain_stage, 2, args, 1, &(arts_edt_hint_t){.rank = 0});
   }
 
   // Kick off chain with value 0.

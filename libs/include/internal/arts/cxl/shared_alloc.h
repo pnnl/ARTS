@@ -8,8 +8,7 @@
 extern "C" {
 #endif
 
-#define COMPILER_DO_NOT_REORDER_WRITES()                                       \
-  __asm__ volatile("" : : : "memory")
+#define COMPILER_DO_NOT_REORDER_WRITES() __asm__ volatile("" : : : "memory")
 #define HW_MEMORY_FENCE() __sync_synchronize()
 
 #ifdef __cplusplus

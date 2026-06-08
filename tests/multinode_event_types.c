@@ -151,8 +151,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_event_hint_t h = ARTS_EVENT_HINT_DEFAULTS;
     h.rank = 0;
     arts_guid_t ev = arts_event_create(&h);
-    arts_guid_t dep = arts_edt_create(
-        once_dep, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+    arts_guid_t dep =
+        arts_edt_create(once_dep, 0, NULL, 1,
+                        &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(ev, dep, 0, DB_MODE_RW);
 
     uint64_t ev_param = (uint64_t)ev;
@@ -185,8 +186,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_event_hint_t h = ARTS_EVENT_HINT_IDEMPOTENT;
     h.rank = 0;
     arts_guid_t ev = arts_event_create(&h);
-    arts_guid_t dep = arts_edt_create(
-        idem_dep, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+    arts_guid_t dep =
+        arts_edt_create(idem_dep, 0, NULL, 1,
+                        &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(ev, dep, 0, DB_MODE_RW);
 
     // Satisfy from node 1.

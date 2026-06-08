@@ -99,6 +99,9 @@ bool arts_lock(volatile unsigned int *lock) {
   return true;
 }
 
+/* __atomic_store_n requires a pointer to non-const; the check cannot see the
+ * builtin's store, so it wrongly suggests const here. */
+// NOLINTNEXTLINE(readability-non-const-parameter)
 void arts_unlock(volatile unsigned int *lock) {
   __atomic_store_n(lock, 0U, __ATOMIC_RELEASE);
 }
@@ -112,11 +115,11 @@ uint64_t arts_atomic_fetch_and_u64(volatile uint64_t *destination,
   return __sync_fetch_and_and(destination, add_val);
 }
 
-unsigned int arts_atomic_read(volatile unsigned int *destination) {
+unsigned int arts_atomic_read(const volatile unsigned int *destination) {
   return __atomic_load_n(destination, __ATOMIC_ACQUIRE);
 }
 
-uint64_t arts_atomic_read_u64(volatile uint64_t *destination) {
+uint64_t arts_atomic_read_u64(const volatile uint64_t *destination) {
   return __atomic_load_n(destination, __ATOMIC_ACQUIRE);
 }
 
@@ -159,6 +162,9 @@ bool arts_writer_try_lock(const volatile unsigned int *read_lock,
   return false;
 }
 
+/* __atomic_store_n requires a pointer to non-const; the check cannot see the
+ * builtin's store, so it wrongly suggests const here. */
+// NOLINTNEXTLINE(readability-non-const-parameter)
 void arts_writer_unlock(volatile unsigned int *write_lock) {
   __atomic_store_n(write_lock, 0U, __ATOMIC_RELEASE);
 }

@@ -70,28 +70,29 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Create a block distribution
   arts_block_dist_t *dist = arts_block_dist_init(8,  // global vertices
-                                                          11, // global edges
-                                                          1,  // partitions
-                                                          ARTS_GUID_DB);
+                                                 11, // global edges
+                                                 1,  // partitions
+                                                 ARTS_GUID_DB);
 
   // Create a list of edges, use arts_edge_vector_t
   arts_edge_vector_t vec;
   arts_edge_vector_init(&vec, 100);
   for (int i = 0; i < 11; ++i) {
     arts_edge_vector_push_back(&vec, edge_arr[(ptrdiff_t)i * 2],
-                   edge_arr[((ptrdiff_t)i * 2) + 1], 0);
+                               edge_arr[((ptrdiff_t)i * 2) + 1], 0);
   }
   arts_edge_vector_sort_by_source_and_target(&vec);
 
   // Create the CSR graph, graphGuid is used to allocate
   // row indices and column array
-  arts_csr_graph_t *graph = arts_csr_init(0,
-                                8,    // number of "local" vertices
-                                11,   // number of "local" edges
-                                dist, // distribution
-                                &vec, // edges
-                                true, /*are edges sorted ?*/
-                                arts_block_dist_guid_for_partition(dist, 0));
+  arts_csr_graph_t *graph =
+      arts_csr_init(0,
+                    8,    // number of "local" vertices
+                    11,   // number of "local" edges
+                    dist, // distribution
+                    &vec, // edges
+                    true, /*are edges sorted ?*/
+                    arts_block_dist_guid_for_partition(dist, 0));
 
   // Edge list not needed after creating the CSR
   arts_edge_vector_free(&vec);

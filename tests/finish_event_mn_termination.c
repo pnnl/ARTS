@@ -57,12 +57,13 @@ void node_task(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t collector = (arts_guid_t)paramv[0];
   uint32_t slot = (uint32_t)paramv[1];
   unsigned int my_rank = arts_get_current_rank();
-  arts_add_dependence((arts_guid_t)((uint64_t)my_rank), collector, slot, DB_MODE_VAL);
+  arts_add_dependence((arts_guid_t)((uint64_t)my_rank), collector, slot,
+                      DB_MODE_VAL);
 }
 
 /// Collector: verify that each rank appears TASKS_PER_NODE times.
 void check_results(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                         arts_edt_dep_t depv[]) {
+                   arts_edt_dep_t depv[]) {
   (void)paramc;
   unsigned int total_nodes = (unsigned int)paramv[0];
   unsigned int counts[MAX_NODES] = {0};
@@ -123,7 +124,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Create collector EDT that receives one signal per task.
   unsigned int total_tasks = TASKS_PER_NODE * total;
   uint64_t total_param = (uint64_t)total;
-  arts_guid_t collector = arts_edt_create(check_results, 1, &total_param, total_tasks, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+  arts_guid_t collector =
+      arts_edt_create(check_results, 1, &total_param, total_tasks,
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
 
   // Launch TASKS_PER_NODE tasks on each node.
   uint32_t slot = 0;
@@ -132,7 +135,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       uint64_t params[2];
       params[0] = (uint64_t)collector;
       params[1] = (uint64_t)slot;
-      arts_edt_create(node_task, 2, params, 0, &(arts_edt_hint_t){.rank = r, .finish_event = fe});
+      arts_edt_create(node_task, 2, params, 0,
+                      &(arts_edt_hint_t){.rank = r, .finish_event = fe});
       slot++;
     }
   }

@@ -78,8 +78,9 @@ static void reader_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_abort(1);
   }
   if (*data != SENTINEL) {
-    fprintf(stderr, "FAIL: reader saw %d (expected %d) — bad cache install\n",
-            *data, SENTINEL);
+    (void)fprintf(stderr,
+                  "FAIL: reader saw %d (expected %d) — bad cache install\n",
+                  *data, SENTINEL);
     arts_abort(1);
   }
   atomic_fetch_add(&g_completed, 1);
@@ -93,7 +94,8 @@ static void shutdown_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
   int got = atomic_load(&g_completed);
   if (got != N_READERS) {
-    fprintf(stderr, "FAIL: only %d of %d readers completed\n", got, N_READERS);
+    (void)fprintf(stderr, "FAIL: only %d of %d readers completed\n", got,
+                  N_READERS);
     arts_abort(1);
   }
   atomic_store(&g_clean_shutdown, 1);
@@ -113,8 +115,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
               N_READERS, SENTINEL);
 
   int *data;
-  arts_guid_t db =
-      arts_db_create((void **)&data, sizeof(int), ARTS_DB, ARTS_DB_PROP_NONE, NULL);
+  arts_guid_t db = arts_db_create((void **)&data, sizeof(int), ARTS_DB,
+                                  ARTS_DB_PROP_NONE, NULL);
   *data = SENTINEL;
 
   /* Outer finish scope ensures shutdown_edt runs only after every reader has
@@ -127,8 +129,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_add_dependence(fe, shut, 0, DB_MODE_NULL);
 
   for (int i = 0; i < N_READERS; i++) {
-    arts_guid_t r =
-        arts_edt_create(reader_edt, 0, NULL, 1, &(arts_edt_hint_t){.finish_event = fe});
+    arts_guid_t r = arts_edt_create(reader_edt, 0, NULL, 1,
+                                    &(arts_edt_hint_t){.finish_event = fe});
     arts_add_dependence(db, r, 0, DB_MODE_RO);
   }
 }
@@ -136,9 +138,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 int main(int argc, char **argv) {
   arts_rt(argc, argv);
   if (arts_get_current_rank() == 0 && !atomic_load(&g_clean_shutdown)) {
-    fprintf(stderr,
-            "FAIL: shutdown_edt did not fire — reader abort or premature "
-            "shutdown\n");
+    (void)fprintf(stderr,
+                  "FAIL: shutdown_edt did not fire — reader abort or premature "
+                  "shutdown\n");
     return 1;
   }
   return 0;

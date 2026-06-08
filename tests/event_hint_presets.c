@@ -8,31 +8,46 @@
 
 static void shutdown_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                          arts_edt_dep_t depv[]) {
-  (void)paramc; (void)paramv; (void)depc; (void)depv;
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
   arts_shutdown();
 }
 
-static void once_receiver(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                          arts_edt_dep_t depv[]) {
-  (void)paramc; (void)paramv; (void)depc; (void)depv;
+static void once_receiver(uint32_t paramc, const uint64_t *paramv,
+                          uint32_t depc, arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
   arts_printf("  PASS: ONCE event delivered to waiter\n");
 }
 
-static void idem_late_receiver(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                               arts_edt_dep_t depv[]) {
-  (void)paramc; (void)paramv; (void)depc; (void)depv;
+static void idem_late_receiver(uint32_t paramc, const uint64_t *paramv,
+                               uint32_t depc, arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
   arts_printf("  PASS: IDEMPOTENT late dep fires immediately\n");
 }
 
-static void sticky_late_receiver(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                                 arts_edt_dep_t depv[]) {
-  (void)paramc; (void)paramv; (void)depc; (void)depv;
+static void sticky_late_receiver(uint32_t paramc, const uint64_t *paramv,
+                                 uint32_t depc, arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
   arts_printf("  PASS: STICKY late dep fires immediately\n");
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
               arts_edt_dep_t depv[]) {
-  (void)paramc; (void)paramv; (void)depc; (void)depv;
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
 
   arts_printf("=== event_hint_presets ===\n");
 
@@ -44,8 +59,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   {
     arts_event_hint_t h = ARTS_EVENT_HINT_ONCE;
     arts_guid_t ev = arts_event_create(&h);
-    arts_guid_t waiter = arts_edt_create(once_receiver, 0, NULL, 1,
-                                         &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+    arts_guid_t waiter =
+        arts_edt_create(once_receiver, 0, NULL, 1,
+                        &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(ev, waiter, 0, DB_MODE_RW);
     arts_event_satisfy(ev, NULL_GUID);
   }
@@ -55,8 +71,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_event_hint_t h = ARTS_EVENT_HINT_IDEMPOTENT;
     arts_guid_t ev = arts_event_create(&h);
     arts_event_satisfy(ev, NULL_GUID);
-    arts_guid_t late = arts_edt_create(idem_late_receiver, 0, NULL, 1,
-                                        &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+    arts_guid_t late =
+        arts_edt_create(idem_late_receiver, 0, NULL, 1,
+                        &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(ev, late, 0, DB_MODE_RW);
   }
 
@@ -65,8 +82,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_event_hint_t h = ARTS_EVENT_HINT_STICKY;
     arts_guid_t ev = arts_event_create(&h);
     arts_event_satisfy(ev, NULL_GUID);
-    arts_guid_t late = arts_edt_create(sticky_late_receiver, 0, NULL, 1,
-                                        &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+    arts_guid_t late =
+        arts_edt_create(sticky_late_receiver, 0, NULL, 1,
+                        &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(ev, late, 0, DB_MODE_RW);
   }
 

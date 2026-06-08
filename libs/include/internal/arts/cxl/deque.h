@@ -62,14 +62,15 @@ typedef union {
   struct {
     int max_size;
     arts_cxl_arena_t *mem_arena;
-    arts_cxl_arena_t *db_arenas[ARTS_CXL_MAX_DEVICES]; /**< One arena per CXL device. */
+    arts_cxl_arena_t
+        *db_arenas[ARTS_CXL_MAX_DEVICES]; /**< One arena per CXL device. */
     unsigned int db_arena_count; /**< Number of active db_arenas entries. */
     arts_cxl_tournament_lock_t *lock;
   };
   uint8_t pad[((sizeof(int) + sizeof(arts_cxl_arena_t *) +
                 sizeof(arts_cxl_arena_t *) * ARTS_CXL_MAX_DEVICES +
-                sizeof(unsigned int) +
-                sizeof(arts_cxl_tournament_lock_t *) + CACHELINE_SIZE - 1) /
+                sizeof(unsigned int) + sizeof(arts_cxl_tournament_lock_t *) +
+                CACHELINE_SIZE - 1) /
                CACHELINE_SIZE) *
               (CACHELINE_SIZE / sizeof(uint8_t))];
 } arts_cxl_deque_consts_t;
@@ -118,10 +119,11 @@ static inline void arts_cxl_arena_init(arts_cxl_arena_t **arena, size_t bytes) {
  * arts_cxl_arena_init_dev — Allocate a DB arena on a specific CXL device.
  *
  * Uses GLOBAL_MALLOC_DEV to place the backing memory on @p dev_id.
- * The arena metadata struct itself is allocated with GLOBAL_MALLOC (any device).
+ * The arena metadata struct itself is allocated with GLOBAL_MALLOC (any
+ * device).
  */
 static inline void arts_cxl_arena_init_dev(arts_cxl_arena_t **arena,
-                                            size_t bytes, uint64_t dev_id) {
+                                           size_t bytes, uint64_t dev_id) {
   *arena = (arts_cxl_arena_t *)GLOBAL_MALLOC(sizeof(arts_cxl_arena_t));
   char *memory = (char *)GLOBAL_MALLOC_DEV(bytes, dev_id);
   (*arena)->base = memory;
@@ -150,8 +152,7 @@ static inline void *arts_cxl_arena_malloc(arts_cxl_arena_t *arena,
     arena->head = (char *)new_head;
     FLUSH_FENCE_PRODUCER(arena, sizeof(arts_cxl_arena_t));
     return (void *)aligned_head;
-  }
-  else {
+  } else {
     printf("Ran out of space in arena!\n");
     fflush(stdout);
   }
@@ -207,7 +208,7 @@ static inline arts_cxl_deque_t *arts_cxl_deque_create(void) {
  */
 static inline arts_cxl_deque_t *
 arts_cxl_deque_create_with_arenas(const uint64_t *dev_ids,
-                                   unsigned int dev_count) {
+                                  unsigned int dev_count) {
   assert(dev_count > 0 && dev_count <= ARTS_CXL_MAX_DEVICES &&
          "dev_count must be in [1, ARTS_CXL_MAX_DEVICES]");
 
@@ -432,9 +433,9 @@ static inline int arts_cxl_deque_push(arts_cxl_deque_t *dq,
  *                   Must be < dq->consts.db_arena_count.
  */
 static inline void *arts_cxl_deque_db_malloc_dev(arts_cxl_deque_t *dq,
-                                                  pthread_mutex_t *local_lock,
-                                                  size_t size,
-                                                  unsigned int dev_idx) {
+                                                 pthread_mutex_t *local_lock,
+                                                 size_t size,
+                                                 unsigned int dev_idx) {
   assert(dev_idx < dq->consts.db_arena_count && "dev_idx out of range");
   arts_cxl_tournament_lock_acquire(dq->consts.lock, local_lock,
                                    arts_global_rank_id);

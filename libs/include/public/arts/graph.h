@@ -72,8 +72,8 @@ typedef struct {
 } arts_edge_vector_t;
 
 void arts_edge_vector_init(arts_edge_vector_t *v, arts_graph_sz_t initial_size);
-void arts_edge_vector_push_back(arts_edge_vector_t *v, arts_vertex_t s, arts_vertex_t t,
-                    arts_edge_data_t d);
+void arts_edge_vector_push_back(arts_edge_vector_t *v, arts_vertex_t s,
+                                arts_vertex_t t, arts_edge_data_t d);
 void arts_edge_vector_free(arts_edge_vector_t *v);
 void arts_edge_vector_sort_by_source(arts_edge_vector_t *v);
 void arts_edge_vector_sort_by_source_and_target(arts_edge_vector_t *v);
@@ -89,25 +89,27 @@ typedef struct {
 } arts_block_dist_t;
 
 arts_block_dist_t *arts_block_dist_init(arts_graph_sz_t n, arts_graph_sz_t m,
-                                                 unsigned int num_blocks,
-                                                 arts_guid_kind_t db_type);
-arts_block_dist_t *arts_block_dist_init_from_args(int argc,
-                                                              char **argv);
+                                        unsigned int num_blocks,
+                                        arts_guid_kind_t db_type);
+arts_block_dist_t *arts_block_dist_init_from_args(int argc, char **argv);
 void arts_block_dist_free(arts_block_dist_t *dist);
 
 arts_graph_sz_t arts_block_dist_block_size(arts_partition_t index,
-                                        const arts_block_dist_t *dist);
+                                           const arts_block_dist_t *dist);
 
-arts_partition_t arts_block_dist_get_owner(arts_vertex_t v, const arts_block_dist_t *dist);
+arts_partition_t arts_block_dist_get_owner(arts_vertex_t v,
+                                           const arts_block_dist_t *dist);
 arts_vertex_t arts_block_dist_partition_start(arts_partition_t index,
-                               const arts_block_dist_t *dist);
-arts_vertex_t arts_block_dist_partition_end(arts_partition_t index, const arts_block_dist_t *dist);
-arts_local_index_t arts_block_dist_get_local_index(arts_vertex_t v, const arts_block_dist_t *dist);
+                                              const arts_block_dist_t *dist);
+arts_vertex_t arts_block_dist_partition_end(arts_partition_t index,
+                                            const arts_block_dist_t *dist);
+arts_local_index_t
+arts_block_dist_get_local_index(arts_vertex_t v, const arts_block_dist_t *dist);
 
 arts_guid_t arts_block_dist_guid_for_vertex(arts_vertex_t v,
-                                      const arts_block_dist_t *dist);
+                                            const arts_block_dist_t *dist);
 arts_guid_t arts_block_dist_guid_for_partition(const arts_block_dist_t *dist,
-                                         arts_partition_t index);
+                                               arts_partition_t index);
 
 /* === CSR graph === */
 
@@ -122,24 +124,26 @@ typedef struct {
   unsigned int num_blocks;
 } arts_csr_graph_t;
 
-arts_csr_graph_t *arts_csr_init(arts_partition_t part_index, arts_graph_sz_t localv,
-                      arts_graph_sz_t locale, arts_block_dist_t *dist,
-                      arts_edge_vector_t *edges, bool sorted_by_src,
-                      arts_guid_t block_guid);
+arts_csr_graph_t *arts_csr_init(arts_partition_t part_index,
+                                arts_graph_sz_t localv, arts_graph_sz_t locale,
+                                arts_block_dist_t *dist,
+                                arts_edge_vector_t *edges, bool sorted_by_src,
+                                arts_guid_t block_guid);
 int arts_csr_load_no_weight(const char *file_path, arts_block_dist_t *dist,
-                         bool flip, bool ignore_self_loops);
+                            bool flip, bool ignore_self_loops);
 int arts_csr_load_no_weight_csr(const char *file_path, arts_block_dist_t *dist,
-                             bool flip, bool ignore_self_loops);
-int arts_csr_load_from_args(arts_block_dist_t *dist, int argc,
-                                   char **argv);
+                                bool flip, bool ignore_self_loops);
+int arts_csr_load_from_args(arts_block_dist_t *dist, int argc, char **argv);
 void arts_csr_free(arts_csr_graph_t *csr);
 void arts_csr_print(arts_csr_graph_t *csr);
-void arts_csr_get_neighbors(arts_csr_graph_t *csr, arts_vertex_t v, arts_vertex_t **out,
-                   arts_graph_sz_t *neighborcount);
+void arts_csr_get_neighbors(arts_csr_graph_t *csr, arts_vertex_t v,
+                            arts_vertex_t **out,
+                            arts_graph_sz_t *neighborcount);
 arts_csr_graph_t *arts_csr_from_guid(arts_guid_t guid);
 arts_csr_graph_t *arts_csr_from_partition(arts_partition_t part_index,
-                                      arts_block_dist_t *dist);
-arts_local_index_t arts_csr_get_local_index(arts_vertex_t v, const arts_csr_graph_t *part);
+                                          arts_block_dist_t *dist);
+arts_local_index_t arts_csr_get_local_index(arts_vertex_t v,
+                                            const arts_csr_graph_t *part);
 
 #ifdef __cplusplus
 }

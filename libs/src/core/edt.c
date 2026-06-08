@@ -46,6 +46,7 @@
 #include "arts/event.h"       /* arts_event_set_auto_destroy (finish proxy) */
 #include "arts/gas/guid.h"
 #include "arts/gas/route_table.h"
+#include "arts/ooo.h"
 #include "arts/runtime_state.h"
 #include "arts/runtime_types.h"
 #include "arts/system/print.h"
@@ -319,7 +320,7 @@ void arts_edt_delete(struct arts_edt_s *edt) {
   ARTS_INFO("EDT delete [Guid:%lu, Id:%lu, Depc:%u, DepcNeeded:%u] on rank %u",
             edt->guid, edt->arts_id, edt->depc, edt->depc_needed,
             arts_global_rank_id);
-  /* route through arts_route_table_mark_delete so the deleter
+  /* route through arts_route_table_set_destroyed so the deleter
    * (arts_edt_deleter -> arts_edt_free) runs once outstanding refs are
    * returned.  Capturing the GUID up front, then calling mark_delete:
    * if no other thread holds an acquire ref, this drops the install ref
@@ -328,36 +329,46 @@ void arts_edt_delete(struct arts_edt_s *edt) {
    * release_item.  Either way `edt` is no longer safe to dereference
    * after this call returns. */
   arts_guid_t guid = edt->guid;
-  arts_route_table_mark_delete(guid);
+  arts_route_table_set_destroyed(guid);
 }
 
-/* Destroy a found, pre-runnable EDT (the home-local body shared by the local
- * API path and the cross-rank wire handler).  `h` is the caller's pin on edt
- * and is released here.  OCR restricts ocrEdtDestroy to pre-runnable EDTs
- * (depc_needed > 0); destroying a runnable/queued/running EDT is UB, so it is
- * skipped. */
-static void edt_destroy_resolved(struct arts_edt_s *edt, arts_guid_t guid,
-                                 arts_shared_ptr_t h) {
+/* Pure Cat-B body (g_ooo_table[OOO_EDT_DESTROY]).  The EDT is installed and
+ * ref-pinned by dispatch_or_defer; this body operates on the live item without
+ * any lookup / pin / release of its own.  OCR restricts ocrEdtDestroy to
+ * pre-runnable EDTs (depc_needed > 0); destroying a runnable/queued/running EDT
+ * is UB and is skipped.  arts_route_table_set_destroyed detaches the slot cb so
+ * the deleter (arts_edt_deleter -> arts_edt_free) runs once outstanding refs
+ * (including dispatch_or_defer's own pin) drain; it is idempotent, so a
+ * duplicate/late replay is a safe no-op. */
+void arts_handler_edt_destroy(void *item_v, void *args_v) {
+  struct arts_edt_s *edt = (struct arts_edt_s *)item_v;
+  struct arts_ooo_args_edt_destroy_s *a =
+      (struct arts_ooo_args_edt_destroy_s *)args_v;
   if (edt->depc_needed == 0) {
     ARTS_INFO("EDT destroy on runnable/queued EDT [Guid:%lu] — UB; ignoring",
-              guid);
-    arts_shared_release(&h);
+              a->guid);
     return;
   }
-  arts_shared_release(&h);
-  arts_route_table_mark_delete(guid);
+  ARTS_INFO("EDT destroy [Guid:%lu, Id:%lu, Depc:%u, DepcNeeded:%u] on rank %u",
+            edt->guid, edt->arts_id, edt->depc, edt->depc_needed,
+            arts_global_rank_id);
+  arts_route_table_set_destroyed(a->guid);
 }
 
 /* Cross-rank send: forward the destroy to the EDT's home rank (symmetric with
  * arts_send_event_destroy / arts_send_db_destroy). */
 void arts_send_edt_destroy(unsigned int home_rank, arts_guid_t guid) {
-  struct arts_remote_guid_only_packet_s packet;
+  struct arts_msg_guid_only_packet_s packet;
   packet.guid = guid;
   arts_fill_packet_header(&packet.header, sizeof(packet), MSG_EDT_DESTROY);
-  arts_remote_send_request_async((int)home_rank, (char *)&packet,
-                                 sizeof(packet));
+  arts_transport_send_async((int)home_rank, (char *)&packet, sizeof(packet));
 }
 
+/* arts_edt_destroy — API: destroy an EDT by GUID.
+ *   home != self → MSG_EDT_DESTROY wire (handler runs on the home rank);
+ *   home == self → dispatch_or_defer (run the destroy body on the live EDT, or
+ *                  defer on the slot until the EDT installs — symmetric with
+ * the RX path and the satisfy path's local-home branch). */
 void arts_edt_destroy(arts_guid_t guid) {
   /* A GUID's home rank is authoritative; an EDT homed elsewhere is destroyed
    * at its home (the route_table entry + finish-scope accounting live there).
@@ -367,38 +378,8 @@ void arts_edt_destroy(arts_guid_t guid) {
     arts_send_edt_destroy(home, guid);
     return;
   }
-  arts_shared_ptr_t h = arts_route_table_lookup_edt(guid);
-  struct arts_edt_s *edt = (struct arts_edt_s *)arts_shared_get(h);
-  if (!edt) {
-    /* Home-local destroy of an absent GUID: genuinely never-created or already
-     * destroyed (no before-create reorder possible for a local create). */
-    ARTS_INFO("EDT destroy missing [Guid:%lu] on rank %u", guid,
-              arts_global_rank_id);
-    return;
-  }
-  ARTS_INFO("EDT destroy [Guid:%lu, Id:%lu, Depc:%u, DepcNeeded:%u] on rank %u",
-            edt->guid, edt->arts_id, edt->depc, edt->depc_needed,
-            arts_global_rank_id);
-  edt_destroy_resolved(edt, guid, h);
-}
-
-/* Home-rank wire handler for MSG_EDT_DESTROY.  Symmetric with
- * arts_handler_event_destroy / arts_handler_db_destroy: if the EDT create
- * raced behind this destroy (before-create wire reorder), defer via the OoO
- * list (OOO_EDT_DESTROY) and replay once the create handler installs + drains;
- * otherwise run the destroy body directly. */
-void arts_handler_edt_destroy(void *ptr) {
-  struct arts_remote_guid_only_packet_s *packet =
-      (struct arts_remote_guid_only_packet_s *)ptr;
-  arts_guid_t guid = packet->guid;
-  arts_shared_ptr_t h = arts_route_table_lookup_edt(guid);
-  struct arts_edt_s *edt = (struct arts_edt_s *)arts_shared_get(h);
-  if (!edt) {
-    struct arts_ooo_args_edt_destroy_s args = {.guid = guid};
-    arts_ooo_dispatch_or_defer_guid(guid, OOO_EDT_DESTROY, &args, sizeof(args));
-    return;
-  }
-  edt_destroy_resolved(edt, guid, h);
+  struct arts_ooo_args_edt_destroy_s a = {.guid = guid};
+  arts_ooo_dispatch_or_defer_guid(guid, OOO_EDT_DESTROY, &a, sizeof(a));
 }
 
 void *arts_get_depv(void *edt_ptr) {
@@ -435,32 +416,29 @@ void *arts_get_depv(void *edt_ptr) {
  * handler does not duplicate it.
  */
 
-/* Defer a non-PTR satisfy on `edt_guid`'s slot (dispatch-or-defer). */
+/* Defer a satisfy on `edt_guid`'s slot (dispatch-or-defer), mode-discriminated.
+ * For DB_MODE_PTR the inline payload (size bytes) is copied into the args blob
+ * right after the args struct; all other modes carry a GUID/value reference
+ * only (size == 0, no trailing payload).  The buffer is freed here —
+ * dispatch_or_defer makes its own copy.  One helper covers both deliveries (the
+ * handler / satisfy core branch on mode), so there is no separate PTR kind. */
 static void edt_defer_satisfy(arts_guid_t edt_guid, arts_guid_t data_guid,
-                              uint32_t slot, arts_db_access_mode_t mode) {
-  struct arts_ooo_args_edt_satisfy_s a = {
-      .edt_guid = edt_guid, .data_guid = data_guid, .slot = slot, .mode = mode};
-  arts_ooo_dispatch_or_defer_guid(edt_guid, OOO_EDT_SATISFY_SLOT, &a,
-                                  sizeof(a));
-}
-
-/* Defer a DB_MODE_PTR satisfy: the inline payload is copied into the OoO
- * payload blob (freed here; dispatch_or_defer makes its own copy). */
-static void edt_defer_satisfy_ptr(arts_guid_t edt_guid, arts_guid_t data_guid,
-                                  uint32_t slot, void *ptr, unsigned int size) {
-  uint32_t asz =
-      (uint32_t)sizeof(struct arts_ooo_args_edt_satisfy_ptr_s) + size;
+                              uint32_t slot, arts_db_access_mode_t mode,
+                              void *ptr, unsigned int size) {
+  uint32_t payload = (mode == DB_MODE_PTR) ? size : 0u;
+  uint32_t asz = (uint32_t)sizeof(struct arts_ooo_args_edt_satisfy_s) + payload;
   char *buf = (char *)arts_malloc(asz);
-  struct arts_ooo_args_edt_satisfy_ptr_s *a =
-      (struct arts_ooo_args_edt_satisfy_ptr_s *)buf;
+  struct arts_ooo_args_edt_satisfy_s *a =
+      (struct arts_ooo_args_edt_satisfy_s *)buf;
   a->edt_guid = edt_guid;
   a->data_guid = data_guid;
   a->slot = slot;
-  a->size = size;
-  if (size > 0 && ptr != NULL) {
-    memcpy(buf + sizeof(*a), ptr, size);
+  a->mode = mode;
+  a->size = payload;
+  if (payload > 0 && ptr != NULL) {
+    memcpy(buf + sizeof(*a), ptr, payload);
   }
-  arts_ooo_dispatch_or_defer_guid(edt_guid, OOO_EDT_SATISFY_SLOT_PTR, buf, asz);
+  arts_ooo_dispatch_or_defer_guid(edt_guid, OOO_EDT_SATISFY_SLOT, buf, asz);
   arts_free(buf);
 }
 
@@ -494,22 +472,17 @@ static void edt_apply_satisfy(struct arts_edt_s *edt, uint32_t slot,
   }
 }
 
-/* Home-routed handler (OOO_EDT_SATISFY_SLOT): item is the installed EDT. */
+/* Home-routed handler (OOO_EDT_SATISFY_SLOT): item is the installed EDT.
+ * Mode-discriminated — for DB_MODE_PTR the inline payload (a->size bytes)
+ * trails the args struct; all other modes carry a GUID/value reference only
+ * (size == 0).  The satisfy core copies the payload exactly when mode ==
+ * DB_MODE_PTR. */
 void arts_handler_edt_satisfy_slot(void *item, void *vargs) {
   struct arts_ooo_args_edt_satisfy_s *a =
       (struct arts_ooo_args_edt_satisfy_s *)vargs;
+  void *ptr = (a->mode == DB_MODE_PTR && a->size > 0) ? (void *)(a + 1) : NULL;
   edt_apply_satisfy((struct arts_edt_s *)item, a->slot, a->data_guid, a->mode,
-                    NULL, 0);
-}
-
-/* Home-routed handler (OOO_EDT_SATISFY_SLOT_PTR): inline payload trails args.
- */
-void arts_handler_edt_satisfy_slot_ptr(void *item, void *vargs) {
-  struct arts_ooo_args_edt_satisfy_ptr_s *a =
-      (struct arts_ooo_args_edt_satisfy_ptr_s *)vargs;
-  void *ptr = a->size > 0 ? (void *)(a + 1) : NULL;
-  edt_apply_satisfy((struct arts_edt_s *)item, a->slot, a->data_guid,
-                    (arts_db_access_mode_t)DB_MODE_PTR, ptr, a->size);
+                    ptr, a->size);
 }
 
 /* arts_edt_satisfy_slot — OCR-standard API: supply depv[slot] on an EDT.
@@ -537,24 +510,25 @@ void arts_edt_satisfy_slot(arts_guid_t edt_guid, uint32_t slot,
 
   if (current_edt && current_edt->invalidate_count > 0) {
     /* CDAG: hold the satisfy until the GPU wrapper EDT's invalidations drain.
-     */
+     * DB_MODE_PTR dispatch-or-defers on the target (the inline payload rides in
+     * the args blob); every other mode force-pushes on the wrapper's slot so
+     * the re-signal of this EDT replays only after the wrapper's invalidations
+     * drain. */
     if (mode == DB_MODE_PTR) {
-      edt_defer_satisfy_ptr(edt_guid, data_guid, slot, ptr, size);
+      edt_defer_satisfy(edt_guid, data_guid, slot, mode, ptr, size);
     } else {
       struct arts_ooo_args_edt_satisfy_s a = {.edt_guid = edt_guid,
                                               .data_guid = data_guid,
                                               .slot = slot,
-                                              .mode = mode};
+                                              .mode = mode,
+                                              .size = 0};
       arts_ooo_push_guid(current_edt->guid, OOO_EDT_SATISFY_SLOT, &a,
                          sizeof(a));
     }
   } else if (arts_guid_get_rank(edt_guid) == arts_global_rank_id) {
-    /* Local home: acquire-or-defer; the handler supplies the dep slot. */
-    if (mode == DB_MODE_PTR) {
-      edt_defer_satisfy_ptr(edt_guid, data_guid, slot, ptr, size);
-    } else {
-      edt_defer_satisfy(edt_guid, data_guid, slot, mode);
-    }
+    /* Local home: acquire-or-defer; the handler supplies the dep slot.  The
+     * mode-discriminated helper handles the DB_MODE_PTR inline payload. */
+    edt_defer_satisfy(edt_guid, data_guid, slot, mode, ptr, size);
   } else {
     /* Remote home: one satisfy message carries mode + (DB_MODE_PTR) payload. */
     arts_send_edt_satisfy_slot(edt_guid, data_guid, slot, mode, ptr, size);
@@ -593,23 +567,23 @@ void arts_send_memory_move(unsigned int rank, arts_guid_t guid, void *ptr,
                            unsigned int mem_size, unsigned message_type,
                            void (*free_method)(void *)) {
   TIME_REMOTE_MOVE_START();
-  struct arts_remote_guid_only_packet_s packet;
+  struct arts_msg_guid_only_packet_s packet;
   arts_fill_packet_header(&packet.header, sizeof(packet) + mem_size,
                           message_type);
   packet.guid = guid;
-  arts_remote_send_request_payload_async_free((int)rank, (char *)&packet,
-                                              sizeof(packet), (char *)ptr, 0,
-                                              mem_size, free_method);
+  arts_transport_send_payload_async_free((int)rank, (char *)&packet,
+                                         sizeof(packet), (char *)ptr, 0,
+                                         mem_size, free_method);
   /* route_table slot now persists; Lifecycle redesign is follow-up work. */
   (void)guid;
   TIME_REMOTE_MOVE_STOP();
 }
 
 void arts_handler_edt_create(void *ptr) {
-  struct arts_remote_guid_only_packet_s *packet =
-      (struct arts_remote_guid_only_packet_s *)ptr;
+  struct arts_msg_guid_only_packet_s *packet =
+      (struct arts_msg_guid_only_packet_s *)ptr;
   uint64_t size =
-      packet->header.size - sizeof(struct arts_remote_guid_only_packet_s);
+      packet->header.size - sizeof(struct arts_msg_guid_only_packet_s);
   struct arts_edt_s *edt = (struct arts_edt_s *)arts_malloc_align(size, 16);
 
   memcpy(edt, packet + 1, size);
@@ -697,7 +671,7 @@ void arts_send_edt_satisfy_slot(arts_guid_t edt, arts_guid_t db, uint32_t slot,
   if (size == 0) {
     /* Reference-only satisfy (GUID / value / NULL): fixed-size header on the
      * stack, no trailing payload. */
-    struct arts_remote_edt_satisfy_slot_packet_s packet;
+    struct arts_msg_edt_satisfy_slot_packet_s packet;
     packet.edt = edt;
     packet.db = db;
     packet.slot = slot;
@@ -705,16 +679,16 @@ void arts_send_edt_satisfy_slot(arts_guid_t edt, arts_guid_t db, uint32_t slot,
     packet.size = 0;
     arts_fill_packet_header(&packet.header, sizeof(packet),
                             MSG_EDT_SATISFY_SLOT);
-    arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
+    arts_transport_send_async((int)rank, (char *)&packet, sizeof(packet));
     return;
   }
 
   /* DB_MODE_PTR delivery: header + inline payload copied contiguously so the
    * receiver materializes the data without a follow-up fetch. */
-  uint64_t total = sizeof(struct arts_remote_edt_satisfy_slot_packet_s) + size;
+  uint64_t total = sizeof(struct arts_msg_edt_satisfy_slot_packet_s) + size;
   char *buf = (char *)arts_malloc((size_t)total);
-  struct arts_remote_edt_satisfy_slot_packet_s *packet =
-      (struct arts_remote_edt_satisfy_slot_packet_s *)buf;
+  struct arts_msg_edt_satisfy_slot_packet_s *packet =
+      (struct arts_msg_edt_satisfy_slot_packet_s *)buf;
   packet->edt = edt;
   packet->db = db;
   packet->slot = slot;
@@ -722,6 +696,6 @@ void arts_send_edt_satisfy_slot(arts_guid_t edt, arts_guid_t db, uint32_t slot,
   packet->size = size;
   arts_fill_packet_header(&packet->header, total, MSG_EDT_SATISFY_SLOT);
   memcpy(buf + sizeof(*packet), ptr, size);
-  arts_remote_send_request_async((int)rank, buf, (unsigned int)total);
+  arts_transport_send_async((int)rank, buf, (unsigned int)total);
   arts_free(buf);
 }

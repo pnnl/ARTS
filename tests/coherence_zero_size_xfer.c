@@ -50,9 +50,9 @@
 ///        Driving the size-0 DB across ranks exercises exactly that path.
 ///
 ///        Completion is the assertion: if the empty transfer crashes any rank,
-///        the finish scope never drains and shutdown never fires, surfacing as a ctest
-///        FAIL.  Model-agnostic (RC/LC simply move ownership without a map).
-///        Requires 2+ ranks.
+///        the finish scope never drains and shutdown never fires, surfacing as
+///        a ctest FAIL.  Model-agnostic (RC/LC simply move ownership without a
+///        map). Requires 2+ ranks.
 
 #include "arts.h"
 
@@ -116,20 +116,24 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
    * a NULL-buffer DB, which is the empty-transfer path under test.  A single
    * hop is sufficient to exercise it; the coherence layer serializes the two
    * RW leases. */
-  arts_guid_t w_home = arts_edt_create(
-      rw_holder_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+  arts_guid_t w_home =
+      arts_edt_create(rw_holder_edt, 0, NULL, 1,
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(db, w_home, 0, DB_MODE_RW);
 
-  arts_guid_t w_foreign = arts_edt_create(
-      rw_holder_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 1, .finish_event = fe});
+  arts_guid_t w_foreign =
+      arts_edt_create(rw_holder_edt, 0, NULL, 1,
+                      &(arts_edt_hint_t){.rank = 1, .finish_event = fe});
   arts_add_dependence(db, w_foreign, 0, DB_MODE_RW);
 }
 
 int main(int argc, char **argv) {
   arts_rt(argc, argv);
   if (arts_get_current_rank() == 0 && !atomic_load(&g_clean_shutdown)) {
-    fprintf(stderr, "FAIL: shutdown_edt did not fire — finish scope never completed "
-                    "(empty-transfer crash or premature shutdown)\n");
+    (void)fprintf(
+        stderr,
+        "FAIL: shutdown_edt did not fire — finish scope never completed "
+        "(empty-transfer crash or premature shutdown)\n");
     return 1;
   }
   return 0;

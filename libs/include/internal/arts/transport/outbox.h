@@ -50,19 +50,19 @@ extern "C" {
 
 void arts_outbox_init(unsigned int size);
 void arts_outbox_cleanup(void);
-void arts_remote_flush_outbound(void);
-bool arts_remote_async_send();
-void arts_remote_send_request_async(int rank, char *message,
-                                    unsigned int length);
-void arts_remote_send_request_payload_async(int rank, char *message,
+void arts_transport_flush_outbound(void);
+bool arts_transport_pump_outbound();
+void arts_transport_send_async(int rank, char *message, unsigned int length);
+void arts_transport_send_payload_async(int rank, char *message,
+                                       unsigned int length, char *payload,
+                                       uint64_t size);
+void arts_transport_send_payload_async_free(int rank, char *message,
                                             unsigned int length, char *payload,
-                                            uint64_t size);
-void arts_remote_send_request_payload_async_free(
-    int rank, char *message, unsigned int length, char *payload,
-    unsigned int offset, uint64_t size, void (*free_method)(void *));
-void arts_remote_set_thread_outbound_queues(unsigned int start,
-                                            unsigned int stop);
-void arts_remote_thread_outbound_queues_cleanup();
+                                            unsigned int offset, uint64_t size,
+                                            void (*free_method)(void *));
+void arts_transport_set_thread_outbound_queues(unsigned int start,
+                                               unsigned int stop);
+void arts_transport_thread_outbound_queues_cleanup();
 #ifdef __cplusplus
 }
 #endif

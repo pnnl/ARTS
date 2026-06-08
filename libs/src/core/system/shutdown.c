@@ -52,8 +52,8 @@
 /*
  * arts_shutdown — Initiate global shutdown of the ARTS runtime.
  *
- * Multi-node: delegates to arts_remote_shutdown() which shuts down all
- *   send and receive sockets.  Remote nodes detect the socket closure
+ * Multi-node: delegates to arts_transport_broadcast_shutdown() which shuts
+ *   down all send and receive sockets.  Remote nodes detect the socket closure
  *   in their receive path and call arts_runtime_stop() themselves.
  * Single-node: directly calls arts_runtime_stop() to signal all threads.
  *
@@ -85,17 +85,18 @@ _Noreturn void arts_abort(uint8_t error_code) {
  * sockets during cleanup.
  */
 static void wait_for_outbox_drain(unsigned int deadline_ms) {
-  struct timespec start, now;
-  clock_gettime(CLOCK_MONOTONIC, &start);
+  struct timespec start;
+  struct timespec now;
+  (void)clock_gettime(CLOCK_MONOTONIC, &start);
   for (;;) {
     unsigned int pending =
         arts_atomic_fetch_add(&arts_node_info.outbox_pending, 0U);
     if (pending == 0U) {
       return;
     }
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    long elapsed_ms = (now.tv_sec - start.tv_sec) * 1000L +
-                      (now.tv_nsec - start.tv_nsec) / 1000000L;
+    (void)clock_gettime(CLOCK_MONOTONIC, &now);
+    long elapsed_ms = ((now.tv_sec - start.tv_sec) * 1000L) +
+                      ((now.tv_nsec - start.tv_nsec) / 1000000L);
     if ((unsigned long)elapsed_ms >= (unsigned long)deadline_ms) {
       ARTS_INFO("shutdown drain timeout: %u messages still pending", pending);
       return;
@@ -108,13 +109,14 @@ static void wait_for_outbox_drain(unsigned int deadline_ms) {
 }
 
 /*
- * arts_enter_shutdown_state — the single internal entry point for
- * transitioning a rank into SHUTTING_DOWN state.
+ * arts_enter_shutdown_state — the single internal CAS-gated mechanism for
+ * transitioning a rank into SHUTTING_DOWN state.  Both the initiator side
+ * (arts_shutdown) and the passive side (arts_handler_shutdown) reach this.
  *
  * Called from:
  *   - arts_shutdown() on the user EDT path (initiator = true)
- *   - the MSG_SHUTDOWN handler in dispatcher.c
- *     (initiator = false)
+ *   - arts_handler_shutdown() — the MSG_SHUTDOWN wire RX path + the signal
+ *     watcher's passive wake (initiator = false)
  *   - legacy EOF-detection paths in socket.c's recv logic
  *     (initiator = false) — defense in depth
  *
@@ -130,7 +132,7 @@ void arts_enter_shutdown_state(bool initiator) {
             arts_global_rank_id, (int)initiator);
   if (initiator && arts_global_rank_count > 1) {
     /* Phase A.1: broadcast SHUTDOWN_MSG to every other rank. */
-    arts_remote_send_shutdown_broadcast();
+    arts_transport_broadcast_shutdown();
     /* Phase A.2: wait for our own outbox to drain so the broadcast
      * bytes are in the kernel TCP buffer before we tear down. */
     wait_for_outbox_drain(500U /* SHUTDOWN_DRAIN_MS */);
@@ -140,4 +142,16 @@ void arts_enter_shutdown_state(bool initiator) {
    * and deliver any inbound SHUTDOWN_MSG that helps with defense in
    * depth. */
   arts_runtime_stop_workers();
+}
+
+/*
+ * arts_handler_shutdown — passive RX entry (spec Cat E).  The wire dispatcher
+ * calls this directly on MSG_SHUTDOWN.  Lightweight: the idempotent CAS gate
+ * (0→1) + worker-thread stop signal, with NO rebroadcast and NO drain-wait
+ * (those are the initiator arts_shutdown's responsibility).  Implemented as the
+ * non-initiator arts_enter_shutdown_state path so the CAS gate stays the single
+ * source of idempotence shared with the initiator side.
+ */
+void arts_handler_shutdown(void) {
+  arts_enter_shutdown_state(/* initiator = */ false);
 }

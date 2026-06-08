@@ -158,26 +158,26 @@ bool arts_guid_is_local(arts_guid_t guid) {
 
 uint64_t arts_guid_get_key(arts_guid_t guid) { return ARTS_GUID_GET_KEY(guid); }
 
-arts_guid_t arts_guid_reserve(arts_guid_kind_t type, unsigned int rank) {
+arts_guid_t arts_guid_reserve(arts_guid_kind_t kind, unsigned int rank) {
   arts_guid_t guid = NULL_GUID;
   if (rank == ARTS_HINT_CURRENT_RANK) {
     rank = arts_global_rank_id;
   }
   rank = rank % arts_global_rank_count;
-  if ((unsigned int)type < ARTS_GUID_LAST) {
-    guid = arts_guid_create_for_rank_internal(rank, (unsigned int)type, 1);
+  if ((unsigned int)kind < ARTS_GUID_LAST) {
+    guid = arts_guid_create_for_rank_internal(rank, (unsigned int)kind, 1);
     // ARTS_INFO("Allocation Guid %u", guid);
   } else {
-    ARTS_INFO("Invalid type %u", type);
+    ARTS_INFO("Invalid type %u", kind);
   }
   //    if(route == arts_global_rank_id)
   //        arts_route_table_install(NULL, guid, arts_global_rank_id, false);
   return guid;
 }
 
-arts_guid_t arts_guid_reserve_range(arts_guid_kind_t type, unsigned int size,
+arts_guid_t arts_guid_reserve_range(arts_guid_kind_t kind, unsigned int size,
                                     unsigned int rank) {
-  if (!size || type >= ARTS_GUID_LAST) {
+  if (!size || kind >= ARTS_GUID_LAST) {
     return NULL_GUID;
   }
   if (rank == ARTS_HINT_ROUND_ROBIN) {
@@ -201,7 +201,7 @@ arts_guid_t arts_guid_reserve_range(arts_guid_kind_t type, unsigned int size,
     }
     uint64_t base_value = 1;
     for (unsigned int r = 0; r < nrank; r++) {
-      uint64_t v = *arts_guid_generator_get_key(r, (unsigned int)type);
+      uint64_t v = *arts_guid_generator_get_key(r, (unsigned int)kind);
       if (v > base_value) {
         base_value = v;
       }
@@ -210,27 +210,27 @@ arts_guid_t arts_guid_reserve_range(arts_guid_kind_t type, unsigned int size,
       ARTS_ERROR("GUID range reservation failed: thread key space exhausted");
     }
     for (unsigned int r = 0; r < nrank; r++) {
-      *arts_guid_generator_get_key(r, (unsigned int)type) = base_value + stride;
+      *arts_guid_generator_get_key(r, (unsigned int)kind) = base_value + stride;
     }
     uint64_t encoded_key =
         base_value +
         (keys_per_thread *
          arts_node_info.global_guid_thread_id[arts_thread_info.thread_id]);
-    return ARTS_GUID_MAKE((unsigned int)type, ARTS_DISTRIBUTED_RANK,
+    return ARTS_GUID_MAKE((unsigned int)kind, ARTS_DISTRIBUTED_RANK,
                           encoded_key);
   }
   if (rank == ARTS_HINT_CURRENT_RANK) {
     rank = arts_global_rank_id;
   }
-  return arts_guid_create_for_rank_internal(rank, (unsigned int)type, size);
+  return arts_guid_create_for_rank_internal(rank, (unsigned int)kind, size);
 }
 
-arts_guid_t arts_guid_reserve_range_hash(arts_guid_kind_t type,
+arts_guid_t arts_guid_reserve_range_hash(arts_guid_kind_t kind,
                                          unsigned int size, unsigned int rank,
                                          unsigned int hash_size) {
-  if (size && (unsigned int)type < ARTS_GUID_LAST) {
+  if (size && (unsigned int)kind < ARTS_GUID_LAST) {
     arts_guid_t start = arts_guid_create_for_rank_internal(
-        rank, (unsigned int)type, size + hash_size);
+        rank, (unsigned int)kind, size + hash_size);
     for (unsigned int i = 0; i < hash_size; i++) {
       if (ARTS_GUID_GET_KEY(start) % hash_size == 0) {
         break;

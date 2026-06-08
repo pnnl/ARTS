@@ -48,7 +48,7 @@
 #include "arts/utils/malloc.h"
 
 void arts_block_dist_internal_init(arts_block_dist_t *dist, arts_graph_sz_t n,
-                                      arts_graph_sz_t m, unsigned int num_blocks) {
+                                   arts_graph_sz_t m, unsigned int num_blocks) {
   dist->num_vertices = n;
   dist->num_edges = m;
   dist->num_blocks = num_blocks;
@@ -56,8 +56,8 @@ void arts_block_dist_internal_init(arts_block_dist_t *dist, arts_graph_sz_t n,
 }
 
 arts_block_dist_t *arts_block_dist_init(arts_graph_sz_t n, arts_graph_sz_t m,
-                                                 unsigned int num_blocks,
-                                                 arts_guid_kind_t db_type) {
+                                        unsigned int num_blocks,
+                                        arts_guid_kind_t db_type) {
   arts_block_dist_t *dist = (arts_block_dist_t *)arts_malloc(
       sizeof(arts_block_dist_t) + (sizeof(arts_guid_t) * num_blocks));
   unsigned int blocks_per_node = num_blocks / arts_get_total_ranks();
@@ -77,8 +77,7 @@ arts_block_dist_t *arts_block_dist_init(arts_graph_sz_t n, arts_graph_sz_t m,
   return dist;
 }
 
-arts_block_dist_t *arts_block_dist_init_from_args(int argc,
-                                                              char **argv) {
+arts_block_dist_t *arts_block_dist_init_from_args(int argc, char **argv) {
   uint64_t n = 0;
   uint64_t m = 0;
   for (int i = 0; i < argc; ++i) {
@@ -106,8 +105,9 @@ arts_block_dist_t *arts_block_dist_init_from_args(int argc,
 
 void arts_block_dist_free(arts_block_dist_t *dist) { arts_free(dist); }
 
-arts_graph_sz_t arts_block_dist_block_size(unsigned int index,
-                                        const arts_block_dist_t *const dist) {
+arts_graph_sz_t
+arts_block_dist_block_size(unsigned int index,
+                           const arts_block_dist_t *const dist) {
   // is this the last block/partition
   if (index == (dist->num_blocks - 1)) {
     return (dist->num_vertices - ((dist->num_blocks - 1) * dist->block_sz));
@@ -115,17 +115,20 @@ arts_graph_sz_t arts_block_dist_block_size(unsigned int index,
   return dist->block_sz;
 }
 
-unsigned int arts_block_dist_get_owner(arts_vertex_t v, const arts_block_dist_t *const dist) {
+unsigned int arts_block_dist_get_owner(arts_vertex_t v,
+                                       const arts_block_dist_t *const dist) {
   return (unsigned int)(v / dist->block_sz);
 }
 
-arts_vertex_t arts_block_dist_partition_start(arts_partition_t index,
-                               const arts_block_dist_t *const dist) {
+arts_vertex_t
+arts_block_dist_partition_start(arts_partition_t index,
+                                const arts_block_dist_t *const dist) {
   return (arts_vertex_t)((dist->block_sz) * index);
 }
 
-arts_vertex_t arts_block_dist_partition_end(arts_partition_t index,
-                             const arts_block_dist_t *const dist) {
+arts_vertex_t
+arts_block_dist_partition_end(arts_partition_t index,
+                              const arts_block_dist_t *const dist) {
   // is this the last block/partition?
   if (index == (dist->num_blocks - 1)) {
     return (arts_vertex_t)(dist->num_vertices - 1);
@@ -133,22 +136,25 @@ arts_vertex_t arts_block_dist_partition_end(arts_partition_t index,
   return (arts_block_dist_partition_start(index, dist) + (dist->block_sz - 1));
 }
 
-arts_local_index_t arts_block_dist_get_local_index(arts_vertex_t v,
-                                    const arts_block_dist_t *const dist) {
+arts_local_index_t
+arts_block_dist_get_local_index(arts_vertex_t v,
+                                const arts_block_dist_t *const dist) {
   unsigned int n = arts_block_dist_get_owner(v, dist);
   arts_vertex_t base = arts_block_dist_partition_start(n, dist);
   assert(base <= v);
   return (v - base);
 }
 
-arts_guid_t arts_block_dist_guid_for_vertex(arts_vertex_t v,
-                                      const arts_block_dist_t *const dist) {
+arts_guid_t
+arts_block_dist_guid_for_vertex(arts_vertex_t v,
+                                const arts_block_dist_t *const dist) {
   unsigned int owner = arts_block_dist_get_owner(v, dist);
   assert(owner < dist->num_blocks);
   return dist->graphGuid[owner];
 }
 
-arts_guid_t arts_block_dist_guid_for_partition(const arts_block_dist_t *const dist,
-                                         arts_partition_t index) {
+arts_guid_t
+arts_block_dist_guid_for_partition(const arts_block_dist_t *const dist,
+                                   arts_partition_t index) {
   return dist->graphGuid[index];
 }

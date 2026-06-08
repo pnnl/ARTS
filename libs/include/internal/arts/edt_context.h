@@ -85,7 +85,8 @@ arts_array_list_t *arts_get_created_db_list(void);
 void arts_owned_finish_register(arts_guid_t fe_guid);
 void arts_owned_finish_consume(arts_guid_t fe_guid);
 void arts_owned_finish_cleanup(void);
-arts_guid_t arts_current_finish_event(void);
+/* arts_current_finish_event is declared once in the public header (arts.h);
+ * callers include that.  Not re-declared here (redundant declaration). */
 
 #ifdef __cplusplus
 }

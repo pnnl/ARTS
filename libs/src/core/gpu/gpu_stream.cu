@@ -55,6 +55,7 @@
 #include "arts/gpu/gpu_internal.h"
 #include "arts/gpu/gpu_lc.h"
 #include "arts/gpu/gpu_route_table.h"
+#include "arts/ooo.h"
 #include "arts/runtime_state.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
@@ -574,21 +575,8 @@ void free_gpu_item(arts_route_item_t *item) {
       get_data_from_stream_now(arts_get_current_gpu(), temp_space,
                                (void *)wrapper->real_data, size, false);
 
-#if 0 /* FIXME: GPU LC sync needs new model -- task 1a.4 */
-      arts_lc_meta_t dev;
-      dev.guid = item->key;
-      dev.data = (void *)(temp_space + 1);
-      dev.data_size = temp_space->cache.db_size;
-      dev.host_version = &temp_space->version;
-      dev.host_time_stamp = &temp_space->time_stamp;
-      dev.gpu_version = item->touched;
-      dev.gpu_time_stamp = wrapper->time_stamp;
-      dev.gpu = -1;
-      dev.read_lock = NULL;
-      dev.write_lock = NULL;
-
-      lc_sync_function[arts_node_info.gpu_lc_sync](&host, &dev);
-#endif
+      /* GPU LC device-side sync is not yet wired to the new route_item model;
+       * the host descriptor is populated above but not consumed here. */
       (void)host;
 
       arts_free(temp_space);
@@ -961,8 +949,6 @@ bool arts_gpu_scheduler_backoff_loop() {
 
   return ran_cpu_edt;
 }
-
-extern ARTS_THREAD_LOCAL unsigned int run_gc_flag;
 
 bool arts_gpu_scheduler_demand_loop() {
   arts_gpu_t *arts_gpu = NULL;

@@ -64,6 +64,7 @@
 #include "arts/edt_context.h" /* current_edt */
 #include "arts/gas/guid.h"
 #include "arts/gas/route_table.h"
+#include "arts/ooo.h"
 #include "arts/runtime_state.h" /* arts_node_info, event_dep_pool */
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
@@ -250,13 +251,31 @@ arts_guid_t arts_event_create(const arts_event_hint_t *hint) {
 
 /* ── Event destroy ──────────────────────────────────────────────────── */
 
+/* Pure Cat-B body (g_ooo_table[OOO_EVENT_DESTROY]).  The event is installed and
+ * ref-pinned by dispatch_or_defer; the destroy action detaches the slot cb so
+ * the deleter runs once outstanding refs drain.  arts_route_table_set_destroyed
+ * is idempotent (slot value exchange -> NULL), so a duplicate/late replay is a
+ * safe no-op.  item_v is unused — the action keys on the GUID. */
+void arts_handler_event_destroy(void *item_v, void *args_v) {
+  (void)item_v;
+  struct arts_ooo_args_event_destroy_s *a =
+      (struct arts_ooo_args_event_destroy_s *)args_v;
+  arts_route_table_set_destroyed(a->guid);
+}
+
+/* arts_event_destroy — API: destroy an event by GUID.
+ *   home != self → MSG_EVENT_DESTROY wire (handler runs on the home rank);
+ *   home == self → dispatch_or_defer (run the destroy body, or defer on the
+ *                  slot until the event installs — symmetric with the RX path
+ *                  and the satisfy path's local-home branch). */
 void arts_event_destroy(arts_guid_t guid) {
   unsigned int rank = arts_guid_get_rank(guid);
   if (rank != arts_global_rank_id) {
     arts_send_event_destroy(guid);
     return;
   }
-  arts_route_table_mark_delete(guid);
+  struct arts_ooo_args_event_destroy_s a = {.guid = guid};
+  arts_ooo_dispatch_or_defer_guid(guid, OOO_EVENT_DESTROY, &a, sizeof(a));
 }
 
 void arts_event_set_auto_destroy(arts_guid_t guid) {
@@ -445,7 +464,7 @@ void arts_handler_event_satisfy_slot(void *item, void *vargs) {
       /* Single-shot: detach the cb from the route_table slot so a waiter
        * polling presence observes the drain, and per-remote-EDT proxies are
        * reclaimed instead of lingering. */
-      arts_route_table_mark_delete(event_guid);
+      arts_route_table_set_destroyed(event_guid);
     }
   }
 }
@@ -599,13 +618,13 @@ static void send_remote_add_dependence_packet(unsigned int message_type,
                                               arts_guid_t destination,
                                               uint32_t slot, unsigned int rank,
                                               arts_db_access_mode_t mode) {
-  struct arts_remote_add_dependence_packet_s packet;
+  struct arts_msg_add_dependence_packet_s packet;
   packet.source = source;
   packet.destination = destination;
   packet.slot = slot;
   packet.mode = mode;
   arts_fill_packet_header(&packet.header, sizeof(packet), message_type);
-  arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
+  arts_transport_send_async((int)rank, (char *)&packet, sizeof(packet));
 }
 
 void arts_send_event_add_dependence(arts_guid_t source, arts_guid_t destination,
@@ -617,10 +636,10 @@ void arts_send_event_add_dependence(arts_guid_t source, arts_guid_t destination,
 }
 
 void arts_handler_event_create(void *ptr) {
-  struct arts_remote_guid_only_packet_s *packet =
-      (struct arts_remote_guid_only_packet_s *)ptr;
+  struct arts_msg_guid_only_packet_s *packet =
+      (struct arts_msg_guid_only_packet_s *)ptr;
   uint64_t size =
-      packet->header.size - sizeof(struct arts_remote_guid_only_packet_s);
+      packet->header.size - sizeof(struct arts_msg_guid_only_packet_s);
 
   struct arts_event_s *mem_packet =
       (struct arts_event_s *)arts_malloc_align(size, 16);
@@ -660,37 +679,22 @@ void arts_handler_event_create(void *ptr) {
 
 void arts_send_event_destroy(arts_guid_t guid) {
   unsigned int rank = arts_guid_get_rank(guid);
-  struct arts_remote_guid_only_packet_s packet;
+  struct arts_msg_guid_only_packet_s packet;
   packet.guid = guid;
   arts_fill_packet_header(&packet.header, sizeof(packet), MSG_EVENT_DESTROY);
-  arts_remote_send_request_async((int)rank, (char *)&packet, sizeof(packet));
-}
-
-void arts_handler_event_destroy(void *ptr) {
-  struct arts_remote_guid_only_packet_s *packet =
-      (struct arts_remote_guid_only_packet_s *)ptr;
-  /* Before-create wire reorder (symmetric with arts_handler_db_destroy): a
-   * DESTROY that reaches the event's home ahead of its CREATE must defer via
-   * the OoO list (OOO_EVENT_DESTROY) and replay once the create handler
-   * installs + drains, rather than mark_delete'ing an absent slot (which would
-   * lose the destroy and leak the later-created event).  dispatch_or_defer's
-   * hit path runs the replay (mark_delete) inline when the event already
-   * exists; mark_delete is itself idempotent (exchange slot value -> NULL). */
-  struct arts_ooo_args_event_destroy_s args = {.guid = packet->guid};
-  arts_ooo_dispatch_or_defer_guid(packet->guid, OOO_EVENT_DESTROY, &args,
-                                  sizeof(args));
+  arts_transport_send_async((int)rank, (char *)&packet, sizeof(packet));
 }
 
 void arts_send_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
                                   uint32_t slot) {
-  struct arts_remote_event_satisfy_slot_packet_s packet;
+  struct arts_msg_event_satisfy_slot_packet_s packet;
   packet.event = event_guid;
   packet.db = data_guid;
   packet.slot = slot;
   arts_fill_packet_header(&packet.header, sizeof(packet),
                           MSG_EVENT_SATISFY_SLOT);
-  arts_remote_send_request_async((int)arts_guid_get_rank(event_guid),
-                                 (char *)&packet, sizeof(packet));
+  arts_transport_send_async((int)arts_guid_get_rank(event_guid),
+                            (char *)&packet, sizeof(packet));
 }
 
 /*

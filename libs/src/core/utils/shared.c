@@ -45,8 +45,9 @@ arts_shared_ptr_t arts_shared_make(void *object, void (*deleter)(void *)) {
 }
 
 arts_shared_ptr_t arts_shared_copy(arts_shared_ptr_t b) {
-  if (!b)
+  if (!b) {
     return NULL;
+  }
   /* Caller already holds b ⇒ strong ≥ 1 ⇒ cb alive; a plain add is safe. */
   atomic_fetch_add_explicit(&b->strong, 1u, memory_order_relaxed);
   return b;
@@ -54,23 +55,26 @@ arts_shared_ptr_t arts_shared_copy(arts_shared_ptr_t b) {
 
 void arts_shared_release(arts_shared_ptr_t *p) {
   arts_shared_ptr_t cb = *p;
-  if (!cb)
+  if (!cb) {
     return;
+  }
   *p = NULL;
   uint64_t prev =
       atomic_fetch_sub_explicit(&cb->strong, 1u, memory_order_acq_rel);
   if (prev == 1u) {
     /* Last drop: run the deleter, then recycle the cb (never freed). */
-    if (cb->deleter)
+    if (cb->deleter) {
       cb->deleter(cb->object);
+    }
     arts_lf_pool_release(&g_shared_cb_pool, cb);
   }
 }
 
 void arts_shared_abandon(arts_shared_ptr_t *p) {
   arts_shared_ptr_t cb = *p;
-  if (!cb)
+  if (!cb) {
     return;
+  }
   *p = NULL;
   /* Unpublished cb (strong == 1, never shared): recycle the control block
    * without running the deleter — the wrapped object stays the caller's. */
@@ -83,8 +87,9 @@ void *arts_shared_get(arts_shared_ptr_t p) { return p ? p->object : NULL; }
 arts_shared_ptr_t arts_atomic_shared_load(arts_atomic_shared_ptr_t *slot) {
   for (;;) {
     arts_shared_ptr_t cb = atomic_load_explicit(slot, memory_order_acquire);
-    if (!cb)
+    if (!cb) {
       return NULL;
+    }
     /* CAS strong-inc, but only while strong > 0 (cb not yet dying). */
     uint64_t s = atomic_load_explicit(&cb->strong, memory_order_relaxed);
     bool got = false;
@@ -96,13 +101,15 @@ arts_shared_ptr_t arts_atomic_shared_load(arts_atomic_shared_ptr_t *slot) {
         break;
       }
     }
-    if (!got)
+    if (!got) {
       continue; /* cb was dying — reload the slot (will see NULL/new cb). */
+    }
     /* Revalidate: if the slot still points at cb, our ref is good.  ABA on
      * a recycled cb pointer is caught here — a different install swaps the
      * slot to a different cb pointer, so we release and retry. */
-    if (atomic_load_explicit(slot, memory_order_acquire) == cb)
+    if (atomic_load_explicit(slot, memory_order_acquire) == cb) {
       return cb;
+    }
     arts_shared_release(&cb);
   }
 }
@@ -111,8 +118,9 @@ void arts_atomic_shared_store(arts_atomic_shared_ptr_t *slot,
                               arts_shared_ptr_t new_val) {
   arts_shared_ptr_t old =
       atomic_exchange_explicit(slot, new_val, memory_order_acq_rel);
-  if (old)
+  if (old) {
     arts_shared_release(&old);
+  }
 }
 
 arts_shared_ptr_t arts_atomic_shared_exchange(arts_atomic_shared_ptr_t *slot,

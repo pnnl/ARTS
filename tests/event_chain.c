@@ -119,8 +119,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_event_hint_t fan_in_hint = ARTS_EVENT_HINT_DEFAULTS;
   fan_in_hint.latch = 2;
   arts_guid_t ev_c = arts_event_create(&fan_in_hint);
-  arts_guid_t edt2 = arts_edt_create(
-      fan_in_end, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+  arts_guid_t edt2 =
+      arts_edt_create(fan_in_end, 0, NULL, 1,
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
 
   arts_add_dependence(ev_a, ev_c, ARTS_EVENT_LATCH_DECR_SLOT, DB_MODE_RW);
   arts_add_dependence(ev_b, ev_c, ARTS_EVENT_LATCH_DECR_SLOT, DB_MODE_RW);

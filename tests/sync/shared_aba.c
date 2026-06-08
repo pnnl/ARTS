@@ -56,8 +56,9 @@ static void *churner(void *arg) {
      * readers may still be mid-load on the same slot/pointer. */
     arts_shared_ptr_t old =
         arts_atomic_shared_exchange(&g_slot, (arts_shared_ptr_t)NULL);
-    if (old)
+    if (old) {
       arts_shared_release(&old);
+    }
   }
   atomic_store_explicit(&g_churn_done, 1, memory_order_release);
   return NULL;
@@ -74,8 +75,9 @@ static void *reader(void *arg) {
       arts_shared_release(&local);
     }
     if (atomic_load_explicit(&g_churn_done, memory_order_acquire) &&
-        i > READ_ITERS / 4)
+        i > READ_ITERS / 4) {
       break; /* churner finished; readers can stop early */
+    }
   }
   return NULL;
 }
@@ -85,13 +87,15 @@ int main(void) {
 
   pthread_t ch;
   pthread_t rd[READERS];
-  for (int i = 0; i < READERS; ++i)
+  for (int i = 0; i < READERS; ++i) {
     pthread_create(&rd[i], NULL, reader, NULL);
+  }
   pthread_create(&ch, NULL, churner, NULL);
 
   pthread_join(ch, NULL);
-  for (int i = 0; i < READERS; ++i)
+  for (int i = 0; i < READERS; ++i) {
     pthread_join(rd[i], NULL);
+  }
 
   arts_atomic_shared_store(&g_slot, (arts_shared_ptr_t)NULL);
   assert(arts_atomic_shared_load(&g_slot) == NULL);

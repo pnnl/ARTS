@@ -9,14 +9,14 @@
  *   - the bit-packed atomic rank bit-set (LRC destroy fan-out roster)
  */
 
-#include "arts/db_coherence_home.h"
+#include "arts/coherence/home.h"
 
 #include <sched.h>
 #include <stdatomic.h>
 #include <stddef.h>
 #include <stdlib.h>
 
-#include "arts/db_coherence.h"
+#include "arts/coherence/coherence.h"
 #include "arts/utils/malloc.h"
 
 /*--- pending_rw home FIFO (Vyukov MPSC) ---------------------------------
@@ -194,15 +194,13 @@ bool arts_rank_u64_map_advance(struct arts_rank_to_u64_map_s *m,
   }
 }
 
-
 /*--- rank bit-set ----------------------------------------------------
  *
  * Bit-packed atomic rank bit-set.  See coherence_home.h / rank_bitset.h.
  * Used only in LRC builds — RC reuses the per-rank version map for the same
  * purpose (set membership = nonzero entry). */
 
-void arts_rank_bitset_init(struct arts_rank_bitset_s *r,
-                            unsigned int nranks) {
+void arts_rank_bitset_init(struct arts_rank_bitset_s *r, unsigned int nranks) {
   r->nranks = nranks;
   r->nwords = (nranks + 63) / 64;
   r->words = (_Atomic(uint64_t) *)calloc(r->nwords, sizeof(_Atomic(uint64_t)));
@@ -226,14 +224,13 @@ bool arts_rank_bitset_set(struct arts_rank_bitset_s *r, unsigned int rank) {
 }
 
 void arts_rank_bitset_for_each(const struct arts_rank_bitset_s *r,
-                                void (*cb)(unsigned int rank, void *ctx),
-                                void *ctx) {
+                               void (*cb)(unsigned int rank, void *ctx),
+                               void *ctx) {
   for (unsigned int w = 0; w < r->nwords; w++) {
-    uint64_t snap = atomic_load_explicit((_Atomic(uint64_t) *)&r->words[w],
-                                         memory_order_acquire);
+    uint64_t snap = atomic_load_explicit((&r->words[w]), memory_order_acquire);
     while (snap) {
       unsigned int b = (unsigned int)__builtin_ctzll(snap);
-      cb(w * 64 + b, ctx);
+      cb((w * 64) + b, ctx);
       snap &= snap - 1;
     }
   }

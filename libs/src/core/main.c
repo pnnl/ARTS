@@ -43,8 +43,8 @@
 #include "arts/gas/guid.h"
 #include "arts/runtime_state.h"
 #include "arts/system/config.h"
-#include "arts/system/signals.h"
 #include "arts/system/print.h"
+#include "arts/system/signals.h"
 #include "arts/system/threads.h"
 #include "arts/transport/dispatcher.h"
 #include "arts/transport/launcher.h"
@@ -91,8 +91,8 @@ int arts_rt(int argc, char **argv) {
   }
 
   if (arts_global_rank_count > 1) {
-    arts_remote_setup_outgoing();
-    if (!arts_remote_setup_incoming()) {
+    arts_transport_setup_outgoing();
+    if (!arts_transport_setup_incoming()) {
       return -1;
     }
   }

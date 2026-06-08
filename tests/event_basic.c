@@ -178,8 +178,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Test 7: single-fire (defaults: latch=1).  Fires once, then lingers.
   {
     arts_guid_t ev7 = arts_event_create(NULL);
-    arts_guid_t dep7 = arts_edt_create(
-        once_dep, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+    arts_guid_t dep7 =
+        arts_edt_create(once_dep, 0, NULL, 1,
+                        &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(ev7, dep7, 0, DB_MODE_RW);
     arts_event_satisfy_slot(ev7, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
   }
@@ -204,8 +205,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   {
     arts_event_hint_t h = ARTS_EVENT_HINT_LATCH(1);
     arts_guid_t ev9 = arts_event_create(&h);
-    arts_guid_t dep9 = arts_edt_create(
-        idem_dep, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+    arts_guid_t dep9 =
+        arts_edt_create(idem_dep, 0, NULL, 1,
+                        &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(ev9, dep9, 0, DB_MODE_RW);
     arts_event_satisfy_slot(ev9, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
     // Re-satisfy: with the default hint this just decrements past zero; the
@@ -219,8 +221,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   {
     arts_event_hint_t h = ARTS_EVENT_HINT_LATCH(3);
     arts_guid_t ev10 = arts_event_create(&h);
-    arts_guid_t dep10 = arts_edt_create(
-        counted_dep, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+    arts_guid_t dep10 =
+        arts_edt_create(counted_dep, 0, NULL, 1,
+                        &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(ev10, dep10, 0, DB_MODE_RW);
     arts_event_satisfy_slot(ev10, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
     arts_event_satisfy_slot(ev10, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);

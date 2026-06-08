@@ -79,8 +79,8 @@ typedef struct arts_marked_list_node_s {
 /* Visit callback used by marked_list_traverse.  May call
  * marked_list_mark on the visited node (typical pattern: claim-and-
  * trigger).  Must not free or push the node — the module owns recycle. */
-typedef void (*arts_marked_list_visit_fn)(arts_marked_list_node_t *node,
-                                          void *ctx);
+typedef void (*arts_marked_list_visit_fn_t)(arts_marked_list_node_t *node,
+                                            void *ctx);
 
 typedef struct arts_marked_list_s {
   /* Sentinels live inside the list struct so destroy can free them in
@@ -124,7 +124,7 @@ bool arts_marked_list_mark(arts_marked_list_node_t *node);
  * helping unlink for any marked node encountered, pushing physically
  * unlinked nodes to the private recycle pool. */
 void arts_marked_list_traverse(arts_marked_list_t *list,
-                               arts_marked_list_visit_fn visit, void *ctx);
+                               arts_marked_list_visit_fn_t visit, void *ctx);
 
 #ifdef __cplusplus
 }

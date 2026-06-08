@@ -40,8 +40,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   /* Drive N fire generations: pair add_dep + satisfy each iteration. */
   for (int i = 0; i < N_GENS; i++) {
-    arts_guid_t edt = arts_edt_create(
-        noop_dep, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+    arts_guid_t edt =
+        arts_edt_create(noop_dep, 0, NULL, 1,
+                        &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(ch, edt, 0, DB_MODE_RW);
     arts_event_satisfy_slot(ch, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
   }

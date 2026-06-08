@@ -113,14 +113,17 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   /* Reader EDT on rank 1: depc=2.
    *   slot 0 — DB RO dependence (delivers data pointer)
-   *   slot 1 — inner finish scope completion signal (ensures DB is created first) */
+   *   slot 1 — inner finish scope completion signal (ensures DB is created
+   * first) */
   uint64_t rparam = (uint64_t)reserved;
-  arts_guid_t reader = arts_edt_create(
-      reader_edt, 1, &rparam, 2, &(arts_edt_hint_t){.rank = 1, .finish_event = outer});
+  arts_guid_t reader =
+      arts_edt_create(reader_edt, 1, &rparam, 2,
+                      &(arts_edt_hint_t){.rank = 1, .finish_event = outer});
   arts_add_dependence(reserved, reader, 0, DB_MODE_RO);
 
-  /* Inner finish scope: creator EDT runs here; reader_edt slot 1 is the finish slot.
-   * When all EDTs in the inner finish scope complete, slot 1 of reader fires. */
+  /* Inner finish scope: creator EDT runs here; reader_edt slot 1 is the finish
+   * slot. When all EDTs in the inner finish scope complete, slot 1 of reader
+   * fires. */
   arts_guid_t inner = arts_event_create(&ARTS_EVENT_HINT_FINISH);
   arts_add_dependence(inner, reader, 1, DB_MODE_NULL);
 

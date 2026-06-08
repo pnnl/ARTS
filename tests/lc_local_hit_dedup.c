@@ -40,8 +40,9 @@ static void reader_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   uint8_t *p = (uint8_t *)depv[0].ptr;
   uint64_t sum = 0;
   if (p) {
-    for (size_t i = 0; i < DB_SIZE; i++)
+    for (size_t i = 0; i < DB_SIZE; i++) {
       sum += p[i];
+    }
   }
   if (sum != g_expected_sum) {
     arts_printf("LC_LOCAL_HIT_DEDUP: reader %llu FAIL sum=%llu expected=%llu\n",
@@ -89,8 +90,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_add_dependence(fe, ver, 0, DB_MODE_NULL);
 
   for (uint64_t i = 0; i < N_READERS; i++) {
-    arts_guid_t edt = arts_edt_create(
-        reader_edt, 1, &i, 1, &(arts_edt_hint_t){.rank = 1, .finish_event = fe});
+    arts_guid_t edt =
+        arts_edt_create(reader_edt, 1, &i, 1,
+                        &(arts_edt_hint_t){.rank = 1, .finish_event = fe});
     arts_add_dependence(db, edt, 0, DB_MODE_RO);
     (void)edt;
   }

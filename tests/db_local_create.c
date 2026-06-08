@@ -138,8 +138,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
   arts_db_release(g1, DB_MODE_RW);
   uint64_t p1 = (uint64_t)g1;
-  arts_guid_t e1 =
-      arts_edt_create(check_local, 1, &p1, 1, &(arts_edt_hint_t){.finish_event = fe});
+  arts_guid_t e1 = arts_edt_create(check_local, 1, &p1, 1,
+                                   &(arts_edt_hint_t){.finish_event = fe});
   arts_add_dependence(g1, e1, 0, DB_MODE_RO);
 
   // Test 2: NULL hint.
@@ -149,8 +149,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   *(unsigned int *)ptr2 = 42;
   arts_db_release(g2, DB_MODE_RW);
   uint64_t p2 = (uint64_t)g2;
-  arts_guid_t e2 =
-      arts_edt_create(check_null_hint, 1, &p2, 1, &(arts_edt_hint_t){.finish_event = fe});
+  arts_guid_t e2 = arts_edt_create(check_null_hint, 1, &p2, 1,
+                                   &(arts_edt_hint_t){.finish_event = fe});
   arts_add_dependence(g2, e2, 0, DB_MODE_RO);
 
   // Test 3: EW ordering — writer then verifier.
@@ -163,10 +163,10 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
   arts_db_release(g3, DB_MODE_RW);
 
-  arts_guid_t e3b =
-      arts_edt_create(ew_verify, 0, NULL, 1, &(arts_edt_hint_t){.finish_event = fe});
-  arts_guid_t e3a =
-      arts_edt_create(ew_modify, 0, NULL, 1, &(arts_edt_hint_t){.finish_event = fe});
+  arts_guid_t e3b = arts_edt_create(ew_verify, 0, NULL, 1,
+                                    &(arts_edt_hint_t){.finish_event = fe});
+  arts_guid_t e3a = arts_edt_create(ew_modify, 0, NULL, 1,
+                                    &(arts_edt_hint_t){.finish_event = fe});
   arts_add_dependence(g3, e3a, 0, DB_MODE_RW);
   arts_add_dependence(g3, e3b, 0, DB_MODE_RW);
 }

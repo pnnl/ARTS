@@ -134,7 +134,8 @@ static void shutdown_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
    * locally on their own rank; the run still reaches this finish-EDT
    * only if every rank's finish scope chain drained without aborting. */
   if (got <= 0) {
-    fprintf(stderr, "FAIL: rank-0 worker count is %d (expected > 0)\n", got);
+    (void)fprintf(stderr, "FAIL: rank-0 worker count is %d (expected > 0)\n",
+                  got);
     arts_abort(1);
   }
   atomic_store(&g_clean_shutdown, 1);
@@ -184,8 +185,11 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     for (int i = 0; i < N_DBS; i++) {
       void *raw = NULL;
       unsigned int home = (unsigned int)(i % (int)nnodes);
-      dbs[i] = arts_db_create(&raw, sizeof(int), ARTS_DB, ARTS_DB_PROP_NONE, &(arts_db_hint_t){.rank = home});
-      arts_guid_t init = arts_edt_create(init_writer_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = home, .finish_event = fe});
+      dbs[i] = arts_db_create(&raw, sizeof(int), ARTS_DB, ARTS_DB_PROP_NONE,
+                              &(arts_db_hint_t){.rank = home});
+      arts_guid_t init =
+          arts_edt_create(init_writer_edt, 0, NULL, 1,
+                          &(arts_edt_hint_t){.rank = home, .finish_event = fe});
       arts_add_dependence(dbs[i], init, 0, DB_MODE_RW);
     }
 
@@ -205,8 +209,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       int db_idx = (iter * 7 + i * 13) % N_DBS;
       unsigned int worker_route = (unsigned int)(i % (int)nnodes);
       uint64_t mode_is_rw = 1; /* B.2: RW-only fan-out */
-      arts_guid_t w =
-          arts_edt_create(worker_edt, 1, &mode_is_rw, 1, &(arts_edt_hint_t){.rank = worker_route, .finish_event = fe});
+      arts_guid_t w = arts_edt_create(
+          worker_edt, 1, &mode_is_rw, 1,
+          &(arts_edt_hint_t){.rank = worker_route, .finish_event = fe});
       arts_add_dependence(dbs[db_idx], w, 0, DB_MODE_RW);
     }
   }
@@ -215,8 +220,10 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 int main(int argc, char **argv) {
   arts_rt(argc, argv);
   if (arts_get_current_rank() == 0 && !atomic_load(&g_clean_shutdown)) {
-    fprintf(stderr, "FAIL: shutdown_edt did not fire — finish scope never completed "
-                    "(consumer abort or premature peer-disconnect shutdown)\n");
+    (void)fprintf(
+        stderr,
+        "FAIL: shutdown_edt did not fire — finish scope never completed "
+        "(consumer abort or premature peer-disconnect shutdown)\n");
     return 1;
   }
   return 0;

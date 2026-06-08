@@ -117,29 +117,37 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // record_dep with RW ensures writer1 runs before writer2, and writer2
   // before reader.
   void *ptr = NULL;
-  arts_guid_t db = arts_db_create(&ptr, sizeof(int), ARTS_DB, ARTS_DB_PROP_NONE, NULL);
+  arts_guid_t db =
+      arts_db_create(&ptr, sizeof(int), ARTS_DB, ARTS_DB_PROP_NONE, NULL);
   ((int *)ptr)[0] = 0;
   arts_db_release(db, DB_MODE_RW);
 
-  arts_guid_t w1 = arts_edt_create(writer1, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+  arts_guid_t w1 = arts_edt_create(
+      writer1, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(db, w1, 0, DB_MODE_RW);
 
-  arts_guid_t w2 = arts_edt_create(writer2, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+  arts_guid_t w2 = arts_edt_create(
+      writer2, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(db, w2, 0, DB_MODE_RW);
 
   uint64_t exp_param = 200;
-  arts_guid_t r1 = arts_edt_create(reader_check, 1, &exp_param, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+  arts_guid_t r1 =
+      arts_edt_create(reader_check, 1, &exp_param, 1,
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(db, r1, 0, DB_MODE_RO);
 
   // Test 2: Multiple concurrent RO readers.
   void *ptr2 = NULL;
-  arts_guid_t db2 = arts_db_create(&ptr2, sizeof(int), ARTS_DB, ARTS_DB_PROP_NONE, NULL);
+  arts_guid_t db2 =
+      arts_db_create(&ptr2, sizeof(int), ARTS_DB, ARTS_DB_PROP_NONE, NULL);
   ((int *)ptr2)[0] = 555;
   arts_db_release(db2, DB_MODE_RW);
 
   for (uint32_t i = 0; i < 4; i++) {
     uint64_t id_param = (uint64_t)i;
-    arts_guid_t reader = arts_edt_create(concurrent_reader, 1, &id_param, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+    arts_guid_t reader =
+        arts_edt_create(concurrent_reader, 1, &id_param, 1,
+                        &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(db2, reader, 0, DB_MODE_RO);
   }
 

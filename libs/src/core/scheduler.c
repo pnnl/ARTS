@@ -41,7 +41,7 @@
 /* tiered_pool.h relies on C11 _Atomic and is C-only; scheduler.c is also
  * compiled as scheduler_gpu.cu (C++) — only pull these on the C side and
  * guard the corresponding init/destroy calls below with the same macro. */
-#include "arts/event.h"        /* struct arts_event_dep_s */
+#include "arts/event.h"             /* struct arts_event_dep_s */
 #include "arts/utils/tiered_pool.h" /* arts_tiered_pool_init / destroy */
 #endif
 #include "arts/utils/malloc.h"
@@ -50,15 +50,15 @@
 #include <stdlib.h>
 #include <time.h>
 
-#include "arts/edt.h"
 #include "arts/counter/Preamble.h"
 #include "arts/counter/counter.h"
 #include "arts/counter/object_counter.h"
+#include "arts/db.h"
 #include "arts/defs.h"
+#include "arts/edt.h"
+#include "arts/edt_context.h" /* arts_set/unset_thread_local_edt_info */
 #include "arts/gas/guid.h"
 #include "arts/gas/route_table.h"
-#include "arts/db.h"
-#include "arts/edt_context.h" /* arts_set/unset_thread_local_edt_info */
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/system/topology.h"
@@ -112,11 +112,11 @@ scheduler_t scheduler_loop[] = {
 #endif
 
 /* Schedule a fully DB-acquired EDT onto a work-stealing deque.  Reached when
- * the strict sequential acquire walk in arts_db_acquire_all completes (resume_k ==
- * depc) — either synchronously (initial arts_handle_ready_edt on a worker) or
- * asynchronously (a coherence wake / OoO drain resumes the walk on a receiver
- * or drain thread).  Hence the deque[0] fallback: the completing thread may
- * have no my_deque. */
+ * the strict sequential acquire walk in arts_db_acquire_all completes (resume_k
+ * == depc) — either synchronously (initial arts_handle_ready_edt on a worker)
+ * or asynchronously (a coherence wake / OoO drain resumes the walk on a
+ * receiver or drain thread).  Hence the deque[0] fallback: the completing
+ * thread may have no my_deque. */
 void arts_schedule_ready_edt(struct arts_edt_s *edt) {
   INCREMENT_NUM_EDT_ACQUIRE_BY(1);
 #ifdef ARTS_USE_GPU
@@ -201,7 +201,8 @@ void arts_run_edt(struct arts_edt_s *edt) {
 
   /* Release DBs before signaling finish-event completion: any RC writeback
    * messages (WRITEBACK) are queued to the sender thread before the finish
-   * DECR message, so TCP FIFO ordering guarantees data arrives at home first. */
+   * DECR message, so TCP FIFO ordering guarantees data arrives at home first.
+   */
   release_dbs(depc, depv, false);
   arts_release_created_dbs();
 

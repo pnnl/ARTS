@@ -150,15 +150,18 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // 3) Create with pre-reserved GUID.
   arts_guid_t reserved = arts_guid_reserve(ARTS_GUID_EDT, 0);
   uint64_t guid_param = (uint64_t)reserved;
-  arts_edt_create(guid_edt, 1, &guid_param, 0, &(arts_edt_hint_t){.guid = reserved});
+  arts_edt_create(guid_edt, 1, &guid_param, 0,
+                  &(arts_edt_hint_t){.guid = reserved});
 
   // 4) Create with finish scope.
   arts_guid_t fe_guid = arts_event_create(&ARTS_EVENT_HINT_FINISH);
-  arts_edt_create(scope_edt, 0, NULL, 0, &(arts_edt_hint_t){.rank = 0, .finish_event = fe_guid});
+  arts_edt_create(scope_edt, 0, NULL, 0,
+                  &(arts_edt_hint_t){.rank = 0, .finish_event = fe_guid});
 
   // 5) Create dep with has_depv=true — signal with DB.
   void *db_ptr = NULL;
-  arts_guid_t db = arts_db_create(&db_ptr, 64, ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
+  arts_guid_t db =
+      arts_db_create(&db_ptr, 64, ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
   arts_guid_t dep_t =
       arts_edt_create(dep_true_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0});
   arts_add_dependence(db, dep_t, 0, DB_MODE_RO);

@@ -45,12 +45,12 @@ extern "C" {
 #include "arts/transport/protocol.h"
 
 void arts_socket_setup(struct arts_config_s *config);
-void arts_transport_dispatch_packet(struct arts_remote_packet_s *packet);
+void arts_transport_dispatch_packet(struct arts_msg_header_s *packet);
 void arts_socket_shutdown();
 void arts_socket_cleanup();
 
 void arts_transport_setup(struct arts_config_s *config);
-void arts_remote_send_shutdown_broadcast(void);
+void arts_transport_broadcast_shutdown(void);
 void arts_transport_cleanup(void);
 #ifdef __cplusplus
 }

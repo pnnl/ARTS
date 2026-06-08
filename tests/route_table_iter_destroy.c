@@ -68,7 +68,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   unsigned int node_id = arts_get_current_rank();
 
   printf("Start\n");
-  arts_guid_t range_start = arts_guid_reserve_range(ARTS_GUID_DB, MYSIZE, node_id);
+  arts_guid_t range_start =
+      arts_guid_reserve_range(ARTS_GUID_DB, MYSIZE, node_id);
   for (uint64_t i = 0; i < MYSIZE; i++) {
     arts_db_create_with_guid(arts_guid_from_index(range_start, i),
                              1024 * sizeof(char), ARTS_DB_DEFAULT,
@@ -88,7 +89,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   print_rt("After DB Lookup");
 
   for (uint64_t i = 0; i < MYSIZE; i++) {
-    arts_route_table_mark_delete(arts_guid_from_index(range_start, i));
+    arts_route_table_set_destroyed(arts_guid_from_index(range_start, i));
   }
   print_rt("After DB Mark Delete");
 

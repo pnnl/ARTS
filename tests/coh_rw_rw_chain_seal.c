@@ -21,7 +21,8 @@ static atomic_int g_final_check = 0;
 
 static void *wd_thread(void *a) {
   (void)a;
-  int last = -1, stuck = 0;
+  int last = -1;
+  int stuck = 0;
   for (;;) {
     sleep(2);
     int w = atomic_load(&g_writer_count);
@@ -31,8 +32,8 @@ static void *wd_thread(void *a) {
     }
     if (w == last) {
       if (++stuck >= 3) {
-        fprintf(stderr, "HANG: writers=%d (expected %d)\n", w, NUM_ITERS);
-        fflush(stderr);
+        (void)fprintf(stderr, "HANG: writers=%d (expected %d)\n", w, NUM_ITERS);
+        (void)fflush(stderr);
         _exit(1);
       }
     } else {
@@ -54,9 +55,9 @@ void writer_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   int *data = (int *)depv[0].ptr;
   if (!data || data[0] != expected_prev) {
     atomic_fetch_add(&g_writer_fail, 1);
-    fprintf(stderr, "writer %d: expected prev=%d got %d\n", iter,
-            expected_prev, data ? data[0] : -999);
-    fflush(stderr);
+    (void)fprintf(stderr, "writer %d: expected prev=%d got %d\n", iter,
+                  expected_prev, data ? data[0] : -999);
+    (void)fflush(stderr);
   }
   if (data) {
     data[0] = iter;
@@ -74,8 +75,8 @@ void final_check_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     atomic_store(&g_final_check, 1);
   } else {
     atomic_store(&g_final_check, -1);
-    fprintf(stderr, "final_check: expected %d got %d\n", NUM_ITERS - 1,
-            data ? data[0] : -999);
+    (void)fprintf(stderr, "final_check: expected %d got %d\n", NUM_ITERS - 1,
+                  data ? data[0] : -999);
   }
 }
 
@@ -90,16 +91,21 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
 
   void *ptr = NULL;
-  arts_guid_t db = arts_db_create(&ptr, sizeof(int), ARTS_DB, ARTS_DB_PROP_NONE, NULL);
+  arts_guid_t db =
+      arts_db_create(&ptr, sizeof(int), ARTS_DB, ARTS_DB_PROP_NONE, NULL);
   ((int *)ptr)[0] = -1;
   arts_db_release(db, DB_MODE_RW);
 
   for (int i = 0; i < NUM_ITERS; i++) {
     uint64_t p = (uint64_t)i;
-    arts_guid_t w = arts_edt_create(writer_edt, 1, &p, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+    arts_guid_t w =
+        arts_edt_create(writer_edt, 1, &p, 1,
+                        &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(db, w, 0, DB_MODE_RW);
   }
-  arts_guid_t fc = arts_edt_create(final_check_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+  arts_guid_t fc =
+      arts_edt_create(final_check_edt, 0, NULL, 1,
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(db, fc, 0, DB_MODE_RO);
 
   {
@@ -112,14 +118,14 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   int w = atomic_load(&g_writer_count);
   int f = atomic_load(&g_writer_fail);
   int fc_res = atomic_load(&g_final_check);
-  fprintf(stderr, "writers=%d fail=%d final_check=%d (expect %d/0/1)\n", w, f,
-          fc_res, NUM_ITERS);
+  (void)fprintf(stderr, "writers=%d fail=%d final_check=%d (expect %d/0/1)\n",
+                w, f, fc_res, NUM_ITERS);
   if (w == NUM_ITERS && f == 0 && fc_res == 1) {
-    fprintf(stderr, "TEST PASS\n");
+    (void)fprintf(stderr, "TEST PASS\n");
   } else {
-    fprintf(stderr, "TEST FAIL\n");
+    (void)fprintf(stderr, "TEST FAIL\n");
   }
-  fflush(stderr);
+  (void)fflush(stderr);
   arts_shutdown();
 }
 

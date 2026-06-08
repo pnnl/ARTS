@@ -65,16 +65,16 @@ void arts_edt_delete(struct arts_edt_s *edt);
  * (e.g. remote handler.c arts_handler_edt_create's race-loser cleanup). */
 void (*arts_edt_get_deleter(void))(void *);
 
-/* arts_edt_satisfy_slot — OCR-standard API: supply depv[slot] on an EDT
- * (home-routed: local→dispatch_or_defer, remote→MSG_EDT_SATISFY_SLOT).
- * arts_signal_edt is a deprecated alias of the same signature. */
-void arts_edt_satisfy_slot(arts_guid_t edt_guid, uint32_t slot,
-                           arts_guid_t data_guid, arts_db_access_mode_t mode,
-                           void *ptr, unsigned int size);
+/* arts_edt_satisfy_slot is the OCR-standard API — declared once in the public
+ * header (arts.h); internal TUs that call it include that.  Not re-declared
+ * here to avoid a redundant declaration. */
 
-/* OoO replay handlers (g_ooo_table) — operate on the acquired EDT. */
+/* OoO replay handlers (g_ooo_table) — operate on the acquired EDT.
+ * arts_handler_edt_satisfy_slot is mode-discriminated: DB_MODE_PTR carries an
+ * inline payload trailing the args struct, every other mode a reference only.
+ */
 void arts_handler_edt_satisfy_slot(void *item, void *args);
-void arts_handler_edt_satisfy_slot_ptr(void *item, void *args);
+void arts_handler_edt_destroy(void *item, void *args);
 
 /* Cross-rank wire TX/RX for EDT create + slot satisfy.
  * arts_send_memory_move is the generic create-marshaller (also used by the
@@ -83,10 +83,13 @@ void arts_send_memory_move(unsigned int rank, arts_guid_t guid, void *ptr,
                            unsigned int mem_size, unsigned message_type,
                            void (*free_method)(void *));
 void arts_handler_edt_create(void *ptr);
-/* Cross-rank EDT destroy: forward to home (arts_send_edt_destroy) + home-rank
- * wire handler (arts_handler_edt_destroy, OoO-deferred on before-create). */
+/* Cross-rank EDT destroy forwarder: forward to the EDT's home rank.  The
+ * home-rank RX handler is arts_handler_edt_destroy (declared above as the Cat-B
+ * OoO body): the dispatcher decodes the GUID and routes through
+ * arts_ooo_dispatch_or_defer_guid(OOO_EDT_DESTROY), so a DESTROY that races
+ * ahead of the EDT's CREATE defers and replays on the create handler's drain.
+ */
 void arts_send_edt_destroy(unsigned int home_rank, arts_guid_t guid);
-void arts_handler_edt_destroy(void *ptr);
 void arts_send_edt_satisfy_slot(arts_guid_t edt, arts_guid_t db, uint32_t slot,
                                 arts_db_access_mode_t mode, void *ptr,
                                 unsigned int size);

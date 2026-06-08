@@ -148,9 +148,13 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // Test 2: Verify RW modifications persisted.
   // Chain: e1 (modify) -> e2 (verify) using RW per-node-exclusive
   // ordering through the DB.  Both EDTs registered on home rank (0).
-  arts_guid_t e2 = arts_edt_create(check_modified, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+  arts_guid_t e2 =
+      arts_edt_create(check_modified, 0, NULL, 1,
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
 
-  arts_guid_t e1 = arts_edt_create(check_pin_rw, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+  arts_guid_t e1 =
+      arts_edt_create(check_pin_rw, 0, NULL, 1,
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(pin_guid, e1, 0, DB_MODE_RW);
   arts_add_dependence(pin_guid, e2, 0, DB_MODE_RW);
 
@@ -167,7 +171,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_guid_t copied = arts_db_copy_to_new_type(src_db, ARTS_DB_PIN);
   uint64_t copy_param = (uint64_t)copied;
-  arts_guid_t e3 = arts_edt_create(check_copy_type, 1, &copy_param, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+  arts_guid_t e3 =
+      arts_edt_create(check_copy_type, 1, &copy_param, 1,
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(copied, e3, 0, DB_MODE_RO);
 
   arts_event_wait(fe);

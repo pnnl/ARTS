@@ -22,8 +22,7 @@
 static inline uint64_t link_pack(bool mark, uint16_t gen,
                                  const arts_marked_list_node_t *ptr) {
   return (mark ? MARKED_LINK_MARK_BIT : 0) |
-         ((uint64_t)((uint64_t)gen & MARKED_LINK_GEN_MAX)
-          << MARKED_LINK_GEN_SHIFT) |
+         (((uint64_t)gen & MARKED_LINK_GEN_MAX) << MARKED_LINK_GEN_SHIFT) |
          ((uintptr_t)ptr & MARKED_LINK_PTR_MASK);
 }
 
@@ -201,7 +200,7 @@ bool arts_marked_list_mark(arts_marked_list_node_t *node) {
 }
 
 void arts_marked_list_traverse(arts_marked_list_t *list,
-                               arts_marked_list_visit_fn visit, void *ctx) {
+                               arts_marked_list_visit_fn_t visit, void *ctx) {
   /* Restart-on-CAS-failure traversal.  The walk pattern:
    *
    *   prev = &head

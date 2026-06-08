@@ -260,7 +260,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     uint64_t arts_id =
         TEST_ARTS_ID_BASE + 100 + i; // DB arts_id: 1100, 1101, ...
 
-    db_guids[i] = arts_db_create(&db_ptrs[i], matrix_size, ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, &(arts_db_hint_t){});
+    db_guids[i] = arts_db_create(&db_ptrs[i], matrix_size, ARTS_DB_DEFAULT,
+                                 ARTS_DB_PROP_NONE, &(arts_db_hint_t){});
 
     // Initialize matrix to zeros
     double *matrix = (double *)db_ptrs[i];
@@ -276,7 +277,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   // Create validator EDT first
   arts_printf("[Step 4] Creating validator EDT (will run last)...\n");
-  arts_guid_t validator_guid = arts_edt_create(validator, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe_guid});
+  arts_guid_t validator_guid =
+      arts_edt_create(validator, 0, NULL, 1,
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe_guid});
 
   // Create writer EDTs with arts_id values
   arts_printf("[Step 5] Creating %u writer EDTs with arts_id values:\n",
@@ -297,9 +300,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     unsigned int db_index = i % NUM_TEST_DBS;
     writer_db_indices[i] = db_index;
 
-    writer_guids[i] =
-        arts_edt_create(test_edt_worker, 1, &param, 1,
-                        &(arts_edt_hint_t){.rank = target_node, .edt_id = arts_id});
+    writer_guids[i] = arts_edt_create(
+        test_edt_worker, 1, &param, 1,
+        &(arts_edt_hint_t){.rank = target_node, .edt_id = arts_id});
 
     arts_printf("  - EDT[%u]: guid=%lu, arts_id=%lu, node=%u, using DB[%u]\n",
                 i, writer_guids[i], arts_id, target_node, db_index);
@@ -328,9 +331,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
         (i % NUM_TEST_DBS) + 1; // 1 to NUM_TEST_DBS dependencies
     reader_num_deps[i] = num_deps;
 
-    reader_guids[i] =
-        arts_edt_create(test_edt_reader, 1, &param, num_deps,
-                        &(arts_edt_hint_t){.rank = target_node, .edt_id = arts_id});
+    reader_guids[i] = arts_edt_create(
+        test_edt_reader, 1, &param, num_deps,
+        &(arts_edt_hint_t){.rank = target_node, .edt_id = arts_id});
 
     arts_printf("  - Reader[%u]: guid=%lu, arts_id=%lu, node=%u, deps=%u\n", i,
                 reader_guids[i], arts_id, target_node, num_deps);

@@ -58,7 +58,7 @@ static void *producer_thread(void *arg) {
   for (uint32_t i = 0; i < NODES_PER_PRODUCER; i++) {
     stress_node_t *n = (stress_node_t *)malloc(sizeof(*n));
     if (!n) {
-      fprintf(stderr, "malloc failed\n");
+      (void)fprintf(stderr, "malloc failed\n");
       abort();
     }
     atomic_init(&n->link.next, NULL);
@@ -78,7 +78,7 @@ int main(void) {
   for (uint32_t p = 0; p < NUM_PRODUCERS; p++) {
     if (pthread_create(&producers[p], NULL, producer_thread,
                        (void *)(uintptr_t)p) != 0) {
-      fprintf(stderr, "pthread_create failed for producer %u\n", p);
+      (void)fprintf(stderr, "pthread_create failed for producer %u\n", p);
       return 1;
     }
   }
@@ -93,7 +93,7 @@ int main(void) {
   size_t bv_words = (size_t)((TOTAL_NODES + 63) / 64);
   uint64_t *seen = calloc(bv_words, sizeof(uint64_t));
   if (!expected_next || !seen) {
-    fprintf(stderr, "calloc failed\n");
+    (void)fprintf(stderr, "calloc failed\n");
     return 1;
   }
 
@@ -119,12 +119,12 @@ int main(void) {
           atomic_load_explicit(&chain->next, memory_order_relaxed);
 
       if (n->producer_id >= NUM_PRODUCERS) {
-        fprintf(stderr, "Bogus producer_id=%u\n", n->producer_id);
+        (void)fprintf(stderr, "Bogus producer_id=%u\n", n->producer_id);
         return 1;
       }
       if (n->seq_in_producer >= NODES_PER_PRODUCER) {
-        fprintf(stderr, "Bogus seq_in_producer=%u (producer %u)\n",
-                n->seq_in_producer, n->producer_id);
+        (void)fprintf(stderr, "Bogus seq_in_producer=%u (producer %u)\n",
+                      n->seq_in_producer, n->producer_id);
         return 1;
       }
 
@@ -133,7 +133,7 @@ int main(void) {
        * are program-order inside the producer thread, reverse_drain
        * preserves FIFO across drains). */
       if (n->seq_in_producer != expected_next[n->producer_id]) {
-        fprintf(
+        (void)fprintf(
             stderr, "FIFO violation: producer=%u expected seq=%u got seq=%u\n",
             n->producer_id, expected_next[n->producer_id], n->seq_in_producer);
         return 1;
@@ -142,12 +142,12 @@ int main(void) {
 
       /* Uniqueness check via bit-vector. */
       uint64_t flat =
-          (uint64_t)n->producer_id * NODES_PER_PRODUCER + n->seq_in_producer;
+          ((uint64_t)n->producer_id * NODES_PER_PRODUCER) + n->seq_in_producer;
       uint64_t word = flat / 64;
       uint64_t bit = (uint64_t)1 << (flat % 64);
       if (seen[word] & bit) {
-        fprintf(stderr, "Duplicate: producer=%u seq=%u\n", n->producer_id,
-                n->seq_in_producer);
+        (void)fprintf(stderr, "Duplicate: producer=%u seq=%u\n", n->producer_id,
+                      n->seq_in_producer);
         return 1;
       }
       seen[word] |= bit;
@@ -167,7 +167,7 @@ int main(void) {
    * consumer received TOTAL_NODES). */
   arts_lf_link_t *leftover = arts_lf_stack_reverse_drain(&g_stack);
   if (leftover) {
-    fprintf(stderr, "Stack not empty after producers joined\n");
+    (void)fprintf(stderr, "Stack not empty after producers joined\n");
     return 1;
   }
 
@@ -175,8 +175,8 @@ int main(void) {
    * NODES_PER_PRODUCER. */
   for (uint32_t p = 0; p < NUM_PRODUCERS; p++) {
     if (expected_next[p] != NODES_PER_PRODUCER) {
-      fprintf(stderr, "Producer %u: only %u / %u nodes observed\n", p,
-              expected_next[p], NODES_PER_PRODUCER);
+      (void)fprintf(stderr, "Producer %u: only %u / %u nodes observed\n", p,
+                    expected_next[p], NODES_PER_PRODUCER);
       return 1;
     }
   }
@@ -185,8 +185,9 @@ int main(void) {
      * multiple of 64 (8 * 1M = 8M, divisible by 64), so all bits in all
      * words must be set. */
     if (seen[w] != ~(uint64_t)0) {
-      fprintf(stderr, "Bit-vector word %zu = 0x%" PRIx64 " (incomplete)\n", w,
-              seen[w]);
+      (void)fprintf(stderr,
+                    "Bit-vector word %zu = 0x%" PRIx64 " (incomplete)\n", w,
+                    seen[w]);
       return 1;
     }
   }

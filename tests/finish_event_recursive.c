@@ -103,8 +103,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_edt_create(exit_program, 0, NULL, 1,
                   &(arts_edt_hint_t){.guid = exit_guid});
   {
-    arts_guid_t __ep = arts_event_create(&ARTS_EVENT_HINT_FINISH);
-    arts_add_dependence(__ep, exit_guid, 0, DB_MODE_NULL);
+    arts_guid_t ep_scope = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+    arts_add_dependence(ep_scope, exit_guid, 0, DB_MODE_NULL);
   }
   arts_edt_create(root_task, 1, &num_dummy, 0, &(arts_edt_hint_t){.rank = 0});
 }

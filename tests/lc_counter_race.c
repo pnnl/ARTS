@@ -32,8 +32,10 @@
 #define INCREMENTS_PER_RANK 1000
 
 static void incrementer_edt(uint32_t paramc, const uint64_t *paramv,
-                              uint32_t depc, arts_edt_dep_t depv[]) {
-  (void)paramc; (void)paramv; (void)depc;
+                            uint32_t depc, arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
   uint64_t *counter = (uint64_t *)depv[0].ptr;
   if (counter) {
     for (uint32_t i = 0; i < INCREMENTS_PER_RANK; i++) {
@@ -42,28 +44,35 @@ static void incrementer_edt(uint32_t paramc, const uint64_t *paramv,
   }
 }
 
-static void verifier_edt(uint32_t paramc, const uint64_t *paramv,
-                          uint32_t depc, arts_edt_dep_t depv[]) {
-  (void)paramc; (void)paramv; (void)depc;
+static void verifier_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                         arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
   uint64_t *counter = (uint64_t *)depv[0].ptr;
   uint64_t v = counter ? *counter : 0;
-  uint64_t expected = 2 * INCREMENTS_PER_RANK;
+  uint64_t expected = (uint64_t)2 * INCREMENTS_PER_RANK;
   if (v == expected) {
-    arts_printf("LC_COUNTER_RACE: counter=%lu (expected=%lu) — DETERMINISTIC (RC-like)\n",
+    arts_printf("LC_COUNTER_RACE: counter=%lu (expected=%lu) — DETERMINISTIC "
+                "(RC-like)\n",
                 v, expected);
   } else if (v == INCREMENTS_PER_RANK) {
-    arts_printf("LC_COUNTER_RACE: counter=%lu (expected=%lu) — RACED (LC-like, lost-update)\n",
+    arts_printf("LC_COUNTER_RACE: counter=%lu (expected=%lu) — RACED (LC-like, "
+                "lost-update)\n",
                 v, expected);
   } else {
-    arts_printf("LC_COUNTER_RACE: counter=%lu (expected=%lu) — UNEXPECTED\n",
-                v, expected);
+    arts_printf("LC_COUNTER_RACE: counter=%lu (expected=%lu) — UNEXPECTED\n", v,
+                expected);
   }
   arts_shutdown();
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-               arts_edt_dep_t depv[]) {
-  (void)paramc; (void)paramv; (void)depc; (void)depv;
+              arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
 
   if (arts_get_total_ranks() < 2) {
     arts_printf("LC_COUNTER_RACE: SKIP requires 2+ ranks\n");
@@ -72,9 +81,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 
   void *addr = NULL;
-  arts_guid_t db = arts_db_create(&addr, sizeof(uint64_t), ARTS_DB,
-                                    ARTS_DB_PROP_NONE,
-                                    &(arts_db_hint_t){.rank = 0});
+  arts_guid_t db =
+      arts_db_create(&addr, sizeof(uint64_t), ARTS_DB, ARTS_DB_PROP_NONE,
+                     &(arts_db_hint_t){.rank = 0});
   *(uint64_t *)addr = 0;
   arts_db_release(db, DB_MODE_RW);
 
@@ -84,9 +93,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   /* Exactly ONE EDT per rank — cross-rank race only. */
   for (unsigned int rank = 0; rank < 2; rank++) {
-    arts_guid_t edt = arts_edt_create(
-        incrementer_edt, 0, NULL, 1,
-        &(arts_edt_hint_t){.rank = rank, .finish_event = fe});
+    arts_guid_t edt =
+        arts_edt_create(incrementer_edt, 0, NULL, 1,
+                        &(arts_edt_hint_t){.rank = rank, .finish_event = fe});
     arts_add_dependence(db, edt, 0, DB_MODE_RW);
     (void)edt;
   }

@@ -65,7 +65,7 @@ static void *mix_thread(void *arg) {
   for (uint32_t i = 0; i < MIX_ITERS; i++) {
     stress_node_t *n = (stress_node_t *)arts_lf_pool_alloc(&g_pool);
     if (!n) {
-      fprintf(stderr, "alloc returned NULL\n");
+      (void)fprintf(stderr, "alloc returned NULL\n");
       abort();
     }
     /* Re-init the link (alloc returns uninitialized after pop). */
@@ -75,7 +75,7 @@ static void *mix_thread(void *arg) {
     atomic_thread_fence(memory_order_seq_cst);
     /* Verify our write is visible to ourselves (sanity). */
     if (n->sentinel != ((pid << 32) | i)) {
-      fprintf(stderr, "sentinel corruption pre-release\n");
+      (void)fprintf(stderr, "sentinel corruption pre-release\n");
       abort();
     }
     arts_lf_pool_release(&g_pool, n);
@@ -89,7 +89,7 @@ static int run_mix_stress(void) {
   pthread_t th[MIX_THREADS];
   for (uint64_t t = 0; t < MIX_THREADS; t++) {
     if (pthread_create(&th[t], NULL, mix_thread, (void *)(uintptr_t)t) != 0) {
-      fprintf(stderr, "pthread_create failed\n");
+      (void)fprintf(stderr, "pthread_create failed\n");
       return 1;
     }
   }
@@ -124,8 +124,9 @@ static void *aba_thread(void *arg) {
   }
   for (uint32_t i = 0; i < ABA_ITERS; i++) {
     stress_node_t *n = (stress_node_t *)arts_lf_pool_alloc(&g_pool);
-    if (!n)
+    if (!n) {
       abort();
+    }
     /* Brief work on the node.  Note alloc returned a possibly-pre-popped
      * node from the pool — its sentinel may carry stale data, that's OK. */
     n->sentinel++;
@@ -148,8 +149,9 @@ static int run_aba_stress(void) {
 
   pthread_t th[ABA_THREADS];
   for (int t = 0; t < ABA_THREADS; t++) {
-    if (pthread_create(&th[t], NULL, aba_thread, NULL) != 0)
+    if (pthread_create(&th[t], NULL, aba_thread, NULL) != 0) {
       abort();
+    }
   }
   atomic_store_explicit(&g_start, 1, memory_order_release);
   for (int t = 0; t < ABA_THREADS; t++) {
@@ -163,8 +165,9 @@ static int run_aba_stress(void) {
   for (;;) {
     uint32_t got = 0;
     arts_lf_link_t *chain = arts_lf_pool_batch_fetch(&g_pool, 1024u, &got);
-    if (!chain || got == 0)
+    if (!chain || got == 0) {
       break;
+    }
     /* Free every node (ASan: 0 leaks). */
     while (chain) {
       arts_lf_link_t *next =
@@ -175,9 +178,10 @@ static int run_aba_stress(void) {
     }
   }
   if (total != ABA_NODES) {
-    fprintf(stderr,
-            "aba_stress: drained %u nodes, expected %u (chain corruption)\n",
-            total, ABA_NODES);
+    (void)fprintf(
+        stderr,
+        "aba_stress: drained %u nodes, expected %u (chain corruption)\n", total,
+        ABA_NODES);
     return 1;
   }
   arts_lf_pool_destroy(&g_pool);
@@ -204,8 +208,9 @@ static void *batch_thread(void *arg) {
     uint32_t got = 0;
     arts_lf_link_t *chain =
         arts_lf_pool_batch_fetch(&g_pool, BATCH_CHAIN_SIZE, &got);
-    if (!chain || got == 0)
+    if (!chain || got == 0) {
       continue;
+    }
 
     /* Walk and verify continuity: chain has exactly `got` nodes,
      * tail->next is NULL (set by batch_fetch). */
@@ -219,8 +224,8 @@ static void *batch_thread(void *arg) {
       next = atomic_load_explicit(&tail->next, memory_order_relaxed);
     }
     if (walked != got) {
-      fprintf(stderr, "batch chain walk mismatch: got=%u walked=%u\n", got,
-              walked);
+      (void)fprintf(stderr, "batch chain walk mismatch: got=%u walked=%u\n",
+                    got, walked);
       abort();
     }
     /* Push back as a batch.  Note: batch_release will overwrite
@@ -246,8 +251,9 @@ static int run_batch_stress(void) {
 
   pthread_t th[BATCH_THREADS];
   for (int t = 0; t < BATCH_THREADS; t++) {
-    if (pthread_create(&th[t], NULL, batch_thread, NULL) != 0)
+    if (pthread_create(&th[t], NULL, batch_thread, NULL) != 0) {
       abort();
+    }
   }
   atomic_store_explicit(&g_start, 1, memory_order_release);
   for (int t = 0; t < BATCH_THREADS; t++) {
@@ -257,10 +263,12 @@ static int run_batch_stress(void) {
   /* Sweep via repeated batch_drain. */
   uint32_t total = 0;
   for (;;) {
-    arts_lf_link_t *gh = NULL, *gt = NULL;
+    arts_lf_link_t *gh = NULL;
+    arts_lf_link_t *gt = NULL;
     arts_lf_pool_batch_drain(&g_pool, 1024u, &gh, &gt);
-    if (!gh)
+    if (!gh) {
       break;
+    }
     while (gh) {
       arts_lf_link_t *next =
           atomic_load_explicit(&gh->next, memory_order_relaxed);
@@ -270,8 +278,8 @@ static int run_batch_stress(void) {
     }
   }
   if (total != BATCH_INITIAL_NODES) {
-    fprintf(stderr, "batch_stress: drained %u, expected %u\n", total,
-            BATCH_INITIAL_NODES);
+    (void)fprintf(stderr, "batch_stress: drained %u, expected %u\n", total,
+                  BATCH_INITIAL_NODES);
     return 1;
   }
   arts_lf_pool_destroy(&g_pool);
@@ -284,17 +292,20 @@ int main(void) {
   /* Sanity: confirm the head struct is 16-byte aligned + sized for
    * cmpxchg16b / casp. */
   if (sizeof(arts_lf_pool_head_t) != 16) {
-    fprintf(stderr, "head sizeof = %zu (expected 16)\n",
-            sizeof(arts_lf_pool_head_t));
+    (void)fprintf(stderr, "head sizeof = %zu (expected 16)\n",
+                  sizeof(arts_lf_pool_head_t));
     return 1;
   }
 
-  if (run_mix_stress() != 0)
+  if (run_mix_stress() != 0) {
     return 1;
-  if (run_aba_stress() != 0)
+  }
+  if (run_aba_stress() != 0) {
     return 1;
-  if (run_batch_stress() != 0)
+  }
+  if (run_batch_stress() != 0) {
     return 1;
+  }
 
   printf("PASS lockfree_pool_stress\n");
   return 0;

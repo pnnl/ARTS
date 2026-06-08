@@ -218,7 +218,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("[Step 1] Started finish scope (guid: %lu)\n", fe_guid);
 
   /// Create writer EDT
-  arts_guid_t writer_edt_guid = arts_edt_create(writer_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe_guid});
+  arts_guid_t writer_edt_guid =
+      arts_edt_create(writer_edt, 0, NULL, 1,
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe_guid});
   arts_printf("[Step 2] Created writer EDT (guid: %lu)\n", writer_edt_guid);
 
   /// Create reader EDTs
@@ -227,8 +229,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   for (unsigned int i = 0; i < num_readers; i++) {
     unsigned int target_node = (i % arts_get_total_ranks());
     uint64_t param = i;
-    reader_edt_guids[i] =
-        arts_edt_create(reader_edt, 1, &param, 1, &(arts_edt_hint_t){.rank = target_node, .finish_event = fe_guid});
+    reader_edt_guids[i] = arts_edt_create(
+        reader_edt, 1, &param, 1,
+        &(arts_edt_hint_t){.rank = target_node, .finish_event = fe_guid});
 
     if ((i + 1) % 4 == 0 || i == num_readers - 1) {
       unsigned int range_start = (i / 4) * 4;
@@ -237,7 +240,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     }
   }
 
-  arts_guid_t validator_edt_guid = arts_edt_create(validator_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe_guid});
+  arts_guid_t validator_edt_guid =
+      arts_edt_create(validator_edt, 0, NULL, 1,
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe_guid});
   arts_printf("[Step 4] Created validator EDT (guid: %lu)\n",
               validator_edt_guid);
 

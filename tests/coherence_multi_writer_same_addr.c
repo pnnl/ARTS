@@ -111,8 +111,8 @@ static void verify_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
   int observed = atomic_load_explicit(data, memory_order_relaxed);
   if (observed != N) {
-    fprintf(stderr, "FAIL: expected %d, got %d (RC visibility bug)\n", N,
-            observed);
+    (void)fprintf(stderr, "FAIL: expected %d, got %d (RC visibility bug)\n", N,
+                  observed);
     arts_abort(1);
   }
   atomic_store(&g_clean_shutdown, 1);
@@ -167,9 +167,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 int main(int argc, char **argv) {
   arts_rt(argc, argv);
   if (arts_get_current_rank() == 0 && !atomic_load(&g_clean_shutdown)) {
-    fprintf(stderr,
-            "FAIL: verify_edt did not fire cleanly — abort or premature "
-            "shutdown\n");
+    (void)fprintf(stderr,
+                  "FAIL: verify_edt did not fire cleanly — abort or premature "
+                  "shutdown\n");
     return 1;
   }
   return 0;

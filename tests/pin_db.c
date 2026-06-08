@@ -99,8 +99,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_add_dependence(some_db_guid, edt_guid, 1, DB_MODE_RW); // Note the mode
 
     // This is the delayed DB
-    int *ptr2 = (int *)arts_db_create_with_guid(
-        some_db_guid, sizeof(unsigned int), ARTS_DB_PIN, ARTS_DB_PROP_NONE, NULL);
+    int *ptr2 =
+        (int *)arts_db_create_with_guid(some_db_guid, sizeof(unsigned int),
+                                        ARTS_DB_PIN, ARTS_DB_PROP_NONE, NULL);
     *ptr2 = 9876;
   }
 }

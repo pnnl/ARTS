@@ -95,7 +95,7 @@ struct arts_runtime_shared_s {
   volatile unsigned int ready_to_clean;
   /* Global shutdown flag. 0 = running normally, 1 = shutting down.
    * Set by arts_runtime_stop() and checked by long-running loops
-   * (e.g. arts_remote_connect retry) so they can bail out promptly. */
+   * (e.g. arts_transport_connect retry) so they can bail out promptly. */
   volatile unsigned int shutdown_state;
   /* Count of in-flight async sends (enqueued but not yet written to
    * kernel TCP buffer). Incremented in arts_outbox_insert_node, decremented at

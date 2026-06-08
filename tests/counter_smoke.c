@@ -24,8 +24,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
 
-  arts_guid_t fe =
-      arts_event_create(&ARTS_EVENT_HINT_FINISH);
+  arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
 
   for (unsigned int i = 0; i < NUM_TASKS; i++) {
     arts_edt_create(worker_edt, 0, NULL, 0,

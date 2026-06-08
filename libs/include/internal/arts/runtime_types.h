@@ -57,10 +57,10 @@ extern "C" {
 
 #include "arts/defs.h"
 /* DB-coherence layout types (arts_db_s / arts_db_cache_s / buffer / home,
- * plus the arts_coh_atomic_uint typedef) live in the coherence module's own
+ * plus the arts_db_atomic_uint_t typedef) live in the coherence module's own
  * header; pulled in here so existing includers of runtime_types.h still see
  * the DB types unchanged. */
-#include "arts/db_coherence_types.h"
+#include "arts/coherence/types.h"
 #include "arts/utils/lockfree_lifo.h" /* arts_lf_stack_t (event simple deps) */
 #include "arts/utils/mpsc.h"          /* arts_mpsc_t (event channel) */
 #include <stdbool.h>
@@ -87,9 +87,9 @@ struct arts_edt_s {
    * and no handler args, so the GUID must travel inside the struct.  This is a
    * load-bearing identity carrier, NOT a redundant self-GUID: do not remove. */
   arts_guid_t guid;
-  arts_guid_t finish_event;  /**< LATCH event for finish-scope tracking.
-                                  NULL_GUID = no finish-scope (legacy path). */
-  arts_edt_types_t edt_type; /**< EDT subtype (DEFAULT=CPU, GPU). */
+  arts_guid_t finish_event;          /**< LATCH event for finish-scope tracking.
+                                          NULL_GUID = no finish-scope (legacy path). */
+  arts_edt_types_t edt_type;         /**< EDT subtype (DEFAULT=CPU, GPU). */
   volatile unsigned int depc_needed; /**< Remaining unsatisfied deps (satisfy
                                           phase — driven to 0 by event/signal
                                           delivery before DB acquisition). */

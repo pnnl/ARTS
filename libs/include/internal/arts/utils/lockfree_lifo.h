@@ -27,8 +27,8 @@
 
 /** Common intrusive link node.  Embed as the first member of any
  *  caller struct that participates in lock-free stacks/pools. */
-typedef struct arts_lf_link {
-  struct arts_lf_link *next;
+typedef struct arts_lf_link_s {
+  struct arts_lf_link_s *next;
 } arts_lf_link_t;
 
 /** 8-byte head CAS Treiber stack.
@@ -47,8 +47,8 @@ typedef struct {
 
 /** Common intrusive link node.  Embed as the first member of any
  *  caller struct that participates in lock-free stacks/pools. */
-typedef struct arts_lf_link {
-  _Atomic(struct arts_lf_link *) next;
+typedef struct arts_lf_link_s {
+  _Atomic(struct arts_lf_link_s *) next;
 } arts_lf_link_t;
 
 /** 8-byte head CAS Treiber stack.

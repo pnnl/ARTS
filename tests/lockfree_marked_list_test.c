@@ -64,7 +64,7 @@ static int phase1_sanity(void) {
   for (int i = 0; i < PHASE1_NODES; i++) {
     arts_marked_list_node_t *n = arts_marked_list_alloc(&g_list);
     test_node_t *t = (test_node_t *)n;
-    t->value = (uint64_t)(i + 100);
+    t->value = (uint64_t)i + 100;
     atomic_init(&t->visited, 0);
     arts_marked_list_push(&g_list, n);
   }
@@ -74,8 +74,8 @@ static int phase1_sanity(void) {
   arts_marked_list_traverse(&g_list, count_visit, NULL);
   uint64_t v = atomic_load_explicit(&g_visit_count, memory_order_relaxed);
   if (v != PHASE1_NODES) {
-    fprintf(stderr, "Phase 1 traverse: expected %d, got %" PRIu64 "\n",
-            PHASE1_NODES, v);
+    (void)fprintf(stderr, "Phase 1 traverse: expected %d, got %" PRIu64 "\n",
+                  PHASE1_NODES, v);
     return 1;
   }
 
@@ -84,8 +84,8 @@ static int phase1_sanity(void) {
   arts_marked_list_traverse(&g_list, mark_visit, NULL);
   uint64_t m = atomic_load_explicit(&g_mark_count, memory_order_relaxed);
   if (m != PHASE1_NODES) {
-    fprintf(stderr, "Phase 1 mark: expected %d, got %" PRIu64 "\n",
-            PHASE1_NODES, m);
+    (void)fprintf(stderr, "Phase 1 mark: expected %d, got %" PRIu64 "\n",
+                  PHASE1_NODES, m);
     return 1;
   }
 
@@ -95,14 +95,15 @@ static int phase1_sanity(void) {
   arts_marked_list_traverse(&g_list, count_visit, NULL);
   v = atomic_load_explicit(&g_visit_count, memory_order_relaxed);
   if (v != 0) {
-    fprintf(stderr, "Phase 1 post-unlink: expected 0, got %" PRIu64 "\n", v);
+    (void)fprintf(stderr, "Phase 1 post-unlink: expected 0, got %" PRIu64 "\n",
+                  v);
     return 1;
   }
 
   /* Recycle pool should have at least one node — alloc and re-use. */
   arts_marked_list_node_t *n = arts_marked_list_alloc(&g_list);
   if (n == NULL) {
-    fprintf(stderr, "Phase 1 recycle: alloc returned NULL\n");
+    (void)fprintf(stderr, "Phase 1 recycle: alloc returned NULL\n");
     return 1;
   }
   test_node_t *t = (test_node_t *)n;
@@ -112,7 +113,8 @@ static int phase1_sanity(void) {
   arts_marked_list_traverse(&g_list, count_visit, NULL);
   v = atomic_load_explicit(&g_visit_count, memory_order_relaxed);
   if (v != 1) {
-    fprintf(stderr, "Phase 1 recycle visit: expected 1, got %" PRIu64 "\n", v);
+    (void)fprintf(stderr,
+                  "Phase 1 recycle visit: expected 1, got %" PRIu64 "\n", v);
     return 1;
   }
 
@@ -153,8 +155,9 @@ static int phase2_concurrent_push(void) {
   uint64_t v = atomic_load_explicit(&g_visit_count, memory_order_relaxed);
   uint64_t expected = (uint64_t)PHASE2_THREADS * PHASE2_PER_THREAD;
   if (v != expected) {
-    fprintf(stderr, "Phase 2 traverse: expected %" PRIu64 ", got %" PRIu64 "\n",
-            expected, v);
+    (void)fprintf(stderr,
+                  "Phase 2 traverse: expected %" PRIu64 ", got %" PRIu64 "\n",
+                  expected, v);
     return 1;
   }
 
@@ -222,20 +225,21 @@ static int phase3_concurrent_push_and_mark(void) {
   for (int i = 0; i < pushers; i++) {
     pthread_join(pusher_threads[i], NULL);
   }
-  fprintf(stderr, "pushers done\n");
+  (void)fprintf(stderr, "pushers done\n");
   /* Pushers done — give markers a moment to drain, then signal stop. */
   atomic_store_explicit(&g_phase3_done, 1, memory_order_release);
-  fprintf(stderr, "done flag set\n");
+  (void)fprintf(stderr, "done flag set\n");
   for (int i = 0; i < markers; i++) {
     pthread_join(marker_threads[i], NULL);
-    fprintf(stderr, "marker %d joined\n", i);
+    (void)fprintf(stderr, "marker %d joined\n", i);
   }
 
   uint64_t marks = atomic_load_explicit(&g_mark_count, memory_order_relaxed);
   uint64_t expected_pushes = (uint64_t)pushers * PHASE3_PER_PUSHER;
   if (marks != expected_pushes) {
-    fprintf(stderr, "Phase 3 marks: expected %" PRIu64 ", got %" PRIu64 "\n",
-            expected_pushes, marks);
+    (void)fprintf(stderr,
+                  "Phase 3 marks: expected %" PRIu64 ", got %" PRIu64 "\n",
+                  expected_pushes, marks);
     return 1;
   }
 
@@ -245,7 +249,8 @@ static int phase3_concurrent_push_and_mark(void) {
   arts_marked_list_traverse(&g_list, count_visit, NULL);
   uint64_t v = atomic_load_explicit(&g_visit_count, memory_order_relaxed);
   if (v != 0) {
-    fprintf(stderr, "Phase 3 final traverse: expected 0, got %" PRIu64 "\n", v);
+    (void)fprintf(stderr,
+                  "Phase 3 final traverse: expected 0, got %" PRIu64 "\n", v);
     return 1;
   }
 
@@ -257,12 +262,15 @@ static int phase3_concurrent_push_and_mark(void) {
 }
 
 int main(void) {
-  if (phase1_sanity() != 0)
+  if (phase1_sanity() != 0) {
     return 1;
-  if (phase2_concurrent_push() != 0)
+  }
+  if (phase2_concurrent_push() != 0) {
     return 1;
-  if (phase3_concurrent_push_and_mark() != 0)
+  }
+  if (phase3_concurrent_push_and_mark() != 0) {
     return 1;
+  }
   printf("ALL PASS\n");
   return 0;
 }

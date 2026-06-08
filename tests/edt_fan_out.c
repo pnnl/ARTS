@@ -54,7 +54,8 @@ void fan_child(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // paramv[0] = index, paramv[1] = collector GUID.
   uint32_t index = (uint32_t)paramv[0];
   arts_guid_t collector = (arts_guid_t)paramv[1];
-  arts_add_dependence((arts_guid_t)((uint64_t)index + 1), collector, index, DB_MODE_VAL);
+  arts_add_dependence((arts_guid_t)((uint64_t)index + 1), collector, index,
+                      DB_MODE_VAL);
 }
 
 /// Collector: receives FAN_WIDTH value-mode deps.
@@ -93,7 +94,8 @@ void db_fan_child(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t db_guid = (arts_guid_t)paramv[2];
 
   // Write index * 10 into our DB.
-  void *db_ptr = arts_db_create_with_guid(db_guid, sizeof(int), ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, NULL);
+  void *db_ptr = arts_db_create_with_guid(db_guid, sizeof(int), ARTS_DB_DEFAULT,
+                                          ARTS_DB_PROP_NONE, NULL);
   ((int *)db_ptr)[0] = (int)(index * 10);
   arts_db_release(db_guid, DB_MODE_RW);
   arts_add_dependence(db_guid, coll_guid, index, DB_MODE_RO);
@@ -136,16 +138,21 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
 
   // Test 1: Value-mode fan-out/fan-in.
-  arts_guid_t coll = arts_edt_create(collector, 0, NULL, FAN_WIDTH, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+  arts_guid_t coll =
+      arts_edt_create(collector, 0, NULL, FAN_WIDTH,
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   for (uint32_t i = 0; i < FAN_WIDTH; i++) {
     uint64_t params[2];
     params[0] = (uint64_t)i;
     params[1] = (uint64_t)coll;
-    arts_edt_create(fan_child, 2, params, 0, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+    arts_edt_create(fan_child, 2, params, 0,
+                    &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   }
 
   // Test 2: DB-mode fan-out/fan-in.
-  arts_guid_t db_coll = arts_edt_create(db_collector, 0, NULL, FAN_WIDTH, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+  arts_guid_t db_coll =
+      arts_edt_create(db_collector, 0, NULL, FAN_WIDTH,
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_guid_t range_start = arts_guid_reserve_range(ARTS_GUID_DB, FAN_WIDTH, 0);
   for (uint32_t i = 0; i < FAN_WIDTH; i++) {
     arts_guid_t db_guid = arts_guid_from_index(range_start, i);
@@ -153,7 +160,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     params[0] = (uint64_t)i;
     params[1] = (uint64_t)db_coll;
     params[2] = (uint64_t)db_guid;
-    arts_edt_create(db_fan_child, 3, params, 0, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+    arts_edt_create(db_fan_child, 3, params, 0,
+                    &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   }
 
   arts_event_wait(fe);

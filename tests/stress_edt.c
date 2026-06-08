@@ -113,22 +113,28 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
 
   // Test 1: Fan-out stress with NUM_EDTS.
-  arts_guid_t collector = arts_edt_create(stress_collector, 0, NULL, NUM_EDTS, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+  arts_guid_t collector =
+      arts_edt_create(stress_collector, 0, NULL, NUM_EDTS,
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
 
   for (uint32_t i = 0; i < NUM_EDTS; i++) {
     uint64_t params[2];
     params[0] = (uint64_t)collector;
     params[1] = (uint64_t)i;
-    arts_edt_create(stress_task, 2, params, 0, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+    arts_edt_create(stress_task, 2, params, 0,
+                    &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   }
 
   // Test 2: Chain stress — CHAIN_LEN stages.
   // Build chain in reverse: final ← stage[N-1] ← ... ← stage[0].
-  arts_guid_t final_edt = arts_edt_create(chain_final, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+  arts_guid_t final_edt =
+      arts_edt_create(chain_final, 0, NULL, 1,
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_guid_t prev = final_edt;
   for (int i = CHAIN_LEN - 1; i >= 0; i--) {
     uint64_t param = (uint64_t)prev;
-    prev = arts_edt_create(chain_stage, 1, &param, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+    prev = arts_edt_create(chain_stage, 1, &param, 1,
+                           &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   }
   // Seed first stage.
   arts_add_dependence((arts_guid_t)(0), prev, 0, DB_MODE_VAL);

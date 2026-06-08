@@ -11,20 +11,27 @@
 #include <stdint.h>
 #include <stdio.h>
 
-void reader_edt(uint32_t paramc, const uint64_t *paramv,
-                uint32_t depc, arts_edt_dep_t *depv) {
-  (void)paramc; (void)paramv; (void)depc;
+void reader_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                arts_edt_dep_t *depv) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
   volatile uint64_t *p = (volatile uint64_t *)depv[0].ptr;
-  if (p) { printf("READER: %lu\n", (unsigned long)*p); }
+  if (p) {
+    printf("READER: %lu\n", (unsigned long)*p);
+  }
   arts_shutdown();
 }
 
-void main_edt(uint32_t paramc, const uint64_t *paramv,
-              uint32_t depc, arts_edt_dep_t *depv) {
-  (void)paramc; (void)paramv; (void)depc; (void)depv;
+void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+              arts_edt_dep_t *depv) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+  (void)depv;
   void *addr;
-  arts_guid_t db = arts_db_create(&addr, sizeof(uint64_t), ARTS_DB,
-                                  ARTS_DB_PROP_NONE, NULL);
+  arts_guid_t db =
+      arts_db_create(&addr, sizeof(uint64_t), ARTS_DB, ARTS_DB_PROP_NONE, NULL);
   *(uint64_t *)addr = 42;
   arts_edt_hint_t hint = ARTS_EDT_HINT_DEFAULTS;
   hint.rank = 1;

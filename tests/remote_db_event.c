@@ -58,7 +58,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
   unsigned int last_node = arts_get_total_ranks() - 1;
   void *tmp;
-  db_guid = arts_db_create(&tmp, sizeof(unsigned int), ARTS_DB_DEFAULT, ARTS_DB_PROP_NONE, &(arts_db_hint_t){.rank = last_node});
+  db_guid =
+      arts_db_create(&tmp, sizeof(unsigned int), ARTS_DB_DEFAULT,
+                     ARTS_DB_PROP_NONE, &(arts_db_hint_t){.rank = last_node});
   for (unsigned int n = 0; n < last_node; n++) {
     arts_guid_t am = arts_edt_create(edt_func, 0, NULL, 1,
                                      &(arts_edt_hint_t){.rank = last_node});

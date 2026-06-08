@@ -116,14 +116,16 @@ void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
   for (uint64_t i = 0; i < num_reads; i++) {
     if (arts_guid_is_local(read_guids[i])) {
-      arts_edt_create(read_test, 0, NULL, 1, &(arts_edt_hint_t){.guid = read_guids[i]});
+      arts_edt_create(read_test, 0, NULL, 1,
+                      &(arts_edt_hint_t){.guid = read_guids[i]});
       arts_add_dependence(db_guid, read_guids[i], 0, DB_MODE_RW);
     }
   }
 
   for (uint64_t i = 0; i < num_writes; i++) {
     if (arts_guid_is_local(write_guids[i])) {
-      arts_edt_create(write_test, 1, &i, 1, &(arts_edt_hint_t){.guid = write_guids[i]});
+      arts_edt_create(write_test, 1, &i, 1,
+                      &(arts_edt_hint_t){.guid = write_guids[i]});
       arts_add_dependence(db_guid, write_guids[i], 0, DB_MODE_RW);
     }
   }
@@ -151,23 +153,28 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   db_guid = arts_guid_reserve(ARTS_GUID_DB, 0);
 
   for (unsigned int i = 0; i < num_reads; i++) {
-    read_guids[i] = arts_guid_reserve(ARTS_GUID_EDT, i % arts_get_total_ranks());
+    read_guids[i] =
+        arts_guid_reserve(ARTS_GUID_EDT, i % arts_get_total_ranks());
   }
   for (unsigned int i = 0; i < num_writes; i++) {
-    write_guids[i] = arts_guid_reserve(ARTS_GUID_EDT, i % arts_get_total_ranks());
+    write_guids[i] =
+        arts_guid_reserve(ARTS_GUID_EDT, i % arts_get_total_ranks());
   }
 
   shutdown_guid = arts_guid_reserve(ARTS_GUID_EDT, 0);
 
   unsigned int *ptr = (unsigned int *)arts_db_create_with_guid(
-      db_guid, sizeof(unsigned int) * num_writes, ARTS_DB, ARTS_DB_PROP_NONE, NULL);
+      db_guid, sizeof(unsigned int) * num_writes, ARTS_DB, ARTS_DB_PROP_NONE,
+      NULL);
   for (unsigned int i = 0; i < num_writes; i++) {
     ptr[i] = 0;
   }
 
-  arts_edt_create(shutdown_edt, 0, NULL, (num_dynamic_reads * num_writes) +
-                                (num_dynamic_writes * num_writes) + num_reads +
-                                num_writes, &(arts_edt_hint_t){.guid = shutdown_guid});
+  arts_edt_create(shutdown_edt, 0, NULL,
+                  (num_dynamic_reads * num_writes) +
+                      (num_dynamic_writes * num_writes) + num_reads +
+                      num_writes,
+                  &(arts_edt_hint_t){.guid = shutdown_guid});
 
   for (unsigned int n = 0; n < arts_get_total_ranks(); n++) {
     arts_edt_create(node_setup, 0, NULL, 0, &(arts_edt_hint_t){.rank = n});
