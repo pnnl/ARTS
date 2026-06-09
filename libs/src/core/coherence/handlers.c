@@ -8,9 +8,9 @@
  *
  * Lookup discipline.  Two handler categories, both lookup-then-operate but
  * differing on the MISS action:
- *   - Cat-B (deferrable home-side: OWNERSHIP_REQUEST / GET_DATA / WRITEBACK / DESTROY):
- *     the wire dispatcher routes through the OoO engine, which acquires the
- *     home db_s (ref-pinned) and hands a pure (item, args) body the live cache
+ *   - Cat-B (deferrable home-side: OWNERSHIP_REQUEST / GET_DATA / WRITEBACK /
+ * DESTROY): the wire dispatcher routes through the OoO engine, which acquires
+ * the home db_s (ref-pinned) and hands a pure (item, args) body the live cache
  *     on a HIT, or DEFERS the args and replays them once DB_CREATE installs.
  *   - Cat-C (non-deferrable: DATA_RESPONSE / DESTROY_NOTIFY / WRITEBACK_ACK /
  *     RELEASE_OWNERSHIP / REDIRECT_RO / INSTALL_ACK): the wire dispatcher
@@ -143,13 +143,17 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
   stub->db_type = (arts_db_types_t)p->db_type;
   if (no_acquire) {
     /* Home is the idle RW owner from creation — identical to a locally created
-     * DB (CREATOR_HOME: rw_holder = self, writer_count > 0).  Install a
-     * zero-init buffer so the first consumer's RW acquire is granted locally
-     * with a writable payload.  HOME_RECV (rw_holder = creator) would route
-     * that acquire's INVALIDATE_NOTICE to a creator that holds no cache — a
-     * phantom holder — and the acquire would stall forever. */
+     * DB that has already been released by its creator.  HOME_RECV (rw_holder =
+     * creator) would route the first INVALIDATE_NOTICE to a creator that holds
+     * no cache — a phantom holder — and the acquire would stall forever.
+     *
+     * CREATOR_HOME sets writer_count = sentinel(1) + creator_hold(1) = 2, but
+     * NO_ACQUIRE means no EDT will ever release the creator hold.  Decrement to
+     * 1 (sentinel only) so the first OWNERSHIP_REQUEST's INVALIDATE-to-self
+     * drives writer_count to 0, triggering advance_chain and the GRANT. */
     arts_db_cache_init(&stub->cache, db_guid, db_size,
                        ARTS_DB_INIT_CREATOR_HOME, creator_rank);
+    stub->cache.writer_count = 1; /* sentinel only: creator never releases */
     if (db_size > 0) {
       arts_db_buf_install(&stub->cache, /*new_version=*/1,
                           /*data_payload=*/NULL, db_size);
