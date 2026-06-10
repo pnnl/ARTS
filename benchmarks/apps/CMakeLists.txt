@@ -105,6 +105,65 @@ target_compile_definitions(ocr_lib_ocrAppUtils PRIVATE ${OCR_EXT_DEFINES} ${BENC
 target_include_directories(ocr_lib_ocrAppUtils PRIVATE ${BENCH_OCR_OPTIONS_DIR})
 
 # ==========================================================================
+# OCR-VX helper library variants (compiled against OCR-VX headers / vdm.h)
+# Only created when the ocr_vdm_mpi target exists.
+# ==========================================================================
+if(TARGET ocr_vdm_mpi)
+
+add_library(ocr_lib_reduction_ocrvx OBJECT
+    ${OCR_LIBS_ROOT}/reduction/reduction.c
+)
+target_include_directories(ocr_lib_reduction_ocrvx PUBLIC
+    ${OCR_LIBS_ROOT}/reduction
+)
+target_include_directories(ocr_lib_reduction_ocrvx PRIVATE
+    ${OCR_LIBS_ROOT}/macros/macros
+    ${OCRVX_OCR_INC}
+)
+set_target_properties(ocr_lib_reduction_ocrvx PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
+target_compile_options(ocr_lib_reduction_ocrvx PRIVATE ${BENCH_C_OPT} -w
+    "-include" "${OCRVX_COMPAT_H}")
+target_compile_definitions(ocr_lib_reduction_ocrvx PRIVATE ${OCR_EXT_DEFINES} "OCR_TYPE_H=vdm.h")
+
+# ocr_lib_reductionEager_ocrvx: not defined.
+# reductionEager.c uses OCR_HINT_DB_EAGER and ocrPrintf which are absent
+# from vdm.h.  Apps that require reductionEager will skip the _ocrvx target.
+
+add_library(ocr_lib_timer_ocrvx OBJECT
+    ${OCR_LIBS_ROOT}/timer/x86/timer.c
+)
+target_include_directories(ocr_lib_timer_ocrvx PUBLIC
+    ${OCR_LIBS_ROOT}/timer/x86
+)
+target_include_directories(ocr_lib_timer_ocrvx PRIVATE
+    ${OCRVX_OCR_INC}
+)
+set_target_properties(ocr_lib_timer_ocrvx PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
+target_compile_options(ocr_lib_timer_ocrvx PRIVATE ${BENCH_C_OPT} -w
+    "-include" "${OCRVX_COMPAT_H}")
+target_compile_definitions(ocr_lib_timer_ocrvx PRIVATE ${OCR_EXT_DEFINES} "OCR_TYPE_H=vdm.h")
+
+add_library(ocr_lib_reduction_v1_ocrvx OBJECT
+    ${OCR_LIBS_ROOT}/reduction/reduction_v1.c
+)
+target_include_directories(ocr_lib_reduction_v1_ocrvx PUBLIC
+    ${OCR_LIBS_ROOT}/reduction
+)
+target_include_directories(ocr_lib_reduction_v1_ocrvx PRIVATE
+    ${OCRVX_OCR_INC}
+)
+set_target_properties(ocr_lib_reduction_v1_ocrvx PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
+target_compile_options(ocr_lib_reduction_v1_ocrvx PRIVATE ${BENCH_C_OPT} -w
+    "-include" "${OCRVX_COMPAT_H}")
+target_compile_definitions(ocr_lib_reduction_v1_ocrvx PRIVATE ${OCR_EXT_DEFINES} "OCR_TYPE_H=vdm.h")
+
+# ocr_lib_ocrAppUtils_ocrvx: not defined.
+# ocrAppUtils.c uses ocrPrintf which is absent from vdm.h.
+# Apps that require ocrAppUtils will skip the _ocrvx target.
+
+endif() # TARGET ocr_vdm_mpi
+
+# ==========================================================================
 # add_benchmark_app: builds an OCR app against both XSOCR and ARTS backends
 #
 # Usage:
@@ -118,10 +177,11 @@ target_include_directories(ocr_lib_ocrAppUtils PRIVATE ${BENCH_OCR_OPTIONS_DIR})
 #       [EXTRA_LINK_LIBS <lib> ...]     # extra link libraries (e.g. m)
 #   )
 #
-# Creates: <name>_arts and <name>_xsocr executables
+# Creates: <name>_arts, <name>_xsocr, and (when compatible) <name>_ocrvx executables
+#       [OCRVX_SKIP]                    # suppress _ocrvx target (app uses unsupported OCR extensions)
 # ==========================================================================
 function(add_benchmark_app)
-    cmake_parse_arguments(APP "" "NAME;DIR;SRC_SUBDIR" "SOURCES;LIBS;EXTRA_INCLUDES;EXTRA_DEFINES;EXTRA_LINK_LIBS" ${ARGN})
+    cmake_parse_arguments(APP "OCRVX_SKIP" "NAME;DIR;SRC_SUBDIR" "SOURCES;LIBS;EXTRA_INCLUDES;EXTRA_DEFINES;EXTRA_LINK_LIBS" ${ARGN})
 
     set(APP_DIR "${OCR_APPS_ROOT}/${APP_DIR}")
     if(APP_SRC_SUBDIR)
@@ -184,6 +244,49 @@ function(add_benchmark_app)
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     )
     target_compile_options(${APP_NAME}_arts PRIVATE ${BENCH_C_OPT} -w)
+
+    # --- OCR-VX variant (only when ocr_vdm_mpi target exists, OCRVX_SKIP not set,
+    #     and all required helper libs have an _ocrvx variant compiled against
+    #     vdm.h headers) ---
+    if(TARGET ocr_vdm_mpi AND NOT APP_OCRVX_SKIP)
+        set(_ocrvx_ok TRUE)
+        foreach(lib ${APP_LIBS})
+            if(NOT TARGET ocr_lib_${lib}_ocrvx)
+                set(_ocrvx_ok FALSE)
+            endif()
+        endforeach()
+        if(_ocrvx_ok)
+            set(LIB_OBJECTS_OCRVX "")
+            foreach(lib ${APP_LIBS})
+                list(APPEND LIB_OBJECTS_OCRVX $<TARGET_OBJECTS:ocr_lib_${lib}_ocrvx>)
+            endforeach()
+
+            add_executable(${APP_NAME}_ocrvx ${ABS_SOURCES} ${LIB_OBJECTS_OCRVX})
+            target_include_directories(${APP_NAME}_ocrvx PRIVATE
+                ${APP_DIR}
+                ${SRC_DIR}
+                ${OCR_LIBS_ROOT}/macros/macros
+                ${APP_EXTRA_INCLUDES}
+                ${LIB_INCLUDES}
+                ${OCRVX_OCR_INC}
+            )
+            target_compile_definitions(${APP_NAME}_ocrvx PRIVATE
+                ${OCR_EXT_DEFINES}
+                "OCR_TYPE_H=vdm.h"
+                OCR_ENABLE_EDT_NAMING
+                ${APP_EXTRA_DEFINES}
+            )
+            target_link_libraries(${APP_NAME}_ocrvx PRIVATE
+                ocr_vdm_mpi ${APP_EXTRA_LINK_LIBS})
+            target_link_options(${APP_NAME}_ocrvx PRIVATE -no-pie -fno-pie)
+            set_target_properties(${APP_NAME}_ocrvx PROPERTIES
+                C_STANDARD 11 C_EXTENSIONS ON
+                RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+            )
+            target_compile_options(${APP_NAME}_ocrvx PRIVATE ${BENCH_C_OPT} -w
+                "-include" "${OCRVX_COMPAT_H}")
+        endif()
+    endif()
 
     # Track for meta target
     # set_property(GLOBAL APPEND PROPERTY BENCHMARK_XSOCR_TARGETS ${APP_NAME}_xsocr)
@@ -400,6 +503,7 @@ add_benchmark_app(NAME hpcg_intel_Eager_Collective
     LIBS timer
     EXTRA_DEFINES ENABLE_EXTENSION_COLLECTIVE_EVT ENABLE_EXTENSION_MULTI_OUTPUT_SLOT
     EXTRA_LINK_LIBS m
+    OCRVX_SKIP   # uses COLLECTIVE_EVT + MULTI_OUTPUT_SLOT absent from vdm.h
 )
 
 # ==========================================================================
@@ -519,6 +623,7 @@ add_benchmark_app(NAME nekbone
     treeForkJoin.c z_nekbone_inOcr.c
     LIBS reduction
     EXTRA_LINK_LIBS m
+    OCRVX_SKIP   # uses ocrGuidMapDestroy absent from vdm.h distributed runtime
 )
 
 add_benchmark_app(NAME npb_cg
@@ -576,6 +681,9 @@ add_benchmark_app(NAME LCS_distributed_ST
 # LCS uses bare "inline" (C11 = no external def) → fails at -O0; force GNU89 semantics
 target_compile_options(LCS_distributed_ST_xsocr PRIVATE -fgnu89-inline)
 target_compile_options(LCS_distributed_ST_arts PRIVATE -fgnu89-inline)
+if(TARGET LCS_distributed_ST_ocrvx)
+    target_compile_options(LCS_distributed_ST_ocrvx PRIVATE -fgnu89-inline)
+endif()
 
 add_benchmark_app(NAME LCS_shared
     DIR LCS/refactored/ocr/intel-jesmin-lcs_shared_datablocks
@@ -585,6 +693,9 @@ add_benchmark_app(NAME LCS_shared
 )
 target_compile_options(LCS_shared_xsocr PRIVATE -fgnu89-inline)
 target_compile_options(LCS_shared_arts PRIVATE -fgnu89-inline)
+if(TARGET LCS_shared_ocrvx)
+    target_compile_options(LCS_shared_ocrvx PRIVATE -fgnu89-inline)
+endif()
 
 # LCS C++ variant: standard OCR API written in C++.  mainEdt is declared
 # extern "C" and ocr.h is extern "C"-guarded, so CMake compiles the .cpp with
@@ -936,6 +1047,11 @@ if(HAS_CRLIBM)
             ${SAR_DATA_${sar_size}_OBJECTS})
         add_dependencies(sar_${sar_size}_xsocr sar_data_${sar_size}_objs)
         add_dependencies(sar_${sar_size}_arts sar_data_${sar_size}_objs)
+        if(TARGET sar_${sar_size}_ocrvx)
+            target_link_libraries(sar_${sar_size}_ocrvx PRIVATE
+                ${SAR_DATA_${sar_size}_OBJECTS})
+            add_dependencies(sar_${sar_size}_ocrvx sar_data_${sar_size}_objs)
+        endif()
     endforeach()
 
     # --- Runtime-input sizes (huge, problem_size_scaling) ---
@@ -967,6 +1083,9 @@ add_benchmark_app(NAME stream
 # stream.c has functions used before declaration (C11 error) — allow it
 target_compile_options(stream_arts PRIVATE -Wno-error=implicit-function-declaration)
 # target_compile_options(stream_xsocr PRIVATE -Wno-error=implicit-function-declaration)
+if(TARGET stream_ocrvx)
+    target_compile_options(stream_ocrvx PRIVATE -Wno-error=implicit-function-declaration)
+endif()
 
 add_benchmark_app(NAME stream_dist
     DIR stream/ocr
@@ -976,6 +1095,9 @@ add_benchmark_app(NAME stream_dist
 )
 target_compile_options(stream_dist_arts PRIVATE -Wno-error=implicit-function-declaration)
 # target_compile_options(stream_dist_xsocr PRIVATE -Wno-error=implicit-function-declaration)
+if(TARGET stream_dist_ocrvx)
+    target_compile_options(stream_dist_ocrvx PRIVATE -Wno-error=implicit-function-declaration)
+endif()
 
 add_benchmark_app(NAME uts
     DIR uts-1.1/ocr

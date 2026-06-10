@@ -481,9 +481,6 @@ if(ARTS_BUILD_BENCHMARKS)
     add_subdirectory(benchmarks)
 endif()
 
-# LRC microbenchmarks are always built (independent of ARTS_BUILD_BENCHMARKS).
-add_subdirectory(benchmarks/lrc_microbench)
-
 add_subdirectory(configs)
 
 # Documentation (Doxygen XML → Breathe → Sphinx HTML)

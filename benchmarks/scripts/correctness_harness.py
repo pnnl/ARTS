@@ -73,6 +73,7 @@ BASE_DIR = BUILD / "benchmarks" / "baseline"
 LOGS_ROOT = REPO / "benchmarks" / "scripts" / "logs" / "correctness"
 ARTS_CFG = REPO / "configs" / "local" / "1n.cfg"
 XSOCR_CFG = REPO / "configs" / "mpi" / "1n.cfg"
+OCRVX_APPS_DIR = APPS_DIR   # ocr-vx binaries live in the same apps/ dir
 
 SW_DIR = Path("/tmp/arts_sw_test")
 BASIC_IO_DAT = "/tmp/arts_basicIO_test.dat"
@@ -122,6 +123,8 @@ class Case:
                                           # (e.g. hpcg needs npx*npy*npz==nodes);
                                           # the single-node reference is recomputed
                                           # per-n with the matching geometry
+    ocrvx_skip: str = ""                  # non-empty → skip ocrvx run for this case
+                                          # (binary exists but known runtime gap)
 
 # Tier A — one entry per OCR pair. Workload args lifted from run_benchmarks.sh.
 # For apps whose last printed value is timing or throughput, scalar_re stays ""
@@ -163,7 +166,8 @@ TIER_A: list[Case] = [
          ["-x","4","-y","4","-z","4","-N","2"],
          scalar_re=r"Final energy\s*:\s*([\-+0-9.eE]+)", scalar_kind="float",
          scalar_tol=1e-6,
-         multinode=True),  # 3-way: xsocr runs it at MN (old HCDist-timeout reason was stale)
+         multinode=True,  # 3-way: xsocr runs it at MN (old HCDist-timeout reason was stale)
+         ocrvx_skip="ocrAppUtils helper lib uses ocrPrintf absent from vdm.h"),
     Case("CoMD_sdsc", "CoMD_sdsc", ["-x","4","-y","4","-z","4","-N","2"],
          # "Final energy" is the end-to-end answer (after the 2-timestep loop);
          # "Initial energy" only echoes the setup state and verifies nothing.
@@ -188,13 +192,15 @@ TIER_A: list[Case] = [
     Case("hpcg_intel_Eager", "hpcg_intel_Eager", ["1","1","1","16","5"],
          scalar_re=r"final deviation:\s*([\-+0-9.eE]+)", scalar_kind="float",
          scalar_tol=1e-4,
-         multinode=True),
+         multinode=True,
+         ocrvx_skip="reductionEager helper lib uses OCR_HINT_DB_EAGER absent from vdm.h"),
     Case("Stencil1D_intel_chandra", "Stencil1D_intel_chandra", [],
          scalar_re=r"Solution validates", scalar_kind="bool",
          multinode=True),
     Case("Stencil2D_intel_channelEVTs", "Stencil2D_intel_channelEVTs", [],
          scalar_re=r"Computed L1 norm\s*=\s*([\-+0-9.eE]+)", scalar_kind="float", scalar_tol=1e-6,
-         multinode=True),
+         multinode=True,
+         ocrvx_skip="ocrAppUtils helper lib uses ocrPrintf absent from vdm.h"),
     Case("Stencil2D_intel_chandra", "Stencil2D_intel_chandra", [],
          scalar_re=r"L1 norm\s*=\s*([\-+0-9.eE]+)", scalar_kind="float", scalar_tol=1e-6,
          multinode=True),
@@ -247,7 +253,8 @@ TIER_A: list[Case] = [
     Case("miniAMR_intel_chandra", "miniAMR_intel_chandra",
          ["--nx","4","--ny","4","--nz","4","--num_tsteps","2","--num_refine","3"],
          scalar_re=r"Done", scalar_kind="bool",
-         multinode=True),  # 3-way: xsocr runs it at MN (old HCDist-timeout reason was stale)
+         multinode=True,  # 3-way: xsocr runs it at MN (old HCDist-timeout reason was stale)
+         ocrvx_skip="ocrAppUtils helper lib uses ocrPrintf absent from vdm.h"),
 
     # --- rc-only sanity (no meaningful scientific scalar) ---
     Case("printf",           "printf",           [],
@@ -319,13 +326,15 @@ TIER_A: list[Case] = [
          multinode_skip="no EDT affinity hints (intel variant); runs caller-rank only"),
     Case("RSBench_intel_sharedDB",    "RSBench_intel_sharedDB",    ["-l","100"],
          scalar_re=r"RS_CHECKSUM:\s+([0-9]+)", scalar_kind="int",
-         multinode=True),
+         multinode=True,
+         ocrvx_skip="ocrAppUtils helper lib uses ocrPrintf absent from vdm.h"),
     Case("XSBench_intel",             "XSBench_intel",             ["-s","small","-g","10","-l","100"],
          scalar_re=r"XSBench grid checksum:\s+(\d+)", scalar_kind="int",
          multinode_skip="no EDT affinity hints; runs caller-rank only"),
     Case("XSBench_intel_sharedDB",    "XSBench_intel_sharedDB",    ["-s","small","-g","10","-l","100"],
          scalar_re=r"Workload\s+\(unit\):\s+(\d+)", scalar_kind="int",
-         multinode_skip="no EDT affinity hints; runs caller-rank only"),
+         multinode_skip="no EDT affinity hints; runs caller-rank only",
+         ocrvx_skip="ocrAppUtils helper lib uses ocrPrintf absent from vdm.h"),
     Case("uts", "uts", [],
          scalar_re=r"UTS Tree size\s*=\s*(\d+)", scalar_kind="int",
          multinode_skip="no EDT affinity hints; runs caller-rank only"),
@@ -343,7 +352,8 @@ TIER_A: list[Case] = [
     Case("nekbone", "nekbone", ["1","1","1","1","1","1","2","1"],
          scalar_re=r"CGstep0_stop> rnorminit(?:\^2)?\s*=\s*([0-9.eE+-]+)",
          scalar_kind="float", scalar_tol=1e-9,
-         multinode=True),
+         multinode=True,
+         ocrvx_skip="ocrGuidMapDestroy absent from ocr-vx vdm.h distributed runtime"),
     Case("cholesky", "cholesky",
          ["--ds","50","--ts","10","--fi",CHOLESKY_INPUT],
          scalar_re=r"CHOLESKY trace\s*=\s*([0-9.eE+-]+)",
@@ -364,7 +374,8 @@ TIER_A: list[Case] = [
          # checksum and the arts value is non-deterministic across ranks; the
          # completion marker is the strongest portable check here.
          scalar_re=r"miniAMR complete", scalar_kind="bool",
-         multinode=True),
+         multinode=True,
+         ocrvx_skip="ocrAppUtils helper lib uses ocrPrintf absent from vdm.h"),
     # hpcg_intel_Eager_Collective: full 3-way at multinode.  The xsocr
     # runtime is built with the collective-event extension chain
     # (COLLECTIVE_EVT + MULTI_OUTPUT_SLOT + DISTRIBUTED_LABELED + REG_ASYNC_SGL),
@@ -381,7 +392,8 @@ TIER_A: list[Case] = [
          multinode=True,
          multinode_args={2: ["2", "1", "1", "16", "5"],
                          3: ["3", "1", "1", "16", "5"],
-                         4: ["4", "1", "1", "16", "5"]}),
+                         4: ["4", "1", "1", "16", "5"]},
+         ocrvx_skip="COLLECTIVE_EVT+MULTI_OUTPUT_SLOT extensions absent from vdm.h"),
 
     Case("stream", "stream", [],
          scalar_re=r"STREAM_RESULT a\[0\] = ([0-9.eE+-]+)", scalar_kind="float", scalar_tol=1e-3,
@@ -406,13 +418,16 @@ TIER_A: list[Case] = [
          multinode_skip="no EDT affinity hints; runs caller-rank only"),
     Case("sar_small",  "sar_small",  [],
          scalar_re=r"SAR detects:\s*(\d+)", scalar_kind="int",
-         multinode_skip="no EDT affinity hints; runs caller-rank only"),
+         multinode_skip="no EDT affinity hints; runs caller-rank only",
+         ocrvx_skip="sar data objects not generated for small size in current build"),
     Case("sar_medium", "sar_medium", [],
          scalar_re=r"SAR detects:\s*(\d+)", scalar_kind="int",
-         multinode_skip="no EDT affinity hints; runs caller-rank only"),
+         multinode_skip="no EDT affinity hints; runs caller-rank only",
+         ocrvx_skip="sar data objects not generated for medium size in current build"),
     Case("sar_large",  "sar_large",  [],
          scalar_re=r"SAR detects:\s*(\d+)", scalar_kind="int",
-         multinode_skip="no EDT affinity hints; runs caller-rank only"),
+         multinode_skip="no EDT affinity hints; runs caller-rank only",
+         ocrvx_skip="sar data objects not generated for large size in current build"),
 ]
 
 # Tier B — 3-way (baseline ↔ xsocr ↔ arts) scalar comparison.
@@ -702,6 +717,24 @@ class Runner:
         )
         return self._run(cmd, env, logfile, wall_timeout=to)
 
+    def run_ocrvx_mpi(self, case_name: str, bin_name: str, args: list[str],
+                      np: int = 1, timeout: int = 0) -> RunResult:
+        """Run ocrvx binary; np > 1 uses mpirun (ocr-vx MPI transport)."""
+        to = timeout or self.timeout
+        suffix = f"_ocrvx_mpi{np}" if np > 1 else "_ocrvx"
+        logfile = self.logdir / f"{case_name}{suffix}.log"
+        env = os.environ.copy()
+        env["OMP_NUM_THREADS"] = "4"
+        if np > 1:
+            launcher = f"mpirun --oversubscribe -n {np} ./{bin_name}_ocrvx"
+        else:
+            launcher = f"./{bin_name}_ocrvx"
+        cmd = (
+            f"cd {APPS_DIR} && ulimit -v {self.mem_kb} && "
+            f"timeout {to} {launcher} " + " ".join(args)
+        )
+        return self._run(cmd, env, logfile, wall_timeout=to)
+
     def run_baseline(self, case_name: str, spec: BaselineSpec) -> RunResult:
         logfile = self.logdir / f"{case_name}.baseline.log"
         env = os.environ.copy()
@@ -770,7 +803,42 @@ def _demote_if_known_bug(v: Verdict, case: Case) -> Verdict:
     return v
 
 
-def tier_a(xsocr: RunResult | None, arts: RunResult, case: Case) -> Verdict:
+def _apply_ocrvx(v: Verdict, ocrvx: RunResult | None,
+                 arts: RunResult, case: Case) -> Verdict:
+    """Demote a PASS verdict to OCRVX-BUG when ocrvx disagrees with arts."""
+    if ocrvx is None or v.tag not in ("PASS-SCALAR", "PASS-RC"):
+        return v
+    bug = _check_ocrvx(ocrvx, arts, case)
+    return bug if bug is not None else v
+
+
+def _check_ocrvx(ocrvx: RunResult, arts: RunResult, case: Case) -> Verdict | None:
+    """Return an OCRVX-BUG verdict if ocrvx diverges from arts, else None."""
+    if ocrvx.rc != 0:
+        return Verdict("OCRVX-BUG", f"ocrvx rc={ocrvx.rc}")
+    if not case.scalar_re:
+        return None  # rc=0, no scalar to compare
+    ov = _pull(ocrvx.stdout, case.scalar_re, case.scalar_kind)
+    ar = _pull(arts.stdout,  case.scalar_re, case.scalar_kind)
+    if ov is None:
+        return Verdict("OCRVX-BUG", "ocrvx scalar_re miss")
+    if case.scalar_kind == "bool":
+        return None  # both present
+    if ar is None:
+        return None  # arts failed — FAIL already raised upstream
+    if case.scalar_kind == "int":
+        if ov != ar:
+            return Verdict("OCRVX-BUG", f"ocrvx={ov} arts={ar}")
+        return None
+    d = _drift(ov, ar)
+    if d > case.scalar_tol:
+        return Verdict("OCRVX-BUG",
+                       f"ocrvx={ov:.6g} arts={ar:.6g} drift={d:.2e} tol={case.scalar_tol:.2e}")
+    return None
+
+
+def tier_a(xsocr: RunResult | None, arts: RunResult, case: Case,
+           ocrvx: RunResult | None = None) -> Verdict:
     # arts_only cases only check the arts side.
     if case.arts_only:
         if arts.rc != 0:
@@ -795,7 +863,8 @@ def tier_a(xsocr: RunResult | None, arts: RunResult, case: Case) -> Verdict:
         return _demote_if_known_bug(
             Verdict("FAIL", f"rc xsocr={xsocr.rc} arts={arts.rc}"), case)
     if not case.scalar_re:
-        return Verdict("PASS-RC", "rc=0 both (no scalar configured)")
+        return _apply_ocrvx(
+            Verdict("PASS-RC", "rc=0 both (no scalar configured)"), ocrvx, arts, case)
     x = _pull(xsocr.stdout, case.scalar_re, case.scalar_kind)
     a = _pull(arts.stdout,  case.scalar_re, case.scalar_kind)
     if x is None or a is None:
@@ -804,7 +873,8 @@ def tier_a(xsocr: RunResult | None, arts: RunResult, case: Case) -> Verdict:
                     f"scalar_re miss (xsocr={x is not None} arts={a is not None})"),
             case)
     if case.scalar_kind == "bool":
-        return Verdict("PASS-SCALAR", "bool present in both")
+        return _apply_ocrvx(
+            Verdict("PASS-SCALAR", "bool present in both"), ocrvx, arts, case)
     if case.scalar_kind == "int":
         if x != a:
             return _demote_if_known_bug(
@@ -812,7 +882,9 @@ def tier_a(xsocr: RunResult | None, arts: RunResult, case: Case) -> Verdict:
         if not _expect_ok(x, case):
             return _demote_if_known_bug(
                 Verdict("FAIL", f"int={x} != expected {case.expect}"), case)
-        return Verdict("PASS-SCALAR", f"int={x}" + (" ==expect" if case.expect else ""))
+        return _apply_ocrvx(
+            Verdict("PASS-SCALAR", f"int={x}" + (" ==expect" if case.expect else "")),
+            ocrvx, arts, case)
     # float
     d = _drift(x, a)
     if d > case.scalar_tol:
@@ -823,8 +895,10 @@ def tier_a(xsocr: RunResult | None, arts: RunResult, case: Case) -> Verdict:
     if not _expect_ok(x, case):
         return _demote_if_known_bug(
             Verdict("FAIL", f"xsocr={x:.6g} arts={a:.6g} != expected {case.expect}"), case)
-    return Verdict("PASS-SCALAR",
-                   f"xsocr={x:.6g} arts={a:.6g} drift={d:.2e}" + (" ==expect" if case.expect else ""))
+    return _apply_ocrvx(
+        Verdict("PASS-SCALAR",
+                f"xsocr={x:.6g} arts={a:.6g} drift={d:.2e}" + (" ==expect" if case.expect else "")),
+        ocrvx, arts, case)
 
 
 def tier_b(xsocr: RunResult, arts: RunResult, base: RunResult, case: Case) -> Verdict:
@@ -891,17 +965,26 @@ def main():
         else:
             xs = runner.run_ocr(c.name, c.ocr_base, c.args, "xsocr")
             xs_rc, xs_wall = xs.rc, round(xs.wall, 3)
-        v = tier_a(xs, ar, c)
+        ocrvx_bin = APPS_DIR / f"{c.ocr_base}_ocrvx"
+        if ocrvx_bin.exists() and not c.ocrvx_skip:
+            ov = runner.run_ocrvx_mpi(c.name, c.ocr_base, c.args)
+            ov_rc, ov_wall = ov.rc, round(ov.wall, 3)
+        else:
+            ov = None
+            ov_rc, ov_wall = "—", "—"
+        v = tier_a(xs, ar, c, ocrvx=ov)
         results_a.append({
             "name": c.name, "args": c.args,
             "xsocr_rc": xs_rc, "xsocr_wall": xs_wall,
             "arts_rc":  ar.rc, "arts_wall":  round(ar.wall, 3),
+            "ocrvx_rc": ov_rc, "ocrvx_wall": ov_wall,
             "verdict":  v.tag, "detail": v.detail,
             "expected_known_bug": c.expected_known_bug,
         })
         xs_line = "arts-only" if c.arts_only else f"xs={xs.rc}/{xs.wall:4.1f}s"
+        ov_line = f"ov={ov_rc}/{ov_wall}s" if ov is not None else ""
         print(f"  [A] {c.name:35s}  {xs_line}  "
-              f"ar={ar.rc}/{ar.wall:4.1f}s  -> {v.tag}  {v.detail[:80]}")
+              f"ar={ar.rc}/{ar.wall:4.1f}s  {ov_line}  -> {v.tag}  {v.detail[:80]}")
 
     results_b: list[dict[str, Any]] = []
     if not args.no_baseline:
@@ -954,7 +1037,9 @@ def main():
         mn_arts_only = c.arts_only or c.multinode_arts_only
         mn_xsocr_only = c.multinode_xsocr_only
         use_mn_args = c.multinode_args is not None
-        ref_a_val = ref_x_val = None
+        ocrvx_bin = APPS_DIR / f"{c.ocr_base}_ocrvx"
+        mn_run_ocrvx = ocrvx_bin.exists() and not c.ocrvx_skip
+        ref_a_val = ref_x_val = ref_ov_val = None
         if not use_mn_args:
             if not mn_xsocr_only:
                 ref_ar = runner.run_ocr(c.name, c.ocr_base, c.args, "arts")
@@ -962,8 +1047,12 @@ def main():
             if not mn_arts_only:
                 ref_xs = runner.run_ocr(c.name, c.ocr_base, c.args, "xsocr")
                 ref_x_val = _pull(ref_xs.stdout, c.scalar_re, c.scalar_kind)
+            if mn_run_ocrvx:
+                ref_ov = runner.run_ocrvx_mpi(c.name, c.ocr_base, c.args)
+                ref_ov_val = _pull(ref_ov.stdout, c.scalar_re, c.scalar_kind)
 
-        all_ok = True
+        all_ok = True        # arts + xsocr checks only
+        ocrvx_mn_ok = True  # ocrvx MN checks (separate: doesn't affect FAIL)
         detail_parts = []
         for n in MN_RANKS:
             # "2n_io" is a 2-node arts-only IO variant — use the 2-node geometry.
@@ -980,7 +1069,11 @@ def main():
                 if not mn_arts_only and n != "2n_io":
                     ref_xn = runner.run_ocr(c.name, c.ocr_base, args_n, "xsocr")
                     ref_x_val = _pull(ref_xn.stdout, c.scalar_re, c.scalar_kind)
+                if mn_run_ocrvx and n != "2n_io":
+                    ref_ovn = runner.run_ocrvx_mpi(c.name, c.ocr_base, args_n)
+                    ref_ov_val = _pull(ref_ovn.stdout, c.scalar_re, c.scalar_kind)
             checks = []
+            ov_checks = []
             if not mn_xsocr_only:
                 ar_mn = runner.run_arts_mn(c.name, c.ocr_base, args_n, n,
                                            timeout=c.multinode_timeout)
@@ -991,31 +1084,49 @@ def main():
                                              timeout=c.multinode_timeout)
                 x_val = _pull(xs_mn.stdout, c.scalar_re, c.scalar_kind)
                 checks.append((f"xs{n}", x_val, ref_x_val, xs_mn.rc))
+            if mn_run_ocrvx and n != "2n_io":
+                ov_mn = runner.run_ocrvx_mpi(c.name, c.ocr_base, args_n,
+                                              np=geo_n, timeout=c.multinode_timeout)
+                ov_val = _pull(ov_mn.stdout, c.scalar_re, c.scalar_kind)
+                ov_checks.append((f"ov{n}", ov_val, ref_ov_val, ov_mn.rc))
 
-            for label, mn_val, ref_val, mn_rc in checks:
+            def _eval_check(label, mn_val, ref_val, mn_rc):
                 if mn_rc != 0:
                     detail_parts.append(f"{label}:rc={mn_rc}")
-                    all_ok = False
-                elif mn_val is None:
+                    return False
+                if mn_val is None:
                     detail_parts.append(f"{label}:miss")
-                    all_ok = False
-                elif c.scalar_kind == "bool":
+                    return False
+                if c.scalar_kind == "bool":
                     detail_parts.append(f"{label}:ok")
                 elif c.scalar_kind == "int":
                     if mn_val != ref_val:
                         detail_parts.append(f"{label}:{mn_val}!={ref_val}")
-                        all_ok = False
+                        return False
                     else:
                         detail_parts.append(f"{label}:ok")
                 else:  # float
                     d = _drift(mn_val, ref_val) if ref_val is not None else 999
                     if d > c.scalar_tol:
                         detail_parts.append(f"{label}:drift={d:.2e}")
-                        all_ok = False
+                        return False
                     else:
                         detail_parts.append(f"{label}:ok")
+                return True
 
-        vtag = "PASS-MN" if all_ok else "FAIL"
+            for check in checks:
+                if not _eval_check(*check):
+                    all_ok = False
+            for check in ov_checks:
+                if not _eval_check(*check):
+                    ocrvx_mn_ok = False
+
+        if all_ok and ocrvx_mn_ok:
+            vtag = "PASS-MN"
+        elif all_ok and not ocrvx_mn_ok:
+            vtag = "OCRVX-BUG"
+        else:
+            vtag = "FAIL"
         vdetail = " ".join(detail_parts)
         # Demote FAIL to KNOWN-BUG when the case has an expected_known_bug
         # (xsocr-side hangs/SEGVs at multinode shouldn't poison the Tier-M

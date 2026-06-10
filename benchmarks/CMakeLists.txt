@@ -21,8 +21,7 @@ set(BENCH_OCR_TYPE_DEFINE "OCR_TYPE_H=arts.h")
 set(BENCH_OCR_OPTIONS_DIR "${CMAKE_CURRENT_BINARY_DIR}")
 
 add_subdirectory(xsocr)
+add_subdirectory(ocrvx)
 add_subdirectory(ocr_shim)
 add_subdirectory(apps)
 add_subdirectory(baseline)
-# lrc_microbench is added from the root CMakeLists.txt so it builds
-# regardless of ARTS_BUILD_BENCHMARKS; skip here to avoid duplicate targets.
