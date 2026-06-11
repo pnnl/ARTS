@@ -22,8 +22,8 @@
   } while (0)
 
 /* EDT_PROP_OEVT_VALID: property bit telling the runtime that an output event
- * GUID has been pre-allocated by the caller.  Absent from vdm.h — define the
- * same numeric value; vdm ignores unknown property bits. */
+ * GUID has been pre-created by the caller.  ocr-vx defines and honors the
+ * same bit (0x8) in its ocr-types.h; keep a fallback for older trees. */
 #ifndef EDT_PROP_OEVT_VALID
 #define EDT_PROP_OEVT_VALID ((u16)0x8)
 #endif

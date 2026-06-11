@@ -210,13 +210,20 @@ TIER_A: list[Case] = [
          scalar_tol=1e-8,
          multinode_skip="no EDT affinity hints (intel variant); runs caller-rank only"),
     Case("npb_cg", "npb_cg", ["-t", "T"],
-         scalar_re=r"zeta\s*=\s*([\-+0-9.eE]+)", scalar_kind="float",
+         # Anchor on the app's own verification verdict: a FAILED run prints
+         # "Verification FAILED (zeta=NaN, correct zeta=<expected>)" and the
+         # bare zeta regex would match the *expected* value (false PASS).
+         scalar_re=r"Verification SUCCESSFUL \(zeta\s*=\s*([\-+0-9.eE]+)", scalar_kind="float",
          scalar_tol=1e-10,
          multinode=True),
-         # xsocr passes at every rank count (xsocr bug fixed).  arts is KNOWN to
-         # time out at multinode here = an arts bug to debug.  The arts-block
-         # flag (multinode_xsocr_only) was REMOVED 2026-06-08 so Tier M reports
-         # the true arts verdict — do NOT re-mask; fix the arts multinode timeout.
+         # All runtimes pass at every rank count (2026-06-10).  The historical
+         # multinode failures here (xsocr NaN at n3 / zeta=0.0 at n4, arts
+         # timeout) were npb-cg APP bugs, fixed in the ocr-apps submodule:
+         # in-place writes through DB_MODE_CONST acquisitions (update's p,
+         # the zeta-carrying DB) and a missing ocrDbRelease before wiring the
+         # verification EDT.  The arts-block flag (multinode_xsocr_only) was
+         # REMOVED 2026-06-08 so Tier M reports the true verdict — do NOT
+         # re-mask if this regresses.
          # class T (tiny: size=50, 3 iters) runs in <1s, so it stays fast enough
          # for xsocr at multinode and runs full 3-way.  (class S — the default —
          # made the multinode run ~36K small remote DBs/iter of synchronous
@@ -717,6 +724,20 @@ class Runner:
         )
         return self._run(cmd, env, logfile, wall_timeout=to)
 
+    # ocr-vx TBB compute parallelism per rank count, sized so the *active*
+    # thread budget matches the arts/xsocr configs on a 14-vCPU host
+    # (totals 14/14/12/12 at 1n/2n/3n/4n).  ocr-vx pins one OS thread per
+    # peer per channel (2*np receivers) plus one sender, but the receivers
+    # block in MPI_Recv and message handling is serialized by a global lock,
+    # so at most ~1 receiver plus the sender are runnable at a time.  The
+    # runtime's shutdown barrier is a TBB task that blocks (zero CPU) until
+    # shutdown, permanently occupying one parallelism slot — so effective
+    # compute width is P-1 and P=1 deadlocks outright.  Active budget per
+    # process = (P-1) compute + sender + 1 active receiver:
+    #   1n: 12+1+1=14, 2n: 5+1+1=7 (x2=14), 3n: 2+1+1=4 (x3=12),
+    #   4n: 1+1+1=3 (x4=12).
+    _OCRVX_TBB_THREADS = {1: 13, 2: 6, 3: 3, 4: 2}
+
     def run_ocrvx_mpi(self, case_name: str, bin_name: str, args: list[str],
                       np: int = 1, timeout: int = 0) -> RunResult:
         """Run ocrvx binary; np > 1 uses mpirun (ocr-vx MPI transport)."""
@@ -725,6 +746,7 @@ class Runner:
         logfile = self.logdir / f"{case_name}{suffix}.log"
         env = os.environ.copy()
         env["OMP_NUM_THREADS"] = "4"
+        env["OCRVX_NUM_THREADS"] = str(self._OCRVX_TBB_THREADS[np])
         if np > 1:
             launcher = f"mpirun --oversubscribe -n {np} ./{bin_name}_ocrvx"
         else:
