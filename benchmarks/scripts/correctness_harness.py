@@ -77,7 +77,10 @@ ARTS_CFG = REPO / "configs" / "local" / "1n.cfg"
 XSOCR_CFG = REPO / "configs" / "mpi" / "1n.cfg"
 OCRVX_APPS_DIR = APPS_DIR   # ocr-vx binaries live in the same apps/ dir
 
-SW_DIR = Path("/tmp/arts_sw_test")
+# smithwaterman ships its own datasets (tiny/small/medium/large triples of
+# string1/string2/score); use the official tiny set directly — no staging.
+SW_DATA = Path(__file__).resolve().parents[2] / \
+    "third_party/ocr-apps/apps/smithwaterman/datasets"
 BASIC_IO_DAT = "/tmp/arts_basicIO_test.dat"
 CHOLESKY_INPUT = "/tmp/arts_cholesky_input.mat"
 
@@ -141,7 +144,9 @@ TIER_A: list[Case] = [
          scalar_re=r"sols:\s*(\d+)", scalar_kind="int",
          multinode_skip="single-node design: process-local solutions counter + global template GUIDs"),
     Case("smithwaterman", "smithwaterman",
-         ["2","2",f"{SW_DIR}/str1.txt",f"{SW_DIR}/str2.txt",f"{SW_DIR}/score.txt"],
+         ["50","50",f"{SW_DATA}/string1-medium-large.txt",
+          f"{SW_DATA}/string2-medium-large.txt",
+          f"{SW_DATA}/score-medium-large.txt"],
          scalar_re=r"score:\s*(\d+)", scalar_kind="int",
          multinode_skip="no EDT affinity hints; runs caller-rank only"),
     Case("fft", "fft", ["6"],
@@ -524,7 +529,7 @@ TIER_B: list[Case] = [
 # with a relaxed relative tolerance (see _expect_ok), so reduced-precision
 # entries here are safe.
 _EXPECT: dict[str, str] = {
-    "fibonacci": "55", "nqueens": "4", "smithwaterman": "32", "triangle": "29760",
+    "fibonacci": "55", "nqueens": "4", "smithwaterman": "1460", "triangle": "29760",
     "basicIO": "1", "highbw": "2048", "multigen": "121393", "multigen_2": "3524578",
     "uts": "39881", "XSBench_intel": "10725709712928718927", "XSBench_intel_sharedDB": "100",
     "sar_tiny": "12", "sar_small": "458", "sar_medium": "1991", "sar_large": "6523",
@@ -589,13 +594,6 @@ class Runner:
         # Stage configs + fixtures once.
         shutil.copy2(ARTS_CFG, APPS_DIR / "arts.cfg")
         shutil.copy2(ARTS_CFG, BASE_DIR / "arts.cfg")
-        SW_DIR.mkdir(parents=True, exist_ok=True)
-        if not (SW_DIR / "str1.txt").exists():
-            (SW_DIR / "str1.txt").write_text("ACGTACGTACGTACGTACGT\n")
-        if not (SW_DIR / "str2.txt").exists():
-            (SW_DIR / "str2.txt").write_text("ACGTAGGTACGTACGTAGGT\n")
-        if not (SW_DIR / "score.txt").exists():
-            (SW_DIR / "score.txt").write_text("1 -1 -1\n-1 1 -1\n-1 -1 1\n")
         if not Path(BASIC_IO_DAT).exists():
             # 10 deterministic u64 values for basicIO (offset=0, XOR=0^1^...^9=1)
             Path(BASIC_IO_DAT).write_text(
