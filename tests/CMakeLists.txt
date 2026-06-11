@@ -256,6 +256,35 @@ endif()
 
 # --- Helper functions ---
 
+# Allocate a unique TCP port base per multinode test.  All local cfg files
+# share default_ports=50000, so a straggler from the previous test (a rank
+# still releasing its listen socket, or an orphan left by a timed-out run)
+# can poison every subsequent test that binds the same range.  The runtime
+# lets the environment override any config key (arts_config_find_variable),
+# so handing each test its own `default_ports` makes cross-test port
+# collisions structurally impossible.  Bases start at 20000, BELOW the kernel
+# ephemeral range (net.ipv4.ip_local_port_range, 32768-60999 here): a base
+# inside that range randomly collides with the source port of any outgoing
+# connection on the box, failing the bind instantly.  Also stays clear of
+# the stock configs and the harness bases.
+set_property(GLOBAL PROPERTY arts_test_port_base 20000)
+# port_count: the number of ports in the spec doubles as the per-node
+# parallel-connection count (port_count = default_ports_count), so the
+# override MUST carry the same number of ports as the cfg it replaces:
+# one for the standard configs, two for 2n_io (one per sender/receiver
+# pair).  A mismatched count breaks the startup connection handshake.
+function(arts_next_port_base port_count out_var)
+    get_property(_base GLOBAL PROPERTY arts_test_port_base)
+    if(port_count GREATER 1)
+        math(EXPR _last "${_base} + ${port_count} - 1")
+        set(${out_var} "[${_base}-${_last}]" PARENT_SCOPE)
+    else()
+        set(${out_var} "${_base}" PARENT_SCOPE)
+    endif()
+    math(EXPR _next "${_base} + 16")
+    set_property(GLOBAL PROPERTY arts_test_port_base ${_next})
+endfunction()
+
 function(register_single_node_test test_name)
     cmake_parse_arguments(ARG "" "TIMEOUT" "ARGS" ${ARGN})
     if(NOT ARG_TIMEOUT)
@@ -292,6 +321,12 @@ function(register_multinode_test test_name)
         set(ARG_VARIANTS 2n 3n 4n 2n_io)
     endif()
     foreach(variant IN LISTS ARG_VARIANTS)
+        if(variant STREQUAL "2n_io")
+            set(_variant_port_count 2)
+        else()
+            set(_variant_port_count 1)
+        endif()
+        arts_next_port_base(${_variant_port_count} port_base)
         add_test(
             NAME ${test_name}_${variant}
             COMMAND ${test_name} ${ARG_ARGS}
@@ -301,7 +336,7 @@ function(register_multinode_test test_name)
             LABELS "multinode"
             TIMEOUT ${ARG_TIMEOUT}
             RESOURCE_LOCK "arts_runtime"
-            ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/${variant}.cfg"
+            ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/${variant}.cfg;default_ports=${port_base}"
         )
     endforeach()
 endfunction()
@@ -558,11 +593,12 @@ add_test(
     COMMAND coherence_lock_req_before_create
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
 )
+arts_next_port_base(1 port_base)
 set_tests_properties(coherence_lock_req_before_create PROPERTIES
     LABELS "coherence_stress;multinode"
     TIMEOUT 120
     RESOURCE_LOCK "arts_runtime"
-    ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/2n.cfg"
+    ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/2n.cfg;default_ports=${port_base}"
 )
 
 # Coherence stress test suite (Spec section 6 B.1/B.4/B.5/B.6 single-node).
@@ -603,11 +639,12 @@ add_test(
     COMMAND coherence_stress_dist
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
 )
+arts_next_port_base(1 port_base)
 set_tests_properties(coherence_stress_dist PROPERTIES
     LABELS "coherence_stress;multinode"
     TIMEOUT 120
     RESOURCE_LOCK "arts_runtime"
-    ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/2n.cfg"
+    ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/2n.cfg;default_ports=${port_base}"
 )
 
 # LRC ownership-transfer TRANSFER/INVALIDATE two-wire reorder stress.  MUST use
@@ -627,11 +664,12 @@ add_test(
     COMMAND coherence_lrc_ownership_reorder
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
 )
+arts_next_port_base(2 port_base)
 set_tests_properties(coherence_lrc_ownership_reorder PROPERTIES
     LABELS "coherence_stress;multinode"
     TIMEOUT 120
     RESOURCE_LOCK "arts_runtime"
-    ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/2n_io.cfg"
+    ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/2n_io.cfg;default_ports=${port_base}"
 )
 
 # --- LC-specific test binaries ---
@@ -668,11 +706,12 @@ if(ARTS_MEMORY_MODEL STREQUAL "LC")
         COMMAND lc_drf_invariant
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     )
+    arts_next_port_base(1 port_base)
     set_tests_properties(lc_drf_invariant_2n PROPERTIES
         LABELS "multinode"
         TIMEOUT 60
         RESOURCE_LOCK "arts_runtime"
-        ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/2n.cfg"
+        ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/2n.cfg;default_ports=${port_base}"
         PASS_REGULAR_EXPRESSION "LC_DRF: PASS"
     )
 
@@ -684,11 +723,12 @@ if(ARTS_MEMORY_MODEL STREQUAL "LC")
         COMMAND lc_local_hit_dedup
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     )
+    arts_next_port_base(1 port_base)
     set_tests_properties(lc_local_hit_dedup_2n PROPERTIES
         LABELS "multinode"
         TIMEOUT 60
         RESOURCE_LOCK "arts_runtime"
-        ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/2n.cfg"
+        ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/2n.cfg;default_ports=${port_base}"
         PASS_REGULAR_EXPRESSION "LC_LOCAL_HIT_DEDUP: PASS"
     )
 

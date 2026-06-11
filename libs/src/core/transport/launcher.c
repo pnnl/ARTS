@@ -428,8 +428,17 @@ void arts_launcher_local_startup_processes(struct arts_launcher_s *launcher) {
        * killed master leaves the local-launcher children reparented to
        * init, surviving indefinitely as orphans (observed: rank-N processes
        * running 599% CPU long after the harness moved on). Race window
-       * between fork() and prctl() is closed by the getppid() recheck. */
-      prctl(PR_SET_PDEATHSIG, SIGTERM);
+       * between fork() and prctl() is closed by the getppid() recheck.
+       *
+       * SIGKILL, not SIGTERM: this fires only when the master died without
+       * running its cleanup (which already does waitpid -> SIGTERM ->
+       * SIGKILL for the graceful path), i.e. the master itself was killed
+       * abnormally — typically because a rank is hung.  A hung rank's
+       * graceful SIGTERM path can hang too, leaving the orphan alive and
+       * holding its ports, which poisons every subsequent run that binds
+       * the same port range.  There is nothing left to shut down gracefully
+       * at that point. */
+      prctl(PR_SET_PDEATHSIG, SIGKILL);
       if (getppid() == 1) {
         _exit(0);
       }

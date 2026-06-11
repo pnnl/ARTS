@@ -29,11 +29,13 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import time
 
@@ -668,9 +670,11 @@ class Runner:
             env["OCR_CONFIG"] = str(XSOCR_CFG)
         cmd = (
             f"cd {APPS_DIR} && ulimit -v {self.mem_kb} && "
-            f"timeout {self.timeout} ./{binary} " + " ".join(args)
+            f"timeout -k 1 {self.timeout} ./{binary} " + " ".join(args)
         )
-        return self._run(cmd, env, logfile)
+        result = self._run(cmd, env, logfile)
+        self._reap_exe(APPS_DIR / binary)
+        return result
 
     # --- Multinode runners (Tier M) ---
 
@@ -689,6 +693,31 @@ class Runner:
         4: "mpi/4n.cfg",
     }
 
+    # Per-run unique TCP port base for arts multinode runs.  All stock cfgs
+    # share default_ports=50000, so a straggler from the previous case (a
+    # rank still releasing its listen socket, or an orphan from a timed-out
+    # run) would poison every later case that binds the same range.  The
+    # runtime lets the environment override any config key, so each run gets
+    # its own range.  Starts at 53000 to stay clear of both the stock 50000
+    # configs (manual runs) and ctest's 51000+ per-test bases.
+    _arts_port_iter = itertools.count(23000, 16)
+
+    @staticmethod
+    def _reap_exe(exe_path: Path) -> None:
+        """SIGKILL every process whose executable is exe_path.
+
+        Matching on /proc/<pid>/exe is the only reliable way to reap ARTS
+        rank processes: comm is truncated to 15 chars (pkill -x misses) and
+        pattern matching the command line (pkill -f) can match the caller
+        itself."""
+        target = str(exe_path)
+        for pid_dir in Path("/proc").glob("[0-9]*"):
+            try:
+                if os.readlink(pid_dir / "exe") == target:
+                    os.kill(int(pid_dir.name), signal.SIGKILL)
+            except OSError:
+                continue
+
     def run_arts_mn(self, case_name: str, bin_name: str, args: list[str],
                     nodes: int, timeout: int = 0) -> RunResult:
         """Run arts at N nodes (self-fork launcher via cfg)."""
@@ -699,11 +728,25 @@ class Runner:
         logfile = self.logdir / f"{case_name}.arts_mn{nodes}.log"
         env = os.environ.copy()
         env["OMP_NUM_THREADS"] = "4"
+        base = next(self._arts_port_iter)
+        # The override must carry the same port COUNT as the cfg it replaces:
+        # the count doubles as the per-node parallel-connection count
+        # (port_count = default_ports_count), so a mismatch breaks the
+        # startup handshake.  2n_io uses two ports (one per sender/receiver
+        # pair); every other local cfg uses one.
+        if nodes == "2n_io":
+            env["default_ports"] = f"[{base}-{base + 1}]"
+        else:
+            env["default_ports"] = str(base)
         cmd = (
             f"cd {APPS_DIR} && ulimit -v {self.mem_kb} && "
-            f"timeout {to} ./{bin_name}_arts " + " ".join(args)
+            f"timeout -k 1 {to} ./{bin_name}_arts " + " ".join(args)
         )
         result = self._run(cmd, env, logfile, wall_timeout=to)
+        # A timed-out run can leave rank processes behind (a hung rank can
+        # survive SIGTERM); reap them so they cannot interfere with later
+        # cases or hold CPU.
+        self._reap_exe(APPS_DIR / f"{bin_name}_arts")
         # Restore single-node cfg for subsequent single-node runs
         shutil.copy2(ARTS_CFG, APPS_DIR / "arts.cfg")
         return result
@@ -718,11 +761,13 @@ class Runner:
         xsocr_cfg = REPO / "configs" / self._XSOCR_MN_CFGS[np]
         cmd = (
             f"cd {APPS_DIR} && ulimit -v {self.mem_kb} && "
-            f"timeout {to} mpirun --oversubscribe -n {np} "
+            f"timeout -k 1 {to} mpirun --oversubscribe -n {np} "
             f"./{bin_name}_xsocr -ocr:cfg {xsocr_cfg} "
             + " ".join(args)
         )
-        return self._run(cmd, env, logfile, wall_timeout=to)
+        result = self._run(cmd, env, logfile, wall_timeout=to)
+        self._reap_exe(APPS_DIR / f"{bin_name}_xsocr")
+        return result
 
     # ocr-vx TBB compute parallelism per rank count, sized so the *active*
     # thread budget matches the arts/xsocr configs on a 14-vCPU host
@@ -753,9 +798,11 @@ class Runner:
             launcher = f"./{bin_name}_ocrvx"
         cmd = (
             f"cd {APPS_DIR} && ulimit -v {self.mem_kb} && "
-            f"timeout {to} {launcher} " + " ".join(args)
+            f"timeout -k 1 {to} {launcher} " + " ".join(args)
         )
-        return self._run(cmd, env, logfile, wall_timeout=to)
+        result = self._run(cmd, env, logfile, wall_timeout=to)
+        self._reap_exe(APPS_DIR / f"{bin_name}_ocrvx")
+        return result
 
     def run_baseline(self, case_name: str, spec: BaselineSpec) -> RunResult:
         logfile = self.logdir / f"{case_name}.baseline.log"

@@ -48,7 +48,11 @@ void arts_handler_db_acquire(void *item, void *args) {
   struct arts_db_cache_s *cache = &db->cache;
   arts_edt_dep_t *dep = &((arts_edt_dep_t *)arts_get_depv(edt))[slot];
   arts_db_access_mode_t mode = dep->mode;
-  bool is_owner = (cache->writer_count > 0);
+  /* Signed: the commutative writer_count is transiently negative when an
+   * INVALIDATE races ahead of its GRANT (multi-receiver wire reorder) —
+   * negative means NOT owner.  An unsigned compare would treat it as owner
+   * and serve RO from a non-owned (stale) buffer. */
+  bool is_owner = ((int)cache->writer_count > 0);
 
   if (mode == DB_MODE_RO) {
     if (is_owner) { /* LRC RO predicate (only the owner holds the canonical

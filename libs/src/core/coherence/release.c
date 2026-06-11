@@ -40,11 +40,18 @@
  * arts_db_acquire_remote_rw. */
 bool arts_db_acquire_rw_local_fast(struct arts_db_cache_s *cache,
                                    arts_edt_dep_t *dep) {
-  /* CAS-loop "increment if positive": never bump from 0. */
+  /* CAS-loop "increment if positive": never bump from <= 0.  The comparison
+   * MUST be signed: the commutative counter is transiently NEGATIVE when an
+   * INVALIDATE races ahead of its GRANT (two messages on separate wires under
+   * multiple receiver threads), and a negative value means NOT owner exactly
+   * like 0.  Bumping from a negative value would cancel the invalidation's
+   * decrement: the settled count then carries a surplus +1, the owner's last
+   * release reads 1 instead of 0, the ownership transfer never fires, and
+   * every queued acquirer on every rank is stranded. */
   while (1) {
     unsigned int wc = cache->writer_count;
-    if (wc == 0) {
-      return false; /* ownership invalidated — fall through to remote-RW. */
+    if ((int)wc <= 0) {
+      return false; /* not owner (incl. transient negative) — go remote-RW. */
     }
     if (arts_atomic_cswap(&cache->writer_count, wc, wc + 1) == wc) {
       /* writer_count bumped.  acquire_local NULL is fine (sentinel /

@@ -42,7 +42,11 @@ void arts_handler_db_acquire(void *item, void *args) {
   arts_edt_dep_t *dep = &((arts_edt_dep_t *)arts_get_depv(edt))[slot];
   arts_db_access_mode_t mode = dep->mode;
   bool is_home = (arts_guid_get_rank(cache->db_guid) == arts_global_rank_id);
-  bool is_owner = (cache->writer_count > 0);
+  /* Signed: the commutative writer_count is transiently negative when an
+   * INVALIDATE races ahead of its GRANT (multi-receiver wire reorder) —
+   * negative means NOT owner.  An unsigned compare would treat it as owner
+   * and serve RO from a non-owned (stale) buffer. */
+  bool is_owner = ((int)cache->writer_count > 0);
 
   if (mode == DB_MODE_RO) {
     if (is_home || is_owner) { /* RC RO predicate (home holds current data) */
