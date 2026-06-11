@@ -405,7 +405,7 @@ TIER_A: list[Case] = [
          multinode_args={2: ["2", "1", "1", "16", "5"],
                          3: ["3", "1", "1", "16", "5"],
                          4: ["4", "1", "1", "16", "5"]},
-         ocrvx_skip="COLLECTIVE_EVT+MULTI_OUTPUT_SLOT extensions absent from vdm.h"),
+         ),
 
     Case("stream", "stream", [],
          scalar_re=r"STREAM_RESULT a\[0\] = ([0-9.eE+-]+)", scalar_kind="float", scalar_tol=1e-3,

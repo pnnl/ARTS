@@ -524,7 +524,6 @@ add_benchmark_app(NAME hpcg_intel_Eager_Collective
     LIBS timer
     EXTRA_DEFINES ENABLE_EXTENSION_COLLECTIVE_EVT ENABLE_EXTENSION_MULTI_OUTPUT_SLOT
     EXTRA_LINK_LIBS m
-    OCRVX_SKIP   # uses COLLECTIVE_EVT + MULTI_OUTPUT_SLOT absent from vdm.h
 )
 
 # ==========================================================================
