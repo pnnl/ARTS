@@ -125,9 +125,20 @@ target_compile_options(ocr_lib_reduction_ocrvx PRIVATE ${BENCH_C_OPT} -w
     "-include" "${OCRVX_COMPAT_H}")
 target_compile_definitions(ocr_lib_reduction_ocrvx PRIVATE ${OCR_EXT_DEFINES} "OCR_TYPE_H=vdm.h")
 
-# ocr_lib_reductionEager_ocrvx: not defined.
-# reductionEager.c uses OCR_HINT_DB_EAGER and ocrPrintf which are absent
-# from vdm.h.  Apps that require reductionEager will skip the _ocrvx target.
+add_library(ocr_lib_reductionEager_ocrvx OBJECT
+    ${OCR_LIBS_ROOT}/reductionEager/reductionEager.c
+)
+target_include_directories(ocr_lib_reductionEager_ocrvx PUBLIC
+    ${OCR_LIBS_ROOT}/reductionEager
+)
+target_include_directories(ocr_lib_reductionEager_ocrvx PRIVATE
+    ${OCR_LIBS_ROOT}/macros/macros
+    ${OCRVX_OCR_INC}
+)
+set_target_properties(ocr_lib_reductionEager_ocrvx PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
+target_compile_options(ocr_lib_reductionEager_ocrvx PRIVATE ${BENCH_C_OPT} -w
+    "-include" "${OCRVX_COMPAT_H}")
+target_compile_definitions(ocr_lib_reductionEager_ocrvx PRIVATE ${OCR_EXT_DEFINES} "OCR_TYPE_H=vdm.h")
 
 add_library(ocr_lib_timer_ocrvx OBJECT
     ${OCR_LIBS_ROOT}/timer/x86/timer.c
@@ -157,9 +168,19 @@ target_compile_options(ocr_lib_reduction_v1_ocrvx PRIVATE ${BENCH_C_OPT} -w
     "-include" "${OCRVX_COMPAT_H}")
 target_compile_definitions(ocr_lib_reduction_v1_ocrvx PRIVATE ${OCR_EXT_DEFINES} "OCR_TYPE_H=vdm.h")
 
-# ocr_lib_ocrAppUtils_ocrvx: not defined.
-# ocrAppUtils.c uses ocrPrintf which is absent from vdm.h.
-# Apps that require ocrAppUtils will skip the _ocrvx target.
+add_library(ocr_lib_ocrAppUtils_ocrvx OBJECT
+    ${OCR_LIBS_ROOT}/ocrAppUtils/ocrAppUtils.c
+)
+target_include_directories(ocr_lib_ocrAppUtils_ocrvx PUBLIC
+    ${OCR_LIBS_ROOT}/ocrAppUtils
+)
+target_include_directories(ocr_lib_ocrAppUtils_ocrvx PRIVATE
+    ${OCRVX_OCR_INC}
+)
+set_target_properties(ocr_lib_ocrAppUtils_ocrvx PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
+target_compile_options(ocr_lib_ocrAppUtils_ocrvx PRIVATE ${BENCH_C_OPT} -w
+    "-include" "${OCRVX_COMPAT_H}")
+target_compile_definitions(ocr_lib_ocrAppUtils_ocrvx PRIVATE ${OCR_EXT_DEFINES} "OCR_TYPE_H=vdm.h")
 
 endif() # TARGET ocr_vdm_mpi
 
@@ -623,7 +644,6 @@ add_benchmark_app(NAME nekbone
     treeForkJoin.c z_nekbone_inOcr.c
     LIBS reduction
     EXTRA_LINK_LIBS m
-    OCRVX_SKIP   # uses ocrGuidMapDestroy absent from vdm.h distributed runtime
 )
 
 add_benchmark_app(NAME npb_cg

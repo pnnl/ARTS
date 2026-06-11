@@ -174,7 +174,7 @@ TIER_A: list[Case] = [
          scalar_re=r"Final energy\s*:\s*([\-+0-9.eE]+)", scalar_kind="float",
          scalar_tol=1e-6,
          multinode=True,  # 3-way: xsocr runs it at MN (old HCDist-timeout reason was stale)
-         ocrvx_skip="ocrAppUtils helper lib uses ocrPrintf absent from vdm.h"),
+         ),
     Case("CoMD_sdsc", "CoMD_sdsc", ["-x","4","-y","4","-z","4","-N","2"],
          # "Final energy" is the end-to-end answer (after the 2-timestep loop);
          # "Initial energy" only echoes the setup state and verifies nothing.
@@ -199,15 +199,14 @@ TIER_A: list[Case] = [
     Case("hpcg_intel_Eager", "hpcg_intel_Eager", ["1","1","1","16","5"],
          scalar_re=r"final deviation:\s*([\-+0-9.eE]+)", scalar_kind="float",
          scalar_tol=1e-4,
-         multinode=True,
-         ocrvx_skip="reductionEager helper lib uses OCR_HINT_DB_EAGER absent from vdm.h"),
+         multinode=True),
     Case("Stencil1D_intel_chandra", "Stencil1D_intel_chandra", [],
          scalar_re=r"Solution validates", scalar_kind="bool",
          multinode=True),
     Case("Stencil2D_intel_channelEVTs", "Stencil2D_intel_channelEVTs", [],
          scalar_re=r"Computed L1 norm\s*=\s*([\-+0-9.eE]+)", scalar_kind="float", scalar_tol=1e-6,
          multinode=True,
-         ocrvx_skip="ocrAppUtils helper lib uses ocrPrintf absent from vdm.h"),
+         ),
     Case("Stencil2D_intel_chandra", "Stencil2D_intel_chandra", [],
          scalar_re=r"L1 norm\s*=\s*([\-+0-9.eE]+)", scalar_kind="float", scalar_tol=1e-6,
          multinode=True),
@@ -268,7 +267,7 @@ TIER_A: list[Case] = [
          ["--nx","4","--ny","4","--nz","4","--num_tsteps","2","--num_refine","3"],
          scalar_re=r"Done", scalar_kind="bool",
          multinode=True,  # 3-way: xsocr runs it at MN (old HCDist-timeout reason was stale)
-         ocrvx_skip="ocrAppUtils helper lib uses ocrPrintf absent from vdm.h"),
+         ),
 
     # --- rc-only sanity (no meaningful scientific scalar) ---
     Case("printf",           "printf",           [],
@@ -341,14 +340,14 @@ TIER_A: list[Case] = [
     Case("RSBench_intel_sharedDB",    "RSBench_intel_sharedDB",    ["-l","100"],
          scalar_re=r"RS_CHECKSUM:\s+([0-9]+)", scalar_kind="int",
          multinode=True,
-         ocrvx_skip="ocrAppUtils helper lib uses ocrPrintf absent from vdm.h"),
+         ),
     Case("XSBench_intel",             "XSBench_intel",             ["-s","small","-g","10","-l","100"],
          scalar_re=r"XSBench grid checksum:\s+(\d+)", scalar_kind="int",
          multinode_skip="no EDT affinity hints; runs caller-rank only"),
     Case("XSBench_intel_sharedDB",    "XSBench_intel_sharedDB",    ["-s","small","-g","10","-l","100"],
          scalar_re=r"Workload\s+\(unit\):\s+(\d+)", scalar_kind="int",
          multinode_skip="no EDT affinity hints; runs caller-rank only",
-         ocrvx_skip="ocrAppUtils helper lib uses ocrPrintf absent from vdm.h"),
+         ),
     Case("uts", "uts", [],
          scalar_re=r"UTS Tree size\s*=\s*(\d+)", scalar_kind="int",
          multinode_skip="no EDT affinity hints; runs caller-rank only"),
@@ -366,8 +365,7 @@ TIER_A: list[Case] = [
     Case("nekbone", "nekbone", ["1","1","1","1","1","1","2","1"],
          scalar_re=r"CGstep0_stop> rnorminit(?:\^2)?\s*=\s*([0-9.eE+-]+)",
          scalar_kind="float", scalar_tol=1e-9,
-         multinode=True,
-         ocrvx_skip="ocrGuidMapDestroy absent from ocr-vx vdm.h distributed runtime"),
+         multinode=True),
     Case("cholesky", "cholesky",
          ["--ds","50","--ts","10","--fi",CHOLESKY_INPUT],
          scalar_re=r"CHOLESKY trace\s*=\s*([0-9.eE+-]+)",
@@ -389,7 +387,7 @@ TIER_A: list[Case] = [
          # completion marker is the strongest portable check here.
          scalar_re=r"miniAMR complete", scalar_kind="bool",
          multinode=True,
-         ocrvx_skip="ocrAppUtils helper lib uses ocrPrintf absent from vdm.h"),
+         ),
     # hpcg_intel_Eager_Collective: full 3-way at multinode.  The xsocr
     # runtime is built with the collective-event extension chain
     # (COLLECTIVE_EVT + MULTI_OUTPUT_SLOT + DISTRIBUTED_LABELED + REG_ASYNC_SGL),
@@ -424,24 +422,20 @@ TIER_A: list[Case] = [
          multinode_skip="single-node design: file-scope volatile statics for shutdown barrier"),
 
     # --- SAR (revived via CMake crlibm bootstrap + datagen integration).
-    # Larger sizes (small/medium/large) are excluded from the default
-    # harness run because their wall-time exceeds the 30s per-case
-    # budget; opt in via --include-slow. ---
+    # All sizes build all three backends; per-size datasets are embedded
+    # via the .incbin pipeline.  Single-node only (no EDT affinity hints). ---
     Case("sar_tiny",   "sar_tiny",   [],
          scalar_re=r"SAR detects:\s*(\d+)", scalar_kind="int",
          multinode_skip="no EDT affinity hints; runs caller-rank only"),
     Case("sar_small",  "sar_small",  [],
          scalar_re=r"SAR detects:\s*(\d+)", scalar_kind="int",
-         multinode_skip="no EDT affinity hints; runs caller-rank only",
-         ocrvx_skip="sar data objects not generated for small size in current build"),
+         multinode_skip="no EDT affinity hints; runs caller-rank only"),
     Case("sar_medium", "sar_medium", [],
          scalar_re=r"SAR detects:\s*(\d+)", scalar_kind="int",
-         multinode_skip="no EDT affinity hints; runs caller-rank only",
-         ocrvx_skip="sar data objects not generated for medium size in current build"),
+         multinode_skip="no EDT affinity hints; runs caller-rank only"),
     Case("sar_large",  "sar_large",  [],
          scalar_re=r"SAR detects:\s*(\d+)", scalar_kind="int",
-         multinode_skip="no EDT affinity hints; runs caller-rank only",
-         ocrvx_skip="sar data objects not generated for large size in current build"),
+         multinode_skip="no EDT affinity hints; runs caller-rank only"),
 ]
 
 # Tier B — 3-way (baseline ↔ xsocr ↔ arts) scalar comparison.
