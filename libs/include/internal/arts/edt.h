@@ -59,7 +59,8 @@ bool arts_edt_create_core(struct arts_edt_s *edt, arts_guid_kind_t guid_kind,
                           unsigned int edt_space, arts_edt_t func_ptr,
                           uint32_t paramc, const uint64_t *paramv,
                           uint32_t depc, arts_guid_t hint_finish_event,
-                          uint64_t arts_id, uint32_t flags);
+                          arts_guid_t hint_output_event, uint64_t arts_id,
+                          uint32_t flags);
 void arts_edt_delete(struct arts_edt_s *edt);
 /* deleter pointer for foreign TUs that allocate arts_edt_s stubs
  * (e.g. remote handler.c arts_handler_edt_create's race-loser cleanup). */

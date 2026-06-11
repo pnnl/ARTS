@@ -89,6 +89,14 @@ struct arts_edt_s {
   arts_guid_t guid;
   arts_guid_t finish_event;          /**< LATCH event for finish-scope tracking.
                                           NULL_GUID = no finish-scope (legacy path). */
+  arts_guid_t output_event;          /**< Per-EDT result channel (OCR-style).
+                                          NULL_GUID = none.  The run path
+                                          satisfies this event with output_data
+                                          after the EDT's data-block releases.
+                                          Never inherited (unlike finish_event). */
+  arts_guid_t output_data;           /**< Result GUID the body registered via
+                                          arts_edt_set_result (NULL_GUID if
+                                          none); payload of output_event. */
   arts_edt_types_t edt_type;         /**< EDT subtype (DEFAULT=CPU, GPU). */
   volatile unsigned int depc_needed; /**< Remaining unsatisfied deps (satisfy
                                           phase — driven to 0 by event/signal

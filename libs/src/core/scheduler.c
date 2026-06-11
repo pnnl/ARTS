@@ -211,6 +211,17 @@ void arts_run_edt(struct arts_edt_s *edt) {
   release_dbs(depc, depv, false);
   arts_release_created_dbs();
 
+  /* Output event: satisfied only now, after every release above, so a
+   * consumer it wakes cannot acquire one of this EDT's data blocks before
+   * the writes are published (a satisfy sent from the EDT body would
+   * precede the version bump and a remote reader could be served its stale
+   * cached copy).  The payload is whatever the body registered via
+   * arts_edt_set_result (NULL_GUID if it registered none). */
+  if (edt->output_event != NULL_GUID) {
+    arts_event_satisfy_slot(edt->output_event, edt->output_data,
+                            ARTS_EVENT_LATCH_DECR_SLOT);
+  }
+
   arts_unset_thread_local_edt_info();
 
   ARTS_INFO("EDT[Guid:%lu, Id:%lu] finished (exec_ns=%lu)", edt->guid,

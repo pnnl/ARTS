@@ -712,7 +712,7 @@ arts_guid_t internal_edt_create_gpu(arts_edt_t func_ptr, arts_guid_t *guid,
   // artsIntrospectionEdtCreateBegin();
   (void)arts_edt_create_core((struct arts_edt_s *)edt, ARTS_GUID_EDT, guid,
                              rank, edt_space, func_ptr, paramc, paramv, depc,
-                             NULL_GUID, 0, 0);
+                             NULL_GUID, NULL_GUID, 0, 0);
   // artsIntrospectionEdtCreateFinish(created);
   //    ARTSEDTCOUNTERTIMERENDINCREMENT(EDT_CREATE_COUNTER);
   return *guid;

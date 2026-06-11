@@ -128,7 +128,8 @@ bool arts_edt_create_core(struct arts_edt_s *edt, arts_guid_kind_t guid_kind,
                           unsigned int edt_space, arts_edt_t func_ptr,
                           uint32_t paramc, const uint64_t *paramv,
                           uint32_t depc, arts_guid_t hint_finish_event,
-                          uint64_t arts_id, uint32_t flags) {
+                          arts_guid_t hint_output_event, uint64_t arts_id,
+                          uint32_t flags) {
   if (!edt) {
     edt = (struct arts_edt_s *)arts_calloc_align(1, edt_space, 16);
   }
@@ -180,6 +181,10 @@ bool arts_edt_create_core(struct arts_edt_s *edt, arts_guid_kind_t guid_kind,
      * thread). */
     arts_event_satisfy_slot(parent_fe, NULL_GUID, ARTS_EVENT_LATCH_INCR_SLOT);
   }
+  /* Output event (per-EDT result channel): never inherited — it belongs to
+   * this EDT only.  The run path satisfies it with the EDT's returned GUID
+   * after the EDT's data-block releases. */
+  edt->output_event = hint_output_event;
   (void)flags;
 
   /* Copy inline parameter values into the EDT's trailing storage.
@@ -298,11 +303,21 @@ arts_guid_t arts_edt_create(arts_edt_t func_ptr, uint32_t paramc,
   unsigned int edt_space = sizeof(struct arts_edt_s) +
                            (paramc * sizeof(uint64_t)) +
                            (depc * sizeof(arts_edt_dep_t));
-  bool ok = arts_edt_create_core(NULL, ARTS_GUID_EDT, &guid, rank, edt_space,
-                                 func_ptr, paramc, paramv, depc,
-                                 snap.finish_event, snap.edt_id, snap.flags);
+  bool ok = arts_edt_create_core(
+      NULL, ARTS_GUID_EDT, &guid, rank, edt_space, func_ptr, paramc, paramv,
+      depc, snap.finish_event, snap.output_event, snap.edt_id, snap.flags);
   TIME_EDT_CREATE_STOP();
   return ok ? guid : NULL_GUID;
+}
+
+/* Register the running EDT's result GUID — delivered as the payload when the
+ * run path satisfies the EDT's output_event after its data-block releases.
+ * `current_edt` is the worker thread-local; outside a running EDT this is a
+ * documented no-op. */
+void arts_edt_set_result(arts_guid_t result_guid) {
+  if (current_edt) {
+    current_edt->output_data = result_guid;
+  }
 }
 
 static void arts_edt_free(struct arts_edt_s *edt) {

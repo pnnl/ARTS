@@ -239,6 +239,13 @@ typedef struct {
    *  ambient finish scope (default).  When set, this EDT (and its descendants)
    *  join that finish event: INCR at create, DECR at completion. */
   arts_guid_t finish_event;
+  /** Output event (per-EDT result channel; OCR-style).  NULL_GUID = none
+   *  (default).  When set, the runtime satisfies this event (DECR slot)
+   *  after the EDT's data blocks have been released, carrying the result
+   *  GUID the EDT body registered via @c arts_edt_set_result (NULL_GUID if
+   *  it registered none).  Unlike @c finish_event this is never inherited —
+   *  it belongs to this EDT only. */
+  arts_guid_t output_event;
   /** Bitfield of ARTS_EDT_FLAG_*.  uint32_t for future flag growth.  Default
    * ARTS_EDT_FLAG_NONE (0). */
   uint32_t flags;
@@ -249,6 +256,7 @@ typedef struct {
                      .edt_id = 0,                                              \
                      .guid = NULL_GUID,                                        \
                      .finish_event = NULL_GUID,                                \
+                     .output_event = NULL_GUID,                                \
                      .flags = ARTS_EDT_FLAG_NONE})
 
 /** Hint passed to @c arts_db_create.
@@ -610,14 +618,27 @@ int arts_guid_index_from(arts_guid_t range_guid, arts_guid_t guid);
  * @param paramc   Number of static parameters.
  * @param paramv   Array of @p paramc uint64_t values copied into the closure.
  * @param depc     Number of dependency slots.
- * @param hint     Advisory metadata (rank, edt_id, guid, finish_event).  NULL =
- *                 defaults.
+ * @param hint     Advisory metadata (rank, edt_id, guid, finish_event,
+ *                 output_event).  NULL = defaults.
  * @return GUID of the newly created EDT.
  * @see arts_add_dependence, arts_edt_destroy
  */
 arts_guid_t arts_edt_create(arts_edt_t func_ptr, uint32_t paramc,
                             const uint64_t *paramv, uint32_t depc,
                             const arts_edt_hint_t *hint);
+
+/**
+ * @brief Register the calling EDT's result GUID (output-event payload).
+ *
+ * Call from inside an EDT body.  The runtime delivers the registered GUID
+ * by satisfying the EDT's output event (@c arts_edt_hint_t.output_event) —
+ * strictly after the EDT's data blocks have been released, so a consumer
+ * woken by the output event can never acquire one of this EDT's data
+ * blocks before the writes are published.  A later call replaces the
+ * value; without a call the output event fires with NULL_GUID.  No-op for
+ * EDTs created without an output event, or outside a running EDT.
+ */
+void arts_edt_set_result(arts_guid_t result_guid);
 
 /**
  * @brief Destroy an EDT and remove its GUID from the routing table.

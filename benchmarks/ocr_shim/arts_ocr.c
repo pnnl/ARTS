@@ -819,12 +819,19 @@ static void ocr_els_reset(void);
  * Layout of ARTS paramv for OCR EDTs:
  *   paramv[0] = function pointer (ocrEdt_t)
  *   paramv[1] = original paramc
- *   paramv[2] = output event GUID (for non-finish EDTs) or NULL_GUID
- *   paramv[3..3+paramc-1] = original paramv values
+ *   paramv[2..2+paramc-1] = original paramv values
+ *
+ * Non-finish EDTs with an OCR outputEvent are created with
+ * hint.output_event; the trampoline registers the OCR return value via
+ * arts_edt_set_result, and the ARTS runtime satisfies the output event
+ * with it after the EDT's data-block releases (OCR rule: an EDT completes
+ * the release of all of its data blocks before its post-event is
+ * satisfied).
  *
  * For finish EDTs (EDT_PROP_FINISH), ocrEdtCreate pre-creates a FINISH event
- * (via ARTS_EVENT_HINT_FINISH), passes it to the EDT via hint.finish_event, and
- * chains it to the OCR outputEvent.  The trampoline itself is scope-agnostic.
+ * (via ARTS_EVENT_HINT_FINISH), passes it to the EDT via hint.finish_event,
+ * and chains it to the OCR outputEvent.  The trampoline itself is
+ * scope-agnostic.
  * ========================================================================= */
 
 static void ocr_edt_trampoline(uint32_t paramc, const uint64_t *paramv,
@@ -836,12 +843,11 @@ static void ocr_edt_trampoline(uint32_t paramc, const uint64_t *paramv,
 
   ocrEdt_t func = (ocrEdt_t)paramv[0];
   u32 origParamc = (u32)paramv[1];
-  arts_guid_t outEvt = (arts_guid_t)paramv[2];
   /* ARTS paramv is const; copy original params for OCR's non-const API */
   u64 *origParamv = NULL;
   u64 origParamBuf[origParamc > 0 ? origParamc : 1];
   if (origParamc > 0) {
-    memcpy(origParamBuf, &paramv[3], origParamc * sizeof(u64));
+    memcpy(origParamBuf, &paramv[2], origParamc * sizeof(u64));
     origParamv = origParamBuf;
   }
 
@@ -859,14 +865,10 @@ static void ocr_edt_trampoline(uint32_t paramc, const uint64_t *paramv,
   }
 
   ocrGuid_t returnGuid = func(origParamc, origParamv, depc, ocrDepv);
-
-  /* Non-finish EDTs satisfy the output event directly with the return value.
-   * Finish EDTs have their output event satisfied by the runtime when the
-   * finish-scope (this EDT + all descendants) drains via finish_event. */
-  if (outEvt != NULL_GUID) {
-    arts_event_satisfy_slot(outEvt, returnGuid.guid,
-                            ARTS_EVENT_LATCH_DECR_SLOT);
-  }
+  /* Output-event payload: registered with the runtime, delivered after the
+   * EDT's releases.  Unused (and harmless) when the EDT has no output
+   * event. */
+  arts_edt_set_result(returnGuid.guid);
 }
 
 /* =========================================================================
@@ -980,18 +982,15 @@ u8 ocrEdtCreate(ocrGuid_t *guid, ocrGuid_t templateGuid, u32 paramc,
     }
   }
 
-  /* paramv layout passed to ocr_edt_trampoline:
-   *   [0] = function pointer, [1] = original paramc,
-   *   [2] = outEvt (non-finish only; finish outEvt is wired via finish_event),
-   *   [3..3+N-1] = user paramv.
+  /* paramv layout passed to the trampoline:
+   *   [0] = function pointer, [1] = original paramc, [2..2+N-1] = user paramv.
    * arts_calloc zero-initialises, so trailing padding beyond the last user
    * word is safe when OCR apps cast structs to u64* with overshoot. */
-  u32 artsParamc = 3 + actualParamc;
+  u32 artsParamc = 2 + actualParamc;
   uint64_t *artsParamv = (uint64_t *)arts_calloc(artsParamc, sizeof(uint64_t));
   artsParamv[0] = (uint64_t)(uintptr_t)templ->funcPtr;
   artsParamv[1] = (uint64_t)actualParamc;
-  artsParamv[2] = isFinishEdt ? (uint64_t)NULL_GUID : (uint64_t)outEvt;
-  ocr_copy_paramv_safe(&artsParamv[3], paramv, actualParamc);
+  ocr_copy_paramv_safe(&artsParamv[2], paramv, actualParamc);
 
   /* For finish EDTs, create the finish event explicitly so the shim owns it
    * and can chain it to outEvt immediately — without querying the EDT after
@@ -1008,9 +1007,16 @@ u8 ocrEdtCreate(ocrGuid_t *guid, ocrGuid_t templateGuid, u32 paramc,
     fe = arts_event_create(&feh);
   }
 
+  /* Non-finish EDTs deliver the OCR return value through the ARTS output
+   * event (hint.output_event; the trampoline registers the value via
+   * arts_edt_set_result): the runtime satisfies it after the EDT's
+   * data-block releases.  Finish EDTs get their outputEvent chained to the
+   * finish event below instead. */
   arts_edt_hint_t edtHint = {.rank = rank};
   if (isFinishEdt) {
     edtHint.finish_event = fe;
+  } else {
+    edtHint.output_event = outEvt;
   }
   arts_guid_t edtGuid = arts_edt_create(ocr_edt_trampoline, artsParamc,
                                         artsParamv, actualDepc, &edtHint);
