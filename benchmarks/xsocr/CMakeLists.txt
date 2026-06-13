@@ -48,12 +48,19 @@ target_include_directories(ocr_xsocr_objects PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}     # generated ocr-config.h wrapper
 )
 
+# Coherence configuration: the lockable datablock factory's per-DB hints
+# OCR_HINT_DB_EAGER (push a read-only copy to a remote consumer at satisfy) and
+# OCR_HINT_DB_LAZY (retain a DB at its current owner and migrate it on the next
+# acquire) are gated by ALLOW_EAGER_DB / ENABLE_LAZY_DB.  Both are left
+# undefined so every datablock uses the factory's default home-centric protocol
+# (fetch-on-acquire, writeback-to-home-on-release) uniformly; the advisory
+# hints, which only some apps set, are then inert.  This keeps the runtime's
+# coherence behaviour single and uniform across all blocks.  The
+# channel/collective extension chain below is unrelated and stays enabled.
 target_compile_definitions(ocr_xsocr_objects PRIVATE
     "OCR_TYPE_H=x86.h"
     CACHE_LINE_SZB=64
     GUID_PROVIDER_LOCID_SIZE=10
-    ALLOW_EAGER_DB
-    ENABLE_LAZY_DB
     OCR_MAX_MULTI_SLOT=32
 )
 

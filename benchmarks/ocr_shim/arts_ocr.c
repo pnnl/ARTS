@@ -678,7 +678,8 @@ static void collective_launch_generation(CollectiveMetadata *meta, u32 r,
 
   /* slot 0: own datum DB.  Release WRITE access so the (possibly cross-rank)
    * up reducer reads the populated bytes; the up reducer for r runs on r's
-   * node, which is this node, but a release keeps the coherence state well-formed. */
+   * node, which is this node, but a release keeps the coherence state
+   * well-formed. */
   void *ownPtr;
   arts_guid_t ownDb = arts_db_create(&ownPtr, payload, ARTS_DB_DEFAULT,
                                      ARTS_DB_PROP_NONE, NULL);
@@ -926,6 +927,12 @@ static int extract_db_affinity(ocrHint_t *hint) {
   if (hint == NULL || hint->type != OCR_HINT_DB_T) {
     return -1;
   }
+  /* Only the affinity hint is consulted.  The other DB hints — the
+   * data-movement ones (OCR_HINT_DB_EAGER eager-push, OCR_HINT_DB_LAZY
+   * lazy-migrate) and the memory-level ones (NEAR/INTER/FAR/HIGHBW) — are
+   * advisory under the OCR spec and intentionally ignored: ARTS coherence is a
+   * compile-time global protocol (ARTS_COHERENCE_PROTOCOL), not a per-DB
+   * policy, so a per-DB data-movement hint carries no runtime meaning here. */
   int idx = OCR_HINT_DB_AFFINITY - OCR_HINT_DB_PROP_START - 1;
   if (idx < 0 || !(hint->propMask & (1ULL << idx))) {
     return -1;

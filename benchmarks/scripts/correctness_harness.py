@@ -206,6 +206,12 @@ TIER_A: list[Case] = [
          scalar_re=r"final deviation:\s*([\-+0-9.eE]+)", scalar_kind="float",
          scalar_tol=1e-4,
          multinode=True),
+    # The "Eager" in these app names is the app's reduction algorithm (the
+    # reductionEager library / OCR_HINT_DB_EAGER read-prefetch hint), NOT a
+    # runtime coherence mode.  The benchmark builds run xsocr eager-only and
+    # ocr-vx lazy-only with the per-DB eager/lazy hints disabled/ignored, so
+    # these apps exercise each runtime's default coherence regardless of the
+    # hint.
     Case("hpcg_intel_Eager", "hpcg_intel_Eager", ["1","1","1","16","5"],
          scalar_re=r"final deviation:\s*([\-+0-9.eE]+)", scalar_kind="float",
          scalar_tol=1e-4,
