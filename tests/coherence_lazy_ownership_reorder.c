@@ -37,11 +37,12 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 
-/// @file coherence_lrc_ownership_reorder.c
-/// @brief Stress the LRC ownership-transfer TRANSFER/INVALIDATE two-wire
-///        reorder window under receiver_threads>1.
+/// @file coherence_lazy_ownership_reorder.c
+/// @brief Stress the lazy-protocol ownership-transfer TRANSFER/INVALIDATE
+///        two-wire reorder window under receiver_threads>1.
 ///
-/// THE WINDOW UNDER TEST.  Under LRC, a shared RW DataBlock's ownership moves
+/// THE WINDOW UNDER TEST.  Under the lazy coherence protocol, a shared RW
+/// DataBlock's ownership moves
 /// owner->owner: home INVALIDATEs the current owner, which ships
 /// TRANSFER_OWNERSHIP (carrying a +1 writer_count sentinel) directly to the new
 /// owner.  When a *further* requester is already queued, home (after the new
@@ -60,7 +61,8 @@
 /// was clobbered by the swap(1) that followed), so the positive->0 transfer
 /// edge was lost and the ownership transfer to the FOLLOWING requester never
 /// shipped -> a queued RW acquirer is stranded forever (distributed hang).  The
-/// fix makes writer_count commutative & signed (matching RC): TRANSFER does
+/// fix makes writer_count commutative & signed (matching the eager protocol):
+/// TRANSFER does
 /// add(+1), INVALIDATE/release do a signed `int rest = sub(...); if (rest != 0)
 /// return;`, shipping TRANSFER_OWNERSHIP only on the unique positive->0 edge; a
 /// transient negative simply means "INVALIDATE raced ahead of its sentinel —
@@ -108,7 +110,7 @@
 ///
 /// Requires 2+ ranks and a receiver_threads>=2 config (arts_2n_io.cfg) to make
 /// the two-wire reorder physically possible; SKIPs cleanly otherwise (and under
-/// LC, which has no exclusive-RW ownership-transfer chain).
+/// the relaxed model, which has no exclusive-RW ownership-transfer chain).
 
 #include "arts.h"
 
@@ -151,7 +153,7 @@ static void *wd_thread(void *arg) {
     }
   }
   (void)fprintf(stderr,
-                "HANG: LRC ownership-transfer reorder stress did not complete "
+                "HANG: lazy ownership-transfer reorder stress did not complete "
                 "in 100s (a TRANSFER/INVALIDATE reorder lost an ownership "
                 "transfer -> stranded RW acquirer)\n");
   (void)fflush(stderr);
@@ -200,7 +202,7 @@ static void check_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     atomic_store(&g_check_result, -1);
     (void)fprintf(
         stderr,
-        "FAIL: LRC ownership-transfer reorder stress: sum %lld != %llu — "
+        "FAIL: lazy ownership-transfer reorder stress: sum %lld != %llu — "
         "the ownership chain lost/duplicated a write (a transfer shipped "
         "stale data, or a transfer was lost)\n",
         got, (unsigned long long)expected);
@@ -208,7 +210,7 @@ static void check_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 
   atomic_store(&g_check_result, 1);
-  arts_printf("PASS: LRC ownership-transfer reorder stress summed to %llu "
+  arts_printf("PASS: lazy ownership-transfer reorder stress summed to %llu "
               "(%llu transfers driven; no transfer lost, no write dropped)\n",
               (unsigned long long)expected, (unsigned long long)expected);
 }
@@ -220,16 +222,17 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
 
-  arts_printf("=== coherence_lrc_ownership_reorder ===\n");
+  arts_printf("=== coherence_lazy_ownership_reorder ===\n");
 
-#ifdef ARTS_MEMORY_MODEL_LC
-  /* LC unifies RW with RO (concurrent replicas, reduce on release) and has no
-   * owner->owner ownership-transfer chain (no LOCK_REQ / INVALIDATE /
-   * TRANSFER), so the TRANSFER/INVALIDATE reorder window does not exist.
-   * Concurrent acquirers also race the read-modify-write under LC.  This test
-   * targets the RC/LRC exclusive-RW ownership-transfer chain (and specifically
-   * LRC's owner->owner TRANSFER path). */
-  arts_printf("SKIP: LC has no exclusive-RW ownership-transfer chain\n");
+#ifdef ARTS_MEMORY_MODEL_RELAXED
+  /* The relaxed (DB-DRF) model unifies RW with RO (concurrent replicas,
+   * reduce on release) and has no owner->owner ownership-transfer chain (no
+   * LOCK_REQ / INVALIDATE / TRANSFER), so the TRANSFER/INVALIDATE reorder
+   * window does not exist.  Concurrent acquirers also race the
+   * read-modify-write under the relaxed model.  This test targets the
+   * OCR-model exclusive-RW ownership-transfer chain (and specifically the
+   * lazy protocol's owner->owner TRANSFER path). */
+  arts_printf("SKIP: RELAXED has no exclusive-RW ownership-transfer chain\n");
   atomic_store(&g_check_result, 1);
   arts_shutdown();
   return;
@@ -296,7 +299,7 @@ int main(int argc, char **argv) {
   arts_rt(argc, argv);
   if (arts_get_current_rank() == 0 && atomic_load(&g_check_result) != 1) {
     (void)fprintf(stderr,
-                  "FAIL: LRC ownership-transfer reorder stress check did not "
+                  "FAIL: lazy ownership-transfer reorder stress check did not "
                   "pass (result=%d)\n",
                   atomic_load(&g_check_result));
     return 1;

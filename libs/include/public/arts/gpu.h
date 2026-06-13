@@ -220,8 +220,8 @@ void arts_put_in_db_from_gpu(void *ptr, arts_guid_t db_guid,
 /**
  * @brief Synchronize an LC DataBlock from GPU to CPU and signal an EDT.
  *
- * Copies the GPU-resident data of the LC (Locality Class) DataBlock back
- * to the host and signals @p edt_guid at dependency @p slot.
+ * Copies the GPU-resident data of the LC (Location Consistency) DataBlock
+ * back to the host and signals @p edt_guid at dependency @p slot.
  *
  * @param edt_guid EDT to signal after the sync completes.
  * @param slot     Dependency slot to fill.

@@ -4,16 +4,16 @@
  *
  * Each arts_send_db_* helper fills a wire packet (header + body) and either
  * dispatches the matching handler inline (when the destination is the local
- * rank — arts_transport_send_async drops self-sends, and the RC uses
- * uniform "send to home" semantics including home == self) or enqueues the
- * packet on the outbox for the transport layer.
+ * rank — arts_transport_send_async drops self-sends, and the eager protocol
+ * uses uniform "send to home" semantics including home == self) or enqueues
+ * the packet on the outbox for the transport layer.
  *
  * The receive-side bodies (arts_handler_db_*) and the home-side dedup /
  * transfer helpers live in coherence_handlers.c.
  *
  * Single-node note: arts_transport_send_async drops messages whose
- * destination is the local rank (self_send_check rejects).  The RC uses
- * uniform "send to home" semantics including home == self, so we dispatch
+ * destination is the local rank (self_send_check rejects).  The eager protocol
+ * uses uniform "send to home" semantics including home == self, so we dispatch
  * handlers directly when rank == self instead of going over the network.
  */
 
@@ -34,10 +34,10 @@
 /* ===== Sender helpers ============================================== */
 
 /* arts_send_db_ownership_request / _return / _invalidate and the
- * OWNERSHIP_RESPONSE sender live in the model TUs (RC+LRC only): the request /
- * return / invalidate senders in coherence/release.c, the OWNERSHIP_RESPONSE
- * sender in coherence/rc.c (GRANT) and coherence/lrc.c
- * (TRANSFER_OWNERSHIP).  LC has no exclusive-ownership wire messages. */
+ * OWNERSHIP_RESPONSE sender live in the protocol TUs (eager+lazy only): the
+ * request / return / invalidate senders in coherence/ownership.c, the
+ * OWNERSHIP_RESPONSE sender in coherence/eager.c (GRANT) and coherence/lazy.c
+ * (TRANSFER_OWNERSHIP).  RELAXED has no exclusive-ownership wire messages. */
 
 void arts_send_db_writeback(unsigned int home_rank, arts_guid_t db_guid,
                             uint64_t version, uint64_t cv,
@@ -52,12 +52,12 @@ void arts_send_db_writeback(unsigned int home_rank, arts_guid_t db_guid,
   p.cv = cv;
   p.flag = (uint8_t)flag;
   memset(p.pad, 0, sizeof(p.pad));
-#if !defined(ARTS_MEMORY_MODEL_LRC)
-  /* Self-send (home == self) — RC/LC only.  LRC reaches arts_send_db_writeback
-   * solely through the owner→home WB_AND_TRANSFER trigger, which early-returns
-   * to a local transfer when home == self, so this branch is statically
-   * unreachable under LRC (and its OOO_DB_WRITEBACK kind does not exist in the
-   * LRC enum). */
+#if !defined(ARTS_COHERENCE_PROTOCOL_LAZY)
+  /* Self-send (home == self) — eager/relaxed only.  The lazy protocol reaches
+   * arts_send_db_writeback solely through the owner→home WB_AND_TRANSFER
+   * trigger, which early-returns to a local transfer when home == self, so
+   * this branch is statically unreachable under the lazy protocol (and its
+   * OOO_DB_WRITEBACK kind does not exist in the lazy enum). */
   if (home_rank == arts_global_rank_id) {
     /* Route through the OoO engine exactly as the wire RX dispatcher does —
      * HIT runs the writeback body inline, MISS defers the args (trailing data
@@ -95,10 +95,10 @@ void arts_send_db_writeback(unsigned int home_rank, arts_guid_t db_guid,
 }
 
 /* WRITEBACK_ACK is the reply to a synchronous WRITEBACK round, which only the
- * RC and LC models use (LRC transfers ownership owner→owner without a
- * synchronous writeback, so it never sends or receives WRITEBACK_ACK and its
- * dispatcher fatals on the wire message). */
-#if !defined(ARTS_MEMORY_MODEL_LRC)
+ * eager and relaxed protocols use (the lazy protocol transfers ownership
+ * owner→owner without a synchronous writeback, so it never sends or receives
+ * WRITEBACK_ACK and its dispatcher fatals on the wire message). */
+#if !defined(ARTS_COHERENCE_PROTOCOL_LAZY)
 void arts_send_db_writeback_ack(unsigned int releaser_rank, arts_guid_t db_guid,
                                 uint64_t cv) {
   struct arts_msg_writeback_ack_packet_s p;
@@ -120,7 +120,7 @@ void arts_send_db_writeback_ack(unsigned int releaser_rank, arts_guid_t db_guid,
   }
   arts_transport_send_async((int)releaser_rank, (char *)&p, sizeof(p));
 }
-#endif /* !ARTS_MEMORY_MODEL_LRC */
+#endif /* !ARTS_COHERENCE_PROTOCOL_LAZY */
 
 void arts_send_db_snapshot_request(unsigned int home_rank, arts_guid_t db_guid,
                                    arts_guid_t edt_guid, uint32_t slot) {
@@ -252,6 +252,6 @@ void arts_send_db_cache_destroy(unsigned int sharer_rank, arts_guid_t db_guid) {
   arts_transport_send_async((int)sharer_rank, (char *)&p, sizeof(p));
 }
 
-/* The LRC-only senders (INSTALL_ACK, REDIRECT_RO) live in coherence/lrc.c
- * alongside their handlers; the RC/LRC OWNERSHIP_RESPONSE senders live in
- * coherence/rc.c / coherence/lrc.c. */
+/* The LAZY-only senders (INSTALL_ACK, REDIRECT_RO) live in coherence/lazy.c
+ * alongside their handlers; the OCR OWNERSHIP_RESPONSE senders live in
+ * coherence/eager.c / coherence/lazy.c. */

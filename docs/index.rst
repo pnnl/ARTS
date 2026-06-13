@@ -10,7 +10,8 @@ concepts.
 - **Event-Driven Tasks (EDTs)** — lightweight asynchronous work units
   scheduled when all dependencies are satisfied.
 - **DataBlocks (DBs)** — explicit data objects identified by globally unique
-  identifiers (GUIDs) and managed through the CDAG memory model.
+  identifiers (GUIDs); consistency is defined by the ARTS memory model
+  (see :doc:`programming_model/memory_model`).
 - **Distributed Scheduling** — decentralised scheduler with support for
   multi-node execution via TCP networking.
 - **GPU Support** — optional CUDA-based EDT and DataBlock operations.
@@ -30,9 +31,10 @@ concepts.
    programming_model/index
    programming_model/edt
    programming_model/datablocks
+   programming_model/memory_model
    programming_model/events
    programming_model/guids
-   programming_model/epochs
+   programming_model/finish_events
 
 .. toctree::
    :maxdepth: 2

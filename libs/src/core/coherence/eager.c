@@ -1,11 +1,11 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * RC (Release Consistency) coherence-model translation unit: defines the
- * RC-specific arts_handler_db_* / arts_db_* bodies directly (CMake links
- * exactly this TU for an RC build) plus the RC-only wire handlers/senders.
- * Compiled only when ARTS_MEMORY_MODEL=RC (selected in
- * libs/src/core/CMakeLists.txt). Contains NO ARTS_MEMORY_MODEL_* preprocessor
- * logic.
+ * EAGER protocol translation unit: defines the EAGER-specific
+ * arts_handler_db_* / arts_db_* bodies directly (CMake links exactly this TU
+ * for an OCR+EAGER build) plus the EAGER-only wire handlers/senders.
+ * Compiled only for ARTS_MEMORY_MODEL=OCR with ARTS_COHERENCE_PROTOCOL=EAGER
+ * (selected in libs/src/core/CMakeLists.txt). Contains NO model/protocol
+ * preprocessor logic.
  */
 #include <semaphore.h>
 #include <stdbool.h>
@@ -26,12 +26,12 @@
 #include "arts/transport/protocol.h" /* arts_fill_packet_header, MSG_* */
 #include "arts/utils/atomics.h"      /* arts_atomic_* */
 
-/* ===== 8-case acquire dispatch (RC arm) ============================
- * Whole arts_handler_db_acquire body for the RC build.  Diverges from LRC only
- * on the RO-has-local-data predicate (RC: is_home||is_owner — home always holds
- * current data via synchronous WRITEBACK).  The remote-RO, RW-local-fast, and
- * remote-RW paths are the shared helpers (coherence/coherence.c /
- * coherence/release.c). */
+/* ===== 8-case acquire dispatch (EAGER arm) ==========================
+ * Whole arts_handler_db_acquire body for the EAGER build.  Diverges from LAZY
+ * only on the RO-has-local-data predicate (EAGER: is_home||is_owner — home
+ * always holds current data via synchronous WRITEBACK).  The remote-RO,
+ * RW-local-fast, and remote-RW paths are the shared helpers
+ * (coherence/coherence.c / coherence/ownership.c). */
 void arts_handler_db_acquire(void *item, void *args) {
   struct arts_db_s *db = (struct arts_db_s *)item;
   struct arts_ooo_args_db_acquire_s *a =
@@ -49,7 +49,8 @@ void arts_handler_db_acquire(void *item, void *args) {
   bool is_owner = ((int)cache->writer_count > 0);
 
   if (mode == DB_MODE_RO) {
-    if (is_home || is_owner) { /* RC RO predicate (home holds current data) */
+    if (is_home ||
+        is_owner) { /* eager RO predicate (home holds current data) */
       dep->ptr = arts_db_acquire_local(cache);
       arts_db_acquire_resolved(edt, slot);
       return;
@@ -70,11 +71,12 @@ bool arts_db_acquire_is_serialized(arts_db_access_mode_t mode) {
   return mode == DB_MODE_RW;
 }
 
-/* ===== release_rw (RC arm) ========================================
- * RC drops its buffer ref in the tail (after the WRITEBACK reads buf->data), so
- * there is no pre-decrement ref drop.  local_transfer_now restores the sentinel
- * (writer_count = 1) when no waiter is queued, so the writer_count==0 teardown
- * window that LRC must close early does not exist for RC. */
+/* ===== release_rw (eager arm) ========================================
+ * The eager protocol drops its buffer ref in the tail (after the WRITEBACK
+ * reads buf->data), so there is no pre-decrement ref drop.  local_transfer_now
+ * restores the sentinel (writer_count = 1) when no waiter is queued, so the
+ * writer_count==0 teardown window that the lazy protocol must close early does
+ * not exist for the eager protocol. */
 void arts_db_release_rw(struct arts_db_cache_s *cache) {
   /* Defensive: writer_count==0 means our acquire never bumped ownership (e.g. a
    * cache already torn down by a destroy fan-out); decrementing would
@@ -107,7 +109,7 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
       arts_db_local_transfer_now(cache);
     } else {
       if (buf != NULL) {
-        /* RC R4: WRITEBACK_AND_TRANSFER + await ACK (stack-local sem). */
+        /* Eager R4: WRITEBACK_AND_TRANSFER + await ACK (stack-local sem). */
         sem_t cv;
         sem_init(&cv, 0, 0);
         unsigned int home_rank = arts_guid_get_rank(cache->db_guid);
@@ -119,8 +121,8 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
       }
     }
   } else if (!is_home && buf != NULL) {
-    /* RC R3: intermediate writeback so remote ROs see fresh data + await ACK.
-     */
+    /* Eager R3: intermediate writeback so remote ROs see fresh data + await
+     * ACK. */
     sem_t cv;
     sem_init(&cv, 0, 0);
     unsigned int home_rank = arts_guid_get_rank(cache->db_guid);
@@ -130,13 +132,13 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
     await_writeback_ack(&cv);
     sem_destroy(&cv);
   }
-  /* RC: release buffer ref after the writeback (which reads buf->data). */
+  /* Eager: release buffer ref after the writeback (which reads buf->data). */
   if (buf != NULL) {
     arts_db_buf_release(&buf_h);
   }
 }
 
-/* RC ownership-transfer chain advance.  Caller guarantees the baton
+/* Eager ownership-transfer chain advance.  Caller guarantees the baton
  * (home.invalidate_in_flight) is held (==1): a transfer round is in progress
  * and this call owns it.  Pops the next waiter, publishes it as rw_holder and
  * GRANTs it, then drives the chain home-side: if more waiters remain it
@@ -148,7 +150,7 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
  * baton is cleared at the two chain-end points — the queue-empty reclaim and
  * the terminal grant — each followed by a race-recheck for a requester that
  * enqueued after the clear. */
-void arts_db_rc_advance_chain(struct arts_db_cache_s *cache) {
+void arts_db_eager_advance_chain(struct arts_db_cache_s *cache) {
   struct arts_db_s *db =
       arts_db_of_cache(cache); /* home fields inlined in db */
   for (;;) {
@@ -166,7 +168,7 @@ void arts_db_rc_advance_chain(struct arts_db_cache_s *cache) {
        * rw_holder and INVALIDATEs it, so rw_holder=self must precede the clear
        * — otherwise the producer can observe a stale rw_holder naming a rank
        * whose sentinel was already withdrawn (writer_count==0) and underflow
-       * it.  (The LRC arms preserve the same clear-baton-last ordering.) */
+       * it.  (The lazy arms preserve the same clear-baton-last ordering.) */
       cache->writer_count = 1;
       atomic_store_explicit(&db->rw_holder, arts_global_rank_id,
                             memory_order_release);
@@ -267,14 +269,15 @@ void arts_db_rc_advance_chain(struct arts_db_cache_s *cache) {
   }
 }
 
-/* RC: the shared chain-advance holds the baton across the has_next chain and
- * clears it at the single queue-empty race-recovery point. */
+/* Eager: the shared chain-advance holds the baton across the has_next chain
+ * and clears it at the single queue-empty race-recovery point. */
 void arts_db_local_transfer_now(struct arts_db_cache_s *cache) {
-  arts_db_rc_advance_chain(cache);
+  arts_db_eager_advance_chain(cache);
 }
 
-/* ===== cache_s lifecycle (RC: pending_rw Vyukov MPSC) =============
- * Construct: RC's model field-init (the Vyukov MPSC pending_rw queue — cannot
+/* ===== cache_s lifecycle (eager: pending_rw Vyukov MPSC) =============
+ * Construct: the eager protocol's field-init (the Vyukov MPSC pending_rw queue
+ * — cannot
  * be zero-initialized, head/tail must point at the embedded stub) runs BEFORE
  * arts_db_cache_common_init so the queue is wired before any push could land.
  * Destruct order: buffer-NULL (pre) → pending_rw destroy → snapshot drain +
@@ -341,13 +344,13 @@ static void update_last_sent_max(struct arts_db_cache_s *cache,
                                  slot, data, data_size);
 }
 
-/* ===== Per-model wire-handler bodies =============================== */
+/* ===== Per-protocol wire-handler bodies =============================== */
 
 /* Cat-B pure body (OoO g_ooo_table[OOO_DB_SNAPSHOT_REQUEST]): the OoO engine
  * has already acquired the home db_s for db_guid and pinned a ref across this
  * call (cache is its FIRST member), so there is no lookup / NULL-check / defer
- * here.  RC serves from home's canonical buffer with last_sent_version dedup.
- */
+ * here.  The eager protocol serves from home's canonical buffer with
+ * last_sent_version dedup. */
 void arts_handler_db_snapshot_request(void *item_v, void *args_v) {
   struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
   struct arts_ooo_args_db_snapshot_request_s *a =
@@ -411,7 +414,7 @@ void arts_handler_db_writeback(void *item_v, void *args_v) {
    * transfer chain via the shared helper (baton held across has_next, cleared
    * only at the queue-empty race-recovery point). */
   if (a->flag == ARTS_WB_AND_TRANSFER) {
-    arts_db_rc_advance_chain(cache);
+    arts_db_eager_advance_chain(cache);
   }
 }
 
@@ -436,8 +439,8 @@ void arts_handler_db_writeback_ack(void *item_v, void *args_v) {
  * cache stays alive — only the install ref is dropped), then
  * arts_route_table_set_destroyed LAST detaches the slot cb + drops the install
  * ref; the cb deleter frees the cache once outstanding lookup refs drain.  A
- * second DESTROY_REQ finds the slot absent and is a no-op.  RC roster source =
- * home->last_sent_version + the queued ownership requesters. */
+ * second DESTROY_REQ finds the slot absent and is a no-op.  Eager roster
+ * source = home->last_sent_version + the queued ownership requesters. */
 void arts_handler_db_destroy(void *item_v, void *args_v) {
   struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
   struct arts_ooo_args_db_destroy_s *a =
@@ -447,7 +450,7 @@ void arts_handler_db_destroy(void *item_v, void *args_v) {
     return;
   }
   unsigned int self = arts_global_rank_id;
-  /* RC: use home->last_sent_version as the readers roster, then the queued
+  /* Eager: use home->last_sent_version as the readers roster, then the queued
    * ownership requesters. */
   {
     unsigned int n = arts_global_rank_count;
@@ -472,16 +475,16 @@ void arts_handler_db_destroy(void *item_v, void *args_v) {
   (void)arts_route_table_set_destroyed(a->db_guid);
 }
 
-/* Case-D leaf: RC publishes creator_rank as the home rw_holder (coalesce path).
- */
+/* Case-D leaf: eager publishes creator_rank as the home rw_holder (coalesce
+ * path). */
 void arts_db_create_publish_holder(struct arts_db_s *db,
                                    unsigned int creator_rank) {
   atomic_store_explicit(&db->rw_holder, creator_rank, memory_order_release);
 }
 
-/* ===== Ownership-round seams (called from coherence/release.c) ===
- * family→model: the release-family OWNERSHIP_REQUEST / RELEASE_OWNERSHIP
- * handlers delegate the RC/LRC-divergent steps here. */
+/* ===== Ownership-round seams (called from coherence/ownership.c) ==
+ * family→protocol: the ownership-family OWNERSHIP_REQUEST / RELEASE_OWNERSHIP
+ * handlers delegate the EAGER/LAZY-divergent steps here. */
 
 void arts_db_start_ownership_round(struct arts_db_cache_s *cache,
                                    struct arts_db_s *db,
@@ -500,14 +503,14 @@ void arts_db_start_ownership_round(struct arts_db_cache_s *cache,
 }
 
 void arts_db_ownership_return(struct arts_db_cache_s *cache) {
-  /* RC: advance the transfer chain via the shared helper (baton held across
+  /* Eager: advance the transfer chain via the shared helper (baton held across
    * has_next, cleared only at the queue-empty race-recovery point).  The
    * helper's master==NULL path sends a no-data GRANT so the new owner's waiter
    * still fires, rather than tearing the new owner's cache mid-chain. */
-  arts_db_rc_advance_chain(cache);
+  arts_db_eager_advance_chain(cache);
 }
 
-/* ===== RC GRANT handler (moved from handlers.c) ==================== */
+/* ===== Eager GRANT handler (moved from handlers.c) ==================== */
 
 void arts_handler_db_ownership_response(
     struct arts_msg_ownership_response_packet_s *p, const void *data,
@@ -535,7 +538,8 @@ void arts_handler_db_ownership_response(
    * exactly the pre-grant waiter set.  The whole scheme is commutative+signed:
    * sentinel(+1)+guard(+1)+drain(+1 each)+INVALIDATE(-1)+ release(-1)+guard(-1)
    * settle to 0 in any order; only the decrement that crosses to exactly 0
-   * ships ownership.  GRANT is RC/LRC only. */
+   * ships ownership.  GRANT is eager/lazy only (no GRANT in the relaxed
+   * protocol). */
   arts_atomic_add(&cache->writer_count, 2u);
   cache->ownership_req_in_flight = 0;
   /* Drain pending_rw — pop every queued waiter in FIFO order via the
@@ -560,7 +564,7 @@ void arts_handler_db_ownership_response(
   }
 }
 
-/* ===== RC INVALIDATE_NOTICE handler (Cat-B pure body) ============== */
+/* ===== Eager INVALIDATE_NOTICE handler (Cat-B pure body) ============== */
 
 /* Cat-B pure body (OoO g_ooo_table[OOO_DB_OWNERSHIP_INVALIDATE]): the engine
  * has already acquired the db_s for db_guid and pinned a ref across this call,
@@ -577,7 +581,7 @@ void arts_handler_db_ownership_invalidate(void *item_v, void *args_v) {
   struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
   struct arts_ooo_args_db_ownership_invalidate_s *a =
       (struct arts_ooo_args_db_ownership_invalidate_s *)args_v;
-  (void)a; /* RC ignores new_owner_rank (LRC consumes it). */
+  (void)a; /* Eager ignores new_owner_rank (lazy consumes it). */
   /* Sentinel withdrawal (writer_count -= 1).  Home's invalidate_in_flight gate
    * sends AT MOST ONE INVALIDATE_NOTICE to this rank per transfer round, after
    * rw_holder has been advanced to a rank that already holds the sentinel (+1).
@@ -599,7 +603,7 @@ void arts_handler_db_ownership_invalidate(void *item_v, void *args_v) {
   }
 }
 
-/* ===== RC GRANT sender (moved from coherence/senders.c) ========== */
+/* ===== Eager GRANT sender (moved from coherence/senders.c) ========== */
 
 void arts_send_db_ownership_response(unsigned int requester_rank,
                                      arts_guid_t db_guid, uint64_t version,
@@ -626,8 +630,8 @@ void arts_send_db_ownership_response(unsigned int requester_rank,
   }
 }
 
-/* Case-D leaf: RC keeps the lazy OCR home-buffer install (the creator's
- * release_rw WRITEBACK / GRANT path publishes the buffer); nothing to do at
+/* Case-D leaf: the eager protocol defers the home-buffer install to the
+ * creator's first release_rw (WRITEBACK / GRANT path); nothing to do at
  * create. */
 void arts_db_create_install_home_buffer(struct arts_db_cache_s *cache,
                                         uint64_t db_size) {

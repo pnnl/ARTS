@@ -58,19 +58,18 @@ if(HWLOC_INCLUDE_DIRS)
     target_include_directories(arts_compute PRIVATE ${HWLOC_INCLUDE_DIRS})
 endif()
 
-# DB coherence model TU: exactly one selected by ARTS_MEMORY_MODEL.  Each model
-# TU defines the model-specific arts_handler_db_* / arts_coh_* bodies directly
-# (the shared coherence/coherence.c declares them in coherence/coherence.h and
-# provides the model-agnostic sub-helpers); the linker resolves the single
-# compiled model.  No ARTS_MEMORY_MODEL_* #ifdef in the model TUs.
-if(ARTS_MEMORY_MODEL STREQUAL "RC")
-    # RC and LRC share the release-consistency ownership machinery
-    # (coherence/release.c); LC does not compile it.
-    set(DB_COHERENCE_MODEL_TU coherence/rc.c coherence/release.c)
-elseif(ARTS_MEMORY_MODEL STREQUAL "LC")
-    set(DB_COHERENCE_MODEL_TU coherence/lc.c)
-else() # LRC (default)
-    set(DB_COHERENCE_MODEL_TU coherence/lrc.c coherence/release.c)
+# DB coherence TU selection: under the OCR memory model exactly one protocol
+# TU is compiled (eager.c or lazy.c) together with the family-shared ownership
+# machinery (ownership.c); the RELAXED model compiles relaxed.c alone.  Each
+# TU defines its arts_handler_db_* / arts_coh_* bodies directly (declared in
+# coherence/coherence.h); the linker resolves the single compiled variant.
+# No model/protocol #ifdef inside these TUs.
+if(ARTS_MEMORY_MODEL STREQUAL "RELAXED")
+    set(DB_COHERENCE_MODEL_TU coherence/relaxed.c)
+elseif(ARTS_COHERENCE_PROTOCOL STREQUAL "EAGER")
+    set(DB_COHERENCE_MODEL_TU coherence/eager.c coherence/ownership.c)
+else() # OCR + LAZY (default)
+    set(DB_COHERENCE_MODEL_TU coherence/lazy.c coherence/ownership.c)
 endif()
 
 # DB + coherence (db.c carries CUDA staging paths -> GPU wrapper).

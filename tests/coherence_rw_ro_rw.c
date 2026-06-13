@@ -1,8 +1,9 @@
 /*
- * coherence_rw_ro_rw.c — Stress test for RW -> RO -> RW RC transitions.
+ * coherence_rw_ro_rw.c — Stress test for RW -> RO -> RW transitions under
+ * the eager ownership protocol.
  *
  * Pattern per iteration: writer(RW) -> N readers(RO) -> writer(RW) -> ...
- * Exercises the sealed RO generation progression path under RC.
+ * Exercises the sealed RO generation progression path.
  */
 
 #include "arts.h"

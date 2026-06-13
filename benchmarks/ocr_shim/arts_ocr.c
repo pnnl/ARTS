@@ -678,7 +678,7 @@ static void collective_launch_generation(CollectiveMetadata *meta, u32 r,
 
   /* slot 0: own datum DB.  Release WRITE access so the (possibly cross-rank)
    * up reducer reads the populated bytes; the up reducer for r runs on r's
-   * node, which is this node, but a release keeps the RC state well-formed. */
+   * node, which is this node, but a release keeps the coherence state well-formed. */
   void *ownPtr;
   arts_guid_t ownDb = arts_db_create(&ownPtr, payload, ARTS_DB_DEFAULT,
                                      ARTS_DB_PROP_NONE, NULL);
@@ -1183,7 +1183,7 @@ u8 ocrEventCreateParams(ocrGuid_t *guid, ocrEventTypes_t eventType,
     void *metaPtr;
     /* PIN, homed on the current rank: collective metadata is node-local
      * shared state accessed by this node's contributing EDTs without going
-     * through RC acquire/release cycles.  A PIN DB is not internode
+     * through coherence acquire/release cycles.  A PIN DB is not internode
      * relocatable, so it must be created locally (round-robin placement
      * would try to home it on a remote rank and fail). */
     size_t metaBytes = sizeof(CollectiveMetadata) +

@@ -69,8 +69,10 @@ extern "C" {
  * arts_handler_ prefix stripped and upper-cased (kind ↔ handler 1:1), e.g.
  * arts_handler_event_add_dependence → OOO_EVENT_ADD_DEPENDENCE.
  *
- * The model-specific DB-coherence kinds are preprocessor-selected: exactly one
- * of ARTS_MEMORY_MODEL_{RC,LRC,LC} is defined per build, so each build's enum
+ * The model-specific DB-coherence kinds are preprocessor-selected: OCR builds
+ * define ARTS_MEMORY_MODEL_OCR plus exactly one
+ * ARTS_COHERENCE_PROTOCOL_{EAGER,LAZY}; RELAXED builds define
+ * ARTS_MEMORY_MODEL_RELAXED.  Each build's enum
  * (and the mirroring g_ooo_table) carries only that model's OOO_DB_* kinds.
  * OOO_KIND_COUNT is therefore per-model — sound because every TU in one build
  * sees the same model define. */
@@ -95,33 +97,34 @@ enum arts_ooo_kind {
  * remote-created DB's lazy_install cache can fire a request/writeback before
  * that DB's home CREATE arrives, so the message reaches home with db_s not yet
  * installed ⇒ OoO push, replayed on the CREATE handler's drain. */
-#if defined(ARTS_MEMORY_MODEL_RC)
+#if defined(ARTS_COHERENCE_PROTOCOL_EAGER)
   OOO_DB_ACQUIRE, /* → arts_db_acquire_replay_dep (re-attempts the one deferred
                      local dep; pushed by arts_db_acquire_all's per-dep 3-way)
                    */
   OOO_DB_SNAPSHOT_REQUEST,  /* → arts_handler_db_snapshot_request @ home */
   OOO_DB_OWNERSHIP_REQUEST, /* → arts_handler_db_ownership_request @ home */
-  /* INVALIDATE replay — RC.  A GRANT/INVALIDATE reorder on two wires, or a
-   * distributed before-create race, can land INVALIDATE before the cache
-   * installs; the commutative signed writer_count makes the replayed decrement
-   * order-independent.  A replayed INVALIDATE is additionally guarded by the
-   * per-slot install-epoch (gen_at_defer) so a stale defer is dropped rather
-   * than applied to a fresh labeled-GUID generation. */
+  /* INVALIDATE replay — eager protocol.  A GRANT/INVALIDATE reorder on two
+   * wires, or a distributed before-create race, can land INVALIDATE before the
+   * cache installs; the commutative signed writer_count makes the replayed
+   * decrement order-independent.  A replayed INVALIDATE is additionally guarded
+   * by the per-slot install-epoch (gen_at_defer) so a stale defer is dropped
+   * rather than applied to a fresh labeled-GUID generation. */
   OOO_DB_OWNERSHIP_INVALIDATE, /* → arts_handler_db_ownership_invalidate @ owner
                                 */
   OOO_DB_WRITEBACK,            /* → arts_handler_db_writeback @ home */
-#elif defined(ARTS_MEMORY_MODEL_LRC)
+#elif defined(ARTS_COHERENCE_PROTOCOL_LAZY)
   OOO_DB_ACQUIRE, /* → arts_db_acquire_replay_dep (re-attempts the one deferred
                      local dep; pushed by arts_db_acquire_all's per-dep 3-way)
                    */
   OOO_DB_SNAPSHOT_REQUEST,  /* → arts_handler_db_snapshot_request @ home */
   OOO_DB_OWNERSHIP_REQUEST, /* → arts_handler_db_ownership_request @ home */
-/* NO OOO_DB_OWNERSHIP_INVALIDATE — LRC never defers INVALIDATE (home publishes
- * the target rw_holder only after that rank's cache install, so the target is
- * provably installed; the dispatcher/self-send call the body directly).
- * NO OOO_DB_WRITEBACK — LRC has no synchronous writeback (the dispatcher fatals
- * on the WRITEBACK wire message). */
-#elif defined(ARTS_MEMORY_MODEL_LC)
+/* NO OOO_DB_OWNERSHIP_INVALIDATE — the lazy protocol never defers INVALIDATE
+ * (home publishes the target rw_holder only after that rank's cache install,
+ * so the target is provably installed; the dispatcher/self-send call the body
+ * directly).
+ * NO OOO_DB_WRITEBACK — the lazy protocol has no synchronous writeback (the
+ * dispatcher fatals on the WRITEBACK wire message). */
+#elif defined(ARTS_MEMORY_MODEL_RELAXED)
   OOO_DB_ACQUIRE, /* → arts_db_acquire_replay_dep (re-attempts the one deferred
                      local dep; pushed by arts_db_acquire_all's per-dep 3-way)
                    */
@@ -129,7 +132,8 @@ enum arts_ooo_kind {
   OOO_DB_WRITEBACK,        /* → arts_handler_db_writeback @ home (no ownership
                               transfer) */
 #else
-#error "exactly one of ARTS_MEMORY_MODEL_{RC,LRC,LC} must be defined"
+#error                                                                         \
+    "exactly one of ARTS_COHERENCE_PROTOCOL_{EAGER,LAZY} or ARTS_MEMORY_MODEL_RELAXED must be defined"
 #endif
 
   OOO_KIND_COUNT /* sentinel — g_ooo_table size (per-model) */
@@ -230,7 +234,8 @@ struct arts_ooo_args_db_writeback_s {
 
 /* DB ownership invalidate: carries the fields the wire
  * arts_msg_ownership_invalidate_packet_s delivers (db_guid + new_owner_rank).
- * RC ignores new_owner_rank; LRC uses it as the TRANSFER_OWNERSHIP target. */
+ * The eager protocol ignores new_owner_rank; the lazy protocol uses it as the
+ * TRANSFER_OWNERSHIP target. */
 struct arts_ooo_args_db_ownership_invalidate_s {
   arts_guid_t db_guid;
   unsigned int new_owner_rank;

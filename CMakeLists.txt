@@ -147,15 +147,64 @@ endif()
 include(GNUInstallDirs)
 include(CheckLanguage)
 
-# Build options
-option(ARTS_BUILD_SHARED "Build shared library" ON)
-option(ARTS_BUILD_STATIC "Build static library" ON)
-option(ARTS_BUILD_EXAMPLES "Build example programs" ON)
-option(ARTS_BUILD_TESTS "Build test programs" ON)
-option(ARTS_BUILD_BENCHMARKS "Build OCR benchmark applications (XSOCR + ARTS backends)" OFF)
+# ═══════════════════════════════════════════════════════════════════════════
+# Build-time options  (override on the cmake line with -D<NAME>=<VALUE>)
+# ═══════════════════════════════════════════════════════════════════════════
+include(CMakeDependentOption)
 
-# Feature options (can be set via command line)
-# Default log level: Debug->3 (DEBUG), Release/etc->1 (WARN).
+# ── Library targets ────────────────────────────────────────────────────────
+option(ARTS_BUILD_SHARED "Build the shared library (libarts.so)" ON)
+option(ARTS_BUILD_STATIC "Build the static library (libarts.a)"  ON)
+
+# ── Optional components ────────────────────────────────────────────────────
+option(ARTS_BUILD_EXAMPLES   "Build example programs"                          OFF)
+option(ARTS_BUILD_TESTS      "Build test programs (enables ctest)"             ON)
+option(ARTS_BUILD_BENCHMARKS "Build OCR benchmark apps (XSOCR + ARTS + ocrvx)" ON)
+option(ARTS_BUILD_DOCS       "Build documentation (requires Doxygen + Sphinx)" OFF)
+
+# ── GPU / CUDA ─────────────────────────────────────────────────────────────
+# ARTS_USE_LOCAL_CUDA_ARCHITECTURES only applies when ARTS_USE_GPU=ON;
+# cmake_dependent_option forces it OFF (and hides it) otherwise.  The related
+# stock CMake variable CMAKE_CUDA_ARCHITECTURES picks the SM targets nvcc emits
+# (e.g. "80;86"): when the option below is ON it is auto-filled from nvidia-smi,
+# otherwise nvcc's default applies (or your own -DCMAKE_CUDA_ARCHITECTURES=...).
+option(ARTS_USE_GPU "Enable CUDA GPU support" OFF)
+cmake_dependent_option(ARTS_USE_LOCAL_CUDA_ARCHITECTURES
+    "Auto-detect CUDA architectures from local GPUs using nvidia-smi" ON
+    "ARTS_USE_GPU" OFF)
+
+# ── Memory model (contract) + coherence protocol (implementation) ──────────
+# Compile-time switches — one binary is exactly one configuration, and all
+# ranks in a multinode run must use the same build.
+#   ARTS_MEMORY_MODEL      OCR (default)  — the OCR v1.2.0 §1.6 memory model.
+#                          RELAXED        — DB-granularity DRF contract; weaker
+#                                           than OCR: racy-but-legal OCR
+#                                           programs may produce wrong results.
+#                                           Evaluation only.
+#   ARTS_COHERENCE_PROTOCOL EAGER | LAZY (default) — how the OCR contract is
+#                          implemented (release-time vs acquire-time
+#                          consistency actions). Ignored when RELAXED.
+# Validation and compile definitions are applied right below.
+set(ARTS_MEMORY_MODEL "OCR" CACHE STRING
+    "Memory model (contract): OCR (default) or RELAXED (DB-DRF, evaluation only)")
+set_property(CACHE ARTS_MEMORY_MODEL PROPERTY STRINGS OCR RELAXED)
+set(ARTS_COHERENCE_PROTOCOL "LAZY" CACHE STRING
+    "Coherence protocol implementing the OCR model: EAGER or LAZY (default); N/A under RELAXED")
+set_property(CACHE ARTS_COHERENCE_PROTOCOL PROPERTY STRINGS EAGER LAZY)
+# ── Default DB storage kind ────────────────────────────────────────────────
+set(ARTS_DEFAULT_DB_KIND "ARTS_DB" CACHE STRING
+    "Default DB storage kind the ARTS_DB_DEFAULT macro expands to: ARTS_DB (regular DRAM) or ARTS_DB_CXL (CXL shared)")
+set_property(CACHE ARTS_DEFAULT_DB_KIND PROPERTY STRINGS ARTS_DB ARTS_DB_CXL)
+
+# ── CXL shared memory (requires the Rapid API) ─────────────────────────────
+option(ARTS_USE_CXL "Enable CXL shared-memory DB support" OFF)
+set(ARTS_CXL_RAPID_INCLUDE_DIR "" CACHE PATH
+    "Path to Rapid API include directory (required when ARTS_USE_CXL=ON)")
+set(ARTS_CXL_LIB_DIR "" CACHE PATH
+    "Path to arts_cxl_lib directory (required when ARTS_USE_CXL=ON)")
+
+# ── Diagnostics ────────────────────────────────────────────────────────────
+# Default log level: Debug -> 3 (DEBUG), other build types -> 1 (WARN).
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(_arts_log_default 3)
 else()
@@ -173,66 +222,66 @@ if(NOT ARTS_LOG_LEVEL MATCHES "^[0-3]$")
     message(FATAL_ERROR
         "Invalid ARTS_LOG_LEVEL='${ARTS_LOG_LEVEL}'. Expected one of: 0, 1, 2, 3")
 endif()
-option(ARTS_USE_GPU "Enable GPU support (default: ON, disable when OFF)" ON)
-option(ARTS_USE_CXL "Enable CXL shared-memory support (default: OFF)" OFF)
+# ASan+UBSan+LSan and TSan are compiler-mutually-exclusive (ASan and LSan both
+# conflict with -fsanitize=thread); they need separate build trees.  Wiring is
+# applied in the Debug compiler-flags block below.
+option(ARTS_USE_SANS "Enable ASan + UBSan + LSan in Debug builds (excludes CUDA)" OFF)
+option(ARTS_USE_TSAN "Enable ThreadSanitizer in Debug builds (excludes CUDA; mutually exclusive with ARTS_USE_SANS)" OFF)
 
-# Host memory consistency model for ARTS_DB.  LRC (default) uses Lazy
-# Release Consistency (no synchronous home write-back, owner-direct data
-# flow) — it avoids the per-release write-back/ACK round-trip that makes
-# the eager RC protocol scale poorly when one rank produces many remotely
-# homed datablocks.  RC is the eager Release Consistency protocol; LC is
-# the weak Location Consistency model.  Compile-time switch — one binary is
-# exactly one mode.  Both ranks in a multinode run must use the same build
-# (mode-mismatch is caught at runtime via ARTS_FATAL stub handlers for
-# opposite-mode wire messages).
-set(ARTS_MEMORY_MODEL "LRC" CACHE STRING
-    "Host memory consistency model for ARTS_DB: LRC (default), RC, or LC")
-set_property(CACHE ARTS_MEMORY_MODEL PROPERTY STRINGS RC LRC LC)
+# ── Build tooling ──────────────────────────────────────────────────────────
+# (To pick a faster linker, use CMake's own -DCMAKE_LINKER_TYPE=MOLD/LLD/GOLD
+#  (cmake >= 3.29) or -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=mold — no ARTS option.)
+set(ARTS_COUNTER_CONFIG
+    "${CMAKE_CURRENT_SOURCE_DIR}/configs/counters.cfg"
+    CACHE FILEPATH "ARTS counter configuration file (parsed to generate introspection macros)")
 
-if(NOT ARTS_MEMORY_MODEL STREQUAL "RC" AND
-   NOT ARTS_MEMORY_MODEL STREQUAL "LRC" AND
-   NOT ARTS_MEMORY_MODEL STREQUAL "LC")
+# ── Memory-model validation + compile definitions (logic, kept with options) ─
+if(NOT ARTS_MEMORY_MODEL STREQUAL "OCR" AND
+   NOT ARTS_MEMORY_MODEL STREQUAL "RELAXED")
   message(FATAL_ERROR
-          "ARTS_MEMORY_MODEL must be RC, LRC, or LC, got: ${ARTS_MEMORY_MODEL}")
+          "ARTS_MEMORY_MODEL must be OCR or RELAXED, got: ${ARTS_MEMORY_MODEL}")
 endif()
-
-if(ARTS_MEMORY_MODEL STREQUAL "LRC")
-  add_compile_definitions(ARTS_MEMORY_MODEL_LRC=1)
-  message(STATUS "ARTS memory model: LRC (Lazy Release Consistency, default)")
-elseif(ARTS_MEMORY_MODEL STREQUAL "LC")
-  add_compile_definitions(ARTS_MEMORY_MODEL_LC=1)
-  message(STATUS "ARTS memory model: LC (Location Consistency)")
+if(NOT ARTS_COHERENCE_PROTOCOL STREQUAL "EAGER" AND
+   NOT ARTS_COHERENCE_PROTOCOL STREQUAL "LAZY")
+  message(FATAL_ERROR
+          "ARTS_COHERENCE_PROTOCOL must be EAGER or LAZY, got: ${ARTS_COHERENCE_PROTOCOL}")
+endif()
+if(ARTS_MEMORY_MODEL STREQUAL "RELAXED")
+  add_compile_definitions(ARTS_MEMORY_MODEL_RELAXED=1)
+  message(WARNING
+          "ARTS_MEMORY_MODEL=RELAXED selects the DB-DRF relaxed model: "
+          "visibility is guaranteed only along event happens-before, and "
+          "programs that are valid under the OCR memory model may produce "
+          "wrong results. Evaluation builds only — never a correctness "
+          "baseline. ARTS_COHERENCE_PROTOCOL is ignored.")
 else()
-  # Define RC explicitly (not just the absence of LRC/LC) so the spec's
-  # `#if defined(ARTS_MEMORY_MODEL_RC) || defined(ARTS_MEMORY_MODEL_LRC)`
-  # field guards select correctly.  Legacy `#else` RC branches still work.
-  add_compile_definitions(ARTS_MEMORY_MODEL_RC=1)
-  message(STATUS "ARTS memory model: RC (Release Consistency)")
+  # OCR builds define the model macro plus exactly one protocol macro, so
+  # `#ifdef ARTS_MEMORY_MODEL_OCR` guards family-shared fields and
+  # `#ifdef ARTS_COHERENCE_PROTOCOL_*` guards protocol-specific seams.
+  add_compile_definitions(ARTS_MEMORY_MODEL_OCR=1)
+  if(ARTS_COHERENCE_PROTOCOL STREQUAL "EAGER")
+    add_compile_definitions(ARTS_COHERENCE_PROTOCOL_EAGER=1)
+    message(STATUS "ARTS memory model: OCR, coherence protocol: EAGER")
+  else()
+    add_compile_definitions(ARTS_COHERENCE_PROTOCOL_LAZY=1)
+    message(STATUS "ARTS memory model: OCR, coherence protocol: LAZY (default)")
+  endif()
 endif()
+if(NOT ARTS_DEFAULT_DB_KIND STREQUAL "ARTS_DB" AND
+   NOT ARTS_DEFAULT_DB_KIND STREQUAL "ARTS_DB_CXL")
+  message(FATAL_ERROR
+          "ARTS_DEFAULT_DB_KIND must be ARTS_DB or ARTS_DB_CXL "
+          "(node-pinned / GPU storage classes are not valid global defaults), "
+          "got: ${ARTS_DEFAULT_DB_KIND}")
+endif()
+add_compile_definitions(ARTS_DB_DEFAULT=${ARTS_DEFAULT_DB_KIND})
 
-# Default DB storage subtype that benchmarks select via ARTS_DB_DEFAULT.
-# Flip this one variable to retarget every benchmark in one shot
-# (e.g. -DARTS_DB_DEFAULT=ARTS_DB_CXL) — no source edits needed.
-set(ARTS_DB_DEFAULT "ARTS_DB" CACHE STRING
-    "DB subtype that ARTS_DB_DEFAULT expands to (ARTS_DB / ARTS_DB_PIN / ARTS_DB_GPU_PIN / ARTS_DB_GPU / ARTS_DB_CXL)")
-set_property(CACHE ARTS_DB_DEFAULT PROPERTY STRINGS
-    ARTS_DB ARTS_DB_PIN ARTS_DB_GPU_PIN ARTS_DB_GPU ARTS_DB_CXL)
-add_compile_definitions(ARTS_DB_DEFAULT=${ARTS_DB_DEFAULT})
-
-# Default EDT kind (mirrors ARTS_DB_DEFAULT pattern).  Flip this one
-# variable to retarget the EDT default in one shot.
-set(ARTS_EDT_DEFAULT_KIND "ARTS_EDT_CPU" CACHE STRING
-    "EDT kind that ARTS_EDT_DEFAULT expands to (ARTS_EDT_CPU / ARTS_EDT_GPU)")
-set_property(CACHE ARTS_EDT_DEFAULT_KIND PROPERTY STRINGS
-    ARTS_EDT_CPU ARTS_EDT_GPU)
-add_compile_definitions(ARTS_EDT_DEFAULT=${ARTS_EDT_DEFAULT_KIND})
-
-set(ARTS_CXL_RAPID_INCLUDE_DIR "" CACHE PATH
-    "Path to Rapid API include directory (required when ARTS_USE_CXL=ON)")
-set(ARTS_CXL_LIB_DIR "" CACHE PATH
-    "Path to arts_cxl_lib directory (required when ARTS_USE_CXL=ON)")
-option(ARTS_USE_SANITIZERS "Enable address and undefined behavior sanitizers in Debug builds" OFF)
-option(ARTS_USE_LOCAL_CUDA_ARCHITECTURES "Auto-detect CUDA architectures from local GPUs using nvidia-smi" ON)
+# ── Mutually-exclusive sanitizer guard ─────────────────────────────────────
+if(ARTS_USE_SANS AND ARTS_USE_TSAN)
+  message(FATAL_ERROR
+    "ARTS_USE_SANS (ASan/UBSan/LSan) and ARTS_USE_TSAN are "
+    "compiler-incompatible — use separate build directories.")
+endif()
 
 # Compiler-specific settings
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -253,7 +302,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 
     # Sanitizers (C/CXX only — CUDA excluded to avoid ASan shadow memory
     # conflicting with the CUDA driver's virtual address space mapping)
-    if(ARTS_USE_SANITIZERS)
+    if(ARTS_USE_SANS)
         add_compile_options(
             $<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:-fsanitize=address>
             $<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:-fsanitize=undefined>
@@ -261,19 +310,17 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
         )
         add_link_options(-fsanitize=address -fsanitize=undefined -fsanitize=leak)
         message(STATUS "Enabled sanitizers for Debug build (C/CXX only, excludes CUDA)")
+    elseif(ARTS_USE_TSAN)
+        add_compile_options(
+            $<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:-fsanitize=thread>
+            $<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:-fsanitize=undefined>
+        )
+        add_link_options(-fsanitize=thread -fsanitize=undefined)
+        message(STATUS "Enabled ThreadSanitizer for Debug build (C/CXX only, excludes CUDA)")
     endif()
 else()
     message(STATUS "Configuring Release build")
     add_compile_options(-march=native -mtune=native)
-endif()
-
-# Linker configuration
-option(ARTS_USE_LINKER "Specify linker to use for ARTS builds" "")
-if(ARTS_USE_LINKER)
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} --ld-path=${ARTS_USE_LINKER} -w")
-    set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} --ld-path=${ARTS_USE_LINKER} -w")
-    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} --ld-path=${ARTS_USE_LINKER} -w")
-    message(STATUS "Using custom linker: ${ARTS_USE_LINKER}")
 endif()
 
 # CUDA support detection (only when GPU support is requested)
@@ -457,20 +504,15 @@ endif()
 add_compile_definitions(ARTS_LOG_LEVEL=${ARTS_LOG_LEVEL})
 message(STATUS "Log level: ${ARTS_LOG_LEVEL} (0=ERROR, 1=+WARN, 2=+INFO, 3=+DEBUG)")
 
-set(COUNTER_CONFIG_PATH
-    "${CMAKE_CURRENT_SOURCE_DIR}/configs/counters.cfg"
-    CACHE FILEPATH "ARTS counter configuration file (parsed to generate introspection macros)")
-set(COUNTER_CONFIG_FILE "${COUNTER_CONFIG_PATH}")
+set(COUNTER_CONFIG_FILE "${ARTS_COUNTER_CONFIG}")
 
 # Create the ARTS library targets (core + extensions)
 add_subdirectory(libs)
 
 # Optional components
-# NOTE: examples/ is temporarily relocated out of the tree during refactoring.
-# Re-enable this block once the directory is restored.
-# if(ARTS_BUILD_EXAMPLES)
-#     add_subdirectory(examples)
-# endif()
+if(ARTS_BUILD_EXAMPLES)
+    add_subdirectory(examples)
+endif()
 
 if(ARTS_BUILD_TESTS)
     enable_testing()
@@ -484,7 +526,6 @@ endif()
 add_subdirectory(configs)
 
 # Documentation (Doxygen XML → Breathe → Sphinx HTML)
-option(ARTS_BUILD_DOCS "Build documentation (requires Doxygen + Sphinx)" OFF)
 if(ARTS_BUILD_DOCS)
     find_package(Doxygen REQUIRED)
     find_program(SPHINX_EXECUTABLE sphinx-build

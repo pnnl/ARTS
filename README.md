@@ -43,6 +43,36 @@ ninja
 
 The root CARTS build invokes this automatically when you configure `cmake` at the repository top level.
 
+### Build Options
+
+All options are set on the cmake line with `-D<NAME>=<VALUE>`, e.g.
+`cmake -GNinja -Bbuild -DCMAKE_BUILD_TYPE=Release -DARTS_USE_GPU=ON`.
+
+| Option | Default | Purpose |
+|--------|---------|---------|
+| `ARTS_BUILD_SHARED` | `ON` | Build the shared library `libarts.so`. |
+| `ARTS_BUILD_STATIC` | `ON` | Build the static library `libarts.a`. |
+| `ARTS_BUILD_EXAMPLES` | `OFF` | Build the example programs under `examples/`. |
+| `ARTS_BUILD_TESTS` | `ON` | Build the test programs and register them with ctest. |
+| `ARTS_BUILD_BENCHMARKS` | `ON` | Build the OCR benchmark apps (XSOCR + ARTS + ocrvx backends). |
+| `ARTS_BUILD_DOCS` | `OFF` | Build the Doxygen + Sphinx documentation. |
+| `ARTS_USE_GPU` | `OFF` | Enable CUDA GPU support (builds `libarts_cuda`). |
+| `ARTS_USE_LOCAL_CUDA_ARCHITECTURES` | `ON` | When GPU is on, auto-detect the local GPU's CUDA architecture via `nvidia-smi`. Only meaningful with `ARTS_USE_GPU=ON`; pair with the stock `CMAKE_CUDA_ARCHITECTURES` (e.g. `-DCMAKE_CUDA_ARCHITECTURES="80;86"`) to set SM targets by hand. |
+| `ARTS_MEMORY_MODEL` | `OCR` | Memory model (contract) — `OCR` (default, the OCR v1.2.0 §1.6 model) or `RELAXED` (DB-DRF; weaker — evaluation only, racy-but-legal OCR programs may yield wrong results). Compile-time; all ranks must share one build. |
+| `ARTS_COHERENCE_PROTOCOL` | `LAZY` | Protocol implementing the OCR model — `LAZY` (acquire-time consistency actions, default) or `EAGER` (release-time). N/A under `RELAXED`. |
+| `ARTS_DEFAULT_DB_KIND` | `ARTS_DB` | Default DB storage kind that the `ARTS_DB_DEFAULT` macro expands to — `ARTS_DB` (regular DRAM) or `ARTS_DB_CXL` (CXL shared). |
+| `ARTS_USE_CXL` | `OFF` | Enable CXL shared-memory DataBlocks (requires the Rapid API). |
+| `ARTS_CXL_RAPID_INCLUDE_DIR` | — | Path to the Rapid API include dir (required when `ARTS_USE_CXL=ON`). |
+| `ARTS_CXL_LIB_DIR` | — | Path to the `arts_cxl_lib` dir (required when `ARTS_USE_CXL=ON`). |
+| `ARTS_LOG_LEVEL` | `3` (Debug) / `1` (Release) | Log verbosity: `0`=ERROR, `1`=+WARN, `2`=+INFO, `3`=+DEBUG. |
+| `ARTS_USE_SANS` | `OFF` | Enable ASan + UBSan + LSan in Debug builds (excludes CUDA). Mutually exclusive with `ARTS_USE_TSAN`. |
+| `ARTS_USE_TSAN` | `OFF` | Enable ThreadSanitizer in Debug builds (excludes CUDA). Compiler-incompatible with `ARTS_USE_SANS`; use a separate build dir. |
+| `ARTS_COUNTER_CONFIG` | `configs/counters.cfg` | Counter configuration file parsed at configure time into introspection macros. |
+
+Standard CMake variables also apply: `CMAKE_BUILD_TYPE` (`Debug` default, or `Release`),
+`CMAKE_INSTALL_PREFIX` (`./install` default), `CMAKE_CUDA_ARCHITECTURES` (see `ARTS_USE_LOCAL_CUDA_ARCHITECTURES`),
+and `CMAKE_LINKER_TYPE` (cmake ≥ 3.29; e.g. `-DCMAKE_LINKER_TYPE=MOLD` to pick a faster linker like mold/lld/gold).
+
 ## Repository Layout (selected paths)
 
 - `libs/core/` – Runtime sources: task scheduler, GUID tables, datablock manager, network transports, logging.

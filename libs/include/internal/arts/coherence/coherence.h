@@ -161,10 +161,11 @@ void arts_db_acquire_resolved(struct arts_edt_s *edt, unsigned int slot);
  * acquire_remaining. Callers: PROCEED handler + GRANT/TRANSFER drain. */
 void mark_edt_secured_by_guid(arts_guid_t edt_guid, unsigned int slot);
 
-/* Per-model classification used by the arts_db_acquire_all driver: returns true
- * for deps that take exclusive ownership through the home directory and must be
- * GUID-serialized (RC/LRC RW). RO is never serialized; LC serializes nothing
- * (every acquire is a home snapshot). Defined in coherence/{rc,lrc,lc}.c. */
+/* Per-protocol classification used by the arts_db_acquire_all driver: returns
+ * true for deps that take exclusive ownership through the home directory and
+ * must be GUID-serialized (eager/lazy RW). RO is never serialized; relaxed
+ * serializes nothing (every acquire is a home snapshot). Defined in
+ * coherence/{eager,lazy,relaxed}.c. */
 bool arts_db_acquire_is_serialized(arts_db_access_mode_t mode);
 
 /*--- Release path --------------------------------------------------------
@@ -198,16 +199,16 @@ void arts_db_release_ro(struct arts_db_cache_s *cache);
  * handler bodies reuse; they carry no model #ifdef. */
 
 /* Block on a stack-local semaphore until the matching WRITEBACK_ACK posts it
- * (pointer identity); returns early if teardown begins.  Used by the RC and LC
- * release-tail bodies. */
+ * (pointer identity); returns early if teardown begins.  Used by the eager and
+ * relaxed release-tail bodies. */
 void await_writeback_ack(sem_t *cv);
 
 /* Take the EDT's strong buffer ref and return buf->data (NULL when no buffer is
- * installed).  Used by the per-model acquire bodies. */
+ * installed).  Used by the per-protocol acquire bodies. */
 void *arts_db_acquire_local(struct arts_db_cache_s *cache);
 
-/* Fire SNAPSHOT_REQUEST (edt_guid + slot) to home and PARK.  Shared by the
- * RC/LRC and LC acquire bodies. */
+/* Fire SNAPSHOT_REQUEST (edt_guid + slot) to home and PARK.  Shared by all
+ * three protocol acquire bodies. */
 arts_db_acquire_result_t
 arts_db_acquire_remote_ro(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
                           unsigned int slot);
@@ -223,17 +224,17 @@ void arts_db_drain_pending_snapshot(struct arts_db_cache_s *cache);
 
 /* Destroy/fail fan-out: wake every parked waiter (RW FIFO + snapshot reorder
  * buffer) with a NULL ptr so the EDT observes the destroyed DB.  The RW-queue
- * drain is model-specific (RC/LRC drain pending_rw, LC has none); both arms
- * also drain pending_snapshot via arts_db_drain_pending_snapshot. */
+ * drain is protocol-specific (eager/lazy drain pending_rw, relaxed has none);
+ * all arms drain pending_snapshot via arts_db_drain_pending_snapshot. */
 void arts_db_fail_trigger_pending(struct arts_db_cache_s *cache);
 
-/* Shared cache_s construct/destruct sub-helpers.  The per-model
+/* Shared cache_s construct/destruct sub-helpers.  The per-protocol
  * arts_db_cache_init / arts_db_cache_destructor wrap these, preserving the
- * exact order: model field-init runs BEFORE arts_db_cache_common_init on
+ * exact order: protocol field-init runs BEFORE arts_db_cache_common_init on
  * construct; on destruct the wrapper runs arts_db_cache_common_destroy_pre
- * (buffer-NULL) → model field-destroy → arts_db_cache_common_destroy_post
+ * (buffer-NULL) → protocol field-destroy → arts_db_cache_common_destroy_post
  * (snapshot drain → home teardown).  Splitting the destruct into pre/post lets
- * the model field-destroy land between the buffer-NULL and the snapshot/home
+ * the protocol field-destroy land between the buffer-NULL and the snapshot/home
  * teardown, matching the original single-TU ordering. */
 void arts_db_cache_common_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
                                uint64_t db_size, arts_db_init_kind_t kind,
@@ -241,21 +242,22 @@ void arts_db_cache_common_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
 void arts_db_cache_common_destroy_pre(struct arts_db_cache_s *cache);
 void arts_db_cache_common_destroy_post(struct arts_db_cache_s *cache);
 
-/* Case-D (arts_handler_db_create) per-model leaf functions — the one accepted
- * shared-skeleton → per-model call pair.  publish_holder: RC/LRC store
- * creator_rank as the home rw_holder, LC no-op; install_home_buffer: LC
- * installs a version-1 zero buffer (home is always canonical), RC/LRC no-op
- * (lazy OCR install).  Defined once per model TU. */
+/* Case-D (arts_handler_db_create) per-protocol leaf functions.
+ * publish_holder: eager/lazy store creator_rank as the home rw_holder, relaxed
+ * no-op; install_home_buffer: relaxed installs a version-1 zero buffer (home
+ * is always canonical), eager/lazy defer the install to the creator's first
+ * WRITEBACK (no-op here).  Defined once per protocol TU. */
 void arts_db_create_publish_holder(struct arts_db_s *db,
                                    unsigned int creator_rank);
 void arts_db_create_install_home_buffer(struct arts_db_cache_s *cache,
                                         uint64_t db_size);
 
-#if defined(ARTS_MEMORY_MODEL_RC) || defined(ARTS_MEMORY_MODEL_LRC)
-/* Release-consistency-family shared acquire helpers (defined in
- * coherence/release.c, linked only into RC + LRC builds).  Called by the
- * RC/LRC arts_handler_db_acquire bodies; the RO-path predicate is the only
- * divergence between RC and LRC, so it stays inline in each model's handler.
+#if defined(ARTS_MEMORY_MODEL_OCR)
+/* OCR-model family shared acquire helpers (defined in
+ * coherence/ownership.c, linked only into OCR builds).  Called by the
+ * EAGER/LAZY arts_handler_db_acquire bodies; the RO-path predicate is the only
+ * divergence between EAGER and LAZY, so it stays inline in each protocol's
+ * handler.
  *
  * arts_db_acquire_rw_local_fast: the case-2/6 RW local fast path.
  * CAS-increments writer_count "if positive"; on success writes dep->ptr
@@ -270,12 +272,12 @@ arts_db_acquire_result_t
 arts_db_acquire_remote_rw(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
                           unsigned int slot);
 
-/* Per-model ownership-round seams (defined in coherence/{rc,lrc}.c, called
- * from the release-family OWNERSHIP_REQUEST / RELEASE_OWNERSHIP handlers —
- * family→model, the sanctioned RC↔LRC divergence).  start: RC INVALIDATEs the
- * current holder, LRC pops the FIFO target + starts the invalidate round.
- * return: RC advances the chain, LRC never receives RELEASE_OWNERSHIP (no-op).
- */
+/* Per-protocol ownership-round seams (defined in coherence/eager.c and
+ * coherence/lazy.c, called from the OWNERSHIP_REQUEST / RELEASE_OWNERSHIP
+ * handlers).  start: the eager protocol INVALIDATEs the current holder; the
+ * lazy protocol pops the FIFO target + starts the invalidate round.  return:
+ * the eager protocol advances the chain; the lazy protocol never receives
+ * RELEASE_OWNERSHIP (no-op). */
 void arts_db_start_ownership_round(struct arts_db_cache_s *cache,
                                    struct arts_db_s *db,
                                    unsigned int requester);
@@ -284,7 +286,8 @@ void arts_db_ownership_return(struct arts_db_cache_s *cache);
 /* RW-pipelining PROCEED (home → secured next owner). Sender self-dispatches the
  * handler when new_owner == self. The handler advances the cursors of all RW
  * waiters parked on db_guid at this rank (no OoO defer: the requester
- * lazy-installed the cache before it sent OWNERSHIP_REQUEST). RC/LRC only. */
+ * lazy-installs the cache before it sends OWNERSHIP_REQUEST). Eager/lazy only;
+ * the relaxed protocol has no exclusive-ownership concept. */
 void arts_send_db_ownership_proceed(unsigned int new_owner,
                                     arts_guid_t db_guid);
 void arts_handler_db_ownership_proceed(arts_guid_t db_guid);
@@ -296,34 +299,34 @@ void arts_pending_rw_queue_for_each(struct arts_pending_rw_queue_s *q,
                                                unsigned int slot, void *ctx),
                                     void *ctx);
 
-/* RC/LRC GRANT drain: pop pending_rw FIFO, bump writer_count per waiter, wake
- * each parked EDT.  Defined in coherence/release.c; called from the RC GRANT
- * handler and the LRC TRANSFER_OWNERSHIP handler. */
+/* OCR GRANT drain: pop pending_rw FIFO, bump writer_count per waiter, wake
+ * each parked EDT.  Defined in coherence/ownership.c; called from the EAGER
+ * GRANT handler and the LAZY TRANSFER_OWNERSHIP handler. */
 void arts_db_drain_pending_rw_after_grant(struct arts_db_cache_s *cache,
                                           uint64_t version, bool has_next);
 
 /* Home-side local ownership hand-off to the next queued waiter (or sentinel
- * restore when none).  RC advances the chain; LRC is a no-op stub.  Called from
- * the release-family invalidate-transfer path. */
+ * restore when none).  EAGER advances the chain; LAZY is a no-op stub.  Called
+ * from the OCR-family invalidate-transfer path. */
 void arts_db_local_transfer_now(struct arts_db_cache_s *cache);
 
 /* Home-side ownership-transfer trigger: home advances the chain locally;
  * non-home ships its buffer to home (WB_AND_TRANSFER) or, for a sentinel DB, a
- * data-less ownership_return.  RC/LRC only (coherence/release.c). */
+ * data-less ownership_return.  OCR model only (coherence/ownership.c). */
 void arts_db_invalidate_transfer(struct arts_db_cache_s *cache);
-#endif /* RC || LRC */
+#endif /* OCR model */
 
-#if defined(ARTS_MEMORY_MODEL_RC)
-/* RC ownership-transfer chain advance: pop the next queued RW requester,
+#if defined(ARTS_COHERENCE_PROTOCOL_EAGER)
+/* Eager ownership-transfer chain advance: pop the next queued RW requester,
  * publish it as the new rw_holder, GRANT it the buffer (monotonic-dedup), and
  * decide whether the transfer chain continues.  Holds home.invalidate_in_flight
  * (the ownership-transfer-in-progress baton) at 1 across the WHOLE has_next
  * chain; the baton is cleared at exactly one point — when the queue drains and
- * a race-recheck confirms no successor raced in.  Shared by the three RC GRANT
- * drivers (local-transfer on home, writeback-and-transfer, ownership-return) so
- * the gate lifetime is identical and auditable.  RC build only; LRC drives its
- * chain through the separate INSTALL_ACK round. */
-void arts_db_rc_advance_chain(struct arts_db_cache_s *cache);
+ * a race-recheck confirms no successor raced in.  Shared by the three eager
+ * GRANT drivers (local-transfer on home, writeback-and-transfer,
+ * ownership-return) so the gate lifetime is identical and auditable.  Eager
+ * builds only; lazy drives the chain through the separate INSTALL_ACK round. */
+void arts_db_eager_advance_chain(struct arts_db_cache_s *cache);
 #endif
 
 #ifdef __cplusplus

@@ -20,14 +20,6 @@ Runtime Lifecycle
    :members:
 
 
-Memory Allocation
------------------
-
-.. doxygengroup:: alloc
-   :content-only:
-   :members:
-
-
 GUID Management
 ---------------
 
@@ -44,14 +36,6 @@ Event-Driven Tasks (EDT)
    :members:
 
 
-Active Messages
----------------
-
-.. doxygengroup:: active_msg
-   :content-only:
-   :members:
-
-
 Events
 ------
 
@@ -60,34 +44,10 @@ Events
    :members:
 
 
-Persistent Events
------------------
-
-.. doxygengroup:: persistent_event
-   :content-only:
-   :members:
-
-
 DataBlocks (DB)
 ---------------
 
 .. doxygengroup:: db
-   :content-only:
-   :members:
-
-
-Epochs / Termination Detection
-------------------------------
-
-.. doxygengroup:: epoch
-   :content-only:
-   :members:
-
-
-Array DataBlocks
-----------------
-
-.. doxygengroup:: arraydb
    :content-only:
    :members:
 

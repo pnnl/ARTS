@@ -39,7 +39,7 @@ extern "C" {
 
 #include "arts/transport/protocol.h"
 
-/* Forward declaration for LRC handler parameters. */
+/* Forward declaration for lazy handler parameters. */
 struct arts_db_cache_s;
 
 /* ===== Cat-C handler args ============================================
@@ -77,7 +77,7 @@ struct arts_db_writeback_ack_args_s {
   uint64_t cv; /* releaser's stack-local sem_t address */
 };
 
-#ifdef ARTS_MEMORY_MODEL_LRC
+#ifdef ARTS_COHERENCE_PROTOCOL_LAZY
 /* arts_handler_db_snapshot_redirect body args (owner side). */
 struct arts_db_snapshot_redirect_args_s {
   arts_guid_t db_guid;
@@ -91,17 +91,17 @@ struct arts_db_ownership_response_ack_args_s {
   arts_guid_t db_guid;
   uint64_t version;
 };
-#endif /* ARTS_MEMORY_MODEL_LRC */
+#endif /* ARTS_COHERENCE_PROTOCOL_LAZY */
 
 /* ===== Home-side handlers ============================================ */
 
 /* Cat-B pure body (OoO g_ooo_table[OOO_DB_OWNERSHIP_REQUEST]): item_v is the
  * home db_s the engine acquired (cache is its first member); args_v is an
- * arts_ooo_args_db_ownership_request_s.  The wire dispatcher decodes OWNERSHIP_REQUEST
- * into those args and routes through arts_ooo_dispatch_or_defer_guid.  Defined
- * for the release-consistency family (coherence/release.c) where OWNERSHIP_REQUEST
- * exists; LC provides a no-op body (coherence/lc.c) — LC never enqueues this
- * kind. */
+ * arts_ooo_args_db_ownership_request_s.  The wire dispatcher decodes
+ * OWNERSHIP_REQUEST into those args and routes through
+ * arts_ooo_dispatch_or_defer_guid.  Defined for the release-consistency family
+ * (coherence/ownership.c) where OWNERSHIP_REQUEST exists; RELAXED provides a
+ * no-op body (coherence/relaxed.c) — RELAXED never enqueues this kind. */
 void arts_handler_db_ownership_request(void *item_v, void *args_v);
 /* Cat-B pure body (OoO g_ooo_table[OOO_DB_SNAPSHOT_REQUEST]): item_v is the
  * home db_s the engine acquired (cache is its first member); args_v is an
@@ -121,8 +121,9 @@ void arts_handler_db_writeback(void *item_v, void *args_v);
  * dispatcher looks the cache up with a held ref and, on a MISS, SILENTLY DROPS:
  * RELEASE_OWNERSHIP is one-way and only flows from a current owner whose
  * acquire implied DB_CREATE already landed at home, so a missing cache means
- * the DB was already torn down (caller awaits no reply).  RC advances the
- * transfer chain; LRC never receives this message (no-op). */
+ * the DB was already torn down (caller awaits no reply).  The eager protocol
+ * advances the transfer chain; the lazy protocol never receives this message
+ * (no-op). */
 void arts_handler_db_ownership_return(void *item_v, void *args_v);
 /* Cat-B pure body (OoO g_ooo_table[OOO_DB_DESTROY]): item_v is the home db_s
  * the engine acquired (cache is its first member); args_v is an
@@ -133,8 +134,8 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p);
 
 /* ===== Sharer-side (response) handlers =============================== */
 
-#ifdef ARTS_MEMORY_MODEL_LRC
-/* LRC TRANSFER_OWNERSHIP at new owner C: payload = full contiguous wire buffer
+#ifdef ARTS_COHERENCE_PROTOCOL_LAZY
+/* Lazy TRANSFER_OWNERSHIP at new owner C: payload = full contiguous wire buffer
  * (header + map + data); size is total bytes. */
 void arts_handler_db_ownership_response(void *payload, size_t size);
 #else
@@ -154,8 +155,9 @@ void arts_handler_db_snapshot_response(void *item_v, void *args_v);
  * arts_ooo_args_db_ownership_invalidate_s.  The wire dispatcher decodes
  * INVALIDATE_NOTICE into those args and routes through
  * arts_ooo_dispatch_or_defer_guid; a missing cache DEFERS and replays on
- * install (§6.1).  RC/LRC define the real body (sentinel withdrawal / transfer
- * trigger); LC provides a no-op body (LC never receives INVALIDATE). */
+ * install (§6.1).  Eager/lazy define the real body (sentinel withdrawal /
+ * transfer trigger); relaxed provides a no-op body (relaxed never receives
+ * INVALIDATE). */
 void arts_handler_db_ownership_invalidate(void *item_v, void *args_v);
 /* Cat-C pure body (WRITEBACK_ACK): item_v is the db_s the dispatcher acquired
  * (unused — the wake is a cache-independent pointer-identity sem-post on
@@ -169,9 +171,9 @@ void arts_handler_db_writeback_ack(void *item_v, void *args_v);
  * on a MISS (already torn down on this rank), SILENTLY DROPS (idempotent). */
 void arts_handler_db_cache_destroy(void *item_v, void *args_v);
 
-/* ===== LRC-only handlers ============================================== */
+/* ===== Lazy-only handlers ============================================== */
 
-#ifdef ARTS_MEMORY_MODEL_LRC
+#ifdef ARTS_COHERENCE_PROTOCOL_LAZY
 /* Cat-C pure body (REDIRECT_RO, owner side): item_v is the db_s the dispatcher
  * acquired (cache is its first member); args_v is an
  * arts_db_snapshot_redirect_args_s.  NOT OoO-deferrable — the dispatcher
@@ -187,7 +189,7 @@ void arts_handler_db_snapshot_redirect(void *item_v, void *args_v);
  * SILENTLY DROPS.  Records the new rw_holder, then starts the next transfer
  * round or releases the invalidate_in_flight baton. */
 void arts_handler_db_ownership_response_ack(void *item_v, void *args_v);
-#endif /* ARTS_MEMORY_MODEL_LRC */
+#endif /* ARTS_COHERENCE_PROTOCOL_LAZY */
 
 /* ===== Sender helpers ================================================ */
 
@@ -196,8 +198,8 @@ void arts_handler_db_ownership_response_ack(void *item_v, void *args_v);
  * Used by handlers that emit replies and by acquire/release in B4/B5. */
 void arts_send_db_ownership_request(unsigned int home_rank,
                                     arts_guid_t db_guid);
-#ifdef ARTS_MEMORY_MODEL_LRC
-/* LRC OWNERSHIP_RESPONSE = TRANSFER_OWNERSHIP: carries the serialized
+#ifdef ARTS_COHERENCE_PROTOCOL_LAZY
+/* Lazy OWNERSHIP_RESPONSE = TRANSFER_OWNERSHIP: carries the serialized
  * last_sent_version map + buffer payload. */
 void arts_send_db_ownership_response(unsigned int new_owner_rank,
                                      arts_guid_t db_guid, uint64_t version,
@@ -218,9 +220,9 @@ void arts_send_db_writeback(unsigned int home_rank, arts_guid_t db_guid,
                             uint64_t data_size);
 void arts_send_db_writeback_ack(unsigned int releaser_rank, arts_guid_t db_guid,
                                 uint64_t cv);
-/* new_owner_rank: rank that home has selected as next owner.  RC builds pass
- * 0 (receiver ignores it); LRC builds embed it in the packet so the holder
- * knows where to ship TRANSFER_OWNERSHIP without a home round-trip. */
+/* new_owner_rank: rank that home has selected as next owner.  Eager builds
+ * pass 0 (receiver ignores it); lazy builds embed it in the packet so the
+ * holder knows where to ship TRANSFER_OWNERSHIP without a home round-trip. */
 void arts_send_db_ownership_invalidate(unsigned int owner_rank,
                                        arts_guid_t db_guid,
                                        unsigned int new_owner_rank);
@@ -237,7 +239,7 @@ void arts_send_db_create_coherent(unsigned int home_rank, arts_guid_t db_guid,
 void arts_send_db_destroy(unsigned int home_rank, arts_guid_t db_guid);
 void arts_send_db_cache_destroy(unsigned int sharer_rank, arts_guid_t db_guid);
 
-#ifdef ARTS_MEMORY_MODEL_LRC
+#ifdef ARTS_COHERENCE_PROTOCOL_LAZY
 /* Send REDIRECT_RO from home to the current owner, asking the owner to
  * serve DATA_RESPONSE or a no-data response directly to requester_rank. */
 void arts_send_db_snapshot_redirect(unsigned int owner_rank,
@@ -250,16 +252,16 @@ void arts_send_db_snapshot_redirect(unsigned int owner_rank,
 void arts_send_db_ownership_response_ack(unsigned int home_rank,
                                          arts_guid_t db_guid, uint64_t version);
 
-/* Send the LRC OWNERSHIP_RESPONSE (TRANSFER_OWNERSHIP) to
+/* Send the lazy OWNERSHIP_RESPONSE (TRANSFER_OWNERSHIP) to
  * cache->incoming_new_owner: serialize last_sent_version + buffer and fire.
  * Called inline from the INVALIDATE_NOTICE handler and release_rw rest==0. */
-void arts_db_lrc_send_ownership_response(struct arts_db_cache_s *cache);
+void arts_db_lazy_send_ownership_response(struct arts_db_cache_s *cache);
 
 /* Kick a new INVALIDATE_NOTICE round: read rw_holder, send notice to
  * holder carrying new_owner as the TRANSFER_OWNERSHIP target. */
-void arts_db_lrc_start_invalidate_round(struct arts_db_cache_s *cache,
-                                        unsigned int new_owner);
-#endif /* ARTS_MEMORY_MODEL_LRC */
+void arts_db_lazy_start_invalidate_round(struct arts_db_cache_s *cache,
+                                         unsigned int new_owner);
+#endif /* ARTS_COHERENCE_PROTOCOL_LAZY */
 
 #ifdef __cplusplus
 }

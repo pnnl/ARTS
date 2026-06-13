@@ -1,6 +1,6 @@
 /*
- * coherence_mixed_local_remote.c — Multi-node RC with mixed local +
- * remote readers.
+ * coherence_mixed_local_remote.c — Multi-node eager-protocol test with
+ * mixed local + remote readers.
  *
  * Dynamically adapts to the node count (1..N):
  *   - DB is owned by node 0 (route=0).

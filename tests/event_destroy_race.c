@@ -11,7 +11,7 @@
  * entire drain; mpsc nodes are paired with deletion; event_deleter
  * cleans up pending nodes; no double-fire.
  *
- * Best run under ASan/UBSan (build with -DARTS_USE_SANITIZERS=ON) to
+ * Best run under ASan/UBSan (build with -DARTS_USE_SANS=ON) to
  * catch UAF.  Built as a regular release test it primarily exercises
  * the ref-count protocol's correctness under contention.
  */

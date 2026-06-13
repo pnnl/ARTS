@@ -45,13 +45,13 @@
 /// driver creates N_DBS DBs round-robin across all ranks (home routing
 /// via arts_edt_hint_t.rank = i % nnodes) and spawns N_EDTS workers, each
 /// pinned to a deterministic rank and acquiring a deterministic DB in a
-/// deterministic mode (RW or RO).  RC must transfer ownership /
-/// install RO snapshots across ranks; the final completion count must
-/// equal N_EDTS * K_ITERS.
+/// deterministic mode (RW or RO).  The ownership protocol must transfer
+/// ownership / install RO snapshots across ranks; the final completion count
+/// must equal N_EDTS * K_ITERS.
 ///
 /// Determinism: every worker increments a per-DB integer if RW, or reads
 /// it if RO.  RW updates per DB are strictly serialised across ranks by
-/// RC's lease + barrier_gen, so the per-DB counter is deterministic
+/// the lease + barrier_gen mechanism, so the per-DB counter is deterministic
 /// modulo the number of RW visits to that DB.  We do not assert the
 /// per-DB final value (cross-rank dispatch order varies); we instead
 /// check that all workers ran without aborting and that the global
@@ -110,7 +110,7 @@ static void worker_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_abort(1);
   }
   if (mode_is_rw) {
-    /* Per-node serialised RW: increment is safe within RC. */
+    /* Per-node serialised RW: increment is safe under per-node exclusivity. */
     (*data)++;
   } else {
     /* RO: just read, do not modify. */
@@ -179,9 +179,10 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     /* DBs distributed round-robin across all ranks.  For each DB we
      * also wire an init_writer EDT pinned on the home rank that takes
      * the first RW lease and stamps the payload to a known value.  This
-     * is required because RC does not synthesise an initial RO
-     * snapshot from an unwritten payload — without an explicit RW
-     * writer the first cross-rank RO acquire returns NULL ptr. */
+     * is required because the ownership protocol does not synthesise an
+     * initial RO snapshot from an unwritten payload — without an
+     * explicit RW writer the first cross-rank RO acquire returns NULL
+     * ptr. */
     for (int i = 0; i < N_DBS; i++) {
       void *raw = NULL;
       unsigned int home = (unsigned int)(i % (int)nnodes);
@@ -194,16 +195,16 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     }
 
     /* Workers fan out across all ranks, deterministically picking a DB
-     * and an access mode based on (iter, i).  RC's per-DB lease
-     * ordering serialises every RW behind the init_writer above.
+     * and an access mode based on (iter, i).  Per-DB lease ordering
+     * serialises every RW behind the init_writer above.
      *
-     * Note: B.2 uses RW-only across ranks.  Cross-rank RO acquire in
-     * RC has a known issue where the first RO acquire arriving on
-     * a rank that has not yet seen any RW may observe NULL ptr (the
-     * RO snapshot install path lazily fetches from home only after the
-     * first RW lease releases).  Validating cross-rank RO is left to
-     * the dedicated coherence_ro_acquire_stress test (single-node) and
-     * to coherence_mixed_local_remote (which interleaves explicit RW
+     * Note: B.2 uses RW-only across ranks.  Cross-rank RO acquire has
+     * a known issue where the first RO acquire arriving on a rank that
+     * has not yet seen any RW may observe NULL ptr (the RO snapshot
+     * install path lazily fetches from home only after the first RW
+     * lease releases).  Validating cross-rank RO is left to the
+     * dedicated coherence_ro_acquire_stress test (single-node) and to
+     * coherence_mixed_local_remote (which interleaves explicit RW
      * fences). */
     for (int i = 0; i < N_EDTS; i++) {
       int db_idx = (iter * 7 + i * 13) % N_DBS;

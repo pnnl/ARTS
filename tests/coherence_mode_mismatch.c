@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * Mode-mismatch detection: launch one rank from an RC binary, the other
- * from an LRC binary.  The first cross-mode message should produce a fatal
- * error within seconds, because the wire protocol tag differs between the
- * two builds.
+ * Mode-mismatch detection: launch the two ranks from binaries built with
+ * different memory-model/protocol configurations (e.g. one eager, one
+ * lazy).  The first cross-mode message should produce a fatal error within
+ * seconds, because the wire protocol tag differs between the two builds.
  *
  * Driven by tests/run_mode_mismatch.sh standalone. */
 

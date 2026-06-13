@@ -71,8 +71,8 @@ bool arts_try_lock(volatile unsigned int *lock);
 uint64_t arts_atomic_fetch_and_u64(volatile uint64_t *destination,
                                    uint64_t add_val);
 
-/* Acquire-load primitives (Phase 2.2) — used pervasively by the v3 RC
- * coherence layer (cache->destroy_state, cache->writer_count, etc.).
+/* Acquire-load primitives — used pervasively by the coherence layer
+ * (cache->destroy_state, cache->writer_count, etc.).
  * Implemented via __atomic_load_n (__ATOMIC_ACQUIRE) so the load pairs
  * with __sync_*-based stores already in arts_atomic_*. */
 unsigned int arts_atomic_read(const volatile unsigned int *destination);

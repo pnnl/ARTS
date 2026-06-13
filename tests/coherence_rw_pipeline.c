@@ -46,7 +46,7 @@
 ///            Exercises PROCEED advancing all local waiters of one DB.
 ///   Each phase uses a finish event so the value check is race-free; a watchdog
 ///   converts a stranded waiter into a loud failure instead of a hang.
-///   RC/LRC only (LC has no ownership round).
+///   OCR model (eager/lazy) only — the relaxed model has no ownership round.
 
 #include "arts.h"
 
@@ -149,8 +149,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
   arts_printf("=== coherence_rw_pipeline ===\n");
 
-#ifdef ARTS_MEMORY_MODEL_LC
-  arts_printf("SKIP: LC has no exclusive-RW ownership round\n");
+#ifdef ARTS_MEMORY_MODEL_RELAXED
+  arts_printf("SKIP: RELAXED has no exclusive-RW ownership round\n");
   atomic_store(&g_check_result, 1);
   arts_shutdown();
   return;

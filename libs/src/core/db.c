@@ -76,23 +76,23 @@ DB_MODE_NAME;
 /*
  * arts_db_user_ptr — Return the user-visible data pointer for a DB.
  *
- * For RC (DEFAULT) DBs this is cache->buffer->data (the canonical
- * payload installed by arts_db_buf_install at create time or
+ * For coherent ARTS_DB datablocks this is cache->buffer->data (the
+ * canonical payload installed by arts_db_buf_install at create time or
  * by GRANT/DATA_RESPONSE on sharer ranks).  For all other subtypes it
  * is the legacy (db+1) pointer.
  *
- * Returns NULL if `db` itself is NULL or if a RC DB has no buffer
- * installed yet (transient at create-time; callers should treat this
- * as "data not yet available").
+ * Returns NULL if `db` itself is NULL or if a coherent ARTS_DB has no
+ * buffer installed yet (transient at create-time; callers should treat
+ * this as "data not yet available").
  */
 static inline void *arts_db_user_ptr(struct arts_db_s *db) {
   if (db == NULL) {
     return NULL;
   }
   if (db->db_type == ARTS_DB) {
-    /* RC: canonical payload lives in the installed buffer's data, not at
-     * (db+1).  Unsafe peek — callers use this for the descriptor's payload
-     * pointer in single-owner contexts. */
+    /* Coherent ARTS_DB: canonical payload lives in the installed buffer's
+     * data, not at (db+1).  Unsafe peek — callers use this for the
+     * descriptor's payload pointer in single-owner contexts. */
     struct arts_db_buffer_s *buf = arts_db_buf_peek(&db->cache);
     return buf ? (void *)buf->data : NULL;
   }
@@ -102,15 +102,15 @@ static inline void *arts_db_user_ptr(struct arts_db_s *db) {
 /*
  * arts_db_auto_acquire — Track the creator EDT's hold on a DB.
  *
- * For ARTS_DB: the RC cache_s was allocated with writer_count=2
+ * For ARTS_DB: the coherence cache_s was allocated with writer_count=2
  * (sentinel + creator EDT) via ARTS_DB_INIT_CREATOR_HOME or
  * ARTS_DB_INIT_CREATOR_REMOTE, so the creator's hold is already
- * counted in the RC state machine.  release_rw drops it at EDT
+ * counted in the coherence state machine.  release_rw drops it at EDT
  * epilogue.
  *
- * For non-RC pinned subtypes (PIN, GPU_PIN, GPU_LC, CXL_LC): there is
- * no DB-level coherence to track; the creator EDT just owns the
- * pointer until it explicitly destroys or hands it off via events.
+ * For pinned subtypes (PIN, GPU_PIN, GPU, CXL): there is no
+ * DB-level coherence to track; the creator EDT just owns the pointer
+ * until it explicitly destroys or hands it off via events.
  *
  * In both cases the GUID is recorded on created_db_list so the EDT
  * epilogue (arts_release_created_dbs) drives the matching release.
@@ -155,11 +155,11 @@ void *arts_db_malloc(arts_db_types_t db_type, size_t size) {
 
 void arts_db_free(void *ptr) {
   struct arts_db_s *db = (struct arts_db_s *)ptr;
-  /* Chain into RC cache teardown if this DB has one.  Only ARTS_DB carries
-   * coherence state; other subtypes leave the embedded cache zeroed.  The
-   * cache is embedded by value as the first member of db_s, so the destructor
-   * tears down its sub-resources (buffer pool, home_s) in place — we do NOT
-   * free it separately; the db_s free below reclaims its storage. */
+  /* Chain into coherence cache teardown if this DB has one.  Only ARTS_DB
+   * carries coherence state; other subtypes leave the embedded cache zeroed.
+   * The cache is embedded by value as the first member of db_s, so the
+   * destructor tears down its sub-resources (buffer pool, home_s) in place — we
+   * do NOT free it separately; the db_s free below reclaims its storage. */
   if (db->db_type == ARTS_DB) {
     arts_db_cache_destructor(&db->cache);
   }
@@ -211,11 +211,11 @@ static void db_create_in_place(arts_guid_t guid, void *addr, uint64_t len,
   db_res->reader = 0;
   db_res->writer = 0;
   db_res->db_type = db_type;
-  /* ARTS_DB enters the RC protocol at create time.  Initialize the embedded
-   * cache (first member of db_s) with CREATOR_HOME init — arts_db_create only
-   * routes here when the local rank is the creator (route ==
-   * arts_global_rank_id), which for round-robin home is also the home rank.
-   * Non-RC subtypes leave the embedded cache zeroed.
+  /* ARTS_DB enters the coherence protocol at create time.  Initialize the
+   * embedded cache (first member of db_s) with CREATOR_HOME init —
+   * arts_db_create only routes here when the local rank is the creator
+   * (route == arts_global_rank_id), which for round-robin home is also the
+   * home rank.  Non-coherent subtypes leave the embedded cache zeroed.
    *
    * Note: db_create_in_place is called only on the local-create
    * branch of arts_db_create; the remote-create branch builds its own
@@ -233,7 +233,7 @@ static void db_create_in_place(arts_guid_t guid, void *addr, uint64_t len,
   if (db_type == ARTS_DB) {
     arts_db_cache_init(cache, guid, user_size, ARTS_DB_INIT_CREATOR_HOME,
                        arts_global_rank_id);
-    /* Install a fresh buffer so subsequent RC acquires
+    /* Install a fresh buffer so subsequent coherent acquires
      * (acquire_local / mark_edt_ready_by_guid) find a non-NULL
      * cache->buffer.  The user pointer returned by arts_db_create
      * points into this buffer's data[] FAM, so writes by the creator
@@ -245,9 +245,9 @@ static void db_create_in_place(arts_guid_t guid, void *addr, uint64_t len,
                           /*data_payload=*/NULL, user_size);
     }
   }
-  /* Non-RC subtypes: PIN, GPU_PIN, GPU_LC, CXL_LC are pinned to the
-   * creator rank and have no DB-level coherence.  The embedded cache stays
-   * zeroed and db_list stays NULL. */
+  /* Non-coherent subtypes (ARTS_DB_PIN, ARTS_DB_GPU_PIN, ARTS_DB_GPU,
+   * ARTS_DB_CXL) are pinned to the creator rank and have no DB-level
+   * coherence.  The embedded cache stays zeroed and db_list stays NULL. */
   if (db_type == ARTS_DB_GPU) {
     void *shadow_copy = (void *)(((char *)addr) + packet_size);
     memcpy(shadow_copy, addr, sizeof(struct arts_db_s));
@@ -262,10 +262,10 @@ static void db_create_in_place(arts_guid_t guid, void *addr, uint64_t len,
 /*
  * arts_db_create — Unified DataBlock creation.
  *
- * Handles all DB subtypes (RC, PIN, GPU_PIN, GPU_LC, CXL_LC).  When
- * hint->rank targets a remote node, only ARTS_DB is supported:
- * a coherent home stub is installed via DB_CREATE_COHERENT.  Pinned
- * subtypes return NULL_GUID with a warning.
+ * Handles all DB subtypes (ARTS_DB, ARTS_DB_PIN, ARTS_DB_GPU_PIN, ARTS_DB_GPU,
+ * ARTS_DB_CXL).  When hint->rank targets a remote node, only ARTS_DB is
+ * supported: a coherent home stub is installed via DB_CREATE_COHERENT.
+ * Pinned subtypes return NULL_GUID with a warning.
  */
 arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
                            uint16_t flags, const arts_db_hint_t *hint) {
@@ -350,7 +350,7 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
           }
           arts_route_table_install(ptr, guid, arts_global_rank_id, true);
         }
-        /* For RC (DEFAULT) DBs the canonical user data lives
+        /* For coherent ARTS_DB the canonical user data lives
          * in cache->buffer->data (installed by db_create_in_place),
          * not at (db+1).  arts_db_user_ptr returns the right pointer
          * for both worlds.  NO_ACQUIRE: return NULL so caller cannot
@@ -370,7 +370,7 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
                ? pre_guid
                : arts_guid_create_for_rank(rank, ARTS_GUID_DB);
     if (db_type == ARTS_DB) {
-      /* For RC type, ask the home rank to install a coherent cache_s
+      /* For ARTS_DB, ask the home rank to install a coherent cache_s
        * via DB_CREATE_COHERENT.  The home handler
        * (arts_handler_db_create) allocates its own stub +
        * cache_s with ARTS_DB_INIT_HOME_RECV.
@@ -453,7 +453,7 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
         if (current_edt && creator_cache) {
           /* Auto-acquire: register the DB on the creator EDT's
            * created_db_list so arts_release_created_dbs at EDT epilogue
-           * dispatches RC release_rw, dropping the creator's
+           * dispatches coherent release_rw, dropping the creator's
            * writer_count and triggering the eventual WB+TRANSFER. */
           arts_db_auto_acquire(creator_stub);
         }
@@ -462,12 +462,12 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
                  "created remotely on rank %u via DB_CREATE_COHERENT",
                  guid, arts_id, GET_DB_TYPE_NAME(db_type), len, rank);
     } else {
-      /* Non-RC types (PIN, GPU_PIN, GPU_LC, CXL_LC) are pinned to the
-       * creator rank.  Creating one on a different rank is a
-       * programming error — return NULL_GUID.  Cross-rank distribution
-       * for these subtypes must use ARTS_DB instead. */
-      ARTS_WARN("arts_db_create: cannot remote-create non-RC DB type %s on "
-                "rank %u (only ARTS_DB is internode relocatable). "
+      /* Non-coherent subtypes (ARTS_DB_PIN, ARTS_DB_GPU_PIN, ARTS_DB_GPU,
+       * ARTS_DB_CXL) are pinned to the creator rank.  Creating one on a
+       * different rank is a programming error — return NULL_GUID.
+       * Cross-rank distribution for these subtypes must use ARTS_DB instead. */
+      ARTS_WARN("arts_db_create: only ARTS_DB (coherent) DataBlocks support "
+                "remote create; %s on rank %u is pinned to the creator rank. "
                 "Returning NULL_GUID.",
                 GET_DB_TYPE_NAME(db_type), rank);
       *addr = NULL;
@@ -516,16 +516,16 @@ void arts_db_destroy(arts_guid_t guid) {
   arts_shared_ptr_t db_res_h = arts_route_table_lookup_db(guid);
   struct arts_db_s *db_res = (struct arts_db_s *)arts_shared_get(db_res_h);
 
-  /* RC path: hand off to the coherence-layer destroy entry, which
-   * sends DESTROY_REQ to home and runs the fan-out / finalize there. */
+  /* Coherent ARTS_DB path: hand off to the coherence-layer destroy entry,
+   * which sends DESTROY_REQ to home and runs the fan-out / finalize there. */
   if (db_res != NULL && db_res->db_type == ARTS_DB) {
     arts_shared_release(&db_res_h);
     arts_db_destroy_remote(guid);
     return;
   }
 
-  /* Non-RC pinned subtypes (PIN, GPU_PIN, GPU_LC, CXL_LC): the DB lives
-   * only on the creator rank.  Route through
+  /* Non-coherent pinned subtypes (ARTS_DB_PIN, ARTS_DB_GPU_PIN, ARTS_DB_GPU,
+   * ARTS_DB_CXL): the DB lives only on the creator rank.  Route through
    * arts_route_table_set_destroyed — once outstanding refs drop, the cb
    * deleter (arts_db_deleter) runs. */
   if (db_res != NULL) {
@@ -624,13 +624,14 @@ static void acquire_one_dep(struct arts_edt_s *edt, arts_edt_dep_t *depv,
   arts_shared_ptr_t db_temp_h = arts_route_table_lookup_db(depv[i].guid);
   struct arts_db_s *db_temp = (struct arts_db_s *)arts_shared_get(db_temp_h);
 
-  /* RC/LRC/LC coherent ARTS_DB path.  Two entry points:
+  /* Coherent ARTS_DB path (eager, lazy, or relaxed protocol).  Two entry
+   * points:
    *   - Existing local cache_s (db_temp with db_type == ARTS_DB; embedded
    *     cache).
    *   - Remote DB never seen on this rank (db_temp == NULL, owner remote):
    *     lazy-install a stub cache_s and dispatch through
-   * arts_handler_db_acquire. Other (pinned) subtypes bypass RC and fall through
-   * below. */
+   *     arts_handler_db_acquire.
+   * Other (pinned) subtypes bypass coherence and fall through below. */
   struct arts_db_cache_s *cache = NULL;
   if (db_temp != NULL && db_temp->db_type == ARTS_DB) {
     cache = &db_temp->cache;
@@ -653,8 +654,9 @@ static void acquire_one_dep(struct arts_edt_s *edt, arts_edt_dep_t *depv,
     return;
   }
 
-  /* Non-RC pinned subtypes (PIN, GPU_PIN, GPU_LC, CXL_LC): the DB lives only
-   * on its creator rank — hand back the local pointer if present. */
+  /* Non-coherent pinned subtypes (ARTS_DB_PIN, ARTS_DB_GPU_PIN, ARTS_DB_GPU,
+   * ARTS_DB_CXL): the DB lives only on its creator rank — hand back the local
+   * pointer if present. */
   if (db_temp != NULL) {
     if (owner != arts_global_rank_id) {
       ARTS_WARN(
@@ -672,15 +674,15 @@ static void acquire_one_dep(struct arts_edt_s *edt, arts_edt_dep_t *depv,
 
   /* DB absent locally.  OoO defer keyed on the DB GUID (park): when DB_CREATE
    * installs it (home==self case) the drain re-attempts this dep through
-   * arts_handler_db_acquire.  A remote non-RC reference can never resolve
-   * locally (pinned-subtype contract) and waits here.  No resolved — the data
-   * and cursor advance arrive on the drain replay. */
+   * arts_handler_db_acquire.  A remote non-coherent (pinned-subtype) reference
+   * can never resolve locally and waits here.  No resolved — the data and
+   * cursor advance arrive on the drain replay. */
   if (arts_guid_is_local(depv[i].guid)) {
     ARTS_DEBUG("DB[Guid:%lu] out of order request slot %u", depv[i].guid, i);
   } else {
     ARTS_WARN("arts_db_acquire_all: cannot resolve remote DB[Guid:%lu] for "
-              "non-RC dep "
-              "on rank %u — owner=%u. Deferring via OoO.",
+              "non-coherent (pinned) dep on rank %u — owner=%u. Deferring via "
+              "OoO.",
               depv[i].guid, arts_global_rank_id, owner);
   }
   {
@@ -837,7 +839,8 @@ void arts_db_acquire_all(struct arts_edt_s *edt) {
     acquire_one_dep(edt, depv, i);
   }
 
-  /* Pass 2: fire the serialized (RW) deps from the cursor (no-op under LC). */
+  /* Pass 2: fire the serialized (RW) deps from the cursor (no-op under the
+   * relaxed model). */
   rw_fire_from_cursor(edt);
 
   /* Remove the +1 bias; this decrement may be the one that reaches 0. */
@@ -879,12 +882,13 @@ void prep_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu) {
     if (depv[i].guid == NULL_GUID || depv[i].ptr == NULL) {
       continue;
     }
-    /* For RC DBs, dep->ptr is buf->data and pointer arithmetic to
+    /* For coherent ARTS_DB, dep->ptr is buf->data and pointer arithmetic to
      * recover db_s would land in the buffer header, NOT a db_s.  Detect
-     * via the coherence adapter and skip — RC drives invalidation
-     * via OWNERSHIP_REQUEST inside the coherence layer.  Non-RC pinned subtypes
-     * (PIN, GPU_PIN, GPU_LC, CXL_LC) have no DB-level coherence and
-     * therefore no inter-rank invalidation step at prep time. */
+     * via the coherence adapter and skip — the OCR model drives invalidation
+     * via OWNERSHIP_REQUEST inside the coherence layer.  Non-coherent pinned
+     * subtypes (ARTS_DB_PIN, ARTS_DB_GPU_PIN, ARTS_DB_GPU, ARTS_DB_CXL) have
+     * no DB-level coherence and therefore no inter-rank invalidation step at
+     * prep time. */
     if (arts_db_cache_lookup(depv[i].guid) != NULL) {
       continue;
     }
@@ -925,13 +929,13 @@ void prep_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu) {
  *
  * Per access mode:
  *   - DB_MODE_RO / DB_MODE_RW: only ARTS_DB needs DB-level coherence
- *     work; route through the RC release entry points
- *     (arts_db_release_ro / arts_db_release_rw).  Non-RC pinned
+ *     work; route through the coherent release entry points
+ *     (arts_db_release_ro / arts_db_release_rw).  Non-coherent pinned
  *     subtypes have no DB-level coherence — release is a no-op.
  *   - DB_MODE_PTR: free the malloc'd copy buffer.
- *   - GPU_LC subtype (GPU build, non-LC_SYNC mode): release the LC reader
- *     lock — pure intra-rank multi-device coordination.
- *   - CXL_LC subtype: producer-flush and return.
+ *   - ARTS_DB_GPU subtype (GPU build, non-LC_SYNC mode): release the GPU-LC
+ *     reader lock — pure intra-rank multi-device coordination.
+ *   - ARTS_DB_CXL subtype: producer-flush and return.
  *
  * Does NOT nullify caller-visible state (guid/ptr/mode).  Callers that
  * need to mark the slot as released (mid-EDT release) do that themselves.
@@ -939,15 +943,13 @@ void prep_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu) {
 static void release_one_dep(arts_edt_dep_t *dep, bool gpu) {
   arts_db_access_mode_t access_mode = dep->mode;
 
-  /* RC release path for ARTS_DB.  For RC DBs, dep->ptr is
-   * cache->buffer->data (NOT (db+1)), so we cannot recover the
-   * arts_db_s by pointer arithmetic.  Look up by GUID via the
-   * coherence adapter; if it returns a cache_s, route through the RC
-   * RC release entry points.  Drops the EDT's per-acquire buffer ref
-   * taken at acquire time (acquire_local / mark_edt_ready_by_guid each
-   * do arts_db_buf_acquire), then dispatches release_rw /
-   * release_ro to handle writeback / ownership transfer / version
-   * bump per mode. */
+  /* Coherent release path for ARTS_DB.  dep->ptr is cache->buffer->data
+   * (NOT (db+1)), so we cannot recover the arts_db_s by pointer arithmetic.
+   * Look up by GUID via the coherence adapter; if it returns a cache_s, route
+   * through the coherent release entry points.  Drops the EDT's per-acquire
+   * buffer ref taken at acquire time (acquire_local / mark_edt_ready_by_guid
+   * each do arts_db_buf_acquire), then dispatches release_rw / release_ro to
+   * handle writeback / ownership transfer / version bump per mode. */
   if (dep->guid != NULL_GUID &&
       (access_mode == DB_MODE_RO || access_mode == DB_MODE_RW)) {
     struct arts_db_cache_s *cache = arts_db_cache_lookup(dep->guid);
@@ -975,9 +977,10 @@ static void release_one_dep(arts_edt_dep_t *dep, bool gpu) {
    * guid != NULL_GUID because arts_db_release may have already nulled
    * the guid while leaving ptr non-NULL (caller responsibility).
    *
-   * Reaching this point means the dep is for a non-RC pinned subtype
-   * (PIN, GPU_PIN, GPU_LC, CXL_LC) or a special access mode (PTR,
-   * VALUE, LC_*, MEMSET) — none of which carry DB-level coherence. */
+   * Reaching this point means the dep is for a non-coherent pinned subtype
+   * (ARTS_DB_PIN, ARTS_DB_GPU_PIN, ARTS_DB_GPU, ARTS_DB_CXL) or a special
+   * access mode (PTR, VALUE, LC_*, MEMSET) — none of which carry DB-level
+   * coherence. */
   arts_db_types_t db_subtype = ARTS_DB;
   if (dep->guid != NULL_GUID && dep->ptr) {
     struct arts_db_s *db_hdr = ((struct arts_db_s *)dep->ptr) - 1;
@@ -1007,7 +1010,7 @@ static void release_one_dep(arts_edt_dep_t *dep, bool gpu) {
       arts_reader_unlock(&db->reader);
     }
   }
-  /* PIN / GPU_PIN / regular RW or RO on non-RC subtypes: nothing to
+  /* PIN / GPU_PIN / regular RW or RO on non-coherent subtypes: nothing to
    * release at the DB-coherence level.  Hardware coherence and
    * application-level event ordering handle the rest. */
 }
@@ -1029,11 +1032,11 @@ void release_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu) {
  * creator's hold is the writer_count=2 sentinel set by
  * ARTS_DB_INIT_CREATOR_HOME / ARTS_DB_INIT_CREATOR_REMOTE —
  * release_rw decrements it directly with NO buffer ref to drop
- * (auto_acquire never called acquire_buf).  For non-RC pinned
- * subtypes (PIN, GPU_PIN, GPU_LC, CXL_LC) the creator EDT has no
- * DB-level coherence hold to drop; building a synthetic RW-mode dep
- * and dispatching through release_one_dep handles only the per-mode
- * non-coherence work (LC reader unlock, CXL producer flush).
+ * (auto_acquire never called acquire_buf).  For non-coherent pinned
+ * subtypes (ARTS_DB_PIN, ARTS_DB_GPU_PIN, ARTS_DB_GPU, ARTS_DB_CXL) the
+ * creator EDT has no DB-level coherence hold to drop; building a synthetic
+ * RW-mode dep and dispatching through release_one_dep handles only the
+ * per-mode non-coherence work (GPU-LC reader unlock, CXL producer flush).
  */
 static void release_one_created(arts_guid_t guid, arts_db_access_mode_t mode) {
   arts_shared_ptr_t db_h = arts_route_table_lookup_db(guid);
@@ -1042,10 +1045,10 @@ static void release_one_created(arts_guid_t guid, arts_db_access_mode_t mode) {
     return;
   }
   if (db->db_type == ARTS_DB) {
-    /* RC creator release.  No buffer ref to drop (auto_acquire is a
-     * no-op for RC — writer_count was pre-stamped to 2 in
+    /* Coherent creator release.  No buffer ref to drop (auto_acquire is a
+     * no-op for ARTS_DB — writer_count was pre-stamped to 2 in
      * arts_db_cache_init).  release_rw decrements writer_count, runs
-     * R1-R4 transfer logic if rest hits 0, and bumps version.  The RC
+     * R1-R4 transfer logic if rest hits 0, and bumps version.  The coherent
      * creator hold is always RW, so `mode` only steers the pinned-subtype
      * synthetic dep below. */
     arts_db_release_rw(&db->cache);
@@ -1130,12 +1133,11 @@ void arts_release_created_dbs(void) {
  * arts_wait_release_dbs / arts_wait_reacquire_dbs -- Pre-/post-yield
  * hooks invoked around arts_event_wait.
  *
- * No-op under RC: multi-EDT same-rank concurrent acquire is allowed
- * (writer_count CAS-loop), so the creator's hold persists across the
+ * No-op under the OCR model: multi-EDT same-rank concurrent acquire is
+ * allowed (writer_count CAS-loop), so the creator's hold persists across the
  * yield and is dropped exactly once at EDT epilogue via
- * arts_release_created_dbs.  Pinned subtypes have no DB-level
- * coherence to drop either.  Kept as stable hooks for future per-EDT
- * release semantics.
+ * arts_release_created_dbs.  Pinned subtypes have no DB-level coherence to
+ * drop either.  Kept as stable hooks for future per-EDT release semantics.
  */
 void arts_wait_release_dbs(void) {}
 void arts_wait_reacquire_dbs(void) {}

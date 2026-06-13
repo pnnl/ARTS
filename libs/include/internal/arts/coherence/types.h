@@ -70,8 +70,8 @@ extern "C" {
 #ifndef __cplusplus
 #include <stdatomic.h>
 #endif
-/* LRC home metadata embeds a per-rank reader bit-set by value. */
-#ifdef ARTS_MEMORY_MODEL_LRC
+/* Lazy home metadata embeds a per-rank reader bit-set by value. */
+#ifdef ARTS_COHERENCE_PROTOCOL_LAZY
 #include "arts/rank_bitset.h"
 #endif
 
@@ -79,7 +79,7 @@ extern "C" {
  * transfer pending".  A real rank is always < rank_count, so UINT_MAX is a safe
  * out-of-band value (and rank 0 is a valid owner, so 0 cannot be the sentinel).
  */
-#define ARTS_LRC_NO_PENDING_OWNER ((unsigned int)-1)
+#define ARTS_LAZY_NO_PENDING_OWNER ((unsigned int)-1)
 
 /* Portable atomic unsigned-int for struct fields visible to both C and the
  * C++/nvcc layout-only TUs (which cannot parse C11 _Atomic).  C accesses these
@@ -108,7 +108,8 @@ typedef _Atomic(unsigned int) arts_db_atomic_uint_t;
  * Atomic discipline: fields the runtime reads/writes concurrently are
  * declared `volatile` and accessed exclusively through arts_atomic_*
  * (or arts_db_atomic_uint_t for the C11 _Atomic / C++-layout split).
- * The per-model #if defined(ARTS_MEMORY_MODEL_{RC,LRC,LC}) selects which
+ * The per-model #if defined(ARTS_COHERENCE_PROTOCOL_{EAGER,LAZY}) /
+ * defined(ARTS_MEMORY_MODEL_RELAXED) selects which
  * machinery is compiled in for each consistency model.
  */
 
@@ -188,10 +189,11 @@ struct arts_db_snapshot_waiter_s {
  * inline below (needed for struct embedding in arts_db_s). */
 struct arts_rank_to_u64_map_s; /* forward decl; sparse rank-keyed u64 map */
 
-/* Vyukov MPSC queue node carrying a requester rank (home OWNERSHIP_REQUEST queue).
- * The embedded `next` pointer is owned by the queue (push/pop manage it).
- * Producers are foreign-rank OWNERSHIP_REQUEST handlers; the single consumer is the
- * home-side dispatcher holding the invalidate_in_flight baton. */
+/* Vyukov MPSC queue node carrying a requester rank (home OWNERSHIP_REQUEST
+ * queue). The embedded `next` pointer is owned by the queue (push/pop manage
+ * it). Producers are foreign-rank OWNERSHIP_REQUEST handlers; the single
+ * consumer is the home-side dispatcher holding the invalidate_in_flight baton.
+ */
 #ifdef __cplusplus
 struct arts_home_lockreq_node_s {
   struct arts_home_lockreq_node_s *next;
@@ -230,9 +232,9 @@ struct arts_home_lockreq_queue_s {
  *                  acquire_buf's CAS-loop against buffer->ref_count.
  *   pending_snapshot  Treiber stack of snapshot-response reorder-buffer
  *                  waiters (case-3 push only; drained whole on next install).
- *                  Parks all modes under LC (LC has no ownership/pending_rw).
- *   buffer_pool    per-DB recycle pool of arts_db_buffer_s (intrusive Treiber
- *                  stack); buffers are never freed during the DB's lifetime.
+ *                  Parks all modes under the relaxed model (no
+ * ownership/pending_rw). buffer_pool    per-DB recycle pool of arts_db_buffer_s
+ * (intrusive Treiber stack); buffers are never freed during the DB's lifetime.
  *
  * The home-directory fields (rw_holder, pending_rw, invalidate_in_flight,
  * cached_ranks, last_sent_version, ...) are NOT here — they are inlined
@@ -254,37 +256,39 @@ struct arts_db_cache_s {
    * original guid argument has been lost in the call chain. */
   arts_guid_t db_guid;
   uint64_t db_size;
-#if defined(ARTS_MEMORY_MODEL_LC)
-  /* LC: writer_count is a pure ref count.  The WRITEBACK ACK rendezvous is a
-   * stack-local sem_t created per release_rw, matched by pointer identity
+#if defined(ARTS_MEMORY_MODEL_RELAXED)
+  /* Relaxed: writer_count is a pure ref count.  The WRITEBACK ACK rendezvous is
+   * a stack-local sem_t created per release_rw, matched by pointer identity
    * (the &sem address rides the WRITEBACK packet and is echoed in the ACK) —
    * no per-cache seq state. */
-#elif defined(ARTS_MEMORY_MODEL_LRC)
-  /* LRC: owner-side dedup map.  Allocated lazily on first ownership; preserved
+#elif defined(ARTS_COHERENCE_PROTOCOL_LAZY)
+  /* Lazy: owner-side dedup map.  Allocated lazily on first ownership; preserved
    * across ownership transfer (TRANSFER_OWNERSHIP serializes it). */
   struct arts_rank_to_u64_map_s *last_sent_version;
   /* New owner rank published by the INVALIDATE_NOTICE handler.  Sentinel
-   * ARTS_LRC_NO_PENDING_OWNER == no transfer pending.  The publish-before-
+   * ARTS_LAZY_NO_PENDING_OWNER == no transfer pending.  The publish-before-
    * sentinel-withdraw ordering makes a separate transfer_pending flag
    * redundant: when release_rw sees writer_count reach 0 it reads this field;
    * a non-sentinel value means the INVALIDATE already named the target, so this
    * (last) releaser ships TRANSFER_OWNERSHIP.  Single writer per round (home
    * baton gate), so no atomic needed. */
   unsigned int incoming_new_owner;
-  /* LRC per-cache RW exclusivity machinery.  RW OWNERSHIP_REQUEST coalescing flag —
-   * only the actor that CASes false->true sends OWNERSHIP_REQUEST; same-node RW EDTs
-   * piggyback on the in-flight one and are picked up by GRANT's drain. */
+  /* Lazy per-cache RW exclusivity machinery.  RW OWNERSHIP_REQUEST coalescing
+   * flag — only the actor that CASes false->true sends OWNERSHIP_REQUEST;
+   * same-node RW EDTs piggyback on the in-flight one and are picked up by
+   * GRANT's drain. */
   volatile unsigned int ownership_req_in_flight;
   /* Vyukov MPSC queue of RW waiters parked on this rank. */
   struct arts_pending_rw_queue_s pending_rw;
 #else
-  /* RC: the WRITEBACK ACK rendezvous is a stack-local sem_t created per
+  /* Eager: the WRITEBACK ACK rendezvous is a stack-local sem_t created per
    * release_rw, matched by pointer identity (the &sem address rides the
    * WRITEBACK packet and is echoed verbatim in the ACK).  Multiple concurrent
    * releases each get their own sem — no per-cache seq state. */
-  /* RC per-cache RW exclusivity machinery.  RW OWNERSHIP_REQUEST coalescing flag —
-   * only the actor that CASes false->true sends OWNERSHIP_REQUEST; same-node RW EDTs
-   * piggyback on the in-flight one and are picked up by GRANT's drain. */
+  /* Eager per-cache RW exclusivity machinery.  RW OWNERSHIP_REQUEST coalescing
+   * flag — only the actor that CASes false->true sends OWNERSHIP_REQUEST;
+   * same-node RW EDTs piggyback on the in-flight one and are picked up by
+   * GRANT's drain. */
   volatile unsigned int ownership_req_in_flight;
   /* Vyukov MPSC queue of RW waiters parked on this rank. */
   struct arts_pending_rw_queue_s pending_rw;
@@ -297,20 +301,22 @@ struct arts_db_cache_s {
  *  as the FIRST member: the cb object the route_table wraps is the db_s, and
  *  cache-to-db_s recovery is a zero-cost cast (cache == &db->cache, and since
  *  cache is first, (struct arts_db_s *)cache aliases the wrapping db_s).  Use
- *  arts_db_of_cache() for that recovery.  Non-RC subtypes (PIN/GPU/CXL) leave
- *  the cache zeroed (no DB-level coherence) and store their payload at
- *  (db + 1). */
+ *  arts_db_of_cache() for that recovery.  Non-coherent pinned subtypes
+ *  (ARTS_DB_PIN/ARTS_DB_GPU_PIN/ARTS_DB_GPU/ARTS_DB_CXL) leave the cache
+ *  zeroed (no DB-level coherence) and store their payload at (db + 1). */
 struct arts_db_s {
-  struct arts_db_cache_s cache; /**< FIRST — RC coherence state (embedded
-                                     by value).  Zeroed for non-RC subtypes. */
-  arts_db_types_t db_type;      /**< Storage subtype (RC/PIN/GPU/CXL).  Placed
+  struct arts_db_cache_s cache; /**< FIRST — coherence state (embedded by
+                                     value).  Zeroed for non-coherent pinned
+                                     subtypes. */
+  arts_db_types_t db_type;      /**< Storage subtype (DB/PIN/GPU/CXL).  Placed
                                      right after the cache so a cache-only stub
                                      (arts_db_cache_stub_size()) still covers it
                                      — every coherence lookup/free reads it. */
   /* Home-directory metadata — present only on the rank that is the GUID home
    * for this DB.  Non-home / lazy / creator-remote ranks allocate a cache-only
    * footprint of arts_db_cache_stub_size() bytes: it ends at the first home-arm
-   * field below (rw_holder, or last_sent_version under LC), so it INCLUDES
+   * field below (rw_holder for eager/lazy, last_sent_version for relaxed), so
+   * it INCLUDES
    * home_initialized but omits every home-arm field.  home_initialized MUST
    * stay in bounds: the cache destructor reads it on every free to decide
    * whether to tear the home directory down — on a stub it reads zeroed false
@@ -318,16 +324,16 @@ struct arts_db_s {
    * never through a stub. */
   bool home_initialized; /**< one-shot init sentinel (set by arts_db_home_init).
                           */
-#if defined(ARTS_MEMORY_MODEL_LRC)
+#if defined(ARTS_COHERENCE_PROTOCOL_LAZY)
   arts_db_atomic_uint_t rw_holder;
   struct arts_home_lockreq_queue_s pending_rw; /* embedded Vyukov MPSC */
   arts_db_atomic_uint_t invalidate_in_flight;
   struct arts_rank_bitset_s
       cached_ranks; /* RO cached-rank roster, destroy fan-out */
   unsigned int pending_install_owner; /* baton-holder-written transfer target */
-#elif defined(ARTS_MEMORY_MODEL_LC)
+#elif defined(ARTS_MEMORY_MODEL_RELAXED)
   struct arts_rank_to_u64_map_s *last_sent_version;
-#else /* RC */
+#else /* eager/lazy (OCR model) */
   arts_db_atomic_uint_t rw_holder;
   struct arts_home_lockreq_queue_s pending_rw; /* embedded Vyukov MPSC */
   arts_db_atomic_uint_t invalidate_in_flight;
@@ -372,9 +378,10 @@ static inline uint64_t arts_db_total_size(const struct arts_db_s *db) {
  * cached_ranks bitset).  The home rank allocates the full sizeof(struct
  * arts_db_s) instead.
  * The stub ends at the first home-directory field after home_initialized
- * (model-dependent: rw_holder for RC/LRC, last_sent_version for LC). */
+ * (protocol-dependent: rw_holder for eager/lazy, last_sent_version for
+ * relaxed). */
 static inline uint64_t arts_db_cache_stub_size(void) {
-#if defined(ARTS_MEMORY_MODEL_LC)
+#if defined(ARTS_MEMORY_MODEL_RELAXED)
   return offsetof(struct arts_db_s, last_sent_version);
 #else
   return offsetof(struct arts_db_s, rw_holder);

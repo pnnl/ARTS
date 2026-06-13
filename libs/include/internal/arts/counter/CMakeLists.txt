@@ -68,13 +68,13 @@ list(LENGTH COUNTER_TYPES COUNTER_COUNT)
 message(STATUS "Parsed ${COUNTER_COUNT} counters from counter.h: ${COUNTER_TYPES}")
 
 # Set counter configuration
-if(NOT EXISTS "${COUNTER_CONFIG_PATH}")
-    message(FATAL_ERROR "Counter configuration file not found: ${COUNTER_CONFIG_PATH}")
+if(NOT EXISTS "${ARTS_COUNTER_CONFIG}")
+    message(FATAL_ERROR "Counter configuration file not found: ${ARTS_COUNTER_CONFIG}")
 endif()
-message(STATUS "Using counter configuration file: ${COUNTER_CONFIG_PATH}")
+message(STATUS "Using counter configuration file: ${ARTS_COUNTER_CONFIG}")
 
 # Parse configuration file
-file(STRINGS "${COUNTER_CONFIG_PATH}" COUNTER_CONFIG_LINES)
+file(STRINGS "${ARTS_COUNTER_CONFIG}" COUNTER_CONFIG_LINES)
 set(ENABLED_COUNT 0)
 set(DISABLED_COUNT 0)
 

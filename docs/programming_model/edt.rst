@@ -42,17 +42,21 @@ Creating an EDT
 
 .. code-block:: c
 
+   arts_edt_hint_t h = ARTS_EDT_HINT_DEFAULTS;
+   h.rank = target_node;                 /* placement */
    arts_guid_t guid = arts_edt_create(
        my_edt,                /* function pointer      */
        paramc, paramv,        /* static params         */
        depc,                  /* dependency count      */
-       &(arts_hint_t){.route = target_node}  /* placement hint */
+       &h                     /* hint (NULL = defaults) */
    );
 
-The returned GUID identifies the EDT.  The ``hint`` parameter controls
-placement: pass ``NULL`` for the current node, or a pointer to an
-``arts_hint_t`` with the ``.route`` field set to the target node rank.
-If ``depc > 0``, the EDT will not run until all slots are signaled.
+The returned GUID identifies the EDT.  The ``hint`` parameter carries
+all optional creation features in :c:type:`arts_edt_hint_t`: pass
+``NULL`` for the defaults (current node, auto-allocated GUID, inherit
+the ambient finish scope), or set ``.rank`` to place the EDT on another
+node.  If ``depc > 0``, the EDT will not run until all slots are
+signaled.
 
 Signaling Dependencies
 ----------------------
@@ -61,27 +65,32 @@ Wire a DataBlock or value into a dependency slot:
 
 .. code-block:: c
 
-   /* Signal a DataBlock into slot 0 (exclusive write) */
-   arts_signal_edt(edt_guid, 0, db_guid, DB_MODE_EW);
+   /* Wire a DataBlock into slot 0 (read-write) */
+   arts_add_dependence(db_guid, edt_guid, 0, DB_MODE_RW);
 
-   /* Signal a raw 64-bit value into slot 1 */
-   arts_signal_edt_value(edt_guid, 1, 42);
+   /* Wire a raw 64-bit value into slot 1 */
+   arts_add_dependence((arts_guid_t)42, edt_guid, 1, DB_MODE_VAL);
 
-   /* Signal without data (just satisfy the slot) */
-   arts_signal_edt_null(edt_guid, 2);
+   /* Satisfy a slot without data (pure control dependency) */
+   arts_add_dependence(NULL_GUID, edt_guid, 2, DB_MODE_NULL);
 
 If ``depc == 0``, the EDT fires immediately after creation.
 
-Convenience Variants
+Creation Hint Fields
 --------------------
 
-ARTS offers several ``arts_edt_create_*`` variants:
+The legacy ``arts_edt_create_*`` variants are collapsed into the single
+:c:func:`arts_edt_create` entry point; optional features ride in
+:c:type:`arts_edt_hint_t`:
 
-- :c:func:`arts_edt_create_dep` — create EDT and pre-signal
-  dependencies in one call.
-- :c:func:`arts_edt_create_with_guid` — create at a pre-reserved GUID.
-- :c:func:`arts_edt_create_with_epoch` — associate with an epoch for
-  termination detection.
+- ``rank`` — home node (``ARTS_HINT_CURRENT_RANK`` = current node).
+- ``guid`` — create at a pre-reserved GUID (``NULL_GUID`` =
+  auto-allocate; when set, the GUID's rank overrides ``rank``).
+- ``finish_event`` — join a finish scope for termination detection
+  (see :doc:`finish_events`).
+- ``output_event`` — per-EDT result channel satisfied after the EDT's
+  DBs are released (payload set via :c:func:`arts_edt_set_result`).
+- ``edt_id`` — compiler-assigned profiling identifier.
 
 See :doc:`/api/public_api` for the full list.
 

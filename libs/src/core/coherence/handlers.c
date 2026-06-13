@@ -55,26 +55,30 @@
 
 /* ===== Home-side handlers ========================================== */
 
-/* arts_handler_db_ownership_request lives in coherence/release.c (RC+LRC
- * only — LC has no OWNERSHIP_REQUEST / GRANT round). */
+/* arts_handler_db_ownership_request lives in coherence/ownership.c (OCR model
+ * only — RELAXED has no OWNERSHIP_REQUEST / GRANT round). */
 
-/* arts_handler_db_snapshot_request (GET_DATA) is model-specific — RC/LC serve
- * from home's canonical buffer (dedup), LRC records the sharer + REDIRECTs to
- * the owner — so its whole body lives in coherence/{rc,lrc,lc}.c. */
+/* arts_handler_db_snapshot_request (GET_DATA) is protocol-specific —
+ * EAGER/RELAXED serve from home's canonical buffer (dedup), LAZY records the
+ * sharer + REDIRECTs to the owner — so its whole body lives in
+ * coherence/{eager,lazy,relaxed}.c. */
 
-/* arts_handler_db_writeback (+_ack) is model-specific — RC/LC install + ACK
- * (RC additionally advances the ownership chain on WB_AND_TRANSFER), LRC has no
- * synchronous writeback (no-op fillers preserve the OoO-table / link parity) —
- * so their whole bodies live in coherence/{rc,lrc,lc}.c. */
+/* arts_handler_db_writeback (+_ack) is protocol-specific — EAGER/RELAXED
+ * install
+ * + ACK (EAGER additionally advances the ownership chain on WB_AND_TRANSFER),
+ * LAZY has no synchronous writeback (no-op fillers preserve the OoO-table /
+ * link parity) — so their whole bodies live in
+ * coherence/{eager,lazy,relaxed}.c. */
 
-/* arts_handler_db_ownership_return lives in coherence/release.c (RC+LRC
- * only — LC has no ownership chain). */
+/* arts_handler_db_ownership_return lives in coherence/ownership.c (OCR model
+ * only — RELAXED has no ownership chain). */
 
-/* arts_handler_db_destroy is model-specific — the roster fan-out source differs
- * (RC/LC walk home->last_sent_version; LRC walks rw_holder + cached_ranks +
- * pending_rw) — so its whole body lives in coherence/{rc,lrc,lc}.c.  All
- * three skeletons run fan-out + arts_db_fail_trigger_pending FIRST, then
- * arts_route_table_set_destroyed LAST. */
+/* arts_handler_db_destroy is protocol-specific — the roster fan-out source
+ * differs (eager/relaxed walk home->last_sent_version; lazy walks rw_holder +
+ * cached_ranks + pending_rw) — so its whole body lives in
+ * coherence/{eager,lazy,relaxed}.c.  All three skeletons run fan-out +
+ * arts_db_fail_trigger_pending FIRST, then arts_route_table_set_destroyed
+ * LAST. */
 
 void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
   /* Home-side init for non-home creator.  Per coherence design plan
@@ -161,9 +165,9 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
   } else {
     arts_db_cache_init(&stub->cache, db_guid, db_size, ARTS_DB_INIT_HOME_RECV,
                        creator_rank);
-    /* Case-D leaf: LC installs a version-1 zero buffer now (home is canonical,
-     * no creator writeback to wait for); RC/LRC keep the lazy OCR install
-     * (no-op). */
+    /* Case-D leaf: relaxed installs a version-1 zero buffer now (home is
+     * canonical, no creator writeback to wait for); eager/lazy defer the
+     * install to the creator's first WRITEBACK (no-op here). */
     arts_db_create_install_home_buffer(&stub->cache, db_size);
   }
 
@@ -200,9 +204,9 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
 
 /* ===== Sharer-side response handlers =============================== */
 
-/* The RC GRANT handler arts_handler_db_ownership_response lives in
- * coherence/rc.c; LRC's TRANSFER_OWNERSHIP overload lives in
- * coherence/lrc.c; LC has no ownership transfer (dispatcher fatals). */
+/* The EAGER GRANT handler arts_handler_db_ownership_response lives in
+ * coherence/eager.c; LAZY's TRANSFER_OWNERSHIP overload lives in
+ * coherence/lazy.c; RELAXED has no ownership transfer (dispatcher fatals). */
 
 /* Cat-C pure body (DATA_RESPONSE).  The wire dispatcher / self-send shortcut
  * has already looked the home db_s up with a held ref and passes it as item_v
@@ -219,7 +223,8 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
  *   3. NO_DATA + a->version > buf->version : the with-data reply was
  *      reordered behind us — push self onto pending_snapshot (a future
  *      case-2 install drains us) + re-check (race recovery).
- * Shared verbatim by RC/LRC/LC (LC routes RW through here too). */
+ * Shared verbatim by eager/lazy/relaxed (relaxed routes RW through here
+ * too). */
 void arts_handler_db_snapshot_response(void *item_v, void *args_v) {
   struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
   struct arts_db_snapshot_response_args_s *a =
@@ -273,15 +278,15 @@ void arts_handler_db_snapshot_response(void *item_v, void *args_v) {
   }
 }
 
-/* arts_handler_db_ownership_invalidate (INVALIDATE_NOTICE) lives per model:
- * coherence/rc.c (commutative signed counter) and coherence/lrc.c
- * (publish-target-then-withdraw).  LC never sends INVALIDATE (dispatcher
+/* arts_handler_db_ownership_invalidate (INVALIDATE_NOTICE) lives per protocol:
+ * coherence/eager.c (commutative signed counter) and coherence/lazy.c
+ * (publish-target-then-withdraw).  RELAXED never sends INVALIDATE (dispatcher
  * fatals). */
 
-/* arts_handler_db_writeback_ack is model-specific — RC/LC post the releaser's
- * stack-local sem_t (pointer identity), LRC has no synchronous writeback (no-op
- * filler for OoO-table / link parity) — so its whole body lives in
- * coherence/{rc,lrc,lc}.c. */
+/* arts_handler_db_writeback_ack is protocol-specific — EAGER/RELAXED post the
+ * releaser's stack-local sem_t (pointer identity), LAZY has no synchronous
+ * writeback (no-op filler for OoO-table / link parity) — so its whole body
+ * lives in coherence/{eager,lazy,relaxed}.c. */
 
 /* Cat-C pure body (DESTROY_NOTIFY).  The wire dispatcher / self-send shortcut
  * has already looked the cache up with a held ref and passes the db_s as item_v
@@ -300,5 +305,5 @@ void arts_handler_db_cache_destroy(void *item_v, void *args_v) {
   (void)arts_route_table_set_destroyed(a->db_guid);
 }
 
-/* The LRC REDIRECT_RO handler arts_handler_db_snapshot_redirect lives in
- * coherence/lrc.c (owner-side, REDIRECT only exists under LRC). */
+/* The LAZY REDIRECT_RO handler arts_handler_db_snapshot_redirect lives in
+ * coherence/lazy.c (owner-side, REDIRECT only exists under LAZY). */

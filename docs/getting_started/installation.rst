@@ -11,14 +11,15 @@ Prerequisites
 -------------
 
 - **C17 compiler**: GCC >= 7 or Clang >= 5 (other compilers are not supported)
-- **CMake** >= 3.12
+- **CMake** >= 3.22
 - **Ninja** build system (Make is not supported)
 - **POSIX threads** (pthreads)
+
+- **hwloc** (bundled as a git submodule; built from source automatically)
 
 Optional:
 
 - **CUDA toolkit** for GPU support
-- **hwloc** for hardware-topology-aware pinning
 
 Obtaining the Source
 --------------------
@@ -40,35 +41,90 @@ ARTS *requires* the Ninja generator. Make is not supported.
    ninja
    ninja install   # installs to CMAKE_INSTALL_PREFIX (default: project/install)
 
-Debug build with sanitizers (enabled by default in Debug mode):
+Debug build (add ``-DARTS_USE_SANS=ON`` for ASan/UBSan/LSan, which are OFF by default):
 
 .. code-block:: bash
 
-   cmake -GNinja .. -DCMAKE_BUILD_TYPE=Debug
+   cmake -GNinja .. -DCMAKE_BUILD_TYPE=Debug -DARTS_USE_SANS=ON
 
 CMake Options
 ~~~~~~~~~~~~~
 
+All options are set with ``-D<NAME>=<VALUE>`` on the cmake line.
+
 .. list-table::
    :header-rows: 1
-   :widths: 30 10 60
+   :widths: 34 14 52
 
    * - Option
      - Default
      - Description
-   * - ``ARTS_USE_GPU``
+   * - ``ARTS_BUILD_SHARED``
      - ON
-     - Enable GPU / CUDA support (requires CUDA toolkit; set to OFF to
-       disable).
+     - Build the shared library ``libarts.so``.
+   * - ``ARTS_BUILD_STATIC``
+     - ON
+     - Build the static library ``libarts.a``.
    * - ``ARTS_BUILD_EXAMPLES``
-     - ON
-     - Build example programs in ``examples/``.
+     - OFF
+     - Build the example programs in ``examples/``.
    * - ``ARTS_BUILD_TESTS``
      - ON
-     - Build test programs in ``tests/``.
-   * - ``ARTS_USE_SANITIZERS``
+     - Build the test programs (registers them with ctest).
+   * - ``ARTS_BUILD_BENCHMARKS``
      - ON
-     - Enable address and undefined behavior sanitizers in Debug builds.
+     - Build the OCR benchmark apps (XSOCR + ARTS + ocrvx).
+   * - ``ARTS_BUILD_DOCS``
+     - OFF
+     - Build the Doxygen + Sphinx documentation.
+   * - ``ARTS_USE_GPU``
+     - OFF
+     - Enable CUDA GPU support (requires the CUDA toolkit).
+   * - ``ARTS_USE_LOCAL_CUDA_ARCHITECTURES``
+     - ON
+     - Auto-detect the local GPU's CUDA architecture via ``nvidia-smi`` (only
+       when ``ARTS_USE_GPU=ON``; otherwise set ``CMAKE_CUDA_ARCHITECTURES``).
+   * - ``ARTS_MEMORY_MODEL``
+     - OCR
+     - Memory model (contract) — ``OCR`` (default, the OCR v1.2.0 §1.6 model) or
+       ``RELAXED`` (DB-DRF; weaker — evaluation only, racy-but-legal OCR programs
+       may yield wrong results). Compile-time; all ranks must share one build.
+   * - ``ARTS_COHERENCE_PROTOCOL``
+     - LAZY
+     - Protocol implementing the OCR model — ``LAZY`` (acquire-time consistency
+       actions, default) or ``EAGER`` (release-time). N/A under ``RELAXED``.
+   * - ``ARTS_DEFAULT_DB_KIND``
+     - ARTS_DB
+     - Default DB storage kind the ``ARTS_DB_DEFAULT`` macro expands to:
+       ``ARTS_DB`` (regular DRAM) or ``ARTS_DB_CXL`` (CXL shared).
+   * - ``ARTS_USE_CXL``
+     - OFF
+     - Enable CXL shared-memory DataBlocks (requires the Rapid API).
+   * - ``ARTS_CXL_RAPID_INCLUDE_DIR``
+     - (empty)
+     - Path to the Rapid API includes (required when ``ARTS_USE_CXL=ON``).
+   * - ``ARTS_CXL_LIB_DIR``
+     - (empty)
+     - Path to ``arts_cxl_lib`` (required when ``ARTS_USE_CXL=ON``).
+   * - ``ARTS_LOG_LEVEL``
+     - 3 / 1
+     - Log verbosity (3 in Debug, 1 otherwise): 0=ERROR … 3=DEBUG.
+   * - ``ARTS_USE_SANS``
+     - OFF
+     - ASan + UBSan + LSan in Debug builds (excludes CUDA; mutually exclusive
+       with ``ARTS_USE_TSAN``).
+   * - ``ARTS_USE_TSAN``
+     - OFF
+     - ThreadSanitizer in Debug builds (excludes CUDA; mutually exclusive with
+       ``ARTS_USE_SANS``).
+   * - ``ARTS_COUNTER_CONFIG``
+     - configs/counters.cfg
+     - Counter configuration file parsed into introspection macros.
+
+To pick a faster linker, use CMake's own ``-DCMAKE_LINKER_TYPE=MOLD`` (cmake ≥ 3.29);
+there is no ARTS-specific linker option.
+
+See :ref:`memory_model` for the normative definition of the model and protocols.
 
 GPU Build
 ~~~~~~~~~
@@ -85,7 +141,6 @@ After building, run a quick test with the Fibonacci example:
 .. code-block:: bash
 
    cd build/examples/cpu
-   cp ../../sample_configs/arts.cfg .
-   ./fib 10
+   ARTS_CONFIG=../../../configs/local/1n.cfg ./fib 10
 
 Expected output shows the 10th Fibonacci number and timing info.

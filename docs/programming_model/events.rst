@@ -1,100 +1,183 @@
 Events
 ======
 
-Events are ARTS's synchronization primitive — latch-based counters that
-fire when their count reaches zero, triggering dependent EDTs.
+Events are ARTS's synchronization primitive.  They serve two roles at
+once: **control flow** (an EDT runs only after the events it depends on
+have fired) and **data plumbing** (a fired event delivers a data GUID —
+typically a DataBlock — into each dependent's slot).
 
 .. contents:: On this page
    :local:
    :depth: 2
 
-Latch Events
-------------
+Creating Events
+---------------
 
-A latch event maintains an integer counter.  When the counter reaches
-zero, the event fires and delivers its data to all registered
-dependents.
+All events are created through a single hint-driven entry point:
 
 .. code-block:: c
 
-   arts_guid_t evt = arts_event_create(target_node, ARTS_EVENT_LATCH,
-                                       initial_latch_count, NULL_GUID);
+   arts_guid_t arts_event_create(const arts_event_hint_t *hint);
 
-   /* Register an EDT to fire when the event completes */
-   arts_add_dependence(evt, edt_guid, slot);
-
-   /* Decrement the latch counter */
-   arts_event_satisfy_slot(evt, data_guid, ARTS_EVENT_LATCH_DECR_SLOT);
-
-.. note::
-
-   ``arts_event_create`` takes the target node rank, the event type
-   (``ARTS_EVENT_LATCH``, ``ARTS_EVENT_ONCE``, ``ARTS_EVENT_STICKY``,
-   ``ARTS_EVENT_IDEM``, ``ARTS_EVENT_COUNTED``, or ``ARTS_EVENT_CHANNEL``),
-   a latch count (used by LATCH and COUNTED), and a data GUID (used by
-   CHANNEL).  Unused parameters are silently ignored.
-
-Slot Types
-~~~~~~~~~~
+Passing ``NULL`` is equivalent to ``ARTS_EVENT_HINT_DEFAULTS`` (a latch
+event with an initial count of 1 — single satisfy fires).  The hint
+selects between the two event kinds and their parameters:
 
 .. list-table::
    :header-rows: 1
-   :widths: 40 60
+   :widths: 30 70
 
-   * - Slot
-     - Effect
-   * - ``ARTS_EVENT_LATCH_DECR_SLOT``
-     - Decrement the latch counter by one.
-   * - ``ARTS_EVENT_LATCH_INCR_SLOT``
-     - Increment the latch counter by one.
+   * - Hint field
+     - Meaning
+   * - ``rank``
+     - Home rank of the event (``ARTS_HINT_CURRENT_RANK`` = current
+       node, the default).
+   * - ``latch``
+     - Initial latch counter (default 1).  Latch events only.
+   * - ``channel``
+     - ``true`` selects a CHANNEL event (multi-fire FIFO, see below).
+   * - ``guid``
+     - Pre-reserved GUID from :c:func:`arts_guid_reserve`
+       (``NULL_GUID`` = auto-allocate).  The GUID's rank field then
+       overrides ``rank``.
+   * - ``check``
+     - ``true`` makes a create at an already-occupied GUID fail
+       (return ``NULL_GUID``) instead of replacing it — OCR
+       rendezvous semantics for labeled GUIDs.
+   * - ``finish``
+     - ``true`` selects a FINISH event (see below); all other fields
+       are ignored.
 
-When the counter reaches zero, the event fires.
+Convenience macros build the common hints:
+``ARTS_EVENT_HINT_LATCH(counter_init)``, ``ARTS_EVENT_HINT_DEFAULTS``,
+``ARTS_EVENT_HINT_CHANNEL``, and ``ARTS_EVENT_HINT_FINISH``.
 
-Event Callbacks
-~~~~~~~~~~~~~~~
+Latch Events (Fire-and-Linger)
+------------------------------
 
-Instead of wiring an EDT, you can attach an inline callback:
+A latch event maintains an integer counter.  Satisfies on the
+``ARTS_EVENT_LATCH_DECR_SLOT`` decrement it; satisfies on the
+``ARTS_EVENT_LATCH_INCR_SLOT`` increment it.  When the counter reaches
+zero the event **fires**, delivering its data GUID to every registered
+dependent.
+
+Firing is a pure state transition — *fire is not destroy*.  A fired
+event **lingers**: any :c:func:`arts_add_dependence` registered after
+the fire is satisfied immediately from the stored fire data, until the
+event is explicitly removed with :c:func:`arts_event_destroy`.  A
+satisfy arriving past the fire is silently absorbed.
+
+The single-fire OCR event flavors (ONCE, IDEMPOTENT, STICKY, COUNTED)
+are all subsumed by this unified fire-and-linger + silent-over-satisfy
+model; the macros ``ARTS_EVENT_HINT_ONCE``,
+``ARTS_EVENT_HINT_IDEMPOTENT``, ``ARTS_EVENT_HINT_STICKY``, and
+``ARTS_EVENT_HINT_COUNTED(nb_deps)`` are kept as source-compatibility
+aliases of ``ARTS_EVENT_HINT_LATCH(1)``.
+
+Signaling (Satisfy)
+-------------------
 
 .. code-block:: c
 
-   void my_callback(arts_edt_dep_t data) {
-       /* runs inline on the thread that fires the event */
-   }
+   /* Common case: decrement, optionally carrying a data GUID. */
+   void arts_event_satisfy(arts_guid_t event_guid, arts_guid_t data_guid);
 
-   arts_add_local_event_callback(evt, my_callback);
+   /* Explicit slot: ARTS_EVENT_LATCH_DECR_SLOT or
+    * ARTS_EVENT_LATCH_INCR_SLOT. */
+   void arts_event_satisfy_slot(arts_guid_t event_guid,
+                                arts_guid_t data_guid, uint32_t slot);
 
-.. warning::
+:c:func:`arts_event_satisfy` is the OCR-aligned convenience wrapper for
+the DECR slot; call :c:func:`arts_event_satisfy_slot` directly only
+when you need INCR.  Cross-rank calls are forwarded to the event's home
+rank.  There is no public API to inspect fire state — observe a fire by
+chaining a dependent EDT off the event.
 
-   Callbacks execute on the signaling thread. Keep them short and
-   avoid blocking operations.
+Wiring Dependencies
+-------------------
+
+.. code-block:: c
+
+   void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
+                            uint32_t slot, arts_db_access_mode_t mode);
+
+:c:func:`arts_add_dependence` is the OCR-standard dispatcher: with an
+event as ``source``, it registers ``destination`` (an EDT or another
+event) as a dependent; when the event fires, its data lands in
+``destination``'s ``slot`` with the given access mode (``DB_MODE_RO``,
+``DB_MODE_RW``, or ``DB_MODE_NULL`` for pure control dependencies).
+The entity-specific form :c:func:`arts_event_add_dependence` takes the
+same arguments and is what the dispatcher calls for an event source.
 
 Channel Events
 --------------
 
-Channel events are re-armable: they can fire multiple times, each
-time delivering updated data via a coupled DataBlock.
+A CHANNEL event (``ARTS_EVENT_HINT_CHANNEL``) is persistent and
+multi-fire: it pairs each satisfy with exactly one
+:c:func:`arts_add_dependence`, in FIFO arrival order.  The *g*-th
+satisfy delivers its data GUID to the *g*-th registered dependent — one
+consumer per generation.  Producer and consumer sides may run ahead of
+each other in either direction; the runtime queues the unmatched side.
 
 .. code-block:: c
 
-   arts_guid_t ch = arts_event_create(route, ARTS_EVENT_CHANNEL, 0, db_guid);
+   arts_event_hint_t h = ARTS_EVENT_HINT_CHANNEL;
+   arts_guid_t ch = arts_event_create(&h);
 
-   /* Register a dependent — will be notified on every fire */
-   arts_add_dependence(ch, edt_guid, slot);
+   arts_event_satisfy(ch, data_db);          /* generation g produced  */
+   arts_add_dependence(ch, edt, 0, DB_MODE_RW); /* generation g consumed */
 
-   /* Increment and decrement the latch to control fire cycles */
-   arts_event_satisfy_slot(ch, NULL_GUID, ARTS_EVENT_LATCH_INCR_SLOT);
-   arts_event_satisfy_slot(ch, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+Channel events suit iterative algorithms where data is produced in
+rounds and each round has a dedicated consumer.
 
-Use cases include iterative algorithms (e.g., graph analytics) where
-data is updated in rounds and dependents need to be re-notified.
+Finish Events
+-------------
 
-Common Patterns
+A FINISH event (``ARTS_EVENT_HINT_FINISH``) is a latch used for
+hierarchical termination detection: its counter tracks the live EDTs of
+a *finish scope*, and it fires when the scope has fully drained.  Wait
+on it with :c:func:`arts_event_wait` or chain a continuation EDT with
+:c:func:`arts_add_dependence`.  See :doc:`finish_events` for scope
+membership, inheritance, and nesting.
+
+Destroying Events
+-----------------
+
+Because fired events linger, every non-finish event must eventually be
+released with:
+
+.. code-block:: c
+
+   void arts_event_destroy(arts_guid_t guid);
+
+Destroy removes the event's route-table entry; the same GUID may be
+re-created afterward.  In-flight satisfies and dependence registrations
+for the GUID are handled through the runtime's out-of-order queue.
+Finish events auto-destroy when they fire and must not be destroyed
+manually.
+
+Minimal Example
 ---------------
 
-**Fan-in (join):** create an event with ``latch_count = N``, register
-one dependent EDT.  As N producers complete, each decrements the latch.
-When the count hits zero, the join EDT fires.
+A two-producer fan-in (after ``tests/event_basic.c``): the dependent
+EDT runs only after both satisfies arrive.
 
-**Barrier:** create an event with ``latch_count = num_workers``.  Each
-worker signals the event when it reaches the barrier point.  The
-continuation EDT fires after all workers check in.
+.. code-block:: c
+
+   void dependent_edt(uint32_t paramc, const uint64_t *paramv,
+                      uint32_t depc, arts_edt_dep_t depv[]) {
+       /* runs once the latch drained to zero */
+   }
+
+   void main_edt(uint32_t paramc, const uint64_t *paramv,
+                 uint32_t depc, arts_edt_dep_t depv[]) {
+       arts_event_hint_t h = ARTS_EVENT_HINT_LATCH(2);
+       arts_guid_t ev = arts_event_create(&h);
+
+       arts_guid_t dep = arts_edt_create(dependent_edt, 0, NULL, 1, NULL);
+       arts_add_dependence(ev, dep, 0, DB_MODE_NULL);
+
+       /* Two producers each decrement the latch; the second fires it. */
+       arts_event_satisfy_slot(ev, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+       arts_event_satisfy_slot(ev, NULL_GUID, ARTS_EVENT_LATCH_DECR_SLOT);
+   }

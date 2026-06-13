@@ -1,7 +1,7 @@
 GUIDs
 =====
 
-Every runtime object in ARTS — EDTs, DataBlocks, events, epochs — is
+Every runtime object in ARTS — EDTs, DataBlocks, events — is
 identified by a 64-bit **Globally Unique Identifier** (GUID).
 
 .. contents:: On this page
@@ -14,15 +14,16 @@ Bitfield Layout
 .. code-block:: text
 
    ┌──────────┬──────────────────┬────────────────────────────────────────┐
-   │ type (8) │   rank (16)      │              key (40)                  │
+   │ kind (2) │   rank (14)      │              key (48)                  │
    └──────────┴──────────────────┴────────────────────────────────────────┘
-    Bits 63–56    Bits 55–40                   Bits 39–0
+    Bits 63–62    Bits 61–48                   Bits 47–0
 
-- **type** (8 bits): Object kind from :c:enum:`arts_type_t` (most-significant
-  byte).
-- **rank** (16 bits): Node that owns the object (up to 65 535 nodes).
-- **key** (40 bits): Node-local unique key (~1 trillion per node), stored in
-  the least-significant bits so that GUID-range arithmetic reduces to plain
+- **kind** (2 bits): Object kind from :c:enum:`arts_guid_kind_t`
+  (``ARTS_GUID_DB`` / ``ARTS_GUID_EVENT`` / ``ARTS_GUID_EDT``; the
+  all-zero pattern is the reserved/NULL sentinel).
+- **rank** (14 bits): Node that owns the object (up to 16 384 nodes).
+- **key** (48 bits): Node-local unique key, stored in the
+  least-significant bits so that GUID-range arithmetic reduces to plain
   integer addition.
 
 Inspecting GUIDs
@@ -33,7 +34,7 @@ Inspecting GUIDs
    arts_guid_t guid = ...;
 
    unsigned int rank = arts_guid_get_rank(guid);
-   unsigned int type = arts_guid_get_type(guid);
+   arts_guid_kind_t kind = arts_guid_get_kind(guid);
    bool local = arts_guid_is_local(guid);
 
 GUID Ranges
@@ -45,7 +46,7 @@ keys:
 .. code-block:: c
 
    arts_guid_t start =
-       arts_guid_reserve_range(ARTS_DB, 100, target_node);
+       arts_guid_reserve_range(ARTS_GUID_DB, 100, target_node);
 
    for (unsigned int i = 0; i < 100; i++) {
        arts_guid_t g = arts_guid_from_index(start, i);
@@ -55,12 +56,15 @@ keys:
 Round-Robin Allocation
 ~~~~~~~~~~~~~~~~~~~~~~
 
-To distribute GUIDs evenly across nodes:
+To distribute the homes of a range evenly across nodes, pass the
+``ARTS_HINT_ROUND_ROBIN`` sentinel rank (``home = idx % nrank``;
+broadcast the range GUID to every rank that derives children):
 
 .. code-block:: c
 
-   arts_guid_t *guids =
-       arts_guid_reserve_round_robin(total_count, ARTS_DB);
+   arts_guid_t start =
+       arts_guid_reserve_range(ARTS_GUID_DB, total_count,
+                               ARTS_HINT_ROUND_ROBIN);
 
 ``NULL_GUID``
 -------------

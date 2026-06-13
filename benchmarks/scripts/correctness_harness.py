@@ -47,28 +47,32 @@ from typing import Any
 REPO = Path(__file__).resolve().parent.parent.parent
 
 # ---------------------------------------------------------------------------
-# Build directory: selectable via --build-dir (default: build_release_rc).
+# Build directory: selectable via --build-dir (default: build_release_eager).
 # Resolved early so module-level Path constants can reference it.
 # ---------------------------------------------------------------------------
 _arg_parser = argparse.ArgumentParser(add_help=False)
-_arg_parser.add_argument('--build-dir', default='build_release_rc')
+_arg_parser.add_argument('--build-dir', default='build_release_eager')
 _pre_args, _ = _arg_parser.parse_known_args()
 BUILD = Path(_pre_args.build_dir)
 if not BUILD.is_absolute():
     BUILD = REPO / BUILD
 
-_mode = 'unknown'
+_model = 'unknown'
+_protocol = ''
 try:
     _cache_path = BUILD / 'CMakeCache.txt'
     with open(_cache_path) as _f:
         for _line in _f:
             _m = re.match(r'ARTS_MEMORY_MODEL:STRING=(\w+)', _line)
             if _m:
-                _mode = _m.group(1)
-                break
+                _model = _m.group(1)
+            _p = re.match(r'ARTS_COHERENCE_PROTOCOL:STRING=(\w+)', _line)
+            if _p:
+                _protocol = _p.group(1)
 except FileNotFoundError:
     pass
-print(f'[harness] Build dir: {BUILD} (mode: {_mode})')
+_mode = _model if _model != 'OCR' else f'{_model}/{_protocol}'
+print(f'[harness] Build dir: {BUILD} (model: {_mode})')
 
 APPS_DIR = BUILD / "benchmarks" / "apps"
 BASE_DIR = BUILD / "benchmarks" / "baseline"
@@ -239,7 +243,7 @@ TIER_A: list[Case] = [
          # class T (tiny: size=50, 3 iters) runs in <1s, so it stays fast enough
          # for xsocr at multinode and runs full 3-way.  (class S — the default —
          # made the multinode run ~36K small remote DBs/iter of synchronous
-         # writeback-ACK round-trips: correct but ~67s n4 / ~170s LC 2n, which is
+         # writeback-ACK round-trips: correct but ~67s n4 / ~170s RELAXED 2n, which is
          # why it used to be arts-only with a wide budget.)
     Case("hpgmg", "hpgmg", ["4","1"],
          scalar_re=r"\|\|error\|\|\s*=\s*([\-+0-9.eE]+)", scalar_kind="float",
@@ -999,7 +1003,7 @@ def tier_b(xsocr: RunResult, arts: RunResult, base: RunResult, case: Case) -> Ve
 # ---------------------------------------------------------------------------
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--build-dir", default="build_release_rc",
+    p.add_argument("--build-dir", default="build_release_eager",
                    help="Build directory containing apps and configs")
     p.add_argument("--no-baseline", action="store_true")
     p.add_argument("--only", type=str, default="")

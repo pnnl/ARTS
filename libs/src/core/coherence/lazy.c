@@ -1,11 +1,11 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * LRC (Lazy Release Consistency) coherence-model translation unit: defines the
- * LRC-specific arts_handler_db_* / arts_db_* bodies directly (CMake links
- * exactly this TU for an LRC build) plus the LRC-only wire handlers/senders.
- * Compiled only when ARTS_MEMORY_MODEL=LRC (selected in
- * libs/src/core/CMakeLists.txt). Contains NO ARTS_MEMORY_MODEL_* preprocessor
- * logic.
+ * LAZY protocol translation unit: defines the LAZY-specific
+ * arts_handler_db_* / arts_db_* bodies directly (CMake links exactly this TU
+ * for an OCR+LAZY build) plus the LAZY-only wire handlers/senders.
+ * Compiled only for ARTS_MEMORY_MODEL=OCR with ARTS_COHERENCE_PROTOCOL=LAZY
+ * (selected in libs/src/core/CMakeLists.txt). Contains NO model/protocol
+ * preprocessor logic.
  */
 #include <stdbool.h>
 #include <stdint.h>
@@ -27,18 +27,18 @@
 #include "arts/utils/atomics.h" /* arts_atomic_* */
 #include "arts/utils/malloc.h"  /* arts_malloc / arts_free (transfer sender) */
 
-/* LRC transfers ownership owner->owner via
- * arts_db_lrc_send_ownership_response, not a home-side GRANT, so there is no
+/* The lazy protocol transfers ownership owner->owner via
+ * arts_db_lazy_send_ownership_response, not a home-side GRANT, so there is no
  * local chain-advance.  invalidate_transfer still calls this on the home path;
- * it is a no-op stub for LRC. */
+ * it is a no-op stub for the lazy build. */
 void arts_db_local_transfer_now(struct arts_db_cache_s *cache) { (void)cache; }
 
-/* ===== 8-case acquire dispatch (LRC arm) ===========================
- * Whole arts_handler_db_acquire body for the LRC build.  Diverges from RC only
- * on the RO-has-local-data predicate (LRC: is_owner — the home rank does NOT
- * hold the canonical copy; only the current owner has an installed buffer, so a
- * home-but-not-owner rank goes through acquire_remote_ro and home forwards to
- * the owner via REDIRECT_RO). */
+/* ===== 8-case acquire dispatch (LAZY arm) ==========================
+ * Whole arts_handler_db_acquire body for the LAZY build.  Diverges from EAGER
+ * only on the RO-has-local-data predicate (LAZY: is_owner — the home rank does
+ * NOT hold the canonical copy; only the current owner has an installed buffer,
+ * so a home-but-not-owner rank goes through acquire_remote_ro and home forwards
+ * to the owner via REDIRECT_RO). */
 void arts_handler_db_acquire(void *item, void *args) {
   struct arts_db_s *db = (struct arts_db_s *)item;
   struct arts_ooo_args_db_acquire_s *a =
@@ -55,7 +55,7 @@ void arts_handler_db_acquire(void *item, void *args) {
   bool is_owner = ((int)cache->writer_count > 0);
 
   if (mode == DB_MODE_RO) {
-    if (is_owner) { /* LRC RO predicate (only the owner holds the canonical
+    if (is_owner) { /* lazy RO predicate (only the owner holds the canonical
                        copy) */
       dep->ptr = arts_db_acquire_local(cache);
       arts_db_acquire_resolved(edt, slot);
@@ -77,13 +77,14 @@ bool arts_db_acquire_is_serialized(arts_db_access_mode_t mode) {
   return mode == DB_MODE_RW;
 }
 
-/* ===== release_rw (LRC arm) =======================================
- * LRC drops the buffer ref BEFORE decrementing writer_count, so the slot's
- * cache-hold is the only ref that can keep the buffer alive past
+/* ===== release_rw (lazy arm) =======================================
+ * The lazy protocol drops the buffer ref BEFORE decrementing writer_count, so
+ * the slot's cache-hold is the only ref that can keep the buffer alive past
  * writer_count==0 (a concurrent teardown then frees it via the cb deleter with
- * no dangling local ref).  In RC this window does not exist (local_transfer_now
- * restores the sentinel); LRC has no sentinel restoration, so it must close the
- * window by releasing the ref before exposing writer_count==0. */
+ * no dangling local ref).  In the eager protocol this window does not exist
+ * (local_transfer_now restores the sentinel); the lazy protocol has no sentinel
+ * restoration, so it must close the window by releasing the ref before exposing
+ * writer_count==0. */
 void arts_db_release_rw(struct arts_db_cache_s *cache) {
   /* Defensive: writer_count==0 means our acquire never bumped ownership;
    * decrementing would underflow.  Atomic acquire-load avoids a TSan race. */
@@ -115,25 +116,25 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
      * TRANSFER_OWNERSHIP — sentinel invariant, no flag.  Identical for home and
      * non-home owners.  Otherwise no transfer is pending: home retains
      * ownership until a future OWNERSHIP_REQUEST; a non-home owner quiesces. */
-    if (cache->incoming_new_owner != ARTS_LRC_NO_PENDING_OWNER) {
-      arts_db_lrc_send_ownership_response(cache);
+    if (cache->incoming_new_owner != ARTS_LAZY_NO_PENDING_OWNER) {
+      arts_db_lazy_send_ownership_response(cache);
     }
   }
 }
 
-/* ===== cache_s lifecycle (LRC: pending_rw + dedup map + sentinel) =
- * Construct: LRC's model field-init (the Vyukov MPSC pending_rw queue + the
- * owner-side dedup map [lazy] + the transfer sentinel) runs BEFORE
- * arts_db_cache_common_init.  Destruct order: buffer-NULL (pre) → pending_rw
- * destroy → snapshot drain + home teardown (post). */
+/* ===== cache_s lifecycle (lazy: pending_rw + dedup map + sentinel) =
+ * Construct: the lazy protocol's field-init (the Vyukov MPSC pending_rw queue +
+ * the owner-side dedup map [lazy-allocated] + the transfer sentinel) runs
+ * BEFORE arts_db_cache_common_init.  Destruct order: buffer-NULL (pre) →
+ * pending_rw destroy → snapshot drain + home teardown (post). */
 void arts_db_cache_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
                         uint64_t db_size, arts_db_init_kind_t kind,
                         unsigned int creator_rank) {
   arts_pending_rw_queue_init(&c->pending_rw);
-  /* LRC owner-side fields: dedup map allocated lazily on first ownership grant;
-   * incoming_new_owner starts at the sentinel (no transfer pending). */
+  /* Lazy owner-side fields: dedup map allocated lazily on first ownership
+   * grant; incoming_new_owner starts at the sentinel (no transfer pending). */
   c->last_sent_version = NULL;
-  c->incoming_new_owner = ARTS_LRC_NO_PENDING_OWNER;
+  c->incoming_new_owner = ARTS_LAZY_NO_PENDING_OWNER;
   arts_db_cache_common_init(c, db_guid, db_size, kind, creator_rank);
 }
 
@@ -166,7 +167,7 @@ void arts_db_home_teardown(struct arts_db_s *db) {
   /* No free: home fields are inlined in the arts_db_s. */
 }
 
-/* ===== last_sent_version map serialization (LRC ownership response) = */
+/* ===== last_sent_version map serialization (lazy ownership response) = */
 
 size_t arts_rank_u64_map_serialize(const struct arts_rank_to_u64_map_s *m,
                                    void *out) {
@@ -206,13 +207,13 @@ arts_rank_u64_map_deserialize(const void *in, size_t size,
   return m;
 }
 
-/* ===== LRC ownership-transfer wire handlers (moved from handlers.c) ===
+/* ===== Lazy ownership-transfer wire handlers (moved from handlers.c) ===
  * (arts_db_drain_pending_snapshot / arts_db_drain_pending_rw_after_grant are
  * declared in coherence/coherence.h.) */
 
-/* ===== LRC ship_transfer / start_invalidate_round ==================== */
+/* ===== Lazy ship_transfer / start_invalidate_round ==================== */
 
-void arts_db_lrc_send_ownership_response(struct arts_db_cache_s *cache) {
+void arts_db_lazy_send_ownership_response(struct arts_db_cache_s *cache) {
   unsigned int new_owner = cache->incoming_new_owner;
   arts_shared_ptr_t buf_h = arts_db_buf_acquire(cache);
   struct arts_db_buffer_s *buf =
@@ -228,7 +229,7 @@ void arts_db_lrc_send_ownership_response(struct arts_db_cache_s *cache) {
                                     /*data=*/NULL, /*data_size=*/0);
     /* Re-arm the sentinel: a future INVALIDATE round publishes a fresh target.
      */
-    cache->incoming_new_owner = ARTS_LRC_NO_PENDING_OWNER;
+    cache->incoming_new_owner = ARTS_LAZY_NO_PENDING_OWNER;
     return;
   }
 
@@ -259,24 +260,24 @@ void arts_db_lrc_send_ownership_response(struct arts_db_cache_s *cache) {
   arts_db_buf_release(&buf_h);
   /* Re-arm the sentinel: this owner has fully shipped; a future INVALIDATE
    * round will publish a fresh target. */
-  cache->incoming_new_owner = ARTS_LRC_NO_PENDING_OWNER;
+  cache->incoming_new_owner = ARTS_LAZY_NO_PENDING_OWNER;
 }
 
-void arts_db_lrc_start_invalidate_round(struct arts_db_cache_s *cache,
-                                        unsigned int new_owner) {
+void arts_db_lazy_start_invalidate_round(struct arts_db_cache_s *cache,
+                                         unsigned int new_owner) {
   struct arts_db_s *db = arts_db_of_cache(cache);
   unsigned int current_owner =
       atomic_load_explicit(&db->rw_holder, memory_order_acquire);
   /* INVALIDATE target is always rw_holder, which home publishes only after that
    * rank's cache install (creator at DB_CREATE, or the new owner at
    * INSTALL_ACK).  So the target's cache is provably already installed when the
-   * INVALIDATE arrives — LRC never defers INVALIDATE; do not route it through
-   * dispatch_or_defer (the dispatcher / self-send call the handler body
-   * directly, guarded by assert(cache != NULL)). */
+   * INVALIDATE arrives — the lazy protocol never defers INVALIDATE; do not
+   * route it through dispatch_or_defer (the dispatcher / self-send call the
+   * handler body directly, guarded by assert(cache != NULL)). */
   arts_send_db_ownership_invalidate(current_owner, cache->db_guid, new_owner);
 }
 
-/* ===== LRC TRANSFER_OWNERSHIP handler (new owner C) =================== */
+/* ===== Lazy TRANSFER_OWNERSHIP handler (new owner C) =================== */
 
 void arts_handler_db_ownership_response(void *payload, size_t size) {
   struct arts_msg_ownership_response_packet_s *hdr =
@@ -318,7 +319,7 @@ void arts_handler_db_ownership_response(void *payload, size_t size) {
 
   /* ADD the ownership sentinel (+1) PLUS a transient DRAIN GUARD (+1) in a
    * single atomic op (jump 0->2, no intermediate 1 a racing INVALIDATE could
-   * catch at 0) — the same scheme RC's GRANT uses.  The guard keeps
+   * catch at 0) — the same scheme the eager GRANT uses.  The guard keeps
    * writer_count >= 1 across the per-waiter +1 drain below, so a commutative
    * INVALIDATE(-1) cannot zero the count mid-drain and ship the transfer before
    * this rank's parked writers are counted+scheduled; the 0-crossing is
@@ -345,18 +346,18 @@ void arts_handler_db_ownership_response(void *payload, size_t size) {
 
   /* Remove the drain guard.  Held >= 1 across the sentinel-add + per-waiter
    * drain so a commutative INVALIDATE(-1) could not transiently zero the count
-   * mid-drain (the same guard RC's GRANT uses); its signed -1 performs the
+   * mid-drain (the same guard the eager GRANT uses); its signed -1 performs the
    * deferred 0-crossing check.  Today home publishes rw_holder=this rank only
    * on the INSTALL_ACK below, so no INVALIDATE targets us during this handler
    * and the fire branch is unreachable — the guard makes correctness
    * independent of that delivery ordering rather than relying on it. */
   unsigned int home_rank = arts_guid_get_rank(db_guid);
   if ((int)arts_atomic_sub(&cache->writer_count, 1) == 0 &&
-      cache->incoming_new_owner != ARTS_LRC_NO_PENDING_OWNER) {
+      cache->incoming_new_owner != ARTS_LAZY_NO_PENDING_OWNER) {
     /* A racing INVALIDATE withdrew the sentinel and no local writer remains: we
      * are the unique transfer actor.  Ship to the pending owner and do NOT
      * INSTALL_ACK — we no longer hold ownership. */
-    arts_db_lrc_send_ownership_response(cache);
+    arts_db_lazy_send_ownership_response(cache);
   } else {
     /* Normal path: confirm installation to home so home can update rw_holder.
      */
@@ -364,7 +365,7 @@ void arts_handler_db_ownership_response(void *payload, size_t size) {
   }
 }
 
-/* ===== LRC INSTALL_ACK handler (home A) =============================== */
+/* ===== Lazy INSTALL_ACK handler (home A) =============================== */
 
 /* Cat-C pure body (INSTALL_ACK, home side).  The wire dispatcher / self-send
  * shortcut has already looked the home db_s up with a held ref and passes it as
@@ -387,7 +388,7 @@ void arts_handler_db_ownership_response_ack(void *item_v, void *args_v) {
     unsigned int next_owner;
     if (arts_home_lockreq_queue_pop(&db->pending_rw, &next_owner)) {
       db->pending_install_owner = next_owner;
-      arts_db_lrc_start_invalidate_round(cache, next_owner);
+      arts_db_lazy_start_invalidate_round(cache, next_owner);
       /* Pipeline: the popped next_owner is the genuine next owner — PROCEED it
        * so it overlaps its RW acquire with the in-flight invalidate round. */
       arts_send_db_ownership_proceed(next_owner, cache->db_guid);
@@ -426,10 +427,10 @@ void arts_handler_db_snapshot_request(void *item_v, void *args_v) {
   arts_guid_t edt_guid = a->edt_guid;
   uint32_t slot = a->slot;
 
-  /* LRC home-side RO routing.
+  /* Lazy home-side RO routing.
    *
-   * Home does not hold the canonical data copy under LRC — the current
-   * owner does.  Home's job is to redirect the requester to the owner
+   * Under the lazy protocol home does not hold the canonical data copy — the
+   * current owner does.  Home's job is to redirect the requester to the owner
    * (via REDIRECT_RO) so the owner can send DATA_RESPONSE directly,
    * applying the owner-side last_sent_version dedup.
    *
@@ -452,7 +453,7 @@ void arts_handler_db_snapshot_request(void *item_v, void *args_v) {
 /* Fan-out callback for arts_rank_bitset_for_each during destroy.
  * ctx carries the db_guid encoded as uintptr_t (no heap allocation
  * needed since the callback is synchronous). */
-static void lrc_destroy_fanout_cb(unsigned int rank, void *ctx) {
+static void lazy_destroy_fanout_cb(unsigned int rank, void *ctx) {
   arts_guid_t db_guid = (arts_guid_t)(uintptr_t)ctx;
   unsigned int self = arts_global_rank_id;
   if (rank != self) {
@@ -463,7 +464,7 @@ static void lrc_destroy_fanout_cb(unsigned int rank, void *ctx) {
 /* Cat-B pure body (OoO g_ooo_table[OOO_DB_DESTROY]): the OoO engine has already
  * acquired the home db_s and pinned a ref across this call (cache is its FIRST
  * member).  Order: roster fan-out + fail_trigger wake parked waiters FIRST,
- * then arts_route_table_set_destroyed LAST.  LRC roster source = rw_holder
+ * then arts_route_table_set_destroyed LAST.  Lazy roster source = rw_holder
  * (current RW owner) + the RO cached-ranks bit-set + the queued ownership
  * requesters. */
 void arts_handler_db_destroy(void *item_v, void *args_v) {
@@ -475,7 +476,7 @@ void arts_handler_db_destroy(void *item_v, void *args_v) {
     return;
   }
   unsigned int self = arts_global_rank_id;
-  /* LRC: notify the current RW owner first (rw_holder, not the cached-ranks
+  /* Lazy: notify the current RW owner first (rw_holder, not the cached-ranks
    * bit-set), then the RO cached-ranks bit-set, then the queued requesters. */
   {
     unsigned int holder =
@@ -484,7 +485,7 @@ void arts_handler_db_destroy(void *item_v, void *args_v) {
       arts_send_db_cache_destroy(holder, a->db_guid);
     }
   }
-  arts_rank_bitset_for_each(&db->cached_ranks, lrc_destroy_fanout_cb,
+  arts_rank_bitset_for_each(&db->cached_ranks, lazy_destroy_fanout_cb,
                             (void *)(uintptr_t)a->db_guid);
   {
     unsigned int q_rank;
@@ -498,22 +499,22 @@ void arts_handler_db_destroy(void *item_v, void *args_v) {
   (void)arts_route_table_set_destroyed(a->db_guid);
 }
 
-/* Case-D leaf: LRC publishes creator_rank as the home rw_holder (coalesce
+/* Case-D leaf: lazy publishes creator_rank as the home rw_holder (coalesce
  * path). */
 void arts_db_create_publish_holder(struct arts_db_s *db,
                                    unsigned int creator_rank) {
   atomic_store_explicit(&db->rw_holder, creator_rank, memory_order_release);
 }
 
-/* ===== Ownership-round seams (called from coherence/release.c) ===
- * family→model: the release-family OWNERSHIP_REQUEST / RELEASE_OWNERSHIP
- * handlers delegate the RC/LRC-divergent steps here. */
+/* ===== Ownership-round seams (called from coherence/ownership.c) ==
+ * family→protocol: the ownership-family OWNERSHIP_REQUEST / RELEASE_OWNERSHIP
+ * handlers delegate the EAGER/LAZY-divergent steps here. */
 
 void arts_db_start_ownership_round(struct arts_db_cache_s *cache,
                                    struct arts_db_s *db,
                                    unsigned int requester) {
   (void)requester;
-  /* LRC: pop the OLDEST requester (FIFO) to be the transfer target and
+  /* Lazy: pop the OLDEST requester (FIFO) to be the transfer target and
    * embed its rank in the INVALIDATE_NOTICE so the current holder ships
    * TRANSFER_OWNERSHIP directly, without a home round-trip.
    * pending_install_owner is only written by the baton holder (single
@@ -526,21 +527,23 @@ void arts_db_start_ownership_round(struct arts_db_cache_s *cache,
     return;
   }
   db->pending_install_owner = next_owner;
-  arts_db_lrc_start_invalidate_round(cache, next_owner);
+  arts_db_lazy_start_invalidate_round(cache, next_owner);
   /* Pipeline: the popped next_owner is the genuine next owner — PROCEED it so
    * it overlaps its RW acquire with the in-flight initial invalidate round. */
   arts_send_db_ownership_proceed(next_owner, cache->db_guid);
 }
 
 void arts_db_ownership_return(struct arts_db_cache_s *cache) {
-  /* LRC transfers ownership owner→owner via TRANSFER_OWNERSHIP and never sends
-   * RELEASE_OWNERSHIP to home, so this is unreachable in LRC. */
+  /* The lazy protocol transfers ownership owner→owner via TRANSFER_OWNERSHIP
+   * and never sends RELEASE_OWNERSHIP to home, so this body is unreachable in
+   * the lazy build. */
   (void)cache;
 }
 
-/* ===== LRC INVALIDATE_NOTICE handler (pure body, DIRECT-call) ====== */
+/* ===== Lazy INVALIDATE_NOTICE handler (pure body, DIRECT-call) ====== */
 
-/* Pure (item, args) body.  LRC does NOT route INVALIDATE through the OoO engine
+/* Pure (item, args) body.  The lazy protocol does NOT route INVALIDATE through
+ * the OoO engine
  * (its engine slot is an inert no-op): the invalidate target is always the
  * rw_holder, whose CACHE the requester lazy-installs before it ever sends
  * OWNERSHIP_REQUEST, so the cache is present and the wire dispatcher /
@@ -551,12 +554,12 @@ void arts_db_ownership_return(struct arts_db_cache_s *cache) {
  * The cache being present does NOT mean the ownership sentinel (+1) is present:
  * the owner's TRANSFER_OWNERSHIP sentinel (+1) and this home->owner INVALIDATE
  * (-1, sent for the NEXT requester) are two messages to the SAME rank that can
- * reorder under multiple receiver threads.  So writer_count uses the SAME
- * commutative signed scheme as RC — TRANSFER adds +1, INVALIDATE/release
- * subtract a signed -1, and only the decrement that drives writer_count from a
- * positive value to EXACTLY 0 ships TRANSFER_OWNERSHIP; a transient 0 -> -1 (an
- * INVALIDATE racing ahead of its sentinel) reads rest != 0 and does NOT ship.
- * Order- independent — it does not rely on delivery ordering. */
+ * reorder under multiple receiver threads.  So writer_count uses the same
+ * commutative signed scheme as the eager protocol — TRANSFER adds +1,
+ * INVALIDATE/release subtract a signed -1, and only the decrement that drives
+ * writer_count from a positive value to EXACTLY 0 ships TRANSFER_OWNERSHIP;
+ * a transient 0 -> -1 (an INVALIDATE racing ahead of its sentinel) reads
+ * rest != 0 and does NOT ship.  Order-independent. */
 void arts_handler_db_ownership_invalidate(void *item_v, void *args_v) {
   struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
   struct arts_ooo_args_db_ownership_invalidate_s *a =
@@ -568,14 +571,15 @@ void arts_handler_db_ownership_invalidate(void *item_v, void *args_v) {
    * performs the ownership transfer; while local writers are still active
    * (rest > 0) the last release_rw drives it instead.
    *
-   * LRC: publish the transfer target BEFORE withdrawing the sentinel.  This
+   * Lazy: publish the transfer target BEFORE withdrawing the sentinel.  This
    * ordering is the dedup (no separate transfer_pending flag): a concurrent
    * release_rw that observes rest==0 is guaranteed to see incoming_new_owner
    * already published, so exactly one of {this handler, the last releaser}
    * ships.  Only one INVALIDATE_NOTICE is in flight per round (home baton
    * gate), so there is no concurrent writer to incoming_new_owner. */
   cache->incoming_new_owner = a->new_owner_rank;
-  /* Signed, commutative (matches RC).  Ship ONLY on the positive->0 edge: */
+  /* Signed, commutative (same scheme as the eager protocol).  Ship ONLY on the
+   * positive->0 edge: */
   int rest = (int)arts_atomic_sub(&cache->writer_count, 1);
   if (rest != 0) {
     /* rest > 0: local writers still active — the last release_rw, seeing
@@ -586,10 +590,10 @@ void arts_handler_db_ownership_invalidate(void *item_v, void *args_v) {
     return;
   }
   /* rest == 0: we are the unique transfer actor. */
-  arts_db_lrc_send_ownership_response(cache);
+  arts_db_lazy_send_ownership_response(cache);
 }
 
-/* ===== LRC REDIRECT_RO handler (owner side, moved from handlers.c) === */
+/* ===== Lazy REDIRECT_RO handler (owner side, moved from handlers.c) === */
 
 /* Cat-C pure body (REDIRECT_RO, owner side).  The wire dispatcher / self-send
  * shortcut has already looked the owner-side db_s up with a held ref and passes
@@ -644,9 +648,9 @@ void arts_handler_db_snapshot_redirect(void *item_v, void *args_v) {
   arts_db_buf_release(&buf_h);
 }
 
-/* ===== LRC wire senders (moved from coherence/senders.c) ========= */
+/* ===== Lazy wire senders (moved from coherence/senders.c) ========= */
 
-/* LRC OWNERSHIP_RESPONSE = TRANSFER_OWNERSHIP: carries the serialized
+/* Lazy OWNERSHIP_RESPONSE = TRANSFER_OWNERSHIP: carries the serialized
  * last_sent_version map + buffer payload. */
 void arts_send_db_ownership_response(unsigned int new_owner_rank,
                                      arts_guid_t db_guid, uint64_t version,
@@ -755,8 +759,8 @@ void arts_send_db_snapshot_redirect(unsigned int owner_rank,
   arts_transport_send_async((int)owner_rank, (char *)&p, sizeof(p));
 }
 
-/* Case-D leaf: LRC keeps the lazy OCR home-buffer install (the creator's
- * release_rw WRITEBACK / GRANT path publishes the buffer); nothing to do at
+/* Case-D leaf: the lazy protocol defers the home-buffer install to the
+ * creator's first release_rw (WRITEBACK / GRANT path); nothing to do at
  * create. */
 void arts_db_create_install_home_buffer(struct arts_db_cache_s *cache,
                                         uint64_t db_size) {

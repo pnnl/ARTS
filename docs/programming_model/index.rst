@@ -9,6 +9,7 @@ from the Open Community Runtime (OCR) specification.
 
    edt
    datablocks
+   memory_model
    events
    guids
-   epochs
+   finish_events

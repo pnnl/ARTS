@@ -12,11 +12,11 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 
-/// @file lc_multi_writer_concurrent.c
-/// @brief LC multi-writer test: two ranks each acquire RW and write their
-///        rank-id into a shared DB.  Under LC per-node-exclusive semantics
-///        the DB accepts concurrent RW requests from different nodes; the
-///        last writer's value wins.  The verifier (run after both writes
+/// @file relaxed_multi_writer_concurrent.c
+/// @brief Relaxed-model multi-writer test: two ranks each acquire RW and
+///        write their rank-id into a shared DB.  Under the relaxed (DB-DRF)
+///        model the DB accepts concurrent RW requests from different nodes;
+///        the last writer's value wins.  The verifier (run after both writes
 ///        complete via a finish scope) accepts any value in {0, 1} as long as
 ///        the buffer is internally consistent.
 ///
@@ -61,12 +61,12 @@ static void verifier_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       }
     }
   }
-  /* Under LC the final value is one of the writer rank-ids. */
+  /* Under the relaxed model the final value is one of the writer rank-ids. */
   if (consistent && (v == 0 || v == 1)) {
-    arts_printf("LC_MULTI_WRITER: PASS final=%u\n", (unsigned)v);
+    arts_printf("RELAXED_MULTI_WRITER: PASS final=%u\n", (unsigned)v);
   } else {
-    arts_printf("LC_MULTI_WRITER: FAIL value=%u consistent=%d\n", (unsigned)v,
-                consistent);
+    arts_printf("RELAXED_MULTI_WRITER: FAIL value=%u consistent=%d\n",
+                (unsigned)v, consistent);
   }
   arts_shutdown();
 }
@@ -79,7 +79,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
 
   if (arts_get_total_ranks() < 2) {
-    arts_printf("LC_MULTI_WRITER: SKIP requires 2 ranks\n");
+    arts_printf("RELAXED_MULTI_WRITER: SKIP requires 2 ranks\n");
     arts_shutdown();
     return;
   }

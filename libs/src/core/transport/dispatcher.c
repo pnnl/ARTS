@@ -38,12 +38,12 @@
  ******************************************************************************/
 #include "arts/transport/dispatcher.h"
 
-#include <assert.h> /* LRC INVALIDATE direct-call invariant assert */
+#include <assert.h> /* lazy INVALIDATE direct-call invariant assert */
 #include <string.h> /* memcpy (WRITEBACK inline-payload copy into OoO args) */
 #include <unistd.h>
 
 #include "arts.h"
-#include "arts/coherence/coherence.h" /* arts_db_cache_lookup (LRC arm) */
+#include "arts/coherence/coherence.h" /* arts_db_cache_lookup (lazy arm) */
 #include "arts/coherence/handlers.h"
 #include "arts/counter/counter.h" /* arts_handler_time_sync_* */
 #include "arts/db.h"
@@ -210,23 +210,23 @@ void arts_transport_dispatch_packet(struct arts_msg_header_s *packet) {
    * payload right after sizeof(struct ...); pass that pointer + size as
    * the data/data_size arguments.
    *
-   * OWNERSHIP_REQUEST / RELEASE_OWNERSHIP: shared between RC and LRC (both use
-   * per-DB exclusive ownership), but LC has no such concept.  Fatal in LC
-   * builds to catch binary mode mismatch.  INVALIDATE_NOTICE is handled in its
-   * own three-model block below (RC = Cat-B defer; LRC = direct, never
-   * deferred).
+   * OWNERSHIP_REQUEST / RELEASE_OWNERSHIP: shared between the eager and lazy
+   * protocols (both use per-DB exclusive ownership), but the relaxed model has
+   * no such concept.  Fatal in relaxed builds to catch binary mode mismatch.
+   * INVALIDATE_NOTICE is handled in its own three-model block below (eager =
+   * Cat-B defer; lazy = direct, never deferred).
    */
-#if defined(ARTS_MEMORY_MODEL_LC)
+#if defined(ARTS_MEMORY_MODEL_RELAXED)
   case MSG_DB_OWNERSHIP_REQUEST:
   case MSG_DB_OWNERSHIP_PROCEED:
   case MSG_DB_OWNERSHIP_RETURN: {
-    ARTS_ERROR("LC build received exclusivity message type %d from rank %u "
-               "— LC has no OWNERSHIP_REQUEST / RELEASE_OWNERSHIP / PROCEED; "
-               "binary mode mismatch?",
+    ARTS_ERROR("relaxed build received exclusivity message type %d from rank "
+               "%u — relaxed model has no OWNERSHIP_REQUEST / "
+               "RELEASE_OWNERSHIP / PROCEED; binary mode mismatch?",
                packet->message_type, packet->rank);
     break;
   }
-#else  /* RC and LRC: full handlers */
+#else  /* eager and lazy: full handlers */
   case MSG_DB_OWNERSHIP_PROCEED: {
     ARTS_DEBUG("Coh OWNERSHIP_PROCEED Received");
     struct arts_msg_ownership_proceed_packet_s *pack =
@@ -261,28 +261,28 @@ void arts_transport_dispatch_packet(struct arts_msg_header_s *packet) {
     arts_shared_release(&h);
     break;
   }
-#endif /* ARTS_MEMORY_MODEL_LC */
-  /* INVALIDATE_NOTICE — model-split.
-   *   RC : Cat-B.  A GRANT/INVALIDATE reorder on two wires, or a distributed
-   *        before-create race, can land INVALIDATE before the db_s/cache
-   *        installs, so it MUST enter the OoO engine (defer-on-miss, replay on
-   *        the install's drain).
-   *   LRC: NOT deferred.  Home publishes the invalidate target (rw_holder) only
-   *        after that rank's cache install (DB_CREATE on the creator, or the
-   *        INSTALL_ACK owner-swap), so the target's cache is provably already
-   *        installed when INVALIDATE arrives — call the pure handler body
-   *        directly with the looked-up cache.  assert(cache != NULL) catches
-   *        any future violation of that invariant loudly.
-   *   LC : no ownership transfer (caught by the fatal group above). */
-#if defined(ARTS_MEMORY_MODEL_LC)
+#endif /* ARTS_MEMORY_MODEL_RELAXED */
+  /* INVALIDATE_NOTICE — protocol-split.
+   *   eager : Cat-B.  A GRANT/INVALIDATE reorder on two wires, or a
+   *           distributed before-create race, can land INVALIDATE before the
+   *           db_s/cache installs, so it MUST enter the OoO engine
+   *           (defer-on-miss, replay on the install's drain).
+   *   lazy  : NOT deferred.  Home publishes the invalidate target (rw_holder)
+   *           only after that rank's cache install (DB_CREATE on the creator,
+   *           or the INSTALL_ACK owner-swap), so the target's cache is
+   *           provably already installed when INVALIDATE arrives — call the
+   *           pure handler body directly with the looked-up cache.
+   *           assert(cache != NULL) catches any future violation loudly.
+   *   relaxed: no ownership transfer (caught by the fatal group above). */
+#if defined(ARTS_MEMORY_MODEL_RELAXED)
   case MSG_DB_OWNERSHIP_INVALIDATE: {
     ARTS_ERROR(
-        "LC build received INVALIDATE from rank %u — LC has no ownership "
-        "transfer; binary mode mismatch?",
+        "relaxed build received INVALIDATE from rank %u — relaxed model has "
+        "no ownership transfer; binary mode mismatch?",
         packet->rank);
     break;
   }
-#elif defined(ARTS_MEMORY_MODEL_LRC)
+#elif defined(ARTS_COHERENCE_PROTOCOL_LAZY)
   case MSG_DB_OWNERSHIP_INVALIDATE: {
     ARTS_DEBUG("Coh INVALIDATE_NOTICE Received");
     struct arts_msg_ownership_invalidate_packet_s *pack =
@@ -296,7 +296,7 @@ void arts_transport_dispatch_packet(struct arts_msg_header_s *packet) {
     arts_handler_db_ownership_invalidate(arts_db_of_cache(cache), &args);
     break;
   }
-#else  /* RC build */
+#else  /* eager build */
   case MSG_DB_OWNERSHIP_INVALIDATE: {
     ARTS_DEBUG("Coh INVALIDATE_NOTICE Received");
     struct arts_msg_ownership_invalidate_packet_s *pack =
@@ -382,25 +382,25 @@ void arts_transport_dispatch_packet(struct arts_msg_header_s *packet) {
     arts_shared_release(&h);
     break;
   }
-  /* OWNERSHIP_RESPONSE: the single ownership-transfer wire message.  RC = GRANT
-   * (buffer payload); LRC = TRANSFER_OWNERSHIP (map + buffer); LC has no
-   * ownership transfer and fatals to catch a binary mode mismatch. */
-#if defined(ARTS_MEMORY_MODEL_LC)
+  /* OWNERSHIP_RESPONSE: the single ownership-transfer wire message.  eager =
+   * GRANT (buffer payload); lazy = TRANSFER_OWNERSHIP (map + buffer); relaxed
+   * has no ownership transfer and fatals to catch a binary mode mismatch. */
+#if defined(ARTS_MEMORY_MODEL_RELAXED)
   case MSG_DB_OWNERSHIP_RESPONSE: {
-    ARTS_ERROR("LC build received OWNERSHIP_RESPONSE from rank %u — LC has no "
-               "ownership transfer; binary mode mismatch?",
+    ARTS_ERROR("relaxed build received OWNERSHIP_RESPONSE from rank %u — "
+               "relaxed model has no ownership transfer; binary mode mismatch?",
                packet->rank);
     break;
   }
-#elif defined(ARTS_MEMORY_MODEL_LRC)
+#elif defined(ARTS_COHERENCE_PROTOCOL_LAZY)
   case MSG_DB_OWNERSHIP_RESPONSE: {
-    ARTS_DEBUG("LRC TRANSFER_OWNERSHIP Received");
+    ARTS_DEBUG("Lazy TRANSFER_OWNERSHIP Received");
     /* Payload (map + data) immediately follows the header in the contiguous
      * wire buffer; the handler parses it from the full packet. */
     arts_handler_db_ownership_response((void *)packet, (size_t)packet->size);
     break;
   }
-#else  /* RC build */
+#else  /* eager build */
   case MSG_DB_OWNERSHIP_RESPONSE: {
     ARTS_DEBUG("Coh GRANT Received");
     struct arts_msg_ownership_response_packet_s *pack =
@@ -412,17 +412,19 @@ void arts_transport_dispatch_packet(struct arts_msg_header_s *packet) {
     break;
   }
 #endif /* model dispatch for MSG_DB_OWNERSHIP_RESPONSE */
-  /* WRITEBACK + WRITEBACK_ACK: used by RC and LC (sync release writeback).
-   * Fatal in LRC only — LRC uses async transfer, not synchronous writeback. */
-#if defined(ARTS_MEMORY_MODEL_LRC)
+  /* WRITEBACK + WRITEBACK_ACK: used by the eager protocol and the relaxed
+   * model (sync release writeback).  Fatal in the lazy protocol — lazy uses
+   * async transfer, not synchronous writeback. */
+#if defined(ARTS_COHERENCE_PROTOCOL_LAZY)
   case MSG_DB_WRITEBACK:
   case MSG_DB_WRITEBACK_ACK: {
-    ARTS_ERROR("LRC build received writeback message type %d from rank %u — "
-               "LRC has no synchronous writeback; binary mode mismatch?",
+    ARTS_ERROR("lazy build received writeback message type %d from rank %u — "
+               "lazy protocol has no synchronous writeback; binary mode "
+               "mismatch?",
                packet->message_type, packet->rank);
     break;
   }
-#else  /* RC and LC: full handlers */
+#else  /* eager and relaxed: full handlers */
   case MSG_DB_WRITEBACK: {
     ARTS_DEBUG("Coh WRITEBACK Received");
     struct arts_msg_writeback_packet_s *pack =
@@ -469,7 +471,7 @@ void arts_transport_dispatch_packet(struct arts_msg_header_s *packet) {
     arts_shared_release(&h);
     break;
   }
-#endif /* ARTS_MEMORY_MODEL_LRC */
+#endif /* ARTS_COHERENCE_PROTOCOL_LAZY */
   case MSG_EVENT_DESTROY: {
     ARTS_DEBUG("Event Destroy Received");
     /* Decode the GUID and route into the OoO engine.  A DESTROY that races
@@ -495,14 +497,13 @@ void arts_transport_dispatch_packet(struct arts_msg_header_s *packet) {
                                     sizeof(args));
     break;
   }
-  /* ===== LRC-only message dispatch
-   * ============================================ These slots are only sent
-   * between ranks compiled with ARTS_MEMORY_MODEL=LRC.  Real handlers are wired
-   * in later tasks; for now the LRC build accepts them as stubs, and the RC
-   * build fatals immediately to catch a binary mode mismatch between ranks. */
-#ifdef ARTS_MEMORY_MODEL_LRC
+  /* ===== lazy-only message dispatch ========================================
+   * These slots are only sent between ranks compiled with the lazy coherence
+   * protocol.  The lazy build routes them to full handlers; the eager build
+   * fatals immediately to catch a binary mode mismatch between ranks. */
+#ifdef ARTS_COHERENCE_PROTOCOL_LAZY
   case MSG_DB_SNAPSHOT_REDIRECT: {
-    ARTS_DEBUG("LRC REDIRECT_RO Received");
+    ARTS_DEBUG("Lazy REDIRECT_RO Received");
     struct arts_msg_snapshot_redirect_packet_s *pack =
         (struct arts_msg_snapshot_redirect_packet_s *)(packet);
     /* Cat-C lookup-acquire-or-{DESTROY_NOTIFY}: HIT serves DATA_RESPONSE from
@@ -526,7 +527,7 @@ void arts_transport_dispatch_packet(struct arts_msg_header_s *packet) {
     break;
   }
   case MSG_DB_OWNERSHIP_RESPONSE_ACK: {
-    ARTS_DEBUG("LRC INSTALL_ACK Received");
+    ARTS_DEBUG("Lazy INSTALL_ACK Received");
     struct arts_msg_install_ack_packet_s *pack =
         (struct arts_msg_install_ack_packet_s *)(packet);
     /* Cat-C lookup-acquire-or-drop: HIT advances the transfer round on the
@@ -543,15 +544,15 @@ void arts_transport_dispatch_packet(struct arts_msg_header_s *packet) {
     arts_shared_release(&h);
     break;
   }
-#else  /* !ARTS_MEMORY_MODEL_LRC */
+#else  /* !ARTS_COHERENCE_PROTOCOL_LAZY */
   case MSG_DB_SNAPSHOT_REDIRECT:
   case MSG_DB_OWNERSHIP_RESPONSE_ACK: {
-    ARTS_ERROR("RC build received LRC-only message type %d from rank %u — "
+    ARTS_ERROR("eager build received lazy-only message type %d from rank %u — "
                "binary mode mismatch?",
                packet->message_type, packet->rank);
     break;
   }
-#endif /* ARTS_MEMORY_MODEL_LRC */
+#endif /* ARTS_COHERENCE_PROTOCOL_LAZY */
   default: {
     ARTS_INFO("Unknown Packet %d %d %d", packet->message_type, packet->size,
               packet->rank);

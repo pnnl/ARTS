@@ -63,10 +63,10 @@
 /* ===== Cache lifecycle ============================================ */
 /* ================================================================== */
 
-/* Model-agnostic cache_s field init.  The per-model arts_db_cache_init
- * wrapper (coherence/<model>.c) runs its model-specific field-init (RC/LRC
- * pending_rw queue + LRC dedup-map/sentinel; LC none) BEFORE calling this, so
- * the Vyukov MPSC stub is wired before any push could land. */
+/* Protocol-agnostic cache_s field init.  The per-protocol arts_db_cache_init
+ * wrapper (coherence/<protocol>.c) runs its protocol-specific field-init
+ * (eager/lazy pending_rw queue + lazy dedup-map/sentinel; relaxed none) BEFORE
+ * calling this, so the Vyukov MPSC stub is wired before any push could land. */
 void arts_db_cache_common_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
                                uint64_t db_size, arts_db_init_kind_t kind,
                                unsigned int creator_rank) {
@@ -99,10 +99,10 @@ void arts_db_cache_common_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
   } else if (kind == ARTS_DB_INIT_CREATOR_REMOTE) {
     c->writer_count = 2;
   }
-  /* RC/LC WRITEBACK ACK rendezvous is now a stack-local sem_t per release_rw
-   * (pointer-identity match) — no per-cache seq fields to initialize.  LRC
-   * owner-side fields (dedup map + transfer sentinel) are armed by the model
-   * init hook above. */
+  /* Eager/relaxed WRITEBACK ACK rendezvous is a stack-local sem_t per
+   * release_rw (pointer-identity match) — no per-cache seq fields to
+   * initialize.  Lazy owner-side fields (dedup map + transfer sentinel) are
+   * armed by the protocol init hook above. */
 }
 
 /* ================================================================== */
@@ -137,7 +137,7 @@ struct arts_db_cache_s *arts_db_cache_lookup(arts_guid_t db_guid) {
 /* Trigger the parked EDT identified by (edt_guid, slot) by writing
  * the dep slot's data pointer and decrementing depc_needed.
  *
- * RC-only: the canonical user data pointer lives in cache->user_data,
+ * Eager-only: the canonical user data pointer lives in cache->user_data,
  * regardless of whether cache_s was created in-place with arts_db_s
  * (user_data == (db+1)) or lazy-installed standalone (user_data ==
  * malloc'd buffer).  We look up the cache via the GUID of the dep
@@ -249,9 +249,9 @@ void *arts_db_acquire_local(struct arts_db_cache_s *cache) {
 }
 
 /* Case 2/6 (RW local fast path) and Case 4/8 (remote-RW path) live in
- * coherence/release.c — they touch the RC/LRC home-directory cache fields
- * (pending_rw, ownership_req_in_flight) that the LC cache layout does not have.
- */
+ * coherence/ownership.c — they touch the OCR-model home-directory cache fields
+ * (pending_rw, ownership_req_in_flight) that the RELAXED cache layout does not
+ * have. */
 
 /* ===== Case 7: remote-RO / remote-snapshot path =================== */
 
@@ -270,19 +270,20 @@ arts_db_acquire_remote_ro(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
   return ARTS_DB_ACQUIRE_PARK;
 }
 
-/* The 8-case acquire dispatcher arts_handler_db_acquire is model-specific: RC
- * and LRC define it in coherence/release.c-backed coherence/{rc,lrc}.c
- * (single-owner OWNERSHIP_REQUEST / GRANT path, differing only on the
- * RO-has-local-data predicate); LC defines its unified home-canonical body in
- * coherence/lc.c. The shared remote-RO path (arts_db_acquire_remote_ro) and the
- * local-buffer fast read (arts_db_acquire_local) above are reused by all three.
+/* The 8-case acquire dispatcher arts_handler_db_acquire is protocol-specific:
+ * EAGER and LAZY define it in coherence/ownership.c-backed
+ * coherence/{eager,lazy}.c (single-owner OWNERSHIP_REQUEST / GRANT path,
+ * differing only on the RO-has-local-data predicate); RELAXED defines its
+ * unified home-canonical body in coherence/relaxed.c.  The shared remote-RO
+ * path (arts_db_acquire_remote_ro) and the local-buffer fast read
+ * (arts_db_acquire_local) above are reused by all three.
  */
 
 /* Drain the snapshot reorder buffer in one atomic_exchange.  Monotonic version
  * guarantees every parked node's target_version <= the buffer version that
  * triggers the drain, so a full drain (no partial pop) is always correct
  * (plan: "install 시 전체 drain").  Called from the case-2 install path, the
- * GRANT install, the LRC TRANSFER_OWNERSHIP install, and destroy fan-out. */
+ * GRANT install, the lazy TRANSFER_OWNERSHIP install, and destroy fan-out. */
 void arts_db_drain_pending_snapshot(struct arts_db_cache_s *cache) {
   arts_lf_link_t *node = arts_lf_stack_drain(&cache->pending_snapshot);
   while (node != NULL) {
@@ -307,9 +308,9 @@ void arts_db_drain_pending_snapshot(struct arts_db_cache_s *cache) {
 /* ===== writeback ACK wait (shared coherence service) =================
  *
  * Synchronous WRITEBACK with a stack-local semaphore matched by pointer
- * identity.  Called by the RC and LC release-tail bodies (the LRC tail uses
- * TRANSFER_OWNERSHIP and never waits on a WRITEBACK_ACK).  Declared in
- * coherence/coherence.h so the model TUs can invoke it. */
+ * identity.  Called by the eager and relaxed release-tail bodies (the lazy
+ * tail uses TRANSFER_OWNERSHIP and never waits on a WRITEBACK_ACK).  Declared
+ * in coherence/coherence.h so the protocol TUs can invoke it. */
 void await_writeback_ack(sem_t *cv) {
   /* Block on the stack-local semaphore until arts_handler_db_writeback_ack
    * posts it.  No busy-wait: sem_timedwait sleeps the worker.  We re-arm on a
@@ -331,11 +332,11 @@ void await_writeback_ack(sem_t *cv) {
   }
 }
 
-/* arts_db_release_rw is model-specific (the version bump is shared, but the
+/* arts_db_release_rw is protocol-specific (the version bump is shared, but the
  * pre-decrement buffer-ref drop and the post-decrement transfer/writeback
- * decision differ per model), so its whole body lives in
- * coherence/{rc,lrc,lc}.c.  All three call await_writeback_ack above for the
- * synchronous-WRITEBACK rendezvous (RC/LC). */
+ * decision differ per protocol), so its whole body lives in
+ * coherence/{eager,lazy,relaxed}.c.  Eager and relaxed call await_writeback_ack
+ * above for the synchronous-WRITEBACK rendezvous. */
 
 void arts_db_release_ro(struct arts_db_cache_s *cache) {
   /* RO release is also no-op here — the EDT's buf ref is dropped by
@@ -349,9 +350,10 @@ void arts_db_release_ro(struct arts_db_cache_s *cache) {
 /* ================================================================== */
 
 /* arts_db_fail_trigger_pending (destroy/fail wake of parked waiters) is
- * model-specific: RC/LRC drain the pending_rw FIFO (coherence/release.c), LC
- * has no pending_rw (coherence/lc.c).  Both arms then drain the snapshot
- * reorder buffer via arts_db_drain_pending_snapshot above. */
+ * protocol-specific: EAGER/LAZY drain the pending_rw FIFO
+ * (coherence/ownership.c), RELAXED has no pending_rw (coherence/relaxed.c).
+ * Both arms then drain the snapshot reorder buffer via
+ * arts_db_drain_pending_snapshot above. */
 
 /* ===== arts_db_destroy_remote public API ============================= */
 
@@ -367,8 +369,9 @@ void arts_db_destroy_remote(arts_guid_t db_guid) {
  *
  * The full destructor arts_db_cache_destructor is model-specific (it sequences
  * the model field-destroy between these two shared steps) and lives in
- * coherence/{rc,lrc,lc}.c.  The agnostic steps are split into pre (the
- * buffer-NULL that must run first) and post (snapshot drain + home teardown);
+ * coherence/{eager,lazy,relaxed}.c.  The agnostic steps are split into pre
+ * (the buffer-NULL that must run first) and post (snapshot drain + home
+ * teardown);
  * the per-model wrapper runs pre → model-destroy → post.  cache_s itself is
  * freed by the route_table after the wrapper returns; buffers (FAM data) are
  * recycled / freed by the cb deleter chain once outstanding refs drain. */
@@ -386,8 +389,8 @@ void arts_db_cache_common_destroy_pre(struct arts_db_cache_s *cache) {
 }
 
 /* Steps 3b+4: drain+free the snapshot reorder buffer (a Treiber stack), then
- * tear down the inlined home-directory sub-resources.  Runs AFTER the model
- * field-destroy (pending_rw, RC/LRC). */
+ * tear down the inlined home-directory sub-resources.  Runs AFTER the protocol
+ * field-destroy (pending_rw in eager and lazy builds). */
 void arts_db_cache_common_destroy_post(struct arts_db_cache_s *cache) {
   if (cache == NULL) {
     return;

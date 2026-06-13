@@ -120,21 +120,25 @@ typedef enum {
  *
  * Specifies the storage class of a DataBlock.  All subtypes share the same
  * @c ARTS_GUID_DB kind tag; the subtype is carried inside the DB descriptor.
- * Naming convention: ARTS_DB_<storage>.  Consistency model for ARTS_DB
- * is selected at compile time (RC or LRC); other subtypes carry no DB-level
- * coherence (hardware coherence only).
+ * Naming convention: ARTS_DB_<storage>.  For ARTS_DB, consistency is
+ * governed by the build-time memory model and coherence protocol; other
+ * subtypes carry no DB-level coherence (hardware coherence only).
+ * See @c docs/programming_model/memory_model.rst for the full model taxonomy.
  *
- *   ARTS_DB         — regular DRAM, RC or LRC (compile-time switch)
+ *   ARTS_DB         — regular DRAM; contract/protocol selected at build time
  *   ARTS_DB_PIN     — regular DRAM, node-pinned, no DB-level coherence
- *   ARTS_DB_CXL     — CXL shared, Location Consistency
- *   ARTS_DB_GPU     — GPU staging, Location Consistency
+ *   ARTS_DB_CXL     — CXL shared; HW cache coherence intra-node, app-ordered
+ *                     (DB-DRF) across nodes
+ *   ARTS_DB_GPU     — GPU staging; concurrent per-device replicas merged by
+ *                     reduction at release (DB-DRF style)
  *   ARTS_DB_GPU_PIN — GPU staging, no DB-level coherence
  */
 typedef enum {
-  ARTS_DB = 0, /**< Regular DRAM; consistency model selected at compile time. */
+  ARTS_DB = 0, /**< Regular DRAM; contract/protocol selected at build time. */
   ARTS_DB_PIN, /**< Node-pinned regular DRAM, no DB-level coherence. */
-  ARTS_DB_CXL, /**< CXL shared, Location Consistency (compiled w/ CXL). */
-  ARTS_DB_GPU, /**< GPU staging, Location Consistency (multi-GPU + reduce). */
+  ARTS_DB_CXL, /**< CXL shared; app-ordered (DB-DRF) (compiled w/ CXL). */
+  ARTS_DB_GPU, /**< GPU staging; per-device replicas merged at release (DB-DRF
+                  style). */
   ARTS_DB_GPU_PIN, /**< GPU staging (host pinned + per-device replica). */
 } arts_db_types_t;
 
@@ -174,15 +178,6 @@ typedef enum {
   ARTS_EDT_CPU = 0, /**< CPU EDT (standard). */
   ARTS_EDT_GPU = 1, /**< GPU EDT (CUDA kernel or library host function). */
 } arts_edt_types_t;
-
-/* @c ARTS_EDT_DEFAULT mirrors the @c ARTS_DB_DEFAULT pattern: the
- * experiment-wide EDT kind every benchmark assumes, decided by CMake (see
- * ARTS_EDT_DEFAULT_KIND in the top-level CMakeLists.txt).  Locally we ship
- * ARTS_EDT_CPU; flip the cmake variable to ARTS_EDT_GPU to retarget every
- * benchmark in one place. */
-#ifndef ARTS_EDT_DEFAULT
-#define ARTS_EDT_DEFAULT ARTS_EDT_CPU
-#endif
 
 /** @} */ /* end type_enum */
 
@@ -738,9 +733,9 @@ void arts_event_add_dependence(arts_guid_t source, arts_guid_t destination,
  *
  * Removes the route_table entry via atomic claim-and-NULL.  The same GUID
  * may be re-created afterward (the destroyed slot is indistinguishable
- * from an uninitialized slot — a pattern shared with RC DataBlocks).
- * Any in-flight satisfies / add_dependences for this GUID are routed
- * through the OoO queue automatically.
+ * from an uninitialized slot — a pattern shared with coherent ARTS_DB
+ * DataBlocks). Any in-flight satisfies / add_dependences for this GUID are
+ * routed through the OoO queue automatically.
  */
 void arts_event_destroy(arts_guid_t guid);
 
@@ -790,7 +785,8 @@ void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
 
 /* ========================================================================= */
 /** @defgroup db DataBlocks (DB)
- *  Fixed-size data objects shared between tasks via the CDAG memory model.
+ *  Fixed-size data objects shared between tasks under the build-time memory
+ *  model (see docs/programming_model/memory_model.rst).
  *  @{ */
 
 /**
@@ -804,8 +800,8 @@ void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
  *                     Set to @c NULL when @p flags includes
  *                     @c ARTS_DB_PROP_NO_ACQUIRE.
  * @param      len     Length in bytes.
- * @param      db_type Storage/coherence class (RC, PIN, GPU_PIN, GPU_LC,
- *                     CXL_LC).
+ * @param      db_type Storage/coherence class (ARTS_DB, ARTS_DB_PIN,
+ *                     ARTS_DB_GPU_PIN, ARTS_DB_GPU, ARTS_DB_CXL).
  * @param      flags   Property bits (@c ARTS_DB_PROP_NONE / @c
  *                     ARTS_DB_PROP_NO_ACQUIRE).
  * @param      hint    Advisory metadata.  @c hint->rank selects the target

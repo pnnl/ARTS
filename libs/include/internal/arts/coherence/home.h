@@ -73,8 +73,8 @@ bool arts_rank_u64_map_advance(struct arts_rank_to_u64_map_s *m,
 /*--- rank bit-set ----------------------------------------------------
  *
  * Bit-packed atomic rank bit-set, sized to the cluster's rank count.  Used
- * only in LRC builds — RC reuses the per-rank version map for the same
- * purpose (set membership = nonzero entry).  The struct
+ * only in lazy builds — the eager protocol reuses the per-rank version map
+ * for the same purpose (set membership = nonzero entry).  The struct
  * arts_rank_bitset_s definition lives in rank_bitset.h (included
  * directly by coherence_types.h, which embeds it by value in
  * arts_db_s). */
@@ -104,13 +104,13 @@ void arts_db_home_init(struct arts_db_s *db, unsigned int rw_holder,
  * Does NOT free the descriptor (the fields live inside the arts_db_s). */
 void arts_db_home_teardown(struct arts_db_s *db);
 
-/*--- last_sent_version map serialization (defined in coherence/lrc.c) -
+/*--- last_sent_version map serialization (defined in coherence/lazy.c) -
  *
  * Used to piggyback the owner-side dedup map onto TRANSFER_OWNERSHIP
  * messages so the new owner can continue skipping redundant DATA_RESPONSE
  * sends without re-learning which ranks already hold a fresh copy.  Only the
- * LRC model TU defines these; the declarations are unconditional so this
- * header carries no consistency-model preprocessor logic.
+ * lazy protocol TU defines these; the declarations are unconditional so this
+ * header carries no coherence-model preprocessor logic.
  *
  * Wire layout (in out buffer, starting at byte 0):
  *   uint32_t count;        number of non-zero (rank, version) pairs

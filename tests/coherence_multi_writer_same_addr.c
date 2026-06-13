@@ -38,12 +38,12 @@
 ******************************************************************************/
 
 /// @file coherence_multi_writer_same_addr.c
-/// @brief B.5 -- Multi-writer same-address RC determinism check.
+/// @brief B.5 -- Multi-writer same-address eager-protocol determinism check.
 ///
 /// N RW EDTs increment the same int in the same DB, then a single RO EDT
-/// verifies the final count.  Tests that RC delivers a coherent view
-/// of the buffer to every RW acquirer regardless of cross-rank GRANT
-/// timing.
+/// verifies the final count.  Tests that the ownership protocol delivers a
+/// coherent view of the buffer to every RW acquirer regardless of cross-rank
+/// GRANT timing.
 ///
 /// IMPORTANT: ARTS RW is per-NODE exclusive (cross-rank LOCK_REQ chain),
 /// not per-EDT exclusive.  Multiple RW EDTs on the same rank can run
@@ -56,8 +56,9 @@
 /// EDT-graph happens-before."
 ///
 /// What this test verifies (post-atomic-increment):
-///   1. RC routes every RW acquirer to a buffer that becomes visible
-///      to subsequent acquirers (cache->buffer + writer_count handoff).
+///   1. The ownership protocol routes every RW acquirer to a buffer that
+///      becomes visible to subsequent acquirers (cache->buffer + writer_count
+///      handoff).
 ///   2. The final RO acquirer observes the stable post-all-RW value.
 ///   3. No EDTs are stranded (all N + 1 finish; outer finish scope shutdown
 ///      fires cleanly).
@@ -85,8 +86,8 @@ static void inc_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   /* ARTS RW = per-node exclusive (cross-rank LOCK_REQ chain) but NOT
    * per-EDT exclusive on the same node.  Use atomic_fetch_add so
    * concurrent same-node EDTs serialize the read-modify-write
-   * themselves; RC's job is buffer visibility, not per-EDT
-   * mutual exclusion. */
+   * themselves; the ownership protocol's job is buffer visibility, not
+   * per-EDT mutual exclusion. */
   _Atomic int *data = (_Atomic int *)depv[0].ptr;
   if (data == NULL) {
     arts_printf("FAIL: inc_edt got NULL ptr\n");
@@ -111,7 +112,8 @@ static void verify_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
   int observed = atomic_load_explicit(data, memory_order_relaxed);
   if (observed != N) {
-    (void)fprintf(stderr, "FAIL: expected %d, got %d (RC visibility bug)\n", N,
+    (void)fprintf(stderr,
+                  "FAIL: expected %d, got %d (ownership visibility bug)\n", N,
                   observed);
     arts_abort(1);
   }

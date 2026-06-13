@@ -131,13 +131,14 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== coherence_rw_multihop ===\n");
 
-#ifdef ARTS_MEMORY_MODEL_LC
-  /* LC unifies RW with RO (concurrent replicas, reduce on release) and has no
-   * ownership-transfer chain (no LOCK_REQ/INVALIDATE/GRANT).  A plain serial
-   * increment is therefore not a meaningful LC workload — concurrent acquirers
-   * race the read-modify-write.  This test targets the RC/LRC exclusive-RW
-   * ownership-transfer chain. */
-  arts_printf("SKIP: LC has no exclusive-RW ownership-transfer chain\n");
+#ifdef ARTS_MEMORY_MODEL_RELAXED
+  /* The relaxed (DB-DRF) model unifies RW with RO (concurrent replicas,
+   * reduce on release) and has no ownership-transfer chain (no
+   * LOCK_REQ/INVALIDATE/GRANT).  A plain serial increment is therefore not a
+   * meaningful relaxed-model workload — concurrent acquirers race the
+   * read-modify-write.  This test targets the OCR-model (eager/lazy)
+   * exclusive-RW ownership-transfer chain. */
+  arts_printf("SKIP: RELAXED has no exclusive-RW ownership-transfer chain\n");
   atomic_store(&g_check_result, 1);
   arts_shutdown();
   return;

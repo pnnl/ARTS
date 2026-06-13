@@ -51,8 +51,8 @@
 ///
 ///        Completion is the assertion: if the empty transfer crashes any rank,
 ///        the finish scope never drains and shutdown never fires, surfacing as
-///        a ctest FAIL.  Model-agnostic (RC/LC simply move ownership without a
-///        map). Requires 2+ ranks.
+///        a ctest FAIL.  Model-agnostic (eager/relaxed builds simply move
+///        ownership without a map). Requires 2+ ranks.
 
 #include "arts.h"
 

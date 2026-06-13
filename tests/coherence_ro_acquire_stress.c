@@ -42,9 +42,9 @@
 ///
 /// Single DB initialized to a known sentinel value (42).  N RO-acquiring
 /// EDTs are spawned concurrently; each verifies that *data == 42.
-/// Exercises RC cases 1/3/7 (concurrent local RO + RO snapshot install
-/// + cached RO version pull).  If any reader sees a corrupted value the
-/// cache install path itself is wrong — that is a real RC bug.
+/// Exercises eager-protocol cases 1/3/7 (concurrent local RO + RO snapshot
+/// install + cached RO version pull).  If any reader sees a corrupted value
+/// the cache install path itself is wrong — that is a real coherence bug.
 ///
 /// Adaptations vs. plan description (line 1882 of plan):
 ///   - 4-arg arts_db_create (no ARTS_DB_PROP_NONE in HEAD).

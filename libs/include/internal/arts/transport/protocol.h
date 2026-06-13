@@ -54,7 +54,7 @@ enum arts_msg_type {
   MSG_TIME_SYNC_REQUEST,
   MSG_TIME_SYNC_RESPONSE,
   /* coherence protocol messages.  The dispatcher routes these to
-   * arts_handler_db_* in libs/src/core/memory/coherence_handlers.c.
+   * arts_handler_db_* in libs/src/core/coherence/handlers.c.
    * Sequential append (CLAUDE.md rule: NO gaps in this enum). */
   MSG_DB_OWNERSHIP_REQUEST,
   MSG_DB_OWNERSHIP_RESPONSE,
@@ -75,22 +75,22 @@ enum arts_msg_type {
    * MSG_EVENT_DESTROY / MSG_DB_DESTROY; OoO-deferred on before-create
    * reorder).  Sequential append, no gaps. */
   MSG_EDT_DESTROY,
-  /* LRC (Location-Consistency) coherence messages.  Only sent/received when
-   * both ranks are compiled with ARTS_MEMORY_MODEL=LRC.  Sequential append,
+  /* Lazy-protocol-only coherence messages.  Only sent/received when both
+   * ranks are compiled with the lazy coherence protocol.  Sequential append,
    * no gaps. */
   MSG_DB_SNAPSHOT_REDIRECT,
   MSG_DB_OWNERSHIP_RESPONSE_ACK,
   /* RW-acquire pipelining: home → designated next owner. "You are the secured
    * next owner of this DB; advance your RW acquire cursor." Sent alongside the
-   * ownership INVALIDATE. RC/LRC only. Sequential append, no gaps. */
+   * ownership INVALIDATE. Eager/lazy only. Sequential append, no gaps. */
   MSG_DB_OWNERSHIP_PROCEED,
 
   MSG_COUNT, /* sentinel — keep last; used for array sizing */
 };
 
 /* WRITEBACK packet flag — selects normal write-back vs. write-back +
- * ownership transfer.  Coherence release path uses these constants
- * (libs/src/core/memory/coherence_release.c lines 166, 174) and the
+ * ownership transfer.  The coherence release/ownership-transfer path
+ * (libs/src/core/coherence/ownership.c) uses these constants and the
  * home-side WRITEBACK handler dispatches on the value.  uint8_t in the
  * wire packet to keep the struct layout tight. */
 typedef enum {
@@ -167,10 +167,11 @@ struct ARTS_PACKED arts_msg_ownership_request_packet_s {
 };
 
 /* OWNERSHIP_RESPONSE — the single ownership-transfer wire message.
- * RC carries an optional trailing buffer payload (data_present == 1).
- * LRC carries a serialized last_sent_version map + buffer payload (the old
- * model-prefixed MSG_DB_OWNERSHIP_RESPONSE_LRC collapsed into this). */
-#ifdef ARTS_MEMORY_MODEL_LRC
+ * The eager protocol carries an optional trailing buffer payload
+ * (data_present == 1).  The lazy protocol carries a serialized
+ * last_sent_version map + buffer payload (the old lazy-prefixed
+ * MSG_DB_OWNERSHIP_RESPONSE_LRC collapsed into this). */
+#ifdef ARTS_COHERENCE_PROTOCOL_LAZY
 struct ARTS_PACKED arts_msg_ownership_response_packet_s {
   struct arts_msg_header_s header;
   arts_guid_t db_guid;
@@ -183,7 +184,7 @@ struct ARTS_PACKED arts_msg_ownership_response_packet_s {
    *   uint8_t data[db_size];
    */
 };
-#else /* RC */
+#else /* eager */
 struct ARTS_PACKED arts_msg_ownership_response_packet_s {
   struct arts_msg_header_s header;
   arts_guid_t db_guid;
@@ -217,8 +218,8 @@ struct ARTS_PACKED arts_msg_writeback_ack_packet_s {
 
 /* INVALIDATE_NOTICE: body = db_guid(8) + new_owner_rank(4) + pad(4) = 16.
  * Total = 44 + 16 = 60 (not 8-aligned; add pad4[] → 64).
- * RC builds send new_owner_rank=0 (ignored by the handler).
- * LRC builds set new_owner_rank so the current holder knows where to send
+ * Eager builds send new_owner_rank=0 (ignored by the handler).
+ * Lazy builds set new_owner_rank so the current holder knows where to send
  * TRANSFER_OWNERSHIP without a round-trip to home. */
 struct ARTS_PACKED arts_msg_ownership_invalidate_packet_s {
   struct arts_msg_header_s header;
@@ -280,9 +281,9 @@ struct ARTS_PACKED arts_msg_cache_destroy_packet_s {
   arts_guid_t db_guid;
 };
 
-/* ===== LRC (Location-Consistency) wire packets ==============================
- * Sent only between ranks compiled with ARTS_MEMORY_MODEL=LRC.
- * A rank compiled with the opposite mode that receives these messages fatals
+/* ===== Lazy-protocol-only wire packets ======================================
+ * Sent only between ranks compiled with the lazy coherence protocol.
+ * A rank compiled with a different protocol that receives these messages fatals
  * immediately (see dispatcher.c). */
 
 /* REDIRECT_RO — home forwards an RO grant request to the current owner.

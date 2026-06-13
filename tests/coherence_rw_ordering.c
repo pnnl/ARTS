@@ -38,9 +38,9 @@
 ******************************************************************************/
 
 /// @file coherence_rw_ordering.c
-/// @brief Tests RC RW ordering: multiple RW writers → RO readers
-///        should all see the final writer's data.  Also exercises
-///        sequential RW writers with correct ordering.
+/// @brief Tests RW ordering under the eager protocol: multiple RW writers
+///        → RO readers should all see the final writer's data.  Also
+///        exercises sequential RW writers with correct ordering.
 
 #include "arts.h"
 

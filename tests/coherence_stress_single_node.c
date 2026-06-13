@@ -45,7 +45,8 @@
 ///   - spawns N EDTs, each RO- or RW-acquiring one of the DBs,
 ///   - reaches a per-iteration finish EDT that verifies all workers ran.
 /// Iteration N+1 only starts after iteration N's finish EDT has fired —
-/// this gives RC many back-to-back acquire/release cycles per DB.
+/// this gives the ownership protocol many back-to-back acquire/release cycles
+/// per DB.
 ///
 /// Adaptations vs. plan code:
 ///   - 4-arg arts_db_create (no ARTS_DB_PROP_NONE in HEAD).

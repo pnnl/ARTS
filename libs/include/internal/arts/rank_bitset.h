@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
  * Bit-packed atomic rank bit-set, sized to the cluster's rank count.
- * Used only in LRC builds — RC reuses the per-rank version map for
- * the same purpose (set membership = nonzero entry).
+ * Used only in lazy builds — the eager protocol reuses the per-rank version
+ * map for the same purpose (set membership = nonzero entry).
  *
  * Each word covers 64 ranks.  At ARTS_GUID_RANK_BITS = 14 (max 16384
  * ranks), max size is (16384 + 63) / 64 = 256 words = 2 KiB per DB.

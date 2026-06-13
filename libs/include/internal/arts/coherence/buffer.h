@@ -36,7 +36,7 @@
  *     pointer is benign because the version stamp inside the buffer
  *     is monotonic per DB.  A reader observing a recycled pointer
  *     necessarily observes a version >= its acquire-time version,
- *     which is exactly what RC promises.
+ *     which is exactly what the eager protocol promises.
  */
 
 #ifndef ARTS_MEMORY_COHERENCE_BUFFER_H

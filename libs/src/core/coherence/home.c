@@ -6,7 +6,7 @@
  *   - home metadata queues / maps / lifecycle (lockreq queue,
  *     last_sent_version dense map, home-directory init/teardown)
  *   - the per-cache pending_rw Vyukov MPSC queue (cache-side RW waiter chain)
- *   - the bit-packed atomic rank bit-set (LRC destroy fan-out roster)
+ *   - the bit-packed atomic rank bit-set (lazy destroy fan-out roster)
  */
 
 #include "arts/coherence/home.h"
@@ -213,8 +213,8 @@ bool arts_rank_u64_map_advance(struct arts_rank_to_u64_map_s *m,
 /*--- rank bit-set ----------------------------------------------------
  *
  * Bit-packed atomic rank bit-set.  See coherence_home.h / rank_bitset.h.
- * Used only in LRC builds — RC reuses the per-rank version map for the same
- * purpose (set membership = nonzero entry). */
+ * Used only in lazy builds — the eager protocol reuses the per-rank version
+ * map for the same purpose (set membership = nonzero entry). */
 
 void arts_rank_bitset_init(struct arts_rank_bitset_s *r, unsigned int nranks) {
   r->nranks = nranks;

@@ -1,18 +1,19 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * Release-consistency family (RC + LRC) shared coherence code.
+ * OCR-model family shared ownership machinery (compiled for both coherence
+ * protocols; the RELAXED model does not compile it).
  *
- * Compiled only when ARTS_MEMORY_MODEL is RC or LRC (selected in
+ * Compiled only when ARTS_MEMORY_MODEL is OCR (selected in
  * libs/src/core/CMakeLists.txt).  Holds the home-directory / single-owner
- * ownership machinery that RC and LRC share but LC does not have (LC keeps the
- * canonical buffer at home via synchronous WRITEBACK and has no
- * OWNERSHIP_REQUEST / GRANT / pending_rw round).  The small points where RC and
- * LRC themselves differ are delegated to per-model seams
+ * ownership machinery that EAGER and LAZY share but RELAXED does not have
+ * (RELAXED keeps the canonical buffer at home via synchronous WRITEBACK and has
+ * no OWNERSHIP_REQUEST / GRANT / pending_rw round).  The small points where
+ * EAGER and LAZY themselves differ are delegated to per-protocol seams
  * (arts_db_start_ownership_round / arts_db_ownership_return) defined in
- * coherence/rc.c / coherence/lrc.c — family→model calls.  Contains NO
- * ARTS_MEMORY_MODEL_* preprocessor logic.
+ * coherence/eager.c / coherence/lazy.c — family→protocol calls.  Contains NO
+ * model/protocol preprocessor logic.
  */
-#include <assert.h> /* LRC INVALIDATE direct-call invariant assert */
+#include <assert.h> /* lazy INVALIDATE direct-call invariant assert */
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -33,11 +34,11 @@
 #include "arts/transport/protocol.h" /* arts_fill_packet_header, MSG_* */
 
 /* ===== Case 2/6: RW local fast path ================================
- * Shared by the RC and LRC arts_handler_db_acquire bodies (coherence/rc.c /
- * coherence/lrc.c).  CAS-increments writer_count "if positive"; on success
- * writes dep->ptr (acquire_local) and returns true; returns false when
- * writer_count went to 0 (ownership invalidated) so the caller falls through to
- * arts_db_acquire_remote_rw. */
+ * Shared by the EAGER and LAZY arts_handler_db_acquire bodies
+ * (coherence/eager.c / coherence/lazy.c).  CAS-increments writer_count "if
+ * positive"; on success writes dep->ptr (acquire_local) and returns true;
+ * returns false when writer_count went to 0 (ownership invalidated) so the
+ * caller falls through to arts_db_acquire_remote_rw. */
 bool arts_db_acquire_rw_local_fast(struct arts_db_cache_s *cache,
                                    arts_edt_dep_t *dep) {
   /* CAS-loop "increment if positive": never bump from <= 0.  The comparison
@@ -96,15 +97,15 @@ arts_db_acquire_remote_rw(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
   return ARTS_DB_ACQUIRE_PARK;
 }
 
-/* The RC/LRC arts_handler_db_acquire 8-case body lives per-model in
- * coherence/{rc,lrc}.c — the two builds differ only on the RO-has-local-data
- * predicate (RC is_home||is_owner; LRC is_owner), which the C-preprocessor seam
- * forbids in a shared TU.  Both call the shared arts_db_acquire_rw_local_fast /
- * arts_db_acquire_remote_rw above and arts_db_acquire_remote_ro
- * (coherence/coherence.c).
+/* The arts_handler_db_acquire 8-case body lives per-protocol in
+ * coherence/eager.c and coherence/lazy.c — the two builds differ only on the
+ * RO-has-local-data predicate (eager: is_home||is_owner; lazy: is_owner), which
+ * the C-preprocessor seam forbids in a shared TU.  Both call the shared
+ * arts_db_acquire_rw_local_fast / arts_db_acquire_remote_rw above and
+ * arts_db_acquire_remote_ro (coherence/coherence.c).
  */
 
-/* ===== GRANT drain (called from coherence/{rc,lrc}.c) =========== */
+/* ===== GRANT drain (called from coherence/eager.c and coherence/lazy.c) === */
 
 /* Drain callback context for the RW MPSC pop loop. */
 struct rw_drain_ctx_s {
@@ -170,12 +171,12 @@ void arts_db_invalidate_transfer(struct arts_db_cache_s *cache) {
   }
 }
 
-/* ===== destroy/fail wake of parked waiters (RC+LRC) ================
+/* ===== destroy/fail wake of parked waiters (EAGER+LAZY) ============
  * Wake every parked waiter with a NULL ptr so the EDT observes the destroyed
  * DB (mark_edt_ready_by_guid delivers NULL when the cache buffer is gone): the
- * RW Vyukov MPSC FIFO first, then the snapshot reorder buffer.  LC has no
+ * RW Vyukov MPSC FIFO first, then the snapshot reorder buffer.  RELAXED has no
  * pending_rw queue so it defines its own arts_db_fail_trigger_pending
- * (coherence/lc.c) draining only pending_snapshot. */
+ * (coherence/relaxed.c) draining only pending_snapshot. */
 
 static void fail_trigger_rw_cb(arts_guid_t edt_guid, unsigned int slot,
                                void *vctx) {
@@ -188,13 +189,13 @@ void arts_db_fail_trigger_pending(struct arts_db_cache_s *cache) {
   arts_db_drain_pending_snapshot(cache);
 }
 
-/* ===== Home-side ownership handlers (RC+LRC; moved from handlers.c) ==
- * OWNERSHIP_REQUEST / RELEASE_OWNERSHIP exist only under RC and LRC (LC routes
+/* ===== Home-side ownership handlers (OCR model; moved from handlers.c) =
+ * OWNERSHIP_REQUEST / RELEASE_OWNERSHIP exist only under OCR (RELAXED routes
  * all acquires through GET_DATA / DATA_RESPONSE), so these handlers are
- * compiled only in the release-consistency family.  The home-directory
- * machinery they touch (pending_rw, invalidate_in_flight, rw_holder) is
- * RC+LRC-shared; the point where RC and LRC diverge is delegated to per-model
- * seams in coherence/rc.c / coherence/lrc.c. */
+ * compiled only for the OCR model.  The home-directory machinery they touch
+ * (pending_rw, invalidate_in_flight, rw_holder) is shared by both protocols;
+ * the point where EAGER and LAZY diverge is delegated to per-protocol seams in
+ * coherence/eager.c / coherence/lazy.c. */
 
 /* Cat-B pure body (OoO g_ooo_table[OOO_DB_OWNERSHIP_REQUEST]): the OoO engine
  * has already acquired the home db_s for db_guid and pinned a ref across this
@@ -203,8 +204,9 @@ void arts_db_fail_trigger_pending(struct arts_db_cache_s *cache) {
  * cache.  The wire dispatcher decodes OWNERSHIP_REQUEST into the args struct
  * and routes through the engine via OOO_DB_OWNERSHIP_REQUEST; a missing home
  * db_s defers the args and re-issues this body once DB_CREATE installs and
- * drains.  (LC never enqueues this kind — coherence/lc.c provides a no-op
- * definition that satisfies the single g_ooo_table slot in the LC build.) */
+ * drains.  (RELAXED never enqueues this kind — coherence/relaxed.c provides a
+ * no-op definition that satisfies the single g_ooo_table slot in the RELAXED
+ * build.) */
 void arts_handler_db_ownership_request(void *item_v, void *args_v) {
   struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
   struct arts_ooo_args_db_ownership_request_s *a =
@@ -230,9 +232,9 @@ void arts_handler_db_ownership_request(void *item_v, void *args_v) {
           memory_order_acquire)) {
     return; /* another round is in flight; requester stays queued */
   }
-  /* Baton won: RC INVALIDATEs the current rw_holder; LRC pops the FIFO transfer
-   * target, publishes pending_install_owner, and starts the invalidate round.
-   */
+  /* Baton won: the eager protocol INVALIDATEs the current rw_holder; the lazy
+   * protocol pops the FIFO transfer target, publishes pending_install_owner,
+   * and starts the invalidate round. */
   arts_db_start_ownership_round(cache, db, requester);
 }
 
@@ -243,18 +245,19 @@ void arts_handler_db_ownership_request(void *item_v, void *args_v) {
  * only flows from a current owner whose acquire implied DB_CREATE already
  * landed at home, so a missing cache means the DB was already torn down (caller
  * awaits no reply, and there is no OoO defer — this message is never deferred).
- * RC advances the transfer chain; LRC never receives this message (no-op). */
+ * The eager protocol advances the transfer chain; the lazy protocol never
+ * receives this message (no-op). */
 void arts_handler_db_ownership_return(void *item_v, void *args_v) {
   (void)args_v;
   struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
   arts_db_ownership_return(cache);
 }
 
-/* ===== Ownership wire senders (RC+LRC; moved from coherence/senders.c) ===
+/* ===== Ownership wire senders (OCR model; moved from coherence/senders.c) ==
  * OWNERSHIP_REQUEST / RELEASE_OWNERSHIP / INVALIDATE_NOTICE exist only under
- * the release-consistency family.  Self-sends dispatch the matching handler
- * inline (request/return defined above; invalidate defined per model in
- * rc.c/lrc.c).
+ * the OCR model.  Self-sends dispatch the matching handler inline
+ * (request/return defined above; invalidate defined per protocol in
+ * eager.c/lazy.c).
  */
 
 void arts_send_db_ownership_request(unsigned int home_rank,
@@ -296,14 +299,14 @@ void arts_send_db_ownership_invalidate(unsigned int owner_rank,
         .db_guid = db_guid,
         .new_owner_rank = new_owner_rank,
     };
-#if defined(ARTS_MEMORY_MODEL_LRC)
-    /* LRC never defers INVALIDATE: home publishes rw_holder (the target) only
-     * after that rank's cache install, so the cache is provably present here.
-     * Call the pure handler body directly. */
+#if defined(ARTS_COHERENCE_PROTOCOL_LAZY)
+    /* The lazy protocol never defers INVALIDATE: home publishes rw_holder (the
+     * target) only after that rank's cache install, so the cache is provably
+     * present here.  Call the pure handler body directly. */
     struct arts_db_cache_s *cache = arts_db_cache_lookup(db_guid);
     assert(cache != NULL); /* target is rw_holder, published post-install */
     arts_handler_db_ownership_invalidate(arts_db_of_cache(cache), &args);
-#else /* RC: Cat-B — defer on miss, replay on the install's drain. */
+#else /* eager: Cat-B — defer on miss, replay on the install's drain. */
     arts_ooo_dispatch_or_defer_guid(db_guid, OOO_DB_OWNERSHIP_INVALIDATE, &args,
                                     sizeof(args));
 #endif

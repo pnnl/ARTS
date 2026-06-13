@@ -59,7 +59,7 @@ set(TEST_PROGRAMS
     coherence_zero_size_xfer
     coherence_rw_multihop
     coherence_rw_pipeline
-    coherence_lrc_ownership_reorder
+    coherence_lazy_ownership_reorder
     lockfree_stack_stress
     lockfree_pool_stress
     tiered_pool_stress
@@ -438,7 +438,7 @@ register_single_node_test(event_sticky_late_bind TIMEOUT 60)
 register_single_node_test(event_channel_fifo TIMEOUT 60)
 register_single_node_test(event_destroy_race TIMEOUT 60)
 
-# Coherence tests (formerly CDAG — names track the RC protocol naming)
+# Coherence tests — exercise the OCR-model ownership protocol paths
 register_single_node_test(coherence_basic ARGS 32 0 0 0)
 register_single_node_test(coherence_rw_chain ARGS 4)
 register_single_node_test(coherence_rw_ordering)
@@ -647,7 +647,8 @@ set_tests_properties(coherence_stress_dist PROPERTIES
     ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/2n.cfg;default_ports=${port_base}"
 )
 
-# LRC ownership-transfer TRANSFER/INVALIDATE two-wire reorder stress.  MUST use
+# Lazy-protocol ownership-transfer TRANSFER/INVALIDATE two-wire reorder stress.
+# MUST use
 # a receiver_threads>=2 config (arts_2n_io.cfg = 2 nodes, 3w/2s/2r) so the
 # TRANSFER_OWNERSHIP(+1) and follow-up INVALIDATE(-1) to the same just-granted
 # owner can be dispatched out of order by different receiver threads — the
@@ -657,84 +658,86 @@ set_tests_properties(coherence_stress_dist PROPERTIES
 # (the regression), caught by the test's watchdog under this TIMEOUT.  The exact
 # end-sum is a diagnostic only, not a gate (a cross-rank writeback can be dropped
 # by a separate FIFO-ordering defect orthogonal to writer_count — see the test
-# file header).  SKIPs cleanly when rank_count < 2 or under LC (no
-# exclusive-RW chain).
+# file header).  SKIPs cleanly when rank_count < 2 or under the RELAXED model
+# (no exclusive-RW chain).
 add_test(
-    NAME coherence_lrc_ownership_reorder
-    COMMAND coherence_lrc_ownership_reorder
+    NAME coherence_lazy_ownership_reorder
+    COMMAND coherence_lazy_ownership_reorder
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
 )
 arts_next_port_base(2 port_base)
-set_tests_properties(coherence_lrc_ownership_reorder PROPERTIES
+set_tests_properties(coherence_lazy_ownership_reorder PROPERTIES
     LABELS "coherence_stress;multinode"
     TIMEOUT 120
     RESOURCE_LOCK "arts_runtime"
     ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/2n_io.cfg;default_ports=${port_base}"
 )
 
-# --- LC-specific test binaries ---
-# These tests target the LC memory model.  They are built unconditionally
-# so the binary exists in all three build trees; CTest entries are only
-# registered when ARTS_MEMORY_MODEL is LC.
+# --- RELAXED-specific test binaries ---
+# These tests target the RELAXED (DB-DRF) memory model.  They are built
+# unconditionally so the binary exists in all three build trees; CTest
+# entries are only registered when ARTS_MEMORY_MODEL is RELAXED.
 
-add_arts_test(lc_multi_writer_concurrent)
-add_arts_test(lc_drf_invariant)
-add_arts_test(lc_local_hit_dedup)
-add_arts_test(lc_counter_race)
+add_arts_test(relaxed_multi_writer_concurrent)
+add_arts_test(relaxed_drf_invariant)
+add_arts_test(relaxed_local_hit_dedup)
+add_arts_test(relaxed_counter_race)
 
-if(ARTS_MEMORY_MODEL STREQUAL "LC")
-    # lc_drf_invariant (single-node): home-rank writer and home-rank reader;
-    # no WRITEBACK round-trip.  Validates finish-event happens-before ordering.
+if(ARTS_MEMORY_MODEL STREQUAL "RELAXED")
+    # relaxed_drf_invariant (single-node): home-rank writer and home-rank
+    # reader; no WRITEBACK round-trip.  Validates finish-event happens-before
+    # ordering.
     add_test(
-        NAME lc_drf_invariant
-        COMMAND lc_drf_invariant
+        NAME relaxed_drf_invariant
+        COMMAND relaxed_drf_invariant
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     )
-    set_tests_properties(lc_drf_invariant PROPERTIES
+    set_tests_properties(relaxed_drf_invariant PROPERTIES
         LABELS "single_node"
         TIMEOUT 30
         RESOURCE_LOCK "arts_runtime"
-        PASS_REGULAR_EXPRESSION "LC_DRF: PASS"
+        ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/1n.cfg"
+        PASS_REGULAR_EXPRESSION "RELAXED_DRF: PASS"
     )
 
-    # lc_drf_invariant (2-node): writer on rank 1, reader on rank 0 (home).
-    # Exercises the cross-rank RW WRITEBACK path: writer_count bump on
-    # acquire ensures release_rw sends WRITEBACK; home delivers updated
+    # relaxed_drf_invariant (2-node): writer on rank 1, reader on rank 0
+    # (home).  Exercises the cross-rank RW WRITEBACK path: writer_count bump
+    # on acquire ensures release_rw sends WRITEBACK; home delivers updated
     # data to the RO reader.
     add_test(
-        NAME lc_drf_invariant_2n
-        COMMAND lc_drf_invariant
+        NAME relaxed_drf_invariant_2n
+        COMMAND relaxed_drf_invariant
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     )
     arts_next_port_base(1 port_base)
-    set_tests_properties(lc_drf_invariant_2n PROPERTIES
+    set_tests_properties(relaxed_drf_invariant_2n PROPERTIES
         LABELS "multinode"
         TIMEOUT 60
         RESOURCE_LOCK "arts_runtime"
         ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/2n.cfg;default_ports=${port_base}"
-        PASS_REGULAR_EXPRESSION "LC_DRF: PASS"
+        PASS_REGULAR_EXPRESSION "RELAXED_DRF: PASS"
     )
 
-    # lc_local_hit_dedup: N concurrent same-rank RO acquires on a DB homed
-    # at a different rank — exercises the GET_DATA / STILL_VALID dedup
-    # code path under LC.  Requires 2-node config.
+    # relaxed_local_hit_dedup: N concurrent same-rank RO acquires on a DB
+    # homed at a different rank — exercises the GET_DATA / STILL_VALID dedup
+    # code path under the relaxed model.  Requires 2-node config.
     add_test(
-        NAME lc_local_hit_dedup_2n
-        COMMAND lc_local_hit_dedup
+        NAME relaxed_local_hit_dedup_2n
+        COMMAND relaxed_local_hit_dedup
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     )
     arts_next_port_base(1 port_base)
-    set_tests_properties(lc_local_hit_dedup_2n PROPERTIES
+    set_tests_properties(relaxed_local_hit_dedup_2n PROPERTIES
         LABELS "multinode"
         TIMEOUT 60
         RESOURCE_LOCK "arts_runtime"
         ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/2n.cfg;default_ports=${port_base}"
-        PASS_REGULAR_EXPRESSION "LC_LOCAL_HIT_DEDUP: PASS"
+        PASS_REGULAR_EXPRESSION "RELAXED_LOCAL_HIT_DEDUP: PASS"
     )
 
-    # lc_multi_writer_concurrent: manual test only — non-deterministic
+    # relaxed_multi_writer_concurrent: manual test only — non-deterministic
     # last-writer-wins outcome cannot be expressed as a fixed regex.
-    # Run directly with: build_lc/tests/lc_multi_writer_concurrent
+    # Run directly with: build_relaxed/tests/relaxed_multi_writer_concurrent
 endif()
 
 # --- Mode-mismatch detection binary (no CTest entry — driven by run_mode_mismatch.sh) ---

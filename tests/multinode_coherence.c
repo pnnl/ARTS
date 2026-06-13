@@ -38,9 +38,9 @@
 ******************************************************************************/
 
 /// @file multinode_coherence.c
-/// @brief Tests RC RW/RO ordering across nodes: sequential RW writers
-///        on different nodes, concurrent RO readers, and RW ping-pong.
-///        Requires multi-node (node_count > 1).
+/// @brief Tests RW/RO ordering across nodes under the eager ownership
+///        protocol: sequential RW writers on different nodes, concurrent
+///        RO readers, and RW ping-pong.  Requires multi-node (node_count > 1).
 
 #include "arts.h"
 

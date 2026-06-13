@@ -2,14 +2,14 @@ Table of Contents
 =================
 
 *   [Project Overview](#project-overview)
-    *   [Detailed Summary](#detailed-summary)
 *   [Installation Guide](#installation-guide)
     *   [Environment Requirements](#environment-requirements)
     *   [Dependencies](#dependencies)
-    *   [Distribution Files](#distrubution-files)
-    *   [Installation Instructions](#installation-instructions)
-    *   [Test Cases](#test-cases)
-*   [User Guide](#user-guide)
+    *   [Building](#building)
+    *   [Build Options](#build-options)
+    *   [Memory Consistency Models](#memory-consistency-models)
+*   [Running Tests](#running-tests)
+*   [Configuration](#configuration)
 *   [Contributors](#contributors)
 
 Project Overview
@@ -17,265 +17,160 @@ Project Overview
 
 **Project Name:** Abstract RunTime System (ARTS)
 
-**Principle Investigator:** Joshua Suetterlein (Joshua.Suetterlein@pnnl.gov)
+**Principal Investigator:** Joshua Suetterlein (Joshua.Suetterlein@pnnl.gov)
 
-**General Area or Topic of Investigation:** Asynchronous Many Task runtime (AMT)
+**General Area or Topic of Investigation:** Asynchronous Many-Task runtime (AMT)
 
-**Release Number:** 1.6
+**Release Number:** 2.0.0
 
-Detailed Summary
-----------------
-
-The ARTS runtime system is an AMT that explores macro-dataflow execution for data analytics.  This runtime provides users
-with a distributed global adress space, a distributed memory model, and efficent synchronization constructs to write
-efficent applications on a massively parallel system.
+ARTS is an asynchronous, distributed, event-driven task runtime based on OCR
+concepts. Programs express work as **EDTs** (Event-Driven Tasks), data as
+**DataBlocks** (DBs), and wiring as **Events** — all identified by globally
+unique **GUIDs**. The runtime builds dynamic DAGs and schedules EDTs as their
+dependencies are satisfied, providing a distributed global address space and a
+distributed memory model with efficient synchronization for massively parallel
+systems.
 
 Installation Guide
 ==================
 
-The following sections detail the compilation, packaging, and installation of the software.
-
 Environment Requirements
 ------------------------
 
-**Programming Language:** C, C++, and CUDA
+**Languages:** C17 (runtime core), C++17, and optionally CUDA (GPU support).
 
-**Operating System & Version:** Ubuntu 16.04.3, CentOS 7, 
+**Operating System:** Linux (x86-64 or ARMv8.1+). The runtime relies on a
+double-width compare-and-swap (`cmpxchg16b` on x86-64, `casp` on ARMv8.1+);
+on x86-64 it is built with `-mcx16` and linked against `libatomic`.
 
-**Required Disk Space:** 160MB
+**Compiler:** GCC >= 7 or Clang >= 5 (strict `-std=c17`, no GNU extensions).
+Other compilers are not supported.
 
-**Required Memory:** At least 1GB
+**Required Memory / Disk:** ~2 GB RAM and ~500 MB disk for a full build.
 
 Dependencies
 ------------
 
-| Name | Version | Download Location | Country of Origin | Optional/Required | Special Instructions |
-| ---- | ------- | ----------------- | ----------------- | ----------------- | -------------------- |
-| cmake | 3.8 | https://github.com/Kitware/CMake | USA | Required | Must use 3.8 or above for CUDA language support | 
-| CUDA | 9.2.148 | https://developer.nvidia.com/cuda-92-download-archive | USA | Required | Tested with CUDA 9.2. Please check OS CUDA combination |
-| CUBLAS | 9.0 | https://developer.nvidia.com/cuda-90-download-archive | USA | Optional | Typically ships with CUDA or CUDA Toolkit. |
-| Thrust | 9.0 | https://developer.nvidia.com/cuda-90-download-archive | USA | Optional | Typically ships with CUDA or CUDA Toolkit. |
-| HWLoc | 1.11 | https://www.open-mpi.org/software/hwloc/v1.11/ | USA | Optional | New versions not yet supported | 
-Distribution Files
-------------------
+| Name | Version | Required | Notes |
+| ---- | ------- | -------- | ----- |
+| CMake | >= 3.22 | Required | The build is CMake-driven. |
+| Ninja | any | Required | ARTS enforces the Ninja generator; Make is **not** supported. |
+| pthreads / librt / libm / libanl | system | Required | Provided by glibc on Linux. |
+| libatomic | system | Required | For 16-byte atomics (DWCAS). |
+| hwloc | >= 2.0 | Bundled | Built from source from the `third_party/hwloc` submodule — no system install needed. |
+| CUDA Toolkit | >= 11 (tested) | Optional | Only when `ARTS_USE_GPU=ON`. |
+| MPI | any | Optional | Only needed by the OCR reference benchmarks (`ARTS_BUILD_BENCHMARKS=ON`). |
 
-Key Directories
-libs/core/ - Main directory containing the runtime source files.
-example/ - Directory containing both CPU and GPU examples.  
-libs/graph/ - Directory containing graph data structures/methods for applications.  Not part of the core runtime development.
-sampleConfigs/ - Directory with arts.conf files required to run examples.  
-test/ - Directory containing tests to debug issues.  For development purposes.  
+Initialize submodules before the first build:
 
-Key Files:
-arts.h - Include file required by arts programs.  
-arts.cfg - Arts configuration file.  This file is required in the same directory as a running ARTS program.  
-libarts.so - Runtime library generated after building.  Required for linking programs.  
+```bash
+git clone <repository-url> arts
+cd arts
+git submodule update --init --recursive
+```
 
+Building
+--------
 
-Installation Instructions
+ARTS *requires* the Ninja generator. The default install prefix is
+`<project>/install`.
+
+```bash
+# Configure (Debug is the default build type)
+cmake -GNinja -Bbuild -DCMAKE_BUILD_TYPE=Release
+
+# Build
+ninja -C build
+
+# Install (to CMAKE_INSTALL_PREFIX, default: <project>/install)
+ninja -C build install
+```
+
+The public headers (`arts.h`, `arts/graph.h`, `arts/gpu.h`, `arts/array_db.h`)
+and the `libarts` static/shared libraries are installed under the prefix, along
+with a CMake package config so downstream projects can `find_package(ARTS)`.
+
+Build Options
+-------------
+
+All options are set on the cmake line with `-D<NAME>=<VALUE>`. The full list
+with defaults lives in [README.md](README.md#build-options); the most common are:
+
+| Option | Default | Purpose |
+| ------ | ------- | ------- |
+| `CMAKE_BUILD_TYPE` | `Debug` | `Debug` or `Release`. |
+| `ARTS_MEMORY_MODEL` | `OCR` | Memory model (contract) — `OCR` (default, the OCR v1.2.0 §1.6 model) or `RELAXED` (DB-DRF; weaker — evaluation only, racy-but-legal OCR programs may yield wrong results). Compile-time; all ranks must share one build. |
+| `ARTS_COHERENCE_PROTOCOL` | `LAZY` | Protocol implementing the OCR model — `LAZY` (acquire-time consistency actions, default) or `EAGER` (release-time). N/A under `RELAXED`. |
+| `ARTS_USE_GPU` | `OFF` | Enable CUDA GPU support. |
+| `ARTS_BUILD_TESTS` | `ON` | Build the ctest suite. |
+| `ARTS_BUILD_BENCHMARKS` | `ON` | Build the OCR benchmark apps (needs MPI). |
+| `ARTS_USE_SANS` | `OFF` | ASan + UBSan + LSan in Debug builds. |
+| `ARTS_USE_TSAN` | `OFF` | ThreadSanitizer in Debug builds (mutually exclusive with `ARTS_USE_SANS`). |
+
+A faster linker is selected with CMake's own `-DCMAKE_LINKER_TYPE=MOLD`
+(cmake >= 3.29) — there is no ARTS-specific linker option.
+
+Memory Consistency Models
 -------------------------
 
-Before attempting to build ARTS, please take a look at the requirements in dependencies.  While cmake will attempt to find the libraries in your path, you can help cmake by providing the path of a library using a flag -D<LIB_NAME>_ROOT=<PATH_TO_LIB_DIR> (e.g. -DHWLOC_ROOT=/usr/lib64/ or -DCUDA_ROOT=/usr/lib64/cuda9.2.148).
+The DataBlock consistency behavior is controlled by two orthogonal compile-time
+knobs. `ARTS_MEMORY_MODEL` selects the **contract**: `OCR` (default) implements
+the OCR v1.2.0 §1.6 memory model; `RELAXED` is the weaker DB-DRF evaluation
+model that emits a configure-time warning and can make racy-but-legal OCR
+programs yield wrong results. `ARTS_COHERENCE_PROTOCOL` selects the
+**implementation** of the OCR model: `LAZY` (acquire-time consistency actions,
+default) or `EAGER` (release-time). `ARTS_COHERENCE_PROTOCOL` has no effect
+under `RELAXED`. One binary is exactly one configuration, and every rank in a
+multinode run must use the same build. To cover all meaningful configurations:
 
-For CPU build only:
-```
-git clone <url-to-ARTS-repo>  # or untar the ARTS source code.
-cd arts
-mkdir build && cd build
-cmake ..
-make -j
-```
-
-For GPU builds:
-```
-git clone <url-to-ARTS-repo>  # or untar the ARTS source code.
-cd arts
-mkdir build && cd build
-cmake .. -DCUDA_ROOT=$CUDAROOT
-make -j
+```bash
+cmake -GNinja -Bbuild_eager   -DCMAKE_BUILD_TYPE=Debug -DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=EAGER
+cmake -GNinja -Bbuild_lazy    -DCMAKE_BUILD_TYPE=Debug -DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=LAZY
+cmake -GNinja -Bbuild_relaxed -DCMAKE_BUILD_TYPE=Debug -DARTS_MEMORY_MODEL=RELAXED
+ninja -C build_eager && ninja -C build_lazy && ninja -C build_relaxed
 ```
 
-Test Cases
-----------
+Running Tests
+=============
 
-To test CPU execution, first go to the examples directory in your build directory.  
-Next cd into the cpu folder, and set the launcher (job scheduler) in the configuration file (arts.cfg).
-To run an arts program the configuration file must be in the run directory.
-The launcher may be set to ssh, slurm, or lsf.  By default is is set to slurm.
-Next run fib:
-```
-./fib 10
-[0] Fib 10: 55 time: 75412 nodes: 1 workers: 16
-```
+CTest is the test runner. Tests are grouped by ctest labels:
 
-To test GPU execution, go to the gpu directory under the examples in your build directory.
-Again set the launcher to ssh, slurm, or lsf in the configuration file.
-To run the GPU code, the gpu flag in the configuration should be set to the number of disired GPUs.
-Next run fibGpu
-```
-./fibGpu 10
-[0] Fib 10: 55 time: 442941730 nodes: 1 workers: 16
-[0] Cleaned 6372 bytes
-[0] Occupancy :
-[0] 	GPU[0] = 0.007812
-[0] 	GPU[1] = 0.007812
-[0] 	GPU[2] = 0.007812
-[0] 	GPU[3] = 0.007812
-[0] 	GPU[4] = 0.007812
-[0] 	GPU[5] = 0.007812
-[0] 	GPU[6] = 0.007812
-[0] 	GPU[7] = 0.007812
-[0] HITS: 9 MISSES: 255 FREED BYTES: 1016 BYTES FREED ON EXIT 4
-[0] HIT RATIO: 0.034091
-
+```bash
+cmake -GNinja -Bbuild -DCMAKE_BUILD_TYPE=Debug
+ninja -C build
+( cd build && ctest -L single_node --output-on-failure )   # single-node
+( cd build && ctest -L multinode  --output-on-failure )     # 2n/3n/4n localhost
+( cd build && ctest -L gpu        --output-on-failure )     # GPU build only
+ctest --test-dir build -R edt_create_basic                  # one test by name
 ```
 
-An example srun command for slurm users is as follows:
-```
-srun -N 8 -n 8 -c 20 ./fib 10
-```
-The example above uses 8 nodes each with 20 threads.
+Each test sets its own `ARTS_CONFIG` to point at the matching cfg under
+`configs/local/`, so no config files are copied into the build directory.
 
-To run the histogram example, go to the histogram directory under /build-path/examples/gpu/histogram.
-Next run histo
-```
-./gpuHist
-[0] ArraySize = 1048576 | tileSize = 128 | numBlocks: 8192 | numGpus: 8
-[0] Starting...
-[0] Done 13357078986
-[0] Cleaned 0 bytes
-[0] Occupancy :
-[0]     GPU[0] = 0.250000
-[0]     GPU[1] = 0.250000
-[0]     GPU[2] = 0.250000
-[0]     GPU[3] = 0.250000
-[0]     GPU[4] = 0.250000
-[0]     GPU[5] = 0.250000
-[0]     GPU[6] = 0.250000
-[0]     GPU[7] = 0.250000
-[0] HITS: 0 MISSES: 24577 FREED BYTES: 7058192 BYTES FREED ON EXIT 150904
-[0] HIT RATIO: 0.000000
-```
+Configuration
+=============
 
-For slurm using 8 nodes and 20 threads:
-```
-srun -N 8 -n 8 -c 20 ./gpuHisto
-```
+An ARTS program reads its runtime configuration from `arts.cfg` in the working
+directory (or the file named by the `ARTS_CONFIG` environment variable).
+Templates live under `configs/`:
 
-To run the Random Access example, go to the random access directory under /build-path/examples/gpu/randomAccess.
-Set gpuLCSync=6 and make sure the number of GPU is correct in the arts.cfg file.
-Next run: 
-```
-./randomAccess
-[0] Random Access Table Size:167772160 Tile Size:20971520 Number of Tiles: 8
-[0] NumGpus: 8 numUpdatesPerGpu: 335544320
-[0] Time 10938636447
-[0] Verified!
-[0] GUPS: 0.245401 MB: 1280
-[0] Cleaned 5368710144 bytes
-[0] Occupancy :
-[0]     GPU[0] = 0.250000
-[0]     GPU[1] = 0.250000
-[0]     GPU[2] = 0.250000
-[0]     GPU[3] = 0.250000
-[0]     GPU[4] = 0.250000
-[0]     GPU[5] = 0.250000
-[0]     GPU[6] = 0.250000
-[0]     GPU[7] = 0.250000
-[0] HITS: 121 MISSES: 175 FREED BYTES: 0 BYTES FREED ON EXIT 106703134272
-[0] HIT RATIO: 0.408784
-```
+- `configs/local/{1n,2n,3n,4n}.cfg` — single- and multi-node localhost
+- `configs/local/gpu/{1n,2n}.cfg` — GPU-enabled
+- `configs/mpi/{1n,2n}.cfg` — MPI launcher
 
-For slurm using 1 node and 20 threads:
-```
-srun -N 1 -n 1 -c 20 ./randomAccess
-```
-
-To run the Stream example, go to the random access directory under /build-path/examples/gpu/stream.
-Set make sure the number of GPU is correct in the arts.cfg file.
-Next run:
-```
-./stream 
-[0] N: 2000000 tileSize: 1048576 numTiles: 2 Gpus: 8
--------------------------------------------------------------
-This system uses 8 bytes per DOUBLE PRECISION word.
--------------------------------------------------------------
-Array size = 2000000, Offset = 0
-Total memory required = 45.8 MB.
-Each test is run 10 times, but only
-the *best* time for each is used.
--------------------------------------------------------------
-Your clock granularity/precision appears to be 1 microseconds.
-Each test below will take on the order of 3817 microseconds.
-   (= 3817 clock ticks)
-Increase the size of the arrays if this shows that
-you are not getting at least 20 clock ticks per test.
--------------------------------------------------------------
-WARNING -- The above is only a rough guideline.
-For best results, please be sure you know the
-precision of your system timer.
--------------------------------------------------------------
-Function      Rate (MB/s)   Avg time     Min time     Max time
-Copy:        8966.3791       0.0144       0.0036       0.0256
-Scale:       3659.2527       0.0099       0.0087       0.0113
-Add:         4308.0177       0.0134       0.0111       0.0162
-Triad:       4651.1861       0.0131       0.0103       0.0159
--------------------------------------------------------------
-Solution Validates
--------------------------------------------------------------
-[0] Cleaned 0 bytes
-[0] Occupancy :
-[0]     GPU[0] = 0.007812
-[0]     GPU[1] = 0.007812
-[0]     GPU[2] = 0.007812
-[0]     GPU[3] = 0.007812
-[0]     GPU[4] = 0.007812
-[0]     GPU[5] = 0.007812
-[0]     GPU[6] = 0.007812
-[0]     GPU[7] = 0.007812
-[0] HITS: 24 MISSES: 176 FREED BYTES: 0 BYTES FREED ON EXIT 1476412672
-[0] HIT RATIO: 0.120000
-```
-
-For slurm using 1 node and 20 threads: 
-```
-srun -N 1 -n 1 -c 20 ./stream
-```
-
-User Guide
-==========
-
-Troubleshooting:  
-
-1. Make sure you are running from a directory with an arts.cfg
-2. Check the launcher in arts.cfg
-3. For GPU support please pull from the gpu branch
-4. Make sure the desired number of GPUs is set in arts.cfg 
-
-Some configurations:  
-The configuration file (arts.cfg) has many options which are set to reasonable defaults.  Three options will be changed by the user, launcher, threads, and gpus.  The launcher has already been discussed.  For threads and gpus, these should be set to a the number of resources you want to use per node.
-  
-Please refer to arts.h and artsRT.h for documentation.  
-  
-To run our GPU matrix multiply please go to build/examples/mm.  Set your configuration file, and run:
-```
-./mmTile [matrix size] [tile size]
-```
-Or for the cuBLAS version:
-```
-./mmTileBlas [matrix size] [tile size]
-```
+The values most often changed are the launcher, the worker/sender/receiver
+thread counts, and the GPU count.
 
 Contributors
 ============
 
-### MAIN TEAM MEMBERS
+### Main Team Members
 
 1. Joshua Suetterlein, joshua.suetterlein@pnnl.gov
 2. Joseph Manzano, joseph.manzano@pnnl.gov
 3. Andres Marquez, andres.marquez@pnnl.gov
 
-### CONTRIBUTORS
+### Contributors
 
 1. Vinay Amatya
 2. Kiran Ranganath
