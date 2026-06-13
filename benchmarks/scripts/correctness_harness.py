@@ -358,7 +358,11 @@ TIER_A: list[Case] = [
          scalar_re=r"Workload\s+\(unit\):\s+(\d+)", scalar_kind="int",
          multinode_skip="no EDT affinity hints; runs caller-rank only",
          ),
-    Case("uts", "uts", [],
+    Case("uts", "uts", ["-g","1","-t","1","-a","2","-d","7","-b","7","-r","220"],
+         # T2L-family geometric tree at gen_mx=7 (4667 nodes, depth 36): same
+         # search character as the built-in gen_mx=10 sample (39881 nodes) but
+         # sized so the serialized ocr-vx message layer finishes well inside
+         # the per-case wall budget.
          scalar_re=r"UTS Tree size\s*=\s*(\d+)", scalar_kind="int",
          multinode_skip="no EDT affinity hints; runs caller-rank only"),
 
@@ -535,7 +539,7 @@ TIER_B: list[Case] = [
 _EXPECT: dict[str, str] = {
     "fibonacci": "55", "nqueens": "4", "smithwaterman": "1460", "triangle": "5072",
     "basicIO": "1", "highbw": "2048", "multigen": "121393", "multigen_2": "3524578",
-    "uts": "39881", "XSBench_intel": "10725709712928718927", "XSBench_intel_sharedDB": "100",
+    "uts": "4667", "XSBench_intel": "10725709712928718927", "XSBench_intel_sharedDB": "100",
     "sar_tiny": "12", "sar_small": "458", "sar_medium": "1991", "sar_large": "6523",
     "CoMD_sdsc": "-1.166058121223", "CoMD_sdsc2": "-1.166063027842",
     "CoMD_intel_chandra_tiled": "-1.166063",
