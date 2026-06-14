@@ -55,28 +55,28 @@
 
 /* ===== Home-side handlers ========================================== */
 
-/* arts_handler_db_ownership_request lives in coherence/ownership.c (OCR model
- * only — RELAXED has no OWNERSHIP_REQUEST / GRANT round). */
+/* arts_handler_db_ownership_request lives in coherence/ownership.c (MRNEW
+ * only — MRMW has no OWNERSHIP_REQUEST / GRANT round). */
 
 /* arts_handler_db_snapshot_request (GET_DATA) is protocol-specific —
- * EAGER/RELAXED serve from home's canonical buffer (dedup), LAZY records the
+ * EAGER/MRMW serve from home's canonical buffer (dedup), LAZY records the
  * sharer + REDIRECTs to the owner — so its whole body lives in
- * coherence/{eager,lazy,relaxed}.c. */
+ * coherence/{eager,lazy,mrmw}.c. */
 
-/* arts_handler_db_writeback (+_ack) is protocol-specific — EAGER/RELAXED
+/* arts_handler_db_writeback (+_ack) is protocol-specific — EAGER/MRMW
  * install
  * + ACK (EAGER additionally advances the ownership chain on WB_AND_TRANSFER),
  * LAZY has no synchronous writeback (no-op fillers preserve the OoO-table /
  * link parity) — so their whole bodies live in
- * coherence/{eager,lazy,relaxed}.c. */
+ * coherence/{eager,lazy,mrmw}.c. */
 
-/* arts_handler_db_ownership_return lives in coherence/ownership.c (OCR model
- * only — RELAXED has no ownership chain). */
+/* arts_handler_db_ownership_return lives in coherence/ownership.c (MRNEW
+ * only — MRMW has no ownership chain). */
 
 /* arts_handler_db_destroy is protocol-specific — the roster fan-out source
- * differs (eager/relaxed walk home->last_sent_version; lazy walks rw_holder +
+ * differs (eager/MRMW walk home->last_sent_version; lazy walks rw_holder +
  * cached_ranks + pending_rw) — so its whole body lives in
- * coherence/{eager,lazy,relaxed}.c.  All three skeletons run fan-out +
+ * coherence/{eager,lazy,mrmw}.c.  All three skeletons run fan-out +
  * arts_db_fail_trigger_pending FIRST, then arts_route_table_set_destroyed
  * LAST. */
 
@@ -165,7 +165,7 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
   } else {
     arts_db_cache_init(&stub->cache, db_guid, db_size, ARTS_DB_INIT_HOME_RECV,
                        creator_rank);
-    /* Case-D leaf: relaxed installs a version-1 zero buffer now (home is
+    /* Case-D leaf: MRMW installs a version-1 zero buffer now (home is
      * canonical, no creator writeback to wait for); eager/lazy defer the
      * install to the creator's first WRITEBACK (no-op here). */
     arts_db_create_install_home_buffer(&stub->cache, db_size);
@@ -206,7 +206,7 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
 
 /* The EAGER GRANT handler arts_handler_db_ownership_response lives in
  * coherence/eager.c; LAZY's TRANSFER_OWNERSHIP overload lives in
- * coherence/lazy.c; RELAXED has no ownership transfer (dispatcher fatals). */
+ * coherence/lazy.c; MRMW has no ownership transfer (dispatcher fatals). */
 
 /* Cat-C pure body (DATA_RESPONSE).  The wire dispatcher / self-send shortcut
  * has already looked the home db_s up with a held ref and passes it as item_v
@@ -223,8 +223,7 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
  *   3. NO_DATA + a->version > buf->version : the with-data reply was
  *      reordered behind us — push self onto pending_snapshot (a future
  *      case-2 install drains us) + re-check (race recovery).
- * Shared verbatim by eager/lazy/relaxed (relaxed routes RW through here
- * too). */
+ * Shared verbatim by eager/lazy/MRMW (MRMW routes RW through here too). */
 void arts_handler_db_snapshot_response(void *item_v, void *args_v) {
   struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
   struct arts_db_snapshot_response_args_s *a =
@@ -280,13 +279,13 @@ void arts_handler_db_snapshot_response(void *item_v, void *args_v) {
 
 /* arts_handler_db_ownership_invalidate (INVALIDATE_NOTICE) lives per protocol:
  * coherence/eager.c (commutative signed counter) and coherence/lazy.c
- * (publish-target-then-withdraw).  RELAXED never sends INVALIDATE (dispatcher
+ * (publish-target-then-withdraw).  MRMW never sends INVALIDATE (dispatcher
  * fatals). */
 
-/* arts_handler_db_writeback_ack is protocol-specific — EAGER/RELAXED post the
+/* arts_handler_db_writeback_ack is protocol-specific — EAGER/MRMW post the
  * releaser's stack-local sem_t (pointer identity), LAZY has no synchronous
  * writeback (no-op filler for OoO-table / link parity) — so its whole body
- * lives in coherence/{eager,lazy,relaxed}.c. */
+ * lives in coherence/{eager,lazy,mrmw}.c. */
 
 /* Cat-C pure body (DESTROY_NOTIFY).  The wire dispatcher / self-send shortcut
  * has already looked the cache up with a held ref and passes the db_s as item_v

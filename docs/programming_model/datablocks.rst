@@ -34,7 +34,7 @@ coherence for the DB:
      - Regular DRAM, runtime-coherent.  The default type for most use
        cases.  Its consistency contract is the build-time memory model;
        the coherence protocol implementing it is also selected at build
-       time (see :ref:`memory_model`).
+       time (see :ref:`coherence_protocols`).
    * - ``ARTS_DB_PIN``
      - Regular DRAM, node-pinned, no DB-level coherence.  Only directly
        accessible on the creating node; the application orders accesses
@@ -92,14 +92,16 @@ Consistency
 -----------
 
 For regular ``ARTS_DB`` DataBlocks, which values a read may return is
-governed by the build-time configuration:
+governed by the build-time protocol selection:
 
-* ``ARTS_MEMORY_MODEL`` selects the **contract** (``OCR`` or
-  ``RELAXED``);
-* ``ARTS_COHERENCE_PROTOCOL`` selects the **protocol** implementing the
-  OCR contract (``EAGER`` or ``LAZY``).
+* ``ARTS_COHERENCE_PROTOCOL`` selects the **admission policy**: ``MRNEW``
+  (default; implements the OCR v1.2.0 §1.6 contract) or ``MRMW``
+  (weaker DB-DRF; evaluation only).
+* ``ARTS_PROTOCOL_TIMING`` selects **when** consistency actions occur:
+  ``LAZY`` (acquire-time, default) or ``EAGER`` (release-time); meaningful
+  only under ``MRNEW``.
 
-See :ref:`memory_model` for the normative definition of both axes.  The
+See :ref:`coherence_protocols` for the normative definition of all axes.  The
 other subtypes (``ARTS_DB_PIN``, ``ARTS_DB_CXL``, ``ARTS_DB_GPU``,
 ``ARTS_DB_GPU_PIN``) carry no DB-level runtime coherence; the
 application orders conflicting accesses with events (DB-DRF).

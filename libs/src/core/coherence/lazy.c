@@ -2,10 +2,10 @@
  *
  * LAZY protocol translation unit: defines the LAZY-specific
  * arts_handler_db_* / arts_db_* bodies directly (CMake links exactly this TU
- * for an OCR+LAZY build) plus the LAZY-only wire handlers/senders.
- * Compiled only for ARTS_MEMORY_MODEL=OCR with ARTS_COHERENCE_PROTOCOL=LAZY
- * (selected in libs/src/core/CMakeLists.txt). Contains NO model/protocol
- * preprocessor logic.
+ * for an MRNEW+LAZY build) plus the LAZY-only wire handlers/senders.
+ * Compiled only for ARTS_COHERENCE_PROTOCOL=MRNEW with
+ * ARTS_PROTOCOL_TIMING=LAZY (selected in libs/src/core/CMakeLists.txt).
+ * Contains NO protocol/timing preprocessor logic.
  */
 #include <stdbool.h>
 #include <stdint.h>

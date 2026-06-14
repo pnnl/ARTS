@@ -149,7 +149,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
   arts_printf("=== coherence_rw_pipeline ===\n");
 
-#ifdef ARTS_MEMORY_MODEL_RELAXED
+#ifdef ARTS_PROTOCOL_MRMW
   arts_printf("SKIP: RELAXED has no exclusive-RW ownership round\n");
   atomic_store(&g_check_result, 1);
   arts_shutdown();

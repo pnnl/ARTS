@@ -1,31 +1,31 @@
 #!/bin/bash
-# Run the ARTS test suites across ALL THREE host memory-model/protocol
-# configurations (eager / lazy / relaxed).  Each has its own build trees:
+# Run the ARTS test suites across ALL THREE host protocol configurations
+# (mrnew_eager / mrnew_lazy / mrmw).  Each has its own build trees:
 #
-#   model    ctest build     harness build           cmake flags
-#   -------  -------------   ---------------------   ------------------------------
-#   eager    build_eager     build_release_eager     -DARTS_MEMORY_MODEL=OCR
-#                                                    -DARTS_COHERENCE_PROTOCOL=EAGER
-#   lazy     build_lazy      build_release_lazy      -DARTS_MEMORY_MODEL=OCR
-#                                                    -DARTS_COHERENCE_PROTOCOL=LAZY
-#   relaxed  build_relaxed   build_release_relaxed   -DARTS_MEMORY_MODEL=RELAXED
+#   protocol     ctest build          harness build                cmake flags
+#   -----------  -------------------  ---------------------------  ----------------------------------
+#   mrnew_eager  build_mrnew_eager    build_release_mrnew_eager    -DARTS_COHERENCE_PROTOCOL=MRNEW
+#                                                                   -DARTS_PROTOCOL_TIMING=EAGER
+#   mrnew_lazy   build_mrnew_lazy     build_release_mrnew_lazy     -DARTS_COHERENCE_PROTOCOL=MRNEW
+#                                                                   -DARTS_PROTOCOL_TIMING=LAZY
+#   mrmw         build_mrmw           build_release_mrmw           -DARTS_COHERENCE_PROTOCOL=MRMW
 #
-# RELAXED is the DB-DRF model: DB-level data races are undefined, so some
+# MRMW is the DB-DRF protocol: DB-level data races are undefined, so some
 # correctness deviations are EXPECTED there — they are reported, not silently
-# treated as regressions.  OCR builds (eager/lazy) must be clean.
+# treated as regressions.  MRNEW builds (mrnew_eager/mrnew_lazy) must be clean.
 #
 # Usage:
-#   bash tests/run_all_models.sh                       # all models, ctest + harness
-#   bash tests/run_all_models.sh --models eager,lazy   # subset
-#   bash tests/run_all_models.sh --no-harness          # ctest only
-#   bash tests/run_all_models.sh --no-ctest            # harness only
-#   bash tests/run_all_models.sh --no-build            # skip reconfigure/rebuild
+#   bash tests/run_all_models.sh                                  # all protocols, ctest + harness
+#   bash tests/run_all_models.sh --models mrnew_eager,mrnew_lazy  # subset
+#   bash tests/run_all_models.sh --no-harness                     # ctest only
+#   bash tests/run_all_models.sh --no-ctest                       # harness only
+#   bash tests/run_all_models.sh --no-build                       # skip reconfigure/rebuild
 set -u
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO" || exit 1
 
-MODELS="eager lazy relaxed"
+MODELS="mrnew_eager mrnew_lazy mrmw"
 DO_CTEST=1
 DO_HARNESS=1
 DO_BUILD=1
@@ -39,36 +39,36 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# model → ctest build dir / harness build dir / cmake model flags
-ctest_dir() { case "$1" in eager) echo build_eager;; lazy) echo build_lazy;; relaxed) echo build_relaxed;; esac; }
-harness_dir() { case "$1" in eager) echo build_release_eager;; lazy) echo build_release_lazy;; relaxed) echo build_release_relaxed;; esac; }
+# protocol → ctest build dir / harness build dir / cmake flags
+ctest_dir()   { case "$1" in mrnew_eager) echo build_mrnew_eager;; mrnew_lazy) echo build_mrnew_lazy;; mrmw) echo build_mrmw;; esac; }
+harness_dir() { case "$1" in mrnew_eager) echo build_release_mrnew_eager;; mrnew_lazy) echo build_release_mrnew_lazy;; mrmw) echo build_release_mrmw;; esac; }
 model_label() { echo "$1" | tr '[:lower:]' '[:upper:]'; }
 model_cmake_flags() {
   case "$1" in
-    eager)   echo "-DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=EAGER" ;;
-    lazy)    echo "-DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=LAZY" ;;
-    relaxed) echo "-DARTS_MEMORY_MODEL=RELAXED" ;;
+    mrnew_eager) echo "-DARTS_COHERENCE_PROTOCOL=MRNEW -DARTS_PROTOCOL_TIMING=EAGER" ;;
+    mrnew_lazy)  echo "-DARTS_COHERENCE_PROTOCOL=MRNEW -DARTS_PROTOCOL_TIMING=LAZY" ;;
+    mrmw)        echo "-DARTS_COHERENCE_PROTOCOL=MRMW" ;;
   esac
 }
-# expected CMakeCache values per model (protocol empty = don't care)
-model_mm() { case "$1" in eager|lazy) echo OCR;; relaxed) echo RELAXED;; esac; }
-model_proto() { case "$1" in eager) echo EAGER;; lazy) echo LAZY;; relaxed) echo "";; esac; }
+# expected CMakeCache values per protocol (timing empty for MRMW = don't care)
+model_proto()  { case "$1" in mrnew_eager|mrnew_lazy) echo MRNEW;; mrmw) echo MRMW;; esac; }
+model_timing() { case "$1" in mrnew_eager) echo EAGER;; mrnew_lazy) echo LAZY;; mrmw) echo "";; esac; }
 
-# Configure a build dir to the requested model if its cache does not match,
+# Configure a build dir to the requested protocol if its cache does not match,
 # then build.  Reconfigure forces a full rebuild (compile-flag change).
-# The cache check compares ARTS_MEMORY_MODEL AND (for OCR configurations)
-# ARTS_COHERENCE_PROTOCOL.
+# The cache check compares ARTS_COHERENCE_PROTOCOL AND (for MRNEW configurations)
+# ARTS_PROTOCOL_TIMING.
 ensure_build() {
   local dir="$1" model="$2" wantgpu="$3" extra="${4:-}"
-  local want_mm; want_mm="$(model_mm "$model")"
   local want_proto; want_proto="$(model_proto "$model")"
-  local have_mm; have_mm="$(grep -E '^ARTS_MEMORY_MODEL:STRING=' "$dir/CMakeCache.txt" 2>/dev/null | cut -d= -f2)"
+  local want_timing; want_timing="$(model_timing "$model")"
   local have_proto; have_proto="$(grep -E '^ARTS_COHERENCE_PROTOCOL:STRING=' "$dir/CMakeCache.txt" 2>/dev/null | cut -d= -f2)"
+  local have_timing; have_timing="$(grep -E '^ARTS_PROTOCOL_TIMING:STRING=' "$dir/CMakeCache.txt" 2>/dev/null | cut -d= -f2)"
   local mismatch=0
-  [ "$have_mm" != "$want_mm" ] && mismatch=1
-  [ -n "$want_proto" ] && [ "$have_proto" != "$want_proto" ] && mismatch=1
+  [ "$have_proto" != "$want_proto" ] && mismatch=1
+  [ -n "$want_timing" ] && [ "$have_timing" != "$want_timing" ] && mismatch=1
   if [ ! -d "$dir" ] || [ "$mismatch" = 1 ]; then
-    echo "  [cfg] $dir → $(model_cmake_flags "$model") (was MM='${have_mm:-none}' PROTO='${have_proto:-none}')"
+    echo "  [cfg] $dir → $(model_cmake_flags "$model") (was PROTO='${have_proto:-none}' TIMING='${have_timing:-none}')"
     # shellcheck disable=SC2086
     cmake -GNinja -B "$dir" -DCMAKE_BUILD_TYPE=Release \
           $(model_cmake_flags "$model") -DARTS_USE_GPU="$wantgpu" $extra >/dev/null 2>&1 \
@@ -87,7 +87,7 @@ mkdir -p "$LOGDIR"
 
 declare -A RESULT
 for m in $MODELS; do
-  echo "================= MODEL: $(model_label "$m") ================="
+  echo "================= PROTOCOL: $(model_label "$m") ================="
 
   if [ "$DO_CTEST" = 1 ]; then
     cd="$(ctest_dir "$m")"
@@ -116,7 +116,7 @@ for m in $MODELS; do
 done
 
 echo
-echo "===================== SUMMARY (eager/lazy must be clean; RELAXED DB-DRF deviations annotated) ====================="
+echo "===================== SUMMARY (mrnew_eager/mrnew_lazy must be clean; MRMW DB-DRF deviations annotated) ====================="
 for m in $MODELS; do
   M="$(model_label "$m")"
   echo "[$M]"

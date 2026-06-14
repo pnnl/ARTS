@@ -1,5 +1,5 @@
 #!/bin/bash
-# Configures, builds, and runs harness for EAGER, LAZY, and RELAXED.
+# Configures, builds, and runs harness for MRNEW+EAGER, MRNEW+LAZY, and MRMW.
 set -uo pipefail
 
 ROOT=$(git rev-parse --show-toplevel)
@@ -7,25 +7,25 @@ cd "$ROOT"
 
 OVERALL_FAIL=0
 
-# eager: OCR model with EAGER coherence protocol
-cmake -GNinja -Bbuild_release_eager -DCMAKE_BUILD_TYPE=Release \
-      -DARTS_USE_GPU=OFF -DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=EAGER \
+# mrnew_eager: MRNEW protocol with EAGER timing
+cmake -GNinja -Bbuild_release_mrnew_eager -DCMAKE_BUILD_TYPE=Release \
+      -DARTS_USE_GPU=OFF -DARTS_COHERENCE_PROTOCOL=MRNEW -DARTS_PROTOCOL_TIMING=EAGER \
       -DARTS_BUILD_BENCHMARKS=ON 2>&1 | tail -3
-ninja -C build_release_eager 2>&1 | tail -3 || { echo "FAIL: eager build"; OVERALL_FAIL=1; }
+ninja -C build_release_mrnew_eager 2>&1 | tail -3 || { echo "FAIL: mrnew_eager build"; OVERALL_FAIL=1; }
 
-# lazy: OCR model with LAZY coherence protocol
-cmake -GNinja -Bbuild_release_lazy -DCMAKE_BUILD_TYPE=Release \
-      -DARTS_USE_GPU=OFF -DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=LAZY \
+# mrnew_lazy: MRNEW protocol with LAZY timing (default)
+cmake -GNinja -Bbuild_release_mrnew_lazy -DCMAKE_BUILD_TYPE=Release \
+      -DARTS_USE_GPU=OFF -DARTS_COHERENCE_PROTOCOL=MRNEW -DARTS_PROTOCOL_TIMING=LAZY \
       -DARTS_BUILD_BENCHMARKS=ON 2>&1 | tail -3
-ninja -C build_release_lazy 2>&1 | tail -3 || { echo "FAIL: lazy build"; OVERALL_FAIL=1; }
+ninja -C build_release_mrnew_lazy 2>&1 | tail -3 || { echo "FAIL: mrnew_lazy build"; OVERALL_FAIL=1; }
 
-# relaxed: RELAXED model (no per-DB coherence protocol)
-cmake -GNinja -Bbuild_release_relaxed -DCMAKE_BUILD_TYPE=Release \
-      -DARTS_USE_GPU=OFF -DARTS_MEMORY_MODEL=RELAXED \
+# mrmw: MRMW protocol (DB-DRF, no per-DB coherence)
+cmake -GNinja -Bbuild_release_mrmw -DCMAKE_BUILD_TYPE=Release \
+      -DARTS_USE_GPU=OFF -DARTS_COHERENCE_PROTOCOL=MRMW \
       -DARTS_BUILD_BENCHMARKS=ON 2>&1 | tail -3
-ninja -C build_release_relaxed 2>&1 | tail -3 || { echo "FAIL: relaxed build"; OVERALL_FAIL=1; }
+ninja -C build_release_mrmw 2>&1 | tail -3 || { echo "FAIL: mrmw build"; OVERALL_FAIL=1; }
 
-for cfg in eager lazy relaxed; do
+for cfg in mrnew_eager mrnew_lazy mrmw; do
   builddir="build_release_${cfg}"
   echo "=== ${cfg} ctest single_node ==="
   ( cd "${builddir}" && ctest -L single_node --output-on-failure ) || \

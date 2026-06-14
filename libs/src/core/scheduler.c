@@ -205,7 +205,7 @@ void arts_run_edt(struct arts_edt_s *edt) {
   INCREMENT_NUM_EDT_FINISH_BY(1);
 
   /* Release DBs before signaling finish-event completion: any WRITEBACK
-   * messages (sent at release by the eager protocol and the relaxed model) are
+   * messages (sent at release by the eager protocol and MRMW) are
    * queued to the sender thread before the
    * finish DECR message, so TCP FIFO ordering guarantees data arrives at home
    * first. */

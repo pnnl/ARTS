@@ -77,7 +77,7 @@ struct arts_db_writeback_ack_args_s {
   uint64_t cv; /* releaser's stack-local sem_t address */
 };
 
-#ifdef ARTS_COHERENCE_PROTOCOL_LAZY
+#ifdef ARTS_TIMING_LAZY
 /* arts_handler_db_snapshot_redirect body args (owner side). */
 struct arts_db_snapshot_redirect_args_s {
   arts_guid_t db_guid;
@@ -91,7 +91,7 @@ struct arts_db_ownership_response_ack_args_s {
   arts_guid_t db_guid;
   uint64_t version;
 };
-#endif /* ARTS_COHERENCE_PROTOCOL_LAZY */
+#endif /* ARTS_TIMING_LAZY */
 
 /* ===== Home-side handlers ============================================ */
 
@@ -100,8 +100,8 @@ struct arts_db_ownership_response_ack_args_s {
  * arts_ooo_args_db_ownership_request_s.  The wire dispatcher decodes
  * OWNERSHIP_REQUEST into those args and routes through
  * arts_ooo_dispatch_or_defer_guid.  Defined for the release-consistency family
- * (coherence/ownership.c) where OWNERSHIP_REQUEST exists; RELAXED provides a
- * no-op body (coherence/relaxed.c) — RELAXED never enqueues this kind. */
+ * (coherence/ownership.c) where OWNERSHIP_REQUEST exists; MRMW provides a
+ * no-op body (coherence/mrmw.c) — MRMW never enqueues this kind. */
 void arts_handler_db_ownership_request(void *item_v, void *args_v);
 /* Cat-B pure body (OoO g_ooo_table[OOO_DB_SNAPSHOT_REQUEST]): item_v is the
  * home db_s the engine acquired (cache is its first member); args_v is an
@@ -134,7 +134,7 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p);
 
 /* ===== Sharer-side (response) handlers =============================== */
 
-#ifdef ARTS_COHERENCE_PROTOCOL_LAZY
+#ifdef ARTS_TIMING_LAZY
 /* Lazy TRANSFER_OWNERSHIP at new owner C: payload = full contiguous wire buffer
  * (header + map + data); size is total bytes. */
 void arts_handler_db_ownership_response(void *payload, size_t size);
@@ -156,7 +156,7 @@ void arts_handler_db_snapshot_response(void *item_v, void *args_v);
  * INVALIDATE_NOTICE into those args and routes through
  * arts_ooo_dispatch_or_defer_guid; a missing cache DEFERS and replays on
  * install (§6.1).  Eager/lazy define the real body (sentinel withdrawal /
- * transfer trigger); relaxed provides a no-op body (relaxed never receives
+ * transfer trigger); MRMW provides a no-op body (MRMW never receives
  * INVALIDATE). */
 void arts_handler_db_ownership_invalidate(void *item_v, void *args_v);
 /* Cat-C pure body (WRITEBACK_ACK): item_v is the db_s the dispatcher acquired
@@ -173,7 +173,7 @@ void arts_handler_db_cache_destroy(void *item_v, void *args_v);
 
 /* ===== Lazy-only handlers ============================================== */
 
-#ifdef ARTS_COHERENCE_PROTOCOL_LAZY
+#ifdef ARTS_TIMING_LAZY
 /* Cat-C pure body (REDIRECT_RO, owner side): item_v is the db_s the dispatcher
  * acquired (cache is its first member); args_v is an
  * arts_db_snapshot_redirect_args_s.  NOT OoO-deferrable — the dispatcher
@@ -189,7 +189,7 @@ void arts_handler_db_snapshot_redirect(void *item_v, void *args_v);
  * SILENTLY DROPS.  Records the new rw_holder, then starts the next transfer
  * round or releases the invalidate_in_flight baton. */
 void arts_handler_db_ownership_response_ack(void *item_v, void *args_v);
-#endif /* ARTS_COHERENCE_PROTOCOL_LAZY */
+#endif /* ARTS_TIMING_LAZY */
 
 /* ===== Sender helpers ================================================ */
 
@@ -198,7 +198,7 @@ void arts_handler_db_ownership_response_ack(void *item_v, void *args_v);
  * Used by handlers that emit replies and by acquire/release in B4/B5. */
 void arts_send_db_ownership_request(unsigned int home_rank,
                                     arts_guid_t db_guid);
-#ifdef ARTS_COHERENCE_PROTOCOL_LAZY
+#ifdef ARTS_TIMING_LAZY
 /* Lazy OWNERSHIP_RESPONSE = TRANSFER_OWNERSHIP: carries the serialized
  * last_sent_version map + buffer payload. */
 void arts_send_db_ownership_response(unsigned int new_owner_rank,
@@ -239,7 +239,7 @@ void arts_send_db_create_coherent(unsigned int home_rank, arts_guid_t db_guid,
 void arts_send_db_destroy(unsigned int home_rank, arts_guid_t db_guid);
 void arts_send_db_cache_destroy(unsigned int sharer_rank, arts_guid_t db_guid);
 
-#ifdef ARTS_COHERENCE_PROTOCOL_LAZY
+#ifdef ARTS_TIMING_LAZY
 /* Send REDIRECT_RO from home to the current owner, asking the owner to
  * serve DATA_RESPONSE or a no-data response directly to requester_rank. */
 void arts_send_db_snapshot_redirect(unsigned int owner_rank,
@@ -274,7 +274,7 @@ void arts_db_lazy_send_ownership_response(struct arts_db_cache_s *cache);
  * holder carrying new_owner as the TRANSFER_OWNERSHIP target. */
 void arts_db_lazy_start_invalidate_round(struct arts_db_cache_s *cache,
                                          unsigned int new_owner);
-#endif /* ARTS_COHERENCE_PROTOCOL_LAZY */
+#endif /* ARTS_TIMING_LAZY */
 
 #ifdef __cplusplus
 }

@@ -417,8 +417,9 @@ void *arts_get_depv(void *edt_ptr) {
  * arts_edt_satisfy_slot — Satisfy one dependency slot on an EDT.
  *
  * Four dispatch paths:
- *   1. CDAG invalidation (current EDT has pending invalidations) → force-defer
- *      on the wrapper's slot so the replay is ordered after it drains.
+ *   1. GPU LC invalidation drain (current EDT has pending device-replica
+ * invalidations) → force-defer on the wrapper's slot so the replay is ordered
+ * after it drains.
  *   2. Local EDT found in route table → write the dep slot and
  *      atomically decrement depc_needed.  If this was the last
  *      dependency (depc_needed hits 0), call arts_handle_ready_edt.
@@ -504,10 +505,10 @@ void arts_handler_edt_satisfy_slot(void *item, void *vargs) {
  *   home == self → dispatch_or_defer (acquire the EDT → run the handler, or
  *                  defer on the slot until the EDT installs);
  *   home != self → MSG_EDT_SATISFY_SLOT wire (handler runs on the home rank);
- *   CDAG (GPU wrapper has outstanding invalidations) → force-defer on the
- *                  wrapper's slot; the replay re-signals this EDT after drain.
- * The satisfy logic lives once in edt_apply_satisfy (the handler); this entry
- * only routes.  arts_signal_edt is a deprecated alias of the same signature. */
+ *   GPU LC (wrapper has outstanding device-replica invalidations) → force-defer
+ * on the wrapper's slot; the replay re-signals this EDT after drain. The
+ * satisfy logic lives once in edt_apply_satisfy (the handler); this entry only
+ * routes.  arts_signal_edt is a deprecated alias of the same signature. */
 void arts_edt_satisfy_slot(arts_guid_t edt_guid, uint32_t slot,
                            arts_guid_t data_guid, arts_db_access_mode_t mode,
                            void *ptr, unsigned int size) {
@@ -524,7 +525,7 @@ void arts_edt_satisfy_slot(arts_guid_t edt_guid, uint32_t slot,
 #endif
 
   if (current_edt && current_edt->invalidate_count > 0) {
-    /* CDAG: hold the satisfy until the GPU wrapper EDT's invalidations drain.
+    /* GPU LC: hold the satisfy until the GPU wrapper EDT's invalidations drain.
      * DB_MODE_PTR dispatch-or-defers on the target (the inline payload rides in
      * the args blob); every other mode force-pushes on the wrapper's slot so
      * the re-signal of this EDT replays only after the wrapper's invalidations

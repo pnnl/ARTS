@@ -176,7 +176,7 @@ struct ARTS_PACKED arts_msg_ownership_request_packet_s {
  * (data_present == 1).  The lazy protocol carries a serialized
  * last_sent_version map + buffer payload (the old lazy-prefixed
  * MSG_DB_OWNERSHIP_RESPONSE_LRC collapsed into this). */
-#ifdef ARTS_COHERENCE_PROTOCOL_LAZY
+#ifdef ARTS_TIMING_LAZY
 struct ARTS_PACKED arts_msg_ownership_response_packet_s {
   struct arts_msg_header_s header;
   arts_guid_t db_guid;

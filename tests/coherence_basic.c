@@ -40,6 +40,8 @@
 
 #include "arts.h"
 
+/* --- Parametric multi-reader/writer test (argc/argv-driven) --- */
+
 unsigned int num_reads = 0;
 unsigned int num_writes = 0;
 unsigned int num_dynamic_reads = 0;
@@ -48,6 +50,35 @@ arts_guid_t shutdown_guid;
 arts_guid_t db_guid;
 arts_guid_t *read_guids;
 arts_guid_t *write_guids;
+
+/* --- Chain test: N sequential RW writers then one RO reader --- */
+
+#define CHAIN_LEN 8
+
+void chain_writer_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                      arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  unsigned int idx = (unsigned int)paramv[0];
+  unsigned int *data = (unsigned int *)depv[0].ptr;
+  data[0] = idx;
+}
+
+void chain_reader_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                      arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  unsigned int *data = (unsigned int *)depv[0].ptr;
+  if (data && data[0] == CHAIN_LEN - 1) {
+    arts_printf("  PASS: chain reader saw final write %u\n", data[0]);
+  } else {
+    arts_printf("  FAIL: chain reader expected %u got %d\n", CHAIN_LEN - 1,
+                data ? (int)data[0] : -1);
+  }
+  /* Signal chain completion to the shared counting shutdown EDT. */
+  arts_add_dependence((arts_guid_t)(0), (arts_guid_t)paramv[0], -1,
+                      DB_MODE_VAL);
+}
 
 void shutdown_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                   arts_edt_dep_t depv[]) {
@@ -170,14 +201,48 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     ptr[i] = 0;
   }
 
+  /* Dep count: parametric-test signals + 1 for the chain test reader. */
   arts_edt_create(shutdown_edt, 0, NULL,
                   (num_dynamic_reads * num_writes) +
                       (num_dynamic_writes * num_writes) + num_reads +
-                      num_writes,
+                      num_writes + 1,
                   &(arts_edt_hint_t){.guid = shutdown_guid});
 
   for (unsigned int n = 0; n < arts_get_total_ranks(); n++) {
     arts_edt_create(node_setup, 0, NULL, 0, &(arts_edt_hint_t){.rank = n});
+  }
+
+  /* Chain test: CHAIN_LEN sequential RW writers → one RO reader.
+   * Each writer stamps data[0] with its index; the reader verifies the
+   * final writer's value is visible.
+   * Ordering: inner finish scope covers all writers; when it fires it
+   * satisfies the reader's slot 1, unblocking the reader after all writers
+   * have released their RW slots.  The reader then signals shutdown_guid. */
+  {
+    void *cptr = NULL;
+    arts_guid_t cdb =
+        arts_db_create(&cptr, sizeof(unsigned int), ARTS_DB, ARTS_DB_PROP_NONE,
+                       &(arts_db_hint_t){.rank = 0});
+    ((unsigned int *)cptr)[0] = 0;
+    arts_db_release(cdb, DB_MODE_RW);
+
+    uint64_t shut_param = (uint64_t)shutdown_guid;
+    arts_guid_t reader = arts_edt_create(chain_reader_edt, 1, &shut_param, 2,
+                                         &(arts_edt_hint_t){.rank = 0});
+    arts_add_dependence(cdb, reader, 0, DB_MODE_RO);
+
+    /* inner finish scope: all writers belong to it; when all writers
+     * complete and release their DB slots, inner fires and satisfies
+     * the reader's slot 1. */
+    arts_guid_t inner = arts_event_create(&ARTS_EVENT_HINT_FINISH);
+    arts_add_dependence(inner, reader, 1, DB_MODE_NULL);
+    for (unsigned int i = 0; i < CHAIN_LEN; i++) {
+      uint64_t param = (uint64_t)i;
+      arts_guid_t w =
+          arts_edt_create(chain_writer_edt, 1, &param, 1,
+                          &(arts_edt_hint_t){.rank = 0, .finish_event = inner});
+      arts_add_dependence(cdb, w, 0, DB_MODE_RW);
+    }
   }
 }
 

@@ -173,7 +173,7 @@ static int phase2_concurrent_push(void) {
  *
  * Modest per-run sizing: this stress isolates the primitive in
  * isolation; full sustained stress comes via ARTS's existing
- * cdag-stress harness once the primitive is wired into the protocol. */
+ * coherence-stress harness once the primitive is wired into the protocol. */
 #define PHASE3_THREADS 2
 #define PHASE3_PER_PUSHER 100
 #define PHASE3_TRAVERSAL_ROUNDS 200

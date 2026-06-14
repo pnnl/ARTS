@@ -12,8 +12,8 @@
 ** License for the specific language governing contracts, limitations and   **
 ******************************************************************************/
 
-/// @file relaxed_local_hit_dedup.c
-/// @brief Relaxed-model same-rank dedup path: N concurrent same-rank RO
+/// @file db_drf_local_hit_dedup.c
+/// @brief DB-DRF same-rank dedup path: N concurrent same-rank RO
 ///        acquires on a
 ///        DB whose home is on a different node exercise the GET_DATA /
 ///        STILL_VALID cache-hit dedup code path.  Without wire-level
@@ -47,7 +47,7 @@ static void reader_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
   if (sum != g_expected_sum) {
     arts_printf(
-        "RELAXED_LOCAL_HIT_DEDUP: reader %llu FAIL sum=%llu expected=%llu\n",
+        "DB_DRF_LOCAL_HIT_DEDUP: reader %llu FAIL sum=%llu expected=%llu\n",
         (unsigned long long)my_id, (unsigned long long)sum,
         (unsigned long long)g_expected_sum);
   }
@@ -60,7 +60,7 @@ static void verifier_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)paramv;
   (void)depc;
   (void)depv;
-  arts_printf("RELAXED_LOCAL_HIT_DEDUP: PASS ran %d same-rank RO readers\n",
+  arts_printf("DB_DRF_LOCAL_HIT_DEDUP: PASS ran %d same-rank RO readers\n",
               N_READERS);
   arts_shutdown();
 }
@@ -73,7 +73,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
 
   if (arts_get_total_ranks() < 2) {
-    arts_printf("RELAXED_LOCAL_HIT_DEDUP: SKIP requires 2 ranks\n");
+    arts_printf("DB_DRF_LOCAL_HIT_DEDUP: SKIP requires 2 ranks\n");
     arts_shutdown();
     return;
   }

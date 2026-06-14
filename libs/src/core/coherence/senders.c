@@ -37,7 +37,7 @@
  * OWNERSHIP_RESPONSE sender live in the protocol TUs (eager+lazy only): the
  * request / return / invalidate senders in coherence/ownership.c, the
  * OWNERSHIP_RESPONSE sender in coherence/eager.c (GRANT) and coherence/lazy.c
- * (TRANSFER_OWNERSHIP).  RELAXED has no exclusive-ownership wire messages. */
+ * (TRANSFER_OWNERSHIP).  MRMW has no exclusive-ownership wire messages. */
 
 void arts_send_db_writeback(unsigned int home_rank, arts_guid_t db_guid,
                             uint64_t version, uint64_t cv,
@@ -52,8 +52,8 @@ void arts_send_db_writeback(unsigned int home_rank, arts_guid_t db_guid,
   p.cv = cv;
   p.flag = (uint8_t)flag;
   memset(p.pad, 0, sizeof(p.pad));
-#if !defined(ARTS_COHERENCE_PROTOCOL_LAZY)
-  /* Self-send (home == self) — eager/relaxed only.  The lazy protocol reaches
+#if !defined(ARTS_TIMING_LAZY)
+  /* Self-send (home == self) — eager/MRMW only.  The lazy protocol reaches
    * arts_send_db_writeback solely through the owner→home WB_AND_TRANSFER
    * trigger, which early-returns to a local transfer when home == self, so
    * this branch is statically unreachable under the lazy protocol (and its
@@ -95,10 +95,10 @@ void arts_send_db_writeback(unsigned int home_rank, arts_guid_t db_guid,
 }
 
 /* WRITEBACK_ACK is the reply to a synchronous WRITEBACK round, which only the
- * eager and relaxed protocols use (the lazy protocol transfers ownership
+ * eager and MRMW protocols use (the lazy protocol transfers ownership
  * owner→owner without a synchronous writeback, so it never sends or receives
  * WRITEBACK_ACK and its dispatcher fatals on the wire message). */
-#if !defined(ARTS_COHERENCE_PROTOCOL_LAZY)
+#if !defined(ARTS_TIMING_LAZY)
 void arts_send_db_writeback_ack(unsigned int releaser_rank, arts_guid_t db_guid,
                                 uint64_t cv) {
   struct arts_msg_writeback_ack_packet_s p;
@@ -120,7 +120,7 @@ void arts_send_db_writeback_ack(unsigned int releaser_rank, arts_guid_t db_guid,
   }
   arts_transport_send_async((int)releaser_rank, (char *)&p, sizeof(p));
 }
-#endif /* !ARTS_COHERENCE_PROTOCOL_LAZY */
+#endif /* !ARTS_TIMING_LAZY */
 
 void arts_send_db_snapshot_request(unsigned int home_rank, arts_guid_t db_guid,
                                    arts_guid_t edt_guid, uint32_t slot) {
@@ -253,5 +253,5 @@ void arts_send_db_cache_destroy(unsigned int sharer_rank, arts_guid_t db_guid) {
 }
 
 /* The LAZY-only senders (INSTALL_ACK, REDIRECT_RO) live in coherence/lazy.c
- * alongside their handlers; the OCR OWNERSHIP_RESPONSE senders live in
+ * alongside their handlers; the MRNEW OWNERSHIP_RESPONSE senders live in
  * coherence/eager.c / coherence/lazy.c. */

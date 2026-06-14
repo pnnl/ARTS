@@ -211,17 +211,17 @@ void arts_transport_dispatch_packet(struct arts_msg_header_s *packet) {
    * the data/data_size arguments.
    *
    * OWNERSHIP_REQUEST / RELEASE_OWNERSHIP: shared between the eager and lazy
-   * protocols (both use per-DB exclusive ownership), but the relaxed model has
-   * no such concept.  Fatal in relaxed builds to catch binary mode mismatch.
+   * protocols (both use per-DB exclusive ownership), but MRMW has
+   * no such concept.  Fatal in MRMW builds to catch binary mode mismatch.
    * INVALIDATE_NOTICE is handled in its own three-model block below (eager =
    * Cat-B defer; lazy = direct, never deferred).
    */
-#if defined(ARTS_MEMORY_MODEL_RELAXED)
+#if defined(ARTS_PROTOCOL_MRMW)
   case MSG_DB_OWNERSHIP_REQUEST:
   case MSG_DB_OWNERSHIP_PROCEED:
   case MSG_DB_OWNERSHIP_RETURN: {
-    ARTS_ERROR("relaxed build received exclusivity message type %d from rank "
-               "%u — relaxed model has no OWNERSHIP_REQUEST / "
+    ARTS_ERROR("MRMW build received exclusivity message type %d from rank "
+               "%u — MRMW has no OWNERSHIP_REQUEST / "
                "RELEASE_OWNERSHIP / PROCEED; binary mode mismatch?",
                packet->message_type, packet->rank);
     break;
@@ -261,7 +261,7 @@ void arts_transport_dispatch_packet(struct arts_msg_header_s *packet) {
     arts_shared_release(&h);
     break;
   }
-#endif /* ARTS_MEMORY_MODEL_RELAXED */
+#endif /* ARTS_PROTOCOL_MRMW */
   /* INVALIDATE_NOTICE — protocol-split.
    *   eager : Cat-B.  A GRANT/INVALIDATE reorder on two wires, or a
    *           distributed before-create race, can land INVALIDATE before the
@@ -273,16 +273,16 @@ void arts_transport_dispatch_packet(struct arts_msg_header_s *packet) {
    *           provably already installed when INVALIDATE arrives — call the
    *           pure handler body directly with the looked-up cache.
    *           assert(cache != NULL) catches any future violation loudly.
-   *   relaxed: no ownership transfer (caught by the fatal group above). */
-#if defined(ARTS_MEMORY_MODEL_RELAXED)
+   *   MRMW: no ownership transfer (caught by the fatal group above). */
+#if defined(ARTS_PROTOCOL_MRMW)
   case MSG_DB_OWNERSHIP_INVALIDATE: {
     ARTS_ERROR(
-        "relaxed build received INVALIDATE from rank %u — relaxed model has "
+        "MRMW build received INVALIDATE from rank %u — MRMW has "
         "no ownership transfer; binary mode mismatch?",
         packet->rank);
     break;
   }
-#elif defined(ARTS_COHERENCE_PROTOCOL_LAZY)
+#elif defined(ARTS_TIMING_LAZY)
   case MSG_DB_OWNERSHIP_INVALIDATE: {
     ARTS_DEBUG("Coh INVALIDATE_NOTICE Received");
     struct arts_msg_ownership_invalidate_packet_s *pack =
@@ -383,16 +383,16 @@ void arts_transport_dispatch_packet(struct arts_msg_header_s *packet) {
     break;
   }
   /* OWNERSHIP_RESPONSE: the single ownership-transfer wire message.  eager =
-   * GRANT (buffer payload); lazy = TRANSFER_OWNERSHIP (map + buffer); relaxed
+   * GRANT (buffer payload); lazy = TRANSFER_OWNERSHIP (map + buffer); MRMW
    * has no ownership transfer and fatals to catch a binary mode mismatch. */
-#if defined(ARTS_MEMORY_MODEL_RELAXED)
+#if defined(ARTS_PROTOCOL_MRMW)
   case MSG_DB_OWNERSHIP_RESPONSE: {
-    ARTS_ERROR("relaxed build received OWNERSHIP_RESPONSE from rank %u — "
-               "relaxed model has no ownership transfer; binary mode mismatch?",
+    ARTS_ERROR("MRMW build received OWNERSHIP_RESPONSE from rank %u — "
+               "MRMW has no ownership transfer; binary mode mismatch?",
                packet->rank);
     break;
   }
-#elif defined(ARTS_COHERENCE_PROTOCOL_LAZY)
+#elif defined(ARTS_TIMING_LAZY)
   case MSG_DB_OWNERSHIP_RESPONSE: {
     ARTS_DEBUG("Lazy TRANSFER_OWNERSHIP Received");
     /* Payload (map + data) immediately follows the header in the contiguous
@@ -412,10 +412,10 @@ void arts_transport_dispatch_packet(struct arts_msg_header_s *packet) {
     break;
   }
 #endif /* model dispatch for MSG_DB_OWNERSHIP_RESPONSE */
-  /* WRITEBACK + WRITEBACK_ACK: used by the eager protocol and the relaxed
-   * model (sync release writeback).  Fatal in the lazy protocol — lazy uses
+  /* WRITEBACK + WRITEBACK_ACK: used by the eager protocol and MRMW
+   * (sync release writeback).  Fatal in the lazy protocol — lazy uses
    * async transfer, not synchronous writeback. */
-#if defined(ARTS_COHERENCE_PROTOCOL_LAZY)
+#if defined(ARTS_TIMING_LAZY)
   case MSG_DB_WRITEBACK:
   case MSG_DB_WRITEBACK_ACK: {
     ARTS_ERROR("lazy build received writeback message type %d from rank %u — "
@@ -424,7 +424,7 @@ void arts_transport_dispatch_packet(struct arts_msg_header_s *packet) {
                packet->message_type, packet->rank);
     break;
   }
-#else  /* eager and relaxed: full handlers */
+#else  /* eager and MRMW: full handlers */
   case MSG_DB_WRITEBACK: {
     ARTS_DEBUG("Coh WRITEBACK Received");
     struct arts_msg_writeback_packet_s *pack =
@@ -471,7 +471,7 @@ void arts_transport_dispatch_packet(struct arts_msg_header_s *packet) {
     arts_shared_release(&h);
     break;
   }
-#endif /* ARTS_COHERENCE_PROTOCOL_LAZY */
+#endif /* ARTS_TIMING_LAZY */
   case MSG_EVENT_DESTROY: {
     ARTS_DEBUG("Event Destroy Received");
     /* Decode the GUID and route into the OoO engine.  A DESTROY that races
@@ -501,7 +501,7 @@ void arts_transport_dispatch_packet(struct arts_msg_header_s *packet) {
    * These slots are only sent between ranks compiled with the lazy coherence
    * protocol.  The lazy build routes them to full handlers; the eager build
    * fatals immediately to catch a binary mode mismatch between ranks. */
-#ifdef ARTS_COHERENCE_PROTOCOL_LAZY
+#ifdef ARTS_TIMING_LAZY
   case MSG_DB_SNAPSHOT_REDIRECT: {
     ARTS_DEBUG("Lazy REDIRECT_RO Received");
     struct arts_msg_snapshot_redirect_packet_s *pack =
@@ -559,7 +559,7 @@ void arts_transport_dispatch_packet(struct arts_msg_header_s *packet) {
     arts_shared_release(&h);
     break;
   }
-#else  /* !ARTS_COHERENCE_PROTOCOL_LAZY */
+#else  /* !ARTS_TIMING_LAZY */
   case MSG_DB_SNAPSHOT_REDIRECT:
   case MSG_DB_OWNERSHIP_RESPONSE_ACK:
   case MSG_DB_OWNERSHIP_CONFIRM: {
@@ -568,7 +568,7 @@ void arts_transport_dispatch_packet(struct arts_msg_header_s *packet) {
                packet->message_type, packet->rank);
     break;
   }
-#endif /* ARTS_COHERENCE_PROTOCOL_LAZY */
+#endif /* ARTS_TIMING_LAZY */
   default: {
     ARTS_INFO("Unknown Packet %d %d %d", packet->message_type, packet->size,
               packet->rank);

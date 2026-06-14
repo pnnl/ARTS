@@ -1,11 +1,11 @@
 # ARTS Runtime Overview
 
-ARTS (Asynchronous Runtime System) is a distributed, event-driven runtime loosely based on the ideas pioneered in the **Open Community Runtime (OCR)**: work is expressed as Event-Driven Tasks (EDTs), data lives in datablocks identified by GUIDs, and dependencies are tracked through events instead of global synchronization. ARTS uses a CDAG-style memory model where each datablock has a canonical owner copy, remote updates flow via owner updates, and the runtime wires dependency graphs dynamically.
+ARTS (Asynchronous Runtime System) is a distributed, event-driven runtime loosely based on the ideas pioneered in the **Open Community Runtime (OCR)**: work is expressed as Event-Driven Tasks (EDTs), data lives in datablocks identified by GUIDs, and dependencies are tracked through events instead of global synchronization. The runtime implements the OCR v1.2.0 §1.6 memory model: each DataBlock has a canonical owner, remote updates flow via ownership transfer, and the runtime wires dependency graphs dynamically.
 
 ## What ARTS Provides
 
 - **Event-Driven Tasks (EDTs)** – Lightweight units of work scheduled when their input dependencies are satisfied.
-- **Datablocks (DBs)** – Explicit data objects with globally unique identifiers (GUIDs). They carry ownership/rendezvous information so ARTS can ship or replicate data across nodes and enforce the CDAG consistency rules.
+- **Datablocks (DBs)** – Explicit data objects with globally unique identifiers (GUIDs). They carry ownership/rendezvous information so ARTS can ship or replicate data across nodes and enforce the OCR consistency contract.
 - **Events & Dependencies** – OCR-style events connect producers/consumers. The runtime builds a dynamic DAG and triggers EDTs once all prereqs fire.
 - **GUID system** – Every EDT, datablock, and event has a GUID so DAGs can be wired across nodes without global pointers.
 - **Datablock lifecycle** – Applications allocate datablocks via `artsDbCreate`, pass GUIDs to EDTs, and the runtime handles acquire/release semantics (read/write modes, owner hand-offs). Reference counts and versioning live in `libs/core/src/runtime/datablock/*`.
@@ -58,8 +58,8 @@ All options are set on the cmake line with `-D<NAME>=<VALUE>`, e.g.
 | `ARTS_BUILD_DOCS` | `OFF` | Build the Doxygen + Sphinx documentation. |
 | `ARTS_USE_GPU` | `OFF` | Enable CUDA GPU support (builds `libarts_cuda`). |
 | `ARTS_USE_LOCAL_CUDA_ARCHITECTURES` | `ON` | When GPU is on, auto-detect the local GPU's CUDA architecture via `nvidia-smi`. Only meaningful with `ARTS_USE_GPU=ON`; pair with the stock `CMAKE_CUDA_ARCHITECTURES` (e.g. `-DCMAKE_CUDA_ARCHITECTURES="80;86"`) to set SM targets by hand. |
-| `ARTS_MEMORY_MODEL` | `OCR` | Memory model (contract) — `OCR` (default, the OCR v1.2.0 §1.6 model) or `RELAXED` (DB-DRF; weaker — evaluation only, racy-but-legal OCR programs may yield wrong results). Compile-time; all ranks must share one build. |
-| `ARTS_COHERENCE_PROTOCOL` | `LAZY` | Protocol implementing the OCR model — `LAZY` (acquire-time consistency actions, default) or `EAGER` (release-time). N/A under `RELAXED`. |
+| `ARTS_COHERENCE_PROTOCOL` | `MRNEW` | Coherence protocol (admission policy) — `MRNEW` (default, Multi-Reader Node-Exclusive Writer; implements the OCR v1.2.0 §1.6 contract) or `MRMW` (true multi-writer, lossy DB-DRF; evaluation only — emits a configure warning). Compile-time; all ranks must share one build. |
+| `ARTS_PROTOCOL_TIMING` | `LAZY` | Timing of consistency actions (meaningful only for `MRNEW`) — `LAZY` (acquire-time, default) or `EAGER` (release-time). Ignored under `MRMW`. |
 | `ARTS_DEFAULT_DB_KIND` | `ARTS_DB` | Default DB storage kind that the `ARTS_DB_DEFAULT` macro expands to — `ARTS_DB` (regular DRAM) or `ARTS_DB_CXL` (CXL shared). |
 | `ARTS_USE_CXL` | `OFF` | Enable CXL shared-memory DataBlocks (requires the Rapid API). |
 | `ARTS_CXL_RAPID_INCLUDE_DIR` | — | Path to the Rapid API include dir (required when `ARTS_USE_CXL=ON`). |

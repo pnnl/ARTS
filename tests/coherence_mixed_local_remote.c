@@ -119,7 +119,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
 
-  (void)fprintf(stderr, "=== cdag_mixed_local_remote ===\n");
+  (void)fprintf(stderr, "=== coherence_mixed_local_remote ===\n");
   (void)fflush(stderr);
   arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
 

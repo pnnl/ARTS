@@ -11,7 +11,7 @@ concepts.
   scheduled when all dependencies are satisfied.
 - **DataBlocks (DBs)** — explicit data objects identified by globally unique
   identifiers (GUIDs); consistency is defined by the ARTS memory model
-  (see :doc:`programming_model/memory_model`).
+  (see :doc:`programming_model/coherence_protocols`).
 - **Distributed Scheduling** — decentralised scheduler with support for
   multi-node execution via TCP networking.
 - **GPU Support** — optional CUDA-based EDT and DataBlock operations.
@@ -31,7 +31,7 @@ concepts.
    programming_model/index
    programming_model/edt
    programming_model/datablocks
-   programming_model/memory_model
+   programming_model/coherence_protocols
    programming_model/events
    programming_model/guids
    programming_model/finish_events

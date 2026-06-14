@@ -473,7 +473,7 @@ void arts_handler_event_satisfy_slot(void *item, void *vargs) {
  *   home == self → dispatch_or_defer (acquire → arts_handler_event_satisfy_slot
  *                  or defer until the event installs);
  *   home != self → MSG_EVENT_SATISFY_SLOT wire;
- *   CDAG → force-defer on the GPU wrapper's slot. */
+ *   GPU LC invalidation drain → force-defer on the GPU wrapper's slot. */
 void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
                              uint32_t slot) {
   TIME_EVENT_SIGNAL_START();

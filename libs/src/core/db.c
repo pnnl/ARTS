@@ -624,7 +624,7 @@ static void acquire_one_dep(struct arts_edt_s *edt, arts_edt_dep_t *depv,
   arts_shared_ptr_t db_temp_h = arts_route_table_lookup_db(depv[i].guid);
   struct arts_db_s *db_temp = (struct arts_db_s *)arts_shared_get(db_temp_h);
 
-  /* Coherent ARTS_DB path (eager, lazy, or relaxed protocol).  Two entry
+  /* Coherent ARTS_DB path (eager, lazy, or MRMW protocol).  Two entry
    * points:
    *   - Existing local cache_s (db_temp with db_type == ARTS_DB; embedded
    *     cache).
@@ -839,8 +839,8 @@ void arts_db_acquire_all(struct arts_edt_s *edt) {
     acquire_one_dep(edt, depv, i);
   }
 
-  /* Pass 2: fire the serialized (RW) deps from the cursor (no-op under the
-   * relaxed model). */
+  /* Pass 2: fire the serialized (RW) deps from the cursor (no-op under MRMW).
+   */
   rw_fire_from_cursor(edt);
 
   /* Remove the +1 bias; this decrement may be the one that reaches 0. */

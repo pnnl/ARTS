@@ -173,24 +173,34 @@ cmake_dependent_option(ARTS_USE_LOCAL_CUDA_ARCHITECTURES
     "Auto-detect CUDA architectures from local GPUs using nvidia-smi" ON
     "ARTS_USE_GPU" OFF)
 
-# ── Memory model (contract) + coherence protocol (implementation) ──────────
-# Compile-time switches — one binary is exactly one configuration, and all
-# ranks in a multinode run must use the same build.
-#   ARTS_MEMORY_MODEL      OCR (default)  — the OCR v1.2.0 §1.6 memory model.
-#                          RELAXED        — DB-granularity DRF contract; weaker
-#                                           than OCR: racy-but-legal OCR
-#                                           programs may produce wrong results.
-#                                           Evaluation only.
-#   ARTS_COHERENCE_PROTOCOL EAGER | LAZY (default) — how the OCR contract is
-#                          implemented (release-time vs acquire-time
-#                          consistency actions). Ignored when RELAXED.
-# Validation and compile definitions are applied right below.
-set(ARTS_MEMORY_MODEL "OCR" CACHE STRING
-    "Memory model (contract): OCR (default) or RELAXED (DB-DRF, evaluation only)")
-set_property(CACHE ARTS_MEMORY_MODEL PROPERTY STRINGS OCR RELAXED)
-set(ARTS_COHERENCE_PROTOCOL "LAZY" CACHE STRING
-    "Coherence protocol implementing the OCR model: EAGER or LAZY (default); N/A under RELAXED")
-set_property(CACHE ARTS_COHERENCE_PROTOCOL PROPERTY STRINGS EAGER LAZY)
+# ── Coherence protocol (admission policy) + timing ─────────────────────────
+# Compile-time switches — one binary is exactly one configuration; all ranks in
+# a multinode run must use the same build. A memory model is a CONSEQUENCE of
+# the protocol, not a separate axis (see docs/programming_model/coherence_protocols.rst).
+#   ARTS_COHERENCE_PROTOCOL  MRNEW (default) — Multi-Reader, Node-Exclusive
+#                            Writer: intra-node multi-writer (HW + shared
+#                            buffer), inter-node single-owner lease. Implements
+#                            the OCR v1.2.0 §1.6 memory model.
+#                            MRMW — true multi-writer, whole-DB writeback; lossy
+#                            (DB-DRF contract, evaluation only).
+#   ARTS_PROTOCOL_TIMING     EAGER | LAZY (default) — when MRNEW performs its
+#                            consistency actions (release-time vs acquire-time).
+#                            Ignored by MRMW.
+set(ARTS_COHERENCE_PROTOCOL "MRNEW" CACHE STRING
+    "Coherence protocol (admission policy): MRNEW (default, = OCR) or MRMW (DB-DRF, evaluation only)")
+set_property(CACHE ARTS_COHERENCE_PROTOCOL PROPERTY STRINGS MRNEW MRMW)
+set(ARTS_PROTOCOL_TIMING "LAZY" CACHE STRING
+    "Timing of MRNEW consistency actions: EAGER or LAZY (default); ignored by MRMW")
+set_property(CACHE ARTS_PROTOCOL_TIMING PROPERTY STRINGS EAGER LAZY)
+
+# Migration guard: the memory-model build axis was removed.
+if(DEFINED ARTS_MEMORY_MODEL)
+  message(FATAL_ERROR
+    "ARTS_MEMORY_MODEL was removed — a memory model is a consequence of the "
+    "coherence protocol, not a build axis. Use "
+    "ARTS_COHERENCE_PROTOCOL={MRNEW,MRMW} (+ ARTS_PROTOCOL_TIMING={EAGER,LAZY} "
+    "for MRNEW). Mapping: OCR+EAGER->MRNEW+EAGER, OCR+LAZY->MRNEW+LAZY, RELAXED->MRMW.")
+endif()
 # ── Default DB storage kind ────────────────────────────────────────────────
 set(ARTS_DEFAULT_DB_KIND "ARTS_DB" CACHE STRING
     "Default DB storage kind the ARTS_DB_DEFAULT macro expands to: ARTS_DB (regular DRAM) or ARTS_DB_CXL (CXL shared)")
@@ -235,36 +245,33 @@ set(ARTS_COUNTER_CONFIG
     "${CMAKE_CURRENT_SOURCE_DIR}/configs/counters.cfg"
     CACHE FILEPATH "ARTS counter configuration file (parsed to generate introspection macros)")
 
-# ── Memory-model validation + compile definitions (logic, kept with options) ─
-if(NOT ARTS_MEMORY_MODEL STREQUAL "OCR" AND
-   NOT ARTS_MEMORY_MODEL STREQUAL "RELAXED")
+# ── Coherence-protocol validation + compile definitions ────────────────────
+if(NOT ARTS_COHERENCE_PROTOCOL STREQUAL "MRNEW" AND
+   NOT ARTS_COHERENCE_PROTOCOL STREQUAL "MRMW")
   message(FATAL_ERROR
-          "ARTS_MEMORY_MODEL must be OCR or RELAXED, got: ${ARTS_MEMORY_MODEL}")
+          "ARTS_COHERENCE_PROTOCOL must be MRNEW or MRMW, got: ${ARTS_COHERENCE_PROTOCOL}")
 endif()
-if(NOT ARTS_COHERENCE_PROTOCOL STREQUAL "EAGER" AND
-   NOT ARTS_COHERENCE_PROTOCOL STREQUAL "LAZY")
+if(NOT ARTS_PROTOCOL_TIMING STREQUAL "EAGER" AND
+   NOT ARTS_PROTOCOL_TIMING STREQUAL "LAZY")
   message(FATAL_ERROR
-          "ARTS_COHERENCE_PROTOCOL must be EAGER or LAZY, got: ${ARTS_COHERENCE_PROTOCOL}")
+          "ARTS_PROTOCOL_TIMING must be EAGER or LAZY, got: ${ARTS_PROTOCOL_TIMING}")
 endif()
-if(ARTS_MEMORY_MODEL STREQUAL "RELAXED")
-  add_compile_definitions(ARTS_MEMORY_MODEL_RELAXED=1)
+if(ARTS_COHERENCE_PROTOCOL STREQUAL "MRMW")
+  add_compile_definitions(ARTS_PROTOCOL_MRMW=1)
   message(WARNING
-          "ARTS_MEMORY_MODEL=RELAXED selects the DB-DRF relaxed model: "
-          "visibility is guaranteed only along event happens-before, and "
-          "programs that are valid under the OCR memory model may produce "
-          "wrong results. Evaluation builds only — never a correctness "
-          "baseline. ARTS_COHERENCE_PROTOCOL is ignored.")
-else()
-  # OCR builds define the model macro plus exactly one protocol macro, so
-  # `#ifdef ARTS_MEMORY_MODEL_OCR` guards family-shared fields and
-  # `#ifdef ARTS_COHERENCE_PROTOCOL_*` guards protocol-specific seams.
-  add_compile_definitions(ARTS_MEMORY_MODEL_OCR=1)
-  if(ARTS_COHERENCE_PROTOCOL STREQUAL "EAGER")
-    add_compile_definitions(ARTS_COHERENCE_PROTOCOL_EAGER=1)
-    message(STATUS "ARTS memory model: OCR, coherence protocol: EAGER")
+          "ARTS_COHERENCE_PROTOCOL=MRMW selects the DB-DRF (lossy multi-writer) "
+          "protocol: visibility is guaranteed only along event happens-before, "
+          "and programs valid under the OCR memory model (which MRNEW provides) "
+          "may produce wrong results. Evaluation builds only — never a "
+          "correctness baseline. ARTS_PROTOCOL_TIMING is ignored.")
+else() # MRNEW
+  add_compile_definitions(ARTS_PROTOCOL_MRNEW=1)
+  if(ARTS_PROTOCOL_TIMING STREQUAL "EAGER")
+    add_compile_definitions(ARTS_TIMING_EAGER=1)
+    message(STATUS "ARTS coherence protocol: MRNEW (= OCR), timing: EAGER")
   else()
-    add_compile_definitions(ARTS_COHERENCE_PROTOCOL_LAZY=1)
-    message(STATUS "ARTS memory model: OCR, coherence protocol: LAZY (default)")
+    add_compile_definitions(ARTS_TIMING_LAZY=1)
+    message(STATUS "ARTS coherence protocol: MRNEW (= OCR), timing: LAZY (default)")
   endif()
 endif()
 if(NOT ARTS_DEFAULT_DB_KIND STREQUAL "ARTS_DB" AND

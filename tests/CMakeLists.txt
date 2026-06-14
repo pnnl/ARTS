@@ -116,14 +116,6 @@ set(TEST_PROGRAMS
     csr
     distribution
     # --- Array DB tests ---
-    # --- Coherence (coh_* prefix = newer minimal API tests) ---
-    coh_basic
-    coh_rw_chain
-    coh_rw_ordering
-    coh_rw_ro_rw
-    coh_rw_rw_chain_seal
-    coh_ro_accumulation
-    coh_mixed_local_remote
     # --- DB type tests ---
     db_pin
     # --- Termination tests ---
@@ -133,7 +125,6 @@ set(TEST_PROGRAMS
     term_sigsegv
     # --- Multinode (built here, registered below) ---
     multinode_stdout_forward
-    multinode_coh
     # --- Pure unit tests (no ARTS runtime) ---
     lockfree_stack_test
     lockfree_marked_list_test
@@ -451,15 +442,6 @@ register_single_node_test(coherence_ro_accumulation)
 register_single_node_test(csr)
 register_single_node_test(distribution)
 
-# --- coh_* coherence tests (minimal API variants) ---
-register_single_node_test(coh_basic)
-register_single_node_test(coh_rw_chain ARGS 4)
-register_single_node_test(coh_rw_ordering)
-register_single_node_test(coh_rw_ro_rw)
-register_single_node_test(coh_rw_rw_chain_seal)
-register_single_node_test(coh_ro_accumulation)
-register_single_node_test(coh_mixed_local_remote)
-
 # --- DB type tests ---
 register_single_node_test(db_pin)
 
@@ -581,7 +563,6 @@ register_multinode_test(multinode_stdout_forward)
 set_tests_properties(multinode_stdout_forward_2n PROPERTIES
     PASS_REGULAR_EXPRESSION "MULTINODE_STDOUT_FORWARD_SENTINEL 42")
 
-register_multinode_test(multinode_coh TIMEOUT 60)
 register_multinode_test(multinode_labeled_guid TIMEOUT 30)
 register_multinode_test(multinode_event_hint TIMEOUT 30)
 
@@ -682,71 +663,71 @@ set_tests_properties(coherence_lazy_ownership_reorder PROPERTIES
 register_single_node_test(coherence_lazy_confirm_gate TIMEOUT 120)
 register_multinode_test(coherence_lazy_confirm_gate TIMEOUT 120)
 
-# --- RELAXED-specific test binaries ---
-# These tests target the RELAXED (DB-DRF) memory model.  They are built
-# unconditionally so the binary exists in all three build trees; CTest
-# entries are only registered when ARTS_MEMORY_MODEL is RELAXED.
+# --- DB-DRF test binaries (target the DB-DRF contract; ctest entries register only in the MRMW build) ---
+# These tests exercise the DB-DRF contract (data-race-free at DB granularity).
+# Binaries are built unconditionally so the binary exists in all build trees;
+# CTest entries are only registered when ARTS_COHERENCE_PROTOCOL is MRMW.
 
-add_arts_test(relaxed_multi_writer_concurrent)
-add_arts_test(relaxed_drf_invariant)
-add_arts_test(relaxed_local_hit_dedup)
-add_arts_test(relaxed_counter_race)
+add_arts_test(db_drf_multi_writer_concurrent)
+add_arts_test(db_drf_invariant)
+add_arts_test(db_drf_local_hit_dedup)
+add_arts_test(db_drf_counter_race)
 
-if(ARTS_MEMORY_MODEL STREQUAL "RELAXED")
-    # relaxed_drf_invariant (single-node): home-rank writer and home-rank
+if(ARTS_COHERENCE_PROTOCOL STREQUAL "MRMW")
+    # db_drf_invariant (single-node): home-rank writer and home-rank
     # reader; no WRITEBACK round-trip.  Validates finish-event happens-before
     # ordering.
     add_test(
-        NAME relaxed_drf_invariant
-        COMMAND relaxed_drf_invariant
+        NAME db_drf_invariant
+        COMMAND db_drf_invariant
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     )
-    set_tests_properties(relaxed_drf_invariant PROPERTIES
+    set_tests_properties(db_drf_invariant PROPERTIES
         LABELS "single_node"
         TIMEOUT 30
         RESOURCE_LOCK "arts_runtime"
         ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/1n.cfg"
-        PASS_REGULAR_EXPRESSION "RELAXED_DRF: PASS"
+        PASS_REGULAR_EXPRESSION "DB_DRF: PASS"
     )
 
-    # relaxed_drf_invariant (2-node): writer on rank 1, reader on rank 0
+    # db_drf_invariant (2-node): writer on rank 1, reader on rank 0
     # (home).  Exercises the cross-rank RW WRITEBACK path: writer_count bump
     # on acquire ensures release_rw sends WRITEBACK; home delivers updated
     # data to the RO reader.
     add_test(
-        NAME relaxed_drf_invariant_2n
-        COMMAND relaxed_drf_invariant
+        NAME db_drf_invariant_2n
+        COMMAND db_drf_invariant
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     )
     arts_next_port_base(1 port_base)
-    set_tests_properties(relaxed_drf_invariant_2n PROPERTIES
+    set_tests_properties(db_drf_invariant_2n PROPERTIES
         LABELS "multinode"
         TIMEOUT 60
         RESOURCE_LOCK "arts_runtime"
         ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/2n.cfg;default_ports=${port_base}"
-        PASS_REGULAR_EXPRESSION "RELAXED_DRF: PASS"
+        PASS_REGULAR_EXPRESSION "DB_DRF: PASS"
     )
 
-    # relaxed_local_hit_dedup: N concurrent same-rank RO acquires on a DB
+    # db_drf_local_hit_dedup: N concurrent same-rank RO acquires on a DB
     # homed at a different rank — exercises the GET_DATA / STILL_VALID dedup
-    # code path under the relaxed model.  Requires 2-node config.
+    # code path under the MRMW protocol.  Requires 2-node config.
     add_test(
-        NAME relaxed_local_hit_dedup_2n
-        COMMAND relaxed_local_hit_dedup
+        NAME db_drf_local_hit_dedup_2n
+        COMMAND db_drf_local_hit_dedup
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     )
     arts_next_port_base(1 port_base)
-    set_tests_properties(relaxed_local_hit_dedup_2n PROPERTIES
+    set_tests_properties(db_drf_local_hit_dedup_2n PROPERTIES
         LABELS "multinode"
         TIMEOUT 60
         RESOURCE_LOCK "arts_runtime"
         ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/2n.cfg;default_ports=${port_base}"
-        PASS_REGULAR_EXPRESSION "RELAXED_LOCAL_HIT_DEDUP: PASS"
+        PASS_REGULAR_EXPRESSION "DB_DRF_LOCAL_HIT_DEDUP: PASS"
     )
 
-    # relaxed_multi_writer_concurrent: manual test only — non-deterministic
+    # db_drf_multi_writer_concurrent: manual test only — non-deterministic
     # last-writer-wins outcome cannot be expressed as a fixed regex.
-    # Run directly with: build_relaxed/tests/relaxed_multi_writer_concurrent
+    # Run directly with: build_mrmw/tests/db_drf_multi_writer_concurrent
 endif()
 
 # --- Mode-mismatch detection binary (no CTest entry — driven by run_mode_mismatch.sh) ---

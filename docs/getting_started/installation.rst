@@ -84,15 +84,17 @@ All options are set with ``-D<NAME>=<VALUE>`` on the cmake line.
      - ON
      - Auto-detect the local GPU's CUDA architecture via ``nvidia-smi`` (only
        when ``ARTS_USE_GPU=ON``; otherwise set ``CMAKE_CUDA_ARCHITECTURES``).
-   * - ``ARTS_MEMORY_MODEL``
-     - OCR
-     - Memory model (contract) — ``OCR`` (default, the OCR v1.2.0 §1.6 model) or
-       ``RELAXED`` (DB-DRF; weaker — evaluation only, racy-but-legal OCR programs
-       may yield wrong results). Compile-time; all ranks must share one build.
    * - ``ARTS_COHERENCE_PROTOCOL``
+     - MRNEW
+     - Admission policy — ``MRNEW`` (default, Multi-Reader Node-Exclusive Writer;
+       implements the OCR v1.2.0 §1.6 contract) or ``MRMW`` (true multi-writer,
+       lossy, DB-DRF only; evaluation only — emits a configure warning).
+       Compile-time; all ranks must share one build.
+   * - ``ARTS_PROTOCOL_TIMING``
      - LAZY
-     - Protocol implementing the OCR model — ``LAZY`` (acquire-time consistency
-       actions, default) or ``EAGER`` (release-time). N/A under ``RELAXED``.
+     - Timing of consistency actions (meaningful only for ``MRNEW``) —
+       ``LAZY`` (acquire-time, default) or ``EAGER`` (release-time). Ignored
+       under ``MRMW``.
    * - ``ARTS_DEFAULT_DB_KIND``
      - ARTS_DB
      - Default DB storage kind the ``ARTS_DB_DEFAULT`` macro expands to:
@@ -124,7 +126,7 @@ All options are set with ``-D<NAME>=<VALUE>`` on the cmake line.
 To pick a faster linker, use CMake's own ``-DCMAKE_LINKER_TYPE=MOLD`` (cmake ≥ 3.29);
 there is no ARTS-specific linker option.
 
-See :ref:`memory_model` for the normative definition of the model and protocols.
+See :ref:`coherence_protocols` for the normative definition of the protocols and their contracts.
 
 GPU Build
 ~~~~~~~~~

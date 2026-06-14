@@ -117,15 +117,15 @@
  * _destroy) — pure (item, args) Cat-B bodies defined in the coherence TUs.
  * Each model's enum (and this table) carries only that model's OOO_DB_* kinds,
  * so a build references only the bodies it actually defines:
- *   - OWNERSHIP_REQUEST: OCR model only (ownership.c); RELAXED's enum omits it.
- *   - WRITEBACK: EAGER/RELAXED only; LAZY's enum omits it (LAZY fatals on the
+ *   - OWNERSHIP_REQUEST: MRNEW only (ownership.c); MRMW's enum omits it.
+ *   - WRITEBACK: EAGER/MRMW only; LAZY's enum omits it (LAZY fatals on the
  * wire).
  *   - OWNERSHIP_INVALIDATE: EAGER only.  EAGER can see a GRANT/INVALIDATE
  * reorder (or a before-create race) that lands INVALIDATE before the cache
  * installs, so it defers + replays here.  The lazy protocol never defers
  * INVALIDATE (home publishes the rw_holder target only after that rank's
  * cache install, so the dispatcher/self-send call the body directly) and the
- * relaxed model has no ownership transfer, so neither carries this kind. */
+ * MRMW has no ownership transfer, so neither carries this kind. */
 
 /* Event/EDT destroy replay bodies are the wire handlers themselves
  * (arts_handler_event_destroy / arts_handler_edt_destroy) — pure (item, args)
@@ -143,17 +143,17 @@ static const arts_ooo_handler_fn_t g_ooo_table[OOO_KIND_COUNT] = {
     [OOO_EDT_DESTROY] = arts_handler_edt_destroy,
     [OOO_EVENT_DESTROY] = arts_handler_event_destroy,
     [OOO_DB_DESTROY] = arts_handler_db_destroy,
-#if defined(ARTS_COHERENCE_PROTOCOL_EAGER)
+#if defined(ARTS_TIMING_EAGER)
     [OOO_DB_ACQUIRE] = arts_db_acquire_replay_dep,
     [OOO_DB_SNAPSHOT_REQUEST] = arts_handler_db_snapshot_request,
     [OOO_DB_OWNERSHIP_REQUEST] = arts_handler_db_ownership_request,
     [OOO_DB_OWNERSHIP_INVALIDATE] = arts_handler_db_ownership_invalidate,
     [OOO_DB_WRITEBACK] = arts_handler_db_writeback,
-#elif defined(ARTS_COHERENCE_PROTOCOL_LAZY)
+#elif defined(ARTS_TIMING_LAZY)
     [OOO_DB_ACQUIRE] = arts_db_acquire_replay_dep,
     [OOO_DB_SNAPSHOT_REQUEST] = arts_handler_db_snapshot_request,
     [OOO_DB_OWNERSHIP_REQUEST] = arts_handler_db_ownership_request,
-#elif defined(ARTS_MEMORY_MODEL_RELAXED)
+#elif defined(ARTS_PROTOCOL_MRMW)
     [OOO_DB_ACQUIRE] = arts_db_acquire_replay_dep,
     [OOO_DB_SNAPSHOT_REQUEST] = arts_handler_db_snapshot_request,
     [OOO_DB_WRITEBACK] = arts_handler_db_writeback,
@@ -196,8 +196,8 @@ void arts_ooo_dispatch_or_defer(struct arts_route_item_s *slot,
      * "a destroy intervened → drop".  Gated to OOO_DB_OWNERSHIP_INVALIDATE —
      * other kinds rely on before-create replay across the install and must not
      * drop.  Eager-only: that kind exists solely in the eager build's enum
-     * (lazy/relaxed never defer INVALIDATE). */
-#if defined(ARTS_COHERENCE_PROTOCOL_EAGER)
+     * (lazy/MRMW never defer INVALIDATE). */
+#if defined(ARTS_TIMING_EAGER)
     if (payload != NULL && kind == OOO_DB_OWNERSHIP_INVALIDATE &&
         payload->gen_at_defer !=
             __atomic_load_n(&slot->gen, __ATOMIC_ACQUIRE)) {

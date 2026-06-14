@@ -5,7 +5,7 @@
  * the two EDTs.  DB is homed on rank 0; rank-0 EDT acquires the home
  * buffer locally, rank-1 EDT acquires a remote working copy.
  *
- * Observed behavior (both OCR-model and relaxed builds):
+ * Observed behavior (both OCR-model and MRMW/DB-DRF builds):
  *   counter == N     (most runs, "lost-update")
  *   counter == 0     (rare, verifier ordering edge case)
  *   counter == 2N    (not observed in this configuration)
@@ -16,13 +16,13 @@
  * does not park on the same chain — when one writer is home and the
  * other is non-home, the two execute concurrently and the non-home
  * WRITEBACK overwrites the home's local increments (or vice versa).
- * The relaxed (DB-DRF) model has no LOCK_REQ chain by design and shows
+ * The DB-DRF (MRMW) model has no LOCK_REQ chain by design and shows
  * the same lost-update pattern.
  *
- * For a clean OCR/relaxed differentiation see CTest:
+ * For a clean OCR/DB-DRF differentiation see CTest:
  * coherence_stress_dist and coherence_lock_req_before_create both PASS
- * under the OCR model and FAIL under the relaxed model because they
- * exercise patterns that the relaxed model does not implement.
+ * under the OCR model and FAIL under the MRMW model because they
+ * exercise patterns that the DB-DRF contract does not implement.
  */
 
 #include <stdint.h>
@@ -55,15 +55,15 @@ static void verifier_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   uint64_t v = counter ? *counter : 0;
   uint64_t expected = (uint64_t)2 * INCREMENTS_PER_RANK;
   if (v == expected) {
-    arts_printf("RELAXED_COUNTER_RACE: counter=%lu (expected=%lu) — "
+    arts_printf("DB_DRF_COUNTER_RACE: counter=%lu (expected=%lu) — "
                 "DETERMINISTIC (OCR-like)\n",
                 v, expected);
   } else if (v == INCREMENTS_PER_RANK) {
-    arts_printf("RELAXED_COUNTER_RACE: counter=%lu (expected=%lu) — RACED "
-                "(relaxed-like, lost-update)\n",
+    arts_printf("DB_DRF_COUNTER_RACE: counter=%lu (expected=%lu) — RACED "
+                "(DB-DRF-like, lost-update)\n",
                 v, expected);
   } else {
-    arts_printf("RELAXED_COUNTER_RACE: counter=%lu (expected=%lu) — "
+    arts_printf("DB_DRF_COUNTER_RACE: counter=%lu (expected=%lu) — "
                 "UNEXPECTED\n",
                 v, expected);
   }
@@ -78,7 +78,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
 
   if (arts_get_total_ranks() < 2) {
-    arts_printf("RELAXED_COUNTER_RACE: SKIP requires 2+ ranks\n");
+    arts_printf("DB_DRF_COUNTER_RACE: SKIP requires 2+ ranks\n");
     arts_shutdown();
     return;
   }

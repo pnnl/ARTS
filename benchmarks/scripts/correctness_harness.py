@@ -47,32 +47,32 @@ from typing import Any
 REPO = Path(__file__).resolve().parent.parent.parent
 
 # ---------------------------------------------------------------------------
-# Build directory: selectable via --build-dir (default: build_release_eager).
+# Build directory: selectable via --build-dir (default: build_release_mrnew_lazy).
 # Resolved early so module-level Path constants can reference it.
 # ---------------------------------------------------------------------------
 _arg_parser = argparse.ArgumentParser(add_help=False)
-_arg_parser.add_argument('--build-dir', default='build_release_eager')
+_arg_parser.add_argument('--build-dir', default='build_release_mrnew_lazy')
 _pre_args, _ = _arg_parser.parse_known_args()
 BUILD = Path(_pre_args.build_dir)
 if not BUILD.is_absolute():
     BUILD = REPO / BUILD
 
-_model = 'unknown'
-_protocol = ''
+_protocol = 'unknown'
+_timing = ''
 try:
     _cache_path = BUILD / 'CMakeCache.txt'
     with open(_cache_path) as _f:
         for _line in _f:
-            _m = re.match(r'ARTS_MEMORY_MODEL:STRING=(\w+)', _line)
-            if _m:
-                _model = _m.group(1)
             _p = re.match(r'ARTS_COHERENCE_PROTOCOL:STRING=(\w+)', _line)
             if _p:
                 _protocol = _p.group(1)
+            _t = re.match(r'ARTS_PROTOCOL_TIMING:STRING=(\w+)', _line)
+            if _t:
+                _timing = _t.group(1)
 except FileNotFoundError:
     pass
-_mode = _model if _model != 'OCR' else f'{_model}/{_protocol}'
-print(f'[harness] Build dir: {BUILD} (model: {_mode})')
+_mode = 'MRMW' if _protocol == 'MRMW' else f'MRNEW+{_timing}'
+print(f'[harness] Build dir: {BUILD} (protocol: {_mode})')
 
 APPS_DIR = BUILD / "benchmarks" / "apps"
 BASE_DIR = BUILD / "benchmarks" / "baseline"
@@ -1013,7 +1013,7 @@ def tier_b(xsocr: RunResult, arts: RunResult, base: RunResult, case: Case) -> Ve
 # ---------------------------------------------------------------------------
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--build-dir", default="build_release_eager",
+    p.add_argument("--build-dir", default="build_release_mrnew_lazy",
                    help="Build directory containing apps and configs")
     p.add_argument("--no-baseline", action="store_true")
     p.add_argument("--only", type=str, default="")

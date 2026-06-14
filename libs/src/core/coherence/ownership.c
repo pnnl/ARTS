@@ -1,12 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * OCR-model family shared ownership machinery (compiled for both coherence
- * protocols; the RELAXED model does not compile it).
+ * MRNEW shared ownership machinery (compiled for both coherence
+ * protocols; MRMW does not compile it).
  *
- * Compiled only when ARTS_MEMORY_MODEL is OCR (selected in
+ * Compiled only when ARTS_COHERENCE_PROTOCOL is MRNEW (selected in
  * libs/src/core/CMakeLists.txt).  Holds the home-directory / single-owner
- * ownership machinery that EAGER and LAZY share but RELAXED does not have
- * (RELAXED keeps the canonical buffer at home via synchronous WRITEBACK and has
+ * ownership machinery that EAGER and LAZY share but MRMW does not have
+ * (MRMW keeps the canonical buffer at home via synchronous WRITEBACK and has
  * no OWNERSHIP_REQUEST / GRANT / pending_rw round).  The small points where
  * EAGER and LAZY themselves differ are delegated to per-protocol seams
  * (arts_db_start_ownership_round / arts_db_ownership_return) defined in
@@ -174,9 +174,9 @@ void arts_db_invalidate_transfer(struct arts_db_cache_s *cache) {
 /* ===== destroy/fail wake of parked waiters (EAGER+LAZY) ============
  * Wake every parked waiter with a NULL ptr so the EDT observes the destroyed
  * DB (mark_edt_ready_by_guid delivers NULL when the cache buffer is gone): the
- * RW Vyukov MPSC FIFO first, then the snapshot reorder buffer.  RELAXED has no
+ * RW Vyukov MPSC FIFO first, then the snapshot reorder buffer.  MRMW has no
  * pending_rw queue so it defines its own arts_db_fail_trigger_pending
- * (coherence/relaxed.c) draining only pending_snapshot. */
+ * (coherence/mrmw.c) draining only pending_snapshot. */
 
 static void fail_trigger_rw_cb(arts_guid_t edt_guid, unsigned int slot,
                                void *vctx) {
@@ -189,10 +189,10 @@ void arts_db_fail_trigger_pending(struct arts_db_cache_s *cache) {
   arts_db_drain_pending_snapshot(cache);
 }
 
-/* ===== Home-side ownership handlers (OCR model; moved from handlers.c) =
- * OWNERSHIP_REQUEST / RELEASE_OWNERSHIP exist only under OCR (RELAXED routes
+/* ===== Home-side ownership handlers (MRNEW; moved from handlers.c) =====
+ * OWNERSHIP_REQUEST / RELEASE_OWNERSHIP exist only under MRNEW (MRMW routes
  * all acquires through GET_DATA / DATA_RESPONSE), so these handlers are
- * compiled only for the OCR model.  The home-directory machinery they touch
+ * compiled only for MRNEW.  The home-directory machinery they touch
  * (pending_rw, invalidate_in_flight, rw_holder) is shared by both protocols;
  * the point where EAGER and LAZY diverge is delegated to per-protocol seams in
  * coherence/eager.c / coherence/lazy.c. */
@@ -204,8 +204,8 @@ void arts_db_fail_trigger_pending(struct arts_db_cache_s *cache) {
  * cache.  The wire dispatcher decodes OWNERSHIP_REQUEST into the args struct
  * and routes through the engine via OOO_DB_OWNERSHIP_REQUEST; a missing home
  * db_s defers the args and re-issues this body once DB_CREATE installs and
- * drains.  (RELAXED never enqueues this kind — coherence/relaxed.c provides a
- * no-op definition that satisfies the single g_ooo_table slot in the RELAXED
+ * drains.  (MRMW never enqueues this kind — coherence/mrmw.c provides a
+ * no-op definition that satisfies the single g_ooo_table slot in the MRMW
  * build.) */
 void arts_handler_db_ownership_request(void *item_v, void *args_v) {
   struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
@@ -253,9 +253,9 @@ void arts_handler_db_ownership_return(void *item_v, void *args_v) {
   arts_db_ownership_return(cache);
 }
 
-/* ===== Ownership wire senders (OCR model; moved from coherence/senders.c) ==
+/* ===== Ownership wire senders (MRNEW; moved from coherence/senders.c) =====
  * OWNERSHIP_REQUEST / RELEASE_OWNERSHIP / INVALIDATE_NOTICE exist only under
- * the OCR model.  Self-sends dispatch the matching handler inline
+ * MRNEW.  Self-sends dispatch the matching handler inline
  * (request/return defined above; invalidate defined per protocol in
  * eager.c/lazy.c).
  */
@@ -299,7 +299,7 @@ void arts_send_db_ownership_invalidate(unsigned int owner_rank,
         .db_guid = db_guid,
         .new_owner_rank = new_owner_rank,
     };
-#if defined(ARTS_COHERENCE_PROTOCOL_LAZY)
+#if defined(ARTS_TIMING_LAZY)
     /* The lazy protocol never defers INVALIDATE: home publishes rw_holder (the
      * target) only after that rank's cache install, so the cache is provably
      * present here.  Call the pure handler body directly. */

@@ -69,10 +69,9 @@ extern "C" {
  * arts_handler_ prefix stripped and upper-cased (kind ↔ handler 1:1), e.g.
  * arts_handler_event_add_dependence → OOO_EVENT_ADD_DEPENDENCE.
  *
- * The model-specific DB-coherence kinds are preprocessor-selected: OCR builds
- * define ARTS_MEMORY_MODEL_OCR plus exactly one
- * ARTS_COHERENCE_PROTOCOL_{EAGER,LAZY}; RELAXED builds define
- * ARTS_MEMORY_MODEL_RELAXED.  Each build's enum
+ * The model-specific DB-coherence kinds are preprocessor-selected: MRNEW builds
+ * define ARTS_PROTOCOL_MRNEW plus exactly one of ARTS_TIMING_{EAGER,LAZY};
+ * MRMW builds define ARTS_PROTOCOL_MRMW alone.  Each build's enum
  * (and the mirroring g_ooo_table) carries only that model's OOO_DB_* kinds.
  * OOO_KIND_COUNT is therefore per-model — sound because every TU in one build
  * sees the same model define. */
@@ -97,7 +96,7 @@ enum arts_ooo_kind {
  * remote-created DB's lazy_install cache can fire a request/writeback before
  * that DB's home CREATE arrives, so the message reaches home with db_s not yet
  * installed ⇒ OoO push, replayed on the CREATE handler's drain. */
-#if defined(ARTS_COHERENCE_PROTOCOL_EAGER)
+#if defined(ARTS_TIMING_EAGER)
   OOO_DB_ACQUIRE, /* → arts_db_acquire_replay_dep (re-attempts the one deferred
                      local dep; pushed by arts_db_acquire_all's per-dep 3-way)
                    */
@@ -112,7 +111,7 @@ enum arts_ooo_kind {
   OOO_DB_OWNERSHIP_INVALIDATE, /* → arts_handler_db_ownership_invalidate @ owner
                                 */
   OOO_DB_WRITEBACK,            /* → arts_handler_db_writeback @ home */
-#elif defined(ARTS_COHERENCE_PROTOCOL_LAZY)
+#elif defined(ARTS_TIMING_LAZY)
   OOO_DB_ACQUIRE, /* → arts_db_acquire_replay_dep (re-attempts the one deferred
                      local dep; pushed by arts_db_acquire_all's per-dep 3-way)
                    */
@@ -124,7 +123,7 @@ enum arts_ooo_kind {
  * directly).
  * NO OOO_DB_WRITEBACK — the lazy protocol has no synchronous writeback (the
  * dispatcher fatals on the WRITEBACK wire message). */
-#elif defined(ARTS_MEMORY_MODEL_RELAXED)
+#elif defined(ARTS_PROTOCOL_MRMW)
   OOO_DB_ACQUIRE, /* → arts_db_acquire_replay_dep (re-attempts the one deferred
                      local dep; pushed by arts_db_acquire_all's per-dep 3-way)
                    */
@@ -133,7 +132,7 @@ enum arts_ooo_kind {
                               transfer) */
 #else
 #error                                                                         \
-    "exactly one of ARTS_COHERENCE_PROTOCOL_{EAGER,LAZY} or ARTS_MEMORY_MODEL_RELAXED must be defined"
+    "exactly one of ARTS_TIMING_{EAGER,LAZY} or ARTS_PROTOCOL_MRMW must be defined"
 #endif
 
   OOO_KIND_COUNT /* sentinel — g_ooo_table size (per-model) */
@@ -175,8 +174,9 @@ static inline void *arts_ooo_payload_args(struct arts_ooo_payload_s *p) {
  * trailing payload exactly as the satisfy core already branches on mode, so one
  * kind covers both the reference and the inline-payload delivery. */
 struct arts_ooo_args_edt_satisfy_s {
-  arts_guid_t edt_guid; /* re-signal target (may differ from the deferred-on
-                           slot, e.g. GPU CDAG defers on the wrapper) */
+  arts_guid_t
+      edt_guid; /* re-signal target (may differ from the deferred-on
+                   slot, e.g. GPU LC invalidation defers on the wrapper) */
   arts_guid_t data_guid;
   uint32_t slot;
   arts_db_access_mode_t mode;
@@ -279,7 +279,7 @@ void arts_ooo_dispatch_or_defer_guid(arts_guid_t guid, ooo_kind_t kind,
                                      const void *args, uint32_t args_size);
 
 /* Unconditional defer (force-push) keyed on `guid` — used by the GPU
- * CDAG-invalidation path which must hold a signal until the wrapper EDT's
+ * GPU-LC-invalidation path which must hold a signal until the wrapper EDT's
  * outstanding invalidations drain, regardless of the destination's install
  * state. */
 void arts_ooo_push_guid(arts_guid_t guid, ooo_kind_t kind, const void *args,

@@ -99,8 +99,8 @@ with defaults lives in [README.md](README.md#build-options); the most common are
 | Option | Default | Purpose |
 | ------ | ------- | ------- |
 | `CMAKE_BUILD_TYPE` | `Debug` | `Debug` or `Release`. |
-| `ARTS_MEMORY_MODEL` | `OCR` | Memory model (contract) — `OCR` (default, the OCR v1.2.0 §1.6 model) or `RELAXED` (DB-DRF; weaker — evaluation only, racy-but-legal OCR programs may yield wrong results). Compile-time; all ranks must share one build. |
-| `ARTS_COHERENCE_PROTOCOL` | `LAZY` | Protocol implementing the OCR model — `LAZY` (acquire-time consistency actions, default) or `EAGER` (release-time). N/A under `RELAXED`. |
+| `ARTS_COHERENCE_PROTOCOL` | `MRNEW` | Coherence protocol (admission policy) — `MRNEW` (default, Multi-Reader Node-Exclusive Writer; implements the OCR v1.2.0 §1.6 contract) or `MRMW` (true multi-writer, lossy DB-DRF; evaluation only — emits a configure warning). Compile-time; all ranks must share one build. |
+| `ARTS_PROTOCOL_TIMING` | `LAZY` | Timing of consistency actions (meaningful only for `MRNEW`) — `LAZY` (acquire-time, default) or `EAGER` (release-time). Ignored under `MRMW`. |
 | `ARTS_USE_GPU` | `OFF` | Enable CUDA GPU support. |
 | `ARTS_BUILD_TESTS` | `ON` | Build the ctest suite. |
 | `ARTS_BUILD_BENCHMARKS` | `ON` | Build the OCR benchmark apps (needs MPI). |
@@ -110,24 +110,26 @@ with defaults lives in [README.md](README.md#build-options); the most common are
 A faster linker is selected with CMake's own `-DCMAKE_LINKER_TYPE=MOLD`
 (cmake >= 3.29) — there is no ARTS-specific linker option.
 
-Memory Consistency Models
--------------------------
+Coherence Protocols
+-------------------
 
-The DataBlock consistency behavior is controlled by two orthogonal compile-time
-knobs. `ARTS_MEMORY_MODEL` selects the **contract**: `OCR` (default) implements
-the OCR v1.2.0 §1.6 memory model; `RELAXED` is the weaker DB-DRF evaluation
-model that emits a configure-time warning and can make racy-but-legal OCR
-programs yield wrong results. `ARTS_COHERENCE_PROTOCOL` selects the
-**implementation** of the OCR model: `LAZY` (acquire-time consistency actions,
-default) or `EAGER` (release-time). `ARTS_COHERENCE_PROTOCOL` has no effect
-under `RELAXED`. One binary is exactly one configuration, and every rank in a
-multinode run must use the same build. To cover all meaningful configurations:
+DataBlock consistency behavior is controlled by one primary compile-time
+knob and one conditional sub-knob. `ARTS_COHERENCE_PROTOCOL` selects the
+**admission policy**: `MRNEW` (default, Multi-Reader Node-Exclusive Writer)
+implements the OCR v1.2.0 §1.6 memory model; `MRMW` (true multi-writer,
+lossy) is the weaker DB-DRF evaluation protocol that emits a configure-time
+warning and can make racy-but-legal OCR programs yield wrong results.
+`ARTS_PROTOCOL_TIMING` selects **when** consistency actions occur: `LAZY`
+(acquire-time, default) or `EAGER` (release-time); it is meaningful only
+under `MRNEW` and is ignored under `MRMW`. One binary is exactly one
+configuration, and every rank in a multinode run must use the same build.
+To cover all meaningful configurations:
 
 ```bash
-cmake -GNinja -Bbuild_eager   -DCMAKE_BUILD_TYPE=Debug -DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=EAGER
-cmake -GNinja -Bbuild_lazy    -DCMAKE_BUILD_TYPE=Debug -DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=LAZY
-cmake -GNinja -Bbuild_relaxed -DCMAKE_BUILD_TYPE=Debug -DARTS_MEMORY_MODEL=RELAXED
-ninja -C build_eager && ninja -C build_lazy && ninja -C build_relaxed
+cmake -GNinja -Bbuild_mrnew_eager -DCMAKE_BUILD_TYPE=Debug -DARTS_COHERENCE_PROTOCOL=MRNEW -DARTS_PROTOCOL_TIMING=EAGER
+cmake -GNinja -Bbuild_mrnew_lazy  -DCMAKE_BUILD_TYPE=Debug -DARTS_COHERENCE_PROTOCOL=MRNEW -DARTS_PROTOCOL_TIMING=LAZY
+cmake -GNinja -Bbuild_mrmw        -DCMAKE_BUILD_TYPE=Debug -DARTS_COHERENCE_PROTOCOL=MRMW
+ninja -C build_mrnew_eager && ninja -C build_mrnew_lazy && ninja -C build_mrmw
 ```
 
 Running Tests

@@ -12,8 +12,8 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 
-/// @file relaxed_drf_invariant.c
-/// @brief Relaxed-model (DB-DRF) invariant: RW writer followed by RO reader
+/// @file db_drf_invariant.c
+/// @brief DB-DRF invariant: RW writer followed by RO reader
 ///        on the same rank
 ///        (home rank).  The writer increments a counter N times; the reader
 ///        verifies the expected value.
@@ -59,10 +59,10 @@ static void reader_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   uint64_t *db = (uint64_t *)depv[0].ptr;
   uint64_t got = db ? *db : (uint64_t)-1;
   if (got == (uint64_t)N_ITERS) {
-    arts_printf("RELAXED_DRF: PASS value=%llu\n", (unsigned long long)got);
+    arts_printf("DB_DRF: PASS value=%llu\n", (unsigned long long)got);
   } else {
-    arts_printf("RELAXED_DRF: FAIL got=%llu expected=%d\n",
-                (unsigned long long)got, N_ITERS);
+    arts_printf("DB_DRF: FAIL got=%llu expected=%d\n", (unsigned long long)got,
+                N_ITERS);
   }
 }
 

@@ -58,17 +58,15 @@ if(HWLOC_INCLUDE_DIRS)
     target_include_directories(arts_compute PRIVATE ${HWLOC_INCLUDE_DIRS})
 endif()
 
-# DB coherence TU selection: under the OCR memory model exactly one protocol
-# TU is compiled (eager.c or lazy.c) together with the family-shared ownership
-# machinery (ownership.c); the RELAXED model compiles relaxed.c alone.  Each
-# TU defines its arts_handler_db_* / arts_coh_* bodies directly (declared in
-# coherence/coherence.h); the linker resolves the single compiled variant.
-# No model/protocol #ifdef inside these TUs.
-if(ARTS_MEMORY_MODEL STREQUAL "RELAXED")
-    set(DB_COHERENCE_MODEL_TU coherence/relaxed.c)
-elseif(ARTS_COHERENCE_PROTOCOL STREQUAL "EAGER")
+# DB coherence TU selection: MRNEW compiles one timing TU (eager.c or lazy.c)
+# plus the shared node-exclusive-writer ownership machinery (ownership.c); MRMW
+# compiles mrmw.c alone. Each TU defines its arts_handler_db_* / arts_coh_*
+# bodies directly; the linker resolves the single compiled variant.
+if(ARTS_COHERENCE_PROTOCOL STREQUAL "MRMW")
+    set(DB_COHERENCE_MODEL_TU coherence/mrmw.c)
+elseif(ARTS_PROTOCOL_TIMING STREQUAL "EAGER")
     set(DB_COHERENCE_MODEL_TU coherence/eager.c coherence/ownership.c)
-else() # OCR + LAZY (default)
+else() # MRNEW + LAZY (default)
     set(DB_COHERENCE_MODEL_TU coherence/lazy.c coherence/ownership.c)
 endif()
 

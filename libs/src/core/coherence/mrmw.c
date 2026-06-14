@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * RELAXED model translation unit: defines the RELAXED (DB-DRF)-specific
+ * MRMW protocol translation unit: defines the MRMW (DB-DRF)-specific
  * arts_handler_db_* / arts_db_* bodies directly (CMake links exactly this TU
- * for a RELAXED build) plus the RELAXED-only wire handlers/senders.
- * Compiled only for ARTS_MEMORY_MODEL=RELAXED (DB-DRF) (selected in
+ * for a MRMW build) plus the MRMW-only wire handlers/senders.
+ * Compiled only for ARTS_COHERENCE_PROTOCOL=MRMW (DB-DRF) (selected in
  * libs/src/core/CMakeLists.txt). Contains NO model/protocol preprocessor
  * logic.
  */
@@ -23,8 +23,8 @@
 #include "arts/system/threads.h" /* arts_global_rank_id */
 #include "arts/utils/atomics.h"  /* arts_atomic_* */
 
-/* ===== 8-case acquire dispatch (relaxed arm) =======================
- * Whole arts_handler_db_acquire body for the relaxed build.  Home holds the
+/* ===== 8-case acquire dispatch (MRMW arm) ==========================
+ * Whole arts_handler_db_acquire body for the MRMW build.  Home holds the
  * canonical buffer (maintained by sync WRITEBACK from every non-home writer).
  * RW and RO are unified — non-home acquires go through acquire_remote_ro in
  * both modes so the EDT parks (no list registration) and is woken by
@@ -57,20 +57,19 @@ void arts_handler_db_acquire(void *item, void *args) {
 
 bool arts_db_acquire_is_serialized(arts_db_access_mode_t mode) {
   (void)mode;
-  return false; /* relaxed: no ownership round; nothing is serialized */
+  return false; /* MRMW: no ownership round; nothing is serialized */
 }
 
-/* The relaxed model has no pending_rw queue (all modes park on
- * pending_snapshot), so the destroy/fail wake of parked waiters only drains
- * the snapshot reorder buffer.  (EAGER/LAZY define their own
- * arts_db_fail_trigger_pending in coherence/ownership.c, which additionally
- * drains pending_rw.) */
+/* MRMW has no pending_rw queue (all modes park on pending_snapshot), so the
+ * destroy/fail wake of parked waiters only drains the snapshot reorder buffer.
+ * (EAGER/LAZY define their own arts_db_fail_trigger_pending in
+ * coherence/ownership.c, which additionally drains pending_rw.) */
 void arts_db_fail_trigger_pending(struct arts_db_cache_s *cache) {
   arts_db_drain_pending_snapshot(cache);
 }
 
-/* ===== release_rw (relaxed arm) ===================================
- * The relaxed model drops its buffer ref in the tail (after the WRITEBACK
+/* ===== release_rw (MRMW arm) =======================================
+ * MRMW drops its buffer ref in the tail (after the WRITEBACK
  * reads buf->data).  Every non-home write must be pushed back to home
  * synchronously so home stays canonical before any subsequent acquire can see
  * fresh data; home itself needs no WRITEBACK.  R3 (rest > 0, non-home) and
@@ -90,7 +89,7 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
     new_version = arts_atomic_read_u64(&buf->version);
   }
   (void)arts_atomic_sub(&cache->writer_count,
-                        1); /* relaxed: rest is not consulted */
+                        1); /* MRMW: rest is not consulted */
   bool is_home = (arts_guid_get_rank(cache->db_guid) == arts_global_rank_id);
   if (!is_home && buf != NULL) {
     sem_t cv;
@@ -108,9 +107,9 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
   }
 }
 
-/* ===== cache_s lifecycle (relaxed: no pending_rw queue) ============
- * The relaxed model's cache struct omits the pending_rw field entirely, so
- * there is no model field-init / field-destroy: the wrapper just calls the
+/* ===== cache_s lifecycle (MRMW: no pending_rw queue) ===============
+ * The MRMW cache struct omits the pending_rw field entirely, so there is no
+ * protocol field-init / field-destroy: the wrapper just calls the
  * shared common steps (construct: common; destruct: buffer-NULL → snapshot
  * drain + home teardown).
  */
@@ -128,11 +127,11 @@ void arts_db_cache_destructor(struct arts_db_cache_s *cache) {
   arts_db_cache_common_destroy_post(cache); /* snapshot drain → home teardown */
 }
 
-/* ===== home-directory lifecycle (relaxed: only last_sent_version) == */
+/* ===== home-directory lifecycle (MRMW: only last_sent_version) ===== */
 
 void arts_db_home_init(struct arts_db_s *db, unsigned int rw_holder,
                        unsigned int nranks) {
-  /* Relaxed: no exclusive owner — rw_holder is unused. */
+  /* MRMW: no exclusive owner — rw_holder is unused. */
   (void)rw_holder;
   db->last_sent_version = arts_rank_u64_map_create(nranks);
 }
@@ -177,8 +176,7 @@ static void update_last_sent_max(struct arts_db_cache_s *cache,
 /* Cat-B pure body (OoO g_ooo_table[OOO_DB_SNAPSHOT_REQUEST]): the OoO engine
  * has already acquired the home db_s and pinned a ref across this call (cache
  * is its FIRST member), so there is no lookup / NULL-check / defer here.  The
- * relaxed model serves from home's canonical buffer with last_sent_version
- * dedup. */
+ * MRMW serves from home's canonical buffer with last_sent_version dedup. */
 void arts_handler_db_snapshot_request(void *item_v, void *args_v) {
   struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
   struct arts_ooo_args_db_snapshot_request_s *a =
@@ -217,9 +215,9 @@ void arts_handler_db_snapshot_request(void *item_v, void *args_v) {
  * its FIRST member); the dispatcher copies the trailing data payload into the
  * args blob after arts_ooo_args_db_writeback_s and this body reads it back from
  * (char *)a + sizeof(*a).  A WRITEBACK that races ahead of DB_CREATE defers and
- * re-issues on the install's drain.  The relaxed model uses WRITEBACK_NORMAL
- * only (no exclusive owner to transfer to), so the WB_AND_TRANSFER
- * ownership-chain relay is moot. */
+ * re-issues on the install's drain.  MRMW uses WRITEBACK_NORMAL only (no
+ * exclusive owner to transfer to), so the WB_AND_TRANSFER ownership-chain
+ * relay is moot. */
 void arts_handler_db_writeback(void *item_v, void *args_v) {
   struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
   struct arts_ooo_args_db_writeback_s *a =
@@ -231,7 +229,7 @@ void arts_handler_db_writeback(void *item_v, void *args_v) {
   if (a->cv != 0) {
     arts_send_db_writeback_ack(a->releaser, a->db_guid, a->cv);
   }
-  /* No WB_AND_TRANSFER relay under the relaxed model (no exclusive owner). */
+  /* No WB_AND_TRANSFER relay under MRMW (no exclusive owner). */
 }
 
 /* Cat-C pure body (WRITEBACK_ACK).  Cache-independent pointer-identity sem-post
@@ -251,9 +249,9 @@ void arts_handler_db_writeback_ack(void *item_v, void *args_v) {
 /* Cat-B pure body (OoO g_ooo_table[OOO_DB_DESTROY]): the OoO engine has already
  * acquired the home db_s and pinned a ref across this call (cache is its FIRST
  * member).  Order: roster fan-out + fail_trigger wake parked waiters FIRST,
- * then arts_route_table_set_destroyed LAST.  The relaxed model's roster source
- * is home->last_sent_version (same as the eager protocol); the relaxed model
- * has no pending_rw queue, so no lockreq drain. */
+ * then arts_route_table_set_destroyed LAST.  The MRMW roster source is
+ * home->last_sent_version (same as the eager protocol); MRMW has no
+ * pending_rw queue, so no lockreq drain. */
 void arts_handler_db_destroy(void *item_v, void *args_v) {
   struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
   struct arts_ooo_args_db_destroy_s *a =
@@ -276,7 +274,7 @@ void arts_handler_db_destroy(void *item_v, void *args_v) {
   (void)arts_route_table_set_destroyed(a->db_guid);
 }
 
-/* Case-D leaf: relaxed model has no exclusive owner — no rw_holder to publish
+/* Case-D leaf: MRMW has no exclusive owner — no rw_holder to publish
  * (no-op). */
 void arts_db_create_publish_holder(struct arts_db_s *db,
                                    unsigned int creator_rank) {
@@ -284,17 +282,17 @@ void arts_db_create_publish_holder(struct arts_db_s *db,
   (void)creator_rank;
 }
 
-/* The relaxed model has no exclusive-ownership protocol (no
- * OWNERSHIP_REQUEST, no INVALIDATE_NOTICE — its dispatcher fatals on both wire
- * messages), so its ooo_kind enum omits OOO_DB_OWNERSHIP_REQUEST and
- * OOO_DB_OWNERSHIP_INVALIDATE entirely.  The relaxed build therefore defines no
+/* MRMW has no exclusive-ownership protocol (no OWNERSHIP_REQUEST, no
+ * INVALIDATE_NOTICE — its dispatcher fatals on both wire messages), so its
+ * ooo_kind enum omits OOO_DB_OWNERSHIP_REQUEST and OOO_DB_OWNERSHIP_INVALIDATE
+ * entirely.  The MRMW build therefore defines no
  * arts_handler_db_ownership_request / _ownership_invalidate body — the real
  * bodies live in coherence/ownership.c / coherence/{eager,lazy}.c, which
- * RELAXED does not compile. */
+ * MRMW does not compile. */
 
-/* ===== create-time home buffer (relaxed: home is canonical) ======== */
+/* ===== create-time home buffer (MRMW: home is canonical) =========== */
 
-/* Case-D leaf: the relaxed model's home holds the canonical copy; there is no
+/* Case-D leaf: the MRMW home holds the canonical copy; there is no
  * creator WRITEBACK to wait for, so publish a version-1 zero buffer
  * immediately.  Without it the first home RW acquire (acquire_local) hands the
  * EDT a NULL payload. */

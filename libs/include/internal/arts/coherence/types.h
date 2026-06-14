@@ -71,7 +71,7 @@ extern "C" {
 #include <stdatomic.h>
 #endif
 /* Lazy home metadata embeds a per-rank reader bit-set by value. */
-#ifdef ARTS_COHERENCE_PROTOCOL_LAZY
+#ifdef ARTS_TIMING_LAZY
 #include "arts/rank_bitset.h"
 #endif
 
@@ -109,7 +109,7 @@ typedef _Atomic(unsigned int) arts_db_atomic_uint_t;
  * declared `volatile` and accessed exclusively through arts_atomic_*
  * (or arts_db_atomic_uint_t for the C11 _Atomic / C++-layout split).
  * The per-model #if defined(ARTS_COHERENCE_PROTOCOL_{EAGER,LAZY}) /
- * defined(ARTS_MEMORY_MODEL_RELAXED) selects which
+ * defined(ARTS_PROTOCOL_MRMW) selects which
  * machinery is compiled in for each consistency model.
  */
 
@@ -232,7 +232,7 @@ struct arts_home_lockreq_queue_s {
  *                  acquire_buf's CAS-loop against buffer->ref_count.
  *   pending_snapshot  Treiber stack of snapshot-response reorder-buffer
  *                  waiters (case-3 push only; drained whole on next install).
- *                  Parks all modes under the relaxed model (no
+ *                  Parks all modes under MRMW (no
  * ownership/pending_rw). buffer_pool    per-DB recycle pool of arts_db_buffer_s
  * (intrusive Treiber stack); buffers are never freed during the DB's lifetime.
  *
@@ -256,12 +256,12 @@ struct arts_db_cache_s {
    * original guid argument has been lost in the call chain. */
   arts_guid_t db_guid;
   uint64_t db_size;
-#if defined(ARTS_MEMORY_MODEL_RELAXED)
-  /* Relaxed: writer_count is a pure ref count.  The WRITEBACK ACK rendezvous is
+#if defined(ARTS_PROTOCOL_MRMW)
+  /* MRMW: writer_count is a pure ref count.  The WRITEBACK ACK rendezvous is
    * a stack-local sem_t created per release_rw, matched by pointer identity
    * (the &sem address rides the WRITEBACK packet and is echoed in the ACK) —
    * no per-cache seq state. */
-#elif defined(ARTS_COHERENCE_PROTOCOL_LAZY)
+#elif defined(ARTS_TIMING_LAZY)
   /* Lazy: owner-side dedup map.  Allocated lazily on first ownership; preserved
    * across ownership transfer (TRANSFER_OWNERSHIP serializes it). */
   struct arts_rank_to_u64_map_s *last_sent_version;
@@ -322,7 +322,7 @@ struct arts_db_s {
   /* Home-directory metadata — present only on the rank that is the GUID home
    * for this DB.  Non-home / lazy / creator-remote ranks allocate a cache-only
    * footprint of arts_db_cache_stub_size() bytes: it ends at the first home-arm
-   * field below (rw_holder for eager/lazy, last_sent_version for relaxed), so
+   * field below (rw_holder for eager/lazy, last_sent_version for MRMW), so
    * it INCLUDES
    * home_initialized but omits every home-arm field.  home_initialized MUST
    * stay in bounds: the cache destructor reads it on every free to decide
@@ -331,16 +331,16 @@ struct arts_db_s {
    * never through a stub. */
   bool home_initialized; /**< one-shot init sentinel (set by arts_db_home_init).
                           */
-#if defined(ARTS_COHERENCE_PROTOCOL_LAZY)
+#if defined(ARTS_TIMING_LAZY)
   arts_db_atomic_uint_t rw_holder;
   struct arts_home_lockreq_queue_s pending_rw; /* embedded Vyukov MPSC */
   arts_db_atomic_uint_t invalidate_in_flight;
   struct arts_rank_bitset_s
       cached_ranks; /* RO cached-rank roster, destroy fan-out */
   unsigned int pending_install_owner; /* baton-holder-written transfer target */
-#elif defined(ARTS_MEMORY_MODEL_RELAXED)
+#elif defined(ARTS_PROTOCOL_MRMW)
   struct arts_rank_to_u64_map_s *last_sent_version;
-#else /* eager/lazy (OCR model) */
+#else /* eager/lazy (MRNEW) */
   arts_db_atomic_uint_t rw_holder;
   struct arts_home_lockreq_queue_s pending_rw; /* embedded Vyukov MPSC */
   arts_db_atomic_uint_t invalidate_in_flight;
@@ -386,9 +386,9 @@ static inline uint64_t arts_db_total_size(const struct arts_db_s *db) {
  * arts_db_s) instead.
  * The stub ends at the first home-directory field after home_initialized
  * (protocol-dependent: rw_holder for eager/lazy, last_sent_version for
- * relaxed). */
+ * MRMW). */
 static inline uint64_t arts_db_cache_stub_size(void) {
-#if defined(ARTS_MEMORY_MODEL_RELAXED)
+#if defined(ARTS_PROTOCOL_MRMW)
   return offsetof(struct arts_db_s, last_sent_version);
 #else
   return offsetof(struct arts_db_s, rw_holder);

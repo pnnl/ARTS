@@ -46,12 +46,15 @@
 /// INSTALL_ACK is redirected by home to the OLD owner and reads a stale value.
 ///
 /// Per iteration (a clean write -> read happens-before chain):
-///   reset (rank 0, RW)  : re-own on home, write vprev      [finish_event e_reset]
-///   writer(rank W, RW)  : gated on e_reset; transfer 0->W;
-///                         write vnew                        [finish_event e_writer]
-///   reader(rank 0, RO)  : gated on e_writer; MUST read vnew [finish_event e_reader]
+///   reset (rank 0, RW)  : re-own on home, write vprev      [finish_event
+///   e_reset] writer(rank W, RW)  : gated on e_reset; transfer 0->W;
+///                         write vnew                        [finish_event
+///                         e_writer]
+///   reader(rank 0, RO)  : gated on e_writer; MUST read vnew [finish_event
+///   e_reader]
 /// main_edt waits on each finish event in order (e_reset, e_writer, e_reader),
-/// releasing the creator-token so each scope can drain and the next EDT can run.
+/// releasing the creator-token so each scope can drain and the next EDT can
+/// run.
 ///
 /// Config-agnostic: runs under configs/local/{1n,2n,3n,4n,2n_io}.cfg.  The
 /// 2n_io config (multiple sender/receiver threads -> wire reorder) is the one
@@ -91,7 +94,8 @@ static void *wd_thread(void *arg) {
   _exit(1);
 }
 
-/// reset: re-establish ownership on home (rank 0) and stamp a per-iter sentinel.
+/// reset: re-establish ownership on home (rank 0) and stamp a per-iter
+/// sentinel.
 void reset_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                arts_edt_dep_t depv[]) {
   (void)paramc;
@@ -102,7 +106,8 @@ void reset_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 }
 
-/// writer: RW acquire forces the home->W ownership transfer; write the new value.
+/// writer: RW acquire forces the home->W ownership transfer; write the new
+/// value.
 void writer_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                 arts_edt_dep_t depv[]) {
   (void)paramc;
@@ -113,7 +118,8 @@ void writer_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 }
 
-/// reader: RO acquire, causally after the writer; MUST observe the writer's value.
+/// reader: RO acquire, causally after the writer; MUST observe the writer's
+/// value.
 void reader_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                 arts_edt_dep_t depv[]) {
   (void)paramc;
@@ -136,7 +142,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== coherence_lazy_confirm_gate ===\n");
 
-#ifdef ARTS_MEMORY_MODEL_RELAXED
+#ifdef ARTS_PROTOCOL_MRMW
   arts_printf("SKIP: RELAXED has no ownership transfer\n");
   atomic_store(&g_done, 1);
   arts_shutdown();
@@ -144,15 +150,17 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 #endif
 
   unsigned int nranks = arts_get_total_ranks();
-  unsigned int W = (nranks > 1) ? 1u : 0u; /* writer rank (remote when possible) */
+  unsigned int W =
+      (nranks > 1) ? 1u : 0u; /* writer rank (remote when possible) */
 
   pthread_t wdt;
   pthread_create(&wdt, NULL, wd_thread, NULL);
   pthread_detach(wdt);
 
   void *ptr = NULL;
-  arts_guid_t db = arts_db_create(&ptr, sizeof(unsigned int), ARTS_DB,
-                                  ARTS_DB_PROP_NONE, &(arts_db_hint_t){.rank = 0});
+  arts_guid_t db =
+      arts_db_create(&ptr, sizeof(unsigned int), ARTS_DB, ARTS_DB_PROP_NONE,
+                     &(arts_db_hint_t){.rank = 0});
   ((unsigned int *)ptr)[0] = 0u;
   arts_db_release(db, DB_MODE_RW);
 
@@ -162,9 +170,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
     /* --- Phase 1: reset EDT re-establishes ownership on home (rank 0). --- */
     arts_guid_t e_reset = arts_event_create(&ARTS_EVENT_HINT_FINISH);
-    arts_guid_t rst = arts_edt_create(
-        reset_edt, 1, &vprev, 1,
-        &(arts_edt_hint_t){.rank = 0, .finish_event = e_reset});
+    arts_guid_t rst =
+        arts_edt_create(reset_edt, 1, &vprev, 1,
+                        &(arts_edt_hint_t){.rank = 0, .finish_event = e_reset});
     arts_add_dependence(db, rst, 0, DB_MODE_RW);
     /* Release the e_reset creator-token and wait for the reset EDT to finish.
      * When this returns, the reset EDT has completed and e_reset has fired,

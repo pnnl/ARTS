@@ -2,10 +2,10 @@
  *
  * EAGER protocol translation unit: defines the EAGER-specific
  * arts_handler_db_* / arts_db_* bodies directly (CMake links exactly this TU
- * for an OCR+EAGER build) plus the EAGER-only wire handlers/senders.
- * Compiled only for ARTS_MEMORY_MODEL=OCR with ARTS_COHERENCE_PROTOCOL=EAGER
- * (selected in libs/src/core/CMakeLists.txt). Contains NO model/protocol
- * preprocessor logic.
+ * for an MRNEW+EAGER build) plus the EAGER-only wire handlers/senders.
+ * Compiled only for ARTS_COHERENCE_PROTOCOL=MRNEW with
+ * ARTS_PROTOCOL_TIMING=EAGER (selected in libs/src/core/CMakeLists.txt).
+ * Contains NO protocol/timing preprocessor logic.
  */
 #include <semaphore.h>
 #include <stdbool.h>
@@ -538,8 +538,7 @@ void arts_handler_db_ownership_response(
    * exactly the pre-grant waiter set.  The whole scheme is commutative+signed:
    * sentinel(+1)+guard(+1)+drain(+1 each)+INVALIDATE(-1)+ release(-1)+guard(-1)
    * settle to 0 in any order; only the decrement that crosses to exactly 0
-   * ships ownership.  GRANT is eager/lazy only (no GRANT in the relaxed
-   * protocol). */
+   * ships ownership.  GRANT is eager/lazy only (no GRANT in MRMW). */
   arts_atomic_add(&cache->writer_count, 2u);
   cache->ownership_req_in_flight = 0;
   /* Drain pending_rw — pop every queued waiter in FIFO order via the

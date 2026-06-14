@@ -65,7 +65,7 @@
 
 /* Protocol-agnostic cache_s field init.  The per-protocol arts_db_cache_init
  * wrapper (coherence/<protocol>.c) runs its protocol-specific field-init
- * (eager/lazy pending_rw queue + lazy dedup-map/sentinel; relaxed none) BEFORE
+ * (eager/lazy pending_rw queue + lazy dedup-map/sentinel; MRMW none) BEFORE
  * calling this, so the Vyukov MPSC stub is wired before any push could land. */
 void arts_db_cache_common_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
                                uint64_t db_size, arts_db_init_kind_t kind,
@@ -99,7 +99,7 @@ void arts_db_cache_common_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
   } else if (kind == ARTS_DB_INIT_CREATOR_REMOTE) {
     c->writer_count = 2;
   }
-  /* Eager/relaxed WRITEBACK ACK rendezvous is a stack-local sem_t per
+  /* Eager/MRMW WRITEBACK ACK rendezvous is a stack-local sem_t per
    * release_rw (pointer-identity match) — no per-cache seq fields to
    * initialize.  Lazy owner-side fields (dedup map + transfer sentinel) are
    * armed by the protocol init hook above. */
@@ -250,7 +250,7 @@ void *arts_db_acquire_local(struct arts_db_cache_s *cache) {
 
 /* Case 2/6 (RW local fast path) and Case 4/8 (remote-RW path) live in
  * coherence/ownership.c — they touch the OCR-model home-directory cache fields
- * (pending_rw, ownership_req_in_flight) that the RELAXED cache layout does not
+ * (pending_rw, ownership_req_in_flight) that the MRMW cache layout does not
  * have. */
 
 /* ===== Case 7: remote-RO / remote-snapshot path =================== */
@@ -273,8 +273,8 @@ arts_db_acquire_remote_ro(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
 /* The 8-case acquire dispatcher arts_handler_db_acquire is protocol-specific:
  * EAGER and LAZY define it in coherence/ownership.c-backed
  * coherence/{eager,lazy}.c (single-owner OWNERSHIP_REQUEST / GRANT path,
- * differing only on the RO-has-local-data predicate); RELAXED defines its
- * unified home-canonical body in coherence/relaxed.c.  The shared remote-RO
+ * differing only on the RO-has-local-data predicate); MRMW defines its
+ * unified home-canonical body in coherence/mrmw.c.  The shared remote-RO
  * path (arts_db_acquire_remote_ro) and the local-buffer fast read
  * (arts_db_acquire_local) above are reused by all three.
  */
@@ -308,7 +308,7 @@ void arts_db_drain_pending_snapshot(struct arts_db_cache_s *cache) {
 /* ===== writeback ACK wait (shared coherence service) =================
  *
  * Synchronous WRITEBACK with a stack-local semaphore matched by pointer
- * identity.  Called by the eager and relaxed release-tail bodies (the lazy
+ * identity.  Called by the eager and MRMW release-tail bodies (the lazy
  * tail uses TRANSFER_OWNERSHIP and never waits on a WRITEBACK_ACK).  Declared
  * in coherence/coherence.h so the protocol TUs can invoke it. */
 void await_writeback_ack(sem_t *cv) {
@@ -335,7 +335,7 @@ void await_writeback_ack(sem_t *cv) {
 /* arts_db_release_rw is protocol-specific (the version bump is shared, but the
  * pre-decrement buffer-ref drop and the post-decrement transfer/writeback
  * decision differ per protocol), so its whole body lives in
- * coherence/{eager,lazy,relaxed}.c.  Eager and relaxed call await_writeback_ack
+ * coherence/{eager,lazy,mrmw}.c.  Eager and MRMW call await_writeback_ack
  * above for the synchronous-WRITEBACK rendezvous. */
 
 void arts_db_release_ro(struct arts_db_cache_s *cache) {
@@ -351,7 +351,7 @@ void arts_db_release_ro(struct arts_db_cache_s *cache) {
 
 /* arts_db_fail_trigger_pending (destroy/fail wake of parked waiters) is
  * protocol-specific: EAGER/LAZY drain the pending_rw FIFO
- * (coherence/ownership.c), RELAXED has no pending_rw (coherence/relaxed.c).
+ * (coherence/ownership.c), MRMW has no pending_rw (coherence/mrmw.c).
  * Both arms then drain the snapshot reorder buffer via
  * arts_db_drain_pending_snapshot above. */
 
@@ -369,7 +369,7 @@ void arts_db_destroy_remote(arts_guid_t db_guid) {
  *
  * The full destructor arts_db_cache_destructor is model-specific (it sequences
  * the model field-destroy between these two shared steps) and lives in
- * coherence/{eager,lazy,relaxed}.c.  The agnostic steps are split into pre
+ * coherence/{eager,lazy,mrmw}.c.  The agnostic steps are split into pre
  * (the buffer-NULL that must run first) and post (snapshot drain + home
  * teardown);
  * the per-model wrapper runs pre → model-destroy → post.  cache_s itself is

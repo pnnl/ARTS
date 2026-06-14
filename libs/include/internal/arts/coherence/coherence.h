@@ -163,9 +163,9 @@ void mark_edt_secured_by_guid(arts_guid_t edt_guid, unsigned int slot);
 
 /* Per-protocol classification used by the arts_db_acquire_all driver: returns
  * true for deps that take exclusive ownership through the home directory and
- * must be GUID-serialized (eager/lazy RW). RO is never serialized; relaxed
+ * must be GUID-serialized (eager/lazy RW). RO is never serialized; MRMW
  * serializes nothing (every acquire is a home snapshot). Defined in
- * coherence/{eager,lazy,relaxed}.c. */
+ * coherence/{eager,lazy,mrmw}.c. */
 bool arts_db_acquire_is_serialized(arts_db_access_mode_t mode);
 
 /*--- Release path --------------------------------------------------------
@@ -200,7 +200,7 @@ void arts_db_release_ro(struct arts_db_cache_s *cache);
 
 /* Block on a stack-local semaphore until the matching WRITEBACK_ACK posts it
  * (pointer identity); returns early if teardown begins.  Used by the eager and
- * relaxed release-tail bodies. */
+ * MRMW release-tail bodies. */
 void await_writeback_ack(sem_t *cv);
 
 /* Take the EDT's strong buffer ref and return buf->data (NULL when no buffer is
@@ -224,7 +224,7 @@ void arts_db_drain_pending_snapshot(struct arts_db_cache_s *cache);
 
 /* Destroy/fail fan-out: wake every parked waiter (RW FIFO + snapshot reorder
  * buffer) with a NULL ptr so the EDT observes the destroyed DB.  The RW-queue
- * drain is protocol-specific (eager/lazy drain pending_rw, relaxed has none);
+ * drain is protocol-specific (eager/lazy drain pending_rw, MRMW has none);
  * all arms drain pending_snapshot via arts_db_drain_pending_snapshot. */
 void arts_db_fail_trigger_pending(struct arts_db_cache_s *cache);
 
@@ -243,8 +243,8 @@ void arts_db_cache_common_destroy_pre(struct arts_db_cache_s *cache);
 void arts_db_cache_common_destroy_post(struct arts_db_cache_s *cache);
 
 /* Case-D (arts_handler_db_create) per-protocol leaf functions.
- * publish_holder: eager/lazy store creator_rank as the home rw_holder, relaxed
- * no-op; install_home_buffer: relaxed installs a version-1 zero buffer (home
+ * publish_holder: eager/lazy store creator_rank as the home rw_holder, MRMW
+ * no-op; install_home_buffer: MRMW installs a version-1 zero buffer (home
  * is always canonical), eager/lazy defer the install to the creator's first
  * WRITEBACK (no-op here).  Defined once per protocol TU. */
 void arts_db_create_publish_holder(struct arts_db_s *db,
@@ -252,9 +252,9 @@ void arts_db_create_publish_holder(struct arts_db_s *db,
 void arts_db_create_install_home_buffer(struct arts_db_cache_s *cache,
                                         uint64_t db_size);
 
-#if defined(ARTS_MEMORY_MODEL_OCR)
-/* OCR-model family shared acquire helpers (defined in
- * coherence/ownership.c, linked only into OCR builds).  Called by the
+#if defined(ARTS_PROTOCOL_MRNEW)
+/* MRNEW shared acquire helpers (defined in
+ * coherence/ownership.c, linked only into MRNEW builds).  Called by the
  * EAGER/LAZY arts_handler_db_acquire bodies; the RO-path predicate is the only
  * divergence between EAGER and LAZY, so it stays inline in each protocol's
  * handler.
@@ -287,7 +287,7 @@ void arts_db_ownership_return(struct arts_db_cache_s *cache);
  * handler when new_owner == self. The handler advances the cursors of all RW
  * waiters parked on db_guid at this rank (no OoO defer: the requester
  * lazy-installs the cache before it sends OWNERSHIP_REQUEST). Eager/lazy only;
- * the relaxed protocol has no exclusive-ownership concept. */
+ * MRMW has no exclusive-ownership concept. */
 void arts_send_db_ownership_proceed(unsigned int new_owner,
                                     arts_guid_t db_guid);
 void arts_handler_db_ownership_proceed(arts_guid_t db_guid);
@@ -299,7 +299,7 @@ void arts_pending_rw_queue_for_each(struct arts_pending_rw_queue_s *q,
                                                unsigned int slot, void *ctx),
                                     void *ctx);
 
-/* OCR GRANT drain: pop pending_rw FIFO, bump writer_count per waiter, wake
+/* MRNEW GRANT drain: pop pending_rw FIFO, bump writer_count per waiter, wake
  * each parked EDT.  Defined in coherence/ownership.c; called from the EAGER
  * GRANT handler and the LAZY TRANSFER_OWNERSHIP handler. */
 void arts_db_drain_pending_rw_after_grant(struct arts_db_cache_s *cache,
@@ -307,16 +307,16 @@ void arts_db_drain_pending_rw_after_grant(struct arts_db_cache_s *cache,
 
 /* Home-side local ownership hand-off to the next queued waiter (or sentinel
  * restore when none).  EAGER advances the chain; LAZY is a no-op stub.  Called
- * from the OCR-family invalidate-transfer path. */
+ * from the MRNEW invalidate-transfer path. */
 void arts_db_local_transfer_now(struct arts_db_cache_s *cache);
 
 /* Home-side ownership-transfer trigger: home advances the chain locally;
  * non-home ships its buffer to home (WB_AND_TRANSFER) or, for a sentinel DB, a
- * data-less ownership_return.  OCR model only (coherence/ownership.c). */
+ * data-less ownership_return.  MRNEW only (coherence/ownership.c). */
 void arts_db_invalidate_transfer(struct arts_db_cache_s *cache);
-#endif /* OCR model */
+#endif /* MRNEW */
 
-#if defined(ARTS_COHERENCE_PROTOCOL_EAGER)
+#if defined(ARTS_TIMING_EAGER)
 /* Eager ownership-transfer chain advance: pop the next queued RW requester,
  * publish it as the new rw_holder, GRANT it the buffer (monotonic-dedup), and
  * decide whether the transfer chain continues.  Holds home.invalidate_in_flight
