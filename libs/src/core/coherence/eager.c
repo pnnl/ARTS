@@ -46,7 +46,7 @@ void arts_handler_db_acquire(void *item, void *args) {
    * INVALIDATE races ahead of its GRANT (multi-receiver wire reorder) —
    * negative means NOT owner.  An unsigned compare would treat it as owner
    * and serve RO from a non-owned (stale) buffer. */
-  bool is_owner = ((int)cache->writer_count > 0);
+  bool is_owner = ((int)arts_atomic_read(&cache->writer_count) > 0);
 
   if (mode == DB_MODE_RO) {
     if (is_home ||

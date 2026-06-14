@@ -50,7 +50,7 @@ bool arts_db_acquire_rw_local_fast(struct arts_db_cache_s *cache,
    * release reads 1 instead of 0, the ownership transfer never fires, and
    * every queued acquirer on every rank is stranded. */
   while (1) {
-    unsigned int wc = cache->writer_count;
+    unsigned int wc = arts_atomic_read(&cache->writer_count);
     if ((int)wc <= 0) {
       return false; /* not owner (incl. transient negative) — go remote-RW. */
     }
