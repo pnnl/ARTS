@@ -223,6 +223,16 @@ arts_rank_u64_map_deserialize(const void *in, size_t size,
 
 void arts_db_lazy_send_ownership_response(struct arts_db_cache_s *cache) {
   unsigned int new_owner = cache->incoming_new_owner;
+  /* Re-arm the sentinel BEFORE the send, not after.  A self-transfer
+   * (new_owner == this rank) ships via an inline self-dispatch that recursively
+   * runs the new owner's install → CONFIRM → INSTALL_ACK → home's next transfer
+   * round → that round's INVALIDATE, which republishes incoming_new_owner.  If
+   * the re-arm ran after the send it would clobber that freshly-published next
+   * target with the sentinel, so the release that later drives writer_count to
+   * 0 would read "no transfer pending" and ship nothing — stranding the next
+   * owner.  Clearing it up front (we already captured new_owner) leaves any
+   * nested round's publish intact. */
+  cache->incoming_new_owner = ARTS_LAZY_NO_PENDING_OWNER;
   arts_shared_ptr_t buf_h = arts_db_buf_acquire(cache);
   struct arts_db_buffer_s *buf =
       (struct arts_db_buffer_s *)arts_shared_get(buf_h);
@@ -235,9 +245,6 @@ void arts_db_lazy_send_ownership_response(struct arts_db_cache_s *cache) {
     arts_send_db_ownership_response(new_owner, cache->db_guid,
                                     /*version=*/0, empty_map, sizeof(empty_map),
                                     /*data=*/NULL, /*data_size=*/0);
-    /* Re-arm the sentinel: a future INVALIDATE round publishes a fresh target.
-     */
-    cache->incoming_new_owner = ARTS_LAZY_NO_PENDING_OWNER;
     return;
   }
 
@@ -266,9 +273,6 @@ void arts_db_lazy_send_ownership_response(struct arts_db_cache_s *cache) {
    * map permanently (until DB destroy), so in-flight RO REDIRECTs that still
    * name this rank as owner are served from its own copy. */
   arts_db_buf_release(&buf_h);
-  /* Re-arm the sentinel: this owner has fully shipped; a future INVALIDATE
-   * round will publish a fresh target. */
-  cache->incoming_new_owner = ARTS_LAZY_NO_PENDING_OWNER;
 }
 
 void arts_db_lazy_start_invalidate_round(struct arts_db_cache_s *cache,
@@ -337,10 +341,10 @@ void arts_handler_db_ownership_response(void *payload, size_t size) {
    * would clobber a racing INVALIDATE's decrement and lose the transfer
    * (distributed hang). */
   /* Gate this rank's RW execution until home confirms the rw_holder flip. Set
-   * the flag BEFORE the writer_count bump (plain store ordered before the atomic
-   * RMW, same discipline as incoming_new_owner vs the INVALIDATE sub): a worker
-   * doing a fresh RW acquire reads writer_count then the gate, so any observer
-   * of the bumped count must also observe the gate. */
+   * the flag BEFORE the writer_count bump (plain store ordered before the
+   * atomic RMW, same discipline as incoming_new_owner vs the INVALIDATE sub): a
+   * worker doing a fresh RW acquire reads writer_count then the gate, so any
+   * observer of the bumped count must also observe the gate. */
   cache->ownership_unconfirmed = 1u;
   /* Sentinel (+1) + drain guard (+1), single op (0->2). The guard is held until
    * the CONFIRM handler, so a next-round INVALIDATE racing ahead of CONFIRM
@@ -422,8 +426,9 @@ void arts_handler_db_ownership_response_ack(void *item_v, void *args_v) {
 
 /* Cat-C pure body (OWNERSHIP_CONFIRM, new-owner side). Home has flipped
  * rw_holder to this rank; it is now safe for this rank's RW EDTs to run and
- * make their writes observable. Drain the RW waiters deferred at TRANSFER, clear
- * the gate, and remove the drain guard (the relocated 0-edge ship-check). */
+ * make their writes observable. Drain the RW waiters deferred at TRANSFER,
+ * clear the gate, and remove the drain guard (the relocated 0-edge ship-check).
+ */
 void arts_handler_db_ownership_confirm(void *item_v, void *args_v) {
   (void)args_v;
   struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
@@ -435,14 +440,16 @@ void arts_handler_db_ownership_confirm(void *item_v, void *args_v) {
 
   /* Drain the RW waiters that the TRANSFER handler deferred (this is the work
    * moved out of arts_handler_db_ownership_response). */
-  arts_db_drain_pending_rw_after_grant(cache, /*version=*/0, /*has_next=*/false);
+  arts_db_drain_pending_rw_after_grant(cache, /*version=*/0,
+                                       /*has_next=*/false);
 
   /* Remove the drain guard held across the INSTALL_ACK→CONFIRM round trip. If a
    * next-round INVALIDATE arrived between the flip and this CONFIRM it withdrew
-   * the sentinel (commutative signed counter); if that drives the count to 0 and
-   * a transfer target is pending and no local writer remains, we are the unique
-   * actor that ships TRANSFER_OWNERSHIP to the next owner. Otherwise this rank
-   * retains ownership and its drained EDTs ship on their own release 0-edge. */
+   * the sentinel (commutative signed counter); if that drives the count to 0
+   * and a transfer target is pending and no local writer remains, we are the
+   * unique actor that ships TRANSFER_OWNERSHIP to the next owner. Otherwise
+   * this rank retains ownership and its drained EDTs ship on their own release
+   * 0-edge. */
   if ((int)arts_atomic_sub(&cache->writer_count, 1) == 0 &&
       cache->incoming_new_owner != ARTS_LAZY_NO_PENDING_OWNER) {
     arts_db_lazy_send_ownership_response(cache);
