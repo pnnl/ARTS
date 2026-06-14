@@ -60,6 +60,7 @@ set(TEST_PROGRAMS
     coherence_rw_multihop
     coherence_rw_pipeline
     coherence_lazy_ownership_reorder
+    coherence_lazy_confirm_gate
     lockfree_stack_stress
     lockfree_pool_stress
     tiered_pool_stress
@@ -672,6 +673,14 @@ set_tests_properties(coherence_lazy_ownership_reorder PROPERTIES
     RESOURCE_LOCK "arts_runtime"
     ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/2n_io.cfg;default_ports=${port_base}"
 )
+
+# LAZY stale-RO ownership-confirm gate: RO acquire causally ordered after a
+# remote RW writer must observe the writer's value, not a stale snapshot from
+# the old owner.  The race window is home's rw_holder lag behind INSTALL_ACK.
+# The 2n_io config (multiple receiver threads -> wire reorder) exposes it;
+# 1n passes trivially (no ownership transfer).  RELAXED SKIPs cleanly.
+register_single_node_test(coherence_lazy_confirm_gate TIMEOUT 120)
+register_multinode_test(coherence_lazy_confirm_gate TIMEOUT 120)
 
 # --- RELAXED-specific test binaries ---
 # These tests target the RELAXED (DB-DRF) memory model.  They are built

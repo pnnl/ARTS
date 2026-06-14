@@ -278,6 +278,13 @@ struct arts_db_cache_s {
    * same-node RW EDTs piggyback on the in-flight one and are picked up by
    * GRANT's drain. */
   volatile unsigned int ownership_req_in_flight;
+  /* Set (1) when a TRANSFER_OWNERSHIP installs the buffer on this rank but home
+   * has not yet flipped rw_holder to us; cleared (0) when home's CONFIRM
+   * arrives. While set, this rank holds the data + ownership sentinel for
+   * accounting but must NOT run RW EDTs (their writes would be observable before
+   * the directory names us — the stale-RO window). Gates both parked and fresh
+   * RW acquires. */
+  volatile unsigned int ownership_unconfirmed;
   /* Vyukov MPSC queue of RW waiters parked on this rank. */
   struct arts_pending_rw_queue_s pending_rw;
 #else

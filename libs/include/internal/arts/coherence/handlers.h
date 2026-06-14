@@ -252,6 +252,19 @@ void arts_send_db_snapshot_redirect(unsigned int owner_rank,
 void arts_send_db_ownership_response_ack(unsigned int home_rank,
                                          arts_guid_t db_guid, uint64_t version);
 
+/* Send OWNERSHIP_CONFIRM from home to the new owner C after home has flipped
+ * rw_holder to C. Self-send dispatches the handler inline. */
+void arts_send_db_ownership_confirm(unsigned int new_owner_rank,
+                                    arts_guid_t db_guid);
+
+/* Cat-C pure body (OWNERSHIP_CONFIRM, new-owner side): item_v is the db_s the
+ * dispatcher acquired (cache is its first member); args_v is unused. Drains the
+ * parked RW waiters that the TRANSFER handler deferred, clears the gate, and
+ * removes the drain guard. NOT OoO-deferrable — the dispatcher looks the cache
+ * up with a held ref and, on a MISS (DB destroyed), SILENTLY DROPS (the gated
+ * waiters are woken by the destroy fan-out instead). */
+void arts_handler_db_ownership_confirm(void *item_v, void *args_v);
+
 /* Send the lazy OWNERSHIP_RESPONSE (TRANSFER_OWNERSHIP) to
  * cache->incoming_new_owner: serialize last_sent_version + buffer and fire.
  * Called inline from the INVALIDATE_NOTICE handler and release_rw rest==0. */

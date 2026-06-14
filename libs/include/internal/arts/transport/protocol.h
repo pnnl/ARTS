@@ -84,6 +84,11 @@ enum arts_msg_type {
    * next owner of this DB; advance your RW acquire cursor." Sent alongside the
    * ownership INVALIDATE. Eager/lazy only. Sequential append, no gaps. */
   MSG_DB_OWNERSHIP_PROCEED,
+  /* Lazy-protocol-only: home → new owner C, after home has flipped rw_holder to
+   * C (at INSTALL_ACK). "The directory now names you; you may run your RW EDT."
+   * Gates C's RW execution so its write becomes observable only after the
+   * directory reflects C (no stale-RO window). Sequential append, no gaps. */
+  MSG_DB_OWNERSHIP_CONFIRM,
 
   MSG_COUNT, /* sentinel — keep last; used for array sizing */
 };
@@ -234,6 +239,14 @@ struct ARTS_PACKED arts_msg_ownership_return_packet_s {
 };
 
 struct ARTS_PACKED arts_msg_ownership_proceed_packet_s {
+  struct arts_msg_header_s header;
+  arts_guid_t db_guid;
+};
+
+/* OWNERSHIP_CONFIRM: home → new owner C. Body = db_guid(8). No version: C
+ * already holds its installed version. Lazy-only by use (eager never sends it);
+ * the struct is unconditional like the PROCEED packet. */
+struct ARTS_PACKED arts_msg_ownership_confirm_packet_s {
   struct arts_msg_header_s header;
   arts_guid_t db_guid;
 };

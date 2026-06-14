@@ -544,9 +544,25 @@ void arts_transport_dispatch_packet(struct arts_msg_header_s *packet) {
     arts_shared_release(&h);
     break;
   }
+  case MSG_DB_OWNERSHIP_CONFIRM: {
+    ARTS_DEBUG("Lazy OWNERSHIP_CONFIRM Received");
+    struct arts_msg_ownership_confirm_packet_s *pack =
+        (struct arts_msg_ownership_confirm_packet_s *)(packet);
+    /* Cat-C lookup-acquire-or-drop: HIT runs the confirm body on the ref-pinned
+     * db_s; MISS (DB destroyed) silently drops — the gated waiters are woken by
+     * the destroy fan-out. */
+    arts_shared_ptr_t h = arts_route_table_lookup_db(pack->db_guid);
+    struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(h);
+    if (db != NULL) {
+      arts_handler_db_ownership_confirm(db, NULL);
+    }
+    arts_shared_release(&h);
+    break;
+  }
 #else  /* !ARTS_COHERENCE_PROTOCOL_LAZY */
   case MSG_DB_SNAPSHOT_REDIRECT:
-  case MSG_DB_OWNERSHIP_RESPONSE_ACK: {
+  case MSG_DB_OWNERSHIP_RESPONSE_ACK:
+  case MSG_DB_OWNERSHIP_CONFIRM: {
     ARTS_ERROR("eager build received lazy-only message type %d from rank %u — "
                "binary mode mismatch?",
                packet->message_type, packet->rank);

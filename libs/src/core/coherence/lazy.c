@@ -65,7 +65,14 @@ void arts_handler_db_acquire(void *item, void *args) {
     return;
   }
   /* RW */
-  if (is_owner && arts_db_acquire_rw_local_fast(cache, dep)) {
+  /* Gate: a TRANSFER installed our buffer + sentinel but home has not confirmed
+   * the rw_holder flip yet. Running now would make this write observable before
+   * the directory names us (the stale-RO window), so a fresh RW acquire parks
+   * until CONFIRM drains it. ownership_req_in_flight is held by the in-flight
+   * round, so acquire_remote_rw parks without issuing a duplicate request. */
+  bool can_run_rw =
+      is_owner && (arts_atomic_read(&cache->ownership_unconfirmed) == 0);
+  if (can_run_rw && arts_db_acquire_rw_local_fast(cache, dep)) {
     arts_db_acquire_resolved(edt, slot); /* data here, writer_count bumped */
     return;
   }
@@ -135,6 +142,7 @@ void arts_db_cache_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
    * grant; incoming_new_owner starts at the sentinel (no transfer pending). */
   c->last_sent_version = NULL;
   c->incoming_new_owner = ARTS_LAZY_NO_PENDING_OWNER;
+  c->ownership_unconfirmed = 0u;
   arts_db_cache_common_init(c, db_guid, db_size, kind, creator_rank);
 }
 
@@ -328,41 +336,31 @@ void arts_handler_db_ownership_response(void *payload, size_t size) {
    * the drain sees exactly the pre-TRANSFER waiter set.  An absolute swap(1)
    * would clobber a racing INVALIDATE's decrement and lose the transfer
    * (distributed hang). */
+  /* Gate this rank's RW execution until home confirms the rw_holder flip. Set
+   * the flag BEFORE the writer_count bump (plain store ordered before the atomic
+   * RMW, same discipline as incoming_new_owner vs the INVALIDATE sub): a worker
+   * doing a fresh RW acquire reads writer_count then the gate, so any observer
+   * of the bumped count must also observe the gate. */
+  cache->ownership_unconfirmed = 1u;
+  /* Sentinel (+1) + drain guard (+1), single op (0->2). The guard is held until
+   * the CONFIRM handler, so a next-round INVALIDATE racing ahead of CONFIRM
+   * cannot zero the count and ship before this rank has used its ownership. */
   arts_atomic_add(&cache->writer_count, 2u);
-  /* Clear ownership_req_in_flight so subsequent RW acquires can kick new
-   * OWNERSHIP_REQUEST rounds if needed. */
-  cache->ownership_req_in_flight = 0;
 
-  /* Drain local RW waiters + any case-3 snapshot reorder-buffer waiters that
-   * this install now satisfies. */
-  arts_db_drain_pending_rw_after_grant(cache, hdr->version,
-                                       /*has_next=*/false);
+  /* RW drain is DEFERRED to the CONFIRM handler (home has not flipped rw_holder
+   * to us yet). The snapshot + OoO drains stay: a parked RO waiter served here
+   * gets the transferred (pre-write) version, which is correct, and a reordered
+   * INVALIDATE deferred on a previously-missing cache replays now. */
   arts_db_drain_pending_snapshot(cache);
-  /* Drain the OoO slot: TRANSFER_OWNERSHIP installs this rank's cache, so an
-   * INVALIDATE_NOTICE that raced ahead of it (two-wire reorder) and deferred on
-   * a missing cache now replays against the just-installed cache (§6.1).
-   * Idempotent when no INVALIDATE is queued. */
   arts_ooo_drain_guid(db_guid);
 
-  /* Remove the drain guard.  Held >= 1 across the sentinel-add + per-waiter
-   * drain so a commutative INVALIDATE(-1) could not transiently zero the count
-   * mid-drain (the same guard the eager GRANT uses); its signed -1 performs the
-   * deferred 0-crossing check.  Today home publishes rw_holder=this rank only
-   * on the INSTALL_ACK below, so no INVALIDATE targets us during this handler
-   * and the fire branch is unreachable — the guard makes correctness
-   * independent of that delivery ordering rather than relying on it. */
+  /* No racing INVALIDATE can have reached us yet: home targets this rank as an
+   * INVALIDATE recipient only after the rw_holder flip, which needs this
+   * INSTALL_ACK. So incoming_new_owner == NONE here — send INSTALL_ACK
+   * unconditionally. ownership_req_in_flight stays 1 until CONFIRM so fresh RW
+   * acquires in the gate window park without issuing a duplicate request. */
   unsigned int home_rank = arts_guid_get_rank(db_guid);
-  if ((int)arts_atomic_sub(&cache->writer_count, 1) == 0 &&
-      cache->incoming_new_owner != ARTS_LAZY_NO_PENDING_OWNER) {
-    /* A racing INVALIDATE withdrew the sentinel and no local writer remains: we
-     * are the unique transfer actor.  Ship to the pending owner and do NOT
-     * INSTALL_ACK — we no longer hold ownership. */
-    arts_db_lazy_send_ownership_response(cache);
-  } else {
-    /* Normal path: confirm installation to home so home can update rw_holder.
-     */
-    arts_send_db_ownership_response_ack(home_rank, db_guid, hdr->version);
-  }
+  arts_send_db_ownership_response_ack(home_rank, db_guid, hdr->version);
 }
 
 /* ===== Lazy INSTALL_ACK handler (home A) =============================== */
@@ -381,6 +379,12 @@ void arts_handler_db_ownership_response_ack(void *item_v, void *args_v) {
   /* Publish the new rw_holder (visible to GET_DATA redirect path). */
   unsigned int new_owner = db->pending_install_owner;
   atomic_store_explicit(&db->rw_holder, new_owner, memory_order_release);
+
+  /* The directory now names the new owner: tell it to run its gated RW EDTs.
+   * CONFIRM and the next-round INVALIDATE below are both home→new_owner and may
+   * reorder under multiple receivers; the new owner's drain guard absorbs that,
+   * so send order does not matter — CONFIRM is sent first. */
+  arts_send_db_ownership_confirm(new_owner, cache->db_guid);
 
   /* Drain-or-release retry loop: try to start the next transfer round
    * if there are pending_rw requests, otherwise release the baton. */
@@ -411,6 +415,37 @@ void arts_handler_db_ownership_response_ack(void *item_v, void *args_v) {
       return;
     }
     /* Re-acquired the baton; loop to pop and start the next round. */
+  }
+}
+
+/* ===== Lazy OWNERSHIP_CONFIRM handler (new owner C) ==================== */
+
+/* Cat-C pure body (OWNERSHIP_CONFIRM, new-owner side). Home has flipped
+ * rw_holder to this rank; it is now safe for this rank's RW EDTs to run and
+ * make their writes observable. Drain the RW waiters deferred at TRANSFER, clear
+ * the gate, and remove the drain guard (the relocated 0-edge ship-check). */
+void arts_handler_db_ownership_confirm(void *item_v, void *args_v) {
+  (void)args_v;
+  struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
+
+  /* Open the gate: fresh RW acquires may now take the fast path, and the
+   * coalescing flag is released so a future round can re-issue. */
+  cache->ownership_unconfirmed = 0u;
+  cache->ownership_req_in_flight = 0u;
+
+  /* Drain the RW waiters that the TRANSFER handler deferred (this is the work
+   * moved out of arts_handler_db_ownership_response). */
+  arts_db_drain_pending_rw_after_grant(cache, /*version=*/0, /*has_next=*/false);
+
+  /* Remove the drain guard held across the INSTALL_ACK→CONFIRM round trip. If a
+   * next-round INVALIDATE arrived between the flip and this CONFIRM it withdrew
+   * the sentinel (commutative signed counter); if that drives the count to 0 and
+   * a transfer target is pending and no local writer remains, we are the unique
+   * actor that ships TRANSFER_OWNERSHIP to the next owner. Otherwise this rank
+   * retains ownership and its drained EDTs ship on their own release 0-edge. */
+  if ((int)arts_atomic_sub(&cache->writer_count, 1) == 0 &&
+      cache->incoming_new_owner != ARTS_LAZY_NO_PENDING_OWNER) {
+    arts_db_lazy_send_ownership_response(cache);
   }
 }
 
@@ -493,6 +528,20 @@ void arts_handler_db_destroy(void *item_v, void *args_v) {
       if (q_rank != self) {
         arts_send_db_cache_destroy(q_rank, a->db_guid);
       }
+    }
+  }
+  /* In-flight ownership transfer: the new owner C lives only in
+   * pending_install_owner during [pop at round-start .. rw_holder flip] and is
+   * in none of the rosters above. With the confirm gate it parks its RW waiter
+   * until CONFIRM, so a destroy that races the transfer must wake it here or it
+   * hangs. Notify it (dedup against rw_holder / self). */
+  if (atomic_load_explicit(&db->invalidate_in_flight, memory_order_acquire) !=
+      0u) {
+    unsigned int in_flight = db->pending_install_owner;
+    unsigned int holder =
+        atomic_load_explicit(&db->rw_holder, memory_order_acquire);
+    if (in_flight != self && in_flight != holder) {
+      arts_send_db_cache_destroy(in_flight, a->db_guid);
     }
   }
   arts_db_fail_trigger_pending(cache);
@@ -722,6 +771,27 @@ void arts_send_db_ownership_response_ack(unsigned int home_rank,
     return;
   }
   arts_transport_send_async((int)home_rank, (char *)&p, sizeof(p));
+}
+
+void arts_send_db_ownership_confirm(unsigned int new_owner_rank,
+                                    arts_guid_t db_guid) {
+  struct arts_msg_ownership_confirm_packet_s p;
+  arts_fill_packet_header(&p.header, sizeof(p), MSG_DB_OWNERSHIP_CONFIRM);
+  p.header.rank = arts_global_rank_id;
+  p.db_guid = db_guid;
+  if (new_owner_rank == arts_global_rank_id) {
+    /* Self-send: mirror the wire RX dispatcher's Cat-C lookup-acquire-or-drop.
+     * HIT runs the confirm body on the ref-pinned db_s; MISS (DB destroyed)
+     * silently drops (gated waiters are woken by the destroy fan-out). */
+    arts_shared_ptr_t h = arts_route_table_lookup_db(db_guid);
+    struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(h);
+    if (db != NULL) {
+      arts_handler_db_ownership_confirm(db, NULL);
+    }
+    arts_shared_release(&h);
+    return;
+  }
+  arts_transport_send_async((int)new_owner_rank, (char *)&p, sizeof(p));
 }
 
 void arts_send_db_snapshot_redirect(unsigned int owner_rank,
