@@ -305,6 +305,13 @@ typedef struct {
   arts_guid_t guid;           /**< GUID of the DataBlock (or encoded value). */
   void *ptr;                  /**< Pointer to the DataBlock payload. */
   arts_db_access_mode_t mode; /**< Access mode for this dependency slot. */
+  /** Runtime-internal: DB storage class recorded at acquire time so release can
+   *  route a coherent @c ARTS_DB (where @c ptr is the buffer payload) versus a
+   *  pinned subtype (where @c ptr is the inline @c db+1) without recovering the
+   *  subtype by pointer arithmetic — which is invalid for the buffer pointer
+   *  and crashes once a concurrent destroy has removed the route entry.  User
+   *  EDTs ignore this field. */
+  arts_db_types_t subtype;
 } arts_edt_dep_t;
 
 /**

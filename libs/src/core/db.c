@@ -603,6 +603,7 @@ static void acquire_one_dep(struct arts_edt_s *edt, arts_edt_dep_t *depv,
      * stale reads after deque wait. */
     if (cxl_db) {
       depv[i].ptr = cxl_db + 1;
+      depv[i].subtype = ARTS_DB_CXL;
       arts_db_acquire_resolved(edt, i);
       return;
     }
@@ -644,7 +645,11 @@ static void acquire_one_dep(struct arts_edt_s *edt, arts_edt_dep_t *depv,
   if (cache != NULL &&
       (access_mode == DB_MODE_RO || access_mode == DB_MODE_RW)) {
     /* The handler self-resolves (writes depv[i].ptr + arts_db_acquire_resolved)
-     * on a local hit, or parks on a remote ownership/data round; no return. */
+     * on a local hit, or parks on a remote ownership/data round; no return.
+     * Record the coherent subtype now (before any park) so release routes by
+     * dep->subtype regardless of whether the handler resolves locally or the
+     * async data-response fills depv[i].ptr later. */
+    depv[i].subtype = ARTS_DB;
     struct arts_ooo_args_db_acquire_s a = {
         .edt = edt, .db_guid = depv[i].guid, .slot = i};
     arts_handler_db_acquire(arts_db_of_cache(cache), &a);
@@ -667,6 +672,7 @@ static void acquire_one_dep(struct arts_edt_s *edt, arts_edt_dep_t *depv,
           owner);
     }
     depv[i].ptr = db_temp + 1;
+    depv[i].subtype = db_temp->db_type;
     arts_shared_release(&db_temp_h);
     arts_db_acquire_resolved(edt, i);
     return;
@@ -883,13 +889,15 @@ void prep_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu) {
       continue;
     }
     /* For coherent ARTS_DB, dep->ptr is buf->data and pointer arithmetic to
-     * recover db_s would land in the buffer header, NOT a db_s.  Detect
-     * via the coherence adapter and skip — the OCR model drives invalidation
-     * via OWNERSHIP_REQUEST inside the coherence layer.  Non-coherent pinned
-     * subtypes (ARTS_DB_PIN, ARTS_DB_GPU_PIN, ARTS_DB_GPU, ARTS_DB_CXL) have
-     * no DB-level coherence and therefore no inter-rank invalidation step at
-     * prep time. */
-    if (arts_db_cache_lookup(depv[i].guid) != NULL) {
+     * recover db_s would land in the buffer header, NOT a db_s.  Skip via the
+     * subtype recorded at acquire — NOT arts_db_cache_lookup, which reads
+     * db->db_type through a borrowed (non-refcounted) route pointer and would
+     * use-after-free if a concurrent destroy freed the arts_db_s.  Coherent
+     * ARTS_DB drives invalidation inside the coherence layer; non-coherent
+     * pinned subtypes (ARTS_DB_PIN, ARTS_DB_GPU_PIN, ARTS_DB_GPU, ARTS_DB_CXL)
+     * have no DB-level coherence and fall through to their per-subtype prep
+     * (their dep->ptr is db+1, so the recovery below is valid for them). */
+    if (depv[i].subtype == ARTS_DB) {
       continue;
     }
 #ifdef ARTS_USE_CXL
@@ -943,34 +951,48 @@ void prep_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu) {
 static void release_one_dep(arts_edt_dep_t *dep, bool gpu) {
   arts_db_access_mode_t access_mode = dep->mode;
 
-  /* Coherent release path for ARTS_DB.  dep->ptr is cache->buffer->data
-   * (NOT (db+1)), so we cannot recover the arts_db_s by pointer arithmetic.
-   * Look up by GUID via the coherence adapter; if it returns a cache_s, route
-   * through the coherent release entry points.  Drops the EDT's per-acquire
-   * buffer ref taken at acquire time (acquire_local / mark_edt_ready_by_guid
-   * each do arts_db_buf_acquire), then dispatches release_rw / release_ro to
-   * handle writeback / ownership transfer / version bump per mode. */
-  if (dep->guid != NULL_GUID &&
+  /* Coherent release path for ARTS_DB.  Routed by dep->subtype (recorded at
+   * acquire), NOT by recovering the subtype from dep->ptr: for a coherent DB
+   * dep->ptr is cache->buffer->data (NOT (db+1)), so the pinned-subtype
+   * pointer arithmetic below would read a wild address — fatal once a
+   * concurrent destroy has removed the route entry (cache lookup then misses).
+   * Drop the EDT's per-acquire buffer ref (taken at acquire time:
+   * acquire_local / mark_edt_ready_by_guid each do arts_db_buf_acquire)
+   * unconditionally via the buffer's own cb: the EDT's ref kept the buffer
+   * (hence buf->cb) alive up to here, so the deref is never use-after-free even
+   * under a racing destroy.  Dispatch release_rw / release_ro only while the
+   * cache is still installed; once destroyed there is no writeback / version
+   * work left to do (the buffer ref drop above is the only cleanup needed). */
+  if (dep->subtype == ARTS_DB &&
       (access_mode == DB_MODE_RO || access_mode == DB_MODE_RW)) {
-    struct arts_db_cache_s *cache = arts_db_cache_lookup(dep->guid);
-    if (cache != NULL) {
-      if (dep->ptr != NULL) {
-        struct arts_db_buffer_s *buf = arts_db_buf_from_data(dep->ptr);
-        if (buf != NULL) {
-          /* Drop the EDT's acquire ref via the buffer's own cb.  Safe: the
-           * EDT's ref kept the buffer (hence buf->cb) alive up to here, so
-           * the deref is never use-after-free even under a racing destroy. */
-          arts_shared_ptr_t buf_cb = buf->cb;
-          arts_db_buf_release(&buf_cb);
-        }
+    if (dep->ptr != NULL) {
+      struct arts_db_buffer_s *buf = arts_db_buf_from_data(dep->ptr);
+      if (buf != NULL) {
+        arts_shared_ptr_t buf_cb = buf->cb;
+        arts_db_buf_release(&buf_cb);
       }
-      if (access_mode == DB_MODE_RW) {
-        arts_db_release_rw(cache);
-      } else {
-        arts_db_release_ro(cache);
-      }
-      return;
     }
+    if (dep->guid != NULL_GUID) {
+      /* Pin the DB via the ref-counted route lookup — NOT arts_db_cache_lookup,
+       * which dereferences a borrowed raw pointer and would use-after-free if a
+       * concurrent destroy frees the arts_db_s between the lookup and the
+       * db_type read.  A non-NULL handle keeps the cache alive across
+       * release_rw/ro; a NULL handle means the DB was already destroyed — the
+       * buffer ref drop above is then the only cleanup needed. */
+      arts_shared_ptr_t db_h = arts_route_table_lookup_db(dep->guid);
+      struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(db_h);
+      if (db != NULL) {
+        if (db->db_type == ARTS_DB) {
+          if (access_mode == DB_MODE_RW) {
+            arts_db_release_rw(&db->cache);
+          } else {
+            arts_db_release_ro(&db->cache);
+          }
+        }
+        arts_shared_release(&db_h);
+      }
+    }
+    return;
   }
 
   /* Get DB subtype from struct when ptr is available.  Guard with
@@ -1059,6 +1081,8 @@ static void release_one_created(arts_guid_t guid, arts_db_access_mode_t mode) {
       .guid = guid,
       .ptr = (void *)(db + 1),
       .mode = mode,
+      .subtype =
+          db->db_type, /* pinned subtype (coherent ARTS_DB returned above) */
   };
   release_one_dep(&synthetic, false);
   arts_shared_release(&db_h);
