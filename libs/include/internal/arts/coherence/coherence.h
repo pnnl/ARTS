@@ -30,8 +30,8 @@ extern "C" {
 #include <stdbool.h>
 #include <stdint.h>
 
-/* The DB coherence layout structs (arts_db_buffer_s, arts_pending_rw_queue_s
- * + node, arts_db_snapshot_waiter_s, arts_home_lockreq_queue_s + node,
+/* The DB coherence layout structs (arts_db_buffer_s, arts_db_rw_waiter_s,
+ * arts_db_snapshot_waiter_s, arts_home_lockreq_queue_s + node,
  * arts_db_cache_s, arts_db_s) and the arts_db_atomic_uint_t typedef live in
  * coherence_types.h (pulled in via runtime_types.h), because struct arts_db_s
  * embeds arts_db_cache_s by value as its first member and inlines the
@@ -39,35 +39,23 @@ extern "C" {
  * keeps only the protocol function declarations. */
 #include "arts/runtime_types.h"
 
-/*--- Pending RW queue lifecycle helpers ----------------------------------*/
-void arts_pending_rw_queue_init(struct arts_pending_rw_queue_s *q);
+/*--- Pending RW Treiber-stack lifecycle helpers --------------------------*/
+void arts_pending_rw_queue_init(arts_lf_stack_t *q);
 /* Push a waiter (multi-producer).  Caller fills edt_guid/slot before
- * calling.  Waiter must be heap-allocated; queue takes ownership and
- * frees it during pop or destroy. */
-void arts_pending_rw_queue_push(struct arts_pending_rw_queue_s *q,
+ * calling.  Waiter must be heap-allocated; the stack takes ownership and
+ * frees it during drain or destroy. */
+void arts_pending_rw_queue_push(arts_lf_stack_t *q,
                                 struct arts_db_rw_waiter_s *w);
-/* Pop the head waiter (single consumer).  On success, *out_edt and
- * *out_slot are populated and the function returns true; the popped
- * node has been freed (or is the embedded stub on first call) before
- * return.  Returns false on empty.
- *
- * Why copy-out instead of returning the waiter pointer: in Vyukov's
- * algorithm the popped node is freed on the NEXT pop (it becomes the
- * "old head" we walk past).  Returning a pointer that becomes a
- * dangling reference one call later is footgun-prone, so we copy
- * fields here and free immediately. */
-bool arts_pending_rw_queue_pop(struct arts_pending_rw_queue_s *q,
-                               arts_guid_t *out_edt, unsigned int *out_slot);
-/* Drain everything (single consumer); invokes cb(edt_guid, slot, ctx)
- * on each popped waiter in FIFO order.  cb must NOT block — drain
+/* Drain everything (single consumer): atomic-exchange the whole chain out,
+ * then invoke cb(edt_guid, slot, ctx) on each waiter and free it.  Order is
+ * LIFO and immaterial (every waiter is woken).  cb must NOT block — drain
  * holds no lock but is intended for short tasks (mark-EDT-ready). */
-void arts_pending_rw_queue_drain(struct arts_pending_rw_queue_s *q,
+void arts_pending_rw_queue_drain(arts_lf_stack_t *q,
                                  void (*cb)(arts_guid_t edt_guid,
                                             unsigned int slot, void *ctx),
                                  void *ctx);
-/* Destroy: free every queued waiter.  Stub is embedded in the queue
- * and not freed. */
-void arts_pending_rw_queue_destroy(struct arts_pending_rw_queue_s *q);
+/* Destroy: free every queued waiter (single-threaded at teardown). */
+void arts_pending_rw_queue_destroy(arts_lf_stack_t *q);
 
 /* Adapter: route_table stores arts_db_s*; the cache_s is embedded by value
  * as the first member.  All coherence paths look up cache via this helper.
@@ -294,7 +282,7 @@ void arts_handler_db_ownership_proceed(arts_guid_t db_guid);
 
 /* Non-destructive enumeration of a cache pending_rw queue (single consumer):
  * invokes cb(edt_guid, slot, ctx) for each parked waiter without popping. */
-void arts_pending_rw_queue_for_each(struct arts_pending_rw_queue_s *q,
+void arts_pending_rw_queue_for_each(arts_lf_stack_t *q,
                                     void (*cb)(arts_guid_t edt_guid,
                                                unsigned int slot, void *ctx),
                                     void *ctx);

@@ -59,21 +59,23 @@ if(HWLOC_INCLUDE_DIRS)
 endif()
 
 # DB coherence TU selection: MRNEW compiles one timing TU (eager.c or lazy.c)
-# plus the shared node-exclusive-writer ownership machinery (ownership.c); MRMW
-# compiles mrmw.c alone. Each TU defines its arts_handler_db_* / arts_coh_*
-# bodies directly; the linker resolves the single compiled variant.
+# plus the shared node-exclusive-writer ownership machinery (ownership.c + the
+# home OWNERSHIP_REQUEST FIFO home.c); MRMW compiles mrmw.c alone (it carries no
+# ownership lease, so the home lockreq queue / home.c are not linked). Each TU
+# defines its arts_handler_db_* / arts_coh_* bodies directly; the linker
+# resolves the single compiled variant.
 if(ARTS_COHERENCE_PROTOCOL STREQUAL "MRMW")
-    set(DB_COHERENCE_MODEL_TU coherence/mrmw.c)
+    set(DB_COHERENCE_MODEL_TU coherence/mrmw/mrmw.c)
 elseif(ARTS_PROTOCOL_TIMING STREQUAL "EAGER")
-    set(DB_COHERENCE_MODEL_TU coherence/eager.c coherence/ownership.c)
+    set(DB_COHERENCE_MODEL_TU coherence/mrnew/eager.c coherence/mrnew/ownership.c coherence/mrnew/home.c)
 else() # MRNEW + LAZY (default)
-    set(DB_COHERENCE_MODEL_TU coherence/lazy.c coherence/ownership.c)
+    set(DB_COHERENCE_MODEL_TU coherence/mrnew/lazy.c coherence/mrnew/ownership.c coherence/mrnew/home.c)
 endif()
 
 # DB + coherence (db.c carries CUDA staging paths -> GPU wrapper).
 set(ARTS_MEMORY_SOURCES
     db.c
-    coherence/coherence.c coherence/home.c coherence/buffer.c
+    coherence/coherence.c coherence/buffer.c coherence/rank_u64_map.c
     coherence/handlers.c coherence/senders.c
     ${DB_COHERENCE_MODEL_TU})
 add_library(arts_memory OBJECT ${ARTS_MEMORY_SOURCES})
