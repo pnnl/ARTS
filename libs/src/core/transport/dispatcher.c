@@ -43,7 +43,7 @@
 #include <unistd.h>
 
 #include "arts.h"
-#include "arts/coherence/coherence.h" /* arts_db_cache_lookup (lazy arm) */
+#include "arts/coherence/coherence.h" /* arts_handler_db_ownership_* bodies */
 #include "arts/coherence/handlers.h"
 #include "arts/counter/counter.h" /* arts_handler_time_sync_* */
 #include "arts/db.h"
@@ -105,6 +105,10 @@ void arts_transport_setup(struct arts_config_s *config) {
 
 void arts_transport_dispatch_packet(struct arts_msg_header_s *packet) {
 #ifdef SEQUENCENUMBERS
+  /* Wire-ordering check — wire RX entry only.  A self-loopback packet never
+   * traverses the wire and carries no per-sender sequence number (it bypasses
+   * the outbox that stamps them), so it enters via arts_transport_dispatch_body
+   * directly and is exempt from this check. */
   uint64_t exp_seq_number =
       __sync_fetch_and_add(&rec_seq_numbers[packet->seq_rank], 1U);
   if (exp_seq_number != packet->seq_num) {
@@ -112,11 +116,11 @@ void arts_transport_dispatch_packet(struct arts_msg_header_s *packet) {
         "MESSAGE RECIEVED OUT OF ORDER exp: %lu rec: %lu source: %u type: %d",
         exp_seq_number, packet->seq_num, packet->rank, packet->message_type);
   }
-//    else
-//        ARTS_INFO("Recv: %lu -> %lu = %lu", packet->seq_rank,
-//        arts_global_rank_id, packet->seq_num);
 #endif
+  arts_transport_dispatch_body(packet);
+}
 
+void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
   switch (packet->message_type) {
   case MSG_SHUTDOWN: {
     ARTS_INFO("Node %u: Received shutdown message from node %u",
@@ -217,23 +221,13 @@ void arts_transport_dispatch_packet(struct arts_msg_header_s *packet) {
    * Cat-B defer; lazy = direct, never deferred).
    */
 #if defined(ARTS_PROTOCOL_MRMW)
-  case MSG_DB_OWNERSHIP_REQUEST:
-  case MSG_DB_OWNERSHIP_PROCEED:
-  case MSG_DB_OWNERSHIP_RETURN: {
+  case MSG_DB_OWNERSHIP_REQUEST: {
     ARTS_ERROR("MRMW build received exclusivity message type %d from rank "
-               "%u — MRMW has no OWNERSHIP_REQUEST / "
-               "RELEASE_OWNERSHIP / PROCEED; binary mode mismatch?",
+               "%u — MRMW has no OWNERSHIP_REQUEST; binary mode mismatch?",
                packet->message_type, packet->rank);
     break;
   }
 #else  /* eager and lazy: full handlers */
-  case MSG_DB_OWNERSHIP_PROCEED: {
-    ARTS_DEBUG("Coh OWNERSHIP_PROCEED Received");
-    struct arts_msg_ownership_proceed_packet_s *pack =
-        (struct arts_msg_ownership_proceed_packet_s *)(packet);
-    arts_handler_db_ownership_proceed(pack->db_guid);
-    break;
-  }
   case MSG_DB_OWNERSHIP_REQUEST: {
     ARTS_DEBUG("Coh OWNERSHIP_REQUEST Received");
     struct arts_msg_ownership_request_packet_s *pack =
@@ -246,43 +240,25 @@ void arts_transport_dispatch_packet(struct arts_msg_header_s *packet) {
                                     &args, sizeof(args));
     break;
   }
-  case MSG_DB_OWNERSHIP_RETURN: {
-    ARTS_DEBUG("Coh RELEASE_OWNERSHIP Received");
-    struct arts_msg_ownership_return_packet_s *pack =
-        (struct arts_msg_ownership_return_packet_s *)(packet);
-    /* Cat-C lookup-acquire-or-drop: HIT advances the transfer chain on the
-     * ref-pinned home db_s; MISS (DB already torn down) silently drops —
-     * RELEASE_OWNERSHIP is one-way and awaits no reply. */
-    arts_shared_ptr_t h = arts_route_table_lookup_db(pack->db_guid);
-    struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(h);
-    if (db != NULL) {
-      arts_handler_db_ownership_return(db, NULL);
-    }
-    arts_shared_release(&h);
-    break;
-  }
 #endif /* ARTS_PROTOCOL_MRMW */
   /* INVALIDATE_NOTICE — protocol-split.
-   *   eager : Cat-B.  A GRANT/INVALIDATE reorder on two wires, or a
-   *           distributed before-create race, can land INVALIDATE before the
-   *           db_s/cache installs, so it MUST enter the OoO engine
-   *           (defer-on-miss, replay on the install's drain).
-   *   lazy  : NOT deferred.  Home publishes the invalidate target (rw_holder)
-   *           only after that rank's cache install (DB_CREATE on the creator,
-   *           or the INSTALL_ACK owner-swap), so the target's cache is
-   *           provably already installed when INVALIDATE arrives — call the
-   *           pure handler body directly with the looked-up cache.
-   *           assert(cache != NULL) catches any future violation loudly.
+   *   eager/lazy : NOT deferred.  Home publishes the invalidate target
+   *           (rw_holder) only after that rank's cache install — the CONFIRM
+   *           owner-swap (post-install in both timings) or the DB_CREATE on the
+   *           creator — so the target's cache is provably already installed
+   * when INVALIDATE arrives.  Call the pure handler body directly with the
+   *           looked-up cache.  (The before-install GRANT/INVALIDATE reorder
+   *           that once forced eager through the OoO engine is gone: EAGER no
+   *           longer flips rw_holder before install.)
    *   MRMW: no ownership transfer (caught by the fatal group above). */
 #if defined(ARTS_PROTOCOL_MRMW)
   case MSG_DB_OWNERSHIP_INVALIDATE: {
-    ARTS_ERROR(
-        "MRMW build received INVALIDATE from rank %u — MRMW has "
-        "no ownership transfer; binary mode mismatch?",
-        packet->rank);
+    ARTS_ERROR("MRMW build received INVALIDATE from rank %u — MRMW has "
+               "no ownership transfer; binary mode mismatch?",
+               packet->rank);
     break;
   }
-#elif defined(ARTS_TIMING_LAZY)
+#else  /* MRNEW: eager + lazy share the direct-call body */
   case MSG_DB_OWNERSHIP_INVALIDATE: {
     ARTS_DEBUG("Coh INVALIDATE_NOTICE Received");
     struct arts_msg_ownership_invalidate_packet_s *pack =
@@ -291,22 +267,20 @@ void arts_transport_dispatch_packet(struct arts_msg_header_s *packet) {
         .db_guid = pack->db_guid,
         .new_owner_rank = pack->new_owner_rank,
     };
-    struct arts_db_cache_s *cache = arts_db_cache_lookup(pack->db_guid);
-    assert(cache != NULL); /* target is rw_holder, published post-install */
-    arts_handler_db_ownership_invalidate(arts_db_of_cache(cache), &args);
-    break;
-  }
-#else  /* eager build */
-  case MSG_DB_OWNERSHIP_INVALIDATE: {
-    ARTS_DEBUG("Coh INVALIDATE_NOTICE Received");
-    struct arts_msg_ownership_invalidate_packet_s *pack =
-        (struct arts_msg_ownership_invalidate_packet_s *)(packet);
-    struct arts_ooo_args_db_ownership_invalidate_s args = {
-        .db_guid = pack->db_guid,
-        .new_owner_rank = pack->new_owner_rank,
-    };
-    arts_ooo_dispatch_or_defer_guid(pack->db_guid, OOO_DB_OWNERSHIP_INVALIDATE,
-                                    &args, sizeof(args));
+    /* Pin the db_s for the handler's duration (the embedded cache is its FIRST
+     * member, offset 0) so a concurrent DESTROY on another receiver thread
+     * cannot free it mid-handler.  The home publishes the rw_holder target only
+     * after that rank's cache install, so the db_s is normally present.  But a
+     * destroy may have NULLed the route slot between that publish and this
+     * INVALIDATE arriving (destroy-during-acquire); the destroy drains every
+     * waiter itself, so an orphaned INVALIDATE for a torn-down DB is simply
+     * dropped. */
+    arts_shared_ptr_t db_h = arts_route_table_lookup_db(pack->db_guid);
+    struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(db_h);
+    if (db != NULL) {
+      arts_handler_db_ownership_invalidate(db, &args);
+    }
+    arts_shared_release(&db_h);
     break;
   }
 #endif /* model dispatch for MSG_DB_OWNERSHIP_INVALIDATE */
@@ -392,23 +366,13 @@ void arts_transport_dispatch_packet(struct arts_msg_header_s *packet) {
                packet->rank);
     break;
   }
-#elif defined(ARTS_TIMING_LAZY)
+#else  /* eager and lazy: one converged layout */
   case MSG_DB_OWNERSHIP_RESPONSE: {
-    ARTS_DEBUG("Lazy TRANSFER_OWNERSHIP Received");
+    ARTS_DEBUG("Coh OWNERSHIP_RESPONSE Received");
     /* Payload (map + data) immediately follows the header in the contiguous
-     * wire buffer; the handler parses it from the full packet. */
+     * wire buffer; the handler parses it from the full packet.  Both timings
+     * share the lazy-style layout (EAGER carries map_entry_count=0). */
     arts_handler_db_ownership_response((void *)packet, (size_t)packet->size);
-    break;
-  }
-#else  /* eager build */
-  case MSG_DB_OWNERSHIP_RESPONSE: {
-    ARTS_DEBUG("Coh GRANT Received");
-    struct arts_msg_ownership_response_packet_s *pack =
-        (struct arts_msg_ownership_response_packet_s *)(packet);
-    const void *data = (const char *)pack + sizeof(*pack);
-    uint64_t data_size = pack->header.size - sizeof(*pack);
-    arts_handler_db_ownership_response(pack, data_size > 0 ? data : NULL,
-                                       data_size);
     break;
   }
 #endif /* model dispatch for MSG_DB_OWNERSHIP_RESPONSE */
@@ -444,7 +408,6 @@ void arts_transport_dispatch_packet(struct arts_msg_header_s *packet) {
     args->db_guid = pack->db_guid;
     args->version = pack->version;
     args->cv = pack->cv;
-    args->flag = pack->flag;
     args->data_size = data_size;
     if (data_size > 0) {
       memcpy(abuf + sizeof(*args), data, data_size);
@@ -526,49 +489,66 @@ void arts_transport_dispatch_packet(struct arts_msg_header_s *packet) {
     arts_shared_release(&h);
     break;
   }
-  case MSG_DB_OWNERSHIP_RESPONSE_ACK: {
-    ARTS_DEBUG("Lazy INSTALL_ACK Received");
-    struct arts_msg_install_ack_packet_s *pack =
-        (struct arts_msg_install_ack_packet_s *)(packet);
-    /* Cat-C lookup-acquire-or-drop: HIT advances the transfer round on the
-     * ref-pinned home db_s; MISS (DB destroyed) silently drops. */
-    struct arts_db_ownership_response_ack_args_s args = {
-        .db_guid = pack->db_guid,
-        .version = pack->version,
-    };
+  case MSG_DB_OWNERSHIP_CONFIRM_ACK: {
+    ARTS_DEBUG("Lazy CONFIRM_ACK Received");
+    struct arts_msg_ownership_confirm_ack_packet_s *pack =
+        (struct arts_msg_ownership_confirm_ack_packet_s *)(packet);
+    /* Cat-C lookup-acquire-or-drop: HIT runs the confirm_ack body on the
+     * ref-pinned db_s.  MISS (DB destroyed): the gated waiters are woken by the
+     * destroy fan-out, so a miss silently drops. */
     arts_shared_ptr_t h = arts_route_table_lookup_db(pack->db_guid);
     struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(h);
     if (db != NULL) {
-      arts_handler_db_ownership_response_ack(db, &args);
-    }
-    arts_shared_release(&h);
-    break;
-  }
-  case MSG_DB_OWNERSHIP_CONFIRM: {
-    ARTS_DEBUG("Lazy OWNERSHIP_CONFIRM Received");
-    struct arts_msg_ownership_confirm_packet_s *pack =
-        (struct arts_msg_ownership_confirm_packet_s *)(packet);
-    /* Cat-C lookup-acquire-or-drop: HIT runs the confirm body on the ref-pinned
-     * db_s; MISS (DB destroyed) silently drops — the gated waiters are woken by
-     * the destroy fan-out. */
-    arts_shared_ptr_t h = arts_route_table_lookup_db(pack->db_guid);
-    struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(h);
-    if (db != NULL) {
-      arts_handler_db_ownership_confirm(db, NULL);
+      arts_handler_db_ownership_confirm_ack(db, pack);
     }
     arts_shared_release(&h);
     break;
   }
 #else  /* !ARTS_TIMING_LAZY */
   case MSG_DB_SNAPSHOT_REDIRECT:
-  case MSG_DB_OWNERSHIP_RESPONSE_ACK:
-  case MSG_DB_OWNERSHIP_CONFIRM: {
+  case MSG_DB_OWNERSHIP_CONFIRM_ACK: {
     ARTS_ERROR("eager build received lazy-only message type %d from rank %u — "
                "binary mode mismatch?",
                packet->message_type, packet->rank);
     break;
   }
 #endif /* ARTS_TIMING_LAZY */
+  /* OWNERSHIP_CONFIRM: both timings (new owner C → home A flips rw_holder +
+   * advances the round).  LAZY additionally replies with CONFIRM_ACK; EAGER's
+   * home handler does not (the new owner already drained at
+   * OWNERSHIP_RESPONSE). MRMW has no ownership transfer and fatals. */
+#if defined(ARTS_PROTOCOL_MRMW)
+  case MSG_DB_OWNERSHIP_CONFIRM: {
+    ARTS_ERROR("MRMW build received OWNERSHIP_CONFIRM from rank %u — MRMW has "
+               "no ownership transfer; binary mode mismatch?",
+               packet->rank);
+    break;
+  }
+#else
+  case MSG_DB_OWNERSHIP_CONFIRM: {
+    ARTS_DEBUG("Coh CONFIRM Received");
+    struct arts_msg_ownership_confirm_packet_s *pack =
+        (struct arts_msg_ownership_confirm_packet_s *)(packet);
+    /* Cat-C lookup-acquire-or-drop: HIT advances the transfer round on the
+     * ref-pinned home db_s; MISS (DB destroyed) silently drops.  EAGER's
+     * handler reads pending_install_owner and ignores args, so pass NULL. */
+    arts_shared_ptr_t h = arts_route_table_lookup_db(pack->db_guid);
+    struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(h);
+    if (db != NULL) {
+#ifdef ARTS_TIMING_LAZY
+      struct arts_db_ownership_response_ack_args_s args = {
+          .db_guid = pack->db_guid,
+          .version = pack->version,
+      };
+      arts_handler_db_ownership_confirm(db, &args);
+#else
+      arts_handler_db_ownership_confirm(db, NULL);
+#endif
+    }
+    arts_shared_release(&h);
+    break;
+  }
+#endif /* OWNERSHIP_CONFIRM model dispatch */
   default: {
     ARTS_INFO("Unknown Packet %d %d %d", packet->message_type, packet->size,
               packet->rank);

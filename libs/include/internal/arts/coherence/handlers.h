@@ -8,8 +8,8 @@
  * so home-side state — home.pending_rw, home.last_sent_version,
  * home.rw_holder — is touched by exactly one writer.  Worker threads
  * concurrently read/write cache.* via the atomic primitives wired up
- * in the data structures (writer_count, buffer, pending_count,
- * destroy_state, the marked-list head/tail, the buffer pool).
+ * in the data structures (writer_count, the buffer slot's atomic shared_ptr,
+ * the pending_rw/pending_snapshot queues).
  *
  * Drop discipline — two categories:
  *   Cat-B (deferrable: OWNERSHIP_REQUEST / GET_DATA / WRITEBACK / DESTROY /
@@ -18,8 +18,8 @@
  *     ref-pinned and hands the pure (item, args) body a live cache on
  *     HIT, or defers the args for replay once DB_CREATE installs.
  *   Cat-C (non-deferrable: DATA_RESPONSE / DESTROY_NOTIFY / WRITEBACK_ACK /
- *     RELEASE_OWNERSHIP / REDIRECT_RO / INSTALL_ACK): the wire dispatcher
- *     (and the matching self-send shortcut) does a ref-pinned lookup via
+ *     RELEASE_OWNERSHIP / REDIRECT_RO / CONFIRM / CONFIRM_ACK): the wire
+ * dispatcher (and the matching self-send shortcut) does a ref-pinned lookup via
  *     arts_route_table_lookup_db; on HIT it calls the pure (item, args)
  *     body, on MISS it applies the handler's exact miss-action (silent
  *     drop, DESTROY_NOTIFY reply, or sem-post — see each body).
@@ -86,7 +86,7 @@ struct arts_db_snapshot_redirect_args_s {
   uint32_t slot;
 };
 
-/* arts_handler_db_ownership_response_ack body args (home side). */
+/* arts_handler_db_ownership_confirm body args (home side). */
 struct arts_db_ownership_response_ack_args_s {
   arts_guid_t db_guid;
   uint64_t version;
@@ -115,16 +115,6 @@ void arts_handler_db_snapshot_request(void *item_v, void *args_v);
  * struct) and routes through arts_ooo_dispatch_or_defer_guid; this body reads
  * the payload from (char *)args_v + sizeof(arts_ooo_args_db_writeback_s). */
 void arts_handler_db_writeback(void *item_v, void *args_v);
-/* Cat-C pure body (RELEASE_OWNERSHIP): item_v is the home db_s the dispatcher
- * acquired (cache is its first member); args_v is unused (the body only
- * advances the transfer chain on the cache).  NOT OoO-deferrable — the
- * dispatcher looks the cache up with a held ref and, on a MISS, SILENTLY DROPS:
- * RELEASE_OWNERSHIP is one-way and only flows from a current owner whose
- * acquire implied DB_CREATE already landed at home, so a missing cache means
- * the DB was already torn down (caller awaits no reply).  The eager protocol
- * advances the transfer chain; the lazy protocol never receives this message
- * (no-op). */
-void arts_handler_db_ownership_return(void *item_v, void *args_v);
 /* Cat-B pure body (OoO g_ooo_table[OOO_DB_DESTROY]): item_v is the home db_s
  * the engine acquired (cache is its first member); args_v is an
  * arts_ooo_args_db_destroy_s.  The wire dispatcher decodes DESTROY_REQ into
@@ -134,15 +124,10 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p);
 
 /* ===== Sharer-side (response) handlers =============================== */
 
-#ifdef ARTS_TIMING_LAZY
-/* Lazy TRANSFER_OWNERSHIP at new owner C: payload = full contiguous wire buffer
- * (header + map + data); size is total bytes. */
+/* OWNERSHIP_RESPONSE at new owner C: payload = full contiguous wire buffer
+ * (header + map + data); size is total bytes.  One signature for both timings —
+ * EAGER drains + runs immediately, LAZY defers the RW drain to CONFIRM_ACK. */
 void arts_handler_db_ownership_response(void *payload, size_t size);
-#else
-void arts_handler_db_ownership_response(
-    struct arts_msg_ownership_response_packet_s *p, const void *data,
-    uint64_t data_size);
-#endif
 /* Cat-C pure body (DATA_RESPONSE): item_v is the db_s the dispatcher acquired
  * (cache is its first member); args_v is an
  * arts_db_snapshot_response_args_s.  NOT OoO-deferrable — the dispatcher
@@ -150,12 +135,12 @@ void arts_handler_db_ownership_response(
  * NULL-stored), SILENTLY DROPS (this 1:1 response resumes a parked EDT; if the
  * cache is gone the EDT was already torn down). */
 void arts_handler_db_snapshot_response(void *item_v, void *args_v);
-/* Cat-B pure body (OoO g_ooo_table[OOO_DB_OWNERSHIP_INVALIDATE]): item_v is the
- * db_s the engine acquired (cache is its first member); args_v is an
- * arts_ooo_args_db_ownership_invalidate_s.  The wire dispatcher decodes
- * INVALIDATE_NOTICE into those args and routes through
- * arts_ooo_dispatch_or_defer_guid; a missing cache DEFERS and replays on
- * install (§6.1).  Eager/lazy define the real body (sentinel withdrawal /
+/* Pure (cache, args) body: item_v is the db_s (cache is its first member);
+ * args_v is an arts_ooo_args_db_ownership_invalidate_s.  The wire dispatcher /
+ * self-send looks the cache up and calls this body DIRECTLY — no OoO defer.  In
+ * both timings the home publishes the invalidate target (rw_holder) only at the
+ * post-install CONFIRM owner-swap, so the cache is provably installed when
+ * INVALIDATE arrives.  Eager/lazy define the real body (sentinel withdrawal /
  * transfer trigger); MRMW provides a no-op body (MRMW never receives
  * INVALIDATE). */
 void arts_handler_db_ownership_invalidate(void *item_v, void *args_v);
@@ -181,42 +166,45 @@ void arts_handler_db_cache_destroy(void *item_v, void *args_v);
  * installed on this rank), sends DESTROY_NOTIFY to the requester (so the
  * requester's parked RO waiter wakes and observes DB_DESTROYED). */
 void arts_handler_db_snapshot_redirect(void *item_v, void *args_v);
+#endif /* ARTS_TIMING_LAZY */
 
-/* Cat-C pure body (INSTALL_ACK, home side): item_v is the db_s the dispatcher
- * acquired (cache is its first member); args_v is an
- * arts_db_ownership_response_ack_args_s.  NOT OoO-deferrable — the
+#if defined(ARTS_PROTOCOL_MRNEW) || defined(ARTS_PROTOCOL_MRSW)
+/* Cat-C pure body (CONFIRM, home side; both timings): item_v is the db_s the
+ * dispatcher acquired (cache is its first member); args_v is unused (the new
+ * owner is read from db->pending_install_owner).  NOT OoO-deferrable — the
  * dispatcher looks the cache up with a held ref and, on a MISS (DB destroyed),
  * SILENTLY DROPS.  Records the new rw_holder, then starts the next transfer
- * round or releases the invalidate_in_flight baton. */
-void arts_handler_db_ownership_response_ack(void *item_v, void *args_v);
-#endif /* ARTS_TIMING_LAZY */
+ * round or releases the invalidate_in_flight baton.  LAZY additionally replies
+ * with CONFIRM_ACK; EAGER does not (the new owner already drained at
+ * OWNERSHIP_RESPONSE). */
+void arts_handler_db_ownership_confirm(void *item_v, void *args_v);
+
+/* Send CONFIRM from new owner C back to home A once the ownership transfer is
+ * complete (both timings; home flips rw_holder + advances the round). */
+void arts_send_db_ownership_confirm(unsigned int home_rank, arts_guid_t db_guid,
+                                    uint64_t version);
+#endif /* MRNEW || MRSW */
 
 /* ===== Sender helpers ================================================ */
 
 /* Send a coherence wire packet of the given type with optional
  * trailing payload (data + data_size).  data == NULL ⇒ no payload.
- * Used by handlers that emit replies and by acquire/release in B4/B5. */
+ * Used by handlers that emit replies and by acquire/release.  The
+ * OWNERSHIP_REQUEST carries only db_guid (the home FIFO orders rank-by-rank).
+ */
 void arts_send_db_ownership_request(unsigned int home_rank,
                                     arts_guid_t db_guid);
-#ifdef ARTS_TIMING_LAZY
-/* Lazy OWNERSHIP_RESPONSE = TRANSFER_OWNERSHIP: carries the serialized
- * last_sent_version map + buffer payload. */
+/* OWNERSHIP_RESPONSE wire sender (shared, both timings): carries the serialized
+ * last_sent_version map + buffer payload (no edt — the EDT rides CONFIRM). */
 void arts_send_db_ownership_response(unsigned int new_owner_rank,
                                      arts_guid_t db_guid, uint64_t version,
                                      const void *map_buf, size_t map_size,
                                      const void *data, size_t data_size);
-#else
-void arts_send_db_ownership_response(unsigned int requester_rank,
-                                     arts_guid_t db_guid, uint64_t version,
-                                     bool has_next, const void *data,
-                                     uint64_t data_size);
-#endif
 /* cv: address of the releaser's stack-local sem_t (as uint64_t), forwarded
  * verbatim to the home and echoed back in the ACK for pointer-identity wakeup.
  */
 void arts_send_db_writeback(unsigned int home_rank, arts_guid_t db_guid,
-                            uint64_t version, uint64_t cv,
-                            arts_writeback_flag_t flag, const void *data,
+                            uint64_t version, uint64_t cv, const void *data,
                             uint64_t data_size);
 void arts_send_db_writeback_ack(unsigned int releaser_rank, arts_guid_t db_guid,
                                 uint64_t cv);
@@ -226,7 +214,6 @@ void arts_send_db_writeback_ack(unsigned int releaser_rank, arts_guid_t db_guid,
 void arts_send_db_ownership_invalidate(unsigned int owner_rank,
                                        arts_guid_t db_guid,
                                        unsigned int new_owner_rank);
-void arts_send_db_ownership_return(unsigned int home_rank, arts_guid_t db_guid);
 void arts_send_db_snapshot_request(unsigned int home_rank, arts_guid_t db_guid,
                                    arts_guid_t edt_guid, uint32_t slot);
 void arts_send_db_snapshot_response(unsigned int requester_rank,
@@ -247,34 +234,42 @@ void arts_send_db_snapshot_redirect(unsigned int owner_rank,
                                     unsigned int requester_rank,
                                     arts_guid_t edt_guid, uint32_t slot);
 
-/* Send INSTALL_ACK from new owner C back to home A once the ownership
- * transfer is complete. */
-void arts_send_db_ownership_response_ack(unsigned int home_rank,
-                                         arts_guid_t db_guid, uint64_t version);
-
-/* Send OWNERSHIP_CONFIRM from home to the new owner C after home has flipped
- * rw_holder to C. Self-send dispatches the handler inline. */
-void arts_send_db_ownership_confirm(unsigned int new_owner_rank,
-                                    arts_guid_t db_guid);
-
-/* Cat-C pure body (OWNERSHIP_CONFIRM, new-owner side): item_v is the db_s the
- * dispatcher acquired (cache is its first member); args_v is unused. Drains the
- * parked RW waiters that the TRANSFER handler deferred, clears the gate, and
- * removes the drain guard. NOT OoO-deferrable — the dispatcher looks the cache
- * up with a held ref and, on a MISS (DB destroyed), SILENTLY DROPS (the gated
- * waiters are woken by the destroy fan-out instead). */
-void arts_handler_db_ownership_confirm(void *item_v, void *args_v);
-
-/* Send the lazy OWNERSHIP_RESPONSE (TRANSFER_OWNERSHIP) to
- * cache->incoming_new_owner: serialize last_sent_version + buffer and fire.
- * Called inline from the INVALIDATE_NOTICE handler and release_rw rest==0. */
-void arts_db_lazy_send_ownership_response(struct arts_db_cache_s *cache);
+/* Send CONFIRM_ACK from home to the new owner C after home has flipped
+ * rw_holder to C. Self-send dispatches the handler inline.
+ * piggyback_new_owner == ARTS_LAZY_NO_PENDING_OWNER ⇒ plain CONFIRM_ACK (no
+ * pending requester).  Otherwise the round advances and the ack carries the
+ * next transfer target, so the new owner's handler applies the INVALIDATE
+ * effect in the same message (no separate INVALIDATE, no reorder window). */
+void arts_send_db_ownership_confirm_ack(unsigned int new_owner_rank,
+                                        arts_guid_t db_guid,
+                                        unsigned int piggyback_new_owner);
+/* Cat-C pure body (CONFIRM_ACK, new-owner side): item_v is the db_s the
+ * dispatcher acquired (cache is its first member); args_v is the
+ * CONFIRM_ACK packet (its new_owner_rank carries the piggybacked invalidate
+ * target, or ARTS_LAZY_NO_PENDING_OWNER for a plain ack). Drains the parked RW
+ * waiters that the TRANSFER handler deferred, clears the gate, applies the
+ * piggybacked invalidate effect (publish incoming_new_owner + withdraw the
+ * sentinel), and removes the drain guard (the relocated 0-edge ship-check). NOT
+ * OoO-deferrable — the dispatcher looks the cache up with a held ref and, on a
+ * MISS (DB destroyed), SILENTLY DROPS (the gated waiters are woken by the
+ * destroy fan-out instead). */
+void arts_handler_db_ownership_confirm_ack(void *item_v, void *args_v);
 
 /* Kick a new INVALIDATE_NOTICE round: read rw_holder, send notice to
  * holder carrying new_owner as the TRANSFER_OWNERSHIP target. */
 void arts_db_lazy_start_invalidate_round(struct arts_db_cache_s *cache,
                                          unsigned int new_owner);
 #endif /* ARTS_TIMING_LAZY */
+
+#if defined(ARTS_PROTOCOL_MRNEW) || defined(ARTS_PROTOCOL_MRSW)
+/* Shared owner→owner transfer ship (defined in coherence/<proto>/ownership.c):
+ * ship the current buffer (+ serialized owner-side map for LAZY, empty map for
+ * EAGER) to cache->incoming_new_owner via the OWNERSHIP_RESPONSE wire,
+ * re-arming incoming_new_owner to the sentinel before sending.  Called on the
+ * 0-edge of release_rw / the INVALIDATE handler (both timings) and the LAZY
+ * CONFIRM_ACK / EAGER OWNERSHIP_RESPONSE drain-guard removal. */
+void arts_db_send_ownership_response(struct arts_db_cache_s *cache);
+#endif /* MRNEW || MRSW */
 
 #ifdef __cplusplus
 }

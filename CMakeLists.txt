@@ -187,10 +187,10 @@ cmake_dependent_option(ARTS_USE_LOCAL_CUDA_ARCHITECTURES
 #                            consistency actions (release-time vs acquire-time).
 #                            Ignored by MRMW.
 set(ARTS_COHERENCE_PROTOCOL "MRNEW" CACHE STRING
-    "Coherence protocol (admission policy): MRNEW (default, = OCR) or MRMW (DB-DRF, evaluation only)")
-set_property(CACHE ARTS_COHERENCE_PROTOCOL PROPERTY STRINGS MRNEW MRMW)
+    "Coherence protocol (admission policy): MRNEW (default, = OCR), MRMW (DB-DRF, evaluation only), or MRSW (single-writer; OCR-superset)")
+set_property(CACHE ARTS_COHERENCE_PROTOCOL PROPERTY STRINGS MRNEW MRMW MRSW)
 set(ARTS_PROTOCOL_TIMING "LAZY" CACHE STRING
-    "Timing of MRNEW consistency actions: EAGER or LAZY (default); ignored by MRMW")
+    "Timing of MRNEW/MRSW consistency actions: EAGER or LAZY (default); ignored by MRMW")
 set_property(CACHE ARTS_PROTOCOL_TIMING PROPERTY STRINGS EAGER LAZY)
 
 # Migration guard: the memory-model build axis was removed.
@@ -238,6 +238,16 @@ endif()
 option(ARTS_USE_SANS "Enable ASan + UBSan + LSan in Debug builds (excludes CUDA)" OFF)
 option(ARTS_USE_TSAN "Enable ThreadSanitizer in Debug builds (excludes CUDA; mutually exclusive with ARTS_USE_SANS)" OFF)
 
+# Wire sequence numbers: a per-message seq_num field + a per-send lock around
+# (assign-seq, enqueue) + a per-receive wire-ordering check — a drop/reorder
+# diagnostic.  This is HOT-PATH (every send and receive) and OFF by default;
+# turn it on only to debug transport ordering.  It changes the wire packet
+# header layout, so every rank in a run must use the same setting.
+option(ARTS_SEQUENCE_NUMBERS "Enable per-message wire sequence-number drop/reorder diagnostic (per-send lock + per-recv check; OFF for performance)" OFF)
+if(ARTS_SEQUENCE_NUMBERS)
+  add_compile_definitions(SEQUENCENUMBERS=1)
+endif()
+
 # ── Build tooling ──────────────────────────────────────────────────────────
 # (To pick a faster linker, use CMake's own -DCMAKE_LINKER_TYPE=MOLD/LLD/GOLD
 #  (cmake >= 3.29) or -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=mold — no ARTS option.)
@@ -247,9 +257,10 @@ set(ARTS_COUNTER_CONFIG
 
 # ── Coherence-protocol validation + compile definitions ────────────────────
 if(NOT ARTS_COHERENCE_PROTOCOL STREQUAL "MRNEW" AND
-   NOT ARTS_COHERENCE_PROTOCOL STREQUAL "MRMW")
+   NOT ARTS_COHERENCE_PROTOCOL STREQUAL "MRMW" AND
+   NOT ARTS_COHERENCE_PROTOCOL STREQUAL "MRSW")
   message(FATAL_ERROR
-          "ARTS_COHERENCE_PROTOCOL must be MRNEW or MRMW, got: ${ARTS_COHERENCE_PROTOCOL}")
+          "ARTS_COHERENCE_PROTOCOL must be MRNEW, MRMW, or MRSW, got: ${ARTS_COHERENCE_PROTOCOL}")
 endif()
 if(NOT ARTS_PROTOCOL_TIMING STREQUAL "EAGER" AND
    NOT ARTS_PROTOCOL_TIMING STREQUAL "LAZY")
@@ -264,6 +275,19 @@ if(ARTS_COHERENCE_PROTOCOL STREQUAL "MRMW")
           "and programs valid under the OCR memory model (which MRNEW provides) "
           "may produce wrong results. Evaluation builds only — never a "
           "correctness baseline. ARTS_PROTOCOL_TIMING is ignored.")
+elseif(ARTS_COHERENCE_PROTOCOL STREQUAL "MRSW")
+  # MRSW (Multi-Reader, Single-Writer): rank-granular on the MRNEW engine, with
+  # the local active-writer count capped at one (a single writer_count {2,1,0}
+  # encoding sentinel+token).  Like MRNEW it honours the OCR memory model
+  # (incidentally stronger) and uses the EAGER/LAZY timing axis.
+  add_compile_definitions(ARTS_PROTOCOL_MRSW=1)
+  if(ARTS_PROTOCOL_TIMING STREQUAL "EAGER")
+    add_compile_definitions(ARTS_TIMING_EAGER=1)
+    message(STATUS "ARTS coherence protocol: MRSW (single-writer), timing: EAGER")
+  else()
+    add_compile_definitions(ARTS_TIMING_LAZY=1)
+    message(STATUS "ARTS coherence protocol: MRSW (single-writer), timing: LAZY (default)")
+  endif()
 else() # MRNEW
   add_compile_definitions(ARTS_PROTOCOL_MRNEW=1)
   if(ARTS_PROTOCOL_TIMING STREQUAL "EAGER")

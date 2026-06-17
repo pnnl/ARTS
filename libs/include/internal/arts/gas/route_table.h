@@ -47,6 +47,9 @@ extern "C" {
 #include "arts/utils/lockfree_lifo.h" /* arts_lf_stack_t (per-slot OoO chain) + arts_lf_link_t */
 #include "arts/utils/shared.h" /* arts_shared_ptr_t, arts_atomic_shared_ptr_t */
 
+/* Convention: all shared-object access is via caller-owned cb handles
+ * (lookup_* / _acquire → handle; release required). No raw no-ref peeks. */
+
 #define COLLISION_RESOLVES 8
 /* Number of independent shards for the remote_route_table.  Must be a
  * power of 2 so (key & (N-1)) is the shard selector. */
@@ -149,12 +152,6 @@ bool arts_route_table_install_if_absent(void *obj, arts_guid_t key,
 void *arts_route_table_install_with_deleter(void *obj, arts_guid_t key,
                                             void (*deleter)(void *));
 
-/* Unsafe peek: raw object pointer WITHOUT holding a ref (load + get + drop).
- * Valid only when the caller has an external liveness guarantee for `key`
- * (e.g. it is the home/owner and no concurrent destroy is possible).  Same
- * unsafety contract as the historical lookup_data. */
-void *arts_route_table_lookup_data(arts_guid_t key);
-
 int arts_route_table_lookup_rank(arts_guid_t key);
 
 /* Destroy: atomically detach the cb from `key`'s slot and drop the install
@@ -162,6 +159,15 @@ int arts_route_table_lookup_rank(arts_guid_t key);
  * "wins"); idempotent.  The object's deleter runs once the last outstanding
  * reader ref is released.  Returns true if this call detached the cb. */
 bool arts_route_table_set_destroyed(arts_guid_t key);
+
+/* True iff `key`'s slot is currently absent (value == NULL) AND a prior
+ * generation was destroyed (the install-epoch gen has been bumped, which only
+ * set_destroyed does).  Lets an acquire-request handler tell a post-destroy
+ * absent slot (fail the pending acquire — the DB is gone) from a pre-create
+ * absent slot (keep deferring — the create has not landed yet).  Acquire-
+ * ordered load of gen, so a true result carries the destroyer's
+ * synchronizes-with edge. */
+bool arts_route_table_was_destroyed(arts_guid_t key);
 
 /* Type-aware safe lookups: return a caller-owned cb handle (strong ref held)
  * or NULL if the slot is absent / destroyed / a kind mismatch.  Use
@@ -194,11 +200,10 @@ arts_route_item_t *
 arts_route_table_search_for_empty(arts_route_table_t *route_table,
                                   arts_guid_t key, bool mark_used);
 
-/* Unsafe peek of a slot's published object WITHOUT holding a ref (load + get +
- * drop).  C-linkage bridge for the slot API (which is otherwise C11-only) so
- * C++/nvcc translation units can read a slot whose object has an external
- * liveness guarantee (e.g. a persistent, never-freed mirror payload). */
-void *arts_route_item_peek_data(arts_route_item_t *item);
+/* Safe C-linkage acquire of a slot's published object; returns a caller-owned
+ * handle (NULL if empty); release via arts_shared_release.  The C++/.cu bridge
+ * for the otherwise C-only atomic-slot API — replaces the removed raw peek. */
+arts_shared_ptr_t arts_route_item_acquire(arts_route_item_t *item);
 
 /* Publish `obj` into THIS slot's cb with an explicit deleter (idempotent CAS).
  * Unlike add_item/add_item_with_deleter, which locate the slot via the global

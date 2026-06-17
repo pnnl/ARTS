@@ -61,11 +61,15 @@ extern "C" {
 #include "arts/coherence/types_common.h"
 
 /* Protocol-specific cache/db layout.  MRMW carries no ownership lease or RW
- * waiter queue (writer_count is a pure ref count); everything else (MRNEW
- * today, MRSW later) shares the ownership-cache shape, with the EAGER/LAZY
- * timing split made inside that header via ARTS_TIMING_LAZY. */
+ * waiter queue (writer_count is a pure ref count); MRNEW and MRSW both share
+ * the ownership-cache shape, with the EAGER/LAZY timing split made inside each
+ * header via ARTS_TIMING_LAZY.  MRSW differs from MRNEW only in the
+ * ownership-cache details (no per-cache RW waiter queue; the home FIFO node +
+ * pending_install carry edt_guid+slot), so it has its own header. */
 #if defined(ARTS_PROTOCOL_MRMW)
 #include "arts/coherence/mrmw/types.h"
+#elif defined(ARTS_PROTOCOL_MRSW)
+#include "arts/coherence/mrsw/types.h"
 #else
 #include "arts/coherence/mrnew/types.h"
 #endif

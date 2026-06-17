@@ -2,41 +2,41 @@
  *
  * Buffer lifecycle for the coherence protocol.
  *
- * Three primitives manage every arts_db_buffer_s instance during a
- * DB's lifetime:
+ * Each DB version is a separate arts_db_buffer_s wrapped in an
+ * arts_shared_ptr_t (cb).  cache.buffer is the atomic slot; the slot holds the
+ * "cache-hold" strong ref and every acquirer holds one more.  There is NO
+ * per-DB buffer pool: the buffer bytes are arts_malloc'd by arts_db_buf_alloc
+ * and freed by the cb deleter (arts_free) on the last strong drop.  (Only the
+ * control block itself rides a global never-drained pool — an internal
+ * shared.h detail, not a buffer pool.)  A per-DB buffer recycle pool is
+ * possible future work but is deliberately NOT implemented today.
  *
- *   acquire_buf   — race-safe buffer acquire.  Increments ref_count
- *                   via a CAS-loop guard ("only bump if rc > 0"),
- *                   re-validates the buffer pointer is still
- *                   cache.buffer after the bump, and retries
- *                   otherwise.  Returns NULL only on destroy NULL-
- *                   swap or pre-population (transient at creation).
+ * Three primitives manage every buffer during a DB's lifetime:
  *
- *   release_buf   — drops a single ref; whoever brings ref_count to
- *                   0 pushes the buffer back to cache.buffer_pool.
- *                   Pool is per-DB and never `free`d at runtime.
+ *   arts_db_buf_acquire  — race-safe acquire.  arts_atomic_shared_load returns
+ *                          a caller-owned strong ref (keeping the buffer alive
+ *                          against a concurrent destroy) or NULL if none is
+ *                          installed.
+ *   arts_db_buf_release  — drops one strong ref; the cb deleter frees the
+ *                          buffer on the last drop.
+ *   arts_db_buf_install  — version-conditional shared-ptr compare-exchange of a
+ *                          new buffer at cache.buffer.  Stale installs
+ *                          (old->version >= new_version) retreat and free the
+ *                          new buffer; the slot drops its ref on the retired
+ *                          buffer (its cb deleter frees it once the last
+ *                          in-flight acquirer releases).
  *
- *   install_buffer — CAS-loop install of a new buffer at cache.buffer.
- *                   Stale installs (incoming version <= current) are
- *                   rejected via "old->version >= new_version" check.
- *                   Pops a buffer from cache.buffer_pool first; mallocs
- *                   only on cold-start miss.  The retired old buffer's
- *                   sentinel ref is fetch_sub'd; whoever brings it to
- *                   0 recycles.
+ * Together these eliminate use-after-free without SMR / hazard pointers /
+ * mutexes:
+ *   - the cb keeps the buffer bytes valid for any in-flight acquirer even
+ *     across a concurrent destroy (the buffer carries no back-pointer to its
+ *     cache, so the release path never touches a possibly-freed cache).
+ *   - version monotonicity: the version stamp inside the buffer is monotonic
+ *     per DB, so a reader observing the installed buffer necessarily observes a
+ *     version >= its acquire-time version — exactly what the protocol promises.
  *
- * Together these eliminate any use-after-free without SMR, hazard
- * pointers, or mutexes:
- *
- *   - never-free recycle: memory stays valid for the DB's lifetime.
- *   - "rc > 0" CAS guard: a reader can never bump from 0 → 1, so a
- *     freshly-popped buffer's mid-init state (version/data being
- *     filled) is unobservable until install_buffer's
- *     ref_count.store(1) publishes.
- *   - version monotonicity across recycles: ABA on the buffer
- *     pointer is benign because the version stamp inside the buffer
- *     is monotonic per DB.  A reader observing a recycled pointer
- *     necessarily observes a version >= its acquire-time version,
- *     which is exactly what the eager protocol promises.
+ * Convention: all shared-object access is via caller-owned cb handles
+ * (lookup_* / _acquire → handle; release required). No raw no-ref peeks.
  */
 
 #ifndef ARTS_MEMORY_COHERENCE_BUFFER_H
@@ -66,11 +66,6 @@ arts_shared_ptr_t arts_db_buf_acquire(struct arts_db_cache_s *cache);
 /* Drop a strong ref taken via acquire_buf.  On the last drop the cb deleter
  * frees the buffer.  Sets *h = NULL. */
 void arts_db_buf_release(arts_shared_ptr_t *h);
-
-/* Unsafe non-refcounted peek of the installed buffer — valid only in
- * create-time / single-owner windows where no concurrent destroy can free
- * it.  Returns NULL if no buffer is installed. */
-struct arts_db_buffer_s *arts_db_buf_peek(struct arts_db_cache_s *cache);
 
 /* Recover the enclosing arts_db_buffer_s from a data pointer (which aliases
  * buf->data, the FAM canonical payload).  Pointer arithmetic only — does NOT

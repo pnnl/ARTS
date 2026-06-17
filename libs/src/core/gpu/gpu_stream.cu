@@ -538,9 +538,10 @@ void arts_schedule_to_gpu(arts_edt_t fn_ptr, uint32_t paramc,
 
 void free_gpu_item(arts_route_item_t *item) {
   arts_guid_kind_t type = arts_guid_get_kind(item->key);
-  arts_item_wrapper_t *wrapper =
-      (arts_item_wrapper_t *)arts_route_item_peek_data(item);
+  arts_shared_ptr_t h = arts_route_item_acquire(item);
+  arts_item_wrapper_t *wrapper = (arts_item_wrapper_t *)arts_shared_get(h);
   if (!wrapper) {
+    arts_shared_release(&h);
     return;
   }
   if (type == ARTS_GUID_EDT) {
@@ -595,6 +596,7 @@ void free_gpu_item(arts_route_item_t *item) {
   wrapper->time_stamp = 0;
   item->key = 0;
   /* item->lock and item->touched fields removed in new route_item model. */
+  arts_shared_release(&h);
 }
 
 /* ======================================================================== */

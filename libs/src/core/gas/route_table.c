@@ -258,38 +258,12 @@ void arts_route_table_reserve_or_lookup(arts_guid_t key,
 
 /* ── cb-based lifecycle ─────────────────────────────────────────────────── */
 
-void *arts_route_table_lookup_data(arts_guid_t key) {
-  arts_route_table_t *route_table = arts_get_route_table(key);
-  arts_route_item_t *item = arts_route_table_search_for_key(route_table, key);
-  if (item == NULL) {
-    return NULL;
-  }
-  /* Unsafe peek: take a ref, read the object, drop the ref.  Valid only when
-   * the caller has an external liveness guarantee (same contract as before). */
-  arts_shared_ptr_t h = arts_atomic_shared_load(&item->value);
-  if (!h) {
-    return NULL;
-  }
-  void *obj = arts_shared_get(h);
-  arts_shared_release(&h);
-  return obj;
-}
-
 int arts_route_table_lookup_rank(arts_guid_t key) {
   return (int)arts_guid_get_rank(key);
 }
 
-void *arts_route_item_peek_data(arts_route_item_t *item) {
-  if (item == NULL) {
-    return NULL;
-  }
-  arts_shared_ptr_t h = arts_atomic_shared_load(&item->value);
-  if (!h) {
-    return NULL;
-  }
-  void *obj = arts_shared_get(h);
-  arts_shared_release(&h);
-  return obj;
+arts_shared_ptr_t arts_route_item_acquire(arts_route_item_t *item) {
+  return item ? arts_atomic_shared_load(&item->value) : NULL;
 }
 
 bool arts_route_item_install_data(arts_route_item_t *item, void *obj,
@@ -393,6 +367,28 @@ bool arts_route_table_set_destroyed(arts_guid_t key) {
     return true;
   }
   return false;
+}
+
+/* True iff `key`'s slot currently holds no object AND a prior generation was
+ * destroyed (gen > 0).  Distinguishes a post-destroy absent slot from a
+ * pre-create absent slot (never installed, gen == 0): the former must fail a
+ * pending acquire (the DB is gone), the latter must keep deferring (the create
+ * is still coming).  gen is bumped acq_rel only by set_destroyed; the load here
+ * is acquire-ordered, so a caller that observes the destroyed state via this
+ * helper has the synchronizes-with edge from the destroyer's set_destroyed. */
+bool arts_route_table_was_destroyed(arts_guid_t key) {
+  arts_route_table_t *route_table = arts_get_route_table(key);
+  arts_route_item_t *item = arts_route_table_search_for_key(route_table, key);
+  if (item == NULL) {
+    return false;
+  }
+  arts_shared_ptr_t v = arts_atomic_shared_load(&item->value);
+  bool absent = (arts_shared_get(v) == NULL);
+  arts_shared_release(&v);
+  if (!absent) {
+    return false;
+  }
+  return __atomic_load_n(&item->gen, __ATOMIC_ACQUIRE) > 0;
 }
 
 /* ── Typed handle lookups (caller-owned ref) ────────────────────────────── */

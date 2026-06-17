@@ -14,7 +14,7 @@
 
 #include "arts/coherence/buffer.h"
 
-#include <stdatomic.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -39,15 +39,6 @@ arts_shared_ptr_t arts_db_buf_acquire(struct arts_db_cache_s *cache) {
 }
 
 void arts_db_buf_release(arts_shared_ptr_t *h) { arts_shared_release(h); }
-
-struct arts_db_buffer_s *arts_db_buf_peek(struct arts_db_cache_s *cache) {
-  /* Unsafe non-refcounted peek — valid only in create-time / single-owner
-   * windows where no concurrent destroy can free the buffer.  Used to read
-   * the freshly-installed payload pointer at DB create. */
-  arts_shared_ptr_t cb =
-      atomic_load_explicit(&cache->buffer, memory_order_acquire);
-  return (struct arts_db_buffer_s *)arts_shared_get(cb);
-}
 
 struct arts_db_buffer_s *arts_db_buf_install(struct arts_db_cache_s *cache,
                                              uint64_t new_version,

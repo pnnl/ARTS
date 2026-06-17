@@ -147,7 +147,6 @@ static const arts_ooo_handler_fn_t g_ooo_table[OOO_KIND_COUNT] = {
     [OOO_DB_ACQUIRE] = arts_db_acquire_replay_dep,
     [OOO_DB_SNAPSHOT_REQUEST] = arts_handler_db_snapshot_request,
     [OOO_DB_OWNERSHIP_REQUEST] = arts_handler_db_ownership_request,
-    [OOO_DB_OWNERSHIP_INVALIDATE] = arts_handler_db_ownership_invalidate,
     [OOO_DB_WRITEBACK] = arts_handler_db_writeback,
 #elif defined(ARTS_TIMING_LAZY)
     [OOO_DB_ACQUIRE] = arts_db_acquire_replay_dep,
@@ -168,7 +167,6 @@ arts_ooo_payload_alloc(ooo_kind_t kind, const void *args, uint32_t args_size) {
       sizeof(struct arts_ooo_payload_s) + args_size);
   p->kind = kind;
   p->args_size = args_size;
-  p->gen_at_defer = 0; /* real epoch snapshot taken at the fresh defer site */
   if (args_size > 0 && args != NULL) {
     memcpy(arts_ooo_payload_args(p), args, args_size);
   }
@@ -185,27 +183,6 @@ void arts_ooo_dispatch_or_defer(struct arts_route_item_s *slot,
    * NULLed it earlier in the same drain walk is observed here. */
   arts_shared_ptr_t h = arts_atomic_shared_load(&slot->value);
   if (h) {
-    /* Cross-generation guard (drain replay only, kind-gated to INVALIDATE).
-     * A payload deferred while one generation was live (e.g. a stale ownership
-     * INVALIDATE) must not replay against a different generation installed by a
-     * labeled-GUID re-create: doing so would apply a withdrawal that belongs to
-     * the prior round to a fresh round's writer_count.  payload != NULL means
-     * this is a drain re-entry (a fresh wire/API arrival has payload == NULL
-     * and can never be stale, so it always dispatches).  Bump-on-destroy-only
-     * makes an unchanged gen mean "same round → replay" and a changed gen mean
-     * "a destroy intervened → drop".  Gated to OOO_DB_OWNERSHIP_INVALIDATE —
-     * other kinds rely on before-create replay across the install and must not
-     * drop.  Eager-only: that kind exists solely in the eager build's enum
-     * (lazy/MRMW never defer INVALIDATE). */
-#if defined(ARTS_TIMING_EAGER)
-    if (payload != NULL && kind == OOO_DB_OWNERSHIP_INVALIDATE &&
-        payload->gen_at_defer !=
-            __atomic_load_n(&slot->gen, __ATOMIC_ACQUIRE)) {
-      arts_shared_release(&h);
-      arts_free(payload);
-      return;
-    }
-#endif
     void *item = arts_shared_get(h);
     /* Ref pinned across the whole handler call — a concurrent destroy's
      * exchange-to-NULL drops only the install ref; `h` keeps the object alive
@@ -221,14 +198,8 @@ void arts_ooo_dispatch_or_defer(struct arts_route_item_s *slot,
   /* Miss — defer. */
   if (payload == NULL) {
     payload = arts_ooo_payload_alloc(kind, args, args_size); /* fresh entry */
-    /* Snapshot the install-epoch ONCE, at the fresh defer.  A re-pushed node
-     * (drain re-entry, payload != NULL) keeps its original epoch so a node that
-     * misses one drain still drops correctly if a destroy later bumps gen. */
-    payload->gen_at_defer = __atomic_load_n(&slot->gen, __ATOMIC_ACQUIRE);
   }
-  /* else: drain re-entry — reuse the same payload (no alloc/free), preserving
-   * its gen_at_defer (do NOT overwrite — it must stay the epoch of first
-   * defer).
+  /* else: drain re-entry — reuse the same payload (no alloc/free).
    *
    * The ooo_list is consumed ONLY by whole-chain reverse_drain (a single
    * atomic_exchange of the head); there is deliberately NO single-node pop.

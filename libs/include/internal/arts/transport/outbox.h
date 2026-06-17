@@ -60,6 +60,17 @@ void arts_transport_send_payload_async_free(int rank, char *message,
                                             unsigned int length, char *payload,
                                             unsigned int offset, uint64_t size,
                                             void (*free_method)(void *));
+
+/* Self-loopback: post a self-addressed packet for asynchronous delivery on a
+ * worker scheduler tick (arts_transport_loopback_drain), avoiding the
+ * unbounded inline-handler recursion a same-rank acquire round would hit. */
+void arts_transport_loopback_post(const void *packet, unsigned int size);
+
+/* Deliver every pending self-send through arts_transport_dispatch_packet.
+ * Called by each worker from its scheduler loop; returns true if it dispatched
+ * at least one (the caller may then skip an idle pause). */
+bool arts_transport_loopback_drain(void);
+
 void arts_transport_set_thread_outbound_queues(unsigned int start,
                                                unsigned int stop);
 void arts_transport_thread_outbound_queues_cleanup();

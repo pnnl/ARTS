@@ -54,6 +54,7 @@ set(TEST_PROGRAMS
     coherence_stress_single_node
     coherence_stress_dist
     coherence_multi_writer_same_addr
+    coherence_multi_writer_multi_db
     coherence_ro_acquire_stress
     coherence_home_producer_ro
     coherence_zero_size_xfer
@@ -595,6 +596,9 @@ set_property(TEST coherence_stress_single_node APPEND PROPERTY
 register_single_node_test(coherence_multi_writer_same_addr TIMEOUT 60)
 set_property(TEST coherence_multi_writer_same_addr APPEND PROPERTY
     LABELS "coherence_stress")
+register_single_node_test(coherence_multi_writer_multi_db TIMEOUT 60)
+set_property(TEST coherence_multi_writer_multi_db APPEND PROPERTY
+    LABELS "coherence_stress")
 register_single_node_test(coherence_ro_acquire_stress TIMEOUT 60)
 set_property(TEST coherence_ro_acquire_stress APPEND PROPERTY
     LABELS "coherence_stress")
@@ -662,6 +666,16 @@ set_tests_properties(coherence_lazy_ownership_reorder PROPERTIES
 # 1n passes trivially (no ownership transfer).  RELAXED SKIPs cleanly.
 register_single_node_test(coherence_lazy_confirm_gate TIMEOUT 120)
 register_multinode_test(coherence_lazy_confirm_gate TIMEOUT 120)
+
+# --- MRSW per-cache RW-waiter FIFO unit test (MRSW-only) ---
+# Pure unit test for cache.pending_rw, the Vyukov MPSC waiter FIFO carrying
+# (edt_guid, slot).  The type + symbols exist only in MRSW builds (the queue TU
+# coherence/mrsw/waiter_queue.c is linked only under ARTS_COHERENCE_PROTOCOL=MRSW),
+# so the binary is built AND the ctest entry registered only in that build.
+if(ARTS_COHERENCE_PROTOCOL STREQUAL "MRSW")
+    add_arts_test(coherence_mrsw_waiter_queue)
+    register_pure_unit_test(coherence_mrsw_waiter_queue)
+endif()
 
 # --- DB-DRF test binaries (target the DB-DRF contract; ctest entries register only in the MRMW build) ---
 # These tests exercise the DB-DRF contract (data-race-free at DB granularity).

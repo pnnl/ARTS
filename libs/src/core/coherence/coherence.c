@@ -109,29 +109,6 @@ void arts_db_cache_common_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
 /* ===== Acquire path =============================================== */
 /* ================================================================== */
 
-/* Adapter: route_table stores arts_db_s*; the coherence cache_s is embedded
- * by value as the first member of db_s.  All coherence paths look up cache
- * via this helper.  Returns NULL if either the route_table entry doesn't
- * exist or the entry has no DB-level coherence (e.g. PIN/CXL DBs, which keep
- * the embedded cache zeroed).
- *
- * This is the last surviving raw arts_route_table_lookup_data caller in
- * libs/.  Migrating it to a typed handle lookup (arts_route_table_lookup_db +
- * arts_shared_release) would require rewriting all ~15 callers across
- * coherence.c / coherence_handlers.c / db.c to balance the ref — out of scope
- * here.  Documented as a known exception. */
-struct arts_db_cache_s *arts_db_cache_lookup(arts_guid_t db_guid) {
-  void *data = arts_route_table_lookup_data(db_guid);
-  if (data == NULL) {
-    return NULL;
-  }
-  struct arts_db_s *db = (struct arts_db_s *)data;
-  if (db->db_type != ARTS_DB) {
-    return NULL;
-  }
-  return &db->cache;
-}
-
 /* ===== EDT wake helper ============================================== */
 
 /* Trigger the parked EDT identified by (edt_guid, slot) by writing
@@ -162,17 +139,24 @@ void mark_edt_ready_by_guid(arts_guid_t edt_guid, unsigned int slot) {
   arts_edt_dep_t *depv = (arts_edt_dep_t *)arts_get_depv(edt);
   arts_guid_t db_guid = depv[slot].guid;
   if (db_guid != NULL_GUID) {
-    struct arts_db_cache_s *cache = arts_db_cache_lookup(db_guid);
-    if (cache != NULL) {
+    /* Pin the db_s for the cache-deref window: the embedded cache is its FIRST
+     * member (offset 0), so pinning the db_s keeps the cache alive against a
+     * concurrent destroy while we read the buffer slot.  Released after
+     * depv[slot].ptr is set. */
+    arts_shared_ptr_t db_h = arts_route_table_lookup_db(db_guid);
+    struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(db_h);
+    if (db != NULL && db->db_type == ARTS_DB) {
+      struct arts_db_cache_s *cache = &db->cache;
       /* Acquire the EDT's strong ref on the buffer; release_one_dep drops it
-       * (via buf_from_data(ptr)->cb) when the EDT finishes.  The handle is not
-       * released here — the ref is the EDT's hold.  depv[slot].ptr aliases
+       * (via buf_from_data(ptr)->cb) when the EDT finishes.  The buf handle is
+       * not released here — that ref is the EDT's hold.  depv[slot].ptr aliases
        * buf->data, the canonical user-visible payload. */
       arts_shared_ptr_t buf_h = arts_db_buf_acquire(cache);
       struct arts_db_buffer_s *buf =
           (struct arts_db_buffer_s *)arts_shared_get(buf_h);
       depv[slot].ptr = buf ? buf->data : NULL;
     }
+    arts_shared_release(&db_h);
   }
   /* Data resolved for this dep — count it down; the actor that reaches 0
    * schedules. The edt_h ref held across this call keeps the EDT alive even if
@@ -185,25 +169,28 @@ void mark_edt_ready_by_guid(arts_guid_t edt_guid, unsigned int slot) {
 /* ===== Lazy first-touch =========================================== */
 
 /* Allocate a stub arts_db_s + cache_s for a DIST DB that this rank
- * has not yet touched, register it in the route_table, and return
- * the cache_s.  The stub has no user data payload — install_buffer
- * lazy-allocates cache->user_data on first wire arrival.
+ * has not yet touched, register it in the route_table, and return a
+ * PINNED handle to the db_s whose cache it installed.  The stub has no
+ * user data payload — install_buffer lazy-allocates cache->user_data on
+ * first wire arrival.
  *
- * Race-safe: route_table_add_item_race rejects if another thread
- * (e.g. a concurrent wire-receive) raced us; in that case we free
- * our stub and return the existing cache_s.
+ * Race-safe: route_table_install_if_absent rejects if another thread
+ * (e.g. a concurrent wire-receive) raced us; in that case we free our
+ * stub and return a pinned handle to the established db_s.
  *
- * Caller invariant: returns with the route_table ref bumped (via
- * lookup) so subsequent arts_db_acquire_all flow can balance with the
- * usual return_db at release_one_dep time. */
-struct arts_db_cache_s *arts_db_cache_lazy_install(arts_guid_t db_guid,
-                                                   uint64_t db_size) {
+ * Returns a pinned handle; the caller MUST arts_shared_release it once the
+ * cache is no longer needed (on every control-flow path).  A NULL handle
+ * means the DB was destroyed before the install could be observed (the
+ * lost-race lookup found no live entry). */
+arts_shared_ptr_t arts_db_cache_lazy_install(arts_guid_t db_guid,
+                                             uint64_t db_size) {
   /* First check if it already exists (someone else lazy-installed or
    * a wire-receive fired). */
-  struct arts_db_cache_s *cache = arts_db_cache_lookup(db_guid);
-  if (cache != NULL) {
-    return cache;
+  arts_shared_ptr_t existing = arts_route_table_lookup_db(db_guid);
+  if (arts_shared_get(existing) != NULL) {
+    return existing;
   }
+  arts_shared_release(&existing);
 
   /* Lazy install (non-home consumer first acquire): cache-only stub — no home
    * directory (this rank is not the GUID home).  arts_db_cache_stub_size()
@@ -224,13 +211,14 @@ struct arts_db_cache_s *arts_db_cache_lazy_install(arts_guid_t db_guid,
   if (arts_route_table_install_if_absent(stub, db_guid, arts_global_rank_id,
                                          /*used=*/true)) {
     arts_ooo_drain_guid(db_guid);
-    return &stub->cache;
+    /* Pin the just-installed db_s (one cb ref) for the caller. */
+    return arts_route_table_lookup_db(db_guid);
   }
 
   /* Lost the race — another thread already installed.  Tear down our
-   * stub and return the established cache. */
+   * stub and return a pinned handle to the established db_s. */
   arts_db_free(stub);
-  return arts_db_cache_lookup(db_guid);
+  return arts_route_table_lookup_db(db_guid);
 }
 
 /* ===== Case 1/3/5: local-buffer acquire ============================= */

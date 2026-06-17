@@ -1,11 +1,20 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * LAZY protocol translation unit: defines the LAZY-specific
+ * LAZY timing translation unit for MRSW: defines the LAZY-specific
  * arts_handler_db_* / arts_db_* bodies directly (CMake links exactly this TU
- * for an MRNEW+LAZY build) plus the LAZY-only wire handlers/senders.
- * Compiled only for ARTS_COHERENCE_PROTOCOL=MRNEW with
+ * for an MRSW+LAZY build) plus the LAZY-only wire handlers/senders.
+ * Compiled only for ARTS_COHERENCE_PROTOCOL=MRSW with
  * ARTS_PROTOCOL_TIMING=LAZY (selected in libs/src/core/CMakeLists.txt).
  * Contains NO protocol/timing preprocessor logic.
+ *
+ * Mirrors coherence/mrnew/lazy.c; the MRSW deltas are the single-writer cap:
+ * the local RW acquire claims the TOKEN (arts_db_acquire_rw_local_fast pushes a
+ * waiter + returns without writing dep->ptr), the TRANSFER install jumps
+ * writer_count 0->2 (sentinel + token — no transient drain guard; the token IS
+ * the running writer's account), the CONFIRM_ACK drains ONE waiter (the token's
+ * writer) and applies the piggybacked sentinel withdrawal but does NOT remove a
+ * guard, and release routes through arts_db_release_rw_local
+ * (pop-then-conditional-sub).
  */
 #include <stdbool.h>
 #include <stdint.h>
@@ -29,10 +38,11 @@
 
 /* ===== 8-case acquire dispatch (LAZY arm) ==========================
  * Whole arts_handler_db_acquire body for the LAZY build.  Diverges from EAGER
- * only on the RO-has-local-data predicate (LAZY: is_owner — the home rank does
- * NOT hold the canonical copy; only the current owner has an installed buffer,
- * so a home-but-not-owner rank goes through acquire_remote_ro and home forwards
- * to the owner via REDIRECT_RO). */
+ * only on the RO-has-local-data predicate (LAZY: is_owner — only the current
+ * owner holds an installed buffer; a home-but-not-owner rank goes through
+ * acquire_remote_ro and home forwards via REDIRECT_RO).  On a successful local
+ * RW fast path the run path delivers the dep — the handler does NOT call
+ * arts_db_acquire_resolved. */
 void arts_handler_db_acquire(void *item, void *args) {
   struct arts_db_s *db = (struct arts_db_s *)item;
   struct arts_ooo_args_db_acquire_s *a =
@@ -42,9 +52,7 @@ void arts_handler_db_acquire(void *item, void *args) {
   struct arts_db_cache_s *cache = &db->cache;
   arts_edt_dep_t *dep = &((arts_edt_dep_t *)arts_get_depv(edt))[slot];
   arts_db_access_mode_t mode = dep->mode;
-  /* writer_count is non-negative (post-install rw_holder flip + install guard),
-   * so > 0 means owner; the (int) cast is defensive.  An unsigned compare would
-   * be equivalent here — both reduce to "owner iff count != 0". */
+  /* writer_count > 0 means owner ({2,1}); the (int) cast is defensive. */
   bool is_owner = ((int)arts_atomic_read(&cache->writer_count) > 0);
 
   if (mode == DB_MODE_RO) {
@@ -66,8 +74,9 @@ void arts_handler_db_acquire(void *item, void *args) {
    * request. */
   bool can_run_rw =
       is_owner && (arts_atomic_read(&cache->ownership_unconfirmed) == 0);
-  if (can_run_rw && arts_db_acquire_rw_local_fast(cache, dep)) {
-    arts_db_acquire_resolved(edt, slot); /* data here, writer_count bumped */
+  if (can_run_rw &&
+      arts_db_acquire_rw_local_fast(cache, dep, edt->guid, slot)) {
+    /* The run path delivers this dep; do NOT resolve here. */
     return;
   }
   arts_db_acquire_remote_rw(cache, edt->guid,
@@ -79,16 +88,16 @@ bool arts_db_acquire_is_serialized(arts_db_access_mode_t mode) {
 }
 
 /* ===== release_rw (lazy arm) =======================================
- * The lazy protocol drops the buffer ref BEFORE decrementing writer_count, so
- * the slot's cache-hold is the only ref that can keep the buffer alive past
+ * The lazy protocol drops the buffer ref BEFORE relinquishing the token, so the
+ * slot's cache-hold is the only ref that can keep the buffer alive past
  * writer_count==0 (a concurrent teardown then frees it via the cb deleter with
- * no dangling local ref).  In the eager protocol this window does not exist
- * (local_transfer_now restores the sentinel); the lazy protocol has no sentinel
- * restoration, so it must close the window by releasing the ref before exposing
- * writer_count==0. */
+ * no dangling local ref).  The single-writer token release (pop-then-
+ * conditional-sub + LOCAL Dekker re-check, and the 0-edge owner→owner ship) is
+ * in arts_db_release_rw_local (coherence/mrsw/ownership.c). */
 void arts_db_release_rw(struct arts_db_cache_s *cache) {
   /* Defensive: writer_count==0 means our acquire never bumped ownership;
-   * decrementing would underflow.  Atomic acquire-load avoids a TSan race. */
+   * the release token logic would underflow.  Atomic acquire-load avoids a
+   * TSan race. */
   if (arts_atomic_read(&cache->writer_count) == 0) {
     return;
   }
@@ -99,37 +108,27 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
   if (buf != NULL) {
     arts_atomic_add_u64(&buf->version, 1);
   }
-  /* Drop the buffer ref BEFORE the writer_count decrement (close the
-   * writer_count==0 teardown window). */
+  /* Drop the buffer ref BEFORE the token release (close the writer_count==0
+   * teardown window). */
   if (buf != NULL) {
     arts_db_buf_release(&buf_h);
   }
 
-  /* writer_count is non-negative (post-install flip + install guard absorb any
-   * INVALIDATE that lands during install).  A true 1->0 release reads 0 and
-   * ships the transfer; the (int) cast is defensive. */
-  int rest = (int)arts_atomic_sub(&cache->writer_count, 1); /* post value */
-  if (rest == 0) {
-    /* If an INVALIDATE_NOTICE already published a transfer target while writers
-     * were live, this (last) releaser is the unique actor that ships
-     * TRANSFER_OWNERSHIP — sentinel invariant, no flag.  Identical for home and
-     * non-home owners.  Otherwise no transfer is pending: home retains
-     * ownership until a future OWNERSHIP_REQUEST; a non-home owner quiesces. */
-    if (cache->incoming_new_owner != ARTS_LAZY_NO_PENDING_OWNER) {
-      arts_db_send_ownership_response(cache);
-    }
-  }
+  /* Single-writer token release: hand the token to the next waiter (pop) or
+   * withdraw it (sub) with a LOCAL Dekker re-check, shipping TRANSFER_OWNERSHIP
+   * only on the true 0-edge with a transfer target pending. */
+  arts_db_release_rw_local(cache);
 }
 
-/* ===== cache_s lifecycle (lazy: pending_rw + dedup map + sentinel) =
- * Construct: the lazy protocol's field-init (the Vyukov MPSC pending_rw queue +
- * the owner-side dedup map [lazy-allocated] + the transfer sentinel) runs
- * BEFORE arts_db_cache_common_init.  Destruct order: buffer-NULL (pre) →
- * pending_rw destroy → snapshot drain + home teardown (post). */
+/* ===== cache_s lifecycle (lazy: pending_rw FIFO + dedup map + sentinel) =
+ * Construct: the lazy protocol's field-init (the per-cache RW-waiter FIFO + the
+ * owner-side dedup map [lazy-allocated] + the transfer sentinel) runs BEFORE
+ * arts_db_cache_common_init.  Destruct order: buffer-NULL (pre) → pending_rw
+ * destroy → snapshot drain + home teardown (post). */
 void arts_db_cache_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
                         uint64_t db_size, arts_db_init_kind_t kind,
                         unsigned int creator_rank) {
-  arts_pending_rw_queue_init(&c->pending_rw);
+  arts_db_rw_waiter_queue_init(&c->pending_rw);
   /* Lazy owner-side fields: dedup map allocated lazily on first ownership
    * grant; incoming_new_owner starts at the sentinel (no transfer pending). */
   c->last_sent_version = NULL;
@@ -143,8 +142,31 @@ void arts_db_cache_destructor(struct arts_db_cache_s *cache) {
     return;
   }
   arts_db_cache_common_destroy_pre(cache); /* buffer-NULL FIRST */
-  arts_pending_rw_queue_destroy(&cache->pending_rw);
-  arts_db_cache_common_destroy_post(cache); /* snapshot drain → home teardown */
+  /* Refcount hit 0 → this destructor is the SOLE owner of the cache: no other
+   * ref-holder exists, so it is the unique safe single consumer of the pop-one
+   * pending_rw FIFO.  Wake every still-parked RW waiter with NULL data (the
+   * buffer slot was NULLed by destroy_pre, so mark_edt_ready_by_guid delivers
+   * depv[slot].ptr=NULL and accounts the dep) BEFORE freeing the queue nodes.
+   * This is where the destroy fan-out's deferred RW wake lands (the handler no
+   * longer drains pending_rw; the releasing token holder relinquished without
+   * popping).  Snapshot waiters are woken too (arts_db_drain_pending_snapshot
+   * wakes; the common-post path only frees), then the queue is torn down.
+   *
+   * Skip the wake during final runtime teardown (shutdown_state != 0): the
+   * worker scheduler is gone by the time arts_clean_up_dbs frees the route
+   * table, so accounting a dep / scheduling a parked EDT would dereference a
+   * destroyed deque.  At shutdown the parked EDTs are abandoned with the rest
+   * of the graph — only the FIFO nodes still need freeing. */
+  if (arts_node_info.shutdown_state == 0) {
+    arts_guid_t edt_guid;
+    unsigned int slot;
+    while (arts_db_rw_waiter_queue_pop(&cache->pending_rw, &edt_guid, &slot)) {
+      mark_edt_ready_by_guid(edt_guid, slot);
+    }
+    arts_db_drain_pending_snapshot(cache); /* wake parked snapshot waiters */
+  }
+  arts_db_rw_waiter_queue_destroy(&cache->pending_rw);
+  arts_db_cache_common_destroy_post(cache); /* snapshot free → home teardown */
 }
 
 /* ===== home-directory lifecycle (inlined in arts_db_s) ============= */
@@ -167,10 +189,6 @@ void arts_db_home_teardown(struct arts_db_s *db) {
   /* No free: home fields are inlined in the arts_db_s. */
 }
 
-/* ===== Lazy ownership-transfer wire handlers (moved from handlers.c) ===
- * (arts_db_drain_pending_snapshot / arts_db_drain_pending_rw_after_grant are
- * declared in coherence/coherence.h.) */
-
 /* ===== Lazy start_invalidate_round ==================================== */
 
 void arts_db_lazy_start_invalidate_round(struct arts_db_cache_s *cache,
@@ -179,25 +197,22 @@ void arts_db_lazy_start_invalidate_round(struct arts_db_cache_s *cache,
   unsigned int current_owner =
       atomic_load_explicit(&db->rw_holder, memory_order_acquire);
   /* INVALIDATE target is always rw_holder, which home publishes only after that
-   * rank's cache install (creator at DB_CREATE, or the new owner at
-   * CONFIRM).  So the target's cache is provably already installed when the
-   * INVALIDATE arrives — the lazy protocol never defers INVALIDATE; do not
-   * route it through dispatch_or_defer (the dispatcher / self-send call the
-   * handler body directly, guarded by assert(cache != NULL)). */
+   * rank's cache install (creator at DB_CREATE, or the new owner at CONFIRM),
+   * so the target's cache is provably already installed; the lazy protocol
+   * never defers INVALIDATE. */
   arts_send_db_ownership_invalidate(current_owner, cache->db_guid, new_owner);
 }
 
-/* ===== Lazy TRANSFER_OWNERSHIP handler (new owner C) =================== */
-
+/* ===== Lazy TRANSFER_OWNERSHIP handler (new owner C) ===================
+ * MRSW: install jumps writer_count 0->2 (sentinel + TOKEN).  The RW drain is
+ * DEFERRED to CONFIRM_ACK (home has not flipped rw_holder yet) — the token is
+ * the gate-held running-writer account, relinquished only by
+ * arts_db_release_rw_local after CONFIRM_ACK runs the writer. */
 void arts_handler_db_ownership_response(void *payload, size_t size) {
   struct arts_msg_ownership_response_packet_s *hdr =
       (struct arts_msg_ownership_response_packet_s *)payload;
   arts_guid_t db_guid = hdr->db_guid;
 
-  /* Pin the db_s for the whole handler body (map deserialize + buffer install +
-   * snapshot/OoO drains + writer_count RMW): the embedded cache is its FIRST
-   * member (offset 0), so one cb ref keeps it alive against a concurrent
-   * DESTROY on another receiver thread.  Released on every return path. */
   arts_shared_ptr_t db_h = arts_route_table_lookup_db(db_guid);
   struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(db_h);
   if (db == NULL) {
@@ -218,9 +233,8 @@ void arts_handler_db_ownership_response(void *payload, size_t size) {
   char *data_start = map_start + map_size;
   size_t data_size = size - sizeof(*hdr) - map_size;
 
-  /* Reconstruct the owner-side dedup map so this rank can skip
-   * redundant DATA_RESPONSE sends to readers that already hold a
-   * sufficiently fresh copy. */
+  /* Reconstruct the owner-side dedup map so this rank can skip redundant
+   * DATA_RESPONSE sends to readers that already hold a fresh-enough copy. */
   if (cache->last_sent_version != NULL) {
     arts_rank_u64_map_destroy(cache->last_sent_version);
   }
@@ -235,42 +249,29 @@ void arts_handler_db_ownership_response(void *payload, size_t size) {
     }
   }
 
-  /* ADD the ownership sentinel (+1) PLUS a transient DRAIN GUARD (+1) in a
-   * single atomic op (jump 0->2, no intermediate 1 a racing INVALIDATE could
-   * catch at 0) — the same scheme the eager GRANT uses.  The guard keeps
-   * writer_count >= 1 across the per-waiter +1 drain below, so a commutative
-   * INVALIDATE(-1) cannot zero the count mid-drain and ship the transfer before
-   * this rank's parked writers are counted+scheduled; the 0-crossing is
-   * deferred to guard-removal (after the drain).  Jumping to 2 also makes a
-   * fresh local RW acquire take the fast path (cswap +1) instead of parking, so
-   * the drain sees exactly the pre-TRANSFER waiter set.  An absolute swap(1)
-   * would clobber a racing INVALIDATE's decrement and lose the transfer
-   * (distributed hang). */
   /* Gate this rank's RW execution until home confirms the rw_holder flip. Set
    * the flag BEFORE the writer_count bump (plain store ordered before the
-   * atomic RMW, same discipline as incoming_new_owner vs the INVALIDATE sub): a
-   * worker doing a fresh RW acquire reads writer_count then the gate, so any
-   * observer of the bumped count must also observe the gate. */
+   * atomic RMW, same discipline as incoming_new_owner vs the INVALIDATE sub).
+   */
   cache->ownership_unconfirmed = 1u;
-  /* Sentinel (+1) + drain guard (+1), single op (0->2). The guard is held until
-   * the CONFIRM_ACK handler, so a next-round INVALIDATE racing ahead of
-   * CONFIRM_ACK cannot zero the count and ship before this rank has used its
-   * ownership. */
+  /* Sentinel(+1) + token(+1), single op (0->2): no intermediate 1 a racing
+   * INVALIDATE could catch at 0.  The token is the running writer's account,
+   * held until release_rw_local after the CONFIRM_ACK drain runs it.  An
+   * absolute swap(1) would clobber a racing INVALIDATE's decrement. */
   arts_atomic_add(&cache->writer_count, 2u);
 
-  /* RW drain is DEFERRED to the CONFIRM_ACK handler (home has not flipped
-   * rw_holder to us yet). The snapshot + OoO drains stay: a parked RO waiter
-   * served here gets the transferred (pre-write) version, which is correct, and
-   * a reordered INVALIDATE deferred on a previously-missing cache replays now.
-   */
+  /* RW drain is DEFERRED to CONFIRM_ACK (home has not flipped rw_holder yet).
+   * The snapshot + OoO drains stay: a parked RO waiter served here gets the
+   * transferred (pre-write) version, which is correct, and a reordered
+   * INVALIDATE deferred on a previously-missing cache replays now. */
   arts_db_drain_pending_snapshot(cache);
   arts_ooo_drain_guid(db_guid);
 
-  /* No racing INVALIDATE can have reached us yet: home targets this rank as an
+  /* No racing INVALIDATE can have reached us yet (home targets this rank as an
    * INVALIDATE recipient only after the rw_holder flip, which needs this
-   * CONFIRM. So incoming_new_owner == NONE here — send CONFIRM
-   * unconditionally. ownership_req_in_flight stays 1 until CONFIRM_ACK so fresh
-   * RW acquires in the gate window park without issuing a duplicate request. */
+   * CONFIRM).  Send CONFIRM unconditionally.  ownership_req_in_flight stays 1
+   * until CONFIRM_ACK so fresh RW acquires in the gate window park without
+   * issuing a duplicate request. */
   unsigned int home_rank = arts_guid_get_rank(db_guid);
   arts_send_db_ownership_confirm(home_rank, db_guid, hdr->version);
 
@@ -279,12 +280,10 @@ void arts_handler_db_ownership_response(void *payload, size_t size) {
 
 /* ===== Lazy CONFIRM handler (home A) =============================== */
 
-/* Cat-C pure body (CONFIRM, home side).  The wire dispatcher / self-send
- * shortcut has already looked the home db_s up with a held ref and passes it as
- * item_v (cache is its FIRST member, offset 0).  No lookup/NULL-check here —
- * the dispatcher's MISS branch SILENTLY DROPS (DB destroyed).  args_v is unused
- * (the new owner is read from db->pending_install_owner, published by the baton
- * holder; CONFIRM only confirms the install completed). */
+/* Cat-C pure body (CONFIRM, home side).  args_v is unused (the new owner is
+ * read from db->pending_install_owner).  Records the new rw_holder, then either
+ * advances the round in the SAME message (CONFIRM_ACK piggybacks the next
+ * transfer target — the merged INVALIDATE) or releases the baton. */
 void arts_handler_db_ownership_confirm(void *item_v, void *args_v) {
   (void)args_v;
   struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
@@ -294,85 +293,61 @@ void arts_handler_db_ownership_confirm(void *item_v, void *args_v) {
   unsigned int new_owner = db->pending_install_owner;
   atomic_store_explicit(&db->rw_holder, new_owner, memory_order_release);
 
-  /* The directory now names the new owner: tell it to run its gated RW EDTs.
-   * If a next requester is queued, the round advances in the SAME message —
-   * the CONFIRM_ACK piggybacks the next transfer target, and the new owner's
-   * handler applies the INVALIDATE effect (publish incoming_new_owner +
-   * withdraw the sentinel) itself.  This merges what used to be two separate
-   * home→new_owner messages (CONFIRM_ACK + INVALIDATE) into one, removing the
-   * CONFIRM_ACK↔INVALIDATE reorder window.  With no pending requester the ack
-   * carries ARTS_LAZY_NO_PENDING_OWNER and the baton is released below. */
+  /* If a next requester is queued, advance the round in the SAME message — the
+   * CONFIRM_ACK piggybacks the next transfer target, and the new owner's
+   * handler applies the INVALIDATE effect itself (publish incoming_new_owner +
+   * withdraw the sentinel), removing the CONFIRM_ACK↔INVALIDATE reorder
+   * window. */
   unsigned int piggyback = ARTS_LAZY_NO_PENDING_OWNER;
   {
     unsigned int next_owner;
     if (arts_home_lockreq_queue_pop(&db->pending_rw, &next_owner)) {
       db->pending_install_owner = next_owner;
       piggyback = next_owner;
-      /* No early PROCEED: the next owner's RW cursor is advanced by the CURRENT
-       * owner at transfer-commit (writer_count->0 in
-       * arts_db_send_ownership_response) — the earliest moment its
-       * acquisition of this db is irrevocably committed.  PROCEEDing here
-       * (round start, before the current owner has released) could strand it in
-       * a hold-and-wait cycle. */
     }
   }
   arts_send_db_ownership_confirm_ack(new_owner, cache->db_guid, piggyback);
   if (piggyback != ARTS_LAZY_NO_PENDING_OWNER) {
     /* Round advanced via the merged ack; the baton stays held until the new
-     * owner releases (transfer-commit), as in the standalone-INVALIDATE case.
-     */
+     * owner releases (transfer-commit). */
     return;
   }
 
   /* No pending requester — release the baton (with the freshly-enqueued-racer
    * recheck retry loop). */
   while (1) {
-    /* Release the baton. */
     atomic_store_explicit(&db->invalidate_in_flight, 0u, memory_order_release);
-    /* Re-check for a freshly-enqueued requester that raced the baton
-     * release.  If the queue is still empty, we're done. */
     if (arts_home_lockreq_queue_empty(&db->pending_rw)) {
       return;
     }
-    /* There is a new requester; try to re-acquire the baton. */
     unsigned int expected = 0u;
     if (!atomic_compare_exchange_strong_explicit(
             &db->invalidate_in_flight, &expected, 1u, memory_order_acq_rel,
             memory_order_acquire)) {
-      /* Another OWNERSHIP_REQUEST handler already picked up the baton (race);
-       * that thread will drain the queue. */
       return;
     }
-    /* Re-acquired the baton: pop the racer and start a fresh round.  This path
-     * starts AFTER the just-confirmed owner is already running (no in-flight
-     * CONFIRM_ACK to piggyback on), so it issues a STANDALONE INVALIDATE to the
-     * current rw_holder, exactly like the first-round request-handler path. */
     unsigned int next_owner;
     if (arts_home_lockreq_queue_pop(&db->pending_rw, &next_owner)) {
       db->pending_install_owner = next_owner;
       arts_db_lazy_start_invalidate_round(cache, next_owner);
       return;
     }
-    /* The racer was already consumed by whoever we contended with; loop to
-     * release and recheck. */
   }
 }
 
 /* ===== Lazy CONFIRM_ACK handler (new owner C) ==================== */
 
-/* Cat-C pure body (CONFIRM_ACK, new-owner side). Home has flipped
- * rw_holder to this rank; it is now safe for this rank's RW EDTs to run and
- * make their writes observable. Drain the RW waiters deferred at TRANSFER,
- * clear the gate, apply the piggybacked invalidate effect (if the round
- * advanced — see arts_handler_db_ownership_confirm), and remove the drain
- * guard (the relocated 0-edge ship-check).
+/* Cat-C pure body (CONFIRM_ACK, new-owner side). Home has flipped rw_holder to
+ * this rank; it is now safe for this rank's RW EDT to run.  Open the gate,
+ * drain the ONE RW waiter deferred at TRANSFER (the token's writer), apply the
+ * piggybacked invalidate effect (if the round advanced), and — MRSW — do NOT
+ * remove a drain guard: the token relinquished by release_rw_local IS the
+ * deferred 0-edge.  After pop-one + the piggyback sentinel sub the running
+ * token writer's release reaches the 0-edge and transfers.
  *
  * args_v is the CONFIRM_ACK packet: its new_owner_rank carries the next
  * transfer target when the round advanced, or ARTS_LAZY_NO_PENDING_OWNER for a
- * plain ack.  Merging the INVALIDATE into this message removes the former
- * CONFIRM_ACK↔INVALIDATE reorder window: both effects now happen here, in a
- * fixed order, under the drain guard.
- */
+ * plain ack. */
 void arts_handler_db_ownership_confirm_ack(void *item_v, void *args_v) {
   struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
   struct arts_msg_ownership_confirm_ack_packet_s *p =
@@ -383,31 +358,31 @@ void arts_handler_db_ownership_confirm_ack(void *item_v, void *args_v) {
   cache->ownership_unconfirmed = 0u;
   cache->ownership_req_in_flight = 0u;
 
-  /* Drain the RW waiters that the TRANSFER handler deferred (this is the work
-   * moved out of arts_handler_db_ownership_response). */
+  /* Drain the ONE RW waiter the TRANSFER handler deferred (the token's writer).
+   * The token (the +1 above the sentinel) already accounts it; run-one delivers
+   * the dep and the writer will release via arts_db_release_rw_local. */
   arts_db_drain_pending_rw_after_grant(cache, /*version=*/0,
                                        /*has_next=*/false);
 
   /* Piggybacked INVALIDATE effect (merged from the former standalone
    * INVALIDATE_NOTICE).  Mirror the INVALIDATE handler's discipline: publish
    * the transfer target BEFORE withdrawing the sentinel (the publish-before-sub
-   * is the dedup against a concurrent release_rw that observes the 0-edge).
-   * Do NOT ship on this sub's edge: the drain guard (+1) is still held, so the
-   * count is >= 1 here and the 0-crossing is deferred to the guard-removal
-   * below — exactly the invariant the held guard always provided. */
+   * is the dedup against the running writer's release that observes the
+   * 0-edge).
+   *
+   * The sub withdraws the SENTINEL.  Two outcomes:
+   *   - the drain popped a writer (token held): rest >= 1 here — the running
+   *     writer's release_rw_local crosses the 0-edge and ships.  Do NOT ship.
+   *   - the drain found the queue empty and dropped the orphan token to idle
+   *     (writer_count == 1, sentinel-only): this sub takes it to 0, and NO
+   *     writer release is coming — so THIS handler is the unique 0-edge actor
+   *     and must ship now. */
   if (p != NULL && p->new_owner_rank != ARTS_LAZY_NO_PENDING_OWNER) {
     cache->incoming_new_owner = p->new_owner_rank;
-    arts_atomic_sub(&cache->writer_count, 1); /* sentinel withdrawal */
-  }
-
-  /* Remove the drain guard held across the CONFIRM→CONFIRM_ACK round trip. If
-   * the round advanced (sentinel withdrawn above) and that drives the count to
-   * 0 with no local writer remaining, we are the unique actor that ships
-   * TRANSFER_OWNERSHIP to the next owner.  Otherwise this rank retains
-   * ownership and its drained EDTs ship on their own release 0-edge. */
-  if ((int)arts_atomic_sub(&cache->writer_count, 1) == 0 &&
-      cache->incoming_new_owner != ARTS_LAZY_NO_PENDING_OWNER) {
-    arts_db_send_ownership_response(cache);
+    if ((int)arts_atomic_sub(&cache->writer_count, 1) == 0 &&
+        cache->incoming_new_owner != ARTS_LAZY_NO_PENDING_OWNER) {
+      arts_db_send_ownership_response(cache);
+    }
   }
 }
 
@@ -415,7 +390,7 @@ void arts_handler_db_ownership_confirm_ack(void *item_v, void *args_v) {
 
 /* Cat-B pure body (OoO g_ooo_table[OOO_DB_SNAPSHOT_REQUEST]): the OoO engine
  * has already acquired the home db_s and pinned a ref across this call (cache
- * is its FIRST member), so there is no lookup / NULL-check / defer here. */
+ * is its FIRST member). */
 void arts_handler_db_snapshot_request(void *item_v, void *args_v) {
   struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
   struct arts_ooo_args_db_snapshot_request_s *a =
@@ -424,32 +399,19 @@ void arts_handler_db_snapshot_request(void *item_v, void *args_v) {
   arts_guid_t edt_guid = a->edt_guid;
   uint32_t slot = a->slot;
 
-  /* Lazy home-side RO routing.
-   *
-   * Under the lazy protocol home does not hold the canonical data copy — the
-   * current owner does.  Home's job is to redirect the requester to the owner
-   * (via REDIRECT_RO) so the owner can send DATA_RESPONSE directly,
-   * applying the owner-side last_sent_version dedup.
-   *
-   * Record the requester in the cached-ranks set, then redirect to the current
-   * owner.  A destroyed DB is handled by the route_table lookup miss (slot
-   * value NULL-stored before destroy) + the handler single-actor invariant —
-   * no per-home destroy flag. */
+  /* Lazy home-side RO routing: home does not hold the canonical copy — the
+   * current owner does.  Record the requester in the cached-ranks set, then
+   * redirect to the current owner (REDIRECT_RO) so the owner serves
+   * DATA_RESPONSE directly, applying the owner-side last_sent_version dedup. */
   struct arts_db_s *db = arts_db_of_cache(cache);
   arts_rank_bitset_set(&db->cached_ranks, requester);
-  /* Forward to the current owner unconditionally: even mid-transfer, rw_holder
-   * still names the OLD owner, which retains its buffer + last_sent_version
-   * permanently and serves the REDIRECT from its own copy.  Client-side
-   * monotonic version compare keeps stale snapshots safe.  No defer queue. */
   unsigned int owner =
       atomic_load_explicit(&db->rw_holder, memory_order_acquire);
   arts_send_db_snapshot_redirect(owner, cache->db_guid, requester, edt_guid,
                                  slot);
 }
 
-/* Fan-out callback for arts_rank_bitset_for_each during destroy.
- * ctx carries the db_guid encoded as uintptr_t (no heap allocation
- * needed since the callback is synchronous). */
+/* Fan-out callback for arts_rank_bitset_for_each during destroy. */
 static void lazy_destroy_fanout_cb(unsigned int rank, void *ctx) {
   arts_guid_t db_guid = (arts_guid_t)(uintptr_t)ctx;
   unsigned int self = arts_global_rank_id;
@@ -460,10 +422,19 @@ static void lazy_destroy_fanout_cb(unsigned int rank, void *ctx) {
 
 /* Cat-B pure body (OoO g_ooo_table[OOO_DB_DESTROY]): the OoO engine has already
  * acquired the home db_s and pinned a ref across this call (cache is its FIRST
- * member).  Order: roster fan-out + fail_trigger wake parked waiters FIRST,
- * then arts_route_table_set_destroyed LAST.  Lazy roster source = rw_holder
- * (current RW owner) + the RO cached-ranks bit-set + the queued ownership
- * requesters. */
+ * member).  Order: remote DESTROY_NOTIFY roster fan-out FIRST (the cache stays
+ * alive — only the install ref is dropped), then arts_route_table_set_destroyed
+ * LAST.  Lazy roster source = rw_holder (current RW owner) + the RO
+ * cached-ranks bit-set + the queued ownership requesters + the in-flight
+ * transfer target.
+ *
+ * MRSW does NOT drain cache.pending_rw here (it is a pop-one FIFO a token
+ * holder can be releasing concurrently — a second consumer would corrupt the
+ * chain). The parked RW + snapshot waiters are woken by the refcount-0 cache
+ * destructor (arts_db_cache_destructor), the SOLE owner once set_destroyed
+ * drops the last install ref; a token holder racing its release defers to the
+ * destructor via the arts_route_table_was_destroyed guard in
+ * arts_db_release_rw_local. */
 void arts_handler_db_destroy(void *item_v, void *args_v) {
   struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
   struct arts_ooo_args_db_destroy_s *a =
@@ -473,8 +444,6 @@ void arts_handler_db_destroy(void *item_v, void *args_v) {
     return;
   }
   unsigned int self = arts_global_rank_id;
-  /* Lazy: notify the current RW owner first (rw_holder, not the cached-ranks
-   * bit-set), then the RO cached-ranks bit-set, then the queued requesters. */
   {
     unsigned int holder =
         atomic_load_explicit(&db->rw_holder, memory_order_acquire);
@@ -494,9 +463,9 @@ void arts_handler_db_destroy(void *item_v, void *args_v) {
   }
   /* In-flight ownership transfer: the new owner C lives only in
    * pending_install_owner during [pop at round-start .. rw_holder flip] and is
-   * in none of the rosters above. With the confirm gate it parks its RW waiter
+   * in none of the rosters above.  With the confirm gate it parks its RW waiter
    * until CONFIRM_ACK, so a destroy that races the transfer must wake it here
-   * or it hangs. Notify it (dedup against rw_holder / self). */
+   * or it hangs.  Notify it (dedup against rw_holder / self). */
   if (atomic_load_explicit(&db->invalidate_in_flight, memory_order_acquire) !=
       0u) {
     unsigned int in_flight = db->pending_install_owner;
@@ -506,103 +475,78 @@ void arts_handler_db_destroy(void *item_v, void *args_v) {
       arts_send_db_cache_destroy(in_flight, a->db_guid);
     }
   }
-  arts_db_fail_trigger_pending(cache);
+  /* Do NOT drain cache.pending_rw / pending_snapshot here: a token holder can
+   * be releasing pending_rw concurrently, and that pop-one FIFO must stay
+   * single-consumer.  set_destroyed drops the last install ref → the refcount-0
+   * destructor (arts_db_cache_destructor) is the sole owner and wakes every
+   * parked waiter. */
+  (void)cache;
   (void)arts_route_table_set_destroyed(a->db_guid);
 }
 
-/* Case-D leaf: lazy publishes creator_rank as the home rw_holder (coalesce
- * path). */
+/* Case-D leaf: lazy publishes creator_rank as the home rw_holder. */
 void arts_db_create_publish_holder(struct arts_db_s *db,
                                    unsigned int creator_rank) {
   atomic_store_explicit(&db->rw_holder, creator_rank, memory_order_release);
 }
 
-/* ===== Ownership-round seams (called from coherence/ownership.c) ==
- * family→protocol: the ownership-family OWNERSHIP_REQUEST / RELEASE_OWNERSHIP
- * handlers delegate the EAGER/LAZY-divergent steps here. */
+/* ===== Ownership-round seams (called from coherence/mrsw/ownership.c) == */
 
 void arts_db_start_ownership_round(struct arts_db_cache_s *cache,
                                    struct arts_db_s *db,
                                    unsigned int requester) {
   (void)requester;
-  /* Lazy: pop the OLDEST requester (FIFO) to be the transfer target and
-   * embed its rank in the INVALIDATE_NOTICE so the current holder ships
-   * TRANSFER_OWNERSHIP directly, without a home round-trip.
-   * pending_install_owner is only written by the baton holder (single
-   * writer invariant), so no atomic needed. */
+  /* Lazy: pop the OLDEST requester (FIFO) to be the transfer target and embed
+   * its rank in the INVALIDATE_NOTICE so the current holder ships
+   * TRANSFER_OWNERSHIP directly.  pending_install_owner is only written by the
+   * baton holder (single writer), so no atomic. */
   unsigned int next_owner;
   if (!arts_home_lockreq_queue_pop(&db->pending_rw, &next_owner)) {
-    /* Defensive: we just pushed, so empty is impossible under correct
-     * usage.  Release the baton and return. */
+    /* Defensive: we just pushed, so empty is impossible under correct usage. */
     atomic_store_explicit(&db->invalidate_in_flight, 0u, memory_order_release);
     return;
   }
   db->pending_install_owner = next_owner;
   arts_db_lazy_start_invalidate_round(cache, next_owner);
-  /* No early PROCEED here (see arts_db_send_ownership_response): the next
-   * owner's RW cursor advances at transfer-commit, not at round start. */
 }
 
-/* ===== Lazy INVALIDATE_NOTICE handler (pure body, DIRECT-call) ====== */
-
-/* Pure (item, args) body.  The lazy protocol does NOT route INVALIDATE through
- * the OoO engine
- * (its engine slot is an inert no-op): the invalidate target is always the
- * rw_holder, whose CACHE the requester lazy-installs before it ever sends
- * OWNERSHIP_REQUEST, so the cache is present and the wire dispatcher /
- * self-send shortcut call this body directly (guarded by assert(cache !=
- * NULL)).  cache is the FIRST member of arts_db_s (offset 0), so the item_v
- * handed in IS the cache.
+/* ===== Lazy INVALIDATE_NOTICE handler (pure body, DIRECT-call) ======
+ * The lazy protocol does NOT route INVALIDATE through the OoO engine: the
+ * invalidate target is always the rw_holder, whose CACHE the requester
+ * lazy-installs before it ever sends OWNERSHIP_REQUEST, so the cache is present
+ * and the wire dispatcher / self-send call this body directly.  cache is the
+ * FIRST member of arts_db_s (offset 0).
  *
- * When this INVALIDATE arrives the ownership sentinel (+1) is already
- * installed: the post-install rw_holder flip (CONFIRM-driven) advances
- * rw_holder to a rank only after its GRANT install, so home sends this notice
- * strictly after that install — GRANT(+sentinel) precedes INVALIDATE(-1), they
- * never reorder.  The install's sentinel+guard (+2) further holds writer_count
- * >= 0 against the next round's INVALIDATE on another receiver thread.
- * writer_count is therefore non-negative; only the decrement that drives it
- * from a positive value to EXACTLY 0 ships the owner->owner transfer, and the
- * (int) cast is defensive. */
+ * MRSW: the count here is sentinel + token (or sentinel-only if the writer has
+ * quiesced).  The sub withdraws the SENTINEL; the 0-edge fires only when no
+ * token remains (a running writer holds the +1), so transfer-gating is
+ * automatic — the last release_rw_local ships instead. */
 void arts_handler_db_ownership_invalidate(void *item_v, void *args_v) {
   struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
   struct arts_ooo_args_db_ownership_invalidate_s *a =
       (struct arts_ooo_args_db_ownership_invalidate_s *)args_v;
-  /* Sentinel withdrawal (writer_count -= 1).  Home's invalidate_in_flight gate
-   * sends AT MOST ONE INVALIDATE_NOTICE to this rank per transfer round, after
-   * rw_holder has been advanced to a rank that already holds the sentinel (+1).
-   * The decrement that drives writer_count to 0 is the unique actor that
-   * performs the ownership transfer; while local writers are still active
-   * (rest > 0) the last release_rw drives it instead.
-   *
-   * Lazy: publish the transfer target BEFORE withdrawing the sentinel.  This
-   * ordering is the dedup (no separate transfer_pending flag): a concurrent
-   * release_rw that observes rest==0 is guaranteed to see incoming_new_owner
-   * already published, so exactly one of {this handler, the last releaser}
-   * ships.  Only one INVALIDATE_NOTICE is in flight per round (home baton
-   * gate), so there is no concurrent writer to incoming_new_owner. */
+  /* Publish the transfer target BEFORE withdrawing the sentinel.  This ordering
+   * is the dedup (no separate transfer_pending flag): a concurrent release that
+   * observes the 0-edge is guaranteed to see incoming_new_owner already
+   * published, so exactly one of {this handler, the last releaser} ships. */
   cache->incoming_new_owner = a->new_owner_rank;
-  /* Ship ONLY on the positive->0 edge (writer_count is non-negative; see the
-   * handler header). */
   int rest = (int)arts_atomic_sub(&cache->writer_count, 1);
   if (rest != 0) {
-    /* rest > 0: local writers still active — the last release_rw, seeing
-     * rest==0 with incoming_new_owner already published, ships instead.  (The
-     * (int) cast is defensive: the post-install flip + install guard keep the
-     * count non-negative, so rest < 0 does not occur.) */
+    /* rest > 0: a token (running writer) still held — the last
+     * release_rw_local, seeing rest==0 with incoming_new_owner already
+     * published, ships instead. */
     return;
   }
-  /* rest == 0: we are the unique transfer actor. */
+  /* rest == 0: we are the unique transfer actor (no token remained). */
   arts_db_send_ownership_response(cache);
 }
 
-/* ===== Lazy REDIRECT_RO handler (owner side, moved from handlers.c) === */
+/* ===== Lazy REDIRECT_RO handler (owner side) ======================= */
 
 /* Cat-C pure body (REDIRECT_RO, owner side).  The wire dispatcher / self-send
  * shortcut has already looked the owner-side db_s up with a held ref and passes
- * it as item_v (cache is its FIRST member, offset 0).  No lookup/NULL-check
- * here — the dispatcher's MISS branch sends DESTROY_NOTIFY to the requester (DB
- * destroyed / not yet installed on this rank) so the requester's parked RO
- * waiter wakes and observes DB_DESTROYED rather than hanging. */
+ * it as item_v (cache is its FIRST member).  On a MISS the dispatcher sends
+ * DESTROY_NOTIFY to the requester. */
 void arts_handler_db_snapshot_redirect(void *item_v, void *args_v) {
   struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
   struct arts_db_snapshot_redirect_args_s *a =
@@ -615,20 +559,18 @@ void arts_handler_db_snapshot_redirect(void *item_v, void *args_v) {
   struct arts_db_buffer_s *buf =
       (struct arts_db_buffer_s *)arts_shared_get(buf_h);
   if (buf == NULL) {
-    /* No buffer installed yet (pre-publication or sentinel DB).
-     * Respond with version=0, no data — requester's RO waiter fires
-     * with undefined content (per spec). */
+    /* No buffer installed yet (pre-publication or sentinel DB).  Respond
+     * version=0, no data — requester's RO waiter fires with undefined content
+     * (per spec). */
     arts_send_db_snapshot_response(requester, a->db_guid, /*version=*/0,
                                    edt_guid, slot, /*data=*/NULL,
                                    /*data_size=*/0);
     return;
   }
   /* Invariant: last_sent_version is created at ownership-install
-   * (TRANSFER_OWNERSHIP, retained permanently thereafter).  The INITIAL
-   * owner (the creator, which never received a transfer) has no map yet, so
-   * lazily create it on its first served REDIRECT — otherwise the producer-on-
-   * home + RO-consumers-elsewhere DAG would be served no-data (NULL/stale).
-   * Single-actor here (the redirect handler runs on the network thread). */
+   * (TRANSFER_OWNERSHIP, retained permanently).  The INITIAL owner (the
+   * creator, which never received a transfer) has no map yet, so lazily create
+   * it on its first served REDIRECT. */
   if (cache->last_sent_version == NULL) {
     cache->last_sent_version = arts_rank_u64_map_create(arts_global_rank_count);
   }
@@ -650,9 +592,9 @@ void arts_handler_db_snapshot_redirect(void *item_v, void *args_v) {
   arts_db_buf_release(&buf_h);
 }
 
-/* ===== Lazy wire senders (moved from coherence/senders.c) =========
- * The OWNERSHIP_RESPONSE wire sender + the owner→owner ship are now shared
- * (coherence/mrnew/ownership.c); the CONFIRM sender is shared too.  Only the
+/* ===== Lazy wire senders =========================================
+ * The OWNERSHIP_RESPONSE wire sender + the owner→owner ship are shared
+ * (coherence/mrsw/ownership.c); the CONFIRM sender is shared too.  Only the
  * lazy-only CONFIRM_ACK + REDIRECT_RO senders remain here. */
 
 void arts_send_db_ownership_confirm_ack(unsigned int new_owner_rank,
@@ -663,12 +605,12 @@ void arts_send_db_ownership_confirm_ack(unsigned int new_owner_rank,
   p.header.rank = arts_global_rank_id;
   p.db_guid = db_guid;
   p.new_owner_rank = piggyback_new_owner;
+  memset(p.pad, 0, sizeof(p.pad));
   if (new_owner_rank == arts_global_rank_id) {
     /* Self-send: mirror the wire RX dispatcher's Cat-C lookup-acquire-or-drop.
-     * HIT runs the confirm_ack body on the ref-pinned db_s, passing the packet
-     * so the piggybacked invalidate effect (if any) is applied; MISS (DB
-     * destroyed) silently drops (gated waiters are woken by the destroy
-     * fan-out). */
+     * HIT runs the confirm_ack body (applying the piggybacked invalidate effect
+     * if any); MISS (DB destroyed) silently drops (gated waiters are woken by
+     * the refcount-0 cache destructor). */
     arts_shared_ptr_t h = arts_route_table_lookup_db(db_guid);
     struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(h);
     if (db != NULL) {
@@ -694,8 +636,7 @@ void arts_send_db_snapshot_redirect(unsigned int owner_rank,
   if (owner_rank == arts_global_rank_id) {
     /* Self-send: mirror the wire RX dispatcher's Cat-C lookup-acquire.  HIT
      * serves DATA_RESPONSE from the ref-pinned owner-side db_s; MISS (DB
-     * destroyed / not yet installed) sends DESTROY_NOTIFY to the requester so
-     * its parked RO waiter wakes and observes DB_DESTROYED. */
+     * destroyed / not yet installed) sends DESTROY_NOTIFY to the requester. */
     struct arts_db_snapshot_redirect_args_s args = {
         .db_guid = db_guid,
         .edt_guid = edt_guid,

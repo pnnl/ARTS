@@ -83,8 +83,10 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
    * explicit mark_delete to exercise the same teardown path. */
   for (uint64_t i = 0; i < MYSIZE; i++) {
     arts_guid_t g = arts_guid_from_index(range_start, i);
-    void *ptr = arts_route_table_lookup_data(g);
+    arts_shared_ptr_t h = arts_route_table_lookup(g);
+    void *ptr = arts_shared_get(h);
     (void)ptr;
+    arts_shared_release(&h);
   }
   print_rt("After DB Lookup");
 

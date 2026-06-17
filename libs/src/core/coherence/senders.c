@@ -23,6 +23,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "arts/coherence/coherence.h" /* mark_edt_ready_by_guid (MRSW destroy-notify wake) */
 #include "arts/db.h" /* struct arts_db_s (Cat-C self-send lookup-acquire) */
 #include "arts/gas/route_table.h" /* arts_route_table_lookup_db (Cat-C self-send) */
 #include "arts/ooo.h" /* arts_ooo_dispatch_or_defer_guid (self-send replay) */
@@ -40,8 +41,7 @@
  * (TRANSFER_OWNERSHIP).  MRMW has no exclusive-ownership wire messages. */
 
 void arts_send_db_writeback(unsigned int home_rank, arts_guid_t db_guid,
-                            uint64_t version, uint64_t cv,
-                            arts_writeback_flag_t flag, const void *data,
+                            uint64_t version, uint64_t cv, const void *data,
                             uint64_t data_size) {
   struct arts_msg_writeback_packet_s p;
   uint64_t total = sizeof(p) + data_size;
@@ -50,14 +50,11 @@ void arts_send_db_writeback(unsigned int home_rank, arts_guid_t db_guid,
   p.db_guid = db_guid;
   p.version = version;
   p.cv = cv;
-  p.flag = (uint8_t)flag;
   memset(p.pad, 0, sizeof(p.pad));
 #if !defined(ARTS_TIMING_LAZY)
-  /* Self-send (home == self) — eager/MRMW only.  The lazy protocol reaches
-   * arts_send_db_writeback solely through the owner→home WB_AND_TRANSFER
-   * trigger, which early-returns to a local transfer when home == self, so
-   * this branch is statically unreachable under the lazy protocol (and its
-   * OOO_DB_WRITEBACK kind does not exist in the lazy enum). */
+  /* Self-send (home == self) — eager/MRMW only.  The lazy protocol has no
+   * synchronous writeback at all (its OOO_DB_WRITEBACK kind does not exist), so
+   * this whole sender is statically excluded under the lazy build. */
   if (home_rank == arts_global_rank_id) {
     /* Route through the OoO engine exactly as the wire RX dispatcher does —
      * HIT runs the writeback body inline, MISS defers the args (trailing data
@@ -73,7 +70,6 @@ void arts_send_db_writeback(unsigned int home_rank, arts_guid_t db_guid,
     args->db_guid = db_guid;
     args->version = version;
     args->cv = cv;
-    args->flag = (uint8_t)flag;
     args->data_size = data_size;
     if (data_size > 0 && data != NULL) {
       memcpy(abuf + sizeof(*args), data, data_size);
@@ -252,6 +248,6 @@ void arts_send_db_cache_destroy(unsigned int sharer_rank, arts_guid_t db_guid) {
   arts_transport_send_async((int)sharer_rank, (char *)&p, sizeof(p));
 }
 
-/* The LAZY-only senders (INSTALL_ACK, REDIRECT_RO) live in coherence/lazy.c
- * alongside their handlers; the MRNEW OWNERSHIP_RESPONSE senders live in
- * coherence/eager.c / coherence/lazy.c. */
+/* The LAZY-only senders (CONFIRM, CONFIRM_ACK, REDIRECT_RO) live in
+ * coherence/lazy.c alongside their handlers; the MRNEW OWNERSHIP_RESPONSE
+ * senders live in coherence/eager.c / coherence/lazy.c. */

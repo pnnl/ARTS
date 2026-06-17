@@ -63,6 +63,7 @@
 #include "arts/system/threads.h"
 #include "arts/system/topology.h"
 #include "arts/transport/dispatcher.h"
+#include "arts/transport/outbox.h" /* arts_transport_loopback_drain */
 #include "arts/transport/protocol.h"
 #include "arts/transport/socket.h"
 #include "arts/utils/array_list.h"
@@ -272,6 +273,12 @@ inline struct arts_edt_s *arts_runtime_steal_from_worker() {
 }
 
 bool arts_network_first_scheduler_loop() {
+  /* Single-node only: a worker drains self-loopback (no receiver thread
+   * exists). On multinode the receiver thread is the sole loopback drainer, so
+   * all coherence stays serialized on one thread; workers must not also drain.
+   */
+  bool drained =
+      (arts_global_rank_count == 1) && arts_transport_loopback_drain();
   struct arts_edt_s *edt_found;
   if (!(edt_found = arts_runtime_steal_from_network())) {
     if (!(edt_found = (struct arts_edt_s *)arts_deque_pop_front(
@@ -283,10 +290,16 @@ bool arts_network_first_scheduler_loop() {
     arts_run_edt(edt_found);
     return true;
   }
-  return false;
+  return drained;
 }
 
 bool arts_network_before_steal_scheduler_loop() {
+  /* Single-node only: a worker drains self-loopback (no receiver thread
+   * exists). On multinode the receiver thread is the sole loopback drainer, so
+   * all coherence stays serialized on one thread; workers must not also drain.
+   */
+  bool drained =
+      (arts_global_rank_count == 1) && arts_transport_loopback_drain();
   struct arts_edt_s *edt_found;
   if (!(edt_found = (struct arts_edt_s *)arts_deque_pop_front(
             arts_thread_info.my_deque))) {
@@ -299,10 +312,19 @@ bool arts_network_before_steal_scheduler_loop() {
     arts_run_edt(edt_found);
     return true;
   }
-  return false;
+  return drained;
 }
 
 bool arts_default_scheduler_loop() {
+  /* Deliver self-sends first so a same-rank acquire/transfer round advances on
+   * a fresh stack (the asynchronous receiver paradigm; a single-node rank has
+   * no receiver thread to carry a message addressed to itself). */
+  /* Single-node only: a worker drains self-loopback (no receiver thread
+   * exists). On multinode the receiver thread is the sole loopback drainer, so
+   * all coherence stays serialized on one thread; workers must not also drain.
+   */
+  bool drained =
+      (arts_global_rank_count == 1) && arts_transport_loopback_drain();
   struct arts_edt_s *edt_found = NULL;
   if (!(edt_found = (struct arts_edt_s *)arts_deque_pop_front(
             arts_thread_info.my_deque))) {
@@ -318,6 +340,9 @@ bool arts_default_scheduler_loop() {
     // arts_wake_up_context();
     return true;
   }
+  if (drained) {
+    return true; /* made progress via self-loopback; loop again before idling */
+  }
   CHECK_OUTSTANDING_EDTS(10000000);
   arts_runtime_idle_pause();
   return false;
@@ -325,6 +350,12 @@ bool arts_default_scheduler_loop() {
 
 #ifdef ARTS_USE_CXL
 bool arts_cxl_scheduler_loop() {
+  /* Single-node only: a worker drains self-loopback (no receiver thread
+   * exists). On multinode the receiver thread is the sole loopback drainer, so
+   * all coherence stays serialized on one thread; workers must not also drain.
+   */
+  bool drained =
+      (arts_global_rank_count == 1) && arts_transport_loopback_drain();
   struct arts_edt_s *edt_found = NULL;
   if (!(edt_found = (struct arts_edt_s *)arts_deque_pop_front(
             arts_thread_info.my_deque))) {
@@ -335,6 +366,9 @@ bool arts_cxl_scheduler_loop() {
   }
   if (edt_found) {
     arts_run_edt(edt_found);
+    return true;
+  }
+  if (drained) {
     return true;
   }
   CHECK_OUTSTANDING_EDTS(10000000);

@@ -96,8 +96,7 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
     sem_init(&cv, 0, 0);
     unsigned int home_rank = arts_guid_get_rank(cache->db_guid);
     arts_send_db_writeback(home_rank, cache->db_guid, new_version,
-                           (uint64_t)(uintptr_t)&cv, ARTS_WB_NORMAL, buf->data,
-                           cache->db_size);
+                           (uint64_t)(uintptr_t)&cv, buf->data, cache->db_size);
     await_writeback_ack(&cv);
     sem_destroy(&cv);
   }
@@ -225,6 +224,9 @@ void arts_handler_db_writeback(void *item_v, void *args_v) {
   const void *data =
       a->data_size > 0 ? (const void *)((char *)a + sizeof(*a)) : NULL;
 
+  /* Monotonic: buf_install ignores a stale (lower/equal version) writeback, so
+   * concurrent writebacks reordered over distinct connections cannot clobber
+   * newer home data with older. */
   arts_db_buf_install(cache, a->version, data, a->data_size);
   if (a->cv != 0) {
     arts_send_db_writeback_ack(a->releaser, a->db_guid, a->cv);
@@ -298,7 +300,10 @@ void arts_db_create_publish_holder(struct arts_db_s *db,
  * EDT a NULL payload. */
 void arts_db_create_install_home_buffer(struct arts_db_cache_s *cache,
                                         uint64_t db_size) {
-  if (db_size > 0 && arts_db_buf_peek(cache) == NULL) {
+  arts_shared_ptr_t buf_h = arts_db_buf_acquire(cache);
+  bool buf_absent = (arts_shared_get(buf_h) == NULL);
+  arts_db_buf_release(&buf_h);
+  if (db_size > 0 && buf_absent) {
     arts_db_buf_install(cache, /*new_version=*/1, /*data_payload=*/NULL,
                         db_size);
   }

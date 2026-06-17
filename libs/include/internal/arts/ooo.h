@@ -102,15 +102,11 @@ enum arts_ooo_kind {
                    */
   OOO_DB_SNAPSHOT_REQUEST,  /* → arts_handler_db_snapshot_request @ home */
   OOO_DB_OWNERSHIP_REQUEST, /* → arts_handler_db_ownership_request @ home */
-  /* INVALIDATE replay — eager protocol.  A GRANT/INVALIDATE reorder on two
-   * wires, or a distributed before-create race, can land INVALIDATE before the
-   * cache installs; the commutative signed writer_count makes the replayed
-   * decrement order-independent.  A replayed INVALIDATE is additionally guarded
-   * by the per-slot install-epoch (gen_at_defer) so a stale defer is dropped
-   * rather than applied to a fresh labeled-GUID generation. */
-  OOO_DB_OWNERSHIP_INVALIDATE, /* → arts_handler_db_ownership_invalidate @ owner
-                                */
-  OOO_DB_WRITEBACK,            /* → arts_handler_db_writeback @ home */
+  /* NO OOO_DB_OWNERSHIP_INVALIDATE — the eager protocol no longer defers
+   * INVALIDATE: rw_holder is flipped only at the post-install CONFIRM (same as
+   * lazy), so the target is provably installed when INVALIDATE arrives and the
+   * dispatcher/self-send call the body directly. */
+  OOO_DB_WRITEBACK, /* → arts_handler_db_writeback @ home */
 #elif defined(ARTS_TIMING_LAZY)
   OOO_DB_ACQUIRE, /* → arts_db_acquire_replay_dep (re-attempts the one deferred
                      local dep; pushed by arts_db_acquire_all's per-dep 3-way)
@@ -148,12 +144,6 @@ struct arts_ooo_payload_s {
   arts_lf_link_t link; /* MUST be first */
   ooo_kind_t kind;
   uint32_t args_size;
-  /* Install-epoch snapshot taken at defer time (the slot's `gen` when this
-   * payload was first pushed).  Preserved across drain re-pushes.  Used to drop
-   * a stale cross-generation replay (see the kind-gated guard in
-   * dispatch_or_defer).  Header field — kept before the args blob so the
-   * arts_ooo_payload_args(p) == (void *)(p + 1) contract still holds. */
-  uint64_t gen_at_defer;
   /* args blob follows here */
 };
 
@@ -204,7 +194,8 @@ struct arts_ooo_args_db_acquire_s {
 
 /* Coherence replay args — re-issue the wire handler once the home db_s/cache
  * is installed.  First-class fields are reconstructed into a stack packet by
- * the handler. */
+ * the handler.  The home FIFO records only the requester rank (MRNEW/MRSW
+ * order ownership rank-by-rank). */
 struct arts_ooo_args_db_ownership_request_s {
   unsigned int requester;
   arts_guid_t db_guid;
@@ -228,7 +219,6 @@ struct arts_ooo_args_db_writeback_s {
   arts_guid_t db_guid;
   uint64_t version;
   uint64_t cv; /* releaser's sem_t address, echoed in the ACK */
-  uint16_t flag;
   uint64_t data_size;
 };
 

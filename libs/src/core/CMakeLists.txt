@@ -58,14 +58,21 @@ if(HWLOC_INCLUDE_DIRS)
     target_include_directories(arts_compute PRIVATE ${HWLOC_INCLUDE_DIRS})
 endif()
 
-# DB coherence TU selection: MRNEW compiles one timing TU (eager.c or lazy.c)
-# plus the shared node-exclusive-writer ownership machinery (ownership.c + the
-# home OWNERSHIP_REQUEST FIFO home.c); MRMW compiles mrmw.c alone (it carries no
-# ownership lease, so the home lockreq queue / home.c are not linked). Each TU
-# defines its arts_handler_db_* / arts_coh_* bodies directly; the linker
+# DB coherence TU selection: MRNEW and MRSW each compile one timing TU (eager.c
+# or lazy.c) plus their single-owner ownership machinery (ownership.c + the home
+# OWNERSHIP_REQUEST FIFO home.c). MRSW additionally compiles waiter_queue.c (its
+# per-cache RW-waiter Vyukov MPSC FIFO, pop-one). MRMW compiles mrmw.c alone (it
+# carries no ownership lease, so the home lockreq queue / home.c are not linked).
+# Each TU defines its arts_handler_db_* / arts_db_* bodies directly; the linker
 # resolves the single compiled variant.
 if(ARTS_COHERENCE_PROTOCOL STREQUAL "MRMW")
     set(DB_COHERENCE_MODEL_TU coherence/mrmw/mrmw.c)
+elseif(ARTS_COHERENCE_PROTOCOL STREQUAL "MRSW")
+    if(ARTS_PROTOCOL_TIMING STREQUAL "EAGER")
+        set(DB_COHERENCE_MODEL_TU coherence/mrsw/eager.c coherence/mrsw/ownership.c coherence/mrsw/home.c coherence/mrsw/waiter_queue.c)
+    else() # MRSW + LAZY
+        set(DB_COHERENCE_MODEL_TU coherence/mrsw/lazy.c coherence/mrsw/ownership.c coherence/mrsw/home.c coherence/mrsw/waiter_queue.c)
+    endif()
 elseif(ARTS_PROTOCOL_TIMING STREQUAL "EAGER")
     set(DB_COHERENCE_MODEL_TU coherence/mrnew/eager.c coherence/mrnew/ownership.c coherence/mrnew/home.c)
 else() # MRNEW + LAZY (default)

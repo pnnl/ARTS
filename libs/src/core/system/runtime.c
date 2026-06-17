@@ -682,7 +682,24 @@ int arts_runtime_loop() {
   switch (arts_thread_info.role) {
   case ARTS_ROLE_RECEIVER:
     while (arts_thread_info.alive) {
-      arts_transport_receive();
+      /* Multinode: the receiver is the SOLE self-loopback drainer, so ALL
+       * coherence (wire + self) is processed on this one thread — the single
+       * coherence processor the ownership handlers assume.  (Single-node has no
+       * receiver; there the worker scheduler loop drains.)  When the drain did
+       * work, poll the wire NON-BLOCKING (time_out=0) and loop straight back to
+       * drain again so a burst of self-coherence is not stalled behind the
+       * blocking wire poll.  When nothing was drained, poll with a SHORT
+       * timeout (not the full blocking poll): a single-writer protocol
+       * self-loopbacks on the critical path of every transfer round, and a
+       * worker can post a fresh self-send while we sit in this poll, so the
+       * wait until the next drain must stay bounded — a full-length idle poll
+       * lets that latency accumulate per round and starves throughput.  A
+       * protocol that never self-loopbacks (MRNEW/MRMW) always takes this arm
+       * with an empty queue: the short timeout only adds idle wakeups (no wire
+       * is ever missed — poll still returns the instant data arrives) at
+       * negligible cost. */
+      bool did = arts_transport_loopback_drain();
+      arts_transport_receive(did ? 0 : 1000);
     }
     break;
   case ARTS_ROLE_SENDER:

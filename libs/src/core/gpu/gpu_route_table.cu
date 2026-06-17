@@ -52,12 +52,16 @@ volatile unsigned int gpu_node_order = 0;
 // Must be thread local
 ARTS_THREAD_LOCAL uint64_t gpu_item_size_bypass = 0;
 
-/* Peek the persistent wrapper published in a GPU-mirror slot's cb.  The GPU
- * table's wrappers live in the persistent wrappers[] array and are installed
- * with a NULL-deleter cb, so releasing the handle immediately is safe — the
- * wrapper is never freed by the cb. */
+/* Acquire the persistent wrapper published in a GPU-mirror slot's cb via the
+ * safe C-linkage bridge (arts_route_item_acquire + arts_shared_get/release).
+ * The GPU table's wrappers live in the persistent wrappers[] array and are
+ * installed with a NULL-deleter cb, so releasing the handle immediately is
+ * safe — the wrapper is never freed by the cb. */
 static arts_item_wrapper_t *gpu_slot_wrapper(arts_route_item_t *item) {
-  return (arts_item_wrapper_t *)arts_route_item_peek_data(item);
+  arts_shared_ptr_t h = arts_route_item_acquire(item);
+  arts_item_wrapper_t *w = (arts_item_wrapper_t *)arts_shared_get(h);
+  arts_shared_release(&h);
+  return w;
 }
 
 /* Claim (or look up) the slot for `key` in `route_table` and install its
@@ -195,11 +199,10 @@ void *arts_gpu_route_table_lookup_db_res(arts_guid_t key, int gpu_id,
                                          unsigned int *time_stamp, bool res) {
   void *ret = NULL;
   arts_route_table_t *route_table = arts_node_info.gpu_route_table[gpu_id];
-  arts_item_wrapper_t *wrapper = NULL;
   /* New model: data ptr lookup (legacy state machine removed). */
   arts_route_item_t *temp = arts_route_table_search_for_key(route_table, key);
-  wrapper =
-      (temp) ? (arts_item_wrapper_t *)arts_route_item_peek_data(temp) : NULL;
+  arts_shared_ptr_t h = arts_route_item_acquire(temp);
+  arts_item_wrapper_t *wrapper = (arts_item_wrapper_t *)arts_shared_get(h);
 
   if (wrapper) {
     if (res) {
@@ -213,6 +216,7 @@ void *arts_gpu_route_table_lookup_db_res(arts_guid_t key, int gpu_id,
     ret = (void *)wrapper->real_data;
     ARTS_DEBUG("Wrapper: %p %p", wrapper, wrapper->real_data);
   }
+  arts_shared_release(&h);
   return ret;
 }
 

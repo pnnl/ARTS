@@ -45,10 +45,12 @@
 #include "arts/runtime_state.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
+#include "arts/transport/dispatcher.h" /* arts_transport_dispatch_packet */
 #include "arts/transport/outbox.h"
 #include "arts/transport/socket.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/link_list.h"
+#include "arts/utils/lockfree_lifo.h" /* arts_lf_stack_t (self-loopback queue) */
 #include "arts/utils/malloc.h"
 
 struct arts_outbox_node_s {
@@ -77,6 +79,38 @@ uint64_t *seq_number = NULL;
 ARTS_THREAD_LOCAL uint64_t *last_out;
 ARTS_THREAD_LOCAL uint64_t *last_sent;
 #endif
+
+/* ===== Self-loopback ======================================================
+ * A message addressed to the sending rank itself cannot ride the outbound
+ * queues (those carry only rank != self; self_send_check drops a self target)
+ * and must NOT be delivered by calling the handler inline: a protocol whose
+ * acquire round hops home -> owner -> home all on one rank would re-enter its
+ * own handler on the caller's stack and recurse without bound.  A self-send is
+ * instead copied onto this lock-free stack and delivered later, on a worker's
+ * scheduler tick, through the same dispatch path the receiver uses for a wire
+ * arrival.  This makes a self-send "fire and return," processed asynchronously
+ * on a fresh stack — identical to how a peer rank would have received it.
+ *
+ * Delivery is SERIALIZED to one drainer at a time (g_loopback_draining, a CAS
+ * token; a worker that loses it does other work, never spins — lock-free, not a
+ * lock).  This faithfully reproduces the single per-rank receiver thread that
+ * orders ALL inbound coherence on a multi-node run: an ownership round depends
+ * on that order (PROCEED reaches the new front before its CONFIRM; an
+ * INVALIDATE publishes the transfer target before the matching release ships),
+ * and draining with many workers reorders those steps and strands a transfer.
+ * The serialized section is only the brief message PROCESSING (snapshot
+ * serving, transfer hops) — the data READS it unblocks run on the worker pool,
+ * fully concurrent, exactly as on multi-node.  Within a turn the chain is taken
+ * whole (reverse_drain, FIFO) and each node freed after dispatch, never
+ * re-pushed — upholding the stack's single-membership invariant. */
+static arts_lf_stack_t g_loopback;
+static _Atomic(int) g_loopback_draining;
+
+struct loopback_node_s {
+  arts_lf_link_t link;
+  unsigned int size;
+  /* packet bytes follow */
+};
 
 void arts_outbox_partial_store(struct arts_outbox_node_s *out,
                                uint64_t length_remaining) {
@@ -142,6 +176,15 @@ void arts_transport_thread_outbound_queues_cleanup() {
 }
 
 void arts_outbox_cleanup(void) {
+  /* Quiescent teardown: free any self-sends never drained by a worker (no
+   * dispatch — handlers must not run against torn-down state at shutdown). */
+  arts_lf_link_t *lb = arts_lf_stack_reverse_drain(&g_loopback);
+  while (lb != NULL) {
+    arts_lf_link_t *next =
+        atomic_load_explicit(&lb->next, memory_order_relaxed);
+    arts_free(lb);
+    lb = next;
+  }
   if (arts_outbox_head) {
     /* Quiescent teardown (senders stopped): pop every remaining message from
      * each lock-free queue, free its payload + node. */
@@ -474,4 +517,42 @@ void arts_transport_send_payload_async_free(int rank, char *message,
   next->free_method = free_method;
   memcpy(next + 1, message, length);
   arts_outbox_insert_node(next, length + sizeof(struct arts_outbox_node_s));
+}
+
+void arts_transport_loopback_post(const void *packet, unsigned int size) {
+  struct loopback_node_s *node = (struct loopback_node_s *)arts_malloc(
+      sizeof(struct loopback_node_s) + size);
+  node->size = size;
+  memcpy(node + 1, packet, size);
+  arts_lf_stack_push(&g_loopback, &node->link);
+}
+
+bool arts_transport_loopback_drain(void) {
+  /* Single drainer at a time (see the file-scope note): CAS the token; a worker
+   * that loses it returns to find other work rather than spinning. */
+  int expected = 0;
+  if (!atomic_compare_exchange_strong_explicit(&g_loopback_draining, &expected,
+                                               1, memory_order_acq_rel,
+                                               memory_order_relaxed)) {
+    return false;
+  }
+  arts_lf_link_t *head = arts_lf_stack_reverse_drain(&g_loopback);
+  bool did_work = (head != NULL);
+  while (head != NULL) {
+    /* Save next before dispatch: the handler may post fresh self-sends, but
+     * those land on the now-empty stack head (a separate chain) — this node's
+     * link is consumed by the free below. */
+    arts_lf_link_t *next =
+        atomic_load_explicit(&head->next, memory_order_relaxed);
+    struct loopback_node_s *node = (struct loopback_node_s *)head;
+    /* dispatch_body, not dispatch_packet: a self-send carries no per-sender
+     * wire sequence number, so it must skip the SEQUENCENUMBERS wire-ordering
+     * check (whose rec_seq_numbers[seq_rank] index would read an unstamped
+     * field). */
+    arts_transport_dispatch_body((struct arts_msg_header_s *)(node + 1));
+    arts_free(node);
+    head = next;
+  }
+  atomic_store_explicit(&g_loopback_draining, 0, memory_order_release);
+  return did_work;
 }

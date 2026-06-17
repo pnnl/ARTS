@@ -57,7 +57,10 @@ void arts_transport_set_config(struct arts_config_s *config);
 void arts_transport_setup_outgoing();
 bool arts_transport_setup_incoming();
 unsigned int arts_transport_get_my_rank();
-bool arts_transport_receive(void);
+/* Poll inbound sockets for up to time_out microseconds, dispatching any wire
+ * messages.  time_out==0 returns immediately after a non-blocking check (used
+ * when the caller has pending self-loopback work to drain promptly). */
+bool arts_transport_receive(int time_out);
 uint64_t arts_transport_send(int rank, unsigned int queue, char *message,
                              uint64_t length);
 uint64_t arts_transport_send_payload(int rank, unsigned int queue,

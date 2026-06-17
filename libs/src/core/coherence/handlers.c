@@ -13,8 +13,8 @@
  * the home db_s (ref-pinned) and hands a pure (item, args) body the live cache
  *     on a HIT, or DEFERS the args and replays them once DB_CREATE installs.
  *   - Cat-C (non-deferrable: DATA_RESPONSE / DESTROY_NOTIFY / WRITEBACK_ACK /
- *     RELEASE_OWNERSHIP / REDIRECT_RO / INSTALL_ACK): the wire dispatcher
- *     (and the matching self-send shortcut) does the ref-pinned
+ *     RELEASE_OWNERSHIP / REDIRECT_RO / CONFIRM / CONFIRM_ACK): the wire
+ * dispatcher (and the matching self-send shortcut) does the ref-pinned
  *     lookup-acquire; on a HIT it calls the pure (item, args) body, and on a
  *     MISS it applies that handler's exact miss-action (silent drop,
  *     DESTROY_NOTIFY reply, or the WRITEBACK_ACK sem-post — see each body).
@@ -63,15 +63,11 @@
  * sharer + REDIRECTs to the owner — so its whole body lives in
  * coherence/{eager,lazy,mrmw}.c. */
 
-/* arts_handler_db_writeback (+_ack) is protocol-specific — EAGER/MRMW
- * install
- * + ACK (EAGER additionally advances the ownership chain on WB_AND_TRANSFER),
- * LAZY has no synchronous writeback (no-op fillers preserve the OoO-table /
- * link parity) — so their whole bodies live in
+/* arts_handler_db_writeback (+_ack) is protocol-specific — EAGER/MRMW install
+ * + ACK (pure: ownership transfer is a separate owner→owner OWNERSHIP_RESPONSE
+ * ship), LAZY has no synchronous writeback (no-op fillers preserve the
+ * OoO-table / link parity) — so their whole bodies live in
  * coherence/{eager,lazy,mrmw}.c. */
-
-/* arts_handler_db_ownership_return lives in coherence/ownership.c (MRNEW
- * only — MRMW has no ownership chain). */
 
 /* arts_handler_db_destroy is protocol-specific — the roster fan-out source
  * differs (eager/MRMW walk home->last_sent_version; lazy walks rw_holder +
@@ -107,7 +103,10 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
   if (existing != NULL && existing->db_type == ARTS_DB) {
     struct arts_db_cache_s *cache = &existing->cache;
     struct arts_db_s *db = existing;
-    if (arts_db_buf_peek(cache) == NULL && db_size > 0) {
+    arts_shared_ptr_t buf_h = arts_db_buf_acquire(cache);
+    bool buf_absent = (arts_shared_get(buf_h) == NULL);
+    arts_db_buf_release(&buf_h);
+    if (buf_absent && db_size > 0) {
       arts_db_buf_install(cache, 1, NULL, db_size);
     }
     if (cache->db_size == 0) {
@@ -184,7 +183,10 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
   if (winner != NULL && winner->db_type == ARTS_DB) {
     struct arts_db_cache_s *cache = &winner->cache;
     struct arts_db_s *db = winner;
-    if (arts_db_buf_peek(cache) == NULL && db_size > 0) {
+    arts_shared_ptr_t buf_h = arts_db_buf_acquire(cache);
+    bool buf_absent = (arts_shared_get(buf_h) == NULL);
+    arts_db_buf_release(&buf_h);
+    if (buf_absent && db_size > 0) {
       arts_db_buf_install(cache, 1, NULL, db_size);
     }
     if (cache->db_size == 0) {

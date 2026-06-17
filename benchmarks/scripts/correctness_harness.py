@@ -71,7 +71,7 @@ try:
                 _timing = _t.group(1)
 except FileNotFoundError:
     pass
-_mode = 'MRMW' if _protocol == 'MRMW' else f'MRNEW+{_timing}'
+_mode = 'MRMW' if _protocol == 'MRMW' else f'{_protocol}+{_timing}'
 print(f'[harness] Build dir: {BUILD} (protocol: {_mode})')
 
 APPS_DIR = BUILD / "benchmarks" / "apps"
@@ -621,6 +621,10 @@ class Runner:
 
     def _run(self, cmd: str, env: dict[str, str], logfile: Path,
              wall_timeout: int = 0) -> RunResult:
+        # Pristine-start isolation: reap leftover ranks / MPI launchers and
+        # remove leaked MPI/UCX /dev/shm segments so no prior case can pollute
+        # this one (the suite is sequential, so nothing live is touched).
+        self._cleanup()
         t0 = time.time()
         if self.cgroup_ok:
             # Wrap inner shell in a transient user scope with cgroup memory.max.
@@ -729,6 +733,50 @@ class Runner:
                     os.kill(int(pid_dir.name), signal.SIGKILL)
             except OSError:
                 continue
+
+    @staticmethod
+    def _cleanup() -> None:
+        """Pristine-start isolation, run before EVERY test execution.
+
+        The suite is sequential, but the host carries cross-test state that the
+        per-run _reap_exe (one binary, after the fact) does not clear:
+          1. Orphaned benchmark ranks or MPI launchers/proxies left by a
+             SIGKILLed / timed-out / crashed prior run, still holding CPU,
+             ports, or memory.
+          2. MPI/UCX shared-memory segments leaked into /dev/shm: when an
+             MPI/UCX rank is SIGKILLed its cleanup is skipped, so the segment
+             persists.  These accumulate across a long suite and can starve a
+             later run (the "roaming" reference-runtime timeout symptom).
+        Reaping is by /proc/<pid>/exe (comm is truncated to 15 chars so pkill
+        -x misses; pkill -f can self-match the harness).  Only benchmark
+        executables (under APPS_DIR / BASE_DIR), known MPI launchers, and
+        MPI/UCX-owned /dev/shm patterns are touched — never unrelated state."""
+        apps, base = str(APPS_DIR), str(BASE_DIR)
+        launchers = {"mpirun", "mpiexec", "mpiexec.hydra",
+                     "hydra_pmi_proxy", "hydra_bstrap_proxy"}
+        self_pid = os.getpid()
+        for pid_dir in Path("/proc").glob("[0-9]*"):
+            try:
+                pid = int(pid_dir.name)
+                if pid == self_pid:
+                    continue
+                exe = os.readlink(pid_dir / "exe")
+            except (OSError, ValueError):
+                continue
+            if (exe.startswith(apps) or exe.startswith(base)
+                    or os.path.basename(exe) in launchers):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except OSError:
+                    continue
+        shm = Path("/dev/shm")
+        for pat in ("sm_segment.*", "ucx_shm_*", "*ompi*",
+                    "vader_*", "hydra_*", "psm*"):
+            for f in shm.glob(pat):
+                try:
+                    f.unlink()
+                except OSError:
+                    continue
 
     def run_arts_mn(self, case_name: str, bin_name: str, args: list[str],
                     nodes: int, timeout: int = 0) -> RunResult:

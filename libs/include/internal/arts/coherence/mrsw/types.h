@@ -20,21 +20,40 @@
 ** Licensed under the Apache License, Version 2.0 (the "License");           **
 ** you may not use this file except in compliance with the License.          **
 ******************************************************************************/
-#ifndef ARTS_MEMORY_COHERENCE_MRNEW_TYPES_H
-#define ARTS_MEMORY_COHERENCE_MRNEW_TYPES_H
+#ifndef ARTS_MEMORY_COHERENCE_MRSW_TYPES_H
+#define ARTS_MEMORY_COHERENCE_MRSW_TYPES_H
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /**
- * @file mrnew/types.h
- * @brief MRNEW (Multi-Reader, Node-Exclusive-Writer) cache/db layout.
+ * @file mrsw/types.h
+ * @brief MRSW (Multi-Reader, Single-Writer) cache/db layout.
  *
- * Selected by arts/coherence/types.h when ARTS_PROTOCOL_MRMW is NOT defined.
- * The EAGER vs LAZY timing variant is chosen here by ARTS_TIMING_LAZY.  The
- * protocol-agnostic pieces (buffer, snapshot waiter, defines, container_of)
- * come from types_common.h; the of_cache/total_size/stub_size helpers live in
- * the dispatcher (types.h), after this header defines cache + db_s.
+ * Selected by arts/coherence/types.h when ARTS_PROTOCOL_MRSW is defined.  The
+ * EAGER vs LAZY timing variant is chosen here by ARTS_TIMING_LAZY.  MRSW is
+ * rank-granular on the MRNEW engine: the buffer / versioning / RO snapshot
+ * machinery, the home OWNERSHIP_REQUEST FIFO (rank-granular, identical to
+ * MRNEW), and the owner→owner transfer + CONFIRM(+ACK) round are byte-for-byte
+ * MRNEW.  The ONE structural difference is the local active-writer cap:
+ *
+ *   - writer_count is a SINGLE counter with states {2, 1, 0}:
+ *       2 = sentinel(owns) + token(one local RW writer is in charge)
+ *       1 = sentinel-only (idle owner, incoming_new_owner == NONE) OR
+ *           token-only (invalidated, draining local, incoming_new_owner !=
+ * NONE) 0 = not owner / transferred away. The RO local-hit predicate is
+ * writer_count > 0; in a non-invalidated epoch it toggles 1<->2 only, never 0,
+ * so RO consistency is preserved (0 is reached only when ownership truly
+ * leaves).
+ *   - cache.pending_rw is a Vyukov MPSC RW-waiter FIFO consumed ONE waiter at a
+ *     time (pop-one): the token, not a per-waiter writer_count bump, accounts
+ *     the single active writer.  A releaser pops the next waiter and hands it
+ *     the token (no writer_count sub, no home round-trip) — bulk locality.
+ *
+ * The protocol-agnostic pieces (buffer, snapshot waiter, defines,
+ * container_of) come from types_common.h; the of_cache/total_size/stub_size
+ * helpers live in the dispatcher (types.h), after this header defines cache +
+ * db_s.
  *
  * @note Internal header.  User code should include @c arts.h.
  */
@@ -45,31 +64,16 @@ extern "C" {
 /** @addtogroup internal_db_structs
  *  @{ */
 
-/*--- Pending RW waiters --------------------------------------------------
- * edt_guid + slot together identify the parked EDT's dep slot to fill on
- * trigger.  The RW waiter chain is a Treiber stack (cache.pending_rw,
- * arts_lf_stack_t): the embedded link is owned by the stack (push prepends,
- * drain atomic-exchanges the whole chain).  Producers are foreign-rank acquire
- * paths; the single consumer is the home-side dispatcher.  Every consume is
- * order-free — drain-all on GRANT/fail, and a non-destructive single-consumer
- * for_each on PROCEED — so a LIFO Treiber stack suffices; there is no FIFO or
- * drain-one requirement (that is the home lockreq queue, which stays Vyukov
- * MPSC). */
-struct arts_db_rw_waiter_s {
-  arts_lf_link_t link; /* FIRST — required by arts_lf_stack_t */
-  arts_guid_t edt_guid;
-  unsigned int slot;
-};
-
 /*--- Per-DB home metadata ------------------------------------------------
  * Lives only on the rank that hosts a given DB (GUID home decides).  Holds
  * the directory state needed for ownership transfer and dedup.  The MPSC
- * queues are defined inline below (needed for struct embedding in arts_db_s).
+ * queue is defined inline below (needed for struct embedding in arts_db_s).
  *
  * Vyukov MPSC queue node carrying a requester rank (home OWNERSHIP_REQUEST
- * queue). The embedded `next` pointer is owned by the queue (push/pop manage
- * it). Producers are foreign-rank OWNERSHIP_REQUEST handlers; the single
- * consumer is the home-side dispatcher holding the invalidate_in_flight baton.
+ * queue) — rank-granular, identical to MRNEW.  The embedded `next` pointer is
+ * owned by the queue (push/pop manage it).  Producers are foreign-rank
+ * OWNERSHIP_REQUEST handlers; the single consumer is the home-side dispatcher
+ * holding the invalidate_in_flight baton.
  */
 #ifdef __cplusplus
 struct arts_home_lockreq_node_s {
@@ -98,19 +102,82 @@ struct arts_home_lockreq_queue_s {
 };
 #endif
 
+/*--- cache.pending_rw RW-waiter FIFO (Vyukov MPSC) -----------------------
+ *
+ * Per-cache FIFO of RW waiters, each carrying an (edt_guid, slot) pair (no
+ * rank — these are local-cache waiters, not home-FIFO ownership requesters).
+ * Mirrors the home lockreq Vyukov MPSC above but is consumed one waiter at a
+ * time in FIFO order (pop-one) and supports peek_empty for a release-time
+ * Dekker re-check.  The embedded stub sentinel is the permanent queue
+ * sentinel; it is never malloc'd or free'd separately.  Producers are the
+ * acquire-side waiter-enqueue paths; the single consumer is the releaser /
+ * the GRANT drain / the idle-owner token claim.
+ */
+#ifdef __cplusplus
+struct arts_db_rw_waiter_node_s {
+  struct arts_db_rw_waiter_node_s *next;
+  arts_guid_t edt_guid;
+  unsigned int slot;
+};
+
+struct arts_db_rw_waiter_queue_s {
+  struct arts_db_rw_waiter_node_s *tail; /* producer end (push exchanges) */
+  struct arts_db_rw_waiter_node_s *head; /* consumer end (pop advances) */
+  struct arts_db_rw_waiter_node_s stub;
+};
+#else
+struct arts_db_rw_waiter_node_s {
+  _Atomic(struct arts_db_rw_waiter_node_s *) next;
+  arts_guid_t edt_guid;
+  unsigned int slot;
+};
+
+struct arts_db_rw_waiter_queue_s {
+  _Atomic(struct arts_db_rw_waiter_node_s *)
+      tail; /* producer end (push exchanges here) */
+  _Atomic(struct arts_db_rw_waiter_node_s *)
+      head;                             /* consumer end (pop advances here) */
+  struct arts_db_rw_waiter_node_s stub; /* permanent sentinel */
+};
+#endif
+
+void arts_db_rw_waiter_queue_init(struct arts_db_rw_waiter_queue_s *q);
+/* Push (edt_guid, slot) at the producer end.  Multi-producer safe. */
+void arts_db_rw_waiter_queue_push(struct arts_db_rw_waiter_queue_s *q,
+                                  arts_guid_t edt_guid, unsigned int slot);
+/* Pop exactly one waiter from the consumer end in FIFO order (single
+ * consumer).  Returns true and sets the out params on success; returns false
+ * when the queue is truly empty. */
+bool arts_db_rw_waiter_queue_pop(struct arts_db_rw_waiter_queue_s *q,
+                                 arts_guid_t *edt_guid_out,
+                                 unsigned int *slot_out);
+/* Return true when the queue has no front node (empty or a producer mid-link).
+ * One acquire load of head->next; for the release-time Dekker re-check. */
+bool arts_db_rw_waiter_queue_peek_empty(
+    const struct arts_db_rw_waiter_queue_s *q);
+void arts_db_rw_waiter_queue_destroy(struct arts_db_rw_waiter_queue_s *q);
+
 /*--- Per-rank DB cache ---------------------------------------------------
  * Every rank that has acquired or hosts a given DB has one of these.  The
  * cache is the runtime's coherence-protocol state: ownership, the live
- * buffer, parked waiters, and destroy lifecycle.
+ * buffer, RW + RO snapshot waiters, and destroy lifecycle.
  *
- *   writer_count   flat ownership counter.  > 0 ⇒ this rank holds RW
- *                  ownership; 0 ⇒ invalidated.
+ *   writer_count   the single {2,1,0} ownership counter (read via (int)).
+ *                  2 = sentinel + token (a local RW writer is in charge);
+ *                  1 = sentinel-only (idle owner) OR token-only (invalidated,
+ *                      draining local); 0 = not owner / transferred away.  The
+ *                  RO local-hit predicate is writer_count > 0 — a
+ *                  non-invalidated epoch toggles 1<->2 only, never 0, so RO
+ *                  reads are always consistent local hits.
  *   buffer         currently-installed buffer, an atomic shared_ptr slot;
  *                  readers acquire via acquire_buf's acquire-and-validate load.
+ *   pending_rw     Vyukov MPSC RW-waiter FIFO, consumed pop-one; the token
+ *                  (the +1 above the sentinel) accounts the single active
+ *                  writer, so the drain/release does NOT bump per-waiter.
  *   pending_snapshot  Treiber stack of snapshot-response reorder-buffer
  *                  waiters (case-3 push only; drained whole on next install).
  *
- * The home-directory fields (rw_holder, pending_rw, invalidate_in_flight,
+ * The home-directory fields (rw_holder, pending_rw FIFO, invalidate_in_flight,
  * cached_ranks, last_sent_version, ...) are NOT here — they are inlined
  * directly in the wrapping struct arts_db_s, after this cache + db_type, and
  * reached via arts_db_of_cache(cache).  Non-home ranks allocate a cache-only
@@ -130,20 +197,34 @@ struct arts_db_cache_s {
    * ARTS_LAZY_NO_PENDING_OWNER == no transfer pending.  The publish-before-
    * sentinel-withdraw ordering makes a separate transfer_pending flag
    * redundant: whichever actor drives writer_count to 0 (the INVALIDATE, or the
-   * last release_rw) reads this field — a non-sentinel value names the target,
-   * so that actor fires the commit-PROCEED to it and ships the transfer
-   * (TRANSFER_OWNERSHIP in lazy, WRITEBACK_AND_TRANSFER/local in eager). Single
-   * writer per round (home baton gate), so no atomic needed.  Shared by both
-   * timings (eager's INVALIDATE now carries new_owner too). */
+   * last release) reads this field — a non-sentinel value names the target, so
+   * that actor ships the owner→owner transfer.  Single writer per round (home
+   * baton gate), so no atomic needed.  Shared by both timings. */
   unsigned int incoming_new_owner;
+  /* Per-cache RW-waiter FIFO (pop-one).  A local RW acquire pushes here; the
+   * idle-owner token claim, the GRANT drain, and the release token hand-off
+   * pop exactly one waiter and deliver it.  The single token (writer_count's
+   * +1 above the sentinel) accounts the one active writer, so consumption does
+   * NOT bump writer_count per waiter.
+   *
+   * Single-consumer invariant (no lock needed): every pop of this Vyukov MPSC
+   * FIFO is either token-serialized (the token holder is the unique actor that
+   * runs/hands-off the next waiter during the DB's live phase) or runs in the
+   * refcount-0 cache destructor (the sole owner — no other ref-holder exists).
+   * Destroy NEVER pops this FIFO at handler time: the destroy handler only sets
+   * the destroyed state, and a token holder racing its own release with that
+   * handler is excluded from popping because the release observes the destroyed
+   * state and relinquishes its token without popping (the destructor wakes the
+   * remaining waiters once refcount reaches 0). */
+  struct arts_db_rw_waiter_queue_s pending_rw;
 #ifdef ARTS_TIMING_LAZY
   /* Lazy: owner-side dedup map.  Allocated lazily on first ownership; preserved
    * across ownership transfer (TRANSFER_OWNERSHIP serializes it). */
   struct arts_rank_to_u64_map_s *last_sent_version;
   /* Lazy per-cache RW exclusivity machinery.  RW OWNERSHIP_REQUEST coalescing
    * flag — only the actor that CASes false->true sends OWNERSHIP_REQUEST;
-   * same-node RW EDTs piggyback on the in-flight one and are picked up by
-   * GRANT's drain. */
+   * same-node RW EDTs piggyback on the in-flight one and are picked up by the
+   * GRANT drain. */
   volatile unsigned int ownership_req_in_flight;
   /* Set (1) when a TRANSFER_OWNERSHIP installs the buffer on this rank but home
    * has not yet flipped rw_holder to us; cleared (0) when home's CONFIRM
@@ -152,26 +233,18 @@ struct arts_db_cache_s {
    * before the directory names us — the stale-RO window). Gates both parked and
    * fresh RW acquires. */
   volatile unsigned int ownership_unconfirmed;
-  /* Treiber stack of RW waiters parked on this rank (order-free drain-all). */
-  arts_lf_stack_t pending_rw;
 #else
-  /* Eager: the WRITEBACK ACK rendezvous is a stack-local sem_t created per
-   * release_rw, matched by pointer identity (the &sem address rides the
-   * WRITEBACK packet and is echoed verbatim in the ACK).  Multiple concurrent
-   * releases each get their own sem — no per-cache seq state. */
   /* Eager per-cache RW exclusivity machinery.  RW OWNERSHIP_REQUEST coalescing
    * flag — only the actor that CASes false->true sends OWNERSHIP_REQUEST;
-   * same-node RW EDTs piggyback on the in-flight one and are picked up by
-   * GRANT's drain. */
+   * same-node RW EDTs piggyback on the in-flight one and are picked up by the
+   * GRANT drain. */
   volatile unsigned int ownership_req_in_flight;
   /* Owner-side dedup map.  EAGER never creates it (always NULL): home serves RO
    * via GET_DATA with the home->last_sent_version watermark, so the eager
    * owner→owner transfer ships an EMPTY map.  The field exists so the shared
-   * arts_db_send_ownership_response (coherence/mrnew/ownership.c) compiles for
+   * arts_db_send_ownership_response (coherence/mrsw/ownership.c) compiles for
    * both timings (it gates the map build on this being non-NULL). */
   struct arts_rank_to_u64_map_s *last_sent_version;
-  /* Treiber stack of RW waiters parked on this rank (order-free drain-all). */
-  arts_lf_stack_t pending_rw;
 #endif
 };
 
@@ -233,4 +306,4 @@ struct arts_db_s {
 }
 #endif
 
-#endif /* ARTS_MEMORY_COHERENCE_MRNEW_TYPES_H */
+#endif /* ARTS_MEMORY_COHERENCE_MRSW_TYPES_H */

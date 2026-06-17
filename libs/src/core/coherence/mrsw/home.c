@@ -1,20 +1,19 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * Home-side coherence state implementations.  See coherence_home.h.
+ * Home-side coherence state implementations (MRSW).  See coherence/home.h.
  *
- * Consolidates the ownership-protocol home-side state (MRNEW today, MRSW later;
- * not linked under MRMW, which carries no ownership lease):
- *   - home OWNERSHIP_REQUEST FIFO (lockreq Vyukov MPSC queue) + home-directory
- *     init/teardown
- *   - the per-cache pending_rw Treiber stack (cache-side RW waiter chain)
- *   - the bit-packed atomic rank bit-set (lazy destroy fan-out roster)
- * The protocol-agnostic last_sent_version dense map moved to rank_u64_map.c
- * (linked into every build, including MRMW).
+ * MRSW is rank-granular on the MRNEW engine, so this home-side state is
+ * byte-for-byte MRNEW:
+ *   - home OWNERSHIP_REQUEST FIFO (lockreq Vyukov MPSC queue, rank-granular) +
+ *     home-directory init/teardown;
+ *   - the bit-packed atomic rank bit-set (lazy destroy fan-out roster).
+ * The per-cache RW-waiter FIFO (cache.pending_rw) is a SEPARATE Vyukov MPSC
+ * consumed pop-one — it lives in coherence/mrsw/waiter_queue.c, not here.  The
+ * protocol-agnostic last_sent_version dense map lives in rank_u64_map.c.
  */
 
 #include "arts/coherence/home.h"
 
-#include <sched.h>
 #include <stdatomic.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -22,13 +21,11 @@
 #include "arts/coherence/coherence.h"
 #include "arts/utils/malloc.h"
 
-/*--- pending_rw home FIFO (Vyukov MPSC) ---------------------------------
+/*--- pending_rw home FIFO (Vyukov MPSC, rank-granular) ------------------
  *
- * Standard Vyukov MPSC FIFO storing an unsigned int requester rank.  The
- * cache-side RW waiter chain (arts_pending_rw_queue_* below) is a separate
- * Treiber stack; this home queue stays Vyukov because the baton holder pops
- * exactly one requester at a time (the next ownership target) — an ordering a
- * LIFO stack cannot provide.  The embedded stub sentinel in
+ * Standard Vyukov MPSC FIFO storing an unsigned int requester rank.  The baton
+ * holder pops exactly one requester at a time (the next ownership target) — an
+ * ordering a LIFO stack cannot provide.  The embedded stub sentinel in
  * arts_home_lockreq_queue_s is the permanent queue sentinel; it is never
  * malloc'd or free'd separately.
  *
@@ -163,7 +160,7 @@ void arts_home_lockreq_queue_destroy(struct arts_home_lockreq_queue_s *q) {
 
 /*--- rank bit-set ----------------------------------------------------
  *
- * Bit-packed atomic rank bit-set.  See coherence_home.h / rank_bitset.h.
+ * Bit-packed atomic rank bit-set.  See coherence/home.h / rank_bitset.h.
  * Used only in lazy builds — the eager protocol reuses the per-rank version
  * map for the same purpose (set membership = nonzero entry). */
 
@@ -200,80 +197,5 @@ void arts_rank_bitset_for_each(const struct arts_rank_bitset_s *r,
       cb((w * 64) + b, ctx);
       snap &= snap - 1;
     }
-  }
-}
-
-/*--- per-cache pending_rw stack (Treiber) -------------------------------
- *
- * The per-cache RW waiter chain.  A Treiber stack (arts_lf_stack_t): each
- * waiter embeds an arts_lf_link_t as its first member.
- *
- * Concurrency model:
- *   Producers — foreign-rank acquire_remote_rw, multi-threaded; push prepends
- *               to the head via release-CAS.
- *   Consumer  — single home-side dispatcher
- *               (drain_pending_rw_after_grant / fail_trigger_pending /
- *                handle_destroy_req).  drain atomic-exchanges the whole chain
- *                out; for_each walks the live chain non-destructively.
- *
- * Memory: heap-allocated waiters (one malloc per producer).  drain / destroy
- * free each waiter after the callback.  The consume order is LIFO and
- * immaterial — every waiter is woken regardless of order — which is why a
- * stack suffices here while the home lockreq queue (drain-one) stays Vyukov. */
-
-void arts_pending_rw_queue_init(arts_lf_stack_t *q) { arts_lf_stack_init(q); }
-
-void arts_pending_rw_queue_push(arts_lf_stack_t *q,
-                                struct arts_db_rw_waiter_s *w) {
-  arts_lf_stack_push(q, &w->link);
-}
-
-void arts_pending_rw_queue_drain(arts_lf_stack_t *q,
-                                 void (*cb)(arts_guid_t edt_guid,
-                                            unsigned int slot, void *ctx),
-                                 void *ctx) {
-  /* Atomic-exchange the whole chain out (the drain's acquire pairs with each
-   * producer's release-CAS push, so every detached node->next is visible),
-   * then walk + wake + free.  LIFO order; the consume is order-free, so the
-   * reversal is immaterial.  A producer prepending concurrently with the
-   * exchange forms a fresh stack picked up by the next drain — no waiter is
-   * lost. */
-  arts_lf_link_t *node = arts_lf_stack_drain(q);
-  while (node != NULL) {
-    arts_lf_link_t *next =
-        atomic_load_explicit(&node->next, memory_order_relaxed);
-    struct arts_db_rw_waiter_s *w =
-        ARTS_CONTAINER_OF(node, struct arts_db_rw_waiter_s, link);
-    cb(w->edt_guid, w->slot, ctx);
-    arts_free(w);
-    node = next;
-  }
-}
-
-void arts_pending_rw_queue_for_each(arts_lf_stack_t *q,
-                                    void (*cb)(arts_guid_t edt_guid,
-                                               unsigned int slot, void *ctx),
-                                    void *ctx) {
-  /* Non-destructive walk of the live stack (single consumer; no pop, no free).
-   * A concurrent producer prepends a new head, so walking from the head we
-   * load may miss an in-flight push — PROCEED tolerates this (best-effort
-   * wake-ahead; the eventual GRANT drain wakes every waiter). */
-  arts_lf_link_t *cur = atomic_load_explicit(&q->head, memory_order_acquire);
-  while (cur != NULL) {
-    struct arts_db_rw_waiter_s *w =
-        ARTS_CONTAINER_OF(cur, struct arts_db_rw_waiter_s, link);
-    cb(w->edt_guid, w->slot, ctx);
-    cur = atomic_load_explicit(&cur->next, memory_order_acquire);
-  }
-}
-
-void arts_pending_rw_queue_destroy(arts_lf_stack_t *q) {
-  /* Single-threaded at destroy: drain the chain and free every waiter. */
-  arts_lf_link_t *node = arts_lf_stack_drain(q);
-  while (node != NULL) {
-    arts_lf_link_t *next =
-        atomic_load_explicit(&node->next, memory_order_relaxed);
-    arts_free(ARTS_CONTAINER_OF(node, struct arts_db_rw_waiter_s, link));
-    node = next;
   }
 }

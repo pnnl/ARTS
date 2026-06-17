@@ -604,7 +604,7 @@ void arts_transport_thread_inbound_queues_cleanup() {
   arts_free(re_receive_res);
 }
 
-bool arts_transport_receive(void) {
+bool arts_transport_receive(int time_out) {
   int i;
   int steal_handler_thread = 0;
   int64_t res;
@@ -612,7 +612,6 @@ bool arts_transport_receive(void) {
   struct arts_msg_header_s *packet;
   int count = (int)(arts_global_message_table->table_length - 1);
   fd_set temp_set;
-  int time_out = 300000;
   struct timeval sel_timeout;
   unsigned int pos;
   res =

@@ -13,8 +13,10 @@
  */
 
 #include "arts/coherence/home.h"
+#include "arts/transport/protocol.h" /* arts_msg_rank_version_pair_s */
 
 #include <stdatomic.h>
+#include <stdint.h>
 #include <stdlib.h>
 
 struct arts_rank_to_u64_map_s *arts_rank_u64_map_create(unsigned int nranks) {
@@ -67,4 +69,45 @@ bool arts_rank_u64_map_advance(struct arts_rank_to_u64_map_s *m,
     }
     /* old refreshed by failed CAS; retry with new snapshot */
   }
+}
+
+/* ===== serialize / deserialize (ownership-transfer wire payload) =====
+ * Shared by both MRNEW timings (the owner→owner OWNERSHIP_RESPONSE carries the
+ * owner-side map).  Layout: count(u32) + pad(u32) + count pairs. */
+size_t arts_rank_u64_map_serialize(const struct arts_rank_to_u64_map_s *m,
+                                   void *out) {
+  uint32_t *count_field = (uint32_t *)out;
+  struct arts_msg_rank_version_pair_s *entries =
+      (struct arts_msg_rank_version_pair_s *)((char *)out +
+                                              (sizeof(uint32_t) * 2));
+  uint32_t n = 0;
+  for (unsigned int r = 0; r < m->nranks; r++) {
+    uint64_t v = atomic_load_explicit(&m->slots[r], memory_order_acquire);
+    if (v == 0) {
+      continue;
+    }
+    entries[n].rank = (uint32_t)r;
+    entries[n].pad = 0;
+    entries[n].version = v;
+    n++;
+  }
+  count_field[0] = n;
+  count_field[1] = 0; /* alignment pad */
+  return (sizeof(uint32_t) * 2) + ((size_t)n * sizeof(*entries));
+}
+
+struct arts_rank_to_u64_map_s *
+arts_rank_u64_map_deserialize(const void *in, size_t size,
+                              unsigned int nranks) {
+  (void)size; /* used by debug assertions; production ignores it */
+  struct arts_rank_to_u64_map_s *m = arts_rank_u64_map_create(nranks);
+  const uint32_t *count_field = (const uint32_t *)in;
+  uint32_t n = count_field[0];
+  const struct arts_msg_rank_version_pair_s *entries =
+      (const struct arts_msg_rank_version_pair_s *)((const char *)in +
+                                                    (sizeof(uint32_t) * 2));
+  for (uint32_t i = 0; i < n; i++) {
+    arts_rank_u64_map_set(m, (unsigned int)entries[i].rank, entries[i].version);
+  }
+  return m;
 }

@@ -86,12 +86,16 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
    * acquire_item / release_item / mark_delete API.  The iterator-walk and
    * post-walk add_item exercise here verifies the data path only. */
 
-  void *ptr = arts_route_table_lookup_data(guid);
+  arts_shared_ptr_t h = arts_route_table_lookup(guid);
+  void *ptr = arts_shared_get(h);
   int rank = arts_route_table_lookup_rank(guid);
   arts_printf("Lookup %lu %p (rank %d)\n", guid, ptr, rank);
+  arts_shared_release(&h);
 
-  ptr = arts_route_table_lookup_data(guid);
+  h = arts_route_table_lookup(guid);
+  ptr = arts_shared_get(h);
   arts_printf("DB Lookup %lu %p\n", guid, ptr);
+  arts_shared_release(&h);
 
   /* Install a sentinel (non-owned integer) for the data-path exercise.  Use
    * the explicit-deleter install with NULL so the cb does NOT try to free this
@@ -102,11 +106,15 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       (void *)(uintptr_t)range_start, guid, NULL);
   (void)location;
 
-  ptr = arts_route_table_lookup_data(guid);
+  h = arts_route_table_lookup(guid);
+  ptr = arts_shared_get(h);
   arts_printf("Lookup2 %lu %p\n", guid, ptr);
+  arts_shared_release(&h);
 
-  ptr = arts_route_table_lookup_data(guid);
+  h = arts_route_table_lookup(guid);
+  ptr = arts_shared_get(h);
   arts_printf("DB Lookup2 %lu %p\n", guid, ptr);
+  arts_shared_release(&h);
 
   arts_shutdown();
 }
