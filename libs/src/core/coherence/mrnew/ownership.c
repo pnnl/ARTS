@@ -71,24 +71,20 @@ bool arts_db_acquire_rw_local_fast(struct arts_db_cache_s *cache,
 arts_db_acquire_result_t
 arts_db_acquire_remote_rw(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
                           unsigned int slot) {
-  /* No destroy_state precheck: per spec 4.11, handle_destroy_req NULL-stores
-   * route_item->data BEFORE flipping destroy_state, so route_table_lookup_db
-   * already misses and the caller's OoO defer handles "DB destroyed".  If
-   * we did get here with destroy_state advancing concurrently, the
-   * fail_trigger_pending pop/wake-with-NULL chain will catch our waiter.
-   */
+  /* No destroy precheck: handle_destroy_req NULL-stores route_item->data BEFORE
+   * detaching the slot, so route_table_lookup_db already misses and the
+   * caller's OoO defer handles "DB destroyed".  Destroying a DB an EDT still
+   * has a pending acquire on is undefined per OCR; a waiter left parked at that
+   * point is freed (not woken) by the refcount-0 cache destructor. */
   /* Allocate + push waiter into MPSC queue. */
   struct arts_db_rw_waiter_s *w =
       (struct arts_db_rw_waiter_s *)arts_malloc(sizeof(*w));
   w->edt_guid = edt_guid;
   w->slot = slot;
-  /* Note: under MPSC there is no per-node "mark" — the consumer simply
-   * pops in FIFO order and wakes each popped waiter (in
-   * drain_pending_rw_after_grant / fail_trigger_pending / destroy
-   * fan-out).  The post-push destroy re-check is folded into the
-   * consumer path: if destroy_state advances past NONE while we are
-   * pushing, fail_trigger_pending will pop us and wake the EDT with
-   * NULL ptr. */
+  /* Note: under MPSC there is no per-node "mark" — the consumer simply pops in
+   * FIFO order and wakes each popped waiter (drain_pending_rw_after_grant on
+   * the grant path); the refcount-0 destructor frees any waiter still parked at
+   * destroy. */
   arts_pending_rw_queue_push(&cache->pending_rw, w);
 
   /* Kick OWNERSHIP_REQUEST if no one else has — GRANT is what eventually
@@ -232,24 +228,6 @@ void arts_send_db_ownership_response(unsigned int new_owner_rank,
   } else {
     arts_transport_send_async((int)new_owner_rank, (char *)&hdr, sizeof(hdr));
   }
-}
-
-/* ===== destroy/fail wake of parked waiters (EAGER+LAZY) ============
- * Wake every parked waiter with a NULL ptr so the EDT observes the destroyed
- * DB (mark_edt_ready_by_guid delivers NULL when the cache buffer is gone): the
- * RW Vyukov MPSC FIFO first, then the snapshot reorder buffer.  MRMW has no
- * pending_rw queue so it defines its own arts_db_fail_trigger_pending
- * (coherence/mrmw.c) draining only pending_snapshot. */
-
-static void fail_trigger_rw_cb(arts_guid_t edt_guid, unsigned int slot,
-                               void *vctx) {
-  (void)vctx;
-  mark_edt_ready_by_guid(edt_guid, slot);
-}
-
-void arts_db_fail_trigger_pending(struct arts_db_cache_s *cache) {
-  arts_pending_rw_queue_drain(&cache->pending_rw, fail_trigger_rw_cb, NULL);
-  arts_db_drain_pending_snapshot(cache);
 }
 
 /* ===== Home-side ownership handlers (MRNEW; moved from handlers.c) =====

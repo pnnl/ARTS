@@ -226,6 +226,11 @@ bool arts_transport_set_ip(struct arts_config_s *config) {
 
     getifaddrs(&ifap);
     for (ifa = ifap; ifa && !found; ifa = ifa->ifa_next) {
+      // getifaddrs() may return entries whose ifa_addr is NULL (interfaces
+      // with no assigned address); skip them before dereferencing.
+      if (ifa->ifa_addr == NULL) {
+        continue;
+      }
       if (ifa->ifa_addr->sa_family == AF_INET) {
         sa = (struct sockaddr_in *)ifa->ifa_addr;
         inet_ntop(AF_INET, &sa->sin_addr, addr, 100);
@@ -475,9 +480,33 @@ bool arts_transport_setup_incoming() {
     setsockopt(local_socket_receive[i], SOL_SOCKET, SO_REUSEADDR,
                (char *)&i_set_option, sizeof(i_set_option));
 
-    int res =
-        bind(local_socket_receive[i], (struct sockaddr *)&local_server_addr[i],
-             sizeof(local_server_addr[i]));
+    /* Bind with retry-on-EADDRINUSE, mirroring the connect-side retry below.
+     * SO_REUSEADDR (set above) clears the TIME_WAIT case, but a previous
+     * process still actively holding this fixed port — a peer rank
+     * mid-shutdown, or a rapid restart on the same port set — fails the first
+     * bind with EADDRINUSE, which SO_REUSEADDR cannot override.  Wait for the
+     * port to be released rather than failing startup outright.  Bounded so a
+     * genuinely persistent conflict still fails, and aborted promptly on
+     * shutdown so we never spin for the full ceiling during teardown.  A failed
+     * bind leaves the socket unbound, so the same fd is retried directly (no
+     * recreate needed). */
+    int res;
+    int bind_retries = 0;
+    const int max_bind_retries = 100; /* ~10s ceiling @ 100ms */
+    while ((res = bind(local_socket_receive[i],
+                       (struct sockaddr *)&local_server_addr[i],
+                       sizeof(local_server_addr[i]))) < 0) {
+      if (errno != EADDRINUSE) {
+        break; /* a non-contention error — fail fast */
+      }
+      if (arts_node_info.shutdown_state) {
+        return false;
+      }
+      if (++bind_retries >= max_bind_retries) {
+        break; /* port never freed — give up and report below */
+      }
+      usleep(100000);
+    }
 
     if (res < 0) {
       ARTS_INFO("Bind Failed");
@@ -663,6 +692,16 @@ bool arts_transport_receive(int time_out) {
                   INCREMENT_BYTES_REMOTE_RECEIVED_BY(res2);
                 }
 
+                if (res2 == 0) {
+                  /* Peer half-closed (FIN) mid-packet: no more bytes will ever
+                   * complete this packet, so adding 0 would spin recv forever.
+                   * Treat exactly like the first-read EOF below — enter
+                   * shutdown so this rank's network threads stop and reach
+                   * teardown. */
+                  arts_enter_shutdown_state(false);
+                  arts_runtime_stop();
+                  return false;
+                }
                 if (res2 < 0) {
                   if (errno != EAGAIN) {
                     ARTS_INFO("Error on recv return 0 %d %d", errno, EAGAIN);
@@ -709,6 +748,16 @@ bool arts_transport_receive(int time_out) {
                          bypass_packet_size[pos] - res, MSG_DONTWAIT);
                 if (res2 > 0) {
                   INCREMENT_BYTES_REMOTE_RECEIVED_BY(res2);
+                }
+                if (res2 == 0) {
+                  /* Peer half-closed (FIN) mid-packet: no more bytes will ever
+                   * complete this packet, so adding 0 would spin recv forever.
+                   * Treat exactly like the first-read EOF below — enter
+                   * shutdown so this rank's network threads stop and reach
+                   * teardown. */
+                  arts_enter_shutdown_state(false);
+                  arts_runtime_stop();
+                  return false;
                 }
                 if (res2 < 0) {
                   if (errno != EAGAIN) {

@@ -294,9 +294,9 @@ void arts_handler_db_writeback_ack(void *item_v, void *args_v) {
 
 /* Cat-B pure body (OoO g_ooo_table[OOO_DB_DESTROY]): the OoO engine has already
  * acquired the home db_s and pinned a ref across this call (cache is its FIRST
- * member).  Order: roster fan-out + fail_trigger wake parked waiters FIRST (the
- * cache stays alive — only the install ref is dropped), then
- * arts_route_table_set_destroyed LAST detaches the slot cb + drops the install
+ * member).  Order: roster fan-out, then
+ * arts_route_table_set_destroyed LAST (detach the slot cb + drop the install
+ * ref); a waiter left parked at destroy (UB) is cleaned up by the destructor detaches the slot cb + drops the install
  * ref; the cb deleter frees the cache once outstanding lookup refs drain.  A
  * second DESTROY_REQ finds the slot absent and is a no-op.  Eager roster
  * source = home->last_sent_version + the queued ownership requesters. */
@@ -330,7 +330,6 @@ void arts_handler_db_destroy(void *item_v, void *args_v) {
       }
     }
   }
-  arts_db_fail_trigger_pending(cache);
   (void)arts_route_table_set_destroyed(a->db_guid);
 }
 

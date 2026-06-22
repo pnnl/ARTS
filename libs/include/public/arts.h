@@ -312,6 +312,16 @@ typedef struct {
    *  and crashes once a concurrent destroy has removed the route entry.  User
    *  EDTs ignore this field. */
   arts_db_types_t subtype;
+  /** Runtime-internal: set at acquire time when this serialized (RW) slot names
+   *  a DB an earlier serialized slot of the same EDT already acquired.  Such a
+   *  slot took a per-slot buffer ref but NOT a coherence (writer_count) hold —
+   *  the earlier slot owns the single acquire/release for that DB.  Release
+   *  drops the buffer ref but skips the coherence release for an alias, so the
+   *  owner's writer_count is decremented exactly once per distinct DB. Recorded
+   *  here (not re-derived by GUID scan at release) so a mid-EDT release that
+   *  nulls the owning slot cannot make an alias masquerade as the owner.  User
+   *  EDTs ignore this field. */
+  bool alias;
 } arts_edt_dep_t;
 
 /**
@@ -431,6 +441,12 @@ typedef struct {
    *  creator-token for cleanup. Wait on it with arts_event_wait. Default false.
    */
   bool finish;
+  /** If true, this event self-destructs (route-slot detach) the instant it
+   *  fires, instead of lingering for late binders.  Single-shot semantics for
+   *  internal forwarder/proxy latches.  Implied by @c finish.  Immutable after
+   *  creation — there is no runtime setter.  Default false (fire-and-linger).
+   */
+  bool auto_destroy;
 } arts_event_hint_t;
 
 /** OCR LATCH_T — counter event.  Argument is the initial counter value;
@@ -643,12 +659,25 @@ arts_guid_t arts_edt_create(arts_edt_t func_ptr, uint32_t paramc,
 void arts_edt_set_result(arts_guid_t result_guid);
 
 /**
- * @brief Destroy an EDT and remove its GUID from the routing table.
+ * @brief Cancel a freshly-created EDT, removing its GUID from the routing
+ * table.
  *
- * EDTs are automatically destroyed after they finish running; call this only
- * to cancel an EDT that has not yet fired.
+ * A pre-runnable EDT (unsatisfied dependency slots remain) is detached and
+ * never runs.  Calling this on an EDT that has already become runnable is a
+ * safe no-op — that EDT runs to completion (it travels by a held reference, so
+ * the route-slot detach cannot free it mid-flight).  The EDT's run state is
+ * therefore NOT the constraint.
  *
- * @param guid GUID of the EDT to destroy.
+ * The caller MUST NOT access the EDT's GUID via arts_add_dependence (as source
+ * or destination) or arts_edt_satisfy* concurrently with, or after, the
+ * destroy: using a destroyed GUID is undefined, and a satisfy racing the
+ * destroy is the one genuinely unsafe interleaving.  In practice the safe
+ * pattern is to cancel a just-created EDT before wiring any dependence into it.
+ *
+ * EDTs are not auto-destroyed on completion; this explicit cancel path is
+ * rarely needed.
+ *
+ * @param guid GUID of the EDT to cancel.
  */
 void arts_edt_destroy(arts_guid_t guid);
 

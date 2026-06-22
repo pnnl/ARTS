@@ -187,8 +187,8 @@ cmake_dependent_option(ARTS_USE_LOCAL_CUDA_ARCHITECTURES
 #                            consistency actions (release-time vs acquire-time).
 #                            Ignored by MRMW.
 set(ARTS_COHERENCE_PROTOCOL "MRNEW" CACHE STRING
-    "Coherence protocol (admission policy): MRNEW (default, = OCR), MRMW (DB-DRF, evaluation only), or MRSW (single-writer; OCR-superset)")
-set_property(CACHE ARTS_COHERENCE_PROTOCOL PROPERTY STRINGS MRNEW MRMW MRSW)
+    "Coherence protocol (admission policy): MRNEW (default, = OCR), MRMW (DB-DRF, evaluation only), MRSW (single-writer; OCR-superset), or LOCK (lock-based, eager-only)")
+set_property(CACHE ARTS_COHERENCE_PROTOCOL PROPERTY STRINGS MRNEW MRMW MRSW LOCK)
 set(ARTS_PROTOCOL_TIMING "LAZY" CACHE STRING
     "Timing of MRNEW/MRSW consistency actions: EAGER or LAZY (default); ignored by MRMW")
 set_property(CACHE ARTS_PROTOCOL_TIMING PROPERTY STRINGS EAGER LAZY)
@@ -258,9 +258,10 @@ set(ARTS_COUNTER_CONFIG
 # ── Coherence-protocol validation + compile definitions ────────────────────
 if(NOT ARTS_COHERENCE_PROTOCOL STREQUAL "MRNEW" AND
    NOT ARTS_COHERENCE_PROTOCOL STREQUAL "MRMW" AND
-   NOT ARTS_COHERENCE_PROTOCOL STREQUAL "MRSW")
+   NOT ARTS_COHERENCE_PROTOCOL STREQUAL "MRSW" AND
+   NOT ARTS_COHERENCE_PROTOCOL STREQUAL "LOCK")
   message(FATAL_ERROR
-          "ARTS_COHERENCE_PROTOCOL must be MRNEW, MRMW, or MRSW, got: ${ARTS_COHERENCE_PROTOCOL}")
+          "ARTS_COHERENCE_PROTOCOL must be MRNEW, MRMW, MRSW, or LOCK, got: ${ARTS_COHERENCE_PROTOCOL}")
 endif()
 if(NOT ARTS_PROTOCOL_TIMING STREQUAL "EAGER" AND
    NOT ARTS_PROTOCOL_TIMING STREQUAL "LAZY")
@@ -275,6 +276,26 @@ if(ARTS_COHERENCE_PROTOCOL STREQUAL "MRMW")
           "and programs valid under the OCR memory model (which MRNEW provides) "
           "may produce wrong results. Evaluation builds only — never a "
           "correctness baseline. ARTS_PROTOCOL_TIMING is ignored.")
+elseif(ARTS_COHERENCE_PROTOCOL STREQUAL "LOCK")
+  # LOCK (lock-based, Entry-Consistency-style): a DB is held in one access mode
+  # at a time (RO-shared or RW-exclusive); reader/writer are time-exclusive;
+  # writers are passive (park, no invalidate push); all inter-node transitions
+  # serialize through the GUID home's single lock_state word.  Eager-only:
+  # RW writeback happens once at lock-release, not per db-release.  LOCK-LAZY is
+  # a future track and is not built here.
+  #
+  # LOCK is its own protocol axis: define ONLY ARTS_PROTOCOL_LOCK.  Do NOT define
+  # ARTS_TIMING_EAGER — the per-protocol selection chains (ooo.h, ooo.c,
+  # coherence/types.h) match ARTS_TIMING_EAGER ahead of (or as a fallthrough vs)
+  # the LOCK arm, so emitting it would mis-route LOCK into MRNEW's eager TUs.
+  # EAGER is enforced as a config constraint (FATAL below), not a compile define.
+  add_compile_definitions(ARTS_PROTOCOL_LOCK=1)
+  if(NOT ARTS_PROTOCOL_TIMING STREQUAL "EAGER")
+    message(FATAL_ERROR
+            "ARTS_COHERENCE_PROTOCOL=LOCK is eager-only; set "
+            "ARTS_PROTOCOL_TIMING=EAGER (got: ${ARTS_PROTOCOL_TIMING})")
+  endif()
+  message(STATUS "ARTS coherence protocol: LOCK (lock-based, eager-only)")
 elseif(ARTS_COHERENCE_PROTOCOL STREQUAL "MRSW")
   # MRSW (Multi-Reader, Single-Writer): rank-granular on the MRNEW engine, with
   # the local active-writer count capped at one (a single writer_count {2,1,0}

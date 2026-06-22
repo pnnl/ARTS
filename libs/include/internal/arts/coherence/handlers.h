@@ -271,6 +271,55 @@ void arts_db_lazy_start_invalidate_round(struct arts_db_cache_s *cache,
 void arts_db_send_ownership_response(struct arts_db_cache_s *cache);
 #endif /* MRNEW || MRSW */
 
+#ifdef ARTS_PROTOCOL_LOCK
+/* ===== LOCK protocol handlers ======================================== */
+
+/* Cat-B pure body (OoO g_ooo_table[OOO_DB_LOCK_REQUEST]) @home: item_v is the
+ * home db_s the engine acquired (cache is its first member); args_v is an
+ * arts_ooo_args_db_lock_request_s.  push-before-CAS on rw_waiters/ro_waiters,
+ * then a single lock_state CAS, then grant-send per the transition case. */
+void arts_handler_db_lock_request(void *item_v, void *args_v);
+
+/* Cat-B pure body (OoO g_ooo_table[OOO_DB_LOCK_RELEASE]) @home: same item_v
+ * shape; args_v is an arts_ooo_args_db_lock_release_s followed by data_size
+ * writeback bytes when mode==RW.  RW installs writeback first, then transitions
+ * lock_state, then grant-sends the next holder(s). */
+void arts_handler_db_lock_release(void *item_v, void *args_v);
+
+/* Cat-C pure body @requester: payload = full contiguous wire buffer
+ * (header + data); size is total bytes.  Buffer install + cache_state CAS
+ * (REQ→GRANT, or phantom RO release) + drain of the cache pending stacks. */
+void arts_handler_db_lock_grant(void *payload, size_t size);
+
+/* NOTE: arts_handler_db_acquire is NOT re-declared here.  It is already
+ * declared protocol-agnostically in coherence.h as void
+ * arts_handler_db_acquire(void *item, void *args) and serves as both the
+ * engine's acquire_one_dep body and the OOO_DB_ACQUIRE replay.  LOCK only
+ * *defines* it (lock/acquire.c). */
+
+/* ===== LOCK senders =================================================== */
+void arts_send_db_lock_request(unsigned int home_rank, arts_guid_t db_guid,
+                               arts_db_access_mode_t mode);
+/* arts_send_db_lock_grant: version is the monotone round counter; home bumps
+ * and forwards it so the requester's buf_install rejects stale grants. */
+void arts_send_db_lock_grant(unsigned int requester_rank, arts_guid_t db_guid,
+                             arts_db_access_mode_t mode, uint64_t version,
+                             const void *data, uint64_t data_size);
+/* arts_send_db_lock_release: cv is the releaser's stack-local sem_t address
+ * (RW only; 0 for RO); version is the monotone counter (RW only; 0 for RO).
+ * Home echoes cv in the LOCK_RELEASE_ACK to unblock the releaser. */
+void arts_send_db_lock_release(unsigned int home_rank, arts_guid_t db_guid,
+                               arts_db_access_mode_t mode, uint64_t version,
+                               uint64_t cv, const void *data,
+                               uint64_t data_size);
+/* arts_send_db_lock_release_ack: home → releaser after installing writeback.
+ * Mirrors arts_send_db_writeback_ack; cv is echoed verbatim so the releaser
+ * wakes by pointer identity (no seq tracking). */
+void arts_send_db_lock_release_ack(unsigned int releaser_rank,
+                                   arts_guid_t db_guid, uint64_t cv);
+
+#endif /* ARTS_PROTOCOL_LOCK */
+
 #ifdef __cplusplus
 }
 #endif

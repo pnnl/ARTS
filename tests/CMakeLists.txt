@@ -49,7 +49,6 @@ set(TEST_PROGRAMS
     coherence_rw_rw_chain_seal
     coherence_ro_accumulation
     coherence_mixed_local_remote
-    coherence_lock_req_before_create
     coherence_destroy_during_acquire
     coherence_stress_single_node
     coherence_stress_dist
@@ -100,8 +99,7 @@ set(TEST_PROGRAMS
     event_add_dep_idem_fastpath
     event_channel_lifetime
     event_idem_silent_oversatisfy
-    persistent_event
-    persistent_event_advanced
+    event_channel_advanced
     guid_basic
     guid_range
     hint_routing
@@ -128,7 +126,6 @@ set(TEST_PROGRAMS
     multinode_stdout_forward
     # --- Pure unit tests (no ARTS runtime) ---
     lockfree_stack_test
-    lockfree_marked_list_test
     coherence_buffer_test
     stdio_forward_scale_test
     # --- New unit tests (Tasks 6-12) ---
@@ -145,11 +142,23 @@ set(TEST_PROGRAMS
     finish_event_stress
     finish_event_wait
     finish_event_nested
+    coherence_multi_writer_dist
 )
 
 # Function to create a test executable
 function(add_arts_test test_name)
-    add_executable(${test_name} ${test_name}.c)
+    # Sources live under one of the ocr/ unit/ subdirectories.
+    #   ocr/  — portable OCR programs (arts_rt main, no globals, no protocol
+    #           #if; valid under any coherence protocol)
+    #   unit/ — whitebox tests (internal headers, global state, or protocol-#if
+    #           guards; exercise ARTS-internal mechanisms)
+    set(_src "")
+    foreach(_sub ocr unit)
+        if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${_sub}/${test_name}.c)
+            set(_src ${_sub}/${test_name}.c)
+        endif()
+    endforeach()
+    add_executable(${test_name} ${_src})
 
     # Set include directories
     target_include_directories(${test_name} PRIVATE ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR} ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
@@ -404,8 +413,7 @@ register_single_node_test(event_satisfy_once)
 register_single_node_test(event_add_dep_idem_fastpath)
 register_single_node_test(event_channel_lifetime)
 register_single_node_test(event_idem_silent_oversatisfy)
-register_single_node_test(persistent_event)
-register_single_node_test(persistent_event_advanced)
+register_single_node_test(event_channel_advanced)
 
 # GUID tests
 register_single_node_test(guid_basic)
@@ -483,7 +491,6 @@ set_tests_properties(term_sigsegv PROPERTIES
 
 # --- Pure unit tests (no ARTS runtime) ---
 register_pure_unit_test(lockfree_stack_test)
-register_pure_unit_test(lockfree_marked_list_test)
 register_pure_unit_test(coherence_buffer_test TIMEOUT 60)
 register_pure_unit_test(stdio_forward_scale_test)
 
@@ -498,7 +505,7 @@ register_pure_unit_test(stdio_forward_scale_test)
 set(SYNC_SHARED_TESTS shared_basic shared_atomic_race shared_aba)
 set(SYNC_MPSC_TESTS mpsc_concurrent mpsc_drain_race)
 foreach(t ${SYNC_SHARED_TESTS})
-    add_executable(${t} sync/${t}.c
+    add_executable(${t} unit/${t}.c
         ${CMAKE_SOURCE_DIR}/libs/src/core/utils/shared.c)
     target_include_directories(${t} PRIVATE
         ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR}
@@ -507,13 +514,120 @@ foreach(t ${SYNC_SHARED_TESTS})
     register_pure_unit_test(${t})
 endforeach()
 foreach(t ${SYNC_MPSC_TESTS})
-    add_executable(${t} sync/${t}.c)
+    add_executable(${t} unit/${t}.c)
     target_include_directories(${t} PRIVATE
         ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR}
         ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
     target_link_libraries(${t} PRIVATE Threads::Threads)
     register_pure_unit_test(${t})
 endforeach()
+
+# --- Work-stealing deque (deque.c) + array_list (array_list.c) ---
+# Standalone like the SYNC_* tests above: each compiles the target source TU
+# directly and provides its own libc-backed arts_calloc_align/arts_free
+# (deque) or arts_malloc/arts_free (array_list) + an arts_atomic_cswap_u64
+# shim (deque), so no ARTS library link is needed.  The deque RACE tests
+# (chaselev/tiebreak/grow) validate the exactly-once Chase-Lev contract;
+# they are functionally green under ASan but DELIBERATELY trip ThreadSanitizer
+# because deque.c uses the volatile + __sync_synchronize idiom rather than C11
+# atomics (suspected bug B052 / weak-mem ordering) — that TSan report is a true
+# property of the runtime, not a test defect.
+set(DEQUE_UNIT_TESTS
+    deque_single_thread deque_chaselev_race deque_last_element_tiebreak
+    deque_grow_during_steal)
+foreach(t ${DEQUE_UNIT_TESTS})
+    add_executable(${t} unit/${t}.c
+        ${CMAKE_SOURCE_DIR}/libs/src/core/utils/deque.c)
+    target_include_directories(${t} PRIVATE
+        ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR}
+        ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
+    target_link_libraries(${t} PRIVATE Threads::Threads)
+endforeach()
+register_pure_unit_test(deque_single_thread)
+register_pure_unit_test(deque_chaselev_race TIMEOUT 60)
+register_pure_unit_test(deque_last_element_tiebreak TIMEOUT 60)
+register_pure_unit_test(deque_grow_during_steal TIMEOUT 60)
+
+add_executable(array_list_basic unit/array_list_basic.c
+    ${CMAKE_SOURCE_DIR}/libs/src/core/utils/array_list.c)
+target_include_directories(array_list_basic PRIVATE
+    ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR}
+    ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
+target_link_libraries(array_list_basic PRIVATE Threads::Threads)
+register_pure_unit_test(array_list_basic)
+
+# --- OoO defer/replay engine (ooo.c) ---
+# Standalone like the SYNC_*/deque tests: each test TU #includes the runtime's
+# ooo.c so the file-static g_ooo_table + engine bodies are compiled in, links
+# shared.c for the cb shared-ptr slot, and supplies counting handler stubs +
+# a single-slot arts_route_table_reserve_or_lookup + libc malloc shims (no ARTS
+# runtime).  The per-config protocol macros (ARTS_PROTOCOL_*/ARTS_TIMING_*) are
+# inherited from the top-level add_compile_definitions, so the g_ooo_table
+# preprocessor arms + the tests' matching handler-stub arms select the same
+# kind set for whichever protocol this build dir is configured for.  ooo.c pulls
+# the generated counter Preamble.h, hence ARTS_BUILD_INTERNAL_INCLUDE_DIR.
+set(OOO_UNIT_TESTS
+    ooo_toctou_rescue ooo_drain_repush ooo_table_completeness)
+foreach(t ${OOO_UNIT_TESTS})
+    add_executable(${t} unit/${t}.c
+        ${CMAKE_SOURCE_DIR}/libs/src/core/utils/shared.c)
+    target_include_directories(${t} PRIVATE
+        ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR}
+        ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
+    target_link_libraries(${t} PRIVATE Threads::Threads)
+endforeach()
+register_pure_unit_test(ooo_toctou_rescue TIMEOUT 60)
+register_pure_unit_test(ooo_drain_repush TIMEOUT 60)
+register_pure_unit_test(ooo_table_completeness)
+
+# --- atomics.c primitives + spin locks (C23p) ---
+# Standalone like the SYNC_*/deque tests: link the runtime's atomics.c TU
+# directly (libc-only dependency), no ARTS library.  atomics_rmw_conventions
+# pins the per-function pre/post return conventions; atomics_rmw_contention
+# proves the fetch_add tickets form a gap-free partition (linearizability);
+# atomics_locks proves mutual-exclusion (no lost updates), the try_lock state
+# machine, and the reader/writer no-overlap invariant, and documents B130
+# (writer_try_lock blocks on reader drain).  atomics_locks is functionally
+# green under ASan but DELIBERATELY trips ThreadSanitizer: atomics.c's RW lock
+# uses plain `volatile` spin-hint reads of *write_lock/*read_lock racing with
+# the barrier'd atomic RMWs on the same word — a true C-UB data race property
+# of the runtime (benign on x86 TSO), not a test defect.
+set(ATOMICS_UNIT_TESTS
+    atomics_rmw_conventions atomics_rmw_contention atomics_locks)
+foreach(t ${ATOMICS_UNIT_TESTS})
+    add_executable(${t} unit/${t}.c
+        ${CMAKE_SOURCE_DIR}/libs/src/core/utils/atomics.c)
+    target_include_directories(${t} PRIVATE
+        ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR}
+        ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
+    target_link_libraries(${t} PRIVATE Threads::Threads)
+endforeach()
+register_pure_unit_test(atomics_rmw_conventions)
+register_pure_unit_test(atomics_rmw_contention TIMEOUT 60)
+register_pure_unit_test(atomics_locks TIMEOUT 60)
+
+# --- malloc.c allocator + footprint, diag.c timestamp/printf (C23p) ---
+# Each test #includes the target runtime .c TU directly (with the heavy header
+# include guards pre-defined + minimal ARTS_ERROR/ARTS_ALIGNED/footprint stubs
+# inside the test), so no extra source and no ARTS library link is needed.
+# malloc_alignment is the ASan target (heap safety + a-aligned user pointers);
+# malloc_footprint_balance DELIBERATELY fails (B132): realloc shrink+free leaks
+# (old-new) bytes from BYTES_MEMORY_FOOTPRINT because free subtracts only the
+# shrunken header size — a true runtime accounting bug, left unmasked.
+# diag_timestamp pins best-effort per-thread monotonicity + fold sanity and
+# documents B133 (arts_printf prefix+body are two non-atomic stdio calls).
+set(MISC_UTIL_UNIT_TESTS
+    malloc_footprint_balance malloc_alignment diag_timestamp)
+foreach(t ${MISC_UTIL_UNIT_TESTS})
+    add_executable(${t} unit/${t}.c)
+    target_include_directories(${t} PRIVATE
+        ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR}
+        ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
+    target_link_libraries(${t} PRIVATE Threads::Threads)
+endforeach()
+register_pure_unit_test(malloc_footprint_balance TIMEOUT 60)
+register_pure_unit_test(malloc_alignment)
+register_pure_unit_test(diag_timestamp TIMEOUT 60)
 
 # Counter smoke test: verifies counter output files are written.
 register_single_node_test(counter_smoke TIMEOUT 30)
@@ -567,22 +681,10 @@ set_tests_properties(multinode_stdout_forward_2n PROPERTIES
 register_multinode_test(multinode_labeled_guid TIMEOUT 30)
 register_multinode_test(multinode_event_hint TIMEOUT 30)
 
-# 3-rank coherence stress: B.3 LOCK_REQ-before-DB_CREATE race regression.
-# Uses arts_2n.cfg; the test SKIPs cleanly when rank_count < 3, so on a
-# 2-node-only setup this becomes a no-op.  Re-enable on a 3+ rank cfg to
-# actually exercise the race.
-add_test(
-    NAME coherence_lock_req_before_create
-    COMMAND coherence_lock_req_before_create
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-)
-arts_next_port_base(1 port_base)
-set_tests_properties(coherence_lock_req_before_create PROPERTIES
-    LABELS "coherence_stress;multinode"
-    TIMEOUT 120
-    RESOURCE_LOCK "arts_runtime"
-    ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/2n.cfg;default_ports=${port_base}"
-)
+# B.3 LOCK_REQ-before-DB_CREATE race regression is registered at 3n/4n (where
+# the race is actually exercised) as `lock_req_before_create` in
+# generated_tests.cmake.  The former 2n single-entry `coherence_lock_req_before_create`
+# here was a no-op (SKIPs at rank<3) over byte-identical source, so it was removed.
 
 # Coherence stress test suite (Spec section 6 B.1/B.4/B.5/B.6 single-node).
 # Each adds the "coherence_stress" label on top of "single_node" so the suite
@@ -667,20 +769,24 @@ set_tests_properties(coherence_lazy_ownership_reorder PROPERTIES
 register_single_node_test(coherence_lazy_confirm_gate TIMEOUT 120)
 register_multinode_test(coherence_lazy_confirm_gate TIMEOUT 120)
 
-# --- MRSW per-cache RW-waiter FIFO unit test (MRSW-only) ---
-# Pure unit test for cache.pending_rw, the Vyukov MPSC waiter FIFO carrying
-# (edt_guid, slot).  The type + symbols exist only in MRSW builds (the queue TU
-# coherence/mrsw/waiter_queue.c is linked only under ARTS_COHERENCE_PROTOCOL=MRSW),
-# so the binary is built AND the ctest entry registered only in that build.
-if(ARTS_COHERENCE_PROTOCOL STREQUAL "MRSW")
-    add_arts_test(coherence_mrsw_waiter_queue)
-    register_pure_unit_test(coherence_mrsw_waiter_queue)
-endif()
+# coherence_multi_writer_dist: multinode cross-rank RW same-address.  The
+# requester is NOT the home rank, so increments cross the wire (LOCK_REQUEST/
+# GRANT or each protocol's equivalent) and the final RO read must observe every
+# writer's atomic update.  An ordinary OCR program — registered under every
+# protocol; at >=3 ranks a DB homed on a non-zero rank has two distinct remote
+# writer ranks, exercising the cross-rank writeback handoff that 2n cannot.
+register_multinode_test(coherence_multi_writer_dist TIMEOUT 120 VARIANTS 2n 3n 4n)
+foreach(_v 2n 3n 4n)
+    set_property(TEST coherence_multi_writer_dist_${_v} APPEND PROPERTY
+        LABELS "coherence_stress")
+endforeach()
 
-# --- DB-DRF test binaries (target the DB-DRF contract; ctest entries register only in the MRMW build) ---
-# These tests exercise the DB-DRF contract (data-race-free at DB granularity).
-# Binaries are built unconditionally so the binary exists in all build trees;
-# CTest entries are only registered when ARTS_COHERENCE_PROTOCOL is MRMW.
+# --- DB-DRF contract tests (portable OCR programs, sources under ocr/) ---
+# These OCR programs exercise the DB-DRF contract (defined results only when
+# accesses are race-free at DB granularity).  Their last-writer / racy outcomes
+# are only well-defined under the MRMW protocol, so the CTest entries are
+# registered only when ARTS_COHERENCE_PROTOCOL is MRMW; the binaries build in
+# every tree.
 
 add_arts_test(db_drf_multi_writer_concurrent)
 add_arts_test(db_drf_invariant)
@@ -745,7 +851,7 @@ if(ARTS_COHERENCE_PROTOCOL STREQUAL "MRMW")
 endif()
 
 # --- Mode-mismatch detection binary (no CTest entry — driven by run_mode_mismatch.sh) ---
-add_executable(coherence_mode_mismatch coherence_mode_mismatch.c)
+add_executable(coherence_mode_mismatch ocr/coherence_mode_mismatch.c)
 target_include_directories(coherence_mode_mismatch PRIVATE
     ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR}
     ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
@@ -776,3 +882,6 @@ if(BUILD_CUDA_LIBRARY)
     register_gpu_test(gpu_for_all)
     register_gpu_test(gpu_lib)
 endif()
+
+# --- Auto-generated Wave-A pure_unit test registrations ---
+include(${CMAKE_CURRENT_SOURCE_DIR}/generated_tests.cmake)

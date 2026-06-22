@@ -52,6 +52,11 @@ typedef struct {
   FILE *fp;
   unsigned indent_size;
   unsigned depth;
+  /* Count of object/array levels opened beyond ARTS_JSON_MAX_DEPTH.  Such
+   * over-deep levels emit nothing (the entry is dropped) so the document stays
+   * brace-balanced; the matching end_* decrements this instead of closing a
+   * brace that was never opened. */
+  unsigned overflow;
   uint8_t need_comma[ARTS_JSON_MAX_DEPTH];
 } arts_json_writer_t;
 

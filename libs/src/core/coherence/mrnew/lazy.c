@@ -144,6 +144,14 @@ void arts_db_cache_destructor(struct arts_db_cache_s *cache) {
   }
   arts_db_cache_common_destroy_pre(cache); /* buffer-NULL FIRST */
   arts_pending_rw_queue_destroy(&cache->pending_rw);
+  /* Owner-side dedup map is allocated lazily on the first served REDIRECT (and
+   * retained, never transferred away, for a producer-on-home + remote-RO DAG),
+   * so the initial owner that is never the target of an ownership transfer must
+   * free it here — otherwise it leaks for the DB's whole lifetime. */
+  if (cache->last_sent_version != NULL) {
+    arts_rank_u64_map_destroy(cache->last_sent_version);
+    cache->last_sent_version = NULL;
+  }
   arts_db_cache_common_destroy_post(cache); /* snapshot drain → home teardown */
 }
 
@@ -460,8 +468,9 @@ static void lazy_destroy_fanout_cb(unsigned int rank, void *ctx) {
 
 /* Cat-B pure body (OoO g_ooo_table[OOO_DB_DESTROY]): the OoO engine has already
  * acquired the home db_s and pinned a ref across this call (cache is its FIRST
- * member).  Order: roster fan-out + fail_trigger wake parked waiters FIRST,
- * then arts_route_table_set_destroyed LAST.  Lazy roster source = rw_holder
+ * member).  Order: roster fan-out, then
+ * arts_route_table_set_destroyed LAST (parked waiter at destroy = UB, cleaned
+ * up by the refcount-0 destructor).  Lazy roster source = rw_holder
  * (current RW owner) + the RO cached-ranks bit-set + the queued ownership
  * requesters. */
 void arts_handler_db_destroy(void *item_v, void *args_v) {
@@ -506,7 +515,6 @@ void arts_handler_db_destroy(void *item_v, void *args_v) {
       arts_send_db_cache_destroy(in_flight, a->db_guid);
     }
   }
-  arts_db_fail_trigger_pending(cache);
   (void)arts_route_table_set_destroyed(a->db_guid);
 }
 

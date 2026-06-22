@@ -1066,7 +1066,10 @@ def main():
     p.add_argument("--no-baseline", action="store_true")
     p.add_argument("--only", type=str, default="")
     p.add_argument("--mem-gb", type=int, default=4)
-    p.add_argument("--timeout", type=int, default=60)
+    # 90s default: MRSW serializes writes (single-writer), so heavy single-node
+    # apps like sar_large legitimately run longer than a 60s budget; passing
+    # cases still return fast, so only genuine hangs wait the full budget.
+    p.add_argument("--timeout", type=int, default=90)
     args = p.parse_args()
 
     only = {s.strip() for s in args.only.split(",") if s.strip()}

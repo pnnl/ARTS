@@ -43,7 +43,7 @@
 #include <string.h>
 
 #include "arts/edt_context.h" /* current_edt + run-start/end ctx hooks */
-#include "arts/event.h"       /* arts_event_set_auto_destroy (finish proxy) */
+#include "arts/event.h"       /* arts_event_create (finish-scope proxy) */
 #include "arts/gas/guid.h"
 #include "arts/gas/route_table.h"
 #include "arts/ooo.h"
@@ -98,6 +98,18 @@ __attribute__((constructor)) static void arts_edt_register_cb_deleter(void) {
  * stubs and need to install the same deleter pointer. */
 void (*arts_edt_get_deleter(void))(void *) { return arts_edt_deleter; }
 
+/* Arm the EDT's non-owning self-cb alias immediately after install, before the
+ * EDT can become runnable.  Looks up the cb just published into the route slot
+ * and stores the bare pointer (the lookup's transient +1 is released so the
+ * alias adds no strong count — see the field comment in runtime_types.h).
+ * Must be called on the installing thread, with the EDT still pinned against a
+ * premature fire (depc > 0 with no queued signals, or the sentinel held). */
+static void arts_edt_arm_self_cb(struct arts_edt_s *edt, arts_guid_t guid) {
+  arts_shared_ptr_t cb = arts_route_table_lookup_edt(guid);
+  edt->self_cb = cb;
+  arts_shared_release(&cb);
+}
+
 /*
  * arts_edt_create_core — Core EDT allocation and registration.
  *
@@ -131,16 +143,19 @@ bool arts_edt_create_core(struct arts_edt_s *edt, arts_guid_kind_t guid_kind,
                           arts_guid_t hint_output_event, uint64_t arts_id,
                           uint32_t flags) {
   if (!edt) {
-    edt = (struct arts_edt_s *)arts_calloc_align(1, edt_space, 16);
+    edt = (struct arts_edt_s *)arts_calloc_align(1, edt_space,
+                                                 ARTS_CACHE_LINE_SIZE);
   }
   if (!edt) {
     ARTS_ERROR("EDT allocation failed (size=%u)", edt_space);
   }
 
   /* lifecycle/deleter handled by the route_table cb (deleter-by-kind) on
-   * install — no per-object shared field to initialize.  Kind comes from the
-   * GUID (bits 63-62); total size from arts_edt_total_size(paramc/depc) — no
-   * per-object header stores them. */
+   * install.  The only per-object shared field is self_cb (a non-owning alias
+   * to that cb): zero-initialised here (calloc / left NULL on a caller-provided
+   * buffer) and armed by arts_edt_arm_self_cb right after install.  Kind comes
+   * from the GUID (bits 63-62); total size from
+   * arts_edt_total_size(paramc/depc) — no per-object header stores them. */
   (void)edt_space;
   edt->arts_id = arts_id;
 
@@ -228,6 +243,7 @@ bool arts_edt_create_core(struct arts_edt_s *edt, arts_guid_kind_t guid_kind,
     if (created_guid) {
       /* New GUID path — no race, safe non-atomic insert. */
       arts_route_table_install(edt, *guid, arts_global_rank_id, false);
+      arts_edt_arm_self_cb(edt, *guid);
       if (edt->depc_needed == 0) {
         ARTS_INFO("EDT[Guid:%lu] immediately ready (depc=0)", *guid);
         arts_handle_ready_edt(edt);
@@ -261,6 +277,7 @@ bool arts_edt_create_core(struct arts_edt_s *edt, arts_guid_kind_t guid_kind,
        * normal empty slot it is a plain install, and a (UB) re-create replaces
        * the prior generation rather than leaking the new object. */
       arts_route_table_install(edt, *guid, arts_global_rank_id, false);
+      arts_edt_arm_self_cb(edt, *guid);
       unsigned int remaining = arts_atomic_sub(&edt->depc_needed, 1U);
       ARTS_INFO("EDT[Guid:%lu] sentinel removed: depc_needed=%u", *guid,
                 remaining);
@@ -321,6 +338,11 @@ void arts_edt_set_result(arts_guid_t result_guid) {
 }
 
 static void arts_edt_free(struct arts_edt_s *edt) {
+  /* rw_sorted is the GUID-sorted serialized-dep order, allocated once at
+   * arts_db_acquire_all entry (NULL if the EDT never reached the acquire
+   * phase).  Freeing here — the single canonical struct-free — covers every
+   * lifetime end (run completion, cancel, destroy) with no double-free. */
+  arts_free(edt->rw_sorted);
   arts_thread_info.edt_free = 1;
   arts_free(edt);
   arts_thread_info.edt_free = 0;
@@ -441,7 +463,10 @@ void *arts_get_depv(void *edt_ptr) {
 static void edt_defer_satisfy(arts_guid_t edt_guid, arts_guid_t data_guid,
                               uint32_t slot, arts_db_access_mode_t mode,
                               void *ptr, unsigned int size) {
-  uint32_t payload = (mode == DB_MODE_PTR) ? size : 0u;
+  /* An inline payload rides only when a real source pointer accompanies it; a
+   * NULL source carries no bytes so the delivered slot pointer is a defined
+   * NULL rather than a buffer of undefined contents. */
+  uint32_t payload = (mode == DB_MODE_PTR && ptr != NULL) ? size : 0u;
   uint32_t asz = (uint32_t)sizeof(struct arts_ooo_args_edt_satisfy_s) + payload;
   char *buf = (char *)arts_malloc(asz);
   struct arts_ooo_args_edt_satisfy_s *a =
@@ -466,9 +491,24 @@ static void edt_apply_satisfy(struct arts_edt_s *edt, uint32_t slot,
                               arts_guid_t data_guid, arts_db_access_mode_t mode,
                               void *ptr, unsigned int size) {
   arts_edt_dep_t *edt_dep = (arts_edt_dep_t *)arts_get_depv(edt);
-  if (slot < edt->depc) {
+  /* (uint32_t)-1 is the "no specific slot" sentinel used by control
+   * dependences (registered with slot -1): they decrement readiness without
+   * writing any dependence-vector entry.  A real, in-range slot writes its
+   * entry and decrements.  ANY OTHER slot is genuinely out of range — it is not
+   * one of this EDT's dependences, so it must neither write past the vector nor
+   * count toward readiness (else the EDT could fire before its real deps land);
+   * ignore it. */
+  const uint32_t NO_SLOT = (uint32_t)-1;
+  bool writes_slot = (slot != NO_SLOT);
+  if (writes_slot && slot >= edt->depc) {
+    return;
+  }
+  if (writes_slot) {
     edt_dep[slot].guid = data_guid;
-    if (mode == DB_MODE_PTR && size > 0) {
+    /* An inline payload is only valid when a real source pointer accompanies
+     * it.  A NULL source surfaces as a NULL slot pointer rather than a buffer
+     * of undefined bytes, so the consumer never reads uninitialized memory. */
+    if (mode == DB_MODE_PTR && size > 0 && ptr != NULL) {
       void *copy = arts_malloc(size);
       memcpy(copy, ptr, size);
       edt_dep[slot].ptr = copy;
@@ -479,6 +519,8 @@ static void edt_apply_satisfy(struct arts_edt_s *edt, uint32_t slot,
       edt_dep[slot].mode = mode;
     }
   }
+  /* Decrement readiness for both a real in-range slot and the no-slot
+   * sentinel; only a genuine out-of-range slot (rejected above) is skipped. */
   unsigned int res = arts_atomic_sub(&edt->depc_needed, 1U);
   ARTS_INFO("Signal EDT[Guid:%lu, Slot:%u] DB[Guid:%lu] depc_needed=%u→%u",
             edt->guid, slot, data_guid, res + 1, res);
@@ -505,15 +547,24 @@ void arts_handler_edt_satisfy_slot(void *item, void *vargs) {
  *   home == self → dispatch_or_defer (acquire the EDT → run the handler, or
  *                  defer on the slot until the EDT installs);
  *   home != self → MSG_EDT_SATISFY_SLOT wire (handler runs on the home rank);
- *   GPU LC (wrapper has outstanding device-replica invalidations) → force-defer
- * on the wrapper's slot; the replay re-signals this EDT after drain. The
- * satisfy logic lives once in edt_apply_satisfy (the handler); this entry only
- * routes.  arts_signal_edt is a deprecated alias of the same signature. */
+ *   GPU LC (wrapper has outstanding device-replica invalidations) →
+ * force-defer on the wrapper's slot; the replay re-signals this EDT after
+ * drain. The satisfy logic lives once in edt_apply_satisfy (the handler);
+ * this entry only routes.  arts_signal_edt is a deprecated alias of the same
+ * signature. */
 void arts_edt_satisfy_slot(arts_guid_t edt_guid, uint32_t slot,
                            arts_guid_t data_guid, arts_db_access_mode_t mode,
                            void *ptr, unsigned int size) {
   TIME_EDT_SIGNAL_START();
   INCREMENT_NUM_EDT_SIGNAL_BY(1);
+
+  /* An inline payload is meaningful only with a real source pointer to copy
+   * from. A NULL source carries no bytes, so normalize the size to zero on
+   * every routing path; the slot then receives a defined NULL rather than a
+   * buffer of undefined contents. */
+  if (ptr == NULL) {
+    size = 0;
+  }
 
 #ifdef ARTS_USE_CXL
   /* CXL GUID encodes the pointer directly — surface it on the dep slot so
@@ -525,11 +576,11 @@ void arts_edt_satisfy_slot(arts_guid_t edt_guid, uint32_t slot,
 #endif
 
   if (current_edt && current_edt->invalidate_count > 0) {
-    /* GPU LC: hold the satisfy until the GPU wrapper EDT's invalidations drain.
-     * DB_MODE_PTR dispatch-or-defers on the target (the inline payload rides in
-     * the args blob); every other mode force-pushes on the wrapper's slot so
-     * the re-signal of this EDT replays only after the wrapper's invalidations
-     * drain. */
+    /* GPU LC: hold the satisfy until the GPU wrapper EDT's invalidations
+     * drain. DB_MODE_PTR dispatch-or-defers on the target (the inline payload
+     * rides in the args blob); every other mode force-pushes on the wrapper's
+     * slot so the re-signal of this EDT replays only after the wrapper's
+     * invalidations drain. */
     if (mode == DB_MODE_PTR) {
       edt_defer_satisfy(edt_guid, data_guid, slot, mode, ptr, size);
     } else {
@@ -546,7 +597,8 @@ void arts_edt_satisfy_slot(arts_guid_t edt_guid, uint32_t slot,
      * mode-discriminated helper handles the DB_MODE_PTR inline payload. */
     edt_defer_satisfy(edt_guid, data_guid, slot, mode, ptr, size);
   } else {
-    /* Remote home: one satisfy message carries mode + (DB_MODE_PTR) payload. */
+    /* Remote home: one satisfy message carries mode + (DB_MODE_PTR) payload.
+     */
     arts_send_edt_satisfy_slot(edt_guid, data_guid, slot, mode, ptr, size);
   }
   TIME_EDT_SIGNAL_STOP();
@@ -600,7 +652,8 @@ void arts_handler_edt_create(void *ptr) {
       (struct arts_msg_guid_only_packet_s *)ptr;
   uint64_t size =
       packet->header.size - sizeof(struct arts_msg_guid_only_packet_s);
-  struct arts_edt_s *edt = (struct arts_edt_s *)arts_malloc_align(size, 16);
+  struct arts_edt_s *edt =
+      (struct arts_edt_s *)arts_malloc_align(size, ARTS_CACHE_LINE_SIZE);
 
   memcpy(edt, packet + 1, size);
   /* lifecycle/deleter handled by the route_table cb (deleter-by-kind) when
@@ -616,17 +669,19 @@ void arts_handler_edt_create(void *ptr) {
    * shipped — race-free under source-rank local sync ordering. */
   if (edt->finish_event != NULL_GUID) {
     arts_guid_t parent_fe = edt->finish_event;
-    arts_event_hint_t latch_hint = ARTS_EVENT_HINT_LATCH(1);
-    arts_guid_t proxy = arts_event_create(&latch_hint);
+    /* Single-shot proxy: auto_destroy is set at creation (immutable) so the
+     * proxy is reclaimed the instant it fires rather than lingering.  A plain
+     * LATCH, not a finish hint — the proxy chains explicitly to the remote
+     * parent below, not to the local ambient finish scope. */
+    arts_event_hint_t proxy_hint = ARTS_EVENT_HINT_LATCH(1);
+    proxy_hint.auto_destroy = true;
+    arts_guid_t proxy = arts_event_create(&proxy_hint);
     /* add_dependence registers the proxy in its own waiter list (local op).
      * The cross-node satisfy-on-fire is emitted automatically by the
      * LATCH fire path when proxy.counter reaches 0. */
     arts_add_dependence(proxy, parent_fe, ARTS_EVENT_LATCH_DECR_SLOT,
                         DB_MODE_NULL);
     edt->finish_event = proxy;
-    /* Single-shot: the proxy fires once (its scope drains), forwards the DECR
-     * to the remote parent, and is reclaimed instead of lingering. */
-    arts_event_set_auto_destroy(proxy);
   }
   /* Sentinel protocol (mirrors the pre-reserved path in
    * arts_edt_create_core): bump depc_needed by 1 before the EDT becomes
@@ -635,9 +690,9 @@ void arts_handler_edt_create(void *ptr) {
    * concurrently on another receiver thread.  Without the sentinel both that
    * satisfy (observing depc_needed hit 0) and this handler's own readiness
    * check would fire arts_handle_ready_edt for the same EDT — a double
-   * dispatch.  The sentinel keeps depc_needed >= 1 across install + replay, so
-   * exactly one party observes the 0 transition: the sentinel removal below,
-   * or the last satisfy after we return. */
+   * dispatch.  The sentinel keeps depc_needed >= 1 across install + replay,
+   * so exactly one party observes the 0 transition: the sentinel removal
+   * below, or the last satisfy after we return. */
   edt->depc_needed += 1;
   /* add_item_race installs the EDT under the route_table lock.  On
    * rejection (another thread won the install race) free the freshly
@@ -662,9 +717,11 @@ void arts_handler_edt_create(void *ptr) {
   }
   ARTS_INFO("EDT[Guid:%lu] Moved to Rank: %d", packet->guid,
             arts_global_rank_id);
+  arts_edt_arm_self_cb(edt, packet->guid);
   /* Remove the sentinel.  add_item_race already replayed queued satisfies and
    * any concurrent satisfy decremented too; the unique observer of the 0
-   * transition fires the EDT exactly once (here, or the last late satisfy). */
+   * transition fires the EDT exactly once (here, or the last late satisfy).
+   */
   unsigned int remaining = arts_atomic_sub(&edt->depc_needed, 1U);
   if (remaining == 0) {
     arts_handle_ready_edt(edt);

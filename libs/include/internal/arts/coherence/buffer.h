@@ -96,6 +96,25 @@ struct arts_db_buffer_s *arts_db_buf_install(struct arts_db_cache_s *cache,
                                              const void *data_payload,
                                              uint64_t db_size);
 
+/* Write into the cache's single stable buffer in place.
+ *
+ * Unlike arts_db_buf_install (versioned realloc-on-write — a fresh buffer is
+ * allocated and swapped on every call, so concurrent readers of the old buffer
+ * keep a valid snapshot), this keeps the buffer at a FIXED address from its
+ * first allocation until destroy.  DBs that store internal absolute pointers
+ * into their own backing store therefore stay valid across writes.
+ *
+ * The first call (no buffer yet) allocates the one stable buffer; every call
+ * memcpy's `data` (or zero-fills when data == NULL) into the existing buffer's
+ * data in place.  Never reallocates or version-swaps once established.
+ *
+ * Correct ONLY when no concurrent reader holds the buffer while it is written:
+ * the caller's protocol must serialize access so an overwrite never races a
+ * read (an exclusive-lock protocol guarantees this; snapshot protocols do not
+ * and MUST use arts_db_buf_install instead). */
+void arts_db_buf_write_inplace(struct arts_db_cache_s *cache, const void *data,
+                               uint64_t db_size);
+
 #ifdef __cplusplus
 }
 #endif

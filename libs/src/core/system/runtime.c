@@ -321,6 +321,30 @@ void arts_runtime_node_init(struct arts_config_s *config) {
 #endif
 }
 
+/* Drop the runnable-phase self_cb ref of every EDT left sitting in a deque at
+ * teardown.  arts_handle_ready_edt takes that ref when an EDT becomes runnable
+ * and arts_run_edt drops it at completion — but an EDT made runnable yet never
+ * executed (still queued when arts_shutdown stopped the workers) keeps it.  The
+ * route-table sweep in arts_clean_up_dbs drops only the install ref, so without
+ * this drop the EDT's refcount never reaches 0 and it leaks.  Single-threaded
+ * here: all worker/sender/receiver threads have already joined. */
+static void arts_drain_pending_edts(struct arts_deque_s *dq) {
+  if (dq == NULL) {
+    return;
+  }
+  void *e;
+  while ((e = arts_deque_pop_front(dq)) != NULL) {
+    struct arts_edt_s *edt = (struct arts_edt_s *)e;
+#ifdef ARTS_USE_CXL
+    if (IS_CXL_PTR(edt)) {
+      continue; /* CXL EDTs carry no self_cb ref (see arts_run_edt) */
+    }
+#endif
+    arts_shared_ptr_t sref = edt->self_cb;
+    arts_shared_release(&sref);
+  }
+}
+
 void arts_runtime_global_cleanup() {
   arts_counter_capture_stop();
   // Write all counter outputs (thread, node, and cluster levels)
@@ -578,10 +602,19 @@ void arts_runtime_private_cleanup() {
   };
   arts_transport_thread_outbound_queues_cleanup();
   arts_transport_thread_inbound_queues_cleanup();
+  /* Drain runnable-but-never-executed EDTs from this thread's deques before
+   * deleting them, dropping each one's self_cb ref (arts_run_edt would have on
+   * completion).  The ready_to_clean barrier above guarantees every thread has
+   * left its scheduler loop, so no concurrent push/steal touches these deques.
+   * The route-table sweep in arts_runtime_global_cleanup later drops the
+   * install ref; without this drop the EDT's refcount never reaches 0 and it
+   * leaks. */
   if (arts_thread_info.my_deque) {
+    arts_drain_pending_edts(arts_thread_info.my_deque);
     arts_deque_delete(arts_thread_info.my_deque);
   }
   if (arts_thread_info.my_gpu_deque) {
+    arts_drain_pending_edts(arts_thread_info.my_gpu_deque);
     arts_deque_delete(arts_thread_info.my_gpu_deque);
   }
   arts_cleanup_edt_tls();

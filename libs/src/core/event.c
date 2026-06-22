@@ -144,7 +144,8 @@ static void event_free_typed(struct arts_event_s *e) { arts_event_deleter(e); }
 /* --- Internal allocation / install --------------------------------------- */
 
 static struct arts_event_s *event_alloc(const arts_event_hint_t *h) {
-  struct arts_event_s *e = arts_calloc(1, sizeof(struct arts_event_s));
+  struct arts_event_s *e =
+      arts_calloc_align(1, sizeof(struct arts_event_s), ARTS_CACHE_LINE_SIZE);
   if (!e) {
     return NULL;
   }
@@ -162,7 +163,8 @@ static struct arts_event_s *event_alloc(const arts_event_hint_t *h) {
     atomic_store_explicit(&e->simple.latch, h->finish ? 1 : h->latch,
                           memory_order_relaxed);
     atomic_store_explicit(&e->simple.fired, false, memory_order_relaxed);
-    atomic_store_explicit(&e->simple.auto_destroy, h->finish ? true : false,
+    atomic_store_explicit(&e->simple.auto_destroy,
+                          (h->finish || h->auto_destroy) ? true : false,
                           memory_order_relaxed);
     e->simple.data = NULL_GUID;
     arts_lf_stack_init(&e->simple.deps_stack);
@@ -276,15 +278,6 @@ void arts_event_destroy(arts_guid_t guid) {
   }
   struct arts_ooo_args_event_destroy_s a = {.guid = guid};
   arts_ooo_dispatch_or_defer_guid(guid, OOO_EVENT_DESTROY, &a, sizeof(a));
-}
-
-void arts_event_set_auto_destroy(arts_guid_t guid) {
-  arts_shared_ptr_t h = arts_route_table_lookup_event(guid);
-  struct arts_event_s *e = (struct arts_event_s *)arts_shared_get(h);
-  if (e && !e->is_channel) {
-    atomic_store_explicit(&e->simple.auto_destroy, true, memory_order_release);
-  }
-  arts_shared_release(&h);
 }
 
 /* ── Signal one queued dep ─────────────────────────────────────────────
@@ -642,7 +635,7 @@ void arts_handler_event_create(void *ptr) {
       packet->header.size - sizeof(struct arts_msg_guid_only_packet_s);
 
   struct arts_event_s *mem_packet =
-      (struct arts_event_s *)arts_malloc_align(size, 16);
+      (struct arts_event_s *)arts_malloc_align(size, ARTS_CACHE_LINE_SIZE);
 
   memcpy(mem_packet, packet + 1, size);
   /* Re-init local-only pointer state.  Event move only happens at create

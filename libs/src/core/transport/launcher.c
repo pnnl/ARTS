@@ -43,6 +43,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -86,6 +87,45 @@ static int arts_shell_quote(const char *input, char *output,
   output[out_index++] = '\'';
   output[out_index] = '\0';
   return 0;
+}
+
+/* Saturating formatted append into a fixed-size buffer.
+ *
+ * `length` is the number of bytes already written (excluding the terminator)
+ * and is updated in place to the new written length, always clamped to
+ * `buf_size - 1` so the buffer stays null-terminatable at `buf[length]`.
+ *
+ * snprintf returns the length it WOULD have written had the buffer been
+ * unbounded, which can exceed the space that remains.  Accumulating that raw
+ * return value lets `length` run past `buf_size`, after which the remaining
+ * size `buf_size - length` underflows and a later `buf[length]` indexes out of
+ * bounds.  Guarding the remaining size against underflow and clamping the
+ * running length keeps every write — including the terminating one — in
+ * bounds even when the composed string is truncated. */
+static void arts_cmd_appendf(char *buf, size_t buf_size, size_t *length,
+                             const char *fmt, ...) {
+  if (buf_size == 0 || *length >= buf_size) {
+    if (buf_size != 0) {
+      *length = buf_size - 1;
+    }
+    return;
+  }
+
+  size_t remaining = buf_size - *length;
+  va_list args;
+  va_start(args, fmt);
+  int written = vsnprintf(buf + *length, remaining, fmt, args);
+  va_end(args);
+
+  if (written < 0) {
+    return;
+  }
+  if ((size_t)written >= remaining) {
+    /* Truncated: the buffer is now full up to its last writable byte. */
+    *length = buf_size - 1;
+  } else {
+    *length += (size_t)written;
+  }
 }
 
 void arts_launcher_ssh_startup_processes(struct arts_launcher_s *launcher) {
@@ -159,15 +199,14 @@ void arts_launcher_ssh_startup_processes(struct arts_launcher_s *launcher) {
 
   for (k = start_node + 1; k < (int)config->table_length + start_node; k++) {
     i = k % (int)config->table_length;
-    unsigned int final_length = 0;
+    size_t final_length = 0;
 
     if (kill_mode) {
       // Kill any previously running instance by process name (basename, up to
       // 15 chars)
       if (binary_name[0] != '\0') {
-        final_length +=
-            snprintf(command + final_length, sizeof(command) - final_length,
-                     "pkill %s", binary_name);
+        arts_cmd_appendf(command, sizeof(command), &final_length, "pkill %s",
+                         binary_name);
       } else if (argc > 0 && argv && argv[0]) {
         // Extract basename from argv[0] for pkill
         const char *argv_base = argv[0];
@@ -181,9 +220,8 @@ void arts_launcher_ssh_startup_processes(struct arts_launcher_s *launcher) {
         strncpy(pkill_name, argv_base, 15);
         pkill_name[15] = '\0';
 
-        final_length +=
-            snprintf(command + final_length, sizeof(command) - final_length,
-                     "pkill %s", pkill_name);
+        arts_cmd_appendf(command, sizeof(command), &final_length, "pkill %s",
+                         pkill_name);
       } else {
         continue;
       }
@@ -192,70 +230,60 @@ void arts_launcher_ssh_startup_processes(struct arts_launcher_s *launcher) {
       // directory and launches the binary by absolute path (the binary may
       // live in a subdirectory of CWD, so basename + "./" would fail).
       if (self_exe[0] != '\0') {
-        final_length +=
-            snprintf(command + final_length, sizeof(command) - final_length,
-                     "cd %s && ", cwd);
+        arts_cmd_appendf(command, sizeof(command), &final_length, "cd %s && ",
+                         cwd);
         // Pass through arts_config environment variable if set
         char *arts_config_env = getenv("ARTS_CONFIG");
         if (arts_config_env) {
-          final_length +=
-              snprintf(command + final_length, sizeof(command) - final_length,
-                       "ARTS_CONFIG=%s ", arts_config_env);
+          arts_cmd_appendf(command, sizeof(command), &final_length,
+                           "ARTS_CONFIG=%s ", arts_config_env);
         }
         // Pass through LD_LIBRARY_PATH if set
         char *ld_library_path = getenv("LD_LIBRARY_PATH");
         if (ld_library_path) {
-          final_length +=
-              snprintf(command + final_length, sizeof(command) - final_length,
-                       "LD_LIBRARY_PATH=%s ", ld_library_path);
+          arts_cmd_appendf(command, sizeof(command), &final_length,
+                           "LD_LIBRARY_PATH=%s ", ld_library_path);
         }
         // Pass ARTS_RANK to tell spawned process its rank (prevents recursive
         // spawning)
-        final_length +=
-            snprintf(command + final_length, sizeof(command) - final_length,
-                     "ARTS_RANK=%d ", i);
-        final_length +=
-            snprintf(command + final_length, sizeof(command) - final_length,
-                     "%s", self_exe);
+        arts_cmd_appendf(command, sizeof(command), &final_length,
+                         "ARTS_RANK=%d ", i);
+        arts_cmd_appendf(command, sizeof(command), &final_length, "%s",
+                         self_exe);
         // Pass through any arguments beyond argv[0] if provided
         for (j = 1; j < (int)argc; j++) {
-          final_length +=
-              snprintf(command + final_length, sizeof(command) - final_length,
-                       " %s", argv[j]);
+          arts_cmd_appendf(command, sizeof(command), &final_length, " %s",
+                           argv[j]);
         }
       } else {
         // Fallback: attempt to use argv if available, otherwise just cd
-        final_length +=
-            snprintf(command + final_length, sizeof(command) - final_length,
-                     "cd %s && ", cwd);
+        arts_cmd_appendf(command, sizeof(command), &final_length, "cd %s && ",
+                         cwd);
         // Pass through arts_config environment variable if set
         char *arts_config_env = getenv("ARTS_CONFIG");
         if (arts_config_env) {
-          final_length +=
-              snprintf(command + final_length, sizeof(command) - final_length,
-                       "ARTS_CONFIG=%s ", arts_config_env);
+          arts_cmd_appendf(command, sizeof(command), &final_length,
+                           "ARTS_CONFIG=%s ", arts_config_env);
         }
         // Pass through LD_LIBRARY_PATH if set
         char *ld_library_path = getenv("LD_LIBRARY_PATH");
         if (ld_library_path) {
-          final_length +=
-              snprintf(command + final_length, sizeof(command) - final_length,
-                       "LD_LIBRARY_PATH=%s ", ld_library_path);
+          arts_cmd_appendf(command, sizeof(command), &final_length,
+                           "LD_LIBRARY_PATH=%s ", ld_library_path);
         }
         // Pass ARTS_RANK to tell spawned process its rank (prevents recursive
         // spawning)
-        final_length +=
-            snprintf(command + final_length, sizeof(command) - final_length,
-                     "ARTS_RANK=%d ", i);
+        arts_cmd_appendf(command, sizeof(command), &final_length,
+                         "ARTS_RANK=%d ", i);
         for (j = 0; j < (int)argc; j++) {
-          final_length +=
-              snprintf(command + final_length, sizeof(command) - final_length,
-                       " %s", argv[j]);
+          arts_cmd_appendf(command, sizeof(command), &final_length, " %s",
+                           argv[j]);
         }
       }
     }
 
-    // Null-terminate
+    // Null-terminate. final_length is clamped to sizeof(command)-1, so this
+    // index is always in bounds.
     command[final_length] = '\0';
 
     ARTS_DEBUG("SSH command[%d]: %s", i, command);

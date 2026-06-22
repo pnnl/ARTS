@@ -82,14 +82,17 @@ void arts_link_list_delete(void *link_list) {
 }
 
 void *arts_link_list_new_item(unsigned int size) {
+  /* A zero-size item carries no payload and cannot be returned (the data ptr
+   * would point past the node with nothing to hold); allocate nothing on that
+   * path so no header is leaked. */
+  if (!size) {
+    return NULL;
+  }
   struct arts_link_list_item_s *new_item =
       (struct arts_link_list_item_s *)arts_calloc(
           1, sizeof(struct arts_link_list_item_s) + size);
   atomic_store_explicit(&new_item->next, NULL, memory_order_relaxed);
-  if (size) {
-    return (void *)(new_item + 1);
-  }
-  return NULL;
+  return (void *)(new_item + 1);
 }
 
 void arts_link_list_delete_item(void *to_delete) {

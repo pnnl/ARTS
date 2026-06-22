@@ -66,7 +66,9 @@ extern "C" {
  * header via ARTS_TIMING_LAZY.  MRSW differs from MRNEW only in the
  * ownership-cache details (no per-cache RW waiter queue; the home FIFO node +
  * pending_install carry edt_guid+slot), so it has its own header. */
-#if defined(ARTS_PROTOCOL_MRMW)
+#if defined(ARTS_PROTOCOL_LOCK)
+#include "arts/coherence/lock/types.h"
+#elif defined(ARTS_PROTOCOL_MRMW)
 #include "arts/coherence/mrmw/types.h"
 #elif defined(ARTS_PROTOCOL_MRSW)
 #include "arts/coherence/mrsw/types.h"
@@ -112,6 +114,8 @@ static inline uint64_t arts_db_total_size(const struct arts_db_s *db) {
 static inline uint64_t arts_db_cache_stub_size(void) {
 #if defined(ARTS_PROTOCOL_MRMW)
   return offsetof(struct arts_db_s, last_sent_version);
+#elif defined(ARTS_PROTOCOL_LOCK)
+  return offsetof(struct arts_db_s, lock_state);
 #else
   return offsetof(struct arts_db_s, rw_holder);
 #endif

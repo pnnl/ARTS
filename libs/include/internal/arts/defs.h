@@ -81,8 +81,17 @@
  *  @param n Required alignment in bytes (must be a power of two). */
 #define ARTS_ALIGNED(n) ARTS_ATTRIBUTE(__aligned__(n))
 
-/** Max natural alignment (replaces bare @c __attribute__((aligned))). */
-#define ARTS_ALIGNED_MAX ARTS_ATTRIBUTE(__aligned__)
+/** Cache-line size — the granularity of false-sharing isolation. */
+#define ARTS_CACHE_LINE_SIZE 64
+
+/** Alignment for shared (multi-thread-accessed) objects.  Each such object is
+ *  pinned to a full cache line so independent shared objects never sit on the
+ *  same line (false-sharing isolation) and per-object atomics own their line.
+ *  NOTE: bare @c __attribute__((aligned)) resolves to max_align_t (only 16B on
+ *  x86-64) — too small to isolate cache lines — so this is pinned to the
+ *  cache-line size.  Every allocation of an ARTS_ALIGNED_MAX object MUST pass
+ *  @c ARTS_CACHE_LINE_SIZE to @c arts_malloc_align / @c arts_calloc_align. */
+#define ARTS_ALIGNED_MAX ARTS_ALIGNED(ARTS_CACHE_LINE_SIZE)
 
 /** Branch prediction hint — indicates the condition is likely true. */
 #define ARTS_LIKELY(x) __extension__ __builtin_expect(!!(x), 1)

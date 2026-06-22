@@ -96,7 +96,13 @@ enum arts_ooo_kind {
  * remote-created DB's lazy_install cache can fire a request/writeback before
  * that DB's home CREATE arrives, so the message reaches home with db_s not yet
  * installed ⇒ OoO push, replayed on the CREATE handler's drain. */
-#if defined(ARTS_TIMING_EAGER)
+#if defined(ARTS_PROTOCOL_LOCK)
+  OOO_DB_ACQUIRE, /* → arts_db_acquire_replay_dep (re-attempts the one deferred
+                     local dep; pushed by arts_db_acquire_all's per-dep 3-way)
+                   */
+  OOO_DB_LOCK_REQUEST, /* → arts_handler_db_lock_request @ home */
+  OOO_DB_LOCK_RELEASE, /* → arts_handler_db_lock_release @ home */
+#elif defined(ARTS_TIMING_EAGER)
   OOO_DB_ACQUIRE, /* → arts_db_acquire_replay_dep (re-attempts the one deferred
                      local dep; pushed by arts_db_acquire_all's per-dep 3-way)
                    */
@@ -128,7 +134,7 @@ enum arts_ooo_kind {
                               transfer) */
 #else
 #error                                                                         \
-    "exactly one of ARTS_TIMING_{EAGER,LAZY} or ARTS_PROTOCOL_MRMW must be defined"
+    "exactly one of ARTS_PROTOCOL_LOCK, ARTS_TIMING_{EAGER,LAZY}, or ARTS_PROTOCOL_MRMW must be defined"
 #endif
 
   OOO_KIND_COUNT /* sentinel — g_ooo_table size (per-model) */
@@ -238,6 +244,28 @@ struct arts_ooo_args_event_destroy_s {
 };
 struct arts_ooo_args_edt_destroy_s {
   arts_guid_t guid;
+};
+
+/* LOCK protocol OoO args (OOO_DB_LOCK_REQUEST / OOO_DB_LOCK_RELEASE). */
+struct arts_ooo_args_db_lock_request_s {
+  unsigned int requester; /* rank that sent MSG_DB_LOCK_REQUEST */
+  arts_guid_t db_guid;
+  arts_db_access_mode_t mode; /* DB_MODE_RO or DB_MODE_RW */
+};
+/* LOCK_RELEASE: inline writeback payload of data_size bytes trails this
+ * header (data_size == 0 for RO releases).
+ * cv: RW only — releaser's stack-local sem_t address; forwarded verbatim in
+ * the LOCK_RELEASE_ACK so the releaser wakes by pointer identity.  0 for RO.
+ * version: monotone round counter bumped by the releaser; home's buf_install
+ * rejects stale overwrites when a reordered/duplicate RELEASE races a newer
+ * one (same guard as the MRNEW writeback path). */
+struct arts_ooo_args_db_lock_release_s {
+  unsigned int releaser; /* rank that sent MSG_DB_LOCK_RELEASE */
+  arts_guid_t db_guid;
+  arts_db_access_mode_t mode; /* DB_MODE_RO or DB_MODE_RW */
+  uint64_t data_size;         /* 0 for RO; >0 for RW writeback */
+  uint64_t cv;                /* RW: releaser sem_t address; 0 for RO */
+  uint64_t version; /* RW: monotone version for buf_install; 0 for RO */
 };
 
 /* g_ooo_table handler: operate on an already-acquired, valid item with the

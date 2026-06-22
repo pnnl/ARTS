@@ -1078,10 +1078,14 @@ u8 ocrEdtDestroy(ocrGuid_t guid) {
  * Map an OCR event flavor + property bits onto a hint snapshot for the
  * unified arts_event_create API.  All OCR
  * flavors collapse onto a single ARTS event type; behavior is selected
- * entirely via hint fields (latch / auto_destroy / multiple_fire / etc.).
+ * entirely via hint fields (latch / channel / etc.).  auto_destroy stays off
+ * for all OCR flavors (async fire-and-linger; see below).
  *
- * Default hint = OCR ONCE_T (latch=1, auto_destroy=true, single fire).
- * Each case overrides only the fields that diverge.
+ * Default hint = LATCH(1) fire-and-linger (latch=1, auto_destroy=false).
+ * Because ARTS is asynchronous, auto-destroying a fired ONCE/LATCH event would
+ * race ahead of late (reordered) satisfies/binds, so the OCR single-fire
+ * flavors deliberately do NOT auto-destroy here — they linger until an explicit
+ * destroy.  Each case overrides only the fields that diverge.
  */
 static arts_event_hint_t ocr_event_kind_to_hint(ocrEventTypes_t kind,
                                                 u16 properties) {

@@ -91,6 +91,18 @@ enum arts_msg_type {
    * Sequential append, no gaps. */
   MSG_DB_OWNERSHIP_CONFIRM_ACK,
 
+  /* LOCK-protocol coherence messages (REQUEST / GRANT / RELEASE / RELEASE_ACK).
+   * Only sent/received in ARTS_COHERENCE_PROTOCOL=LOCK builds; the
+   * dispatcher's LOCK cases are #ifdef-guarded.  Sequential append, no gaps. */
+  MSG_DB_LOCK_REQUEST,
+  MSG_DB_LOCK_GRANT,
+  MSG_DB_LOCK_RELEASE,
+  /* Synchronous writeback ACK: home → RW releaser after installing the
+   * writeback payload.  Unblocks the releaser's await in arts_db_release_rw
+   * so lock_home_grant cannot run before the new data is at home.  RO
+   * releases are fire-and-forget and never send this message. */
+  MSG_DB_LOCK_RELEASE_ACK,
+
   MSG_COUNT, /* sentinel — keep last; used for array sizing */
 };
 
@@ -127,6 +139,10 @@ struct ARTS_PACKED arts_msg_edt_satisfy_slot_packet_s {
   /* Inline payload byte count following the header (DB_MODE_PTR delivery);
    * zero when the satisfy carries only a GUID/value reference. */
   unsigned int size;
+  /* Pad so sizeof() (where the trailing inline payload begins) is 8-aligned:
+   * 16-byte header + 8 + 8 + 4 + 4 + 4 = 44, +4 -> 48.  Keeps the payload's
+   * wire offset 8-aligned. */
+  uint32_t pad;
 };
 
 struct ARTS_PACKED arts_msg_event_satisfy_slot_packet_s {
@@ -187,8 +203,9 @@ struct ARTS_PACKED arts_msg_ownership_response_packet_s {
 };
 
 /* WRITEBACK carries optional trailing buffer payload.
- * Body: db_guid(8) + version(8) + cv(8) = 24, total = 44 + 24 = 68;
- * pad[4] -> 72 (8-aligned).
+ * Body: db_guid(8) + version(8) + cv(8) = 24; with the 16-byte header the total
+ * is 40, already 8-aligned, so the trailing payload begins on an 8-byte
+ * boundary with no pad field.
  * cv: opaque address of the releaser's stack-local sem_t, valid only at the
  * releaser rank; the home forwards it verbatim in the ACK so the releaser
  * matches by pointer identity (no seq tracking). */
@@ -197,7 +214,6 @@ struct ARTS_PACKED arts_msg_writeback_packet_s {
   arts_guid_t db_guid;
   uint64_t version;
   uint64_t cv;
-  uint8_t pad[4];
 };
 
 struct ARTS_PACKED arts_msg_writeback_ack_packet_s {
@@ -309,6 +325,45 @@ struct ARTS_PACKED arts_msg_ownership_confirm_packet_s {
   arts_guid_t db_guid;
   uint64_t version;
 };
+
+#ifdef ARTS_PROTOCOL_LOCK
+struct ARTS_PACKED arts_msg_lock_request_packet_s {
+  struct arts_msg_header_s header;
+  arts_guid_t db_guid;
+  uint32_t mode; /* arts_db_access_mode_t: DB_MODE_RO or DB_MODE_RW */
+  uint32_t pad;
+  /* requester rank = header.rank; no edt_guid/slot (rank-granular). */
+};
+
+struct ARTS_PACKED arts_msg_lock_grant_packet_s {
+  struct arts_msg_header_s header;
+  arts_guid_t db_guid;
+  uint32_t mode;
+  uint32_t pad;
+  uint64_t version; /* monotone round counter; buf_install rejects stale */
+  /* followed by: uint8_t data[db_size]; */
+};
+
+struct ARTS_PACKED arts_msg_lock_release_packet_s {
+  struct arts_msg_header_s header;
+  arts_guid_t db_guid;
+  uint32_t mode;
+  uint32_t pad;
+  uint64_t
+      version; /* monotone version bumped by releaser; stale overwrite guard */
+  uint64_t cv; /* RW only: releaser's stack-local sem_t address for ACK */
+  /* followed by: uint8_t data[db_size]; only when mode==DB_MODE_RW. */
+};
+
+/* LOCK_RELEASE_ACK: home → RW releaser after installing writeback.  Carries
+ * cv verbatim from the LOCK_RELEASE so the releaser wakes by pointer identity.
+ */
+struct ARTS_PACKED arts_msg_lock_release_ack_packet_s {
+  struct arts_msg_header_s header;
+  arts_guid_t db_guid;
+  uint64_t cv; /* releaser's sem_t address, forwarded verbatim from RELEASE */
+};
+#endif /* ARTS_PROTOCOL_LOCK */
 
 #include "arts/system/threads.h"
 

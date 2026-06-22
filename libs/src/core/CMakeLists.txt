@@ -67,6 +67,8 @@ endif()
 # resolves the single compiled variant.
 if(ARTS_COHERENCE_PROTOCOL STREQUAL "MRMW")
     set(DB_COHERENCE_MODEL_TU coherence/mrmw/mrmw.c)
+elseif(ARTS_COHERENCE_PROTOCOL STREQUAL "LOCK")
+    set(DB_COHERENCE_MODEL_TU coherence/lock/home.c coherence/lock/acquire.c coherence/lock/release.c)
 elseif(ARTS_COHERENCE_PROTOCOL STREQUAL "MRSW")
     if(ARTS_PROTOCOL_TIMING STREQUAL "EAGER")
         set(DB_COHERENCE_MODEL_TU coherence/mrsw/eager.c coherence/mrsw/ownership.c coherence/mrsw/home.c coherence/mrsw/waiter_queue.c)

@@ -99,3 +99,43 @@ struct arts_db_buffer_s *arts_db_buf_install(struct arts_db_cache_s *cache,
     }
   }
 }
+
+void arts_db_buf_write_inplace(struct arts_db_cache_s *cache, const void *data,
+                               uint64_t db_size) {
+  arts_shared_ptr_t h = arts_db_buf_acquire(cache);
+  struct arts_db_buffer_s *buf = (struct arts_db_buffer_s *)arts_shared_get(h);
+  if (buf != NULL) {
+    /* Established stable buffer: overwrite in place.  The address is fixed, so
+     * a DB holding internal self-pointers stays valid.  Safe because the
+     * caller's protocol guarantees no concurrent reader during the write. */
+    if (db_size > 0 && data != NULL) {
+      memcpy(buf->data, data, (size_t)db_size);
+    }
+    if (cache->db_size == 0) {
+      cache->db_size = db_size;
+    }
+    arts_shared_release(&h);
+    return;
+  }
+  /* First touch: allocate the one stable buffer (no further realloc).  Single
+   * producer here — the caller's serialization makes the first write to a given
+   * cache unique — so a plain store publishes it. */
+  struct arts_db_buffer_s *nb = arts_db_buf_alloc(db_size);
+  if (nb == NULL) {
+    return; /* OOM — caller decides how to surface. */
+  }
+  nb->version = 0;
+  if (db_size > 0) {
+    if (data != NULL) {
+      memcpy(nb->data, data, (size_t)db_size);
+    } else {
+      memset(nb->data, 0, (size_t)db_size);
+    }
+    if (cache->db_size == 0) {
+      cache->db_size = db_size;
+    }
+  }
+  arts_shared_ptr_t cb = arts_shared_make(nb, buffer_deleter);
+  nb->cb = cb;
+  arts_atomic_shared_store(&cache->buffer, cb);
+}

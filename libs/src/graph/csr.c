@@ -93,13 +93,21 @@ arts_csr_graph_t *arts_csr_init(arts_partition_t part_index,
       arts_edge_vector_sort_by_source(edges);
     }
 
+    // A partition with no local edges is a well-formed empty CSR: the
+    // all-zero row pointers already encode every local vertex as having an
+    // empty neighbour range, so the edge array (which may be empty/NULL) must
+    // not be dereferenced.
+    if (edges->used == 0) {
+      return csr;
+    }
+
     arts_vertex_t last_src = edges->edge_array[0].source;
     arts_vertex_t t = edges->edge_array[0].target;
     arts_vertex_t src_ind = arts_block_dist_get_local_index(last_src, dist);
 
     columns[0] = t;
     row_indices[src_ind] = 0;
-    row_indices[src_ind + 1] = (edges->used) ? 1 : 0;
+    row_indices[src_ind + 1] = 1;
 
     // populate edges
     for (uint64_t i = 1; i < edges->used; ++i) {
@@ -148,7 +156,14 @@ arts_csr_graph_t *arts_csr_init(arts_partition_t part_index,
   return csr;
 }
 
-void arts_csr_free(arts_csr_graph_t *csr) { arts_db_destroy(csr->partGuid); }
+void arts_csr_free(arts_csr_graph_t *csr) {
+  // A non-materialized (e.g. remote) partition is represented by a NULL graph;
+  // freeing it must be a no-op rather than dereferencing the NULL pointer.
+  if (csr == NULL) {
+    return;
+  }
+  arts_db_destroy(csr->partGuid);
+}
 
 arts_vertex_t arts_csr_index_start(unsigned int index,
                                    const arts_csr_graph_t *const part) {
@@ -222,7 +237,10 @@ int arts_csr_load_from_args(arts_block_dist_t *dist, int argc, char **argv) {
   char *file = NULL;
 
   for (int i = 0; i < argc; ++i) {
-    if (strcmp("--file", argv[i]) == 0) {
+    // A value-bearing flag consumes the following token; only read it when one
+    // exists so a flag in the last position cannot read past the argument
+    // array.
+    if (strcmp("--file", argv[i]) == 0 && i + 1 < argc) {
       file = argv[i + 1];
     }
     if (strcmp("--flip", argv[i]) == 0) {
@@ -368,6 +386,8 @@ int arts_csr_load_no_weight(const char *file_path, arts_block_dist_t *dist,
 
     arts_edge_vector_free(&vedges[k]);
   }
+  arts_free(part_index);
+  arts_free(vedges);
   return 0;
 }
 
@@ -440,8 +460,16 @@ int arts_csr_load_no_weight_csr(const char *file_path, arts_block_dist_t *dist,
 
     char *token = strtok(str, " \t\\v\f\r");
     while (token != NULL) {
-      arts_graph_sz_t target = strtoll(token, NULL, 10) - 1;
+      arts_graph_sz_t raw = strtoll(token, NULL, 10);
       token = strtok(NULL, " \t\\v\f\r");
+
+      // Targets are 1-based in this format; a token of 0 (or below) has no
+      // valid 0-based vertex and decrementing it would underflow to a bogus
+      // huge index, so skip it.
+      if (raw == 0) {
+        continue;
+      }
+      arts_graph_sz_t target = raw - 1;
 
       if (ignore_self_loops && (src == target)) {
         // ARTS_INFO("SELF LOOP");
@@ -488,8 +516,15 @@ int arts_csr_load_no_weight_csr(const char *file_path, arts_block_dist_t *dist,
   } else {
     ARTS_INFO("SRC: %lu != num_verts %lu.  Check the line length", src,
               num_verts);
+    // No CSR is built on a header mismatch, but the per-partition edge buffers
+    // were still allocated during parsing and must be released.
+    for (unsigned int k = 0; k < num_local_parts; k++) {
+      arts_edge_vector_free(&vedges[k]);
+    }
   }
 
+  arts_free(part_index);
+  arts_free(vedges);
   return 0;
 }
 

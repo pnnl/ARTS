@@ -63,6 +63,7 @@ extern "C" {
 #include "arts/coherence/types.h"
 #include "arts/utils/lockfree_lifo.h" /* arts_lf_stack_t (event simple deps) */
 #include "arts/utils/mpsc.h"          /* arts_mpsc_t (event channel) */
+#include "arts/utils/shared.h"        /* arts_shared_ptr_t (EDT runnable ref) */
 #include <stdbool.h>
 #include <stdint.h>
 #ifndef __cplusplus
@@ -101,10 +102,17 @@ struct arts_edt_s {
   volatile unsigned int depc_needed; /**< Remaining unsatisfied deps (satisfy
                                           phase — driven to 0 by event/signal
                                           delivery before DB acquisition). */
-  uint32_t rw_cursor; /**< GUID-sorted index over the EDT's serialized (RW)
-                           deps, up to which they have been *secured* (owned or
-                           guaranteed next-owner). Advanced at the secured point
-                           (PROCEED / local-fast), NOT at data install. */
+  uint32_t rw_cursor;  /**< GUID-sorted index over the EDT's serialized (RW)
+                            deps, up to which they have been *secured* (owned or
+                            guaranteed next-owner). Advanced at the secured point
+                            (PROCEED / local-fast), NOT at data install. */
+  uint32_t *rw_sorted; /**< GUID-sorted serialized-dep index order, computed
+                            ONCE at arts_db_acquire_all entry and consumed by
+                            rw_fire_from_cursor / rw_secure /
+                            arts_db_acquire_resolved (never re-sorted per dep).
+                            NULL until the acquire phase begins; freed at run.
+                            Order is a pure function of depv (fixed once ready),
+                            so a single sort is identity-preserving. */
   volatile unsigned int acquire_remaining; /**< Count of real DB deps (RO+RW)
                            whose data is not yet resolved at this rank;
                            decremented on each data arrival, the actor driving
@@ -112,6 +120,17 @@ struct arts_edt_s {
                            initial fire. */
   volatile unsigned int
       invalidate_count; /**< Outstanding cache invalidations. */
+  /* Non-owning alias to this EDT's own route-table control block, armed once
+   * the EDT is installed (before it can become runnable).  An EDT is dispatched
+   * by raw pointer through the lock-free deques and is held by raw pointer
+   * across asynchronous coherence park/resume, so nothing on those paths can
+   * recover a control block to ref-count.  This alias lets the runnable-phase
+   * code take an owning ref (arts_shared_copy at the ready transition, released
+   * at run completion) that keeps the EDT alive even after a concurrent destroy
+   * has CAS-detached the route slot.  It holds NO strong count itself (that
+   * would be a self-cycle that never frees); the cb pool guarantees the pointer
+   * stays valid, and copies are only ever taken while another ref is held. */
+  arts_shared_ptr_t self_cb;
 } ARTS_ALIGNED_MAX;
 
 /* Total allocation size of an EDT = struct + trailing [paramv | depv].

@@ -155,31 +155,10 @@ void arts_db_cache_destructor(struct arts_db_cache_s *cache) {
     return;
   }
   arts_db_cache_common_destroy_pre(cache); /* buffer-NULL FIRST */
-  /* Refcount hit 0 → this destructor is the SOLE owner of the cache: no other
-   * ref-holder exists, so it is the unique safe single consumer of the pop-one
-   * pending_rw FIFO.  Wake every still-parked RW waiter with NULL data (the
-   * buffer slot was NULLed by destroy_pre, so mark_edt_ready_by_guid delivers
-   * depv[slot].ptr=NULL and accounts the dep) BEFORE freeing the queue nodes.
-   * This is where the destroy fan-out's deferred RW wake lands (the handler no
-   * longer drains pending_rw; the releasing token holder relinquished without
-   * popping).  Snapshot waiters are woken too (arts_db_drain_pending_snapshot
-   * wakes; the common-post path only frees), then the queue is torn down.
-   *
-   * Skip the wake during final runtime teardown (shutdown_state != 0): the
-   * worker scheduler is gone by the time arts_clean_up_dbs frees the route
-   * table, so accounting a dep / scheduling a parked EDT would dereference a
-   * destroyed deque.  At shutdown the parked EDTs are abandoned with the rest
-   * of the graph — only the FIFO nodes still need freeing. */
-  if (arts_node_info.shutdown_state == 0) {
-    arts_guid_t edt_guid;
-    unsigned int slot;
-    while (arts_db_rw_waiter_queue_pop(&cache->pending_rw, &edt_guid, &slot)) {
-      mark_edt_ready_by_guid(edt_guid, slot);
-    }
-    arts_db_drain_pending_snapshot(cache); /* wake parked snapshot waiters */
-  }
+  /* No parked-waiter wake — destroying an in-use DB is undefined (OCR); the
+   * queue is freed, not drained. */
   arts_db_rw_waiter_queue_destroy(&cache->pending_rw);
-  arts_db_cache_common_destroy_post(cache); /* snapshot free → home teardown */
+  arts_db_cache_common_destroy_post(cache); /* snapshot drain → home teardown */
 }
 
 /* ===== home-directory lifecycle (inlined in arts_db_s) ============= */
@@ -293,13 +272,10 @@ void arts_handler_db_writeback_ack(void *item_v, void *args_v) {
  * LAST.  Eager roster source = home->last_sent_version + the queued ownership
  * requesters.
  *
- * MRSW does NOT drain cache.pending_rw here (it is a pop-one FIFO a token
- * holder can be releasing concurrently — a second consumer would corrupt the
- * chain). The parked RW + snapshot waiters are woken by the refcount-0 cache
- * destructor (arts_db_cache_destructor), the SOLE owner once set_destroyed
- * drops the last install ref; a token holder racing its release defers to the
- * destructor via the arts_route_table_was_destroyed guard in
- * arts_db_release_rw_local. */
+ * Canonical contract: route-slot detach + refcount-drop only; no parked-EDT
+ * wake.  Destroying a DB while an EDT has a pending dependence is OCR undefined
+ * behavior.  cache.pending_rw is not drained here (single-consumer invariant).
+ */
 void arts_handler_db_destroy(void *item_v, void *args_v) {
   struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
   struct arts_ooo_args_db_destroy_s *a =
@@ -328,11 +304,8 @@ void arts_handler_db_destroy(void *item_v, void *args_v) {
       }
     }
   }
-  /* Do NOT drain cache.pending_rw / pending_snapshot here: a token holder can
-   * be releasing pending_rw concurrently, and that pop-one FIFO must stay
-   * single-consumer.  set_destroyed drops the last install ref → the refcount-0
-   * destructor (arts_db_cache_destructor) is the sole owner and wakes every
-   * parked waiter. */
+  /* Canonical contract: route-slot detach + refcount-drop only; no parked-EDT
+   * wake.  cache.pending_rw is not drained here (single-consumer invariant). */
   (void)cache;
   (void)arts_route_table_set_destroyed(a->db_guid);
 }

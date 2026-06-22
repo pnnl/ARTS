@@ -39,6 +39,7 @@
 #include "arts/counter/counter.h"
 
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -64,7 +65,7 @@ ARTS_THREAD_LOCAL arts_counter_t arts_thread_local_counters[NUM_COUNTER_TYPES];
 
 // Capture thread state - only used for periodic counter capture
 static pthread_t capture_thread;
-static volatile bool capture_thread_running = false;
+static _Atomic bool capture_thread_running = false;
 
 // Time synchronization variables (exported for RemoteFunctions.c)
 // timeOffset = workerTime - masterTime (positive if worker is ahead)
@@ -80,17 +81,21 @@ static inline uint64_t arts_get_synced_time_stamp(void) {
 }
 
 static uint64_t arts_counter_capture_counter(arts_counter_t *counter) {
-  uint64_t expected = counter->start;
+  /* start/count are mutated by the owning worker via arts_atomic_cswap_u64 /
+   * arts_atomic_swap_u64 / arts_atomic_fetch_add_u64 with no happens-before to
+   * this capture thread, so every read here MUST be an atomic load — a plain
+   * read would be a data race (B137). */
+  uint64_t expected = arts_atomic_read_u64(&counter->start);
   while (expected) {
     uint64_t start = arts_get_time_stamp();
     if (arts_atomic_cswap_u64(&counter->start, expected, start) != expected) {
-      expected = counter->start;
+      expected = arts_atomic_read_u64(&counter->start);
     } else {
       arts_atomic_fetch_add_u64(&counter->count, start - expected);
       expected = 0;
     }
   }
-  return counter->count;
+  return arts_atomic_read_u64(&counter->count);
 }
 
 static void *arts_counter_capture_thread(void *args) {
@@ -132,7 +137,7 @@ static void *arts_counter_capture_thread(void *args) {
   // (i.e., baseline + interval_ns for epoch 0)
   uint64_t next_capture_time = baseline_time + interval_ns;
 
-  while (capture_thread_running) {
+  while (atomic_load_explicit(&capture_thread_running, memory_order_acquire)) {
     synced_time = arts_get_synced_time_stamp();
     // Calculate sleep time until next aligned capture (in synced time)
     int64_t sleep_ns = (int64_t)(next_capture_time - synced_time);
@@ -191,7 +196,7 @@ static void *arts_counter_capture_thread(void *args) {
 }
 
 void arts_counter_capture_start() {
-  if (capture_thread_running) {
+  if (atomic_load_explicit(&capture_thread_running, memory_order_acquire)) {
     ARTS_ERROR("Counter capture thread already running");
   }
 
@@ -232,13 +237,14 @@ void arts_counter_capture_start() {
       }
     }
 
-    capture_thread_running = true;
+    atomic_store_explicit(&capture_thread_running, true, memory_order_release);
 
     int ret = pthread_create(&capture_thread, NULL, arts_counter_capture_thread,
                              NULL);
     if (ret) {
       ARTS_DEBUG("Failed to create capture thread: %d", ret);
-      capture_thread_running = false;
+      atomic_store_explicit(&capture_thread_running, false,
+                            memory_order_release);
     } else {
       ARTS_INFO("Counter capture thread started");
     }
@@ -246,11 +252,11 @@ void arts_counter_capture_start() {
 }
 
 void arts_counter_capture_stop() {
-  if (!capture_thread_running) {
+  if (!atomic_load_explicit(&capture_thread_running, memory_order_acquire)) {
     // No capture thread to stop - this is fine, counters still work
     return;
   }
-  capture_thread_running = false;
+  atomic_store_explicit(&capture_thread_running, false, memory_order_release);
   int ret = pthread_join(capture_thread, NULL);
   if (ret) {
     ARTS_DEBUG("Failed to join capture thread: %d", ret);
@@ -911,8 +917,16 @@ arts_read_node_counter_file(const char *filepath,
       continue;
     }
 
-    // Find the end of this counter object for scoped searching
+    // Find the end of this counter object for scoped searching.
+    // arts_json_find_object_end returns NULL when the key's value is not an
+    // object (a scalar, or the name was matched inside a string value) — a
+    // plausible malformed/partially-written file.  Without this guard
+    // counter_end - counter_obj would be a wild (NULL - ptr) size_t, driving a
+    // huge arts_malloc + OOB memcpy.  Skip such a counter.
     const char *counter_end = arts_json_find_object_end(counter_obj);
+    if (!counter_end) {
+      continue;
+    }
     size_t counter_len = counter_end - counter_obj;
     char *counter_json = (char *)arts_malloc(counter_len + 1);
     memcpy(counter_json, counter_obj, counter_len);

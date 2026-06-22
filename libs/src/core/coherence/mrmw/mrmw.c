@@ -60,14 +60,6 @@ bool arts_db_acquire_is_serialized(arts_db_access_mode_t mode) {
   return false; /* MRMW: no ownership round; nothing is serialized */
 }
 
-/* MRMW has no pending_rw queue (all modes park on pending_snapshot), so the
- * destroy/fail wake of parked waiters only drains the snapshot reorder buffer.
- * (EAGER/LAZY define their own arts_db_fail_trigger_pending in
- * coherence/ownership.c, which additionally drains pending_rw.) */
-void arts_db_fail_trigger_pending(struct arts_db_cache_s *cache) {
-  arts_db_drain_pending_snapshot(cache);
-}
-
 /* ===== release_rw (MRMW arm) =======================================
  * MRMW drops its buffer ref in the tail (after the WRITEBACK
  * reads buf->data).  Every non-home write must be pushed back to home
@@ -250,8 +242,9 @@ void arts_handler_db_writeback_ack(void *item_v, void *args_v) {
 
 /* Cat-B pure body (OoO g_ooo_table[OOO_DB_DESTROY]): the OoO engine has already
  * acquired the home db_s and pinned a ref across this call (cache is its FIRST
- * member).  Order: roster fan-out + fail_trigger wake parked waiters FIRST,
- * then arts_route_table_set_destroyed LAST.  The MRMW roster source is
+ * member).  Order: roster fan-out, then arts_route_table_set_destroyed LAST (a
+ * waiter left parked at destroy = UB, freed by the refcount-0 destructor).
+ * The MRMW roster source is
  * home->last_sent_version (same as the eager protocol); MRMW has no
  * pending_rw queue, so no lockreq drain. */
 void arts_handler_db_destroy(void *item_v, void *args_v) {
@@ -272,7 +265,6 @@ void arts_handler_db_destroy(void *item_v, void *args_v) {
       arts_send_db_cache_destroy(r, a->db_guid);
     }
   }
-  arts_db_fail_trigger_pending(cache);
   (void)arts_route_table_set_destroyed(a->db_guid);
 }
 

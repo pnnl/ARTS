@@ -38,7 +38,8 @@
  ******************************************************************************/
 #include "arts/transport/dispatcher.h"
 
-#include <assert.h> /* lazy INVALIDATE direct-call invariant assert */
+#include <assert.h>    /* lazy INVALIDATE direct-call invariant assert */
+#include <semaphore.h> /* sem_post (LOCK_RELEASE_ACK inline wake) */
 #include <string.h> /* memcpy (WRITEBACK inline-payload copy into OoO args) */
 #include <unistd.h>
 
@@ -220,14 +221,14 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
    * INVALIDATE_NOTICE is handled in its own three-model block below (eager =
    * Cat-B defer; lazy = direct, never deferred).
    */
-#if defined(ARTS_PROTOCOL_MRMW)
+#if defined(ARTS_PROTOCOL_MRMW) || defined(ARTS_PROTOCOL_LOCK)
   case MSG_DB_OWNERSHIP_REQUEST: {
-    ARTS_ERROR("MRMW build received exclusivity message type %d from rank "
-               "%u — MRMW has no OWNERSHIP_REQUEST; binary mode mismatch?",
+    ARTS_ERROR("MRMW/LOCK build received exclusivity message type %d from rank "
+               "%u — protocol has no OWNERSHIP_REQUEST; binary mode mismatch?",
                packet->message_type, packet->rank);
     break;
   }
-#else  /* eager and lazy: full handlers */
+#else  /* MRNEW/MRSW eager and lazy: full handlers */
   case MSG_DB_OWNERSHIP_REQUEST: {
     ARTS_DEBUG("Coh OWNERSHIP_REQUEST Received");
     struct arts_msg_ownership_request_packet_s *pack =
@@ -251,14 +252,14 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
    *           that once forced eager through the OoO engine is gone: EAGER no
    *           longer flips rw_holder before install.)
    *   MRMW: no ownership transfer (caught by the fatal group above). */
-#if defined(ARTS_PROTOCOL_MRMW)
+#if defined(ARTS_PROTOCOL_MRMW) || defined(ARTS_PROTOCOL_LOCK)
   case MSG_DB_OWNERSHIP_INVALIDATE: {
-    ARTS_ERROR("MRMW build received INVALIDATE from rank %u — MRMW has "
-               "no ownership transfer; binary mode mismatch?",
+    ARTS_ERROR("MRMW/LOCK build received INVALIDATE from rank %u — "
+               "protocol has no ownership invalidate; binary mode mismatch?",
                packet->rank);
     break;
   }
-#else  /* MRNEW: eager + lazy share the direct-call body */
+#else  /* MRNEW/MRSW: eager + lazy share the direct-call body */
   case MSG_DB_OWNERSHIP_INVALIDATE: {
     ARTS_DEBUG("Coh INVALIDATE_NOTICE Received");
     struct arts_msg_ownership_invalidate_packet_s *pack =
@@ -284,6 +285,15 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     break;
   }
 #endif /* model dispatch for MSG_DB_OWNERSHIP_INVALIDATE */
+#if defined(ARTS_PROTOCOL_LOCK)
+  case MSG_DB_SNAPSHOT_REQUEST:
+  case MSG_DB_SNAPSHOT_RESPONSE: {
+    ARTS_ERROR("LOCK build received snapshot message type %d from rank %u — "
+               "LOCK has no RO snapshot protocol; binary mode mismatch?",
+               packet->message_type, packet->rank);
+    break;
+  }
+#else  /* MRNEW/MRSW/MRMW: snapshot handlers */
   case MSG_DB_SNAPSHOT_REQUEST: {
     ARTS_DEBUG("Coh GET_DATA Received");
     struct arts_msg_snapshot_request_packet_s *pack =
@@ -302,6 +312,12 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     ARTS_DEBUG("Coh DATA_RESPONSE Received");
     struct arts_msg_snapshot_response_packet_s *pack =
         (struct arts_msg_snapshot_response_packet_s *)(packet);
+    /* header.size is the peer-supplied total on-wire byte count; a malformed
+     * value below the fixed struct size would underflow the unsigned payload
+     * length and drive an OOB copy/allocation. Drop such packets. */
+    if (pack->header.size < sizeof(*pack)) {
+      break;
+    }
     const void *data = (const char *)pack + sizeof(*pack);
     uint64_t data_size = pack->header.size - sizeof(*pack);
     /* Cat-C lookup-acquire-or-drop: HIT runs the pure body against the
@@ -323,6 +339,7 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     arts_shared_release(&h);
     break;
   }
+#endif /* ARTS_PROTOCOL_LOCK */
   case MSG_DB_CREATE: {
     ARTS_DEBUG("Coh DB_CREATE_COHERENT Received");
     arts_handler_db_create(
@@ -359,14 +376,14 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
   /* OWNERSHIP_RESPONSE: the single ownership-transfer wire message.  eager =
    * GRANT (buffer payload); lazy = TRANSFER_OWNERSHIP (map + buffer); MRMW
    * has no ownership transfer and fatals to catch a binary mode mismatch. */
-#if defined(ARTS_PROTOCOL_MRMW)
+#if defined(ARTS_PROTOCOL_MRMW) || defined(ARTS_PROTOCOL_LOCK)
   case MSG_DB_OWNERSHIP_RESPONSE: {
-    ARTS_ERROR("MRMW build received OWNERSHIP_RESPONSE from rank %u — "
-               "MRMW has no ownership transfer; binary mode mismatch?",
+    ARTS_ERROR("MRMW/LOCK build received OWNERSHIP_RESPONSE from rank %u — "
+               "protocol has no ownership transfer; binary mode mismatch?",
                packet->rank);
     break;
   }
-#else  /* eager and lazy: one converged layout */
+#else  /* MRNEW/MRSW eager and lazy: one converged layout */
   case MSG_DB_OWNERSHIP_RESPONSE: {
     ARTS_DEBUG("Coh OWNERSHIP_RESPONSE Received");
     /* Payload (map + data) immediately follows the header in the contiguous
@@ -379,20 +396,26 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
   /* WRITEBACK + WRITEBACK_ACK: used by the eager protocol and MRMW
    * (sync release writeback).  Fatal in the lazy protocol — lazy uses
    * async transfer, not synchronous writeback. */
-#if defined(ARTS_TIMING_LAZY)
+#if defined(ARTS_TIMING_LAZY) || defined(ARTS_PROTOCOL_LOCK)
   case MSG_DB_WRITEBACK:
   case MSG_DB_WRITEBACK_ACK: {
-    ARTS_ERROR("lazy build received writeback message type %d from rank %u — "
-               "lazy protocol has no synchronous writeback; binary mode "
+    ARTS_ERROR("lazy/LOCK build received writeback message type %d from rank "
+               "%u — protocol has no synchronous WRITEBACK; binary mode "
                "mismatch?",
                packet->message_type, packet->rank);
     break;
   }
-#else  /* eager and MRMW: full handlers */
+#else  /* MRNEW/MRSW eager and MRMW: full handlers */
   case MSG_DB_WRITEBACK: {
     ARTS_DEBUG("Coh WRITEBACK Received");
     struct arts_msg_writeback_packet_s *pack =
         (struct arts_msg_writeback_packet_s *)(packet);
+    /* header.size is the peer-supplied total on-wire byte count; a malformed
+     * value below the fixed struct size would underflow the unsigned payload
+     * length and drive an OOB copy/allocation. Drop such packets. */
+    if (pack->header.size < sizeof(*pack)) {
+      break;
+    }
     const void *data = (const char *)pack + sizeof(*pack);
     uint64_t data_size = pack->header.size - sizeof(*pack);
     /* WRITEBACK carries an inline data payload: lay it immediately after the
@@ -517,14 +540,14 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
    * advances the round).  LAZY additionally replies with CONFIRM_ACK; EAGER's
    * home handler does not (the new owner already drained at
    * OWNERSHIP_RESPONSE). MRMW has no ownership transfer and fatals. */
-#if defined(ARTS_PROTOCOL_MRMW)
+#if defined(ARTS_PROTOCOL_MRMW) || defined(ARTS_PROTOCOL_LOCK)
   case MSG_DB_OWNERSHIP_CONFIRM: {
-    ARTS_ERROR("MRMW build received OWNERSHIP_CONFIRM from rank %u — MRMW has "
-               "no ownership transfer; binary mode mismatch?",
+    ARTS_ERROR("MRMW/LOCK build received OWNERSHIP_CONFIRM from rank %u — "
+               "protocol has no ownership transfer; binary mode mismatch?",
                packet->rank);
     break;
   }
-#else
+#else /* MRNEW/MRSW */
   case MSG_DB_OWNERSHIP_CONFIRM: {
     ARTS_DEBUG("Coh CONFIRM Received");
     struct arts_msg_ownership_confirm_packet_s *pack =
@@ -549,6 +572,80 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     break;
   }
 #endif /* OWNERSHIP_CONFIRM model dispatch */
+  /* LOCK has its own REQUEST/GRANT/RELEASE wire (below); it has no
+   * ownership/snapshot/writeback handlers, so the legacy coherence cases are
+   * excluded from LOCK builds (each is already guarded above). */
+#ifdef ARTS_PROTOCOL_LOCK
+  case MSG_DB_LOCK_REQUEST: {
+    ARTS_DEBUG("Coh LOCK_REQUEST Received");
+    struct arts_msg_lock_request_packet_s *pack =
+        (struct arts_msg_lock_request_packet_s *)(packet);
+    struct arts_ooo_args_db_lock_request_s args = {
+        .requester = pack->header.rank,
+        .db_guid = pack->db_guid,
+        .mode = pack->mode,
+    };
+    arts_ooo_dispatch_or_defer_guid(pack->db_guid, OOO_DB_LOCK_REQUEST, &args,
+                                    sizeof(args));
+    break;
+  }
+  case MSG_DB_LOCK_GRANT: {
+    ARTS_DEBUG("Coh LOCK_GRANT Received");
+    /* Cat-C: the grant receiver always sent its own REQUEST first, so its cache
+     * exists.  Payload (data) follows the header in the contiguous buffer; the
+     * handler parses it from the full packet. */
+    arts_handler_db_lock_grant((void *)packet, (size_t)packet->size);
+    break;
+  }
+  case MSG_DB_LOCK_RELEASE: {
+    ARTS_DEBUG("Coh LOCK_RELEASE Received");
+    struct arts_msg_lock_release_packet_s *pack =
+        (struct arts_msg_lock_release_packet_s *)(packet);
+    /* header.size is the peer-supplied total on-wire byte count; a malformed
+     * value below the fixed struct size would underflow the unsigned payload
+     * length and drive an OOB copy/allocation. Drop such packets. */
+    if (pack->header.size < sizeof(*pack)) {
+      break;
+    }
+    const void *data = (const char *)pack + sizeof(*pack);
+    uint64_t data_size = pack->header.size - sizeof(*pack);
+    /* RW release carries an inline writeback payload; lay it after the args
+     * struct so the deferred OoO payload reconstructs it, pass total size.
+     * Also decode cv (ACK token) and version for monotone buf_install. */
+    uint32_t asz =
+        (uint32_t)(sizeof(struct arts_ooo_args_db_lock_release_s) + data_size);
+    char *abuf = (char *)arts_malloc(asz);
+    struct arts_ooo_args_db_lock_release_s *args =
+        (struct arts_ooo_args_db_lock_release_s *)abuf;
+    args->releaser = pack->header.rank;
+    args->db_guid = pack->db_guid;
+    args->mode = pack->mode;
+    args->data_size = data_size;
+    args->cv = pack->cv;
+    args->version = pack->version;
+    if (data_size > 0) {
+      memcpy(abuf + sizeof(*args), data, data_size);
+    }
+    arts_ooo_dispatch_or_defer_guid(pack->db_guid, OOO_DB_LOCK_RELEASE, abuf,
+                                    asz);
+    arts_free(abuf);
+    break;
+  }
+  case MSG_DB_LOCK_RELEASE_ACK: {
+    ARTS_DEBUG("Coh LOCK_RELEASE_ACK Received");
+    struct arts_msg_lock_release_ack_packet_s *pack =
+        (struct arts_msg_lock_release_ack_packet_s *)(packet);
+    /* Cat-C SPECIAL — pointer-identity sem_post on cv directly.  The wake
+     * is cache-independent: a torn-down home cache must NOT drop the ACK or
+     * the blocked releaser hangs (await_writeback_ack would spin forever).
+     * arts_handler_db_writeback_ack is not linked in the LOCK build (it
+     * lives in MRNEW/MRSW/MRMW TUs), so inline the sem_post here. */
+    if (pack->cv != 0) {
+      sem_post((sem_t *)(uintptr_t)pack->cv);
+    }
+    break;
+  }
+#endif /* ARTS_PROTOCOL_LOCK */
   default: {
     ARTS_INFO("Unknown Packet %d %d %d", packet->message_type, packet->size,
               packet->rank);

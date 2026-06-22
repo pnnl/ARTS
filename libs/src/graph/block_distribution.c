@@ -81,10 +81,13 @@ arts_block_dist_t *arts_block_dist_init_from_args(int argc, char **argv) {
   uint64_t n = 0;
   uint64_t m = 0;
   for (int i = 0; i < argc; ++i) {
-    if (strcmp("--num-vertices", argv[i]) == 0) {
+    // A value-bearing flag consumes the following token; only read it when one
+    // exists so a flag in the last position cannot read past the argument
+    // array.
+    if (strcmp("--num-vertices", argv[i]) == 0 && i + 1 < argc) {
       n = (uint64_t)strtoull(argv[i + 1], NULL, 10);
     }
-    if (strcmp("--num-edges", argv[i]) == 0) {
+    if (strcmp("--num-edges", argv[i]) == 0 && i + 1 < argc) {
       m = (uint64_t)strtoull(argv[i + 1], NULL, 10);
     }
   }
@@ -108,15 +111,27 @@ void arts_block_dist_free(arts_block_dist_t *dist) { arts_free(dist); }
 arts_graph_sz_t
 arts_block_dist_block_size(unsigned int index,
                            const arts_block_dist_t *const dist) {
-  // is this the last block/partition
-  if (index == (dist->num_blocks - 1)) {
-    return (dist->num_vertices - ((dist->num_blocks - 1) * dist->block_sz));
+  // A block covers the half-open vertex range [index*block_sz, num_vertices)
+  // capped at block_sz.  Computing the size as a difference (rather than a
+  // special-case for the last block) keeps the partition exact and never
+  // underflows the unsigned size: a block whose start is at/after the vertex
+  // count is simply empty.
+  arts_graph_sz_t start = (arts_graph_sz_t)index * dist->block_sz;
+  if (start >= dist->num_vertices) {
+    return 0;
   }
-  return dist->block_sz;
+  arts_graph_sz_t remaining = dist->num_vertices - start;
+  return (remaining < dist->block_sz) ? remaining : dist->block_sz;
 }
 
 unsigned int arts_block_dist_get_owner(arts_vertex_t v,
                                        const arts_block_dist_t *const dist) {
+  // An empty distribution (no blocks => zero block size) has no owner for any
+  // vertex; guard the division so a degenerate dist cannot trigger a
+  // divide-by-zero.
+  if (dist->block_sz == 0) {
+    return 0;
+  }
   return (unsigned int)(v / dist->block_sz);
 }
 
@@ -129,11 +144,12 @@ arts_block_dist_partition_start(arts_partition_t index,
 arts_vertex_t
 arts_block_dist_partition_end(arts_partition_t index,
                               const arts_block_dist_t *const dist) {
-  // is this the last block/partition?
-  if (index == (dist->num_blocks - 1)) {
-    return (arts_vertex_t)(dist->num_vertices - 1);
-  }
-  return (arts_block_dist_partition_start(index, dist) + (dist->block_sz - 1));
+  // Last vertex index in this block, derived from the block's actual size so an
+  // empty block (size 0, e.g. an empty graph) reports its start rather than
+  // underflowing the unsigned index below zero.
+  arts_vertex_t start = arts_block_dist_partition_start(index, dist);
+  arts_graph_sz_t size = arts_block_dist_block_size(index, dist);
+  return (size == 0) ? start : (arts_vertex_t)(start + size - 1);
 }
 
 arts_local_index_t

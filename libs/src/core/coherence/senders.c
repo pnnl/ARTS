@@ -19,6 +19,7 @@
 
 #include "arts/coherence/handlers.h"
 
+#include <semaphore.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -40,6 +41,7 @@
  * OWNERSHIP_RESPONSE sender in coherence/eager.c (GRANT) and coherence/lazy.c
  * (TRANSFER_OWNERSHIP).  MRMW has no exclusive-ownership wire messages. */
 
+#if !defined(ARTS_PROTOCOL_LOCK)
 void arts_send_db_writeback(unsigned int home_rank, arts_guid_t db_guid,
                             uint64_t version, uint64_t cv, const void *data,
                             uint64_t data_size) {
@@ -50,7 +52,6 @@ void arts_send_db_writeback(unsigned int home_rank, arts_guid_t db_guid,
   p.db_guid = db_guid;
   p.version = version;
   p.cv = cv;
-  memset(p.pad, 0, sizeof(p.pad));
 #if !defined(ARTS_TIMING_LAZY)
   /* Self-send (home == self) — eager/MRMW only.  The lazy protocol has no
    * synchronous writeback at all (its OOO_DB_WRITEBACK kind does not exist), so
@@ -89,12 +90,13 @@ void arts_send_db_writeback(unsigned int home_rank, arts_guid_t db_guid,
   arts_transport_send_payload_async((int)home_rank, (char *)&p, sizeof(p),
                                     (char *)data, data_size);
 }
+#endif /* !ARTS_PROTOCOL_LOCK */
 
 /* WRITEBACK_ACK is the reply to a synchronous WRITEBACK round, which only the
  * eager and MRMW protocols use (the lazy protocol transfers ownership
  * owner→owner without a synchronous writeback, so it never sends or receives
  * WRITEBACK_ACK and its dispatcher fatals on the wire message). */
-#if !defined(ARTS_TIMING_LAZY)
+#if !defined(ARTS_TIMING_LAZY) && !defined(ARTS_PROTOCOL_LOCK)
 void arts_send_db_writeback_ack(unsigned int releaser_rank, arts_guid_t db_guid,
                                 uint64_t cv) {
   struct arts_msg_writeback_ack_packet_s p;
@@ -116,8 +118,9 @@ void arts_send_db_writeback_ack(unsigned int releaser_rank, arts_guid_t db_guid,
   }
   arts_transport_send_async((int)releaser_rank, (char *)&p, sizeof(p));
 }
-#endif /* !ARTS_TIMING_LAZY */
+#endif /* !ARTS_TIMING_LAZY && !ARTS_PROTOCOL_LOCK */
 
+#if !defined(ARTS_PROTOCOL_LOCK)
 void arts_send_db_snapshot_request(unsigned int home_rank, arts_guid_t db_guid,
                                    arts_guid_t edt_guid, uint32_t slot) {
   struct arts_msg_snapshot_request_packet_s p;
@@ -186,6 +189,7 @@ void arts_send_db_snapshot_response(unsigned int requester_rank,
     arts_transport_send_async((int)requester_rank, (char *)&p, sizeof(p));
   }
 }
+#endif /* !ARTS_PROTOCOL_LOCK */
 
 void arts_send_db_create_coherent(unsigned int home_rank, arts_guid_t db_guid,
                                   uint64_t db_size, uint16_t flags,
@@ -247,6 +251,38 @@ void arts_send_db_cache_destroy(unsigned int sharer_rank, arts_guid_t db_guid) {
   }
   arts_transport_send_async((int)sharer_rank, (char *)&p, sizeof(p));
 }
+
+#ifdef ARTS_PROTOCOL_LOCK
+/* arts_send_db_lock_release_ack — LOCK_RELEASE_ACK: home → RW releaser.
+ *
+ * Mirrors arts_send_db_writeback_ack (MRNEW eager): forwards cv verbatim so
+ * the releaser's await_writeback_ack unblocks by pointer-identity sem_post.
+ *
+ * Cat-C SPECIAL self-send: posts the sem even when db==NULL (home cache
+ * torn down concurrently) so the blocked releaser is never stranded.
+ *
+ * The sem_post inline (rather than calling arts_handler_db_writeback_ack)
+ * avoids a cross-protocol link dependency: arts_handler_db_writeback_ack is
+ * defined only in MRNEW/MRSW/MRMW TUs, not in the LOCK build. */
+void arts_send_db_lock_release_ack(unsigned int releaser_rank,
+                                   arts_guid_t db_guid, uint64_t cv) {
+  struct arts_msg_lock_release_ack_packet_s p;
+  arts_fill_packet_header(&p.header, sizeof(p), MSG_DB_LOCK_RELEASE_ACK);
+  p.header.rank = arts_global_rank_id;
+  p.db_guid = db_guid;
+  p.cv = cv;
+  if (releaser_rank == arts_global_rank_id) {
+    /* Self-send: pointer-identity sem_post directly (no lookup needed —
+     * the body ignores item_v and only uses cv; unconditional post matches
+     * the Cat-C SPECIAL dispatcher pattern). */
+    if (cv != 0) {
+      sem_post((sem_t *)(uintptr_t)cv);
+    }
+    return;
+  }
+  arts_transport_send_async((int)releaser_rank, (char *)&p, sizeof(p));
+}
+#endif /* ARTS_PROTOCOL_LOCK */
 
 /* The LAZY-only senders (CONFIRM, CONFIRM_ACK, REDIRECT_RO) live in
  * coherence/lazy.c alongside their handlers; the MRNEW OWNERSHIP_RESPONSE

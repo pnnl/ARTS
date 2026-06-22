@@ -141,7 +141,7 @@ arts_route_table_t *arts_new_route_table(unsigned int route_table_size,
       (arts_route_table_t *)arts_calloc(1, sizeof(arts_route_table_t));
   route_table->data = (arts_route_item_t *)arts_calloc_align(
       (size_t)COLLISION_RESOLVES * route_table_size, sizeof(arts_route_item_t),
-      16);
+      ARTS_CACHE_LINE_SIZE);
   route_table->size = route_table_size;
   route_table->shift = shift;
   route_table->newFunc = arts_new_route_table;

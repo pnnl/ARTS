@@ -94,11 +94,21 @@ void arts_json_writer_init(arts_json_writer_t *writer, FILE *fp,
   writer->fp = fp;
   writer->indent_size = indent_size;
   writer->depth = 0;
+  writer->overflow = 0;
   memset(writer->need_comma, 0, sizeof(writer->need_comma));
 }
 
 void arts_json_writer_begin_object(arts_json_writer_t *writer,
                                    const char *key) {
+  /* Over-deep: depth cannot grow (json_writer_push would refuse), so emitting
+   * the opening brace here would diverge from the tracked depth and leave the
+   * document brace-unbalanced (and insert a spurious comma between same-depth
+   * siblings).  Drop the entry entirely; the matching end_object un-drops it. */
+  if (writer->overflow || writer->depth + 1 >= ARTS_JSON_MAX_DEPTH) {
+    writer->overflow++;
+    return;
+  }
+
   if (writer->depth) {
     json_writer_prepare_entry(writer);
   }
@@ -112,10 +122,19 @@ void arts_json_writer_begin_object(arts_json_writer_t *writer,
 }
 
 void arts_json_writer_end_object(arts_json_writer_t *writer) {
+  if (writer->overflow) {
+    writer->overflow--;
+    return;
+  }
   json_writer_pop(writer, '}');
 }
 
 void arts_json_writer_begin_array(arts_json_writer_t *writer, const char *key) {
+  if (writer->overflow || writer->depth + 1 >= ARTS_JSON_MAX_DEPTH) {
+    writer->overflow++;
+    return;
+  }
+
   if (writer->depth) {
     json_writer_prepare_entry(writer);
   }
@@ -129,6 +148,10 @@ void arts_json_writer_begin_array(arts_json_writer_t *writer, const char *key) {
 }
 
 void arts_json_writer_end_array(arts_json_writer_t *writer) {
+  if (writer->overflow) {
+    writer->overflow--;
+    return;
+  }
   json_writer_pop(writer, ']');
 }
 
@@ -178,24 +201,36 @@ static void json_writer_write_key(arts_json_writer_t *writer, const char *key) {
 
 void arts_json_writer_write_u_int64(arts_json_writer_t *writer, const char *key,
                                     uint64_t value) {
+  if (writer->overflow) {
+    return; /* inside a dropped over-deep level — emit nothing */
+  }
   json_writer_write_key(writer, key);
   (void)fprintf(writer->fp, "%llu", (unsigned long long)value);
 }
 
 void arts_json_writer_write_double(arts_json_writer_t *writer, const char *key,
                                    double value) {
+  if (writer->overflow) {
+    return;
+  }
   json_writer_write_key(writer, key);
   (void)fprintf(writer->fp, "%.6f", value);
 }
 
 void arts_json_writer_write_string(arts_json_writer_t *writer, const char *key,
                                    const char *value) {
+  if (writer->overflow) {
+    return;
+  }
   json_writer_write_key(writer, key);
   json_writer_write_escaped(value ? value : "", writer->fp);
 }
 
 void arts_json_writer_write_raw_array(arts_json_writer_t *writer,
                                       const char *key, const char *raw_json) {
+  if (writer->overflow) {
+    return;
+  }
   json_writer_write_key(writer, key);
   (void)fputs(raw_json, writer->fp);
 }

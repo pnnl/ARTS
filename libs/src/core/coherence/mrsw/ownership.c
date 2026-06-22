@@ -30,7 +30,7 @@
 #include "arts/coherence/home.h" /* arts_home_lockreq_queue_push */
 #include "arts/db.h"
 #include "arts/edt.h"
-#include "arts/gas/route_table.h" /* arts_route_table_lookup_db (Cat-C self-send) + arts_route_table_was_destroyed (release guard) */
+#include "arts/gas/route_table.h" /* arts_route_table_lookup_db (Cat-C self-send) */
 #include "arts/ooo.h"
 #include "arts/runtime_state.h"
 #include "arts/runtime_types.h"
@@ -42,15 +42,14 @@
 
 /* ===== single-consumer invariant for cache.pending_rw =============
  * The Vyukov MPSC FIFO is multi-producer / SINGLE-consumer.  MRSW upholds the
- * single-consumer invariant WITHOUT a lock: every pop is either token-
- * serialized (the token holder is the unique live-phase consumer — run_one /
- * release hand-off) or runs in the refcount-0 cache destructor (the sole
- * owner).  Destroy never pops this FIFO at handler time; a token holder racing
- * its own release with the destroy handler observes the destroyed state and
- * relinquishes its token WITHOUT popping (arts_db_release_rw_local), so the
- * destructor is the unique actor that ever drains the remaining waiters.  The
- * raw queue helpers (arts_db_rw_waiter_queue_pop / _peek_empty) are therefore
- * called directly. */
+ * single-consumer invariant WITHOUT a lock: the ONLY consumer that pops-and-
+ * delivers is the token holder (run_one / release hand-off), which is unique by
+ * the writer-token serialization.  Destroy does not pop or wake this FIFO;
+ * destroying a DB with a still-parked waiter is OCR undefined behavior, so the
+ * refcount-0 cache destructor merely FREES the leftover nodes
+ * (arts_db_rw_waiter_queue_destroy) without delivering them.  The raw queue
+ * helpers (arts_db_rw_waiter_queue_pop / _peek_empty) are therefore called
+ * directly. */
 
 /* ===== pop-one delivery (token already accounts the one active writer) =====
  * Pop exactly ONE waiter from cache.pending_rw and deliver it.  Unlike MRNEW's
@@ -82,9 +81,10 @@ bool arts_db_mrsw_run_one(struct arts_db_cache_s *cache) {
  *
  * No destroy_state precheck: per spec 4.11, handle_destroy_req NULL-stores
  * route_item->data BEFORE flipping destroy_state, so route_table_lookup_db
- * already misses and the caller's OoO defer handles "DB destroyed".  If we did
- * get here with destroy advancing concurrently, our waiter stays parked on
- * cache.pending_rw and is woken with NULL data by the refcount-0 destructor. */
+ * already misses and the caller's OoO defer handles "DB destroyed".  If a
+ * destroy races in at this point, the waiter on cache.pending_rw is abandoned
+ * (destroying a DB while an EDT holds a pending dependence is OCR undefined
+ * behavior). */
 static void arts_db_kick_remote_rw(struct arts_db_cache_s *cache) {
   if (arts_atomic_cswap(&cache->ownership_req_in_flight, 0, 1) == 0) {
     unsigned int home_rank = arts_guid_get_rank(cache->db_guid);
@@ -187,27 +187,8 @@ void arts_db_drain_pending_rw_after_grant(struct arts_db_cache_s *cache,
  * acquirer pushes between our pop-empty and the sub, it reads the pre-sub
  * positive count and returns "active writer present" expecting US to pop it —
  * without the re-check it would strand.  This re-check is purely local (one
- * peek load + one reclaim CAS) — no home round-trip, no MPSC rescan.
- *
- * Destroy interlock (lock-free single-consumer invariant): if the DB is already
- * destroyed, the token holder must NOT pop/run the next waiter nor ship a
- * transfer — popping here would race the refcount-0 destructor, which is the
- * sole owner that drains the remaining waiters.  Relinquish the token via a
- * bare accounting sub and return; once this release drops the EDT's ref (in
- * release_one_dep), refcount proceeds toward 0 and the destructor wakes every
- * parked waiter with NULL data.  The destroyed predicate is the route-table
- * generation read (value NULLed + gen bumped by arts_route_table_set_destroyed
- * in the destroy handler), acquire-ordered so the synchronizes-with edge to the
- * destroyer is established. */
+ * peek load + one reclaim CAS) — no home round-trip, no MPSC rescan. */
 void arts_db_release_rw_local(struct arts_db_cache_s *cache) {
-  if (arts_route_table_was_destroyed(cache->db_guid)) {
-    /* DB destroyed: do not consume pending_rw or ship — the destructor (sole
-     * owner at refcount 0) wakes the remaining waiters.  Just relinquish the
-     * token so the accounting balances (writer_count never read again on this
-     * cache except by that destructor). */
-    arts_atomic_sub(&cache->writer_count, 1);
-    return;
-  }
   arts_guid_t g;
   unsigned int slot;
   if (arts_db_rw_waiter_queue_pop(&cache->pending_rw, &g, &slot)) {
@@ -353,27 +334,6 @@ void arts_send_db_ownership_response(unsigned int new_owner_rank,
   } else {
     arts_transport_send_async((int)new_owner_rank, (char *)&hdr, sizeof(hdr));
   }
-}
-
-/* ===== destroy/fail wake of parked snapshot waiters (EAGER+LAZY) =======
- * Called at destroy-handler time (the home OOO_DB_DESTROY body and the shared
- * remote DESTROY_NOTIFY leaf in coherence/handlers.c) while the cache is still
- * ALIVE (refcount != 0): only the install ref has been / is about to be
- * dropped.
- *
- * MRSW wakes ONLY the snapshot reorder buffer here, NOT cache.pending_rw.  The
- * snapshot stack is a Treiber stack drained by a single atomic-exchange, so it
- * is multi-consumer-safe and may be drained concurrently with any other actor.
- * cache.pending_rw is a Vyukov pop-one FIFO that must stay single-consumer: a
- * token-holding RW EDT can be releasing it concurrently with this destroy
- * fan-out, so popping it here would be a second consumer (chain corruption /
- * double-free).  Its waiters are instead woken by the refcount-0 cache
- * destructor (arts_db_cache_destructor), which is the SOLE owner of the object
- * (no other ref-holder exists at that point) — the unique safe single consumer.
- * The releasing token holder defers to the destructor via the
- * arts_route_table_was_destroyed guard in arts_db_release_rw_local. */
-void arts_db_fail_trigger_pending(struct arts_db_cache_s *cache) {
-  arts_db_drain_pending_snapshot(cache);
 }
 
 /* ===== Home-side ownership handlers (MRSW; rank-granular like MRNEW) =====

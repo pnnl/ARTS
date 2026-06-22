@@ -167,6 +167,18 @@ void arts_handle_ready_edt(struct arts_edt_s *edt) {
     return;
   }
 #endif
+  /* Take the runnable-phase ref: from here the EDT travels by raw pointer
+   * through DB acquire (including asynchronous coherence park/resume on other
+   * threads), the work-stealing deque, and execution — none of which can
+   * recover a control block to ref-count.  Copying the install-time self alias
+   * pins the EDT cb alive across that whole span, so a concurrent destroy
+   * (which only CAS-detaches the route slot, dropping the install ref) cannot
+   * free an EDT that is still queued or running.  Released exactly once at run
+   * completion (arts_run_edt / the GPU completion path).  Route-independent:
+   * the copy succeeds even if destroy already detached the slot, because the
+   * caller still holds a ref (the OoO dispatch pin, or the creating thread).
+   * arts_shared_copy(NULL) is a safe no-op for any unarmed path. */
+  arts_shared_copy(edt->self_cb);
   edt->rw_cursor = 0;
   edt->acquire_remaining =
       1; /* +1 bias; arts_db_acquire_all adds the dep count */
@@ -228,12 +240,21 @@ void arts_run_edt(struct arts_edt_s *edt) {
 
   ARTS_INFO("EDT[Guid:%lu, Id:%lu] finished (exec_ns=%lu)", edt->guid,
             edt->arts_id, exec_ns);
+  /* Drop the runnable-phase ref taken in arts_handle_ready_edt.  Capture the
+   * alias first: arts_edt_delete detaches the route slot (dropping the install
+   * ref), but the EDT is kept alive by this ref, so the final release below is
+   * the last drop that runs the deleter (free).  If a concurrent destroy
+   * already detached the slot, arts_edt_delete's set_destroyed is an idempotent
+   * no-op and this release is still the last drop. */
+  arts_shared_ptr_t sref = edt->self_cb;
 #ifdef ARTS_USE_CXL
   if (!IS_CXL_PTR(edt)) {
     arts_edt_delete(edt);
+    arts_shared_release(&sref);
   }
 #else
   arts_edt_delete(edt);
+  arts_shared_release(&sref);
 #endif
   DEC_OUTSTANDING_EDTS(1);
   ARTS_DEBUG("EDT completed, outstanding_edts decremented");

@@ -557,7 +557,7 @@ void free_gpu_item(arts_route_item_t *item) {
     if (db && db->db_type == ARTS_DB_GPU) {
       unsigned int size = arts_db_total_size(db);
       struct arts_db_s *temp_space =
-          (struct arts_db_s *)arts_malloc_align(size, 16);
+          (struct arts_db_s *)arts_malloc_align(size, ARTS_CACHE_LINE_SIZE);
 
       arts_lc_meta_t host;
       host.guid = item->key;
@@ -821,7 +821,13 @@ void arts_gpu_host_wrap_up(void *edt_packet, arts_guid_t to_signal,
       }
     }
   }
+  /* Drop the runnable-phase ref taken in arts_handle_ready_edt (mirrors the CPU
+   * arts_run_edt completion): capture the self alias, detach the route slot,
+   * then release — the last drop frees the EDT even if a concurrent destroy
+   * already detached the slot. */
+  arts_shared_ptr_t sref = ((struct arts_edt_s *)edt_packet)->self_cb;
   arts_edt_delete((struct arts_edt_s *)edt_packet);
+  arts_shared_release(&sref);
 }
 
 struct arts_edt_s *arts_runtime_steal_gpu_task() {

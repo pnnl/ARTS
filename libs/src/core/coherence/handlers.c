@@ -72,9 +72,31 @@
 /* arts_handler_db_destroy is protocol-specific — the roster fan-out source
  * differs (eager/MRMW walk home->last_sent_version; lazy walks rw_holder +
  * cached_ranks + pending_rw) — so its whole body lives in
- * coherence/{eager,lazy,mrmw}.c.  All three skeletons run fan-out +
- * arts_db_fail_trigger_pending FIRST, then arts_route_table_set_destroyed
- * LAST. */
+ * coherence/{eager,lazy,mrmw}.c.  All three skeletons run the roster fan-out,
+ * then arts_route_table_set_destroyed; any waiter left parked at destroy time
+ * (UB per OCR) is cleaned up by the refcount-0 cache destructor. */
+
+/* NO_ACQUIRE home normalization.  The creator neither acquires nor releases,
+ * so the home is the sole idle owner.  Every home create path seeds a
+ * create-time RW hold (cache_init CREATOR_HOME / arts_db_home_init) that, for
+ * NO_ACQUIRE, no EDT will ever release.  That seed must be undone so the first
+ * real acquirer is granted rather than blocked behind a hold nothing releases.
+ * Mirrors the local-create path: under a single-writer lock the unreleased hold
+ * deadlocks every future writer; the ownership protocols collapse the seed to
+ * the sentinel (writer_count = 1).  Idempotent and safe to call on every create
+ * path (fresh install and lazy-stub coalesce). */
+static inline void db_create_no_acquire_idle(struct arts_db_s *db,
+                                             bool no_acquire) {
+  if (!no_acquire) {
+    return;
+  }
+#if defined(ARTS_PROTOCOL_LOCK)
+  atomic_store_explicit(&db->cache.cache_state, 0ULL, memory_order_relaxed);
+  atomic_store_explicit(&db->lock_state, 0ULL, memory_order_relaxed);
+#else
+  db->cache.writer_count = 1;
+#endif
+}
 
 void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
   /* Home-side init for non-home creator.  Per coherence design plan
@@ -118,6 +140,7 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
     } else {
       arts_db_create_publish_holder(db, creator_rank);
     }
+    db_create_no_acquire_idle(db, no_acquire);
     arts_shared_release(&existing_h);
     return;
   }
@@ -140,8 +163,8 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
    * block is undefined" -- ARTS interprets this as "before any writer
    * has published, no data exists; reading is application's
    * responsibility"). */
-  struct arts_db_s *stub =
-      (struct arts_db_s *)arts_malloc_align(sizeof(struct arts_db_s), 16);
+  struct arts_db_s *stub = (struct arts_db_s *)arts_malloc_align(
+      sizeof(struct arts_db_s), ARTS_CACHE_LINE_SIZE);
   memset(stub, 0, sizeof(struct arts_db_s));
   stub->db_type = (arts_db_types_t)p->db_type;
   if (no_acquire) {
@@ -156,7 +179,11 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
      * drives writer_count to 0, triggering advance_chain and the GRANT. */
     arts_db_cache_init(&stub->cache, db_guid, db_size,
                        ARTS_DB_INIT_CREATOR_HOME, creator_rank);
-    stub->cache.writer_count = 1; /* sentinel only: creator never releases */
+    /* Collapse the create-time creator hold to the idle/sentinel state:
+     * MRNEW/MRSW drop writer_count 2 -> 1 (sentinel only); LOCK frees the
+     * lock+cache state so the first OWNERSHIP_REQUEST / LOCK_REQUEST is granted
+     * rather than blocked behind a hold no EDT will ever release. */
+    db_create_no_acquire_idle(stub, no_acquire);
     if (db_size > 0) {
       arts_db_buf_install(&stub->cache, /*new_version=*/1,
                           /*data_payload=*/NULL, db_size);
@@ -198,6 +225,7 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
     } else {
       arts_db_create_publish_holder(db, creator_rank);
     }
+    db_create_no_acquire_idle(db, no_acquire);
   }
   if (winner != NULL) {
     arts_shared_release(&winner_h);
@@ -295,14 +323,15 @@ void arts_handler_db_snapshot_response(void *item_v, void *args_v) {
  * dispatcher's MISS branch SILENTLY DROPS (already torn down on this rank;
  * cb-NULL = idempotent, a second DESTROY_NOTIFY is a no-op).
  *
- * cb-model destroy (single-actor): no destroy_state gate.  fail_trigger FIRST
- * so the cache is alive while we wake waiters (mark_delete drops only the
- * install ref; the cb deleter frees once outstanding lookup refs drain). */
+ * Destroy is just the route-slot detach (CAS value→NULL + drop the install
+ * ref); the cb deleter (arts_db_cache_destructor) runs at refcount 0 and does
+ * the cleanup (free the parked-waiter nodes).  Destroying a DB that an EDT
+ * still has a pending dependence on is undefined per OCR (ocrDbDestroy: the
+ * user ensures the DB is not in use), so no parked-EDT wake is attempted. */
 void arts_handler_db_cache_destroy(void *item_v, void *args_v) {
-  struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
+  (void)item_v;
   struct arts_db_cache_destroy_args_s *a =
       (struct arts_db_cache_destroy_args_s *)args_v;
-  arts_db_fail_trigger_pending(cache);
   (void)arts_route_table_set_destroyed(a->db_guid);
 }
 

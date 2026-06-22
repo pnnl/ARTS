@@ -62,6 +62,8 @@ char *extract_nodelist_lsf(const char *envr, int stride, unsigned int *cnt) {
   int ele = 0;
   lsf_nodes = getenv(envr);
   if (lsf_nodes == NULL) {
+    *cnt = 0; /* define the out-param on every path so callers never read
+                 garbage */
     return NULL;
   }
   if (stride <= 0) {
@@ -84,7 +86,16 @@ char *extract_nodelist_lsf(const char *envr, int stride, unsigned int *cnt) {
       count++;
     }
   }
-  node_list[list_str_length - 1] = '\0';
+  /* The loop appends "<host>," for each distinct non-first token, so
+   * list_str_length is 0 when nothing was appended (e.g. a single host, the
+   * common 1-node case).  Strip the trailing ',' only when one exists;
+   * otherwise terminate at index 0 (an unsigned (0-1) index would be a wild
+   * OOB write). */
+  if (list_str_length > 0) {
+    node_list[list_str_length - 1] = '\0';
+  } else {
+    node_list[0] = '\0';
+  }
   *cnt = count;
   return node_list;
 }
@@ -108,24 +119,42 @@ arts_config_find_variable(struct arts_config_variable_s **head,
   char *overide = getenv(string);
   if (overide) {
     unsigned int size = strlen(overide);
+    /* value[] is a flexible array and the copy below writes size+1 bytes
+     * (including the terminating NUL), so the allocation must reserve size+1
+     * (not size) trailing bytes. */
     struct arts_config_variable_s *new_var =
         (struct arts_config_variable_s *)arts_malloc(
-            sizeof(struct arts_config_variable_s) + size);
+            sizeof(struct arts_config_variable_s) + size + 1);
 
     new_var->size = size;
-    memcpy(new_var->variable, string, strlen(string) + 1);
+    /* Default the link to NULL so the not-found / append case below leaves a
+     * well-formed tail; the found case overwrites it with next->next. */
+    new_var->next = NULL;
+    /* variable[] is a fixed char[255]; bound the name copy so an over-long key
+     * cannot overflow it. */
+    size_t name_len = strlen(string);
+    if (name_len >= sizeof(new_var->variable)) {
+      name_len = sizeof(new_var->variable) - 1;
+    }
+    memcpy(new_var->variable, string, name_len);
+    new_var->variable[name_len] = '\0';
     memcpy(new_var->value, overide, size + 1);
 
-    if (last) {
+    if (next) {
+      /* Found: splice the replacement in place of `next`. */
+      new_var->next = next->next;
+      if (last) {
+        last->next = new_var;
+      } else {
+        *head = new_var;
+      }
+      arts_free(next);
+    } else if (last) {
+      /* Not found, non-empty list: append as the new tail (next stays NULL). */
       last->next = new_var;
     } else {
-      new_var->next = *head;
+      /* Not found, empty list: prepend. */
       *head = new_var;
-    }
-
-    if (next) {
-      new_var->next = next->next;
-      arts_free(next);
     }
     return new_var;
   }
@@ -346,6 +375,12 @@ void arts_config_create_routing_table(struct arts_config_s **config,
   if (!(*config)->master_boot) {
     char *part;
     while ((part = arts_get_next_partition(&node_list))) {
+      /* The table is calloc'd with exactly node_count entries; never index past
+       * it even if the node_list string parses to more hosts than config->nodes
+       * (a user misconfiguration).  current_node is the running write index. */
+      if (current_node >= node_count) {
+        break;
+      }
       char *node_begin = strtok(part, "[");
       char *next = strtok(NULL, "[");
       if (next) {
@@ -355,6 +390,9 @@ void arts_config_create_routing_table(struct arts_config_s **config,
         do {
           node_begin = strtok(node_begin, ",");
           next = node_begin + strlen(node_begin) + 1;
+          if (current_node >= node_count) {
+            break; /* table full — never write past node_count entries */
+          }
           if (node_begin) {
             node_begin = strtok(node_begin, "-");
             char *node_end = strtok(NULL, "-");
@@ -375,6 +413,9 @@ void arts_config_create_routing_table(struct arts_config_s **config,
               }
 
               while (start != stop + 1) {
+                if (current_node >= node_count) {
+                  break;
+                }
                 table[current_node].rank = current_node;
                 table[current_node].ip_address =
                     arts_config_get_slurm_hostname(name, node_begin, start);
@@ -424,6 +465,9 @@ void arts_config_create_routing_table(struct arts_config_s **config,
       node_begin = strtok(node_begin, ",");
       if (node_begin == NULL) {
         break;
+      }
+      if (current_node >= node_count) {
+        break; /* table is full (node_count entries); never write past it */
       }
       next = node_begin + strlen(node_begin) + 1;
 
@@ -479,6 +523,9 @@ void arts_config_create_routing_table(struct arts_config_s **config,
           }
 
           while (start != stop + direction) {
+            if (current_node >= node_count) {
+              break;
+            }
             char hostname[512];
             (void)snprintf(hostname, sizeof(hostname), "%s%0*u", base_name,
                            pad_width, start);

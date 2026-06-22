@@ -212,7 +212,7 @@ void arts_rank_bitset_for_each(const struct arts_rank_bitset_s *r,
  *   Producers — foreign-rank acquire_remote_rw, multi-threaded; push prepends
  *               to the head via release-CAS.
  *   Consumer  — single home-side dispatcher
- *               (drain_pending_rw_after_grant / fail_trigger_pending /
+ *               (drain_pending_rw_after_grant /
  *                handle_destroy_req).  drain atomic-exchanges the whole chain
  *                out; for_each walks the live chain non-destructively.
  *

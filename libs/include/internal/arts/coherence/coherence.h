@@ -200,11 +200,13 @@ void await_writeback_ack(sem_t *cv);
  * installed).  Used by the per-protocol acquire bodies. */
 void *arts_db_acquire_local(struct arts_db_cache_s *cache);
 
-/* Fire SNAPSHOT_REQUEST (edt_guid + slot) to home and PARK.  Shared by all
- * three protocol acquire bodies. */
+/* Fire SNAPSHOT_REQUEST (edt_guid + slot) to home and PARK.  Shared by the
+ * MRNEW/MRSW/MRMW acquire bodies (not LOCK, which uses LOCK_REQUEST). */
+#if !defined(ARTS_PROTOCOL_LOCK)
 arts_db_acquire_result_t
 arts_db_acquire_remote_ro(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
                           unsigned int slot);
+#endif
 
 /* Wake a parked EDT's dep slot (re-derives dep->ptr from the installed buffer).
  * Used by the drain paths and the response handlers. */
@@ -212,14 +214,8 @@ void mark_edt_ready_by_guid(arts_guid_t edt_guid, unsigned int slot);
 
 /* Drain the snapshot reorder buffer in one atomic_exchange (monotonic version
  * guarantees a full drain is always correct).  Called from the install paths
- * (GRANT / TRANSFER_OWNERSHIP / DATA_RESPONSE case 2) and destroy fan-out. */
+ * (GRANT / TRANSFER_OWNERSHIP / DATA_RESPONSE case 2). */
 void arts_db_drain_pending_snapshot(struct arts_db_cache_s *cache);
-
-/* Destroy/fail fan-out: wake every parked waiter (RW FIFO + snapshot reorder
- * buffer) with a NULL ptr so the EDT observes the destroyed DB.  The RW-queue
- * drain is protocol-specific (eager/lazy drain pending_rw, MRMW has none);
- * all arms drain pending_snapshot via arts_db_drain_pending_snapshot. */
-void arts_db_fail_trigger_pending(struct arts_db_cache_s *cache);
 
 /* Shared cache_s construct/destruct sub-helpers.  The per-protocol
  * arts_db_cache_init / arts_db_cache_destructor wrap these, preserving the

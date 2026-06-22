@@ -110,7 +110,7 @@ int first_fit(uint64_t mask, uint64_t size, unsigned int total_threads) {
   for (unsigned int i = 0; i < arts_node_info.gpu; i++) {
     int index = (int)((i + (unsigned int)random) % arts_node_info.gpu);
     uint64_t check_mask = (uint64_t)1 << index;
-    if (mask && check_mask) {
+    if (mask & check_mask) {
       if (try_reserve(index, size, total_threads)) {
         ARTS_DEBUG("Reserved Successfully on %u\n", index);
         return index;
@@ -126,7 +126,7 @@ int round_robin_fit(uint64_t mask, uint64_t size, unsigned int total_threads) {
   for (unsigned int i = 0; i < arts_node_info.gpu; i++) {
     int index = (int)((i + start) % arts_node_info.gpu);
     uint64_t check_mask = (uint64_t)1 << index;
-    if (mask && check_mask) {
+    if (mask & check_mask) {
       if (try_reserve(index, size, total_threads)) {
         ARTS_DEBUG("Reserved Successfully on %u\n", index);
         return index;
@@ -143,7 +143,7 @@ int best_fit(uint64_t mask, uint64_t size, unsigned int total_threads) {
   for (unsigned int i = 0; i < arts_node_info.gpu; i++) {
     int index = (int)((i + (unsigned int)random) % arts_node_info.gpu);
     uint64_t check_mask = (uint64_t)1 << index;
-    if (mask && check_mask) {
+    if (mask & check_mask) {
       if (selected_gpu != -1) {
         if (arts_gpus[index].avail_global_mem - size >
             selected_gpu_avail_size) {
@@ -170,7 +170,7 @@ int worst_fit(uint64_t mask, uint64_t size, unsigned int total_threads) {
   for (unsigned int i = 0; i < arts_node_info.gpu; i++) {
     int index = (int)((i + (unsigned int)random) % arts_node_info.gpu);
     uint64_t check_mask = (uint64_t)1 << index;
-    if (mask && check_mask) {
+    if (mask & check_mask) {
       if (selected_gpu != -1) {
         if (arts_gpus[index].avail_global_mem - size <
             selected_gpu_avail_size) {
@@ -236,7 +236,11 @@ int all_or_nothing(void *edt_packet) {
   uint64_t size = (sizeof(uint64_t) * paramc) +
                   (sizeof(arts_edt_dep_t) * depc) +
                   get_db_size_needed(depc, depv);
-  uint64_t mask = 0;
+  // Intersection of every dependency's GPU-presence set: a candidate GPU must
+  // hold ALL dependencies.  The identity element for intersection is the full
+  // set (all ones), so seed with ~0 and AND each lookup in; an empty depc keeps
+  // the full set, and any dep resident nowhere zeroes the mask.
+  uint64_t mask = ~(uint64_t)0;
   for (unsigned int i = 0; i < depc; ++i) {
     mask &= arts_gpu_lookup_db(depv[i].guid);
   }
@@ -293,7 +297,7 @@ int hash_on_db_zero(void *edt_packet) {
                   get_db_size_needed(depc, depv);
   uint64_t key = (depv[0].guid) ? arts_guid_get_key(depv[0].guid) : 0;
   int index = (int)(key % (uint64_t)arts_node_info.gpu);
-  if ((unsigned int)index > arts_node_info.gpu) {
+  if ((unsigned int)index >= arts_node_info.gpu) {
     ARTS_ERROR("GPU stream hash failed: index %d >= gpu count %u", index,
                arts_node_info.gpu);
   }

@@ -50,7 +50,17 @@
 #define ALIGNMENT 16
 #define IS_POWER_OF_TWO(x) (!((x) & ((x) - 1)))
 
-typedef struct ARTS_ALIGNED(64) arts_alloc_header_s {
+/* Internal per-allocation bookkeeping — NOT a shared (multi-thread) object: it
+ * is written once at allocation and read only by free/realloc of that same
+ * allocation, never concurrently.  It therefore needs no cache-line isolation.
+ * It MUST stay at the base allocator alignment (ALIGNMENT): the plain
+ * arts_malloc path places this header directly on the address returned by the
+ * system malloc (16-byte aligned), so over-aligning it (e.g. to 64) would make
+ * every header access on that path a misaligned-access UB.  Keeping the header
+ * a multiple of ALIGNMENT also preserves the system 16-byte user alignment for
+ * arts_malloc; shared objects that need a full cache line use arts_malloc_align
+ * (ARTS_CACHE_LINE_SIZE) instead. */
+typedef struct ARTS_ALIGNED(ALIGNMENT) arts_alloc_header_s {
   size_t size;
   size_t align; // 0 if not aligned
   void *base;
@@ -149,6 +159,10 @@ void *arts_realloc(void *ptr, size_t size) {
   arts_alloc_header_t *old_hdr = (arts_alloc_header_t *)ptr - 1;
   size_t old_size = old_hdr->size;
   if (size <= old_size) {
+    /* In-place shrink: the stored size becomes the authority for the eventual
+     * free, so the footprint must be adjusted by the freed delta now to stay
+     * balanced (free will only subtract the new, smaller size). */
+    DECREMENT_BYTES_MEMORY_FOOTPRINT_BY(old_size - size);
     old_hdr->size = size;
     return ptr;
   }

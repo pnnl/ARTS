@@ -27,9 +27,9 @@
  *      releaser rank, where the post runs) — no per-cache seq state, no
  *      busy-wait.
  *
- *   4. Destroy lifecycle (arts_db_destroy_remote public entry +
- *      fail_trigger_pending).  Final teardown is driven by the cb
- *      (shared-ptr) deferred-free model: destroy fans out, then
+ *   4. Destroy lifecycle (arts_db_destroy_remote public entry).  Final teardown
+ *      is driven by the cb (shared-ptr) deferred-free model: destroy fans out,
+ *      then
  *      arts_route_table_set_destroyed frees the cache_s via
  *      arts_db_cache_destructor once all refs drain.
  */
@@ -95,9 +95,14 @@ void arts_db_cache_common_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
   } else if (kind == ARTS_DB_INIT_CREATOR_HOME) {
     arts_db_home_init(db_self, self, n);
     db_self->home_initialized = true;
-    c->writer_count = 2; /* sentinel + creator EDT */
-  } else if (kind == ARTS_DB_INIT_CREATOR_REMOTE) {
+#if !defined(ARTS_PROTOCOL_LOCK)
+    /* MRNEW/MRSW/MRMW: writer_count tracks ownership (sentinel + creator). */
     c->writer_count = 2;
+#endif
+  } else if (kind == ARTS_DB_INIT_CREATOR_REMOTE) {
+#if !defined(ARTS_PROTOCOL_LOCK)
+    c->writer_count = 2;
+#endif
   }
   /* Eager/MRMW WRITEBACK ACK rendezvous is a stack-local sem_t per
    * release_rw (pointer-identity match) — no per-cache seq fields to
@@ -121,9 +126,8 @@ void arts_db_cache_common_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
  * slot's DB and stamp depv[slot].ptr accordingly.
  *
  * Cross-TU: the snapshot-response handler (coherence_handlers.c) resumes a
- * parked EDT by (edt_guid, slot) directly; the destroy path
- * (fail_trigger_pending) wakes parked EDTs on destroy-fail (NULL ptr semantics
- * — EDT observes destroyed DB). */
+ * parked EDT by (edt_guid, slot) directly; the refcount-0 cache destructor
+ * delivers a NULL ptr to any waiter still parked at destroy. */
 void mark_edt_ready_by_guid(arts_guid_t edt_guid, unsigned int slot) {
   if (edt_guid == NULL_GUID) {
     return;
@@ -148,13 +152,32 @@ void mark_edt_ready_by_guid(arts_guid_t edt_guid, unsigned int slot) {
     if (db != NULL && db->db_type == ARTS_DB) {
       struct arts_db_cache_s *cache = &db->cache;
       /* Acquire the EDT's strong ref on the buffer; release_one_dep drops it
-       * (via buf_from_data(ptr)->cb) when the EDT finishes.  The buf handle is
-       * not released here — that ref is the EDT's hold.  depv[slot].ptr aliases
-       * buf->data, the canonical user-visible payload. */
+       * (via buf_from_data(ptr)->cb) when the EDT finishes.  depv[slot].ptr
+       * aliases buf->data, the canonical user-visible payload. */
       arts_shared_ptr_t buf_h = arts_db_buf_acquire(cache);
       struct arts_db_buffer_s *buf =
           (struct arts_db_buffer_s *)arts_shared_get(buf_h);
-      depv[slot].ptr = buf ? buf->data : NULL;
+      void *data = buf ? buf->data : NULL;
+      /* Idempotent slot claim.  Two delivery paths can wake the SAME
+       * (edt, slot) — e.g. a snapshot_response case-2 drain racing a direct
+       * response.  The slot resolves exactly once: CAS depv[slot].ptr
+       * NULL->data so only the first wake keeps its buffer ref (the EDT's hold)
+       * and accounts; a loser drops the extra ref it just took and returns
+       * WITHOUT accounting — no double-decrement of acquire_remaining, no
+       * buffer-ref leak.  (A NULL data resolution is the destroyed-DB / UB
+       * path; it does not claim and falls through to account, matching legacy
+       * behavior.) */
+      if (data != NULL) {
+        void *expected = NULL;
+        if (!atomic_compare_exchange_strong((_Atomic(void *) *)&depv[slot].ptr,
+                                            &expected, data)) {
+          arts_db_buf_release(&buf_h); /* lost: release the extra ref */
+          arts_shared_release(&db_h);
+          arts_shared_release(&edt_h);
+          return;
+        }
+        /* won: keep buf_h as the EDT's hold (do not release it here). */
+      }
     }
     arts_shared_release(&db_h);
   }
@@ -196,7 +219,8 @@ arts_shared_ptr_t arts_db_cache_lazy_install(arts_guid_t db_guid,
    * directory (this rank is not the GUID home).  arts_db_cache_stub_size()
    * spans cache + db_type, stopping before the home fields. */
   uint64_t stub_sz = arts_db_cache_stub_size();
-  struct arts_db_s *stub = (struct arts_db_s *)arts_malloc_align(stub_sz, 16);
+  struct arts_db_s *stub =
+      (struct arts_db_s *)arts_malloc_align(stub_sz, ARTS_CACHE_LINE_SIZE);
   memset(stub, 0, stub_sz);
   stub->db_type = ARTS_DB;
 
@@ -243,20 +267,20 @@ void *arts_db_acquire_local(struct arts_db_cache_s *cache) {
 
 /* ===== Case 7: remote-RO / remote-snapshot path =================== */
 
+#if !defined(ARTS_PROTOCOL_LOCK)
 arts_db_acquire_result_t
 arts_db_acquire_remote_ro(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
                           unsigned int slot) {
-  /* No list registration (plan: "acquire 시 list 등록 안 함").  Fire
-   * SNAPSHOT_REQUEST carrying edt_guid + slot and PARK; the matching
-   * SNAPSHOT_RESPONSE at this rank resumes the EDT directly (case 1/2),
-   * or — only under transport reorder — case 3 pushes a reorder-buffer
-   * node onto pending_snapshot.  A concurrent destroy is handled by the
-   * caller's lookup-miss + OoO defer (route_item NULL-store precedes the
-   * destroy_state CAS); no per-waiter destroy precheck is needed here. */
+  /* No list registration.  Fire SNAPSHOT_REQUEST carrying edt_guid + slot and
+   * PARK; the matching SNAPSHOT_RESPONSE at this rank resumes the EDT directly
+   * (case 1/2), or — only under transport reorder — case 3 pushes a
+   * reorder-buffer node onto pending_snapshot.  A concurrent destroy is handled
+   * by the caller's lookup-miss + OoO defer. */
   unsigned int home_rank = arts_guid_get_rank(cache->db_guid);
   arts_send_db_snapshot_request(home_rank, cache->db_guid, edt_guid, slot);
   return ARTS_DB_ACQUIRE_PARK;
 }
+#endif /* !ARTS_PROTOCOL_LOCK */
 
 /* The 8-case acquire dispatcher arts_handler_db_acquire is protocol-specific:
  * EAGER and LAZY define it in coherence/ownership.c-backed
@@ -326,22 +350,19 @@ void await_writeback_ack(sem_t *cv) {
  * coherence/{eager,lazy,mrmw}.c.  Eager and MRMW call await_writeback_ack
  * above for the synchronous-WRITEBACK rendezvous. */
 
+#if !defined(ARTS_PROTOCOL_LOCK)
 void arts_db_release_ro(struct arts_db_cache_s *cache) {
-  /* RO release is also no-op here — the EDT's buf ref is dropped by
-   * release_one_dep's DIST branch via release_buf (matching the
-   * acquire_buf in mark_edt_ready_by_guid / acquire_local). */
+  /* RO release is a no-op for MRNEW/MRSW/MRMW: the EDT's buf ref is dropped
+   * by release_one_dep's DIST branch via release_buf (matching the
+   * acquire_buf in mark_edt_ready_by_guid / acquire_local).
+   * LOCK defines its own arts_db_release_ro in coherence/lock/release.c. */
   (void)cache;
 }
+#endif /* !ARTS_PROTOCOL_LOCK */
 
 /* ================================================================== */
 /* ===== Destroy lifecycle ========================================== */
 /* ================================================================== */
-
-/* arts_db_fail_trigger_pending (destroy/fail wake of parked waiters) is
- * protocol-specific: EAGER/LAZY drain the pending_rw FIFO
- * (coherence/ownership.c), MRMW has no pending_rw (coherence/mrmw.c).
- * Both arms then drain the snapshot reorder buffer via
- * arts_db_drain_pending_snapshot above. */
 
 /* ===== arts_db_destroy_remote public API ============================= */
 
