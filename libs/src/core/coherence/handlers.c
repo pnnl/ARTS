@@ -91,8 +91,29 @@ static inline void db_create_no_acquire_idle(struct arts_db_s *db,
     return;
   }
 #if defined(ARTS_PROTOCOL_LOCK)
+#if defined(ARTS_TIMING_LAZY)
+  /* LAZY: data lives with the owner, not the home.  With no creator hold there
+   * is no owner unless we make one — so the home rank (this rank; the create
+   * handler runs only on the GUID home, see the assert in
+   * arts_handler_db_create) becomes the IDLE data owner: it holds the zero-init
+   * buffer (installed by the create flow) with owner-bit set but rw_st=IDLE,
+   * wc=0.  The first writer's REQUEST then migrates that zero buffer from here,
+   * exactly like a sticky owner that has finished its writers.  lock_state is
+   * the idle directory naming this rank as owner. */
+  atomic_store_explicit(&db->cache.cache_state,
+                        CACHE_MAKE_FULL(1u, CACHE_ST_IDLE, CACHE_ST_IDLE,
+                                        ARTS_LOCK_NO_TARGET, 0u, 0u),
+                        memory_order_relaxed);
+  atomic_store_explicit(&db->lock_state,
+                        LOCK_MAKE(LOCK_PHASE_IDLE, arts_global_rank_id, 0u, 0u),
+                        memory_order_relaxed);
+#else  /* ARTS_TIMING_EAGER */
+  /* EAGER: the home holds the canonical buffer and grants from it; the creator
+   * is a non-owner.  Idle both words (the first LOCK_REQUEST is granted, not
+   * blocked behind the unreleased creator hold). */
   atomic_store_explicit(&db->cache.cache_state, 0ULL, memory_order_relaxed);
   atomic_store_explicit(&db->lock_state, 0ULL, memory_order_relaxed);
+#endif /* ARTS_TIMING_* */
 #else
   db->cache.writer_count = 1;
 #endif

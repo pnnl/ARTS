@@ -187,7 +187,7 @@ cmake_dependent_option(ARTS_USE_LOCAL_CUDA_ARCHITECTURES
 #                            consistency actions (release-time vs acquire-time).
 #                            Ignored by MRMW.
 set(ARTS_COHERENCE_PROTOCOL "MRNEW" CACHE STRING
-    "Coherence protocol (admission policy): MRNEW (default, = OCR), MRMW (DB-DRF, evaluation only), MRSW (single-writer; OCR-superset), or LOCK (lock-based, eager-only)")
+    "Coherence protocol (admission policy): MRNEW (default, = OCR), MRMW (DB-DRF, evaluation only), MRSW (single-writer; OCR-superset), or LOCK (lock-based Entry-Consistency)")
 set_property(CACHE ARTS_COHERENCE_PROTOCOL PROPERTY STRINGS MRNEW MRMW MRSW LOCK)
 set(ARTS_PROTOCOL_TIMING "LAZY" CACHE STRING
     "Timing of MRNEW/MRSW consistency actions: EAGER or LAZY (default); ignored by MRMW")
@@ -280,22 +280,24 @@ elseif(ARTS_COHERENCE_PROTOCOL STREQUAL "LOCK")
   # LOCK (lock-based, Entry-Consistency-style): a DB is held in one access mode
   # at a time (RO-shared or RW-exclusive); reader/writer are time-exclusive;
   # writers are passive (park, no invalidate push); all inter-node transitions
-  # serialize through the GUID home's single lock_state word.  Eager-only:
-  # RW writeback happens once at lock-release, not per db-release.  LOCK-LAZY is
-  # a future track and is not built here.
+  # serialize through the GUID home's single lock_state word.
   #
-  # LOCK is its own protocol axis: define ONLY ARTS_PROTOCOL_LOCK.  Do NOT define
-  # ARTS_TIMING_EAGER — the per-protocol selection chains (ooo.h, ooo.c,
-  # coherence/types.h) match ARTS_TIMING_EAGER ahead of (or as a fallthrough vs)
-  # the LOCK arm, so emitting it would mis-route LOCK into MRNEW's eager TUs.
-  # EAGER is enforced as a config constraint (FATAL below), not a compile define.
+  # LOCK is its own protocol axis: define ARTS_PROTOCOL_LOCK plus the timing
+  # macro (ARTS_TIMING_EAGER or ARTS_TIMING_LAZY).  Do NOT define
+  # ARTS_TIMING_EAGER without also checking ARTS_PROTOCOL_LOCK first — the
+  # per-protocol selection chains (ooo.h, ooo.c, coherence/types.h) match
+  # ARTS_TIMING_EAGER ahead of the LOCK arm, so the LOCK build emits the timing
+  # macro in addition to ARTS_PROTOCOL_LOCK (not instead of it).
   add_compile_definitions(ARTS_PROTOCOL_LOCK=1)
-  if(NOT ARTS_PROTOCOL_TIMING STREQUAL "EAGER")
+  if(ARTS_PROTOCOL_TIMING STREQUAL "EAGER")
+    add_compile_definitions(ARTS_TIMING_EAGER=1)
+  elseif(ARTS_PROTOCOL_TIMING STREQUAL "LAZY")
+    add_compile_definitions(ARTS_TIMING_LAZY=1)
+  else()
     message(FATAL_ERROR
-            "ARTS_COHERENCE_PROTOCOL=LOCK is eager-only; set "
-            "ARTS_PROTOCOL_TIMING=EAGER (got: ${ARTS_PROTOCOL_TIMING})")
+            "LOCK requires ARTS_PROTOCOL_TIMING=EAGER or LAZY (got: ${ARTS_PROTOCOL_TIMING})")
   endif()
-  message(STATUS "ARTS coherence protocol: LOCK (lock-based, eager-only)")
+  message(STATUS "ARTS coherence protocol: LOCK (lock-based, ${ARTS_PROTOCOL_TIMING})")
 elseif(ARTS_COHERENCE_PROTOCOL STREQUAL "MRSW")
   # MRSW (Multi-Reader, Single-Writer): rank-granular on the MRNEW engine, with
   # the local active-writer count capped at one (a single writer_count {2,1,0}

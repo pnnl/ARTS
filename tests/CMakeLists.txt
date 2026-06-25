@@ -44,6 +44,7 @@ set(TEST_PROGRAMS
     route_table_remote_guid
     coherence_basic
     coherence_rw_chain
+    coherence_rwro_phase
     coherence_rw_ordering
     coherence_rw_ro_rw
     coherence_rw_rw_chain_seal
@@ -441,7 +442,8 @@ register_single_node_test(event_destroy_race TIMEOUT 60)
 
 # Coherence tests — exercise the OCR-model ownership protocol paths
 register_single_node_test(coherence_basic ARGS 32 0 0 0)
-register_single_node_test(coherence_rw_chain ARGS 4)
+register_single_node_test(coherence_rw_chain)
+register_single_node_test(coherence_rwro_phase)
 register_single_node_test(coherence_rw_ordering)
 register_single_node_test(coherence_rw_ro_rw)
 register_single_node_test(coherence_rw_rw_chain_seal)
@@ -673,6 +675,8 @@ register_multinode_test(coherence_home_producer_ro TIMEOUT 30)
 register_multinode_test(coherence_zero_size_xfer TIMEOUT 30)
 register_multinode_test(coherence_rw_multihop TIMEOUT 30)
 register_multinode_test(coherence_rw_pipeline TIMEOUT 40)
+register_multinode_test(coherence_rw_chain TIMEOUT 30)
+register_multinode_test(coherence_rwro_phase TIMEOUT 30)
 
 register_multinode_test(multinode_stdout_forward)
 set_tests_properties(multinode_stdout_forward_2n PROPERTIES

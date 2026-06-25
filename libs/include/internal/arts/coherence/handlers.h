@@ -318,6 +318,55 @@ void arts_send_db_lock_release(unsigned int home_rank, arts_guid_t db_guid,
 void arts_send_db_lock_release_ack(unsigned int releaser_rank,
                                    arts_guid_t db_guid, uint64_t cv);
 
+#ifdef ARTS_TIMING_LAZY
+/* ===== LOCK-LAZY handlers (Cat-C direct dispatch; stubs until Tasks 5-6) = */
+
+/* arts_handler_db_lock_forward: Cat-C @owner.  item_v is the full wire packet
+ * (arts_msg_lock_forward_packet_s *); the handler looks up the db_s internally
+ * by ->db_guid.  Handles home→owner forward: either migrate RW to a new owner
+ * or serve one RO reader directly from the owner's buffer. */
+void arts_handler_db_lock_forward(void *item_v);
+
+/* arts_handler_db_lock_deliver: Cat-C @target.  payload is the full wire
+ * buffer (header + inline data); size is total bytes (data starts at
+ * sizeof(arts_msg_lock_deliver_packet_s)).  Installs data + transitions cache
+ * state (GRANT or RO-hold) and drains any pending local acquires. */
+void arts_handler_db_lock_deliver(void *payload, size_t size);
+
+/* arts_handler_db_lock_confirm: Cat-C @home.  item_v is the full wire packet
+ * (arts_msg_lock_confirm_packet_s *); the handler looks up the db_s internally
+ * by ->db_guid.  New owner → home: migration complete; home transitions
+ * lock_state and serves the next waiter if any.  packet->rank = new owner. */
+void arts_handler_db_lock_confirm(void *item_v);
+
+/* arts_handler_db_lock_roret: Cat-C @home.  item_v is the full wire packet
+ * (arts_msg_lock_confirm_packet_s *); the handler looks up the db_s internally
+ * by ->db_guid.  Reader → home: RO release (data-less); home decrements the
+ * reader count and serves the next waiter when the count reaches zero.
+ * packet->rank = the returning reader. */
+void arts_handler_db_lock_roret(void *item_v);
+
+/* ===== LOCK-LAZY senders (stubs until Tasks 5-6) ========================= */
+
+/* arts_send_db_lock_forward: home → current owner.  mode=DB_MODE_RW requests
+ * migration to target rank; mode=DB_MODE_RO requests serving one RO reader. */
+void arts_send_db_lock_forward(unsigned int owner_rank, arts_guid_t db_guid,
+                               uint32_t mode, uint32_t target);
+
+/* arts_send_db_lock_deliver: owner → target.  Versionless (LOCK serialization
+ * guarantees ordering); data follows the fixed header inline. */
+void arts_send_db_lock_deliver(unsigned int target_rank, arts_guid_t db_guid,
+                               uint32_t mode, const void *data,
+                               uint64_t data_size);
+
+/* arts_send_db_lock_confirm: new owner → home: migration done. */
+void arts_send_db_lock_confirm(unsigned int home_rank, arts_guid_t db_guid);
+
+/* arts_send_db_lock_roret: reader → home: RO release (data-less). */
+void arts_send_db_lock_roret(unsigned int home_rank, arts_guid_t db_guid);
+
+#endif /* ARTS_TIMING_LAZY */
+
 #endif /* ARTS_PROTOCOL_LOCK */
 
 #ifdef __cplusplus

@@ -1,123 +1,117 @@
-/******************************************************************************
-** This material was prepared as an account of work sponsored by an agency   **
-** of the United States Government.  Neither the United States Government    **
-** nor the United States Department of Energy, nor Battelle, nor any of      **
-** their employees, nor any jurisdiction or organization that has cooperated **
-** in the development of these materials, makes any warranty, express or     **
-** implied, or assumes any legal liability or responsibility for the accuracy,*
-** completeness, or usefulness or any information, apparatus, product,       **
-** software, or process disclosed, or represents that its use would not      **
-** infringe privately owned rights.                                          **
-**                                                                           **
-** Reference herein to any specific commercial product, process, or service  **
-** by trade name, trademark, manufacturer, or otherwise does not necessarily **
-** constitute or imply its endorsement, recommendation, or favoring by the   **
-** United States Government or any agency thereof, or Battelle Memorial      **
-** Institute. The views and opinions of authors expressed herein do not      **
-** necessarily state or reflect those of the United States Government or     **
-** any agency thereof.                                                       **
-**                                                                           **
-**                      PACIFIC NORTHWEST NATIONAL LABORATORY                **
-**                                  operated by                              **
-**                                    BATTELLE                               **
-**                                     for the                               **
-**                      UNITED STATES DEPARTMENT OF ENERGY                   **
-**                         under Contract DE-AC05-76RL01830                  **
-**                                                                           **
-** Copyright 2019 Battelle Memorial Institute                                **
-** Licensed under the Apache License, Version 2.0 (the "License");           **
-** you may not use this file except in compliance with the License.          **
-** You may obtain a copy of the License at                                   **
-**                                                                           **
-**    https://www.apache.org/licenses/LICENSE-2.0                            **
-**                                                                           **
-** Unless required by applicable law or agreed to in writing, software       **
-** distributed under the License is distributed on an "AS IS" BASIS, WITHOUT **
-** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
-** License for the specific language governing permissions and limitations   **
-******************************************************************************/
-#include <stdlib.h>
+/* SPDX-License-Identifier: Apache-2.0
+ *
+ * coherence_rw_chain — ordered RW migration chain + value preservation.
+ *
+ * A single counter DB is RW-acquired by a CHAIN of writer EDTs spread across
+ * ranks (writer i on rank i % nranks).  Writer i+1 is gated on writer i's
+ * output_event, so the runtime's release-before-satisfy rule (OCR §1.6.2: an
+ * EDT completes the release of all its data blocks before its post-event is
+ * satisfied) gives writer i+1 a happens-before edge to writer i: it acquires
+ * the DB only after writer i released it, hence observes writer i's increment.
+ * A plain (non-atomic) increment is therefore correct — the chain is strictly
+ * ordered, not racy.  Across ranks this drives the LOCK-LAZY ownership
+ * MIGRATION chain (DB hops rank→rank); single-node it is the owner local-hit
+ * path.
+ *
+ * A final RO reader, gated on the last writer's output_event, asserts the
+ * counter equals the number of writers (model invariant I2: the owner's value
+ * is preserved across every migration).  Portable (arts.h + arts_rt only): it
+ * asserts COHERENCE, so it passes on every protocol/timing build.
+ */
 
 #include "arts.h"
 
-unsigned int num_writes = 0;
-arts_guid_t db_guid;
-arts_guid_t *write_guids;
+#include <stdint.h>
+#include <stdio.h>
 
-void write_test(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                arts_edt_dep_t depv[]) {
-  (void)depc;
-  unsigned int index = paramv[0];
-  unsigned int *array = (unsigned int *)depv[0].ptr;
-  //    if(array)
-  //    {
-  for (unsigned int i = index; i < num_writes; i++) {
-    array[i] = index;
-  }
-  //    }
-  if (paramc > 1) {
-    arts_printf("-----------------SIGNALLING NEXT %u\n", index);
-    arts_add_dependence((arts_guid_t)(0), (arts_guid_t)paramv[1], -1,
-                        DB_MODE_VAL);
-  } else {
-    for (unsigned int i = 0; i < num_writes; i++) {
-      arts_printf("i: %u %u\n", i, array[i]);
-    }
-    arts_shutdown();
-  }
-}
+#define N_WRITERS 12 /* > nranks so the DB migrates around several times */
 
-void node_setup(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                arts_edt_dep_t depv[]) {
+/* Writer: depv[0] = counter DB (RW).  depv[1] (when present) = previous
+ * writer's output_event (NULL/control) — the chain edge.  Increment is
+ * HB-ordered after the previous writer, so a plain ++ observes the committed
+ * prior value. */
+static void writer_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                       arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
-  (void)depv;
-  uint64_t args[2];
-  for (uint64_t i = 0; i < num_writes; i++) {
-    if (arts_guid_is_local(write_guids[i])) {
-      args[0] = i;
-
-      if (i < num_writes - 1) {
-        args[1] = write_guids[i + 1];
-        arts_edt_create(write_test, 2, args, 2,
-                        &(arts_edt_hint_t){.guid = write_guids[i]});
-      } else {
-        arts_edt_create(write_test, 1, args, 2,
-                        &(arts_edt_hint_t){.guid = write_guids[i]});
-      }
-      arts_add_dependence(db_guid, write_guids[i], 0, DB_MODE_RW);
-    }
+  uint64_t *counter = (uint64_t *)depv[0].ptr;
+  if (counter != NULL) {
+    *counter += 1u;
   }
+}
+
+/* Verify: depv[0] = last writer's output_event (NULL), depv[1] = counter DB
+ * (RO).  Gated on the whole chain completing, so it reads committed data. */
+static void verify_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
+                       arts_edt_dep_t depv[]) {
+  (void)paramc;
+  (void)depc;
+  unsigned int n = (unsigned int)paramv[0];
+  const uint64_t *counter = (const uint64_t *)depv[1].ptr;
+  uint64_t got = (counter != NULL) ? *counter : 0u;
+  if (got != (uint64_t)n) {
+    (void)fprintf(stderr, "FAIL: coherence_rw_chain counter=%llu (want %u)\n",
+                  (unsigned long long)got, n);
+    arts_abort(1);
+  }
+  arts_printf("coherence_rw_chain: %u-writer migration chain, counter=%llu "
+              "— PASS\n",
+              n, (unsigned long long)got);
+  arts_shutdown();
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
               arts_edt_dep_t depv[]) {
   (void)paramc;
+  (void)paramv;
   (void)depc;
   (void)depv;
-  char **argv = (char **)paramv[1];
-  db_guid = arts_guid_reserve(ARTS_GUID_DB, 0);
 
-  num_writes = strtol(argv[1], NULL, 10);
-  write_guids = (arts_guid_t *)malloc(sizeof(arts_guid_t) * num_writes);
-  for (unsigned int i = 0; i < num_writes; i++) {
-    write_guids[i] =
-        arts_guid_reserve(ARTS_GUID_EDT, i % arts_get_total_ranks());
+  arts_printf("=== coherence_rw_chain (%d writers) ===\n", N_WRITERS);
+
+  unsigned int nranks = arts_get_total_ranks();
+
+  /* Counter DB on rank 0, initialized to 0 and RELEASED before any writer is
+   * wired (release-before-satisfy: the first writer must not acquire stale). */
+  void *cp = NULL;
+  arts_guid_t counter =
+      arts_db_create(&cp, sizeof(uint64_t), ARTS_DB, ARTS_DB_PROP_NONE,
+                     &(arts_db_hint_t){.rank = 0u});
+  if (counter == NULL_GUID || cp == NULL) {
+    (void)fprintf(stderr, "FAIL: counter DB create\n");
+    arts_abort(1);
+  }
+  *(uint64_t *)cp = 0u;
+  arts_db_release(counter, DB_MODE_RW);
+
+  /* One LATCH output_event per writer — fires at that writer's epilogue, after
+   * its DB release publishes the increment. */
+  arts_guid_t oe[N_WRITERS];
+  for (unsigned int i = 0; i < N_WRITERS; i++) {
+    oe[i] = arts_event_create(&ARTS_EVENT_HINT_LATCH(1));
   }
 
-  unsigned int *ptr = (unsigned int *)arts_db_create_with_guid(
-      db_guid, sizeof(unsigned int) * num_writes, ARTS_DB, ARTS_DB_PROP_NONE,
-      NULL);
-  for (unsigned int i = 0; i < num_writes; i++) {
-    ptr[i] = 0;
+  /* Chain: writer i on rank i%nranks, output_event=oe[i]; depends on the
+   * counter (RW, slot 0) and, for i>0, on oe[i-1] (NULL/control, slot 1). */
+  for (unsigned int i = 0; i < N_WRITERS; i++) {
+    unsigned int r = (nranks > 1u) ? (i % nranks) : 0u;
+    uint32_t edepc = (i == 0u) ? 1u : 2u;
+    arts_guid_t w =
+        arts_edt_create(writer_edt, 0, NULL, edepc,
+                        &(arts_edt_hint_t){.rank = r, .output_event = oe[i]});
+    arts_add_dependence(counter, w, 0, DB_MODE_RW);
+    if (i > 0u) {
+      arts_add_dependence(oe[i - 1u], w, 1, DB_MODE_NULL);
+    }
   }
 
-  for (unsigned int n = 0; n < arts_get_total_ranks(); n++) {
-    arts_edt_create(node_setup, 0, NULL, 0, &(arts_edt_hint_t){.rank = n});
-  }
-
-  arts_add_dependence((arts_guid_t)(0), write_guids[0], -1, DB_MODE_VAL);
+  /* Verify gated on the last writer's output_event + the counter (RO). */
+  uint64_t vp[1] = {(uint64_t)N_WRITERS};
+  arts_guid_t v =
+      arts_edt_create(verify_edt, 1, vp, 2, &(arts_edt_hint_t){.rank = 0u});
+  arts_add_dependence(oe[N_WRITERS - 1], v, 0, DB_MODE_NULL);
+  arts_add_dependence(counter, v, 1, DB_MODE_RO);
 }
 
 int main(int argc, char **argv) {

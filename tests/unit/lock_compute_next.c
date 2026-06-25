@@ -26,11 +26,11 @@
 
 #include <stdio.h>
 
-#if !defined(ARTS_PROTOCOL_LOCK)
+#if !defined(ARTS_PROTOCOL_LOCK) || !defined(ARTS_TIMING_EAGER)
 int main(void) {
   printf(
-      "PASS lock_compute_next: skipped (LOCK-only; lock_state machine exists "
-      "only in the LOCK protocol)\n");
+      "PASS lock_compute_next: skipped (EAGER LOCK-only; the EAGER lock_state "
+      "machine [state_bit|w|r] exists only in the LOCK+EAGER build)\n");
   return 0;
 }
 #else
@@ -168,10 +168,6 @@ void arts_transport_loopback_post(const void *packet, unsigned int size) {
   (void)packet;
   (void)size;
 }
-void arts_handler_db_lock_grant(void *payload, size_t size) {
-  (void)payload;
-  (void)size;
-}
 arts_shared_ptr_t arts_db_buf_acquire(struct arts_db_cache_s *cache) {
   (void)cache;
   return NULL;
@@ -216,5 +212,5 @@ bool arts_route_table_set_destroyed(arts_guid_t key) {
 #endif /* ARTS_PROTOCOL_LOCK */
 
 #if defined(ARTS_PROTOCOL_LOCK)
-#include "core/coherence/lock/home.c"
+#include "core/coherence/lock/arbiters.c"
 #endif

@@ -102,6 +102,13 @@ enum arts_msg_type {
    * so lock_home_grant cannot run before the new data is at home.  RO
    * releases are fire-and-forget and never send this message. */
   MSG_DB_LOCK_RELEASE_ACK,
+  /* LOCK-LAZY-only messages (FORWARD / DELIVER / CONFIRM / RORET).
+   * Used only in ARTS_COHERENCE_PROTOCOL=LOCK + ARTS_PROTOCOL_TIMING=LAZY
+   * builds.  Sequential append, no gaps. */
+  MSG_DB_LOCK_FORWARD, /* home → current owner: serve RO reader or migrate RW */
+  MSG_DB_LOCK_DELIVER, /* owner → target: data + mode (no version field) */
+  MSG_DB_LOCK_CONFIRM, /* new owner → home: migration complete */
+  MSG_DB_LOCK_RORET,   /* reader → home: RO release (data-less) */
 
   MSG_COUNT, /* sentinel — keep last; used for array sizing */
 };
@@ -363,6 +370,39 @@ struct ARTS_PACKED arts_msg_lock_release_ack_packet_s {
   arts_guid_t db_guid;
   uint64_t cv; /* releaser's sem_t address, forwarded verbatim from RELEASE */
 };
+
+/* ===== LOCK-LAZY-only wire packets =========================================
+ * Sent only between ranks compiled with LOCK+LAZY.  Members unconditional;
+ * structs inside the ARTS_PROTOCOL_LOCK guard so they share the LOCK types. */
+#ifdef ARTS_TIMING_LAZY
+/* LOCK_FORWARD: home → current owner.  mode=DB_MODE_RW → migrate ownership to
+ * target; mode=DB_MODE_RO → serve one RO reader at target. */
+struct ARTS_PACKED arts_msg_lock_forward_packet_s {
+  struct arts_msg_header_s header;
+  arts_guid_t db_guid;
+  uint32_t mode;   /* DB_MODE_RW = migrate, DB_MODE_RO = serve reader */
+  uint32_t target; /* migrate: new-owner rank; serve: reader rank */
+};
+
+/* LOCK_DELIVER: owner → target.  Carries the DB data inline.  NO version
+ * field — LOCK uses versionless buffer-install (exclusive-lock serialization
+ * guarantees no stale write can race; mirrors the EAGER GRANT layout). */
+struct ARTS_PACKED arts_msg_lock_deliver_packet_s {
+  struct arts_msg_header_s header;
+  arts_guid_t db_guid;
+  uint32_t mode; /* DB_MODE_RW = new owner, DB_MODE_RO = reader copy */
+  uint32_t pad;
+  /* followed by: uint8_t data[db_size] */
+};
+
+/* LOCK_CONFIRM / LOCK_RORET share one struct: both are data-less
+ * db_guid-only messages (new-owner→home confirm, and reader→home RO release).
+ */
+struct ARTS_PACKED arts_msg_lock_confirm_packet_s {
+  struct arts_msg_header_s header;
+  arts_guid_t db_guid;
+};
+#endif /* ARTS_TIMING_LAZY */
 #endif /* ARTS_PROTOCOL_LOCK */
 
 #include "arts/system/threads.h"

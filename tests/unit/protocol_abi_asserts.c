@@ -104,8 +104,15 @@ _Static_assert(MSG_DB_LOCK_RELEASE == 25,
                "ordinal MSG_DB_LOCK_RELEASE drifted");
 _Static_assert(MSG_DB_LOCK_RELEASE_ACK == 26,
                "ordinal MSG_DB_LOCK_RELEASE_ACK drifted");
-_Static_assert(MSG_COUNT == 27,
-               "MSG_COUNT drifted (wire-compat: must be 27 in all 6 configs)");
+_Static_assert(MSG_DB_LOCK_FORWARD == 27,
+               "ordinal MSG_DB_LOCK_FORWARD drifted");
+_Static_assert(MSG_DB_LOCK_DELIVER == 28,
+               "ordinal MSG_DB_LOCK_DELIVER drifted");
+_Static_assert(MSG_DB_LOCK_CONFIRM == 29,
+               "ordinal MSG_DB_LOCK_CONFIRM drifted");
+_Static_assert(MSG_DB_LOCK_RORET == 30, "ordinal MSG_DB_LOCK_RORET drifted");
+_Static_assert(MSG_COUNT == 31,
+               "MSG_COUNT drifted (wire-compat: must be 31 in all 6 configs)");
 
 /* ===== (2) header layout — read before the message type is known. ===== */
 _Static_assert(offsetof(struct arts_msg_header_s, message_type) == 0,
@@ -186,6 +193,14 @@ _Static_assert(sizeof(struct arts_msg_lock_release_packet_s) == 48,
                "lock_release sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_lock_release_ack_packet_s) == 32,
                "lock_release_ack sizeof drifted");
+#ifdef ARTS_TIMING_LAZY
+_Static_assert(sizeof(struct arts_msg_lock_forward_packet_s) == 32,
+               "lock_forward sizeof drifted");
+_Static_assert(sizeof(struct arts_msg_lock_deliver_packet_s) == 32,
+               "lock_deliver sizeof drifted");
+_Static_assert(sizeof(struct arts_msg_lock_confirm_packet_s) == 24,
+               "lock_confirm sizeof drifted");
+#endif /* ARTS_TIMING_LAZY */
 #endif
 #endif /* !SEQUENCENUMBERS */
 
@@ -221,6 +236,9 @@ int main(void) {
 #ifdef ARTS_PROTOCOL_LOCK
       {"LOCK_GRANT", sizeof(struct arts_msg_lock_grant_packet_s), 1},
       {"LOCK_RELEASE", sizeof(struct arts_msg_lock_release_packet_s), 1},
+#ifdef ARTS_TIMING_LAZY
+      {"LOCK_DELIVER", sizeof(struct arts_msg_lock_deliver_packet_s), 1},
+#endif
 #endif
   };
 

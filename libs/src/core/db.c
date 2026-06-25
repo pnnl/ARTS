@@ -380,13 +380,32 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
              * same reason the remote DB_CREATE handler stamps writer_count = 1
              * for NO_ACQUIRE. */
 #if defined(ARTS_PROTOCOL_LOCK)
-            /* NO_ACQUIRE: undo the create-time creator RW seed (cache_init /
-             * home_init) → free lock, so the first real acquirer is granted
+#if defined(ARTS_TIMING_LAZY)
+            /* LAZY: data lives with the owner, not the home — with no creator
+             * hold there is no owner unless we make one.  This rank (the GUID
+             * home, where a local create runs) becomes the IDLE data owner: it
+             * holds the zero-init buffer (installed by db_create_in_place) with
+             * owner-bit set but rw_st=IDLE, wc=0.  The first writer's REQUEST
+             * migrates that zero buffer from here.  lock_state is the idle
+             * directory naming this rank as owner. */
+            atomic_store_explicit(&((struct arts_db_s *)ptr)->cache.cache_state,
+                                  CACHE_MAKE_FULL(1u, CACHE_ST_IDLE,
+                                                  CACHE_ST_IDLE,
+                                                  ARTS_LOCK_NO_TARGET, 0u, 0u),
+                                  memory_order_relaxed);
+            atomic_store_explicit(
+                &((struct arts_db_s *)ptr)->lock_state,
+                LOCK_MAKE(LOCK_PHASE_IDLE, arts_global_rank_id, 0u, 0u),
+                memory_order_relaxed);
+#else  /* ARTS_TIMING_EAGER */
+            /* EAGER: the home holds the canonical buffer; undo the create-time
+             * creator RW seed → free lock, so the first acquirer is granted
              * rather than blocked behind a hold no EDT will ever release. */
             atomic_store_explicit(&((struct arts_db_s *)ptr)->cache.cache_state,
                                   0ULL, memory_order_relaxed);
             atomic_store_explicit(&((struct arts_db_s *)ptr)->lock_state, 0ULL,
                                   memory_order_relaxed);
+#endif /* ARTS_TIMING_* */
 #else
             ((struct arts_db_s *)ptr)->cache.writer_count = 1;
 #endif
@@ -418,13 +437,32 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
              * same reason the remote DB_CREATE handler stamps writer_count = 1
              * for NO_ACQUIRE. */
 #if defined(ARTS_PROTOCOL_LOCK)
-            /* NO_ACQUIRE: undo the create-time creator RW seed (cache_init /
-             * home_init) → free lock, so the first real acquirer is granted
+#if defined(ARTS_TIMING_LAZY)
+            /* LAZY: data lives with the owner, not the home — with no creator
+             * hold there is no owner unless we make one.  This rank (the GUID
+             * home, where a local create runs) becomes the IDLE data owner: it
+             * holds the zero-init buffer (installed by db_create_in_place) with
+             * owner-bit set but rw_st=IDLE, wc=0.  The first writer's REQUEST
+             * migrates that zero buffer from here.  lock_state is the idle
+             * directory naming this rank as owner. */
+            atomic_store_explicit(&((struct arts_db_s *)ptr)->cache.cache_state,
+                                  CACHE_MAKE_FULL(1u, CACHE_ST_IDLE,
+                                                  CACHE_ST_IDLE,
+                                                  ARTS_LOCK_NO_TARGET, 0u, 0u),
+                                  memory_order_relaxed);
+            atomic_store_explicit(
+                &((struct arts_db_s *)ptr)->lock_state,
+                LOCK_MAKE(LOCK_PHASE_IDLE, arts_global_rank_id, 0u, 0u),
+                memory_order_relaxed);
+#else  /* ARTS_TIMING_EAGER */
+            /* EAGER: the home holds the canonical buffer; undo the create-time
+             * creator RW seed → free lock, so the first acquirer is granted
              * rather than blocked behind a hold no EDT will ever release. */
             atomic_store_explicit(&((struct arts_db_s *)ptr)->cache.cache_state,
                                   0ULL, memory_order_relaxed);
             atomic_store_explicit(&((struct arts_db_s *)ptr)->lock_state, 0ULL,
                                   memory_order_relaxed);
+#endif /* ARTS_TIMING_* */
 #else
             ((struct arts_db_s *)ptr)->cache.writer_count = 1;
 #endif

@@ -96,12 +96,20 @@ enum arts_ooo_kind {
  * remote-created DB's lazy_install cache can fire a request/writeback before
  * that DB's home CREATE arrives, so the message reaches home with db_s not yet
  * installed ⇒ OoO push, replayed on the CREATE handler's drain. */
-#if defined(ARTS_PROTOCOL_LOCK)
+#if defined(ARTS_PROTOCOL_LOCK) && defined(ARTS_TIMING_EAGER)
   OOO_DB_ACQUIRE, /* → arts_db_acquire_replay_dep (re-attempts the one deferred
                      local dep; pushed by arts_db_acquire_all's per-dep 3-way)
                    */
   OOO_DB_LOCK_REQUEST, /* → arts_handler_db_lock_request @ home */
   OOO_DB_LOCK_RELEASE, /* → arts_handler_db_lock_release @ home */
+#elif defined(ARTS_PROTOCOL_LOCK) && defined(ARTS_TIMING_LAZY)
+  OOO_DB_ACQUIRE, /* → arts_db_acquire_replay_dep (re-attempts the one deferred
+                     local dep; pushed by arts_db_acquire_all's per-dep 3-way)
+                   */
+  OOO_DB_LOCK_REQUEST, /* → arts_handler_db_lock_request @ home */
+/* NO OOO_DB_LOCK_RELEASE: LAZY has no synchronous writeback release; the
+ * DELIVER/CONFIRM/RORET messages are all direct-dispatched (Cat-C, target
+ * provably installed by the time these messages arrive). */
 #elif defined(ARTS_TIMING_EAGER)
   OOO_DB_ACQUIRE, /* → arts_db_acquire_replay_dep (re-attempts the one deferred
                      local dep; pushed by arts_db_acquire_all's per-dep 3-way)
@@ -134,7 +142,7 @@ enum arts_ooo_kind {
                               transfer) */
 #else
 #error                                                                         \
-    "exactly one of ARTS_PROTOCOL_LOCK, ARTS_TIMING_{EAGER,LAZY}, or ARTS_PROTOCOL_MRMW must be defined"
+    "exactly one of ARTS_PROTOCOL_LOCK+ARTS_TIMING_{EAGER,LAZY}, ARTS_TIMING_{EAGER,LAZY} (MRNEW/MRSW), or ARTS_PROTOCOL_MRMW must be defined"
 #endif
 
   OOO_KIND_COUNT /* sentinel — g_ooo_table size (per-model) */

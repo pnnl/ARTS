@@ -485,9 +485,11 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
   }
   /* ===== lazy-only message dispatch ========================================
    * These slots are only sent between ranks compiled with the lazy coherence
-   * protocol.  The lazy build routes them to full handlers; the eager build
-   * fatals immediately to catch a binary mode mismatch between ranks. */
-#ifdef ARTS_TIMING_LAZY
+   * protocol (MRNEW/MRSW).  The LOCK protocol has its own lazy messages
+   * (FORWARD/DELIVER/CONFIRM/RORET) dispatched in the ARTS_PROTOCOL_LOCK block
+   * below.  The eager build fatals immediately to catch a binary mode mismatch.
+   */
+#if defined(ARTS_TIMING_LAZY) && !defined(ARTS_PROTOCOL_LOCK)
   case MSG_DB_SNAPSHOT_REDIRECT: {
     ARTS_DEBUG("Lazy REDIRECT_RO Received");
     struct arts_msg_snapshot_redirect_packet_s *pack =
@@ -527,15 +529,16 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     arts_shared_release(&h);
     break;
   }
-#else  /* !ARTS_TIMING_LAZY */
+#else  /* eager build or LOCK (LOCK has its own lazy messages below) */
   case MSG_DB_SNAPSHOT_REDIRECT:
   case MSG_DB_OWNERSHIP_CONFIRM_ACK: {
-    ARTS_ERROR("eager build received lazy-only message type %d from rank %u — "
-               "binary mode mismatch?",
-               packet->message_type, packet->rank);
+    ARTS_ERROR(
+        "non-MRNEW/MRSW-lazy build received MRNEW/MRSW-lazy message type %d "
+        "from rank %u — binary mode mismatch?",
+        packet->message_type, packet->rank);
     break;
   }
-#endif /* ARTS_TIMING_LAZY */
+#endif /* ARTS_TIMING_LAZY && !ARTS_PROTOCOL_LOCK */
   /* OWNERSHIP_CONFIRM: both timings (new owner C → home A flips rw_holder +
    * advances the round).  LAZY additionally replies with CONFIRM_ACK; EAGER's
    * home handler does not (the new owner already drained at
@@ -572,10 +575,13 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     break;
   }
 #endif /* OWNERSHIP_CONFIRM model dispatch */
-  /* LOCK has its own REQUEST/GRANT/RELEASE wire (below); it has no
-   * ownership/snapshot/writeback handlers, so the legacy coherence cases are
-   * excluded from LOCK builds (each is already guarded above). */
+  /* LOCK has its own REQUEST wire (both timings) and timing-specific grant/
+   * release messages.  The legacy coherence cases are excluded from LOCK builds
+   * (each is already guarded above). */
 #ifdef ARTS_PROTOCOL_LOCK
+  /* MSG_DB_LOCK_REQUEST is shared: both EAGER and LAZY home-dispatch via OoO
+   * (a REQUEST can arrive before the home db_s is installed on a remote-create
+   * lazy-install path). */
   case MSG_DB_LOCK_REQUEST: {
     ARTS_DEBUG("Coh LOCK_REQUEST Received");
     struct arts_msg_lock_request_packet_s *pack =
@@ -589,6 +595,8 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
                                     sizeof(args));
     break;
   }
+#ifdef ARTS_TIMING_EAGER
+  /* EAGER-only: synchronous grant/release/release-ack round-trip. */
   case MSG_DB_LOCK_GRANT: {
     ARTS_DEBUG("Coh LOCK_GRANT Received");
     /* Cat-C: the grant receiver always sent its own REQUEST first, so its cache
@@ -645,6 +653,34 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     }
     break;
   }
+#endif /* ARTS_TIMING_EAGER */
+#ifdef ARTS_TIMING_LAZY
+  /* LAZY-only: async migration/serve protocol.
+   * All four are Cat-C (direct): their target is always installed by the time
+   * the message arrives — FORWARD/DELIVER targets a cache built at acquire;
+   * CONFIRM/RORET reach home only after home sent FORWARD, so home db_s exists.
+   */
+  case MSG_DB_LOCK_FORWARD: {
+    ARTS_DEBUG("Coh LOCK_FORWARD Received");
+    arts_handler_db_lock_forward((void *)packet);
+    break;
+  }
+  case MSG_DB_LOCK_DELIVER: {
+    ARTS_DEBUG("Coh LOCK_DELIVER Received");
+    arts_handler_db_lock_deliver((void *)packet, (size_t)packet->size);
+    break;
+  }
+  case MSG_DB_LOCK_CONFIRM: {
+    ARTS_DEBUG("Coh LOCK_CONFIRM Received");
+    arts_handler_db_lock_confirm((void *)packet);
+    break;
+  }
+  case MSG_DB_LOCK_RORET: {
+    ARTS_DEBUG("Coh LOCK_RORET Received");
+    arts_handler_db_lock_roret((void *)packet);
+    break;
+  }
+#endif /* ARTS_TIMING_LAZY */
 #endif /* ARTS_PROTOCOL_LOCK */
   default: {
     ARTS_INFO("Unknown Packet %d %d %d", packet->message_type, packet->size,

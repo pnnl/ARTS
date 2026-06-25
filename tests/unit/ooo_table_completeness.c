@@ -57,7 +57,9 @@ MK_HANDLER(arts_handler_db_snapshot_request)
 MK_HANDLER(arts_handler_db_writeback)
 #if defined(ARTS_PROTOCOL_LOCK)
 MK_HANDLER(arts_handler_db_lock_request)
+#ifdef ARTS_TIMING_EAGER
 MK_HANDLER(arts_handler_db_lock_release)
+#endif
 #elif defined(ARTS_TIMING_EAGER) || defined(ARTS_TIMING_LAZY)
 MK_HANDLER(arts_handler_db_ownership_request)
 #endif
@@ -93,10 +95,13 @@ static const struct expect_s g_expect[] = {
     E(OOO_EDT_DESTROY, arts_handler_edt_destroy),
     E(OOO_EVENT_DESTROY, arts_handler_event_destroy),
     E(OOO_DB_DESTROY, arts_handler_db_destroy),
-#if defined(ARTS_PROTOCOL_LOCK)
+#if defined(ARTS_PROTOCOL_LOCK) && defined(ARTS_TIMING_EAGER)
     E(OOO_DB_ACQUIRE, arts_db_acquire_replay_dep),
     E(OOO_DB_LOCK_REQUEST, arts_handler_db_lock_request),
     E(OOO_DB_LOCK_RELEASE, arts_handler_db_lock_release),
+#elif defined(ARTS_PROTOCOL_LOCK) && defined(ARTS_TIMING_LAZY)
+    E(OOO_DB_ACQUIRE, arts_db_acquire_replay_dep),
+    E(OOO_DB_LOCK_REQUEST, arts_handler_db_lock_request),
 #elif defined(ARTS_TIMING_EAGER)
     E(OOO_DB_ACQUIRE, arts_db_acquire_replay_dep),
     E(OOO_DB_SNAPSHOT_REQUEST, arts_handler_db_snapshot_request),
@@ -125,8 +130,10 @@ _Static_assert(OOO_KIND_COUNT == N_EXPECT,
 
 int main(void) {
   const char *cfg =
-#if defined(ARTS_PROTOCOL_LOCK)
-      "LOCK"
+#if defined(ARTS_PROTOCOL_LOCK) && defined(ARTS_TIMING_EAGER)
+      "LOCK+EAGER"
+#elif defined(ARTS_PROTOCOL_LOCK) && defined(ARTS_TIMING_LAZY)
+      "LOCK+LAZY"
 #elif defined(ARTS_TIMING_EAGER)
       "MR*+EAGER"
 #elif defined(ARTS_TIMING_LAZY)
