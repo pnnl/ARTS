@@ -357,6 +357,28 @@ if(BUILD_CUDA_LIBRARY)
     endif()
 endif()
 
+# Link mimalloc-static when selected.  The OBJECT library arts_utils needs
+# the include dir at compile time (for malloc.c's #include <mimalloc.h>);
+# target_link_libraries on an OBJECT target propagates INTERFACE properties
+# (include dirs) to its compilation unit without introducing a link dep.
+if(ARTS_MALLOC STREQUAL "mimalloc")
+    target_link_libraries(arts_utils PRIVATE mimalloc-static)
+    if(ARTS_BUILD_STATIC)
+        target_link_libraries(arts_static PRIVATE mimalloc-static)
+    endif()
+    if(ARTS_BUILD_SHARED)
+        target_link_libraries(arts_shared PRIVATE mimalloc-static)
+    endif()
+    if(BUILD_CUDA_LIBRARY)
+        if(ARTS_BUILD_STATIC)
+            target_link_libraries(arts_cuda_static PRIVATE mimalloc-static)
+        endif()
+        if(ARTS_BUILD_SHARED)
+            target_link_libraries(arts_cuda_shared PRIVATE mimalloc-static)
+        endif()
+    endif()
+endif()
+
 # Create alias targets for convenience (prefer shared over static)
 if(ARTS_BUILD_SHARED)
     add_library(ARTS::arts ALIAS arts_shared)

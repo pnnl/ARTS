@@ -36,8 +36,27 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
+/* Thin wrappers over the active allocator (mimalloc when ARTS_MALLOC_MIMALLOC,
+ * else the C library).  Validation is delegated to the allocator wherever it
+ * already does it: overflow (nmemb*size) and bad alignment (zero / not a power
+ * of two) both surface as a NULL return, which the wrappers turn into a fatal
+ * error.  The only ARTS-level guards are the size==0 -> NULL contract and a
+ * uniform minimum alignment, so over-alignment behaves identically regardless
+ * of which allocator the build selected.
+ *
+ * No per-allocation bookkeeping header is stored: the allocator already tracks
+ * every block's size internally (it must, for free to work), so the
+ * memory-footprint counter reads that size back with the allocator's own
+ * usable-size query rather than duplicating it.  Aligned allocations use the
+ * allocator's native aligned entry points, which return a directly-freeable
+ * pointer — no manual over-allocate-and-offset, no stored base.  Consequences:
+ * the footprint counts the allocator's usable size (>= the requested size — the
+ * true resident cost, rounding included), and arts_realloc yields only the base
+ * allocator alignment (an over-aligned block must not be grown through realloc;
+ * nothing in the tree does). */
 #include "arts/utils/malloc.h"
 
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -47,104 +66,120 @@
 #include "arts/cxl/wrapper.h"
 #endif
 
+#ifdef ARTS_MALLOC_MIMALLOC
+#include <mimalloc.h>
+#define ARTS_SYS_MALLOC(sz) mi_malloc(sz)
+#define ARTS_SYS_CALLOC(n, sz) mi_calloc((n), (sz))
+#define ARTS_SYS_REALLOC(p, sz) mi_realloc((p), (sz))
+#define ARTS_SYS_FREE(p) mi_free(p)
+#define ARTS_SYS_USABLE(p) mi_usable_size(p)
+#else
+#include <malloc.h> /* malloc_usable_size */
+#define ARTS_SYS_MALLOC(sz) malloc(sz)
+#define ARTS_SYS_CALLOC(n, sz) calloc((n), (sz))
+#define ARTS_SYS_REALLOC(p, sz) realloc((p), (sz))
+#define ARTS_SYS_FREE(p) free(p)
+#define ARTS_SYS_USABLE(p) malloc_usable_size(p)
+#endif
+
+/* Uniform minimum (and base) alignment.  Every power-of-two >= ALIGNMENT is
+ * also a multiple of sizeof(void*), which is exactly posix_memalign's extra
+ * requirement, so the two allocator backends accept the same alignment set. */
 #define ALIGNMENT 16
-#define IS_POWER_OF_TWO(x) (!((x) & ((x) - 1)))
 
-/* Internal per-allocation bookkeeping — NOT a shared (multi-thread) object: it
- * is written once at allocation and read only by free/realloc of that same
- * allocation, never concurrently.  It therefore needs no cache-line isolation.
- * It MUST stay at the base allocator alignment (ALIGNMENT): the plain
- * arts_malloc path places this header directly on the address returned by the
- * system malloc (16-byte aligned), so over-aligning it (e.g. to 64) would make
- * every header access on that path a misaligned-access UB.  Keeping the header
- * a multiple of ALIGNMENT also preserves the system 16-byte user alignment for
- * arts_malloc; shared objects that need a full cache line use arts_malloc_align
- * (ARTS_CACHE_LINE_SIZE) instead. */
-typedef struct ARTS_ALIGNED(ALIGNMENT) arts_alloc_header_s {
-  size_t size;
-  size_t align; // 0 if not aligned
-  void *base;
-} arts_alloc_header_t;
+/* Native aligned allocation returning a directly-freeable pointer.  Returns
+ * NULL for an invalid (zero / non-power-of-two) alignment — the allocator
+ * validates it. */
+static inline void *sys_malloc_aligned(size_t size, size_t align) {
+#ifdef ARTS_MALLOC_MIMALLOC
+  return mi_malloc_aligned(size, align);
+#else
+  void *p = NULL;
+  return posix_memalign(&p, align, size) == 0 ? p : NULL;
+#endif
+}
 
-static inline void *align_pointer(void *ptr, size_t align) {
-  return (void *)(((uintptr_t)ptr + align - 1) & ~(align - 1));
+/* Native aligned + zeroed allocation.  mimalloc has a native entry that zeroes,
+ * overflow-checks, and validates the alignment; the C library has none, so fall
+ * back to aligned + memset with an explicit product-overflow guard. */
+static inline void *sys_calloc_aligned(size_t nmemb, size_t size,
+                                       size_t align) {
+#ifdef ARTS_MALLOC_MIMALLOC
+  return mi_calloc_aligned(nmemb, size, align);
+#else
+  if (size > SIZE_MAX / nmemb) {
+    return NULL;
+  }
+  size_t total = nmemb * size;
+  void *p = NULL;
+  if (posix_memalign(&p, align, total) != 0) {
+    return NULL;
+  }
+  memset(p, 0, total);
+  return p;
+#endif
 }
 
 void *arts_malloc(size_t size) {
   if (!size) {
     return NULL;
   }
-
-  arts_alloc_header_t *base =
-      (arts_alloc_header_t *)malloc(size + sizeof(arts_alloc_header_t));
-  if (!base) {
-    ARTS_ERROR("arts_malloc: system malloc failed (size=%zu)", size);
+  void *p = ARTS_SYS_MALLOC(size);
+  if (!p) {
+    ARTS_ERROR("arts_malloc: out of memory (size=%zu)", size);
   }
-  INCREMENT_BYTES_MEMORY_FOOTPRINT_BY(size);
-
-  base->size = size;
-  base->align = 0;
-  base->base = base;
-
-  return base + 1;
+  INCREMENT_BYTES_MEMORY_FOOTPRINT_BY(ARTS_SYS_USABLE(p));
+  return p;
 }
 
-void *arts_malloc_align(size_t size, size_t align) {
-  if (!size || align < ALIGNMENT || !IS_POWER_OF_TWO(align)) {
-    ARTS_ERROR("arts_malloc_align: invalid params (size=%zu, align=%zu)", size,
-               align);
+void *arts_malloc_aligned(size_t size, size_t align) {
+  if (!size) {
+    return NULL;
   }
-
-  void *base = malloc(size + align - 1 + sizeof(arts_alloc_header_t));
-  if (!base) {
-    ARTS_ERROR("arts_malloc_align: system malloc failed (size=%zu, align=%zu)",
+  if (align < ALIGNMENT) {
+    ARTS_ERROR("arts_malloc_aligned: align %zu below minimum %d", align,
+               ALIGNMENT);
+  }
+  void *p = sys_malloc_aligned(size, align);
+  if (!p) {
+    ARTS_ERROR("arts_malloc_aligned: bad alignment or out of memory "
+               "(size=%zu, align=%zu)",
                size, align);
   }
-  INCREMENT_BYTES_MEMORY_FOOTPRINT_BY(size);
-
-  void *aligned =
-      align_pointer((char *)base + sizeof(arts_alloc_header_t), align);
-  arts_alloc_header_t *hdr = (arts_alloc_header_t *)aligned - 1;
-
-  hdr->size = size;
-  hdr->align = align;
-  hdr->base = base;
-
-  return aligned;
+  INCREMENT_BYTES_MEMORY_FOOTPRINT_BY(ARTS_SYS_USABLE(p));
+  return p;
 }
 
 void *arts_calloc(size_t nmemb, size_t size) {
   if (!nmemb || !size) {
     return NULL;
   }
-  if (size > SIZE_MAX / nmemb) {
-    ARTS_ERROR("arts_calloc: overflow (nmemb=%zu, size=%zu)", nmemb, size);
-    return NULL;
+  void *p =
+      ARTS_SYS_CALLOC(nmemb, size); /* zeroes + overflow-checks natively */
+  if (!p) {
+    ARTS_ERROR("arts_calloc: out of memory or overflow (nmemb=%zu, size=%zu)",
+               nmemb, size);
   }
-
-  size_t total_size = nmemb * size;
-  void *ptr = arts_malloc(total_size);
-  memset(ptr, 0, total_size);
-
-  return ptr;
+  INCREMENT_BYTES_MEMORY_FOOTPRINT_BY(ARTS_SYS_USABLE(p));
+  return p;
 }
 
-void *arts_calloc_align(size_t nmemb, size_t size, size_t align) {
+void *arts_calloc_aligned(size_t nmemb, size_t size, size_t align) {
   if (!nmemb || !size) {
     return NULL;
   }
-  if (size > SIZE_MAX / nmemb || align < ALIGNMENT || !IS_POWER_OF_TWO(align)) {
-    ARTS_ERROR(
-        "arts_calloc_align: invalid params (nmemb=%zu, size=%zu, align=%zu)",
-        nmemb, size, align);
-    return NULL;
+  if (align < ALIGNMENT) {
+    ARTS_ERROR("arts_calloc_aligned: align %zu below minimum %d", align,
+               ALIGNMENT);
   }
-
-  size_t total_size = nmemb * size;
-  void *ptr = arts_malloc_align(total_size, align);
-  memset(ptr, 0, total_size);
-
-  return ptr;
+  void *p = sys_calloc_aligned(nmemb, size, align);
+  if (!p) {
+    ARTS_ERROR("arts_calloc_aligned: bad alignment, overflow, or out of memory "
+               "(nmemb=%zu, size=%zu, align=%zu)",
+               nmemb, size, align);
+  }
+  INCREMENT_BYTES_MEMORY_FOOTPRINT_BY(ARTS_SYS_USABLE(p));
+  return p;
 }
 
 void *arts_realloc(void *ptr, size_t size) {
@@ -155,24 +190,14 @@ void *arts_realloc(void *ptr, size_t size) {
     arts_free(ptr);
     return NULL;
   }
-
-  arts_alloc_header_t *old_hdr = (arts_alloc_header_t *)ptr - 1;
-  size_t old_size = old_hdr->size;
-  if (size <= old_size) {
-    /* In-place shrink: the stored size becomes the authority for the eventual
-     * free, so the footprint must be adjusted by the freed delta now to stay
-     * balanced (free will only subtract the new, smaller size). */
-    DECREMENT_BYTES_MEMORY_FOOTPRINT_BY(old_size - size);
-    old_hdr->size = size;
-    return ptr;
+  size_t old_usable = ARTS_SYS_USABLE(ptr); /* query before realloc frees it */
+  void *p = ARTS_SYS_REALLOC(ptr, size);
+  if (!p) {
+    ARTS_ERROR("arts_realloc: out of memory (size=%zu)", size);
   }
-
-  size_t align = old_hdr->align;
-
-  void *new_ptr = align ? arts_malloc_align(size, align) : arts_malloc(size);
-  memcpy(new_ptr, ptr, old_size);
-  arts_free(ptr);
-  return new_ptr;
+  DECREMENT_BYTES_MEMORY_FOOTPRINT_BY(old_usable);
+  INCREMENT_BYTES_MEMORY_FOOTPRINT_BY(ARTS_SYS_USABLE(p));
+  return p;
 }
 
 void arts_free(void *ptr) {
@@ -184,8 +209,6 @@ void arts_free(void *ptr) {
     return; /* CXL arena-managed memory, not individually freeable */
   }
 #endif
-  arts_alloc_header_t *hdr = (arts_alloc_header_t *)ptr - 1;
-  size_t size = hdr->size;
-  free(hdr->base);
-  DECREMENT_BYTES_MEMORY_FOOTPRINT_BY(size);
+  DECREMENT_BYTES_MEMORY_FOOTPRINT_BY(ARTS_SYS_USABLE(ptr));
+  ARTS_SYS_FREE(ptr);
 }

@@ -123,7 +123,7 @@ static inline void arts_lf_pool_release(arts_lockfree_pool_t *p, void *node) {
   }
 }
 
-/* ── Batch primitives (used by tiered_pool, Task 4m-2) ─────────────────── */
+/* ── Batch primitives ───────────────────────────────────────────────────── */
 
 /** Try to detach up to `want` nodes from the top of the pool.  Walks the
  *  chain to determine the tail (or end), then DWCAS the new head.  On
@@ -175,6 +175,17 @@ static inline arts_lf_link_t *arts_lf_pool_batch_fetch(arts_lockfree_pool_t *p,
     }
     /* cur reloaded — retry walk from new top. */
   }
+}
+
+/** Pop exactly one recycled node, or NULL if the pool is empty.  Unlike
+ *  arts_lf_pool_alloc this does NOT fall back to the allocator on an empty
+ *  pool — the caller (e.g. the per-DB buffer pool, which needs a 64-byte
+ *  aligned allocation) does its own allocation on a miss.  Built on
+ *  batch_fetch(1) so it shares the DWCAS ABA-safe pop. */
+static inline arts_lf_link_t *
+arts_lf_pool_pop_or_null(arts_lockfree_pool_t *p) {
+  uint32_t got = 0;
+  return arts_lf_pool_batch_fetch(p, 1, &got); /* NULL on empty; no calloc */
 }
 
 /** Prepend a caller-owned chain of `batch_n` nodes [head .. tail] onto the

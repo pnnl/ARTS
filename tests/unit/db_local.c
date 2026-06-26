@@ -145,18 +145,22 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
   arts_db_release(local_guid, DB_MODE_RW);
 
-  // Test 2: Verify RW modifications persisted.
-  // Chain: e1 (modify) -> e2 (verify) using EW ordering through the DB.
-  // Registration order matters: e1 registered first gets EW access first.
+  // Test 2: Verify RW modifications persisted.  A PIN datablock carries no
+  // DB-level coherence, so two RW EDTs on the same DB are unordered unless an
+  // explicit completion edge chains them.  e1 (modify) publishes an
+  // output_event that gates e2 (verify), so e2 deterministically observes the
+  // modified data.
+  arts_guid_t oe1 = arts_event_create(&ARTS_EVENT_HINT_LATCH(1));
   arts_guid_t e2 =
-      arts_edt_create(check_modified, 0, NULL, 1,
+      arts_edt_create(check_modified, 0, NULL, 2,
                       &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
 
-  arts_guid_t e1 =
-      arts_edt_create(check_local_rw, 0, NULL, 1,
-                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+  arts_guid_t e1 = arts_edt_create(
+      check_local_rw, 0, NULL, 1,
+      &(arts_edt_hint_t){.rank = 0, .finish_event = fe, .output_event = oe1});
   arts_add_dependence(local_guid, e1, 0, DB_MODE_RW);
   arts_add_dependence(local_guid, e2, 0, DB_MODE_RW);
+  arts_add_dependence(oe1, e2, 1, DB_MODE_NULL); /* e2 runs after e1 releases */
 
   // Test 3: arts_db_copy_to_new_type (DB -> DB_LOCAL).
   void *src_ptr = NULL;

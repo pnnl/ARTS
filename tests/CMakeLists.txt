@@ -64,7 +64,6 @@ set(TEST_PROGRAMS
     coherence_lazy_confirm_gate
     lockfree_stack_stress
     lockfree_pool_stress
-    tiered_pool_stress
     route_table_install_race
     event_once_storm
     event_sticky_late_bind
@@ -136,6 +135,7 @@ set(TEST_PROGRAMS
     db_labeled_guid
     multinode_labeled_guid
     multinode_event_hint
+    per_db_buf_pool
     # --- Finish-EDT mechanism tests ---
     finish_event_basic
     finish_event_inherit
@@ -627,6 +627,13 @@ foreach(t ${MISC_UTIL_UNIT_TESTS})
         ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
     target_link_libraries(${t} PRIVATE Threads::Threads)
 endforeach()
+# These tests #include malloc.c directly; when mimalloc is selected the TU
+# needs <mimalloc.h> on its include path, inherited from mimalloc-static.
+if(ARTS_MALLOC STREQUAL "mimalloc")
+    foreach(t malloc_footprint_balance malloc_alignment)
+        target_link_libraries(${t} PRIVATE mimalloc-static)
+    endforeach()
+endif()
 register_pure_unit_test(malloc_footprint_balance TIMEOUT 60)
 register_pure_unit_test(malloc_alignment)
 register_pure_unit_test(diag_timestamp TIMEOUT 60)
@@ -642,6 +649,7 @@ register_single_node_test(event_hint_presets)
 
 register_single_node_test(db_labeled_guid)
 
+register_pure_unit_test(per_db_buf_pool)
 
 # --- Finish-EDT mechanism tests ---
 register_single_node_test(finish_event_basic)
@@ -719,10 +727,6 @@ register_single_node_test(lockfree_stack_stress TIMEOUT 60)
 # scenario + batch fetch / release contention.  Pure unit test, no
 # runtime needed.
 register_single_node_test(lockfree_pool_stress TIMEOUT 60)
-
-# Tiered pool stress (Task 4m-2): 3-tier (tcache + NUMA + global)
-# symmetric + asymmetric workloads.  Pure unit test, no runtime needed.
-register_single_node_test(tiered_pool_stress TIMEOUT 60)
 
 # Distributed coherence stress: B.2.  Uses arts_2n.cfg (the test SKIPs
 # cleanly if rank_count < 2).

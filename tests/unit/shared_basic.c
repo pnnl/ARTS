@@ -51,7 +51,7 @@ int main(void) {
 
   /* Atomic slot: store transfers the make ref into the slot. */
   arts_atomic_shared_ptr_t slot;
-  atomic_store(&slot, (arts_shared_ptr_t)NULL);
+  atomic_store(&slot, (arts_shared_slot_t){0});   /* empty slot {NULL, ext=0} */
   assert(arts_atomic_shared_load(&slot) == NULL); /* empty slot */
 
   arts_shared_ptr_t b = arts_shared_make(&obj_b, counting_deleter);

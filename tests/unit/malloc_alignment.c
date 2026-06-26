@@ -1,38 +1,35 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * T246 — alignment + realloc correctness of arts_malloc_align /
- * arts_calloc_align / arts_realloc in libs/src/core/utils/malloc.c.
+ * T246 — alignment + realloc correctness of arts_malloc_aligned /
+ * arts_calloc_aligned / arts_realloc in libs/src/core/utils/malloc.c.
  *
- * Properties (census 32-misc-utils.md §1.3 items 2,3 + invalid-param paths):
- *   A. arts_malloc_align(n, a) returns an a-aligned pointer for every valid
- *      power-of-two a >= 16, and arts_free recovers the real base (ASan must
- *      stay clean — no heap corruption, no leak, no double-free).
- *   B. arts_calloc_align(n, sz, a) is a-aligned AND zero-initialised.
- *   C. arts_realloc on an aligned block grows into a NEW block that (i)
- *      preserves the first min(old,new) bytes and (ii) keeps the same
- *      alignment class (still a-aligned).
- *   D. arts_realloc shrink keeps the same pointer (in place) and the data.
- *   E. size==0 / NULL-return paths that DON'T abort:
- *        arts_realloc(NULL, n) == arts_malloc(n) (aligned class lost: plain),
- *        arts_realloc(p, 0) frees and returns NULL.
+ * Properties:
+ *   A. arts_malloc_aligned(n, a) returns an a-aligned pointer for every valid
+ *      power-of-two a >= 16, and arts_free frees it directly (ASan must stay
+ *      clean — no heap corruption, no leak, no double-free).  The allocator's
+ *      native aligned entry point returns a directly-freeable pointer; there is
+ *      no manual over-allocate-and-offset and no stored base.
+ *   B. arts_calloc_aligned(n, sz, a) is a-aligned AND zero-initialised.
+ *   C. arts_realloc on an aligned block preserves the first min(old,new) bytes.
+ *      It yields only the BASE allocator alignment — the original
+ * over-alignment is intentionally NOT preserved (realloc has no alignment
+ * argument).  This is the documented contract: an over-aligned block must not
+ * be grown via realloc; the test pins that the data survives and the result is
+ * at least base-aligned. D. arts_realloc shrink preserves the data (the
+ * returned pointer may or may not equal the original — native realloc decides).
+ *   E. size==0 / NULL-return paths (no abort): arts_malloc_aligned(0,a)==NULL,
+ *      arts_realloc(NULL, n) == arts_malloc(n), arts_realloc(p, 0) frees and
+ *      returns NULL.
  *
- * INVALID-PARAM PATHS ABORT (not NULL-return): arts_malloc_align with
- * align<16 / non-power-of-two / size==0 call ARTS_ERROR -> abort.  We verify
- * one such path aborts by forking a child and checking it died via SIGABRT;
- * this also pins that the overflow/!pow2 guards are live.
+ * INVALID ALIGNMENT ABORTS: arts_malloc_aligned with align<16 hits the explicit
+ * minimum-alignment guard -> ARTS_ERROR -> abort; a zero / non-power-of-two
+ * alignment instead fails inside the allocator (NULL return), which the wrapper
+ * also turns into ARTS_ERROR -> abort.  We verify the align<16 path aborts by
+ * forking a child and checking it died via SIGABRT.
  *
  * STANDALONE STRATEGY identical to malloc_footprint_balance.c: pre-define the
- * heavy header include guards and supply minimal ARTS_ERROR / ARTS_ALIGNED /
- * footprint macros, then #include the malloc.c TU directly.
- *
- * NOTE (exposed runtime sharp edge): the allocator's internal
- * arts_alloc_header_t is declared ARTS_ALIGNED(64) but for the UNALIGNED
- * arts_malloc path the header is placed at glibc's 16-byte-aligned base, so
- * -fsanitize=undefined (alignment) reports a misaligned access to a
- * 64-byte-aligned struct.  That is a real UB sharp edge in the runtime
- * allocator; this test's correctness target is -fsanitize=address (heap
- * safety) + functional alignment of the RETURNED user pointers, which are
- * correct.
+ * heavy header include guards and supply minimal ARTS_ERROR / footprint macros,
+ * then #include the malloc.c TU directly.
  */
 
 #include <inttypes.h>
@@ -49,7 +46,6 @@ static unsigned long long g_footprint;
 
 #define ARTS_SYSTEM_PRINT_H 1
 #define ARTS_DEFS_H 1
-#define ARTS_ALIGNED(n) __attribute__((__aligned__(n)))
 #define ARTS_ERROR(...)                                                        \
   do {                                                                         \
     (void)fprintf(stderr, "ARTS_ERROR: " __VA_ARGS__);                         \
@@ -85,7 +81,7 @@ int main(void) {
     for (size_t i = 0; i < sizeof(aligns) / sizeof(aligns[0]); i++) {
       size_t a = aligns[i];
       for (size_t sz = 1; sz <= 300; sz += 37) {
-        void *p = arts_malloc_align(sz, a);
+        void *p = arts_malloc_aligned(sz, a);
         check_aligned(p, a, "malloc_align");
         /* touch full payload so ASan catches under-allocation. */
         memset(p, 0xAB, sz);
@@ -97,7 +93,7 @@ int main(void) {
   /* ===== B: calloc_align is aligned AND zeroed. ===== */
   {
     size_t a = 128;
-    unsigned char *p = (unsigned char *)arts_calloc_align(40, 3, a);
+    unsigned char *p = (unsigned char *)arts_calloc_aligned(40, 3, a);
     check_aligned(p, a, "calloc_align");
     for (size_t i = 0; i < 40 * 3; i++) {
       if (p[i] != 0) {
@@ -109,16 +105,17 @@ int main(void) {
     arts_free(p);
   }
 
-  /* ===== C: realloc grow preserves bytes + alignment class. ===== */
+  /* ===== C: realloc grow preserves bytes; result is at least base-aligned
+   *          (over-alignment intentionally not preserved). ===== */
   {
     size_t a = 256;
-    unsigned char *p = (unsigned char *)arts_malloc_align(50, a);
+    unsigned char *p = (unsigned char *)arts_malloc_aligned(50, a);
     check_aligned(p, a, "pre-grow malloc_align");
     for (int i = 0; i < 50; i++) {
       p[i] = (unsigned char)(i + 1);
     }
     unsigned char *q = (unsigned char *)arts_realloc(p, 500); /* grow */
-    check_aligned(q, a, "grown realloc"); /* alignment class preserved */
+    check_aligned(q, ALIGNMENT, "grown realloc"); /* base alignment only */
     for (int i = 0; i < 50; i++) {
       if (q[i] != (unsigned char)(i + 1)) {
         (void)fprintf(stderr, "FAIL malloc_alignment: grow lost byte %d\n", i);
@@ -130,18 +127,15 @@ int main(void) {
     arts_free(q);
   }
 
-  /* ===== D: realloc shrink keeps ptr + data. ===== */
+  /* ===== D: realloc shrink preserves the data. ===== */
   {
     size_t a = 64;
-    unsigned char *p = (unsigned char *)arts_malloc_align(400, a);
+    unsigned char *p = (unsigned char *)arts_malloc_aligned(400, a);
     for (int i = 0; i < 100; i++) {
       p[i] = (unsigned char)(i + 5);
     }
     unsigned char *q = (unsigned char *)arts_realloc(p, 100); /* shrink */
-    if (q != p) {
-      (void)fprintf(stderr, "FAIL malloc_alignment: shrink should keep ptr\n");
-      g_fail = 1;
-    }
+    check_aligned(q, ALIGNMENT, "shrunk realloc");
     for (int i = 0; i < 100; i++) {
       if (q[i] != (unsigned char)(i + 5)) {
         (void)fprintf(stderr, "FAIL malloc_alignment: shrink lost byte %d\n",
@@ -155,7 +149,7 @@ int main(void) {
 
   /* ===== E: realloc NULL/zero paths. ===== */
   {
-    void *p = arts_realloc(NULL, 80); /* == arts_malloc(80), unaligned class */
+    void *p = arts_realloc(NULL, 80); /* == arts_malloc(80) */
     if (p == NULL) {
       (void)fprintf(stderr, "FAIL malloc_alignment: realloc(NULL,80)\n");
       g_fail = 1;
@@ -174,7 +168,7 @@ int main(void) {
     if (pid == 0) {
       /* child: silence stderr noise, then trigger the abort path */
       (void)freopen("/dev/null", "w", stderr);
-      void *bad = arts_malloc_align(64, 8); /* align 8 < 16 -> ARTS_ERROR */
+      void *bad = arts_malloc_aligned(64, 8); /* align 8 < 16 -> ARTS_ERROR */
       /* should never reach here */
       (void)bad;
       _exit(0);
@@ -198,7 +192,7 @@ int main(void) {
     return 1;
   }
   printf("PASS malloc_alignment: a-aligned alloc (16..4096), calloc_align "
-         "zeroed, realloc grow/shrink preserve bytes+alignment class, "
-         "NULL/zero paths, align<16 aborts\n");
+         "zeroed, realloc grow/shrink preserve bytes (base-aligned), NULL/zero "
+         "paths, align<16 aborts\n");
   return 0;
 }

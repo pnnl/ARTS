@@ -13,3 +13,6 @@
 [submodule "third_party/tbb"]
 	path = third_party/tbb
 	url = https://github.com/uxlfoundation/oneTBB
+[submodule "third_party/mimalloc"]
+	path = third_party/mimalloc
+	url = https://github.com/microsoft/mimalloc.git

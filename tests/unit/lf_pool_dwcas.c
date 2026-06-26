@@ -43,7 +43,7 @@
  * through the inline bodies if instantiated). */
 #include <stdlib.h>
 void *arts_calloc(size_t nmemb, size_t size) { return calloc(nmemb, size); }
-void *arts_calloc_align(size_t nmemb, size_t size, size_t align) {
+void *arts_calloc_aligned(size_t nmemb, size_t size, size_t align) {
   void *p = NULL;
   if (posix_memalign(&p, align, nmemb * size) != 0) {
     return NULL;

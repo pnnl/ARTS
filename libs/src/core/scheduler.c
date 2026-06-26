@@ -37,13 +37,6 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 #include "arts/runtime_state.h"
-#ifndef __cplusplus
-/* tiered_pool.h relies on C11 _Atomic and is C-only; scheduler.c is also
- * compiled as scheduler_gpu.cu (C++) — only pull these on the C side and
- * guard the corresponding init/destroy calls below with the same macro. */
-#include "arts/event.h"             /* struct arts_event_dep_s */
-#include "arts/utils/tiered_pool.h" /* arts_tiered_pool_init / destroy */
-#endif
 #include "arts/utils/malloc.h"
 
 #include <assert.h>

@@ -45,9 +45,9 @@ extern "C" {
 #include <stddef.h>
 
 void *arts_malloc(size_t size);
-void *arts_malloc_align(size_t size, size_t align);
+void *arts_malloc_aligned(size_t size, size_t align);
 void *arts_calloc(size_t nmemb, size_t size);
-void *arts_calloc_align(size_t nmemb, size_t size, size_t align);
+void *arts_calloc_aligned(size_t nmemb, size_t size, size_t align);
 void *arts_realloc(void *ptr, size_t size);
 void arts_free(void *ptr);
 

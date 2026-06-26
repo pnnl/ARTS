@@ -63,7 +63,7 @@ static int deterministic(void) {
   atomic_store(&g_deleted, 0);
 
   arts_atomic_shared_ptr_t slot;
-  atomic_store(&slot, (arts_shared_ptr_t)NULL);
+  atomic_store(&slot, (arts_shared_slot_t){0});
 
   /* Install A into the slot; keep our own pinning ref on A. */
   arts_shared_ptr_t A = arts_shared_make(make_obj(), del_obj); /* strong=1 */
@@ -215,7 +215,7 @@ static int concurrent(void) {
   atomic_init(&g_start, 0);
   atomic_init(&g_stop, 0);
   atomic_init(&g_cas_wins, 0);
-  atomic_store(&g_slot, (arts_shared_ptr_t)NULL);
+  atomic_store(&g_slot, (arts_shared_slot_t){0});
 
   /* Seed the slot. */
   arts_atomic_shared_store(&g_slot, arts_shared_make(make_obj(), del_obj));

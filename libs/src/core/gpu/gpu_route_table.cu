@@ -108,7 +108,7 @@ arts_route_table_t *arts_gpu_new_route_table(unsigned int route_table_size,
   unsigned int total_elems = COLLISION_RESOLVES * route_table_size;
   arts_gpu_route_table_t *gpu_route_table =
       (arts_gpu_route_table_t *)arts_calloc(1, sizeof(arts_gpu_route_table_t));
-  gpu_route_table->routingTable.data = (arts_route_item_t *)arts_calloc_align(
+  gpu_route_table->routingTable.data = (arts_route_item_t *)arts_calloc_aligned(
       total_elems, sizeof(arts_route_item_t), ARTS_CACHE_LINE_SIZE);
   gpu_route_table->routingTable.size = route_table_size;
   gpu_route_table->routingTable.shift = shift;

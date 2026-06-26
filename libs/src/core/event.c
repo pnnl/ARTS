@@ -65,16 +65,15 @@
 #include "arts/gas/guid.h"
 #include "arts/gas/route_table.h"
 #include "arts/ooo.h"
-#include "arts/runtime_state.h" /* arts_node_info, event_dep_pool */
+#include "arts/runtime_state.h" /* arts_node_info */
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/transport/outbox.h"    /* outbound send helpers */
 #include "arts/transport/protocol.h"  /* wire packet structs */
 #include "arts/utils/lockfree_lifo.h" /* arts_lf_stack_init / drain */
 #include "arts/utils/malloc.h"
-#include "arts/utils/mpsc.h"        /* arts_mpsc_t */
-#include "arts/utils/shared.h"      /* arts_shared_ptr_t, get/release */
-#include "arts/utils/tiered_pool.h" /* arts_tiered_pool_release */
+#include "arts/utils/mpsc.h"   /* arts_mpsc_t */
+#include "arts/utils/shared.h" /* arts_shared_ptr_t, get/release */
 
 #include <assert.h>
 #include <string.h>
@@ -91,10 +90,7 @@ static inline arts_event_hint_t hint_or_defaults(const arts_event_hint_t *h) {
 /* Free a single mpsc node back to the per-rank dep pool.  CHANNEL queue
  * payload is intrusive: the node IS arts_event_dep_s for both data and
  * dep entries (data uses target=guid, kind=ARTS_NULL marker). */
-static inline void event_node_free(arts_lf_link_t *node) {
-  arts_tiered_pool_release(arts_node_info.event_dep_pool,
-                           (struct arts_event_dep_s *)node);
-}
+static inline void event_node_free(arts_lf_link_t *node) { arts_free(node); }
 
 /* --- cb deleter (route_table deleter-by-kind for ARTS_GUID_EVENT) --------- */
 
@@ -145,7 +141,7 @@ static void event_free_typed(struct arts_event_s *e) { arts_event_deleter(e); }
 
 static struct arts_event_s *event_alloc(const arts_event_hint_t *h) {
   struct arts_event_s *e =
-      arts_calloc_align(1, sizeof(struct arts_event_s), ARTS_CACHE_LINE_SIZE);
+      arts_calloc_aligned(1, sizeof(struct arts_event_s), ARTS_CACHE_LINE_SIZE);
   if (!e) {
     return NULL;
   }
@@ -297,8 +293,7 @@ static struct arts_event_dep_s *event_node_alloc(arts_guid_kind_t kind,
                                                  uint32_t slot,
                                                  arts_db_access_mode_t mode) {
   struct arts_event_dep_s *node =
-      (struct arts_event_dep_s *)arts_tiered_pool_alloc(
-          arts_node_info.event_dep_pool);
+      (struct arts_event_dep_s *)arts_malloc(sizeof(struct arts_event_dep_s));
   node->kind = kind;
   node->target = target;
   node->slot = slot;
@@ -635,7 +630,7 @@ void arts_handler_event_create(void *ptr) {
       packet->header.size - sizeof(struct arts_msg_guid_only_packet_s);
 
   struct arts_event_s *mem_packet =
-      (struct arts_event_s *)arts_malloc_align(size, ARTS_CACHE_LINE_SIZE);
+      (struct arts_event_s *)arts_malloc_aligned(size, ARTS_CACHE_LINE_SIZE);
 
   memcpy(mem_packet, packet + 1, size);
   /* Re-init local-only pointer state.  Event move only happens at create

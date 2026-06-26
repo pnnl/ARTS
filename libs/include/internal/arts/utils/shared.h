@@ -3,23 +3,27 @@
  * arts_shared_ptr_t — atomic_shared_ptr pattern (ad-hoc lock-free).
  *
  * Semantic equivalent of std::atomic<std::shared_ptr<T>>: a control block
- * (cb) carries a strong refcount, the managed object pointer, and a per-
- * object deleter.  Slots that publish a cb are declared by the caller as
- * arts_atomic_shared_ptr_t (an _Atomic cb pointer); concurrent readers use
- * the acquire-and-validate load below, which is immune to use-after-free
- * because cb memory is drawn from a global pool that is never returned to
- * the allocator (last strong drop recycles the cb into the pool, so the
- * pointer always addresses valid memory — possibly a different live object,
- * which the slot revalidation step rejects).
+ * (cb) carries a reference count, the managed object pointer, and a per-object
+ * deleter.  Slots that publish a cb are declared by the caller as
+ * arts_atomic_shared_ptr_t (a 16-byte DWCAS slot).  Concurrent readers use the
+ * split-reference-counting load below (Williams "C++ Concurrency in Action"
+ * §7.2.4): it DWCAS-bumps a per-slot in-flight counter WITHOUT dereferencing
+ * the cb (so it never touches a cb a concurrent store may be freeing), which
+ * pins the cb, then folds the claim into the cb's count and returns a plain
+ * owned cb pointer.  Control blocks are allocated/freed per-op by the allocator
+ * (no type-stable pool); a per-slot generation tag defeats ABA on a recycled cb
+ * address, and a two-field count (refs + in_slot presence bit) makes the free
+ * decision immune to the reconcile/load transient-zero race.  Full protocol and
+ * the invariants it rests on are documented in shared.c.
  *
  * Local API (single-owner):
- *   make    — allocate a cb (strong = 1) wrapping object + deleter.
- *   copy    — strong++ on a cb the caller already holds (never fails).
- *   release — strong--; last drop runs deleter(object) + recycles the cb.
+ *   make    — allocate a cb (ref = 1) wrapping object + deleter.
+ *   copy    — ref++ on a cb the caller already holds (never fails).
+ *   release — ref--; last drop runs deleter(object) + frees the cb.
  *   get     — raw object pointer (valid while the caller holds a ref).
  *
  * Atomic slot API (multi-thread shared):
- *   load     — acquire-and-validate: atomic load + strong-inc, retry on ABA.
+ *   load     — split-count acquire (claim + fold); returns a caller-owned ref.
  *   store    — slot takes ownership of new_val; old slot value is released.
  *   exchange — atomic swap; returns the old value (caller releases it).
  */
@@ -34,38 +38,48 @@ extern "C" {
  * callers only ever hold the pointer. */
 typedef struct arts_shared_s *arts_shared_ptr_t;
 
-/* Portable atomic slot type.  C uses C11 _Atomic; the C++/nvcc translation
- * units (which pull this header transitively via runtime_types.h) drop the
- * _Atomic qualifier for layout-only visibility — the slot API itself is
- * C-only.  Both see a single pointer-width slot, so the layout matches. */
+/* Atomic slot type — SPLIT REFERENCE COUNTING.  The slot packs the cb pointer
+ * with a 64-bit external counter `ext` into a 16-byte DWCAS word: a load
+ * DWCAS-increments `ext` WITHOUT dereferencing the cb (so it never touches a cb
+ * a concurrent store may be freeing), which pins the cb; only then does it
+ * dereference to fold the claim into the cb's internal count.  16-byte aligned
+ * for cmpxchg16b (x86-64) / casp (ARM64).  The C++/nvcc translation units
+ * (which pull this header transitively via runtime_types.h) see the same
+ * 16-byte struct layout (no _Atomic) so structs embedding a slot match
+ * byte-for-byte; the slot API below is C-only. */
+#include <stdint.h>
+typedef struct {
+  arts_shared_ptr_t cb;
+  uint64_t ext;
+} __attribute__((aligned(16))) arts_shared_slot_t;
 #ifdef __cplusplus
-typedef arts_shared_ptr_t arts_atomic_shared_ptr_t;
+typedef arts_shared_slot_t arts_atomic_shared_ptr_t;
 #else
 #include <stdatomic.h>
 #include <stdbool.h>
-typedef _Atomic(arts_shared_ptr_t) arts_atomic_shared_ptr_t;
+typedef _Atomic(arts_shared_slot_t) arts_atomic_shared_ptr_t;
 #endif
 
 /* ── Local API (single-owner) ──────────────────────────────────────────── */
 
-/* Allocate a cb (from the global pool, or fresh) with strong = 1, wrapping
- * `object` and `deleter`.  `deleter` may be NULL (object is unmanaged). */
+/* Allocate a cb (from the allocator) with ref = 1, wrapping `object` and
+ * `deleter`.  `deleter` may be NULL (object is unmanaged). */
 arts_shared_ptr_t arts_shared_make(void *object, void (*deleter)(void *));
 
-/* Strong++ on a cb the caller already holds.  Returns b (or NULL if b is
- * NULL).  Always succeeds: the caller's ref keeps the cb alive. */
+/* Ref++ on a cb the caller already holds.  Returns b (or NULL if b is NULL).
+ * Always succeeds: the caller's ref keeps the cb alive. */
 arts_shared_ptr_t arts_shared_copy(arts_shared_ptr_t b);
 
-/* Strong--; on the last drop runs deleter(object) and recycles the cb into
- * the global pool.  Sets *p = NULL.  No-op when *p is NULL. */
+/* Ref--; on the last drop runs deleter(object) and frees the cb.  Sets
+ * *p = NULL.  No-op when *p is NULL. */
 void arts_shared_release(arts_shared_ptr_t *p);
 
 /* Cancel an UNPUBLISHED cb (just returned by arts_shared_make, never stored
- * into a slot and never copied): recycle the control block into the pool
- * WITHOUT running the deleter, so the wrapped object stays owned by the
- * caller.  Use on the losing side of an install race ("insert-or-fail":
- * the object is still mine").  Precondition: strong == 1 (no other holder).
- * Sets *p = NULL; no-op when *p is NULL. */
+ * into a slot and never copied): free the control block WITHOUT running the
+ * deleter, so the wrapped object stays owned by the caller.  Use on the losing
+ * side of an install race ("insert-or-fail": the object is still mine").
+ * Precondition: ref == 1 (no other holder).  Sets *p = NULL; no-op when *p is
+ * NULL. */
 void arts_shared_abandon(arts_shared_ptr_t *p);
 
 /* Raw managed-object pointer; valid while the caller holds a ref. */

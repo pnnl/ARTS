@@ -139,7 +139,7 @@ int main(void) {
 
   for (int r = 0; r < ROUNDS; r++) {
     /* Reset the slot to the pre-install state (value NULL, empty chain). */
-    atomic_store_explicit(&g_slot.value, (arts_shared_ptr_t)NULL,
+    atomic_store_explicit(&g_slot.value, (arts_shared_slot_t){0},
                           memory_order_relaxed);
     arts_lf_stack_init(&g_slot.ooo_list);
     __atomic_store_n(&g_slot.gen, 0, __ATOMIC_RELAXED);

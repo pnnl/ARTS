@@ -1,44 +1,93 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * arts_shared_ptr_t implementation — see arts/utils/shared.h.
+ * arts_shared_ptr_t — atomic_shared_ptr via SPLIT REFERENCE COUNTING.
+ * Williams "C++ Concurrency in Action" Sec. 7.2.4, with two refinements that
+ * the textbook stack version handles structurally but a single atomic pointer
+ * over a recycling allocator does not:
  *
- * The control block embeds an arts_lf_link_t as its first member so a
- * recycled cb can ride the global DWCAS pool.  The pool is never drained
- * back to the allocator during the run, which is what makes the
- * acquire-and-validate load immune to use-after-free: a stale cb pointer
- * always addresses valid (possibly reused) memory, and the slot
- * revalidation step rejects a cb that has since been reinstalled.
+ *   (1) GENERATION TAG (ABA).  The 16-byte DWCAS slot is {cb*, ext}, where
+ *       ext = (generation << 16) | claims.  `generation` is bumped on every
+ *       store/exchange/compare_exchange.  A control block freed (back to
+ *       mimalloc) and recycled to the SAME address is reinstalled under a NEW
+ *       generation, so a stalled load holding a stale {cb, ext} can never
+ *       DWCAS-claim the recycled cb — what the old type-stable cb pool used to
+ *       guarantee structurally.  `claims` is the transient in-flight LOAD count
+ *       (≪ 2^16): a load DWCAS-bumps claims (no cb dereference — immune to a
+ *       concurrent free), pinning the cb, then dereferences it to fold the
+ *       claim into the cb's count and hand back a plain owned cb pointer.
+ *
+ *   (2) TWO-FIELD COUNT (transient-zero free).  The cb count packs an `in_slot`
+ *       presence bit (bit 0) under the reference count: count = (refs << 1) |
+ *       in_slot.  The cb is freed ONLY when count == 0 (refs == 0 AND not in a
+ *       slot).  This is essential: when a store removes the cb it must fold the
+ *       in-flight claims into refs AND drop the slot hold, but those folds race
+ *       the in-flight loads' own fold/undo.  Without the presence bit, refs
+ *       could transiently hit 0 mid-reconcile and free a still-referenced cb
+ *       (a real heap-use-after-free).  The in_slot bit keeps count odd (≠ 0)
+ *       for as long as the cb sits in a slot, so the free can only fire after
+ *       the reconcile atomically clears in_slot and folds the claims in one
+ *       fetch_add.  Reference deltas are therefore scaled by 2 (SHARED_REF);
+ *       installing sets the hold (fetch_add -1: one ref → in_slot); reconcile
+ *       clears it (fetch_add 2*claims - 1).
+ *
+ * No type-stable pool ⇒ per-thread (NUMA-local) cb alloc/free scaling instead
+ * of a single global pool head.
  */
 
 #include "arts/utils/shared.h"
 
-#include "arts/utils/lockfree_lifo.h" /* arts_lf_link_t */
-#include "arts/utils/lockfree_pool.h" /* arts_lockfree_pool_t */
+#include "arts/utils/malloc.h" /* arts_calloc / arts_free */
 
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
+/* count = (refs << 1) | in_slot.  One reference unit is 2; the in_slot
+ * presence bit is 1.  Freed iff count == 0 (no refs, not in a slot). */
+#define SHARED_REF 2
+
 struct arts_shared_s {
-  arts_lf_link_t link;      /* first member — rides the cb pool */
-  _Atomic(uint64_t) strong; /* strong refcount; 0 ⇒ dying/recycled */
-  void *object;             /* managed object pointer */
-  void (*deleter)(void *);  /* run once on the last strong drop */
+  _Atomic(int64_t) count; /* (refs << 1) | in_slot.  Signed: refs may dip
+                             negative transiently mid-reconcile; only the exact
+                             0 (both fields zero) frees. */
+  void *object;
+  void (*deleter)(void *);
 };
 
-/* Global cb pool — never freed for the lifetime of the process.  Initialized
- * before main() via the constructor below so the very first arts_shared_make
- * (which may run during static init in unit tests) sees a valid node_size. */
-static arts_lockfree_pool_t g_shared_cb_pool;
-
-__attribute__((constructor)) static void arts_shared_pool_ctor(void) {
-  arts_lf_pool_init(&g_shared_cb_pool, sizeof(struct arts_shared_s));
+/* ext = (generation << 16) | claims. */
+#define SHARED_CLAIMS_BITS 16
+static inline uint64_t shared_claims(uint64_t ext) { return ext & 0xFFFFu; }
+static inline uint64_t shared_gen(uint64_t ext) {
+  return ext >> SHARED_CLAIMS_BITS;
+}
+/* The ext to install on a store: bump the generation, reset claims to 0. */
+static inline uint64_t shared_next_gen_ext(uint64_t ext) {
+  return (shared_gen(ext) + 1u) << SHARED_CLAIMS_BITS;
 }
 
+/* fetch_add `delta` onto count; free on the transition to exactly 0. */
+static void shared_count_add(struct arts_shared_s *cb, int64_t delta) {
+  int64_t prev =
+      atomic_fetch_add_explicit(&cb->count, delta, memory_order_acq_rel);
+  if (prev + delta == 0) {
+    if (cb->deleter) {
+      cb->deleter(cb->object);
+    }
+    arts_free(cb);
+  }
+}
+
+/* ── Local API (single-owner) ──────────────────────────────────────────── */
+
 arts_shared_ptr_t arts_shared_make(void *object, void (*deleter)(void *)) {
-  struct arts_shared_s *cb = arts_lf_pool_alloc(&g_shared_cb_pool);
-  atomic_store_explicit(&cb->strong, 1u, memory_order_relaxed);
+  /* arts_calloc (not arts_malloc): the standalone shared-ptr unit tests are
+   * library-independent and shim arts_calloc/arts_free; the zero-init is also a
+   * cheap safety net before the fields are set below. */
+  struct arts_shared_s *cb =
+      (struct arts_shared_s *)arts_calloc(1, sizeof(struct arts_shared_s));
+  atomic_store_explicit(&cb->count, SHARED_REF,
+                        memory_order_relaxed); /* refs=1 */
   cb->object = object;
   cb->deleter = deleter;
   return cb;
@@ -48,8 +97,8 @@ arts_shared_ptr_t arts_shared_copy(arts_shared_ptr_t b) {
   if (!b) {
     return NULL;
   }
-  /* Caller already holds b ⇒ strong ≥ 1 ⇒ cb alive; a plain add is safe. */
-  atomic_fetch_add_explicit(&b->strong, 1u, memory_order_relaxed);
+  /* Caller already holds b ⇒ refs ≥ 1 ⇒ cb alive; a plain add is safe. */
+  atomic_fetch_add_explicit(&b->count, SHARED_REF, memory_order_relaxed);
   return b;
 }
 
@@ -59,15 +108,7 @@ void arts_shared_release(arts_shared_ptr_t *p) {
     return;
   }
   *p = NULL;
-  uint64_t prev =
-      atomic_fetch_sub_explicit(&cb->strong, 1u, memory_order_acq_rel);
-  if (prev == 1u) {
-    /* Last drop: run the deleter, then recycle the cb (never freed). */
-    if (cb->deleter) {
-      cb->deleter(cb->object);
-    }
-    arts_lf_pool_release(&g_shared_cb_pool, cb);
-  }
+  shared_count_add(cb, -SHARED_REF);
 }
 
 void arts_shared_abandon(arts_shared_ptr_t *p) {
@@ -76,72 +117,133 @@ void arts_shared_abandon(arts_shared_ptr_t *p) {
     return;
   }
   *p = NULL;
-  /* Unpublished cb (strong == 1, never shared): recycle the control block
-   * without running the deleter — the wrapped object stays the caller's. */
-  atomic_store_explicit(&cb->strong, 0u, memory_order_relaxed);
-  arts_lf_pool_release(&g_shared_cb_pool, cb);
+  /* Unpublished cb (refs == 1, never stored/copied): free WITHOUT running the
+   * deleter — the wrapped object stays owned by the caller. */
+  arts_free(cb);
 }
 
 void *arts_shared_get(arts_shared_ptr_t p) { return p ? p->object : NULL; }
 
+/* ── Atomic slot API (multi-thread shared) ─────────────────────────────── */
+
 arts_shared_ptr_t arts_atomic_shared_load(arts_atomic_shared_ptr_t *slot) {
+  arts_shared_slot_t cur = atomic_load_explicit(slot, memory_order_acquire);
+  /* Claim: DWCAS claims++ (pure slot CAS, no cb dereference). */
   for (;;) {
-    arts_shared_ptr_t cb = atomic_load_explicit(slot, memory_order_acquire);
-    if (!cb) {
+    if (cur.cb == NULL) {
       return NULL;
     }
-    /* CAS strong-inc, but only while strong > 0 (cb not yet dying). */
-    uint64_t s = atomic_load_explicit(&cb->strong, memory_order_relaxed);
-    bool got = false;
-    while (s != 0u) {
-      if (atomic_compare_exchange_weak_explicit(&cb->strong, &s, s + 1u,
-                                                memory_order_acq_rel,
-                                                memory_order_relaxed)) {
-        got = true;
-        break;
-      }
+    arts_shared_slot_t claimed = {cur.cb, cur.ext + 1u};
+    if (atomic_compare_exchange_weak_explicit(
+            slot, &cur, claimed, memory_order_acq_rel, memory_order_acquire)) {
+      cur = claimed;
+      break;
     }
-    if (!got) {
-      continue; /* cb was dying — reload the slot (will see NULL/new cb). */
+    /* cur reloaded by the failed CAS — retry. */
+  }
+  struct arts_shared_s *cb = cur.cb; /* pinned: claims ≥ 1 keeps it alive. */
+  uint64_t claim_gen = shared_gen(cur.ext);
+  /* Fold the claim into a stable owned ref (cb is safe to dereference now). */
+  atomic_fetch_add_explicit(&cb->count, SHARED_REF, memory_order_relaxed);
+  /* Release the claim while the slot still holds cb at the SAME generation.  If
+   * a store has bumped the generation (and possibly recycled cb), it already
+   * folded our claim into refs — so undo our extra fold instead. */
+  for (;;) {
+    if (cur.cb != cb || shared_gen(cur.ext) != claim_gen) {
+      /* The reconcile already folded our claim as our owned ref (count holds
+       * it), so this undo never frees; never check for 0. */
+      atomic_fetch_sub_explicit(&cb->count, SHARED_REF, memory_order_relaxed);
+      break;
     }
-    /* Revalidate: if the slot still points at cb, our ref is good.  ABA on
-     * a recycled cb pointer is caught here — a different install swaps the
-     * slot to a different cb pointer, so we release and retry. */
-    if (atomic_load_explicit(slot, memory_order_acquire) == cb) {
-      return cb;
+    arts_shared_slot_t released = {cb, cur.ext - 1u};
+    if (atomic_compare_exchange_weak_explicit(
+            slot, &cur, released, memory_order_acq_rel, memory_order_acquire)) {
+      break; /* released our claim; we own a folded ref. */
     }
-    arts_shared_release(&cb);
+    /* cur reloaded — claims or generation changed; retry. */
+  }
+  return cb;
+}
+
+/* Install new_val into the slot (one of new_val's refs becomes the slot hold,
+ * bumping the generation) and return the displaced value.  Caller has already
+ * set new_val's in_slot bit (or new_val is NULL).  Shared by store/exchange. */
+static arts_shared_slot_t shared_slot_install(arts_atomic_shared_ptr_t *slot,
+                                              arts_shared_ptr_t new_val) {
+  arts_shared_slot_t cur = atomic_load_explicit(slot, memory_order_acquire);
+  for (;;) {
+    arts_shared_slot_t desired = {new_val, shared_next_gen_ext(cur.ext)};
+    if (atomic_compare_exchange_weak_explicit(
+            slot, &cur, desired, memory_order_acq_rel, memory_order_acquire)) {
+      return cur; /* the displaced value. */
+    }
+    /* cur reloaded — retry. */
   }
 }
 
 void arts_atomic_shared_store(arts_atomic_shared_ptr_t *slot,
                               arts_shared_ptr_t new_val) {
-  arts_shared_ptr_t old =
-      atomic_exchange_explicit(slot, new_val, memory_order_acq_rel);
-  if (old) {
-    arts_shared_release(&old);
+  if (new_val != NULL) {
+    /* One of new_val's refs becomes the slot hold (refs-- , in_slot=1). */
+    atomic_fetch_add_explicit(&new_val->count, -1, memory_order_relaxed);
+  }
+  arts_shared_slot_t old = shared_slot_install(slot, new_val);
+  if (old.cb != NULL) {
+    /* old leaves the slot: clear in_slot (-1) and fold in-flight claims
+     * (+2*claims); free if that was the last reference. */
+    shared_count_add(old.cb, 2 * (int64_t)shared_claims(old.ext) - 1);
   }
 }
 
 arts_shared_ptr_t arts_atomic_shared_exchange(arts_atomic_shared_ptr_t *slot,
                                               arts_shared_ptr_t new_val) {
-  return atomic_exchange_explicit(slot, new_val, memory_order_acq_rel);
+  if (new_val != NULL) {
+    atomic_fetch_add_explicit(&new_val->count, -1, memory_order_relaxed);
+  }
+  arts_shared_slot_t old = shared_slot_install(slot, new_val);
+  if (old.cb != NULL) {
+    /* Clear in_slot and fold claims, but KEEP the hold as a ref handed to the
+     * caller (refs += claims + 1): clear (-1) + caller ref (+2) + claims
+     * (+2*claims).  Never frees (the caller's ref survives). */
+    atomic_fetch_add_explicit(&old.cb->count,
+                              2 * (int64_t)shared_claims(old.ext) + 1,
+                              memory_order_relaxed);
+  }
+  return old.cb;
 }
 
 bool arts_atomic_shared_compare_exchange(arts_atomic_shared_ptr_t *slot,
                                          arts_shared_ptr_t expected,
                                          arts_shared_ptr_t new_val) {
-  arts_shared_ptr_t e = expected;
-  if (atomic_compare_exchange_strong_explicit(
-          slot, &e, new_val, memory_order_acq_rel, memory_order_acquire)) {
-    /* Slot ownership moved expected → new_val.  Drop the ref the slot held on
-     * the old value (the caller keeps its own ref on `expected`, which pinned
-     * it against ABA across this call and which the caller releases itself). */
-    if (expected) {
-      arts_shared_ptr_t old = expected;
-      arts_shared_release(&old);
+  arts_shared_slot_t cur = atomic_load_explicit(slot, memory_order_acquire);
+  bool hold_set = false;
+  for (;;) {
+    if (cur.cb != expected) {
+      if (hold_set) {
+        /* We tentatively set new_val's hold but the slot drifted off expected;
+         * undo so new_val stays a plain caller handle. */
+        atomic_fetch_add_explicit(&new_val->count, 1, memory_order_relaxed);
+      }
+      return false; /* mismatch — leave slot + both refs untouched. */
     }
-    return true;
+    if (new_val != NULL && !hold_set) {
+      atomic_fetch_add_explicit(&new_val->count, -1, memory_order_relaxed);
+      hold_set = true;
+    }
+    arts_shared_slot_t desired = {new_val, shared_next_gen_ext(cur.ext)};
+    if (atomic_compare_exchange_weak_explicit(
+            slot, &cur, desired, memory_order_acq_rel, memory_order_acquire)) {
+      /* expected left the slot: clear in_slot (-1) + fold claims.  The caller
+       * keeps its OWN ref on expected (pinned it against ABA), released
+       * separately, so this does not free expected from under the caller.
+       * expected == NULL is install-into-empty (CAS NULL→new_val): nothing left
+       * the slot, so there is no hold to drop. */
+      if (expected != NULL) {
+        shared_count_add(expected, 2 * (int64_t)shared_claims(cur.ext) - 1);
+      }
+      return true;
+    }
+    /* CAS failed; cur reloaded.  If only claims/generation changed (cb still
+     * expected) the loop retries the install; if cb changed it bails above. */
   }
-  return false;
 }

@@ -186,7 +186,7 @@ int main(void) {
 }
 
 /* ── libc-backed shims so the test links deque.c without the ARTS runtime ── */
-void *arts_calloc_align(size_t nmemb, size_t size, size_t align) {
+void *arts_calloc_aligned(size_t nmemb, size_t size, size_t align) {
   void *p = NULL;
   size_t total = nmemb * size;
   if (align < sizeof(void *))

@@ -322,6 +322,18 @@ typedef struct {
    *  nulls the owning slot cannot make an alias masquerade as the owner.  User
    *  EDTs ignore this field. */
   bool alias;
+  /** Runtime-internal: for a coherent @c ARTS_DB slot, the ref-counted handle
+   *  on the owning DB descriptor (@c arts_db_s), taken once when this slot's
+   *  buffer ref is secured at acquire and dropped LAST in @c release_one_dep
+   *  (after the buffer-ref drop and the RW/RO coherence release).  Pinning the
+   *  descriptor for the slot's whole acquire→release span keeps the descriptor
+   *  — and the buffer slot + recycle pool embedded in it — alive while any
+   *  buffer reference is outstanding, so a concurrent destroy cannot free the
+   *  descriptor out from under a buffer's recycle-on-drop.  NULL when unset
+   *  (non-coherent slot).  Typed @c void* here to avoid leaking the internal
+   *  @c arts_shared_ptr_t into the public header; the runtime casts it.  User
+   *  EDTs ignore this field. */
+  void *db_pin;
 } arts_edt_dep_t;
 
 /**

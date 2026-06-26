@@ -153,7 +153,10 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                                    &(arts_edt_hint_t){.finish_event = fe});
   arts_add_dependence(g2, e2, 0, DB_MODE_RO);
 
-  // Test 3: EW ordering — writer then verifier.
+  // Test 3: writer then verifier.  A PIN datablock carries no DB-level
+  // coherence, so the writer and verifier must be chained by an explicit
+  // completion edge: e3a (modify) publishes an output_event that gates e3b
+  // (verify), so e3b deterministically observes the modified data.
   void *ptr3 = NULL;
   arts_guid_t g3 = arts_db_create(&ptr3, NUM_ELEMS * sizeof(unsigned int),
                                   ARTS_DB_PIN, ARTS_DB_PROP_NONE, NULL);
@@ -163,12 +166,15 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
   arts_db_release(g3, DB_MODE_RW);
 
-  arts_guid_t e3b = arts_edt_create(ew_verify, 0, NULL, 1,
+  arts_guid_t oe3 = arts_event_create(&ARTS_EVENT_HINT_LATCH(1));
+  arts_guid_t e3b = arts_edt_create(ew_verify, 0, NULL, 2,
                                     &(arts_edt_hint_t){.finish_event = fe});
-  arts_guid_t e3a = arts_edt_create(ew_modify, 0, NULL, 1,
-                                    &(arts_edt_hint_t){.finish_event = fe});
+  arts_guid_t e3a = arts_edt_create(
+      ew_modify, 0, NULL, 1,
+      &(arts_edt_hint_t){.finish_event = fe, .output_event = oe3});
   arts_add_dependence(g3, e3a, 0, DB_MODE_RW);
   arts_add_dependence(g3, e3b, 0, DB_MODE_RW);
+  arts_add_dependence(oe3, e3b, 1, DB_MODE_NULL); /* e3b runs after e3a */
 }
 
 int main(int argc, char **argv) {

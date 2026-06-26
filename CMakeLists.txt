@@ -65,14 +65,22 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # while CMAKE_C_EXTENSIONS=OFF keeps the C17 *language* strict.
 add_compile_definitions(_DEFAULT_SOURCE _GNU_SOURCE)
 
-# x86-64: enable 128-bit compare-and-swap (cmpxchg16b)
+# 128-bit compare-and-swap, per architecture:
+#  - x86-64: cmpxchg16b, enabled by -mcx16.
+#  - ARM64 (AArch64): ARMv8.1-a LSE gives an inline lock-free `casp`.  Without
+#    it, 16-byte atomics fall back to a libatomic LOCK (NOT lock-free), which
+#    would silently break the DWCAS contract.  (-moutline-atomics is the
+#    alternative if an ARMv8.0 baseline must be supported.)
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|amd64|AMD64")
     add_compile_options($<$<COMPILE_LANGUAGE:C>:-mcx16>)
     add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-mcx16>)
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
+    add_compile_options($<$<COMPILE_LANGUAGE:C>:-march=armv8.1-a>)
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-march=armv8.1-a>)
 endif()
 
 # DWCAS feature detection (cmpxchg16b on x86_64, casp on ARMv8.1+).
-# Required by Task 4m / 4m-2 (lockfree_pool, tiered_pool).  GCC and Clang
+# Required by lockfree_pool.h for DWCAS.  GCC and Clang
 # emit a libcall (`__atomic_compare_exchange_16`) for 16-byte atomics
 # even when -mcx16 is set, so we link against libatomic.  Detection
 # probes the linker pipeline (compile + link) by running CheckCSourceCompiles
@@ -116,11 +124,13 @@ unset(_arts_saved_required_flags)
 unset(_arts_saved_required_libs)
 if(NOT ARTS_HAVE_DWCAS)
     message(FATAL_ERROR
-        "ARTS requires DWCAS (cmpxchg16b/casp).  "
-        "Compile with -mcx16 (x86_64) or ARMv8.1+.")
+        "ARTS requires a LOCK-FREE 128-bit CAS (cmpxchg16b on x86-64, casp on "
+        "ARMv8.1+).  Build with -mcx16 (AMD64) or -march=armv8.1-a / +lse / "
+        "-moutline-atomics (ARM64).")
 endif()
+add_compile_definitions(ARTS_HAVE_DWCAS)
 # Make libatomic available to all targets that may emit 16-byte atomic
-# libcalls (lockfree_pool.h / tiered_pool.h users).
+# libcalls (lockfree_pool.h users).
 if(ATOMIC_LIBRARY)
     link_libraries(${ATOMIC_LIBRARY})
 endif()
@@ -192,6 +202,9 @@ set_property(CACHE ARTS_COHERENCE_PROTOCOL PROPERTY STRINGS MRNEW MRMW MRSW LOCK
 set(ARTS_PROTOCOL_TIMING "LAZY" CACHE STRING
     "Timing of MRNEW/MRSW consistency actions: EAGER or LAZY (default); ignored by MRMW")
 set_property(CACHE ARTS_PROTOCOL_TIMING PROPERTY STRINGS EAGER LAZY)
+set(ARTS_MALLOC "mimalloc" CACHE STRING
+    "General allocator: mimalloc (default, vendored static) or system (libc malloc)")
+set_property(CACHE ARTS_MALLOC PROPERTY STRINGS mimalloc system)
 
 # Migration guard: the memory-model build axis was removed.
 if(DEFINED ARTS_MEMORY_MODEL)
@@ -320,6 +333,14 @@ else() # MRNEW
     add_compile_definitions(ARTS_TIMING_LAZY=1)
     message(STATUS "ARTS coherence protocol: MRNEW (= OCR), timing: LAZY (default)")
   endif()
+endif()
+if(ARTS_MALLOC STREQUAL "mimalloc")
+  add_compile_definitions(ARTS_MALLOC_MIMALLOC=1)
+  message(STATUS "ARTS allocator: mimalloc (vendored static)")
+elseif(ARTS_MALLOC STREQUAL "system")
+  message(STATUS "ARTS allocator: system (libc malloc)")
+else()
+  message(FATAL_ERROR "ARTS_MALLOC must be 'mimalloc' or 'system', got '${ARTS_MALLOC}'")
 endif()
 if(NOT ARTS_DEFAULT_DB_KIND STREQUAL "ARTS_DB" AND
    NOT ARTS_DEFAULT_DB_KIND STREQUAL "ARTS_DB_CXL")

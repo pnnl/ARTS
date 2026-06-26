@@ -46,9 +46,7 @@ extern "C" {
 #include <stddef.h>                   /* offsetof */
 
 /** Dep node — one per registered EDT or chained event waiting on this
- *  source event.  Allocated from arts_node_info.event_dep_pool.
- *  After drain, the firing thread releases each dep back to that pool
- *  via arts_lf_pool_release. */
+ *  source event.  Allocated via arts_malloc / freed via arts_free. */
 struct arts_event_dep_s {
   arts_lf_link_t link;        /* MUST be first (link = node addr) */
   arts_guid_kind_t kind;      /* ARTS_GUID_EDT or ARTS_GUID_EVENT */

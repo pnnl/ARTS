@@ -557,7 +557,7 @@ void free_gpu_item(arts_route_item_t *item) {
     if (db && db->db_type == ARTS_DB_GPU) {
       unsigned int size = arts_db_total_size(db);
       struct arts_db_s *temp_space =
-          (struct arts_db_s *)arts_malloc_align(size, ARTS_CACHE_LINE_SIZE);
+          (struct arts_db_s *)arts_malloc_aligned(size, ARTS_CACHE_LINE_SIZE);
 
       arts_lc_meta_t host;
       host.guid = item->key;
@@ -1079,7 +1079,7 @@ void internal_lc_sync_gpu(arts_guid_t acq_guid, struct arts_db_s *db) {
     bool copy_only = false;
     unsigned int size = arts_db_total_size(db);
     struct arts_db_s *temp_space =
-        (struct arts_db_s *)arts_malloc_align(size, 16);
+        (struct arts_db_s *)arts_malloc_aligned(size, 16);
 
     gpu_gc_write_lock(); // Don't let the gc take our copies...
     ARTS_DEBUG("FUNCTION: %u\n", arts_node_info.gpu_lc_sync);

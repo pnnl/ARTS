@@ -45,7 +45,7 @@ void arts_abort(uint8_t code) {
 }
 void *arts_malloc(size_t s) { return malloc(s); }
 void *arts_calloc(size_t n, size_t s) { return calloc(n, s); }
-void *arts_calloc_align(size_t n, size_t s, size_t a) {
+void *arts_calloc_aligned(size_t n, size_t s, size_t a) {
   void *p = NULL;
   if (posix_memalign(&p, a < sizeof(void *) ? sizeof(void *) : a, n * s)) {
     return NULL;

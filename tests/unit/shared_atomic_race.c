@@ -75,7 +75,7 @@ static void *consumer(void *arg) {
 }
 
 int main(void) {
-  atomic_store(&g_slot, (arts_shared_ptr_t)NULL);
+  atomic_store(&g_slot, (arts_shared_slot_t){0}); /* empty slot {NULL, ext=0} */
 
   pthread_t prod[PRODUCERS];
   pthread_t cons[CONSUMERS];

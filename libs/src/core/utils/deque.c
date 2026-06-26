@@ -96,7 +96,7 @@ struct arts_deque_s {
 } ARTS_ALIGNED(64);
 
 static inline struct circular_array_s *new_circular_array(unsigned int size) {
-  struct circular_array_s *array = (struct circular_array_s *)arts_calloc_align(
+  struct circular_array_s *array = (struct circular_array_s *)arts_calloc_aligned(
       1, sizeof(struct circular_array_s) + (sizeof(void *) * size), 64);
   array->size = size;
   array->segment = (void **)(array + 1);
@@ -156,7 +156,7 @@ static inline void arts_deque_new_init(struct arts_deque_s *deque,
 }
 
 struct arts_deque_s *arts_deque_new(unsigned int size) {
-  struct arts_deque_s *deque = (struct arts_deque_s *)arts_calloc_align(
+  struct arts_deque_s *deque = (struct arts_deque_s *)arts_calloc_aligned(
       1, sizeof(struct arts_deque_s), 64);
   arts_deque_new_init(deque, size);
   return deque;
@@ -225,7 +225,7 @@ void *arts_deque_pop_back(struct arts_deque_s *deque) {
 
 struct arts_deque_s *arts_deque_list_new(unsigned int list_size,
                                          unsigned int deque_size) {
-  struct arts_deque_s *deque_list = (struct arts_deque_s *)arts_calloc_align(
+  struct arts_deque_s *deque_list = (struct arts_deque_s *)arts_calloc_aligned(
       list_size, sizeof(struct arts_deque_s), 64);
   unsigned int i = 0;
   for (i = 0; i < list_size; i++) {

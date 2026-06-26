@@ -139,7 +139,7 @@ arts_route_table_t *arts_new_route_table(unsigned int route_table_size,
                                          unsigned int shift) {
   arts_route_table_t *route_table =
       (arts_route_table_t *)arts_calloc(1, sizeof(arts_route_table_t));
-  route_table->data = (arts_route_item_t *)arts_calloc_align(
+  route_table->data = (arts_route_item_t *)arts_calloc_aligned(
       (size_t)COLLISION_RESOLVES * route_table_size, sizeof(arts_route_item_t),
       ARTS_CACHE_LINE_SIZE);
   route_table->size = route_table_size;
@@ -274,10 +274,7 @@ bool arts_route_item_install_data(arts_route_item_t *item, void *obj,
     return false;
   }
   arts_shared_ptr_t cb = arts_shared_make(obj, deleter);
-  arts_shared_ptr_t expected = NULL;
-  if (atomic_compare_exchange_strong_explicit(&item->value, &expected, cb,
-                                              memory_order_acq_rel,
-                                              memory_order_acquire)) {
+  if (arts_atomic_shared_compare_exchange(&item->value, NULL, cb)) {
     return true;
   }
   /* Lost the install race — abandon our cb (object stays the caller's). */
@@ -331,10 +328,7 @@ bool arts_route_table_install_if_absent(void *obj, arts_guid_t key,
   arts_route_table_reserve_or_lookup(key, &item);
   arts_shared_ptr_t cb =
       arts_shared_make(obj, deleter_for_kind(arts_guid_get_kind(key)));
-  arts_shared_ptr_t expected = NULL;
-  if (atomic_compare_exchange_strong_explicit(&item->value, &expected, cb,
-                                              memory_order_acq_rel,
-                                              memory_order_acquire)) {
+  if (arts_atomic_shared_compare_exchange(&item->value, NULL, cb)) {
     arts_ooo_drain(item);
     return true;
   }
@@ -442,10 +436,7 @@ bool arts_route_table_move_item(arts_guid_t old_key, arts_guid_t new_key) {
   if (!cb) {
     return false;
   }
-  arts_shared_ptr_t expected = NULL;
-  if (atomic_compare_exchange_strong_explicit(&new_item->value, &expected, cb,
-                                              memory_order_acq_rel,
-                                              memory_order_acquire)) {
+  if (arts_atomic_shared_compare_exchange(&new_item->value, NULL, cb)) {
     arts_ooo_drain(new_item);
     return true;
   }

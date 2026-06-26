@@ -185,6 +185,9 @@ void arts_db_rw_waiter_queue_destroy(struct arts_db_rw_waiter_queue_s *q);
 struct arts_db_cache_s {
   volatile unsigned int writer_count;
   arts_atomic_shared_ptr_t buffer;
+  arts_lockfree_pool_t
+      buf_freelist; /* per-DB recycled-buffer pool (push on deleter, pull on
+                       install); unbounded, drained at cache destroy */
   arts_lf_stack_t pending_snapshot;
   /* db_guid stored here for symmetry with the protocol pseudocode —
    * acquire_remote_* needs it for the route_table_return_db pairing on

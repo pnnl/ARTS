@@ -143,7 +143,7 @@ bool arts_edt_create_core(struct arts_edt_s *edt, arts_guid_kind_t guid_kind,
                           arts_guid_t hint_output_event, uint64_t arts_id,
                           uint32_t flags) {
   if (!edt) {
-    edt = (struct arts_edt_s *)arts_calloc_align(1, edt_space,
+    edt = (struct arts_edt_s *)arts_calloc_aligned(1, edt_space,
                                                  ARTS_CACHE_LINE_SIZE);
   }
   if (!edt) {
@@ -653,7 +653,7 @@ void arts_handler_edt_create(void *ptr) {
   uint64_t size =
       packet->header.size - sizeof(struct arts_msg_guid_only_packet_s);
   struct arts_edt_s *edt =
-      (struct arts_edt_s *)arts_malloc_align(size, ARTS_CACHE_LINE_SIZE);
+      (struct arts_edt_s *)arts_malloc_aligned(size, ARTS_CACHE_LINE_SIZE);
 
   memcpy(edt, packet + 1, size);
   /* lifecycle/deleter handled by the route_table cb (deleter-by-kind) when

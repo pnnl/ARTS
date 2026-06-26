@@ -220,7 +220,7 @@ static int part_bc(void) {
   atomic_store(&g_deleted, 0);
   atomic_init(&g_start, 0);
   atomic_init(&g_stop, 0);
-  atomic_store(&g_slot, (arts_shared_ptr_t)NULL);
+  atomic_store(&g_slot, (arts_shared_slot_t){0});
   arts_atomic_shared_store(&g_slot, arts_shared_make(make_obj(), del_obj));
 
   pthread_t th[MIX_THREADS];

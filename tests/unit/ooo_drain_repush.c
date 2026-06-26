@@ -107,7 +107,7 @@ static void noop_deleter(void *o) { (void)o; }
  * ──────────────────────────────────────────────────────────────────────── */
 static int part1_save_next(void) {
   const int M = 1000;
-  atomic_store_explicit(&g_slot.value, (arts_shared_ptr_t)NULL,
+  atomic_store_explicit(&g_slot.value, (arts_shared_slot_t){0},
                         memory_order_relaxed);
   arts_lf_stack_init(&g_slot.ooo_list);
   for (int id = 0; id < M; id++) {
@@ -245,7 +245,7 @@ static int part2_concurrent_repush(void) {
     (void)fprintf(stderr, "FAIL part2: TOTAL %d > MAX_IDS\n", TOTAL);
     return 1;
   }
-  atomic_store_explicit(&g_slot.value, (arts_shared_ptr_t)NULL,
+  atomic_store_explicit(&g_slot.value, (arts_shared_slot_t){0},
                         memory_order_relaxed);
   arts_lf_stack_init(&g_slot.ooo_list);
   for (int id = 0; id < TOTAL; id++) {

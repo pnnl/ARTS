@@ -5,11 +5,10 @@
  * Each DB version is a separate arts_db_buffer_s wrapped in an
  * arts_shared_ptr_t (cb).  cache.buffer is the atomic slot; the slot holds the
  * "cache-hold" strong ref and every acquirer holds one more.  There is NO
- * per-DB buffer pool: the buffer bytes are arts_malloc'd by arts_db_buf_alloc
- * and freed by the cb deleter (arts_free) on the last strong drop.  (Only the
- * control block itself rides a global never-drained pool — an internal
- * shared.h detail, not a buffer pool.)  A per-DB buffer recycle pool is
- * possible future work but is deliberately NOT implemented today.
+ * per-DB buffer free-list: arts_db_buf_alloc pulls a recycled buffer from
+ * cache->buf_freelist before falling back to arts_malloc_aligned; buffer_deleter
+ * pushes the buffer back onto the free-list (unbounded) on the last strong
+ * drop so version buffers are reused across the DB's lifetime.
  *
  * Three primitives manage every buffer during a DB's lifetime:
  *
@@ -52,10 +51,12 @@ extern "C" {
 #include "arts/coherence/coherence.h"
 #include "arts/utils/shared.h" /* arts_shared_ptr_t */
 
-/* Allocate a fresh, uninitialized buffer (header + db_size payload), 64-byte
- * aligned.  install_buffer fills + wraps it in a control block; before that
- * the buffer is private to the caller. */
-struct arts_db_buffer_s *arts_db_buf_alloc(uint64_t db_size);
+/* Allocate a buffer (header + db_size payload), 64-byte aligned.  Pulls a
+ * recycled buffer from cache->buf_freelist when one is available; falls back
+ * to arts_malloc_aligned.  install_buffer fills + wraps it in a control block;
+ * before that the buffer is private to the caller. */
+struct arts_db_buffer_s *arts_db_buf_alloc(struct arts_db_cache_s *cache,
+                                           uint64_t db_size);
 
 /* Race-safe acquire: returns a caller-owned strong ref to the installed
  * buffer (keeping it alive against a concurrent destroy), or NULL if no

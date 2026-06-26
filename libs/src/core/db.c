@@ -184,7 +184,7 @@ void *arts_db_malloc(arts_db_types_t db_type, size_t size) {
   if (!ptr) {
     /* Full DataBlock backing store: the arts_db_s header sits at offset 0, so
      * it must be cache-line aligned (shared, multi-thread object). */
-    ptr = arts_malloc_align(size, ARTS_CACHE_LINE_SIZE);
+    ptr = arts_malloc_aligned(size, ARTS_CACHE_LINE_SIZE);
   }
   return ptr;
 }
@@ -535,7 +535,7 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
          * fields, which this rank never touches (home lives on the GUID home).
          * Init the cache in place, then install the buffer. */
         uint64_t stub_sz = arts_db_cache_stub_size();
-        struct arts_db_s *creator_stub = (struct arts_db_s *)arts_malloc_align(
+        struct arts_db_s *creator_stub = (struct arts_db_s *)arts_malloc_aligned(
             stub_sz, ARTS_CACHE_LINE_SIZE);
         memset(creator_stub, 0, stub_sz);
         creator_stub->db_type = ARTS_DB;
@@ -799,8 +799,15 @@ static void acquire_one_dep(struct arts_edt_s *edt, arts_edt_dep_t *depv,
    * call returns a SEPARATE pinned handle (lazy_h) to the just-installed db_s;
    * it must be released on every path below, mirroring db_temp_h. */
   arts_shared_ptr_t lazy_h = NULL;
+  /* B1: which of the two handles keeps `cache`'s descriptor (arts_db_s) alive.
+   * If the handler resolves locally (takes the EDT's buffer ref), this handle
+   * is MOVED into depv[i].db_pin to pin the descriptor — and the buffer slot +
+   * recycle pool embedded in it — for the slot's whole acquire->release span.
+   */
+  arts_shared_ptr_t *cache_owner_h = NULL;
   if (db_temp != NULL && db_temp->db_type == ARTS_DB) {
     cache = &db_temp->cache;
+    cache_owner_h = &db_temp_h;
   } else if (db_temp == NULL && owner != arts_global_rank_id) {
     /* db_size=0 means "size learned on first GRANT/DATA_RESPONSE
      * install_buffer".  Round-robin home is encoded in the GUID, so all
@@ -809,6 +816,7 @@ static void acquire_one_dep(struct arts_edt_s *edt, arts_edt_dep_t *depv,
     struct arts_db_s *lazy_db = (struct arts_db_s *)arts_shared_get(lazy_h);
     if (lazy_db != NULL) {
       cache = &lazy_db->cache;
+      cache_owner_h = &lazy_h;
     }
   }
   if (cache != NULL &&
@@ -822,6 +830,20 @@ static void acquire_one_dep(struct arts_edt_s *edt, arts_edt_dep_t *depv,
     struct arts_ooo_args_db_acquire_s a = {
         .edt = edt, .db_guid = depv[i].guid, .slot = i};
     arts_handler_db_acquire(arts_db_of_cache(cache), &a);
+    /* B1: a local hit set depv[i].ptr and took the EDT's buffer ref.  Pin the
+     * descriptor by MOVING the still-alive cache-owning handle into db_pin
+     * (released last in release_one_dep), so a concurrent destroy cannot free
+     * the cache out from under the outstanding buffer ref / its
+     * recycle-on-drop. A parked handler leaves ptr NULL — the resume site
+     * (mark_edt_ready_by_guid) pins instead.  The db_pin==NULL guard keeps the
+     * pin balanced across OoO replays. */
+    if (depv[i].ptr != NULL &&
+        __atomic_load_n(&depv[i].db_pin, __ATOMIC_ACQUIRE) == NULL &&
+        cache_owner_h != NULL) {
+      __atomic_store_n(&depv[i].db_pin, (void *)*cache_owner_h,
+                       __ATOMIC_RELEASE);
+      *cache_owner_h = NULL;
+    }
     arts_shared_release(&db_temp_h);
     arts_shared_release(&lazy_h);
     return;
@@ -1051,7 +1073,7 @@ static void rw_fire_from_cursor(struct arts_edt_s *edt) {
     if (reentrant) {
       /* Pin the db_s for the cache-deref window (cache is its FIRST member,
        * offset 0).  arts_db_acquire_local takes the buffer's own ref (the EDT's
-       * hold), so this pin is released right after.  Released on every path. */
+       * hold); B1 keeps this descriptor pin alive for the slot's whole span. */
       arts_shared_ptr_t db_h = arts_route_table_lookup_db(depv[i].guid);
       struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(db_h);
       if (db != NULL && db->db_type == ARTS_DB) {
@@ -1062,6 +1084,15 @@ static void rw_fire_from_cursor(struct arts_edt_s *edt) {
         depv[i].alias = true;
         depv[i].ptr = arts_db_acquire_local(&db->cache);
         arts_db_acquire_resolved(edt, i); /* advances cursor; loop continues */
+        /* B1: the alias took a per-slot buffer ref — pin the descriptor for its
+         * acquire->release span by MOVING db_h into db_pin (released last in
+         * release_one_dep).  ptr==NULL means no buffer was installed (no ref
+         * taken); release db_h normally then. */
+        if (depv[i].ptr != NULL &&
+            __atomic_load_n(&depv[i].db_pin, __ATOMIC_ACQUIRE) == NULL) {
+          __atomic_store_n(&depv[i].db_pin, (void *)db_h, __ATOMIC_RELEASE);
+          db_h = NULL;
+        }
         arts_shared_release(&db_h);
         continue;
       }
@@ -1298,6 +1329,17 @@ static void release_one_dep(arts_edt_dep_t *dep, bool gpu) {
         arts_db_buf_release(&buf_cb);
       }
     }
+    /* B1: take the stashed descriptor pin (set when this slot's buffer ref was
+     * secured at acquire).  Dropped LAST — after the buffer-ref drop above and
+     * the RW/RO release below — so the cache (buffer slot + recycle pool)
+     * outlives the buffer's recycle-on-drop and the coherence release even
+     * against a concurrent destroy. */
+    /* Consume the descriptor pin published (with release) at the acquire/wake
+     * site; acquire-load matches that release across the work-stealing handoff
+     * (mirrors the sibling ptr field's atomic discipline — TSan-clean). */
+    arts_shared_ptr_t db_pin =
+        (arts_shared_ptr_t)__atomic_load_n(&dep->db_pin, __ATOMIC_ACQUIRE);
+    __atomic_store_n(&dep->db_pin, NULL, __ATOMIC_RELAXED);
     /* Re-entrant alias slot (a later dep naming a DB an earlier serialized slot
      * of the same EDT already acquired): it took a buffer ref at acquire (so
      * the drop above balances it) but never a writer_count hold — the first
@@ -1305,17 +1347,29 @@ static void release_one_dep(arts_edt_dep_t *dep, bool gpu) {
      * owner's writer_count is decremented exactly once per distinct DB.  The
      * alias bit is recorded at acquire (rw_fire_from_cursor), NOT re-derived
      * here, so a mid-EDT release that nulls the owning slot's GUID cannot make
-     * an alias masquerade as the owner. */
+     * an alias masquerade as the owner.  Still drop the alias's own pin. */
     if (dep->alias) {
+      arts_shared_release(&db_pin);
       return;
     }
-    if (dep->guid != NULL_GUID) {
-      /* Pin the DB via the ref-counted route lookup — NOT a borrowed raw
-       * pointer, which would use-after-free if a concurrent destroy frees the
-       * arts_db_s between the lookup and the db_type read.  A non-NULL handle
-       * keeps the cache alive across
-       * release_rw/ro; a NULL handle means the DB was already destroyed — the
-       * buffer ref drop above is then the only cleanup needed. */
+    if (db_pin != NULL) {
+      /* Resolve the descriptor via the B1 pin — guaranteed alive (it kept the
+       * cache pinned across the whole span), so it is immune to the
+       * destroyed-but-lingering-DB re-lookup miss the old path risked. */
+      struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(db_pin);
+      if (db != NULL && db->db_type == ARTS_DB) {
+        if (access_mode == DB_MODE_RW) {
+          arts_db_release_rw(&db->cache);
+        } else {
+          arts_db_release_ro(&db->cache);
+        }
+      }
+      arts_shared_release(&db_pin);
+    } else if (dep->guid != NULL_GUID) {
+      /* No pin stashed (a buffer-ref path not covered by B1, or a destroyed
+       * DB): fall back to the ref-counted route re-lookup — identical to pre-B1
+       * behavior, correct for the held writer_count; it only loses the
+       * destroy-race robustness the pin provides. */
       arts_shared_ptr_t db_h = arts_route_table_lookup_db(dep->guid);
       struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(db_h);
       if (db != NULL) {

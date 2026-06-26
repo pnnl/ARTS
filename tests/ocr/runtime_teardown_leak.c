@@ -9,11 +9,11 @@
 /// arts_runtime_global_cleanup mirrors arts_runtime_node_init: it must free the
 /// per-thread arrays (deque/route_table/local_spin/thread_roles/keys/counter
 /// sub-arrays/capture lists), the 8 remote route-table shards, the per-thread
-/// local route tables, the shared scratch buf, the object-counter node storage,
-/// and (non-C++) the event_dep_pool.  A missing free in cleanup, or an alloc in
-/// node_init with no matching cleanup, shows up as an LSan leak at process
-/// exit. The event_dep_pool is allocated-but-currently-unused (a documented
-/// dead allocation) and must still be destroyed without leaking.
+/// local route tables, the shared scratch buf, and the object-counter node
+/// storage. A missing free in cleanup, or an alloc in node_init with no
+/// matching cleanup, shows up as an LSan leak at process exit.  Event
+/// dependency nodes are allocated via arts_malloc and freed via arts_free
+/// during cleanup.
 ///
 /// To make the teardown meaningful we exercise the allocating paths: create and
 /// release several DBs (route-table inserts + object storage), create events

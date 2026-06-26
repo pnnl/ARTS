@@ -1,33 +1,37 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * T245 — footprint-counter balance of the arts_malloc/arts_calloc/arts_free
- * family in libs/src/core/utils/malloc.c.
+ * T245 — footprint-counter balance of the arts_malloc/arts_calloc/arts_realloc/
+ * arts_free family in libs/src/core/utils/malloc.c.
  *
- * The allocator bumps BYTES_MEMORY_FOOTPRINT by `size` on every alloc and
- * decrements it by the (possibly shrunk) stored header size on free.  This
- * test pins the census invariants (32-misc-utils.md §1.3 items 1,4,5):
+ * The allocator stores no per-allocation header: it bumps
+ * BYTES_MEMORY_FOOTPRINT by the allocator's USABLE size (queried back from the
+ * allocator, which already tracks every block) on each alloc and decrements by
+ * the same usable size on free.  Usable size is >= the requested size
+ * (size-class rounding) and is stable for a given live pointer, so matched
+ * alloc/free is exactly net zero. This test pins:
  *
- *   1. Matched alloc/free leaves the footprint at its starting value (net 0).
+ *   1. Matched alloc/free leaves the footprint at its starting value (net 0),
+ *      and the bump equals the allocator's usable size (>= requested).
  *   2. size==0 semantics: arts_malloc(0)==NULL (no counter bump),
  *      arts_calloc(0,_)==arts_calloc(_,0)==NULL, arts_realloc(p,0) frees and
  *      returns NULL, arts_realloc(NULL,0)==NULL.
- *   3. Concurrent consistency: N threads each malloc+free M blocks; the
+ *   3. calloc zero-initialises and balances.
+ *   4. realloc (grow and shrink) re-bases the footprint to the new block's
+ *      usable size and stays balanced across the eventual free.
+ *   5. Concurrent consistency: N threads each malloc+free M blocks; the
  *      footprint counter (an atomic add/sub) returns to its start with no torn
  *      updates.
- *   4. DOCUMENTED SHARP EDGE (census bug B132, not fixed here): arts_realloc
- *      shrink updates hdr->size in place and does NOT decrement the footprint
- *      for the freed delta — so the *live* footprint over-reports during the
- *      shrink window, yet the eventual free (which decrements by the shrunken
- *      size) leaves the net correct.  Part D measures and asserts exactly this
- *      stale-then-net-correct behaviour, documenting the bug without masking.
  *
  * STANDALONE STRATEGY: malloc.c reaches the footprint macro and ARTS_ERROR via
  * the heavy "arts/system/print.h" -> runtime_state.h -> counter chain.  To
  * unit-test it without the runtime we pre-define the include guards of those
- * headers and supply our own minimal ARTS_ERROR / ARTS_ALIGNED / footprint
- * macros, then #include the malloc.c translation unit directly.  Our footprint
- * macros target a test-local atomic counter so we can observe balance exactly.
- * (Precedent: tests build edt_gpu.cu by #include'ing edt.c.)
+ * headers and supply our own minimal ARTS_ERROR / footprint macros, then
+ * #include the malloc.c translation unit directly.  Our footprint macros target
+ * a test-local atomic counter so we can observe balance exactly.  malloc.c
+ * exposes ARTS_SYS_USABLE (mi_usable_size or ARTS_SYS_USABLE for whichever
+ * allocator the build selected), which we reuse for the exact expected bumps so
+ * the test is path-agnostic.  (Precedent: tests build edt_gpu.cu by
+ * #include'ing edt.c.)
  */
 
 #include <inttypes.h>
@@ -46,9 +50,6 @@ static atomic_uint_least64_t g_footprint;
 #define ARTS_SYSTEM_PRINT_H 1 /* skip arts/system/print.h body */
 #define ARTS_DEFS_H 1         /* skip arts/defs.h body */
 
-/* defs.h would have provided this; supply the attribute directly. */
-#define ARTS_ALIGNED(n) __attribute__((__aligned__(n)))
-
 /* print.h would have provided ARTS_ERROR (which aborts).  Keep the abort
  * semantics so invalid-param paths terminate as the real runtime does. */
 #define ARTS_ERROR(...)                                                        \
@@ -64,7 +65,7 @@ static atomic_uint_least64_t g_footprint;
 #define DECREMENT_BYTES_MEMORY_FOOTPRINT_BY(v)                                 \
   atomic_fetch_sub_explicit(&g_footprint, (uint64_t)(v), memory_order_relaxed)
 
-/* Now pull in the unit under test. */
+/* Now pull in the unit under test (also makes ARTS_SYS_USABLE visible). */
 #include "../../libs/src/core/utils/malloc.c"
 
 static uint64_t footprint(void) {
@@ -95,15 +96,17 @@ int main(void) {
   int rc = 0;
   atomic_init(&g_footprint, 0);
 
-  /* ===== Part 1: single matched alloc/free is net zero. ===== */
+  /* ===== Part 1: matched alloc/free is net zero; bump == usable size. ===== */
   {
     uint64_t base = footprint();
     void *p = arts_malloc(123);
-    if (footprint() != base + 123) {
+    uint64_t bumped = footprint() - base;
+    size_t usable = ARTS_SYS_USABLE(p);
+    if (bumped != usable || bumped < 123) {
       (void)fprintf(stderr,
-                    "FAIL malloc_footprint_balance: malloc(123) bumped to "
-                    "%" PRIu64 ", expected %" PRIu64 "\n",
-                    footprint(), base + 123);
+                    "FAIL malloc_footprint_balance: malloc(123) bumped %" PRIu64
+                    ", expected usable=%zu (>=123)\n",
+                    bumped, usable);
       rc = 1;
     }
     arts_free(p);
@@ -161,7 +164,7 @@ int main(void) {
         break;
       }
     }
-    if (footprint() != base + n * sz) {
+    if (footprint() != base + ARTS_SYS_USABLE(p)) {
       (void)fprintf(stderr,
                     "FAIL malloc_footprint_balance: calloc footprint wrong\n");
       rc = 1;
@@ -174,50 +177,32 @@ int main(void) {
     }
   }
 
-  /* ===== Part 4: realloc shrink leaves footprint stale (B132), then free
-   *               nets correct. ===== */
+  /* ===== Part 4: realloc shrink re-bases the footprint and stays balanced. */
   {
     uint64_t base = footprint();
-    void *p = arts_malloc(1000); /* +1000 */
-    if (footprint() != base + 1000) {
-      (void)fprintf(stderr, "FAIL malloc_footprint_balance: pre-shrink\n");
-      rc = 1;
-    }
-    void *q = arts_realloc(p, 100); /* in-place shrink: footprint NOT lowered */
-    if (q != p) {
+    void *p = arts_malloc(1000);
+    void *q =
+        arts_realloc(p, 100); /* shrink: footprint follows the new block */
+    if (footprint() != base + ARTS_SYS_USABLE(q)) {
       (void)fprintf(stderr,
-                    "FAIL malloc_footprint_balance: shrink should keep ptr\n");
+                    "FAIL malloc_footprint_balance: shrink footprint %" PRIu64
+                    " != base+usable %" PRIu64 "\n",
+                    footprint(), base + ARTS_SYS_USABLE(q));
       rc = 1;
-    }
-    /* STALE WINDOW: after in-place shrink the footprint still reads base+1000
-     * (the freed delta is not subtracted yet). */
-    if (footprint() != base + 1000) {
-      (void)fprintf(stderr,
-                    "NOTE malloc_footprint_balance: shrink no longer leaves "
-                    "footprint stale (B132 shrink-window may be fixed): "
-                    "%" PRIu64 "\n",
-                    footprint());
     }
     arts_free(q);
-    /* CORRECTNESS REQUIREMENT: a balanced allocator must return the footprint
-     * to base after this matched alloc+free.  EXPOSES RUNTIME BUG B132: free
-     * decrements by the SHRUNKEN header size (100), not the originally-counted
-     * size (1000), so (old_size - new_size) = 900 bytes leak from the counter
-     * permanently.  The census claim "net correct at free time" is incorrect;
-     * the over-count is NOT corrected at free.  Left as a hard failure on
-     * purpose (do not mask). */
     if (footprint() != base) {
-      (void)fprintf(stderr,
-                    "FAIL malloc_footprint_balance: EXPOSES B132 — realloc "
-                    "shrink+free leaks %" PRIu64 " bytes from footprint "
-                    "counter (got %" PRIu64 ", expected %" PRIu64 "); free "
-                    "subtracts only the shrunken size, never the original\n",
-                    footprint() - base, footprint(), base);
+      (void)fprintf(
+          stderr,
+          "FAIL malloc_footprint_balance: realloc shrink+free not net "
+          "0 (got %" PRIu64 ", expected %" PRIu64 ")\n",
+          footprint(), base);
       rc = 1;
     }
   }
 
-  /* ===== Part 5: realloc grow preserves bytes and balances. ===== */
+  /* ===== Part 5: realloc grow preserves bytes, re-bases, and balances. =====
+   */
   {
     uint64_t base = footprint();
     unsigned char *p = (unsigned char *)arts_malloc(16);
@@ -233,11 +218,11 @@ int main(void) {
         break;
       }
     }
-    if (footprint() != base + 64) {
+    if (footprint() != base + ARTS_SYS_USABLE(q)) {
       (void)fprintf(stderr,
                     "FAIL malloc_footprint_balance: grow footprint %" PRIu64
-                    " != %" PRIu64 "\n",
-                    footprint(), base + 64);
+                    " != base+usable %" PRIu64 "\n",
+                    footprint(), base + ARTS_SYS_USABLE(q));
       rc = 1;
     }
     arts_free(q);
@@ -272,9 +257,9 @@ int main(void) {
   if (rc) {
     return 1;
   }
-  printf("PASS malloc_footprint_balance: net-zero matched alloc/free, "
-         "size==0 NULL paths, calloc zeroing, realloc grow/shrink net-correct, "
-         "%d-thread concurrent balance; B132 shrink-stale documented\n",
+  printf("PASS malloc_footprint_balance: net-zero matched alloc/free, bump=="
+         "usable size, size==0 NULL paths, calloc zeroing, realloc grow/shrink "
+         "re-base + net-correct, %d-thread concurrent balance\n",
          C_THREADS);
   return 0;
 }

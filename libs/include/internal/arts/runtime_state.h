@@ -52,14 +52,6 @@ extern "C" {
 #include <pthread.h>
 #endif
 
-/* Forward declaration: arts_tiered_pool_t is defined in
- * arts/utils/tiered_pool.h.  We cannot include tiered_pool.h here because
- * its inline functions depend on arts_thread_info / arts_node_info defined
- * below.  arts_node_info therefore stores a pointer to the pool; the
- * concrete allocation lives in scheduler.c (init) and is freed in
- * arts_runtime_global_cleanup. */
-typedef struct arts_tiered_pool_s arts_tiered_pool_t;
-
 struct arts_runtime_shared_s {
   volatile unsigned int steal_request_lock;
   char pad3[56];
@@ -136,13 +128,6 @@ struct arts_runtime_shared_s {
   arts_object_table_t **object_tables;   // [thread_id]
   arts_array_list_t **object_edt_traces; // [thread_id]
   arts_array_list_t **object_db_traces;  // [thread_id]
-  /* Per-rank pool of struct arts_event_dep_s nodes (Task 4o).  Allocated
-   * heap-side because arts_tiered_pool_t cannot be embedded by value here
-   * (its inline alloc/release reference arts_thread_info / arts_node_info
-   * defined below this struct, creating a circular include).  Lifetime
-   * matches arts_node_info: init in arts_runtime_node_init, destroy in
-   * arts_runtime_global_cleanup. */
-  arts_tiered_pool_t *event_dep_pool;
 } ARTS_ALIGNED(64);
 
 struct arts_runtime_private_s {

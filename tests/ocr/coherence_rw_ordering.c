@@ -38,9 +38,12 @@
 ******************************************************************************/
 
 /// @file coherence_rw_ordering.c
-/// @brief Tests RW ordering under the eager protocol: multiple RW writers
-///        → RO readers should all see the final writer's data.  Also
-///        exercises sequential RW writers with correct ordering.
+/// @brief Tests RW ordering: writer1 → writer2 → RO reader, with the stages
+///        chained by output_events so the reader deterministically observes
+///        the final writer's value.  Ordering is explicit (RW mode gives
+///        mutual exclusion, not inter-EDT order), so it holds on every
+///        protocol/timing build.  Also exercises multiple concurrent RO
+///        readers on a separate DB.
 
 #include "arts.h"
 
@@ -113,28 +116,44 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
 
-  // Test 1: Sequential EW ordering: writer1(EW) → writer2(EW) → reader(RO).
-  // record_dep with EW ensures writer1 runs before writer2, and writer2
-  // before reader.
+  // Test 1: explicitly-ordered RW writers → RO reader.  RW (per-node-exclusive)
+  // gives MUTUAL EXCLUSION, not inter-EDT ordering, so a sound ordering test
+  // must chain the stages with completion edges.  Each writer's output_event
+  // fires at its epilogue — after its DB release publishes the write (OCR
+  // §1.6.2 release-before-satisfy) — so gating the next stage on it gives a
+  // happens-before edge: writer1 → writer2 → reader.  The reader therefore
+  // deterministically observes writer2's value (200) on every protocol/timing.
   void *ptr = NULL;
   arts_guid_t db =
       arts_db_create(&ptr, sizeof(int), ARTS_DB, ARTS_DB_PROP_NONE, NULL);
   ((int *)ptr)[0] = 0;
   arts_db_release(db, DB_MODE_RW);
 
+  arts_guid_t oe1 = arts_event_create(&ARTS_EVENT_HINT_LATCH(1));
+  arts_guid_t oe2 = arts_event_create(&ARTS_EVENT_HINT_LATCH(1));
+
+  // writer1: db (RW, slot 0); publishes completion via output_event oe1.
   arts_guid_t w1 = arts_edt_create(
-      writer1, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+      writer1, 0, NULL, 1,
+      &(arts_edt_hint_t){.rank = 0, .finish_event = fe, .output_event = oe1});
   arts_add_dependence(db, w1, 0, DB_MODE_RW);
 
+  // writer2: db (RW, slot 0) + oe1 (control, slot 1) → runs strictly after
+  // writer1 released; publishes completion via oe2.
   arts_guid_t w2 = arts_edt_create(
-      writer2, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+      writer2, 0, NULL, 2,
+      &(arts_edt_hint_t){.rank = 0, .finish_event = fe, .output_event = oe2});
   arts_add_dependence(db, w2, 0, DB_MODE_RW);
+  arts_add_dependence(oe1, w2, 1, DB_MODE_NULL);
 
+  // reader: db (RO, slot 0) + oe2 (control, slot 1) → reads strictly after
+  // writer2 released, so it sees 200.
   uint64_t exp_param = 200;
   arts_guid_t r1 =
-      arts_edt_create(reader_check, 1, &exp_param, 1,
+      arts_edt_create(reader_check, 1, &exp_param, 2,
                       &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(db, r1, 0, DB_MODE_RO);
+  arts_add_dependence(oe2, r1, 1, DB_MODE_NULL);
 
   // Test 2: Multiple concurrent RO readers.
   void *ptr2 = NULL;

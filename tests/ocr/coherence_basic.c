@@ -236,12 +236,24 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
      * the reader's slot 1. */
     arts_guid_t inner = arts_event_create(&ARTS_EVENT_HINT_FINISH);
     arts_add_dependence(inner, reader, 1, DB_MODE_NULL);
+    /* Chain the writers with output_events so they execute in index order: RW
+     * grant order is scheduler-determined, not registration order, so "the
+     * final writer's value" is only well-defined once the writers are
+     * explicitly serialized (writer i+1 waits on writer i's output_event,
+     * which fires after writer i releases the DB). */
+    arts_guid_t prev_oe = (arts_guid_t)0; /* first writer has no predecessor */
     for (unsigned int i = 0; i < CHAIN_LEN; i++) {
       uint64_t param = (uint64_t)i;
-      arts_guid_t w =
-          arts_edt_create(chain_writer_edt, 1, &param, 1,
-                          &(arts_edt_hint_t){.rank = 0, .finish_event = inner});
+      arts_guid_t oe = arts_event_create(&ARTS_EVENT_HINT_LATCH(1));
+      arts_guid_t w = arts_edt_create(
+          chain_writer_edt, 1, &param, (prev_oe ? 2 : 1),
+          &(arts_edt_hint_t){
+              .rank = 0, .finish_event = inner, .output_event = oe});
       arts_add_dependence(cdb, w, 0, DB_MODE_RW);
+      if (prev_oe) {
+        arts_add_dependence(prev_oe, w, 1, DB_MODE_NULL);
+      }
+      prev_oe = oe;
     }
   }
 }

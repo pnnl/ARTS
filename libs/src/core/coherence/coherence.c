@@ -79,6 +79,7 @@ void arts_db_cache_common_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
    * explicitly for clarity).  Nodes are heap-allocated on the case-3 push path
    * and freed when drained by the next install. */
   arts_lf_stack_init(&c->pending_snapshot);
+  arts_lf_pool_init(&c->buf_freelist, 0);
   /* Initialize the inlined home-directory fields only on the rank that owns
    * this DB's GUID home; non-home ranks leave db_self->home_initialized false
    * (and allocate only the cache-only stub, so the home fields don't exist).
@@ -176,10 +177,22 @@ void mark_edt_ready_by_guid(arts_guid_t edt_guid, unsigned int slot) {
           arts_shared_release(&edt_h);
           return;
         }
-        /* won: keep buf_h as the EDT's hold (do not release it here). */
+        /* won: keep buf_h as the EDT's hold (do not release it here).  B1: pin
+         * the descriptor for the slot's acquire->release span by MOVING db_h
+         * into db_pin (released last in release_one_dep) instead of dropping it
+         * below, so a concurrent destroy cannot free the cache (buffer slot +
+         * recycle pool) under this outstanding buffer ref. */
+        if (__atomic_load_n(&depv[slot].db_pin, __ATOMIC_ACQUIRE) == NULL) {
+          /* Publish with release so the run/release thread (reached via the
+           * work-stealing deque handoff) observes db_pin like the sibling ptr
+           * field's atomic CAS — keeps TSan clean and the ARM ordering explicit
+           * rather than relying on the deque's incidental HW fence. */
+          __atomic_store_n(&depv[slot].db_pin, (void *)db_h, __ATOMIC_RELEASE);
+          db_h = NULL;
+        }
       }
     }
-    arts_shared_release(&db_h);
+    arts_shared_release(&db_h); /* no-op when moved into db_pin above */
   }
   /* Data resolved for this dep — count it down; the actor that reaches 0
    * schedules. The edt_h ref held across this call keeps the EDT alive even if
@@ -220,7 +233,7 @@ arts_shared_ptr_t arts_db_cache_lazy_install(arts_guid_t db_guid,
    * spans cache + db_type, stopping before the home fields. */
   uint64_t stub_sz = arts_db_cache_stub_size();
   struct arts_db_s *stub =
-      (struct arts_db_s *)arts_malloc_align(stub_sz, ARTS_CACHE_LINE_SIZE);
+      (struct arts_db_s *)arts_malloc_aligned(stub_sz, ARTS_CACHE_LINE_SIZE);
   memset(stub, 0, stub_sz);
   stub->db_type = ARTS_DB;
 
@@ -395,6 +408,14 @@ void arts_db_cache_common_destroy_pre(struct arts_db_cache_s *cache) {
     return;
   }
   arts_atomic_shared_store(&cache->buffer, NULL);
+  /* Drain the per-DB recycled-buffer pool, returning leftovers to mimalloc.
+   * The buffer slot is already NULL'd above, and B1 keeps the descriptor (hence
+   * this pool) alive until the last buffer ref drops, so no late deleter can
+   * push in after this point; the cache is torn down single-threaded here.
+   * arts_lf_pool_destroy detaches the DWCAS pool and frees every node via
+   * arts_free (pool_link is at offset 0, so the node ptr is the buffer base).
+   */
+  arts_lf_pool_destroy(&cache->buf_freelist);
 }
 
 /* Steps 3b+4: drain+free the snapshot reorder buffer (a Treiber stack), then

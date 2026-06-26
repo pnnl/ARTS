@@ -184,7 +184,7 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
    * block is undefined" -- ARTS interprets this as "before any writer
    * has published, no data exists; reading is application's
    * responsibility"). */
-  struct arts_db_s *stub = (struct arts_db_s *)arts_malloc_align(
+  struct arts_db_s *stub = (struct arts_db_s *)arts_malloc_aligned(
       sizeof(struct arts_db_s), ARTS_CACHE_LINE_SIZE);
   memset(stub, 0, sizeof(struct arts_db_s));
   stub->db_type = (arts_db_types_t)p->db_type;

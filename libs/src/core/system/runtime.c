@@ -37,16 +37,10 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 #include "arts/runtime_state.h"
-#ifndef __cplusplus
-/* tiered_pool.h relies on C11 _Atomic and is C-only; pull these on the C
- * side and guard the corresponding init/destroy calls below with the same
- * macro. */
-#include "arts/event.h"             /* struct arts_event_dep_s */
-#include "arts/utils/tiered_pool.h" /* arts_tiered_pool_init / destroy */
-#endif
 #include "arts/utils/malloc.h"
 
 #include <assert.h>
+#include <stdint.h>
 #include <stdlib.h>
 
 #include "arts/counter/Preamble.h"
@@ -300,20 +294,6 @@ void arts_runtime_node_init(struct arts_config_s *config) {
   /* Object counter storage (per-arts_id tracking) */
   arts_object_alloc_node_storage(tc);
 
-#ifndef __cplusplus
-  /* Per-rank pool of arts_event_dep_s nodes (Task 4o).  Allocate the
-   * tiered_pool struct on the heap because runtime_state.h forward-declares
-   * arts_tiered_pool_t (full definition lives in arts/utils/tiered_pool.h
-   * which cannot be included from runtime_state.h without a circular
-   * dependency).  Future work will make event.c consume this pool. */
-  arts_node_info.event_dep_pool =
-      (arts_tiered_pool_t *)arts_calloc(1, sizeof(arts_tiered_pool_t));
-  arts_tiered_pool_cfg_t event_dep_cfg = {
-      .H_local = 128, .B_local = 64, .H_numa = 1024, .B_numa = 256};
-  arts_tiered_pool_init(arts_node_info.event_dep_pool,
-                        sizeof(struct arts_event_dep_s), event_dep_cfg);
-#endif
-
 #ifdef ARTS_USE_GPU
   if (arts_node_info.gpu) {
     arts_node_init_gpus();
@@ -413,15 +393,6 @@ void arts_runtime_global_cleanup() {
   }
   arts_free(arts_node_info.keys);
   arts_free(arts_node_info.global_guid_thread_id);
-
-#ifndef __cplusplus
-  /* Tear down event_dep_pool (paired with init in arts_runtime_node_init). */
-  if (arts_node_info.event_dep_pool) {
-    arts_tiered_pool_destroy(arts_node_info.event_dep_pool);
-    arts_free(arts_node_info.event_dep_pool);
-    arts_node_info.event_dep_pool = NULL;
-  }
-#endif
 
   /* Network outbound queues and sequence tracking arrays */
   arts_transport_cleanup();

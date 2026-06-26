@@ -90,7 +90,7 @@
  *  NOTE: bare @c __attribute__((aligned)) resolves to max_align_t (only 16B on
  *  x86-64) — too small to isolate cache lines — so this is pinned to the
  *  cache-line size.  Every allocation of an ARTS_ALIGNED_MAX object MUST pass
- *  @c ARTS_CACHE_LINE_SIZE to @c arts_malloc_align / @c arts_calloc_align. */
+ *  @c ARTS_CACHE_LINE_SIZE to @c arts_malloc_aligned / @c arts_calloc_aligned. */
 #define ARTS_ALIGNED_MAX ARTS_ALIGNED(ARTS_CACHE_LINE_SIZE)
 
 /** Branch prediction hint — indicates the condition is likely true. */

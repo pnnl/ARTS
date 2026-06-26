@@ -43,6 +43,7 @@ extern "C" {
 
 #include "arts/defs.h"
 #include "arts/utils/lockfree_lifo.h"  /* arts_lf_stack_t / arts_lf_link_t */
+#include "arts/utils/lockfree_pool.h"  /* arts_lockfree_pool_t (buf_freelist) */
 #include "arts/utils/lockfree_stack.h" /* arts_lockfree_stack_t */
 #include "arts/utils/mpsc.h"           /* arts_mpsc_t */
 #include "arts/utils/shared.h"         /* arts_shared_ptr_t (buffer cb) */
@@ -87,10 +88,13 @@ typedef _Atomic(unsigned int) arts_db_atomic_uint_t;
  *   data     FAM holding db_size bytes — user-visible canonical payload,
  *            64-byte aligned (cache-line / CXL atomicity). */
 struct arts_db_buffer_s {
-  uint64_t version;     /* monotonic per buffer */
-  arts_shared_ptr_t cb; /* this buffer's control block */
-  char _pad[48];        /* data[] lands at offset 64 (cache-line aligned) */
-  char data[];          /* db_size bytes — user-visible */
+  arts_lf_link_t pool_link; /* FIRST — per-DB free-list node when recycled */
+  uint64_t version;         /* monotonic per buffer (stale while free-listed) */
+  arts_shared_ptr_t cb;     /* this buffer's control block */
+  struct arts_db_cache_s
+      *owner_cache; /* deleter pushes here; read only at strong==0 */
+  char _pad[32];    /* data[] lands at offset 64 (cache-line aligned) */
+  char data[];      /* db_size bytes — user-visible */
 };
 
 /* Snapshot-response reorder-buffer node.  Pushed ONLY in case 3 of
@@ -107,6 +111,8 @@ struct arts_db_snapshot_waiter_s {
   uint64_t target_version;
 };
 
+/* Forward decl; per-rank cache (owner of the per-DB buffer free-list). */
+struct arts_db_cache_s;
 /* Forward decl; sparse rank-keyed u64 map (owner-side dedup; protocol arms). */
 struct arts_rank_to_u64_map_s;
 
