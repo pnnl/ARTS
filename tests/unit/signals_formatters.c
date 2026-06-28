@@ -1,21 +1,24 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * T233 — async-signal-safe formatters in signals.c (write_uint, signal_name)
- * plus arts_atomic_print truncation (print.h).  write_uint and signal_name are
- * file-static in signals.c, so this TU #includes signals.c to pull them in; the
- * two runtime symbols signals.c references (arts_global_rank_id,
- * arts_enter_shutdown_state) are stubbed so the unit links standalone.
+ * Async-signal-safe formatters in signals.c (write_signal_line, signal_name)
+ * plus arts_atomic_print truncation (print.h).  write_signal_line and
+ * signal_name are file-static in signals.c, so this TU #includes signals.c to
+ * pull them in; the two runtime symbols signals.c references
+ * (arts_global_rank_id, arts_enter_shutdown_state) are stubbed so the unit
+ * links standalone.
  *
  * Properties under test
  * -------------------
- * write_uint(val): fills a 16-byte stack buffer back-to-front and write()s the
- *   populated tail to STDERR.  Invariants:
- *     - 0 prints "0" (the special case);
- *     - a single digit prints that digit;
- *     - UINT_MAX (4294967295) prints all 10 digits, no overflow of buf[16];
- *     - powers of ten and boundary values print exactly;
- *     - the emitted byte count is in [1,16] and equals the decimal length.
- *   We capture STDERR via a pipe and compare to a reference snprintf("%u").
+ * write_signal_line(pre, name, rank, post): composes the whole crash/term line
+ *   ("<pre><name> (rank <N>)<post>") into one stack buffer and emits it with a
+ *   SINGLE write() — so concurrent worker logging cannot interleave between the
+ *   prefix, the signal name, the rank digits, and the suffix (a split line made
+ *   ctest's PASS_REGEX miss intermittently before the single-write rewrite).
+ *   Invariants:
+ *     - rank 0 prints "0"; single- and multi-digit ranks print every digit;
+ *     - the emitted bytes equal exactly <pre><name> (rank <N>)<post>;
+ *     - nothing overflows the fixed buffer.
+ *   We capture STDERR via a pipe and compare to a reference snprintf.
  *
  * signal_name(sig): async-signal-safe switch; MUST enumerate exactly the
  *   signals the handlers install (crash {SEGV,BUS,FPE} + term {TERM,INT,ALRM,
@@ -49,7 +52,7 @@
 unsigned int arts_global_rank_id = 0;
 void arts_enter_shutdown_state(bool initiator) { (void)initiator; }
 
-/* Pull in the real signals.c (static write_uint + signal_name). */
+/* Pull in the real signals.c (static write_signal_line + signal_name). */
 #include "../../libs/src/core/system/signals.c"
 
 /* signals.c also references the thread-local arts_thread_info (declared extern
@@ -65,7 +68,7 @@ ARTS_THREAD_LOCAL struct arts_runtime_private_s arts_thread_info;
 static void fail(const char *msg) {
   /* write directly: stderr may be redirected mid-test. */
   char line[256];
-  int n = snprintf(line, sizeof(line), "FAIL signals_write_uint: %s\n", msg);
+  int n = snprintf(line, sizeof(line), "FAIL signals_formatters: %s\n", msg);
   (void)write(STDOUT_FILENO, line, (size_t)n);
   exit(1);
 }
@@ -115,27 +118,32 @@ static size_t capture_stderr(void (*body)(void *), void *arg, char *out,
   return total;
 }
 
-struct uint_arg {
-  unsigned int v;
+struct line_arg {
+  const char *pre;
+  const char *name;
+  unsigned int rank;
+  const char *post;
 };
-static void call_write_uint(void *a) { write_uint(((struct uint_arg *)a)->v); }
+static void call_write_signal_line(void *a) {
+  struct line_arg *p = (struct line_arg *)a;
+  write_signal_line(p->pre, p->name, p->rank, p->post);
+}
 
-static void check_write_uint(unsigned int v) {
-  char got[64];
-  struct uint_arg a = {v};
-  size_t n = capture_stderr(call_write_uint, &a, got, sizeof(got));
-  char want[32];
-  int wn = snprintf(want, sizeof(want), "%u", v);
+static void check_write_signal_line(const char *pre, const char *name,
+                                    unsigned int rank, const char *post) {
+  char got[256];
+  struct line_arg a = {pre, name, rank, post};
+  size_t n = capture_stderr(call_write_signal_line, &a, got, sizeof(got));
+  char want[256];
+  /* signals.c emits exactly: <pre><name> (rank <N>)<post>. */
+  int wn =
+      snprintf(want, sizeof(want), "%s%s (rank %u%s", pre, name, rank, post);
   if (n != (size_t)wn || memcmp(got, want, n) != 0) {
-    char msg[160];
+    char msg[600];
     snprintf(msg, sizeof(msg),
-             "write_uint(%u): got \"%s\" (%zu bytes) want \"%s\" (%d bytes)", v,
+             "write_signal_line: got \"%s\" (%zu bytes) want \"%s\" (%d bytes)",
              got, n, want, wn);
     fail(msg);
-  }
-  /* buf[16] invariant: at most 10 digits for any unsigned int (32-bit). */
-  if (n < 1 || n > 16) {
-    fail("write_uint byte count outside [1,16]");
   }
 }
 
@@ -149,27 +157,15 @@ static void call_atomic_print(void *a) {
 }
 
 int main(void) {
-  /* ---- write_uint: 0, single digits, UINT_MAX, powers of ten, boundaries --
+  /* ---- write_signal_line: rank 0, single/multi-digit, real crash/term forms
    */
-  check_write_uint(0);
-  for (unsigned int d = 1; d <= 9; d++) {
-    check_write_uint(d);
-  }
-  check_write_uint(10);
-  check_write_uint(99);
-  check_write_uint(100);
-  check_write_uint(999);
-  check_write_uint(1000);
-  check_write_uint(10000);
-  check_write_uint(100000);
-  check_write_uint(1000000);
-  check_write_uint(10000000);
-  check_write_uint(100000000);
-  check_write_uint(1000000000);
-  check_write_uint(4294967294u);       /* UINT_MAX - 1 */
-  check_write_uint(4294967295u);       /* UINT_MAX, 10 digits */
-  check_write_uint((unsigned)INT_MAX); /* 2147483647 */
-  check_write_uint(2147483648u);       /* INT_MAX + 1 */
+  check_write_signal_line("\n[ARTS] Crashed: ", "SIGFPE", 0,
+                          ") — stack trace:\n");
+  check_write_signal_line("\n[ARTS] Killed by ", "SIGINT", 5, ")\n");
+  check_write_signal_line("", "SIGSEGV", 9, ")\n");     /* single-digit rank */
+  check_write_signal_line("p:", "SIGTERM", 123, ")\n"); /* multi-digit rank */
+  check_write_signal_line("\n[ARTS] Crashed: ", "SIGBUS", 1000000u,
+                          ") — stack trace:\n");
 
   /* ---- signal_name: every installed signal -> literal; others -> UNKNOWN ---
    */
@@ -252,7 +248,7 @@ int main(void) {
     }
   }
 
-  printf("PASS signals_write_uint: write_uint digits + signal_name table + "
+  printf("PASS signals_formatters: write_signal_line + signal_name table + "
          "arts_atomic_print truncation verified\n");
   return 0;
 }

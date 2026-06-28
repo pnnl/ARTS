@@ -109,6 +109,16 @@ void prep_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu);
 void *arts_db_malloc(arts_db_types_t db_type, size_t size);
 void arts_db_free(void *ptr);
 
+/* User-visible data pointer for a DB.  For coherent ARTS_DB it is the installed
+ * buffer's payload; for every other subtype it is the inline payload after the
+ * wrapping struct.  Defined in the per-protocol-compiled runtime so the inline
+ * payload offset always matches the protocol's actual struct arts_db_s size —
+ * callers (e.g. the OCR shim, linked across protocol variants) must use this
+ * instead of `(db + 1)`, whose offset depends on the caller's compile-time view
+ * of the protocol-conditional layout.  NULL-safe; NULL if no buffer is yet
+ * installed on a coherent DB. */
+void *arts_db_user_ptr(struct arts_db_s *db);
+
 /* Internal pre/post-yield helpers used when an EDT yields (e.g.
  * arts_event_wait). Not part of the public ARTS API. */
 void arts_wait_release_dbs(void);

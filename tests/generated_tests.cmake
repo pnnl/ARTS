@@ -33,6 +33,11 @@ function(add_pure_unit_src name)
     if(PU_DEFINES)
         target_compile_definitions(${name} PRIVATE ${PU_DEFINES})
     endif()
+    # Some pure_unit TUs pull arts/ooo.h (directly or via route_table.c) which
+    # requires exactly one compile-time coherence-protocol selection.  Apply it
+    # unconditionally — tests that do not include protocol-sensitive headers
+    # simply leave the macros unused, so this is harmless for all others.
+    arts_apply_protocol(${name} ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
     set_property(TARGET ${name} PROPERTY POSITION_INDEPENDENT_CODE OFF)
     target_compile_options(${name} PRIVATE -fno-pie -fno-PIE)
     target_link_options(${name} PRIVATE -no-pie -fno-pie -fno-PIE)
@@ -165,7 +170,7 @@ add_pure_unit_src(runtime_edt_event_layout PASS_REGEX "PASS runtime_edt_event_la
 add_pure_unit_src(topology_placement_order LIBS hwloc PASS_REGEX "PASS topology_placement_order" TIMEOUT 60)
 add_pure_unit_src(topology_thread_mask LIBS hwloc PASS_REGEX "PASS topology_thread_mask" TIMEOUT 60)
 add_pure_unit_src(threads_worker_underflow PASS_REGEX "PASS threads_worker_underflow" TIMEOUT 60)
-add_pure_unit_src(signals_write_uint PASS_REGEX "PASS signals_write_uint" TIMEOUT 60)
+add_pure_unit_src(signals_formatters PASS_REGEX "PASS signals_formatters" TIMEOUT 60)
 # T245 EXPOSES B132: expected to FAIL/crash under sanitizer (documents runtime bug, do not mask)
 # T250 EXPOSES B138: expected to FAIL/crash under sanitizer (documents runtime bug, do not mask)
 add_pure_unit_src(json_writer SOURCES ${CMAKE_SOURCE_DIR}/libs/src/core/counter/json.c TIMEOUT 60)

@@ -57,6 +57,7 @@ target_link_libraries(arts_compute PRIVATE arts_interface)
 if(HWLOC_INCLUDE_DIRS)
     target_include_directories(arts_compute PRIVATE ${HWLOC_INCLUDE_DIRS})
 endif()
+arts_apply_protocol(arts_compute ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
 
 # DB coherence TU selection: MRNEW and MRSW each compile one timing TU (eager.c
 # or lazy.c) plus their single-owner ownership machinery (ownership.c + the home
@@ -65,25 +66,7 @@ endif()
 # carries no ownership lease, so the home lockreq queue / home.c are not linked).
 # Each TU defines its arts_handler_db_* / arts_db_* bodies directly; the linker
 # resolves the single compiled variant.
-if(ARTS_COHERENCE_PROTOCOL STREQUAL "MRMW")
-    set(DB_COHERENCE_MODEL_TU coherence/mrmw/mrmw.c)
-elseif(ARTS_COHERENCE_PROTOCOL STREQUAL "LOCK")
-    if(ARTS_PROTOCOL_TIMING STREQUAL "LAZY")
-        set(DB_COHERENCE_MODEL_TU coherence/lock/home.c coherence/lock/lazy.c)
-    else()
-        set(DB_COHERENCE_MODEL_TU coherence/lock/home.c coherence/lock/eager.c)
-    endif()
-elseif(ARTS_COHERENCE_PROTOCOL STREQUAL "MRSW")
-    if(ARTS_PROTOCOL_TIMING STREQUAL "EAGER")
-        set(DB_COHERENCE_MODEL_TU coherence/mrsw/eager.c coherence/mrsw/ownership.c coherence/mrsw/home.c coherence/mrsw/waiter_queue.c)
-    else() # MRSW + LAZY
-        set(DB_COHERENCE_MODEL_TU coherence/mrsw/lazy.c coherence/mrsw/ownership.c coherence/mrsw/home.c coherence/mrsw/waiter_queue.c)
-    endif()
-elseif(ARTS_PROTOCOL_TIMING STREQUAL "EAGER")
-    set(DB_COHERENCE_MODEL_TU coherence/mrnew/eager.c coherence/mrnew/ownership.c coherence/mrnew/home.c)
-else() # MRNEW + LAZY (default)
-    set(DB_COHERENCE_MODEL_TU coherence/mrnew/lazy.c coherence/mrnew/ownership.c coherence/mrnew/home.c)
-endif()
+arts_coherence_model_tus(DB_COHERENCE_MODEL_TU ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
 
 # DB + coherence (db.c carries CUDA staging paths -> GPU wrapper).
 set(ARTS_MEMORY_SOURCES
@@ -96,6 +79,7 @@ target_link_libraries(arts_memory PRIVATE arts_interface)
 if(HWLOC_INCLUDE_DIRS)
     target_include_directories(arts_memory PRIVATE ${HWLOC_INCLUDE_DIRS})
 endif()
+arts_apply_protocol(arts_memory ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
 
 # Event + EDT execution context (CPU-only; reused as-is in GPU builds).
 add_library(arts_sync OBJECT event.c edt_context.c)
@@ -103,6 +87,7 @@ target_link_libraries(arts_sync PRIVATE arts_interface)
 if(HWLOC_INCLUDE_DIRS)
     target_include_directories(arts_sync PRIVATE ${HWLOC_INCLUDE_DIRS})
 endif()
+arts_apply_protocol(arts_sync ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
 
 # Out-of-order deferred-op engine (replays operations that arrived before
 # their target object was installed in the route table).  CPU-only; reused
@@ -112,6 +97,7 @@ target_link_libraries(arts_ooo PRIVATE arts_interface)
 if(HWLOC_INCLUDE_DIRS)
     target_include_directories(arts_ooo PRIVATE ${HWLOC_INCLUDE_DIRS})
 endif()
+arts_apply_protocol(arts_ooo ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
 
 # Scheduler (scheduler.c at core/ top level, needs GPU wrapper for CUDA builds)
 add_library(arts_scheduler OBJECT scheduler.c)
@@ -119,6 +105,7 @@ target_link_libraries(arts_scheduler PRIVATE arts_interface)
 if(HWLOC_INCLUDE_DIRS)
     target_include_directories(arts_scheduler PRIVATE ${HWLOC_INCLUDE_DIRS})
 endif()
+arts_apply_protocol(arts_scheduler ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
 
 # GPU module is only built for CUDA library
 if(BUILD_CUDA_LIBRARY)
@@ -133,6 +120,7 @@ if(BUILD_CUDA_LIBRARY)
         target_include_directories(arts_compute_gpu PRIVATE ${HWLOC_INCLUDE_DIRS})
     endif()
     target_compile_definitions(arts_compute_gpu PRIVATE ARTS_USE_GPU)
+    arts_apply_protocol(arts_compute_gpu ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
 
     # GPU variant of memory: recompile db.c as .cu, coherence TUs as .c, all with
     # ARTS_USE_GPU.
@@ -147,6 +135,7 @@ if(BUILD_CUDA_LIBRARY)
         target_include_directories(arts_memory_gpu PRIVATE ${HWLOC_INCLUDE_DIRS})
     endif()
     target_compile_definitions(arts_memory_gpu PRIVATE ARTS_USE_GPU)
+    arts_apply_protocol(arts_memory_gpu ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
 
     # GPU variant of scheduler (wraps scheduler.c as .cu for NVCC)
     set(SCHED_PATH "${CMAKE_CURRENT_SOURCE_DIR}/scheduler.c")
@@ -158,4 +147,5 @@ if(BUILD_CUDA_LIBRARY)
         target_include_directories(arts_scheduler_gpu PRIVATE ${HWLOC_INCLUDE_DIRS})
     endif()
     target_compile_definitions(arts_scheduler_gpu PRIVATE ARTS_USE_GPU)
+    arts_apply_protocol(arts_scheduler_gpu ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
 endif()

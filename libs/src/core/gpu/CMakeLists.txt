@@ -53,6 +53,11 @@ if(BUILD_CUDA_LIBRARY)
     # Add ARTS_USE_GPU definition for this module
     target_compile_definitions(arts_gpu PRIVATE ARTS_USE_GPU)
 
+    # GPU TUs include protocol-sensitive internal headers (ooo.h, coherence/
+    # types.h) that require exactly one compile-time coherence selection; apply
+    # it per-target like every other ARTS object library.
+    arts_apply_protocol(arts_gpu ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
+
     # Add hwloc include directories if available
     if(HWLOC_INCLUDE_DIRS)
         target_include_directories(arts_gpu PRIVATE ${HWLOC_INCLUDE_DIRS})

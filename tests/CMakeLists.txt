@@ -164,6 +164,14 @@ function(add_arts_test test_name)
     # Set include directories
     target_include_directories(${test_name} PRIVATE ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR} ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
 
+    # Whitebox tests include protocol-sensitive internal headers (ooo.h,
+    # coherence/types.h, protocol.h) that require exactly one compile-time
+    # coherence-protocol selection.  The selection is applied per-target (not
+    # globally) so it cannot collide with the per-variant benchmark libraries;
+    # apply this build's option-selected protocol to the test the same way the
+    # ARTS library targets receive it.
+    arts_apply_protocol(${test_name} ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
+
     # Match CARTS launcher expectations: non-PIE binaries avoid pointer-auth
     # failures when passing raw function pointers across nodes.
     set_property(TARGET ${test_name} PROPERTY POSITION_INDEPENDENT_CODE OFF)
@@ -214,6 +222,10 @@ if(BUILD_CUDA_LIBRARY)
 
         # Set include directories
         target_include_directories(${test_name} PRIVATE ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR} ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
+
+        # Protocol-sensitive internal headers need the compile-time coherence
+        # selection applied per-target (see add_arts_test).
+        arts_apply_protocol(${test_name} ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
 
         set_property(TARGET ${test_name} PROPERTY POSITION_INDEPENDENT_CODE OFF)
         target_compile_options(${test_name} PRIVATE -fno-pie -fno-PIE)
@@ -576,6 +588,10 @@ foreach(t ${OOO_UNIT_TESTS})
     target_include_directories(${t} PRIVATE
         ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR}
         ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
+    # ooo.c (included directly by each test TU) pulls arts/ooo.h which requires
+    # exactly one compile-time protocol selection — same reason add_arts_test
+    # calls arts_apply_protocol.
+    arts_apply_protocol(${t} ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
     target_link_libraries(${t} PRIVATE Threads::Threads)
 endforeach()
 register_pure_unit_test(ooo_toctou_rescue TIMEOUT 60)

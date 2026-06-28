@@ -54,6 +54,7 @@
 
 /* --- ARTS headers second --- */
 #include "arts.h"
+#include "arts/db.h"
 #include "arts/edt.h"
 #include "arts/gas/guid.h"
 #include "arts/gas/route_table.h"
@@ -1313,7 +1314,7 @@ u8 ocrEventCollectiveSatisfySlot(ocrGuid_t eventGuid, void *dataPtr,
   if (raw == NULL) {
     return OCR_EFAULT;
   }
-  CollectiveMetadata *meta = (CollectiveMetadata *)(raw + 1);
+  CollectiveMetadata *meta = (CollectiveMetadata *)arts_db_user_ptr(raw);
 
   if (islot >= meta->nbContribs) {
     arts_shared_release(&meta_h);
@@ -1372,7 +1373,7 @@ u8 ocrDbCreate(ocrGuid_t *db, void **addr, u64 len, u16 flags, ocrHint_t *hint,
       arts_shared_ptr_t ex_h = arts_route_table_lookup_db(labeledGuid);
       struct arts_db_s *db_existing = (struct arts_db_s *)arts_shared_get(ex_h);
       if (db_existing != NULL) {
-        *addr = (void *)(db_existing + 1);
+        *addr = arts_db_user_ptr(db_existing);
         arts_shared_release(&ex_h);
         /* Match ocrEventCreate's labeling convention: only surface
          * EGUIDEXISTS when the caller asked to be told via GUID_PROP_CHECK. */
@@ -1565,7 +1566,7 @@ u8 ocrAddDependenceSlot(ocrGuid_t source, u32 sslot, ocrGuid_t destination,
     if (raw == NULL) {
       return OCR_EFAULT;
     }
-    CollectiveMetadata *meta = (CollectiveMetadata *)(raw + 1);
+    CollectiveMetadata *meta = (CollectiveMetadata *)arts_db_user_ptr(raw);
     if (sslot >= meta->nbContribs) {
       arts_shared_release(&meta_h);
       return OCR_EINVAL;

@@ -198,7 +198,7 @@ endif() # TARGET ocr_vdm_mpi
 #       [EXTRA_LINK_LIBS <lib> ...]     # extra link libraries (e.g. m)
 #   )
 #
-# Creates: <name>_arts, <name>_xsocr, and (when compatible) <name>_ocrvx executables
+# Creates: <name>_arts_<suffix> (×7 coherence variants), <name>_xsocr, and (when compatible) <name>_ocrvx executables
 #       [OCRVX_SKIP]                    # suppress _ocrvx target (app uses unsupported OCR extensions)
 # ==========================================================================
 function(add_benchmark_app)
@@ -254,17 +254,22 @@ function(add_benchmark_app)
     )
     target_compile_options(${APP_NAME}_xsocr PRIVATE ${BENCH_C_OPT} -w)
 
-    # --- ARTS variant ---
-    add_executable(${APP_NAME}_arts ${ABS_SOURCES} ${LIB_OBJECTS})
-    target_include_directories(${APP_NAME}_arts PRIVATE ${COMMON_INCLUDES})
-    target_compile_definitions(${APP_NAME}_arts PRIVATE ${COMMON_DEFINES})
-    target_link_libraries(${APP_NAME}_arts PRIVATE ocr_arts_static arts_static pthread ${APP_EXTRA_LINK_LIBS})
-    target_link_options(${APP_NAME}_arts PRIVATE -no-pie -fno-pie)
-    set_target_properties(${APP_NAME}_arts PROPERTIES
-        C_STANDARD 11 C_EXTENSIONS ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-    )
-    target_compile_options(${APP_NAME}_arts PRIVATE ${BENCH_C_OPT} -w)
+    # --- ARTS variants (one per coherence protocol) ---
+    set(ARTS_VARIANT_SUFFIXES mrnew_eager mrnew_lazy mrsw_eager mrsw_lazy mrmw lock_eager lock_lazy)
+    foreach(sfx ${ARTS_VARIANT_SUFFIXES})
+        add_executable(${APP_NAME}_arts_${sfx} ${ABS_SOURCES} ${LIB_OBJECTS}
+                       $<TARGET_OBJECTS:ocr_arts_objects>)
+        target_include_directories(${APP_NAME}_arts_${sfx} PRIVATE
+            ${COMMON_INCLUDES} ${OCR_INC_DIR})
+        target_compile_definitions(${APP_NAME}_arts_${sfx} PRIVATE ${COMMON_DEFINES})
+        target_link_libraries(${APP_NAME}_arts_${sfx} PRIVATE
+            arts_static_${sfx} pthread ${APP_EXTRA_LINK_LIBS})
+        target_link_options(${APP_NAME}_arts_${sfx} PRIVATE -no-pie -fno-pie)
+        set_target_properties(${APP_NAME}_arts_${sfx} PROPERTIES
+            C_STANDARD 11 C_EXTENSIONS ON
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+        target_compile_options(${APP_NAME}_arts_${sfx} PRIVATE ${BENCH_C_OPT} -w)
+    endforeach()
 
     # --- OCR-VX variant (only when ocr_vdm_mpi target exists, OCRVX_SKIP not set,
     #     and all required helper libs have an _ocrvx variant compiled against
@@ -311,7 +316,9 @@ function(add_benchmark_app)
 
     # Track for meta target
     # set_property(GLOBAL APPEND PROPERTY BENCHMARK_XSOCR_TARGETS ${APP_NAME}_xsocr)
-    set_property(GLOBAL APPEND PROPERTY BENCHMARK_ARTS_TARGETS ${APP_NAME}_arts)
+    foreach(sfx ${ARTS_VARIANT_SUFFIXES})
+        set_property(GLOBAL APPEND PROPERTY BENCHMARK_ARTS_TARGETS ${APP_NAME}_arts_${sfx})
+    endforeach()
 endfunction()
 
 # ==========================================================================
@@ -699,7 +706,9 @@ add_benchmark_app(NAME LCS_distributed_ST
 )
 # LCS uses bare "inline" (C11 = no external def) → fails at -O0; force GNU89 semantics
 target_compile_options(LCS_distributed_ST_xsocr PRIVATE -fgnu89-inline)
-target_compile_options(LCS_distributed_ST_arts PRIVATE -fgnu89-inline)
+foreach(sfx mrnew_eager mrnew_lazy mrsw_eager mrsw_lazy mrmw lock_eager lock_lazy)
+    target_compile_options(LCS_distributed_ST_arts_${sfx} PRIVATE -fgnu89-inline)
+endforeach()
 if(TARGET LCS_distributed_ST_ocrvx)
     target_compile_options(LCS_distributed_ST_ocrvx PRIVATE -fgnu89-inline)
 endif()
@@ -711,7 +720,9 @@ add_benchmark_app(NAME LCS_shared
     EXTRA_LINK_LIBS m
 )
 target_compile_options(LCS_shared_xsocr PRIVATE -fgnu89-inline)
-target_compile_options(LCS_shared_arts PRIVATE -fgnu89-inline)
+foreach(sfx mrnew_eager mrnew_lazy mrsw_eager mrsw_lazy mrmw lock_eager lock_lazy)
+    target_compile_options(LCS_shared_arts_${sfx} PRIVATE -fgnu89-inline)
+endforeach()
 if(TARGET LCS_shared_ocrvx)
     target_compile_options(LCS_shared_ocrvx PRIVATE -fgnu89-inline)
 endif()
@@ -1062,10 +1073,12 @@ if(HAS_CRLIBM)
         # reference to image_0/platform_0/pulse_0/...". */
         target_link_libraries(sar_${sar_size}_xsocr PRIVATE
             ${SAR_DATA_${sar_size}_OBJECTS})
-        target_link_libraries(sar_${sar_size}_arts PRIVATE
-            ${SAR_DATA_${sar_size}_OBJECTS})
+        foreach(sfx mrnew_eager mrnew_lazy mrsw_eager mrsw_lazy mrmw lock_eager lock_lazy)
+            target_link_libraries(sar_${sar_size}_arts_${sfx} PRIVATE
+                ${SAR_DATA_${sar_size}_OBJECTS})
+            add_dependencies(sar_${sar_size}_arts_${sfx} sar_data_${sar_size}_objs)
+        endforeach()
         add_dependencies(sar_${sar_size}_xsocr sar_data_${sar_size}_objs)
-        add_dependencies(sar_${sar_size}_arts sar_data_${sar_size}_objs)
         if(TARGET sar_${sar_size}_ocrvx)
             target_link_libraries(sar_${sar_size}_ocrvx PRIVATE
                 ${SAR_DATA_${sar_size}_OBJECTS})
@@ -1100,7 +1113,9 @@ add_benchmark_app(NAME stream
     EXTRA_LINK_LIBS pthread m
 )
 # stream.c has functions used before declaration (C11 error) — allow it
-target_compile_options(stream_arts PRIVATE -Wno-error=implicit-function-declaration)
+foreach(sfx mrnew_eager mrnew_lazy mrsw_eager mrsw_lazy mrmw lock_eager lock_lazy)
+    target_compile_options(stream_arts_${sfx} PRIVATE -Wno-error=implicit-function-declaration)
+endforeach()
 # target_compile_options(stream_xsocr PRIVATE -Wno-error=implicit-function-declaration)
 if(TARGET stream_ocrvx)
     target_compile_options(stream_ocrvx PRIVATE -Wno-error=implicit-function-declaration)
@@ -1112,7 +1127,9 @@ add_benchmark_app(NAME stream_dist
     EXTRA_DEFINES STREAM_ARRAY_SIZE=1000 NUM_THREADS=2 NTIMES=3
     EXTRA_LINK_LIBS pthread m
 )
-target_compile_options(stream_dist_arts PRIVATE -Wno-error=implicit-function-declaration)
+foreach(sfx mrnew_eager mrnew_lazy mrsw_eager mrsw_lazy mrmw lock_eager lock_lazy)
+    target_compile_options(stream_dist_arts_${sfx} PRIVATE -Wno-error=implicit-function-declaration)
+endforeach()
 # target_compile_options(stream_dist_xsocr PRIVATE -Wno-error=implicit-function-declaration)
 if(TARGET stream_dist_ocrvx)
     target_compile_options(stream_dist_ocrvx PRIVATE -Wno-error=implicit-function-declaration)
@@ -1141,15 +1158,18 @@ set_target_properties(release_sync_stress_xsocr PROPERTIES C_STANDARD 11 C_EXTEN
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 target_compile_options(release_sync_stress_xsocr PRIVATE ${BENCH_C_OPT} -w)
 
-add_executable(release_sync_stress_arts ${RSS_SRC})
-target_include_directories(release_sync_stress_arts PRIVATE
-    ${OCR_LIBS_ROOT}/macros/macros ${BENCH_OCR_OPTIONS_DIR})
-target_compile_definitions(release_sync_stress_arts PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
-target_link_libraries(release_sync_stress_arts PRIVATE ocr_arts_static arts_static pthread)
-target_link_options(release_sync_stress_arts PRIVATE -no-pie -fno-pie)
-set_target_properties(release_sync_stress_arts PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-target_compile_options(release_sync_stress_arts PRIVATE ${BENCH_C_OPT} -w)
+foreach(sfx mrnew_eager mrnew_lazy mrsw_eager mrsw_lazy mrmw lock_eager lock_lazy)
+    add_executable(release_sync_stress_arts_${sfx} ${RSS_SRC}
+                   $<TARGET_OBJECTS:ocr_arts_objects>)
+    target_include_directories(release_sync_stress_arts_${sfx} PRIVATE
+        ${OCR_LIBS_ROOT}/macros/macros ${BENCH_OCR_OPTIONS_DIR} ${OCR_INC_DIR})
+    target_compile_definitions(release_sync_stress_arts_${sfx} PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
+    target_link_libraries(release_sync_stress_arts_${sfx} PRIVATE arts_static_${sfx} pthread)
+    target_link_options(release_sync_stress_arts_${sfx} PRIVATE -no-pie -fno-pie)
+    set_target_properties(release_sync_stress_arts_${sfx} PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    target_compile_options(release_sync_stress_arts_${sfx} PRIVATE ${BENCH_C_OPT} -w)
+endforeach()
 
 if(TARGET ocr_vdm_mpi)
     add_executable(release_sync_stress_ocrvx ${RSS_SRC})

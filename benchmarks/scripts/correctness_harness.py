@@ -117,11 +117,15 @@ _TPN = {
     'server': {2: 24, 4: 12, 8: 6, 16: 3},
 }[TARGET]
 
-# ocr-vx TBB worker count per node count (= per-node budget - 1; one slot is
-# permanently held by the runtime's blocking shutdown task).
+# ocr-vx TBB worker count per node count = full per-rank core budget, matching
+# the original runtime's default (tbb::info::default_concurrency() = all cores
+# the process sees).  We previously reserved one slot for the runtime's blocking
+# shutdown-barrier task (budget-1), but the original gives ocr-vx the full
+# budget, so match it.  Budget >= 3 at every node count here, so the P=1
+# shutdown deadlock cannot occur.
 _OCRVX_TBB = {
-    'laptop': {1: 13, 2: 6, 3: 3, 4: 2},
-    'server': {1: 47, 2: 23, 4: 11, 8: 5, 16: 2},
+    'laptop': {1: 14, 2: 7, 3: 4, 4: 3},
+    'server': {1: 48, 2: 24, 4: 12, 8: 6, 16: 3},
 }[TARGET]
 
 # ocr-vx's coherence protocol is structurally far slower than arts/xsocr, so a
@@ -603,16 +607,19 @@ TIER_B: list[Case] = [
     # grand total summed over variables.  The two are not the same scalar,
     # and summing baseline's per-variable prints after the fact is fragile.
     # xsocr↔arts comparison still runs in Tier A.
-    Case(
-        name="XSBench_B", ocr_base="XSBench_intel",
-        args=["-s","small","-g","10","-l","100"],
-        scalar_re=r"Workload\s+\(unit\):\s+(\d+)", scalar_kind="int",
-        baseline=BaselineSpec(
-            bin="XSBench_omp",
-            args=["-t","4","-s","small","-g","10","-l","100"],
-            scalar_re=r"Lookups:\s+(\d+)\s*\n", scalar_kind="int",
-        ),
-    ),
+    # XSBench_B removed from Tier B: there is NO correctness metric shared by
+    # the OCR app and any OMP/MPI baseline.  The OCR XSBench prints only its
+    # own "XSBench grid checksum" (added in refactored/ocr/intel Main.c; no
+    # OMP/MPI variant computes it), while the OMP/MPI baselines print only the
+    # canonical "Verification checksum" vhash (under -DVERIFICATION) — which the
+    # OCR refactor never wires up (building it with VERIFICATION still emits no
+    # vhash).  The old comparison matched "Workload (unit)" (the OCR-side echo
+    # of the -l input = 100) against the baseline's "Lookups" (also the -l
+    # input) — i.e. the input parameter, not a computed result.  Aligning on a
+    # real metric would require app-source surgery (port the distributed
+    # verification hash into the OCR app, or add the grid checksum to a
+    # baseline).  XSBench correctness is covered by XSBench_intel in Tier A
+    # (grid-checksum consensus across the 7 arts variants + xsocr + ocr-vx).
     Case(
         name="RSBench_B", ocr_base="RSBench_intel",
         args=["-l","100"],
@@ -776,9 +783,16 @@ class Runner:
         wall = time.time() - t0
         return RunResult(rc=rc, wall=wall, stdout=out, log_path=str(logfile))
 
-    def run_ocr(self, case_name: str, bin_name: str, args: list[str], backend: str) -> RunResult:
-        binary = f"{bin_name}_{backend}"
-        logfile = self.logdir / f"{case_name}.{backend}.log"
+    def run_ocr(self, case_name: str, bin_name: str, args: list[str], backend: str,
+               suffix: str = "") -> RunResult:
+        # When backend=="arts" and suffix is given, exec <bin_name>_arts_<suffix>.
+        if backend == "arts" and suffix:
+            binary = f"{bin_name}_arts_{suffix}"
+            log_tag = f"arts_{suffix}"
+        else:
+            binary = f"{bin_name}_{backend}"
+            log_tag = backend
+        logfile = self.logdir / f"{case_name}.{log_tag}.log"
         env = os.environ.copy()
         env["OMP_NUM_THREADS"] = "4"
         if backend == "xsocr":
@@ -803,14 +817,26 @@ class Runner:
     _XSOCR_MN_CFGS = {n: f"mpi/{TARGET}/{_cfg_name(n)}"
                       for n in MN_RANKS if isinstance(n, int)}
 
-    # Per-run unique TCP port base for arts multinode runs.  All stock cfgs
-    # share default_ports=50000, so a straggler from the previous case (a
-    # rank still releasing its listen socket, or an orphan from a timed-out
-    # run) would poison every later case that binds the same range.  The
-    # runtime lets the environment override any config key, so each run gets
-    # its own range.  Starts at 53000 to stay clear of both the stock 50000
-    # configs (manual runs) and ctest's 51000+ per-test bases.
-    _arts_port_iter = itertools.count(23000, 16)
+    # Per-run unique TCP port base for arts multinode runs.  A straggler from
+    # the previous case (a rank still releasing its listen socket, or an orphan
+    # from a timed-out run) would poison every later case that binds the same
+    # range; the runtime lets the environment override any config key, so each
+    # run gets its own range.
+    #
+    # The base MUST stay BELOW the kernel ephemeral range (32768-60999): a base
+    # inside it randomly collides with the source port the kernel assigns to an
+    # outgoing connection (the launcher's inter-rank connects), and bind() then
+    # fails instantly (exit 255).  A monotonic counter climbs into that range
+    # over a long matrix, so cycle within a fixed sub-ephemeral window instead.
+    # Runs are serialized (one MN runner at a time), so a base is free for reuse
+    # long before the cycle returns to it.  Each run needs nodes*port_count
+    # consecutive ports (<= 16 nodes * 2 _io ports = 32 ports); _PORT_STEP
+    # exceeds that span so adjacent bases never overlap, and _PORT_BASE_HI keeps
+    # the whole span clear of 32768.
+    _PORT_BASE_LO = 20000
+    _PORT_BASE_HI = 32700
+    _PORT_STEP = 48
+    _arts_port_ctr = itertools.count(0)
 
     @staticmethod
     def _reap_exe(exe_path: Path) -> None:
@@ -873,16 +899,22 @@ class Runner:
                     continue
 
     def run_arts_mn(self, case_name: str, bin_name: str, args: list[str],
-                    nodes: int, timeout: int = 0) -> RunResult:
-        """Run arts at N nodes (self-fork launcher via cfg)."""
+                    nodes: int, timeout: int = 0, suffix: str = "") -> RunResult:
+        """Run arts at N nodes (self-fork launcher via cfg).
+
+        When suffix is set, exec <bin_name>_arts_<suffix> instead of <bin_name>_arts.
+        """
         to = timeout or self.timeout
         cfg_name = self._ARTS_MN_CFGS[nodes]
         cfg_src = REPO / "configs" / cfg_name
         shutil.copy2(cfg_src, APPS_DIR / "arts.cfg")  # arts reads ./arts.cfg
-        logfile = self.logdir / f"{case_name}.arts_mn{nodes}.log"
+        log_tag = f"arts_{suffix}_mn{nodes}" if suffix else f"arts_mn{nodes}"
+        logfile = self.logdir / f"{case_name}.{log_tag}.log"
         env = os.environ.copy()
         env["OMP_NUM_THREADS"] = "4"
-        base = next(self._arts_port_iter)
+        base = self._PORT_BASE_LO + (
+            next(self._arts_port_ctr) * self._PORT_STEP
+        ) % (self._PORT_BASE_HI - self._PORT_BASE_LO)
         # The override must carry the same port COUNT as the cfg it replaces:
         # the count doubles as the per-node parallel-connection count
         # (port_count = default_ports_count), so a mismatch breaks the
@@ -892,15 +924,16 @@ class Runner:
             env["default_ports"] = f"[{base}-{base + 1}]"
         else:
             env["default_ports"] = str(base)
+        arts_bin = f"{bin_name}_arts_{suffix}" if suffix else f"{bin_name}_arts"
         cmd = (
             f"cd {APPS_DIR} && {self.mem_prefix}"
-            f"timeout -k 1 {to} ./{bin_name}_arts " + " ".join(args)
+            f"timeout -k 1 {to} ./{arts_bin} " + " ".join(args)
         )
         result = self._run(cmd, env, logfile, wall_timeout=to)
         # A timed-out run can leave rank processes behind (a hung rank can
         # survive SIGTERM); reap them so they cannot interfere with later
         # cases or hold CPU.
-        self._reap_exe(APPS_DIR / f"{bin_name}_arts")
+        self._reap_exe(APPS_DIR / arts_bin)
         # Restore single-node cfg for subsequent single-node runs
         shutil.copy2(ARTS_CFG, APPS_DIR / "arts.cfg")
         return result
@@ -971,14 +1004,8 @@ class Runner:
 
 
 # ---------------------------------------------------------------------------
-# Scalar extraction / comparison.
+# Scalar extraction / comparison helpers.
 # ---------------------------------------------------------------------------
-@dataclass
-class Verdict:
-    tag: str     # PASS-SCALAR | PASS-RC | FAIL | KNOWN-BUG | SKIP | SKIP-STRESS
-    detail: str = ""
-
-
 def _pull(text: str, rex: str, kind: str):
     m = re.search(rex, text)
     if not m:
@@ -1000,151 +1027,384 @@ def _drift(a: float, b: float) -> float:
     return abs(a - b) / denom
 
 
-def _expect_ok(val, case: "Case") -> bool:
-    """True unless the case pins an absolute answer (case.expect) that val violates."""
-    if not case.expect:
+def _expect_ok(value: object, case: "Case") -> bool:
+    """Return True when value agrees with case.expect (absolute correctness pin).
+
+    case.expect is always a string (parsed from _EXPECT); convert it to the
+    case's scalar_kind before comparing so the comparison mirrors _pull()."""
+    exp_str = case.expect
+    if not exp_str:
         return True
     try:
-        exp = int(case.expect) if case.scalar_kind == "int" else float(case.expect)
-    except ValueError:
-        return True
-    if case.scalar_kind == "int":
-        return val == exp
-    # The pin guards against a correlated regression to a DIFFERENT answer, not
-    # against last-digit precision; a real wrong answer diverges far more than
-    # this, while a pinned value may be recorded at reduced precision.
-    return _drift(val, exp) <= max(case.scalar_tol, 1e-4)
-
-
-def _demote_if_known_bug(v: Verdict, case: Case) -> Verdict:
-    """Map FAIL → KNOWN-BUG(reason) when the case declares an expected runtime bug."""
-    if v.tag == "FAIL" and case.expected_known_bug:
-        return Verdict("KNOWN-BUG", f"{case.expected_known_bug} | obs: {v.detail}")
-    return v
-
-
-def _apply_ocrvx(v: Verdict, ocrvx: RunResult | None,
-                 arts: RunResult, case: Case) -> Verdict:
-    """Demote a PASS verdict to OCRVX-BUG when ocrvx disagrees with arts."""
-    if ocrvx is None or v.tag not in ("PASS-SCALAR", "PASS-RC"):
-        return v
-    bug = _check_ocrvx(ocrvx, arts, case)
-    return bug if bug is not None else v
-
-
-def _check_ocrvx(ocrvx: RunResult, arts: RunResult, case: Case) -> Verdict | None:
-    """Return an OCRVX-BUG verdict if ocrvx diverges from arts, else None."""
-    if ocrvx.rc != 0:
-        return Verdict("OCRVX-BUG", f"ocrvx rc={ocrvx.rc}")
-    if not case.scalar_re:
-        return None  # rc=0, no scalar to compare
-    ov = _pull(ocrvx.stdout, case.scalar_re, case.scalar_kind)
-    ar = _pull(arts.stdout,  case.scalar_re, case.scalar_kind)
-    if ov is None:
-        return Verdict("OCRVX-BUG", "ocrvx scalar_re miss")
-    if case.scalar_kind == "bool":
-        return None  # both present
-    if ar is None:
-        return None  # arts failed — FAIL already raised upstream
-    if case.scalar_kind == "int":
-        if ov != ar:
-            return Verdict("OCRVX-BUG", f"ocrvx={ov} arts={ar}")
-        return None
-    d = _drift(ov, ar)
-    if d > case.scalar_tol:
-        return Verdict("OCRVX-BUG",
-                       f"ocrvx={ov:.6g} arts={ar:.6g} drift={d:.2e} tol={case.scalar_tol:.2e}")
-    return None
-
-
-def tier_a(xsocr: RunResult | None, arts: RunResult, case: Case,
-           ocrvx: RunResult | None = None) -> Verdict:
-    # arts_only cases only check the arts side.
-    if case.arts_only:
-        if arts.rc != 0:
-            return _demote_if_known_bug(
-                Verdict("FAIL", f"arts rc={arts.rc} (arts-only mode)"), case)
-        if not case.scalar_re:
-            return Verdict("PASS-RC", "arts-only: rc=0 (no scalar configured)")
-        a = _pull(arts.stdout, case.scalar_re, case.scalar_kind)
-        if a is None:
-            return _demote_if_known_bug(
-                Verdict("FAIL", "arts-only: scalar_re miss"), case)
         if case.scalar_kind == "bool":
-            return Verdict("PASS-SCALAR", "arts-only: bool marker present")
-        if not _expect_ok(a, case):
-            return _demote_if_known_bug(
-                Verdict("FAIL", f"arts-only: {a} != expected {case.expect}"), case)
-        return Verdict("PASS-SCALAR", f"arts-only: {case.scalar_kind}={a}")
-
-    # Standard xsocr↔arts compare.
-    assert xsocr is not None
-    if xsocr.rc != 0 or arts.rc != 0:
-        return _demote_if_known_bug(
-            Verdict("FAIL", f"rc xsocr={xsocr.rc} arts={arts.rc}"), case)
-    if not case.scalar_re:
-        return _apply_ocrvx(
-            Verdict("PASS-RC", "rc=0 both (no scalar configured)"), ocrvx, arts, case)
-    x = _pull(xsocr.stdout, case.scalar_re, case.scalar_kind)
-    a = _pull(arts.stdout,  case.scalar_re, case.scalar_kind)
-    if x is None or a is None:
-        return _demote_if_known_bug(
-            Verdict("FAIL",
-                    f"scalar_re miss (xsocr={x is not None} arts={a is not None})"),
-            case)
-    if case.scalar_kind == "bool":
-        return _apply_ocrvx(
-            Verdict("PASS-SCALAR", "bool present in both"), ocrvx, arts, case)
-    if case.scalar_kind == "int":
-        if x != a:
-            return _demote_if_known_bug(
-                Verdict("FAIL", f"int xsocr={x} arts={a}"), case)
-        if not _expect_ok(x, case):
-            return _demote_if_known_bug(
-                Verdict("FAIL", f"int={x} != expected {case.expect}"), case)
-        return _apply_ocrvx(
-            Verdict("PASS-SCALAR", f"int={x}" + (" ==expect" if case.expect else "")),
-            ocrvx, arts, case)
-    # float
-    d = _drift(x, a)
-    if d > case.scalar_tol:
-        return _demote_if_known_bug(
-            Verdict("FAIL",
-                    f"xsocr={x:.6g} arts={a:.6g} drift={d:.2e} tol={case.scalar_tol:.2e}"),
-            case)
-    if not _expect_ok(x, case):
-        return _demote_if_known_bug(
-            Verdict("FAIL", f"xsocr={x:.6g} arts={a:.6g} != expected {case.expect}"), case)
-    return _apply_ocrvx(
-        Verdict("PASS-SCALAR",
-                f"xsocr={x:.6g} arts={a:.6g} drift={d:.2e}" + (" ==expect" if case.expect else "")),
-        ocrvx, arts, case)
+            return bool(value) == bool(exp_str)
+        if case.scalar_kind == "int":
+            return int(value) == int(exp_str)  # type: ignore[arg-type]
+        # float: the pin is a human-rounded reference value, so compare with a
+        # tolerance no tighter than the project's FP tolerance (0.01% = 1e-4),
+        # never the (often far tighter) cross-runtime scalar_tol.  The runtimes
+        # agree bit-for-bit so scalar_tol can be 1e-10; but a pin like npb_cg's
+        # "7.85534" differs from the agreed 7.8553405... by 5e-6, which a 1e-10
+        # tol would spuriously flag as EXPECT-FAIL.  Looser per-app tols win.
+        pin_tol = max(case.scalar_tol, 1e-4)
+        return _drift(float(value), float(exp_str)) <= pin_tol  # type: ignore[arg-type]
+    except (ValueError, TypeError):
+        return False
 
 
-def tier_b(xsocr: RunResult, arts: RunResult, base: RunResult, case: Case) -> Verdict:
-    if xsocr.rc != 0 or arts.rc != 0 or base.rc != 0:
-        return Verdict("FAIL", f"rc xs={xsocr.rc} ar={arts.rc} bs={base.rc}")
-    assert case.baseline is not None
-    x = _pull(xsocr.stdout, case.scalar_re, case.scalar_kind)
-    a = _pull(arts.stdout,  case.scalar_re, case.scalar_kind)
-    b = _pull(base.stdout,  case.baseline.scalar_re, case.baseline.scalar_kind)
-    if x is None or a is None or b is None:
-        return Verdict("FAIL", f"scalar_re miss xs={x is not None} ar={a is not None} bs={b is not None}")
-    if case.scalar_kind == "bool":
-        return Verdict("PASS-SCALAR", "bool marker present in all three")
-    if case.scalar_kind == "int":
-        return (Verdict("PASS-SCALAR", f"int={x}") if x == a == b
-                else Verdict("FAIL", f"xs={x} ar={a} bs={b}"))
-    # float
-    dxa = _drift(x, a)
-    dxb = _drift(x, b)
-    dab = _drift(a, b)
-    if dxa <= case.scalar_tol and max(dxb, dab) <= case.baseline.scalar_tol:
-        return Verdict("PASS-SCALAR",
-                       f"xs={x:.6g} ar={a:.6g} bs={b:.6g} dxa={dxa:.2e} dxb={dxb:.2e}")
-    return Verdict("FAIL",
-                   f"xs={x:.6g} ar={a:.6g} bs={b:.6g} dxa={dxa:.2e} dxb={dxb:.2e} "
-                   f"(oc_tol={case.scalar_tol:.2e}, bo_tol={case.baseline.scalar_tol:.2e})")
+# ---------------------------------------------------------------------------
+# 9-way consensus engine (Tasks 4-6).
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Runtime:
+    key: str          # column id, e.g. "mrnew_lazy", "xsocr", "ocrvx", "baseline"
+    label: str        # display
+    kind: str         # "arts" | "xsocr" | "ocrvx" | "baseline"
+    suffix: str = ""  # arts variant binary suffix (empty for non-arts)
+
+ARTS_VARIANTS = [
+    "mrnew_eager", "mrnew_lazy",
+    "mrsw_eager", "mrsw_lazy",
+    "mrmw",
+    "lock_eager", "lock_lazy",
+]
+RUNTIMES: list[Runtime] = (
+    [Runtime(s, f"arts_{s}", "arts", s) for s in ARTS_VARIANTS]
+    + [Runtime("xsocr", "xsocr", "xsocr"),
+       Runtime("ocrvx", "ocrvx", "ocrvx")]
+)
+
+NODE_CONFIGS: list = ["1n"] + MN_RANKS   # e.g. ["1n", 2, 4, 8, 16, "2n_io", ...]
+
+
+def runtime_eligible(rt: Runtime, case: Case, node: object) -> bool:
+    """Return True iff runtime rt should be invoked for (case, node)."""
+    is_io = isinstance(node, str) and node.endswith("_io")
+    single = node in ("1n", 1)
+    # _io configs are arts-only (no xsocr/ocrvx/baseline MPI equivalent).
+    if rt.kind in ("xsocr", "ocrvx", "baseline") and is_io:
+        return False
+    if not single:
+        # Multinode eligibility.
+        if case.multinode_skip or not case.multinode or not case.scalar_re:
+            return False
+        if rt.kind == "xsocr" and (case.arts_only or case.multinode_arts_only):
+            return False
+        if rt.kind == "ocrvx" and case.ocrvx_skip:
+            return False
+    if rt.kind == "ocrvx" and not (APPS_DIR / f"{case.ocr_base}_ocrvx").exists():
+        return False
+    if rt.kind == "baseline" and case.baseline is None:
+        return False
+    return True
+
+
+def run_runtime(runner: Runner, rt: Runtime, case: Case, node: object) -> dict:
+    """Run a single (runtime, case, node) cell and return a CellRun dict.
+
+    state is "OK?" (ran and scalar extracted), "FAIL" (non-zero rc or scalar
+    miss), or "N/A" (excluded by eligibility).  Consensus in Task 5 resolves
+    "OK?" into "OK", "DISAGREE", or "NO-CONSENSUS".
+    """
+    if not runtime_eligible(rt, case, node):
+        return {"state": "N/A", "rc": None, "wall": None, "scalar": None}
+    # Determine the effective args for this node geometry.
+    if node in ("1n", 1):
+        geo = 1
+    else:
+        geo = int(str(node).split("n")[0])
+    args = (case.multinode_args.get(geo, case.args)
+            if case.multinode_args else case.args)
+    # Dispatch.
+    if node in ("1n", 1):
+        if rt.kind == "arts":
+            r = runner.run_ocr(case.name, case.ocr_base, args, "arts",
+                               suffix=rt.suffix)
+        elif rt.kind == "xsocr":
+            r = runner.run_ocr(case.name, case.ocr_base, args, "xsocr")
+        elif rt.kind == "ocrvx":
+            r = runner.run_ocrvx_mpi(case.name, case.ocr_base, args)
+        else:  # baseline
+            r = runner.run_baseline(case.name, case.baseline)
+    else:
+        mn_to = case.multinode_timeout
+        if rt.kind == "arts":
+            r = runner.run_arts_mn(case.name, case.ocr_base, args, node,
+                                   timeout=mn_to, suffix=rt.suffix)
+        elif rt.kind == "xsocr":
+            r = runner.run_xsocr_mpi(case.name, case.ocr_base, args, node,
+                                     timeout=mn_to)
+        else:  # ocrvx (baseline never at multinode, runtime_eligible guards)
+            r = runner.run_ocrvx_mpi(case.name, case.ocr_base, args,
+                                     np=geo, timeout=mn_to)
+    # Classify.
+    wall_r = round(r.wall, 3)
+    if r.rc == 124:
+        return {"state": "FAIL", "rc": 124, "wall": wall_r, "scalar": None}
+    if r.rc != 0:
+        return {"state": "FAIL", "rc": r.rc, "wall": wall_r, "scalar": None}
+    val = _pull(r.stdout, case.scalar_re, case.scalar_kind)
+    if val is None:
+        return {"state": "FAIL", "rc": 0, "wall": wall_r, "scalar": None}
+    return {"state": "OK?", "rc": 0, "wall": wall_r, "scalar": val}
+
+
+def consensus(cells: dict, case: Case) -> tuple:
+    """Cluster scalars from all "OK?" cells; largest cluster wins.
+
+    Returns (consensus_value, dict[key -> final_state]) where final_state is
+    one of "OK", "DISAGREE", "FAIL", "N/A", or "NO-CONSENSUS".
+    """
+    final: dict = {}
+    for k, c in cells.items():
+        if c["state"] == "N/A":
+            final[k] = "N/A"
+        elif c["state"] == "FAIL":
+            final[k] = "FAIL"
+    # Candidates are cells that ran and produced a scalar.
+    cand = {k: c for k, c in cells.items()
+            if c["state"] == "OK?" and c["scalar"] is not None}
+    if not cand:
+        return (None, final)
+
+    def same(a: object, b: object) -> bool:
+        if case.scalar_kind == "bool":
+            return bool(a) == bool(b)
+        if case.scalar_kind == "int":
+            return a == b
+        # float
+        ref = b if b not in (0, 0.0) else None
+        return (_drift(a, b) <= case.scalar_tol  # type: ignore[arg-type]
+                if ref is not None else (a == b))
+
+    clusters: list[dict] = []
+    for k, c in cand.items():
+        placed = False
+        for cl in clusters:
+            if same(c["scalar"], cl["rep"]):
+                cl["members"].append(k)
+                placed = True
+                break
+        if not placed:
+            clusters.append({"rep": c["scalar"], "members": [k]})
+    clusters.sort(key=lambda cl: len(cl["members"]), reverse=True)
+    top = clusters[0]
+    tie = (len(clusters) > 1
+           and len(clusters[1]["members"]) == len(top["members"]))
+    for cl in clusters:
+        if tie:
+            st = "NO-CONSENSUS"
+        else:
+            st = "OK" if cl is top else "DISAGREE"
+        for k in cl["members"]:
+            final[k] = st
+    consensus_val = None if tie else top["rep"]
+    return (consensus_val, final)
+
+
+def run_matrix(runner: Runner, cases: list, only: set, no_baseline: bool) -> dict:
+    """Run every (case, node-config, runtime) cell; compute consensus per (case, node).
+
+    Returns a nested dict: report[case_name][node_str] = {consensus, cells}.
+    """
+    report: dict = {}
+    glyph = {
+        "OK": "·", "DISAGREE": "X", "FAIL": "!",
+        "N/A": "-", "NO-CONSENSUS": "?",
+    }
+    for c in cases:
+        if only and c.name not in only:
+            continue
+        report[c.name] = {}
+        rts = list(RUNTIMES)
+        if c.baseline is not None and not no_baseline:
+            rts = rts + [Runtime("baseline", "baseline", "baseline")]
+        for node in NODE_CONFIGS:
+            cells: dict = {rt.key: run_runtime(runner, rt, c, node)
+                           for rt in rts}
+            cval, final = consensus(cells, c)
+            for k in cells:
+                cells[k] = dict(cells[k])
+                cells[k]["state"] = final.get(k, cells[k]["state"])
+            report[c.name][str(node)] = {"consensus": cval, "cells": cells}
+            row = " ".join(
+                f"{k}={glyph.get(cells[k]['state'], '?')}" for k in cells
+            )
+            print(f"[{c.name:28s} {str(node):8s}] consensus={cval}  {row}")
+    return report
+
+
+def emit(report: dict, logdir: Path, cases: "list[Case] | None" = None) -> None:
+    """Write report.json, summary.txt, and print per-node tables + minority report."""
+    # Build a name→Case map for expect-pin lookup (Finding 1).
+    _case_map: dict[str, "Case"] = {}
+    if cases:
+        for _c in cases:
+            _case_map[_c.name] = _c
+
+    (logdir / "report.json").write_text(
+        json.dumps(report, indent=2, default=str))
+    lines: list[str] = []
+    minority: list[tuple] = []
+
+    # Finding 3: determine once whether any case has a baseline cell (non-N/A)
+    # so the header column is only shown when relevant.
+    _has_baseline: dict[str, bool] = {}
+    for node in NODE_CONFIGS:
+        node_str = str(node)
+        has_base = any(
+            byn.get(node_str, {}).get("cells", {}).get("baseline", {}).get("state", "N/A") != "N/A"
+            for byn in report.values()
+        )
+        _has_baseline[node_str] = has_base
+
+    for node in NODE_CONFIGS:
+        node_str = str(node)
+        lines.append(f"\n=== node-config {node_str} ===")
+        hdr = ["app"] + [rt.key for rt in RUNTIMES]
+        if _has_baseline[node_str]:
+            hdr.append("baseline")
+        hdr.append("consensus")
+        lines.append(" | ".join(hdr))
+        for app, byn in report.items():
+            cell = byn.get(node_str)
+            if not cell:
+                continue
+            cells = cell["cells"]
+            cval = cell["consensus"]
+
+            def _g(k: str) -> str:
+                c = cells.get(k)
+                if not c:
+                    return "-"
+                s = c["state"]
+                if s == "OK":
+                    return "OK"
+                if s == "DISAGREE":
+                    return f"X:{c['scalar']}"
+                if s == "FAIL":
+                    return f"FAIL:{c['rc']}"
+                if s == "NO-CONSENSUS":
+                    return f"?:{c['scalar']}"
+                return "-"  # N/A
+
+            # Finding 1: check consensus value against absolute expect pin.
+            case_obj = _case_map.get(app)
+            expect_fail = (
+                case_obj is not None
+                and case_obj.expect
+                and cval is not None
+                and not _expect_ok(cval, case_obj)
+            )
+            consensus_cell = (
+                f"EXPECT-FAIL:{cval}(exp{case_obj.expect})"
+                if expect_fail else str(cval)
+            )
+
+            row = [app] + [_g(rt.key) for rt in RUNTIMES]
+            if _has_baseline[node_str]:
+                row.append(_g("baseline"))
+            row.append(consensus_cell)
+            lines.append(" | ".join(row))
+
+            bad_states = {"DISAGREE", "FAIL", "NO-CONSENSUS"}
+            # Finding 2: also check baseline cell for bad state.
+            rt_keys = [rt.key for rt in RUNTIMES] + ["baseline"]
+            if (any(cells.get(k, {}).get("state") in bad_states for k in rt_keys)
+                    or expect_fail):
+                div_cells = {k: (v["state"], v["scalar"], v["rc"])
+                             for k, v in cells.items()
+                             if v["state"] in bad_states}
+                if expect_fail:
+                    div_cells["__expect__"] = (
+                        f"EXPECT-FAIL", cval, None
+                    )
+                minority.append((app, node_str, div_cells))
+
+    lines.append("\n=== MINORITY REPORT (non-unanimous (app,config)) ===")
+    for app, node_s, div in minority:
+        parts = ", ".join(
+            f"{k}:{s}({val if val is not None else rc})"
+            for k, (s, val, rc) in div.items()
+        )
+        lines.append(f"{app} @ {node_s}: {parts}")
+    txt = "\n".join(lines)
+    (logdir / "summary.txt").write_text(txt)
+    print(txt)
+
+
+def _selftest() -> None:
+    """Assert consensus() behaves correctly on synthetic cell dicts."""
+    # Minimal Case stub for selftest (only scalar_kind and scalar_tol matter).
+    dummy = Case(name="test", ocr_base="test", args=[],
+                 scalar_kind="float", scalar_tol=1e-4)
+
+    def _ok(v: object) -> dict:
+        return {"state": "OK?", "rc": 0, "wall": 0.1, "scalar": v}
+
+    def _fail() -> dict:
+        return {"state": "FAIL", "rc": 1, "wall": 0.1, "scalar": None}
+
+    def _na() -> dict:
+        return {"state": "N/A", "rc": None, "wall": None, "scalar": None}
+
+    # 1. Unanimous floats within tol → all OK.
+    cells1 = {"a": _ok(1.0), "b": _ok(1.0), "c": _ok(1.0000001)}
+    cval1, final1 = consensus(cells1, dummy)
+    assert cval1 is not None, "unanimous: expected a consensus value"
+    assert all(v == "OK" for v in final1.values()), f"unanimous: {final1}"
+    print("  selftest 1 PASS: unanimous floats → all OK")
+
+    # 2. One outlier → DISAGREE; majority stays OK.
+    cells2 = {"a": _ok(1.0), "b": _ok(1.0), "c": _ok(99.0)}
+    cval2, final2 = consensus(cells2, dummy)
+    assert cval2 is not None, "outlier: expected a consensus value"
+    assert final2["a"] == "OK" and final2["b"] == "OK", f"outlier majority: {final2}"
+    assert final2["c"] == "DISAGREE", f"outlier minority: {final2}"
+    print("  selftest 2 PASS: one outlier → DISAGREE")
+
+    # 3. One hang (FAIL) + rest agree → hang stays FAIL, rest OK.
+    cells3 = {"a": _ok(1.0), "b": _ok(1.0), "c": _fail()}
+    cval3, final3 = consensus(cells3, dummy)
+    assert cval3 is not None, "hang: expected a consensus value"
+    assert final3["a"] == "OK" and final3["b"] == "OK", f"hang rest: {final3}"
+    assert final3["c"] == "FAIL", f"hang stays FAIL: {final3}"
+    print("  selftest 3 PASS: 1 hang + rest agree → hang FAIL, rest OK")
+
+    # 4. Even split → NO-CONSENSUS.
+    cells4 = {"a": _ok(1.0), "b": _ok(2.0)}
+    cval4, final4 = consensus(cells4, dummy)
+    assert cval4 is None, f"even split: expected no consensus, got {cval4}"
+    assert all(v == "NO-CONSENSUS" for k, v in final4.items()
+               if cells4[k]["state"] == "OK?"), f"even split: {final4}"
+    print("  selftest 4 PASS: even split → NO-CONSENSUS")
+
+    # 5. All N/A → no consensus value, all N/A states.
+    cells5 = {"a": _na(), "b": _na()}
+    cval5, final5 = consensus(cells5, dummy)
+    assert cval5 is None, f"all N/A: {cval5}"
+    assert all(v == "N/A" for v in final5.values()), f"all N/A: {final5}"
+    print("  selftest 5 PASS: all N/A → None consensus, all N/A")
+
+    # 6. _expect_ok: consensus value that disagrees with the expect pin →
+    #    _expect_ok returns False → EXPECT-FAIL would be surfaced in emit().
+    dummy_pinned = Case(name="pinned", ocr_base="pinned", args=[],
+                        scalar_kind="float", scalar_tol=1e-4,
+                        expect="1.0")
+    # Within tolerance → passes.
+    assert _expect_ok(1.00005, dummy_pinned), "expect_ok within tol should be True"
+    # Far from the pin → fails.
+    assert not _expect_ok(99.0, dummy_pinned), "expect_ok far from pin should be False"
+    # Integer comparison.
+    dummy_int = Case(name="pi", ocr_base="pi", args=[],
+                     scalar_kind="int", scalar_tol=0, expect="42")
+    assert _expect_ok(42, dummy_int), "expect_ok int match"
+    assert not _expect_ok(43, dummy_int), "expect_ok int mismatch"
+    print("  selftest 6 PASS: _expect_ok correctly flags consensus-vs-pin mismatch")
+
+    print("\nAll selftest assertions passed.")
+
 
 
 # ---------------------------------------------------------------------------
@@ -1163,310 +1423,43 @@ def main():
     # apps like sar_large legitimately run longer than a 60s budget; passing
     # cases still return fast, so only genuine hangs wait the full budget.
     p.add_argument("--timeout", type=int, default=90)
+    p.add_argument("--node", type=str, default="",
+                   help="Restrict to a single node-config, e.g. --node 1n")
+    p.add_argument("--selftest", action="store_true",
+                   help="Run consensus unit tests (no build required) and exit")
     args = p.parse_args()
+
+    if args.selftest:
+        print("Running consensus selftest...")
+        _selftest()
+        return
+
+    # Restrict NODE_CONFIGS when --node is given.
+    global NODE_CONFIGS
+    if args.node:
+        # Accept either "1n" (string) or integer-like "2" / "2n_io".
+        target_node: object
+        if args.node == "1n":
+            target_node = "1n"
+        elif args.node.endswith("_io"):
+            target_node = args.node
+        else:
+            try:
+                target_node = int(args.node.rstrip("n"))
+            except ValueError:
+                target_node = args.node
+        NODE_CONFIGS = [target_node]
 
     only = {s.strip() for s in args.only.split(",") if s.strip()}
     ts = time.strftime("%Y-%m-%d_%H-%M-%S")
     logdir = LOGS_ROOT / ts
     runner = Runner(args.mem_gb, args.timeout, logdir)
 
-    results_a: list[dict[str, Any]] = []
-    for c in TIER_A:
-        if only and c.name not in only:
-            continue
-        if c.skip:
-            results_a.append({"name": c.name, "verdict": "SKIP", "detail": c.skip})
-            print(f"  [A] {c.name:35s}  SKIP  {c.skip}")
-            continue
-        if c.stress_skip:
-            results_a.append({"name": c.name, "verdict": "SKIP-STRESS",
-                              "detail": c.stress_skip})
-            print(f"  [A] {c.name:35s}  SKIP-STRESS  {c.stress_skip[:60]}")
-            continue
-        ar = runner.run_ocr(c.name, c.ocr_base, c.args, "arts")
-        if c.arts_only:
-            xs = None
-            xs_rc, xs_wall = "—", "—"
-        else:
-            xs = runner.run_ocr(c.name, c.ocr_base, c.args, "xsocr")
-            xs_rc, xs_wall = xs.rc, round(xs.wall, 3)
-        ocrvx_bin = APPS_DIR / f"{c.ocr_base}_ocrvx"
-        if ocrvx_bin.exists() and not c.ocrvx_skip:
-            ov = runner.run_ocrvx_mpi(c.name, c.ocr_base, c.args)
-            ov_rc, ov_wall = ov.rc, round(ov.wall, 3)
-        else:
-            ov = None
-            ov_rc, ov_wall = "—", "—"
-        v = tier_a(xs, ar, c, ocrvx=ov)
-        results_a.append({
-            "name": c.name, "args": c.args,
-            "xsocr_rc": xs_rc, "xsocr_wall": xs_wall,
-            "arts_rc":  ar.rc, "arts_wall":  round(ar.wall, 3),
-            "ocrvx_rc": ov_rc, "ocrvx_wall": ov_wall,
-            "verdict":  v.tag, "detail": v.detail,
-            "expected_known_bug": c.expected_known_bug,
-        })
-        xs_line = "arts-only" if c.arts_only else f"xs={xs.rc}/{xs.wall:4.1f}s"
-        ov_line = f"ov={ov_rc}/{ov_wall}s" if ov is not None else ""
-        print(f"  [A] {c.name:35s}  {xs_line}  "
-              f"ar={ar.rc}/{ar.wall:4.1f}s  {ov_line}  -> {v.tag}  {v.detail[:80]}")
-
-    results_b: list[dict[str, Any]] = []
-    if not args.no_baseline:
-        for c in TIER_B:
-            if only and c.name not in only:
-                continue
-            if c.skip:
-                results_b.append({"name": c.name, "verdict": "SKIP", "detail": c.skip})
-                continue
-            assert c.baseline is not None
-            xs = runner.run_ocr(c.name, c.ocr_base, c.args, "xsocr")
-            ar = runner.run_ocr(c.name, c.ocr_base, c.args, "arts")
-            bs = runner.run_baseline(c.name, c.baseline)
-            v = tier_b(xs, ar, bs, c)
-            results_b.append({
-                "name": c.name, "args": c.args,
-                "xsocr_rc": xs.rc, "xsocr_wall": round(xs.wall, 3),
-                "arts_rc":  ar.rc, "arts_wall":  round(ar.wall, 3),
-                "base_rc":  bs.rc, "base_wall":  round(bs.wall, 3),
-                "verdict":  v.tag, "detail": v.detail,
-            })
-            print(f"  [B] {c.name:35s}  xs={xs.rc}/{xs.wall:4.1f}s  "
-                  f"ar={ar.rc}/{ar.wall:4.1f}s  bs={bs.rc}/{bs.wall:4.1f}s  -> {v.tag}  {v.detail[:80]}")
-
-    # --- Tier M: multinode scaling invariance ---
-    # For each eligible Tier-A app, run arts and xsocr at 2 nodes.  Scalars
-    # must match the single-node result.
-    skip_tier_m = os.environ.get("SKIP_TIER_M", "")
-    # MN_RANKS is the module-level, --target-selected node-count list.
-    results_m: list[dict[str, Any]] = []
-    for c in TIER_A:
-        if skip_tier_m or not c.multinode:
-            continue
-        if only and c.name not in only:
-            continue
-        if c.multinode_skip:
-            results_m.append({"name": c.name, "verdict": "SKIP-MN",
-                              "detail": c.multinode_skip})
-            print(f"  [M] {c.name:35s}  SKIP-MN  {c.multinode_skip[:60]}")
-            continue
-        if not c.scalar_re:
-            continue  # need a scalar for Tier M
-
-        # Single-node reference (already captured in Tier A run above, but
-        # re-run for isolation so we have fresh results).  arts_only and
-        # multinode_arts_only cases have xsocr disabled at multinode (xsocr
-        # cannot run them there) and compare arts multinode output against
-        # the arts single-node reference only.  Geometry apps (multinode_args)
-        # have a rank-count-specific reference, recomputed per-n in the loop.
-        mn_arts_only = c.arts_only or c.multinode_arts_only
-        mn_xsocr_only = c.multinode_xsocr_only
-        use_mn_args = c.multinode_args is not None
-        ocrvx_bin = APPS_DIR / f"{c.ocr_base}_ocrvx"
-        mn_run_ocrvx = ocrvx_bin.exists() and not c.ocrvx_skip
-        ref_a_val = ref_x_val = ref_ov_val = None
-        if not use_mn_args:
-            if not mn_xsocr_only:
-                ref_ar = runner.run_ocr(c.name, c.ocr_base, c.args, "arts")
-                ref_a_val = _pull(ref_ar.stdout, c.scalar_re, c.scalar_kind)
-            if not mn_arts_only:
-                ref_xs = runner.run_ocr(c.name, c.ocr_base, c.args, "xsocr")
-                ref_x_val = _pull(ref_xs.stdout, c.scalar_re, c.scalar_kind)
-            if mn_run_ocrvx:
-                ref_ov = runner.run_ocrvx_mpi(c.name, c.ocr_base, c.args)
-                ref_ov_val = _pull(ref_ov.stdout, c.scalar_re, c.scalar_kind)
-
-        all_ok = True        # arts + xsocr checks only
-        ocrvx_mn_ok = True  # ocrvx MN checks (separate: doesn't affect FAIL)
-        detail_parts = []
-        for n in MN_RANKS:
-            # "<k>n_io" is a k-node arts-only IO variant — use the k-node
-            # geometry for args/ocr-vx; xsocr is skipped (arts-only).
-            geo_n = int(n.split("n")[0]) if isinstance(n, str) else n
-            args_n = c.multinode_args.get(geo_n, c.args) if use_mn_args else c.args
-            if use_mn_args:
-                # rank-count-specific geometry: reference is single-node with
-                # the SAME args so the scalar is comparable.  For full 3-way
-                # geometry apps the xsocr reference is also rank-count-specific,
-                # so recompute it per-n alongside the arts reference.
-                if not mn_xsocr_only:
-                    ref_n = runner.run_ocr(c.name, c.ocr_base, args_n, "arts")
-                    ref_a_val = _pull(ref_n.stdout, c.scalar_re, c.scalar_kind)
-                if not mn_arts_only and not isinstance(n, str):
-                    ref_xn = runner.run_ocr(c.name, c.ocr_base, args_n, "xsocr")
-                    ref_x_val = _pull(ref_xn.stdout, c.scalar_re, c.scalar_kind)
-                if mn_run_ocrvx and not isinstance(n, str):
-                    ref_ovn = runner.run_ocrvx_mpi(c.name, c.ocr_base, args_n)
-                    ref_ov_val = _pull(ref_ovn.stdout, c.scalar_re, c.scalar_kind)
-            checks = []
-            ov_checks = []
-            if not mn_xsocr_only:
-                ar_mn = runner.run_arts_mn(c.name, c.ocr_base, args_n, n,
-                                           timeout=c.multinode_timeout)
-                a_val = _pull(ar_mn.stdout, c.scalar_re, c.scalar_kind)
-                checks.append((f"ar{n}", a_val, ref_a_val, ar_mn.rc))
-            if not mn_arts_only and not isinstance(n, str):
-                xs_mn = runner.run_xsocr_mpi(c.name, c.ocr_base, args_n, n,
-                                             timeout=c.multinode_timeout)
-                x_val = _pull(xs_mn.stdout, c.scalar_re, c.scalar_kind)
-                checks.append((f"xs{n}", x_val, ref_x_val, xs_mn.rc))
-            if mn_run_ocrvx and not isinstance(n, str):
-                ov_mn = runner.run_ocrvx_mpi(c.name, c.ocr_base, args_n,
-                                              np=geo_n, timeout=c.multinode_timeout)
-                ov_val = _pull(ov_mn.stdout, c.scalar_re, c.scalar_kind)
-                ov_checks.append((f"ov{n}", ov_val, ref_ov_val, ov_mn.rc))
-
-            def _eval_check(label, mn_val, ref_val, mn_rc):
-                if mn_rc != 0:
-                    detail_parts.append(f"{label}:rc={mn_rc}")
-                    return False
-                if mn_val is None:
-                    detail_parts.append(f"{label}:miss")
-                    return False
-                if c.scalar_kind == "bool":
-                    detail_parts.append(f"{label}:ok")
-                elif c.scalar_kind == "int":
-                    if mn_val != ref_val:
-                        detail_parts.append(f"{label}:{mn_val}!={ref_val}")
-                        return False
-                    else:
-                        detail_parts.append(f"{label}:ok")
-                else:  # float
-                    d = _drift(mn_val, ref_val) if ref_val is not None else 999
-                    if d > c.scalar_tol:
-                        detail_parts.append(f"{label}:drift={d:.2e}")
-                        return False
-                    else:
-                        detail_parts.append(f"{label}:ok")
-                return True
-
-            for check in checks:
-                if not _eval_check(*check):
-                    all_ok = False
-            for check in ov_checks:
-                if not _eval_check(*check):
-                    ocrvx_mn_ok = False
-
-        if all_ok and ocrvx_mn_ok:
-            vtag = "PASS-MN"
-        elif all_ok and not ocrvx_mn_ok:
-            vtag = "OCRVX-BUG"
-        else:
-            vtag = "FAIL"
-        vdetail = " ".join(detail_parts)
-        # Demote FAIL to KNOWN-BUG when the case has an expected_known_bug
-        # (xsocr-side hangs/SEGVs at multinode shouldn't poison the Tier-M
-        # tally; arts-side ar2:ok already proves arts is fine).
-        if vtag == "FAIL" and c.expected_known_bug:
-            vtag = "KNOWN-BUG"
-            vdetail = f"{c.expected_known_bug} | obs: {vdetail}"
-        results_m.append({"name": c.name, "verdict": vtag, "detail": vdetail})
-        print(f"  [M] {c.name:35s}  -> {vtag}  {vdetail[:80]}")
-
-    _write_report(logdir, results_a, results_b, results_m)
-    tally_a = _tally(results_a)
-    tally_b = _tally(results_b)
-    tally_m = _tally(results_m)
-    summary = (f"Tier A: {tally_a}\nTier B: {tally_b}\n"
-               f"Tier M: {tally_m}\nLog dir: {logdir}\n")
-    (logdir / "summary.txt").write_text(summary)
-    print("\n" + summary)
+    cases = TIER_A + TIER_B
+    report = run_matrix(runner, cases, only, args.no_baseline)
+    emit(report, logdir, cases)
 
 
-def _tally(results: list[dict[str, Any]]) -> str:
-    buckets: dict[str, int] = {}
-    for r in results:
-        k = r.get("verdict", "UNKNOWN")
-        buckets[k] = buckets.get(k, 0) + 1
-    return ", ".join(f"{k}={v}" for k, v in sorted(buckets.items()))
-
-
-def _write_report(logdir: Path, a: list[dict], b: list[dict],
-                   m: list[dict] | None = None) -> None:
-    (logdir / "report.json").write_text(
-        json.dumps({"tier_a": a, "tier_b": b, "tier_m": m or []}, indent=2))
-
-    lines = ["# ARTS benchmark correctness report", ""]
-    lines.append(f"- Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}")
-    lines.append(f"- Repo: `{REPO}`")
-    lines.append("")
-    lines.append("## Tier A — xsocr ↔ arts (per-app scalar)")
-    lines.append("")
-    lines.append("| app | xsocr rc/wall | arts rc/wall | verdict | detail |")
-    lines.append("|---|---|---|---|---|")
-    for r in a:
-        if r["verdict"] in ("SKIP", "SKIP-STRESS"):
-            lines.append(f"| {r['name']} | — | — | {r['verdict']} | {r['detail'][:140]} |")
-        else:
-            xs_cell = (f"{r['xsocr_rc']}/{r['xsocr_wall']}s"
-                       if r['xsocr_rc'] != "—" else "arts-only")
-            lines.append(
-                f"| {r['name']} | {xs_cell} "
-                f"| {r['arts_rc']}/{r['arts_wall']}s "
-                f"| {r['verdict']} | {r['detail'][:140]} |"
-            )
-    lines.append("")
-    lines.append("## Tier B — baseline ↔ xsocr ↔ arts (per-app scalar)")
-    lines.append("")
-    lines.append("| app | xsocr | arts | baseline | verdict | detail |")
-    lines.append("|---|---|---|---|---|---|")
-    for r in b:
-        if r["verdict"] == "SKIP":
-            lines.append(f"| {r['name']} | — | — | — | SKIP | {r['detail']} |")
-        else:
-            lines.append(
-                f"| {r['name']} | {r['xsocr_rc']}/{r['xsocr_wall']}s "
-                f"| {r['arts_rc']}/{r['arts_wall']}s "
-                f"| {r['base_rc']}/{r['base_wall']}s "
-                f"| {r['verdict']} | {r['detail'][:140]} |"
-            )
-    lines.append("")
-
-    # Known-bugs sections: canonical TODO list for shim/runtime fixes.
-    arts_hangs = [r for r in a
-                  if r.get("verdict") == "KNOWN-BUG"
-                  and "arts-hang" in r.get("expected_known_bug", "")]
-    xsocr_segvs = [r for r in a
-                   if r.get("verdict") == "KNOWN-BUG"
-                   and "xsocr-segv" in r.get("expected_known_bug", "")]
-    if arts_hangs:
-        lines.append("## Known runtime / shim bugs (arts side)")
-        lines.append("")
-        lines.append("These are documented arts-side failures that the harness "
-                     "currently tolerates as KNOWN-BUG. Each one is an "
-                     "actionable TODO for the shim/runtime fix phase.")
-        lines.append("")
-        for r in arts_hangs:
-            lines.append(f"- **{r['name']}** — {r['expected_known_bug']}")
-        lines.append("")
-    if xsocr_segvs:
-        lines.append("## Pre-existing xsocr bugs (arts runs cleanly)")
-        lines.append("")
-        lines.append("These cases run only the arts side because xsocr has a "
-                     "pre-existing crash. Not an ARTS problem; listed here so "
-                     "it's visible in the report.")
-        lines.append("")
-        for r in xsocr_segvs:
-            lines.append(f"- **{r['name']}** — {r['expected_known_bug']}")
-        lines.append("")
-
-    # SAR dataset cache status (for later debugging of build pipeline).
-    sar_datasets_dir = REPO / "third_party" / "ocr-apps" / "apps" / "sar" / "datasets"
-    if sar_datasets_dir.exists():
-        lines.append("## SAR dataset cache status")
-        lines.append("")
-        for sz in ["tiny", "small", "medium", "large"]:
-            datafile = sar_datasets_dir / sz / "Data.bin"
-            if datafile.exists():
-                sz_mb = datafile.stat().st_size / (1024 * 1024)
-                mtime = time.strftime("%Y-%m-%d %H:%M",
-                                       time.localtime(datafile.stat().st_mtime))
-                lines.append(f"- **{sz}**: cached ({sz_mb:.1f} MB, mtime {mtime})")
-            else:
-                lines.append(f"- **{sz}**: MISSING")
-        lines.append("")
-
-    (logdir / "report.md").write_text("\n".join(lines))
 
 
 if __name__ == "__main__":

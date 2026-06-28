@@ -282,7 +282,6 @@ if(NOT ARTS_PROTOCOL_TIMING STREQUAL "EAGER" AND
           "ARTS_PROTOCOL_TIMING must be EAGER or LAZY, got: ${ARTS_PROTOCOL_TIMING}")
 endif()
 if(ARTS_COHERENCE_PROTOCOL STREQUAL "MRMW")
-  add_compile_definitions(ARTS_PROTOCOL_MRMW=1)
   message(WARNING
           "ARTS_COHERENCE_PROTOCOL=MRMW selects the DB-DRF (lossy multi-writer) "
           "protocol: visibility is guaranteed only along event happens-before, "
@@ -301,12 +300,7 @@ elseif(ARTS_COHERENCE_PROTOCOL STREQUAL "LOCK")
   # per-protocol selection chains (ooo.h, ooo.c, coherence/types.h) match
   # ARTS_TIMING_EAGER ahead of the LOCK arm, so the LOCK build emits the timing
   # macro in addition to ARTS_PROTOCOL_LOCK (not instead of it).
-  add_compile_definitions(ARTS_PROTOCOL_LOCK=1)
-  if(ARTS_PROTOCOL_TIMING STREQUAL "EAGER")
-    add_compile_definitions(ARTS_TIMING_EAGER=1)
-  elseif(ARTS_PROTOCOL_TIMING STREQUAL "LAZY")
-    add_compile_definitions(ARTS_TIMING_LAZY=1)
-  else()
+  if(NOT ARTS_PROTOCOL_TIMING STREQUAL "EAGER" AND NOT ARTS_PROTOCOL_TIMING STREQUAL "LAZY")
     message(FATAL_ERROR
             "LOCK requires ARTS_PROTOCOL_TIMING=EAGER or LAZY (got: ${ARTS_PROTOCOL_TIMING})")
   endif()
@@ -316,21 +310,15 @@ elseif(ARTS_COHERENCE_PROTOCOL STREQUAL "MRSW")
   # the local active-writer count capped at one (a single writer_count {2,1,0}
   # encoding sentinel+token).  Like MRNEW it honours the OCR memory model
   # (incidentally stronger) and uses the EAGER/LAZY timing axis.
-  add_compile_definitions(ARTS_PROTOCOL_MRSW=1)
   if(ARTS_PROTOCOL_TIMING STREQUAL "EAGER")
-    add_compile_definitions(ARTS_TIMING_EAGER=1)
     message(STATUS "ARTS coherence protocol: MRSW (single-writer), timing: EAGER")
   else()
-    add_compile_definitions(ARTS_TIMING_LAZY=1)
     message(STATUS "ARTS coherence protocol: MRSW (single-writer), timing: LAZY (default)")
   endif()
 else() # MRNEW
-  add_compile_definitions(ARTS_PROTOCOL_MRNEW=1)
   if(ARTS_PROTOCOL_TIMING STREQUAL "EAGER")
-    add_compile_definitions(ARTS_TIMING_EAGER=1)
     message(STATUS "ARTS coherence protocol: MRNEW (= OCR), timing: EAGER")
   else()
-    add_compile_definitions(ARTS_TIMING_LAZY=1)
     message(STATUS "ARTS coherence protocol: MRNEW (= OCR), timing: LAZY (default)")
   endif()
 endif()

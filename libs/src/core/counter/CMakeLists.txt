@@ -43,3 +43,4 @@ file(GLOB COUNTER_SOURCES "*.c")
 # Create object library for the counter module
 add_library(arts_counter OBJECT ${COUNTER_SOURCES})
 target_link_libraries(arts_counter PRIVATE arts_interface)
+arts_apply_protocol(arts_counter ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})

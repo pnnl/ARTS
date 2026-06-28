@@ -50,6 +50,62 @@ if(ARTS_USE_CXL)
     target_link_libraries(arts_interface INTERFACE arts_cxl_lib)
 endif()
 
+# --- Coherence-protocol helpers (shared by main lib + benchmark variants) -----
+# Sets ${out} (caller scope) to the coherence model TU paths for (proto,timing),
+# RELATIVE to libs/src/core/. Mirrors libs/src/core/CMakeLists.txt selection.
+function(arts_coherence_model_tus out proto timing)
+    if(proto STREQUAL "MRMW")
+        set(tus coherence/mrmw/mrmw.c)
+    elseif(proto STREQUAL "LOCK")
+        if(timing STREQUAL "LAZY")
+            set(tus coherence/lock/home.c coherence/lock/lazy.c)
+        else()
+            set(tus coherence/lock/home.c coherence/lock/eager.c)
+        endif()
+    elseif(proto STREQUAL "MRSW")
+        if(timing STREQUAL "EAGER")
+            set(tus coherence/mrsw/eager.c coherence/mrsw/ownership.c coherence/mrsw/home.c coherence/mrsw/waiter_queue.c)
+        else()
+            set(tus coherence/mrsw/lazy.c coherence/mrsw/ownership.c coherence/mrsw/home.c coherence/mrsw/waiter_queue.c)
+        endif()
+    else() # MRNEW
+        if(timing STREQUAL "EAGER")
+            set(tus coherence/mrnew/eager.c coherence/mrnew/ownership.c coherence/mrnew/home.c)
+        else()
+            set(tus coherence/mrnew/lazy.c coherence/mrnew/ownership.c coherence/mrnew/home.c)
+        endif()
+    endif()
+    set(${out} ${tus} PARENT_SCOPE)
+endfunction()
+
+# Applies the protocol/timing compile definitions to <target> (PRIVATE).
+function(arts_apply_protocol target proto timing)
+    if(proto STREQUAL "MRMW")
+        target_compile_definitions(${target} PRIVATE ARTS_PROTOCOL_MRMW=1)
+    elseif(proto STREQUAL "LOCK")
+        target_compile_definitions(${target} PRIVATE ARTS_PROTOCOL_LOCK=1)
+        if(timing STREQUAL "EAGER")
+            target_compile_definitions(${target} PRIVATE ARTS_TIMING_EAGER=1)
+        else()
+            target_compile_definitions(${target} PRIVATE ARTS_TIMING_LAZY=1)
+        endif()
+    elseif(proto STREQUAL "MRSW")
+        target_compile_definitions(${target} PRIVATE ARTS_PROTOCOL_MRSW=1)
+        if(timing STREQUAL "EAGER")
+            target_compile_definitions(${target} PRIVATE ARTS_TIMING_EAGER=1)
+        else()
+            target_compile_definitions(${target} PRIVATE ARTS_TIMING_LAZY=1)
+        endif()
+    else() # MRNEW
+        target_compile_definitions(${target} PRIVATE ARTS_PROTOCOL_MRNEW=1)
+        if(timing STREQUAL "EAGER")
+            target_compile_definitions(${target} PRIVATE ARTS_TIMING_EAGER=1)
+        else()
+            target_compile_definitions(${target} PRIVATE ARTS_TIMING_LAZY=1)
+        endif()
+    endif()
+endfunction()
+
 # Module subdirectories — each defines OBJECT library targets
 add_subdirectory(core)
 add_subdirectory(graph)
@@ -132,6 +188,8 @@ if(ARTS_BUILD_STATIC)
         target_link_libraries(arts_static PUBLIC arts_cxl_lib)
     endif()
 
+    arts_apply_protocol(arts_static ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
+
     # Set library properties
     set_target_properties(arts_static PROPERTIES
         OUTPUT_NAME arts
@@ -203,6 +261,8 @@ if(ARTS_BUILD_SHARED)
         target_link_libraries(arts_shared PUBLIC arts_cxl_lib)
     endif()
 
+    arts_apply_protocol(arts_shared ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
+
     # Set library properties
     set_target_properties(arts_shared PROPERTIES
         OUTPUT_NAME arts
@@ -273,6 +333,8 @@ if(BUILD_CUDA_LIBRARY)
         if(APPLE AND HWLOC_FOUND)
             target_link_libraries(arts_cuda_static PRIVATE "-framework CoreFoundation" "-framework IOKit" "-framework OpenCL")
         endif()
+
+        arts_apply_protocol(arts_cuda_static ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
 
         # Set library properties
         set_target_properties(arts_cuda_static PROPERTIES
@@ -347,6 +409,8 @@ if(BUILD_CUDA_LIBRARY)
             target_link_libraries(arts_cuda_shared PRIVATE "-framework CoreFoundation" "-framework IOKit" "-framework OpenCL")
         endif()
 
+        arts_apply_protocol(arts_cuda_shared ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
+
         # Set library properties
         set_target_properties(arts_cuda_shared PROPERTIES
             OUTPUT_NAME arts_cuda
@@ -355,6 +419,72 @@ if(BUILD_CUDA_LIBRARY)
             EXPORT_NAME cuda_shared
         )
     endif()
+endif()
+
+# --- Per-protocol variant libraries (benchmarks/harness only) -----------------
+# Build a full arts static lib for one (proto,timing). The protocol-independent
+# sources are gathered from the CPU object-lib targets (their compiled objects
+# cannot be reused — each variant needs its own protocol defines), the coherence
+# MODEL TUs are swapped for this variant's, and the defines are applied per-target.
+if(ARTS_BUILD_BENCHMARKS AND ARTS_BUILD_STATIC)
+    set(_ARTS_VARIANT_OBJLIBS
+        arts_compute arts_memory arts_sync arts_ooo arts_scheduler
+        arts_transport arts_gas arts_system arts_utils arts_counter arts_graph)
+
+    function(arts_variant suffix proto timing)
+        # Gather all protocol-independent sources (absolute paths) from the
+        # object libs, dropping any coherence MODEL TU (path contains
+        # /coherence/<model>/), which is variant-specific.
+        set(srcs "${CMAKE_CURRENT_SOURCE_DIR}/core/main.c")
+        foreach(lib ${_ARTS_VARIANT_OBJLIBS})
+            get_target_property(lsrcs ${lib} SOURCES)
+            get_target_property(ldir  ${lib} SOURCE_DIR)
+            foreach(s ${lsrcs})
+                if(IS_ABSOLUTE "${s}")
+                    set(abs "${s}")
+                else()
+                    set(abs "${ldir}/${s}")
+                endif()
+                # skip coherence model TUs (mrnew/mrsw/lock/mrmw subdirs)
+                if(NOT abs MATCHES "/coherence/(mrnew|mrsw|lock|mrmw)/")
+                    list(APPEND srcs "${abs}")
+                endif()
+            endforeach()
+        endforeach()
+        # add this variant's coherence model TUs
+        arts_coherence_model_tus(model "${proto}" "${timing}")
+        foreach(tu ${model})
+            list(APPEND srcs "${CMAKE_CURRENT_SOURCE_DIR}/core/${tu}")
+        endforeach()
+
+        add_library(arts_static_${suffix} STATIC ${srcs})
+        target_include_directories(arts_static_${suffix} BEFORE PRIVATE
+            ${ARTS_BUILD_INTERNAL_INCLUDE_DIR}
+            ${ARTS_PUBLIC_INCLUDE_DIR}
+            ${ARTS_INTERNAL_INCLUDE_DIR})
+        if(HWLOC_INCLUDE_DIRS)
+            target_include_directories(arts_static_${suffix} PRIVATE ${HWLOC_INCLUDE_DIRS})
+        endif()
+        target_link_libraries(arts_static_${suffix} PUBLIC arts_interface)
+        target_link_libraries(arts_static_${suffix} PRIVATE
+            Threads::Threads ${RT_LIBRARY} ${M_LIBRARY} ${ANL_LIBRARY}
+            $<BUILD_INTERFACE:${HWLOC_LIBRARIES}> ${HWLOC_PRIVATE_LIBS})
+        if(ARTS_ATOMIC_LIBRARY)
+            target_link_libraries(arts_static_${suffix} PRIVATE ${ARTS_ATOMIC_LIBRARY})
+        endif()
+        if(ARTS_MALLOC STREQUAL "mimalloc")
+            target_link_libraries(arts_static_${suffix} PRIVATE mimalloc-static)
+        endif()
+        arts_apply_protocol(arts_static_${suffix} "${proto}" "${timing}")
+    endfunction()
+
+    arts_variant(mrnew_eager MRNEW EAGER)
+    arts_variant(mrnew_lazy  MRNEW LAZY)
+    arts_variant(mrsw_eager  MRSW  EAGER)
+    arts_variant(mrsw_lazy   MRSW  LAZY)
+    arts_variant(mrmw        MRMW  LAZY)
+    arts_variant(lock_eager  LOCK  EAGER)
+    arts_variant(lock_lazy   LOCK  LAZY)
 endif()
 
 # Link mimalloc-static when selected.  The OBJECT library arts_utils needs

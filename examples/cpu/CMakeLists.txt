@@ -46,7 +46,6 @@ if (ARTS_USE_CXL)
       simple_reduction
       tiled_matmul
       bfs
-      # graph_search
       triangle_count
       triangle_count2
       triangle_count_promise
@@ -61,7 +60,6 @@ set(CPU_EXAMPLES
     simple_reduction
     tiled_matmul
     bfs
-    # graph_search
     triangle_count
     triangle_count2
     triangle_count_promise
@@ -80,6 +78,10 @@ function(add_cpu_example example_name)
 
     # Set include directories
     target_include_directories(${example_name} PRIVATE ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR} ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
+
+    # Protocol-sensitive internal headers need the compile-time coherence
+    # selection applied per-target (see tests/ add_arts_test).
+    arts_apply_protocol(${example_name} ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
 
     # Use the appropriate ARTS library based on availability
     if(TARGET arts_shared)
@@ -102,6 +104,10 @@ function(add_cpu_cxx_example example_name)
 
     # Set include directories
     target_include_directories(${example_name} PRIVATE ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR} ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
+
+    # Protocol-sensitive internal headers need the compile-time coherence
+    # selection applied per-target (see tests/ add_arts_test).
+    arts_apply_protocol(${example_name} ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
 
     if(ARTS_USE_CXL AND TARGET arts_cxl_lib)
         target_link_libraries(${example_name} PRIVATE arts_cxl_lib)
@@ -187,3 +193,8 @@ endif()
 
 # Subdirectory-based examples
 add_subdirectory(lulesh)
+add_subdirectory(cholesky)
+add_subdirectory(fft)
+add_subdirectory(miniAMR)
+add_subdirectory(sar)
+add_subdirectory(smithwaterman)

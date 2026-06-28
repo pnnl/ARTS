@@ -76,19 +76,42 @@ static const char *signal_name(int sig) {
   }
 }
 
-// Async-signal-safe: write an unsigned int as decimal digits to stderr.
-static void write_uint(unsigned int val) {
-  char buf[16];
-  int pos = (int)sizeof(buf);
-  if (val == 0) {
-    buf[--pos] = '0';
-  } else {
-    while (val > 0) {
-      buf[--pos] = (char)('0' + (val % 10));
-      val /= 10;
+// Async-signal-safe: compose "<pre><name> (rank <rank>)<post>" into one stack
+// buffer and emit it with a SINGLE write().  A multi-write sequence interleaves
+// with other still-running threads' log output (the crashing thread's siblings
+// keep running until the handler re-raises), splitting the identifying line —
+// which breaks log scrapers and any PASS regex that expects the substring
+// contiguous.  snprintf is not async-signal-safe, so the rank is formatted by
+// hand.  A single write() of < PIPE_BUF bytes is atomic, so nothing can wedge
+// between the prefix and the signal name.
+static void write_signal_line(const char *pre, const char *name,
+                              unsigned int rank, const char *post) {
+  char buf[192];
+  size_t n = 0;
+  const char *head[3] = {pre, name, " (rank "};
+  for (int p = 0; p < 3; p++) {
+    for (const char *s = head[p]; *s && n < sizeof(buf) - 1; s++) {
+      buf[n++] = *s;
     }
   }
-  (void)write(STDERR_FILENO, buf + pos, (size_t)(sizeof(buf) - (size_t)pos));
+  char num[16];
+  int pos = (int)sizeof(num);
+  if (rank == 0) {
+    num[--pos] = '0';
+  } else {
+    unsigned int v = rank;
+    while (v > 0) {
+      num[--pos] = (char)('0' + (v % 10));
+      v /= 10;
+    }
+  }
+  while (pos < (int)sizeof(num) && n < sizeof(buf) - 1) {
+    buf[n++] = num[pos++];
+  }
+  for (const char *s = post; *s && n < sizeof(buf) - 1; s++) {
+    buf[n++] = *s;
+  }
+  (void)write(STDERR_FILENO, buf, n);
 }
 
 static void write_backtrace(void) {
@@ -99,15 +122,8 @@ static void write_backtrace(void) {
 
 // Crash signals (SIGSEGV, SIGBUS, SIGFPE) — unrecoverable, re-raise for core.
 static void arts_crash_signal_handler(int sig) {
-  const char *pre = "\n[ARTS] Crashed: ";
-  (void)write(STDERR_FILENO, pre, strlen(pre));
-  const char *name = signal_name(sig);
-  (void)write(STDERR_FILENO, name, strlen(name));
-  const char *mid = " (rank ";
-  (void)write(STDERR_FILENO, mid, strlen(mid));
-  write_uint(arts_global_rank_id);
-  const char *post = ") — stack trace:\n";
-  (void)write(STDERR_FILENO, post, strlen(post));
+  write_signal_line("\n[ARTS] Crashed: ", signal_name(sig), arts_global_rank_id,
+                    ") — stack trace:\n");
 
   write_backtrace();
 
@@ -125,15 +141,8 @@ static void arts_crash_signal_handler(int sig) {
 // stdio/malloc locks (e.g. fprintf) can deadlock against a worker already
 // holding those locks, leaving the process hung instead of dying.
 static void arts_term_signal_handler(int sig) {
-  const char *pre = "\n[ARTS] Killed by ";
-  (void)write(STDERR_FILENO, pre, strlen(pre));
-  const char *name = signal_name(sig);
-  (void)write(STDERR_FILENO, name, strlen(name));
-  const char *mid = " (rank ";
-  (void)write(STDERR_FILENO, mid, strlen(mid));
-  write_uint(arts_global_rank_id);
-  const char *post = ")\n";
-  (void)write(STDERR_FILENO, post, strlen(post));
+  write_signal_line("\n[ARTS] Killed by ", signal_name(sig),
+                    arts_global_rank_id, ")\n");
 
   /* backtrace_symbols_fd is async-signal-safe per glibc; keep it. */
   write_backtrace();

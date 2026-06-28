@@ -85,7 +85,7 @@ DB_MODE_NAME;
  * buffer installed yet (transient at create-time; callers should treat
  * this as "data not yet available").
  */
-static inline void *arts_db_user_ptr(struct arts_db_s *db) {
+void *arts_db_user_ptr(struct arts_db_s *db) {
   if (db == NULL) {
     return NULL;
   }
