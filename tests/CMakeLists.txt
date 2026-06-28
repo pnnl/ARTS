@@ -302,7 +302,7 @@ function(register_single_node_test test_name)
         LABELS "single_node"
         TIMEOUT ${ARG_TIMEOUT}
         RESOURCE_LOCK "arts_runtime"
-        ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/1n.cfg"
+        ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/laptop/1n.cfg"
     )
 endfunction()
 
@@ -339,7 +339,7 @@ function(register_multinode_test test_name)
             LABELS "multinode"
             TIMEOUT ${ARG_TIMEOUT}
             RESOURCE_LOCK "arts_runtime"
-            ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/${variant}.cfg;default_ports=${port_base}"
+            ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/laptop/${variant}.cfg;default_ports=${port_base}"
         )
     endforeach()
 endfunction()
@@ -740,7 +740,7 @@ set_tests_properties(coherence_stress_dist PROPERTIES
     LABELS "coherence_stress;multinode"
     TIMEOUT 120
     RESOURCE_LOCK "arts_runtime"
-    ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/2n.cfg;default_ports=${port_base}"
+    ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/laptop/2n.cfg;default_ports=${port_base}"
 )
 
 # Lazy-protocol ownership-transfer TRANSFER/INVALIDATE two-wire reorder stress.
@@ -766,7 +766,7 @@ set_tests_properties(coherence_lazy_ownership_reorder PROPERTIES
     LABELS "coherence_stress;multinode"
     TIMEOUT 120
     RESOURCE_LOCK "arts_runtime"
-    ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/2n_io.cfg;default_ports=${port_base}"
+    ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/laptop/2n_io.cfg;default_ports=${port_base}"
 )
 
 # LAZY stale-RO ownership-confirm gate: RO acquire causally ordered after a
@@ -814,7 +814,7 @@ if(ARTS_COHERENCE_PROTOCOL STREQUAL "MRMW")
         LABELS "single_node"
         TIMEOUT 30
         RESOURCE_LOCK "arts_runtime"
-        ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/1n.cfg"
+        ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/laptop/1n.cfg"
         PASS_REGULAR_EXPRESSION "DB_DRF: PASS"
     )
 
@@ -832,7 +832,7 @@ if(ARTS_COHERENCE_PROTOCOL STREQUAL "MRMW")
         LABELS "multinode"
         TIMEOUT 60
         RESOURCE_LOCK "arts_runtime"
-        ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/2n.cfg;default_ports=${port_base}"
+        ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/laptop/2n.cfg;default_ports=${port_base}"
         PASS_REGULAR_EXPRESSION "DB_DRF: PASS"
     )
 
@@ -849,7 +849,7 @@ if(ARTS_COHERENCE_PROTOCOL STREQUAL "MRMW")
         LABELS "multinode"
         TIMEOUT 60
         RESOURCE_LOCK "arts_runtime"
-        ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/2n.cfg;default_ports=${port_base}"
+        ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/laptop/2n.cfg;default_ports=${port_base}"
         PASS_REGULAR_EXPRESSION "DB_DRF_LOCAL_HIT_DEDUP: PASS"
     )
 

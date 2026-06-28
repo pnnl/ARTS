@@ -57,9 +57,9 @@ struct arts_route_item_s;
 void arts_ooo_drain(struct arts_route_item_s *s) { (void)s; }
 void arts_ooo_free_all(struct arts_route_item_s *s) { (void)s; }
 
-#include "/home/whnbaek/pnnl/ARTS/libs/src/core/gas/guid.c"
-#include "/home/whnbaek/pnnl/ARTS/libs/src/core/gas/route_table.c"
-#include "/home/whnbaek/pnnl/ARTS/libs/src/core/utils/shared.c"
+#include "../../libs/src/core/gas/guid.c"
+#include "../../libs/src/core/gas/route_table.c"
+#include "../../libs/src/core/utils/shared.c"
 
 struct arts_runtime_shared_s arts_node_info;
 ARTS_THREAD_LOCAL struct arts_runtime_private_s arts_thread_info;

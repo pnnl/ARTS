@@ -49,7 +49,7 @@ void *arts_calloc_aligned(size_t n, size_t s, size_t a) {
 }
 void arts_free(void *p) { free(p); }
 
-#include "/home/whnbaek/pnnl/ARTS/libs/src/core/gas/guid.c"
+#include "../../libs/src/core/gas/guid.c"
 
 struct arts_runtime_shared_s arts_node_info;
 ARTS_THREAD_LOCAL struct arts_runtime_private_s arts_thread_info;

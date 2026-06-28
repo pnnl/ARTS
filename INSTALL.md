@@ -147,7 +147,7 @@ ctest --test-dir build -R edt_create_basic                  # one test by name
 ```
 
 Each test sets its own `ARTS_CONFIG` to point at the matching cfg under
-`configs/local/`, so no config files are copied into the build directory.
+`configs/local/laptop/`, so no config files are copied into the build directory.
 
 Configuration
 =============
@@ -156,9 +156,11 @@ An ARTS program reads its runtime configuration from `arts.cfg` in the working
 directory (or the file named by the `ARTS_CONFIG` environment variable).
 Templates live under `configs/`:
 
-- `configs/local/{1n,2n,3n,4n}.cfg` — single- and multi-node localhost
+- `configs/local/laptop/{1n,2n,3n,4n,2n_io}.cfg` — localhost, 14-thread budget
+- `configs/local/server/{1n,2n,4n,8n,16n,2n_io,4n_io,8n_io}.cfg` — localhost, 48-thread budget
 - `configs/local/gpu/{1n,2n}.cfg` — GPU-enabled
-- `configs/mpi/{1n,2n}.cfg` — MPI launcher
+- `configs/mpi/laptop/{1n,2n,3n,4n}.cfg` — MPI launcher (xsocr), 14-thread
+- `configs/mpi/server/{1n,2n,4n,8n,16n}.cfg` — MPI launcher (xsocr), 48-thread
 
 The values most often changed are the launcher, the worker/sender/receiver
 thread counts, and the GPU count.

@@ -18,7 +18,7 @@
 #                          Set to 0 to disable. Prevents OOM from apps with huge allocations.
 #   MULTINODE_VARIANT    - Multinode config variant to use when --multinode is set.
 #                          Valid values: 2n (default), 3n, 4n, 2n_io.
-#                          Maps to configs/local/${VARIANT}.cfg + configs/mpi/${VARIANT}.cfg.
+#                          Maps to configs/local/laptop/${VARIANT}.cfg + configs/mpi/laptop/${VARIANT}.cfg.
 
 set -euo pipefail
 
@@ -220,9 +220,9 @@ run_ocr_apps() {
     # stale multinode config from a previous run causing single-node crashes)
     if [ "$suffix" = "arts" ]; then
         if [ "$DO_MULTINODE" -eq 1 ]; then
-            cp "$REPO_ROOT/configs/local/${MULTINODE_VARIANT}.cfg" arts.cfg
+            cp "$REPO_ROOT/configs/local/laptop/${MULTINODE_VARIANT}.cfg" arts.cfg
         else
-            cp "$REPO_ROOT/configs/local/1n.cfg" arts.cfg
+            cp "$REPO_ROOT/configs/local/laptop/1n.cfg" arts.cfg
         fi
         if [ ! -f arts.cfg ]; then
             echo "WARNING: No arts.cfg found, ARTS apps may fail"
@@ -232,9 +232,9 @@ run_ocr_apps() {
     # Set OCR_CONFIG for XSOCR backend
     if [ "$suffix" = "xsocr" ]; then
         if [ "$DO_MULTINODE" -eq 1 ]; then
-            export OCR_CONFIG="${REPO_ROOT}/configs/mpi/${MULTINODE_VARIANT}.cfg"
+            export OCR_CONFIG="${REPO_ROOT}/configs/mpi/laptop/${MULTINODE_VARIANT}.cfg"
         else
-            export OCR_CONFIG="${REPO_ROOT}/configs/mpi/1n.cfg"
+            export OCR_CONFIG="${REPO_ROOT}/configs/mpi/laptop/1n.cfg"
         fi
     fi
 
@@ -377,7 +377,7 @@ run_ocr_apps_multinode() {
     log "===== OCR apps (arts backend, multi-node ${MULTINODE_VARIANT} localhost) ====="
 
     # Copy multi-node config
-    cp "$REPO_ROOT/configs/local/${MULTINODE_VARIANT}.cfg" arts.cfg
+    cp "$REPO_ROOT/configs/local/laptop/${MULTINODE_VARIANT}.cfg" arts.cfg
 
     # CoMD variants (affinity-aware)
     # CoMD_intel_chandra: Known HANG — FINISH EDT + affinity deadlock

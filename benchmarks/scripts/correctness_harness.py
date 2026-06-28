@@ -52,10 +52,12 @@ REPO = Path(__file__).resolve().parent.parent.parent
 # ---------------------------------------------------------------------------
 _arg_parser = argparse.ArgumentParser(add_help=False)
 _arg_parser.add_argument('--build-dir', default='build_release_mrnew_lazy')
+_arg_parser.add_argument('--target', default='laptop', choices=['laptop', 'server'])
 _pre_args, _ = _arg_parser.parse_known_args()
 BUILD = Path(_pre_args.build_dir)
 if not BUILD.is_absolute():
     BUILD = REPO / BUILD
+TARGET = _pre_args.target
 
 _protocol = 'unknown'
 _timing = ''
@@ -77,8 +79,8 @@ print(f'[harness] Build dir: {BUILD} (protocol: {_mode})')
 APPS_DIR = BUILD / "benchmarks" / "apps"
 BASE_DIR = BUILD / "benchmarks" / "baseline"
 LOGS_ROOT = REPO / "benchmarks" / "scripts" / "logs" / "correctness"
-ARTS_CFG = REPO / "configs" / "local" / "1n.cfg"
-XSOCR_CFG = REPO / "configs" / "mpi" / "1n.cfg"
+ARTS_CFG = REPO / "configs" / "local" / TARGET / "1n.cfg"
+XSOCR_CFG = REPO / "configs" / "mpi" / TARGET / "1n.cfg"
 OCRVX_APPS_DIR = APPS_DIR   # ocr-vx binaries live in the same apps/ dir
 
 # smithwaterman ships its own datasets (tiny/small/medium/large triples of
@@ -87,6 +89,92 @@ SW_DATA = Path(__file__).resolve().parents[2] / \
     "third_party/ocr-apps/apps/smithwaterman/datasets"
 BASIC_IO_DAT = "/tmp/arts_basicIO_test.dat"
 CHOLESKY_INPUT = "/tmp/arts_cholesky_input.mat"
+
+
+# ---------------------------------------------------------------------------
+# Per-target machine geometry (laptop = 14-thread budget, server = 48-thread),
+# selected by --target.  Drives the config subdir, the Tier-M node counts, the
+# per-rank thread budget (for taskset pinning), and the ocr-vx TBB width.  Every
+# config is sized so node_count * per-node-threads == the machine's core count.
+# ---------------------------------------------------------------------------
+def _cfg_name(n) -> str:
+    return f"{n}n.cfg" if isinstance(n, int) else f"{n}.cfg"
+
+
+# Multinode node counts exercised in Tier M.  The *_io entries are arts-only:
+# xsocr/ocr-vx have a single comm worker (no sender/receiver split), so their
+# N-node total already equals the plain N-node config — no separate IO variant.
+_MN_NODE_COUNTS = {
+    'laptop': [2, 3, 4, "2n_io"],
+    'server': [2, 4, 8, 16, "2n_io", "4n_io", "8n_io"],
+}
+MN_RANKS = _MN_NODE_COUNTS[TARGET]
+
+# Threads per rank (= per-node total thread budget) used to taskset-pin each
+# mpirun rank to a disjoint core block, mirroring arts's per-rank pu_offset.
+_TPN = {
+    'laptop': {2: 7, 3: 4, 4: 3},
+    'server': {2: 24, 4: 12, 8: 6, 16: 3},
+}[TARGET]
+
+# ocr-vx TBB worker count per node count (= per-node budget - 1; one slot is
+# permanently held by the runtime's blocking shutdown task).
+_OCRVX_TBB = {
+    'laptop': {1: 13, 2: 6, 3: 3, 4: 2},
+    'server': {1: 47, 2: 23, 4: 11, 8: 5, 16: 2},
+}[TARGET]
+
+# ocr-vx's coherence protocol is structurally far slower than arts/xsocr, so a
+# correctness run that those two finish well within budget can still time out on
+# ocr-vx while it is *still making progress* (not hung).  Give ocr-vx a larger
+# wall budget so a genuine result is collected; fast cases are unaffected (they
+# return long before the ceiling).
+_OCRVX_TIMEOUT_MULT = 8
+
+# Physical cores used on this machine target (= single-node thread budget).
+# The reference runtimes (xsocr/ocr-vx/baseline) have no internal core pinning,
+# so a single-node run would float its threads across ALL logical CPUs (incl.
+# the HT siblings above core count).  Confine them to cores 0..N-1 via taskset
+# so they occupy the same cores arts self-pins to.
+_NCORES = {'laptop': 14, 'server': 48}[TARGET]
+_PIN_SINGLE = f"taskset -c 0-{_NCORES - 1}"
+
+
+def _pin_wrap(tpn: int) -> str:
+    """Wrap an mpirun-launched command so each rank taskset-pins itself to a
+    disjoint block of `tpn` cores by PMI_RANK, mirroring arts's per-rank core
+    placement so the reference runtimes occupy the same cores in a localhost
+    multinode simulation."""
+    return ("bash -c 'r=${PMI_RANK:-0}; s=$((r*%d)); e=$((s+%d-1)); "
+            "exec taskset -c $s-$e \"$@\"' _" % (tpn, tpn))
+
+
+# ---------------------------------------------------------------------------
+# Portable mpirun launcher.  OpenMPI requires --oversubscribe to place more
+# ranks than detected slots; MPICH (Hydra) rejects that flag outright and
+# oversubscribes by default.  Probe the active mpirun once so the launcher
+# line works under either implementation.
+# ---------------------------------------------------------------------------
+def _detect_mpirun_oversubscribe() -> str:
+    try:
+        out = subprocess.run(["mpirun", "--version"], capture_output=True,
+                             text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return "--oversubscribe" if ("Open MPI" in out or "OpenRTE" in out) else ""
+
+
+MPIRUN_OVERSUB = _detect_mpirun_oversubscribe()
+
+
+def mpirun_prefix(np: int) -> str:
+    """`mpirun [--oversubscribe] -n <np>` — oversubscribe flag only when the
+    active launcher is OpenMPI."""
+    parts = ["mpirun"]
+    if MPIRUN_OVERSUB:
+        parts.append(MPIRUN_OVERSUB)
+    parts += ["-n", str(np)]
+    return " ".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -424,7 +512,9 @@ TIER_A: list[Case] = [
          multinode=True,
          multinode_args={2: ["2", "1", "1", "16", "5"],
                          3: ["3", "1", "1", "16", "5"],
-                         4: ["4", "1", "1", "16", "5"]},
+                         4: ["4", "1", "1", "16", "5"],
+                         8: ["8", "1", "1", "16", "5"],
+                         16: ["16", "1", "1", "16", "5"]},
          ),
 
     Case("stream", "stream", [],
@@ -593,17 +683,26 @@ class Runner:
         # can exceed by inflating RSS without the kernel killing them; this
         # has previously taken the host to OOM. cgroup memory.max via
         # systemd-run is a kernel-enforced RSS cap.
-        try:
-            r = subprocess.run(
-                ["systemd-run", "--user", "--scope", "--quiet",
-                 "-p", "MemoryMax=64M", "--", "/bin/true"],
-                capture_output=True, timeout=5)
-            self.cgroup_ok = (r.returncode == 0)
-        except (OSError, subprocess.TimeoutExpired):
-            self.cgroup_ok = False
-        if not self.cgroup_ok:
-            print("WARNING: systemd-run --user not available; "
-                  "falling back to ulimit -v only (RSS not capped).")
+        # On a large-memory target, skip memory capping entirely: the box has
+        # ample RAM, and ulimit -v breaks mmap-reserving allocators (mimalloc
+        # reserves virtual address space far above its actual RSS, so a virtual
+        # cap rejects allocations the host could easily satisfy).
+        self.cap_memory = (TARGET != 'server')
+        self.cgroup_ok = False
+        if self.cap_memory:
+            try:
+                r = subprocess.run(
+                    ["systemd-run", "--user", "--scope", "--quiet",
+                     "-p", "MemoryMax=64M", "--", "/bin/true"],
+                    capture_output=True, timeout=5)
+                self.cgroup_ok = (r.returncode == 0)
+            except (OSError, subprocess.TimeoutExpired):
+                self.cgroup_ok = False
+            if not self.cgroup_ok:
+                print("WARNING: systemd-run --user not available; "
+                      "falling back to ulimit -v only (RSS not capped).")
+        self.mem_prefix = (f"ulimit -v {self.mem_kb} && "
+                           if self.cap_memory else "")
 
         # Stage configs + fixtures once.
         shutil.copy2(ARTS_CFG, APPS_DIR / "arts.cfg")
@@ -684,9 +783,12 @@ class Runner:
         env["OMP_NUM_THREADS"] = "4"
         if backend == "xsocr":
             env["OCR_CONFIG"] = str(XSOCR_CFG)
+        # arts self-pins (hwloc); the xsocr reference needs taskset to occupy
+        # the same cores instead of floating across all logical CPUs.
+        pin = f"{_PIN_SINGLE} " if backend == "xsocr" else ""
         cmd = (
-            f"cd {APPS_DIR} && ulimit -v {self.mem_kb} && "
-            f"timeout -k 1 {self.timeout} ./{binary} " + " ".join(args)
+            f"cd {APPS_DIR} && {self.mem_prefix}"
+            f"timeout -k 1 {self.timeout} {pin}./{binary} " + " ".join(args)
         )
         result = self._run(cmd, env, logfile)
         self._reap_exe(APPS_DIR / binary)
@@ -694,20 +796,12 @@ class Runner:
 
     # --- Multinode runners (Tier M) ---
 
-    _ARTS_MN_CFGS = {
-        2: "local/2n.cfg",
-        3: "local/3n.cfg",
-        4: "local/4n.cfg",
-        # 2-node IO variant: 3 worker / 2 sender / 2 receiver threads + port
-        # range — stresses the multi-threaded sender/receiver IO-forwarding
-        # path with real benchmarks.  arts-only (no xsocr/MPI equivalent).
-        "2n_io": "local/2n_io.cfg",
-    }
-    _XSOCR_MN_CFGS = {
-        2: "mpi/2n.cfg",
-        3: "mpi/3n.cfg",
-        4: "mpi/4n.cfg",
-    }
+    # Per-target multinode config paths, generated from MN_RANKS.  The *_io
+    # variants (sender/receiver-heavy IO-forwarding stress) are arts-only — no
+    # xsocr/MPI equivalent, so they are absent from the xsocr map.
+    _ARTS_MN_CFGS = {n: f"local/{TARGET}/{_cfg_name(n)}" for n in MN_RANKS}
+    _XSOCR_MN_CFGS = {n: f"mpi/{TARGET}/{_cfg_name(n)}"
+                      for n in MN_RANKS if isinstance(n, int)}
 
     # Per-run unique TCP port base for arts multinode runs.  All stock cfgs
     # share default_ports=50000, so a straggler from the previous case (a
@@ -792,14 +886,14 @@ class Runner:
         # The override must carry the same port COUNT as the cfg it replaces:
         # the count doubles as the per-node parallel-connection count
         # (port_count = default_ports_count), so a mismatch breaks the
-        # startup handshake.  2n_io uses two ports (one per sender/receiver
-        # pair); every other local cfg uses one.
-        if nodes == "2n_io":
+        # startup handshake.  The *_io variants use two ports (2 sender / 2
+        # receiver threads); every other local cfg uses one.
+        if isinstance(nodes, str):  # *_io variant
             env["default_ports"] = f"[{base}-{base + 1}]"
         else:
             env["default_ports"] = str(base)
         cmd = (
-            f"cd {APPS_DIR} && ulimit -v {self.mem_kb} && "
+            f"cd {APPS_DIR} && {self.mem_prefix}"
             f"timeout -k 1 {to} ./{bin_name}_arts " + " ".join(args)
         )
         result = self._run(cmd, env, logfile, wall_timeout=to)
@@ -820,8 +914,8 @@ class Runner:
         env["OMP_NUM_THREADS"] = "4"
         xsocr_cfg = REPO / "configs" / self._XSOCR_MN_CFGS[np]
         cmd = (
-            f"cd {APPS_DIR} && ulimit -v {self.mem_kb} && "
-            f"timeout -k 1 {to} mpirun --oversubscribe -n {np} "
+            f"cd {APPS_DIR} && {self.mem_prefix}"
+            f"timeout -k 1 {to} {mpirun_prefix(np)} {_pin_wrap(_TPN[np])} "
             f"./{bin_name}_xsocr -ocr:cfg {xsocr_cfg} "
             + " ".join(args)
         )
@@ -829,35 +923,29 @@ class Runner:
         self._reap_exe(APPS_DIR / f"{bin_name}_xsocr")
         return result
 
-    # ocr-vx TBB compute parallelism per rank count, sized so the *active*
-    # thread budget matches the arts/xsocr configs on a 14-vCPU host
-    # (totals 14/14/12/12 at 1n/2n/3n/4n).  ocr-vx pins one OS thread per
-    # peer per channel (2*np receivers) plus one sender, but the receivers
-    # block in MPI_Recv and message handling is serialized by a global lock,
-    # so at most ~1 receiver plus the sender are runnable at a time.  The
-    # runtime's shutdown barrier is a TBB task that blocks (zero CPU) until
-    # shutdown, permanently occupying one parallelism slot — so effective
-    # compute width is P-1 and P=1 deadlocks outright.  Active budget per
-    # process = (P-1) compute + sender + 1 active receiver:
-    #   1n: 12+1+1=14, 2n: 5+1+1=7 (x2=14), 3n: 2+1+1=4 (x3=12),
-    #   4n: 1+1+1=3 (x4=12).
-    _OCRVX_TBB_THREADS = {1: 13, 2: 6, 3: 3, 4: 2}
+    # ocr-vx TBB compute parallelism per node count (target-selected, see
+    # module-level _OCRVX_TBB).  Sized so the *active* thread budget matches the
+    # arts/xsocr configs: the runtime's shutdown barrier is a TBB task that
+    # blocks (zero CPU) permanently occupying one parallelism slot, so effective
+    # compute width is P-1 and P=1 deadlocks outright — hence P = per-node
+    # budget - 1.
+    _OCRVX_TBB_THREADS = _OCRVX_TBB
 
     def run_ocrvx_mpi(self, case_name: str, bin_name: str, args: list[str],
                       np: int = 1, timeout: int = 0) -> RunResult:
         """Run ocrvx binary; np > 1 uses mpirun (ocr-vx MPI transport)."""
-        to = timeout or self.timeout
+        to = (timeout or self.timeout) * _OCRVX_TIMEOUT_MULT
         suffix = f"_ocrvx_mpi{np}" if np > 1 else "_ocrvx"
         logfile = self.logdir / f"{case_name}{suffix}.log"
         env = os.environ.copy()
         env["OMP_NUM_THREADS"] = "4"
         env["OCRVX_NUM_THREADS"] = str(self._OCRVX_TBB_THREADS[np])
         if np > 1:
-            launcher = f"mpirun --oversubscribe -n {np} ./{bin_name}_ocrvx"
+            launcher = f"{mpirun_prefix(np)} {_pin_wrap(_TPN[np])} ./{bin_name}_ocrvx"
         else:
-            launcher = f"./{bin_name}_ocrvx"
+            launcher = f"{_PIN_SINGLE} ./{bin_name}_ocrvx"
         cmd = (
-            f"cd {APPS_DIR} && ulimit -v {self.mem_kb} && "
+            f"cd {APPS_DIR} && {self.mem_prefix}"
             f"timeout -k 1 {to} {launcher} " + " ".join(args)
         )
         result = self._run(cmd, env, logfile, wall_timeout=to)
@@ -869,11 +957,14 @@ class Runner:
         env = os.environ.copy()
         env["OMP_NUM_THREADS"] = "4"
         if spec.np > 1 or spec.force_mpirun:
-            launcher = f"mpirun -n {spec.np} --oversubscribe ./{spec.bin}"
+            # Multinode: per-rank disjoint blocks; single-rank force_mpirun:
+            # confine the one rank to cores 0..N-1 like the other references.
+            pin = f"{_pin_wrap(_TPN[spec.np])} " if spec.np in _TPN else f"{_PIN_SINGLE} "
+            launcher = f"{mpirun_prefix(spec.np)} {pin}./{spec.bin}"
         else:
-            launcher = f"./{spec.bin}"
+            launcher = f"{_PIN_SINGLE} ./{spec.bin}"
         cmd = (
-            f"cd {BASE_DIR} && ulimit -v {self.mem_kb} && "
+            f"cd {BASE_DIR} && {self.mem_prefix}"
             f"timeout {self.timeout} {launcher} " + " ".join(spec.args)
         )
         return self._run(cmd, env, logfile)
@@ -1063,6 +1154,8 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--build-dir", default="build_release_mrnew_lazy",
                    help="Build directory containing apps and configs")
+    p.add_argument("--target", default="laptop", choices=["laptop", "server"],
+                   help="Machine geometry: laptop (14-thread) or server (48-thread)")
     p.add_argument("--no-baseline", action="store_true")
     p.add_argument("--only", type=str, default="")
     p.add_argument("--mem-gb", type=int, default=4)
@@ -1145,7 +1238,7 @@ def main():
     # For each eligible Tier-A app, run arts and xsocr at 2 nodes.  Scalars
     # must match the single-node result.
     skip_tier_m = os.environ.get("SKIP_TIER_M", "")
-    MN_RANKS = [2, 3, 4, "2n_io"]  # "2n_io" = 2-node IO-variant, arts-only
+    # MN_RANKS is the module-level, --target-selected node-count list.
     results_m: list[dict[str, Any]] = []
     for c in TIER_A:
         if skip_tier_m or not c.multinode:
@@ -1187,8 +1280,9 @@ def main():
         ocrvx_mn_ok = True  # ocrvx MN checks (separate: doesn't affect FAIL)
         detail_parts = []
         for n in MN_RANKS:
-            # "2n_io" is a 2-node arts-only IO variant — use the 2-node geometry.
-            geo_n = 2 if n == "2n_io" else n
+            # "<k>n_io" is a k-node arts-only IO variant — use the k-node
+            # geometry for args/ocr-vx; xsocr is skipped (arts-only).
+            geo_n = int(n.split("n")[0]) if isinstance(n, str) else n
             args_n = c.multinode_args.get(geo_n, c.args) if use_mn_args else c.args
             if use_mn_args:
                 # rank-count-specific geometry: reference is single-node with
@@ -1198,10 +1292,10 @@ def main():
                 if not mn_xsocr_only:
                     ref_n = runner.run_ocr(c.name, c.ocr_base, args_n, "arts")
                     ref_a_val = _pull(ref_n.stdout, c.scalar_re, c.scalar_kind)
-                if not mn_arts_only and n != "2n_io":
+                if not mn_arts_only and not isinstance(n, str):
                     ref_xn = runner.run_ocr(c.name, c.ocr_base, args_n, "xsocr")
                     ref_x_val = _pull(ref_xn.stdout, c.scalar_re, c.scalar_kind)
-                if mn_run_ocrvx and n != "2n_io":
+                if mn_run_ocrvx and not isinstance(n, str):
                     ref_ovn = runner.run_ocrvx_mpi(c.name, c.ocr_base, args_n)
                     ref_ov_val = _pull(ref_ovn.stdout, c.scalar_re, c.scalar_kind)
             checks = []
@@ -1211,12 +1305,12 @@ def main():
                                            timeout=c.multinode_timeout)
                 a_val = _pull(ar_mn.stdout, c.scalar_re, c.scalar_kind)
                 checks.append((f"ar{n}", a_val, ref_a_val, ar_mn.rc))
-            if not mn_arts_only and n != "2n_io":
+            if not mn_arts_only and not isinstance(n, str):
                 xs_mn = runner.run_xsocr_mpi(c.name, c.ocr_base, args_n, n,
                                              timeout=c.multinode_timeout)
                 x_val = _pull(xs_mn.stdout, c.scalar_re, c.scalar_kind)
                 checks.append((f"xs{n}", x_val, ref_x_val, xs_mn.rc))
-            if mn_run_ocrvx and n != "2n_io":
+            if mn_run_ocrvx and not isinstance(n, str):
                 ov_mn = runner.run_ocrvx_mpi(c.name, c.ocr_base, args_n,
                                               np=geo_n, timeout=c.multinode_timeout)
                 ov_val = _pull(ov_mn.stdout, c.scalar_re, c.scalar_kind)
