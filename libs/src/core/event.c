@@ -204,9 +204,14 @@ static bool event_install(arts_guid_t *guid, const arts_event_hint_t *h_in) {
     }
     return true;
   }
-  /* Cross-rank: forward as a marshaled buffer.  Receiver
-   * arts_handler_event_create performs add_item_race.  Discard the
-   * local allocation since the remote will materialise its own copy. */
+  /* Cross-rank: reserve the GUID on the target rank first (mirroring the EDT
+   * create path, which reserves regardless of locality) so the caller gets a
+   * valid handle back; then forward as a marshaled buffer.  Receiver
+   * arts_handler_event_create performs add_item_race.  Discard the local
+   * allocation since the remote will materialise its own copy. */
+  if (*guid == NULL_GUID) {
+    *guid = arts_guid_create_for_rank(rank, ARTS_GUID_EVENT);
+  }
   arts_send_memory_move(rank, *guid, event, sizeof(*event), MSG_EVENT_CREATE,
                         arts_event_deleter);
   return true;

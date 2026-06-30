@@ -1864,9 +1864,8 @@ u8 ocrAffinityQuery(ocrGuid_t guid, u64 *count, ocrGuid_t *affinities) {
   if (!count || !affinities) {
     return 1;
   }
-  (void)guid;
   if (*count >= 1) {
-    affinities[0].guid = (intptr_t)arts_global_rank_id;
+    affinities[0].guid = (intptr_t)ARTS_GUID_GET_RANK((uint64_t)guid.guid);
     *count = 1;
   }
   return 0;

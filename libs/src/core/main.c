@@ -52,8 +52,6 @@
 #include "arts/transport/stdio_forward.h"
 
 int arts_rt(int argc, char **argv) {
-  TIME_INIT_START();
-
   struct arts_config_s config;
   arts_config_load(&config);
 

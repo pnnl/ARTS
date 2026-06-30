@@ -16,6 +16,10 @@ set(OCR_EXT_DEFINES
     ENABLE_EXTENSION_RTITF
     ENABLE_EXTENSION_CHANNEL_EVT
     ENABLE_EXTENSION_COUNTED_EVT
+    # RSBench-only: gates its PD-distributed EDT affinity (main.c #if defined(...));
+    # the app's own Makefile defines it but ARTS's CMake had omitted it, pinning all
+    # RSBench EDTs to rank0. No other benchmark app references this macro.
+    SINGLE_RUN_ACROSS_PD
 )
 
 # ==========================================================================

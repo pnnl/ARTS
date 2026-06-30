@@ -128,6 +128,14 @@ void arts_enter_shutdown_state(bool initiator) {
   if (arts_atomic_cswap(&arts_node_info.shutdown_state, 0U, 1U) != 0U) {
     return; /* another thread / handler already started shutdown */
   }
+  /* End-to-end marker (rank 0): this CAS is the single idempotent point where
+   * shutdown is first recognized — before the broadcast + outbox-drain
+   * teardown below.  Stamp the e2e end here so the measured span excludes
+   * teardown, matching the reference runtimes (which stop at shutdown
+   * reception).  Any thread may execute this; arts_get_time_stamp is
+   * thread-independent and the CAS guarantees it runs exactly once per node. */
+  if (!arts_global_rank_id && arts_node_info.e2e_marker_enabled)
+    arts_node_info.e2e_end_stamp = arts_get_time_stamp();
   ARTS_INFO("arts_enter_shutdown_state: rank=%u initiator=%d",
             arts_global_rank_id, (int)initiator);
   if (initiator && arts_global_rank_count > 1) {

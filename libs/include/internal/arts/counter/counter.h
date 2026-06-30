@@ -113,10 +113,10 @@ extern "C" {
   X(OBJ_BYTES_DB_REMOTE)                                                       \
   X(OBJ_NUM_DB_CACHE_MISS)                                                     \
   X(OBJ_TRACE_EDT)                                                             \
-  X(OBJ_TRACE_DB)                                                              \
-  /* Time: runtime phases */                                                   \
-  X(TIME_INIT)                                                                 \
-  X(TIME_TOTAL)
+  X(OBJ_TRACE_DB)
+/* Note: end-to-end / init wall time is no longer a counter — it is the
+ * env-gated "[E2E] <ns>" stderr marker (rank 0; see runtime.c / shutdown.c /
+ * threads.c), identical across arts/xsocr/ocr-vx. */
 
 // Generate enum from X-macro
 typedef enum arts_counter_type_t {

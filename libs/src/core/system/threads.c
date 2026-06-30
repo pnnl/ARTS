@@ -107,7 +107,18 @@ void arts_thread_main_join() {
   ARTS_DEBUG("arts_thread_main_join: main thread exited runtime_loop, joining "
              "%u threads",
              arts_node_info.total_thread_count - 1);
-  TIME_TOTAL_STOP();
+
+  /* End-to-end marker (rank 0): both stamps are set — e2e_start_stamp at the
+   * application start (runtime.c) and e2e_end_stamp at shutdown recognition
+   * (shutdown.c).  Print the span on stderr, gated by $ARTS_E2E_MARKER, in the
+   * same "[E2E] <ns>" form the reference runtimes use, so the harness parses
+   * all three runtimes identically. */
+  if (!arts_global_rank_id && arts_node_info.e2e_marker_enabled) {
+    fprintf(stderr, "[E2E] %lu\n",
+            (unsigned long)(arts_node_info.e2e_end_stamp -
+                            arts_node_info.e2e_start_stamp));
+    fflush(stderr);
+  }
 
   /* Phase C: close the network layer so receivers wake up from poll()
    * (they would otherwise block up to 300 s). Uses SHUT_WR on send

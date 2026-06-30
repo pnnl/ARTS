@@ -94,6 +94,17 @@ struct arts_runtime_shared_s {
    * the end of arts_actual_send (both success and error paths). Used by
    * the shutdown protocol to drain the outbox before tearing down. */
   volatile unsigned int outbox_pending;
+  /* End-to-end wall-clock marker (rank 0 only), independent of the counter
+   * subsystem.  e2e_start_stamp is taken when the main application EDT
+   * becomes runnable (init complete — so application init callbacks run
+   * inside the span); e2e_end_stamp is taken at shutdown recognition (the
+   * enter-shutdown CAS, before any teardown/drain).  When e2e_marker_enabled
+   * (set once from $ARTS_E2E_MARKER at startup) their difference is printed
+   * as "[E2E] <ns>" on rank 0 at exit.  Gated so a normal run is never
+   * perturbed. */
+  uint64_t e2e_start_stamp;
+  uint64_t e2e_end_stamp;
+  int e2e_marker_enabled;
   /* Round-robin counter used by arts_db_create when the caller passes
    * NULL hint (no node preference) — distributes home rank across all
    * nodes so DBs aren't all pinned to the creator. */
