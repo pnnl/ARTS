@@ -34,6 +34,14 @@ target_compile_definitions(ocr_arts_objects PRIVATE
     ${BENCH_OCR_TYPE_DEFINE}
 )
 
+# No-hint DB home policy selector (see top-level ARTS_SHIM_NOHINT_DB_HOME).
+target_compile_definitions(ocr_arts_objects PRIVATE
+    ARTS_SHIM_NOHINT_DB_HOME_ROUNDROBIN=${_ARTS_SHIM_NOHINT_RR})
+
+# No-hint EDT placement policy selector (see top-level ARTS_SHIM_NOHINT_EDT_PLACE).
+target_compile_definitions(ocr_arts_objects PRIVATE
+    ARTS_SHIM_NOHINT_EDT_PLACE_ROUNDROBIN=${_ARTS_SHIM_NOHINT_EDT_RR})
+
 # Include: OCR public headers + extension headers
 target_include_directories(ocr_arts_objects PRIVATE
     ${OCR_ROOT}/inc                # ocr.h, ocr-types.h, etc.

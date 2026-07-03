@@ -56,6 +56,16 @@
 #include "arts/utils/atomics.h"
 #include "arts/utils/shared.h" /* arts_shared_ptr_t, get/release */
 
+/* No-hint EDT placement policy: ROUNDROBIN (default) distributes execution
+ * rank across all nodes when the caller expresses no placement preference
+ * (NULL hint or ARTS_HINT_ANY_RANK), mirroring arts_db_create's NULL-hint
+ * home distribution.  CREATOR pins to the calling rank (legacy behavior).
+ * CMake sets this for every libarts compile; the fallback covers any TU
+ * that pulls in edt.c outside the normal build (e.g. direct inclusion). */
+#ifndef ARTS_NOHINT_EDT_ROUNDROBIN
+#define ARTS_NOHINT_EDT_ROUNDROBIN 1
+#endif
+
 #ifdef ARTS_USE_GPU
 #include "arts/gpu/gpu_internal.h"
 #endif
@@ -299,6 +309,9 @@ arts_guid_t arts_edt_create(arts_edt_t func_ptr, uint32_t paramc,
   /* Snapshot hint (NULL = ARTS_EDT_HINT_DEFAULTS).  After this all optional
    * fields are well-defined and follow the documented precedence:
    *   - if .guid != NULL_GUID, the GUID's rank field overrides .rank
+   *   - if .rank == ARTS_HINT_ANY_RANK (or hint itself is NULL), the rank is
+   *     policy-selected below (ARTS_NOHINT_EDT_ROUNDROBIN) rather than taken
+   *     from .rank
    *   - if .finish_event == NULL_GUID, the EDT inherits the caller's ambient
    *     finish scope (handled inside arts_edt_create_core). */
   arts_edt_hint_t snap = hint
@@ -311,6 +324,20 @@ arts_guid_t arts_edt_create(arts_edt_t func_ptr, uint32_t paramc,
   unsigned int rank;
   if (guid != NULL_GUID) {
     rank = arts_guid_get_rank(guid);
+  } else if (hint == NULL || snap.rank == ARTS_HINT_ANY_RANK) {
+    /* No placement preference (NULL hint, or an explicit hint that still
+     * needs other fields populated but leaves rank unpinned via
+     * ARTS_HINT_ANY_RANK — e.g. the OCR shim's finish/output-event-bearing
+     * hint).  ROUNDROBIN distributes execution rank across all nodes
+     * (mirrors arts_db_create's NULL-hint home distribution); CREATOR
+     * reproduces the legacy pin-to-creator behavior.  Both arms resolve to
+     * a concrete rank — the sentinel never reaches guid encoding. */
+#if ARTS_NOHINT_EDT_ROUNDROBIN
+    rank = arts_atomic_fetch_add(&arts_node_info.edt_rr_route, 1U) %
+           arts_global_rank_count;
+#else
+    rank = arts_global_rank_id;
+#endif
   } else if (snap.rank != ARTS_HINT_CURRENT_RANK) {
     rank = snap.rank;
   } else {

@@ -58,6 +58,7 @@ if(HWLOC_INCLUDE_DIRS)
     target_include_directories(arts_compute PRIVATE ${HWLOC_INCLUDE_DIRS})
 endif()
 arts_apply_protocol(arts_compute ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
+target_compile_definitions(arts_compute PRIVATE ARTS_NOHINT_EDT_ROUNDROBIN=${_ARTS_NOHINT_EDT_RR})
 
 # DB coherence TU selection: MRNEW and MRSW each compile one timing TU (eager.c
 # or lazy.c) plus their single-owner ownership machinery (ownership.c + the home
@@ -121,6 +122,7 @@ if(BUILD_CUDA_LIBRARY)
     endif()
     target_compile_definitions(arts_compute_gpu PRIVATE ARTS_USE_GPU)
     arts_apply_protocol(arts_compute_gpu ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
+    target_compile_definitions(arts_compute_gpu PRIVATE ARTS_NOHINT_EDT_ROUNDROBIN=${_ARTS_NOHINT_EDT_RR})
 
     # GPU variant of memory: recompile db.c as .cu, coherence TUs as .c, all with
     # ARTS_USE_GPU.

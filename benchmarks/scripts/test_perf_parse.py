@@ -42,3 +42,16 @@ def test_parse_arts_counters_missing_files(tmp_path):
 def test_parse_e2e_reference():
     assert ph.parse_reference_e2e("foo\n[E2E] 9876543\nbar") == 9876543.0
     assert ph.parse_reference_e2e("no marker") is None
+
+
+def test_parse_extra_scalars_graph500():
+    txt = "blah\n[kernel2 time 3.5]\nmean MTEPS 42.7\nnodes 64\n"
+    es = {"kernel2_ns": r"\[kernel2 time ([0-9.eE+-]+)\]",
+          "mteps": r"mean MTEPS ([0-9.eE+-]+)"}
+    out = ph.parse_extra_scalars(txt, es)
+    assert out["kernel2_ns"] == 3.5 and out["mteps"] == 42.7
+
+
+def test_parse_extra_scalars_absent():
+    out = ph.parse_extra_scalars("no markers here", {"k": r"k=([0-9]+)"})
+    assert out["k"] is None

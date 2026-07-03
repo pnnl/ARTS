@@ -37,7 +37,7 @@ import json
 import os
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from harness_common import REPO, Runner, Runtime, RUNTIMES
@@ -53,8 +53,11 @@ RUNNER_APPS: Path | None = None
 class PerfCase:
     name: str
     ocr_base: str
-    args: object              # list[str] OR dict[int(node_geo) -> list[str]]
-    completion_marker: str    # regex marking "result printed"
+    completion_marker: str     # regex marking "result printed"
+    fix_args: list             # one fixed arg-list (Cat A constant grid / Cat B fixed)
+    strong_args: object        # list (constant across nodes) OR dict[int,list], grid=4N
+    weak_args: object          # list OR dict[int,list], grid=4N, per-sub-domain fixed
+    extra_scalars: dict = field(default_factory=dict)  # name -> regex (graph500 kernel2)
 
 
 E2E_RE = re.compile(r"\[E2E\]\s+(\d+)")
@@ -65,6 +68,17 @@ def parse_reference_e2e(text: str):
     `[E2E] <nanoseconds>` from stdout. Returns None if absent."""
     m = E2E_RE.search(text)
     return float(m.group(1)) if m else None
+
+
+def parse_extra_scalars(text: str, extra_scalars: dict) -> dict:
+    """Extract app-specific secondary scalars by name->regex (e.g. graph500's
+    kernel-2 time / MTEPS, which scale cleanly where e2e does not because of the
+    NO_FILES redundant graph generation). Missing markers map to None."""
+    out = {}
+    for name, pat in extra_scalars.items():
+        m = re.search(pat, text)
+        out[name] = float(m.group(1)) if m else None
+    return out
 
 
 def _counter_value(entry):
@@ -100,84 +114,85 @@ def parse_arts_counters(counter_dir) -> dict:
     return out
 
 
-# Node configs exercised by the perf matrix (filled in by later tasks).
-# The "*_sc" entries are the server-target single-config (_sc) cfgs added in
-# Task 2: arts -> configs/local/server/{n}_sc.cfg, xsocr/ocr-vx ->
-# configs/mpi/server/{n}_sc.cfg via mpirun.
-PERF_NODE_CONFIGS = [
-    "1n", 2, 4, 8, 16, "2n_io", "4n_io", "8n_io",
-    "1n_sc", "2n_sc", "4n_sc", "8n_sc",
-]
+# fix = capacity family (48 cores constant, vary node count). _io are arts-only.
+FIX_CONFIGS = ["1n", 2, 4, 8, 16, "2n_io", "4n_io", "8n_io"]
+# strong AND weak share the scalability (_sc) family (4 workers/node, 1..8).
+SCALE_CONFIGS = ["1n_sc", "2n_sc", "4n_sc", "8n_sc"]
+EXPERIMENTS = {"fix": FIX_CONFIGS, "strong": SCALE_CONFIGS, "weak": SCALE_CONFIGS}
 
-# Args are calibrated so each bench's 1n arts wall time lands in the 10-30s
-# window: large enough that the run is compute-dominated (not startup/
-# teardown noise), small enough to keep the full matrix tractable.
+
+def select_perf_args(case: "PerfCase", experiment: str, geo: int) -> list:
+    """Pick the argv for one (experiment, geo) cell.
+    fix -> the single fixed list; strong/weak -> the geo entry of a dict, or a
+    constant list broadcast to every geo (Category-B apps)."""
+    if experiment == "fix":
+        return case.fix_args
+    a = case.strong_args if experiment == "strong" else case.weak_args
+    return a[geo] if isinstance(a, dict) else a
+
 PERF_BENCHES: list = [
-    # Strong scaling: SCALE=21 (total vertices=2^21) FIXED; the R*C worker grid
-    # = node count so per-rank vertices = 2^21/(R*C) shrinks with node count.
-    # R>=C (the app's grid convention). args = SCALE EDGEFACTOR R C.
-    PerfCase("graph500", "graph500", {
-        1:  ["21", "8", "1", "1"],
-        2:  ["21", "8", "2", "1"],
-        4:  ["21", "8", "2", "2"],
-        8:  ["21", "8", "4", "2"],
-        16: ["21", "8", "4", "4"],
-    }, r"nodes \d+"),
-    PerfCase("CoMD_sdsc2", "CoMD_sdsc2",
-             ["-x", "40", "-y", "40", "-z", "40", "-N", "2"], r"Final energy"),
-    # Strong scaling: total grid (npx*npy*npz * local_nx^3) FIXED at 1n's 160^3;
-    # npx*npy*npz = node count, local_nx = round((160^3/node)^(1/3)) so per-rank
-    # work shrinks with node count. args = npx npy npz local_nx iters.
-    PerfCase("hpcg_intel", "hpcg_intel", {
-        1:  ["1", "1", "1", "160", "5"],
-        2:  ["2", "1", "1", "127", "5"],
-        4:  ["2", "2", "1", "101", "5"],
-        8:  ["2", "2", "2", "80", "5"],
-        16: ["4", "2", "2", "64", "5"],
-    }, r"final deviation"),
-    PerfCase("hpgmg", "hpgmg", ["6", "64"], r"\|\|error\|\|"),
-    # args = Rx Ry Rz Ex Ey Ez pDOF CGcount.  Strong scaling: TOTAL elements
-    # (Rx*Ry*Rz * Ex*Ey*Ez) FIXED at 1n's 512 (=8^3); the Rx*Ry*Rz PD grid
-    # (Rx>=Ry>=Rz, the app's ordering invariant) = node count, so per-rank
-    # Ex*Ey*Ez = 512/node halves each step (8*8*8 -> 8*8*4 -> 8*4*4 -> 4*4*4
-    # -> 4*4*2).  pDOF=8 (8th-order spectral basis) and CGcount=400 fixed.
-    # Marker is FinalEDT (true completion) not rnorminit (which prints on the
-    # first CG step, long before the CGcount loop finishes).
-    PerfCase("nekbone", "nekbone", {
-        1:  ["1", "1", "1", "8", "8", "8", "8", "400"],
-        2:  ["2", "1", "1", "8", "8", "4", "8", "400"],
-        4:  ["2", "2", "1", "8", "4", "4", "8", "400"],
-        8:  ["2", "2", "2", "4", "4", "4", "8", "400"],
-        16: ["4", "2", "2", "4", "4", "2", "8", "400"],
-    }, r"FinalEDT"),
-    # miniAMR_intel_bryan DROPPED from the perf core (8 -> 7): every EDT uses
-    # ocrAffinityGetCurrent (caller-rank) with no PD-distribution code, so at 2n+
-    # all EDTs pin to rank0 (measured EDT_FINISH n0/n1 = 356007/0) — effectively
-    # single-node, unfit for multinode perf scaling. See memory
-    # perf-affinity-rsbench-miniamr. Perf core is now: CoMD_sdsc2, hpcg_intel,
-    # hpgmg, nekbone, RSBench_intel_sharedDB, Stencil2D_intel_chandra, graph500.
-    # Strong scaling: lookups (-l) FIXED; -t (perThread SPMD EDT count) = node count
-    # so the EDTs spread across policy domains via getPolicyDomainID_Cart1D. Needs
-    # the SINGLE_RUN_ACROSS_PD build define (benchmarks/apps/CMakeLists.txt) to
-    # compile in the affinity-hint code; without BOTH (build define + -t=node) all
-    # RSBench EDTs pin to rank0 (verified: -t1 => n0/n1=612/0; -t2 => 315/303).
-    PerfCase("RSBench_intel_sharedDB", "RSBench_intel_sharedDB", {
-        1:  ["-l", "300000", "-t", "1"],
-        2:  ["-l", "300000", "-t", "2"],
-        4:  ["-l", "300000", "-t", "4"],
-        8:  ["-l", "300000", "-t", "8"],
-        16: ["-l", "300000", "-t", "16"],
-    }, r"RS_CHECKSUM"),
-    # Strong scaling: npoints (grid edge) and ntimesteps FIXED; nranks (2nd arg)
-    # = node count so the grid is split across ranks. args = npoints nranks
-    # ntimesteps.
-    PerfCase("Stencil2D_intel_chandra", "Stencil2D_intel_chandra", {
-        1:  ["10000", "1", "64"],
-        2:  ["10000", "2", "64"],
-        4:  ["10000", "4", "64"],
-        8:  ["10000", "8", "64"],
-        16: ["10000", "16", "64"],
-    }, r"L1 norm"),
+    # graph500: SCALE EDGEFACTOR R C. R*C=grid (pow2). EDGEFACTOR=8 fixed.
+    # fix R*C=32 (8x4); strong R*C=4N fixed SCALE; weak R*C=4N SCALE=base+log2(4N).
+    PerfCase("graph500", "graph500", r"nodes \d+",
+        fix_args=["24", "8", "8", "4"],
+        strong_args={1: ["25","8","2","2"], 2: ["25","8","4","2"],
+                     4: ["25","8","4","4"], 8: ["25","8","8","4"]},
+        weak_args={1: ["22","8","2","2"], 2: ["23","8","4","2"],
+                   4: ["24","8","4","4"], 8: ["25","8","8","4"]},
+        extra_scalars={"kernel2_ns": r"\[kernel2 time ([0-9.eE+-]+)\]",
+                       "mteps": r"mean MTEPS ([0-9.eE+-]+)"}),
+    # CoMD_sdsc2: -x -y -z (cells) -N (steps). No grid arg (auto-distribute).
+    # -N is the time lever (no memory growth). weak grows the box per node.
+    PerfCase("CoMD_sdsc2", "CoMD_sdsc2", r"Final energy",
+        fix_args=["-x","60","-y","60","-z","60","-N","4"],
+        strong_args=["-x","40","-y","40","-z","40","-N","100"],
+        weak_args={1: ["-x","40","-y","40","-z","40","-N","40"],
+                   2: ["-x","80","-y","40","-z","40","-N","40"],
+                   4: ["-x","80","-y","80","-z","40","-N","40"],
+                   8: ["-x","80","-y","80","-z","80","-N","40"]}),
+    # hpcg_intel: npx npy npz m iters. grid=npx*npy*npz. m rounds UP to x16.
+    # fix grid=48 (4x4x3); strong grid=4N total~const; weak grid=4N m=64.
+    PerfCase("hpcg_intel", "hpcg_intel", r"final deviation",
+        fix_args=["4","4","3","64","48"],
+        strong_args={1: ["2","2","1","144","50"], 2: ["2","2","2","112","50"],
+                     4: ["4","2","2","96","50"], 8: ["4","4","2","80","50"]},
+        weak_args={1: ["2","2","1","112","50"], 2: ["2","2","2","112","50"],
+                   4: ["4","2","2","112","50"], 8: ["4","4","2","112","50"]}),
+    # nekbone: Rx Ry Rz Ex Ey Ez pDOF CGcount. Rtotal=grid. Rx>=Ry>=Rz, Ex>=Ey>=Ez.
+    # fix grid=48; strong grid=4N total=1024; weak grid=4N per-rank Etotal=256
+    # (8x8x4, held constant across geos -> total grows with N). pDOF=12, CG=time lever.
+    PerfCase("nekbone", "nekbone", r"FinalEDT",
+        fix_args=["4","4","3","4","4","4","12","200"],
+        strong_args={1: ["2","2","1","8","8","4","12","550"],
+                     2: ["2","2","2","8","4","4","12","550"],
+                     4: ["4","2","2","4","4","4","12","550"],
+                     8: ["4","4","2","4","4","2","12","550"]},
+        weak_args={1: ["2","2","1","8","8","4","12","200"],
+                   2: ["2","2","2","8","8","4","12","200"],
+                   4: ["4","2","2","8","8","4","12","200"],
+                   8: ["4","4","2","8","8","4","12","200"]}),
+    # RSBench_intel_sharedDB: -l (GLOBAL lookups, split among -t) -t (EDTs=grid).
+    # fix -t=48; strong -t=4N -l fixed; weak -t=4N -l=base*4N.
+    PerfCase("RSBench_intel_sharedDB", "RSBench_intel_sharedDB", r"RS_CHECKSUM",
+        fix_args=["-l","14000000","-t","48"],
+        strong_args={1: ["-l","6000000","-t","4"], 2: ["-l","6000000","-t","8"],
+                     4: ["-l","6000000","-t","16"], 8: ["-l","6000000","-t","32"]},
+        weak_args={1: ["-l","2560000","-t","4"], 2: ["-l","5120000","-t","8"],
+                   4: ["-l","10240000","-t","16"], 8: ["-l","20480000","-t","32"]}),
+    # Stencil2D_intel_chandra: npoints nranks ntimesteps. nranks=grid (2D split).
+    # weak npoints=base*sqrt(4N). ntimesteps=time lever. L1=2*(nt+1).
+    PerfCase("Stencil2D_intel_chandra", "Stencil2D_intel_chandra", r"L1 norm",
+        fix_args=["20000","48","100"],
+        strong_args={1: ["32000","4","64"], 2: ["32000","8","64"],
+                     4: ["32000","16","64"], 8: ["32000","32","64"]},
+        weak_args={1: ["20000","4","64"], 2: ["28284","8","64"],
+                   4: ["40000","16","64"], 8: ["56569","32","64"]}),
+    # hpgmg: log2_box_dim target_boxes. Boxes auto-home box%node_count (Cat B).
+    # weak target_boxes=boxes_in_i^3 ~ proportional to N.
+    PerfCase("hpgmg", "hpgmg", r"\|\|error\|\|",
+        fix_args=["6","64"],
+        strong_args=["6","216"],
+        weak_args={1: ["6","64"], 2: ["6","216"], 4: ["6","512"], 8: ["6","1000"]}),
 ]
 
 
@@ -205,9 +220,24 @@ def classify_run(rc: int, marker_seen: bool, proc_alive: bool) -> str:
     return "COMPUTE_FAIL"
 
 
-def _perf_dispatch(runner: Runner, rt: Runtime, case: PerfCase, node: object,
-                   metrics_dir: str | None = None):
-    """Run one (runtime, case, node) cell. Mirrors correctness_harness
+def finalize_status(status: str, e2e_ns) -> str:
+    """Gate classify_run's verdict on e2e-marker presence: a run is only a
+    valid measurement when the "[E2E] <ns>" marker was actually captured,
+    whichever path produced "OK" -- a clean exit (rc==0), a post-result hang
+    (SHUTDOWN_HANG: rc==124 or reaped), or a post-result teardown death
+    (nonzero rc with the completion marker seen, e.g. rc==139 SIGSEGV; these
+    three collapse to the same "OK" from classify_run). Missing e2e demotes
+    to COMPUTE_FAIL so the caller's retry path can re-attempt (or the
+    iteration is dropped as FAIL after retries exhaust) -- a run missing
+    either marker never counts as valid, regardless of rc."""
+    if status in ("OK", "SHUTDOWN_HANG"):
+        return "OK" if e2e_ns is not None else "COMPUTE_FAIL"
+    return status
+
+
+def _perf_dispatch(runner: Runner, rt: Runtime, case: PerfCase, experiment: str,
+                   node: object, metrics_dir: str | None = None):
+    """Run one (runtime, case, experiment, node) cell. Mirrors correctness_harness
     run_runtime's dispatch (capacity 1n / capacity MN), plus the "_sc"
     scalability-series family which needs an explicit cfg-path override
     (the capacity cfg maps in Runner only cover the capacity MN_RANKS keys).
@@ -224,7 +254,7 @@ def _perf_dispatch(runner: Runner, rt: Runtime, case: PerfCase, node: object,
     else:
         geo = int(str(node).split("n")[0])
 
-    args = case.args.get(geo, []) if isinstance(case.args, dict) else case.args
+    args = select_perf_args(case, experiment, geo)
     arts_env = {"counter_folder": metrics_dir} if (rt.kind == "arts" and metrics_dir) else None
 
     if is_sc:
@@ -243,7 +273,7 @@ def _perf_dispatch(runner: Runner, rt: Runtime, case: PerfCase, node: object,
                     case.name, case.ocr_base, args, "xsocr",
                     cfg_path=cfg_base / "mpi" / "server" / "1n_sc.cfg")
             else:  # ocrvx -- no cfg file consumed; np=1 already direct-execs
-                return runner.run_ocrvx_mpi(case.name, case.ocr_base, args)
+                return runner.run_ocrvx_mpi(case.name, case.ocr_base, args, tbb=4)
         else:
             if rt.kind == "arts":
                 return runner.run_arts_mn(
@@ -255,8 +285,9 @@ def _perf_dispatch(runner: Runner, rt: Runtime, case: PerfCase, node: object,
                     case.name, case.ocr_base, args, geo,
                     cfg_path=cfg_base / "mpi" / "server" / f"{geo}n_sc.cfg",
                     tpn=6)
-            else:  # ocrvx -- np-driven, no cfg file
-                return runner.run_ocrvx_mpi(case.name, case.ocr_base, args, np=geo)
+            else:  # ocrvx -- np-driven; _sc geometry = 4 workers / 6 cores per rank
+                return runner.run_ocrvx_mpi(case.name, case.ocr_base, args, np=geo,
+                                            tpn=6, tbb=4)
     elif node in ("1n", 1):
         if rt.kind == "arts":
             return runner.run_ocr(case.name, case.ocr_base, args, "arts",
@@ -275,15 +306,19 @@ def _perf_dispatch(runner: Runner, rt: Runtime, case: PerfCase, node: object,
             return runner.run_ocrvx_mpi(case.name, case.ocr_base, args, np=geo)
 
 
-def run_cell_with_retry(runner: Runner, rt: Runtime, case: PerfCase, node: object,
-                        iters: int, retries: int) -> list:
-    """Run (rt, case, node) for `iters` accepted iterations, retrying
+def run_cell_with_retry(runner: Runner, rt: Runtime, case: PerfCase, experiment: str,
+                        node: object, iters: int, retries: int) -> list:
+    """Run (rt, case, experiment, node) for `iters` accepted iterations, retrying
     COMPUTE_FAIL up to `retries` times per iteration.
 
-    A SHUTDOWN_HANG with a parsed e2e is accepted as-is (the result was
-    captured in-runtime before the post-result hang); the hung process is
-    reaped via Runner._reap_exe so it cannot interfere with the next run.
-    Only COMPUTE_FAIL (no usable result at all) triggers a retry.
+    A post-result death with a parsed e2e is accepted as-is (the result was
+    captured in-runtime before the process died) whether it presents as a
+    SHUTDOWN_HANG (rc==124 or reaped-but-alive) or a teardown crash (nonzero
+    rc, e.g. rc==139 SIGSEGV, process already exited) -- see
+    finalize_status(). The dead/hung process is reaped via Runner._reap_exe
+    so it cannot interfere with the next run. Only COMPUTE_FAIL (no usable
+    result at all, including an OK-shaped run whose e2e marker never printed)
+    triggers a retry.
 
     Returns one dict per accepted iteration:
         {"iter", "e2e_ns", "rc", "wall", "status", "metrics_dir"}
@@ -314,7 +349,7 @@ def run_cell_with_retry(runner: Runner, rt: Runtime, case: PerfCase, node: objec
                 # dropped with no error).
                 metrics_path.mkdir(parents=True, exist_ok=True)
                 metrics_dir = str(metrics_path)
-            r = _perf_dispatch(runner, rt, case, node, metrics_dir=metrics_dir)
+            r = _perf_dispatch(runner, rt, case, experiment, node, metrics_dir=metrics_dir)
             marker_seen = bool(re.search(case.completion_marker, r.stdout))
             proc_alive = False
             if r.rc == 124:
@@ -334,14 +369,14 @@ def run_cell_with_retry(runner: Runner, rt: Runtime, case: PerfCase, node: objec
             # metrics into its counter-output dir, summarized later from
             # metrics_dir; e2e itself is no longer a counter.
             e2e_ns = parse_reference_e2e(r.stdout)
+            extra = parse_extra_scalars(r.stdout, case.extra_scalars)
 
-            if status == "SHUTDOWN_HANG":
-                # Accept if e2e parsed (captured pre-shutdown); otherwise
-                # treat as an unusable iteration and retry like COMPUTE_FAIL.
-                if e2e_ns is not None:
-                    status = "OK"
-                else:
-                    status = "COMPUTE_FAIL"
+            # Gate on e2e presence uniformly across every "OK" path: a clean
+            # exit, a post-result hang (SHUTDOWN_HANG), and a post-result
+            # teardown death (nonzero rc, marker seen -> classify_run already
+            # says "OK") all require the e2e marker to count as a valid
+            # measurement; missing it demotes to COMPUTE_FAIL (retry).
+            status = finalize_status(status, e2e_ns)
 
             if status == "COMPUTE_FAIL" and attempt < retries:
                 attempt += 1
@@ -354,6 +389,7 @@ def run_cell_with_retry(runner: Runner, rt: Runtime, case: PerfCase, node: objec
                 "wall": round(r.wall, 3),
                 "status": status if status != "COMPUTE_FAIL" else "FAIL",
                 "metrics_dir": metrics_dir,
+                **extra,
             })
             break
 
@@ -381,12 +417,13 @@ def perf_runtime_eligible(rt: Runtime, case: PerfCase, node: object) -> bool:
 
 
 def write_results_csv(rows: list, path) -> None:
-    cols = ["bench", "config", "runtime", "iter", "e2e_ns", "rc", "wall", "status"]
+    cols = ["experiment", "bench", "config", "runtime", "iter", "e2e_ns",
+            "rc", "wall", "status", "kernel2_ns", "mteps"]
     with open(path, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=cols)
         w.writeheader()
         for r in rows:
-            w.writerow({k: r.get(k, "") for k in cols})
+            w.writerow({k: ("" if r.get(k) is None else r.get(k)) for k in cols})
 
 
 def write_metrics_json(metric_rows: list, path) -> None:
@@ -404,8 +441,43 @@ def _parse_node_arg(node_arg: str):
         return node_arg
 
 
+RESULT_COLS = ["experiment", "bench", "config", "runtime", "iter", "e2e_ns",
+               "rc", "wall", "status", "kernel2_ns", "mteps"]
+
+
+def _load_done_cells(csv_path) -> set:
+    """Read an existing results.csv into a set of (experiment, bench, config,
+    runtime) keys already recorded, so a resumed run skips them. One saved row
+    means that app+protocol+config cell is done (per-program resume)."""
+    done = set()
+    p = Path(csv_path)
+    if not p.exists():
+        return done
+    try:
+        with open(p, newline="") as f:
+            for r in csv.DictReader(f):
+                done.add((r.get("experiment", ""), r.get("bench", ""),
+                          r.get("config", ""), r.get("runtime", "")))
+    except (OSError, ValueError):
+        pass
+    return done
+
+
+def _append_result_row(csv_path, row) -> None:
+    """Append one cell's result row (writing the header if the file is new) and
+    flush, so a kill loses at most the single in-flight cell."""
+    p = Path(csv_path)
+    new = (not p.exists()) or p.stat().st_size == 0
+    with open(p, "a", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=RESULT_COLS)
+        if new:
+            w.writeheader()
+        w.writerow({k: ("" if row.get(k) is None else row.get(k)) for k in RESULT_COLS})
+        f.flush()
+
+
 def main():
-    global RUNNER_APPS, PERF_NODE_CONFIGS, PERF_BENCHES
+    global RUNNER_APPS
 
     p = argparse.ArgumentParser()
     p.add_argument("--build-dir", default="build_release_mrnew_lazy",
@@ -416,12 +488,18 @@ def main():
                    help="Comma-separated bench names to restrict to")
     p.add_argument("--node", type=str, default="",
                    help="Restrict to a single node-config, e.g. --node 1n")
+    p.add_argument("--experiment", type=str, default="fix,strong,weak",
+                   help="Comma-separated experiments to run: fix,strong,weak")
     p.add_argument("--iters", type=int, default=5,
                    help="Accepted iterations per (bench, node, runtime) cell")
     p.add_argument("--retries", type=int, default=3,
                    help="Max COMPUTE_FAIL retries per iteration")
     p.add_argument("--mem-gb", type=int, default=4)
     p.add_argument("--timeout", type=int, default=90)
+    p.add_argument("--out-dir", type=str, default="",
+                   help="Stable results dir. Rows are appended per cell and any "
+                        "cell already in its results.csv is skipped (per-program "
+                        "resume). Default: a fresh timestamped dir (no resume).")
     args = p.parse_args()
 
     # All three runtimes (arts/xsocr/ocr-vx) emit their "[E2E] <ns>" span only
@@ -430,14 +508,18 @@ def main():
     # and is never perturbed.
     os.environ["ARTS_E2E_MARKER"] = "1"
 
+    # Perf runs cap EVERY runtime at the same wall budget (--timeout): a cell that
+    # needs longer is "too slow" and should time out rather than consume the 8x
+    # budget the correctness harness grants ocr-vx (whose protocol is structurally
+    # slower).  Override the module's ocr-vx multiplier to 1 for this perf process
+    # only; the correctness harness runs in a separate process and keeps its 8x.
+    import harness_common
+    harness_common._OCRVX_TIMEOUT_MULT = 1
+
     build = Path(args.build_dir)
     if not build.is_absolute():
         build = REPO / build
     RUNNER_APPS = build / "benchmarks" / "apps"
-
-    node_configs = PERF_NODE_CONFIGS
-    if args.node:
-        node_configs = [_parse_node_arg(args.node)]
 
     benches = PERF_BENCHES
     if args.only:
@@ -445,48 +527,70 @@ def main():
         benches = [b for b in benches if b.name in only]
 
     ts = time.strftime("%Y-%m-%d_%H-%M-%S")
-    logdir = LOGS_ROOT / ts
+    logdir = Path(args.out_dir) if args.out_dir else (LOGS_ROOT / ts)
+    if not logdir.is_absolute():
+        logdir = REPO / logdir
+    logdir.mkdir(parents=True, exist_ok=True)
     runner = Runner(args.mem_gb, args.timeout, logdir, target=args.target, build=build)
 
-    rows = []
+    csv_path = logdir / "results.csv"
+    metrics_path = logdir / "metrics.json"
+    # Per-program resume: skip any (experiment, bench, config, runtime) cell whose
+    # row is already saved, and append each new cell immediately (flush) so a kill
+    # or reboot loses at most the single in-flight program.
+    done = _load_done_cells(csv_path)
     metric_rows = []
-    for case in benches:
-        for node in node_configs:
-            for rt in RUNTIMES:
-                if not perf_runtime_eligible(rt, case, node):
-                    continue
-                print(f"[perf] {case.name} x {node} x {rt.key} ...", flush=True)
-                iters = run_cell_with_retry(runner, rt, case, node,
-                                            args.iters, args.retries)
-                for it in iters:
-                    rows.append({
-                        "bench": case.name,
-                        "config": str(node),
-                        "runtime": rt.key,
-                        "iter": it["iter"],
-                        "e2e_ns": it["e2e_ns"],
-                        "rc": it["rc"],
-                        "wall": it["wall"],
-                        "status": it["status"],
-                    })
-                    if rt.kind == "arts" and it["metrics_dir"]:
-                        counters = parse_arts_counters(it["metrics_dir"])
-                        metric_rows.append({
-                            "bench": case.name,
-                            "config": str(node),
-                            "runtime": rt.key,
-                            "iter": it["iter"],
-                            "e2e_ns": it["e2e_ns"],
-                            "per_rank": counters["per_rank"],
-                        })
-                    print(f"    iter {it['iter']}: status={it['status']} "
-                          f"e2e_ns={it['e2e_ns']} wall={it['wall']}", flush=True)
+    if metrics_path.exists():
+        try:
+            metric_rows = json.loads(metrics_path.read_text())
+        except (OSError, ValueError):
+            metric_rows = []
+    n_new = 0
+    selected_exps = [e.strip() for e in args.experiment.split(",") if e.strip()]
+    for experiment in selected_exps:
+        node_configs = EXPERIMENTS[experiment]
+        if args.node:
+            node_configs = [_parse_node_arg(args.node)]
+        for case in benches:
+            for node in node_configs:
+                for rt in RUNTIMES:
+                    if not perf_runtime_eligible(rt, case, node):
+                        continue
+                    cell = (experiment, case.name, str(node), rt.key)
+                    if cell in done:
+                        print(f"[perf] SKIP done: {experiment} {case.name} x {node} "
+                              f"x {rt.key}", flush=True)
+                        continue
+                    print(f"[perf] {experiment} {case.name} x {node} x {rt.key} ...",
+                          flush=True)
+                    iters = run_cell_with_retry(runner, rt, case, experiment, node,
+                                                args.iters, args.retries)
+                    for it in iters:
+                        row = {
+                            "experiment": experiment, "bench": case.name,
+                            "config": str(node), "runtime": rt.key, "iter": it["iter"],
+                            "e2e_ns": it["e2e_ns"], "rc": it["rc"], "wall": it["wall"],
+                            "status": it["status"],
+                            **{k: it.get(k) for k in case.extra_scalars},
+                        }
+                        _append_result_row(csv_path, row)
+                        n_new += 1
+                        if rt.kind == "arts" and it["metrics_dir"]:
+                            counters = parse_arts_counters(it["metrics_dir"])
+                            metric_rows.append({
+                                "experiment": experiment, "bench": case.name,
+                                "config": str(node), "runtime": rt.key,
+                                "iter": it["iter"], "e2e_ns": it["e2e_ns"],
+                                "per_rank": counters["per_rank"],
+                            })
+                            write_metrics_json(metric_rows, metrics_path)
+                        print(f"    iter {it['iter']}: status={it['status']} "
+                              f"e2e_ns={it['e2e_ns']} wall={it['wall']}", flush=True)
+                    done.add(cell)
 
-    logdir.mkdir(parents=True, exist_ok=True)
-    write_results_csv(rows, logdir / "results.csv")
-    write_metrics_json(metric_rows, logdir / "metrics.json")
-    print(f"\n[perf] wrote {len(rows)} rows -> {logdir / 'results.csv'}")
-    print(f"[perf] wrote {len(metric_rows)} metric rows -> {logdir / 'metrics.json'}")
+    print(f"\n[perf] appended {n_new} new rows -> {csv_path} "
+          f"({len(done)} cells recorded)")
+    print(f"[perf] {len(metric_rows)} metric rows -> {metrics_path}")
 
 
 if __name__ == "__main__":

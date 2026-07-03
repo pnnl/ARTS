@@ -109,6 +109,10 @@ struct arts_runtime_shared_s {
    * NULL hint (no node preference) — distributes home rank across all
    * nodes so DBs aren't all pinned to the creator. */
   volatile unsigned int db_rr_route;
+  /* Round-robin counter used by arts_edt_create when the caller passes
+   * NULL hint (no node preference) — distributes execution rank across
+   * all nodes so hint-less work isn't all pinned to the creator. */
+  volatile unsigned int edt_rr_route;
   char *buf;
   int packet_size;
   unsigned int gpu;

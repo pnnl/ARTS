@@ -808,6 +808,9 @@ u8 ocrEdtTemplateDestroy(ocrGuid_t guid) {
 
 /* Forward declaration: defined alongside ocr_to_arts_mode further down. */
 static u32 arts_to_ocr_mode(arts_db_access_mode_t arts_mode);
+/* Forward declaration: maps an OCR access mode to the ARTS mode; defined
+ * further down.  Used by ocrEdtCreate's create-time depv wiring. */
+static arts_db_access_mode_t ocr_to_arts_mode(ocrDbAccessMode_t ocr_mode);
 
 /* Forward declaration: defined alongside the ELS storage further down.
  * Called at the start of every trampoline so ELS truly is "EDT-local"
@@ -966,10 +969,10 @@ u8 ocrEdtCreate(ocrGuid_t *guid, ocrGuid_t templateGuid, u32 paramc,
   u32 actualParamc = (paramc == EDT_PARAM_DEF) ? templ->paramc : paramc;
   u32 actualDepc = (depc == EDT_PARAM_DEF) ? templ->depc : depc;
 
-  /* hint affinity → ARTS rank, else self-rank (matches arts_edt_create's
-   * hint=NULL fallback).  ARTS does NOT round-robin EDTs by default — the
-   * intended policy is "EDT runs on the calling rank unless the user asks
-   * otherwise." */
+  /* hint affinity → ARTS rank, else self-rank.  This `rank` places the
+   * output/finish event created below (kept local to the creator regardless
+   * of where the EDT itself executes); the EDT's own execution rank is
+   * `edtRank`, computed separately near its arts_edt_create call below. */
   int aff = extract_edt_affinity(hint);
   unsigned int rank = (aff < 0) ? arts_global_rank_id : (unsigned int)aff;
   arts_guid_t outEvt = NULL_GUID;
@@ -1015,12 +1018,29 @@ u8 ocrEdtCreate(ocrGuid_t *guid, ocrGuid_t templateGuid, u32 paramc,
     fe = arts_event_create(&feh);
   }
 
+  /* No affinity hint → policy-selected EDT execution rank.  ROUNDROBIN
+   * (default): pass ARTS_HINT_ANY_RANK so arts_edt_create's own no-hint
+   * placement policy decides, distributing hint-less work across ranks
+   * instead of pinning it to the creator.  CREATOR: keep the explicit
+   * self-rank (legacy behavior).  The hint struct itself must stay
+   * populated regardless — it also carries finish_event/output_event below
+   * — so unlike arts_db_create's no-hint path this cannot simply pass a
+   * NULL hint; ARTS_HINT_ANY_RANK is the struct-preserving equivalent. */
+#ifndef ARTS_SHIM_NOHINT_EDT_PLACE_ROUNDROBIN
+#define ARTS_SHIM_NOHINT_EDT_PLACE_ROUNDROBIN 1
+#endif
+#if ARTS_SHIM_NOHINT_EDT_PLACE_ROUNDROBIN
+  unsigned int edtRank = (aff < 0) ? ARTS_HINT_ANY_RANK : rank;
+#else
+  unsigned int edtRank = rank;
+#endif
+
   /* Non-finish EDTs deliver the OCR return value through the ARTS output
    * event (hint.output_event; the trampoline registers the value via
    * arts_edt_set_result): the runtime satisfies it after the EDT's
    * data-block releases.  Finish EDTs get their outputEvent chained to the
    * finish event below instead. */
-  arts_edt_hint_t edtHint = {.rank = rank};
+  arts_edt_hint_t edtHint = {.rank = edtRank};
   if (isFinishEdt) {
     edtHint.finish_event = fe;
   } else {
@@ -1057,8 +1077,18 @@ u8 ocrEdtCreate(ocrGuid_t *guid, ocrGuid_t templateGuid, u32 paramc,
         /* Valid GUID — signal now.  UNINITIALIZED_GUID slots are
          * left open for later ocrAddDependence calls. */
         /* arts_add_dependence handles both DB (immediate satisfy) and
-         * event (register waiter) sources uniformly. */
-        arts_add_dependence(depv[i].guid, edtGuid, i, ARTS_MODE_RO);
+         * event (register waiter) sources uniformly.  The access mode for a
+         * create-time dependence is the model's default (read-write): the
+         * spec resolves each create-time depv element as if by
+         * ocrAddDependence(elem, edt, i, DB_DEFAULT_MODE), and DB_DEFAULT_MODE
+         * is RW.  Registering RO here would silently downgrade every
+         * create-time DB (or DB-bearing event) dependence to read-only, so an
+         * EDT that mutates such a slot loses its writeback once it executes on
+         * a node other than the DB's home (the shared read-only copy is never
+         * written back).  Callers that want read-only sharing use an explicit
+         * ocrAddDependence(..., DB_MODE_RO) instead of the create-time array. */
+        arts_add_dependence(depv[i].guid, edtGuid, i,
+                            ocr_to_arts_mode(DB_DEFAULT_MODE));
       }
     }
   }
@@ -1385,15 +1415,24 @@ u8 ocrDbCreate(ocrGuid_t *db, void **addr, u64 len, u16 flags, ocrHint_t *hint,
     return 0;
   }
 
-  /* No affinity hint → pass NULL to arts_db_create so its built-in
-   * round-robin (atomic counter starting at self-rank, see db.c) takes
-   * effect.  Explicit affinity → wrap in arts_db_hint_t. */
+  /* No affinity hint → policy-selected home.  ROUNDROBIN (default): pass NULL
+   * so arts_db_create's built-in round-robin distributes the home across ranks.
+   * CREATOR: pin to the current node via an explicit current-rank hint. */
   arts_db_hint_t artsHint;
   const arts_db_hint_t *hintp = NULL;
   if (aff >= 0) {
     artsHint = (arts_db_hint_t){.rank = (unsigned int)aff};
     hintp = &artsHint;
   }
+#ifndef ARTS_SHIM_NOHINT_DB_HOME_ROUNDROBIN
+#define ARTS_SHIM_NOHINT_DB_HOME_ROUNDROBIN 1
+#endif
+#if !ARTS_SHIM_NOHINT_DB_HOME_ROUNDROBIN
+  else {
+    artsHint = (arts_db_hint_t){.rank = ARTS_HINT_CURRENT_RANK};
+    hintp = &artsHint;
+  }
+#endif
   /* DB_PROP_NO_ACQUIRE: the creating EDT does not acquire the block (it is
    * created for a later consumer).  The runtime leaves the home as the sole
    * idle owner and returns a NULL pointer, so no release is required.  Any

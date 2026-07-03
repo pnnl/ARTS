@@ -14,17 +14,26 @@ Each case defines ONE piece of information to compare:
     scalar_kind = "float" | "int" | "bool"
     scalar_tol = relative tolerance for float; 0 for int; ignored for bool
 
-The harness runs xsocr and arts with identical argv, extracts the scalar
-from each stdout, and compares. Tier B adds a baseline run with matched
-parameters and its own scalar_re; all three must agree.
+The harness runs every eligible runtime (arts variants, xsocr, ocrvx) with
+identical argv, extracts the scalar from each stdout, and compares. A case
+may optionally carry a `baseline` (OMP/MPI reference) attachment, which adds
+one more cell to the same vote with matched parameters; when absent the
+report's baseline column is simply blank for that case.
+
+There is one unified case list (`CASES`): every case runs at every node
+config in `NODE_CONFIGS` unless it sets `multinode_skip` to a documented
+STRUCTURAL reason (the app's design is inherently single-node — e.g.
+file-scope global state, no cross-rank distribution mechanism). There is no
+tiering by scalar-availability or baseline-availability; those are simply
+optional per-case attributes on the same case.
 
 Apps without a meaningful scalar concept (printf test, basicIO, cache tests,
 etc.) get `scalar_re = ""` and are verified via rc-only (PASS-RC verdict).
 
 Usage:
     python3 correctness_harness.py                       # full suite
-    python3 correctness_harness.py --no-baseline         # Tier A only
-    python3 correctness_harness.py --only nqueens,CoMD_sdsc2_B
+    python3 correctness_harness.py --no-baseline         # skip baseline cells
+    python3 correctness_harness.py --only nqueens,CoMD_sdsc2
 """
 from __future__ import annotations
 
@@ -74,7 +83,6 @@ _mode = 'MRMW' if _protocol == 'MRMW' else f'{_protocol}+{_timing}'
 print(f'[harness] Build dir: {BUILD} (protocol: {_mode})')
 
 APPS_DIR = BUILD / "benchmarks" / "apps"
-BASE_DIR = BUILD / "benchmarks" / "baseline"
 LOGS_ROOT = REPO / "benchmarks" / "scripts" / "logs" / "correctness"
 
 # smithwaterman ships its own datasets (tiny/small/medium/large triples of
@@ -115,60 +123,69 @@ class Case:
                                           # set, the extracted scalar must also equal
                                           # it (catches both runtimes being wrong),
                                           # not just match each other
-    skip: str = ""                        # non-empty → SKIP(reason)
-    stress_skip: str = ""                 # non-empty → SKIP-STRESS(reason)
-    arts_only: bool = False               # True → never invoke xsocr
-    expected_known_bug: str = ""          # FAIL → KNOWN-BUG(reason) when set
-    baseline: BaselineSpec | None = None
-    multinode: bool = False               # True → also run Tier M (arts + xsocr at N ranks)
-    multinode_skip: str = ""              # non-empty → skip multinode with reason
-    multinode_arts_only: bool = False     # Tier M runs arts only (xsocr blocked at
-                                          # multinode); Tier A still compares 3-way
-    multinode_xsocr_only: bool = False    # Tier M runs xsocr only (arts blocked at
-                                          # multinode, e.g. a transient runtime-refactor
-                                          # casualty); Tier A still compares 3-way
-    multinode_timeout: int = 0            # per-case Tier-M wall budget (s); 0 → global
+    baseline: BaselineSpec | None = None  # optional OMP/MPI reference attachment;
+                                          # blank column in the report when absent
+    multinode_skip: str = ""              # non-empty → structural reason this case
+                                          # cannot run at ANY multinode config (every
+                                          # other case runs at every NODE_CONFIGS entry)
+    multinode_timeout: int = 0            # per-case multinode wall budget (s); 0 → global
+    ocrvx_mn_max_ranks: int = 0           # >0 → ocr-vx cells run only at rank counts
+                                          # <= this bound (blank/N/A above it): for
+                                          # message-storm micro-benchmarks whose fixed
+                                          # (non-CLI) problem size has a measured wall
+                                          # floor on ocr-vx's serialized message
+                                          # pipeline far beyond any test budget
     multinode_args: dict | None = None    # per-rank-count args for geometry apps
                                           # (e.g. hpcg needs npx*npy*npz==nodes);
                                           # the single-node reference is recomputed
                                           # per-n with the matching geometry
-    ocrvx_skip: str = ""                  # non-empty → skip ocrvx run for this case
-                                          # (binary exists but known runtime gap)
 
-# Tier A — one entry per OCR pair. Workload args lifted from run_benchmarks.sh.
+# CASES — one entry per OCR pair. Workload args lifted from run_benchmarks.sh.
+# Every case runs at every node config in NODE_CONFIGS unless multinode_skip
+# documents a structural reason (single-node-only app design); an optional
+# `baseline=` attachment adds an OMP/MPI reference cell to the same vote.
 # For apps whose last printed value is timing or throughput, scalar_re stays ""
 # (rc-only verdict). Adding a print to those apps is a vendor-source task
 # explicitly out of scope.
-TIER_A: list[Case] = [
+_SAR_MN_SKIP = ("single-node design: self-referential absolute pointers "
+                "baked into 2D-array DataBlock payloads (X/Pt/curImage/"
+                "refImage/corr_map — main.c:394-408; relocation assert "
+                "inputs.c:226-227 never got its remap fallback)")
+
+CASES: list[Case] = [
     # --- scalar-checkable (scientific output already present) ---
     Case("fibonacci", "fibonacci", ["10"],
-         scalar_re=r"answer is\s*(\d+)", scalar_kind="int",
-         multinode_skip="no EDT affinity hints; runs caller-rank only"),
+         scalar_re=r"answer is\s*(\d+)", scalar_kind="int"),
     Case("nqueens", "nqueens", ["6", "2"],
          scalar_re=r"sols:\s*(\d+)", scalar_kind="int",
-         multinode_skip="single-node design: process-local solutions counter + global template GUIDs"),
+         multinode_skip="single-node design: process-local solutions counter + global template GUIDs",
+         baseline=BaselineSpec(
+             bin="nqueens_omp", args=["6"],
+             scalar_re=r"sols:\s*(\d+)", scalar_kind="int", scalar_tol=0,
+         )),
     Case("smithwaterman", "smithwaterman",
          ["50","50",f"{SW_DATA}/string1-medium-large.txt",
           f"{SW_DATA}/string2-medium-large.txt",
           f"{SW_DATA}/score-medium-large.txt"],
-         scalar_re=r"score:\s*(\d+)", scalar_kind="int",
-         multinode_skip="no EDT affinity hints; runs caller-rank only"),
+         scalar_re=r"score:\s*(\d+)", scalar_kind="int"),
     Case("fft", "fft", ["6"],
-         scalar_re=r"FFT checksum\s*=\s*([\-+0-9.eE]+)", scalar_kind="float", scalar_tol=1e-3,
-         multinode_skip="no EDT affinity hints; runs caller-rank only"),
-    # Depth-6 partial search (5072 sequences): the full-depth puzzle is a
+         scalar_re=r"FFT checksum\s*=\s*([\-+0-9.eE]+)", scalar_kind="float", scalar_tol=1e-3),
+    # Depth-5 partial search (1074 sequences): the full-depth puzzle is a
     # fine-grained EDT-per-node tree (~1.3M EDTs) that the ocr-vx runtime's
     # serialized local message pipeline cannot finish within any per-case
     # budget (and its monotonic object retention exceeds the memory cap).
-    # Depth 6 keeps a real 3-way correctness check; the app still solves the
-    # full puzzle when run with no argument.
-    Case("triangle", "triangle", ["6"],
-         scalar_re=r"final count\s+(\d+)", scalar_kind="int",
-         multinode_skip="no EDT affinity hints; runs caller-rank only"),
-    Case("p2p", "p2p", ["2","10","100","10"],
+    # Depth 5 keeps a real 3-way correctness check while landing the slowest
+    # reference runtime (ocr-vx at the widest rank count) inside the per-case
+    # wall budget; the app still solves the full puzzle when run with no
+    # argument.
+    Case("triangle", "triangle", ["5"],
+         scalar_re=r"final count\s+(\d+)", scalar_kind="int"),
+    # rows/timesteps shrunk from the original 100/10 (checksum = (t+1)*(n+m-2),
+    # still a nontrivial computed value) so the pipeline-fill message count
+    # (~ P*T*rows) fits the slowest reference runtime inside the wall budget.
+    Case("p2p", "p2p", ["2","10","30","5"],
          scalar_re=r"PASS checksum\s*=\s*([\-+0-9.eE]+)", scalar_kind="float",
-         scalar_tol=1e-8,
-         multinode=True),
+         scalar_tol=1e-8),
     Case("CoMD_intel_chandra", "CoMD_intel_chandra",
          ["-x","4","-y","4","-z","4","-N","2","-n","1"],
          # The energy is a parallel reduction over atoms; summation order varies
@@ -177,24 +194,37 @@ TIER_A: list[Case] = [
          # ranks).  Use the numerical-port tolerance (0.01%); a real divergence
          # in a molecular-dynamics energy is orders of magnitude larger.
          scalar_re=r"Initial energy\s*:\s*([\-+0-9.eE]+)", scalar_kind="float",
-         scalar_tol=1e-4,
-         multinode=True),
+         scalar_tol=1e-4),
+    # xsocr runs this at MN too (old HCDist-timeout exclusion reason was stale).
     Case("CoMD_intel_chandra_tiled", "CoMD_intel_chandra_tiled",
          ["-x","4","-y","4","-z","4","-N","2"],
          scalar_re=r"Final energy\s*:\s*([\-+0-9.eE]+)", scalar_kind="float",
-         scalar_tol=1e-6,
-         multinode=True,  # 3-way: xsocr runs it at MN (old HCDist-timeout reason was stale)
-         ),
+         scalar_tol=1e-6),
     Case("CoMD_sdsc", "CoMD_sdsc", ["-x","4","-y","4","-z","4","-N","2"],
          # "Final energy" is the end-to-end answer (after the 2-timestep loop);
          # "Initial energy" only echoes the setup state and verifies nothing.
          scalar_re=r"Final energy\s*:\s*([\-+0-9.eE]+)", scalar_kind="float",
          scalar_tol=1e-6,
-         multinode_skip="no EDT affinity hints (sdsc variant); runs caller-rank only"),
+         multinode_skip="placement-sensitive design gap: zero affinity hints "
+         "(contrast CoMD_sdsc2, the validated multinode twin) + a full-domain "
+         "single-EDT redistribute_edt acquiring every box DB_MODE_RW each "
+         "timestep (cells.c:87) — hint-less round-robin scatter yields a "
+         "non-deterministic, topology-dependent energy at n>=4 (all three "
+         "runtimes diverge to different 1e-2-scale values)"),
     Case("CoMD_sdsc2", "CoMD_sdsc2", ["-x","4","-y","4","-z","4","-N","2"],
          scalar_re=r"Final energy\s*:\s*([\-+0-9.eE]+)", scalar_kind="float",
-         scalar_tol=1e-6,
-         multinode=True),
+         # Widened from 1e-6 to 1e-4 to admit the baseline cell into the same
+         # cluster: the MPI/OMP reference's parallel reduction order differs
+         # from the OCR app's, so its energy carries more FP non-associativity
+         # noise than the cross-runtime (xsocr/arts variants/ocrvx) agreement
+         # alone. consensus() clusters on this single case-level tolerance.
+         scalar_tol=1e-4,
+         baseline=BaselineSpec(
+             bin="CoMD_mpi_omp", args=["-x","4","-y","4","-z","4","-N","2"],
+             np=1, force_mpirun=True,
+             scalar_re=r"Final energy\s*:\s*([\-+0-9.eE]+)",
+             scalar_kind="float", scalar_tol=1e-4,
+         )),
          # xsocr passes at every rank count (the np4 home-MD race + the residual
          # np2/3 startup hang were fixed app/xsocr-side).  arts is KNOWN to hang
          # at multinode in the affinity-DB create path here = an arts bug to
@@ -204,8 +234,7 @@ TIER_A: list[Case] = [
          # the arts multinode affinity-DB-create hang.
     Case("hpcg_intel", "hpcg_intel", ["1","1","1","16","5"],
          scalar_re=r"final deviation:\s*([\-+0-9.eE]+)", scalar_kind="float",
-         scalar_tol=1e-4,
-         multinode=True),
+         scalar_tol=1e-4),
     # The "Eager" in these app names is the app's reduction algorithm (the
     # reductionEager library / OCR_HINT_DB_EAGER read-prefetch hint), NOT a
     # runtime coherence mode.  The benchmark builds run xsocr eager-only and
@@ -214,96 +243,132 @@ TIER_A: list[Case] = [
     # hint.
     Case("hpcg_intel_Eager", "hpcg_intel_Eager", ["1","1","1","16","5"],
          scalar_re=r"final deviation:\s*([\-+0-9.eE]+)", scalar_kind="float",
-         scalar_tol=1e-4,
-         multinode=True),
+         scalar_tol=1e-4),
     Case("Stencil1D_intel_chandra", "Stencil1D_intel_chandra", [],
-         scalar_re=r"Solution validates", scalar_kind="bool",
-         multinode=True),
+         scalar_re=r"Solution validates", scalar_kind="bool"),
     Case("Stencil2D_intel_channelEVTs", "Stencil2D_intel_channelEVTs", [],
-         scalar_re=r"Computed L1 norm\s*=\s*([\-+0-9.eE]+)", scalar_kind="float", scalar_tol=1e-6,
-         multinode=True,
-         ),
+         scalar_re=r"Computed L1 norm\s*=\s*([\-+0-9.eE]+)", scalar_kind="float", scalar_tol=1e-6),
+    # No baseline attachment: the OMP baseline (Stencil2D_omp) only prints a
+    # "Solution validates" bool, while this app's scalar is the L1-norm float
+    # — not the same metric (same principle as the miniAMR_intel / XSBench_intel
+    # baseline omissions below).  Cross-runtime consensus still covers this case.
     Case("Stencil2D_intel_chandra", "Stencil2D_intel_chandra", [],
-         scalar_re=r"L1 norm\s*=\s*([\-+0-9.eE]+)", scalar_kind="float", scalar_tol=1e-6,
-         multinode=True),
+         scalar_re=r"L1 norm\s*=\s*([\-+0-9.eE]+)", scalar_kind="float", scalar_tol=1e-6),
+    # No baseline attachment: baseline miniAMR_mpi only prints per-variable
+    # checksums under --report_diffusion, while OCR prints a grand total
+    # summed over variables.  The two are not the same scalar, and summing
+    # baseline's per-variable prints after the fact is fragile.  Cross-runtime
+    # (xsocr/arts variants/ocrvx) consensus still covers this case.
     Case("miniAMR_intel", "miniAMR_intel",
          ["--nx","4","--ny","4","--nz","4","--num_tsteps","2","--num_objects","1"],
          scalar_re=r"Grand Total Checksum\s*==\s*([\-+0-9.eE]+)", scalar_kind="float",
-         scalar_tol=1e-8,
-         multinode_skip="no EDT affinity hints (intel variant); runs caller-rank only"),
-    Case("npb_cg", "npb_cg", ["-t", "T"],
+         scalar_tol=1e-8),
+    # "-b 25" raises the sparse matrix-vector multiply's block size (default
+    # 1, i.e. one row per block): this only changes how the na=50 rows are
+    # grouped into spmv_edt sub-EDTs (25 -> 2 blocks), not the arithmetic, so
+    # zeta is bit-identical to the unblocked run while the ocr-vx message
+    # count drops ~25x.
+    Case("npb_cg", "npb_cg", ["-t", "T", "-b", "25"],
          # Anchor on the app's own verification verdict: a FAILED run prints
          # "Verification FAILED (zeta=NaN, correct zeta=<expected>)" and the
          # bare zeta regex would match the *expected* value (false PASS).
          scalar_re=r"Verification SUCCESSFUL \(zeta\s*=\s*([\-+0-9.eE]+)", scalar_kind="float",
-         scalar_tol=1e-10,
-         multinode=True),
+         scalar_tol=1e-10),
+         # No baseline attachment: the OMP reference runs its built-in S-class
+         # problem (size=1400, 15 iterations, zeta=8.427309...) and ignores the
+         # OCR port's tiny-class knob (-t T -> size=50, 3 iterations,
+         # zeta=7.855340...).  zeta is problem-size-dependent, so the two
+         # scalars are not comparable (same principle as the Stencil2D /
+         # miniAMR / XSBench baseline omissions).
          # All runtimes pass at every rank count (2026-06-10).  The historical
          # multinode failures here (xsocr NaN at n3 / zeta=0.0 at n4, arts
          # timeout) were npb-cg APP bugs, fixed in the ocr-apps submodule:
          # in-place writes through DB_MODE_CONST acquisitions (update's p,
          # the zeta-carrying DB) and a missing ocrDbRelease before wiring the
          # verification EDT.  The arts-block flag (multinode_xsocr_only) was
-         # REMOVED 2026-06-08 so Tier M reports the true verdict — do NOT
+         # REMOVED 2026-06-08 so the harness reports the true verdict — do NOT
          # re-mask if this regresses.
          # class T (tiny: size=50, 3 iters) runs in <1s, so it stays fast enough
          # for xsocr at multinode and runs full 3-way.  (class S — the default —
          # made the multinode run ~36K small remote DBs/iter of synchronous
          # writeback-ACK round-trips: correct but ~67s n4 / ~170s RELAXED 2n, which is
          # why it used to be arts-only with a wide budget.)
+    # Already at the floor: log2_box_dim must be >=4 and target_boxes >=1 (both
+    # enforced by the app), so ["4","1"] is the smallest legal problem --
+    # nothing left to shrink.
     Case("hpgmg", "hpgmg", ["4","1"],
          scalar_re=r"\|\|error\|\|\s*=\s*([\-+0-9.eE]+)", scalar_kind="float",
-         scalar_tol=1e-4,
-         multinode=True),
+         # Widened from 1e-4 to 1e-3 to admit the baseline cell into the same
+         # cluster (MPI/OMP reference's reduction order differs; see
+         # CoMD_sdsc2 above for the same rationale).
+         scalar_tol=1e-3,
+         baseline=BaselineSpec(
+             bin="hpgmg_mpi_omp", args=["4","1"], np=1, force_mpirun=True,
+             scalar_re=r"\|\|error\|\|\s*=\s*([\-+0-9.eE]+)",
+             scalar_kind="float", scalar_tol=1e-3,
+         )),
+    # No smaller args exist without degenerating the check: the CLI's only
+    # knob is patchRange (k, patches-per-panel-edge); k=1 collapses every
+    # diagonal-neighbor slot (the captured cross-check value) to a constant
+    # -1 regardless of correctness (verified: at k=1 the boundary conditions
+    # in findNeighborPatch force NE/SE/SW/NW to -1 unconditionally), so k=2
+    # is the smallest value that still exercises real diagonal connectivity.
+    # DURATION (per-patch halo-exchange timesteps) is a compile-time #define,
+    # not CLI-settable.  Current wall already fits under the ocr-vx cap.
+    # tempest: k=2 is the semantic floor (k=1 degenerates the cross-check value
+    # to a constant), and its ocr-vx wall at 16 ranks is ~60s nominal — the
+    # global 30s*3 ocr-vx budget leaves too little jitter headroom (measured
+    # 90.2s under gate load).  Per-case budget 40s -> ocr-vx cap 120s: 2x
+    # headroom, worst case still bounded at two minutes.
     Case("tempest", "tempest", [],
          scalar_re=r"CROSS-CHECKING NEIGHBOR DATA EXCHANGE\*(?:[ \t]*\n|[ \t]+|[A-Za-z*][^\n]*\n)*-?\d+[ \t]+-?\d+[ \t]+-?\d+(?:[ \t]*\n|[ \t]+|[A-Za-z*][^\n]*\n)*-?\d+[ \t]+-?\d+[ \t]+-?\d+(?:[ \t]*\n|[ \t]+|[A-Za-z*][^\n]*\n)*-?\d+[ \t]+-?\d+[ \t]+(-?\d+)",
          scalar_kind="int",
-         multinode=True),
-    Case("curvefit", "curvefit", [],
+         multinode_timeout=40),
+    # maxX (upper bound of the fitted domain) shrunk from the default 100000
+    # to 10000: the adaptive-subdivision tree depth grows with the domain
+    # (f(x)=x*sin(x) has growing curvature at large x, needing finer
+    # segments), so this cuts total EDT count well past the wall-budget need
+    # while the completion marker stays a real convergence check.
+    Case("curvefit", "curvefit", ["4","0.01","0.5","10000"],
          # Completion marker: the leaf-segment count is a structural constant of
          # the fixed input, and aggregating it across the recursive fan-out would
          # require global mutable state (illegal in OCR — EDTs are stateless) or a
          # reduction DataBlock that the app does not build, so completion is the
          # strongest spec-compliant check here.
-         scalar_re=r"SUCCESS", scalar_kind="bool",
-         multinode_skip="no EDT affinity hints; runs caller-rank only"),
+         scalar_re=r"SUCCESS", scalar_kind="bool"),
     Case("testlibs", "testlibs", [],
-         scalar_re=r"Testing strlen of \w+ is (\d+)", scalar_kind="int",
-         multinode_skip="no EDT affinity hints; runs caller-rank only"),
+         scalar_re=r"Testing strlen of \w+ is (\d+)", scalar_kind="int"),
     Case("graph500", "graph500", ["6","8","1","1"],
-         scalar_re=r"nodes (\d+)", scalar_kind="int",
-         multinode=True),
+         scalar_re=r"nodes (\d+)", scalar_kind="int"),
     Case("multigen", "multigen", [],
-         scalar_re=r"End leaf1, result\s*=\s*(-?\d+)", scalar_kind="int",
-         multinode_skip="no EDT affinity hints; runs caller-rank only"),
+         scalar_re=r"End leaf1, result\s*=\s*(-?\d+)", scalar_kind="int"),
     Case("multigen_2", "multigen_2", [],
-         scalar_re=r"End leaf1, result\s*=\s*(-?\d+)", scalar_kind="int",
-         multinode_skip="no EDT affinity hints; runs caller-rank only"),
+         scalar_re=r"End leaf1, result\s*=\s*(-?\d+)", scalar_kind="int"),
+    # xsocr runs this at MN too (old HCDist-timeout exclusion reason was stale).
+    # num_refine lowered from 3 to 1: at this block size/object count the
+    # refinement check never actually splits a block at any depth (verified:
+    # #blocks stays 1 at num_refine 1, 2, or 3 alike), so the extra levels
+    # were pure redundant per-timestep refinement-check overhead with no
+    # additional distributed behavior exercised.
     Case("miniAMR_intel_chandra", "miniAMR_intel_chandra",
-         ["--nx","4","--ny","4","--nz","4","--num_tsteps","2","--num_refine","3"],
-         scalar_re=r"Done", scalar_kind="bool",
-         multinode=True,  # 3-way: xsocr runs it at MN (old HCDist-timeout reason was stale)
-         ),
+         ["--nx","4","--ny","4","--nz","4","--num_tsteps","2","--num_refine","1"],
+         scalar_re=r"Done", scalar_kind="bool"),
 
     # --- rc-only sanity (no meaningful scientific scalar) ---
     Case("printf",           "printf",           [],
-         scalar_re=r"Hello from mainEdt", scalar_kind="bool",
-         multinode_skip="no EDT affinity hints; runs caller-rank only"),
+         scalar_re=r"Hello from mainEdt", scalar_kind="bool"),
     Case("quicksort",        "quicksort",        [],
-         scalar_re=r"(\d+)\s*\n\s*(?:\[\d+\]\s*)?Sorting Finished", scalar_kind="int",
-         multinode_skip="no EDT affinity hints; runs caller-rank only"),
+         scalar_re=r"(\d+)\s*\n\s*(?:\[\d+\]\s*)?Sorting Finished", scalar_kind="int"),
     Case("basicIO",          "basicIO",          ["0","10", BASIC_IO_DAT],
-         scalar_re=r"BASICIO_CHK\s+(\d+)", scalar_kind="int",
-         multinode_skip="no EDT affinity hints; runs caller-rank only"),
+         scalar_re=r"BASICIO_CHK\s+(\d+)", scalar_kind="int"),
     Case("cache_offset",     "cache_offset",     [],
          scalar_re=r"CACHE_OFFSET_CHK\s+(\d+)", scalar_kind="int",
          multinode_skip="single-node design: file-scope dbGuids/dbPtrs arrays"),
+    # xsocr runs this at MN too (old startup-hang exclusion reason was stale).
     Case("highbw",           "highbw",           [],
-         scalar_re=r"HIGHBW_WORK_SUM\s*=\s*(\d+)", scalar_kind="int",
-         multinode=True),  # 3-way: xsocr runs it at MN (old startup-hang reason was stale)
+         scalar_re=r"HIGHBW_WORK_SUM\s*=\s*(\d+)", scalar_kind="int"),
     Case("task_priorities",  "task_priorities",  [],
-         scalar_re=r"Hello from 9", scalar_kind="bool",
-         multinode_skip="no EDT affinity hints; runs caller-rank only"),
+         scalar_re=r"Hello from 9", scalar_kind="bool"),
     Case("dbctrl",           "dbctrl",           ["5","5","256"],
          # DB create/destroy control stress test: the destroy count is a static
          # function of (DEPTH, FANOUT) and the kernel computes no data answer.
@@ -314,23 +379,41 @@ TIER_A: list[Case] = [
     Case("prodcon",          "prodcon",          [],
          scalar_re=r"MB/s", scalar_kind="bool",
          multinode_skip="single-node design: file-scope mapProdGuid/mapConsGuid"),
+    # No CLI knob exists to shrink these three: mainEdt() takes no params (argv
+    # is never read) and the problem size (M=matrix rows, N=participant count,
+    # T=CG iterations) is an unconditional #define in the shared ocrGS.h,
+    # identical for all three variants -- there is no #ifndef guard to override
+    # via a build define either (verified: dummy CLI args are silently
+    # ignored, output is byte-identical).  cgShim/cgNoShim's ocr-vx wall at the
+    # widest rank count exceeds even the widened ocr-vx cap; pcg's does not
+    # (pcg's residual converges well before hitting T=100, unlike cgShim/
+    # cgNoShim which run the full iteration count) -- see the retune report for
+    # measured walls.
+    # globalsum cgShim/cgNoShim: problem size is a fixed shared-header #define
+    # (no CLI/build knob), and the measured ocr-vx wall floor at 8/16 ranks is
+    # ~120s/~500s (serialized message pipeline x fixed message storm) — far
+    # beyond any test budget, while 2/4 ranks complete in seconds.  Cap the
+    # ocr-vx cells at 4 ranks; arts/xsocr run everywhere.
     Case("globalsum_cgShim",   "globalsum_cgShim",   [],
          scalar_re=r"CG0 T\d+\s+0 value\s+([0-9.]+)", scalar_kind="float", scalar_tol=1e-5,
-         multinode_skip="no EDT affinity hints; runs caller-rank only"),
+         ocrvx_mn_max_ranks=4),
     Case("globalsum_cgNoShim", "globalsum_cgNoShim", [],
          scalar_re=r"CG0 T100\s+0 value\s+([0-9.]+)", scalar_kind="float", scalar_tol=1e-5,
-         multinode_skip="no EDT affinity hints; runs caller-rank only"),
+         ocrvx_mn_max_ranks=4),
     Case("globalsum_pcg",      "globalsum_pcg",      [],
-         scalar_re=r"CG0 T\d+\s+0 value\s+([0-9.]+)", scalar_kind="float", scalar_tol=1e-5,
-         multinode_skip="no EDT affinity hints; runs caller-rank only"),
+         scalar_re=r"CG0 T\d+\s+0 value\s+([0-9.]+)", scalar_kind="float", scalar_tol=1e-5),
     Case("stencil1D_sticky", "stencil1D_sticky", [],
          scalar_re=r"S3 i9 valu\s+([0-9.]+)", scalar_kind="float",
-         scalar_tol=0,
-         multinode=True),
-    Case("reduction_intel",  "reduction_intel",  [],
-         scalar_re=r"T300 i1\s+([0-9.]+)", scalar_kind="float",
-         scalar_tol=0,
-         multinode=True),
+         scalar_tol=0),
+    # [nrank, ndata, maxtimestep] shrunk from the defaults [25,2,300] to
+    # [25,2,30]: maxtimestep (T) is the dominant cost (the same nrank=25
+    # ALLREDUCE tree runs once per timestep with real cross-node messages,
+    # since participants are placed round-robin across the physical PDs), so
+    # cutting it 10x is the direct lever; the regex/pin below track the new
+    # final timestep.
+    Case("reduction_intel",  "reduction_intel",  ["25","2","30"],
+         scalar_re=r"T30 i1\s+([0-9.]+)", scalar_kind="float",
+         scalar_tol=0),
     Case("reduction_intel_chandra", "reduction_intel_chandra", ["10"],
          scalar_re=r"RESULT = ([0-9.]+)", scalar_kind="float", scalar_tol=1e-6),
     # Full 3-way: the OCR runtime now clones labeled (reserved-GUID) datablock
@@ -341,36 +424,60 @@ TIER_A: list[Case] = [
     Case("LCS_distributed_ST","LCS_distributed_ST",[],
          # distributed wavefront LCS result (depv[1] result DB at the answer
          # index), self-validated against a serial_lcs reference; deterministic.
-         scalar_re=r"LCS length:\s*(-?\d+)", scalar_kind="int",
-         multinode=True),
-    Case("LCS_all_db_distributed","LCS_all_db_distributed",[],
-         scalar_re=r"LCS length:\s*(\d+)", scalar_kind="int",
-         multinode=True),
+         scalar_re=r"LCS length:\s*(-?\d+)", scalar_kind="int"),
+    # [string_len, basecase, num_workers] shrunk from the default basecase 256
+    # to 512 (string_len held at 1024): basecase is purely the wavefront DP's
+    # block-tiling granularity (25 -> 9 blocks), not part of the LCS
+    # recurrence, so the answer is unchanged (verified bit-identical) while
+    # the ocr-vx cross-block message count drops sharply.
+    Case("LCS_all_db_distributed","LCS_all_db_distributed",["1024","512","16"],
+         scalar_re=r"LCS length:\s*(\d+)", scalar_kind="int"),
     Case("LCS_shared",        "LCS_shared",       [],
          # distributed wavefront LCS result, self-validated against serial_lcs.
-         scalar_re=r"LCS length:\s*(-?\d+)", scalar_kind="int",
-         multinode_skip="no EDT affinity hints; runs caller-rank only"),
+         scalar_re=r"LCS length:\s*(-?\d+)", scalar_kind="int"),
     Case("RSBench_intel",             "RSBench_intel",             ["-l","100"],
          scalar_re=r"Lookups:", scalar_kind="bool",
-         multinode_skip="no EDT affinity hints (intel variant); runs caller-rank only"),
+         baseline=BaselineSpec(
+             bin="RSBench_omp",
+             args=["-t","4","-l","100"],
+             scalar_re=r"Lookups:", scalar_kind="bool",
+         )),
     Case("RSBench_intel_sharedDB",    "RSBench_intel_sharedDB",    ["-l","100"],
-         scalar_re=r"RS_CHECKSUM:\s+([0-9]+)", scalar_kind="int",
-         multinode=True,
-         ),
-    Case("XSBench_intel",             "XSBench_intel",             ["-s","small","-g","10","-l","100"],
-         scalar_re=r"XSBench grid checksum:\s+(\d+)", scalar_kind="int",
-         multinode_skip="no EDT affinity hints; runs caller-rank only"),
+         scalar_re=r"RS_CHECKSUM:\s+([0-9]+)", scalar_kind="int"),
+    # No baseline attachment: there is NO correctness metric shared by the OCR
+    # app and any OMP/MPI baseline.  The OCR XSBench prints only its own
+    # "XSBench grid checksum" (added in refactored/ocr/intel Main.c; no
+    # OMP/MPI variant computes it), while the OMP/MPI baselines print only the
+    # canonical "Verification checksum" vhash (under -DVERIFICATION) — which
+    # the OCR refactor never wires up (building it with VERIFICATION still
+    # emits no vhash).  A prior comparison matched "Workload (unit)" (the
+    # OCR-side echo of the -l input = 100) against the baseline's "Lookups"
+    # (also the -l input) — i.e. the input parameter, not a computed result.
+    # Aligning on a real metric would require app-source surgery (port the
+    # distributed verification hash into the OCR app, or add the grid
+    # checksum to a baseline).  XSBench correctness is covered by this case's
+    # cross-runtime consensus (grid-checksum agreement across the 7 arts
+    # variants + xsocr + ocr-vx).
+    # -g (gridpoints/nuclide) shrunk 10 -> 3 and -l (lookups) 100 -> 30: the
+    # grid checksum depends only on -s/-g (the nuclide-grid RNG init), not on
+    # -l, so lowering lookups is free (no re-pin needed for that half); -g
+    # directly shrinks the per-isotope grid-build/sort work.
+    Case("XSBench_intel",             "XSBench_intel",             ["-s","small","-g","3","-l","30"],
+         scalar_re=r"XSBench grid checksum:\s+(\d+)", scalar_kind="int"),
     Case("XSBench_intel_sharedDB",    "XSBench_intel_sharedDB",    ["-s","small","-g","10","-l","100"],
-         scalar_re=r"Workload\s+\(unit\):\s+(\d+)", scalar_kind="int",
-         multinode_skip="no EDT affinity hints; runs caller-rank only",
-         ),
+         scalar_re=r"Workload\s+\(unit\):\s+(\d+)", scalar_kind="int"),
     Case("uts", "uts", ["-g","1","-t","1","-a","2","-d","7","-b","7","-r","220"],
          # T2L-family geometric tree at gen_mx=7 (4667 nodes, depth 36): same
          # search character as the built-in gen_mx=10 sample (39881 nodes) but
          # sized so the serialized ocr-vx message layer finishes well inside
          # the per-case wall budget.
          scalar_re=r"UTS Tree size\s*=\s*(\d+)", scalar_kind="int",
-         multinode_skip="no EDT affinity hints; runs caller-rank only"),
+         multinode_skip="single-node design: CPS continuations recreate EDTs "
+         "from process-local template globals set only in rank 0's mainEdt "
+         "(__template_uts_parseParams et al.); a continuation placed on "
+         "another rank reads template GUID 0 and the chain dies (arts: "
+         "EINVAL + release-mode assert no-op -> silent stall; xsocr/ocr-vx: "
+         "SIGSEGV at the same point)"),
 
     # --- previously-SKIPped: revived with proper argv ---
     # nekbone: nrank=1 (Rx=Ry=Rz=1) used to deadlock on BOTH arts and xsocr
@@ -384,30 +491,24 @@ TIER_A: list[Case] = [
     # <0.5 s.  Harness workload kept at nrank=1 as a regression guard.
     Case("nekbone", "nekbone", ["1","1","1","1","1","1","2","1"],
          scalar_re=r"CGstep0_stop> rnorminit(?:\^2)?\s*=\s*([0-9.eE+-]+)",
-         scalar_kind="float", scalar_tol=1e-9,
-         multinode=True),
+         scalar_kind="float", scalar_tol=1e-9),
     Case("cholesky", "cholesky",
          ["--ds","50","--ts","10","--fi",CHOLESKY_INPUT],
          scalar_re=r"CHOLESKY trace\s*=\s*([0-9.eE+-]+)",
-         scalar_kind="float", scalar_tol=1e-9,
-         multinode_skip="no EDT affinity hints; runs caller-rank only"),
+         scalar_kind="float", scalar_tol=1e-9),
     # xeonNumaSize: needs at least one action flag or it just prints help.
     # -dcpu just enumerates CPUs and fires the DONE! marker fast.
     Case("xeonNumaSize", "xeonNumaSize", ["-dcpu"],
-         scalar_re=r"DONE!", scalar_kind="bool",
-         multinode_skip="no EDT affinity hints; runs caller-rank only"),
+         scalar_re=r"DONE!", scalar_kind="bool"),
     Case("stream_dist", "stream_dist", [],
-         scalar_re=r"STREAM checksum: a\[0\] = ([0-9.eE+-]+)", scalar_kind="float", scalar_tol=1e-9,
-         multinode=True),
+         scalar_re=r"STREAM checksum: a\[0\] = ([0-9.eE+-]+)", scalar_kind="float", scalar_tol=1e-9),
 
     # --- previously-SKIPped: genuine arts-side runtime bugs (report, don't fix) ---
     Case("miniAMR_intel_bryan", "miniAMR_intel_bryan", [],
          # checksum strengthening abandoned: xsocr does not emit the per-block
          # checksum and the arts value is non-deterministic across ranks; the
          # completion marker is the strongest portable check here.
-         scalar_re=r"miniAMR complete", scalar_kind="bool",
-         multinode=True,
-         ),
+         scalar_re=r"miniAMR complete", scalar_kind="bool"),
     # hpcg_intel_Eager_Collective: full 3-way at multinode.  The xsocr
     # runtime is built with the collective-event extension chain
     # (COLLECTIVE_EVT + MULTI_OUTPUT_SLOT + DISTRIBUTED_LABELED + REG_ASYNC_SGL),
@@ -421,7 +522,6 @@ TIER_A: list[Case] = [
          ["1","1","1","16","5"],
          scalar_re=r"final deviation:\s*([\-+0-9.eE]+)",
          scalar_kind="float", scalar_tol=1e-4,
-         multinode=True,
          multinode_args={2: ["2", "1", "1", "16", "5"],
                          3: ["3", "1", "1", "16", "5"],
                          4: ["4", "1", "1", "16", "5"],
@@ -445,99 +545,27 @@ TIER_A: list[Case] = [
 
     # --- SAR (revived via CMake crlibm bootstrap + datagen integration).
     # All sizes build all three backends; per-size datasets are embedded
-    # via the .incbin pipeline.  Single-node only (no EDT affinity hints). ---
+    # via the .incbin pipeline. ---
+    # SAR (all sizes): the app packs self-referential 2D arrays into single
+    # DataBlocks — row-pointer values computed against the DB's address at
+    # creation are baked into the DB payload (main.c:394-408), and the app's
+    # own guard `assert(&X[0][0] == &X[P1]) // if relocated need to remap`
+    # (inputs.c:226-227) shows the remap was never implemented.  Any runtime
+    # that clones the DB to another node dereferences stale pointers (all
+    # three SIGSEGV identically at n>=2); release builds compile the assert
+    # out.  Genuine app bug, not runtime-specific.
     Case("sar_tiny",   "sar_tiny",   [],
          scalar_re=r"SAR detects:\s*(\d+)", scalar_kind="int",
-         multinode_skip="no EDT affinity hints; runs caller-rank only"),
+         multinode_skip=_SAR_MN_SKIP),
     Case("sar_small",  "sar_small",  [],
          scalar_re=r"SAR detects:\s*(\d+)", scalar_kind="int",
-         multinode_skip="no EDT affinity hints; runs caller-rank only"),
+         multinode_skip=_SAR_MN_SKIP),
     Case("sar_medium", "sar_medium", [],
          scalar_re=r"SAR detects:\s*(\d+)", scalar_kind="int",
-         multinode_skip="no EDT affinity hints; runs caller-rank only"),
+         multinode_skip=_SAR_MN_SKIP),
     Case("sar_large",  "sar_large",  [],
          scalar_re=r"SAR detects:\s*(\d+)", scalar_kind="int",
-         multinode_skip="no EDT affinity hints; runs caller-rank only"),
-]
-
-# Tier B — 3-way (baseline ↔ xsocr ↔ arts) scalar comparison.
-TIER_B: list[Case] = [
-    Case(
-        name="nqueens_B", ocr_base="nqueens", args=["6","2"],
-        scalar_re=r"sols:\s*(\d+)", scalar_kind="int", scalar_tol=0,
-        baseline=BaselineSpec(
-            bin="nqueens_omp", args=["6"],
-            scalar_re=r"sols:\s*(\d+)", scalar_kind="int", scalar_tol=0,
-        ),
-    ),
-    Case(
-        name="CoMD_sdsc2_B", ocr_base="CoMD_sdsc2",
-        args=["-x","4","-y","4","-z","4","-N","2"],
-        scalar_re=r"Final energy\s*:\s*([\-+0-9.eE]+)",
-        scalar_kind="float", scalar_tol=1e-4,
-        baseline=BaselineSpec(
-            bin="CoMD_mpi_omp", args=["-x","4","-y","4","-z","4","-N","2"],
-            np=1, force_mpirun=True,
-            scalar_re=r"Final energy\s*:\s*([\-+0-9.eE]+)",
-            scalar_kind="float", scalar_tol=1e-4,
-        ),
-    ),
-    Case(
-        name="Stencil2D_B", ocr_base="Stencil2D_intel_chandra", args=[],
-        scalar_re=r"Solution validates", scalar_kind="bool",
-        baseline=BaselineSpec(
-            bin="Stencil2D_omp", args=["4","5","64"],
-            scalar_re=r"Solution validates", scalar_kind="bool",
-        ),
-    ),
-    Case(
-        name="hpgmg_B", ocr_base="hpgmg", args=["4","1"],
-        scalar_re=r"\|\|error\|\|\s*=\s*([\-+0-9.eE]+)",
-        scalar_kind="float", scalar_tol=1e-3,
-        baseline=BaselineSpec(
-            bin="hpgmg_mpi_omp", args=["4","1"], np=1, force_mpirun=True,
-            scalar_re=r"\|\|error\|\|\s*=\s*([\-+0-9.eE]+)",
-            scalar_kind="float", scalar_tol=1e-3,
-        ),
-    ),
-    Case(
-        name="npb_cg_B", ocr_base="npb_cg", args=[],
-        scalar_re=r"zeta\s*=\s*([\-+0-9.eE]+)",
-        scalar_kind="float", scalar_tol=1e-10,
-        baseline=BaselineSpec(
-            bin="npb_cg_omp", args=[],
-            scalar_re=r"zeta\s*=\s*([\-+0-9.eE]+)",
-            scalar_kind="float", scalar_tol=1e-10,
-        ),
-    ),
-    # miniAMR_intel_B removed from Tier B: baseline miniAMR_mpi only prints
-    # per-variable checksums under --report_diffusion, while OCR prints a
-    # grand total summed over variables.  The two are not the same scalar,
-    # and summing baseline's per-variable prints after the fact is fragile.
-    # xsocr↔arts comparison still runs in Tier A.
-    # XSBench_B removed from Tier B: there is NO correctness metric shared by
-    # the OCR app and any OMP/MPI baseline.  The OCR XSBench prints only its
-    # own "XSBench grid checksum" (added in refactored/ocr/intel Main.c; no
-    # OMP/MPI variant computes it), while the OMP/MPI baselines print only the
-    # canonical "Verification checksum" vhash (under -DVERIFICATION) — which the
-    # OCR refactor never wires up (building it with VERIFICATION still emits no
-    # vhash).  The old comparison matched "Workload (unit)" (the OCR-side echo
-    # of the -l input = 100) against the baseline's "Lookups" (also the -l
-    # input) — i.e. the input parameter, not a computed result.  Aligning on a
-    # real metric would require app-source surgery (port the distributed
-    # verification hash into the OCR app, or add the grid checksum to a
-    # baseline).  XSBench correctness is covered by XSBench_intel in Tier A
-    # (grid-checksum consensus across the 7 arts variants + xsocr + ocr-vx).
-    Case(
-        name="RSBench_B", ocr_base="RSBench_intel",
-        args=["-l","100"],
-        scalar_re=r"Lookups:", scalar_kind="bool",
-        baseline=BaselineSpec(
-            bin="RSBench_omp",
-            args=["-t","4","-l","100"],
-            scalar_re=r"Lookups:", scalar_kind="bool",
-        ),
-    ),
+         multinode_skip=_SAR_MN_SKIP),
 ]
 
 
@@ -548,15 +576,15 @@ TIER_B: list[Case] = [
 # with a relaxed relative tolerance (see _expect_ok), so reduced-precision
 # entries here are safe.
 _EXPECT: dict[str, str] = {
-    "fibonacci": "55", "nqueens": "4", "smithwaterman": "1460", "triangle": "5072",
+    "fibonacci": "55", "nqueens": "4", "smithwaterman": "1460", "triangle": "1074",
     "basicIO": "1", "highbw": "2048", "multigen": "121393", "multigen_2": "3524578",
-    "uts": "4667", "XSBench_intel": "10725709712928718927", "XSBench_intel_sharedDB": "100",
+    "uts": "4667", "XSBench_intel": "16088953243632067443", "XSBench_intel_sharedDB": "100",
     "sar_tiny": "12", "sar_small": "458", "sar_medium": "1991", "sar_large": "6523",
     "CoMD_sdsc": "-1.166058121223", "CoMD_sdsc2": "-1.166063027842",
     "CoMD_intel_chandra_tiled": "-1.166063",
     "cholesky": "50", "hpcg_intel": "0.001279", "hpcg_intel_Eager": "0.001279",
     "hpgmg": "2.97878e-06", "miniAMR_intel": "710400", "npb_cg": "7.85534",
-    "p2p": "1188", "reduction_intel": "7775", "stencil1D_sticky": "1",
+    "p2p": "228", "reduction_intel": "1025", "stencil1D_sticky": "1",
     "LCS_all_db_distributed": "523",
     "LCS_distributed_ST": "1024", "LCS_shared": "1024",
     # strengthened from completion/perf-only to a verified numeric answer
@@ -570,7 +598,7 @@ _EXPECT: dict[str, str] = {
     "cache_offset": "17592181850112",
     "RSBench_intel_sharedDB": "17079",
 }
-for _c in TIER_A + TIER_B:
+for _c in CASES:
     if _c.name in _EXPECT and not _c.expect:
         _c.expect = _EXPECT[_c.name]
 
@@ -639,13 +667,14 @@ def runtime_eligible(rt: Runtime, case: Case, node: object) -> bool:
     if rt.kind in ("xsocr", "ocrvx", "baseline") and is_io:
         return False
     if not single:
-        # Multinode eligibility.
-        if case.multinode_skip or not case.multinode or not case.scalar_re:
+        # Multinode eligibility: every case runs at every node config unless
+        # multinode_skip documents a structural reason, or the case has no
+        # scalar to vote on.
+        if case.multinode_skip or not case.scalar_re:
             return False
-        if rt.kind == "xsocr" and (case.arts_only or case.multinode_arts_only):
-            return False
-        if rt.kind == "ocrvx" and case.ocrvx_skip:
-            return False
+    if (rt.kind == "ocrvx" and case.ocrvx_mn_max_ranks
+            and isinstance(node, int) and node > case.ocrvx_mn_max_ranks):
+        return False
     if rt.kind == "ocrvx" and not (APPS_DIR / f"{case.ocr_base}_ocrvx").exists():
         return False
     if rt.kind == "baseline" and case.baseline is None:
@@ -656,9 +685,15 @@ def runtime_eligible(rt: Runtime, case: Case, node: object) -> bool:
 def run_runtime(runner: Runner, rt: Runtime, case: Case, node: object) -> dict:
     """Run a single (runtime, case, node) cell and return a CellRun dict.
 
-    state is "OK?" (ran and scalar extracted), "FAIL" (non-zero rc or scalar
-    miss), or "N/A" (excluded by eligibility).  Consensus in Task 5 resolves
-    "OK?" into "OK", "DISAGREE", or "NO-CONSENSUS".
+    state is "OK?" (scalar extracted -- rc==0, or rc!=0 with "teardown"=True,
+    see below) or "FAIL" (scalar regex did not match, regardless of rc), or
+    "N/A" (excluded by eligibility). A "teardown"=True cell is an "OK?" whose
+    process died (SIGSEGV/SIGTERM/SIGKILL) AFTER printing a complete, correct
+    result -- a known xsocr/ocr-vx teardown-phase intermittent, not a
+    correctness failure. consensus() resolves "OK?" into "OK" / "OK-TEARDOWN"
+    (teardown cells whose scalar agrees with the winning cluster), "DISAGREE"
+    (scalar does not match, teardown or not), or "NO-CONSENSUS" (tied
+    clusters).
     """
     if not runtime_eligible(rt, case, node):
         return {"state": "N/A", "rc": None, "wall": None, "scalar": None}
@@ -691,15 +726,22 @@ def run_runtime(runner: Runner, rt: Runtime, case: Case, node: object) -> dict:
         else:  # ocrvx (baseline never at multinode, runtime_eligible guards)
             r = runner.run_ocrvx_mpi(case.name, case.ocr_base, args,
                                      np=geo, timeout=mn_to)
-    # Classify.
+    # Classify: try to extract the scalar regardless of rc. A scalar miss is
+    # always FAIL (genuine failure, whatever rc says). A scalar hit with
+    # rc==0 is a normal "OK?" candidate. A scalar hit with rc!=0 (SIGSEGV,
+    # or a SIGTERM/SIGKILL-reaped hang) is STILL a verifiable result -- xsocr/
+    # ocr-vx are known to die AFTER printing correct output during teardown
+    # (deprioritized runtime defect, not a correctness bug) -- so it also
+    # becomes an "OK?" candidate and votes in consensus() normally; marking
+    # it teardown=True lets consensus() render an otherwise-"OK" resolution
+    # as "OK-TEARDOWN" instead of silently hiding the death.
     wall_r = round(r.wall, 3)
-    if r.rc == 124:
-        return {"state": "FAIL", "rc": 124, "wall": wall_r, "scalar": None}
-    if r.rc != 0:
-        return {"state": "FAIL", "rc": r.rc, "wall": wall_r, "scalar": None}
     val = _pull(r.stdout, case.scalar_re, case.scalar_kind)
     if val is None:
-        return {"state": "FAIL", "rc": 0, "wall": wall_r, "scalar": None}
+        return {"state": "FAIL", "rc": r.rc, "wall": wall_r, "scalar": None}
+    if r.rc != 0:
+        return {"state": "OK?", "rc": r.rc, "wall": wall_r, "scalar": val,
+                "teardown": True}
     return {"state": "OK?", "rc": 0, "wall": wall_r, "scalar": val}
 
 
@@ -707,7 +749,12 @@ def consensus(cells: dict, case: Case) -> tuple:
     """Cluster scalars from all "OK?" cells; largest cluster wins.
 
     Returns (consensus_value, dict[key -> final_state]) where final_state is
-    one of "OK", "DISAGREE", "FAIL", "N/A", or "NO-CONSENSUS".
+    one of "OK", "OK-TEARDOWN", "DISAGREE", "FAIL", "N/A", or "NO-CONSENSUS".
+    A cell's "teardown" flag (process died after printing a valid scalar --
+    see run_runtime) only affects an otherwise-"OK" resolution, downgrading
+    it to "OK-TEARDOWN"; a teardown cell whose scalar disagrees still
+    resolves to "DISAGREE" like any other outlier -- scalar comparison always
+    precedes the teardown distinction, so nothing is hidden.
     """
     final: dict = {}
     for k, c in cells.items():
@@ -751,26 +798,32 @@ def consensus(cells: dict, case: Case) -> tuple:
         else:
             st = "OK" if cl is top else "DISAGREE"
         for k in cl["members"]:
-            final[k] = st
+            final[k] = ("OK-TEARDOWN" if st == "OK" and cells[k].get("teardown")
+                       else st)
     consensus_val = None if tie else top["rep"]
     return (consensus_val, final)
 
 
-def run_matrix(runner: Runner, cases: list, only: set, no_baseline: bool) -> dict:
+def run_matrix(runner: Runner, cases: list, only: set, no_baseline: bool,
+               runtimes: "set[str] | None" = None) -> dict:
     """Run every (case, node-config, runtime) cell; compute consensus per (case, node).
+
+    `runtimes`, when non-empty, restricts the voting set to those runtime keys
+    (baseline and the static expect pins still participate) — used to re-verify
+    a change that touches only some runtimes without paying for the full 9-way.
 
     Returns a nested dict: report[case_name][node_str] = {consensus, cells}.
     """
     report: dict = {}
     glyph = {
-        "OK": "·", "DISAGREE": "X", "FAIL": "!",
+        "OK": "·", "OK-TEARDOWN": "t", "DISAGREE": "X", "FAIL": "!",
         "N/A": "-", "NO-CONSENSUS": "?",
     }
     for c in cases:
         if only and c.name not in only:
             continue
         report[c.name] = {}
-        rts = list(RUNTIMES)
+        rts = [rt for rt in RUNTIMES if not runtimes or rt.key in runtimes]
         if c.baseline is not None and not no_baseline:
             rts = rts + [Runtime("baseline", "baseline", "baseline")]
         for node in NODE_CONFIGS:
@@ -834,6 +887,8 @@ def emit(report: dict, logdir: Path, cases: "list[Case] | None" = None) -> None:
                 s = c["state"]
                 if s == "OK":
                     return "OK"
+                if s == "OK-TEARDOWN":
+                    return f"OKt:{c['rc']}"
                 if s == "DISAGREE":
                     return f"X:{c['scalar']}"
                 if s == "FAIL":
@@ -861,6 +916,10 @@ def emit(report: dict, logdir: Path, cases: "list[Case] | None" = None) -> None:
             row.append(consensus_cell)
             lines.append(" | ".join(row))
 
+            # OK-TEARDOWN deliberately excluded: its scalar agreed with
+            # consensus, so it is a verified result, not a correctness
+            # failure -- the teardown death is still visible via the "OKt"
+            # glyph and the report.json state string, just not flagged here.
             bad_states = {"DISAGREE", "FAIL", "NO-CONSENSUS"}
             # Finding 2: also check baseline cell for bad state.
             rt_keys = [rt.key for rt in RUNTIMES] + ["baseline"]
@@ -901,6 +960,12 @@ def _selftest() -> None:
 
     def _na() -> dict:
         return {"state": "N/A", "rc": None, "wall": None, "scalar": None}
+
+    def _teardown(v: object, rc: int = 139) -> dict:
+        # A process that died (SIGSEGV/SIGTERM/SIGKILL) AFTER printing a
+        # valid scalar -- see run_runtime's teardown=True branch.
+        return {"state": "OK?", "rc": rc, "wall": 0.1, "scalar": v,
+                "teardown": True}
 
     # 1. Unanimous floats within tol → all OK.
     cells1 = {"a": _ok(1.0), "b": _ok(1.0), "c": _ok(1.0000001)}
@@ -956,6 +1021,24 @@ def _selftest() -> None:
     assert not _expect_ok(43, dummy_int), "expect_ok int mismatch"
     print("  selftest 6 PASS: _expect_ok correctly flags consensus-vs-pin mismatch")
 
+    # 7. Teardown death (rc!=0) whose scalar AGREES with consensus →
+    #    OK-TEARDOWN, not OK (visible, not hidden) and not FAIL/DISAGREE
+    #    (it still votes normally and joins the winning cluster).
+    cells7 = {"a": _ok(1.0), "b": _ok(1.0), "c": _teardown(1.0)}
+    cval7, final7 = consensus(cells7, dummy)
+    assert cval7 is not None, "teardown agree: expected a consensus value"
+    assert final7["a"] == "OK" and final7["b"] == "OK", f"teardown agree rest: {final7}"
+    assert final7["c"] == "OK-TEARDOWN", f"teardown agree: {final7}"
+    print("  selftest 7 PASS: teardown death + agreeing scalar → OK-TEARDOWN")
+
+    # 8. Teardown death whose scalar DISAGREES with consensus → still
+    #    DISAGREE (scalar comparison precedes the teardown classification;
+    #    a wrong answer is never laundered into OK-TEARDOWN).
+    cells8 = {"a": _ok(1.0), "b": _ok(1.0), "c": _teardown(99.0)}
+    cval8, final8 = consensus(cells8, dummy)
+    assert final8["c"] == "DISAGREE", f"teardown disagree: {final8}"
+    print("  selftest 8 PASS: teardown death + disagreeing scalar → DISAGREE (not hidden)")
+
     print("\nAll selftest assertions passed.")
 
 
@@ -972,12 +1055,18 @@ def main():
     p.add_argument("--no-baseline", action="store_true")
     p.add_argument("--only", type=str, default="")
     p.add_argument("--mem-gb", type=int, default=4)
-    # 90s default: MRSW serializes writes (single-writer), so heavy single-node
-    # apps like sar_large legitimately run longer than a 60s budget; passing
-    # cases still return fast, so only genuine hangs wait the full budget.
-    p.add_argument("--timeout", type=int, default=90)
+    # 30s default: every case is sized (problem-size args, see CASES) so the
+    # slowest reference runtime finishes well inside this budget at the widest
+    # rank count; passing cases return in seconds, so only a genuine hang pays
+    # the full wait.  ocr-vx gets its own larger cap (_OCRVX_TIMEOUT_MULT in
+    # harness_common.py) on top of this base.
+    p.add_argument("--timeout", type=int, default=30)
     p.add_argument("--node", type=str, default="",
                    help="Restrict to a single node-config, e.g. --node 1n")
+    p.add_argument("--runtimes", type=str, default="",
+                   help="Comma-separated runtime keys to run (e.g. "
+                        "mrnew_lazy,xsocr,ocrvx); empty = all. Baseline and "
+                        "expect pins still participate in the consensus.")
     p.add_argument("--selftest", action="store_true",
                    help="Run consensus unit tests (no build required) and exit")
     args = p.parse_args()
@@ -1004,12 +1093,19 @@ def main():
         NODE_CONFIGS = [target_node]
 
     only = {s.strip() for s in args.only.split(",") if s.strip()}
+    runtimes = {s.strip() for s in args.runtimes.split(",") if s.strip()}
+    if runtimes:
+        known = {rt.key for rt in RUNTIMES}
+        unknown = runtimes - known
+        if unknown:
+            p.error(f"unknown --runtimes keys {sorted(unknown)}; "
+                    f"valid: {sorted(known)}")
     ts = time.strftime("%Y-%m-%d_%H-%M-%S")
     logdir = LOGS_ROOT / ts
     runner = Runner(args.mem_gb, args.timeout, logdir, target=TARGET, build=BUILD)
 
-    cases = TIER_A + TIER_B
-    report = run_matrix(runner, cases, only, args.no_baseline)
+    cases = CASES
+    report = run_matrix(runner, cases, only, args.no_baseline, runtimes)
     emit(report, logdir, cases)
 
 

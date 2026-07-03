@@ -197,6 +197,15 @@ typedef enum {
  *  round-robin home distribution policy. */
 #define ARTS_HINT_ROUND_ROBIN ((unsigned int)-2)
 
+/** Sentinel: no placement preference — let the runtime's compile-time
+ *  no-hint placement policy pick the rank (ROUNDROBIN or CREATOR; see
+ *  arts_edt_create's hint==NULL behavior, which this is equivalent to).
+ *  Distinct from @c ARTS_HINT_CURRENT_RANK (explicit self) and from passing
+ *  a NULL hint pointer: usable by callers that must still populate other
+ *  hint fields (finish_event, output_event, edt_id, flags) while leaving
+ *  placement itself unpinned. */
+#define ARTS_HINT_ANY_RANK ((unsigned int)-3)
+
 /** @defgroup hint_structs Creation hints (purpose-specific)
  *
  *  Three independent hint structs so each creation API can grow features
@@ -224,7 +233,9 @@ typedef enum {
  *    - @c finish_event when non-NULL_GUID joins this EDT to that finish scope.
  *    - @c flags  bitfield of ARTS_EDT_FLAG_* (default ARTS_EDT_FLAG_NONE). */
 typedef struct {
-  /** Target node rank.  ARTS_HINT_CURRENT_RANK = current node (default). */
+  /** Target node rank.  ARTS_HINT_CURRENT_RANK = current node (default) |
+   *  ARTS_HINT_ANY_RANK = no preference (policy-selected, same as passing a
+   *  NULL hint) | specific rank. */
   unsigned int rank;
   /** Compiler-assigned profiling identifier.  0 = disabled. */
   uint64_t edt_id;
@@ -641,8 +652,11 @@ int arts_guid_index_from(arts_guid_t range_guid, arts_guid_t guid);
  * The EDT will execute @p func_ptr once all @p depc dependency slots have
  * been satisfied via arts_add_dependence().  All optional fields (target
  * rank, pre-reserved GUID, finish scope, profiling id) are carried in the
- * hint struct.  Pass @c NULL for ARTS_EDT_HINT_DEFAULTS, which auto-allocates
- * a GUID on the current rank and inherits the caller's ambient finish scope.
+ * hint struct.  Pass @c NULL, or a hint with @c rank == ARTS_HINT_ANY_RANK,
+ * for "no placement preference": the runtime's compile-time no-hint EDT
+ * placement policy (ARTS_NOHINT_EDT_PLACEMENT: ROUNDROBIN default, or
+ * CREATOR for the legacy pin-to-creator behavior) picks the execution rank.
+ * A NULL hint also inherits the caller's ambient finish scope.
  *
  * @param func_ptr Function to execute.
  * @param paramc   Number of static parameters.

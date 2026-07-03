@@ -5,7 +5,7 @@ performance harnesses: machine geometry, the launcher-pinning helpers, and
 the `Runner` class that drives ocr/arts/xsocr/ocrvx/baseline subprocesses
 (hwloc-aware core pinning, cleanup/reap-by-exe-path, multinode port cycling).
 
-Nothing here is correctness-specific (no scalar extraction, no Case/Tier
+Nothing here is correctness-specific (no scalar extraction, no Case
 definitions) — that lives in correctness_harness.py and any future perf
 harness that imports this module.
 """
@@ -48,12 +48,14 @@ def APPS_DIR_for(build: Path) -> Path:
 
 # ---------------------------------------------------------------------------
 # Per-target machine geometry (laptop = 14-thread budget, server = 48-thread).
-# Drives the config subdir, the Tier-M node counts, the per-rank thread budget
+# Drives the config subdir, the multinode node counts, the per-rank thread budget
 # (for taskset pinning), and the ocr-vx TBB width.  Every config is sized so
 # node_count * per-node-threads == the machine's core count.
 # ---------------------------------------------------------------------------
 
-# Multinode node counts exercised in Tier M.  The *_io entries are arts-only:
+# Multinode node counts every case runs at unless it documents a structural
+# exclusion (see correctness_harness.py's Case.multinode_skip).  The *_io
+# entries are arts-only:
 # xsocr/ocr-vx have a single comm worker (no sender/receiver split), so their
 # N-node total already equals the plain N-node config — no separate IO variant.
 _MN_NODE_COUNTS = {
@@ -98,8 +100,12 @@ def _OCRVX_TBB_for(target: str) -> dict:
 # correctness run that those two finish well within budget can still time out on
 # ocr-vx while it is *still making progress* (not hung).  Give ocr-vx a larger
 # wall budget so a genuine result is collected; fast cases are unaffected (they
-# return long before the ceiling).
-_OCRVX_TIMEOUT_MULT = 8
+# return long before the ceiling).  Cases are sized so the slowest reference
+# runtime (ocr-vx at the widest rank count) finishes in well under a minute, so
+# the multiplier only needs to cover ocr-vx's serialized message pipeline with
+# headroom for variance -- a genuine hang still costs at most base*mult
+# seconds, not the old 12-minute ceiling.
+_OCRVX_TIMEOUT_MULT = 3
 
 # Physical cores used on this machine target (= single-node thread budget).
 # The reference runtimes (xsocr/ocr-vx/baseline) have no internal core pinning,
@@ -334,7 +340,7 @@ class Runner:
         self._reap_exe(self.apps_dir / binary)
         return result
 
-    # --- Multinode runners (Tier M) ---
+    # --- Multinode runners ---
 
     # Per-run unique TCP port base for arts multinode runs.  A straggler from
     # the previous case (a rank still releasing its listen socket, or an orphan
@@ -491,16 +497,24 @@ class Runner:
         return result
 
     def run_ocrvx_mpi(self, case_name: str, bin_name: str, args: list[str],
-                      np: int = 1, timeout: int = 0) -> RunResult:
-        """Run ocrvx binary; np > 1 uses mpirun (ocr-vx MPI transport)."""
+                      np: int = 1, timeout: int = 0,
+                      tpn: int | None = None, tbb: int | None = None) -> RunResult:
+        """Run ocrvx binary; np > 1 uses mpirun (ocr-vx MPI transport).
+
+        tpn/tbb override the per-rank taskset block and OCRVX_NUM_THREADS looked
+        up from the capacity tables (_tpn[np] / _ocrvx_tbb_threads[np]); the
+        scalability (_sc) family must pass both so ocr-vx gets the same 4-worker
+        / 6-core-per-rank budget as arts/xsocr instead of the capacity budget."""
         to = (timeout or self.timeout) * _OCRVX_TIMEOUT_MULT
         suffix = f"_ocrvx_mpi{np}" if np > 1 else "_ocrvx"
         logfile = self.logdir / f"{case_name}{suffix}.log"
         env = os.environ.copy()
         env["OMP_NUM_THREADS"] = "4"
-        env["OCRVX_NUM_THREADS"] = str(self._ocrvx_tbb_threads[np])
+        env["OCRVX_NUM_THREADS"] = str(tbb if tbb is not None
+                                        else self._ocrvx_tbb_threads[np])
         if np > 1:
-            launcher = f"{mpirun_prefix(np)} {pin_wrap(self._tpn[np])} ./{bin_name}_ocrvx"
+            block = tpn if tpn is not None else self._tpn[np]
+            launcher = f"{mpirun_prefix(np)} {pin_wrap(block)} ./{bin_name}_ocrvx"
         else:
             launcher = f"{self._pin_single} ./{bin_name}_ocrvx"
         cmd = (

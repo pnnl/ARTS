@@ -16,3 +16,13 @@ def test_runtimes_nine():
     keys = [r.key for r in hc.RUNTIMES]
     assert keys == ["mrnew_eager", "mrnew_lazy", "mrsw_eager", "mrsw_lazy",
                      "mrmw", "lock_eager", "lock_lazy", "xsocr", "ocrvx"]
+
+
+import inspect
+
+
+def test_run_ocrvx_mpi_accepts_sc_overrides():
+    sig = inspect.signature(hc.Runner.run_ocrvx_mpi)
+    assert "tpn" in sig.parameters and "tbb" in sig.parameters
+    assert sig.parameters["tpn"].default is None
+    assert sig.parameters["tbb"].default is None

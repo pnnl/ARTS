@@ -476,6 +476,8 @@ if(ARTS_BUILD_BENCHMARKS AND ARTS_BUILD_STATIC)
             target_link_libraries(arts_static_${suffix} PRIVATE mimalloc-static)
         endif()
         arts_apply_protocol(arts_static_${suffix} "${proto}" "${timing}")
+        target_compile_definitions(arts_static_${suffix} PRIVATE
+            ARTS_NOHINT_EDT_ROUNDROBIN=${_ARTS_NOHINT_EDT_RR})
     endfunction()
 
     arts_variant(mrnew_eager MRNEW EAGER)

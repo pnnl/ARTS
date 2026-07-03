@@ -177,6 +177,7 @@ void arts_runtime_node_init(struct arts_config_s *config) {
    * across ranks the round-robin then walks the cluster evenly instead of
    * hammering rank 0. */
   arts_node_info.db_rr_route = arts_global_rank_id;
+  arts_node_info.edt_rr_route = arts_global_rank_id;
 
   /* Network buffer */
   arts_node_info.buf = (char *)arts_malloc(PACKET_SIZE);

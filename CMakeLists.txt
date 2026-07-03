@@ -226,6 +226,40 @@ set(ARTS_CXL_RAPID_INCLUDE_DIR "" CACHE PATH
 set(ARTS_CXL_LIB_DIR "" CACHE PATH
     "Path to arts_cxl_lib directory (required when ARTS_USE_CXL=ON)")
 
+# ── No-hint EDT placement policy (runtime-wide) ─────────────────────────────
+# Mirrors the DB no-hint round-robin: selects what arts_edt_create does when
+# the caller expresses no placement preference (NULL hint, or an explicit
+# hint with rank == ARTS_HINT_ANY_RANK).
+set(ARTS_NOHINT_EDT_PLACEMENT "ROUNDROBIN" CACHE STRING
+    "No-hint EDT placement policy: ROUNDROBIN (default) or CREATOR")
+set_property(CACHE ARTS_NOHINT_EDT_PLACEMENT PROPERTY STRINGS ROUNDROBIN CREATOR)
+if(ARTS_NOHINT_EDT_PLACEMENT STREQUAL "CREATOR")
+  set(_ARTS_NOHINT_EDT_RR 0)
+else()
+  set(_ARTS_NOHINT_EDT_RR 1)
+endif()
+
+# ── OCR shim (benchmarks) ───────────────────────────────────────────────────
+set(ARTS_SHIM_NOHINT_DB_HOME "ROUNDROBIN" CACHE STRING
+    "No-hint DB home policy for the OCR shim: ROUNDROBIN (default) or CREATOR")
+set_property(CACHE ARTS_SHIM_NOHINT_DB_HOME PROPERTY STRINGS ROUNDROBIN CREATOR)
+if(ARTS_SHIM_NOHINT_DB_HOME STREQUAL "CREATOR")
+  set(_ARTS_SHIM_NOHINT_RR 0)
+else()
+  set(_ARTS_SHIM_NOHINT_RR 1)
+endif()
+
+set(ARTS_SHIM_NOHINT_EDT_PLACE "ROUNDROBIN" CACHE STRING
+    "No-hint EDT placement policy for the OCR shim's ocrEdtCreate (no OCR \
+affinity hint given): ROUNDROBIN (default, defers to ARTS_NOHINT_EDT_PLACEMENT) \
+or CREATOR (pin to the calling rank)")
+set_property(CACHE ARTS_SHIM_NOHINT_EDT_PLACE PROPERTY STRINGS ROUNDROBIN CREATOR)
+if(ARTS_SHIM_NOHINT_EDT_PLACE STREQUAL "CREATOR")
+  set(_ARTS_SHIM_NOHINT_EDT_RR 0)
+else()
+  set(_ARTS_SHIM_NOHINT_EDT_RR 1)
+endif()
+
 # ── Diagnostics ────────────────────────────────────────────────────────────
 # Default log level: Debug -> 3 (DEBUG), other build types -> 1 (WARN).
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")

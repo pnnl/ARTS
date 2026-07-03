@@ -57,11 +57,15 @@ target_include_directories(ocr_xsocr_objects PRIVATE
 # hints, which only some apps set, are then inert.  This keeps the runtime's
 # coherence behaviour single and uniform across all blocks.  The
 # channel/collective extension chain below is unrelated and stays enabled.
+# OCR_NOHINT_DB_HOME_ROUNDROBIN: no-hint DB home placement policy.
+# 1 = round-robin the home across all locations (default); 0 = pin to the
+# creator (legacy behavior).
 target_compile_definitions(ocr_xsocr_objects PRIVATE
     "OCR_TYPE_H=x86.h"
     CACHE_LINE_SZB=64
     GUID_PROVIDER_LOCID_SIZE=10
     OCR_MAX_MULTI_SLOT=32
+    OCR_NOHINT_DB_HOME_ROUNDROBIN=1
 )
 
 # NOTE: the collective-event / distributed-labeled extension chain
