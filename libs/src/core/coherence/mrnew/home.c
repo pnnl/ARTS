@@ -56,10 +56,16 @@ void arts_home_lockreq_queue_init(struct arts_home_lockreq_queue_s *q) {
 }
 
 void arts_home_lockreq_queue_push(struct arts_home_lockreq_queue_s *q,
-                                  unsigned int rank) {
+                                  unsigned int rank,
+                                  const struct arts_rdzv_landing_s *rdzv) {
   struct arts_home_lockreq_node_s *n =
       (struct arts_home_lockreq_node_s *)malloc(sizeof(*n));
   n->rank = rank;
+  if (rdzv != NULL) {
+    n->rdzv = *rdzv;
+  } else {
+    n->rdzv = (struct arts_rdzv_landing_s){0, 0, 0, 0};
+  }
   atomic_store_explicit(&n->next, (struct arts_home_lockreq_node_s *)NULL,
                         memory_order_relaxed);
   /* Swap n onto the tail (producer end).  The previous tail becomes our
@@ -71,7 +77,8 @@ void arts_home_lockreq_queue_push(struct arts_home_lockreq_queue_s *q,
 }
 
 bool arts_home_lockreq_queue_pop(struct arts_home_lockreq_queue_s *q,
-                                 unsigned int *out_rank) {
+                                 unsigned int *out_rank,
+                                 struct arts_rdzv_landing_s *out_rdzv) {
   for (;;) {
     /* Acquire on head load: defensive barrier so a new baton holder sees
      * all prior consumer writes to head, even if the baton CAS ordering
@@ -101,6 +108,9 @@ bool arts_home_lockreq_queue_pop(struct arts_home_lockreq_queue_s *q,
      * free `head` — unless head IS the stub sentinel, which is embedded
      * in the queue struct and must never be freed. */
     *out_rank = next->rank;
+    if (out_rdzv != NULL) {
+      *out_rdzv = next->rdzv;
+    }
     atomic_store_explicit(&q->head, next, memory_order_release);
     if (head != &q->stub) {
       free(head);
@@ -110,7 +120,8 @@ bool arts_home_lockreq_queue_pop(struct arts_home_lockreq_queue_s *q,
 }
 
 bool arts_home_lockreq_queue_peek(const struct arts_home_lockreq_queue_s *q,
-                                  unsigned int *out_rank) {
+                                  unsigned int *out_rank,
+                                  struct arts_rdzv_landing_s *out_rdzv) {
   /* Cast away const for atomic load — the queue isn't mutated (no head
    * advance, no node free).  Single consumer (the baton holder). */
   struct arts_home_lockreq_node_s *head = atomic_load_explicit(
@@ -122,6 +133,9 @@ bool arts_home_lockreq_queue_peek(const struct arts_home_lockreq_queue_s *q,
     return false; /* empty, or a producer mid-link — treat as no front yet */
   }
   *out_rank = next->rank;
+  if (out_rdzv != NULL) {
+    *out_rdzv = next->rdzv;
+  }
   return true;
 }
 

@@ -100,6 +100,20 @@ if(HWLOC_INCLUDE_DIRS)
 endif()
 arts_apply_protocol(arts_ooo ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
 
+# Registered slab pool: per-NUMA mimalloc arenas over (optionally) fabric-
+# registered memory.  Plain C, no CUDA paths; reused as-is in GPU builds.
+# Protocol-agnostic (no coherence headers).  Linking the mimalloc and libfabric
+# imported targets to this OBJECT library propagates their include dirs (and the
+# fabric build-order dependency) to the compile without adding a link edge.
+add_library(arts_regpool OBJECT memory/regpool.c)
+target_link_libraries(arts_regpool PRIVATE arts_interface)
+if(ARTS_MALLOC STREQUAL "mimalloc")
+    target_link_libraries(arts_regpool PRIVATE mimalloc-static)
+endif()
+if(ARTS_TRANSPORT_OFI)
+    target_link_libraries(arts_regpool PRIVATE arts::libfabric)
+endif()
+
 # Scheduler (scheduler.c at core/ top level, needs GPU wrapper for CUDA builds)
 add_library(arts_scheduler OBJECT scheduler.c)
 target_link_libraries(arts_scheduler PRIVATE arts_interface)

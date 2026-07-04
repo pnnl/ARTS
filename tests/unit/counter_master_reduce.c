@@ -4,30 +4,26 @@
 ******************************************************************************/
 
 /// @file counter_master_reduce.c
-/// @brief EXPOSES B136: cluster-level MASTER reduction assumes the master
-///        rank == node index 0.
+/// @brief Cluster-level counter aggregation: the master rank must collect
+///        EVERY node's per-node counter file (n{n}.json) and reduce each
+///        CLUSTER counter across ALL nodes into cluster.json.
 ///
-/// arts_apply_reduction(REDUCE_MASTER) returns the source value only when
-/// source_index == 0.  arts_counter_write_cluster (counter.c) iterates node
-/// index n and passes n as source_index, so MASTER always selects node 0's
-/// value — not the value of arts_global_master_rank_id.  Compounding this,
-/// arts_counter_write_node emits a MASTER CLUSTER counter ONLY on the master
-/// rank; so when the master rank != 0, node 0's n0.json contains no
-/// TIME_INIT/TIME_TOTAL object, the cluster reducer reads the calloc-zeroed
-/// slot for node 0, and the cluster value collapses to 0 (wrong).
+/// The workload finishes exactly (ranks + 1) EDTs — the main EDT on rank 0
+/// plus one affinity-pinned EDT per rank — so NUM_EDT_FINISH (PERIODIC,
+/// CLUSTER, SUM in the stock counter configs) must aggregate to at least
+/// ranks + 1 in cluster.json.  A smaller sum means some node's counter file
+/// was dropped from (or mis-selected by) the reduction: that node's pinned
+/// EDT goes uncounted.  This guards the reducer's node-coverage contract —
+/// the historical failure mode where the cluster reduce reads the wrong
+/// source node's slot (a calloc-zeroed value) instead of a real one.
 ///
-/// TIME_INIT and TIME_TOTAL are ONCE,CLUSTER,MASTER in both counters.cfg and
-/// full_counters.cfg.  The master writes cluster.json at shutdown after polling
-/// every n{n}.json.  This test (run on the master rank) reads cluster.json and
-/// asserts TIME_TOTAL's cluster value is non-zero — the master's real
-/// end-to-end time.  This holds iff master rank == 0; if a config ever sets a
-/// non-zero master rank the value is 0 and the assertion fails, surfacing B136.
-///
-/// Multinode: requires node_count > 1 (single node has no cluster aggregation).
-/// SKIPs cleanly on a single node.  If cluster.json or TIME_TOTAL is absent
-/// (CLUSTER counters disabled in this build's counter config) it SKIPs.
-/// Config-agnostic across coherence protocols.  A stranded run is reaped by the
-/// ctest TIMEOUT.
+/// Multinode: requires node_count > 1 (single node has no cluster
+/// aggregation).  SKIPs cleanly on a single node, when cluster.json is
+/// absent, or when NUM_EDT_FINISH is not part of this build's counter
+/// config (ARTS_COUNTER_CONFIG is a build-time selection; the assertion is
+/// only meaningful for counters the build actually captures).
+/// Config-agnostic across coherence protocols.  A stranded run is reaped by
+/// the ctest TIMEOUT.
 
 #include "arts.h"
 #include "arts/system/identity.h"
@@ -53,7 +49,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
 
-  /* A little work on each rank so per-node counter files are produced. */
+  /* One EDT pinned to each rank so every node's counter file must
+   * contribute to the cluster sum. */
   arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
   unsigned int ranks = arts_get_total_ranks();
   for (unsigned int r = 0; r < ranks; r++) {
@@ -130,27 +127,32 @@ int main(int argc, char **argv) {
   (void)fclose(fp);
   buf[got] = '\0';
 
-  uint64_t total = 0;
-  bool found = read_counter_value(buf, "TIME_TOTAL", &total);
+  uint64_t finished = 0;
+  bool found = read_counter_value(buf, "NUM_EDT_FINISH", &finished);
   free(buf);
 
   if (!found) {
-    printf("SKIP counter_master_reduce: TIME_TOTAL absent in cluster.json\n");
+    printf(
+        "SKIP counter_master_reduce: NUM_EDT_FINISH absent in cluster.json "
+        "(not enabled in this build's counter config)\n");
     return 0;
   }
 
-  /* B136: when master rank != 0 the MASTER reduce selects node 0 (which never
-     emitted the counter) and collapses to 0.  A correct master-aware reduce
-     yields the master's real (non-zero) TIME_TOTAL. */
-  if (total == 0) {
-    printf("FAIL counter_master_reduce: cluster TIME_TOTAL == 0 (master rank "
-           "%u != node-index 0 -> B136 MASTER-reduce picked wrong node)\n",
-           arts_global_master_rank_id);
+  /* main EDT + one pinned EDT per rank all completed before shutdown, so a
+   * node-complete SUM reduce must see at least ranks + 1.  Anything less
+   * means a node's file was dropped from the cluster reduction. */
+  uint64_t expected_min = (uint64_t)arts_global_rank_count + 1;
+  if (finished < expected_min) {
+    printf("FAIL counter_master_reduce: cluster NUM_EDT_FINISH=%llu < %llu "
+           "(ranks+1) — a node's counter file was dropped from the cluster "
+           "reduce\n",
+           (unsigned long long)finished, (unsigned long long)expected_min);
     return 1;
   }
 
-  printf("PASS counter_master_reduce: cluster TIME_TOTAL=%llu from master rank "
-         "%u\n",
-         (unsigned long long)total, arts_global_master_rank_id);
+  printf("PASS counter_master_reduce: cluster NUM_EDT_FINISH=%llu >= %llu "
+         "(ranks+1) from master rank %u\n",
+         (unsigned long long)finished, (unsigned long long)expected_min,
+         arts_global_master_rank_id);
   return 0;
 }

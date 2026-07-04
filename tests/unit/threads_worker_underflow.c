@@ -1,30 +1,33 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * T229 — arts_thread_init network/worker thread-count derivation
- * (libs/src/core/system/threads.c).  This TU #includes threads.c so the real
- * derivation code runs; the runtime collaborators arts_thread_init calls
- * (get_thread_mask, arts_runtime_node_init, print_mask, private_init/loop/
- * cleanup, arts_malloc/arts_free, counters, ARTS_ERROR->arts_abort) are stubbed
- * so the unit links standalone and we can inspect the derived counts WITHOUT
- * the full runtime.
+ * T229 — arts_thread_init worker-count derivation after the transport cutover
+ * + config-surface cleanup (libs/src/core/system/threads.c).  This TU
+ * #includes threads.c so the real derivation code runs; the runtime
+ * collaborators arts_thread_init calls (get_thread_mask, arts_runtime_node_init,
+ * print_mask, private_init/loop/cleanup, arts_malloc/arts_free, counters,
+ * ARTS_ERROR->arts_abort) are stubbed so the unit links standalone and we can
+ * inspect the derived counts WITHOUT the full runtime.
  *
  * Property under test
  * -------------------
  * arts_thread_init derives the role split:
- *   rank_count == 1  =>  sender = receiver = 0, worker = thread_count.
- *   rank_count  > 1  =>  worker = thread_count - sender - receiver.
- * The multi-node branch has NO guard that sender + receiver <= thread_count, so
- * a misconfig (e.g. thread_count=2, sender=2, receiver=2) makes the UNSIGNED
- * subtraction UNDERFLOW worker_thread_count to a near-UINT_MAX value, which
- * then drives get_thread_mask's Phase-4 role split and the spawn loop into a
- * massive over-run.  This is suspected bug B088 (== B102 config-side).
+ *   rank_count == 1  =>  progress = 0, worker = thread_count.
+ *   rank_count  > 1  =>  worker = thread_count - progress.
+ * The multi-node branch has NO guard that progress <= thread_count, so a
+ * misconfig (e.g. thread_count=2, progress=4) makes the UNSIGNED subtraction
+ * UNDERFLOW worker_thread_count to a near-UINT_MAX value, which then drives
+ * get_thread_mask's Phase-4 role split and the spawn loop into a massive
+ * over-run.  This is suspected bug B088 (== B102 config-side).  The dedicated
+ * sender role that used to also feed this subtraction is gone entirely (its
+ * old cfg key is now a hard error in config.c), so progress alone is the
+ * only remaining term that can drive the underflow.
  *
  * Test strategy
  * -------------
- * 1. rank_count==1 case: assert sender==receiver==0 and worker==thread_count
+ * 1. rank_count==1 case: assert progress==0 and worker==thread_count
  *    (the CORRECT, expected behavior — must always pass).
- * 2. rank_count>1, sender+receiver==thread_count: worker==0 (boundary, fine).
- * 3. rank_count>1, sender+receiver > thread_count: the derivation underflows.
+ * 2. rank_count>1, progress==thread_count: worker==0 (boundary, fine).
+ * 3. rank_count>1, progress > thread_count: the derivation underflows.
  *    The test asserts the INTENDED contract (worker <= thread_count).  Because
  *    the runtime currently underflows, this assertion FAILS at runtime — that
  *    is the point: it exposes B088.  We do NOT relax it.  The failing-case
@@ -105,7 +108,6 @@ int arts_runtime_loop(void) { return 0; }
 void arts_runtime_global_cleanup(void) {}
 void arts_runtime_stop(void) {}
 void arts_runtime_stop_network(void) {}
-void arts_socket_shutdown(void) {}
 void arts_object_save_thread_data(unsigned int tid) { (void)tid; }
 void arts_counter_timer_end(arts_counter_t *counter) { (void)counter; }
 
@@ -117,9 +119,8 @@ void arts_counter_timer_end(arts_counter_t *counter) { (void)counter; }
 
 static unsigned int run_derivation(unsigned int rank_count,
                                    unsigned int thread_count,
-                                   unsigned int sender, unsigned int receiver,
-                                   unsigned int *out_sender,
-                                   unsigned int *out_receiver) {
+                                   unsigned int progress,
+                                   unsigned int *out_progress) {
   /* Set up the global rank count the derivation reads. */
   arts_global_rank_count = rank_count;
 
@@ -140,8 +141,7 @@ static unsigned int run_derivation(unsigned int rank_count,
   struct arts_config_s c;
   memset(&c, 0, sizeof(c));
   c.thread_count = thread_count;
-  c.sender_thread_count = sender;
-  c.receiver_thread_count = receiver;
+  c.progress_thread_count = progress;
   c.port_count = 64; /* large so max_net never trips for our small counts */
   c.stack_size = 0;
   c.pin_threads = false;
@@ -149,11 +149,8 @@ static unsigned int run_derivation(unsigned int rank_count,
   arts_thread_init(&c);
 
   unsigned int worker = c.worker_thread_count;
-  if (out_sender) {
-    *out_sender = c.sender_thread_count;
-  }
-  if (out_receiver) {
-    *out_receiver = c.receiver_thread_count;
+  if (out_progress) {
+    *out_progress = c.progress_thread_count;
   }
 
   /* Join the worker threads arts_thread_init spawned (indices 1..tc-1) so the
@@ -184,17 +181,17 @@ static unsigned int run_derivation(unsigned int rank_count,
 int main(void) {
   int bug_exposed = 0;
 
-  /* ---- Case 1: rank_count==1 forces net threads to 0, worker=thread_count --
+  /* ---- Case 1: rank_count==1 forces progress to 0, worker=thread_count ----
    */
   {
-    unsigned int s = 999, r = 999;
-    unsigned int w = run_derivation(/*rank_count=*/1, /*tc=*/4, /*sender=*/2,
-                                    /*receiver=*/1, &s, &r);
-    if (s != 0 || r != 0) {
+    unsigned int p = 999;
+    unsigned int w = run_derivation(/*rank_count=*/1, /*tc=*/4, /*progress=*/2,
+                                    &p);
+    if (p != 0) {
       fprintf(stderr,
-              "FAIL threads_worker_underflow: rank1 did not zero net threads "
-              "(sender=%u receiver=%u)\n",
-              s, r);
+              "FAIL threads_worker_underflow: rank1 did not zero progress "
+              "threads (progress=%u)\n",
+              p);
       return 1;
     }
     if (w != 4) {
@@ -204,11 +201,11 @@ int main(void) {
     }
   }
 
-  /* ---- Case 2: rank>1, sender+receiver == thread_count => worker == 0 ------
+  /* ---- Case 2: rank>1, progress == thread_count => worker == 0 ------------
    */
   {
-    unsigned int w = run_derivation(/*rank_count=*/2, /*tc=*/4, /*sender=*/2,
-                                    /*receiver=*/2, NULL, NULL);
+    unsigned int w = run_derivation(/*rank_count=*/2, /*tc=*/4,
+                                    /*progress=*/4, NULL);
     if (w != 0) {
       fprintf(stderr,
               "FAIL threads_worker_underflow: boundary worker=%u, want 0\n", w);
@@ -216,7 +213,7 @@ int main(void) {
     }
   }
 
-  /* ---- Case 3: rank>1, sender+receiver > thread_count => UNDERFLOW (B088) --
+  /* ---- Case 3: rank>1, progress > thread_count => UNDERFLOW (B088) --------
    */
   /* Run in a child so an over-run / huge alloc cannot kill the parent. */
   {
@@ -226,14 +223,14 @@ int main(void) {
       return 1;
     }
     if (pid == 0) {
-      unsigned int w = run_derivation(/*rank_count=*/2, /*tc=*/2, /*sender=*/2,
-                                      /*receiver=*/2, NULL, NULL);
+      unsigned int w = run_derivation(/*rank_count=*/2, /*tc=*/2,
+                                      /*progress=*/4, NULL);
       /* Intended contract: worker_thread_count must be <= thread_count. */
       if (w > 2) {
         /* Underflowed.  Report via a distinctive exit code. */
         fprintf(stderr,
                 "CHILD: B088 underflow observed: worker_thread_count=%u "
-                "(thread_count=2, sender+receiver=4)\n",
+                "(thread_count=2, progress=4)\n",
                 w);
         _exit(88); /* sentinel: underflow confirmed */
       }
@@ -248,8 +245,8 @@ int main(void) {
       bug_exposed = 1;
       fprintf(stderr,
               "EXPOSES_RUNTIME_BUG B088: arts_thread_init underflows "
-              "worker_thread_count when sender+receiver > thread_count "
-              "(no guard); unsigned wrap -> astronomical worker count.\n");
+              "worker_thread_count when progress > thread_count (no guard); "
+              "unsigned wrap -> astronomical worker count.\n");
     } else if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
       /* The runtime guarded the bad config — bug is fixed; that's fine. */
       fprintf(stderr,

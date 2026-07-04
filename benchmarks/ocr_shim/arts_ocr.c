@@ -1556,7 +1556,8 @@ u8 ocrAddDependence(ocrGuid_t source, ocrGuid_t destination, u32 slot,
   if (srcType == ARTS_GUID_DB) {
     /* DB → EDT/Event: arts_add_dependence does immediate satisfy for DB
      * sources (DBs are passive objects — no channel event, no waiting).
-     * Map OCR access modes to ARTS: RO→RO, EW/RW→EW.
+     * Map OCR access modes to ARTS: RO→RO, EW/RW→RW (ARTS has no separate
+     * EW mode; both OCR EW and RW map to per-node-exclusive DB_MODE_RW).
      * GUID-sorted acquisition in arts_db_acquire_all prevents acquisition-order
      * deadlocks that previously required forcing all deps to RO. */
     if (dstType == ARTS_GUID_EDT) {

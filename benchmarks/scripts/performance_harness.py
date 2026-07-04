@@ -403,7 +403,7 @@ def run_cell_with_retry(runner: Runner, rt: Runtime, case: PerfCase, experiment:
 def perf_runtime_eligible(rt: Runtime, case: PerfCase, node: object) -> bool:
     """Whether (rt, case, node) is a cell the matrix should run at all.
 
-    Reference runtimes (xsocr/ocr-vx) have no sender/receiver-split IO
+    Reference runtimes (xsocr/ocr-vx) have no worker/progress-split IO
     transport -- their N-node total already equals the plain N-node config,
     so the "_io" variants are arts-only and refs must be skipped there.
     ocr-vx is additionally skipped per-case when that app has no ocr-vx port

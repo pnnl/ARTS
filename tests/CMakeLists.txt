@@ -53,6 +53,8 @@ set(TEST_PROGRAMS
     coherence_destroy_during_acquire
     coherence_stress_single_node
     coherence_stress_dist
+    coherence_payload_large
+    coherence_satisfy_before_release
     coherence_multi_writer_same_addr
     coherence_multi_writer_multi_db
     coherence_ro_acquire_stress
@@ -128,6 +130,8 @@ set(TEST_PROGRAMS
     lockfree_stack_test
     coherence_buffer_test
     stdio_forward_scale_test
+    regpool_basic
+    regpool_guard
     # --- New unit tests (Tasks 6-12) ---
     counter_smoke
     edt_dep_variants
@@ -286,8 +290,9 @@ set_property(GLOBAL PROPERTY arts_test_port_base 20000)
 # port_count: the number of ports in the spec doubles as the per-node
 # parallel-connection count (port_count = default_ports_count), so the
 # override MUST carry the same number of ports as the cfg it replaces:
-# one for the standard configs, two for 2n_io (one per sender/receiver
-# pair).  A mismatched count breaks the startup connection handshake.
+# one for the standard configs, two for 2n_io (matching its
+# progress_threads=2).  A mismatched count breaks the startup connection
+# handshake.
 function(arts_next_port_base port_count out_var)
     get_property(_base GLOBAL PROPERTY arts_test_port_base)
     if(port_count GREATER 1)
@@ -327,12 +332,12 @@ function(register_multinode_test test_name)
         # All four local multinode flavours.  Names map 1:1 to the cfg files in
         # configs/local/; each test's ARTS_CONFIG env points straight at the
         # source cfg (no copy), so ctest runs standalone.
-        #   2n     — 2 nodes, 5w/1s/1r per node (worker-heavy default)
-        #   3n     — 3 nodes, 2w/1s/1r per node
-        #   4n     — 4 nodes, 1w/1s/1r per node
-        #   2n_io  — 2 nodes, 3w/2s/2r per node (network-heavy variant:
-        #            multiple sender/receiver threads break per-peer message
-        #            FIFO, exercising concurrent cross-rank handler dispatch)
+        #   2n     — 2 nodes, 6w/1p per node (worker-heavy default)
+        #   3n     — 3 nodes, 3w/1p per node
+        #   4n     — 4 nodes, 2w/1p per node
+        #   2n_io  — 2 nodes, 5w/2p per node (network-heavy variant:
+        #            multiple progress threads break per-peer message FIFO,
+        #            exercising concurrent cross-rank handler dispatch)
         set(ARG_VARIANTS 2n 3n 4n 2n_io)
     endif()
     foreach(variant IN LISTS ARG_VARIANTS)
@@ -507,6 +512,66 @@ set_tests_properties(term_sigsegv PROPERTIES
 register_pure_unit_test(lockfree_stack_test)
 register_pure_unit_test(coherence_buffer_test TIMEOUT 60)
 register_pure_unit_test(stdio_forward_scale_test)
+
+# regpool_basic/regpool_guard assert the confinement invariant (every
+# returned pointer resolves through arts_regpool_lookup to a registered
+# slab), which only the arena-allocator implementation provides.  The
+# ARTS_MALLOC=system fallback has no arena/slab concept — it is a plain
+# pass-through allocator, so arts_regpool_lookup always misses there by
+# design (see regpool.c's non-mimalloc branch).  Still built under every
+# ARTS_MALLOC config for compile coverage; only run where the invariant
+# they check actually holds.
+if(ARTS_MALLOC STREQUAL "mimalloc")
+    register_pure_unit_test(regpool_basic TIMEOUT 60)
+    register_pure_unit_test(regpool_guard TIMEOUT 60)
+endif()
+
+# net_selfsend — whitebox self-send exercise for the libfabric transport core
+# (transport/net.c).  It #includes net.c directly (statics under test) with a
+# stubbed dispatch symbol, so it must NOT link the ARTS library (that would
+# duplicate net.o / the dispatcher).  It links the real registered-pool object
+# (bounce-buffer path needs registered memory) + mimalloc + libfabric, and
+# builds only when the OFI transport is on AND the arena allocator is selected
+# (registered slabs require it).  No ARTS runtime, no ports -> a pure unit test.
+if(ARTS_TRANSPORT_OFI AND ARTS_MALLOC STREQUAL "mimalloc")
+    add_executable(net_selfsend unit/net_selfsend.c $<TARGET_OBJECTS:arts_regpool>)
+    target_include_directories(net_selfsend PRIVATE
+        ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR}
+        ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
+    target_compile_definitions(net_selfsend PRIVATE ARTS_TRANSPORT_OFI=1 ARTS_LOG_LEVEL=2)
+    target_link_libraries(net_selfsend PRIVATE
+        Threads::Threads mimalloc-static arts::libfabric ${RT_LIBRARY})
+    register_pure_unit_test(net_selfsend TIMEOUT 60)
+    set_tests_properties(net_selfsend PROPERTIES ENVIRONMENT "FI_PROVIDER=tcp")
+
+    # net_rendezvous — whitebox one-sided data plane (fi_writedata PUT into a
+    # pre-registered landing buffer + txid immediate pairing).  Same standalone
+    # harness shape as net_selfsend (includes net.c; must not link libarts).
+    add_executable(net_rendezvous unit/net_rendezvous.c $<TARGET_OBJECTS:arts_regpool>)
+    target_include_directories(net_rendezvous PRIVATE
+        ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR}
+        ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
+    target_compile_definitions(net_rendezvous PRIVATE ARTS_TRANSPORT_OFI=1 ARTS_LOG_LEVEL=2)
+    target_link_libraries(net_rendezvous PRIVATE
+        Threads::Threads mimalloc-static arts::libfabric ${RT_LIBRARY})
+    register_pure_unit_test(net_rendezvous TIMEOUT 60)
+    set_tests_properties(net_rendezvous PROPERTIES ENVIRONMENT "FI_PROVIDER=tcp")
+endif()
+
+# net_addr_frame_bound — whitebox for the bootstrap address-frame length bound
+# (arts_net_addr_frame_ok in net.h).  Header-only: it exercises the pure
+# predicate, so it needs the internal include dir but no libfabric/runtime link.
+# Compiles in every build; the OFI predicate is under test only when the OFI
+# transport is on (otherwise the test reports SKIP).
+add_executable(net_addr_frame_bound unit/net_addr_frame_bound.c)
+target_include_directories(net_addr_frame_bound PRIVATE
+    ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR}
+    ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
+if(ARTS_TRANSPORT_OFI)
+    target_compile_definitions(net_addr_frame_bound PRIVATE ARTS_TRANSPORT_OFI=1)
+endif()
+target_link_libraries(net_addr_frame_bound PRIVATE Threads::Threads)
+register_pure_unit_test(net_addr_frame_bound)
 
 # --- Foundation concurrency primitives (standalone — no ARTS runtime) ---
 # Exercise arts_shared_ptr_t (shared.c) and the header-only Vyukov
@@ -759,11 +824,52 @@ set_tests_properties(coherence_stress_dist PROPERTIES
     ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/laptop/2n.cfg;default_ports=${port_base}"
 )
 
+# Large-payload cross-rank coherence transfer: a ~256 KiB DB is stamped by a
+# home-rank writer and RW-verified by workers on other ranks, so every hop ships
+# the whole payload over the wire.  This is the guard for the transport's
+# message framing — a payload split across frames the connectionless RX cannot
+# reassemble corrupts silently (checksum mismatch -> FAIL) or mis-dispatches
+# (spurious shutdown -> TIMEOUT); the sizeof(int) DBs elsewhere never reach it.
+# Standard MN variants (2n/3n/4n/2n_io); SKIPs cleanly at rank_count < 2.
+register_multinode_test(coherence_payload_large TIMEOUT 120)
+foreach(_v 2n 3n 4n 2n_io)
+    set_property(TEST coherence_payload_large_${_v} APPEND PROPERTY
+        LABELS "coherence_stress")
+    # A framing bug can mis-dispatch the raw payload frame -> spurious shutdown,
+    # ending the run cleanly (exit 0) BEFORE any worker verifies.  Require the
+    # end-of-run PASS line so that "verification never completed" fails, and
+    # fail on any worker's corruption abort.
+    set_tests_properties(coherence_payload_large_${_v} PROPERTIES
+        PASS_REGULAR_EXPRESSION "PASS: 4 DBs"
+        FAIL_REGULAR_EXPRESSION "FAIL:")
+endforeach()
+
+# Add-dependence-then-release hand-off: consumers whose slots satisfied BEFORE
+# the producer's release must observe the release-published bytes.  A DB whose
+# home is neither the creator nor pre-seeded exposes a serve-early bug as a
+# consumer NULL/zero read (FAIL/abort — rank death still exits 0 through the
+# survivor's clean shutdown, so require the PASS line) or as a never-woken
+# parked acquire (missing PASS -> timeout).
+# NOT registered under MRMW: the release-gated hand-off is an OCR-model
+# (exclusive-RW serialization) guarantee.  MRMW's DB-DRF admission has no
+# ownership round — a reader satisfied mid-hold legally reads the current
+# canonical snapshot, so this assertion is outside that contract.
+if(NOT ARTS_COHERENCE_PROTOCOL STREQUAL "MRMW")
+register_multinode_test(coherence_satisfy_before_release TIMEOUT 60)
+foreach(_v 2n 3n 4n 2n_io)
+    set_property(TEST coherence_satisfy_before_release_${_v} APPEND PROPERTY
+        LABELS "coherence_stress")
+    set_tests_properties(coherence_satisfy_before_release_${_v} PROPERTIES
+        PASS_REGULAR_EXPRESSION "PASS: 4 DBs observed|SKIP"
+        FAIL_REGULAR_EXPRESSION "FAIL:")
+endforeach()
+endif()
+
 # Lazy-protocol ownership-transfer TRANSFER/INVALIDATE two-wire reorder stress.
 # MUST use
-# a receiver_threads>=2 config (arts_2n_io.cfg = 2 nodes, 3w/2s/2r) so the
+# a progress_threads>=2 config (arts_2n_io.cfg = 2 nodes, 5w/2p) so the
 # TRANSFER_OWNERSHIP(+1) and follow-up INVALIDATE(-1) to the same just-granted
-# owner can be dispatched out of order by different receiver threads — the
+# owner can be dispatched out of order by different progress threads — the
 # window the commutative-signed writer_count fix closes.  Drives a few thousand
 # ownership transfers and PASSES on chain completion (no transfer lost = no
 # stranded RW acquirer); a lost transfer would strand a queued acquirer and hang
@@ -788,7 +894,7 @@ set_tests_properties(coherence_lazy_ownership_reorder PROPERTIES
 # LAZY stale-RO ownership-confirm gate: RO acquire causally ordered after a
 # remote RW writer must observe the writer's value, not a stale snapshot from
 # the old owner.  The race window is home's rw_holder lag behind INSTALL_ACK.
-# The 2n_io config (multiple receiver threads -> wire reorder) exposes it;
+# The 2n_io config (multiple progress threads -> wire reorder) exposes it;
 # 1n passes trivially (no ownership transfer).  RELAXED SKIPs cleanly.
 register_single_node_test(coherence_lazy_confirm_gate TIMEOUT 120)
 register_multinode_test(coherence_lazy_confirm_gate TIMEOUT 120)

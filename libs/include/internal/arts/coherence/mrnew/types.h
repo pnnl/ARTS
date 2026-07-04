@@ -75,6 +75,7 @@ struct arts_db_rw_waiter_s {
 struct arts_home_lockreq_node_s {
   struct arts_home_lockreq_node_s *next;
   unsigned int rank;
+  struct arts_rdzv_landing_s rdzv; /* requester's transfer landing */
 };
 
 struct arts_home_lockreq_queue_s {
@@ -87,6 +88,7 @@ struct arts_home_lockreq_queue_s {
 struct arts_home_lockreq_node_s {
   _Atomic(struct arts_home_lockreq_node_s *) next;
   unsigned int rank;
+  struct arts_rdzv_landing_s rdzv; /* requester's transfer landing */
 };
 
 struct arts_home_lockreq_queue_s {
@@ -139,6 +141,10 @@ struct arts_db_cache_s {
    * writer per round (home baton gate), so no atomic needed.  Shared by both
    * timings (eager's INVALIDATE now carries new_owner too). */
   unsigned int incoming_new_owner;
+  /* The pending new owner's transfer landing, published together with (and
+   * under the same single-writer / publish-before-withdraw discipline as)
+   * incoming_new_owner: the 0-edge actor PUTs the transfer payload here. */
+  struct arts_rdzv_landing_s incoming_new_owner_rdzv;
 #ifdef ARTS_TIMING_LAZY
   /* Lazy: owner-side dedup map.  Allocated lazily on first ownership; preserved
    * across ownership transfer (TRANSFER_OWNERSHIP serializes it). */

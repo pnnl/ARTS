@@ -18,6 +18,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "arts/memory/regpool.h"
+#include "arts/system/print.h"  /* ARTS_ERROR (unadvertisable landing) */
+#include "arts/transport/net.h" /* arts_net_rdzv_local / _txid_next */
 #include "arts/utils/malloc.h"
 #include "arts/utils/shared.h"
 
@@ -32,7 +35,7 @@ static void buffer_deleter(void *obj) {
     arts_lf_pool_release(&cache->buf_freelist, &b->pool_link);
     return;
   }
-  arts_free(b);
+  arts_regpool_free(b);
 }
 
 struct arts_db_buffer_s *arts_db_buf_alloc(struct arts_db_cache_s *cache,
@@ -44,9 +47,12 @@ struct arts_db_buffer_s *arts_db_buf_alloc(struct arts_db_cache_s *cache,
         struct arts_db_buffer_s *)node; /* recycled; caller re-inits fields */
   }
   /* 64-byte aligned so buf->data (offset 64) lands on a cache-line / CXL
-   * boundary.  Recycled by the cb deleter via the free-list; freed only when
+   * boundary.  Drawn from the registered pool so every DB payload buffer
+   * falls inside a slab that is (or will be) pinned and pre-registered with
+   * the fabric, resolvable by arts_regpool_lookup for one-sided RDMA.
+   * Recycled by the cb deleter via the free-list; freed only when
    * owner_cache is NULL (shouldn't happen in normal operation). */
-  return (struct arts_db_buffer_s *)arts_malloc_aligned(
+  return (struct arts_db_buffer_s *)arts_regpool_alloc_aligned(
       sizeof(struct arts_db_buffer_s) + db_size, 64);
 }
 
@@ -59,31 +65,14 @@ arts_shared_ptr_t arts_db_buf_acquire(struct arts_db_cache_s *cache) {
 
 void arts_db_buf_release(arts_shared_ptr_t *h) { arts_shared_release(h); }
 
-struct arts_db_buffer_s *arts_db_buf_install(struct arts_db_cache_s *cache,
-                                             uint64_t new_version,
-                                             const void *data_payload,
-                                             uint64_t db_size) {
-  struct arts_db_buffer_s *new_buf = arts_db_buf_alloc(cache, db_size);
-  if (new_buf == NULL) {
-    return NULL; /* OOM — caller decides how to surface. */
-  }
-  new_buf->owner_cache = cache;
-  new_buf->version = new_version;
-  /* Publish bytes into buf->data (FAM, canonical user-visible storage).
-   * data_payload == NULL ⇒ initial install at create-time: zero-init so
-   * subsequent reads see deterministic state. */
-  if (db_size > 0) {
-    if (data_payload != NULL) {
-      memcpy(new_buf->data, data_payload, (size_t)db_size);
-    } else {
-      memset(new_buf->data, 0, (size_t)db_size);
-    }
-    /* Lazy-installed caches start with db_size==0; the first install learns
-     * the real size from the wire payload. */
-    if (cache->db_size == 0) {
-      cache->db_size = db_size;
-    }
-  }
+/* Version-conditional publish of a fully-initialized private buffer (fields +
+ * payload bytes already set; no cb yet).  Shared by the copy install
+ * (arts_db_buf_install) and the rendezvous landed install
+ * (arts_db_buf_install_landed).  On a stale loss the private buffer is
+ * recycled and the newer installed buffer returned. */
+static struct arts_db_buffer_s *buf_publish(struct arts_db_cache_s *cache,
+                                            struct arts_db_buffer_s *new_buf,
+                                            uint64_t new_version) {
   /* Wrap the buffer in a fresh control block (strong = 1).  The slot will
    * take this ref as the cache-hold on a successful publish.  Stash the cb in
    * the buffer so a holder can recover it (buf->cb) to release without
@@ -118,6 +107,84 @@ struct arts_db_buffer_s *arts_db_buf_install(struct arts_db_cache_s *cache,
       arts_shared_release(&old_h);
     }
   }
+}
+
+struct arts_db_buffer_s *arts_db_buf_install(struct arts_db_cache_s *cache,
+                                             uint64_t new_version,
+                                             const void *data_payload,
+                                             uint64_t db_size) {
+  struct arts_db_buffer_s *new_buf = arts_db_buf_alloc(cache, db_size);
+  if (new_buf == NULL) {
+    return NULL; /* OOM — caller decides how to surface. */
+  }
+  new_buf->owner_cache = cache;
+  new_buf->version = new_version;
+  /* Publish bytes into buf->data (FAM, canonical user-visible storage).
+   * data_payload == NULL ⇒ initial install at create-time: zero-init so
+   * subsequent reads see deterministic state. */
+  if (db_size > 0) {
+    if (data_payload != NULL) {
+      memcpy(new_buf->data, data_payload, (size_t)db_size);
+    } else {
+      memset(new_buf->data, 0, (size_t)db_size);
+    }
+    /* Lazy-installed caches start with db_size==0; the first install learns
+     * the real size from the wire payload. */
+    if (cache->db_size == 0) {
+      cache->db_size = db_size;
+    }
+  }
+  return buf_publish(cache, new_buf, new_version);
+}
+
+/* ===== Rendezvous landing lifecycle (see buffer.h) ======================= */
+
+struct arts_db_buffer_s *
+arts_db_buf_landing_alloc(struct arts_db_cache_s *cache, uint64_t db_size,
+                          struct arts_rdzv_landing_s *out) {
+  struct arts_db_buffer_s *b = arts_db_buf_alloc(cache, db_size);
+  if (b == NULL) {
+    ARTS_ERROR("coherence: rendezvous landing alloc failed (%llu bytes)",
+               (unsigned long long)db_size);
+  }
+  b->owner_cache = cache;
+  if (!arts_net_rdzv_local(b->data, db_size, &out->addr, &out->key)) {
+    /* The buffer lies in no fabric-registered slab, so no peer can PUT into
+     * it.  One-sided bulk transfer requires the registered arena pool. */
+    ARTS_ERROR("coherence: landing buffer is not fabric-registered — "
+               "one-sided payloads require the registered pool "
+               "(ARTS_MALLOC=mimalloc)");
+  }
+  out->txid = arts_net_rdzv_txid_next();
+  out->cookie = (uint64_t)(uintptr_t)b;
+  return b;
+}
+
+void arts_db_buf_landing_recycle(struct arts_db_cache_s *cache,
+                                 struct arts_db_buffer_s *b) {
+  if (b == NULL) {
+    return;
+  }
+  b->cb = NULL;
+  b->owner_cache = cache;
+  arts_lf_pool_release(&cache->buf_freelist, &b->pool_link);
+}
+
+struct arts_db_buffer_s *
+arts_db_buf_install_landed(struct arts_db_cache_s *cache, uint64_t new_version,
+                           struct arts_db_buffer_s *landing,
+                           uint64_t db_size) {
+  landing->owner_cache = cache;
+  landing->version = new_version;
+  if (db_size > 0 && cache->db_size == 0) {
+    cache->db_size = db_size;
+  }
+  return buf_publish(cache, landing, new_version);
+}
+
+void arts_db_buf_ref_release_cb(void *arg) {
+  arts_shared_ptr_t h = (arts_shared_ptr_t)arg;
+  arts_shared_release(&h);
 }
 
 void arts_db_buf_write_inplace(struct arts_db_cache_s *cache, const void *data,

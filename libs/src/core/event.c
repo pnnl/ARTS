@@ -68,7 +68,7 @@
 #include "arts/runtime_state.h" /* arts_node_info */
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
-#include "arts/transport/outbox.h"    /* outbound send helpers */
+#include "arts/transport/net.h"    /* outbound send helpers */
 #include "arts/transport/protocol.h"  /* wire packet structs */
 #include "arts/utils/lockfree_lifo.h" /* arts_lf_stack_init / drain */
 #include "arts/utils/malloc.h"
@@ -629,10 +629,10 @@ void arts_send_event_add_dependence(arts_guid_t source, arts_guid_t destination,
 }
 
 void arts_handler_event_create(void *ptr) {
-  struct arts_msg_guid_only_packet_s *packet =
-      (struct arts_msg_guid_only_packet_s *)ptr;
+  struct arts_msg_memory_move_packet_s *packet =
+      (struct arts_msg_memory_move_packet_s *)ptr;
   uint64_t size =
-      packet->header.size - sizeof(struct arts_msg_guid_only_packet_s);
+      packet->header.size - sizeof(struct arts_msg_memory_move_packet_s);
 
   struct arts_event_s *mem_packet =
       (struct arts_event_s *)arts_malloc_aligned(size, ARTS_CACHE_LINE_SIZE);

@@ -51,11 +51,12 @@
 #include "arts/edt.h"
 #include "arts/event.h"
 #include "arts/gas/route_table.h" /* arts_route_table_lookup_db (Cat-C lookup-acquire) */
+#include "arts/memory/regpool.h" /* push-rendezvous landing alloc */
 #include "arts/ooo.h"
 #include "arts/runtime_state.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
-#include "arts/transport/outbox.h"
+#include "arts/transport/net.h"
 #include "arts/transport/protocol.h"
 #include "arts/utils/malloc.h"
 #include "arts/utils/shared.h" /* arts_shared_get / arts_shared_release */
@@ -67,10 +68,10 @@ uint64_t *rec_seq_numbers;
 /*
  * arts_transport_broadcast_shutdown — First step of the shutdown protocol.
  *
- * Enqueue a header-only MSG_SHUTDOWN to every other rank.
- * The sender thread drains the outbox; the caller should then wait for
- * arts_node_info.outbox_pending to reach zero (see wait_for_outbox_drain
- * in threads.c) before proceeding to local shutdown.
+ * Inject a header-only MSG_SHUTDOWN onto the fabric to every other rank (same
+ * path as every other message).  The caller then waits (bounded) on
+ * arts_net_drain_outstanding for those sends to complete before proceeding to
+ * local shutdown.
  */
 void arts_transport_broadcast_shutdown(void) {
   if (arts_global_rank_count <= 1) {
@@ -87,7 +88,7 @@ void arts_transport_broadcast_shutdown(void) {
 }
 
 void arts_transport_cleanup(void) {
-  arts_outbox_cleanup();
+  arts_loopback_cleanup();
 #ifdef SEQUENCENUMBERS
   arts_free(rec_seq_numbers);
   rec_seq_numbers = NULL;
@@ -95,13 +96,134 @@ void arts_transport_cleanup(void) {
 }
 
 void arts_transport_setup(struct arts_config_s *config) {
-  // ASYNC Message Queue Init
+  /* Establish the bootstrap TCP mesh.  The outbound queue the outbox once
+   * carved here is gone — each producing thread injects its own sends directly
+   * onto the fabric. */
   arts_socket_setup(config);
-  arts_outbox_init(arts_global_rank_count * config->port_count);
 #ifdef SEQUENCENUMBERS
   rec_seq_numbers =
       (uint64_t *)arts_calloc(arts_global_rank_count, sizeof(uint64_t));
 #endif
+}
+
+/* ===== Generic push rendezvous ==============================================
+ * Sender side: a bulk payload the receiver did not ask for (EDT/event moves,
+ * DB_MODE_PTR satisfies) whose wire total would breach the control ceiling.
+ * RTS announces the size; the target allocates a plain registered landing and
+ * replies CTS; the sender PUTs, patches {rdzv_txid, rdzv_cookie(, rdzv_size)}
+ * into the retained control packet by message type, and sends it; the target
+ * pairs {packet, write completion} and re-enters the normal handler with the
+ * landed bytes. */
+
+struct rdzv_push_ctx_s {
+  int rank;
+  char *payload;
+  uint64_t size;
+  void (*free_method)(void *);
+  unsigned int packet_len;
+  /* packet bytes follow inline */
+};
+
+/* PUT local-completion hook: run the caller's completion-gated free. */
+static void rdzv_push_src_done(void *arg) {
+  struct rdzv_push_ctx_s *ctx = (struct rdzv_push_ctx_s *)arg;
+  if (ctx->free_method != NULL) {
+    ctx->free_method(ctx->payload);
+  }
+  arts_free(ctx);
+}
+
+void arts_transport_send_pushed_payload(int rank,
+                                        const struct arts_msg_header_s *packet,
+                                        unsigned int packet_len, char *payload,
+                                        uint64_t size,
+                                        void (*free_method)(void *)) {
+  /* Mirror the public wrappers' self/out-of-range warn-drop BEFORE retaining
+   * state: a dropped RTS would otherwise strand the ctx and the payload (the
+   * completion-gated free only runs on the CTS round-trip). */
+  if ((unsigned int)rank == arts_global_rank_id ||
+      (unsigned int)rank >= arts_global_rank_count) {
+    ARTS_WARN("Cannot push to rank %u (self=%u, total=%u)", (unsigned int)rank,
+              arts_global_rank_id, arts_global_rank_count);
+    if (free_method != NULL) {
+      free_method(payload);
+    }
+    return;
+  }
+  struct rdzv_push_ctx_s *ctx = (struct rdzv_push_ctx_s *)arts_malloc(
+      sizeof(struct rdzv_push_ctx_s) + packet_len);
+  ctx->rank = rank;
+  ctx->payload = payload;
+  ctx->size = size;
+  ctx->free_method = free_method;
+  ctx->packet_len = packet_len;
+  memcpy(ctx + 1, packet, packet_len);
+  struct arts_msg_rdzv_push_rts_packet_s rts;
+  arts_fill_packet_header(&rts.header, sizeof(rts), MSG_RDZV_PUSH_RTS);
+  rts.size = size;
+  rts.push_cookie = (uint64_t)(uintptr_t)ctx;
+  arts_transport_send_async(rank, (char *)&rts, sizeof(rts));
+}
+
+/* Target-side continuation: the pushed bytes fully landed; rebuild the
+ * contiguous (packet + payload) image the normal handlers expect, dispatch
+ * it, and free the landing. */
+struct rdzv_push_landed_ctx_s {
+  char *landing;
+  uint64_t size;
+  unsigned int packet_len;
+  /* control-packet bytes follow inline */
+};
+
+static void rdzv_push_landed_cb(void *arg) {
+  struct rdzv_push_landed_ctx_s *ctx = (struct rdzv_push_landed_ctx_s *)arg;
+  struct arts_msg_header_s *hdr = (struct arts_msg_header_s *)(ctx + 1);
+  uint64_t total = (uint64_t)ctx->packet_len + ctx->size;
+  char *rebuilt = (char *)arts_malloc((size_t)total);
+  memcpy(rebuilt, hdr, ctx->packet_len);
+  memcpy(rebuilt + ctx->packet_len, ctx->landing, (size_t)ctx->size);
+  struct arts_msg_header_s *rh = (struct arts_msg_header_s *)rebuilt;
+  rh->size = total; /* the handlers derive the blob size from header.size */
+  /* Strip the pairing marks so the re-entry takes the inline arm. */
+  switch (rh->message_type) {
+  case MSG_EDT_SATISFY_SLOT: {
+    struct arts_msg_edt_satisfy_slot_packet_s *sp =
+        (struct arts_msg_edt_satisfy_slot_packet_s *)rebuilt;
+    sp->rdzv_txid = 0;
+    sp->rdzv_cookie = 0;
+    break;
+  }
+  case MSG_EDT_CREATE:
+  case MSG_EVENT_CREATE: {
+    struct arts_msg_memory_move_packet_s *mp =
+        (struct arts_msg_memory_move_packet_s *)rebuilt;
+    mp->rdzv_txid = 0;
+    mp->rdzv_cookie = 0;
+    mp->rdzv_size = 0;
+    break;
+  }
+  default:
+    ARTS_ERROR("push rendezvous: unsupported pushed message type %u",
+               rh->message_type);
+  }
+  arts_transport_dispatch_body(rh);
+  arts_free(rebuilt);
+  arts_regpool_free(ctx->landing);
+  arts_free(ctx);
+}
+
+/* Register the pairing for a pushed message's payload; the packet bytes are
+ * retained in the ctx (the wire buffer is freed after dispatch). */
+static void rdzv_push_expect(const struct arts_msg_header_s *packet,
+                             unsigned int packet_len, uint64_t txid,
+                             uint64_t cookie, uint64_t size) {
+  struct rdzv_push_landed_ctx_s *ctx = (struct rdzv_push_landed_ctx_s *)
+      arts_malloc(sizeof(struct rdzv_push_landed_ctx_s) + packet_len);
+  ctx->landing = (char *)(uintptr_t)cookie;
+  ctx->size = size;
+  ctx->packet_len = packet_len;
+  memcpy(ctx + 1, packet, packet_len);
+  arts_net_rdzv_expect(txid, rdzv_push_landed_cb, ctx);
 }
 
 void arts_transport_dispatch_packet(struct arts_msg_header_s *packet) {
@@ -144,6 +266,14 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
      * OOO_EDT_SATISFY_SLOT kind lays the PTR inline payload immediately after
      * the args struct so the deferred payload reconstructs it; the handler
      * branches on mode to locate it. */
+    if (pack->rdzv_txid != 0) {
+      /* Oversized DB_MODE_PTR payload traveling by push rendezvous: pair this
+       * packet with the write completion, then re-enter with the landed bytes
+       * rebuilt inline. */
+      rdzv_push_expect(packet, (unsigned int)sizeof(*pack), pack->rdzv_txid,
+                       pack->rdzv_cookie, pack->size);
+      break;
+    }
     uint32_t payload = (pack->mode == DB_MODE_PTR) ? pack->size : 0u;
     uint32_t asz =
         (uint32_t)sizeof(struct arts_ooo_args_edt_satisfy_s) + payload;
@@ -192,11 +322,25 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
   }
   case MSG_EDT_CREATE: {
     ARTS_DEBUG("EDT Create Received");
+    struct arts_msg_memory_move_packet_s *pack =
+        (struct arts_msg_memory_move_packet_s *)(packet);
+    if (pack->rdzv_txid != 0) {
+      rdzv_push_expect(packet, (unsigned int)sizeof(*pack), pack->rdzv_txid,
+                       pack->rdzv_cookie, pack->rdzv_size);
+      break;
+    }
     arts_handler_edt_create(packet);
     break;
   }
   case MSG_EVENT_CREATE: {
     ARTS_DEBUG("Event Move Received");
+    struct arts_msg_memory_move_packet_s *pack =
+        (struct arts_msg_memory_move_packet_s *)(packet);
+    if (pack->rdzv_txid != 0) {
+      rdzv_push_expect(packet, (unsigned int)sizeof(*pack), pack->rdzv_txid,
+                       pack->rdzv_cookie, pack->rdzv_size);
+      break;
+    }
     arts_handler_event_create(packet);
     break;
   }
@@ -236,6 +380,10 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     struct arts_ooo_args_db_ownership_request_s args = {
         .requester = pack->header.rank,
         .db_guid = pack->db_guid,
+        .rdzv = {.addr = pack->rdzv.addr,
+                 .key = pack->rdzv.key,
+                 .txid = pack->rdzv.txid,
+                 .cookie = pack->rdzv.cookie},
     };
     arts_ooo_dispatch_or_defer_guid(pack->db_guid, OOO_DB_OWNERSHIP_REQUEST,
                                     &args, sizeof(args));
@@ -267,6 +415,10 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     struct arts_ooo_args_db_ownership_invalidate_s args = {
         .db_guid = pack->db_guid,
         .new_owner_rank = pack->new_owner_rank,
+        .new_owner_rdzv = {.addr = pack->new_owner_rdzv.addr,
+                           .key = pack->new_owner_rdzv.key,
+                           .txid = pack->new_owner_rdzv.txid,
+                           .cookie = pack->new_owner_rdzv.cookie},
     };
     /* Pin the db_s for the handler's duration (the embedded cache is its FIRST
      * member, offset 0) so a concurrent DESTROY on another receiver thread
@@ -303,6 +455,10 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
         .db_guid = pack->db_guid,
         .edt_guid = pack->edt_guid,
         .slot = pack->slot,
+        .rdzv = {.addr = pack->rdzv.addr,
+                 .key = pack->rdzv.key,
+                 .txid = pack->rdzv.txid,
+                 .cookie = pack->rdzv.cookie},
     };
     arts_ooo_dispatch_or_defer_guid(pack->db_guid, OOO_DB_SNAPSHOT_REQUEST,
                                     &args, sizeof(args));
@@ -312,29 +468,31 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     ARTS_DEBUG("Coh DATA_RESPONSE Received");
     struct arts_msg_snapshot_response_packet_s *pack =
         (struct arts_msg_snapshot_response_packet_s *)(packet);
-    /* header.size is the peer-supplied total on-wire byte count; a malformed
-     * value below the fixed struct size would underflow the unsigned payload
-     * length and drive an OOB copy/allocation. Drop such packets. */
-    if (pack->header.size < sizeof(*pack)) {
-      break;
-    }
-    const void *data = (const char *)pack + sizeof(*pack);
-    uint64_t data_size = pack->header.size - sizeof(*pack);
-    /* Cat-C lookup-acquire-or-drop: HIT runs the pure body against the
-     * ref-pinned home db_s; MISS (DB destroyed / slot NULL-stored) silently
-     * drops — the parked EDT this 1:1 response would resume was torn down. */
+    /* No inline payload rides the wire anymore (the snapshot payload travels
+     * one-sided and pairs by rdzv_txid inside the handler); a data-bearing
+     * response is metadata-only.  Cat-C lookup-acquire-or-drop: HIT runs the
+     * pure body against the ref-pinned db_s; MISS (DB destroyed / slot
+     * NULL-stored) silently drops — the parked EDT this 1:1 response would
+     * resume was torn down. */
     struct arts_db_snapshot_response_args_s args = {
         .edt_guid = pack->edt_guid,
         .slot = pack->slot,
         .data_present = pack->data_present,
         .version = pack->version,
-        .data = data_size > 0 ? data : NULL,
-        .data_size = data_size,
+        .data = NULL,
+        .data_size = 0,
+        .db_size = pack->db_size,
+        .rdzv_txid = pack->rdzv_txid,
+        .rdzv_cookie = pack->rdzv_cookie,
     };
     arts_shared_ptr_t h = arts_route_table_lookup_db(pack->db_guid);
     struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(h);
     if (db != NULL) {
       arts_handler_db_snapshot_response(db, &args);
+    } else {
+      /* MISS with a one-sided payload in flight: still consume the txid so
+       * the pairing table stays leak-free (the landing frees on arrival). */
+      arts_db_rdzv_discard_landing(pack->rdzv_txid, pack->rdzv_cookie);
     }
     arts_shared_release(&h);
     break;
@@ -377,25 +535,74 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
    * GRANT (buffer payload); lazy = TRANSFER_OWNERSHIP (map + buffer); MRMW
    * has no ownership transfer and fatals to catch a binary mode mismatch. */
 #if defined(ARTS_PROTOCOL_MRMW) || defined(ARTS_PROTOCOL_LOCK)
-  case MSG_DB_OWNERSHIP_RESPONSE: {
-    ARTS_ERROR("MRMW/LOCK build received OWNERSHIP_RESPONSE from rank %u — "
-               "protocol has no ownership transfer; binary mode mismatch?",
-               packet->rank);
+  case MSG_DB_OWNERSHIP_RESPONSE:
+  case MSG_DB_OWNERSHIP_CTS: {
+    ARTS_ERROR("MRMW/LOCK build received ownership-transfer message type %d "
+               "from rank %u — protocol has no ownership transfer; binary "
+               "mode mismatch?",
+               packet->message_type, packet->rank);
     break;
   }
 #else  /* MRNEW/MRSW eager and lazy: one converged layout */
   case MSG_DB_OWNERSHIP_RESPONSE: {
     ARTS_DEBUG("Coh OWNERSHIP_RESPONSE Received");
-    /* Payload (map + data) immediately follows the header in the contiguous
-     * wire buffer; the handler parses it from the full packet.  Both timings
-     * share the lazy-style layout (EAGER carries map_entry_count=0). */
+    /* The (small) serialized map immediately follows the header; the buffer
+     * payload travels one-sided and pairs by rdzv_txid inside the handler.
+     * Both timings share the lazy-style layout (EAGER: map_entry_count=0). */
     arts_handler_db_ownership_response((void *)packet, (size_t)packet->size);
+    break;
+  }
+  case MSG_DB_OWNERSHIP_CTS: {
+    ARTS_DEBUG("Coh OWNERSHIP_CTS Received");
+    struct arts_msg_ownership_cts_packet_s *pack =
+        (struct arts_msg_ownership_cts_packet_s *)(packet);
+    /* Cat-C lookup-acquire-or-drop: HIT learns db_size + re-issues the
+     * in-flight request with a landing; MISS (DB destroyed) silently drops
+     * (the requester's parked waiters are woken by the destroy fan-out). */
+    arts_shared_ptr_t h = arts_route_table_lookup_db(pack->db_guid);
+    struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(h);
+    if (db != NULL) {
+      arts_handler_db_ownership_cts(db, pack);
+    }
+    arts_shared_release(&h);
     break;
   }
 #endif /* model dispatch for MSG_DB_OWNERSHIP_RESPONSE */
   /* WRITEBACK + WRITEBACK_ACK: used by the eager protocol and MRMW
    * (sync release writeback).  Fatal in the lazy protocol — lazy uses
    * async transfer, not synchronous writeback. */
+#if defined(ARTS_TIMING_LAZY)
+  case MSG_DB_WRITEBACK_CTS: {
+    ARTS_ERROR("lazy build received WRITEBACK_CTS from rank %u — no "
+               "synchronous writeback exists; binary mode mismatch?",
+               packet->rank);
+    break;
+  }
+#else
+  /* WRITEBACK_CTS is valid under EVERY non-lazy timing: the ownership
+   * protocols' and the lossy multi-writer protocol's dirty-writeback
+   * announce leg, and the exclusive-lock protocol's landing-less RW release
+   * (a creator-seeded hold that never received a grant). */
+  case MSG_DB_WRITEBACK_CTS: {
+    ARTS_DEBUG("Coh WRITEBACK_CTS Received");
+    struct arts_msg_writeback_cts_packet_s *pack =
+        (struct arts_msg_writeback_cts_packet_s *)(packet);
+    /* Cat-C SPECIAL — pointer-identity wake of the blocked releaser's stack
+     * rendezvous (sem first member).  Cache-independent: write the landing
+     * fields, THEN post (sem_post is the release/acquire edge), even if the
+     * DB is being torn down — a stranded releaser must never hang. */
+    struct arts_db_wb_rendezvous_s *wr =
+        (struct arts_db_wb_rendezvous_s *)(uintptr_t)pack->cv;
+    if (wr != NULL) {
+      wr->landing.addr = pack->landing.addr;
+      wr->landing.key = pack->landing.key;
+      wr->landing.txid = pack->landing.txid;
+      wr->landing.cookie = pack->landing.cookie;
+      sem_post(&wr->sem);
+    }
+    break;
+  }
+#endif /* WRITEBACK_CTS timing dispatch */
 #if defined(ARTS_TIMING_LAZY) || defined(ARTS_PROTOCOL_LOCK)
   case MSG_DB_WRITEBACK:
   case MSG_DB_WRITEBACK_ACK: {
@@ -410,33 +617,20 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     ARTS_DEBUG("Coh WRITEBACK Received");
     struct arts_msg_writeback_packet_s *pack =
         (struct arts_msg_writeback_packet_s *)(packet);
-    /* header.size is the peer-supplied total on-wire byte count; a malformed
-     * value below the fixed struct size would underflow the unsigned payload
-     * length and drive an OOB copy/allocation. Drop such packets. */
-    if (pack->header.size < sizeof(*pack)) {
-      break;
-    }
-    const void *data = (const char *)pack + sizeof(*pack);
-    uint64_t data_size = pack->header.size - sizeof(*pack);
-    /* WRITEBACK carries an inline data payload: lay it immediately after the
-     * args struct so the deferred OoO payload reconstructs it, and pass
-     * sizeof(struct) + data_size as the args size.  The pure body reads the
-     * payload back from (char *)args + sizeof(struct). */
-    uint32_t asz =
-        (uint32_t)(sizeof(struct arts_ooo_args_db_writeback_s) + data_size);
-    char *abuf = (char *)arts_malloc(asz);
-    struct arts_ooo_args_db_writeback_s *args =
-        (struct arts_ooo_args_db_writeback_s *)abuf;
-    args->releaser = pack->header.rank;
-    args->db_guid = pack->db_guid;
-    args->version = pack->version;
-    args->cv = pack->cv;
-    args->data_size = data_size;
-    if (data_size > 0) {
-      memcpy(abuf + sizeof(*args), data, data_size);
-    }
-    arts_ooo_dispatch_or_defer_guid(pack->db_guid, OOO_DB_WRITEBACK, abuf, asz);
-    arts_free(abuf);
+    /* Control-only in every phase (announce / commit / data-less) — the dirty
+     * payload travels one-sided and pairs by rdzv_txid inside the handler. */
+    struct arts_ooo_args_db_writeback_s args = {
+        .releaser = pack->header.rank,
+        .db_guid = pack->db_guid,
+        .version = pack->version,
+        .cv = pack->cv,
+        .data_size = pack->data_size,
+        .rdzv_txid = pack->rdzv_txid,
+        .rdzv_cookie = pack->rdzv_cookie,
+        .data_inline = 0,
+    };
+    arts_ooo_dispatch_or_defer_guid(pack->db_guid, OOO_DB_WRITEBACK, &args,
+                                    sizeof(args));
     break;
   }
   case MSG_DB_WRITEBACK_ACK: {
@@ -503,6 +697,10 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
         .edt_guid = pack->edt_guid,
         .requester_rank = pack->requester_rank,
         .slot = pack->slot,
+        .rdzv = {.addr = pack->rdzv.addr,
+                 .key = pack->rdzv.key,
+                 .txid = pack->rdzv.txid,
+                 .cookie = pack->rdzv.cookie},
     };
     arts_shared_ptr_t h = arts_route_table_lookup_db(pack->db_guid);
     struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(h);
@@ -590,9 +788,27 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
         .requester = pack->header.rank,
         .db_guid = pack->db_guid,
         .mode = pack->mode,
+        .rdzv = {.addr = pack->rdzv.addr,
+                 .key = pack->rdzv.key,
+                 .txid = pack->rdzv.txid,
+                 .cookie = pack->rdzv.cookie},
     };
     arts_ooo_dispatch_or_defer_guid(pack->db_guid, OOO_DB_LOCK_REQUEST, &args,
                                     sizeof(args));
+    break;
+  }
+  case MSG_DB_LOCK_CTS: {
+    ARTS_DEBUG("Coh LOCK_CTS Received");
+    struct arts_msg_lock_cts_packet_s *pack =
+        (struct arts_msg_lock_cts_packet_s *)(packet);
+    /* Cat-C lookup-acquire-or-drop: HIT learns db_size + re-issues the
+     * request with a landing; MISS (DB destroyed) silently drops. */
+    arts_shared_ptr_t h = arts_route_table_lookup_db(pack->db_guid);
+    struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(h);
+    if (db != NULL) {
+      arts_handler_db_lock_cts(db, pack);
+    }
+    arts_shared_release(&h);
     break;
   }
 #ifdef ARTS_TIMING_EAGER
@@ -609,34 +825,21 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     ARTS_DEBUG("Coh LOCK_RELEASE Received");
     struct arts_msg_lock_release_packet_s *pack =
         (struct arts_msg_lock_release_packet_s *)(packet);
-    /* header.size is the peer-supplied total on-wire byte count; a malformed
-     * value below the fixed struct size would underflow the unsigned payload
-     * length and drive an OOB copy/allocation. Drop such packets. */
-    if (pack->header.size < sizeof(*pack)) {
-      break;
-    }
-    const void *data = (const char *)pack + sizeof(*pack);
-    uint64_t data_size = pack->header.size - sizeof(*pack);
-    /* RW release carries an inline writeback payload; lay it after the args
-     * struct so the deferred OoO payload reconstructs it, pass total size.
-     * Also decode cv (ACK token) and version for monotone buf_install. */
-    uint32_t asz =
-        (uint32_t)(sizeof(struct arts_ooo_args_db_lock_release_s) + data_size);
-    char *abuf = (char *)arts_malloc(asz);
-    struct arts_ooo_args_db_lock_release_s *args =
-        (struct arts_ooo_args_db_lock_release_s *)abuf;
-    args->releaser = pack->header.rank;
-    args->db_guid = pack->db_guid;
-    args->mode = pack->mode;
-    args->data_size = data_size;
-    args->cv = pack->cv;
-    args->version = pack->version;
-    if (data_size > 0) {
-      memcpy(abuf + sizeof(*args), data, data_size);
-    }
-    arts_ooo_dispatch_or_defer_guid(pack->db_guid, OOO_DB_LOCK_RELEASE, abuf,
-                                    asz);
-    arts_free(abuf);
+    /* Control-only: a dirty RW release PUT its bytes into the grant's home
+     * landing and pairs by rdzv_txid inside the handler. */
+    struct arts_ooo_args_db_lock_release_s args = {
+        .releaser = pack->header.rank,
+        .db_guid = pack->db_guid,
+        .mode = pack->mode,
+        .data_size = pack->data_size,
+        .cv = pack->cv,
+        .version = pack->version,
+        .rdzv_txid = pack->rdzv_txid,
+        .rdzv_cookie = pack->rdzv_cookie,
+        .data_inline = 0,
+    };
+    arts_ooo_dispatch_or_defer_guid(pack->db_guid, OOO_DB_LOCK_RELEASE, &args,
+                                    sizeof(args));
     break;
   }
   case MSG_DB_LOCK_RELEASE_ACK: {
@@ -682,6 +885,72 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
   }
 #endif /* ARTS_TIMING_LAZY */
 #endif /* ARTS_PROTOCOL_LOCK */
+  case MSG_RDZV_PUSH_RTS: {
+    ARTS_DEBUG("RDZV_PUSH_RTS Received");
+    struct arts_msg_rdzv_push_rts_packet_s *pack =
+        (struct arts_msg_rdzv_push_rts_packet_s *)(packet);
+    /* Allocate a plain registered landing for the incoming push and hand it
+     * back.  Fail-loud if it cannot be advertised (one-sided delivery needs
+     * the registered pool). */
+    char *landing =
+        (char *)arts_regpool_alloc_aligned((size_t)pack->size, 64);
+    struct arts_msg_rdzv_push_cts_packet_s cts;
+    arts_fill_packet_header(&cts.header, sizeof(cts), MSG_RDZV_PUSH_CTS);
+    cts.push_cookie = pack->push_cookie;
+    if (!arts_net_rdzv_local(landing, pack->size, &cts.landing.addr,
+                             &cts.landing.key)) {
+      ARTS_ERROR("push rendezvous: landing is not fabric-registered — "
+                 "one-sided payloads require the registered pool");
+    }
+    cts.landing.txid = arts_net_rdzv_txid_next();
+    cts.landing.cookie = (uint64_t)(uintptr_t)landing;
+    arts_transport_send_async((int)packet->rank, (char *)&cts, sizeof(cts));
+    break;
+  }
+  case MSG_RDZV_PUSH_CTS: {
+    ARTS_DEBUG("RDZV_PUSH_CTS Received");
+    struct arts_msg_rdzv_push_cts_packet_s *pack =
+        (struct arts_msg_rdzv_push_cts_packet_s *)(packet);
+    struct rdzv_push_ctx_s *ctx =
+        (struct rdzv_push_ctx_s *)(uintptr_t)pack->push_cookie;
+    /* PUT the retained payload into the granted landing, then send the
+     * retained control packet with the pairing marks patched in by message
+     * type.  The payload's completion-gated free rides the PUT's local
+     * completion. */
+    struct arts_msg_header_s *hdr = (struct arts_msg_header_s *)(ctx + 1);
+    switch (hdr->message_type) {
+    case MSG_EDT_SATISFY_SLOT: {
+      struct arts_msg_edt_satisfy_slot_packet_s *sp =
+          (struct arts_msg_edt_satisfy_slot_packet_s *)hdr;
+      sp->rdzv_txid = pack->landing.txid;
+      sp->rdzv_cookie = pack->landing.cookie;
+      break;
+    }
+    case MSG_EDT_CREATE:
+    case MSG_EVENT_CREATE: {
+      struct arts_msg_memory_move_packet_s *mp =
+          (struct arts_msg_memory_move_packet_s *)hdr;
+      mp->rdzv_txid = pack->landing.txid;
+      mp->rdzv_cookie = pack->landing.cookie;
+      mp->rdzv_size = ctx->size;
+      break;
+    }
+    default:
+      ARTS_ERROR("push rendezvous: unsupported pushed message type %u",
+                 hdr->message_type);
+    }
+    /* Send the control packet BEFORE posting the PUT: send_async copies the
+     * bytes synchronously, while the PUT's local completion — which frees ctx
+     * (and hdr inside it) — can fire as early as the submit's own
+     * backpressure reap.  Packet/completion ordering is irrelevant (the
+     * target pairs by txid in either order). */
+    int target_rank = ctx->rank;
+    arts_transport_send_async(target_rank, (char *)hdr, ctx->packet_len);
+    arts_net_put_payload(target_rank, pack->landing.addr, pack->landing.key,
+                         pack->landing.txid, ctx->payload, ctx->size,
+                         rdzv_push_src_done, ctx);
+    break;
+  }
   default: {
     ARTS_INFO("Unknown Packet %d %d %d", packet->message_type, packet->size,
               packet->rank);

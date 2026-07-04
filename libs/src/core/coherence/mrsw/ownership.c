@@ -35,7 +35,7 @@
 #include "arts/runtime_state.h"
 #include "arts/runtime_types.h"
 #include "arts/system/threads.h"     /* arts_global_rank_id */
-#include "arts/transport/outbox.h"   /* arts_transport_send_async */
+#include "arts/transport/net.h"   /* arts_transport_send_async */
 #include "arts/transport/protocol.h" /* arts_fill_packet_header, MSG_* */
 #include "arts/utils/atomics.h"      /* arts_atomic_* */
 #include "arts/utils/malloc.h" /* arts_malloc / arts_free (transfer ship) */
@@ -87,8 +87,7 @@ bool arts_db_mrsw_run_one(struct arts_db_cache_s *cache) {
  * behavior). */
 static void arts_db_kick_remote_rw(struct arts_db_cache_s *cache) {
   if (arts_atomic_cswap(&cache->ownership_req_in_flight, 0, 1) == 0) {
-    unsigned int home_rank = arts_guid_get_rank(cache->db_guid);
-    arts_send_db_ownership_request(home_rank, cache->db_guid);
+    arts_send_db_ownership_request(cache);
   }
 }
 
@@ -240,37 +239,98 @@ void arts_db_release_rw_local(struct arts_db_cache_s *cache) {
  * 8, so an omitted header would underflow data_size and corrupt the install. */
 void arts_db_send_ownership_response(struct arts_db_cache_s *cache) {
   unsigned int new_owner = cache->incoming_new_owner;
+  struct arts_rdzv_landing_s rdzv = cache->incoming_new_owner_rdzv;
   cache->incoming_new_owner =
       ARTS_LAZY_NO_PENDING_OWNER; /* re-arm before send */
+  cache->incoming_new_owner_rdzv = (struct arts_rdzv_landing_s){0, 0, 0, 0};
   arts_shared_ptr_t buf_h = arts_db_buf_acquire(cache);
   struct arts_db_buffer_s *buf =
       (struct arts_db_buffer_s *)arts_shared_get(buf_h);
-  if (buf == NULL) {
-    /* Sentinel DB (db_size==0) or pre-publication: empty transfer + empty map
-     * count-header. */
-    uint32_t empty_map[2] = {0u, 0u};
-    arts_send_db_ownership_response(new_owner, cache->db_guid, /*version=*/0,
-                                    empty_map, sizeof(empty_map), /*data=*/NULL,
-                                    /*data_size=*/0);
+
+  /* Serialize the owner-side dedup map — small, and it rides INLINE in the
+   * response packet (the control plane); only the buffer payload moves
+   * one-sided.  An empty count-header is emitted when there is no map: the
+   * receiver unconditionally parses map_size >= 8, so omitting it would
+   * corrupt the parse. */
+  size_t map_max =
+      (sizeof(uint32_t) * 2) + ((size_t)arts_global_rank_count *
+                                sizeof(struct arts_msg_rank_version_pair_s));
+  void *map_buf = arts_malloc(map_max);
+  size_t map_size;
+  if (buf != NULL && cache->last_sent_version != NULL) {
+    map_size = arts_rank_u64_map_serialize(cache->last_sent_version, map_buf);
   } else {
-    size_t map_max =
-        (sizeof(uint32_t) * 2) + ((size_t)arts_global_rank_count *
-                                  sizeof(struct arts_msg_rank_version_pair_s));
-    void *map_buf = arts_malloc(map_max);
-    size_t map_size;
-    if (cache->last_sent_version != NULL) {
-      map_size = arts_rank_u64_map_serialize(cache->last_sent_version, map_buf);
-    } else {
-      uint32_t *p = (uint32_t *)map_buf;
-      p[0] = 0u;
-      p[1] = 0u;
-      map_size = sizeof(uint32_t) * 2;
+    uint32_t *mp = (uint32_t *)map_buf;
+    mp[0] = 0u;
+    mp[1] = 0u;
+    map_size = sizeof(uint32_t) * 2;
+  }
+
+  uint64_t version = (buf != NULL) ? buf->version : 0;
+  uint64_t data_size = (buf != NULL) ? cache->db_size : 0;
+  struct arts_msg_ownership_response_packet_s hdr;
+  arts_fill_packet_header(&hdr.header, sizeof(hdr) + map_size,
+                          MSG_DB_OWNERSHIP_RESPONSE);
+  hdr.header.rank = arts_global_rank_id;
+  hdr.db_guid = cache->db_guid;
+  hdr.version = version;
+  hdr.map_entry_count = (map_size >= sizeof(uint32_t) * 2)
+                            ? ((const uint32_t *)map_buf)[0]
+                            : 0u;
+  hdr.pad = 0;
+
+  if (new_owner == arts_global_rank_id) {
+    /* Self-transfer: no wire, no RDMA.  The landing this rank advertised in
+     * its own request is unused — recycle it — and the handler runs inline on
+     * a contiguous same-rank buffer (map + data trailing). */
+    if (rdzv.cookie != 0) {
+      arts_db_buf_landing_recycle(
+          cache, (struct arts_db_buffer_s *)(uintptr_t)rdzv.cookie);
     }
-    arts_send_db_ownership_response(new_owner, cache->db_guid, buf->version,
-                                    map_buf, map_size, buf->data,
-                                    cache->db_size);
+    uint64_t total = sizeof(hdr) + map_size + data_size;
+    hdr.header.size = total;
+    hdr.data_size = data_size;
+    hdr.rdzv_txid = 0;
+    hdr.rdzv_cookie = 0;
+    char *pkt = (char *)arts_malloc((size_t)total);
+    memcpy(pkt, &hdr, sizeof(hdr));
+    memcpy(pkt + sizeof(hdr), map_buf, map_size);
+    if (buf != NULL && data_size > 0) {
+      memcpy(pkt + sizeof(hdr) + map_size, buf->data, (size_t)data_size);
+    }
     arts_free(map_buf);
-    arts_db_buf_release(&buf_h);
+    if (buf != NULL) {
+      arts_db_buf_release(&buf_h);
+    }
+    arts_handler_db_ownership_response(pkt, (size_t)total);
+    arts_free(pkt);
+  } else {
+    if (buf != NULL && data_size > 0 && rdzv.txid != 0) {
+      /* One-sided ship: PUT straight from the live buffer into the new
+       * owner's landing — zero copy at the source.  The strong buffer ref
+       * transfers to the PUT's local completion, keeping the bytes valid
+       * until the fabric no longer reads them. */
+      hdr.data_size = data_size;
+      hdr.rdzv_txid = rdzv.txid;
+      hdr.rdzv_cookie = rdzv.cookie;
+      arts_net_put_payload((int)new_owner, rdzv.addr, rdzv.key, rdzv.txid,
+                           buf->data, data_size, arts_db_buf_ref_release_cb,
+                           (void *)buf_h);
+      buf_h = NULL; /* transferred to the PUT completion */
+    } else {
+      /* Data-less transfer (sentinel DB / pre-publication).  Echo the unused
+       * landing (if any) so the requester recycles it. */
+      hdr.data_size = 0;
+      hdr.rdzv_txid = 0;
+      hdr.rdzv_cookie = rdzv.cookie;
+      if (buf != NULL) {
+        arts_db_buf_release(&buf_h);
+      }
+    }
+    arts_transport_send_payload_async_free((int)new_owner, (char *)&hdr,
+                                           sizeof(hdr), (char *)map_buf,
+                                           /*offset=*/0, (uint64_t)map_size,
+                                           arts_free);
   }
   /* Stranded-waiter re-request tail: ownership has left this rank to new_owner.
    * A CROSS-RANK transfer cannot pop a local waiter that raced into pending_rw
@@ -282,57 +342,6 @@ void arts_db_send_ownership_response(struct arts_db_cache_s *cache) {
   if (new_owner != arts_global_rank_id &&
       !arts_db_rw_waiter_queue_peek_empty(&cache->pending_rw)) {
     arts_db_kick_remote_rw(cache);
-  }
-}
-
-/* ===== OWNERSHIP_RESPONSE wire sender (EAGER + LAZY) ================
- * Carries the serialized last_sent_version map + buffer payload.  A self-send
- * (new_owner == this rank) constructs a contiguous buffer and dispatches the
- * handler inline. */
-void arts_send_db_ownership_response(unsigned int new_owner_rank,
-                                     arts_guid_t db_guid, uint64_t version,
-                                     const void *map_buf, size_t map_size,
-                                     const void *data, size_t data_size) {
-  struct arts_msg_ownership_response_packet_s hdr;
-  uint32_t entry_count = (map_buf != NULL && map_size >= sizeof(uint32_t) * 2)
-                             ? ((const uint32_t *)map_buf)[0]
-                             : 0u;
-  uint64_t total =
-      (uint64_t)sizeof(hdr) + (uint64_t)map_size + (uint64_t)data_size;
-  arts_fill_packet_header(&hdr.header, total, MSG_DB_OWNERSHIP_RESPONSE);
-  hdr.header.rank = arts_global_rank_id;
-  hdr.db_guid = db_guid;
-  hdr.version = version;
-  hdr.map_entry_count = entry_count;
-  hdr.pad = 0;
-  if (new_owner_rank == arts_global_rank_id) {
-    /* Self-transfer: construct a contiguous buffer and call handler inline. */
-    void *buf = arts_malloc((size_t)total);
-    memcpy(buf, &hdr, sizeof(hdr));
-    if (map_buf != NULL && map_size > 0) {
-      memcpy((char *)buf + sizeof(hdr), map_buf, map_size);
-    }
-    if (data != NULL && data_size > 0) {
-      memcpy((char *)buf + sizeof(hdr) + map_size, data, data_size);
-    }
-    arts_handler_db_ownership_response(buf, (size_t)total);
-    arts_free(buf);
-    return;
-  }
-  if ((map_size > 0 || data_size > 0) && (map_buf != NULL || data != NULL)) {
-    size_t payload_size = map_size + data_size;
-    void *payload = arts_malloc(payload_size);
-    if (map_buf != NULL && map_size > 0) {
-      memcpy(payload, map_buf, map_size);
-    }
-    if (data != NULL && data_size > 0) {
-      memcpy((char *)payload + map_size, data, data_size);
-    }
-    arts_transport_send_payload_async_free(
-        (int)new_owner_rank, (char *)&hdr, sizeof(hdr), (char *)payload,
-        /*offset=*/0, (uint64_t)payload_size, arts_free);
-  } else {
-    arts_transport_send_async((int)new_owner_rank, (char *)&hdr, sizeof(hdr));
   }
 }
 
@@ -355,7 +364,15 @@ void arts_handler_db_ownership_request(void *item_v, void *args_v) {
   unsigned int requester = a->requester;
 
   struct arts_db_s *db = arts_db_of_cache(cache);
-  arts_home_lockreq_queue_push(&db->pending_rw, requester);
+  if (a->rdzv.txid == 0 && cache->db_size > 0 && arts_global_rank_count > 1) {
+    /* First-touch request without a landing: the requester did not know
+     * db_size.  Answer with the size (CTS) and do NOT enqueue — home only
+     * queues requests that carry a landing (or target a sentinel DB, whose
+     * transfers are data-less).  The requester re-issues with a landing. */
+    arts_send_db_ownership_cts(requester, cache->db_guid, cache->db_size);
+    return;
+  }
+  arts_home_lockreq_queue_push(&db->pending_rw, requester, &a->rdzv);
 
   /* Active-directory invariant: AT MOST ONE INVALIDATE_NOTICE in flight
    * to the current rw_holder per ownership-transfer round.  CAS 0->1
@@ -383,12 +400,27 @@ void arts_handler_db_ownership_request(void *item_v, void *args_v) {
  * (arts_db_send_ownership_response); there is no RELEASE_OWNERSHIP message.
  * Self-sends dispatch the matching handler inline. */
 
-void arts_send_db_ownership_request(unsigned int home_rank,
-                                    arts_guid_t db_guid) {
+void arts_send_db_ownership_request(struct arts_db_cache_s *cache) {
+  arts_guid_t db_guid = cache->db_guid;
+  unsigned int home_rank = arts_guid_get_rank(db_guid);
+  /* Advertise a fresh transfer landing when the size is known; a size-unknown
+   * first touch sends landing-less (txid 0) and home answers OWNERSHIP_CTS,
+   * whose handler re-enters this sender with cache->db_size learned.  The
+   * rendezvous plane exists only when a peer could PUT (multi-rank run): a
+   * single-rank run has no fabric, every transfer is a same-rank inline
+   * dispatch, and the registered pool carries no MRs to advertise. */
+  struct arts_rdzv_landing_s rdzv = {0, 0, 0, 0};
+  if (cache->db_size > 0 && arts_global_rank_count > 1) {
+    (void)arts_db_buf_landing_alloc(cache, cache->db_size, &rdzv);
+  }
   struct arts_msg_ownership_request_packet_s p;
   arts_fill_packet_header(&p.header, sizeof(p), MSG_DB_OWNERSHIP_REQUEST);
   p.header.rank = arts_global_rank_id;
   p.db_guid = db_guid;
+  p.rdzv.addr = rdzv.addr;
+  p.rdzv.key = rdzv.key;
+  p.rdzv.txid = rdzv.txid;
+  p.rdzv.cookie = rdzv.cookie;
   if (home_rank == arts_global_rank_id) {
     /* Self-send: route through the OoO engine exactly as the wire RX
      * dispatcher does — HIT runs the OWNERSHIP_REQUEST body inline, MISS defers
@@ -396,6 +428,7 @@ void arts_send_db_ownership_request(unsigned int home_rank,
     struct arts_ooo_args_db_ownership_request_s args = {
         .requester = p.header.rank,
         .db_guid = db_guid,
+        .rdzv = rdzv,
     };
     arts_ooo_dispatch_or_defer_guid(db_guid, OOO_DB_OWNERSHIP_REQUEST, &args,
                                     sizeof(args));
@@ -404,15 +437,57 @@ void arts_send_db_ownership_request(unsigned int home_rank,
   arts_transport_send_async((int)home_rank, (char *)&p, sizeof(p));
 }
 
-void arts_send_db_ownership_invalidate(unsigned int owner_rank,
-                                       arts_guid_t db_guid,
-                                       unsigned int new_owner_rank) {
+/* OWNERSHIP_CTS sender (home → first-touch requester) + requester-side body.
+ * The requester learns db_size and re-issues the in-flight request with a
+ * landing; the coalescing flag stays held (same round continuing). */
+void arts_send_db_ownership_cts(unsigned int requester_rank,
+                                arts_guid_t db_guid, uint64_t db_size) {
+  struct arts_msg_ownership_cts_packet_s p;
+  arts_fill_packet_header(&p.header, sizeof(p), MSG_DB_OWNERSHIP_CTS);
+  p.header.rank = arts_global_rank_id;
+  p.db_guid = db_guid;
+  p.db_size = db_size;
+  if (requester_rank == arts_global_rank_id) {
+    /* Self-send cannot occur in a consistent state (home == requester shares
+     * ONE cache, so a size-unknown request implies a size-unknown home), but
+     * mirror the Cat-C lookup-acquire-or-drop for uniformity. */
+    arts_shared_ptr_t h = arts_route_table_lookup_db(db_guid);
+    struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(h);
+    if (db != NULL) {
+      arts_handler_db_ownership_cts(db, &p);
+    }
+    arts_shared_release(&h);
+    return;
+  }
+  arts_transport_send_async((int)requester_rank, (char *)&p, sizeof(p));
+}
+
+void arts_handler_db_ownership_cts(void *item_v, void *args_v) {
+  struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
+  struct arts_msg_ownership_cts_packet_s *p =
+      (struct arts_msg_ownership_cts_packet_s *)args_v;
+  if (cache->db_size == 0) {
+    cache->db_size = p->db_size;
+  }
+  arts_send_db_ownership_request(cache);
+}
+
+void arts_send_db_ownership_invalidate(
+    unsigned int owner_rank, arts_guid_t db_guid, unsigned int new_owner_rank,
+    const struct arts_rdzv_landing_s *new_owner_rdzv) {
+  struct arts_rdzv_landing_s rdzv =
+      (new_owner_rdzv != NULL) ? *new_owner_rdzv
+                               : (struct arts_rdzv_landing_s){0, 0, 0, 0};
   struct arts_msg_ownership_invalidate_packet_s p;
   arts_fill_packet_header(&p.header, sizeof(p), MSG_DB_OWNERSHIP_INVALIDATE);
   p.header.rank = arts_global_rank_id;
   p.db_guid = db_guid;
   p.new_owner_rank = new_owner_rank;
   memset(p.pad, 0, sizeof(p.pad));
+  p.new_owner_rdzv.addr = rdzv.addr;
+  p.new_owner_rdzv.key = rdzv.key;
+  p.new_owner_rdzv.txid = rdzv.txid;
+  p.new_owner_rdzv.cookie = rdzv.cookie;
   if (owner_rank == arts_global_rank_id) {
     /* Self-send: both timings dispatch the INVALIDATE handler directly.  The
      * home publishes the invalidate target (rw_holder) only AFTER that rank's
@@ -422,6 +497,7 @@ void arts_send_db_ownership_invalidate(unsigned int owner_rank,
     struct arts_ooo_args_db_ownership_invalidate_s args = {
         .db_guid = db_guid,
         .new_owner_rank = new_owner_rank,
+        .new_owner_rdzv = rdzv,
     };
     arts_shared_ptr_t db_h = arts_route_table_lookup_db(db_guid);
     struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(db_h);

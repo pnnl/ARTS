@@ -64,6 +64,19 @@ extern "C" {
  */
 #define ARTS_LAZY_NO_PENDING_OWNER ((unsigned int)-1)
 
+/* In-memory rendezvous landing descriptor — the coherence-side mirror of the
+ * packed wire struct arts_msg_rdzv_landing_s (protocol.h): where a payload
+ * sender may fi_writedata, keyed for pairing.  txid == 0 means "no landing"
+ * everywhere (data-less round / size not yet known).  cookie is the
+ * advertiser-local landing-buffer pointer, only ever dereferenced back on the
+ * advertiser rank. */
+struct arts_rdzv_landing_s {
+  uint64_t addr;
+  uint64_t key;
+  uint64_t txid;
+  uint64_t cookie;
+};
+
 /* Portable atomic unsigned-int for struct fields visible to both C and the
  * C++/nvcc layout-only TUs (which cannot parse C11 _Atomic).  C accesses these
  * via arts_atomic_* on the underlying uint; nvcc only needs the layout. */
@@ -97,11 +110,21 @@ struct arts_db_buffer_s {
   char data[];      /* db_size bytes — user-visible */
 };
 
-/* Snapshot-response reorder-buffer node.  Pushed ONLY in case 3 of
- * arts_handler_db_snapshot_response (a NO_DATA reply arrived with version >
- * buf->version, i.e. transport reordered the with-data reply behind it).
- * Drained in full by the next case-2 install via a single atomic_exchange on
- * the Treiber stack — monotonic version guarantees every parked node's
+/* Forward decl; per-rank cache (owner of the per-DB buffer free-list). */
+struct arts_db_cache_s;
+
+/* Snapshot reorder-buffer node, three parkers share it:
+ *   1. requester-side case 3 of arts_handler_db_snapshot_response (a NO_DATA
+ *      reply arrived with version > buf->version — transport reordered the
+ *      with-data reply behind it);
+ *   2. a home-local RO acquire that found no buffer installed yet (cross-rank
+ *      create installs home metadata only; the creator's first WRITEBACK is
+ *      the publication point that installs the first buffer);
+ *   3. a home-side remote GET_DATA serve deferred for the same reason —
+ *      `serve` is non-NULL and the drain re-issues the serve with the
+ *      original requester/rdzv instead of resuming a local EDT.
+ * Drained in full by the next install via a single atomic_exchange on the
+ * Treiber stack — monotonic version guarantees every parked node's
  * target_version <= the just-installed version.  RO path; present in every
  * protocol (MRMW parks all modes here). */
 struct arts_db_snapshot_waiter_s {
@@ -109,10 +132,15 @@ struct arts_db_snapshot_waiter_s {
   arts_guid_t edt_guid;
   unsigned int slot;
   uint64_t target_version;
+  /* Deferred-serve arm: NULL = local waiter (drain resumes the parked EDT;
+   * the resume re-derives dep->ptr from the installed buffer).  Non-NULL =
+   * deferred remote serve; the drain invokes serve(cache, w) BEFORE freeing
+   * w, and requester/rdzv carry the original request. */
+  void (*serve)(struct arts_db_cache_s *cache,
+                struct arts_db_snapshot_waiter_s *w);
+  unsigned int requester;
+  struct arts_rdzv_landing_s rdzv;
 };
-
-/* Forward decl; per-rank cache (owner of the per-DB buffer free-list). */
-struct arts_db_cache_s;
 /* Forward decl; sparse rank-keyed u64 map (owner-side dedup; protocol arms). */
 struct arts_rank_to_u64_map_s;
 

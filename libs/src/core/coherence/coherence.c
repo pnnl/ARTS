@@ -50,11 +50,13 @@
 #include "arts/db.h"
 #include "arts/edt.h"
 #include "arts/gas/route_table.h"
+#include "arts/memory/regpool.h"
 #include "arts/ooo.h"
 #include "arts/runtime_state.h"
 #include "arts/runtime_types.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
+#include "arts/transport/net.h" /* arts_net_put_payload */
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
 #include "arts/utils/shared.h"
@@ -289,8 +291,7 @@ arts_db_acquire_remote_ro(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
    * (case 1/2), or — only under transport reorder — case 3 pushes a
    * reorder-buffer node onto pending_snapshot.  A concurrent destroy is handled
    * by the caller's lookup-miss + OoO defer. */
-  unsigned int home_rank = arts_guid_get_rank(cache->db_guid);
-  arts_send_db_snapshot_request(home_rank, cache->db_guid, edt_guid, slot);
+  arts_send_db_snapshot_request(cache, edt_guid, slot);
   return ARTS_DB_ACQUIRE_PARK;
 }
 #endif /* !ARTS_PROTOCOL_LOCK */
@@ -316,12 +317,20 @@ void arts_db_drain_pending_snapshot(struct arts_db_cache_s *cache) {
         (struct arts_db_snapshot_waiter_s *)node;
     arts_lf_link_t *next =
         atomic_load_explicit(&node->next, memory_order_relaxed);
-    arts_guid_t edt_local = w->edt_guid;
-    unsigned int slot_local = w->slot;
-    arts_free(w);
-    /* Wake after free: mark_edt_ready_by_guid re-derives dep->ptr from the
-     * (now-installed) cache buffer and resumes the acquire walk. */
-    mark_edt_ready_by_guid(edt_local, slot_local);
+    if (w->serve != NULL) {
+      /* Deferred remote serve (home parked a GET_DATA while it had no buffer
+       * yet): re-issue against the now-installed buffer.  The callback must
+       * not retain w past its return. */
+      w->serve(cache, w);
+      arts_free(w);
+    } else {
+      arts_guid_t edt_local = w->edt_guid;
+      unsigned int slot_local = w->slot;
+      arts_free(w);
+      /* Wake after free: mark_edt_ready_by_guid re-derives dep->ptr from the
+       * (now-installed) cache buffer and resumes the acquire walk. */
+      mark_edt_ready_by_guid(edt_local, slot_local);
+    }
     node = next;
   }
 }
@@ -360,8 +369,76 @@ void await_writeback_ack(sem_t *cv) {
 /* arts_db_release_rw is protocol-specific (the version bump is shared, but the
  * pre-decrement buffer-ref drop and the post-decrement transfer/writeback
  * decision differ per protocol), so its whole body lives in
- * coherence/{eager,lazy,mrmw}.c.  Eager and MRMW call await_writeback_ack
- * above for the synchronous-WRITEBACK rendezvous. */
+ * coherence/{eager,lazy,mrmw}.c.  Eager and MRMW call arts_db_writeback_sync
+ * below for the synchronous-WRITEBACK rendezvous. */
+
+#if !defined(ARTS_TIMING_LAZY) && !defined(ARTS_PROTOCOL_LOCK)
+void arts_db_writeback_sync(struct arts_db_cache_s *cache, uint64_t version,
+                            const void *data, uint64_t data_size) {
+  unsigned int home_rank = arts_guid_get_rank(cache->db_guid);
+  /* The rendezvous lives on the HEAP, not the releaser's stack: the shutdown
+   * escape in await_writeback_ack can abandon the wait while a CTS/ACK reply
+   * is still in flight, and that reply writes the landing fields through the
+   * echoed cv before posting.  A heap block deliberately LEAKED on the
+   * shutdown escape keeps that late write inside live memory (a bounded,
+   * teardown-only leak); a popped stack frame would be corrupted. */
+  struct arts_db_wb_rendezvous_s *wr =
+      (struct arts_db_wb_rendezvous_s *)arts_malloc(sizeof(*wr));
+  sem_init(&wr->sem, 0, 0);
+  wr->landing = (struct arts_rdzv_landing_s){0, 0, 0, 0};
+  if (home_rank == arts_global_rank_id || data == NULL || data_size == 0) {
+    /* Same-rank round (the payload rides inline through the OoO args copy —
+     * no wire, no RDMA) or a data-less ordering round: single announce+ACK. */
+    arts_send_db_writeback(home_rank, cache->db_guid, version,
+                           (uint64_t)(uintptr_t)wr, data, data_size,
+                           /*rdzv_txid=*/0, /*rdzv_cookie=*/0);
+    await_writeback_ack(&wr->sem);
+    if (arts_atomic_read(&arts_node_info.shutdown_state) != 0) {
+      return; /* possible shutdown escape: a late ACK may still post — leak */
+    }
+    sem_destroy(&wr->sem);
+    arts_free(wr);
+    return;
+  }
+  /* Remote dirty round: announce (data_size, txid 0) -> home allocates a
+   * fresh landing and replies WRITEBACK_CTS -> PUT the dirty bytes -> commit
+   * (same packet layout, txid set) -> home pairs {commit, write completion},
+   * installs the landing, ACKs. */
+  arts_send_db_writeback(home_rank, cache->db_guid, version,
+                         (uint64_t)(uintptr_t)wr, /*data=*/NULL, data_size,
+                         /*rdzv_txid=*/0, /*rdzv_cookie=*/0);
+  await_writeback_ack(&wr->sem); /* CTS wake — or the shutdown escape */
+  if (wr->landing.txid == 0) {
+    /* Shutdown escape before the CTS landed: no landing to PUT into; the
+     * round is abandoned with the runtime (never a silent data drop in a
+     * live run — the CTS wake always carries a landing).  Leak wr: the late
+     * CTS may still write/post through the echoed cv.
+     *
+     * This read of wr->landing.txid is UNSYNCHRONIZED on this escape path —
+     * sem_timedwait returned via the shutdown timeout, not a real post, so
+     * there is no happens-before edge against a CTS reply that races in
+     * concurrently.  That is precisely why wr must be leaked here rather than
+     * freed: freeing it and letting the racing write land afterward would be
+     * a use-after-free.  Do not "tighten" this into an immediate free. */
+    return;
+  }
+  /* Source lifetime: the caller's buffer ref pins `data` across the PUT; the
+   * ACK below follows the target-side write completion, which implies the
+   * fabric has fully drained the source — no per-PUT completion hook needed. */
+  arts_net_put_payload((int)home_rank, wr->landing.addr, wr->landing.key,
+                       wr->landing.txid, data, data_size,
+                       /*on_local_done=*/NULL, NULL);
+  arts_send_db_writeback(home_rank, cache->db_guid, version,
+                         (uint64_t)(uintptr_t)wr, /*data=*/NULL, data_size,
+                         wr->landing.txid, wr->landing.cookie);
+  await_writeback_ack(&wr->sem); /* install ACK */
+  if (arts_atomic_read(&arts_node_info.shutdown_state) != 0) {
+    return; /* possible shutdown escape — leak (late ACK may post) */
+  }
+  sem_destroy(&wr->sem);
+  arts_free(wr);
+}
+#endif /* !ARTS_TIMING_LAZY && !ARTS_PROTOCOL_LOCK */
 
 #if !defined(ARTS_PROTOCOL_LOCK)
 void arts_db_release_ro(struct arts_db_cache_s *cache) {
@@ -408,14 +485,15 @@ void arts_db_cache_common_destroy_pre(struct arts_db_cache_s *cache) {
     return;
   }
   arts_atomic_shared_store(&cache->buffer, NULL);
-  /* Drain the per-DB recycled-buffer pool, returning leftovers to mimalloc.
-   * The buffer slot is already NULL'd above, and B1 keeps the descriptor (hence
-   * this pool) alive until the last buffer ref drops, so no late deleter can
-   * push in after this point; the cache is torn down single-threaded here.
-   * arts_lf_pool_destroy detaches the DWCAS pool and frees every node via
-   * arts_free (pool_link is at offset 0, so the node ptr is the buffer base).
-   */
-  arts_lf_pool_destroy(&cache->buf_freelist);
+  /* Drain the per-DB recycled-buffer pool, returning leftovers to the
+   * registered pool.  The buffer slot is already NULL'd above, and B1 keeps
+   * the descriptor (hence this pool) alive until the last buffer ref drops,
+   * so no late deleter can push in after this point; the cache is torn down
+   * single-threaded here.  Every node was allocated by arts_db_buf_alloc via
+   * arts_regpool_alloc_aligned (pool_link is at offset 0, so the node ptr is
+   * the buffer base), so the matching free is arts_regpool_free, not the
+   * pool's default arts_free. */
+  arts_lf_pool_destroy_with(&cache->buf_freelist, arts_regpool_free);
 }
 
 /* Steps 3b+4: drain+free the snapshot reorder buffer (a Treiber stack), then

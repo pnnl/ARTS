@@ -47,6 +47,7 @@
 #include "arts/runtime_state.h"
 #include "arts/system/print.h"
 #include "arts/transport/dispatcher.h"
+#include "arts/transport/net.h" /* arts_net_drain_outstanding */
 #include "arts/utils/atomics.h"
 
 /*
@@ -76,39 +77,6 @@ _Noreturn void arts_abort(uint8_t error_code) {
 }
 
 /*
- * wait_for_outbox_drain — Phase A helper.
- *
- * Poll arts_node_info.outbox_pending until it reaches zero or the
- * deadline elapses. Used by the initiator of a shutdown to guarantee
- * that the broadcast MSG_SHUTDOWN packets have been fully
- * handed off to the kernel TCP buffer before the initiator tears down
- * sockets during cleanup.
- */
-static void wait_for_outbox_drain(unsigned int deadline_ms) {
-  struct timespec start;
-  struct timespec now;
-  (void)clock_gettime(CLOCK_MONOTONIC, &start);
-  for (;;) {
-    unsigned int pending =
-        arts_atomic_fetch_add(&arts_node_info.outbox_pending, 0U);
-    if (pending == 0U) {
-      return;
-    }
-    (void)clock_gettime(CLOCK_MONOTONIC, &now);
-    long elapsed_ms = ((now.tv_sec - start.tv_sec) * 1000L) +
-                      ((now.tv_nsec - start.tv_nsec) / 1000000L);
-    if ((unsigned long)elapsed_ms >= (unsigned long)deadline_ms) {
-      ARTS_INFO("shutdown drain timeout: %u messages still pending", pending);
-      return;
-    }
-    /* Short backoff so we don't hog the CPU while the sender thread
-     * drains the outbox. */
-    struct timespec ts = {.tv_sec = 0, .tv_nsec = 1000000L /* 1 ms */};
-    nanosleep(&ts, NULL);
-  }
-}
-
-/*
  * arts_enter_shutdown_state — the single internal CAS-gated mechanism for
  * transitioning a rank into SHUTTING_DOWN state.  Both the initiator side
  * (arts_shutdown) and the passive side (arts_handler_shutdown) reach this.
@@ -129,7 +97,7 @@ void arts_enter_shutdown_state(bool initiator) {
     return; /* another thread / handler already started shutdown */
   }
   /* End-to-end marker (rank 0): this CAS is the single idempotent point where
-   * shutdown is first recognized — before the broadcast + outbox-drain
+   * shutdown is first recognized — before the broadcast + outstanding-drain
    * teardown below.  Stamp the e2e end here so the measured span excludes
    * teardown, matching the reference runtimes (which stop at shutdown
    * reception).  Any thread may execute this; arts_get_time_stamp is
@@ -139,11 +107,14 @@ void arts_enter_shutdown_state(bool initiator) {
   ARTS_INFO("arts_enter_shutdown_state: rank=%u initiator=%d",
             arts_global_rank_id, (int)initiator);
   if (initiator && arts_global_rank_count > 1) {
-    /* Phase A.1: broadcast SHUTDOWN_MSG to every other rank. */
+    /* Phase A.1: broadcast SHUTDOWN_MSG to every other rank (over the fabric,
+     * like every other message). */
     arts_transport_broadcast_shutdown();
-    /* Phase A.2: wait for our own outbox to drain so the broadcast
-     * bytes are in the kernel TCP buffer before we tear down. */
-    wait_for_outbox_drain(500U /* SHUTDOWN_DRAIN_MS */);
+    /* Phase A.2: wait (bounded) for those fabric sends to complete so the
+     * SHUTDOWN frames leave this node before teardown.  The progress thread is
+     * still running and reaps completions; this assists and polls the
+     * outstanding-TX count. */
+    arts_net_drain_outstanding(500U /* SHUTDOWN_DRAIN_MS */);
   }
   /* Phase A.3: stop worker threads. Network threads (senders,
    * receivers) remain alive so they can flush any in-flight traffic

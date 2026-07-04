@@ -46,9 +46,11 @@
 #include "arts/coherence/home.h"
 #include "arts/db.h"
 #include "arts/gas/route_table.h"
+#include "arts/memory/regpool.h" /* arts_regpool_free (orphaned landing) */
 #include "arts/ooo.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
+#include "arts/transport/net.h" /* arts_net_rdzv_expect */
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
 #include "arts/utils/shared.h"
@@ -275,12 +277,112 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
  *      reordered behind us — push self onto pending_snapshot (a future
  *      case-2 install drains us) + re-check (race recovery).
  * Shared verbatim by eager/lazy/MRMW (MRMW routes RW through here too). */
+/* Consume an in-flight rendezvous whose receiver-side object is gone: the
+ * metadata packet arrived for a destroyed target, so nobody will ever expect
+ * the txid — register a discard continuation that returns the landing's
+ * storage to the registered pool once (or as soon as) the write completion
+ * arrives, keeping the pairing table leak-free. */
+struct rdzv_discard_ctx_s {
+  struct arts_db_buffer_s *landing;
+};
+
+static void rdzv_discard_cb(void *arg) {
+  struct rdzv_discard_ctx_s *ctx = (struct rdzv_discard_ctx_s *)arg;
+  arts_regpool_free(ctx->landing);
+  arts_free(ctx);
+}
+
+void arts_db_rdzv_discard_landing(uint64_t txid, uint64_t cookie) {
+  if (txid == 0) {
+    return;
+  }
+  struct rdzv_discard_ctx_s *ctx =
+      (struct rdzv_discard_ctx_s *)arts_malloc(sizeof(*ctx));
+  ctx->landing = (struct arts_db_buffer_s *)(uintptr_t)cookie;
+  arts_net_rdzv_expect(txid, rdzv_discard_cb, ctx);
+}
+
+#if !defined(ARTS_PROTOCOL_LOCK)
+/* Rendezvous continuation for a data-bearing DATA_RESPONSE: the snapshot
+ * payload has fully landed in our advertised landing ("imm seen => landing
+ * valid").  Install it without a copy (version-conditional; a stale landing
+ * recycles), drain the reorder buffer, and resume the parked EDT.  Fires on
+ * {packet, write-completion} pairing, either arrival order, on a
+ * dispatch-path progress thread. */
+struct snapshot_landed_ctx_s {
+  arts_shared_ptr_t db_h; /* own pin taken by the handler (may be NULL) */
+  struct arts_db_buffer_s *landing;
+  uint64_t version;
+  uint64_t data_size;
+  arts_guid_t edt_guid;
+  uint32_t slot;
+};
+
+static void snapshot_landed_cb(void *arg) {
+  struct snapshot_landed_ctx_s *ctx = (struct snapshot_landed_ctx_s *)arg;
+  struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(ctx->db_h);
+  if (db == NULL) {
+    /* DB destroyed while the pairing was outstanding (destroy-during-pending-
+     * acquire is app UB): the cache — and its recycle pool — are gone, so
+     * return the landing's storage straight to the registered pool and drop
+     * (the parked EDT was torn down with the DB). */
+    arts_regpool_free(ctx->landing);
+    arts_shared_release(&ctx->db_h);
+    arts_free(ctx);
+    return;
+  }
+  struct arts_db_cache_s *cache = &db->cache;
+  arts_db_buf_install_landed(cache, ctx->version, ctx->landing,
+                             ctx->data_size);
+  arts_db_drain_pending_snapshot(cache);
+  mark_edt_ready_by_guid(ctx->edt_guid, ctx->slot);
+  arts_shared_release(&ctx->db_h);
+  arts_free(ctx);
+}
+
 void arts_handler_db_snapshot_response(void *item_v, void *args_v) {
   struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
   struct arts_db_snapshot_response_args_s *a =
       (struct arts_db_snapshot_response_args_s *)args_v;
   arts_guid_t edt_guid = a->edt_guid;
   uint32_t slot = a->slot;
+
+  if (a->data_present == 2) {
+    /* Size-only CTS: the server holds data but our request carried no landing
+     * (first touch — db_size unknown).  Learn the size and re-issue the
+     * request; the re-request advertises a landing and is served for real. */
+    if (cache->db_size == 0) {
+      cache->db_size = a->db_size;
+    }
+    arts_send_db_snapshot_request(cache, edt_guid, slot);
+    return;
+  }
+
+  if (a->data_present == 1 && a->rdzv_txid != 0) {
+    /* The payload travels one-sided: pair this packet with the write
+     * completion (either may arrive first); install+resume when both are in.
+     * Take our own descriptor pin for the pairing window (the dispatcher's
+     * ref ends when this handler returns). */
+    struct snapshot_landed_ctx_s *ctx =
+        (struct snapshot_landed_ctx_s *)arts_malloc(sizeof(*ctx));
+    ctx->db_h = arts_route_table_lookup_db(cache->db_guid);
+    ctx->landing = (struct arts_db_buffer_s *)(uintptr_t)a->rdzv_cookie;
+    ctx->version = a->version;
+    ctx->data_size = a->db_size;
+    ctx->edt_guid = edt_guid;
+    ctx->slot = slot;
+    arts_net_rdzv_expect(a->rdzv_txid, snapshot_landed_cb, ctx);
+    return;
+  }
+
+  /* No PUT consumed the advertised landing: recycle it.  Covers a no-data
+   * reply (dedup'd / nothing published) AND a same-rank inline serve (a LAZY
+   * REDIRECT that resolved back onto the requester) — in both the echoed
+   * cookie names our own untouched buffer. */
+  if (a->rdzv_cookie != 0) {
+    arts_db_buf_landing_recycle(
+        cache, (struct arts_db_buffer_s *)(uintptr_t)a->rdzv_cookie);
+  }
 
   arts_shared_ptr_t buf_h = arts_db_buf_acquire(cache);
   struct arts_db_buffer_s *buf =
@@ -310,6 +412,7 @@ void arts_handler_db_snapshot_response(void *item_v, void *args_v) {
   w->edt_guid = edt_guid;
   w->slot = slot;
   w->target_version = a->version;
+  w->serve = NULL; /* local waiter: drain resumes the parked EDT */
   arts_lf_stack_push(&cache->pending_snapshot, &w->link);
   /* Race recovery: a concurrent case-2 install may have published the buffer
    * between our version read and the push.  If so, drain (our own node
@@ -327,6 +430,7 @@ void arts_handler_db_snapshot_response(void *item_v, void *args_v) {
     arts_db_drain_pending_snapshot(cache);
   }
 }
+#endif /* !ARTS_PROTOCOL_LOCK */
 
 /* arts_handler_db_ownership_invalidate (INVALIDATE_NOTICE) lives per protocol:
  * coherence/eager.c (commutative signed counter) and coherence/lazy.c

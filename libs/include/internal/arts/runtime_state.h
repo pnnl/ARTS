@@ -57,7 +57,7 @@ struct arts_runtime_shared_s {
   char pad3[56];
   bool (*scheduler)();
   struct arts_deque_s **deque;
-  struct arts_deque_s **receiver_deque;
+  struct arts_deque_s **progress_deque;
   struct arts_deque_s **gpu_deque;
 #ifdef ARTS_USE_CXL
   arts_cxl_deque_t *cxl_deque;
@@ -77,8 +77,7 @@ struct arts_runtime_shared_s {
    * can filter threads by role (workers vs. network). */
   unsigned int *thread_roles;
   unsigned int worker_thread_count;
-  unsigned int sender_thread_count;
-  unsigned int receiver_thread_count;
+  unsigned int progress_thread_count;
   unsigned int total_thread_count;
   volatile unsigned int ready_to_push;
   volatile unsigned int ready_to_parallel_start;
@@ -89,11 +88,6 @@ struct arts_runtime_shared_s {
    * Set by arts_runtime_stop() and checked by long-running loops
    * (e.g. arts_transport_connect retry) so they can bail out promptly. */
   volatile unsigned int shutdown_state;
-  /* Count of in-flight async sends (enqueued but not yet written to
-   * kernel TCP buffer). Incremented in arts_outbox_insert_node, decremented at
-   * the end of arts_actual_send (both success and error paths). Used by
-   * the shutdown protocol to drain the outbox before tearing down. */
-  volatile unsigned int outbox_pending;
   /* End-to-end wall-clock marker (rank 0 only), independent of the counter
    * subsystem.  e2e_start_stamp is taken when the main application EDT
    * becomes runnable (init complete — so application init callbacks run

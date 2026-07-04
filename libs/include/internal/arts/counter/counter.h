@@ -87,6 +87,17 @@ extern "C" {
   /* Num: network */                                                           \
   X(NUM_REMOTE_SEND)                                                           \
   X(NUM_REMOTE_RECEIVE)                                                        \
+  /* Num: network — outbound message size census, bucketed by total wire     \
+   * size (header + payload) at the async send entry points, before         \
+   * fragmentation/retry. NET_MSG_TOTAL is the message population count     \
+   * standing in for a per-wire-type breakdown (no array-counter infra to   \
+   * key by message type cheaply). */                                       \
+  X(NET_MSG_LE64)                                                              \
+  X(NET_MSG_LE512)                                                             \
+  X(NET_MSG_LE4K)                                                              \
+  X(NET_MSG_LE64K)                                                             \
+  X(NET_MSG_GT64K)                                                             \
+  X(NET_MSG_TOTAL)                                                             \
   /* Time: network */                                                          \
   X(TIME_REMOTE_MOVE)                                                          \
   /* Time: events */                                                           \

@@ -56,7 +56,7 @@ def APPS_DIR_for(build: Path) -> Path:
 # Multinode node counts every case runs at unless it documents a structural
 # exclusion (see correctness_harness.py's Case.multinode_skip).  The *_io
 # entries are arts-only:
-# xsocr/ocr-vx have a single comm worker (no sender/receiver split), so their
+# xsocr/ocr-vx have a single comm worker (no worker/progress split), so their
 # N-node total already equals the plain N-node config — no separate IO variant.
 _MN_NODE_COUNTS = {
     'laptop': [2, 3, 4, "2n_io"],
@@ -185,7 +185,7 @@ class Runner:
         self.xsocr_cfg = REPO / "configs" / "mpi" / target / "1n.cfg"
 
         # Per-target multinode config paths, generated from MN_RANKS.  The
-        # *_io variants (sender/receiver-heavy IO-forwarding stress) are
+        # *_io variants (progress-thread-heavy IO-forwarding stress) are
         # arts-only — no xsocr/MPI equivalent, so they are absent from the
         # xsocr map.
         mn_ranks = MN_RANKS_for(target)
@@ -303,7 +303,7 @@ class Runner:
 
     def run_ocr(self, case_name: str, bin_name: str, args: list[str], backend: str,
                suffix: str = "", cfg_path: Path | None = None,
-               extra_env: dict | None = None) -> RunResult:
+               extra_env: dict | None = None, timeout: int = 0) -> RunResult:
         # When backend=="arts" and suffix is given, exec <bin_name>_arts_<suffix>.
         # cfg_path overrides the capacity-1n default cfg this backend reads
         # (e.g. a scalability-series "_sc" cfg) -- callers outside the
@@ -312,6 +312,8 @@ class Runner:
         # key override such as counter_folder -- every cfg key is overridable
         # by an identically-named env var, see config.c's per-variable
         # getenv() check).
+        # timeout: per-case single-node wall budget (s); 0 -> the global
+        # default (mirrors run_arts_mn's contract on the multinode side).
         if backend == "arts" and suffix:
             binary = f"{bin_name}_arts_{suffix}"
             log_tag = f"arts_{suffix}"
@@ -330,11 +332,12 @@ class Runner:
         # arts self-pins (hwloc); the xsocr reference needs taskset to occupy
         # the same cores instead of floating across all logical CPUs.
         pin = f"{self._pin_single} " if backend == "xsocr" else ""
+        to = timeout or self.timeout
         cmd = (
             f"cd {self.apps_dir} && {self.mem_prefix}"
-            f"timeout -k 1 {self.timeout} {pin}./{binary} " + " ".join(args)
+            f"timeout -k 1 {to} {pin}./{binary} " + " ".join(args)
         )
-        result = self._run(cmd, env, logfile)
+        result = self._run(cmd, env, logfile, wall_timeout=to)
         if backend == "arts" and cfg_path:
             shutil.copy2(self.arts_cfg, self.apps_dir / "arts.cfg")  # restore default
         self._reap_exe(self.apps_dir / binary)
@@ -450,8 +453,8 @@ class Runner:
         # The override must carry the same port COUNT as the cfg it replaces:
         # the count doubles as the per-node parallel-connection count
         # (port_count = default_ports_count), so a mismatch breaks the
-        # startup handshake.  The *_io variants use two ports (2 sender / 2
-        # receiver threads); every other local cfg uses one.
+        # startup handshake.  The *_io variants use two ports (progress_threads=2);
+        # every other local cfg uses one.
         if isinstance(nodes, str):  # *_io variant
             env["default_ports"] = f"[{base}-{base + 1}]"
         else:
@@ -525,7 +528,10 @@ class Runner:
         self._reap_exe(self.apps_dir / f"{bin_name}_ocrvx")
         return result
 
-    def run_baseline(self, case_name: str, spec) -> RunResult:
+    def run_baseline(self, case_name: str, spec, timeout: int = 0) -> RunResult:
+        # timeout: per-case single-node wall budget (s); 0 -> the global
+        # default (mirrors run_ocr's/run_ocrvx_mpi's contract).
+        to = timeout or self.timeout
         logfile = self.logdir / f"{case_name}.baseline.log"
         env = os.environ.copy()
         env["OMP_NUM_THREADS"] = "4"
@@ -539,9 +545,9 @@ class Runner:
             launcher = f"{self._pin_single} ./{spec.bin}"
         cmd = (
             f"cd {self.base_dir} && {self.mem_prefix}"
-            f"timeout {self.timeout} {launcher} " + " ".join(spec.args)
+            f"timeout -k 1 {to} {launcher} " + " ".join(spec.args)
         )
-        return self._run(cmd, env, logfile)
+        return self._run(cmd, env, logfile, wall_timeout=to)
 
 
 @dataclass(frozen=True)

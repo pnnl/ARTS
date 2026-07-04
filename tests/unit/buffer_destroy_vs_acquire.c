@@ -31,6 +31,7 @@
  */
 
 #include "arts/coherence/buffer.h"
+#include "arts/memory/regpool.h"
 #include "arts/utils/malloc.h"
 #include "arts/utils/shared.h"
 
@@ -151,3 +152,27 @@ void *arts_malloc_aligned(size_t size, size_t align) {
   }
   return p;
 }
+void *arts_regpool_alloc_aligned(size_t size, size_t align) {
+  return arts_malloc_aligned(size, align);
+}
+void arts_regpool_free(void *p) { free(p); }
+
+/* Rendezvous-plane stubs: buffer.c's landing helpers reference the net core's
+ * advertisement/txid primitives and the runtime's fatal-print externs; a pure
+ * unit run never allocates a landing, so inert stubs satisfy the link. */
+#include <stdint.h>
+#include "arts/runtime_state.h"
+#include "arts/system/threads.h"
+unsigned int arts_global_rank_id = 0;
+ARTS_THREAD_LOCAL struct arts_runtime_private_s arts_thread_info;
+void arts_abort(uint8_t code) { exit(code ? code : 1); }
+bool arts_net_rdzv_local(const void *p, uint64_t len, uint64_t *raddr,
+                         uint64_t *rkey) {
+  (void)p;
+  (void)len;
+  (void)raddr;
+  (void)rkey;
+  return false;
+}
+uint64_t arts_net_rdzv_txid_next(void) { return 1; }
+

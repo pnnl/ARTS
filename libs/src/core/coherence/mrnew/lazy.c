@@ -22,7 +22,7 @@
 #include "arts/runtime_state.h"
 #include "arts/runtime_types.h"
 #include "arts/system/threads.h"   /* arts_global_rank_id */
-#include "arts/transport/outbox.h" /* arts_transport_send_async */
+#include "arts/transport/net.h" /* arts_transport_send_async */
 #include "arts/transport/protocol.h"
 #include "arts/utils/atomics.h" /* arts_atomic_* */
 #include "arts/utils/malloc.h"  /* arts_malloc / arts_free (transfer sender) */
@@ -134,6 +134,7 @@ void arts_db_cache_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
    * grant; incoming_new_owner starts at the sentinel (no transfer pending). */
   c->last_sent_version = NULL;
   c->incoming_new_owner = ARTS_LAZY_NO_PENDING_OWNER;
+  c->incoming_new_owner_rdzv = (struct arts_rdzv_landing_s){0, 0, 0, 0};
   c->ownership_unconfirmed = 0u;
   arts_db_cache_common_init(c, db_guid, db_size, kind, creator_rank);
 }
@@ -181,8 +182,9 @@ void arts_db_home_teardown(struct arts_db_s *db) {
 
 /* ===== Lazy start_invalidate_round ==================================== */
 
-void arts_db_lazy_start_invalidate_round(struct arts_db_cache_s *cache,
-                                         unsigned int new_owner) {
+void arts_db_lazy_start_invalidate_round(
+    struct arts_db_cache_s *cache, unsigned int new_owner,
+    const struct arts_rdzv_landing_s *new_owner_rdzv) {
   struct arts_db_s *db = arts_db_of_cache(cache);
   unsigned int current_owner =
       atomic_load_explicit(&db->rw_holder, memory_order_acquire);
@@ -192,10 +194,22 @@ void arts_db_lazy_start_invalidate_round(struct arts_db_cache_s *cache,
    * INVALIDATE arrives — the lazy protocol never defers INVALIDATE; do not
    * route it through dispatch_or_defer (the dispatcher / self-send call the
    * handler body directly, guarded by assert(cache != NULL)). */
-  arts_send_db_ownership_invalidate(current_owner, cache->db_guid, new_owner);
+  arts_send_db_ownership_invalidate(current_owner, cache->db_guid, new_owner,
+                                    new_owner_rdzv);
 }
 
 /* ===== Lazy TRANSFER_OWNERSHIP handler (new owner C) =================== */
+
+struct lazy_response_landed_ctx_s {
+  arts_shared_ptr_t db_h; /* pin transferred from the handler */
+  arts_guid_t db_guid;
+  struct arts_db_buffer_s *landing;
+  uint64_t version;
+  uint64_t data_size;
+};
+static void lazy_response_commit(arts_shared_ptr_t db_h, arts_guid_t db_guid,
+                                 uint64_t version);
+static void lazy_response_landed_cb(void *arg);
 
 void arts_handler_db_ownership_response(void *payload, size_t size) {
   struct arts_msg_ownership_response_packet_s *hdr =
@@ -213,35 +227,72 @@ void arts_handler_db_ownership_response(void *payload, size_t size) {
     db = (struct arts_db_s *)arts_shared_get(db_h);
     if (db == NULL) {
       arts_shared_release(&db_h);
+      /* Consume any in-flight one-sided payload so the pairing table stays
+       * leak-free (the landing frees on arrival). */
+      arts_db_rdzv_discard_landing(hdr->rdzv_txid, hdr->rdzv_cookie);
       return; /* DB destroyed before we became owner — drop. */
     }
   }
   struct arts_db_cache_s *cache = &db->cache;
 
-  /* Wire layout: header | map (count pairs) | data bytes */
+  /* Wire layout: header | map (count pairs, inline).  The buffer payload does
+   * not trail on the wire — it travels one-sided into our advertised landing
+   * (a same-rank self-transfer still trails it inline). */
   char *map_start = (char *)payload + sizeof(*hdr);
   size_t map_size =
       (sizeof(uint32_t) * 2) + ((size_t)hdr->map_entry_count *
                                 sizeof(struct arts_msg_rank_version_pair_s));
-  char *data_start = map_start + map_size;
-  size_t data_size = size - sizeof(*hdr) - map_size;
 
-  /* Reconstruct the owner-side dedup map so this rank can skip
-   * redundant DATA_RESPONSE sends to readers that already hold a
-   * sufficiently fresh copy. */
+  /* Reconstruct the owner-side dedup map so this rank can skip redundant
+   * DATA_RESPONSE sends to readers that already hold a sufficiently fresh
+   * copy.  Must happen HERE (the map bytes live in the packet, which is freed
+   * after dispatch) — harmless ahead of the install: the map is only consulted
+   * once this rank serves REDIRECTs, which requires the ownership this round
+   * is still delivering. */
   if (cache->last_sent_version != NULL) {
     arts_rank_u64_map_destroy(cache->last_sent_version);
   }
   cache->last_sent_version = arts_rank_u64_map_deserialize(
       map_start, map_size, arts_global_rank_count);
 
-  /* Install the transferred buffer. */
+  if (hdr->rdzv_txid != 0) {
+    /* Payload travels one-sided: pair this packet with the write completion
+     * (either order) and install+commit when both are in. */
+    struct lazy_response_landed_ctx_s *ctx =
+        (struct lazy_response_landed_ctx_s *)arts_malloc(sizeof(*ctx));
+    ctx->db_h = db_h;
+    ctx->db_guid = db_guid;
+    ctx->landing = (struct arts_db_buffer_s *)(uintptr_t)hdr->rdzv_cookie;
+    ctx->version = hdr->version;
+    ctx->data_size = hdr->data_size;
+    arts_net_rdzv_expect(hdr->rdzv_txid, lazy_response_landed_cb, ctx);
+    return;
+  }
+
+  /* No PUT: recycle the unused landing (echoed for a data-less transfer),
+   * install any inline same-rank payload, and commit. */
+  if (hdr->rdzv_cookie != 0) {
+    arts_db_buf_landing_recycle(
+        cache, (struct arts_db_buffer_s *)(uintptr_t)hdr->rdzv_cookie);
+  }
+  char *data_start = map_start + map_size;
+  size_t data_size = size - sizeof(*hdr) - map_size;
   if (data_size > 0) {
     arts_db_buf_install(cache, hdr->version, data_start, data_size);
     if (cache->db_size == 0) {
       cache->db_size = data_size;
     }
   }
+  lazy_response_commit(db_h, db_guid, hdr->version); /* releases db_h */
+}
+
+/* Post-install tail of the TRANSFER_OWNERSHIP handler — everything that must
+ * run only once the transferred bytes are in place.  db_h is the caller's pin
+ * on the db_s; consumed (released) here. */
+static void lazy_response_commit(arts_shared_ptr_t db_h, arts_guid_t db_guid,
+                                 uint64_t version) {
+  struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(db_h);
+  struct arts_db_cache_s *cache = &db->cache;
 
   /* ADD the ownership sentinel (+1) PLUS a transient DRAIN GUARD (+1) in a
    * single atomic op (jump 0->2, no intermediate 1 a racing INVALIDATE could
@@ -280,9 +331,22 @@ void arts_handler_db_ownership_response(void *payload, size_t size) {
    * unconditionally. ownership_req_in_flight stays 1 until CONFIRM_ACK so fresh
    * RW acquires in the gate window park without issuing a duplicate request. */
   unsigned int home_rank = arts_guid_get_rank(db_guid);
-  arts_send_db_ownership_confirm(home_rank, db_guid, hdr->version);
+  arts_send_db_ownership_confirm(home_rank, db_guid, version);
 
   arts_shared_release(&db_h);
+}
+
+/* Rendezvous continuation: transfer payload fully landed — install without a
+ * copy, then run the commit tail.  Fires on {packet, write-completion}
+ * pairing, either arrival order, on a dispatch-path progress thread. */
+static void lazy_response_landed_cb(void *arg) {
+  struct lazy_response_landed_ctx_s *ctx =
+      (struct lazy_response_landed_ctx_s *)arg;
+  struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(ctx->db_h);
+  arts_db_buf_install_landed(&db->cache, ctx->version, ctx->landing,
+                             ctx->data_size);
+  lazy_response_commit(ctx->db_h, ctx->db_guid, ctx->version); /* releases */
+  arts_free(ctx);
 }
 
 /* ===== Lazy CONFIRM handler (home A) =============================== */
@@ -311,9 +375,11 @@ void arts_handler_db_ownership_confirm(void *item_v, void *args_v) {
    * CONFIRM_ACK↔INVALIDATE reorder window.  With no pending requester the ack
    * carries ARTS_LAZY_NO_PENDING_OWNER and the baton is released below. */
   unsigned int piggyback = ARTS_LAZY_NO_PENDING_OWNER;
+  struct arts_rdzv_landing_s piggyback_rdzv = {0, 0, 0, 0};
   {
     unsigned int next_owner;
-    if (arts_home_lockreq_queue_pop(&db->pending_rw, &next_owner)) {
+    if (arts_home_lockreq_queue_pop(&db->pending_rw, &next_owner,
+                                    &piggyback_rdzv)) {
       db->pending_install_owner = next_owner;
       piggyback = next_owner;
       /* No early PROCEED: the next owner's RW cursor is advanced by the CURRENT
@@ -324,7 +390,8 @@ void arts_handler_db_ownership_confirm(void *item_v, void *args_v) {
        * a hold-and-wait cycle. */
     }
   }
-  arts_send_db_ownership_confirm_ack(new_owner, cache->db_guid, piggyback);
+  arts_send_db_ownership_confirm_ack(new_owner, cache->db_guid, piggyback,
+                                     &piggyback_rdzv);
   if (piggyback != ARTS_LAZY_NO_PENDING_OWNER) {
     /* Round advanced via the merged ack; the baton stays held until the new
      * owner releases (transfer-commit), as in the standalone-INVALIDATE case.
@@ -356,9 +423,11 @@ void arts_handler_db_ownership_confirm(void *item_v, void *args_v) {
      * CONFIRM_ACK to piggyback on), so it issues a STANDALONE INVALIDATE to the
      * current rw_holder, exactly like the first-round request-handler path. */
     unsigned int next_owner;
-    if (arts_home_lockreq_queue_pop(&db->pending_rw, &next_owner)) {
+    struct arts_rdzv_landing_s next_rdzv;
+    if (arts_home_lockreq_queue_pop(&db->pending_rw, &next_owner,
+                                    &next_rdzv)) {
       db->pending_install_owner = next_owner;
-      arts_db_lazy_start_invalidate_round(cache, next_owner);
+      arts_db_lazy_start_invalidate_round(cache, next_owner, &next_rdzv);
       return;
     }
     /* The racer was already consumed by whoever we contended with; loop to
@@ -404,6 +473,10 @@ void arts_handler_db_ownership_confirm_ack(void *item_v, void *args_v) {
    * count is >= 1 here and the 0-crossing is deferred to the guard-removal
    * below — exactly the invariant the held guard always provided. */
   if (p != NULL && p->new_owner_rank != ARTS_LAZY_NO_PENDING_OWNER) {
+    cache->incoming_new_owner_rdzv.addr = p->new_owner_rdzv.addr;
+    cache->incoming_new_owner_rdzv.key = p->new_owner_rdzv.key;
+    cache->incoming_new_owner_rdzv.txid = p->new_owner_rdzv.txid;
+    cache->incoming_new_owner_rdzv.cookie = p->new_owner_rdzv.cookie;
     cache->incoming_new_owner = p->new_owner_rank;
     arts_atomic_sub(&cache->writer_count, 1); /* sentinel withdrawal */
   }
@@ -449,10 +522,20 @@ void arts_handler_db_snapshot_request(void *item_v, void *args_v) {
    * still names the OLD owner, which retains its buffer + last_sent_version
    * permanently and serves the REDIRECT from its own copy.  Client-side
    * monotonic version compare keeps stale snapshots safe.  No defer queue. */
+  if (a->rdzv.txid == 0 && cache->db_size > 0 && arts_global_rank_count > 1) {
+    /* First-touch request without a landing: the requester did not know
+     * db_size.  Home is the size authority even though the data lives with
+     * the owner — answer a size-only CTS directly; the re-request carries a
+     * landing and is then redirected for real. */
+    arts_send_db_snapshot_response(requester, cache->db_guid, /*version=*/0,
+                                   edt_guid, slot, /*kind=*/2, cache->db_size,
+                                   &a->rdzv, NULL);
+    return;
+  }
   unsigned int owner =
       atomic_load_explicit(&db->rw_holder, memory_order_acquire);
   arts_send_db_snapshot_redirect(owner, cache->db_guid, requester, edt_guid,
-                                 slot);
+                                 slot, &a->rdzv);
 }
 
 /* Fan-out callback for arts_rank_bitset_for_each during destroy.
@@ -495,7 +578,7 @@ void arts_handler_db_destroy(void *item_v, void *args_v) {
                             (void *)(uintptr_t)a->db_guid);
   {
     unsigned int q_rank;
-    while (arts_home_lockreq_queue_pop(&db->pending_rw, &q_rank)) {
+    while (arts_home_lockreq_queue_pop(&db->pending_rw, &q_rank, NULL)) {
       if (q_rank != self) {
         arts_send_db_cache_destroy(q_rank, a->db_guid);
       }
@@ -539,14 +622,15 @@ void arts_db_start_ownership_round(struct arts_db_cache_s *cache,
    * pending_install_owner is only written by the baton holder (single
    * writer invariant), so no atomic needed. */
   unsigned int next_owner;
-  if (!arts_home_lockreq_queue_pop(&db->pending_rw, &next_owner)) {
+  struct arts_rdzv_landing_s next_rdzv;
+  if (!arts_home_lockreq_queue_pop(&db->pending_rw, &next_owner, &next_rdzv)) {
     /* Defensive: we just pushed, so empty is impossible under correct
      * usage.  Release the baton and return. */
     atomic_store_explicit(&db->invalidate_in_flight, 0u, memory_order_release);
     return;
   }
   db->pending_install_owner = next_owner;
-  arts_db_lazy_start_invalidate_round(cache, next_owner);
+  arts_db_lazy_start_invalidate_round(cache, next_owner, &next_rdzv);
   /* No early PROCEED here (see arts_db_send_ownership_response): the next
    * owner's RW cursor advances at transfer-commit, not at round start. */
 }
@@ -588,6 +672,7 @@ void arts_handler_db_ownership_invalidate(void *item_v, void *args_v) {
    * already published, so exactly one of {this handler, the last releaser}
    * ships.  Only one INVALIDATE_NOTICE is in flight per round (home baton
    * gate), so there is no concurrent writer to incoming_new_owner. */
+  cache->incoming_new_owner_rdzv = a->new_owner_rdzv;
   cache->incoming_new_owner = a->new_owner_rank;
   /* Ship ONLY on the positive->0 edge (writer_count is non-negative; see the
    * handler header). */
@@ -623,12 +708,12 @@ void arts_handler_db_snapshot_redirect(void *item_v, void *args_v) {
   struct arts_db_buffer_s *buf =
       (struct arts_db_buffer_s *)arts_shared_get(buf_h);
   if (buf == NULL) {
-    /* No buffer installed yet (pre-publication or sentinel DB).
-     * Respond with version=0, no data — requester's RO waiter fires
-     * with undefined content (per spec). */
+    /* No buffer installed yet (pre-publication or sentinel DB).  Respond
+     * version=0, no data — the requester's RO waiter fires with undefined
+     * content (per spec); its unused landing is echoed for recycling. */
     arts_send_db_snapshot_response(requester, a->db_guid, /*version=*/0,
-                                   edt_guid, slot, /*data=*/NULL,
-                                   /*data_size=*/0);
+                                   edt_guid, slot, /*kind=*/0, cache->db_size,
+                                   &a->rdzv, NULL);
     return;
   }
   /* Invariant: last_sent_version is created at ownership-install
@@ -646,16 +731,27 @@ void arts_handler_db_snapshot_redirect(void *item_v, void *args_v) {
       arts_rank_u64_map_get(cache->last_sent_version, requester);
 
   if (last_sent >= cur_v) {
-    /* Requester already holds this version — send no-data response. */
+    /* Requester already holds this version — no payload moves; echo the
+     * unused landing for recycling. */
+    arts_db_buf_release(&buf_h);
     arts_send_db_snapshot_response(requester, a->db_guid, cur_v, edt_guid, slot,
-                                   NULL, 0);
+                                   /*kind=*/0, cache->db_size, &a->rdzv, NULL);
+  } else if (a->rdzv.txid == 0 && arts_global_rank_count > 1) {
+    /* Data must move but no landing was forwarded (a first-touch request that
+     * slipped past home's CTS gate can only mean home learned the size after
+     * forwarding — defensive).  Size-only CTS; the re-request (via home)
+     * carries a landing.  The watermark does NOT advance. */
+    arts_db_buf_release(&buf_h);
+    arts_send_db_snapshot_response(requester, a->db_guid, cur_v, edt_guid, slot,
+                                   /*kind=*/2, cache->db_size, &a->rdzv, NULL);
   } else {
-    /* Advance dedup watermark (monotonic max) then send data. */
+    /* Advance dedup watermark (monotonic max), then PUT the payload into the
+     * forwarded landing (buf_h transfers into the sender). */
     arts_rank_u64_map_advance(cache->last_sent_version, requester, cur_v);
     arts_send_db_snapshot_response(requester, a->db_guid, cur_v, edt_guid, slot,
-                                   buf->data, cache->db_size);
+                                   /*kind=*/1, cache->db_size, &a->rdzv,
+                                   buf_h);
   }
-  arts_db_buf_release(&buf_h);
 }
 
 /* ===== Lazy wire senders (moved from coherence/senders.c) =========
@@ -663,14 +759,23 @@ void arts_handler_db_snapshot_redirect(void *item_v, void *args_v) {
  * (coherence/mrnew/ownership.c); the CONFIRM sender is shared too.  Only the
  * lazy-only CONFIRM_ACK + REDIRECT_RO senders remain here. */
 
-void arts_send_db_ownership_confirm_ack(unsigned int new_owner_rank,
-                                        arts_guid_t db_guid,
-                                        unsigned int piggyback_new_owner) {
+void arts_send_db_ownership_confirm_ack(
+    unsigned int new_owner_rank, arts_guid_t db_guid,
+    unsigned int piggyback_new_owner,
+    const struct arts_rdzv_landing_s *piggyback_rdzv) {
   struct arts_msg_ownership_confirm_ack_packet_s p;
   arts_fill_packet_header(&p.header, sizeof(p), MSG_DB_OWNERSHIP_CONFIRM_ACK);
   p.header.rank = arts_global_rank_id;
   p.db_guid = db_guid;
   p.new_owner_rank = piggyback_new_owner;
+  if (piggyback_rdzv != NULL) {
+    p.new_owner_rdzv.addr = piggyback_rdzv->addr;
+    p.new_owner_rdzv.key = piggyback_rdzv->key;
+    p.new_owner_rdzv.txid = piggyback_rdzv->txid;
+    p.new_owner_rdzv.cookie = piggyback_rdzv->cookie;
+  } else {
+    p.new_owner_rdzv = (struct arts_msg_rdzv_landing_s){0, 0, 0, 0};
+  }
   if (new_owner_rank == arts_global_rank_id) {
     /* Self-send: mirror the wire RX dispatcher's Cat-C lookup-acquire-or-drop.
      * HIT runs the confirm_ack body on the ref-pinned db_s, passing the packet
@@ -691,7 +796,10 @@ void arts_send_db_ownership_confirm_ack(unsigned int new_owner_rank,
 void arts_send_db_snapshot_redirect(unsigned int owner_rank,
                                     arts_guid_t db_guid,
                                     unsigned int requester_rank,
-                                    arts_guid_t edt_guid, uint32_t slot) {
+                                    arts_guid_t edt_guid, uint32_t slot,
+                                    const struct arts_rdzv_landing_s *rdzv) {
+  struct arts_rdzv_landing_s fwd =
+      (rdzv != NULL) ? *rdzv : (struct arts_rdzv_landing_s){0, 0, 0, 0};
   struct arts_msg_snapshot_redirect_packet_s p;
   arts_fill_packet_header(&p.header, sizeof(p), MSG_DB_SNAPSHOT_REDIRECT);
   p.header.rank = arts_global_rank_id;
@@ -699,6 +807,10 @@ void arts_send_db_snapshot_redirect(unsigned int owner_rank,
   p.edt_guid = edt_guid;
   p.requester_rank = requester_rank;
   p.slot = slot;
+  p.rdzv.addr = fwd.addr;
+  p.rdzv.key = fwd.key;
+  p.rdzv.txid = fwd.txid;
+  p.rdzv.cookie = fwd.cookie;
   if (owner_rank == arts_global_rank_id) {
     /* Self-send: mirror the wire RX dispatcher's Cat-C lookup-acquire.  HIT
      * serves DATA_RESPONSE from the ref-pinned owner-side db_s; MISS (DB
@@ -709,6 +821,7 @@ void arts_send_db_snapshot_redirect(unsigned int owner_rank,
         .edt_guid = edt_guid,
         .requester_rank = requester_rank,
         .slot = slot,
+        .rdzv = fwd,
     };
     arts_shared_ptr_t h = arts_route_table_lookup_db(db_guid);
     struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(h);

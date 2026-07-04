@@ -50,10 +50,8 @@ static const char *role_char(enum arts_thread_role role) {
   switch (role) {
   case ARTS_ROLE_WORKER:
     return "W";
-  case ARTS_ROLE_SENDER:
-    return "S";
-  case ARTS_ROLE_RECEIVER:
-    return "R";
+  case ARTS_ROLE_PROGRESS:
+    return "P";
   default:
     return "?";
   }
@@ -197,14 +195,11 @@ void get_thread_mask(struct arts_config_s *config, struct thread_mask_s *flat) {
      multi-node so each rank gets a disjoint PU slice). */
   unsigned int role_count[ARTS_ROLE_MAX] = {0};
   for (unsigned int t = 0; t < config->thread_count; t++) {
-    enum arts_thread_role role;
-    if (t < config->worker_thread_count) {
-      role = ARTS_ROLE_WORKER;
-    } else if (t < config->worker_thread_count + config->sender_thread_count) {
-      role = ARTS_ROLE_SENDER;
-    } else {
-      role = ARTS_ROLE_RECEIVER;
-    }
+    /* Workers fill the low slots; the remainder are progress threads.  The
+     * sender role is gone (its cfg count folds into worker_threads at config
+     * time), so there is no middle band. */
+    enum arts_thread_role role =
+        (t < config->worker_thread_count) ? ARTS_ROLE_WORKER : ARTS_ROLE_PROGRESS;
 
     unsigned int pi = pu_offset + t;
     flat[t].id = t;

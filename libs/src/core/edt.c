@@ -51,7 +51,7 @@
 #include "arts/runtime_types.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
-#include "arts/transport/outbox.h"   /* outbound send helpers */
+#include "arts/transport/net.h"   /* outbound send helpers */
 #include "arts/transport/protocol.h" /* wire packet structs */
 #include "arts/utils/atomics.h"
 #include "arts/utils/shared.h" /* arts_shared_ptr_t, get/release */
@@ -662,23 +662,36 @@ void arts_send_memory_move(unsigned int rank, arts_guid_t guid, void *ptr,
                            unsigned int mem_size, unsigned message_type,
                            void (*free_method)(void *)) {
   TIME_REMOTE_MOVE_START();
-  struct arts_msg_guid_only_packet_s packet;
-  arts_fill_packet_header(&packet.header, sizeof(packet) + mem_size,
-                          message_type);
+  struct arts_msg_memory_move_packet_s packet;
   packet.guid = guid;
-  arts_transport_send_payload_async_free((int)rank, (char *)&packet,
-                                         sizeof(packet), (char *)ptr, 0,
-                                         mem_size, free_method);
+  packet.rdzv_txid = 0;
+  packet.rdzv_cookie = 0;
+  packet.rdzv_size = 0;
+  uint64_t total = sizeof(packet) + mem_size;
+  if (total > ARTS_NET_MSG_MAX) {
+    /* Oversized object blob: travels by the generic push rendezvous (the
+     * caller's completion-gated free_method transfers to the PUT's local
+     * completion — no staging copy needed). */
+    arts_fill_packet_header(&packet.header, sizeof(packet), message_type);
+    arts_transport_send_pushed_payload((int)rank, &packet.header,
+                                       sizeof(packet), (char *)ptr, mem_size,
+                                       free_method);
+  } else {
+    arts_fill_packet_header(&packet.header, total, message_type);
+    arts_transport_send_payload_async_free((int)rank, (char *)&packet,
+                                           sizeof(packet), (char *)ptr, 0,
+                                           mem_size, free_method);
+  }
   /* route_table slot now persists; Lifecycle redesign is follow-up work. */
   (void)guid;
   TIME_REMOTE_MOVE_STOP();
 }
 
 void arts_handler_edt_create(void *ptr) {
-  struct arts_msg_guid_only_packet_s *packet =
-      (struct arts_msg_guid_only_packet_s *)ptr;
+  struct arts_msg_memory_move_packet_s *packet =
+      (struct arts_msg_memory_move_packet_s *)ptr;
   uint64_t size =
-      packet->header.size - sizeof(struct arts_msg_guid_only_packet_s);
+      packet->header.size - sizeof(struct arts_msg_memory_move_packet_s);
   struct arts_edt_s *edt =
       (struct arts_edt_s *)arts_malloc_aligned(size, ARTS_CACHE_LINE_SIZE);
 
@@ -777,15 +790,44 @@ void arts_send_edt_satisfy_slot(arts_guid_t edt, arts_guid_t db, uint32_t slot,
     packet.slot = slot;
     packet.mode = mode;
     packet.size = 0;
+    packet.pad = 0;
+    packet.rdzv_txid = 0;
+    packet.rdzv_cookie = 0;
     arts_fill_packet_header(&packet.header, sizeof(packet),
                             MSG_EDT_SATISFY_SLOT);
     arts_transport_send_async((int)rank, (char *)&packet, sizeof(packet));
     return;
   }
 
-  /* DB_MODE_PTR delivery: header + inline payload copied contiguously so the
-   * receiver materializes the data without a follow-up fetch. */
   uint64_t total = sizeof(struct arts_msg_edt_satisfy_slot_packet_s) + size;
+  if (total > ARTS_NET_MSG_MAX) {
+    /* Oversized DB_MODE_PTR payload: the wire total would breach the
+     * control-plane ceiling, so the payload travels by the generic push
+     * rendezvous (RTS -> landing -> one-sided PUT -> this packet, paired by
+     * txid at the target).  The bytes are staged into an owned copy because
+     * the caller's pointer is only guaranteed for the duration of this call,
+     * while the PUT fires an RTT later. */
+    struct arts_msg_edt_satisfy_slot_packet_s packet;
+    packet.edt = edt;
+    packet.db = db;
+    packet.slot = slot;
+    packet.mode = mode;
+    packet.size = size;
+    packet.pad = 0;
+    packet.rdzv_txid = 0;   /* patched by the push CTS leg */
+    packet.rdzv_cookie = 0;
+    arts_fill_packet_header(&packet.header, sizeof(packet),
+                            MSG_EDT_SATISFY_SLOT);
+    char *copy = (char *)arts_malloc((size_t)size);
+    memcpy(copy, ptr, size);
+    arts_transport_send_pushed_payload((int)rank, &packet.header,
+                                       sizeof(packet), copy, size, arts_free);
+    return;
+  }
+
+  /* DB_MODE_PTR delivery within the ceiling: header + inline payload copied
+   * contiguously so the receiver materializes the data without a follow-up
+   * fetch. */
   char *buf = (char *)arts_malloc((size_t)total);
   struct arts_msg_edt_satisfy_slot_packet_s *packet =
       (struct arts_msg_edt_satisfy_slot_packet_s *)buf;
@@ -794,6 +836,9 @@ void arts_send_edt_satisfy_slot(arts_guid_t edt, arts_guid_t db, uint32_t slot,
   packet->slot = slot;
   packet->mode = mode;
   packet->size = size;
+  packet->pad = 0;
+  packet->rdzv_txid = 0;
+  packet->rdzv_cookie = 0;
   arts_fill_packet_header(&packet->header, total, MSG_EDT_SATISFY_SLOT);
   memcpy(buf + sizeof(*packet), ptr, size);
   arts_transport_send_async((int)rank, buf, (unsigned int)total);

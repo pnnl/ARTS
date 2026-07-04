@@ -823,10 +823,11 @@ static const struct arts_config_entry_s config_entries[] = {
     {"gpu_buff_on", CONFIG_BOOL, OFF(gpu_buff_on), "0", NULL},
     /* --- Networking (conditional defaults applied in config_compute_derived)
        --- */
-    {"sender_threads", CONFIG_UINT, OFF(sender_thread_count), NULL, NULL},
-    {"receiver_threads", CONFIG_UINT, OFF(receiver_thread_count), NULL, NULL},
+    {"progress_threads", CONFIG_UINT, OFF(progress_thread_count), NULL, NULL},
     {"port_count", CONFIG_UINT, OFF(port_count), NULL, NULL},
     {"master_node", CONFIG_STRING, OFF(master_node), NULL, NULL},
+    {"provider", CONFIG_STRING, OFF(provider), NULL, NULL},
+    {"regpool_slab_mb", CONFIG_UINT, OFF(regpool_slab_mb), "64", NULL},
     /* --- Debug --- */
     {"kill_mode", CONFIG_UINT, OFF(kill_mode), "0", NULL},
     {"core_dump", CONFIG_BOOL, OFF(core_dump), "0", NULL},
@@ -1064,28 +1065,22 @@ static void config_compute_derived(struct arts_config_s *config) {
   config->route_table_entries = 1U << config->route_table_size;
   config->gpu_route_table_entries = 1U << config->gpu_route_table_size;
 
-  /* Single-node: reclaim sender/receiver threads as workers. */
+  /* Single-node: reclaim the progress thread as a worker (no peer to poll
+   * the fabric for). */
   if (config->table_length <= 1) {
-    if (config->sender_thread_count || config->receiver_thread_count) {
-      ARTS_WARN("Single-node: reclaiming sender_threads=%u + "
-                "receiver_threads=%u as workers",
-                config->sender_thread_count, config->receiver_thread_count);
-      config->worker_thread_count +=
-          config->sender_thread_count + config->receiver_thread_count;
-      config->sender_thread_count = 0;
-      config->receiver_thread_count = 0;
+    if (config->progress_thread_count) {
+      ARTS_WARN("Single-node: reclaiming progress_threads=%u as workers",
+                config->progress_thread_count);
+      config->worker_thread_count += config->progress_thread_count;
+      config->progress_thread_count = 0;
     }
   }
 
   /* Networking conditional defaults (any launcher with multiple nodes). */
   if (config->table_length > 1) {
-    if (!config->sender_thread_count) {
-      config->sender_thread_count = 1;
-      ARTS_WARN("Multi-node: defaulting sender_threads to 1");
-    }
-    if (!config->receiver_thread_count) {
-      config->receiver_thread_count = 1;
-      ARTS_WARN("Multi-node: defaulting receiver_threads to 1");
+    if (!config->progress_thread_count) {
+      config->progress_thread_count = 1;
+      ARTS_WARN("Multi-node: defaulting progress_threads to 1");
     }
 
     /* Port defaults: derive port_count and default_ports. */
@@ -1143,15 +1138,13 @@ static void config_compute_derived(struct arts_config_s *config) {
 
   /* Compute total thread count.
      If thread_count was set directly (SLURM/env), derive worker count from it.
-     Otherwise compute total from worker + sender + receiver. */
+     Otherwise compute total from worker + progress. */
   if (config->thread_count > 0) {
-    config->worker_thread_count = config->thread_count -
-                                  config->sender_thread_count -
-                                  config->receiver_thread_count;
+    config->worker_thread_count =
+        config->thread_count - config->progress_thread_count;
   }
-  config->thread_count = config->worker_thread_count +
-                         config->sender_thread_count +
-                         config->receiver_thread_count;
+  config->thread_count =
+      config->worker_thread_count + config->progress_thread_count;
 }
 
 static void config_print_warnings(struct arts_config_s *config) {
@@ -1204,10 +1197,32 @@ static void config_free_variables(struct arts_config_variable_s *vars) {
   }
 }
 
+/*--- Removed-Key Rejection --------------------------------------------------
+ *
+ * Keys that no longer name anything in the current config surface must fail
+ * loudly with a message that names the replacement, rather than being
+ * silently ignored (a cfg with a stale key would otherwise run with an
+ * unintended default).
+ *---------------------------------------------------------------------------*/
+
+static void config_reject_removed_keys(struct arts_config_variable_s **vars) {
+  if (config_lookup(vars, "sender_threads")) {
+    ARTS_ERROR(
+        "sender_threads no longer exists: the transport injects directly "
+        "from workers; remove the key and add its count to worker_threads");
+  }
+  if (config_lookup(vars, "receiver_threads")) {
+    ARTS_ERROR("receiver_threads was renamed to progress_threads: rename the "
+               "key (same value/semantics -- one progress thread per node, "
+               "default 1 on multi-node runs, 0 single-node)");
+  }
+}
+
 /*=============================================================================
  * arts_config_load — Phased config loading
  *
  * Open file, parse key=value pairs into linked list
+ * Reject removed keys
  * Allocate config, set non-zero pre-defaults
  * Table-driven parse (replaces ~280 lines of if-else)
  * Launcher-specific setup (nodes, routing table, master)
@@ -1219,6 +1234,10 @@ void arts_config_load(struct arts_config_s *config) {
   FILE *fp = config_open_file();
   struct arts_config_variable_s *vars = arts_config_get_variables(fp);
   (void)fclose(fp);
+
+  /* Fail loudly on keys the config surface no longer recognizes, before any
+   * of their (now-absent) defaults could silently apply. */
+  config_reject_removed_keys(&vars);
 
   /* Zero-init and set non-zero pre-defaults. */
   memset(config, 0, sizeof(*config));
@@ -1260,6 +1279,9 @@ void arts_config_destroy(struct arts_config_s *config) {
   }
   if (config->net_interface) {
     arts_free(config->net_interface);
+  }
+  if (config->provider) {
+    arts_free(config->provider);
   }
   if (config->counter_folder) {
     arts_free(config->counter_folder);

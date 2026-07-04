@@ -12,7 +12,7 @@
  * ----------------------------------------------
  *  - every flat[t].pu_id < total_pus (in range);
  *  - all flat[t].pu_id are DISTINCT (no two threads pinned to one PU);
- *  - role counts equal the config split (worker/sender/receiver);
+ *  - role counts equal the config split (worker/progress);
  *  - group_pos is 0..count-1 CONTIGUOUS within each role group;
  *  - flat[t].id == t;
  *  - num_numa_domains >= 1 after the call;
@@ -72,17 +72,19 @@ static void fail(const char *msg) {
   exit(1);
 }
 
-/* Build a config with a self-consistent worker/sender/receiver split. */
+/* Build a config with a self-consistent worker/progress split.  After the
+ * transport cutover get_thread_mask assigns exactly two roles: workers fill the
+ * low slots [0,worker_count), the remainder are progress threads.  Only
+ * worker_thread_count drives the split (sender is gone, progress_thread_count
+ * is not read by topology). */
 static struct arts_config_s make_config(unsigned int thread_count,
-                                        unsigned int sender,
-                                        unsigned int receiver, bool shared_pool,
+                                        unsigned int progress, bool shared_pool,
                                         unsigned int my_rank) {
   struct arts_config_s c;
   memset(&c, 0, sizeof(c));
   c.thread_count = thread_count;
-  c.sender_thread_count = sender;
-  c.receiver_thread_count = receiver;
-  c.worker_thread_count = thread_count - sender - receiver;
+  c.progress_thread_count = progress;
+  c.worker_thread_count = thread_count - progress;
   c.shared_pu_pool = shared_pool;
   c.my_rank = my_rank;
   c.pin_threads = false;
@@ -126,29 +128,20 @@ static void check_mask(struct thread_mask_s *flat, struct arts_config_s *c,
     }
   }
 
-  /* role counts == config split */
+  /* role counts == config split (workers + progress == thread_count) */
   if (role_seen[ARTS_ROLE_WORKER] != c->worker_thread_count) {
     fail("worker count mismatch");
   }
-  if (role_seen[ARTS_ROLE_SENDER] != c->sender_thread_count) {
-    fail("sender count mismatch");
-  }
-  if (role_seen[ARTS_ROLE_RECEIVER] != c->receiver_thread_count) {
-    fail("receiver count mismatch");
+  if (role_seen[ARTS_ROLE_PROGRESS] != tc - c->worker_thread_count) {
+    fail("progress count mismatch");
   }
 
-  /* Role layout must be [workers | senders | receivers] by index. */
+  /* Role layout must be [workers | progress] by index. */
   for (unsigned int t = 0; t < tc; t++) {
-    enum arts_thread_role want;
-    if (t < c->worker_thread_count) {
-      want = ARTS_ROLE_WORKER;
-    } else if (t < c->worker_thread_count + c->sender_thread_count) {
-      want = ARTS_ROLE_SENDER;
-    } else {
-      want = ARTS_ROLE_RECEIVER;
-    }
+    enum arts_thread_role want =
+        (t < c->worker_thread_count) ? ARTS_ROLE_WORKER : ARTS_ROLE_PROGRESS;
     if (flat[t].role != want) {
-      fail("role layout not [workers|senders|receivers]");
+      fail("role layout not [workers|progress]");
     }
   }
 
@@ -169,7 +162,7 @@ static void death_test_offset_overflow(unsigned int total_pus) {
     /* child: request a slice that overflows.  thread_count = total_pus, but
      * shared_pu_pool with my_rank=1 => offset = total_pus => slice exceeds. */
     struct arts_config_s c =
-        make_config(total_pus, 0, 0, /*shared_pool=*/true, /*my_rank=*/1);
+        make_config(total_pus, 0, /*shared_pool=*/true, /*my_rank=*/1);
     struct thread_mask_s *flat = calloc(total_pus, sizeof(*flat));
     get_thread_mask(&c, flat); /* expected to ARTS_ERROR -> arts_abort */
     /* If we get here, the bounds check did NOT fire — fail loudly. */
@@ -195,23 +188,15 @@ static void death_test_offset_overflow(unsigned int total_pus) {
 int main(void) {
   unsigned int total_pus = host_total_pus();
 
-  /* Pick a thread_count that fits the host and forces all three roles to be
-   * non-empty when possible.  Use up to 6 threads (>=14 PUs typical, but
-   * clamp to total_pus). */
+  /* Pick a thread_count that fits the host and forces BOTH roles to be
+   * non-empty when possible.  Use up to 4 threads, clamped to total_pus. */
   unsigned int tc = total_pus < 4 ? total_pus : 4;
-  unsigned int sender = 0, receiver = 0;
-  if (tc >= 3) {
-    sender = 1;
-    receiver = 1;
-  } else if (tc == 2) {
-    sender = 1;
-    receiver = 0;
-  }
+  unsigned int progress = (tc >= 2) ? 1 : 0;
 
   /* Case 1: single-rank (no shared pool). */
   {
     struct arts_config_s c =
-        make_config(tc, sender, receiver, /*shared_pool=*/false, /*rank=*/0);
+        make_config(tc, progress, /*shared_pool=*/false, /*rank=*/0);
     struct thread_mask_s *flat = calloc(tc, sizeof(*flat));
     if (!flat) {
       fail("calloc");
@@ -228,13 +213,12 @@ int main(void) {
     if (slice_tc > 3) {
       slice_tc = 3; /* keep the test small but multi-threaded */
     }
-    unsigned int s = slice_tc >= 3 ? 1 : 0;
-    unsigned int r = slice_tc >= 3 ? 1 : 0;
+    unsigned int prog = slice_tc >= 2 ? 1 : 0;
 
     struct arts_config_s c0 =
-        make_config(slice_tc, s, r, /*shared_pool=*/true, /*rank=*/0);
+        make_config(slice_tc, prog, /*shared_pool=*/true, /*rank=*/0);
     struct arts_config_s c1 =
-        make_config(slice_tc, s, r, /*shared_pool=*/true, /*rank=*/1);
+        make_config(slice_tc, prog, /*shared_pool=*/true, /*rank=*/1);
     struct thread_mask_s *f0 = calloc(slice_tc, sizeof(*f0));
     struct thread_mask_s *f1 = calloc(slice_tc, sizeof(*f1));
     if (!f0 || !f1) {

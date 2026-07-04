@@ -57,7 +57,7 @@
 /// gated only on the SAME DB inside one finish scope per batch.  Mutually
 /// unordered, they build a deep home pending_rw queue so home fires a tight
 /// GRANT-then-INVALIDATE stream — a fresh +2/-1 reorder opportunity per
-/// transfer.  receiver_threads>=2 (the 2n_io config) makes the physical reorder
+/// transfer.  progress_threads>=2 (the 2n_io config) makes the physical reorder
 /// possible.
 ///
 /// ASSERTS: (1) PROGRESS — every batch quiesces (a lost transfer from an

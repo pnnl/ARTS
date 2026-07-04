@@ -54,8 +54,11 @@ struct arts_db_cache_s;
  * heap payload, so a trailing data pointer (snapshot_response) stays valid for
  * the handler's duration (it points into the live receive buffer). */
 
-/* arts_handler_db_snapshot_response body args.  `data`/`data_size` point into
- * the live wire receive buffer (data == NULL when data_present == 0). */
+/* arts_handler_db_snapshot_response body args.  data_present mirrors the wire
+ * packet's tri-state (0 = no data moved, 1 = data, 2 = size-only CTS).  For
+ * data_present == 1 the payload either landed one-sided (rdzv_txid != 0; the
+ * landing is named by rdzv_cookie and install pairs by txid) or — same-rank
+ * self-serve only — rides inline via `data`/`data_size`. */
 struct arts_db_snapshot_response_args_s {
   arts_guid_t edt_guid;
   uint32_t slot;
@@ -63,6 +66,9 @@ struct arts_db_snapshot_response_args_s {
   uint64_t version;
   const void *data;
   uint64_t data_size;
+  uint64_t db_size;     /* CTS: allocation size; data: landed byte count */
+  uint64_t rdzv_txid;   /* != 0: payload PUT into our landing; pair by txid */
+  uint64_t rdzv_cookie; /* our landing handle, echoed back */
 };
 
 /* arts_handler_db_cache_destroy body args. */
@@ -84,6 +90,7 @@ struct arts_db_snapshot_redirect_args_s {
   arts_guid_t edt_guid;
   unsigned int requester_rank;
   uint32_t slot;
+  struct arts_rdzv_landing_s rdzv; /* requester's landing, forwarded by home */
 };
 
 /* arts_handler_db_ownership_confirm body args (home side). */
@@ -135,6 +142,11 @@ void arts_handler_db_ownership_response(void *payload, size_t size);
  * NULL-stored), SILENTLY DROPS (this 1:1 response resumes a parked EDT; if the
  * cache is gone the EDT was already torn down). */
 void arts_handler_db_snapshot_response(void *item_v, void *args_v);
+/* Consume an in-flight rendezvous whose receiver-side target is gone (the
+ * metadata packet reached a destroyed object): registers a discard
+ * continuation so the landing frees and the txid pairing table stays
+ * leak-free.  No-op for txid == 0. */
+void arts_db_rdzv_discard_landing(uint64_t txid, uint64_t cookie);
 /* Pure (cache, args) body: item_v is the db_s (cache is its first member);
  * args_v is an arts_ooo_args_db_ownership_invalidate_s.  The wire dispatcher /
  * self-send looks the cache up and calls this body DIRECTLY — no OoO defer.  In
@@ -187,39 +199,63 @@ void arts_send_db_ownership_confirm(unsigned int home_rank, arts_guid_t db_guid,
 
 /* ===== Sender helpers ================================================ */
 
-/* Send a coherence wire packet of the given type with optional
- * trailing payload (data + data_size).  data == NULL ⇒ no payload.
- * Used by handlers that emit replies and by acquire/release.  The
- * OWNERSHIP_REQUEST carries only db_guid (the home FIFO orders rank-by-rank).
- */
-void arts_send_db_ownership_request(unsigned int home_rank,
-                                    arts_guid_t db_guid);
-/* OWNERSHIP_RESPONSE wire sender (shared, both timings): carries the serialized
- * last_sent_version map + buffer payload (no edt — the EDT rides CONFIRM). */
-void arts_send_db_ownership_response(unsigned int new_owner_rank,
-                                     arts_guid_t db_guid, uint64_t version,
-                                     const void *map_buf, size_t map_size,
-                                     const void *data, size_t data_size);
-/* cv: address of the releaser's stack-local sem_t (as uint64_t), forwarded
- * verbatim to the home and echoed back in the ACK for pointer-identity wakeup.
- */
+/* Send OWNERSHIP_REQUEST to the DB's home (the home FIFO orders
+ * rank-by-rank).  When the requester knows db_size a fresh transfer landing
+ * is allocated and advertised in the request; a size-unknown first touch
+ * sends landing-less (txid 0) and home answers OWNERSHIP_CTS, whose handler
+ * re-issues through this sender with the landing attached. */
+void arts_send_db_ownership_request(struct arts_db_cache_s *cache);
+/* Cat-C pure body (OWNERSHIP_CTS at the requester): item_v is the db_s the
+ * dispatcher acquired; args_v is the OWNERSHIP_CTS packet.  Learns db_size
+ * and re-issues the in-flight OWNERSHIP_REQUEST with a landing (the
+ * coalescing flag stays held — this is the same round continuing).  MISS
+ * (DB destroyed) silently drops. */
+void arts_handler_db_ownership_cts(void *item_v, void *args_v);
+/* OWNERSHIP_CTS sender: home → first-touch requester (db_size reply). */
+void arts_send_db_ownership_cts(unsigned int requester_rank,
+                                arts_guid_t db_guid, uint64_t db_size);
+/* cv: address of the releaser's stack-local writeback rendezvous
+ * (arts_db_wb_rendezvous_s; sem first) as uint64_t, forwarded verbatim and
+ * echoed back in WRITEBACK_CTS / WRITEBACK_ACK for pointer-identity wakeup.
+ * Same-rank sends carry `data` inline through the OoO args; remote sends are
+ * control-only (announce txid==0 / commit txid!=0 — the payload travels
+ * one-sided between them, see arts_db_writeback_sync). */
 void arts_send_db_writeback(unsigned int home_rank, arts_guid_t db_guid,
                             uint64_t version, uint64_t cv, const void *data,
-                            uint64_t data_size);
+                            uint64_t data_size, uint64_t rdzv_txid,
+                            uint64_t rdzv_cookie);
+/* WRITEBACK_CTS: home → releaser, carrying a fresh home landing for an
+ * announced dirty writeback (cv echoed verbatim). */
+void arts_send_db_writeback_cts(unsigned int releaser_rank, arts_guid_t db_guid,
+                                const struct arts_rdzv_landing_s *landing,
+                                uint64_t cv);
 void arts_send_db_writeback_ack(unsigned int releaser_rank, arts_guid_t db_guid,
                                 uint64_t cv);
-/* new_owner_rank: rank that home has selected as next owner.  Eager builds
- * pass 0 (receiver ignores it); lazy builds embed it in the packet so the
- * holder knows where to ship TRANSFER_OWNERSHIP without a home round-trip. */
-void arts_send_db_ownership_invalidate(unsigned int owner_rank,
-                                       arts_guid_t db_guid,
-                                       unsigned int new_owner_rank);
-void arts_send_db_snapshot_request(unsigned int home_rank, arts_guid_t db_guid,
+/* new_owner_rank: rank home selected as next owner; new_owner_rdzv: that
+ * rank's transfer landing (from its queued request), forwarded so the current
+ * holder can PUT the transfer payload directly (NULL = zero landing —
+ * sentinel/data-less round). */
+void arts_send_db_ownership_invalidate(
+    unsigned int owner_rank, arts_guid_t db_guid, unsigned int new_owner_rank,
+    const struct arts_rdzv_landing_s *new_owner_rdzv);
+/* Send SNAPSHOT_REQUEST (GET_DATA) to the DB's home, advertising a fresh
+ * snapshot landing when db_size is known (multi-rank runs); a size-unknown
+ * first touch sends landing-less and the server answers a size-only CTS
+ * response (data_present == 2), whose handler re-enters this sender. */
+void arts_send_db_snapshot_request(struct arts_db_cache_s *cache,
                                    arts_guid_t edt_guid, uint32_t slot);
+/* Send DATA_RESPONSE.  kind (-> wire data_present): 0 = no data moved (a
+ * non-NULL landing's cookie is echoed so the requester recycles it), 1 =
+ * payload (PUT from src_h's buffer into `landing`; src_h — a strong buffer
+ * ref — is CONSUMED: transferred to the PUT's local completion, or released
+ * after an inline self-serve), 2 = size-only CTS (db_size).  src_h must be
+ * NULL for kinds 0/2. */
 void arts_send_db_snapshot_response(unsigned int requester_rank,
                                     arts_guid_t db_guid, uint64_t version,
                                     arts_guid_t edt_guid, uint32_t slot,
-                                    const void *data, uint64_t data_size);
+                                    uint32_t kind, uint64_t db_size,
+                                    const struct arts_rdzv_landing_s *landing,
+                                    arts_shared_ptr_t src_h);
 void arts_send_db_create_coherent(unsigned int home_rank, arts_guid_t db_guid,
                                   uint64_t db_size, uint16_t flags,
                                   uint16_t db_type);
@@ -232,7 +268,8 @@ void arts_send_db_cache_destroy(unsigned int sharer_rank, arts_guid_t db_guid);
 void arts_send_db_snapshot_redirect(unsigned int owner_rank,
                                     arts_guid_t db_guid,
                                     unsigned int requester_rank,
-                                    arts_guid_t edt_guid, uint32_t slot);
+                                    arts_guid_t edt_guid, uint32_t slot,
+                                    const struct arts_rdzv_landing_s *rdzv);
 
 /* Send CONFIRM_ACK from home to the new owner C after home has flipped
  * rw_holder to C. Self-send dispatches the handler inline.
@@ -240,9 +277,10 @@ void arts_send_db_snapshot_redirect(unsigned int owner_rank,
  * pending requester).  Otherwise the round advances and the ack carries the
  * next transfer target, so the new owner's handler applies the INVALIDATE
  * effect in the same message (no separate INVALIDATE, no reorder window). */
-void arts_send_db_ownership_confirm_ack(unsigned int new_owner_rank,
-                                        arts_guid_t db_guid,
-                                        unsigned int piggyback_new_owner);
+void arts_send_db_ownership_confirm_ack(
+    unsigned int new_owner_rank, arts_guid_t db_guid,
+    unsigned int piggyback_new_owner,
+    const struct arts_rdzv_landing_s *piggyback_rdzv);
 /* Cat-C pure body (CONFIRM_ACK, new-owner side): item_v is the db_s the
  * dispatcher acquired (cache is its first member); args_v is the
  * CONFIRM_ACK packet (its new_owner_rank carries the piggybacked invalidate
@@ -257,8 +295,9 @@ void arts_handler_db_ownership_confirm_ack(void *item_v, void *args_v);
 
 /* Kick a new INVALIDATE_NOTICE round: read rw_holder, send notice to
  * holder carrying new_owner as the TRANSFER_OWNERSHIP target. */
-void arts_db_lazy_start_invalidate_round(struct arts_db_cache_s *cache,
-                                         unsigned int new_owner);
+void arts_db_lazy_start_invalidate_round(
+    struct arts_db_cache_s *cache, unsigned int new_owner,
+    const struct arts_rdzv_landing_s *new_owner_rdzv);
 #endif /* ARTS_TIMING_LAZY */
 
 #if defined(ARTS_PROTOCOL_MRNEW) || defined(ARTS_PROTOCOL_MRSW)
@@ -298,20 +337,40 @@ void arts_handler_db_lock_grant(void *payload, size_t size);
  * *defines* it (lock/acquire.c). */
 
 /* ===== LOCK senders =================================================== */
-void arts_send_db_lock_request(unsigned int home_rank, arts_guid_t db_guid,
+/* Send LOCK_REQUEST to the home, advertising this rank's grant/deliver
+ * landing: the stable buffer for RW (in-place install is LOCK's fixed-address
+ * contract), a FRESH landing for a LAZY RO serve (a stale RO grant racing a
+ * newer owner install must not clobber the stable buffer — the ro_return arm
+ * discards it).  Size-unknown first touch sends landing-less; home answers
+ * LOCK_CTS and the handler re-enters this sender. */
+void arts_send_db_lock_request(struct arts_db_cache_s *cache,
                                arts_db_access_mode_t mode);
-/* arts_send_db_lock_grant: version is the monotone round counter; home bumps
- * and forwards it so the requester's buf_install rejects stale grants. */
+/* Cat-C pure body (LOCK_CTS at the requester): item_v is the db_s; args_v is
+ * the LOCK_CTS packet.  Learns db_size and re-issues the request (echoed
+ * mode) with a landing. */
+void arts_handler_db_lock_cts(void *item_v, void *args_v);
+/* LOCK_CTS sender: home → first-touch requester (db_size + echoed mode). */
+void arts_send_db_lock_cts(unsigned int requester_rank, arts_guid_t db_guid,
+                           uint64_t db_size, uint32_t mode);
+/* arts_send_db_lock_grant: version is the monotone round counter.  The grant
+ * payload PUTs into req_rdzv (the requester's advertised landing; src_h — a
+ * strong ref on the home buffer — is CONSUMED); `wb`, for RW grants, is
+ * home's writeback landing for this grant's release (NULL/zero for RO). */
 void arts_send_db_lock_grant(unsigned int requester_rank, arts_guid_t db_guid,
                              arts_db_access_mode_t mode, uint64_t version,
-                             const void *data, uint64_t data_size);
+                             const struct arts_rdzv_landing_s *req_rdzv,
+                             const struct arts_rdzv_landing_s *wb,
+                             arts_shared_ptr_t src_h, uint64_t data_size);
 /* arts_send_db_lock_release: cv is the releaser's stack-local sem_t address
  * (RW only; 0 for RO); version is the monotone counter (RW only; 0 for RO).
- * Home echoes cv in the LOCK_RELEASE_ACK to unblock the releaser. */
+ * Home echoes cv in the LOCK_RELEASE_ACK to unblock the releaser.  A remote
+ * RW release PUTs the dirty bytes into the grant's `wb` landing first and
+ * echoes {rdzv_txid, rdzv_cookie} here; `data` rides inline only same-rank. */
 void arts_send_db_lock_release(unsigned int home_rank, arts_guid_t db_guid,
                                arts_db_access_mode_t mode, uint64_t version,
                                uint64_t cv, const void *data,
-                               uint64_t data_size);
+                               uint64_t data_size, uint64_t rdzv_txid,
+                               uint64_t rdzv_cookie);
 /* arts_send_db_lock_release_ack: home → releaser after installing writeback.
  * Mirrors arts_send_db_writeback_ack; cv is echoed verbatim so the releaser
  * wakes by pointer identity (no seq tracking). */
@@ -351,13 +410,16 @@ void arts_handler_db_lock_roret(void *item_v);
 /* arts_send_db_lock_forward: home → current owner.  mode=DB_MODE_RW requests
  * migration to target rank; mode=DB_MODE_RO requests serving one RO reader. */
 void arts_send_db_lock_forward(unsigned int owner_rank, arts_guid_t db_guid,
-                               uint32_t mode, uint32_t target);
+                               uint32_t mode, uint32_t target,
+                               const struct arts_rdzv_landing_s *target_rdzv);
 
 /* arts_send_db_lock_deliver: owner → target.  Versionless (LOCK serialization
- * guarantees ordering); data follows the fixed header inline. */
+ * guarantees ordering).  The payload PUTs into the target's forwarded landing
+ * (rdzv); src_h — a strong ref on the owner buffer — is CONSUMED. */
 void arts_send_db_lock_deliver(unsigned int target_rank, arts_guid_t db_guid,
-                               uint32_t mode, const void *data,
-                               uint64_t data_size);
+                               uint32_t mode,
+                               const struct arts_rdzv_landing_s *rdzv,
+                               arts_shared_ptr_t src_h, uint64_t data_size);
 
 /* arts_send_db_lock_confirm: new owner → home: migration done. */
 void arts_send_db_lock_confirm(unsigned int home_rank, arts_guid_t db_guid);

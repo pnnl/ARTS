@@ -129,6 +129,25 @@ class Case:
                                           # cannot run at ANY multinode config (every
                                           # other case runs at every NODE_CONFIGS entry)
     multinode_timeout: int = 0            # per-case multinode wall budget (s); 0 → global
+    mrmw_skip: str = ""                   # non-empty → contract reason this case's
+                                          # semantics are OUTSIDE the MRMW (DB-DRF)
+                                          # admission (cell → N/A, excluded from the
+                                          # vote, like multinode_skip).  Contract
+                                          # representation, NOT a bug mask: per
+                                          # CLAUDE.md, MRMW is a deliberately weaker
+                                          # contract — "racy-but-legal OCR programs
+                                          # may yield wrong results there by design"
+                                          # — so OCR-legal programs relying on
+                                          # guarantees MRMW omits (exclusive-writer
+                                          # serialization / disjoint-write survival
+                                          # under whole-DB lossy writeback) do not
+                                          # get a vote in that column
+    timeout: int = 0                      # per-case SINGLE-NODE wall budget (s); 0 →
+                                          # global.  For cases whose fixed (non-CLI)
+                                          # problem size has a measured single-node
+                                          # wall floor above the global budget on a
+                                          # slower protocol — a budget fact, not a
+                                          # mask (the scalar is still fully verified)
     ocrvx_mn_max_ranks: int = 0           # >0 → ocr-vx cells run only at rank counts
                                           # <= this bound (blank/N/A above it): for
                                           # message-storm micro-benchmarks whose fixed
@@ -179,7 +198,8 @@ CASES: list[Case] = [
     # wall budget; the app still solves the full puzzle when run with no
     # argument.
     Case("triangle", "triangle", ["5"],
-         scalar_re=r"final count\s+(\d+)", scalar_kind="int"),
+         scalar_re=r"final count\s+(\d+)", scalar_kind="int",
+         mrmw_skip="EW accumulator requires exclusion; MRMW admission provides none"),
     # rows/timesteps shrunk from the original 100/10 (checksum = (t+1)*(n+m-2),
     # still a nontrivial computed value) so the pipeline-fill message count
     # (~ P*T*rows) fits the slowest reference runtime inside the wall budget.
@@ -262,7 +282,9 @@ CASES: list[Case] = [
     Case("miniAMR_intel", "miniAMR_intel",
          ["--nx","4","--ny","4","--nz","4","--num_tsteps","2","--num_objects","1"],
          scalar_re=r"Grand Total Checksum\s*==\s*([\-+0-9.eE]+)", scalar_kind="float",
-         scalar_tol=1e-8),
+         scalar_tol=1e-8,
+         mrmw_skip="creator-held carrier DBs handed clone->clone, ordered only by "
+                   "RW exclusion; MRMW admission provides none (non-DB-DRF)"),
     # "-b 25" raises the sparse matrix-vector multiply's block size (default
     # 1, i.e. one row per block): this only changes how the na=50 rows are
     # grouped into spmv_edt sub-EDTs (25 -> 2 blocks), not the arithmetic, so
@@ -358,7 +380,9 @@ CASES: list[Case] = [
     Case("printf",           "printf",           [],
          scalar_re=r"Hello from mainEdt", scalar_kind="bool"),
     Case("quicksort",        "quicksort",        [],
-         scalar_re=r"(\d+)\s*\n\s*(?:\[\d+\]\s*)?Sorting Finished", scalar_kind="int"),
+         scalar_re=r"(\d+)\s*\n\s*(?:\[\d+\]\s*)?Sorting Finished", scalar_kind="int",
+         mrmw_skip="unordered disjoint-region sibling writers; MRMW whole-DB "
+                   "writeback is declared lossy"),
     Case("basicIO",          "basicIO",          ["0","10", BASIC_IO_DAT],
          scalar_re=r"BASICIO_CHK\s+(\d+)", scalar_kind="int"),
     Case("cache_offset",     "cache_offset",     [],
@@ -434,6 +458,9 @@ CASES: list[Case] = [
          scalar_re=r"LCS length:\s*(\d+)", scalar_kind="int"),
     Case("LCS_shared",        "LCS_shared",       [],
          # distributed wavefront LCS result, self-validated against serial_lcs.
+         # The x12/x21 sibling quadrants that share the single rolling `score`
+         # datablock are now happens-before ordered (x11->x12->x21), so the
+         # program is DB-DRF and MRMW votes with the consensus.
          scalar_re=r"LCS length:\s*(-?\d+)", scalar_kind="int"),
     Case("RSBench_intel",             "RSBench_intel",             ["-l","100"],
          scalar_re=r"Lookups:", scalar_kind="bool",
@@ -565,7 +592,13 @@ CASES: list[Case] = [
          multinode_skip=_SAR_MN_SKIP),
     Case("sar_large",  "sar_large",  [],
          scalar_re=r"SAR detects:\s*(\d+)", scalar_kind="int",
-         multinode_skip=_SAR_MN_SKIP),
+         multinode_skip=_SAR_MN_SKIP,
+         # The baked (non-CLI) dataset runs 61-63 s single-node under the
+         # MRSW protocol on BOTH the socket- and fabric-transport eras
+         # (measured; other protocols finish in ~2 s) — a protocol wall floor
+         # above the global budget, so this case carries its own.  The scalar
+         # is still fully verified against consensus + the static pin.
+         timeout=120),
 ]
 
 
@@ -672,6 +705,8 @@ def runtime_eligible(rt: Runtime, case: Case, node: object) -> bool:
         # scalar to vote on.
         if case.multinode_skip or not case.scalar_re:
             return False
+    if rt.kind == "arts" and rt.key == "mrmw" and case.mrmw_skip:
+        return False
     if (rt.kind == "ocrvx" and case.ocrvx_mn_max_ranks
             and isinstance(node, int) and node > case.ocrvx_mn_max_ranks):
         return False
@@ -708,13 +743,16 @@ def run_runtime(runner: Runner, rt: Runtime, case: Case, node: object) -> dict:
     if node in ("1n", 1):
         if rt.kind == "arts":
             r = runner.run_ocr(case.name, case.ocr_base, args, "arts",
-                               suffix=rt.suffix)
+                               suffix=rt.suffix, timeout=case.timeout)
         elif rt.kind == "xsocr":
-            r = runner.run_ocr(case.name, case.ocr_base, args, "xsocr")
+            r = runner.run_ocr(case.name, case.ocr_base, args, "xsocr",
+                               timeout=case.timeout)
         elif rt.kind == "ocrvx":
-            r = runner.run_ocrvx_mpi(case.name, case.ocr_base, args)
+            r = runner.run_ocrvx_mpi(case.name, case.ocr_base, args,
+                                     timeout=case.timeout)
         else:  # baseline
-            r = runner.run_baseline(case.name, case.baseline)
+            r = runner.run_baseline(case.name, case.baseline,
+                                    timeout=case.timeout)
     else:
         mn_to = case.multinode_timeout
         if rt.kind == "arts":

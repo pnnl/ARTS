@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include "arts/coherence/buffer.h"
+#include "arts/memory/regpool.h" /* arts_regpool_free (orphaned landing) */
 #include "arts/coherence/coherence.h"
 #include "arts/coherence/handlers.h"
 #include "arts/coherence/home.h"
@@ -23,9 +24,10 @@
 #include "arts/runtime_state.h"
 #include "arts/runtime_types.h"
 #include "arts/system/threads.h"     /* arts_global_rank_id */
-#include "arts/transport/outbox.h"   /* arts_transport_send_async */
+#include "arts/transport/net.h"   /* arts_transport_send_async */
 #include "arts/transport/protocol.h" /* arts_fill_packet_header, MSG_* */
-#include "arts/utils/atomics.h"      /* arts_atomic_* */
+#include "arts/utils/atomics.h"
+#include "arts/utils/malloc.h" /* pairing ctx */      /* arts_atomic_* */
 
 /* ===== 8-case acquire dispatch (EAGER arm) ==========================
  * Whole arts_handler_db_acquire body for the EAGER build.  Diverges from LAZY
@@ -52,6 +54,32 @@ void arts_handler_db_acquire(void *item, void *args) {
     if (is_home ||
         is_owner) { /* eager RO predicate (home holds current data) */
       dep->ptr = arts_db_acquire_local(cache);
+      if (dep->ptr == NULL && cache->db_size > 0) {
+        /* Home before the creator's first WRITEBACK: a cross-rank create
+         * installs home metadata only — no buffer exists until the creator's
+         * release publishes one.  A dependence satisfied before that release
+         * (add-dependence satisfies immediately) may legally race here; the
+         * RELEASE is the publication point, so PARK on the snapshot reorder
+         * buffer — the first writeback install drains us and the resume
+         * re-derives dep->ptr from the installed buffer.  (db_size == 0 is
+         * the sentinel DB: NULL is its defined value.) */
+        struct arts_db_snapshot_waiter_s *w =
+            (struct arts_db_snapshot_waiter_s *)arts_malloc(sizeof(*w));
+        w->edt_guid = edt->guid;
+        w->slot = slot;
+        w->target_version = 1;
+        w->serve = NULL;
+        arts_lf_stack_push(&cache->pending_snapshot, &w->link);
+        /* Race recovery: an install may have landed between the NULL read
+         * and the push — drain (our own node included) so nobody parks
+         * forever.  The atomic_exchange drain is single-actor safe. */
+        arts_shared_ptr_t rh = arts_db_buf_acquire(cache);
+        if (arts_shared_get(rh) != NULL) {
+          arts_db_buf_release(&rh);
+          arts_db_drain_pending_snapshot(cache);
+        }
+        return;
+      }
       arts_db_acquire_resolved(edt, slot);
       return;
     }
@@ -103,13 +131,10 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
    * WB_AND_TRANSFER mode — ownership transfer is the separate owner→owner ship
    * below. */
   if (!is_home && buf != NULL) {
-    sem_t cv;
-    sem_init(&cv, 0, 0);
-    unsigned int home_rank = arts_guid_get_rank(cache->db_guid);
-    arts_send_db_writeback(home_rank, cache->db_guid, new_version,
-                           (uint64_t)(uintptr_t)&cv, buf->data, cache->db_size);
-    await_writeback_ack(&cv);
-    sem_destroy(&cv);
+    /* buf_h (held until after this call) pins buf->data for the whole round —
+     * the sync helper's ACK follows the target-side write completion, which
+     * implies the fabric has fully drained the source. */
+    arts_db_writeback_sync(cache, new_version, buf->data, cache->db_size);
   }
   /* Eager: release buffer ref after the writeback (which reads buf->data). */
   if (buf != NULL) {
@@ -144,6 +169,7 @@ void arts_db_cache_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
    * transfer pending); writer_count->0 always implies a prior INVALIDATE set
    * it. */
   c->incoming_new_owner = ARTS_LAZY_NO_PENDING_OWNER;
+  c->incoming_new_owner_rdzv = (struct arts_rdzv_landing_s){0, 0, 0, 0};
   /* EAGER has no owner-side dedup map (home serves RO via GET_DATA): the
    * owner→owner transfer always ships an empty map.  NULL so the shared ship
    * helper's map-build gate takes its empty-map branch. */
@@ -188,23 +214,65 @@ void arts_db_home_teardown(struct arts_db_s *db) {
  * CAS-loop" the design plan specifies collapses to a plain compare/
  * advance — but we keep the helper signature so future MPMC upgrades
  * are localized. */
+/* GET_DATA reply path: decide CTS / no-data / one-sided-data from the home
+ * watermark and the requester's landing, then advance the watermark only when
+ * payload actually moves.  Consumes master_h (the pinned canonical buffer). */
 static void update_last_sent_max(struct arts_db_cache_s *cache,
                                  unsigned int requester, uint64_t master_v,
-                                 const void *data, uint64_t data_size,
-                                 arts_guid_t edt_guid, uint32_t slot) {
+                                 arts_shared_ptr_t master_h,
+                                 arts_guid_t edt_guid, uint32_t slot,
+                                 const struct arts_rdzv_landing_s *rdzv) {
   struct arts_db_s *db = arts_db_of_cache(cache);
   /* Monotonic dedup — if the requester already received this version
-   * (cur >= master_v), send NO_DATA.  Cache_s lifetime invariant
-   * guarantees user_data persists until destroy (route_table ref). */
+   * (cur >= master_v), no payload moves: reply no-data, echoing the unused
+   * landing for recycling. */
   uint64_t cur = arts_rank_u64_map_get(db->last_sent_version, requester);
   if (cur >= master_v) {
+    arts_db_buf_release(&master_h);
     arts_send_db_snapshot_response(requester, cache->db_guid, master_v,
-                                   edt_guid, slot, NULL, 0);
+                                   edt_guid, slot, /*kind=*/0,
+                                   cache->db_size, rdzv, NULL);
+    return;
+  }
+  if (rdzv->txid == 0 && arts_global_rank_count > 1) {
+    /* Data must move but the requester advertised no landing (first touch —
+     * db_size unknown there).  Size-only CTS; the re-request carries a
+     * landing.  The watermark does NOT advance on this leg. */
+    arts_db_buf_release(&master_h);
+    arts_send_db_snapshot_response(requester, cache->db_guid, master_v,
+                                   edt_guid, slot, /*kind=*/2,
+                                   cache->db_size, rdzv, NULL);
     return;
   }
   arts_rank_u64_map_set(db->last_sent_version, requester, master_v);
+  /* master_h transfers into the sender (PUT source-lifetime pin). */
   arts_send_db_snapshot_response(requester, cache->db_guid, master_v, edt_guid,
-                                 slot, data, data_size);
+                                 slot, /*kind=*/1, cache->db_size, rdzv,
+                                 master_h);
+}
+
+/* Deferred GET_DATA serve (snapshot-waiter `serve` arm): the request arrived
+ * at home before the creator's first WRITEBACK installed a buffer, and the
+ * install's drain now re-issues it.  Runs the same serve tail as the request
+ * handler.  The waiter is freed by the drain after this returns. */
+static void eager_serve_parked_snapshot(struct arts_db_cache_s *cache,
+                                        struct arts_db_snapshot_waiter_s *w) {
+  arts_shared_ptr_t master_h = arts_db_buf_acquire(cache);
+  struct arts_db_buffer_s *master =
+      (struct arts_db_buffer_s *)arts_shared_get(master_h);
+  if (master == NULL) {
+    /* Only reachable when the drain runs from cache teardown with the serve
+     * still parked (destroy-during-pending-acquire is app UB): fall back to
+     * the no-data reply so the requester is never stranded. */
+    arts_send_db_snapshot_response(w->requester, cache->db_guid, /*version=*/0,
+                                   w->edt_guid, w->slot, /*kind=*/0,
+                                   cache->db_size, &w->rdzv, NULL);
+    return;
+  }
+  uint64_t master_v = master->version;
+  /* master_h transfers into the reply path (consumed there). */
+  update_last_sent_max(cache, w->requester, master_v, master_h, w->edt_guid,
+                       w->slot, &w->rdzv);
 }
 
 /* ===== Per-protocol wire-handler bodies =============================== */
@@ -227,24 +295,44 @@ void arts_handler_db_snapshot_request(void *item_v, void *args_v) {
       (struct arts_db_buffer_s *)arts_shared_get(master_h);
   if (master == NULL) {
     /* Two cases produce master==NULL post-precheck:
-     *   (a) Sentinel DB (db_size==0): no buffer is ever installed.
-     *   (b) HOME_RECV pre-WRITEBACK: cross-rank create has happened but
-     *       the creator's first WRITEBACK has not landed; we have a
-     *       cache but no buffer (lazy install per OCR pattern).
-     * Both cases: respond with version=0, NULL data.  The requester's
-     * handle_data_response will deliver ptr=NULL to the parked RO waiter
-     * (per spec, "value is undefined" before any writer publishes).
+     *   (a) Sentinel DB (db_size==0): no buffer is ever installed — respond
+     *       with version=0, NULL data (NULL is the sentinel's defined value).
+     *   (b) HOME_RECV pre-WRITEBACK (db_size>0): cross-rank create has
+     *       happened but the creator's first WRITEBACK has not landed.  The
+     *       creator's RELEASE is the publication point a satisfied consumer
+     *       is entitled to observe, so PARK the serve on the snapshot
+     *       reorder buffer; the first writeback install drains it and
+     *       re-issues the serve with the original requester/landing.
      * NOT a destroy condition -- the precheck above (destroy_state) is
      * authoritative for that. */
+    if (cache->db_size > 0) {
+      struct arts_db_snapshot_waiter_s *w =
+          (struct arts_db_snapshot_waiter_s *)arts_malloc(sizeof(*w));
+      w->edt_guid = edt_guid;
+      w->slot = slot;
+      w->target_version = 1;
+      w->serve = eager_serve_parked_snapshot;
+      w->requester = requester;
+      w->rdzv = a->rdzv;
+      arts_lf_stack_push(&cache->pending_snapshot, &w->link);
+      /* Race recovery: an install may have landed between the NULL read and
+       * the push — drain (our own node included) so no serve parks forever. */
+      arts_shared_ptr_t rh = arts_db_buf_acquire(cache);
+      if (arts_shared_get(rh) != NULL) {
+        arts_db_buf_release(&rh);
+        arts_db_drain_pending_snapshot(cache);
+      }
+      return;
+    }
     arts_send_db_snapshot_response(requester, cache->db_guid, /*version=*/0,
-                                   edt_guid, slot,
-                                   /*data=*/NULL, /*data_size=*/0);
+                                   edt_guid, slot, /*kind=*/0, cache->db_size,
+                                   &a->rdzv, NULL);
     return;
   }
   uint64_t master_v = master->version;
-  update_last_sent_max(cache, requester, master_v, master->data, cache->db_size,
-                       edt_guid, slot);
-  arts_db_buf_release(&master_h);
+  /* master_h transfers into the reply path (consumed there). */
+  update_last_sent_max(cache, requester, master_v, master_h, edt_guid, slot,
+                       &a->rdzv);
 }
 
 /* Cat-B pure body (OoO g_ooo_table[OOO_DB_WRITEBACK]): the OoO engine has
@@ -259,22 +347,90 @@ void arts_handler_db_snapshot_request(void *item_v, void *args_v) {
  * deferred WRITEBACK does NOT ack on the defer — the single WRITEBACK_ACK is
  * sent on the drain replay.  Pure: it only installs (version-guarded) + acks;
  * ownership transfer is a separate owner→owner OWNERSHIP_RESPONSE ship. */
+/* Rendezvous continuation for a committed writeback: the dirty bytes have
+ * fully landed in the home landing; install them without a copy and ACK the
+ * blocked releaser.  The ACK fires even if the DB was destroyed while the
+ * pairing was outstanding — a torn-down home cache must never strand the
+ * blocked releaser (the WRITEBACK_ACK-on-MISS rule). */
+struct wb_landed_ctx_s {
+  arts_shared_ptr_t db_h;
+  struct arts_db_buffer_s *landing;
+  uint64_t version;
+  uint64_t data_size;
+  unsigned int releaser;
+  arts_guid_t db_guid;
+  uint64_t cv;
+};
+
+static void wb_landed_cb(void *arg) {
+  struct wb_landed_ctx_s *ctx = (struct wb_landed_ctx_s *)arg;
+  struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(ctx->db_h);
+  if (db != NULL) {
+    arts_db_buf_install_landed(&db->cache, ctx->version, ctx->landing,
+                               ctx->data_size);
+    /* First-writeback publication: wake home-parked RO acquires and re-issue
+     * home-parked GET_DATA serves (pre-install parkers). */
+    arts_db_drain_pending_snapshot(&db->cache);
+  } else {
+    /* Destroyed mid-round (app UB): the cache's recycle pool is gone — return
+     * the landing's storage straight to the registered pool. */
+    arts_regpool_free(ctx->landing);
+  }
+  if (ctx->cv != 0) {
+    arts_send_db_writeback_ack(ctx->releaser, ctx->db_guid, ctx->cv);
+  }
+  arts_shared_release(&ctx->db_h);
+  arts_free(ctx);
+}
+
 void arts_handler_db_writeback(void *item_v, void *args_v) {
   struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
   struct arts_ooo_args_db_writeback_s *a =
       (struct arts_ooo_args_db_writeback_s *)args_v;
-  const void *data =
-      a->data_size > 0 ? (const void *)((char *)a + sizeof(*a)) : NULL;
 
-  /* Monotonic: buf_install ignores a stale (lower/equal version) writeback, so
-   * an A(v)-vs-B(v+1) writeback reorder over distinct connections cannot
-   * clobber newer home data with older. */
-  arts_db_buf_install(cache, a->version, data, a->data_size);
-  if (a->cv != 0) {
-    arts_send_db_writeback_ack(a->releaser, a->db_guid, a->cv);
+  if (a->data_size == 0) {
+    /* Data-less ordering round (sentinel DB): install nothing, ACK. */
+    if (a->cv != 0) {
+      arts_send_db_writeback_ack(a->releaser, a->db_guid, a->cv);
+    }
+    return;
   }
-  /* No snapshot drain here: home's RO acquires hit case 1 (resume self) and
-   * never park; foreign ROs are served by GET_DATA, not by drain. */
+  if (a->data_inline != 0) {
+    /* Same-rank writeback: the payload trails the args blob.  Monotonic:
+     * buf_install ignores a stale (lower/equal version) writeback. */
+    arts_db_buf_install(cache, a->version, (const void *)((char *)a + sizeof(*a)),
+                        a->data_size);
+    /* First-writeback publication: wake home-parked RO acquires and re-issue
+     * home-parked GET_DATA serves (pre-install parkers). */
+    arts_db_drain_pending_snapshot(cache);
+    if (a->cv != 0) {
+      arts_send_db_writeback_ack(a->releaser, a->db_guid, a->cv);
+    }
+    return;
+  }
+  if (a->rdzv_txid == 0) {
+    /* Announce: the releaser holds a->data_size dirty bytes.  Allocate a
+     * fresh home landing for them and hand it back (WRITEBACK_CTS); nothing
+     * installs yet — the commit leg pairs with the write completion. */
+    struct arts_rdzv_landing_s landing;
+    (void)arts_db_buf_landing_alloc(cache, a->data_size, &landing);
+    arts_send_db_writeback_cts(a->releaser, a->db_guid, &landing, a->cv);
+    return;
+  }
+  /* Commit: the dirty bytes were PUT into our landing (named by the echoed
+   * cookie).  Pair with the write completion — either arrival order — then
+   * install the landing without a copy (version-conditional; stale retreats
+   * recycle) and ACK the blocked releaser. */
+  struct wb_landed_ctx_s *ctx =
+      (struct wb_landed_ctx_s *)arts_malloc(sizeof(*ctx));
+  ctx->db_h = arts_route_table_lookup_db(cache->db_guid);
+  ctx->landing = (struct arts_db_buffer_s *)(uintptr_t)a->rdzv_cookie;
+  ctx->version = a->version;
+  ctx->data_size = a->data_size;
+  ctx->releaser = a->releaser;
+  ctx->db_guid = a->db_guid;
+  ctx->cv = a->cv;
+  arts_net_rdzv_expect(a->rdzv_txid, wb_landed_cb, ctx);
 }
 
 /* Cat-C pure body (WRITEBACK_ACK).  Cache-independent pointer-identity sem-post
@@ -324,7 +480,7 @@ void arts_handler_db_destroy(void *item_v, void *args_v) {
   }
   {
     unsigned int q_rank;
-    while (arts_home_lockreq_queue_pop(&db->pending_rw, &q_rank)) {
+    while (arts_home_lockreq_queue_pop(&db->pending_rw, &q_rank, NULL)) {
       if (q_rank != self) {
         arts_send_db_cache_destroy(q_rank, a->db_guid);
       }
@@ -356,7 +512,8 @@ void arts_db_start_ownership_round(struct arts_db_cache_s *cache,
    * LAZY divergence is only the drain timing in the response/confirm handlers.
    */
   unsigned int next_owner;
-  if (!arts_home_lockreq_queue_pop(&db->pending_rw, &next_owner)) {
+  struct arts_rdzv_landing_s next_rdzv;
+  if (!arts_home_lockreq_queue_pop(&db->pending_rw, &next_owner, &next_rdzv)) {
     /* Defensive: we just pushed, so empty is impossible under correct usage.
      * Release the baton and return. */
     atomic_store_explicit(&db->invalidate_in_flight, 0u, memory_order_release);
@@ -365,7 +522,8 @@ void arts_db_start_ownership_round(struct arts_db_cache_s *cache,
   db->pending_install_owner = next_owner;
   unsigned int current_owner =
       atomic_load_explicit(&db->rw_holder, memory_order_acquire);
-  arts_send_db_ownership_invalidate(current_owner, cache->db_guid, next_owner);
+  arts_send_db_ownership_invalidate(current_owner, cache->db_guid, next_owner,
+                                    &next_rdzv);
 }
 
 /* ===== Eager OWNERSHIP_RESPONSE handler (new owner C) ================ */
@@ -374,42 +532,13 @@ void arts_db_start_ownership_round(struct arts_db_cache_s *cache,
  * divergence: EAGER drains pending_rw + runs its RW EDTs IMMEDIATELY here (no
  * CONFIRM_ACK gate — home serves RO, so there is no stale-RO window to close),
  * then sends CONFIRM to home (flips rw_holder + advances the next round). */
-void arts_handler_db_ownership_response(void *payload, size_t size) {
-  struct arts_msg_ownership_response_packet_s *hdr =
-      (struct arts_msg_ownership_response_packet_s *)payload;
-  arts_guid_t db_guid = hdr->db_guid;
-
-  /* Pin the db_s for the whole handler body (buffer install + pending_rw drain
-   * + writer_count RMW): the embedded cache is its FIRST member (offset 0), so
-   * one cb ref keeps it alive against a concurrent DESTROY on another receiver
-   * thread.  Released on every return path. */
-  arts_shared_ptr_t db_h = arts_route_table_lookup_db(db_guid);
+/* Post-install tail of the OWNERSHIP_RESPONSE (GRANT) handler — everything
+ * that must run only once the transferred bytes are in place.  db_h is the
+ * caller's pin on the db_s; consumed (released) here. */
+static void eager_response_commit(arts_shared_ptr_t db_h, arts_guid_t db_guid,
+                                  uint64_t version) {
   struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(db_h);
-  if (db == NULL) {
-    db_h = arts_db_cache_lazy_install(db_guid, /*db_size=*/0);
-    db = (struct arts_db_s *)arts_shared_get(db_h);
-    if (db == NULL) {
-      arts_shared_release(&db_h);
-      return; /* DB destroyed before we became owner — drop. */
-    }
-  }
   struct arts_db_cache_s *cache = &db->cache;
-
-  /* Wire layout: header | map (count pairs) | data bytes.  EAGER ignores the
-   * map (it dedups RO via home->last_sent_version), but parses past it. */
-  char *map_start = (char *)payload + sizeof(*hdr);
-  size_t map_size =
-      (sizeof(uint32_t) * 2) + ((size_t)hdr->map_entry_count *
-                                sizeof(struct arts_msg_rank_version_pair_s));
-  char *data_start = map_start + map_size;
-  size_t data_size = size - sizeof(*hdr) - map_size;
-
-  if (data_size > 0) {
-    arts_db_buf_install(cache, hdr->version, data_start, data_size);
-    if (cache->db_size == 0) {
-      cache->db_size = data_size;
-    }
-  }
 
   /* Sentinel(+1) + drain guard(+1), single op (0->2): the guard keeps
    * writer_count >= 1 across the per-waiter +1 drain so a commutative
@@ -421,12 +550,12 @@ void arts_handler_db_ownership_response(void *payload, size_t size) {
   /* EAGER drains + runs NOW (no confirm-ack gate): home serves RO so there is
    * no stale-RO window.  Then tell home we installed (CONFIRM), which flips
    * rw_holder + advances the next round. */
-  arts_db_drain_pending_rw_after_grant(cache, hdr->version, /*has_next=*/false);
+  arts_db_drain_pending_rw_after_grant(cache, version, /*has_next=*/false);
   arts_db_drain_pending_snapshot(cache);
   arts_ooo_drain_guid(db_guid);
 
   unsigned int home_rank = arts_guid_get_rank(db_guid);
-  arts_send_db_ownership_confirm(home_rank, db_guid, hdr->version);
+  arts_send_db_ownership_confirm(home_rank, db_guid, version);
 
   /* Remove the drain guard: the relocated 0-edge ship-check.  If a next-round
    * INVALIDATE already withdrew the sentinel and no local writer remains, we
@@ -437,6 +566,93 @@ void arts_handler_db_ownership_response(void *payload, size_t size) {
   }
 
   arts_shared_release(&db_h);
+}
+
+/* Rendezvous continuation: the transfer payload has fully landed in the
+ * advertised landing buffer ("imm seen => landing valid"); install it without
+ * a copy and run the commit tail.  Fires on {response packet, write
+ * completion} pairing, in either arrival order, on a dispatch-path progress
+ * thread. */
+struct eager_response_landed_ctx_s {
+  arts_shared_ptr_t db_h; /* pin transferred from the handler */
+  arts_guid_t db_guid;
+  struct arts_db_buffer_s *landing;
+  uint64_t version;
+  uint64_t data_size;
+};
+
+static void eager_response_landed_cb(void *arg) {
+  struct eager_response_landed_ctx_s *ctx =
+      (struct eager_response_landed_ctx_s *)arg;
+  struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(ctx->db_h);
+  arts_db_buf_install_landed(&db->cache, ctx->version, ctx->landing,
+                             ctx->data_size);
+  eager_response_commit(ctx->db_h, ctx->db_guid, ctx->version); /* releases */
+  arts_free(ctx);
+}
+
+void arts_handler_db_ownership_response(void *payload, size_t size) {
+  struct arts_msg_ownership_response_packet_s *hdr =
+      (struct arts_msg_ownership_response_packet_s *)payload;
+  arts_guid_t db_guid = hdr->db_guid;
+
+  /* Pin the db_s across the install + commit (and, on the rendezvous path,
+   * across the pairing wait): the embedded cache is its FIRST member (offset
+   * 0), so one cb ref keeps it alive against a concurrent DESTROY on another
+   * receiver thread.  Released by the commit tail. */
+  arts_shared_ptr_t db_h = arts_route_table_lookup_db(db_guid);
+  struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(db_h);
+  if (db == NULL) {
+    db_h = arts_db_cache_lazy_install(db_guid, /*db_size=*/0);
+    db = (struct arts_db_s *)arts_shared_get(db_h);
+    if (db == NULL) {
+      arts_shared_release(&db_h);
+      /* Consume any in-flight one-sided payload so the pairing table stays
+       * leak-free (the landing frees on arrival). */
+      arts_db_rdzv_discard_landing(hdr->rdzv_txid, hdr->rdzv_cookie);
+      return; /* DB destroyed before we became owner — drop. */
+    }
+  }
+  struct arts_db_cache_s *cache = &db->cache;
+
+  /* Wire layout: header | map (count pairs, inline).  EAGER ignores the map
+   * (it dedups RO via home->last_sent_version), but parses past it. */
+  char *map_start = (char *)payload + sizeof(*hdr);
+  size_t map_size =
+      (sizeof(uint32_t) * 2) + ((size_t)hdr->map_entry_count *
+                                sizeof(struct arts_msg_rank_version_pair_s));
+
+  if (hdr->rdzv_txid != 0) {
+    /* The payload travels one-sided: pair this packet with the write
+     * completion (either may arrive first) and install+commit when both are
+     * in.  The landing is our own buffer, named by the echoed cookie. */
+    struct eager_response_landed_ctx_s *ctx =
+        (struct eager_response_landed_ctx_s *)arts_malloc(sizeof(*ctx));
+    ctx->db_h = db_h;
+    ctx->db_guid = db_guid;
+    ctx->landing =
+        (struct arts_db_buffer_s *)(uintptr_t)hdr->rdzv_cookie;
+    ctx->version = hdr->version;
+    ctx->data_size = hdr->data_size;
+    arts_net_rdzv_expect(hdr->rdzv_txid, eager_response_landed_cb, ctx);
+    return;
+  }
+
+  /* No PUT: recycle the unused landing (echoed back for a data-less
+   * transfer), install any inline same-rank payload, and commit. */
+  if (hdr->rdzv_cookie != 0) {
+    arts_db_buf_landing_recycle(
+        cache, (struct arts_db_buffer_s *)(uintptr_t)hdr->rdzv_cookie);
+  }
+  char *data_start = map_start + map_size;
+  size_t data_size = size - sizeof(*hdr) - map_size;
+  if (data_size > 0) {
+    arts_db_buf_install(cache, hdr->version, data_start, data_size);
+    if (cache->db_size == 0) {
+      cache->db_size = data_size;
+    }
+  }
+  eager_response_commit(db_h, db_guid, hdr->version); /* releases db_h */
 }
 
 /* ===== Eager CONFIRM handler (home A) =============================== */
@@ -460,11 +676,13 @@ void arts_handler_db_ownership_confirm(void *item_v, void *args_v) {
    * the CONFIRM_ACK send). */
   while (1) {
     unsigned int next_owner;
-    if (arts_home_lockreq_queue_pop(&db->pending_rw, &next_owner)) {
+    struct arts_rdzv_landing_s next_rdzv;
+    if (arts_home_lockreq_queue_pop(&db->pending_rw, &next_owner, &next_rdzv)) {
       db->pending_install_owner = next_owner;
       unsigned int current =
           atomic_load_explicit(&db->rw_holder, memory_order_acquire);
-      arts_send_db_ownership_invalidate(current, cache->db_guid, next_owner);
+      arts_send_db_ownership_invalidate(current, cache->db_guid, next_owner,
+                                        &next_rdzv);
       return;
     }
     atomic_store_explicit(&db->invalidate_in_flight, 0u, memory_order_release);
@@ -502,6 +720,7 @@ void arts_handler_db_ownership_invalidate(void *item_v, void *args_v) {
    * store-before-decrement discipline the lazy arm uses for incoming_new_owner;
    * the eager INVALIDATE now carries new_owner (home embeds the FIFO front),
    * making the eager and lazy transfer paths structurally identical. */
+  cache->incoming_new_owner_rdzv = a->new_owner_rdzv;
   cache->incoming_new_owner = a->new_owner_rank;
   /* Sentinel withdrawal (writer_count -= 1).  Home's invalidate_in_flight gate
    * sends AT MOST ONE INVALIDATE_NOTICE to this rank per transfer round, after

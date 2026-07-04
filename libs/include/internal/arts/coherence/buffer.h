@@ -6,7 +6,7 @@
  * arts_shared_ptr_t (cb).  cache.buffer is the atomic slot; the slot holds the
  * "cache-hold" strong ref and every acquirer holds one more.  There is NO
  * per-DB buffer free-list: arts_db_buf_alloc pulls a recycled buffer from
- * cache->buf_freelist before falling back to arts_malloc_aligned; buffer_deleter
+ * cache->buf_freelist before falling back to arts_regpool_alloc_aligned; buffer_deleter
  * pushes the buffer back onto the free-list (unbounded) on the last strong
  * drop so version buffers are reused across the DB's lifetime.
  *
@@ -53,8 +53,8 @@ extern "C" {
 
 /* Allocate a buffer (header + db_size payload), 64-byte aligned.  Pulls a
  * recycled buffer from cache->buf_freelist when one is available; falls back
- * to arts_malloc_aligned.  install_buffer fills + wraps it in a control block;
- * before that the buffer is private to the caller. */
+ * to arts_regpool_alloc_aligned.  install_buffer fills + wraps it in a
+ * control block; before that the buffer is private to the caller. */
 struct arts_db_buffer_s *arts_db_buf_alloc(struct arts_db_cache_s *cache,
                                            uint64_t db_size);
 
@@ -96,6 +96,41 @@ struct arts_db_buffer_s *arts_db_buf_install(struct arts_db_cache_s *cache,
                                              uint64_t new_version,
                                              const void *data_payload,
                                              uint64_t db_size);
+
+/* ===== Rendezvous landing lifecycle =========================================
+ * A landing is a FRESH buffer allocated by the RECEIVER of a bulk payload and
+ * advertised (addr/key/txid/cookie) to the sender, which fi_writedata's the
+ * payload straight into landing->data.  On {metadata, write-completion}
+ * pairing the landing becomes the installed buffer via
+ * arts_db_buf_install_landed — today's install logic with the memcpy deleted —
+ * preserving the fresh-buffer-per-install invariant (concurrent readers of the
+ * old buffer keep a valid snapshot) with zero copies at both ends. */
+
+/* Allocate a fresh landing for `db_size` payload bytes and fill its wire
+ * advertisement (addr per negotiated mr_mode, MR key, fresh txid, cookie =
+ * the landing pointer).  Fails loudly if the buffer cannot be advertised
+ * (payloads cannot move one-sided without a fabric-registered pool). */
+struct arts_db_buffer_s *
+arts_db_buf_landing_alloc(struct arts_db_cache_s *cache, uint64_t db_size,
+                          struct arts_rdzv_landing_s *out);
+
+/* Return a never-installed landing to the per-DB free-list (the payload did
+ * not move: dedup'd response, unused advertisement, self-transfer). */
+void arts_db_buf_landing_recycle(struct arts_db_cache_s *cache,
+                                 struct arts_db_buffer_s *b);
+
+/* Install a PUT-landed buffer carrying `new_version` at cache.buffer — the
+ * no-copy twin of arts_db_buf_install (the payload bytes are already in
+ * landing->data).  Stale installs retreat, recycle the landing, and return
+ * the newer installed buffer unchanged. */
+struct arts_db_buffer_s *
+arts_db_buf_install_landed(struct arts_db_cache_s *cache, uint64_t new_version,
+                           struct arts_db_buffer_s *landing, uint64_t db_size);
+
+/* One-shot completion callback releasing the strong buffer ref passed as arg —
+ * the PUT source-lifetime gate (the ref keeps the source buffer's bytes valid
+ * until the fabric's local completion says it no longer reads them). */
+void arts_db_buf_ref_release_cb(void *arg);
 
 /* Write into the cache's single stable buffer in place.
  *

@@ -5,10 +5,10 @@
  * Property under test
  * -------------------
  * protocol.h is the cross-rank wire contract.  Two ranks built in DIFFERENT
- * coherence configs (the 6 supported: MRNEW+EAGER, MRNEW+LAZY, MRSW+EAGER,
- * MRSW+LAZY, MRMW, LOCK) MUST agree byte-for-byte on:
+ * coherence configs (the 7 supported: MRNEW+EAGER, MRNEW+LAZY, MRSW+EAGER,
+ * MRSW+LAZY, MRMW, LOCK+EAGER, LOCK+LAZY) MUST agree byte-for-byte on:
  *   (1) `enum arts_msg_type` — every ordinal contiguous 0..MSG_COUNT-1, and
- *       MSG_COUNT itself, IDENTICAL across all 6 configs (the enum members are
+ *       MSG_COUNT itself, IDENTICAL across all 7 configs (the enum members are
  *       unconditional even where their dispatcher case is #ifdef'd out, so the
  *       ordinals must not drift) — a skew = silent misroute.
  *   (2) `struct arts_msg_header_s` field offsets (message_type / size / rank)
@@ -19,10 +19,11 @@
  * payload at offset sizeof(struct); a sizeof skew tears every payload.
  *
  * The golden values below were frozen from the current tree and verified
- * IDENTICAL across all 6 configs (only the LOCK-only structs differ in
- * presence, never in the shared ordinals/offsets/sizes).  This TU is meant to
- * be COMPILED ONCE PER -DARTS_PROTOCOL_* config; the `_Static_assert`s catch
- * any config that drifts from the golden table at compile time.
+ * IDENTICAL across all 7 configs (only the LOCK-only structs, and the
+ * LOCK+LAZY-only subset within them, differ in presence, never in the shared
+ * ordinals/offsets/sizes).  This TU is meant to be COMPILED ONCE PER
+ * -DARTS_PROTOCOL_* config; the `_Static_assert`s catch any config that drifts
+ * from the golden table at compile time.
  *
  * SEQ-build skew (B071, second half): when built with -DSEQUENCENUMBERS the
  * header grows two fields, so `sizeof(header)` and `offsetof(size)` change —
@@ -33,22 +34,19 @@
  * wire-supplied seq_rank with no bounds check — out of scope for a compile
  * assertion, flagged here.)
  *
- * Runtime portion — the 8-byte payload-alignment INVARIANT (exposes a defect)
+ * Runtime portion — the 8-byte payload-alignment INVARIANT
  * ---------------------------------------------------------------------------
  * protocol.h §4 documents a pad-field invariant: "Pad-fields exist to keep the
  * trailing payload on an 8-byte boundary ... the payload starts at sizeof() —
  * that offset must be 8-aligned."  The payload-carrying structs are
- * OWNERSHIP_RESPONSE, WRITEBACK, SNAPSHOT_RESPONSE, LOCK_GRANT, LOCK_RELEASE
- * (and EDT_SATISFY_SLOT for DB_MODE_PTR).  This TU checks that sizeof() of each
- * is a multiple of 8.  It is currently VIOLATED for the payload-carrying
- * WRITEBACK packet (and for EDT_SATISFY_SLOT): with the packed 16-byte header,
- * sizeof(arts_msg_writeback_packet_s)==44, so the trailing buffer payload
- * starts at wire-offset 44 — NOT 8-aligned, contradicting the documented
- * invariant (the comment was sized for a 28-byte header).  The misalignment is
- * benign on x86 same-build clusters (sender/receiver agree on the offset and
- * the receiver memcpy's the data out), but it is a real ABI-invariant
- * violation: an unaligned trailing payload.  We REPORT it (exit 1) rather than
- * relax the assertion.
+ * OWNERSHIP_RESPONSE, WRITEBACK, SNAPSHOT_RESPONSE, EDT_SATISFY_SLOT (for
+ * DB_MODE_PTR), and — in LOCK builds — LOCK_GRANT, LOCK_RELEASE, and (LOCK+LAZY
+ * only) LOCK_DELIVER.  This TU checks that sizeof() of each is a multiple of 8
+ * at runtime (the invariant spans a pad field whose width is itself derived
+ * from other fields, so it is not expressible as a single `_Static_assert`).
+ * All payload-carrying structs currently HOLD the invariant — the check exists
+ * to catch a future regression (e.g. a field added to a payload struct without
+ * a compensating pad), not to report a live defect.
  */
 
 #include "arts/transport/protocol.h"
@@ -57,7 +55,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-/* ===== (1) enum ordinals — frozen golden table, identical across all 6
+/* ===== (1) enum ordinals — frozen golden table, identical across all 7
  * configs. Members are unconditional in protocol.h regardless of build. */
 _Static_assert(MSG_SHUTDOWN == 0, "ordinal MSG_SHUTDOWN drifted");
 _Static_assert(MSG_EDT_SATISFY_SLOT == 1,
@@ -111,8 +109,15 @@ _Static_assert(MSG_DB_LOCK_DELIVER == 28,
 _Static_assert(MSG_DB_LOCK_CONFIRM == 29,
                "ordinal MSG_DB_LOCK_CONFIRM drifted");
 _Static_assert(MSG_DB_LOCK_RORET == 30, "ordinal MSG_DB_LOCK_RORET drifted");
-_Static_assert(MSG_COUNT == 31,
-               "MSG_COUNT drifted (wire-compat: must be 31 in all 6 configs)");
+_Static_assert(MSG_DB_OWNERSHIP_CTS == 31,
+               "ordinal MSG_DB_OWNERSHIP_CTS drifted");
+_Static_assert(MSG_DB_WRITEBACK_CTS == 32,
+               "ordinal MSG_DB_WRITEBACK_CTS drifted");
+_Static_assert(MSG_DB_LOCK_CTS == 33, "ordinal MSG_DB_LOCK_CTS drifted");
+_Static_assert(MSG_RDZV_PUSH_RTS == 34, "ordinal MSG_RDZV_PUSH_RTS drifted");
+_Static_assert(MSG_RDZV_PUSH_CTS == 35, "ordinal MSG_RDZV_PUSH_CTS drifted");
+_Static_assert(MSG_COUNT == 36,
+               "MSG_COUNT drifted (wire-compat: must be 36 in all 7 configs)");
 
 /* ===== (2) header layout — read before the message type is known. ===== */
 _Static_assert(offsetof(struct arts_msg_header_s, message_type) == 0,
@@ -142,13 +147,15 @@ _Static_assert(sizeof(struct arts_msg_header_s) == 16, "header size drifted");
 /* ===== (3) per-packet sizeof — frozen golden table (non-SEQ).
  * Only assert under the non-SEQ header (the SEQ header adds 12 bytes to every
  * struct, which is the very skew B071 documents).  Each value verified
- * identical across all 6 configs. */
+ * identical across all 7 configs. */
 #ifndef SEQUENCENUMBERS
 _Static_assert(sizeof(struct arts_msg_guid_only_packet_s) == 24,
                "guid_only sizeof drifted");
+_Static_assert(sizeof(struct arts_msg_memory_move_packet_s) == 48,
+               "memory_move sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_add_dependence_packet_s) == 40,
                "add_dependence sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_edt_satisfy_slot_packet_s) == 48,
+_Static_assert(sizeof(struct arts_msg_edt_satisfy_slot_packet_s) == 64,
                "edt_satisfy_slot sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_event_satisfy_slot_packet_s) == 36,
                "event_satisfy_slot sizeof drifted");
@@ -156,21 +163,21 @@ _Static_assert(sizeof(struct arts_msg_time_sync_req_packet_s) == 24,
                "time_sync_req sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_time_sync_resp_packet_s) == 32,
                "time_sync_resp sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_ownership_request_packet_s) == 24,
+_Static_assert(sizeof(struct arts_msg_ownership_request_packet_s) == 56,
                "ownership_request sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_ownership_response_packet_s) == 40,
+_Static_assert(sizeof(struct arts_msg_ownership_response_packet_s) == 64,
                "ownership_response sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_writeback_packet_s) == 40,
+_Static_assert(sizeof(struct arts_msg_writeback_packet_s) == 64,
                "writeback sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_writeback_ack_packet_s) == 32,
                "writeback_ack sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_ownership_invalidate_packet_s) == 32,
+_Static_assert(sizeof(struct arts_msg_ownership_invalidate_packet_s) == 64,
                "ownership_invalidate sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_ownership_confirm_ack_packet_s) == 32,
+_Static_assert(sizeof(struct arts_msg_ownership_confirm_ack_packet_s) == 64,
                "ownership_confirm_ack sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_snapshot_request_packet_s) == 40,
+_Static_assert(sizeof(struct arts_msg_snapshot_request_packet_s) == 72,
                "snapshot_request sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_snapshot_response_packet_s) == 48,
+_Static_assert(sizeof(struct arts_msg_snapshot_response_packet_s) == 72,
                "snapshot_response sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_db_create_coherent_packet_s) == 40,
                "db_create_coherent sizeof drifted");
@@ -178,25 +185,37 @@ _Static_assert(sizeof(struct arts_msg_destroy_packet_s) == 24,
                "destroy sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_cache_destroy_packet_s) == 24,
                "cache_destroy sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_snapshot_redirect_packet_s) == 40,
+_Static_assert(sizeof(struct arts_msg_snapshot_redirect_packet_s) == 72,
                "snapshot_redirect sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_rank_version_pair_s) == 16,
                "rank_version_pair sizeof drifted");
+_Static_assert(sizeof(struct arts_msg_rdzv_landing_s) == 32,
+               "rdzv_landing sizeof drifted");
+_Static_assert(sizeof(struct arts_msg_ownership_cts_packet_s) == 32,
+               "ownership_cts sizeof drifted");
+_Static_assert(sizeof(struct arts_msg_writeback_cts_packet_s) == 64,
+               "writeback_cts sizeof drifted");
+_Static_assert(sizeof(struct arts_msg_rdzv_push_rts_packet_s) == 32,
+               "rdzv_push_rts sizeof drifted");
+_Static_assert(sizeof(struct arts_msg_rdzv_push_cts_packet_s) == 56,
+               "rdzv_push_cts sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_ownership_confirm_packet_s) == 32,
                "ownership_confirm sizeof drifted");
 #ifdef ARTS_PROTOCOL_LOCK
-_Static_assert(sizeof(struct arts_msg_lock_request_packet_s) == 32,
+_Static_assert(sizeof(struct arts_msg_lock_request_packet_s) == 64,
                "lock_request sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_lock_grant_packet_s) == 40,
+_Static_assert(sizeof(struct arts_msg_lock_grant_packet_s) == 96,
                "lock_grant sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_lock_release_packet_s) == 48,
+_Static_assert(sizeof(struct arts_msg_lock_release_packet_s) == 72,
                "lock_release sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_lock_release_ack_packet_s) == 32,
                "lock_release_ack sizeof drifted");
+_Static_assert(sizeof(struct arts_msg_lock_cts_packet_s) == 40,
+               "lock_cts sizeof drifted");
 #ifdef ARTS_TIMING_LAZY
-_Static_assert(sizeof(struct arts_msg_lock_forward_packet_s) == 32,
+_Static_assert(sizeof(struct arts_msg_lock_forward_packet_s) == 64,
                "lock_forward sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_lock_deliver_packet_s) == 32,
+_Static_assert(sizeof(struct arts_msg_lock_deliver_packet_s) == 56,
                "lock_deliver sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_lock_confirm_packet_s) == 24,
                "lock_confirm sizeof drifted");

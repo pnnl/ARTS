@@ -61,22 +61,34 @@ static inline void arts_lf_pool_init(arts_lockfree_pool_t *p,
   p->node_size = node_size;
 }
 
-/** Drain everything and free each node via arts_free.  Caller is
- *  responsible for ensuring no other thread touches the pool during
- *  destroy. */
-static inline void arts_lf_pool_destroy(arts_lockfree_pool_t *p) {
+/** Drain everything and free each node via `free_fn`.  Caller is
+ *  responsible for ensuring no other thread touches the pool during destroy,
+ *  and that `free_fn` is the matching free for whatever allocator produced
+ *  the pool's nodes — a pool seeded from a non-default allocator (e.g. a
+ *  registered/pinned pool) must be destroyed with that allocator's free, not
+ *  the default arts_free, or the mismatched free is a correctness bug (double
+ *  bookkeeping, or freeing memory the wrong allocator does not own). */
+static inline void arts_lf_pool_destroy_with(arts_lockfree_pool_t *p,
+                                             void (*free_fn)(void *)) {
   arts_lf_pool_head_t cur =
       atomic_load_explicit(&p->head, memory_order_acquire);
   arts_lf_link_t *node = cur.ptr;
   while (node) {
     arts_lf_link_t *next =
         atomic_load_explicit(&node->next, memory_order_relaxed);
-    arts_free(node);
+    free_fn(node);
     node = next;
   }
   arts_lf_pool_head_t empty = {.ptr = NULL, .tag = cur.tag};
   atomic_store_explicit(&p->head, empty, memory_order_relaxed);
   atomic_store_explicit(&p->count, 0u, memory_order_relaxed);
+}
+
+/** Drain everything and free each node via arts_free.  Caller is
+ *  responsible for ensuring no other thread touches the pool during
+ *  destroy. */
+static inline void arts_lf_pool_destroy(arts_lockfree_pool_t *p) {
+  arts_lf_pool_destroy_with(p, arts_free);
 }
 
 /* ── Single-node alloc / release ──────────────────────────────────────── */

@@ -120,17 +120,10 @@ void arts_thread_main_join() {
     fflush(stderr);
   }
 
-  /* Phase C: close the network layer so receivers wake up from poll()
-   * (they would otherwise block up to 300 s). Uses SHUT_WR on send
-   * sockets so any buffered SHUTDOWN_MSG broadcast bytes still get
-   * delivered via FIN, and SHUT_RD on recv sockets. Receivers see EOF
-   * on the next poll() iteration and exit their loop. */
-  if (arts_global_rank_count > 1) {
-    arts_socket_shutdown();
-  }
-  /* Belt-and-braces: explicitly clear alive on network threads too, so
-   * any sender that is not currently inside a socket call also exits
-   * promptly. Idempotent with respect to the EOF/EPIPE path. */
+  /* Stop the progress threads.  After the transport cutover they no longer
+   * block in a socket poll (they reap the fabric with a short bounded wait), so
+   * clearing alive is enough — no socket shutdown is needed to wake them, and
+   * the data sockets were already closed once bootstrap finished. */
   arts_runtime_stop_network();
 
   arts_runtime_private_cleanup();
@@ -198,28 +191,16 @@ void arts_thread_main_join() {
 void arts_thread_init(struct arts_config_s *config) {
   g_config = config;
 
-  /* Validate/adjust network thread counts now that rank_count is known. */
+  /* Adjust the progress-thread count now that rank_count is known.  The sender
+   * role is gone (its cfg count is folded into workers at config time), and a
+   * single-node run has no progress thread.  Progress threads no longer own a
+   * per-socket partition — they all reap the shared fabric completion queue —
+   * so the old node*port ceiling no longer applies. */
   if (arts_global_rank_count == 1) {
-    config->sender_thread_count = 0;
-    config->receiver_thread_count = 0;
-  } else {
-    unsigned int max_net = (arts_global_rank_count - 1) * config->port_count;
-    if (config->sender_thread_count > max_net) {
-      ARTS_ERROR(
-          "sender_threads (%u) exceeds node*port limit (%u nodes * %u ports)",
-          config->sender_thread_count, arts_global_rank_count - 1,
-          config->port_count);
-    }
-    if (config->receiver_thread_count > max_net) {
-      ARTS_ERROR(
-          "receiver_threads (%u) exceeds node*port limit (%u nodes * %u ports)",
-          config->receiver_thread_count, arts_global_rank_count - 1,
-          config->port_count);
-    }
+    config->progress_thread_count = 0;
   }
-  config->worker_thread_count = config->thread_count -
-                                config->sender_thread_count -
-                                config->receiver_thread_count;
+  config->worker_thread_count =
+      config->thread_count - config->progress_thread_count;
 
   mask =
       (struct thread_mask_s *)arts_malloc(sizeof(*mask) * config->thread_count);

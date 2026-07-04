@@ -106,6 +106,13 @@ function(arts_apply_protocol target proto timing)
     endif()
 endfunction()
 
+# OFI (libfabric) transport availability, visible to every target in this
+# directory and its subdirectories (core/, graph/) so per-module OBJECT
+# libraries can gate fabric-header includes with #ifdef ARTS_TRANSPORT_OFI.
+if(ARTS_TRANSPORT_OFI)
+    add_compile_definitions(ARTS_TRANSPORT_OFI=1)
+endif()
+
 # Module subdirectories — each defines OBJECT library targets
 add_subdirectory(core)
 add_subdirectory(graph)
@@ -158,6 +165,7 @@ if(ARTS_BUILD_STATIC)
         $<TARGET_OBJECTS:arts_memory>
         $<TARGET_OBJECTS:arts_sync>
         $<TARGET_OBJECTS:arts_ooo>
+        $<TARGET_OBJECTS:arts_regpool>
         $<TARGET_OBJECTS:arts_system>
         $<TARGET_OBJECTS:arts_utils>
         $<TARGET_OBJECTS:arts_graph>
@@ -186,6 +194,10 @@ if(ARTS_BUILD_STATIC)
 
     if(ARTS_USE_CXL)
         target_link_libraries(arts_static PUBLIC arts_cxl_lib)
+    endif()
+
+    if(ARTS_TRANSPORT_OFI)
+        target_link_libraries(arts_static PRIVATE arts::libfabric)
     endif()
 
     arts_apply_protocol(arts_static ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
@@ -224,6 +236,7 @@ if(ARTS_BUILD_SHARED)
         $<TARGET_OBJECTS:arts_memory>
         $<TARGET_OBJECTS:arts_sync>
         $<TARGET_OBJECTS:arts_ooo>
+        $<TARGET_OBJECTS:arts_regpool>
         $<TARGET_OBJECTS:arts_system>
         $<TARGET_OBJECTS:arts_utils>
         $<TARGET_OBJECTS:arts_graph>
@@ -259,6 +272,23 @@ if(ARTS_BUILD_SHARED)
 
     if(ARTS_USE_CXL)
         target_link_libraries(arts_shared PUBLIC arts_cxl_lib)
+    endif()
+
+    if(ARTS_TRANSPORT_OFI)
+        # INTERFACE, not PRIVATE: do NOT embed the static libfabric archive into
+        # libarts.so.  libfabric applies ELF symbol versioning (FABRIC_1.x);
+        # statically pulling a versioned symbol into a shared object fails to
+        # link ("version node not found ... failed to set dynamic section
+        # sizes") because libfabric's version script is not applied here.
+        # Leaving the fi_* symbols undefined in libarts.so (shared objects allow
+        # that) and having every consumer (each links arts_shared) pull the
+        # archive resolves them at the executable link — the same way the static
+        # arts library already propagates libfabric to its consumers.
+        target_link_libraries(arts_shared INTERFACE arts::libfabric)
+        # Still needed at compile time for the fabric headers in this dir's TUs
+        # (main.c); PRIVATE include-only, no link edge into the .so.
+        target_include_directories(arts_shared PRIVATE
+            $<TARGET_PROPERTY:arts::libfabric,INTERFACE_INCLUDE_DIRECTORIES>)
     endif()
 
     arts_apply_protocol(arts_shared ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
@@ -302,6 +332,7 @@ if(BUILD_CUDA_LIBRARY)
             $<TARGET_OBJECTS:arts_memory_gpu>
             $<TARGET_OBJECTS:arts_sync>
             $<TARGET_OBJECTS:arts_ooo>
+            $<TARGET_OBJECTS:arts_regpool>
             $<TARGET_OBJECTS:arts_system>
             $<TARGET_OBJECTS:arts_utils>
             $<TARGET_OBJECTS:arts_gpu>
@@ -370,6 +401,7 @@ if(BUILD_CUDA_LIBRARY)
             $<TARGET_OBJECTS:arts_memory_gpu>
             $<TARGET_OBJECTS:arts_sync>
             $<TARGET_OBJECTS:arts_ooo>
+            $<TARGET_OBJECTS:arts_regpool>
             $<TARGET_OBJECTS:arts_system>
             $<TARGET_OBJECTS:arts_utils>
             $<TARGET_OBJECTS:arts_gpu>
@@ -428,7 +460,7 @@ endif()
 # MODEL TUs are swapped for this variant's, and the defines are applied per-target.
 if(ARTS_BUILD_BENCHMARKS AND ARTS_BUILD_STATIC)
     set(_ARTS_VARIANT_OBJLIBS
-        arts_compute arts_memory arts_sync arts_ooo arts_scheduler
+        arts_compute arts_memory arts_sync arts_ooo arts_regpool arts_scheduler
         arts_transport arts_gas arts_system arts_utils arts_counter arts_graph)
 
     function(arts_variant suffix proto timing)
@@ -474,6 +506,11 @@ if(ARTS_BUILD_BENCHMARKS AND ARTS_BUILD_STATIC)
         endif()
         if(ARTS_MALLOC STREQUAL "mimalloc")
             target_link_libraries(arts_static_${suffix} PRIVATE mimalloc-static)
+        endif()
+        if(ARTS_TRANSPORT_OFI)
+            # regpool.c (gathered from arts_regpool) includes fabric headers and
+            # the static lib resolves fi_* symbols from libfabric.
+            target_link_libraries(arts_static_${suffix} PRIVATE arts::libfabric)
         endif()
         arts_apply_protocol(arts_static_${suffix} "${proto}" "${timing}")
         target_compile_definitions(arts_static_${suffix} PRIVATE

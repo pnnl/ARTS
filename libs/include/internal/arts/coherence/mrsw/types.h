@@ -79,6 +79,7 @@ extern "C" {
 struct arts_home_lockreq_node_s {
   struct arts_home_lockreq_node_s *next;
   unsigned int rank;
+  struct arts_rdzv_landing_s rdzv; /* requester's transfer landing */
 };
 
 struct arts_home_lockreq_queue_s {
@@ -91,6 +92,7 @@ struct arts_home_lockreq_queue_s {
 struct arts_home_lockreq_node_s {
   _Atomic(struct arts_home_lockreq_node_s *) next;
   unsigned int rank;
+  struct arts_rdzv_landing_s rdzv; /* requester's transfer landing */
 };
 
 struct arts_home_lockreq_queue_s {
@@ -204,6 +206,10 @@ struct arts_db_cache_s {
    * that actor ships the owner→owner transfer.  Single writer per round (home
    * baton gate), so no atomic needed.  Shared by both timings. */
   unsigned int incoming_new_owner;
+  /* The pending new owner's transfer landing, published together with (and
+   * under the same single-writer / publish-before-withdraw discipline as)
+   * incoming_new_owner: the 0-edge actor PUTs the transfer payload here. */
+  struct arts_rdzv_landing_s incoming_new_owner_rdzv;
   /* Per-cache RW-waiter FIFO (pop-one).  A local RW acquire pushes here; the
    * idle-owner token claim, the GRANT drain, and the release token hand-off
    * pop exactly one waiter and deliver it.  The single token (writer_count's

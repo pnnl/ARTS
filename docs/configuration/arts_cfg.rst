@@ -120,12 +120,27 @@ Networking
    * - Key
      - Default
      - Description
-   * - ``sender_threads``
+   * - ``progress_threads``
      - 1
-     - Number of outgoing (sender) network threads (0 for local mode).
-   * - ``receiver_threads``
-     - 1
-     - Number of incoming (receiver) network threads (0 for local mode).
+     - Number of progress threads per node, draining the fabric completion
+       queue (0 for local mode). The transport injects sends directly from
+       workers, so there is no separate sender-thread key; fold any sender
+       count from an older config into ``worker_threads``. The removed
+       ``sender_threads`` key and the old ``receiver_threads`` name are a
+       **hard error** at config-parse time, not a silent ignore, so a stale
+       config fails loudly instead of quietly changing its thread budget.
+   * - ``provider``
+     - auto
+     - libfabric provider name passed to ``fi_getinfo``'s ``prov_name`` hint
+       (``tcp``, ``verbs``, ``cxi``, etc.). Unset/empty auto-selects. When
+       set, this overrides the ambient ``FI_PROVIDER`` environment variable
+       for the process — the config is the deliberate, versioned artifact;
+       the environment variable is ambient and host-specific.
+   * - ``regpool_slab_mb``
+     - 64
+     - Registered-memory slab pool size in MB, per NUMA node. Backs the
+       libfabric memory registration the DB payload buffers draw from; the
+       pool grows on demand from this floor.
    * - ``port_count``
      - 1
      - Number of parallel network connections per node pair.

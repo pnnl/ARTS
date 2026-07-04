@@ -39,7 +39,7 @@
 
 /// @file coherence_lazy_ownership_reorder.c
 /// @brief Stress the lazy-protocol ownership-transfer TRANSFER/INVALIDATE
-///        two-wire reorder window under receiver_threads>1.
+///        two-wire reorder window under progress_threads>1.
 ///
 /// THE WINDOW UNDER TEST.  Under the lazy coherence protocol, a shared RW
 /// DataBlock's ownership moves
@@ -49,8 +49,8 @@
 /// owner's INSTALL_ACK advances rw_holder) immediately sends that new owner an
 /// INVALIDATE (a -1) for the NEXT round.  The TRANSFER_OWNERSHIP(+1) and the
 /// follow-up INVALIDATE(-1) are therefore TWO messages to the SAME rank.  With
-/// a single receiver thread they keep per-peer FIFO order (sentinel installs
-/// first); with receiver_threads>1 they can be dispatched by different receiver
+/// a single progress thread they keep per-peer FIFO order (sentinel installs
+/// first); with progress_threads>1 they can be dispatched by different progress
 /// threads OUT OF ORDER.  An INVALIDATE that wins the race arrives while
 /// writer_count is still 0, momentarily driving it negative.
 ///
@@ -109,7 +109,7 @@
 /// (worker_threads>1), with no bearing on the ownership-transfer path — i.e. it
 /// would be a test bug, not a runtime defect.
 ///
-/// Requires 2+ ranks and a receiver_threads>=2 config (arts_2n_io.cfg) to make
+/// Requires 2+ ranks and a progress_threads>=2 config (arts_2n_io.cfg) to make
 /// the two-wire reorder physically possible; SKIPs cleanly otherwise (and under
 /// the relaxed model, which has no exclusive-RW ownership-transfer chain).
 /// A stranded waiter is caught by the ctest TIMEOUT (no in-test watchdog).

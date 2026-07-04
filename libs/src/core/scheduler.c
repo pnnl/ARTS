@@ -56,7 +56,7 @@
 #include "arts/system/threads.h"
 #include "arts/system/topology.h"
 #include "arts/transport/dispatcher.h"
-#include "arts/transport/outbox.h" /* arts_transport_loopback_drain */
+#include "arts/transport/net.h" /* arts_transport_loopback_drain */
 #include "arts/transport/protocol.h"
 #include "arts/transport/socket.h"
 #include "arts/utils/array_list.h"
@@ -74,16 +74,6 @@ bool arts_cxl_scheduler_loop(void);
 #endif
 
 extern unsigned int num_numa_domains;
-
-static inline void arts_runtime_idle_pause(void) {
-#if defined(__x86_64__) || defined(__i386__)
-  __asm__ __volatile__("pause" ::: "memory");
-#elif defined(__aarch64__) || defined(__arm__)
-  __asm__ __volatile__("yield" ::: "memory");
-#else
-  __asm__ __volatile__("" ::: "memory");
-#endif
-}
 
 ARTS_THREAD_LOCAL struct arts_runtime_private_s arts_thread_info;
 
@@ -257,10 +247,10 @@ inline struct arts_edt_s *arts_runtime_steal_from_network() {
   struct arts_edt_s *edt = NULL;
   if (arts_global_rank_count > 1) {
     unsigned int index = arts_thread_info.thread_id;
-    for (unsigned int i = 0; i < arts_node_info.receiver_thread_count; i++) {
-      index = (index + 1) % arts_node_info.receiver_thread_count;
+    for (unsigned int i = 0; i < arts_node_info.progress_thread_count; i++) {
+      index = (index + 1) % arts_node_info.progress_thread_count;
       if ((edt = (struct arts_edt_s *)arts_deque_pop_back(
-               arts_node_info.receiver_deque[index])) != NULL) {
+               arts_node_info.progress_deque[index])) != NULL) {
         break;
       }
     }

@@ -9,8 +9,8 @@ ARTS (Asynchronous Runtime System) is a distributed, event-driven runtime loosel
 - **Events & Dependencies** – OCR-style events connect producers/consumers. The runtime builds a dynamic DAG and triggers EDTs once all prereqs fire.
 - **GUID system** – Every EDT, datablock, and event has a GUID so DAGs can be wired across nodes without global pointers.
 - **Datablock lifecycle** – Applications allocate datablocks via `artsDbCreate`, pass GUIDs to EDTs, and the runtime handles acquire/release semantics (read/write modes, owner hand-offs). Reference counts and versioning live in `libs/core/src/runtime/datablock/*`.
-- **Distributed Scheduling** – A decentralized scheduler assigns EDTs to worker threads, maintains per-thread deques, supports work stealing, and cooperates with the network layer (`libs/core/src/runtime/network`) to migrate work or data.
-- **Networked DB protocol** – Messages for acquire/release/clone requests flow through configurable transports (shared-memory, MPI, or GASNet depending on build flags). The protocol keeps metadata (size, owner, access mode) alongside payloads so receivers can reconcile updates efficiently.
+- **Distributed Scheduling** – A decentralized scheduler assigns EDTs to worker threads, maintains per-thread deques, supports work stealing, and cooperates with the transport layer (`libs/src/core/transport/`) to migrate work or data.
+- **Networked DB protocol** – Cross-rank DB acquire/release/writeback and control messages ride a libfabric (OFI) RDM-endpoint transport (`libs/src/core/transport/net.c`); the provider is chosen via the config file's `provider` key (or the `FI_PROVIDER` env var), defaulting to `tcp`. DataBlock payloads are staged in a per-NUMA registered memory pool ("regpool") and delivered by one-sided RDMA into the receiver's pre-registered buffer; small control messages ride ordinary two-sided sends. Dedicated worker threads run EDTs while separate progress thread(s) drive completion. libfabric is vendored as a submodule and built in-tree, so no external networking library is required. A TCP socket mesh still exists, but only for process launch, the one-shot startup address exchange, and post-bootstrap liveness detection — no DB payload or protocol traffic crosses it.
 
 ## Relationship to OCR
 
@@ -28,7 +28,8 @@ See `INSTALL.md` for detailed package lists. At a high level you need:
 - A C/C++ compiler with OpenMP support (GCC or Clang)
 - CMake + Ninja (preferred) or Make
 - `libhwloc`, `libnuma`, pthreads
-- Optional: MPI or GASNet if building networked backends
+- The libfabric (OFI) transport is a vendored submodule, built in-tree — no external networking library to install
+- Optional: MPI, only for the xsocr/ocr-vx/baseline reference benchmark backends (not needed for ARTS itself)
 
 ## Building
 

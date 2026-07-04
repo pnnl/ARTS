@@ -13,7 +13,9 @@ concepts.
   identifiers (GUIDs); consistency is defined by the ARTS memory model
   (see :doc:`programming_model/coherence_protocols`).
 - **Distributed Scheduling** — decentralised scheduler with support for
-  multi-node execution via TCP networking.
+  multi-node execution over a libfabric (OFI) RDMA transport; a TCP mesh is
+  retained only for process launch, the startup address exchange, and
+  post-bootstrap liveness detection (no application data crosses it).
 - **GPU Support** — optional CUDA-based EDT and DataBlock operations.
 
 .. toctree::

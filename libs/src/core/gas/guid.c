@@ -101,9 +101,9 @@ arts_guid_t arts_guid_create_for_rank(unsigned int rank, unsigned int type) {
 }
 
 void set_guid_generator_after_parallel_start() {
-  /* One GUID key partition PER THREAD (workers + senders + receivers).  Any
+  /* One GUID key partition PER THREAD (workers + progress threads).  Any
    * thread that may mint GUIDs concurrently needs a DISJOINT key block.  In
-   * particular, with receiver_threads > 1 several receiver threads run
+   * particular, with progress_threads > 1 several progress threads run
    * arts_handler_edt_create (and create finish-event proxy LATCHes) at the same
    * time; collapsing every non-worker thread onto a single shared slot made
    * those threads emit IDENTICAL GUID sequences (same offset, both counters

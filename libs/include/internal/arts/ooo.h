@@ -213,6 +213,7 @@ struct arts_ooo_args_db_acquire_s {
 struct arts_ooo_args_db_ownership_request_s {
   unsigned int requester;
   arts_guid_t db_guid;
+  struct arts_rdzv_landing_s rdzv; /* requester's transfer landing */
 };
 
 struct arts_ooo_args_db_snapshot_request_s {
@@ -220,6 +221,7 @@ struct arts_ooo_args_db_snapshot_request_s {
   arts_guid_t db_guid;
   arts_guid_t edt_guid;
   uint32_t slot;
+  struct arts_rdzv_landing_s rdzv; /* requester's snapshot landing */
 };
 
 struct arts_ooo_args_db_destroy_s {
@@ -227,13 +229,24 @@ struct arts_ooo_args_db_destroy_s {
   arts_guid_t db_guid;
 };
 
-/* DB writeback: inline write-back payload trails this header. */
+/* DB writeback.  Three shapes share this args struct (see the WRITEBACK wire
+ * doc in protocol.h):
+ *   data_inline != 0                : same-rank writeback — the payload
+ *       (data_size bytes) trails this header in the args blob;
+ *   data_inline == 0, rdzv_txid == 0: announce leg — home allocates a fresh
+ *       landing and replies WRITEBACK_CTS (nothing installs yet);
+ *   data_inline == 0, rdzv_txid != 0: commit leg — the payload was PUT into
+ *       home's landing (rdzv_cookie); install on {args, txid} pairing.
+ *   data_size == 0                  : data-less round — install nothing, ACK. */
 struct arts_ooo_args_db_writeback_s {
   unsigned int releaser;
   arts_guid_t db_guid;
   uint64_t version;
-  uint64_t cv; /* releaser's sem_t address, echoed in the ACK */
+  uint64_t cv; /* releaser's stack rendezvous address, echoed in CTS/ACK */
   uint64_t data_size;
+  uint64_t rdzv_txid;
+  uint64_t rdzv_cookie;
+  uint32_t data_inline;
 };
 
 /* DB ownership invalidate: carries the fields the wire
@@ -243,6 +256,7 @@ struct arts_ooo_args_db_writeback_s {
 struct arts_ooo_args_db_ownership_invalidate_s {
   arts_guid_t db_guid;
   unsigned int new_owner_rank;
+  struct arts_rdzv_landing_s new_owner_rdzv; /* transfer landing at new owner */
 };
 
 /* Event / EDT destroy replay (before-create reorder): the guid is enough to
@@ -259,6 +273,7 @@ struct arts_ooo_args_db_lock_request_s {
   unsigned int requester; /* rank that sent MSG_DB_LOCK_REQUEST */
   arts_guid_t db_guid;
   arts_db_access_mode_t mode; /* DB_MODE_RO or DB_MODE_RW */
+  struct arts_rdzv_landing_s rdzv; /* requester's grant/deliver landing */
 };
 /* LOCK_RELEASE: inline writeback payload of data_size bytes trails this
  * header (data_size == 0 for RO releases).
@@ -274,6 +289,12 @@ struct arts_ooo_args_db_lock_release_s {
   uint64_t data_size;         /* 0 for RO; >0 for RW writeback */
   uint64_t cv;                /* RW: releaser sem_t address; 0 for RO */
   uint64_t version; /* RW: monotone version for buf_install; 0 for RO */
+  /* RW dirty payload delivery: data_inline != 0 = payload trails this header
+   * (same-rank release); else the payload was PUT into the grant's wb landing
+   * — {rdzv_txid, rdzv_cookie} echo it and install pairs by txid. */
+  uint64_t rdzv_txid;
+  uint64_t rdzv_cookie;
+  uint32_t data_inline;
 };
 
 /* g_ooo_table handler: operate on an already-acquired, valid item with the

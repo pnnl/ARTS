@@ -54,8 +54,9 @@ void arts_thread_main_join(void);
  *
  * Responsibility split (spec Cat E — state-less, no route_table):
  *   - arts_shutdown (public API, the initiator side): owns the cluster
- *     broadcast (MSG_SHUTDOWN × N-1) + wait_for_outbox_drain, then enters the
- *     local stop state.  The drain wait is the initiator's responsibility only.
+ *     broadcast (MSG_SHUTDOWN × N-1) + arts_net_drain_outstanding, then enters
+ *     the local stop state.  The drain wait is the initiator's responsibility
+ *     only.
  *   - arts_handler_shutdown (the passive RX side): the lightweight gate the
  *     wire dispatcher calls directly on MSG_SHUTDOWN — idempotent CAS (0→1) +
  *     worker-thread stop signal.  NO rebroadcast, NO drain-wait.  Sender/
@@ -73,6 +74,19 @@ void arts_handler_shutdown(void);
  *   arts_stop_local_node   — stop the whole local runtime. */
 void arts_stop_local_worker(void);
 void arts_stop_local_node(void);
+
+/* Architectural spin-wait hint for idle poll loops (x86 `pause` / arm `yield`;
+ * compiler barrier elsewhere).  Cuts the pipeline/power cost of a busy-poll
+ * and forces re-reads of polled memory each iteration. */
+static inline void arts_runtime_idle_pause(void) {
+#if defined(__x86_64__) || defined(__i386__)
+  __asm__ __volatile__("pause" ::: "memory");
+#elif defined(__aarch64__) || defined(__arm__)
+  __asm__ __volatile__("yield" ::: "memory");
+#else
+  __asm__ __volatile__("" ::: "memory");
+#endif
+}
 
 /* Rank-identity externs live in arts/system/identity.h (kept here for
  * back-compat of threads.h includers). */

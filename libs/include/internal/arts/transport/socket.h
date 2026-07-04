@@ -57,18 +57,20 @@ void arts_transport_set_config(struct arts_config_s *config);
 void arts_transport_setup_outgoing();
 bool arts_transport_setup_incoming();
 unsigned int arts_transport_get_my_rank();
-/* Poll inbound sockets for up to time_out microseconds, dispatching any wire
- * messages.  time_out==0 returns immediately after a non-blocking check (used
- * when the caller has pending self-loopback work to drain promptly). */
-bool arts_transport_receive(int time_out);
-uint64_t arts_transport_send(int rank, unsigned int queue, char *message,
-                             uint64_t length);
-uint64_t arts_transport_send_payload(int rank, unsigned int queue,
-                                     char *message, unsigned int length,
-                                     char *payload, uint64_t length2);
-void arts_transport_set_thread_inbound_queues(unsigned int start,
-                                              unsigned int stop);
-void arts_transport_thread_inbound_queues_cleanup();
+/* Convert the bootstrap TCP mesh into zero-traffic liveness sentinels once the
+ * fi-address exchange has finished: every established connection stays open
+ * (connection lifetime doubles as peer liveness — orderly close and process
+ * death both surface as HUP on the peer's accept-side socket); only the
+ * listening sockets are closed.  The launcher / stdio sockets are untouched. */
+void arts_socket_sentinel_arm(void);
+
+/* Non-blocking probe of the accept-side sentinels for peer death
+ * (POLLHUP/POLLERR/EOF).  Called from a progress thread's idle cycle; on a
+ * dead peer it enters the same idempotent passive-shutdown path an inbound
+ * shutdown message uses and returns true.  Stands down (false) once shutdown
+ * is already in progress, so an orderly peer exit is never mistaken for a
+ * death.  Serialized internally to a single prober. */
+bool arts_socket_sentinel_check(void);
 #ifdef __cplusplus
 }
 #endif

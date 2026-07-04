@@ -111,13 +111,9 @@ else()
     add_pure_unit_src(rank_bitset SOURCES ${_rank_bitset_home}
         DEFINES ARTS_UNIT_STANDALONE_SHIMS=1 PASS_REGEX "PASS rank_bitset" TIMEOUT 60)
 endif()
-add_pure_unit_src(socket_framing_reassembly PASS_REGEX "PASS socket_framing_reassembly" TIMEOUT 60)
 # T169 EXPOSES B-set-ip-null: expected to FAIL/crash under sanitizer (documents runtime bug, do not mask)
 add_pure_unit_src(socket_set_ip_null_ifa LIBS ${CMAKE_DL_LIBS} TIMEOUT 60)
 add_pure_unit_src(socket_helpers LIBS ${CMAKE_DL_LIBS} PASS_REGEX "PASS socket_helpers" TIMEOUT 60)
-add_pure_unit_src(socket_size_dos_bound PASS_REGEX "PASS socket_size_dos_bound" TIMEOUT 60)
-add_pure_unit_src(outbox_partial_store SOURCES ${CMAKE_SOURCE_DIR}/libs/src/core/utils/link_list.c PASS_REGEX "PASS outbox_partial_store" TIMEOUT 60)
-add_pure_unit_src(outbox_mpsc SOURCES ${CMAKE_SOURCE_DIR}/libs/src/core/utils/link_list.c PASS_REGEX "PASS outbox_mpsc" TIMEOUT 60)
 # T180 EXPOSES B071: expected to FAIL/crash under sanitizer (documents runtime bug, do not mask)
 # (SEQUENCENUMBERS is an optional SEQ-header ABI variant supplied by the build dir
 #  when enabled; not forced here so the default wire layout is exercised.)
@@ -679,36 +675,12 @@ add_arts_test(scheduler_loop_variants)
 register_single_node_test(scheduler_loop_variants TIMEOUT 60)
 set_tests_properties(scheduler_loop_variants PROPERTIES PASS_REGULAR_EXPRESSION "scheduler_loop_variants: .* — PASS|SKIP scheduler_loop_variants")
 
-# --- C16r: transport socket/outbox ---
-# T165 EXPOSES B-outbox-pending-parity — normally PASSES (regression gate). runtime_multinode.
-add_arts_test(socket_outbox_pending_parity)
-register_multinode_test(socket_outbox_pending_parity TIMEOUT 120)
-foreach(_v 2n 3n 4n 2n_io)
-    set_tests_properties(socket_outbox_pending_parity_${_v} PROPERTIES
-        PASS_REGULAR_EXPRESSION "PASS: socket_outbox_pending_parity drained clean|SKIP socket_outbox_pending_parity_${_v}")
-endforeach()
-
+# --- C16r: transport socket (bootstrap-only after the fabric cutover) ---
 add_arts_test(socket_connect_retry_abort)
 register_multinode_test(socket_connect_retry_abort TIMEOUT 120)
 foreach(_v 2n 3n 4n 2n_io)
     set_tests_properties(socket_connect_retry_abort_${_v} PROPERTIES
         PASS_REGULAR_EXPRESSION "PASS: socket_connect_retry_abort connected|SKIP socket_connect_retry_abort_${_v}")
-endforeach()
-
-# T167 EXPOSES off-by-one index-domain risk — normally PASSES. runtime_multinode.
-add_arts_test(socket_shutdown_index_domains)
-register_multinode_test(socket_shutdown_index_domains TIMEOUT 120)
-foreach(_v 2n 3n 4n 2n_io)
-    set_tests_properties(socket_shutdown_index_domains_${_v} PROPERTIES
-        PASS_REGULAR_EXPRESSION "PASS: socket_shutdown_index_domains mesh|SKIP socket_shutdown_index_domains_${_v}")
-endforeach()
-
-# T168 EXPOSES receiver-thread slice partition risk — normally PASSES. runtime_multinode.
-add_arts_test(socket_ports_partition)
-register_multinode_test(socket_ports_partition TIMEOUT 120)
-foreach(_v 2n 3n 4n 2n_io)
-    set_tests_properties(socket_ports_partition_${_v} PROPERTIES
-        PASS_REGULAR_EXPRESSION "PASS: socket_ports_partition|SKIP socket_ports_partition_${_v}")
 endforeach()
 
 # T172 EXPOSES B-remote-alive-nonatomic — normally PASSES. runtime_multinode.
@@ -717,43 +689,6 @@ register_multinode_test(socket_remote_alive_owner TIMEOUT 120)
 foreach(_v 2n 3n 4n 2n_io)
     set_tests_properties(socket_remote_alive_owner_${_v} PROPERTIES
         PASS_REGULAR_EXPRESSION "PASS: socket_remote_alive_owner|SKIP socket_remote_alive_owner_${_v}")
-endforeach()
-
-# --- C17r: outbox loopback / pending / partial / free-once ---
-# outbox_loopback_drain: config_specific (MRSW/LOCK self-loopback on 1n), single-node only.
-add_arts_test(outbox_loopback_drain)
-register_single_node_test(outbox_loopback_drain TIMEOUT 60)
-set_tests_properties(outbox_loopback_drain PROPERTIES PASS_REGULAR_EXPRESSION "PASS outbox_loopback_drain|SKIP outbox_loopback_drain")
-
-# T176 EXPOSES B-outbox-pending-parity — normally PASSES. runtime_multinode.
-add_arts_test(outbox_pending_zero_at_shutdown)
-register_multinode_test(outbox_pending_zero_at_shutdown TIMEOUT 90)
-foreach(_v 2n 3n 4n 2n_io)
-    set_tests_properties(outbox_pending_zero_at_shutdown_${_v} PROPERTIES
-        PASS_REGULAR_EXPRESSION "PASS outbox_pending_zero_at_shutdown|SKIP outbox_pending_zero_at_shutdown_${_v}")
-endforeach()
-
-# T177 EXPOSES partial-store reassembly bug — normally PASSES. runtime_multinode.
-add_arts_test(outbox_partial_backpressure)
-register_multinode_test(outbox_partial_backpressure TIMEOUT 120)
-foreach(_v 2n 3n 4n 2n_io)
-    set_tests_properties(outbox_partial_backpressure_${_v} PROPERTIES
-        PASS_REGULAR_EXPRESSION "PASS outbox_partial_backpressure|SKIP outbox_partial_backpressure_${_v}")
-endforeach()
-
-# T178 EXPOSES free-exactly-once surface — normally PASSES. runtime_multinode.
-add_arts_test(outbox_payload_free_once)
-register_multinode_test(outbox_payload_free_once TIMEOUT 90)
-foreach(_v 2n 3n 4n 2n_io)
-    set_tests_properties(outbox_payload_free_once_${_v} PROPERTIES
-        PASS_REGULAR_EXPRESSION "PASS outbox_payload_free_once|SKIP outbox_payload_free_once_${_v}")
-endforeach()
-
-add_arts_test(outbox_send_payload_leak)
-register_multinode_test(outbox_send_payload_leak TIMEOUT 90)
-foreach(_v 2n 3n 4n 2n_io)
-    set_tests_properties(outbox_send_payload_leak_${_v} PROPERTIES
-        PASS_REGULAR_EXPRESSION "PASS outbox_send_payload_leak|SKIP outbox_send_payload_leak_${_v}")
 endforeach()
 
 # --- C18r: dispatcher ---
@@ -830,6 +765,17 @@ set_tests_properties(config_port_count_agreement_2n PROPERTIES PASS_REGULAR_EXPR
 add_arts_test(config_override_embedded)
 register_pure_unit_test(config_override_embedded TIMEOUT 30)
 set_tests_properties(config_override_embedded PROPERTIES PASS_REGULAR_EXPRESSION "PASS config_override_embedded|SKIP config_override_embedded")
+
+# config_removed_keys_reject: pure_unit (links libarts, starts no runtime;
+# forks to probe the sender_threads/receiver_threads ARTS_ERROR death paths).
+add_arts_test(config_removed_keys_reject)
+register_pure_unit_test(config_removed_keys_reject TIMEOUT 30)
+set_tests_properties(config_removed_keys_reject PROPERTIES PASS_REGULAR_EXPRESSION "PASS config_removed_keys_reject|SKIP config_removed_keys_reject")
+
+# config_provider_regpool_parse: pure_unit (links libarts, starts no runtime).
+add_arts_test(config_provider_regpool_parse)
+register_pure_unit_test(config_provider_regpool_parse TIMEOUT 30)
+set_tests_properties(config_provider_regpool_parse PROPERTIES PASS_REGULAR_EXPRESSION "PASS config_provider_regpool_parse|SKIP config_provider_regpool_parse")
 
 # --- C22r: runtime startup/shutdown/threads/signals ---
 add_arts_test(runtime_barrier_counts)
@@ -950,12 +896,18 @@ set_tests_properties(system_info_in_edt PROPERTIES PASS_REGULAR_EXPRESSION "PASS
 add_arts_test(counter_kway_merge)
 register_single_node_test(counter_kway_merge TIMEOUT 60)
 
-# T253 EXPOSES B136 (cluster MASTER reduce) — guard form: PASSES under all local cfgs (master
-# rank==0). runtime_multinode.
+# T253 — cluster-reduce node coverage: the master's cluster.json must reduce
+# every node's counter file (asserts NUM_EDT_FINISH >= ranks+1; SUM short of
+# that means a node's file was dropped).  Originally targeted B136 via the
+# ONCE,CLUSTER,MASTER TIME_TOTAL counter; that counter was retired from the
+# counter configs (e2e time is the [E2E] stderr marker now), so the test
+# asserts on a counter the stock configs still capture.  The single shared
+# binary cannot know which node-config variant invoked it, so the SKIP arm is
+# unsuffixed (matching the test's actual output). runtime_multinode.
 add_arts_test(counter_master_reduce)
 register_multinode_test(counter_master_reduce TIMEOUT 30)
 foreach(_v 2n 3n 4n 2n_io)
-    set_tests_properties(counter_master_reduce_${_v} PROPERTIES PASS_REGULAR_EXPRESSION "PASS counter_master_reduce|SKIP counter_master_reduce_${_v}")
+    set_tests_properties(counter_master_reduce_${_v} PROPERTIES PASS_REGULAR_EXPRESSION "PASS counter_master_reduce|SKIP counter_master_reduce")
 endforeach()
 
 # T254 EXPOSES B137 (counter start-field race) — TSan-only; on non-TSan deterministic green.

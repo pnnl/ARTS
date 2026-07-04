@@ -48,8 +48,7 @@ static int write_cfg(char *path_out, size_t path_cap) {
         "launcher=local\n"
         "node_count=2\n"
         "worker_threads=2\n"
-        "sender_threads=1\n"
-        "receiver_threads=1\n"
+        "progress_threads=1\n"
         "port_count=2\n"
         "default_ports=25000\n"
         "route_table_size=14\n",

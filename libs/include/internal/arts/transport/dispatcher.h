@@ -53,7 +53,6 @@ void arts_transport_dispatch_packet(struct arts_msg_header_s *packet);
 /* Route a packet to its handler, no wire-ordering check.  The self-loopback
  * drain enters here (a self-send carries no per-sender sequence number). */
 void arts_transport_dispatch_body(struct arts_msg_header_s *packet);
-void arts_socket_shutdown();
 void arts_socket_cleanup();
 
 void arts_transport_setup(struct arts_config_s *config);

@@ -191,6 +191,28 @@ void arts_db_release_ro(struct arts_db_cache_s *cache);
  * helpers.  These are the genuinely shared coherence internals the per-model
  * handler bodies reuse; they carry no model #ifdef. */
 
+/* Releaser-side writeback rendezvous: the stack-local wait state a blocked
+ * RW releaser parks on across the dirty-writeback round.  Its ADDRESS travels
+ * as the wire `cv` and every reply (WRITEBACK_CTS, WRITEBACK_ACK) wakes it by
+ * pointer identity.  `sem` MUST be the first member: the ACK path posts
+ * (sem_t *)cv directly, so &wr == &wr.sem.  The CTS handler writes `landing`
+ * before posting (sem_post is the release/acquire edge). */
+struct arts_db_wb_rendezvous_s {
+  sem_t sem; /* FIRST — cv posts resolve to this address */
+  struct arts_rdzv_landing_s landing;
+};
+
+/* Synchronous dirty/data-less writeback round to the DB's home (EAGER-timing
+ * ownership protocols + the lossy multi-writer protocol).  Same-rank and
+ * data-less rounds are a single announce+ACK; a remote dirty round runs
+ * announce -> home landing (WRITEBACK_CTS) -> one-sided PUT -> commit -> ACK.
+ * The caller must hold a strong ref on the buffer backing `data` across the
+ * call (the ACK follows the target-side write completion, which implies the
+ * fabric has fully drained the source).  Blocks the calling worker; returns
+ * early only on shutdown. */
+void arts_db_writeback_sync(struct arts_db_cache_s *cache, uint64_t version,
+                            const void *data, uint64_t data_size);
+
 /* Block on a stack-local semaphore until the matching WRITEBACK_ACK posts it
  * (pointer identity); returns early if teardown begins.  Used by the eager and
  * MRMW release-tail bodies. */

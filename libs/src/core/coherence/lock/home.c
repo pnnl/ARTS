@@ -38,7 +38,7 @@
 #include "arts/gas/route_table.h"
 #include "arts/ooo.h"
 #include "arts/system/identity.h"
-#include "arts/transport/outbox.h"
+#include "arts/transport/net.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
 
@@ -58,10 +58,16 @@ void arts_home_lockreq_queue_init(struct arts_home_lockreq_queue_s *q) {
 }
 
 void arts_home_lockreq_queue_push(struct arts_home_lockreq_queue_s *q,
-                                  unsigned int rank) {
+                                  unsigned int rank,
+                                  const struct arts_rdzv_landing_s *rdzv) {
   struct arts_home_lockreq_node_s *n =
       (struct arts_home_lockreq_node_s *)malloc(sizeof(*n));
   n->rank = rank;
+  if (rdzv != NULL) {
+    n->rdzv = *rdzv;
+  } else {
+    n->rdzv = (struct arts_rdzv_landing_s){0, 0, 0, 0};
+  }
   atomic_store_explicit(&n->next, (struct arts_home_lockreq_node_s *)NULL,
                         memory_order_relaxed);
   struct arts_home_lockreq_node_s *prev =
@@ -70,7 +76,8 @@ void arts_home_lockreq_queue_push(struct arts_home_lockreq_queue_s *q,
 }
 
 bool arts_home_lockreq_queue_pop(struct arts_home_lockreq_queue_s *q,
-                                 unsigned int *out_rank) {
+                                 unsigned int *out_rank,
+                                 struct arts_rdzv_landing_s *out_rdzv) {
   for (;;) {
     struct arts_home_lockreq_node_s *head =
         atomic_load_explicit(&q->head, memory_order_acquire);
@@ -85,6 +92,9 @@ bool arts_home_lockreq_queue_pop(struct arts_home_lockreq_queue_s *q,
       continue;
     }
     *out_rank = next->rank;
+    if (out_rdzv != NULL) {
+      *out_rdzv = next->rdzv;
+    }
     atomic_store_explicit(&q->head, next, memory_order_release);
     if (head != &q->stub) {
       free(head);
@@ -94,7 +104,8 @@ bool arts_home_lockreq_queue_pop(struct arts_home_lockreq_queue_s *q,
 }
 
 bool arts_home_lockreq_queue_peek(const struct arts_home_lockreq_queue_s *q,
-                                  unsigned int *out_rank) {
+                                  unsigned int *out_rank,
+                                  struct arts_rdzv_landing_s *out_rdzv) {
   struct arts_home_lockreq_node_s *head = atomic_load_explicit(
       (_Atomic(struct arts_home_lockreq_node_s *) *)&q->head,
       memory_order_acquire);
@@ -104,6 +115,9 @@ bool arts_home_lockreq_queue_peek(const struct arts_home_lockreq_queue_s *q,
     return false;
   }
   *out_rank = next->rank;
+  if (out_rdzv != NULL) {
+    *out_rdzv = next->rdzv;
+  }
   return true;
 }
 

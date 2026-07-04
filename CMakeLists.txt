@@ -172,6 +172,9 @@ option(ARTS_BUILD_TESTS      "Build test programs (enables ctest)"             O
 option(ARTS_BUILD_BENCHMARKS "Build OCR benchmark apps (XSOCR + ARTS + ocrvx)" ON)
 option(ARTS_BUILD_DOCS       "Build documentation (requires Doxygen + Sphinx)" OFF)
 
+# ── Transport ──────────────────────────────────────────────────────────────
+option(ARTS_TRANSPORT_OFI "libfabric (OFI) transport" ON)
+
 # ── GPU / CUDA ─────────────────────────────────────────────────────────────
 # ARTS_USE_LOCAL_CUDA_ARCHITECTURES only applies when ARTS_USE_GPU=ON;
 # cmake_dependent_option forces it OFF (and hides it) otherwise.  The related
@@ -771,7 +774,11 @@ if(BUILD_CUDA_LIBRARY)
 else()
     message(STATUS "  CUDA Library:     OFF")
 endif()
-message(STATUS "  Network:          TCP")
+if(ARTS_TRANSPORT_OFI)
+    message(STATUS "  Network:          libfabric (OFI) / TCP bootstrap")
+else()
+    message(STATUS "  Network:          TCP")
+endif()
 message(STATUS "  Hardware Topo:    hwloc v${HWLOC_VERSION} (source)")
 message(STATUS "")
 message(STATUS "Build options:")

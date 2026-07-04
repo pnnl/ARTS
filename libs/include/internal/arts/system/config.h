@@ -76,9 +76,12 @@ struct arts_config_s {
   unsigned int port_count;
   unsigned int *default_ports;
   unsigned int default_ports_count;
+  char *provider; /* libfabric provider name (fi_getinfo hints prov_name);
+                     NULL/empty = auto-select.  Overrides the ambient
+                     FI_PROVIDER env var when set. */
+  unsigned int regpool_slab_mb; /* registered-memory slab pool size, MB */
   unsigned int worker_thread_count;
-  unsigned int sender_thread_count;
-  unsigned int receiver_thread_count;
+  unsigned int progress_thread_count;
   unsigned int thread_count;
   unsigned int nodes;
   unsigned int master_rank;

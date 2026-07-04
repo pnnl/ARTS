@@ -42,6 +42,7 @@
 #include <assert.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <unistd.h> /* usleep (OFF-build progress arm idle sleep) */
 
 #include "arts/counter/Preamble.h"
 #include "arts/counter/counter.h"
@@ -52,11 +53,12 @@
 #include "arts/edt_context.h" /* arts_owned_finish_cleanup, ctx tls */
 #include "arts/gas/guid.h"
 #include "arts/gas/route_table.h"
+#include "arts/memory/regpool.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/system/topology.h"
 #include "arts/transport/dispatcher.h"
-#include "arts/transport/outbox.h"
+#include "arts/transport/net.h"
 #include "arts/transport/protocol.h"
 #include "arts/transport/socket.h"
 #include "arts/utils/array_list.h"
@@ -103,6 +105,44 @@ struct arts_runtime_shared_s arts_node_info;
 
 void arts_runtime_node_init(struct arts_config_s *config) {
   unsigned int tc = config->thread_count;
+  size_t regpool_slab_bytes = (size_t)config->regpool_slab_mb * 1024 * 1024;
+
+  /* Registered-slab pool for DB payload buffers + fabric bring-up.  The pool
+   * must be live before any worker/sender/receiver thread can allocate a
+   * payload (arts_db_buf_alloc draws from it), so it is carved here — before
+   * arts_thread_init spawns a single thread.
+   *
+   * When the OFI transport is on AND the run is multinode, the fabric comes up
+   * FIRST so the pool can register its slabs against the domain net_init
+   * creates.  Receive resources are armed before this rank's fabric address is
+   * ever published, so no peer can target an unarmed endpoint: the pool is
+   * carved, RX landing buffers are posted, and only then does the one-shot
+   * fi-address exchange ride the already-established TCP mesh here on the main
+   * thread — before any network thread exists to contend for those sockets.
+   * A single-node run — or an OFI-off build — stays entirely fabric-free and
+   * carves the pool with a NULL (unregistered) domain, identical to the
+   * plain-malloc path. */
+#ifdef ARTS_TRANSPORT_OFI
+  if (arts_global_rank_count > 1) {
+    arts_net_init(config->provider);
+    if (!arts_regpool_init(arts_net_domain(), regpool_slab_bytes, 0)) {
+      ARTS_ERROR("arts_runtime_node_init: registered pool init failed");
+    }
+    arts_net_rx_arm();
+    arts_net_exchange_addresses();
+    /* Bootstrap is complete: the fi-address exchange was the last payload to
+     * ride the TCP mesh.  All live traffic now flows over the fabric; the mesh
+     * connections stay open as zero-traffic liveness sentinels (a peer's death
+     * surfaces as HUP, probed by the progress thread) and only the listeners
+     * close. */
+    arts_socket_sentinel_arm();
+  } else
+#endif
+  {
+    if (!arts_regpool_init(NULL, regpool_slab_bytes, 0)) {
+      ARTS_ERROR("arts_runtime_node_init: registered pool init failed");
+    }
+  }
 
   /* Scheduler */
 #ifdef ARTS_USE_GPU
@@ -125,10 +165,10 @@ void arts_runtime_node_init(struct arts_config_s *config) {
   /* Per-thread indexed arrays */
   arts_node_info.deque =
       (struct arts_deque_s **)arts_malloc(sizeof(struct arts_deque_s *) * tc);
-  arts_node_info.receiver_deque =
-      config->receiver_thread_count
+  arts_node_info.progress_deque =
+      config->progress_thread_count
           ? (struct arts_deque_s **)arts_malloc(sizeof(struct arts_deque_s *) *
-                                                config->receiver_thread_count)
+                                                config->progress_thread_count)
           : NULL;
   arts_node_info.gpu_deque =
       (struct arts_deque_s **)arts_malloc(sizeof(struct arts_deque_s *) * tc);
@@ -158,8 +198,7 @@ void arts_runtime_node_init(struct arts_config_s *config) {
 
   /* Thread counts */
   arts_node_info.worker_thread_count = config->worker_thread_count;
-  arts_node_info.sender_thread_count = config->sender_thread_count;
-  arts_node_info.receiver_thread_count = config->receiver_thread_count;
+  arts_node_info.progress_thread_count = config->progress_thread_count;
   arts_node_info.total_thread_count = tc;
 
   /* Synchronization barriers */
@@ -172,7 +211,6 @@ void arts_runtime_node_init(struct arts_config_s *config) {
   /* Locks and shutdown coordination */
   arts_node_info.steal_request_lock = 1U;
   arts_node_info.shutdown_state = 0U;
-  arts_node_info.outbox_pending = 0U;
   /* Seed at our own rank so different ranks pick different first targets;
    * across ranks the round-robin then walks the cluster evenly instead of
    * hammering rank 0. */
@@ -383,7 +421,7 @@ void arts_runtime_global_cleanup() {
 
   /* Per-thread indexed arrays */
   arts_free(arts_node_info.deque);
-  arts_free(arts_node_info.receiver_deque);
+  arts_free(arts_node_info.progress_deque);
   arts_free(arts_node_info.gpu_deque);
   arts_free(arts_node_info.gpu_route_table);
   arts_free((void *)arts_node_info.local_spin);
@@ -400,6 +438,32 @@ void arts_runtime_global_cleanup() {
 
   /* Socket server global arrays (safe to call even for single-node) */
   arts_socket_cleanup();
+
+#ifdef ARTS_TRANSPORT_OFI
+  /* Fabric teardown is two-phase around the pool cleanup.  Phase 1 runs BEFORE
+   * the pool is freed: refuse new sends, discard/reap in-flight txns (their
+   * bounces return to the still-live pool) and close ep/cq/av while returning
+   * the recv landing buffers to the pool — so afterward no send desc or recv
+   * buffer references a slab MR the pool cleanup is about to close. */
+  if (arts_global_rank_count > 1) {
+    arts_net_quiesce();
+  }
+#endif
+
+  /* Registered-slab pool: torn down last, after arts_clean_up_dbs (above)
+   * has already released every DB payload buffer back to it — no thread is
+   * still allocating at this point (called after every worker/sender/
+   * receiver thread has joined). */
+  arts_regpool_cleanup();
+
+#ifdef ARTS_TRANSPORT_OFI
+  /* Phase 2: the pool's slab MRs (backing both sends and the recv buffers) are
+   * now closed, so the net module can close the domain and fabric — no memory
+   * registration outlives its domain. */
+  if (arts_global_rank_count > 1) {
+    arts_net_teardown();
+  }
+#endif
 }
 
 /*
@@ -492,37 +556,13 @@ void arts_runtime_private_init(struct thread_mask_s *thread,
 #endif
   }
 
-  if (thread->role == ARTS_ROLE_SENDER || thread->role == ARTS_ROLE_RECEIVER) {
-    if (thread->role == ARTS_ROLE_SENDER) {
-      unsigned int size = arts_global_rank_count * config->port_count /
-                          arts_node_info.sender_thread_count;
-      unsigned int rem = arts_global_rank_count * config->port_count %
-                         arts_node_info.sender_thread_count;
-      unsigned int start;
-      if (thread->group_pos < rem) {
-        start = thread->group_pos * (size + 1);
-        arts_transport_set_thread_outbound_queues(start, start + size + 1);
-      } else {
-        start = (rem * (size + 1)) + ((thread->group_pos - rem) * size);
-        arts_transport_set_thread_outbound_queues(start, start + size);
-      }
-    }
-    if (thread->role == ARTS_ROLE_RECEIVER) {
-      arts_node_info.receiver_deque[thread->group_pos] =
-          arts_node_info.deque[thread->id];
-      unsigned int size = (arts_global_rank_count - 1) * config->port_count /
-                          arts_node_info.receiver_thread_count;
-      unsigned int rem = (arts_global_rank_count - 1) * config->port_count %
-                         arts_node_info.receiver_thread_count;
-      unsigned int start;
-      if (thread->group_pos < rem) {
-        start = thread->group_pos * (size + 1);
-        arts_transport_set_thread_inbound_queues(start, start + size + 1);
-      } else {
-        start = (rem * (size + 1)) + ((thread->group_pos - rem) * size);
-        arts_transport_set_thread_inbound_queues(start, start + size);
-      }
-    }
+  if (thread->role == ARTS_ROLE_PROGRESS) {
+    /* Progress threads have no per-socket partition (they reap the shared
+     * fabric completion queue), so there are no inbound/outbound queues to
+     * carve.  They still own a deque, published here so workers can steal the
+     * EDTs a progress thread creates while dispatching inbound EDT_CREATE. */
+    arts_node_info.progress_deque[thread->group_pos] =
+        arts_node_info.deque[thread->id];
   }
   arts_node_info.local_spin[thread->id] = &arts_thread_info.alive;
   arts_node_info.thread_roles[thread->id] = (unsigned int)thread->role;
@@ -582,8 +622,6 @@ void arts_runtime_private_cleanup() {
   arts_atomic_sub(&arts_node_info.ready_to_clean, 1U);
   while (arts_node_info.ready_to_clean) {
   };
-  arts_transport_thread_outbound_queues_cleanup();
-  arts_transport_thread_inbound_queues_cleanup();
   /* Drain runnable-but-never-executed EDTs from this thread's deques before
    * deleting them, dropping each one's self_cb ref (arts_run_edt would have on
    * completion).  The ready_to_clean barrier above guarantees every thread has
@@ -663,8 +701,7 @@ void arts_runtime_stop_workers() {
  */
 void arts_runtime_stop_network() {
   ARTS_INFO("arts_runtime_stop_network");
-  arts_runtime_stop_by_role(
-      (1U << ARTS_ROLE_RECEIVER) | (1U << ARTS_ROLE_SENDER), "network");
+  arts_runtime_stop_by_role(1U << ARTS_ROLE_PROGRESS, "progress");
 }
 
 void arts_runtime_stop() {
@@ -682,46 +719,60 @@ void arts_runtime_stop() {
 /*
  * arts_runtime_loop — Main per-thread dispatch loop.
  *
- * Each thread enters exactly one of three roles:
- *   - network_receive: Polls for incoming messages (multi-node only).
- *   - network_send:    Drains outbound queues; triggers arts_runtime_stop()
- *                      when shutdown timeout elapses.
- *   - worker:          Runs the selected scheduler loop until alive==false.
+ * Each thread enters exactly one of two roles:
+ *   - progress: Reaps fabric completions (dispatching inbound messages) and
+ *               drains the self-loopback (multi-node only).
+ *   - worker:   Runs the selected scheduler loop until alive==false.
  *
- * On single-node configurations, all threads are workers (no network threads).
+ * On single-node configurations, all threads are workers (no progress thread).
  * The loop exits when arts_runtime_stop() sets alive=false for this thread.
  */
 int arts_runtime_loop() {
   ARTS_DEBUG("Thread %u entering runtime_loop (role=%d)",
              arts_thread_info.thread_id, arts_thread_info.role);
   switch (arts_thread_info.role) {
-  case ARTS_ROLE_RECEIVER:
+  case ARTS_ROLE_PROGRESS: {
+#ifdef ARTS_TRANSPORT_OFI
+    unsigned int sentinel_spin = 0;
     while (arts_thread_info.alive) {
-      /* Multinode: the receiver is the SOLE self-loopback drainer, so ALL
-       * coherence (wire + self) is processed on this one thread — the single
-       * coherence processor the ownership handlers assume.  (Single-node has no
-       * receiver; there the worker scheduler loop drains.)  When the drain did
-       * work, poll the wire NON-BLOCKING (time_out=0) and loop straight back to
-       * drain again so a burst of self-coherence is not stalled behind the
-       * blocking wire poll.  When nothing was drained, poll with a SHORT
-       * timeout (not the full blocking poll): a single-writer protocol
-       * self-loopbacks on the critical path of every transfer round, and a
-       * worker can post a fresh self-send while we sit in this poll, so the
-       * wait until the next drain must stay bounded — a full-length idle poll
-       * lets that latency accumulate per round and starves throughput.  A
-       * protocol that never self-loopbacks (MRNEW/MRMW) always takes this arm
-       * with an empty queue: the short timeout only adds idle wakeups (no wire
-       * is ever missed — poll still returns the instant data arrives) at
-       * negligible cost. */
+      /* Multinode: the progress thread is the SOLE self-loopback drainer, so
+       * ALL coherence (wire + self) is processed on this one thread — the
+       * single coherence processor the ownership handlers assume.  (Single-node
+       * has no progress thread; there the worker scheduler loop drains.)
+       *
+       * Busy-poll by design: the thread budget dedicates a PU to every
+       * progress thread (startup aborts on PU oversubscription when the
+       * topology mask is built), so idle waiting spins with the architectural
+       * pause hint instead of sleeping — a sleeping poll would put a fixed
+       * per-hop latency floor under every message an idle rank receives,
+       * which multiplies across latency-bound message chains. */
       bool did = arts_transport_loopback_drain();
-      arts_transport_receive(did ? 0 : 1000);
+      did |= arts_net_progress();
+      if (!did) {
+        arts_runtime_idle_pause();
+      }
+      /* Peer-liveness probe: the fabric is connectionless, so a peer that dies
+       * without the shutdown handshake produces no fabric event — the TCP
+       * liveness sentinels carry that signal instead.  poll() is a syscall, so
+       * throttle it to every N loop iterations (an idle iteration is now
+       * nanoseconds, not a sleep); N trades a few ms of dead-peer detection
+       * latency for staying off the syscall path — ample for liveness. */
+      if (++sentinel_spin >= 16384u) {
+        sentinel_spin = 0;
+        arts_socket_sentinel_check();
+      }
     }
-    break;
-  case ARTS_ROLE_SENDER:
+#else
+    /* Single-node-only build: no fabric, and no progress thread is ever
+     * spawned (the progress count is zeroed single-node) — nothing to do.  If a
+     * build ever did spawn one, sleep between wake checks so this arm can never
+     * become a core-eating busy spin. */
     while (arts_thread_info.alive) {
-      arts_transport_pump_outbound();
+      usleep(1000);
     }
+#endif
     break;
+  }
   case ARTS_ROLE_WORKER:
     while (arts_thread_info.alive) {
       arts_node_info.scheduler();

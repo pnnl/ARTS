@@ -19,7 +19,7 @@
 /// THE WINDOW UNDER TEST (coherence.c `arts_db_drain_pending_snapshot` +
 /// handlers.c `arts_handler_db_snapshot_response`).  A remote RO acquire fires
 /// a SNAPSHOT_REQUEST and parks.  The home replies with the data, but the two
-/// wire facts can REORDER under receiver_threads>1: a NO_DATA-style response
+/// wire facts can REORDER under progress_threads>1: a NO_DATA-style response
 /// (a->version > buf->version, data_present == false) can be dispatched AHEAD
 /// of the with-data install.  When that happens the handler takes case 3:
 ///   - push a reorder-buffer node onto cache->pending_snapshot, then

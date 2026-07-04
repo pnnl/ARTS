@@ -12,16 +12,20 @@
 #include <stdint.h>
 
 #include "arts/coherence/buffer.h"
+#include "arts/memory/regpool.h" /* arts_regpool_free (orphaned landing) */
 #include "arts/coherence/coherence.h"
 #include "arts/coherence/handlers.h"
 #include "arts/coherence/home.h"
+#include "arts/gas/route_table.h" /* pairing-window descriptor pin */
 #include "arts/db.h"
 #include "arts/edt.h" /* arts_edt_dep_t (acquire body) */
 #include "arts/ooo.h" /* OOO_DB_* args (handler bodies) */
 #include "arts/runtime_state.h"
+#include "arts/transport/net.h" /* arts_net_rdzv_expect */
 #include "arts/runtime_types.h"
 #include "arts/system/threads.h" /* arts_global_rank_id */
-#include "arts/utils/atomics.h"  /* arts_atomic_* */
+#include "arts/utils/atomics.h"
+#include "arts/utils/malloc.h" /* pairing ctx */  /* arts_atomic_* */
 
 /* ===== 8-case acquire dispatch (MRMW arm) ==========================
  * Whole arts_handler_db_acquire body for the MRMW build.  Home holds the
@@ -84,13 +88,10 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
                         1); /* MRMW: rest is not consulted */
   bool is_home = (arts_guid_get_rank(cache->db_guid) == arts_global_rank_id);
   if (!is_home && buf != NULL) {
-    sem_t cv;
-    sem_init(&cv, 0, 0);
-    unsigned int home_rank = arts_guid_get_rank(cache->db_guid);
-    arts_send_db_writeback(home_rank, cache->db_guid, new_version,
-                           (uint64_t)(uintptr_t)&cv, buf->data, cache->db_size);
-    await_writeback_ack(&cv);
-    sem_destroy(&cv);
+    /* buf_h (held until after this call) pins buf->data for the whole round —
+     * the sync helper's ACK follows the target-side write completion, which
+     * implies the fabric has fully drained the source. */
+    arts_db_writeback_sync(cache, new_version, buf->data, cache->db_size);
   }
   /* Release the buffer ref held for the version-bump and WRITEBACK read. */
   if (buf != NULL) {
@@ -145,21 +146,36 @@ void arts_db_home_teardown(struct arts_db_s *db) {
  * are localized. */
 static void update_last_sent_max(struct arts_db_cache_s *cache,
                                  unsigned int requester, uint64_t master_v,
-                                 const void *data, uint64_t data_size,
-                                 arts_guid_t edt_guid, uint32_t slot) {
+                                 arts_shared_ptr_t master_h,
+                                 arts_guid_t edt_guid, uint32_t slot,
+                                 const struct arts_rdzv_landing_s *rdzv) {
   struct arts_db_s *db = arts_db_of_cache(cache);
   /* Monotonic dedup — if the requester already received this version
-   * (cur >= master_v), send NO_DATA.  Cache_s lifetime invariant
-   * guarantees user_data persists until destroy (route_table ref). */
+   * (cur >= master_v), no payload moves: reply no-data, echoing the unused
+   * landing for recycling. */
   uint64_t cur = arts_rank_u64_map_get(db->last_sent_version, requester);
   if (cur >= master_v) {
+    arts_db_buf_release(&master_h);
     arts_send_db_snapshot_response(requester, cache->db_guid, master_v,
-                                   edt_guid, slot, NULL, 0);
+                                   edt_guid, slot, /*kind=*/0,
+                                   cache->db_size, rdzv, NULL);
+    return;
+  }
+  if (rdzv->txid == 0 && arts_global_rank_count > 1) {
+    /* Data must move but the requester advertised no landing (first touch —
+     * db_size unknown there).  Size-only CTS; the re-request carries a
+     * landing.  The watermark does NOT advance on this leg. */
+    arts_db_buf_release(&master_h);
+    arts_send_db_snapshot_response(requester, cache->db_guid, master_v,
+                                   edt_guid, slot, /*kind=*/2,
+                                   cache->db_size, rdzv, NULL);
     return;
   }
   arts_rank_u64_map_set(db->last_sent_version, requester, master_v);
+  /* master_h transfers into the sender (PUT source-lifetime pin). */
   arts_send_db_snapshot_response(requester, cache->db_guid, master_v, edt_guid,
-                                 slot, data, data_size);
+                                 slot, /*kind=*/1, cache->db_size, rdzv,
+                                 master_h);
 }
 
 /* ===== Per-model wire-handler bodies =============================== */
@@ -191,14 +207,14 @@ void arts_handler_db_snapshot_request(void *item_v, void *args_v) {
      * NOT a destroy condition -- the precheck above (destroy_state) is
      * authoritative for that. */
     arts_send_db_snapshot_response(requester, cache->db_guid, /*version=*/0,
-                                   edt_guid, slot,
-                                   /*data=*/NULL, /*data_size=*/0);
+                                   edt_guid, slot, /*kind=*/0, cache->db_size,
+                                   &a->rdzv, NULL);
     return;
   }
   uint64_t master_v = master->version;
-  update_last_sent_max(cache, requester, master_v, master->data, cache->db_size,
-                       edt_guid, slot);
-  arts_db_buf_release(&master_h);
+  /* master_h transfers into the reply path (consumed there). */
+  update_last_sent_max(cache, requester, master_v, master_h, edt_guid, slot,
+                       &a->rdzv);
 }
 
 /* Cat-B pure body (OoO g_ooo_table[OOO_DB_WRITEBACK]): the OoO engine has
@@ -209,21 +225,84 @@ void arts_handler_db_snapshot_request(void *item_v, void *args_v) {
  * re-issues on the install's drain.  MRMW uses WRITEBACK_NORMAL only (no
  * exclusive owner to transfer to), so the WB_AND_TRANSFER ownership-chain
  * relay is moot. */
+/* Rendezvous continuation for a committed writeback: the dirty bytes have
+ * fully landed in the home landing; install them without a copy and ACK the
+ * blocked releaser.  The ACK fires even if the DB was destroyed while the
+ * pairing was outstanding — a torn-down home cache must never strand the
+ * blocked releaser (the WRITEBACK_ACK-on-MISS rule). */
+struct wb_landed_ctx_s {
+  arts_shared_ptr_t db_h;
+  struct arts_db_buffer_s *landing;
+  uint64_t version;
+  uint64_t data_size;
+  unsigned int releaser;
+  arts_guid_t db_guid;
+  uint64_t cv;
+};
+
+static void wb_landed_cb(void *arg) {
+  struct wb_landed_ctx_s *ctx = (struct wb_landed_ctx_s *)arg;
+  struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(ctx->db_h);
+  if (db != NULL) {
+    arts_db_buf_install_landed(&db->cache, ctx->version, ctx->landing,
+                               ctx->data_size);
+  } else {
+    /* Destroyed mid-round (app UB): the cache's recycle pool is gone — return
+     * the landing's storage straight to the registered pool. */
+    arts_regpool_free(ctx->landing);
+  }
+  if (ctx->cv != 0) {
+    arts_send_db_writeback_ack(ctx->releaser, ctx->db_guid, ctx->cv);
+  }
+  arts_shared_release(&ctx->db_h);
+  arts_free(ctx);
+}
+
 void arts_handler_db_writeback(void *item_v, void *args_v) {
   struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
   struct arts_ooo_args_db_writeback_s *a =
       (struct arts_ooo_args_db_writeback_s *)args_v;
-  const void *data =
-      a->data_size > 0 ? (const void *)((char *)a + sizeof(*a)) : NULL;
 
-  /* Monotonic: buf_install ignores a stale (lower/equal version) writeback, so
-   * concurrent writebacks reordered over distinct connections cannot clobber
-   * newer home data with older. */
-  arts_db_buf_install(cache, a->version, data, a->data_size);
-  if (a->cv != 0) {
-    arts_send_db_writeback_ack(a->releaser, a->db_guid, a->cv);
+  if (a->data_size == 0) {
+    /* Data-less ordering round (sentinel DB): install nothing, ACK. */
+    if (a->cv != 0) {
+      arts_send_db_writeback_ack(a->releaser, a->db_guid, a->cv);
+    }
+    return;
   }
-  /* No WB_AND_TRANSFER relay under MRMW (no exclusive owner). */
+  if (a->data_inline != 0) {
+    /* Same-rank writeback: the payload trails the args blob.  Monotonic:
+     * buf_install ignores a stale (lower/equal version) writeback. */
+    arts_db_buf_install(cache, a->version, (const void *)((char *)a + sizeof(*a)),
+                        a->data_size);
+    if (a->cv != 0) {
+      arts_send_db_writeback_ack(a->releaser, a->db_guid, a->cv);
+    }
+    return;
+  }
+  if (a->rdzv_txid == 0) {
+    /* Announce: the releaser holds a->data_size dirty bytes.  Allocate a
+     * fresh home landing for them and hand it back (WRITEBACK_CTS); nothing
+     * installs yet — the commit leg pairs with the write completion. */
+    struct arts_rdzv_landing_s landing;
+    (void)arts_db_buf_landing_alloc(cache, a->data_size, &landing);
+    arts_send_db_writeback_cts(a->releaser, a->db_guid, &landing, a->cv);
+    return;
+  }
+  /* Commit: the dirty bytes were PUT into our landing (named by the echoed
+   * cookie).  Pair with the write completion — either arrival order — then
+   * install the landing without a copy (version-conditional; stale retreats
+   * recycle) and ACK the blocked releaser. */
+  struct wb_landed_ctx_s *ctx =
+      (struct wb_landed_ctx_s *)arts_malloc(sizeof(*ctx));
+  ctx->db_h = arts_route_table_lookup_db(cache->db_guid);
+  ctx->landing = (struct arts_db_buffer_s *)(uintptr_t)a->rdzv_cookie;
+  ctx->version = a->version;
+  ctx->data_size = a->data_size;
+  ctx->releaser = a->releaser;
+  ctx->db_guid = a->db_guid;
+  ctx->cv = a->cv;
+  arts_net_rdzv_expect(a->rdzv_txid, wb_landed_cb, ctx);
 }
 
 /* Cat-C pure body (WRITEBACK_ACK).  Cache-independent pointer-identity sem-post

@@ -51,7 +51,7 @@
 #include "arts/runtime_state.h"
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
-#include "arts/transport/outbox.h"   /* outbound send helpers */
+#include "arts/transport/net.h"   /* outbound send helpers */
 #include "arts/transport/protocol.h" /* wire packet structs */
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"

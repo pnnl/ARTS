@@ -345,6 +345,7 @@ struct arts_db_lock_waiter_s {
 struct arts_home_lockreq_node_s {
   struct arts_home_lockreq_node_s *next;
   unsigned int rank;
+  struct arts_rdzv_landing_s rdzv; /* requester's grant/deliver landing */
 };
 
 struct arts_home_lockreq_queue_s {
@@ -356,6 +357,7 @@ struct arts_home_lockreq_queue_s {
 struct arts_home_lockreq_node_s {
   _Atomic(struct arts_home_lockreq_node_s *) next;
   unsigned int rank;
+  struct arts_rdzv_landing_s rdzv; /* requester's grant/deliver landing */
 };
 
 struct arts_home_lockreq_queue_s {
@@ -389,6 +391,16 @@ struct arts_db_cache_s {
    * FORWARD; the owner drains (DELIVER copy to each reader) when wc reaches 0.
    * This list cannot be packed into the single cache_state word. */
   arts_lf_stack_t ro_serve;
+  /* The pending migrate target's landing (its stable buffer), written by the
+   * FORWARD(migrate) handler BEFORE the CAS that publishes migrate_target
+   * (single in-flight migration per owner — home serializes by CONFIRM), read
+   * by whichever actor ships the DELIVER on the wc 0-edge. */
+  struct arts_rdzv_landing_s migrate_rdzv;
+#else
+  /* Home's writeback landing for THIS grant's release (advertised in the
+   * grant, 1:1 with the eventual RW release).  Written by the grant handler
+   * before any local writer runs; consumed by the single ACK-gated releaser. */
+  struct arts_rdzv_landing_s home_wb_rdzv;
 #endif
   arts_guid_t db_guid;
   uint64_t db_size;
@@ -405,6 +417,9 @@ struct arts_db_cache_s {
   arts_lf_stack_t rw_pending;
 #ifdef ARTS_TIMING_LAZY
   arts_lf_stack_t ro_serve; /* RO-phase serve list (owner only; LAZY only) */
+  struct arts_rdzv_landing_s migrate_rdzv; /* pending migrate target landing */
+#else
+  struct arts_rdzv_landing_s home_wb_rdzv; /* grant's writeback landing */
 #endif
   arts_guid_t db_guid;
   uint64_t db_size;

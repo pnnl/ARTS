@@ -40,6 +40,7 @@
 
 #include <errno.h>
 #include <inttypes.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -273,29 +274,118 @@ void arts_socket_setup(struct arts_config_s *config) {
   }
 }
 
-void arts_socket_shutdown() {
-  if (!arts_global_message_table || !remote_socket_receive_list) {
+void arts_socket_sentinel_arm(void) {
+  /* Called once the bootstrap fi-address exchange has finished: no payload will
+   * ever ride the TCP mesh again, but the connections themselves are kept open
+   * as zero-traffic LIVENESS SENTINELS — connection lifetime doubles as peer
+   * liveness, and an orderly peer exit and a peer process death both surface as
+   * HUP/EOF on the accept-side socket.  Closing any established socket here
+   * would instead signal a false death to its peer, so only the listening
+   * sockets (whose accept duty is complete) are closed.  The launcher / stdio
+   * sockets are separate fds and are untouched. */
+  if (!arts_global_message_table) {
     return;
   }
-  int count = (int)arts_global_message_table->table_length;
-  /* Receive sockets: just drop the read half (we will not read any
-   * more incoming data after this). */
-  for (int i = 0; i < (count - 1) * ports; i++) {
-    shutdown(remote_socket_receive_list[i], SHUT_RD);
-  }
-
-  /* Send sockets: close the write half gracefully (SHUT_WR sends FIN
-   * rather than RST) so the kernel delivers any already-buffered bytes
-   * — including the SHUTDOWN_MSG broadcast we enqueued earlier — before
-   * the connection is torn down. */
-  for (int i = 0; i < count * ports; i++) {
-    if (i / ports != arts_global_rank_id) {
-      shutdown(remote_socket_send_list[i], SHUT_WR);
+  if (local_socket_receive) {
+    for (int z = 0; z < (int)ports; z++) {
+      if (local_socket_receive[z] > 0) {
+        close(local_socket_receive[z]);
+        local_socket_receive[z] = 0;
+      }
     }
   }
 }
 
+/* Single prober at a time: two progress threads polling the shared pollfd
+ * array would race on its revents fields. */
+static _Atomic int g_sentinel_probing;
+
+bool arts_socket_sentinel_check(void) {
+  /* Probe the accept-side mesh for peer death (POLLHUP/POLLERR/EOF), with a
+   * zero timeout — called from a progress thread's idle cycle, never blocking,
+   * and never reading data beyond draining the EOF condition (no payload ever
+   * rides these sockets after bootstrap).  A dead peer funnels into the same
+   * idempotent shutdown entry an inbound shutdown message uses.  Once shutdown
+   * is already in progress a peer's close is the expected orderly teardown, so
+   * the probe stands down entirely — an orderly exit is never mistaken for a
+   * death. */
+  if (!arts_global_message_table || poll_incoming == NULL ||
+      arts_node_info.shutdown_state) {
+    return false;
+  }
+  int n = (int)(arts_global_message_table->table_length - 1) * (int)ports;
+  if (n <= 0) {
+    return false;
+  }
+  int expected = 0;
+  if (!atomic_compare_exchange_strong_explicit(&g_sentinel_probing, &expected,
+                                               1, memory_order_acq_rel,
+                                               memory_order_relaxed)) {
+    return false;
+  }
+  bool dead_peer = false;
+  if (poll(poll_incoming, (nfds_t)n, 0) > 0) {
+    for (int i = 0; i < n && !dead_peer; i++) {
+      short re = poll_incoming[i].revents;
+      if (re == 0) {
+        continue;
+      }
+      if (re & (POLLHUP | POLLERR | POLLNVAL)) {
+        dead_peer = true;
+      } else if (re & POLLIN) {
+        char scratch[256];
+        ssize_t r =
+            recv(poll_incoming[i].fd, scratch, sizeof(scratch), MSG_DONTWAIT);
+        if (r == 0) {
+          dead_peer = true; /* EOF: peer closed its end */
+        } else if (r > 0) {
+          ARTS_WARN("liveness sentinel %d received %zd unexpected bytes "
+                    "(no data should ride the bootstrap mesh)",
+                    i, (ssize_t)r);
+        }
+        /* r < 0 (EAGAIN/EINTR): spurious wakeup, ignore. */
+      }
+      if (dead_peer) {
+        ARTS_INFO("liveness sentinel %d: peer connection closed before "
+                  "shutdown began — treating as peer exit/death",
+                  i);
+        poll_incoming[i].fd = -1; /* negative fd: poll ignores this entry */
+      }
+    }
+  }
+  atomic_store_explicit(&g_sentinel_probing, 0, memory_order_release);
+  if (dead_peer) {
+    /* Same entry the wire shutdown handler uses (idempotent CAS), then stop
+     * the local threads — this thread's own loop exits on the cleared flag. */
+    arts_enter_shutdown_state(false);
+    arts_runtime_stop();
+  }
+  return dead_peer;
+}
+
 void arts_socket_cleanup() {
+  /* Orderly close of the liveness sentinels, at the very end of teardown —
+   * the cluster-wide shutdown protocol has already completed over the live
+   * transport (every rank's shutdown_state is set), so a peer observing our
+   * HUP is itself shutting down and its sentinel probe stands down. */
+  if (arts_global_message_table != NULL) {
+    int count = (int)arts_global_message_table->table_length;
+    if (remote_socket_receive_list) {
+      for (int i = 0; i < (count - 1) * (int)ports; i++) {
+        if (remote_socket_receive_list[i] >= 0) {
+          close(remote_socket_receive_list[i]);
+        }
+      }
+    }
+    if (remote_socket_send_list) {
+      for (int i = 0; i < count * (int)ports; i++) {
+        if (i / (int)ports != (int)arts_global_rank_id &&
+            remote_socket_send_list[i] >= 0) {
+          close(remote_socket_send_list[i]);
+        }
+      }
+    }
+  }
   arts_free(ip_list);
   arts_free(remote_socket_send_list);
   arts_free((void *)remote_socket_send_lock_list);
@@ -364,86 +454,6 @@ static inline bool arts_transport_connect(int rank, unsigned int port) {
   }
 
   return true;
-}
-
-// inline int arts_actual_send(char * message, unsigned int length, int rank,
-// int port)
-uint64_t arts_actual_send(char *message, uint64_t length, int rank, int port) {
-  int res = 0;
-  uint64_t total = 0;
-  int iterations = 0;
-  while (length != 0 && res >= 0) {
-    res = (int)send(remote_socket_send_list[(rank * ports) + port],
-                    message + total, length, MSG_DONTWAIT);
-    if (res >= 0) {
-      total += res;
-      length -= res;
-    }
-    iterations++;
-    if (iterations > 1000000) {
-      ARTS_INFO("arts_actual_send: stuck in loop, res=%d, length=%lu, "
-                "total=%lu, errno=%d",
-                res, length, total, errno);
-      break;
-    }
-  }
-
-  if (res < 0) {
-    if (errno != EAGAIN) {
-      struct arts_msg_header_s *pk = (struct arts_msg_header_s *)message;
-      ARTS_INFO(
-          "arts_transport_send %u Socket appears to be closed to rank %d: "
-          " %s",
-          pk->message_type, rank, strerror(errno));
-      /* Broken socket: drop the send. Decrement outbox_pending so the
-       * shutdown drain does not wait forever on a dead peer, then signal
-       * local shutdown via the usual path. */
-      arts_atomic_sub(&arts_node_info.outbox_pending, 1U);
-      arts_runtime_stop();
-      return -1;
-    }
-    /* EAGAIN: socket buffer full, partial send. Caller will retry via
-     * arts_outbox_resend mechanism; do NOT decrement outbox_pending yet. */
-  } else {
-    /* Success — the message has been fully handed off to the kernel
-     * TCP buffer. Matched with the arts_outbox_insert_node increment. */
-    arts_atomic_sub(&arts_node_info.outbox_pending, 1U);
-  }
-  INCREMENT_BYTES_REMOTE_SENT_BY(total);
-  INCREMENT_NUM_REMOTE_SEND_BY(1);
-  return length;
-}
-
-uint64_t arts_transport_send(int rank, unsigned int queue, char *message,
-                             uint64_t length) {
-  int port = (int)(queue % ports);
-  if (arts_transport_connect(rank, port)) {
-    return arts_actual_send(message, length, rank, port);
-  }
-  return length;
-}
-
-uint64_t arts_transport_send_payload(int rank, unsigned int queue,
-                                     char *message, unsigned int length,
-                                     char *payload, uint64_t length2) {
-  int port = (int)(queue % ports);
-  if (arts_transport_connect(rank, port)) {
-    uint64_t temp_length = arts_actual_send(message, length, rank, port);
-    if (temp_length) {
-      return temp_length + length2;
-    }
-    /* Header was sent fully -- arts_actual_send decremented outbox_pending
-     * once.  But the caller (arts_outbox_insert_node) only incremented ONCE for
-     * the whole logical message (header + payload).  The payload send
-     * below will decrement again, underflowing the counter.  Pre-increment
-     * here to keep the invariant: one increment per logical message,
-     * one decrement per arts_actual_send call.  Without this fix the
-     * shutdown-protocol drain races a wrap-around pending count and
-     * forces premature peer-disconnect shutdown. */
-    arts_atomic_add(&arts_node_info.outbox_pending, 1U);
-    return arts_actual_send(payload, length2, rank, port);
-  }
-  return length + length2;
 }
 
 bool arts_transport_setup_incoming() {
@@ -599,204 +609,6 @@ void arts_transport_setup_outgoing() {
           inet_addr(ip_list + ((ptrdiff_t)100 * i)));
     }
   }
-}
-
-static ARTS_THREAD_LOCAL unsigned int thread_start;
-static ARTS_THREAD_LOCAL unsigned int thread_stop;
-static ARTS_THREAD_LOCAL char **bypass_buf;
-static ARTS_THREAD_LOCAL uint64_t *bypass_packet_size;
-static ARTS_THREAD_LOCAL int64_t *re_receive_res;
-static ARTS_THREAD_LOCAL bool max_out_working;
-
-void arts_transport_set_thread_inbound_queues(unsigned int start,
-                                              unsigned int stop) {
-  thread_start = start;
-  thread_stop = stop;
-  // ARTS_INFO_MASTER("%d %d", start, stop);
-  unsigned int size = stop - start;
-  bypass_buf = (char **)arts_malloc(sizeof(char *) * size);
-  bypass_packet_size = (uint64_t *)arts_malloc(sizeof(uint64_t) * size);
-  re_receive_res = (int64_t *)arts_calloc(size, sizeof(int64_t));
-  for (int i = 0; i < size; i++) {
-    bypass_buf[i] = (char *)arts_malloc(PACKET_SIZE);
-    bypass_packet_size[i] = PACKET_SIZE;
-  }
-}
-
-void arts_transport_thread_inbound_queues_cleanup() {
-  unsigned int size = thread_stop - thread_start;
-  for (int i = 0; i < size; i++) {
-    arts_free(bypass_buf[i]);
-  }
-  arts_free(bypass_buf);
-  arts_free(bypass_packet_size);
-  arts_free(re_receive_res);
-}
-
-bool arts_transport_receive(int time_out) {
-  int i;
-  int steal_handler_thread = 0;
-  int64_t res;
-  int64_t res2;
-  struct arts_msg_header_s *packet;
-  int count = (int)(arts_global_message_table->table_length - 1);
-  fd_set temp_set;
-  struct timeval sel_timeout;
-  unsigned int pos;
-  res =
-      poll(poll_incoming + thread_start, thread_stop - thread_start, time_out);
-
-  if (res == -1) {
-    arts_enter_shutdown_state(false);
-    arts_runtime_stop();
-  }
-
-  unsigned int space_left;
-  bool packet_incoming_on_a_socket = false;
-  bool goto_next = false;
-  if (res > 0) {
-    // ARTS_INFO("POLL");
-    time_out = 1;
-    max_out_working = true;
-    while (max_out_working) {
-      max_out_working = false;
-      for (i = (int)thread_start; i < (int)thread_stop; i++) {
-        pos = i - thread_start;
-        goto_next = false;
-        if (poll_incoming[i].revents & (POLLIN | POLLHUP | POLLERR)) {
-          if (re_receive_res[pos] == 0) {
-            // ARTS_INFO("Here3a");
-            packet = (struct arts_msg_header_s *)bypass_buf[pos];
-            res = recv(remote_socket_receive_list[i], bypass_buf[pos],
-                       bypass_packet_size[pos], MSG_DONTWAIT);
-            if (res > 0) {
-              INCREMENT_BYTES_REMOTE_RECEIVED_BY(res);
-            }
-          } else {
-            packet = (struct arts_msg_header_s *)bypass_buf[pos];
-            res = re_receive_res[pos];
-            re_receive_res[pos] = 0;
-          }
-          if (res > 0) {
-            packet_incoming_on_a_socket = true;
-            while (res > 0) {
-              while (res < sizeof(struct arts_msg_header_s)) {
-                if (bypass_buf[pos] != (char *)packet) {
-                  memmove(bypass_buf[pos], packet, res);
-                  packet = (struct arts_msg_header_s *)bypass_buf[pos];
-                }
-                res2 =
-                    recv(remote_socket_receive_list[i], bypass_buf[pos] + res,
-                         bypass_packet_size[pos] - res, MSG_DONTWAIT);
-                if (res2 > 0) {
-                  INCREMENT_BYTES_REMOTE_RECEIVED_BY(res2);
-                }
-
-                if (res2 == 0) {
-                  /* Peer half-closed (FIN) mid-packet: no more bytes will ever
-                   * complete this packet, so adding 0 would spin recv forever.
-                   * Treat exactly like the first-read EOF below — enter
-                   * shutdown so this rank's network threads stop and reach
-                   * teardown. */
-                  arts_enter_shutdown_state(false);
-                  arts_runtime_stop();
-                  return false;
-                }
-                if (res2 < 0) {
-                  if (errno != EAGAIN) {
-                    ARTS_INFO("Error on recv return 0 %d %d", errno, EAGAIN);
-                    arts_enter_shutdown_state(false);
-                    arts_runtime_stop();
-                  }
-
-                  re_receive_res[pos] = res;
-                  goto_next = true;
-                  break;
-                }
-                // space_left-=res2;
-                res += res2;
-              }
-              if (goto_next) {
-                break;
-              }
-
-              if (bypass_packet_size[pos] < packet->size) {
-                // For large packets (>256MB), avoid 4x over-allocation
-                uint64_t new_buf_size = (packet->size > (1ULL << 28))
-                                            ? packet->size
-                                            : packet->size * 4;
-                char *next_buf = (char *)arts_malloc(new_buf_size);
-
-                memcpy(next_buf, bypass_buf[pos], bypass_packet_size[pos]);
-
-                arts_free(bypass_buf[pos]);
-
-                packet = (struct arts_msg_header_s *)(next_buf +
-                                                      (((char *)packet) -
-                                                       (bypass_buf[pos])));
-                bypass_buf[pos] = next_buf;
-                bypass_packet_size[pos] = new_buf_size;
-              }
-
-              while (res < packet->size) {
-                if (bypass_buf[pos] != (char *)packet) {
-                  memmove(bypass_buf[pos], packet, res);
-                  packet = (struct arts_msg_header_s *)bypass_buf[pos];
-                }
-                res2 =
-                    recv(remote_socket_receive_list[i], bypass_buf[pos] + res,
-                         bypass_packet_size[pos] - res, MSG_DONTWAIT);
-                if (res2 > 0) {
-                  INCREMENT_BYTES_REMOTE_RECEIVED_BY(res2);
-                }
-                if (res2 == 0) {
-                  /* Peer half-closed (FIN) mid-packet: no more bytes will ever
-                   * complete this packet, so adding 0 would spin recv forever.
-                   * Treat exactly like the first-read EOF below — enter
-                   * shutdown so this rank's network threads stop and reach
-                   * teardown. */
-                  arts_enter_shutdown_state(false);
-                  arts_runtime_stop();
-                  return false;
-                }
-                if (res2 < 0) {
-                  if (errno != EAGAIN) {
-                    ARTS_INFO("Error on recv return 0 %d %d", errno, EAGAIN);
-                    ARTS_INFO("error %s", strerror(errno));
-                    arts_enter_shutdown_state(false);
-                    arts_runtime_stop();
-                  }
-                  re_receive_res[pos] = res;
-                  goto_next = true;
-                  break;
-                }
-                res += res2;
-              }
-              if (goto_next) {
-                break;
-              }
-              INCREMENT_NUM_REMOTE_RECEIVE_BY(1);
-              arts_transport_dispatch_packet(packet);
-
-              res -= (int64_t)packet->size;
-              packet =
-                  (struct arts_msg_header_s *)(((char *)packet) + packet->size);
-            }
-          } else if (res == -1) {
-            arts_enter_shutdown_state(false);
-            arts_runtime_stop();
-            return false;
-          } else if (res == 0) {
-            arts_enter_shutdown_state(false);
-            arts_runtime_stop();
-            return false;
-          }
-        }
-      }
-    }
-    return packet_incoming_on_a_socket;
-  }
-  return false;
 }
 
 int arts_get_new_socket() {

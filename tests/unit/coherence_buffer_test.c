@@ -19,6 +19,7 @@
  */
 
 #include "arts/coherence/buffer.h"
+#include "arts/memory/regpool.h"
 #include "arts/utils/malloc.h"
 #include "arts/utils/shared.h"
 
@@ -254,6 +255,14 @@ static int phase4_mixed(void) {
 }
 
 int main(void) {
+  /* No ARTS runtime bootstrap here (see file header) — arts_db_buf_install
+   * draws its buffers from the registered pool, so this standalone test
+   * must init it itself, the same precondition arts_runtime_node_init
+   * establishes before any real worker/receiver thread runs. */
+  if (!arts_regpool_init(NULL, (size_t)64 * 1024 * 1024, 1)) {
+    (void)fprintf(stderr, "regpool_init failed\n");
+    return 1;
+  }
   if (phase1_basic() != 0) {
     return 1;
   }
@@ -266,6 +275,7 @@ int main(void) {
   if (phase4_mixed() != 0) {
     return 1;
   }
+  arts_regpool_cleanup();
   printf("ALL PASS\n");
   return 0;
 }
