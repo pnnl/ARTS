@@ -1392,8 +1392,21 @@ u8 ocrDbCreate(ocrGuid_t *db, void **addr, u64 len, u16 flags, ocrHint_t *hint,
      * install replaces unconditionally. */
     arts_db_hint_t lh = ARTS_DB_HINT_DEFAULTS;
     lh.check = (flags & GUID_PROP_CHECK) != 0;
+    /* DB_PROP_NO_ACQUIRE: same translation as the non-labeled branch below --
+     * the creator does not acquire; home stays the sole idle owner. */
+    unsigned int arts_flags = (flags & DB_PROP_NO_ACQUIRE)
+                                  ? ARTS_DB_PROP_NO_ACQUIRE
+                                  : ARTS_DB_PROP_NONE;
     void *data = arts_db_create_with_guid(labeledGuid, len, ARTS_DB_DEFAULT,
-                                          ARTS_DB_PROP_NONE, &lh);
+                                          arts_flags, &lh);
+    if (flags & DB_PROP_NO_ACQUIRE) {
+      /* Mirror the non-labeled NO_ACQUIRE return: no hold, no pointer.  The
+       * core always hands back NULL here on this path (success or not), so
+       * this must be checked before the "already taken" NULL-data test below
+       * -- that test's meaning is specific to the acquiring path. */
+      *addr = NULL;
+      return 0;
+    }
     if (data == NULL) {
       /* Labeled GUID already taken — fall back to looking it up so the
        * caller still gets a valid pointer.  The lookup handle is released

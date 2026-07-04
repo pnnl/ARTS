@@ -255,6 +255,21 @@ add_arts_test(db_user_ptr_uaf)
 register_single_node_test(db_user_ptr_uaf TIMEOUT 30)
 set_tests_properties(db_user_ptr_uaf PROPERTIES PASS_REGULAR_EXPRESSION "PASS: db_user_ptr_uaf|SKIP db_user_ptr_uaf")
 
+# dbcreate_matrix: probe of the DB-create capability matrix --
+# (creator-acquisition) x (home-determination) x (locality).  Exercises the
+# ARTS core create path directly (arts.h, no OCR shim), so it is a coverage
+# regression guard rather than a bug-exposing test: each cell prints its result
+# independently, so require only that the scalar appears, not a specific count.
+# Cross-runtime capability parity (shim vs the reference runtimes) is compared
+# separately through the correctness harness, not here.
+add_arts_test(dbcreate_matrix)
+register_single_node_test(dbcreate_matrix TIMEOUT 60)
+register_multinode_test(dbcreate_matrix TIMEOUT 60)
+set_tests_properties(dbcreate_matrix PROPERTIES PASS_REGULAR_EXPRESSION "CELLS_OK=[0-9]+/12")
+foreach(_v 2n 3n 4n 2n_io)
+    set_tests_properties(dbcreate_matrix_${_v} PROPERTIES PASS_REGULAR_EXPRESSION "CELLS_OK=[0-9]+/12")
+endforeach()
+
 # db_cxl_paths: CXL real body, builds+links against standard libarts via the public-API
 # SKIP path in non-CXL builds; the ARTS_USE_CXL define selects the real body.
 if(ARTS_USE_CXL)

@@ -385,6 +385,12 @@ CASES: list[Case] = [
                    "writeback is declared lossy"),
     Case("basicIO",          "basicIO",          ["0","10", BASIC_IO_DAT],
          scalar_re=r"BASICIO_CHK\s+(\d+)", scalar_kind="int"),
+    # dbcreate_matrix: DB-create capability matrix (labeled/affinity/no-hint
+    # x acquire/no-acquire x local/remote) -- compares create-path capability
+    # across the runtimes. No expect= pin: the point of this case is to record
+    # each runtime's own count, not assert a single "correct" answer.
+    Case("dbcreate_matrix",  "dbcreate_matrix",  [],
+         scalar_re=r"CELLS_OK=(\d+)/12", scalar_kind="int"),
     Case("cache_offset",     "cache_offset",     [],
          scalar_re=r"CACHE_OFFSET_CHK\s+(\d+)", scalar_kind="int",
          multinode_skip="single-node design: file-scope dbGuids/dbPtrs arrays"),

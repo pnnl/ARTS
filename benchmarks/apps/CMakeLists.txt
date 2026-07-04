@@ -1190,6 +1190,53 @@ if(TARGET ocr_vdm_mpi)
 endif()
 
 # ==========================================================================
+# dbcreate_matrix  (bespoke: source lives in this repo, not in ocr-apps)
+# Probes the DB-create capability matrix -- (creator-acquisition) x (home-
+# determination: affinity / labeled / no-hint) x (locality) -- through the
+# portable OCR API, so the SAME source builds for every runtime and the
+# correctness harness can compare their create-path capability.  Prints
+# CELLS_OK=<k>/12.
+# ==========================================================================
+set(DBCM_SRC "${CMAKE_CURRENT_SOURCE_DIR}/dbcreate_matrix.c")
+
+add_executable(dbcreate_matrix_xsocr ${DBCM_SRC})
+target_include_directories(dbcreate_matrix_xsocr PRIVATE
+    ${OCR_LIBS_ROOT}/macros/macros ${BENCH_OCR_OPTIONS_DIR})
+target_compile_definitions(dbcreate_matrix_xsocr PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
+target_link_libraries(dbcreate_matrix_xsocr PRIVATE ocr_xsocr_static pthread)
+target_link_options(dbcreate_matrix_xsocr PRIVATE -no-pie -fno-pie)
+set_target_properties(dbcreate_matrix_xsocr PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+target_compile_options(dbcreate_matrix_xsocr PRIVATE ${BENCH_C_OPT} -w)
+
+foreach(sfx mrnew_eager mrnew_lazy mrsw_eager mrsw_lazy mrmw lock_eager lock_lazy)
+    add_executable(dbcreate_matrix_arts_${sfx} ${DBCM_SRC}
+                   $<TARGET_OBJECTS:ocr_arts_objects>)
+    target_include_directories(dbcreate_matrix_arts_${sfx} PRIVATE
+        ${OCR_LIBS_ROOT}/macros/macros ${BENCH_OCR_OPTIONS_DIR} ${OCR_INC_DIR})
+    target_compile_definitions(dbcreate_matrix_arts_${sfx} PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
+    target_link_libraries(dbcreate_matrix_arts_${sfx} PRIVATE arts_static_${sfx} pthread)
+    target_link_options(dbcreate_matrix_arts_${sfx} PRIVATE -no-pie -fno-pie)
+    set_target_properties(dbcreate_matrix_arts_${sfx} PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    target_compile_options(dbcreate_matrix_arts_${sfx} PRIVATE ${BENCH_C_OPT} -w)
+endforeach()
+
+if(TARGET ocr_vdm_mpi)
+    add_executable(dbcreate_matrix_ocrvx ${DBCM_SRC})
+    target_include_directories(dbcreate_matrix_ocrvx PRIVATE
+        ${OCR_LIBS_ROOT}/macros/macros ${OCRVX_OCR_INC})
+    target_compile_definitions(dbcreate_matrix_ocrvx PRIVATE
+        ${OCR_EXT_DEFINES} "OCR_TYPE_H=vdm.h" OCR_ENABLE_EDT_NAMING)
+    target_link_libraries(dbcreate_matrix_ocrvx PRIVATE ocr_vdm_mpi)
+    target_link_options(dbcreate_matrix_ocrvx PRIVATE -no-pie -fno-pie)
+    set_target_properties(dbcreate_matrix_ocrvx PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    target_compile_options(dbcreate_matrix_ocrvx PRIVATE ${BENCH_C_OPT} -w
+        "-include" "${OCRVX_COMPAT_H}")
+endif()
+
+# ==========================================================================
 # Meta targets
 # ==========================================================================
 
