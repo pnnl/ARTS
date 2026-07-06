@@ -3,7 +3,10 @@ import performance_harness as ph
 def test_classify():
     assert ph.classify_run(rc=0, marker_seen=True, proc_alive=False) == "OK"
     assert ph.classify_run(rc=124, marker_seen=True, proc_alive=True) == "SHUTDOWN_HANG"
-    assert ph.classify_run(rc=124, marker_seen=False, proc_alive=True) == "COMPUTE_FAIL"
+    # rc==124 with no result at all is a measurement ("slower than budget"),
+    # not a retryable failure: the run loop retries it once (hang vs
+    # structural) and then stops the cell.
+    assert ph.classify_run(rc=124, marker_seen=False, proc_alive=True) == "TIMEOUT"
     assert ph.classify_run(rc=139, marker_seen=False, proc_alive=False) == "COMPUTE_FAIL"
     # Teardown death (SIGSEGV/SIGKILL) AFTER the result printed: marker_seen
     # with a nonzero, non-124 rc and the process already exited (not "still

@@ -79,6 +79,9 @@ struct arts_config_s {
   char *provider; /* libfabric provider name (fi_getinfo hints prov_name);
                      NULL/empty = auto-select.  Overrides the ambient
                      FI_PROVIDER env var when set. */
+  char *fabric_domain; /* libfabric domain name (fi_getinfo hints
+                          domain_attr->name, e.g. an HCA like "mlx5_0");
+                          NULL/empty = provider's first domain. */
   unsigned int regpool_slab_mb; /* registered-memory slab pool size, MB */
   unsigned int worker_thread_count;
   unsigned int progress_thread_count;

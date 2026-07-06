@@ -56,6 +56,21 @@ struct arts_db_buffer_s *arts_db_buf_alloc(struct arts_db_cache_s *cache,
       sizeof(struct arts_db_buffer_s) + db_size, 64);
 }
 
+/* As arts_db_buf_alloc, but buf->data reads as zero.  A recycled buffer is
+ * cleared here (its previous contents are arbitrary); a fresh pool
+ * allocation arrives zeroed without being touched. */
+struct arts_db_buffer_s *arts_db_buf_alloc_zeroed(struct arts_db_cache_s *cache,
+                                                  uint64_t db_size) {
+  arts_lf_link_t *node = arts_lf_pool_pop_or_null(&cache->buf_freelist);
+  if (node != NULL) {
+    struct arts_db_buffer_s *b = (struct arts_db_buffer_s *)node;
+    memset(b->data, 0, (size_t)db_size);
+    return b;
+  }
+  return (struct arts_db_buffer_s *)arts_regpool_zalloc_aligned(
+      sizeof(struct arts_db_buffer_s) + db_size, 64);
+}
+
 arts_shared_ptr_t arts_db_buf_acquire(struct arts_db_cache_s *cache) {
   /* Acquire-and-validate load: returns a caller-owned strong ref (keeps the
    * buffer alive) or NULL if no buffer is installed.  Caller releases via
@@ -113,20 +128,24 @@ struct arts_db_buffer_s *arts_db_buf_install(struct arts_db_cache_s *cache,
                                              uint64_t new_version,
                                              const void *data_payload,
                                              uint64_t db_size) {
-  struct arts_db_buffer_s *new_buf = arts_db_buf_alloc(cache, db_size);
+  /* data_payload == NULL ⇒ initial install at create-time: the payload must
+   * read as zero (deterministic state).  Take the zeroed allocation path so
+   * only a recycled buffer is actually cleared — fresh pool memory is
+   * kernel-zeroed already, and skipping the redundant full-payload memset
+   * keeps the touch (and its page faults) off the creator's critical path. */
+  struct arts_db_buffer_s *new_buf =
+      (data_payload == NULL && db_size > 0)
+          ? arts_db_buf_alloc_zeroed(cache, db_size)
+          : arts_db_buf_alloc(cache, db_size);
   if (new_buf == NULL) {
     return NULL; /* OOM — caller decides how to surface. */
   }
   new_buf->owner_cache = cache;
   new_buf->version = new_version;
-  /* Publish bytes into buf->data (FAM, canonical user-visible storage).
-   * data_payload == NULL ⇒ initial install at create-time: zero-init so
-   * subsequent reads see deterministic state. */
+  /* Publish bytes into buf->data (FAM, canonical user-visible storage). */
   if (db_size > 0) {
     if (data_payload != NULL) {
       memcpy(new_buf->data, data_payload, (size_t)db_size);
-    } else {
-      memset(new_buf->data, 0, (size_t)db_size);
     }
     /* Lazy-installed caches start with db_size==0; the first install learns
      * the real size from the wire payload. */

@@ -155,6 +155,11 @@ void *arts_malloc_aligned(size_t size, size_t align) {
 void *arts_regpool_alloc_aligned(size_t size, size_t align) {
   return arts_malloc_aligned(size, align);
 }
+void *arts_regpool_zalloc_aligned(size_t size, size_t align) {
+  void *p = arts_regpool_alloc_aligned(size, align);
+  if (p) memset(p, 0, size);
+  return p;
+}
 void arts_regpool_free(void *p) { free(p); }
 
 /* Rendezvous-plane stubs: buffer.c's landing helpers reference the net core's

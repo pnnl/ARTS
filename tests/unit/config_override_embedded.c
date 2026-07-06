@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * T218 — config_open_file priority chain + slurm hostname digit truncation.
+ * T218 — config_open_file priority chain + slurm hostname width contract.
  *
  * Two config-parser behaviours, exercised against the linked libarts (no
  * runtime started):
@@ -19,11 +19,10 @@
  *     config.c (the tests/unit/ #include-config.c pattern); flagged here, not
  *     silently skipped.
  *
- * (B) arts_config_get_slurm_hostname() digit truncation (config.c, exported).
- *     The pad width equals strlen(digit_sample); a value with MORE digits than
- *     the sample width has its HIGH-ORDER digits silently dropped (the
- * value/=10 loop runs only digit_length times).  This pins that documented
- * behaviour so a future fix that widens / errors is detected.
+ * (B) arts_config_get_slurm_hostname() width contract (config.c, exported).
+ *     The pad width is max(strlen(digit_sample), natural digits of value):
+ *     zero-padded samples keep their padding, and a value wider than the
+ *     sample widens instead of dropping high-order digits.
  *
  * Orthogonal to the coherence protocol axis.
  */
@@ -93,7 +92,7 @@ static void test_arts_config_priority(void) {
   (void)remove(cfg_path);
 }
 
-/* (B) slurm hostname zero-pad + high-order digit truncation. */
+/* (B) slurm hostname zero-pad + width-widening contract. */
 static void expect_hostname(char *name, char *sample, unsigned int value,
                             const char *want) {
   char *got = arts_config_get_slurm_hostname(name, sample, value);
@@ -109,22 +108,23 @@ static void expect_hostname(char *name, char *sample, unsigned int value,
   arts_free(got);
 }
 
-static void test_slurm_hostname_truncation(void) {
+static void test_slurm_hostname_widths(void) {
   /* Fits in the pad width: zero-padded normally. */
   expect_hostname("node", "01", 5, "node05");
   expect_hostname("node", "001", 42, "node042");
   /* Exactly the pad width. */
   expect_hostname("node", "01", 42, "node42");
-  /* OVERFLOW: value has more digits than the sample width -> the high-order
-     digit(s) are silently dropped.  123 with width 2 keeps only "23". */
-  expect_hostname("node", "01", 123, "node23");
-  /* 4567 with width 3 keeps only "567". */
-  expect_hostname("host", "000", 4567, "host567");
+  /* Wider than the sample: the name widens to the value's natural digit
+     count — dropping high-order digits would fabricate a hostname that is
+     not in the range (an unpadded range like 8-12 crosses a width
+     boundary mid-expansion). */
+  expect_hostname("node", "01", 123, "node123");
+  expect_hostname("host", "000", 4567, "host4567");
 }
 
 int main(void) {
   test_arts_config_priority();
-  test_slurm_hostname_truncation();
+  test_slurm_hostname_widths();
 
   /* Document the unreachable rungs of the priority chain as a known coverage
      gap (informational, not a failure). */
@@ -134,7 +134,7 @@ int main(void) {
 
   if (fails == 0) {
     printf("PASS config_override_embedded: ARTS_CONFIG priority honored + "
-           "slurm hostname truncation pinned\n");
+           "slurm hostname width contract pinned\n");
     return 0;
   }
   return 1;

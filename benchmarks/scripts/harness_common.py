@@ -30,7 +30,7 @@ CHOLESKY_INPUT = "/tmp/arts_cholesky_input.mat"
 
 
 def _cfg_name(n) -> str:
-    return f"{n}n.cfg" if isinstance(n, int) else f"{n}.cfg"
+    return f"{n}n_sc.cfg" if isinstance(n, int) else f"{n}.cfg"
 
 
 def BUILD_for(build_dir: str) -> Path:
@@ -47,7 +47,7 @@ def APPS_DIR_for(build: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Per-target machine geometry (laptop = 14-thread budget, server = 48-thread).
+# Per-target machine geometry (laptop = 14-thread budget, cbgpu02 = 48-thread).
 # Drives the config subdir, the multinode node counts, the per-rank thread budget
 # (for taskset pinning), and the ocr-vx TBB width.  Every config is sized so
 # node_count * per-node-threads == the machine's core count.
@@ -59,8 +59,7 @@ def APPS_DIR_for(build: Path) -> Path:
 # xsocr/ocr-vx have a single comm worker (no worker/progress split), so their
 # N-node total already equals the plain N-node config — no separate IO variant.
 _MN_NODE_COUNTS = {
-    'laptop': [2, 3, 4, "2n_io"],
-    'server': [2, 4, 8, 16, "2n_io", "4n_io", "8n_io"],
+    'cbgpu02': [2, 4],
 }
 
 
@@ -71,8 +70,7 @@ def MN_RANKS_for(target: str) -> list:
 # Threads per rank (= per-node total thread budget) used to taskset-pin each
 # mpirun rank to a disjoint core block, mirroring arts's per-rank pu_offset.
 _TPN = {
-    'laptop': {2: 7, 3: 4, 4: 3},
-    'server': {2: 24, 4: 12, 8: 6, 16: 3},
+    'cbgpu02': {2: 12, 4: 12},
 }
 
 
@@ -87,8 +85,7 @@ def _TPN_for(target: str) -> dict:
 # budget, so match it.  Budget >= 3 at every node count here, so the P=1
 # shutdown deadlock cannot occur.
 _OCRVX_TBB = {
-    'laptop': {1: 14, 2: 7, 3: 4, 4: 3},
-    'server': {1: 48, 2: 24, 4: 12, 8: 6, 16: 3},
+    'cbgpu02': {1: 48, 2: 12, 4: 12},
 }
 
 
@@ -112,7 +109,7 @@ _OCRVX_TIMEOUT_MULT = 3
 # so a single-node run would float its threads across ALL logical CPUs (incl.
 # the HT siblings above core count).  Confine them to cores 0..N-1 via taskset
 # so they occupy the same cores arts self-pins to.
-_NCORES = {'laptop': 14, 'server': 48}
+_NCORES = {'cbgpu02': 48}
 
 
 def _NCORES_for(target: str) -> int:
@@ -212,7 +209,7 @@ class Runner:
         # ample RAM, and ulimit -v breaks mmap-reserving allocators (mimalloc
         # reserves virtual address space far above its actual RSS, so a virtual
         # cap rejects allocations the host could easily satisfy).
-        self.cap_memory = (target != 'server')
+        self.cap_memory = (target != 'cbgpu02')
         self.cgroup_ok = False
         if self.cap_memory:
             try:
@@ -301,8 +298,10 @@ class Runner:
         wall = time.time() - t0
         return RunResult(rc=rc, wall=wall, stdout=out, log_path=str(logfile))
 
-    def run_ocr(self, case_name: str, bin_name: str, args: list[str], backend: str,
+    def run_ocr(self, case_name: str, bin_name: str, args: list[str],
+                backend: str,
                suffix: str = "", cfg_path: Path | None = None,
+               width: int | None = None,
                extra_env: dict | None = None, timeout: int = 0) -> RunResult:
         # When backend=="arts" and suffix is given, exec <bin_name>_arts_<suffix>.
         # cfg_path overrides the capacity-1n default cfg this backend reads
@@ -329,9 +328,11 @@ class Runner:
             shutil.copy2(cfg_path or self.arts_cfg, self.apps_dir / "arts.cfg")
         if backend == "xsocr":
             env["OCR_CONFIG"] = str(cfg_path or self.xsocr_cfg)
-        # arts self-pins (hwloc); the xsocr reference needs taskset to occupy
-        # the same cores instead of floating across all logical CPUs.
-        pin = f"{self._pin_single} " if backend == "xsocr" else ""
+        # Defense in depth: every backend gets an OS-level cpuset matching the
+        # run's thread width, even the self-pinning ones — a stray unpinned
+        # thread (aux/launcher) must not escape the measured core block.
+        w = width if width is not None else _NCORES_for(self.target)
+        pin = f"taskset -c 0-{w - 1} "
         to = timeout or self.timeout
         cmd = (
             f"cd {self.apps_dir} && {self.mem_prefix}"
@@ -519,7 +520,12 @@ class Runner:
             block = tpn if tpn is not None else self._tpn[np]
             launcher = f"{mpirun_prefix(np)} {pin_wrap(block)} ./{bin_name}_ocrvx"
         else:
-            launcher = f"{self._pin_single} ./{bin_name}_ocrvx"
+            # No native pinning: the taskset IS placement.  Confine to exactly
+            # as many cores as threads, or a reduced-width run floats over the
+            # whole machine and measures a wider-cache configuration than its
+            # peers.
+            width = tbb if tbb is not None else _NCORES_for(self.target)
+            launcher = f"taskset -c 0-{width - 1} ./{bin_name}_ocrvx"
         cmd = (
             f"cd {self.apps_dir} && {self.mem_prefix}"
             f"timeout -k 1 {to} {launcher} " + " ".join(args)

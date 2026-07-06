@@ -843,6 +843,21 @@ void arts_send_db_lock_release(unsigned int home_rank, arts_guid_t db_guid,
  * RO → data-less fire-and-forget notify. */
 static void lock_send_release_rw(struct arts_db_cache_s *cache) {
   unsigned int home = (unsigned int)arts_guid_get_rank(cache->db_guid);
+  if (home == arts_global_rank_id) {
+    /* Home-local RW release: this rank IS home, so the releaser already holds
+     * home's authoritative buffer (its in-place writes have landed) and the
+     * caller keeps the descriptor pinned across this call.  There is nothing to
+     * ship and no ACK to await — apply the home lock_state commit + onward
+     * grant directly on the live cache.  Routing this through a GUID-keyed
+     * self-send would re-resolve the DB via its route slot, which a concurrent
+     * (legal) destroy may have already detached while this holder still owed
+     * its release; the self-send would then MISS, defer on the OoO list
+     * forever, and strand this worker in await_writeback_ack.  A release
+     * provably follows a successful acquire, so it never needs the OoO
+     * before-create deferral that the request path relies on. */
+    lock_release_commit(arts_db_of_cache(cache), cache, DB_MODE_RW);
+    return;
+  }
   arts_shared_ptr_t buf_h = arts_db_buf_acquire(cache);
   struct arts_db_buffer_s *buf =
       (struct arts_db_buffer_s *)arts_shared_get(buf_h);
@@ -921,6 +936,13 @@ static void lock_send_release_rw(struct arts_db_cache_s *cache) {
 
 static void lock_send_release_ro(struct arts_db_cache_s *cache) {
   unsigned int home = (unsigned int)arts_guid_get_rank(cache->db_guid);
+  if (home == arts_global_rank_id) {
+    /* Home-local RO release: commit the home lock_state transition + onward
+     * grant directly, for the same reason the RW path does — a destroy that
+     * detached the route slot must not be able to defer this release forever. */
+    lock_release_commit(arts_db_of_cache(cache), cache, DB_MODE_RO);
+    return;
+  }
   arts_send_db_lock_release(home, cache->db_guid, DB_MODE_RO, /*version=*/0u,
                             /*cv=*/0u, NULL, 0u, /*rdzv_txid=*/0u,
                             /*rdzv_cookie=*/0u);

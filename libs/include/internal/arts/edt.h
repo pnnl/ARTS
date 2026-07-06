@@ -45,15 +45,6 @@ extern "C" {
 #include "arts/runtime_types.h"
 #include "arts/utils/atomics.h"
 
-extern volatile uint64_t outstanding_edts;
-void check_out_edts(uint64_t threshold);
-
-#define INC_OUTSTANDING_EDTS(num_edts)                                         \
-  arts_atomic_fetch_add_u64(&outstanding_edts, num_edts)
-#define DEC_OUTSTANDING_EDTS(num_edts)                                         \
-  arts_atomic_fetch_sub_u64(&outstanding_edts, num_edts)
-#define CHECK_OUTSTANDING_EDTS(threshold) check_out_edts(threshold)
-
 bool arts_edt_create_core(struct arts_edt_s *edt, arts_guid_kind_t guid_kind,
                           arts_guid_t *guid, unsigned int rank,
                           unsigned int edt_space, arts_edt_t func_ptr,

@@ -124,7 +124,8 @@ void arts_runtime_node_init(struct arts_config_s *config) {
    * plain-malloc path. */
 #ifdef ARTS_TRANSPORT_OFI
   if (arts_global_rank_count > 1) {
-    arts_net_init(config->provider);
+    arts_net_init(config->provider, config->fabric_domain,
+                  config->net_interface);
     if (!arts_regpool_init(arts_net_domain(), regpool_slab_bytes, 0)) {
       ARTS_ERROR("arts_runtime_node_init: registered pool init failed");
     }
@@ -374,7 +375,21 @@ void arts_runtime_global_cleanup() {
   // Write object counter output (per-arts_id tracking)
   arts_object_write_node(arts_node_info.counter_folder, arts_global_rank_id,
                          tc);
+  /* Final-teardown fast path: every runtime thread has joined and the process
+   * is about to exit, so running each leftover object's destructor only moves
+   * bookkeeping inside heaps and pools that are themselves released wholesale
+   * below (pool unmap / process exit) — on programs that never destroy their
+   * objects the per-item sweep costs wall-clock time proportional to the
+   * leftover population for no observable effect.  Keep the full sweep only
+   * under leak-checking sanitizers, whose reports require every allocation to
+   * be individually freed. */
+#ifndef __has_feature
+#define __has_feature(x) 0
+#endif
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__) ||           \
+    __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
   arts_clean_up_dbs();
+#endif
 
   /* Counter cleanup (reverse of arts_runtime_node_init allocation) */
   for (unsigned int t = 0; t < tc; t++) {

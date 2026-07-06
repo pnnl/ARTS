@@ -2,9 +2,9 @@ import harness_common as hc
 
 
 def test_geometry_server():
-    assert hc.MN_RANKS_for('server') == [2, 4, 8, 16, "2n_io", "4n_io", "8n_io"]
-    assert hc._TPN_for('server') == {2: 24, 4: 12, 8: 6, 16: 3}
-    assert hc._NCORES_for('server') == 48
+    assert hc.MN_RANKS_for('cbgpu02') == [2, 4]
+    assert hc._TPN_for('cbgpu02') == {2: 12, 4: 12}
+    assert hc._NCORES_for('cbgpu02') == 48
 
 
 def test_pin_wrap_shape():

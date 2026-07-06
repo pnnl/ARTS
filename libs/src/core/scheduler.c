@@ -239,8 +239,6 @@ void arts_run_edt(struct arts_edt_s *edt) {
   arts_edt_delete(edt);
   arts_shared_release(&sref);
 #endif
-  DEC_OUTSTANDING_EDTS(1);
-  ARTS_DEBUG("EDT completed, outstanding_edts decremented");
 }
 
 inline struct arts_edt_s *arts_runtime_steal_from_network() {
@@ -347,7 +345,6 @@ bool arts_default_scheduler_loop() {
   if (drained) {
     return true; /* made progress via self-loopback; loop again before idling */
   }
-  CHECK_OUTSTANDING_EDTS(10000000);
   arts_runtime_idle_pause();
   return false;
 }
@@ -375,7 +372,6 @@ bool arts_cxl_scheduler_loop() {
   if (drained) {
     return true;
   }
-  CHECK_OUTSTANDING_EDTS(10000000);
   arts_runtime_idle_pause();
   return false;
 }

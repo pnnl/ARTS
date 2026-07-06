@@ -222,8 +222,24 @@ struct fid_domain;
  * provider the ambient FI_PROVIDER env var, if any, still admits).  A
  * non-empty value pins fi_getinfo's prov_name hint AND overwrites FI_PROVIDER
  * for this process, so an explicit config choice always wins over whatever
- * was ambient in the environment. */
-void arts_net_init(const char *provider);
+ * was ambient in the environment.
+ *
+ * `fabric_domain`: NULL/empty selects the provider's first domain.  A
+ * non-empty value pins fi_getinfo's domain_attr->name hint — the way to pick
+ * one HCA (e.g. "mlx5_0") on a multi-rail host, since RDMA domains are named
+ * after the device, not after an IP interface.
+ *
+ * `net_interface`: NULL/empty leaves the source address unconstrained.  For
+ * IP-based providers (tcp, sockets) a non-empty value binds the endpoint's
+ * source address to the first AF_INET address of the interface with that
+ * exact name (or, failing that, that name prefix) — the way to steer an IP
+ * provider onto a specific network (e.g. IPoIB) when the host's default
+ * route points elsewhere.  Ignored for non-IP providers, whose addressing is
+ * not interface-based.  Naming an interface that has no usable address is
+ * fatal: silently falling back to the default route would move all data
+ * traffic to the wrong network. */
+void arts_net_init(const char *provider, const char *fabric_domain,
+                   const char *net_interface);
 
 /* The domain created by arts_net_init, for arts_regpool_init to register slabs
  * against.  NULL before init / after teardown. */

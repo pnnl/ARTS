@@ -85,6 +85,7 @@
 
 #include "arts/memory/regpool.h"
 
+#include <errno.h> /* mmap failure diagnostics */
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -168,9 +169,16 @@ static atomic_uint_least64_t g_mr_key_next;
  * arena here; per-thread heaps notice the change and re-bind. */
 static _Atomic(mi_arena_id_t) g_node_arena[REGPOOL_MAX_NODES];
 
-/* Per-thread allocator heap, bound to one exclusive arena.  ARTS worker threads
- * live for the whole process, so a heap created here is never destroyed — its
- * lifetime is the process lifetime, and the arena it draws from outlives it. */
+/* Per-node grow count (guarded by g_lock).  Drives exponential slab sizing:
+ * successive slabs double up to a cap, so a workload whose live footprint is
+ * far above the base slab reaches it in O(log) grows instead of consuming an
+ * arena-table slot per base-slab-worth of demand (the allocator caps how many
+ * arenas a process may register). */
+static unsigned g_node_grow_count[REGPOOL_MAX_NODES];
+
+/* Per-thread allocator heap, bound to one exclusive arena at a time.  The
+ * binding moves on exhaustion (see regpool_thread_bind); the superseded heap
+ * is always deleted so its empty pages return to their arena for reuse. */
 static __thread mi_heap_t *t_heap;
 static __thread mi_arena_id_t t_arena;
 static __thread int t_node = -1;
@@ -236,8 +244,11 @@ static bool regpool_map_slab(int node, size_t len, size_t align, void **out_base
   size_t over = len + align;
   void *raw = mmap(NULL, over, PROT_READ | PROT_WRITE,
                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-  if (raw == MAP_FAILED)
+  if (raw == MAP_FAILED) {
+    ARTS_WARN("regpool: mmap(%zu MiB) failed: %s", over >> 20,
+              strerror(errno));
     return false;
+  }
 
   uintptr_t aligned = ((uintptr_t)raw + (align - 1)) & ~(uintptr_t)(align - 1);
   size_t head = (size_t)(aligned - (uintptr_t)raw);
@@ -337,8 +348,26 @@ static bool regpool_grow_locked(int node) {
   void *base;
   struct fid_mr *mr;
   uint64_t rkey;
-  if (!regpool_map_slab(node, g_slab_bytes, REGPOOL_BASE_ALIGN, &base, &mr,
-                        &rkey))
+  /* Exponential slab sizing (capped): the arena table is a bounded process
+   * resource, so per-grow slab size doubles until the cap — total capacity
+   * then scales with the cap times the table size rather than the base slab
+   * times the table size.
+   *
+   * The doubling STARTS at the configured slab size (the caller's choice is
+   * respected — the first grow is exactly one configured slab); only the CAP
+   * differs by registration mode.  An unregistered slab (no fabric domain)
+   * is a plain anonymous mapping whose pages materialize on first touch, so
+   * a large slab costs address space, not memory — let the doubling run
+   * high to keep the arena count small.  A registered slab is pinned in
+   * full by the registration itself, so its ceiling stays conservative. */
+  unsigned grows = g_node_grow_count[node];
+  const bool pinned = (g_domain != NULL);
+  size_t want = g_slab_bytes;
+  const size_t cap = pinned ? ((size_t)1024 * 1024 * 1024)
+                            : ((size_t)8 * 1024 * 1024 * 1024);
+  while (grows-- > 0 && want < cap)
+    want <<= 1;
+  if (!regpool_map_slab(node, want, REGPOOL_BASE_ALIGN, &base, &mr, &rkey))
     return false;
 
   /* Hand the pinned range to an exclusive arena.  is_committed=true (the
@@ -347,19 +376,27 @@ static bool regpool_grow_locked(int node) {
    * is_pinned=true (the arena must never decommit/purge/reset a registered
    * range), exclusive=true (only heaps created for this arena draw from it —
    * the confinement mechanism). */
+  /* is_zero=true: the slab is a fresh anonymous mapping, which the kernel
+   * guarantees zero-filled, and nothing between map and manage writes into
+   * it (registration only pins; the NUMA bind only sets policy).  Declaring
+   * this lets the allocator's zeroed-allocation path skip the redundant
+   * memset on first-touch blocks and clear only recycled ones. */
   mi_arena_id_t arena = NULL;
-  if (!mi_manage_os_memory_ex(base, g_slab_bytes, /*is_committed=*/true,
-                              /*is_pinned=*/true, /*is_zero=*/false, node,
+  if (!mi_manage_os_memory_ex(base, want, /*is_committed=*/true,
+                              /*is_pinned=*/true, /*is_zero=*/true, node,
                               /*exclusive=*/true, &arena)) {
+    ARTS_WARN("regpool: allocator refused to manage a %zu MiB slab "
+              "(arena table full?)",
+              want >> 20);
 #ifdef ARTS_TRANSPORT_OFI
     if (mr != NULL)
       fi_close(&mr->fid);
 #endif
-    munmap(base, g_slab_bytes);
+    munmap(base, want);
     return false;
   }
 
-  if (regpool_append(base, g_slab_bytes, mr, rkey, node, false, arena) == NULL) {
+  if (regpool_append(base, want, mr, rkey, node, false, arena) == NULL) {
 #ifdef ARTS_TRANSPORT_OFI
     if (mr != NULL)
       fi_close(&mr->fid);
@@ -367,8 +404,28 @@ static bool regpool_grow_locked(int node) {
     /* Arena metadata now references this range; the OS reclaims it at exit. */
     return false;
   }
+  g_node_grow_count[node]++;
   atomic_store_explicit(&g_node_arena[node], arena, memory_order_release);
   return true;
+}
+
+/* Grow only if no slab has been appended since the caller last observed
+ * `seen_slabs` — collapses a herd of threads that exhausted the same arena
+ * concurrently into a single mapping (the losers re-try allocation against
+ * the winner's slab instead of each mapping one of their own). */
+static bool regpool_grow_if_unchanged(int node, size_t seen_slabs) {
+  pthread_mutex_lock(&g_lock);
+  if (!g_inited) {
+    pthread_mutex_unlock(&g_lock);
+    return false;
+  }
+  if (atomic_load_explicit(&g_slab_count, memory_order_acquire) != seen_slabs) {
+    pthread_mutex_unlock(&g_lock);
+    return true; /* someone else already grew — retry allocation first */
+  }
+  bool ok = regpool_grow_locked(node);
+  pthread_mutex_unlock(&g_lock);
+  return ok;
 }
 
 /* Oversize path: a dedicated mapping that backs exactly one allocation, kept in
@@ -400,36 +457,119 @@ static void *regpool_alloc_direct(size_t size, size_t align, int node) {
   return base;
 }
 
-/* Arena path: allocate from the calling thread's heap, re-binding it whenever
- * the node's current arena has advanced (a grow happened), and growing once on
- * exhaustion. */
-static void *regpool_alloc_arena(size_t size, size_t align, int node) {
+/* Re-bind the calling thread's heap to `arena`.  The previous heap MUST be
+ * deleted, not abandoned by overwrite: deletion migrates its live pages to
+ * the main heap (bookkeeping only — blocks stay in place) and returns its
+ * fully-empty pages to their arena, where a future heap bound to that arena
+ * can reuse them.  An overwritten heap would strand every freed block it
+ * still owned, and repeated re-binds would ratchet the pool's footprint up
+ * monotonically while its satisfiable space shrank. */
+static bool regpool_thread_bind(mi_arena_id_t arena, int node) {
+  if (t_heap != NULL)
+    mi_heap_delete(t_heap);
+  t_heap = mi_heap_new_in_arena(arena);
+  t_arena = arena;
+  t_node = node;
+  return t_heap != NULL;
+}
+
+/* Sweep the existing arena slabs newest-first (the newest is the least
+ * likely to be fully consumed), re-binding the thread's heap to each
+ * candidate and attempting the allocation.  `node_filter` < 0 admits every
+ * node's arenas — the locality-fallback pass; NUMA placement is a
+ * preference, never a reason to refuse memory that exists.  Skips the arena
+ * that already refused this request. */
+static void *regpool_sweep_arenas(size_t size, size_t align, bool zero,
+                                  int node_filter, mi_arena_id_t refused) {
+  size_t n = atomic_load_explicit(&g_slab_count, memory_order_acquire);
+  for (size_t i = n; i-- > 0;) {
+    regpool_slab_t *s = &g_slabs[i];
+    if (s->is_direct || atomic_load_explicit(&s->is_free, memory_order_acquire))
+      continue;
+    if (s->arena == NULL || s->arena == refused)
+      continue;
+    if (node_filter >= 0 && s->mr.numa_node != (unsigned)node_filter)
+      continue;
+    if (!regpool_thread_bind(s->arena, (int)s->mr.numa_node))
+      return NULL;
+    void *p = zero ? mi_heap_zalloc_aligned(t_heap, size, align)
+                   : mi_heap_malloc_aligned(t_heap, size, align);
+    if (p != NULL)
+      return p;
+  }
+  return NULL;
+}
+
+/* Exhaustion slow path.  A heap can only draw from the single arena it is
+ * bound to, so recovery is a re-binding cascade: (1) sweep this node's
+ * existing arenas (space freed into an earlier arena is reachable only
+ * through a heap bound to it), (2) grow this node, (3) drop the locality
+ * preference — sweep every node's arenas, then grow any other node.  Loops
+ * until the allocation succeeds or every node's grow fails at the
+ * map/registration level; only that is genuine exhaustion.  A transient
+ * miss (a peer raced away a fresh slab) re-enters the cascade. */
+static void *regpool_alloc_arena_slow(size_t size, size_t align, bool zero,
+                                      int node) {
+  for (;;) {
+    size_t seen = atomic_load_explicit(&g_slab_count, memory_order_acquire);
+    void *p = regpool_sweep_arenas(size, align, zero, node, t_arena);
+    if (p != NULL)
+      return p;
+
+    if (regpool_grow_if_unchanged(node, seen)) {
+      mi_arena_id_t cur =
+          atomic_load_explicit(&g_node_arena[node], memory_order_acquire);
+      if (!regpool_thread_bind(cur, node)) {
+        ARTS_WARN("regpool: heap re-bind failed for node %d", node);
+        return NULL;
+      }
+      p = zero ? mi_heap_zalloc_aligned(t_heap, size, align)
+               : mi_heap_malloc_aligned(t_heap, size, align);
+      if (p != NULL)
+        return p;
+      continue; /* raced away — re-enter the cascade */
+    }
+
+    /* This node cannot grow: fall back across nodes before failing. */
+    p = regpool_sweep_arenas(size, align, zero, -1, t_arena);
+    if (p != NULL)
+      return p;
+    bool grew = false;
+    for (unsigned o = 0; o < g_numa_nodes && !grew; o++) {
+      if ((int)o == node)
+        continue;
+      if (atomic_load_explicit(&g_node_arena[o], memory_order_acquire) == NULL)
+        continue;
+      grew = regpool_grow_if_unchanged(
+          (int)o, atomic_load_explicit(&g_slab_count, memory_order_acquire));
+    }
+    if (!grew) {
+      ARTS_WARN("regpool: no node can grow (%zu-byte alloc, node %d)", size,
+                node);
+      return NULL;
+    }
+    /* The grown node's fresh slab is found by the next sweep pass. */
+  }
+}
+
+/* Arena path: allocate from the calling thread's heap; on exhaustion enter
+ * the re-binding cascade above. */
+static void *regpool_alloc_arena(size_t size, size_t align, bool zero,
+                                 int node) {
   mi_arena_id_t cur = atomic_load_explicit(&g_node_arena[node],
                                            memory_order_acquire);
   if (cur == NULL)
     return NULL; /* node not initialized */
   if (t_heap == NULL || t_arena != cur || t_node != node) {
-    t_heap = mi_heap_new_in_arena(cur);
-    t_arena = cur;
-    t_node = node;
-    if (t_heap == NULL)
+    if (!regpool_thread_bind(cur, node))
       return NULL;
   }
 
-  void *p = mi_heap_malloc_aligned(t_heap, size, align);
+  void *p = zero ? mi_heap_zalloc_aligned(t_heap, size, align)
+                 : mi_heap_malloc_aligned(t_heap, size, align);
   if (p != NULL)
     return p;
-
-  /* Exhausted: grow and retry once with a heap bound to the new arena. */
-  if (!arts_regpool_grow(node))
-    return NULL;
-  cur = atomic_load_explicit(&g_node_arena[node], memory_order_acquire);
-  t_heap = mi_heap_new_in_arena(cur);
-  t_arena = cur;
-  t_node = node;
-  if (t_heap == NULL)
-    return NULL;
-  return mi_heap_malloc_aligned(t_heap, size, align);
+  return regpool_alloc_arena_slow(size, align, zero, node);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -506,8 +646,10 @@ void arts_regpool_cleanup(void) {
       munmap(s->mr.base, s->mr.len);
   }
   atomic_store_explicit(&g_slab_count, 0, memory_order_release);
-  for (unsigned i = 0; i < REGPOOL_MAX_NODES; i++)
+  for (unsigned i = 0; i < REGPOOL_MAX_NODES; i++) {
     atomic_store_explicit(&g_node_arena[i], NULL, memory_order_release);
+    g_node_grow_count[i] = 0;
+  }
   g_domain = NULL;
   g_slab_bytes = 0;
   g_numa_nodes = 0;
@@ -530,7 +672,7 @@ bool arts_regpool_grow(int numa_node) {
   return ok;
 }
 
-void *arts_regpool_alloc_aligned(size_t size, size_t align) {
+static void *regpool_alloc_common(size_t size, size_t align, bool zero) {
   if (size == 0)
     return NULL;
   size_t slab = g_slab_bytes;
@@ -543,16 +685,38 @@ void *arts_regpool_alloc_aligned(size_t size, size_t align) {
   if ((unsigned)node >= g_numa_nodes)
     node = 0;
 
-  /* Oversize requests (> half a slab) take the direct path; the rest draw from
-   * the node's arena, which grows once on exhaustion. */
+  /* Oversize requests (> half a slab) take the direct path; the rest draw
+   * from the node's arena, which grows on exhaustion.  The direct path is a
+   * fresh anonymous mapping and therefore already zero-filled — a zeroed
+   * request needs no extra work there. */
   void *p = (size > slab / 2) ? regpool_alloc_direct(size, align, node)
-                              : regpool_alloc_arena(size, align, node);
+                              : regpool_alloc_arena(size, align, zero, node);
 
   /* Fail loudly: an allocation that could not be satisfied even after a grow
-   * cannot be papered over — the payload it would back has nowhere to live. */
-  if (p == NULL)
+   * cannot be papered over — the payload it would back has nowhere to live.
+   * Dump the pool's shape first so exhaustion is distinguishable from an
+   * allocator-path defect in the field. */
+  if (p == NULL) {
+    size_t n = atomic_load_explicit(&g_slab_count, memory_order_acquire);
+    size_t total = 0, node_total = 0;
+    unsigned node_slabs = 0;
+    for (size_t i = 0; i < n; i++) {
+      regpool_slab_t *s = &g_slabs[i];
+      if (atomic_load_explicit(&s->is_free, memory_order_acquire))
+        continue;
+      total += s->mr.len;
+      if (!s->is_direct && s->mr.numa_node == (unsigned)node) {
+        node_total += s->mr.len;
+        node_slabs++;
+      }
+    }
+    ARTS_WARN("regpool state: slabs=%zu total=%zu MiB; node %d: arenas=%u "
+              "(%zu MiB, %u grows); heap=%s",
+              n, total >> 20, node, node_slabs, node_total >> 20,
+              g_node_grow_count[node], t_heap ? "bound" : "NULL");
     ARTS_ERROR("regpool: could not satisfy %zu-byte allocation (align %zu)",
                size, align);
+  }
 
   /* Confinement guard.  An external arena's contiguity is not contractually
    * guaranteed by the allocator, so a returned pointer that resolves to no
@@ -562,6 +726,18 @@ void *arts_regpool_alloc_aligned(size_t size, size_t align) {
     ARTS_ERROR("regpool: allocation %p (size %zu) escaped all registered slabs",
                p, size);
   return p;
+}
+
+void *arts_regpool_alloc_aligned(size_t size, size_t align) {
+  return regpool_alloc_common(size, align, /*zero=*/false);
+}
+
+/* Zeroed variant: the allocator clears only blocks recycled from dirty
+ * pages — fresh slab memory is kernel-zeroed and declared so at manage
+ * time, so the common create-then-initialize pattern skips a full payload
+ * memset (and the page faults it forces) on the caller's critical path. */
+void *arts_regpool_zalloc_aligned(size_t size, size_t align) {
+  return regpool_alloc_common(size, align, /*zero=*/true);
 }
 
 void arts_regpool_free(void *p) {
@@ -647,6 +823,12 @@ void *arts_regpool_alloc_aligned(size_t size, size_t align) {
   if (posix_memalign(&p, a, size) != 0) {
     return NULL;
   }
+  return p;
+}
+void *arts_regpool_zalloc_aligned(size_t size, size_t align) {
+  void *p = arts_regpool_alloc_aligned(size, align);
+  if (p != NULL)
+    memset(p, 0, size);
   return p;
 }
 void arts_regpool_free(void *p) { free(p); }

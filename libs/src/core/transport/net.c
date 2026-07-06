@@ -40,11 +40,14 @@
 
 #ifdef ARTS_TRANSPORT_OFI
 
+#include <ifaddrs.h>
+#include <netinet/in.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -1026,7 +1029,43 @@ struct fid_domain *arts_net_domain(void) { return g_net.domain; }
 /* Init / teardown                                                             */
 /* ------------------------------------------------------------------------- */
 
-void arts_net_init(const char *provider) {
+/* First AF_INET address of the interface named `ifname` (exact match wins;
+ * a prefix match is accepted so one config can say "ib" across hosts whose
+ * suffixes differ).  Returns false if no interface matches or the matching
+ * ones carry no IPv4 address. */
+static bool net_lookup_iface_addr(const char *ifname,
+                                  struct sockaddr_in *out) {
+  struct ifaddrs *ifap = NULL;
+  if (getifaddrs(&ifap) != 0) {
+    return false;
+  }
+  bool found = false;
+  bool exact = false;
+  size_t want_len = strlen(ifname);
+  for (struct ifaddrs *ifa = ifap; ifa != NULL; ifa = ifa->ifa_next) {
+    if (ifa->ifa_addr == NULL || ifa->ifa_addr->sa_family != AF_INET) {
+      continue;
+    }
+    bool is_exact = strcmp(ifa->ifa_name, ifname) == 0;
+    bool is_prefix = strncmp(ifa->ifa_name, ifname, want_len) == 0;
+    if (!is_exact && !is_prefix) {
+      continue;
+    }
+    if (is_exact || !found) {
+      memcpy(out, ifa->ifa_addr, sizeof(*out));
+      found = true;
+      exact = is_exact;
+    }
+    if (exact) {
+      break;
+    }
+  }
+  freeifaddrs(ifap);
+  return found;
+}
+
+void arts_net_init(const char *provider, const char *fabric_domain,
+                   const char *net_interface) {
   bool provider_pinned = provider && provider[0] != '\0';
   if (provider_pinned) {
     /* Config is the deliberate artifact, the env var is ambient: overwrite
@@ -1077,6 +1116,35 @@ void arts_net_init(const char *provider) {
     hints->fabric_attr->prov_name = strdup(provider);
   } else if (tcp_first) {
     hints->fabric_attr->prov_name = strdup("tcp");
+  }
+  if (fabric_domain && fabric_domain[0] != '\0') {
+    /* Same ownership rule as prov_name: fi_freeinfo frees domain_attr->name. */
+    hints->domain_attr->name = strdup(fabric_domain);
+  }
+
+  /* Source-interface bind, IP providers only.  The effective provider is an
+   * IP one when it was explicitly named tcp/sockets, or when the tcp-first
+   * default is in play.  For anything else (verbs, shm, ...) an interface
+   * name is meaningless — addressing there is by fabric domain. */
+  const char *effective_provider =
+      provider_pinned ? provider : (env_pinned ? env_provider : NULL);
+  bool ip_provider =
+      tcp_first ||
+      (effective_provider != NULL && (strcmp(effective_provider, "tcp") == 0 ||
+                                      strcmp(effective_provider, "sockets") == 0));
+  if (net_interface && net_interface[0] != '\0' && ip_provider) {
+    /* fi_freeinfo frees hints->src_addr, so it must be heap-owned. */
+    struct sockaddr_in *src =
+        (struct sockaddr_in *)calloc(1, sizeof(struct sockaddr_in));
+    if (src == NULL || !net_lookup_iface_addr(net_interface, src)) {
+      ARTS_ERROR("arts_net: net_interface=%s has no usable IPv4 address — "
+                 "refusing to fall back to the default route",
+                 net_interface);
+    }
+    src->sin_port = 0; /* any port; only the address constrains the bind */
+    hints->addr_format = FI_SOCKADDR_IN;
+    hints->src_addr = src;
+    hints->src_addrlen = sizeof(struct sockaddr_in);
   }
 
   int rc = fi_getinfo(FI_VERSION(FI_MAJOR_VERSION, FI_MINOR_VERSION), NULL, NULL,

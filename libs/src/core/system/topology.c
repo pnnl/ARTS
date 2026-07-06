@@ -38,6 +38,7 @@
 ******************************************************************************/
 #include "arts/system/topology.h"
 
+#include "arts/system/placement.h"
 #include "arts/system/print.h"
 
 #include <hwloc.h>
@@ -92,50 +93,6 @@ static hwloc_obj_t ancestor_by_type(hwloc_obj_t obj, hwloc_obj_type_t type) {
   return NULL;
 }
 
-/*
- * PU entry for the collect-sort-assign algorithm.
- * Stores enough metadata to sort PUs into NUMA-aware, HT-aware order.
- */
-struct pu_entry_s {
-  unsigned int pu_os_index;
-  unsigned int core_os_index;
-  unsigned int pkg_os_index;
-  unsigned int numa_id;
-  unsigned int pu_rank_in_core; /* 0 = first PU in core, 1 = HT sibling, ... */
-};
-
-/* Sort by (pu_rank_in_core ASC, numa_id ASC, pu_os_index ASC).
- * This gives: round 0 (one PU per core, NUMA 0 first), round 1 (HT siblings),
- * etc. */
-static int pu_entry_compare(const void *a, const void *b) {
-  const struct pu_entry_s *pa = (const struct pu_entry_s *)a;
-  const struct pu_entry_s *pb = (const struct pu_entry_s *)b;
-  if (pa->pu_rank_in_core != pb->pu_rank_in_core) {
-    return (pa->pu_rank_in_core < pb->pu_rank_in_core) ? -1 : 1;
-  }
-  if (pa->numa_id != pb->numa_id) {
-    return (pa->numa_id < pb->numa_id) ? -1 : 1;
-  }
-  if (pa->pu_os_index != pb->pu_os_index) {
-    return (pa->pu_os_index < pb->pu_os_index) ? -1 : 1;
-  }
-  return 0;
-}
-
-/* Helper comparator for computing pu_rank_in_core:
- * sort by (core_os_index ASC, pu_os_index ASC). */
-static int pu_entry_by_core(const void *a, const void *b) {
-  const struct pu_entry_s *pa = (const struct pu_entry_s *)a;
-  const struct pu_entry_s *pb = (const struct pu_entry_s *)b;
-  if (pa->core_os_index != pb->core_os_index) {
-    return (pa->core_os_index < pb->core_os_index) ? -1 : 1;
-  }
-  if (pa->pu_os_index != pb->pu_os_index) {
-    return (pa->pu_os_index < pb->pu_os_index) ? -1 : 1;
-  }
-  return 0;
-}
-
 void get_thread_mask(struct arts_config_s *config, struct thread_mask_s *flat) {
   /* Init hwloc topology */
   hwloc_topology_t topology;
@@ -165,8 +122,9 @@ void get_thread_mask(struct arts_config_s *config, struct thread_mask_s *flat) {
     return;
   }
 
-  /* Phase 1: Collect all PUs with topology metadata */
-  struct pu_entry_s *pus = malloc(total_pus * sizeof(*pus));
+  /* Collect the machine's PUs; the placement itself is the pure core in
+     placement.c (unit-tested against synthetic topologies). */
+  struct arts_pu_desc_s *pus = malloc(total_pus * sizeof(*pus));
   for (unsigned int i = 0; i < total_pus; i++) {
     hwloc_obj_t pu = hwloc_get_obj_by_type(topology, HWLOC_OBJ_PU, i);
     hwloc_obj_t core = ancestor_by_type(pu, HWLOC_OBJ_CORE);
@@ -175,43 +133,30 @@ void get_thread_mask(struct arts_config_s *config, struct thread_mask_s *flat) {
     pus[i].core_os_index = core ? core->os_index : 0;
     pus[i].pkg_os_index = pkg ? pkg->os_index : 0;
     pus[i].numa_id = find_numa_for_pu(topology, pu);
-    pus[i].pu_rank_in_core = 0;
   }
 
-  /* Phase 2: Compute pu_rank_in_core — sort by core, assign ranks within */
-  qsort(pus, total_pus, sizeof(*pus), pu_entry_by_core);
-  unsigned int rank = 0;
-  for (unsigned int i = 0; i < total_pus; i++) {
-    if (i > 0 && pus[i].core_os_index != pus[i - 1].core_os_index) {
-      rank = 0;
-    }
-    pus[i].pu_rank_in_core = rank++;
+  struct arts_placement_s *placed =
+      malloc(config->thread_count * sizeof(*placed));
+  if (!arts_placement_compute(pus, total_pus, pu_offset,
+                              config->worker_thread_count,
+                              config->progress_thread_count, placed)) {
+    ARTS_ERROR("Rank %u: thread placement failed (%u threads, offset %u, "
+               "%u PUs)",
+               config->my_rank, config->thread_count, pu_offset, total_pus);
   }
 
-  /* Phase 3: Sort by (pu_rank_in_core, numa_id, pu_os_index) */
-  qsort(pus, total_pus, sizeof(*pus), pu_entry_compare);
-
-  /* Phase 4: Assign threads from sorted PU list (offset for local
-     multi-node so each rank gets a disjoint PU slice). */
-  unsigned int role_count[ARTS_ROLE_MAX] = {0};
   for (unsigned int t = 0; t < config->thread_count; t++) {
-    /* Workers fill the low slots; the remainder are progress threads.  The
-     * sender role is gone (its cfg count folds into worker_threads at config
-     * time), so there is no middle band. */
-    enum arts_thread_role role =
-        (t < config->worker_thread_count) ? ARTS_ROLE_WORKER : ARTS_ROLE_PROGRESS;
-
-    unsigned int pi = pu_offset + t;
     flat[t].id = t;
-    flat[t].pu_id = pus[pi].pu_os_index;
-    flat[t].core_id = pus[pi].core_os_index;
-    flat[t].package_id = pus[pi].pkg_os_index;
-    flat[t].numa_domain_id = pus[pi].numa_id;
-    flat[t].role = role;
-    flat[t].group_pos = role_count[role]++;
+    flat[t].pu_id = placed[t].pu_os_index;
+    flat[t].core_id = placed[t].core_os_index;
+    flat[t].package_id = placed[t].pkg_os_index;
+    flat[t].numa_domain_id = placed[t].numa_id;
+    flat[t].role = placed[t].role;
+    flat[t].group_pos = placed[t].group_pos;
     flat[t].pin = config->pin_threads;
   }
 
+  free(placed);
   free(pus);
 
   /* NUMA domain count for public API */

@@ -44,6 +44,7 @@ typedef struct {
 #else /* C path with _Atomic + inline helpers */
 
 #include <stdatomic.h>
+#include <stdbool.h>
 
 /** Common intrusive link node.  Embed as the first member of any
  *  caller struct that participates in lock-free stacks/pools. */
@@ -63,6 +64,16 @@ typedef struct {
 
 static inline void arts_lf_stack_init(arts_lf_stack_t *s) {
   atomic_store_explicit(&s->head, NULL, memory_order_relaxed);
+}
+
+/** Read-only emptiness probe.  Never writes the head line, so any number of
+ *  concurrent pollers keep it in shared cache state — the scalable gate for
+ *  poll-before-consume loops (a failed CAS would still take the line
+ *  exclusive and ping-pong it between pollers).  Relaxed: a poller that
+ *  observes a stale NULL simply retries on its next poll; the consumer that
+ *  proceeds re-synchronizes on its own acquire. */
+static inline bool arts_lf_stack_empty(arts_lf_stack_t *s) {
+  return atomic_load_explicit(&s->head, memory_order_relaxed) == NULL;
 }
 
 static inline void arts_lf_stack_push(arts_lf_stack_t *s,

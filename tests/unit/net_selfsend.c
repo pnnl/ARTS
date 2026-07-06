@@ -91,7 +91,7 @@ static bool wait_for(int want) {
 int main(void) {
   setenv("FI_PROVIDER", "tcp", 1);
 
-  arts_net_init(NULL); /* auto -- FI_PROVIDER above still applies */
+  arts_net_init(NULL, NULL, NULL); /* auto -- FI_PROVIDER above still applies */
   /* Registered pool for the bounce/send path AND the recv landing buffers
    * (needs net_init's domain). */
   if (!arts_regpool_init(arts_net_domain(), (size_t)32 * 1024 * 1024, 0)) {

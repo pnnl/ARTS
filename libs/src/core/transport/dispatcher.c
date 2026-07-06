@@ -838,8 +838,41 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
         .rdzv_cookie = pack->rdzv_cookie,
         .data_inline = 0,
     };
-    arts_ooo_dispatch_or_defer_guid(pack->db_guid, OOO_DB_LOCK_RELEASE, &args,
-                                    sizeof(args));
+    /* A home slot can be absent for two distinct reasons, and a LOCK_RELEASE
+     * must treat them oppositely:
+     *   - post-destroy (gen > 0): a concurrent (legal) destroy detached the slot
+     *     while this holder still owed its release.  The DB is gone, so there is
+     *     no writeback target and no next grantee — deferring on the OoO list
+     *     would wait for an install that never comes and strand the remote
+     *     releaser in await_writeback_ack.  ACK it directly (a torn-down home
+     *     must never drop the ACK) and discard any paired one-sided landing.
+     *   - pre-create (gen == 0): a creator-remote seeded RW hold releases via
+     *     the announce leg, ordered only after its own DB_CREATE_COHERENT; with
+     *     >= 2 progress threads the create/release can dispatch out of per-peer
+     *     order, so the release may reach home before the home db_s is
+     *     installed.  This one MUST keep deferring so the install-time OoO drain
+     *     replays it.
+     * When the slot is present, run the release inline on the pinned db_s. */
+    arts_shared_ptr_t db_h = arts_route_table_lookup_db(pack->db_guid);
+    struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(db_h);
+    if (db != NULL) {
+      arts_handler_db_lock_release(db, &args);
+      arts_shared_release(&db_h);
+    } else {
+      arts_shared_release(&db_h);
+      if (arts_route_table_was_destroyed(pack->db_guid)) {
+        if (pack->rdzv_txid != 0) {
+          arts_db_rdzv_discard_landing(pack->rdzv_txid, pack->rdzv_cookie);
+        }
+        if ((arts_db_access_mode_t)pack->mode == DB_MODE_RW && pack->cv != 0) {
+          arts_send_db_lock_release_ack(pack->header.rank, pack->db_guid,
+                                        pack->cv);
+        }
+      } else {
+        arts_ooo_dispatch_or_defer_guid(pack->db_guid, OOO_DB_LOCK_RELEASE,
+                                        &args, sizeof(args));
+      }
+    }
     break;
   }
   case MSG_DB_LOCK_RELEASE_ACK: {

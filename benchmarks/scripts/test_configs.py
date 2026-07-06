@@ -11,12 +11,12 @@ def _kv(p):
     return d
 
 def test_sc_geometry():
-    g = REPO / "configs/local/server"
-    a = _kv(g / "1n_sc.cfg"); assert a["worker_threads"] == "4"
-    for n in ("2n_sc","4n_sc","8n_sc"):
+    g = REPO / "configs/local/cbgpu02"
+    a = _kv(g / "1n_sc.cfg"); assert a["worker_threads"] == "12"
+    for n in ("2n_sc","4n_sc"):
         c = _kv(g / f"{n}.cfg")
-        assert c["worker_threads"] == "5" and c["progress_threads"] == "1"
-    assert _kv(g / "8n_sc.cfg")["node_count"] == "8"  # 8*(5+1)=48
+        assert c["worker_threads"] == "11" and c["progress_threads"] == "1"
+    assert _kv(g / "4n_sc.cfg")["node_count"] == "4"  # 4*(11+1)=48
 
 def test_perf_counters_cluster_and_interval():
     c = _kv(REPO / "configs/perf_counters.cfg")

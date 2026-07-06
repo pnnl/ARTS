@@ -233,6 +233,17 @@ char *arts_config_get_slurm_hostname(char *name, char *digit_sample,
                                      unsigned int value) {
   unsigned int length = strlen(name);
   unsigned int digit_length = strlen(digit_sample);
+  /* The sample fixes the minimum width (zero-padded lists keep their
+     padding), but an unpadded range that crosses a digit-width boundary
+     (e.g. 8..12) must widen per element — truncating to the sample's width
+     would drop high-order digits. */
+  unsigned int value_digits = 1;
+  for (unsigned int v = value; v >= 10; v /= 10) {
+    value_digits++;
+  }
+  if (value_digits > digit_length) {
+    digit_length = value_digits;
+  }
   unsigned int name_length = length + digit_length + 1;
   char *out_name = (char *)arts_malloc(name_length);
 
@@ -357,7 +368,7 @@ void arts_config_create_routing_table(struct arts_config_s **config,
   char *next;
   unsigned int start;
   unsigned int stop;
-  unsigned int direction;
+  int direction;
   unsigned int list_length;
 
   if (node_list == NULL) {
@@ -412,7 +423,9 @@ void arts_config_create_routing_table(struct arts_config_s **config,
                 direction = -1;
               }
 
-              while (start != stop + 1) {
+              /* One-past-the-end in the walk direction; unsigned wraparound
+                 makes stop + (-1) the correct sentinel for descending. */
+              while (start != stop + direction) {
                 if (current_node >= node_count) {
                   break;
                 }
@@ -827,6 +840,7 @@ static const struct arts_config_entry_s config_entries[] = {
     {"port_count", CONFIG_UINT, OFF(port_count), NULL, NULL},
     {"master_node", CONFIG_STRING, OFF(master_node), NULL, NULL},
     {"provider", CONFIG_STRING, OFF(provider), NULL, NULL},
+    {"fabric_domain", CONFIG_STRING, OFF(fabric_domain), NULL, NULL},
     {"regpool_slab_mb", CONFIG_UINT, OFF(regpool_slab_mb), "64", NULL},
     /* --- Debug --- */
     {"kill_mode", CONFIG_UINT, OFF(kill_mode), "0", NULL},
@@ -903,7 +917,12 @@ static void config_setup_slurm(struct arts_config_s *config) {
     config->nodes = 1;
   }
 
+  /* srun sets the step-scoped list; a bare sbatch shell (no srun) only has
+     the job-scoped one.  Same compressed hostlist format either way. */
   char *node_list = getenv("SLURM_STEP_NODELIST");
+  if (node_list == NULL) {
+    node_list = getenv("SLURM_JOB_NODELIST");
+  }
   arts_config_create_routing_table(&config, node_list);
   config_set_master_from_table(config);
 }
@@ -1282,6 +1301,9 @@ void arts_config_destroy(struct arts_config_s *config) {
   }
   if (config->provider) {
     arts_free(config->provider);
+  }
+  if (config->fabric_domain) {
+    arts_free(config->fabric_domain);
   }
   if (config->counter_folder) {
     arts_free(config->counter_folder);

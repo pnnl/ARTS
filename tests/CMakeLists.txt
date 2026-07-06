@@ -319,7 +319,7 @@ function(register_single_node_test test_name)
         LABELS "single_node"
         TIMEOUT ${ARG_TIMEOUT}
         RESOURCE_LOCK "arts_runtime"
-        ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/laptop/1n.cfg"
+        ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/test/1n.cfg"
     )
 endfunction()
 
@@ -356,7 +356,7 @@ function(register_multinode_test test_name)
             LABELS "multinode"
             TIMEOUT ${ARG_TIMEOUT}
             RESOURCE_LOCK "arts_runtime"
-            ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/laptop/${variant}.cfg;default_ports=${port_base}"
+            ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/test/${variant}.cfg;default_ports=${port_base}"
         )
     endforeach()
 endfunction()
@@ -556,6 +556,18 @@ if(ARTS_TRANSPORT_OFI AND ARTS_MALLOC STREQUAL "mimalloc")
         Threads::Threads mimalloc-static arts::libfabric ${RT_LIBRARY})
     register_pure_unit_test(net_rendezvous TIMEOUT 60)
     set_tests_properties(net_rendezvous PROPERTIES ENVIRONMENT "FI_PROVIDER=tcp")
+
+    # net_src_bind — whitebox for arts_net_init's steering hints: net_interface
+    # source-bind (loopback), fabric_domain pin, and the fatal missing-interface
+    # contract.  Same standalone harness shape as net_selfsend.
+    add_executable(net_src_bind unit/net_src_bind.c $<TARGET_OBJECTS:arts_regpool>)
+    target_include_directories(net_src_bind PRIVATE
+        ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR}
+        ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
+    target_compile_definitions(net_src_bind PRIVATE ARTS_TRANSPORT_OFI=1 ARTS_LOG_LEVEL=2)
+    target_link_libraries(net_src_bind PRIVATE
+        Threads::Threads mimalloc-static arts::libfabric ${RT_LIBRARY})
+    register_pure_unit_test(net_src_bind TIMEOUT 60)
 endif()
 
 # net_addr_frame_bound — whitebox for the bootstrap address-frame length bound
@@ -821,7 +833,7 @@ set_tests_properties(coherence_stress_dist PROPERTIES
     LABELS "coherence_stress;multinode"
     TIMEOUT 120
     RESOURCE_LOCK "arts_runtime"
-    ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/laptop/2n.cfg;default_ports=${port_base}"
+    ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/test/2n.cfg;default_ports=${port_base}"
 )
 
 # Large-payload cross-rank coherence transfer: a ~256 KiB DB is stamped by a
@@ -888,7 +900,7 @@ set_tests_properties(coherence_lazy_ownership_reorder PROPERTIES
     LABELS "coherence_stress;multinode"
     TIMEOUT 120
     RESOURCE_LOCK "arts_runtime"
-    ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/laptop/2n_io.cfg;default_ports=${port_base}"
+    ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/test/2n_io.cfg;default_ports=${port_base}"
 )
 
 # LAZY stale-RO ownership-confirm gate: RO acquire causally ordered after a
@@ -936,7 +948,7 @@ if(ARTS_COHERENCE_PROTOCOL STREQUAL "MRMW")
         LABELS "single_node"
         TIMEOUT 30
         RESOURCE_LOCK "arts_runtime"
-        ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/laptop/1n.cfg"
+        ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/test/1n.cfg"
         PASS_REGULAR_EXPRESSION "DB_DRF: PASS"
     )
 
@@ -954,7 +966,7 @@ if(ARTS_COHERENCE_PROTOCOL STREQUAL "MRMW")
         LABELS "multinode"
         TIMEOUT 60
         RESOURCE_LOCK "arts_runtime"
-        ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/laptop/2n.cfg;default_ports=${port_base}"
+        ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/test/2n.cfg;default_ports=${port_base}"
         PASS_REGULAR_EXPRESSION "DB_DRF: PASS"
     )
 
@@ -971,7 +983,7 @@ if(ARTS_COHERENCE_PROTOCOL STREQUAL "MRMW")
         LABELS "multinode"
         TIMEOUT 60
         RESOURCE_LOCK "arts_runtime"
-        ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/laptop/2n.cfg;default_ports=${port_base}"
+        ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/test/2n.cfg;default_ports=${port_base}"
         PASS_REGULAR_EXPRESSION "DB_DRF_LOCAL_HIT_DEDUP: PASS"
     )
 

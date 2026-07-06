@@ -45,17 +45,17 @@ function(copy_config_to_target source_file target_dir target_name)
 endfunction()
 
 # ── single-node (default for tests + cpu examples) ─────────────────────────
-copy_config_to_target(local/laptop/1n.cfg examples/cpu arts.cfg)
-copy_config_to_target(local/laptop/1n.cfg tests         arts.cfg)
+copy_config_to_target(local/test/1n.cfg examples/cpu arts.cfg)
+copy_config_to_target(local/test/1n.cfg tests         arts.cfg)
 
 # ── multi-node localhost config ─────────────────────────────────────────────
-copy_config_to_target(local/laptop/2n.cfg  tests arts_2node.cfg)
+copy_config_to_target(local/test/2n.cfg  tests arts_2node.cfg)
 
 # ── GPU config ──────────────────────────────────────────────────────────────
 copy_config_to_target(local/gpu/1n.cfg tests arts_gpu.cfg)
 
 # Install the canonical single-node config alongside the ARTS runtime.
-install(FILES local/laptop/1n.cfg
+install(FILES local/test/1n.cfg
     DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/arts
     RENAME arts.cfg
     COMPONENT config

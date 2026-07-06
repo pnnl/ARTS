@@ -116,7 +116,7 @@ static bool check_pattern(const unsigned char *p, size_t len, unsigned seed) {
 int main(void) {
   setenv("FI_PROVIDER", "tcp", 1);
 
-  arts_net_init(NULL); /* auto -- FI_PROVIDER above still applies */
+  arts_net_init(NULL, NULL, NULL); /* auto -- FI_PROVIDER above still applies */
   if (!arts_regpool_init(arts_net_domain(), (size_t)64 * 1024 * 1024, 0)) {
     fprintf(stderr, "FAIL net_rendezvous: regpool init failed\n");
     return 1;

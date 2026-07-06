@@ -1462,23 +1462,24 @@ u8 ocrDbCreate(ocrGuid_t *db, void **addr, u64 len, u16 flags, ocrHint_t *hint,
 }
 
 u8 ocrDbDestroy(ocrGuid_t db) {
-  /* OCR spec: ocrDbDestroy marks the DB for destruction.
+  /* OCR ocrDbDestroy: mark the DB for destruction.  The OCR contract places
+   * the liveness guarantee on the caller: the block must no longer be in use
+   * (no EDT holds it and none will acquire or await a dependence on it after
+   * this point); a dependence resolved against a destroyed DB is undefined.
+   * If the calling EDT currently holds an acquire on the block, the destroy
+   * implicitly releases it first, matching "ocrDbDestroy releases the DB if the
+   * EDT has acquired it".
    *
-   * Several real-world OCR apps call ocrDbDestroy on intermediate DBs
-   * while later sibling EDTs still hold add_dependence wirings to the
-   * same GUIDs.  That is use-after-destroy by OCR spec, but the
-   * pattern is entrenched in shipped apps.  The underlying runtime
-   * propagates the destroyed state correctly (NULL data in the route
-   * entry, DB_DESTROYED waking parked waiters), but app bodies that
-   * dereference depv[slot].ptr unconditionally would still segfault.
-   *
-   * For pragmatic shim compatibility, skip the destroy and let the DB
-   * live until process-exit cleanup.  This trades a bounded memory
-   * leak (sized to the app's working set) for OCR-app correctness.
-   * arts_db_destroy is still reachable from the collective reduction
-   * path in this file, where the lifecycle is shim-internal and
-   * well-formed. */
-  (void)db;
+   * The teardown is deferred: the route-table slot is detached and the storage
+   * is reclaimed only once the last outstanding reference drops, so a destroy
+   * concurrent with an in-flight lookup is a deferred free, never a
+   * use-after-free.  For a coherent block the destroy fans out to every rank
+   * that holds a replica or has a request queued, so a parked acquirer is woken
+   * to observe the destroyed state (a NULL data resolution) rather than
+   * hanging. */
+  if (!ocrGuidIsNull(db)) {
+    arts_db_destroy(db.guid);
+  }
   return 0;
 }
 

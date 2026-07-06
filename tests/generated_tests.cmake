@@ -143,6 +143,8 @@ add_pure_unit_src(config_parse_port_spec PASS_REGEX "PASS config_parse_port_spec
 add_pure_unit_src(config_count_nodes PASS_REGEX "PASS config_count_nodes" TIMEOUT 60)
 add_pure_unit_src(config_get_variables_oob PASS_REGEX "PASS config_get_variables_oob" TIMEOUT 60)
 add_pure_unit_src(config_routing_table_ssh_bracket PASS_REGEX "PASS config_routing_table_ssh_bracket" TIMEOUT 60)
+add_pure_unit_src(config_routing_table_slurm_hostlist PASS_REGEX "PASS config_routing_table_slurm_hostlist" TIMEOUT 60)
+add_pure_unit_src(placement_invariants SOURCES ${CMAKE_SOURCE_DIR}/libs/src/core/system/placement.c PASS_REGEX "PASS placement_invariants" TIMEOUT 60)
 add_pure_unit_src(config_route_table_size_shift PASS_REGEX "PASS config_route_table_size_shift" TIMEOUT 60)
 add_pure_unit_src(config_thread_count_underflow PASS_REGEX "PASS config_thread_count_underflow" TIMEOUT 60)
 add_pure_unit_src(config_launcher_env_precedence PASS_REGEX "PASS config_launcher_env_precedence" TIMEOUT 60)
@@ -163,8 +165,7 @@ endif()
 
 add_pure_unit_src(runtime_edt_event_layout PASS_REGEX "PASS runtime_edt_event_layout" TIMEOUT 60)
 # topology.c #includes <hwloc.h> and calls hwloc_* — link the system hwloc.
-add_pure_unit_src(topology_placement_order LIBS hwloc PASS_REGEX "PASS topology_placement_order" TIMEOUT 60)
-add_pure_unit_src(topology_thread_mask LIBS hwloc PASS_REGEX "PASS topology_thread_mask" TIMEOUT 60)
+add_pure_unit_src(topology_thread_mask SOURCES ${CMAKE_SOURCE_DIR}/libs/src/core/system/placement.c LIBS hwloc PASS_REGEX "PASS topology_thread_mask" TIMEOUT 60)
 add_pure_unit_src(threads_worker_underflow PASS_REGEX "PASS threads_worker_underflow" TIMEOUT 60)
 add_pure_unit_src(signals_formatters PASS_REGEX "PASS signals_formatters" TIMEOUT 60)
 # T245 EXPOSES B132: expected to FAIL/crash under sanitizer (documents runtime bug, do not mask)

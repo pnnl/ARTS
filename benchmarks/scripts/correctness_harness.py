@@ -58,7 +58,7 @@ from harness_common import (
 # ---------------------------------------------------------------------------
 _arg_parser = argparse.ArgumentParser(add_help=False)
 _arg_parser.add_argument('--build-dir', default='build_release_mrnew_lazy')
-_arg_parser.add_argument('--target', default='laptop', choices=['laptop', 'server'])
+_arg_parser.add_argument('--target', default='laptop', choices=['laptop', 'cbgpu02'])
 _pre_args, _ = _arg_parser.parse_known_args()
 BUILD = Path(_pre_args.build_dir)
 if not BUILD.is_absolute():
@@ -1094,7 +1094,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--build-dir", default="build_release_mrnew_lazy",
                    help="Build directory containing apps and configs")
-    p.add_argument("--target", default="laptop", choices=["laptop", "server"],
+    p.add_argument("--target", default="laptop", choices=["laptop", "cbgpu02"],
                    help="Machine geometry: laptop (14-thread) or server (48-thread)")
     p.add_argument("--no-baseline", action="store_true")
     p.add_argument("--only", type=str, default="")

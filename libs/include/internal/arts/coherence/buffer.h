@@ -58,6 +58,11 @@ extern "C" {
 struct arts_db_buffer_s *arts_db_buf_alloc(struct arts_db_cache_s *cache,
                                            uint64_t db_size);
 
+/* As arts_db_buf_alloc, but buf->data reads as zero (recycled buffers are
+ * cleared; fresh pool memory arrives zeroed untouched). */
+struct arts_db_buffer_s *arts_db_buf_alloc_zeroed(struct arts_db_cache_s *cache,
+                                                  uint64_t db_size);
+
 /* Race-safe acquire: returns a caller-owned strong ref to the installed
  * buffer (keeping it alive against a concurrent destroy), or NULL if no
  * buffer is currently installed.  Recover the buffer via arts_shared_get;

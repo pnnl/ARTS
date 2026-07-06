@@ -99,6 +99,17 @@ void arts_transport_loopback_post(const void *packet, unsigned int size) {
 }
 
 bool arts_transport_loopback_drain(void) {
+  /* Scalable empty gate: this is polled from every worker's scheduler
+   * iteration, so the nothing-to-do case must stay READ-ONLY — plain loads
+   * keep the head and token lines in shared cache state across all pollers,
+   * whereas an unconditional CAS (even a failing one) takes the line
+   * exclusive on every poll and ping-pongs it between cores/sockets. */
+  if (arts_lf_stack_empty(&g_loopback)) {
+    return false;
+  }
+  if (atomic_load_explicit(&g_loopback_draining, memory_order_relaxed) != 0) {
+    return false; /* someone is already draining — find other work */
+  }
   /* Single drainer at a time (see the file-scope note): CAS the token; a thread
    * that loses it returns to find other work rather than spinning. */
   int expected = 0;

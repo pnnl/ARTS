@@ -102,6 +102,13 @@ void arts_regpool_cleanup(void);
  * pointer that escaped the registered slabs is a fatal error. */
 void *arts_regpool_alloc_aligned(size_t size, size_t align);
 
+/* As arts_regpool_alloc_aligned, but the returned bytes are zero.  Prefer
+ * this over alloc+memset for zero-initialized payloads: fresh slab memory is
+ * already kernel-zeroed, so only blocks recycled from dirty pages are
+ * actually cleared — the full-payload touch (and its page faults) leaves the
+ * caller's critical path. */
+void *arts_regpool_zalloc_aligned(size_t size, size_t align);
+
 /* Return a pointer previously obtained from arts_regpool_alloc_aligned. */
 void arts_regpool_free(void *p);
 

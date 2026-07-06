@@ -28,7 +28,7 @@ for pair in "${PAIRS[@]}"; do
   echo "=== Pair: rank0=${A}, rank1=${B} ==="
   WORKDIR=$(mktemp -d)
   trap 'rm -rf "$WORKDIR"' EXIT
-  cp "${ROOT}/configs/local/laptop/2n.cfg" "${WORKDIR}/arts.cfg"
+  cp "${ROOT}/configs/local/test/2n.cfg" "${WORKDIR}/arts.cfg"
   ( cd "${WORKDIR}" && timeout 30s "${BIN[$A]}" ) &
   P0=$!
   sleep 1

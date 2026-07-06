@@ -249,7 +249,6 @@ bool arts_edt_create_core(struct arts_edt_s *edt, arts_guid_kind_t guid_kind,
                           MSG_EDT_CREATE, arts_free);
   } else {
     /* Local EDT: register in the route table and check readiness. */
-    INC_OUTSTANDING_EDTS(1);
     if (created_guid) {
       /* New GUID path — no race, safe non-atomic insert. */
       arts_route_table_install(edt, *guid, arts_global_rank_id, false);
@@ -629,14 +628,6 @@ void arts_edt_satisfy_slot(arts_guid_t edt_guid, uint32_t slot,
     arts_send_edt_satisfy_slot(edt_guid, data_guid, slot, mode, ptr, size);
   }
   TIME_EDT_SIGNAL_STOP();
-}
-
-volatile uint64_t outstanding_edts = 0;
-void check_out_edts(uint64_t threshold) {
-  static uint64_t count = 0;
-  if (arts_atomic_fetch_add_u64(&count, 1) + 1 == threshold) {
-    arts_atomic_fetch_sub_u64(&count, threshold);
-  }
 }
 
 void arts_lc_sync(arts_guid_t edt_guid, uint32_t slot, arts_guid_t data_guid) {

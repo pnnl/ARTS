@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * T129 — EDT trailing-storage offset agreement + check_out_edts modulo wrap.
+ * T129 — EDT trailing-storage offset agreement.
  *
  * Property under test
  * -------------------
@@ -20,14 +20,9 @@
  * For the GPU subtype the base is sizeof(arts_gpu_edt_t) (header includes the
  * grid/block metadata) and arts_get_depv mirrors it.
  *
- * Separately, check_out_edts maintains a process-static counter that is
- * supposed to wrap to 0 exactly when it reaches the threshold (modulo-N).  We
- * exercise the wrap arithmetic with a small threshold over many calls and
- * assert it never grows unbounded — i.e. the wrap is exact.
- *
  * Pure unit: this exercises header arithmetic (arts_edt_total_size /
- * arts_get_depv offsets) and the check_out_edts library helper.  No runtime is
- * started; main() runs the asserts directly.
+ * arts_get_depv offsets).  No runtime is started; main() runs the asserts
+ * directly.
  */
 
 #include "arts.h"
@@ -42,9 +37,6 @@
 #ifdef ARTS_USE_GPU
 #include "arts/gpu/gpu_internal.h"
 #endif
-
-/* check_out_edts is a runtime helper with external linkage. */
-void check_out_edts(uint64_t threshold);
 
 /* Verify arts_get_depv returns header_offset + paramc*8 for a heap-allocated
  * EDT-shaped block of the given subtype.  Returns 1 on PASS, 0 on FAIL. */
@@ -109,33 +101,14 @@ static int check_gpu_offsets(void) {
 #endif
 }
 
-static int check_modulo_wrap(void) {
-  /* check_out_edts uses a process-static counter that subtracts `threshold`
-   * once it reaches it.  Call it many multiples of the threshold; the only
-   * observable property from outside is that it does not abort/UB and that
-   * repeated wraps keep working (no monotonic blow-up of the static counter).
-   * We exercise far more than `threshold` iterations to force several wraps. */
-  const uint64_t threshold = 8;
-  for (uint64_t i = 0; i < threshold * 100u + 3u; i++) {
-    check_out_edts(threshold);
-  }
-  /* A degenerate threshold of 1 must wrap on every call (count never grows). */
-  for (uint64_t i = 0; i < 1000u; i++) {
-    check_out_edts(1);
-  }
-  return 1;
-}
-
 int main(void) {
   int ok = 1;
   ok &= check_cpu_offsets();
   ok &= check_gpu_offsets();
-  ok &= check_modulo_wrap();
   if (!ok) {
     fprintf(stderr, "FAIL edt_size_offsets\n");
     return 1;
   }
-  printf(
-      "PASS edt_size_offsets: depv offset agreement + modulo wrap verified\n");
+  printf("PASS edt_size_offsets: depv offset agreement verified\n");
   return 0;
 }

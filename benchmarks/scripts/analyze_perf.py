@@ -72,12 +72,100 @@ def section(title):
     return f"\n{'='*78}\n{title}\n{'='*78}\n"
 
 
+def _median(xs):
+    xs = sorted(xs)
+    n = len(xs)
+    if n == 0:
+        return None
+    return xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2
+
+
+def report_single(rows, outdir):
+    """The "single" experiment: every app at 1n x 48 workers, arts(mrnew_lazy)
+    vs xsocr vs ocr-vx.  Rows carry one line per accepted ITERATION, so each
+    cell aggregates to median/min/max.  Emits a per-app comparison table
+    sorted by the worst arts-vs-ref ratio, plus the arts teardown gap
+    (median wall - median e2e) which the e2e span excludes."""
+    per = defaultdict(list)          # (bench, rt) -> [(e2e_s, wall_s, status)]
+    for r in rows:
+        if r["experiment"] != "single":
+            continue
+        e = e2e_s(r)
+        try:
+            w = float(r["wall"])
+        except (TypeError, ValueError):
+            w = None
+        per[(r["bench"], r["runtime"])].append((e, w, r["status"]))
+
+    benches = sorted({b for (b, _) in per})
+    rts = ["mrnew_lazy", "xsocr", "ocrvx"]
+
+    def agg(bench, rt):
+        entries = per.get((bench, rt), [])
+        es = [e for (e, _, _) in entries if e is not None]
+        ws = [w for (_, w, s) in entries if w is not None]
+        statuses = [s for (_, _, s) in entries]
+        return {
+            "med": _median(es), "min": min(es) if es else None,
+            "max": max(es) if es else None, "wall_med": _median(ws),
+            "n_ok": len(es), "n": len(statuses),
+            "verdict": ("OK" if es else
+                        ("TIMEOUT" if "TIMEOUT" in statuses else
+                         ("FAIL" if statuses else "-"))),
+        }
+
+    def f(v, w=8):
+        return f"{v:{w}.2f}" if v is not None else " " * (w - 4) + "  - "
+
+    lines = [section("SINGLE-NODE 48T 3-RUNTIME COMPARISON (median e2e s; "
+                     "x/A = runtime/arts ratio; teardown = arts wall-e2e)")]
+    hdr = (f"  {'bench':<28}{'arts':>8}{'xsocr':>8}{'x/A':>7}{'ocrvx':>8}"
+           f"{'o/A':>7}{'teardown':>9}  notes")
+    lines.append(hdr)
+    lines.append("  " + "-" * (len(hdr) - 2))
+
+    def ratio(a, b):
+        return (b / a) if (a and b) else None
+
+    scored = []
+    for bench in benches:
+        A, X, O = (agg(bench, rt) for rt in rts)
+        rx, ro = ratio(A["med"], X["med"]), ratio(A["med"], O["med"])
+        # sort key: worst case for arts (smallest ref/arts ratio) first
+        worst = min([r for r in (rx, ro) if r is not None], default=None)
+        scored.append((worst if worst is not None else 99.0, bench, A, X, O, rx, ro))
+    scored.sort()
+
+    for _, bench, A, X, O, rx, ro in scored:
+        notes = []
+        for rt, G in (("arts", A), ("xsocr", X), ("ocrvx", O)):
+            if G["verdict"] in ("FAIL", "TIMEOUT"):
+                notes.append(f"{rt}:{G['verdict']}")
+            elif 0 < G["n_ok"] < G["n"]:
+                notes.append(f"{rt}:{G['n_ok']}/{G['n']}ok")
+        tear = (A["wall_med"] - A["med"]) if (A["wall_med"] and A["med"]) else None
+        lines.append(
+            f"  {bench:<28}{f(A['med'])}{f(X['med'])}"
+            f"{(f'{rx:5.1f}x' if rx else '    - '):>7}{f(O['med'])}"
+            f"{(f'{ro:5.1f}x' if ro else '    - '):>7}"
+            f"{f(tear, 9)}  {' '.join(notes)}")
+    return "\n".join(lines)
+
+
 def main():
     matrix_dir = sys.argv[1] if len(sys.argv) > 1 else \
         "benchmarks/scripts/logs/perf/matrix6app"
     rows, metrics = load(matrix_dir)
     outdir = Path(matrix_dir) / "analysis"
     outdir.mkdir(exist_ok=True)
+
+    if any(r["experiment"] == "single" for r in rows):
+        report = report_single(rows, outdir)
+        (outdir / "report_single.txt").write_text(report)
+        print(report)
+        print(f"\n[analysis] wrote {outdir}/report_single.txt")
+        if all(r["experiment"] == "single" for r in rows):
+            return
 
     benches = sorted({r["bench"] for r in rows})
     E = cell(rows)                          # (exp,bench,cfg,rt) -> e2e_s or None
