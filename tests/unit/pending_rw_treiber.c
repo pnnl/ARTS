@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * T065 — MRNEW arts_pending_rw_queue_* (cache-side RW waiter chain).
+ * T065 — RCU arts_pending_rw_queue_* (cache-side RW waiter chain).
  *
  * A Treiber stack (arts_lf_stack_t) of arts_db_rw_waiter_s nodes (link FIRST).
  * Producers (foreign-rank acquire_remote_rw) prepend via release-CAS; the
@@ -9,7 +9,7 @@
  * frees).  Order is immaterial (every waiter is woken regardless), which is why
  * a LIFO stack suffices vs the home lockreq Vyukov FIFO.
  *
- * Defined in mrnew/home.c → MRNEW-only.  #includes the TU standalone
+ * Defined in rcu/home.c → RCU-only.  #includes the TU standalone
  * (precedent: rank_bitset.c).  Self-skips elsewhere.
  *
  * Properties exercised:
@@ -24,15 +24,15 @@
  *      racing a drain forms a fresh stack picked up by the NEXT drain — so the
  *      union over all drains wakes EXACTLY the pushed set, no loss, no dup.
  *
- * Build: -DARTS_PROTOCOL_MRNEW=1 (+ a timing) -DARTS_UNIT_STANDALONE_SHIMS.
+ * Build: -DARTS_PROTOCOL_RCU=1 (+ a timing) -DARTS_UNIT_STANDALONE_SHIMS.
  */
 
 #include <stdio.h>
 
-#if !defined(ARTS_PROTOCOL_MRNEW)
+#if !defined(ARTS_PROTOCOL_RCU)
 int main(void) {
-  printf("PASS pending_rw_treiber: skipped (MRNEW-only; cache.pending_rw is a "
-         "Treiber stack only in the MRNEW engine)\n");
+  printf("PASS pending_rw_treiber: skipped (RCU-only; cache.pending_rw is a "
+         "Treiber stack only in the RCU engine)\n");
   return 0;
 }
 #else
@@ -287,8 +287,8 @@ void arts_free(void *ptr) { free(ptr); }
 void *arts_malloc(size_t size) { return malloc(size); }
 #endif
 
-#endif /* ARTS_PROTOCOL_MRNEW */
+#endif /* ARTS_PROTOCOL_RCU */
 
-#if defined(ARTS_PROTOCOL_MRNEW)
-#include "core/coherence/mrnew/home.c"
+#if defined(ARTS_PROTOCOL_RCU)
+#include "core/coherence/rcu/home.c"
 #endif

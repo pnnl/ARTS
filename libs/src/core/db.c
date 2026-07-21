@@ -125,7 +125,7 @@ static void arts_db_auto_acquire(struct arts_db_s *db) {
 }
 
 /* arts_db_creator_skip_hold — should the coherent (ARTS_DB) creator EDT be kept
- * OFF created_db_list?  Under the LOCK protocol the creator takes no implicit
+ * OFF created_db_list?  Under the RWLOCK protocol the creator takes no implicit
  * lock: the home rank is the sole arbiter and zero-inits the buffer at create
  * time, and a writer only ever holds the lock via a granted LOCK_REQUEST (which
  * bumps the per-rank cache_state rw_count + sets rw_state=GRANT).  A
@@ -146,7 +146,7 @@ static void arts_db_auto_acquire(struct arts_db_s *db) {
 static inline bool arts_db_creator_skip_hold(arts_db_types_t db_type) {
   /* No protocol skips the creator hold any more: arts_db_create defaults to an
    * RW acquire for every coherent DB, and each protocol seeds that hold at
-   * create time (single-owner: writer_count=2; LOCK: cache_state RW-GRANT +
+   * create time (single-owner: writer_count=2; RWLOCK: cache_state RW-GRANT +
    * lock_state w=1).  The matching release (explicit or EDT-epilogue
    * auto-release) drives it back, so the creator is tracked like any holder. */
   (void)db_type;
@@ -379,7 +379,7 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
              * blocks every future writer under a single-writer protocol — the
              * same reason the remote DB_CREATE handler stamps writer_count = 1
              * for NO_ACQUIRE. */
-#if defined(ARTS_PROTOCOL_LOCK)
+#if defined(ARTS_PROTOCOL_RWLOCK)
 #if defined(ARTS_TIMING_LAZY)
             /* LAZY: data lives with the owner, not the home — with no creator
              * hold there is no owner unless we make one.  This rank (the GUID
@@ -436,7 +436,7 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
              * blocks every future writer under a single-writer protocol — the
              * same reason the remote DB_CREATE handler stamps writer_count = 1
              * for NO_ACQUIRE. */
-#if defined(ARTS_PROTOCOL_LOCK)
+#if defined(ARTS_PROTOCOL_RWLOCK)
 #if defined(ARTS_TIMING_LAZY)
             /* LAZY: data lives with the owner, not the home — with no creator
              * hold there is no owner unless we make one.  This rank (the GUID
@@ -566,7 +566,7 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
                               ? &adopted_db->cache
                               : NULL;
           if (creator_cache != NULL) {
-#if !defined(ARTS_PROTOCOL_LOCK)
+#if !defined(ARTS_PROTOCOL_RWLOCK)
             arts_atomic_add(&creator_cache->writer_count, 2);
 #endif
           }
@@ -786,7 +786,7 @@ static void acquire_one_dep(struct arts_edt_s *edt, arts_edt_dep_t *depv,
   arts_shared_ptr_t db_temp_h = arts_route_table_lookup_db(depv[i].guid);
   struct arts_db_s *db_temp = (struct arts_db_s *)arts_shared_get(db_temp_h);
 
-  /* Coherent ARTS_DB path (eager, lazy, or MRMW protocol).  Two entry
+  /* Coherent ARTS_DB path (eager, lazy, or WRF_RCU protocol).  Two entry
    * points:
    *   - Existing local cache_s (db_temp with db_type == ARTS_DB; embedded
    *     cache).
@@ -997,6 +997,19 @@ static ARTS_THREAD_LOCAL uint32_t tl_resume_len = 0;
 static ARTS_THREAD_LOCAL uint32_t tl_resume_cap = 0;
 static ARTS_THREAD_LOCAL bool tl_in_flush = false;
 
+/* Continuation-ownership signal for the resume_k loop: set when the dep the
+ * loop just fired was resolved IN-FRAME (a synchronous local resolve or a
+ * same-thread nested serve — rw_secure / arts_db_acquire_resolved with
+ * edt == tl_acquiring).  The loop continues ONLY on this signal; otherwise it
+ * breaks and the serving side owns the continuation (its rw_secure enqueued
+ * the flat resume on its own thread).  A cursor comparison cannot make this
+ * call: a CONCURRENT other-thread serve also advances the cursor, and reading
+ * "advanced" as "resolved in-frame" lets two threads drive the same EDT's
+ * loop at once — double-firing the next dep (double count, one release, and a
+ * double acquire_remaining account).  Being thread-local, this flag is
+ * untouchable by other threads' serves, so ownership is race-free. */
+static ARTS_THREAD_LOCAL bool tl_inline_advanced = false;
+
 static void resume_enqueue(arts_guid_t edt_guid) {
   if (tl_resume_len == tl_resume_cap) {
     uint32_t ncap = tl_resume_cap ? tl_resume_cap * 2u : 16u;
@@ -1035,7 +1048,7 @@ static void flush_resume_list(void) {
  * dep that PARKS (its grant is not local) leaves the cursor put and we return —
  * the matching async grant re-enters here (rw_secure) to continue.  Driving the
  * walk as a LOOP (not the handler re-firing recursively) keeps the stack O(1)
- * however many serialized deps resolve in a row — required for LOCK, where RW
+ * however many serialized deps resolve in a row — required for RWLOCK, where RW
  * AND RO are both serialized so an EDT can have very many serialized deps. */
 static void rw_fire_from_cursor(struct arts_edt_s *edt) {
   arts_edt_dep_t *depv = (arts_edt_dep_t *)arts_get_depv(edt);
@@ -1099,14 +1112,19 @@ static void rw_fire_from_cursor(struct arts_edt_s *edt) {
       arts_shared_release(&db_h);
       /* Cache unexpectedly absent — fall back to a normal acquire. */
     }
-    uint32_t before = edt->rw_cursor;
+    tl_inline_advanced = false;
     acquire_one_dep(
         edt, depv,
         i); /* local hit advances the cursor; remote/contended parks */
-    if (edt->rw_cursor == before) {
-      break; /* parked — the async grant / OoO replay re-enters this loop */
+    if (!tl_inline_advanced) {
+      /* Parked (or deferred): the serving side owns the continuation — its
+       * rw_secure enqueues the flat resume on its own thread.  Do NOT infer
+       * "resolved" from cursor movement: a concurrent other-thread serve also
+       * advances the cursor, and continuing here would put two threads in the
+       * same EDT's loop (double-firing the next dep). */
+      break;
     }
-    /* resolved locally — the loop picks up the next serialized dep */
+    /* resolved in-frame — the loop picks up the next serialized dep */
   }
   tl_acquiring = prev_acquiring;
 }
@@ -1125,13 +1143,15 @@ static void rw_secure(struct arts_edt_s *edt, unsigned int slot) {
   if (edt->rw_cursor < depc && sorted[edt->rw_cursor] == slot) {
     edt->rw_cursor++;
     /* If this resume is for THIS thread's in-flight EDT (a same-rank grant
-     * whose handler ran synchronously inside the running loop), the loop
-     * already advances to the next dep — nothing to do.  Otherwise it is a
-     * PARKED EDT woken by a grant: enqueue it for the flat resume drain (NOT an
+     * whose handler ran synchronously inside the running loop), signal the
+     * loop to continue — it owns the continuation.  Otherwise it is a PARKED
+     * EDT woken by a grant: enqueue it for the flat resume drain (NOT an
      * inline rw_fire_from_cursor, which would nest on the running loop =
-     * recursion). */
+     * recursion).  Exactly one side continues the loop, never both. */
     if (edt != tl_acquiring) {
       resume_enqueue(edt->guid);
+    } else {
+      tl_inline_advanced = true;
     }
   }
 }
@@ -1152,6 +1172,9 @@ void arts_db_acquire_resolved(struct arts_edt_s *edt, unsigned int slot) {
     const uint32_t *sorted = edt->rw_sorted; /* sorted ONCE in acquire_all */
     if (edt->rw_cursor < depc && sorted[edt->rw_cursor] == slot) {
       edt->rw_cursor++; /* advance only; the loop fires the next dep */
+      if (edt == tl_acquiring) {
+        tl_inline_advanced = true; /* in-frame resolve: the loop continues */
+      }
     }
   }
   arts_db_acquire_account(
@@ -1196,7 +1219,7 @@ void arts_db_acquire_all(struct arts_edt_s *edt) {
     acquire_one_dep(edt, depv, i);
   }
 
-  /* Pass 2: fire the serialized (RW) deps from the cursor (no-op under MRMW).
+  /* Pass 2: fire the serialized (RW) deps from the cursor (no-op under WRF_RCU).
    */
   rw_fire_from_cursor(edt);
 

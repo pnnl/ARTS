@@ -37,7 +37,7 @@ function(add_pure_unit_src name)
     # requires exactly one compile-time coherence-protocol selection.  Apply it
     # unconditionally — tests that do not include protocol-sensitive headers
     # simply leave the macros unused, so this is harmless for all others.
-    arts_apply_protocol(${name} ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
+    arts_apply_protocol(${name} ${ARTS_COHERENCE_ARM} ${ARTS_PROTOCOL_TIMING})
     set_property(TARGET ${name} PROPERTY POSITION_INDEPENDENT_CODE OFF)
     target_compile_options(${name} PRIVATE -fno-pie -fno-PIE)
     target_link_options(${name} PRIVATE -no-pie -fno-pie -fno-PIE)
@@ -85,29 +85,24 @@ add_pure_unit_src(rank_u64_map_roundtrip SOURCES ${CMAKE_SOURCE_DIR}/libs/src/co
 add_pure_unit_src(rank_u64_map_advance SOURCES ${CMAKE_SOURCE_DIR}/libs/src/core/coherence/rank_u64_map.c PASS_REGEX "PASS rank_u64_map_advance" TIMEOUT 60)
 # T056 rank_bitset: the arts_rank_bitset_* symbols live in the protocol-specific
 # coherence home.c, so the source/link selection is keyed on the build dir's
-# ${ARTS_COHERENCE_PROTOCOL}:
-#   MRNEW -> compile mrnew/home.c standalone (ARTS_UNIT_STANDALONE_SHIMS shims)
-#   MRSW  -> compile mrsw/home.c  standalone (same shims)
-#   MRMW  -> the rank bit-set is not compiled under MRMW (the protocol home.c
+# ${ARTS_COHERENCE_ARM}:
+#   RCU -> compile rcu/home.c standalone (ARTS_UNIT_STANDALONE_SHIMS shims)
+#   WRF_RCU  -> the rank bit-set is not compiled under WRF_RCU (the protocol home.c
 #            bodies don't even build there, as their node/waiter structs are
 #            #if'd out), and the test self-skips (prints PASS).  So link NO
 #            protocol home.c — the self-skipping main needs no home symbols.
-#   LOCK  -> lock/home.c pulls transport/edt deps, so link the full libarts
+#   RWLOCK  -> rwlock/home.c pulls transport/edt deps, so link the full libarts
 #            (shims auto-compiled-out via the ARTS_UNIT_STANDALONE_SHIMS gate)
-if(ARTS_COHERENCE_PROTOCOL STREQUAL "LOCK")
+if(ARTS_COHERENCE_ARM STREQUAL "RWLOCK")
     add_arts_test(rank_bitset)
     register_pure_unit_test(rank_bitset TIMEOUT 60)
     set_tests_properties(rank_bitset PROPERTIES PASS_REGULAR_EXPRESSION "PASS rank_bitset")
-elseif(ARTS_COHERENCE_PROTOCOL STREQUAL "MRMW")
-    # No protocol home.c source: the test body self-skips under MRMW.
+elseif(ARTS_COHERENCE_ARM STREQUAL "WRF_RCU")
+    # No protocol home.c source: the test body self-skips under WRF_RCU.
     add_pure_unit_src(rank_bitset
         DEFINES ARTS_UNIT_STANDALONE_SHIMS=1 PASS_REGEX "PASS rank_bitset" TIMEOUT 60)
 else()
-    if(ARTS_COHERENCE_PROTOCOL STREQUAL "MRSW")
-        set(_rank_bitset_home ${CMAKE_SOURCE_DIR}/libs/src/core/coherence/mrsw/home.c)
-    else()
-        set(_rank_bitset_home ${CMAKE_SOURCE_DIR}/libs/src/core/coherence/mrnew/home.c)
-    endif()
+    set(_rank_bitset_home ${CMAKE_SOURCE_DIR}/libs/src/core/coherence/rcu/home.c)
     add_pure_unit_src(rank_bitset SOURCES ${_rank_bitset_home}
         DEFINES ARTS_UNIT_STANDALONE_SHIMS=1 PASS_REGEX "PASS rank_bitset" TIMEOUT 60)
 endif()
@@ -213,7 +208,7 @@ add_arts_test(db_no_acquire)
 register_single_node_test(db_no_acquire TIMEOUT 30)
 set_tests_properties(db_no_acquire PROPERTIES PASS_REGULAR_EXPRESSION "PASS: db_no_acquire|SKIP db_no_acquire")
 
-# config_specific: LOCK-only real body, self-skips elsewhere
+# config_specific: RWLOCK-only real body, self-skips elsewhere
 add_arts_test(db_lock_creator_skip_hold)
 register_single_node_test(db_lock_creator_skip_hold TIMEOUT 30)
 set_tests_properties(db_lock_creator_skip_hold PROPERTIES
@@ -224,7 +219,7 @@ register_single_node_test(db_copy_to_new_type_race TIMEOUT 30)
 set_tests_properties(db_copy_to_new_type_race PROPERTIES PASS_REGULAR_EXPRESSION "PASS: db_copy_to_new_type_race|SKIP db_copy_to_new_type_race")
 
 # T121 EXPOSES B-create-install-uaf: expected to FAIL (UAF/underflow crash or hang) in its
-# target config (non-LOCK, >=3 ranks); self-skips (exit 0) under LOCK or with <3 ranks. Do not mask.
+# target config (non-RWLOCK, >=3 ranks); self-skips (exit 0) under RWLOCK or with <3 ranks. Do not mask.
 add_arts_test(db_create_install_race)
 register_multinode_test(db_create_install_race TIMEOUT 60)
 
@@ -233,7 +228,7 @@ register_single_node_test(db_acquire_replay_local TIMEOUT 30)
 set_tests_properties(db_acquire_replay_local PROPERTIES PASS_REGULAR_EXPRESSION "PASS: db_acquire_replay_local|SKIP db_acquire_replay_local")
 
 # T123 EXPOSES B-release-alias-underflow: expected to FAIL (double-decrement) in its target
-# config (ownership/LOCK); self-skips (exit 0) under MRMW. Do not mask.
+# config (ownership/RWLOCK); self-skips (exit 0) under WRF_RCU. Do not mask.
 add_arts_test(db_release_alias_slot)
 register_single_node_test(db_release_alias_slot TIMEOUT 30)
 
@@ -364,206 +359,145 @@ if(BUILD_CUDA_LIBRARY)
         PASS_REGULAR_EXPRESSION "event_gpu_force_defer:.*PASS|SKIP event_gpu_force_defer")
 endif()
 
-# --- C07: MRNEW protocol/timing-specific ---
-# All MRNEW config_specific tests self-skip (no-op main printing SKIP) under non-MRNEW.
-add_arts_test(mrnew_eager_vs_lazy_divergence)
-register_single_node_test(mrnew_eager_vs_lazy_divergence TIMEOUT 60)
-register_multinode_test(mrnew_eager_vs_lazy_divergence TIMEOUT 60)
-set_tests_properties(mrnew_eager_vs_lazy_divergence PROPERTIES PASS_REGULAR_EXPRESSION "PASS mrnew_eager_vs_lazy_divergence|SKIP mrnew_eager_vs_lazy_divergence")
-set_tests_properties(mrnew_eager_vs_lazy_divergence_2n PROPERTIES PASS_REGULAR_EXPRESSION "PASS mrnew_eager_vs_lazy_divergence|SKIP mrnew_eager_vs_lazy_divergence")
+# --- C07: RCU protocol/timing-specific ---
+# All RCU config_specific tests self-skip (no-op main printing SKIP) under non-RCU.
+add_arts_test(rcu_eager_vs_lazy_divergence)
+register_single_node_test(rcu_eager_vs_lazy_divergence TIMEOUT 60)
+register_multinode_test(rcu_eager_vs_lazy_divergence TIMEOUT 60)
+set_tests_properties(rcu_eager_vs_lazy_divergence PROPERTIES PASS_REGULAR_EXPRESSION "PASS rcu_eager_vs_lazy_divergence|SKIP rcu_eager_vs_lazy_divergence")
+set_tests_properties(rcu_eager_vs_lazy_divergence_2n PROPERTIES PASS_REGULAR_EXPRESSION "PASS rcu_eager_vs_lazy_divergence|SKIP rcu_eager_vs_lazy_divergence")
 
-add_arts_test(mrnew_writer_count_nonneg)
-register_single_node_test(mrnew_writer_count_nonneg TIMEOUT 120)
-register_multinode_test(mrnew_writer_count_nonneg TIMEOUT 120)
-set_tests_properties(mrnew_writer_count_nonneg PROPERTIES PASS_REGULAR_EXPRESSION "PASS mrnew_writer_count_nonneg|SKIP mrnew_writer_count_nonneg")
-set_tests_properties(mrnew_writer_count_nonneg_2n_io PROPERTIES PASS_REGULAR_EXPRESSION "PASS mrnew_writer_count_nonneg|SKIP mrnew_writer_count_nonneg")
+add_arts_test(rcu_writer_count_nonneg)
+register_single_node_test(rcu_writer_count_nonneg TIMEOUT 120)
+register_multinode_test(rcu_writer_count_nonneg TIMEOUT 120)
+set_tests_properties(rcu_writer_count_nonneg PROPERTIES PASS_REGULAR_EXPRESSION "PASS rcu_writer_count_nonneg|SKIP rcu_writer_count_nonneg")
+set_tests_properties(rcu_writer_count_nonneg_2n_io PROPERTIES PASS_REGULAR_EXPRESSION "PASS rcu_writer_count_nonneg|SKIP rcu_writer_count_nonneg")
 
-add_arts_test(mrnew_publish_before_decrement)
-register_single_node_test(mrnew_publish_before_decrement TIMEOUT 120)
-register_multinode_test(mrnew_publish_before_decrement TIMEOUT 120)
-set_tests_properties(mrnew_publish_before_decrement PROPERTIES PASS_REGULAR_EXPRESSION "PASS mrnew_publish_before_decrement|SKIP mrnew_publish_before_decrement")
-set_tests_properties(mrnew_publish_before_decrement_2n PROPERTIES PASS_REGULAR_EXPRESSION "PASS mrnew_publish_before_decrement|SKIP mrnew_publish_before_decrement")
+add_arts_test(rcu_publish_before_decrement)
+register_single_node_test(rcu_publish_before_decrement TIMEOUT 120)
+register_multinode_test(rcu_publish_before_decrement TIMEOUT 120)
+set_tests_properties(rcu_publish_before_decrement PROPERTIES PASS_REGULAR_EXPRESSION "PASS rcu_publish_before_decrement|SKIP rcu_publish_before_decrement")
+set_tests_properties(rcu_publish_before_decrement_2n PROPERTIES PASS_REGULAR_EXPRESSION "PASS rcu_publish_before_decrement|SKIP rcu_publish_before_decrement")
 
-add_arts_test(mrnew_eager_writeback_ack)
-register_single_node_test(mrnew_eager_writeback_ack TIMEOUT 120)
-register_multinode_test(mrnew_eager_writeback_ack TIMEOUT 120)
-set_tests_properties(mrnew_eager_writeback_ack PROPERTIES PASS_REGULAR_EXPRESSION "PASS mrnew_eager_writeback_ack|SKIP mrnew_eager_writeback_ack")
-set_tests_properties(mrnew_eager_writeback_ack_2n PROPERTIES PASS_REGULAR_EXPRESSION "PASS mrnew_eager_writeback_ack|SKIP mrnew_eager_writeback_ack")
+add_arts_test(rcu_eager_writeback_ack)
+register_single_node_test(rcu_eager_writeback_ack TIMEOUT 120)
+register_multinode_test(rcu_eager_writeback_ack TIMEOUT 120)
+set_tests_properties(rcu_eager_writeback_ack PROPERTIES PASS_REGULAR_EXPRESSION "PASS rcu_eager_writeback_ack|SKIP rcu_eager_writeback_ack")
+set_tests_properties(rcu_eager_writeback_ack_2n PROPERTIES PASS_REGULAR_EXPRESSION "PASS rcu_eager_writeback_ack|SKIP rcu_eager_writeback_ack")
 
-add_arts_test(mrnew_lazy_confirm_ack_round)
-register_single_node_test(mrnew_lazy_confirm_ack_round TIMEOUT 120)
-register_multinode_test(mrnew_lazy_confirm_ack_round TIMEOUT 120)
-set_tests_properties(mrnew_lazy_confirm_ack_round PROPERTIES PASS_REGULAR_EXPRESSION "PASS mrnew_lazy_confirm_ack_round|SKIP mrnew_lazy_confirm_ack_round")
-set_tests_properties(mrnew_lazy_confirm_ack_round_2n PROPERTIES PASS_REGULAR_EXPRESSION "PASS mrnew_lazy_confirm_ack_round|SKIP mrnew_lazy_confirm_ack_round")
+add_arts_test(rcu_lazy_confirm_ack_round)
+register_single_node_test(rcu_lazy_confirm_ack_round TIMEOUT 120)
+register_multinode_test(rcu_lazy_confirm_ack_round TIMEOUT 120)
+set_tests_properties(rcu_lazy_confirm_ack_round PROPERTIES PASS_REGULAR_EXPRESSION "PASS rcu_lazy_confirm_ack_round|SKIP rcu_lazy_confirm_ack_round")
+set_tests_properties(rcu_lazy_confirm_ack_round_2n PROPERTIES PASS_REGULAR_EXPRESSION "PASS rcu_lazy_confirm_ack_round|SKIP rcu_lazy_confirm_ack_round")
 
-add_arts_test(mrnew_rw_drain_count)
-register_single_node_test(mrnew_rw_drain_count TIMEOUT 120)
-register_multinode_test(mrnew_rw_drain_count TIMEOUT 120)
-set_tests_properties(mrnew_rw_drain_count PROPERTIES PASS_REGULAR_EXPRESSION "PASS mrnew_rw_drain_count|SKIP mrnew_rw_drain_count")
-set_tests_properties(mrnew_rw_drain_count_2n PROPERTIES PASS_REGULAR_EXPRESSION "PASS mrnew_rw_drain_count|SKIP mrnew_rw_drain_count")
+add_arts_test(rcu_rw_drain_count)
+register_single_node_test(rcu_rw_drain_count TIMEOUT 120)
+register_multinode_test(rcu_rw_drain_count TIMEOUT 120)
+set_tests_properties(rcu_rw_drain_count PROPERTIES PASS_REGULAR_EXPRESSION "PASS rcu_rw_drain_count|SKIP rcu_rw_drain_count")
+set_tests_properties(rcu_rw_drain_count_2n PROPERTIES PASS_REGULAR_EXPRESSION "PASS rcu_rw_drain_count|SKIP rcu_rw_drain_count")
 
-add_arts_test(mrnew_snapshot_request)
-register_single_node_test(mrnew_snapshot_request TIMEOUT 120)
-register_multinode_test(mrnew_snapshot_request TIMEOUT 120)
-set_tests_properties(mrnew_snapshot_request PROPERTIES PASS_REGULAR_EXPRESSION "PASS mrnew_snapshot_request|SKIP mrnew_snapshot_request")
-set_tests_properties(mrnew_snapshot_request_2n PROPERTIES PASS_REGULAR_EXPRESSION "PASS mrnew_snapshot_request|SKIP mrnew_snapshot_request")
+add_arts_test(rcu_snapshot_request)
+register_single_node_test(rcu_snapshot_request TIMEOUT 120)
+register_multinode_test(rcu_snapshot_request TIMEOUT 120)
+set_tests_properties(rcu_snapshot_request PROPERTIES PASS_REGULAR_EXPRESSION "PASS rcu_snapshot_request|SKIP rcu_snapshot_request")
+set_tests_properties(rcu_snapshot_request_2n PROPERTIES PASS_REGULAR_EXPRESSION "PASS rcu_snapshot_request|SKIP rcu_snapshot_request")
 
-add_arts_test(mrnew_baton_invalidate_recheck)
-register_single_node_test(mrnew_baton_invalidate_recheck TIMEOUT 120)
-register_multinode_test(mrnew_baton_invalidate_recheck TIMEOUT 120)
-set_tests_properties(mrnew_baton_invalidate_recheck PROPERTIES PASS_REGULAR_EXPRESSION "PASS mrnew_baton_invalidate_recheck|SKIP mrnew_baton_invalidate_recheck")
-set_tests_properties(mrnew_baton_invalidate_recheck_2n PROPERTIES PASS_REGULAR_EXPRESSION "PASS mrnew_baton_invalidate_recheck|SKIP mrnew_baton_invalidate_recheck")
+add_arts_test(rcu_baton_invalidate_recheck)
+register_single_node_test(rcu_baton_invalidate_recheck TIMEOUT 120)
+register_multinode_test(rcu_baton_invalidate_recheck TIMEOUT 120)
+set_tests_properties(rcu_baton_invalidate_recheck PROPERTIES PASS_REGULAR_EXPRESSION "PASS rcu_baton_invalidate_recheck|SKIP rcu_baton_invalidate_recheck")
+set_tests_properties(rcu_baton_invalidate_recheck_2n PROPERTIES PASS_REGULAR_EXPRESSION "PASS rcu_baton_invalidate_recheck|SKIP rcu_baton_invalidate_recheck")
 
-add_arts_test(mrnew_no_acquire)
-register_single_node_test(mrnew_no_acquire TIMEOUT 120)
-register_multinode_test(mrnew_no_acquire TIMEOUT 120)
-set_tests_properties(mrnew_no_acquire PROPERTIES PASS_REGULAR_EXPRESSION "PASS mrnew_no_acquire|SKIP mrnew_no_acquire")
-set_tests_properties(mrnew_no_acquire_2n PROPERTIES PASS_REGULAR_EXPRESSION "PASS mrnew_no_acquire|SKIP mrnew_no_acquire")
+add_arts_test(rcu_no_acquire)
+register_single_node_test(rcu_no_acquire TIMEOUT 120)
+register_multinode_test(rcu_no_acquire TIMEOUT 120)
+set_tests_properties(rcu_no_acquire PROPERTIES PASS_REGULAR_EXPRESSION "PASS rcu_no_acquire|SKIP rcu_no_acquire")
+set_tests_properties(rcu_no_acquire_2n PROPERTIES PASS_REGULAR_EXPRESSION "PASS rcu_no_acquire|SKIP rcu_no_acquire")
 
-# --- C08: MRSW protocol/timing-specific ---
-add_arts_test(mrsw_writer_count_state)
-register_single_node_test(mrsw_writer_count_state TIMEOUT 60)
-set_tests_properties(mrsw_writer_count_state PROPERTIES PASS_REGULAR_EXPRESSION "PASS: mrsw_writer_count_state|SKIP mrsw_writer_count_state")
-
-add_arts_test(mrsw_release_dekker_race)
-register_single_node_test(mrsw_release_dekker_race TIMEOUT 60)
-set_tests_properties(mrsw_release_dekker_race PROPERTIES PASS_REGULAR_EXPRESSION "PASS: mrsw_release_dekker_race|SKIP mrsw_release_dekker_race")
-
-add_arts_test(mrsw_grant_empty_drain)
-register_single_node_test(mrsw_grant_empty_drain TIMEOUT 60)
-register_multinode_test(mrsw_grant_empty_drain TIMEOUT 60)
-set_tests_properties(mrsw_grant_empty_drain PROPERTIES PASS_REGULAR_EXPRESSION "PASS: mrsw_grant_empty_drain|SKIP mrsw_grant_empty_drain")
-set_tests_properties(mrsw_grant_empty_drain_2n PROPERTIES PASS_REGULAR_EXPRESSION "PASS: mrsw_grant_empty_drain|SKIP mrsw_grant_empty_drain")
-
-add_arts_test(mrsw_owner_transfer_churn)
-register_multinode_test(mrsw_owner_transfer_churn TIMEOUT 60)
-set_tests_properties(mrsw_owner_transfer_churn_2n PROPERTIES PASS_REGULAR_EXPRESSION "PASS: mrsw_owner_transfer_churn|SKIP mrsw_owner_transfer_churn")
-
-add_arts_test(mrsw_destroy_release_race)
-register_single_node_test(mrsw_destroy_release_race TIMEOUT 60)
-register_multinode_test(mrsw_destroy_release_race TIMEOUT 60)
-set_tests_properties(mrsw_destroy_release_race PROPERTIES PASS_REGULAR_EXPRESSION "PASS: mrsw_destroy_release_race|SKIP mrsw_destroy_release_race")
-set_tests_properties(mrsw_destroy_release_race_2n PROPERTIES PASS_REGULAR_EXPRESSION "PASS: mrsw_destroy_release_race|SKIP mrsw_destroy_release_race")
-
-add_arts_test(mrsw_lazy_confirm_gate)
-register_single_node_test(mrsw_lazy_confirm_gate TIMEOUT 60)
-register_multinode_test(mrsw_lazy_confirm_gate TIMEOUT 60)
-set_tests_properties(mrsw_lazy_confirm_gate PROPERTIES PASS_REGULAR_EXPRESSION "PASS: mrsw_lazy_confirm_gate|SKIP mrsw_lazy_confirm_gate")
-set_tests_properties(mrsw_lazy_confirm_gate_2n_io PROPERTIES PASS_REGULAR_EXPRESSION "PASS: mrsw_lazy_confirm_gate|SKIP mrsw_lazy_confirm_gate")
-
-add_arts_test(mrsw_empty_map_transfer)
-register_multinode_test(mrsw_empty_map_transfer TIMEOUT 60)
-set_tests_properties(mrsw_empty_map_transfer_2n PROPERTIES PASS_REGULAR_EXPRESSION "PASS: mrsw_empty_map_transfer|SKIP mrsw_empty_map_transfer")
-
-add_arts_test(mrsw_lazy_transfer_map)
-register_multinode_test(mrsw_lazy_transfer_map TIMEOUT 60)
-set_tests_properties(mrsw_lazy_transfer_map_2n PROPERTIES PASS_REGULAR_EXPRESSION "PASS: mrsw_lazy_transfer_map|SKIP mrsw_lazy_transfer_map")
-
-add_arts_test(mrsw_eager_writeback_install)
-register_multinode_test(mrsw_eager_writeback_install TIMEOUT 60)
-set_tests_properties(mrsw_eager_writeback_install_2n PROPERTIES PASS_REGULAR_EXPRESSION "PASS: mrsw_eager_writeback_install|SKIP mrsw_eager_writeback_install")
-
-add_arts_test(mrsw_acquire_fastpath)
-register_single_node_test(mrsw_acquire_fastpath TIMEOUT 60)
-register_multinode_test(mrsw_acquire_fastpath TIMEOUT 60)
-set_tests_properties(mrsw_acquire_fastpath PROPERTIES PASS_REGULAR_EXPRESSION "PASS: mrsw_acquire_fastpath|SKIP mrsw_acquire_fastpath")
-set_tests_properties(mrsw_acquire_fastpath_2n PROPERTIES PASS_REGULAR_EXPRESSION "PASS: mrsw_acquire_fastpath|SKIP mrsw_acquire_fastpath")
-
-# T091 (C08) EXPOSES B-eager-no-invalidate-assumption: expected to FAIL (over-count / wrong
-# value or stranded writer) in MRSW+EAGER at >=2 ranks; self-skips elsewhere. Do not mask.
-add_arts_test(mrsw_eager_invalidate_during_install)
-register_multinode_test(mrsw_eager_invalidate_during_install TIMEOUT 60)
-
-add_arts_test(mrsw_eq_mrnew_results)
-register_single_node_test(mrsw_eq_mrnew_results TIMEOUT 60)
-register_multinode_test(mrsw_eq_mrnew_results TIMEOUT 60)
-foreach(_v "" _2n _3n _4n _2n_io)
-    set_tests_properties(mrsw_eq_mrnew_results${_v} PROPERTIES PASS_REGULAR_EXPRESSION "PASS: mrsw_eq_mrnew_results final=5050|SKIP mrsw_eq_mrnew_results")
-endforeach()
-
-# --- C09: LOCK protocol-specific ---
-# T093 EXPOSES B-lock-samerank-rw-grant-loss: expected to FAIL (hang) under LOCK; self-skips
+# --- C09: RWLOCK protocol-specific ---
+# T093 EXPOSES B-lock-samerank-rw-grant-loss: expected to FAIL (hang) under RWLOCK; self-skips
 # elsewhere. Do not mask.
-add_arts_test(lock_samerank_rw_grant_race)
-register_single_node_test(lock_samerank_rw_grant_race TIMEOUT 60)
-register_multinode_test(lock_samerank_rw_grant_race TIMEOUT 60)
+add_arts_test(rwlock_samerank_rw_grant_race)
+register_single_node_test(rwlock_samerank_rw_grant_race TIMEOUT 60)
+register_multinode_test(rwlock_samerank_rw_grant_race TIMEOUT 60)
 
 # T094 EXPOSES B-lock-multiconsumer-queue: expected to FAIL (lost GRANT / stranded writer)
-# under LOCK; valid RW-churn correctness check (no skip) elsewhere. Do not mask.
-add_arts_test(lock_multiconsumer_queue)
-register_single_node_test(lock_multiconsumer_queue TIMEOUT 60)
-register_multinode_test(lock_multiconsumer_queue TIMEOUT 60)
+# under RWLOCK; valid RW-churn correctness check (no skip) elsewhere. Do not mask.
+add_arts_test(rwlock_multiconsumer_queue)
+register_single_node_test(rwlock_multiconsumer_queue TIMEOUT 60)
+register_multinode_test(rwlock_multiconsumer_queue TIMEOUT 60)
 
-add_arts_test(lock_request_coalesce)
-register_single_node_test(lock_request_coalesce TIMEOUT 60)
-set_tests_properties(lock_request_coalesce PROPERTIES PASS_REGULAR_EXPRESSION "lock_request_coalesce: .* — PASS|SKIP lock_request_coalesce")
+add_arts_test(rwlock_request_coalesce)
+register_single_node_test(rwlock_request_coalesce TIMEOUT 60)
+set_tests_properties(rwlock_request_coalesce PROPERTIES PASS_REGULAR_EXPRESSION "rwlock_request_coalesce: .* — PASS|SKIP rwlock_request_coalesce")
 
 # T096 EXPOSES B-lock-destroy-during-acquire: expected to FAIL (unbalanced counter / stranded
-# waiter) under LOCK; self-skips elsewhere. Do not mask.
-add_arts_test(lock_destroy_during_acquire)
-register_single_node_test(lock_destroy_during_acquire TIMEOUT 60)
+# waiter) under RWLOCK; self-skips elsewhere. Do not mask.
+add_arts_test(rwlock_destroy_during_acquire)
+register_single_node_test(rwlock_destroy_during_acquire TIMEOUT 60)
 
-add_arts_test(lock_home_grant_d6_d7)
-register_single_node_test(lock_home_grant_d6_d7 TIMEOUT 60)
-register_multinode_test(lock_home_grant_d6_d7 TIMEOUT 60)
-set_tests_properties(lock_home_grant_d6_d7 PROPERTIES PASS_REGULAR_EXPRESSION "lock_home_grant_d6_d7 D7: .* — PASS|SKIP lock_home_grant_d6_d7")
-set_tests_properties(lock_home_grant_d6_d7_2n PROPERTIES PASS_REGULAR_EXPRESSION "lock_home_grant_d6_d7 D7: .* — PASS|SKIP lock_home_grant_d6_d7")
+add_arts_test(rwlock_home_grant_d6_d7)
+register_single_node_test(rwlock_home_grant_d6_d7 TIMEOUT 60)
+register_multinode_test(rwlock_home_grant_d6_d7 TIMEOUT 60)
+set_tests_properties(rwlock_home_grant_d6_d7 PROPERTIES PASS_REGULAR_EXPRESSION "rwlock_home_grant_d6_d7 D7: .* — PASS|SKIP rwlock_home_grant_d6_d7")
+set_tests_properties(rwlock_home_grant_d6_d7_2n PROPERTIES PASS_REGULAR_EXPRESSION "rwlock_home_grant_d6_d7 D7: .* — PASS|SKIP rwlock_home_grant_d6_d7")
 
-# T098 EXPOSES B-lock-grant-destroyed: expected to FAIL (dropped GRANT / stall) under LOCK at
+# T098 EXPOSES B-lock-grant-destroyed: expected to FAIL (dropped GRANT / stall) under RWLOCK at
 
-# lock_req_before_create: protocol-agnostic, needs 3+ ranks (verbatim copy of the old
+# rwlock_req_before_create: protocol-agnostic, needs 3+ ranks (verbatim copy of the old
 # coherence_lock_req_before_create into the planned filename); register at 3n/4n.
-add_arts_test(lock_req_before_create)
-register_multinode_test(lock_req_before_create TIMEOUT 90 VARIANTS 3n 4n)
-set_tests_properties(lock_req_before_create_3n PROPERTIES PASS_REGULAR_EXPRESSION "PASS: [0-9]+ iterations completed|SKIP lock_req_before_create")
-set_tests_properties(lock_req_before_create_4n PROPERTIES PASS_REGULAR_EXPRESSION "PASS: [0-9]+ iterations completed|SKIP lock_req_before_create")
+add_arts_test(rwlock_req_before_create)
+register_multinode_test(rwlock_req_before_create TIMEOUT 90 VARIANTS 3n 4n)
+set_tests_properties(rwlock_req_before_create_3n PROPERTIES PASS_REGULAR_EXPRESSION "PASS: [0-9]+ iterations completed|SKIP rwlock_req_before_create")
+set_tests_properties(rwlock_req_before_create_4n PROPERTIES PASS_REGULAR_EXPRESSION "PASS: [0-9]+ iterations completed|SKIP rwlock_req_before_create")
 
-# lock_mode_mismatch_fatal: standalone driver paired by run_mode_mismatch.sh — NOT a plain
+# rwlock_mode_mismatch_fatal: standalone driver paired by run_mode_mismatch.sh — NOT a plain
 # ctest (like coherence_mode_mismatch). Build the binary only; no add_test registration.
-add_arts_test(lock_mode_mismatch_fatal)
+add_arts_test(rwlock_mode_mismatch_fatal)
 
-# --- C10: MRMW protocol-specific ---
-# mrmw_is_serialized: pure_unit, MRMW-only (self-skips else); links the real per-config libarts
+# --- C10: WRF_RCU protocol-specific ---
+# wrf_rcu_is_serialized: pure_unit, WRF_RCU-only (self-skips else); links the real per-config libarts
 # symbol, so it uses add_arts_test (not add_pure_unit_src) + register_pure_unit_test.
-add_arts_test(mrmw_is_serialized)
-register_pure_unit_test(mrmw_is_serialized TIMEOUT 30)
-set_tests_properties(mrmw_is_serialized PROPERTIES PASS_REGULAR_EXPRESSION "PASS mrmw_is_serialized|SKIP mrmw_is_serialized")
+add_arts_test(wrf_rcu_is_serialized)
+register_pure_unit_test(wrf_rcu_is_serialized TIMEOUT 30)
+set_tests_properties(wrf_rcu_is_serialized PROPERTIES PASS_REGULAR_EXPRESSION "PASS wrf_rcu_is_serialized|SKIP wrf_rcu_is_serialized")
 
-# T102 EXPOSES B-mrmw-writer-count-leak: expected to FAIL (stranded parked acquire) under MRMW
+# T102 EXPOSES B-wrf_rcu-writer-count-leak: expected to FAIL (stranded parked acquire) under WRF_RCU
 
-# T103 EXPOSES update_last_sent_max watermark hazard (latent): see status_note. MRMW, >=2 ranks.
-add_arts_test(mrmw_getdata_dedup)
-register_multinode_test(mrmw_getdata_dedup TIMEOUT 120)
+# T103 EXPOSES update_cached_version_max watermark hazard (latent): see status_note. WRF_RCU, >=2 ranks.
+add_arts_test(wrf_rcu_getdata_dedup)
+register_multinode_test(wrf_rcu_getdata_dedup TIMEOUT 120)
 
-# T104 EXPOSES in-place buf->version-vs-install hazard. MRMW, >=2 ranks.
-add_arts_test(mrmw_home_vs_nonhome_writer)
-register_multinode_test(mrmw_home_vs_nonhome_writer TIMEOUT 120)
+# T104 EXPOSES in-place buf->version-vs-install hazard. WRF_RCU, >=2 ranks.
+add_arts_test(wrf_rcu_home_vs_nonhome_writer)
+register_multinode_test(wrf_rcu_home_vs_nonhome_writer TIMEOUT 120)
 
-# T105 EXPOSES snapshot_request master==NULL/version=0 hazard. MRMW, >=2 ranks.
-add_arts_test(mrmw_sentinel_snapshot)
-register_multinode_test(mrmw_sentinel_snapshot TIMEOUT 120)
+# T105 EXPOSES snapshot_request master==NULL/version=0 hazard. WRF_RCU, >=2 ranks.
+add_arts_test(wrf_rcu_sentinel_snapshot)
+register_multinode_test(wrf_rcu_sentinel_snapshot TIMEOUT 120)
 
 
-add_arts_test(db_drf_promote_manual)
-register_multinode_test(db_drf_promote_manual TIMEOUT 120)
-set_tests_properties(db_drf_promote_manual_2n PROPERTIES PASS_REGULAR_EXPRESSION "db_drf_promote_manual: PASS|SKIP db_drf_promote_manual")
+add_arts_test(db_wrf_promote_manual)
+register_multinode_test(db_wrf_promote_manual TIMEOUT 120)
+set_tests_properties(db_wrf_promote_manual_2n PROPERTIES PASS_REGULAR_EXPRESSION "db_wrf_promote_manual: PASS|SKIP db_wrf_promote_manual")
 
 # --- C11: snapshot / writeback-ack / destroy-notify / dispatcher-parity (config_specific,
 # but census asks for multinode variants to expose the wire reorder; register both) ---
-# T108 EXPOSES B014/B028. Non-LOCK (snapshot-bearing); self-skips under LOCK.
+# T108 EXPOSES B014/B028. Non-RWLOCK (snapshot-bearing); self-skips under RWLOCK.
 add_arts_test(snapshot_response_3case)
 register_single_node_test(snapshot_response_3case TIMEOUT 120)
 register_multinode_test(snapshot_response_3case TIMEOUT 120)
 
-# T109 EXPOSES B017/B018. EAGER + MRMW; self-skips under LAZY/LOCK.
+# T109 EXPOSES B017/B018. EAGER + WRF_RCU; self-skips under LAZY/RWLOCK.
 add_arts_test(writeback_ack_post_on_miss)
 register_single_node_test(writeback_ack_post_on_miss TIMEOUT 120)
 register_multinode_test(writeback_ack_post_on_miss TIMEOUT 120)
 
-# T110 EXPOSES B018 (LOCK_RELEASE_ACK). LOCK only; self-skips elsewhere.
-add_arts_test(lock_release_ack_post_on_miss)
-register_single_node_test(lock_release_ack_post_on_miss TIMEOUT 120)
-register_multinode_test(lock_release_ack_post_on_miss TIMEOUT 120)
+# T110 EXPOSES B018 (LOCK_RELEASE_ACK). RWLOCK only; self-skips elsewhere.
+add_arts_test(rwlock_release_ack_post_on_miss)
+register_single_node_test(rwlock_release_ack_post_on_miss TIMEOUT 120)
+register_multinode_test(rwlock_release_ack_post_on_miss TIMEOUT 120)
 
 
 # T112 EXPOSES B023 (self-send vs dispatcher parity). All protocols; needs 1n AND multinode.
@@ -575,7 +509,7 @@ register_multinode_test(self_send_vs_dispatcher_parity TIMEOUT 120)
 add_arts_test(create_coalesce)
 register_multinode_test(create_coalesce TIMEOUT 120)
 
-# T114 EXPOSES B019 (destroy-before-create defer). config_specific (non-LOCK), needs >=2 ranks.
+# T114 EXPOSES B019 (destroy-before-create defer). config_specific (non-RWLOCK), needs >=2 ranks.
 add_arts_test(destroy_before_create_defer)
 register_multinode_test(destroy_before_create_defer TIMEOUT 120)
 
@@ -586,7 +520,7 @@ register_multinode_test(cat_c_ref_balance TIMEOUT 120)
 set_tests_properties(cat_c_ref_balance PROPERTIES PASS_REGULAR_EXPRESSION "PASS: cat_c_ref_balance|SKIP cat_c_ref_balance")
 set_tests_properties(cat_c_ref_balance_2n PROPERTIES PASS_REGULAR_EXPRESSION "PASS: cat_c_ref_balance|SKIP cat_c_ref_balance")
 
-# T116 EXPOSES B017 (await_writeback_ack under shutdown). EAGER + MRMW; self-skips under LAZY/LOCK.
+# T116 EXPOSES B017 (await_writeback_ack under shutdown). EAGER + WRF_RCU; self-skips under LAZY/RWLOCK.
 # Normally PASSES (prints token before shutdown). 1n + multinode.
 add_arts_test(await_writeback_ack_shutdown)
 register_single_node_test(await_writeback_ack_shutdown TIMEOUT 120)
@@ -595,9 +529,6 @@ set_tests_properties(await_writeback_ack_shutdown PROPERTIES PASS_REGULAR_EXPRES
 set_tests_properties(await_writeback_ack_shutdown_2n PROPERTIES PASS_REGULAR_EXPRESSION "PASS: await_writeback_ack_shutdown reached shutdown|SKIP await_writeback_ack_shutdown")
 
 # --- C03r: route-table / GUID determinism ---
-add_arts_test(route_table_was_destroyed)
-register_single_node_test(route_table_was_destroyed TIMEOUT 60)
-set_tests_properties(route_table_was_destroyed PROPERTIES PASS_REGULAR_EXPRESSION "route_table_was_destroyed: ALL PASSED|SKIP route_table_was_destroyed")
 
 add_arts_test(guid_crossrank_determinism)
 register_multinode_test(guid_crossrank_determinism TIMEOUT 120)
@@ -1106,17 +1037,14 @@ add_pure_unit_src(event_drain_simple_idempotent PASS_REGEX "PASS event_drain_sim
 # configs).
 # ============================================================================
 
-# home_lockreq_queue: MRNEW/MRSW/LOCK (the .c #if-guards select the home.c arm; MRMW self-skips).
+# home_lockreq_queue: RCU/RWLOCK (the .c #if-guards select the home.c arm; WRF_RCU self-skips).
 add_pure_unit_src(home_lockreq_queue DEFINES ARTS_UNIT_STANDALONE_SHIMS PASS_REGEX "PASS home_lockreq_queue:|SKIP" TIMEOUT 60)
 
-# pending_rw_treiber: MRNEW only (self-skips else).
+# pending_rw_treiber: RCU only (self-skips else).
 add_pure_unit_src(pending_rw_treiber DEFINES ARTS_UNIT_STANDALONE_SHIMS PASS_REGEX "PASS pending_rw_treiber:|SKIP" TIMEOUT 60)
 
-# rw_waiter_queue_popone: MRSW only (self-skips else).
-add_pure_unit_src(rw_waiter_queue_popone DEFINES ARTS_UNIT_STANDALONE_SHIMS PASS_REGEX "PASS rw_waiter_queue_popone:|SKIP" TIMEOUT 60)
-
-# lock_compute_next: LOCK only (self-skips else).
-add_pure_unit_src(lock_compute_next DEFINES ARTS_UNIT_STANDALONE_SHIMS PASS_REGEX "PASS lock_compute_next:|SKIP" TIMEOUT 60)
+# rwlock_compute_next: RWLOCK only (self-skips else).
+add_pure_unit_src(rwlock_compute_next DEFINES ARTS_UNIT_STANDALONE_SHIMS PASS_REGEX "PASS rwlock_compute_next:|SKIP" TIMEOUT 60)
 
 # acquire_is_serialized (T068): needs_full_build — it does NOT #include a coherence .c; it
 # links the real arts_db_acquire_is_serialized symbol out of the per-config static libarts and
@@ -1215,7 +1143,7 @@ set_tests_properties(coherence_mixed_local_remote_2n_io PROPERTIES FAIL_REGULAR_
 foreach(_v 2n 3n 4n)
     set_tests_properties(coherence_multi_writer_dist_${_v} PROPERTIES
         FAIL_REGULAR_EXPRESSION "FAIL"
-        PASS_REGULAR_EXPRESSION "PASS: LOCK distributed arbitration|SKIP coherence_multi_writer_dist")
+        PASS_REGULAR_EXPRESSION "PASS: RWLOCK distributed arbitration|SKIP coherence_multi_writer_dist")
 endforeach()
 set_tests_properties(coherence_multi_writer_multi_db PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL")
 set_tests_properties(coherence_multi_writer_same_addr PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL")
@@ -1236,7 +1164,7 @@ set_tests_properties(coherence_rw_pipeline_2n_io PROPERTIES FAIL_REGULAR_EXPRESS
 set_tests_properties(coherence_rw_ro_rw PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL")
 # Intentionally racy: same-DB RW writers wired with no event ordering may observe
 # a stale value and print "MISMATCH (racy, expected)" — that is a legal outcome
-# under the app-ordered (DB-DRF) memory model, so it must NOT fail the test.  Only
+# under the app-ordered (DB-WRF) memory model, so it must NOT fail the test.  Only
 # a hard "FAIL" (NULL ptr / hang) is a real failure.
 set_tests_properties(coherence_rw_rw_chain_seal PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL")
 set_tests_properties(coherence_stress_single_node PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL")

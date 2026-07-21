@@ -54,25 +54,19 @@ endif()
 # Sets ${out} (caller scope) to the coherence model TU paths for (proto,timing),
 # RELATIVE to libs/src/core/. Mirrors libs/src/core/CMakeLists.txt selection.
 function(arts_coherence_model_tus out proto timing)
-    if(proto STREQUAL "MRMW")
-        set(tus coherence/mrmw/mrmw.c)
-    elseif(proto STREQUAL "LOCK")
+    if(proto STREQUAL "WRF_RCU")
+        set(tus coherence/wrf_rcu/wrf_rcu.c)
+    elseif(proto STREQUAL "RWLOCK")
         if(timing STREQUAL "LAZY")
-            set(tus coherence/lock/home.c coherence/lock/lazy.c)
+            set(tus coherence/rwlock/home.c coherence/rwlock/lazy.c)
         else()
-            set(tus coherence/lock/home.c coherence/lock/eager.c)
+            set(tus coherence/rwlock/home.c coherence/rwlock/eager.c)
         endif()
-    elseif(proto STREQUAL "MRSW")
+    else() # RCU
         if(timing STREQUAL "EAGER")
-            set(tus coherence/mrsw/eager.c coherence/mrsw/ownership.c coherence/mrsw/home.c coherence/mrsw/waiter_queue.c)
+            set(tus coherence/rcu/eager.c coherence/rcu/ownership.c coherence/rcu/home.c)
         else()
-            set(tus coherence/mrsw/lazy.c coherence/mrsw/ownership.c coherence/mrsw/home.c coherence/mrsw/waiter_queue.c)
-        endif()
-    else() # MRNEW
-        if(timing STREQUAL "EAGER")
-            set(tus coherence/mrnew/eager.c coherence/mrnew/ownership.c coherence/mrnew/home.c)
-        else()
-            set(tus coherence/mrnew/lazy.c coherence/mrnew/ownership.c coherence/mrnew/home.c)
+            set(tus coherence/rcu/lazy.c coherence/rcu/ownership.c coherence/rcu/home.c)
         endif()
     endif()
     set(${out} ${tus} PARENT_SCOPE)
@@ -80,24 +74,17 @@ endfunction()
 
 # Applies the protocol/timing compile definitions to <target> (PRIVATE).
 function(arts_apply_protocol target proto timing)
-    if(proto STREQUAL "MRMW")
-        target_compile_definitions(${target} PRIVATE ARTS_PROTOCOL_MRMW=1)
-    elseif(proto STREQUAL "LOCK")
-        target_compile_definitions(${target} PRIVATE ARTS_PROTOCOL_LOCK=1)
+    if(proto STREQUAL "WRF_RCU")
+        target_compile_definitions(${target} PRIVATE ARTS_PROTOCOL_WRF_RCU=1)
+    elseif(proto STREQUAL "RWLOCK")
+        target_compile_definitions(${target} PRIVATE ARTS_PROTOCOL_RWLOCK=1)
         if(timing STREQUAL "EAGER")
             target_compile_definitions(${target} PRIVATE ARTS_TIMING_EAGER=1)
         else()
             target_compile_definitions(${target} PRIVATE ARTS_TIMING_LAZY=1)
         endif()
-    elseif(proto STREQUAL "MRSW")
-        target_compile_definitions(${target} PRIVATE ARTS_PROTOCOL_MRSW=1)
-        if(timing STREQUAL "EAGER")
-            target_compile_definitions(${target} PRIVATE ARTS_TIMING_EAGER=1)
-        else()
-            target_compile_definitions(${target} PRIVATE ARTS_TIMING_LAZY=1)
-        endif()
-    else() # MRNEW
-        target_compile_definitions(${target} PRIVATE ARTS_PROTOCOL_MRNEW=1)
+    else() # RCU
+        target_compile_definitions(${target} PRIVATE ARTS_PROTOCOL_RCU=1)
         if(timing STREQUAL "EAGER")
             target_compile_definitions(${target} PRIVATE ARTS_TIMING_EAGER=1)
         else()
@@ -200,7 +187,7 @@ if(ARTS_BUILD_STATIC)
         target_link_libraries(arts_static PRIVATE arts::libfabric)
     endif()
 
-    arts_apply_protocol(arts_static ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
+    arts_apply_protocol(arts_static ${ARTS_COHERENCE_ARM} ${ARTS_PROTOCOL_TIMING})
 
     # Set library properties
     set_target_properties(arts_static PROPERTIES
@@ -291,7 +278,7 @@ if(ARTS_BUILD_SHARED)
             $<TARGET_PROPERTY:arts::libfabric,INTERFACE_INCLUDE_DIRECTORIES>)
     endif()
 
-    arts_apply_protocol(arts_shared ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
+    arts_apply_protocol(arts_shared ${ARTS_COHERENCE_ARM} ${ARTS_PROTOCOL_TIMING})
 
     # Set library properties
     set_target_properties(arts_shared PROPERTIES
@@ -365,7 +352,7 @@ if(BUILD_CUDA_LIBRARY)
             target_link_libraries(arts_cuda_static PRIVATE "-framework CoreFoundation" "-framework IOKit" "-framework OpenCL")
         endif()
 
-        arts_apply_protocol(arts_cuda_static ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
+        arts_apply_protocol(arts_cuda_static ${ARTS_COHERENCE_ARM} ${ARTS_PROTOCOL_TIMING})
 
         # Set library properties
         set_target_properties(arts_cuda_static PROPERTIES
@@ -441,7 +428,7 @@ if(BUILD_CUDA_LIBRARY)
             target_link_libraries(arts_cuda_shared PRIVATE "-framework CoreFoundation" "-framework IOKit" "-framework OpenCL")
         endif()
 
-        arts_apply_protocol(arts_cuda_shared ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
+        arts_apply_protocol(arts_cuda_shared ${ARTS_COHERENCE_ARM} ${ARTS_PROTOCOL_TIMING})
 
         # Set library properties
         set_target_properties(arts_cuda_shared PROPERTIES
@@ -477,8 +464,8 @@ if(ARTS_BUILD_BENCHMARKS AND ARTS_BUILD_STATIC)
                 else()
                     set(abs "${ldir}/${s}")
                 endif()
-                # skip coherence model TUs (mrnew/mrsw/lock/mrmw subdirs)
-                if(NOT abs MATCHES "/coherence/(mrnew|mrsw|lock|mrmw)/")
+                # skip coherence model TUs (rcu/rwlock/wrf_rcu subdirs)
+                if(NOT abs MATCHES "/coherence/(rcu|rwlock|wrf_rcu)/")
                     list(APPEND srcs "${abs}")
                 endif()
             endforeach()
@@ -517,13 +504,14 @@ if(ARTS_BUILD_BENCHMARKS AND ARTS_BUILD_STATIC)
             ARTS_NOHINT_EDT_ROUNDROBIN=${_ARTS_NOHINT_EDT_RR})
     endfunction()
 
-    arts_variant(mrnew_eager MRNEW EAGER)
-    arts_variant(mrnew_lazy  MRNEW LAZY)
-    arts_variant(mrsw_eager  MRSW  EAGER)
-    arts_variant(mrsw_lazy   MRSW  LAZY)
-    arts_variant(mrmw        MRMW  LAZY)
-    arts_variant(lock_eager  LOCK  EAGER)
-    arts_variant(lock_lazy   LOCK  LAZY)
+    # Suffix = <memory model>_<protocol>_<timing>; the second argument is the
+    # protocol ARM (the TU family): RCU/RWLOCK live under the OCR model,
+    # WRF_RCU is the RCU protocol under the DB-WRF model.
+    arts_variant(ocr_rcu_eager    RCU     EAGER)
+    arts_variant(ocr_rcu_lazy     RCU     LAZY)
+    arts_variant(ocr_rwlock_eager RWLOCK  EAGER)
+    arts_variant(ocr_rwlock_lazy  RWLOCK  LAZY)
+    arts_variant(wrf_rcu_eager    WRF_RCU EAGER)
 endif()
 
 # Link mimalloc-static when selected.  The OBJECT library arts_utils needs

@@ -41,7 +41,7 @@
 /// @brief T116 — await_writeback_ack escapes under shutdown; no UB on the stale
 ///        stack sem (B017).
 ///
-/// The eager/MRMW RW release tail blocks in `await_writeback_ack` on a
+/// The eager/WRF_RCU RW release tail blocks in `await_writeback_ack` on a
 /// stack-local sem_t until the home's WRITEBACK_ACK posts it by pointer
 /// identity.  Two failure modes are under test:
 ///   1. Lost-ACK under shutdown: once teardown starts the network receiver
@@ -61,17 +61,17 @@
 /// stale-stack post is an ASan use-after-free / SIGSEGV.
 ///
 /// Config gate: WRITEBACK_ACK + await_writeback_ack exist only under EAGER
-/// (MRNEW+EAGER, MRSW+EAGER) and MRMW — LAZY has no synchronous writeback, LOCK
-/// uses LOCK_RELEASE_ACK.  Compile-time self-skip on LAZY/LOCK.
+/// (RCU+EAGER) and WRF_RCU — LAZY has no synchronous writeback, RWLOCK
+/// uses LOCK_RELEASE_ACK.  Compile-time self-skip on LAZY/RWLOCK.
 
 #include "arts.h"
 
 #include <stdint.h>
 #include <stdio.h>
 
-#if defined(ARTS_PROTOCOL_LOCK) || defined(ARTS_TIMING_LAZY)
+#if defined(ARTS_PROTOCOL_RWLOCK) || defined(ARTS_TIMING_LAZY)
 int main(void) {
-  printf("SKIP await_writeback_ack_shutdown: EAGER (MRNEW+E/MRSW+E) + MRMW "
+  printf("SKIP await_writeback_ack_shutdown: EAGER (RCU+E) + WRF_RCU "
          "only\n");
   return 0;
 }

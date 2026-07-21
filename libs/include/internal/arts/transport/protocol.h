@@ -91,9 +91,9 @@ enum arts_msg_type {
    * Sequential append, no gaps. */
   MSG_DB_OWNERSHIP_CONFIRM_ACK,
 
-  /* LOCK-protocol coherence messages (REQUEST / GRANT / RELEASE / RELEASE_ACK).
-   * Only sent/received in ARTS_COHERENCE_PROTOCOL=LOCK builds; the
-   * dispatcher's LOCK cases are #ifdef-guarded.  Sequential append, no gaps. */
+  /* RWLOCK-protocol coherence messages (REQUEST / GRANT / RELEASE / RELEASE_ACK).
+   * Only sent/received in ARTS_COHERENCE_PROTOCOL=RWLOCK builds; the
+   * dispatcher's RWLOCK cases are #ifdef-guarded.  Sequential append, no gaps. */
   MSG_DB_LOCK_REQUEST,
   MSG_DB_LOCK_GRANT,
   MSG_DB_LOCK_RELEASE,
@@ -102,8 +102,8 @@ enum arts_msg_type {
    * so lock_home_grant cannot run before the new data is at home.  RO
    * releases are fire-and-forget and never send this message. */
   MSG_DB_LOCK_RELEASE_ACK,
-  /* LOCK-LAZY-only messages (FORWARD / DELIVER / CONFIRM / RORET).
-   * Used only in ARTS_COHERENCE_PROTOCOL=LOCK + ARTS_PROTOCOL_TIMING=LAZY
+  /* RWLOCK-LAZY-only messages (FORWARD / DELIVER / CONFIRM / RORET).
+   * Used only in ARTS_COHERENCE_PROTOCOL=RWLOCK + ARTS_PROTOCOL_TIMING=LAZY
    * builds.  Sequential append, no gaps. */
   MSG_DB_LOCK_FORWARD, /* home → current owner: serve RO reader or migrate RW */
   MSG_DB_LOCK_DELIVER, /* owner → target: data + mode (no version field) */
@@ -121,7 +121,7 @@ enum arts_msg_type {
                            writeback the releaser announced (WRITEBACK with
                            data_size>0, txid==0); the releaser PUTs then sends
                            the final WRITEBACK carrying the txid. */
-  MSG_DB_LOCK_CTS,      /* LOCK home → requester: db_size for a first-touch
+  MSG_DB_LOCK_CTS,      /* RWLOCK home → requester: db_size for a first-touch
                            LOCK_REQUEST that carried no landing. */
   MSG_RDZV_PUSH_RTS,    /* generic push (satisfy/memory-move) sender → target:
                            "size bytes incoming, advertise me a landing". */
@@ -257,12 +257,12 @@ struct ARTS_PACKED arts_msg_ownership_cts_packet_s {
 };
 
 /* OWNERSHIP_RESPONSE — the single ownership-transfer wire message, ONE layout
- * for both timings: a serialized last_sent_version map (map_entry_count pairs)
+ * for both timings: a serialized cached_version map (map_entry_count pairs)
  * rides INLINE after the header; the buffer payload does NOT ride the wire —
  * it travels one-sided (the old owner PUTs it into the landing the requester
  * advertised in its OWNERSHIP_REQUEST) and this packet pairs with that write
  * completion by rdzv_txid.  EAGER sends map_entry_count=0 (it dedups RO via
- * home's last_sent_version, not an owner-side map), LAZY serializes its
+ * home's cached_version, not an owner-side map), LAZY serializes its
  * owner-side map.
  *
  *   rdzv_txid != 0 : `data_size` payload bytes were PUT into the requester's
@@ -283,10 +283,6 @@ struct ARTS_PACKED arts_msg_ownership_response_packet_s {
   uint64_t data_size;   /* payload bytes PUT into the landing (0 = none) */
   uint64_t rdzv_txid;   /* write-completion pairing id (0 = no PUT) */
   uint64_t rdzv_cookie; /* requester's landing handle, echoed verbatim */
-  /* MRSW note: the TRANSFER_OWNERSHIP carries NO edt — it moves only the
-   * buffer + dedup map; the one EDT this round serves rides the subsequent home
-   * CONFIRM packet (which the new owner acts on once the directory names it).
-   */
   /* followed by:
    *   arts_msg_rank_version_pair_s pairs[map_entry_count];
    *   uint8_t data[data_size];   (self-dispatch only — wire payload is PUT)
@@ -483,7 +479,7 @@ struct ARTS_PACKED arts_msg_rdzv_push_cts_packet_s {
   struct arts_msg_rdzv_landing_s landing;
 };
 
-#ifdef ARTS_PROTOCOL_LOCK
+#ifdef ARTS_PROTOCOL_RWLOCK
 struct ARTS_PACKED arts_msg_lock_request_packet_s {
   struct arts_msg_header_s header;
   arts_guid_t db_guid;
@@ -551,9 +547,9 @@ struct ARTS_PACKED arts_msg_lock_release_ack_packet_s {
   uint64_t cv; /* releaser's sem_t address, forwarded verbatim from RELEASE */
 };
 
-/* ===== LOCK-LAZY-only wire packets =========================================
- * Sent only between ranks compiled with LOCK+LAZY.  Members unconditional;
- * structs inside the ARTS_PROTOCOL_LOCK guard so they share the LOCK types. */
+/* ===== RWLOCK-LAZY-only wire packets =========================================
+ * Sent only between ranks compiled with RWLOCK+LAZY.  Members unconditional;
+ * structs inside the ARTS_PROTOCOL_RWLOCK guard so they share the RWLOCK types. */
 #ifdef ARTS_TIMING_LAZY
 /* LOCK_FORWARD: home → current owner.  mode=DB_MODE_RW → migrate ownership to
  * target; mode=DB_MODE_RO → serve one RO reader at target.  Forwards the
@@ -569,7 +565,7 @@ struct ARTS_PACKED arts_msg_lock_forward_packet_s {
 /* LOCK_DELIVER: owner → target.  The DB data travels by PUT into the target's
  * landing; this packet pairs with the write completion by rdzv_txid
  * (rdzv_cookie echoes the target's landing handle, data_size counts the
- * landed bytes; txid==0 = data-less deliver).  NO version field — LOCK uses
+ * landed bytes; txid==0 = data-less deliver).  NO version field — RWLOCK uses
  * versionless buffer-install (exclusive-lock serialization guarantees no
  * stale write can race). */
 struct ARTS_PACKED arts_msg_lock_deliver_packet_s {
@@ -590,7 +586,7 @@ struct ARTS_PACKED arts_msg_lock_confirm_packet_s {
   arts_guid_t db_guid;
 };
 #endif /* ARTS_TIMING_LAZY */
-#endif /* ARTS_PROTOCOL_LOCK */
+#endif /* ARTS_PROTOCOL_RWLOCK */
 
 #include "arts/system/threads.h"
 

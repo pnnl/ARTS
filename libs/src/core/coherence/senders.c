@@ -27,7 +27,7 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "arts/coherence/coherence.h" /* mark_edt_ready_by_guid (MRSW destroy-notify wake) */
+#include "arts/coherence/coherence.h" /* mark_edt_ready_by_guid */
 #include "arts/db.h" /* struct arts_db_s (Cat-C self-send lookup-acquire) */
 #include "arts/gas/route_table.h" /* arts_route_table_lookup_db (Cat-C self-send) */
 #include "arts/ooo.h" /* arts_ooo_dispatch_or_defer_guid (self-send replay) */
@@ -43,9 +43,9 @@
  * OWNERSHIP_RESPONSE sender live in the protocol TUs (eager+lazy only): the
  * request / return / invalidate senders in coherence/ownership.c, the
  * OWNERSHIP_RESPONSE sender in coherence/eager.c (GRANT) and coherence/lazy.c
- * (TRANSFER_OWNERSHIP).  MRMW has no exclusive-ownership wire messages. */
+ * (TRANSFER_OWNERSHIP).  WRF_RCU has no exclusive-ownership wire messages. */
 
-#if !defined(ARTS_PROTOCOL_LOCK)
+#if !defined(ARTS_PROTOCOL_RWLOCK)
 void arts_send_db_writeback(unsigned int home_rank, arts_guid_t db_guid,
                             uint64_t version, uint64_t cv, const void *data,
                             uint64_t data_size, uint64_t rdzv_txid,
@@ -60,7 +60,7 @@ void arts_send_db_writeback(unsigned int home_rank, arts_guid_t db_guid,
   p.rdzv_txid = rdzv_txid;
   p.rdzv_cookie = rdzv_cookie;
 #if !defined(ARTS_TIMING_LAZY)
-  /* Self-send (home == self) — eager/MRMW only.  The lazy protocol has no
+  /* Self-send (home == self) — eager/WRF_RCU only.  The lazy protocol has no
    * synchronous writeback at all (its OOO_DB_WRITEBACK kind does not exist), so
    * this whole sender is statically excluded under the lazy build. */
   if (home_rank == arts_global_rank_id) {
@@ -99,7 +99,7 @@ void arts_send_db_writeback(unsigned int home_rank, arts_guid_t db_guid,
   arts_transport_send_async((int)home_rank, (char *)&p, sizeof(p));
 }
 
-#endif /* !ARTS_PROTOCOL_LOCK */
+#endif /* !ARTS_PROTOCOL_RWLOCK */
 
 /* WRITEBACK_CTS — home → releaser: a home landing for an announced dirty
  * writeback (a fresh buffer under the ownership/multi-writer protocols; the
@@ -122,10 +122,10 @@ void arts_send_db_writeback_cts(unsigned int releaser_rank, arts_guid_t db_guid,
 }
 
 /* WRITEBACK_ACK is the reply to a synchronous WRITEBACK round, which only the
- * eager and MRMW protocols use (the lazy protocol transfers ownership
+ * eager and WRF_RCU protocols use (the lazy protocol transfers ownership
  * owner→owner without a synchronous writeback, so it never sends or receives
  * WRITEBACK_ACK and its dispatcher fatals on the wire message). */
-#if !defined(ARTS_TIMING_LAZY) && !defined(ARTS_PROTOCOL_LOCK)
+#if !defined(ARTS_TIMING_LAZY) && !defined(ARTS_PROTOCOL_RWLOCK)
 void arts_send_db_writeback_ack(unsigned int releaser_rank, arts_guid_t db_guid,
                                 uint64_t cv) {
   struct arts_msg_writeback_ack_packet_s p;
@@ -147,9 +147,9 @@ void arts_send_db_writeback_ack(unsigned int releaser_rank, arts_guid_t db_guid,
   }
   arts_transport_send_async((int)releaser_rank, (char *)&p, sizeof(p));
 }
-#endif /* !ARTS_TIMING_LAZY && !ARTS_PROTOCOL_LOCK */
+#endif /* !ARTS_TIMING_LAZY && !ARTS_PROTOCOL_RWLOCK */
 
-#if !defined(ARTS_PROTOCOL_LOCK)
+#if !defined(ARTS_PROTOCOL_RWLOCK)
 void arts_send_db_snapshot_request(struct arts_db_cache_s *cache,
                                    arts_guid_t edt_guid, uint32_t slot) {
   arts_guid_t db_guid = cache->db_guid;
@@ -258,7 +258,7 @@ void arts_send_db_snapshot_response(unsigned int requester_rank,
   }
   arts_transport_send_async((int)requester_rank, (char *)&p, sizeof(p));
 }
-#endif /* !ARTS_PROTOCOL_LOCK */
+#endif /* !ARTS_PROTOCOL_RWLOCK */
 
 void arts_send_db_create_coherent(unsigned int home_rank, arts_guid_t db_guid,
                                   uint64_t db_size, uint16_t flags,
@@ -321,10 +321,10 @@ void arts_send_db_cache_destroy(unsigned int sharer_rank, arts_guid_t db_guid) {
   arts_transport_send_async((int)sharer_rank, (char *)&p, sizeof(p));
 }
 
-#ifdef ARTS_PROTOCOL_LOCK
+#ifdef ARTS_PROTOCOL_RWLOCK
 /* arts_send_db_lock_release_ack — LOCK_RELEASE_ACK: home → RW releaser.
  *
- * Mirrors arts_send_db_writeback_ack (MRNEW eager): forwards cv verbatim so
+ * Mirrors arts_send_db_writeback_ack (RCU eager): forwards cv verbatim so
  * the releaser's await_writeback_ack unblocks by pointer-identity sem_post.
  *
  * Cat-C SPECIAL self-send: posts the sem even when db==NULL (home cache
@@ -332,7 +332,7 @@ void arts_send_db_cache_destroy(unsigned int sharer_rank, arts_guid_t db_guid) {
  *
  * The sem_post inline (rather than calling arts_handler_db_writeback_ack)
  * avoids a cross-protocol link dependency: arts_handler_db_writeback_ack is
- * defined only in MRNEW/MRSW/MRMW TUs, not in the LOCK build. */
+ * defined only in RCU/WRF_RCU TUs, not in the RWLOCK build. */
 void arts_send_db_lock_release_ack(unsigned int releaser_rank,
                                    arts_guid_t db_guid, uint64_t cv) {
   struct arts_msg_lock_release_ack_packet_s p;
@@ -351,8 +351,8 @@ void arts_send_db_lock_release_ack(unsigned int releaser_rank,
   }
   arts_transport_send_async((int)releaser_rank, (char *)&p, sizeof(p));
 }
-#endif /* ARTS_PROTOCOL_LOCK */
+#endif /* ARTS_PROTOCOL_RWLOCK */
 
 /* The LAZY-only senders (CONFIRM, CONFIRM_ACK, REDIRECT_RO) live in
- * coherence/lazy.c alongside their handlers; the MRNEW OWNERSHIP_RESPONSE
+ * coherence/lazy.c alongside their handlers; the RCU OWNERSHIP_RESPONSE
  * senders live in coherence/eager.c / coherence/lazy.c. */

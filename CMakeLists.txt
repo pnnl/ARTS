@@ -68,7 +68,7 @@ add_compile_definitions(_DEFAULT_SOURCE _GNU_SOURCE)
 # 128-bit compare-and-swap, per architecture:
 #  - x86-64: cmpxchg16b, enabled by -mcx16.
 #  - ARM64 (AArch64): ARMv8.1-a LSE gives an inline lock-free `casp`.  Without
-#    it, 16-byte atomics fall back to a libatomic LOCK (NOT lock-free), which
+#    it, 16-byte atomics fall back to a libatomic lock (NOT lock-free), which
 #    would silently break the DWCAS contract.  (-moutline-atomics is the
 #    alternative if an ARMv8.0 baseline must be supported.)
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|amd64|AMD64")
@@ -186,37 +186,46 @@ cmake_dependent_option(ARTS_USE_LOCAL_CUDA_ARCHITECTURES
     "Auto-detect CUDA architectures from local GPUs using nvidia-smi" ON
     "ARTS_USE_GPU" OFF)
 
-# ── Coherence protocol (admission policy) + timing ─────────────────────────
+# ── Memory model × coherence protocol × timing ─────────────────────────────
 # Compile-time switches — one binary is exactly one configuration; all ranks in
-# a multinode run must use the same build. A memory model is a CONSEQUENCE of
-# the protocol, not a separate axis (see docs/programming_model/coherence_protocols.rst).
-#   ARTS_COHERENCE_PROTOCOL  MRNEW (default) — Multi-Reader, Node-Exclusive
-#                            Writer: intra-node multi-writer (HW + shared
-#                            buffer), inter-node single-owner lease. Implements
-#                            the OCR v1.2.0 §1.6 memory model.
-#                            MRMW — true multi-writer, whole-DB writeback; lossy
-#                            (DB-DRF contract, evaluation only).
-#   ARTS_PROTOCOL_TIMING     EAGER | LAZY (default) — when MRNEW performs its
-#                            consistency actions (release-time vs acquire-time).
-#                            Ignored by MRMW.
-set(ARTS_COHERENCE_PROTOCOL "MRNEW" CACHE STRING
-    "Coherence protocol (admission policy): MRNEW (default, = OCR), MRMW (DB-DRF, evaluation only), MRSW (single-writer; OCR-superset), or LOCK (lock-based Entry-Consistency)")
-set_property(CACHE ARTS_COHERENCE_PROTOCOL PROPERTY STRINGS MRNEW MRMW MRSW LOCK)
+# a multinode run must use the same build.
+#   ARTS_MEMORY_MODEL        OCR (default) — the OCR v1.2.0 §1.6 memory model:
+#                            races are legal; the runtime orders all conflicting
+#                            accesses it must (word-granular race semantics).
+#                            DB_WRF — write-race-free at datablock granularity:
+#                            the PROGRAM must order every write-write conflict
+#                            on a DB via events; read-write races keep the same
+#                            word-granular (regular-register) reader floor.
+#   ARTS_COHERENCE_PROTOCOL  RCU (default) — RCU-style: readers acquire
+#                            versioned snapshots and are never blocked by or
+#                            invalidated on behalf of writers; update-side
+#                            ordering comes from runtime ownership (OCR) or
+#                            from the program (DB_WRF).
+#                            RWLOCK — queue-fair distributed reader–writer lock
+#                            per DB (entry-consistency style): shared grants
+#                            ship read copies, exclusive release writes back.
+#   ARTS_PROTOCOL_TIMING     EAGER | LAZY (default) — when consistency actions
+#                            run: EAGER = release-time home writeback, LAZY =
+#                            acquire-time owner-to-owner transfer.
+# Valid combinations (everything else is a configure error):
+#   OCR    × RCU    × {EAGER, LAZY}
+#   OCR    × RWLOCK × {EAGER, LAZY}
+#   DB_WRF × RCU    × EAGER            (home-canonical sync writeback)
+set(ARTS_MEMORY_MODEL "OCR" CACHE STRING
+    "Memory model the build implements: OCR (default; races legal, runtime-ordered) or DB_WRF (program orders write-write conflicts per DB)")
+set_property(CACHE ARTS_MEMORY_MODEL PROPERTY STRINGS OCR DB_WRF)
+set(ARTS_COHERENCE_PROTOCOL "RCU" CACHE STRING
+    "Coherence protocol: RCU (default; versioned snapshots, readers never blocked/invalidated) or RWLOCK (per-DB distributed reader-writer lock)")
+set_property(CACHE ARTS_COHERENCE_PROTOCOL PROPERTY STRINGS RCU RWLOCK)
 set(ARTS_PROTOCOL_TIMING "LAZY" CACHE STRING
-    "Timing of MRNEW/MRSW consistency actions: EAGER or LAZY (default); ignored by MRMW")
+    "Timing of consistency actions: EAGER (release-time) or LAZY (acquire-time, default)")
 set_property(CACHE ARTS_PROTOCOL_TIMING PROPERTY STRINGS EAGER LAZY)
+option(ARTS_RO_REQUEST_COMBINING
+    "Combine concurrent same-DB remote read acquires into a single in-flight snapshot request per DB (RCU pull path; no effect under RWLOCK)" OFF)
 set(ARTS_MALLOC "mimalloc" CACHE STRING
     "General allocator: mimalloc (default, vendored static) or system (libc malloc)")
 set_property(CACHE ARTS_MALLOC PROPERTY STRINGS mimalloc system)
 
-# Migration guard: the memory-model build axis was removed.
-if(DEFINED ARTS_MEMORY_MODEL)
-  message(FATAL_ERROR
-    "ARTS_MEMORY_MODEL was removed — a memory model is a consequence of the "
-    "coherence protocol, not a build axis. Use "
-    "ARTS_COHERENCE_PROTOCOL={MRNEW,MRMW} (+ ARTS_PROTOCOL_TIMING={EAGER,LAZY} "
-    "for MRNEW). Mapping: OCR+EAGER->MRNEW+EAGER, OCR+LAZY->MRNEW+LAZY, RELAXED->MRMW.")
-endif()
 # ── Default DB storage kind ────────────────────────────────────────────────
 set(ARTS_DEFAULT_DB_KIND "ARTS_DB" CACHE STRING
     "Default DB storage kind the ARTS_DB_DEFAULT macro expands to: ARTS_DB (regular DRAM) or ARTS_DB_CXL (CXL shared)")
@@ -305,59 +314,87 @@ set(ARTS_COUNTER_CONFIG
     "${CMAKE_CURRENT_SOURCE_DIR}/configs/counters.cfg"
     CACHE FILEPATH "ARTS counter configuration file (parsed to generate introspection macros)")
 
-# ── Coherence-protocol validation + compile definitions ────────────────────
-if(NOT ARTS_COHERENCE_PROTOCOL STREQUAL "MRNEW" AND
-   NOT ARTS_COHERENCE_PROTOCOL STREQUAL "MRMW" AND
-   NOT ARTS_COHERENCE_PROTOCOL STREQUAL "MRSW" AND
-   NOT ARTS_COHERENCE_PROTOCOL STREQUAL "LOCK")
+# ── Memory-model × protocol × timing validation + arm derivation ───────────
+# The three user-facing axes reduce to one protocol ARM — the TU family that
+# gets compiled and the ARTS_PROTOCOL_* macro it defines:
+#   (OCR,    RCU,    E/L)   -> arm RCU      (coherence/rcu/,     ARTS_PROTOCOL_RCU)
+#   (OCR,    RWLOCK, E/L)   -> arm RWLOCK   (coherence/rwlock/,  ARTS_PROTOCOL_RWLOCK)
+#   (DB_WRF, RCU,    EAGER) -> arm WRF_RCU  (coherence/wrf_rcu/, ARTS_PROTOCOL_WRF_RCU)
+# ARTS_COHERENCE_ARM is internal — downstream CMake (TU selection, tests)
+# branches on the arm, never on the raw axes.
+# Migration guard: pre-rebranding single-axis values.
+if(ARTS_COHERENCE_PROTOCOL STREQUAL "MRNEW" OR ARTS_COHERENCE_PROTOCOL STREQUAL "MRMW" OR
+   ARTS_COHERENCE_PROTOCOL STREQUAL "MRSW" OR ARTS_COHERENCE_PROTOCOL STREQUAL "LOCK")
   message(FATAL_ERROR
-          "ARTS_COHERENCE_PROTOCOL must be MRNEW, MRMW, MRSW, or LOCK, got: ${ARTS_COHERENCE_PROTOCOL}")
+          "ARTS_COHERENCE_PROTOCOL=${ARTS_COHERENCE_PROTOCOL} was renamed. Use the "
+          "three-axis form: MRNEW -> ARTS_MEMORY_MODEL=OCR ARTS_COHERENCE_PROTOCOL=RCU; "
+          "LOCK -> ARTS_MEMORY_MODEL=OCR ARTS_COHERENCE_PROTOCOL=RWLOCK; "
+          "MRMW -> ARTS_MEMORY_MODEL=DB_WRF ARTS_COHERENCE_PROTOCOL=RCU "
+          "ARTS_PROTOCOL_TIMING=EAGER. MRSW was retired (archive/coherence-mrsw/).")
+endif()
+if(NOT ARTS_MEMORY_MODEL STREQUAL "OCR" AND NOT ARTS_MEMORY_MODEL STREQUAL "DB_WRF")
+  message(FATAL_ERROR
+          "ARTS_MEMORY_MODEL must be OCR or DB_WRF, got: ${ARTS_MEMORY_MODEL}")
+endif()
+if(NOT ARTS_COHERENCE_PROTOCOL STREQUAL "RCU" AND
+   NOT ARTS_COHERENCE_PROTOCOL STREQUAL "RWLOCK")
+  message(FATAL_ERROR
+          "ARTS_COHERENCE_PROTOCOL must be RCU or RWLOCK, got: ${ARTS_COHERENCE_PROTOCOL}")
 endif()
 if(NOT ARTS_PROTOCOL_TIMING STREQUAL "EAGER" AND
    NOT ARTS_PROTOCOL_TIMING STREQUAL "LAZY")
   message(FATAL_ERROR
           "ARTS_PROTOCOL_TIMING must be EAGER or LAZY, got: ${ARTS_PROTOCOL_TIMING}")
 endif()
-if(ARTS_COHERENCE_PROTOCOL STREQUAL "MRMW")
+if(ARTS_MEMORY_MODEL STREQUAL "DB_WRF")
+  if(ARTS_COHERENCE_PROTOCOL STREQUAL "RWLOCK")
+    message(FATAL_ERROR
+            "DB_WRF x RWLOCK is not a meaningful configuration: RWLOCK already "
+            "serializes writer-writer at runtime, so the DB-WRF program "
+            "obligation is redundant — use ARTS_MEMORY_MODEL=OCR "
+            "ARTS_COHERENCE_PROTOCOL=RWLOCK.")
+  endif()
+  if(ARTS_PROTOCOL_TIMING STREQUAL "LAZY")
+    message(FATAL_ERROR
+            "DB_WRF x RCU x LAZY is designed but unimplemented (owner-held "
+            "canonical copy, control-only release). The implemented DB_WRF "
+            "configuration is ARTS_PROTOCOL_TIMING=EAGER (home-canonical "
+            "sync writeback at release).")
+  endif()
+  set(ARTS_COHERENCE_ARM "WRF_RCU")
   message(WARNING
-          "ARTS_COHERENCE_PROTOCOL=MRMW selects the DB-DRF (lossy multi-writer) "
-          "protocol: visibility is guaranteed only along event happens-before, "
-          "and programs valid under the OCR memory model (which MRNEW provides) "
-          "may produce wrong results. Evaluation builds only — never a "
-          "correctness baseline. ARTS_PROTOCOL_TIMING is ignored.")
-elseif(ARTS_COHERENCE_PROTOCOL STREQUAL "LOCK")
-  # LOCK (lock-based, Entry-Consistency-style): a DB is held in one access mode
-  # at a time (RO-shared or RW-exclusive); reader/writer are time-exclusive;
+          "ARTS_MEMORY_MODEL=DB_WRF: write-write conflicts on a DB must be "
+          "event-ordered BY THE PROGRAM (whole-DB granularity — unordered "
+          "writers to disjoint regions of one DB are also outside the "
+          "contract). Programs valid under the OCR memory model may produce "
+          "wrong results here. Evaluation builds only — never a correctness "
+          "baseline.")
+  message(STATUS "ARTS: model DB_WRF, protocol RCU (arm WRF_RCU), timing EAGER")
+elseif(ARTS_COHERENCE_PROTOCOL STREQUAL "RWLOCK")
+  # RWLOCK (entry-consistency style): a DB is held in one access mode at a
+  # time (RO-shared or RW-exclusive); reader/writer are time-exclusive;
   # writers are passive (park, no invalidate push); all inter-node transitions
   # serialize through the GUID home's single lock_state word.
   #
-  # LOCK is its own protocol axis: define ARTS_PROTOCOL_LOCK plus the timing
-  # macro (ARTS_TIMING_EAGER or ARTS_TIMING_LAZY).  Do NOT define
-  # ARTS_TIMING_EAGER without also checking ARTS_PROTOCOL_LOCK first — the
-  # per-protocol selection chains (ooo.h, ooo.c, coherence/types.h) match
-  # ARTS_TIMING_EAGER ahead of the LOCK arm, so the LOCK build emits the timing
-  # macro in addition to ARTS_PROTOCOL_LOCK (not instead of it).
-  if(NOT ARTS_PROTOCOL_TIMING STREQUAL "EAGER" AND NOT ARTS_PROTOCOL_TIMING STREQUAL "LAZY")
-    message(FATAL_ERROR
-            "LOCK requires ARTS_PROTOCOL_TIMING=EAGER or LAZY (got: ${ARTS_PROTOCOL_TIMING})")
-  endif()
-  message(STATUS "ARTS coherence protocol: LOCK (lock-based, ${ARTS_PROTOCOL_TIMING})")
-elseif(ARTS_COHERENCE_PROTOCOL STREQUAL "MRSW")
-  # MRSW (Multi-Reader, Single-Writer): rank-granular on the MRNEW engine, with
-  # the local active-writer count capped at one (a single writer_count {2,1,0}
-  # encoding sentinel+token).  Like MRNEW it honours the OCR memory model
-  # (incidentally stronger) and uses the EAGER/LAZY timing axis.
-  if(ARTS_PROTOCOL_TIMING STREQUAL "EAGER")
-    message(STATUS "ARTS coherence protocol: MRSW (single-writer), timing: EAGER")
-  else()
-    message(STATUS "ARTS coherence protocol: MRSW (single-writer), timing: LAZY (default)")
-  endif()
-else() # MRNEW
-  if(ARTS_PROTOCOL_TIMING STREQUAL "EAGER")
-    message(STATUS "ARTS coherence protocol: MRNEW (= OCR), timing: EAGER")
-  else()
-    message(STATUS "ARTS coherence protocol: MRNEW (= OCR), timing: LAZY (default)")
-  endif()
+  # The arm defines ARTS_PROTOCOL_RWLOCK plus the timing macro
+  # (ARTS_TIMING_EAGER or ARTS_TIMING_LAZY).  Do NOT define ARTS_TIMING_EAGER
+  # without also checking ARTS_PROTOCOL_RWLOCK first — the per-protocol
+  # selection chains (ooo.h, ooo.c, coherence/types.h) match ARTS_TIMING_EAGER
+  # ahead of the RWLOCK arm, so the RWLOCK build emits the timing macro in
+  # addition to ARTS_PROTOCOL_RWLOCK (not instead of it).
+  set(ARTS_COHERENCE_ARM "RWLOCK")
+  message(STATUS "ARTS: model OCR, protocol RWLOCK, timing ${ARTS_PROTOCOL_TIMING}")
+else()
+  set(ARTS_COHERENCE_ARM "RCU")
+  message(STATUS "ARTS: model OCR, protocol RCU, timing ${ARTS_PROTOCOL_TIMING}")
+endif()
+if(ARTS_RO_REQUEST_COMBINING)
+  # Requester-side combining of the MVCC-family remote read path: while one
+  # snapshot request per DB is in flight, later same-rank read acquires park
+  # and share its response instead of issuing their own round trips.  Pure
+  # pull — no reader state at the home, no writer-side invalidation.
+  add_compile_definitions(ARTS_RO_REQUEST_COMBINING=1)
+  message(STATUS "ARTS RO request combining: ON (one in-flight snapshot request per DB)")
 endif()
 if(ARTS_MALLOC STREQUAL "mimalloc")
   add_compile_definitions(ARTS_MALLOC_MIMALLOC=1)

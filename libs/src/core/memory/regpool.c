@@ -183,6 +183,23 @@ static __thread mi_heap_t *t_heap;
 static __thread mi_arena_id_t t_arena;
 static __thread int t_node = -1;
 
+/* Per-(thread, arena) heap cache.  A heap, once created for an arena, is
+ * never deleted while the runtime runs: mi_heap_delete migrates live pages
+ * and returns all-free pages to the arena, and that page-retirement path
+ * races with lock-free cross-thread frees landing on the same pages (the
+ * abandon-vs-free window).  A cached live heap keeps owning its pages, so
+ * frees from any thread take mimalloc's ordinary supported path, and a later
+ * re-bind to the same arena reuses the heap (no stranded blocks, no
+ * footprint ratchet — the concerns that motivated deletion — since the heap
+ * remains reachable and allocatable). */
+#define REGPOOL_THREAD_HEAP_SLOTS 512
+typedef struct {
+  mi_arena_id_t arena;
+  mi_heap_t *heap;
+} regpool_theap_slot_t;
+static __thread regpool_theap_slot_t t_heap_cache[REGPOOL_THREAD_HEAP_SLOTS];
+static __thread unsigned t_heap_cache_count;
+
 /* ------------------------------------------------------------------------- */
 /* helpers                                                                     */
 /* ------------------------------------------------------------------------- */
@@ -457,20 +474,33 @@ static void *regpool_alloc_direct(size_t size, size_t align, int node) {
   return base;
 }
 
-/* Re-bind the calling thread's heap to `arena`.  The previous heap MUST be
- * deleted, not abandoned by overwrite: deletion migrates its live pages to
- * the main heap (bookkeeping only — blocks stay in place) and returns its
- * fully-empty pages to their arena, where a future heap bound to that arena
- * can reuse them.  An overwritten heap would strand every freed block it
- * still owned, and repeated re-binds would ratchet the pool's footprint up
- * monotonically while its satisfiable space shrank. */
+/* Re-bind the calling thread's heap to `arena` via the per-thread heap
+ * cache: switch to the arena's cached heap, creating it on first use.  See
+ * the cache's comment for why heaps are never deleted mid-run. */
 static bool regpool_thread_bind(mi_arena_id_t arena, int node) {
-  if (t_heap != NULL)
-    mi_heap_delete(t_heap);
-  t_heap = mi_heap_new_in_arena(arena);
+  mi_heap_t *h = NULL;
+  for (unsigned i = 0; i < t_heap_cache_count; i++) {
+    if (t_heap_cache[i].arena == arena) {
+      h = t_heap_cache[i].heap;
+      break;
+    }
+  }
+  if (h == NULL) {
+    h = mi_heap_new_in_arena(arena);
+    if (h == NULL)
+      return false;
+    if (t_heap_cache_count < REGPOOL_THREAD_HEAP_SLOTS) {
+      t_heap_cache[t_heap_cache_count].arena = arena;
+      t_heap_cache[t_heap_cache_count].heap = h;
+      t_heap_cache_count++;
+    }
+    /* Cache overflow leaves the heap uncached but live: correctness is
+     * unaffected, a re-bind simply creates another heap. */
+  }
+  t_heap = h;
   t_arena = arena;
   t_node = node;
-  return t_heap != NULL;
+  return true;
 }
 
 /* Sweep the existing arena slabs newest-first (the newest is the least

@@ -14,8 +14,8 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-RUNTIME_ORDER = ["mrnew_eager", "mrnew_lazy", "mrsw_eager", "mrsw_lazy", "mrmw",
-                 "lock_eager", "lock_lazy", "xsocr", "ocrvx"]
+RUNTIME_ORDER = ["ocr_rcu_eager", "ocr_rcu_lazy", "wrf_rcu_eager",
+                 "ocr_rwlock_eager", "ocr_rwlock_lazy", "xsocr", "ocrvx"]
 CFG_ORDER = {
     "strong": ["1n_sc", "2n_sc", "4n_sc", "8n_sc"],
     "weak":   ["1n_sc", "2n_sc", "4n_sc", "8n_sc"],
@@ -81,7 +81,7 @@ def _median(xs):
 
 
 def report_single(rows, outdir):
-    """The "single" experiment: every app at 1n x 48 workers, arts(mrnew_lazy)
+    """The "single" experiment: every app at 1n x 48 workers, arts(ocr_rcu_lazy)
     vs xsocr vs ocr-vx.  Rows carry one line per accepted ITERATION, so each
     cell aggregates to median/min/max.  Emits a per-app comparison table
     sorted by the worst arts-vs-ref ratio, plus the arts teardown gap
@@ -98,7 +98,7 @@ def report_single(rows, outdir):
         per[(r["bench"], r["runtime"])].append((e, w, r["status"]))
 
     benches = sorted({b for (b, _) in per})
-    rts = ["mrnew_lazy", "xsocr", "ocrvx"]
+    rts = ["ocr_rcu_lazy", "xsocr", "ocrvx"]
 
     def agg(bench, rt):
         entries = per.get((bench, rt), [])
@@ -205,19 +205,19 @@ def main():
     for exp in EXPERIMENTS:
         bc = base_cfg[exp]
         out.append(f"\n### {exp}  @ {bc}   e2e(s), and eager/lazy ratio, arts_lazy vs xsocr/ocrvx")
-        out.append(f"  {'bench':<26}{'mrnew_l':>9}{'mrnew_e':>9}{'e/l':>6}"
+        out.append(f"  {'bench':<26}{'rcu_l':>9}{'rcu_e':>9}{'e/l':>6}"
                    f"{'lock_l':>9}{'lock_e':>9}{'xsocr':>9}{'ocrvx':>9}")
         for bench in benches:
             g = lambda rt: E.get((exp, bench, bc, rt))
-            ml, me = g("mrnew_lazy"), g("mrnew_eager")
-            ll, le = g("lock_lazy"), g("lock_eager")
+            ml, me = g("ocr_rcu_lazy"), g("ocr_rcu_eager")
+            ll, le = g("ocr_rwlock_lazy"), g("ocr_rwlock_eager")
             xs, ov = g("xsocr"), g("ocrvx")
             el = f"{me/ml:.1f}x" if (ml and me) else "  -"
             out.append(f"  {bench:<26}{fmt(ml):>9}{fmt(me):>9}{el:>6}"
                        f"{fmt(ll):>9}{fmt(le):>9}{fmt(xs):>9}{fmt(ov):>9}")
 
     # ---- (3) coherence-counter analysis: network + EDT spread -> comm-cliff ----
-    out.append(section("(3)  COHERENCE COUNTERS  (arts mrnew_lazy; total remote bytes & "
+    out.append(section("(3)  COHERENCE COUNTERS  (arts ocr_rcu_lazy; total remote bytes & "
                        "per-rank EDT spread)"))
     # index metrics by (exp,bench,cfg,rt)
     M = {(m["experiment"], m["bench"], m["config"], m["runtime"]): m for m in metrics}
@@ -226,11 +226,11 @@ def main():
             cfgs = CFG_ORDER[exp]
             hdr_done = False
             for c in cfgs:
-                m = M.get((exp, bench, c, "mrnew_lazy"))
+                m = M.get((exp, bench, c, "ocr_rcu_lazy"))
                 if not m:
                     continue
                 if not hdr_done:
-                    out.append(f"\n### {bench}  [{exp}]  (mrnew_lazy)")
+                    out.append(f"\n### {bench}  [{exp}]  (ocr_rcu_lazy)")
                     out.append(f"  {'config':>7}{'e2e_s':>8}{'remote_MB':>11}"
                                f"{'remote_sends':>13}{'edt_finish(min..max/rank)':>28}")
                     hdr_done = True

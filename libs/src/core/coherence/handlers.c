@@ -57,24 +57,24 @@
 
 /* ===== Home-side handlers ========================================== */
 
-/* arts_handler_db_ownership_request lives in coherence/ownership.c (MRNEW
- * only — MRMW has no OWNERSHIP_REQUEST / GRANT round). */
+/* arts_handler_db_ownership_request lives in coherence/ownership.c (RCU
+ * only — WRF_RCU has no OWNERSHIP_REQUEST / GRANT round). */
 
 /* arts_handler_db_snapshot_request (GET_DATA) is protocol-specific —
- * EAGER/MRMW serve from home's canonical buffer (dedup), LAZY records the
+ * EAGER/WRF_RCU serve from home's canonical buffer (dedup), LAZY records the
  * sharer + REDIRECTs to the owner — so its whole body lives in
- * coherence/{eager,lazy,mrmw}.c. */
+ * coherence/{eager,lazy,wrf_rcu}.c. */
 
-/* arts_handler_db_writeback (+_ack) is protocol-specific — EAGER/MRMW install
+/* arts_handler_db_writeback (+_ack) is protocol-specific — EAGER/WRF_RCU install
  * + ACK (pure: ownership transfer is a separate owner→owner OWNERSHIP_RESPONSE
  * ship), LAZY has no synchronous writeback (no-op fillers preserve the
  * OoO-table / link parity) — so their whole bodies live in
- * coherence/{eager,lazy,mrmw}.c. */
+ * coherence/{eager,lazy,wrf_rcu}.c. */
 
 /* arts_handler_db_destroy is protocol-specific — the roster fan-out source
- * differs (eager/MRMW walk home->last_sent_version; lazy walks rw_holder +
+ * differs (eager/WRF_RCU walk home->cached_version; lazy walks rw_holder +
  * cached_ranks + pending_rw) — so its whole body lives in
- * coherence/{eager,lazy,mrmw}.c.  All three skeletons run the roster fan-out,
+ * coherence/{eager,lazy,wrf_rcu}.c.  All three skeletons run the roster fan-out,
  * then arts_route_table_set_destroyed; any waiter left parked at destroy time
  * (UB per OCR) is cleaned up by the refcount-0 cache destructor. */
 
@@ -92,7 +92,7 @@ static inline void db_create_no_acquire_idle(struct arts_db_s *db,
   if (!no_acquire) {
     return;
   }
-#if defined(ARTS_PROTOCOL_LOCK)
+#if defined(ARTS_PROTOCOL_RWLOCK)
 #if defined(ARTS_TIMING_LAZY)
   /* LAZY: data lives with the owner, not the home.  With no creator hold there
    * is no owner unless we make one — so the home rank (this rank; the create
@@ -203,7 +203,7 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
     arts_db_cache_init(&stub->cache, db_guid, db_size,
                        ARTS_DB_INIT_CREATOR_HOME, creator_rank);
     /* Collapse the create-time creator hold to the idle/sentinel state:
-     * MRNEW/MRSW drop writer_count 2 -> 1 (sentinel only); LOCK frees the
+     * RCU drop writer_count 2 -> 1 (sentinel only); RWLOCK frees the
      * lock+cache state so the first OWNERSHIP_REQUEST / LOCK_REQUEST is granted
      * rather than blocked behind a hold no EDT will ever release. */
     db_create_no_acquire_idle(stub, no_acquire);
@@ -214,7 +214,7 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
   } else {
     arts_db_cache_init(&stub->cache, db_guid, db_size, ARTS_DB_INIT_HOME_RECV,
                        creator_rank);
-    /* Case-D leaf: MRMW installs a version-1 zero buffer now (home is
+    /* Case-D leaf: WRF_RCU installs a version-1 zero buffer now (home is
      * canonical, no creator writeback to wait for); eager/lazy defer the
      * install to the creator's first WRITEBACK (no-op here). */
     arts_db_create_install_home_buffer(&stub->cache, db_size);
@@ -259,7 +259,7 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
 
 /* The EAGER GRANT handler arts_handler_db_ownership_response lives in
  * coherence/eager.c; LAZY's TRANSFER_OWNERSHIP overload lives in
- * coherence/lazy.c; MRMW has no ownership transfer (dispatcher fatals). */
+ * coherence/lazy.c; WRF_RCU has no ownership transfer (dispatcher fatals). */
 
 /* Cat-C pure body (DATA_RESPONSE).  The wire dispatcher / self-send shortcut
  * has already looked the home db_s up with a held ref and passes it as item_v
@@ -276,7 +276,7 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
  *   3. NO_DATA + a->version > buf->version : the with-data reply was
  *      reordered behind us — push self onto pending_snapshot (a future
  *      case-2 install drains us) + re-check (race recovery).
- * Shared verbatim by eager/lazy/MRMW (MRMW routes RW through here too). */
+ * Shared verbatim by eager/lazy/WRF_RCU (WRF_RCU routes RW through here too). */
 /* Consume an in-flight rendezvous whose receiver-side object is gone: the
  * metadata packet arrived for a destroyed target, so nobody will ever expect
  * the txid — register a discard continuation that returns the landing's
@@ -302,7 +302,7 @@ void arts_db_rdzv_discard_landing(uint64_t txid, uint64_t cookie) {
   arts_net_rdzv_expect(txid, rdzv_discard_cb, ctx);
 }
 
-#if !defined(ARTS_PROTOCOL_LOCK)
+#if !defined(ARTS_PROTOCOL_RWLOCK)
 /* Rendezvous continuation for a data-bearing DATA_RESPONSE: the snapshot
  * payload has fully landed in our advertised landing ("imm seen => landing
  * valid").  Install it without a copy (version-conditional; a stale landing
@@ -336,6 +336,9 @@ static void snapshot_landed_cb(void *arg) {
                              ctx->data_size);
   arts_db_drain_pending_snapshot(cache);
   mark_edt_ready_by_guid(ctx->edt_guid, ctx->slot);
+#ifdef ARTS_RO_REQUEST_COMBINING
+  arts_db_ro_combine_on_terminal(cache, true, ctx->version);
+#endif
   arts_shared_release(&ctx->db_h);
   arts_free(ctx);
 }
@@ -395,6 +398,9 @@ void arts_handler_db_snapshot_response(void *item_v, void *args_v) {
   if (a->version <= buf_v) {
     /* Case 1: nothing newer to install — resume self. */
     mark_edt_ready_by_guid(edt_guid, slot);
+#ifdef ARTS_RO_REQUEST_COMBINING
+    arts_db_ro_combine_on_terminal(cache, true, a->version);
+#endif
     return;
   }
   if (a->data_present) {
@@ -403,10 +409,19 @@ void arts_handler_db_snapshot_response(void *item_v, void *args_v) {
     arts_db_buf_install(cache, a->version, a->data, a->data_size);
     arts_db_drain_pending_snapshot(cache);
     mark_edt_ready_by_guid(edt_guid, slot);
+#ifdef ARTS_RO_REQUEST_COMBINING
+    arts_db_ro_combine_on_terminal(cache, true, a->version);
+#endif
     return;
   }
   /* Case 3: NO_DATA arrived ahead of the with-data reply.  Park a
    * reorder-buffer node; a later case-2 install drains it. */
+#ifdef ARTS_RO_REQUEST_COMBINING
+  /* The in-flight batch shares the leader's fate.  Park it on the reorder
+   * buffer BEFORE the leader's own park so the recovery recheck below covers
+   * the whole batch. */
+  arts_db_ro_combine_on_terminal(cache, false, a->version);
+#endif
   struct arts_db_snapshot_waiter_s *w =
       (struct arts_db_snapshot_waiter_s *)arts_malloc(sizeof(*w));
   w->edt_guid = edt_guid;
@@ -430,17 +445,17 @@ void arts_handler_db_snapshot_response(void *item_v, void *args_v) {
     arts_db_drain_pending_snapshot(cache);
   }
 }
-#endif /* !ARTS_PROTOCOL_LOCK */
+#endif /* !ARTS_PROTOCOL_RWLOCK */
 
 /* arts_handler_db_ownership_invalidate (INVALIDATE_NOTICE) lives per protocol:
  * coherence/eager.c (commutative signed counter) and coherence/lazy.c
- * (publish-target-then-withdraw).  MRMW never sends INVALIDATE (dispatcher
+ * (publish-target-then-withdraw).  WRF_RCU never sends INVALIDATE (dispatcher
  * fatals). */
 
-/* arts_handler_db_writeback_ack is protocol-specific — EAGER/MRMW post the
+/* arts_handler_db_writeback_ack is protocol-specific — EAGER/WRF_RCU post the
  * releaser's stack-local sem_t (pointer identity), LAZY has no synchronous
  * writeback (no-op filler for OoO-table / link parity) — so its whole body
- * lives in coherence/{eager,lazy,mrmw}.c. */
+ * lives in coherence/{eager,lazy,wrf_rcu}.c. */
 
 /* Cat-C pure body (DESTROY_NOTIFY).  The wire dispatcher / self-send shortcut
  * has already looked the cache up with a held ref and passes the db_s as item_v

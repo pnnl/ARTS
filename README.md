@@ -59,8 +59,9 @@ All options are set on the cmake line with `-D<NAME>=<VALUE>`, e.g.
 | `ARTS_BUILD_DOCS` | `OFF` | Build the Doxygen + Sphinx documentation. |
 | `ARTS_USE_GPU` | `OFF` | Enable CUDA GPU support (builds `libarts_cuda`). |
 | `ARTS_USE_LOCAL_CUDA_ARCHITECTURES` | `ON` | When GPU is on, auto-detect the local GPU's CUDA architecture via `nvidia-smi`. Only meaningful with `ARTS_USE_GPU=ON`; pair with the stock `CMAKE_CUDA_ARCHITECTURES` (e.g. `-DCMAKE_CUDA_ARCHITECTURES="80;86"`) to set SM targets by hand. |
-| `ARTS_COHERENCE_PROTOCOL` | `MRNEW` | Coherence protocol (admission policy) — `MRNEW` (default, Multi-Reader Node-Exclusive Writer; implements the OCR v1.2.0 §1.6 contract) or `MRMW` (true multi-writer, lossy DB-DRF; evaluation only — emits a configure warning). Compile-time; all ranks must share one build. |
-| `ARTS_PROTOCOL_TIMING` | `LAZY` | Timing of consistency actions (meaningful only for `MRNEW`) — `LAZY` (acquire-time, default) or `EAGER` (release-time). Ignored under `MRMW`. |
+| `ARTS_MEMORY_MODEL` | `OCR` | Memory model — `OCR` (default; implements the OCR v1.2.0 §1.6 contract) or `DB_WRF` (write-race-free at DB granularity: the program must event-order every write-write conflict on a DB; evaluation only — emits a configure warning). Compile-time; all ranks must share one build. |
+| `ARTS_COHERENCE_PROTOCOL` | `RCU` | Coherence protocol — `RCU` (default; readers acquire versioned snapshots, never blocked/invalidated) or `RWLOCK` (per-DB distributed reader-writer lock). Valid combos: OCR×RCU×{E,L}, OCR×RWLOCK×{E,L}, DB_WRF×RCU×EAGER. |
+| `ARTS_PROTOCOL_TIMING` | `LAZY` | Timing of consistency actions — `LAZY` (acquire-time, default) or `EAGER` (release-time). |
 | `ARTS_DEFAULT_DB_KIND` | `ARTS_DB` | Default DB storage kind that the `ARTS_DB_DEFAULT` macro expands to — `ARTS_DB` (regular DRAM) or `ARTS_DB_CXL` (CXL shared). |
 | `ARTS_USE_CXL` | `OFF` | Enable CXL shared-memory DataBlocks (requires the Rapid API). |
 | `ARTS_CXL_RAPID_INCLUDE_DIR` | — | Path to the Rapid API include dir (required when `ARTS_USE_CXL=ON`). |

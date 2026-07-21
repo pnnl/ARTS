@@ -44,19 +44,19 @@
 /// finish event fires; (2) correctness — every reader observes the writer's
 /// installed value (a dropped/duplicated drain would show a stale read).
 ///
-/// runtime_multinode, non-LOCK: the snapshot reorder buffer is the RO-acquire
-/// mechanism for MRNEW/MRSW/MRMW.  LOCK has its own RO acquire/release path
+/// runtime_multinode, non-RWLOCK: the snapshot reorder buffer is the RO-acquire
+/// mechanism for RCU/WRF_RCU.  RWLOCK has its own RO acquire/release path
 /// (no pending_snapshot reorder buffer), so self-skips.  On a single node the
 /// readers are local hits (no snapshot path) and the test passes trivially.
 
 #include "arts.h"
 
-#if defined(ARTS_PROTOCOL_LOCK)
+#if defined(ARTS_PROTOCOL_RWLOCK)
 
 #include <stdio.h>
 
 int main(void) {
-  printf("SKIP snapshot_drain_case3: non-LOCK only (LOCK has no snapshot "
+  printf("SKIP snapshot_drain_case3: non-RWLOCK only (RWLOCK has no snapshot "
          "reorder buffer)\n");
   return 0;
 }

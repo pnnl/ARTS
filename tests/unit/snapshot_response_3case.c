@@ -64,17 +64,17 @@
 /// caught by the ctest TIMEOUT (no in-test spin).
 ///
 /// Config gate: SNAPSHOT_RESPONSE is a snapshot-bearing protocol message that
-/// exists only in the non-LOCK builds (MRNEW/MRSW/MRMW route RO through the
-/// snapshot path).  LOCK has no snapshot machinery → compile-time self-skip.
+/// exists only in the non-RWLOCK builds (RCU/WRF_RCU route RO through the
+/// snapshot path).  RWLOCK has no snapshot machinery → compile-time self-skip.
 
 #include "arts.h"
 
 #include <stdint.h>
 #include <stdio.h>
 
-#if defined(ARTS_PROTOCOL_LOCK)
+#if defined(ARTS_PROTOCOL_RWLOCK)
 int main(void) {
-  printf("SKIP snapshot_response_3case: non-LOCK (snapshot-bearing) only\n");
+  printf("SKIP snapshot_response_3case: non-RWLOCK (snapshot-bearing) only\n");
   return 0;
 }
 #else
@@ -204,4 +204,4 @@ int main(int argc, char **argv) {
   return 0;
 }
 
-#endif /* ARTS_PROTOCOL_LOCK */
+#endif /* ARTS_PROTOCOL_RWLOCK */

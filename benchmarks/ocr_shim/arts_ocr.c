@@ -406,13 +406,27 @@ static void collective_edge_event_ensure(arts_guid_t edge) {
  * keyed by the collective event GUID (the OCR-visible identifier) → the
  * metadata DB GUID holding this node's per-collective state.
  *
- * Concurrency model:
- *   - `edtGuid` is published via __sync_bool_compare_and_swap (full
- *     barrier).  `metaDbGuid` is a plain store BEFORE the CAS so the CAS
- *     itself is the publication point: any thread observing edtGuid is
- *     guaranteed to see the paired metaDbGuid.
- *   - A TOMBSTONE marker lets unregister clear an entry without breaking
- *     the probe chain.
+ * Lock-free claim-then-publish contract:
+ *   - `key` is write-once: installed only by CAS(NULL→key), immutable after.
+ *     A slot is permanently bound to its key, so the probe chain never
+ *     shifts and a tombstoned slot is never reused for a DIFFERENT key
+ *     (key space is insert-only; distinct collectives are finite).
+ *   - `metaDbGuid` is the registration state and the ONLY shared word a
+ *     registrant writes, and only by CAS: a registrant fully builds its
+ *     private metadata DB first, then a single CAS(EMPTY→guid) with release
+ *     ordering IS the registration.  The CAS loser never touches the slot;
+ *     it destroys only its own redundant DB and adopts the winner's entry.
+ *   - Unregister is a single claim: CAS(guid→TOMBSTONE).  Only the claim
+ *     winner receives the guid, so within one registration generation the
+ *     paired destroy runs exactly once (the exact-compare CAS makes a
+ *     duplicate claim of the same guid fail).  A later same-key
+ *     registration may re-arm the slot from TOMBSTONE; a destroy is only
+ *     well-defined against the generation it targets, so callers must
+ *     order a destroy before any same-key re-create (the usual labeled
+ *     GUID lifecycle).
+ *   - Consumers load both words with acquire ordering, pairing with the
+ *     release publication (the winner's DB contents happen-before any
+ *     reader that observed its guid).
  * ========================================================================= */
 
 #define COLLECTIVE_HASH_SIZE 4096
@@ -442,8 +456,8 @@ typedef struct {
 } CollectiveMetadata;
 
 typedef struct {
-  volatile arts_guid_t edtGuid;
-  arts_guid_t metaDbGuid;
+  arts_guid_t key;        /* write-once via CAS(NULL->key) */
+  arts_guid_t metaDbGuid; /* EMPTY -> live guid -> TOMBSTONE, CAS-only */
 } CollectiveMapEntry;
 
 static CollectiveMapEntry collectiveMetaMap[COLLECTIVE_HASH_SIZE] = {{0, 0}};
@@ -461,55 +475,83 @@ static u32 collectiveHash(arts_guid_t guid) {
 
 static enum collective_register_result
 tryRegisterCollectiveMeta(arts_guid_t key, arts_guid_t metaDbGuid) {
+  /* Claim-then-publish.  The caller has fully built the DB behind metaDbGuid;
+   * the value CAS below is the sole publication (release, paired with the
+   * acquire loads in lookup/unregister).  On EXISTS the caller must destroy
+   * only its own DB — the slot is never written by a loser. */
   u32 idx = collectiveHash(key);
   for (u32 i = 0; i < COLLECTIVE_HASH_SIZE; i++) {
-    u32 probeIdx = (idx + i) % COLLECTIVE_HASH_SIZE;
-    arts_guid_t cur = collectiveMetaMap[probeIdx].edtGuid;
-
-    if (cur == NULL_GUID || cur == COLLECTIVE_TOMBSTONE) {
-      collectiveMetaMap[probeIdx].metaDbGuid = metaDbGuid;
-      if (__sync_bool_compare_and_swap(&collectiveMetaMap[probeIdx].edtGuid,
-                                       cur, key)) {
-        return COLLECTIVE_REGISTER_OK;
+    CollectiveMapEntry *e = &collectiveMetaMap[(idx + i) % COLLECTIVE_HASH_SIZE];
+    arts_guid_t curKey = __atomic_load_n(&e->key, __ATOMIC_ACQUIRE);
+    if (curKey == NULL_GUID) {
+      arts_guid_t expectKey = NULL_GUID;
+      if (__atomic_compare_exchange_n(&e->key, &expectKey, key, false,
+                                      __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        curKey = key;
+      } else {
+        curKey = expectKey; /* concurrently claimed; re-evaluate */
       }
     }
-
-    if (collectiveMetaMap[probeIdx].edtGuid == key) {
-      return COLLECTIVE_REGISTER_EXISTS;
+    if (curKey != key) {
+      continue; /* slot permanently bound to another key */
     }
+    /* this key's slot; registration = one CAS on the value word */
+    arts_guid_t curVal = __atomic_load_n(&e->metaDbGuid, __ATOMIC_ACQUIRE);
+    while (curVal == NULL_GUID || curVal == COLLECTIVE_TOMBSTONE) {
+      if (__atomic_compare_exchange_n(&e->metaDbGuid, &curVal, metaDbGuid,
+                                      false, __ATOMIC_RELEASE,
+                                      __ATOMIC_ACQUIRE)) {
+        return COLLECTIVE_REGISTER_OK;
+      }
+      /* curVal reloaded by the failed CAS */
+    }
+    return COLLECTIVE_REGISTER_EXISTS;
   }
   return COLLECTIVE_REGISTER_FULL;
 }
 
-static arts_guid_t lookupCollectiveMeta(arts_guid_t edtGuid) {
-  u32 idx = collectiveHash(edtGuid);
+static arts_guid_t lookupCollectiveMeta(arts_guid_t key) {
+  u32 idx = collectiveHash(key);
   for (u32 i = 0; i < COLLECTIVE_HASH_SIZE; i++) {
-    u32 probeIdx = (idx + i) % COLLECTIVE_HASH_SIZE;
-    arts_guid_t cur = collectiveMetaMap[probeIdx].edtGuid;
-    if (cur == edtGuid) {
-      return collectiveMetaMap[probeIdx].metaDbGuid;
+    CollectiveMapEntry *e = &collectiveMetaMap[(idx + i) % COLLECTIVE_HASH_SIZE];
+    arts_guid_t curKey = __atomic_load_n(&e->key, __ATOMIC_ACQUIRE);
+    if (curKey == key) {
+      arts_guid_t v = __atomic_load_n(&e->metaDbGuid, __ATOMIC_ACQUIRE);
+      return (v == COLLECTIVE_TOMBSTONE) ? NULL_GUID : v;
     }
-    if (cur == NULL_GUID) {
+    if (curKey == NULL_GUID) {
       return NULL_GUID;
     }
   }
   return NULL_GUID;
 }
 
-static arts_guid_t unregisterCollectiveMeta(arts_guid_t edtGuid) {
-  u32 idx = collectiveHash(edtGuid);
+static arts_guid_t unregisterCollectiveMeta(arts_guid_t key) {
+  /* Single claim: CAS(guid->TOMBSTONE).  Exactly one caller receives the
+   * guid, so within one registration generation the paired destroy runs
+   * exactly once.  Across a TOMBSTONE re-arm the claim binds to whatever
+   * generation is live at CAS time, so a destroy must be ordered before
+   * any same-key re-create. */
+  u32 idx = collectiveHash(key);
   for (u32 i = 0; i < COLLECTIVE_HASH_SIZE; i++) {
-    u32 probeIdx = (idx + i) % COLLECTIVE_HASH_SIZE;
-    arts_guid_t cur = collectiveMetaMap[probeIdx].edtGuid;
-    if (cur == edtGuid) {
-      arts_guid_t metaDb = collectiveMetaMap[probeIdx].metaDbGuid;
-      collectiveMetaMap[probeIdx].metaDbGuid = NULL_GUID;
-      collectiveMetaMap[probeIdx].edtGuid = COLLECTIVE_TOMBSTONE;
-      return metaDb;
-    }
-    if (cur == NULL_GUID) {
+    CollectiveMapEntry *e = &collectiveMetaMap[(idx + i) % COLLECTIVE_HASH_SIZE];
+    arts_guid_t curKey = __atomic_load_n(&e->key, __ATOMIC_ACQUIRE);
+    if (curKey == NULL_GUID) {
       return NULL_GUID;
     }
+    if (curKey != key) {
+      continue;
+    }
+    arts_guid_t curVal = __atomic_load_n(&e->metaDbGuid, __ATOMIC_ACQUIRE);
+    while (curVal != NULL_GUID && curVal != COLLECTIVE_TOMBSTONE) {
+      if (__atomic_compare_exchange_n(&e->metaDbGuid, &curVal,
+                                      COLLECTIVE_TOMBSTONE, false,
+                                      __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        return curVal;
+      }
+      /* curVal reloaded by the failed CAS */
+    }
+    return NULL_GUID;
   }
   return NULL_GUID;
 }

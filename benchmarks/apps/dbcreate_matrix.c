@@ -55,6 +55,7 @@
 #include "extensions/ocr-labeling.h"
 
 #include <stdbool.h>
+#include <stdlib.h>
 
 #define NUM_CELLS 12
 #define PAYLOAD_COUNT 4
@@ -333,7 +334,8 @@ ocrGuid_t cellrun_edt(u32 paramc, u64 *paramv, u32 depc, ocrEdtDep_t depv[]) {
   return NULL_GUID;
 }
 
-/* ---- range_maker_edt: paramv={rIndex}; depv[0]=rangesDB (RW, u64[R]).
+/* ---- range_maker_edt: paramv={rIndex}; depv[0]=rangesDB (RW, u64[R]),
+ * depv[1]=predecessor gate (NULL for the first maker).
  * Runs affinitized to the target home PD so the range it reserves is homed
  * there (see file header), then stores the range guid's raw scalar into its
  * own slot.  NOTE: the range guid is handed off through a real DB, never
@@ -355,7 +357,15 @@ ocrGuid_t range_maker_edt(u32 paramc, u64 *paramv, u32 depc,
 
 /* ---- setup_edt (FINISH): paramv={rangesDB, R}. Creates the R
  * range_maker_edts (each RW on rangesDB, hinted to its target PD); its
- * outputEvent fires once all R have written their slot. -------------------
+ * outputEvent fires once all R have written their slot.
+ *
+ * The makers are CHAINED (each gated on its predecessor's output event) so
+ * their same-DB writes are event-ordered: they write disjoint slots, but
+ * unordered sibling writers to one DB have defined results only under
+ * whole-DB write-exclusion -- a memory model whose writeback is whole-DB and
+ * lossy may keep just one sibling's image, dropping the other slots.  The
+ * chain keeps this bootstrap within the portable data-race-free contract on
+ * every backend at the cost of serializing a 3-EDT setup step. ------------
  */
 ocrGuid_t setup_edt(u32 paramc, u64 *paramv, u32 depc, ocrEdtDep_t depv[]) {
   (void)paramc;
@@ -365,7 +375,9 @@ ocrGuid_t setup_edt(u32 paramc, u64 *paramv, u32 depc, ocrEdtDep_t depv[]) {
   u64 r_count = paramv[1];
 
   ocrGuid_t rmtmpl;
-  ocrEdtTemplateCreate(&rmtmpl, range_maker_edt, 1, 1);
+  ocrEdtTemplateCreate(&rmtmpl, range_maker_edt, 1, 2);
+  ocrGuid_t rm[MAX_RANGES];
+  ocrGuid_t rm_done[MAX_RANGES];
   for (u64 r = 0; r < r_count; r++) {
     ocrHint_t h;
     ocrHintInit(&h, OCR_HINT_EDT_T);
@@ -373,20 +385,37 @@ ocrGuid_t setup_edt(u32 paramc, u64 *paramv, u32 depc, ocrEdtDep_t depv[]) {
     ocrAffinityGetAt(AFFINITY_PD, r, &aff);
     ocrSetHintValue(&h, OCR_HINT_EDT_AFFINITY, ocrAffinityToHintValue(aff));
     u64 rp[1] = {r};
-    ocrGuid_t rm;
-    ocrEdtCreate(&rm, rmtmpl, EDT_PARAM_DEF, rp, EDT_PARAM_DEF, NULL,
-                 EDT_PROP_NONE, &h, NULL);
-    ocrAddDependence(ranges_db, rm, 0, DB_MODE_RW);
+    ocrEdtCreate(&rm[r], rmtmpl, EDT_PARAM_DEF, rp, EDT_PARAM_DEF, NULL,
+                 EDT_PROP_NONE, &h, &rm_done[r]);
+  }
+  /* Wire every chain gate BEFORE any DB dep: a single-fire output event must
+   * be registered before its producer can run, and the DB satisfy below is
+   * what makes a maker runnable. */
+  for (u64 r = 0; r < r_count; r++) {
+    ocrAddDependence(r == 0 ? NULL_GUID : rm_done[r - 1], rm[r], 1,
+                     DB_MODE_NULL);
+  }
+  for (u64 r = 0; r < r_count; r++) {
+    ocrAddDependence(ranges_db, rm[r], 0, DB_MODE_RW);
   }
   return NULL_GUID;
 }
 
 /* ---- reduce_edt: depv[0]=cellrun's finish control, depv[1]=results DB
  * (RO). --------------------------------------------------------------- */
+static void launch_sweep(u64 rounds_left);
+
+/* paramv={rounds_left}. Sequential sweep repetitions (argv[1], default 1):
+ * each round re-runs the full 12-cell matrix with fresh DBs; only the last
+ * round reports and shuts down (turns the probe into a create-path stress).
+ * The round count chains through paramv -- EDTs may run on any PD. */
 ocrGuid_t reduce_edt(u32 paramc, u64 *paramv, u32 depc, ocrEdtDep_t depv[]) {
   (void)paramc;
-  (void)paramv;
   (void)depc;
+  if (paramv[0] > 1) {
+    launch_sweep(paramv[0] - 1);
+    return NULL_GUID;
+  }
   const u8 *results = (const u8 *)depv[1].ptr;
   u32 k = 0;
   for (u32 i = 0; i < NUM_CELLS; i++) {
@@ -397,12 +426,7 @@ ocrGuid_t reduce_edt(u32 paramc, u64 *paramv, u32 depc, ocrEdtDep_t depv[]) {
   return NULL_GUID;
 }
 
-ocrGuid_t mainEdt(u32 paramc, u64 *paramv, u32 depc, ocrEdtDep_t depv[]) {
-  (void)paramc;
-  (void)paramv;
-  (void)depc;
-  (void)depv;
-
+static void launch_sweep(u64 rounds_left) {
   u64 n = 0;
   ocrAffinityCount(AFFINITY_PD, &n);
   u64 r_count = (n >= MAX_RANGES) ? MAX_RANGES : n;
@@ -445,12 +469,26 @@ ocrGuid_t mainEdt(u32 paramc, u64 *paramv, u32 depc, ocrEdtDep_t depv[]) {
   ocrAddDependence(ranges_db, cellrun, 1, DB_MODE_RO);
 
   ocrGuid_t rdtmpl;
-  ocrEdtTemplateCreate(&rdtmpl, reduce_edt, 0, 2);
+  ocrEdtTemplateCreate(&rdtmpl, reduce_edt, 1, 2);
   ocrGuid_t reduce;
-  ocrEdtCreate(&reduce, rdtmpl, EDT_PARAM_DEF, NULL, EDT_PARAM_DEF, NULL,
+  ocrEdtCreate(&reduce, rdtmpl, EDT_PARAM_DEF, &rounds_left, EDT_PARAM_DEF, NULL,
                EDT_PROP_NONE, NULL_HINT, NULL);
   ocrAddDependence(cells_done, reduce, 0, DB_MODE_NULL);
   ocrAddDependence(results_db, reduce, 1, DB_MODE_RO);
+}
 
+ocrGuid_t mainEdt(u32 paramc, u64 *paramv, u32 depc, ocrEdtDep_t depv[]) {
+  (void)paramc;
+  (void)paramv;
+  (void)depc;
+
+  u64 rounds = 1;
+  if (ocrGetArgc(depv[0].ptr) > 1) {
+    u64 r = strtoull(ocrGetArgv(depv[0].ptr, 1), NULL, 10);
+    if (r >= 1) {
+      rounds = r;
+    }
+  }
+  launch_sweep(rounds);
   return NULL_GUID;
 }

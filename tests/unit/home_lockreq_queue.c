@@ -3,11 +3,11 @@
  * T064 — arts_home_lockreq_queue_{init,push,pop,peek,empty,destroy}
  *        (the home OWNERSHIP-REQUEST FIFO; a Vyukov MPSC, drain-one).
  *
- * This queue type is byte-identical in mrnew/home.c, mrsw/home.c, and
+ * This queue type is byte-identical in rcu/home.c and
  * lock/home.c — whichever home.c the build configures defines the bodies.  The
  * test #includes the matching protocol's home.c into a standalone TU (no ARTS
  * runtime; precedent: tests/unit/rank_bitset.c, edt_gpu.cu->edt.c) and is
- * validated under all three protocol defines.  Self-skips under MRMW (no
+ * validated under all three protocol defines.  Self-skips under WRF_RCU (no
  * ownership lease → no home lockreq queue compiled).
  *
  * Properties exercised:
@@ -21,21 +21,20 @@
  *      the consumer must observe each producer's values in increasing order).
  *      This also exercises the transient-NULL mid-link spin retry in pop().
  *
- * Build: -DARTS_PROTOCOL_MRNEW=1 (+ -DARTS_TIMING_LAZY=1 |
- * -DARTS_TIMING_EAGER=1) -DARTS_PROTOCOL_MRSW=1  (+ a timing)
- *        -DARTS_PROTOCOL_LOCK=1
+ * Build: -DARTS_PROTOCOL_RCU=1 (+ -DARTS_TIMING_LAZY=1 |
+ *        -DARTS_PROTOCOL_RWLOCK=1
  *   with -DARTS_UNIT_STANDALONE_SHIMS for the libc alloc shims.
  */
 
 #include <stdio.h>
 
-#if defined(ARTS_PROTOCOL_MRMW)
-/* MRMW carries no ownership lease → coherence.h does not even define the home
- * lockreq queue struct under MRMW, so the rest of this TU would not compile.
+#if defined(ARTS_PROTOCOL_WRF_RCU)
+/* WRF_RCU carries no ownership lease → coherence.h does not even define the home
+ * lockreq queue struct under WRF_RCU, so the rest of this TU would not compile.
  * Self-skip cleanly BEFORE pulling in any coherence header. */
 int main(void) {
   printf(
-      "PASS home_lockreq_queue: skipped under MRMW (no home lockreq queue in "
+      "PASS home_lockreq_queue: skipped under WRF_RCU (no home lockreq queue in "
       "this protocol)\n");
   return 0;
 }
@@ -274,13 +273,13 @@ void *arts_calloc(size_t nmemb, size_t size) { return calloc(nmemb, size); }
 void arts_free(void *ptr) { free(ptr); }
 void *arts_malloc(size_t size) { return malloc(size); }
 
-/* LOCK's home.c is monolithic: the same TU that defines the queue/bitset bodies
- * we test also defines the LOCK request/release/destroy HANDLERS, which
+/* RWLOCK's home.c is monolithic: the same TU that defines the queue/bitset bodies
+ * we test also defines the RWLOCK request/release/destroy HANDLERS, which
  * reference the broader runtime (transport, route table, buffer cb, identity).
  * T064 never invokes any of those — it only drives the queue API — so satisfy
  * the linker with inert stubs.  None are reachable from the test's call graph.
  */
-#if defined(ARTS_PROTOCOL_LOCK)
+#if defined(ARTS_PROTOCOL_RWLOCK)
 #include "arts/coherence/buffer.h"
 #include "arts/utils/shared.h"
 unsigned int arts_global_rank_id = 0;
@@ -340,17 +339,15 @@ bool arts_route_table_set_destroyed(arts_guid_t key) {
   (void)key;
   return false;
 }
-#endif /* ARTS_PROTOCOL_LOCK */
+#endif /* ARTS_PROTOCOL_RWLOCK */
 #endif
 
-#endif /* !ARTS_PROTOCOL_MRMW */
+#endif /* !ARTS_PROTOCOL_WRF_RCU */
 
 /* Pull in the protocol's home.c (defines the queue bodies).  Done at the end so
  * the test's own includes/decls are in scope first. */
-#if defined(ARTS_PROTOCOL_MRNEW)
-#include "core/coherence/mrnew/home.c"
-#elif defined(ARTS_PROTOCOL_MRSW)
-#include "core/coherence/mrsw/home.c"
-#elif defined(ARTS_PROTOCOL_LOCK)
-#include "core/coherence/lock/home.c"
+#if defined(ARTS_PROTOCOL_RCU)
+#include "core/coherence/rcu/home.c"
+#elif defined(ARTS_PROTOCOL_RWLOCK)
+#include "core/coherence/rwlock/home.c"
 #endif

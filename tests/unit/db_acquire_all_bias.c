@@ -63,8 +63,8 @@
 /// premature schedule corrupts a dep -> arts_abort, a lost decrement hangs ->
 /// ctest TIMEOUT.  Repeated for many iterations to widen the race window.
 ///
-/// ownership protocols (MRNEW/MRSW); needs >= 2 ranks for the remote-park arm.
-/// SKIPs cleanly single-node and under MRMW (no ownership park).  LOCK also
+/// ownership protocols (RCU); needs >= 2 ranks for the remote-park arm.
+/// SKIPs cleanly single-node and under WRF_RCU (no ownership park).  RWLOCK also
 /// serializes RW and parks remotely, so it runs there too.
 
 #include "arts.h"
@@ -121,8 +121,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== db_acquire_all_bias ===\n");
 
-#if defined(ARTS_PROTOCOL_MRMW)
-  arts_printf("SKIP db_acquire_all_bias: MRMW has no ownership park\n");
+#if defined(ARTS_PROTOCOL_WRF_RCU)
+  arts_printf("SKIP db_acquire_all_bias: WRF_RCU has no ownership park\n");
   arts_shutdown();
   return;
 #else

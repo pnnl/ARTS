@@ -84,17 +84,22 @@ All options are set with ``-D<NAME>=<VALUE>`` on the cmake line.
      - ON
      - Auto-detect the local GPU's CUDA architecture via ``nvidia-smi`` (only
        when ``ARTS_USE_GPU=ON``; otherwise set ``CMAKE_CUDA_ARCHITECTURES``).
+   * - ``ARTS_MEMORY_MODEL``
+     - OCR
+     - Memory model — ``OCR`` (default; implements the OCR v1.2.0 §1.6
+       contract) or ``DB_WRF`` (write-race-free at DB granularity; evaluation
+       only — emits a configure warning). Compile-time; all ranks must share
+       one build.
    * - ``ARTS_COHERENCE_PROTOCOL``
-     - MRNEW
-     - Admission policy — ``MRNEW`` (default, Multi-Reader Node-Exclusive Writer;
-       implements the OCR v1.2.0 §1.6 contract) or ``MRMW`` (true multi-writer,
-       lossy, DB-DRF only; evaluation only — emits a configure warning).
-       Compile-time; all ranks must share one build.
+     - RCU
+     - Coherence protocol — ``RCU`` (default; versioned snapshots, readers
+       never blocked/invalidated) or ``RWLOCK`` (per-DB distributed
+       reader-writer lock). Valid combos: OCR×RCU×{E,L}, OCR×RWLOCK×{E,L},
+       DB_WRF×RCU×EAGER.
    * - ``ARTS_PROTOCOL_TIMING``
      - LAZY
-     - Timing of consistency actions (meaningful only for ``MRNEW``) —
-       ``LAZY`` (acquire-time, default) or ``EAGER`` (release-time). Ignored
-       under ``MRMW``.
+     - Timing of consistency actions — ``LAZY`` (acquire-time, default) or
+       ``EAGER`` (release-time).
    * - ``ARTS_DEFAULT_DB_KIND``
      - ARTS_DB
      - Default DB storage kind the ``ARTS_DB_DEFAULT`` macro expands to:

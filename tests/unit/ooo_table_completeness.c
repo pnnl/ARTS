@@ -15,7 +15,7 @@
  *
  *  (2) EXACT PER-CONFIG KIND SET.  The model-agnostic kinds are always present;
  *      each build's OOO_DB_* arm wires only that protocol's coherence kinds
- *      (EAGER vs LAZY vs MRMW vs LOCK).  The test asserts each named enum maps
+ *      (EAGER vs LAZY vs WRF_RCU vs RWLOCK).  The test asserts each named enum maps
  *      to its expected handler (the OOO_<NAME> == arts_handler_<name> naming
  *      invariant) and that OOO_KIND_COUNT equals the count of kinds that
  *      protocol defines — pinning the per-config table shape.
@@ -55,7 +55,7 @@ MK_HANDLER(arts_handler_db_destroy)
 MK_HANDLER(arts_db_acquire_replay_dep)
 MK_HANDLER(arts_handler_db_snapshot_request)
 MK_HANDLER(arts_handler_db_writeback)
-#if defined(ARTS_PROTOCOL_LOCK)
+#if defined(ARTS_PROTOCOL_RWLOCK)
 MK_HANDLER(arts_handler_db_lock_request)
 #ifdef ARTS_TIMING_EAGER
 MK_HANDLER(arts_handler_db_lock_release)
@@ -95,11 +95,11 @@ static const struct expect_s g_expect[] = {
     E(OOO_EDT_DESTROY, arts_handler_edt_destroy),
     E(OOO_EVENT_DESTROY, arts_handler_event_destroy),
     E(OOO_DB_DESTROY, arts_handler_db_destroy),
-#if defined(ARTS_PROTOCOL_LOCK) && defined(ARTS_TIMING_EAGER)
+#if defined(ARTS_PROTOCOL_RWLOCK) && defined(ARTS_TIMING_EAGER)
     E(OOO_DB_ACQUIRE, arts_db_acquire_replay_dep),
     E(OOO_DB_LOCK_REQUEST, arts_handler_db_lock_request),
     E(OOO_DB_LOCK_RELEASE, arts_handler_db_lock_release),
-#elif defined(ARTS_PROTOCOL_LOCK) && defined(ARTS_TIMING_LAZY)
+#elif defined(ARTS_PROTOCOL_RWLOCK) && defined(ARTS_TIMING_LAZY)
     E(OOO_DB_ACQUIRE, arts_db_acquire_replay_dep),
     E(OOO_DB_LOCK_REQUEST, arts_handler_db_lock_request),
 #elif defined(ARTS_TIMING_EAGER)
@@ -111,7 +111,7 @@ static const struct expect_s g_expect[] = {
     E(OOO_DB_ACQUIRE, arts_db_acquire_replay_dep),
     E(OOO_DB_SNAPSHOT_REQUEST, arts_handler_db_snapshot_request),
     E(OOO_DB_OWNERSHIP_REQUEST, arts_handler_db_ownership_request),
-#elif defined(ARTS_PROTOCOL_MRMW)
+#elif defined(ARTS_PROTOCOL_WRF_RCU)
     E(OOO_DB_ACQUIRE, arts_db_acquire_replay_dep),
     E(OOO_DB_SNAPSHOT_REQUEST, arts_handler_db_snapshot_request),
     E(OOO_DB_WRITEBACK, arts_handler_db_writeback),
@@ -130,16 +130,16 @@ _Static_assert(OOO_KIND_COUNT == N_EXPECT,
 
 int main(void) {
   const char *cfg =
-#if defined(ARTS_PROTOCOL_LOCK) && defined(ARTS_TIMING_EAGER)
-      "LOCK+EAGER"
-#elif defined(ARTS_PROTOCOL_LOCK) && defined(ARTS_TIMING_LAZY)
-      "LOCK+LAZY"
+#if defined(ARTS_PROTOCOL_RWLOCK) && defined(ARTS_TIMING_EAGER)
+      "RWLOCK+EAGER"
+#elif defined(ARTS_PROTOCOL_RWLOCK) && defined(ARTS_TIMING_LAZY)
+      "RWLOCK+LAZY"
 #elif defined(ARTS_TIMING_EAGER)
       "MR*+EAGER"
 #elif defined(ARTS_TIMING_LAZY)
       "MR*+LAZY"
-#elif defined(ARTS_PROTOCOL_MRMW)
-      "MRMW"
+#elif defined(ARTS_PROTOCOL_WRF_RCU)
+      "WRF_RCU"
 #else
       "?"
 #endif

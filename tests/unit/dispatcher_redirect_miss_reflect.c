@@ -28,7 +28,7 @@
  *
  * Config gate: MSG_DB_SNAPSHOT_REDIRECT exists ONLY in the LAZY timing builds
  * (EAGER serves RO from home directly; the eager dispatcher fatals on REDIRECT;
- * LOCK/MRMW have no snapshot protocol at all).  Compile-time self-skip on
+ * RWLOCK/WRF_RCU have no snapshot protocol at all).  Compile-time self-skip on
  * everything that is not LAZY.
  */
 

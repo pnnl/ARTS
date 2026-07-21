@@ -16,9 +16,11 @@ set(OCR_EXT_DEFINES
     ENABLE_EXTENSION_RTITF
     ENABLE_EXTENSION_CHANNEL_EVT
     ENABLE_EXTENSION_COUNTED_EVT
-    # RSBench-only: gates its PD-distributed EDT affinity (main.c #if defined(...));
-    # the app's own Makefile defines it but ARTS's CMake had omitted it, pinning all
-    # RSBench EDTs to rank0. No other benchmark app references this macro.
+    # Gates the sharedDB benchmark's PD-distributed per-thread EDT affinity
+    # (#if defined(...) in its main.c); the app's own Makefile defines it but
+    # ARTS's CMake had omitted it, pinning every thread-EDT to rank0.
+    # Referenced by RSBench_intel_sharedDB only (xsbench_dist distributes via
+    # its SPMD fork instead).
     SINGLE_RUN_ACROSS_PD
 )
 
@@ -202,7 +204,7 @@ endif() # TARGET ocr_vdm_mpi
 #       [EXTRA_LINK_LIBS <lib> ...]     # extra link libraries (e.g. m)
 #   )
 #
-# Creates: <name>_arts_<suffix> (×7 coherence variants), <name>_xsocr, and (when compatible) <name>_ocrvx executables
+# Creates: <name>_arts_<suffix> (×5 coherence variants), <name>_xsocr, and (when compatible) <name>_ocrvx executables
 #       [OCRVX_SKIP]                    # suppress _ocrvx target (app uses unsupported OCR extensions)
 # ==========================================================================
 function(add_benchmark_app)
@@ -259,7 +261,7 @@ function(add_benchmark_app)
     target_compile_options(${APP_NAME}_xsocr PRIVATE ${BENCH_C_OPT} -w)
 
     # --- ARTS variants (one per coherence protocol) ---
-    set(ARTS_VARIANT_SUFFIXES mrnew_eager mrnew_lazy mrsw_eager mrsw_lazy mrmw lock_eager lock_lazy)
+    set(ARTS_VARIANT_SUFFIXES ocr_rcu_eager ocr_rcu_lazy ocr_rwlock_eager ocr_rwlock_lazy wrf_rcu_eager)
     foreach(sfx ${ARTS_VARIANT_SUFFIXES})
         add_executable(${APP_NAME}_arts_${sfx} ${ABS_SOURCES} ${LIB_OBJECTS}
                        $<TARGET_OBJECTS:ocr_arts_objects>)
@@ -342,6 +344,11 @@ add_benchmark_app(NAME printf
 add_benchmark_app(NAME quicksort
     DIR quicksort/ocr
     SOURCES quicksort.c
+)
+
+add_benchmark_app(NAME quicksort_dist
+    DIR quicksort/ocr
+    SOURCES quicksort_dist.c
 )
 
 add_benchmark_app(NAME nqueens
@@ -443,9 +450,23 @@ add_benchmark_app(NAME cholesky
     EXTRA_LINK_LIBS m
 )
 
+# Tiled Cholesky whose per-tile kernels are the standard CBLAS/LAPACKE calls
+# (dpotrf/dtrsm/dsyrk/dgemm), served by the third_party OpenBLAS submodule.
+add_benchmark_app(NAME cholesky_blas
+    DIR cholesky/ocr-mkl
+    SOURCES ocr_mkl_cholesky.c
+    EXTRA_LINK_LIBS arts::openblas m
+)
+
 add_benchmark_app(NAME fft
     DIR fft/ocr
     SOURCES fft.c verify.c
+    EXTRA_LINK_LIBS m
+)
+
+add_benchmark_app(NAME fft_dist
+    DIR fft/ocr
+    SOURCES fft_dist.c
     EXTRA_LINK_LIBS m
 )
 
@@ -541,20 +562,62 @@ add_benchmark_app(NAME hpcg_intel_Eager_Collective
 # Tier 7: Stencil variants
 # ==========================================================================
 
+# The chandra stencil source is dimension-parameterized (PROBLEM_TYPE 1|2)
+# and the upstream Stencil1D port left the header's default (2) in place, so
+# this target used to build the SAME 2-D problem as Stencil2D_intel_chandra.
+# Select the real 1-D problem here.
 add_benchmark_app(NAME Stencil1D_intel_chandra
     DIR Stencil1D/refactored/ocr/intel-chandra
     SOURCES stencil_1d.c timers.c
     LIBS reduction
+    EXTRA_DEFINES PROBLEM_TYPE=1
     EXTRA_LINK_LIBS m
 )
 
-# Stencil1D/intel-david: multiple code variants (each is a standalone app)
-# Note: only sticky and stickyLG use v1.2-compatible API; guid/once/channel
-# use old v1.0 API (NULL_GUID instead of NULL_HINT) and fail to compile.
+# Stencil1D/intel-david: multiple code variants (each is a standalone app),
+# one per event/dependence idiom (sticky / stickyLG labeled-guid / channel /
+# once / oncePI / guid / guidPI).  All ported to the current OCR API
+# (ocrGuidIsEq/ocrGuidIsNull instead of struct ==/!=, hint-bearing
+# ocrEdtCreate/ocrDbCreate signatures).
 add_benchmark_app(NAME stencil1D_sticky
     DIR Stencil1D/refactored/ocr/intel-david
     SOURCES stencil1Dsticky.c
 )
+
+
+add_benchmark_app(NAME stencil1D_channel
+    DIR Stencil1D/refactored/ocr/intel-david
+    SOURCES stencil1Dchannel.c
+)
+
+add_benchmark_app(NAME stencil1D_stickyLG
+    DIR Stencil1D/refactored/ocr/intel-david
+    SOURCES stencil1DstickyLG.c
+)
+
+add_benchmark_app(NAME stencil1D_guid
+    DIR Stencil1D/refactored/ocr/intel-david
+    SOURCES stencil1Dguid.c
+)
+
+add_benchmark_app(NAME stencil1D_guidPI
+    DIR Stencil1D/refactored/ocr/intel-david
+    SOURCES stencil1DguidPI.c
+)
+
+add_benchmark_app(NAME stencil1D_once
+    DIR Stencil1D/refactored/ocr/intel-david
+    SOURCES stencil1Donce.c
+)
+
+add_benchmark_app(NAME stencil1D_oncePI
+    DIR Stencil1D/refactored/ocr/intel-david
+    SOURCES stencil1DoncePI.c
+)
+
+
+
+
 
 add_benchmark_app(NAME Stencil2D_intel_chandra
     DIR Stencil2D/refactored/ocr/intel-chandra
@@ -605,6 +668,7 @@ add_benchmark_app(NAME hpgmg
     residual_edt.c restrict_edt.c smooth_edt.c interpolate_edt.c
     EXTRA_LINK_LIBS m
 )
+
 
 # ==========================================================================
 # Tier 10: MiniAMR variants
@@ -698,6 +762,17 @@ add_benchmark_app(NAME XSBench_intel_sharedDB
     EXTRA_LINK_LIBS m
 )
 
+# xsbench_dist: distributed sibling driver in the same source dir (the
+# quicksort_dist/fft_dist pattern) — true SPMD with one deterministic table
+# replica per rank; reuses the pristine physics/io sources unchanged.
+add_benchmark_app(NAME xsbench_dist
+    DIR XSBench/refactored/ocr/intel-sharedDB
+    SRC_SUBDIR src
+    SOURCES Main_dist.c io.c GridInit.c CalculateXS.c XSutils.c Materials.c timers.c
+    LIBS timer ocrAppUtils
+    EXTRA_LINK_LIBS m
+)
+
 # ==========================================================================
 # Tier 13: LCS variants
 # ==========================================================================
@@ -710,7 +785,7 @@ add_benchmark_app(NAME LCS_distributed_ST
 )
 # LCS uses bare "inline" (C11 = no external def) → fails at -O0; force GNU89 semantics
 target_compile_options(LCS_distributed_ST_xsocr PRIVATE -fgnu89-inline)
-foreach(sfx mrnew_eager mrnew_lazy mrsw_eager mrsw_lazy mrmw lock_eager lock_lazy)
+foreach(sfx ocr_rcu_eager ocr_rcu_lazy ocr_rwlock_eager ocr_rwlock_lazy wrf_rcu_eager)
     target_compile_options(LCS_distributed_ST_arts_${sfx} PRIVATE -fgnu89-inline)
 endforeach()
 if(TARGET LCS_distributed_ST_ocrvx)
@@ -724,7 +799,7 @@ add_benchmark_app(NAME LCS_shared
     EXTRA_LINK_LIBS m
 )
 target_compile_options(LCS_shared_xsocr PRIVATE -fgnu89-inline)
-foreach(sfx mrnew_eager mrnew_lazy mrsw_eager mrsw_lazy mrmw lock_eager lock_lazy)
+foreach(sfx ocr_rcu_eager ocr_rcu_lazy ocr_rwlock_eager ocr_rwlock_lazy wrf_rcu_eager)
     target_compile_options(LCS_shared_arts_${sfx} PRIVATE -fgnu89-inline)
 endforeach()
 if(TARGET LCS_shared_ocrvx)
@@ -1077,7 +1152,7 @@ if(HAS_CRLIBM)
         # reference to image_0/platform_0/pulse_0/...". */
         target_link_libraries(sar_${sar_size}_xsocr PRIVATE
             ${SAR_DATA_${sar_size}_OBJECTS})
-        foreach(sfx mrnew_eager mrnew_lazy mrsw_eager mrsw_lazy mrmw lock_eager lock_lazy)
+        foreach(sfx ocr_rcu_eager ocr_rcu_lazy ocr_rwlock_eager ocr_rwlock_lazy wrf_rcu_eager)
             target_link_libraries(sar_${sar_size}_arts_${sfx} PRIVATE
                 ${SAR_DATA_${sar_size}_OBJECTS})
             add_dependencies(sar_${sar_size}_arts_${sfx} sar_data_${sar_size}_objs)
@@ -1117,7 +1192,7 @@ add_benchmark_app(NAME stream
     EXTRA_LINK_LIBS pthread m
 )
 # stream.c has functions used before declaration (C11 error) — allow it
-foreach(sfx mrnew_eager mrnew_lazy mrsw_eager mrsw_lazy mrmw lock_eager lock_lazy)
+foreach(sfx ocr_rcu_eager ocr_rcu_lazy ocr_rwlock_eager ocr_rwlock_lazy wrf_rcu_eager)
     target_compile_options(stream_arts_${sfx} PRIVATE -Wno-error=implicit-function-declaration)
 endforeach()
 # target_compile_options(stream_xsocr PRIVATE -Wno-error=implicit-function-declaration)
@@ -1131,12 +1206,36 @@ add_benchmark_app(NAME stream_dist
     EXTRA_DEFINES STREAM_ARRAY_SIZE=1000 NUM_THREADS=2 NTIMES=3
     EXTRA_LINK_LIBS pthread m
 )
-foreach(sfx mrnew_eager mrnew_lazy mrsw_eager mrsw_lazy mrmw lock_eager lock_lazy)
+foreach(sfx ocr_rcu_eager ocr_rcu_lazy ocr_rwlock_eager ocr_rwlock_lazy wrf_rcu_eager)
     target_compile_options(stream_dist_arts_${sfx} PRIVATE -Wno-error=implicit-function-declaration)
 endforeach()
 # target_compile_options(stream_dist_xsocr PRIVATE -Wno-error=implicit-function-declaration)
 if(TARGET stream_dist_ocrvx)
     target_compile_options(stream_dist_ocrvx PRIVATE -Wno-error=implicit-function-declaration)
+endif()
+
+add_benchmark_app(NAME stream_org
+    DIR stream/ocr
+    SOURCES stream_org.c
+    EXTRA_LINK_LIBS pthread m
+)
+foreach(sfx ocr_rcu_eager ocr_rcu_lazy ocr_rwlock_eager ocr_rwlock_lazy wrf_rcu_eager)
+    target_compile_options(stream_org_arts_${sfx} PRIVATE -Wno-error=implicit-function-declaration)
+endforeach()
+if(TARGET stream_org_ocrvx)
+    target_compile_options(stream_org_ocrvx PRIVATE -Wno-error=implicit-function-declaration)
+endif()
+
+add_benchmark_app(NAME stream_sa
+    DIR stream/ocr
+    SOURCES stream_sa.c
+    EXTRA_LINK_LIBS pthread m
+)
+foreach(sfx ocr_rcu_eager ocr_rcu_lazy ocr_rwlock_eager ocr_rwlock_lazy wrf_rcu_eager)
+    target_compile_options(stream_sa_arts_${sfx} PRIVATE -Wno-error=implicit-function-declaration)
+endforeach()
+if(TARGET stream_sa_ocrvx)
+    target_compile_options(stream_sa_ocrvx PRIVATE -Wno-error=implicit-function-declaration)
 endif()
 
 add_benchmark_app(NAME uts
@@ -1162,7 +1261,7 @@ set_target_properties(release_sync_stress_xsocr PROPERTIES C_STANDARD 11 C_EXTEN
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 target_compile_options(release_sync_stress_xsocr PRIVATE ${BENCH_C_OPT} -w)
 
-foreach(sfx mrnew_eager mrnew_lazy mrsw_eager mrsw_lazy mrmw lock_eager lock_lazy)
+foreach(sfx ocr_rcu_eager ocr_rcu_lazy ocr_rwlock_eager ocr_rwlock_lazy wrf_rcu_eager)
     add_executable(release_sync_stress_arts_${sfx} ${RSS_SRC}
                    $<TARGET_OBJECTS:ocr_arts_objects>)
     target_include_directories(release_sync_stress_arts_${sfx} PRIVATE
@@ -1209,7 +1308,7 @@ set_target_properties(dbcreate_matrix_xsocr PROPERTIES C_STANDARD 11 C_EXTENSION
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 target_compile_options(dbcreate_matrix_xsocr PRIVATE ${BENCH_C_OPT} -w)
 
-foreach(sfx mrnew_eager mrnew_lazy mrsw_eager mrsw_lazy mrmw lock_eager lock_lazy)
+foreach(sfx ocr_rcu_eager ocr_rcu_lazy ocr_rwlock_eager ocr_rwlock_lazy wrf_rcu_eager)
     add_executable(dbcreate_matrix_arts_${sfx} ${DBCM_SRC}
                    $<TARGET_OBJECTS:ocr_arts_objects>)
     target_include_directories(dbcreate_matrix_arts_${sfx} PRIVATE
@@ -1246,3 +1345,94 @@ get_property(ALL_ARTS GLOBAL PROPERTY BENCHMARK_ARTS_TARGETS)
 # add_custom_target(benchmark_xsocr DEPENDS ${ALL_XSOCR})
 add_custom_target(benchmark_arts DEPENDS ${ALL_ARTS})
 add_custom_target(benchmark_apps DEPENDS benchmark_arts)
+
+# ==========================================================================
+# rwmix  (bespoke: source lives in this repo, not in ocr-apps)
+# Racy single-DB reader/writer contention probe: N gated task EDTs over one
+# data block, W of them RW, roles uniformly interleaved in creation order.
+# Prints ELAPSED_US from trigger to global completion.
+# ==========================================================================
+set(RWMIX_SRC "${CMAKE_CURRENT_SOURCE_DIR}/rwmix.c")
+
+add_executable(rwmix_xsocr ${RWMIX_SRC})
+target_include_directories(rwmix_xsocr PRIVATE
+    ${OCR_LIBS_ROOT}/macros/macros ${BENCH_OCR_OPTIONS_DIR})
+target_compile_definitions(rwmix_xsocr PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
+target_link_libraries(rwmix_xsocr PRIVATE ocr_xsocr_static pthread)
+target_link_options(rwmix_xsocr PRIVATE -no-pie -fno-pie)
+set_target_properties(rwmix_xsocr PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+target_compile_options(rwmix_xsocr PRIVATE ${BENCH_C_OPT} -w)
+
+foreach(sfx ocr_rcu_eager ocr_rcu_lazy ocr_rwlock_eager ocr_rwlock_lazy wrf_rcu_eager)
+    add_executable(rwmix_arts_${sfx} ${RWMIX_SRC}
+                   $<TARGET_OBJECTS:ocr_arts_objects>)
+    target_include_directories(rwmix_arts_${sfx} PRIVATE
+        ${OCR_LIBS_ROOT}/macros/macros ${BENCH_OCR_OPTIONS_DIR} ${OCR_INC_DIR})
+    target_compile_definitions(rwmix_arts_${sfx} PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
+    target_link_libraries(rwmix_arts_${sfx} PRIVATE arts_static_${sfx} pthread)
+    target_link_options(rwmix_arts_${sfx} PRIVATE -no-pie -fno-pie)
+    set_target_properties(rwmix_arts_${sfx} PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    target_compile_options(rwmix_arts_${sfx} PRIVATE ${BENCH_C_OPT} -w)
+endforeach()
+
+if(TARGET ocr_vdm_mpi)
+    add_executable(rwmix_ocrvx ${RWMIX_SRC})
+    target_include_directories(rwmix_ocrvx PRIVATE
+        ${OCR_LIBS_ROOT}/macros/macros ${OCRVX_OCR_INC})
+    target_compile_definitions(rwmix_ocrvx PRIVATE
+        ${OCR_EXT_DEFINES} "OCR_TYPE_H=vdm.h" OCR_ENABLE_EDT_NAMING)
+    target_link_libraries(rwmix_ocrvx PRIVATE ocr_vdm_mpi)
+    target_link_options(rwmix_ocrvx PRIVATE -no-pie -fno-pie)
+    set_target_properties(rwmix_ocrvx PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    target_compile_options(rwmix_ocrvx PRIVATE ${BENCH_C_OPT} -w
+        "-include" "${OCRVX_COMPAT_H}")
+endif()
+
+# ==========================================================================
+# rwrounds  (bespoke: source lives in this repo, not in ocr-apps)
+# Racy single-DB reader/writer contention probe: N gated task EDTs over one
+# data block, W of them RW, roles uniformly interleaved in creation order.
+# Prints ELAPSED_US from trigger to global completion.
+# ==========================================================================
+set(RWROUNDS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/rwrounds.c")
+
+add_executable(rwrounds_xsocr ${RWROUNDS_SRC})
+target_include_directories(rwrounds_xsocr PRIVATE
+    ${OCR_LIBS_ROOT}/macros/macros ${BENCH_OCR_OPTIONS_DIR})
+target_compile_definitions(rwrounds_xsocr PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
+target_link_libraries(rwrounds_xsocr PRIVATE ocr_xsocr_static pthread)
+target_link_options(rwrounds_xsocr PRIVATE -no-pie -fno-pie)
+set_target_properties(rwrounds_xsocr PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+target_compile_options(rwrounds_xsocr PRIVATE ${BENCH_C_OPT} -w)
+
+foreach(sfx ocr_rcu_eager ocr_rcu_lazy ocr_rwlock_eager ocr_rwlock_lazy wrf_rcu_eager)
+    add_executable(rwrounds_arts_${sfx} ${RWROUNDS_SRC}
+                   $<TARGET_OBJECTS:ocr_arts_objects>)
+    target_include_directories(rwrounds_arts_${sfx} PRIVATE
+        ${OCR_LIBS_ROOT}/macros/macros ${BENCH_OCR_OPTIONS_DIR} ${OCR_INC_DIR})
+    target_compile_definitions(rwrounds_arts_${sfx} PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
+    target_link_libraries(rwrounds_arts_${sfx} PRIVATE arts_static_${sfx} pthread)
+    target_link_options(rwrounds_arts_${sfx} PRIVATE -no-pie -fno-pie)
+    set_target_properties(rwrounds_arts_${sfx} PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    target_compile_options(rwrounds_arts_${sfx} PRIVATE ${BENCH_C_OPT} -w)
+endforeach()
+
+if(TARGET ocr_vdm_mpi)
+    add_executable(rwrounds_ocrvx ${RWROUNDS_SRC})
+    target_include_directories(rwrounds_ocrvx PRIVATE
+        ${OCR_LIBS_ROOT}/macros/macros ${OCRVX_OCR_INC})
+    target_compile_definitions(rwrounds_ocrvx PRIVATE
+        ${OCR_EXT_DEFINES} "OCR_TYPE_H=vdm.h" OCR_ENABLE_EDT_NAMING)
+    target_link_libraries(rwrounds_ocrvx PRIVATE ocr_vdm_mpi)
+    target_link_options(rwrounds_ocrvx PRIVATE -no-pie -fno-pie)
+    set_target_properties(rwrounds_ocrvx PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    target_compile_options(rwrounds_ocrvx PRIVATE ${BENCH_C_OPT} -w
+        "-include" "${OCRVX_COMPAT_H}")
+endif()
+

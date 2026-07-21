@@ -62,7 +62,7 @@
 /// (arts_abort).
 ///
 /// Config-agnostic: runs under every protocol (RW handoff is a no-op transfer
-/// under MRMW but the read-after-write chain still holds).
+/// under WRF_RCU but the read-after-write chain still holds).
 
 #include "arts.h"
 

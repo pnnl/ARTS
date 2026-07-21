@@ -119,7 +119,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== coherence_lazy_confirm_gate ===\n");
 
-#ifdef ARTS_PROTOCOL_MRMW
+#ifdef ARTS_PROTOCOL_WRF_RCU
   arts_printf("SKIP: RELAXED has no ownership transfer\n");
   arts_shutdown();
   return;

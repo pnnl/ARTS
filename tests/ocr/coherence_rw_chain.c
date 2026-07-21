@@ -9,7 +9,7 @@
  * satisfied) gives writer i+1 a happens-before edge to writer i: it acquires
  * the DB only after writer i released it, hence observes writer i's increment.
  * A plain (non-atomic) increment is therefore correct — the chain is strictly
- * ordered, not racy.  Across ranks this drives the LOCK-LAZY ownership
+ * ordered, not racy.  Across ranks this drives the RWLOCK-LAZY ownership
  * MIGRATION chain (DB hops rank→rank); single-node it is the owner local-hit
  * path.
  *

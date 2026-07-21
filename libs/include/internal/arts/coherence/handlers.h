@@ -5,7 +5,7 @@
  * The 11 wire messages defined in arts/transport/protocol.h each
  * land in their own handler here.  Handlers are dispatched from the
  * single per-rank network handler thread (one of S1's invariants),
- * so home-side state — home.pending_rw, home.last_sent_version,
+ * so home-side state — home.pending_rw, home.cached_version,
  * home.rw_holder — is touched by exactly one writer.  Worker threads
  * concurrently read/write cache.* via the atomic primitives wired up
  * in the data structures (writer_count, the buffer slot's atomic shared_ptr,
@@ -107,8 +107,8 @@ struct arts_db_ownership_response_ack_args_s {
  * arts_ooo_args_db_ownership_request_s.  The wire dispatcher decodes
  * OWNERSHIP_REQUEST into those args and routes through
  * arts_ooo_dispatch_or_defer_guid.  Defined for the release-consistency family
- * (coherence/ownership.c) where OWNERSHIP_REQUEST exists; MRMW provides a
- * no-op body (coherence/mrmw.c) — MRMW never enqueues this kind. */
+ * (coherence/ownership.c) where OWNERSHIP_REQUEST exists; WRF_RCU provides a
+ * no-op body (coherence/wrf_rcu.c) — WRF_RCU never enqueues this kind. */
 void arts_handler_db_ownership_request(void *item_v, void *args_v);
 /* Cat-B pure body (OoO g_ooo_table[OOO_DB_SNAPSHOT_REQUEST]): item_v is the
  * home db_s the engine acquired (cache is its first member); args_v is an
@@ -153,7 +153,7 @@ void arts_db_rdzv_discard_landing(uint64_t txid, uint64_t cookie);
  * both timings the home publishes the invalidate target (rw_holder) only at the
  * post-install CONFIRM owner-swap, so the cache is provably installed when
  * INVALIDATE arrives.  Eager/lazy define the real body (sentinel withdrawal /
- * transfer trigger); MRMW provides a no-op body (MRMW never receives
+ * transfer trigger); WRF_RCU provides a no-op body (WRF_RCU never receives
  * INVALIDATE). */
 void arts_handler_db_ownership_invalidate(void *item_v, void *args_v);
 /* Cat-C pure body (WRITEBACK_ACK): item_v is the db_s the dispatcher acquired
@@ -180,7 +180,7 @@ void arts_handler_db_cache_destroy(void *item_v, void *args_v);
 void arts_handler_db_snapshot_redirect(void *item_v, void *args_v);
 #endif /* ARTS_TIMING_LAZY */
 
-#if defined(ARTS_PROTOCOL_MRNEW) || defined(ARTS_PROTOCOL_MRSW)
+#if defined(ARTS_PROTOCOL_RCU)
 /* Cat-C pure body (CONFIRM, home side; both timings): item_v is the db_s the
  * dispatcher acquired (cache is its first member); args_v is unused (the new
  * owner is read from db->pending_install_owner).  NOT OoO-deferrable — the
@@ -195,7 +195,7 @@ void arts_handler_db_ownership_confirm(void *item_v, void *args_v);
  * complete (both timings; home flips rw_holder + advances the round). */
 void arts_send_db_ownership_confirm(unsigned int home_rank, arts_guid_t db_guid,
                                     uint64_t version);
-#endif /* MRNEW || MRSW */
+#endif /* RCU */
 
 /* ===== Sender helpers ================================================ */
 
@@ -300,7 +300,7 @@ void arts_db_lazy_start_invalidate_round(
     const struct arts_rdzv_landing_s *new_owner_rdzv);
 #endif /* ARTS_TIMING_LAZY */
 
-#if defined(ARTS_PROTOCOL_MRNEW) || defined(ARTS_PROTOCOL_MRSW)
+#if defined(ARTS_PROTOCOL_RCU)
 /* Shared owner→owner transfer ship (defined in coherence/<proto>/ownership.c):
  * ship the current buffer (+ serialized owner-side map for LAZY, empty map for
  * EAGER) to cache->incoming_new_owner via the OWNERSHIP_RESPONSE wire,
@@ -308,10 +308,10 @@ void arts_db_lazy_start_invalidate_round(
  * 0-edge of release_rw / the INVALIDATE handler (both timings) and the LAZY
  * CONFIRM_ACK / EAGER OWNERSHIP_RESPONSE drain-guard removal. */
 void arts_db_send_ownership_response(struct arts_db_cache_s *cache);
-#endif /* MRNEW || MRSW */
+#endif /* RCU */
 
-#ifdef ARTS_PROTOCOL_LOCK
-/* ===== LOCK protocol handlers ======================================== */
+#ifdef ARTS_PROTOCOL_RWLOCK
+/* ===== RWLOCK protocol handlers ======================================== */
 
 /* Cat-B pure body (OoO g_ooo_table[OOO_DB_LOCK_REQUEST]) @home: item_v is the
  * home db_s the engine acquired (cache is its first member); args_v is an
@@ -333,12 +333,12 @@ void arts_handler_db_lock_grant(void *payload, size_t size);
 /* NOTE: arts_handler_db_acquire is NOT re-declared here.  It is already
  * declared protocol-agnostically in coherence.h as void
  * arts_handler_db_acquire(void *item, void *args) and serves as both the
- * engine's acquire_one_dep body and the OOO_DB_ACQUIRE replay.  LOCK only
+ * engine's acquire_one_dep body and the OOO_DB_ACQUIRE replay.  RWLOCK only
  * *defines* it (lock/acquire.c). */
 
-/* ===== LOCK senders =================================================== */
+/* ===== RWLOCK senders =================================================== */
 /* Send LOCK_REQUEST to the home, advertising this rank's grant/deliver
- * landing: the stable buffer for RW (in-place install is LOCK's fixed-address
+ * landing: the stable buffer for RW (in-place install is RWLOCK's fixed-address
  * contract), a FRESH landing for a LAZY RO serve (a stale RO grant racing a
  * newer owner install must not clobber the stable buffer — the ro_return arm
  * discards it).  Size-unknown first touch sends landing-less; home answers
@@ -378,7 +378,7 @@ void arts_send_db_lock_release_ack(unsigned int releaser_rank,
                                    arts_guid_t db_guid, uint64_t cv);
 
 #ifdef ARTS_TIMING_LAZY
-/* ===== LOCK-LAZY handlers (Cat-C direct dispatch; stubs until Tasks 5-6) = */
+/* ===== RWLOCK-LAZY handlers (Cat-C direct dispatch; stubs until Tasks 5-6) = */
 
 /* arts_handler_db_lock_forward: Cat-C @owner.  item_v is the full wire packet
  * (arts_msg_lock_forward_packet_s *); the handler looks up the db_s internally
@@ -405,7 +405,7 @@ void arts_handler_db_lock_confirm(void *item_v);
  * packet->rank = the returning reader. */
 void arts_handler_db_lock_roret(void *item_v);
 
-/* ===== LOCK-LAZY senders (stubs until Tasks 5-6) ========================= */
+/* ===== RWLOCK-LAZY senders (stubs until Tasks 5-6) ========================= */
 
 /* arts_send_db_lock_forward: home → current owner.  mode=DB_MODE_RW requests
  * migration to target rank; mode=DB_MODE_RO requests serving one RO reader. */
@@ -413,7 +413,7 @@ void arts_send_db_lock_forward(unsigned int owner_rank, arts_guid_t db_guid,
                                uint32_t mode, uint32_t target,
                                const struct arts_rdzv_landing_s *target_rdzv);
 
-/* arts_send_db_lock_deliver: owner → target.  Versionless (LOCK serialization
+/* arts_send_db_lock_deliver: owner → target.  Versionless (RWLOCK serialization
  * guarantees ordering).  The payload PUTs into the target's forwarded landing
  * (rdzv); src_h — a strong ref on the owner buffer — is CONSUMED. */
 void arts_send_db_lock_deliver(unsigned int target_rank, arts_guid_t db_guid,
@@ -429,7 +429,7 @@ void arts_send_db_lock_roret(unsigned int home_rank, arts_guid_t db_guid);
 
 #endif /* ARTS_TIMING_LAZY */
 
-#endif /* ARTS_PROTOCOL_LOCK */
+#endif /* ARTS_PROTOCOL_RWLOCK */
 
 #ifdef __cplusplus
 }

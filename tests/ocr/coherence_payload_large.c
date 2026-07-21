@@ -61,7 +61,7 @@
 ///     rank != the DB home, acquire RO (which pulls the whole payload
 ///     cross-rank as one snapshot) and verify every element equals PATTERN(j)
 ///     (arts_abort on any mismatch).  RO (not concurrent RW) keeps the flow
-///     well-defined under every protocol including the DB-DRF MRMW contract,
+///     well-defined under every protocol including the DB-WRF WRF_RCU contract,
 ///     while still exercising the exact large-payload framing under test.
 ///   * A second finish scope gates a shutdown EDT that prints PASS once every
 ///     reader has completed.
@@ -171,7 +171,7 @@ static void phase2_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     /* Each reader is pinned to a rank other than the DB's home, so its RO
      * acquire pulls the whole payload across the wire as one snapshot.  RO is
      * used (not RW): the readers only observe, so the flow is well-defined under
-     * every protocol including the DB-DRF MRMW contract (a concurrent-RW test
+     * every protocol including the DB-WRF WRF_RCU contract (a concurrent-RW test
      * would be racy there by design), and it still exercises the exact
      * large-payload transport framing this test targets. */
     for (int w = 0; w < WORKERS_PER_DB; w++) {
@@ -217,10 +217,10 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     dbs[d] = arts_db_create(&raw, db_bytes[d], ARTS_DB, ARTS_DB_PROP_NONE,
                             &(arts_db_hint_t){.rank = home});
     /* Release the creator's initial RW lease so the DB's home copy is published
-     * before any acquire.  Required for the DB-DRF (MRMW) contract — where an
+     * before any acquire.  Required for the DB-WRF (WRF_RCU) contract — where an
      * unreleased create leaves the home copy unpublished and a cross-rank RO
      * reader would observe zeros — and harmless under the OCR-coherence
-     * protocols (mirrors the db_drf_invariant idiom). */
+     * protocols (mirrors the db_wrf_invariant idiom). */
     arts_db_release(dbs[d], DB_MODE_RW);
   }
 

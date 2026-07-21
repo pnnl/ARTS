@@ -190,8 +190,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== coherence_lazy_ownership_reorder ===\n");
 
-#ifdef ARTS_PROTOCOL_MRMW
-  /* The relaxed (DB-DRF) model unifies RW with RO (concurrent replicas,
+#ifdef ARTS_PROTOCOL_WRF_RCU
+  /* The relaxed (DB-WRF) model unifies RW with RO (concurrent replicas,
    * reduce on release) and has no owner->owner ownership-transfer chain (no
    * LOCK_REQ / INVALIDATE / TRANSFER), so the TRANSFER/INVALIDATE reorder
    * window does not exist.  Concurrent acquirers also race the

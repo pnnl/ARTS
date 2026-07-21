@@ -47,7 +47,7 @@ def APPS_DIR_for(build: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Per-target machine geometry (laptop = 14-thread budget, cbgpu02 = 48-thread).
+# Per-target machine geometry (cbgpu02 = 48-thread).
 # Drives the config subdir, the multinode node counts, the per-rank thread budget
 # (for taskset pinning), and the ocr-vx TBB width.  Every config is sized so
 # node_count * per-node-threads == the machine's core count.
@@ -200,31 +200,10 @@ class Runner:
         # - 1.
         self._ocrvx_tbb_threads = _OCRVX_TBB_for(target)
 
-        # Detect systemd-run user-scope availability for hard RSS cap.
-        # ulimit -v alone caps virtual address space, which mmap-heavy apps
-        # can exceed by inflating RSS without the kernel killing them; this
-        # has previously taken the host to OOM. cgroup memory.max via
-        # systemd-run is a kernel-enforced RSS cap.
-        # On a large-memory target, skip memory capping entirely: the box has
-        # ample RAM, and ulimit -v breaks mmap-reserving allocators (mimalloc
-        # reserves virtual address space far above its actual RSS, so a virtual
-        # cap rejects allocations the host could easily satisfy).
-        self.cap_memory = (target != 'cbgpu02')
-        self.cgroup_ok = False
-        if self.cap_memory:
-            try:
-                r = subprocess.run(
-                    ["systemd-run", "--user", "--scope", "--quiet",
-                     "-p", "MemoryMax=64M", "--", "/bin/true"],
-                    capture_output=True, timeout=5)
-                self.cgroup_ok = (r.returncode == 0)
-            except (OSError, subprocess.TimeoutExpired):
-                self.cgroup_ok = False
-            if not self.cgroup_ok:
-                print("WARNING: systemd-run --user not available; "
-                      "falling back to ulimit -v only (RSS not capped).")
-        self.mem_prefix = (f"ulimit -v {self.mem_kb} && "
-                           if self.cap_memory else "")
+        # Memory capping (ulimit -v / cgroup MemoryMax) was retired entirely
+        # (2026-07-14): virtual-address caps break mmap-reserving allocators
+        # and this host never needs them. Runaway protection = per-case
+        # timeout + reap-by-exe, not memory caps.
 
         # Stage configs + fixtures once.
         shutil.copy2(self.arts_cfg, self.apps_dir / "arts.cfg")
@@ -247,21 +226,7 @@ class Runner:
         # this one (the suite is sequential, so nothing live is touched).
         self._cleanup()
         t0 = time.time()
-        if self.cgroup_ok:
-            # Wrap inner shell in a transient user scope with cgroup memory.max.
-            # MemoryMax kills the entire scope (and all descendants, including
-            # ARTS workers/SSH spawns) when the cgroup RSS exceeds the cap,
-            # protecting the host from harness-induced OOM. MemoryHigh adds a
-            # softer throttle threshold.
-            cap = f"{self.mem_gb}G"
-            soft = f"{max(1, self.mem_gb * 3 // 4)}G"
-            wrapped = (
-                f"systemd-run --user --scope --quiet "
-                f"-p MemoryMax={cap} -p MemoryHigh={soft} "
-                f"-- /bin/bash -c {shlex_quote(cmd)}"
-            )
-        else:
-            wrapped = cmd
+        wrapped = cmd
         # Stream stdout/stderr directly to the per-case log file.  Earlier
         # versions used capture_output=True which made Python buffer the
         # full child stdout in RAM; ARTS verbose builds can emit tens of MB
@@ -335,7 +300,7 @@ class Runner:
         pin = f"taskset -c 0-{w - 1} "
         to = timeout or self.timeout
         cmd = (
-            f"cd {self.apps_dir} && {self.mem_prefix}"
+            f"cd {self.apps_dir} && "
             f"timeout -k 1 {to} {pin}./{binary} " + " ".join(args)
         )
         result = self._run(cmd, env, logfile, wall_timeout=to)
@@ -462,7 +427,7 @@ class Runner:
             env["default_ports"] = str(base)
         arts_bin = f"{bin_name}_arts_{suffix}" if suffix else f"{bin_name}_arts"
         cmd = (
-            f"cd {self.apps_dir} && {self.mem_prefix}"
+            f"cd {self.apps_dir} && "
             f"timeout -k 1 {to} ./{arts_bin} " + " ".join(args)
         )
         result = self._run(cmd, env, logfile, wall_timeout=to)
@@ -491,7 +456,7 @@ class Runner:
         env["OMP_NUM_THREADS"] = "4"
         xsocr_cfg = cfg_path or (REPO / "configs" / self._xsocr_mn_cfgs[np])
         cmd = (
-            f"cd {self.apps_dir} && {self.mem_prefix}"
+            f"cd {self.apps_dir} && "
             f"timeout -k 1 {to} {mpirun_prefix(np)} {pin_wrap(tpn or self._tpn[np])} "
             f"./{bin_name}_xsocr -ocr:cfg {xsocr_cfg} "
             + " ".join(args)
@@ -527,7 +492,7 @@ class Runner:
             width = tbb if tbb is not None else _NCORES_for(self.target)
             launcher = f"taskset -c 0-{width - 1} ./{bin_name}_ocrvx"
         cmd = (
-            f"cd {self.apps_dir} && {self.mem_prefix}"
+            f"cd {self.apps_dir} && "
             f"timeout -k 1 {to} {launcher} " + " ".join(args)
         )
         result = self._run(cmd, env, logfile, wall_timeout=to)
@@ -550,7 +515,7 @@ class Runner:
         else:
             launcher = f"{self._pin_single} ./{spec.bin}"
         cmd = (
-            f"cd {self.base_dir} && {self.mem_prefix}"
+            f"cd {self.base_dir} && "
             f"timeout -k 1 {to} {launcher} " + " ".join(spec.args)
         )
         return self._run(cmd, env, logfile, wall_timeout=to)
@@ -558,17 +523,16 @@ class Runner:
 
 @dataclass(frozen=True)
 class Runtime:
-    key: str          # column id, e.g. "mrnew_lazy", "xsocr", "ocrvx", "baseline"
+    key: str          # column id, e.g. "ocr_rcu_lazy", "xsocr", "ocrvx", "baseline"
     label: str        # display
     kind: str         # "arts" | "xsocr" | "ocrvx" | "baseline"
     suffix: str = ""  # arts variant binary suffix (empty for non-arts)
 
 
 ARTS_VARIANTS = [
-    "mrnew_eager", "mrnew_lazy",
-    "mrsw_eager", "mrsw_lazy",
-    "mrmw",
-    "lock_eager", "lock_lazy",
+    "ocr_rcu_eager", "ocr_rcu_lazy",
+    "wrf_rcu_eager",
+    "ocr_rwlock_eager", "ocr_rwlock_lazy",
 ]
 RUNTIMES: list[Runtime] = (
     [Runtime(s, f"arts_{s}", "arts", s) for s in ARTS_VARIANTS]

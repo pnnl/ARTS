@@ -104,8 +104,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== coherence_rw_multihop ===\n");
 
-#ifdef ARTS_PROTOCOL_MRMW
-  /* The relaxed (DB-DRF) model unifies RW with RO (concurrent replicas,
+#ifdef ARTS_PROTOCOL_WRF_RCU
+  /* The relaxed (DB-WRF) model unifies RW with RO (concurrent replicas,
    * reduce on release) and has no ownership-transfer chain (no
    * LOCK_REQ/INVALIDATE/GRANT).  A plain serial increment is therefore not a
    * meaningful relaxed-model workload — concurrent acquirers race the

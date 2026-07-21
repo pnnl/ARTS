@@ -1,5 +1,5 @@
 #!/bin/bash
-# Configures, builds, and runs harness for MRNEW+EAGER, MRNEW+LAZY, and MRMW.
+# Configures, builds, and runs harness for ocr_rcu_{eager,lazy} and wrf_rcu_eager.
 set -uo pipefail
 
 ROOT=$(git rev-parse --show-toplevel)
@@ -7,30 +7,30 @@ cd "$ROOT"
 
 OVERALL_FAIL=0
 
-# mrnew_eager: MRNEW protocol with EAGER timing
-cmake -GNinja -Bbuild_release_mrnew_eager -DCMAKE_BUILD_TYPE=Release \
-      -DARTS_USE_GPU=OFF -DARTS_COHERENCE_PROTOCOL=MRNEW -DARTS_PROTOCOL_TIMING=EAGER \
+# ocr_rcu_eager: RCU protocol with EAGER timing
+cmake -GNinja -Bbuild_release_ocr_rcu_eager -DCMAKE_BUILD_TYPE=Release \
+      -DARTS_USE_GPU=OFF -DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=RCU -DARTS_PROTOCOL_TIMING=EAGER \
       -DARTS_BUILD_BENCHMARKS=ON 2>&1 | tail -3
-ninja -C build_release_mrnew_eager 2>&1 | tail -3 || { echo "FAIL: mrnew_eager build"; OVERALL_FAIL=1; }
+ninja -C build_release_ocr_rcu_eager 2>&1 | tail -3 || { echo "FAIL: ocr_rcu_eager build"; OVERALL_FAIL=1; }
 
-# mrnew_lazy: MRNEW protocol with LAZY timing (default)
-cmake -GNinja -Bbuild_release_mrnew_lazy -DCMAKE_BUILD_TYPE=Release \
-      -DARTS_USE_GPU=OFF -DARTS_COHERENCE_PROTOCOL=MRNEW -DARTS_PROTOCOL_TIMING=LAZY \
+# ocr_rcu_lazy: RCU protocol with LAZY timing (default)
+cmake -GNinja -Bbuild_release_ocr_rcu_lazy -DCMAKE_BUILD_TYPE=Release \
+      -DARTS_USE_GPU=OFF -DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=RCU -DARTS_PROTOCOL_TIMING=LAZY \
       -DARTS_BUILD_BENCHMARKS=ON 2>&1 | tail -3
-ninja -C build_release_mrnew_lazy 2>&1 | tail -3 || { echo "FAIL: mrnew_lazy build"; OVERALL_FAIL=1; }
+ninja -C build_release_ocr_rcu_lazy 2>&1 | tail -3 || { echo "FAIL: ocr_rcu_lazy build"; OVERALL_FAIL=1; }
 
-# mrmw: MRMW protocol (DB-DRF, no per-DB coherence)
-cmake -GNinja -Bbuild_release_mrmw -DCMAKE_BUILD_TYPE=Release \
-      -DARTS_USE_GPU=OFF -DARTS_COHERENCE_PROTOCOL=MRMW \
+# wrf_rcu_eager: RCU protocol under the DB-WRF memory model
+cmake -GNinja -Bbuild_release_wrf_rcu_eager -DCMAKE_BUILD_TYPE=Release \
+      -DARTS_USE_GPU=OFF -DARTS_MEMORY_MODEL=DB_WRF -DARTS_COHERENCE_PROTOCOL=RCU -DARTS_PROTOCOL_TIMING=EAGER \
       -DARTS_BUILD_BENCHMARKS=ON 2>&1 | tail -3
-ninja -C build_release_mrmw 2>&1 | tail -3 || { echo "FAIL: mrmw build"; OVERALL_FAIL=1; }
+ninja -C build_release_wrf_rcu_eager 2>&1 | tail -3 || { echo "FAIL: wrf_rcu_eager build"; OVERALL_FAIL=1; }
 
-for cfg in mrnew_eager mrnew_lazy mrmw; do
+for cfg in ocr_rcu_eager ocr_rcu_lazy wrf_rcu_eager; do
   builddir="build_release_${cfg}"
   echo "=== ${cfg} ctest single_node ==="
   ( cd "${builddir}" && ctest -L single_node --output-on-failure ) || \
     { echo "FAIL: ${cfg} single_node"; OVERALL_FAIL=1; }
-  echo "=== ${cfg} ctest multinode (excl 4n/5n / lock_req_before_create) ==="
+  echo "=== ${cfg} ctest multinode (excl 4n/5n / rwlock_req_before_create) ==="
   ( cd "${builddir}" && ctest -L multinode --output-on-failure \
         -E "(_4n|_5n|coherence_lock_req_before_create)" ) || \
     { echo "FAIL: ${cfg} multinode"; OVERALL_FAIL=1; }

@@ -48,7 +48,7 @@ extern "C" {
  *
  * Includes the protocol-agnostic layout (types_common.h), then the
  * protocol-specific cache/db (coherence/<proto>/types.h, chosen by
- * ARTS_PROTOCOL_MRMW), then the of_cache / total_size / stub_size helpers that
+ * ARTS_PROTOCOL_WRF_RCU), then the of_cache / total_size / stub_size helpers that
  * need the complete cache + db_s types.  struct arts_db_s embeds the per-rank
  * cache (struct arts_db_cache_s) by value as its FIRST member, so each protocol
  * header defines the whole cache + db_s chain together.
@@ -60,20 +60,16 @@ extern "C" {
 
 #include "arts/coherence/types_common.h"
 
-/* Protocol-specific cache/db layout.  MRMW carries no ownership lease or RW
- * waiter queue (writer_count is a pure ref count); MRNEW and MRSW both share
- * the ownership-cache shape, with the EAGER/LAZY timing split made inside each
- * header via ARTS_TIMING_LAZY.  MRSW differs from MRNEW only in the
- * ownership-cache details (no per-cache RW waiter queue; the home FIFO node +
- * pending_install carry edt_guid+slot), so it has its own header. */
-#if defined(ARTS_PROTOCOL_LOCK)
-#include "arts/coherence/lock/types.h"
-#elif defined(ARTS_PROTOCOL_MRMW)
-#include "arts/coherence/mrmw/types.h"
-#elif defined(ARTS_PROTOCOL_MRSW)
-#include "arts/coherence/mrsw/types.h"
+/* Protocol-specific cache/db layout.  WRF_RCU carries no ownership lease or RW
+ * waiter queue (writer_count is a pure ref count); RCU carries the
+ * ownership-cache shape, with the EAGER/LAZY timing split made inside the
+ * header via ARTS_TIMING_LAZY. */
+#if defined(ARTS_PROTOCOL_RWLOCK)
+#include "arts/coherence/rwlock/types.h"
+#elif defined(ARTS_PROTOCOL_WRF_RCU)
+#include "arts/coherence/wrf_rcu/types.h"
 #else
-#include "arts/coherence/mrnew/types.h"
+#include "arts/coherence/rcu/types.h"
 #endif
 
 /* ========================================================================= */
@@ -109,12 +105,12 @@ static inline uint64_t arts_db_total_size(const struct arts_db_s *db) {
  * cached_ranks bitset).  The home rank allocates the full sizeof(struct
  * arts_db_s) instead.
  * The stub ends at the first home-directory field after home_initialized
- * (protocol-dependent: rw_holder for the ownership protocols, last_sent_version
- * for MRMW). */
+ * (protocol-dependent: rw_holder for the ownership protocols, cached_version
+ * for WRF_RCU). */
 static inline uint64_t arts_db_cache_stub_size(void) {
-#if defined(ARTS_PROTOCOL_MRMW)
-  return offsetof(struct arts_db_s, last_sent_version);
-#elif defined(ARTS_PROTOCOL_LOCK)
+#if defined(ARTS_PROTOCOL_WRF_RCU)
+  return offsetof(struct arts_db_s, cached_version);
+#elif defined(ARTS_PROTOCOL_RWLOCK)
   return offsetof(struct arts_db_s, lock_state);
 #else
   return offsetof(struct arts_db_s, rw_holder);

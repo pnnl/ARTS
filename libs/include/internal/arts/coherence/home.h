@@ -6,7 +6,7 @@
  *   - pending_rw queue: Vyukov MPSC.  Multi-producer (any handler thread
  * enqueues on OWNERSHIP_REQUEST); single-consumer in time (the unique actor
  * holding the invalidate_in_flight = 1 baton).  Lock-free queue ops.
- *   - last_sent_version map: per-slot atomic.  Each rank slot is an independent
+ *   - cached_version map: per-slot atomic.  Each rank slot is an independent
  *     _Atomic(uint64_t) accessed via atomic load/store and CAS-loop
  * monotonic-max for advance.  No cross-slot invariant.
  *   - rw_holder, invalidate_in_flight: _Atomic.  rw_holder uses
@@ -55,7 +55,7 @@ bool arts_home_lockreq_queue_peek(const struct arts_home_lockreq_queue_s *q,
                                   struct arts_rdzv_landing_s *out_rdzv);
 bool arts_home_lockreq_queue_empty(const struct arts_home_lockreq_queue_s *q);
 
-/*--- last_sent_version dense map ----------------------------------------*/
+/*--- cached_version dense map ----------------------------------------*/
 
 struct arts_rank_to_u64_map_s {
   _Atomic(uint64_t)
@@ -110,7 +110,7 @@ void arts_db_home_init(struct arts_db_s *db, unsigned int rw_holder,
  * Does NOT free the descriptor (the fields live inside the arts_db_s). */
 void arts_db_home_teardown(struct arts_db_s *db);
 
-/*--- last_sent_version map serialization (defined in coherence/lazy.c) -
+/*--- cached_version map serialization (defined in coherence/lazy.c) -
  *
  * Used to piggyback the owner-side dedup map onto TRANSFER_OWNERSHIP
  * messages so the new owner can continue skipping redundant DATA_RESPONSE

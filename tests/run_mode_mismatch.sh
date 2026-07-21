@@ -4,11 +4,11 @@ set -uo pipefail
 ROOT=$(git rev-parse --show-toplevel)
 
 declare -A BIN
-BIN[MRNEW_EAGER]="${ROOT}/build_release_mrnew_eager/tests/coherence_mode_mismatch"
-BIN[MRNEW_LAZY]="${ROOT}/build_release_mrnew_lazy/tests/coherence_mode_mismatch"
-BIN[MRMW]="${ROOT}/build_release_mrmw/tests/coherence_mode_mismatch"
+BIN[RCU_EAGER]="${ROOT}/build_release_ocr_rcu_eager/tests/coherence_mode_mismatch"
+BIN[RCU_LAZY]="${ROOT}/build_release_ocr_rcu_lazy/tests/coherence_mode_mismatch"
+BIN[WRF_RCU]="${ROOT}/build_release_wrf_rcu_eager/tests/coherence_mode_mismatch"
 
-for mode in MRNEW_EAGER MRNEW_LAZY MRMW; do
+for mode in RCU_EAGER RCU_LAZY WRF_RCU; do
   if [ ! -x "${BIN[$mode]}" ]; then
     echo "Build for ${mode} missing — run benchmarks/scripts/run_three_builds.sh first."
     exit 1
@@ -16,9 +16,9 @@ for mode in MRNEW_EAGER MRNEW_LAZY MRMW; do
 done
 
 PAIRS=(
-  "MRNEW_EAGER MRNEW_LAZY"
-  "MRNEW_EAGER MRMW"
-  "MRNEW_LAZY MRMW"
+  "RCU_EAGER RCU_LAZY"
+  "RCU_EAGER WRF_RCU"
+  "RCU_LAZY WRF_RCU"
 )
 
 OVERALL=0

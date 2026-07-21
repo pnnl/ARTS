@@ -45,14 +45,14 @@
 /// installs the home directory is a Cat-B deferrable op: the OoO engine defers
 /// it on the GUID slot and replays it when DB_CREATE drains.  DB_CREATE itself
 /// is NON-deferrable — it is the drain trigger.  Two families exercise this:
-///   - SNAPSHOT_REQUEST (RO acquire) — non-LOCK protocols;
-///   - WRITEBACK (RW release) — EAGER / MRMW only.
+///   - SNAPSHOT_REQUEST (RO acquire) — non-RWLOCK protocols;
+///   - WRITEBACK (RW release) — EAGER / WRF_RCU only.
 /// Critically, the LAZY WRITEBACK sender must never be reached with home==self
 /// (B019): the self-send fast path is `#if !ARTS_TIMING_LAZY`-excluded, so
 /// under LAZY a stray writeback would fall to the async send → self_send_check
-/// drops it → silent lost writeback hang.  This test self-skips LOCK and only
-/// drives the RW-writeback leg under EAGER/MRMW; the RO-snapshot leg runs on
-/// all non-LOCK.
+/// drops it → silent lost writeback hang.  This test self-skips RWLOCK and only
+/// drives the RW-writeback leg under EAGER/WRF_RCU; the RO-snapshot leg runs on
+/// all non-RWLOCK.
 ///
 /// Black-box driver: a reserved (labeled) DB GUID home=0 with a remote acquirer
 /// in the SAME generation as the home create.  The remote's request can land
@@ -62,17 +62,17 @@
 /// the in-EDT assertion.
 ///
 /// Harness: runtime_multinode (the before-create reorder needs a remote
-/// sender); clean SKIP single-node.  Config gate: self-skip LOCK.
+/// sender); clean SKIP single-node.  Config gate: self-skip RWLOCK.
 
 #include "arts.h"
 
 #include <stdint.h>
 #include <stdio.h>
 
-#if defined(ARTS_PROTOCOL_LOCK)
+#if defined(ARTS_PROTOCOL_RWLOCK)
 int main(void) {
   printf(
-      "SKIP destroy_before_create_defer: non-LOCK (snapshot/writeback) only\n");
+      "SKIP destroy_before_create_defer: non-RWLOCK (snapshot/writeback) only\n");
   return 0;
 }
 #else
@@ -97,7 +97,7 @@ static void creator_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 /// remote RW writer: forces a WRITEBACK round on release whose message can
-/// reach the home before CREATE installs (EAGER/MRMW only — see gate below).
+/// reach the home before CREATE installs (EAGER/WRF_RCU only — see gate below).
 static void writer_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                        arts_edt_dep_t depv[]) {
   (void)paramc;
@@ -129,7 +129,7 @@ static void reader_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 /// blocks on the outer wait and so cannot release per-generation tokens, so
 /// each generation's inner scope is owned by this short-lived EDT that returns
 /// immediately — its completion releases the inner token, letting inner fire
-/// once the creator (and, under EAGER/MRMW, the writer) finish.
+/// once the creator (and, under EAGER/WRF_RCU, the writer) finish.
 static void launcher_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                          arts_edt_dep_t depv[]) {
   (void)paramc;
@@ -138,7 +138,7 @@ static void launcher_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t outer = (arts_guid_t)paramv[0];
   unsigned int sentinel = (unsigned int)paramv[1];
 
-  /* The value the reader must ultimately observe.  Under EAGER/MRMW a remote
+  /* The value the reader must ultimately observe.  Under EAGER/WRF_RCU a remote
    * RW writer runs after the creator and overwrites it; the reader then expects
    * the writer's value.  Under LAZY there is no writeback leg, so the reader
    * expects the creator's sentinel. */
@@ -172,7 +172,7 @@ static void launcher_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)creator;
 
 #if !defined(ARTS_TIMING_LAZY)
-  /* RW-writeback leg (EAGER/MRMW only): a remote RW writer ordered strictly
+  /* RW-writeback leg (EAGER/WRF_RCU only): a remote RW writer ordered strictly
    * AFTER the creator by the DB's per-node exclusive RW lease (serialized), so
    * the write->read chain is unambiguous.  Its release sheds ownership with a
    * synchronous WRITEBACK whose message can reach the home before / around
@@ -228,4 +228,4 @@ int main(int argc, char **argv) {
   return 0;
 }
 
-#endif /* ARTS_PROTOCOL_LOCK */
+#endif /* ARTS_PROTOCOL_RWLOCK */

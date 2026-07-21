@@ -129,7 +129,7 @@ static void verify_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       arts_abort(1);
     }
   }
-  arts_printf("PASS: LOCK distributed arbitration: %d iters × %d DBs × "
+  arts_printf("PASS: RWLOCK distributed arbitration: %d iters × %d DBs × "
               "%d workers/DB, each DB final=%d\n",
               K_ITERS, N_DBS, WORKERS_PER_DB, EXPECTED_FINAL);
   arts_shutdown();
@@ -144,14 +144,14 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   unsigned int nnodes = arts_get_total_ranks();
 
-#if defined(ARTS_PROTOCOL_MRMW)
-  /* MRMW (DB-DRF) provides no exclusive cross-rank ownership for RW: concurrent
+#if defined(ARTS_PROTOCOL_WRF_RCU)
+  /* WRF_RCU (DB-WRF) provides no exclusive cross-rank ownership for RW: concurrent
    * RW holders on different nodes each receive a buffer copy and race at
    * WRITEBACK time.  This test requires every RW writer's atomic increment to
    * survive to the RO verify, which holds only under protocols that guarantee
-   * per-node exclusive ownership (MRNEW, MRSW, LOCK). */
+   * per-node exclusive ownership (RCU, RWLOCK). */
   arts_printf("SKIP coherence_multi_writer_dist: concurrent cross-rank RW "
-              "accumulation is DB-DRF racy under MRMW\n");
+              "accumulation is DB-WRF racy under WRF_RCU\n");
   arts_shutdown();
   return;
 #endif

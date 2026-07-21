@@ -44,4 +44,4 @@ file(GLOB GRAPH_SOURCES "*.c")
 
 add_library(arts_graph OBJECT ${GRAPH_SOURCES})
 target_link_libraries(arts_graph PRIVATE arts_interface)
-arts_apply_protocol(arts_graph ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
+arts_apply_protocol(arts_graph ${ARTS_COHERENCE_ARM} ${ARTS_PROTOCOL_TIMING})

@@ -44,37 +44,40 @@ def test_benches_unified_and_named_uniquely():
     # Every app is one PerfCase; no duplicate names across the merged table.
     names = [b.name for b in ph.BENCHES]
     assert len(names) == len(set(names))
-    assert ph.SINGLE_BENCHES is ph.BENCHES
-    assert ph.PERF_BENCHES == ph.BENCHES[: len(ph.PERF_BENCHES)]  # scalable prefix
+    assert isinstance(ph.BENCHES, list) and len(ph.BENCHES) > 0
 
 
 def test_every_bench_has_a_scaling_decision():
-    # Each app is EITHER a scaling app (strong+weak args, no scale_skip) OR
-    # explicitly scale_skip'd -- never ambiguous, never both.
+    # Each app EITHER carries a weak series OR is a documented _WEAK_EXEMPT
+    # entry -- never neither, never both.  (strong needs no decision: it
+    # broadcasts fix_args wherever no designed table exists;
+    # pure analysis metadata.)
     for b in ph.BENCHES:
-        scalable = b.strong_args is not None and not b.scale_skip
-        skipped = bool(b.scale_skip)
-        assert scalable != skipped, b.name
-        if scalable:
-            assert b.weak_args is not None, b.name
+        has_weak = b.weak_args is not None
+        exempt = b.name in ph._WEAK_EXEMPT
+        assert has_weak != exempt, b.name
 
 
 def test_single_and_strong_run_every_app():
-    # No skip field gates a run: single AND strong run every app.
-    assert ph.benches_for("single") == ph.BENCHES
-    assert ph.benches_for("strong") == ph.BENCHES
+    # No ANALYSIS skip field gates a run; the only run gate is the curated
+    # TOY_BENCHES exclusion (runtime-fixture micros are not benchmarks).
+    expected = [b for b in ph.BENCHES if b.name not in ph.PERF_EXCLUDED]
+    assert ph.benches_for("single") == expected
+    assert ph.benches_for("strong") == expected
 
 
-def test_weak_runs_weak_axis_apps_only():
-    # weak runs every app WITH a weak axis (designed core + derived non-core);
-    # weak-exempt fixed-workload apps (weak_args None) are skipped there.
+def test_weak_runs_every_app_except_documented():
+    # weak runs EVERY app that has any weak series (designed dict, derived
+    # axis, argv-ized repeat knob, or dataset ladder); the only allowed
+    # exemptions are the documented _WEAK_EXEMPT entries.
     weak = ph.benches_for("weak")
     assert all(b.weak_args is not None for b in weak)
     names = {b.name for b in weak}
+    exempt = ({b.name for b in ph.BENCHES} - names) - ph.PERF_EXCLUDED
+    assert exempt == set(ph._WEAK_EXEMPT) == set()
     assert {"graph500", "hpcg_intel", "stream_dist"} <= names          # core
-    assert {"fibonacci", "reduction_intel", "quicksort", "uts"} <= names  # derived
-    assert names.isdisjoint({"smithwaterman", "triangle", "cache_offset",
-                             "printf", "curvefit", "cholesky"})         # exempt
+    assert {"fibonacci", "nqueens", "quicksort_dist"} <= names  # derived
+    assert {"fft_dist", "triangle", "npb_cg", "sar_pss"} <= names
 
 
 def test_non_core_app_broadcasts_fix_args_in_strong():
@@ -107,6 +110,7 @@ def test_benches_for_only_filter():
 
 def test_scaling_apps_use_sc_geo_keys():
     # Apps that DO carry designed strong/weak dicts key them by _sc geo (1,2,4).
-    for b in ph.PERF_BENCHES:
+    for b in [x for x in ph.BENCHES if isinstance(x.strong_args, dict)
+              and isinstance(x.weak_args, dict)]:
         for d in (b.strong_args, b.weak_args):
             assert isinstance(d, dict) and set(d) == {1, 2, 4}, b.name

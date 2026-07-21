@@ -78,8 +78,8 @@ static int failures = 0;
   } while (0)
 
 /* Exercise all three structs whose dispatcher case uses the data_size pattern.
- * SNAPSHOT_RESPONSE + WRITEBACK exist in non-LOCK builds; LOCK_RELEASE exists
- * only under ARTS_PROTOCOL_LOCK.  We test whichever are present in this build
+ * SNAPSHOT_RESPONSE + WRITEBACK exist in non-RWLOCK builds; LOCK_RELEASE exists
+ * only under ARTS_PROTOCOL_RWLOCK.  We test whichever are present in this build
  * plus a synthetic struct so the arithmetic is always exercised. */
 static int exercise(const char *name, size_t struct_size) {
   int local_fail = 0;
@@ -145,17 +145,17 @@ static int exercise(const char *name, size_t struct_size) {
 }
 
 int main(void) {
-  /* SNAPSHOT_RESPONSE (non-LOCK builds) — dispatcher.c:316. */
-#ifndef ARTS_PROTOCOL_LOCK
+  /* SNAPSHOT_RESPONSE (non-RWLOCK builds) — dispatcher.c:316. */
+#ifndef ARTS_PROTOCOL_RWLOCK
   failures += exercise("MSG_DB_SNAPSHOT_RESPONSE",
                        sizeof(struct arts_msg_snapshot_response_packet_s));
 #endif
-  /* WRITEBACK (eager / MRMW dispatcher case) — dispatcher.c:408.  The struct is
+  /* WRITEBACK (eager / WRF_RCU dispatcher case) — dispatcher.c:408.  The struct is
    * unconditional in protocol.h, so size-check it in every build. */
   failures +=
       exercise("MSG_DB_WRITEBACK", sizeof(struct arts_msg_writeback_packet_s));
-#ifdef ARTS_PROTOCOL_LOCK
-  /* LOCK_RELEASE (LOCK builds only) — dispatcher.c:593. */
+#ifdef ARTS_PROTOCOL_RWLOCK
+  /* LOCK_RELEASE (RWLOCK builds only) — dispatcher.c:593. */
   failures += exercise("MSG_DB_LOCK_RELEASE",
                        sizeof(struct arts_msg_lock_release_packet_s));
 #endif

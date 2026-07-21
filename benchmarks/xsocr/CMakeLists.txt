@@ -9,6 +9,9 @@ file(GLOB_RECURSE XSOCR_SRCS "${OCR_ROOT}/src/*.c")
 
 # Build as OBJECT library first, then assemble into static
 add_library(ocr_xsocr_objects OBJECT ${XSOCR_SRCS})
+# Debug info in every build flavor: no codegen impact, and scheduler-level
+# faults in the reference runtime are otherwise undebuggable.
+target_compile_options(ocr_xsocr_objects PRIVATE -g)
 
 # XSOCR uses GNU extensions (VLAs, typeof, __thread, etc.)
 set_target_properties(ocr_xsocr_objects PROPERTIES
@@ -60,12 +63,18 @@ target_include_directories(ocr_xsocr_objects PRIVATE
 # OCR_NOHINT_DB_HOME_ROUNDROBIN: no-hint DB home placement policy.
 # 1 = round-robin the home across all locations (default); 0 = pin to the
 # creator (legacy behavior).
+# INIT_DEQUE_CAPACITY: the workstealing deque does not grow; a full deque's
+# push would silently wrap and corrupt entries when asserts are compiled out.
+# Size it for large single-rank EDT fanouts, and keep the overflow assert
+# active in release builds (OCR_ASSERT_CRITICAL) so exhaustion aborts loudly
+# instead of corrupting the scheduler.
 target_compile_definitions(ocr_xsocr_objects PRIVATE
     "OCR_TYPE_H=x86.h"
     CACHE_LINE_SZB=64
     GUID_PROVIDER_LOCID_SIZE=10
-    OCR_MAX_MULTI_SLOT=32
     OCR_NOHINT_DB_HOME_ROUNDROBIN=1
+    INIT_DEQUE_CAPACITY=2097152
+    OCR_ASSERT_CRITICAL=1
 )
 
 # NOTE: the collective-event / distributed-labeled extension chain

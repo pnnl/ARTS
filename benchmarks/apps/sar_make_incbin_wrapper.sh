@@ -2,8 +2,7 @@
 # sar_make_incbin_wrapper.sh — generate a GNU as .S wrapper that uses
 # .incbin to embed a SAR .bin dataset file into an object file without
 # parsing the binary data as a C source (which is what sar_dataImage does
-# and which requires 10+ GB of RAM for the medium/large sizes on a
-# 12 GB laptop).
+# and which needs 10+ GB of compile-time RAM for the medium/large sizes).
 #
 # The .bin file layout is binary-identical to the C struct array the SAR
 # source expects (verified: Data.bin size == 2 * P1 * S1 * sizeof(struct

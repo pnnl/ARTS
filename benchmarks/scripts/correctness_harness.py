@@ -53,24 +53,28 @@ from harness_common import (
 )
 
 # ---------------------------------------------------------------------------
-# Build directory: selectable via --build-dir (default: build_release_mrnew_lazy).
+# Build directory: selectable via --build-dir (default: build_release_ocr_rcu_lazy).
 # Resolved early so module-level Path constants can reference it.
 # ---------------------------------------------------------------------------
 _arg_parser = argparse.ArgumentParser(add_help=False)
-_arg_parser.add_argument('--build-dir', default='build_release_mrnew_lazy')
-_arg_parser.add_argument('--target', default='laptop', choices=['laptop', 'cbgpu02'])
+_arg_parser.add_argument('--build-dir', default='build_release_ocr_rcu_lazy')
+_arg_parser.add_argument('--target', default='cbgpu02', choices=['cbgpu02'])
 _pre_args, _ = _arg_parser.parse_known_args()
 BUILD = Path(_pre_args.build_dir)
 if not BUILD.is_absolute():
     BUILD = REPO / BUILD
 TARGET = _pre_args.target
 
+_model = 'unknown'
 _protocol = 'unknown'
 _timing = ''
 try:
     _cache_path = BUILD / 'CMakeCache.txt'
     with open(_cache_path) as _f:
         for _line in _f:
+            _m = re.match(r'ARTS_MEMORY_MODEL:STRING=(\w+)', _line)
+            if _m:
+                _model = _m.group(1)
             _p = re.match(r'ARTS_COHERENCE_PROTOCOL:STRING=(\w+)', _line)
             if _p:
                 _protocol = _p.group(1)
@@ -79,8 +83,8 @@ try:
                 _timing = _t.group(1)
 except FileNotFoundError:
     pass
-_mode = 'MRMW' if _protocol == 'MRMW' else f'{_protocol}+{_timing}'
-print(f'[harness] Build dir: {BUILD} (protocol: {_mode})')
+_mode = f'{_model}+{_protocol}+{_timing}'
+print(f'[harness] Build dir: {BUILD} (config: {_mode})')
 
 APPS_DIR = BUILD / "benchmarks" / "apps"
 LOGS_ROOT = REPO / "benchmarks" / "scripts" / "logs" / "correctness"
@@ -91,9 +95,10 @@ SW_DATA = Path(__file__).resolve().parents[2] / \
     "third_party/ocr-apps/apps/smithwaterman/datasets"
 BASIC_IO_DAT = "/tmp/arts_basicIO_test.dat"
 CHOLESKY_INPUT = "/tmp/arts_cholesky_input.mat"
+OCR_APPS = REPO / "third_party" / "ocr-apps" / "apps"
 
 
-# Per-target machine geometry (laptop = 14-thread budget, server = 48-thread),
+# Per-target machine geometry (cbgpu02 = 48-thread),
 # selected by --target.  See harness_common for the factory functions.
 MN_RANKS = MN_RANKS_for(TARGET)
 
@@ -129,16 +134,34 @@ class Case:
                                           # cannot run at ANY multinode config (every
                                           # other case runs at every NODE_CONFIGS entry)
     multinode_timeout: int = 0            # per-case multinode wall budget (s); 0 → global
-    mrmw_skip: str = ""                   # non-empty → contract reason this case's
-                                          # semantics are OUTSIDE the MRMW (DB-DRF)
-                                          # admission (cell → N/A, excluded from the
+    multinode_novote: str = ""            # non-empty → reason this case's MN value
+                                          # is not comparable (e.g. process-local
+                                          # accumulator): the cell still RUNS at MN
+                                          # (hangs/SEGVs must surface) but its
+                                          # scalar is excluded from the vote.
+    wrf_rcu_multinode_skip: str = ""         # non-empty → the case's WRF_RCU cells are
+                                          # excluded from EXECUTION at multinode
+                                          # (N/A), single-node still runs: a
+                                          # debugged, evidence-closed
+                                          # contract-consequence hang/SEGV (lost
+                                          # updates land in control data), so
+                                          # re-running buys no information and
+                                          # burns a full wall budget per cell.
+                                          # Reason must cite the closed verdict.
+    wrf_rcu_skip: str = ""                   # non-empty → contract reason this case's
+                                          # semantics are OUTSIDE the WRF_RCU (DB-WRF)
+                                          # value is undefined under WRF_RCU.  The cell
+                                          # still RUNS (a weak contract may yield a
+                                          # wrong VALUE, never a hang/SEGV — those
+                                          # are runtime bugs and must surface); the
+                                          # scalar is merely excluded from the
                                           # vote, like multinode_skip).  Contract
                                           # representation, NOT a bug mask: per
-                                          # CLAUDE.md, MRMW is a deliberately weaker
+                                          # CLAUDE.md, WRF_RCU is a deliberately weaker
                                           # contract — "racy-but-legal OCR programs
                                           # may yield wrong results there by design"
                                           # — so OCR-legal programs relying on
-                                          # guarantees MRMW omits (exclusive-writer
+                                          # guarantees WRF_RCU omits (exclusive-writer
                                           # serialization / disjoint-write survival
                                           # under whole-DB lossy writeback) do not
                                           # get a vote in that column
@@ -166,18 +189,15 @@ class Case:
 # For apps whose last printed value is timing or throughput, scalar_re stays ""
 # (rc-only verdict). Adding a print to those apps is a vendor-source task
 # explicitly out of scope.
-_SAR_MN_SKIP = ("single-node design: self-referential absolute pointers "
-                "baked into 2D-array DataBlock payloads (X/Pt/curImage/"
-                "refImage/corr_map — main.c:394-408; relocation assert "
-                "inputs.c:226-227 never got its remap fallback)")
-
 CASES: list[Case] = [
     # --- scalar-checkable (scientific output already present) ---
     Case("fibonacci", "fibonacci", ["10"],
          scalar_re=r"answer is\s*(\d+)", scalar_kind="int"),
+    # nqueens returns per-subtree counts up the recursion tree (8-byte count DB
+    # on each task's completion event), so the printed total is exact at any
+    # rank count and the MN cells vote normally.
     Case("nqueens", "nqueens", ["6", "2"],
          scalar_re=r"sols:\s*(\d+)", scalar_kind="int",
-         multinode_skip="single-node design: process-local solutions counter + global template GUIDs",
          baseline=BaselineSpec(
              bin="nqueens_omp", args=["6"],
              scalar_re=r"sols:\s*(\d+)", scalar_kind="int", scalar_tol=0,
@@ -189,6 +209,12 @@ CASES: list[Case] = [
          scalar_re=r"score:\s*(\d+)", scalar_kind="int"),
     Case("fft", "fft", ["6"],
          scalar_re=r"FFT checksum\s*=\s*([\-+0-9.eE]+)", scalar_kind="float", scalar_tol=1e-3),
+    # fft_dist: four-step transpose FFT on a single-tone input; the analytic
+    # spectrum makes the global checksum exactly N (two peaks of N/2), and the
+    # line only prints when every bin passes the closed-form self-check.
+    Case("fft_dist", "fft_dist", ["22"],
+         scalar_re=r"FFT_DIST checksum\s*=\s*([\-+0-9.eE]+)",
+         scalar_kind="float", scalar_tol=1e-3),
     # Depth-5 partial search (1074 sequences): the full-depth puzzle is a
     # fine-grained EDT-per-node tree (~1.3M EDTs) that the ocr-vx runtime's
     # serialized local message pipeline cannot finish within any per-case
@@ -197,9 +223,11 @@ CASES: list[Case] = [
     # reference runtime (ocr-vx at the widest rank count) inside the per-case
     # wall budget; the app still solves the full puzzle when run with no
     # argument.
+    # triangle returns per-subtree counts up the recursion tree (8-byte count
+    # DB on each task's completion event); the former shared EW accumulator is
+    # gone, so the WRF_RCU column is contract-eligible again.
     Case("triangle", "triangle", ["5"],
-         scalar_re=r"final count\s+(\d+)", scalar_kind="int",
-         mrmw_skip="EW accumulator requires exclusion; MRMW admission provides none"),
+         scalar_re=r"final count\s+(\d+)", scalar_kind="int"),
     # rows/timesteps shrunk from the original 100/10 (checksum = (t+1)*(n+m-2),
     # still a nontrivial computed value) so the pipeline-fill message count
     # (~ P*T*rows) fits the slowest reference runtime inside the wall budget.
@@ -216,8 +244,12 @@ CASES: list[Case] = [
          scalar_re=r"Initial energy\s*:\s*([\-+0-9.eE]+)", scalar_kind="float",
          scalar_tol=1e-4),
     # xsocr runs this at MN too (old HCDist-timeout exclusion reason was stale).
+    # -i/-j/-k (SPMD tile grid) defaults to 1x1x1 = single-PD; 2x2x1 makes the
+    # multinode rows exercise real distribution.  The app's sanityChecks
+    # require the global extent per split axis >= 2*cutoff*procAxis, which
+    # -x 4 fails at procAxis 2 -- 8 clears it (8*3.615 > 2*5.7875*2).
     Case("CoMD_intel_chandra_tiled", "CoMD_intel_chandra_tiled",
-         ["-x","4","-y","4","-z","4","-N","2"],
+         ["-x","8","-y","8","-z","8","-N","2","-i","2","-j","2","-k","1"],
          scalar_re=r"Final energy\s*:\s*([\-+0-9.eE]+)", scalar_kind="float",
          scalar_tol=1e-6),
     Case("CoMD_sdsc", "CoMD_sdsc", ["-x","4","-y","4","-z","4","-N","2"],
@@ -225,12 +257,14 @@ CASES: list[Case] = [
          # "Initial energy" only echoes the setup state and verifies nothing.
          scalar_re=r"Final energy\s*:\s*([\-+0-9.eE]+)", scalar_kind="float",
          scalar_tol=1e-6,
-         multinode_skip="placement-sensitive design gap: zero affinity hints "
+         multinode_novote="placement-sensitive design gap: zero affinity hints "
          "(contrast CoMD_sdsc2, the validated multinode twin) + a full-domain "
          "single-EDT redistribute_edt acquiring every box DB_MODE_RW each "
          "timestep (cells.c:87) — hint-less round-robin scatter yields a "
          "non-deterministic, topology-dependent energy at n>=4 (all three "
-         "runtimes diverge to different 1e-2-scale values)"),
+         "runtimes diverge to different 1e-2-scale values; run still "
+         "validates liveness)",
+         wrf_rcu_multinode_skip="closed M-class verdict (via the sdsc2 twin): unordered sibling RW writes to the schedule GUID array are lossy-dropped -> garbage GUID -> early init stall, 124 at MN (wrf_rcu_mn_verdicts.md)"),
     Case("CoMD_sdsc2", "CoMD_sdsc2", ["-x","4","-y","4","-z","4","-N","2"],
          scalar_re=r"Final energy\s*:\s*([\-+0-9.eE]+)", scalar_kind="float",
          # Widened from 1e-6 to 1e-4 to admit the baseline cell into the same
@@ -239,12 +273,17 @@ CASES: list[Case] = [
          # noise than the cross-runtime (xsocr/arts variants/ocrvx) agreement
          # alone. consensus() clusters on this single case-level tolerance.
          scalar_tol=1e-4,
+         wrf_rcu_skip="up to 26 neighbor FNC_init siblings concurrently RW-acquire "
+                   "a box's schedule GUID-array DB (simulation.c:658), each "
+                   "writing a distinct index (simulation.c:501-503) with no HB "
+                   "edge; WRF_RCU whole-DB writeback is declared lossy",
          baseline=BaselineSpec(
              bin="CoMD_mpi_omp", args=["-x","4","-y","4","-z","4","-N","2"],
              np=1, force_mpirun=True,
              scalar_re=r"Final energy\s*:\s*([\-+0-9.eE]+)",
              scalar_kind="float", scalar_tol=1e-4,
-         )),
+         ),
+         wrf_rcu_multinode_skip="closed M-class verdict: 26 FNC_init siblings' disjoint-index writes to the sched GUID array lossy-dropped -> garbage GUID -> early init stall, 124 at MN (wrf_rcu_mn_verdicts.md)"),
          # xsocr passes at every rank count (the np4 home-MD race + the residual
          # np2/3 startup hang were fixed app/xsocr-side).  arts is KNOWN to hang
          # at multinode in the affinity-DB create path here = an arts bug to
@@ -283,8 +322,14 @@ CASES: list[Case] = [
          ["--nx","4","--ny","4","--nz","4","--num_tsteps","2","--num_objects","1"],
          scalar_re=r"Grand Total Checksum\s*==\s*([\-+0-9.eE]+)", scalar_kind="float",
          scalar_tol=1e-8,
-         mrmw_skip="creator-held carrier DBs handed clone->clone, ordered only by "
-                   "RW exclusion; MRMW admission provides none (non-DB-DRF)"),
+         # wrf_rcu_eager runs truthfully: the clone->clone carrier hand-off releases
+         # each block BEFORE wiring it into the successor (release -> satisfy
+         # -> acquire is a happens-before chain independent of the dependence
+         # mode), so the relay's conflicting accesses are ordered within the
+         # memory model — not by RW admission.  Sibling sharing is read-only
+         # and joins/halos are event-carried, so no unordered same-DB
+         # conflict exists (DB-WRF-conformant).
+         ),
     # "-b 25" raises the sparse matrix-vector multiply's block size (default
     # 1, i.e. one row per block): this only changes how the na=50 rows are
     # grouped into spmv_edt sub-EDTs (25 -> 2 blocks), not the arithmetic, so
@@ -295,7 +340,14 @@ CASES: list[Case] = [
          # "Verification FAILED (zeta=NaN, correct zeta=<expected>)" and the
          # bare zeta regex would match the *expected* value (false PASS).
          scalar_re=r"Verification SUCCESSFUL \(zeta\s*=\s*([\-+0-9.eE]+)", scalar_kind="float",
-         scalar_tol=1e-10),
+         scalar_tol=1e-10,
+         # wrf_rcu_eager runs truthfully: the former skip cited the a/x RW passthrough
+         # racing the CG DAG's CONST readers; the app now declares truthful
+         # modes (a CONST everywhere, x RW only into its writers) and makea
+         # releases the container and block sub-DBs at their publication
+         # point, so every conflicting pair is release/satisfy-ordered
+         # (DB-WRF-conformant).
+         ),
          # No baseline attachment: the OMP reference runs its built-in S-class
          # problem (size=1400, 15 iterations, zeta=8.427309...) and ignores the
          # OCR port's tiny-class knob (-t T -> size=50, 3 iterations,
@@ -324,6 +376,15 @@ CASES: list[Case] = [
          # cluster (MPI/OMP reference's reduction order differs; see
          # CoMD_sdsc2 above for the same rationale).
          scalar_tol=1e-3,
+         # wrf_rcu_eager runs truthfully: the former wrf_rcu_skip cited a halo RW/CONST
+         # sibling race that is structurally absent at this 1-box workload
+         # (total_boxes==1 -> a single exchange_edt, all neighbors resolve to
+         # the read-only boundary sentinel), and at multi-box workloads the
+         # exchange writes only the box's own ghost region against immutable
+         # phase-fenced interiors (single writer per box).  The residual MN
+         # wrf_rcu_eager hang is an wrf_rcu_eager-column-isolated runtime defect (every
+         # ownership protocol passes the same cells), tracked as a bug, not a
+         # contract exclusion.
          baseline=BaselineSpec(
              bin="hpgmg_mpi_omp", args=["4","1"], np=1, force_mpirun=True,
              scalar_re=r"\|\|error\|\|\s*=\s*([\-+0-9.eE]+)",
@@ -361,6 +422,11 @@ CASES: list[Case] = [
     Case("testlibs", "testlibs", [],
          scalar_re=r"Testing strlen of \w+ is (\d+)", scalar_kind="int"),
     Case("graph500", "graph500", ["6","8","1","1"],
+         # MN runs use a real R-by-C worker grid so the distributed BFS wiring
+         # (cross-rank row/column scatter, level latches) is actually exercised;
+         # the visited-vertex scalar is grid-invariant.
+         multinode_args={2: ["6","8","2","2"], 4: ["6","8","2","2"],
+                         8: ["6","8","4","2"], 16: ["6","8","4","4"]},
          scalar_re=r"nodes (\d+)", scalar_kind="int"),
     Case("multigen", "multigen", [],
          scalar_re=r"End leaf1, result\s*=\s*(-?\d+)", scalar_kind="int"),
@@ -372,17 +438,31 @@ CASES: list[Case] = [
     # #blocks stays 1 at num_refine 1, 2, or 3 alike), so the extra levels
     # were pure redundant per-timestep refinement-check overhead with no
     # additional distributed behavior exercised.
+    # --npx/npy/npz (SPMD rank grid) defaults to 1x1x1 = single-PD at every
+    # node count; 2x2x1 makes the multinode rows exercise real distribution.
+    # --report_diffusion 1 + --checksum_freq 1 upgrade the anchor from the
+    # bare "Done" liveness bool to the deterministic per-variable checksum
+    # (VERIFICATION_RUN seeding); the scalar is the final-timestep var-0 sum.
     Case("miniAMR_intel_chandra", "miniAMR_intel_chandra",
-         ["--nx","4","--ny","4","--nz","4","--num_tsteps","2","--num_refine","1"],
-         scalar_re=r"Done", scalar_kind="bool"),
+         ["--nx","4","--ny","4","--nz","4","--num_tsteps","2","--num_refine","1",
+          "--npx","2","--npy","2","--npz","1",
+          "--report_diffusion","1","--checksum_freq","1"],
+         scalar_re=r"ts 2 CHECKSUM sum\s+([\-+0-9.eE]+)", scalar_kind="float",
+         scalar_tol=1e-6),
 
     # --- rc-only sanity (no meaningful scientific scalar) ---
     Case("printf",           "printf",           [],
          scalar_re=r"Hello from mainEdt", scalar_kind="bool"),
     Case("quicksort",        "quicksort",        [],
          scalar_re=r"(\d+)\s*\n\s*(?:\[\d+\]\s*)?Sorting Finished", scalar_kind="int",
-         mrmw_skip="unordered disjoint-region sibling writers; MRMW whole-DB "
+         wrf_rcu_skip="unordered disjoint-region sibling writers; WRF_RCU whole-DB "
                    "writeback is declared lossy"),
+    # quicksort_dist: sample-splitter p-way partition; every DB has a single
+    # writer (chunk-local segments, bucket-local outputs), all sharing is RO —
+    # WRF_RCU-eligible by construction, unlike the single-DB recursion twin above.
+    # The scalar (element sum) only matches when the sorted flag is 1.
+    Case("quicksort_dist",   "quicksort_dist",   [],
+         scalar_re=r"QSORT_VALID sum=(\d+) sorted=1", scalar_kind="int"),
     Case("basicIO",          "basicIO",          ["0","10", BASIC_IO_DAT],
          scalar_re=r"BASICIO_CHK\s+(\d+)", scalar_kind="int"),
     # dbcreate_matrix: DB-create capability matrix (labeled/affinity/no-hint
@@ -392,8 +472,7 @@ CASES: list[Case] = [
     Case("dbcreate_matrix",  "dbcreate_matrix",  [],
          scalar_re=r"CELLS_OK=(\d+)/12", scalar_kind="int"),
     Case("cache_offset",     "cache_offset",     [],
-         scalar_re=r"CACHE_OFFSET_CHK\s+(\d+)", scalar_kind="int",
-         multinode_skip="single-node design: file-scope dbGuids/dbPtrs arrays"),
+         scalar_re=r"CACHE_OFFSET_CHK\s+(\d+)", scalar_kind="int"),
     # xsocr runs this at MN too (old startup-hang exclusion reason was stale).
     Case("highbw",           "highbw",           [],
          scalar_re=r"HIGHBW_WORK_SUM\s*=\s*(\d+)", scalar_kind="int"),
@@ -404,11 +483,9 @@ CASES: list[Case] = [
          # function of (DEPTH, FANOUT) and the kernel computes no data answer.
          # Counting destroys across EDTs would need illegal global state, so the
          # completion/timing marker is the strongest spec-compliant check.
-         scalar_re=r"Total time", scalar_kind="bool",
-         multinode_skip="single-node design: file-scope template GUIDs + evtMap array"),
+         scalar_re=r"Total time", scalar_kind="bool"),
     Case("prodcon",          "prodcon",          [],
-         scalar_re=r"MB/s", scalar_kind="bool",
-         multinode_skip="single-node design: file-scope mapProdGuid/mapConsGuid"),
+         scalar_re=r"MB/s", scalar_kind="bool"),
     # No CLI knob exists to shrink these three: mainEdt() takes no params (argv
     # is never read) and the problem size (M=matrix rows, N=participant count,
     # T=CG iterations) is an unconditional #define in the shared ocrGS.h,
@@ -426,15 +503,75 @@ CASES: list[Case] = [
     # ocr-vx cells at 4 ranks; arts/xsocr run everywhere.
     Case("globalsum_cgShim",   "globalsum_cgShim",   [],
          scalar_re=r"CG0 T\d+\s+0 value\s+([0-9.]+)", scalar_kind="float", scalar_tol=1e-5,
-         ocrvx_mn_max_ranks=4),
+         ocrvx_mn_max_ranks=4,
+         wrf_rcu_skip="N reduction-tree/compute siblings RW-acquire the shared "
+                   "GSsharedBlock via direct GUID each round (gsLib.c:43,119,132), "
+                   "no HB order; WRF_RCU whole-DB writeback can drop node-0's "
+                   "rootEvent/sum control write (non-DB-WRF)",
+         wrf_rcu_multinode_skip="closed M-class verdict: lossy writeback clobbers the shared control block's rootEvent on node 0 -> lost wakeup, deterministic 124 at MN (wrf_rcu_mn_verdicts.md)"),
     Case("globalsum_cgNoShim", "globalsum_cgNoShim", [],
          scalar_re=r"CG0 T100\s+0 value\s+([0-9.]+)", scalar_kind="float", scalar_tol=1e-5,
-         ocrvx_mn_max_ranks=4),
+         ocrvx_mn_max_ranks=4,
+         wrf_rcu_skip="N reduction-tree/compute siblings RW-acquire the shared "
+                   "GSsharedBlock via direct GUID each round (gsLib.c:43,119,132), "
+                   "no HB order; WRF_RCU whole-DB writeback can drop node-0's "
+                   "rootEvent/sum control write (non-DB-WRF)",
+         wrf_rcu_multinode_skip="closed M-class verdict: lossy writeback clobbers the shared control block's rootEvent on node 0 -> lost wakeup, deterministic 124 at MN (wrf_rcu_mn_verdicts.md)"),
     Case("globalsum_pcg",      "globalsum_pcg",      [],
-         scalar_re=r"CG0 T\d+\s+0 value\s+([0-9.]+)", scalar_kind="float", scalar_tol=1e-5),
+         scalar_re=r"CG0 T\d+\s+0 value\s+([0-9.]+)", scalar_kind="float", scalar_tol=1e-5,
+         wrf_rcu_skip="N reduction-tree/compute siblings RW-acquire the shared "
+                   "GSsharedBlock via direct GUID each round (gsLib.c:43,119,132), "
+                   "no HB order; WRF_RCU whole-DB writeback can drop node-0's "
+                   "rootEvent/sum control write (non-DB-WRF)",
+         wrf_rcu_multinode_skip="closed M-class verdict: lossy writeback clobbers the shared control block's rootEvent on node 0 -> lost wakeup, deterministic 124 at MN (wrf_rcu_mn_verdicts.md)"),
     Case("stencil1D_sticky", "stencil1D_sticky", [],
          scalar_re=r"S3 i9 valu\s+([0-9.]+)", scalar_kind="float",
+         scalar_tol=0,
+         wrf_rcu_multinode_skip="clone->clone halo relay ordered only by RW exclusion (same family as the stencil1D_guid/guidPI verdicts) -> relay stalls on a lossy-dropped hand-off at MN (wrf_rcu_mn_verdicts.md)"),
+    Case("stencil1D_channel", "stencil1D_channel", [],
+         scalar_re=r"S3 i9 valu\s+([0-9.]+)", scalar_kind="float",
          scalar_tol=0),
+    Case("stencil1D_guid", "stencil1D_guid", [],
+         scalar_re=r"S3 i9 valu\s+([0-9.]+)", scalar_kind="float",
+         scalar_tol=0,
+         wrf_rcu_skip="clone->clone halo relay: boundary DB handed each iteration "
+                   "via bare DB_MODE_RW to a sibling EDT GUID read from the DB "
+                   "payload (stencil1Dguid.c:178-183), no event; ordered only by "
+                   "RW exclusion WRF_RCU omits (same class as miniAMR_intel)"),
+    Case("stencil1D_once", "stencil1D_once", [],
+         scalar_re=r"S3 i9 valu\s+([0-9.]+)", scalar_kind="float",
+         scalar_tol=0),
+    Case("stencil1D_stickyLG", "stencil1D_stickyLG", [],
+         scalar_re=r"9 49\s+([0-9.]+)", scalar_kind="float",
+         scalar_tol=0),
+    Case("stencil1D_guidPI", "stencil1D_guidPI", [],
+         scalar_re=r"9 49\s+([0-9.]+)", scalar_kind="float",
+         scalar_tol=0,
+         wrf_rcu_skip="steady-state clone->clone halo relay hands the boundary DB "
+                   "via bare DB_MODE_RW to a sibling EDT GUID read from the DB's "
+                   ".control field (stencil1DguidPI.c:94,163,196), no event; "
+                   "ordered only by RW exclusion WRF_RCU omits (non-DB-WRF)"),
+    Case("stencil1D_oncePI", "stencil1D_oncePI", [],
+         scalar_re=r"9 49\s+([0-9.]+)", scalar_kind="float",
+         scalar_tol=0),
+    # stream_org / stream_sa print a deterministic final array value
+    # (STREAM_RESULT, a pure function of the iteration count) alongside the
+    # non-comparable bandwidth lines; a short iteration count keeps the cell
+    # cheap while exercising the full kernel chain.
+    # At multinode the 200-iteration cross-rank RW chain puts a wall floor
+    # well above the global budget on the EAGER-timing protocols (release
+    # blocks on the synchronous writeback ACK each iteration) and on the
+    # serialized ocr-vx pipeline; all runtimes complete correctly given the
+    # headroom.  Per-case budget 75s -> ocr-vx cap 225s: >2x measured worst
+    # case under full gate load.
+    Case("stream_org", "stream_org", ["200"],
+         scalar_re=r"STREAM_VALID relerr = ([0-9.eE+-]+)",
+         scalar_kind="float", scalar_tol=1e-12,
+         multinode_timeout=75),
+    Case("stream_sa", "stream_sa", ["200"],
+         scalar_re=r"STREAM_VALID relerr = ([0-9.eE+-]+)",
+         scalar_kind="float", scalar_tol=1e-12,
+         multinode_timeout=75),
     # [nrank, ndata, maxtimestep] shrunk from the defaults [25,2,300] to
     # [25,2,30]: maxtimestep (T) is the dominant cost (the same nrank=25
     # ALLREDUCE tree runs once per timestep with real cross-node messages,
@@ -466,7 +603,7 @@ CASES: list[Case] = [
          # distributed wavefront LCS result, self-validated against serial_lcs.
          # The x12/x21 sibling quadrants that share the single rolling `score`
          # datablock are now happens-before ordered (x11->x12->x21), so the
-         # program is DB-DRF and MRMW votes with the consensus.
+         # program is DB-WRF and WRF_RCU votes with the consensus.
          scalar_re=r"LCS length:\s*(-?\d+)", scalar_kind="int"),
     Case("RSBench_intel",             "RSBench_intel",             ["-l","100"],
          scalar_re=r"Lookups:", scalar_kind="bool",
@@ -483,12 +620,7 @@ CASES: list[Case] = [
     # OMP/MPI variant computes it), while the OMP/MPI baselines print only the
     # canonical "Verification checksum" vhash (under -DVERIFICATION) — which
     # the OCR refactor never wires up (building it with VERIFICATION still
-    # emits no vhash).  A prior comparison matched "Workload (unit)" (the
-    # OCR-side echo of the -l input = 100) against the baseline's "Lookups"
-    # (also the -l input) — i.e. the input parameter, not a computed result.
-    # Aligning on a real metric would require app-source surgery (port the
-    # distributed verification hash into the OCR app, or add the grid
-    # checksum to a baseline).  XSBench correctness is covered by this case's
+    # emits no vhash).  XSBench correctness is covered by this case's
     # cross-runtime consensus (grid-checksum agreement across the 7 arts
     # variants + xsocr + ocr-vx).
     # -g (gridpoints/nuclide) shrunk 10 -> 3 and -l (lookups) 100 -> 30: the
@@ -497,21 +629,19 @@ CASES: list[Case] = [
     # directly shrinks the per-isotope grid-build/sort work.
     Case("XSBench_intel",             "XSBench_intel",             ["-s","small","-g","3","-l","30"],
          scalar_re=r"XSBench grid checksum:\s+(\d+)", scalar_kind="int"),
+    # XSBench_intel_sharedDB is the upstream-pristine control (its scalar is
+    # the -l input echo, a liveness check); the computed XS_CHECKSUM
+    # correctness story lives in XSBench_dist below.
     Case("XSBench_intel_sharedDB",    "XSBench_intel_sharedDB",    ["-s","small","-g","10","-l","100"],
          scalar_re=r"Workload\s+\(unit\):\s+(\d+)", scalar_kind="int"),
-    Case("uts", "uts", ["-g","1","-t","1","-a","2","-d","7","-b","7","-r","220"],
-         # T2L-family geometric tree at gen_mx=7 (4667 nodes, depth 36): same
-         # search character as the built-in gen_mx=10 sample (39881 nodes) but
-         # sized so the serialized ocr-vx message layer finishes well inside
-         # the per-case wall budget.
-         scalar_re=r"UTS Tree size\s*=\s*(\d+)", scalar_kind="int",
-         multinode_skip="single-node design: CPS continuations recreate EDTs "
-         "from process-local template globals set only in rank 0's mainEdt "
-         "(__template_uts_parseParams et al.); a continuation placed on "
-         "another rank reads template GUID 0 and the chain dies (arts: "
-         "EINVAL + release-mode assert no-op -> silent stall; xsocr/ocr-vx: "
-         "SIGSEGV at the same point)"),
-
+    # XSBench_dist: true-SPMD distributed XSBench — one deterministic table
+    # replica per rank (fixed data RNG), lookup range tiled once across
+    # rank x thread workers, per-lookup seed derived from the global index.
+    # XS_CHECKSUM is therefore invariant to rank/thread count and runtime.
+    # Every DB is single-writer-then-RO (replicas) or written-once partials
+    # gathered through events — WRF_RCU-eligible by construction (no wrf_rcu_skip).
+    Case("XSBench_dist",              "xsbench_dist",              ["-s","small","-g","10","-l","100"],
+         scalar_re=r"XS_CHECKSUM\s*=\s*(\d+)", scalar_kind="int"),
     # --- previously-SKIPped: revived with proper argv ---
     # nekbone: nrank=1 (Rx=Ry=Rz=1) used to deadlock on BOTH arts and xsocr
     # at the nekMultiplicity_stop step.  Root cause was a vendor bug in
@@ -526,6 +656,10 @@ CASES: list[Case] = [
          scalar_re=r"CGstep0_stop> rnorminit(?:\^2)?\s*=\s*([0-9.eE+-]+)",
          scalar_kind="float", scalar_tol=1e-9),
     Case("cholesky", "cholesky",
+         ["--ds","50","--ts","10","--fi",CHOLESKY_INPUT],
+         scalar_re=r"CHOLESKY trace\s*=\s*([0-9.eE+-]+)",
+         scalar_kind="float", scalar_tol=1e-9),
+    Case("cholesky_blas", "cholesky_blas",
          ["--ds","50","--ts","10","--fi",CHOLESKY_INPUT],
          scalar_re=r"CHOLESKY trace\s*=\s*([0-9.eE+-]+)",
          scalar_kind="float", scalar_tol=1e-9),
@@ -563,8 +697,7 @@ CASES: list[Case] = [
          ),
 
     Case("stream", "stream", [],
-         scalar_re=r"STREAM_RESULT a\[0\] = ([0-9.eE+-]+)", scalar_kind="float", scalar_tol=1e-3,
-         multinode_skip="single-node only; stream_dist is the multinode variant"),
+         scalar_re=r"STREAM_RESULT a\[0\] = ([0-9.eE+-]+)", scalar_kind="float", scalar_tol=1e-3),
 
     # --- previously-SKIPped: by-design stress test, cannot be tamed ---
     # miniAMR_forkbomb: previously SKIP-STRESS.  Vendor source hardcoded
@@ -572,39 +705,68 @@ CASES: list[Case] = [
     # third_party/ocr-apps/.../forkbomb/mainOCR.c to honor --num_tsteps /
     # --num_refine and add a shutdown barrier on the initial block count.
     Case("miniAMR_forkbomb", "miniAMR_forkbomb",
-         ["--nx","1","--ny","1","--nz","1","--num_tsteps","3","--num_refine","0"],
-         scalar_re=r"BLOCK 0 finished", scalar_kind="bool",
-         multinode_skip="single-node design: file-scope volatile statics for shutdown barrier"),
+         ["--npx","1","--npy","1","--npz","1","--max_time","3"],
+         scalar_re=r"BLOCK 0 finished", scalar_kind="bool"),
 
     # --- SAR (revived via CMake crlibm bootstrap + datagen integration).
     # All sizes build all three backends; per-size datasets are embedded
     # via the .incbin pipeline. ---
-    # SAR (all sizes): the app packs self-referential 2D arrays into single
-    # DataBlocks — row-pointer values computed against the DB's address at
-    # creation are baked into the DB payload (main.c:394-408), and the app's
-    # own guard `assert(&X[0][0] == &X[P1]) // if relocated need to remap`
-    # (inputs.c:226-227) shows the remap was never implemented.  Any runtime
-    # that clones the DB to another node dereferences stale pointers (all
-    # three SIGSEGV identically at n>=2); release builds compile the assert
-    # out.  Genuine app bug, not runtime-specific.
+    # SAR packs self-referential 2D arrays into single DataBlocks (row-pointer
+    # tables built against the block's creation address), baked process-local
+    # FILE* handles into a param DB, and stores absolute pointers to sibling
+    # axis-vector DBs inside ImageParams — all of which go stale when a runtime
+    # relocates the block to another rank (previously an identical SIGSEGV at
+    # n>=2 on every runtime).  The ocr-apps SAR source now (a) rebuilds each
+    # packed row-pointer table into EDT-local storage on entry (the vendor's own
+    # predicted remap), (b) carries file PATHS instead of FILE* — each
+    # file-touching EDT reopens on its executing node, ReadData seeking to its
+    # image's file slice (no affinity dependence, so it also covers ocr-vx,
+    # whose EDT-affinity hint value is stubbed out), and (c) reconstructs xr/yr
+    # locally from ImageParams.  Runs clean at MN on every arts protocol
+    # (RCU/RWLOCK × EAGER/LAZY), on xsocr, AND on ocr-vx; implicit-data
+    # cases keep their exact static pins at MN.  The pss consensus scalar is
+    # 35892 (benign ULP FP-threshold shift from the compute-EDT edits,
+    # unanimous across all rebuilt runtimes; no static pin).  WRF_RCU SIGSEGVs in
+    # the affine path (cross-node __sync counters + disjoint-region sibling
+    # writers are outside its DB-WRF contract) — wrf_rcu_skip excludes its vote;
+    # the cell still runs so the SEGV surfaces truthfully.
     Case("sar_tiny",   "sar_tiny",   [],
          scalar_re=r"SAR detects:\s*(\d+)", scalar_kind="int",
-         multinode_skip=_SAR_MN_SKIP),
+         wrf_rcu_skip="cross-node __sync counter coordination + disjoint-region sibling writers to shared image blocks — guarantees outside WRF_RCU's DB-WRF contract (whole-DB lossy writeback drops sibling updates)",
+         wrf_rcu_multinode_skip="closed S/M verdict: cross-node __sync counter coordination stalls the backprojection stage under lossy writeback -> 124 at MN (sar_mn_fix.md, wrf_rcu_mn_verdicts.md)"),
     Case("sar_small",  "sar_small",  [],
          scalar_re=r"SAR detects:\s*(\d+)", scalar_kind="int",
-         multinode_skip=_SAR_MN_SKIP),
+         wrf_rcu_skip="cross-node __sync counter coordination + disjoint-region sibling writers to shared image blocks — guarantees outside WRF_RCU's DB-WRF contract (whole-DB lossy writeback drops sibling updates)",
+         wrf_rcu_multinode_skip="closed S/M verdict: cross-node __sync counter coordination stalls the backprojection stage under lossy writeback -> 124 at MN (sar_mn_fix.md, wrf_rcu_mn_verdicts.md)"),
     Case("sar_medium", "sar_medium", [],
          scalar_re=r"SAR detects:\s*(\d+)", scalar_kind="int",
-         multinode_skip=_SAR_MN_SKIP),
+         wrf_rcu_skip="cross-node __sync counter coordination + disjoint-region sibling writers to shared image blocks — guarantees outside WRF_RCU's DB-WRF contract (whole-DB lossy writeback drops sibling updates)",
+         wrf_rcu_multinode_skip="closed S/M verdict: cross-node __sync counter coordination stalls the backprojection stage under lossy writeback -> 124 at MN (sar_mn_fix.md, wrf_rcu_mn_verdicts.md)"),
+    Case("sar_pss", "sar_problem_size_scaling",
+         [f"{OCR_APPS}/sar/datasets/huge/Data.bin",
+          f"{OCR_APPS}/sar/datasets/huge/PlatformPosition.bin",
+          f"{OCR_APPS}/sar/datasets/huge/PulseTransmissionTime.bin",
+          "/tmp/arts_sar_detects_corr.txt",
+          f"{OCR_APPS}/sar/ocr/problem_size_scaling/Parameter0.txt"],
+         scalar_re=r"SAR detects:\s*(\d+)", scalar_kind="int",
+         wrf_rcu_skip="cross-node __sync counter coordination + disjoint-region sibling writers to shared image blocks — guarantees outside WRF_RCU's DB-WRF contract (whole-DB lossy writeback drops sibling updates)",
+         wrf_rcu_multinode_skip="closed S/M verdict: cross-node __sync counter coordination stalls the backprojection stage under lossy writeback -> 124 at MN (sar_mn_fix.md, wrf_rcu_mn_verdicts.md)"),
     Case("sar_large",  "sar_large",  [],
          scalar_re=r"SAR detects:\s*(\d+)", scalar_kind="int",
-         multinode_skip=_SAR_MN_SKIP,
-         # The baked (non-CLI) dataset runs 61-63 s single-node under the
-         # MRSW protocol on BOTH the socket- and fabric-transport eras
-         # (measured; other protocols finish in ~2 s) — a protocol wall floor
-         # above the global budget, so this case carries its own.  The scalar
+         # The baked (non-CLI) dataset ran 61-63 s single-node under the
+         # since-retired MRSW protocol (measured on both transport eras;
+         # the surviving protocols finish in ~2 s) — that wall floor
+         # motivated the per-case budget, kept as headroom.  The scalar
          # is still fully verified against consensus + the static pin.
-         timeout=120),
+         # The same wall floor scaled with rank count (quiet-box measured
+         # ~103 s @2n, ~153 s @4n vs single-digit seconds on the other
+         # protocols); per-case multinode budget 300s = ~2x the slowest
+         # measured cell, so slow-but-correct completion is not misread as a
+         # hang.
+         timeout=120,
+         multinode_timeout=300,
+         wrf_rcu_skip="cross-node __sync counter coordination + disjoint-region sibling writers to shared image blocks — guarantees outside WRF_RCU's DB-WRF contract (whole-DB lossy writeback drops sibling updates)",
+         wrf_rcu_multinode_skip="closed S/M verdict: cross-node __sync counter coordination stalls the backprojection stage under lossy writeback -> 124 at MN (sar_mn_fix.md, wrf_rcu_mn_verdicts.md)"),
 ]
 
 
@@ -617,7 +779,18 @@ CASES: list[Case] = [
 _EXPECT: dict[str, str] = {
     "fibonacci": "55", "nqueens": "4", "smithwaterman": "1460", "triangle": "1074",
     "basicIO": "1", "highbw": "2048", "multigen": "121393", "multigen_2": "3524578",
-    "uts": "4667", "XSBench_intel": "16088953243632067443", "XSBench_intel_sharedDB": "100",
+    "XSBench_intel": "16088953243632067443", "XSBench_intel_sharedDB": "100",
+    # XSBench_dist at -s small -g 10 -l 100: the promotion surgery's 9-way
+    # unanimous computed digest, reproduced by construction (same fixed-seed
+    # rand()-stream tables + index-pure lookup seeding + FNV digest).
+    "XSBench_dist": "486159",
+    # quicksort_dist default shape (N=1000, range=1e6): element sum of the
+    # fixed-seed input, printed only when the sorted flag validates; agreed
+    # by arts x7, xsocr, ocr-vx at 1n and 2n.
+    "quicksort_dist": "496344943",
+    # fft_dist at log2N=22: analytic single-tone checksum == N (two peaks of
+    # N/2, all other bins zero) — closed-form, runtime-independent.
+    "fft_dist": "4194304.0",
     "sar_tiny": "12", "sar_small": "458", "sar_medium": "1991", "sar_large": "6523",
     "CoMD_sdsc": "-1.166058121223", "CoMD_sdsc2": "-1.166063027842",
     "CoMD_intel_chandra_tiled": "-1.166063",
@@ -711,8 +884,8 @@ def runtime_eligible(rt: Runtime, case: Case, node: object) -> bool:
         # scalar to vote on.
         if case.multinode_skip or not case.scalar_re:
             return False
-    if rt.kind == "arts" and rt.key == "mrmw" and case.mrmw_skip:
-        return False
+        if rt.kind == "arts" and rt.key == "wrf_rcu_eager" and case.wrf_rcu_multinode_skip:
+            return False
     if (rt.kind == "ocrvx" and case.ocrvx_mn_max_ranks
             and isinstance(node, int) and node > case.ocrvx_mn_max_ranks):
         return False
@@ -805,10 +978,23 @@ def consensus(cells: dict, case: Case) -> tuple:
         if c["state"] == "N/A":
             final[k] = "N/A"
         elif c["state"] == "FAIL":
-            final[k] = "FAIL"
-    # Candidates are cells that ran and produced a scalar.
+            # A no-vote cell that exited cleanly (rc==0) but yielded no
+            # parsable scalar is the declared situation itself -- the value
+            # (including its printability) is incomparable under the
+            # declaration.  Only a nonzero rc (hang/crash) must surface.
+            if c.get("novote") and c.get("rc") == 0:
+                final[k] = "NV"
+            else:
+                final[k] = "FAIL"
+        elif c.get("novote"):
+            # Ran under a no-vote declaration and did not fail: the run is
+            # the point (wedges/crashes must surface as FAIL above); the
+            # value is declared incomparable and casts no vote.
+            final[k] = "NV"
+    # Candidates are cells that ran, produced a scalar, and hold a vote.
     cand = {k: c for k, c in cells.items()
-            if c["state"] == "OK?" and c["scalar"] is not None}
+            if c["state"] == "OK?" and c["scalar"] is not None
+            and not c.get("novote")}
     if not cand:
         return (None, final)
 
@@ -861,7 +1047,7 @@ def run_matrix(runner: Runner, cases: list, only: set, no_baseline: bool,
     report: dict = {}
     glyph = {
         "OK": "·", "OK-TEARDOWN": "t", "DISAGREE": "X", "FAIL": "!",
-        "N/A": "-", "NO-CONSENSUS": "?",
+        "N/A": "-", "NV": "~", "NO-CONSENSUS": "?",
     }
     for c in cases:
         if only and c.name not in only:
@@ -873,6 +1059,12 @@ def run_matrix(runner: Runner, cases: list, only: set, no_baseline: bool,
         for node in NODE_CONFIGS:
             cells: dict = {rt.key: run_runtime(runner, rt, c, node)
                            for rt in rts}
+            single = node in ("1n", 1)
+            for k in cells:
+                nv = (k == "wrf_rcu_eager" and bool(c.wrf_rcu_skip)) or \
+                     (not single and bool(c.multinode_novote))
+                cells[k] = dict(cells[k])
+                cells[k]["novote"] = nv
             cval, final = consensus(cells, c)
             for k in cells:
                 cells[k] = dict(cells[k])
@@ -1092,10 +1284,10 @@ def _selftest() -> None:
 # ---------------------------------------------------------------------------
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--build-dir", default="build_release_mrnew_lazy",
+    p.add_argument("--build-dir", default="build_release_ocr_rcu_lazy",
                    help="Build directory containing apps and configs")
-    p.add_argument("--target", default="laptop", choices=["laptop", "cbgpu02"],
-                   help="Machine geometry: laptop (14-thread) or server (48-thread)")
+    p.add_argument("--target", default="cbgpu02", choices=["cbgpu02"],
+                   help="Machine geometry (drives config subdir + node counts)")
     p.add_argument("--no-baseline", action="store_true")
     p.add_argument("--only", type=str, default="")
     p.add_argument("--mem-gb", type=int, default=4)
@@ -1109,7 +1301,7 @@ def main():
                    help="Restrict to a single node-config, e.g. --node 1n")
     p.add_argument("--runtimes", type=str, default="",
                    help="Comma-separated runtime keys to run (e.g. "
-                        "mrnew_lazy,xsocr,ocrvx); empty = all. Baseline and "
+                        "ocr_rcu_lazy,xsocr,ocrvx); empty = all. Baseline and "
                         "expect pins still participate in the consensus.")
     p.add_argument("--selftest", action="store_true",
                    help="Run consensus unit tests (no build required) and exit")

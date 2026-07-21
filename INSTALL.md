@@ -99,8 +99,9 @@ with defaults lives in [README.md](README.md#build-options); the most common are
 | Option | Default | Purpose |
 | ------ | ------- | ------- |
 | `CMAKE_BUILD_TYPE` | `Debug` | `Debug` or `Release`. |
-| `ARTS_COHERENCE_PROTOCOL` | `MRNEW` | Coherence protocol (admission policy) — `MRNEW` (default, Multi-Reader Node-Exclusive Writer; implements the OCR v1.2.0 §1.6 contract) or `MRMW` (true multi-writer, lossy DB-DRF; evaluation only — emits a configure warning). Compile-time; all ranks must share one build. |
-| `ARTS_PROTOCOL_TIMING` | `LAZY` | Timing of consistency actions (meaningful only for `MRNEW`) — `LAZY` (acquire-time, default) or `EAGER` (release-time). Ignored under `MRMW`. |
+| `ARTS_MEMORY_MODEL` | `OCR` | Memory model — `OCR` (default; implements the OCR v1.2.0 §1.6 contract) or `DB_WRF` (write-race-free at DB granularity: the program must event-order every write-write conflict on a DB; evaluation only — emits a configure warning). Compile-time; all ranks must share one build. |
+| `ARTS_COHERENCE_PROTOCOL` | `RCU` | Coherence protocol — `RCU` (default; readers acquire versioned snapshots, never blocked/invalidated) or `RWLOCK` (per-DB distributed reader-writer lock). Valid combos: OCR×RCU×{E,L}, OCR×RWLOCK×{E,L}, DB_WRF×RCU×EAGER. |
+| `ARTS_PROTOCOL_TIMING` | `LAZY` | Timing of consistency actions — `LAZY` (acquire-time, default) or `EAGER` (release-time). |
 | `ARTS_USE_GPU` | `OFF` | Enable CUDA GPU support. |
 | `ARTS_BUILD_TESTS` | `ON` | Build the ctest suite. |
 | `ARTS_BUILD_BENCHMARKS` | `ON` | Build the OCR benchmark apps (needs MPI). |
@@ -115,21 +116,21 @@ Coherence Protocols
 
 DataBlock consistency behavior is controlled by one primary compile-time
 knob and one conditional sub-knob. `ARTS_COHERENCE_PROTOCOL` selects the
-**admission policy**: `MRNEW` (default, Multi-Reader Node-Exclusive Writer)
-implements the OCR v1.2.0 §1.6 memory model; `MRMW` (true multi-writer,
-lossy) is the weaker DB-DRF evaluation protocol that emits a configure-time
+**memory model × protocol**: `OCR`×`RCU` (default)
+implements the OCR v1.2.0 §1.6 memory model; `DB_WRF`×`RCU` (true multi-writer,
+lossy) is the DB-WRF evaluation configuration that emits a configure-time
 warning and can make racy-but-legal OCR programs yield wrong results.
 `ARTS_PROTOCOL_TIMING` selects **when** consistency actions occur: `LAZY`
 (acquire-time, default) or `EAGER` (release-time); it is meaningful only
-under `MRNEW` and is ignored under `MRMW`. One binary is exactly one
+for every OCR-model configuration (`DB_WRF` requires `EAGER`). One binary is exactly one
 configuration, and every rank in a multinode run must use the same build.
 To cover all meaningful configurations:
 
 ```bash
-cmake -GNinja -Bbuild_mrnew_eager -DCMAKE_BUILD_TYPE=Debug -DARTS_COHERENCE_PROTOCOL=MRNEW -DARTS_PROTOCOL_TIMING=EAGER
-cmake -GNinja -Bbuild_mrnew_lazy  -DCMAKE_BUILD_TYPE=Debug -DARTS_COHERENCE_PROTOCOL=MRNEW -DARTS_PROTOCOL_TIMING=LAZY
-cmake -GNinja -Bbuild_mrmw        -DCMAKE_BUILD_TYPE=Debug -DARTS_COHERENCE_PROTOCOL=MRMW
-ninja -C build_mrnew_eager && ninja -C build_mrnew_lazy && ninja -C build_mrmw
+cmake -GNinja -Bbuild_ocr_rcu_eager -DCMAKE_BUILD_TYPE=Debug -DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=RCU -DARTS_PROTOCOL_TIMING=EAGER
+cmake -GNinja -Bbuild_ocr_rcu_lazy  -DCMAKE_BUILD_TYPE=Debug -DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=RCU -DARTS_PROTOCOL_TIMING=LAZY
+cmake -GNinja -Bbuild_wrf_rcu_eager -DCMAKE_BUILD_TYPE=Debug -DARTS_MEMORY_MODEL=DB_WRF -DARTS_COHERENCE_PROTOCOL=RCU -DARTS_PROTOCOL_TIMING=EAGER
+ninja -C build_ocr_rcu_eager && ninja -C build_ocr_rcu_lazy && ninja -C build_wrf_rcu_eager
 ```
 
 Running Tests

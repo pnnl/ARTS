@@ -5,19 +5,19 @@ Absolute seconds are NOT comparable across apps (each app is sized differently),
 so the DEFAULT figures are NORMALIZED:
 
   (a) a_runtime_1n_normalized  -- per app, each runtime's median e2e / the app's
-      ARTS mrnew_lazy median (mrnew_lazy == 1.0).  Log x.  Whiskers propagate as
-      ratios (min/max over that runtime's iters / the mrnew_lazy median).  A
+      ARTS ocr_rcu_lazy median (ocr_rcu_lazy == 1.0).  Log x.  Whiskers propagate as
+      ratios (min/max over that runtime's iters / the ocr_rcu_lazy median).  A
       TIMEOUT is a lower bound (>= 30 s / base): hatched bar + '>' arrow.  A
       GEOMEAN group (geometric mean ratio per runtime, OK cells only, TIMEOUTs
       excluded) summarises across apps.
-  (b) b_protocols_1n_normalized -- same, the 5 ARTS coherence variants.  MRMW is
-      hatched where the app is MRMW-contract-ineligible (correctness_harness
-      mrmw_skip).
+  (b) b_protocols_1n_normalized -- same, the 5 ARTS coherence variants.  WRF_RCU is
+      hatched where the app is WRF_RCU-contract-ineligible (correctness_harness
+      wrf_rcu_skip).
   (c) c_concurrency_speedup -- 48w vs 12w speedup = t(12w)/t(48w) (>1 = 48w
       faster), per runtime; ideal = 4x (4x the cores).
   (d1/d2) strong/weak speedup panels -- per app, speedup vs 1 node = t(1n_sc)/
       t(Nn_sc) over nodes 1/2/4, with the y=x ideal (strong) / y=1 weak-ideal;
-      TIMEOUT = open marker (a 30 s floor -> an UPPER bound on speedup).
+      TIMEOUT = open marker (the 120 s wall budget as t(N) -> an UPPER bound on speedup).
 
 Absolute-second originals are preserved under figures/absolute/.  dataviz-skill
 palette (ARTS #2a78d6 + cool variants; xsocr #1baf7a; ocr-vx #eda100), fixed
@@ -34,25 +34,50 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
-TIMEOUT_CAP = 30.0
+# Per-family censoring caps = each family's wall budget (a censored cell is a
+# ">= budget" lower bound). single runs under a larger budget than strong/weak.
+TIMEOUT_CAP = 120.0         # strong/weak budget (and the plot annotation line)
+SINGLE_CAP = 120.0          # single-family budget
 
-RT_ORDER = ["mrnew_eager", "mrnew_lazy", "lock_eager", "lock_lazy", "mrmw", "xsocr", "ocrvx"]
-RT_COLOR = {"mrnew_eager": "#1b5c9e", "mrnew_lazy": "#2a78d6", "lock_eager": "#5b3fb8",
-            "lock_lazy": "#9b7fe0", "mrmw": "#c44fa0", "xsocr": "#1baf7a", "ocrvx": "#eda100"}
-RT_LABEL = {"mrnew_eager": "ARTS MRNEW/eager", "mrnew_lazy": "ARTS MRNEW/lazy",
-            "lock_eager": "ARTS LOCK/eager", "lock_lazy": "ARTS LOCK/lazy",
-            "mrmw": "ARTS MRMW", "xsocr": "xsocr (OCR)", "ocrvx": "ocr-vx (TBB)"}
+RT_ORDER = ["ocr_rcu_eager", "ocr_rcu_lazy", "ocr_rwlock_eager", "ocr_rwlock_lazy", "wrf_rcu_eager", "xsocr", "ocrvx"]
+# Categorical palette: protocol families share a warm/cool side (RCU =
+# red/orange, RWLOCK = blue/purple, WRF_RCU = green; refs = amber/cyan) with the
+# in-family pair split by hue AND lightness so it survives CVD simulation
+# (Machado protan/deutan adjacent-pair dE >= 12; >= 3:1 contrast on white).
+RT_COLOR = {"ocr_rcu_eager": "#ea580c", "ocr_rcu_lazy": "#c41111", "ocr_rwlock_eager": "#5b21b6",
+            "ocr_rwlock_lazy": "#3b82f6", "wrf_rcu_eager": "#16a34a", "xsocr": "#b45309", "ocrvx": "#0891b2"}
+RT_LABEL = {"ocr_rcu_eager": "ARTS RCU/eager", "ocr_rcu_lazy": "ARTS RCU/lazy",
+            "ocr_rwlock_eager": "ARTS RWLOCK/eager", "ocr_rwlock_lazy": "ARTS RWLOCK/lazy",
+            "wrf_rcu_eager": "ARTS WRF_RCU", "xsocr": "xsocr (OCR)", "ocrvx": "ocr-vx (TBB)"}
 ARTS_VARIANTS = RT_ORDER[:5]
-CROSS = ["mrnew_lazy", "xsocr", "ocrvx"]
+# Apps whose sources place EDTs with affinity hints (EDT_AFFINITY /
+# ocrAffinityGet* / AFFINITY_PD found in the app's own SOURCES or their
+# directly-#include'd headers).  Hint-less apps rely on the runtime's
+# no-hint round-robin placement (no data locality), so their multinode
+# scaling reflects placement policy, not app-structured distribution --
+# figures render hinted app names in bold to keep the two classes apart.
+HINTED_APPS = {
+    "CoMD_intel_chandra", "CoMD_intel_chandra_tiled", "CoMD_sdsc2",
+    "RSBench_intel_sharedDB", "Stencil1D_intel_chandra",
+    "Stencil2D_intel_chandra", "Stencil2D_intel_channelEVTs",
+    "XSBench_intel_sharedDB", "dbcreate_matrix", "fft_dist", "fibonacci",
+    "graph500", "hpcg_intel", "hpcg_intel_Eager",
+    "hpcg_intel_Eager_Collective", "hpgmg", "miniAMR_forkbomb",
+    "miniAMR_intel_bryan", "miniAMR_intel_chandra", "nekbone", "nqueens",
+    "p2p", "quicksort_dist", "reduction_intel", "stencil1D_channel",
+    "stream_dist", "tempest", "triangle",
+}
+CROSS = ["ocr_rcu_lazy", "xsocr", "ocrvx"]
 INK, MUTED, GRID = "#1a1a1a", "#666666", "#dddddd"
+HINT_INK = "#1d4ed8"   # affinity-hinted app names: bold + this accent
 
 
-def get_mrmw_ineligible(repo: Path) -> dict:
+def get_wrf_rcu_ineligible(repo: Path) -> dict:
     src = (repo / "benchmarks" / "scripts" / "correctness_harness.py").read_text()
     out = {}
     for chunk in re.split(r"\bCase\(", src)[1:]:
         nm = re.search(r"[\"']([A-Za-z0-9_]+)[\"']", chunk)
-        ms = re.search(r"mrmw_skip\s*=\s*[\"']([^\"']+)", chunk)
+        ms = re.search(r"wrf_rcu_skip\s*=\s*[\"']([^\"']+)", chunk)
         if nm and ms:
             out[nm.group(1)] = ms.group(1)
     return out
@@ -63,22 +88,27 @@ def load(dir_: Path) -> list:
     return list(csv.DictReader(open(p, newline=""))) if p.exists() else []
 
 
-def agg(rows: list) -> dict:
+def agg(rows: list, cap: float = TIMEOUT_CAP) -> dict:
     buck = {}
     for r in rows:
         key = (r["bench"], r["config"], r["runtime"])
         e, statv = r.get("e2e_ns"), r.get("status")
-        if e:
+        # Censoring is decided by STATUS, never by e2e presence: the runtimes
+        # also print their "[E2E]" marker during SIGTERM teardown, so a
+        # TIMEOUT/FAIL row can carry an e2e that is "time until killed", not a
+        # measurement. Only an OK row's e2e is a sample; everything else is a
+        # >= cap lower bound (cap = that family's wall budget).
+        if statv == "OK" and e:
             buck.setdefault(key, []).append((float(e) / 1e9, False))
-        elif statv in ("TIMEOUT", "FAIL"):
-            buck.setdefault(key, []).append((TIMEOUT_CAP, True))
+        else:
+            buck.setdefault(key, []).append((cap, True))
     out = {}
     for key, vals in buck.items():
         ok = [v for v, c in vals if not c]
         if ok:
             out[key] = {"med": st.median(ok), "lo": min(ok), "hi": max(ok), "censored": False, "n": len(ok)}
         else:
-            out[key] = {"med": TIMEOUT_CAP, "lo": TIMEOUT_CAP, "hi": TIMEOUT_CAP, "censored": True, "n": 0}
+            out[key] = {"med": cap, "lo": cap, "hi": cap, "censored": True, "n": 0}
     return out
 
 
@@ -98,7 +128,7 @@ def _style(ax, axis="x"):
 # ---------------------------------------------------------------------------
 # Normalized bar figures (a, b) + geomean
 # ---------------------------------------------------------------------------
-def _norm_ratios(A, benches, runtimes, base_rt="mrnew_lazy"):
+def _norm_ratios(A, benches, runtimes, base_rt="xsocr"):
     """Return (rows, geomeans): rows[b][rt] = (ratio, rlo, rhi, censored);
     geomeans[rt] over OK (non-censored) cells."""
     rows, per_rt = {}, {rt: [] for rt in runtimes}
@@ -120,7 +150,7 @@ def _norm_ratios(A, benches, runtimes, base_rt="mrnew_lazy"):
     return keep, rows, {rt: geomean(v) for rt, v in per_rt.items()}
 
 
-def fig_normalized(A, benches, runtimes, base_rt, title, path, mrmw_bad):
+def fig_normalized(A, benches, runtimes, base_rt, title, path, wrf_rcu_bad):
     keep, rows, gm = _norm_ratios(A, benches, runtimes, base_rt)
     if not keep:
         return gm
@@ -138,7 +168,7 @@ def fig_normalized(A, benches, runtimes, base_rt, title, path, mrmw_bad):
                 continue
             ratio, rlo, rhi, cen = rows[b][rt]
             y = ypos(i, j)
-            hatch = "///" if cen or (rt == "mrmw" and b in mrmw_bad) else ""
+            hatch = "///" if cen or (rt == "wrf_rcu_eager" and b in wrf_rcu_bad) else ""
             ax.barh(y, ratio - floor, left=floor, height=bw, color=RT_COLOR[rt], zorder=3,
                     edgecolor="white", linewidth=0.4, hatch=hatch,
                     xerr=[[max(0, ratio - rlo)], [max(0, rhi - ratio)]] if not cen else None,
@@ -157,11 +187,13 @@ def fig_normalized(A, benches, runtimes, base_rt, title, path, mrmw_bad):
     for t in ax.get_yticklabels():
         if t.get_text() == "GEOMEAN":
             t.set_weight("bold")
-    ax.set_xlabel(f"normalized e2e  (x ARTS mrnew_lazy;  1.0 = mrnew_lazy;  <1 faster)  [log]", color=INK, fontsize=9)
+        elif t.get_text() in HINTED_APPS:
+            t.set_weight("bold"); t.set_color(HINT_INK)
+    ax.set_xlabel(f"normalized e2e  (x {RT_LABEL.get(base_rt, base_rt)};  1.0 = {base_rt};  <1 faster)  [log]", color=INK, fontsize=9)
     ax.set_title(title, color=INK, fontsize=11, loc="left", weight="bold")
     _style(ax)
     ax.legend(fontsize=7, frameon=False, loc="lower right")
-    fig.text(0.01, -0.01, "hatched = TIMEOUT lower bound (>=30s/base, '>' arrow) or MRMW-ineligible; excluded from GEOMEAN.",
+    fig.text(0.01, -0.01, "hatched = TIMEOUT lower bound (>=30s/base, '>' arrow) or WRF_RCU-ineligible; excluded from GEOMEAN.",
              fontsize=6.5, color=MUTED)
     fig.tight_layout(); fig.savefig(path, dpi=140, bbox_inches="tight"); plt.close(fig)
     return gm
@@ -171,11 +203,11 @@ def fig_normalized(A, benches, runtimes, base_rt, title, path, mrmw_bad):
 # (e) timing axis isolated: eager vs lazy per protocol
 # ---------------------------------------------------------------------------
 def fig_eager_vs_lazy(A, benches, path):
-    """Per app, the eager/lazy median-e2e ratio for the MRNEW pair and the LOCK
+    """Per app, the eager/lazy median-e2e ratio for the RCU pair and the RWLOCK
     pair (>1 = eager slower).  Log x, 1.0 parity baseline, GEOMEAN group -- shows
     whether an eager-vs-lazy gap is uniform across apps or driven by a few."""
-    PAIRS = [("MRNEW  eager/lazy", "mrnew_eager", "mrnew_lazy", RT_COLOR["mrnew_lazy"]),
-             ("LOCK  eager/lazy", "lock_eager", "lock_lazy", RT_COLOR["lock_eager"])]
+    PAIRS = [("RCU  eager/lazy", "ocr_rcu_eager", "ocr_rcu_lazy", RT_COLOR["ocr_rcu_lazy"]),
+             ("RWLOCK  eager/lazy", "ocr_rwlock_eager", "ocr_rwlock_lazy", RT_COLOR["ocr_rwlock_eager"])]
     labels = [p[0] for p in PAIRS]; colors = {p[0]: p[3] for p in PAIRS}
     rows, per, keep = {}, {lab: [] for lab in labels}, []
     for b in benches:
@@ -220,6 +252,8 @@ def fig_eager_vs_lazy(A, benches, path):
     for t in ax.get_yticklabels():
         if t.get_text() == "GEOMEAN":
             t.set_weight("bold")
+        elif t.get_text() in HINTED_APPS:
+            t.set_weight("bold"); t.set_color(HINT_INK)
     ax.set_xlabel("eager / lazy  median e2e @48w   (>1 = eager slower;  1.0 = parity)  [log]", color=INK, fontsize=9)
     ax.set_title("(e) Timing axis isolated: eager vs lazy per ARTS protocol", color=INK, fontsize=11, loc="left", weight="bold")
     _style(ax); ax.legend(fontsize=8, frameon=False, loc="lower right")
@@ -271,6 +305,8 @@ def fig_pair_ratio(A, benches, num_rt, den_rt, num_lbl, den_lbl, color, title, x
     for t in ax.get_yticklabels():
         if t.get_text() == "GEOMEAN":
             t.set_weight("bold")
+        elif t.get_text() in HINTED_APPS:
+            t.set_weight("bold"); t.set_color(HINT_INK)
     ax.set_xlabel(xlabel, color=INK, fontsize=9)
     ax.set_title(title, color=INK, fontsize=11, loc="left", weight="bold")
     ax.text(floor, ygeo + 1.3, f"<- {den_lbl} faster", color=MUTED, fontsize=7, ha="left")
@@ -307,6 +343,9 @@ def fig_concurrency_speedup(A, benches, runtimes, path):
     ax.axvline(4.0, color="#c0392b", lw=1.0, ls="--", zorder=2)
     ax.text(4.0, n - 0.3, "ideal 4x (4x cores)", color="#c0392b", fontsize=7, ha="center")
     ax.set_yticks(range(n)); ax.set_yticklabels(bs, fontsize=7)
+    for t in ax.get_yticklabels():
+        if t.get_text() in HINTED_APPS:
+            t.set_weight("bold"); t.set_color(HINT_INK)
     ax.set_xlabel("speedup  t(12w) / t(48w)   (>1 = 48 workers faster)", color=INK, fontsize=9)
     ax.set_title("(c) Within-node concurrency speedup: 48 vs 12 workers", color=INK, fontsize=11, loc="left", weight="bold")
     _style(ax); ax.legend(fontsize=7, frameon=False, loc="lower right")
@@ -328,7 +367,7 @@ def fig_speedup_panels(A, benches, title, path, weak=False, runtimes=RT_ORDER):
     def real_base(b, rt):
         c = A.get((b, "1n_sc", rt))
         return c and not c["censored"] and c["med"] > REAL_FLOOR
-    bs = [b for b in benches if real_base(b, "mrnew_lazy")]
+    bs = [b for b in benches if real_base(b, "xsocr")]
     if not bs:
         return
     ncol = 4; nrow = (len(bs) + ncol - 1) // ncol
@@ -361,7 +400,10 @@ def fig_speedup_panels(A, benches, title, path, weak=False, runtimes=RT_ORDER):
             ax.axhline(1.0, ls="--", color="#c0392b", lw=0.9, zorder=2)   # weak-ideal: flat efficiency = 1
         else:
             ax.plot([1, 4], [1, 4], ls=":", color=INK, lw=0.9, zorder=2)  # strong-ideal: speedup = N (y=x)
-        ax.set_title(b + (" (clip)" if clipped else ""), fontsize=8, color=INK)
+        hint = b in HINTED_APPS
+        ax.set_title(b + (" (clip)" if clipped else ""), fontsize=8,
+                     color=HINT_INK if hint else INK,
+                     weight="bold" if hint else "normal")
         ax.set_xticks([1, 2, 4]); ax.set_xticklabels(["1", "2", "4"], fontsize=7); ax.tick_params(labelsize=7)
         ax.set_ylim(0, max(1.25, min(YCAP, pmax * 1.15)))
         _style(ax, axis="y")
@@ -377,18 +419,20 @@ def fig_speedup_panels(A, benches, title, path, weak=False, runtimes=RT_ORDER):
         ylab = "speedup  t(1n_sc)/t(Nn_sc)   (N = ideal)"
         foot = "strong: fixed total work -> linear speedup (y=x) is ideal."
     handles.append(Line2D([0], [0], marker="o", color=MUTED, markerfacecolor="none", lw=0,
-                          label="open + arrow = TIMEOUT (t(N)>=30s: plotted is an UPPER bound, true value lower)"))
+                          label="open + arrow = TIMEOUT (t(N)>=120s: plotted is an UPPER bound, true value lower)"))
     fig.suptitle(title, y=1.005, fontsize=12, weight="bold", color=INK, x=0.02, ha="left")
     fig.legend(handles=handles, fontsize=8, frameon=False, loc="upper center", ncol=3, bbox_to_anchor=(0.5, 0.982))
     fig.text(-0.005, 0.5, ylab, rotation=90, va="center", ha="center", fontsize=9, color=INK)
-    fig.text(0.5, -0.008, f"nodes 1/2/4 (12 workers each).  {foot}", ha="center", fontsize=8, color=MUTED)
+    fig.text(0.5, -0.008, f"nodes 1/2/4 (12 workers each).  {foot}  "
+             "blue bold title = app places EDTs with affinity hints (grouped first); black = no-hint round-robin placement.",
+             ha="center", fontsize=8, color=MUTED)
     fig.tight_layout(rect=[0, 0, 1, 0.955]); fig.savefig(path, dpi=130, bbox_inches="tight"); plt.close(fig)
 
 
 # ---------------------------------------------------------------------------
 # Absolute-second originals (preserved under figures/absolute/)
 # ---------------------------------------------------------------------------
-def fig_abs_bars(A, benches, runtimes, title, path, mrmw_bad):
+def fig_abs_bars(A, benches, runtimes, title, path, wrf_rcu_bad):
     bs = [b for b in benches if any((b, "1n", rt) in A for rt in runtimes)]
     if not bs:
         return
@@ -402,12 +446,15 @@ def fig_abs_bars(A, benches, runtimes, title, path, mrmw_bad):
                 continue
             y = i + (j - k / 2) * bw + bw / 2
             ax.barh(y, c["med"], height=bw, color=RT_COLOR[rt], zorder=3, edgecolor="white", linewidth=0.4,
-                    hatch=("///" if c["censored"] or (rt == "mrmw" and b in mrmw_bad) else ""),
+                    hatch=("///" if c["censored"] or (rt == "wrf_rcu_eager" and b in wrf_rcu_bad) else ""),
                     xerr=[[c["med"] - c["lo"]], [c["hi"] - c["med"]]],
                     error_kw=dict(ecolor=MUTED, lw=0.6, capsize=1.5),
                     label=RT_LABEL[rt] if i == 0 else "")
     ax.axvline(TIMEOUT_CAP, color="#c0392b", lw=0.8, ls=":", zorder=2)
     ax.set_yticks(range(n)); ax.set_yticklabels(bs, fontsize=7)
+    for t in ax.get_yticklabels():
+        if t.get_text() in HINTED_APPS:
+            t.set_weight("bold"); t.set_color(HINT_INK)
     ax.set_xlabel("e2e (s) -- absolute (NOT cross-app comparable)", color=INK, fontsize=9)
     ax.set_title(title, color=INK, fontsize=11, loc="left", weight="bold")
     _style(ax); ax.legend(fontsize=7, frameon=False, loc="lower right")
@@ -423,6 +470,20 @@ def fig_abs_scaling(A, benches, title, path):
     fig, axes = plt.subplots(nrow, ncol, figsize=(3.2 * ncol, 2.4 * nrow), squeeze=False)
     for idx, b in enumerate(bs):
         ax = axes[idx // ncol][idx % ncol]
+        # Robust per-panel y-limit from the UNCENSORED medians only, dropping
+        # far outliers (> 5x the panel median): the fast group's scaling
+        # structure stays readable; anything beyond the limit (a censored
+        # 120 s point or a legitimately divergent runtime) clips off-axis and
+        # is flagged with an up-arrow at the top edge instead.
+        oky = [A[(b, g, rt)]["med"] for g, _ in geos for rt in RT_ORDER
+               if (b, g, rt) in A and not A[(b, g, rt)]["censored"]]
+        if oky:
+            med = st.median(oky)
+            core = [y for y in oky if y <= 5 * med]
+            ymax = 1.2 * max(core)
+        else:
+            ymax = TIMEOUT_CAP * 1.08
+        ax.set_ylim(0, ymax)
         for rt in RT_ORDER:
             xs, ys, cens = [], [], []
             for g, nn in geos:
@@ -432,17 +493,34 @@ def fig_abs_scaling(A, benches, title, path):
                 xs.append(nn); ys.append(c["med"]); cens.append(c["censored"])
             if not xs:
                 continue
-            ax.plot(xs, ys, "-", color=RT_COLOR[rt], lw=1.4, zorder=3)
+            ax.plot(xs, ys, "-", color=RT_COLOR[rt], lw=1.4, zorder=3, clip_on=True)
             for x, y, cn in zip(xs, ys, cens):
-                ax.plot(x, y, "o", ms=4, color=RT_COLOR[rt], markerfacecolor=("none" if cn else RT_COLOR[rt]), zorder=4)
-        ax.axhline(TIMEOUT_CAP, color="#c0392b", lw=0.6, ls=":")
-        ax.set_title(b, fontsize=8, color=INK)
+                if y > ymax:
+                    ax.plot(x, ymax * 0.965, marker="^", ms=5, color=RT_COLOR[rt],
+                            markerfacecolor=("none" if cn else RT_COLOR[rt]), lw=0, zorder=5)
+                else:
+                    ax.plot(x, y, "o", ms=4, color=RT_COLOR[rt], markerfacecolor=("none" if cn else RT_COLOR[rt]), zorder=4)
+        if TIMEOUT_CAP <= ymax:
+            ax.axhline(TIMEOUT_CAP, color="#c0392b", lw=0.6, ls=":")
+        hint = b in HINTED_APPS
+        ax.set_title(b, fontsize=8, color=HINT_INK if hint else INK,
+                     weight="bold" if hint else "normal")
         ax.set_xticks([1, 2, 4]); ax.set_xticklabels(["1", "2", "4"], fontsize=7); ax.tick_params(labelsize=7)
         _style(ax, axis="y")
     for j in range(len(bs), nrow * ncol):
         axes[j // ncol][j % ncol].axis("off")
-    fig.suptitle(title, y=1.01, fontsize=12, weight="bold", color=INK, x=0.02, ha="left")
-    fig.tight_layout(); fig.savefig(path, dpi=125, bbox_inches="tight"); plt.close(fig)
+    handles = [Line2D([0], [0], color=RT_COLOR[rt], lw=2, label=RT_LABEL[rt]) for rt in RT_ORDER]
+    handles.append(Line2D([0], [0], ls=":", color="#c0392b",
+                          label=f"wall budget ({TIMEOUT_CAP:.0f}s)"))
+    handles.append(Line2D([0], [0], marker="o", color=MUTED, markerfacecolor="none", lw=0,
+                          label="open marker = TIMEOUT (true e2e above the budget line)"))
+    handles.append(Line2D([0], [0], marker="^", color=MUTED, markerfacecolor="none", lw=0,
+                          label="^ at top edge = off-axis (beyond the tightened y-limit; open ^ = also TIMEOUT)"))
+    fig.suptitle(title, y=1.005, fontsize=12, weight="bold", color=INK, x=0.02, ha="left")
+    fig.legend(handles=handles, fontsize=8, frameon=False, loc="upper center", ncol=3, bbox_to_anchor=(0.5, 0.988))
+    fig.text(-0.005, 0.5, "e2e wall (s) -- absolute, per-app axis (NOT cross-app comparable)",
+             rotation=90, va="center", ha="center", fontsize=9, color=INK)
+    fig.tight_layout(rect=[0, 0, 1, 0.96]); fig.savefig(path, dpi=125, bbox_inches="tight"); plt.close(fig)
 
 
 def write_summary_csv(A, path):
@@ -453,7 +531,7 @@ def write_summary_csv(A, path):
             w.writerow([b, cfg, rt, f"{v['med']:.3f}", f"{v['lo']:.3f}", f"{v['hi']:.3f}", int(v["censored"]), v["n"]])
 
 
-def write_readme(out, A_s, A_st, A_wk, order, mrmw_bad, ph, gm_a, gm_b, gm_e, gm_f, rows_f):
+def write_readme(out, A_s, A_st, A_wk, order, wrf_rcu_bad, ph, gm_a, gm_b, gm_e, gm_f, rows_f):
     def med(A, b, cfg, rt):
         c = A.get((b, cfg, rt)); return c["med"] if c else None
     L = ["# ARTS scaling campaign -- 2026-07-06 (localhost cbgpu02, 48 cores)\n"]
@@ -461,18 +539,18 @@ def write_readme(out, A_s, A_st, A_wk, order, mrmw_bad, ph, gm_a, gm_b, gm_e, gm
              "**localhost-simulated** (libfabric loopback) -- absolute MN numbers are comm-inflated; "
              "**real multinode requires the junction cluster**. Within-node (1n 48w / 1n_sc 12w) is real.\n")
     L.append("**Normalized by design**: absolute seconds are not comparable across apps, so figures a/b "
-             "report **e2e / the app's ARTS mrnew_lazy median (mrnew_lazy = 1.0)**, c/d report **speedup**. "
+             "report **e2e / the app's ARTS ocr_rcu_lazy median (ocr_rcu_lazy = 1.0)**, c/d report **speedup**. "
              "Metric = [E2E] compute span; a TIMEOUT is a `>=30 s` lower bound (hatched, excluded from geomean). "
              "Absolute-second originals are in `figures/absolute/`.\n")
     L.append("## Figures\n")
-    L.append("- **a_runtime_1n_normalized** -- 1n 48w, each runtime / mrnew_lazy (log x) + GEOMEAN group.")
-    L.append("- **b_protocols_1n_normalized** -- the 5 ARTS variants / mrnew_lazy + GEOMEAN; MRMW hatched where ineligible.")
-    L.append("- **e_eager_vs_lazy** -- timing axis isolated: per-app eager/lazy median-e2e ratio for the MRNEW pair and "
-             "the LOCK pair (>1 = eager slower), log x, 1.0 parity line + GEOMEAN. Reads whether an eager-vs-lazy gap is "
+    L.append("- **a_runtime_1n_normalized** -- 1n 48w, each runtime / ocr_rcu_lazy (log x) + GEOMEAN group.")
+    L.append("- **b_protocols_1n_normalized** -- the 5 ARTS variants / ocr_rcu_lazy + GEOMEAN; WRF_RCU hatched where ineligible.")
+    L.append("- **e_eager_vs_lazy** -- timing axis isolated: per-app eager/lazy median-e2e ratio for the RCU pair and "
+             "the RWLOCK pair (>1 = eager slower), log x, 1.0 parity line + GEOMEAN. Reads whether an eager-vs-lazy gap is "
              "uniform or driven by a few apps.")
-    L.append("- **f_lock_eager_vs_xsocr** -- **same protocol, two implementations**: ARTS LOCK/eager and xsocr are the "
+    L.append("- **f_lock_eager_vs_xsocr** -- **same protocol, two implementations**: ARTS RWLOCK/eager and xsocr are the "
              "SAME coherence protocol (home-centric lock arbitration + release-time eager writeback), so this is an "
-             "implementation duel. Per-app ratio LOCK/eager / xsocr (>1 = the ARTS implementation is slower), log x, "
+             "implementation duel. Per-app ratio RWLOCK/eager / xsocr (>1 = the ARTS implementation is slower), log x, "
              "1.0 parity line, GEOMEAN.")
     L.append("- **c_concurrency_speedup** -- t(12w)/t(48w) speedup (ideal 4x).")
     L.append("- **d1_strong_speedup** -- per-app **strong speedup** = t(1n_sc)/t(Nn_sc) vs nodes 1/2/4; ideal **y=x**. "
@@ -491,9 +569,9 @@ def write_readme(out, A_s, A_st, A_wk, order, mrmw_bad, ph, gm_a, gm_b, gm_e, gm
                 L.append(f"| {lab.strip()} | {v:.2f} |")
         L.append("")
     if gm_f and rows_f:
-        L.append("### (f) same-protocol implementation duel: ARTS LOCK/eager vs xsocr @48w\n")
-        L.append("ARTS LOCK/eager and xsocr implement the **same** coherence protocol (home-centric lock arbitration + "
-                 "release-time eager writeback), so this isolates *implementation* quality. Ratio = LOCK/eager / xsocr "
+        L.append("### (f) same-protocol implementation duel: ARTS RWLOCK/eager vs xsocr @48w\n")
+        L.append("ARTS RWLOCK/eager and xsocr implement the **same** coherence protocol (home-centric lock arbitration + "
+                 "release-time eager writeback), so this isolates *implementation* quality. Ratio = RWLOCK/eager / xsocr "
                  f"(>1 = ARTS slower). **GEOMEAN = {gm_f:.2f}** over OK cells "
                  f"({'ARTS faster on average' if gm_f < 1 else 'xsocr faster on average'}).\n")
         def _fmt(r):
@@ -501,11 +579,11 @@ def write_readme(out, A_s, A_st, A_wk, order, mrmw_bad, ph, gm_a, gm_b, gm_e, gm
             return f"`{b}` {ratio:.2f}" + ("(>=,ARTS TO)" if nc else "(<=,xsocr TO)" if dc else "")
         arts_wins = [r for r in rows_f if not (r[2] or r[3])][:5]                  # lowest ratio
         xsocr_wins = [r for r in rows_f if not (r[2] or r[3])][-5:][::-1]          # highest ratio
-        L.append("- **ARTS LOCK/eager wins most (lowest ratio):** " + ", ".join(_fmt(r) for r in arts_wins))
+        L.append("- **ARTS RWLOCK/eager wins most (lowest ratio):** " + ", ".join(_fmt(r) for r in arts_wins))
         L.append("- **xsocr wins most (highest ratio):** " + ", ".join(_fmt(r) for r in xsocr_wins))
         L.append("")
     # GEOMEAN table
-    L.append("## GEOMEAN normalized e2e @48w (x mrnew_lazy; lower = faster; mrnew_lazy = 1.00)\n")
+    L.append("## GEOMEAN normalized e2e @48w (x ocr_rcu_lazy; lower = faster; ocr_rcu_lazy = 1.00)\n")
     L.append("| runtime | geomean (a: cross-runtime) | geomean (b: protocols) |")
     L.append("|---|---|---|")
     for rt in RT_ORDER:
@@ -514,27 +592,27 @@ def write_readme(out, A_s, A_st, A_wk, order, mrmw_bad, ph, gm_a, gm_b, gm_e, gm
         if a == "-" and b == "-":
             continue
         L.append(f"| {RT_LABEL[rt]} | {a} | {b} |")
-    L.append("\n(geomean over apps with an OK mrnew_lazy base; TIMEOUT/censored cells excluded -- including them "
+    L.append("\n(geomean over apps with an OK ocr_rcu_lazy base; TIMEOUT/censored cells excluded -- including them "
              "would only push the lower-bound ratios further and understate the reference runtimes' true cost.)\n")
     # win/loss @1n
     L.append("## Single-node 48w win/loss (median e2e s; `*` = TIMEOUT/censored)\n")
-    L.append("| app | ARTS mrnew_lazy | xsocr | ocr-vx | fastest |")
+    L.append("| app | ARTS ocr_rcu_lazy | xsocr | ocr-vx | fastest |")
     L.append("|---|---|---|---|---|")
     wins = {}
     for b in order:
-        a1, x1, o1 = med(A_s, b, "1n", "mrnew_lazy"), med(A_s, b, "1n", "xsocr"), med(A_s, b, "1n", "ocrvx")
+        a1, x1, o1 = med(A_s, b, "1n", "ocr_rcu_lazy"), med(A_s, b, "1n", "xsocr"), med(A_s, b, "1n", "ocrvx")
         if a1 is None and x1 is None and o1 is None:
             continue
         avail = {k: v for k, v in {"ARTS": a1, "xsocr": x1, "ocr-vx": o1}.items()
-                 if v is not None and not A_s.get((b, "1n", {"ARTS": "mrnew_lazy", "xsocr": "xsocr", "ocr-vx": "ocrvx"}[k]), {}).get("censored")}
+                 if v is not None and not A_s.get((b, "1n", {"ARTS": "ocr_rcu_lazy", "xsocr": "xsocr", "ocr-vx": "ocrvx"}[k]), {}).get("censored")}
         best = min(avail, key=avail.get) if avail else "-"
         wins[best] = wins.get(best, 0) + 1
         def s(v, rt):
             return "-" if v is None else f"{v:.2f}" + ("*" if A_s.get((b, "1n", rt), {}).get("censored") else "")
-        L.append(f"| {b} | {s(a1,'mrnew_lazy')} | {s(x1,'xsocr')} | {s(o1,'ocrvx')} | {best} |")
+        L.append(f"| {b} | {s(a1,'ocr_rcu_lazy')} | {s(x1,'xsocr')} | {s(o1,'ocrvx')} | {best} |")
     L.append(f"\n**Fastest-at-48w tally (OK cells):** ARTS {wins.get('ARTS',0)}, xsocr {wins.get('xsocr',0)}, ocr-vx {wins.get('ocr-vx',0)}.\n")
-    L.append("## MRMW-contract-ineligible (hatched; number shown, correctness NOT guaranteed under MRMW)\n")
-    L.append(", ".join(f"`{k}`" for k in sorted(mrmw_bad)) + " -- same verdict as the correctness harness `mrmw_skip`.\n")
+    L.append("## WRF_RCU-contract-ineligible (hatched; number shown, correctness NOT guaranteed under WRF_RCU)\n")
+    L.append(", ".join(f"`{k}`" for k in sorted(wrf_rcu_bad)) + " -- same verdict as the correctness harness `wrf_rcu_skip`.\n")
     exempt = sorted(getattr(ph, "_WEAK_EXEMPT", {}).items())
     if exempt:
         L.append("## Weak-scaling exemptions (no ~2x-scalable work knob; weak == strong there)\n")
@@ -560,26 +638,31 @@ def main():
     FA.mkdir(parents=True, exist_ok=True); FR.mkdir(parents=True, exist_ok=True); (out / "data").mkdir(exist_ok=True)
     import sys; sys.path.insert(0, str(repo / "benchmarks" / "scripts"))
     import performance_harness as ph
-    order = [b.name for b in ph.BENCHES]
-    mrmw_bad = get_mrmw_ineligible(repo)
-    A_s, A_st, A_wk = agg(load(Path(a.single))), agg(load(Path(a.strong))), agg(load(Path(a.weak)))
+    order = [b.name for b in ph.BENCHES
+             if b.name not in getattr(ph, "PERF_EXCLUDED", set())]
+    # Hinted apps (bold/blue-marked) group at the top of every figure; each
+    # group keeps the bench-table order.
+    order = sorted(order, key=lambda b: b not in HINTED_APPS)
+    wrf_rcu_bad = get_wrf_rcu_ineligible(repo)
+    A_s, A_st, A_wk = (agg(load(Path(a.single)), cap=SINGLE_CAP),
+                       agg(load(Path(a.strong))), agg(load(Path(a.weak))))
     for name, A in (("single", A_s), ("strong", A_st), ("weak", A_wk)):
         write_summary_csv(A, out / "data" / f"summary_{name}.csv")
 
     # normalized (default)
-    gm_a = fig_normalized(A_s, order, CROSS, "mrnew_lazy",
-                          "(a) Single-node 48w, normalized to ARTS mrnew_lazy (=1.0)",
-                          F / "a_runtime_1n_normalized.png", mrmw_bad)
-    gm_b = fig_normalized(A_s, order, ARTS_VARIANTS, "mrnew_lazy",
-                          "(b) ARTS protocols @48w, normalized to MRNEW/lazy (=1.0)",
-                          F / "b_protocols_1n_normalized.png", mrmw_bad)
+    gm_a = fig_normalized(A_s, order, CROSS, "xsocr",
+                          "(a) Single-node 48w, normalized to ARTS ocr_rcu_lazy (=1.0)",
+                          F / "a_runtime_1n_normalized.png", wrf_rcu_bad)
+    gm_b = fig_normalized(A_s, order, ARTS_VARIANTS + ["xsocr"], "xsocr",
+                          "(b) ARTS protocols @48w, normalized to RCU/lazy (=1.0)",
+                          F / "b_protocols_1n_normalized.png", wrf_rcu_bad)
     gm_e = fig_eager_vs_lazy(A_s, order, F / "e_eager_vs_lazy.png")
-    # (f) same-protocol implementation duel: ARTS LOCK/eager vs xsocr (both are
+    # (f) same-protocol implementation duel: ARTS RWLOCK/eager vs xsocr (both are
     # home-centric lock arbitration + release-time eager writeback).
-    gm_f, rows_f = fig_pair_ratio(A_s, order, "lock_eager", "xsocr", "xsocr", "ARTS LOCK/eager",
-                                  RT_COLOR["lock_eager"],
-                                  "(f) Same protocol, two implementations: ARTS LOCK/eager vs xsocr @48w",
-                                  "ARTS LOCK/eager / xsocr  median e2e   (>1 = ARTS slower;  1.0 = parity)  [log]",
+    gm_f, rows_f = fig_pair_ratio(A_s, order, "ocr_rwlock_eager", "xsocr", "xsocr", "ARTS RWLOCK/eager",
+                                  RT_COLOR["ocr_rwlock_eager"],
+                                  "(f) Same protocol, two implementations: ARTS RWLOCK/eager vs xsocr @48w",
+                                  "ARTS RWLOCK/eager / xsocr  median e2e   (>1 = ARTS slower;  1.0 = parity)  [log]",
                                   F / "f_lock_eager_vs_xsocr.png")
     fig_concurrency_speedup(A_s, order, CROSS, F / "c_concurrency_speedup.png")
     # d1/d2 default = ARTS 5 protocols only (intra-ARTS scaling comparison).
@@ -593,18 +676,18 @@ def main():
     fig_speedup_panels(A_wk, order, "(d2+refs) WEAK scaling efficiency -- all runtimes",
                        FR / "d2_weak_speedup.png", weak=True, runtimes=RT_ORDER)
     # absolute originals (preserved)
-    fig_abs_bars(A_s, order, CROSS, "(a-abs) 48w ARTS vs xsocr vs ocr-vx (seconds)", FA / "a_runtime_1n.png", mrmw_bad)
-    fig_abs_bars(A_s, order, ARTS_VARIANTS, "(b-abs) ARTS protocols @48w (seconds)", FA / "b_protocols_1n.png", mrmw_bad)
+    fig_abs_bars(A_s, order, CROSS, "(a-abs) 48w ARTS vs xsocr vs ocr-vx (seconds)", FA / "a_runtime_1n.png", wrf_rcu_bad)
+    fig_abs_bars(A_s, order, ARTS_VARIANTS, "(b-abs) ARTS protocols @48w (seconds)", FA / "b_protocols_1n.png", wrf_rcu_bad)
     fig_abs_scaling(A_st, order, "(d1-abs) STRONG e2e vs nodes", FA / "d1_strong_scaling.png")
     fig_abs_scaling(A_wk, order, "(d2-abs) WEAK e2e vs nodes", FA / "d2_weak_scaling.png")
 
-    write_readme(out, A_s, A_st, A_wk, order, mrmw_bad, ph, gm_a, gm_b, gm_e, gm_f, rows_f)
+    write_readme(out, A_s, A_st, A_wk, order, wrf_rcu_bad, ph, gm_a, gm_b, gm_e, gm_f, rows_f)
     gm_line = " ".join(f"{rt}={gm_a[rt]:.2f}" for rt in CROSS if gm_a.get(rt))
     gm_eline = " | ".join(f"{lab}={v:.2f}" for lab, v in gm_e.items() if v)
     xs_win = ", ".join(f"{b}({r:.2f})" for b, r, _, _ in rows_f[:5])
     arts_win = ", ".join(f"{b}({r:.2f})" for b, r, _, _ in rows_f[-5:][::-1])
     print(f"[figures] geomean(a): {gm_line}; geomean(e): {gm_eline}; "
-          f"geomean(f lock_eager/xsocr): {gm_f:.2f}\n  ARTS-wins-most(low): {xs_win}\n  xsocr-wins-most(high): {arts_win}")
+          f"geomean(f ocr_rwlock_eager/xsocr): {gm_f:.2f}\n  ARTS-wins-most(low): {xs_win}\n  xsocr-wins-most(high): {arts_win}")
 
 
 if __name__ == "__main__":

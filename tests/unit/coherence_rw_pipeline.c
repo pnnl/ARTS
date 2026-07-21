@@ -126,7 +126,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
   arts_printf("=== coherence_rw_pipeline ===\n");
 
-#ifdef ARTS_PROTOCOL_MRMW
+#ifdef ARTS_PROTOCOL_WRF_RCU
   arts_printf("SKIP: RELAXED has no exclusive-RW ownership round\n");
   arts_shutdown();
   return;

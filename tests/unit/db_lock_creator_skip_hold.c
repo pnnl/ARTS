@@ -38,11 +38,11 @@
 ******************************************************************************/
 
 /// @file db_lock_creator_skip_hold.c
-/// @brief LOCK-only: arts_db_creator_skip_hold keeps the coherent (ARTS_DB)
+/// @brief RWLOCK-only: arts_db_creator_skip_hold keeps the coherent (ARTS_DB)
 ///        creator OFF created_db_list so the EDT epilogue does NOT run a bogus
 ///        release_rw on a hold that was never granted.
 ///
-/// Under the LOCK protocol the creator takes no implicit lock: the home rank is
+/// Under the RWLOCK protocol the creator takes no implicit lock: the home rank is
 /// the sole arbiter and zero-inits the buffer at create time.  If the creator
 /// were tracked on created_db_list, the epilogue would ship a spurious RW_REL
 /// to home, stealing a concurrent same-rank worker's local_count, driving the
@@ -61,21 +61,21 @@
 /// update would be lost -> reader mismatch -> arts_abort.  A stuck lock counter
 /// instead manifests as a hang caught by the ctest TIMEOUT.
 ///
-/// config_specific: meaningful only under LOCK.  Self-skips (prints SKIP and
+/// config_specific: meaningful only under RWLOCK.  Self-skips (prints SKIP and
 /// returns 0) under every other protocol.
 
 #include "arts.h"
 
-#if !defined(ARTS_PROTOCOL_LOCK)
+#if !defined(ARTS_PROTOCOL_RWLOCK)
 
 #include <stdio.h>
 
 int main(void) {
-  (void)printf("SKIP db_lock_creator_skip_hold: LOCK-only\n");
+  (void)printf("SKIP db_lock_creator_skip_hold: RWLOCK-only\n");
   return 0;
 }
 
-#else /* ARTS_PROTOCOL_LOCK */
+#else /* ARTS_PROTOCOL_RWLOCK */
 
 #include <stdint.h>
 #include <stdio.h>
@@ -91,7 +91,7 @@ void creator_writes_nothing(uint32_t paramc, const uint64_t *paramv,
   (void)paramv;
   (void)depc;
   (void)depv;
-  /* Intentionally no DB write: under LOCK the creator holds no lock. */
+  /* Intentionally no DB write: under RWLOCK the creator holds no lock. */
 }
 
 /// joiner_writer: a real RW writer through a dependency — takes the lock,
@@ -134,13 +134,13 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== db_lock_creator_skip_hold ===\n");
 
-  /* Create the DB on rank 0 (home == self when run single-node; the LOCK
+  /* Create the DB on rank 0 (home == self when run single-node; the RWLOCK
    * skip_hold decision is local to the creator's epilogue regardless). */
   void *ptr = NULL;
   arts_guid_t db =
       arts_db_create(&ptr, sizeof(unsigned int), ARTS_DB, ARTS_DB_PROP_NONE,
                      &(arts_db_hint_t){.rank = 0});
-  /* Under LOCK *addr is the writable stub buffer; pre-seed a non-sentinel so a
+  /* Under RWLOCK *addr is the writable stub buffer; pre-seed a non-sentinel so a
    * lost JOINer write would be detectable. */
   if (ptr != NULL) {
     ((unsigned int *)ptr)[0] = 0u;
@@ -180,4 +180,4 @@ int main(int argc, char **argv) {
   return 0;
 }
 
-#endif /* ARTS_PROTOCOL_LOCK */
+#endif /* ARTS_PROTOCOL_RWLOCK */

@@ -360,19 +360,19 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
    * the data/data_size arguments.
    *
    * OWNERSHIP_REQUEST / RELEASE_OWNERSHIP: shared between the eager and lazy
-   * protocols (both use per-DB exclusive ownership), but MRMW has
-   * no such concept.  Fatal in MRMW builds to catch binary mode mismatch.
+   * protocols (both use per-DB exclusive ownership), but WRF_RCU has
+   * no such concept.  Fatal in WRF_RCU builds to catch binary mode mismatch.
    * INVALIDATE_NOTICE is handled in its own three-model block below (eager =
    * Cat-B defer; lazy = direct, never deferred).
    */
-#if defined(ARTS_PROTOCOL_MRMW) || defined(ARTS_PROTOCOL_LOCK)
+#if defined(ARTS_PROTOCOL_WRF_RCU) || defined(ARTS_PROTOCOL_RWLOCK)
   case MSG_DB_OWNERSHIP_REQUEST: {
-    ARTS_ERROR("MRMW/LOCK build received exclusivity message type %d from rank "
+    ARTS_ERROR("WRF_RCU/RWLOCK build received exclusivity message type %d from rank "
                "%u — protocol has no OWNERSHIP_REQUEST; binary mode mismatch?",
                packet->message_type, packet->rank);
     break;
   }
-#else  /* MRNEW/MRSW eager and lazy: full handlers */
+#else  /* RCU eager and lazy: full handlers */
   case MSG_DB_OWNERSHIP_REQUEST: {
     ARTS_DEBUG("Coh OWNERSHIP_REQUEST Received");
     struct arts_msg_ownership_request_packet_s *pack =
@@ -389,7 +389,7 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
                                     &args, sizeof(args));
     break;
   }
-#endif /* ARTS_PROTOCOL_MRMW */
+#endif /* ARTS_PROTOCOL_WRF_RCU */
   /* INVALIDATE_NOTICE — protocol-split.
    *   eager/lazy : NOT deferred.  Home publishes the invalidate target
    *           (rw_holder) only after that rank's cache install — the CONFIRM
@@ -399,15 +399,15 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
    *           looked-up cache.  (The before-install GRANT/INVALIDATE reorder
    *           that once forced eager through the OoO engine is gone: EAGER no
    *           longer flips rw_holder before install.)
-   *   MRMW: no ownership transfer (caught by the fatal group above). */
-#if defined(ARTS_PROTOCOL_MRMW) || defined(ARTS_PROTOCOL_LOCK)
+   *   WRF_RCU: no ownership transfer (caught by the fatal group above). */
+#if defined(ARTS_PROTOCOL_WRF_RCU) || defined(ARTS_PROTOCOL_RWLOCK)
   case MSG_DB_OWNERSHIP_INVALIDATE: {
-    ARTS_ERROR("MRMW/LOCK build received INVALIDATE from rank %u — "
+    ARTS_ERROR("WRF_RCU/RWLOCK build received INVALIDATE from rank %u — "
                "protocol has no ownership invalidate; binary mode mismatch?",
                packet->rank);
     break;
   }
-#else  /* MRNEW/MRSW: eager + lazy share the direct-call body */
+#else  /* RCU: eager + lazy share the direct-call body */
   case MSG_DB_OWNERSHIP_INVALIDATE: {
     ARTS_DEBUG("Coh INVALIDATE_NOTICE Received");
     struct arts_msg_ownership_invalidate_packet_s *pack =
@@ -437,15 +437,15 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     break;
   }
 #endif /* model dispatch for MSG_DB_OWNERSHIP_INVALIDATE */
-#if defined(ARTS_PROTOCOL_LOCK)
+#if defined(ARTS_PROTOCOL_RWLOCK)
   case MSG_DB_SNAPSHOT_REQUEST:
   case MSG_DB_SNAPSHOT_RESPONSE: {
-    ARTS_ERROR("LOCK build received snapshot message type %d from rank %u — "
-               "LOCK has no RO snapshot protocol; binary mode mismatch?",
+    ARTS_ERROR("RWLOCK build received snapshot message type %d from rank %u — "
+               "RWLOCK has no RO snapshot protocol; binary mode mismatch?",
                packet->message_type, packet->rank);
     break;
   }
-#else  /* MRNEW/MRSW/MRMW: snapshot handlers */
+#else  /* RCU/WRF_RCU: snapshot handlers */
   case MSG_DB_SNAPSHOT_REQUEST: {
     ARTS_DEBUG("Coh GET_DATA Received");
     struct arts_msg_snapshot_request_packet_s *pack =
@@ -497,7 +497,7 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     arts_shared_release(&h);
     break;
   }
-#endif /* ARTS_PROTOCOL_LOCK */
+#endif /* ARTS_PROTOCOL_RWLOCK */
   case MSG_DB_CREATE: {
     ARTS_DEBUG("Coh DB_CREATE_COHERENT Received");
     arts_handler_db_create(
@@ -532,18 +532,18 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     break;
   }
   /* OWNERSHIP_RESPONSE: the single ownership-transfer wire message.  eager =
-   * GRANT (buffer payload); lazy = TRANSFER_OWNERSHIP (map + buffer); MRMW
+   * GRANT (buffer payload); lazy = TRANSFER_OWNERSHIP (map + buffer); WRF_RCU
    * has no ownership transfer and fatals to catch a binary mode mismatch. */
-#if defined(ARTS_PROTOCOL_MRMW) || defined(ARTS_PROTOCOL_LOCK)
+#if defined(ARTS_PROTOCOL_WRF_RCU) || defined(ARTS_PROTOCOL_RWLOCK)
   case MSG_DB_OWNERSHIP_RESPONSE:
   case MSG_DB_OWNERSHIP_CTS: {
-    ARTS_ERROR("MRMW/LOCK build received ownership-transfer message type %d "
+    ARTS_ERROR("WRF_RCU/RWLOCK build received ownership-transfer message type %d "
                "from rank %u — protocol has no ownership transfer; binary "
                "mode mismatch?",
                packet->message_type, packet->rank);
     break;
   }
-#else  /* MRNEW/MRSW eager and lazy: one converged layout */
+#else  /* RCU eager and lazy: one converged layout */
   case MSG_DB_OWNERSHIP_RESPONSE: {
     ARTS_DEBUG("Coh OWNERSHIP_RESPONSE Received");
     /* The (small) serialized map immediately follows the header; the buffer
@@ -568,7 +568,7 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     break;
   }
 #endif /* model dispatch for MSG_DB_OWNERSHIP_RESPONSE */
-  /* WRITEBACK + WRITEBACK_ACK: used by the eager protocol and MRMW
+  /* WRITEBACK + WRITEBACK_ACK: used by the eager protocol and WRF_RCU
    * (sync release writeback).  Fatal in the lazy protocol — lazy uses
    * async transfer, not synchronous writeback. */
 #if defined(ARTS_TIMING_LAZY)
@@ -603,16 +603,16 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     break;
   }
 #endif /* WRITEBACK_CTS timing dispatch */
-#if defined(ARTS_TIMING_LAZY) || defined(ARTS_PROTOCOL_LOCK)
+#if defined(ARTS_TIMING_LAZY) || defined(ARTS_PROTOCOL_RWLOCK)
   case MSG_DB_WRITEBACK:
   case MSG_DB_WRITEBACK_ACK: {
-    ARTS_ERROR("lazy/LOCK build received writeback message type %d from rank "
+    ARTS_ERROR("lazy/RWLOCK build received writeback message type %d from rank "
                "%u — protocol has no synchronous WRITEBACK; binary mode "
                "mismatch?",
                packet->message_type, packet->rank);
     break;
   }
-#else  /* MRNEW/MRSW eager and MRMW: full handlers */
+#else  /* RCU eager and WRF_RCU: full handlers */
   case MSG_DB_WRITEBACK: {
     ARTS_DEBUG("Coh WRITEBACK Received");
     struct arts_msg_writeback_packet_s *pack =
@@ -679,11 +679,11 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
   }
   /* ===== lazy-only message dispatch ========================================
    * These slots are only sent between ranks compiled with the lazy coherence
-   * protocol (MRNEW/MRSW).  The LOCK protocol has its own lazy messages
-   * (FORWARD/DELIVER/CONFIRM/RORET) dispatched in the ARTS_PROTOCOL_LOCK block
+   * protocol (RCU).  The RWLOCK protocol has its own lazy messages
+   * (FORWARD/DELIVER/CONFIRM/RORET) dispatched in the ARTS_PROTOCOL_RWLOCK block
    * below.  The eager build fatals immediately to catch a binary mode mismatch.
    */
-#if defined(ARTS_TIMING_LAZY) && !defined(ARTS_PROTOCOL_LOCK)
+#if defined(ARTS_TIMING_LAZY) && !defined(ARTS_PROTOCOL_RWLOCK)
   case MSG_DB_SNAPSHOT_REDIRECT: {
     ARTS_DEBUG("Lazy REDIRECT_RO Received");
     struct arts_msg_snapshot_redirect_packet_s *pack =
@@ -727,28 +727,28 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     arts_shared_release(&h);
     break;
   }
-#else  /* eager build or LOCK (LOCK has its own lazy messages below) */
+#else  /* eager build or RWLOCK (RWLOCK has its own lazy messages below) */
   case MSG_DB_SNAPSHOT_REDIRECT:
   case MSG_DB_OWNERSHIP_CONFIRM_ACK: {
     ARTS_ERROR(
-        "non-MRNEW/MRSW-lazy build received MRNEW/MRSW-lazy message type %d "
+        "non-RCU-lazy build received RCU-lazy message type %d "
         "from rank %u — binary mode mismatch?",
         packet->message_type, packet->rank);
     break;
   }
-#endif /* ARTS_TIMING_LAZY && !ARTS_PROTOCOL_LOCK */
+#endif /* ARTS_TIMING_LAZY && !ARTS_PROTOCOL_RWLOCK */
   /* OWNERSHIP_CONFIRM: both timings (new owner C → home A flips rw_holder +
    * advances the round).  LAZY additionally replies with CONFIRM_ACK; EAGER's
    * home handler does not (the new owner already drained at
-   * OWNERSHIP_RESPONSE). MRMW has no ownership transfer and fatals. */
-#if defined(ARTS_PROTOCOL_MRMW) || defined(ARTS_PROTOCOL_LOCK)
+   * OWNERSHIP_RESPONSE). WRF_RCU has no ownership transfer and fatals. */
+#if defined(ARTS_PROTOCOL_WRF_RCU) || defined(ARTS_PROTOCOL_RWLOCK)
   case MSG_DB_OWNERSHIP_CONFIRM: {
-    ARTS_ERROR("MRMW/LOCK build received OWNERSHIP_CONFIRM from rank %u — "
+    ARTS_ERROR("WRF_RCU/RWLOCK build received OWNERSHIP_CONFIRM from rank %u — "
                "protocol has no ownership transfer; binary mode mismatch?",
                packet->rank);
     break;
   }
-#else /* MRNEW/MRSW */
+#else /* RCU */
   case MSG_DB_OWNERSHIP_CONFIRM: {
     ARTS_DEBUG("Coh CONFIRM Received");
     struct arts_msg_ownership_confirm_packet_s *pack =
@@ -773,10 +773,10 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     break;
   }
 #endif /* OWNERSHIP_CONFIRM model dispatch */
-  /* LOCK has its own REQUEST wire (both timings) and timing-specific grant/
-   * release messages.  The legacy coherence cases are excluded from LOCK builds
+  /* RWLOCK has its own REQUEST wire (both timings) and timing-specific grant/
+   * release messages.  The legacy coherence cases are excluded from RWLOCK builds
    * (each is already guarded above). */
-#ifdef ARTS_PROTOCOL_LOCK
+#ifdef ARTS_PROTOCOL_RWLOCK
   /* MSG_DB_LOCK_REQUEST is shared: both EAGER and LAZY home-dispatch via OoO
    * (a REQUEST can arrive before the home db_s is installed on a remote-create
    * lazy-install path). */
@@ -882,8 +882,8 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     /* Cat-C SPECIAL — pointer-identity sem_post on cv directly.  The wake
      * is cache-independent: a torn-down home cache must NOT drop the ACK or
      * the blocked releaser hangs (await_writeback_ack would spin forever).
-     * arts_handler_db_writeback_ack is not linked in the LOCK build (it
-     * lives in MRNEW/MRSW/MRMW TUs), so inline the sem_post here. */
+     * arts_handler_db_writeback_ack is not linked in the RWLOCK build (it
+     * lives in RCU/WRF_RCU TUs), so inline the sem_post here. */
     if (pack->cv != 0) {
       sem_post((sem_t *)(uintptr_t)pack->cv);
     }
@@ -917,7 +917,7 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     break;
   }
 #endif /* ARTS_TIMING_LAZY */
-#endif /* ARTS_PROTOCOL_LOCK */
+#endif /* ARTS_PROTOCOL_RWLOCK */
   case MSG_RDZV_PUSH_RTS: {
     ARTS_DEBUG("RDZV_PUSH_RTS Received");
     struct arts_msg_rdzv_push_rts_packet_s *pack =

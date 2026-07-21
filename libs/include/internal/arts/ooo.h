@@ -69,9 +69,9 @@ extern "C" {
  * arts_handler_ prefix stripped and upper-cased (kind ↔ handler 1:1), e.g.
  * arts_handler_event_add_dependence → OOO_EVENT_ADD_DEPENDENCE.
  *
- * The model-specific DB-coherence kinds are preprocessor-selected: MRNEW builds
- * define ARTS_PROTOCOL_MRNEW plus exactly one of ARTS_TIMING_{EAGER,LAZY};
- * MRMW builds define ARTS_PROTOCOL_MRMW alone.  Each build's enum
+ * The model-specific DB-coherence kinds are preprocessor-selected: RCU builds
+ * define ARTS_PROTOCOL_RCU plus exactly one of ARTS_TIMING_{EAGER,LAZY};
+ * WRF_RCU builds define ARTS_PROTOCOL_WRF_RCU alone.  Each build's enum
  * (and the mirroring g_ooo_table) carries only that model's OOO_DB_* kinds.
  * OOO_KIND_COUNT is therefore per-model — sound because every TU in one build
  * sees the same model define. */
@@ -96,13 +96,13 @@ enum arts_ooo_kind {
  * remote-created DB's lazy_install cache can fire a request/writeback before
  * that DB's home CREATE arrives, so the message reaches home with db_s not yet
  * installed ⇒ OoO push, replayed on the CREATE handler's drain. */
-#if defined(ARTS_PROTOCOL_LOCK) && defined(ARTS_TIMING_EAGER)
+#if defined(ARTS_PROTOCOL_RWLOCK) && defined(ARTS_TIMING_EAGER)
   OOO_DB_ACQUIRE, /* → arts_db_acquire_replay_dep (re-attempts the one deferred
                      local dep; pushed by arts_db_acquire_all's per-dep 3-way)
                    */
   OOO_DB_LOCK_REQUEST, /* → arts_handler_db_lock_request @ home */
   OOO_DB_LOCK_RELEASE, /* → arts_handler_db_lock_release @ home */
-#elif defined(ARTS_PROTOCOL_LOCK) && defined(ARTS_TIMING_LAZY)
+#elif defined(ARTS_PROTOCOL_RWLOCK) && defined(ARTS_TIMING_LAZY)
   OOO_DB_ACQUIRE, /* → arts_db_acquire_replay_dep (re-attempts the one deferred
                      local dep; pushed by arts_db_acquire_all's per-dep 3-way)
                    */
@@ -133,7 +133,7 @@ enum arts_ooo_kind {
  * directly).
  * NO OOO_DB_WRITEBACK — the lazy protocol has no synchronous writeback (the
  * dispatcher fatals on the WRITEBACK wire message). */
-#elif defined(ARTS_PROTOCOL_MRMW)
+#elif defined(ARTS_PROTOCOL_WRF_RCU)
   OOO_DB_ACQUIRE, /* → arts_db_acquire_replay_dep (re-attempts the one deferred
                      local dep; pushed by arts_db_acquire_all's per-dep 3-way)
                    */
@@ -142,7 +142,7 @@ enum arts_ooo_kind {
                               transfer) */
 #else
 #error                                                                         \
-    "exactly one of ARTS_PROTOCOL_LOCK+ARTS_TIMING_{EAGER,LAZY}, ARTS_TIMING_{EAGER,LAZY} (MRNEW/MRSW), or ARTS_PROTOCOL_MRMW must be defined"
+    "exactly one of ARTS_PROTOCOL_RWLOCK+ARTS_TIMING_{EAGER,LAZY}, ARTS_TIMING_{EAGER,LAZY} (RCU), or ARTS_PROTOCOL_WRF_RCU must be defined"
 #endif
 
   OOO_KIND_COUNT /* sentinel — g_ooo_table size (per-model) */
@@ -208,7 +208,7 @@ struct arts_ooo_args_db_acquire_s {
 
 /* Coherence replay args — re-issue the wire handler once the home db_s/cache
  * is installed.  First-class fields are reconstructed into a stack packet by
- * the handler.  The home FIFO records only the requester rank (MRNEW/MRSW
+ * the handler.  The home FIFO records only the requester rank (RCU
  * order ownership rank-by-rank). */
 struct arts_ooo_args_db_ownership_request_s {
   unsigned int requester;
@@ -268,7 +268,7 @@ struct arts_ooo_args_edt_destroy_s {
   arts_guid_t guid;
 };
 
-/* LOCK protocol OoO args (OOO_DB_LOCK_REQUEST / OOO_DB_LOCK_RELEASE). */
+/* RWLOCK protocol OoO args (OOO_DB_LOCK_REQUEST / OOO_DB_LOCK_RELEASE). */
 struct arts_ooo_args_db_lock_request_s {
   unsigned int requester; /* rank that sent MSG_DB_LOCK_REQUEST */
   arts_guid_t db_guid;
@@ -281,7 +281,7 @@ struct arts_ooo_args_db_lock_request_s {
  * the LOCK_RELEASE_ACK so the releaser wakes by pointer identity.  0 for RO.
  * version: monotone round counter bumped by the releaser; home's buf_install
  * rejects stale overwrites when a reordered/duplicate RELEASE races a newer
- * one (same guard as the MRNEW writeback path). */
+ * one (same guard as the RCU writeback path). */
 struct arts_ooo_args_db_lock_release_s {
   unsigned int releaser; /* rank that sent MSG_DB_LOCK_RELEASE */
   arts_guid_t db_guid;

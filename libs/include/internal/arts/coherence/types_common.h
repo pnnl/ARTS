@@ -29,7 +29,7 @@ extern "C" {
 /**
  * @file types_common.h
  * @brief Protocol-agnostic DB-coherence layout types shared by every
- *        ARTS_COHERENCE_PROTOCOL build (MRNEW / MRMW / MRSW).
+ *        ARTS_COHERENCE_PROTOCOL build (RCU / WRF_RCU).
  *
  * The protocol-specific cache/db ownership layout lives in the per-protocol
  * coherence/<proto>/types.h, selected by arts/coherence/types.h.  Anything
@@ -126,7 +126,7 @@ struct arts_db_cache_s;
  * Drained in full by the next install via a single atomic_exchange on the
  * Treiber stack — monotonic version guarantees every parked node's
  * target_version <= the just-installed version.  RO path; present in every
- * protocol (MRMW parks all modes here). */
+ * protocol (WRF_RCU parks all modes here). */
 struct arts_db_snapshot_waiter_s {
   arts_lf_link_t link; /* FIRST — required by arts_lf_stack_t */
   arts_guid_t edt_guid;

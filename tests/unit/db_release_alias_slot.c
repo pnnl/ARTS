@@ -64,7 +64,7 @@
 ///
 /// This test is designed to FAIL while the bug exists (it must stay
 /// correct-and-failing); it documents the contract that mid-EDT release of an
-/// alias slot must not double-decrement.  ownership/LOCK only (MRMW does not
+/// alias slot must not double-decrement.  ownership/RWLOCK only (WRF_RCU does not
 /// serialize RW so there is no alias dedup; it self-skips).
 ///
 /// No in-test watchdog: a hang is reaped by the ctest TIMEOUT.
@@ -140,8 +140,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== db_release_alias_slot ===\n");
 
-#if defined(ARTS_PROTOCOL_MRMW)
-  arts_printf("SKIP db_release_alias_slot: MRMW does not serialize RW (no "
+#if defined(ARTS_PROTOCOL_WRF_RCU)
+  arts_printf("SKIP db_release_alias_slot: WRF_RCU does not serialize RW (no "
               "alias dedup)\n");
   arts_shutdown();
   return;

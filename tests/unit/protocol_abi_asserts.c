@@ -5,8 +5,8 @@
  * Property under test
  * -------------------
  * protocol.h is the cross-rank wire contract.  Two ranks built in DIFFERENT
- * coherence configs (the 7 supported: MRNEW+EAGER, MRNEW+LAZY, MRSW+EAGER,
- * MRSW+LAZY, MRMW, LOCK+EAGER, LOCK+LAZY) MUST agree byte-for-byte on:
+ * coherence configs (the 5 supported: RCU+EAGER, RCU+LAZY,
+ * WRF_RCU, RWLOCK+EAGER, RWLOCK+LAZY) MUST agree byte-for-byte on:
  *   (1) `enum arts_msg_type` — every ordinal contiguous 0..MSG_COUNT-1, and
  *       MSG_COUNT itself, IDENTICAL across all 7 configs (the enum members are
  *       unconditional even where their dispatcher case is #ifdef'd out, so the
@@ -19,8 +19,8 @@
  * payload at offset sizeof(struct); a sizeof skew tears every payload.
  *
  * The golden values below were frozen from the current tree and verified
- * IDENTICAL across all 7 configs (only the LOCK-only structs, and the
- * LOCK+LAZY-only subset within them, differ in presence, never in the shared
+ * IDENTICAL across all 7 configs (only the RWLOCK-only structs, and the
+ * RWLOCK+LAZY-only subset within them, differ in presence, never in the shared
  * ordinals/offsets/sizes).  This TU is meant to be COMPILED ONCE PER
  * -DARTS_PROTOCOL_* config; the `_Static_assert`s catch any config that drifts
  * from the golden table at compile time.
@@ -40,7 +40,7 @@
  * trailing payload on an 8-byte boundary ... the payload starts at sizeof() —
  * that offset must be 8-aligned."  The payload-carrying structs are
  * OWNERSHIP_RESPONSE, WRITEBACK, SNAPSHOT_RESPONSE, EDT_SATISFY_SLOT (for
- * DB_MODE_PTR), and — in LOCK builds — LOCK_GRANT, LOCK_RELEASE, and (LOCK+LAZY
+ * DB_MODE_PTR), and — in RWLOCK builds — LOCK_GRANT, LOCK_RELEASE, and (RWLOCK+LAZY
  * only) LOCK_DELIVER.  This TU checks that sizeof() of each is a multiple of 8
  * at runtime (the invariant spans a pad field whose width is itself derived
  * from other fields, so it is not expressible as a single `_Static_assert`).
@@ -201,7 +201,7 @@ _Static_assert(sizeof(struct arts_msg_rdzv_push_cts_packet_s) == 56,
                "rdzv_push_cts sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_ownership_confirm_packet_s) == 32,
                "ownership_confirm sizeof drifted");
-#ifdef ARTS_PROTOCOL_LOCK
+#ifdef ARTS_PROTOCOL_RWLOCK
 _Static_assert(sizeof(struct arts_msg_lock_request_packet_s) == 64,
                "lock_request sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_lock_grant_packet_s) == 96,
@@ -252,7 +252,7 @@ int main(void) {
        1},
       {"EDT_SATISFY_SLOT", sizeof(struct arts_msg_edt_satisfy_slot_packet_s),
        1},
-#ifdef ARTS_PROTOCOL_LOCK
+#ifdef ARTS_PROTOCOL_RWLOCK
       {"LOCK_GRANT", sizeof(struct arts_msg_lock_grant_packet_s), 1},
       {"LOCK_RELEASE", sizeof(struct arts_msg_lock_release_packet_s), 1},
 #ifdef ARTS_TIMING_LAZY

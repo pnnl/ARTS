@@ -71,7 +71,7 @@ void arts_handler_db_destroy(void *i, void *a) { recorder(i, a); }
 void arts_db_acquire_replay_dep(void *i, void *a) { recorder(i, a); }
 void arts_handler_db_snapshot_request(void *i, void *a) { recorder(i, a); }
 void arts_handler_db_writeback(void *i, void *a) { recorder(i, a); }
-#if defined(ARTS_PROTOCOL_LOCK)
+#if defined(ARTS_PROTOCOL_RWLOCK)
 void arts_handler_db_lock_request(void *i, void *a) { recorder(i, a); }
 void arts_handler_db_lock_release(void *i, void *a) { recorder(i, a); }
 #elif defined(ARTS_TIMING_EAGER) || defined(ARTS_TIMING_LAZY)

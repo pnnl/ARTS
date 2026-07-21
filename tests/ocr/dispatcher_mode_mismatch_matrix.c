@@ -8,31 +8,31 @@
  * that does not exist in this build's protocol — the diagnostic for a cluster
  * accidentally assembled from binaries built with mismatched
  * ARTS_COHERENCE_PROTOCOL / ARTS_PROTOCOL_TIMING.  The existing
- * coherence_mode_mismatch.c only paired MRNEW_EAGER / MRNEW_LAZY / MRMW, and
- * lock_mode_mismatch_fatal.c added LOCK; NEITHER drives MRSW.  This driver is
+ * coherence_mode_mismatch.c only paired RCU_EAGER / RCU_LAZY / WRF_RCU, and
+ * rwlock_mode_mismatch_fatal.c added RWLOCK.  This driver is
  * protocol-agnostic and, built once per config dir, completes the matrix:
- * pairing any two DIFFERENT-config binaries (MRNEW_EAGER, MRNEW_LAZY,
- * MRSW_EAGER, MRSW_LAZY, MRMW, LOCK) makes the first cross-protocol message hit
+ * pairing any two DIFFERENT-config binaries (RCU_EAGER, RCU_LAZY,
+ * WRF_RCU, RWLOCK) makes the first cross-protocol message hit
  * a fatal arm.
  *
  * What each protocol emits across the rank boundary (so every fatal arm is
  * reached by SOME pairing):
  *   - RW remote acquire → the build's RW-ownership wire:
- *       MRNEW/MRSW eager : OWNERSHIP_REQUEST/RESPONSE + WRITEBACK/WRITEBACK_ACK
- *       MRNEW/MRSW lazy  : OWNERSHIP_REQUEST/RESPONSE + CONFIRM/CONFIRM_ACK
- *       MRMW             : WRITEBACK/WRITEBACK_ACK (no ownership)
- *       LOCK             : LOCK_REQUEST/GRANT/RELEASE/RELEASE_ACK
+ *       RCU eager : OWNERSHIP_REQUEST/RESPONSE + WRITEBACK/WRITEBACK_ACK
+ *       RCU lazy  : OWNERSHIP_REQUEST/RESPONSE + CONFIRM/CONFIRM_ACK
+ *       WRF_RCU             : WRITEBACK/WRITEBACK_ACK (no ownership)
+ *       RWLOCK             : LOCK_REQUEST/GRANT/RELEASE/RELEASE_ACK
  *   - RO remote acquire → the build's RO wire:
- *       non-LOCK         : SNAPSHOT_REQUEST/RESPONSE (+ lazy SNAPSHOT_REDIRECT)
- *       LOCK             : LOCK_REQUEST(RO)
+ *       non-RWLOCK         : SNAPSHOT_REQUEST/RESPONSE (+ lazy SNAPSHOT_REDIRECT)
+ *       RWLOCK             : LOCK_REQUEST(RO)
  * A receiver compiled for a different protocol either fatals on the foreign
- * coherence tag (the #if fatal arms) or — for LOCK's own REQUEST/GRANT/RELEASE
- * tags, which non-LOCK builds do not even compile a case for — falls into the
+ * coherence tag (the #if fatal arms) or — for RWLOCK's own REQUEST/GRANT/RELEASE
+ * tags, which non-RWLOCK builds do not even compile a case for — falls into the
  * `default` arm (arts_shutdown + arts_runtime_stop).  Either path makes the
  * receiving rank exit non-zero (or stall until the harness -k SIGKILL), which
  * is the mismatch-detected signal.
  *
- * Like coherence_mode_mismatch.c / lock_mode_mismatch_fatal.c this is a
+ * Like coherence_mode_mismatch.c / rwlock_mode_mismatch_fatal.c this is a
  * STANDALONE pairing driver, NOT a plain ctest: the mismatch only exists when
  * the integrator launches two DIFFERENT-config builds of this binary as the two
  * ranks.  When both ranks are the SAME protocol the program completes normally

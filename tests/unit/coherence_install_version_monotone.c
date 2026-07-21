@@ -33,20 +33,20 @@
 /// after.
 ///
 /// config_specific: meaningful only where DB-level ownership transfer + version
-/// installs happen, i.e. MRNEW and MRSW (both timings).  LOCK has a distinct
-/// state machine (and is registered separately); MRMW is DB-DRF with no version
-/// guard contract.  Self-skips cleanly under LOCK / MRMW.
+/// installs happen, i.e. RCU (both timings).  RWLOCK has a distinct
+/// state machine (and is registered separately); WRF_RCU is DB-WRF with no version
+/// guard contract.  Self-skips cleanly under RWLOCK / WRF_RCU.
 ///
 /// A lost transfer / stranded acquirer is caught by the ctest TIMEOUT.
 
 #include "arts.h"
 
-#if !defined(ARTS_PROTOCOL_MRNEW) && !defined(ARTS_PROTOCOL_MRSW)
+#if !defined(ARTS_PROTOCOL_RCU)
 
 #include <stdio.h>
 
 int main(void) {
-  printf("SKIP coherence_install_version_monotone: MRNEW/MRSW-only\n");
+  printf("SKIP coherence_install_version_monotone: RCU-only\n");
   return 0;
 }
 

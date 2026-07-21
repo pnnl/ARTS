@@ -47,7 +47,7 @@
 /// GUID (NO route table entry, NO DB-level coherence), and uses producer /
 /// consumer FLUSH fences (driven automatically by db.c at create / prep /
 /// release) for cross-node visibility under HW MESI.  The application drives
-/// ordering via explicit events (DB-DRF, app-ordered across nodes).
+/// ordering via explicit events (app-ordered across nodes, full DRF).
 ///
 /// This test creates a CXL DB, fills it through the creator pointer, releases,
 /// and a consumer EDT reads it back — verifying the create flush + acquire-side

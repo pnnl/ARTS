@@ -128,16 +128,16 @@ typedef enum {
  *   ARTS_DB         — regular DRAM; contract/protocol selected at build time
  *   ARTS_DB_PIN     — regular DRAM, node-pinned, no DB-level coherence
  *   ARTS_DB_CXL     — CXL shared; HW cache coherence intra-node, app-ordered
- *                     (DB-DRF) across nodes
+ *                     (app-ordered, full DRF) across nodes
  *   ARTS_DB_GPU     — GPU staging; concurrent per-device replicas merged by
- *                     reduction at release (DB-DRF style)
+ *                     reduction at release (app-ordered)
  *   ARTS_DB_GPU_PIN — GPU staging, no DB-level coherence
  */
 typedef enum {
   ARTS_DB = 0, /**< Regular DRAM; contract/protocol selected at build time. */
   ARTS_DB_PIN, /**< Node-pinned regular DRAM, no DB-level coherence. */
-  ARTS_DB_CXL, /**< CXL shared; app-ordered (DB-DRF) (compiled w/ CXL). */
-  ARTS_DB_GPU, /**< GPU staging; per-device replicas merged at release (DB-DRF
+  ARTS_DB_CXL, /**< CXL shared; app-ordered, full DRF (compiled w/ CXL). */
+  ARTS_DB_GPU, /**< GPU staging; per-device replicas merged at release (app-ordered
                   style). */
   ARTS_DB_GPU_PIN, /**< GPU staging (host pinned + per-device replica). */
 } arts_db_types_t;

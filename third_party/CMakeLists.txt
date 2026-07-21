@@ -232,3 +232,52 @@ if(ARTS_TRANSPORT_OFI)
   add_dependencies(arts::libfabric libfabric_ep)
   # tcp provider needs no extra system libs; verbs pulls ibverbs only if present
 endif()
+
+# Build OpenBLAS (BLAS + LAPACK/LAPACKE, BSD-3) from the third_party/OpenBLAS
+# submodule for benchmark apps that call the standard CBLAS/LAPACKE C
+# interfaces.  Built SINGLE-THREADED (USE_THREAD=0): the consuming apps
+# parallelize at task granularity (one kernel call per tile task), so a
+# threaded BLAS underneath would oversubscribe the machine and serialize on
+# its own thread pool.  Same private-source-copy discipline as the libfabric
+# build above: the submodule tree is shared by every build directory, and
+# OpenBLAS's make build writes artifacts into its source tree.
+if(ARTS_BUILD_BENCHMARKS)
+  if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/OpenBLAS/Makefile")
+    message(FATAL_ERROR
+        "OpenBLAS submodule not initialized: "
+        "${CMAKE_CURRENT_SOURCE_DIR}/OpenBLAS/Makefile not found. "
+        "Run: git submodule update --init third_party/OpenBLAS")
+  endif()
+
+  include(ExternalProject)
+  set(OPENBLAS_SUBMODULE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/OpenBLAS")
+  set(OPENBLAS_SRC_DIR "${CMAKE_BINARY_DIR}/openblas-src")
+  set(OPENBLAS_PREFIX "${CMAKE_BINARY_DIR}/openblas")
+  if(NOT CMAKE_BUILD_PARALLEL_LEVEL)
+    set(CMAKE_BUILD_PARALLEL_LEVEL 4)
+  endif()
+  ExternalProject_Add(openblas_ep
+    DOWNLOAD_COMMAND ${CMAKE_COMMAND} -E remove_directory ${OPENBLAS_SRC_DIR}
+              COMMAND ${CMAKE_COMMAND} -E copy_directory ${OPENBLAS_SUBMODULE_DIR} ${OPENBLAS_SRC_DIR}
+    SOURCE_DIR ${OPENBLAS_SRC_DIR}
+    CONFIGURE_COMMAND ""
+    BUILD_IN_SOURCE 1
+    BUILD_COMMAND make -j${CMAKE_BUILD_PARALLEL_LEVEL}
+        USE_THREAD=0 USE_LOCKING=1 NO_SHARED=1 NO_FORTRAN=0
+        libs netlib
+    INSTALL_COMMAND make PREFIX=${OPENBLAS_PREFIX} NO_SHARED=1 install
+    LOG_BUILD 1 LOG_INSTALL 1
+    BUILD_BYPRODUCTS ${OPENBLAS_PREFIX}/lib/libopenblas.a
+  )
+
+  file(MAKE_DIRECTORY ${OPENBLAS_PREFIX}/include)
+
+  add_library(arts::openblas STATIC IMPORTED GLOBAL)
+  set_target_properties(arts::openblas PROPERTIES
+    IMPORTED_LOCATION ${OPENBLAS_PREFIX}/lib/libopenblas.a
+    INTERFACE_INCLUDE_DIRECTORIES ${OPENBLAS_PREFIX}/include
+    # The bundled LAPACK objects are Fortran; static single-pass linking
+    # needs the Fortran runtime after the archive on the consumer link line.
+    INTERFACE_LINK_LIBRARIES "gfortran;m;pthread")
+  add_dependencies(arts::openblas openblas_ep)
+endif()

@@ -131,7 +131,7 @@ add_baseline_app(NAME Stencil2D_omp
     SOURCES stencil.c
     NEEDS_OMP
     EXTRA_INCLUDES "${STENCIL2D_INCLUDE}" "${STENCIL2D_COMMON}"
-    EXTRA_DEFINES STAR
+    EXTRA_DEFINES STAR DOUBLE
     EXTRA_LINK_LIBS m
 )
 # PRK helper functions (bail_out, wtime) live in common/
@@ -150,6 +150,15 @@ add_baseline_app(NAME nqueens_omp
 add_baseline_app(NAME npb_cg_omp
     DIR npb-cg/sdsc-omp
     SOURCES cg_omp.c main.c makea.c util.c
+    NEEDS_OMP
+    EXTRA_LINK_LIBS m
+)
+
+# Tile Cholesky, hand-coded OpenMP tasks (no BLAS) — the reference for the
+# cholesky / cholesky_blas OCR ports (run at both problem sizes).
+add_baseline_app(NAME cholesky_omp
+    DIR cholesky/omp-no-mkl
+    SOURCES omp_cholesky.c
     NEEDS_OMP
     EXTRA_LINK_LIBS m
 )
@@ -185,7 +194,7 @@ add_baseline_app(NAME CoMD_mpi_omp
     NEEDS_OMP
     NEEDS_MPI
     EXTRA_INCLUDES "${COMD_INFO_DIR}"
-    EXTRA_DEFINES DOUBLE
+    EXTRA_DEFINES DOUBLE DO_MPI
     EXTRA_LINK_LIBS m
 )
 
@@ -216,7 +225,7 @@ add_baseline_app(NAME Stencil2D_mpi
     SOURCES stencil.c
     NEEDS_MPI
     EXTRA_INCLUDES "${STENCIL2D_INCLUDE}" "${STENCIL2D_COMMON}"
-    EXTRA_DEFINES STAR
+    EXTRA_DEFINES STAR DOUBLE_USER
     EXTRA_LINK_LIBS m
 )
 target_sources(Stencil2D_mpi PRIVATE
@@ -276,51 +285,64 @@ add_baseline_app(NAME lulesh_mpi_omp
     EXTRA_LINK_LIBS m
 )
 
-# HPCG 3.0 — MPI+OpenMP version
+# HPCG 3.0 — official source (OpenMP+MPI hybrid).  Two targets from the same
+# sources: hpcg_mpi is MPI-only (HPCG_NO_OPENMP), hpcg_mpi_omp is the hybrid
+# build (OpenMP threads within each MPI rank), for the MPI+OMP ceiling.
+set(HPCG_SOURCES
+    CG.cpp CG_ref.cpp CheckAspectRatio.cpp CheckProblem.cpp
+    ComputeDotProduct.cpp ComputeDotProduct_ref.cpp
+    ComputeMG.cpp ComputeMG_ref.cpp ComputeOptimalShapeXYZ.cpp
+    ComputeProlongation_ref.cpp ComputeResidual.cpp
+    ComputeRestriction_ref.cpp ComputeSPMV.cpp ComputeSPMV_ref.cpp
+    ComputeSYMGS.cpp ComputeSYMGS_ref.cpp
+    ComputeWAXPBY.cpp ComputeWAXPBY_ref.cpp
+    ExchangeHalo.cpp GenerateCoarseProblem.cpp GenerateGeometry.cpp
+    GenerateProblem.cpp GenerateProblem_ref.cpp
+    SetupHalo.cpp SetupHalo_ref.cpp
+    MixedBaseCounter.cpp OptimizeProblem.cpp ReadHpcgDat.cpp
+    ReportResults.cpp TestCG.cpp TestNorms.cpp TestSymmetry.cpp
+    WriteProblem.cpp YAML_Doc.cpp YAML_Element.cpp
+    finalize.cpp init.cpp main.cpp mytimer.cpp)
+
 add_baseline_app(NAME hpcg_mpi
     DIR hpcg/baseline/mpi/sandia/hpcg-3.0/src
-    SOURCES
-        CG.cpp CG_ref.cpp CheckAspectRatio.cpp CheckProblem.cpp
-        ComputeDotProduct.cpp ComputeDotProduct_ref.cpp
-        ComputeMG.cpp ComputeMG_ref.cpp ComputeOptimalShapeXYZ.cpp
-        ComputeProlongation_ref.cpp ComputeResidual.cpp
-        ComputeRestriction_ref.cpp ComputeSPMV.cpp ComputeSPMV_ref.cpp
-        ComputeSYMGS.cpp ComputeSYMGS_ref.cpp
-        ComputeWAXPBY.cpp ComputeWAXPBY_ref.cpp
-        ExchangeHalo.cpp GenerateCoarseProblem.cpp GenerateGeometry.cpp
-        GenerateProblem.cpp GenerateProblem_ref.cpp
-        SetupHalo.cpp SetupHalo_ref.cpp
-        MixedBaseCounter.cpp OptimizeProblem.cpp ReadHpcgDat.cpp
-        ReportResults.cpp TestCG.cpp TestNorms.cpp TestSymmetry.cpp
-        WriteProblem.cpp YAML_Doc.cpp YAML_Element.cpp
-        finalize.cpp init.cpp main.cpp mytimer.cpp
+    SOURCES ${HPCG_SOURCES}
     LANGUAGE CXX
     NEEDS_OMP
     NEEDS_MPI
     EXTRA_DEFINES HPCG_NO_OPENMP
 )
 
+add_baseline_app(NAME hpcg_mpi_omp
+    DIR hpcg/baseline/mpi/sandia/hpcg-3.0/src
+    SOURCES ${HPCG_SOURCES}
+    LANGUAGE CXX
+    NEEDS_OMP
+    NEEDS_MPI
+)
+
 # ==========================================================================
 # SAR OpenMP baseline (requires crlibm from OCR libs)
 # ==========================================================================
 
-set(CRLIBM_DIR "${BASELINE_APPS_ROOT}/libs/src/crlibm-1.0beta5")
-if(EXISTS "${CRLIBM_DIR}/crlibm.h")
-    set(HAS_CRLIBM_BASELINE TRUE)
-else()
-    set(HAS_CRLIBM_BASELINE FALSE)
-endif()
-
-if(HAS_CRLIBM_BASELINE)
-    # SAR OMP has a mix of C and C++ (clustering.cpp) — build as C++ to link both
+# SAR OMP needs both crlibm (extracted by the benchmarks/apps SAR tier into
+# ${CMAKE_BINARY_DIR}/benchmarks/apps/crlibm) AND a single-precision FFTW3
+# (fftwf_*) implementation.  crlibm is now reachable, but the only in-repo
+# fftw3.h/fftw3.c is an OCR-runtime-coupled shim (it #includes ocr.h), so it
+# cannot back a native OpenMP executable, and no standalone FFTW3 dev header
+# is installed on this box.  Skip until a real FFTW3 dev package is available.
+set(CRLIBM_GEN_DIR "${CMAKE_BINARY_DIR}/benchmarks/apps/crlibm")
+if(EXISTS "/usr/include/fftw3.h" AND EXISTS "${CRLIBM_GEN_DIR}/crlibm.h" AND TARGET ocr_lib_crlibm)
     add_baseline_app(NAME sar_omp
         DIR sar/omp/src
         SOURCES main.c common.c ccd.c cfar.c sinc.c sinc_interp.c backproj.c
                 downsample.c registration.c digspot.c inputs.c image_formation.c
         NEEDS_OMP
-        EXTRA_INCLUDES "${CRLIBM_DIR}"
-        EXTRA_LINK_LIBS m ocr_lib_crlibm
+        EXTRA_INCLUDES "${CRLIBM_GEN_DIR}"
+        EXTRA_LINK_LIBS m ocr_lib_crlibm fftw3f
     )
+else()
+    message(STATUS "Skipping sar_omp: standalone FFTW3 (fftw3.h) not available")
 endif()
 
 # ==========================================================================

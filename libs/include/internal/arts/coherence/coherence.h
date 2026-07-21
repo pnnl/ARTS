@@ -41,11 +41,9 @@ extern "C" {
 #include "arts/utils/shared.h" /* arts_shared_ptr_t — lazy_install return type */
 
 /*--- Pending RW Treiber-stack lifecycle helpers --------------------------
- * The per-cache RW waiter chain exists only under MRNEW: it parks same-node RW
- * EDTs that piggyback on an in-flight ownership round.  MRSW removes it — every
- * writer is ordered through the home FIFO and woken by a route-table lookup, so
- * the worker never parks RW EDTs in a per-cache queue. */
-#if defined(ARTS_PROTOCOL_MRNEW)
+ * The per-cache RW waiter chain exists only under RCU: it parks same-node RW
+ * EDTs that piggyback on an in-flight ownership round. */
+#if defined(ARTS_PROTOCOL_RCU)
 void arts_pending_rw_queue_init(arts_lf_stack_t *q);
 /* Push a waiter (multi-producer).  Caller fills edt_guid/slot before
  * calling.  Waiter must be heap-allocated; the stack takes ownership and
@@ -62,7 +60,7 @@ void arts_pending_rw_queue_drain(arts_lf_stack_t *q,
                                  void *ctx);
 /* Destroy: free every queued waiter (single-threaded at teardown). */
 void arts_pending_rw_queue_destroy(arts_lf_stack_t *q);
-#endif /* MRNEW */
+#endif /* RCU */
 
 /* Cache_s init kinds — selects how writer_count / home / buffer get
  * initialized.  Per coherence design plan §1006-1031 / §968-988. */
@@ -156,9 +154,9 @@ void mark_edt_secured_by_guid(arts_guid_t edt_guid, unsigned int slot);
 
 /* Per-protocol classification used by the arts_db_acquire_all driver: returns
  * true for deps that take exclusive ownership through the home directory and
- * must be GUID-serialized (eager/lazy RW). RO is never serialized; MRMW
+ * must be GUID-serialized (eager/lazy RW). RO is never serialized; WRF_RCU
  * serializes nothing (every acquire is a home snapshot). Defined in
- * coherence/{eager,lazy,mrmw}.c. */
+ * coherence/{eager,lazy,wrf_rcu}.c. */
 bool arts_db_acquire_is_serialized(arts_db_access_mode_t mode);
 
 /*--- Release path --------------------------------------------------------
@@ -215,7 +213,7 @@ void arts_db_writeback_sync(struct arts_db_cache_s *cache, uint64_t version,
 
 /* Block on a stack-local semaphore until the matching WRITEBACK_ACK posts it
  * (pointer identity); returns early if teardown begins.  Used by the eager and
- * MRMW release-tail bodies. */
+ * WRF_RCU release-tail bodies. */
 void await_writeback_ack(sem_t *cv);
 
 /* Take the EDT's strong buffer ref and return buf->data (NULL when no buffer is
@@ -223,8 +221,8 @@ void await_writeback_ack(sem_t *cv);
 void *arts_db_acquire_local(struct arts_db_cache_s *cache);
 
 /* Fire SNAPSHOT_REQUEST (edt_guid + slot) to home and PARK.  Shared by the
- * MRNEW/MRSW/MRMW acquire bodies (not LOCK, which uses LOCK_REQUEST). */
-#if !defined(ARTS_PROTOCOL_LOCK)
+ * RCU/WRF_RCU acquire bodies (not RWLOCK, which uses LOCK_REQUEST). */
+#if !defined(ARTS_PROTOCOL_RWLOCK)
 arts_db_acquire_result_t
 arts_db_acquire_remote_ro(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
                           unsigned int slot);
@@ -238,6 +236,23 @@ void mark_edt_ready_by_guid(arts_guid_t edt_guid, unsigned int slot);
  * guarantees a full drain is always correct).  Called from the install paths
  * (GRANT / TRANSFER_OWNERSHIP / DATA_RESPONSE case 2). */
 void arts_db_drain_pending_snapshot(struct arts_db_cache_s *cache);
+
+#if defined(ARTS_RO_REQUEST_COMBINING) && !defined(ARTS_PROTOCOL_RWLOCK)
+/* Response-terminal hook of the remote-read combining window: resume the
+ * in-flight batch against the now-current buffer (buffer_live), or park it on
+ * the reorder buffer with target `version` (reorder case), then re-arm the
+ * window with whatever accumulated meanwhile or release it.  Call at every
+ * point the response path resumes the on-wire requester. */
+void arts_db_ro_combine_on_terminal(struct arts_db_cache_s *cache,
+                                    bool buffer_live, uint64_t version);
+
+/* Ownership-arrival hook of the combining window: resume every read waiter
+ * still accumulating (not the in-flight group) against the just-transferred
+ * buffer.  Must be called from the transfer-commit body while its
+ * sentinel/guard pins writer_count — the bracket that makes the local serve
+ * race-free against a concurrent ownership departure. */
+void arts_db_ro_combine_grant_drain(struct arts_db_cache_s *cache);
+#endif
 
 /* Shared cache_s construct/destruct sub-helpers.  The per-protocol
  * arts_db_cache_init / arts_db_cache_destructor wrap these, preserving the
@@ -254,8 +269,8 @@ void arts_db_cache_common_destroy_pre(struct arts_db_cache_s *cache);
 void arts_db_cache_common_destroy_post(struct arts_db_cache_s *cache);
 
 /* Case-D (arts_handler_db_create) per-protocol leaf functions.
- * publish_holder: eager/lazy store creator_rank as the home rw_holder, MRMW
- * no-op; install_home_buffer: MRMW installs a version-1 zero buffer (home
+ * publish_holder: eager/lazy store creator_rank as the home rw_holder, WRF_RCU
+ * no-op; install_home_buffer: WRF_RCU installs a version-1 zero buffer (home
  * is always canonical), eager/lazy defer the install to the creator's first
  * WRITEBACK (no-op here).  Defined once per protocol TU. */
 void arts_db_create_publish_holder(struct arts_db_s *db,
@@ -263,16 +278,15 @@ void arts_db_create_publish_holder(struct arts_db_s *db,
 void arts_db_create_install_home_buffer(struct arts_db_cache_s *cache,
                                         uint64_t db_size);
 
-#if defined(ARTS_PROTOCOL_MRNEW) || defined(ARTS_PROTOCOL_MRSW)
-/* Single-owner ownership machinery shared by the MRNEW and MRSW protocols
+#if defined(ARTS_PROTOCOL_RCU)
+/* Single-owner ownership machinery of the RCU protocol
  * (defined in coherence/<proto>/ownership.c).  Called by the EAGER/LAZY
  * arts_handler_db_acquire bodies; the RO-path predicate is the only divergence
  * between EAGER and LAZY, so it stays inline in each protocol's handler.
  *
- * arts_db_acquire_remote_rw: the remote-RW acquire path.  MRNEW pushes a
- * pending_rw waiter and kicks a OWNERSHIP_REQUEST if none is in flight; MRSW
- * always sends OWNERSHIP_REQUEST(edt_guid, slot) to home (no per-cache queue,
- * single-writer ordering) — both return PARK. */
+ * arts_db_acquire_remote_rw: the remote-RW acquire path.  Pushes a
+ * pending_rw waiter and kicks a OWNERSHIP_REQUEST if none is in flight —
+ * returns PARK. */
 arts_db_acquire_result_t
 arts_db_acquire_remote_rw(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
                           unsigned int slot);
@@ -286,10 +300,10 @@ arts_db_acquire_remote_rw(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
 void arts_db_start_ownership_round(struct arts_db_cache_s *cache,
                                    struct arts_db_s *db,
                                    unsigned int requester);
-#endif /* MRNEW || MRSW */
+#endif /* RCU */
 
-#if defined(ARTS_PROTOCOL_MRNEW)
-/* arts_db_acquire_rw_local_fast: the case-2/6 RW local fast path (MRNEW).
+#if defined(ARTS_PROTOCOL_RCU)
+/* arts_db_acquire_rw_local_fast: the case-2/6 RW local fast path (RCU).
  * CAS-increments writer_count "if positive"; on success writes dep->ptr
  * (acquire_local) and returns true; returns false when writer_count went to 0
  * (ownership invalidated) so the caller falls through to
@@ -303,41 +317,15 @@ void arts_pending_rw_queue_for_each(arts_lf_stack_t *q,
                                     void (*cb)(arts_guid_t edt_guid,
                                                unsigned int slot, void *ctx),
                                     void *ctx);
-#endif /* MRNEW */
+#endif /* RCU */
 
-#if defined(ARTS_PROTOCOL_MRSW)
-/* arts_db_acquire_rw_local_fast: the case-2/6 RW local fast path (MRSW).  MRSW
- * caps the local active-writer count at one (the token): it pushes (edt_guid,
- * slot) onto cache.pending_rw, then claims the token (idle owner: CAS 1->2 +
- * run the FIFO head) or returns true to be popped by the active writer's
- * release / the drain.  Returns false only when this rank is NOT the owner, so
- * the caller falls through to arts_db_acquire_remote_rw.  Does NOT write
- * dep->ptr (the run path delivers it). */
-bool arts_db_acquire_rw_local_fast(struct arts_db_cache_s *cache,
-                                   arts_edt_dep_t *dep, arts_guid_t edt_guid,
-                                   unsigned int slot);
-
-/* Pop exactly ONE waiter from cache.pending_rw and deliver it (mark secured +
- * ready).  No per-waiter writer_count bump — the single token already accounts
- * the one active writer.  Called by the idle-owner token claim, the GRANT
- * drain, and the release token hand-off.  Returns true iff a waiter was popped
- * (false ⇒ queue empty: the caller may need to drop an orphan token). */
-bool arts_db_mrsw_run_one(struct arts_db_cache_s *cache);
-
-/* MRSW local RW release: pop-then-conditional-sub with a cheap LOCAL Dekker
- * re-check (defined in coherence/mrsw/ownership.c; called from
- * arts_db_release_rw after the per-timing writeback/version bump). */
-void arts_db_release_rw_local(struct arts_db_cache_s *cache);
-#endif /* MRSW */
-
-#if defined(ARTS_PROTOCOL_MRNEW) || defined(ARTS_PROTOCOL_MRSW)
-/* GRANT drain: install the granted waiters.  MRNEW pops every pending_rw waiter
- * (bump writer_count per waiter); MRSW pops exactly one (the token provides the
- * single-writer floor).  Defined in coherence/<proto>/ownership.c; called from
- * the EAGER GRANT handler and the LAZY CONFIRM_ACK handler. */
+#if defined(ARTS_PROTOCOL_RCU)
+/* GRANT drain: install the granted waiters — pops every pending_rw waiter
+ * (bump writer_count per waiter).  Defined in coherence/<proto>/ownership.c;
+ * called from the EAGER GRANT handler and the LAZY CONFIRM_ACK handler. */
 void arts_db_drain_pending_rw_after_grant(struct arts_db_cache_s *cache,
                                           uint64_t version, bool has_next);
-#endif /* MRNEW || MRSW */
+#endif /* RCU */
 
 #ifdef __cplusplus
 }

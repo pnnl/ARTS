@@ -41,11 +41,11 @@ coherence for the DB:
        via events.
    * - ``ARTS_DB_CXL``
      - CXL shared memory.  Hardware cache coherence intra-node;
-       application-ordered (DB-DRF) across nodes.  Compiled only with
+       application-ordered (full DRF) across nodes.  Compiled only with
        ``ARTS_USE_CXL=ON``.
    * - ``ARTS_DB_GPU``
      - GPU staging.  Concurrent per-device replicas merged by reduction
-       at release (DB-DRF style).
+       at release (app-ordered).
    * - ``ARTS_DB_GPU_PIN``
      - GPU staging (host pinned + per-device replica), no DB-level
        coherence.
@@ -94,17 +94,18 @@ Consistency
 For regular ``ARTS_DB`` DataBlocks, which values a read may return is
 governed by the build-time protocol selection:
 
-* ``ARTS_COHERENCE_PROTOCOL`` selects the **admission policy**: ``MRNEW``
-  (default; implements the OCR v1.2.0 §1.6 contract) or ``MRMW``
-  (weaker DB-DRF; evaluation only).
+* ``ARTS_MEMORY_MODEL`` × ``ARTS_COHERENCE_PROTOCOL`` select the contract and
+  mechanism: ``OCR`` × ``RCU`` (default; implements the OCR v1.2.0 §1.6
+  contract), ``OCR`` × ``RWLOCK``, or ``DB_WRF`` × ``RCU``
+  (write-race-free at DB granularity, DB-WRF; evaluation only).
 * ``ARTS_PROTOCOL_TIMING`` selects **when** consistency actions occur:
   ``LAZY`` (acquire-time, default) or ``EAGER`` (release-time); meaningful
-  only under ``MRNEW``.
+  for all OCR-model configurations.
 
 See :ref:`coherence_protocols` for the normative definition of all axes.  The
 other subtypes (``ARTS_DB_PIN``, ``ARTS_DB_CXL``, ``ARTS_DB_GPU``,
 ``ARTS_DB_GPU_PIN``) carry no DB-level runtime coherence; the
-application orders conflicting accesses with events (DB-DRF).
+application orders conflicting accesses with events (full DRF for the non-coherent storage kinds).
 
 Creating a DataBlock
 --------------------

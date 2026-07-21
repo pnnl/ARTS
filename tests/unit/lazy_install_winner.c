@@ -43,19 +43,19 @@
 /// wrong stub would corrupt the read); (3) progress — every wave drains (a
 /// stranded lazy install would hang the finish scope → ctest TIMEOUT).
 ///
-/// runtime_single+multinode, non-LOCK: lazy first-touch install is the
-/// MRNEW/MRSW/MRMW remote-acquire mechanism.  LOCK has its own RO acquire path,
+/// runtime_single+multinode, non-RWLOCK: lazy first-touch install is the
+/// RCU/WRF_RCU remote-acquire mechanism.  RWLOCK has its own RO acquire path,
 /// so self-skips.  On a single node every acquire is a local hit (the lazy path
 /// is never entered) and the test passes trivially.
 
 #include "arts.h"
 
-#if defined(ARTS_PROTOCOL_LOCK)
+#if defined(ARTS_PROTOCOL_RWLOCK)
 
 #include <stdio.h>
 
 int main(void) {
-  printf("SKIP lazy_install_winner: non-LOCK only (LOCK has no lazy "
+  printf("SKIP lazy_install_winner: non-RWLOCK only (RWLOCK has no lazy "
          "first-touch cache install)\n");
   return 0;
 }

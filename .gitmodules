@@ -19,3 +19,7 @@
 [submodule "third_party/libfabric"]
 	path = third_party/libfabric
 	url = https://github.com/ofiwg/libfabric.git
+[submodule "third_party/OpenBLAS"]
+	path = third_party/OpenBLAS
+	url = https://github.com/OpenMathLib/OpenBLAS.git
+	shallow = true

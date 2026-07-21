@@ -41,7 +41,7 @@
 /// @brief T109 — WRITEBACK_ACK posts the releaser's sem on HIT and MISS
 ///        (B017/B018).
 ///
-/// The eager (and MRMW) RW release performs a synchronous WRITEBACK round: the
+/// The eager (and WRF_RCU) RW release performs a synchronous WRITEBACK round: the
 /// releaser blocks on a stack-local sem_t whose address is carried in the wire
 /// `cv` field; the home posts that sem via WRITEBACK_ACK by pointer identity.
 /// The Cat-C SPECIAL invariant is that the ACK posts the sem on BOTH HIT and
@@ -58,20 +58,20 @@
 /// a torn-down home cache (the MISS path).  If any ACK is dropped the releaser
 /// never wakes and the finish scope never drains → ctest TIMEOUT FAIL.
 ///
-/// Config gate: WRITEBACK / WRITEBACK_ACK exist only under EAGER (MRNEW+EAGER,
-/// MRSW+EAGER) and MRMW — LAZY has no synchronous writeback (its dispatcher
-/// fatals on the message) and LOCK uses LOCK_RELEASE_ACK instead.  Compile-time
-/// self-skip on LAZY/LOCK.
+/// Config gate: WRITEBACK / WRITEBACK_ACK exist only under EAGER (RCU+EAGER,
+/// and WRF_RCU — LAZY has no synchronous writeback (its dispatcher
+/// fatals on the message) and RWLOCK uses LOCK_RELEASE_ACK instead.  Compile-time
+/// self-skip on LAZY/RWLOCK.
 
 #include "arts.h"
 
 #include <stdint.h>
 #include <stdio.h>
 
-#if defined(ARTS_PROTOCOL_LOCK) || defined(ARTS_TIMING_LAZY)
+#if defined(ARTS_PROTOCOL_RWLOCK) || defined(ARTS_TIMING_LAZY)
 int main(void) {
   printf(
-      "SKIP writeback_ack_post_on_miss: EAGER (MRNEW+E/MRSW+E) + MRMW only\n");
+      "SKIP writeback_ack_post_on_miss: EAGER (RCU+E) + WRF_RCU only\n");
   return 0;
 }
 #else

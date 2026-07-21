@@ -68,6 +68,14 @@ void arts_transport_loopback_post(const void *packet, unsigned int size) {
 /* Compile the module under test (its statics: net_send_core, g_net, ...). */
 #include "../../libs/src/core/transport/net.c"
 
+/* counter stubs: net.c's introspection increments resolve here (this harness
+ * links no counter TU). */
+ARTS_THREAD_LOCAL arts_counter_t arts_thread_local_counters[NUM_COUNTER_TYPES];
+void arts_counter_increment_by(arts_counter_t *counter, uint64_t num) {
+  (void)counter;
+  (void)num;
+}
+
 /* ------------------------------------------------------------------------- */
 
 static uint64_t now_ns(void) {

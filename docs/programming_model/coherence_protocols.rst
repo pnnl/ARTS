@@ -7,30 +7,43 @@ Coherence Protocols
    :local:
    :depth: 2
 
-This page is **normative**. It defines the contract every ARTS build provides
-and surveys the protocol design space — admission policies, timing variants,
-and orthogonal dimensions — both implemented and roadmap.
+This page is **normative**. It defines the memory-model contracts an ARTS
+build can provide, the coherence protocols that implement them, and the
+surrounding design space — both implemented and roadmap.
 
-Model vs protocol, reframed
-----------------------------
+Model, protocol, timing
+-----------------------
 
 A *memory (consistency) model* is a contract: it defines which values a read
-may legally return, and therefore which programs are valid.  A *coherence
+may legally return, and therefore which programs are valid. A *coherence
 protocol* is an implementation mechanism — replica management, admission
-control, ownership transfer, invalidation, write-back — that satisfies some
-contract as a *consequence* of its design.  The contract is therefore not a
-build axis: it is what falls out of the protocol you choose.
+control, ownership transfer, write-back — that satisfies some contract as a
+consequence of its design. ARTS keeps the two as **separate build axes**,
+plus a third for *when* consistency actions run:
 
-ARTS exposes one primary build axis and one conditional sub-axis:
-
-* ``ARTS_COHERENCE_PROTOCOL`` selects the **admission policy** — how many
-  concurrent readers and writers the protocol grants access to a DataBlock.
-  Values: ``MRNEW`` (default) or ``MRMW``.
+* ``ARTS_MEMORY_MODEL`` selects the **contract** the build implements:
+  ``OCR`` (default; races legal, the runtime orders every conflict it must) or
+  ``DB_WRF`` (write-race-free at DataBlock granularity: the program must
+  event-order every write-write conflict on a DB; evaluation only).
+* ``ARTS_COHERENCE_PROTOCOL`` selects the **mechanism**: ``RCU`` (default;
+  readers acquire versioned snapshots and are never blocked or invalidated)
+  or ``RWLOCK`` (queue-fair distributed reader–writer lock per DB).
 * ``ARTS_PROTOCOL_TIMING`` selects the **timing** of consistency actions —
-  when write-backs, ownership transfers, and invalidations are performed.
+  when write-backs and ownership transfers are performed.
   Values: ``EAGER`` (release-time) or ``LAZY`` (acquire-time, default).
-  Meaningful only when ``ARTS_COHERENCE_PROTOCOL=MRNEW``; ignored (with a
-  CMake STATUS message) under ``MRMW``.
+
+Valid combinations — five in total, one build directory each:
+OCR×RCU×{EAGER,LAZY}, OCR×RWLOCK×{EAGER,LAZY}, DB_WRF×RCU×EAGER. Everything
+else is a configure-time ``FATAL_ERROR``: DB_WRF×RWLOCK is rejected because a
+reader–writer lock already serializes all writers, making the program-side
+write-ordering obligation redundant; DB_WRF×RCU×LAZY is rejected because the
+DB_WRF arm is home-canonical — the release-time write-back *is* what makes
+the home copy canonical.
+
+The model and protocol axes are genuinely orthogonal in one direction: the
+same RCU read path serves both contracts. What changes between OCR×RCU and
+DB_WRF×RCU is **who orders the update side** — the runtime (via a
+single-owner lease) under OCR, or the program (via events) under DB_WRF.
 
 Every rank in a multinode run must use the same build.
 
@@ -39,8 +52,8 @@ Every rank in a multinode run must use the same build.
 The OCR contract (reference)
 -----------------------------
 
-The contract delivered by the default protocol (MRNEW) is the memory model of
-the *Open Community Runtime Interface*, version 1.2.0, §1.6, with the
+The contract delivered by the default build (OCR × RCU) is the memory model
+of the *Open Community Runtime Interface*, version 1.2.0, §1.6, with the
 ``synchronized-with`` relation completed as in Dokulil, "Consistency model for
 runtime objects in the Open Community Runtime", J. Supercomputing 75:2725–2760,
 2018 (doi:10.1007/s11227-018-2681-2), which this document incorporates by
@@ -65,7 +78,8 @@ Data races are **legal** under this contract, with defined semantics:
   ranges of one DB, both writes must appear in memory (no write may be masked
   by buffering or whole-block write-back).
 * *Overlapping rule:* unordered overlapping writes resolve to one legal
-  interleaving at the platform's N-byte store-atomicity granularity.
+  interleaving at the platform's N-byte store-atomicity granularity (N = 8 on
+  AMD64).
 
 Access modes are replication directives
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -102,218 +116,251 @@ Implementations may be stronger; programs must not rely on it
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Every conforming implementation (both ARTS protocols, and likewise XSOCR and
-OCR-Vx) is incidentally *stronger* than the contract in places — e.g. current
-ARTS protocols serialize unordered inter-node RW sessions via single-owner
-leases, and remote RO acquires observe an installed-version copy. These
+OCR-Vx) is incidentally *stronger* than the contract in places — e.g. the RCU
+protocol serializes unordered inter-node RW sessions via single-owner leases,
+and remote RO acquires observe an installed-version copy. These
 strengthenings are **never** part of the contract. A program that depends on
 them is *non-portable* (it may break on another conforming implementation or
 protocol), not invalid. Keeping the contract maximally relaxed preserves
 implementation freedom — including future multi-writer merge protocols.
 
-.. _admission_ladder:
+.. _db_wrf_contract:
 
-Admission-policy ladder
-------------------------
+The DB-WRF contract
+-------------------
 
-The admission policy governs how many concurrent readers and writers the
-protocol grants. The ladder below runs from most permissive to strictest. All
-entries that are stronger than the OCR contract still *satisfy* it (a valid
-OCR program gets correct results under any of them).
+``ARTS_MEMORY_MODEL=DB_WRF`` delivers a deliberately **weaker** contract —
+*write-race-freedom at DataBlock granularity*:
 
-MRMW — Multi-Reader, Multi-Writer (evaluation only)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  Any two unordered writes to the same DB (no happens-before edge between
+  their acquire/release brackets, at whole-DB granularity — disjoint-range
+  sibling writers included) make the program's outcome undefined: concurrent
+  writes may be lost entirely, because release performs a whole-DB write-back
+  and the last write-back wins.
 
-*Status:* implemented (``mrmw.c``); selected by
-``-DARTS_COHERENCE_PROTOCOL=MRMW``. Emits a CMake configure warning.
+Read-write races remain **legal**, with the same word-granularity floor as
+racy reads under OCR: an unordered reader observes, per 8-byte-aligned word,
+some value that was legitimately held by that word (a *regular register* in
+Lamport's sense). The name follows the DRF → HRF lineage: where DRF requires
+the program to order *all* conflicting pairs, WRF requires it only for
+*write-write* pairs.
 
-Allows true concurrent multi-writer access at every level: intra-node and
-inter-node. No exclusive owner is maintained. At release, the entire DataBlock
-is written back (whole-DB write-back), which **loses concurrent writes** —
-the last write-back wins. The contract is therefore weaker than OCR:
-
-  Visibility is guaranteed **only** along event happens-before. Any two
-  accesses to the same DB that are not ordered by happens-before, where at
-  least one writes, make the program's outcome undefined — concurrent writes
-  may be lost entirely (whole-DB write-back may mask them).
-
-Equivalently: only programs that are data-race-free *at DB granularity* have
-defined results (hence DB-DRF). This is in the spirit of Location Consistency
-(Gao & Sarkar, 2000) — provably weaker than release consistency yet equivalent
-to it for DB-DRF programs — but it is not the LC model or the LC cache
-protocol of that paper: conflicts are tracked at DataBlock granularity, not per
-location.
+The lattice of program classes is ``DRF ⊂ DB-WRF ⊂ OCR-legal``: every
+data-race-free program is DB-WRF-valid, and every DB-WRF-valid program is
+OCR-legal — but OCR-legal programs that exploit the non-overlapping data-race
+rule (e.g. unordered sibling writers to disjoint regions of one DB) are
+**invalid under DB-WRF** and can silently produce wrong answers there.
 
 .. warning::
 
-   Programs that are valid under the OCR memory model (which legalizes data
-   races) can be **invalid** under MRMW and silently produce wrong answers.
-   MRMW exists to measure the cost of coherence in benchmarks. Never use it
-   as a correctness baseline. The build emits a CMake warning when selected.
+   DB_WRF exists to measure the cost of coherence obligations in benchmarks.
+   Never use it as a correctness baseline; the build emits a CMake warning
+   when selected. The correctness harness marks apps whose wiring relies on
+   guarantees outside this contract with ``wrf_rcu_skip`` (a
+   contract-ineligibility declaration, not a bug mask).
 
-MRNEW — Multi-Reader, Node-Exclusive Writer (default)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. _protocols:
 
-*Status:* implemented (``eager.c`` / ``lazy.c`` + ``ownership.c``); selected
-by ``-DARTS_COHERENCE_PROTOCOL=MRNEW`` (the default). Timing variant selected
-by ``ARTS_PROTOCOL_TIMING={EAGER,LAZY}`` (default ``LAZY``).
+The protocols
+-------------
 
-Grants multi-reader access freely; grants write access to at most one node at
-a time via a single-owner lease. Within a node, multiple RW acquirers share a
-local buffer, so intra-node writes are multi-writer (hardware cache coherence
-keeps them consistent). Between nodes, a remote RW acquire sends an
-``OWNERSHIP_REQUEST`` to the current owner; the owner completes its release,
-ships the DB payload and transfers the lease to the requester (the new writer
-PARKs until the transfer arrives). This serializes inter-node writes without
-forbidding concurrent inter-node reads or local multi-writer patterns.
+RCU — versioned snapshots, externally ordered updates (default)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The contract delivered is **exactly the OCR v1.2.0 §1.6 memory model**
-(see :ref:`ocr_contract` above). Non-overlapping concurrent writes survive
-because intra-node they are hardware-coherent (shared buffer), and inter-node
-the single-owner serialization prevents them from occurring concurrently.
+*Status:* implemented (``libs/src/core/coherence/rcu/`` — ``eager.c`` /
+``lazy.c`` + ``home.c`` + ``ownership.c``); selected by
+``-DARTS_COHERENCE_PROTOCOL=RCU`` (the default), timing by
+``ARTS_PROTOCOL_TIMING={EAGER,LAZY}`` (default ``LAZY``).
 
-MRSW — Multi-Reader, Single-Writer (roadmap)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The name is used in McKenney's sense: **readers are never blocked and never
+invalidated**. A reader acquires a versioned snapshot and proceeds on it;
+updates install new versions without disturbing readers in flight. The
+update side's ordering comes from *outside* the read path — which is exactly
+what the model axis selects:
 
-*Status:* not implemented; documentation-only roadmap.
+* **Under OCR** (OCR×RCU): write access is granted to at most one node at a
+  time via a single-owner lease. Within the owning node, multiple RW
+  acquirers share a local buffer, so intra-node writes are multi-writer
+  (hardware cache coherence keeps them consistent). A remote RW acquire
+  requests ownership from the current owner; the owner completes its release,
+  ships the payload and transfers the lease. This serializes inter-node
+  writes — the OCR non-overlapping rule holds because intra-node concurrent
+  writes are hardware-coherent and inter-node ones never overlap in time.
+* **Under DB_WRF** (DB_WRF×RCU×EAGER, ``wrf_rcu/wrf_rcu.c``): no ownership
+  machinery at all. The home rank always holds the canonical payload;
+  release writes the whole DB back to the home synchronously; acquires pull
+  from the home. True concurrent multi-writer access is admitted at every
+  level — which is precisely why the contract must demand program-side
+  write-write ordering (see :ref:`db_wrf_contract`).
 
-Would grant shared multi-reader access but restrict write access to one writer
-at a time *globally* (no two writers anywhere, intra- or inter-node,
-concurrently). Reads would observe the last-committed version of the DB
-(version-isolated, last-ancestor reads), forbidding competing writes entirely.
-This is **stronger than OCR**: the OCR contract legalizes concurrent
-overlapping writes; MRSW would forbid them, giving stronger isolation in
-exchange for lower concurrency.
+The correspondence to canonical RCU is the read-side regime: updaters
+serialized outside the read path, readers proceeding on possibly-stale
+versions, old versions reclaimed only after their readers drain (refcounted
+snapshot buffers standing in for grace periods). Two mechanics deliberately
+diverge: updates are applied **in place** rather than copy-on-update —
+versions materialize at *serve* time, as reader-bound copies (copy-on-read) —
+and reads are consequently **not version-atomic**: a snapshot copied
+concurrently with an in-place write may carry mixed content, which the OCR
+RO contract legalizes at word granularity.
 
-MRSW is the spirit of CDAG-style write-exclusion (see
-:ref:`cdag_dropped` for why it was not pursued).
+Reader-side invalidation — in any form — is a **non-goal** of this protocol
+family: read-mostly cases where a lock or invalidation protocol wins are a
+philosophy difference, not a defect. RO snapshot serving is deduplicated by a
+per-rank ``cached_version`` ledger (a monotonic floor of what each rank's
+cache holds, credited by serves, by write-back installs, and by the
+releaser/shipper itself under LAZY): a request from a rank whose ledger
+already matches the master version receives a header-only, no-data reply.
 
-RWLOCK — Reader/Writer Mutex (roadmap)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+RWLOCK — queue-fair distributed reader–writer lock
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-*Status:* not implemented; documentation-only roadmap.
+*Status:* implemented (``libs/src/core/coherence/rwlock/`` — ``eager.c`` /
+``lazy.c`` + ``home.c`` + ``arbiters.c``); selected by
+``-DARTS_COHERENCE_PROTOCOL=RWLOCK``, timing by
+``ARTS_PROTOCOL_TIMING={EAGER,LAZY}``.
 
-Full reader/writer mutual exclusion: granting a write lock excludes all
-readers, and granting shared read locks excludes all writers. Deterministic
-serialization; useful as a strict correctness baseline. Stronger than MRSW
-(no concurrent reads during a write).
+Each DB carries a distributed reader–writer lock whose authoritative state is
+a single 64-bit ``lock_state`` word on the home rank: shared read grants
+overlap; a write grant excludes everything; waiters queue fairly (in the
+tradition of queue-based reader–writer synchronization, Mellor-Crummey &
+Scott). Data ships with the grant, in the style of entry consistency — the
+consistency actions are scoped to the DB whose lock is being acquired.
+RWLOCK trivially satisfies the OCR contract (it is strictly stronger:
+readers are isolated from writers by admission, not by promise) and serves as
+the lock-philosophy point of the design-space comparison.
 
-SRSW — Single-Reader, Single-Writer (roadmap)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Retired and rejected arms
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-*Status:* not implemented; documentation-only roadmap.
-
-Fully serialized: at most one reader or one writer holds the DB at any time.
-Strictest admission; maximal isolation; intended as a debug lower bound.
+* **MRSW** (multi-reader, single *global* writer; version-isolated reads) —
+  implemented in 2026-06 as a mirror of the RCU engine, retired in 2026-07 to
+  ``archive/coherence-mrsw/``. Its extra strength over OCR×RCU (forbidding
+  even node-interleaved writer overlap) bought no benchmark insight for its
+  maintenance cost. No configure value selects it.
+* **MSI / write-invalidate** — abandoned: on this workload class it was
+  dominated by both RWLOCK and RCU, and reader invalidation contradicts the
+  RCU philosophy above. OCR-Vx serves as the write-invalidate representative
+  in cross-runtime comparisons instead.
+* **SRSW** (fully serialized single-reader/single-writer) — never built;
+  useful only as a debug lower bound, and RWLOCK already provides a strict,
+  deterministic baseline.
 
 .. _orthogonal_dimensions:
 
 Orthogonal protocol dimensions
 -------------------------------
 
-Admission policy is one axis; the following dimensions are orthogonal to it
-and to each other. Each can in principle be combined with any admission policy.
+The implemented axes fix three points in a larger design space. The following
+dimensions are orthogonal to each other; entries marked *roadmap* are
+documented options, not commitments.
 
 Timing
 ~~~~~~
 
-When are write-backs, ownership transfers, and invalidations performed?
+When are write-backs and ownership transfers performed?
 
-* **EAGER** (release-time) — consistency actions are performed synchronously
-  at release: the releasing node writes back modified data and transfers
-  ownership before the release completes. Acquirers find the DB ready. Trades
-  release-side latency for shorter critical paths at acquire time. Selected
-  by ``-DARTS_PROTOCOL_TIMING=EAGER``.
-* **LAZY** (acquire-time) — consistency actions are deferred until the next
-  acquire or ownership transfer: the releaser is fast (local metadata update
-  only); the acquirer pulls the latest data on demand. Fewer messages per
-  release, but acquire latency includes the round trip. Default; selected by
-  ``-DARTS_PROTOCOL_TIMING=LAZY``.
-* **Invalidate-at-write** — a third variant (not implemented) publishes
-  invalidations at the moment a write begins rather than at release or acquire.
-  This is the CDAG-style publish-at-write-acquire timing and is related to
-  MRSW; see :ref:`cdag_dropped`.
+* **EAGER** (release-time) — consistency actions run synchronously at
+  release: the releasing node writes back modified data (and, under RCU×OCR,
+  answers ownership transfers) before the release completes. Acquirers find
+  the DB ready. Trades release-side latency for shorter acquire paths.
+* **LAZY** (acquire-time, default) — consistency actions are deferred until
+  the next acquire or ownership transfer: the releaser is fast (local
+  metadata update only); the acquirer pulls the latest data on demand. Fewer
+  messages per release, but acquire latency includes the round trip.
+* **Invalidate-at-write** (rejected) — publishing invalidations at the moment
+  a write begins is the write-invalidate timing; see the MSI entry above.
 
 Propagation strategy
 ~~~~~~~~~~~~~~~~~~~~
 
-How are stale replicas evicted and fresh data delivered?
+How does fresh data reach readers?
 
-* **Invalidate-and-pull** (current ARTS) — on ownership transfer or acquire,
-  stale remote copies receive an invalidation; the acquirer pulls the payload
-  from the current owner. Simple ownership chain; one round trip per transfer.
-* **Update-and-push** — the releasing node proactively pushes the new value to
-  all current readers instead of invalidating them. Eliminates the pull round
-  trip for readers, at the cost of sending the payload speculatively.
-  Beneficial when the same DB is acquired RO by many readers in succession;
-  costly if the push is discarded.
+* **Pull-on-acquire** (current RCU) — the acquirer pulls a versioned snapshot
+  from the serving side; stale replicas are never invalidated, they simply
+  age out when re-acquired. One round trip per (non-deduplicated) acquire.
+* **Ship-with-grant** (current RWLOCK) — data travels with the lock grant;
+  admission control makes staleness impossible by construction.
+* **Update-and-push** (roadmap) — the releasing node proactively pushes the
+  new value to current readers. Eliminates the pull round trip when the same
+  DB is re-acquired RO by many readers in succession; costly if the push is
+  discarded. Aggregation-style RO improvements are the accepted evolution
+  path for the RCU family (never reader invalidation).
 
 Directory / ownership
 ~~~~~~~~~~~~~~~~~~~~~
 
-Where does ownership bookkeeping live?
+Where does coherence bookkeeping live?
 
-* **Fixed home** (current ARTS) — each DB has a designated home node (set at
-  creation; encoded in the GUID rank field). The home holds the authoritative
-  directory entry. Lease grants and transfers always go through the home.
-  Simple and predictable; home can become a hot-spot for highly shared DBs.
-* **Migratory owner** (roadmap) — ownership migrates to the last acquirer via
-  pointer forwarding; the home is consulted only on cache miss. Reduces
-  home-node traffic for producer-consumer patterns where the DB moves through
-  a chain of owners.
-* **Hierarchical NUMA/cluster** (roadmap) — directory is partitioned into
-  levels (intra-socket, inter-socket, inter-node, inter-cluster), exploiting
-  locality to reduce long-distance traffic. Appropriate for systems with deep
-  memory hierarchies.
+* **Fixed home** (all current arms) — each DB has a designated home rank
+  (set at creation; encoded in the GUID rank field). The home holds the
+  authoritative directory entry (RCU×OCR: lease directory; RWLOCK:
+  ``lock_state``; DB_WRF: the canonical payload itself). Simple and
+  predictable; the home can become a hot-spot for highly shared DBs.
+* **Migratory owner** (partially present) — under RCU×OCR×LAZY the payload
+  and the per-rank serving ledger migrate with the ownership lease; the home
+  keeps only directory state. Full pointer-forwarding migration (home
+  consulted only on miss) remains roadmap.
+* **Hierarchical NUMA/cluster** (roadmap) — directory partitioned into
+  levels (intra-socket, inter-socket, inter-node), exploiting locality to
+  reduce long-distance traffic.
 
 Read consistency
 ~~~~~~~~~~~~~~~~
 
 What version of the DB's contents does a reader observe?
 
-* **Live-shared** (current ARTS) — the reader observes whatever data is
-  present in the DB at acquire time (the installed-version snapshot on remote
-  acquire, or the live shared buffer on local acquire). No version isolation:
-  unordered concurrent writers can affect what the reader sees.
-* **MVCC / versioned snapshot** (roadmap) — the reader receives a
-  version-tagged copy that is isolated from subsequent writes; a concurrent
-  writer produces a new version without disturbing the reader. Required by
-  MRSW's "last-ancestor read" semantics.
+* **Position-dependent** (current RCU) — a reader co-located with the owner
+  binds to the live shared buffer; a remote reader receives an
+  installed-version snapshot copy. Both are legal under both contracts.
+* **Lock-isolated** (current RWLOCK) — readers are admitted only when no
+  writer holds the lock, so they always observe a quiescent DB.
+
+.. note::
+
+   The RCU position dependence gives racy programs *location-variable*
+   semantics: a co-located racy reader sits on live hardware-coherent memory
+   (effectively the machine's TSO floor), while a remote racy reader sees a
+   frozen snapshot whose guarantee is only per-word regularity — reading in
+   inverse write order no longer proves a publication prefix. Both behaviors
+   are within the contract (races promise no more than the word-granularity
+   floor), but a racy flag-then-payload idiom can appear to work single-node
+   and break distributed. This is a property of any snapshot-serving
+   conforming implementation, and one more reason racy idioms are
+   non-portable.
 
 Multi-writer resolution
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-When two writers access the same DB and their accesses are unordered (no
-happens-before edge between them), how are their writes reconciled?
+When two writers' accesses to one DB are unordered, how are their writes
+reconciled?
 
-* **Node-exclusive serialization** (current MRNEW) — intra-node: concurrent
-  hardware-coherent writes to a shared buffer; inter-node: single-owner lease
-  serializes concurrent writers one node at a time. The OCR non-overlapping
-  rule holds because each inter-node write is serialized; each intra-node write
-  is cache-coherent.
-* **Lossy whole-DB write-back** (current MRMW) — each release writes the
-  entire DB back; the last write-back wins. Concurrent inter-node writes to
-  disjoint ranges of the same DB are *not* preserved (violates the OCR
-  non-overlapping rule). DB-DRF contract only.
-* **Non-lossy merge** (roadmap) — diff-based or twin-based merging reconciles
-  concurrent writers' changes. This is the approach of TreadMarks (Keleher
-  et al., LRC / diff-and-patch) and Entry Consistency (Bershad et al.): each
-  writer's modifications are recorded as diffs, and at synchronization time
-  diffs from all writers are merged. Achieves the full OCR non-overlapping
-  rule while permitting true inter-node multi-writer access; the admission
-  policy would be MRMW in name but non-lossy (a genuinely OCR-conformant
-  multi-writer protocol).
+* **Node-exclusive serialization** (OCR×RCU) — intra-node: concurrent
+  hardware-coherent writes to a shared buffer; inter-node: the single-owner
+  lease serializes writers one node at a time. Preserves the OCR
+  non-overlapping rule.
+* **Admission exclusion** (OCR×RWLOCK) — the lock never grants two writers
+  concurrently anywhere; the question is moot.
+* **Lossy whole-DB write-back** (DB_WRF×RCU) — each release writes the whole
+  DB back to the home; the last write-back wins. Unordered writes are lost —
+  hence the stricter program-side contract.
+* **Non-lossy merge** (roadmap) — diff- or twin-based merging in the
+  TreadMarks / Midway tradition would reconcile concurrent writers' disjoint
+  changes, achieving the full OCR non-overlapping rule while admitting true
+  inter-node multi-writer access. This is the only path to a genuinely
+  OCR-conformant multi-writer protocol.
 
 Per-DB-kind contracts
 ---------------------
 
 The global axes govern regular DRAM DBs (``ARTS_DB``). The other storage
 kinds carry their own fixed, documented semantics regardless of the global
-axes: ``ARTS_DB_PIN`` and ``ARTS_DB_GPU_PIN`` perform no DB-level coherence
-(the application orders accesses with events); ``ARTS_DB_GPU`` allows
-concurrent per-device replicas merged by reduction at release; ``ARTS_DB_CXL``
-relies on hardware cache coherence intra-node and application-driven event
-ordering across nodes. All of these are DB-DRF-style contracts: order your
-conflicting accesses with events.
+axes: ``ARTS_DB_PIN`` and ``ARTS_DB_GPU_PIN`` perform no DB-level coherence;
+``ARTS_DB_GPU`` allows concurrent per-device replicas merged by reduction at
+release; ``ARTS_DB_CXL`` relies on hardware cache coherence intra-node and
+application-driven ordering across nodes. All of these are **app-ordered
+(full DRF) contracts**: the application must event-order *every* conflicting
+access pair — read-write included — because there is no snapshot or admission
+machinery underneath.
 
 .. _cdag_dropped:
 
@@ -323,24 +370,20 @@ Considered and dropped: CDAG
 *Cache DAG Consistency* (Landwehr et al., 2017) is a variant of DAG
 consistency (Blumofe et al., 1996) in which a task observes the write of the
 immediately preceding ancestor version of a shared location ("last-ancestor"
-read). It effectively maps to the MRSW admission policy plus MVCC reads:
-a single global writer per DataBlock at a time, and readers observe the
-last-committed ancestor version rather than live data.
+read). It effectively maps to a globally single-writer admission policy with
+version-isolated reads — the design point the retired MRSW arm occupied.
 
-CDAG was considered as a coherence option for ARTS and was dropped for the
-following reasons:
+CDAG was considered as a coherence option for ARTS and was dropped:
 
-1. **Small implementation delta over MRNEW.** MRNEW's existing single-owner
-   lease already serializes inter-node writers. The additional work for CDAG
-   semantics — adding version tags, MVCC reads, and the "last-ancestor"
-   copy at acquire time — is non-trivial but marginal relative to the
-   machinery already in place. Implementing CDAG would be a refinement of
-   MRSW, not a separate protocol.
-2. **Weaker parallelism.** CDAG / MRSW forbids competing concurrent writes
-   entirely, reducing parallelism for programs that exploit the OCR
-   non-overlapping data-race rule.
-3. **Deferred.** If MRSW is later pursued, CDAG's "last-ancestor" read
-   semantics can be revisited as part of that work.
+1. **Small delta over the RCU engine.** The single-owner lease already
+   serializes inter-node writers; adding global writer exclusion and
+   last-ancestor reads is a refinement of MRSW, not a separate protocol —
+   and MRSW itself was retired for lack of benchmark insight.
+2. **Weaker parallelism.** Forbidding competing concurrent writes entirely
+   reduces parallelism for programs that exploit the OCR non-overlapping
+   data-race rule.
+3. **Recoverable.** ``archive/coherence-mrsw/`` preserves the engine CDAG
+   semantics would build on, should the design point be revisited.
 
 .. note::
 
@@ -361,26 +404,36 @@ of the one OCR contract — and ``LC`` was not the literature's Location
 Consistency. Those terms are retired; the mapping is
 ``RC → OCR+EAGER``, ``LRC → OCR+LAZY``, ``LC → RELAXED``.
 
-**Current → new axis (this release):** the ``ARTS_MEMORY_MODEL`` build axis
-(``OCR`` / ``RELAXED``) is retired. A memory model is a consequence of the
-protocol, not an independent knob. The new axis is
-``ARTS_COHERENCE_PROTOCOL`` ∈ {``MRNEW``, ``MRMW``} (admission policy) plus
-``ARTS_PROTOCOL_TIMING`` ∈ {``EAGER``, ``LAZY``} (timing; MRNEW only). The
-mapping is exact and behavior-preserving:
+**Axis history:** an earlier ``ARTS_MEMORY_MODEL`` axis (``OCR`` /
+``RELAXED``) was retired in 2026-06 in favour of a single
+``ARTS_COHERENCE_PROTOCOL`` admission-policy axis (``MRNEW`` / ``MRMW`` /
+``MRSW`` / ``LOCK``). In 2026-07 the memory-model axis was deliberately
+**re-introduced** on a new theoretical footing (OCR vs DB-WRF —
+write-race-freedom at DataBlock granularity; the earlier "DB-DRF" label for
+the weak arm was corrected to DB-WRF, since read-write races remain legal),
+orthogonal to the mechanism axis. The mapping from the single-axis era is
+exact and behavior-preserving:
 
-* ``OCR + EAGER`` → ``MRNEW + EAGER``
-* ``OCR + LAZY``  → ``MRNEW + LAZY`` (default)
-* ``RELAXED``     → ``MRMW``
+* ``MRNEW + EAGER`` → ``OCR × RCU × EAGER``
+* ``MRNEW + LAZY``  → ``OCR × RCU × LAZY`` (default)
+* ``LOCK + E/L``    → ``OCR × RWLOCK × E/L``
+* ``MRMW``          → ``DB_WRF × RCU × EAGER``
+* ``MRSW``          → retired (``archive/coherence-mrsw/``)
 
-Using the old ``-DARTS_MEMORY_MODEL=`` option causes a CMake ``FATAL_ERROR``
-with the mapping message above, so existing build scripts are caught at
-configure time.
+Using an old ``-DARTS_COHERENCE_PROTOCOL={MRNEW,MRMW,MRSW,LOCK}`` value causes
+a CMake ``FATAL_ERROR`` with this mapping, so existing build scripts are
+caught at configure time.
 
 References
 ----------
 
 * OCR working group, *The Open Community Runtime Interface*, v1.2.0, 2016 — §1.6.
 * J. Dokulil, *Consistency model for runtime objects in the Open Community Runtime*, J. Supercomputing, 2018.
+* P. McKenney, J. Slingwine, *Read-Copy Update: Using Execution History to Solve Concurrency Problems*, PDCS 1998.
+* J. Mellor-Crummey, M. Scott, *Scalable Reader-Writer Synchronization for Shared-Memory Multiprocessors*, PPoPP 1991.
+* L. Lamport, *On Interprocess Communication, Part II: Algorithms*, Distributed Computing 1(2), 1986 (regular registers).
+* S. Adve, M. Hill, *Weak Ordering — A New Definition*, ISCA 1990 (DRF).
+* D. Hower et al., *Heterogeneous-race-free Memory Models*, ASPLOS 2014 (HRF).
 * T. Landwehr et al., *Designing Scalable Distributed Memory Models*, SC 2017 (Cache DAG Consistency).
 * G. R. Gao, V. Sarkar, *Location Consistency — A New Memory Model and Cache Consistency Protocol*, IEEE TC 49(8), 2000.
 * K. Gharachorloo et al., *Memory Consistency and Event Ordering in Scalable Shared-Memory Multiprocessors*, ISCA 1990.
@@ -388,4 +441,3 @@ References
 * B. Bershad, M. Zekauskas, W. Sawdon, *The Midway Distributed Shared Memory System*, COMPCON 1993.
 * L. Iftode, J. P. Singh, K. Li, *Scope Consistency: A Bridge between Release Consistency and Entry Consistency*, SPAA 1996.
 * R. Blumofe et al., *DAG-Consistent Distributed Shared Memory*, IPPS 1996.
-* S. Adve, M. Hill, *Weak Ordering — A New Definition*, ISCA 1990.

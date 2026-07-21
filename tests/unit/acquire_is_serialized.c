@@ -7,13 +7,13 @@
  * The function has a different ANSWER per coherence protocol; this single file
  * is compiled once per build config and asserts the answer for whichever
  * protocol macro is defined:
- *   - MRNEW / MRSW (ownership lease, single inter-node writer): RW is
+ *   - RCU (ownership lease, single inter-node writer): RW is
  *     serialized, RO is NOT (RO is a snapshot read, no ordering needed).
- *   - LOCK (blocking RW *and* RO locks): BOTH RW and RO are serialized.
- *   - MRMW (DB-DRF, no ownership round): NOTHING is serialized → false for all.
+ *   - RWLOCK (blocking RW *and* RO locks): BOTH RW and RO are serialized.
+ *   - WRF_RCU (DB-WRF, no ownership round): NOTHING is serialized → false for all.
  *
- * The defining TU per protocol (mrnew/{eager,lazy}.c, mrsw/{eager,lazy}.c,
- * mrmw/mrmw.c, lock/acquire.c) drags in the broader runtime, so this test links
+ * The defining TU per protocol (rcu/{eager,lazy}.c,
+ * wrf_rcu/wrf_rcu.c, lock/acquire.c) drags in the broader runtime, so this test links
  * the real symbol out of the per-config static libarts (needs_full_build)
  * rather than #including a heavyweight TU — it never starts the runtime, it
  * only calls the pure query function.
@@ -39,20 +39,16 @@ int main(void) {
 
   bool exp_rw, exp_ro;
   const char *proto;
-#if defined(ARTS_PROTOCOL_LOCK)
-  proto = "LOCK";
+#if defined(ARTS_PROTOCOL_RWLOCK)
+  proto = "RWLOCK";
   exp_rw = true;
   exp_ro = true; /* blocking locks: both serialized */
-#elif defined(ARTS_PROTOCOL_MRMW)
-  proto = "MRMW";
+#elif defined(ARTS_PROTOCOL_WRF_RCU)
+  proto = "WRF_RCU";
   exp_rw = false;
-  exp_ro = false; /* DB-DRF: nothing serialized */
-#elif defined(ARTS_PROTOCOL_MRNEW)
-  proto = "MRNEW";
-  exp_rw = true;
-  exp_ro = false; /* RW serialized, RO snapshot */
-#elif defined(ARTS_PROTOCOL_MRSW)
-  proto = "MRSW";
+  exp_ro = false; /* DB-WRF: nothing serialized */
+#elif defined(ARTS_PROTOCOL_RCU)
+  proto = "RCU";
   exp_rw = true;
   exp_ro = false; /* RW serialized, RO snapshot */
 #else

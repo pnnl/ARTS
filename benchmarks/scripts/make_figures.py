@@ -39,15 +39,13 @@ plt.rcParams.update({
 })
 
 # runtime -> (color, linestyle, marker, display label). Protocol family = color;
-# lazy = solid, eager = dashed; MRMW = dash-dot; references = dotted.
+# lazy = solid, eager = dashed; WRF_RCU = dash-dot; references = dotted.
 RT_STYLE = {
-    "mrnew_lazy":  ("#1f77b4", "-",  "o", "MRNEW-lazy"),
-    "mrnew_eager": ("#1f77b4", "--", "o", "MRNEW-eager"),
-    "mrsw_lazy":   ("#2ca02c", "-",  "s", "MRSW-lazy"),
-    "mrsw_eager":  ("#2ca02c", "--", "s", "MRSW-eager"),
-    "lock_lazy":   ("#d62728", "-",  "^", "LOCK-lazy"),
-    "lock_eager":  ("#d62728", "--", "^", "LOCK-eager"),
-    "mrmw":        ("#9467bd", "-.", "D", "MRMW"),
+    "ocr_rcu_lazy":  ("#1f77b4", "-",  "o", "RCU-lazy"),
+    "ocr_rcu_eager": ("#1f77b4", "--", "o", "RCU-eager"),
+    "ocr_rwlock_lazy":   ("#d62728", "-",  "^", "RWLOCK-lazy"),
+    "ocr_rwlock_eager":  ("#d62728", "--", "^", "RWLOCK-eager"),
+    "wrf_rcu_eager":        ("#9467bd", "-.", "D", "WRF_RCU"),
     "xsocr":       ("#000000", ":",  "x", "xsocr"),
     "ocrvx":       ("#7f7f7f", ":",  "+", "ocr-vx"),
 }
@@ -196,9 +194,8 @@ def fig_eager_lazy(E, outdir):
     An eager cell that timed out has no finite ratio (eager/lazy -> infinity); it is
     drawn as a broken bar running off the top of the axis with a 'timeout' label."""
     cfg, exp = "2n_sc", "strong"
-    fams = [("MRNEW", "mrnew_eager", "mrnew_lazy"),
-            ("MRSW", "mrsw_eager", "mrsw_lazy"),
-            ("LOCK", "lock_eager", "lock_lazy")]
+    fams = [("RCU", "ocr_rcu_eager", "ocr_rcu_lazy"),
+            ("RWLOCK", "ocr_rwlock_eager", "ocr_rwlock_lazy")]
     fig, ax = plt.subplots(figsize=(9.2, 4.4))
     x = np.arange(len(APP_ORDER)); w = 0.26
     R, real_max = {}, 1.0            # (i,j) -> ratio | None(timeout) | nan(missing)
@@ -238,7 +235,7 @@ def fig_arts_vs_ref(E, outdir):
     fig, axes = plt.subplots(1, 2, figsize=(11.5, 4.5))
 
     def best_lazy(app, cfg):
-        ks = [("strong", app, cfg, rt) for rt in ("mrnew_lazy", "mrsw_lazy", "lock_lazy")]
+        ks = [("strong", app, cfg, rt) for rt in ("ocr_rcu_lazy", "ocr_rwlock_lazy")]
         vs = [E.get(k) for k in ks if k in E]
         done = [v for v in vs if v]
         return min(done) if done else (None if vs else np.nan)
@@ -329,33 +326,33 @@ def fig_comm_correlation(E, ST, M, outdir):
 
 
 def fig_comm_intensity(M, E, outdir):
-    """remote MB/s (bytes/e2e) per app per node count, mrnew_lazy — comm pressure."""
+    """remote MB/s (bytes/e2e) per app per node count, ocr_rcu_lazy — comm pressure."""
     fig, ax = plt.subplots(figsize=(8.5, 4.4))
     x = np.arange(len(APP_ORDER)); w = 0.2
     for i, (c, n) in enumerate(SC_NODES.items()):
         vals = []
         for app in APP_ORDER:
-            d = M.get(("strong", app, c, "mrnew_lazy"))
-            e = E.get(("strong", app, c, "mrnew_lazy"))
+            d = M.get(("strong", app, c, "ocr_rcu_lazy"))
+            e = E.get(("strong", app, c, "ocr_rcu_lazy"))
             vals.append((d["bytes"] / 1e6 / e) if (d and e and d["bytes"] > 0) else 0)
         ax.bar(x + (i - 1.5) * w, vals, w, label=f"{n}n", alpha=0.85)
     ax.set_yscale("log")
     ax.set_xticks(x); ax.set_xticklabels([APP_LABEL[a].split()[0] for a in APP_ORDER],
                                           rotation=25, ha="right", fontsize=8.5)
     ax.set_ylabel("inter-node MB / second")
-    ax.set_title("Communication intensity (MRNEW-lazy, strong)")
+    ax.set_title("Communication intensity (RCU-lazy, strong)")
     ax.legend(title="nodes", ncol=4)
     fig.tight_layout(); savefig(fig, outdir, "fig_comm_intensity")
 
 
 # ------------------------------------------------ E. load balance ----
 def fig_load_balance(M, outdir):
-    """EDT_FINISH imbalance = max/mean across ranks, vs nodes, mrnew_lazy strong."""
+    """EDT_FINISH imbalance = max/mean across ranks, vs nodes, ocr_rcu_lazy strong."""
     fig, ax = plt.subplots(figsize=(8, 4.4))
     for app in APP_ORDER:
         xs, ys = [], []
         for c, n in SC_NODES.items():
-            d = M.get(("strong", app, c, "mrnew_lazy"))
+            d = M.get(("strong", app, c, "ocr_rcu_lazy"))
             if d and d["fins"] and n > 1:
                 f = d["fins"]; mean = sum(f) / len(f)
                 if mean > 0:
@@ -366,7 +363,7 @@ def fig_load_balance(M, outdir):
     ax.set_xscale("log", base=2); ax.set_xticks([2, 4, 8])
     ax.set_xticklabels(["2", "4", "8"])
     ax.set_xlabel("nodes"); ax.set_ylabel("EDT load imbalance (max/mean per rank)")
-    ax.set_title("Work-distribution balance (MRNEW-lazy, strong)")
+    ax.set_title("Work-distribution balance (RCU-lazy, strong)")
     ax.legend(ncol=2, fontsize=8.5)
     fig.tight_layout(); savefig(fig, outdir, "fig_load_balance")
 

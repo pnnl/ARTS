@@ -18,4 +18,4 @@ if(ARTS_TRANSPORT_OFI)
     target_link_libraries(arts_transport PRIVATE arts::libfabric)
 endif()
 
-arts_apply_protocol(arts_transport ${ARTS_COHERENCE_PROTOCOL} ${ARTS_PROTOCOL_TIMING})
+arts_apply_protocol(arts_transport ${ARTS_COHERENCE_ARM} ${ARTS_PROTOCOL_TIMING})

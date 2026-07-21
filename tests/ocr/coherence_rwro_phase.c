@@ -18,7 +18,7 @@
  *   acquires only once every reader returned its RO grant (RO→RW flip at
  * rc==0).
  *
- * Across ranks this exercises the LOCK-LAZY RW→RO flip (SERVE_ALL drain) and
+ * Across ranks this exercises the RWLOCK-LAZY RW→RO flip (SERVE_ALL drain) and
  * RO→RW flip (migrate after the last RO_RETURN).  Portable (arts.h + arts_rt):
  * asserts COHERENCE, so it passes on every protocol/timing build.
  */

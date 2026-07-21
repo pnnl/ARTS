@@ -223,9 +223,16 @@ void arts_db_buf_write_inplace(struct arts_db_cache_s *cache, const void *data,
     arts_shared_release(&h);
     return;
   }
-  /* First touch: allocate the one stable buffer (no further realloc).  Single
-   * producer here — the caller's serialization makes the first write to a given
-   * cache unique — so a plain store publishes it. */
+  /* First touch: allocate the one stable buffer (no further realloc).
+   *
+   * First touches CAN race: independent acquisition paths materialize the
+   * same cache's buffer concurrently (e.g. two request rounds whose replies
+   * arrive on different progress threads).  Publish with an
+   * install-if-absent CAS, never an unconditional store — a losing store
+   * would REPLACE the winner's established buffer, detaching any
+   * fixed-address landing already advertised on it (silently discarding
+   * data already landed there) while later readers re-derive their pointers
+   * from the fresh, still-zero instance. */
   struct arts_db_buffer_s *nb = arts_db_buf_alloc(cache, db_size);
   if (nb == NULL) {
     return; /* OOM — caller decides how to surface. */
@@ -244,5 +251,21 @@ void arts_db_buf_write_inplace(struct arts_db_cache_s *cache, const void *data,
   }
   arts_shared_ptr_t cb = arts_shared_make(nb, buffer_deleter);
   nb->cb = cb;
-  arts_atomic_shared_store(&cache->buffer, cb);
+  if (!arts_atomic_shared_compare_exchange(&cache->buffer, NULL, cb)) {
+    /* Lost the install race.  Racing first touches publish the same zero
+     * first image, so adopting the winner is value-identical; a
+     * data-carrying caller (whose write the coherence protocol serializes
+     * against every reader) writes its bytes through the established buffer
+     * instead. */
+    arts_shared_release(&cb);
+    if (db_size > 0 && data != NULL) {
+      arts_shared_ptr_t wh = arts_db_buf_acquire(cache);
+      struct arts_db_buffer_s *wbuf =
+          (struct arts_db_buffer_s *)arts_shared_get(wh);
+      if (wbuf != NULL) {
+        memcpy(wbuf->data, data, (size_t)db_size);
+      }
+      arts_shared_release(&wh);
+    }
+  }
 }

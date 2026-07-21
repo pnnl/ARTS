@@ -17,7 +17,7 @@
  *      OOB read caused the P6 SIGSEGV).
  *   3. stub_size == offsetof(arts_db_s, <first home-arm field>) — the stub ends
  *      exactly at the first home-directory field (rw_holder for the ownership
- *      protocols, last_sent_version for MRMW, lock_state for LOCK), so it
+ *      protocols, cached_version for WRF_RCU, lock_state for RWLOCK), so it
  *      INCLUDES home_initialized but omits the bulky home directory.
  *   4. home_initialized is laid out AFTER db_type which is AFTER the cache —
  *      i.e. offsetof(cache)==0 < offsetof(db_type) <
@@ -42,9 +42,9 @@
 
 /* The protocol-dependent first home-arm field, mirroring
  * arts_db_cache_stub_size() in coherence/types.h. */
-#if defined(ARTS_PROTOCOL_MRMW)
-#define FIRST_HOME_ARM_OFF offsetof(struct arts_db_s, last_sent_version)
-#elif defined(ARTS_PROTOCOL_LOCK)
+#if defined(ARTS_PROTOCOL_WRF_RCU)
+#define FIRST_HOME_ARM_OFF offsetof(struct arts_db_s, cached_version)
+#elif defined(ARTS_PROTOCOL_RWLOCK)
 #define FIRST_HOME_ARM_OFF offsetof(struct arts_db_s, lock_state)
 #else
 #define FIRST_HOME_ARM_OFF offsetof(struct arts_db_s, rw_holder)

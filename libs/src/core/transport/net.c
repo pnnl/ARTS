@@ -58,6 +58,8 @@
 #include <rdma/fi_errno.h>
 #include <rdma/fi_rma.h>
 
+#include "arts/counter/Preamble.h" /* INCREMENT_{BYTES,NUM}_REMOTE_* */
+#include "arts/counter/counter.h"
 #include "arts/defs.h"
 #include "arts/memory/regpool.h"
 #include "arts/system/identity.h" /* arts_global_rank_id / arts_global_rank_count */
@@ -473,6 +475,9 @@ void arts_net_send_core(int rank, char *message, unsigned int length,
   fi_addr_t addr = g_net.peers[rank];
   bool is_ack =
       net_is_ack_class(((struct arts_msg_header_s *)message)->message_type);
+  /* One logical wire message accepted (inject and bounce paths both deliver). */
+  INCREMENT_BYTES_REMOTE_SENT_BY(wire_total);
+  INCREMENT_NUM_REMOTE_SEND_BY(1);
 
   if (payload == NULL) {
     if (length <= g_net.inject_size) {
@@ -743,6 +748,9 @@ void arts_net_put_payload(int rank, uint64_t raddr, uint64_t rkey,
     }
     return;
   }
+  /* One-sided payload PUT is its own wire transfer. */
+  INCREMENT_BYTES_REMOTE_SENT_BY(len);
+  INCREMENT_NUM_REMOTE_SEND_BY(1);
   struct net_txn_s *txn = net_txn_new(g_net.peers[rank], (void *)src,
                                       (size_t)len, net_desc(src),
                                       /*bounce=*/NULL, on_local_done, arg);
@@ -877,6 +885,10 @@ static bool net_reap_locked(void) {
        * without immediate data is never issued by this runtime; ignore it
        * defensively rather than fabricate a zero txid. */
       if ((e->flags & FI_REMOTE_WRITE) && (e->flags & FI_REMOTE_CQ_DATA)) {
+        /* One-sided payload landed: count it as its own remote receive (the
+         * pairing control message is counted separately at dispatch). */
+        INCREMENT_BYTES_REMOTE_RECEIVED_BY(e->len);
+        INCREMENT_NUM_REMOTE_RECEIVE_BY(1);
         struct net_pending_s *pn =
             (struct net_pending_s *)malloc(sizeof(struct net_pending_s));
         if (pn == NULL) {
@@ -939,6 +951,8 @@ static bool net_reap_and_dispatch(void) {
     if (head->rdzv_txid != 0) {
       net_rdzv_data_arrived(head->rdzv_txid);
     } else {
+      INCREMENT_BYTES_REMOTE_RECEIVED_BY(head->len);
+      INCREMENT_NUM_REMOTE_RECEIVE_BY(1);
       arts_transport_dispatch_packet((struct arts_msg_header_s *)(head + 1));
     }
     free(head);

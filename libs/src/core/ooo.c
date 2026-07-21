@@ -117,15 +117,15 @@
  * _destroy) — pure (item, args) Cat-B bodies defined in the coherence TUs.
  * Each model's enum (and this table) carries only that model's OOO_DB_* kinds,
  * so a build references only the bodies it actually defines:
- *   - OWNERSHIP_REQUEST: MRNEW only (ownership.c); MRMW's enum omits it.
- *   - WRITEBACK: EAGER/MRMW only; LAZY's enum omits it (LAZY fatals on the
+ *   - OWNERSHIP_REQUEST: RCU only (ownership.c); WRF_RCU's enum omits it.
+ *   - WRITEBACK: EAGER/WRF_RCU only; LAZY's enum omits it (LAZY fatals on the
  * wire).
  *   - OWNERSHIP_INVALIDATE: EAGER only.  EAGER can see a GRANT/INVALIDATE
  * reorder (or a before-create race) that lands INVALIDATE before the cache
  * installs, so it defers + replays here.  The lazy protocol never defers
  * INVALIDATE (home publishes the rw_holder target only after that rank's
  * cache install, so the dispatcher/self-send call the body directly) and the
- * MRMW has no ownership transfer, so neither carries this kind. */
+ * WRF_RCU has no ownership transfer, so neither carries this kind. */
 
 /* Event/EDT destroy replay bodies are the wire handlers themselves
  * (arts_handler_event_destroy / arts_handler_edt_destroy) — pure (item, args)
@@ -143,11 +143,11 @@ static const arts_ooo_handler_fn_t g_ooo_table[OOO_KIND_COUNT] = {
     [OOO_EDT_DESTROY] = arts_handler_edt_destroy,
     [OOO_EVENT_DESTROY] = arts_handler_event_destroy,
     [OOO_DB_DESTROY] = arts_handler_db_destroy,
-#if defined(ARTS_PROTOCOL_LOCK) && defined(ARTS_TIMING_EAGER)
+#if defined(ARTS_PROTOCOL_RWLOCK) && defined(ARTS_TIMING_EAGER)
     [OOO_DB_ACQUIRE] = arts_db_acquire_replay_dep,
     [OOO_DB_LOCK_REQUEST] = arts_handler_db_lock_request,
     [OOO_DB_LOCK_RELEASE] = arts_handler_db_lock_release,
-#elif defined(ARTS_PROTOCOL_LOCK) && defined(ARTS_TIMING_LAZY)
+#elif defined(ARTS_PROTOCOL_RWLOCK) && defined(ARTS_TIMING_LAZY)
     [OOO_DB_ACQUIRE] = arts_db_acquire_replay_dep,
     [OOO_DB_LOCK_REQUEST] = arts_handler_db_lock_request,
 #elif defined(ARTS_TIMING_EAGER)
@@ -159,7 +159,7 @@ static const arts_ooo_handler_fn_t g_ooo_table[OOO_KIND_COUNT] = {
     [OOO_DB_ACQUIRE] = arts_db_acquire_replay_dep,
     [OOO_DB_SNAPSHOT_REQUEST] = arts_handler_db_snapshot_request,
     [OOO_DB_OWNERSHIP_REQUEST] = arts_handler_db_ownership_request,
-#elif defined(ARTS_PROTOCOL_MRMW)
+#elif defined(ARTS_PROTOCOL_WRF_RCU)
     [OOO_DB_ACQUIRE] = arts_db_acquire_replay_dep,
     [OOO_DB_SNAPSHOT_REQUEST] = arts_handler_db_snapshot_request,
     [OOO_DB_WRITEBACK] = arts_handler_db_writeback,

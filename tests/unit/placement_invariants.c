@@ -221,8 +221,8 @@ static void verify_multirank(const struct topo_s *t, unsigned int ranks,
 
 int main(void) {
   struct topo_s t;
-  /* Fixed fleet: junction (2x32 no SMT), two-socket multi-NUMA, laptop-ish,
-   * SMT2 interleaved os ids, asymmetric + per-package core ids, 4 sockets. */
+  /* Fixed fleet: junction (2x32 no SMT), two-socket multi-NUMA, small single-
+   * socket, SMT2 interleaved os ids, asymmetric + per-package core ids, 4 sockets. */
   struct {
     unsigned int npkg, numa, cores, extra, smt;
     int os;

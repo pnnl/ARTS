@@ -14,11 +14,10 @@
 # Backends: arts, xsocr, baseline (default: all three, run sequentially)
 #
 # Environment variables:
-#   BENCH_MEM_LIMIT_KB   - Virtual memory limit per process in KB (default: 8388608 = 8GB)
 #                          Set to 0 to disable. Prevents OOM from apps with huge allocations.
 #   MULTINODE_VARIANT    - Multinode config variant to use when --multinode is set.
-#                          Valid values: 2n (default), 3n, 4n, 2n_io.
-#                          Maps to configs/local/laptop/${VARIANT}.cfg + configs/mpi/laptop/${VARIANT}.cfg.
+#                          Valid values: 2n_sc (default), 4n_sc.
+#                          Maps to configs/local/cbgpu02/${VARIANT}.cfg + configs/mpi/cbgpu02/${VARIANT}.cfg.
 
 set -euo pipefail
 
@@ -27,9 +26,9 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TIMEOUT=60  # seconds per app
 DO_MULTINODE=0
 DO_BUILD=0
-# Multinode config variant: 2n (default), 3n, 4n, 2n_io.
-# Override via env: MULTINODE_VARIANT=3n run_benchmarks.sh --multinode arts
-MULTINODE_VARIANT="${MULTINODE_VARIANT:-2n}"
+# Multinode config variant: 2n_sc (default), 4n_sc.
+# Override via env: MULTINODE_VARIANT=4n_sc run_benchmarks.sh --multinode arts
+MULTINODE_VARIANT="${MULTINODE_VARIANT:-2n_sc}"
 
 # Parse options and backends
 BACKENDS=()
@@ -51,16 +50,8 @@ if [ ${#BACKENDS[@]} -eq 0 ]; then
     BACKENDS=(arts xsocr baseline)
 fi
 
-# Memory limit in KB for child processes (virtual address space).
-# Default 8GB. Set BENCH_MEM_LIMIT_KB=0 to disable.
-BENCH_MEM_LIMIT_KB="${BENCH_MEM_LIMIT_KB:-8388608}"
-
-if [ "$BENCH_MEM_LIMIT_KB" -gt 0 ] 2>/dev/null; then
-    ulimit -v "$BENCH_MEM_LIMIT_KB" 2>/dev/null || true
-    MEM_LIMIT_MB=$((BENCH_MEM_LIMIT_KB / 1024))
-else
-    MEM_LIMIT_MB="unlimited"
-fi
+# Memory caps (ulimit -v) were retired entirely (2026-07-14): runaway
+# protection is per-app timeout + reap-by-exe, not memory limits.
 
 # ==========================================================================
 # Logging setup (matches tests/run_tests.sh format)
@@ -220,9 +211,9 @@ run_ocr_apps() {
     # stale multinode config from a previous run causing single-node crashes)
     if [ "$suffix" = "arts" ]; then
         if [ "$DO_MULTINODE" -eq 1 ]; then
-            cp "$REPO_ROOT/configs/local/laptop/${MULTINODE_VARIANT}.cfg" arts.cfg
+            cp "$REPO_ROOT/configs/local/cbgpu02/${MULTINODE_VARIANT}.cfg" arts.cfg
         else
-            cp "$REPO_ROOT/configs/local/laptop/1n.cfg" arts.cfg
+            cp "$REPO_ROOT/configs/local/cbgpu02/1n.cfg" arts.cfg
         fi
         if [ ! -f arts.cfg ]; then
             echo "WARNING: No arts.cfg found, ARTS apps may fail"
@@ -232,9 +223,9 @@ run_ocr_apps() {
     # Set OCR_CONFIG for XSOCR backend
     if [ "$suffix" = "xsocr" ]; then
         if [ "$DO_MULTINODE" -eq 1 ]; then
-            export OCR_CONFIG="${REPO_ROOT}/configs/mpi/laptop/${MULTINODE_VARIANT}.cfg"
+            export OCR_CONFIG="${REPO_ROOT}/configs/mpi/cbgpu02/${MULTINODE_VARIANT}.cfg"
         else
-            export OCR_CONFIG="${REPO_ROOT}/configs/mpi/laptop/1n.cfg"
+            export OCR_CONFIG="${REPO_ROOT}/configs/mpi/cbgpu02/1n.cfg"
         fi
     fi
 
@@ -347,18 +338,17 @@ run_ocr_apps() {
 
     # Tier 14: SAR (tiny/small/medium/large; huge intentionally excluded —
     # huge dataset generation alone is far longer than this script's
-    # per-app timeout, and the runtime test is outside the laptop budget).
+    # per-app timeout, and the runtime test is outside this script's budget).
     run_app "sar_tiny_${suffix}"                "$dir"
     run_app "sar_small_${suffix}"               "$dir"
     run_app "sar_medium_${suffix}"              "$dir"
     run_app "sar_large_${suffix}"               "$dir"
 
-    # Tier 15: Stream, UTS
+    # Tier 15: Stream
     # stream: Known SIGSEGV on XSOCR (runtime race in scheduler/memory mgmt)
     if [ "$suffix" != "xsocr" ]; then
         run_app "stream_${suffix}"              "$dir"
     fi
-    run_app "uts_${suffix}"                     "$dir"
 
     # Tier 16: NUMA diagnostics (needs libnuma — will SKIP if not built)
     run_app "xeonNumaSize_${suffix}"            "$dir"
@@ -377,7 +367,7 @@ run_ocr_apps_multinode() {
     log "===== OCR apps (arts backend, multi-node ${MULTINODE_VARIANT} localhost) ====="
 
     # Copy multi-node config
-    cp "$REPO_ROOT/configs/local/laptop/${MULTINODE_VARIANT}.cfg" arts.cfg
+    cp "$REPO_ROOT/configs/local/cbgpu02/${MULTINODE_VARIANT}.cfg" arts.cfg
 
     # CoMD variants (affinity-aware)
     # CoMD_intel_chandra: Known HANG — FINISH EDT + affinity deadlock
@@ -501,14 +491,12 @@ echo "=== ARTS Benchmark Smoke Test ==="
 echo "    Backends: ${BACKENDS[*]}"
 echo "    Mode:     $MODE_LABEL"
 echo "    Timeout:  ${TIMEOUT}s per app"
-echo "    Memory:   ${MEM_LIMIT_MB}MB per process"
 echo "    Log:      $LOG_FILE"
 
 log "=== ARTS Benchmark Smoke Test: $TIMESTAMP ==="
 log "Backends: ${BACKENDS[*]}"
 log "Mode:     $MODE_LABEL"
 log "Timeout:  ${TIMEOUT}s per app"
-log "Memory:   ${MEM_LIMIT_MB}MB per process"
 log ""
 
 for backend in "${BACKENDS[@]}"; do

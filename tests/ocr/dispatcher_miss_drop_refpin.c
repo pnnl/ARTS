@@ -10,8 +10,8 @@
  *       may arrive AFTER the DB's route slot was NULLed by a concurrent
  *       destroy.  The dispatcher drops it (the lookup MISSes), but the destroy
  *       fan-out / DESTROY_NOTIFY must already have woken every parked waiter,
- * so no EDT is stranded.  The Cat-C handlers covered: non-LOCK : INVALIDATE,
- * SNAPSHOT_RESPONSE, CACHE_DESTROY, CONFIRM, CONFIRM_ACK (lazy). LOCK     :
+ * so no EDT is stranded.  The Cat-C handlers covered: non-RWLOCK : INVALIDATE,
+ * SNAPSHOT_RESPONSE, CACHE_DESTROY, CONFIRM, CONFIRM_ACK (lazy). RWLOCK     :
  * LOCK_RELEASE (Cat-B defer), CACHE_DESTROY.
  *
  *   (b) NO UAF — each Cat-C case ref-pins the db_s (arts_route_table_lookup_db
@@ -20,7 +20,7 @@
  *       thread therefore cannot free the db_s mid-handler.  A torn-down slot is
  *       a clean NULL get, not a dangling pointer deref.
  *
- *   (c) ACK-ON-MISS — WRITEBACK_ACK (eager/MRMW) and LOCK_RELEASE_ACK (LOCK)
+ *   (c) ACK-ON-MISS — WRITEBACK_ACK (eager/WRF_RCU) and LOCK_RELEASE_ACK (RWLOCK)
  *       post the releaser's stack-local sem by pointer identity, INDEPENDENT of
  *       the route lookup (the body is called even on db==NULL, or the sem_post
  *       is inline).  A torn-down home cache must NOT swallow the ACK or the
@@ -40,8 +40,8 @@
  * double-free / cb refcount underflow).
  *
  * Config-agnostic: every protocol routes RW/RO acquires + destroy through the
- * dispatcher Cat-C cases, so this runs unchanged under MRNEW (eager/lazy), MRSW
- * (eager/lazy), MRMW, and LOCK.  Cross-rank handoff (nranks>1, the
+ * dispatcher Cat-C cases, so this runs unchanged under RCU (eager/lazy)
+ * (eager/lazy), WRF_RCU, and RWLOCK.  Cross-rank handoff (nranks>1, the
  * 2n/3n/4n/2n_io registrations) is what generates the real wire responses; on a
  * single rank the self-loopback Cat-C path still exercises the unconditional
  * ACK post.
