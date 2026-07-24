@@ -350,4 +350,6 @@ bool arts_route_table_set_destroyed(arts_guid_t key) {
 #include "core/coherence/rcu/home.c"
 #elif defined(ARTS_PROTOCOL_RWLOCK)
 #include "core/coherence/rwlock/home.c"
+#elif defined(ARTS_PROTOCOL_MSI)
+#include "core/coherence/msi/home.c"
 #endif

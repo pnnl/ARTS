@@ -60,6 +60,9 @@ MK_HANDLER(arts_handler_db_lock_request)
 #ifdef ARTS_TIMING_EAGER
 MK_HANDLER(arts_handler_db_lock_release)
 #endif
+#elif defined(ARTS_PROTOCOL_MSI)
+MK_HANDLER(arts_handler_db_msi_request)
+MK_HANDLER(arts_handler_db_msi_writeback)
 #elif defined(ARTS_TIMING_EAGER) || defined(ARTS_TIMING_LAZY)
 MK_HANDLER(arts_handler_db_ownership_request)
 #endif
@@ -102,6 +105,10 @@ static const struct expect_s g_expect[] = {
 #elif defined(ARTS_PROTOCOL_RWLOCK) && defined(ARTS_TIMING_LAZY)
     E(OOO_DB_ACQUIRE, arts_db_acquire_replay_dep),
     E(OOO_DB_LOCK_REQUEST, arts_handler_db_lock_request),
+#elif defined(ARTS_PROTOCOL_MSI)
+    E(OOO_DB_ACQUIRE, arts_db_acquire_replay_dep),
+    E(OOO_DB_MSI_REQUEST, arts_handler_db_msi_request),
+    E(OOO_DB_MSI_WRITEBACK, arts_handler_db_msi_writeback),
 #elif defined(ARTS_TIMING_EAGER)
     E(OOO_DB_ACQUIRE, arts_db_acquire_replay_dep),
     E(OOO_DB_SNAPSHOT_REQUEST, arts_handler_db_snapshot_request),

@@ -310,6 +310,47 @@ void arts_db_lazy_start_invalidate_round(
 void arts_db_send_ownership_response(struct arts_db_cache_s *cache);
 #endif /* RCU */
 
+#ifdef ARTS_PROTOCOL_MSI
+/* ===== MSI protocol handlers / senders ================================= */
+
+/* Cat-B pure bodies (OoO g_ooo_table) @home: REQUEST (RO/RW mode in the
+ * packet — one kind for both) and WRITEBACK.  WRITEBACK's item is the
+ * pinned home db_s; the dispatcher also calls it inline on a HIT. */
+void arts_handler_db_msi_request(void *item_v, void *args_v);
+void arts_handler_db_msi_writeback(void *item_v, void *args_v);
+
+/* Cat-C bodies. */
+struct arts_msg_msi_cts_packet_s;
+void arts_handler_db_msi_cts(struct arts_db_s *db,
+                             struct arts_msg_msi_cts_packet_s *p);
+void arts_handler_db_msi_deliver(void *payload, size_t size);
+void arts_handler_db_msi_grant(void *payload, size_t size);
+void arts_handler_db_msi_invalidate(struct arts_db_s *db);
+void arts_handler_db_msi_invalidate_ack(struct arts_db_s *db,
+                                        unsigned int sharer_rank);
+
+/* Senders. */
+void arts_send_db_msi_request(struct arts_db_cache_s *cache,
+                              arts_db_access_mode_t mode);
+void arts_send_db_msi_cts(unsigned int requester_rank, arts_guid_t db_guid,
+                          uint64_t db_size, arts_db_access_mode_t mode);
+void arts_send_db_msi_deliver(unsigned int requester_rank,
+                              struct arts_db_s *db,
+                              const struct arts_rdzv_landing_s *rdzv);
+void arts_send_db_msi_grant(unsigned int requester_rank, struct arts_db_s *db,
+                            uint64_t version,
+                            const struct arts_rdzv_landing_s *rdzv);
+void arts_send_db_msi_writeback(struct arts_db_cache_s *cache, uint64_t vnew,
+                                uint64_t cv, uint32_t final_flag,
+                                const void *data, uint64_t data_size,
+                                uint64_t rdzv_txid, uint64_t rdzv_cookie);
+void arts_send_db_msi_writeback_ack(unsigned int releaser_rank,
+                                    arts_guid_t db_guid, uint64_t cv);
+void arts_send_db_msi_invalidate(unsigned int sharer_rank, arts_guid_t db_guid);
+void arts_send_db_msi_invalidate_ack(unsigned int home_rank,
+                                     arts_guid_t db_guid);
+#endif /* ARTS_PROTOCOL_MSI */
+
 #ifdef ARTS_PROTOCOL_RWLOCK
 /* ===== RWLOCK protocol handlers ======================================== */
 

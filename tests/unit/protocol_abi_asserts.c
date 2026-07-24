@@ -116,8 +116,20 @@ _Static_assert(MSG_DB_WRITEBACK_CTS == 32,
 _Static_assert(MSG_DB_LOCK_CTS == 33, "ordinal MSG_DB_LOCK_CTS drifted");
 _Static_assert(MSG_RDZV_PUSH_RTS == 34, "ordinal MSG_RDZV_PUSH_RTS drifted");
 _Static_assert(MSG_RDZV_PUSH_CTS == 35, "ordinal MSG_RDZV_PUSH_CTS drifted");
-_Static_assert(MSG_COUNT == 36,
-               "MSG_COUNT drifted (wire-compat: must be 36 in all 7 configs)");
+_Static_assert(MSG_DB_MSI_REQUEST == 36, "ordinal MSG_DB_MSI_REQUEST drifted");
+_Static_assert(MSG_DB_MSI_CTS == 37, "ordinal MSG_DB_MSI_CTS drifted");
+_Static_assert(MSG_DB_MSI_DELIVER == 38, "ordinal MSG_DB_MSI_DELIVER drifted");
+_Static_assert(MSG_DB_MSI_GRANT == 39, "ordinal MSG_DB_MSI_GRANT drifted");
+_Static_assert(MSG_DB_MSI_WRITEBACK == 40,
+               "ordinal MSG_DB_MSI_WRITEBACK drifted");
+_Static_assert(MSG_DB_MSI_WRITEBACK_ACK == 41,
+               "ordinal MSG_DB_MSI_WRITEBACK_ACK drifted");
+_Static_assert(MSG_DB_MSI_INVALIDATE == 42,
+               "ordinal MSG_DB_MSI_INVALIDATE drifted");
+_Static_assert(MSG_DB_MSI_INVALIDATE_ACK == 43,
+               "ordinal MSG_DB_MSI_INVALIDATE_ACK drifted");
+_Static_assert(MSG_COUNT == 44,
+               "MSG_COUNT drifted (wire-compat: must be 44 in all configs)");
 
 /* ===== (2) header layout — read before the message type is known. ===== */
 _Static_assert(offsetof(struct arts_msg_header_s, message_type) == 0,

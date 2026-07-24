@@ -204,19 +204,24 @@ cmake_dependent_option(ARTS_USE_LOCAL_CUDA_ARCHITECTURES
 #                            RWLOCK — queue-fair distributed reader–writer lock
 #                            per DB (entry-consistency style): shared grants
 #                            ship read copies, exclusive release writes back.
+#                            MSI — write-invalidate: readers overlap writers
+#                            (never blocked), every RW release publishes to
+#                            home and a per-release invalidation round kills
+#                            older copies (EAGER timing only).
 #   ARTS_PROTOCOL_TIMING     EAGER | LAZY (default) — when consistency actions
 #                            run: EAGER = release-time home writeback, LAZY =
 #                            acquire-time owner-to-owner transfer.
 # Valid combinations (everything else is a configure error):
 #   OCR    × RCU    × {EAGER, LAZY}
 #   OCR    × RWLOCK × {EAGER, LAZY}
+#   OCR    × MSI    × EAGER            (write-invalidate; LAZY designed only)
 #   DB_WRF × RCU    × EAGER            (home-canonical sync writeback)
 set(ARTS_MEMORY_MODEL "OCR" CACHE STRING
     "Memory model the build implements: OCR (default; races legal, runtime-ordered) or DB_WRF (program orders write-write conflicts per DB)")
 set_property(CACHE ARTS_MEMORY_MODEL PROPERTY STRINGS OCR DB_WRF)
 set(ARTS_COHERENCE_PROTOCOL "RCU" CACHE STRING
-    "Coherence protocol: RCU (default; versioned snapshots, readers never blocked/invalidated) or RWLOCK (per-DB distributed reader-writer lock)")
-set_property(CACHE ARTS_COHERENCE_PROTOCOL PROPERTY STRINGS RCU RWLOCK)
+    "Coherence protocol: RCU (default; versioned snapshots, readers never blocked/invalidated), RWLOCK (per-DB distributed reader-writer lock), or MSI (write-invalidate; readers overlap writers, per-release invalidation rounds)")
+set_property(CACHE ARTS_COHERENCE_PROTOCOL PROPERTY STRINGS RCU RWLOCK MSI)
 set(ARTS_PROTOCOL_TIMING "LAZY" CACHE STRING
     "Timing of consistency actions: EAGER (release-time) or LAZY (acquire-time, default)")
 set_property(CACHE ARTS_PROTOCOL_TIMING PROPERTY STRINGS EAGER LAZY)
@@ -337,14 +342,30 @@ if(NOT ARTS_MEMORY_MODEL STREQUAL "OCR" AND NOT ARTS_MEMORY_MODEL STREQUAL "DB_W
           "ARTS_MEMORY_MODEL must be OCR or DB_WRF, got: ${ARTS_MEMORY_MODEL}")
 endif()
 if(NOT ARTS_COHERENCE_PROTOCOL STREQUAL "RCU" AND
-   NOT ARTS_COHERENCE_PROTOCOL STREQUAL "RWLOCK")
+   NOT ARTS_COHERENCE_PROTOCOL STREQUAL "RWLOCK" AND
+   NOT ARTS_COHERENCE_PROTOCOL STREQUAL "MSI")
   message(FATAL_ERROR
-          "ARTS_COHERENCE_PROTOCOL must be RCU or RWLOCK, got: ${ARTS_COHERENCE_PROTOCOL}")
+          "ARTS_COHERENCE_PROTOCOL must be RCU, RWLOCK or MSI, got: ${ARTS_COHERENCE_PROTOCOL}")
 endif()
 if(NOT ARTS_PROTOCOL_TIMING STREQUAL "EAGER" AND
    NOT ARTS_PROTOCOL_TIMING STREQUAL "LAZY")
   message(FATAL_ERROR
           "ARTS_PROTOCOL_TIMING must be EAGER or LAZY, got: ${ARTS_PROTOCOL_TIMING}")
+endif()
+if(ARTS_COHERENCE_PROTOCOL STREQUAL "MSI")
+  if(ARTS_MEMORY_MODEL STREQUAL "DB_WRF")
+    message(FATAL_ERROR
+            "DB_WRF x MSI is not a meaningful configuration: MSI already "
+            "orders writers at runtime (per-release rounds), so the DB-WRF "
+            "program obligation is redundant — use ARTS_MEMORY_MODEL=OCR.")
+  endif()
+  if(ARTS_PROTOCOL_TIMING STREQUAL "LAZY")
+    message(FATAL_ERROR
+            "MSI x LAZY is designed but unimplemented (demand-driven "
+            "migration, no writeback). The implemented MSI configuration is "
+            "ARTS_PROTOCOL_TIMING=EAGER (per-release home writeback + "
+            "invalidation round).")
+  endif()
 endif()
 if(ARTS_MEMORY_MODEL STREQUAL "DB_WRF")
   if(ARTS_COHERENCE_PROTOCOL STREQUAL "RWLOCK")
@@ -370,6 +391,15 @@ if(ARTS_MEMORY_MODEL STREQUAL "DB_WRF")
           "wrong results here. Evaluation builds only — never a correctness "
           "baseline.")
   message(STATUS "ARTS: model DB_WRF, protocol RCU (arm WRF_RCU), timing EAGER")
+elseif(ARTS_COHERENCE_PROTOCOL STREQUAL "MSI")
+  # MSI (write-invalidate): readers are never blocked, tracked only as a
+  # node-granular copy roster; every RW release publishes to home (EAGER)
+  # and a per-release invalidation round retires older copies.  The arm
+  # defines ARTS_PROTOCOL_MSI plus ARTS_TIMING_EAGER (EAGER-only; the
+  # per-protocol selection chains match ARTS_TIMING_EAGER ahead of the
+  # protocol macro, so MSI emits both — same discipline as RWLOCK).
+  set(ARTS_COHERENCE_ARM "MSI")
+  message(STATUS "ARTS: model OCR, protocol MSI, timing EAGER")
 elseif(ARTS_COHERENCE_PROTOCOL STREQUAL "RWLOCK")
   # RWLOCK (entry-consistency style): a DB is held in one access mode at a
   # time (RO-shared or RW-exclusive); reader/writer are time-exclusive;

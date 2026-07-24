@@ -45,7 +45,7 @@
  * OWNERSHIP_RESPONSE sender in coherence/eager.c (GRANT) and coherence/lazy.c
  * (TRANSFER_OWNERSHIP).  WRF_RCU has no exclusive-ownership wire messages. */
 
-#if !defined(ARTS_PROTOCOL_RWLOCK)
+#if !defined(ARTS_PROTOCOL_RWLOCK) && !defined(ARTS_PROTOCOL_MSI)
 void arts_send_db_writeback(unsigned int home_rank, arts_guid_t db_guid,
                             uint64_t version, uint64_t cv, const void *data,
                             uint64_t data_size, uint64_t rdzv_txid,
@@ -99,7 +99,7 @@ void arts_send_db_writeback(unsigned int home_rank, arts_guid_t db_guid,
   arts_transport_send_async((int)home_rank, (char *)&p, sizeof(p));
 }
 
-#endif /* !ARTS_PROTOCOL_RWLOCK */
+#endif /* !ARTS_PROTOCOL_RWLOCK && !ARTS_PROTOCOL_MSI */
 
 /* WRITEBACK_CTS — home → releaser: a home landing for an announced dirty
  * writeback (a fresh buffer under the ownership/multi-writer protocols; the
@@ -125,7 +125,8 @@ void arts_send_db_writeback_cts(unsigned int releaser_rank, arts_guid_t db_guid,
  * eager and WRF_RCU protocols use (the lazy protocol transfers ownership
  * owner→owner without a synchronous writeback, so it never sends or receives
  * WRITEBACK_ACK and its dispatcher fatals on the wire message). */
-#if !defined(ARTS_TIMING_LAZY) && !defined(ARTS_PROTOCOL_RWLOCK)
+#if !defined(ARTS_TIMING_LAZY) && !defined(ARTS_PROTOCOL_RWLOCK) && \
+    !defined(ARTS_PROTOCOL_MSI)
 void arts_send_db_writeback_ack(unsigned int releaser_rank, arts_guid_t db_guid,
                                 uint64_t cv) {
   struct arts_msg_writeback_ack_packet_s p;
@@ -149,7 +150,7 @@ void arts_send_db_writeback_ack(unsigned int releaser_rank, arts_guid_t db_guid,
 }
 #endif /* !ARTS_TIMING_LAZY && !ARTS_PROTOCOL_RWLOCK */
 
-#if !defined(ARTS_PROTOCOL_RWLOCK)
+#if !defined(ARTS_PROTOCOL_RWLOCK) && !defined(ARTS_PROTOCOL_MSI)
 void arts_send_db_snapshot_request(struct arts_db_cache_s *cache,
                                    arts_guid_t edt_guid, uint32_t slot) {
   arts_guid_t db_guid = cache->db_guid;

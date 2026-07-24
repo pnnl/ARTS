@@ -101,6 +101,10 @@ elseif(ARTS_COHERENCE_ARM STREQUAL "WRF_RCU")
     # No protocol home.c source: the test body self-skips under WRF_RCU.
     add_pure_unit_src(rank_bitset
         DEFINES ARTS_UNIT_STANDALONE_SHIMS=1 PASS_REGEX "PASS rank_bitset" TIMEOUT 60)
+elseif(ARTS_COHERENCE_ARM STREQUAL "MSI")
+    set(_rank_bitset_home ${CMAKE_SOURCE_DIR}/libs/src/core/coherence/msi/home.c)
+    add_pure_unit_src(rank_bitset SOURCES ${_rank_bitset_home}
+        DEFINES ARTS_UNIT_STANDALONE_SHIMS=1 PASS_REGEX "PASS rank_bitset" TIMEOUT 60)
 else()
     set(_rank_bitset_home ${CMAKE_SOURCE_DIR}/libs/src/core/coherence/rcu/home.c)
     add_pure_unit_src(rank_bitset SOURCES ${_rank_bitset_home}
@@ -1045,6 +1049,9 @@ add_pure_unit_src(pending_rw_treiber DEFINES ARTS_UNIT_STANDALONE_SHIMS PASS_REG
 
 # rwlock_compute_next: RWLOCK only (self-skips else).
 add_pure_unit_src(rwlock_compute_next DEFINES ARTS_UNIT_STANDALONE_SHIMS PASS_REGEX "PASS rwlock_compute_next:|SKIP" TIMEOUT 60)
+
+# msi_compute_next: MSI only (self-skips else).
+add_pure_unit_src(msi_compute_next DEFINES ARTS_UNIT_STANDALONE_SHIMS PASS_REGEX "PASS msi_compute_next:|SKIP" TIMEOUT 60)
 
 # acquire_is_serialized (T068): needs_full_build — it does NOT #include a coherence .c; it
 # links the real arts_db_acquire_is_serialized symbol out of the per-config static libarts and

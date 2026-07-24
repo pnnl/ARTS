@@ -81,7 +81,8 @@ void arts_db_cache_common_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
    * explicitly for clarity).  Nodes are heap-allocated on the case-3 push path
    * and freed when drained by the next install. */
   arts_lf_stack_init(&c->pending_snapshot);
-#if defined(ARTS_RO_REQUEST_COMBINING) && !defined(ARTS_PROTOCOL_RWLOCK)
+#if defined(ARTS_RO_REQUEST_COMBINING) && !defined(ARTS_PROTOCOL_RWLOCK) && \
+    !defined(ARTS_PROTOCOL_MSI)
   arts_lf_stack_init(&c->ro_combine);
   c->ro_combine_group = NULL;
   c->snapshot_req_in_flight = 0;
@@ -103,12 +104,12 @@ void arts_db_cache_common_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
   } else if (kind == ARTS_DB_INIT_CREATOR_HOME) {
     arts_db_home_init(db_self, self, n);
     db_self->home_initialized = true;
-#if !defined(ARTS_PROTOCOL_RWLOCK)
+#if !defined(ARTS_PROTOCOL_RWLOCK) && !defined(ARTS_PROTOCOL_MSI)
     /* RCU/WRF_RCU: writer_count tracks ownership (sentinel + creator). */
     c->writer_count = 2;
 #endif
   } else if (kind == ARTS_DB_INIT_CREATOR_REMOTE) {
-#if !defined(ARTS_PROTOCOL_RWLOCK)
+#if !defined(ARTS_PROTOCOL_RWLOCK) && !defined(ARTS_PROTOCOL_MSI)
     c->writer_count = 2;
 #endif
   }
@@ -287,7 +288,7 @@ void *arts_db_acquire_local(struct arts_db_cache_s *cache) {
 
 /* ===== Case 7: remote-RO / remote-snapshot path =================== */
 
-#if !defined(ARTS_PROTOCOL_RWLOCK)
+#if !defined(ARTS_PROTOCOL_RWLOCK) && !defined(ARTS_PROTOCOL_MSI)
 #ifdef ARTS_RO_REQUEST_COMBINING
 /* ===== Remote-read request combining ===============================
  *
@@ -514,7 +515,8 @@ void await_writeback_ack(sem_t *cv) {
  * coherence/{eager,lazy,wrf_rcu}.c.  Eager and WRF_RCU call arts_db_writeback_sync
  * below for the synchronous-WRITEBACK rendezvous. */
 
-#if !defined(ARTS_TIMING_LAZY) && !defined(ARTS_PROTOCOL_RWLOCK)
+#if !defined(ARTS_TIMING_LAZY) && !defined(ARTS_PROTOCOL_RWLOCK) &&           \
+    !defined(ARTS_PROTOCOL_MSI)
 void arts_db_writeback_sync(struct arts_db_cache_s *cache, uint64_t version,
                             const void *data, uint64_t data_size) {
   unsigned int home_rank = arts_guid_get_rank(cache->db_guid);
@@ -654,7 +656,8 @@ void arts_db_cache_common_destroy_post(struct arts_db_cache_s *cache) {
       n = next;
     }
   }
-#if defined(ARTS_RO_REQUEST_COMBINING) && !defined(ARTS_PROTOCOL_RWLOCK)
+#if defined(ARTS_RO_REQUEST_COMBINING) && !defined(ARTS_PROTOCOL_RWLOCK) && \
+    !defined(ARTS_PROTOCOL_MSI)
   {
     /* Combining waiters still parked at destroy are freed, not woken —
      * destroying a DB with a pending acquire is undefined per the programming

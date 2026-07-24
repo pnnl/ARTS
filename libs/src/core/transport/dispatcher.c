@@ -365,7 +365,8 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
    * INVALIDATE_NOTICE is handled in its own three-model block below (eager =
    * Cat-B defer; lazy = direct, never deferred).
    */
-#if defined(ARTS_PROTOCOL_WRF_RCU) || defined(ARTS_PROTOCOL_RWLOCK)
+#if defined(ARTS_PROTOCOL_WRF_RCU) || defined(ARTS_PROTOCOL_RWLOCK) ||        \
+    defined(ARTS_PROTOCOL_MSI)
   case MSG_DB_OWNERSHIP_REQUEST: {
     ARTS_ERROR("WRF_RCU/RWLOCK build received exclusivity message type %d from rank "
                "%u — protocol has no OWNERSHIP_REQUEST; binary mode mismatch?",
@@ -400,7 +401,8 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
    *           that once forced eager through the OoO engine is gone: EAGER no
    *           longer flips rw_holder before install.)
    *   WRF_RCU: no ownership transfer (caught by the fatal group above). */
-#if defined(ARTS_PROTOCOL_WRF_RCU) || defined(ARTS_PROTOCOL_RWLOCK)
+#if defined(ARTS_PROTOCOL_WRF_RCU) || defined(ARTS_PROTOCOL_RWLOCK) ||        \
+    defined(ARTS_PROTOCOL_MSI)
   case MSG_DB_OWNERSHIP_INVALIDATE: {
     ARTS_ERROR("WRF_RCU/RWLOCK build received INVALIDATE from rank %u — "
                "protocol has no ownership invalidate; binary mode mismatch?",
@@ -437,7 +439,7 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     break;
   }
 #endif /* model dispatch for MSG_DB_OWNERSHIP_INVALIDATE */
-#if defined(ARTS_PROTOCOL_RWLOCK)
+#if defined(ARTS_PROTOCOL_RWLOCK) || defined(ARTS_PROTOCOL_MSI)
   case MSG_DB_SNAPSHOT_REQUEST:
   case MSG_DB_SNAPSHOT_RESPONSE: {
     ARTS_ERROR("RWLOCK build received snapshot message type %d from rank %u — "
@@ -534,7 +536,8 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
   /* OWNERSHIP_RESPONSE: the single ownership-transfer wire message.  eager =
    * GRANT (buffer payload); lazy = TRANSFER_OWNERSHIP (map + buffer); WRF_RCU
    * has no ownership transfer and fatals to catch a binary mode mismatch. */
-#if defined(ARTS_PROTOCOL_WRF_RCU) || defined(ARTS_PROTOCOL_RWLOCK)
+#if defined(ARTS_PROTOCOL_WRF_RCU) || defined(ARTS_PROTOCOL_RWLOCK) ||        \
+    defined(ARTS_PROTOCOL_MSI)
   case MSG_DB_OWNERSHIP_RESPONSE:
   case MSG_DB_OWNERSHIP_CTS: {
     ARTS_ERROR("WRF_RCU/RWLOCK build received ownership-transfer message type %d "
@@ -603,7 +606,8 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     break;
   }
 #endif /* WRITEBACK_CTS timing dispatch */
-#if defined(ARTS_TIMING_LAZY) || defined(ARTS_PROTOCOL_RWLOCK)
+#if defined(ARTS_TIMING_LAZY) || defined(ARTS_PROTOCOL_RWLOCK) ||             \
+    defined(ARTS_PROTOCOL_MSI)
   case MSG_DB_WRITEBACK:
   case MSG_DB_WRITEBACK_ACK: {
     ARTS_ERROR("lazy/RWLOCK build received writeback message type %d from rank "
@@ -741,7 +745,8 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
    * advances the round).  LAZY additionally replies with CONFIRM_ACK; EAGER's
    * home handler does not (the new owner already drained at
    * OWNERSHIP_RESPONSE). WRF_RCU has no ownership transfer and fatals. */
-#if defined(ARTS_PROTOCOL_WRF_RCU) || defined(ARTS_PROTOCOL_RWLOCK)
+#if defined(ARTS_PROTOCOL_WRF_RCU) || defined(ARTS_PROTOCOL_RWLOCK) ||        \
+    defined(ARTS_PROTOCOL_MSI)
   case MSG_DB_OWNERSHIP_CONFIRM: {
     ARTS_ERROR("WRF_RCU/RWLOCK build received OWNERSHIP_CONFIRM from rank %u — "
                "protocol has no ownership transfer; binary mode mismatch?",
@@ -918,6 +923,138 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
   }
 #endif /* ARTS_TIMING_LAZY */
 #endif /* ARTS_PROTOCOL_RWLOCK */
+#ifdef ARTS_PROTOCOL_MSI
+  /* MSI wire arm.  REQUEST/WRITEBACK are Cat-B (a message can reach home
+   * before the home db_s installs on a remote-create lazy-install path);
+   * the rest are Cat-C with per-message MISS actions that must never strand
+   * a round or a blocked releaser. */
+  case MSG_DB_MSI_REQUEST: {
+    ARTS_DEBUG("Coh MSI_REQUEST Received");
+    struct arts_msg_msi_request_packet_s *pack =
+        (struct arts_msg_msi_request_packet_s *)(packet);
+    struct arts_ooo_args_db_msi_request_s args = {
+        .requester = pack->header.rank,
+        .db_guid = pack->db_guid,
+        .mode = (arts_db_access_mode_t)pack->mode,
+        .rdzv = {.addr = pack->rdzv.addr,
+                 .key = pack->rdzv.key,
+                 .txid = pack->rdzv.txid,
+                 .cookie = pack->rdzv.cookie},
+    };
+    arts_ooo_dispatch_or_defer_guid(pack->db_guid, OOO_DB_MSI_REQUEST, &args,
+                                    sizeof(args));
+    break;
+  }
+  case MSG_DB_MSI_CTS: {
+    ARTS_DEBUG("Coh MSI_CTS Received");
+    struct arts_msg_msi_cts_packet_s *pack =
+        (struct arts_msg_msi_cts_packet_s *)(packet);
+    /* Cat-C lookup-acquire-or-drop: HIT learns db_size + re-issues the
+     * request with a landing; MISS (DB destroyed) silently drops. */
+    arts_shared_ptr_t h = arts_route_table_lookup_db(pack->db_guid);
+    struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(h);
+    if (db != NULL) {
+      arts_handler_db_msi_cts(db, pack);
+    }
+    arts_shared_release(&h);
+    break;
+  }
+  case MSG_DB_MSI_DELIVER: {
+    ARTS_DEBUG("Coh MSI_DELIVER Received");
+    /* Cat-C: the receiver sent its own REQUEST first, so its cache exists;
+     * a destroyed cache discards the landing inside the handler. */
+    arts_handler_db_msi_deliver((void *)packet, (size_t)packet->size);
+    break;
+  }
+  case MSG_DB_MSI_GRANT: {
+    ARTS_DEBUG("Coh MSI_GRANT Received");
+    arts_handler_db_msi_grant((void *)packet, (size_t)packet->size);
+    break;
+  }
+  case MSG_DB_MSI_WRITEBACK: {
+    ARTS_DEBUG("Coh MSI_WRITEBACK Received");
+    struct arts_msg_msi_writeback_packet_s *pack =
+        (struct arts_msg_msi_writeback_packet_s *)(packet);
+    struct arts_ooo_args_db_msi_writeback_s args = {
+        .releaser = pack->header.rank,
+        .db_guid = pack->db_guid,
+        .vnew = pack->vnew,
+        .cv = pack->cv,
+        .final_flag = pack->final_flag,
+        .data_inline = 0,
+        .data_size = pack->data_size,
+        .rdzv_txid = pack->rdzv_txid,
+        .rdzv_cookie = pack->rdzv_cookie,
+    };
+    /* Absent home slot: post-destroy (gen > 0) must ACK directly — a
+     * torn-down home never strands the blocked releaser — and discard any
+     * landed payload; pre-create (gen == 0) must keep deferring so the
+     * install-time OoO drain replays it. */
+    arts_shared_ptr_t db_h = arts_route_table_lookup_db(pack->db_guid);
+    struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(db_h);
+    if (db != NULL) {
+      arts_handler_db_msi_writeback(db, &args);
+      arts_shared_release(&db_h);
+    } else {
+      arts_shared_release(&db_h);
+      if (arts_route_table_was_destroyed(pack->db_guid)) {
+        if (pack->rdzv_txid != 0) {
+          arts_db_rdzv_discard_landing(pack->rdzv_txid, pack->rdzv_cookie);
+        }
+        if (pack->cv != 0) {
+          arts_send_db_msi_writeback_ack(pack->header.rank, pack->db_guid,
+                                         pack->cv);
+        }
+      } else {
+        arts_ooo_dispatch_or_defer_guid(pack->db_guid, OOO_DB_MSI_WRITEBACK,
+                                        &args, sizeof(args));
+      }
+    }
+    break;
+  }
+  case MSG_DB_MSI_WRITEBACK_ACK: {
+    ARTS_DEBUG("Coh MSI_WRITEBACK_ACK Received");
+    struct arts_msg_msi_writeback_ack_packet_s *pack =
+        (struct arts_msg_msi_writeback_ack_packet_s *)(packet);
+    /* Cat-C SPECIAL — pointer-identity sem_post on cv directly; the wake is
+     * cache-independent (a torn-down cache must not strand the releaser). */
+    if (pack->cv != 0) {
+      sem_post((sem_t *)(uintptr_t)pack->cv);
+    }
+    break;
+  }
+  case MSG_DB_MSI_INVALIDATE: {
+    ARTS_DEBUG("Coh MSI_INVALIDATE Received");
+    struct arts_msg_msi_invalidate_packet_s *pack =
+        (struct arts_msg_msi_invalidate_packet_s *)(packet);
+    /* Cat-C; MISS (cache already destroyed) MUST still ack — the round's
+     * close is gated on every roster member answering. */
+    arts_shared_ptr_t h = arts_route_table_lookup_db(pack->db_guid);
+    struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(h);
+    if (db != NULL) {
+      arts_handler_db_msi_invalidate(db);
+      arts_shared_release(&h);
+    } else {
+      arts_shared_release(&h);
+      arts_send_db_msi_invalidate_ack(pack->header.rank, pack->db_guid);
+    }
+    break;
+  }
+  case MSG_DB_MSI_INVALIDATE_ACK: {
+    ARTS_DEBUG("Coh MSI_INVALIDATE_ACK Received");
+    struct arts_msg_msi_invalidate_ack_packet_s *pack =
+        (struct arts_msg_msi_invalidate_ack_packet_s *)(packet);
+    /* Cat-C at home; a MISS means the DB was destroyed with a round open —
+     * outside the destroy contract — drop. */
+    arts_shared_ptr_t h = arts_route_table_lookup_db(pack->db_guid);
+    struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(h);
+    if (db != NULL) {
+      arts_handler_db_msi_invalidate_ack(db, pack->header.rank);
+    }
+    arts_shared_release(&h);
+    break;
+  }
+#endif /* ARTS_PROTOCOL_MSI */
   case MSG_RDZV_PUSH_RTS: {
     ARTS_DEBUG("RDZV_PUSH_RTS Received");
     struct arts_msg_rdzv_push_rts_packet_s *pack =

@@ -532,6 +532,7 @@ class Runtime:
 ARTS_VARIANTS = [
     "ocr_rcu_eager", "ocr_rcu_lazy",
     "wrf_rcu_eager",
+    "ocr_msi_eager",
     "ocr_rwlock_eager", "ocr_rwlock_lazy",
 ]
 RUNTIMES: list[Runtime] = (

@@ -51,6 +51,10 @@ int main(void) {
   proto = "RCU";
   exp_rw = true;
   exp_ro = false; /* RW serialized, RO snapshot */
+#elif defined(ARTS_PROTOCOL_MSI)
+  proto = "MSI";
+  exp_rw = true;  /* a write grant waits on other tenures' releases */
+  exp_ro = false; /* readers are never blocked by writers */
 #else
 #error "no ARTS_PROTOCOL_* defined"
 #endif

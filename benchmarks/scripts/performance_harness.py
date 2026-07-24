@@ -1426,8 +1426,8 @@ def main():
                    help="Comma-separated bench names to restrict to")
     p.add_argument("--node", type=str, default="",
                    help="Restrict to a single node-config, e.g. --node 1n")
-    p.add_argument("--experiment", type=str, default="fix,strong,weak",
-                   help="Comma-separated experiments to run: fix,strong,weak,single")
+    p.add_argument("--experiment", type=str, default="strong,weak",
+                   help="Comma-separated experiments to run: strong,weak,single")
     p.add_argument("--runtimes", type=str, default="",
                    help="Comma-separated runtime keys to restrict to "
                         "(e.g. ocr_rcu_lazy,xsocr,ocrvx); default all")

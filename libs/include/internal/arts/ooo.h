@@ -110,6 +110,17 @@ enum arts_ooo_kind {
 /* NO OOO_DB_LOCK_RELEASE: LAZY has no synchronous writeback release; the
  * DELIVER/CONFIRM/RORET messages are all direct-dispatched (Cat-C, target
  * provably installed by the time these messages arrive). */
+#elif defined(ARTS_PROTOCOL_MSI)
+  OOO_DB_ACQUIRE, /* → arts_db_acquire_replay_dep (re-attempts the one deferred
+                     local dep; pushed by arts_db_acquire_all's per-dep 3-way)
+                   */
+  OOO_DB_MSI_REQUEST,   /* → arts_handler_db_msi_request @ home (RO/RW mode in
+                           the packet — one Cat-B kind for both) */
+  OOO_DB_MSI_WRITEBACK, /* → arts_handler_db_msi_writeback @ home */
+/* DELIVER/GRANT/INVALIDATE/INV_ACK/CTS are Cat-C: their targets are either
+ * provably installed (home for ACKs; the requester pinned its cache when it
+ * sent the request) or the MISS action is part of the protocol (INVALIDATE
+ * MISS → ACK; GRANT/DELIVER MISS → landing discard). */
 #elif defined(ARTS_TIMING_EAGER)
   OOO_DB_ACQUIRE, /* → arts_db_acquire_replay_dep (re-attempts the one deferred
                      local dep; pushed by arts_db_acquire_all's per-dep 3-way)
@@ -142,7 +153,7 @@ enum arts_ooo_kind {
                               transfer) */
 #else
 #error                                                                         \
-    "exactly one of ARTS_PROTOCOL_RWLOCK+ARTS_TIMING_{EAGER,LAZY}, ARTS_TIMING_{EAGER,LAZY} (RCU), or ARTS_PROTOCOL_WRF_RCU must be defined"
+    "exactly one of ARTS_PROTOCOL_RWLOCK+ARTS_TIMING_{EAGER,LAZY}, ARTS_PROTOCOL_MSI (EAGER), ARTS_TIMING_{EAGER,LAZY} (RCU), or ARTS_PROTOCOL_WRF_RCU must be defined"
 #endif
 
   OOO_KIND_COUNT /* sentinel — g_ooo_table size (per-model) */
@@ -257,6 +268,30 @@ struct arts_ooo_args_db_ownership_invalidate_s {
   arts_guid_t db_guid;
   unsigned int new_owner_rank;
   struct arts_rdzv_landing_s new_owner_rdzv; /* transfer landing at new owner */
+};
+
+/* MSI protocol OoO args (OOO_DB_MSI_REQUEST / OOO_DB_MSI_WRITEBACK). */
+struct arts_ooo_args_db_msi_request_s {
+  unsigned int requester; /* rank that sent MSG_DB_MSI_REQUEST */
+  arts_guid_t db_guid;
+  arts_db_access_mode_t mode; /* DB_MODE_RO or DB_MODE_RW */
+  struct arts_rdzv_landing_s rdzv; /* deliver/grant landing; txid==0 = first
+                                      touch (home replies MSI_CTS) */
+};
+/* WRITEBACK: announce leg (rdzv_txid==0 — home allocates a landing and
+ * replies WRITEBACK_CTS) or commit leg (payload PUT into home's landing,
+ * pairs by txid); data_inline != 0 = the payload trails this header
+ * (same-rank release). */
+struct arts_ooo_args_db_msi_writeback_s {
+  unsigned int releaser;
+  arts_guid_t db_guid;
+  uint64_t vnew;
+  uint64_t cv; /* releaser's stack sem_t address (round-close wake) */
+  uint32_t final_flag;
+  uint32_t data_inline;
+  uint64_t data_size;
+  uint64_t rdzv_txid;
+  uint64_t rdzv_cookie;
 };
 
 /* Event / EDT destroy replay (before-create reorder): the guid is enough to

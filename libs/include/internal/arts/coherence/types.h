@@ -66,6 +66,8 @@ extern "C" {
  * header via ARTS_TIMING_LAZY. */
 #if defined(ARTS_PROTOCOL_RWLOCK)
 #include "arts/coherence/rwlock/types.h"
+#elif defined(ARTS_PROTOCOL_MSI)
+#include "arts/coherence/msi/types.h"
 #elif defined(ARTS_PROTOCOL_WRF_RCU)
 #include "arts/coherence/wrf_rcu/types.h"
 #else
@@ -112,6 +114,8 @@ static inline uint64_t arts_db_cache_stub_size(void) {
   return offsetof(struct arts_db_s, cached_version);
 #elif defined(ARTS_PROTOCOL_RWLOCK)
   return offsetof(struct arts_db_s, lock_state);
+#elif defined(ARTS_PROTOCOL_MSI)
+  return offsetof(struct arts_db_s, dir_state);
 #else
   return offsetof(struct arts_db_s, rw_holder);
 #endif

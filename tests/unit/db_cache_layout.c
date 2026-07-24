@@ -46,6 +46,8 @@
 #define FIRST_HOME_ARM_OFF offsetof(struct arts_db_s, cached_version)
 #elif defined(ARTS_PROTOCOL_RWLOCK)
 #define FIRST_HOME_ARM_OFF offsetof(struct arts_db_s, lock_state)
+#elif defined(ARTS_PROTOCOL_MSI)
+#define FIRST_HOME_ARM_OFF offsetof(struct arts_db_s, dir_state)
 #else
 #define FIRST_HOME_ARM_OFF offsetof(struct arts_db_s, rw_holder)
 #endif

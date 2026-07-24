@@ -116,6 +116,14 @@ static inline void db_create_no_acquire_idle(struct arts_db_s *db,
   atomic_store_explicit(&db->cache.cache_state, 0ULL, memory_order_relaxed);
   atomic_store_explicit(&db->lock_state, 0ULL, memory_order_relaxed);
 #endif /* ARTS_TIMING_* */
+#elif defined(ARTS_PROTOCOL_MSI)
+  /* The home holds the canonical buffer and serves from it; with no creator
+   * hold both words idle (no owner, no writers) so the first REQUEST is
+   * granted rather than blocked behind a hold nothing releases. */
+  atomic_store_explicit(&db->cache.cache_state, 0ULL, memory_order_relaxed);
+  atomic_store_explicit(&db->dir_state,
+                        MSI_DIR_MAKE(0u, 0u, MSI_OWNER_NOBODY, 0u),
+                        memory_order_relaxed);
 #else
   db->cache.writer_count = 1;
 #endif
@@ -302,7 +310,7 @@ void arts_db_rdzv_discard_landing(uint64_t txid, uint64_t cookie) {
   arts_net_rdzv_expect(txid, rdzv_discard_cb, ctx);
 }
 
-#if !defined(ARTS_PROTOCOL_RWLOCK)
+#if !defined(ARTS_PROTOCOL_RWLOCK) && !defined(ARTS_PROTOCOL_MSI)
 /* Rendezvous continuation for a data-bearing DATA_RESPONSE: the snapshot
  * payload has fully landed in our advertised landing ("imm seen => landing
  * valid").  Install it without a copy (version-conditional; a stale landing

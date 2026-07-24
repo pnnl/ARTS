@@ -127,6 +127,24 @@ enum arts_msg_type {
                            "size bytes incoming, advertise me a landing". */
   MSG_RDZV_PUSH_CTS,    /* target → sender: the landing for that push. */
 
+  /* MSI-protocol coherence messages.  Only sent/received in
+   * ARTS_COHERENCE_PROTOCOL=MSI builds; the dispatcher's MSI cases are
+   * #ifdef-guarded.  Sequential append, no gaps. */
+  MSG_DB_MSI_REQUEST,       /* requester → home: RO/RW fetch (mode in packet) */
+  MSG_DB_MSI_CTS,           /* home → requester: db_size for a first-touch
+                               REQUEST that carried no landing */
+  MSG_DB_MSI_DELIVER,       /* home → requester: RO copy (payload by PUT; no
+                               version field — the sharer plane is
+                               versionless) */
+  MSG_DB_MSI_GRANT,         /* home → requester: RW grant (payload by PUT +
+                               the writeback-axis version base) */
+  MSG_DB_MSI_WRITEBACK,     /* owner → home: per-release publication
+                               (announce/commit legs share the generic
+                               WRITEBACK_CTS rendezvous) */
+  MSG_DB_MSI_WRITEBACK_ACK, /* home → releaser at round close: cv wake */
+  MSG_DB_MSI_INVALIDATE,    /* home → sharer: retire the copy ({guid} only) */
+  MSG_DB_MSI_INVALIDATE_ACK, /* sharer → home: round ack ({guid} only) */
+
   MSG_COUNT, /* sentinel — keep last; used for array sizing */
 };
 
@@ -587,6 +605,89 @@ struct ARTS_PACKED arts_msg_lock_confirm_packet_s {
 };
 #endif /* ARTS_TIMING_LAZY */
 #endif /* ARTS_PROTOCOL_RWLOCK */
+
+/* ===== MSI wire packets ======================================================
+ * Sent only between ranks compiled with ARTS_COHERENCE_PROTOCOL=MSI.
+ * Members unconditional; structs guarded so they can share host-side types. */
+#ifdef ARTS_PROTOCOL_MSI
+struct ARTS_PACKED arts_msg_msi_request_packet_s {
+  struct arts_msg_header_s header;
+  arts_guid_t db_guid;
+  uint32_t mode; /* arts_db_access_mode_t: DB_MODE_RO or DB_MODE_RW */
+  uint32_t pad;
+  /* Requester's landing for the deliver/grant payload.  txid==0 = requester
+   * does not yet know db_size (first touch): home answers MSI_CTS and the
+   * requester re-issues with a landing. */
+  struct arts_msg_rdzv_landing_s rdzv;
+};
+
+struct ARTS_PACKED arts_msg_msi_cts_packet_s {
+  struct arts_msg_header_s header;
+  arts_guid_t db_guid;
+  uint64_t db_size;
+  uint32_t mode; /* echoed so the requester re-issues the same request */
+  uint32_t pad;
+};
+
+/* The requester's PROTOCOL never compares versions (its ordering comes
+ * entirely from the word state machine: one outstanding fetch, the kill
+ * mark in-word).  `version` exists solely as the install lane's stamp: all
+ * requester-side installs (deliver AND grant) use home-issued versions in
+ * ONE monotone lane, so the conditional install resolves a concurrent
+ * read-reply/grant install race in the grant's favor in every interleaving
+ * (v_deliver <= v_grant by home monotonicity). */
+struct ARTS_PACKED arts_msg_msi_deliver_packet_s {
+  struct arts_msg_header_s header;
+  arts_guid_t db_guid;
+  uint64_t version; /* install-lane stamp only — never protocol-compared */
+  uint64_t data_size;
+  uint64_t rdzv_txid; /* pairs the one-sided payload PUT; 0 = data-less */
+  uint64_t rdzv_cookie;
+};
+
+struct ARTS_PACKED arts_msg_msi_grant_packet_s {
+  struct arts_msg_header_s header;
+  arts_guid_t db_guid;
+  uint64_t version; /* writeback-axis base: the grantee's releases number
+                       monotonically from here */
+  uint64_t data_size;
+  uint64_t rdzv_txid;
+  uint64_t rdzv_cookie;
+};
+
+/* Per-release publication.  Announce leg: rdzv_txid==0, data_size>0 — home
+ * allocates a landing and replies with the generic WRITEBACK_CTS; commit leg:
+ * rdzv_txid set, payload already landed.  The releaser then blocks on cv
+ * until the invalidation round covering this release closes. */
+struct ARTS_PACKED arts_msg_msi_writeback_packet_s {
+  struct arts_msg_header_s header;
+  arts_guid_t db_guid;
+  uint64_t vnew;
+  uint64_t cv;         /* releaser's stack sem_t address (round-close wake) */
+  uint32_t final_flag; /* last writer's release: returns the tenure */
+  uint32_t pad;
+  uint64_t data_size;
+  uint64_t rdzv_txid;
+  uint64_t rdzv_cookie;
+};
+
+struct ARTS_PACKED arts_msg_msi_writeback_ack_packet_s {
+  struct arts_msg_header_s header;
+  arts_guid_t db_guid;
+  uint64_t cv; /* releaser's sem_t address, forwarded verbatim */
+};
+
+struct ARTS_PACKED arts_msg_msi_invalidate_packet_s {
+  struct arts_msg_header_s header;
+  arts_guid_t db_guid;
+};
+
+struct ARTS_PACKED arts_msg_msi_invalidate_ack_packet_s {
+  struct arts_msg_header_s header;
+  arts_guid_t db_guid;
+};
+#endif /* ARTS_PROTOCOL_MSI */
+
 
 #include "arts/system/threads.h"
 

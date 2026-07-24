@@ -222,7 +222,7 @@ void *arts_db_acquire_local(struct arts_db_cache_s *cache);
 
 /* Fire SNAPSHOT_REQUEST (edt_guid + slot) to home and PARK.  Shared by the
  * RCU/WRF_RCU acquire bodies (not RWLOCK, which uses LOCK_REQUEST). */
-#if !defined(ARTS_PROTOCOL_RWLOCK)
+#if !defined(ARTS_PROTOCOL_RWLOCK) && !defined(ARTS_PROTOCOL_MSI)
 arts_db_acquire_result_t
 arts_db_acquire_remote_ro(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
                           unsigned int slot);
@@ -237,7 +237,8 @@ void mark_edt_ready_by_guid(arts_guid_t edt_guid, unsigned int slot);
  * (GRANT / TRANSFER_OWNERSHIP / DATA_RESPONSE case 2). */
 void arts_db_drain_pending_snapshot(struct arts_db_cache_s *cache);
 
-#if defined(ARTS_RO_REQUEST_COMBINING) && !defined(ARTS_PROTOCOL_RWLOCK)
+#if defined(ARTS_RO_REQUEST_COMBINING) && !defined(ARTS_PROTOCOL_RWLOCK) && \
+    !defined(ARTS_PROTOCOL_MSI)
 /* Response-terminal hook of the remote-read combining window: resume the
  * in-flight batch against the now-current buffer (buffer_live), or park it on
  * the reorder buffer with target `version` (reorder case), then re-arm the

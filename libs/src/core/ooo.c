@@ -150,6 +150,10 @@ static const arts_ooo_handler_fn_t g_ooo_table[OOO_KIND_COUNT] = {
 #elif defined(ARTS_PROTOCOL_RWLOCK) && defined(ARTS_TIMING_LAZY)
     [OOO_DB_ACQUIRE] = arts_db_acquire_replay_dep,
     [OOO_DB_LOCK_REQUEST] = arts_handler_db_lock_request,
+#elif defined(ARTS_PROTOCOL_MSI)
+    [OOO_DB_ACQUIRE] = arts_db_acquire_replay_dep,
+    [OOO_DB_MSI_REQUEST] = arts_handler_db_msi_request,
+    [OOO_DB_MSI_WRITEBACK] = arts_handler_db_msi_writeback,
 #elif defined(ARTS_TIMING_EAGER)
     [OOO_DB_ACQUIRE] = arts_db_acquire_replay_dep,
     [OOO_DB_SNAPSHOT_REQUEST] = arts_handler_db_snapshot_request,

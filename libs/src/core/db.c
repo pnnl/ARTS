@@ -406,6 +406,14 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
             atomic_store_explicit(&((struct arts_db_s *)ptr)->lock_state, 0ULL,
                                   memory_order_relaxed);
 #endif /* ARTS_TIMING_* */
+#elif defined(ARTS_PROTOCOL_MSI)
+            /* Home-canonical: idle both words so the first REQUEST is
+             * granted, not blocked behind an unreleased creator hold. */
+            atomic_store_explicit(&((struct arts_db_s *)ptr)->cache.cache_state,
+                                  0ULL, memory_order_relaxed);
+            atomic_store_explicit(&((struct arts_db_s *)ptr)->dir_state,
+                                  MSI_DIR_MAKE(0u, 0u, MSI_OWNER_NOBODY, 0u),
+                                  memory_order_relaxed);
 #else
             ((struct arts_db_s *)ptr)->cache.writer_count = 1;
 #endif
@@ -463,6 +471,14 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
             atomic_store_explicit(&((struct arts_db_s *)ptr)->lock_state, 0ULL,
                                   memory_order_relaxed);
 #endif /* ARTS_TIMING_* */
+#elif defined(ARTS_PROTOCOL_MSI)
+            /* Home-canonical: idle both words so the first REQUEST is
+             * granted, not blocked behind an unreleased creator hold. */
+            atomic_store_explicit(&((struct arts_db_s *)ptr)->cache.cache_state,
+                                  0ULL, memory_order_relaxed);
+            atomic_store_explicit(&((struct arts_db_s *)ptr)->dir_state,
+                                  MSI_DIR_MAKE(0u, 0u, MSI_OWNER_NOBODY, 0u),
+                                  memory_order_relaxed);
 #else
             ((struct arts_db_s *)ptr)->cache.writer_count = 1;
 #endif
@@ -566,7 +582,7 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
                               ? &adopted_db->cache
                               : NULL;
           if (creator_cache != NULL) {
-#if !defined(ARTS_PROTOCOL_RWLOCK)
+#if !defined(ARTS_PROTOCOL_RWLOCK) && !defined(ARTS_PROTOCOL_MSI)
             arts_atomic_add(&creator_cache->writer_count, 2);
 #endif
           }
