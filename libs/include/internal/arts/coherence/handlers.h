@@ -170,7 +170,7 @@ void arts_handler_db_cache_destroy(void *item_v, void *args_v);
 
 /* ===== Lazy-only handlers ============================================== */
 
-#ifdef ARTS_TIMING_LAZY
+#if defined(ARTS_TIMING_LAZY) && !defined(ARTS_PROTOCOL_MSI)
 /* Cat-C pure body (REDIRECT_RO, owner side): item_v is the db_s the dispatcher
  * acquired (cache is its first member); args_v is an
  * arts_db_snapshot_redirect_args_s.  NOT OoO-deferrable — the dispatcher
@@ -178,7 +178,7 @@ void arts_handler_db_cache_destroy(void *item_v, void *args_v);
  * installed on this rank), sends DESTROY_NOTIFY to the requester (so the
  * requester's parked RO waiter wakes and observes DB_DESTROYED). */
 void arts_handler_db_snapshot_redirect(void *item_v, void *args_v);
-#endif /* ARTS_TIMING_LAZY */
+#endif /* ARTS_TIMING_LAZY && !ARTS_PROTOCOL_MSI */
 
 #if defined(ARTS_PROTOCOL_RCU)
 /* Cat-C pure body (CONFIRM, home side; both timings): item_v is the db_s the
@@ -313,27 +313,101 @@ void arts_db_send_ownership_response(struct arts_db_cache_s *cache);
 #ifdef ARTS_PROTOCOL_MSI
 /* ===== MSI protocol handlers / senders ================================= */
 
-/* Cat-B pure bodies (OoO g_ooo_table) @home: REQUEST (RO/RW mode in the
- * packet — one kind for both) and WRITEBACK.  WRITEBACK's item is the
- * pinned home db_s; the dispatcher also calls it inline on a HIT. */
+/* Cat-B pure body (OoO g_ooo_table) @home: REQUEST — the mode rides in the
+ * packet, so one kind covers reads and writes. */
 void arts_handler_db_msi_request(void *item_v, void *args_v);
-void arts_handler_db_msi_writeback(void *item_v, void *args_v);
 
-/* Cat-C bodies. */
+/* Cat-C bodies shared by both timings. */
 struct arts_msg_msi_cts_packet_s;
 void arts_handler_db_msi_cts(struct arts_db_s *db,
                              struct arts_msg_msi_cts_packet_s *p);
 void arts_handler_db_msi_deliver(void *payload, size_t size);
-void arts_handler_db_msi_grant(void *payload, size_t size);
 void arts_handler_db_msi_invalidate(struct arts_db_s *db);
 void arts_handler_db_msi_invalidate_ack(struct arts_db_s *db,
                                         unsigned int sharer_rank);
 
-/* Senders. */
-void arts_send_db_msi_request(struct arts_db_cache_s *cache,
-                              arts_db_access_mode_t mode);
+/* Senders shared by both timings. */
 void arts_send_db_msi_cts(unsigned int requester_rank, arts_guid_t db_guid,
                           uint64_t db_size, arts_db_access_mode_t mode);
+void arts_send_db_msi_invalidate(unsigned int sharer_rank, arts_guid_t db_guid);
+void arts_send_db_msi_invalidate_ack(unsigned int home_rank,
+                                     arts_guid_t db_guid);
+
+#ifdef ARTS_TIMING_LAZY
+/* Cat-C body args @the current owner.  Both messages name a rank the directory
+ * chose — the reader to serve, or the migration target — plus that rank's
+ * landing, forwarded so the owner can PUT straight into it. */
+struct arts_db_msi_redir_args_s {
+  arts_guid_t db_guid;
+  unsigned int requester;
+  struct arts_rdzv_landing_s rdzv;
+};
+struct arts_db_msi_fwdm_args_s {
+  arts_guid_t db_guid;
+  unsigned int target;
+  struct arts_rdzv_landing_s rdzv;
+};
+
+/* Cat-C bodies @the current owner.  Both target the rank the directory
+ * believes holds the canonical copy, which reached that state by installing
+ * it, so the cache is provably present — a MISS means the DB was destroyed.
+ * REDIR MISS bounces the read request back through the home (this rank holds
+ * nothing, which IS the bounce case); FWDM MISS drops (the copy the order
+ * would move is gone). */
+void arts_handler_db_msi_redir(void *item_v, void *args_v);
+void arts_handler_db_msi_fwdm(void *item_v, void *args_v);
+
+/* Cat-B body @home: a releasing owner's round request.  Deferrable because a
+ * creator releases on its own rank, which can outrun its DB_CREATE reaching
+ * the home directory — and a stranded round request never returns. */
+void arts_handler_db_msi_round_req(void *item_v, void *args_v);
+
+/* Cat-C bodies.  CONFIRM (@home) records the new owner and credits the
+ * ex-owner's retained copy back into the roster; CONFIRM_ACK (@new owner)
+ * opens the store gate; ROUND_DONE is the sanctioned wake and is delivered by
+ * pointer identity, so it needs no cache at all. */
+void arts_handler_db_msi_deliver_rw(void *payload, size_t size);
+void arts_handler_db_msi_confirm(struct arts_db_s *db, unsigned int new_owner);
+void arts_handler_db_msi_confirm_ack(struct arts_db_s *db);
+
+/* Senders.  A read request names its subject explicitly: the current holder
+ * re-sends it on the reader's behalf when it cannot serve. */
+void arts_send_db_msi_request(struct arts_db_cache_s *cache,
+                              arts_db_access_mode_t mode);
+void arts_send_db_msi_ro_request(arts_guid_t db_guid, unsigned int requester,
+                                 const struct arts_rdzv_landing_s *rdzv);
+void arts_send_db_msi_redir(unsigned int owner_rank, arts_guid_t db_guid,
+                            unsigned int requester,
+                            const struct arts_rdzv_landing_s *rdzv);
+void arts_send_db_msi_fwdm(unsigned int owner_rank, arts_guid_t db_guid,
+                           unsigned int target,
+                           const struct arts_rdzv_landing_s *rdzv);
+/* `version` is the install-lane arbitration stamp ONLY: it decides which of
+ * two asynchronous installs wins the receiver's buffer slot, and no branch on
+ * either side compares it to judge whether a copy is still valid.  src_h — a
+ * strong ref on the served buffer — is CONSUMED (transferred to the PUT's
+ * local completion, or released when no payload moves). */
+void arts_send_db_msi_deliver(unsigned int requester_rank, arts_guid_t db_guid,
+                              uint64_t version,
+                              const struct arts_rdzv_landing_s *rdzv,
+                              arts_shared_ptr_t src_h, uint64_t data_size);
+void arts_send_db_msi_deliver_rw(unsigned int target_rank, arts_guid_t db_guid,
+                                 uint64_t version,
+                                 const struct arts_rdzv_landing_s *rdzv,
+                                 arts_shared_ptr_t src_h, uint64_t data_size);
+void arts_send_db_msi_confirm(unsigned int home_rank, arts_guid_t db_guid);
+void arts_send_db_msi_confirm_ack(unsigned int owner_rank,
+                                  arts_guid_t db_guid);
+void arts_send_db_msi_round_req(arts_guid_t db_guid, uint64_t cv);
+void arts_send_db_msi_round_done(unsigned int releaser_rank,
+                                 arts_guid_t db_guid, uint64_t cv);
+#else /* EAGER */
+/* Cat-B body @home: the per-release publication. */
+void arts_handler_db_msi_writeback(void *item_v, void *args_v);
+void arts_handler_db_msi_grant(void *payload, size_t size);
+
+void arts_send_db_msi_request(struct arts_db_cache_s *cache,
+                              arts_db_access_mode_t mode);
 void arts_send_db_msi_deliver(unsigned int requester_rank,
                               struct arts_db_s *db,
                               const struct arts_rdzv_landing_s *rdzv);
@@ -346,9 +420,7 @@ void arts_send_db_msi_writeback(struct arts_db_cache_s *cache, uint64_t vnew,
                                 uint64_t rdzv_txid, uint64_t rdzv_cookie);
 void arts_send_db_msi_writeback_ack(unsigned int releaser_rank,
                                     arts_guid_t db_guid, uint64_t cv);
-void arts_send_db_msi_invalidate(unsigned int sharer_rank, arts_guid_t db_guid);
-void arts_send_db_msi_invalidate_ack(unsigned int home_rank,
-                                     arts_guid_t db_guid);
+#endif /* ARTS_TIMING_LAZY */
 #endif /* ARTS_PROTOCOL_MSI */
 
 #ifdef ARTS_PROTOCOL_RWLOCK

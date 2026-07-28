@@ -74,6 +74,9 @@ void arts_handler_db_writeback(void *i, void *a) { recorder(i, a); }
 #if defined(ARTS_PROTOCOL_RWLOCK)
 void arts_handler_db_lock_request(void *i, void *a) { recorder(i, a); }
 void arts_handler_db_lock_release(void *i, void *a) { recorder(i, a); }
+#elif defined(ARTS_PROTOCOL_MSI) && defined(ARTS_TIMING_LAZY)
+void arts_handler_db_msi_request(void *i, void *a) { recorder(i, a); }
+void arts_handler_db_msi_round_req(void *i, void *a) { recorder(i, a); }
 #elif defined(ARTS_PROTOCOL_MSI)
 void arts_handler_db_msi_request(void *i, void *a) { recorder(i, a); }
 void arts_handler_db_msi_writeback(void *i, void *a) { recorder(i, a); }

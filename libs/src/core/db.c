@@ -407,6 +407,20 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
                                   memory_order_relaxed);
 #endif /* ARTS_TIMING_* */
 #elif defined(ARTS_PROTOCOL_MSI)
+#if defined(ARTS_TIMING_LAZY)
+            /* Owner-canonical: the creator holds the copy, but with no create
+             * hold there is nothing to release — boot it writer-free
+             * (wc 0) so the first redirect is served immediately. */
+            atomic_store_explicit(
+                &((struct arts_db_s *)ptr)->cache.cache_state,
+                MSI_LAZY_CACHE_MAKE(MSI_RW_GRANT, MSI_RO_VALID, 0u, 0u, 0u,
+                                    0u, 0u, 0u, 0u),
+                memory_order_relaxed);
+            atomic_store_explicit(&((struct arts_db_s *)ptr)->dir_state,
+                                  MSI_LAZY_DIR_MAKE(0u, 0u, 0u,
+                                                    arts_global_rank_id, 0u),
+                                  memory_order_relaxed);
+#else
             /* Home-canonical: idle both words so the first REQUEST is
              * granted, not blocked behind an unreleased creator hold. */
             atomic_store_explicit(&((struct arts_db_s *)ptr)->cache.cache_state,
@@ -414,6 +428,7 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
             atomic_store_explicit(&((struct arts_db_s *)ptr)->dir_state,
                                   MSI_DIR_MAKE(0u, 0u, MSI_OWNER_NOBODY, 0u),
                                   memory_order_relaxed);
+#endif /* ARTS_TIMING_LAZY */
 #else
             ((struct arts_db_s *)ptr)->cache.writer_count = 1;
 #endif
@@ -472,6 +487,20 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
                                   memory_order_relaxed);
 #endif /* ARTS_TIMING_* */
 #elif defined(ARTS_PROTOCOL_MSI)
+#if defined(ARTS_TIMING_LAZY)
+            /* Owner-canonical: the creator holds the copy, but with no create
+             * hold there is nothing to release — boot it writer-free
+             * (wc 0) so the first redirect is served immediately. */
+            atomic_store_explicit(
+                &((struct arts_db_s *)ptr)->cache.cache_state,
+                MSI_LAZY_CACHE_MAKE(MSI_RW_GRANT, MSI_RO_VALID, 0u, 0u, 0u,
+                                    0u, 0u, 0u, 0u),
+                memory_order_relaxed);
+            atomic_store_explicit(&((struct arts_db_s *)ptr)->dir_state,
+                                  MSI_LAZY_DIR_MAKE(0u, 0u, 0u,
+                                                    arts_global_rank_id, 0u),
+                                  memory_order_relaxed);
+#else
             /* Home-canonical: idle both words so the first REQUEST is
              * granted, not blocked behind an unreleased creator hold. */
             atomic_store_explicit(&((struct arts_db_s *)ptr)->cache.cache_state,
@@ -479,6 +508,7 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
             atomic_store_explicit(&((struct arts_db_s *)ptr)->dir_state,
                                   MSI_DIR_MAKE(0u, 0u, MSI_OWNER_NOBODY, 0u),
                                   memory_order_relaxed);
+#endif /* ARTS_TIMING_LAZY */
 #else
             ((struct arts_db_s *)ptr)->cache.writer_count = 1;
 #endif

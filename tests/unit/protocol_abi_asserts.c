@@ -128,8 +128,20 @@ _Static_assert(MSG_DB_MSI_INVALIDATE == 42,
                "ordinal MSG_DB_MSI_INVALIDATE drifted");
 _Static_assert(MSG_DB_MSI_INVALIDATE_ACK == 43,
                "ordinal MSG_DB_MSI_INVALIDATE_ACK drifted");
-_Static_assert(MSG_COUNT == 44,
-               "MSG_COUNT drifted (wire-compat: must be 44 in all configs)");
+_Static_assert(MSG_DB_MSI_REDIR == 44, "ordinal MSG_DB_MSI_REDIR drifted");
+_Static_assert(MSG_DB_MSI_FWDM == 45, "ordinal MSG_DB_MSI_FWDM drifted");
+_Static_assert(MSG_DB_MSI_DELIVER_RW == 46,
+               "ordinal MSG_DB_MSI_DELIVER_RW drifted");
+_Static_assert(MSG_DB_MSI_CONFIRM == 47,
+               "ordinal MSG_DB_MSI_CONFIRM drifted");
+_Static_assert(MSG_DB_MSI_CONFIRM_ACK == 48,
+               "ordinal MSG_DB_MSI_CONFIRM_ACK drifted");
+_Static_assert(MSG_DB_MSI_ROUND_REQ == 49,
+               "ordinal MSG_DB_MSI_ROUND_REQ drifted");
+_Static_assert(MSG_DB_MSI_ROUND_DONE == 50,
+               "ordinal MSG_DB_MSI_ROUND_DONE drifted");
+_Static_assert(MSG_COUNT == 51,
+               "MSG_COUNT drifted (wire-compat: must be 51 in all configs)");
 
 /* ===== (2) header layout — read before the message type is known. ===== */
 _Static_assert(offsetof(struct arts_msg_header_s, message_type) == 0,

@@ -110,6 +110,21 @@ enum arts_ooo_kind {
 /* NO OOO_DB_LOCK_RELEASE: LAZY has no synchronous writeback release; the
  * DELIVER/CONFIRM/RORET messages are all direct-dispatched (Cat-C, target
  * provably installed by the time these messages arrive). */
+#elif defined(ARTS_PROTOCOL_MSI) && defined(ARTS_TIMING_LAZY)
+  OOO_DB_ACQUIRE, /* → arts_db_acquire_replay_dep (re-attempts the one deferred
+                     local dep; pushed by arts_db_acquire_all's per-dep 3-way)
+                   */
+  OOO_DB_MSI_REQUEST,   /* → arts_handler_db_msi_request @ home (RO/RW mode in
+                           the packet — one Cat-B kind for both) */
+  OOO_DB_MSI_ROUND_REQ, /* → arts_handler_db_msi_round_req @ home: a creator
+                           releases on its own rank, which can outrun its
+                           DB_CREATE reaching the home directory */
+/* REDIR/FWDM/DELIVER/DELIVER_RW/CONFIRM/CONFIRM_ACK/ROUND_DONE/INVALIDATE/
+ * INV_ACK/CTS are Cat-C: their targets are either provably installed (the
+ * directory names an owner only once that rank has installed the copy; a
+ * requester pinned its cache when it sent the request; home for the acks) or
+ * the MISS action is part of the protocol (INVALIDATE MISS → ACK; REDIR MISS →
+ * bounce; DELIVER MISS → landing discard; ROUND_DONE MISS → wake anyway). */
 #elif defined(ARTS_PROTOCOL_MSI)
   OOO_DB_ACQUIRE, /* → arts_db_acquire_replay_dep (re-attempts the one deferred
                      local dep; pushed by arts_db_acquire_all's per-dep 3-way)
@@ -153,7 +168,7 @@ enum arts_ooo_kind {
                               transfer) */
 #else
 #error                                                                         \
-    "exactly one of ARTS_PROTOCOL_RWLOCK+ARTS_TIMING_{EAGER,LAZY}, ARTS_PROTOCOL_MSI (EAGER), ARTS_TIMING_{EAGER,LAZY} (RCU), or ARTS_PROTOCOL_WRF_RCU must be defined"
+    "exactly one of ARTS_PROTOCOL_RWLOCK+ARTS_TIMING_{EAGER,LAZY}, ARTS_PROTOCOL_MSI+ARTS_TIMING_{EAGER,LAZY}, ARTS_TIMING_{EAGER,LAZY} (RCU), or ARTS_PROTOCOL_WRF_RCU must be defined"
 #endif
 
   OOO_KIND_COUNT /* sentinel — g_ooo_table size (per-model) */
@@ -272,12 +287,24 @@ struct arts_ooo_args_db_ownership_invalidate_s {
 
 /* MSI protocol OoO args (OOO_DB_MSI_REQUEST / OOO_DB_MSI_WRITEBACK). */
 struct arts_ooo_args_db_msi_request_s {
-  unsigned int requester; /* rank that sent MSG_DB_MSI_REQUEST */
+  unsigned int requester; /* subject of the request — NOT the wire sender: a
+                             holder may re-send a read request on the reader's
+                             behalf */
   arts_guid_t db_guid;
-  arts_db_access_mode_t mode; /* DB_MODE_RO or DB_MODE_RW */
+  arts_db_access_mode_t mode;      /* DB_MODE_RO or DB_MODE_RW */
   struct arts_rdzv_landing_s rdzv; /* deliver/grant landing; txid==0 = first
                                       touch (home replies MSI_CTS) */
 };
+
+#if defined(ARTS_PROTOCOL_MSI) && defined(ARTS_TIMING_LAZY)
+/* A releasing owner asking the home for this release's invalidation round.
+ * cv is the releaser's rendezvous address, echoed verbatim in ROUND_DONE. */
+struct arts_ooo_args_db_msi_round_req_s {
+  arts_guid_t db_guid;
+  unsigned int rank;
+  uint64_t cv;
+};
+#endif /* ARTS_PROTOCOL_MSI && ARTS_TIMING_LAZY */
 /* WRITEBACK: announce leg (rdzv_txid==0 — home allocates a landing and
  * replies WRITEBACK_CTS) or commit leg (payload PUT into home's landing,
  * pairs by txid); data_inline != 0 = the payload trails this header

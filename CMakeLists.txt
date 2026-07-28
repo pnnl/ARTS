@@ -214,7 +214,7 @@ cmake_dependent_option(ARTS_USE_LOCAL_CUDA_ARCHITECTURES
 # Valid combinations (everything else is a configure error):
 #   OCR    × RCU    × {EAGER, LAZY}
 #   OCR    × RWLOCK × {EAGER, LAZY}
-#   OCR    × MSI    × EAGER            (write-invalidate; LAZY designed only)
+#   OCR    × MSI    × {EAGER, LAZY}    (write-invalidate)
 #   DB_WRF × RCU    × EAGER            (home-canonical sync writeback)
 set(ARTS_MEMORY_MODEL "OCR" CACHE STRING
     "Memory model the build implements: OCR (default; races legal, runtime-ordered) or DB_WRF (program orders write-write conflicts per DB)")
@@ -359,13 +359,6 @@ if(ARTS_COHERENCE_PROTOCOL STREQUAL "MSI")
             "orders writers at runtime (per-release rounds), so the DB-WRF "
             "program obligation is redundant — use ARTS_MEMORY_MODEL=OCR.")
   endif()
-  if(ARTS_PROTOCOL_TIMING STREQUAL "LAZY")
-    message(FATAL_ERROR
-            "MSI x LAZY is designed but unimplemented (demand-driven "
-            "migration, no writeback). The implemented MSI configuration is "
-            "ARTS_PROTOCOL_TIMING=EAGER (per-release home writeback + "
-            "invalidation round).")
-  endif()
 endif()
 if(ARTS_MEMORY_MODEL STREQUAL "DB_WRF")
   if(ARTS_COHERENCE_PROTOCOL STREQUAL "RWLOCK")
@@ -393,13 +386,17 @@ if(ARTS_MEMORY_MODEL STREQUAL "DB_WRF")
   message(STATUS "ARTS: model DB_WRF, protocol RCU (arm WRF_RCU), timing EAGER")
 elseif(ARTS_COHERENCE_PROTOCOL STREQUAL "MSI")
   # MSI (write-invalidate): readers are never blocked, tracked only as a
-  # node-granular copy roster; every RW release publishes to home (EAGER)
-  # and a per-release invalidation round retires older copies.  The arm
-  # defines ARTS_PROTOCOL_MSI plus ARTS_TIMING_EAGER (EAGER-only; the
-  # per-protocol selection chains match ARTS_TIMING_EAGER ahead of the
-  # protocol macro, so MSI emits both — same discipline as RWLOCK).
+  # node-granular copy roster, and every RW release retires every valid copy
+  # in an invalidation round whose acks it collects before returning.  EAGER
+  # additionally publishes each release to the home (home-canonical); LAZY
+  # keeps the canonical copy at the owner and moves it owner-to-owner by
+  # migration (home is a pure directory that redirects reads), so it drops the
+  # writeback and its ack — never the invalidate ack.  The arm defines
+  # ARTS_PROTOCOL_MSI plus the timing macro (the per-protocol selection chains
+  # match the timing macro ahead of the protocol macro, so MSI emits both —
+  # same discipline as RWLOCK).
   set(ARTS_COHERENCE_ARM "MSI")
-  message(STATUS "ARTS: model OCR, protocol MSI, timing EAGER")
+  message(STATUS "ARTS: model OCR, protocol MSI, timing ${ARTS_PROTOCOL_TIMING}")
 elseif(ARTS_COHERENCE_PROTOCOL STREQUAL "RWLOCK")
   # RWLOCK (entry-consistency style): a DB is held in one access mode at a
   # time (RO-shared or RW-exclusive); reader/writer are time-exclusive;

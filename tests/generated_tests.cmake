@@ -1050,8 +1050,11 @@ add_pure_unit_src(pending_rw_treiber DEFINES ARTS_UNIT_STANDALONE_SHIMS PASS_REG
 # rwlock_compute_next: RWLOCK only (self-skips else).
 add_pure_unit_src(rwlock_compute_next DEFINES ARTS_UNIT_STANDALONE_SHIMS PASS_REGEX "PASS rwlock_compute_next:|SKIP" TIMEOUT 60)
 
-# msi_compute_next: MSI only (self-skips else).
+# msi_compute_next: MSI+EAGER only (self-skips else).
 add_pure_unit_src(msi_compute_next DEFINES ARTS_UNIT_STANDALONE_SHIMS PASS_REGEX "PASS msi_compute_next:|SKIP" TIMEOUT 60)
+
+# msi_lazy_compute_next: MSI+LAZY only (self-skips else).
+add_pure_unit_src(msi_lazy_compute_next DEFINES ARTS_UNIT_STANDALONE_SHIMS PASS_REGEX "PASS msi_lazy_compute_next:|SKIP" TIMEOUT 60)
 
 # acquire_is_serialized (T068): needs_full_build — it does NOT #include a coherence .c; it
 # links the real arts_db_acquire_is_serialized symbol out of the per-config static libarts and

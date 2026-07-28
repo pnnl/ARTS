@@ -183,6 +183,18 @@ void arts_rank_bitset_for_each(const struct arts_rank_bitset_s *r,
 
 void arts_db_home_init(struct arts_db_s *db, unsigned int rw_holder,
                        unsigned int nranks) {
+#ifdef ARTS_TIMING_LAZY
+  /* The creator boots as the owner holding the canonical copy in its own cache
+   * word; the directory's w counts only ranks waiting for ownership, so it
+   * starts at 0. */
+  atomic_store_explicit(&db->dir_state,
+                        MSI_LAZY_DIR_MAKE(0u, 0u, 0u, (uint32_t)rw_holder, 0u),
+                        memory_order_relaxed);
+  atomic_store_explicit(&db->cur_round, (struct arts_db_msi_round_req_s *)NULL,
+                        memory_order_relaxed);
+  atomic_store_explicit(&db->round_pending, 0u, memory_order_relaxed);
+  arts_mpsc_init(&db->round_q);
+#else
   /* Seed the creator's write tenure: arts_db_create defaults to an RW
    * acquire (OCR contract), so the directory starts with one writer (the
    * creator rank) owning the tenure — its matching final writeback drives
@@ -193,8 +205,9 @@ void arts_db_home_init(struct arts_db_s *db, unsigned int rw_holder,
       memory_order_relaxed);
   atomic_store_explicit(&db->hver, 1u, memory_order_relaxed);
   atomic_store_explicit(&db->opening_pending, false, memory_order_relaxed);
-  arts_home_lockreq_queue_init(&db->rw_waiters);
   arts_lf_stack_init(&db->wb_queue);
+#endif
+  arts_home_lockreq_queue_init(&db->rw_waiters);
   arts_rank_bitset_init(&db->roster, nranks);
   arts_rank_bitset_init(&db->cached_ranks, nranks);
 }
@@ -204,14 +217,28 @@ void arts_db_home_teardown(struct arts_db_s *db) {
     return;
   }
   arts_home_lockreq_queue_destroy(&db->rw_waiters);
-  /* Drain + free any writeback entries still queued (single-threaded at
-   * teardown — the route slot is already absent, no concurrent push). */
+  /* Drain + free anything still queued (single-threaded at teardown — the
+   * route slot is already absent, no concurrent push). */
+#ifdef ARTS_TIMING_LAZY
+  for (;;) {
+    arts_lf_link_t *node = arts_mpsc_pop(&db->round_q);
+    if (node == NULL) {
+      break;
+    }
+    arts_free(ARTS_CONTAINER_OF(node, struct arts_db_msi_round_req_s, link));
+  }
+  struct arts_db_msi_round_req_s *open_req = atomic_exchange_explicit(
+      &db->cur_round, (struct arts_db_msi_round_req_s *)NULL,
+      memory_order_acq_rel);
+  arts_free(open_req);
+#else
   arts_lf_link_t *node = arts_lf_stack_drain(&db->wb_queue);
   while (node != NULL) {
     arts_lf_link_t *nx = atomic_load_explicit(&node->next, memory_order_relaxed);
     arts_free(ARTS_CONTAINER_OF(node, struct arts_db_msi_wb_s, link));
     node = nx;
   }
+#endif
   arts_rank_bitset_destroy(&db->roster);
   arts_rank_bitset_destroy(&db->cached_ranks);
 }

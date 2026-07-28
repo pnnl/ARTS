@@ -23,16 +23,17 @@
  *   - ROUND_CLOSE folding {final w--, owner clear, reopen-claim} into one
  *     transition.
  *
- * Built standalone by #including coherence/msi/arbiters.c.  MSI-only;
- * self-skips elsewhere.
+ * Built standalone by #including coherence/msi/arbiters.c.  MSI+EAGER only;
+ * self-skips elsewhere (the LAZY arm packs different words and has its own
+ * truth table).
  */
 
 #include <stdio.h>
 
-#if !defined(ARTS_PROTOCOL_MSI)
+#if !defined(ARTS_PROTOCOL_MSI) || defined(ARTS_TIMING_LAZY)
 int main(void) {
-  printf("PASS msi_compute_next: skipped (MSI-only; the packed cache/dir "
-         "words exist only in the MSI build)\n");
+  printf("PASS msi_compute_next: skipped (MSI+EAGER only; the packed "
+         "cache/dir words exist only in that build)\n");
   return 0;
 }
 #else
@@ -331,4 +332,4 @@ int main(void) {
 /* Pull in the arbiters (defines the two pure functions). */
 #include "core/coherence/msi/arbiters.c"
 
-#endif /* ARTS_PROTOCOL_MSI */
+#endif /* ARTS_PROTOCOL_MSI && !ARTS_TIMING_LAZY */

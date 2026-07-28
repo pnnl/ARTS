@@ -60,6 +60,9 @@ MK_HANDLER(arts_handler_db_lock_request)
 #ifdef ARTS_TIMING_EAGER
 MK_HANDLER(arts_handler_db_lock_release)
 #endif
+#elif defined(ARTS_PROTOCOL_MSI) && defined(ARTS_TIMING_LAZY)
+MK_HANDLER(arts_handler_db_msi_request)
+MK_HANDLER(arts_handler_db_msi_round_req)
 #elif defined(ARTS_PROTOCOL_MSI)
 MK_HANDLER(arts_handler_db_msi_request)
 MK_HANDLER(arts_handler_db_msi_writeback)
@@ -105,6 +108,10 @@ static const struct expect_s g_expect[] = {
 #elif defined(ARTS_PROTOCOL_RWLOCK) && defined(ARTS_TIMING_LAZY)
     E(OOO_DB_ACQUIRE, arts_db_acquire_replay_dep),
     E(OOO_DB_LOCK_REQUEST, arts_handler_db_lock_request),
+#elif defined(ARTS_PROTOCOL_MSI) && defined(ARTS_TIMING_LAZY)
+    E(OOO_DB_ACQUIRE, arts_db_acquire_replay_dep),
+    E(OOO_DB_MSI_REQUEST, arts_handler_db_msi_request),
+    E(OOO_DB_MSI_ROUND_REQ, arts_handler_db_msi_round_req),
 #elif defined(ARTS_PROTOCOL_MSI)
     E(OOO_DB_ACQUIRE, arts_db_acquire_replay_dep),
     E(OOO_DB_MSI_REQUEST, arts_handler_db_msi_request),
@@ -141,6 +148,10 @@ int main(void) {
       "RWLOCK+EAGER"
 #elif defined(ARTS_PROTOCOL_RWLOCK) && defined(ARTS_TIMING_LAZY)
       "RWLOCK+LAZY"
+#elif defined(ARTS_PROTOCOL_MSI) && defined(ARTS_TIMING_LAZY)
+      "MSI+LAZY"
+#elif defined(ARTS_PROTOCOL_MSI)
+      "MSI+EAGER"
 #elif defined(ARTS_TIMING_EAGER)
       "MR*+EAGER"
 #elif defined(ARTS_TIMING_LAZY)

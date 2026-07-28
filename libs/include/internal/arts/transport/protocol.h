@@ -144,6 +144,16 @@ enum arts_msg_type {
   MSG_DB_MSI_WRITEBACK_ACK, /* home → releaser at round close: cv wake */
   MSG_DB_MSI_INVALIDATE,    /* home → sharer: retire the copy ({guid} only) */
   MSG_DB_MSI_INVALIDATE_ACK, /* sharer → home: round ack ({guid} only) */
+  MSG_DB_MSI_REDIR,      /* home → current owner: serve this reader */
+  MSG_DB_MSI_FWDM,       /* home → current owner: migrate to this target */
+  MSG_DB_MSI_DELIVER_RW, /* ex-owner → new owner: data + ownership */
+  MSG_DB_MSI_CONFIRM,    /* new owner → home: installed; flip the directory */
+  MSG_DB_MSI_CONFIRM_ACK, /* home → new owner: the flip is published; stores
+                             and further migration may run */
+  MSG_DB_MSI_ROUND_REQ,   /* releasing owner → home: run this release's
+                             invalidation round */
+  MSG_DB_MSI_ROUND_DONE,  /* home → releaser: every ack collected; the
+                             release may return */
 
   MSG_COUNT, /* sentinel — keep last; used for array sizing */
 };
@@ -610,6 +620,21 @@ struct ARTS_PACKED arts_msg_lock_confirm_packet_s {
  * Sent only between ranks compiled with ARTS_COHERENCE_PROTOCOL=MSI.
  * Members unconditional; structs guarded so they can share host-side types. */
 #ifdef ARTS_PROTOCOL_MSI
+#ifdef ARTS_TIMING_LAZY
+/* The home is a pure directory, so a request names its subject explicitly: a
+ * read request may be re-sent BY a holder on the reader's behalf, and then the
+ * header's sender rank is not the requester. */
+struct ARTS_PACKED arts_msg_msi_request_packet_s {
+  struct arts_msg_header_s header;
+  arts_guid_t db_guid;
+  uint32_t mode; /* arts_db_access_mode_t: DB_MODE_RO or DB_MODE_RW */
+  uint32_t requester;
+  /* Requester's landing for the deliver payload.  txid==0 = requester does
+   * not yet know db_size (first touch): home answers MSI_CTS and the
+   * requester re-issues with a landing. */
+  struct arts_msg_rdzv_landing_s rdzv;
+};
+#else
 struct ARTS_PACKED arts_msg_msi_request_packet_s {
   struct arts_msg_header_s header;
   arts_guid_t db_guid;
@@ -620,6 +645,7 @@ struct ARTS_PACKED arts_msg_msi_request_packet_s {
    * requester re-issues with a landing. */
   struct arts_msg_rdzv_landing_s rdzv;
 };
+#endif /* ARTS_TIMING_LAZY */
 
 struct ARTS_PACKED arts_msg_msi_cts_packet_s {
   struct arts_msg_header_s header;
@@ -686,6 +712,48 @@ struct ARTS_PACKED arts_msg_msi_invalidate_ack_packet_s {
   struct arts_msg_header_s header;
   arts_guid_t db_guid;
 };
+#ifdef ARTS_TIMING_LAZY
+struct ARTS_PACKED arts_msg_msi_redir_packet_s {
+  struct arts_msg_header_s header;
+  arts_guid_t db_guid;
+  uint32_t requester;
+  uint32_t pad;
+  struct arts_msg_rdzv_landing_s rdzv;
+};
+
+struct ARTS_PACKED arts_msg_msi_fwdm_packet_s {
+  struct arts_msg_header_s header;
+  arts_guid_t db_guid;
+  uint32_t target;
+  uint32_t pad;
+  /* The target's landing, forwarded from its queued request so the current
+   * owner can PUT the shipped payload straight into it. */
+  struct arts_msg_rdzv_landing_s rdzv;
+};
+
+struct ARTS_PACKED arts_msg_msi_deliver_rw_packet_s {
+  struct arts_msg_header_s header;
+  arts_guid_t db_guid;
+  uint64_t version; /* the shipped buffer's version = the grantee's base */
+  uint64_t data_size;
+  struct arts_msg_rdzv_landing_s rdzv;
+};
+
+/* CONFIRM and CONFIRM_ACK carry nothing but the subject: the directory learns
+ * the new owner from the header rank, and the gate it opens is per-rank. */
+struct ARTS_PACKED arts_msg_msi_confirm_packet_s {
+  struct arts_msg_header_s header;
+  arts_guid_t db_guid;
+};
+
+/* ROUND_REQ / ROUND_DONE carry the releaser's rendezvous address verbatim so
+ * the wake resolves by pointer identity, with no sequence tracking. */
+struct ARTS_PACKED arts_msg_msi_round_packet_s {
+  struct arts_msg_header_s header;
+  arts_guid_t db_guid;
+  uint64_t cv;
+};
+#endif /* ARTS_TIMING_LAZY */
 #endif /* ARTS_PROTOCOL_MSI */
 
 

@@ -117,6 +117,20 @@ static inline void db_create_no_acquire_idle(struct arts_db_s *db,
   atomic_store_explicit(&db->lock_state, 0ULL, memory_order_relaxed);
 #endif /* ARTS_TIMING_* */
 #elif defined(ARTS_PROTOCOL_MSI)
+#if defined(ARTS_TIMING_LAZY)
+  /* Owner-canonical: with no creator hold there is no owner unless we make
+   * one, so this rank (the GUID home, where the create handler runs) becomes
+   * the writer-free owner of the zero-init copy — the first redirect is
+   * served immediately and the first writer migrates it away. */
+  atomic_store_explicit(&db->cache.cache_state,
+                        MSI_LAZY_CACHE_MAKE(MSI_RW_GRANT, MSI_RO_VALID, 0u, 0u,
+                                            0u, 0u, 0u, 0u, 0u),
+                        memory_order_relaxed);
+  atomic_store_explicit(
+      &db->dir_state,
+      MSI_LAZY_DIR_MAKE(0u, 0u, 0u, arts_global_rank_id, 0u),
+      memory_order_relaxed);
+#else
   /* The home holds the canonical buffer and serves from it; with no creator
    * hold both words idle (no owner, no writers) so the first REQUEST is
    * granted rather than blocked behind a hold nothing releases. */
@@ -124,6 +138,7 @@ static inline void db_create_no_acquire_idle(struct arts_db_s *db,
   atomic_store_explicit(&db->dir_state,
                         MSI_DIR_MAKE(0u, 0u, MSI_OWNER_NOBODY, 0u),
                         memory_order_relaxed);
+#endif /* ARTS_TIMING_LAZY */
 #else
   db->cache.writer_count = 1;
 #endif

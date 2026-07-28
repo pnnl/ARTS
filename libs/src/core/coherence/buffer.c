@@ -99,7 +99,11 @@ static struct arts_db_buffer_s *buf_publish(struct arts_db_cache_s *cache,
     arts_shared_ptr_t old_h = arts_atomic_shared_load(&cache->buffer);
     struct arts_db_buffer_s *old =
         (struct arts_db_buffer_s *)arts_shared_get(old_h);
-    if (old != NULL && old->version >= new_version) {
+    /* The publish decision reads a version another rank's release may be
+     * bumping in place; an acquire load pairs with that read-modify-write so
+     * the comparison never observes a torn or reordered value. */
+    if (old != NULL &&
+        __atomic_load_n(&old->version, __ATOMIC_ACQUIRE) >= new_version) {
       /* Stale install: a newer (or equal) buffer is already published.
        * Drop our load ref, abandon the unpublished cb (keeps new_buf ours)
        * and free new_buf.  old stays alive via the slot's sentinel ref. */

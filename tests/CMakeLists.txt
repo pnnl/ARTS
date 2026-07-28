@@ -148,6 +148,7 @@ set(TEST_PROGRAMS
     finish_event_wait
     finish_event_nested
     coherence_multi_writer_dist
+    coherence_writer_ro_overlap
 )
 
 # Function to create a test executable
@@ -921,6 +922,37 @@ register_multinode_test(coherence_multi_writer_dist TIMEOUT 120 VARIANTS 2n 3n 4
 foreach(_v 2n 3n 4n)
     set_property(TEST coherence_multi_writer_dist_${_v} APPEND PROPERTY
         LABELS "coherence_stress")
+endforeach()
+
+# coherence_writer_ro_overlap: cross-rank RW write write windows OVERLAPPED by
+# concurrent RO readers on other ranks — the one regime the rest of the suite
+# leaves uncovered (coherence_stress_dist is RW-only across ranks; the
+# large-payload and rwro_phase tests phase-separate writers from readers).  Runs
+# of same-rank RW EDTs hold a write window open across several releases while readers
+# stream in; the run boundaries migrate the write window so redirects race live
+# hand-offs.  An ordinary OCR program: the header has a single event-ordered
+# writer that every acquire must observe verbatim, and a round's writers all
+# stamp the churn region with the same byte, so the only legal observations are
+# this round's and the previous round's stamps.  Both assertions survive a
+# whole-DB last-writer-wins writeback, so it is registered under every arm
+# including WRF_RCU.  Single-node registration covers the all-local paths; the
+# multinode variants carry the cross-rank ones.
+register_single_node_test(coherence_writer_ro_overlap TIMEOUT 120)
+register_multinode_test(coherence_writer_ro_overlap TIMEOUT 180)
+set(_writer_ro_cases
+    coherence_writer_ro_overlap
+    coherence_writer_ro_overlap_2n
+    coherence_writer_ro_overlap_3n
+    coherence_writer_ro_overlap_4n
+    coherence_writer_ro_overlap_2n_io)
+foreach(_t IN LISTS _writer_ro_cases)
+    set_property(TEST ${_t} APPEND PROPERTY LABELS "coherence_stress")
+    # A protocol that ends the run early (spurious shutdown) would exit 0 with
+    # nothing verified — require the end-of-run scalar, and fail on any
+    # acquirer's violation report.
+    set_tests_properties(${_t} PROPERTIES
+        PASS_REGULAR_EXPRESSION "PASS: rw-write window/ro-overlap rounds=16 dbs=8 reads=1024 writes=1152"
+        FAIL_REGULAR_EXPRESSION "FAIL:")
 endforeach()
 
 # --- DB-WRF contract tests (portable OCR programs, sources under ocr/) ---
