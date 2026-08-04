@@ -50,7 +50,7 @@
 ///                   one finish scope.  Concurrency is essential — it produces
 ///                   multiple simultaneous LOCK_REQs at home, which is what
 ///                   exercises the chain.  arts_event_wait blocks until every
-///                   incrementer has run AND written back; a stranded waiter
+///                   incrementer has run AND published; a stranded waiter
 ///                   therefore shows up as the finish scope never quiescing
 ///                   (caught by the ctest TIMEOUT).
 ///          Phase 2: a single RO reader, created only AFTER phase 1 has fully
@@ -104,12 +104,12 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== coherence_rw_multihop ===\n");
 
-#ifdef ARTS_PROTOCOL_WRF_RCU
+#ifdef ARTS_PROTOCOL_WRF_VAL
   /* The relaxed (DB-WRF) model unifies RW with RO (concurrent replicas,
    * reduce on release) and has no ownership-transfer chain (no
    * LOCK_REQ/INVALIDATE/GRANT).  A plain serial increment is therefore not a
    * meaningful relaxed-model workload — concurrent acquirers race the
-   * read-modify-write.  This test targets the OCR-model (eager/lazy)
+   * read-modify-write.  This test targets the OCR-model (HOME/OWNER placements)
    * exclusive-RW ownership-transfer chain. */
   arts_printf("SKIP: RELAXED has no exclusive-RW ownership-transfer chain\n");
   arts_shutdown();
@@ -139,7 +139,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
         inc_edt, 0, NULL, 1, &(arts_edt_hint_t){.rank = r, .finish_event = e1});
     arts_add_dependence(db, w, 0, DB_MODE_RW);
   }
-  arts_event_wait(e1); /* blocks until ALL incs ran + wrote back */
+  arts_event_wait(e1); /* blocks until ALL incs ran + published */
 
   /* Phase 2: RO reader, created only now that phase 1 has fully quiesced, so
    * its snapshot deterministically observes every increment. */

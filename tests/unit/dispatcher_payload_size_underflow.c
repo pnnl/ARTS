@@ -11,8 +11,8 @@
  *     ... arts_malloc(sizeof(args) + data_size);
  *     if (data_size > 0) memcpy(dst, data, data_size);
  *
- * (MSG_DB_SNAPSHOT_RESPONSE dispatcher.c:316, MSG_DB_WRITEBACK :408,
- *  MSG_DB_LOCK_RELEASE :593).  `header.size` is the peer-supplied TOTAL on-wire
+ * (MSG_DB_SNAPSHOT_RESPONSE dispatcher.c:316, MSG_DB_PUBLISH :408,
+ *  MSG_DB_EXCL_RELEASE :593).  `header.size` is the peer-supplied TOTAL on-wire
  * byte count (header + payload); `sizeof(*pack)` is the fixed struct size.
  *
  * The RX loop (socket.c) only guarantees it read `header.size` bytes; it never
@@ -78,8 +78,8 @@ static int failures = 0;
   } while (0)
 
 /* Exercise all three structs whose dispatcher case uses the data_size pattern.
- * SNAPSHOT_RESPONSE + WRITEBACK exist in non-RWLOCK builds; LOCK_RELEASE exists
- * only under ARTS_PROTOCOL_RWLOCK.  We test whichever are present in this build
+ * SNAPSHOT_RESPONSE + PUBLISH exist in non-EXCL builds; LOCK_RELEASE exists
+ * only under ARTS_PROTOCOL_EXCL.  We test whichever are present in this build
  * plus a synthetic struct so the arithmetic is always exercised. */
 static int exercise(const char *name, size_t struct_size) {
   int local_fail = 0;
@@ -145,19 +145,19 @@ static int exercise(const char *name, size_t struct_size) {
 }
 
 int main(void) {
-  /* SNAPSHOT_RESPONSE (non-RWLOCK builds) — dispatcher.c:316. */
-#ifndef ARTS_PROTOCOL_RWLOCK
+  /* SNAPSHOT_RESPONSE (non-EXCL builds) — dispatcher.c:316. */
+#ifndef ARTS_PROTOCOL_EXCL
   failures += exercise("MSG_DB_SNAPSHOT_RESPONSE",
                        sizeof(struct arts_msg_snapshot_response_packet_s));
 #endif
-  /* WRITEBACK (eager / WRF_RCU dispatcher case) — dispatcher.c:408.  The struct is
+  /* PUBLISH (HOME / WRF_VAL dispatcher case) — dispatcher.c:408.  The struct is
    * unconditional in protocol.h, so size-check it in every build. */
   failures +=
-      exercise("MSG_DB_WRITEBACK", sizeof(struct arts_msg_writeback_packet_s));
-#ifdef ARTS_PROTOCOL_RWLOCK
-  /* LOCK_RELEASE (RWLOCK builds only) — dispatcher.c:593. */
-  failures += exercise("MSG_DB_LOCK_RELEASE",
-                       sizeof(struct arts_msg_lock_release_packet_s));
+      exercise("MSG_DB_PUBLISH", sizeof(struct arts_msg_publish_packet_s));
+#ifdef ARTS_PROTOCOL_EXCL
+  /* LOCK_RELEASE (EXCL builds only) — dispatcher.c:593. */
+  failures += exercise("MSG_DB_EXCL_RELEASE",
+                       sizeof(struct arts_msg_excl_release_packet_s));
 #endif
 
   /* With the fix in place, every exercised struct must: accept the two
@@ -170,7 +170,7 @@ int main(void) {
             "dispatcher_payload_size_underflow: %d failure(s) — the "
             "header.size>=sizeof floor is missing or boundary handling "
             "regressed in dispatcher "
-            "SNAPSHOT_RESPONSE/WRITEBACK/LOCK_RELEASE (B070).\n",
+            "SNAPSHOT_RESPONSE/PUBLISH/LOCK_RELEASE (B070).\n",
             failures);
     return 1;
   }

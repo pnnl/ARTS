@@ -17,7 +17,7 @@
 /// @brief T058 — install-version monotonicity across multi-hop RW ownership.
 ///
 /// Each owner along an RW chain installs a strictly higher DB buffer version
-/// (EAGER installs at writeback/GRANT, LAZY at TRANSFER_OWNERSHIP).  A reader
+/// (HOME installs at publish/GRANT, OWNER at TRANSFER_OWNERSHIP).  A reader
 /// inserted in causal order after a given writer must observe a buffer whose
 /// value is at least as recent as that writer's — never a version regression
 /// across a GRANT/TRANSFER install.
@@ -33,20 +33,20 @@
 /// after.
 ///
 /// config_specific: meaningful only where DB-level ownership transfer + version
-/// installs happen, i.e. RCU (both timings).  RWLOCK has a distinct
-/// state machine (and is registered separately); WRF_RCU is DB-WRF with no version
-/// guard contract.  Self-skips cleanly under RWLOCK / WRF_RCU.
+/// installs happen, i.e. VAL (both placements).  EXCL has a distinct
+/// state machine (and is registered separately); WRF_VAL is DB-WRF with no version
+/// guard contract.  Self-skips cleanly under EXCL / WRF_VAL.
 ///
 /// A lost transfer / stranded acquirer is caught by the ctest TIMEOUT.
 
 #include "arts.h"
 
-#if !defined(ARTS_PROTOCOL_RCU)
+#if !defined(ARTS_PROTOCOL_VAL)
 
 #include <stdio.h>
 
 int main(void) {
-  printf("SKIP coherence_install_version_monotone: RCU-only\n");
+  printf("SKIP coherence_install_version_monotone: VAL-only\n");
   return 0;
 }
 

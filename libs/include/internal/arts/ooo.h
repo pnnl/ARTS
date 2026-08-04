@@ -70,8 +70,8 @@ extern "C" {
  * arts_handler_event_add_dependence → OOO_EVENT_ADD_DEPENDENCE.
  *
  * The model-specific DB-coherence kinds are preprocessor-selected: RCU builds
- * define ARTS_PROTOCOL_RCU plus exactly one of ARTS_TIMING_{EAGER,LAZY};
- * WRF_RCU builds define ARTS_PROTOCOL_WRF_RCU alone.  Each build's enum
+ * define ARTS_PROTOCOL_VAL plus exactly one of ARTS_WRITE_POLICY_{WT,WB};
+ * WRF_RCU builds define ARTS_PROTOCOL_WRF_VAL alone.  Each build's enum
  * (and the mirroring g_ooo_table) carries only that model's OOO_DB_* kinds.
  * OOO_KIND_COUNT is therefore per-model — sound because every TU in one build
  * sees the same model define. */
@@ -87,88 +87,85 @@ enum arts_ooo_kind {
    * create handler installs+drains. */
   OOO_EDT_DESTROY,   /* → arts_handler_edt_destroy */
   OOO_EVENT_DESTROY, /* → arts_handler_event_destroy */
-  OOO_DB_DESTROY, /* → arts_handler_db_destroy — no dep/lazy_install gate, so a
+  OOO_DB_DESTROY, /* → arts_handler_db_destroy — no dep/stub_install gate, so a
                      create/destroy reorder can land DESTROY before home CREATE
                    */
 
 /* ===== Model-specific DB coherence — exactly one model active =====
  * Re-issue the wire handler once the home db_s/cache is installed: a
- * remote-created DB's lazy_install cache can fire a request/writeback before
+ * remote-created DB's stub_install cache can fire a request/publish before
  * that DB's home CREATE arrives, so the message reaches home with db_s not yet
  * installed ⇒ OoO push, replayed on the CREATE handler's drain. */
-#if defined(ARTS_PROTOCOL_RWLOCK) && defined(ARTS_TIMING_EAGER)
+#if defined(ARTS_PROTOCOL_EXCL) && defined(ARTS_RELEASE_PURGE)
   OOO_DB_ACQUIRE, /* → arts_db_acquire_replay_dep (re-attempts the one deferred
                      local dep; pushed by arts_db_acquire_all's per-dep 3-way)
                    */
-  OOO_DB_LOCK_REQUEST, /* → arts_handler_db_lock_request @ home */
-  OOO_DB_LOCK_RELEASE, /* → arts_handler_db_lock_release @ home */
-#elif defined(ARTS_PROTOCOL_RWLOCK) && defined(ARTS_TIMING_LAZY)
+  OOO_DB_EXCL_REQUEST, /* → arts_handler_db_excl_request @ home */
+  OOO_DB_EXCL_RELEASE, /* → arts_handler_db_excl_release @ home */
+#elif defined(ARTS_PROTOCOL_EXCL) && defined(ARTS_RELEASE_RETAIN)
   OOO_DB_ACQUIRE, /* → arts_db_acquire_replay_dep (re-attempts the one deferred
                      local dep; pushed by arts_db_acquire_all's per-dep 3-way)
                    */
-  OOO_DB_LOCK_REQUEST, /* → arts_handler_db_lock_request @ home */
-/* NO OOO_DB_LOCK_RELEASE: LAZY has no synchronous writeback release; the
+  OOO_DB_EXCL_REQUEST, /* → arts_handler_db_excl_request @ home */
+/* NO OOO_DB_EXCL_RELEASE: the OWNER placement has no synchronous publish release; the
  * DELIVER/CONFIRM/RORET messages are all direct-dispatched (Cat-C, target
  * provably installed by the time these messages arrive). */
-#elif defined(ARTS_PROTOCOL_MSI) && defined(ARTS_TIMING_LAZY)
+#elif defined(ARTS_PROTOCOL_INV)
   OOO_DB_ACQUIRE, /* → arts_db_acquire_replay_dep (re-attempts the one deferred
                      local dep; pushed by arts_db_acquire_all's per-dep 3-way)
                    */
-  OOO_DB_MSI_REQUEST,   /* → arts_handler_db_msi_request @ home (RO/RW mode in
-                           the packet — one Cat-B kind for both) */
-  OOO_DB_MSI_ROUND_REQ, /* → arts_handler_db_msi_round_req @ home: a creator
-                           releases on its own rank, which can outrun its
-                           DB_CREATE reaching the home directory */
-/* REDIR/FWDM/DELIVER/DELIVER_RW/CONFIRM/CONFIRM_ACK/ROUND_DONE/INVALIDATE/
- * INV_ACK/CTS are Cat-C: their targets are either provably installed (the
- * directory names an owner only once that rank has installed the copy; a
- * requester pinned its cache when it sent the request; home for the acks) or
- * the MISS action is part of the protocol (INVALIDATE MISS → ACK; REDIR MISS →
- * bounce; DELIVER MISS → landing discard; ROUND_DONE MISS → wake anyway). */
-#elif defined(ARTS_PROTOCOL_MSI)
-  OOO_DB_ACQUIRE, /* → arts_db_acquire_replay_dep (re-attempts the one deferred
-                     local dep; pushed by arts_db_acquire_all's per-dep 3-way)
-                   */
-  OOO_DB_MSI_REQUEST,   /* → arts_handler_db_msi_request @ home (RO/RW mode in
-                           the packet — one Cat-B kind for both) */
-  OOO_DB_MSI_WRITEBACK, /* → arts_handler_db_msi_writeback @ home */
-/* DELIVER/GRANT/INVALIDATE/INV_ACK/CTS are Cat-C: their targets are either
- * provably installed (home for ACKs; the requester pinned its cache when it
- * sent the request) or the MISS action is part of the protocol (INVALIDATE
- * MISS → ACK; GRANT/DELIVER MISS → landing discard). */
-#elif defined(ARTS_TIMING_EAGER)
+  /* The migrating grant, shared with every other grant-bearing arm. */
+  OOO_DB_GRANT_REQUEST, /* → arts_handler_db_grant_request @ home */
+  /* MSI's own: the reader fetch, and (HOME placement only) the release that
+   * carries payload to the home. */
+  OOO_DB_INV_REQUEST, /* → arts_handler_db_inv_request @ home (RO fetch) */
+  /* Every release asks the home for its invalidation round.  Under HOME the
+   * request carries the payload (the home installs it and serves readers from
+   * it); under OWNER it is pure control.  That is the ONLY difference between
+   * the two placements' releases. */
+  OOO_DB_PUBLISH, /* → arts_handler_db_publish @ home */
+#ifdef ARTS_WRITE_POLICY_WB
+  OOO_DB_INV_REDIRECT, /* → arts_handler_db_inv_redirect @ the grant holder */
+#endif
+/* OWNERSHIP_INVALIDATE / RESPONSE / CONFIRM, and DELIVER / INVALIDATE /
+ * INV_ACK / CTS, are Cat-C: their targets are either provably installed (the
+ * home names a holder only after that rank installed; a requester pinned its
+ * cache when it sent the request; home for the acks) or the MISS action is
+ * part of the protocol (INVALIDATE MISS → ACK; DELIVER MISS → landing
+ * discard). */
+#elif defined(ARTS_WRITE_POLICY_WT)
   OOO_DB_ACQUIRE, /* → arts_db_acquire_replay_dep (re-attempts the one deferred
                      local dep; pushed by arts_db_acquire_all's per-dep 3-way)
                    */
   OOO_DB_SNAPSHOT_REQUEST,  /* → arts_handler_db_snapshot_request @ home */
-  OOO_DB_OWNERSHIP_REQUEST, /* → arts_handler_db_ownership_request @ home */
-  /* NO OOO_DB_OWNERSHIP_INVALIDATE — the eager protocol no longer defers
+  OOO_DB_GRANT_REQUEST, /* → arts_handler_db_grant_request @ home */
+  /* NO OOO_DB_GRANT_INVALIDATE — the HOME placement no longer defers
    * INVALIDATE: rw_holder is flipped only at the post-install CONFIRM (same as
-   * lazy), so the target is provably installed when INVALIDATE arrives and the
+   * OWNER), so the target is provably installed when INVALIDATE arrives and the
    * dispatcher/self-send call the body directly. */
-  OOO_DB_WRITEBACK, /* → arts_handler_db_writeback @ home */
-#elif defined(ARTS_TIMING_LAZY)
+  OOO_DB_PUBLISH, /* → arts_handler_db_publish @ home */
+#elif defined(ARTS_WRITE_POLICY_WB)
   OOO_DB_ACQUIRE, /* → arts_db_acquire_replay_dep (re-attempts the one deferred
                      local dep; pushed by arts_db_acquire_all's per-dep 3-way)
                    */
   OOO_DB_SNAPSHOT_REQUEST,  /* → arts_handler_db_snapshot_request @ home */
-  OOO_DB_OWNERSHIP_REQUEST, /* → arts_handler_db_ownership_request @ home */
-/* NO OOO_DB_OWNERSHIP_INVALIDATE — the lazy protocol never defers INVALIDATE
+  OOO_DB_GRANT_REQUEST, /* → arts_handler_db_grant_request @ home */
+/* NO OOO_DB_GRANT_INVALIDATE — the OWNER placement never defers INVALIDATE
  * (home publishes the target rw_holder only after that rank's cache install,
  * so the target is provably installed; the dispatcher/self-send call the body
  * directly).
- * NO OOO_DB_WRITEBACK — the lazy protocol has no synchronous writeback (the
- * dispatcher fatals on the WRITEBACK wire message). */
-#elif defined(ARTS_PROTOCOL_WRF_RCU)
+ * NO OOO_DB_PUBLISH — the OWNER placement has no synchronous publish (the
+ * dispatcher fatals on the PUBLISH wire message). */
+#elif defined(ARTS_PROTOCOL_WRF_VAL)
   OOO_DB_ACQUIRE, /* → arts_db_acquire_replay_dep (re-attempts the one deferred
                      local dep; pushed by arts_db_acquire_all's per-dep 3-way)
                    */
   OOO_DB_SNAPSHOT_REQUEST, /* → arts_handler_db_snapshot_request @ home */
-  OOO_DB_WRITEBACK,        /* → arts_handler_db_writeback @ home (no ownership
+  OOO_DB_PUBLISH,        /* → arts_handler_db_publish @ home (no ownership
                               transfer) */
 #else
 #error                                                                         \
-    "exactly one of ARTS_PROTOCOL_RWLOCK+ARTS_TIMING_{EAGER,LAZY}, ARTS_PROTOCOL_MSI+ARTS_TIMING_{EAGER,LAZY}, ARTS_TIMING_{EAGER,LAZY} (RCU), or ARTS_PROTOCOL_WRF_RCU must be defined"
+    "exactly one of ARTS_PROTOCOL_EXCL+ARTS_RELEASE_{PURGE,RETAIN}, ARTS_PROTOCOL_INV+ARTS_WRITE_POLICY_{WT,WB}, ARTS_WRITE_POLICY_{WT,WB} (VAL), or ARTS_PROTOCOL_WRF_VAL must be defined"
 #endif
 
   OOO_KIND_COUNT /* sentinel — g_ooo_table size (per-model) */
@@ -236,7 +233,7 @@ struct arts_ooo_args_db_acquire_s {
  * is installed.  First-class fields are reconstructed into a stack packet by
  * the handler.  The home FIFO records only the requester rank (RCU
  * order ownership rank-by-rank). */
-struct arts_ooo_args_db_ownership_request_s {
+struct arts_ooo_args_db_grant_request_s {
   unsigned int requester;
   arts_guid_t db_guid;
   struct arts_rdzv_landing_s rdzv; /* requester's transfer landing */
@@ -255,16 +252,16 @@ struct arts_ooo_args_db_destroy_s {
   arts_guid_t db_guid;
 };
 
-/* DB writeback.  Three shapes share this args struct (see the WRITEBACK wire
+/* DB publish.  Three shapes share this args struct (see the PUBLISH wire
  * doc in protocol.h):
- *   data_inline != 0                : same-rank writeback — the payload
+ *   data_inline != 0                : same-rank publish — the payload
  *       (data_size bytes) trails this header in the args blob;
  *   data_inline == 0, rdzv_txid == 0: announce leg — home allocates a fresh
- *       landing and replies WRITEBACK_CTS (nothing installs yet);
+ *       landing and replies PUBLISH_CTS (nothing installs yet);
  *   data_inline == 0, rdzv_txid != 0: commit leg — the payload was PUT into
  *       home's landing (rdzv_cookie); install on {args, txid} pairing.
  *   data_size == 0                  : data-less round — install nothing, ACK. */
-struct arts_ooo_args_db_writeback_s {
+struct arts_ooo_args_db_publish_s {
   unsigned int releaser;
   arts_guid_t db_guid;
   uint64_t version;
@@ -276,17 +273,17 @@ struct arts_ooo_args_db_writeback_s {
 };
 
 /* DB ownership invalidate: carries the fields the wire
- * arts_msg_ownership_invalidate_packet_s delivers (db_guid + new_owner_rank).
- * The eager protocol ignores new_owner_rank; the lazy protocol uses it as the
+ * arts_msg_grant_invalidate_packet_s delivers (db_guid + new_owner_rank).
+ * The HOME placement ignores new_owner_rank; the OWNER placement uses it as the
  * TRANSFER_OWNERSHIP target. */
-struct arts_ooo_args_db_ownership_invalidate_s {
+struct arts_ooo_args_db_grant_invalidate_s {
   arts_guid_t db_guid;
   unsigned int new_owner_rank;
   struct arts_rdzv_landing_s new_owner_rdzv; /* transfer landing at new owner */
 };
 
-/* MSI protocol OoO args (OOO_DB_MSI_REQUEST / OOO_DB_MSI_WRITEBACK). */
-struct arts_ooo_args_db_msi_request_s {
+/* MSI protocol OoO args (OOO_DB_INV_REQUEST / OOO_DB_MSI_PUBLISH). */
+struct arts_ooo_args_db_inv_request_s {
   unsigned int requester; /* subject of the request — NOT the wire sender: a
                              holder may re-send a read request on the reader's
                              behalf */
@@ -296,30 +293,17 @@ struct arts_ooo_args_db_msi_request_s {
                                       touch (home replies MSI_CTS) */
 };
 
-#if defined(ARTS_PROTOCOL_MSI) && defined(ARTS_TIMING_LAZY)
-/* A releasing owner asking the home for this release's invalidation round.
- * cv is the releaser's rendezvous address, echoed verbatim in ROUND_DONE. */
-struct arts_ooo_args_db_msi_round_req_s {
+#if defined(ARTS_PROTOCOL_INV) && defined(ARTS_WRITE_POLICY_WB)
+/* The home forwarding a read it cannot answer to the current grant holder.
+ * The requester is the subject, never the sender: the holder replies to it
+ * directly, or bounces the request back to the home if the bytes have already
+ * moved on. */
+struct arts_ooo_args_db_inv_redirect_s {
+  unsigned int requester;
   arts_guid_t db_guid;
-  unsigned int rank;
-  uint64_t cv;
+  struct arts_rdzv_landing_s rdzv;
 };
-#endif /* ARTS_PROTOCOL_MSI && ARTS_TIMING_LAZY */
-/* WRITEBACK: announce leg (rdzv_txid==0 — home allocates a landing and
- * replies WRITEBACK_CTS) or commit leg (payload PUT into home's landing,
- * pairs by txid); data_inline != 0 = the payload trails this header
- * (same-rank release). */
-struct arts_ooo_args_db_msi_writeback_s {
-  unsigned int releaser;
-  arts_guid_t db_guid;
-  uint64_t vnew;
-  uint64_t cv; /* releaser's stack sem_t address (round-close wake) */
-  uint32_t final_flag;
-  uint32_t data_inline;
-  uint64_t data_size;
-  uint64_t rdzv_txid;
-  uint64_t rdzv_cookie;
-};
+#endif /* ARTS_PROTOCOL_INV && ARTS_WRITE_POLICY_WB */
 
 /* Event / EDT destroy replay (before-create reorder): the guid is enough to
  * re-issue the destroy once the object installs. */
@@ -330,29 +314,29 @@ struct arts_ooo_args_edt_destroy_s {
   arts_guid_t guid;
 };
 
-/* RWLOCK protocol OoO args (OOO_DB_LOCK_REQUEST / OOO_DB_LOCK_RELEASE). */
-struct arts_ooo_args_db_lock_request_s {
-  unsigned int requester; /* rank that sent MSG_DB_LOCK_REQUEST */
+/* RWLOCK protocol OoO args (OOO_DB_EXCL_REQUEST / OOO_DB_EXCL_RELEASE). */
+struct arts_ooo_args_db_excl_request_s {
+  unsigned int requester; /* rank that sent MSG_DB_EXCL_REQUEST */
   arts_guid_t db_guid;
   arts_db_access_mode_t mode; /* DB_MODE_RO or DB_MODE_RW */
   struct arts_rdzv_landing_s rdzv; /* requester's grant/deliver landing */
 };
-/* LOCK_RELEASE: inline writeback payload of data_size bytes trails this
+/* LOCK_RELEASE: inline publish payload of data_size bytes trails this
  * header (data_size == 0 for RO releases).
  * cv: RW only — releaser's stack-local sem_t address; forwarded verbatim in
  * the LOCK_RELEASE_ACK so the releaser wakes by pointer identity.  0 for RO.
  * version: monotone round counter bumped by the releaser; home's buf_install
  * rejects stale overwrites when a reordered/duplicate RELEASE races a newer
- * one (same guard as the RCU writeback path). */
-struct arts_ooo_args_db_lock_release_s {
-  unsigned int releaser; /* rank that sent MSG_DB_LOCK_RELEASE */
+ * one (same guard as the RCU publish path). */
+struct arts_ooo_args_db_excl_release_s {
+  unsigned int releaser; /* rank that sent MSG_DB_EXCL_RELEASE */
   arts_guid_t db_guid;
   arts_db_access_mode_t mode; /* DB_MODE_RO or DB_MODE_RW */
-  uint64_t data_size;         /* 0 for RO; >0 for RW writeback */
+  uint64_t data_size;         /* 0 for RO; >0 for RW publish */
   uint64_t cv;                /* RW: releaser sem_t address; 0 for RO */
   uint64_t version; /* RW: monotone version for buf_install; 0 for RO */
   /* RW dirty payload delivery: data_inline != 0 = payload trails this header
-   * (same-rank release); else the payload was PUT into the grant's wb landing
+   * (same-rank release); else the payload was PUT into the grant's pub landing
    * — {rdzv_txid, rdzv_cookie} echo it and install pairs by txid. */
   uint64_t rdzv_txid;
   uint64_t rdzv_cookie;

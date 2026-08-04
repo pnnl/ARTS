@@ -51,7 +51,7 @@
 ///
 ///        Completion is the assertion: if the empty transfer crashes any rank,
 ///        the finish scope never drains and shutdown never fires, surfacing as
-///        a ctest FAIL.  Model-agnostic (eager/relaxed builds simply move
+///        a ctest FAIL.  Model-agnostic (HOME/WRF_VAL builds simply move
 ///        ownership without a map). Requires 2+ ranks.
 
 #include "arts.h"
@@ -60,7 +60,7 @@
 
 /// RW holder on a sentinel DB.  The dep pointer is NULL (no payload); acquiring
 /// it RW is what makes this rank the owner and forces a transfer when the next
-/// rank's RW lease arrives.
+/// rank's RW grant arrives.
 void rw_holder_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                    arts_edt_dep_t depv[]) {
   (void)paramc;
@@ -68,7 +68,7 @@ void rw_holder_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
   /* Sentinel DB: depv[0].ptr is expected NULL — nothing to read or write.
-   * Holding the RW lease is the whole point. */
+   * Holding the RW grant is the whole point. */
 }
 
 void shutdown_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -108,10 +108,10 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_db_release(db, DB_MODE_RW);
 
   /* One RW holder on home (rank 0, the initial owner) and one on a foreign
-   * rank (rank 1): the second lease forces a single owner→foreign transfer of
+   * rank (rank 1): the second grant forces a single owner→foreign transfer of
    * a NULL-buffer DB, which is the empty-transfer path under test.  A single
    * hop is sufficient to exercise it; the coherence layer serializes the two
-   * RW leases. */
+   * RW grants. */
   arts_guid_t w_home =
       arts_edt_create(rw_holder_edt, 0, NULL, 1,
                       &(arts_edt_hint_t){.rank = 0, .finish_event = fe});

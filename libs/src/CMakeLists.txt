@@ -51,58 +51,56 @@ if(ARTS_USE_CXL)
 endif()
 
 # --- Coherence-protocol helpers (shared by main lib + benchmark variants) -----
-# Sets ${out} (caller scope) to the coherence model TU paths for (proto,timing),
-# RELATIVE to libs/src/core/. Mirrors libs/src/core/CMakeLists.txt selection.
-function(arts_coherence_model_tus out proto timing)
-    if(proto STREQUAL "WRF_RCU")
-        set(tus coherence/wrf_rcu/wrf_rcu.c)
-    elseif(proto STREQUAL "MSI")
-        if(timing STREQUAL "LAZY")
-            set(tus coherence/msi/home.c coherence/msi/lazy.c)
+# Sets ${out} (caller scope) to the coherence model TU paths for
+# (proto,placement), RELATIVE to libs/src/core/.  Mirrors
+# libs/src/core/CMakeLists.txt selection.
+function(arts_coherence_model_tus out arm write_policy release_policy)
+    if(arm STREQUAL "WRF_VAL")
+        set(tus coherence/wrf_val/wrf_val.c)
+    elseif(arm STREQUAL "INV")
+        if(write_policy STREQUAL "WB")
+            set(tus coherence/inv/directory.c coherence/inv/engine.c coherence/inv/wb.c coherence/grant.c coherence/grant_queue.c coherence/grant_wb.c)
         else()
-            set(tus coherence/msi/home.c coherence/msi/eager.c)
+            set(tus coherence/inv/directory.c coherence/inv/engine.c coherence/inv/wt.c coherence/grant.c coherence/grant_queue.c coherence/grant_wt.c)
         endif()
-    elseif(proto STREQUAL "RWLOCK")
-        if(timing STREQUAL "LAZY")
-            set(tus coherence/rwlock/home.c coherence/rwlock/lazy.c)
+    elseif(arm STREQUAL "EXCL")
+        if(release_policy STREQUAL "RETAIN")
+            set(tus coherence/excl/directory.c coherence/excl/retain.c)
         else()
-            set(tus coherence/rwlock/home.c coherence/rwlock/eager.c)
+            set(tus coherence/excl/directory.c coherence/excl/purge.c)
         endif()
-    else() # RCU
-        if(timing STREQUAL "EAGER")
-            set(tus coherence/rcu/eager.c coherence/rcu/ownership.c coherence/rcu/home.c)
+    else() # VAL
+        if(write_policy STREQUAL "WT")
+            set(tus coherence/val/wt.c coherence/grant.c coherence/grant_queue.c coherence/grant_wt.c coherence/val/directory.c)
         else()
-            set(tus coherence/rcu/lazy.c coherence/rcu/ownership.c coherence/rcu/home.c)
+            set(tus coherence/val/wb.c coherence/grant.c coherence/grant_queue.c coherence/grant_wb.c coherence/val/directory.c)
         endif()
     endif()
     set(${out} ${tus} PARENT_SCOPE)
 endfunction()
 
-# Applies the protocol/timing compile definitions to <target> (PRIVATE).
-function(arts_apply_protocol target proto timing)
-    if(proto STREQUAL "WRF_RCU")
-        target_compile_definitions(${target} PRIVATE ARTS_PROTOCOL_WRF_RCU=1)
-    elseif(proto STREQUAL "MSI")
-        target_compile_definitions(${target} PRIVATE ARTS_PROTOCOL_MSI=1)
-        if(timing STREQUAL "EAGER")
-            target_compile_definitions(${target} PRIVATE ARTS_TIMING_EAGER=1)
-        else()
-            target_compile_definitions(${target} PRIVATE ARTS_TIMING_LAZY=1)
-        endif()
-    elseif(proto STREQUAL "RWLOCK")
-        target_compile_definitions(${target} PRIVATE ARTS_PROTOCOL_RWLOCK=1)
-        if(timing STREQUAL "EAGER")
-            target_compile_definitions(${target} PRIVATE ARTS_TIMING_EAGER=1)
-        else()
-            target_compile_definitions(${target} PRIVATE ARTS_TIMING_LAZY=1)
-        endif()
-    else() # RCU
-        target_compile_definitions(${target} PRIVATE ARTS_PROTOCOL_RCU=1)
-        if(timing STREQUAL "EAGER")
-            target_compile_definitions(${target} PRIVATE ARTS_TIMING_EAGER=1)
-        else()
-            target_compile_definitions(${target} PRIVATE ARTS_TIMING_LAZY=1)
-        endif()
+# Applies the family + second-axis compile definitions to <target> (PRIVATE).
+# All three macro groups are always emitted: ARTS_PROTOCOL_<arm>, one of
+# ARTS_WRITE_POLICY_WT/WB, and one of ARTS_RELEASE_PURGE/RETAIN.  Each arm's
+# sources test only its live axis (EXCL: ARTS_RELEASE_*; INV/VAL and the
+# grant plane: ARTS_WRITE_POLICY_*).
+function(arts_apply_protocol target arm write_policy release_policy)
+    target_compile_definitions(${target} PRIVATE ARTS_PROTOCOL_${arm}=1)
+    if(arm STREQUAL "WRF_VAL")
+        # WRF_VAL is WT by construction and links no grant plane; it defines
+        # neither second-axis macro so the shared selection chains fall through
+        # to their ARTS_PROTOCOL_WRF_VAL branches.
+        return()
+    endif()
+    if(write_policy STREQUAL "WT")
+        target_compile_definitions(${target} PRIVATE ARTS_WRITE_POLICY_WT=1)
+    else()
+        target_compile_definitions(${target} PRIVATE ARTS_WRITE_POLICY_WB=1)
+    endif()
+    if(release_policy STREQUAL "PURGE")
+        target_compile_definitions(${target} PRIVATE ARTS_RELEASE_PURGE=1)
+    else()
+        target_compile_definitions(${target} PRIVATE ARTS_RELEASE_RETAIN=1)
     endif()
 endfunction()
 
@@ -200,7 +198,7 @@ if(ARTS_BUILD_STATIC)
         target_link_libraries(arts_static PRIVATE arts::libfabric)
     endif()
 
-    arts_apply_protocol(arts_static ${ARTS_COHERENCE_ARM} ${ARTS_PROTOCOL_TIMING})
+    arts_apply_protocol(arts_static ${ARTS_COHERENCE_ARM} ${ARTS_WRITE_POLICY} ${ARTS_RELEASE_POLICY})
 
     # Set library properties
     set_target_properties(arts_static PROPERTIES
@@ -291,7 +289,7 @@ if(ARTS_BUILD_SHARED)
             $<TARGET_PROPERTY:arts::libfabric,INTERFACE_INCLUDE_DIRECTORIES>)
     endif()
 
-    arts_apply_protocol(arts_shared ${ARTS_COHERENCE_ARM} ${ARTS_PROTOCOL_TIMING})
+    arts_apply_protocol(arts_shared ${ARTS_COHERENCE_ARM} ${ARTS_WRITE_POLICY} ${ARTS_RELEASE_POLICY})
 
     # Set library properties
     set_target_properties(arts_shared PROPERTIES
@@ -365,7 +363,7 @@ if(BUILD_CUDA_LIBRARY)
             target_link_libraries(arts_cuda_static PRIVATE "-framework CoreFoundation" "-framework IOKit" "-framework OpenCL")
         endif()
 
-        arts_apply_protocol(arts_cuda_static ${ARTS_COHERENCE_ARM} ${ARTS_PROTOCOL_TIMING})
+        arts_apply_protocol(arts_cuda_static ${ARTS_COHERENCE_ARM} ${ARTS_WRITE_POLICY} ${ARTS_RELEASE_POLICY})
 
         # Set library properties
         set_target_properties(arts_cuda_static PROPERTIES
@@ -441,7 +439,7 @@ if(BUILD_CUDA_LIBRARY)
             target_link_libraries(arts_cuda_shared PRIVATE "-framework CoreFoundation" "-framework IOKit" "-framework OpenCL")
         endif()
 
-        arts_apply_protocol(arts_cuda_shared ${ARTS_COHERENCE_ARM} ${ARTS_PROTOCOL_TIMING})
+        arts_apply_protocol(arts_cuda_shared ${ARTS_COHERENCE_ARM} ${ARTS_WRITE_POLICY} ${ARTS_RELEASE_POLICY})
 
         # Set library properties
         set_target_properties(arts_cuda_shared PROPERTIES
@@ -454,7 +452,7 @@ if(BUILD_CUDA_LIBRARY)
 endif()
 
 # --- Per-protocol variant libraries (benchmarks/harness only) -----------------
-# Build a full arts static lib for one (proto,timing). The protocol-independent
+# Build a full arts static lib for one (proto,placement). The protocol-independent
 # sources are gathered from the CPU object-lib targets (their compiled objects
 # cannot be reused — each variant needs its own protocol defines), the coherence
 # MODEL TUs are swapped for this variant's, and the defines are applied per-target.
@@ -463,7 +461,7 @@ if(ARTS_BUILD_BENCHMARKS AND ARTS_BUILD_STATIC)
         arts_compute arts_memory arts_sync arts_ooo arts_regpool arts_scheduler
         arts_transport arts_gas arts_system arts_utils arts_counter arts_graph)
 
-    function(arts_variant suffix proto timing)
+    function(arts_variant suffix arm write_policy release_policy)
         # Gather all protocol-independent sources (absolute paths) from the
         # object libs, dropping any coherence MODEL TU (path contains
         # /coherence/<model>/), which is variant-specific.
@@ -477,14 +475,15 @@ if(ARTS_BUILD_BENCHMARKS AND ARTS_BUILD_STATIC)
                 else()
                     set(abs "${ldir}/${s}")
                 endif()
-                # skip coherence model TUs (rcu/rwlock/wrf_rcu subdirs)
-                if(NOT abs MATCHES "/coherence/(rcu|rwlock|wrf_rcu|msi)/")
+                # Skip variant-specific coherence TUs: the per-arm subdirs, and
+                # the grant plane (linked only by arms whose ownership migrates).
+                if(NOT abs MATCHES "/coherence/(val|excl|wrf_val|inv)/|/coherence/grant(_wt|_wb|_queue)?\\.c$")
                     list(APPEND srcs "${abs}")
                 endif()
             endforeach()
         endforeach()
         # add this variant's coherence model TUs
-        arts_coherence_model_tus(model "${proto}" "${timing}")
+        arts_coherence_model_tus(model "${arm}" "${write_policy}" "${release_policy}")
         foreach(tu ${model})
             list(APPEND srcs "${CMAKE_CURRENT_SOURCE_DIR}/core/${tu}")
         endforeach()
@@ -512,21 +511,22 @@ if(ARTS_BUILD_BENCHMARKS AND ARTS_BUILD_STATIC)
             # the static lib resolves fi_* symbols from libfabric.
             target_link_libraries(arts_static_${suffix} PRIVATE arts::libfabric)
         endif()
-        arts_apply_protocol(arts_static_${suffix} "${proto}" "${timing}")
+        arts_apply_protocol(arts_static_${suffix} "${arm}" "${write_policy}" "${release_policy}")
         target_compile_definitions(arts_static_${suffix} PRIVATE
             ARTS_NOHINT_EDT_ROUNDROBIN=${_ARTS_NOHINT_EDT_RR})
     endfunction()
 
-    # Suffix = <memory model>_<protocol>_<timing>; the second argument is the
-    # protocol ARM (the TU family): RCU/RWLOCK live under the OCR model,
-    # WRF_RCU is the RCU protocol under the DB-WRF model.
-    arts_variant(ocr_rcu_eager    RCU     EAGER)
-    arts_variant(ocr_rcu_lazy     RCU     LAZY)
-    arts_variant(ocr_rwlock_eager RWLOCK  EAGER)
-    arts_variant(ocr_rwlock_lazy  RWLOCK  LAZY)
-    arts_variant(wrf_rcu_eager    WRF_RCU EAGER)
-    arts_variant(ocr_msi_eager    MSI     EAGER)
-    arts_variant(ocr_msi_lazy     MSI     LAZY)
+    # Suffix = <memory model>_<family>_<live second axis>; the second argument
+    # is the protocol ARM (the TU family): VAL/INV/EXCL live under the OCR
+    # model, WRF_VAL is the VAL family under the DB-WRF model.  The dead axis
+    # sits at its required value (WB for EXCL, RETAIN for INV/VAL).
+    arts_variant(ocr_val_wt      VAL     WT RETAIN)
+    arts_variant(ocr_val_wb      VAL     WB RETAIN)
+    arts_variant(ocr_excl_purge  EXCL    WB PURGE)
+    arts_variant(ocr_excl_retain EXCL    WB RETAIN)
+    arts_variant(wrf_val_wt      WRF_VAL WT RETAIN)
+    arts_variant(ocr_inv_wt      INV     WT RETAIN)
+    arts_variant(ocr_inv_wb      INV     WB RETAIN)
 endif()
 
 # Link mimalloc-static when selected.  The OBJECT library arts_utils needs

@@ -41,7 +41,7 @@
 /// @brief Two concurrent creator-remote installs of the SAME labeled GUID drive
 ///        the install_if_absent loser path in arts_db_create (remote branch):
 ///        the loser frees its creator_stub, adopts the existing cache, and
-///        (non-RWLOCK) bumps writer_count += 2 + auto_acquire(creator_stub).
+///        (non-EXCL) bumps writer_count += 2 + auto_acquire(creator_stub).
 ///        Targets the suspected use-after-free where auto_acquire reads
 ///        creator_stub->cache.db_guid AFTER arts_db_free(creator_stub).
 ///
@@ -55,8 +55,8 @@
 /// the loser path tends to surface as a crash under sanitizers or a stuck DB
 /// (caught by the ctest TIMEOUT).
 ///
-/// non-RWLOCK only: the writer_count += 2 adoption arithmetic is #if !RWLOCK.  The
-/// race is irrelevant under RWLOCK (no writer_count), so this self-skips there.
+/// non-EXCL only: the writer_count += 2 adoption arithmetic is #if !EXCL.  The
+/// race is irrelevant under EXCL (no writer_count), so this self-skips there.
 /// Needs >= 3 ranks for two distinct remote creators; SKIPs cleanly otherwise.
 
 #include "arts.h"
@@ -111,8 +111,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== db_create_install_race ===\n");
 
-#if defined(ARTS_PROTOCOL_RWLOCK)
-  arts_printf("SKIP db_create_install_race: non-RWLOCK only (writer_count "
+#if defined(ARTS_PROTOCOL_EXCL)
+  arts_printf("SKIP db_create_install_race: non-EXCL only (writer_count "
               "adoption arm)\n");
   arts_shutdown();
   return;

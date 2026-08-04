@@ -523,17 +523,17 @@ class Runner:
 
 @dataclass(frozen=True)
 class Runtime:
-    key: str          # column id, e.g. "ocr_rcu_lazy", "xsocr", "ocrvx", "baseline"
+    key: str          # column id, e.g. "ocr_val_wb", "xsocr", "ocrvx", "baseline"
     label: str        # display
     kind: str         # "arts" | "xsocr" | "ocrvx" | "baseline"
     suffix: str = ""  # arts variant binary suffix (empty for non-arts)
 
 
 ARTS_VARIANTS = [
-    "ocr_rcu_eager", "ocr_rcu_lazy",
-    "wrf_rcu_eager",
-    "ocr_msi_eager", "ocr_msi_lazy",
-    "ocr_rwlock_eager", "ocr_rwlock_lazy",
+    "ocr_val_wt", "ocr_val_wb",
+    "wrf_val_wt",
+    "ocr_inv_wt", "ocr_inv_wb",
+    "ocr_excl_purge", "ocr_excl_retain",
 ]
 RUNTIMES: list[Runtime] = (
     [Runtime(s, f"arts_{s}", "arts", s) for s in ARTS_VARIANTS]

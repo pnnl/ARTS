@@ -11,39 +11,61 @@ This page is **normative**. It defines the memory-model contracts an ARTS
 build can provide, the coherence protocols that implement them, and the
 surrounding design space — both implemented and roadmap.
 
-Model, protocol, timing
------------------------
+Model, family, and the second axes
+----------------------------------
 
 A *memory (consistency) model* is a contract: it defines which values a read
 may legally return, and therefore which programs are valid. A *coherence
 protocol* is an implementation mechanism — replica management, admission
 control, ownership transfer, write-back — that satisfies some contract as a
-consequence of its design. ARTS keeps the two as **separate build axes**,
-plus a third for *when* consistency actions run:
+consequence of its design. ARTS keeps the contract and the mechanism as
+**separate build axes**, plus two second axes for what a release moves and
+when a grant goes back:
 
 * ``ARTS_MEMORY_MODEL`` selects the **contract** the build implements:
   ``OCR`` (default; races legal, the runtime orders every conflict it must) or
   ``DB_WRF`` (write-race-free at DataBlock granularity: the program must
   event-order every write-write conflict on a DB; evaluation only).
-* ``ARTS_COHERENCE_PROTOCOL`` selects the **mechanism**: ``RCU`` (default;
-  readers acquire versioned snapshots and are never blocked or invalidated)
-  or ``RWLOCK`` (queue-fair distributed reader–writer lock per DB).
-* ``ARTS_PROTOCOL_TIMING`` selects the **timing** of consistency actions —
-  when write-backs and ownership transfers are performed.
-  Values: ``EAGER`` (release-time) or ``LAZY`` (acquire-time, default).
+* ``ARTS_COHERENCE_PROTOCOL`` selects the coherence **family** — who keeps
+  reader copies valid: ``VAL`` (default; *validation* — each read acquire
+  checks its cached copy's version at the serving side and refetches only
+  when stale; readers are never blocked, tracked, or invalidated), ``INV``
+  (*invalidation* — reader copies stay valid until a writer's release
+  retires every standing copy in an acknowledged invalidation round), or
+  ``EXCL`` (*exclusion* — queue-fair distributed reader–writer lock per DB;
+  readers and writers take turns, so no stale copy ever exists).
+* ``ARTS_WRITE_POLICY`` selects the **write policy** of a node's DB cache at
+  release granularity — live under INV/VAL: ``WT`` (write-through at
+  release; the payload is flushed to the DB's home, which then serves reads)
+  or ``WB`` (default; write-back — the payload stays with the last writer
+  and moves only on demand, through directory forwarding).
+* ``ARTS_RELEASE_POLICY`` selects the **release policy** — what a node does
+  with its grant when the last local user finishes — live under EXCL:
+  ``PURGE`` (hand copy and permission back to the home) or ``RETAIN``
+  (default; keep both until another node asks, and let the home recall
+  them).
 
-Valid combinations — five in total, one build directory each:
-OCR×RCU×{EAGER,LAZY}, OCR×RWLOCK×{EAGER,LAZY}, DB_WRF×RCU×EAGER. Everything
-else is a configure-time ``FATAL_ERROR``: DB_WRF×RWLOCK is rejected because a
-reader–writer lock already serializes all writers, making the program-side
-write-ordering obligation redundant; DB_WRF×RCU×LAZY is rejected because the
-DB_WRF arm is home-canonical — the release-time write-back *is* what makes
-the home copy canonical.
+The axes are nominally independent: within OCR the family × write-policy ×
+release-policy space has 12 combinations, of which **six** are built (the
+non-live axis is pinned at its only sensible value in each family); DB_WRF
+adds one more, for **seven build configurations** in total, one build
+directory each: OCR×VAL×{WT,WB}, OCR×INV×{WT,WB}, OCR×EXCL×{PURGE,RETAIN},
+DB_WRF×VAL×WT. Everything else is a configure-time ``FATAL_ERROR`` naming
+the reason: EXCL×WT (under exclusion no copy outlives a write turn, so the
+payload rides the permission and the release policy already decides both),
+INV/VAL×PURGE (the migrating write grant is metadata-only in the
+sharer-bearing families; returning it early saves no data movement and only
+forfeits the message-free re-acquisition of a repeated local writer),
+DB_WRF×EXCL and DB_WRF×INV (both mechanisms already order writers at
+runtime — admission for EXCL, per-release rounds for INV — making the
+program-side write-ordering obligation redundant), and DB_WRF×VAL×WB
+(designed but unimplemented: the built DB_WRF arm is home-canonical, and the
+release-time write-through *is* what makes the home copy canonical).
 
 The model and protocol axes are genuinely orthogonal in one direction: the
-same RCU read path serves both contracts. What changes between OCR×RCU and
-DB_WRF×RCU is **who orders the update side** — the runtime (via a
-single-owner lease) under OCR, or the program (via events) under DB_WRF.
+same VAL read path serves both contracts. What changes between OCR×VAL and
+DB_WRF×VAL is **who orders the update side** — the runtime (via a
+single-owner grant) under OCR, or the program (via events) under DB_WRF.
 
 Every rank in a multinode run must use the same build.
 
@@ -52,7 +74,7 @@ Every rank in a multinode run must use the same build.
 The OCR contract (reference)
 -----------------------------
 
-The contract delivered by the default build (OCR × RCU) is the memory model
+The contract delivered by the default build (OCR × VAL) is the memory model
 of the *Open Community Runtime Interface*, version 1.2.0, §1.6, with the
 ``synchronized-with`` relation completed as in Dokulil, "Consistency model for
 runtime objects in the Open Community Runtime", J. Supercomputing 75:2725–2760,
@@ -115,9 +137,9 @@ non-conformance of ARTS).
 Implementations may be stronger; programs must not rely on it
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Every conforming implementation (both ARTS protocols, and likewise XSOCR and
-OCR-Vx) is incidentally *stronger* than the contract in places — e.g. the RCU
-protocol serializes unordered inter-node RW sessions via single-owner leases,
+Every conforming implementation (all three ARTS families, and likewise XSOCR and
+OCR-Vx) is incidentally *stronger* than the contract in places — e.g. the VAL
+protocol serializes unordered inter-node RW sessions via single-owner grants,
 and remote RO acquires observe an installed-version copy. These
 strengthenings are **never** part of the contract. A program that depends on
 them is *non-portable* (it may break on another conforming implementation or
@@ -156,7 +178,7 @@ rule (e.g. unordered sibling writers to disjoint regions of one DB) are
    DB_WRF exists to measure the cost of coherence obligations in benchmarks.
    Never use it as a correctness baseline; the build emits a CMake warning
    when selected. The correctness harness marks apps whose wiring relies on
-   guarantees outside this contract with ``wrf_rcu_skip`` (a
+   guarantees outside this contract with ``wrf_val_skip`` (a
    contract-ineligibility declaration, not a bug mask).
 
 .. _protocols:
@@ -164,13 +186,13 @@ rule (e.g. unordered sibling writers to disjoint regions of one DB) are
 The protocols
 -------------
 
-RCU — versioned snapshots, externally ordered updates (default)
+VAL — versioned snapshots, externally ordered updates (default)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-*Status:* implemented (``libs/src/core/coherence/rcu/`` — ``eager.c`` /
-``lazy.c`` + ``home.c`` + ``ownership.c``); selected by
-``-DARTS_COHERENCE_PROTOCOL=RCU`` (the default), timing by
-``ARTS_PROTOCOL_TIMING={EAGER,LAZY}`` (default ``LAZY``).
+*Status:* implemented (``libs/src/core/coherence/val/`` — ``directory.c`` +
+``wt.c`` + ``wb.c``, plus the shared grant plane ``coherence/grant.c``);
+selected by ``-DARTS_COHERENCE_PROTOCOL=VAL`` (the default), write policy by
+``ARTS_WRITE_POLICY={WT,WB}`` (default ``WB``).
 
 The name is used in McKenney's sense: **readers are never blocked and never
 invalidated**. A reader acquires a versioned snapshot and proceeds on it;
@@ -178,15 +200,15 @@ updates install new versions without disturbing readers in flight. The
 update side's ordering comes from *outside* the read path — which is exactly
 what the model axis selects:
 
-* **Under OCR** (OCR×RCU): write access is granted to at most one node at a
-  time via a single-owner lease. Within the owning node, multiple RW
+* **Under OCR** (OCR×VAL): write access is granted to at most one node at a
+  time via a single-owner grant. Within the owning node, multiple RW
   acquirers share a local buffer, so intra-node writes are multi-writer
   (hardware cache coherence keeps them consistent). A remote RW acquire
   requests ownership from the current owner; the owner completes its release,
-  ships the payload and transfers the lease. This serializes inter-node
+  ships the payload and transfers the grant. This serializes inter-node
   writes — the OCR non-overlapping rule holds because intra-node concurrent
   writes are hardware-coherent and inter-node ones never overlap in time.
-* **Under DB_WRF** (DB_WRF×RCU×EAGER, ``wrf_rcu/wrf_rcu.c``): no ownership
+* **Under DB_WRF** (DB_WRF×VAL×WT, ``wrf_val/wrf_val.c``): no ownership
   machinery at all. The home rank always holds the canonical payload;
   release writes the whole DB back to the home synchronously; acquires pull
   from the home. True concurrent multi-writer access is admitted at every
@@ -208,16 +230,40 @@ family: read-mostly cases where a lock or invalidation protocol wins are a
 philosophy difference, not a defect. RO snapshot serving is deduplicated by a
 per-rank ``cached_version`` ledger (a monotonic floor of what each rank's
 cache holds, credited by serves, by write-back installs, and by the
-releaser/shipper itself under LAZY): a request from a rank whose ledger
+releaser/shipper itself under WB): a request from a rank whose ledger
 already matches the master version receives a header-only, no-data reply.
 
-RWLOCK — queue-fair distributed reader–writer lock
+INV — write-invalidate, durable reader copies
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+*Status:* implemented (``libs/src/core/coherence/inv/`` — ``directory.c`` +
+``engine.c`` + ``wt.c`` + ``wb.c``, plus the shared grant plane
+``coherence/grant.c``); selected by ``-DARTS_COHERENCE_PROTOCOL=INV``,
+write policy by ``ARTS_WRITE_POLICY={WT,WB}``.
+
+The mirror of VAL on the validity-agent axis: the *writer* keeps reader
+copies valid. A reader's copy is durable — holding the copy is the
+permission to read it, so a repeated read on that node is a pure local load
+with no message, no atomic update, and no version comparison; a copy dies
+exactly one way, when an invalidation arrives. In exchange, every RW release
+returns only after an *invalidation round* covering it has closed: the home
+snapshots its sharer roster (one bit per node, set before a copy is served,
+so it safely over-approximates who might hold one), multicasts an
+invalidation, and collects an acknowledgment from every target; concurrent
+releases may be covered by one round. Write ownership is the same migrating
+grant VAL uses, and the sharer plane is deliberately **version-free** — a
+versioned sharer plane would already be halfway to VAL. Under ``WT`` the
+release additionally publishes the payload to the home, which then serves
+reads; under ``WB`` the publish is control-only and the home is a pure
+directory that registers readers and redirects them to the owner.
+
+EXCL — queue-fair distributed reader–writer lock
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-*Status:* implemented (``libs/src/core/coherence/rwlock/`` — ``eager.c`` /
-``lazy.c`` + ``home.c`` + ``arbiters.c``); selected by
-``-DARTS_COHERENCE_PROTOCOL=RWLOCK``, timing by
-``ARTS_PROTOCOL_TIMING={EAGER,LAZY}``.
+*Status:* implemented (``libs/src/core/coherence/excl/`` — ``arbiters.c`` +
+``directory.c`` + ``purge.c`` + ``retain.c``); selected by
+``-DARTS_COHERENCE_PROTOCOL=EXCL``, release policy by
+``ARTS_RELEASE_POLICY={PURGE,RETAIN}`` (default ``RETAIN``).
 
 Each DB carries a distributed reader–writer lock whose authoritative state is
 a single 64-bit ``lock_state`` word on the home rank: shared read grants
@@ -225,24 +271,34 @@ overlap; a write grant excludes everything; waiters queue fairly (in the
 tradition of queue-based reader–writer synchronization, Mellor-Crummey &
 Scott). Data ships with the grant, in the style of entry consistency — the
 consistency actions are scoped to the DB whose lock is being acquired.
-RWLOCK trivially satisfies the OCR contract (it is strictly stronger:
+EXCL trivially satisfies the OCR contract (it is strictly stronger:
 readers are isolated from writers by admission, not by promise) and serves as
 the lock-philosophy point of the design-space comparison.
+
+Because no copy outlives a write turn, permission and payload are one token
+here, and the release policy decides when that token goes back. Under
+``PURGE`` the release that ends a node's turn carries the payload to the
+home and returns the grant in the same message, making the home canonical;
+the next turn re-requests and re-fetches. Under ``RETAIN`` a release with
+nothing pending sends nothing: the home stays a pure directory naming the
+holder (callback-locking style — it recalls the grant when another node
+asks), and a second local write turn costs no traffic.
 
 Retired and rejected arms
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 * **MRSW** (multi-reader, single *global* writer; version-isolated reads) —
-  implemented in 2026-06 as a mirror of the RCU engine, retired in 2026-07 to
-  ``archive/coherence-mrsw/``. Its extra strength over OCR×RCU (forbidding
+  implemented in 2026-06 as a mirror of the VAL engine, retired in 2026-07 to
+  ``archive/coherence-mrsw/``. Its extra strength over OCR×VAL (forbidding
   even node-interleaved writer overlap) bought no benchmark insight for its
   maintenance cost. No configure value selects it.
-* **MSI / write-invalidate** — abandoned: on this workload class it was
-  dominated by both RWLOCK and RCU, and reader invalidation contradicts the
-  RCU philosophy above. OCR-Vx serves as the write-invalidate representative
-  in cross-runtime comparisons instead.
+* **Write-invalidate, first pass** — a 2026-06 evaluation set the
+  write-invalidate family aside; that judgment was reversed in 2026-07 and
+  the family is now the first-class INV arm above. OCR-Vx remains the
+  *independent* write-invalidate implementation used as a reference point in
+  cross-runtime comparisons.
 * **SRSW** (fully serialized single-reader/single-writer) — never built;
-  useful only as a debug lower bound, and RWLOCK already provides a strict,
+  useful only as a debug lower bound, and EXCL already provides a strict,
   deterministic baseline.
 
 .. _orthogonal_dimensions:
@@ -250,41 +306,62 @@ Retired and rejected arms
 Orthogonal protocol dimensions
 -------------------------------
 
-The implemented axes fix three points in a larger design space. The following
+The implemented axes fix seven points in a larger design space. The following
 dimensions are orthogonal to each other; entries marked *roadmap* are
 documented options, not commitments.
 
-Timing
-~~~~~~
+Write policy (payload placement)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-When are write-backs and ownership transfers performed?
+Where does the canonical payload rest between write turns? Live under
+INV/VAL (``ARTS_WRITE_POLICY``):
 
-* **EAGER** (release-time) — consistency actions run synchronously at
-  release: the releasing node writes back modified data (and, under RCU×OCR,
-  answers ownership transfers) before the release completes. Acquirers find
-  the DB ready. Trades release-side latency for shorter acquire paths.
-* **LAZY** (acquire-time, default) — consistency actions are deferred until
-  the next acquire or ownership transfer: the releaser is fast (local
-  metadata update only); the acquirer pulls the latest data on demand. Fewer
-  messages per release, but acquire latency includes the round trip.
-* **Invalidate-at-write** (rejected) — publishing invalidations at the moment
-  a write begins is the write-invalidate timing; see the MSI entry above.
+* **WT** (write-through at release) — the payload returns to the DB's home
+  at every RW release, synchronously acknowledged; the home always holds a
+  current copy and serves reads. Trades release-side flush bandwidth for
+  one-hop reads.
+* **WB** (write-back, default) — no payload moves at release: the canonical
+  payload stays with the last writer, and the home directory forwards
+  requesters to the owner. Trades a forwarding hop on first access for zero
+  flush traffic while ownership is reused.
+
+Under EXCL this axis is pinned at WB: no reader copy outlives a write turn,
+so a per-release flush would have nobody to serve, and the payload instead
+rides the permission (the release policy below decides both).
+
+Release policy (permission return)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When does the write grant go back? Live under EXCL
+(``ARTS_RELEASE_POLICY``):
+
+* **PURGE** — copy and permission return to the home as soon as the last
+  local user finishes; the next turn re-requests and re-fetches.
+* **RETAIN** (default) — both stay until another node asks; the home recalls
+  them on demand (callback-locking style), so a repeated local turn is free.
+
+Under INV/VAL this axis is pinned at RETAIN: the migrating write grant is
+metadata-only there, so returning it early saves no data movement and only
+forfeits the message-free re-acquisition of a repeated local writer.
 
 Propagation strategy
 ~~~~~~~~~~~~~~~~~~~~
 
 How does fresh data reach readers?
 
-* **Pull-on-acquire** (current RCU) — the acquirer pulls a versioned snapshot
+* **Pull-on-acquire** (current VAL) — the acquirer pulls a versioned snapshot
   from the serving side; stale replicas are never invalidated, they simply
   age out when re-acquired. One round trip per (non-deduplicated) acquire.
-* **Ship-with-grant** (current RWLOCK) — data travels with the lock grant;
+* **Invalidate-then-reread** (current INV) — stale copies are retired by
+  the writer's release-time round; a surviving copy is read with no message
+  at all, and a retired one is re-fetched on the next acquire.
+* **Ship-with-grant** (current EXCL) — data travels with the lock grant;
   admission control makes staleness impossible by construction.
 * **Update-and-push** (roadmap) — the releasing node proactively pushes the
   new value to current readers. Eliminates the pull round trip when the same
   DB is re-acquired RO by many readers in succession; costly if the push is
   discarded. Aggregation-style RO improvements are the accepted evolution
-  path for the RCU family (never reader invalidation).
+  path for the VAL family (never reader invalidation).
 
 Directory / ownership
 ~~~~~~~~~~~~~~~~~~~~~
@@ -293,13 +370,15 @@ Where does coherence bookkeeping live?
 
 * **Fixed home** (all current arms) — each DB has a designated home rank
   (set at creation; encoded in the GUID rank field). The home holds the
-  authoritative directory entry (RCU×OCR: lease directory; RWLOCK:
-  ``lock_state``; DB_WRF: the canonical payload itself). Simple and
+  authoritative directory entry (VAL×OCR: grant directory; INV: grant
+  directory + sharer roster; EXCL: ``lock_state``; DB_WRF: the canonical
+  payload itself). Simple and
   predictable; the home can become a hot-spot for highly shared DBs.
-* **Migratory owner** (partially present) — under RCU×OCR×LAZY the payload
-  and the per-rank serving ledger migrate with the ownership lease; the home
-  keeps only directory state. Full pointer-forwarding migration (home
-  consulted only on miss) remains roadmap.
+* **Migratory owner** (current WB placements, and EXCL under RETAIN) — the
+  payload (and, under VAL, the per-rank serving ledger) migrates with the
+  write grant; the home keeps only directory state and forwards requesters.
+  Full pointer-forwarding migration (home consulted only on miss) remains
+  roadmap.
 * **Hierarchical NUMA/cluster** (roadmap) — directory partitioned into
   levels (intra-socket, inter-socket, inter-node), exploiting locality to
   reduce long-distance traffic.
@@ -309,15 +388,18 @@ Read consistency
 
 What version of the DB's contents does a reader observe?
 
-* **Position-dependent** (current RCU) — a reader co-located with the owner
+* **Position-dependent** (current VAL) — a reader co-located with the owner
   binds to the live shared buffer; a remote reader receives an
   installed-version snapshot copy. Both are legal under both contracts.
-* **Lock-isolated** (current RWLOCK) — readers are admitted only when no
+* **Durable-copy** (current INV) — a reader's copy stays legal until an
+  invalidation retires it, so every re-read between two writes is
+  message-free and observes the last completed release.
+* **Lock-isolated** (current EXCL) — readers are admitted only when no
   writer holds the lock, so they always observe a quiescent DB.
 
 .. note::
 
-   The RCU position dependence gives racy programs *location-variable*
+   The VAL position dependence gives racy programs *location-variable*
    semantics: a co-located racy reader sits on live hardware-coherent memory
    (effectively the machine's TSO floor), while a remote racy reader sees a
    frozen snapshot whose guarantee is only per-word regularity — reading in
@@ -334,13 +416,13 @@ Multi-writer resolution
 When two writers' accesses to one DB are unordered, how are their writes
 reconciled?
 
-* **Node-exclusive serialization** (OCR×RCU) — intra-node: concurrent
-  hardware-coherent writes to a shared buffer; inter-node: the single-owner
-  lease serializes writers one node at a time. Preserves the OCR
-  non-overlapping rule.
-* **Admission exclusion** (OCR×RWLOCK) — the lock never grants two writers
+* **Node-exclusive serialization** (OCR×VAL, OCR×INV) — intra-node:
+  concurrent hardware-coherent writes to a shared buffer; inter-node: the
+  single-owner grant serializes writers one node at a time. Preserves the
+  OCR non-overlapping rule.
+* **Admission exclusion** (OCR×EXCL) — the lock never grants two writers
   concurrently anywhere; the question is moot.
-* **Lossy whole-DB write-back** (DB_WRF×RCU) — each release writes the whole
+* **Lossy whole-DB write-back** (DB_WRF×VAL) — each release writes the whole
   DB back to the home; the last write-back wins. Unordered writes are lost —
   hence the stricter program-side contract.
 * **Non-lossy merge** (roadmap) — diff- or twin-based merging in the
@@ -375,7 +457,7 @@ version-isolated reads — the design point the retired MRSW arm occupied.
 
 CDAG was considered as a coherence option for ARTS and was dropped:
 
-1. **Small delta over the RCU engine.** The single-owner lease already
+1. **Small delta over the VAL engine.** The single-owner grant already
    serializes inter-node writers; adding global writer exclusion and
    last-ancestor reads is a refinement of MRSW, not a separate protocol —
    and MRSW itself was retired for lack of benchmark insight.
@@ -414,15 +496,28 @@ the weak arm was corrected to DB-WRF, since read-write races remain legal),
 orthogonal to the mechanism axis. The mapping from the single-axis era is
 exact and behavior-preserving:
 
-* ``MRNEW + EAGER`` → ``OCR × RCU × EAGER``
-* ``MRNEW + LAZY``  → ``OCR × RCU × LAZY`` (default)
-* ``LOCK + E/L``    → ``OCR × RWLOCK × E/L``
-* ``MRMW``          → ``DB_WRF × RCU × EAGER``
+* ``MRNEW + EAGER`` → ``OCR × VAL × WT``
+* ``MRNEW + LAZY``  → ``OCR × VAL × WB`` (default)
+* ``LOCK + EAGER/LAZY`` → ``OCR × EXCL × PURGE/RETAIN``
+* ``MRMW``          → ``DB_WRF × VAL × WT``
 * ``MRSW``          → retired (``archive/coherence-mrsw/``)
 
 Using an old ``-DARTS_COHERENCE_PROTOCOL={MRNEW,MRMW,MRSW,LOCK}`` value causes
 a CMake ``FATAL_ERROR`` with this mapping, so existing build scripts are
-caught at configure time.
+caught at configure time. A 2026-07-31 terminology pass subsequently renamed
+the mechanism axis itself — ``RCU → VAL``, ``RWLOCK → EXCL``, ``MSI → INV``
+— and split the old ``ARTS_DATA_PLACEMENT={HOME,OWNER}`` axis into
+``ARTS_WRITE_POLICY={WT,WB}`` (live under VAL/INV) and
+``ARTS_RELEASE_POLICY={PURGE,RETAIN}`` (live under EXCL); using an old
+``-DARTS_COHERENCE_PROTOCOL={RCU,RWLOCK,MSI}`` or any
+``-DARTS_DATA_PLACEMENT=...`` value is likewise a configure-time
+``FATAL_ERROR`` with a mapping message. This page describes the current
+axes throughout; the intermediate 2026-07 vocabulary (``RCU``/``RWLOCK``/
+``MSI`` × ``HOME``/``OWNER``, and before it the ``ARTS_PROTOCOL_TIMING``
+``EAGER``/``LAZY`` axis) maps onto them as ``HOME → WT`` / ``OWNER → WB``
+under INV/VAL and ``HOME → PURGE`` / ``OWNER → RETAIN`` under EXCL
+(``EAGER``/``LAZY`` map the same way: ``EAGER → WT``/``PURGE``,
+``LAZY → WB``/``RETAIN``).
 
 References
 ----------
@@ -436,6 +531,8 @@ References
 * D. Hower et al., *Heterogeneous-race-free Memory Models*, ASPLOS 2014 (HRF).
 * T. Landwehr et al., *Designing Scalable Distributed Memory Models*, SC 2017 (Cache DAG Consistency).
 * G. R. Gao, V. Sarkar, *Location Consistency — A New Memory Model and Cache Consistency Protocol*, IEEE TC 49(8), 2000.
+* L. Censier, P. Feautrier, *A New Solution to Coherence Problems in Multicache Systems*, IEEE ToC, 1978 (directory protocols).
+* J. Archibald, J.-L. Baer, *Cache Coherence Protocols: Evaluation Using a Multiprocessor Simulation Model*, ACM TOCS, 1986 (write-invalidate vs write-update).
 * K. Gharachorloo et al., *Memory Consistency and Event Ordering in Scalable Shared-Memory Multiprocessors*, ISCA 1990.
 * P. Keleher et al., *Lazy Release Consistency for Software Distributed Shared Memory*, ISCA 1992.
 * B. Bershad, M. Zekauskas, W. Sawdon, *The Midway Distributed Shared Memory System*, COMPCON 1993.

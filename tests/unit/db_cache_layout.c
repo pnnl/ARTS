@@ -3,7 +3,7 @@
  * T048 — DB cache / db_s static layout invariants (B029: stub_size /
  * home_initialized layout, the historical "P6 teardown SIGSEGV" class).
  *
- * A non-home / lazy / creator-remote DB is allocated as a *cache-only stub* of
+ * A non-home / stub-installed / creator-remote DB is allocated as a *cache-only stub* of
  * arts_db_cache_stub_size() bytes instead of the full sizeof(struct arts_db_s).
  * The cache destructor reads db->home_initialized on EVERY free to decide
  * whether to tear the home directory down; on a stub it must read a (zeroed)
@@ -17,7 +17,7 @@
  *      OOB read caused the P6 SIGSEGV).
  *   3. stub_size == offsetof(arts_db_s, <first home-arm field>) — the stub ends
  *      exactly at the first home-directory field (rw_holder for the ownership
- *      protocols, cached_version for WRF_RCU, lock_state for RWLOCK), so it
+ *      protocols, cached_version for WRF_VAL, lock_state for EXCL), so it
  *      INCLUDES home_initialized but omits the bulky home directory.
  *   4. home_initialized is laid out AFTER db_type which is AFTER the cache —
  *      i.e. offsetof(cache)==0 < offsetof(db_type) <
@@ -42,11 +42,11 @@
 
 /* The protocol-dependent first home-arm field, mirroring
  * arts_db_cache_stub_size() in coherence/types.h. */
-#if defined(ARTS_PROTOCOL_WRF_RCU)
+#if defined(ARTS_PROTOCOL_WRF_VAL)
 #define FIRST_HOME_ARM_OFF offsetof(struct arts_db_s, cached_version)
-#elif defined(ARTS_PROTOCOL_RWLOCK)
+#elif defined(ARTS_PROTOCOL_EXCL)
 #define FIRST_HOME_ARM_OFF offsetof(struct arts_db_s, lock_state)
-#elif defined(ARTS_PROTOCOL_MSI)
+#elif defined(ARTS_PROTOCOL_INV)
 #define FIRST_HOME_ARM_OFF offsetof(struct arts_db_s, dir_state)
 #else
 #define FIRST_HOME_ARM_OFF offsetof(struct arts_db_s, rw_holder)

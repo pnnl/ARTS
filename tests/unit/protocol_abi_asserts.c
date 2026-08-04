@@ -5,8 +5,8 @@
  * Property under test
  * -------------------
  * protocol.h is the cross-rank wire contract.  Two ranks built in DIFFERENT
- * coherence configs (the 5 supported: RCU+EAGER, RCU+LAZY,
- * WRF_RCU, RWLOCK+EAGER, RWLOCK+LAZY) MUST agree byte-for-byte on:
+ * coherence configs (the 7 supported: VAL+HOME, VAL+OWNER, INV+HOME, INV+OWNER,
+ * WRF_VAL, EXCL+HOME, EXCL+OWNER) MUST agree byte-for-byte on:
  *   (1) `enum arts_msg_type` — every ordinal contiguous 0..MSG_COUNT-1, and
  *       MSG_COUNT itself, IDENTICAL across all 7 configs (the enum members are
  *       unconditional even where their dispatcher case is #ifdef'd out, so the
@@ -19,8 +19,8 @@
  * payload at offset sizeof(struct); a sizeof skew tears every payload.
  *
  * The golden values below were frozen from the current tree and verified
- * IDENTICAL across all 7 configs (only the RWLOCK-only structs, and the
- * RWLOCK+LAZY-only subset within them, differ in presence, never in the shared
+ * IDENTICAL across all 7 configs (only the EXCL-only structs, and the
+ * EXCL+OWNER-only subset within them, differ in presence, never in the shared
  * ordinals/offsets/sizes).  This TU is meant to be COMPILED ONCE PER
  * -DARTS_PROTOCOL_* config; the `_Static_assert`s catch any config that drifts
  * from the golden table at compile time.
@@ -39,8 +39,8 @@
  * protocol.h §4 documents a pad-field invariant: "Pad-fields exist to keep the
  * trailing payload on an 8-byte boundary ... the payload starts at sizeof() —
  * that offset must be 8-aligned."  The payload-carrying structs are
- * OWNERSHIP_RESPONSE, WRITEBACK, SNAPSHOT_RESPONSE, EDT_SATISFY_SLOT (for
- * DB_MODE_PTR), and — in RWLOCK builds — LOCK_GRANT, LOCK_RELEASE, and (RWLOCK+LAZY
+ * OWNERSHIP_RESPONSE, PUBLISH, SNAPSHOT_RESPONSE, EDT_SATISFY_SLOT (for
+ * DB_MODE_PTR), and — in EXCL builds — LOCK_GRANT, LOCK_RELEASE, and (EXCL+OWNER
  * only) LOCK_DELIVER.  This TU checks that sizeof() of each is a multiple of 8
  * at runtime (the invariant spans a pad field whose width is itself derived
  * from other fields, so it is not expressible as a single `_Static_assert`).
@@ -70,15 +70,15 @@ _Static_assert(MSG_TIME_SYNC_REQUEST == 6,
                "ordinal MSG_TIME_SYNC_REQUEST drifted");
 _Static_assert(MSG_TIME_SYNC_RESPONSE == 7,
                "ordinal MSG_TIME_SYNC_RESPONSE drifted");
-_Static_assert(MSG_DB_OWNERSHIP_REQUEST == 8,
-               "ordinal MSG_DB_OWNERSHIP_REQUEST drifted");
-_Static_assert(MSG_DB_OWNERSHIP_RESPONSE == 9,
-               "ordinal MSG_DB_OWNERSHIP_RESPONSE drifted");
-_Static_assert(MSG_DB_WRITEBACK == 10, "ordinal MSG_DB_WRITEBACK drifted");
-_Static_assert(MSG_DB_WRITEBACK_ACK == 11,
-               "ordinal MSG_DB_WRITEBACK_ACK drifted");
-_Static_assert(MSG_DB_OWNERSHIP_INVALIDATE == 12,
-               "ordinal MSG_DB_OWNERSHIP_INVALIDATE drifted");
+_Static_assert(MSG_DB_GRANT_REQUEST == 8,
+               "ordinal MSG_DB_GRANT_REQUEST drifted");
+_Static_assert(MSG_DB_GRANT_RESPONSE == 9,
+               "ordinal MSG_DB_GRANT_RESPONSE drifted");
+_Static_assert(MSG_DB_PUBLISH == 10, "ordinal MSG_DB_PUBLISH drifted");
+_Static_assert(MSG_DB_PUBLISH_ACK == 11,
+               "ordinal MSG_DB_PUBLISH_ACK drifted");
+_Static_assert(MSG_DB_GRANT_INVALIDATE == 12,
+               "ordinal MSG_DB_GRANT_INVALIDATE drifted");
 _Static_assert(MSG_DB_SNAPSHOT_REQUEST == 13,
                "ordinal MSG_DB_SNAPSHOT_REQUEST drifted");
 _Static_assert(MSG_DB_SNAPSHOT_RESPONSE == 14,
@@ -91,57 +91,42 @@ _Static_assert(MSG_EVENT_DESTROY == 18, "ordinal MSG_EVENT_DESTROY drifted");
 _Static_assert(MSG_EDT_DESTROY == 19, "ordinal MSG_EDT_DESTROY drifted");
 _Static_assert(MSG_DB_SNAPSHOT_REDIRECT == 20,
                "ordinal MSG_DB_SNAPSHOT_REDIRECT drifted");
-_Static_assert(MSG_DB_OWNERSHIP_CONFIRM == 21,
-               "ordinal MSG_DB_OWNERSHIP_CONFIRM drifted");
-_Static_assert(MSG_DB_OWNERSHIP_CONFIRM_ACK == 22,
-               "ordinal MSG_DB_OWNERSHIP_CONFIRM_ACK drifted");
-_Static_assert(MSG_DB_LOCK_REQUEST == 23,
-               "ordinal MSG_DB_LOCK_REQUEST drifted");
-_Static_assert(MSG_DB_LOCK_GRANT == 24, "ordinal MSG_DB_LOCK_GRANT drifted");
-_Static_assert(MSG_DB_LOCK_RELEASE == 25,
-               "ordinal MSG_DB_LOCK_RELEASE drifted");
-_Static_assert(MSG_DB_LOCK_RELEASE_ACK == 26,
-               "ordinal MSG_DB_LOCK_RELEASE_ACK drifted");
-_Static_assert(MSG_DB_LOCK_FORWARD == 27,
-               "ordinal MSG_DB_LOCK_FORWARD drifted");
-_Static_assert(MSG_DB_LOCK_DELIVER == 28,
-               "ordinal MSG_DB_LOCK_DELIVER drifted");
-_Static_assert(MSG_DB_LOCK_CONFIRM == 29,
-               "ordinal MSG_DB_LOCK_CONFIRM drifted");
-_Static_assert(MSG_DB_LOCK_RORET == 30, "ordinal MSG_DB_LOCK_RORET drifted");
-_Static_assert(MSG_DB_OWNERSHIP_CTS == 31,
-               "ordinal MSG_DB_OWNERSHIP_CTS drifted");
-_Static_assert(MSG_DB_WRITEBACK_CTS == 32,
-               "ordinal MSG_DB_WRITEBACK_CTS drifted");
-_Static_assert(MSG_DB_LOCK_CTS == 33, "ordinal MSG_DB_LOCK_CTS drifted");
+_Static_assert(MSG_DB_GRANT_CONFIRM == 21,
+               "ordinal MSG_DB_GRANT_CONFIRM drifted");
+_Static_assert(MSG_DB_GRANT_CONFIRM_ACK == 22,
+               "ordinal MSG_DB_GRANT_CONFIRM_ACK drifted");
+_Static_assert(MSG_DB_EXCL_REQUEST == 23,
+               "ordinal MSG_DB_EXCL_REQUEST drifted");
+_Static_assert(MSG_DB_EXCL_GRANT == 24, "ordinal MSG_DB_EXCL_GRANT drifted");
+_Static_assert(MSG_DB_EXCL_RELEASE == 25,
+               "ordinal MSG_DB_EXCL_RELEASE drifted");
+_Static_assert(MSG_DB_EXCL_RELEASE_ACK == 26,
+               "ordinal MSG_DB_EXCL_RELEASE_ACK drifted");
+_Static_assert(MSG_DB_EXCL_FORWARD == 27,
+               "ordinal MSG_DB_EXCL_FORWARD drifted");
+_Static_assert(MSG_DB_EXCL_DELIVER == 28,
+               "ordinal MSG_DB_EXCL_DELIVER drifted");
+_Static_assert(MSG_DB_EXCL_CONFIRM == 29,
+               "ordinal MSG_DB_EXCL_CONFIRM drifted");
+_Static_assert(MSG_DB_EXCL_RORET == 30, "ordinal MSG_DB_EXCL_RORET drifted");
+_Static_assert(MSG_DB_GRANT_CTS == 31,
+               "ordinal MSG_DB_GRANT_CTS drifted");
+_Static_assert(MSG_DB_PUBLISH_CTS == 32,
+               "ordinal MSG_DB_PUBLISH_CTS drifted");
+_Static_assert(MSG_DB_EXCL_CTS == 33, "ordinal MSG_DB_EXCL_CTS drifted");
 _Static_assert(MSG_RDZV_PUSH_RTS == 34, "ordinal MSG_RDZV_PUSH_RTS drifted");
 _Static_assert(MSG_RDZV_PUSH_CTS == 35, "ordinal MSG_RDZV_PUSH_CTS drifted");
-_Static_assert(MSG_DB_MSI_REQUEST == 36, "ordinal MSG_DB_MSI_REQUEST drifted");
-_Static_assert(MSG_DB_MSI_CTS == 37, "ordinal MSG_DB_MSI_CTS drifted");
-_Static_assert(MSG_DB_MSI_DELIVER == 38, "ordinal MSG_DB_MSI_DELIVER drifted");
-_Static_assert(MSG_DB_MSI_GRANT == 39, "ordinal MSG_DB_MSI_GRANT drifted");
-_Static_assert(MSG_DB_MSI_WRITEBACK == 40,
-               "ordinal MSG_DB_MSI_WRITEBACK drifted");
-_Static_assert(MSG_DB_MSI_WRITEBACK_ACK == 41,
-               "ordinal MSG_DB_MSI_WRITEBACK_ACK drifted");
-_Static_assert(MSG_DB_MSI_INVALIDATE == 42,
-               "ordinal MSG_DB_MSI_INVALIDATE drifted");
-_Static_assert(MSG_DB_MSI_INVALIDATE_ACK == 43,
-               "ordinal MSG_DB_MSI_INVALIDATE_ACK drifted");
-_Static_assert(MSG_DB_MSI_REDIR == 44, "ordinal MSG_DB_MSI_REDIR drifted");
-_Static_assert(MSG_DB_MSI_FWDM == 45, "ordinal MSG_DB_MSI_FWDM drifted");
-_Static_assert(MSG_DB_MSI_DELIVER_RW == 46,
-               "ordinal MSG_DB_MSI_DELIVER_RW drifted");
-_Static_assert(MSG_DB_MSI_CONFIRM == 47,
-               "ordinal MSG_DB_MSI_CONFIRM drifted");
-_Static_assert(MSG_DB_MSI_CONFIRM_ACK == 48,
-               "ordinal MSG_DB_MSI_CONFIRM_ACK drifted");
-_Static_assert(MSG_DB_MSI_ROUND_REQ == 49,
-               "ordinal MSG_DB_MSI_ROUND_REQ drifted");
-_Static_assert(MSG_DB_MSI_ROUND_DONE == 50,
-               "ordinal MSG_DB_MSI_ROUND_DONE drifted");
-_Static_assert(MSG_COUNT == 51,
-               "MSG_COUNT drifted (wire-compat: must be 51 in all configs)");
+_Static_assert(MSG_DB_INV_REQUEST == 36, "ordinal MSG_DB_INV_REQUEST drifted");
+_Static_assert(MSG_DB_INV_CTS == 37, "ordinal MSG_DB_INV_CTS drifted");
+_Static_assert(MSG_DB_INV_DELIVER == 38, "ordinal MSG_DB_INV_DELIVER drifted");
+_Static_assert(MSG_DB_INV_INVALIDATE == 39,
+               "ordinal MSG_DB_INV_INVALIDATE drifted");
+_Static_assert(MSG_DB_INV_INVALIDATE_ACK == 40,
+               "ordinal MSG_DB_INV_INVALIDATE_ACK drifted");
+_Static_assert(MSG_DB_INV_REDIRECT == 41,
+               "ordinal MSG_DB_INV_REDIRECT drifted");
+_Static_assert(MSG_COUNT == 42,
+               "MSG_COUNT drifted (wire-compat: must be 42 in all configs)");
 
 /* ===== (2) header layout — read before the message type is known. ===== */
 _Static_assert(offsetof(struct arts_msg_header_s, message_type) == 0,
@@ -187,17 +172,17 @@ _Static_assert(sizeof(struct arts_msg_time_sync_req_packet_s) == 24,
                "time_sync_req sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_time_sync_resp_packet_s) == 32,
                "time_sync_resp sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_ownership_request_packet_s) == 56,
+_Static_assert(sizeof(struct arts_msg_grant_request_packet_s) == 56,
                "ownership_request sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_ownership_response_packet_s) == 64,
+_Static_assert(sizeof(struct arts_msg_grant_response_packet_s) == 64,
                "ownership_response sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_writeback_packet_s) == 64,
-               "writeback sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_writeback_ack_packet_s) == 32,
-               "writeback_ack sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_ownership_invalidate_packet_s) == 64,
+_Static_assert(sizeof(struct arts_msg_publish_packet_s) == 64,
+               "publish sizeof drifted");
+_Static_assert(sizeof(struct arts_msg_publish_ack_packet_s) == 32,
+               "publish_ack sizeof drifted");
+_Static_assert(sizeof(struct arts_msg_grant_invalidate_packet_s) == 64,
                "ownership_invalidate sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_ownership_confirm_ack_packet_s) == 64,
+_Static_assert(sizeof(struct arts_msg_grant_confirm_ack_packet_s) == 64,
                "ownership_confirm_ack sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_snapshot_request_packet_s) == 72,
                "snapshot_request sizeof drifted");
@@ -215,35 +200,35 @@ _Static_assert(sizeof(struct arts_msg_rank_version_pair_s) == 16,
                "rank_version_pair sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_rdzv_landing_s) == 32,
                "rdzv_landing sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_ownership_cts_packet_s) == 32,
+_Static_assert(sizeof(struct arts_msg_grant_cts_packet_s) == 32,
                "ownership_cts sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_writeback_cts_packet_s) == 64,
-               "writeback_cts sizeof drifted");
+_Static_assert(sizeof(struct arts_msg_publish_cts_packet_s) == 64,
+               "publish_cts sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_rdzv_push_rts_packet_s) == 32,
                "rdzv_push_rts sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_rdzv_push_cts_packet_s) == 56,
                "rdzv_push_cts sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_ownership_confirm_packet_s) == 32,
+_Static_assert(sizeof(struct arts_msg_grant_confirm_packet_s) == 32,
                "ownership_confirm sizeof drifted");
-#ifdef ARTS_PROTOCOL_RWLOCK
-_Static_assert(sizeof(struct arts_msg_lock_request_packet_s) == 64,
+#ifdef ARTS_PROTOCOL_EXCL
+_Static_assert(sizeof(struct arts_msg_excl_request_packet_s) == 64,
                "lock_request sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_lock_grant_packet_s) == 96,
+_Static_assert(sizeof(struct arts_msg_excl_grant_packet_s) == 96,
                "lock_grant sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_lock_release_packet_s) == 72,
+_Static_assert(sizeof(struct arts_msg_excl_release_packet_s) == 72,
                "lock_release sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_lock_release_ack_packet_s) == 32,
+_Static_assert(sizeof(struct arts_msg_excl_release_ack_packet_s) == 32,
                "lock_release_ack sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_lock_cts_packet_s) == 40,
+_Static_assert(sizeof(struct arts_msg_excl_cts_packet_s) == 40,
                "lock_cts sizeof drifted");
-#ifdef ARTS_TIMING_LAZY
-_Static_assert(sizeof(struct arts_msg_lock_forward_packet_s) == 64,
+#ifdef ARTS_RELEASE_RETAIN
+_Static_assert(sizeof(struct arts_msg_excl_forward_packet_s) == 64,
                "lock_forward sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_lock_deliver_packet_s) == 56,
+_Static_assert(sizeof(struct arts_msg_excl_deliver_packet_s) == 56,
                "lock_deliver sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_lock_confirm_packet_s) == 24,
+_Static_assert(sizeof(struct arts_msg_excl_confirm_packet_s) == 24,
                "lock_confirm sizeof drifted");
-#endif /* ARTS_TIMING_LAZY */
+#endif /* ARTS_RELEASE_RETAIN */
 #endif
 #endif /* !SEQUENCENUMBERS */
 
@@ -270,17 +255,17 @@ int main(void) {
 
   const struct payload_pkt pkts[] = {
       {"OWNERSHIP_RESPONSE",
-       sizeof(struct arts_msg_ownership_response_packet_s), 1},
-      {"WRITEBACK", sizeof(struct arts_msg_writeback_packet_s), 1},
+       sizeof(struct arts_msg_grant_response_packet_s), 1},
+      {"PUBLISH", sizeof(struct arts_msg_publish_packet_s), 1},
       {"SNAPSHOT_RESPONSE", sizeof(struct arts_msg_snapshot_response_packet_s),
        1},
       {"EDT_SATISFY_SLOT", sizeof(struct arts_msg_edt_satisfy_slot_packet_s),
        1},
-#ifdef ARTS_PROTOCOL_RWLOCK
-      {"LOCK_GRANT", sizeof(struct arts_msg_lock_grant_packet_s), 1},
-      {"LOCK_RELEASE", sizeof(struct arts_msg_lock_release_packet_s), 1},
-#ifdef ARTS_TIMING_LAZY
-      {"LOCK_DELIVER", sizeof(struct arts_msg_lock_deliver_packet_s), 1},
+#ifdef ARTS_PROTOCOL_EXCL
+      {"EXCL_GRANT", sizeof(struct arts_msg_excl_grant_packet_s), 1},
+      {"EXCL_RELEASE", sizeof(struct arts_msg_excl_release_packet_s), 1},
+#ifdef ARTS_RELEASE_RETAIN
+      {"EXCL_DELIVER", sizeof(struct arts_msg_excl_deliver_packet_s), 1},
 #endif
 #endif
   };

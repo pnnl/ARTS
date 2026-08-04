@@ -25,25 +25,25 @@
 extern "C" {
 #endif
 
-#include <semaphore.h> /* sem_t — await_writeback_ack signature */
+#include <semaphore.h> /* sem_t — await_publish_ack signature */
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 
 /* The DB coherence layout structs (arts_db_buffer_s, arts_db_rw_waiter_s,
- * arts_db_snapshot_waiter_s, arts_home_lockreq_queue_s + node,
+ * arts_db_snapshot_waiter_s, arts_home_grantreq_queue_s + node,
  * arts_db_cache_s, arts_db_s) and the arts_db_atomic_uint_t typedef live in
  * coherence_types.h (pulled in via runtime_types.h), because struct arts_db_s
  * embeds arts_db_cache_s by value as its first member and inlines the
  * home-directory fields, so it needs the complete cache type.  This header
  * keeps only the protocol function declarations. */
 #include "arts/runtime_types.h"
-#include "arts/utils/shared.h" /* arts_shared_ptr_t — lazy_install return type */
+#include "arts/utils/shared.h" /* arts_shared_ptr_t — stub_install return type */
 
 /*--- Pending RW Treiber-stack lifecycle helpers --------------------------
  * The per-cache RW waiter chain exists only under RCU: it parks same-node RW
  * EDTs that piggyback on an in-flight ownership round. */
-#if defined(ARTS_PROTOCOL_RCU)
+#if defined(ARTS_PROTOCOL_VAL)
 void arts_pending_rw_queue_init(arts_lf_stack_t *q);
 /* Push a waiter (multi-producer).  Caller fills edt_guid/slot before
  * calling.  Waiter must be heap-allocated; the stack takes ownership and
@@ -75,16 +75,16 @@ typedef enum {
    * buffer (zero-init), writer_count = 0, home struct with rw_holder
    * = creator_rank. */
   ARTS_DB_INIT_HOME_RECV,
-  /* Lazy install on a sharer that is neither creator nor home, or
+  /* Stub install on a sharer that is neither creator nor home, or
    * pre-DB_CREATE arrival on home: no buffer, writer_count = 0. */
-  ARTS_DB_INIT_LAZY,
+  ARTS_DB_INIT_STUB,
 } arts_db_init_kind_t;
 
 /* Initialize a coherence cache_s in place for db_guid.  The cache is
  * embedded by value as the first member of struct arts_db_s; the caller
  * allocates (and zeroes) the db_s and passes &db->cache.  Used by
  * db_create_in_place (creator side), the DB_CREATE wire handler (home
- * side), and lazy install on consumer ranks.  creator_rank: only consulted
+ * side), and stub install on consumer ranks.  creator_rank: only consulted
  * when kind == ARTS_DB_INIT_HOME_RECV (used to set home->rw_holder).
  * Defined in coherence.c. */
 void arts_db_cache_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
@@ -108,7 +108,7 @@ void arts_db_cache_destructor(struct arts_db_cache_s *cache);
  *
  * Implements the 8-case dispatcher (HOME × OWNER × {RO, RW}), the remote
  * acquire helpers (OWNERSHIP_REQUEST for RW, GET_DATA for RO), the
- * GRANT/DATA_RESPONSE-side drain routines, and the lazy first-touch cache_s
+ * GRANT/DATA_RESPONSE-side drain routines, and the OWNER first-touch cache_s
  * allocation for foreign ranks.
  *
  * Result enum, returned by the remote acquire helpers
@@ -124,12 +124,12 @@ typedef enum {
   ARTS_DB_ACQUIRE_PARK,
 } arts_db_acquire_result_t;
 
-/* Lazy first-touch: allocate cache_s on this rank if absent.  Used by the
+/* Stub first-touch: allocate cache_s on this rank if absent.  Used by the
  * acquire path when a lookup_db miss is observed on a remote-owned DB.
  * Returns a PINNED handle to the db_s whose cache it installed; the caller
  * MUST arts_shared_release it on every control-flow path.  A NULL handle =
  * the DB was destroyed before the install could be observed. */
-arts_shared_ptr_t arts_db_cache_lazy_install(arts_guid_t db_guid,
+arts_shared_ptr_t arts_db_cache_stub_install(arts_guid_t db_guid,
                                              uint64_t db_size);
 
 /* OOO_DB_ACQUIRE Cat-B body (per model). item = the installed db_s; args =
@@ -154,9 +154,9 @@ void mark_edt_secured_by_guid(arts_guid_t edt_guid, unsigned int slot);
 
 /* Per-protocol classification used by the arts_db_acquire_all driver: returns
  * true for deps that take exclusive ownership through the home directory and
- * must be GUID-serialized (eager/lazy RW). RO is never serialized; WRF_RCU
+ * must be GUID-serialized (HOME/OWNER RW). RO is never serialized; WRF_RCU
  * serializes nothing (every acquire is a home snapshot). Defined in
- * coherence/{eager,lazy,wrf_rcu}.c. */
+ * each arm's own placement TU. */
 bool arts_db_acquire_is_serialized(arts_db_access_mode_t mode);
 
 /*--- Release path --------------------------------------------------------
@@ -167,13 +167,13 @@ bool arts_db_acquire_is_serialized(arts_db_access_mode_t mode);
  *
  *   R1 (home == self,  rest > 0):  version++; nothing else
  *   R2 (home == self,  rest == 0): version++; local_transfer
- *   R3 (home != self,  rest > 0):  version++; WRITEBACK_NORMAL + await ACK
- *   R4 (home != self,  rest == 0): version++; WRITEBACK_AND_TRANSFER + await
+ *   R3 (home != self,  rest > 0):  version++; PUBLISH_NORMAL + await ACK
+ *   R4 (home != self,  rest == 0): version++; PUBLISH_AND_TRANSFER + await
  * ACK
  *
  * If destroy is locally marked when release_rw enters, all wire sends are
  * skipped — destroy commits the runtime to teardown and any state we would
- * have written back is moot. */
+ * have published is moot. */
 
 /* Release a RW acquire.  Cache-only signature: the dual-stack model keeps
  * user data at cache->user_data and the buf is just a coherence handle owned
@@ -189,32 +189,32 @@ void arts_db_release_ro(struct arts_db_cache_s *cache);
  * helpers.  These are the genuinely shared coherence internals the per-model
  * handler bodies reuse; they carry no model #ifdef. */
 
-/* Releaser-side writeback rendezvous: the stack-local wait state a blocked
- * RW releaser parks on across the dirty-writeback round.  Its ADDRESS travels
- * as the wire `cv` and every reply (WRITEBACK_CTS, WRITEBACK_ACK) wakes it by
+/* Releaser-side publish rendezvous: the stack-local wait state a blocked
+ * RW releaser parks on across the dirty-publish round.  Its ADDRESS travels
+ * as the wire `cv` and every reply (PUBLISH_CTS, PUBLISH_ACK) wakes it by
  * pointer identity.  `sem` MUST be the first member: the ACK path posts
  * (sem_t *)cv directly, so &wr == &wr.sem.  The CTS handler writes `landing`
  * before posting (sem_post is the release/acquire edge). */
-struct arts_db_wb_rendezvous_s {
+struct arts_db_pub_rendezvous_s {
   sem_t sem; /* FIRST — cv posts resolve to this address */
   struct arts_rdzv_landing_s landing;
 };
 
-/* Synchronous dirty/data-less writeback round to the DB's home (EAGER-timing
+/* Synchronous dirty/data-less publish round to the DB's home (HOME-placement
  * ownership protocols + the lossy multi-writer protocol).  Same-rank and
  * data-less rounds are a single announce+ACK; a remote dirty round runs
- * announce -> home landing (WRITEBACK_CTS) -> one-sided PUT -> commit -> ACK.
+ * announce -> home landing (PUBLISH_CTS) -> one-sided PUT -> commit -> ACK.
  * The caller must hold a strong ref on the buffer backing `data` across the
  * call (the ACK follows the target-side write completion, which implies the
  * fabric has fully drained the source).  Blocks the calling worker; returns
  * early only on shutdown. */
-void arts_db_writeback_sync(struct arts_db_cache_s *cache, uint64_t version,
+void arts_db_publish_sync(struct arts_db_cache_s *cache, uint64_t version,
                             const void *data, uint64_t data_size);
 
-/* Block on a stack-local semaphore until the matching WRITEBACK_ACK posts it
- * (pointer identity); returns early if teardown begins.  Used by the eager and
+/* Block on a stack-local semaphore until the matching PUBLISH_ACK posts it
+ * (pointer identity); returns early if teardown begins.  Used by the HOME and
  * WRF_RCU release-tail bodies. */
-void await_writeback_ack(sem_t *cv);
+void await_publish_ack(sem_t *cv);
 
 /* Take the EDT's strong buffer ref and return buf->data (NULL when no buffer is
  * installed).  Used by the per-protocol acquire bodies. */
@@ -222,7 +222,7 @@ void *arts_db_acquire_local(struct arts_db_cache_s *cache);
 
 /* Fire SNAPSHOT_REQUEST (edt_guid + slot) to home and PARK.  Shared by the
  * RCU/WRF_RCU acquire bodies (not RWLOCK, which uses LOCK_REQUEST). */
-#if !defined(ARTS_PROTOCOL_RWLOCK) && !defined(ARTS_PROTOCOL_MSI)
+#if !defined(ARTS_PROTOCOL_EXCL) && !defined(ARTS_PROTOCOL_INV)
 arts_db_acquire_result_t
 arts_db_acquire_remote_ro(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
                           unsigned int slot);
@@ -237,8 +237,8 @@ void mark_edt_ready_by_guid(arts_guid_t edt_guid, unsigned int slot);
  * (GRANT / TRANSFER_OWNERSHIP / DATA_RESPONSE case 2). */
 void arts_db_drain_pending_snapshot(struct arts_db_cache_s *cache);
 
-#if defined(ARTS_RO_REQUEST_COMBINING) && !defined(ARTS_PROTOCOL_RWLOCK) && \
-    !defined(ARTS_PROTOCOL_MSI)
+#if defined(ARTS_RO_REQUEST_COMBINING) && !defined(ARTS_PROTOCOL_EXCL) && \
+    !defined(ARTS_PROTOCOL_INV)
 /* Response-terminal hook of the remote-read combining window: resume the
  * in-flight batch against the now-current buffer (buffer_live), or park it on
  * the reorder buffer with target `version` (reorder case), then re-arm the
@@ -270,40 +270,40 @@ void arts_db_cache_common_destroy_pre(struct arts_db_cache_s *cache);
 void arts_db_cache_common_destroy_post(struct arts_db_cache_s *cache);
 
 /* Case-D (arts_handler_db_create) per-protocol leaf functions.
- * publish_holder: eager/lazy store creator_rank as the home rw_holder, WRF_RCU
+ * publish_holder: HOME/OWNER store creator_rank as the home rw_holder, WRF_RCU
  * no-op; install_home_buffer: WRF_RCU installs a version-1 zero buffer (home
- * is always canonical), eager/lazy defer the install to the creator's first
- * WRITEBACK (no-op here).  Defined once per protocol TU. */
+ * is always canonical), HOME/OWNER defer the install to the creator's first
+ * PUBLISH (no-op here).  Defined once per protocol TU. */
 void arts_db_create_publish_holder(struct arts_db_s *db,
                                    unsigned int creator_rank);
 void arts_db_create_install_home_buffer(struct arts_db_cache_s *cache,
                                         uint64_t db_size);
 
-#if defined(ARTS_PROTOCOL_RCU)
+#if defined(ARTS_PROTOCOL_VAL)
 /* Single-owner ownership machinery of the RCU protocol
- * (defined in coherence/<proto>/ownership.c).  Called by the EAGER/LAZY
+ * (defined in coherence/<proto>/grant.c).  Called by the HOME/OWNER
  * arts_handler_db_acquire bodies; the RO-path predicate is the only divergence
- * between EAGER and LAZY, so it stays inline in each protocol's handler.
+ * between HOME and OWNER, so it stays inline in each protocol's handler.
  *
  * arts_db_acquire_remote_rw: the remote-RW acquire path.  Pushes a
- * pending_rw waiter and kicks a OWNERSHIP_REQUEST if none is in flight —
+ * pending_rw waiter and kicks an OWNERSHIP_REQUEST if none is in flight —
  * returns PARK. */
 arts_db_acquire_result_t
 arts_db_acquire_remote_rw(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
                           unsigned int slot);
 
-/* Per-protocol ownership-round seams (defined in coherence/eager.c and
- * coherence/lazy.c, called from the OWNERSHIP_REQUEST / RELEASE_OWNERSHIP
- * handlers).  start: the eager protocol INVALIDATEs the current holder; the
- * lazy protocol pops the FIFO target + starts the invalidate round.  return:
- * the eager protocol advances the chain; the lazy protocol never receives
+/* Per-protocol ownership-round seams (defined in coherence/home.c and
+ * coherence/owner.c, called from the OWNERSHIP_REQUEST / RELEASE_OWNERSHIP
+ * handlers).  start: the HOME placement INVALIDATEs the current holder; the
+ * OWNER protocol pops the FIFO target + starts the invalidate round.  return:
+ * the HOME placement advances the chain; the OWNER placement never receives
  * RELEASE_OWNERSHIP (no-op). */
-void arts_db_start_ownership_round(struct arts_db_cache_s *cache,
+void arts_db_start_grant_round(struct arts_db_cache_s *cache,
                                    struct arts_db_s *db,
                                    unsigned int requester);
 #endif /* RCU */
 
-#if defined(ARTS_PROTOCOL_RCU)
+#if defined(ARTS_PROTOCOL_VAL)
 /* arts_db_acquire_rw_local_fast: the case-2/6 RW local fast path (RCU).
  * CAS-increments writer_count "if positive"; on success writes dep->ptr
  * (acquire_local) and returns true; returns false when writer_count went to 0
@@ -320,10 +320,10 @@ void arts_pending_rw_queue_for_each(arts_lf_stack_t *q,
                                     void *ctx);
 #endif /* RCU */
 
-#if defined(ARTS_PROTOCOL_RCU)
+#if defined(ARTS_PROTOCOL_VAL)
 /* GRANT drain: install the granted waiters — pops every pending_rw waiter
- * (bump writer_count per waiter).  Defined in coherence/<proto>/ownership.c;
- * called from the EAGER GRANT handler and the LAZY CONFIRM_ACK handler. */
+ * (bump writer_count per waiter).  Defined in coherence/<proto>/grant.c;
+ * called from the HOME GRANT handler and the OWNER CONFIRM_ACK handler. */
 void arts_db_drain_pending_rw_after_grant(struct arts_db_cache_s *cache,
                                           uint64_t version, bool has_next);
 #endif /* RCU */

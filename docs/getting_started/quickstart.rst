@@ -53,16 +53,16 @@ the ``ARTS_CONFIG`` environment variable).  A minimal configuration:
 
    [ARTS]
    worker_threads=4
-   launcher=ssh
-   node_count=1
-   nodes=localhost
-   default_ports=34739
+   launcher=local
 
-Copy the sample config for a quick start:
+The annotated reference listing every recognized key is
+``configs/example.cfg`` (documentation only — copy the entries you need
+into your ``arts.cfg``). Ready-to-run localhost shapes live in
+``configs/local/test/``:
 
 .. code-block:: bash
 
-   cp <arts-root>/sample_configs/arts.cfg .
+   cp <arts-root>/configs/local/test/1n.cfg ./arts.cfg
 
 Building and Running
 --------------------
@@ -86,10 +86,15 @@ For SSH-based multi-node runs, list nodes in ``arts.cfg``:
 
 .. code-block:: ini
 
+   launcher=ssh
    node_count=4
    nodes=node1,node2,node3,node4
+   default_ports=25000
 
-Then launch normally — ARTS SSHs into each node automatically.
+Then launch normally — ARTS SSHs into each node automatically. Pick a
+``default_ports`` base below the kernel ephemeral port range (32768–60999);
+a base inside it can randomly collide with outgoing connections' source
+ports.
 
 For SLURM clusters:
 

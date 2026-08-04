@@ -56,7 +56,7 @@ target_include_directories(ocr_xsocr_objects PRIVATE
 # OCR_HINT_DB_LAZY (retain a DB at its current owner and migrate it on the next
 # acquire) are gated by ALLOW_EAGER_DB / ENABLE_LAZY_DB.  Both are left
 # undefined so every datablock uses the factory's default home-centric protocol
-# (fetch-on-acquire, writeback-to-home-on-release) uniformly; the advisory
+# (fetch-on-acquire, publish-to-home-on-release) uniformly; the advisory
 # hints, which only some apps set, are then inert.  This keeps the runtime's
 # coherence behaviour single and uniform across all blocks.  The
 # channel/collective extension chain below is unrelated and stays enabled.

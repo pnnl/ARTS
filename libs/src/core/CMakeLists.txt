@@ -57,16 +57,18 @@ target_link_libraries(arts_compute PRIVATE arts_interface)
 if(HWLOC_INCLUDE_DIRS)
     target_include_directories(arts_compute PRIVATE ${HWLOC_INCLUDE_DIRS})
 endif()
-arts_apply_protocol(arts_compute ${ARTS_COHERENCE_ARM} ${ARTS_PROTOCOL_TIMING})
+arts_apply_protocol(arts_compute ${ARTS_COHERENCE_ARM} ${ARTS_WRITE_POLICY} ${ARTS_RELEASE_POLICY})
 target_compile_definitions(arts_compute PRIVATE ARTS_NOHINT_EDT_ROUNDROBIN=${_ARTS_NOHINT_EDT_RR})
 
-# DB coherence TU selection: RCU compiles one timing TU (eager.c or lazy.c)
-# plus its single-owner ownership machinery (ownership.c + the home
-# OWNERSHIP_REQUEST FIFO home.c). WRF_RCU compiles wrf_rcu.c alone (it
-# carries no ownership lease, so the home lockreq queue / home.c are not linked).
+# DB coherence TU selection: each arm compiles its live-axis TU (wt.c/wb.c,
+# or purge.c/retain.c for EXCL) plus its shared directory infrastructure
+# (directory.c).  Arms whose ownership is a migrating sentinel grant (VAL,
+# INV) also link the protocol-independent grant plane (coherence/grant.c).
+# WRF_VAL compiles wrf_val.c alone (it carries no ownership grant, so neither
+# the request queue nor directory.c is linked).
 # Each TU defines its arts_handler_db_* / arts_db_* bodies directly; the linker
 # resolves the single compiled variant.
-arts_coherence_model_tus(DB_COHERENCE_MODEL_TU ${ARTS_COHERENCE_ARM} ${ARTS_PROTOCOL_TIMING})
+arts_coherence_model_tus(DB_COHERENCE_MODEL_TU ${ARTS_COHERENCE_ARM} ${ARTS_WRITE_POLICY} ${ARTS_RELEASE_POLICY})
 
 # DB + coherence (db.c carries CUDA staging paths -> GPU wrapper).
 set(ARTS_MEMORY_SOURCES
@@ -79,7 +81,7 @@ target_link_libraries(arts_memory PRIVATE arts_interface)
 if(HWLOC_INCLUDE_DIRS)
     target_include_directories(arts_memory PRIVATE ${HWLOC_INCLUDE_DIRS})
 endif()
-arts_apply_protocol(arts_memory ${ARTS_COHERENCE_ARM} ${ARTS_PROTOCOL_TIMING})
+arts_apply_protocol(arts_memory ${ARTS_COHERENCE_ARM} ${ARTS_WRITE_POLICY} ${ARTS_RELEASE_POLICY})
 
 # Event + EDT execution context (CPU-only; reused as-is in GPU builds).
 add_library(arts_sync OBJECT event.c edt_context.c)
@@ -87,7 +89,7 @@ target_link_libraries(arts_sync PRIVATE arts_interface)
 if(HWLOC_INCLUDE_DIRS)
     target_include_directories(arts_sync PRIVATE ${HWLOC_INCLUDE_DIRS})
 endif()
-arts_apply_protocol(arts_sync ${ARTS_COHERENCE_ARM} ${ARTS_PROTOCOL_TIMING})
+arts_apply_protocol(arts_sync ${ARTS_COHERENCE_ARM} ${ARTS_WRITE_POLICY} ${ARTS_RELEASE_POLICY})
 
 # Out-of-order deferred-op engine (replays operations that arrived before
 # their target object was installed in the route table).  CPU-only; reused
@@ -97,7 +99,7 @@ target_link_libraries(arts_ooo PRIVATE arts_interface)
 if(HWLOC_INCLUDE_DIRS)
     target_include_directories(arts_ooo PRIVATE ${HWLOC_INCLUDE_DIRS})
 endif()
-arts_apply_protocol(arts_ooo ${ARTS_COHERENCE_ARM} ${ARTS_PROTOCOL_TIMING})
+arts_apply_protocol(arts_ooo ${ARTS_COHERENCE_ARM} ${ARTS_WRITE_POLICY} ${ARTS_RELEASE_POLICY})
 
 # Registered slab pool: per-NUMA mimalloc arenas over (optionally) fabric-
 # registered memory.  Plain C, no CUDA paths; reused as-is in GPU builds.
@@ -119,7 +121,7 @@ target_link_libraries(arts_scheduler PRIVATE arts_interface)
 if(HWLOC_INCLUDE_DIRS)
     target_include_directories(arts_scheduler PRIVATE ${HWLOC_INCLUDE_DIRS})
 endif()
-arts_apply_protocol(arts_scheduler ${ARTS_COHERENCE_ARM} ${ARTS_PROTOCOL_TIMING})
+arts_apply_protocol(arts_scheduler ${ARTS_COHERENCE_ARM} ${ARTS_WRITE_POLICY} ${ARTS_RELEASE_POLICY})
 
 # GPU module is only built for CUDA library
 if(BUILD_CUDA_LIBRARY)
@@ -134,7 +136,7 @@ if(BUILD_CUDA_LIBRARY)
         target_include_directories(arts_compute_gpu PRIVATE ${HWLOC_INCLUDE_DIRS})
     endif()
     target_compile_definitions(arts_compute_gpu PRIVATE ARTS_USE_GPU)
-    arts_apply_protocol(arts_compute_gpu ${ARTS_COHERENCE_ARM} ${ARTS_PROTOCOL_TIMING})
+    arts_apply_protocol(arts_compute_gpu ${ARTS_COHERENCE_ARM} ${ARTS_WRITE_POLICY} ${ARTS_RELEASE_POLICY})
     target_compile_definitions(arts_compute_gpu PRIVATE ARTS_NOHINT_EDT_ROUNDROBIN=${_ARTS_NOHINT_EDT_RR})
 
     # GPU variant of memory: recompile db.c as .cu, coherence TUs as .c, all with
@@ -150,7 +152,7 @@ if(BUILD_CUDA_LIBRARY)
         target_include_directories(arts_memory_gpu PRIVATE ${HWLOC_INCLUDE_DIRS})
     endif()
     target_compile_definitions(arts_memory_gpu PRIVATE ARTS_USE_GPU)
-    arts_apply_protocol(arts_memory_gpu ${ARTS_COHERENCE_ARM} ${ARTS_PROTOCOL_TIMING})
+    arts_apply_protocol(arts_memory_gpu ${ARTS_COHERENCE_ARM} ${ARTS_WRITE_POLICY} ${ARTS_RELEASE_POLICY})
 
     # GPU variant of scheduler (wraps scheduler.c as .cu for NVCC)
     set(SCHED_PATH "${CMAKE_CURRENT_SOURCE_DIR}/scheduler.c")
@@ -162,5 +164,5 @@ if(BUILD_CUDA_LIBRARY)
         target_include_directories(arts_scheduler_gpu PRIVATE ${HWLOC_INCLUDE_DIRS})
     endif()
     target_compile_definitions(arts_scheduler_gpu PRIVATE ARTS_USE_GPU)
-    arts_apply_protocol(arts_scheduler_gpu ${ARTS_COHERENCE_ARM} ${ARTS_PROTOCOL_TIMING})
+    arts_apply_protocol(arts_scheduler_gpu ${ARTS_COHERENCE_ARM} ${ARTS_WRITE_POLICY} ${ARTS_RELEASE_POLICY})
 endif()

@@ -106,7 +106,7 @@ typedef enum {
  */
 typedef enum {
   DB_MODE_NULL = 0, /**< Unset / placeholder. */
-  DB_MODE_RO,       /**< Read-Only (shared readers, no writeback). */
+  DB_MODE_RO,       /**< Read-Only (shared readers, no publish). */
   DB_MODE_RW,       /**< Read-Write (per-node exclusive, OCR RW semantics). */
   DB_MODE_VAL,      /**< Dependency carries a raw uint64 value (not a GUID). */
   /* Values >= DB_MODE_INTERNAL_BASE are reserved for runtime-internal
@@ -832,7 +832,7 @@ arts_guid_t arts_current_finish_event(void);
  *   - @c source is NULL / DB / a raw value, @c destination is an event
  *                            → @c arts_event_satisfy_slot.
  * The dep mode rides on the satisfy at fire time (stored in the event's
- * waiter metadata), so there is no separate eager mode-set message.
+ * waiter metadata), so there is no separate up-front mode-set message.
  *
  * @param source      Source event or DB GUID (or @c NULL_GUID).
  * @param destination Destination EDT or event GUID.

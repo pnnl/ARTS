@@ -41,7 +41,7 @@
 /// @brief T115 — Cat-C self-send / dispatcher ref get/release balance (B024).
 ///
 /// Every Cat-C coherence handler (DATA_RESPONSE / DESTROY_NOTIFY /
-/// WRITEBACK_ACK / LOCK_RELEASE_ACK / REDIRECT_RO / CONFIRM / CONFIRM_ACK) pins
+/// PUBLISH_ACK / LOCK_RELEASE_ACK / REDIRECT_RO / CONFIRM / CONFIRM_ACK) pins
 /// the home/owner db_s with a ref-counted `arts_route_table_lookup_db` +
 /// `arts_shared_get` and MUST `arts_shared_release` on EVERY path — HIT and
 /// every early-return MISS.  An early-return that skips the release leaks a
@@ -53,8 +53,8 @@
 /// loop on a fresh DB GUID every generation.  This drives all Cat-C families:
 ///   - DESTROY_NOTIFY fan-out (cache destroy) — both HIT and idempotent MISS,
 ///   - SNAPSHOT_RESPONSE (RO acquire) — HIT and torn-down-home MISS,
-///   - WRITEBACK_ACK / LOCK_RELEASE_ACK (RW release) — HIT and MISS,
-///   - REDIRECT_RO / CONFIRM[_ACK] (lazy ownership) where the protocol uses
+///   - PUBLISH_ACK / LOCK_RELEASE_ACK (RW release) — HIT and MISS,
+///   - REDIRECT_RO / CONFIRM[_ACK] (OWNER ownership) where the protocol uses
 ///   them.
 /// Each generation's DB is explicitly destroyed; if any Cat-C path leaked a
 /// ref, the cb would never reach refcount 0 and a parked waiter's
@@ -110,7 +110,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     ((unsigned int *)ptr)[0] = 0u;
     arts_db_release(db, DB_MODE_RW);
 
-    /* Drive RW (writeback/ownership/ACK Cat-C) then RO (snapshot/redirect
+    /* Drive RW (publish/ownership/ACK Cat-C) then RO (snapshot/redirect
      * Cat-C) across every rank so each foreign rank's cache pins + must
      * release. */
     arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);

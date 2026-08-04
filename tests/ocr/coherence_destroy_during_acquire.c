@@ -44,7 +44,7 @@
 /// completed: workers are collected under a dedicated per-iteration finish
 /// event (few), and the destroyer depends on few via DB_MODE_NULL so it
 /// cannot run until all workers have released the DB.  Destroyer is pinned
-/// to the DB home rank (rank 0) to satisfy the LAZY protocol's requirement
+/// to the DB home rank (rank 0) to satisfy the OWNER placement's requirement
 /// that destroy originates at the owner.  Exercising destroy-in-use is OCR
 /// undefined behaviour; this test verifies the legal, quiesced path.
 

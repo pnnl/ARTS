@@ -25,11 +25,11 @@
 ///
 ///        Under DRF the inner finish scope guarantees reader_edt executes only
 ///        after writer_edt has released the DB.  When writer and reader are
-///        both on the home rank no WRITEBACK round-trip is needed — the
+///        both on the home rank no PUBLISH round-trip is needed — the
 ///        home buffer is updated in-place — so the DRF guarantee holds.
 ///        Registered as a single-node ctest; the single-rank path exercises
 ///        the finish scope ordering invariant without depending on multi-node
-///        writeback delivery.
+///        publish delivery.
 
 #include <stdint.h>
 

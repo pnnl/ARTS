@@ -8,8 +8,8 @@ Outputs: <matrix_dir>/analysis/figures/*.pdf and *.png  (300 dpi)
 Figure groups:
   A. e2e scaling        (strong / weak / fix, one 2x3 app panel each)
   B. strong speedup     (vs ideal linear)
-  C. protocol compare   (eager-vs-lazy penalty; arts vs xsocr/ocrvx)
-  D. network comm       (remote bytes & sends vs nodes; eager-vs-lazy traffic;
+  C. protocol compare   (Home-vs-Owner penalty; arts vs xsocr/ocrvx)
+  D. network comm       (remote bytes & sends vs nodes; Home-vs-Owner traffic;
                          comm-intensity; e2e-vs-bytes correlation)
   E. load balance       (per-rank EDT_FINISH imbalance)
   F. summary heatmaps   (apps x runtimes, per experiment)
@@ -39,13 +39,13 @@ plt.rcParams.update({
 })
 
 # runtime -> (color, linestyle, marker, display label). Protocol family = color;
-# lazy = solid, eager = dashed; WRF_RCU = dash-dot; references = dotted.
+# Owner = solid, Home = dashed; WRF_VAL = dash-dot; references = dotted.
 RT_STYLE = {
-    "ocr_rcu_lazy":  ("#1f77b4", "-",  "o", "RCU-lazy"),
-    "ocr_rcu_eager": ("#1f77b4", "--", "o", "RCU-eager"),
-    "ocr_rwlock_lazy":   ("#d62728", "-",  "^", "RWLOCK-lazy"),
-    "ocr_rwlock_eager":  ("#d62728", "--", "^", "RWLOCK-eager"),
-    "wrf_rcu_eager":        ("#9467bd", "-.", "D", "WRF_RCU"),
+    "ocr_val_wb":  ("#1f77b4", "-",  "o", "VAL-Owner"),
+    "ocr_val_wt": ("#1f77b4", "--", "o", "VAL-Home"),
+    "ocr_excl_retain":   ("#d62728", "-",  "^", "EXCL-Owner"),
+    "ocr_excl_purge":  ("#d62728", "--", "^", "EXCL-Home"),
+    "wrf_val_wt":        ("#9467bd", "-.", "D", "WRF_VAL"),
     "xsocr":       ("#000000", ":",  "x", "xsocr"),
     "ocrvx":       ("#7f7f7f", ":",  "+", "ocr-vx"),
 }
@@ -189,13 +189,13 @@ def fig_scaling(E, ST, outdir, exp, ylabel="end-to-end time (s)", speedup=False)
 
 
 # ---------------------------------------------- C. protocol compare ----
-def fig_eager_lazy(E, outdir):
+def fig_home_owner(E, outdir):
     """Eager/Lazy e2e ratio at a multinode config, per protocol family, per app.
-    An eager cell that timed out has no finite ratio (eager/lazy -> infinity); it is
+    A Home cell that timed out has no finite ratio (Home/Owner -> infinity); it is
     drawn as a broken bar running off the top of the axis with a 'timeout' label."""
     cfg, exp = "2n_sc", "strong"
-    fams = [("RCU", "ocr_rcu_eager", "ocr_rcu_lazy"),
-            ("RWLOCK", "ocr_rwlock_eager", "ocr_rwlock_lazy")]
+    fams = [("VAL", "ocr_val_wt", "ocr_val_wb"),
+            ("EXCL", "ocr_excl_purge", "ocr_excl_retain")]
     fig, ax = plt.subplots(figsize=(9.2, 4.4))
     x = np.arange(len(APP_ORDER)); w = 0.26
     R, real_max = {}, 1.0            # (i,j) -> ratio | None(timeout) | nan(missing)
@@ -204,7 +204,7 @@ def fig_eager_lazy(E, outdir):
             ve, vl = E.get((exp, app, cfg, e)), E.get((exp, app, cfg, l))
             if ve and vl:
                 R[(i, j)] = ve / vl; real_max = max(real_max, ve / vl)
-            elif vl and (exp, app, cfg, e) in E:      # eager ran but FAILed
+            elif vl and (exp, app, cfg, e) in E:      # Home ran but FAILed
                 R[(i, j)] = None
             else:
                 R[(i, j)] = np.nan
@@ -222,20 +222,20 @@ def fig_eager_lazy(E, outdir):
     ax.axhline(1.0, color="0.4", ls="--", lw=1)
     ax.set_xticks(x); ax.set_xticklabels([APP_LABEL[a] for a in APP_ORDER],
                                           rotation=25, ha="right", fontsize=8.5)
-    ax.set_ylabel("eager / lazy  e2e ratio")
-    ax.set_title(f"EAGER writeback penalty vs LAZY  (strong @ {cfg}; >1 = eager slower; "
-                 "broken bar = eager timed out)")
+    ax.set_ylabel("Home / Owner  e2e ratio")
+    ax.set_title(f"HOME flush penalty vs OWNER  (strong @ {cfg}; >1 = Home slower; "
+                 "broken bar = Home timed out)")
     ax.legend(title="protocol")
-    fig.tight_layout(); savefig(fig, outdir, "fig_eager_vs_lazy")
+    fig.tight_layout(); savefig(fig, outdir, "fig_home_vs_owner")
 
 
 def fig_arts_vs_ref(E, outdir):
-    """Best arts-lazy vs xsocr vs ocr-vx at the strong baseline (1n_sc) and 8n_sc.
+    """Best arts-Owner vs xsocr vs ocr-vx at the strong baseline (1n_sc) and 8n_sc.
     A runtime that timed out is drawn as a broken bar off the top with 'timeout'."""
     fig, axes = plt.subplots(1, 2, figsize=(11.5, 4.5))
 
-    def best_lazy(app, cfg):
-        ks = [("strong", app, cfg, rt) for rt in ("ocr_rcu_lazy", "ocr_rwlock_lazy")]
+    def best_owner(app, cfg):
+        ks = [("strong", app, cfg, rt) for rt in ("ocr_val_wb", "ocr_excl_retain")]
         vs = [E.get(k) for k in ks if k in E]
         done = [v for v in vs if v]
         return min(done) if done else (None if vs else np.nan)
@@ -248,7 +248,7 @@ def fig_arts_vs_ref(E, outdir):
 
     for ax, cfg in zip(axes, ("1n_sc", "8n_sc")):
         x = np.arange(len(APP_ORDER)); w = 0.26
-        series = [("arts (best lazy)", "#1f77b4", [best_lazy(a, cfg) for a in APP_ORDER]),
+        series = [("arts (best Owner)", "#1f77b4", [best_owner(a, cfg) for a in APP_ORDER]),
                   ("xsocr", "#000000", [ref(a, cfg, "xsocr") for a in APP_ORDER]),
                   ("ocr-vx", "#7f7f7f", [ref(a, cfg, "ocrvx") for a in APP_ORDER])]
         real = [v for _, _, ys in series for v in ys
@@ -326,33 +326,33 @@ def fig_comm_correlation(E, ST, M, outdir):
 
 
 def fig_comm_intensity(M, E, outdir):
-    """remote MB/s (bytes/e2e) per app per node count, ocr_rcu_lazy — comm pressure."""
+    """remote MB/s (bytes/e2e) per app per node count, ocr_val_wb — comm pressure."""
     fig, ax = plt.subplots(figsize=(8.5, 4.4))
     x = np.arange(len(APP_ORDER)); w = 0.2
     for i, (c, n) in enumerate(SC_NODES.items()):
         vals = []
         for app in APP_ORDER:
-            d = M.get(("strong", app, c, "ocr_rcu_lazy"))
-            e = E.get(("strong", app, c, "ocr_rcu_lazy"))
+            d = M.get(("strong", app, c, "ocr_val_wb"))
+            e = E.get(("strong", app, c, "ocr_val_wb"))
             vals.append((d["bytes"] / 1e6 / e) if (d and e and d["bytes"] > 0) else 0)
         ax.bar(x + (i - 1.5) * w, vals, w, label=f"{n}n", alpha=0.85)
     ax.set_yscale("log")
     ax.set_xticks(x); ax.set_xticklabels([APP_LABEL[a].split()[0] for a in APP_ORDER],
                                           rotation=25, ha="right", fontsize=8.5)
     ax.set_ylabel("inter-node MB / second")
-    ax.set_title("Communication intensity (RCU-lazy, strong)")
+    ax.set_title("Communication intensity (VAL-Owner, strong)")
     ax.legend(title="nodes", ncol=4)
     fig.tight_layout(); savefig(fig, outdir, "fig_comm_intensity")
 
 
 # ------------------------------------------------ E. load balance ----
 def fig_load_balance(M, outdir):
-    """EDT_FINISH imbalance = max/mean across ranks, vs nodes, ocr_rcu_lazy strong."""
+    """EDT_FINISH imbalance = max/mean across ranks, vs nodes, ocr_val_wb strong."""
     fig, ax = plt.subplots(figsize=(8, 4.4))
     for app in APP_ORDER:
         xs, ys = [], []
         for c, n in SC_NODES.items():
-            d = M.get(("strong", app, c, "ocr_rcu_lazy"))
+            d = M.get(("strong", app, c, "ocr_val_wb"))
             if d and d["fins"] and n > 1:
                 f = d["fins"]; mean = sum(f) / len(f)
                 if mean > 0:
@@ -363,7 +363,7 @@ def fig_load_balance(M, outdir):
     ax.set_xscale("log", base=2); ax.set_xticks([2, 4, 8])
     ax.set_xticklabels(["2", "4", "8"])
     ax.set_xlabel("nodes"); ax.set_ylabel("EDT load imbalance (max/mean per rank)")
-    ax.set_title("Work-distribution balance (RCU-lazy, strong)")
+    ax.set_title("Work-distribution balance (VAL-Owner, strong)")
     ax.legend(ncol=2, fontsize=8.5)
     fig.tight_layout(); savefig(fig, outdir, "fig_load_balance")
 
@@ -405,7 +405,7 @@ def main():
     for exp in ("strong", "weak", "fix"):
         fig_scaling(E, ST, outdir, exp)
     fig_scaling(E, ST, outdir, "strong", speedup=True)
-    fig_eager_lazy(E, outdir)
+    fig_home_owner(E, outdir)
     fig_arts_vs_ref(E, outdir)
     fig_network(M, outdir, "bytes", "remote bytes sent (MB)", "fig_net_bytes", unit=1e6)
     fig_network(M, outdir, "sends", "remote sends (count)", "fig_net_sends")

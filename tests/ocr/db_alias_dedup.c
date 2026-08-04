@@ -63,9 +63,9 @@
 /// writer + RO reader chain proves writer_count returned cleanly to a grantable
 /// state after the aliased EDT released.
 ///
-/// Config: ownership protocols (RCU) serialize RW so the reentrant
-/// branch is live.  Under RWLOCK RW is also serialized (alias dedup applies).
-/// Under WRF_RCU RW is NOT serialized — the reentrant branch is a no-op but the
+/// Config: ownership protocols (VAL) serialize RW so the reentrant
+/// branch is live.  Under EXCL RW is also serialized (alias dedup applies).
+/// Under WRF_VAL RW is NOT serialized — the reentrant branch is a no-op but the
 /// test is still a valid two-slot-same-DB correctness check, so it runs in all
 /// configs.  Config-agnostic across 1n..4n.  A stranded EDT is caught by the
 /// ctest TIMEOUT (no in-test watchdog).

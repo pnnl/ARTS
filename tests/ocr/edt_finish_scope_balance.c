@@ -89,15 +89,15 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   unsigned int nranks = arts_get_total_ranks();
 
-#if defined(ARTS_PROTOCOL_WRF_RCU)
-  /* WRF_RCU (DB-WRF) provides no exclusive cross-rank ownership for RW: concurrent
+#if defined(ARTS_PROTOCOL_WRF_VAL)
+  /* WRF_VAL (DB-WRF) provides no exclusive cross-rank ownership for RW: concurrent
    * RW holders on different nodes each receive a buffer copy and race at
-   * WRITEBACK time (version-monotonic CAS, last writer wins).  Members on
+   * PUBLISH time (version-monotonic CAS, last writer wins).  Members on
    * different ranks atomically increment their local copy of cdb, but only one
    * copy survives to the verifier — the other increments are silently lost. */
   if (nranks > 1) {
     arts_printf("SKIP edt_finish_scope_balance: concurrent cross-rank RW "
-                "accumulation is DB-WRF racy under WRF_RCU\n");
+                "accumulation is DB-WRF racy under WRF_VAL\n");
     arts_shutdown();
     return;
   }

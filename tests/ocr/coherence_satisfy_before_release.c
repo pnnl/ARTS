@@ -49,7 +49,7 @@
 ///
 /// Every consumer therefore becomes READY — and issues its acquire — long
 /// before the DB's home rank has ever seen a byte of data (a cross-rank
-/// create installs home METADATA only; the creator's first writeback delivers
+/// create installs home METADATA only; the creator's first publish delivers
 /// the first buffer).  The runtime must hold a home-side acquire (home-local
 /// reader AND cross-rank GET_DATA reader alike) until the creator's release
 /// publishes, then serve the released bytes.  Because the write

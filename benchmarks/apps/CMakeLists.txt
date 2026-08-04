@@ -261,7 +261,7 @@ function(add_benchmark_app)
     target_compile_options(${APP_NAME}_xsocr PRIVATE ${BENCH_C_OPT} -w)
 
     # --- ARTS variants (one per coherence protocol) ---
-    set(ARTS_VARIANT_SUFFIXES ocr_rcu_eager ocr_rcu_lazy ocr_rwlock_eager ocr_rwlock_lazy wrf_rcu_eager ocr_msi_eager ocr_msi_lazy)
+    set(ARTS_VARIANT_SUFFIXES ocr_val_wt ocr_val_wb ocr_excl_purge ocr_excl_retain wrf_val_wt ocr_inv_wt ocr_inv_wb)
     foreach(sfx ${ARTS_VARIANT_SUFFIXES})
         add_executable(${APP_NAME}_arts_${sfx} ${ABS_SOURCES} ${LIB_OBJECTS}
                        $<TARGET_OBJECTS:ocr_arts_objects>)
@@ -785,7 +785,7 @@ add_benchmark_app(NAME LCS_distributed_ST
 )
 # LCS uses bare "inline" (C11 = no external def) → fails at -O0; force GNU89 semantics
 target_compile_options(LCS_distributed_ST_xsocr PRIVATE -fgnu89-inline)
-foreach(sfx ocr_rcu_eager ocr_rcu_lazy ocr_rwlock_eager ocr_rwlock_lazy wrf_rcu_eager ocr_msi_eager ocr_msi_lazy)
+foreach(sfx ocr_val_wt ocr_val_wb ocr_excl_purge ocr_excl_retain wrf_val_wt ocr_inv_wt ocr_inv_wb)
     target_compile_options(LCS_distributed_ST_arts_${sfx} PRIVATE -fgnu89-inline)
 endforeach()
 if(TARGET LCS_distributed_ST_ocrvx)
@@ -799,7 +799,7 @@ add_benchmark_app(NAME LCS_shared
     EXTRA_LINK_LIBS m
 )
 target_compile_options(LCS_shared_xsocr PRIVATE -fgnu89-inline)
-foreach(sfx ocr_rcu_eager ocr_rcu_lazy ocr_rwlock_eager ocr_rwlock_lazy wrf_rcu_eager ocr_msi_eager ocr_msi_lazy)
+foreach(sfx ocr_val_wt ocr_val_wb ocr_excl_purge ocr_excl_retain wrf_val_wt ocr_inv_wt ocr_inv_wb)
     target_compile_options(LCS_shared_arts_${sfx} PRIVATE -fgnu89-inline)
 endforeach()
 if(TARGET LCS_shared_ocrvx)
@@ -1152,7 +1152,7 @@ if(HAS_CRLIBM)
         # reference to image_0/platform_0/pulse_0/...". */
         target_link_libraries(sar_${sar_size}_xsocr PRIVATE
             ${SAR_DATA_${sar_size}_OBJECTS})
-        foreach(sfx ocr_rcu_eager ocr_rcu_lazy ocr_rwlock_eager ocr_rwlock_lazy wrf_rcu_eager ocr_msi_eager ocr_msi_lazy)
+        foreach(sfx ocr_val_wt ocr_val_wb ocr_excl_purge ocr_excl_retain wrf_val_wt ocr_inv_wt ocr_inv_wb)
             target_link_libraries(sar_${sar_size}_arts_${sfx} PRIVATE
                 ${SAR_DATA_${sar_size}_OBJECTS})
             add_dependencies(sar_${sar_size}_arts_${sfx} sar_data_${sar_size}_objs)
@@ -1192,7 +1192,7 @@ add_benchmark_app(NAME stream
     EXTRA_LINK_LIBS pthread m
 )
 # stream.c has functions used before declaration (C11 error) — allow it
-foreach(sfx ocr_rcu_eager ocr_rcu_lazy ocr_rwlock_eager ocr_rwlock_lazy wrf_rcu_eager ocr_msi_eager ocr_msi_lazy)
+foreach(sfx ocr_val_wt ocr_val_wb ocr_excl_purge ocr_excl_retain wrf_val_wt ocr_inv_wt ocr_inv_wb)
     target_compile_options(stream_arts_${sfx} PRIVATE -Wno-error=implicit-function-declaration)
 endforeach()
 # target_compile_options(stream_xsocr PRIVATE -Wno-error=implicit-function-declaration)
@@ -1206,7 +1206,7 @@ add_benchmark_app(NAME stream_dist
     EXTRA_DEFINES STREAM_ARRAY_SIZE=1000 NUM_THREADS=2 NTIMES=3
     EXTRA_LINK_LIBS pthread m
 )
-foreach(sfx ocr_rcu_eager ocr_rcu_lazy ocr_rwlock_eager ocr_rwlock_lazy wrf_rcu_eager ocr_msi_eager ocr_msi_lazy)
+foreach(sfx ocr_val_wt ocr_val_wb ocr_excl_purge ocr_excl_retain wrf_val_wt ocr_inv_wt ocr_inv_wb)
     target_compile_options(stream_dist_arts_${sfx} PRIVATE -Wno-error=implicit-function-declaration)
 endforeach()
 # target_compile_options(stream_dist_xsocr PRIVATE -Wno-error=implicit-function-declaration)
@@ -1219,7 +1219,7 @@ add_benchmark_app(NAME stream_org
     SOURCES stream_org.c
     EXTRA_LINK_LIBS pthread m
 )
-foreach(sfx ocr_rcu_eager ocr_rcu_lazy ocr_rwlock_eager ocr_rwlock_lazy wrf_rcu_eager ocr_msi_eager ocr_msi_lazy)
+foreach(sfx ocr_val_wt ocr_val_wb ocr_excl_purge ocr_excl_retain wrf_val_wt ocr_inv_wt ocr_inv_wb)
     target_compile_options(stream_org_arts_${sfx} PRIVATE -Wno-error=implicit-function-declaration)
 endforeach()
 if(TARGET stream_org_ocrvx)
@@ -1231,7 +1231,7 @@ add_benchmark_app(NAME stream_sa
     SOURCES stream_sa.c
     EXTRA_LINK_LIBS pthread m
 )
-foreach(sfx ocr_rcu_eager ocr_rcu_lazy ocr_rwlock_eager ocr_rwlock_lazy wrf_rcu_eager ocr_msi_eager ocr_msi_lazy)
+foreach(sfx ocr_val_wt ocr_val_wb ocr_excl_purge ocr_excl_retain wrf_val_wt ocr_inv_wt ocr_inv_wb)
     target_compile_options(stream_sa_arts_${sfx} PRIVATE -Wno-error=implicit-function-declaration)
 endforeach()
 if(TARGET stream_sa_ocrvx)
@@ -1261,7 +1261,7 @@ set_target_properties(release_sync_stress_xsocr PROPERTIES C_STANDARD 11 C_EXTEN
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 target_compile_options(release_sync_stress_xsocr PRIVATE ${BENCH_C_OPT} -w)
 
-foreach(sfx ocr_rcu_eager ocr_rcu_lazy ocr_rwlock_eager ocr_rwlock_lazy wrf_rcu_eager ocr_msi_eager ocr_msi_lazy)
+foreach(sfx ocr_val_wt ocr_val_wb ocr_excl_purge ocr_excl_retain wrf_val_wt ocr_inv_wt ocr_inv_wb)
     add_executable(release_sync_stress_arts_${sfx} ${RSS_SRC}
                    $<TARGET_OBJECTS:ocr_arts_objects>)
     target_include_directories(release_sync_stress_arts_${sfx} PRIVATE
@@ -1308,7 +1308,7 @@ set_target_properties(dbcreate_matrix_xsocr PROPERTIES C_STANDARD 11 C_EXTENSION
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 target_compile_options(dbcreate_matrix_xsocr PRIVATE ${BENCH_C_OPT} -w)
 
-foreach(sfx ocr_rcu_eager ocr_rcu_lazy ocr_rwlock_eager ocr_rwlock_lazy wrf_rcu_eager ocr_msi_eager ocr_msi_lazy)
+foreach(sfx ocr_val_wt ocr_val_wb ocr_excl_purge ocr_excl_retain wrf_val_wt ocr_inv_wt ocr_inv_wb)
     add_executable(dbcreate_matrix_arts_${sfx} ${DBCM_SRC}
                    $<TARGET_OBJECTS:ocr_arts_objects>)
     target_include_directories(dbcreate_matrix_arts_${sfx} PRIVATE
@@ -1364,7 +1364,7 @@ set_target_properties(rwmix_xsocr PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 target_compile_options(rwmix_xsocr PRIVATE ${BENCH_C_OPT} -w)
 
-foreach(sfx ocr_rcu_eager ocr_rcu_lazy ocr_rwlock_eager ocr_rwlock_lazy wrf_rcu_eager ocr_msi_eager ocr_msi_lazy)
+foreach(sfx ocr_val_wt ocr_val_wb ocr_excl_purge ocr_excl_retain wrf_val_wt ocr_inv_wt ocr_inv_wb)
     add_executable(rwmix_arts_${sfx} ${RWMIX_SRC}
                    $<TARGET_OBJECTS:ocr_arts_objects>)
     target_include_directories(rwmix_arts_${sfx} PRIVATE
@@ -1409,7 +1409,7 @@ set_target_properties(rwrounds_xsocr PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 target_compile_options(rwrounds_xsocr PRIVATE ${BENCH_C_OPT} -w)
 
-foreach(sfx ocr_rcu_eager ocr_rcu_lazy ocr_rwlock_eager ocr_rwlock_lazy wrf_rcu_eager ocr_msi_eager ocr_msi_lazy)
+foreach(sfx ocr_val_wt ocr_val_wb ocr_excl_purge ocr_excl_retain wrf_val_wt ocr_inv_wt ocr_inv_wb)
     add_executable(rwrounds_arts_${sfx} ${RWROUNDS_SRC}
                    $<TARGET_OBJECTS:ocr_arts_objects>)
     target_include_directories(rwrounds_arts_${sfx} PRIVATE

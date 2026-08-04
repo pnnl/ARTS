@@ -100,8 +100,9 @@ with defaults lives in [README.md](README.md#build-options); the most common are
 | ------ | ------- | ------- |
 | `CMAKE_BUILD_TYPE` | `Debug` | `Debug` or `Release`. |
 | `ARTS_MEMORY_MODEL` | `OCR` | Memory model — `OCR` (default; implements the OCR v1.2.0 §1.6 contract) or `DB_WRF` (write-race-free at DB granularity: the program must event-order every write-write conflict on a DB; evaluation only — emits a configure warning). Compile-time; all ranks must share one build. |
-| `ARTS_COHERENCE_PROTOCOL` | `RCU` | Coherence protocol — `RCU` (default; readers acquire versioned snapshots, never blocked/invalidated) or `RWLOCK` (per-DB distributed reader-writer lock). Valid combos: OCR×RCU×{E,L}, OCR×RWLOCK×{E,L}, DB_WRF×RCU×EAGER. |
-| `ARTS_PROTOCOL_TIMING` | `LAZY` | Timing of consistency actions — `LAZY` (acquire-time, default) or `EAGER` (release-time). |
+| `ARTS_COHERENCE_PROTOCOL` | `VAL` | Coherence family — who keeps reader copies valid: `VAL` (default; acquire-time version validation, readers never blocked/tracked/invalidated), `INV` (release-time invalidation rounds), or `EXCL` (per-DB distributed reader-writer lock). Valid combos: OCR×{VAL,INV}×{WT,WB}, OCR×EXCL×WB×{PURGE,RETAIN}, DB_WRF×VAL×WT. |
+| `ARTS_WRITE_POLICY` | `WB` | Write policy at release granularity — `WT` (write-through: payload flushed to the block's home at every release; home serves reads) or `WB` (default; write-back: payload stays with the last writer, directory forwards on demand). Live in INV/VAL; EXCL requires WB. |
+| `ARTS_RELEASE_POLICY` | `RETAIN` | What a node does with its write grant when the last local user finishes — `PURGE` (hand copy and permission back to the home) or `RETAIN` (default; keep both until another node asks). Live in EXCL; INV/VAL require RETAIN. |
 | `ARTS_USE_GPU` | `OFF` | Enable CUDA GPU support. |
 | `ARTS_BUILD_TESTS` | `ON` | Build the ctest suite. |
 | `ARTS_BUILD_BENCHMARKS` | `ON` | Build the OCR benchmark apps (needs MPI). |
@@ -115,22 +116,25 @@ Coherence Protocols
 -------------------
 
 DataBlock consistency behavior is controlled by one primary compile-time
-knob and one conditional sub-knob. `ARTS_COHERENCE_PROTOCOL` selects the
-**memory model × protocol**: `OCR`×`RCU` (default)
-implements the OCR v1.2.0 §1.6 memory model; `DB_WRF`×`RCU` (true multi-writer,
+knob and one family-conditional sub-knob. `ARTS_COHERENCE_PROTOCOL` selects
+the **memory model × protocol**: `OCR`×`VAL` (default)
+implements the OCR v1.2.0 §1.6 memory model; `DB_WRF`×`VAL` (true multi-writer,
 lossy) is the DB-WRF evaluation configuration that emits a configure-time
 warning and can make racy-but-legal OCR programs yield wrong results.
-`ARTS_PROTOCOL_TIMING` selects **when** consistency actions occur: `LAZY`
-(acquire-time, default) or `EAGER` (release-time); it is meaningful only
-for every OCR-model configuration (`DB_WRF` requires `EAGER`). One binary is exactly one
-configuration, and every rank in a multinode run must use the same build.
-To cover all meaningful configurations:
+The sub-knob depends on the protocol family: `ARTS_WRITE_POLICY` (`WT`/`WB`,
+default `WB`) selects **where** the canonical payload lives under `VAL`/`INV`
+— `WB` (with the last writer) or `WT` (flushed back to the DB home at every
+release, which is what `DB_WRF` requires); `ARTS_RELEASE_POLICY`
+(`PURGE`/`RETAIN`, default `RETAIN`) selects the release-time grant behavior
+under `EXCL` instead. One binary is exactly one configuration, and every rank
+in a multinode run must use the same build. To cover all meaningful
+configurations:
 
 ```bash
-cmake -GNinja -Bbuild_ocr_rcu_eager -DCMAKE_BUILD_TYPE=Debug -DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=RCU -DARTS_PROTOCOL_TIMING=EAGER
-cmake -GNinja -Bbuild_ocr_rcu_lazy  -DCMAKE_BUILD_TYPE=Debug -DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=RCU -DARTS_PROTOCOL_TIMING=LAZY
-cmake -GNinja -Bbuild_wrf_rcu_eager -DCMAKE_BUILD_TYPE=Debug -DARTS_MEMORY_MODEL=DB_WRF -DARTS_COHERENCE_PROTOCOL=RCU -DARTS_PROTOCOL_TIMING=EAGER
-ninja -C build_ocr_rcu_eager && ninja -C build_ocr_rcu_lazy && ninja -C build_wrf_rcu_eager
+cmake -GNinja -Bbuild_ocr_val_wt  -DCMAKE_BUILD_TYPE=Debug -DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=VAL -DARTS_WRITE_POLICY=WT
+cmake -GNinja -Bbuild_ocr_val_wb  -DCMAKE_BUILD_TYPE=Debug -DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=VAL -DARTS_WRITE_POLICY=WB
+cmake -GNinja -Bbuild_wrf_val_wt  -DCMAKE_BUILD_TYPE=Debug -DARTS_MEMORY_MODEL=DB_WRF -DARTS_COHERENCE_PROTOCOL=VAL -DARTS_WRITE_POLICY=WT
+ninja -C build_ocr_val_wt && ninja -C build_ocr_val_wb && ninja -C build_wrf_val_wt
 ```
 
 Running Tests

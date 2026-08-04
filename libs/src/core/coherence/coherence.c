@@ -7,7 +7,7 @@
  *
  *   1. Cache construction / destruction
  *      - arts_db_cache_init: in-place cache_s initializer (creator-home,
- *        creator-remote, home-recv, lazy).
+ *        creator-remote, home-recv, OWNER).
  *      - arts_db_cache_destructor: chained from arts_db_free.
  *
  *   2. Acquire path (8-case dispatcher + supporting routines).  See the
@@ -18,11 +18,11 @@
  *      atomic_sub(depc_needed); on reaching 0 the EDT is handed to the
  *      scheduler.
  *
- *   3. Release path (the four release cases R1-R4 and the WRITEBACK_ACK
+ *   3. Release path (the four release cases R1-R4 and the PUBLISH_ACK
  *      rendezvous).  Wait/wake mechanism: a stack-local binary semaphore;
  *      release_rw sem_init's a sem_t on its stack, embeds its address in the
- *      WRITEBACK packet, and sem_waits on it.  The home echoes that address
- *      verbatim in WRITEBACK_ACK; arts_handler_db_writeback_ack sem_posts it.
+ *      PUBLISH packet, and sem_waits on it.  The home echoes that address
+ *      verbatim in PUBLISH_ACK; arts_handler_db_publish_ack sem_posts it.
  *      Matching is by pointer identity (the address is valid only on the
  *      releaser rank, where the post runs) — no per-cache seq state, no
  *      busy-wait.
@@ -46,7 +46,7 @@
 #include "arts/coherence/buffer.h"
 #include "arts/coherence/coherence.h"
 #include "arts/coherence/handlers.h"
-#include "arts/coherence/home.h"
+#include "arts/coherence/directory.h"
 #include "arts/db.h"
 #include "arts/edt.h"
 #include "arts/gas/route_table.h"
@@ -67,7 +67,7 @@
 
 /* Protocol-agnostic cache_s field init.  The per-protocol arts_db_cache_init
  * wrapper (coherence/<protocol>.c) runs its protocol-specific field-init
- * (eager/lazy pending_rw queue + lazy dedup-map/sentinel; WRF_RCU none) BEFORE
+ * (HOME/OWNER pending_rw queue + OWNER dedup-map/sentinel; WRF_RCU none) BEFORE
  * calling this, so the Vyukov MPSC stub is wired before any push could land. */
 void arts_db_cache_common_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
                                uint64_t db_size, arts_db_init_kind_t kind,
@@ -81,8 +81,7 @@ void arts_db_cache_common_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
    * explicitly for clarity).  Nodes are heap-allocated on the case-3 push path
    * and freed when drained by the next install. */
   arts_lf_stack_init(&c->pending_snapshot);
-#if defined(ARTS_RO_REQUEST_COMBINING) && !defined(ARTS_PROTOCOL_RWLOCK) && \
-    !defined(ARTS_PROTOCOL_MSI)
+#if defined(ARTS_RO_REQUEST_COMBINING) && !defined(ARTS_PROTOCOL_EXCL) 
   arts_lf_stack_init(&c->ro_combine);
   c->ro_combine_group = NULL;
   c->snapshot_req_in_flight = 0;
@@ -104,16 +103,16 @@ void arts_db_cache_common_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
   } else if (kind == ARTS_DB_INIT_CREATOR_HOME) {
     arts_db_home_init(db_self, self, n);
     db_self->home_initialized = true;
-#if !defined(ARTS_PROTOCOL_RWLOCK) && !defined(ARTS_PROTOCOL_MSI)
+#if !defined(ARTS_PROTOCOL_EXCL)
     /* RCU/WRF_RCU: writer_count tracks ownership (sentinel + creator). */
     c->writer_count = 2;
 #endif
   } else if (kind == ARTS_DB_INIT_CREATOR_REMOTE) {
-#if !defined(ARTS_PROTOCOL_RWLOCK) && !defined(ARTS_PROTOCOL_MSI)
+#if !defined(ARTS_PROTOCOL_EXCL)
     c->writer_count = 2;
 #endif
   }
-  /* Eager/WRF_RCU WRITEBACK ACK rendezvous is a stack-local sem_t per
+  /* Eager/WRF_RCU PUBLISH ACK rendezvous is a stack-local sem_t per
    * release_rw (pointer-identity match) — no per-cache seq fields to
    * initialize.  Lazy owner-side fields (dedup map + transfer sentinel) are
    * armed by the protocol init hook above. */
@@ -130,7 +129,7 @@ void arts_db_cache_common_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
  *
  * Eager-only: the canonical user data pointer lives in cache->user_data,
  * regardless of whether cache_s was created in-place with arts_db_s
- * (user_data == (db+1)) or lazy-installed standalone (user_data ==
+ * (user_data == (db+1)) or stub-installed standalone (user_data ==
  * malloc'd buffer).  We look up the cache via the GUID of the dep
  * slot's DB and stamp depv[slot].ptr accordingly.
  *
@@ -210,12 +209,12 @@ void mark_edt_ready_by_guid(arts_guid_t edt_guid, unsigned int slot) {
   arts_shared_release(&edt_h);
 }
 
-/* ===== Lazy first-touch =========================================== */
+/* ===== Stub first-touch =========================================== */
 
 /* Allocate a stub arts_db_s + cache_s for a DIST DB that this rank
  * has not yet touched, register it in the route_table, and return a
  * PINNED handle to the db_s whose cache it installed.  The stub has no
- * user data payload — install_buffer lazy-allocates cache->user_data on
+ * user data payload — install_buffer allocates on demand cache->user_data on
  * first wire arrival.
  *
  * Race-safe: route_table_install_if_absent rejects if another thread
@@ -226,9 +225,9 @@ void mark_edt_ready_by_guid(arts_guid_t edt_guid, unsigned int slot) {
  * cache is no longer needed (on every control-flow path).  A NULL handle
  * means the DB was destroyed before the install could be observed (the
  * lost-race lookup found no live entry). */
-arts_shared_ptr_t arts_db_cache_lazy_install(arts_guid_t db_guid,
+arts_shared_ptr_t arts_db_cache_stub_install(arts_guid_t db_guid,
                                              uint64_t db_size) {
-  /* First check if it already exists (someone else lazy-installed or
+  /* First check if it already exists (someone else stub-installed or
    * a wire-receive fired). */
   arts_shared_ptr_t existing = arts_route_table_lookup_db(db_guid);
   if (arts_shared_get(existing) != NULL) {
@@ -236,7 +235,7 @@ arts_shared_ptr_t arts_db_cache_lazy_install(arts_guid_t db_guid,
   }
   arts_shared_release(&existing);
 
-  /* Lazy install (non-home consumer first acquire): cache-only stub — no home
+  /* Stub install (non-home consumer first acquire): cache-only stub — no home
    * directory (this rank is not the GUID home).  arts_db_cache_stub_size()
    * spans cache + db_type, stopping before the home fields. */
   uint64_t stub_sz = arts_db_cache_stub_size();
@@ -245,12 +244,12 @@ arts_shared_ptr_t arts_db_cache_lazy_install(arts_guid_t db_guid,
   memset(stub, 0, stub_sz);
   stub->db_type = ARTS_DB;
 
-  /* db_size==0 ⇒ lazy install: buffer alloc deferred until first wire
+  /* db_size==0 ⇒ stub install: buffer alloc deferred until first wire
    * arrival (install_buffer with the actual db_size).  No home struct
    * yet — even for is_home, the home struct is created when DB_CREATE
    * arrives (with the proper rw_holder = creator_rank). */
   arts_db_cache_init(&stub->cache, db_guid, /*db_size=*/db_size,
-                     ARTS_DB_INIT_LAZY,
+                     ARTS_DB_INIT_STUB,
                      /*creator_rank=*/0);
 
   if (arts_route_table_install_if_absent(stub, db_guid, arts_global_rank_id,
@@ -282,13 +281,13 @@ void *arts_db_acquire_local(struct arts_db_cache_s *cache) {
 }
 
 /* Case 2/6 (RW local fast path) and Case 4/8 (remote-RW path) live in
- * coherence/ownership.c — they touch the OCR-model home-directory cache fields
- * (pending_rw, ownership_req_in_flight) that the WRF_RCU cache layout does not
+ * coherence/grant.c — they touch the OCR-model home-directory cache fields
+ * (pending_rw, grant_req_in_flight) that the WRF_RCU cache layout does not
  * have. */
 
 /* ===== Case 7: remote-RO / remote-snapshot path =================== */
 
-#if !defined(ARTS_PROTOCOL_RWLOCK) && !defined(ARTS_PROTOCOL_MSI)
+#if !defined(ARTS_PROTOCOL_EXCL)
 #ifdef ARTS_RO_REQUEST_COMBINING
 /* ===== Remote-read request combining ===============================
  *
@@ -332,7 +331,11 @@ static bool ro_combine_launch_owned(struct arts_db_cache_s *cache) {
   arts_guid_t leader_guid = leader->edt_guid;
   unsigned int leader_slot = leader->slot;
   arts_free(leader);
+#ifdef ARTS_PROTOCOL_INV
+  arts_send_db_inv_request(cache, DB_MODE_RO);
+#else
   arts_send_db_snapshot_request(cache, leader_guid, leader_slot);
+#endif
   return true;
 }
 
@@ -434,16 +437,20 @@ arts_db_acquire_remote_ro(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
     return ARTS_DB_ACQUIRE_PARK;
   }
 #endif
+#ifdef ARTS_PROTOCOL_INV
+  arts_send_db_inv_request(cache, DB_MODE_RO);
+#else
   arts_send_db_snapshot_request(cache, edt_guid, slot);
+#endif
   return ARTS_DB_ACQUIRE_PARK;
 }
-#endif /* !ARTS_PROTOCOL_RWLOCK */
+#endif /* !ARTS_PROTOCOL_EXCL */
 
 /* The 8-case acquire dispatcher arts_handler_db_acquire is protocol-specific:
- * EAGER and LAZY define it in coherence/ownership.c-backed
- * coherence/{eager,lazy}.c (single-owner OWNERSHIP_REQUEST / GRANT path,
+ * HOME and OWNER define it in coherence/grant.c-backed
+ * each arm's own placement TU (single-owner OWNERSHIP_REQUEST / GRANT path,
  * differing only on the RO-has-local-data predicate); WRF_RCU defines its
- * unified home-canonical body in coherence/wrf_rcu.c.  The shared remote-RO
+ * unified home-canonical body in coherence/wrf_val.c.  The shared remote-RO
  * path (arts_db_acquire_remote_ro) and the local-buffer fast read
  * (arts_db_acquire_local) above are reused by all three.
  */
@@ -452,7 +459,7 @@ arts_db_acquire_remote_ro(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
  * guarantees every parked node's target_version <= the buffer version that
  * triggers the drain, so a full drain (no partial pop) is always correct
  * (plan: "install 시 전체 drain").  Called from the case-2 install path, the
- * GRANT install, the lazy TRANSFER_OWNERSHIP install, and destroy fan-out. */
+ * GRANT install, the OWNER TRANSFER_OWNERSHIP install, and destroy fan-out. */
 void arts_db_drain_pending_snapshot(struct arts_db_cache_s *cache) {
   arts_lf_link_t *node = arts_lf_stack_drain(&cache->pending_snapshot);
   while (node != NULL) {
@@ -482,14 +489,14 @@ void arts_db_drain_pending_snapshot(struct arts_db_cache_s *cache) {
 /* ===== Release path =============================================== */
 /* ================================================================== */
 
-/* ===== writeback ACK wait (shared coherence service) =================
+/* ===== publish ACK wait (shared coherence service) =================
  *
- * Synchronous WRITEBACK with a stack-local semaphore matched by pointer
- * identity.  Called by the eager and WRF_RCU release-tail bodies (the lazy
- * tail uses TRANSFER_OWNERSHIP and never waits on a WRITEBACK_ACK).  Declared
+ * Synchronous PUBLISH with a stack-local semaphore matched by pointer
+ * identity.  Called by the HOME and WRF_RCU release-tail bodies (the OWNER
+ * tail uses TRANSFER_OWNERSHIP and never waits on a PUBLISH_ACK).  Declared
  * in coherence/coherence.h so the protocol TUs can invoke it. */
-void await_writeback_ack(sem_t *cv) {
-  /* Block on the stack-local semaphore until arts_handler_db_writeback_ack
+void await_publish_ack(sem_t *cv) {
+  /* Block on the stack-local semaphore until arts_handler_db_publish_ack
    * posts it.  No busy-wait: sem_timedwait sleeps the worker.  We re-arm on a
    * coarse cadence only to re-check the shutdown flag — once teardown starts
    * the network receiver stops draining and the ACK never arrives, so the EDT
@@ -510,33 +517,36 @@ void await_writeback_ack(sem_t *cv) {
 }
 
 /* arts_db_release_rw is protocol-specific (the version bump is shared, but the
- * pre-decrement buffer-ref drop and the post-decrement transfer/writeback
+ * pre-decrement buffer-ref drop and the post-decrement transfer/publish
  * decision differ per protocol), so its whole body lives in
- * coherence/{eager,lazy,wrf_rcu}.c.  Eager and WRF_RCU call arts_db_writeback_sync
- * below for the synchronous-WRITEBACK rendezvous. */
+ * each arm's own placement TU.  Eager and WRF_RCU call arts_db_publish_sync
+ * below for the synchronous-PUBLISH rendezvous. */
 
-#if !defined(ARTS_TIMING_LAZY) && !defined(ARTS_PROTOCOL_RWLOCK) &&           \
-    !defined(ARTS_PROTOCOL_MSI)
-void arts_db_writeback_sync(struct arts_db_cache_s *cache, uint64_t version,
+/* Compiled by every arm that publishes at a release.  Under HOME that is the
+ * payload write-through; under OWNER only MSI publishes at all, and its
+ * publish is control-only — the round request. */
+#if !defined(ARTS_PROTOCOL_EXCL) &&                                          \
+    (!defined(ARTS_WRITE_POLICY_WB) || defined(ARTS_PROTOCOL_INV))
+void arts_db_publish_sync(struct arts_db_cache_s *cache, uint64_t version,
                             const void *data, uint64_t data_size) {
   unsigned int home_rank = arts_guid_get_rank(cache->db_guid);
   /* The rendezvous lives on the HEAP, not the releaser's stack: the shutdown
-   * escape in await_writeback_ack can abandon the wait while a CTS/ACK reply
+   * escape in await_publish_ack can abandon the wait while a CTS/ACK reply
    * is still in flight, and that reply writes the landing fields through the
    * echoed cv before posting.  A heap block deliberately LEAKED on the
    * shutdown escape keeps that late write inside live memory (a bounded,
    * teardown-only leak); a popped stack frame would be corrupted. */
-  struct arts_db_wb_rendezvous_s *wr =
-      (struct arts_db_wb_rendezvous_s *)arts_malloc(sizeof(*wr));
+  struct arts_db_pub_rendezvous_s *wr =
+      (struct arts_db_pub_rendezvous_s *)arts_malloc(sizeof(*wr));
   sem_init(&wr->sem, 0, 0);
   wr->landing = (struct arts_rdzv_landing_s){0, 0, 0, 0};
   if (home_rank == arts_global_rank_id || data == NULL || data_size == 0) {
     /* Same-rank round (the payload rides inline through the OoO args copy —
      * no wire, no RDMA) or a data-less ordering round: single announce+ACK. */
-    arts_send_db_writeback(home_rank, cache->db_guid, version,
+    arts_send_db_publish(home_rank, cache->db_guid, version,
                            (uint64_t)(uintptr_t)wr, data, data_size,
                            /*rdzv_txid=*/0, /*rdzv_cookie=*/0);
-    await_writeback_ack(&wr->sem);
+    await_publish_ack(&wr->sem);
     if (arts_atomic_read(&arts_node_info.shutdown_state) != 0) {
       return; /* possible shutdown escape: a late ACK may still post — leak */
     }
@@ -545,13 +555,13 @@ void arts_db_writeback_sync(struct arts_db_cache_s *cache, uint64_t version,
     return;
   }
   /* Remote dirty round: announce (data_size, txid 0) -> home allocates a
-   * fresh landing and replies WRITEBACK_CTS -> PUT the dirty bytes -> commit
+   * fresh landing and replies PUBLISH_CTS -> PUT the dirty bytes -> commit
    * (same packet layout, txid set) -> home pairs {commit, write completion},
    * installs the landing, ACKs. */
-  arts_send_db_writeback(home_rank, cache->db_guid, version,
+  arts_send_db_publish(home_rank, cache->db_guid, version,
                          (uint64_t)(uintptr_t)wr, /*data=*/NULL, data_size,
                          /*rdzv_txid=*/0, /*rdzv_cookie=*/0);
-  await_writeback_ack(&wr->sem); /* CTS wake — or the shutdown escape */
+  await_publish_ack(&wr->sem); /* CTS wake — or the shutdown escape */
   if (wr->landing.txid == 0) {
     /* Shutdown escape before the CTS landed: no landing to PUT into; the
      * round is abandoned with the runtime (never a silent data drop in a
@@ -572,27 +582,27 @@ void arts_db_writeback_sync(struct arts_db_cache_s *cache, uint64_t version,
   arts_net_put_payload((int)home_rank, wr->landing.addr, wr->landing.key,
                        wr->landing.txid, data, data_size,
                        /*on_local_done=*/NULL, NULL);
-  arts_send_db_writeback(home_rank, cache->db_guid, version,
+  arts_send_db_publish(home_rank, cache->db_guid, version,
                          (uint64_t)(uintptr_t)wr, /*data=*/NULL, data_size,
                          wr->landing.txid, wr->landing.cookie);
-  await_writeback_ack(&wr->sem); /* install ACK */
+  await_publish_ack(&wr->sem); /* install ACK */
   if (arts_atomic_read(&arts_node_info.shutdown_state) != 0) {
     return; /* possible shutdown escape — leak (late ACK may post) */
   }
   sem_destroy(&wr->sem);
   arts_free(wr);
 }
-#endif /* !ARTS_TIMING_LAZY && !ARTS_PROTOCOL_RWLOCK */
+#endif /* !ARTS_WRITE_POLICY_WB && !ARTS_PROTOCOL_EXCL */
 
-#if !defined(ARTS_PROTOCOL_RWLOCK)
+#if !defined(ARTS_PROTOCOL_EXCL)
 void arts_db_release_ro(struct arts_db_cache_s *cache) {
   /* RO release is a no-op for RCU/WRF_RCU: the EDT's buf ref is dropped
    * by release_one_dep's DIST branch via release_buf (matching the
    * acquire_buf in mark_edt_ready_by_guid / acquire_local).
-   * RWLOCK defines its own arts_db_release_ro in coherence/rwlock/release.c. */
+   * RWLOCK defines its own arts_db_release_ro in coherence/excl/release.c. */
   (void)cache;
 }
-#endif /* !ARTS_PROTOCOL_RWLOCK */
+#endif /* !ARTS_PROTOCOL_EXCL */
 
 /* ================================================================== */
 /* ===== Destroy lifecycle ========================================== */
@@ -610,12 +620,12 @@ void arts_db_destroy_remote(arts_guid_t db_guid) {
 
 /* ===== cache_s destructor (chained from arts_db_free) =============
  *
- * The full destructor arts_db_cache_destructor is model-specific (it sequences
- * the model field-destroy between these two shared steps) and lives in
- * coherence/{eager,lazy,wrf_rcu}.c.  The agnostic steps are split into pre
+ * The full destructor arts_db_cache_destructor is protocol-specific — it
+ * sequences the protocol's own field teardown between these two shared steps —
+ * and lives with each arm's placement TU.  The agnostic steps split into pre
  * (the buffer-NULL that must run first) and post (snapshot drain + home
- * teardown);
- * the per-model wrapper runs pre → model-destroy → post.  cache_s itself is
+ * teardown), so the per-arm wrapper runs pre, its own teardown, then post.
+ * cache_s itself is
  * freed by the route_table after the wrapper returns; buffers (FAM data) are
  * recycled / freed by the cb deleter chain once outstanding refs drain. */
 
@@ -642,7 +652,7 @@ void arts_db_cache_common_destroy_pre(struct arts_db_cache_s *cache) {
 
 /* Steps 3b+4: drain+free the snapshot reorder buffer (a Treiber stack), then
  * tear down the inlined home-directory sub-resources.  Runs AFTER the protocol
- * field-destroy (pending_rw in eager and lazy builds). */
+ * field-destroy (pending_rw in HOME and OWNER builds). */
 void arts_db_cache_common_destroy_post(struct arts_db_cache_s *cache) {
   if (cache == NULL) {
     return;
@@ -656,8 +666,7 @@ void arts_db_cache_common_destroy_post(struct arts_db_cache_s *cache) {
       n = next;
     }
   }
-#if defined(ARTS_RO_REQUEST_COMBINING) && !defined(ARTS_PROTOCOL_RWLOCK) && \
-    !defined(ARTS_PROTOCOL_MSI)
+#if defined(ARTS_RO_REQUEST_COMBINING) && !defined(ARTS_PROTOCOL_EXCL) 
   {
     /* Combining waiters still parked at destroy are freed, not woken —
      * destroying a DB with a pending acquire is undefined per the programming

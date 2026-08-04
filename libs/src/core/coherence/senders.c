@@ -4,7 +4,7 @@
  *
  * Each arts_send_db_* helper fills a wire packet (header + body) and either
  * dispatches the matching handler inline (when the destination is the local
- * rank — arts_transport_send_async drops self-sends, and the eager protocol
+ * rank — arts_transport_send_async drops self-sends, and the HOME placement
  * uses uniform "send to home" semantics including home == self) or hands the
  * packet to the transport layer; bulk payloads travel one-sided into
  * receiver-advertised rendezvous landings, never on the control plane.
@@ -13,7 +13,7 @@
  * transfer helpers live in coherence_handlers.c.
  *
  * Single-node note: arts_transport_send_async drops messages whose
- * destination is the local rank (self_send_check rejects).  The eager protocol
+ * destination is the local rank (self_send_check rejects).  The HOME protocol
  * uses uniform "send to home" semantics including home == self, so we dispatch
  * handlers directly when rank == self instead of going over the network.
  */
@@ -39,19 +39,19 @@
 
 /* ===== Sender helpers ============================================== */
 
-/* arts_send_db_ownership_request / _return / _invalidate and the
- * OWNERSHIP_RESPONSE sender live in the protocol TUs (eager+lazy only): the
- * request / return / invalidate senders in coherence/ownership.c, the
- * OWNERSHIP_RESPONSE sender in coherence/eager.c (GRANT) and coherence/lazy.c
+/* arts_send_db_grant_request / _return / _invalidate and the
+ * OWNERSHIP_RESPONSE sender live in the protocol TUs (HOME and OWNER only): the
+ * request / return / invalidate senders in coherence/grant.c, the
+ * OWNERSHIP_RESPONSE sender in coherence/home.c (GRANT) and coherence/owner.c
  * (TRANSFER_OWNERSHIP).  WRF_RCU has no exclusive-ownership wire messages. */
 
-#if !defined(ARTS_PROTOCOL_RWLOCK) && !defined(ARTS_PROTOCOL_MSI)
-void arts_send_db_writeback(unsigned int home_rank, arts_guid_t db_guid,
+#if !defined(ARTS_PROTOCOL_EXCL)
+void arts_send_db_publish(unsigned int home_rank, arts_guid_t db_guid,
                             uint64_t version, uint64_t cv, const void *data,
                             uint64_t data_size, uint64_t rdzv_txid,
                             uint64_t rdzv_cookie) {
-  struct arts_msg_writeback_packet_s p;
-  arts_fill_packet_header(&p.header, sizeof(p), MSG_DB_WRITEBACK);
+  struct arts_msg_publish_packet_s p;
+  arts_fill_packet_header(&p.header, sizeof(p), MSG_DB_PUBLISH);
   p.header.rank = arts_global_rank_id;
   p.db_guid = db_guid;
   p.version = version;
@@ -59,22 +59,27 @@ void arts_send_db_writeback(unsigned int home_rank, arts_guid_t db_guid,
   p.data_size = data_size;
   p.rdzv_txid = rdzv_txid;
   p.rdzv_cookie = rdzv_cookie;
-#if !defined(ARTS_TIMING_LAZY)
-  /* Self-send (home == self) — eager/WRF_RCU only.  The lazy protocol has no
-   * synchronous writeback at all (its OOO_DB_WRITEBACK kind does not exist), so
-   * this whole sender is statically excluded under the lazy build. */
+/* The OoO kind exists only in arms that publish at a release; RCU under OWNER
+ * publishes nothing, so its local-hit branch is compiled out with it. */
+#if !defined(ARTS_WRITE_POLICY_WB) || defined(ARTS_PROTOCOL_INV)
+  /* Local hit: the home is this rank, so there is nothing to put on the wire.
+   * Route through the OoO engine exactly as the wire RX dispatcher does — a
+   * HIT runs the publish body inline, a MISS defers the args (trailing payload
+   * preserved) and replays once the home db_s installs and drains.  Skipping
+   * the engine here would lose the before-create reorder handling that the
+   * remote path gets for free. */
   if (home_rank == arts_global_rank_id) {
     /* Route through the OoO engine exactly as the wire RX dispatcher does —
-     * HIT runs the writeback body inline, MISS defers the args (trailing data
+     * HIT runs the publish body inline, MISS defers the args (trailing data
      * preserved) and replays once the home db_s is installed + drained.  A
-     * same-rank writeback carries its payload inline after the args struct
+     * same-rank publish carries its payload inline after the args struct
      * (data_inline=1); no rendezvous round exists for it. */
     uint64_t inline_size = (data != NULL) ? data_size : 0;
     uint32_t asz =
-        (uint32_t)(sizeof(struct arts_ooo_args_db_writeback_s) + inline_size);
+        (uint32_t)(sizeof(struct arts_ooo_args_db_publish_s) + inline_size);
     char *abuf = (char *)arts_malloc(asz);
-    struct arts_ooo_args_db_writeback_s *args =
-        (struct arts_ooo_args_db_writeback_s *)abuf;
+    struct arts_ooo_args_db_publish_s *args =
+        (struct arts_ooo_args_db_publish_s *)abuf;
     args->releaser = p.header.rank;
     args->db_guid = db_guid;
     args->version = version;
@@ -86,7 +91,7 @@ void arts_send_db_writeback(unsigned int home_rank, arts_guid_t db_guid,
     if (inline_size > 0) {
       memcpy(abuf + sizeof(*args), data, inline_size);
     }
-    arts_ooo_dispatch_or_defer_guid(db_guid, OOO_DB_WRITEBACK, abuf, asz);
+    arts_ooo_dispatch_or_defer_guid(db_guid, OOO_DB_PUBLISH, abuf, asz);
     arts_free(abuf);
     return;
   }
@@ -94,23 +99,23 @@ void arts_send_db_writeback(unsigned int home_rank, arts_guid_t db_guid,
   /* Remote: the packet is control-only in every phase — announce
    * (data_size>0, txid 0), commit (txid set), or a data-less ordering round
    * (data_size 0).  The dirty payload itself travels one-sided
-   * (arts_db_writeback_sync PUTs it between announce and commit). */
+   * (arts_db_publish_sync PUTs it between announce and commit). */
   (void)data;
   arts_transport_send_async((int)home_rank, (char *)&p, sizeof(p));
 }
 
-#endif /* !ARTS_PROTOCOL_RWLOCK && !ARTS_PROTOCOL_MSI */
+#endif /* !ARTS_PROTOCOL_EXCL */
 
-/* WRITEBACK_CTS — home → releaser: a home landing for an announced dirty
- * writeback (a fresh buffer under the ownership/multi-writer protocols; the
+/* PUBLISH_CTS — home → releaser: a home landing for an announced dirty
+ * publish (a fresh buffer under the ownership/multi-writer protocols; the
  * stable buffer under the exclusive-lock protocol's landing-less release).
- * Never a self-send (a same-rank writeback is inline).  Compiled for every
- * protocol with a synchronous writeback leg. */
-void arts_send_db_writeback_cts(unsigned int releaser_rank, arts_guid_t db_guid,
+ * Never a self-send (a same-rank publish is inline).  Compiled for every
+ * protocol with a synchronous publish leg. */
+void arts_send_db_publish_cts(unsigned int releaser_rank, arts_guid_t db_guid,
                                 const struct arts_rdzv_landing_s *landing,
                                 uint64_t cv) {
-  struct arts_msg_writeback_cts_packet_s p;
-  arts_fill_packet_header(&p.header, sizeof(p), MSG_DB_WRITEBACK_CTS);
+  struct arts_msg_publish_cts_packet_s p;
+  arts_fill_packet_header(&p.header, sizeof(p), MSG_DB_PUBLISH_CTS);
   p.header.rank = arts_global_rank_id;
   p.db_guid = db_guid;
   p.landing.addr = landing->addr;
@@ -121,16 +126,16 @@ void arts_send_db_writeback_cts(unsigned int releaser_rank, arts_guid_t db_guid,
   arts_transport_send_async((int)releaser_rank, (char *)&p, sizeof(p));
 }
 
-/* WRITEBACK_ACK is the reply to a synchronous WRITEBACK round, which only the
- * eager and WRF_RCU protocols use (the lazy protocol transfers ownership
- * owner→owner without a synchronous writeback, so it never sends or receives
- * WRITEBACK_ACK and its dispatcher fatals on the wire message). */
-#if !defined(ARTS_TIMING_LAZY) && !defined(ARTS_PROTOCOL_RWLOCK) && \
-    !defined(ARTS_PROTOCOL_MSI)
-void arts_send_db_writeback_ack(unsigned int releaser_rank, arts_guid_t db_guid,
+/* PUBLISH_ACK is the reply to a synchronous PUBLISH round, which only the
+ * the HOME placement and WRF_RCU use (the OWNER placement transfers ownership
+ * owner→owner without a synchronous publish, so it never sends or receives
+ * PUBLISH_ACK and its dispatcher fatals on the wire message). */
+#if !defined(ARTS_PROTOCOL_EXCL) &&                                          \
+    (!defined(ARTS_WRITE_POLICY_WB) || defined(ARTS_PROTOCOL_INV))
+void arts_send_db_publish_ack(unsigned int releaser_rank, arts_guid_t db_guid,
                                 uint64_t cv) {
-  struct arts_msg_writeback_ack_packet_s p;
-  arts_fill_packet_header(&p.header, sizeof(p), MSG_DB_WRITEBACK_ACK);
+  struct arts_msg_publish_ack_packet_s p;
+  arts_fill_packet_header(&p.header, sizeof(p), MSG_DB_PUBLISH_ACK);
   p.header.rank = arts_global_rank_id;
   p.db_guid = db_guid;
   p.cv = cv;
@@ -139,18 +144,20 @@ void arts_send_db_writeback_ack(unsigned int releaser_rank, arts_guid_t db_guid,
      * wake is a cache-independent pointer-identity sem-post on cv; the body
      * ignores item_v, so call it unconditionally (db may be NULL — a missing
      * home cache must still post the sem, else the blocked releaser hangs). */
-    struct arts_db_writeback_ack_args_s args = {.cv = cv};
+    struct arts_db_publish_ack_args_s args = {.cv = cv};
     arts_shared_ptr_t h = arts_route_table_lookup_db(db_guid);
     struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(h);
-    arts_handler_db_writeback_ack(db, &args);
+    arts_handler_db_publish_ack(db, &args);
     arts_shared_release(&h);
     return;
   }
   arts_transport_send_async((int)releaser_rank, (char *)&p, sizeof(p));
 }
-#endif /* !ARTS_TIMING_LAZY && !ARTS_PROTOCOL_RWLOCK */
+#endif /* !ARTS_WRITE_POLICY_WB && !ARTS_PROTOCOL_EXCL */
 
-#if !defined(ARTS_PROTOCOL_RWLOCK) && !defined(ARTS_PROTOCOL_MSI)
+/* The versioned-snapshot read path: RCU and WRF_RCU only.  MSI's readers hold
+ * durable copies and fetch with MSI_REQUEST instead. */
+#if !defined(ARTS_PROTOCOL_EXCL) && !defined(ARTS_PROTOCOL_INV)
 void arts_send_db_snapshot_request(struct arts_db_cache_s *cache,
                                    arts_guid_t edt_guid, uint32_t slot) {
   arts_guid_t db_guid = cache->db_guid;
@@ -214,7 +221,7 @@ void arts_send_db_snapshot_response(unsigned int requester_rank,
   p.rdzv_txid = 0;
   p.rdzv_cookie = (landing != NULL) ? landing->cookie : 0;
   if (requester_rank == arts_global_rank_id) {
-    /* Self-serve (a LAZY REDIRECT round-trip can land back on the requester
+    /* Self-serve (an OWNER REDIRECT round-trip can land back on the requester
      * rank): no RDMA — the bytes ride inline through the args while src_h
      * pins the buffer; the handler recycles our own unused landing (cookie).
      * Mirror the wire RX dispatcher's Cat-C lookup-acquire-or-drop. */
@@ -259,7 +266,7 @@ void arts_send_db_snapshot_response(unsigned int requester_rank,
   }
   arts_transport_send_async((int)requester_rank, (char *)&p, sizeof(p));
 }
-#endif /* !ARTS_PROTOCOL_RWLOCK */
+#endif /* !ARTS_PROTOCOL_EXCL && !ARTS_PROTOCOL_INV */
 
 void arts_send_db_create_coherent(unsigned int home_rank, arts_guid_t db_guid,
                                   uint64_t db_size, uint16_t flags,
@@ -322,22 +329,22 @@ void arts_send_db_cache_destroy(unsigned int sharer_rank, arts_guid_t db_guid) {
   arts_transport_send_async((int)sharer_rank, (char *)&p, sizeof(p));
 }
 
-#ifdef ARTS_PROTOCOL_RWLOCK
-/* arts_send_db_lock_release_ack — LOCK_RELEASE_ACK: home → RW releaser.
+#ifdef ARTS_PROTOCOL_EXCL
+/* arts_send_db_excl_release_ack — LOCK_RELEASE_ACK: home → RW releaser.
  *
- * Mirrors arts_send_db_writeback_ack (RCU eager): forwards cv verbatim so
- * the releaser's await_writeback_ack unblocks by pointer-identity sem_post.
+ * Mirrors arts_send_db_publish_ack (RCU HOME): forwards cv verbatim so
+ * the releaser's await_publish_ack unblocks by pointer-identity sem_post.
  *
  * Cat-C SPECIAL self-send: posts the sem even when db==NULL (home cache
  * torn down concurrently) so the blocked releaser is never stranded.
  *
- * The sem_post inline (rather than calling arts_handler_db_writeback_ack)
- * avoids a cross-protocol link dependency: arts_handler_db_writeback_ack is
+ * The sem_post inline (rather than calling arts_handler_db_publish_ack)
+ * avoids a cross-protocol link dependency: arts_handler_db_publish_ack is
  * defined only in RCU/WRF_RCU TUs, not in the RWLOCK build. */
-void arts_send_db_lock_release_ack(unsigned int releaser_rank,
+void arts_send_db_excl_release_ack(unsigned int releaser_rank,
                                    arts_guid_t db_guid, uint64_t cv) {
-  struct arts_msg_lock_release_ack_packet_s p;
-  arts_fill_packet_header(&p.header, sizeof(p), MSG_DB_LOCK_RELEASE_ACK);
+  struct arts_msg_excl_release_ack_packet_s p;
+  arts_fill_packet_header(&p.header, sizeof(p), MSG_DB_EXCL_RELEASE_ACK);
   p.header.rank = arts_global_rank_id;
   p.db_guid = db_guid;
   p.cv = cv;
@@ -352,8 +359,8 @@ void arts_send_db_lock_release_ack(unsigned int releaser_rank,
   }
   arts_transport_send_async((int)releaser_rank, (char *)&p, sizeof(p));
 }
-#endif /* ARTS_PROTOCOL_RWLOCK */
+#endif /* ARTS_PROTOCOL_EXCL */
 
-/* The LAZY-only senders (CONFIRM, CONFIRM_ACK, REDIRECT_RO) live in
- * coherence/lazy.c alongside their handlers; the RCU OWNERSHIP_RESPONSE
- * senders live in coherence/eager.c / coherence/lazy.c. */
+/* The OWNER-only senders (CONFIRM, CONFIRM_ACK, REDIRECT_RO) live in
+ * coherence/owner.c alongside their handlers; the RCU OWNERSHIP_RESPONSE
+ * senders live in coherence/home.c / coherence/owner.c. */

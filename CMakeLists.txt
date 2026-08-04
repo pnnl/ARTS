@@ -186,7 +186,7 @@ cmake_dependent_option(ARTS_USE_LOCAL_CUDA_ARCHITECTURES
     "Auto-detect CUDA architectures from local GPUs using nvidia-smi" ON
     "ARTS_USE_GPU" OFF)
 
-# ── Memory model × coherence protocol × timing ─────────────────────────────
+# ── Memory model × coherence protocol × data placement ─────────────────────
 # Compile-time switches — one binary is exactly one configuration; all ranks in
 # a multinode run must use the same build.
 #   ARTS_MEMORY_MODEL        OCR (default) — the OCR v1.2.0 §1.6 memory model:
@@ -196,37 +196,51 @@ cmake_dependent_option(ARTS_USE_LOCAL_CUDA_ARCHITECTURES
 #                            the PROGRAM must order every write-write conflict
 #                            on a DB via events; read-write races keep the same
 #                            word-granular (regular-register) reader floor.
-#   ARTS_COHERENCE_PROTOCOL  RCU (default) — RCU-style: readers acquire
-#                            versioned snapshots and are never blocked by or
-#                            invalidated on behalf of writers; update-side
-#                            ordering comes from runtime ownership (OCR) or
-#                            from the program (DB_WRF).
-#                            RWLOCK — queue-fair distributed reader–writer lock
-#                            per DB (entry-consistency style): shared grants
-#                            ship read copies, exclusive release writes back.
-#                            MSI — write-invalidate: readers overlap writers
-#                            (never blocked), every RW release publishes to
-#                            home and a per-release invalidation round kills
-#                            older copies (EAGER timing only).
-#   ARTS_PROTOCOL_TIMING     EAGER | LAZY (default) — when consistency actions
-#                            run: EAGER = release-time home writeback, LAZY =
-#                            acquire-time owner-to-owner transfer.
-# Valid combinations (everything else is a configure error):
-#   OCR    × RCU    × {EAGER, LAZY}
-#   OCR    × RWLOCK × {EAGER, LAZY}
-#   OCR    × MSI    × {EAGER, LAZY}    (write-invalidate)
-#   DB_WRF × RCU    × EAGER            (home-canonical sync writeback)
+#   ARTS_COHERENCE_PROTOCOL  Coherence family — who keeps reader copies valid:
+#                            VAL (default) — validation: each read acquire
+#                            checks its cached copy's version at the serving
+#                            side and refetches only when stale; readers are
+#                            never blocked, tracked, or invalidated.
+#                            INV — invalidation: reader copies stay valid until
+#                            a writer's release retires every standing copy in
+#                            an acknowledged invalidation round.
+#                            EXCL — exclusion: queue-fair distributed
+#                            reader-writer lock per DB; readers and writers
+#                            take turns, so no stale copy ever exists.
+#   ARTS_WRITE_POLICY        WT | WB (default) — write policy of a node's
+#                            data-block cache at release granularity: WT =
+#                            write-through (payload flushed to the block's home
+#                            at every release; home serves reads), WB =
+#                            write-back (payload stays with the last writer;
+#                            directory forwards on demand). Live in INV/VAL.
+#   ARTS_RELEASE_POLICY      PURGE | RETAIN (default) — what a node does with
+#                            its grant when the last local user finishes:
+#                            PURGE = hand copy and permission back to the home;
+#                            RETAIN = keep both until another node asks. Live
+#                            in EXCL.
+# The axes are nominally independent: 12 combinations, 6 built. Everything
+# else is a configure error naming the reason:
+#   OCR    × VAL  × {WT, WB} × RETAIN
+#   OCR    × INV  × {WT, WB} × RETAIN
+#   OCR    × EXCL × WB × {PURGE, RETAIN}
+#   DB_WRF × VAL  × WT × RETAIN        (home-canonical sync publish)
+# Not built: EXCL×WT (the payload rides the permission, so the release policy
+# already decides both), INV/VAL×PURGE (the migrating write grant is
+# metadata-only; giving it up early saves no data movement).
 set(ARTS_MEMORY_MODEL "OCR" CACHE STRING
     "Memory model the build implements: OCR (default; races legal, runtime-ordered) or DB_WRF (program orders write-write conflicts per DB)")
 set_property(CACHE ARTS_MEMORY_MODEL PROPERTY STRINGS OCR DB_WRF)
-set(ARTS_COHERENCE_PROTOCOL "RCU" CACHE STRING
-    "Coherence protocol: RCU (default; versioned snapshots, readers never blocked/invalidated), RWLOCK (per-DB distributed reader-writer lock), or MSI (write-invalidate; readers overlap writers, per-release invalidation rounds)")
-set_property(CACHE ARTS_COHERENCE_PROTOCOL PROPERTY STRINGS RCU RWLOCK MSI)
-set(ARTS_PROTOCOL_TIMING "LAZY" CACHE STRING
-    "Timing of consistency actions: EAGER (release-time) or LAZY (acquire-time, default)")
-set_property(CACHE ARTS_PROTOCOL_TIMING PROPERTY STRINGS EAGER LAZY)
+set(ARTS_COHERENCE_PROTOCOL "VAL" CACHE STRING
+    "Coherence family: VAL (default; acquire-time version validation, readers never blocked/tracked/invalidated), INV (release-time invalidation rounds), or EXCL (per-DB distributed reader-writer lock)")
+set_property(CACHE ARTS_COHERENCE_PROTOCOL PROPERTY STRINGS VAL INV EXCL)
+set(ARTS_WRITE_POLICY "WB" CACHE STRING
+    "Write policy at release granularity: WT (flush to the home at every release) or WB (resident with the last writer, default). Live in INV/VAL; EXCL requires WB")
+set_property(CACHE ARTS_WRITE_POLICY PROPERTY STRINGS WT WB)
+set(ARTS_RELEASE_POLICY "RETAIN" CACHE STRING
+    "Grant policy at the last local release: PURGE (hand copy and permission back to the home) or RETAIN (keep both until asked, default). Live in EXCL; INV/VAL require RETAIN")
+set_property(CACHE ARTS_RELEASE_POLICY PROPERTY STRINGS PURGE RETAIN)
 option(ARTS_RO_REQUEST_COMBINING
-    "Combine concurrent same-DB remote read acquires into a single in-flight snapshot request per DB (RCU pull path; no effect under RWLOCK)" OFF)
+    "Combine concurrent same-DB remote read acquires into a single in-flight snapshot request per DB (VAL pull path; no effect under EXCL)" OFF)
 set(ARTS_MALLOC "mimalloc" CACHE STRING
     "General allocator: mimalloc (default, vendored static) or system (libc malloc)")
 set_property(CACHE ARTS_MALLOC PROPERTY STRINGS mimalloc system)
@@ -319,63 +333,92 @@ set(ARTS_COUNTER_CONFIG
     "${CMAKE_CURRENT_SOURCE_DIR}/configs/counters.cfg"
     CACHE FILEPATH "ARTS counter configuration file (parsed to generate introspection macros)")
 
-# ── Memory-model × protocol × timing validation + arm derivation ───────────
-# The three user-facing axes reduce to one protocol ARM — the TU family that
-# gets compiled and the ARTS_PROTOCOL_* macro it defines:
-#   (OCR,    RCU,    E/L)   -> arm RCU      (coherence/rcu/,     ARTS_PROTOCOL_RCU)
-#   (OCR,    RWLOCK, E/L)   -> arm RWLOCK   (coherence/rwlock/,  ARTS_PROTOCOL_RWLOCK)
-#   (DB_WRF, RCU,    EAGER) -> arm WRF_RCU  (coherence/wrf_rcu/, ARTS_PROTOCOL_WRF_RCU)
+# ── Memory-model × family × second-axes validation + arm derivation ───────
+# The user-facing axes reduce to one protocol ARM — the TU family that gets
+# compiled and the ARTS_PROTOCOL_* macro it defines:
+#   (OCR,    VAL,  WT/WB)  -> arm VAL      (coherence/val/,     ARTS_PROTOCOL_VAL)
+#   (OCR,    INV,  WT/WB)  -> arm INV      (coherence/inv/,     ARTS_PROTOCOL_INV)
+#   (OCR,    EXCL, P/R)    -> arm EXCL     (coherence/excl/,    ARTS_PROTOCOL_EXCL)
+#   (DB_WRF, VAL,  WT)     -> arm WRF_VAL  (coherence/wrf_val/, ARTS_PROTOCOL_WRF_VAL)
 # ARTS_COHERENCE_ARM is internal — downstream CMake (TU selection, tests)
 # branches on the arm, never on the raw axes.
-# Migration guard: pre-rebranding single-axis values.
+# Migration guards: pre-rename axis values.
 if(ARTS_COHERENCE_PROTOCOL STREQUAL "MRNEW" OR ARTS_COHERENCE_PROTOCOL STREQUAL "MRMW" OR
-   ARTS_COHERENCE_PROTOCOL STREQUAL "MRSW" OR ARTS_COHERENCE_PROTOCOL STREQUAL "LOCK")
+   ARTS_COHERENCE_PROTOCOL STREQUAL "MRSW" OR ARTS_COHERENCE_PROTOCOL STREQUAL "LOCK" OR
+   ARTS_COHERENCE_PROTOCOL STREQUAL "RCU" OR ARTS_COHERENCE_PROTOCOL STREQUAL "RWLOCK" OR
+   ARTS_COHERENCE_PROTOCOL STREQUAL "MSI")
   message(FATAL_ERROR
-          "ARTS_COHERENCE_PROTOCOL=${ARTS_COHERENCE_PROTOCOL} was renamed. Use the "
-          "three-axis form: MRNEW -> ARTS_MEMORY_MODEL=OCR ARTS_COHERENCE_PROTOCOL=RCU; "
-          "LOCK -> ARTS_MEMORY_MODEL=OCR ARTS_COHERENCE_PROTOCOL=RWLOCK; "
-          "MRMW -> ARTS_MEMORY_MODEL=DB_WRF ARTS_COHERENCE_PROTOCOL=RCU "
-          "ARTS_PROTOCOL_TIMING=EAGER. MRSW was retired (archive/coherence-mrsw/).")
+          "ARTS_COHERENCE_PROTOCOL=${ARTS_COHERENCE_PROTOCOL} was renamed "
+          "(2026-07-31 terminology pass). Use the family names: "
+          "RCU -> VAL, MSI -> INV, RWLOCK -> EXCL. "
+          "(Older single-axis values: MRNEW -> VAL, LOCK -> EXCL, "
+          "MRMW -> ARTS_MEMORY_MODEL=DB_WRF ARTS_COHERENCE_PROTOCOL=VAL "
+          "ARTS_WRITE_POLICY=WT. MRSW was retired, archive/coherence-mrsw/.)")
+endif()
+if(DEFINED ARTS_DATA_PLACEMENT)
+  message(FATAL_ERROR
+          "ARTS_DATA_PLACEMENT was split (2026-07-31 terminology pass) into "
+          "ARTS_WRITE_POLICY=WT|WB (live in INV/VAL; old HOME -> WT, "
+          "OWNER -> WB) and ARTS_RELEASE_POLICY=PURGE|RETAIN (live in EXCL; "
+          "old HOME -> PURGE, OWNER -> RETAIN).")
 endif()
 if(NOT ARTS_MEMORY_MODEL STREQUAL "OCR" AND NOT ARTS_MEMORY_MODEL STREQUAL "DB_WRF")
   message(FATAL_ERROR
           "ARTS_MEMORY_MODEL must be OCR or DB_WRF, got: ${ARTS_MEMORY_MODEL}")
 endif()
-if(NOT ARTS_COHERENCE_PROTOCOL STREQUAL "RCU" AND
-   NOT ARTS_COHERENCE_PROTOCOL STREQUAL "RWLOCK" AND
-   NOT ARTS_COHERENCE_PROTOCOL STREQUAL "MSI")
+if(NOT ARTS_COHERENCE_PROTOCOL STREQUAL "VAL" AND
+   NOT ARTS_COHERENCE_PROTOCOL STREQUAL "INV" AND
+   NOT ARTS_COHERENCE_PROTOCOL STREQUAL "EXCL")
   message(FATAL_ERROR
-          "ARTS_COHERENCE_PROTOCOL must be RCU, RWLOCK or MSI, got: ${ARTS_COHERENCE_PROTOCOL}")
+          "ARTS_COHERENCE_PROTOCOL must be VAL, INV or EXCL, got: ${ARTS_COHERENCE_PROTOCOL}")
 endif()
-if(NOT ARTS_PROTOCOL_TIMING STREQUAL "EAGER" AND
-   NOT ARTS_PROTOCOL_TIMING STREQUAL "LAZY")
+if(NOT ARTS_WRITE_POLICY STREQUAL "WT" AND NOT ARTS_WRITE_POLICY STREQUAL "WB")
   message(FATAL_ERROR
-          "ARTS_PROTOCOL_TIMING must be EAGER or LAZY, got: ${ARTS_PROTOCOL_TIMING}")
+          "ARTS_WRITE_POLICY must be WT or WB, got: ${ARTS_WRITE_POLICY}")
 endif()
-if(ARTS_COHERENCE_PROTOCOL STREQUAL "MSI")
-  if(ARTS_MEMORY_MODEL STREQUAL "DB_WRF")
-    message(FATAL_ERROR
-            "DB_WRF x MSI is not a meaningful configuration: MSI already "
-            "orders writers at runtime (per-release rounds), so the DB-WRF "
-            "program obligation is redundant — use ARTS_MEMORY_MODEL=OCR.")
-  endif()
+if(NOT ARTS_RELEASE_POLICY STREQUAL "PURGE" AND NOT ARTS_RELEASE_POLICY STREQUAL "RETAIN")
+  message(FATAL_ERROR
+          "ARTS_RELEASE_POLICY must be PURGE or RETAIN, got: ${ARTS_RELEASE_POLICY}")
+endif()
+# Per-family live axis: the dead axis must sit at its required value.
+if(ARTS_COHERENCE_PROTOCOL STREQUAL "EXCL" AND ARTS_WRITE_POLICY STREQUAL "WT")
+  message(FATAL_ERROR
+          "EXCL x WT is not built: under exclusion no copy outlives a write "
+          "turn, so the payload rides the permission and the release policy "
+          "(ARTS_RELEASE_POLICY=PURGE|RETAIN) already decides both. "
+          "Use ARTS_WRITE_POLICY=WB.")
+endif()
+if((ARTS_COHERENCE_PROTOCOL STREQUAL "INV" OR ARTS_COHERENCE_PROTOCOL STREQUAL "VAL")
+   AND ARTS_RELEASE_POLICY STREQUAL "PURGE")
+  message(FATAL_ERROR
+          "${ARTS_COHERENCE_PROTOCOL} x PURGE is not built: the migrating "
+          "write grant is metadata-only in the sharer-bearing families, so "
+          "returning it early saves no data movement and forfeits the "
+          "message-free re-acquisition of a repeated local writer. "
+          "Use ARTS_RELEASE_POLICY=RETAIN.")
+endif()
+if(ARTS_COHERENCE_PROTOCOL STREQUAL "INV" AND ARTS_MEMORY_MODEL STREQUAL "DB_WRF")
+  message(FATAL_ERROR
+          "DB_WRF x INV is not a meaningful configuration: INV already "
+          "orders writers at runtime (per-release rounds), so the DB-WRF "
+          "program obligation is redundant — use ARTS_MEMORY_MODEL=OCR.")
 endif()
 if(ARTS_MEMORY_MODEL STREQUAL "DB_WRF")
-  if(ARTS_COHERENCE_PROTOCOL STREQUAL "RWLOCK")
+  if(ARTS_COHERENCE_PROTOCOL STREQUAL "EXCL")
     message(FATAL_ERROR
-            "DB_WRF x RWLOCK is not a meaningful configuration: RWLOCK already "
+            "DB_WRF x EXCL is not a meaningful configuration: EXCL already "
             "serializes writer-writer at runtime, so the DB-WRF program "
             "obligation is redundant — use ARTS_MEMORY_MODEL=OCR "
-            "ARTS_COHERENCE_PROTOCOL=RWLOCK.")
+            "ARTS_COHERENCE_PROTOCOL=EXCL.")
   endif()
-  if(ARTS_PROTOCOL_TIMING STREQUAL "LAZY")
+  if(ARTS_WRITE_POLICY STREQUAL "WB")
     message(FATAL_ERROR
-            "DB_WRF x RCU x LAZY is designed but unimplemented (owner-held "
+            "DB_WRF x VAL x WB is designed but unimplemented (owner-held "
             "canonical copy, control-only release). The implemented DB_WRF "
-            "configuration is ARTS_PROTOCOL_TIMING=EAGER (home-canonical "
-            "sync writeback at release).")
+            "configuration is ARTS_WRITE_POLICY=WT (home-canonical sync "
+            "publish at release).")
   endif()
-  set(ARTS_COHERENCE_ARM "WRF_RCU")
+  set(ARTS_COHERENCE_ARM "WRF_VAL")
   message(WARNING
           "ARTS_MEMORY_MODEL=DB_WRF: write-write conflicts on a DB must be "
           "event-ordered BY THE PROGRAM (whole-DB granularity — unordered "
@@ -383,37 +426,29 @@ if(ARTS_MEMORY_MODEL STREQUAL "DB_WRF")
           "contract). Programs valid under the OCR memory model may produce "
           "wrong results here. Evaluation builds only — never a correctness "
           "baseline.")
-  message(STATUS "ARTS: model DB_WRF, protocol RCU (arm WRF_RCU), timing EAGER")
-elseif(ARTS_COHERENCE_PROTOCOL STREQUAL "MSI")
-  # MSI (write-invalidate): readers are never blocked, tracked only as a
+  message(STATUS "ARTS: model DB_WRF, family VAL (arm WRF_VAL), write policy WT")
+elseif(ARTS_COHERENCE_PROTOCOL STREQUAL "INV")
+  # INV (invalidation): readers are never blocked, tracked only as a
   # node-granular copy roster, and every RW release retires every valid copy
-  # in an invalidation round whose acks it collects before returning.  EAGER
-  # additionally publishes each release to the home (home-canonical); LAZY
+  # in an invalidation round whose acks it collects before returning.  WT
+  # additionally publishes each release to the home (home-canonical); WB
   # keeps the canonical copy at the owner and moves it owner-to-owner by
   # migration (home is a pure directory that redirects reads), so it drops the
-  # writeback and its ack — never the invalidate ack.  The arm defines
-  # ARTS_PROTOCOL_MSI plus the timing macro (the per-protocol selection chains
-  # match the timing macro ahead of the protocol macro, so MSI emits both —
-  # same discipline as RWLOCK).
-  set(ARTS_COHERENCE_ARM "MSI")
-  message(STATUS "ARTS: model OCR, protocol MSI, timing ${ARTS_PROTOCOL_TIMING}")
-elseif(ARTS_COHERENCE_PROTOCOL STREQUAL "RWLOCK")
-  # RWLOCK (entry-consistency style): a DB is held in one access mode at a
-  # time (RO-shared or RW-exclusive); reader/writer are time-exclusive;
+  # publish and its ack — never the invalidate ack.
+  set(ARTS_COHERENCE_ARM "INV")
+  message(STATUS "ARTS: model OCR, family INV, write policy ${ARTS_WRITE_POLICY}")
+elseif(ARTS_COHERENCE_PROTOCOL STREQUAL "EXCL")
+  # EXCL (exclusion, entry-consistency style): a DB is held in one access mode
+  # at a time (RO-shared or RW-exclusive); reader/writer are time-exclusive;
   # writers are passive (park, no invalidate push); all inter-node transitions
-  # serialize through the GUID home's single lock_state word.
-  #
-  # The arm defines ARTS_PROTOCOL_RWLOCK plus the timing macro
-  # (ARTS_TIMING_EAGER or ARTS_TIMING_LAZY).  Do NOT define ARTS_TIMING_EAGER
-  # without also checking ARTS_PROTOCOL_RWLOCK first — the per-protocol
-  # selection chains (ooo.h, ooo.c, coherence/types.h) match ARTS_TIMING_EAGER
-  # ahead of the RWLOCK arm, so the RWLOCK build emits the timing macro in
-  # addition to ARTS_PROTOCOL_RWLOCK (not instead of it).
-  set(ARTS_COHERENCE_ARM "RWLOCK")
-  message(STATUS "ARTS: model OCR, protocol RWLOCK, timing ${ARTS_PROTOCOL_TIMING}")
+  # serialize through the GUID home's single lock_state word.  The release
+  # policy decides what the zero edge does: PURGE returns grant and payload to
+  # the home, RETAIN keeps both until the home recalls them.
+  set(ARTS_COHERENCE_ARM "EXCL")
+  message(STATUS "ARTS: model OCR, family EXCL, release policy ${ARTS_RELEASE_POLICY}")
 else()
-  set(ARTS_COHERENCE_ARM "RCU")
-  message(STATUS "ARTS: model OCR, protocol RCU, timing ${ARTS_PROTOCOL_TIMING}")
+  set(ARTS_COHERENCE_ARM "VAL")
+  message(STATUS "ARTS: model OCR, family VAL, write policy ${ARTS_WRITE_POLICY}")
 endif()
 if(ARTS_RO_REQUEST_COMBINING)
   # Requester-side combining of the MVCC-family remote read path: while one

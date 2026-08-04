@@ -42,7 +42,7 @@
 ///
 /// Single DB initialized to a known sentinel value (42).  N RO-acquiring
 /// EDTs are spawned concurrently; each verifies that *data == 42.
-/// Exercises eager-protocol cases 1/3/7 (concurrent local RO + RO snapshot
+/// Exercises HOME-placement cases 1/3/7 (concurrent local RO + RO snapshot
 /// install + cached RO version pull).  If any reader sees a corrupted value
 /// the cache install path itself is wrong — that is a real coherence bug.
 ///

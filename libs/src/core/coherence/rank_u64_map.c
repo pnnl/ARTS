@@ -12,7 +12,7 @@
  * wins the CAS, losers are harmless).
  */
 
-#include "arts/coherence/home.h"
+#include "arts/coherence/directory.h"
 #include "arts/transport/protocol.h" /* arts_msg_rank_version_pair_s */
 
 #include <stdatomic.h>
@@ -72,7 +72,7 @@ bool arts_rank_u64_map_advance(struct arts_rank_to_u64_map_s *m,
 }
 
 /* ===== serialize / deserialize (ownership-transfer wire payload) =====
- * Shared by both RCU timings (the owner→owner OWNERSHIP_RESPONSE carries the
+ * Shared by both RCU placements (the owner→owner OWNERSHIP_RESPONSE carries the
  * owner-side map).  Layout: count(u32) + pad(u32) + count pairs. */
 size_t arts_rank_u64_map_serialize(const struct arts_rank_to_u64_map_s *m,
                                    void *out) {

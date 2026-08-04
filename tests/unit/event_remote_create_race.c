@@ -116,16 +116,16 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   unsigned int ranks = arts_get_total_ranks();
 
-#if defined(ARTS_PROTOCOL_WRF_RCU)
-  /* WRF_RCU (DB-WRF) provides no exclusive cross-rank ownership for RW: concurrent
+#if defined(ARTS_PROTOCOL_WRF_VAL)
+  /* WRF_VAL (DB-WRF) provides no exclusive cross-rank ownership for RW: concurrent
    * RW holders on different nodes each receive a buffer copy and race at
-   * WRITEBACK time (version-monotonic CAS, last writer wins).  Each racer
-   * writes to its own slot of result_db, but a later WRITEBACK from another
+   * PUBLISH time (version-monotonic CAS, last writer wins).  Each racer
+   * writes to its own slot of result_db, but a later PUBLISH from another
    * rank overwrites the whole buffer, silently discarding earlier slot writes.
    * The attendance check would then report fewer racers than expected and
    * abort. */
   printf("SKIP: event_remote_create_race: concurrent per-slot RW writes to a "
-         "shared DB are DB-WRF racy under WRF_RCU\n");
+         "shared DB are DB-WRF racy under WRF_VAL\n");
   arts_shutdown();
   return;
 #endif

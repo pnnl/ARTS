@@ -106,7 +106,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_edt_destroy(victim); /* 0 -> 1 wire MSG_EDT_DESTROY */
 
   /* Checker on rank 0: RO counter snapshot.  No ordering barrier is needed:
-   * the victim never acquires the counter's RW lease (acquire_dbs only runs
+   * the victim never acquires the counter's RW grant (acquire_dbs only runs
    * once ALL deps resolve, and slot 1 never does), so its pending destroy
    * cannot race the checker's RO read of the counter. */
   arts_edt_hint_t ch = ARTS_EDT_HINT_DEFAULTS;

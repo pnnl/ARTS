@@ -38,7 +38,7 @@
 ******************************************************************************/
 
 /// @file coherence_multi_writer_same_addr.c
-/// @brief B.5 -- Multi-writer same-address eager-protocol determinism check.
+/// @brief B.5 -- Multi-writer same-address HOME-placement determinism check.
 ///
 /// N RW EDTs increment the same int in the same DB, then a single RO EDT
 /// verifies the final count.  Tests that the ownership protocol delivers a

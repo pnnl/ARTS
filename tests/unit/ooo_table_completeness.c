@@ -15,7 +15,7 @@
  *
  *  (2) EXACT PER-CONFIG KIND SET.  The model-agnostic kinds are always present;
  *      each build's OOO_DB_* arm wires only that protocol's coherence kinds
- *      (EAGER vs LAZY vs WRF_RCU vs RWLOCK).  The test asserts each named enum maps
+ *      (HOME vs OWNER vs WRF_VAL vs EXCL).  The test asserts each named enum maps
  *      to its expected handler (the OOO_<NAME> == arts_handler_<name> naming
  *      invariant) and that OOO_KIND_COUNT equals the count of kinds that
  *      protocol defines — pinning the per-config table shape.
@@ -54,20 +54,20 @@ MK_HANDLER(arts_handler_event_destroy)
 MK_HANDLER(arts_handler_db_destroy)
 MK_HANDLER(arts_db_acquire_replay_dep)
 MK_HANDLER(arts_handler_db_snapshot_request)
-MK_HANDLER(arts_handler_db_writeback)
-#if defined(ARTS_PROTOCOL_RWLOCK)
-MK_HANDLER(arts_handler_db_lock_request)
-#ifdef ARTS_TIMING_EAGER
-MK_HANDLER(arts_handler_db_lock_release)
+MK_HANDLER(arts_handler_db_publish)
+#if defined(ARTS_PROTOCOL_EXCL)
+MK_HANDLER(arts_handler_db_excl_request)
+#ifdef ARTS_RELEASE_PURGE
+MK_HANDLER(arts_handler_db_excl_release)
 #endif
-#elif defined(ARTS_PROTOCOL_MSI) && defined(ARTS_TIMING_LAZY)
-MK_HANDLER(arts_handler_db_msi_request)
-MK_HANDLER(arts_handler_db_msi_round_req)
-#elif defined(ARTS_PROTOCOL_MSI)
-MK_HANDLER(arts_handler_db_msi_request)
-MK_HANDLER(arts_handler_db_msi_writeback)
-#elif defined(ARTS_TIMING_EAGER) || defined(ARTS_TIMING_LAZY)
-MK_HANDLER(arts_handler_db_ownership_request)
+#elif defined(ARTS_PROTOCOL_INV)
+MK_HANDLER(arts_handler_db_grant_request)
+MK_HANDLER(arts_handler_db_inv_request)
+#ifdef ARTS_WRITE_POLICY_WB
+MK_HANDLER(arts_handler_db_inv_redirect)
+#endif
+#elif defined(ARTS_WRITE_POLICY_WT) || defined(ARTS_WRITE_POLICY_WB)
+MK_HANDLER(arts_handler_db_grant_request)
 #endif
 
 /* route_table + allocator shims (ooo.c needs them at link time even though the
@@ -101,34 +101,34 @@ static const struct expect_s g_expect[] = {
     E(OOO_EDT_DESTROY, arts_handler_edt_destroy),
     E(OOO_EVENT_DESTROY, arts_handler_event_destroy),
     E(OOO_DB_DESTROY, arts_handler_db_destroy),
-#if defined(ARTS_PROTOCOL_RWLOCK) && defined(ARTS_TIMING_EAGER)
+#if defined(ARTS_PROTOCOL_EXCL) && defined(ARTS_RELEASE_PURGE)
     E(OOO_DB_ACQUIRE, arts_db_acquire_replay_dep),
-    E(OOO_DB_LOCK_REQUEST, arts_handler_db_lock_request),
-    E(OOO_DB_LOCK_RELEASE, arts_handler_db_lock_release),
-#elif defined(ARTS_PROTOCOL_RWLOCK) && defined(ARTS_TIMING_LAZY)
+    E(OOO_DB_EXCL_REQUEST, arts_handler_db_excl_request),
+    E(OOO_DB_EXCL_RELEASE, arts_handler_db_excl_release),
+#elif defined(ARTS_PROTOCOL_EXCL) && defined(ARTS_RELEASE_RETAIN)
     E(OOO_DB_ACQUIRE, arts_db_acquire_replay_dep),
-    E(OOO_DB_LOCK_REQUEST, arts_handler_db_lock_request),
-#elif defined(ARTS_PROTOCOL_MSI) && defined(ARTS_TIMING_LAZY)
+    E(OOO_DB_EXCL_REQUEST, arts_handler_db_excl_request),
+#elif defined(ARTS_PROTOCOL_INV)
     E(OOO_DB_ACQUIRE, arts_db_acquire_replay_dep),
-    E(OOO_DB_MSI_REQUEST, arts_handler_db_msi_request),
-    E(OOO_DB_MSI_ROUND_REQ, arts_handler_db_msi_round_req),
-#elif defined(ARTS_PROTOCOL_MSI)
-    E(OOO_DB_ACQUIRE, arts_db_acquire_replay_dep),
-    E(OOO_DB_MSI_REQUEST, arts_handler_db_msi_request),
-    E(OOO_DB_MSI_WRITEBACK, arts_handler_db_msi_writeback),
-#elif defined(ARTS_TIMING_EAGER)
-    E(OOO_DB_ACQUIRE, arts_db_acquire_replay_dep),
-    E(OOO_DB_SNAPSHOT_REQUEST, arts_handler_db_snapshot_request),
-    E(OOO_DB_OWNERSHIP_REQUEST, arts_handler_db_ownership_request),
-    E(OOO_DB_WRITEBACK, arts_handler_db_writeback),
-#elif defined(ARTS_TIMING_LAZY)
+    E(OOO_DB_GRANT_REQUEST, arts_handler_db_grant_request),
+    E(OOO_DB_INV_REQUEST, arts_handler_db_inv_request),
+    E(OOO_DB_PUBLISH, arts_handler_db_publish),
+#ifdef ARTS_WRITE_POLICY_WB
+    E(OOO_DB_INV_REDIRECT, arts_handler_db_inv_redirect),
+#endif
+#elif defined(ARTS_WRITE_POLICY_WT)
     E(OOO_DB_ACQUIRE, arts_db_acquire_replay_dep),
     E(OOO_DB_SNAPSHOT_REQUEST, arts_handler_db_snapshot_request),
-    E(OOO_DB_OWNERSHIP_REQUEST, arts_handler_db_ownership_request),
-#elif defined(ARTS_PROTOCOL_WRF_RCU)
+    E(OOO_DB_GRANT_REQUEST, arts_handler_db_grant_request),
+    E(OOO_DB_PUBLISH, arts_handler_db_publish),
+#elif defined(ARTS_WRITE_POLICY_WB)
     E(OOO_DB_ACQUIRE, arts_db_acquire_replay_dep),
     E(OOO_DB_SNAPSHOT_REQUEST, arts_handler_db_snapshot_request),
-    E(OOO_DB_WRITEBACK, arts_handler_db_writeback),
+    E(OOO_DB_GRANT_REQUEST, arts_handler_db_grant_request),
+#elif defined(ARTS_PROTOCOL_WRF_VAL)
+    E(OOO_DB_ACQUIRE, arts_db_acquire_replay_dep),
+    E(OOO_DB_SNAPSHOT_REQUEST, arts_handler_db_snapshot_request),
+    E(OOO_DB_PUBLISH, arts_handler_db_publish),
 #endif
 };
 
@@ -144,20 +144,20 @@ _Static_assert(OOO_KIND_COUNT == N_EXPECT,
 
 int main(void) {
   const char *cfg =
-#if defined(ARTS_PROTOCOL_RWLOCK) && defined(ARTS_TIMING_EAGER)
-      "RWLOCK+EAGER"
-#elif defined(ARTS_PROTOCOL_RWLOCK) && defined(ARTS_TIMING_LAZY)
-      "RWLOCK+LAZY"
-#elif defined(ARTS_PROTOCOL_MSI) && defined(ARTS_TIMING_LAZY)
-      "MSI+LAZY"
-#elif defined(ARTS_PROTOCOL_MSI)
-      "MSI+EAGER"
-#elif defined(ARTS_TIMING_EAGER)
-      "MR*+EAGER"
-#elif defined(ARTS_TIMING_LAZY)
-      "MR*+LAZY"
-#elif defined(ARTS_PROTOCOL_WRF_RCU)
-      "WRF_RCU"
+#if defined(ARTS_PROTOCOL_EXCL) && defined(ARTS_RELEASE_PURGE)
+      "EXCL+HOME"
+#elif defined(ARTS_PROTOCOL_EXCL) && defined(ARTS_RELEASE_RETAIN)
+      "EXCL+OWNER"
+#elif defined(ARTS_PROTOCOL_INV) && defined(ARTS_WRITE_POLICY_WB)
+      "INV+OWNER"
+#elif defined(ARTS_PROTOCOL_INV)
+      "INV+HOME"
+#elif defined(ARTS_WRITE_POLICY_WT)
+      "VAL+HOME"
+#elif defined(ARTS_WRITE_POLICY_WB)
+      "VAL+OWNER"
+#elif defined(ARTS_PROTOCOL_WRF_VAL)
+      "WRF_VAL"
 #else
       "?"
 #endif

@@ -129,7 +129,7 @@ void orchestrator(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   (void)depv;
   /* cdb passed by VALUE (its GUID): the orchestrator only wires children to it
-   * and never reads/writes the buffer.  It must NOT hold a DB lease here —
+   * and never reads/writes the buffer.  It must NOT hold a DB grant here —
    * holding cdb RW across the arts_event_wait below self-deadlocks under a
    * sequential single-writer protocol: the awaited leaf needs cdb RW but cannot
    * get the writer token while this parked EDT holds it.  (Protocols that allow
@@ -191,7 +191,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_edt_hint_t oh = ARTS_EDT_HINT_DEFAULTS;
   uint64_t op =
-      (uint64_t)cdb; /* pass cdb by value; orchestrator holds no lease */
+      (uint64_t)cdb; /* pass cdb by value; orchestrator holds no grant */
   arts_guid_t o = arts_edt_create(orchestrator, 1, &op, 0, &oh);
 }
 

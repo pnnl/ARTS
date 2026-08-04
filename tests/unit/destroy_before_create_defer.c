@@ -38,21 +38,21 @@
 ******************************************************************************/
 
 /// @file destroy_before_create_defer.c
-/// @brief T114 — request/writeback before create → Cat-B OoO defer + replay on
+/// @brief T114 — request/publish before create → Cat-B OoO defer + replay on
 ///        DB_CREATE drain (B019).
 ///
 /// A coherence request that reaches the home before the owning DB_CREATE
 /// installs the home directory is a Cat-B deferrable op: the OoO engine defers
 /// it on the GUID slot and replays it when DB_CREATE drains.  DB_CREATE itself
 /// is NON-deferrable — it is the drain trigger.  Two families exercise this:
-///   - SNAPSHOT_REQUEST (RO acquire) — non-RWLOCK protocols;
-///   - WRITEBACK (RW release) — EAGER / WRF_RCU only.
-/// Critically, the LAZY WRITEBACK sender must never be reached with home==self
-/// (B019): the self-send fast path is `#if !ARTS_TIMING_LAZY`-excluded, so
-/// under LAZY a stray writeback would fall to the async send → self_send_check
-/// drops it → silent lost writeback hang.  This test self-skips RWLOCK and only
-/// drives the RW-writeback leg under EAGER/WRF_RCU; the RO-snapshot leg runs on
-/// all non-RWLOCK.
+///   - SNAPSHOT_REQUEST (RO acquire) — non-EXCL protocols;
+///   - PUBLISH (RW release) — HOME / WRF_VAL only.
+/// Critically, the OWNER PUBLISH sender must never be reached with home==self
+/// (B019): the self-send fast path is `#if !ARTS_WRITE_POLICY_WB`-excluded, so
+/// under OWNER a stray publish would fall to the async send → self_send_check
+/// drops it → silent lost publish hang.  This test self-skips EXCL and only
+/// drives the RW-publish leg under HOME/WRF_VAL; the RO-snapshot leg runs on
+/// all non-EXCL.
 ///
 /// Black-box driver: a reserved (labeled) DB GUID home=0 with a remote acquirer
 /// in the SAME generation as the home create.  The remote's request can land
@@ -62,17 +62,17 @@
 /// the in-EDT assertion.
 ///
 /// Harness: runtime_multinode (the before-create reorder needs a remote
-/// sender); clean SKIP single-node.  Config gate: self-skip RWLOCK.
+/// sender); clean SKIP single-node.  Config gate: self-skip EXCL.
 
 #include "arts.h"
 
 #include <stdint.h>
 #include <stdio.h>
 
-#if defined(ARTS_PROTOCOL_RWLOCK)
+#if defined(ARTS_PROTOCOL_EXCL)
 int main(void) {
   printf(
-      "SKIP destroy_before_create_defer: non-RWLOCK (snapshot/writeback) only\n");
+      "SKIP destroy_before_create_defer: non-EXCL (snapshot/publish) only\n");
   return 0;
 }
 #else
@@ -96,8 +96,8 @@ static void creator_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_db_release(reserved, DB_MODE_RW);
 }
 
-/// remote RW writer: forces a WRITEBACK round on release whose message can
-/// reach the home before CREATE installs (EAGER/WRF_RCU only — see gate below).
+/// remote RW writer: forces a PUBLISH round on release whose message can
+/// reach the home before CREATE installs (HOME/WRF_VAL only — see gate below).
 static void writer_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                        arts_edt_dep_t depv[]) {
   (void)paramc;
@@ -129,7 +129,7 @@ static void reader_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 /// blocks on the outer wait and so cannot release per-generation tokens, so
 /// each generation's inner scope is owned by this short-lived EDT that returns
 /// immediately — its completion releases the inner token, letting inner fire
-/// once the creator (and, under EAGER/WRF_RCU, the writer) finish.
+/// once the creator (and, under HOME/WRF_VAL, the writer) finish.
 static void launcher_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                          arts_edt_dep_t depv[]) {
   (void)paramc;
@@ -138,11 +138,11 @@ static void launcher_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_guid_t outer = (arts_guid_t)paramv[0];
   unsigned int sentinel = (unsigned int)paramv[1];
 
-  /* The value the reader must ultimately observe.  Under EAGER/WRF_RCU a remote
+  /* The value the reader must ultimately observe.  Under HOME/WRF_VAL a remote
    * RW writer runs after the creator and overwrites it; the reader then expects
-   * the writer's value.  Under LAZY there is no writeback leg, so the reader
+   * the writer's value.  Under OWNER there is no publish leg, so the reader
    * expects the creator's sentinel. */
-#if !defined(ARTS_TIMING_LAZY)
+#if !defined(ARTS_WRITE_POLICY_WB)
   unsigned int expect = sentinel ^ 1u;
 #else
   unsigned int expect = sentinel;
@@ -171,13 +171,13 @@ static void launcher_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                       &(arts_edt_hint_t){.rank = 0, .finish_event = inner});
   (void)creator;
 
-#if !defined(ARTS_TIMING_LAZY)
-  /* RW-writeback leg (EAGER/WRF_RCU only): a remote RW writer ordered strictly
-   * AFTER the creator by the DB's per-node exclusive RW lease (serialized), so
+#if !defined(ARTS_WRITE_POLICY_WB)
+  /* RW-publish leg (HOME/WRF_VAL only): a remote RW writer ordered strictly
+   * AFTER the creator by the DB's per-node exclusive RW grant (serialized), so
    * the write->read chain is unambiguous.  Its release sheds ownership with a
-   * synchronous WRITEBACK whose message can reach the home before / around
-   * CREATE — exercising Cat-B defer of WRITEBACK.  Statically excluded under
-   * LAZY, which has no synchronous writeback (B019). */
+   * synchronous PUBLISH whose message can reach the home before / around
+   * CREATE — exercising Cat-B defer of PUBLISH.  Statically excluded under
+   * OWNER, which has no synchronous publish (B019). */
   uint64_t wparam = (uint64_t)expect;
   arts_guid_t writer =
       arts_edt_create(writer_edt, 1, &wparam, 1,
@@ -228,4 +228,4 @@ int main(int argc, char **argv) {
   return 0;
 }
 
-#endif /* ARTS_PROTOCOL_RWLOCK */
+#endif /* ARTS_PROTOCOL_EXCL */

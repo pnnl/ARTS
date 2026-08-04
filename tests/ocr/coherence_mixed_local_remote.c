@@ -1,5 +1,5 @@
 /*
- * coherence_mixed_local_remote.c — Multi-node eager-protocol test with
+ * coherence_mixed_local_remote.c — Multi-node HOME-placement test with
  * mixed local + remote readers.
  *
  * Dynamically adapts to the node count (1..N):

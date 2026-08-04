@@ -46,8 +46,8 @@
 ///   - arts_db_create with NO_ACQUIRE returns *addr == NULL (creator must not
 ///     write the buffer; home is the idle owner).
 ///   - Local NO_ACQUIRE (home==self) drops the pre-stamped writer_count 2->1
-///     (non-RWLOCK) so the unreleased creator-hold does not block future writers;
-///     under RWLOCK the equivalent is skip_hold + home-arbiter zero-init.  Either
+///     (non-EXCL) so the unreleased creator-hold does not block future writers;
+///     under EXCL the equivalent is skip_hold + home-arbiter zero-init.  Either
 ///     way the first writer must succeed.
 ///   - Remote NO_ACQUIRE (home!=self): no creator-side cache; the home is the
 ///     idle owner; the first consumer triggers a normal OWNERSHIP_REQUEST.

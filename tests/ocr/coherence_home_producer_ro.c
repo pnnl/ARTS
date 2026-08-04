@@ -50,7 +50,7 @@
 ///        with no payload, so the foreign reader observed a NULL / stale
 ///        pointer.
 ///
-///        Model-agnostic: under every model (eager/lazy/relaxed) the same
+///        Model-agnostic: under every model (HOME/OWNER/WRF_VAL) the same
 ///        producer→foreign-RO chain must deliver the written value.  Failure
 ///        aborts the consumer, which propagates as a non-zero exit and a ctest
 ///        FAIL.  Requires 2+ ranks.

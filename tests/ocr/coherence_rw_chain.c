@@ -9,14 +9,14 @@
  * satisfied) gives writer i+1 a happens-before edge to writer i: it acquires
  * the DB only after writer i released it, hence observes writer i's increment.
  * A plain (non-atomic) increment is therefore correct — the chain is strictly
- * ordered, not racy.  Across ranks this drives the RWLOCK-LAZY ownership
+ * ordered, not racy.  Across ranks this drives the EXCL-OWNER ownership
  * MIGRATION chain (DB hops rank→rank); single-node it is the owner local-hit
  * path.
  *
  * A final RO reader, gated on the last writer's output_event, asserts the
  * counter equals the number of writers (model invariant I2: the owner's value
  * is preserved across every migration).  Portable (arts.h + arts_rt only): it
- * asserts COHERENCE, so it passes on every protocol/timing build.
+ * asserts COHERENCE, so it passes on every protocol/placement build.
  */
 
 #include "arts.h"

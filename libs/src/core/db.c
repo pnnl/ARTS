@@ -134,7 +134,7 @@ static void arts_db_auto_acquire(struct arts_db_s *db) {
  * -> release_rw) run a release on a hold that was never granted.  When a
  * same-rank worker has concurrently JOINed (raising local_count), that bogus
  * release steals the worker's count, drives the 0-edge, and ships a stale
- * writeback to home as a spurious RW_REL — corrupting home's lock_state w
+ * publish to home as a spurious RW_REL — corrupting home's lock_state w
  * counter and overwriting the worker's update (the cross-rank lost-update). The
  * creator's stub buffer is still installed (so the user pointer is writable);
  * it just is not tracked for an auto-release.  A creator that must publish
@@ -379,9 +379,9 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
              * blocks every future writer under a single-writer protocol — the
              * same reason the remote DB_CREATE handler stamps writer_count = 1
              * for NO_ACQUIRE. */
-#if defined(ARTS_PROTOCOL_RWLOCK)
-#if defined(ARTS_TIMING_LAZY)
-            /* LAZY: data lives with the owner, not the home — with no creator
+#if defined(ARTS_PROTOCOL_EXCL)
+#if defined(ARTS_RELEASE_RETAIN)
+            /* OWNER placement: data lives with the owner, not the home — with no creator
              * hold there is no owner unless we make one.  This rank (the GUID
              * home, where a local create runs) becomes the IDLE data owner: it
              * holds the zero-init buffer (installed by db_create_in_place) with
@@ -397,39 +397,20 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
                 &((struct arts_db_s *)ptr)->lock_state,
                 LOCK_MAKE(LOCK_PHASE_IDLE, arts_global_rank_id, 0u, 0u),
                 memory_order_relaxed);
-#else  /* ARTS_TIMING_EAGER */
-            /* EAGER: the home holds the canonical buffer; undo the create-time
+#else  /* ARTS_RELEASE_PURGE */
+            /* HOME placement: the home holds the canonical buffer; undo the create-time
              * creator RW seed → free lock, so the first acquirer is granted
              * rather than blocked behind a hold no EDT will ever release. */
             atomic_store_explicit(&((struct arts_db_s *)ptr)->cache.cache_state,
                                   0ULL, memory_order_relaxed);
             atomic_store_explicit(&((struct arts_db_s *)ptr)->lock_state, 0ULL,
                                   memory_order_relaxed);
-#endif /* ARTS_TIMING_* */
-#elif defined(ARTS_PROTOCOL_MSI)
-#if defined(ARTS_TIMING_LAZY)
-            /* Owner-canonical: the creator holds the copy, but with no create
-             * hold there is nothing to release — boot it writer-free
-             * (wc 0) so the first redirect is served immediately. */
-            atomic_store_explicit(
-                &((struct arts_db_s *)ptr)->cache.cache_state,
-                MSI_LAZY_CACHE_MAKE(MSI_RW_GRANT, MSI_RO_VALID, 0u, 0u, 0u,
-                                    0u, 0u, 0u, 0u),
-                memory_order_relaxed);
-            atomic_store_explicit(&((struct arts_db_s *)ptr)->dir_state,
-                                  MSI_LAZY_DIR_MAKE(0u, 0u, 0u,
-                                                    arts_global_rank_id, 0u),
-                                  memory_order_relaxed);
+#endif /* ARTS_RELEASE_* */
 #else
-            /* Home-canonical: idle both words so the first REQUEST is
-             * granted, not blocked behind an unreleased creator hold. */
-            atomic_store_explicit(&((struct arts_db_s *)ptr)->cache.cache_state,
-                                  0ULL, memory_order_relaxed);
-            atomic_store_explicit(&((struct arts_db_s *)ptr)->dir_state,
-                                  MSI_DIR_MAKE(0u, 0u, MSI_OWNER_NOBODY, 0u),
-                                  memory_order_relaxed);
-#endif /* ARTS_TIMING_LAZY */
-#else
+            /* Grant-bearing arms: this rank keeps the sentinel and becomes the
+             * idle owner.  With no creator hold there is nothing to release,
+             * so the first foreign request revokes an idle grant rather than
+             * queueing behind a hold nobody will ever drop. */
             ((struct arts_db_s *)ptr)->cache.writer_count = 1;
 #endif
           }
@@ -459,9 +440,9 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
              * blocks every future writer under a single-writer protocol — the
              * same reason the remote DB_CREATE handler stamps writer_count = 1
              * for NO_ACQUIRE. */
-#if defined(ARTS_PROTOCOL_RWLOCK)
-#if defined(ARTS_TIMING_LAZY)
-            /* LAZY: data lives with the owner, not the home — with no creator
+#if defined(ARTS_PROTOCOL_EXCL)
+#if defined(ARTS_RELEASE_RETAIN)
+            /* OWNER placement: data lives with the owner, not the home — with no creator
              * hold there is no owner unless we make one.  This rank (the GUID
              * home, where a local create runs) becomes the IDLE data owner: it
              * holds the zero-init buffer (installed by db_create_in_place) with
@@ -477,39 +458,20 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
                 &((struct arts_db_s *)ptr)->lock_state,
                 LOCK_MAKE(LOCK_PHASE_IDLE, arts_global_rank_id, 0u, 0u),
                 memory_order_relaxed);
-#else  /* ARTS_TIMING_EAGER */
-            /* EAGER: the home holds the canonical buffer; undo the create-time
+#else  /* ARTS_RELEASE_PURGE */
+            /* HOME placement: the home holds the canonical buffer; undo the create-time
              * creator RW seed → free lock, so the first acquirer is granted
              * rather than blocked behind a hold no EDT will ever release. */
             atomic_store_explicit(&((struct arts_db_s *)ptr)->cache.cache_state,
                                   0ULL, memory_order_relaxed);
             atomic_store_explicit(&((struct arts_db_s *)ptr)->lock_state, 0ULL,
                                   memory_order_relaxed);
-#endif /* ARTS_TIMING_* */
-#elif defined(ARTS_PROTOCOL_MSI)
-#if defined(ARTS_TIMING_LAZY)
-            /* Owner-canonical: the creator holds the copy, but with no create
-             * hold there is nothing to release — boot it writer-free
-             * (wc 0) so the first redirect is served immediately. */
-            atomic_store_explicit(
-                &((struct arts_db_s *)ptr)->cache.cache_state,
-                MSI_LAZY_CACHE_MAKE(MSI_RW_GRANT, MSI_RO_VALID, 0u, 0u, 0u,
-                                    0u, 0u, 0u, 0u),
-                memory_order_relaxed);
-            atomic_store_explicit(&((struct arts_db_s *)ptr)->dir_state,
-                                  MSI_LAZY_DIR_MAKE(0u, 0u, 0u,
-                                                    arts_global_rank_id, 0u),
-                                  memory_order_relaxed);
+#endif /* ARTS_RELEASE_* */
 #else
-            /* Home-canonical: idle both words so the first REQUEST is
-             * granted, not blocked behind an unreleased creator hold. */
-            atomic_store_explicit(&((struct arts_db_s *)ptr)->cache.cache_state,
-                                  0ULL, memory_order_relaxed);
-            atomic_store_explicit(&((struct arts_db_s *)ptr)->dir_state,
-                                  MSI_DIR_MAKE(0u, 0u, MSI_OWNER_NOBODY, 0u),
-                                  memory_order_relaxed);
-#endif /* ARTS_TIMING_LAZY */
-#else
+            /* Grant-bearing arms: this rank keeps the sentinel and becomes the
+             * idle owner.  With no creator hold there is nothing to release,
+             * so the first foreign request revokes an idle grant rather than
+             * queueing behind a hold nobody will ever drop. */
             ((struct arts_db_s *)ptr)->cache.writer_count = 1;
 #endif
           }
@@ -540,8 +502,8 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
        * (arts_handler_db_create) allocates its own stub +
        * cache_s with ARTS_DB_INIT_HOME_RECV.
        *
-       * Also lazy-install a creator-side cache_s on this (non-home)
-       * rank via arts_db_cache_lazy_install.  This is necessary so
+       * Also stub-install a creator-side cache_s on this (non-home)
+       * rank via arts_db_cache_stub_install.  This is necessary so
        * that home's first INVALIDATE_NOTICE (sent to
        * rw_holder = creator_rank when a foreign OWNERSHIP_REQUEST arrives)
        * finds a cache_s on this rank to drop the sentinel and trigger
@@ -553,7 +515,7 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
        * home sends INVALIDATE_NOTICE to rw_holder = creator; creator's
        * fetch_sub takes wc 2 -> 1 (no transfer yet -- creator EDT may
        * still be using the buffer).  Creator EDT release_rw drops wc
-       * 1 -> 0, triggering R4 WRITEBACK_AND_TRANSFER with the creator's
+       * 1 -> 0, triggering R4 PUBLISH_AND_TRANSFER with the creator's
        * data.  wc = 1 (the implementer's earlier choice) was wrong: it
        * would trigger the transfer immediately on INVALIDATE_NOTICE
        * while the creator EDT was still writing.
@@ -566,9 +528,9 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
        * (alloc_cache_s contract).  We install one explicitly via
        * arts_db_buf_install so the user's `*addr = ...` write
        * lands in cache->buffer->data, and the buffer is captured by the
-       * subsequent WRITEBACK_AND_TRANSFER. */
+       * subsequent PUBLISH_AND_TRANSFER. */
       if (no_acquire) {
-        /* NO_ACQUIRE: do NOT lazy-install a creator-side cache_s.  The
+        /* NO_ACQUIRE: do NOT stub-install a creator-side cache_s.  The
          * home is the sole idle owner; first consumer EDT triggers a
          * normal OWNERSHIP_REQUEST to acquire ownership.  Wire only carries
          * metadata (no payload bytes). */
@@ -612,7 +574,7 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
                               ? &adopted_db->cache
                               : NULL;
           if (creator_cache != NULL) {
-#if !defined(ARTS_PROTOCOL_RWLOCK) && !defined(ARTS_PROTOCOL_MSI)
+#if !defined(ARTS_PROTOCOL_EXCL) && !defined(ARTS_PROTOCOL_INV)
             arts_atomic_add(&creator_cache->writer_count, 2);
 #endif
           }
@@ -620,8 +582,8 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
         arts_send_db_create_coherent(rank, guid, len, ARTS_DB_PROP_NONE,
                                      (uint16_t)db_type);
         /* Return the creator-side buffer pointer so the user can write to
-         * the local copy.  The data is published to home via WRITEBACK
-         * when the creator EDT releases (or via per-release writeback).
+         * the local copy.  The data is published to home via PUBLISH
+         * when the creator EDT releases (or via per-release publish).
          * Single-owner context: the creator owns the freshly-installed
          * buffer, so acquire a ref, read the payload pointer, release. */
         arts_shared_ptr_t creator_buf_h =
@@ -741,7 +703,7 @@ arts_guid_t arts_db_copy_to_new_type(arts_guid_t old_guid,
           memcpy(inline_data, old_data, db_res->cache.db_size);
         }
         /* The coherent-model resources (versioned buffer + home directory:
-         * rank_bitset, snapshot reorder stack, lockreq queues) are now dead —
+         * rank_bitset, snapshot reorder stack, grantreq queues) are now dead —
          * the non-coherent target reads the inline payload and never runs the
          * coherent teardown.  Release them here with the canonical teardown so
          * they are not leaked.  common_destroy_post clears home_initialized, so
@@ -772,7 +734,7 @@ arts_guid_t arts_db_copy_to_new_type(arts_guid_t old_guid,
  * when the EDT must park (remote ownership/data round, or OoO defer of a
  * not-yet-installed local DB) it leaves the slot for the protocol wake / OoO
  * drain replay and does NOT account.  The 3-way route_table dispatch (local
- * entry / remote-home lazy install / home==self-but-not-created → OoO push)
+ * entry / remote-home stub install / home==self-but-not-created → OoO push)
  * lives here, inlined from the old single-DB arts_db_acquire API.  The caller
  * (arts_db_acquire_all / rw_fire_from_cursor) has already filtered NULL_GUID /
  * DB_MODE_VAL / pre-filled slots, so depv[i] is a real, not-yet-acquired DB
@@ -832,19 +794,19 @@ static void acquire_one_dep(struct arts_edt_s *edt, arts_edt_dep_t *depv,
   arts_shared_ptr_t db_temp_h = arts_route_table_lookup_db(depv[i].guid);
   struct arts_db_s *db_temp = (struct arts_db_s *)arts_shared_get(db_temp_h);
 
-  /* Coherent ARTS_DB path (eager, lazy, or WRF_RCU protocol).  Two entry
+  /* Coherent ARTS_DB path (either placement, any protocol).  Two entry
    * points:
    *   - Existing local cache_s (db_temp with db_type == ARTS_DB; embedded
    *     cache).
    *   - Remote DB never seen on this rank (db_temp == NULL, owner remote):
-   *     lazy-install a stub cache_s and dispatch through
+   *     stub-install a stub cache_s and dispatch through
    *     arts_handler_db_acquire.
    * Other (pinned) subtypes bypass coherence and fall through below. */
   struct arts_db_cache_s *cache = NULL;
-  /* When db_temp misses on a remote-owned DB we lazy-install a stub and the
-   * call returns a SEPARATE pinned handle (lazy_h) to the just-installed db_s;
+  /* When db_temp misses on a remote-owned DB we stub-install a stub and the
+   * call returns a SEPARATE pinned handle (stub_h) to the just-installed db_s;
    * it must be released on every path below, mirroring db_temp_h. */
-  arts_shared_ptr_t lazy_h = NULL;
+  arts_shared_ptr_t stub_h = NULL;
   /* B1: which of the two handles keeps `cache`'s descriptor (arts_db_s) alive.
    * If the handler resolves locally (takes the EDT's buffer ref), this handle
    * is MOVED into depv[i].db_pin to pin the descriptor — and the buffer slot +
@@ -858,11 +820,11 @@ static void acquire_one_dep(struct arts_edt_s *edt, arts_edt_dep_t *depv,
     /* db_size=0 means "size learned on first GRANT/DATA_RESPONSE
      * install_buffer".  Round-robin home is encoded in the GUID, so all
      * ranks agree. */
-    lazy_h = arts_db_cache_lazy_install(depv[i].guid, /*db_size=*/0);
-    struct arts_db_s *lazy_db = (struct arts_db_s *)arts_shared_get(lazy_h);
-    if (lazy_db != NULL) {
-      cache = &lazy_db->cache;
-      cache_owner_h = &lazy_h;
+    stub_h = arts_db_cache_stub_install(depv[i].guid, /*db_size=*/0);
+    struct arts_db_s *stub_db = (struct arts_db_s *)arts_shared_get(stub_h);
+    if (stub_db != NULL) {
+      cache = &stub_db->cache;
+      cache_owner_h = &stub_h;
     }
   }
   if (cache != NULL &&
@@ -891,13 +853,13 @@ static void acquire_one_dep(struct arts_edt_s *edt, arts_edt_dep_t *depv,
       *cache_owner_h = NULL;
     }
     arts_shared_release(&db_temp_h);
-    arts_shared_release(&lazy_h);
+    arts_shared_release(&stub_h);
     return;
   }
-  /* cache==NULL fall-throughs below never used lazy_h (it is only set on the
+  /* cache==NULL fall-throughs below never used stub_h (it is only set on the
    * remote-miss arm, which always has a non-NULL cache here unless the DB was
-   * destroyed before install — lazy_h NULL then); release defensively. */
-  arts_shared_release(&lazy_h);
+   * destroyed before install — stub_h NULL then); release defensively. */
+  arts_shared_release(&stub_h);
 
   /* Non-coherent pinned subtypes (ARTS_DB_PIN, ARTS_DB_GPU_PIN, ARTS_DB_GPU,
    * ARTS_DB_CXL): the DB lives only on its creator rank — hand back the local
@@ -1387,7 +1349,7 @@ static void release_one_dep(arts_edt_dep_t *dep, bool gpu) {
    * unconditionally via the buffer's own cb: the EDT's ref kept the buffer
    * (hence buf->cb) alive up to here, so the deref is never use-after-free even
    * under a racing destroy.  Dispatch release_rw / release_ro only while the
-   * cache is still installed; once destroyed there is no writeback / version
+   * cache is still installed; once destroyed there is no publish / version
    * work left to do (the buffer ref drop above is the only cleanup needed). */
   if (dep->subtype == ARTS_DB &&
       (access_mode == DB_MODE_RO || access_mode == DB_MODE_RW)) {

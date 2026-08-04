@@ -1,6 +1,6 @@
 /*
  * coherence_rw_rw_chain_seal.c — Stress test for back-to-back RW writers
- * under the eager ownership protocol.
+ * under the HOME-placement ownership protocol.
  *
  * Pattern: writer(0) reads init -> writes 0; writer(1) reads 0 -> writes 1; ...
  *

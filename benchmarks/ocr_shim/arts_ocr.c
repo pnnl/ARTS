@@ -615,9 +615,9 @@ static void collective_up_edt(uint32_t paramc, const uint64_t *paramv,
     }
   }
 
-  /* Release WRITE access on the partial so its bytes are written back to the
+  /* Release WRITE access on the partial so its bytes are published to the
    * DB's home and become visible to the cross-rank consumer acquiring it RO.
-   * Without this the consumer would acquire before the EDT-epilogue writeback
+   * Without this the consumer would acquire before the EDT-epilogue publish
    * and observe stale / unpopulated data. */
   arts_db_release(partialDb, ARTS_MODE_RW);
 
@@ -1125,9 +1125,9 @@ u8 ocrEdtCreate(ocrGuid_t *guid, ocrGuid_t templateGuid, u32 paramc,
          * ocrAddDependence(elem, edt, i, DB_DEFAULT_MODE), and DB_DEFAULT_MODE
          * is RW.  Registering RO here would silently downgrade every
          * create-time DB (or DB-bearing event) dependence to read-only, so an
-         * EDT that mutates such a slot loses its writeback once it executes on
+         * EDT that mutates such a slot loses its publish once it executes on
          * a node other than the DB's home (the shared read-only copy is never
-         * written back).  Callers that want read-only sharing use an explicit
+         * published).  Callers that want read-only sharing use an explicit
          * ocrAddDependence(..., DB_MODE_RO) instead of the create-time array. */
         arts_add_dependence(depv[i].guid, edtGuid, i,
                             ocr_to_arts_mode(DB_DEFAULT_MODE));

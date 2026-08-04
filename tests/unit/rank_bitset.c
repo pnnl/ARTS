@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
  * T056 — rank_bitset set / for_each / init / destroy (B035: for_each snapshot
- * vs concurrent set; first-set-wins).  Built RCU+LAZY (the bitset is the lazy
- * destroy fan-out roster; eager reuses the version map, so this is self-skipped
- * under WRF_RCU and only meaningful where cached_ranks exists).
+ * vs concurrent set; first-set-wins).  Built VAL+OWNER (the bitset is the OWNER
+ * destroy fan-out roster; HOME reuses the version map, so this is self-skipped
+ * under WRF_VAL and only meaningful where cached_ranks exists).
  *
  * Each word covers 64 ranks; nwords == (nranks+63)/64.  arts_rank_bitset_set
  * returns true IFF the bit was previously clear (first-time set).
@@ -26,12 +26,12 @@
  *      boundaries) → every set returns true once, for_each (after join) visits
  *      every rank exactly once.
  *
- * Standalone: links rcu/home.c (carries the bitset fns) with libc-backed
- * alloc shims.  Built with -DARTS_PROTOCOL_RCU=1 -DARTS_TIMING_LAZY=1.
+ * Standalone: links val/home.c (carries the bitset fns) with libc-backed
+ * alloc shims.  Built with -DARTS_PROTOCOL_VAL=1 -DARTS_WRITE_POLICY_WB=1.
  */
 
 #include "arts/rank_bitset.h"
-#include "arts/coherence/home.h"
+#include "arts/coherence/directory.h"
 
 #include <pthread.h>
 #include <stdatomic.h>
@@ -41,12 +41,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if defined(ARTS_PROTOCOL_WRF_RCU)
-/* WRF_RCU carries no per-DB rank bit-set (no cached_ranks roster; its home arm is
- * the version map).  The bitset functions are not even compiled for WRF_RCU, so
+#if defined(ARTS_PROTOCOL_WRF_VAL)
+/* WRF_VAL carries no per-DB rank bit-set (no cached_ranks roster; its home arm is
+ * the version map).  The bitset functions are not even compiled for WRF_VAL, so
  * this test self-skips there. */
 int main(void) {
-  printf("PASS rank_bitset: skipped under WRF_RCU (no rank bit-set in this "
+  printf("PASS rank_bitset: skipped under WRF_VAL (no rank bit-set in this "
          "protocol)\n");
   return 0;
 }
@@ -299,8 +299,8 @@ int main(void) {
 }
 
 /* ── libc-backed alloc shims so the test links standalone against just the
- * protocol's home.c (RCU).  When linked against the full ARTS library
- * (the RWLOCK path, which pulls in a monolithic lock/home.c), libarts already
+ * protocol's home.c (VAL).  When linked against the full ARTS library
+ * (the EXCL path, which pulls in a monolithic lock/home.c), libarts already
  * provides these, so the shims are compiled out to avoid multiple-definition.
  */
 #ifdef ARTS_UNIT_STANDALONE_SHIMS
@@ -309,4 +309,4 @@ void arts_free(void *ptr) { free(ptr); }
 void *arts_malloc(size_t size) { return malloc(size); }
 #endif
 
-#endif /* !ARTS_PROTOCOL_WRF_RCU */
+#endif /* !ARTS_PROTOCOL_WRF_VAL */

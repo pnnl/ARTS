@@ -8,7 +8,7 @@ the perf harness (_sc geometry: 12 workers per node).
 
 Progress and results append to a track file on repo disk so the sweep
 survives session loss.  Usage:
-    python3 benchmarks/scripts/rwmix_sweep.py --build-dir build_release_ocr_rcu_lazy
+    python3 benchmarks/scripts/rwmix_sweep.py --build-dir build_release_ocr_val_wb
 """
 import argparse
 import json
@@ -23,8 +23,8 @@ from harness_common import Runner, REPO  # noqa: E402
 RE_OUT = re.compile(
     r"RWMIX PDS=(\d+) N=(\d+) W=(\d+) E_US=(\d+) BYTES=(\d+) ELAPSED_US=(\d+)")
 
-ARTS_SUFFIXES = ["ocr_rcu_eager", "ocr_rcu_lazy",
-                 "ocr_rwlock_eager", "ocr_rwlock_lazy"]
+ARTS_SUFFIXES = ["ocr_val_wt", "ocr_val_wb",
+                 "ocr_excl_purge", "ocr_excl_retain"]
 RUNTIMES = [("xsocr", None), ("ocrvx", None)] + [("arts", s) for s in ARTS_SUFFIXES]
 
 W_VALUES = [0, 1, 2, 4, 8, 16, 32, 64, 128, 512, 2048]
@@ -63,7 +63,7 @@ def run_cell(runner: Runner, kind: str, suffix, nodes: int, args: list[str],
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--build-dir", default="build_release_ocr_rcu_lazy")
+    ap.add_argument("--build-dir", default="build_release_ocr_val_wb")
     ap.add_argument("--timeout", type=int, default=120)
     ap.add_argument("--out", default=None)
     args = ap.parse_args()

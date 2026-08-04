@@ -90,9 +90,9 @@
 /// snapshot is produced, while still being a true oracle rather than a smoke
 /// test.
 ///
-/// Runs under every memory model / protocol / timing combination.  The header
+/// Runs under every memory model / protocol / placement combination.  The header
 /// has one event-ordered writer and the churn writers of a round are
-/// value-idempotent, so a whole-DB last-writer-wins writeback (the DB-WRF
+/// value-idempotent, so a whole-DB last-writer-wins publish (the DB-WRF
 /// contract's lossy case) preserves both assertions.
 ///
 /// A violation prints FAIL: and aborts; a stranded acquire surfaces as a ctest

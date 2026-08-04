@@ -1,23 +1,25 @@
 #!/bin/bash
-# Run the ARTS test suites across ALL FIVE build configurations
-# (<memory model>_<protocol>_<timing>).  Each config has its own build trees,
+# Run the ARTS test suites across ALL SEVEN build configurations
+# (<memory model>_<family>_<live second axis>).  Each config has its own build trees,
 # build_<config> (ctest, Debug) and build_release_<config> (harness):
 #
-#   config             cmake flags
-#   -----------------  -------------------------------------------------------
-#   ocr_rcu_eager      -DARTS_MEMORY_MODEL=OCR    -DARTS_COHERENCE_PROTOCOL=RCU    -DARTS_PROTOCOL_TIMING=EAGER
-#   ocr_rcu_lazy       -DARTS_MEMORY_MODEL=OCR    -DARTS_COHERENCE_PROTOCOL=RCU    -DARTS_PROTOCOL_TIMING=LAZY
-#   ocr_rwlock_eager   -DARTS_MEMORY_MODEL=OCR    -DARTS_COHERENCE_PROTOCOL=RWLOCK -DARTS_PROTOCOL_TIMING=EAGER
-#   ocr_rwlock_lazy    -DARTS_MEMORY_MODEL=OCR    -DARTS_COHERENCE_PROTOCOL=RWLOCK -DARTS_PROTOCOL_TIMING=LAZY
-#   wrf_rcu_eager      -DARTS_MEMORY_MODEL=DB_WRF -DARTS_COHERENCE_PROTOCOL=RCU    -DARTS_PROTOCOL_TIMING=EAGER
+#   config           cmake flags
+#   ---------------  ---------------------------------------------------------
+#   ocr_val_wt       -DARTS_MEMORY_MODEL=OCR    -DARTS_COHERENCE_PROTOCOL=VAL  -DARTS_WRITE_POLICY=WT
+#   ocr_val_wb       -DARTS_MEMORY_MODEL=OCR    -DARTS_COHERENCE_PROTOCOL=VAL  -DARTS_WRITE_POLICY=WB
+#   ocr_excl_purge   -DARTS_MEMORY_MODEL=OCR    -DARTS_COHERENCE_PROTOCOL=EXCL -DARTS_RELEASE_POLICY=PURGE
+#   ocr_excl_retain  -DARTS_MEMORY_MODEL=OCR    -DARTS_COHERENCE_PROTOCOL=EXCL -DARTS_RELEASE_POLICY=RETAIN
+#   ocr_inv_wt       -DARTS_MEMORY_MODEL=OCR    -DARTS_COHERENCE_PROTOCOL=INV  -DARTS_WRITE_POLICY=WT
+#   ocr_inv_wb       -DARTS_MEMORY_MODEL=OCR    -DARTS_COHERENCE_PROTOCOL=INV  -DARTS_WRITE_POLICY=WB
+#   wrf_val_wt       -DARTS_MEMORY_MODEL=DB_WRF -DARTS_COHERENCE_PROTOCOL=VAL  -DARTS_WRITE_POLICY=WT
 #
-# DB_WRF (wrf_rcu_eager) requires program-ordered write-write conflicts, so some
+# DB_WRF (wrf_val_wt) requires program-ordered write-write conflicts, so some
 # correctness deviations are EXPECTED there — they are reported, not silently
 # treated as regressions.  OCR-model builds must be clean.
 #
 # Usage:
 #   bash tests/run_all_models.sh                                  # all protocols, ctest + harness
-#   bash tests/run_all_models.sh --models ocr_rcu_eager,ocr_rcu_lazy  # subset
+#   bash tests/run_all_models.sh --models ocr_val_wt,ocr_val_wb  # subset
 #   bash tests/run_all_models.sh --no-harness                     # ctest only
 #   bash tests/run_all_models.sh --no-ctest                       # harness only
 #   bash tests/run_all_models.sh --no-build                       # skip reconfigure/rebuild
@@ -26,7 +28,7 @@ set -u
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO" || exit 1
 
-MODELS="ocr_rcu_eager ocr_rcu_lazy ocr_rwlock_eager ocr_rwlock_lazy wrf_rcu_eager"
+MODELS="ocr_val_wt ocr_val_wb ocr_excl_purge ocr_excl_retain ocr_inv_wt ocr_inv_wb wrf_val_wt"
 DO_CTEST=1
 DO_HARNESS=1
 DO_BUILD=1
@@ -46,22 +48,24 @@ harness_dir() { echo "build_release_$1"; }
 model_label() { echo "$1" | tr '[:lower:]' '[:upper:]'; }
 model_cmake_flags() {
   case "$1" in
-    ocr_rcu_eager)    echo "-DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=RCU -DARTS_PROTOCOL_TIMING=EAGER" ;;
-    ocr_rcu_lazy)     echo "-DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=RCU -DARTS_PROTOCOL_TIMING=LAZY" ;;
-    ocr_rwlock_eager) echo "-DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=RWLOCK -DARTS_PROTOCOL_TIMING=EAGER" ;;
-    ocr_rwlock_lazy)  echo "-DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=RWLOCK -DARTS_PROTOCOL_TIMING=LAZY" ;;
-    wrf_rcu_eager)    echo "-DARTS_MEMORY_MODEL=DB_WRF -DARTS_COHERENCE_PROTOCOL=RCU -DARTS_PROTOCOL_TIMING=EAGER" ;;
+    ocr_val_wt)      echo "-DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=VAL -DARTS_WRITE_POLICY=WT" ;;
+    ocr_val_wb)      echo "-DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=VAL -DARTS_WRITE_POLICY=WB" ;;
+    ocr_excl_purge)  echo "-DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=EXCL -DARTS_RELEASE_POLICY=PURGE" ;;
+    ocr_excl_retain) echo "-DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=EXCL -DARTS_RELEASE_POLICY=RETAIN" ;;
+    ocr_inv_wt)      echo "-DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=INV -DARTS_WRITE_POLICY=WT" ;;
+    ocr_inv_wb)      echo "-DARTS_MEMORY_MODEL=OCR -DARTS_COHERENCE_PROTOCOL=INV -DARTS_WRITE_POLICY=WB" ;;
+    wrf_val_wt)      echo "-DARTS_MEMORY_MODEL=DB_WRF -DARTS_COHERENCE_PROTOCOL=VAL -DARTS_WRITE_POLICY=WT" ;;
   esac
 }
 # expected CMakeCache values per config
-model_model()  { case "$1" in wrf_rcu_eager) echo DB_WRF;; *) echo OCR;; esac; }
-model_proto()  { case "$1" in ocr_rwlock_*) echo RWLOCK;; *) echo RCU;; esac; }
-model_timing() { case "$1" in *_eager) echo EAGER;; *_lazy) echo LAZY;; esac; }
+model_model()  { case "$1" in wrf_val_wt) echo DB_WRF;; *) echo OCR;; esac; }
+model_proto()  { case "$1" in ocr_excl_*) echo EXCL;; ocr_inv_*) echo INV;; *) echo VAL;; esac; }
+model_timing() { case "$1" in *_wt) echo WT;; *_wb) echo WB;; *_purge) echo PURGE;; *_retain) echo RETAIN;; esac; }
 
 # Configure a build dir to the requested configuration if its cache does not
 # match, then build.  Reconfigure forces a full rebuild (compile-flag change).
 # The cache check compares ARTS_MEMORY_MODEL, ARTS_COHERENCE_PROTOCOL, and
-# ARTS_PROTOCOL_TIMING.
+# the live second axis (ARTS_WRITE_POLICY / ARTS_RELEASE_POLICY).
 ensure_build() {
   local dir="$1" model="$2" wantgpu="$3" extra="${4:-}"
   local want_model; want_model="$(model_model "$model")"
@@ -69,7 +73,11 @@ ensure_build() {
   local want_timing; want_timing="$(model_timing "$model")"
   local have_model; have_model="$(grep -E '^ARTS_MEMORY_MODEL:STRING=' "$dir/CMakeCache.txt" 2>/dev/null | cut -d= -f2)"
   local have_proto; have_proto="$(grep -E '^ARTS_COHERENCE_PROTOCOL:STRING=' "$dir/CMakeCache.txt" 2>/dev/null | cut -d= -f2)"
-  local have_timing; have_timing="$(grep -E '^ARTS_PROTOCOL_TIMING:STRING=' "$dir/CMakeCache.txt" 2>/dev/null | cut -d= -f2)"
+  local have_timing
+  case "$model" in
+    ocr_excl_*) have_timing="$(grep -E '^ARTS_RELEASE_POLICY:STRING=' "$dir/CMakeCache.txt" 2>/dev/null | cut -d= -f2)" ;;
+    *)          have_timing="$(grep -E '^ARTS_WRITE_POLICY:STRING=' "$dir/CMakeCache.txt" 2>/dev/null | cut -d= -f2)" ;;
+  esac
   local mismatch=0
   [ "$have_model" != "$want_model" ] && mismatch=1
   [ "$have_proto" != "$want_proto" ] && mismatch=1
@@ -123,7 +131,7 @@ for m in $MODELS; do
 done
 
 echo
-echo "===================== SUMMARY (ocr_rcu_eager/ocr_rcu_lazy must be clean; WRF_RCU DB-WRF deviations annotated) ====================="
+echo "===================== SUMMARY (OCR-model configs must be clean; WRF_VAL DB-WRF deviations annotated) ====================="
 for m in $MODELS; do
   M="$(model_label "$m")"
   echo "[$M]"

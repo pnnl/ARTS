@@ -7,13 +7,13 @@
  * The function has a different ANSWER per coherence protocol; this single file
  * is compiled once per build config and asserts the answer for whichever
  * protocol macro is defined:
- *   - RCU (ownership lease, single inter-node writer): RW is
+ *   - VAL (ownership grant, single inter-node writer): RW is
  *     serialized, RO is NOT (RO is a snapshot read, no ordering needed).
- *   - RWLOCK (blocking RW *and* RO locks): BOTH RW and RO are serialized.
- *   - WRF_RCU (DB-WRF, no ownership round): NOTHING is serialized → false for all.
+ *   - EXCL (blocking RW *and* RO locks): BOTH RW and RO are serialized.
+ *   - WRF_VAL (DB-WRF, no ownership round): NOTHING is serialized → false for all.
  *
- * The defining TU per protocol (rcu/{eager,lazy}.c,
- * wrf_rcu/wrf_rcu.c, lock/acquire.c) drags in the broader runtime, so this test links
+ * The defining TU per protocol (val/{home,owner}.c,
+ * wrf_val/wrf_val.c, lock/acquire.c) drags in the broader runtime, so this test links
  * the real symbol out of the per-config static libarts (needs_full_build)
  * rather than #including a heavyweight TU — it never starts the runtime, it
  * only calls the pure query function.
@@ -39,21 +39,21 @@ int main(void) {
 
   bool exp_rw, exp_ro;
   const char *proto;
-#if defined(ARTS_PROTOCOL_RWLOCK)
-  proto = "RWLOCK";
+#if defined(ARTS_PROTOCOL_EXCL)
+  proto = "EXCL";
   exp_rw = true;
   exp_ro = true; /* blocking locks: both serialized */
-#elif defined(ARTS_PROTOCOL_WRF_RCU)
-  proto = "WRF_RCU";
+#elif defined(ARTS_PROTOCOL_WRF_VAL)
+  proto = "WRF_VAL";
   exp_rw = false;
   exp_ro = false; /* DB-WRF: nothing serialized */
-#elif defined(ARTS_PROTOCOL_RCU)
-  proto = "RCU";
+#elif defined(ARTS_PROTOCOL_VAL)
+  proto = "VAL";
   exp_rw = true;
   exp_ro = false; /* RW serialized, RO snapshot */
-#elif defined(ARTS_PROTOCOL_MSI)
-  proto = "MSI";
-  exp_rw = true;  /* a write grant waits on other tenures' releases */
+#elif defined(ARTS_PROTOCOL_INV)
+  proto = "INV";
+  exp_rw = true;  /* a write grant waits on other holders' releases */
   exp_ro = false; /* readers are never blocked by writers */
 #else
 #error "no ARTS_PROTOCOL_* defined"

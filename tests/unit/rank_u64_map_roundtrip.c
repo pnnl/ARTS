@@ -29,7 +29,7 @@
  * Standalone: links rank_u64_map.c (no shims needed — it uses libc malloc).
  */
 
-#include "arts/coherence/home.h"
+#include "arts/coherence/directory.h"
 #include "arts/transport/protocol.h"
 
 #include <stdint.h>

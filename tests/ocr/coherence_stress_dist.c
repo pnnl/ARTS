@@ -140,7 +140,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
     /* DBs distributed round-robin across all ranks.  For each DB we
      * also wire an init_writer EDT pinned on the home rank that takes
-     * the first RW lease and stamps the payload to a known value.  This
+     * the first RW grant and stamps the payload to a known value.  This
      * is required because the ownership protocol does not synthesise an
      * initial RO snapshot from an unwritten payload — without an
      * explicit RW writer the first cross-rank RO acquire returns NULL
@@ -157,14 +157,14 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     }
 
     /* Workers fan out across all ranks, deterministically picking a DB
-     * and an access mode based on (iter, i).  Per-DB lease ordering
+     * and an access mode based on (iter, i).  Per-DB grant ordering
      * serialises every RW behind the init_writer above.
      *
      * Note: B.2 uses RW-only across ranks.  Cross-rank RO acquire has
      * a known issue where the first RO acquire arriving on a rank that
      * has not yet seen any RW may observe NULL ptr (the RO snapshot
      * install path lazily fetches from home only after the first RW
-     * lease releases).  Validating cross-rank RO is left to the
+     * grant releases).  Validating cross-rank RO is left to the
      * dedicated coherence_ro_acquire_stress test (single-node) and to
      * coherence_mixed_local_remote (which interleaves explicit RW
      * fences). */

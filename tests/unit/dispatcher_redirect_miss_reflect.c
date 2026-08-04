@@ -1,10 +1,10 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * dispatcher_redirect_miss_reflect — the LAZY-only MSG_DB_SNAPSHOT_REDIRECT
+ * dispatcher_redirect_miss_reflect — the OWNER-only MSG_DB_SNAPSHOT_REDIRECT
  * miss-reflection arm of the dispatcher (census 19-dispatcher §2 per-case table
  * row MSG_DB_SNAPSHOT_REDIRECT; dispatcher.c ~479).
  *
- * Under LAZY, a remote RO acquire is served by the CURRENT owner, not the home:
+ * Under OWNER, a remote RO acquire is served by the CURRENT owner, not the home:
  * the home forwards the reader's request to the owner as
  * MSG_DB_SNAPSHOT_REDIRECT (carrying the requester rank + parked edt/slot). The
  * dispatcher's REDIRECT case is Cat-C-or-DESTROY_NOTIFY: HIT  (owner cache
@@ -26,10 +26,10 @@
  * run (resumed by DATA_RESPONSE on HIT, or woken by the reflected
  * DESTROY_NOTIFY on MISS); the finish scope draining proves none was stranded.
  *
- * Config gate: MSG_DB_SNAPSHOT_REDIRECT exists ONLY in the LAZY timing builds
- * (EAGER serves RO from home directly; the eager dispatcher fatals on REDIRECT;
- * RWLOCK/WRF_RCU have no snapshot protocol at all).  Compile-time self-skip on
- * everything that is not LAZY.
+ * Config gate: MSG_DB_SNAPSHOT_REDIRECT exists ONLY in the OWNER-placement builds
+ * (HOME serves RO from home directly; the HOME dispatcher fatals on REDIRECT;
+ * EXCL/WRF_VAL have no snapshot protocol at all).  Compile-time self-skip on
+ * everything that is not OWNER.
  */
 
 #include <stdint.h>
@@ -37,9 +37,9 @@
 
 #include "arts.h"
 
-#if !defined(ARTS_TIMING_LAZY)
+#if !defined(ARTS_WRITE_POLICY_WB)
 int main(void) {
-  printf("SKIP dispatcher_redirect_miss_reflect: LAZY-only "
+  printf("SKIP dispatcher_redirect_miss_reflect: OWNER-only "
          "(MSG_DB_SNAPSHOT_REDIRECT)\n");
   return 0;
 }
@@ -134,4 +134,4 @@ int main(int argc, char **argv) {
   return 0;
 }
 
-#endif /* ARTS_TIMING_LAZY */
+#endif /* ARTS_WRITE_POLICY_WB */

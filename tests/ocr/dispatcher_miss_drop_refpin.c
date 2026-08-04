@@ -10,8 +10,8 @@
  *       may arrive AFTER the DB's route slot was NULLed by a concurrent
  *       destroy.  The dispatcher drops it (the lookup MISSes), but the destroy
  *       fan-out / DESTROY_NOTIFY must already have woken every parked waiter,
- * so no EDT is stranded.  The Cat-C handlers covered: non-RWLOCK : INVALIDATE,
- * SNAPSHOT_RESPONSE, CACHE_DESTROY, CONFIRM, CONFIRM_ACK (lazy). RWLOCK     :
+ * so no EDT is stranded.  The Cat-C handlers covered: non-EXCL : INVALIDATE,
+ * SNAPSHOT_RESPONSE, CACHE_DESTROY, CONFIRM, CONFIRM_ACK (OWNER). EXCL     :
  * LOCK_RELEASE (Cat-B defer), CACHE_DESTROY.
  *
  *   (b) NO UAF — each Cat-C case ref-pins the db_s (arts_route_table_lookup_db
@@ -20,7 +20,7 @@
  *       thread therefore cannot free the db_s mid-handler.  A torn-down slot is
  *       a clean NULL get, not a dangling pointer deref.
  *
- *   (c) ACK-ON-MISS — WRITEBACK_ACK (eager/WRF_RCU) and LOCK_RELEASE_ACK (RWLOCK)
+ *   (c) ACK-ON-MISS — PUBLISH_ACK (HOME/WRF_VAL) and LOCK_RELEASE_ACK (EXCL)
  *       post the releaser's stack-local sem by pointer identity, INDEPENDENT of
  *       the route lookup (the body is called even on db==NULL, or the sem_post
  *       is inline).  A torn-down home cache must NOT swallow the ACK or the
@@ -32,7 +32,7 @@
  * buffer / RW FIFO), the finish scope is awaited, then the DB is destroyed and
  * the now-stale GUID destroyed AGAIN.  The next generation re-creates while the
  * previous destroy can still be draining, so a coherence response (INVALIDATE /
- * SNAPSHOT_RESPONSE / CONFIRM / CONFIRM_ACK / WRITEBACK_ACK / LOCK_RELEASE_ACK)
+ * SNAPSHOT_RESPONSE / CONFIRM / CONFIRM_ACK / PUBLISH_ACK / LOCK_RELEASE_ACK)
  * can race a torn-down home cache and exercise the dispatcher MISS branch.  If
  * any waiter is stranded or any ACK dropped, the finish scope never drains and
  * the ctest TIMEOUT reaps it as a FAIL (no in-test spin/watchdog).  The second
@@ -40,8 +40,8 @@
  * double-free / cb refcount underflow).
  *
  * Config-agnostic: every protocol routes RW/RO acquires + destroy through the
- * dispatcher Cat-C cases, so this runs unchanged under RCU (eager/lazy)
- * (eager/lazy), WRF_RCU, and RWLOCK.  Cross-rank handoff (nranks>1, the
+ * dispatcher Cat-C cases, so this runs unchanged under VAL (HOME/OWNER)
+ * (HOME/OWNER), WRF_VAL, and EXCL.  Cross-rank handoff (nranks>1, the
  * 2n/3n/4n/2n_io registrations) is what generates the real wire responses; on a
  * single rank the self-loopback Cat-C path still exercises the unconditional
  * ACK post.
@@ -100,7 +100,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
     /* Fan RW + RO dependents across every rank: each remote rank installs a
      * sharer cache and may park a waiter the dispatcher's Cat-C response would
-     * resume.  The RW chain drives ownership/writeback/lock ACK rounds; the RO
+     * resume.  The RW chain drives ownership/publish/lock ACK rounds; the RO
      * fan drives SNAPSHOT_RESPONSE / REDIRECT. */
     arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
     for (unsigned int r = 0; r < nranks; r++) {

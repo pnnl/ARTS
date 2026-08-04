@@ -27,7 +27,7 @@ outdir.mkdir(parents=True, exist_ok=True)
 track = outdir/"track.jsonl"
 cfgs = gen_cfgs(outdir)
 runner = Runner(mem_gb=0, timeout=180, logdir=outdir, target="cbgpu02",
-                build=REPO/"build_release_ocr_rcu_lazy")
+                build=REPO/"build_release_ocr_val_wb")
 
 todo = []
 for nodes in NODES:

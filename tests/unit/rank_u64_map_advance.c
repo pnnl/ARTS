@@ -29,7 +29,7 @@
  * Standalone: links rank_u64_map.c (uses libc malloc directly).
  */
 
-#include "arts/coherence/home.h"
+#include "arts/coherence/directory.h"
 
 #include <inttypes.h>
 #include <pthread.h>

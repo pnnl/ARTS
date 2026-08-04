@@ -91,15 +91,24 @@ All options are set with ``-D<NAME>=<VALUE>`` on the cmake line.
        only — emits a configure warning). Compile-time; all ranks must share
        one build.
    * - ``ARTS_COHERENCE_PROTOCOL``
-     - RCU
-     - Coherence protocol — ``RCU`` (default; versioned snapshots, readers
-       never blocked/invalidated) or ``RWLOCK`` (per-DB distributed
-       reader-writer lock). Valid combos: OCR×RCU×{E,L}, OCR×RWLOCK×{E,L},
-       DB_WRF×RCU×EAGER.
-   * - ``ARTS_PROTOCOL_TIMING``
-     - LAZY
-     - Timing of consistency actions — ``LAZY`` (acquire-time, default) or
-       ``EAGER`` (release-time).
+     - VAL
+     - Coherence family — ``VAL`` (default; validation: versioned snapshots,
+       readers never blocked/invalidated), ``INV`` (invalidation: directory
+       write-invalidate with acknowledged per-release invalidation rounds),
+       or ``EXCL`` (exclusion: per-DB distributed reader-writer lock).
+       Valid combos: OCR×VAL×{WT,WB}, OCR×INV×{WT,WB},
+       OCR×EXCL×{PURGE,RETAIN}, DB_WRF×VAL×WT.
+   * - ``ARTS_WRITE_POLICY``
+     - WB
+     - Write policy at release granularity, live in INV/VAL — ``WT``
+       (write-through at release; the home holds a current copy and serves
+       reads) or ``WB`` (write-back; the payload stays with the last writer
+       and moves on demand).
+   * - ``ARTS_RELEASE_POLICY``
+     - RETAIN
+     - Release policy, live in EXCL — ``PURGE`` (copy and permission return
+       to the home when the last local user finishes) or ``RETAIN`` (keep
+       both until another node asks; the home recalls on demand).
    * - ``ARTS_DEFAULT_DB_KIND``
      - ARTS_DB
      - Default DB storage kind the ``ARTS_DB_DEFAULT`` macro expands to:
@@ -148,6 +157,6 @@ After building, run a quick test with the Fibonacci example:
 .. code-block:: bash
 
    cd build/examples/cpu
-   ARTS_CONFIG=../../../configs/local/1n.cfg ./fib 10
+   ARTS_CONFIG=../../../configs/local/test/1n.cfg ./fib 10
 
 Expected output shows the 10th Fibonacci number and timing info.

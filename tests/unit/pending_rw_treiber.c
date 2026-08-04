@@ -1,15 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * T065 — RCU arts_pending_rw_queue_* (cache-side RW waiter chain).
+ * T065 — VAL arts_pending_rw_queue_* (cache-side RW waiter chain).
  *
  * A Treiber stack (arts_lf_stack_t) of arts_db_rw_waiter_s nodes (link FIRST).
  * Producers (foreign-rank acquire_remote_rw) prepend via release-CAS; the
  * single home-side consumer either drain-alls (GRANT / fail / destroy) — woken
  * + freed once each — or non-destructively for_each-walks (PROCEED, never
  * frees).  Order is immaterial (every waiter is woken regardless), which is why
- * a LIFO stack suffices vs the home lockreq Vyukov FIFO.
+ * a LIFO stack suffices vs the home grantreq Vyukov FIFO.
  *
- * Defined in rcu/home.c → RCU-only.  #includes the TU standalone
+ * Defined in coherence/grant.c — the shared migrating-grant plane.  #includes the TU standalone
  * (precedent: rank_bitset.c).  Self-skips elsewhere.
  *
  * Properties exercised:
@@ -24,21 +24,21 @@
  *      racing a drain forms a fresh stack picked up by the NEXT drain — so the
  *      union over all drains wakes EXACTLY the pushed set, no loss, no dup.
  *
- * Build: -DARTS_PROTOCOL_RCU=1 (+ a timing) -DARTS_UNIT_STANDALONE_SHIMS.
+ * Build: -DARTS_PROTOCOL_VAL=1 (+ a placement) -DARTS_UNIT_STANDALONE_SHIMS.
  */
 
 #include <stdio.h>
 
-#if !defined(ARTS_PROTOCOL_RCU)
+#if !defined(ARTS_PROTOCOL_VAL)
 int main(void) {
-  printf("PASS pending_rw_treiber: skipped (RCU-only; cache.pending_rw is a "
-         "Treiber stack only in the RCU engine)\n");
+  printf("PASS pending_rw_treiber: skipped (VAL-only; cache.pending_rw is a "
+         "Treiber stack only in the VAL engine)\n");
   return 0;
 }
 #else
 
 #include "arts/coherence/coherence.h"
-#include "arts/coherence/home.h"
+#include "arts/coherence/directory.h"
 #include "arts/utils/lockfree_lifo.h"
 
 #include <pthread.h>
@@ -287,8 +287,8 @@ void arts_free(void *ptr) { free(ptr); }
 void *arts_malloc(size_t size) { return malloc(size); }
 #endif
 
-#endif /* ARTS_PROTOCOL_RCU */
+#endif /* ARTS_PROTOCOL_VAL */
 
-#if defined(ARTS_PROTOCOL_RCU)
-#include "core/coherence/rcu/home.c"
+#if defined(ARTS_PROTOCOL_VAL)
+#include "core/coherence/grant_queue.c"
 #endif

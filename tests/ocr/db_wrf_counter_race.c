@@ -5,7 +5,7 @@
  * the two EDTs.  DB is homed on rank 0; rank-0 EDT acquires the home
  * buffer locally, rank-1 EDT acquires a remote working copy.
  *
- * Observed behavior (both OCR-model and WRF_RCU/DB-WRF builds):
+ * Observed behavior (both OCR-model and WRF_VAL/DB-WRF builds):
  *   counter == N     (most runs, "lost-update")
  *   counter == 0     (rare, verifier ordering edge case)
  *   counter == 2N    (not observed in this configuration)
@@ -15,13 +15,13 @@
  * NON-HOME ranks, but the home rank reading/writing its own buffer
  * does not park on the same chain — when one writer is home and the
  * other is non-home, the two execute concurrently and the non-home
- * WRITEBACK overwrites the home's local increments (or vice versa).
- * The DB-WRF (WRF_RCU) model has no LOCK_REQ chain by design and shows
+ * PUBLISH overwrites the home's local increments (or vice versa).
+ * The DB-WRF (WRF_VAL) model has no LOCK_REQ chain by design and shows
  * the same lost-update pattern.
  *
  * For a clean OCR/DB-WRF differentiation see CTest:
  * coherence_stress_dist and coherence_lock_req_before_create both PASS
- * under the OCR model and FAIL under the WRF_RCU model because they
+ * under the OCR model and FAIL under the WRF_VAL model because they
  * exercise patterns that the DB-WRF contract does not implement.
  */
 

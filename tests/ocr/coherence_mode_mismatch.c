@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
  * Mode-mismatch detection: launch the two ranks from binaries built with
- * different memory-model/protocol configurations (e.g. one eager, one
- * lazy).  The first cross-mode message should produce a fatal error within
+ * different memory-model/protocol configurations (e.g. one HOME, one
+ * OWNER).  The first cross-mode message should produce a fatal error within
  * seconds, because the wire protocol tag differs between the two builds.
  *
  * Driven by tests/run_mode_mismatch.sh standalone. */

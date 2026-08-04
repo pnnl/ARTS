@@ -40,7 +40,7 @@ def main():
     track = outdir/"track.jsonl"
     gen_cfgs(outdir)
     runner = Runner(mem_gb=0, timeout=240, logdir=outdir, target="cbgpu02",
-                    build=REPO/"build_release_ocr_rcu_lazy")
+                    build=REPO/"build_release_ocr_val_wb")
     total = len(NODES) * 2 * 3 * ITERS
     done = 0
     for nodes in NODES:

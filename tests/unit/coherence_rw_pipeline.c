@@ -46,7 +46,7 @@
 ///   Each phase uses a finish event so the value check is race-free.  A verify
 ///   EDT arts_abort()s on mismatch, so a wrong result is a non-zero exit code;
 ///   a stranded waiter is caught by the ctest TIMEOUT (no in-test watchdog).
-///   OCR model (eager/lazy) only — the relaxed model has no ownership round.
+///   OCR model (HOME/OWNER) only — the DB_WRF model has no ownership round.
 
 #include "arts.h"
 
@@ -126,7 +126,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depv;
   arts_printf("=== coherence_rw_pipeline ===\n");
 
-#ifdef ARTS_PROTOCOL_WRF_RCU
+#ifdef ARTS_PROTOCOL_WRF_VAL
   arts_printf("SKIP: RELAXED has no exclusive-RW ownership round\n");
   arts_shutdown();
   return;

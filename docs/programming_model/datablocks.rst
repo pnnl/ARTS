@@ -94,13 +94,16 @@ Consistency
 For regular ``ARTS_DB`` DataBlocks, which values a read may return is
 governed by the build-time protocol selection:
 
-* ``ARTS_MEMORY_MODEL`` × ``ARTS_COHERENCE_PROTOCOL`` select the contract and
-  mechanism: ``OCR`` × ``RCU`` (default; implements the OCR v1.2.0 §1.6
-  contract), ``OCR`` × ``RWLOCK``, or ``DB_WRF`` × ``RCU``
-  (write-race-free at DB granularity, DB-WRF; evaluation only).
-* ``ARTS_PROTOCOL_TIMING`` selects **when** consistency actions occur:
-  ``LAZY`` (acquire-time, default) or ``EAGER`` (release-time); meaningful
-  for all OCR-model configurations.
+* ``ARTS_MEMORY_MODEL`` × ``ARTS_COHERENCE_PROTOCOL`` select the contract
+  and the coherence family: ``OCR`` × ``VAL`` (default; implements the OCR
+  v1.2.0 §1.6 contract), ``OCR`` × ``INV``, ``OCR`` × ``EXCL``, or
+  ``DB_WRF`` × ``VAL`` (write-race-free at DB granularity, DB-WRF;
+  evaluation only).
+* ``ARTS_WRITE_POLICY`` selects where the canonical payload rests between
+  write turns — ``WB`` (write-back, default) or ``WT`` (write-through at
+  release); live under INV/VAL.
+* ``ARTS_RELEASE_POLICY`` selects when a node's write grant goes back —
+  ``RETAIN`` (default) or ``PURGE``; live under EXCL.
 
 See :ref:`coherence_protocols` for the normative definition of all axes.  The
 other subtypes (``ARTS_DB_PIN``, ``ARTS_DB_CXL``, ``ARTS_DB_GPU``,

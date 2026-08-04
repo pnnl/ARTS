@@ -48,7 +48,7 @@ extern "C" {
  *
  * Includes the protocol-agnostic layout (types_common.h), then the
  * protocol-specific cache/db (coherence/<proto>/types.h, chosen by
- * ARTS_PROTOCOL_WRF_RCU), then the of_cache / total_size / stub_size helpers that
+ * ARTS_PROTOCOL_WRF_VAL), then the of_cache / total_size / stub_size helpers that
  * need the complete cache + db_s types.  struct arts_db_s embeds the per-rank
  * cache (struct arts_db_cache_s) by value as its FIRST member, so each protocol
  * header defines the whole cache + db_s chain together.
@@ -60,18 +60,18 @@ extern "C" {
 
 #include "arts/coherence/types_common.h"
 
-/* Protocol-specific cache/db layout.  WRF_RCU carries no ownership lease or RW
+/* Protocol-specific cache/db layout.  WRF_RCU carries no ownership grant or RW
  * waiter queue (writer_count is a pure ref count); RCU carries the
- * ownership-cache shape, with the EAGER/LAZY timing split made inside the
- * header via ARTS_TIMING_LAZY. */
-#if defined(ARTS_PROTOCOL_RWLOCK)
-#include "arts/coherence/rwlock/types.h"
-#elif defined(ARTS_PROTOCOL_MSI)
-#include "arts/coherence/msi/types.h"
-#elif defined(ARTS_PROTOCOL_WRF_RCU)
-#include "arts/coherence/wrf_rcu/types.h"
+ * ownership-cache shape, with the HOME/OWNER placement split made inside the
+ * header via ARTS_WRITE_POLICY_WB. */
+#if defined(ARTS_PROTOCOL_EXCL)
+#include "arts/coherence/excl/types.h"
+#elif defined(ARTS_PROTOCOL_INV)
+#include "arts/coherence/inv/types.h"
+#elif defined(ARTS_PROTOCOL_WRF_VAL)
+#include "arts/coherence/wrf_val/types.h"
 #else
-#include "arts/coherence/rcu/types.h"
+#include "arts/coherence/val/types.h"
 #endif
 
 /* ========================================================================= */
@@ -97,7 +97,7 @@ static inline uint64_t arts_db_total_size(const struct arts_db_s *db) {
   return sizeof(struct arts_db_s) + db->cache.db_size;
 }
 
-/* Footprint of a non-home / lazy / creator-remote DB stub: the cache prefix +
+/* Footprint of a non-home / OWNER / creator-remote DB stub: the cache prefix +
  * db_type + home_initialized, stopping before the home-directory queues/maps
  * (which only the GUID home rank ever touches).  home_initialized MUST be in
  * bounds: the cache destructor reads it on EVERY free to decide whether to tear
@@ -110,11 +110,11 @@ static inline uint64_t arts_db_total_size(const struct arts_db_s *db) {
  * (protocol-dependent: rw_holder for the ownership protocols, cached_version
  * for WRF_RCU). */
 static inline uint64_t arts_db_cache_stub_size(void) {
-#if defined(ARTS_PROTOCOL_WRF_RCU)
+#if defined(ARTS_PROTOCOL_WRF_VAL)
   return offsetof(struct arts_db_s, cached_version);
-#elif defined(ARTS_PROTOCOL_RWLOCK)
+#elif defined(ARTS_PROTOCOL_EXCL)
   return offsetof(struct arts_db_s, lock_state);
-#elif defined(ARTS_PROTOCOL_MSI)
+#elif defined(ARTS_PROTOCOL_INV)
   return offsetof(struct arts_db_s, dir_state);
 #else
   return offsetof(struct arts_db_s, rw_holder);

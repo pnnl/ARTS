@@ -18,7 +18,7 @@
  * recover the buffer.
  *
  * Also checks: when the cache starts db_size==0 and a zero-size install runs,
- * the lazy db_size-learn branch is NOT taken (it is gated on db_size > 0), so
+ * the deferred db_size-learn branch is NOT taken (it is gated on db_size > 0), so
  * cache->db_size stays 0 — documents that a zero-size install does not falsely
  * "learn" a size.
  *

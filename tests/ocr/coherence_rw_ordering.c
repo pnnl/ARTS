@@ -42,7 +42,7 @@
 ///        chained by output_events so the reader deterministically observes
 ///        the final writer's value.  Ordering is explicit (RW mode gives
 ///        mutual exclusion, not inter-EDT order), so it holds on every
-///        protocol/timing build.  Also exercises multiple concurrent RO
+///        protocol/placement build.  Also exercises multiple concurrent RO
 ///        readers on a separate DB.
 
 #include "arts.h"
@@ -122,7 +122,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   // fires at its epilogue — after its DB release publishes the write (OCR
   // §1.6.2 release-before-satisfy) — so gating the next stage on it gives a
   // happens-before edge: writer1 → writer2 → reader.  The reader therefore
-  // deterministically observes writer2's value (200) on every protocol/timing.
+  // deterministically observes writer2's value (200) on every protocol/placement.
   void *ptr = NULL;
   arts_guid_t db =
       arts_db_create(&ptr, sizeof(int), ARTS_DB, ARTS_DB_PROP_NONE, NULL);

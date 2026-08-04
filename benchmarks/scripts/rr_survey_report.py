@@ -26,7 +26,7 @@ from pathlib import Path
 
 R_DIVERGENT, R_DEGRADED = 3.0, 1.5
 GEOS = ["1n_sc", "2n_sc", "4n_sc"]
-PROTOS = ["ocr_rcu_lazy", "ocr_rwlock_lazy"]
+PROTOS = ["ocr_val_wb", "ocr_excl_retain"]
 
 
 def load(dir_):
@@ -84,7 +84,7 @@ def verdict(rows, bench, proto):
     return "SCALES", worst, base_e2e, cells
 
 
-def cause(metrics, bench, proto="ocr_rcu_lazy", geo="2n_sc"):
+def cause(metrics, bench, proto="ocr_val_wb", geo="2n_sc"):
     """Counter-based cause-family estimate at the given geo.
     caller-rank-only  = EDTs stay on rank 0 (rank0 EDT_FINISH fraction ~1).
     coherence-roundtrip = EDTs spread but remote traffic per DB op is high."""
@@ -124,7 +124,7 @@ def main():
 
     rows, metrics = load(dir_)
     L = []
-    L.append("# RR-divergence survey (all apps x {ocr_rcu_lazy, ocr_rwlock_lazy} x {1n_sc,2n_sc,4n_sc})\n")
+    L.append("# RR-divergence survey (all apps x {ocr_val_wb, ocr_excl_retain} x {1n_sc,2n_sc,4n_sc})\n")
     L.append(f"Source: `{dir_}` (experiment=strong, 1 iter, retries=0, timeout=45 s).\n")
     L.append("## Criteria\n")
     L.append("Metric = compute span **[E2E]** (excludes fixed multi-rank launcher "
@@ -137,8 +137,8 @@ def main():
              "carried as the *expected* reason and is NOT a run gate.\n")
 
     tally = {v: 0 for v in ("SCALES", "DEGRADED", "DIVERGENT", "NO_BASE", "INCOMPLETE")}
-    L.append("\n## Per-app verdict (ocr_rcu_lazy | ocr_rwlock_lazy)\n")
-    L.append("| app | expected(scale_skip) | ocr_rcu_lazy e2e 1n/2n/4n | r | verdict | ocr_rwlock_lazy e2e 1n/2n/4n | r | verdict |")
+    L.append("\n## Per-app verdict (ocr_val_wb | ocr_excl_retain)\n")
+    L.append("| app | expected(scale_skip) | ocr_val_wb e2e 1n/2n/4n | r | verdict | ocr_excl_retain e2e 1n/2n/4n | r | verdict |")
     L.append("|---|---|---|---|---|---|---|---|")
     verdicts = {}
     for bench in order:
@@ -155,18 +155,18 @@ def main():
             trip = "/".join(cell_s(g) for g in GEOS)
             rs = ("%.1fx" % r) if isinstance(r, float) else "-"
             line += [trip, rs, v]
-            if proto == "ocr_rcu_lazy":
+            if proto == "ocr_val_wb":
                 verdicts[bench] = v
                 tally[v] = tally.get(v, 0) + 1
         L.append("| " + " | ".join(line) + " |")
 
-    L.append(f"\n## Tally (ocr_rcu_lazy): "
+    L.append(f"\n## Tally (ocr_val_wb): "
              + ", ".join(f"{k}={tally.get(k,0)}" for k in
                          ("SCALES","DEGRADED","DIVERGENT","NO_BASE","INCOMPLETE")) + "\n")
 
     # Cause-family spot-check on up to a few DIVERGENT apps (counter evidence).
     div = [b for b in order if verdicts.get(b) == "DIVERGENT"]
-    L.append("## Cause-family (counter spot-check @2n_sc, ocr_rcu_lazy)\n")
+    L.append("## Cause-family (counter spot-check @2n_sc, ocr_val_wb)\n")
     L.append("| app | cause | rank0_edt_frac | remote_send | owner_upd | db_acq | remote/db |")
     L.append("|---|---|---|---|---|---|---|")
     shown = 0

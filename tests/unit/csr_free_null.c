@@ -31,15 +31,15 @@
  * The ARTS runtime is NOT started.  csr.c references the edge_vector and
  * block_distribution helpers and (in arts_csr_from_guid) the complete
  * struct arts_db_s layout, so we compile all three graph TUs via #include and
- * pull the coherence type header (ARTS_PROTOCOL_RCU selected — the graph code
+ * pull the coherence type header (ARTS_PROTOCOL_VAL selected — the graph code
  * is protocol-INDEPENDENT, the macro only fixes the arts_db_s layout for the
  * pointer arithmetic in arts_csr_from_guid, which this test does not call).
  * Every other runtime symbol csr.c references is stubbed below; only
  * arts_db_destroy is actually reached.
  */
 
-#ifndef ARTS_PROTOCOL_RCU
-#define ARTS_PROTOCOL_RCU 1
+#ifndef ARTS_PROTOCOL_VAL
+#define ARTS_PROTOCOL_VAL 1
 #endif
 
 #define ARTS_SYSTEM_PRINT_H
@@ -58,7 +58,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#include "arts/coherence/types.h" /* complete struct arts_db_s (RCU layout) */
+#include "arts/coherence/types.h" /* complete struct arts_db_s (VAL layout) */
 #include "arts/gas/route_table.h"
 #include "arts/graph.h"
 #include "arts/utils/shared.h" /* arts_shared_ptr_t (opaque) */

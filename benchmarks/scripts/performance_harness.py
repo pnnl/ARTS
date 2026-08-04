@@ -13,7 +13,7 @@ build. There is no runtime knob to swap counter sets — a perf build that
 wants `configs/perf_counters.cfg`'s counters must be *configured* with
 `-DARTS_COUNTER_CONFIG=configs/perf_counters.cfg` and rebuilt. (Task 7:
 the perf build dir is therefore a separate cmake configure/build from the
-correctness `build_release_ocr_rcu_lazy`, not a runtime flag on the same
+correctness `build_release_ocr_val_wb`, not a runtime flag on the same
 binaries.)
 
 Real counter JSON schema (Step 4 finding, from libs/src/core/counter/counter.c):
@@ -223,7 +223,7 @@ def _bench_axes(name, marker, fix, strong, weak, extra=None, ocr_base=None):
                     extra_scalars=extra or {})
 
 
-# Cross-node scaling core (calibrated 2026-07-06 on arts_rcu_lazy, post
+# Cross-node scaling core (calibrated 2026-07-06 on arts_val_wb(then 'val_wb'), post
 # leak-fix, at the cbgpu02 _sc geometry: 12 workers/node, 1/2/4 nodes on the
 # 48-core box).  On this LOCALHOST-simulated multinode (one physical box,
 # libfabric loopback comm), compute-bound apps (graph500, hpcg, Stencil2D,
@@ -360,7 +360,7 @@ _DESIGNED_AXES: list = [
 # Non-scaling apps: run only in the "single" experiment (whole OCR-pair suite
 # at the 48-worker single-node geometry PLUS the 12-worker 1n_sc geometry -- a
 # two-point within-node concurrency-scaling axis every app can run).  fix_args
-# are calibrated (2026-07-06, post leak-fix) so the arts (ocr_rcu_lazy) wall is
+# are calibrated (2026-07-06, post leak-fix) so the arts (ocr_val_wb) wall is
 # ~3 s at 48 workers, with human-natural parameter values (powers of two /
 # multiples of ten); worker/rank-grid parameters are pinned to 48 (or the
 # nearest power of two the app demands).  Apps with no CLI workload knob run at
@@ -490,7 +490,7 @@ _DERIVED_AXES: list = [
     # incbin sizes for perf (same pipeline, selectable image grid over the
     # shared huge pulse dataset); tiny..large stay in the correctness matrix.
     # Strong = P2 (1200^2): the largest ladder rung whose slowest coherence
-    # arm (ocr_rcu_eager) still clears the 4n_sc cell budget with margin
+    # arm (ocr_val_wt) still clears the 4n_sc cell budget with margin
     # (measured ~38 s vs ~113 s at the next rung); the larger rungs are
     # cluster-scale problems, not for this host.
     PerfCase("sar_pss", "sar_problem_size_scaling", r"SAR detects:",
@@ -1231,10 +1231,10 @@ def run_cell_with_retry(runner: Runner, rt: Runtime, case: PerfCase, experiment:
 # Eligibility + emitters (Task 7).
 # ---------------------------------------------------------------------------
 
-# WRF_RCU contract-ineligibility mirrors the correctness harness's per-case
-# wrf_rcu_skip declarations (single source of truth): an app whose wiring relies
-# on RW/CONST admission exclusion is outside WRF_RCU's DB-WRF contract, so its
-# wrf_rcu_eager cells measure undefined behavior (wrong values, hangs, or crashes from
+# WRF_VAL contract-ineligibility mirrors the correctness harness's per-case
+# wrf_val_skip declarations (single source of truth): an app whose wiring relies
+# on RW/CONST admission exclusion is outside WRF_VAL's DB-WRF contract, so its
+# wrf_val_wt cells measure undefined behavior (wrong values, hangs, or crashes from
 # clobbered carrier DBs) — never protocol performance.  Exact-name matches
 # only: a differently-wired sibling bench (e.g. a _dist rewrite) is judged on
 # its own wiring.
@@ -1243,7 +1243,7 @@ import io as _io
 with _contextlib.redirect_stdout(_io.StringIO()):  # its import-time banner
     import correctness_harness as _correctness
 WRF_RCU_INELIGIBLE: frozenset = frozenset(
-    c.name for c in _correctness.CASES if c.wrf_rcu_skip)
+    c.name for c in _correctness.CASES if c.wrf_val_skip)
 
 
 def perf_runtime_eligible(rt: Runtime, case: PerfCase, node: object) -> bool:
@@ -1259,7 +1259,7 @@ def perf_runtime_eligible(rt: Runtime, case: PerfCase, node: object) -> bool:
         return False
     if rt.kind == "ocrvx" and not (RUNNER_APPS / f"{case.ocr_base}_ocrvx").exists():
         return False
-    if rt.key == "wrf_rcu_eager" and case.name in WRF_RCU_INELIGIBLE:
+    if rt.key == "wrf_val_wt" and case.name in WRF_RCU_INELIGIBLE:
         return False
     return True
 
@@ -1417,7 +1417,7 @@ def main():
     global RUNNER_APPS
 
     p = argparse.ArgumentParser()
-    p.add_argument("--build-dir", default="build_release_ocr_rcu_lazy",
+    p.add_argument("--build-dir", default="build_release_ocr_val_wb",
                    help="Build directory containing apps and configs")
     p.add_argument("--target", default="cbgpu02", choices=["cbgpu02"],
                    help="Machine geometry (drives config subdir + node counts, "
@@ -1430,7 +1430,7 @@ def main():
                    help="Comma-separated experiments to run: strong,weak,single")
     p.add_argument("--runtimes", type=str, default="",
                    help="Comma-separated runtime keys to restrict to "
-                        "(e.g. ocr_rcu_lazy,xsocr,ocrvx); default all")
+                        "(e.g. ocr_val_wb,xsocr,ocrvx); default all")
     p.add_argument("--iters", type=int, default=5,
                    help="Accepted iterations per (bench, node, runtime) cell")
     p.add_argument("--retries", type=int, default=3,

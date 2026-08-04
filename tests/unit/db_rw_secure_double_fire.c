@@ -59,8 +59,8 @@
 /// accounted exactly once, in order).  A premature schedule corrupts at least
 /// one DB -> arts_abort; a stalled cursor hangs -> ctest TIMEOUT.
 ///
-/// ownership/RWLOCK only (RW is serialized; the cursor + rw_secure are live).
-/// WRF_RCU does not serialize RW (Pass-2 cursor is a no-op) -> self-skip.  Runs in
+/// ownership/EXCL only (RW is serialized; the cursor + rw_secure are live).
+/// WRF_VAL does not serialize RW (Pass-2 cursor is a no-op) -> self-skip.  Runs in
 /// all node counts; remote homes only exist when nranks>1, so single-node is a
 /// (still-valid) local-hit smoke of the same multi-RW accounting.
 
@@ -117,8 +117,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   arts_printf("=== db_rw_secure_double_fire ===\n");
 
-#if defined(ARTS_PROTOCOL_WRF_RCU)
-  arts_printf("SKIP db_rw_secure_double_fire: WRF_RCU does not serialize RW\n");
+#if defined(ARTS_PROTOCOL_WRF_VAL)
+  arts_printf("SKIP db_rw_secure_double_fire: WRF_VAL does not serialize RW\n");
   arts_shutdown();
   return;
 #else

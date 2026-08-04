@@ -602,7 +602,7 @@ void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
 
   /* Event source — delegate to the entity-specific API.  The dep mode rides
    * on the satisfy at fire time (stored in the waiter node, replayed through
-   * arts_edt_satisfy_slot), so no eager mode-set to the destination. */
+   * arts_edt_satisfy_slot), so no up-front mode-set to the destination. */
   arts_event_add_dependence(source, destination, slot, access_mode);
 }
 

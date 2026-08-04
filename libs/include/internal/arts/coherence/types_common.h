@@ -54,7 +54,7 @@ extern "C" {
 #include <stdatomic.h>
 #endif
 /* Lazy home metadata embeds a per-rank reader bit-set by value. */
-#ifdef ARTS_TIMING_LAZY
+#ifdef ARTS_WRITE_POLICY_WB
 #include "arts/rank_bitset.h"
 #endif
 
@@ -62,7 +62,7 @@ extern "C" {
  * transfer pending".  A real rank is always < rank_count, so UINT_MAX is a safe
  * out-of-band value (and rank 0 is a valid owner, so 0 cannot be the sentinel).
  */
-#define ARTS_LAZY_NO_PENDING_OWNER ((unsigned int)-1)
+#define ARTS_NO_PENDING_OWNER ((unsigned int)-1)
 
 /* In-memory rendezvous landing descriptor — the coherence-side mirror of the
  * packed wire struct arts_msg_rdzv_landing_s (protocol.h): where a payload
@@ -118,7 +118,7 @@ struct arts_db_cache_s;
  *      reply arrived with version > buf->version — transport reordered the
  *      with-data reply behind it);
  *   2. a home-local RO acquire that found no buffer installed yet (cross-rank
- *      create installs home metadata only; the creator's first WRITEBACK is
+ *      create installs home metadata only; the creator's first PUBLISH is
  *      the publication point that installs the first buffer);
  *   3. a home-side remote GET_DATA serve deferred for the same reason —
  *      `serve` is non-NULL and the drain re-issues the serve with the
@@ -141,6 +141,22 @@ struct arts_db_snapshot_waiter_s {
   unsigned int requester;
   struct arts_rdzv_landing_s rdzv;
 };
+/*--- Pending RW waiters --------------------------------------------------
+ * edt_guid + slot together identify the parked EDT's dep slot to fill on
+ * trigger.  The RW waiter chain is a Treiber stack (cache.pending_rw,
+ * arts_lf_stack_t): the embedded link is owned by the stack (push prepends,
+ * drain atomic-exchanges the whole chain).  Producers are foreign-rank acquire
+ * paths; the single consumer is the home-side dispatcher.  Every consume is
+ * order-free — drain-all on GRANT/fail, and a non-destructive single-consumer
+ * for_each on PROCEED — so a LIFO Treiber stack suffices; there is no FIFO or
+ * drain-one requirement (that is the home grantreq queue, which stays Vyukov
+ * MPSC). */
+struct arts_db_rw_waiter_s {
+  arts_lf_link_t link; /* FIRST — required by arts_lf_stack_t */
+  arts_guid_t edt_guid;
+  unsigned int slot;
+};
+
 /* Forward decl; sparse rank-keyed u64 map (owner-side dedup; protocol arms). */
 struct arts_rank_to_u64_map_s;
 

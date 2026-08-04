@@ -64,7 +64,7 @@
 #include "arts/utils/malloc.h"
 
 /* Disable Nagle on a connected TCP data socket.  ARTS's cross-rank protocol is
- * dominated by small synchronous request/ACK round-trips (DB writeback ACK,
+ * dominated by small synchronous request/ACK round-trips (DB publish ACK,
  * finish-event signals, lock requests); Nagle's coalescing delay compounds with
  * the
  * peer's delayed-ACK to inflate every such round-trip. */

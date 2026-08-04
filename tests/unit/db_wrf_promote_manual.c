@@ -24,7 +24,7 @@
  *       else.  This pins the legal lost-update window without requiring a
  *       specific deterministic answer.
  *
- * config_specific: WRF_RCU only — the no-ownership concurrent cross-rank RW is the
+ * config_specific: WRF_VAL only — the no-ownership concurrent cross-rank RW is the
  * DB-WRF contract; ownership protocols serialize and would yield 2N for (B) and
  * are exercised by their own coherence suites.
  */
@@ -38,14 +38,14 @@
 #define DB_SIZE 4096
 #define INCREMENTS_PER_RANK 1000u
 
-#if !defined(ARTS_PROTOCOL_WRF_RCU)
+#if !defined(ARTS_PROTOCOL_WRF_VAL)
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
               arts_edt_dep_t depv[]) {
   (void)paramc;
   (void)paramv;
   (void)depc;
   (void)depv;
-  arts_printf("SKIP db_wrf_promote_manual: WRF_RCU-only\n");
+  arts_printf("SKIP db_wrf_promote_manual: WRF_VAL-only\n");
   arts_shutdown();
 }
 #else

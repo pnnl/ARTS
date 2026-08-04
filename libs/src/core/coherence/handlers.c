@@ -8,16 +8,16 @@
  *
  * Lookup discipline.  Two handler categories, both lookup-then-operate but
  * differing on the MISS action:
- *   - Cat-B (deferrable home-side: OWNERSHIP_REQUEST / GET_DATA / WRITEBACK /
+ *   - Cat-B (deferrable home-side: OWNERSHIP_REQUEST / GET_DATA / PUBLISH /
  * DESTROY): the wire dispatcher routes through the OoO engine, which acquires
  * the home db_s (ref-pinned) and hands a pure (item, args) body the live cache
  *     on a HIT, or DEFERS the args and replays them once DB_CREATE installs.
- *   - Cat-C (non-deferrable: DATA_RESPONSE / DESTROY_NOTIFY / WRITEBACK_ACK /
+ *   - Cat-C (non-deferrable: DATA_RESPONSE / DESTROY_NOTIFY / PUBLISH_ACK /
  *     RELEASE_OWNERSHIP / REDIRECT_RO / CONFIRM / CONFIRM_ACK): the wire
  * dispatcher (and the matching self-send shortcut) does the ref-pinned
  *     lookup-acquire; on a HIT it calls the pure (item, args) body, and on a
  *     MISS it applies that handler's exact miss-action (silent drop,
- *     DESTROY_NOTIFY reply, or the WRITEBACK_ACK sem-post — see each body).
+ *     DESTROY_NOTIFY reply, or the PUBLISH_ACK sem-post — see each body).
  * Either way the handler body itself performs NO route-table lookup; it
  * operates on the already-acquired, ref-pinned cache (the FIRST member of the
  * db_s the caller hands it).
@@ -43,7 +43,7 @@
 #include "arts.h" /* ARTS_DB_PROP_NO_ACQUIRE */
 #include "arts/coherence/buffer.h"
 #include "arts/coherence/coherence.h"
-#include "arts/coherence/home.h"
+#include "arts/coherence/directory.h"
 #include "arts/db.h"
 #include "arts/gas/route_table.h"
 #include "arts/memory/regpool.h" /* arts_regpool_free (orphaned landing) */
@@ -57,24 +57,24 @@
 
 /* ===== Home-side handlers ========================================== */
 
-/* arts_handler_db_ownership_request lives in coherence/ownership.c (RCU
+/* arts_handler_db_grant_request lives in coherence/grant.c (RCU
  * only — WRF_RCU has no OWNERSHIP_REQUEST / GRANT round). */
 
 /* arts_handler_db_snapshot_request (GET_DATA) is protocol-specific —
- * EAGER/WRF_RCU serve from home's canonical buffer (dedup), LAZY records the
+ * HOME/WRF_RCU serve from home's canonical buffer (dedup), OWNER records the
  * sharer + REDIRECTs to the owner — so its whole body lives in
- * coherence/{eager,lazy,wrf_rcu}.c. */
+ * each arm's own placement TU. */
 
-/* arts_handler_db_writeback (+_ack) is protocol-specific — EAGER/WRF_RCU install
+/* arts_handler_db_publish (+_ack) is protocol-specific — HOME/WRF_RCU install
  * + ACK (pure: ownership transfer is a separate owner→owner OWNERSHIP_RESPONSE
- * ship), LAZY has no synchronous writeback (no-op fillers preserve the
+ * ship), OWNER has no synchronous publish (no-op fillers preserve the
  * OoO-table / link parity) — so their whole bodies live in
- * coherence/{eager,lazy,wrf_rcu}.c. */
+ * each arm's own placement TU. */
 
 /* arts_handler_db_destroy is protocol-specific — the roster fan-out source
- * differs (eager/WRF_RCU walk home->cached_version; lazy walks rw_holder +
+ * differs (HOME/WRF_RCU walk home->cached_version; OWNER walks rw_holder +
  * cached_ranks + pending_rw) — so its whole body lives in
- * coherence/{eager,lazy,wrf_rcu}.c.  All three skeletons run the roster fan-out,
+ * each arm's own placement TU.  All three skeletons run the roster fan-out,
  * then arts_route_table_set_destroyed; any waiter left parked at destroy time
  * (UB per OCR) is cleaned up by the refcount-0 cache destructor. */
 
@@ -86,15 +86,15 @@
  * Mirrors the local-create path: under a single-writer lock the unreleased hold
  * deadlocks every future writer; the ownership protocols collapse the seed to
  * the sentinel (writer_count = 1).  Idempotent and safe to call on every create
- * path (fresh install and lazy-stub coalesce). */
+ * path (fresh install and OWNER-stub coalesce). */
 static inline void db_create_no_acquire_idle(struct arts_db_s *db,
                                              bool no_acquire) {
   if (!no_acquire) {
     return;
   }
-#if defined(ARTS_PROTOCOL_RWLOCK)
-#if defined(ARTS_TIMING_LAZY)
-  /* LAZY: data lives with the owner, not the home.  With no creator hold there
+#if defined(ARTS_PROTOCOL_EXCL)
+#if defined(ARTS_RELEASE_RETAIN)
+  /* OWNER: data lives with the owner, not the home.  With no creator hold there
    * is no owner unless we make one — so the home rank (this rank; the create
    * handler runs only on the GUID home, see the assert in
    * arts_handler_db_create) becomes the IDLE data owner: it holds the zero-init
@@ -109,37 +109,16 @@ static inline void db_create_no_acquire_idle(struct arts_db_s *db,
   atomic_store_explicit(&db->lock_state,
                         LOCK_MAKE(LOCK_PHASE_IDLE, arts_global_rank_id, 0u, 0u),
                         memory_order_relaxed);
-#else  /* ARTS_TIMING_EAGER */
-  /* EAGER: the home holds the canonical buffer and grants from it; the creator
+#else  /* ARTS_RELEASE_PURGE */
+  /* HOME: the home holds the canonical buffer and grants from it; the creator
    * is a non-owner.  Idle both words (the first LOCK_REQUEST is granted, not
    * blocked behind the unreleased creator hold). */
   atomic_store_explicit(&db->cache.cache_state, 0ULL, memory_order_relaxed);
   atomic_store_explicit(&db->lock_state, 0ULL, memory_order_relaxed);
-#endif /* ARTS_TIMING_* */
-#elif defined(ARTS_PROTOCOL_MSI)
-#if defined(ARTS_TIMING_LAZY)
-  /* Owner-canonical: with no creator hold there is no owner unless we make
-   * one, so this rank (the GUID home, where the create handler runs) becomes
-   * the writer-free owner of the zero-init copy — the first redirect is
-   * served immediately and the first writer migrates it away. */
-  atomic_store_explicit(&db->cache.cache_state,
-                        MSI_LAZY_CACHE_MAKE(MSI_RW_GRANT, MSI_RO_VALID, 0u, 0u,
-                                            0u, 0u, 0u, 0u, 0u),
-                        memory_order_relaxed);
-  atomic_store_explicit(
-      &db->dir_state,
-      MSI_LAZY_DIR_MAKE(0u, 0u, 0u, arts_global_rank_id, 0u),
-      memory_order_relaxed);
+#endif /* ARTS_RELEASE_* */
 #else
-  /* The home holds the canonical buffer and serves from it; with no creator
-   * hold both words idle (no owner, no writers) so the first REQUEST is
-   * granted rather than blocked behind a hold nothing releases. */
-  atomic_store_explicit(&db->cache.cache_state, 0ULL, memory_order_relaxed);
-  atomic_store_explicit(&db->dir_state,
-                        MSI_DIR_MAKE(0u, 0u, MSI_OWNER_NOBODY, 0u),
-                        memory_order_relaxed);
-#endif /* ARTS_TIMING_LAZY */
-#else
+  /* Grant-bearing arms: with no creator hold this rank is the idle owner and
+   * keeps the sentinel; the first foreign request revokes an idle grant. */
   db->cache.writer_count = 1;
 #endif
 }
@@ -151,8 +130,8 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
   unsigned int creator_rank = p->header.rank;
   arts_guid_t db_guid = p->db_guid;
   uint64_t db_size = p->db_size;
-  /* NO_ACQUIRE: the creator neither acquires nor writes back, so home is the
-   * sole idle owner (not a non-owner awaiting a creator writeback). */
+  /* NO_ACQUIRE: the creator neither acquires nor publishes, so home is the
+   * sole idle owner (not a non-owner awaiting a creator publish). */
   bool no_acquire = (p->flags & ARTS_DB_PROP_NO_ACQUIRE) != 0;
 
   /* This handler installs/initializes the home directory, so it is only ever
@@ -163,9 +142,9 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
   assert((unsigned int)arts_guid_get_rank(db_guid) == arts_global_rank_id &&
          "home-directory init must run on the GUID home rank");
 
-  /* Race against lazy_install or another path that already set up an
+  /* Race against stub_install or another path that already set up an
    * empty cache_s on this rank — coalesce by promoting the existing
-   * lazy entry rather than allocating a duplicate. */
+   * OWNER entry rather than allocating a duplicate. */
   arts_shared_ptr_t existing_h = arts_route_table_lookup_db(db_guid);
   struct arts_db_s *existing = (struct arts_db_s *)arts_shared_get(existing_h);
   if (existing != NULL && existing->db_type == ARTS_DB) {
@@ -201,7 +180,7 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
    *
    * Lazy buffer install (OCR pattern): HOME_RECV does NOT install a
    * buffer here.  cache->buffer stays NULL with version 0 -- "metadata
-   * only" state.  The first WRITEBACK from the creator's release_rw
+   * only" state.  The first PUBLISH from the creator's release_rw
    * installs the buffer at home (version 1+, with the creator's
    * payload).  Cross-rank GET_DATA before that point is served as a
    * no-payload DATA_RESPONSE (handle_get_data); the requesting rank
@@ -238,8 +217,8 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
     arts_db_cache_init(&stub->cache, db_guid, db_size, ARTS_DB_INIT_HOME_RECV,
                        creator_rank);
     /* Case-D leaf: WRF_RCU installs a version-1 zero buffer now (home is
-     * canonical, no creator writeback to wait for); eager/lazy defer the
-     * install to the creator's first WRITEBACK (no-op here). */
+     * canonical, no creator publish to wait for); HOME/OWNER defer the
+     * install to the creator's first PUBLISH (no-op here). */
     arts_db_create_install_home_buffer(&stub->cache, db_size);
   }
 
@@ -280,9 +259,9 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
 
 /* ===== Sharer-side response handlers =============================== */
 
-/* The EAGER GRANT handler arts_handler_db_ownership_response lives in
- * coherence/eager.c; LAZY's TRANSFER_OWNERSHIP overload lives in
- * coherence/lazy.c; WRF_RCU has no ownership transfer (dispatcher fatals). */
+/* The HOME GRANT handler arts_handler_db_grant_response lives in
+ * coherence/home.c; OWNER's TRANSFER_OWNERSHIP overload lives in
+ * coherence/owner.c; WRF_RCU has no ownership transfer (dispatcher fatals). */
 
 /* Cat-C pure body (DATA_RESPONSE).  The wire dispatcher / self-send shortcut
  * has already looked the home db_s up with a held ref and passes it as item_v
@@ -299,7 +278,7 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
  *   3. NO_DATA + a->version > buf->version : the with-data reply was
  *      reordered behind us — push self onto pending_snapshot (a future
  *      case-2 install drains us) + re-check (race recovery).
- * Shared verbatim by eager/lazy/WRF_RCU (WRF_RCU routes RW through here too). */
+ * Shared verbatim by HOME/OWNER/WRF_RCU (WRF_RCU routes RW through here too). */
 /* Consume an in-flight rendezvous whose receiver-side object is gone: the
  * metadata packet arrived for a destroyed target, so nobody will ever expect
  * the txid — register a discard continuation that returns the landing's
@@ -325,7 +304,7 @@ void arts_db_rdzv_discard_landing(uint64_t txid, uint64_t cookie) {
   arts_net_rdzv_expect(txid, rdzv_discard_cb, ctx);
 }
 
-#if !defined(ARTS_PROTOCOL_RWLOCK) && !defined(ARTS_PROTOCOL_MSI)
+#if !defined(ARTS_PROTOCOL_EXCL) && !defined(ARTS_PROTOCOL_INV)
 /* Rendezvous continuation for a data-bearing DATA_RESPONSE: the snapshot
  * payload has fully landed in our advertised landing ("imm seen => landing
  * valid").  Install it without a copy (version-conditional; a stale landing
@@ -402,7 +381,7 @@ void arts_handler_db_snapshot_response(void *item_v, void *args_v) {
   }
 
   /* No PUT consumed the advertised landing: recycle it.  Covers a no-data
-   * reply (dedup'd / nothing published) AND a same-rank inline serve (a LAZY
+   * reply (dedup'd / nothing published) AND a same-rank inline serve (an OWNER
    * REDIRECT that resolved back onto the requester) — in both the echoed
    * cookie names our own untouched buffer. */
   if (a->rdzv_cookie != 0) {
@@ -468,17 +447,17 @@ void arts_handler_db_snapshot_response(void *item_v, void *args_v) {
     arts_db_drain_pending_snapshot(cache);
   }
 }
-#endif /* !ARTS_PROTOCOL_RWLOCK */
+#endif /* !ARTS_PROTOCOL_EXCL */
 
-/* arts_handler_db_ownership_invalidate (INVALIDATE_NOTICE) lives per protocol:
- * coherence/eager.c (commutative signed counter) and coherence/lazy.c
+/* arts_handler_db_grant_invalidate (INVALIDATE_NOTICE) lives per protocol:
+ * coherence/home.c (commutative signed counter) and coherence/owner.c
  * (publish-target-then-withdraw).  WRF_RCU never sends INVALIDATE (dispatcher
  * fatals). */
 
-/* arts_handler_db_writeback_ack is protocol-specific — EAGER/WRF_RCU post the
- * releaser's stack-local sem_t (pointer identity), LAZY has no synchronous
- * writeback (no-op filler for OoO-table / link parity) — so its whole body
- * lives in coherence/{eager,lazy,wrf_rcu}.c. */
+/* arts_handler_db_publish_ack is protocol-specific — HOME/WRF_RCU post the
+ * releaser's stack-local sem_t (pointer identity), OWNER has no synchronous
+ * publish (no-op filler for OoO-table / link parity) — so its whole body
+ * lives in each arm's own placement TU. */
 
 /* Cat-C pure body (DESTROY_NOTIFY).  The wire dispatcher / self-send shortcut
  * has already looked the cache up with a held ref and passes the db_s as item_v
@@ -498,5 +477,5 @@ void arts_handler_db_cache_destroy(void *item_v, void *args_v) {
   (void)arts_route_table_set_destroyed(a->db_guid);
 }
 
-/* The LAZY REDIRECT_RO handler arts_handler_db_snapshot_redirect lives in
- * coherence/lazy.c (owner-side, REDIRECT only exists under LAZY). */
+/* The OWNER REDIRECT_RO handler arts_handler_db_snapshot_redirect lives in
+ * coherence/owner.c (owner-side, REDIRECT only exists under OWNER). */

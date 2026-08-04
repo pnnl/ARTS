@@ -64,18 +64,18 @@ void arts_handler_event_destroy(void *i, void *a) { recorder(i, a); }
 void arts_handler_db_destroy(void *i, void *a) { recorder(i, a); }
 void arts_db_acquire_replay_dep(void *i, void *a) { recorder(i, a); }
 void arts_handler_db_snapshot_request(void *i, void *a) { recorder(i, a); }
-void arts_handler_db_writeback(void *i, void *a) { recorder(i, a); }
-#if defined(ARTS_PROTOCOL_RWLOCK)
-void arts_handler_db_lock_request(void *i, void *a) { recorder(i, a); }
-void arts_handler_db_lock_release(void *i, void *a) { recorder(i, a); }
-#elif defined(ARTS_PROTOCOL_MSI) && defined(ARTS_TIMING_LAZY)
-void arts_handler_db_msi_request(void *i, void *a) { recorder(i, a); }
-void arts_handler_db_msi_round_req(void *i, void *a) { recorder(i, a); }
-#elif defined(ARTS_PROTOCOL_MSI)
-void arts_handler_db_msi_request(void *i, void *a) { recorder(i, a); }
-void arts_handler_db_msi_writeback(void *i, void *a) { recorder(i, a); }
-#elif defined(ARTS_TIMING_EAGER) || defined(ARTS_TIMING_LAZY)
-void arts_handler_db_ownership_request(void *i, void *a) { recorder(i, a); }
+void arts_handler_db_publish(void *i, void *a) { recorder(i, a); }
+#if defined(ARTS_PROTOCOL_EXCL)
+void arts_handler_db_excl_request(void *i, void *a) { recorder(i, a); }
+void arts_handler_db_excl_release(void *i, void *a) { recorder(i, a); }
+#elif defined(ARTS_PROTOCOL_INV)
+void arts_handler_db_grant_request(void *i, void *a) { recorder(i, a); }
+void arts_handler_db_inv_request(void *i, void *a) { recorder(i, a); }
+#ifdef ARTS_WRITE_POLICY_WB
+void arts_handler_db_inv_redirect(void *i, void *a) { recorder(i, a); }
+#endif
+#elif defined(ARTS_WRITE_POLICY_WT) || defined(ARTS_WRITE_POLICY_WB)
+void arts_handler_db_grant_request(void *i, void *a) { recorder(i, a); }
 #endif
 
 /* ── Single fixed slot the test fully controls ────────────────────────────

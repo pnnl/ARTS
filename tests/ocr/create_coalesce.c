@@ -38,12 +38,12 @@
 ******************************************************************************/
 
 /// @file create_coalesce.c
-/// @brief T113 — DB_CREATE coalesce vs lazy_install winner; home_initialized
+/// @brief T113 — DB_CREATE coalesce vs stub_install winner; home_initialized
 ///        double-init (B015/B016).
 ///
 /// On the home rank a DB's route-table entry can appear via two paths that
 /// race: (a) the owning DB_CREATE handler, and (b) a foreign rank's acquire
-/// that lazy-installs a cache stub at the home before CREATE arrives.  Whoever
+/// that stub-installs a cache stub at the home before CREATE arrives.  Whoever
 /// loses must coalesce / promote-in-place rather than re-initialize:
 ///   - `home_initialized` must transition exactly once (B015 — a non-atomic
 ///     read-test-set across the two coalesce sites would double `home_init`,
@@ -53,7 +53,7 @@
 ///
 /// Black-box driver: a reserved (labeled) DB GUID with home=0 is acquired RO by
 /// a remote rank in the SAME generation the home creates it — the remote
-/// acquire lazy-installs the stub, racing the home's CREATE.  The reader
+/// acquire stub-installs the stub, racing the home's CREATE.  The reader
 /// carries only its RO dependence (no control gate) so it dispatches
 /// immediately and its acquire genuinely races CREATE; the DB's RW->RO
 /// coherence then orders the read after the creator's release, so it MUST
@@ -65,7 +65,7 @@
 /// caught by the ctest TIMEOUT; a version regression is caught by the in-EDT
 /// assertion.
 ///
-/// Harness: runtime_multinode — the lazy_install-vs-create race only exists
+/// Harness: runtime_multinode — the stub_install-vs-create race only exists
 /// with a remote acquirer, so this needs 2+ ranks (clean SKIP single-node).
 /// Config-agnostic (the create/coalesce path is protocol-shared).
 
@@ -134,7 +134,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_guid_t reserved = arts_guid_reserve(ARTS_GUID_DB, 0);
 
     /* Reader on a remote rank with a single RO dependence and no control gate,
-     * so it dispatches immediately: its RO acquire lazy-installs the home stub
+     * so it dispatches immediately: its RO acquire stub-installs the home stub
      * and genuinely races the home's own CREATE coalesce.  When the acquire
      * lands before CREATE it defers (OoO) until the DB exists; the DB's RW->RO
      * coherence then orders it after the creator's RW release, so it observes

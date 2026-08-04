@@ -41,7 +41,7 @@
 /// @brief Large-payload cross-rank coherence transfer correctness.
 ///
 /// Every distributed coherence transfer that carries DB data — ownership
-/// GRANT/TRANSFER, RO snapshot, eager writeback — must deliver the whole
+/// GRANT/TRANSFER, RO snapshot, HOME publish — must deliver the whole
 /// payload bit-for-bit.  This test drives DBs across a size ladder that spans
 /// every transport regime: payloads far larger than a control message, one AT
 /// the control-plane message ceiling, and one far ABOVE it (which can only
@@ -57,11 +57,11 @@
 ///     DB[j] = PATTERN(j) for every element.  All init writers run inside one
 ///     finish scope.
 ///   Phase 2 — gated on that finish scope (so every init writer has RELEASED
-///     its RW lease first), WORKERS_PER_DB RO readers per DB, each pinned to a
+///     its RW grant first), WORKERS_PER_DB RO readers per DB, each pinned to a
 ///     rank != the DB home, acquire RO (which pulls the whole payload
 ///     cross-rank as one snapshot) and verify every element equals PATTERN(j)
 ///     (arts_abort on any mismatch).  RO (not concurrent RW) keeps the flow
-///     well-defined under every protocol including the DB-WRF WRF_RCU contract,
+///     well-defined under every protocol including the DB-WRF WRF_VAL contract,
 ///     while still exercising the exact large-payload framing under test.
 ///   * A second finish scope gates a shutdown EDT that prints PASS once every
 ///     reader has completed.
@@ -152,7 +152,7 @@ static void shutdown_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 /* Phase 2: gated on the init finish scope (so every init writer has released
- * its RW lease and the pattern is durably at each DB's owner), fan out the
+ * its RW grant and the pattern is durably at each DB's owner), fan out the
  * cross-rank RW verify workers.  The N_DBS DB GUIDs arrive via paramv. */
 static void phase2_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                        arts_edt_dep_t depv[]) {
@@ -171,7 +171,7 @@ static void phase2_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     /* Each reader is pinned to a rank other than the DB's home, so its RO
      * acquire pulls the whole payload across the wire as one snapshot.  RO is
      * used (not RW): the readers only observe, so the flow is well-defined under
-     * every protocol including the DB-WRF WRF_RCU contract (a concurrent-RW test
+     * every protocol including the DB-WRF WRF_VAL contract (a concurrent-RW test
      * would be racy there by design), and it still exercises the exact
      * large-payload transport framing this test targets. */
     for (int w = 0; w < WORKERS_PER_DB; w++) {
@@ -216,8 +216,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     unsigned int home = (unsigned int)(d % (int)nnodes);
     dbs[d] = arts_db_create(&raw, db_bytes[d], ARTS_DB, ARTS_DB_PROP_NONE,
                             &(arts_db_hint_t){.rank = home});
-    /* Release the creator's initial RW lease so the DB's home copy is published
-     * before any acquire.  Required for the DB-WRF (WRF_RCU) contract — where an
+    /* Release the creator's initial RW grant so the DB's home copy is published
+     * before any acquire.  Required for the DB-WRF (WRF_VAL) contract — where an
      * unreleased create leaves the home copy unpublished and a cross-rank RO
      * reader would observe zeros — and harmless under the OCR-coherence
      * protocols (mirrors the db_wrf_invariant idiom). */

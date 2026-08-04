@@ -113,16 +113,16 @@
  * / parks. No whole-driver re-run. */
 
 /* The coherence replay bodies are the wire handlers themselves
- * (arts_handler_db_ownership_request / _snapshot_request / _writeback /
+ * (arts_handler_db_grant_request / _snapshot_request / _publish /
  * _destroy) — pure (item, args) Cat-B bodies defined in the coherence TUs.
  * Each model's enum (and this table) carries only that model's OOO_DB_* kinds,
  * so a build references only the bodies it actually defines:
- *   - OWNERSHIP_REQUEST: RCU only (ownership.c); WRF_RCU's enum omits it.
- *   - WRITEBACK: EAGER/WRF_RCU only; LAZY's enum omits it (LAZY fatals on the
+ *   - OWNERSHIP_REQUEST: RCU only (grant.c); WRF_RCU's enum omits it.
+ *   - PUBLISH: HOME/WRF_RCU only; OWNER's enum omits it (OWNER fatals on the
  * wire).
- *   - OWNERSHIP_INVALIDATE: EAGER only.  EAGER can see a GRANT/INVALIDATE
+ *   - OWNERSHIP_INVALIDATE: HOME only.  HOME can see a GRANT/INVALIDATE
  * reorder (or a before-create race) that lands INVALIDATE before the cache
- * installs, so it defers + replays here.  The lazy protocol never defers
+ * installs, so it defers + replays here.  The OWNER placement never defers
  * INVALIDATE (home publishes the rw_holder target only after that rank's
  * cache install, so the dispatcher/self-send call the body directly) and the
  * WRF_RCU has no ownership transfer, so neither carries this kind. */
@@ -143,34 +143,34 @@ static const arts_ooo_handler_fn_t g_ooo_table[OOO_KIND_COUNT] = {
     [OOO_EDT_DESTROY] = arts_handler_edt_destroy,
     [OOO_EVENT_DESTROY] = arts_handler_event_destroy,
     [OOO_DB_DESTROY] = arts_handler_db_destroy,
-#if defined(ARTS_PROTOCOL_RWLOCK) && defined(ARTS_TIMING_EAGER)
+#if defined(ARTS_PROTOCOL_EXCL) && defined(ARTS_RELEASE_PURGE)
     [OOO_DB_ACQUIRE] = arts_db_acquire_replay_dep,
-    [OOO_DB_LOCK_REQUEST] = arts_handler_db_lock_request,
-    [OOO_DB_LOCK_RELEASE] = arts_handler_db_lock_release,
-#elif defined(ARTS_PROTOCOL_RWLOCK) && defined(ARTS_TIMING_LAZY)
+    [OOO_DB_EXCL_REQUEST] = arts_handler_db_excl_request,
+    [OOO_DB_EXCL_RELEASE] = arts_handler_db_excl_release,
+#elif defined(ARTS_PROTOCOL_EXCL) && defined(ARTS_RELEASE_RETAIN)
     [OOO_DB_ACQUIRE] = arts_db_acquire_replay_dep,
-    [OOO_DB_LOCK_REQUEST] = arts_handler_db_lock_request,
-#elif defined(ARTS_PROTOCOL_MSI) && defined(ARTS_TIMING_LAZY)
+    [OOO_DB_EXCL_REQUEST] = arts_handler_db_excl_request,
+#elif defined(ARTS_PROTOCOL_INV)
     [OOO_DB_ACQUIRE] = arts_db_acquire_replay_dep,
-    [OOO_DB_MSI_REQUEST] = arts_handler_db_msi_request,
-    [OOO_DB_MSI_ROUND_REQ] = arts_handler_db_msi_round_req,
-#elif defined(ARTS_PROTOCOL_MSI)
-    [OOO_DB_ACQUIRE] = arts_db_acquire_replay_dep,
-    [OOO_DB_MSI_REQUEST] = arts_handler_db_msi_request,
-    [OOO_DB_MSI_WRITEBACK] = arts_handler_db_msi_writeback,
-#elif defined(ARTS_TIMING_EAGER)
-    [OOO_DB_ACQUIRE] = arts_db_acquire_replay_dep,
-    [OOO_DB_SNAPSHOT_REQUEST] = arts_handler_db_snapshot_request,
-    [OOO_DB_OWNERSHIP_REQUEST] = arts_handler_db_ownership_request,
-    [OOO_DB_WRITEBACK] = arts_handler_db_writeback,
-#elif defined(ARTS_TIMING_LAZY)
+    [OOO_DB_GRANT_REQUEST] = arts_handler_db_grant_request,
+    [OOO_DB_INV_REQUEST] = arts_handler_db_inv_request,
+    [OOO_DB_PUBLISH] = arts_handler_db_publish,
+#ifdef ARTS_WRITE_POLICY_WB
+    [OOO_DB_INV_REDIRECT] = arts_handler_db_inv_redirect,
+#endif
+#elif defined(ARTS_WRITE_POLICY_WT)
     [OOO_DB_ACQUIRE] = arts_db_acquire_replay_dep,
     [OOO_DB_SNAPSHOT_REQUEST] = arts_handler_db_snapshot_request,
-    [OOO_DB_OWNERSHIP_REQUEST] = arts_handler_db_ownership_request,
-#elif defined(ARTS_PROTOCOL_WRF_RCU)
+    [OOO_DB_GRANT_REQUEST] = arts_handler_db_grant_request,
+    [OOO_DB_PUBLISH] = arts_handler_db_publish,
+#elif defined(ARTS_WRITE_POLICY_WB)
     [OOO_DB_ACQUIRE] = arts_db_acquire_replay_dep,
     [OOO_DB_SNAPSHOT_REQUEST] = arts_handler_db_snapshot_request,
-    [OOO_DB_WRITEBACK] = arts_handler_db_writeback,
+    [OOO_DB_GRANT_REQUEST] = arts_handler_db_grant_request,
+#elif defined(ARTS_PROTOCOL_WRF_VAL)
+    [OOO_DB_ACQUIRE] = arts_db_acquire_replay_dep,
+    [OOO_DB_SNAPSHOT_REQUEST] = arts_handler_db_snapshot_request,
+    [OOO_DB_PUBLISH] = arts_handler_db_publish,
 #endif
 };
 

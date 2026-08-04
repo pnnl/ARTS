@@ -1,6 +1,6 @@
 /*
  * coherence_rw_ro_rw.c — Stress test for RW -> RO -> RW transitions under
- * the eager ownership protocol.
+ * the HOME-placement ownership protocol.
  *
  * Pattern per iteration: writer(RW) -> N readers(RO) -> writer(RW) -> ...
  * Exercises the sealed RO generation progression path.

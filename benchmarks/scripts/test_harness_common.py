@@ -14,8 +14,8 @@ def test_pin_wrap_shape():
 
 def test_runtimes_nine():
     keys = [r.key for r in hc.RUNTIMES]
-    assert keys == ["ocr_rcu_eager", "ocr_rcu_lazy",
-                     "wrf_rcu_eager", "ocr_rwlock_eager", "ocr_rwlock_lazy", "xsocr", "ocrvx"]
+    assert keys == ["ocr_val_wt", "ocr_val_wb",
+                     "wrf_val_wt", "ocr_excl_purge", "ocr_excl_retain", "xsocr", "ocrvx"]
 
 
 import inspect

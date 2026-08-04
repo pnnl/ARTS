@@ -43,7 +43,7 @@
 ///
 /// route_table.h and ooo.h describe a defer-time `gen` snapshot stored in the
 /// OoO payload, dropped at drain-replay when the slot's `gen` has advanced past
-/// it — so a stale coherence op (notably an EAGER OWNERSHIP_INVALIDATE) that
+/// it — so a stale coherence op (notably an HOME OWNERSHIP_INVALIDATE) that
 /// outlives a destroy + labeled-GUID re-create is NOT replayed against the NEW
 /// generation's object.  But `arts_ooo_payload_s` has no gen field and ooo.c
 /// never reads `item->gen`; cross-generation suppression relies ENTIRELY on
@@ -61,8 +61,8 @@
 ///   Generation A:
 ///     - DB created at a fixed labeled GUID, home rank 0, value VAL_A.
 ///     - A remote RW writer on rank W forces a home(0)->W ownership transfer
-///       (EAGER may defer OWNERSHIP_INVALIDATE; LAZY/WRF_RCU defer SNAPSHOT /
-///       OWNERSHIP / WRITEBACK on the before-install path).
+///       (HOME may defer OWNERSHIP_INVALIDATE; OWNER/WRF_VAL defer SNAPSHOT /
+///       OWNERSHIP / PUBLISH on the before-install path).
 ///     - The DB is destroyed.
 ///   Generation B:
 ///     - The SAME labeled GUID is re-created (gen bumped), value VAL_B.
@@ -71,8 +71,8 @@
 /// Multinode-only (the cross-gen + ownership-transfer race needs >1 rank); on a
 /// single rank the test self-skips.  2n_io (multi sender/receiver -> wire
 /// reorder) is the configuration most likely to actually float a stale op
-/// across the boundary.  RELAXED (WRF_RCU) has no ownership transfer but still
-/// has destroy/writeback defer paths, so it is exercised too.
+/// across the boundary.  RELAXED (WRF_VAL) has no ownership transfer but still
+/// has destroy/publish defer paths, so it is exercised too.
 ///
 /// exposes_runtime_bug: targets the B-gen unimplemented cross-generation drop.
 /// A stranded waiter is reaped by the ctest TIMEOUT (no in-test spin).

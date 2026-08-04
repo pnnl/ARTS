@@ -78,7 +78,7 @@
 #define ARTS_NET_RECV_BUF_COUNT 2u
 
 /* Per-thread EAGAIN retry ring.  A handful of slots are reserved so
- * progress-side ACK replies (writeback/lock-release ACK, shutdown) can always
+ * progress-side ACK replies (publish/lock-release ACK, shutdown) can always
  * be buffered even when data sends have saturated the ring — otherwise a full
  * ring could wedge the very progress that would drain it. */
 #define ARTS_NET_RING_CAP 1024u
@@ -216,9 +216,9 @@ static inline void *net_bounce(size_t size) {
 static inline bool net_is_ack_class(unsigned int msg_type) {
   switch (msg_type) {
   case MSG_SHUTDOWN:
-  case MSG_DB_WRITEBACK_ACK:
-  case MSG_DB_WRITEBACK_CTS:
-  case MSG_DB_LOCK_RELEASE_ACK:
+  case MSG_DB_PUBLISH_ACK:
+  case MSG_DB_PUBLISH_CTS:
+  case MSG_DB_EXCL_RELEASE_ACK:
     return true;
   default:
     return false;

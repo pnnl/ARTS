@@ -71,7 +71,7 @@ struct arts_route_item_s {
   /* value == NULL means "absent" — deliberately NOT distinguishing
    * "never created" from "destroyed".  The OoO defer path treats both
    * uniformly; create-vs-destroy semantics are resolved by handler category
-   * (Cat B request/writeback defers + drains on the next install or shutdown;
+   * (Cat B request/publish defers + drains on the next install or shutdown;
    * Cat C response/ack silent-drops on absent), not by a per-slot state bit. */
   arts_atomic_shared_ptr_t value; /* cb: event/db/edt (NULL = absent) */
   arts_lf_stack_t

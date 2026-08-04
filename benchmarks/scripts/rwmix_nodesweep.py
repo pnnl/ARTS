@@ -26,8 +26,8 @@ from harness_common import Runner, REPO  # noqa: E402
 RE_OUT = re.compile(
     r"RWMIX PDS=(\d+) N=(\d+) W=(\d+) E_US=(\d+) BYTES=(\d+) ELAPSED_US=(\d+)")
 
-ARTS_SUFFIXES = ["ocr_rcu_eager", "ocr_rcu_lazy",
-                 "ocr_rwlock_eager", "ocr_rwlock_lazy"]
+ARTS_SUFFIXES = ["ocr_val_wt", "ocr_val_wb",
+                 "ocr_excl_purge", "ocr_excl_retain"]
 RUNTIMES = [("xsocr", None), ("ocrvx", None)] + [("arts", s) for s in ARTS_SUFFIXES]
 
 NODES = list(range(1, 25))
@@ -75,7 +75,7 @@ def run_cell(runner, cfgs, kind, suffix, nodes, args, timeout):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--build-dir", default="build_release_ocr_rcu_lazy")
+    ap.add_argument("--build-dir", default="build_release_ocr_val_wb")
     ap.add_argument("--timeout", type=int, default=180)
     args = ap.parse_args()
 

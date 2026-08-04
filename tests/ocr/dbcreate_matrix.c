@@ -151,13 +151,13 @@ static void wire_consumers(arts_guid_t db, unsigned int cell_idx, axis_t axis,
                            arts_guid_t gate_event) {
   /* gate_event (NULL_GUID = none): for NO_ACQUIRE cells the writer's payload
    * is published only when the writer EDT finishes and its RW hold is
-   * released (writeback).  A bare DB->consumer dep satisfies immediately, so
-   * the consumer's RO acquire would race ahead of that writeback and read the
+   * released (publish).  A bare DB->consumer dep satisfies immediately, so
+   * the consumer's RO acquire would race ahead of that publish and read the
    * home's v1 zero placeholder -- an UNDEFINED RO/RW overlap per the OCR
    * model, not a coherence bug.  The gate event (the writer's OUTPUT EVENT,
    * satisfied strictly AFTER the writer's DBs are released) is added as an
    * extra consumer pre-slot so the consumer becomes runnable -- and thus does
-   * its RO acquire -- only happens-after the writeback.  ACQUIRE cells pass
+   * its RO acquire -- only happens-after the publish.  ACQUIRE cells pass
    * NULL_GUID: they are already release-before-wire in run_cell. */
   bool gated = (gate_event != NULL_GUID);
   uint32_t depc = gated ? 3 : 2;
@@ -190,7 +190,7 @@ static void wire_consumers(arts_guid_t db, unsigned int cell_idx, axis_t axis,
 /* ---- writer_edt (NO_ACQUIRE cells only): paramv = {cellIdx}; depv[0]=target
  * DB (RW).  Writes the payload and returns; the runtime satisfies this EDT's
  * output event (see run_cell) only after this EDT's RW hold is released, so a
- * consumer gated on that event is happens-after the writeback. ------------
+ * consumer gated on that event is happens-after the publish. ------------
  */
 static void writer_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                        arts_edt_dep_t depv[]) {
@@ -237,7 +237,7 @@ static void run_cell(unsigned int cell_idx, axis_t axis, unsigned int home_idx,
      * data can end up correct despite the contract violation). */
     uint64_t create_ok = (addr == NULL) ? 1 : 0;
     /* Writer's output event: satisfied by the runtime strictly AFTER the
-     * writer's RW hold is released (writeback published).  The consumer(s)
+     * writer's RW hold is released (publish published).  The consumer(s)
      * gate on it so their RO read is happens-after the write.  Wire the
      * consumer(s) to the event BEFORE the writer's DB-dep satisfy below
      * (which makes the writer runnable), so the registration lands before the

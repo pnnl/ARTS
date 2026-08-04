@@ -52,7 +52,7 @@
 /// (dispatcher) — never both.
 ///
 /// This driver exercises EVERY coherence message family — DB_CREATE,
-/// SNAPSHOT_REQUEST/RESPONSE (RO acquire), WRITEBACK/ownership transfer (RW
+/// SNAPSHOT_REQUEST/RESPONSE (RO acquire), PUBLISH/ownership transfer (RW
 /// handoff), DESTROY + CACHE_DESTROY — and asserts the SAME correctness
 /// invariant in both topologies.  Run single-node it drives the self-send
 /// shortcut for all of them (home == self); run multinode the integrator's
@@ -62,7 +62,7 @@
 /// (arts_abort).
 ///
 /// Config-agnostic: runs under every protocol (RW handoff is a no-op transfer
-/// under WRF_RCU but the read-after-write chain still holds).
+/// under WRF_VAL but the read-after-write chain still holds).
 
 #include "arts.h"
 
@@ -123,7 +123,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     ((unsigned int *)ptr)[0] = 0u;
     arts_db_release(db, DB_MODE_RW);
 
-    /* RW handoff: writeback / ownership-transfer message family. */
+    /* RW handoff: publish / ownership-transfer message family. */
     arts_guid_t e_w = arts_event_create(&ARTS_EVENT_HINT_FINISH);
     arts_guid_t wr =
         arts_edt_create(writer_edt, 1, &vnew, 1,

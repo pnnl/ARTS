@@ -62,8 +62,8 @@ set(TEST_PROGRAMS
     coherence_zero_size_xfer
     coherence_rw_multihop
     coherence_rw_pipeline
-    coherence_lazy_ownership_reorder
-    coherence_lazy_confirm_gate
+    coherence_owner_ownership_reorder
+    coherence_owner_confirm_gate
     lockfree_stack_stress
     lockfree_pool_stress
     route_table_install_race
@@ -175,7 +175,7 @@ function(add_arts_test test_name)
     # globally) so it cannot collide with the per-variant benchmark libraries;
     # apply this build's option-selected protocol to the test the same way the
     # ARTS library targets receive it.
-    arts_apply_protocol(${test_name} ${ARTS_COHERENCE_ARM} ${ARTS_PROTOCOL_TIMING})
+    arts_apply_protocol(${test_name} ${ARTS_COHERENCE_ARM} ${ARTS_WRITE_POLICY} ${ARTS_RELEASE_POLICY})
 
     # Match CARTS launcher expectations: non-PIE binaries avoid pointer-auth
     # failures when passing raw function pointers across nodes.
@@ -230,7 +230,7 @@ if(BUILD_CUDA_LIBRARY)
 
         # Protocol-sensitive internal headers need the compile-time coherence
         # selection applied per-target (see add_arts_test).
-        arts_apply_protocol(${test_name} ${ARTS_COHERENCE_ARM} ${ARTS_PROTOCOL_TIMING})
+        arts_apply_protocol(${test_name} ${ARTS_COHERENCE_ARM} ${ARTS_WRITE_POLICY} ${ARTS_RELEASE_POLICY})
 
         set_property(TARGET ${test_name} PROPERTY POSITION_INDEPENDENT_CODE OFF)
         target_compile_options(${test_name} PRIVATE -fno-pie -fno-PIE)
@@ -653,7 +653,7 @@ register_pure_unit_test(array_list_basic)
 # ooo.c so the file-static g_ooo_table + engine bodies are compiled in, links
 # shared.c for the cb shared-ptr slot, and supplies counting handler stubs +
 # a single-slot arts_route_table_reserve_or_lookup + libc malloc shims (no ARTS
-# runtime).  The per-config protocol macros (ARTS_PROTOCOL_*/ARTS_TIMING_*) are
+# runtime).  The per-config protocol macros (ARTS_PROTOCOL_*/ARTS_WRITE_POLICY_*/ARTS_RELEASE_*) are
 # inherited from the top-level add_compile_definitions, so the g_ooo_table
 # preprocessor arms + the tests' matching handler-stub arms select the same
 # kind set for whichever protocol this build dir is configured for.  ooo.c pulls
@@ -669,7 +669,7 @@ foreach(t ${OOO_UNIT_TESTS})
     # ooo.c (included directly by each test TU) pulls arts/ooo.h which requires
     # exactly one compile-time protocol selection — same reason add_arts_test
     # calls arts_apply_protocol.
-    arts_apply_protocol(${t} ${ARTS_COHERENCE_ARM} ${ARTS_PROTOCOL_TIMING})
+    arts_apply_protocol(${t} ${ARTS_COHERENCE_ARM} ${ARTS_WRITE_POLICY} ${ARTS_RELEASE_POLICY})
     target_link_libraries(${t} PRIVATE Threads::Threads)
 endforeach()
 register_pure_unit_test(ooo_toctou_rescue TIMEOUT 60)
@@ -788,7 +788,7 @@ register_multinode_test(multinode_labeled_guid TIMEOUT 30)
 register_multinode_test(multinode_event_hint TIMEOUT 30)
 
 # B.3 LOCK_REQ-before-DB_CREATE race regression is registered at 3n/4n (where
-# the race is actually exercised) as `rwlock_req_before_create` in
+# the race is actually exercised) as `excl_req_before_create` in
 # generated_tests.cmake.  The former 2n single-entry `coherence_lock_req_before_create`
 # here was a no-op (SKIPs at rank<3) over byte-identical source, so it was removed.
 
@@ -863,11 +863,11 @@ endforeach()
 # consumer NULL/zero read (FAIL/abort — rank death still exits 0 through the
 # survivor's clean shutdown, so require the PASS line) or as a never-woken
 # parked acquire (missing PASS -> timeout).
-# NOT registered under WRF_RCU: the release-gated hand-off is an OCR-model
-# (exclusive-RW serialization) guarantee.  WRF_RCU's DB-WRF admission has no
+# NOT registered under WRF_VAL: the release-gated hand-off is an OCR-model
+# (exclusive-RW serialization) guarantee.  WRF_VAL's DB-WRF admission has no
 # ownership round — a reader satisfied mid-hold legally reads the current
 # canonical snapshot, so this assertion is outside that contract.
-if(NOT ARTS_COHERENCE_ARM STREQUAL "WRF_RCU")
+if(NOT ARTS_COHERENCE_ARM STREQUAL "WRF_VAL")
 register_multinode_test(coherence_satisfy_before_release TIMEOUT 60)
 foreach(_v 2n 3n 4n 2n_io)
     set_property(TEST coherence_satisfy_before_release_${_v} APPEND PROPERTY
@@ -887,37 +887,37 @@ endif()
 # ownership transfers and PASSES on chain completion (no transfer lost = no
 # stranded RW acquirer); a lost transfer would strand a queued acquirer and hang
 # (the regression), caught by the test's watchdog under this TIMEOUT.  The exact
-# end-sum is a diagnostic only, not a gate (a cross-rank writeback can be dropped
+# end-sum is a diagnostic only, not a gate (a cross-rank publish can be dropped
 # by a separate FIFO-ordering defect orthogonal to writer_count — see the test
 # file header).  SKIPs cleanly when rank_count < 2 or under the RELAXED model
 # (no exclusive-RW chain).
 add_test(
-    NAME coherence_lazy_ownership_reorder
-    COMMAND coherence_lazy_ownership_reorder
+    NAME coherence_owner_ownership_reorder
+    COMMAND coherence_owner_ownership_reorder
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
 )
 arts_next_port_base(2 port_base)
-set_tests_properties(coherence_lazy_ownership_reorder PROPERTIES
+set_tests_properties(coherence_owner_ownership_reorder PROPERTIES
     LABELS "coherence_stress;multinode"
     TIMEOUT 120
     RESOURCE_LOCK "arts_runtime"
     ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/test/2n_io.cfg;default_ports=${port_base}"
 )
 
-# LAZY stale-RO ownership-confirm gate: RO acquire causally ordered after a
+# OWNER-placement stale-RO ownership-confirm gate: RO acquire causally ordered after a
 # remote RW writer must observe the writer's value, not a stale snapshot from
 # the old owner.  The race window is home's rw_holder lag behind INSTALL_ACK.
 # The 2n_io config (multiple progress threads -> wire reorder) exposes it;
 # 1n passes trivially (no ownership transfer).  RELAXED SKIPs cleanly.
-register_single_node_test(coherence_lazy_confirm_gate TIMEOUT 120)
-register_multinode_test(coherence_lazy_confirm_gate TIMEOUT 120)
+register_single_node_test(coherence_owner_confirm_gate TIMEOUT 120)
+register_multinode_test(coherence_owner_confirm_gate TIMEOUT 120)
 
 # coherence_multi_writer_dist: multinode cross-rank RW same-address.  The
 # requester is NOT the home rank, so increments cross the wire (LOCK_REQUEST/
 # GRANT or each protocol's equivalent) and the final RO read must observe every
 # writer's atomic update.  An ordinary OCR program — registered under every
 # protocol; at >=3 ranks a DB homed on a non-zero rank has two distinct remote
-# writer ranks, exercising the cross-rank writeback handoff that 2n cannot.
+# writer ranks, exercising the cross-rank publish handoff that 2n cannot.
 register_multinode_test(coherence_multi_writer_dist TIMEOUT 120 VARIANTS 2n 3n 4n)
 foreach(_v 2n 3n 4n)
     set_property(TEST coherence_multi_writer_dist_${_v} APPEND PROPERTY
@@ -934,8 +934,8 @@ endforeach()
 # writer that every acquire must observe verbatim, and a round's writers all
 # stamp the churn region with the same byte, so the only legal observations are
 # this round's and the previous round's stamps.  Both assertions survive a
-# whole-DB last-writer-wins writeback, so it is registered under every arm
-# including WRF_RCU.  Single-node registration covers the all-local paths; the
+# whole-DB last-writer-wins publish, so it is registered under every arm
+# including WRF_VAL.  Single-node registration covers the all-local paths; the
 # multinode variants carry the cross-rank ones.
 register_single_node_test(coherence_writer_ro_overlap TIMEOUT 120)
 register_multinode_test(coherence_writer_ro_overlap TIMEOUT 180)
@@ -958,8 +958,8 @@ endforeach()
 # --- DB-WRF contract tests (portable OCR programs, sources under ocr/) ---
 # These OCR programs exercise the DB-WRF contract (defined results only when
 # accesses are race-free at DB granularity).  Their last-writer / racy outcomes
-# are only well-defined under the WRF_RCU protocol, so the CTest entries are
-# registered only when ARTS_COHERENCE_ARM is WRF_RCU; the binaries build in
+# are only well-defined under the WRF_VAL protocol, so the CTest entries are
+# registered only when ARTS_COHERENCE_ARM is WRF_VAL; the binaries build in
 # every tree.
 
 add_arts_test(db_wrf_multi_writer_concurrent)
@@ -967,9 +967,9 @@ add_arts_test(db_wrf_invariant)
 add_arts_test(db_wrf_local_hit_dedup)
 add_arts_test(db_wrf_counter_race)
 
-if(ARTS_COHERENCE_ARM STREQUAL "WRF_RCU")
+if(ARTS_COHERENCE_ARM STREQUAL "WRF_VAL")
     # db_wrf_invariant (single-node): home-rank writer and home-rank
-    # reader; no WRITEBACK round-trip.  Validates finish-event happens-before
+    # reader; no PUBLISH round-trip.  Validates finish-event happens-before
     # ordering.
     add_test(
         NAME db_wrf_invariant
@@ -985,8 +985,8 @@ if(ARTS_COHERENCE_ARM STREQUAL "WRF_RCU")
     )
 
     # db_wrf_invariant (2-node): writer on rank 1, reader on rank 0
-    # (home).  Exercises the cross-rank RW WRITEBACK path: writer_count bump
-    # on acquire ensures release_rw sends WRITEBACK; home delivers updated
+    # (home).  Exercises the cross-rank RW PUBLISH path: writer_count bump
+    # on acquire ensures release_rw sends PUBLISH; home delivers updated
     # data to the RO reader.
     add_test(
         NAME db_wrf_invariant_2n
@@ -1004,7 +1004,7 @@ if(ARTS_COHERENCE_ARM STREQUAL "WRF_RCU")
 
     # db_wrf_local_hit_dedup: N concurrent same-rank RO acquires on a DB
     # homed at a different rank — exercises the GET_DATA / STILL_VALID dedup
-    # code path under the WRF_RCU protocol.  Requires 2-node config.
+    # code path under the WRF_VAL protocol.  Requires 2-node config.
     add_test(
         NAME db_wrf_local_hit_dedup_2n
         COMMAND db_wrf_local_hit_dedup
@@ -1021,7 +1021,7 @@ if(ARTS_COHERENCE_ARM STREQUAL "WRF_RCU")
 
     # db_wrf_multi_writer_concurrent: manual test only — non-deterministic
     # last-writer-wins outcome cannot be expressed as a fixed regex.
-    # Run directly with: build_wrf_rcu_eager/tests/db_wrf_multi_writer_concurrent
+    # Run directly with: build_wrf_val_wt/tests/db_wrf_multi_writer_concurrent
 endif()
 
 # --- Mode-mismatch detection binary (no CTest entry — driven by run_mode_mismatch.sh) ---
