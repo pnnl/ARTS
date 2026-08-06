@@ -1,47 +1,70 @@
 # Third-party dependencies build configuration
 
-# Build hwloc from source (third_party/hwloc submodule)
+# Vendored autotools dependencies are consumed as official release (dist)
+# tarballs, never as repository checkouts: a dist tarball ships the
+# pre-generated `configure` and auxiliary build files, so building it needs
+# only a shell, make, and a C compiler — no autoconf/automake/libtool chain
+# on the build host. Each tarball is cached next to this file; a host without
+# network access can pre-stage the file there by hand and the build proceeds
+# identically. The pinned SHA256 is verified for downloaded and pre-staged
+# files alike.
+function(arts_fetch_dist_tarball out_var tarball_name url sha256)
+    set(_tarball "${CMAKE_CURRENT_SOURCE_DIR}/${tarball_name}")
+    if(NOT EXISTS "${_tarball}")
+        message(STATUS "Downloading ${tarball_name} from ${url}")
+        file(DOWNLOAD "${url}" "${_tarball}" STATUS _dl SHOW_PROGRESS)
+        list(GET _dl 0 _dl_code)
+        if(NOT _dl_code EQUAL 0)
+            list(GET _dl 1 _dl_msg)
+            file(REMOVE "${_tarball}")
+            message(FATAL_ERROR
+                "Failed to download ${url}: ${_dl_msg}\n"
+                "On a host without network access, fetch the file elsewhere "
+                "and place it at ${_tarball}, then re-run cmake.")
+        endif()
+    endif()
+    file(SHA256 "${_tarball}" _have)
+    if(NOT _have STREQUAL "${sha256}")
+        message(FATAL_ERROR
+            "${_tarball} SHA256 mismatch:\n"
+            "  have ${_have}\n"
+            "  want ${sha256}\n"
+            "Delete the file and re-run cmake to re-download.")
+    endif()
+    set(${out_var} "${_tarball}" PARENT_SCOPE)
+endfunction()
+
+set(HWLOC_DIST_VERSION "2.13.0")
+set(HWLOC_DIST_URL "https://download.open-mpi.org/release/hwloc/v2.13/hwloc-${HWLOC_DIST_VERSION}.tar.bz2")
+set(HWLOC_DIST_SHA256 "52e936afb6ebd80f171f763fcf14f7b1f5ce98b125af5dd2f328b873b1fd0dab")
+
+set(OFI_DIST_VERSION "2.6.0")
+set(OFI_DIST_URL "https://github.com/ofiwg/libfabric/releases/download/v${OFI_DIST_VERSION}/libfabric-${OFI_DIST_VERSION}.tar.bz2")
+set(OFI_DIST_SHA256 "1ee2ab6eb16462c0fe7a836f9df52b8f12309dfee3f3774aa93a86f521a8e8b1")
+
+# Build hwloc from its vendored dist tarball
 function(build_hwloc)
-    message(STATUS "Building hwloc from third_party/hwloc")
+    arts_fetch_dist_tarball(HWLOC_TARBALL
+        "hwloc-${HWLOC_DIST_VERSION}.tar.bz2" "${HWLOC_DIST_URL}" "${HWLOC_DIST_SHA256}")
 
-    # Check if hwloc submodule is properly initialized
-    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/hwloc/autogen.sh")
-        message(STATUS "hwloc submodule not initialized, running git submodule update")
-        execute_process(
-            COMMAND git submodule update --init --recursive third_party/hwloc
-            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-            RESULT_VARIABLE GIT_RESULT
-        )
-        if(NOT GIT_RESULT EQUAL 0)
-            message(FATAL_ERROR "Failed to initialize hwloc submodule")
-        endif()
+    # Extraction preserves the dist tree's relative timestamps, so make never
+    # invokes the maintainer rules that would regenerate configure/Makefile.in
+    # (and would require autotools after all).
+    set(HWLOC_SRC_DIR "${CMAKE_BINARY_DIR}/third_party/hwloc-${HWLOC_DIST_VERSION}")
+    if(NOT EXISTS "${HWLOC_SRC_DIR}/configure")
+        message(STATUS "Extracting hwloc ${HWLOC_DIST_VERSION}")
+        file(ARCHIVE_EXTRACT INPUT "${HWLOC_TARBALL}"
+             DESTINATION "${CMAKE_BINARY_DIR}/third_party")
     endif()
 
-    # Check if autogen.sh exists and run it if configure doesn't exist
-    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/hwloc/configure")
-        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/hwloc/autogen.sh")
-            message(STATUS "Running hwloc autogen.sh")
-            execute_process(
-                COMMAND ./autogen.sh
-                WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/hwloc
-                RESULT_VARIABLE AUTOGEN_RESULT
-            )
-            if(NOT AUTOGEN_RESULT EQUAL 0)
-                message(FATAL_ERROR "Failed to run hwloc autogen.sh")
-            endif()
-        else()
-            message(FATAL_ERROR "hwloc configure script not found and autogen.sh not available")
-        endif()
-    endif()
-
-    # Configure hwloc
+    # Configure hwloc (out-of-tree; the extracted source stays pristine)
     set(HWLOC_BUILD_DIR "${CMAKE_BINARY_DIR}/third_party/hwloc")
     set(HWLOC_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/hwloc_install")
     file(MAKE_DIRECTORY ${HWLOC_BUILD_DIR})
 
     message(STATUS "Configuring hwloc with prefix: ${HWLOC_INSTALL_DIR}")
     execute_process(
-        COMMAND ${CMAKE_COMMAND} -E env CFLAGS=-fPIC ${CMAKE_CURRENT_SOURCE_DIR}/hwloc/configure
+        COMMAND ${CMAKE_COMMAND} -E env CFLAGS=-fPIC ${HWLOC_SRC_DIR}/configure
             --prefix=${HWLOC_INSTALL_DIR}
             --disable-rsmi
             --disable-cuda
@@ -154,46 +177,34 @@ if(ARTS_MALLOC STREQUAL "mimalloc")
   add_subdirectory(mimalloc EXCLUDE_FROM_ALL)
 endif()
 
-# Build libfabric (OFI) from source (third_party/libfabric submodule) via
-# autotools, driven through CMake's ExternalProject so it participates in the
-# Ninja build graph (rerun on source changes, parallel with other targets).
+# Build libfabric (OFI) from its vendored dist tarball, driven through CMake's
+# ExternalProject so it participates in the Ninja build graph (parallel with
+# other targets). The tarball is extracted at configure time into a tree
+# private to this build directory; configure and make then run out of EP's
+# own binary dir, leaving the extracted source pristine.
 if(ARTS_TRANSPORT_OFI)
-  message(STATUS "Building libfabric from third_party/libfabric")
+  message(STATUS "Building libfabric ${OFI_DIST_VERSION} from vendored dist tarball")
 
-  if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/libfabric/autogen.sh")
-    message(FATAL_ERROR
-        "libfabric submodule not initialized: "
-        "${CMAKE_CURRENT_SOURCE_DIR}/libfabric/autogen.sh not found. "
-        "Run: git submodule update --init third_party/libfabric")
+  arts_fetch_dist_tarball(OFI_TARBALL
+      "libfabric-${OFI_DIST_VERSION}.tar.bz2" "${OFI_DIST_URL}" "${OFI_DIST_SHA256}")
+
+  set(OFI_SRC_DIR "${CMAKE_BINARY_DIR}/libfabric-${OFI_DIST_VERSION}")
+  if(NOT EXISTS "${OFI_SRC_DIR}/configure")
+    message(STATUS "Extracting libfabric ${OFI_DIST_VERSION}")
+    file(ARCHIVE_EXTRACT INPUT "${OFI_TARBALL}" DESTINATION "${CMAKE_BINARY_DIR}")
   endif()
 
   include(ExternalProject)
-  set(OFI_SUBMODULE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/libfabric")
-  set(OFI_SRC_DIR "${CMAKE_BINARY_DIR}/libfabric-src")
   set(OFI_PREFIX "${CMAKE_BINARY_DIR}/libfabric")
 
-  # libfabric ships no `configure` at git-tag checkouts (autotools artifacts
-  # are release-tarball-only) — autogen.sh runs `autoreconf` to generate it,
-  # writing generated files (configure, aclocal.m4, Makefile.in,
-  # autom4te.cache) into its working directory as a side effect. The
-  # submodule checkout is a single source tree shared by every build
-  # directory that configures this project, so autogen must never run
-  # directly on it: two build directories bootstrapping concurrently would
-  # race autoreconf on the same files and corrupt each other's output. The
-  # download step below instead copies the submodule into a tree private to
-  # this build directory; autogen, configure, and build all then operate on
-  # that private copy, same as the hwloc build above builds out-of-tree.
-  #
-  # BUILD_COMMAND parallelism is bounded the same way the hwloc build above
-  # bounds it: an unbounded `make -j` spawns one job per source file with no
-  # ceiling, which can outstrip available cores/memory on a shared or
-  # resource-constrained build host.
+  # BUILD_COMMAND parallelism is bounded: an unbounded `make -j` spawns one
+  # job per source file with no ceiling, which can outstrip available
+  # cores/memory on a shared or resource-constrained build host.
   if(NOT CMAKE_BUILD_PARALLEL_LEVEL)
     set(CMAKE_BUILD_PARALLEL_LEVEL 4)
   endif()
   ExternalProject_Add(libfabric_ep
-    DOWNLOAD_COMMAND ${CMAKE_COMMAND} -E remove_directory ${OFI_SRC_DIR}
-              COMMAND ${CMAKE_COMMAND} -E copy_directory ${OFI_SUBMODULE_DIR} ${OFI_SRC_DIR}
+    DOWNLOAD_COMMAND ""
     SOURCE_DIR ${OFI_SRC_DIR}
     CONFIGURE_COMMAND ${CMAKE_COMMAND} -E env CFLAGS=-fPIC ${OFI_SRC_DIR}/configure
         --prefix=${OFI_PREFIX} --enable-static --disable-shared
@@ -202,12 +213,6 @@ if(ARTS_TRANSPORT_OFI)
     BUILD_COMMAND make -j${CMAKE_BUILD_PARALLEL_LEVEL}
     INSTALL_COMMAND make install
     BUILD_BYPRODUCTS ${OFI_PREFIX}/lib/libfabric.a
-  )
-  ExternalProject_Add_Step(libfabric_ep autogen
-    COMMAND ${OFI_SRC_DIR}/autogen.sh
-    WORKING_DIRECTORY ${OFI_SRC_DIR}
-    DEPENDEES download
-    DEPENDERS configure
   )
 
   # CMake validates INTERFACE_INCLUDE_DIRECTORIES at configure time, before
@@ -238,9 +243,9 @@ endif()
 # interfaces.  Built SINGLE-THREADED (USE_THREAD=0): the consuming apps
 # parallelize at task granularity (one kernel call per tile task), so a
 # threaded BLAS underneath would oversubscribe the machine and serialize on
-# its own thread pool.  Same private-source-copy discipline as the libfabric
-# build above: the submodule tree is shared by every build directory, and
-# OpenBLAS's make build writes artifacts into its source tree.
+# its own thread pool.  The submodule tree is shared by every build directory
+# and OpenBLAS's make build writes artifacts into its source tree, so each
+# build directory builds from a private copy.
 if(ARTS_BUILD_BENCHMARKS)
   if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/OpenBLAS/Makefile")
     message(FATAL_ERROR

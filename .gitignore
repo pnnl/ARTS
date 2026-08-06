@@ -15,3 +15,10 @@ docs/_build/
 .vscode/
 .claude/
 CLAUDE.md
+
+# Vendored dist-tarball cache (downloaded or pre-staged; pinned by SHA256 in
+# third_party/CMakeLists.txt — never committed)
+third_party/*.tar.bz2
+third_party/*.tar.gz
+third_party/*.tar.xz
+

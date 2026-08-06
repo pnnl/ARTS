@@ -57,7 +57,8 @@ Dependencies
 | Ninja | any | Required | ARTS enforces the Ninja generator; Make is **not** supported. |
 | pthreads / librt / libm / libanl | system | Required | Provided by glibc on Linux. |
 | libatomic | system | Required | For 16-byte atomics (DWCAS). |
-| hwloc | >= 2.0 | Bundled | Built from source from the `third_party/hwloc` submodule — no system install needed. |
+| hwloc | pinned in `third_party/CMakeLists.txt` | Bundled | Built from the official release tarball — no system install, no autotools needed. |
+| libfabric | pinned in `third_party/CMakeLists.txt` | Bundled | Built from the official release tarball — no system install, no autotools needed. |
 | CUDA Toolkit | >= 11 (tested) | Optional | Only when `ARTS_USE_GPU=ON`. |
 | MPI | any | Optional | Only needed by the OCR reference benchmarks (`ARTS_BUILD_BENCHMARKS=ON`). |
 
@@ -68,6 +69,14 @@ git clone <repository-url> arts
 cd arts
 git submodule update --init --recursive
 ```
+
+The bundled hwloc and libfabric are **not** submodules: the first `cmake`
+run downloads their official release tarballs (URL + SHA256 pinned in
+`third_party/CMakeLists.txt`) into `third_party/` and builds from them.
+On a host without network access, download the two tarballs elsewhere and
+place them at `third_party/hwloc-<version>.tar.bz2` and
+`third_party/libfabric-<version>.tar.bz2` before running cmake — the build
+verifies the same pinned SHA256 either way.
 
 Building
 --------
