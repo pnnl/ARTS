@@ -1,12 +1,12 @@
 [submodule "third_party/ocr-apps"]
 	path = third_party/ocr-apps
-	url = git@github.com:whnbaek/ocr-apps.git
+	url = https://github.com/whnbaek/ocr-apps.git
 [submodule "third_party/ocr"]
 	path = third_party/ocr
-	url = git@github.com:whnbaek/ocr.git
+	url = https://github.com/whnbaek/ocr.git
 [submodule "third_party/ocr-vx"]
 	path = third_party/ocr-vx
-	url = git@github.com:whnbaek/ocr-vx.git
+	url = https://github.com/whnbaek/ocr-vx.git
 [submodule "third_party/tbb"]
 	path = third_party/tbb
 	url = https://github.com/uxlfoundation/oneTBB

@@ -346,10 +346,12 @@ add_benchmark_app(NAME quicksort
     SOURCES quicksort.c
 )
 
-add_benchmark_app(NAME quicksort_dist
-    DIR quicksort/ocr
-    SOURCES quicksort_dist.c
-)
+# quicksort_dist: disabled — quicksort_dist.c is not yet in the ocr-apps
+# submodule.
+# add_benchmark_app(NAME quicksort_dist
+#     DIR quicksort/ocr
+#     SOURCES quicksort_dist.c
+# )
 
 add_benchmark_app(NAME nqueens
     DIR nqueens/refactored/ocr
@@ -464,11 +466,12 @@ add_benchmark_app(NAME fft
     EXTRA_LINK_LIBS m
 )
 
-add_benchmark_app(NAME fft_dist
-    DIR fft/ocr
-    SOURCES fft_dist.c
-    EXTRA_LINK_LIBS m
-)
+# fft_dist: disabled — fft_dist.c is not yet in the ocr-apps submodule.
+# add_benchmark_app(NAME fft_dist
+#     DIR fft/ocr
+#     SOURCES fft_dist.c
+#     EXTRA_LINK_LIBS m
+# )
 
 add_benchmark_app(NAME graph500
     DIR graph500
@@ -765,13 +768,14 @@ add_benchmark_app(NAME XSBench_intel_sharedDB
 # xsbench_dist: distributed sibling driver in the same source dir (the
 # quicksort_dist/fft_dist pattern) — true SPMD with one deterministic table
 # replica per rank; reuses the pristine physics/io sources unchanged.
-add_benchmark_app(NAME xsbench_dist
-    DIR XSBench/refactored/ocr/intel-sharedDB
-    SRC_SUBDIR src
-    SOURCES Main_dist.c io.c GridInit.c CalculateXS.c XSutils.c Materials.c timers.c
-    LIBS timer ocrAppUtils
-    EXTRA_LINK_LIBS m
-)
+# Disabled — Main_dist.c is not yet in the ocr-apps submodule.
+# add_benchmark_app(NAME xsbench_dist
+#     DIR XSBench/refactored/ocr/intel-sharedDB
+#     SRC_SUBDIR src
+#     SOURCES Main_dist.c io.c GridInit.c CalculateXS.c XSutils.c Materials.c timers.c
+#     LIBS timer ocrAppUtils
+#     EXTRA_LINK_LIBS m
+# )
 
 # ==========================================================================
 # Tier 13: LCS variants

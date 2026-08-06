@@ -62,12 +62,15 @@ Dependencies
 | CUDA Toolkit | >= 11 (tested) | Optional | Only when `ARTS_USE_GPU=ON`. |
 | MPI | any | Optional | Only needed by the OCR reference benchmarks (`ARTS_BUILD_BENCHMARKS=ON`). |
 
-Initialize submodules before the first build:
+A plain `git clone` is enough: the first cmake run initializes every
+required submodule automatically (per enabled option — e.g. the benchmark
+runtimes only when `ARTS_BUILD_BENCHMARKS=ON`). Initializing them up front
+is equivalent:
 
 ```bash
 git clone <repository-url> arts
 cd arts
-git submodule update --init --recursive
+git submodule update --init --recursive   # optional
 ```
 
 The bundled hwloc and libfabric are **not** submodules: the first `cmake`

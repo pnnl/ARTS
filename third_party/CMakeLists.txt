@@ -34,6 +34,34 @@ function(arts_fetch_dist_tarball out_var tarball_name url sha256)
     set(${out_var} "${_tarball}" PARENT_SCOPE)
 endfunction()
 
+# Submodule sources are fetched on demand: a plain `git clone` (without
+# --recurse-submodules) leaves every submodule directory empty, so each
+# submodule is ensured here right before it is consumed — marker present →
+# use as-is; absent → run `git submodule update --init` for that path (which
+# honors per-submodule settings such as shallow). The fallback error names
+# the exact command for source trees where auto-init is impossible (no git
+# available, or not a git checkout, e.g. an exported source archive).
+function(arts_init_submodule path marker)
+    if(EXISTS "${CMAKE_SOURCE_DIR}/${path}/${marker}")
+        return()
+    endif()
+    find_package(Git QUIET)
+    if(GIT_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
+        message(STATUS "Initializing submodule ${path}")
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} submodule update --init ${path}
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            RESULT_VARIABLE _rc
+        )
+        if(_rc EQUAL 0 AND EXISTS "${CMAKE_SOURCE_DIR}/${path}/${marker}")
+            return()
+        endif()
+    endif()
+    message(FATAL_ERROR
+        "Submodule ${path} is not initialized and could not be fetched "
+        "automatically. Run: git submodule update --init ${path}")
+endfunction()
+
 set(HWLOC_DIST_VERSION "2.13.0")
 set(HWLOC_DIST_URL "https://download.open-mpi.org/release/hwloc/v2.13/hwloc-${HWLOC_DIST_VERSION}.tar.bz2")
 set(HWLOC_DIST_SHA256 "52e936afb6ebd80f171f763fcf14f7b1f5ce98b125af5dd2f328b873b1fd0dab")
@@ -169,6 +197,7 @@ set(HWLOC_FOUND ${HWLOC_FOUND} PARENT_SCOPE)
 set(HWLOC_VERSION ${HWLOC_VERSION} PARENT_SCOPE)
 
 if(ARTS_MALLOC STREQUAL "mimalloc")
+  arts_init_submodule(third_party/mimalloc CMakeLists.txt)
   set(MI_BUILD_SHARED OFF CACHE BOOL "" FORCE)
   set(MI_BUILD_STATIC ON  CACHE BOOL "" FORCE)
   set(MI_BUILD_OBJECT OFF CACHE BOOL "" FORCE)
@@ -247,12 +276,14 @@ endif()
 # and OpenBLAS's make build writes artifacts into its source tree, so each
 # build directory builds from a private copy.
 if(ARTS_BUILD_BENCHMARKS)
-  if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/OpenBLAS/Makefile")
-    message(FATAL_ERROR
-        "OpenBLAS submodule not initialized: "
-        "${CMAKE_CURRENT_SOURCE_DIR}/OpenBLAS/Makefile not found. "
-        "Run: git submodule update --init third_party/OpenBLAS")
-  endif()
+  # Everything the benchmark tree consumes (reference runtimes, benchmark
+  # apps, and their support libraries), ensured here where the other
+  # third-party sources are set up rather than at each consumer.
+  arts_init_submodule(third_party/ocr ocr/inc/ocr.h)
+  arts_init_submodule(third_party/ocr-apps apps)
+  arts_init_submodule(third_party/ocr-vx build_one/CMakeLists.txt)
+  arts_init_submodule(third_party/tbb CMakeLists.txt)
+  arts_init_submodule(third_party/OpenBLAS Makefile)
 
   include(ExternalProject)
   set(OPENBLAS_SUBMODULE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/OpenBLAS")
