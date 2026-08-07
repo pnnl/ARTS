@@ -250,6 +250,21 @@ if(ARTS_TRANSPORT_OFI)
   # consumers configure cleanly on a fresh build tree.
   file(MAKE_DIRECTORY ${OFI_PREFIX}/include)
 
+  # Find X11 and XNVCtrl libraries (portable across systems)
+  set(X11_LIBS "")
+  find_library(XNVCtrl_LIBRARY NAMES XNVCtrl XNVCtrl.so.0 PATHS /usr/lib64 /usr/lib /usr/local/lib64 /usr/local/lib)
+  find_library(X11_LIBRARY NAMES X11 X11.so.6 PATHS /usr/lib64 /usr/lib /usr/local/lib64 /usr/local/lib)
+  find_library(Xext_LIBRARY NAMES Xext Xext.so PATHS /usr/lib64 /usr/lib /usr/local/lib64 /usr/local/lib)
+  if(XNVCtrl_LIBRARY)
+    list(APPEND X11_LIBS ${XNVCtrl_LIBRARY})
+  endif()
+  if(X11_LIBRARY)
+    list(APPEND X11_LIBS ${X11_LIBRARY})
+  endif()
+  if(Xext_LIBRARY)
+    list(APPEND X11_LIBS ${Xext_LIBRARY})
+  endif()
+
   add_library(arts::libfabric STATIC IMPORTED GLOBAL)
   set_target_properties(arts::libfabric PROPERTIES
     IMPORTED_LOCATION ${OFI_PREFIX}/lib/libfabric.a
@@ -262,7 +277,7 @@ if(ARTS_TRANSPORT_OFI)
     # back-resolve these references — otherwise a target that pulls the
     # provider-init objects (fi_getinfo & friends) fails with "undefined
     # reference to dlclose / shm_open".
-    INTERFACE_LINK_LIBRARIES "rt;atomic;pthread;${CMAKE_DL_LIBS}")
+    INTERFACE_LINK_LIBRARIES "rt;atomic;pthread;${CMAKE_DL_LIBS};rdmacm;ibverbs;${HWLOC_LIB_A};${X11_LIBS}")
   add_dependencies(arts::libfabric libfabric_ep)
   # tcp provider needs no extra system libs; verbs pulls ibverbs only if present
 endif()
