@@ -59,6 +59,8 @@ Dependencies
 | libatomic | system | Required | For 16-byte atomics (DWCAS). |
 | hwloc | pinned in `third_party/CMakeLists.txt` | Bundled | Built from the official release tarball — no system install, no autotools needed. |
 | libfabric | pinned in `third_party/CMakeLists.txt` | Bundled | Built from the official release tarball — no system install, no autotools needed. |
+| rdma-core | pinned submodule (`third_party/rdma-core`) | Bundled | Verbs (RDMA) userspace stack, built statically with CMake; makes the libfabric verbs provider available on every build. |
+| pkg-config, python3 | system | Required | pkg-config describes the bundled rdma-core link set; python3 runs rdma-core's build scripts. |
 | CUDA Toolkit | >= 11 (tested) | Optional | Only when `ARTS_USE_GPU=ON`. |
 | MPI | any | Optional | Only needed by the OCR reference benchmarks (`ARTS_BUILD_BENCHMARKS=ON`). |
 
@@ -79,7 +81,14 @@ run downloads their official release tarballs (URL + SHA256 pinned in
 On a host without network access, download the two tarballs elsewhere and
 place them at `third_party/hwloc-<version>.tar.bz2` and
 `third_party/libfabric-<version>.tar.bz2` before running cmake — the build
-verifies the same pinned SHA256 either way.
+verifies the same pinned SHA256 either way. rdma-core *is* a submodule
+(auto-initialized like the others) and builds with plain CMake — no
+autotools, no system RDMA packages.
+
+RDMA support is always compiled in: the bundled rdma-core backs libfabric's
+verbs provider on every build, and a node without RDMA devices simply runs
+on the tcp provider. Set `provider=` in `arts.cfg` to pin the choice
+explicitly (e.g. `provider=verbs` on an InfiniBand cluster).
 
 Building
 --------

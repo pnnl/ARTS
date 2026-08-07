@@ -17,3 +17,7 @@
 	path = third_party/OpenBLAS
 	url = https://github.com/OpenMathLib/OpenBLAS.git
 	shallow = true
+[submodule "third_party/rdma-core"]
+	path = third_party/rdma-core
+	url = https://github.com/linux-rdma/rdma-core.git
+	shallow = true

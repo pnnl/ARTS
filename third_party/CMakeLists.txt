@@ -92,12 +92,23 @@ function(build_hwloc)
 
     message(STATUS "Configuring hwloc with prefix: ${HWLOC_INSTALL_DIR}")
     execute_process(
-        COMMAND ${CMAKE_COMMAND} -E env CFLAGS=-fPIC ${HWLOC_SRC_DIR}/configure
+        # Consumers use CPU/NUMA topology only.  Every I/O discovery backend
+    # (accelerators, display, PCI, udev device naming) exists to place I/O
+    # devices and, when auto-detected, makes the static library's external
+    # references depend on what the build host has installed — the GL
+    # backend alone pulls in X11/NVCtrl.  Disabling them keeps the link
+    # surface identical on every host.
+    COMMAND ${CMAKE_COMMAND} -E env CFLAGS=-fPIC ${HWLOC_SRC_DIR}/configure
             --prefix=${HWLOC_INSTALL_DIR}
             --disable-rsmi
             --disable-cuda
             --disable-nvml
             --disable-libxml2
+            --disable-opencl
+            --disable-levelzero
+            --disable-gl
+            --disable-libudev
+            --disable-pci
             --enable-static
             --disable-shared
         WORKING_DIRECTORY ${HWLOC_BUILD_DIR}
@@ -147,6 +158,13 @@ endif()
 
 if(NOT EXISTS ${HWLOC_LIB_A})
     message(FATAL_ERROR "hwloc static library not found after build at ${HWLOC_LIB_A}")
+endif()
+
+# Some configure probes address an install prefix through a lib64/ layout;
+# the alias keeps such probes resolving inside this install instead of
+# falling through to whatever the host has.
+if(NOT EXISTS "${HWLOC_INSTALL_DIR}/lib64")
+    file(CREATE_LINK "lib" "${HWLOC_INSTALL_DIR}/lib64" SYMBOLIC)
 endif()
 
 # Static library for embedding into libarts
@@ -212,6 +230,150 @@ endif()
 # private to this build directory; configure and make then run out of EP's
 # own binary dir, leaving the extracted source pristine.
 if(ARTS_TRANSPORT_OFI)
+  # The verbs provider's userspace stack (rdma-core: libibverbs + librdmacm +
+  # the per-NIC provider libraries) is vendored so the provider can be
+  # compiled in on every build host; at run time the provider simply reports
+  # no fabrics on machines without RDMA devices.  rdma-core builds with plain
+  # CMake from a git checkout (it bundles its own kernel ABI headers), so it
+  # is consumed as a pinned submodule.
+  #
+  # The build is walled off from the host: ENABLE_RESOLVE_NEIGH=0 drops the
+  # userspace neighbour-resolution path — and with it the libnl dependency —
+  # leaving device discovery and connection setup on their sysfs / kernel
+  # rdma_cm paths.  What that path serves is Ethernet UD address handles on
+  # kernels too old to resolve the destination MAC kernel-side; connected
+  # (RC) endpoints established through rdma_cm never enter it.
+  # PKG_CONFIG_LIBDIR points at an empty directory so optional host packages
+  # (systemd, udev) cannot alter what gets built.  INSTALL_RUNDIR must be a
+  # short absolute path: the daemon socket path is compiled into librdmacm
+  # and a deep build tree would overflow sockaddr_un's sun_path limit.
+  # Static consumers must pull hardware-provider objects explicitly
+  # (RDMA_STATIC_PROVIDERS in the consumer's CPPFLAGS) — without that a
+  # statically linked stack silently discovers zero devices.
+  set(RDMA_CORE_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/rdma-core_install")
+
+  function(build_rdma_core)
+    arts_init_submodule(third_party/rdma-core CMakeLists.txt)
+    set(RDMA_CORE_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/rdma-core")
+    set(RDMA_CORE_BUILD_DIR "${CMAKE_BINARY_DIR}/third_party/rdma-core")
+    set(RDMA_CORE_EMPTY_PKGCONFIG "${CMAKE_BINARY_DIR}/third_party/pkgconfig_empty")
+    file(MAKE_DIRECTORY ${RDMA_CORE_BUILD_DIR})
+    file(MAKE_DIRECTORY ${RDMA_CORE_EMPTY_PKGCONFIG})
+
+    if(NOT CMAKE_BUILD_PARALLEL_LEVEL)
+      set(CMAKE_BUILD_PARALLEL_LEVEL 4)
+    endif()
+
+    message(STATUS "Configuring rdma-core with prefix: ${RDMA_CORE_INSTALL_DIR}")
+    execute_process(
+      COMMAND ${CMAKE_COMMAND} -E env
+          PKG_CONFIG_LIBDIR=${RDMA_CORE_EMPTY_PKGCONFIG}
+          ${CMAKE_COMMAND} -S ${RDMA_CORE_SRC_DIR} -B ${RDMA_CORE_BUILD_DIR}
+          -GNinja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+          -DCMAKE_INSTALL_PREFIX=${RDMA_CORE_INSTALL_DIR}
+          -DCMAKE_INSTALL_LIBDIR=lib
+          -DCMAKE_INSTALL_RUNDIR=/var/run
+          -DSYSUSERS_DIR=etc/sysusers.d
+          -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+          -DENABLE_STATIC=1
+          -DENABLE_RESOLVE_NEIGH=0
+          -DNO_MAN_PAGES=1
+          -DNO_PYVERBS=1
+          -DENABLE_VALGRIND=OFF
+      RESULT_VARIABLE CONFIGURE_RESULT
+    )
+    if(NOT CONFIGURE_RESULT EQUAL 0)
+      message(FATAL_ERROR "Failed to configure rdma-core")
+    endif()
+
+    message(STATUS "Building rdma-core")
+    execute_process(
+      COMMAND ${CMAKE_COMMAND} --build ${RDMA_CORE_BUILD_DIR}
+              -j${CMAKE_BUILD_PARALLEL_LEVEL}
+      RESULT_VARIABLE BUILD_RESULT
+    )
+    if(NOT BUILD_RESULT EQUAL 0)
+      message(FATAL_ERROR "Failed to build rdma-core")
+    endif()
+
+    message(STATUS "Installing rdma-core to ${RDMA_CORE_INSTALL_DIR}")
+    execute_process(
+      COMMAND ${CMAKE_COMMAND} --install ${RDMA_CORE_BUILD_DIR}
+      RESULT_VARIABLE INSTALL_RESULT
+    )
+    if(NOT INSTALL_RESULT EQUAL 0)
+      message(FATAL_ERROR "Failed to install rdma-core")
+    endif()
+
+    # A prefix that offers both .a and .so would let -l resolution pick the
+    # shared object; static consumers must only ever see the archives.
+    file(GLOB _rdma_shared "${RDMA_CORE_INSTALL_DIR}/lib/*.so*")
+    if(_rdma_shared)
+      file(REMOVE ${_rdma_shared})
+    endif()
+  endfunction()
+
+  if(NOT EXISTS "${RDMA_CORE_INSTALL_DIR}/lib/libibverbs.a")
+    build_rdma_core()
+  endif()
+
+  # Alias layout for probes that address the prefix through lib64/, and a
+  # second spelling for archives that must appear twice on one link line
+  # (deduplication keys on the path text).
+  if(NOT EXISTS "${RDMA_CORE_INSTALL_DIR}/lib64")
+    file(CREATE_LINK "lib" "${RDMA_CORE_INSTALL_DIR}/lib64" SYMBOLIC)
+  endif()
+
+  # Everything the statically linked verbs provider drags in, as pkg-config
+  # describes it (core libraries plus every hardware-provider archive, in
+  # link order).  The archives are mutually referential — the static provider
+  # table names the providers, the providers call back into the core — so
+  # consumers link the set as one group.
+  execute_process(
+    COMMAND ${CMAKE_COMMAND} -E env
+        PKG_CONFIG_LIBDIR=${RDMA_CORE_INSTALL_DIR}/lib/pkgconfig
+        pkg-config --static --libs libibverbs librdmacm
+    OUTPUT_VARIABLE RDMA_STATIC_LINK_LINE
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE _rdma_pc_rc
+  )
+  if(NOT _rdma_pc_rc EQUAL 0)
+    message(FATAL_ERROR
+        "pkg-config could not describe the vendored rdma-core static link line")
+  endif()
+  separate_arguments(RDMA_STATIC_LINK_FLAGS UNIX_COMMAND "${RDMA_STATIC_LINK_LINE}")
+  set(RDMA_VERBS_LINK_SET
+      "-Wl,--start-group" ${RDMA_STATIC_LINK_FLAGS} "-Wl,--end-group")
+  # The same set for links that pass through libtool, which deduplicates
+  # bare -l flags (keeping the last occurrence) and hoists -Wl options in
+  # front of the libraries — both of which break a cyclic archive set.
+  # Absolute archive paths keep their relative order, and the one archive
+  # that must appear twice on the line uses a second spelling (the lib64
+  # alias) so text-keyed deduplication cannot collapse it.
+  set(RDMA_VERBS_LIBTOOL_LIBS "")
+  set(_rdma_seen_ibverbs FALSE)
+  foreach(_flag IN LISTS RDMA_STATIC_LINK_FLAGS)
+    if(_flag MATCHES "^-l(.+)$")
+      set(_name "${CMAKE_MATCH_1}")
+      if(_name STREQUAL "pthread" OR _name STREQUAL "m")
+        continue()
+      endif()
+      if(_name STREQUAL "ibverbs" AND _rdma_seen_ibverbs)
+        string(APPEND RDMA_VERBS_LIBTOOL_LIBS
+               " ${RDMA_CORE_INSTALL_DIR}/lib64/libibverbs.a")
+      else()
+        string(APPEND RDMA_VERBS_LIBTOOL_LIBS
+               " ${RDMA_CORE_INSTALL_DIR}/lib/lib${_name}.a")
+        if(_name STREQUAL "ibverbs")
+          set(_rdma_seen_ibverbs TRUE)
+        endif()
+      endif()
+    endif()
+  endforeach()
+  string(STRIP "${RDMA_VERBS_LIBTOOL_LIBS}" RDMA_VERBS_LIBTOOL_LIBS)
+
   message(STATUS "Building libfabric ${OFI_DIST_VERSION} from vendored dist tarball")
 
   arts_fetch_dist_tarball(OFI_TARBALL
@@ -235,8 +397,23 @@ if(ARTS_TRANSPORT_OFI)
   ExternalProject_Add(libfabric_ep
     DOWNLOAD_COMMAND ""
     SOURCE_DIR ${OFI_SRC_DIR}
-    CONFIGURE_COMMAND ${CMAKE_COMMAND} -E env CFLAGS=-fPIC ${OFI_SRC_DIR}/configure
+    # --enable-verbs=<prefix> replaces auto-detection: the provider is always
+    # built, always against the vendored stack, so what a build host happens
+    # to have installed can no longer change the artifact.
+    # RDMA_STATIC_PROVIDERS makes the provider translation units reference
+    # every hardware provider so their objects survive static linking.  LIBS
+    # carries the static archive set (twice: the set is cyclic and configure
+    # probes plus bundled utilities link in a single pass without grouping).
+    # HWLOC_DIR pins the verbs provider's optional hwloc probe to the
+    # vendored hwloc so its outcome is a pure function of vendored inputs.
+    CONFIGURE_COMMAND ${CMAKE_COMMAND} -E env CFLAGS=-fPIC
+        CPPFLAGS=-DRDMA_STATIC_PROVIDERS=all
+        "LDFLAGS=-L${RDMA_CORE_INSTALL_DIR}/lib"
+        "LIBS=${RDMA_VERBS_LIBTOOL_LIBS} -lpthread -lm"
+        HWLOC_DIR=${HWLOC_INSTALL_DIR}
+        ${OFI_SRC_DIR}/configure
         --prefix=${OFI_PREFIX} --enable-static --disable-shared
+        --enable-verbs=${RDMA_CORE_INSTALL_DIR}
         --disable-usnic --disable-efa --disable-psm2 --disable-psm3
         --disable-opx CC=${CMAKE_C_COMPILER}
     BUILD_COMMAND make -j${CMAKE_BUILD_PARALLEL_LEVEL}
@@ -250,21 +427,6 @@ if(ARTS_TRANSPORT_OFI)
   # consumers configure cleanly on a fresh build tree.
   file(MAKE_DIRECTORY ${OFI_PREFIX}/include)
 
-  # Find X11 and XNVCtrl libraries (portable across systems)
-  set(X11_LIBS "")
-  find_library(XNVCtrl_LIBRARY NAMES XNVCtrl XNVCtrl.so.0 PATHS /usr/lib64 /usr/lib /usr/local/lib64 /usr/local/lib)
-  find_library(X11_LIBRARY NAMES X11 X11.so.6 PATHS /usr/lib64 /usr/lib /usr/local/lib64 /usr/local/lib)
-  find_library(Xext_LIBRARY NAMES Xext Xext.so PATHS /usr/lib64 /usr/lib /usr/local/lib64 /usr/local/lib)
-  if(XNVCtrl_LIBRARY)
-    list(APPEND X11_LIBS ${XNVCtrl_LIBRARY})
-  endif()
-  if(X11_LIBRARY)
-    list(APPEND X11_LIBS ${X11_LIBRARY})
-  endif()
-  if(Xext_LIBRARY)
-    list(APPEND X11_LIBS ${Xext_LIBRARY})
-  endif()
-
   add_library(arts::libfabric STATIC IMPORTED GLOBAL)
   set_target_properties(arts::libfabric PROPERTIES
     IMPORTED_LOCATION ${OFI_PREFIX}/lib/libfabric.a
@@ -276,10 +438,10 @@ if(ARTS_TRANSPORT_OFI)
     # every consumer's link line, which single-pass static linking needs to
     # back-resolve these references — otherwise a target that pulls the
     # provider-init objects (fi_getinfo & friends) fails with "undefined
-    # reference to dlclose / shm_open".
-    INTERFACE_LINK_LIBRARIES "rt;atomic;pthread;${CMAKE_DL_LIBS};rdmacm;ibverbs;${HWLOC_LIB_A};${X11_LIBS}")
+    # reference to dlclose / shm_open".  The verbs provider's userspace stack
+    # and (when its probe engaged) hwloc are back-resolved the same way.
+    INTERFACE_LINK_LIBRARIES "rt;atomic;pthread;${CMAKE_DL_LIBS};${RDMA_VERBS_LINK_SET};${HWLOC_LIB_A}")
   add_dependencies(arts::libfabric libfabric_ep)
-  # tcp provider needs no extra system libs; verbs pulls ibverbs only if present
 endif()
 
 # Build OpenBLAS (BLAS + LAPACK/LAPACKE, BSD-3) from the third_party/OpenBLAS
