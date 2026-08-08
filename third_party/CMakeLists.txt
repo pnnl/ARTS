@@ -415,7 +415,8 @@ if(ARTS_TRANSPORT_OFI)
         --prefix=${OFI_PREFIX} --enable-static --disable-shared
         --enable-verbs=${RDMA_CORE_INSTALL_DIR}
         --disable-usnic --disable-efa --disable-psm2 --disable-psm3
-        --disable-opx CC=${CMAKE_C_COMPILER}
+        --disable-opx --disable-cxi --disable-xpmem
+        --disable-rxm CC=${CMAKE_C_COMPILER}
     BUILD_COMMAND make -j${CMAKE_BUILD_PARALLEL_LEVEL}
     INSTALL_COMMAND make install
     BUILD_BYPRODUCTS ${OFI_PREFIX}/lib/libfabric.a
