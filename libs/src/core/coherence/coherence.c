@@ -81,7 +81,7 @@ void arts_db_cache_common_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
    * explicitly for clarity).  Nodes are heap-allocated on the case-3 push path
    * and freed when drained by the next install. */
   arts_lf_stack_init(&c->pending_snapshot);
-#if defined(ARTS_RO_REQUEST_COMBINING) && !defined(ARTS_PROTOCOL_EXCL) 
+#ifdef ARTS_RO_COMBINING_LIVE
   arts_lf_stack_init(&c->ro_combine);
   c->ro_combine_group = NULL;
   c->snapshot_req_in_flight = 0;
@@ -288,7 +288,7 @@ void *arts_db_acquire_local(struct arts_db_cache_s *cache) {
 /* ===== Case 7: remote-RO / remote-snapshot path =================== */
 
 #if !defined(ARTS_PROTOCOL_EXCL)
-#ifdef ARTS_RO_REQUEST_COMBINING
+#ifdef ARTS_RO_COMBINING_LIVE
 /* ===== Remote-read request combining ===============================
  *
  * One snapshot request per cache may be in flight ("the window").  The 0->1
@@ -414,7 +414,7 @@ void arts_db_ro_combine_grant_drain(struct arts_db_cache_s *cache) {
     node = next;
   }
 }
-#endif /* ARTS_RO_REQUEST_COMBINING */
+#endif /* ARTS_RO_COMBINING_LIVE */
 
 arts_db_acquire_result_t
 arts_db_acquire_remote_ro(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
@@ -424,7 +424,7 @@ arts_db_acquire_remote_ro(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
    * (case 1/2), or — only under transport reorder — case 3 pushes a
    * reorder-buffer node onto pending_snapshot.  A concurrent destroy is handled
    * by the caller's lookup-miss + OoO defer. */
-#ifdef ARTS_RO_REQUEST_COMBINING
+#ifdef ARTS_RO_COMBINING_LIVE
   if (arts_global_rank_count > 1) {
     struct arts_db_snapshot_waiter_s *w =
         (struct arts_db_snapshot_waiter_s *)arts_malloc(sizeof(*w));
@@ -666,7 +666,7 @@ void arts_db_cache_common_destroy_post(struct arts_db_cache_s *cache) {
       n = next;
     }
   }
-#if defined(ARTS_RO_REQUEST_COMBINING) && !defined(ARTS_PROTOCOL_EXCL) 
+#ifdef ARTS_RO_COMBINING_LIVE
   {
     /* Combining waiters still parked at destroy are freed, not woken —
      * destroying a DB with a pending acquire is undefined per the programming

@@ -69,6 +69,19 @@ struct arts_db_cache_s {
       buf_freelist; /* per-DB recycled-buffer pool (push on deleter, pull on
                        install); unbounded, drained at cache destroy */
   arts_lf_stack_t pending_snapshot;
+  /* db_guid stored here for symmetry with the protocol pseudocode —
+   * acquire_remote_* needs it for the route_table_return_db pairing on
+   * ARTS_DB_DESTROYED early-returns, where the cache is in scope but the
+   * original guid argument has been lost in the call chain. */
+  arts_guid_t db_guid;
+  uint64_t db_size;
+  /* WRF_RCU: writer_count is a pure ref count.  The PUBLISH ACK rendezvous is
+   * a stack-local sem_t created per release_rw, matched by pointer identity
+   * (the &sem address rides the PUBLISH packet and is echoed in the ACK) —
+   * no per-cache seq state. */
+  /* Kept at the tail so compiling the option in cannot shift the offsets
+   * of the fields (and the inlined home directory beyond them) that every
+   * acquire path touches. */
 #ifdef ARTS_RO_REQUEST_COMBINING
   /* Remote-read request-combining window (see coherence/coherence.c).
    * snapshot_req_in_flight admits ONE outstanding snapshot request per cache
@@ -85,16 +98,6 @@ struct arts_db_cache_s {
   arts_lf_stack_t ro_combine;
   arts_lf_link_t *ro_combine_group;
 #endif
-  /* db_guid stored here for symmetry with the protocol pseudocode —
-   * acquire_remote_* needs it for the route_table_return_db pairing on
-   * ARTS_DB_DESTROYED early-returns, where the cache is in scope but the
-   * original guid argument has been lost in the call chain. */
-  arts_guid_t db_guid;
-  uint64_t db_size;
-  /* WRF_RCU: writer_count is a pure ref count.  The PUBLISH ACK rendezvous is
-   * a stack-local sem_t created per release_rw, matched by pointer identity
-   * (the &sem address rides the PUBLISH packet and is echoed in the ACK) —
-   * no per-cache seq state. */
 };
 
 /** Internal DataBlock descriptor.

@@ -237,8 +237,16 @@ void mark_edt_ready_by_guid(arts_guid_t edt_guid, unsigned int slot);
  * (GRANT / TRANSFER_OWNERSHIP / DATA_RESPONSE case 2). */
 void arts_db_drain_pending_snapshot(struct arts_db_cache_s *cache);
 
+/* RO request combining rides the validation family's snapshot pull path; the
+ * exclusion and invalidation families' caches carry no combining window, so
+ * the option compiles out (inert) for them.  Every combining site gates on
+ * this derived macro, never on the raw option. */
 #if defined(ARTS_RO_REQUEST_COMBINING) && !defined(ARTS_PROTOCOL_EXCL) && \
     !defined(ARTS_PROTOCOL_INV)
+#define ARTS_RO_COMBINING_LIVE 1
+#endif
+
+#ifdef ARTS_RO_COMBINING_LIVE
 /* Response-terminal hook of the remote-read combining window: resume the
  * in-flight batch against the now-current buffer (buffer_live), or park it on
  * the reorder buffer with target `version` (reorder case), then re-arm the

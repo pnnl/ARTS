@@ -338,7 +338,7 @@ static void snapshot_landed_cb(void *arg) {
                              ctx->data_size);
   arts_db_drain_pending_snapshot(cache);
   mark_edt_ready_by_guid(ctx->edt_guid, ctx->slot);
-#ifdef ARTS_RO_REQUEST_COMBINING
+#ifdef ARTS_RO_COMBINING_LIVE
   arts_db_ro_combine_on_terminal(cache, true, ctx->version);
 #endif
   arts_shared_release(&ctx->db_h);
@@ -400,7 +400,7 @@ void arts_handler_db_snapshot_response(void *item_v, void *args_v) {
   if (a->version <= buf_v) {
     /* Case 1: nothing newer to install — resume self. */
     mark_edt_ready_by_guid(edt_guid, slot);
-#ifdef ARTS_RO_REQUEST_COMBINING
+#ifdef ARTS_RO_COMBINING_LIVE
     arts_db_ro_combine_on_terminal(cache, true, a->version);
 #endif
     return;
@@ -411,14 +411,14 @@ void arts_handler_db_snapshot_response(void *item_v, void *args_v) {
     arts_db_buf_install(cache, a->version, a->data, a->data_size);
     arts_db_drain_pending_snapshot(cache);
     mark_edt_ready_by_guid(edt_guid, slot);
-#ifdef ARTS_RO_REQUEST_COMBINING
+#ifdef ARTS_RO_COMBINING_LIVE
     arts_db_ro_combine_on_terminal(cache, true, a->version);
 #endif
     return;
   }
   /* Case 3: NO_DATA arrived ahead of the with-data reply.  Park a
    * reorder-buffer node; a later case-2 install drains it. */
-#ifdef ARTS_RO_REQUEST_COMBINING
+#ifdef ARTS_RO_COMBINING_LIVE
   /* The in-flight batch shares the leader's fate.  Park it on the reorder
    * buffer BEFORE the leader's own park so the recovery recheck below covers
    * the whole batch. */

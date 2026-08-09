@@ -109,19 +109,6 @@ struct arts_db_cache_s {
       buf_freelist; /* per-DB recycled-buffer pool (push on deleter, pull on
                        install); unbounded, drained at cache destroy */
   arts_lf_stack_t pending_snapshot;
-#ifdef ARTS_RO_REQUEST_COMBINING
-  /* Remote-read request-combining window (see coherence/coherence.c).
-   * snapshot_req_in_flight admits ONE outstanding snapshot request per cache
-   * (0->1 CAS claims the window).  ro_combine accumulates waiters that arrive
-   * while a request is in flight; ro_combine_group is the batch the current
-   * request rides for — isolated from ro_combine in one exchange at send time,
-   * resumed wholesale by the response terminal.  ro_combine_group is
-   * single-actor (written by the window owner before the send, consumed by
-   * the one response that ends that window), so it needs no atomics. */
-  volatile unsigned int snapshot_req_in_flight;
-  arts_lf_stack_t ro_combine;
-  arts_lf_link_t *ro_combine_group;
-#endif
   /* db_guid stored here for symmetry with the protocol pseudocode —
    * acquire_remote_* needs it for the route_table_return_db pairing on
    * ARTS_DB_DESTROYED early-returns, where the cache is in scope but the
@@ -179,6 +166,22 @@ struct arts_db_cache_s {
   struct arts_rank_to_u64_map_s *cached_version;
   /* Treiber stack of RW waiters parked on this rank (order-free drain-all). */
   arts_lf_stack_t pending_rw;
+#endif
+  /* Kept at the tail so compiling the option in cannot shift the offsets
+   * of the fields (and the inlined home directory beyond them) that every
+   * acquire path touches. */
+#ifdef ARTS_RO_REQUEST_COMBINING
+  /* Remote-read request-combining window (see coherence/coherence.c).
+   * snapshot_req_in_flight admits ONE outstanding snapshot request per cache
+   * (0->1 CAS claims the window).  ro_combine accumulates waiters that arrive
+   * while a request is in flight; ro_combine_group is the batch the current
+   * request rides for — isolated from ro_combine in one exchange at send time,
+   * resumed wholesale by the response terminal.  ro_combine_group is
+   * single-actor (written by the window owner before the send, consumed by
+   * the one response that ends that window), so it needs no atomics. */
+  volatile unsigned int snapshot_req_in_flight;
+  arts_lf_stack_t ro_combine;
+  arts_lf_link_t *ro_combine_group;
 #endif
 };
 

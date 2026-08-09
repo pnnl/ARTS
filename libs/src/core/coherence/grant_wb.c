@@ -186,7 +186,7 @@ static void owner_response_commit(arts_shared_ptr_t db_h, arts_guid_t db_guid,
    * a reordered INVALIDATE deferred on a previously-missing cache replays now.
    */
   arts_db_drain_pending_snapshot(cache);
-#ifdef ARTS_RO_REQUEST_COMBINING
+#ifdef ARTS_RO_COMBINING_LIVE
   /* Read waiters batched while this rank had no local copy resume here
    * against the transferred buffer instead of re-fetching remotely. */
   arts_db_ro_combine_grant_drain(cache);
