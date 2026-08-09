@@ -41,14 +41,17 @@ SINGLE_CAP = 120.0          # single-family budget
 
 RT_ORDER = ["ocr_val_wt", "ocr_val_wb", "ocr_excl_purge", "ocr_excl_retain", "wrf_val_wt", "xsocr", "ocrvx"]
 # Categorical palette: protocol families share a warm/cool side (VAL =
-# red/orange, EXCL = blue/purple, WRF_VAL = green; refs = amber/cyan) with the
-# in-family pair split by hue AND lightness so it survives CVD simulation
-# (Machado protan/deutan adjacent-pair dE >= 12; >= 3:1 contrast on white).
+# red/orange, EXCL = blue/purple, INV = plum/pink, WRF_VAL = green; refs =
+# amber/cyan) with the in-family pair split by hue AND lightness so it survives
+# CVD simulation (Machado protan/deutan adjacent-pair dE >= 12; >= 3:1 contrast
+# on white).
 RT_COLOR = {"ocr_val_wt": "#ea580c", "ocr_val_wb": "#c41111", "ocr_excl_purge": "#5b21b6",
-            "ocr_excl_retain": "#3b82f6", "wrf_val_wt": "#16a34a", "xsocr": "#b45309", "ocrvx": "#0891b2"}
-RT_LABEL = {"ocr_val_wt": "ARTS VAL-Home", "ocr_val_wb": "ARTS VAL-Owner",
-            "ocr_excl_purge": "ARTS EXCL-Home", "ocr_excl_retain": "ARTS EXCL-Owner",
-            "wrf_val_wt": "ARTS WRF_VAL-Home", "xsocr": "xsocr (OCR)", "ocrvx": "ocr-vx (TBB)"}
+            "ocr_excl_retain": "#3b82f6", "ocr_inv_wt": "#831843", "ocr_inv_wb": "#db2777",
+            "wrf_val_wt": "#16a34a", "xsocr": "#b45309", "ocrvx": "#0891b2"}
+RT_LABEL = {"ocr_val_wt": "ARTS VAL-WT", "ocr_val_wb": "ARTS VAL-WB",
+            "ocr_excl_purge": "ARTS EXCL-PURGE", "ocr_excl_retain": "ARTS EXCL-RETAIN",
+            "ocr_inv_wt": "ARTS INV-WT", "ocr_inv_wb": "ARTS INV-WB",
+            "wrf_val_wt": "ARTS WRF_VAL-WT", "xsocr": "xsocr (OCR)", "ocrvx": "ocr-vx (TBB)"}
 ARTS_VARIANTS = RT_ORDER[:5]
 # Apps whose sources place EDTs with affinity hints (EDT_AFFINITY /
 # ocrAffinityGet* / AFFINITY_PD found in the app's own SOURCES or their

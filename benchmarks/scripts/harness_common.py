@@ -71,7 +71,10 @@ def APPS_DIR_for(build: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Per-target machine geometry (cbgpu02 = 48-thread).
+# Per-target machine geometry (cbgpu02 = 48-core/96HT; bentley = 2x EPYC 7742,
+# 128-core/256HT, 8 NUMA nodes x 16 physical cores -- the 16-thread rank budget
+# aligns each rank to one NUMA node, and OS CPUs 0-127 are the per-core first
+# hyperthreads, so contiguous 16-blocks are SMT-clean by construction).
 # Drives the config subdir, the multinode node counts, the per-rank thread budget
 # (for taskset pinning), and the ocr-vx TBB width.  Every config is sized so
 # node_count * per-node-threads == the machine's core count.
@@ -84,6 +87,7 @@ def APPS_DIR_for(build: Path) -> Path:
 # N-node total already equals the plain N-node config — no separate IO variant.
 _MN_NODE_COUNTS = {
     'cbgpu02': [2, 4],
+    'bentley': [2, 4, 8],
 }
 
 
@@ -95,6 +99,7 @@ def MN_RANKS_for(target: str) -> list:
 # mpirun rank to a disjoint core block, mirroring arts's per-rank pu_offset.
 _TPN = {
     'cbgpu02': {2: 12, 4: 12},
+    'bentley': {2: 16, 4: 16, 8: 16},
 }
 
 
@@ -110,6 +115,7 @@ def _TPN_for(target: str) -> dict:
 # shutdown deadlock cannot occur.
 _OCRVX_TBB = {
     'cbgpu02': {1: 48, 2: 12, 4: 12},
+    'bentley': {1: 16, 2: 16, 4: 16, 8: 16},
 }
 
 
@@ -133,7 +139,7 @@ _OCRVX_TIMEOUT_MULT = 3
 # so a single-node run would float its threads across ALL logical CPUs (incl.
 # the HT siblings above core count).  Confine them to cores 0..N-1 via taskset
 # so they occupy the same cores arts self-pins to.
-_NCORES = {'cbgpu02': 48}
+_NCORES = {'cbgpu02': 48, 'bentley': 16}
 
 
 def _NCORES_for(target: str) -> int:

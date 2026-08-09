@@ -704,6 +704,13 @@ add_benchmark_app(NAME miniAMR_intel_chandra
     comm_parent.c driver.c comm.c comm_utils.c stencil.c util.c
     load_balance.c profile.c
     LIBS reduction ocrAppUtils timer
+    # VERIFICATION_RUN: the app's own deterministic-init mode.  The default
+    # init fills cells from one global unseeded rand() stream that worker
+    # threads consume concurrently, so every run (same binary, same input)
+    # produces different checksums — unusable for cross-runtime consensus.
+    # The verification init is data-identical on every runtime and run while
+    # the stencil work (data-independent FLOPs) is unchanged.
+    EXTRA_DEFINES VERIFICATION_RUN
     EXTRA_LINK_LIBS m
 )
 

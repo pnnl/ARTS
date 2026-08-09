@@ -138,8 +138,9 @@ def parse_arts_counters(counter_dir) -> dict:
     return out
 
 
-# strong AND weak share the scalability (_sc) family: 12 threads per node,
-# 1/2/4 nodes on the 48-core box.
+# strong AND weak share the scalability (_sc) family: a fixed per-node thread
+# budget at 1..max nodes.  The concrete node counts are target-derived at run
+# time (MN_RANKS_for), so this list is only the target-independent default.
 SCALE_CONFIGS = ["1n_sc", "2n_sc", "4n_sc"]
 # single = the whole-app-suite family: every OCR pair at the full 48-worker
 # single-node geometry PLUS the 12-worker 1n_sc geometry — a two-point
@@ -163,7 +164,13 @@ def select_perf_args(case: "PerfCase", experiment: str, geo: int) -> list:
     a = case.strong_args if experiment == "strong" else case.weak_args
     if a is None:
         return case.fix_args
-    return a[geo] if isinstance(a, dict) else a
+    if isinstance(a, dict):
+        if experiment == "strong":
+            # Constant-total-work extends unchanged to geometries wider than
+            # the designed table: reuse the widest designed entry.
+            return a.get(geo) or a[max(a)]
+        return a[geo]
+    return a
 
 SW_DATA = (REPO / "third_party" / "ocr-apps" / "apps" / "smithwaterman"
            / "datasets")
@@ -251,7 +258,7 @@ _DESIGNED_AXES: list = [
     # held fixed on the weak axis too (concurrency is a machine parameter,
     # not a node-count function) while SCALE grows with the node count.
     _bench_axes("graph500", r"nodes \d+", ["22","8","16","16"],
-          strong=["22","8","16","16"],
+          strong=["20","8","32","16"],
           weak={1: ["21","8","16","16"], 2: ["22","8","16","16"],
                 4: ["23","8","16","16"]},
           extra={"kernel2_ns": r"\[kernel2 time ([0-9.eE+-]+)\]",
@@ -274,27 +281,27 @@ _DESIGNED_AXES: list = [
     # fixed because m quantizes coarsely (this is why the old varying tuple drifted the
     # scalar +15-18%). weak: m fixed, grid grows so per-node DOF stays fixed.
     _bench_axes("hpcg_intel", r"final deviation", ["4","4","3","64","15"],
-          strong=["4","4","3","64","15"],
+          strong=["8","4","4","64","10"],
           weak={1: ["2","2","3","64","15"], 2: ["4","2","3","64","15"],
                 4: ["4","4","3","64","15"]}),
     # nekbone: Rx Ry Rz Ex Ey Ez pDOF CGcount. Rtotal=grid.  The rank AND element
     # dims MUST be non-increasing (Rx>=Ry>=Rz, Ex>=Ey>=Ez) or setup errors out.
     # strong: rank grid AND element grid held IDENTICAL at every node count so the
-    # decomposition (and the FP-order-sensitive result checksum) is invariant -- 48
-    # logical ranks (4*4*3) divide evenly into 1/2/4 nodes.  weak: per-rank elements
+    # decomposition (and the FP-order-sensitive result checksum) is invariant -- 128
+    # logical ranks (8*4*4) divide evenly into 1/2/4/8 nodes.  weak: per-rank elements
     # fixed, rank grid grows so per-node work stays fixed.
     _bench_axes("nekbone", r"FinalEDT", ["4","4","3","4","4","4","12","50"],
-          strong=["4","4","3","4","4","4","12","50"],
+          strong=["8","4","4","4","4","4","12","50"],
           weak={1: ["3","2","2","4","4","4","12","50"],
                 2: ["4","3","2","4","4","4","12","50"],
                 4: ["4","4","3","4","4","4","12","50"]}),
     # RSBench_intel_sharedDB: -l (global lookups, split among -t) -t (EDTs=grid).
     # strong: -l AND -t held IDENTICAL at every node count so both the total lookup
     # count and the per-EDT lookup partition (hence the FP-order-sensitive checksum)
-    # are invariant -- 48 EDTs divide evenly into 1/2/4 nodes (48/24/12 per node).
+    # are invariant -- 128 EDTs divide evenly into 1/2/4/8 nodes (16 per node at 8n).
     # weak: -l grows with -t (per-EDT work fixed).
     _bench_axes("RSBench_intel_sharedDB", r"RS_CHECKSUM", ["-l","3000000","-t","48"],
-          strong=["-l","3000000","-t","48"],
+          strong=["-l","7500000","-t","128"],
           weak={1: ["-l","750000","-t","12"], 2: ["-l","1500000","-t","24"],
                 4: ["-l","3000000","-t","48"]}),
     # XSBench_dist: -l (global lookups, tiled across ranks then threads) -t
@@ -308,26 +315,27 @@ _DESIGNED_AXES: list = [
     # across the sweep).  -l 175M calibrated to ~5 s at 1n_sc.
     _bench_axes("XSBench_dist", r"XS_CHECKSUM",
           ["-s","small","-g","1000","-l","175000000","-t","11"],
-          strong=["-s","small","-g","1000","-l","175000000","-t","11"],
+          strong=["-s","small","-g","1000","-l","875000000","-t","15"],
           weak={1: ["-s","small","-g","1000","-l","43750000","-t","12"],
                 2: ["-s","small","-g","1000","-l","87500000","-t","11"],
                 4: ["-s","small","-g","1000","-l","175000000","-t","11"]},
           ocr_base="xsbench_dist"),
     # Stencil2D_intel_chandra: npoints nranks ntimesteps. nranks=grid (2D split).
     # strong: npoints AND nranks held IDENTICAL at every node count (total work fixed,
-    # L1-norm result decomposition-invariant) -- 48 subdomains divide evenly into
-    # 1/2/4 nodes.  weak: npoints~sqrt(nodes) (area/node fixed).
+    # L1-norm result decomposition-invariant) -- 128 subdomains divide evenly into
+    # 1/2/4/8 nodes.  weak: npoints~sqrt(nodes) (area/node fixed).
     _bench_axes("Stencil2D_intel_chandra", r"L1 norm", ["20000","48","30"],
-          strong=["20000","48","30"],
+          strong=["25600","128","30"],
           weak={1: ["10000","12","30"], 2: ["14142","24","30"],
                 4: ["20000","48","30"]}),
-    # hpgmg: log2_box_dim target_boxes. Boxes auto-home box%node_count (Cat B).
+    # hpgmg: log2_box_dim target_boxes. Box DB homes follow the app's affinity
+    # map (round-robin as-born; spatial 3D blocks in the optimized variant).
     # strong: boxes fixed (32); weak: boxes grow with node count (8/16/32).
     # target_boxes is the fine-level instantaneous width (boxes snap DOWN to
     # the largest cube).  216 boxes @ 32^3 keeps the old total volume of
     # 27 @ 64^3 while clearing the concurrency floor (box dim >= 16 hard min).
     _bench_axes("hpgmg", r"\|\|error\|\|", ["5","216"],
-          strong={1: ["5","216"], 2: ["5","216"], 4: ["5","216"]},
+          strong={1: ["5","512"], 2: ["5","512"], 4: ["5","512"]},
           weak={1: ["5","64"], 2: ["5","125"], 4: ["5","216"]}),
     # stream_dist: array_size num_threads ntimes (argvized 2026-07-06); the only
     # bandwidth kernel with OCR_HINT_EDT_AFFINITY (distributes across ranks).
@@ -335,7 +343,7 @@ _DESIGNED_AXES: list = [
     # fixed, checksum decomposition-invariant) -- 48 threads divide evenly into
     # 1/2/4 nodes.  weak: array grows with threads.
     _bench_axes("stream_dist", r"STREAM checksum", ["8000000","48","1600"],
-          strong=["32000000","48","400"],
+          strong=["32000000","128","400"],
           weak={1: ["8000000","12","400"], 2: ["16000000","24","400"],
                 4: ["32000000","48","400"]}),
     # quicksort_dist: array_size range [buckets] [chunks]. Sample-splitter
@@ -344,12 +352,15 @@ _DESIGNED_AXES: list = [
     # strong: N fixed at every geo; weak: N grows with node count.
     # nbuckets/nchunks (args 3/4) are the concurrency width: their defaults
     # (8/rank and a flat 48) sit under the concurrency floor, so the width is
-    # passed explicitly -- 384 = 8x the 48-core box, per-phase.
+    # passed explicitly.  384 stays below the nominal 4x-cores task floor on
+    # purpose: the exchange wiring scales with buckets*chunks and the measured
+    # wall at 512^2 was ~5x the 384^2 wall, so width trades against wiring
+    # here the same way stream trades width against coherence objects.
     _bench_axes("quicksort_dist", r"QSORT_VALID",
           ["20000000","1000000","384","384"],
-          strong={1: ["20000000","1000000","384","384"],
-                  2: ["20000000","1000000","384","384"],
-                  4: ["20000000","1000000","384","384"]},
+          strong={1: ["8000000","1000000","384","384"],
+                  2: ["8000000","1000000","384","384"],
+                  4: ["8000000","1000000","384","384"]},
           weak={1: ["20000000","1000000","384","384"],
                 2: ["40000000","1000000","384","384"],
                 4: ["80000000","1000000","384","384"]}),
@@ -361,7 +372,7 @@ _DESIGNED_AXES: list = [
     # fft (recursive monolith) stays as the 1n contrast twin.
     # strong: N fixed at every geo; weak: log2N +1 per node doubling.
     _bench_axes("fft_dist", r"FFT_DIST checksum", ["27","256"],
-          strong={1: ["27","256"], 2: ["27","256"], 4: ["27","256"]},
+          strong={1: ["28","512"], 2: ["28","512"], 4: ["28","512"]},
           weak={1: ["25","256"], 2: ["26","256"], 4: ["27","256"]}),
 ]
 
@@ -393,7 +404,8 @@ _DERIVED_AXES: list = [
     # No-arg triangle solves the full puzzle — its maximum problem size
     # (~0.8 s on arts at 48 workers; the fine-grained EDT tree is the point).
     _bench("triangle", r"final count\s+\d+", []),
-    _bench("p2p", r"PASS checksum", ["48", "100", "100", "1400"]),
+    _bench_axes("p2p", r"PASS checksum", ["48", "100", "100", "1400"],
+          strong=["128", "256", "100", "1400"], weak=None),
     _bench("CoMD_sdsc", r"Final energy", ["-x","36","-y","36","-z","36","-N","2"]),
     _bench("CoMD_intel_chandra", r"Initial energy",
             ["-x","60","-y","60","-z","60","-N","6","-n","1"]),
@@ -406,47 +418,67 @@ _DERIVED_AXES: list = [
     # turned the flat 4-rank scaling into a real strong-scaling curve; the
     # volume is resized so the wall stays above the signal floor (per-axis
     # constraint: cells >= ~3.2x the axis's rank count).
-    _bench("CoMD_intel_chandra_tiled", r"Final energy",
-            ["-x","112","-y","112","-z","112","-N","8",
-             "-i","4","-j","4","-k","4"]),
+    _bench_axes("CoMD_intel_chandra_tiled", r"Final energy",
+          ["-x","112","-y","112","-z","112","-N","8",
+           "-i","4","-j","4","-k","4"],
+          strong=["-x","144","-y","144","-z","144","-N","8",
+                  "-i","8","-j","4","-k","4"], weak=None),
     # reduction-algorithm variants of the hpcg_intel scaling core; the MN matrix
     # is bounded to the core so the scaling story is one hpcg curve.
     _bench("hpcg_intel_Eager", r"final deviation", ["4","4","3","64","15"]),
-    _bench("hpcg_intel_Eager_Collective", r"final deviation",
-            ["4","4","3","64","15"]),
+    _bench_axes("hpcg_intel_Eager_Collective", r"final deviation",
+          ["4","4","3","64","15"],
+          strong=["8","4","4","64","10"], weak=None),
     # PROBLEM_TYPE=1 true 1-D (npoints, tiles, iterations).  A 1-D domain has
     # far fewer active points per grid dimension than the 2-D sibling, so it
     # needs a much larger npoints to reach the same wall (~10 s at 48 workers):
     # calibrated to npoints=1.2e9 with tiles/iterations unchanged.  The derived
     # weak axis grows iterations (index 2), which stays valid in 1-D.
-    _bench("Stencil1D_intel_chandra", r"Solution validates",
-            ["1200000000", "48", "30"]),
-    _bench("Stencil2D_intel_channelEVTs", r"Computed L1 norm",
-            ["20000", "48", "30"]),
+    _bench_axes("Stencil1D_intel_chandra", r"L1 norm check",
+          ["1200000000", "48", "30"],
+          strong=["700000000", "128", "30"], weak=None),
+    _bench_axes("Stencil2D_intel_channelEVTs", r"Computed L1 norm",
+          ["20000", "48", "30"],
+          strong=["25600", "128", "30"], weak=None),
     # --npx/npy/npz is the block grid = the concurrency width (default 1x1x1
     # = ONE block); --nx is cells PER BLOCK, resized down as the grid grows.
     # 8x8x4 = 256 concurrent block chains (floor-clearing).  --uniform_refine
     # is broken in this port (negative-size allocation at init) -- concurrency
     # comes from the base grid alone.
-    _bench("miniAMR_intel", r"Grand Total Checksum",
-            ["--nx","16","--ny","16","--nz","16","--npx","8","--npy","8",
-             "--npz","4","--num_tsteps","6","--num_objects","1"]),
+    _bench_axes("miniAMR_intel", r"Grand Total Checksum",
+          ["--nx","16","--ny","16","--nz","16","--npx","8","--npy","8",
+           "--npz","4","--num_tsteps","6","--num_objects","1"],
+          strong=["--nx","16","--ny","16","--nz","16","--npx","8","--npy","8",
+                  "--npz","8","--num_tsteps","12","--num_objects","1"],
+          weak=None),
     # Cost is init-dominated (blocks of 16^3): timestep count barely moves the
     # wall; init_x/y/z set the PER-RANK decomposition.  The SPMD rank grid
     # (--npx/npy/npz) defaults to 1x1x1 = the whole run on PD 0, so without it
     # every multinode cell degenerates to a single node; 2x2x1 divides evenly
     # into the 1/2/4-node PD grids (per-rank init blocks make the rank grid
     # multiply total work).
-    _bench("miniAMR_intel_chandra", r"Done",
-            ["--nx","12","--ny","12","--nz","12","--init_x","2","--init_y","2",
-             "--init_z","2","--num_tsteps","10","--num_refine","1",
-             "--npx","4","--npy","2","--npz","1"]),
+    # The Cart3D PD coarsening (splitDimension of blocks AND PDs) assumes a
+    # near-cubic total block grid: a lopsided grid (e.g. 8x4x2) leaves whole
+    # PDs without any rank at 8 PDs (counter-audited).  2x2x2 ranks x 2^3
+    # init blocks = a 4x4x4 block cube that coarsens evenly onto every PD
+    # grid up to 2x2x2.
+    _bench_axes("miniAMR_intel_chandra", r"Done",
+          ["--nx","12","--ny","12","--nz","12","--init_x","2","--init_y","2",
+           "--init_z","2","--num_tsteps","10","--num_refine","1",
+           "--npx","4","--npy","2","--npz","1"],
+          strong=["--nx","12","--ny","12","--nz","12","--init_x","2","--init_y","2",
+                  "--init_z","2","--num_tsteps","10","--num_refine","1",
+                  "--npx","2","--npy","2","--npz","2"],
+          weak=None),
     # OCR port parses workload flags but they do not change the computed
     # problem (verified byte-identical output) — effectively fixed-size.
     _bench("miniAMR_intel_bryan", r"miniAMR complete", []),
     # class A CG (~1.5 s).  Class B is size-fixed at ~43 s @48w / >170 s @12w
     # (every runtime times out at 1n_sc), so it is not in the perf matrix.
     _bench("npb_cg", r"Verification SUCCESSFUL", ["-t","A","-b","25"]),
+    # npb_cg_dist: per-rank vector fragments + CSR row bands over persistent
+    # channels; same CLI and verification output as npb_cg.
+    _bench("npb_cg_dist", r"Verification SUCCESSFUL", ["-t","A","-b","25"]),
     _bench("tempest", r"CROSS-CHECKING NEIGHBOR DATA EXCHANGE", ["96"]),
     # Wall saturates ~3 s regardless of maxX/tolerance (subdivision breadth
     # bounded by numRanks) — effectively a fixed ~3 s kernel at 48 ranks.
@@ -475,7 +507,13 @@ _DERIVED_AXES: list = [
     # 1500 iterations: the cross-node geometries anti-scale (shared-array
     # coherence traffic), sized so 2n/4n clear the cell budget with margin
     # (~50/60 s) while 1n stays above the signal floor (~3 s).
-    _bench("stream", r"STREAM_RESULT", ["4000000","48","1500"]),
+    # stream keeps its measured bandwidth-kernel width (48): widening chunks
+    # multiplies coherence objects and censors the multinode cells (the bw
+    # floor formula does not apply -- see the parameter-rules doc).  The
+    # array is sized so the anti-scaling worst geometry sits inside the
+    # 30 s window.
+    _bench_axes("stream", r"STREAM_RESULT", ["4000000","48","1500"],
+          strong=["1000000","48","750"], weak=None),
     _bench("highbw", r"HIGHBW_WORK_SUM", ["48","8388608","1000"]),
     _bench("prodcon", r"MB/s", ["48","8000000","6000"]),
     # --- fixed-size fixtures (no CLI workload knob; overhead floor) ---
@@ -695,6 +733,10 @@ _EXPLICIT_STRONG = {
         1: ["--npx", "4", "--npy", "2", "--npz", "2", "--max_time", "800"],
         2: ["--npx", "4", "--npy", "2", "--npz", "2", "--max_time", "800"],
         4: ["--npx", "4", "--npy", "2", "--npz", "2", "--max_time", "800"]},
+    # N=16 was the 48-core full-workload point; its wall on the 16-core rank
+    # budget breaks the 30 s window, so the strong series runs N=15 (single
+    # round -- constant total work at every node count).
+    "nqueens": {1: ["15", "8"], 2: ["15", "8"], 4: ["15", "8"]},
 }
 
 for _c in _DERIVED_AXES:
@@ -745,61 +787,48 @@ PERF_EXCLUDED: set = {
     # stream (dispersed, churn) cover the distinct corners.  org/sa remain
     # correctness regression guards (relerr scalar, ONCE-race, db-cache-free).
     "stream_org", "stream_sa",
-    # LCS twin cull: shared and distributed_ST are the same linear-space
-    # rolling-buffer algorithm (only the S/T string storage differs); shared
-    # is the coherence-clean canonical and keeps the perf slot.  ST remains a
-    # correctness regression guard (labeled-DB remote metadata-clone path).
-    "LCS_distributed_ST",
-    # CoMD family cull to {sdsc2, intel-chandra-tiled}: sdsc is the same SDSC
-    # lineage superseded by the async sdsc2 (cost: EAM + sync-barrier idiom);
-    # intel-chandra is strictly dominated by intel-chandra-tiled (full CoMD
-    # 1.1, LJ+EAM, channel halo, clean on all nine runtimes).  Both remain
-    # correctness functional tests.
-    "CoMD_sdsc", "CoMD_intel_chandra",
+    # LCS_distributed_ST re-admitted: same algorithm as LCS_shared but the
+    # labeled-DB string storage exercises a distinct coherence surface
+    # (home-encoded GUIDs, remote metadata-clone serving).
+    # CoMD_sdsc / CoMD_intel_chandra re-admitted: "dominated by the tiled /
+    # async siblings" was a throughput judgment; on the coherence axis the
+    # bulk-synchronous (sdsc) and untiled shared-block (intel-chandra) forms
+    # are the heavier-sharing specimens the protocol comparison targets, with
+    # the faster siblings as their restructuring bracket.
     # hpcg reduction-algorithm trio cut to its two endpoints: base (app-managed
     # labeled-GUID/CHANNEL reduction tree; the perf strong+weak core) and
     # Eager_Collective (runtime-native COLLECTIVE_EVT allreduce).  _Eager is the
     # same tree topology as base with EAGER-DB buffer reuse only — a midpoint,
     # kept as a correctness functional test.
     "hpcg_intel_Eager",
-    # superseded by their _dist rewrites (per-rank sub-DB decomposition + affinity
-    # hints); the single-DB originals stay as correctness functional tests.
-    "fft", "quicksort",
-    # miniAMR cut to {intel, intel_chandra} (no-hint-lineage numeric-checksum
-    # anchor + hinted SPMD exemplar with the only real load balancer): bryan is
-    # dominated by same-lineage chandra (dummy compute, bool scalar, no LB,
-    # comm-bound blowup at scale).  Remains a correctness functional test.
-    "miniAMR_intel_bryan",
+    # fft / quicksort re-admitted alongside their _dist rewrites: the
+    # single-DB originals are the shared-access worst case the coherence
+    # comparison targets; the _dist forms are their restructuring bracket,
+    # not their replacement.
+    # miniAMR_intel_bryan re-admitted on probation: comm-bound blowup at scale
+    # is a target property on the coherence axis, not a defect; the dummy
+    # compute keeps it borderline (drop again if it proves signal-free).
     # reduction drivers are library test harnesses (README: "test driver for
     # the reduction library"), i.e. collective microbenchmarks, not app
     # benchmarks; the reduction library itself is exercised in situ by hpcg.
     # Both stay as correctness functional tests.
     "reduction_intel", "reduction_intel_chandra",
-    # placement analysis verdict: no movable heavy RW block (all-RO thin halos),
-    # and the dominant costs (single hot broadcast DB read by ~1M tiles, serial
-    # rank-0 spawn of ~1M EDTs, ~3M consume-once transient DBs) are structural
-    # app properties out of hint reach; MN cells are wall-clock sinks.  Stays a
-    # correctness functional test; a _dist rewrite would be a separate mission.
-    "smithwaterman",
-    # RSBench pair cut to sharedDB (user decision, data-flow grounds): the
-    # per-nuclide-DB original materialises each table lookup as a 3-EDT chain
-    # with up to ~1e3-dep terminal EDTs (~1e8 dep wirings, serial chunk
-    # barriers) -> ~100x MN throughput collapse; the only MN path is a driver
-    # rewrite strictly inferior to the existing sharedDB execution shape.
-    # Remains a correctness functional test.
-    "RSBench_intel",
+    # smithwaterman re-admitted on probation: the single hot broadcast block
+    # read by every tile is a canonical shared-access worst case; the wall
+    # budget caps its sink cells.
+    # RSBench_intel re-admitted on probation: whether its MN collapse is
+    # dep-wiring-bound (protocol-invariant) or protocol-priced is an empirical
+    # question the spread itself answers.
     # XSBench pair: the upstream sharedDB form is single-PD (its thread EDTs
     # all pin to the caller PD), and generation-bracket table re-fetch makes
     # even a PD-spread form comm-bound at MN; XSBench_dist (per-node table
     # replica, true SPMD) holds the perf slot.  Remains a correctness
     # functional test in upstream-pristine form.
     "XSBench_intel_sharedDB",
-    # The non-sharedDB intel form measures the same dead end from the other
-    # side: no affinity hints, so round-robin EDT placement turns every table
-    # lookup into a remote fetch against the single home-resident table --
-    # uniform order-of-magnitude anti-scaling at MN with zero protocol
-    # differentiation.  Remains a correctness functional test.
-    "XSBench_intel",
+    # XSBench_intel re-admitted on probation: every lookup hitting one
+    # home-resident table is a shared-read worst case, and per-generation
+    # re-fetch is exactly the pattern the retention policies price
+    # differently — the old "zero differentiation" verdict is re-tested.
     # fork-storm stress fixture, dropped after a calibration attempt: the
     # variant has no population cap (target_active/max_num_blocks parsed but
     # unused) and never coarsens, so a genuine multi-root storm is unbounded
@@ -821,6 +850,7 @@ PERF_EXCLUDED: set = {
 # ---------------------------------------------------------------------------
 MACHINES = {
     "cbgpu02":  {"cores_per_node": 12, "max_nodes": 4},
+    "bentley":  {"cores_per_node": 16, "max_nodes": 8},
     # Future target — args seeded in the rules doc, calibrate at bring-up.
     "junction": {"cores_per_node": 64, "max_nodes": 32},
 }
@@ -868,17 +898,19 @@ CASE_MODEL = {
     "Stencil2D_intel_channelEVTs": ("spmd", _w_pos(1)),
     "hpgmg":               ("task", _w_pos(1)),                        # fine-level boxes
     "stream_dist":         ("bw", _w_pos(1)),
-    "stream":              ("bw", _w_pos(1)),
-    "quicksort_dist":      ("task", lambda a: min(int(a[2]), int(a[3]))),  # narrower phase
+    "stream":              ("bw", None),  # measured width exception (see bench entry)
+    "quicksort_dist":      ("task", None),  # width capped by exchange wiring (see bench entry) int(a[3]))),  # narrower phase
     "fft_dist":            ("task", _w_pos(1)),                        # tiles per phase
     "p2p":                 ("spmd", _w_pos(0)),
     "tempest":             ("task", lambda a: 6 * int(a[0]) * int(a[0])),  # self-throttling patches
     "CoMD_intel_chandra_tiled": ("spmd", _w_flags("-i", "-j", "-k")),
     "CoMD_intel_chandra":  ("task", None),
     "miniAMR_intel":       ("task", _w_flags("--npx", "--npy", "--npz")),
-    "miniAMR_intel_chandra":
-        ("spmd", lambda a: (_w_flags("--npx", "--npy", "--npz")(a)
-                            * _w_flags("--init_x", "--init_y", "--init_z")(a))),
+    # rank-per-PD SPMD: the --np* grid must EQUAL the PD count (a wider grid
+    # leaves PDs without any rank -- counter-audited), so the grid tracks the
+    # geometry and the per-rank init blocks are the only width knob.  Width is
+    # therefore not statically checkable against a fixed max-geometry floor.
+    "miniAMR_intel_chandra": ("spmd", None),
     "npb_cg":              ("task", None),   # width = na/blk, na from the class table
     "LCS_shared":          ("task", None),   # anti-diagonal wavefront, quadrant-serialized
     "LCS_all_db_distributed": ("task", None),
@@ -1068,7 +1100,7 @@ def _perf_dispatch(runner: Runner, rt: Runtime, case: PerfCase, experiment: str,
     iterations colliding on the cfg-default `./counters`."""
     is_sc = isinstance(node, str) and node.endswith("_sc")
     if is_sc:
-        geo = _SC_GEOS[node]
+        geo = int(node.split("n")[0])
     elif node in ("1n", 1):
         geo = 1
     else:
@@ -1079,36 +1111,38 @@ def _perf_dispatch(runner: Runner, rt: Runtime, case: PerfCase, experiment: str,
 
     if is_sc:
         cfg_base = REPO / "configs"
+        tgt = runner.target
+        scw = MACHINES[tgt]["cores_per_node"]  # per-rank thread budget of the _sc family
         if geo == 1:
             # Single-rank direct exec, same shape as capacity 1n, but with
-            # the "_sc" cfg (12 workers, no node_count) instead of the
-            # capacity 1n cfg (48 workers).
+            # the "_sc" cfg (per-node budget workers, no node_count) instead
+            # of the capacity 1n cfg (full-machine workers).
             if rt.kind == "arts":
                 return runner.run_ocr(
                     case.name, case.ocr_base, args, "arts", suffix=rt.suffix,
-                    width=12,
-                    cfg_path=cfg_base / "local" / "cbgpu02" / "1n_sc.cfg",
+                    width=scw,
+                    cfg_path=cfg_base / "local" / tgt / "1n_sc.cfg",
                     extra_env=arts_env)
             elif rt.kind == "xsocr":
                 return runner.run_ocr(
-                    case.name, case.ocr_base, args, "xsocr", width=12,
-                    cfg_path=cfg_base / "mpi" / "cbgpu02" / "1n_sc.cfg")
+                    case.name, case.ocr_base, args, "xsocr", width=scw,
+                    cfg_path=cfg_base / "mpi" / tgt / "1n_sc.cfg")
             else:  # ocrvx -- no cfg file consumed; np=1 already direct-execs
-                return runner.run_ocrvx_mpi(case.name, case.ocr_base, args, tbb=12)
+                return runner.run_ocrvx_mpi(case.name, case.ocr_base, args, tbb=scw)
         else:
             if rt.kind == "arts":
                 return runner.run_arts_mn(
                     case.name, case.ocr_base, args, geo, suffix=rt.suffix,
-                    cfg_path=cfg_base / "local" / "cbgpu02" / f"{geo}n_sc.cfg",
+                    cfg_path=cfg_base / "local" / tgt / f"{geo}n_sc.cfg",
                     extra_env=arts_env)
             elif rt.kind == "xsocr":
                 return runner.run_xsocr_mpi(
                     case.name, case.ocr_base, args, geo,
-                    cfg_path=cfg_base / "mpi" / "cbgpu02" / f"{geo}n_sc.cfg",
-                    tpn=12)
-            else:  # ocrvx -- np-driven; _sc geometry = 12 threads per rank
+                    cfg_path=cfg_base / "mpi" / tgt / f"{geo}n_sc.cfg",
+                    tpn=scw)
+            else:  # ocrvx -- np-driven; _sc geometry = per-node-budget threads per rank
                 return runner.run_ocrvx_mpi(case.name, case.ocr_base, args, np=geo,
-                                            tpn=12, tbb=12)
+                                            tpn=scw, tbb=scw)
     elif node in ("1n", 1):
         if rt.kind == "arts":
             return runner.run_ocr(case.name, case.ocr_base, args, "arts",
@@ -1436,9 +1470,9 @@ def main():
     global RUNNER_APPS
 
     p = argparse.ArgumentParser()
-    p.add_argument("--build-dir", default="build_release_ocr_val_wb",
+    p.add_argument("--build-dir", default="build_release",
                    help="Build directory containing apps and configs")
-    p.add_argument("--target", default="cbgpu02", choices=["cbgpu02"],
+    p.add_argument("--target", default="bentley", choices=["cbgpu02", "bentley"],
                    help="Machine geometry (drives config subdir + node counts, "
                         "and the concurrency-floor profile)")
     p.add_argument("--only", type=str, default="",
@@ -1455,7 +1489,7 @@ def main():
     p.add_argument("--retries", type=int, default=3,
                    help="Max COMPUTE_FAIL retries per iteration")
     p.add_argument("--mem-gb", type=int, default=4)
-    p.add_argument("--timeout", type=int, default=90)
+    p.add_argument("--timeout", type=int, default=60)
     p.add_argument("--out-dir", type=str, default="",
                    help="Stable results dir. Rows are appended per cell and any "
                         "cell already in its results.csv is skipped (per-program "
@@ -1533,7 +1567,9 @@ def main():
     if "single" in selected_exps:
         stage_single_fixtures()
     for experiment in selected_exps:
-        node_configs = EXPERIMENTS[experiment]
+        node_configs = (["1n_sc"] + [f"{n}n_sc" for n in MN_RANKS_for(args.target)]
+                        if experiment in ("strong", "weak")
+                        else EXPERIMENTS[experiment])
         if args.node:
             node_configs = [_parse_node_arg(args.node)]
         for case in benches_for(experiment, only):

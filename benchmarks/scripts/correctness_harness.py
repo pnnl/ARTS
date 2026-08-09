@@ -59,8 +59,8 @@ from harness_common import (
 # Resolved early so module-level Path constants can reference it.
 # ---------------------------------------------------------------------------
 _arg_parser = argparse.ArgumentParser(add_help=False)
-_arg_parser.add_argument('--build-dir', default='build_release_ocr_val_wb')
-_arg_parser.add_argument('--target', default='cbgpu02', choices=['cbgpu02'])
+_arg_parser.add_argument('--build-dir', default='build_release')
+_arg_parser.add_argument('--target', default='bentley', choices=['cbgpu02', 'bentley'])
 _pre_args, _ = _arg_parser.parse_known_args()
 BUILD = Path(_pre_args.build_dir)
 if not BUILD.is_absolute():
@@ -107,12 +107,12 @@ OCR_APPS = REPO / "third_party" / "ocr-apps" / "apps"
 # the compile-time-data sizes (tiny..large) are unaffected.
 SAR_HUGE_DATA = REPO / "datasets" / "sar-huge"
 
-# Per-target machine geometry (cbgpu02 = 48-thread),
 def sar_huge_data_present() -> bool:
     return all((SAR_HUGE_DATA / f).is_file() for f in
                ("Data.bin", "PlatformPosition.bin", "PulseTransmissionTime.bin"))
 
 
+# Per-target machine geometry (bentley = 128-core/8-NUMA; cbgpu02 retired),
 # selected by --target.  See harness_common for the factory functions.
 MN_RANKS = MN_RANKS_for(TARGET)
 
@@ -1328,9 +1328,9 @@ def _selftest() -> None:
 # ---------------------------------------------------------------------------
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--build-dir", default="build_release_ocr_val_wb",
+    p.add_argument("--build-dir", default="build_release",
                    help="Build directory containing apps and configs")
-    p.add_argument("--target", default="cbgpu02", choices=["cbgpu02"],
+    p.add_argument("--target", default="bentley", choices=["cbgpu02", "bentley"],
                    help="Machine geometry (drives config subdir + node counts)")
     p.add_argument("--no-baseline", action="store_true")
     p.add_argument("--only", type=str, default="")
