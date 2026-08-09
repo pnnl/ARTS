@@ -69,6 +69,17 @@
 #include "arts/gpu/gpu_internal.h"
 #endif
 
+/* No-hint DB home policy: CREATOR (default) keeps the home on the creating
+ * rank — first-touch, so a block inherits whatever distribution the placement
+ * of its creating task achieved, and create/destroy directory traffic stays
+ * local.  ROUNDROBIN distributes homes across all ranks regardless of the
+ * creation site.  An explicit hint rank or a pre-reserved GUID always wins.
+ * CMake sets this for every libarts compile; the fallback covers any TU that
+ * pulls in db.c outside the normal build (e.g. direct inclusion). */
+#ifndef ARTS_NOHINT_DB_ROUNDROBIN
+#define ARTS_NOHINT_DB_ROUNDROBIN 0
+#endif
+
 ARTS_TYPE_NAME;
 ARTS_DB_TYPE_NAME;
 DB_MODE_NAME;
@@ -308,9 +319,9 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
                            uint16_t flags, const arts_db_hint_t *hint) {
   TIME_DB_CREATE_START();
   /* Route resolution:
-   *   hint == NULL                          -> round-robin home distribution
-   *                                             across all ranks (avoid pinning
-   *                                             every DB to the creator).
+   *   hint == NULL                          -> policy-selected home
+   *                                             (ARTS_NOHINT_DB_ROUNDROBIN;
+   *                                             creator-local by default).
    *   hint->rank == ARTS_HINT_CURRENT_RANK -> caller explicitly requested
    *                                             current node.
    *   hint->rank == specific rank          -> caller-specified rank.
@@ -325,8 +336,12 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
   if (pre_guid != NULL_GUID) {
     rank = arts_guid_get_rank(pre_guid);
   } else if (hint == NULL) {
+#if ARTS_NOHINT_DB_ROUNDROBIN
     rank = arts_atomic_fetch_add(&arts_node_info.db_rr_route, 1U) %
            arts_global_rank_count;
+#else
+    rank = arts_global_rank_id;
+#endif
   } else if (hint->rank == ARTS_HINT_CURRENT_RANK) {
     rank = arts_global_rank_id;
   } else {

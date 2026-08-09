@@ -193,8 +193,8 @@ typedef enum {
  *  distributed across all nodes round-robin by index — same `(range, idx)`
  *  on every rank yields the same GUID, but the home rank is `idx % nrank`.
  *  Used by the OCR shim's @c ocrGuidRangeCreate to honor OCR's "any EDT
- *  with same input → same GUID" invariant while preserving ARTS's
- *  round-robin home distribution policy. */
+ *  with same input → same GUID" invariant while keeping the range's homes
+ *  distributed across ranks. */
 #define ARTS_HINT_ROUND_ROBIN ((unsigned int)-2)
 
 /** Sentinel: no placement preference — let the runtime's compile-time
@@ -866,8 +866,11 @@ void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
  *                     ARTS_DB_GPU_PIN, ARTS_DB_GPU, ARTS_DB_CXL).
  * @param      flags   Property bits (@c ARTS_DB_PROP_NONE / @c
  *                     ARTS_DB_PROP_NO_ACQUIRE).
- * @param      hint    Advisory metadata.  @c hint->rank selects the target
- *                     node; NULL or ARTS_HINT_CURRENT_RANK = current node.
+ * @param      hint    Advisory metadata.  @c hint->rank selects the home
+ *                     node; ARTS_HINT_CURRENT_RANK = current node.  NULL =
+ *                     no preference: the build's no-hint DB home policy
+ *                     picks the rank (ARTS_NOHINT_DB_HOME: CREATOR default
+ *                     — first-touch — or ROUNDROBIN).
  * @return GUID of the created DB.
  * @see arts_db_destroy
  */

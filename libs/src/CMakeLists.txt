@@ -111,6 +111,13 @@ if(ARTS_TRANSPORT_OFI)
     add_compile_definitions(ARTS_TRANSPORT_OFI=1)
 endif()
 
+# No-hint placement policies, visible to every libarts compile in this
+# directory and its subdirectories (edt.c / db.c gate their no-hint branches
+# on these; see ARTS_NOHINT_EDT_PLACEMENT / ARTS_NOHINT_DB_HOME at top level).
+add_compile_definitions(
+    ARTS_NOHINT_EDT_ROUNDROBIN=${_ARTS_NOHINT_EDT_RR}
+    ARTS_NOHINT_DB_ROUNDROBIN=${_ARTS_NOHINT_DB_RR})
+
 # Module subdirectories — each defines OBJECT library targets
 add_subdirectory(core)
 add_subdirectory(graph)
@@ -512,8 +519,6 @@ if(ARTS_BUILD_BENCHMARKS AND ARTS_BUILD_STATIC)
             target_link_libraries(arts_static_${suffix} PRIVATE arts::libfabric)
         endif()
         arts_apply_protocol(arts_static_${suffix} "${arm}" "${write_policy}" "${release_policy}")
-        target_compile_definitions(arts_static_${suffix} PRIVATE
-            ARTS_NOHINT_EDT_ROUNDROBIN=${_ARTS_NOHINT_EDT_RR})
     endfunction()
 
     # Suffix = <memory model>_<family>_<live second axis>; the second argument

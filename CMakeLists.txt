@@ -257,12 +257,16 @@ set(ARTS_CXL_RAPID_INCLUDE_DIR "" CACHE PATH
 set(ARTS_CXL_LIB_DIR "" CACHE PATH
     "Path to arts_cxl_lib directory (required when ARTS_USE_CXL=ON)")
 
-# ── No-hint EDT placement policy (runtime-wide) ─────────────────────────────
-# Mirrors the DB no-hint round-robin: selects what arts_edt_create does when
-# the caller expresses no placement preference (NULL hint, or an explicit
-# hint with rank == ARTS_HINT_ANY_RANK).
+# ── No-hint placement policies (runtime-wide) ───────────────────────────────
+# Select what the runtime does when the caller expresses no placement
+# preference; an explicit hint always wins.  The defaults differ on purpose:
+# an EDT chain seeded on one rank can never bootstrap distribution by staying
+# with its creator, so no-hint EDTs round-robin; a DB created by an
+# already-placed EDT inherits that distribution, so no-hint DB homes stay
+# with the creator (first-touch).
 set(ARTS_NOHINT_EDT_PLACEMENT "ROUNDROBIN" CACHE STRING
-    "No-hint EDT placement policy: ROUNDROBIN (default) or CREATOR")
+    "No-hint EDT placement policy (NULL hint or rank == ARTS_HINT_ANY_RANK): \
+ROUNDROBIN (default) or CREATOR")
 set_property(CACHE ARTS_NOHINT_EDT_PLACEMENT PROPERTY STRINGS ROUNDROBIN CREATOR)
 if(ARTS_NOHINT_EDT_PLACEMENT STREQUAL "CREATOR")
   set(_ARTS_NOHINT_EDT_RR 0)
@@ -270,14 +274,27 @@ else()
   set(_ARTS_NOHINT_EDT_RR 1)
 endif()
 
-# ── OCR shim (benchmarks) ───────────────────────────────────────────────────
-set(ARTS_SHIM_NOHINT_DB_HOME "ROUNDROBIN" CACHE STRING
-    "No-hint DB home policy for the OCR shim: ROUNDROBIN (default) or CREATOR")
-set_property(CACHE ARTS_SHIM_NOHINT_DB_HOME PROPERTY STRINGS ROUNDROBIN CREATOR)
-if(ARTS_SHIM_NOHINT_DB_HOME STREQUAL "CREATOR")
-  set(_ARTS_SHIM_NOHINT_RR 0)
+set(ARTS_NOHINT_DB_HOME "CREATOR" CACHE STRING
+    "No-hint DB home policy (NULL hint; explicit hint rank or pre-reserved \
+GUID always wins): CREATOR (default; first-touch — home stays on the \
+creating rank) or ROUNDROBIN (distribute homes across ranks)")
+set_property(CACHE ARTS_NOHINT_DB_HOME PROPERTY STRINGS CREATOR ROUNDROBIN)
+if(ARTS_NOHINT_DB_HOME STREQUAL "ROUNDROBIN")
+  set(_ARTS_NOHINT_DB_RR 1)
 else()
+  set(_ARTS_NOHINT_DB_RR 0)
+endif()
+
+# ── OCR shim (benchmarks) ───────────────────────────────────────────────────
+set(ARTS_SHIM_NOHINT_DB_HOME "CREATOR" CACHE STRING
+    "No-hint DB home policy for the OCR shim's ocrDbCreate (no OCR affinity \
+hint given): CREATOR (default; first-touch — defers to arts_db_create's own \
+no-hint policy) or ROUNDROBIN (explicit round-robin home distribution)")
+set_property(CACHE ARTS_SHIM_NOHINT_DB_HOME PROPERTY STRINGS CREATOR ROUNDROBIN)
+if(ARTS_SHIM_NOHINT_DB_HOME STREQUAL "ROUNDROBIN")
   set(_ARTS_SHIM_NOHINT_RR 1)
+else()
+  set(_ARTS_SHIM_NOHINT_RR 0)
 endif()
 
 set(ARTS_SHIM_NOHINT_EDT_PLACE "ROUNDROBIN" CACHE STRING

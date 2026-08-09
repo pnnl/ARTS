@@ -1470,9 +1470,12 @@ u8 ocrDbCreate(ocrGuid_t *db, void **addr, u64 len, u16 flags, ocrHint_t *hint,
     return 0;
   }
 
-  /* No affinity hint → policy-selected home.  ROUNDROBIN (default): pass NULL
-   * so arts_db_create's built-in round-robin distributes the home across ranks.
-   * CREATOR: pin to the current node via an explicit current-rank hint. */
+  /* No affinity hint → policy-selected home.  CREATOR (default): pass NULL
+   * and defer to arts_db_create's own no-hint policy (first-touch by
+   * default).  ROUNDROBIN: distribute homes across ranks with a shim-side
+   * counter, independent of the runtime's configured no-hint policy; the
+   * counter is seeded with this rank so concurrent creators on every rank
+   * start on distinct picks instead of all colliding on rank 0. */
   arts_db_hint_t artsHint;
   const arts_db_hint_t *hintp = NULL;
   if (aff >= 0) {
@@ -1480,11 +1483,14 @@ u8 ocrDbCreate(ocrGuid_t *db, void **addr, u64 len, u16 flags, ocrHint_t *hint,
     hintp = &artsHint;
   }
 #ifndef ARTS_SHIM_NOHINT_DB_HOME_ROUNDROBIN
-#define ARTS_SHIM_NOHINT_DB_HOME_ROUNDROBIN 1
+#define ARTS_SHIM_NOHINT_DB_HOME_ROUNDROBIN 0
 #endif
-#if !ARTS_SHIM_NOHINT_DB_HOME_ROUNDROBIN
+#if ARTS_SHIM_NOHINT_DB_HOME_ROUNDROBIN
   else {
-    artsHint = (arts_db_hint_t){.rank = ARTS_HINT_CURRENT_RANK};
+    static unsigned int s_db_home_rr = 0;
+    unsigned int pick = __atomic_fetch_add(&s_db_home_rr, 1U, __ATOMIC_RELAXED);
+    artsHint = (arts_db_hint_t){
+        .rank = (pick + arts_global_rank_id) % arts_global_rank_count};
     hintp = &artsHint;
   }
 #endif
