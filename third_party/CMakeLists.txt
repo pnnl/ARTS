@@ -275,7 +275,10 @@ if(ARTS_TRANSPORT_OFI)
           -DCMAKE_INSTALL_PREFIX=${RDMA_CORE_INSTALL_DIR}
           -DCMAKE_INSTALL_LIBDIR=lib
           -DCMAKE_INSTALL_RUNDIR=/var/run
-          -DSYSUSERS_DIR=etc/sysusers.d
+          # Absolute on purpose: the option is a CACHE PATH, and a relative
+          # value would be absolutized against the configuring process's
+          # working directory rather than the install prefix.
+          -DSYSUSERS_DIR=${RDMA_CORE_INSTALL_DIR}/etc/sysusers.d
           -DCMAKE_POSITION_INDEPENDENT_CODE=ON
           -DENABLE_STATIC=1
           -DENABLE_RESOLVE_NEIGH=0
