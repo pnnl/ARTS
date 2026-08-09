@@ -107,4 +107,5 @@ Next Steps
 
 - :doc:`/programming_model/edt` — learn about EDT creation and signaling.
 - :doc:`/programming_model/datablocks` — understand the DataBlock memory model.
-- :doc:`/examples/fib` — a complete Fibonacci example with distributed work.
+- :doc:`/examples/fib` — a complete Fibonacci walkthrough (reading reference
+  only: the ``examples/`` tree is deprecated and excluded from the build).

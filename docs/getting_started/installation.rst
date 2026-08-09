@@ -66,8 +66,10 @@ All options are set with ``-D<NAME>=<VALUE>`` on the cmake line.
      - ON
      - Build the static library ``libarts.a``.
    * - ``ARTS_BUILD_EXAMPLES``
-     - OFF
-     - Build the example programs in ``examples/``.
+     - OFF (forced)
+     - **Deprecated** — ``examples/`` predates the current public API and
+       does not build; enabling is a configure error until the examples are
+       modernized.  See ``tests/ocr/`` and ``benchmarks/`` for working usage.
    * - ``ARTS_BUILD_TESTS``
      - ON
      - Build the test programs (registers them with ctest).
@@ -152,11 +154,13 @@ GPU Build
 Verifying the Build
 -------------------
 
-After building, run a quick test with the Fibonacci example:
+After building, run the single-node test suite as a smoke check (the
+``examples/`` tree is deprecated and excluded from the build — see the
+option table above):
 
 .. code-block:: bash
 
-   cd build/examples/cpu
-   ARTS_CONFIG=../../../configs/local/test/1n.cfg ./fib 10
+   cd build
+   ctest -L single_node --output-on-failure
 
-Expected output shows the 10th Fibonacci number and timing info.
+Every test should report ``Passed``.

@@ -53,7 +53,7 @@ All options are set on the cmake line with `-D<NAME>=<VALUE>`, e.g.
 |--------|---------|---------|
 | `ARTS_BUILD_SHARED` | `ON` | Build the shared library `libarts.so`. |
 | `ARTS_BUILD_STATIC` | `ON` | Build the static library `libarts.a`. |
-| `ARTS_BUILD_EXAMPLES` | `OFF` | Build the example programs under `examples/`. |
+| `ARTS_BUILD_EXAMPLES` | `OFF` (forced) | **Deprecated** — `examples/` predates the current public API and does not build; enabling is a configure error until the examples are modernized. See `tests/ocr/` and `benchmarks/` for working usage. |
 | `ARTS_BUILD_TESTS` | `ON` | Build the test programs and register them with ctest. |
 | `ARTS_BUILD_BENCHMARKS` | `ON` | Build the OCR benchmark apps (XSOCR + ARTS + ocrvx backends). |
 | `ARTS_BUILD_DOCS` | `OFF` | Build the Doxygen + Sphinx documentation. |

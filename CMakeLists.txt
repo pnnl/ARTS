@@ -167,7 +167,17 @@ option(ARTS_BUILD_SHARED "Build the shared library (libarts.so)" ON)
 option(ARTS_BUILD_STATIC "Build the static library (libarts.a)"  ON)
 
 # ── Optional components ────────────────────────────────────────────────────
-option(ARTS_BUILD_EXAMPLES   "Build example programs"                          OFF)
+# examples/ predates the current public API and no longer builds against it.
+# The option stays visible for discoverability, but enabling it is a
+# configure error until the examples are modernized — use tests/ocr/ and
+# benchmarks/ as working usage references in the meantime.
+option(ARTS_BUILD_EXAMPLES   "Build example programs (DEPRECATED: forced OFF pending modernization)" OFF)
+if(ARTS_BUILD_EXAMPLES)
+    message(FATAL_ERROR
+        "ARTS_BUILD_EXAMPLES cannot be enabled: examples/ predates the current "
+        "public API and does not build. The sources are kept for reference "
+        "until modernized; see tests/ocr/ and benchmarks/ for working usage.")
+endif()
 option(ARTS_BUILD_TESTS      "Build test programs (enables ctest)"             ON)
 option(ARTS_BUILD_BENCHMARKS "Build OCR benchmark apps (XSOCR + ARTS + ocrvx)" ON)
 option(ARTS_BUILD_DOCS       "Build documentation (requires Doxygen + Sphinx)" OFF)
