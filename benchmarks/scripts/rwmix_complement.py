@@ -9,8 +9,8 @@ from rwmix_nodesweep import (RE_OUT, RUNTIMES, NODES, N_TASKS, E_US, BYTES,
                              ITERS, gen_cfgs, run_cell)
 
 SURVIVING = [
-    REPO/"benchmarks"/"scripts"/"logs"/"rwmixns_20260721-125446"/"track.jsonl",
-    REPO/"benchmarks"/"scripts"/"logs"/"rwmixns_20260721-143717"/"track.jsonl",
+    REPO/"logs"/"micro"/"rwmixns_20260721-125446"/"track.jsonl",
+    REPO/"logs"/"micro"/"rwmixns_20260721-143717"/"track.jsonl",
 ]
 
 have = {}
@@ -22,12 +22,12 @@ for t in SURVIVING:
         have[k] = have.get(k, 0) + 1
 
 ts = time.strftime("%Y%m%d-%H%M%S")
-outdir = REPO/"benchmarks"/"scripts"/"logs"/f"rwmixns_comp_{ts}"
+outdir = REPO/"logs"/"micro"/f"rwmixns_comp_{ts}"
 outdir.mkdir(parents=True, exist_ok=True)
 track = outdir/"track.jsonl"
 cfgs = gen_cfgs(outdir)
 runner = Runner(mem_gb=0, timeout=180, logdir=outdir, target="cbgpu02",
-                build=REPO/"build_release_ocr_val_wb")
+                build=REPO/"build_release")
 
 todo = []
 for nodes in NODES:

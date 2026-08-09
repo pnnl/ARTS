@@ -30,6 +30,7 @@ ONCE,CLUSTER,MASTER in configs/perf_counters.cfg, so it lands in
 cluster.json's `counters.TIME_TOTAL.value`.
 """
 from __future__ import annotations
+import sys
 
 import argparse
 import csv
@@ -41,9 +42,10 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from harness_common import REPO, Runner, Runtime, RUNTIMES
+from harness_common import (REPO, SCRATCH, BASIC_IO_DAT, Runner, Runtime,
+                            RUNTIMES, MN_RANKS_for)
 
-LOGS_ROOT = REPO / "benchmarks" / "scripts" / "logs" / "perf"
+LOGS_ROOT = REPO / "logs" / "perf"
 
 # Set by main() once --build-dir is known; perf_runtime_eligible probes this
 # to detect an absent ocrvx binary (some apps have no ocr-vx port).
@@ -165,41 +167,49 @@ def select_perf_args(case: "PerfCase", experiment: str, geo: int) -> list:
 
 SW_DATA = (REPO / "third_party" / "ocr-apps" / "apps" / "smithwaterman"
            / "datasets")
-CHOLESKY_PERF_MAT = "/tmp/arts_cholesky_perf5k.mat"
-CHOLESKY_PERF_MAT_LG = "/tmp/arts_cholesky_perf7k5.mat"
+CHOLESKY_PERF_MAT = str(SCRATCH / "cholesky_perf5k.mat")
+CHOLESKY_PERF_MAT_LG = str(SCRATCH / "cholesky_perf7k5.mat")
 # Weak-series fixtures: ds grows by 2^(1/3) per work doubling (flops ~ ds^3),
 # rounded to a tile-size multiple. cholesky 5000->6300 (2.000x) -> 7900 (3.944x);
 # cholesky_blas 7500 -> 9400 (1.968x) -> 11900 (3.994x).
 CHOLESKY_WEAK_MATS = {
-    "cholesky": {1: (5000, CHOLESKY_PERF_MAT), 2: (6300, "/tmp/arts_cholesky_perf6k3.mat"),
-                 4: (7900, "/tmp/arts_cholesky_perf7k9.mat")},
-    "cholesky_blas": {1: (7500, CHOLESKY_PERF_MAT_LG), 2: (9400, "/tmp/arts_cholesky_perf9k4.mat"),
-                      4: (11900, "/tmp/arts_cholesky_perf11k9.mat")},
+    "cholesky": {1: (5000, CHOLESKY_PERF_MAT), 2: (6300, str(SCRATCH / "cholesky_perf6k3.mat")),
+                 4: (7900, str(SCRATCH / "cholesky_perf7k9.mat"))},
+    "cholesky_blas": {1: (7500, CHOLESKY_PERF_MAT_LG), 2: (9400, str(SCRATCH / "cholesky_perf9k4.mat")),
+                      4: (11900, str(SCRATCH / "cholesky_perf11k9.mat"))},
 }
-BASIC_IO_DAT = "/tmp/arts_basicIO_test.dat"
 
 # SAR runtime-input assets: one huge pulse dataset (generated once by
-# datagen-huge) serves every problem_size_scaling Parameter file -- the ladder
-# varies only the image grid (Ix=Iy=400*(k+1)), so wall grows ~ Ix^2.
+# datagen-huge; O(100h) wall, so it is staged rather than regenerated) serves
+# sar_huge and every problem_size_scaling Parameter file -- the ladder varies
+# only the image grid (Ix=Iy=400*(k+1)), so wall grows ~ Ix^2.  The dataset
+# lives OUTSIDE the app tree at datasets/sar-huge/ (gitignored; provenance,
+# checksums and restore steps in datasets/README.md): the pure OCR app takes
+# all paths as argv, and the ~256 MB payload never enters git history.  Hosts
+# without the staged dataset drop the SAR runtime-input cases loudly (below).
 SAR_ROOT = REPO / "third_party" / "ocr-apps" / "apps" / "sar"
-SAR_HUGE_DATA = SAR_ROOT / "datasets" / "huge"
+SAR_HUGE_DATA = REPO / "datasets" / "sar-huge"
 SAR_PSS_PARAMS = SAR_ROOT / "ocr" / "problem_size_scaling"
+
+def sar_huge_data_present() -> bool:
+    return all((SAR_HUGE_DATA / f).is_file() for f in
+               ("Data.bin", "PlatformPosition.bin", "PulseTransmissionTime.bin"))
 
 def _sar_pss_args(p: int) -> list:
     return [str(SAR_HUGE_DATA / "Data.bin"),
             str(SAR_HUGE_DATA / "PlatformPosition.bin"),
             str(SAR_HUGE_DATA / "PulseTransmissionTime.bin"),
-            "/tmp/arts_sar_detects.txt",
+            str(SCRATCH / "sar_detects.txt"),
             str(SAR_PSS_PARAMS / f"Parameter{p}.txt")]
 
 BASIC_IO_1M = str(REPO / "third_party" / "ocr-apps" / "apps" / "basicIO" / "ocr"
                   / "input_1000000.txt")
-BASIC_IO_250K = "/tmp/arts_basicIO_250k.txt"
-BASIC_IO_500K = "/tmp/arts_basicIO_500k.txt"
-SW_XL = ("/tmp/arts_sw_string1_xl.txt", "/tmp/arts_sw_string2_xl.txt",
-         "/tmp/arts_sw_score_xl.txt")
-SW_XXL = ("/tmp/arts_sw_string1_xxl.txt", "/tmp/arts_sw_string2_xxl.txt",
-          "/tmp/arts_sw_score_xxl.txt")
+BASIC_IO_250K = str(SCRATCH / "basicIO_250k.txt")
+BASIC_IO_500K = str(SCRATCH / "basicIO_500k.txt")
+SW_XL = (str(SCRATCH / "sw_string1_xl.txt"), str(SCRATCH / "sw_string2_xl.txt"),
+          str(SCRATCH / "sw_score_xl.txt"))
+SW_XXL = (str(SCRATCH / "sw_string1_xxl.txt"), str(SCRATCH / "sw_string2_xxl.txt"),
+          str(SCRATCH / "sw_score_xxl.txt"))
 
 
 def _bench(name, marker, args):
@@ -701,6 +711,15 @@ for _c in _DERIVED_AXES:
 # The ONLY perf-matrix exclusion is the user-curated PERF_EXCLUDED set below.
 # The correctness harness is deliberately NOT curated: it runs everything.
 BENCHES: list = _DESIGNED_AXES + _DERIVED_AXES
+
+# sar_pss reads the out-of-tree huge dataset at runtime; a host where it is
+# not staged (fresh clone) drops the case loudly instead of reporting a
+# spurious failure.  Every compile-time-data SAR size still runs.
+if not sar_huge_data_present():
+    BENCHES = [b for b in BENCHES if b.name != "sar_pss"]
+    print(f"[harness] SAR huge dataset not staged at {SAR_HUGE_DATA} -> "
+          "sar_pss disabled (staging steps: datasets/README.md)",
+          file=sys.stderr)
 
 # User-curated perf-matrix exclusions (fixture micros, demos, redundant
 # variants).  Excluded from every perf experiment and from the figures; the

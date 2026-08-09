@@ -8,7 +8,7 @@ the perf harness (_sc geometry: 12 workers per node).
 
 Progress and results append to a track file on repo disk so the sweep
 survives session loss.  Usage:
-    python3 benchmarks/scripts/rwmix_sweep.py --build-dir build_release_ocr_val_wb
+    python3 benchmarks/scripts/rwmix_sweep.py --build-dir build_release
 """
 import argparse
 import json
@@ -63,14 +63,14 @@ def run_cell(runner: Runner, kind: str, suffix, nodes: int, args: list[str],
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--build-dir", default="build_release_ocr_val_wb")
+    ap.add_argument("--build-dir", default="build_release")
     ap.add_argument("--timeout", type=int, default=120)
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
     build = REPO / args.build_dir
     ts = time.strftime("%Y%m%d-%H%M%S")
-    outdir = REPO / "benchmarks" / "scripts" / "logs" / f"rwmix_{ts}"
+    outdir = REPO / "logs" / "micro" / f"rwmix_{ts}"
     outdir.mkdir(parents=True, exist_ok=True)
     track = outdir / "track.jsonl"
     runner = Runner(mem_gb=0, timeout=args.timeout, logdir=outdir,

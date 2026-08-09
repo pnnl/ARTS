@@ -74,13 +74,13 @@ def run_cell(runner, cfgs, kind, suffix, nodes, args, timeout):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--build-dir", default="build_release_ocr_val_wb")
+    ap.add_argument("--build-dir", default="build_release")
     ap.add_argument("--timeout", type=int, default=180)
     args = ap.parse_args()
 
     build = REPO / args.build_dir
     ts = time.strftime("%Y%m%d-%H%M%S")
-    outdir = REPO / "benchmarks" / "scripts" / "logs" / f"excl_contention_{ts}"
+    outdir = REPO / "logs" / "micro" / f"excl_contention_{ts}"
     outdir.mkdir(parents=True, exist_ok=True)
     track = outdir / "track.jsonl"
     cfgs = gen_cfgs(outdir)

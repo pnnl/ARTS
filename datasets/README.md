@@ -1,0 +1,75 @@
+# datasets/ — out-of-tree runtime datasets (gitignored)
+
+This directory holds large, expensive-to-regenerate datasets that benchmark
+apps read **at runtime via argv**. It is excluded from git (`/datasets/` in
+the repo `.gitignore`): the payloads never enter git history, and the pure
+OCR app trees under `third_party/ocr-apps` carry no external paths — the
+harnesses (`benchmarks/scripts/{performance,correctness}_harness.py`) pass
+the paths on the command line.
+
+**Presence gating**: each harness checks at startup that the dataset it
+needs is staged; if absent it *drops* the dependent cases with a loud
+stderr note (never a spurious FAIL). Everything else runs normally, so a
+fresh clone works out of the box minus the gated cases.
+
+## sar-huge/ — SAR huge pulse dataset
+
+Consumed by the runtime-input SAR builds `sar_huge` and
+`sar_problem_size_scaling` (harness cases `sar_huge`, `sar_pss`). The
+compile-time sizes (tiny/small/medium/large) embed their data at build time
+and do not use this directory.
+
+This directory holds **generator OUTPUT only**. The generator inputs
+(`Parameters.txt`, `Targets.txt`) are small tracked files in the app tree at
+`third_party/ocr-apps/apps/sar/datagen-huge/huge/` — the split follows the
+datagen Makefile rule (`Radar.txt: Parameters.txt Targets.txt` runs
+`datagen <Data> <PlatformPosition> <PulseTransmissionTime> <Radar>`).
+Regeneration from those inputs takes on the order of **days of wall time** —
+never regenerate on a new host; stage this directory instead.
+
+| file | size | role |
+|---|---|---|
+| `Data.bin` | 268,800,000 B | radar pulse samples (app argv[1]) |
+| `PlatformPosition.bin` | 100,800 B | platform positions (app argv[2]) |
+| `PulseTransmissionTime.bin` | 33,600 B | pulse timestamps (app argv[3]) |
+| `Radar.txt` | 119 B | generated radar-parameter snapshot; not read by the app at runtime |
+| `SHA256SUMS` | — | integrity manifest |
+
+The app-format params (app argv[5]) are also in-tree, and distinct from the
+datagen input of the same name: `ocr/huge/Parameters.txt` for `sar_huge`,
+`ocr/problem_size_scaling/Parameter<k>.txt` for `sar_pss`.
+
+Verify integrity after staging (the staged dir carries the same manifest as
+`SHA256SUMS`; it is reproduced here so a fresh clone can verify without any
+staged file):
+
+```bash
+cd datasets/sar-huge && sha256sum -c SHA256SUMS   # or -c <(grep -A99 '^10e0' ../README.md)
+```
+
+```
+10e0e890c39737d1bd320ef40f6c80fe15fdf54f781ac2b88bd4d928fb3cabda  Data.bin
+dd9b8656cb5e4ef1ac4bf21386bf1b89c4547329b621df01a1009231f30b3059  PlatformPosition.bin
+af989050a46b167043d3d610e587c60a4dde436c084b234fdfad11306f4c5623  PulseTransmissionTime.bin
+59b794dfb293a719d10d91bc0701e2fd3767dc51d115fc18eff397a664d1a775  Radar.txt
+```
+
+## Staging onto a new host
+
+Pick whichever transport is available:
+
+```bash
+# direct copy from a host that has it
+rsync -aP --partial <src-host>:ARTS/datasets/ ~/ARTS/datasets/
+
+# or from cloud storage (upload once from a staged host):
+#   tar czf sar-huge.tar.gz -C datasets sar-huge
+#   -> upload sar-huge.tar.gz to the lab Google Drive / OneDrive
+# restore:
+#   download sar-huge.tar.gz, then
+tar xzf sar-huge.tar.gz -C ~/ARTS/datasets/
+cd ~/ARTS/datasets/sar-huge && sha256sum -c SHA256SUMS
+```
+
+Always run the checksum verification — a truncated `Data.bin` produces a
+plausible-looking but wrong detects count, not a crash.

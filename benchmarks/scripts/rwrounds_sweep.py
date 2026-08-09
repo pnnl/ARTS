@@ -35,12 +35,12 @@ def run(runner, outdir, kind, nodes, mode, timeout):
 
 def main():
     ts = time.strftime("%Y%m%d-%H%M%S")
-    outdir = REPO/"benchmarks"/"scripts"/"logs"/f"rwrounds_{ts}"
+    outdir = REPO/"logs"/"micro"/f"rwrounds_{ts}"
     outdir.mkdir(parents=True, exist_ok=True)
     track = outdir/"track.jsonl"
     gen_cfgs(outdir)
     runner = Runner(mem_gb=0, timeout=240, logdir=outdir, target="cbgpu02",
-                    build=REPO/"build_release_ocr_val_wb")
+                    build=REPO/"build_release")
     total = len(NODES) * 2 * 3 * ITERS
     done = 0
     for nodes in NODES:

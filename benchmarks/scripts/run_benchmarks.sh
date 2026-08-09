@@ -1,7 +1,7 @@
 #!/bin/bash
 # Benchmark smoke test script
 # Runs each benchmark app with correct arguments and reports pass/fail.
-# Writes timestamped logs to benchmarks/scripts/logs/.
+# Writes timestamped logs to <repo>/logs/run_benchmarks/.
 #
 # Usage:
 #   cd build/benchmarks
@@ -56,7 +56,7 @@ fi
 # ==========================================================================
 # Logging setup (matches tests/run_tests.sh format)
 # ==========================================================================
-LOG_DIR="$SCRIPT_DIR/logs"
+LOG_DIR="$SCRIPT_DIR/../../logs/run_benchmarks"
 mkdir -p "$LOG_DIR"
 TIMESTAMP="$(date +%Y-%m-%d_%H-%M-%S)"
 LOG_FILE="$LOG_DIR/${TIMESTAMP}.log"

@@ -14,7 +14,6 @@ from __future__ import annotations
 import itertools
 import os
 import shlex
-import shutil
 import signal
 import subprocess
 import time
@@ -25,8 +24,33 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
 
-BASIC_IO_DAT = "/tmp/arts_basicIO_test.dat"
-CHOLESKY_INPUT = "/tmp/arts_cholesky_input.mat"
+# The repo-local toolchain libs (install/lib: hwloc, numa) back the MPI stack
+# the reference runtimes link against.  DT_RUNPATH does not propagate to a
+# shared library's own dependencies, so every child process needs the path on
+# LD_LIBRARY_PATH — injected here so the harness works identically however it
+# was launched (interactive shell, detached, cron).
+_TOOLCHAIN_LIB = str(REPO / "install" / "lib")
+if _TOOLCHAIN_LIB not in os.environ.get("LD_LIBRARY_PATH", "").split(":"):
+    _prev = os.environ.get("LD_LIBRARY_PATH", "")
+    os.environ["LD_LIBRARY_PATH"] = _TOOLCHAIN_LIB + (":" + _prev if _prev else "")
+# Same launch-mode independence for executables: the repo-local toolchain bin
+# and the user-level MPI launcher (mpirun) live outside the default
+# non-interactive PATH.
+for _d in (str(Path.home() / ".local" / "bin"), str(REPO / "install" / "bin")):
+    if _d not in os.environ.get("PATH", "").split(":"):
+        os.environ["PATH"] = _d + ":" + os.environ.get("PATH", "")
+
+# Everything an app run generates is confined to one gitignored scratch
+# directory: every runner chdirs here before exec, so relative-path outputs
+# (default output files, debug dumps) can never litter the repo root or the
+# build tree, and staged fixtures live beside them.  Deliberately NOT /tmp:
+# that is tmpfs (RAM) on the target hosts, and app outputs reach hundreds of
+# MB.  Contents are disposable and overwritten run-to-run.
+SCRATCH = REPO / "scratch"
+SCRATCH.mkdir(exist_ok=True)
+
+BASIC_IO_DAT = str(SCRATCH / "basicIO_test.dat")
+CHOLESKY_INPUT = str(SCRATCH / "cholesky_input.mat")
 
 
 def _cfg_name(n) -> str:
@@ -205,9 +229,9 @@ class Runner:
         # and this host never needs them. Runaway protection = per-case
         # timeout + reap-by-exe, not memory caps.
 
-        # Stage configs + fixtures once.
-        shutil.copy2(self.arts_cfg, self.apps_dir / "arts.cfg")
-        shutil.copy2(self.arts_cfg, self.base_dir / "arts.cfg")
+        # Stage fixtures once (arts config selection is per-run via the
+        # ARTS_CONFIG env var — the runtime reads it before the ./arts.cfg
+        # cwd fallback, so no config files are copied anywhere).
         if not Path(BASIC_IO_DAT).exists():
             # 10 deterministic u64 values for basicIO (offset=0, XOR=0^1^...^9=1)
             Path(BASIC_IO_DAT).write_text(
@@ -290,7 +314,7 @@ class Runner:
         if extra_env:
             env.update(extra_env)
         if backend == "arts":
-            shutil.copy2(cfg_path or self.arts_cfg, self.apps_dir / "arts.cfg")
+            env["ARTS_CONFIG"] = str(cfg_path or self.arts_cfg)
         if backend == "xsocr":
             env["OCR_CONFIG"] = str(cfg_path or self.xsocr_cfg)
         # Defense in depth: every backend gets an OS-level cpuset matching the
@@ -300,12 +324,10 @@ class Runner:
         pin = f"taskset -c 0-{w - 1} "
         to = timeout or self.timeout
         cmd = (
-            f"cd {self.apps_dir} && "
-            f"timeout -k 1 {to} {pin}./{binary} " + " ".join(args)
+            f"cd {SCRATCH} && "
+            f"timeout -k 1 {to} {pin}{self.apps_dir / binary} " + " ".join(args)
         )
         result = self._run(cmd, env, logfile, wall_timeout=to)
-        if backend == "arts" and cfg_path:
-            shutil.copy2(self.arts_cfg, self.apps_dir / "arts.cfg")  # restore default
         self._reap_exe(self.apps_dir / binary)
         return result
 
@@ -406,10 +428,10 @@ class Runner:
         """
         to = timeout or self.timeout
         cfg_src = cfg_path or (REPO / "configs" / self._arts_mn_cfgs[nodes])
-        shutil.copy2(cfg_src, self.apps_dir / "arts.cfg")  # arts reads ./arts.cfg
         log_tag = f"arts_{suffix}_mn{nodes}" if suffix else f"arts_mn{nodes}"
         logfile = self.logdir / f"{case_name}.{log_tag}.log"
         env = os.environ.copy()
+        env["ARTS_CONFIG"] = str(cfg_src)
         env["OMP_NUM_THREADS"] = "4"
         if extra_env:
             env.update(extra_env)
@@ -427,16 +449,14 @@ class Runner:
             env["default_ports"] = str(base)
         arts_bin = f"{bin_name}_arts_{suffix}" if suffix else f"{bin_name}_arts"
         cmd = (
-            f"cd {self.apps_dir} && "
-            f"timeout -k 1 {to} ./{arts_bin} " + " ".join(args)
+            f"cd {SCRATCH} && "
+            f"timeout -k 1 {to} {self.apps_dir / arts_bin} " + " ".join(args)
         )
         result = self._run(cmd, env, logfile, wall_timeout=to)
         # A timed-out run can leave rank processes behind (a hung rank can
         # survive SIGTERM); reap them so they cannot interfere with later
         # cases or hold CPU.
         self._reap_exe(self.apps_dir / arts_bin)
-        # Restore single-node cfg for subsequent single-node runs
-        shutil.copy2(self.arts_cfg, self.apps_dir / "arts.cfg")
         return result
 
     def run_xsocr_mpi(self, case_name: str, bin_name: str, args: list[str],
@@ -456,9 +476,9 @@ class Runner:
         env["OMP_NUM_THREADS"] = "4"
         xsocr_cfg = cfg_path or (REPO / "configs" / self._xsocr_mn_cfgs[np])
         cmd = (
-            f"cd {self.apps_dir} && "
+            f"cd {SCRATCH} && "
             f"timeout -k 1 {to} {mpirun_prefix(np)} {pin_wrap(tpn or self._tpn[np])} "
-            f"./{bin_name}_xsocr -ocr:cfg {xsocr_cfg} "
+            f"{self.apps_dir / f'{bin_name}_xsocr'} -ocr:cfg {xsocr_cfg} "
             + " ".join(args)
         )
         result = self._run(cmd, env, logfile, wall_timeout=to)
@@ -481,18 +501,19 @@ class Runner:
         env["OMP_NUM_THREADS"] = "4"
         env["OCRVX_NUM_THREADS"] = str(tbb if tbb is not None
                                         else self._ocrvx_tbb_threads[np])
+        ocrvx_bin = self.apps_dir / f"{bin_name}_ocrvx"
         if np > 1:
             block = tpn if tpn is not None else self._tpn[np]
-            launcher = f"{mpirun_prefix(np)} {pin_wrap(block)} ./{bin_name}_ocrvx"
+            launcher = f"{mpirun_prefix(np)} {pin_wrap(block)} {ocrvx_bin}"
         else:
             # No native pinning: the taskset IS placement.  Confine to exactly
             # as many cores as threads, or a reduced-width run floats over the
             # whole machine and measures a wider-cache configuration than its
             # peers.
             width = tbb if tbb is not None else _NCORES_for(self.target)
-            launcher = f"taskset -c 0-{width - 1} ./{bin_name}_ocrvx"
+            launcher = f"taskset -c 0-{width - 1} {ocrvx_bin}"
         cmd = (
-            f"cd {self.apps_dir} && "
+            f"cd {SCRATCH} && "
             f"timeout -k 1 {to} {launcher} " + " ".join(args)
         )
         result = self._run(cmd, env, logfile, wall_timeout=to)
@@ -511,11 +532,11 @@ class Runner:
             # confine the one rank to cores 0..N-1 like the other references.
             pin = (f"{pin_wrap(self._tpn[spec.np])} " if spec.np in self._tpn
                    else f"{self._pin_single} ")
-            launcher = f"{mpirun_prefix(spec.np)} {pin}./{spec.bin}"
+            launcher = f"{mpirun_prefix(spec.np)} {pin}{self.base_dir / spec.bin}"
         else:
-            launcher = f"{self._pin_single} ./{spec.bin}"
+            launcher = f"{self._pin_single} {self.base_dir / spec.bin}"
         cmd = (
-            f"cd {self.base_dir} && "
+            f"cd {SCRATCH} && "
             f"timeout -k 1 {to} {launcher} " + " ".join(spec.args)
         )
         return self._run(cmd, env, logfile, wall_timeout=to)

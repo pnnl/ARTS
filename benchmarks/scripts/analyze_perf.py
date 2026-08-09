@@ -154,7 +154,7 @@ def report_single(rows, outdir):
 
 def main():
     matrix_dir = sys.argv[1] if len(sys.argv) > 1 else \
-        "benchmarks/scripts/logs/perf/matrix6app"
+        "logs/perf/matrix6app"
     rows, metrics = load(matrix_dir)
     outdir = Path(matrix_dir) / "analysis"
     outdir.mkdir(exist_ok=True)

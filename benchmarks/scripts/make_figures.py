@@ -397,7 +397,7 @@ def fig_heatmap(E, ST, outdir, exp):
 
 def main():
     md = sys.argv[1] if len(sys.argv) > 1 else \
-        "benchmarks/scripts/logs/perf/matrix6app"
+        "logs/perf/matrix6app"
     E, ST, M = load(md)
     outdir = Path(md) / "analysis" / "figures"
     outdir.mkdir(parents=True, exist_ok=True)

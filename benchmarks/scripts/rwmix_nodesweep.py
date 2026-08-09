@@ -81,7 +81,7 @@ def main():
 
     build = REPO / args.build_dir
     ts = time.strftime("%Y%m%d-%H%M%S")
-    outdir = REPO / "benchmarks" / "scripts" / "logs" / f"rwmixns_{ts}"
+    outdir = REPO / "logs" / "micro" / f"rwmixns_{ts}"
     outdir.mkdir(parents=True, exist_ok=True)
     track = outdir / "track.jsonl"
     cfgs = gen_cfgs(outdir)

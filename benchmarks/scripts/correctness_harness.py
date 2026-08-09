@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 import time
 
 from dataclasses import dataclass, field
@@ -47,7 +48,8 @@ from pathlib import Path
 from typing import Any
 
 from harness_common import (
-    REPO, _cfg_name, MN_RANKS_for, _TPN_for, _OCRVX_TBB_for,
+    REPO, SCRATCH, BASIC_IO_DAT, CHOLESKY_INPUT,
+    _cfg_name, MN_RANKS_for, _TPN_for, _OCRVX_TBB_for,
     _OCRVX_TIMEOUT_MULT, _NCORES_for, pin_single, pin_wrap, mpirun_prefix,
     RunResult, Runner, Runtime, ARTS_VARIANTS, RUNTIMES,
 )
@@ -90,18 +92,27 @@ _mode = f'{_model}+{_protocol}+{_timing}'
 print(f'[harness] Build dir: {BUILD} (config: {_mode})')
 
 APPS_DIR = BUILD / "benchmarks" / "apps"
-LOGS_ROOT = REPO / "benchmarks" / "scripts" / "logs" / "correctness"
+LOGS_ROOT = REPO / "logs" / "correctness"
 
 # smithwaterman ships its own datasets (tiny/small/medium/large triples of
 # string1/string2/score); use the official tiny set directly — no staging.
 SW_DATA = Path(__file__).resolve().parents[2] / \
     "third_party/ocr-apps/apps/smithwaterman/datasets"
-BASIC_IO_DAT = "/tmp/arts_basicIO_test.dat"
-CHOLESKY_INPUT = "/tmp/arts_cholesky_input.mat"
 OCR_APPS = REPO / "third_party" / "ocr-apps" / "apps"
 
+# SAR huge pulse dataset: staged out-of-tree at datasets/sar-huge/
+# (gitignored; O(100h) to regenerate — provenance, checksums and restore
+# steps in datasets/README.md).  The runtime-input SAR cases (sar_huge,
+# sar_pss) read it via argv and are dropped loudly when it is not staged;
+# the compile-time-data sizes (tiny..large) are unaffected.
+SAR_HUGE_DATA = REPO / "datasets" / "sar-huge"
 
 # Per-target machine geometry (cbgpu02 = 48-thread),
+def sar_huge_data_present() -> bool:
+    return all((SAR_HUGE_DATA / f).is_file() for f in
+               ("Data.bin", "PlatformPosition.bin", "PulseTransmissionTime.bin"))
+
+
 # selected by --target.  See harness_common for the factory functions.
 MN_RANKS = MN_RANKS_for(TARGET)
 
@@ -746,12 +757,32 @@ CASES: list[Case] = [
          wrf_val_skip="cross-node __sync counter coordination + disjoint-region sibling writers to shared image blocks — guarantees outside WRF_VAL's DB-WRF contract (whole-DB lossy publish drops sibling updates)",
          wrf_val_multinode_skip="closed S/M verdict: cross-node __sync counter coordination stalls the backprojection stage under lossy publish -> 124 at MN (sar_mn_fix.md, wrf_val_mn_verdicts.md)"),
     Case("sar_pss", "sar_problem_size_scaling",
-         [f"{OCR_APPS}/sar/datasets/huge/Data.bin",
-          f"{OCR_APPS}/sar/datasets/huge/PlatformPosition.bin",
-          f"{OCR_APPS}/sar/datasets/huge/PulseTransmissionTime.bin",
-          "/tmp/arts_sar_detects_corr.txt",
+         [str(SAR_HUGE_DATA / "Data.bin"),
+          str(SAR_HUGE_DATA / "PlatformPosition.bin"),
+          str(SAR_HUGE_DATA / "PulseTransmissionTime.bin"),
+          str(SCRATCH / "sar_detects_corr.txt"),
           f"{OCR_APPS}/sar/ocr/problem_size_scaling/Parameter0.txt"],
          scalar_re=r"SAR detects:\s*(\d+)", scalar_kind="int",
+         wrf_val_skip="cross-node __sync counter coordination + disjoint-region sibling writers to shared image blocks — guarantees outside WRF_VAL's DB-WRF contract (whole-DB lossy publish drops sibling updates)",
+         wrf_val_multinode_skip="closed S/M verdict: cross-node __sync counter coordination stalls the backprojection stage under lossy publish -> 124 at MN (sar_mn_fix.md, wrf_val_mn_verdicts.md)"),
+    # sar_huge: same pipeline as pss over the same staged pulse data, but the
+    # image grid comes from the huge variant's own in-tree Parameters.txt
+    # (Ix=Iy=4000; the ladder tops out at 2000).  The dataset dir's
+    # Parameters.txt is datagen provenance, not app-format params.
+    Case("sar_huge", "sar_huge",
+         [str(SAR_HUGE_DATA / "Data.bin"),
+          str(SAR_HUGE_DATA / "PlatformPosition.bin"),
+          str(SAR_HUGE_DATA / "PulseTransmissionTime.bin"),
+          str(SCRATCH / "sar_detects_huge_corr.txt"),
+          f"{OCR_APPS}/sar/ocr/huge/Parameters.txt"],
+         scalar_re=r"SAR detects:\s*(\d+)", scalar_kind="int",
+         # The 4000^2 backprojection measures ~55 s single-node on the
+         # fastest coherence arm (16-core rank); the budgets leave the
+         # slower write-through/purging arms and the reference runtimes
+         # room to finish so a slow-but-correct cell is not misread as a
+         # hang.
+         timeout=300,
+         multinode_timeout=600,
          wrf_val_skip="cross-node __sync counter coordination + disjoint-region sibling writers to shared image blocks — guarantees outside WRF_VAL's DB-WRF contract (whole-DB lossy publish drops sibling updates)",
          wrf_val_multinode_skip="closed S/M verdict: cross-node __sync counter coordination stalls the backprojection stage under lossy publish -> 124 at MN (sar_mn_fix.md, wrf_val_mn_verdicts.md)"),
     Case("sar_large",  "sar_large",  [],
@@ -771,6 +802,16 @@ CASES: list[Case] = [
          wrf_val_skip="cross-node __sync counter coordination + disjoint-region sibling writers to shared image blocks — guarantees outside WRF_VAL's DB-WRF contract (whole-DB lossy publish drops sibling updates)",
          wrf_val_multinode_skip="closed S/M verdict: cross-node __sync counter coordination stalls the backprojection stage under lossy publish -> 124 at MN (sar_mn_fix.md, wrf_val_mn_verdicts.md)"),
 ]
+
+# Runtime-input SAR cases need the staged huge dataset (see SAR_HUGE_DATA
+# above); without it they cannot produce a truthful verdict, so they are
+# removed from the matrix loudly rather than reported as failures.
+if not sar_huge_data_present():
+    _dropped = [c.name for c in CASES if c.name in ("sar_pss", "sar_huge")]
+    CASES = [c for c in CASES if c.name not in ("sar_pss", "sar_huge")]
+    print(f"[harness] SAR huge dataset not staged at {SAR_HUGE_DATA} -> "
+          f"dropped {', '.join(_dropped)} (staging steps: datasets/README.md)",
+          file=sys.stderr)
 
 
 # Statically-derived absolute answers, verified against deterministic agreed

@@ -1120,8 +1120,12 @@ set(SAR_SOURCES
     image_formation.c back_proj.c ccd.c fftw3.c rag_ocr.c
 )
 
+# DEBUG_SSCP (per-variant upstream Makefile default for every size but
+# problem_size_scaling) is left out for ALL sizes: it dumps the full
+# image/correlation planes to cwd-relative .bin files (hundreds of MB per
+# run) and routes shutdown through the dump EDT — debug-only output that has
+# no place in measured runs.  Define it manually when the dumps are needed.
 set(SAR_DEFINES
-    DEBUG_SSCP
     RAG_TG_ARCH_NULL_GUID_WORKAROUND
     RAG_NEW_BLK_SIZE=32
     TRACE
@@ -1172,12 +1176,19 @@ if(HAS_CRLIBM)
     # --- Runtime-input sizes (huge, problem_size_scaling) ---
     foreach(sar_size huge problem_size_scaling)
         if(EXISTS "${SAR_ROOT}/ocr/${sar_size}")
+            set(SAR_RT_DEFINES ${SAR_DEFINES})
+            if(sar_size STREQUAL "problem_size_scaling")
+                # This variant's own Makefile.x86 sets the blocking factor to
+                # 50 (the shared list carries the other variants' 32).
+                list(REMOVE_ITEM SAR_RT_DEFINES RAG_NEW_BLK_SIZE=32)
+                list(APPEND SAR_RT_DEFINES RAG_NEW_BLK_SIZE=50)
+            endif()
             add_benchmark_app(NAME sar_${sar_size}
                 DIR sar/ocr/${sar_size}
                 SRC_SUBDIR ../src
                 SOURCES ${SAR_SOURCES}
                 EXTRA_INCLUDES ${SAR_SRC_DIR} ${CRLIBM_DIR}
-                EXTRA_DEFINES ${SAR_DEFINES}
+                EXTRA_DEFINES ${SAR_RT_DEFINES}
                 EXTRA_LINK_LIBS m ocr_lib_crlibm
             )
         endif()

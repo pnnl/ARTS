@@ -1,5 +1,6 @@
 # Build and installation directories
 build/
+build*/
 install/
 CMakeFiles/
 CMakeCache.txt
@@ -9,11 +10,14 @@ __pycache__/
 # Documentation build artifacts
 docs/_build/
 
-# IDEs and editors
+# IDEs, editors, tool state
 .cache/
 .venv/
 .vscode/
 .claude/
+.pytest_cache/
+.superpowers/
+.remember/
 CLAUDE.md
 
 # Vendored dist-tarball cache (downloaded or pre-staged; pinned by SHA256 in
@@ -22,3 +26,21 @@ third_party/*.tar.bz2
 third_party/*.tar.gz
 third_party/*.tar.xz
 
+# SAR generated datasets (produced by sar_datagen at build time)
+third_party/ocr-apps/apps/sar/datasets/
+third_party/ocrPNNL/
+
+# Internal working material — one root per kind, never committed:
+#   research/    discussion docs, plans, specs, handoffs, surveys
+#   logs/        every run / campaign / mission log
+#   experiments/ figure-generation campaigns and their outputs
+#   scratch/     app-run byproducts + staged fixtures (harness chdirs here)
+#   notes/       reading material
+#   datasets/    large staged runtime datasets (README stays tracked)
+/research/
+/logs/
+/experiments/
+/scratch/
+/notes/
+/datasets/*
+!/datasets/README.md

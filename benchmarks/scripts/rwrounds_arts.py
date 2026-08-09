@@ -8,12 +8,12 @@ from rwmix_nodesweep2 import gen_cfgs
 
 RE_OUT = re.compile(r"RWROUNDS PDS=(\d+) MODE=(\d+) ROUNDS=(\d+) E_US=(\d+) BYTES=(\d+) ELAPSED_US=(\d+)")
 ts = time.strftime("%Y%m%d-%H%M%S")
-outdir = REPO/"benchmarks"/"scripts"/"logs"/f"rwrounds_arts_{ts}"
+outdir = REPO/"logs"/"micro"/f"rwrounds_arts_{ts}"
 outdir.mkdir(parents=True, exist_ok=True)
 track = outdir/"track.jsonl"
 cfgs = gen_cfgs(outdir)
 runner = Runner(mem_gb=0, timeout=240, logdir=outdir, target="cbgpu02",
-                build=REPO/"build_release_ocr_val_wb")
+                build=REPO/"build_release")
 done=0; total=15*3*3
 for nodes in range(2,17):
     for mode in (0,1,2):
