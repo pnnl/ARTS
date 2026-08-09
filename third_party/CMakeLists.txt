@@ -413,10 +413,18 @@ if(ARTS_TRANSPORT_OFI)
         HWLOC_DIR=${HWLOC_INSTALL_DIR}
         ${OFI_SRC_DIR}/configure
         --prefix=${OFI_PREFIX} --enable-static --disable-shared
+        # Provider allowlist.  With a STATIC libfabric.a every enabled
+        # provider's external libraries become link-time dependencies of every
+        # consuming binary, so providers auto-enabled by configure probing the
+        # build host (cxi, xpmem, psm, ...) break the final link on any
+        # cluster that ships their headers.  --enable-only inverts the
+        # default: nothing builds unless named here, which makes the build
+        # deterministic on every host.  verbs exposes RDM endpoints only as
+        # the verbs;ofi_rxm stack, so rxm must stay enabled or every
+        # InfiniBand host silently downgrades to tcp.
+        --enable-only --enable-tcp --enable-rxm
         --enable-verbs=${RDMA_CORE_INSTALL_DIR}
-        --disable-usnic --disable-efa --disable-psm2 --disable-psm3
-        --disable-opx --disable-cxi --disable-xpmem
-        --disable-rxm CC=${CMAKE_C_COMPILER}
+        CC=${CMAKE_C_COMPILER}
     BUILD_COMMAND make -j${CMAKE_BUILD_PARALLEL_LEVEL}
     INSTALL_COMMAND make install
     BUILD_BYPRODUCTS ${OFI_PREFIX}/lib/libfabric.a
