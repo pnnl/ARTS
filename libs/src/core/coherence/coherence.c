@@ -47,6 +47,7 @@
 #include "arts/coherence/coherence.h"
 #include "arts/coherence/handlers.h"
 #include "arts/coherence/directory.h"
+#include "arts/counter/object_counter.h"
 #include "arts/db.h"
 #include "arts/edt.h"
 #include "arts/gas/route_table.h"
@@ -60,6 +61,7 @@
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
 #include "arts/utils/shared.h"
+#include "arts/counter/Preamble.h"
 
 /* ================================================================== */
 /* ===== Cache lifecycle ============================================ */
@@ -197,6 +199,13 @@ void mark_edt_ready_by_guid(arts_guid_t edt_guid, unsigned int slot) {
           __atomic_store_n(&depv[slot].db_pin, (void *)db_h, __ATOMIC_RELEASE);
           db_h = NULL;
         }
+        /* The bytes half of a parked acquire's accounting: only now is the
+         * payload — and, for a datablock this rank had never seen, its size —
+         * in hand.  The winning CAS above makes this exactly-once per
+         * resolution; the acquire itself was already counted where the arm
+         * decided it. */
+        arts_object_record_db_bytes(edt->arts_id, cache->db_size);
+        arts_object_trace_db(edt->arts_id, cache->db_size, 1);
       }
     }
     arts_shared_release(&db_h); /* no-op when moved into db_pin above */
@@ -277,6 +286,8 @@ void *arts_db_acquire_local(struct arts_db_cache_s *cache) {
   if (buf == NULL) {
     return NULL; /* h is NULL — nothing installed, nothing held */
   }
+  INCREMENT_NUM_DB_ACQUIRE_LOCAL_HIT_BY(1);
+  arts_object_acquire(false);
   return buf->data;
 }
 
@@ -346,9 +357,13 @@ static bool ro_combine_launch_owned(struct arts_db_cache_s *cache) {
 static void ro_combine_pump(struct arts_db_cache_s *cache) {
   while (!arts_lf_stack_empty(&cache->ro_combine)) {
     if (arts_atomic_cswap(&cache->snapshot_req_in_flight, 0, 1) != 0) {
+      /* A reader that found a window already open: one request combining
+       * kept off the wire. */
+      INCREMENT_NUM_RO_COMBINE_JOINED_BY(1);
       return; /* someone owns the window; their terminal rechecks */
     }
     if (ro_combine_launch_owned(cache)) {
+      INCREMENT_NUM_RO_COMBINE_WINDOW_BY(1);
       return; /* window stays owned until the response terminal */
     }
     (void)arts_atomic_swap(&cache->snapshot_req_in_flight, 0);
@@ -424,6 +439,8 @@ arts_db_acquire_remote_ro(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
    * (case 1/2), or — only under transport reorder — case 3 pushes a
    * reorder-buffer node onto pending_snapshot.  A concurrent destroy is handled
    * by the caller's lookup-miss + OoO defer. */
+  INCREMENT_NUM_DB_ACQUIRE_REMOTE_BY(1);
+  arts_object_acquire(true);
 #ifdef ARTS_RO_COMBINING_LIVE
   if (arts_global_rank_count > 1) {
     struct arts_db_snapshot_waiter_s *w =

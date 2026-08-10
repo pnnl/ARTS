@@ -51,6 +51,7 @@
 #include "arts/coherence/coherence.h"
 #include "arts/coherence/handlers.h"
 #include "arts/counter/Preamble.h"
+#include "arts/counter/object_counter.h"
 #include "arts/edt.h"
 #include "arts/edt_context.h" /* current_edt + created-DB tracking */
 #include "arts/gas/guid.h"
@@ -249,8 +250,7 @@ __attribute__((constructor)) static void arts_db_register_cb_deleter(void) {
  * route-table registration.
  */
 static void db_create_in_place(arts_guid_t guid, void *addr, uint64_t len,
-                               uint64_t packet_size, arts_db_types_t db_type,
-                               uint64_t arts_id) {
+                               uint64_t packet_size, arts_db_types_t db_type) {
   (void)len;
   struct arts_db_s *db_res = (struct arts_db_s *)addr;
   /* lifecycle/deleter handled by the route_table cb (deleter-by-kind) on
@@ -300,9 +300,6 @@ static void db_create_in_place(arts_guid_t guid, void *addr, uint64_t len,
     void *shadow_copy = (void *)(((char *)addr) + packet_size);
     memcpy(shadow_copy, addr, sizeof(struct arts_db_s));
   }
-  // Record per-object DB metrics
-  arts_object_record_db(arts_id, packet_size, 0, 0);
-  arts_object_trace_db(arts_id, packet_size, 0);
   INCREMENT_NUM_DB_CREATE_BY(1);
   INCREMENT_BYTES_DB_CREATE_BY(len);
 }
@@ -347,9 +344,6 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
   } else {
     rank = hint->rank;
   }
-  /* DB hint has no profiling id field; arts_db_s.arts_id retained for log
-   * compatibility but no longer settable via hint. */
-  uint64_t arts_id = 0;
   bool no_acquire = (flags & ARTS_DB_PROP_NO_ACQUIRE) != 0;
   arts_guid_t guid = NULL_GUID;
 
@@ -361,7 +355,7 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
       void *ptr = arts_db_malloc(ARTS_DB_CXL, db_size);
       if (ptr) {
         guid = arts_cxl_make_guid(ptr);
-        db_create_in_place(guid, ptr, len, db_size, ARTS_DB_CXL, arts_id);
+        db_create_in_place(guid, ptr, len, db_size, ARTS_DB_CXL);
         /* No route table entry — GUID encodes CXL pointer directly */
         // FLUSH_FENCE_PRODUCER(ptr, db_size);
         FLUSH_FENCE_PRODUCER(ptr, sizeof(struct arts_db_s));
@@ -377,7 +371,7 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
         if (pre_guid != NULL_GUID) {
           /* Pre-reserved labeled GUID. */
           guid = pre_guid;
-          db_create_in_place(guid, ptr, len, db_size, db_type, arts_id);
+          db_create_in_place(guid, ptr, len, db_size, db_type);
           /* Register the creator's hold BEFORE the DB becomes visible, then
            * install — both install variants fire the OoO list internally on a
            * successful install (no separate fire_oo needed). */
@@ -441,7 +435,7 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
           }
         } else {
           guid = arts_guid_create_for_rank(arts_global_rank_id, ARTS_GUID_DB);
-          db_create_in_place(guid, ptr, len, db_size, db_type, arts_id);
+          db_create_in_place(guid, ptr, len, db_size, db_type);
           if (current_edt && !no_acquire &&
               !arts_db_creator_skip_hold(db_type)) {
             arts_db_auto_acquire((struct arts_db_s *)ptr);
@@ -498,9 +492,9 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
          * for both worlds.  NO_ACQUIRE: return NULL so caller cannot
          * accidentally write to the buffer (home is the idle owner). */
         *addr = no_acquire ? NULL : arts_db_user_ptr((struct arts_db_s *)ptr);
-        ARTS_DEBUG("arts_db_create: DB[Guid:%lu, Id:%lu, Type:%s, Size:%lu] "
+        ARTS_DEBUG("arts_db_create: DB[Guid:%lu, Type:%s, Size:%lu] "
                    "created locally",
-                   guid, arts_id, GET_DB_TYPE_NAME(db_type), len);
+                   guid, GET_DB_TYPE_NAME(db_type), len);
       }
     }
   } else {
@@ -618,9 +612,9 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
         /* Drop the adopted-DB pin (NULL on the install-success path). */
         arts_shared_release(&adopted_h);
       }
-      ARTS_DEBUG("arts_db_create: DB[Guid:%lu, Id:%lu, Type:%s, Size:%lu] "
+      ARTS_DEBUG("arts_db_create: DB[Guid:%lu, Type:%s, Size:%lu] "
                  "created remotely on rank %u via DB_CREATE_COHERENT",
-                 guid, arts_id, GET_DB_TYPE_NAME(db_type), len, rank);
+                 guid, GET_DB_TYPE_NAME(db_type), len, rank);
     } else {
       /* Non-coherent subtypes (ARTS_DB_PIN, ARTS_DB_GPU_PIN, ARTS_DB_GPU,
        * ARTS_DB_CXL) are pinned to the creator rank.  Creating one on a
@@ -769,9 +763,6 @@ static void acquire_one_dep(struct arts_edt_s *edt, arts_edt_dep_t *depv,
     INCREMENT_NUM_DB_ACQUIRE_READ_BY(1);
   } else if (access_mode == DB_MODE_RW) {
     INCREMENT_NUM_DB_ACQUIRE_WRITE_BY(1);
-    if (owner == arts_global_rank_id) {
-      INCREMENT_NUM_OWNER_UPDATE_PERFORMED_BY(1);
-    }
   }
 
   ARTS_INFO("Acquiring DB[Guid:%lu, GuidType:%u, AccessMode:%u, Owner:%d, "
@@ -852,7 +843,20 @@ static void acquire_one_dep(struct arts_edt_s *edt, arts_edt_dep_t *depv,
     depv[i].subtype = ARTS_DB;
     struct arts_ooo_args_db_acquire_s a = {
         .edt = edt, .db_guid = depv[i].guid, .slot = i};
+    /* Publish the acquiring task for the span of the decision: the arm that
+     * decides whether this rank can answer counts against it there, at the
+     * same points it counts the cluster-wide totals.  Restored rather than
+     * cleared, because a serve can nest inside another one on this thread. */
+    uint64_t prev_task = arts_object_task_enter(edt->arts_id);
     arts_handler_db_acquire(arts_db_of_cache(cache), &a);
+    arts_object_task_leave(prev_task);
+    /* A handler that answered from here left ptr set, so the payload size is
+     * known now.  One that parked is charged its bytes at the resume site,
+     * where a datablock this rank had never seen finally has a size. */
+    if (depv[i].ptr != NULL) {
+      arts_object_record_db_bytes(edt->arts_id, cache->db_size);
+      arts_object_trace_db(edt->arts_id, cache->db_size, 0);
+    }
     /* B1: a local hit set depv[i].ptr and took the EDT's buffer ref.  Pin the
      * descriptor by MOVING the still-alive cache-owning handle into db_pin
      * (released last in release_one_dep), so a concurrent destroy cannot free

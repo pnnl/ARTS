@@ -65,20 +65,22 @@ extern "C" {
   X(NUM_YIELD)                                                                 \
   /* Time: DB lifecycle */                                                     \
   X(TIME_DB_CREATE)                                                            \
-  X(TIME_DB_GET)                                                               \
-  X(TIME_DB_PUT)                                                               \
   /* Num: DB lifecycle */                                                      \
   X(NUM_DB_CREATE)                                                             \
-  X(NUM_DB_GET)                                                                \
-  X(NUM_DB_PUT)                                                                \
   X(NUM_DB_DESTROY)                                                            \
   X(NUM_DB_ACQUIRE_READ)                                                       \
   X(NUM_DB_ACQUIRE_WRITE)                                                      \
-  X(NUM_OWNER_UPDATE_SAVED)                                                    \
-  X(NUM_OWNER_UPDATE_PERFORMED)                                                \
+  /* Num: coherence — where an acquire was answered.  Their sum is the       \
+   * acquire population; the hit share is what aggregation buys, and is      \
+   * comparable across every arm because both are counted in the shared      \
+   * acquire helpers rather than in one arm's handler. */                    \
+  X(NUM_DB_ACQUIRE_LOCAL_HIT)                                                  \
+  X(NUM_DB_ACQUIRE_REMOTE)                                                     \
   /* Bytes: DB data */                                                         \
   X(BYTES_DB_CREATE)                                                           \
-  X(BYTES_DB_PUT)                                                              \
+  /* Bytes: coherence — payload actually shipped for a datablock, as opposed \
+   * to BYTES_REMOTE_SENT which mixes control traffic in. */                 \
+  X(BYTES_DB_PAYLOAD_SENT)                                                     \
   /* Bytes: memory */                                                          \
   X(BYTES_MEMORY_FOOTPRINT)                                                    \
   /* Bytes: network */                                                         \
@@ -111,17 +113,40 @@ extern "C" {
   X(NUM_STEAL_SUCCESS)                                                         \
   /* Time: scheduling */                                                       \
   X(TIME_YIELD)                                                                \
-  /* Num: epoch */                                                             \
-  X(NUM_EPOCH_CREATE)                                                          \
   /* Num: out-of-order */                                                      \
   X(NUM_OO_ENQUEUE)                                                            \
+  /* Num/Time: validation arm.  A reply with no payload (data_present 0) is  \
+   * one the version ledger saved; a size-only CTS (data_present 2) is the   \
+   * rendezvous negotiating a landing and is counted apart, since it makes   \
+   * a size-unknown first touch cost two requests rather than one.  A        \
+   * request that joins an open window is one combining kept off the wire.   \
+   * Inert unless the build compiles the VAL family in. */                   \
+  X(NUM_SNAPSHOT_REQUEST)                                                      \
+  X(NUM_SNAPSHOT_HEADER_ONLY)                                                  \
+  X(NUM_SNAPSHOT_SIZE_CTS)                                                     \
+  X(NUM_RO_COMBINE_WINDOW)                                                     \
+  X(NUM_RO_COMBINE_JOINED)                                                     \
+  /* Num/Time: invalidation arm — one round per RW release, its multicast    \
+   * and the acks it blocks on.  The time is the release-side cost the       \
+   * regime map attributes the crossover to. */                              \
+  X(NUM_INVALIDATE_ROUND)                                                      \
+  X(NUM_INVALIDATE_SENT)                                                       \
+  X(NUM_INVALIDATE_ACK)                                                        \
+  X(TIME_INVALIDATE_ROUND)                                                     \
+  /* Num: migrating write permission — a grant that moved versus one a       \
+   * later local writer reused without touching the wire (the sticky grant). \
+   * Live in the arms whose ownership migrates. */                           \
+  X(NUM_GRANT_MIGRATE)                                                         \
+  X(NUM_GRANT_LOCAL_REUSE)                                                     \
+  /* Num: exclusion arm — turns that could not be granted on arrival and had \
+   * to queue at the home: the reader/writer serialization its philosophy    \
+   * pays for. */                                                            \
+  X(NUM_EXCL_QUEUE_WAIT)                                                       \
   /* Object counters — per arts_id tracking */                                 \
   X(OBJ_NUM_EDT)                                                               \
   X(OBJ_TIME_EDT_EXEC)                                                         \
-  X(OBJ_TIME_EDT_STALL)                                                        \
   X(OBJ_NUM_DB)                                                                \
-  X(OBJ_BYTES_DB_LOCAL)                                                        \
-  X(OBJ_BYTES_DB_REMOTE)                                                       \
+  X(OBJ_BYTES_DB)                                                              \
   X(OBJ_NUM_DB_CACHE_MISS)                                                     \
   X(OBJ_TRACE_EDT)                                                             \
   X(OBJ_TRACE_DB)

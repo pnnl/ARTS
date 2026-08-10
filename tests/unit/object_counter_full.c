@@ -5,7 +5,7 @@
 
 /// @file object_counter_full.c
 /// @brief Exercises the per-arts_id object-counter path end-to-end:
-///        arts_object_record_edt / arts_object_record_db ->
+///        arts_object_record_edt / arts_object_acquire ->
 ///        find_edt_slot/find_db_slot (FNV linear probe) -> save/reduce_tables
 ///        -> arts_object_write_node (object_n{node}.json).
 ///
@@ -51,13 +51,20 @@ void recorder_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   /* EDT object: count++, exec_ns += 7, stall_ns += 3 for this id. */
   arts_object_record_edt(id, 7, 3);
-  /* DB object keyed by the same id space (offset to keep db ids distinct from
-     0 too): count++, bytes_local += 11, bytes_remote += 0, misses += 1. */
-  arts_object_record_db(id, 11, 0, 1);
+  /* DB object, in the two halves the runtime records separately: the acquire
+     is counted against whichever task is published at the time, and the bytes
+     are added afterwards, when a payload's size is known. */
+  uint64_t previous = arts_object_task_enter(id);
+  arts_object_acquire(true);
+  arts_object_task_leave(previous);
+  arts_object_record_db_bytes(id, 11);
 
-  /* Sentinel id 0 must be silently dropped by both record functions. */
+  /* Sentinel id 0 must be silently dropped by every one of them. */
   arts_object_record_edt(0, 999, 999);
-  arts_object_record_db(0, 999, 999, 999);
+  previous = arts_object_task_enter(0);
+  arts_object_acquire(true);
+  arts_object_task_leave(previous);
+  arts_object_record_db_bytes(0, 999);
 }
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,

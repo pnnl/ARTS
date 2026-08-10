@@ -38,6 +38,7 @@
 ******************************************************************************/
 #include "arts/counter/counter.h"
 
+#include <errno.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -402,16 +403,27 @@ static unsigned int arts_counters_at_level(unsigned int level) {
   return count;
 }
 
-// Helper: open output file, creating directory if needed
+/* Open one output file, creating the folder if it is absent.
+ *
+ * Only the final component is created: a caller naming a path whose parents do
+ * not exist gets a diagnosed failure, not a silently discarded measurement —
+ * counters that vanish are worse than counters that were never asked for,
+ * because the run still reports success. */
 static FILE *arts_open_counter_file(const char *output_folder,
                                     const char *filename) {
   struct stat st = {0};
-  if (stat(output_folder, &st) == -1) {
-    mkdir(output_folder, 0755);
+  if (stat(output_folder, &st) == -1 && mkdir(output_folder, 0755) == -1) {
+    ARTS_WARN("counters: cannot create %s: %s — no counters written",
+              output_folder, strerror(errno));
+    return NULL;
   }
   char filepath[1024];
   (void)snprintf(filepath, sizeof(filepath), "%s/%s", output_folder, filename);
-  return fopen(filepath, "w");
+  FILE *fp = fopen(filepath, "w");
+  if (!fp) {
+    ARTS_WARN("counters: cannot write %s: %s", filepath, strerror(errno));
+  }
+  return fp;
 }
 
 // Helper: finalize and close JSON file

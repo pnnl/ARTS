@@ -41,6 +41,7 @@
 #include "arts/transport/net.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
+#include "arts/counter/Preamble.h"
 
 /* ===== Home OWNERSHIP-REQUEST FIFO (Vyukov MPSC) =======================
  *
@@ -60,6 +61,8 @@ void arts_home_grantreq_queue_init(struct arts_home_grantreq_queue_s *q) {
 void arts_home_grantreq_queue_push(struct arts_home_grantreq_queue_s *q,
                                   unsigned int rank,
                                   const struct arts_rdzv_landing_s *rdzv) {
+  /* Reached only when the turn could not be granted on arrival. */
+  INCREMENT_NUM_EXCL_QUEUE_WAIT_BY(1);
   struct arts_home_grantreq_node_s *n =
       (struct arts_home_grantreq_node_s *)malloc(sizeof(*n));
   n->rank = rank;

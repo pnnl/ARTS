@@ -63,6 +63,7 @@
 #include "arts/transport/net.h"
 #include "arts/transport/protocol.h"
 #include "arts/utils/atomics.h"
+#include "arts/counter/Preamble.h"
 
 /* ===== waiter pool (index-addressed chain nodes) ========================
  * Chain nodes live in per-DB chunked storage addressed by an 18-bit index
@@ -348,6 +349,10 @@ void inv_home_round_try_open(struct arts_db_s *db) {
     /* Claim held.  Take the whole queued batch (Treiber head XCHG). */
     arts_lf_link_t *chain = arts_lf_stack_drain(&db->pub_queue);
     struct arts_db_inv_pub_s *entries = (struct arts_db_inv_pub_s *)chain;
+    /* One round per claim, counted where the claim is won so an empty round
+     * (a claim that raced past consumed work) is counted too — it costs the
+     * same directory transition. */
+    INCREMENT_NUM_INVALIDATE_ROUND_BY(1);
     if (entries == NULL) {
       /* Empty round: the claim raced past work another opener consumed. */
       inv_home_round_close(db, NULL);
@@ -724,6 +729,7 @@ void arts_handler_db_inv_invalidate(struct arts_db_s *db) {
 void arts_handler_db_inv_invalidate_ack(struct arts_db_s *db,
                                         unsigned int sharer_rank) {
   (void)sharer_rank;
+  INCREMENT_NUM_INVALIDATE_ACK_BY(1);
   uint32_t act;
   uint64_t cur, next;
   do {
@@ -760,8 +766,11 @@ void arts_send_db_inv_cts(unsigned int requester_rank, arts_guid_t db_guid,
 }
 
 
+/* One message per sharer in the roster snapshot: the multicast whose width is
+ * what the round costs. */
 void arts_send_db_inv_invalidate(unsigned int sharer_rank,
                                  arts_guid_t db_guid) {
+  INCREMENT_NUM_INVALIDATE_SENT_BY(1);
   if (sharer_rank == arts_global_rank_id) {
     /* Local hit: run the retirement inline.  Reachable under OWNER, where the
      * home holds no canonical copy and is therefore an ordinary sharer — its

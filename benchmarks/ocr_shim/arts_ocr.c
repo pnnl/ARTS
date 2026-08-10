@@ -716,6 +716,7 @@ static void collective_launch_generation(CollectiveMetadata *meta, u32 r,
 
   /* --- Up reducer: own datum + each child up-edge. --- */
   arts_edt_hint_t upHint = ARTS_EDT_HINT_DEFAULTS;
+  upHint.edt_id = (uint64_t)(uintptr_t)collective_up_edt;
   arts_guid_t upEdt = arts_edt_create(collective_up_edt, CP_COUNT, pv,
                                       1u + numChildren, &upHint);
 
@@ -744,6 +745,7 @@ static void collective_launch_generation(CollectiveMetadata *meta, u32 r,
 
   /* --- Down forwarder: waits on r's down-edge, fans out + delivers. --- */
   arts_edt_hint_t downHint = ARTS_EDT_HINT_DEFAULTS;
+  downHint.edt_id = (uint64_t)(uintptr_t)collective_down_edt;
   arts_guid_t downEdt =
       arts_edt_create(collective_down_edt, CP_COUNT, pv, 1u, &downHint);
   arts_guid_t myDown = collective_edge_guid(coll, nrank, gen, r, 1);
@@ -1082,7 +1084,13 @@ u8 ocrEdtCreate(ocrGuid_t *guid, ocrGuid_t templateGuid, u32 paramc,
    * arts_edt_set_result): the runtime satisfies it after the EDT's
    * data-block releases.  Finish EDTs get their outputEvent chained to the
    * finish event below instead. */
-  arts_edt_hint_t edtHint = {.rank = edtRank};
+  /* The template's function pointer is this EDT's kind, and the profiling id
+   * the runtime accumulates per-kind statistics under.  Non-PIE loading (the
+   * same property the template GUID encoding already relies on) makes the
+   * address identical on every rank, so one kind's counters aggregate across
+   * ranks instead of splitting per rank. */
+  arts_edt_hint_t edtHint = {.rank = edtRank,
+                             .edt_id = (uint64_t)(uintptr_t)templ->funcPtr};
   if (isFinishEdt) {
     edtHint.finish_event = fe;
   } else {
@@ -2181,7 +2189,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     currentOffset += len;
   }
 
-  arts_edt_hint_t h = {.rank = arts_global_rank_id};
+  arts_edt_hint_t h = {.rank = arts_global_rank_id,
+                       .edt_id = (uint64_t)(uintptr_t)mainEdtTrampoline};
   arts_guid_t mainEdtGuid = arts_edt_create(mainEdtTrampoline, 0, NULL, 1, &h);
   arts_add_dependence(argsDbGuid, mainEdtGuid, 0, ARTS_MODE_RO);
 }

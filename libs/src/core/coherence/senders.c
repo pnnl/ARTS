@@ -36,6 +36,7 @@
 #include "arts/transport/net.h" /* outbound send helpers */
 #include "arts/utils/malloc.h"
 #include "arts/utils/shared.h" /* arts_shared_get / arts_shared_release */
+#include "arts/counter/Preamble.h"
 
 /* ===== Sender helpers ============================================== */
 
@@ -158,8 +159,10 @@ void arts_send_db_publish_ack(unsigned int releaser_rank, arts_guid_t db_guid,
 /* The versioned-snapshot read path: RCU and WRF_RCU only.  MSI's readers hold
  * durable copies and fetch with MSI_REQUEST instead. */
 #if !defined(ARTS_PROTOCOL_EXCL) && !defined(ARTS_PROTOCOL_INV)
+/* One request on the wire per parked reader (or per combining window). */
 void arts_send_db_snapshot_request(struct arts_db_cache_s *cache,
                                    arts_guid_t edt_guid, uint32_t slot) {
+  INCREMENT_NUM_SNAPSHOT_REQUEST_BY(1);
   arts_guid_t db_guid = cache->db_guid;
   unsigned int home_rank = arts_guid_get_rank(db_guid);
   /* Advertise a fresh snapshot landing when the size is known; a size-unknown
@@ -246,6 +249,15 @@ void arts_send_db_snapshot_response(unsigned int requester_rank,
       arts_db_buf_release(&src_h);
     }
     return;
+  }
+  if (kind == 0) {
+    /* The requester already holds this version: the ledger turned what would
+     * have been a payload into a header. */
+    INCREMENT_NUM_SNAPSHOT_HEADER_ONLY_BY(1);
+  } else if (kind == 2) {
+    /* Size-only CTS — the requester asked without a landing and now has to
+     * ask again.  Not a saving: the second leg of one fetch. */
+    INCREMENT_NUM_SNAPSHOT_SIZE_CTS_BY(1);
   }
   if (kind == 1) {
     /* One-sided serve: PUT straight from the live buffer into the

@@ -12,6 +12,7 @@
  * directory lifecycles, the senders — is in msi/directory.c, and write
  * ownership is the shared migrating grant.
  */
+#include "arts/counter/object_counter.h"
 #include "arts/coherence/inv/types.h"
 
 #include <stdatomic.h>
@@ -29,6 +30,7 @@
 #include "arts/system/identity.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
+#include "arts/counter/Preamble.h"
 
 /* ===== acquire ==========================================================
  * The two planes are answered independently, because they are independent:
@@ -112,6 +114,11 @@ void arts_handler_db_acquire(void *item, void *args) {
       atomic_load_explicit(&cache->cache_state, memory_order_acquire);
   if (MSI_CACHE_RO(peek) == MSI_RO_VALID ||
       (int)arts_atomic_read(&cache->writer_count) > 0) {
+    /* A durable copy answers with no message and no CAS — still an acquire
+     * served locally, so it belongs in the same census the other arms feed
+     * through arts_db_acquire_local. */
+    INCREMENT_NUM_DB_ACQUIRE_LOCAL_HIT_BY(1);
+    arts_object_acquire(false);
     mark_edt_ready_by_guid(edt->guid, slot);
     return;
   }
@@ -138,13 +145,22 @@ void arts_handler_db_acquire(void *item, void *args) {
 
   switch (act) {
   case MSI_CACHE_ACT_SELF_SERVE:
+    /* The copy turned valid while we were deciding — served from here. */
+    INCREMENT_NUM_DB_ACQUIRE_LOCAL_HIT_BY(1);
+    arts_object_acquire(false);
     inv_waiter_free(cache, idx);
     mark_edt_ready_by_guid(edt->guid, slot);
     break;
   case MSI_CACHE_ACT_SEND_RO:
+    INCREMENT_NUM_DB_ACQUIRE_REMOTE_BY(1);
+    arts_object_acquire(true);
     arts_send_db_inv_request(cache, DB_MODE_RO);
     break;
   default: /* PARK: the fetch's committer will serve us */
+    /* Parked behind an open fetch: still an acquire this rank could not
+     * answer, so it counts with the one that issued the fetch. */
+    INCREMENT_NUM_DB_ACQUIRE_REMOTE_BY(1);
+    arts_object_acquire(true);
     break;
   }
 }
@@ -187,8 +203,10 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
   /* A home owner's buffer IS the home buffer, so no bytes move — but the round
    * still runs: it is what retires the remote copies. */
   if (buf != NULL) {
+    TIME_INVALIDATE_ROUND_START();
     arts_db_publish_sync(cache, new_version, is_home ? NULL : buf->data,
                          is_home ? 0u : cache->db_size);
+    TIME_INVALIDATE_ROUND_STOP();
   }
   if (buf != NULL) {
     arts_db_buf_release(&buf_h);

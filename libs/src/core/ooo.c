@@ -54,6 +54,7 @@
 #include "arts/utils/lockfree_lifo.h"
 #include "arts/utils/malloc.h"
 #include "arts/utils/shared.h"
+#include "arts/counter/Preamble.h"
 
 /* ===========================================================================
  * OoO engine — unified dispatch_or_defer.
@@ -222,6 +223,7 @@ void arts_ooo_dispatch_or_defer(struct arts_route_item_s *slot,
    * under allocator address reuse — a push only links to "whatever is on top
    * now" and never caches a head->next for a CAS.  Do NOT add a single-node
    * pop on this stack. */
+  INCREMENT_NUM_OO_ENQUEUE_BY(1);
   arts_lf_stack_push(&slot->ooo_list, &payload->link);
 
   /* TOCTOU rescue: an installer may have published value between our initial
@@ -252,6 +254,7 @@ void arts_ooo_push_guid(arts_guid_t guid, ooo_kind_t kind, const void *args,
   arts_route_table_reserve_or_lookup(guid, &slot);
   struct arts_ooo_payload_s *payload =
       arts_ooo_payload_alloc(kind, args, args_size);
+  INCREMENT_NUM_OO_ENQUEUE_BY(1);
   arts_lf_stack_push(&slot->ooo_list, &payload->link);
 }
 

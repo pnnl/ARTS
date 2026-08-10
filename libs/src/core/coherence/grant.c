@@ -32,6 +32,7 @@
 #include <string.h>
 
 #include "arts/coherence/buffer.h" /* arts_db_buf_acquire (invalidate xfer) */
+#include "arts/counter/object_counter.h"
 #include "arts/coherence/coherence.h"
 #include "arts/coherence/handlers.h"
 #include "arts/coherence/directory.h" /* arts_home_grantreq_queue_push */
@@ -45,6 +46,7 @@
 #include "arts/transport/net.h"   /* arts_transport_send_async */
 #include "arts/transport/protocol.h" /* arts_fill_packet_header, MSG_* */
 #include "arts/utils/malloc.h" /* arts_malloc / arts_free (transfer ship) */
+#include "arts/counter/Preamble.h"
 
 /* ===== Case 2/6: RW local fast path ================================
  * Shared by the HOME and OWNER arts_handler_db_acquire bodies
@@ -70,6 +72,9 @@ bool arts_db_acquire_rw_local_fast(struct arts_db_cache_s *cache,
     if (arts_atomic_cswap(&cache->writer_count, wc, wc + 1) == wc) {
       /* writer_count bumped.  acquire_local NULL is fine (sentinel /
        * version-0); release_rw will decrement the matching bump. */
+      /* A write turn taken on a grant this rank already held: the round trip
+       * the sticky grant removed. */
+      INCREMENT_NUM_GRANT_LOCAL_REUSE_BY(1);
       dep->ptr = arts_db_acquire_local(cache);
       return true;
     }
@@ -95,11 +100,15 @@ arts_db_acquire_remote_rw(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
    * FIFO order and wakes each popped waiter (drain_pending_rw_after_grant on
    * the grant path); the refcount-0 destructor frees any waiter still parked at
    * destroy. */
+  INCREMENT_NUM_DB_ACQUIRE_REMOTE_BY(1);
+  arts_object_acquire(true);
   arts_pending_rw_queue_push(&cache->pending_rw, w);
 
   /* Kick OWNERSHIP_REQUEST if no one else has — GRANT is what eventually
-   * triggers our drain in FIFO order. */
+   * triggers our drain in FIFO order.  One request per round, so this counts
+   * grants that had to move rather than waiters. */
   if (arts_atomic_cswap(&cache->grant_req_in_flight, 0, 1) == 0) {
+    INCREMENT_NUM_GRANT_MIGRATE_BY(1);
     arts_send_db_grant_request(cache);
   }
   return ARTS_DB_ACQUIRE_PARK;

@@ -18,6 +18,7 @@
  * a later ownership generation.  Nothing queues and nothing sleeps, which is
  * what keeps a reader from ever waiting behind a writer.
  */
+#include "arts/counter/object_counter.h"
 #include "arts/coherence/inv/types.h"
 
 #include <stdatomic.h>
@@ -38,6 +39,7 @@
 #include "arts/transport/net.h"
 #include "arts/transport/protocol.h"
 #include "arts/utils/malloc.h"
+#include "arts/counter/Preamble.h"
 
 /* ===== acquire ==========================================================
  * The two planes are answered independently, because they are independent:
@@ -93,6 +95,11 @@ void arts_handler_db_acquire(void *item, void *args) {
   if (MSI_CACHE_RO(peek) == MSI_RO_VALID ||
       ((int)arts_atomic_read(&cache->writer_count) > 0 &&
        arts_atomic_read(&cache->grant_unconfirmed) == 0)) {
+    /* A durable copy answers with no message and no CAS — still an
+     * acquire served locally, so it belongs in the same census the
+     * other arms feed through arts_db_acquire_local. */
+    INCREMENT_NUM_DB_ACQUIRE_LOCAL_HIT_BY(1);
+    arts_object_acquire(false);
     mark_edt_ready_by_guid(edt->guid, slot);
     return;
   }
@@ -119,13 +126,22 @@ void arts_handler_db_acquire(void *item, void *args) {
 
   switch (act) {
   case MSI_CACHE_ACT_SELF_SERVE:
+    /* The copy turned valid while we were deciding — served from here. */
+    INCREMENT_NUM_DB_ACQUIRE_LOCAL_HIT_BY(1);
+    arts_object_acquire(false);
     inv_waiter_free(cache, idx);
     mark_edt_ready_by_guid(edt->guid, slot);
     break;
   case MSI_CACHE_ACT_SEND_RO:
+    INCREMENT_NUM_DB_ACQUIRE_REMOTE_BY(1);
+    arts_object_acquire(true);
     arts_send_db_inv_request(cache, DB_MODE_RO);
     break;
   default: /* PARK: the fetch's committer will serve us */
+    /* Parked behind an open fetch: still an acquire this rank could not
+     * answer, so it counts with the one that issued the fetch. */
+    INCREMENT_NUM_DB_ACQUIRE_REMOTE_BY(1);
+    arts_object_acquire(true);
     break;
   }
 }
@@ -155,7 +171,9 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
   }
   /* Control-only publish: ask the home for this release's invalidation round
    * and block until every ack is in.  No bytes move. */
+  TIME_INVALIDATE_ROUND_START();
   arts_db_publish_sync(cache, new_version, /*data=*/NULL, /*data_size=*/0);
+  TIME_INVALIDATE_ROUND_STOP();
 
   int rest = (int)arts_atomic_sub(&cache->writer_count, 1); /* post value */
   if (rest == 0 && cache->incoming_new_owner != ARTS_NO_PENDING_OWNER) {

@@ -55,10 +55,9 @@ extern "C" {
 
 // Composite enable flags (auto-derived from individual Preamble ENABLE_* flags)
 #define ARTS_OBJECT_EDT_TABLE_ENABLED                                          \
-  (ENABLE_OBJ_NUM_EDT || ENABLE_OBJ_TIME_EDT_EXEC || ENABLE_OBJ_TIME_EDT_STALL)
+  (ENABLE_OBJ_NUM_EDT || ENABLE_OBJ_TIME_EDT_EXEC)
 #define ARTS_OBJECT_DB_TABLE_ENABLED                                           \
-  (ENABLE_OBJ_NUM_DB || ENABLE_OBJ_BYTES_DB_LOCAL ||                           \
-   ENABLE_OBJ_BYTES_DB_REMOTE || ENABLE_OBJ_NUM_DB_CACHE_MISS)
+  (ENABLE_OBJ_NUM_DB || ENABLE_OBJ_BYTES_DB || ENABLE_OBJ_NUM_DB_CACHE_MISS)
 #define ARTS_OBJECT_EDT_TRACE_ENABLED ENABLE_OBJ_TRACE_EDT
 #define ARTS_OBJECT_DB_TRACE_ENABLED ENABLE_OBJ_TRACE_DB
 #define ARTS_OBJECT_ANY_ENABLED                                                \
@@ -78,8 +77,7 @@ typedef struct {
 typedef struct {
   uint64_t arts_id;
   uint64_t count;
-  uint64_t bytes_local;
-  uint64_t bytes_remote;
+  uint64_t bytes;
   uint64_t cache_misses;
   bool valid;
 } arts_object_db_entry_t;
@@ -125,8 +123,19 @@ extern ARTS_THREAD_LOCAL arts_array_list_t *arts_object_tls_db_traces;
 // Recording functions (runtime hot path)
 void arts_object_record_edt(uint64_t arts_id, uint64_t exec_ns,
                             uint64_t stall_ns);
-void arts_object_record_db(uint64_t arts_id, uint64_t bytes_local,
-                           uint64_t bytes_remote, uint64_t cache_misses);
+/* One task's datablock accounting, split by where each half is knowable.
+ *
+ * Whether an acquire could be answered here is decided inside the coherence
+ * arm, which does not carry the acquiring task; the driver of the acquire
+ * publishes that identity for the duration of the decision, and the arm counts
+ * against it at the same points it counts the cluster-wide totals — so the two
+ * cannot disagree.  How many bytes arrived is only knowable once they have,
+ * which for a datablock this rank has never seen is after the fetch returns;
+ * that half is recorded at the resolution and adds no count. */
+uint64_t arts_object_task_enter(uint64_t arts_id);
+void arts_object_task_leave(uint64_t previous);
+void arts_object_acquire(bool remote);
+void arts_object_record_db_bytes(uint64_t arts_id, uint64_t bytes);
 void arts_object_trace_edt(uint64_t arts_id, uint64_t exec_ns,
                            uint64_t stall_ns);
 void arts_object_trace_db(uint64_t arts_id, uint64_t bytes_accessed,

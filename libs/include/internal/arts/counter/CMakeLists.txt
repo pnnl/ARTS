@@ -170,6 +170,11 @@ extern \"C\" {
 
 #include <stdbool.h>
 
+/* The generated macros dereference arts_thread_local_counters, so this header
+ * carries its own declaration rather than relying on the including file to
+ * have pulled counter.h in first. */
+#include \"arts/counter/counter.h\"
+
 /* ============================================================================
 * Enable/Disable Flags
 * ============================================================================ */

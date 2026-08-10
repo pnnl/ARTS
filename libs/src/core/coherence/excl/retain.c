@@ -24,6 +24,7 @@
 /* lock/types.h must precede all other coherence headers: it defines
  * arts_db_cache_s, arts_db_s, the CACHE_ and LOCK_ macros, the OWNER arbiter
  * prototypes, and arts_db_excl_waiter_s for the RWLOCK build. */
+#include "arts/counter/object_counter.h"
 #include "arts/coherence/excl/types.h"
 
 #include <stdatomic.h>
@@ -51,6 +52,7 @@
 #include "arts/transport/protocol.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
+#include "arts/counter/Preamble.h"
 
 /* ===== RO-serve node (reader rank the owner must serve in the RO phase) =
  * The owner's ro_serve is an arts_lf_stack_t (Treiber); each node carries one
@@ -758,15 +760,25 @@ void arts_handler_db_acquire(void *item, void *args) {
 
   switch (act) {
   case CACHE_ACT_SEND_RW:
+    INCREMENT_NUM_DB_ACQUIRE_REMOTE_BY(1);
+    arts_object_acquire(true);
     arts_send_db_excl_request(cache, DB_MODE_RW);
     break;
   case CACHE_ACT_SEND_RO:
+    INCREMENT_NUM_DB_ACQUIRE_REMOTE_BY(1);
+    arts_object_acquire(true);
     arts_send_db_excl_request(cache, DB_MODE_RO);
     break;
   case CACHE_ACT_DRAIN_RW:
+    /* The permission was already held here, so the waiter is served without
+     * asking anyone — the retained grant's whole point. */
+    INCREMENT_NUM_DB_ACQUIRE_LOCAL_HIT_BY(1);
+    arts_object_acquire(false);
     lock_drain_pending(&cache->rw_pending);
     break;
   case CACHE_ACT_DRAIN_RO:
+    INCREMENT_NUM_DB_ACQUIRE_LOCAL_HIT_BY(1);
+    arts_object_acquire(false);
     lock_drain_pending(&cache->ro_pending);
     break;
   default: /* NONE: parked; a DELIVER / another acquire's drain serves us. */

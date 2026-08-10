@@ -739,6 +739,10 @@ void arts_net_put_payload(int rank, uint64_t raddr, uint64_t rkey,
                "(len=%llu txid=%llx)",
                (unsigned long long)len, (unsigned long long)txid);
   }
+  /* Every datablock payload leaves through this one call, so it is where the
+   * payload half of the traffic can be told apart from the control half that
+   * BYTES_REMOTE_SENT lumps together with it. */
+  INCREMENT_BYTES_DB_PAYLOAD_SENT_BY(len);
   /* Teardown has begun: drop the PUT but still run the local-done hook so the
    * source buffer's completion-gated release is not leaked (mirrors
    * arts_net_send_core's quiescing contract). */

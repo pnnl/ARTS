@@ -38,6 +38,7 @@
 ******************************************************************************/
 #include "arts/counter/object_counter.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -46,6 +47,7 @@
 #include "arts.h"
 #include "arts/counter/json.h"
 #include "arts/runtime_state.h"
+#include "arts/system/print.h"
 #include "arts/utils/malloc.h"
 
 // ============================================================================
@@ -161,8 +163,52 @@ void arts_object_record_edt(uint64_t arts_id, uint64_t exec_ns,
 #endif
 }
 
-void arts_object_record_db(uint64_t arts_id, uint64_t bytes_local,
-                           uint64_t bytes_remote, uint64_t cache_misses) {
+#if ARTS_OBJECT_DB_TABLE_ENABLED
+/* The task whose acquire the coherence arm is currently deciding.  Scoped to
+ * one synchronous decision and saved/restored, so a serve nested inside
+ * another one on this thread cannot be billed to the wrong task. */
+static ARTS_THREAD_LOCAL uint64_t arts_object_tls_task;
+#endif
+
+uint64_t arts_object_task_enter(uint64_t arts_id) {
+#if ARTS_OBJECT_DB_TABLE_ENABLED
+  uint64_t previous = arts_object_tls_task;
+  arts_object_tls_task = arts_id;
+  return previous;
+#else
+  (void)arts_id;
+  return 0;
+#endif
+}
+
+void arts_object_task_leave(uint64_t previous) {
+#if ARTS_OBJECT_DB_TABLE_ENABLED
+  arts_object_tls_task = previous;
+#else
+  (void)previous;
+#endif
+}
+
+void arts_object_acquire(bool remote) {
+#if ARTS_OBJECT_DB_TABLE_ENABLED
+  if (arts_object_tls_task == 0) {
+    return;
+  }
+
+  arts_object_db_entry_t *slot = arts_object_find_db_slot(
+      arts_object_tls_table.db_table, arts_object_tls_task,
+      &arts_object_tls_table.db_collisions);
+
+  if (slot) {
+    slot->count++;
+    slot->cache_misses += remote ? 1u : 0u;
+  }
+#else
+  (void)remote;
+#endif
+}
+
+void arts_object_record_db_bytes(uint64_t arts_id, uint64_t bytes) {
 #if ARTS_OBJECT_DB_TABLE_ENABLED
   if (arts_id == 0) {
     return;
@@ -173,16 +219,11 @@ void arts_object_record_db(uint64_t arts_id, uint64_t bytes_local,
                                &arts_object_tls_table.db_collisions);
 
   if (slot) {
-    slot->count++;
-    slot->bytes_local += bytes_local;
-    slot->bytes_remote += bytes_remote;
-    slot->cache_misses += cache_misses;
+    slot->bytes += bytes;
   }
 #else
   (void)arts_id;
-  (void)bytes_local;
-  (void)bytes_remote;
-  (void)cache_misses;
+  (void)bytes;
 #endif
 }
 
@@ -275,8 +316,7 @@ void arts_object_reduce_tables(arts_object_table_t *dest,
 
     if (slot) {
       slot->count += src->db_table[i].count;
-      slot->bytes_local += src->db_table[i].bytes_local;
-      slot->bytes_remote += src->db_table[i].bytes_remote;
+      slot->bytes += src->db_table[i].bytes;
       slot->cache_misses += src->db_table[i].cache_misses;
     }
   }
@@ -385,16 +425,21 @@ void arts_object_write_node(const char *output_folder, unsigned int node_id,
   }
 #endif
 
-  // Open output file
+  /* Only the final path component is created; a folder whose parents are
+   * absent is diagnosed rather than swallowed, since the alternative is a run
+   * that measured nothing and still reported success. */
   struct stat st = {0};
-  if (stat(output_folder, &st) == -1) {
-    mkdir(output_folder, 0755);
+  if (stat(output_folder, &st) == -1 && mkdir(output_folder, 0755) == -1) {
+    ARTS_WARN("counters: cannot create %s: %s — no per-object tables written",
+              output_folder, strerror(errno));
+    return;
   }
   char filepath[1024];
   (void)snprintf(filepath, sizeof(filepath), "%s/object_n%u.json",
                  output_folder, node_id);
   FILE *fp = fopen(filepath, "w");
   if (!fp) {
+    ARTS_WARN("counters: cannot write %s: %s", filepath, strerror(errno));
     return;
   }
 
@@ -443,10 +488,7 @@ void arts_object_write_node(const char *output_folder, unsigned int node_id,
     arts_json_writer_write_u_int64(&writer, "arts_id",
                                    merged.db_table[i].arts_id);
     arts_json_writer_write_u_int64(&writer, "count", merged.db_table[i].count);
-    arts_json_writer_write_u_int64(&writer, "bytes_local",
-                                   merged.db_table[i].bytes_local);
-    arts_json_writer_write_u_int64(&writer, "bytes_remote",
-                                   merged.db_table[i].bytes_remote);
+    arts_json_writer_write_u_int64(&writer, "bytes", merged.db_table[i].bytes);
     arts_json_writer_write_u_int64(&writer, "cache_misses",
                                    merged.db_table[i].cache_misses);
     arts_json_writer_end_object(&writer);
