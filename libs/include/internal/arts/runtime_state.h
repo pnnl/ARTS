@@ -150,7 +150,11 @@ struct arts_runtime_private_s {
   enum arts_thread_role role;
   arts_guid_t current_edt_guid;
   int edt_free;
-  unsigned short drand_buf[3];
+  /* This thread's pseudo-random stream: a private counter, and a key that
+     makes the stream itself different from every other thread's rather than
+     the same sequence started at a different point. */
+  uint64_t rng_counter;
+  uint64_t rng_key;
 };
 
 extern struct arts_runtime_shared_s arts_node_info;

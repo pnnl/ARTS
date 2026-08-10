@@ -38,6 +38,7 @@
 ******************************************************************************/
 #include "arts/runtime_state.h"
 #include "arts/utils/malloc.h"
+#include "arts/utils/random.h"
 
 #include <assert.h>
 #include <stdint.h>
@@ -628,9 +629,7 @@ void arts_runtime_private_init(struct thread_mask_s *thread,
     while (arts_node_info.ready_to_execute) {
     };
   }
-  arts_thread_info.drand_buf[0] = 1202107158 + (thread->id * 1999);
-  arts_thread_info.drand_buf[1] = 0;
-  arts_thread_info.drand_buf[2] = 0;
+  arts_thread_random_init(arts_global_rank_id, thread->id);
 }
 
 void arts_runtime_private_cleanup() {

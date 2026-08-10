@@ -41,28 +41,24 @@
 /// @brief Runtime exercise of arts_thread_safe_random() (libs/src/core/utils/
 ///        random.c).  Two properties are asserted:
 ///
-///   (1) PER-THREAD INDEPENDENT STREAMS.  arts_thread_info.drand_buf[3] is
-///       ARTS_THREAD_LOCAL, so every worker thread owns its own jrand48 xsubi
-///       state.  We fan out many sampling EDTs (which the scheduler spreads
-///       across workers), have each draw a short sequence, and require both
-///       intra-stream variation (a worker's successive draws differ) and
-///       overall variation (the global multiset is not a single repeated
-///       value).  This catches a shared/uninitialised state regression.
+///   (1) PER-THREAD INDEPENDENT STREAMS.  A thread's counter and key are
+///       ARTS_THREAD_LOCAL, so every worker walks its own stream.  We fan out
+///       many sampling EDTs (which the scheduler spreads across workers), have
+///       each draw a short sequence, and require both intra-stream variation (a
+///       worker's successive draws differ) and overall variation (the global
+///       multiset is not a single repeated value).  This catches a shared or
+///       uninitialised state regression.
 ///
-///   (2) SIGN-EXTENSION REGRESSION (targets B129).  jrand48() returns a SIGNED
-///       long in [-2^31, 2^31).  random.c does `(uint64_t)temp`, so a negative
-///       draw sign-extends: bits 32..63 all become 1.  A caller expecting a
-///       uniform unsigned value (e.g. `value % N` bucket selection) is then
-///       badly skewed.  The correct behaviour is the unsigned 32-bit value
-///       `(uint64_t)(uint32_t)temp`, whose high 32 bits are always zero.  We
-///       therefore assert that NO sample has any of bits 32..63 set.  Under
-///       the current sign-extending implementation roughly half the samples
-///       (the negative ones) light up the high word, so this assertion FAILS
-///       on purpose until B129 is fixed.  This is an exposes-bug test: it has
-///       no PASS_REGULAR_EXPRESSION and must visibly print FAIL.
+///   (2) THE WHOLE WIDTH IS RANDOM.  A generator that only fills the lower half
+///       -- or that widens a signed 32-bit draw, leaving bits 32..63 a copy of
+///       the sign bit -- gives a high word that is only ever 0x00000000 or
+///       0xffffffff, and a caller reducing modulo a bucket count then draws
+///       from two disjoint residue classes instead of one uniform range.  We
+///       require at least one sample whose high word is NEITHER of those two
+///       values: impossible in either degenerate case, near-certain otherwise.
 ///
-/// Single-node test; protocol-agnostic (plain DB RW aggregation).  Completion
-/// is driven by a finish event + arts_event_wait, never by spinning.
+/// Single-node test; protocol-agnostic.  Completion is driven by a finish event
+/// + arts_event_wait, never by spinning.
 
 #include <stdint.h>
 
@@ -72,24 +68,27 @@
 #define NUM_SAMPLER_EDTS 32u
 #define DRAWS_PER_EDT 8u
 
-/// Shared aggregation record (single DB, RW-serialised across samplers).
+/// What one sampler recorded.  Each sampler owns its own slot and touches no
+/// other: ARTS's RW is OCR RW — the write right belongs to the NODE, not to one
+/// EDT — so two samplers can hold the block at the same time and a shared
+/// read-modify-write would silently lose increments.  Folding is the checker's
+/// job, once every sampler has finished.
 typedef struct {
-  uint64_t total_draws;     /* how many samples contributed                 */
-  uint64_t high_bits_or;    /* OR of bits 32..63 across every sample        */
-  uint64_t distinct_first;  /* first sample value seen (for global variation) */
-  uint64_t any_global_diff; /* set if any sample differs from distinct_first */
-  uint64_t
-      intra_stream_ok; /* count of EDTs whose own draws were not all equal */
-  uint64_t intra_stream_bad;
+  uint64_t draws;       /* samples this sampler contributed                 */
+  uint64_t first;       /* its first draw (for cross-sampler variation)     */
+  uint64_t high_entropy; /* saw a high word that is neither 0 nor ~0        */
+  uint64_t intra_varies; /* its own successive draws were not all equal     */
+} sample_rec_t;
+
+typedef struct {
+  sample_rec_t rec[NUM_SAMPLER_EDTS];
 } agg_t;
 
 /// One sampling EDT: draws DRAWS_PER_EDT values on whatever worker runs it and
-/// folds them into the shared aggregation DB (acquired RW = per-node exclusive,
-/// so the read-modify-write below is serialised).
+/// records them in its own slot (paramv[0]).
 void rng_sampler(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                  arts_edt_dep_t depv[]) {
   (void)paramc;
-  (void)paramv;
   (void)depc;
   agg_t *a = (agg_t *)depv[0].ptr;
   if (!a) {
@@ -98,10 +97,13 @@ void rng_sampler(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 
   uint64_t local[DRAWS_PER_EDT];
-  uint64_t local_high_or = 0;
+  uint64_t local_high_entropy = 0;
   for (uint32_t i = 0; i < DRAWS_PER_EDT; i++) {
     local[i] = arts_thread_safe_random();
-    local_high_or |= (local[i] >> 32);
+    uint64_t high = local[i] >> 32;
+    if (high != 0u && high != 0xffffffffu) {
+      local_high_entropy = 1;
+    }
   }
 
   /* Did this worker's own stream produce more than one distinct value? */
@@ -113,24 +115,11 @@ void rng_sampler(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     }
   }
 
-  if (a->total_draws == 0) {
-    a->distinct_first = local[0];
-  } else {
-    for (uint32_t i = 0; i < DRAWS_PER_EDT; i++) {
-      if (local[i] != a->distinct_first) {
-        a->any_global_diff = 1;
-        break;
-      }
-    }
-  }
-
-  a->total_draws += DRAWS_PER_EDT;
-  a->high_bits_or |= local_high_or;
-  if (intra_varies) {
-    a->intra_stream_ok += 1;
-  } else {
-    a->intra_stream_bad += 1;
-  }
+  sample_rec_t *me = &a->rec[(uint32_t)paramv[0]];
+  me->first = local[0];
+  me->high_entropy = local_high_entropy;
+  me->intra_varies = intra_varies ? 1u : 0u;
+  me->draws = DRAWS_PER_EDT;
 }
 
 /// Runs after every sampler has folded in (joined the same finish scope via the
@@ -143,38 +132,51 @@ void rng_check(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   agg_t *a = (agg_t *)depv[0].ptr;
   bool pass = true;
 
-  if (!a || a->total_draws != (uint64_t)NUM_SAMPLER_EDTS * DRAWS_PER_EDT) {
+  /* Fold the per-sampler slots.  Every sampler has finished and released by the
+     time this runs, so the records are complete and nobody else is writing. */
+  uint64_t total_draws = 0;
+  uint64_t intra_ok = 0;
+  uint64_t high_entropy = 0;
+  bool any_global_diff = false;
+  if (a) {
+    for (uint32_t i = 0; i < NUM_SAMPLER_EDTS; i++) {
+      total_draws += a->rec[i].draws;
+      intra_ok += a->rec[i].intra_varies;
+      high_entropy |= a->rec[i].high_entropy;
+      if (a->rec[i].first != a->rec[0].first) {
+        any_global_diff = true;
+      }
+    }
+  }
+
+  if (!a || total_draws != (uint64_t)NUM_SAMPLER_EDTS * DRAWS_PER_EDT) {
     arts_printf("  FAIL: expected %lu draws, got %lu\n",
-                (uint64_t)NUM_SAMPLER_EDTS * DRAWS_PER_EDT,
-                a ? a->total_draws : 0);
+                (uint64_t)NUM_SAMPLER_EDTS * DRAWS_PER_EDT, total_draws);
     pass = false;
   }
 
-  /* (1) Per-thread independent streams: overall variation + at least one
-   *     worker stream that itself varied (catches a degenerate constant RNG).
-   */
-  if (a && a->any_global_diff == 0) {
-    arts_printf("  FAIL: all %lu samples were identical (no RNG variation)\n",
-                a->total_draws);
+  /* (1) Per-thread independent streams: variation across samplers plus at
+   *     least one sampler whose own draws varied (catches a constant RNG). */
+  if (a && !any_global_diff) {
+    arts_printf("  FAIL: every sampler's first draw was identical (no RNG "
+                "variation)\n");
     pass = false;
   } else {
     arts_printf("  PASS: thread-safe RNG produced varying values\n");
   }
-  if (a && a->intra_stream_ok == 0) {
+  if (a && intra_ok == 0) {
     arts_printf(
         "  FAIL: no worker stream produced distinct successive draws\n");
     pass = false;
   }
 
-  /* (2) Sign-extension regression (B129).  Correct impl keeps bits 32..63 at
-   *     zero for every draw.  Sign-extension lights them up for negatives. */
-  if (a && a->high_bits_or != 0) {
-    arts_printf("  FAIL: B129 sign-extension: high 32 bits set (or=0x%lx) — "
-                "jrand48 negative draws sign-extend to huge uint64\n",
-                a->high_bits_or);
+  /* (2) The upper half must carry entropy of its own, not the sign bit. */
+  if (a && !high_entropy) {
+    arts_printf("  FAIL: every sample's high word was 0 or 0xffffffff — the "
+                "upper half is a sign-extended copy, not random\n");
     pass = false;
   } else {
-    arts_printf("  PASS: no sign-extension; high 32 bits clear\n");
+    arts_printf("  PASS: upper half carries its own entropy\n");
   }
 
   if (pass) {
@@ -199,19 +201,20 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       arts_db_create(&ptr, sizeof(agg_t), ARTS_DB, ARTS_DB_PROP_NONE,
                      &(arts_db_hint_t){.rank = 0});
   agg_t *a = (agg_t *)ptr;
-  a->total_draws = 0;
-  a->high_bits_or = 0;
-  a->distinct_first = 0;
-  a->any_global_diff = 0;
-  a->intra_stream_ok = 0;
-  a->intra_stream_bad = 0;
+  for (uint32_t i = 0; i < NUM_SAMPLER_EDTS; i++) {
+    a->rec[i].draws = 0;
+    a->rec[i].first = 0;
+    a->rec[i].high_entropy = 0;
+    a->rec[i].intra_varies = 0;
+  }
   arts_db_release(db, DB_MODE_RW);
 
   arts_guid_t fe = arts_event_create(&ARTS_EVENT_HINT_FINISH);
 
   for (uint32_t i = 0; i < NUM_SAMPLER_EDTS; i++) {
+    uint64_t slot = (uint64_t)i;
     arts_guid_t s =
-        arts_edt_create(rng_sampler, 0, NULL, 1,
+        arts_edt_create(rng_sampler, 1, &slot, 1,
                         &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
     arts_add_dependence(db, s, 0, DB_MODE_RW);
   }

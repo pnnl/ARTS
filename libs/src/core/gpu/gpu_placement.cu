@@ -50,6 +50,7 @@
 #include "arts/system/print.h"
 #include "arts/system/threads.h"
 #include "arts/utils/atomics.h"
+#include "arts/utils/random.h"
 
 int random(void *edt_packet);
 int all_or_nothing(void *edt_packet);
@@ -106,9 +107,11 @@ bool try_reserve(int gpu, uint64_t size, unsigned int threads) {
 }
 
 int first_fit(uint64_t mask, uint64_t size, unsigned int total_threads) {
-  int random = (int)jrand48(arts_thread_info.drand_buf);
+  /* Unsigned from the shared helper: a raw jrand48 draw is signed, and the
+   * rotation below must start from a uniform offset. */
+  unsigned int random = (unsigned int)arts_thread_safe_random();
   for (unsigned int i = 0; i < arts_node_info.gpu; i++) {
-    int index = (int)((i + (unsigned int)random) % arts_node_info.gpu);
+    int index = (int)((i + random) % arts_node_info.gpu);
     uint64_t check_mask = (uint64_t)1 << index;
     if (mask & check_mask) {
       if (try_reserve(index, size, total_threads)) {
@@ -139,9 +142,11 @@ int round_robin_fit(uint64_t mask, uint64_t size, unsigned int total_threads) {
 int best_fit(uint64_t mask, uint64_t size, unsigned int total_threads) {
   int selected_gpu = -1;
   uint64_t selected_gpu_avail_size = 0;
-  int random = (int)jrand48(arts_thread_info.drand_buf);
+  /* Unsigned from the shared helper: a raw jrand48 draw is signed, and the
+   * rotation below must start from a uniform offset. */
+  unsigned int random = (unsigned int)arts_thread_safe_random();
   for (unsigned int i = 0; i < arts_node_info.gpu; i++) {
-    int index = (int)((i + (unsigned int)random) % arts_node_info.gpu);
+    int index = (int)((i + random) % arts_node_info.gpu);
     uint64_t check_mask = (uint64_t)1 << index;
     if (mask & check_mask) {
       if (selected_gpu != -1) {
@@ -166,9 +171,11 @@ int best_fit(uint64_t mask, uint64_t size, unsigned int total_threads) {
 int worst_fit(uint64_t mask, uint64_t size, unsigned int total_threads) {
   int selected_gpu = -1;
   uint64_t selected_gpu_avail_size = 0;
-  int random = (int)jrand48(arts_thread_info.drand_buf);
+  /* Unsigned from the shared helper: a raw jrand48 draw is signed, and the
+   * rotation below must start from a uniform offset. */
+  unsigned int random = (unsigned int)arts_thread_safe_random();
   for (unsigned int i = 0; i < arts_node_info.gpu; i++) {
-    int index = (int)((i + (unsigned int)random) % arts_node_info.gpu);
+    int index = (int)((i + random) % arts_node_info.gpu);
     uint64_t check_mask = (uint64_t)1 << index;
     if (mask & check_mask) {
       if (selected_gpu != -1) {

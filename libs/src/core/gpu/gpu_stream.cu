@@ -62,6 +62,7 @@
 #include "arts/utils/atomics.h"
 #include "arts/utils/deque.h"
 #include "arts/utils/malloc.h"
+#include "arts/utils/random.h"
 
 /* File-internal stream/buffer helpers (no cross-TU caller).  Forward-declared
  * here so the runtime/stream code may call them regardless of definition
@@ -835,8 +836,11 @@ struct arts_edt_s *arts_runtime_steal_gpu_task() {
   if (arts_node_info.total_thread_count > 1) {
     long unsigned int steal_loc;
     do {
-      steal_loc = jrand48(arts_thread_info.drand_buf);
-      steal_loc = steal_loc % arts_node_info.total_thread_count;
+      /* Through the shared helper, not a raw jrand48: its result is signed, and
+       * widening a negative draw into an unsigned victim index skews which
+       * deque gets robbed. */
+      steal_loc =
+          arts_thread_safe_random() % arts_node_info.total_thread_count;
     } while (steal_loc == arts_thread_info.thread_id);
     edt = (struct arts_edt_s *)arts_deque_pop_back(
         arts_node_info.gpu_deque[steal_loc]);
@@ -873,8 +877,7 @@ bool arts_gpu_scheduler_loop() {
 
   bool ran_cpu_edt = arts_default_scheduler_loop();
   if (arts_node_info.run_gpu_gc_idle && !ran_gpu_edt && !ran_cpu_edt) {
-    long unsigned int gpu_id = jrand48(arts_thread_info.drand_buf);
-    gpu_id = gpu_id % arts_node_info.gpu;
+    long unsigned int gpu_id = arts_thread_safe_random() % arts_node_info.gpu;
     arts_gpu = &arts_gpus[gpu_id];
     ARTS_DEBUG("Running Idle GPU GC: %u\n", gpu_id);
     arts_cuda_set_device(arts_gpu->device, true);
@@ -930,8 +933,7 @@ bool arts_gpu_scheduler_backoff_loop() {
 
   if (!ran_gpu_edt && !ran_cpu_edt) {
     if (arts_node_info.run_gpu_gc_idle && gc_counter % backoff == 0) {
-      long unsigned int gpu_id = jrand48(arts_thread_info.drand_buf);
-      gpu_id = gpu_id % arts_node_info.gpu;
+      long unsigned int gpu_id = arts_thread_safe_random() % arts_node_info.gpu;
       arts_gpu = &arts_gpus[gpu_id];
       ARTS_DEBUG("Running Idle GPU GC: %u\n", gpu_id);
       arts_cuda_set_device(arts_gpu->device, true);

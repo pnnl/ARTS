@@ -44,9 +44,13 @@ extern "C" {
 
 #include <stdint.h>
 
-/** Internal: thread-safe pseudo-random number.  Used by GPU LC sync paths
- *  and by tests that exercise the runtime PRNG.  Not part of the public
- *  ARTS API; do not call from user code. */
+/** Internal: seed this thread's stream from its (rank, thread) identity.
+ *  Called once per thread during startup, before any draw. */
+void arts_thread_random_init(unsigned int rank, unsigned int thread_id);
+
+/** Internal: next value from this thread's own stream.  Used by the scheduler's
+ *  victim pick, the GPU placement paths, and tests that exercise the runtime
+ *  PRNG.  Not part of the public ARTS API; do not call from user code. */
 uint64_t arts_thread_safe_random(void);
 
 #ifdef __cplusplus

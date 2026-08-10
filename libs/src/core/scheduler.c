@@ -61,6 +61,7 @@
 #include "arts/transport/socket.h"
 #include "arts/utils/array_list.h"
 #include "arts/utils/atomics.h"
+#include "arts/utils/random.h"
 #include "arts/utils/deque.h"
 
 #ifdef ARTS_USE_GPU
@@ -262,8 +263,11 @@ inline struct arts_edt_s *arts_runtime_steal_from_worker() {
     INCREMENT_NUM_STEAL_ATTEMPT_BY(1);
     long unsigned int steal_loc;
     do {
-      steal_loc = jrand48(arts_thread_info.drand_buf);
-      steal_loc = steal_loc % arts_node_info.total_thread_count;
+      /* Through the shared helper, not a raw jrand48: its result is signed, and
+       * widening a negative draw into an unsigned victim index skews which
+       * deque gets robbed. */
+      steal_loc =
+          arts_thread_safe_random() % arts_node_info.total_thread_count;
     } while (steal_loc == arts_thread_info.thread_id);
     edt = (struct arts_edt_s *)arts_deque_pop_back(
         arts_node_info.deque[steal_loc]);
