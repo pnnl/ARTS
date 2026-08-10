@@ -1050,6 +1050,12 @@ if(HAS_CRLIBM)
     set(_sar_incbin_script
         "${CMAKE_SOURCE_DIR}/benchmarks/apps/sar_make_incbin_wrapper.sh")
 
+    # datagen wrapper — enters the size's input directory (the generator reads
+    # Parameters.txt / Targets.txt from the working directory) and stages its
+    # outputs before moving them into place.
+    set(_sar_datagen_script
+        "${CMAKE_SOURCE_DIR}/benchmarks/apps/sar_run_datagen.sh")
+
     foreach(sar_size ${SAR_IMPLICIT_SIZES})
         set(_ocr_size_dir "${SAR_ROOT}/ocr/${sar_size}")
         set(_data_build_dir "${CMAKE_CURRENT_BINARY_DIR}/sar_data/${sar_size}")
@@ -1060,6 +1066,30 @@ if(HAS_CRLIBM)
 
         set(_data_names Data PlatformPosition PulseTransmissionTime)
         set(_data_objects "")
+
+        # The .bin datasets are a deterministic function of two tracked files,
+        # and the datasets directory itself is not tracked — so a checkout that
+        # has never staged them has no .bin at all.  Generating them here makes
+        # that the build's job: without a rule the build would instead stop on
+        # a missing file it calls a source, naming neither SAR nor the two
+        # inputs that produce it.  Only the sizes embedded at build time are
+        # generated; the runtime-input size costs orders of magnitude more to
+        # produce and is staged onto a host rather than rebuilt on it.
+        set(_datagen_inputs "${SAR_ROOT}/datagen-tsml/${sar_size}")
+        set(_datagen_outputs "")
+        foreach(_name ${_data_names})
+            list(APPEND _datagen_outputs "${_datasets_dir}/${_name}.bin")
+        endforeach()
+        add_custom_command(
+            OUTPUT ${_datagen_outputs} "${_datasets_dir}/Radar.txt"
+            COMMAND sh "${_sar_datagen_script}" "$<TARGET_FILE:sar_datagen>"
+                    "${_datagen_inputs}" "${_datasets_dir}"
+            DEPENDS sar_datagen "${_sar_datagen_script}"
+                    "${_datagen_inputs}/Parameters.txt"
+                    "${_datagen_inputs}/Targets.txt"
+            COMMENT "SAR: Generating ${sar_size} dataset from datagen inputs..."
+            VERBATIM
+        )
 
         foreach(_name ${_data_names})
             set(_build_o "${_data_build_dir}/${_name}.o")
