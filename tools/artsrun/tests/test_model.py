@@ -68,11 +68,15 @@ def test_catalog_rows_exclude_rewrites():
     assert not rewrites & {a.name for a in catalog.rows}
 
 
-def test_dist_version_resolves_to_the_rewrite_target():
+def test_a_restructured_version_resolves_to_the_rewrite_target():
+    # Whichever application offers one — naming a specific application here
+    # makes the test fail when that application's rewrite is held back, which
+    # says nothing about the resolution being tested.
     catalog = load_catalog()
-    source, stem = catalog.resolve("quicksort", Version.RESTRUCTURED)
-    assert stem == catalog.apps["quicksort_dist"].binary
-    assert source.name == "quicksort_dist"
+    named = next(a for a in catalog.rows if a.restructured_as)
+    source, stem = catalog.resolve(named.name, Version.RESTRUCTURED)
+    assert source.name == named.restructured_as
+    assert stem == catalog.apps[named.restructured_as].binary
 
 
 def test_hinted_version_resolves_to_the_opt_target():
@@ -156,11 +160,16 @@ def test_benchset_disable_removes_every_version():
     assert not [a for a in bs.resolve(catalog) if a.name == "nqueens"]
 
 
-def test_asking_for_a_version_an_application_lacks_is_an_error():
+def test_a_version_an_application_lacks_is_dropped_and_said_out_loud(capsys):
+    # A roster keeps naming a version the catalog has withdrawn, so it comes
+    # back on its own when the catalog restores it; what must not happen is
+    # the campaign running as though it had measured it.
     catalog = load_catalog()
-    bs = Benchset(name="o", apps={"graph500": BenchsetEntry(versions=[Version.HINTED])})
-    with pytest.raises(ValueError, match="only has"):
-        bs.resolve(catalog)
+    bs = Benchset(name="o", apps={"graph500": BenchsetEntry(
+        versions=[Version.ASBORN, Version.HINTED])})
+    got = bs.resolve(catalog)
+    assert [a.key for a in got] == ["graph500:asborn"]
+    assert "no hinted version" in capsys.readouterr().err
 
 
 # --- selection ------------------------------------------------------------

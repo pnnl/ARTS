@@ -8,6 +8,8 @@ only has to carry its deltas.
 
 from __future__ import annotations
 
+import sys
+
 from pydantic import BaseModel, Field
 
 from artsrun.model.catalog import AppClass, AppEntry, Catalog, ScalarKind, Version
@@ -83,16 +85,21 @@ class Benchset(BaseModel):
         available = app.own_versions
         if entry is None or entry.versions is None:
             return available
-        # A benchset naming a version the application does not have is a
-        # mistake worth surfacing, not a silent drop.
+        # A version the application does not offer is dropped and said out
+        # loud.  Raising instead would be the wrong trade: a roster records
+        # what a campaign wants to measure, and a version can be withdrawn
+        # from the catalog while that intent stays correct -- so the roster
+        # keeps naming it and picks it up again when the catalog restores it,
+        # rather than every roster needing an edit in the meantime.
         unknown = [v for v in entry.versions if v not in available]
         if unknown:
-            raise ValueError(
-                f"{app.name}: benchset asks for "
-                f"{', '.join(v.value for v in unknown)} but the application "
-                f"only has {', '.join(v.value for v in available)}"
+            print(
+                f"artsrun: {app.name} has no "
+                f"{', '.join(v.value for v in unknown)} version "
+                f"(offers {', '.join(v.value for v in available)}) — not run",
+                file=sys.stderr,
             )
-        return list(entry.versions)
+        return [v for v in entry.versions if v in available]
 
     def resolve(self, catalog: Catalog) -> list[ResolvedApp]:
         """Expand to the (application, version) pairs this set runs."""

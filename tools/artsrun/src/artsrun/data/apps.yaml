@@ -154,19 +154,23 @@ apps:
     expect: '81.421870'
     expect_args: ['6']
     args: ['23']
-    restructured_as: fft_dist
+    # restructured_as: fft_dist   # held back — see the entry below
 
-  fft_dist:
-    binary: fft_dist
-    class: task
-    provenance: 'FFT, Bailey four-step transpose rewrite'
-    marker: 'FFT_DIST checksum'
-    scalar_re: 'FFT_DIST checksum\s*=\s*([\-+0-9.eE]+)'
-    tolerance: 0.001
-    expect: '4194304.0'
-    expect_args: ['22']
-    args: ['28', '512']
-    restructured_from: fft
+  # Held back with the target: the program's source is not carried by the
+  # application submodule yet, so the build has no target for it.  Restore
+  # this entry, and its parent's restructured_as, with the registration in
+  # benchmarks/apps/CMakeLists.txt once the submodule carries the source.
+  #fft_dist:
+  #binary: fft_dist
+  #class: task
+  #provenance: 'FFT, Bailey four-step transpose rewrite'
+  #marker: 'FFT_DIST checksum'
+  #scalar_re: 'FFT_DIST checksum\s*=\s*([\-+0-9.eE]+)'
+  #tolerance: 0.001
+  #expect: '4194304.0'
+  #expect_args: ['22']
+  #args: ['28', '512']
+  #restructured_from: fft
 
   fibonacci:
     binary: fibonacci
@@ -409,17 +413,21 @@ apps:
     expect: '7.85534'
     expect_args: ['-t', 'T', '-b', '25']
     args: ['-t', 'A', '-b', '25']
-    restructured_as: npb_cg_dist
+    # restructured_as: npb_cg_dist   # held back — see the entry below
 
-  npb_cg_dist:
-    binary: npb_cg_dist
-    class: task
-    provenance: 'NAS Parallel Benchmarks CG; distributed rewrite'
-    marker: 'Verification SUCCESSFUL'
-    scalar_re: 'Verification SUCCESSFUL \(zeta\s*=\s*([\-+0-9.eE]+)'
-    tolerance: 1e-10
-    args: ['-t', 'A', '-b', '25']
-    restructured_from: npb_cg
+  # Held back with the target: the program's source is not carried by the
+  # application submodule yet, so the build has no target for it.  Restore
+  # this entry, and its parent's restructured_as, with the registration in
+  # benchmarks/apps/CMakeLists.txt once the submodule carries the source.
+  #npb_cg_dist:
+  #binary: npb_cg_dist
+  #class: task
+  #provenance: 'NAS Parallel Benchmarks CG; distributed rewrite'
+  #marker: 'Verification SUCCESSFUL'
+  #scalar_re: 'Verification SUCCESSFUL \(zeta\s*=\s*([\-+0-9.eE]+)'
+  #tolerance: 1e-10
+  #args: ['-t', 'A', '-b', '25']
+  #restructured_from: npb_cg
 
   nqueens:
     binary: nqueens
@@ -475,19 +483,23 @@ apps:
     expect: '26648'
     expect_args: []
     args: ['4000000', '1000000']
-    restructured_as: quicksort_dist
+    # restructured_as: quicksort_dist   # held back — see the entry below
 
-  quicksort_dist:
-    binary: quicksort_dist
-    class: task
-    provenance: 'Sample-splitter distributed sort'
-    marker: 'QSORT_VALID'
-    scalar_re: 'QSORT_VALID sum=(\d+) sorted=1'
-    scalar_kind: int
-    expect: '496344943'
-    expect_args: []
-    args: ['8000000', '1000000', '384', '384']
-    restructured_from: quicksort
+  # Held back with the target: the program's source is not carried by the
+  # application submodule yet, so the build has no target for it.  Restore
+  # this entry, and its parent's restructured_as, with the registration in
+  # benchmarks/apps/CMakeLists.txt once the submodule carries the source.
+  #quicksort_dist:
+  #binary: quicksort_dist
+  #class: task
+  #provenance: 'Sample-splitter distributed sort'
+  #marker: 'QSORT_VALID'
+  #scalar_re: 'QSORT_VALID sum=(\d+) sorted=1'
+  #scalar_kind: int
+  #expect: '496344943'
+  #expect_args: []
+  #args: ['8000000', '1000000', '384', '384']
+  #restructured_from: quicksort
 
   reduction_intel:
     binary: reduction_intel
@@ -756,17 +768,21 @@ apps:
     args: ['-dcpu']
     default_enabled: false
 
-  XSBench_dist:
-    binary: xsbench_dist
-    class: spmd
-    provenance: 'XSBench (ANL); distributed SPMD rewrite'
-    marker: 'XS_CHECKSUM'
-    scalar_re: 'XS_CHECKSUM\s*=\s*(\d+)'
-    scalar_kind: int
-    expect: '486159'
-    expect_args: ['-s', 'small', '-g', '10', '-l', '100']
-    args: ['-s', 'small', '-g', '1000', '-l', '875000000', '-t', '15']
-    restructured_from: XSBench_intel
+  # Held back with the target: the program's source is not carried by the
+  # application submodule yet, so the build has no target for it.  Restore
+  # this entry, and its parent's restructured_as, with the registration in
+  # benchmarks/apps/CMakeLists.txt once the submodule carries the source.
+  #XSBench_dist:
+  #binary: xsbench_dist
+  #class: spmd
+  #provenance: 'XSBench (ANL); distributed SPMD rewrite'
+  #marker: 'XS_CHECKSUM'
+  #scalar_re: 'XS_CHECKSUM\s*=\s*(\d+)'
+  #scalar_kind: int
+  #expect: '486159'
+  #expect_args: ['-s', 'small', '-g', '10', '-l', '100']
+  #args: ['-s', 'small', '-g', '1000', '-l', '875000000', '-t', '15']
+  #restructured_from: XSBench_intel
 
   XSBench_intel:
     binary: XSBench_intel
@@ -778,7 +794,7 @@ apps:
     expect: '16088953243632067443'
     expect_args: ['-s', 'small', '-g', '3', '-l', '30']
     args: ['-s', 'small', '-g', '1000', '-l', '400000']
-    restructured_as: XSBench_dist
+    # restructured_as: XSBench_dist   # held back — see the entry below
 
   sar_large:
     binary: sar_large

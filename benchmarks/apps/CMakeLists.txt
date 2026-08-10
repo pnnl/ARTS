@@ -375,10 +375,15 @@ add_benchmark_app(NAME quicksort
     SOURCES quicksort.c
 )
 
-add_benchmark_app(NAME quicksort_dist
-    DIR quicksort/ocr
-    SOURCES quicksort_dist.c
-)
+# Registration held back: this program's source is not carried by the
+# application submodule yet, so a checkout that has not produced it
+# locally cannot configure.  Restore this block, and the application's
+# restructured version in the driver's catalog, once the submodule
+# carries the source.
+#add_benchmark_app(NAME quicksort_dist
+#    DIR quicksort/ocr
+#    SOURCES quicksort_dist.c
+#)
 
 add_benchmark_app(NAME nqueens
     DIR nqueens/refactored/ocr
@@ -498,11 +503,16 @@ add_benchmark_app(NAME fft
     EXTRA_LINK_LIBS m
 )
 
-add_benchmark_app(NAME fft_dist
-    DIR fft/ocr
-    SOURCES fft_dist.c
-    EXTRA_LINK_LIBS m
-)
+# Registration held back: this program's source is not carried by the
+# application submodule yet, so a checkout that has not produced it
+# locally cannot configure.  Restore this block, and the application's
+# restructured version in the driver's catalog, once the submodule
+# carries the source.
+#add_benchmark_app(NAME fft_dist
+#    DIR fft/ocr
+#    SOURCES fft_dist.c
+#    EXTRA_LINK_LIBS m
+#)
 
 add_benchmark_app(NAME graph500
     DIR graph500
@@ -770,12 +780,17 @@ add_benchmark_app(NAME npb_cg
     EXTRA_LINK_LIBS m
 )
 
-add_benchmark_app(NAME npb_cg_dist
-    DIR npb-cg/sdsc-ocr
-    SOURCES cg_dist_edt.c makea_ocr.c util_ocr.c
-    LIBS reduction
-    EXTRA_LINK_LIBS m
-)
+# Registration held back: this program's source is not carried by the
+# application submodule yet, so a checkout that has not produced it
+# locally cannot configure.  Restore this block, and the application's
+# restructured version in the driver's catalog, once the submodule
+# carries the source.
+#add_benchmark_app(NAME npb_cg_dist
+#    DIR npb-cg/sdsc-ocr
+#    SOURCES cg_dist_edt.c makea_ocr.c util_ocr.c
+#    LIBS reduction
+#    EXTRA_LINK_LIBS m
+#)
 
 # ==========================================================================
 # Tier 12: RSBench, XSBench
@@ -816,13 +831,18 @@ add_benchmark_app(NAME XSBench_intel_sharedDB
 # xsbench_dist: distributed sibling driver in the same source dir (the
 # quicksort_dist/fft_dist pattern) — true SPMD with one deterministic table
 # replica per rank; reuses the pristine physics/io sources unchanged.
-add_benchmark_app(NAME xsbench_dist
-    DIR XSBench/refactored/ocr/intel-sharedDB
-    SRC_SUBDIR src
-    SOURCES Main_dist.c io.c GridInit.c CalculateXS.c XSutils.c Materials.c timers.c
-    LIBS timer ocrAppUtils
-    EXTRA_LINK_LIBS m
-)
+# Registration held back: this program's source is not carried by the
+# application submodule yet, so a checkout that has not produced it
+# locally cannot configure.  Restore this block, and the application's
+# restructured version in the driver's catalog, once the submodule
+# carries the source.
+#add_benchmark_app(NAME xsbench_dist
+#    DIR XSBench/refactored/ocr/intel-sharedDB
+#    SRC_SUBDIR src
+#    SOURCES Main_dist.c io.c GridInit.c CalculateXS.c XSutils.c Materials.c timers.c
+#    LIBS timer ocrAppUtils
+#    EXTRA_LINK_LIBS m
+#)
 
 # ==========================================================================
 # Tier 13: LCS variants
