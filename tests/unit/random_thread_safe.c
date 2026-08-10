@@ -63,6 +63,7 @@
 #include <stdint.h>
 
 #include "arts.h"
+#include "../test_failure_status.h"
 #include "arts/utils/random.h" /* arts_thread_safe_random (internal util) */
 
 #define NUM_SAMPLER_EDTS 32u
@@ -92,6 +93,7 @@ void rng_sampler(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   (void)depc;
   agg_t *a = (agg_t *)depv[0].ptr;
   if (!a) {
+    arts_test_fail();
     arts_printf("  FAIL: sampler got NULL aggregation DB\n");
     return;
   }
@@ -150,6 +152,7 @@ void rng_check(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   }
 
   if (!a || total_draws != (uint64_t)NUM_SAMPLER_EDTS * DRAWS_PER_EDT) {
+    arts_test_fail();
     arts_printf("  FAIL: expected %lu draws, got %lu\n",
                 (uint64_t)NUM_SAMPLER_EDTS * DRAWS_PER_EDT, total_draws);
     pass = false;
@@ -158,6 +161,7 @@ void rng_check(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   /* (1) Per-thread independent streams: variation across samplers plus at
    *     least one sampler whose own draws varied (catches a constant RNG). */
   if (a && !any_global_diff) {
+    arts_test_fail();
     arts_printf("  FAIL: every sampler's first draw was identical (no RNG "
                 "variation)\n");
     pass = false;
@@ -165,6 +169,7 @@ void rng_check(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_printf("  PASS: thread-safe RNG produced varying values\n");
   }
   if (a && intra_ok == 0) {
+    arts_test_fail();
     arts_printf(
         "  FAIL: no worker stream produced distinct successive draws\n");
     pass = false;
@@ -172,6 +177,7 @@ void rng_check(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   /* (2) The upper half must carry entropy of its own, not the sign bit. */
   if (a && !high_entropy) {
+    arts_test_fail();
     arts_printf("  FAIL: every sample's high word was 0 or 0xffffffff — the "
                 "upper half is a sign-extended copy, not random\n");
     pass = false;
@@ -182,6 +188,7 @@ void rng_check(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   if (pass) {
     arts_printf("PASS random_thread_safe\n");
   } else {
+    arts_test_fail();
     arts_printf("FAIL random_thread_safe\n");
   }
   arts_shutdown();
@@ -228,6 +235,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 int main(int argc, char **argv) {
-  arts_rt(argc, argv);
-  return 0;
+  /* Two verdicts to merge: what arts_rt saw of the ranks it spawned (their exit
+     status reaches nobody else) and what this rank's own checks found. */
+  int rc = arts_rt(argc, argv);
+  return rc != 0 ? 1 : arts_test_status();
 }

@@ -7,7 +7,7 @@
  * compiled standalone.  The integer "which GPU index is a candidate" logic is
  * pure; its only externals are arts_node_info.gpu (GPU count), a per-GPU
  * avail_global_mem table, try_reserve(), jrand48(), and arts_atomic_fetch_add.
- * Per the census (docs/test-census/36-gpu-lc-placement.md, Part 5) the bodies
+ * The bodies
  * are copied VERBATIM below with those externals satisfied by host stubs that
  * RECORD which indices each scheme actually offered to try_reserve.  No runtime
  * source is modified.

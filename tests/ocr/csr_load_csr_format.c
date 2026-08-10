@@ -68,6 +68,7 @@
 #include <unistd.h>
 
 #include "arts.h"
+#include "../test_failure_status.h"
 #include "arts/graph.h"
 
 #define NVERTS 4
@@ -123,8 +124,9 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
    *   line src=2: "4"     -> neighbours {3}
    *   line src=3: "1 3"   -> neighbours {0, 2}
    * total 6 edges. */
-  snprintf(path, sizeof(path), "/tmp/arts_t269_valid_%d.txt", (int)getpid());
+  snprintf(path, sizeof(path), "arts_t269_valid_%d.txt", (int)getpid());
   if (!write_file(path, "4 6\n2 3\n1\n4\n1 3\n")) {
+    arts_test_fail();
     arts_printf("FAIL: cannot write valid fixture\n");
     arts_shutdown();
     return;
@@ -134,23 +136,28 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     int rc = arts_csr_load_no_weight_csr(path, dist, /*flip=*/false,
                                          /*ignore_self_loops=*/true);
     if (rc != 0) {
+      arts_test_fail();
       arts_printf("FAIL: valid load rc=%d\n", rc);
       ok = false;
     }
     /* 1-based decrement: token "2" -> neighbour 1, "3" -> 2, etc. */
     if (ok && !(has_neighbor(dist, 0, 1) && has_neighbor(dist, 0, 2))) {
+      arts_test_fail();
       arts_printf("FAIL: vertex 0 neighbours wrong\n");
       ok = false;
     }
     if (ok && !has_neighbor(dist, 1, 0)) {
+      arts_test_fail();
       arts_printf("FAIL: vertex 1 neighbour wrong\n");
       ok = false;
     }
     if (ok && !has_neighbor(dist, 2, 3)) {
+      arts_test_fail();
       arts_printf("FAIL: vertex 2 neighbour wrong\n");
       ok = false;
     }
     if (ok && !(has_neighbor(dist, 3, 0) && has_neighbor(dist, 3, 2))) {
+      arts_test_fail();
       arts_printf("FAIL: vertex 3 neighbours wrong\n");
       ok = false;
     }
@@ -166,9 +173,10 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
    * The loader detects src != num_verts and builds nothing, returning 0.
    * The CSR DB must therefore NOT exist. */
   if (ok) {
-    snprintf(path, sizeof(path), "/tmp/arts_t269_mismatch_%d.txt",
+    snprintf(path, sizeof(path), "arts_t269_mismatch_%d.txt",
              (int)getpid());
     if (!write_file(path, "4 3\n2 3\n1\n")) {
+      arts_test_fail();
       arts_printf("FAIL: cannot write mismatch fixture\n");
       ok = false;
     } else {
@@ -176,10 +184,12 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
           arts_block_dist_init(NVERTS, 0, 1, ARTS_GUID_DB);
       int rc = arts_csr_load_no_weight_csr(path, dist, false, true);
       if (rc != 0) {
+        arts_test_fail();
         arts_printf("FAIL: mismatch load rc=%d (expected 0)\n", rc);
         ok = false;
       }
       if (ok && arts_csr_from_partition(0, dist) != NULL) {
+        arts_test_fail();
         arts_printf("FAIL: mismatched header still built a CSR\n");
         ok = false;
       }
@@ -195,15 +205,17 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
    * neighbour (uint64_t)-1 (i.e. the loader behaved sanely).  While the bug
    * stands, either an OOB build occurs (ASan) or the huge value slips in. */
   if (ok) {
-    snprintf(path, sizeof(path), "/tmp/arts_t269_zero_%d.txt", (int)getpid());
+    snprintf(path, sizeof(path), "arts_t269_zero_%d.txt", (int)getpid());
     /* 2 verts: line src=0 "0 2", line src=1 "1". */
     if (!write_file(path, "2 3\n0 2\n1\n")) {
+      arts_test_fail();
       arts_printf("FAIL: cannot write zero-token fixture\n");
       ok = false;
     } else {
       arts_block_dist_t *dist = arts_block_dist_init(2, 0, 1, ARTS_GUID_DB);
       (void)arts_csr_load_no_weight_csr(path, dist, false, true);
       if (has_neighbor(dist, 0, (arts_vertex_t)-1)) {
+        arts_test_fail();
         arts_printf("FAIL: B-csr-token-zero produced bogus neighbour -1\n");
         ok = false;
       }
@@ -223,6 +235,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 int main(int argc, char **argv) {
-  arts_rt(argc, argv);
-  return 0;
+  /* Two verdicts to merge: what arts_rt saw of the ranks it spawned (their exit
+     status reaches nobody else) and what this rank's own checks found. */
+  int rc = arts_rt(argc, argv);
+  return rc != 0 ? 1 : arts_test_status();
 }

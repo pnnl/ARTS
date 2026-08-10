@@ -37,72 +37,36 @@
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
 
-/// @file edt_chain.c
-/// @brief Tests EDT chaining: EDT A signals EDT B which signals EDT C.
-///        Validates data flows correctly through a pipeline of EDTs.
+#ifndef ARTS_TEST_FAILURE_STATUS_H
+#define ARTS_TEST_FAILURE_STATUS_H
 
-#include "arts.h"
+/* Carries a failure detected inside an EDT out to the process exit status.
+ *
+ * A test that only PRINTS its verdict cannot fail: the checks run on worker
+ * threads, and by the time main() regains control after arts_rt() it has
+ * nothing left to look at, so it returns 0 no matter what happened.  The
+ * counter below is the missing channel — bumped where the failure is found,
+ * read where the process reports.
+ *
+ * Atomic because the checks run on whatever worker the scheduler picked, and
+ * several may find a failure at once.
+ *
+ * SCOPE: one process, so this carries a rank's OWN verdict.  A multinode
+ * test's other ranks are separate processes whose status the launcher does not
+ * forward, so their verdicts still travel as printed output.
+ */
 
-#define CHAIN_LEN 10
+#include <stdatomic.h>
 
-/// Each stage increments the value by 1 and passes it on.
-void chain_stage(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                 arts_edt_dep_t depv[]) {
-  (void)paramc;
-  (void)depc;
-  uint64_t stage = paramv[0];
-  arts_guid_t next_guid = (arts_guid_t)paramv[1];
-  uint64_t value = (uint64_t)depv[0].guid;
+static atomic_uint arts_test_failures;
 
-  arts_printf("  Stage %lu: received value %lu\n", stage, value);
-  arts_add_dependence((arts_guid_t)(value + 1), next_guid, 0, DB_MODE_VAL);
+static inline void arts_test_fail(void) {
+  atomic_fetch_add_explicit(&arts_test_failures, 1u, memory_order_relaxed);
 }
 
-/// Final stage verifies the accumulated value.
-void chain_final(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-                 arts_edt_dep_t depv[]) {
-  (void)paramc;
-  (void)paramv;
-  (void)depc;
-  uint64_t value = (uint64_t)depv[0].guid;
-
-  if (value == CHAIN_LEN) {
-    arts_printf("  PASS: chain accumulated value %lu == %d\n", value,
-                CHAIN_LEN);
-  } else {
-    arts_printf("  FAIL: chain value %lu != %d\n", value, CHAIN_LEN);
-  }
-  arts_shutdown();
+/* Exit status for a test's main(): non-zero once anything failed. */
+static inline int arts_test_status(void) {
+  return atomic_load_explicit(&arts_test_failures, memory_order_relaxed) ? 1 : 0;
 }
 
-void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
-              arts_edt_dep_t depv[]) {
-  (void)paramc;
-  (void)paramv;
-  (void)depc;
-  (void)depv;
-
-  arts_printf("=== edt_chain (length=%d) ===\n", CHAIN_LEN);
-
-  // Build the chain backwards: final <- stage[N-1] <- ... <- stage[0].
-  arts_guid_t final_edt =
-      arts_edt_create(chain_final, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0});
-
-  arts_guid_t next = final_edt;
-  for (int i = CHAIN_LEN - 1; i >= 0; i--) {
-    uint64_t args[2];
-    args[0] = (uint64_t)i;
-    args[1] = (uint64_t)next;
-    next =
-        arts_edt_create(chain_stage, 2, args, 1, &(arts_edt_hint_t){.rank = 0});
-  }
-
-  // Kick off chain with value 0.
-  arts_add_dependence((arts_guid_t)(0), next, 0, DB_MODE_VAL);
-}
-
-int main(int argc, char **argv) {
-  /* Non-zero when a rank this process spawned ended badly: their exit status
-     reaches nobody else, and a run with a dead rank did not succeed. */
-  return arts_rt(argc, argv) != 0 ? 1 : 0;
-}
+#endif /* ARTS_TEST_FAILURE_STATUS_H */

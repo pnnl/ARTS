@@ -149,6 +149,18 @@ static void write_file(const char *path, const char *contents) {
   (void)fclose(f);
 }
 
+/* The fixtures live in the test's working directory, so they have to be taken
+ * away again: a leaked tree would accumulate one directory per run. */
+static void cleanup_tmpdir(const char *dir) {
+  static const char *names[] = {"good.json", "bad_scalar.json", "trunc.json"};
+  char path[1280];
+  for (unsigned int i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+    (void)snprintf(path, sizeof(path), "%s/%s", dir, names[i]);
+    (void)remove(path);
+  }
+  (void)rmdir(dir);
+}
+
 int main(void) {
   int ci = first_cluster_counter();
   if (ci < 0) {
@@ -161,7 +173,7 @@ int main(void) {
   }
   const char *cname = arts_counter_names[ci];
 
-  char tmpl[] = "/tmp/arts_counter_json_XXXXXX";
+  char tmpl[] = "arts_counter_json_XXXXXX";
   if (!mkdtemp(tmpl)) {
     fprintf(stderr, "FAIL counter_json_parser: mkdtemp failed\n");
     return 1;
@@ -275,6 +287,7 @@ int main(void) {
   }
 
   free(data);
+  cleanup_tmpdir(tmpl);
   printf("PASS counter_json_parser (well-formed parse + malformed/truncated "
          "no-OOB, counter=%s)\n",
          cname);

@@ -56,6 +56,11 @@ struct arts_launcher_s {
   void (*cleanup_processes)(struct arts_launcher_s *);
   pid_t *child_pids;
   unsigned int child_count;
+  /* Ranks this launcher spawned that did not end cleanly.  ctest — and any
+     other caller — only ever observes the spawning process's exit status, so a
+     rank that aborted or exited non-zero is otherwise indistinguishable from
+     one that finished.  Cleanup records it here; arts_rt reports it. */
+  unsigned int failed_child_count;
 };
 
 // SSH launcher

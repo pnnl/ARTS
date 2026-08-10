@@ -559,6 +559,11 @@ void arts_launcher_local_cleanup_processes(struct arts_launcher_s *launcher) {
   const int graceful_ms = 5000;
   const int term_ms = 2000;
 
+  /* A rank that ended badly is a failed run even when this process is fine.
+     Escalation below (SIGTERM/SIGKILL) is this launcher's own doing, so only a
+     child that ended on its own is judged. */
+  launcher->failed_child_count = 0;
+
   for (unsigned int i = 0; i < launcher->child_count; i++) {
     pid_t pid = launcher->child_pids[i];
     if (pid <= 0) {
@@ -575,6 +580,15 @@ void arts_launcher_local_cleanup_processes(struct arts_launcher_s *launcher) {
       usleep(10000);
     }
     if (exited) {
+      if (WIFSIGNALED(status)) {
+        ARTS_WARN("Local launcher: rank %u (pid %d) died on signal %d", i + 1,
+                  (int)pid, WTERMSIG(status));
+        launcher->failed_child_count++;
+      } else if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
+        ARTS_WARN("Local launcher: rank %u (pid %d) exited with status %d",
+                  i + 1, (int)pid, WEXITSTATUS(status));
+        launcher->failed_child_count++;
+      }
       continue;
     }
 

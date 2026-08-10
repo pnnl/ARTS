@@ -45,11 +45,10 @@
 ///   (1) SAFE / CORRECT: when --num-vertices / --num-edges are missing, the
 ///       constructor must return NULL (and arts_csr_load_from_args with no
 ///       --file must dispatch into a loader that returns -1 on a NULL path).
-///   (2) BUG EXPOSURE (B-args-oob): both parsers read argv[i+1] when a flag
-///       matches, without checking i+1 < argc.  When the flag is the LAST
-///       token, argv[i+1] is an out-of-bounds read past the argv array.  Under
-///       ASan this aborts; the test is therefore designed to FAIL visibly,
-///       which is the intended exposure of the bug.  exposes_runtime_bug=true.
+///   (2) A VALUE-BEARING FLAG IN THE LAST POSITION.  Its value token does not
+///       exist, so the parser must leave the flag unset rather than reach past
+///       the argv array for it: the constructor then sees no vertex count and
+///       returns NULL, exactly as it does when the flag is absent entirely.
 ///
 /// Runtime test: _from_args calls arts_get_total_ranks(), so it must run
 /// inside main_edt.  Config-independent (no coherence protocol dependence).
@@ -58,6 +57,7 @@
 #include <stdlib.h>
 
 #include "arts.h"
+#include "../test_failure_status.h"
 #include "arts/graph.h"
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -74,6 +74,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     char *argv0[] = {(char *)"prog"};
     arts_block_dist_t *d = arts_block_dist_init_from_args(1, argv0);
     if (d != NULL) {
+      arts_test_fail();
       arts_printf("FAIL: missing both args should yield NULL\n");
       arts_block_dist_free(d);
       arts_shutdown();
@@ -86,6 +87,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     char *argv1[] = {(char *)"prog", (char *)"--num-vertices", (char *)"16"};
     arts_block_dist_t *d = arts_block_dist_init_from_args(3, argv1);
     if (d != NULL) {
+      arts_test_fail();
       arts_printf("FAIL: only --num-vertices should yield NULL\n");
       arts_block_dist_free(d);
       arts_shutdown();
@@ -101,6 +103,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     char *argv2[] = {(char *)"prog"};
     int rc = arts_csr_load_from_args(dist, 1, argv2);
     if (rc != -1) {
+      arts_test_fail();
       arts_printf("FAIL: load_from_args with no --file should return -1, "
                   "got %d\n",
                   rc);
@@ -111,23 +114,23 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_block_dist_free(dist);
   }
 
-  arts_printf("  arg-NULL paths OK; now triggering B-args-oob exposure\n");
+  arts_printf("  arg-NULL paths OK\n");
 
-  /* (2) BUG EXPOSURE: flag as the LAST argv token -> argv[i+1] OOB read.
-   *     argv here is a tightly-sized array of length 2, so argv[2] is past the
-   *     end.  arts_block_dist_init_from_args reads argv[i+1] for the matched
-   *     --num-vertices.  Under ASan this is a heap/stack OOB read and the
-   *     process aborts -- the intended, correct failure for this bug. */
+  /* (2) A value-bearing flag with no value token.  argv here is tightly sized
+   *     at 2, so argv[2] is past the end; the parser must not go looking there.
+   *     Reading it is an out-of-bounds access a sanitizer build aborts on, and
+   *     on any build it would feed the constructor a garbage vertex count. */
   {
     char *argv3[] = {(char *)"prog", (char *)"--num-vertices"};
     arts_block_dist_t *d = arts_block_dist_init_from_args(2, argv3);
-    /* If we reach here without a sanitizer abort the OOB read silently
-     * succeeded (read garbage); that is still the bug, report it. */
-    arts_printf("FAIL: B-args-oob not caught -- argv[i+1] OOB read returned "
-                "%p without abort\n",
-                (void *)d);
     if (d != NULL) {
+      arts_test_fail();
+      arts_printf("FAIL: --num-vertices with no value produced a distribution "
+                  "(%p) -- the missing value token was read anyway\n",
+                  (void *)d);
       arts_block_dist_free(d);
+    } else {
+      arts_printf("  PASS: trailing --num-vertices left the count unset\n");
     }
   }
 
@@ -135,6 +138,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 int main(int argc, char **argv) {
-  arts_rt(argc, argv);
-  return 0;
+  /* Two verdicts to merge: what arts_rt saw of the ranks it spawned (their exit
+     status reaches nobody else) and what this rank's own checks found. */
+  int rc = arts_rt(argc, argv);
+  return rc != 0 ? 1 : arts_test_status();
 }

@@ -1,7 +1,7 @@
 # ============================================================================
 # Auto-generated Wave-A pure_unit test registrations.
 #
-# Generated from docs/test-census/waveA-result.json. Do NOT edit by hand;
+# Generated from research/test-census/waveA-result.json. Do NOT edit by hand;
 # regenerate from the census instead.
 #
 # Protocol selection (ARTS_PROTOCOL_* / ARTS_WRITE_POLICY_* / ARTS_RELEASE_*)
@@ -186,7 +186,7 @@ add_pure_unit_src(gpu_locality_schemes TIMEOUT 60)
 # ============================================================================
 # Wave C/D runtime + config_specific tests
 #
-# Generated from docs/test-census/waveCD-result.json (clusters C02r..C27, C12r..C18r,
+# Generated from research/test-census/waveCD-result.json (clusters C02r..C27, C12r..C18r,
 # C19r/C21r/C22r/C23r/C24r/C25r) plus the C13 EDT cluster (scanned from tests/ocr/
 # directly — its census metadata was lost when the authoring agent died).
 #

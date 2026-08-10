@@ -28,6 +28,7 @@
  */
 
 #include "arts.h"
+#include "../test_failure_status.h"
 #include "arts/db.h" /* DB_MODE_PTR */
 
 #include <stdatomic.h>
@@ -66,6 +67,7 @@ void consumer(uint32_t pc, const uint64_t *pv, uint32_t dc,
   if (ok) {
     atomic_fetch_add_explicit(&t->ok, 1u, memory_order_relaxed);
   } else {
+    arts_test_fail();
     arts_printf("FAIL: consumer payload mismatch (ptr=%p)\n", (const void *)p);
   }
 }
@@ -131,6 +133,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 int main(int argc, char **argv) {
-  arts_rt(argc, argv);
-  return 0;
+  /* Two verdicts to merge: what arts_rt saw of the ranks it spawned (their exit
+     status reaches nobody else) and what this rank's own checks found. */
+  int rc = arts_rt(argc, argv);
+  return rc != 0 ? 1 : arts_test_status();
 }

@@ -67,6 +67,7 @@
 #include <unistd.h>
 
 #include "arts.h"
+#include "../test_failure_status.h"
 #include "arts/graph.h"
 
 #define NVERTS 6
@@ -133,7 +134,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   bool ok = true;
   char path[256];
-  snprintf(path, sizeof(path), "/tmp/arts_t268_edgelist_%d.txt", (int)getpid());
+  snprintf(path, sizeof(path), "arts_t268_edgelist_%d.txt", (int)getpid());
 
   /* Fixture: an mmio '%' header (next line skipped), a '#' comment, real edges,
    * a self-loop (3 3), and a 3-token weighted line that the loader mis-parses
@@ -150,6 +151,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       "5 0\n";
 
   if (!write_file(path, content)) {
+    arts_test_fail();
     arts_printf("FAIL: cannot write fixture %s\n", path);
     arts_shutdown();
     return;
@@ -161,27 +163,33 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     int rc = arts_csr_load_no_weight(path, dist, /*flip=*/false,
                                      /*ignore_self_loops=*/true);
     if (rc != 0) {
+      arts_test_fail();
       arts_printf("FAIL: load rc=%d\n", rc);
       ok = false;
     }
     if (ok && !has_neighbor(dist, 0, 1)) {
+      arts_test_fail();
       arts_printf("FAIL: edge 0->1 missing\n");
       ok = false;
     }
     if (ok && !has_neighbor(dist, 0, 2)) {
+      arts_test_fail();
       arts_printf("FAIL: edge 0->2 missing\n");
       ok = false;
     }
     if (ok && !has_neighbor(dist, 1, 0)) {
+      arts_test_fail();
       arts_printf("FAIL: edge 1->0 missing\n");
       ok = false;
     }
     if (ok && !has_neighbor(dist, 5, 0)) {
+      arts_test_fail();
       arts_printf("FAIL: edge 5->0 missing\n");
       ok = false;
     }
     /* Self loop 3->3 must have been dropped. */
     if (ok && has_neighbor(dist, 3, 3)) {
+      arts_test_fail();
       arts_printf("FAIL: self-loop 3->3 not dropped\n");
       ok = false;
     }
@@ -198,17 +206,20 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     int rc = arts_csr_load_no_weight(path, dist, /*flip=*/true,
                                      /*ignore_self_loops=*/true);
     if (rc != 0) {
+      arts_test_fail();
       arts_printf("FAIL: flip load rc=%d\n", rc);
       ok = false;
     }
     /* With flip, 1->0 (reverse of 0->1) is already present; 2->0 is the
      * reverse of 0->2 and must now exist. */
     if (ok && !has_neighbor(dist, 2, 0)) {
+      arts_test_fail();
       arts_printf("FAIL: flip reverse edge 2->0 missing\n");
       ok = false;
     }
     arts_graph_sz_t deg = total_degree(dist);
     if (ok && deg == (arts_graph_sz_t)-1) {
+      arts_test_fail();
       arts_printf("FAIL: flip total_degree lookup failed\n");
       ok = false;
     }
@@ -228,6 +239,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 int main(int argc, char **argv) {
-  arts_rt(argc, argv);
-  return 0;
+  /* Two verdicts to merge: what arts_rt saw of the ranks it spawned (their exit
+     status reaches nobody else) and what this rank's own checks found. */
+  int rc = arts_rt(argc, argv);
+  return rc != 0 ? 1 : arts_test_status();
 }

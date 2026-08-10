@@ -58,6 +58,7 @@
 /// Config-independent (CSR DBs are ARTS_DB_PIN).  Single-node.
 
 #include "arts.h"
+#include "../test_failure_status.h"
 #include "arts/graph.h"
 
 void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -84,6 +85,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_edge_vector_free(&vec);
 
   if (csr == NULL) {
+    arts_test_fail();
     arts_printf("FAIL: empty local partition init returned NULL\n");
     arts_block_dist_free(dist);
     arts_shutdown();
@@ -98,6 +100,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_graph_sz_t cnt = (arts_graph_sz_t)-1;
     arts_csr_get_neighbors(csr, v, &nbrs, &cnt);
     if (cnt != 0) {
+      arts_test_fail();
       arts_printf("FAIL: vertex %lu of empty partition has %lu neighbours\n",
                   (unsigned long)v, (unsigned long)cnt);
       ok = false;
@@ -107,6 +110,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   if (ok) {
     arts_printf("PASS csr_empty_partition\n");
   } else {
+    arts_test_fail();
     arts_printf("FAIL csr_empty_partition\n");
   }
 
@@ -116,6 +120,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 int main(int argc, char **argv) {
-  arts_rt(argc, argv);
-  return 0;
+  /* Two verdicts to merge: what arts_rt saw of the ranks it spawned (their exit
+     status reaches nobody else) and what this rank's own checks found. */
+  int rc = arts_rt(argc, argv);
+  return rc != 0 ? 1 : arts_test_status();
 }

@@ -3,7 +3,7 @@
  * T241 — single-thread pinning of the exact return-value conventions of the
  * arts_atomic_* RMW wrappers in libs/src/core/utils/atomics.c.
  *
- * The load-bearing contract (see docs/test-census/32-misc-utils.md §1.1) is
+ * The load-bearing contract is
  * that the *_add / *_sub / *_add_u64 / *_sub_u64 family return the NEW
  * (post-op) value, while fetch_add / fetch_sub / fetch_and / swap return the
  * OLD (pre-op) value, and cswap returns the PRIOR value (not a bool).  These

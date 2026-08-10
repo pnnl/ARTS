@@ -39,7 +39,6 @@
 
 /*
  * arts_event_s — single struct, is_channel-discriminated union.
- * See docs/superpowers/plans/2026-05-11-event-hint-redesign.md.
  *
  *   - simple (non-CHANNEL): latch + Treiber dep stack.  All single-fire
  *     OCR flavors (ONCE / IDEM / STICKY / COUNTED) and LATCH(N) use this

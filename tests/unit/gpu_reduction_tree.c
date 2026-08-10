@@ -6,9 +6,8 @@
  * CUDA TU (#include <cuda_runtime_api.h>) and therefore cannot be compiled
  * standalone with host gcc.  The functions exercised here — find_roots,
  * add_to_trav, gpu_tree_reduction_rec, gpu_tree_reduction_start — are PURE
- * integer logic with NO CUDA and NO global state (gpu_lc.cu:268-393).  Per the
- * census report (docs/test-census/36-gpu-lc-placement.md, Part 5: "prefer
- * extraction for portability — no GPU needed"), the pure bodies are copied
+ * integer logic with NO CUDA and NO global state (gpu_lc.cu:268-393).  Extracted
+ * rather than exercised through a GPU build, the pure bodies are copied
  * VERBATIM below from gpu_lc.cu, under #define GPUGROUPSIZE 4 / GPUNUMGROUP 2
  * (the hardcoded 4x2 / 8-GPU model).  Each copied block cites its source lines.
  * No runtime source is modified; this is the host-only mirror.

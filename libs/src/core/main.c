@@ -122,11 +122,16 @@ int arts_rt(int argc, char **argv) {
     arts_counter_write_cluster(config.counter_folder, config.nodes);
     arts_object_write_cluster(config.counter_folder, config.nodes);
   }
+  int spawned_rank_failures = 0;
   if (arts_global_rank_id == config.master_rank && config.master_boot) {
     config.launcher_data->cleanup_processes(config.launcher_data);
+    spawned_rank_failures = (int)config.launcher_data->failed_child_count;
     arts_stdio_forwarder_shutdown_all();
   }
   arts_stop_signal_watcher_thread();
   arts_config_destroy(&config);
-  return 0;
+  /* The run is only successful if every rank was.  This process cannot see a
+     peer's status on a distributed launcher, but for the ranks it spawned
+     itself it can, and it is the only process whose status the caller sees. */
+  return spawned_rank_failures > 0 ? -1 : 0;
 }

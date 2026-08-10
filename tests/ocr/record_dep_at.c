@@ -63,11 +63,12 @@ void check_record_dep_ro(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 /// Test 2: arts_record_dep with DB_MODE_RW (exclusive write).
-/// After the first writer finishes, the second reader sees modified data.
+/// The reader that must observe this write waits on a slot this EDT satisfies
+/// by hand — paramv[0] names it.  Naming the same DB from both EDTs would say
+/// what each one gets, never which runs first.
 void writer_ew(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                arts_edt_dep_t depv[]) {
   (void)paramc;
-  (void)paramv;
   (void)depc;
   int *data = (int *)depv[0].ptr;
   if (data) {
@@ -75,6 +76,13 @@ void writer_ew(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     data[1] = 2000;
   }
   arts_printf("  PASS: record_dep EW - write completed\n");
+
+  /* Release before handing the turn over.  The satisfy can make the reader
+   * runnable immediately, and it must not acquire a DB this EDT still holds
+   * for writing. */
+  arts_db_release(depv[0].guid, DB_MODE_RW);
+  arts_edt_satisfy_slot((arts_guid_t)paramv[0], 1, NULL_GUID, DB_MODE_NULL,
+                        NULL, 0);
 }
 
 void reader_after_ew(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
@@ -154,7 +162,13 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                       &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(db1, e1, 0, DB_MODE_RO);
 
-  // Test 2: EW → RO ordering via record_dep.
+  // Test 2: a writer ordered BEFORE a reader on the same DB.
+  //
+  // Naming a DB as a dependence says what an EDT gets, never when it runs
+  // relative to another EDT naming the same DB, and joining both to one finish
+  // event only merges their completions.  The order is an explicit hand-off:
+  // the reader carries a second slot that the writer satisfies once it has
+  // written and released.
   void *ptr2 = NULL;
   arts_guid_t db2 = arts_db_create(&ptr2, 2 * sizeof(int), ARTS_DB_DEFAULT,
                                    ARTS_DB_PROP_NONE, NULL);
@@ -163,14 +177,17 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   d2[1] = 0;
   arts_db_release(db2, DB_MODE_RW);
 
-  arts_guid_t ew_edt = arts_edt_create(
-      writer_ew, 0, NULL, 1, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
-  arts_add_dependence(db2, ew_edt, 0, DB_MODE_RW);
-
   arts_guid_t ro_edt =
-      arts_edt_create(reader_after_ew, 0, NULL, 1,
+      arts_edt_create(reader_after_ew, 0, NULL, 2,
                       &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
   arts_add_dependence(db2, ro_edt, 0, DB_MODE_RO);
+  /* Slot 1 stays pending until the writer satisfies it. */
+
+  uint64_t ro_param = (uint64_t)ro_edt;
+  arts_guid_t ew_edt =
+      arts_edt_create(writer_ew, 1, &ro_param, 1,
+                      &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
+  arts_add_dependence(db2, ew_edt, 0, DB_MODE_RW);
 
   // Test 3: record_dep_at with byte offset.
   void *ptr3 = NULL;
@@ -203,6 +220,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 int main(int argc, char **argv) {
-  arts_rt(argc, argv);
-  return 0;
+  /* Non-zero when a rank this process spawned ended badly: their exit status
+     reaches nobody else, and a run with a dead rank did not succeed. */
+  return arts_rt(argc, argv) != 0 ? 1 : 0;
 }

@@ -138,7 +138,7 @@ int main(void) {
   /* ===== Part B: torn arts_printf output (documentation). ===== */
   /* Redirect stdout to a temp file so we can scan for torn lines. */
   {
-    char tmpl[] = "/tmp/diag_printf_XXXXXX";
+    char tmpl[] = "diag_printf_XXXXXX";
     int fd = mkstemp(tmpl);
     if (fd < 0) {
       (void)fprintf(stderr, "NOTE diag_timestamp: mkstemp failed, skip torn "

@@ -7,9 +7,8 @@
  * parses the arts_gpu_edt_t packet to recover (depc, depv[]) and a size, then
  * combines per-dep GPU-presence lookups (arts_gpu_lookup_db) into a candidate
  * mask, or hashes a dep key into a GPU index.  The packet parsing and the
- * size accounting are NOT the logic under test; the census
- * (docs/test-census/36-gpu-lc-placement.md, Part 4 #3 and #6) flags two pure
- * integer defects in the mask/index core:
+ * size accounting are NOT the logic under test; two pure integer defects in
+ * the mask/index core are:
  *
  *   B-all-or-nothing (#3, severity medium), now FIXED: all_or_nothing used to
  *       initialize `uint64_t mask = 0;` then `mask &= arts_gpu_lookup_db(dep)`

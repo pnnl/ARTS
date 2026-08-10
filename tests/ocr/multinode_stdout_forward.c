@@ -35,6 +35,7 @@ void init_per_worker(unsigned int node_id, unsigned int worker_id, int argc,
 }
 
 int main(int argc, char **argv) {
-  arts_rt(argc, argv);
-  return 0;
+  /* Non-zero when a rank this process spawned ended badly: their exit status
+     reaches nobody else, and a run with a dead rank did not succeed. */
+  return arts_rt(argc, argv) != 0 ? 1 : 0;
 }

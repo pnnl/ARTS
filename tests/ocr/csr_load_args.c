@@ -47,9 +47,9 @@
 ///   * --flip / --keep-self-loops plumbing: with --keep-self-loops a self loop
 ///     survives; without it (default) a self loop is dropped.
 ///   * Missing --file: dispatch reaches a loader with file==NULL -> returns -1.
-///   * --file as the LAST argv token (B-args-oob): argv[i+1] read past the end.
-///     Under ASan this aborts -> the intended failure.  exposes_runtime_bug =
-///     true (B-args-oob).
+///   * --file as the LAST argv token: its value token does not exist, so the
+///     parser must leave the path unset rather than reach past the argv array
+///     -- dispatch then behaves as if --file were absent (returns -1).
 ///
 /// Config-independent (ARTS_DB_PIN).  Single-node.
 
@@ -58,6 +58,7 @@
 #include <unistd.h>
 
 #include "arts.h"
+#include "../test_failure_status.h"
 #include "arts/graph.h"
 
 #define NVERTS 4
@@ -114,18 +115,20 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   bool ok = true;
   char el_path[256];
   char csr_path[256];
-  snprintf(el_path, sizeof(el_path), "/tmp/arts_t270_el_%d.txt", (int)getpid());
-  snprintf(csr_path, sizeof(csr_path), "/tmp/arts_t270_csr_%d.txt",
+  snprintf(el_path, sizeof(el_path), "arts_t270_el_%d.txt", (int)getpid());
+  snprintf(csr_path, sizeof(csr_path), "arts_t270_csr_%d.txt",
            (int)getpid());
 
   /* Edge-list fixture with a self-loop 2->2. */
   if (!write_file(el_path, "0 1\n1 2\n2 2\n3 0\n")) {
+    arts_test_fail();
     arts_printf("FAIL: cannot write edge-list fixture\n");
     arts_shutdown();
     return;
   }
   /* CSR-format fixture, 4 verts, 1-based. */
   if (!write_file(csr_path, "4 4\n2\n3\n3\n1\n")) {
+    arts_test_fail();
     arts_printf("FAIL: cannot write csr fixture\n");
     remove(el_path);
     arts_shutdown();
@@ -138,14 +141,17 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     char *argv[] = {(char *)"prog", (char *)"--file", el_path};
     int rc = arts_csr_load_from_args(dist, 3, argv);
     if (rc != 0) {
+      arts_test_fail();
       arts_printf("FAIL: edge-list dispatch rc=%d\n", rc);
       ok = false;
     }
     if (ok && !has_neighbor(dist, 0, 1)) {
+      arts_test_fail();
       arts_printf("FAIL: edge-list 0->1 missing\n");
       ok = false;
     }
     if (ok && has_neighbor(dist, 2, 2)) {
+      arts_test_fail();
       arts_printf("FAIL: self loop 2->2 not dropped by default\n");
       ok = false;
     }
@@ -160,10 +166,12 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                     (char *)"--keep-self-loops"};
     int rc = arts_csr_load_from_args(dist, 4, argv);
     if (rc != 0) {
+      arts_test_fail();
       arts_printf("FAIL: keep-self-loops dispatch rc=%d\n", rc);
       ok = false;
     }
     if (ok && !has_neighbor(dist, 2, 2)) {
+      arts_test_fail();
       arts_printf("FAIL: --keep-self-loops did not retain 2->2\n");
       ok = false;
     }
@@ -178,11 +186,13 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                     (char *)"--csr-format"};
     int rc = arts_csr_load_from_args(dist, 4, argv);
     if (rc != 0) {
+      arts_test_fail();
       arts_printf("FAIL: csr-format dispatch rc=%d\n", rc);
       ok = false;
     }
     /* line src=0 "2" -> neighbour 1 (1-based decrement). */
     if (ok && !has_neighbor(dist, 0, 1)) {
+      arts_test_fail();
       arts_printf("FAIL: csr-format vertex 0 neighbour wrong\n");
       ok = false;
     }
@@ -196,6 +206,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     char *argv[] = {(char *)"prog"};
     int rc = arts_csr_load_from_args(dist, 1, argv);
     if (rc != -1) {
+      arts_test_fail();
       arts_printf("FAIL: missing --file rc=%d (expected -1)\n", rc);
       ok = false;
     }
@@ -206,18 +217,24 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   remove(csr_path);
 
   if (ok) {
-    arts_printf("  arg-dispatch paths OK; now triggering B-args-oob\n");
+    arts_printf("  arg-dispatch paths OK\n");
   }
 
-  /* (5) BUG EXPOSURE: --file as the last token -> argv[i+1] OOB read.  The
-   * array is sized exactly 2, so argv[2] is past the end.  ASan aborts. */
+  /* (5) --file with no value token.  The array is sized exactly 2, so argv[2]
+   * is past the end; the parser must not go looking there.  With the path left
+   * unset, dispatch is the same as for a missing --file: -1. */
   {
     arts_block_dist_t *dist = arts_block_dist_init(NVERTS, 0, 1, ARTS_GUID_DB);
     char *argv[] = {(char *)"prog", (char *)"--file"};
     int rc = arts_csr_load_from_args(dist, 2, argv);
-    arts_printf("FAIL: B-args-oob not caught -- --file last token returned "
-                "rc=%d without abort\n",
-                rc);
+    if (rc != -1) {
+      arts_test_fail();
+      arts_printf("FAIL: trailing --file returned rc=%d, want -1 (the missing "
+                  "value token was read anyway)\n",
+                  rc);
+    } else {
+      arts_printf("  PASS: trailing --file left the path unset\n");
+    }
     arts_block_dist_free(dist);
   }
 
@@ -225,6 +242,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 }
 
 int main(int argc, char **argv) {
-  arts_rt(argc, argv);
-  return 0;
+  /* Two verdicts to merge: what arts_rt saw of the ranks it spawned (their exit
+     status reaches nobody else) and what this rank's own checks found. */
+  int rc = arts_rt(argc, argv);
+  return rc != 0 ? 1 : arts_test_status();
 }
