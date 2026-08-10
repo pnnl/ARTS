@@ -55,6 +55,16 @@ typedef enum {
 } arts_cxl_db_alloc_strategy_t;
 #endif /* ARTS_USE_CXL */
 
+/* Window a local run's port block is drawn from: above the registered-service
+   crowd, below the customary Linux ephemeral floor (32768), where a listen port
+   would collide at random with an outgoing connection's source port. */
+#define ARTS_PORT_WINDOW_LO 20000U
+#define ARTS_PORT_WINDOW_HI 32000U
+/* How the spawning rank tells the ranks it spawns what the run settled on.
+   Not a config key: it is an internal handoff, and a local run rejects any
+   attempt to name ports by hand. */
+#define ARTS_RESOLVED_PORTS_ENV "ARTS_RESOLVED_PORTS"
+
 struct arts_config_table_s {
   unsigned int rank;
   char *ip_address;
@@ -74,8 +84,11 @@ struct arts_config_s {
   char *net_interface;
   char *launcher;
   unsigned int port_count;
-  unsigned int *default_ports;
-  unsigned int default_ports_count;
+  /* Base list every node's ports are derived from; exactly port_count entries.
+     Named by the config for a remote launcher, chosen by the runtime for a
+     local one. */
+  unsigned int *ports;
+  unsigned int ports_count;
   char *provider; /* libfabric provider name (fi_getinfo hints prov_name);
                      NULL/empty = auto-select.  Overrides the ambient
                      FI_PROVIDER env var when set. */

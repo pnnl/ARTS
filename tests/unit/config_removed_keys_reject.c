@@ -24,7 +24,7 @@
  *
  * This is a config-parser test: it calls arts_config_load() directly against
  * crafted temp cfgs (no runtime started, no ports bound).  Self-contained: it
- * sets its own ARTS_CONFIG and clears the inherited `default_ports`/
+ * sets its own ARTS_CONFIG and clears the inherited `ports`/
  * `port_count` env overrides.  Orthogonal to the coherence protocol axis.
  */
 
@@ -66,7 +66,7 @@ static int child_load_rejected(const char *cfg_path) {
   }
   if (pid == 0) {
     setenv("ARTS_CONFIG", cfg_path, 1);
-    unsetenv("default_ports");
+    unsetenv("ports");
     unsetenv("port_count");
     struct arts_config_s config;
     arts_config_load(&config);
@@ -118,6 +118,20 @@ int main(void) {
     fails++;
   }
 
+  /* (B2) default_ports present -> hard error (renamed to ports). */
+  if (write_cfg(cfg_path, sizeof(cfg_path), "defaultports",
+                "default_ports=25000\n") != 0) {
+    printf("FAIL config_removed_keys_reject: cannot write default_ports cfg\n");
+    return 1;
+  }
+  int default_ports_rejected = child_load_rejected(cfg_path);
+  (void)remove(cfg_path);
+  if (default_ports_rejected != 1) {
+    printf("FAIL config_removed_keys_reject: default_ports was ACCEPTED "
+           "(expected hard error)\n");
+    fails++;
+  }
+
   /* (C) sanity: progress_threads (the new key) loads normally -- the hard
    * error is specific to the removed key NAMES, not networking keys in
    * general.  Run directly (not forked): this must NOT abort. */
@@ -128,7 +142,7 @@ int main(void) {
     return 1;
   }
   setenv("ARTS_CONFIG", cfg_path, 1);
-  unsetenv("default_ports");
+  unsetenv("ports");
   unsetenv("port_count");
   struct arts_config_s config;
   arts_config_load(&config);

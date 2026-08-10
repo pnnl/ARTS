@@ -54,6 +54,13 @@ int arts_get_socket_outgoing(struct sockaddr_in *outgoing_socket,
                              unsigned int port, in_addr_t s_addr);
 
 void arts_transport_set_config(struct arts_config_s *config);
+/* Slide a local multi-node run's port block past whatever already holds it, by
+ * probing the exact set of ports the run is about to claim; rewrites
+ * config->ports on success.  Callable only from the process that spawns
+ * the other ranks — they inherit the chosen base and must not probe again.
+ * Returns false when no free block fits below the ephemeral range, leaving the
+ * configured ports in place. */
+bool arts_transport_select_local_ports(struct arts_config_s *config);
 void arts_transport_setup_outgoing();
 bool arts_transport_setup_incoming();
 unsigned int arts_transport_get_my_rank();

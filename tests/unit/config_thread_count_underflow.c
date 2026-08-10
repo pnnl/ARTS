@@ -32,6 +32,9 @@ int main(void) {
   memset(&c, 0, sizeof(c));
   c.table_length = 2; /* multi-node branch */
   c.table = NULL;     /* port-population loop is guarded on table != NULL */
+  /* The multi-node branch also resolves the port block, which needs a launcher
+     to know who is allowed to choose it. */
+  c.launcher = arts_config_make_new_var("local");
   c.route_table_size = 16;
   c.gpu_route_table_size = 12;
 
@@ -61,7 +64,7 @@ int main(void) {
   printf("PASS config_thread_count_underflow: worker=%u (no underflow; "
          "thread_count=%u)\n",
          c.worker_thread_count, c.thread_count);
-  /* compute_derived allocated default_ports (multi-node, neither specified). */
+  /* compute_derived allocated the port block (multi-node, none named). */
   arts_config_destroy(&c);
   return 0;
 }

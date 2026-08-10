@@ -18,7 +18,7 @@
  * This is a config-parser test: it calls arts_config_load() directly against a
  * crafted temp cfg (via ARTS_CONFIG) and inspects the resolved struct.  It does
  * NOT start the runtime (no arts_rt), so it binds no ports and spawns no
- * threads.  It overrides ARTS_CONFIG (and clears the harness `default_ports`
+ * threads.  It overrides ARTS_CONFIG (and clears the harness `ports`
  * override) so it is self-contained regardless of the registered config.
  *
  * Orthogonal to the coherence protocol axis (config.c is protocol-agnostic).
@@ -58,9 +58,9 @@ int main(void) {
   }
 
   /* Self-contained: point the loader at our cfg and drop any inherited
-     per-test `default_ports` override (it is irrelevant single-node). */
+     per-test `ports` override (it is irrelevant single-node). */
   setenv("ARTS_CONFIG", cfg_path, 1);
-  unsetenv("default_ports");
+  unsetenv("ports");
   unsetenv("port_count");
 
   struct arts_config_s config;

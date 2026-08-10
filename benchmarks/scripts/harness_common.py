@@ -3,7 +3,7 @@
 harness_common.py — shared infrastructure for the correctness and
 performance harnesses: machine geometry, the launcher-pinning helpers, and
 the `Runner` class that drives ocr/arts/xsocr/ocrvx/baseline subprocesses
-(hwloc-aware core pinning, cleanup/reap-by-exe-path, multinode port cycling).
+(hwloc-aware core pinning, cleanup/reap-by-exe-path).
 
 Nothing here is correctness-specific (no scalar extraction, no Case
 definitions) — that lives in correctness_harness.py and any future perf
@@ -11,7 +11,6 @@ harness that imports this module.
 """
 from __future__ import annotations
 
-import itertools
 import os
 import shlex
 import signal
@@ -345,21 +344,6 @@ class Runner:
     # range; the runtime lets the environment override any config key, so each
     # run gets its own range.
     #
-    # The base MUST stay BELOW the kernel ephemeral range (32768-60999): a base
-    # inside it randomly collides with the source port the kernel assigns to an
-    # outgoing connection (the launcher's inter-rank connects), and bind() then
-    # fails instantly (exit 255).  A monotonic counter climbs into that range
-    # over a long matrix, so cycle within a fixed sub-ephemeral window instead.
-    # Runs are serialized (one MN runner at a time), so a base is free for reuse
-    # long before the cycle returns to it.  Each run needs nodes*port_count
-    # consecutive ports (<= 16 nodes * 2 _io ports = 32 ports); _PORT_STEP
-    # exceeds that span so adjacent bases never overlap, and _PORT_BASE_HI keeps
-    # the whole span clear of 32768.
-    _PORT_BASE_LO = 20000
-    _PORT_BASE_HI = 32700
-    _PORT_STEP = 48
-    _arts_port_ctr = itertools.count(0)
-
     @staticmethod
     def _reap_exe(exe_path: Path) -> None:
         """SIGKILL every process whose executable is exe_path.
@@ -441,18 +425,9 @@ class Runner:
         env["OMP_NUM_THREADS"] = "4"
         if extra_env:
             env.update(extra_env)
-        base = self._PORT_BASE_LO + (
-            next(self._arts_port_ctr) * self._PORT_STEP
-        ) % (self._PORT_BASE_HI - self._PORT_BASE_LO)
-        # The override must carry the same port COUNT as the cfg it replaces:
-        # the count doubles as the per-node parallel-connection count
-        # (port_count = default_ports_count), so a mismatch breaks the
-        # startup handshake.  The *_io variants use two ports (progress_threads=2);
-        # every other local cfg uses one.
-        if isinstance(nodes, str):  # *_io variant
-            env["default_ports"] = f"[{base}-{base + 1}]"
-        else:
-            env["default_ports"] = str(base)
+        # No port override: a local multinode run claims its own block (the
+        # runtime probes and slides before spawning the peers), so nothing here
+        # has to keep runs apart by handing out bases.
         arts_bin = f"{bin_name}_arts_{suffix}" if suffix else f"{bin_name}_arts"
         cmd = (
             f"cd {SCRATCH} && "

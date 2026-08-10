@@ -129,6 +129,8 @@ set(TEST_PROGRAMS
     # --- Pure unit tests (no ARTS runtime) ---
     lockfree_stack_test
     coherence_buffer_test
+    config_ports_contract
+    port_block_relocation
     stdio_forward_scale_test
     regpool_basic
     regpool_guard
@@ -276,35 +278,13 @@ endif()
 
 # --- Helper functions ---
 
-# Allocate a unique TCP port base per multinode test.  All local cfg files
-# share default_ports=50000, so a straggler from the previous test (a rank
-# still releasing its listen socket, or an orphan left by a timed-out run)
-# can poison every subsequent test that binds the same range.  The runtime
-# lets the environment override any config key (arts_config_find_variable),
-# so handing each test its own `default_ports` makes cross-test port
-# collisions structurally impossible.  Bases start at 20000, BELOW the kernel
-# ephemeral range (net.ipv4.ip_local_port_range, 32768-60999 here): a base
-# inside that range randomly collides with the source port of any outgoing
-# connection on the box, failing the bind instantly.  Also stays clear of
-# the stock configs and the harness bases.
-set_property(GLOBAL PROPERTY arts_test_port_base 20000)
-# port_count: the number of ports in the spec doubles as the per-node
-# parallel-connection count (port_count = default_ports_count), so the
-# override MUST carry the same number of ports as the cfg it replaces:
-# one for the standard configs, two for 2n_io (matching its
-# progress_threads=2).  A mismatched count breaks the startup connection
-# handshake.
-function(arts_next_port_base port_count out_var)
-    get_property(_base GLOBAL PROPERTY arts_test_port_base)
-    if(port_count GREATER 1)
-        math(EXPR _last "${_base} + ${port_count} - 1")
-        set(${out_var} "[${_base}-${_last}]" PARENT_SCOPE)
-    else()
-        set(${out_var} "${_base}" PARENT_SCOPE)
-    endif()
-    math(EXPR _next "${_base} + 16")
-    set_property(GLOBAL PROPERTY arts_test_port_base ${_next})
-endfunction()
+# A local multinode run claims its own port block: before spawning the peers
+# the runtime bind-probes a pid-seeded block, slides past whatever holds it, and
+# hands the result down.  So the suites no longer hand out bases by hand, and a
+# straggler, an orphan, or an unrelated process squatting a port is absorbed by
+# the runtime rather than poisoning the next test.  Do not reintroduce a fixed
+# base here: a fixed base is exactly the shared state that made one test's
+# leftovers everyone else's problem.
 
 function(register_single_node_test test_name)
     cmake_parse_arguments(ARG "" "TIMEOUT" "ARGS" ${ARGN})
@@ -347,7 +327,6 @@ function(register_multinode_test test_name)
         else()
             set(_variant_port_count 1)
         endif()
-        arts_next_port_base(${_variant_port_count} port_base)
         add_test(
             NAME ${test_name}_${variant}
             COMMAND ${test_name} ${ARG_ARGS}
@@ -357,10 +336,11 @@ function(register_multinode_test test_name)
             LABELS "multinode"
             TIMEOUT ${ARG_TIMEOUT}
             RESOURCE_LOCK "arts_runtime"
-            ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/test/${variant}.cfg;default_ports=${port_base}"
+            ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/test/${variant}.cfg"
         )
     endforeach()
 endfunction()
+
 
 function(register_gpu_test test_name)
     cmake_parse_arguments(ARG "" "TIMEOUT" "ARGS" ${ARGN})
@@ -486,7 +466,9 @@ set_tests_properties(term_abort PROPERTIES
 # term_sigfpe / term_sigsegv crash via signal — CTest Exception short-circuits
 # PASS_REGULAR_EXPRESSION before evaluating it.  Use a bash wrapper so the
 # shell catches the signal exit and CTest sees exit-code 0; the regex then
-# matches [ARTS] Crashed: SIG* in the captured output.
+# matches [ARTS] Crashed: SIG* in the captured output.  Hand-registered, so
+# ARTS_CONFIG has to be set here too: without it the runtime falls back to
+# ./arts.cfg in the working directory, which the build tree does not contain.
 add_test(
     NAME term_sigfpe
     COMMAND bash -c "ASAN_OPTIONS=handle_sigfpe=0:handle_segv=0 ${CMAKE_CURRENT_BINARY_DIR}/term_sigfpe 2>&1; true"
@@ -496,6 +478,7 @@ set_tests_properties(term_sigfpe PROPERTIES
     LABELS "single_node"
     TIMEOUT 10
     RESOURCE_LOCK "arts_runtime"
+    ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/test/1n.cfg"
     PASS_REGULAR_EXPRESSION "\\[ARTS\\] Crashed: SIGFPE")
 
 add_test(
@@ -507,11 +490,21 @@ set_tests_properties(term_sigsegv PROPERTIES
     LABELS "single_node"
     TIMEOUT 10
     RESOURCE_LOCK "arts_runtime"
+    ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/test/1n.cfg"
     PASS_REGULAR_EXPRESSION "\\[ARTS\\] Crashed: SIGSEGV")
 
 # --- Pure unit tests (no ARTS runtime) ---
 register_pure_unit_test(lockfree_stack_test)
 register_pure_unit_test(coherence_buffer_test TIMEOUT 60)
+# Forks to probe the ARTS_ERROR death paths of the port contract; loads cfgs
+# only, so it binds nothing and needs no runtime.
+register_pure_unit_test(config_ports_contract TIMEOUT 30)
+set_tests_properties(config_ports_contract PROPERTIES
+    PASS_REGULAR_EXPRESSION "PASS config_ports_contract")
+# Binds real sockets to occupy a block, then checks the selector moves off it.
+register_pure_unit_test(port_block_relocation TIMEOUT 30)
+set_tests_properties(port_block_relocation PROPERTIES
+    PASS_REGULAR_EXPRESSION "PASS port_block_relocation|SKIP port_block_relocation")
 register_pure_unit_test(stdio_forward_scale_test)
 
 # regpool_basic/regpool_guard assert the confinement invariant (every
@@ -829,12 +822,11 @@ add_test(
     COMMAND coherence_stress_dist
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
 )
-arts_next_port_base(1 port_base)
 set_tests_properties(coherence_stress_dist PROPERTIES
     LABELS "coherence_stress;multinode"
     TIMEOUT 120
     RESOURCE_LOCK "arts_runtime"
-    ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/test/2n.cfg;default_ports=${port_base}"
+    ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/test/2n.cfg"
 )
 
 # Large-payload cross-rank coherence transfer: a ~256 KiB DB is stamped by a
@@ -896,12 +888,11 @@ add_test(
     COMMAND coherence_owner_ownership_reorder
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
 )
-arts_next_port_base(2 port_base)
 set_tests_properties(coherence_owner_ownership_reorder PROPERTIES
     LABELS "coherence_stress;multinode"
     TIMEOUT 120
     RESOURCE_LOCK "arts_runtime"
-    ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/test/2n_io.cfg;default_ports=${port_base}"
+    ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/test/2n_io.cfg"
 )
 
 # OWNER-placement stale-RO ownership-confirm gate: RO acquire causally ordered after a
@@ -993,12 +984,11 @@ if(ARTS_COHERENCE_ARM STREQUAL "WRF_VAL")
         COMMAND db_wrf_invariant
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     )
-    arts_next_port_base(1 port_base)
     set_tests_properties(db_wrf_invariant_2n PROPERTIES
         LABELS "multinode"
         TIMEOUT 60
         RESOURCE_LOCK "arts_runtime"
-        ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/test/2n.cfg;default_ports=${port_base}"
+        ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/test/2n.cfg"
         PASS_REGULAR_EXPRESSION "DB_WRF: PASS"
     )
 
@@ -1010,12 +1000,11 @@ if(ARTS_COHERENCE_ARM STREQUAL "WRF_VAL")
         COMMAND db_wrf_local_hit_dedup
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     )
-    arts_next_port_base(1 port_base)
     set_tests_properties(db_wrf_local_hit_dedup_2n PROPERTIES
         LABELS "multinode"
         TIMEOUT 60
         RESOURCE_LOCK "arts_runtime"
-        ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/test/2n.cfg;default_ports=${port_base}"
+        ENVIRONMENT "ARTS_CONFIG=${CMAKE_SOURCE_DIR}/configs/local/test/2n.cfg"
         PASS_REGULAR_EXPRESSION "DB_WRF_LOCAL_HIT_DEDUP: PASS"
     )
 

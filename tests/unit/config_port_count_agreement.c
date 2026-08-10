@@ -1,19 +1,19 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * T212 — port_count / default_ports_count agreement check
+ * T212 — port_count / ports_count agreement check
  *        (config_compute_derived).
  *
  * Property: for a multi-node config, the explicit `port_count` and the number
- * of ports parsed from `default_ports` must agree.  CLAUDE.md states the rule:
+ * of ports parsed from `ports` must agree.  CLAUDE.md states the rule:
  * "The override must carry the same port COUNT as the cfg".  config_compute_
  * derived enforces it:
  *
- *     if (config->default_ports_count != config->port_count)
- *         ARTS_ERROR("default_ports specifies %u ports but port_count=%u",
+ *     if (config->ports_count != config->port_count)
+ *         ARTS_ERROR("ports specifies %u ports but port_count=%u",
  * ...);
  *
  * ARTS_ERROR calls arts_abort(1) -> exit(1).  We therefore drive a deliberately
- * inconsistent cfg (port_count=2 but a single-port default_ports) IN A CHILD
+ * inconsistent cfg (port_count=2 but a single-port ports) IN A CHILD
  * PROCESS and assert the child dies with a nonzero status; doing it in-process
  * would terminate the test binary.  The parent reports PASS only when the
  * mismatch was actually rejected.
@@ -21,7 +21,7 @@
  * This is a config-parser test: the child calls arts_config_load() directly
  * against a crafted temp cfg (no runtime started, no ports bound).  It is
  * self-contained: it sets its own ARTS_CONFIG and clears the inherited
- * `default_ports`/`port_count` env overrides so the harness cfg is irrelevant.
+ * `ports`/`port_count` env overrides so the harness cfg is irrelevant.
  * Orthogonal to the coherence protocol axis.
  */
 
@@ -42,15 +42,16 @@ static int write_cfg(char *path_out, size_t path_cap) {
     return -1;
   }
   /* node_count=2 forces the multi-node port-derivation branch; port_count=2 but
-     default_ports has a single port -> default_ports_count(1) != port_count(2).
+     ports has a single port -> ports_count(1) != port_count(2).
    */
   fputs("[ARTS]\n"
-        "launcher=local\n"
+        "launcher=ssh\n"
+        "nodes=n01,n02\n"
         "node_count=2\n"
         "worker_threads=2\n"
         "progress_threads=1\n"
         "port_count=2\n"
-        "default_ports=25000\n"
+        "ports=25000\n"
         "route_table_size=14\n",
         f);
   (void)fclose(f);
@@ -77,7 +78,7 @@ int main(void) {
        so the parent flags the missing validation. */
     setenv("ARTS_CONFIG", cfg_path, 1);
     /* Drop any inherited per-test overrides that would mask the mismatch. */
-    unsetenv("default_ports");
+    unsetenv("ports");
     unsetenv("port_count");
     struct arts_config_s config;
     arts_config_load(&config);
@@ -102,13 +103,13 @@ int main(void) {
   }
 
   if (rejected) {
-    printf("PASS config_port_count_agreement: port_count!=default_ports_count "
+    printf("PASS config_port_count_agreement: port_count!=ports_count "
            "rejected (status=%d)\n",
            status);
     return 0;
   }
 
   printf("FAIL config_port_count_agreement: inconsistent port_count/"
-         "default_ports was ACCEPTED (child exited 0)\n");
+         "ports was ACCEPTED (child exited 0)\n");
   return 1;
 }

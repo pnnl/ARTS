@@ -96,6 +96,10 @@ int arts_rt(int argc, char **argv) {
   }
   arts_global_master_rank_id = config.master_rank;
   if (arts_global_rank_id == config.master_rank && config.master_boot) {
+    /* Settle the port block before the peers exist: they are spawned with the
+     * chosen base in their environment, so the decision is made once and only
+     * by the process that makes it for everyone. */
+    (void)arts_transport_select_local_ports(&config);
     config.launcher_data->argc = (unsigned int)argc;
     config.launcher_data->argv = argv;
     config.launcher_data->launch_processes(config.launcher_data);

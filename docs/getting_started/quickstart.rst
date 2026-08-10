@@ -89,12 +89,18 @@ For SSH-based multi-node runs, list nodes in ``arts.cfg``:
    launcher=ssh
    node_count=4
    nodes=node1,node2,node3,node4
-   default_ports=25000
+   ports=25000
 
-Then launch normally — ARTS SSHs into each node automatically. Pick a
-``default_ports`` base below the kernel ephemeral port range (32768–60999);
-a base inside it can randomly collide with outgoing connections' source
-ports.
+Then launch normally — ARTS SSHs into each node automatically. ``ports`` is
+required here: every rank resolves its peers' ports from its own copy of the
+config, so nothing but the config can supply them. Pick a base below the
+kernel ephemeral port range (32768–60999); a base inside it can randomly
+collide with outgoing connections' source ports.
+
+A ``launcher=local`` run — several ranks on one machine, as the tests and the
+benchmark harness use — names no ports at all: the ranks share a machine and so
+cannot share a port, and the spawning rank finds a free block for all of them.
+Setting ``ports`` there is a configure error.
 
 For SLURM clusters:
 

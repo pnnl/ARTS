@@ -41,6 +41,7 @@
 #include <errno.h>
 #include <inttypes.h>
 #include <stdatomic.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -272,6 +273,121 @@ void arts_socket_setup(struct arts_config_s *config) {
     // config->net_interface);
     ARTS_ERROR("Could not resolve ip to any device");
   }
+}
+
+/* Claim-and-release probe of one wildcard listen port, with the same options
+ * the real listen socket is created with, so its verdict matches what bind()
+ * will do there.  Availability is a point-in-time observation, never a
+ * reservation: the port is released again before this returns. */
+static bool port_is_bindable(unsigned int port) {
+  int fd = socket(PF_INET, SOCK_STREAM, 0);
+  if (fd < 0) {
+    return false;
+  }
+  int one = 1;
+  setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (char *)&one, sizeof(one));
+
+  struct sockaddr_in addr;
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_ANY);
+  addr.sin_port = htons((uint16_t)port);
+
+  bool free_port = bind(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0;
+  close(fd);
+  return free_port;
+}
+
+/* Lowest port the kernel hands out as an outgoing connection's source port.  A
+ * listen port at or above it collides at random with any connection the machine
+ * makes, so the search below never crosses it. */
+static unsigned int ephemeral_port_floor(void) {
+  unsigned int low = 32768;
+  unsigned int high;
+  FILE *f = fopen("/proc/sys/net/ipv4/ip_local_port_range", "r");
+  if (f) {
+    if (fscanf(f, "%u %u", &low, &high) != 2) {
+      low = 32768;
+    }
+    fclose(f);
+  }
+  return low;
+}
+
+/* Sliding the port block is the spawning rank's job, and only on a local run:
+ * a bind probe here observes this machine, which for a local run is where every
+ * rank lives.  A rank that was spawned already carries the answer in its
+ * environment and must not choose again — two ranks choosing separately would
+ * disagree about each other's ports. */
+static bool this_rank_chooses_ports(const struct arts_config_s *config) {
+  return config->launcher != NULL && strcmp(config->launcher, "local") == 0 &&
+         config->master_boot && config->table_length > 1 &&
+         config->table != NULL && config->ports != NULL &&
+         config->port_count > 0 && getenv(ARTS_RESOLVED_PORTS_ENV) == NULL;
+}
+
+bool arts_transport_select_local_ports(struct arts_config_s *config) {
+  if (!this_rank_chooses_ports(config)) {
+    return true;
+  }
+
+  const unsigned int span = config->table_length * config->port_count;
+  const unsigned int seed = config->ports[0];
+
+  /* Candidates walk up from the seed and wrap back to the bottom of the
+   * window, so a seed near the top still sees the whole window.  Stepping by
+   * the span keeps successive candidates from overlapping. */
+  unsigned int ceiling = ephemeral_port_floor();
+  if (ceiling > ARTS_PORT_WINDOW_HI) {
+    ceiling = ARTS_PORT_WINDOW_HI;
+  }
+  if (ceiling < ARTS_PORT_WINDOW_LO + span) {
+    ARTS_WARN("Local multi-node: the port window %u-%u cannot hold %u ports; "
+              "keeping %u and letting bind contend",
+              ARTS_PORT_WINDOW_LO, ceiling, span, seed);
+    return false;
+  }
+  const unsigned int last_start = ceiling - span;
+  const unsigned int candidates = (last_start - ARTS_PORT_WINDOW_LO) / span + 1;
+
+  unsigned int base = seed > last_start ? ARTS_PORT_WINDOW_LO : seed;
+  for (unsigned int tried = 0; tried < candidates; tried++) {
+    bool all_free = true;
+    for (unsigned int rank = 0; rank < config->table_length && all_free;
+         rank++) {
+      for (unsigned int slot = 0; slot < config->port_count; slot++) {
+        if (!port_is_bindable(base + slot + (rank * config->port_count))) {
+          all_free = false;
+          break;
+        }
+      }
+    }
+
+    if (all_free) {
+      if (base != seed) {
+        ARTS_WARN("Local multi-node: port block at %u is occupied, taking %u "
+                  "instead (%u ports)",
+                  seed, base, span);
+      }
+      for (unsigned int slot = 0; slot < config->port_count; slot++) {
+        config->ports[slot] = base + slot;
+      }
+      for (unsigned int rank = 0; rank < config->table_length; rank++) {
+        for (unsigned int slot = 0; slot < config->port_count; slot++) {
+          config->table[rank].ports[slot] =
+              base + slot + (rank * config->port_count);
+        }
+      }
+      return true;
+    }
+
+    base = base + span > last_start ? ARTS_PORT_WINDOW_LO : base + span;
+  }
+
+  ARTS_WARN("Local multi-node: no free block of %u ports in %u-%u; keeping %u "
+            "and letting bind contend",
+            span, ARTS_PORT_WINDOW_LO, ceiling, seed);
+  return false;
 }
 
 void arts_socket_sentinel_arm(void) {
@@ -519,16 +635,20 @@ bool arts_transport_setup_incoming() {
     }
 
     if (res < 0) {
-      ARTS_INFO("Bind Failed");
-      ARTS_INFO("error %s", strerror(errno));
+      /* Loud and terminal: a rank that cannot open its listen socket can never
+       * join the mesh, and the peers waiting to connect to it have no way to
+       * learn that.  Reporting this below the default log level once made an
+       * occupied port look like a clean, silent, zero-output exit. */
+      ARTS_ERROR("Could not bind listen port %u: %s", my_ports[i],
+                 strerror(errno));
       return false;
     }
 
     res = listen(local_socket_receive[i], 2 * count);
 
     if (res < 0) {
-      ARTS_INFO("Listening Failed");
-      ARTS_INFO("error %s", strerror(errno));
+      ARTS_ERROR("Could not listen on port %u: %s", my_ports[i],
+                 strerror(errno));
       return false;
     }
   }

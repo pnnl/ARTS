@@ -9,20 +9,20 @@
  *   - mark config->shared_pu_pool == true (all nodes share PUs on 127.0.0.1),
  *   - force every table[i].ip_address to "127.0.0.1",
  *   - and, because all nodes share the loopback interface, give each node a
- *     DISJOINT port block:  table[i].ports[j] == default_ports[j] +
+ *     DISJOINT port block:  table[i].ports[j] == ports[j] +
  * i*port_count. A regression here makes every local multinode run collide on
  * the same TCP ports and flake.
  *
  * Harness: runtime_multinode.  Registered for 2n/3n/4n/2n_io; each variant's
  * ARTS_CONFIG points at configs/local/<variant>.cfg and the per-test
- * `default_ports` env override (set by register_multinode_test) replaces the
- * cfg's default_ports base.  The test does NOT start the runtime — it calls
+ * `ports` env override (set by register_multinode_test) replaces the
+ * cfg's ports base.  The test does NOT start the runtime — it calls
  * arts_config_load() directly and inspects the resolved table, so it binds no
  * ports and never oversubscribes.  config.c is protocol-agnostic, so this runs
  * meaningfully in every coherence build.
  *
- * Note: arts_config_load() reads the `default_ports` env override itself (via
- * arts_config_find_variable), so after load config->default_ports already holds
+ * Note: arts_config_load() reads the `ports` env override itself (via
+ * arts_config_find_variable), so after load config->ports already holds
  * the harness-assigned base block; we verify the table offset against THAT, so
  * the assertion is independent of which base the harness happened to hand us.
  */
@@ -54,16 +54,16 @@ int main(void) {
            "local multi-node\n");
     ok = 0;
   }
-  if (config.default_ports == NULL || config.default_ports_count == 0) {
+  if (config.ports == NULL || config.ports_count == 0) {
     printf(
-        "FAIL config_load_multinode_port_offset: no default_ports resolved\n");
+        "FAIL config_load_multinode_port_offset: no ports resolved\n");
     arts_config_destroy(&config);
     return 1;
   }
-  if (config.port_count != config.default_ports_count) {
+  if (config.port_count != config.ports_count) {
     printf("FAIL config_load_multinode_port_offset: port_count=%u != "
-           "default_ports_count=%u\n",
-           config.port_count, config.default_ports_count);
+           "ports_count=%u\n",
+           config.port_count, config.ports_count);
     ok = 0;
   }
   if (config.table == NULL) {
@@ -90,12 +90,12 @@ int main(void) {
       continue;
     }
     for (unsigned int j = 0; j < config.port_count; j++) {
-      unsigned int expected = config.default_ports[j] + (i * config.port_count);
+      unsigned int expected = config.ports[j] + (i * config.port_count);
       if (config.table[i].ports[j] != expected) {
         printf("FAIL config_load_multinode_port_offset: node %u port[%u]=%u "
                "expected %u (base=%u + %u*%u)\n",
                i, j, config.table[i].ports[j], expected,
-               config.default_ports[j], i, config.port_count);
+               config.ports[j], i, config.port_count);
         ok = 0;
       }
     }

@@ -8,11 +8,12 @@
  *     "50000"              -> ([50000], 1)
  *     "[50000-50002]"      -> ([50000,50001,50002], 3)
  *     "50000,50020,50040"  -> 3 entries
- *     trailing comma       -> count is the real token count (no over-read)
- * Documented foot-gun (B104): an invalid / reversed range silently falls back
- * to a SINGLE port hard-coded to 75563 with count 1, masking bad config.  This
- * test PINS that behavior (it is not a crash, just a silent magic default) so a
- * future fix that surfaces an error is detected as a deliberate change.
+ * Anything else — a reversed or unterminated range, a non-numeric token, a
+ * number outside the TCP port space, a list that yields fewer entries than it
+ * promises — is malformed and reports (NULL, 0).  Substituting a port for a
+ * spec the operator got wrong would bind something nobody named, and a list
+ * shorter than its promised length is read past its end by the caller, whose
+ * entry count doubles as the per-node connection count.
  *
  * Pure unit: #include config.c for the static, libc-shim the runtime deps.
  */
@@ -74,17 +75,20 @@ int main(void) {
     expect_array("[50000-50002]", w, 3);
   }
 
-  /* Reversed range -> invalid -> silent 75563 fallback (B104). */
-  {
-    unsigned int w[] = {75563};
-    expect_array("[50005-50000]", w, 1);
-  }
+  /* Reversed range -> malformed -> (NULL, 0), so the caller can reject the
+     config instead of binding a port nobody named. */
+  expect_null("[50005-50000]");
 
-  /* Garbage range -> invalid -> 75563 fallback (B104). */
-  {
-    unsigned int w[] = {75563};
-    expect_array("[abc-def]", w, 1);
-  }
+  /* Garbage range -> malformed. */
+  expect_null("[abc-def]");
+
+  /* Unterminated range -> malformed. */
+  expect_null("[50000-50001");
+
+  /* Out of the TCP port space -> malformed. */
+  expect_null("[65535-65536]");
+  expect_null("70000");
+  expect_null("0");
 
   /* Comma list. */
   {
@@ -92,24 +96,20 @@ int main(void) {
     expect_array("50000,50020,50040", w, 3);
   }
 
-  /* Trailing comma: n = comma_count+1 = 2 allocated, but only one real token
-     is produced before strtok returns NULL, so *count must be 1 (no over-read
-     of the second uninitialized slot). */
-  {
-    unsigned int w[] = {50000};
-    expect_array("50000,", w, 1);
-  }
+  /* Trailing comma: the list promises comma_count+1 entries but yields one, so
+     the spec is malformed rather than a short list the caller would read past
+     the end of. */
+  expect_null("50000,");
 
-  /* Single garbage -> strtoul yields 0 (silent), count 1. */
-  {
-    unsigned int w[] = {0};
-    expect_array("notaport", w, 1);
-  }
+  /* A token that is not a number at all. */
+  expect_null("notaport");
+  expect_null("50000,notaport");
 
   if (fails) {
     fprintf(stderr, "FAIL config_parse_port_spec: %d checks failed\n", fails);
     return 1;
   }
-  printf("PASS config_parse_port_spec: grammar + 75563 fallback pinned\n");
+  printf("PASS config_parse_port_spec: grammar pinned; malformed specs "
+         "report no ports\n");
   return 0;
 }

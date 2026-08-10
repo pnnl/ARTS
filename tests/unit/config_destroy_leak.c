@@ -7,7 +7,7 @@
  * file-static arts_config_override_data directly — legal because this test TU
  * #includes config.c, so the static is in-scope; config_open_file fmemopen's
  * it).  The cfg populates: launcher (ssh), routing table (3 hosts with per-node
- * ports), default_ports, master_node, net_interface, counter_folder, and a
+ * ports), ports, master_node, net_interface, counter_folder, and a
  * launcher_data via arts_launcher_create.  Then arts_config_destroy frees them.
  *
  * Property (LSan): a single load+destroy leaks ZERO bytes.  Note the documented
@@ -29,13 +29,14 @@
 #include <string.h>
 
 int main(void) {
-  /* Embedded cfg: ssh launcher, 3 hosts via bracket range with per-node ports,
-     plus the string/array fields config_destroy must free. */
+  /* Embedded cfg: ssh launcher, 3 hosts via bracket range, plus the
+     string/array fields config_destroy must free. */
   static char cfg_text[] = "launcher=ssh\n"
-                           "nodes=n[01-03]:[50000-50001]\n"
+                           "nodes=n[01-03]\n"
+                           "ports=[25000-25001]\n"
                            "node_count=3\n"
                            "net_interface=eth0\n"
-                           "counter_folder=/tmp/artscnt\n"
+                           "counter_folder=./artscnt\n"
                            "master_node=n01\n"
                            "worker_threads=4\n";
   arts_config_override_data = cfg_text;

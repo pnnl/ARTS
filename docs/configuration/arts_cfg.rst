@@ -142,47 +142,37 @@ Networking
        libfabric memory registration the DB payload buffers draw from; the
        pool grows on demand from this floor.
    * - ``port_count``
-     - 1
-     - Number of parallel network connections per node pair.
-   * - ``net_interface``
-     - auto
-     - Network interface name (``eth0``, ``ib0``, etc.).
+     - (from ``ports``, else 1)
+     - Parallel connections each node listens on.  The ``ports`` list must
+       name exactly this many ports.
+   * - ``ports``
+     - (see below)
+     - Network port(s) every node's listen ports are derived from.  A single
+       port (``25000``), a range (``[25000-25001]``), or a comma-separated
+       list (``25000,25010``).  **Required** with ``launcher=ssh``,
+       ``slurm``, or ``lsf``, and **rejected** with ``launcher=local``.
 
-Launcher
---------
+Who fixes the ports depends on where the ranks land.  A remote launcher puts
+one rank on each host, so every rank can listen on the same port — but each of
+them resolves its peers' ports from its own copy of this config, so the config
+must name them.  Pick a base below the kernel ephemeral port range
+(``net.ipv4.ip_local_port_range``, typically 32768–60999): a listen port inside
+it collides at random with the source port of any outgoing connection the
+machine makes, and the bind dies instantly.
 
-.. list-table::
-   :header-rows: 1
-   :widths: 25 12 63
-
-   * - Key
-     - Default
-     - Description
-   * - ``launcher``
-     - ssh
-     - Launch method: ``ssh``, ``slurm``, ``lsf``, or ``local``.
-       SLURM and LSF are auto-detected from environment variables
-       (``SLURM_PROCID``, ``LSB_HOSTS``) and override this setting.
-   * - ``master_node``
-     - (first)
-     - Hostname of the master node.
-   * - ``node_count``
-     - (auto)
-     - Number of nodes.
-   * - ``nodes``
-     - localhost
-     - Comma-separated node list.  Supports per-node ports
-       (``host:port``) and range expansion (``node[01-10]``).
-   * - ``default_ports``
-     - 75563
-     - Default network port(s).  Per-node ports in the ``nodes`` list
-       override this.  Supports single port (``34739``), range
-       (``[34739-34740]``), or comma-separated (``34739,34800``).
+A ``launcher=local`` run is the mirror image.  Every rank is a process on this
+one machine, so they cannot share a port and the ports must be found rather
+than declared: before spawning the peers, the spawning rank bind-probes a block
+of ``node_count × port_count`` ports, slides past anything already holding
+them, and hands the result to the ranks it spawns.  The search is seeded from
+the process id so two runs starting at the same moment do not pick the same
+block.  Naming ``ports`` there is a configure error — it would only reintroduce
+the collisions the search exists to avoid.
 
 .. tip::
 
-   When running multiple instances on the same machine via SSH, assign
-   different ports per node: ``nodes=localhost:34739,localhost:34740``.
+   To run several ranks on one machine, use ``launcher=local`` and let it
+   place them.  The nodes list carries hostnames only.
 
 Debug / Utility
 ---------------

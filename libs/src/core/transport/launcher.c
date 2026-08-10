@@ -440,6 +440,30 @@ void arts_launcher_local_startup_processes(struct arts_launcher_s *launcher) {
   }
   new_argv[new_argc] = NULL;
 
+  /* The port block this run settled on.  The spawned ranks re-read the same
+   * cfg, which for a local run names no ports at all — this handoff is the only
+   * way they learn what was claimed, and every rank must derive its peers'
+   * ports from the identical base. */
+  char port_spec[512];
+  size_t spec_len = 0;
+  port_spec[0] = '\0';
+  for (unsigned int j = 0; j < config->port_count && config->ports; j++) {
+    int written =
+        snprintf(port_spec + spec_len, sizeof(port_spec) - spec_len, "%s%u",
+                 j == 0 ? "" : ",", config->ports[j]);
+    if (written < 0 || (size_t)written >= sizeof(port_spec) - spec_len) {
+      port_spec[0] = '\0';
+      break;
+    }
+    spec_len += (size_t)written;
+  }
+  /* Published once here rather than per child: every child takes the same base,
+   * and the environment is inherited across fork.  Nothing re-reads the config
+   * in this process, so exporting it here changes only what the children see. */
+  if (port_spec[0] != '\0') {
+    setenv(ARTS_RESOLVED_PORTS_ENV, port_spec, 1);
+  }
+
   /* Allocate PID tracking for non-master nodes. */
   unsigned int num_children = config->table_length - 1;
   launcher->child_pids = (pid_t *)arts_calloc(num_children, sizeof(pid_t));

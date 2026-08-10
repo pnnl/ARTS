@@ -67,7 +67,7 @@ static void test_arts_config_priority(void) {
   (void)fclose(f);
 
   setenv("ARTS_CONFIG", cfg_path, 1);
-  unsetenv("default_ports");
+  unsetenv("ports");
   unsetenv("port_count");
 
   struct arts_config_s config;

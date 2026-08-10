@@ -37,22 +37,12 @@
 ## License for the specific language governing permissions and limitations
 ###############################################################################
 
-# Copy a config file into a build-tree directory under a conventional name.
-function(copy_config_to_target source_file target_dir target_name)
-    if(IS_DIRECTORY ${CMAKE_BINARY_DIR}/${target_dir})
-        configure_file(${source_file} ${CMAKE_BINARY_DIR}/${target_dir}/${target_name} COPYONLY)
-    endif()
-endfunction()
-
-# ── single-node (default for tests + cpu examples) ─────────────────────────
-copy_config_to_target(local/test/1n.cfg examples/cpu arts.cfg)
-copy_config_to_target(local/test/1n.cfg tests         arts.cfg)
-
-# ── multi-node localhost config ─────────────────────────────────────────────
-copy_config_to_target(local/test/2n.cfg  tests arts_2node.cfg)
-
-# ── GPU config ──────────────────────────────────────────────────────────────
-copy_config_to_target(local/gpu/1n.cfg tests arts_gpu.cfg)
+# Nothing is copied into the build tree.  Every test names the config it wants
+# through ARTS_CONFIG, pointing straight at the source cfg, so the build tree
+# holds no config files at all.  A copy here would be worse than redundant: the
+# runtime falls back to ./arts.cfg in the working directory, so a stray copy
+# silently answers for a test that forgot to name its config — which is exactly
+# how a misregistered test can look green.
 
 # Install the canonical single-node config alongside the ARTS runtime.
 install(FILES local/test/1n.cfg

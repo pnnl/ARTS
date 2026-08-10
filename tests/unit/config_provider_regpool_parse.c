@@ -18,7 +18,7 @@
  * This is a config-parser test: it calls arts_config_load() directly against
  * crafted temp cfgs (no runtime started, no fabric brought up, no ports
  * bound).  Self-contained: it sets its own ARTS_CONFIG and clears the
- * inherited `default_ports`/`port_count` env overrides.  Orthogonal to the
+ * inherited `ports`/`port_count` env overrides.  Orthogonal to the
  * coherence protocol axis (config.c is protocol-agnostic).
  */
 
@@ -56,7 +56,7 @@ static int load_cfg(const char *tag, const char *extra_lines,
     return -1;
   }
   setenv("ARTS_CONFIG", cfg_path, 1);
-  unsetenv("default_ports");
+  unsetenv("ports");
   unsetenv("port_count");
   arts_config_load(out);
   (void)remove(cfg_path);
