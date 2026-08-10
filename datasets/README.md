@@ -4,10 +4,10 @@ This directory holds large, expensive-to-regenerate datasets that benchmark
 apps read **at runtime via argv**. It is excluded from git (`/datasets/` in
 the repo `.gitignore`): the payloads never enter git history, and the pure
 OCR app trees under `third_party/ocr-apps` carry no external paths — the
-harnesses (`benchmarks/scripts/{performance,correctness}_harness.py`) pass
-the paths on the command line.
+experiment driver (`artsrun`, `tools/artsrun/`) passes the paths on the
+command line, from the arguments in its application catalog.
 
-**Presence gating**: each harness checks at startup that the dataset it
+**Presence gating**: the driver checks at startup that the dataset a case
 needs is staged; if absent it *drops* the dependent cases with a loud
 stderr note (never a spurious FAIL). Everything else runs normally, so a
 fresh clone works out of the box minus the gated cases.

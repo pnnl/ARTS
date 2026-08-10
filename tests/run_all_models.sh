@@ -1,7 +1,8 @@
 #!/bin/bash
-# Run the ARTS test suites across ALL SEVEN build configurations
-# (<memory model>_<family>_<live second axis>).  Each config has its own build trees,
-# build_<config> (ctest, Debug) and build_release_<config> (harness):
+# Run the ARTS ctest suites across ALL SEVEN build configurations
+# (<memory model>_<family>_<live second axis>), each in its own build_<config>
+# tree, then run the application matrix once over the single benchmark build
+# (which holds every coherence configuration at once):
 #
 #   config           cmake flags
 #   ---------------  ---------------------------------------------------------
@@ -18,10 +19,10 @@
 # treated as regressions.  OCR-model builds must be clean.
 #
 # Usage:
-#   bash tests/run_all_models.sh                                  # all protocols, ctest + harness
+#   bash tests/run_all_models.sh                                  # ctest + applications
 #   bash tests/run_all_models.sh --models ocr_val_wt,ocr_val_wb  # subset
 #   bash tests/run_all_models.sh --no-harness                     # ctest only
-#   bash tests/run_all_models.sh --no-ctest                       # harness only
+#   bash tests/run_all_models.sh --no-ctest                       # applications only
 #   bash tests/run_all_models.sh --no-build                       # skip reconfigure/rebuild
 set -u
 
@@ -42,9 +43,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# protocol → ctest build dir / harness build dir / cmake flags
+# protocol → ctest build dir / cmake flags
 ctest_dir()   { echo "build_$1"; }
-harness_dir() { echo "build_release_$1"; }
 model_label() { echo "$1" | tr '[:lower:]' '[:upper:]'; }
 model_cmake_flags() {
   case "$1" in
@@ -118,17 +118,22 @@ for m in $MODELS; do
     echo "  ctest multi  : ${mn:-NORUN}"
   fi
 
-  if [ "$DO_HARNESS" = 1 ]; then
-    hd="$(harness_dir "$m")"
-    [ "$DO_BUILD" = 1 ] && ensure_build "$hd" "$m" OFF "-DARTS_BUILD_BENCHMARKS=ON"
-    drain_ports
-    timeout -k 30 2400 python3 "$REPO/benchmarks/scripts/correctness_harness.py" \
-        --build-dir "$hd" --no-baseline >"$LOGDIR/harness_$m.log" 2>&1
-    tally=$( grep -E '^Tier [ABM]:' "$LOGDIR/harness_$m.log" | tr '\n' ' ' )
-    RESULT["$m,harness"]="${tally:-NORUN}"
-    echo "  harness      : ${tally:-NORUN}  (full log: $LOGDIR/harness_$m.log)"
-  fi
 done
+
+# The application matrix is no longer per-configuration: one benchmark build
+# holds every coherence configuration, so it runs once for all of them rather
+# than once inside the loop above.
+if [ "$DO_HARNESS" = 1 ]; then
+  hd="build_release"
+  [ "$DO_BUILD" = 1 ] && ensure_build "$hd" ocr_val_wb OFF "-DARTS_BUILD_BENCHMARKS=ON"
+  drain_ports
+  echo "================= APPLICATION MATRIX ================="
+  timeout -k 30 2400 artsrun run -p bentley -b paper-main --nodes 1 \
+      --build-dir "$hd" >"$LOGDIR/apps.log" 2>&1
+  tally=$( grep -E 'MINORITY REPORT|No disagreement' "$LOGDIR/apps.log" | head -1 )
+  APPS_RESULT="${tally:-NORUN}"
+  echo "  applications : ${APPS_RESULT}  (full log: $LOGDIR/apps.log)"
+fi
 
 echo
 echo "===================== SUMMARY (OCR-model configs must be clean; WRF_VAL DB-WRF deviations annotated) ====================="
@@ -137,5 +142,4 @@ for m in $MODELS; do
   echo "[$M]"
   [ "$DO_CTEST" = 1 ]   && echo "   ctest single : ${RESULT[$m,ctest_single]:-skip}"
   [ "$DO_CTEST" = 1 ]   && echo "   ctest multi  : ${RESULT[$m,ctest_multi]:-skip}"
-  [ "$DO_HARNESS" = 1 ] && echo "   harness      : ${RESULT[$m,harness]:-skip}"
 done

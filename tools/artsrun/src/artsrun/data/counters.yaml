@@ -1,0 +1,297 @@
+# Counters the runtime defines, as its own X-macro list declares them.
+#
+# This file mirrors libs/include/internal/arts/counter/counter.h: a counter
+# that is not in that list cannot be enabled, and one added there has to
+# appear here before the driver will offer it.  What a campaign switches on,
+# and at which level, is a counter set under experiments/countersets/.
+#
+# Selecting counters is a BUILD-time decision: the set is parsed at configure
+# time into Preamble.h, whose indices are compiled in.  Changing it forces a
+# reconfigure and a full rebuild.
+
+counters:
+  TIME_EDT_EXEC:
+    group: 'EDT time'
+    unit: ns
+    help: 'Wall-clock time spent executing EDT user functions (paused during yield/wait)'
+
+  TIME_EDT_CREATE:
+    group: 'EDT time'
+    unit: ns
+    help: 'Time spent in arts_edt_create() — GUID allocation, metadata setup, route table'
+
+  TIME_EDT_SIGNAL:
+    group: 'EDT time'
+    unit: ns
+    help: 'Time spent in EDT dependency signaling (internal_signal_edt)'
+
+  TIME_CONTEXT_SWITCH:
+    group: 'EDT time'
+    unit: ns
+    help: 'Time spent saving/restoring EDT thread-local context during preemption'
+
+  NUM_EDT_CREATE:
+    group: 'EDT counts'
+    unit: count
+    help: 'Total number of EDTs created on this rank'
+
+  NUM_EDT_ACQUIRE:
+    group: 'EDT counts'
+    unit: count
+    help: 'Number of EDTs that resolved all dependencies and became ready to execute'
+
+  NUM_EDT_FINISH:
+    group: 'EDT counts'
+    unit: count
+    help: 'Number of EDTs that completed execution'
+
+  NUM_EDT_SIGNAL:
+    group: 'EDT counts'
+    unit: count
+    help: 'Number of EDT dependency signals (arts_signal_edt calls)'
+
+  NUM_YIELD:
+    group: 'EDT counts'
+    unit: count
+    help: 'Count of voluntary EDT yields (arts_yield and arts_wait_on_handle)'
+
+  TIME_DB_CREATE:
+    group: 'DB time'
+    unit: ns
+    help: 'Time spent in arts_db_create() — allocation, route table insertion, data copy'
+
+  NUM_DB_CREATE:
+    group: 'DB counts'
+    unit: count
+    help: 'Total number of DataBlocks created on this rank'
+
+  NUM_DB_DESTROY:
+    group: 'DB counts'
+    unit: count
+    help: 'Number of arts_db_destroy() calls'
+
+  NUM_DB_ACQUIRE_READ:
+    group: 'DB counts'
+    unit: count
+    help: 'Count of READ-mode DataBlock acquisitions during dependency resolution'
+
+  NUM_DB_ACQUIRE_WRITE:
+    group: 'DB counts'
+    unit: count
+    help: 'Count of WRITE-mode DataBlock acquisitions during dependency resolution'
+
+  NUM_DB_ACQUIRE_LOCAL_HIT:
+    group: 'Coherence: acquires'
+    unit: count
+    help: 'Acquires answered from this rank''s own copy — no message'
+
+  NUM_DB_ACQUIRE_REMOTE:
+    group: 'Coherence: acquires'
+    unit: count
+    help: 'Acquires that had to park on a remote round'
+
+  BYTES_DB_CREATE:
+    group: 'DB bytes'
+    unit: bytes
+    help: 'Total bytes of DataBlock data allocated via arts_db_create()'
+
+  BYTES_DB_PAYLOAD_SENT:
+    group: 'Coherence: payload'
+    unit: bytes
+    help: 'Datablock payload shipped, excluding control traffic'
+
+  BYTES_MEMORY_FOOTPRINT:
+    group: 'Memory'
+    unit: bytes
+    help: 'Running total of allocated minus freed bytes (current heap footprint)'
+
+  BYTES_REMOTE_SENT:
+    group: 'Network bytes'
+    unit: bytes
+    help: 'Total bytes sent over the network to remote ranks'
+
+  BYTES_REMOTE_RECEIVED:
+    group: 'Network bytes'
+    unit: bytes
+    help: 'Total bytes received from the network from remote ranks'
+
+  NUM_REMOTE_SEND:
+    group: 'Network counts'
+    unit: count
+    help: 'Number of remote messages sent (per arts_actual_send call)'
+
+  NUM_REMOTE_RECEIVE:
+    group: 'Network counts'
+    unit: count
+    help: 'Number of remote messages received (per completed packet)'
+
+  NET_MSG_LE64:
+    group: 'Network counts'
+    unit: count
+    help: 'Outbound messages with total size <= 64 bytes'
+
+  NET_MSG_LE512:
+    group: 'Network counts'
+    unit: count
+    help: 'Outbound messages with total size <= 512 bytes (and > 64)'
+
+  NET_MSG_LE4K:
+    group: 'Network counts'
+    unit: count
+    help: 'Outbound messages with total size <= 4K bytes (and > 512)'
+
+  NET_MSG_LE64K:
+    group: 'Network counts'
+    unit: count
+    help: 'Outbound messages with total size <= 64K bytes (and > 4K)'
+
+  NET_MSG_GT64K:
+    group: 'Network counts'
+    unit: count
+    help: 'Outbound messages with total size > 64K bytes'
+
+  NET_MSG_TOTAL:
+    group: 'Network counts'
+    unit: count
+    help: 'Total outbound messages across all buckets (population census)'
+
+  TIME_REMOTE_MOVE:
+    group: 'Network time'
+    unit: ns
+    help: 'Time spent in arts_remote_memory_move() — sending local DB data to remote node'
+
+  TIME_EVENT_CREATE:
+    group: 'Event time'
+    unit: ns
+    help: 'Time spent in arts_event_create()'
+
+  TIME_EVENT_SIGNAL:
+    group: 'Event time'
+    unit: ns
+    help: 'Time spent in arts_event_satisfy_slot() — signaling all dependents'
+
+  NUM_EVENT_CREATE:
+    group: 'Event counts'
+    unit: count
+    help: 'Number of arts_event_create() calls'
+
+  NUM_EVENT_SIGNAL:
+    group: 'Event counts'
+    unit: count
+    help: 'Number of arts_event_satisfy_slot() calls'
+
+  NUM_STEAL_ATTEMPT:
+    group: 'Scheduling'
+    unit: count
+    help: 'Number of work-stealing attempts (arts_runtime_steal_from_worker entries)'
+
+  NUM_STEAL_SUCCESS:
+    group: 'Scheduling'
+    unit: count
+    help: 'Number of successful work steals (non-NULL deque pop_back)'
+
+  TIME_YIELD:
+    group: 'Scheduling'
+    unit: ns
+    help: 'Time spent in arts_yield / arts_wait_on_handle (sleeping/waiting)'
+
+  NUM_OO_ENQUEUE:
+    group: 'Out-of-order'
+    unit: count
+    help: 'Number of OO list insertions (deferred operations for not-yet-created targets)'
+
+  NUM_SNAPSHOT_REQUEST:
+    group: 'Validation arm'
+    unit: count
+    help: 'Snapshot requests put on the wire'
+
+  NUM_SNAPSHOT_HEADER_ONLY:
+    group: 'Validation arm'
+    unit: count
+    help: 'Replies with no payload because the requester already held that version'
+
+  NUM_SNAPSHOT_SIZE_CTS:
+    group: 'Validation arm'
+    unit: count
+    help: 'Size-only CTS replies — the rendezvous leg that makes a size-unknown first touch cost two requests'
+
+  NUM_RO_COMBINE_WINDOW:
+    group: 'Validation arm'
+    unit: count
+    help: 'Combining windows opened (one request each)'
+
+  NUM_RO_COMBINE_JOINED:
+    group: 'Validation arm'
+    unit: count
+    help: 'Readers that joined an open window instead of asking'
+
+  NUM_INVALIDATE_ROUND:
+    group: 'Invalidation arm'
+    unit: count
+    help: 'Invalidation rounds opened at the home'
+
+  NUM_INVALIDATE_SENT:
+    group: 'Invalidation arm'
+    unit: count
+    help: 'INVALIDATE messages multicast to sharers'
+
+  NUM_INVALIDATE_ACK:
+    group: 'Invalidation arm'
+    unit: count
+    help: 'Invalidation acks collected'
+
+  TIME_INVALIDATE_ROUND:
+    group: 'Invalidation arm'
+    unit: ns
+    help: 'Time a release blocked on its invalidation round'
+
+  NUM_GRANT_MIGRATE:
+    group: 'Write grant'
+    unit: count
+    help: 'Write grants that had to move between ranks'
+
+  NUM_GRANT_LOCAL_REUSE:
+    group: 'Write grant'
+    unit: count
+    help: 'Write turns taken on a grant this rank already held'
+
+  NUM_EXCL_QUEUE_WAIT:
+    group: 'Exclusion arm'
+    unit: count
+    help: 'Turns that could not be granted on arrival and queued'
+
+  OBJ_NUM_EDT:
+    group: 'Per-object'
+    unit: count
+    help: 'Per-object EDT invocations, keyed by arts_id'
+
+  OBJ_TIME_EDT_EXEC:
+    group: 'Per-object'
+    unit: ns
+    help: 'Per-object execution time, keyed by arts_id'
+
+  OBJ_NUM_DB:
+    group: 'Per-object'
+    unit: count
+    help: 'Datablock acquires by task kind (adds up to the global acquires)'
+
+  OBJ_BYTES_DB:
+    group: 'Per-object'
+    unit: bytes
+    help: 'Bytes acquires delivered, by task kind'
+
+
+  OBJ_NUM_DB_CACHE_MISS:
+    group: 'Per-object'
+    unit: count
+    help: 'Acquires by task kind this rank could not answer (adds up to NUM_DB_ACQUIRE_REMOTE)'
+
+  OBJ_TRACE_EDT:
+    group: 'Per-object'
+    unit: count
+    help: 'Per-invocation EDT records (detailed trace)'
+
+  OBJ_TRACE_DB:
+    group: 'Per-object'
+    unit: count
+    help: 'Per-invocation datablock records (detailed trace)'

@@ -1,0 +1,91 @@
+# The coherence-configuration plane.
+#
+# Rows are the coherence family; columns are the two second axes (release
+# policy x write policy).  Only combinations a build accepts appear under
+# `cells`; every other grid position is unbuildable and carries the reason the
+# build itself gives, so the selection screen can explain the gap instead of
+# hiding it.
+#
+# Two cells are also implemented by an independent runtime.  Those cells offer
+# a second entry, which is what makes a configuration comparable across
+# engines at a fixed design point.
+
+families: [EXCL, INV, VAL, VAL_COMB]
+releases: [PURGE, RETAIN]
+writes: [WT, WB]
+
+family_labels:
+  EXCL: EXCL
+  INV: INV
+  VAL: VAL
+  VAL_COMB: VAL+comb
+
+# Spelled out: the abbreviations are easy to swap for each other at a glance.
+write_labels:
+  WT: Write Through
+  WB: Write Back
+
+# The family names are acronyms and stay upper-case; the policies are
+# ordinary words and read as such.
+release_labels:
+  PURGE: Purge
+  RETAIN: Retain
+
+cells:
+  - family: EXCL
+    release: PURGE
+    write: WB
+    variant: ocr_excl_purge
+    reference: xsocr
+  - family: EXCL
+    release: RETAIN
+    write: WB
+    variant: ocr_excl_retain
+  - family: INV
+    release: RETAIN
+    write: WT
+    variant: ocr_inv_wt
+  - family: INV
+    release: RETAIN
+    write: WB
+    variant: ocr_inv_wb
+    reference: ocrvx
+  - family: VAL
+    release: RETAIN
+    write: WT
+    variant: ocr_val_wt
+  - family: VAL
+    release: RETAIN
+    write: WB
+    variant: ocr_val_wb
+  - family: VAL_COMB
+    release: RETAIN
+    write: WT
+    variant: ocr_val_wt_comb
+  - family: VAL_COMB
+    release: RETAIN
+    write: WB
+    variant: ocr_val_wb_comb
+
+# Why a grid position carries no configuration.  Keyed by the rule that
+# excludes it; the model picks the rule that applies.
+unbuildable:
+  excl_needs_wb: >-
+    EXCL requires WB — the payload rides the permission, so the release
+    policy already decides both halves.
+  needs_retain: >-
+    INV and VAL require RETAIN — their write grant migrates as metadata only,
+    so returning it early saves no payload motion.
+
+references:
+  xsocr:
+    label: XSOCR
+    kind: xsocr
+    note: home-based purging lock; the same design point as EXCL x PURGE
+  ocrvx:
+    # OCR-vx is the project; it ships three runtime families (v1, vsm, vdm).
+    # The one built here is the distributed-memory family, so the label names
+    # that rather than the project.
+    label: OCR-Vdm
+    kind: ocrvx
+    note: owner-resident write-invalidate; the same design point as INV x WB

@@ -1,0 +1,38 @@
+{# Runtime configuration.  Every key is emitted only when the profile sets it,
+   so an unset key falls through to the runtime's own default instead of being
+   written as an empty value.  Ports are a launcher property: a local run's
+   ranks share a machine and each claims its own block, so naming ports there
+   is a configuration error. #}
+[ARTS]
+worker_threads={{ workers }}
+progress_threads={{ progress }}
+launcher={{ launcher }}
+node_count={{ nodes }}
+pin={{ 1 if pin else 0 }}
+route_table_size={{ route_table_size }}
+core_dump={{ 1 if core_dump else 0 }}
+{%- if provider %}
+provider={{ provider }}
+{%- endif %}
+{%- if net_interface %}
+net_interface={{ net_interface }}
+{%- endif %}
+{%- if fabric_domain %}
+fabric_domain={{ fabric_domain }}
+{%- endif %}
+{%- if regpool_slab_mb %}
+regpool_slab_mb={{ regpool_slab_mb }}
+{%- endif %}
+port_count={{ port_count }}
+{%- if ports %}
+ports={{ ports | join(',') }}
+{%- endif %}
+{%- if hosts %}
+nodes={{ hosts | join(',') }}
+{%- endif %}
+{%- if counter_folder %}
+counter_folder={{ counter_folder }}
+{%- endif %}
+{%- if counter_capture_interval %}
+counter_capture_interval={{ counter_capture_interval }}
+{%- endif %}

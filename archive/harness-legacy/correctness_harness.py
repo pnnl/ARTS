@@ -349,6 +349,14 @@ CASES: list[Case] = [
     # grouped into spmv_edt sub-EDTs (25 -> 2 blocks), not the arithmetic, so
     # zeta is bit-identical to the unblocked run while the ocr-vx message
     # count drops ~25x.
+    # Distributed rewrite: per-rank vector fragments on rank-pinned chains,
+    # fresh per-generation fragment blocks over persistent channels, allreduce
+    # dot products.  Same CLI, same verification line, converged class -> zeta
+    # is bit-identical across rank counts.
+    Case("npb_cg_dist", "npb_cg_dist", ["-t", "T", "-b", "25"],
+         scalar_re=r"Verification SUCCESSFUL \(zeta\s*=\s*([\-+0-9.eE]+)", scalar_kind="float",
+         scalar_tol=1e-10,
+         ),
     Case("npb_cg", "npb_cg", ["-t", "T", "-b", "25"],
          # Anchor on the app's own verification verdict: a FAILED run prints
          # "Verification FAILED (zeta=NaN, correct zeta=<expected>)" and the
@@ -605,7 +613,13 @@ CASES: list[Case] = [
     Case("LCS_distributed_ST","LCS_distributed_ST",[],
          # distributed wavefront LCS result (depv[1] result DB at the answer
          # index), self-validated against a serial_lcs reference; deterministic.
-         scalar_re=r"LCS length:\s*(-?\d+)", scalar_kind="int"),
+         scalar_re=r"LCS length:\s*(-?\d+)", scalar_kind="int",
+         # Same rolling-score-buffer algorithm as LCS_shared: the x12/x21
+         # sibling quadrant subtrees write disjoint slot bands of one score
+         # datablock, gated only on x11 — legal under OCR Rule 1 but lost by
+         # the WRF_VAL whole-DB publish.
+         wrf_val_skip="unordered disjoint-region sibling writers; WRF_VAL "
+                   "whole-DB publish is declared lossy"),
     # [string_len, basecase, num_workers] shrunk from the default basecase 256
     # to 512 (string_len held at 1024): basecase is purely the wavefront DP's
     # block-tiling granularity (25 -> 9 blocks), not part of the LCS
@@ -615,10 +629,14 @@ CASES: list[Case] = [
          scalar_re=r"LCS length:\s*(\d+)", scalar_kind="int"),
     Case("LCS_shared",        "LCS_shared",       [],
          # distributed wavefront LCS result, self-validated against serial_lcs.
-         # The x12/x21 sibling quadrants that share the single rolling `score`
-         # datablock are now happens-before ordered (x11->x12->x21), so the
-         # program is DB-WRF and WRF_VAL votes with the consensus.
-         scalar_re=r"LCS length:\s*(-?\d+)", scalar_kind="int"),
+         scalar_re=r"LCS length:\s*(-?\d+)", scalar_kind="int",
+         # The x12/x21 sibling quadrant subtrees write disjoint slot bands of
+         # the single rolling `score` datablock and are gated only on x11 —
+         # unordered disjoint-region sibling writers, legal under OCR Rule 1
+         # (RW exclusion orders the turns) but lost by the WRF_VAL whole-DB
+         # publish (each sibling publishes a clone missing the other's band).
+         wrf_val_skip="unordered disjoint-region sibling writers; WRF_VAL "
+                   "whole-DB publish is declared lossy"),
     Case("RSBench_intel",             "RSBench_intel",             ["-l","100"],
          scalar_re=r"Lookups:", scalar_kind="bool",
          baseline=BaselineSpec(

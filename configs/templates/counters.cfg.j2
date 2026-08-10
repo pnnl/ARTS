@@ -1,0 +1,18 @@
+{# Counter configuration.  Parsed at CONFIGURE time into Preamble.h, so the
+   selection below is compiled in: changing it needs a reconfigure and a full
+   rebuild.  Every counter the runtime declares is listed, including the ones
+   left off, so the file states the whole selection rather than a delta.
+
+   Format: NAME=MODE[,LEVEL[,REDUCE]]
+     MODE   OFF | ONCE (one value at the end) | PERIODIC (sampled)
+     LEVEL  THREAD (per worker) | NODE (reduced per rank) | CLUSTER (reduced
+            across ranks; the per-rank value is still written)
+     REDUCE SUM | MAX | MIN | MASTER
+#}
+# Generated from configs/templates/counters.cfg.j2 — edit the counter set,
+# not this file.
+{% if description %}# {{ description }}
+{% endif %}
+{%- for line in lines %}
+{{ line }}
+{%- endfor %}

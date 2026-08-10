@@ -1,0 +1,846 @@
+# Application catalog: what each benchmark structurally is.
+#
+# Committed values are the ones that describe the application itself —
+# its binary, how a completed run announces itself, how its result scalar
+# is read, which versions exist, and the structural reasons a cell cannot
+# run.  `args` is the calibrated strong-scaling workload and is the only
+# field a benchset routinely overrides.
+#
+# `kind` separates what the program is from whether a campaign runs it. An
+# application is one a field cites by name (graph500, HPCG, CoMD, XSBench,
+# STREAM); a microbenchmark is named after an operation (globalsum, reduction,
+# dbcreate) or after nothing, and probes one runtime mechanism. Upstream's own
+# layout decides most of it: apps/kernels/ and apps/examples/ are
+# microbenchmarks, apps/<name>/ is an application.
+#
+# Versions: every application has `asborn`.  `hinted` exists where the
+# source carries a placement hint layer (built as <binary>_opt), and
+# `restructured` where the task/data decomposition was redesigned and
+# registered as its own target — the answer to a scaling problem that
+# placement hints alone could not fix.
+
+apps:
+  basicIO:
+    binary: basicIO
+    class: task
+    provenance: 'OCR file-input fixture'
+    kind: microbench
+    marker: 'BASICIO_CHK'
+    scalar_re: 'BASICIO_CHK\s+(\d+)'
+    scalar_kind: int
+    expect: '1'
+    expect_args: ['0', '10', '{repo}/scratch/basicIO_test.dat']
+    args: ['0', '10', '{repo}/scratch/basicIO_test.dat']
+    fixtures: ['{repo}/scratch/basicIO_test.dat']
+    default_enabled: false
+
+  cache_offset:
+    binary: cache_offset
+    class: task
+    provenance: 'OCR datablock cache-offset probe'
+    kind: microbench
+    marker: 'CACHE_OFFSET_CHK'
+    scalar_re: 'CACHE_OFFSET_CHK\s+(\d+)'
+    scalar_kind: int
+    expect: '17592181850112'
+    expect_args: []
+    args: []
+    default_enabled: false
+
+  cholesky:
+    binary: cholesky
+    class: task
+    provenance: 'Tiled Cholesky factorization'
+    marker: 'CHOLESKY trace'
+    scalar_re: 'CHOLESKY trace\s*=\s*([0-9.eE+-]+)'
+    tolerance: 1e-09
+    expect: '50'
+    expect_args: ['--ds', '50', '--ts', '10', '--fi', '{repo}/scratch/cholesky_input.mat']
+    args: ['--ds', '5000', '--ts', '100', '--fi', '{repo}/scratch/cholesky_perf5k.mat']
+    fixtures: ['{repo}/scratch/cholesky_perf5k.mat']
+    hinted: true
+
+  cholesky_blas:
+    binary: cholesky_blas
+    class: task
+    provenance: 'Tiled Cholesky factorization over BLAS'
+    marker: 'CHOLESKY trace'
+    scalar_re: 'CHOLESKY trace\s*=\s*([0-9.eE+-]+)'
+    tolerance: 1e-09
+    args: ['--ds', '7500', '--ts', '100', '--fi', '{repo}/scratch/cholesky_perf7k5.mat']
+    fixtures: ['{repo}/scratch/cholesky_perf7k5.mat']
+    hinted: true
+
+  CoMD_intel_chandra:
+    binary: CoMD_intel_chandra
+    class: task
+    provenance: 'CoMD (ExMatEx); Intel OCR port'
+    marker: 'Initial energy'
+    scalar_re: 'Initial energy\s*:\s*([\-+0-9.eE]+)'
+    tolerance: 0.0001
+    args: ['-x', '60', '-y', '60', '-z', '60', '-N', '6', '-n', '1']
+
+  CoMD_intel_chandra_tiled:
+    binary: CoMD_intel_chandra_tiled
+    class: spmd
+    provenance: 'CoMD (ExMatEx); Intel OCR port, tiled rank grid'
+    marker: 'Final energy'
+    scalar_re: 'Final energy\s*:\s*([\-+0-9.eE]+)'
+    tolerance: 1e-06
+    expect: '-1.166063'
+    expect_args: ['-x', '8', '-y', '8', '-z', '8', '-N', '2', '-i', '2', '-j', '2', '-k', '1']
+    args: ['-x', '144', '-y', '144', '-z', '144', '-N', '8', '-i', '8', '-j', '4', '-k', '4']
+
+  CoMD_sdsc:
+    binary: CoMD_sdsc
+    class: task
+    provenance: 'CoMD molecular-dynamics proxy (ExMatEx); OCR port by SDSC'
+    marker: 'Final energy'
+    scalar_re: 'Final energy\s*:\s*([\-+0-9.eE]+)'
+    tolerance: 1e-06
+    expect: '-1.166058121223'
+    expect_args: ['-x', '4', '-y', '4', '-z', '4', '-N', '2']
+    args: ['-x', '36', '-y', '36', '-z', '36', '-N', '2']
+
+  CoMD_sdsc2:
+    binary: CoMD_sdsc2
+    class: task
+    provenance: 'CoMD (ExMatEx); OCR port by SDSC (P. Cicotti)'
+    marker: 'Final energy'
+    scalar_re: 'Final energy\s*:\s*([\-+0-9.eE]+)'
+    tolerance: 0.0001
+    expect: '-1.166063027842'
+    expect_args: ['-x', '4', '-y', '4', '-z', '4', '-N', '2']
+    args: ['-x', '44', '-y', '44', '-z', '44', '-N', '8']
+
+  curvefit:
+    binary: curvefit
+    class: task
+    provenance: 'OCR adaptive piecewise-linear fit demo (reports no result)'
+    kind: microbench
+    marker: 'SUCCESS'
+    scalar_kind: bool
+    args: ['48', '0.01', '0.5', '1000000']
+    default_enabled: false
+
+  dbcreate_matrix:
+    binary: dbcreate_matrix
+    class: task
+    provenance: 'Datablock-creation probe written for this driver'
+    kind: microbench
+    marker: 'CELLS_OK='
+    scalar_re: 'CELLS_OK=(\d+)/12'
+    scalar_kind: int
+    args: []
+    default_enabled: false
+
+  dbctrl:
+    binary: dbctrl
+    class: task
+    provenance: 'OCR datablock lifecycle kernel'
+    kind: microbench
+    marker: 'Total time'
+    scalar_kind: bool
+    args: ['6', '6', '1024']
+    default_enabled: false
+
+  fft:
+    binary: fft
+    class: task
+    provenance: 'FFT, recursive form'
+    marker: 'FFT checksum'
+    scalar_re: 'FFT checksum\s*=\s*([\-+0-9.eE]+)'
+    tolerance: 0.001
+    expect: '81.421870'
+    expect_args: ['6']
+    args: ['23']
+    restructured_as: fft_dist
+
+  fft_dist:
+    binary: fft_dist
+    class: task
+    provenance: 'FFT, Bailey four-step transpose rewrite'
+    marker: 'FFT_DIST checksum'
+    scalar_re: 'FFT_DIST checksum\s*=\s*([\-+0-9.eE]+)'
+    tolerance: 0.001
+    expect: '4194304.0'
+    expect_args: ['22']
+    args: ['28', '512']
+    restructured_from: fft
+
+  fibonacci:
+    binary: fibonacci
+    class: task
+    provenance: 'Fibonacci recursion'
+    marker: 'answer is\s*\d+'
+    scalar_re: 'answer is\s*(\d+)'
+    scalar_kind: int
+    expect: '55'
+    expect_args: ['10']
+    args: ['33']
+    hinted: true
+
+  globalsum_cgNoShim:
+    binary: globalsum_cgNoShim
+    class: task
+    provenance: 'OCR global-sum implementation, CG driver without shim'
+    kind: microbench
+    marker: 'CG0 T\d+\s+0 value'
+    scalar_re: 'CG0 T100\s+0 value\s+([0-9.]+)'
+    tolerance: 1e-05
+    expect: '0.462231'
+    expect_args: []
+    args: []
+    default_enabled: false
+
+  globalsum_cgShim:
+    binary: globalsum_cgShim
+    class: task
+    provenance: 'OCR global-sum implementation, CG driver with shim'
+    kind: microbench
+    marker: 'CG0 T\d+\s+0 value'
+    scalar_re: 'CG0 T\d+\s+0 value\s+([0-9.]+)'
+    tolerance: 1e-05
+    expect: '0.462231'
+    expect_args: []
+    args: []
+    default_enabled: false
+
+  globalsum_pcg:
+    binary: globalsum_pcg
+    class: task
+    provenance: 'OCR global-sum implementation, preconditioned CG driver'
+    kind: microbench
+    marker: 'CG0 T\d+\s+0 value'
+    scalar_re: 'CG0 T\d+\s+0 value\s+([0-9.]+)'
+    tolerance: 1e-05
+    expect: '0.999794'
+    expect_args: []
+    args: []
+    default_enabled: false
+
+  graph500:
+    binary: graph500
+    class: task
+    provenance: 'Graph500 BFS benchmark'
+    marker: 'nodes \d+'
+    scalar_re: 'nodes (\d+)'
+    scalar_kind: int
+    expect: '64'
+    expect_args: ['6', '8', '1', '1']
+    args: ['20', '8', '32', '16']
+    extra_scalars:
+      kernel2_ns: '\[kernel2 time ([0-9.eE+-]+)\]'
+      mteps: 'mean MTEPS ([0-9.eE+-]+)'
+
+  highbw:
+    binary: highbw
+    class: bw
+    provenance: 'OCR high-bandwidth example'
+    kind: microbench
+    marker: 'HIGHBW_WORK_SUM'
+    scalar_re: 'HIGHBW_WORK_SUM\s*=\s*(\d+)'
+    scalar_kind: int
+    expect: '2048'
+    expect_args: []
+    args: ['48', '8388608', '1000']
+    default_enabled: false
+
+  hpcg_intel:
+    binary: hpcg_intel
+    class: spmd
+    provenance: 'HPCG conjugate-gradient benchmark'
+    marker: 'final deviation'
+    scalar_re: 'final deviation:\s*([\-+0-9.eE]+)'
+    tolerance: 0.0001
+    expect: '0.001279'
+    expect_args: ['1', '1', '1', '16', '5']
+    args: ['8', '4', '4', '64', '10']
+
+  hpcg_intel_Eager:
+    binary: hpcg_intel_Eager
+    class: spmd
+    provenance: 'HPCG; eager-datablock reduction variant'
+    marker: 'final deviation'
+    scalar_re: 'final deviation:\s*([\-+0-9.eE]+)'
+    tolerance: 0.0001
+    expect: '0.001279'
+    expect_args: ['1', '1', '1', '16', '5']
+    args: ['4', '4', '3', '64', '15']
+    default_enabled: false
+
+  hpcg_intel_Eager_Collective:
+    binary: hpcg_intel_Eager_Collective
+    class: spmd
+    provenance: 'HPCG; runtime collective-event reduction variant'
+    marker: 'final deviation'
+    scalar_re: 'final deviation:\s*([\-+0-9.eE]+)'
+    tolerance: 0.0001
+    args: ['8', '4', '4', '64', '10']
+
+  hpgmg:
+    binary: hpgmg
+    class: task
+    provenance: 'HPGMG geometric-multigrid benchmark; OCR port by SDSC'
+    marker: '\|\|error\|\|'
+    scalar_re: '\|\|error\|\|\s*=\s*([\-+0-9.eE]+)'
+    tolerance: 0.001
+    expect: '2.97878e-06'
+    expect_args: ['4', '1']
+    args: ['5', '512']
+    hinted: true
+
+  LCS_all_db_distributed:
+    binary: LCS_all_db_distributed
+    class: task
+    provenance: 'Longest common subsequence; fully distributed datablocks'
+    marker: 'LCS length:'
+    scalar_re: 'LCS length:\s*(\d+)'
+    scalar_kind: int
+    expect: '523'
+    expect_args: ['1024', '512', '16']
+    args: ['65536', '1024', '48']
+    hinted: true
+
+  LCS_distributed_ST:
+    binary: LCS_distributed_ST
+    class: task
+    provenance: 'Longest common subsequence; labeled-GUID string storage'
+    marker: 'LCS length:'
+    scalar_re: 'LCS length:\s*(-?\d+)'
+    scalar_kind: int
+    expect: '1024'
+    expect_args: []
+    args: ['57344', '1024', '48']
+
+  LCS_shared:
+    binary: LCS_shared
+    class: task
+    provenance: 'Longest common subsequence; shared datablocks'
+    marker: 'LCS length:'
+    scalar_re: 'LCS length:\s*(-?\d+)'
+    scalar_kind: int
+    expect: '1024'
+    expect_args: []
+    args: ['40960', '1024', '48']
+
+  miniAMR_forkbomb:
+    binary: miniAMR_forkbomb
+    class: task
+    provenance: 'miniAMR (Mantevo); spawn-storm variant'
+    marker: 'BLOCK 0 finished'
+    scalar_kind: bool
+    args: ['--nx', '1', '--ny', '1', '--nz', '1', '--num_tsteps', '1200000', '--num_refine', '2']
+    default_enabled: false
+
+  miniAMR_intel:
+    binary: miniAMR_intel
+    class: task
+    provenance: 'miniAMR adaptive-mesh proxy (Mantevo); Intel OCR port'
+    marker: 'Grand Total Checksum'
+    scalar_re: 'Grand Total Checksum\s*==\s*([\-+0-9.eE]+)'
+    tolerance: 1e-08
+    expect: '710400'
+    expect_args: ['--nx', '4', '--ny', '4', '--nz', '4', '--num_tsteps', '2', '--num_objects', '1']
+    args: ['--nx', '16', '--ny', '16', '--nz', '16', '--npx', '8', '--npy', '8', '--npz', '8', '--num_tsteps', '12', '--num_objects', '1']
+    hinted: true
+
+  miniAMR_intel_bryan:
+    binary: miniAMR_intel_bryan
+    class: task
+    provenance: 'miniAMR (Mantevo); full refinement and communication'
+    marker: 'miniAMR complete'
+    scalar_kind: bool
+    args: ['--npx', '4', '--npy', '2', '--npz', '2', '--max_time', '800']
+
+  miniAMR_intel_chandra:
+    binary: miniAMR_intel_chandra
+    class: spmd
+    provenance: 'miniAMR (Mantevo); SPMD rank-grid port'
+    marker: 'Done'
+    scalar_re: 'ts 2 CHECKSUM sum\s+([\-+0-9.eE]+)'
+    tolerance: 1e-06
+    args: ['--nx', '12', '--ny', '12', '--nz', '12', '--init_x', '2', '--init_y', '2', '--init_z', '2', '--num_tsteps', '10', '--num_refine', '1', '--npx', '2', '--npy', '2', '--npz', '2']
+
+  multigen:
+    binary: multigen
+    class: task
+    provenance: 'OCR multi-generation EDT example'
+    kind: microbench
+    marker: 'End leaf1, result'
+    scalar_re: 'End leaf1, result\s*=\s*(-?\d+)'
+    scalar_kind: int
+    expect: '121393'
+    expect_args: []
+    args: []
+    default_enabled: false
+
+  multigen_2:
+    binary: multigen_2
+    class: task
+    provenance: 'OCR multi-generation EDT example, second form'
+    kind: microbench
+    marker: 'End leaf1, result'
+    scalar_re: 'End leaf1, result\s*=\s*(-?\d+)'
+    scalar_kind: int
+    expect: '3524578'
+    expect_args: []
+    args: []
+    default_enabled: false
+
+  nekbone:
+    binary: nekbone
+    class: spmd
+    provenance: 'Nekbone (Nek5000 proxy)'
+    marker: 'FinalEDT'
+    scalar_re: 'CGstep0_stop> rnorminit(?:\^2)?\s*=\s*([0-9.eE+-]+)'
+    tolerance: 1e-09
+    expect: '1.90095144672794E+00'
+    expect_args: ['1', '1', '1', '1', '1', '1', '2', '1']
+    args: ['8', '4', '4', '4', '4', '4', '12', '50']
+
+  npb_cg:
+    binary: npb_cg
+    class: task
+    provenance: 'NAS Parallel Benchmarks CG'
+    marker: 'Verification SUCCESSFUL'
+    scalar_re: 'Verification SUCCESSFUL \(zeta\s*=\s*([\-+0-9.eE]+)'
+    tolerance: 1e-10
+    expect: '7.85534'
+    expect_args: ['-t', 'T', '-b', '25']
+    args: ['-t', 'A', '-b', '25']
+    restructured_as: npb_cg_dist
+
+  npb_cg_dist:
+    binary: npb_cg_dist
+    class: task
+    provenance: 'NAS Parallel Benchmarks CG; distributed rewrite'
+    marker: 'Verification SUCCESSFUL'
+    scalar_re: 'Verification SUCCESSFUL \(zeta\s*=\s*([\-+0-9.eE]+)'
+    tolerance: 1e-10
+    args: ['-t', 'A', '-b', '25']
+    restructured_from: npb_cg
+
+  nqueens:
+    binary: nqueens
+    class: task
+    provenance: 'N-Queens'
+    marker: 'sols:\s*\d+'
+    scalar_re: 'sols:\s*(\d+)'
+    scalar_kind: int
+    expect: '4'
+    expect_args: ['6', '2']
+    args: ['15', '8']
+    hinted: true
+
+  p2p:
+    binary: p2p
+    class: spmd
+    provenance: 'Parallel Research Kernels synch_p2p (pipelined wavefront)'
+    marker: 'PASS checksum'
+    scalar_re: 'PASS checksum\s*=\s*([\-+0-9.eE]+)'
+    tolerance: 1e-08
+    expect: '228'
+    expect_args: ['2', '10', '30', '5']
+    args: ['128', '256', '100', '1400']
+    hinted: true
+
+  printf:
+    binary: printf
+    class: task
+    provenance: 'OCR output fixture'
+    kind: microbench
+    marker: 'Hello from mainEdt'
+    scalar_kind: bool
+    args: []
+    default_enabled: false
+
+  prodcon:
+    binary: prodcon
+    class: bw
+    provenance: 'OCR tagged-scheduler producer/consumer kernel'
+    kind: microbench
+    marker: 'MB/s'
+    scalar_kind: bool
+    args: ['48', '8000000', '6000']
+    default_enabled: false
+
+  quicksort:
+    binary: quicksort
+    class: task
+    provenance: 'Quicksort'
+    marker: 'Sorting Finished'
+    scalar_re: '(\d+)\s*\n\s*(?:\[\d+\]\s*)?Sorting Finished'
+    scalar_kind: int
+    expect: '26648'
+    expect_args: []
+    args: ['4000000', '1000000']
+    restructured_as: quicksort_dist
+
+  quicksort_dist:
+    binary: quicksort_dist
+    class: task
+    provenance: 'Sample-splitter distributed sort'
+    marker: 'QSORT_VALID'
+    scalar_re: 'QSORT_VALID sum=(\d+) sorted=1'
+    scalar_kind: int
+    expect: '496344943'
+    expect_args: []
+    args: ['8000000', '1000000', '384', '384']
+    restructured_from: quicksort
+
+  reduction_intel:
+    binary: reduction_intel
+    class: task
+    provenance: 'Test driver for the OCR reduction library'
+    kind: microbench
+    marker: 'T\d+ i1'
+    scalar_re: 'T30 i1\s+([0-9.]+)'
+    expect: '1025'
+    expect_args: ['25', '2', '30']
+    args: ['48', '2', '20000']
+    default_enabled: false
+
+  reduction_intel_chandra:
+    binary: reduction_intel_chandra
+    class: task
+    provenance: 'Scalar-reduction example for the OCR reduction library'
+    kind: microbench
+    marker: 'RESULT = '
+    scalar_re: 'RESULT = ([0-9.]+)'
+    tolerance: 1e-06
+    expect: '45.0'
+    expect_args: ['10']
+    args: ['650000']
+    default_enabled: false
+
+  RSBench_intel:
+    binary: RSBench_intel
+    class: spmd
+    provenance: 'RSBench multipole cross-section proxy (ANL)'
+    marker: 'Lookups:'
+    scalar_kind: bool
+    args: ['-l', '400000']
+
+  RSBench_intel_sharedDB:
+    binary: RSBench_intel_sharedDB
+    class: spmd
+    provenance: 'RSBench (ANL); shared-datablock form'
+    marker: 'RS_CHECKSUM'
+    scalar_re: 'RS_CHECKSUM:\s+([0-9]+)'
+    scalar_kind: int
+    expect: '17079'
+    expect_args: ['-l', '100']
+    args: ['-l', '7500000', '-t', '128']
+
+  sar_pss:
+    binary: sar_problem_size_scaling
+    class: task
+    provenance: 'Streaming Sensor Challenge Problem SAR reference (Georgia Tech Research Institute)'
+    marker: 'SAR detects:'
+    scalar_re: 'SAR detects:\s*(\d+)'
+    scalar_kind: int
+    args: ['{repo}/datasets/sar-huge/Data.bin', '{repo}/datasets/sar-huge/PlatformPosition.bin', '{repo}/datasets/sar-huge/PulseTransmissionTime.bin', '{repo}/scratch/sar_detects.txt', '{repo}/third_party/ocr-apps/apps/sar/ocr/problem_size_scaling/Parameter2.txt']
+    fixtures: ['{repo}/datasets/sar-huge/Data.bin', '{repo}/datasets/sar-huge/PlatformPosition.bin', '{repo}/datasets/sar-huge/PulseTransmissionTime.bin']
+    hinted: true
+
+  smithwaterman:
+    binary: smithwaterman
+    class: task
+    provenance: 'Smith-Waterman sequence alignment'
+    marker: 'score:\s*\d+'
+    scalar_re: 'score:\s*(\d+)'
+    scalar_kind: int
+    expect: '1460'
+    expect_args: ['50', '50', '{repo}/third_party/ocr-apps/apps/smithwaterman/datasets/string1-medium-large.txt', '{repo}/third_party/ocr-apps/apps/smithwaterman/datasets/string2-medium-large.txt', '{repo}/third_party/ocr-apps/apps/smithwaterman/datasets/score-medium-large.txt']
+    args: ['100', '100', '{repo}/third_party/ocr-apps/apps/smithwaterman/datasets/string1-large.txt', '{repo}/third_party/ocr-apps/apps/smithwaterman/datasets/string2-large.txt', '{repo}/third_party/ocr-apps/apps/smithwaterman/datasets/score-large.txt']
+    fixtures: ['{repo}/third_party/ocr-apps/apps/smithwaterman/datasets/string1-large.txt', '{repo}/third_party/ocr-apps/apps/smithwaterman/datasets/string2-large.txt', '{repo}/third_party/ocr-apps/apps/smithwaterman/datasets/score-large.txt']
+
+  stencil1D_channel:
+    binary: stencil1D_channel
+    class: spmd
+    provenance: '1-D stencil, channel-event idiom (Intel OCR app)'
+    marker: 'S3 i9 valu'
+    scalar_re: 'S3 i9 valu\s+([0-9.]+)'
+    args: ['48', '50', '340000']
+    default_enabled: false
+
+  stencil1D_guid:
+    binary: stencil1D_guid
+    class: spmd
+    provenance: '1-D stencil, labeled-GUID idiom (Intel OCR app)'
+    marker: 'S3 i9 valu'
+    scalar_re: 'S3 i9 valu\s+([0-9.]+)'
+    args: ['48', '50', '340000']
+    default_enabled: false
+
+  stencil1D_guidPI:
+    binary: stencil1D_guidPI
+    class: spmd
+    provenance: '1-D stencil, labeled-GUID idiom, pointer-immediate (Intel OCR app)'
+    marker: '9 49\s'
+    scalar_re: '9 49\s+([0-9.]+)'
+    args: ['48', '50', '340000']
+    default_enabled: false
+
+  Stencil1D_intel_chandra:
+    binary: Stencil1D_intel_chandra
+    class: spmd
+    provenance: '1-D stencil (Intel OCR app)'
+    marker: 'L1 norm check'
+    scalar_re: 'Solution validates'
+    scalar_kind: bool
+    args: ['700000000', '128', '30']
+
+  stencil1D_once:
+    binary: stencil1D_once
+    class: spmd
+    provenance: '1-D stencil, once-event idiom (Intel OCR app)'
+    marker: 'S3 i9 valu'
+    scalar_re: 'S3 i9 valu\s+([0-9.]+)'
+    args: ['48', '50', '340000']
+    default_enabled: false
+
+  stencil1D_oncePI:
+    binary: stencil1D_oncePI
+    class: spmd
+    provenance: '1-D stencil, once-event idiom, pointer-immediate (Intel OCR app)'
+    marker: '9 49\s'
+    scalar_re: '9 49\s+([0-9.]+)'
+    args: ['48', '50', '340000']
+    default_enabled: false
+
+  stencil1D_sticky:
+    binary: stencil1D_sticky
+    class: spmd
+    provenance: '1-D stencil, sticky-event idiom (Intel OCR app)'
+    marker: 'S3 i9 valu'
+    scalar_re: 'S3 i9 valu\s+([0-9.]+)'
+    expect: '1'
+    expect_args: []
+    args: ['48', '50', '340000']
+    default_enabled: false
+
+  stencil1D_stickyLG:
+    binary: stencil1D_stickyLG
+    class: spmd
+    provenance: '1-D stencil, sticky labeled-GUID idiom (Intel OCR app)'
+    marker: '9 49\s'
+    scalar_re: '9 49\s+([0-9.]+)'
+    args: ['48', '50', '340000']
+    default_enabled: false
+
+  Stencil2D_intel_chandra:
+    binary: Stencil2D_intel_chandra
+    class: spmd
+    provenance: '2-D stencil (Intel OCR app)'
+    marker: 'L1 norm'
+    scalar_re: 'L1 norm\s*=\s*([\-+0-9.eE]+)'
+    tolerance: 1e-06
+    expect: '22.0'
+    expect_args: []
+    args: ['25600', '128', '30']
+
+  Stencil2D_intel_channelEVTs:
+    binary: Stencil2D_intel_channelEVTs
+    class: spmd
+    provenance: '2-D stencil over channel events (Intel OCR app)'
+    marker: 'Computed L1 norm'
+    scalar_re: 'Computed L1 norm\s*=\s*([\-+0-9.eE]+)'
+    tolerance: 1e-06
+    expect: '22.0'
+    expect_args: []
+    args: ['25600', '128', '30']
+
+  stream:
+    binary: stream
+    class: bw
+    provenance: 'STREAM memory-bandwidth benchmark (McCalpin)'
+    marker: 'STREAM_RESULT'
+    scalar_re: 'STREAM_RESULT a\[0\] = ([0-9.eE+-]+)'
+    tolerance: 0.001
+    expect: '2.321060036183137e+07'
+    expect_args: []
+    args: ['1000000', '48', '750']
+    restructured_as: stream_dist
+
+  stream_dist:
+    binary: stream_dist
+    class: bw
+    provenance: 'STREAM; distributed rewrite'
+    marker: 'STREAM checksum'
+    scalar_re: 'STREAM checksum: a\[0\] = ([0-9.eE+-]+)'
+    tolerance: 1e-09
+    expect: '2.100022581888'
+    expect_args: []
+    args: ['32000000', '128', '400']
+    restructured_from: stream
+
+  stream_org:
+    binary: stream_org
+    class: bw
+    provenance: 'STREAM; original single-node form'
+    marker: 'MB/s'
+    scalar_re: 'STREAM_VALID relerr = ([0-9.eE+-]+)'
+    tolerance: 1e-12
+    args: []
+    default_enabled: false
+    multinode_timeout: 75
+
+  stream_sa:
+    binary: stream_sa
+    class: bw
+    provenance: 'STREAM; shared-array form'
+    marker: 'MB/s'
+    scalar_re: 'STREAM_VALID relerr = ([0-9.eE+-]+)'
+    tolerance: 1e-12
+    args: []
+    default_enabled: false
+    multinode_timeout: 75
+
+  task_priorities:
+    binary: task_priorities
+    class: task
+    provenance: 'OCR priority-scheduler test program'
+    kind: microbench
+    marker: 'Hello from 9'
+    scalar_kind: bool
+    args: []
+    default_enabled: false
+
+  tempest:
+    binary: tempest
+    class: task
+    provenance: 'Tempest neighbour exchange (Intel OCR app, B. Pawlowski)'
+    marker: 'CROSS-CHECKING NEIGHBOR DATA EXCHANGE'
+    scalar_re: 'CROSS-CHECKING NEIGHBOR DATA EXCHANGE\*(?:[ \t]*\n|[ \t]+|[A-Za-z*][^\n]*\n)*-?\d+[ \t]+-?\d+[ \t]+-?\d+(?:[ \t]*\n|[ \t]+|[A-Za-z*][^\n]*\n)*-?\d+[ \t]+-?\d+[ \t]+-?\d+(?:[ \t]*\n|[ \t]+|[A-Za-z*][^\n]*\n)*-?\d+[ \t]+-?\d+[ \t]+(-?\d+)'
+    scalar_kind: int
+    expect: '21'
+    expect_args: []
+    args: ['96']
+    hinted: true
+    multinode_timeout: 40
+
+  testlibs:
+    binary: testlibs
+    class: task
+    provenance: 'OCR C-library fixture'
+    kind: microbench
+    marker: 'Testing strlen'
+    scalar_re: 'Testing strlen of \w+ is (\d+)'
+    scalar_kind: int
+    expect: '10'
+    expect_args: []
+    args: []
+    default_enabled: false
+
+  triangle:
+    binary: triangle
+    class: task
+    provenance: '14-peg puzzle solution count (Intel OCR app, D. Scott)'
+    marker: 'final count\s+\d+'
+    scalar_re: 'final count\s+(\d+)'
+    scalar_kind: int
+    expect: '1074'
+    expect_args: ['5']
+    args: []
+    hinted: true
+
+  xeonNumaSize:
+    binary: xeonNumaSize
+    class: task
+    provenance: 'OCR allocation-size test program'
+    kind: microbench
+    marker: 'DONE!'
+    scalar_kind: bool
+    args: ['-dcpu']
+    default_enabled: false
+
+  XSBench_dist:
+    binary: xsbench_dist
+    class: spmd
+    provenance: 'XSBench (ANL); distributed SPMD rewrite'
+    marker: 'XS_CHECKSUM'
+    scalar_re: 'XS_CHECKSUM\s*=\s*(\d+)'
+    scalar_kind: int
+    expect: '486159'
+    expect_args: ['-s', 'small', '-g', '10', '-l', '100']
+    args: ['-s', 'small', '-g', '1000', '-l', '875000000', '-t', '15']
+    restructured_from: XSBench_intel
+
+  XSBench_intel:
+    binary: XSBench_intel
+    class: spmd
+    provenance: 'XSBench Monte Carlo neutron-transport proxy (ANL)'
+    marker: 'Lookups/s'
+    scalar_re: 'XSBench grid checksum:\s+(\d+)'
+    scalar_kind: int
+    expect: '16088953243632067443'
+    expect_args: ['-s', 'small', '-g', '3', '-l', '30']
+    args: ['-s', 'small', '-g', '1000', '-l', '400000']
+    restructured_as: XSBench_dist
+
+  sar_large:
+    binary: sar_large
+    class: task
+    provenance: 'Streaming Sensor Challenge Problem SAR reference (Georgia Tech Research Institute)'
+    marker: 'SAR detects:'
+    scalar_re: 'SAR detects:\s*(\d+)'
+    scalar_kind: int
+    expect: '6523'
+    expect_args: []
+    args: []
+    hinted: true
+    default_enabled: false
+    timeout: 120
+
+  sar_medium:
+    binary: sar_medium
+    class: task
+    provenance: 'Streaming Sensor Challenge Problem SAR reference (Georgia Tech Research Institute)'
+    marker: 'SAR detects:'
+    scalar_re: 'SAR detects:\s*(\d+)'
+    scalar_kind: int
+    expect: '1991'
+    expect_args: []
+    args: []
+    hinted: true
+    default_enabled: false
+
+  sar_small:
+    binary: sar_small
+    class: task
+    provenance: 'Streaming Sensor Challenge Problem SAR reference (Georgia Tech Research Institute)'
+    marker: 'SAR detects:'
+    scalar_re: 'SAR detects:\s*(\d+)'
+    scalar_kind: int
+    expect: '458'
+    expect_args: []
+    args: []
+    hinted: true
+    default_enabled: false
+
+  sar_tiny:
+    binary: sar_tiny
+    class: task
+    provenance: 'Streaming Sensor Challenge Problem SAR reference (Georgia Tech Research Institute)'
+    marker: 'SAR detects:'
+    scalar_re: 'SAR detects:\s*(\d+)'
+    scalar_kind: int
+    expect: '12'
+    expect_args: []
+    args: []
+    hinted: true
+    default_enabled: false
+
+  XSBench_intel_sharedDB:
+    binary: XSBench_intel_sharedDB
+    class: spmd
+    provenance: 'XSBench (ANL); shared-datablock form'
+    marker: 'Workload\s+\(unit\):'
+    scalar_re: 'Workload\s+\(unit\):\s+(\d+)'
+    scalar_kind: int
+    expect: '100'
+    expect_args: ['-s', 'small', '-g', '10', '-l', '100']
+    args: ['-s', 'small', '-g', '10', '-l', '100']
+    default_enabled: false

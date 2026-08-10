@@ -1,0 +1,372 @@
+Screen {
+    layers: base;
+}
+
+/* The header's icon opens the command palette, which the footer already
+   offers by key.  One control for it, in the place that names its shortcut. */
+HeaderIcon {
+    display: none;
+}
+
+.panel-head {
+    padding: 0 1;
+    background: $panel;
+}
+
+/* --- plane ------------------------------------------------------------- */
+.plane-row {
+    height: auto;
+}
+
+.plane-family {
+    width: 13;
+    padding: 0 1;
+    color: $text;
+    text-style: bold;
+}
+
+/* Just wide enough for the longest pair a split cell holds — two checkboxes
+   and the longer runtime name — so nothing is elided and nothing pads. */
+/* Spans the two release columns underneath it. */
+.plane-write-head {
+    width: 48;
+    text-align: center;
+    color: $text;
+    text-style: bold;
+}
+
+.plane-col-head {
+    width: 24;
+    text-align: center;
+    color: $text-muted;
+}
+
+.plane-cell {
+    width: 24;
+    height: auto;
+    border: round $panel-darken-2;
+    align: left middle;
+}
+
+.plane-cell.blank {
+    color: $text-disabled;
+    text-align: center;
+    border: round $panel-darken-3;
+}
+
+/* Sized to its own label, not to the cell: a lone toggle stretched across a
+   whole column reads as a wide button rather than as one choice.  No padding
+   or margin — a split cell has to fit two of these plus the longer runtime
+   name, and every spare column comes out of the label. */
+.entry-toggle {
+    width: auto;
+    border: none;
+    padding: 0;
+    margin: 0;
+}
+
+/* --- profile ----------------------------------------------------------- */
+#profile-summary {
+    padding: 0 1;
+    color: $text-muted;
+}
+
+#node-row {
+    height: auto;
+    padding: 0 1;
+    width: 100%;
+}
+
+.node-toggle {
+    width: 12;
+    border: none;
+}
+
+/* --- benchset ---------------------------------------------------------- */
+.bench-row {
+    height: 1;
+}
+
+.bench-name {
+    width: 30;
+    padding: 0 1;
+}
+
+.bench-col-head {
+    width: 13;
+    text-align: center;
+    color: $text-muted;
+}
+
+/* The cell holds the column width and does the centring; the box inside is
+   only as wide as its glyph, so the rest of the column takes no clicks. */
+.bench-cell {
+    width: 13;
+    height: 1;
+    border: none;
+    padding: 0;
+    align: center middle;
+    content-align: center middle;
+}
+
+/* A checkbox always renders its glyph followed by a space and its label.  With
+   no label there is nothing to elide, so the trailing space is cut rather than
+   replaced by an ellipsis. */
+.app-toggle {
+    width: 3;
+    height: 1;
+    border: none;
+    padding: 0;
+    margin: 0;
+    text-overflow: clip;
+}
+
+.bench-cell.blank {
+    color: $text-disabled;
+    text-align: center;
+}
+
+/* --- run --------------------------------------------------------------- */
+#run-controls {
+    height: auto;
+    padding: 0 1;
+}
+
+#run-size {
+    padding: 0 1;
+    color: $text-muted;
+}
+
+#run-log {
+    height: 1fr;
+    border: round $panel-darken-2;
+}
+
+/* --- editors ----------------------------------------------------------- */
+#profile-bar, #bench-bar {
+    height: auto;
+    padding: 0 1;
+}
+
+#profile-bar Select, #bench-bar Select {
+    width: 24;
+}
+
+#profile-name, #bench-name-input {
+    width: 22;
+}
+
+#profile-status, #bench-status {
+    padding: 0 1;
+    height: auto;
+}
+
+.form-section {
+    padding: 0 1;
+    margin-top: 1;
+    background: $panel;
+}
+
+.form-row {
+    height: auto;
+    padding: 0 1;
+}
+
+.form-label {
+    width: 22;
+    padding: 1 0 0 0;
+    color: $text-muted;
+}
+
+.form-input {
+    width: 32;
+}
+
+.form-select {
+    width: 32;
+}
+
+/* A switch draws narrower than an input but occupies the same column, so the
+   explanations after it start where all the others do. */
+.form-switch {
+    width: 32;
+}
+
+.form-help {
+    width: 1fr;
+    padding: 1 0 0 2;
+    color: $text-disabled;
+}
+
+.bench-args-head {
+    width: 1fr;
+    padding: 0 1;
+    color: $text-muted;
+}
+
+.bench-args {
+    width: 1fr;
+    border: none;
+    padding: 0 1;
+    height: 1;
+}
+
+/* --- node list --------------------------------------------------------- */
+.form-block {
+    height: auto;
+}
+
+/* The other rows are three columns tall because their inputs carry a border;
+   this one holds flat controls, so it matches by centring them in the same
+   height instead of by growing. */
+.node-form-row {
+    height: 3;
+    align: left middle;
+}
+
+.node-form-row .form-label {
+    padding: 0;
+}
+
+/* label column + control column, so the text starts where every other
+   explanation does. */
+.node-help-gutter {
+    width: 54;
+}
+
+.node-help-row {
+    height: 1;
+}
+
+.node-help {
+    width: 1fr;
+    padding: 0 0 0 2;
+}
+
+#node-row {
+    height: 1;
+    width: auto;
+    align: left middle;
+}
+
+.node-item {
+    width: auto;
+    height: 1;
+}
+
+.node-toggle {
+    width: auto;
+    border: none;
+    padding: 0;
+    margin: 0;
+}
+
+.node-del {
+    width: 3;
+    height: 1;
+    min-width: 3;
+    border: none;
+    padding: 0;
+    margin: 0 1 0 0;
+    color: $text-disabled;
+}
+
+.node-del:hover {
+    color: $error;
+}
+
+.node-add {
+    width: 8;
+    height: 1;
+    border: none;
+    padding: 0 1;
+}
+
+.node-add-btn {
+    width: 3;
+    height: 1;
+    min-width: 3;
+    border: none;
+    padding: 0;
+}
+
+/* --- checkbox state ----------------------------------------------------- */
+/* Colouring only the glyph leaves on and off looking alike at a glance, so
+   the box itself carries the state: filled when selected, sunk when not, with
+   the mark picked for contrast against whichever it is. */
+Checkbox > .toggle--button {
+    background: $panel-darken-2;
+    color: $text-disabled;
+}
+
+Checkbox.-on > .toggle--button {
+    background: $success;
+    color: auto 90%;
+}
+
+Checkbox > .toggle--label {
+    color: $text-disabled;
+}
+
+Checkbox.-on > .toggle--label {
+    color: $text;
+}
+
+Checkbox:focus > .toggle--button {
+    text-style: bold;
+}
+
+.bench-group {
+    padding: 0 1;
+    margin-top: 1;
+    background: $panel;
+}
+
+/* --- counters ----------------------------------------------------------- */
+#counter-bar {
+    height: auto;
+    padding: 0 1;
+}
+
+#counter-bar Select {
+    width: 24;
+}
+
+#counter-name {
+    width: 22;
+}
+
+#counter-status {
+    padding: 0 1;
+    height: auto;
+}
+
+.counter-name {
+    width: 30;
+    padding: 0 1;
+}
+
+.counter-col {
+    width: 14;
+    text-align: center;
+    color: $text-muted;
+}
+
+/* Select draws its value and arrow inside a bordered SelectCurrent, so both
+   have to lose the border for the control to fit one row. */
+.counter-select {
+    width: 14;
+    height: 1;
+}
+
+.counter-select SelectCurrent {
+    border: none;
+    height: 1;
+    padding: 0 1;
+}
+
+.counter-help-head, .counter-help {
+    width: 1fr;
+    padding: 0 1;
+    color: $text-disabled;
+}

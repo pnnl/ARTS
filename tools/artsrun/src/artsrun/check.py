@@ -1,0 +1,163 @@
+"""Read each cell's result scalar and vote a consensus across configurations.
+
+Two rules make the verdict trustworthy. A run whose completion marker never
+appeared fails regardless of its exit status, because a wedged run that printed
+part of an answer must not pass. And the only cells excluded from a vote are
+structurally ineligible ones — never a cell that merely disagreed.
+"""
+
+from __future__ import annotations
+
+import math
+import re
+from dataclasses import dataclass, field
+from enum import StrEnum
+
+from artsrun.model.catalog import ScalarKind
+from artsrun.run.types import CellResult, Status
+
+
+class Verdict(StrEnum):
+    OK = "OK"
+    DISAGREE = "DISAGREE"
+    FAIL = "FAIL"
+    NA = "N/A"
+    EXPECT_FAIL = "EXPECT-FAIL"
+
+
+def extract(text: str, marker: str, scalar_re: str) -> tuple[bool, str | None]:
+    """(completed, scalar).
+
+    A regex with a capture group yields that group; one without is a pure
+    completion assertion whose "value" is the fact that it matched.
+    """
+    completed = re.search(marker, text) is not None
+    if not completed:
+        return False, None
+    m = re.search(scalar_re, text)
+    if m is None:
+        return True, None
+    if m.groups():
+        return True, m.group(1)
+    return True, "MATCHED"
+
+
+def extract_extra(text: str, patterns: dict[str, str]) -> dict[str, str]:
+    out = {}
+    for name, pattern in patterns.items():
+        m = re.search(pattern, text)
+        if m and m.groups():
+            out[name] = m.group(1)
+    return out
+
+
+def apply_to(result: CellResult) -> CellResult:
+    """Fill in a finished cell's scalar, and demote a run that never finished."""
+    if result.log_path is None or not result.log_path.is_file():
+        if result.status is Status.OK:
+            result.status = Status.FAIL
+            result.note = result.note or "no log"
+        return result
+    text = result.log_path.read_text(errors="replace")
+    completed, scalar = extract(text, result.cell.app.marker, result.cell.app.scalar_re)
+    result.scalar = scalar
+    result.extra.update(extract_extra(text, result.cell.app.extra_scalars))
+    if result.status is Status.OK and not completed:
+        result.status = Status.FAIL
+        result.note = "exited cleanly but never printed its completion marker"
+    return result
+
+
+def _as_number(value: str, kind: ScalarKind) -> float | None:
+    if kind is ScalarKind.BOOL:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _close(a: str, b: str, kind: ScalarKind, tol: float) -> bool:
+    x, y = _as_number(a, kind), _as_number(b, kind)
+    if x is None or y is None:
+        return a == b
+    if tol <= 0:
+        # Floating-point results still need a floor: identical computations
+        # reorder across configurations.
+        tol = 1e-9 if kind is ScalarKind.INT else 1e-4
+    return math.isclose(x, y, rel_tol=tol, abs_tol=tol)
+
+
+@dataclass
+class Group:
+    """All results for one (application, version, node count)."""
+
+    app_key: str
+    nodes: int
+    results: list[CellResult] = field(default_factory=list)
+    consensus: str | None = None
+    verdicts: dict[str, Verdict] = field(default_factory=dict)
+
+    @property
+    def unanimous(self) -> bool:
+        return all(v is not Verdict.DISAGREE for v in self.verdicts.values())
+
+
+def vote(results: list[CellResult]) -> list[Group]:
+    """Cluster each group's scalars; the largest cluster is the consensus."""
+    groups: dict[tuple[str, int], Group] = {}
+    for r in results:
+        key = (r.cell.app.key, r.cell.nodes)
+        groups.setdefault(key, Group(app_key=key[0], nodes=key[1])).results.append(r)
+
+    out = []
+    for group in groups.values():
+        app = group.results[0].cell.app
+        voters = [
+            r for r in group.results
+            if r.status is Status.OK and r.scalar is not None
+        ]
+        clusters: list[list[CellResult]] = []
+        for r in voters:
+            for cluster in clusters:
+                if _close(cluster[0].scalar, r.scalar, app.scalar_kind, app.tolerance):
+                    cluster.append(r)
+                    break
+            else:
+                clusters.append([r])
+        clusters.sort(key=len, reverse=True)
+        if clusters:
+            group.consensus = clusters[0][0].scalar
+            majority = {id(r) for r in clusters[0]}
+        else:
+            majority = set()
+
+        for r in group.results:
+            if r.status is Status.SKIPPED:
+                group.verdicts[r.cell.entry.key] = Verdict.NA
+            elif r.status is not Status.OK or r.scalar is None:
+                group.verdicts[r.cell.entry.key] = Verdict.FAIL
+            elif id(r) in majority:
+                group.verdicts[r.cell.entry.key] = Verdict.OK
+            else:
+                group.verdicts[r.cell.entry.key] = Verdict.DISAGREE
+
+        # A pinned answer catches the case where every configuration agrees on
+        # the same wrong value — but it only answers for the workload it was
+        # derived from, so a campaign running other arguments has no pin.
+        args = group.results[0].cell.args
+        pinned = bool(app.expect) and list(app.expect_args) == list(args)
+        if pinned and group.consensus is not None:
+            if not _close(app.expect, group.consensus, app.scalar_kind, app.tolerance):
+                for key, verdict in group.verdicts.items():
+                    if verdict is Verdict.OK:
+                        group.verdicts[key] = Verdict.EXPECT_FAIL
+        out.append(group)
+
+    out.sort(key=lambda g: (g.app_key, g.nodes))
+    return out
+
+
+def minority_report(groups: list[Group]) -> list[Group]:
+    return [g for g in groups if not g.unanimous or
+            any(v is Verdict.EXPECT_FAIL for v in g.verdicts.values())]

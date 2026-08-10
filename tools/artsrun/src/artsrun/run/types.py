@@ -1,0 +1,77 @@
+"""What a campaign runs, and what comes back."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import StrEnum
+from pathlib import Path
+
+from artsrun.model.benchset import ResolvedApp
+from artsrun.model.plane import SelectionEntry
+
+
+class Status(StrEnum):
+    PENDING = "pending"
+    SUBMITTED = "submitted"
+    RUNNING = "running"
+    OK = "ok"
+    FAIL = "fail"
+    TIMEOUT = "timeout"
+    SKIPPED = "skipped"
+
+
+@dataclass(frozen=True)
+class Cell:
+    """One measured run: a configuration, an application version, a geometry."""
+
+    entry: SelectionEntry
+    app: ResolvedApp
+    nodes: int
+    repeat: int
+    binary: Path
+    args: list[str]
+    timeout_s: int
+    cfg: Path | None = None
+    env: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def key(self) -> str:
+        return f"{self.app.key}@{self.nodes}n/{self.entry.key}#{self.repeat}"
+
+    @property
+    def slug(self) -> str:
+        """Filesystem-safe cell identity, unique within a campaign."""
+        return (
+            f"{self.app.name}.{self.app.version.value}."
+            f"{self.entry.key}.{self.nodes}n.r{self.repeat}"
+        )
+
+    @property
+    def log_name(self) -> str:
+        return f"{self.slug}.log"
+
+
+@dataclass
+class CellResult:
+    cell: Cell
+    status: Status
+    rc: int = 0
+    wall_s: float = 0.0
+    log_path: Path | None = None
+    scalar: str | None = None
+    extra: dict[str, str] = field(default_factory=dict)
+    note: str = ""
+
+    @property
+    def ran(self) -> bool:
+        return self.status in (Status.OK, Status.FAIL, Status.TIMEOUT)
+
+
+@dataclass(frozen=True)
+class Skipped:
+    """A cell that was never eligible, with the structural reason why."""
+
+    entry_key: str
+    app_key: str
+    nodes: int
+    reason: str

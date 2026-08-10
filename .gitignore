@@ -44,3 +44,7 @@ third_party/ocrPNNL/
 /notes/
 /datasets/*
 !/datasets/README.md
+
+# Editable-install metadata for tools/artsrun
+*.egg-info/
+.pytest_cache/
