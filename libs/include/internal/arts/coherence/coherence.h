@@ -41,9 +41,10 @@ extern "C" {
 #include "arts/utils/shared.h" /* arts_shared_ptr_t — stub_install return type */
 
 /*--- Pending RW Treiber-stack lifecycle helpers --------------------------
- * The per-cache RW waiter chain exists only under RCU: it parks same-node RW
- * EDTs that piggyback on an in-flight ownership round. */
-#if defined(ARTS_PROTOCOL_VAL)
+ * The per-cache RW waiter chain belongs to the shared grant plane, so it
+ * exists in every arm whose write right migrates: it parks same-node RW EDTs
+ * that piggyback on an in-flight ownership round. */
+#if defined(ARTS_PROTOCOL_VAL) || defined(ARTS_PROTOCOL_INV)
 void arts_pending_rw_queue_init(arts_lf_stack_t *q);
 /* Push a waiter (multi-producer).  Caller fills edt_guid/slot before
  * calling.  Waiter must be heap-allocated; the stack takes ownership and
@@ -60,7 +61,7 @@ void arts_pending_rw_queue_drain(arts_lf_stack_t *q,
                                  void *ctx);
 /* Destroy: free every queued waiter (single-threaded at teardown). */
 void arts_pending_rw_queue_destroy(arts_lf_stack_t *q);
-#endif /* RCU */
+#endif /* shared grant plane */
 
 /* Cache_s init kinds — selects how writer_count / home / buffer get
  * initialized.  Per coherence design plan §1006-1031 / §968-988. */
@@ -287,7 +288,7 @@ void arts_db_create_publish_holder(struct arts_db_s *db,
 void arts_db_create_install_home_buffer(struct arts_db_cache_s *cache,
                                         uint64_t db_size);
 
-#if defined(ARTS_PROTOCOL_VAL)
+#if defined(ARTS_PROTOCOL_VAL) || defined(ARTS_PROTOCOL_INV)
 /* Single-owner ownership machinery of the RCU protocol
  * (defined in coherence/<proto>/grant.c).  Called by the HOME/OWNER
  * arts_handler_db_acquire bodies; the RO-path predicate is the only divergence
@@ -309,9 +310,9 @@ arts_db_acquire_remote_rw(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
 void arts_db_start_grant_round(struct arts_db_cache_s *cache,
                                    struct arts_db_s *db,
                                    unsigned int requester);
-#endif /* RCU */
+#endif /* shared grant plane */
 
-#if defined(ARTS_PROTOCOL_VAL)
+#if defined(ARTS_PROTOCOL_VAL) || defined(ARTS_PROTOCOL_INV)
 /* arts_db_acquire_rw_local_fast: the case-2/6 RW local fast path (RCU).
  * CAS-increments writer_count "if positive"; on success writes dep->ptr
  * (acquire_local) and returns true; returns false when writer_count went to 0
@@ -326,15 +327,15 @@ void arts_pending_rw_queue_for_each(arts_lf_stack_t *q,
                                     void (*cb)(arts_guid_t edt_guid,
                                                unsigned int slot, void *ctx),
                                     void *ctx);
-#endif /* RCU */
+#endif /* shared grant plane */
 
-#if defined(ARTS_PROTOCOL_VAL)
+#if defined(ARTS_PROTOCOL_VAL) || defined(ARTS_PROTOCOL_INV)
 /* GRANT drain: install the granted waiters — pops every pending_rw waiter
  * (bump writer_count per waiter).  Defined in coherence/<proto>/grant.c;
  * called from the HOME GRANT handler and the OWNER CONFIRM_ACK handler. */
 void arts_db_drain_pending_rw_after_grant(struct arts_db_cache_s *cache,
                                           uint64_t version, bool has_next);
-#endif /* RCU */
+#endif /* shared grant plane */
 
 #ifdef __cplusplus
 }

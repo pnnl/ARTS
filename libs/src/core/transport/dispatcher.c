@@ -1037,11 +1037,10 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
   }
 #else
   case MSG_DB_INV_REDIRECT: {
-    ARTS_ERROR("MSI-HOME build received a redirect from rank %u — the home "
-               "serves reads itself under this placement; binary mode "
+    ARTS_ERROR("write-through build received a redirect from rank %u — the "
+               "home serves reads itself under this policy; binary mode "
                "mismatch",
                ((struct arts_msg_header_s *)packet)->rank);
-    arts_shutdown_now();
     break;
   }
 #endif /* ARTS_WRITE_POLICY_WB */

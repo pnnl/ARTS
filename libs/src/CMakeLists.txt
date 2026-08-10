@@ -85,6 +85,13 @@ endfunction()
 # sources test only its live axis (EXCL: ARTS_RELEASE_*; INV/VAL and the
 # grant plane: ARTS_WRITE_POLICY_*).
 function(arts_apply_protocol target arm write_policy release_policy)
+    # A call with no declaration in scope is an error, not a warning.  Each arm
+    # compiles a different subset of the sources, so a declaration guarded to
+    # the wrong set of arms is invisible in the arm that was tested and leaves
+    # the others calling through an implicit int -- which silently narrows a
+    # pointer or a bool return.  Compilers that still default this to a warning
+    # let it accumulate unseen; the ones that do not simply refuse to build.
+    target_compile_options(${target} PRIVATE -Werror=implicit-function-declaration)
     # An optional 5th argument pins read combining for this target; without it
     # the target follows the directory-wide option.  Targets that name it are
     # self-describing: nothing outside their own definition decides what they

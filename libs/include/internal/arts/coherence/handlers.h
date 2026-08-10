@@ -180,7 +180,7 @@ void arts_handler_db_cache_destroy(void *item_v, void *args_v);
 void arts_handler_db_snapshot_redirect(void *item_v, void *args_v);
 #endif /* ARTS_WRITE_POLICY_WB && !ARTS_PROTOCOL_INV */
 
-#if defined(ARTS_PROTOCOL_VAL)
+#if defined(ARTS_PROTOCOL_VAL) || defined(ARTS_PROTOCOL_INV)
 /* Cat-C pure body (CONFIRM, home side; both placements): item_v is the db_s the
  * dispatcher acquired (cache is its first member); args_v is unused (the new
  * owner is read from db->pending_install_owner).  NOT OoO-deferrable — the
@@ -195,7 +195,7 @@ void arts_handler_db_grant_confirm(void *item_v, void *args_v);
  * complete (both placements; home flips rw_holder + advances the round). */
 void arts_send_db_grant_confirm(unsigned int home_rank, arts_guid_t db_guid,
                                     uint64_t version);
-#endif /* RCU */
+#endif /* shared grant plane */
 
 /* ===== Sender helpers ================================================ */
 
@@ -300,7 +300,7 @@ void arts_db_owner_start_invalidate_round(
     const struct arts_rdzv_landing_s *new_owner_rdzv);
 #endif /* ARTS_WRITE_POLICY_WB */
 
-#if defined(ARTS_PROTOCOL_VAL)
+#if defined(ARTS_PROTOCOL_VAL) || defined(ARTS_PROTOCOL_INV)
 /* Shared owner→owner transfer ship (defined in coherence/<proto>/grant.c):
  * ship the current buffer (+ serialized owner-side map for OWNER, empty map for
  * HOME) to cache->incoming_new_owner via the OWNERSHIP_RESPONSE wire,
@@ -308,7 +308,7 @@ void arts_db_owner_start_invalidate_round(
  * 0-edge of release_rw / the INVALIDATE handler (both placements) and the OWNER
  * CONFIRM_ACK / HOME OWNERSHIP_RESPONSE drain-guard removal. */
 void arts_db_send_grant_response(struct arts_db_cache_s *cache);
-#endif /* RCU */
+#endif /* shared grant plane */
 
 #ifdef ARTS_PROTOCOL_INV
 /* ===== MSI protocol handlers / senders ================================= */

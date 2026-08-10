@@ -1308,14 +1308,6 @@ add_benchmark_app(NAME stream
     EXTRA_DEFINES STREAM_ARRAY_SIZE=1000 NUM_THREADS=2 NTIMES=3
     EXTRA_LINK_LIBS pthread m
 )
-# stream.c has functions used before declaration (C11 error) — allow it
-foreach(sfx ${ARTS_VARIANT_SUFFIXES})
-    target_compile_options(stream_arts_${sfx} PRIVATE -Wno-error=implicit-function-declaration)
-endforeach()
-# target_compile_options(stream_xsocr PRIVATE -Wno-error=implicit-function-declaration)
-if(TARGET stream_ocrvx)
-    target_compile_options(stream_ocrvx PRIVATE -Wno-error=implicit-function-declaration)
-endif()
 
 add_benchmark_app(NAME stream_dist
     DIR stream/ocr
@@ -1323,37 +1315,18 @@ add_benchmark_app(NAME stream_dist
     EXTRA_DEFINES STREAM_ARRAY_SIZE=1000 NUM_THREADS=2 NTIMES=3
     EXTRA_LINK_LIBS pthread m
 )
-foreach(sfx ${ARTS_VARIANT_SUFFIXES})
-    target_compile_options(stream_dist_arts_${sfx} PRIVATE -Wno-error=implicit-function-declaration)
-endforeach()
-# target_compile_options(stream_dist_xsocr PRIVATE -Wno-error=implicit-function-declaration)
-if(TARGET stream_dist_ocrvx)
-    target_compile_options(stream_dist_ocrvx PRIVATE -Wno-error=implicit-function-declaration)
-endif()
 
 add_benchmark_app(NAME stream_org
     DIR stream/ocr
     SOURCES stream_org.c
     EXTRA_LINK_LIBS pthread m
 )
-foreach(sfx ${ARTS_VARIANT_SUFFIXES})
-    target_compile_options(stream_org_arts_${sfx} PRIVATE -Wno-error=implicit-function-declaration)
-endforeach()
-if(TARGET stream_org_ocrvx)
-    target_compile_options(stream_org_ocrvx PRIVATE -Wno-error=implicit-function-declaration)
-endif()
 
 add_benchmark_app(NAME stream_sa
     DIR stream/ocr
     SOURCES stream_sa.c
     EXTRA_LINK_LIBS pthread m
 )
-foreach(sfx ${ARTS_VARIANT_SUFFIXES})
-    target_compile_options(stream_sa_arts_${sfx} PRIVATE -Wno-error=implicit-function-declaration)
-endforeach()
-if(TARGET stream_sa_ocrvx)
-    target_compile_options(stream_sa_ocrvx PRIVATE -Wno-error=implicit-function-declaration)
-endif()
 
 add_benchmark_app(NAME uts
     DIR uts-1.1/ocr
