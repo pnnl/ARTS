@@ -33,12 +33,22 @@ class RuntimeKind(StrEnum):
     OCRVX = "ocrvx"
 
 
+def _arts_key(variant: str) -> str:
+    """The name an ARTS configuration is selected and reported by.
+
+    Its build suffix leads with the memory model (`ocr_`), which the plane
+    holds fixed, so carrying that into the name distinguishes nothing and
+    misreads as the reference runtime of the same name.
+    """
+    return "arts_" + variant.removeprefix("ocr_")
+
+
 class SelectionEntry(BaseModel):
     """One selectable runtime configuration.
 
     `key` is the stable identifier used on the command line, in saved
-    selections and in result rows: an ARTS entry is named by its build
-    variant, a reference entry by the runtime.
+    selections and in result rows: an ARTS entry is named by the
+    configuration it selects, a reference entry by the runtime.
     """
 
     key: str
@@ -170,8 +180,13 @@ def load_plane() -> Plane:
             cells.append(cell)
             entries.append(
                 SelectionEntry(
-                    key=cell.variant,
-                    label=cell.variant,
+                    # The build suffix leads with the memory model, which this
+                    # plane fixes, so as a name it says nothing and reads as
+                    # the wrong runtime beside the two references.  The entry
+                    # names the runtime it selects; the suffix stays the
+                    # build's own.
+                    key=_arts_key(cell.variant),
+                    label=_arts_key(cell.variant),
                     kind=RuntimeKind.ARTS,
                     cell=cell.key,
                     variant=cell.variant,

@@ -8,14 +8,16 @@ the source of truth; the console is a convenience.
 from __future__ import annotations
 
 import json
+import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
 from artsrun import check, report
 from artsrun.build import (
-    BuildPlan, build, check_build_dir, check_counter_config, plan_targets,
+    BuildPlan, build, check_build_dir, configure_counters, counter_mismatch,
+    plan_targets,
 )
 from artsrun.model.benchset import Benchset
 from artsrun.model.catalog import Catalog
@@ -40,6 +42,19 @@ class Campaign:
     build_dir: Path
     run_dir: Path
     counterset: Counterset | None = None
+    # Set from another thread to end the campaign after whatever is running.
+    stop_requested: threading.Event = field(default_factory=threading.Event)
+
+    def request_stop(self) -> None:
+        """Ask the campaign to end without waiting for the rest of the queue.
+
+        The backend is told as well, because a local cell blocks for its whole
+        run and would otherwise hold the campaign open until its own timeout.
+        """
+        self.stop_requested.set()
+        backend = getattr(self, "_backend", None)
+        if backend is not None and hasattr(backend, "abort"):
+            backend.abort()
 
     @classmethod
     def prepare(
@@ -74,13 +89,15 @@ class Campaign:
         )
 
     # -- phases ------------------------------------------------------------
-    def build_plan(self) -> BuildPlan:
+    def build_plan(self, *, on_line=None) -> BuildPlan:
         check_build_dir(self.build_dir)
         if self.counterset and self.counterset.enabled:
             # Written next to the run so the file the build was configured
             # against is the one the results can be read back through.
             wanted = write_counter_config(self.counterset, self.run_dir / "cfg")
-            check_counter_config(self.build_dir, wanted)
+            differing = counter_mismatch(self.build_dir, self.counterset)
+            if differing:
+                configure_counters(self.build_dir, wanted, on_line=on_line)
         return plan_targets(
             self.selection, self.plane, self.catalog, self.benchset, self.build_dir
         )
@@ -133,7 +150,8 @@ class Campaign:
         return LocalBackend(self.profile, log_dir)
 
     # -- execution ---------------------------------------------------------
-    def run(self, *, on_line=None, resume_from: Path | None = None) -> dict:
+    def run(self, *, on_line=None, resume: bool = False,
+            retry_failed: bool = True) -> dict:
         self.run_dir.mkdir(parents=True, exist_ok=True)
         say = on_line or (lambda _msg: None)
 
@@ -141,16 +159,26 @@ class Campaign:
             json.dumps(self.selection.model_dump(mode="json"), indent=2)
         )
 
-        plan = self.build_plan()
+        plan = self.build_plan(on_line=say)
         say(f"building {len(plan.targets)} targets in {self.build_dir}")
         build(plan, on_line=lambda line: say(line))
 
         cells, skipped = self.cells()
-        done_keys = _completed_keys(resume_from) if resume_from else set()
-        if done_keys:
-            before = len(cells)
-            cells = [c for c in cells if c.key not in done_keys]
-            say(f"resuming: {before - len(cells)} cells already complete")
+        # A continuation keeps what the interrupted run measured and runs the
+        # rest into the same directory, so one report describes both halves.
+        carried: list[CellResult] = []
+        if resume:
+            earlier = recorded_results(self.run_dir, cells)
+            keep = [
+                r for r in earlier
+                if r.status is Status.OK or not retry_failed
+            ]
+            carried = keep
+            done = {r.cell.key for r in keep}
+            cells = [c for c in cells if c.key not in done]
+            again = len(earlier) - len(keep)
+            say(f"continuing: {len(keep)} cells already measured"
+                + (f", {again} being retried" if again else ""))
 
         say(f"{len(cells)} cells to run, {len(skipped)} structurally ineligible")
 
@@ -172,6 +200,7 @@ class Campaign:
                     f"({result.wall_s:.1f}s)")
 
         backend = self.backend()
+        self._backend = backend
         poll = (
             self.profile.slurm.poll_interval_s
             if self.profile.slurm else 5.0
@@ -179,12 +208,17 @@ class Campaign:
         scheduler = Scheduler(
             backend, cells, WallCache(wall_cache_path()),
             on_event=on_event, poll_interval_s=poll,
+            stop=self.stop_requested,
         )
         try:
             results = scheduler.run()
         finally:
             track.close()
+        if scheduler.stopped:
+            say(f"stopped: {len(results)} cells measured, "
+                f"{scheduler.unreached} never started")
 
+        results = carried + results
         for r in results:
             check.apply_to(r)
         groups = check.vote([r for r in results if r.status is not Status.SKIPPED])
@@ -206,20 +240,43 @@ class Campaign:
         }
 
 
-def _completed_keys(run_dir: Path) -> set[str]:
-    """Cells a previous run finished, read from its track file."""
+def recorded_results(run_dir: Path, cells: list) -> list[CellResult]:
+    """What a previous run of this campaign measured, rebuilt from its track.
+
+    A continuation has to report on both halves: consensus is a vote across
+    the configurations that ran one application, so a report covering only the
+    cells run after the interruption would be voting with half a ballot.  The
+    track file says what finished and the per-cell logs are still there, so
+    each earlier cell comes back as the result it was -- scalar included, since
+    that is extracted from the log rather than remembered.
+    """
     track = run_dir / "track.jsonl"
     if not track.is_file():
-        return set()
-    keys = set()
+        return []
+    by_key = {c.key: c for c in cells}
+    rows: dict[str, dict] = {}
     for line in track.read_text(errors="replace").splitlines():
         try:
             row = json.loads(line)
         except ValueError:
             continue
-        if row.get("event") == "finished" and row.get("status") == Status.OK.value:
-            keys.add(row["cell"])
-    return keys
+        if row.get("event") == "finished" and row.get("cell") in by_key:
+            rows[row["cell"]] = row  # a later attempt supersedes an earlier one
+    out = []
+    for key, row in rows.items():
+        cell = by_key[key]
+        log = run_dir / "cells" / cell.log_name
+        try:
+            status = Status(row.get("status", ""))
+        except ValueError:
+            continue
+        out.append(CellResult(
+            cell=cell, status=status, rc=int(row.get("rc", 0)),
+            wall_s=float(row.get("wall_s", 0.0)),
+            log_path=log if log.is_file() else None,
+            note=row.get("note", ""),
+        ))
+    return out
 
 
 def summarize_skips(skipped: list[Skipped]) -> dict[str, int]:
@@ -227,3 +284,76 @@ def summarize_skips(skipped: list[Skipped]) -> dict[str, int]:
     for s in skipped:
         counts[s.reason] = counts.get(s.reason, 0) + 1
     return counts
+
+
+@dataclass(frozen=True)
+class PastRun:
+    """One campaign on disk, and how far it got."""
+
+    run_id: str
+    run_dir: Path
+    measured: int
+    ok: int
+    total: int
+
+    @property
+    def finished(self) -> bool:
+        """Whether it reached the end, as opposed to being stopped or dying."""
+        return (self.run_dir / "summary.txt").is_file() and not self.remaining
+
+    @property
+    def remaining(self) -> int:
+        return max(0, self.total - self.measured)
+
+    @property
+    def label(self) -> str:
+        state = "complete" if self.finished else f"{self.remaining} left"
+        return f"{self.run_id}  ({self.measured}/{self.total} cells, {state})"
+
+
+def past_runs(limit: int = 40) -> list[PastRun]:
+    """Campaigns that recorded a selection, newest first.
+
+    A run is resumable when its selection is on disk; how far it got comes
+    from the track file, which is written as the campaign goes rather than at
+    the end -- so a run that was stopped, or whose session died, is described
+    as accurately as one that finished.
+    """
+    root = logs_root()
+    if not root.is_dir():
+        return []
+    out: list[PastRun] = []
+    for d in sorted((p for p in root.iterdir() if p.is_dir()), reverse=True):
+        saved = d / "selection.yaml"
+        if not saved.is_file():
+            continue
+        try:
+            selection = Selection.model_validate(json.loads(saved.read_text()))
+        except (OSError, ValueError):
+            continue
+        measured, ok = 0, 0
+        track = d / "track.jsonl"
+        if track.is_file():
+            seen: dict[str, str] = {}
+            for line in track.read_text(errors="replace").splitlines():
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if row.get("event") == "finished":
+                    seen[row.get("cell", "")] = row.get("status", "")
+            measured = len(seen)
+            ok = sum(1 for v in seen.values() if v == Status.OK.value)
+        out.append(PastRun(d.name, d, measured, ok, selection.cell_count))
+        if len(out) >= limit:
+            break
+    return out
+
+
+def load_past(run_id: str) -> tuple[Selection, Path]:
+    """The selection a past run recorded, and the directory to continue in."""
+    run_dir = logs_root() / run_id
+    saved = run_dir / "selection.yaml"
+    if not saved.is_file():
+        raise FileNotFoundError(f"{run_dir} has no selection.yaml to continue from")
+    return Selection.model_validate(json.loads(saved.read_text())), run_dir

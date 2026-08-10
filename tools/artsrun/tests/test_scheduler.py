@@ -15,7 +15,7 @@ def _cell(nodes: int, name: str = "app") -> Cell:
         marker="X", scalar_re="X",
     )
     entry = SelectionEntry(
-        key="ocr_val_wb", label="v", kind=RuntimeKind.ARTS,
+        key="arts_val_wb", label="arts_val_wb", kind=RuntimeKind.ARTS,
         cell="VAL/RETAIN/WB", variant="ocr_val_wb",
     )
     return Cell(entry=entry, app=app, nodes=nodes, repeat=1,
@@ -128,3 +128,48 @@ def test_a_slurm_job_asks_for_the_width_it_will_use(tmp_path):
     script = backend._script(cell)
     assert "--ntasks-per-node=1" in script
     assert f"-N {cell.nodes}" in script
+
+
+def test_a_stop_is_noticed_between_cells_not_after_the_last_one():
+    # A synchronous backend returns from submit() only when the cell is done,
+    # so a whole campaign passes inside one admission sweep; a stop checked
+    # only around that sweep would arrive after everything had run.
+    import threading
+
+    from artsrun.run.scheduler import Scheduler, WallCache
+    from artsrun.run.types import CellResult, Status
+
+    stop = threading.Event()
+
+    class Sequential:
+        capacity = 1
+
+        def __init__(self):
+            self.ran = 0
+
+        def cost(self, cell):
+            return 1
+
+        def submit(self, cell):
+            self.ran += 1
+            if self.ran == 2:
+                stop.set()          # asked to stop while this one runs
+            return CellResult(cell=cell, status=Status.OK, wall_s=0.01)
+
+        def poll(self, result):
+            return result
+
+        def shutdown(self):
+            pass
+
+        def abort(self):
+            pass
+
+    cells = [_cell(nodes=1, name=f"a{i}") for i in range(6)]
+    backend = Sequential()
+    sched = Scheduler(backend, cells, WallCache(Path("/nonexistent")),
+                      stop=stop, poll_interval_s=0)
+    done = sched.run()
+    assert backend.ran == 2, "the sweep kept going after the stop"
+    assert len(done) == 2
+    assert sched.stopped and sched.unreached == 4

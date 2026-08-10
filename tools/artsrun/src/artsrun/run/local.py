@@ -48,6 +48,10 @@ class LocalBackend:
         self.log_dir = log_dir
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.capacity = 1
+        # The cell in progress, so a stop from another thread can end it.
+        # submit() blocks for the whole run, so there is nowhere else to reach
+        # the process from.
+        self._current: subprocess.Popen | None = None
 
     def cost(self, cell: Cell) -> int:
         return 1
@@ -64,10 +68,15 @@ class LocalBackend:
         with log_path.open("w", encoding="utf-8", errors="replace") as log:
             log.write(f"$ {render(argv)}\n")
             log.flush()
-            proc = subprocess.run(
+            proc = subprocess.Popen(
                 argv, cwd=cwd, env=env, stdout=log,
-                stderr=subprocess.STDOUT, check=False,
+                stderr=subprocess.STDOUT,
             )
+            self._current = proc
+            try:
+                proc.wait()
+            finally:
+                self._current = None
         wall = time.monotonic() - started
 
         # A timed-out run can leave ranks behind: a wedged rank survives the
@@ -86,5 +95,22 @@ class LocalBackend:
     def poll(self, result: CellResult) -> CellResult:
         return result
 
+    def abort(self) -> None:
+        """End the cell in progress, from whichever thread asks.
+
+        The command runs under `timeout`, which forwards a term to the
+        program, so terminating it stops the run the way a budget expiry
+        would; the reap that follows every cell then clears any rank that
+        outlived it.
+        """
+        proc = self._current
+        if proc is None or proc.poll() is not None:
+            return
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
     def shutdown(self) -> None:
-        return
+        self.abort()

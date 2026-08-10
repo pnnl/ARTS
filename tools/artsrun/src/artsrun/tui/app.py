@@ -38,6 +38,8 @@ class ArtsRunApp(App):
         ("a", "toggle_all", "all / none"),
         ("r", "run", "run"),
         ("d", "dry_run", "dry run"),
+        ("s", "stop", "stop"),
+        ("c", "continue", "continue"),
         ("q", "quit", "quit"),
     ]
 
@@ -59,7 +61,8 @@ class ArtsRunApp(App):
         sets = store.list_countersets()
         self.counterset = (store.load_counterset(sets[0]) if sets
                            else store.default_counterset())
-        self._running = False
+        self._campaign_running = False
+        self._campaign = None
 
     # -- layout ------------------------------------------------------------
     def compose(self) -> ComposeResult:
@@ -157,6 +160,18 @@ class ArtsRunApp(App):
     @on(Button.Pressed, "#dry-button")
     def _dry_pressed(self) -> None:
         self.action_dry_run()
+
+    @on(Button.Pressed, "#stop-button")
+    def _stop_pressed(self) -> None:
+        self.action_stop()
+
+    @on(Select.Changed, "#resume-select")
+    def _resume_picked(self, event: Select.Changed) -> None:
+        self.query_one("#resume-button", Button).disabled = not event.value
+
+    @on(Button.Pressed, "#resume-button")
+    def _resume_pressed(self) -> None:
+        self.action_continue()
 
     # -- profile editing ---------------------------------------------------
     @on(Button.Pressed, "#profile-save")
@@ -270,21 +285,76 @@ class ArtsRunApp(App):
         self.query_one(TabbedContent).active = "tab-run"
         self._dry_run(selection)
 
+    def action_continue(self) -> None:
+        """Carry a past run on, measuring against the selection it recorded.
+
+        The screens are left alone: a continuation belongs to the campaign it
+        continues, and taking the current selection instead would append cells
+        of one experiment to the results of another.
+        """
+        if self._campaign_running:
+            self.notify("a campaign is already running", severity="warning")
+            return
+        picked = self.query_one("#resume-select", Select).value
+        if not picked:
+            self.notify("choose a run to continue", severity="warning")
+            return
+        from artsrun.campaign import load_past
+
+        try:
+            selection, run_dir = load_past(str(picked))
+        except (OSError, ValueError) as exc:
+            self.notify(str(exc), severity="error")
+            return
+        self.query_one(TabbedContent).active = "tab-run"
+        self._log(f"continuing {run_dir.name}")
+        self._set_running(True)
+        self._run_campaign(selection, run_dir=run_dir)
+
+    def action_stop(self) -> None:
+        campaign = getattr(self, "_campaign", None)
+        if not self._campaign_running or campaign is None:
+            self.notify("nothing is running", severity="warning")
+            return
+        self._log("stopping — the cell in progress is being ended")
+        campaign.request_stop()
+
+    def _set_running(self, running: bool) -> None:
+        """Show the stop control exactly while it has something to stop."""
+        self._campaign_running = running
+        try:
+            self.query_one("#stop-button").display = running
+            if not running:
+                # A run that just finished is no longer resumable, and one
+                # that was stopped now is.
+                self.query_one("#run", RunPanel).refresh_runs()
+        except Exception:
+            pass
+
     def action_run(self) -> None:
-        if self._running:
+        if self._campaign_running:
             self.notify("a campaign is already running", severity="warning")
             return
         selection = self.build_selection(announce=True)
         if selection is None:
-            self._running = False
             return
         self.query_one(TabbedContent).active = "tab-run"
-        self._running = True
+        self._set_running(True)
         self._run_campaign(selection)
 
     # -- workers -----------------------------------------------------------
     def _log(self, line: str) -> None:
-        self.call_from_thread(self.query_one("#run-log", RichLog).write, line)
+        """Write one line to the run log, from a worker or from the screen.
+
+        The campaign writes from its worker thread and the controls write from
+        the screen's own, and the hand-off the first needs is an error for the
+        second.
+        """
+        write = self.query_one("#run-log", RichLog).write
+        try:
+            self.call_from_thread(write, line)
+        except RuntimeError:
+            write(line)
 
     @work(thread=True)
     def _dry_run(self, selection: Selection) -> None:
@@ -307,7 +377,8 @@ class ArtsRunApp(App):
         except Exception as exc:
             self._log(f"build check: {exc}")
         cells, skipped = campaign.cells()
-        ordered = order(cells, WallCache(wall_cache_path()))
+        ordered = order(cells, WallCache(wall_cache_path()),
+                        capacity=campaign.backend().capacity)
         self._log(f"{len(cells)} cells, {len(skipped)} structurally ineligible")
         for cell in ordered[:20]:
             self._log(f"  {cell.nodes:>3}n  {cell.app.key:<28} {cell.entry.key}")
@@ -316,25 +387,36 @@ class ArtsRunApp(App):
         self.call_from_thread(log.write, "")
 
     @work(thread=True)
-    def _run_campaign(self, selection: Selection) -> None:
+    def _run_campaign(self, selection: Selection, run_dir=None) -> None:
         from artsrun.campaign import Campaign
 
-        profile = self.query_one("#profile", ProfilePanel).effective_profile()
-        counters = self.query_one("#counters", CounterPanel).effective_counterset()
-        campaign = Campaign.prepare(
-            selection, self.plane, self.catalog, self.benchset, profile,
-            counterset=counters,
-        )
+        # Everything the worker does sits inside the guard: a campaign that
+        # cannot even be prepared is the case a caller most needs told about,
+        # and an exception escaping a worker thread is only written to the
+        # framework's own log -- the screen would show nothing at all, and the
+        # in-progress flag would never be lowered.
         try:
-            result = campaign.run(on_line=self._log)
+            profile = self.query_one("#profile", ProfilePanel).effective_profile()
+            counters = self.query_one("#counters", CounterPanel).effective_counterset()
+            campaign = Campaign.prepare(
+                selection, self.plane, self.catalog, self.benchset, profile,
+                counterset=counters, run_dir=run_dir,
+            )
+            self._campaign = campaign
+            result = campaign.run(on_line=self._log, resume=run_dir is not None)
             self._log("")
             for line in result["summary"].splitlines():
                 self._log(line)
             self._log(f"run directory: {result['run_dir']}")
         except Exception as exc:
-            self._log(f"campaign failed: {exc}")
+            # Several of these carry the command that resolves them, over more
+            # than one line; collapsing them to one would cut it off.
+            self._log("campaign failed:")
+            for line in str(exc).splitlines():
+                self._log(f"  {line}")
         finally:
-            self._running = False
+            self._campaign = None
+            self.call_from_thread(self._set_running, False)
 
 
 def run_tui(profile: str | None = None, benchset: str | None = None) -> int:

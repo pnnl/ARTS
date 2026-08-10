@@ -551,12 +551,44 @@ class BenchsetPanel(VerticalScroll):
 
 
 class RunPanel(Vertical):
+    """Start a campaign, or carry an earlier one on.
+
+    A continuation is a separate control rather than a mode of the first,
+    because the two differ in what they measure against: one starts from the
+    screens, the other from what a past run already recorded.
+    """
+
     def compose(self) -> ComposeResult:
+        from artsrun.campaign import past_runs
+
         yield Static("[b]Run[/b]", classes="panel-head")
         with Horizontal(id="run-controls"):
             yield Button("Build and run", id="run-button", variant="primary")
             yield Button("Dry run", id="dry-button")
+            # Shown only while something is running: a stop with nothing to
+            # stop invites a press that reports an error for no reason.
+            stop = Button("Stop", id="stop-button", variant="error")
+            stop.display = False
+            yield stop
+        unfinished = [r for r in past_runs() if r.remaining]
+        with Horizontal(id="resume-controls"):
+            yield Select(
+                [(r.label, r.run_id) for r in unfinished],
+                prompt="continue a past run…", id="resume-select",
+                allow_blank=True,
+            )
+            yield Button("Continue", id="resume-button", disabled=True)
         yield Static("", id="run-size")
+
+    def refresh_runs(self) -> None:
+        """Re-read what is resumable, after a campaign changes the answer."""
+        from artsrun.campaign import past_runs
+
+        select = self.query_one("#resume-select", Select)
+        select.set_options(
+            (r.label, r.run_id) for r in past_runs() if r.remaining
+        )
+        self.query_one("#resume-button", Button).disabled = True
 
 
 class CounterPanel(VerticalScroll):

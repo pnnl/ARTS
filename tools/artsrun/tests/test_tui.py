@@ -911,3 +911,102 @@ def test_a_set_with_once_and_no_reduction_loads_onto_the_screen():
     enabled, mode, level = drive(check)
     assert "OBJ_BYTES_DB" in enabled
     assert (mode, level) == ("ONCE", "NODE")
+
+
+def test_the_run_action_is_not_blocked_before_anything_runs():
+    # The in-progress flag once shared a name with one the framework sets on
+    # startup, so the screen reported a campaign already running from the
+    # moment it opened and the key did nothing for the life of the process.
+    async def check(app, pilot):
+        started = app._campaign_running
+        app.action_run()
+        return started, app._campaign_running
+
+    started, after = drive(check)
+    assert started is False
+    assert after is True
+
+
+def test_the_flag_names_nothing_the_framework_writes():
+    # The screen's own state must not share a name with anything the base
+    # class assigns, since whichever writes last wins and neither knows.
+    import inspect
+    import re
+
+    from textual.app import App
+
+    assigned = set(re.findall(r"self\.(_[a-z_]+)\s*=", inspect.getsource(App)))
+    assert "_campaign_running" not in assigned
+    assert "_running" in assigned, (
+        "the collision this guards against is gone; keep the check pointed at "
+        "a name the framework really does assign"
+    )
+
+
+def test_a_campaign_that_cannot_be_prepared_says_so_and_clears_the_flag():
+    # An exception escaping a worker thread reaches the framework's log and
+    # nowhere the user looks, and would leave the flag raised for good.
+    async def check(app, pilot):
+        import artsrun.campaign as campaign_mod
+
+        def boom(*a, **k):
+            raise RuntimeError("counter tree mismatch\n  run: cmake -B...")
+
+        original = campaign_mod.Campaign.prepare
+        campaign_mod.Campaign.prepare = boom
+        try:
+            app.action_run()
+            for _ in range(80):
+                await pilot.pause()
+                await asyncio.sleep(0.05)
+                if not app._campaign_running:
+                    break
+        finally:
+            campaign_mod.Campaign.prepare = original
+        from textual.widgets import RichLog
+
+        text = "\n".join(
+            s.text if hasattr(s, "text") else str(s)
+            for s in app.query_one("#run-log", RichLog).lines
+        )
+        return app._campaign_running, text
+
+    running, text = drive(check)
+    assert running is False
+    assert "campaign failed" in text
+    assert "cmake -B" in text          # the multi-line detail survives
+
+
+def test_continuing_is_a_separate_control_from_starting():
+    # The two differ in what they measure against — the screens, or what a
+    # past run recorded — so they are not one button with a mode.
+    async def check(app, pilot):
+        from textual.widgets import Button, Select
+
+        select = app.query_one("#resume-select", Select)
+        button = app.query_one("#resume-button", Button)
+        before = button.disabled
+        app.action_continue()            # nothing picked: refuses, does not run
+        picked_none = app._campaign_running
+        return before, picked_none
+
+    disabled, ran = drive(check)
+    assert disabled is True, "continue offers itself before a run is chosen"
+    assert ran is False, "continue started a campaign with no run chosen"
+
+
+def test_only_unfinished_runs_are_offered():
+    from artsrun.campaign import past_runs
+
+    async def check(app, pilot):
+        from textual.widgets import Select
+
+        select = app.query_one("#resume-select", Select)
+        # The blank prompt carries the widget's own sentinel, not a run.
+        return {v for _, v in select._options if isinstance(v, str)}
+
+    offered = drive(check)
+    resumable = {r.run_id for r in past_runs() if r.remaining}
+    # A completed campaign has nothing left to run, so offering it would be
+    # offering a no-op.
+    assert offered <= resumable

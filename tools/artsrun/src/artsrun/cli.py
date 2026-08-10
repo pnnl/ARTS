@@ -211,7 +211,10 @@ def show_apps(
 
 @app.command("run")
 def run_cmd(
-    profile: str = typer.Option(..., "--profile", "-p"),
+    # Not required: --resume and --from carry the profile the campaign was
+    # selected against, and taking a different one would silently
+    # re-measure against another machine.
+    profile: str = typer.Option(None, "--profile", "-p"),
     benchset: str = typer.Option(None, "--benchset", "-b"),
     counters: str = typer.Option(None, "--counters", "-c",
                                  help="counter set to compile in"),
@@ -225,18 +228,35 @@ def run_cmd(
     build_dir: Path = typer.Option(None, "--build-dir"),
     from_file: Path = typer.Option(None, "--from", help="replay a saved selection"),
     resume: str = typer.Option(None, "--resume", help="run id to continue"),
+    retry_failed: bool = typer.Option(
+        True, "--retry-failed/--keep-failed",
+        help="rerun cells the earlier run failed (default), or leave them as they are",
+    ),
     dry_run: bool = typer.Option(False, "--dry-run"),
     detach: bool = typer.Option(False, "--detach"),
 ) -> None:
     """Build everything selected, then run it cell by cell."""
     from artsrun.campaign import Campaign
 
-    if from_file:
+    run_dir = None
+    if resume:
+        # Continuing means continuing THAT campaign: its selection is what was
+        # measured against, and its directory is where the halves meet.
+        from artsrun.campaign import load_past
+
+        try:
+            selection, run_dir = load_past(resume)
+        except (FileNotFoundError, ValueError) as exc:
+            _fail(str(exc))
+        plane, catalog, prof, bs = _load(selection.profile, selection.benchset)
+    elif from_file:
         import json
 
         selection = Selection.model_validate(json.loads(from_file.read_text()))
         plane, catalog, prof, bs = _load(selection.profile, selection.benchset)
     else:
+        if not profile:
+            _fail("--profile is required unless --resume or --from names a run")
         plane, catalog, prof, bs = _load(profile, benchset)
         keys = _split(entries) or plane.entry_keys
         unknown = [k for k in keys if k not in plane.entry_keys]
@@ -265,7 +285,7 @@ def run_cmd(
         _fail(str(exc))
     campaign = Campaign.prepare(
         selection, plane, catalog, bs, prof, counterset=cset,
-        build_dir=build_dir,
+        build_dir=build_dir, run_dir=run_dir,
     )
 
     if dry_run:
@@ -277,7 +297,8 @@ def run_cmd(
         return
 
     result = campaign.run(
-        on_line=lambda line: console.print(line, highlight=False, markup=False)
+        on_line=lambda line: console.print(line, highlight=False, markup=False),
+        resume=bool(resume), retry_failed=retry_failed,
     )
     console.print(result["summary"])
     console.print(f"\nrun directory: {result['run_dir']}")
@@ -301,7 +322,8 @@ def _dry_run(campaign, selection: Selection) -> None:
     from artsrun.run.scheduler import WallCache, order
     from artsrun.paths import wall_cache_path
 
-    ordered = order(cells, WallCache(wall_cache_path()))
+    ordered = order(cells, WallCache(wall_cache_path()),
+                    capacity=campaign.backend().capacity)
     table = Table(title="Submission order (first 20)", expand=False)
     for column in ("#", "app", "version", "entry", "nodes", "timeout"):
         table.add_column(column)
@@ -348,6 +370,31 @@ def report_cmd(run: str = typer.Argument(None, help="run id (default: latest)"))
         _fail(f"no summary in {run_dir}")
     console.print(summary.read_text())
     console.print(f"\nrun directory: {run_dir}")
+
+
+@app.command("runs")
+def list_runs(limit: int = typer.Option(20, "--limit")) -> None:
+    """Past campaigns, and how far each got."""
+    from artsrun.campaign import past_runs
+
+    rows = past_runs(limit)
+    if not rows:
+        console.print(f"no runs under {logs_root()}")
+        return
+    table = Table(title="Campaigns", expand=False)
+    table.add_column("run", no_wrap=True)
+    table.add_column("measured", justify="right")
+    table.add_column("ok", justify="right")
+    table.add_column("of", justify="right")
+    table.add_column("state")
+    for r in rows:
+        table.add_row(
+            r.run_id, f"{r.measured}", f"{r.ok}", f"{r.total}",
+            "[green]complete[/green]" if r.finished
+            else f"[yellow]{r.remaining} left[/yellow]",
+        )
+    console.print(table)
+    console.print("\n[dim]continue one with: artsrun run --resume <run>[/dim]")
 
 
 def _latest_run(run: str | None) -> Path:

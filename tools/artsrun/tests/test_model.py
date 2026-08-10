@@ -53,7 +53,7 @@ def test_wrf_is_not_selectable():
 
 def test_binary_names_follow_the_build_convention():
     plane = load_plane()
-    arts = plane.entry("ocr_val_wb")
+    arts = plane.entry("arts_val_wb")
     assert arts.binary("nqueens", hinted=False) == "nqueens_arts_ocr_val_wb"
     assert arts.binary("nqueens", hinted=True) == "nqueens_opt_arts_ocr_val_wb"
     assert plane.entry("xsocr").binary("nqueens", hinted=False) == "nqueens_xsocr"
@@ -177,7 +177,7 @@ def test_selection_rejects_a_node_count_outside_the_profile_sweep():
     plane, catalog = load_plane(), load_catalog()
     profile = Profile.model_validate(_local())
     sel = Selection(
-        profile="t", benchset="b", entries=["ocr_val_wb"],
+        profile="t", benchset="b", entries=["arts_val_wb"],
         apps={"nqueens": [Version.ASBORN]}, node_counts=[8],
     )
     with pytest.raises(ValueError, match="not in profile"):
@@ -186,7 +186,7 @@ def test_selection_rejects_a_node_count_outside_the_profile_sweep():
 
 def test_cell_count_is_the_product_of_the_three_surfaces():
     sel = Selection(
-        profile="t", benchset="b", entries=["ocr_val_wb", "xsocr"],
+        profile="t", benchset="b", entries=["arts_val_wb", "xsocr"],
         apps={"nqueens": [Version.ASBORN, Version.HINTED]},
         node_counts=[1, 2], repeats=3,
     )
@@ -351,3 +351,67 @@ def test_the_whole_sar_size_ladder_is_present():
     # takes its problem size from the arguments, so it has none.
     for name in ("sar_tiny", "sar_small", "sar_medium", "sar_large"):
         assert catalog.apps[name].expect, f"{name} has no pinned answer"
+
+
+# --- continuing a run -----------------------------------------------------
+def _track(run_dir, rows):
+    import json as _json
+
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "track.jsonl").write_text(
+        "\n".join(_json.dumps(r) for r in rows) + "\n"
+    )
+
+
+def test_a_continuation_carries_the_earlier_results_into_the_report(tmp_path):
+    # Consensus is a vote across the configurations that ran one application,
+    # so a report covering only the cells run after the interruption would be
+    # voting with half a ballot.
+    from artsrun.campaign import recorded_results
+    from artsrun.run.types import Status
+
+    class FakeCell:
+        def __init__(self, key):
+            self.key = key
+            self.log_name = f"{key}.log"
+
+    cells = [FakeCell("a"), FakeCell("b"), FakeCell("c")]
+    _track(tmp_path, [
+        {"event": "finished", "cell": "a", "status": "ok", "rc": 0, "wall_s": 1.5},
+        {"event": "finished", "cell": "b", "status": "fail", "rc": 1, "wall_s": 0.5},
+        {"event": "submitted", "cell": "c", "status": "submitted"},
+    ])
+    got = {r.cell.key: r for r in recorded_results(tmp_path, cells)}
+    assert set(got) == {"a", "b"}          # "c" never finished
+    assert got["a"].status is Status.OK and got["a"].wall_s == 1.5
+    assert got["b"].status is Status.FAIL
+
+
+def test_a_later_attempt_supersedes_the_earlier_one(tmp_path):
+    from artsrun.campaign import recorded_results
+    from artsrun.run.types import Status
+
+    class FakeCell:
+        def __init__(self, key):
+            self.key = key
+            self.log_name = f"{key}.log"
+
+    _track(tmp_path, [
+        {"event": "finished", "cell": "a", "status": "fail", "rc": 1},
+        {"event": "finished", "cell": "a", "status": "ok", "rc": 0},
+    ])
+    got = recorded_results(tmp_path, [FakeCell("a")])
+    assert len(got) == 1 and got[0].status is Status.OK
+
+
+def test_a_run_with_no_selection_is_not_offered_for_continuing(tmp_path, monkeypatch):
+    # Without it there is nothing to measure against, so it is not a campaign
+    # anyone can carry on.
+    import artsrun.campaign as mod
+
+    monkeypatch.setattr(mod, "logs_root", lambda: tmp_path)
+    (tmp_path / "20260101-000000").mkdir()
+    _track(tmp_path / "20260101-000000", [
+        {"event": "finished", "cell": "a", "status": "ok"},
+    ])
+    assert mod.past_runs() == []

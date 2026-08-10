@@ -51,38 +51,98 @@ def counter_config_of(build_dir: Path) -> str | None:
     return _cache_value(build_dir, "ARTS_COUNTER_CONFIG")
 
 
-def check_counter_config(build_dir: Path, wanted: Path) -> None:
-    """Refuse a mismatch instead of measuring with the wrong counters.
+# How the configure step encodes a counter's settings into the header it
+# generates.  Reading them back is what lets a tree be checked against a set
+# rather than against the file it happened to be configured from.
+_MODES = {0: "OFF", 1: "ONCE", 2: "PERIODIC"}
+_LEVELS = {0: "THREAD", 1: "NODE", 2: "CLUSTER"}
+_REDUCERS = {0: "SUM", 1: "MAX", 2: "MIN", 3: "MASTER"}
 
-    The selection is compiled in — Preamble.h holds the indices — so a tree
-    configured against another file cannot be corrected by rebuilding a
-    target.  Reconfiguring recompiles everything, which is the user's call to
-    make, not something to do behind a campaign.
+_PREAMBLE = "libs/include/internal/arts/counter/Preamble.h"
 
-    What is compiled in is the file's CONTENT, so that is what decides.  Each
-    campaign renders its counters into its own run directory, and comparing
-    paths would call every repeat of one set a mismatch.
+
+def compiled_counters(build_dir: Path) -> dict[str, tuple[str, str, str]] | None:
+    """What this tree actually compiled, counter by counter.
+
+    The generated header is the only authority: the selection is turned into
+    macros at configure time, so a build carries its counters no matter which
+    file they arrived in or whether that file still exists.
     """
-    have = counter_config_of(build_dir)
-    if have and Path(have).resolve() != wanted.resolve():
-        try:
-            same = (
-                Path(have).read_text(errors="ignore")
-                == wanted.read_text(errors="ignore")
-            )
-        except OSError:
-            same = False  # the configured file is gone; its content is unknown
-        if same:
-            return
+    header = build_dir / _PREAMBLE
+    if not header.is_file():
+        return None
+    text = header.read_text(errors="ignore")
+
+    def read(prefix: str) -> dict[str, int]:
+        return {
+            m.group(1): int(m.group(2))
+            for m in re.finditer(rf"^#define {prefix}([A-Z0-9_]+) (\d+)$", text, re.M)
+        }
+
+    enabled = read("ENABLE_")
+    modes, levels = read("COUNTER_MODE_"), read("COUNTER_LEVEL_")
+    reducers = read("COUNTER_REDUCE_") or read("REDUCE_METHOD_")
+    if not enabled:
+        return None
+    return {
+        name: (
+            _MODES.get(modes.get(name, 0), "OFF") if on else "OFF",
+            _LEVELS.get(levels.get(name, 1), "NODE"),
+            _REDUCERS.get(reducers.get(name, 0), "SUM"),
+        )
+        for name, on in enabled.items()
+    }
+
+
+def counter_mismatch(build_dir: Path, counterset) -> list[str]:
+    """Counters whose compiled settings differ from what a set asks for.
+
+    What the tree compiled is read back out of its generated header, not out
+    of the file it was configured from.  A counter set is values that get
+    rendered afresh for every campaign, so the file they land in is
+    incidental: a tree configured from a hand-written file may hold exactly
+    the wanted selection, and two renderings of one set differ in path only.
+    """
+    have = compiled_counters(build_dir)
+    if have is None or counterset is None:
+        return []
+    default = ("OFF", "NODE", "SUM")
+    want = {
+        name: (s.mode.value, s.level.value,
+               (s.reduce.value if s.reduce else "SUM"))
+        for name, s in counterset.counters.items()
+    }
+    return sorted(
+        name for name in set(have) | set(want)
+        if have.get(name, default) != want.get(name, default)
+    )
+
+
+def configure_counters(build_dir: Path, wanted: Path, *, on_line=None) -> None:
+    """Point an existing tree at a counter configuration and reconfigure it.
+
+    Counter selection is compiled in, so making a tree match is a build step
+    rather than something to hand back to the caller: asking to build with a
+    counter set IS asking for the tree that carries it.  Only the counter
+    option is passed — everything else stays in the cache, so this cannot
+    quietly change the configuration in any other respect.  The rebuild that
+    follows is a full one, and says so.
+    """
+    say = on_line or (lambda _msg: None)
+    if shutil.which("cmake") is None:
+        raise BuildError("cmake not found on PATH")
+    say(f"counters changed — reconfiguring {build_dir} (this rebuilds everything)")
+    proc = subprocess.run(
+        ["cmake", "-B", str(build_dir), f"-DARTS_COUNTER_CONFIG={wanted}"],
+        capture_output=True, text=True,
+    )
+    for line in proc.stdout.splitlines():
+        if "Counter configuration:" in line or "error" in line.lower():
+            say(f"  {line.strip()}")
+    if proc.returncode != 0:
+        tail = "\n".join((proc.stderr or proc.stdout).splitlines()[-15:])
         raise BuildError(
-            f"{build_dir} was configured with counters from\n"
-            f"  {have}\n"
-            f"but this campaign asks for\n"
-            f"  {wanted}\n"
-            f"Counter selection is compiled in, so switching means a full "
-            f"rebuild:\n"
-            f"  cmake -GNinja -B{build_dir} -DCMAKE_BUILD_TYPE=Release "
-            f"-DARTS_COUNTER_CONFIG={wanted}"
+            f"could not reconfigure {build_dir} for the counter set:\n{tail}"
         )
 
 
