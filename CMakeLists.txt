@@ -482,7 +482,10 @@ if(ARTS_RO_REQUEST_COMBINING)
   # snapshot request per DB is in flight, later same-rank read acquires park
   # and share its response instead of issuing their own round trips.  Pure
   # pull — no reader state at the home, no writer-side invalidation.
-  add_compile_definitions(ARTS_RO_REQUEST_COMBINING=1)
+  #
+  # The macro is applied per target by arts_apply_protocol, not directory-wide:
+  # a build can hold several configurations at once, and each must be able to
+  # differ on this axis without the others seeing it.
   message(STATUS "ARTS RO request combining: ON (one in-flight snapshot request per DB)")
 endif()
 if(ARTS_MALLOC STREQUAL "mimalloc")

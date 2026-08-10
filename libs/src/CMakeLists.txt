@@ -85,6 +85,18 @@ endfunction()
 # sources test only its live axis (EXCL: ARTS_RELEASE_*; INV/VAL and the
 # grant plane: ARTS_WRITE_POLICY_*).
 function(arts_apply_protocol target arm write_policy release_policy)
+    # An optional 5th argument pins read combining for this target; without it
+    # the target follows the directory-wide option.  Targets that name it are
+    # self-describing: nothing outside their own definition decides what they
+    # compile, which is what lets several configurations coexist in one build.
+    if(ARGC GREATER 4)
+        set(combining "${ARGV4}")
+    else()
+        set(combining "${ARTS_RO_REQUEST_COMBINING}")
+    endif()
+    if(combining)
+        target_compile_definitions(${target} PRIVATE ARTS_RO_REQUEST_COMBINING=1)
+    endif()
     target_compile_definitions(${target} PRIVATE ARTS_PROTOCOL_${arm}=1)
     if(arm STREQUAL "WRF_VAL")
         # WRF_VAL is WT by construction and links no grant plane; it defines
@@ -468,7 +480,7 @@ if(ARTS_BUILD_BENCHMARKS AND ARTS_BUILD_STATIC)
         arts_compute arts_memory arts_sync arts_ooo arts_regpool arts_scheduler
         arts_transport arts_gas arts_system arts_utils arts_counter arts_graph)
 
-    function(arts_variant suffix arm write_policy release_policy)
+    function(arts_variant suffix arm write_policy release_policy combining)
         # Gather all protocol-independent sources (absolute paths) from the
         # object libs, dropping any coherence MODEL TU (path contains
         # /coherence/<model>/), which is variant-specific.
@@ -518,20 +530,26 @@ if(ARTS_BUILD_BENCHMARKS AND ARTS_BUILD_STATIC)
             # the static lib resolves fi_* symbols from libfabric.
             target_link_libraries(arts_static_${suffix} PRIVATE arts::libfabric)
         endif()
-        arts_apply_protocol(arts_static_${suffix} "${arm}" "${write_policy}" "${release_policy}")
+        arts_apply_protocol(arts_static_${suffix} "${arm}" "${write_policy}"
+                            "${release_policy}" "${combining}")
     endfunction()
 
     # Suffix = <memory model>_<family>_<live second axis>; the second argument
     # is the protocol ARM (the TU family): VAL/INV/EXCL live under the OCR
     # model, WRF_VAL is the VAL family under the DB-WRF model.  The dead axis
-    # sits at its required value (WB for EXCL, RETAIN for INV/VAL).
-    arts_variant(ocr_val_wt      VAL     WT RETAIN)
-    arts_variant(ocr_val_wb      VAL     WB RETAIN)
-    arts_variant(ocr_excl_purge  EXCL    WB PURGE)
-    arts_variant(ocr_excl_retain EXCL    WB RETAIN)
-    arts_variant(wrf_val_wt      WRF_VAL WT RETAIN)
-    arts_variant(ocr_inv_wt      INV     WT RETAIN)
-    arts_variant(ocr_inv_wb      INV     WB RETAIN)
+    # sits at its required value (WB for EXCL, RETAIN for INV/VAL).  The last
+    # argument is read combining, off for a family's base configuration and on
+    # only where the suffix says so — it is a serving optimization layered on
+    # the validation family, not part of any family's definition.
+    arts_variant(ocr_val_wt        VAL     WT RETAIN OFF)
+    arts_variant(ocr_val_wb        VAL     WB RETAIN OFF)
+    arts_variant(ocr_val_wt_comb   VAL     WT RETAIN ON)
+    arts_variant(ocr_val_wb_comb   VAL     WB RETAIN ON)
+    arts_variant(ocr_excl_purge    EXCL    WB PURGE  OFF)
+    arts_variant(ocr_excl_retain   EXCL    WB RETAIN OFF)
+    arts_variant(wrf_val_wt        WRF_VAL WT RETAIN OFF)
+    arts_variant(ocr_inv_wt        INV     WT RETAIN OFF)
+    arts_variant(ocr_inv_wb        INV     WB RETAIN OFF)
 endif()
 
 # Link mimalloc-static when selected.  The OBJECT library arts_utils needs

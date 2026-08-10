@@ -4,6 +4,13 @@
 # Helper libraries (reduction, timer, ocrAppUtils) are compiled from
 # third_party/ocr-apps/apps/libs/src/ and linked into apps that need them.
 
+# Every coherence configuration the app factory builds an executable for.  One
+# list, referenced everywhere: a per-app copy of it silently omits new
+# configurations from whichever apps forgot to grow.
+set(ARTS_VARIANT_SUFFIXES
+    ocr_val_wt ocr_val_wb ocr_val_wt_comb ocr_val_wb_comb
+    ocr_excl_purge ocr_excl_retain wrf_val_wt ocr_inv_wt ocr_inv_wb)
+
 set(OCR_APPS_ROOT "${CMAKE_SOURCE_DIR}/third_party/ocr-apps/apps")
 set(OCR_LIBS_ROOT "${OCR_APPS_ROOT}/libs/src")
 set(OCR_INC_DIR "${CMAKE_SOURCE_DIR}/third_party/ocr/ocr/inc")
@@ -202,13 +209,18 @@ endif() # TARGET ocr_vdm_mpi
 #       [EXTRA_INCLUDES <dir> ...]      # additional include dirs
 #       [EXTRA_DEFINES <def> ...]       # additional compile definitions
 #       [EXTRA_LINK_LIBS <lib> ...]     # extra link libraries (e.g. m)
+#       [OCRVX_SKIP]                    # suppress _ocrvx target (app uses unsupported OCR extensions)
+#       [OPTIMIZED_PLACEMENT]           # source carries a placement hint layer
 #   )
 #
-# Creates: <name>_arts_<suffix> (×5 coherence variants), <name>_xsocr, and (when compatible) <name>_ocrvx executables
-#       [OCRVX_SKIP]                    # suppress _ocrvx target (app uses unsupported OCR extensions)
+# Creates, per backend, <name>_arts_<suffix> (one per coherence configuration),
+# <name>_xsocr and (when compatible) <name>_ocrvx.  With OPTIMIZED_PLACEMENT the
+# same set is created a second time under the name <name>_opt, compiled with the
+# hint layer enabled — so both placement settings coexist in one build tree and
+# neither is a property of the build directory.
 # ==========================================================================
 function(add_benchmark_app)
-    cmake_parse_arguments(APP "OCRVX_SKIP" "NAME;DIR;SRC_SUBDIR" "SOURCES;LIBS;EXTRA_INCLUDES;EXTRA_DEFINES;EXTRA_LINK_LIBS" ${ARGN})
+    cmake_parse_arguments(APP "OCRVX_SKIP;OPTIMIZED_PLACEMENT" "NAME;DIR;SRC_SUBDIR" "SOURCES;LIBS;EXTRA_INCLUDES;EXTRA_DEFINES;EXTRA_LINK_LIBS" ${ARGN})
 
     set(APP_DIR "${OCR_APPS_ROOT}/${APP_DIR}")
     if(APP_SRC_SUBDIR)
@@ -245,85 +257,101 @@ function(add_benchmark_app)
     )
     set(COMMON_DEFINES ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE} ${APP_EXTRA_DEFINES})
 
-    # --- XSOCR variant ---
-    add_executable(${APP_NAME}_xsocr ${ABS_SOURCES} ${LIB_OBJECTS})
-    target_include_directories(${APP_NAME}_xsocr PRIVATE ${COMMON_INCLUDES})
-    target_compile_definitions(${APP_NAME}_xsocr PRIVATE ${COMMON_DEFINES})
-    target_link_libraries(${APP_NAME}_xsocr PRIVATE ocr_xsocr_static pthread ${APP_EXTRA_LINK_LIBS})
-    # Non-PIE: OCR's distributed mode serializes function pointers as raw
-    # addresses across MPI ranks.  With PIE + ASLR each rank gets a
-    # different base address and deserialized funcPtrs become invalid.
-    target_link_options(${APP_NAME}_xsocr PRIVATE -no-pie -fno-pie)
-    set_target_properties(${APP_NAME}_xsocr PROPERTIES
-        C_STANDARD 11 C_EXTENSIONS ON
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-    )
-    target_compile_options(${APP_NAME}_xsocr PRIVATE ${BENCH_C_OPT} -w)
-
-    # --- ARTS variants (one per coherence protocol) ---
-    set(ARTS_VARIANT_SUFFIXES ocr_val_wt ocr_val_wb ocr_excl_purge ocr_excl_retain wrf_val_wt ocr_inv_wt ocr_inv_wb)
-    foreach(sfx ${ARTS_VARIANT_SUFFIXES})
-        add_executable(${APP_NAME}_arts_${sfx} ${ABS_SOURCES} ${LIB_OBJECTS}
-                       $<TARGET_OBJECTS:ocr_arts_objects>)
-        target_include_directories(${APP_NAME}_arts_${sfx} PRIVATE
-            ${COMMON_INCLUDES} ${OCR_INC_DIR})
-        target_compile_definitions(${APP_NAME}_arts_${sfx} PRIVATE ${COMMON_DEFINES})
-        target_link_libraries(${APP_NAME}_arts_${sfx} PRIVATE
-            arts_static_${sfx} pthread ${APP_EXTRA_LINK_LIBS})
-        target_link_options(${APP_NAME}_arts_${sfx} PRIVATE -no-pie -fno-pie)
-        set_target_properties(${APP_NAME}_arts_${sfx} PROPERTIES
-            C_STANDARD 11 C_EXTENSIONS ON
-            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-        target_compile_options(${APP_NAME}_arts_${sfx} PRIVATE ${BENCH_C_OPT} -w)
-    endforeach()
-
-    # --- OCR-VX variant (only when ocr_vdm_mpi target exists, OCRVX_SKIP not set,
-    #     and all required helper libs have an _ocrvx variant compiled against
-    #     vdm.h headers) ---
-    if(TARGET ocr_vdm_mpi AND NOT APP_OCRVX_SKIP)
-        set(_ocrvx_ok TRUE)
-        foreach(lib ${APP_LIBS})
-            if(NOT TARGET ocr_lib_${lib}_ocrvx)
-                set(_ocrvx_ok FALSE)
-            endif()
-        endforeach()
-        if(_ocrvx_ok)
-            set(LIB_OBJECTS_OCRVX "")
-            foreach(lib ${APP_LIBS})
-                list(APPEND LIB_OBJECTS_OCRVX $<TARGET_OBJECTS:ocr_lib_${lib}_ocrvx>)
-            endforeach()
-
-            add_executable(${APP_NAME}_ocrvx ${ABS_SOURCES} ${LIB_OBJECTS_OCRVX})
-            target_include_directories(${APP_NAME}_ocrvx PRIVATE
-                ${APP_DIR}
-                ${SRC_DIR}
-                ${OCR_LIBS_ROOT}/macros/macros
-                ${APP_EXTRA_INCLUDES}
-                ${LIB_INCLUDES}
-                ${OCRVX_OCR_INC}
-            )
-            target_compile_definitions(${APP_NAME}_ocrvx PRIVATE
-                ${OCR_EXT_DEFINES}
-                "OCR_TYPE_H=vdm.h"
-                OCR_ENABLE_EDT_NAMING
-                ${APP_EXTRA_DEFINES}
-            )
-            target_link_libraries(${APP_NAME}_ocrvx PRIVATE
-                ocr_vdm_mpi ${APP_EXTRA_LINK_LIBS})
-            target_link_options(${APP_NAME}_ocrvx PRIVATE -no-pie -fno-pie)
-            set_target_properties(${APP_NAME}_ocrvx PROPERTIES
-                C_STANDARD 11 C_EXTENSIONS ON
-                RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-            )
-            target_compile_options(${APP_NAME}_ocrvx PRIVATE ${BENCH_C_OPT} -w
-                "-include" "${OCRVX_COMPAT_H}")
-        endif()
+    # Placement flavors.  The base name compiles the application as born, with
+    # its hint layer left out; the _opt name compiles that layer in.  A flavor
+    # differs only by a define in the shared application source, so every
+    # backend below sees the same setting — placement is a property of the
+    # program, never of one runtime.
+    set(_flavors base)
+    if(APP_OPTIMIZED_PLACEMENT)
+        list(APPEND _flavors opt)
     endif()
 
-    # Track for meta target
-    # set_property(GLOBAL APPEND PROPERTY BENCHMARK_XSOCR_TARGETS ${APP_NAME}_xsocr)
-    foreach(sfx ${ARTS_VARIANT_SUFFIXES})
-        set_property(GLOBAL APPEND PROPERTY BENCHMARK_ARTS_TARGETS ${APP_NAME}_arts_${sfx})
+    foreach(_flavor ${_flavors})
+        if(_flavor STREQUAL opt)
+            set(_app "${APP_NAME}_opt")
+            set(_flavor_define OCR_APP_OPTIMIZED_PLACEMENT)
+        else()
+            set(_app "${APP_NAME}")
+            set(_flavor_define "")
+        endif()
+
+        # --- XSOCR variant ---
+        add_executable(${_app}_xsocr ${ABS_SOURCES} ${LIB_OBJECTS})
+        target_include_directories(${_app}_xsocr PRIVATE ${COMMON_INCLUDES})
+        target_compile_definitions(${_app}_xsocr PRIVATE ${COMMON_DEFINES} ${_flavor_define})
+        target_link_libraries(${_app}_xsocr PRIVATE ocr_xsocr_static pthread ${APP_EXTRA_LINK_LIBS})
+        # Non-PIE: OCR's distributed mode serializes function pointers as raw
+        # addresses across MPI ranks.  With PIE + ASLR each rank gets a
+        # different base address and deserialized funcPtrs become invalid.
+        target_link_options(${_app}_xsocr PRIVATE -no-pie -fno-pie)
+        set_target_properties(${_app}_xsocr PROPERTIES
+            C_STANDARD 11 C_EXTENSIONS ON
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+        )
+        target_compile_options(${_app}_xsocr PRIVATE ${BENCH_C_OPT} -w)
+
+        # --- ARTS variants (one per coherence configuration) ---
+        foreach(sfx ${ARTS_VARIANT_SUFFIXES})
+            add_executable(${_app}_arts_${sfx} ${ABS_SOURCES} ${LIB_OBJECTS}
+                           $<TARGET_OBJECTS:ocr_arts_objects>)
+            target_include_directories(${_app}_arts_${sfx} PRIVATE
+                ${COMMON_INCLUDES} ${OCR_INC_DIR})
+            target_compile_definitions(${_app}_arts_${sfx} PRIVATE
+                ${COMMON_DEFINES} ${_flavor_define})
+            target_link_libraries(${_app}_arts_${sfx} PRIVATE
+                arts_static_${sfx} pthread ${APP_EXTRA_LINK_LIBS})
+            target_link_options(${_app}_arts_${sfx} PRIVATE -no-pie -fno-pie)
+            set_target_properties(${_app}_arts_${sfx} PROPERTIES
+                C_STANDARD 11 C_EXTENSIONS ON
+                RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+            target_compile_options(${_app}_arts_${sfx} PRIVATE ${BENCH_C_OPT} -w)
+            set_property(GLOBAL APPEND PROPERTY BENCHMARK_ARTS_TARGETS ${_app}_arts_${sfx})
+        endforeach()
+
+        # --- OCR-VX variant (only when ocr_vdm_mpi target exists, OCRVX_SKIP not set,
+        #     and all required helper libs have an _ocrvx variant compiled against
+        #     vdm.h headers) ---
+        if(TARGET ocr_vdm_mpi AND NOT APP_OCRVX_SKIP)
+            set(_ocrvx_ok TRUE)
+            foreach(lib ${APP_LIBS})
+                if(NOT TARGET ocr_lib_${lib}_ocrvx)
+                    set(_ocrvx_ok FALSE)
+                endif()
+            endforeach()
+            if(_ocrvx_ok)
+                set(LIB_OBJECTS_OCRVX "")
+                foreach(lib ${APP_LIBS})
+                    list(APPEND LIB_OBJECTS_OCRVX $<TARGET_OBJECTS:ocr_lib_${lib}_ocrvx>)
+                endforeach()
+
+                add_executable(${_app}_ocrvx ${ABS_SOURCES} ${LIB_OBJECTS_OCRVX})
+                target_include_directories(${_app}_ocrvx PRIVATE
+                    ${APP_DIR}
+                    ${SRC_DIR}
+                    ${OCR_LIBS_ROOT}/macros/macros
+                    ${APP_EXTRA_INCLUDES}
+                    ${LIB_INCLUDES}
+                    ${OCRVX_OCR_INC}
+                )
+                target_compile_definitions(${_app}_ocrvx PRIVATE
+                    ${OCR_EXT_DEFINES}
+                    "OCR_TYPE_H=vdm.h"
+                    OCR_ENABLE_EDT_NAMING
+                    ${APP_EXTRA_DEFINES}
+                    ${_flavor_define}
+                )
+                target_link_libraries(${_app}_ocrvx PRIVATE
+                    ocr_vdm_mpi ${APP_EXTRA_LINK_LIBS})
+                target_link_options(${_app}_ocrvx PRIVATE -no-pie -fno-pie)
+                set_target_properties(${_app}_ocrvx PROPERTIES
+                    C_STANDARD 11 C_EXTENSIONS ON
+                    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+                )
+                target_compile_options(${_app}_ocrvx PRIVATE ${BENCH_C_OPT} -w
+                    "-include" "${OCRVX_COMPAT_H}")
+            endif()
+        endif()
     endforeach()
 endfunction()
 
@@ -334,6 +362,7 @@ endfunction()
 add_benchmark_app(NAME fibonacci
     DIR fibonacci/ocr
     SOURCES fib.c
+    OPTIMIZED_PLACEMENT
 )
 
 add_benchmark_app(NAME printf
@@ -346,17 +375,16 @@ add_benchmark_app(NAME quicksort
     SOURCES quicksort.c
 )
 
-# quicksort_dist: disabled — quicksort_dist.c is not yet in the ocr-apps
-# submodule.
-# add_benchmark_app(NAME quicksort_dist
-#     DIR quicksort/ocr
-#     SOURCES quicksort_dist.c
-# )
+add_benchmark_app(NAME quicksort_dist
+    DIR quicksort/ocr
+    SOURCES quicksort_dist.c
+)
 
 add_benchmark_app(NAME nqueens
     DIR nqueens/refactored/ocr
     SOURCES nqueens.c
     LIBS timer
+    OPTIMIZED_PLACEMENT
 )
 
 add_benchmark_app(NAME smithwaterman
@@ -435,11 +463,13 @@ add_benchmark_app(NAME curvefit
 add_benchmark_app(NAME triangle
     DIR triangle/refactored/ocr/intel
     SOURCES triangle.c
+    OPTIMIZED_PLACEMENT
 )
 
 add_benchmark_app(NAME tempest
     DIR tempest/refactored/ocr/intel-bryan
     SOURCES tempestCommunication.c
+    OPTIMIZED_PLACEMENT
 )
 
 # ==========================================================================
@@ -450,6 +480,7 @@ add_benchmark_app(NAME cholesky
     DIR cholesky/ocr
     SOURCES cholesky.c
     EXTRA_LINK_LIBS m
+    OPTIMIZED_PLACEMENT
 )
 
 # Tiled Cholesky whose per-tile kernels are the standard CBLAS/LAPACKE calls
@@ -458,6 +489,7 @@ add_benchmark_app(NAME cholesky_blas
     DIR cholesky/ocr-mkl
     SOURCES ocr_mkl_cholesky.c
     EXTRA_LINK_LIBS arts::openblas m
+    OPTIMIZED_PLACEMENT
 )
 
 add_benchmark_app(NAME fft
@@ -466,12 +498,11 @@ add_benchmark_app(NAME fft
     EXTRA_LINK_LIBS m
 )
 
-# fft_dist: disabled — fft_dist.c is not yet in the ocr-apps submodule.
-# add_benchmark_app(NAME fft_dist
-#     DIR fft/ocr
-#     SOURCES fft_dist.c
-#     EXTRA_LINK_LIBS m
-# )
+add_benchmark_app(NAME fft_dist
+    DIR fft/ocr
+    SOURCES fft_dist.c
+    EXTRA_LINK_LIBS m
+)
 
 add_benchmark_app(NAME graph500
     DIR graph500
@@ -645,6 +676,7 @@ add_benchmark_app(NAME p2p
     DIR p2p/refactored/ocr/intel
     SOURCES p2p.c wtime.c
     LIBS reduction
+    OPTIMIZED_PLACEMENT
 )
 
 add_benchmark_app(NAME reduction_intel
@@ -670,6 +702,7 @@ add_benchmark_app(NAME hpgmg
     SOURCES hpgmg.c init.c utils.c mg.c mg_edt.c solve_edt.c test_edt.c
     residual_edt.c restrict_edt.c smooth_edt.c interpolate_edt.c
     EXTRA_LINK_LIBS m
+    OPTIMIZED_PLACEMENT
 )
 
 
@@ -689,6 +722,7 @@ add_benchmark_app(NAME miniAMR_intel
     SOURCES block.c chksum.c comm.c clone.c init.c move.c parent.c plot.c
     stencil.c refine.c root.c util.c wtime.c
     EXTRA_LINK_LIBS m
+    OPTIMIZED_PLACEMENT
 )
 
 add_benchmark_app(NAME miniAMR_intel_bryan
@@ -736,6 +770,13 @@ add_benchmark_app(NAME npb_cg
     EXTRA_LINK_LIBS m
 )
 
+add_benchmark_app(NAME npb_cg_dist
+    DIR npb-cg/sdsc-ocr
+    SOURCES cg_dist_edt.c makea_ocr.c util_ocr.c
+    LIBS reduction
+    EXTRA_LINK_LIBS m
+)
+
 # ==========================================================================
 # Tier 12: RSBench, XSBench
 # ==========================================================================
@@ -775,14 +816,13 @@ add_benchmark_app(NAME XSBench_intel_sharedDB
 # xsbench_dist: distributed sibling driver in the same source dir (the
 # quicksort_dist/fft_dist pattern) — true SPMD with one deterministic table
 # replica per rank; reuses the pristine physics/io sources unchanged.
-# Disabled — Main_dist.c is not yet in the ocr-apps submodule.
-# add_benchmark_app(NAME xsbench_dist
-#     DIR XSBench/refactored/ocr/intel-sharedDB
-#     SRC_SUBDIR src
-#     SOURCES Main_dist.c io.c GridInit.c CalculateXS.c XSutils.c Materials.c timers.c
-#     LIBS timer ocrAppUtils
-#     EXTRA_LINK_LIBS m
-# )
+add_benchmark_app(NAME xsbench_dist
+    DIR XSBench/refactored/ocr/intel-sharedDB
+    SRC_SUBDIR src
+    SOURCES Main_dist.c io.c GridInit.c CalculateXS.c XSutils.c Materials.c timers.c
+    LIBS timer ocrAppUtils
+    EXTRA_LINK_LIBS m
+)
 
 # ==========================================================================
 # Tier 13: LCS variants
@@ -796,7 +836,7 @@ add_benchmark_app(NAME LCS_distributed_ST
 )
 # LCS uses bare "inline" (C11 = no external def) → fails at -O0; force GNU89 semantics
 target_compile_options(LCS_distributed_ST_xsocr PRIVATE -fgnu89-inline)
-foreach(sfx ocr_val_wt ocr_val_wb ocr_excl_purge ocr_excl_retain wrf_val_wt ocr_inv_wt ocr_inv_wb)
+foreach(sfx ${ARTS_VARIANT_SUFFIXES})
     target_compile_options(LCS_distributed_ST_arts_${sfx} PRIVATE -fgnu89-inline)
 endforeach()
 if(TARGET LCS_distributed_ST_ocrvx)
@@ -810,7 +850,7 @@ add_benchmark_app(NAME LCS_shared
     EXTRA_LINK_LIBS m
 )
 target_compile_options(LCS_shared_xsocr PRIVATE -fgnu89-inline)
-foreach(sfx ocr_val_wt ocr_val_wb ocr_excl_purge ocr_excl_retain wrf_val_wt ocr_inv_wt ocr_inv_wb)
+foreach(sfx ${ARTS_VARIANT_SUFFIXES})
     target_compile_options(LCS_shared_arts_${sfx} PRIVATE -fgnu89-inline)
 endforeach()
 if(TARGET LCS_shared_ocrvx)
@@ -825,6 +865,7 @@ add_benchmark_app(NAME LCS_all_db_distributed
     DIR LCS/refactored/ocr/intel-jesmin-lcs_all_db_distributed
     SOURCES lcs_distributed.cpp
     EXTRA_LINK_LIBS m
+    OPTIMIZED_PLACEMENT
 )
 
 # ==========================================================================
@@ -1190,24 +1231,27 @@ if(HAS_CRLIBM)
             EXTRA_INCLUDES ${SAR_SRC_DIR} ${CRLIBM_DIR}
             EXTRA_DEFINES ${SAR_SIZE_DEFINES}
             EXTRA_LINK_LIBS m ocr_lib_crlibm
+            OPTIMIZED_PLACEMENT
         )
         # Link the per-size data objects (image_*, platform_*, pulse_*
         # symbols emitted from the sar_dataImage / .incbin pipeline) into
         # the executable.  Without this the link fails with "undefined
         # reference to image_0/platform_0/pulse_0/...". */
-        target_link_libraries(sar_${sar_size}_xsocr PRIVATE
-            ${SAR_DATA_${sar_size}_OBJECTS})
-        foreach(sfx ocr_val_wt ocr_val_wb ocr_excl_purge ocr_excl_retain wrf_val_wt ocr_inv_wt ocr_inv_wb)
-            target_link_libraries(sar_${sar_size}_arts_${sfx} PRIVATE
+        foreach(_sa sar_${sar_size} sar_${sar_size}_opt)
+            target_link_libraries(${_sa}_xsocr PRIVATE
                 ${SAR_DATA_${sar_size}_OBJECTS})
-            add_dependencies(sar_${sar_size}_arts_${sfx} sar_data_${sar_size}_objs)
+            add_dependencies(${_sa}_xsocr sar_data_${sar_size}_objs)
+            foreach(sfx ${ARTS_VARIANT_SUFFIXES})
+                target_link_libraries(${_sa}_arts_${sfx} PRIVATE
+                    ${SAR_DATA_${sar_size}_OBJECTS})
+                add_dependencies(${_sa}_arts_${sfx} sar_data_${sar_size}_objs)
+            endforeach()
+            if(TARGET ${_sa}_ocrvx)
+                target_link_libraries(${_sa}_ocrvx PRIVATE
+                    ${SAR_DATA_${sar_size}_OBJECTS})
+                add_dependencies(${_sa}_ocrvx sar_data_${sar_size}_objs)
+            endif()
         endforeach()
-        add_dependencies(sar_${sar_size}_xsocr sar_data_${sar_size}_objs)
-        if(TARGET sar_${sar_size}_ocrvx)
-            target_link_libraries(sar_${sar_size}_ocrvx PRIVATE
-                ${SAR_DATA_${sar_size}_OBJECTS})
-            add_dependencies(sar_${sar_size}_ocrvx sar_data_${sar_size}_objs)
-        endif()
     endforeach()
 
     # --- Runtime-input sizes (huge, problem_size_scaling) ---
@@ -1227,6 +1271,7 @@ if(HAS_CRLIBM)
                 EXTRA_INCLUDES ${SAR_SRC_DIR} ${CRLIBM_DIR}
                 EXTRA_DEFINES ${SAR_RT_DEFINES}
                 EXTRA_LINK_LIBS m ocr_lib_crlibm
+                OPTIMIZED_PLACEMENT
             )
         endif()
     endforeach()
@@ -1244,7 +1289,7 @@ add_benchmark_app(NAME stream
     EXTRA_LINK_LIBS pthread m
 )
 # stream.c has functions used before declaration (C11 error) — allow it
-foreach(sfx ocr_val_wt ocr_val_wb ocr_excl_purge ocr_excl_retain wrf_val_wt ocr_inv_wt ocr_inv_wb)
+foreach(sfx ${ARTS_VARIANT_SUFFIXES})
     target_compile_options(stream_arts_${sfx} PRIVATE -Wno-error=implicit-function-declaration)
 endforeach()
 # target_compile_options(stream_xsocr PRIVATE -Wno-error=implicit-function-declaration)
@@ -1258,7 +1303,7 @@ add_benchmark_app(NAME stream_dist
     EXTRA_DEFINES STREAM_ARRAY_SIZE=1000 NUM_THREADS=2 NTIMES=3
     EXTRA_LINK_LIBS pthread m
 )
-foreach(sfx ocr_val_wt ocr_val_wb ocr_excl_purge ocr_excl_retain wrf_val_wt ocr_inv_wt ocr_inv_wb)
+foreach(sfx ${ARTS_VARIANT_SUFFIXES})
     target_compile_options(stream_dist_arts_${sfx} PRIVATE -Wno-error=implicit-function-declaration)
 endforeach()
 # target_compile_options(stream_dist_xsocr PRIVATE -Wno-error=implicit-function-declaration)
@@ -1271,7 +1316,7 @@ add_benchmark_app(NAME stream_org
     SOURCES stream_org.c
     EXTRA_LINK_LIBS pthread m
 )
-foreach(sfx ocr_val_wt ocr_val_wb ocr_excl_purge ocr_excl_retain wrf_val_wt ocr_inv_wt ocr_inv_wb)
+foreach(sfx ${ARTS_VARIANT_SUFFIXES})
     target_compile_options(stream_org_arts_${sfx} PRIVATE -Wno-error=implicit-function-declaration)
 endforeach()
 if(TARGET stream_org_ocrvx)
@@ -1283,7 +1328,7 @@ add_benchmark_app(NAME stream_sa
     SOURCES stream_sa.c
     EXTRA_LINK_LIBS pthread m
 )
-foreach(sfx ocr_val_wt ocr_val_wb ocr_excl_purge ocr_excl_retain wrf_val_wt ocr_inv_wt ocr_inv_wb)
+foreach(sfx ${ARTS_VARIANT_SUFFIXES})
     target_compile_options(stream_sa_arts_${sfx} PRIVATE -Wno-error=implicit-function-declaration)
 endforeach()
 if(TARGET stream_sa_ocrvx)
@@ -1313,7 +1358,7 @@ set_target_properties(release_sync_stress_xsocr PROPERTIES C_STANDARD 11 C_EXTEN
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 target_compile_options(release_sync_stress_xsocr PRIVATE ${BENCH_C_OPT} -w)
 
-foreach(sfx ocr_val_wt ocr_val_wb ocr_excl_purge ocr_excl_retain wrf_val_wt ocr_inv_wt ocr_inv_wb)
+foreach(sfx ${ARTS_VARIANT_SUFFIXES})
     add_executable(release_sync_stress_arts_${sfx} ${RSS_SRC}
                    $<TARGET_OBJECTS:ocr_arts_objects>)
     target_include_directories(release_sync_stress_arts_${sfx} PRIVATE
@@ -1360,7 +1405,7 @@ set_target_properties(dbcreate_matrix_xsocr PROPERTIES C_STANDARD 11 C_EXTENSION
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 target_compile_options(dbcreate_matrix_xsocr PRIVATE ${BENCH_C_OPT} -w)
 
-foreach(sfx ocr_val_wt ocr_val_wb ocr_excl_purge ocr_excl_retain wrf_val_wt ocr_inv_wt ocr_inv_wb)
+foreach(sfx ${ARTS_VARIANT_SUFFIXES})
     add_executable(dbcreate_matrix_arts_${sfx} ${DBCM_SRC}
                    $<TARGET_OBJECTS:ocr_arts_objects>)
     target_include_directories(dbcreate_matrix_arts_${sfx} PRIVATE
@@ -1416,7 +1461,7 @@ set_target_properties(rwmix_xsocr PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 target_compile_options(rwmix_xsocr PRIVATE ${BENCH_C_OPT} -w)
 
-foreach(sfx ocr_val_wt ocr_val_wb ocr_excl_purge ocr_excl_retain wrf_val_wt ocr_inv_wt ocr_inv_wb)
+foreach(sfx ${ARTS_VARIANT_SUFFIXES})
     add_executable(rwmix_arts_${sfx} ${RWMIX_SRC}
                    $<TARGET_OBJECTS:ocr_arts_objects>)
     target_include_directories(rwmix_arts_${sfx} PRIVATE
@@ -1461,7 +1506,7 @@ set_target_properties(rwrounds_xsocr PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 target_compile_options(rwrounds_xsocr PRIVATE ${BENCH_C_OPT} -w)
 
-foreach(sfx ocr_val_wt ocr_val_wb ocr_excl_purge ocr_excl_retain wrf_val_wt ocr_inv_wt ocr_inv_wb)
+foreach(sfx ${ARTS_VARIANT_SUFFIXES})
     add_executable(rwrounds_arts_${sfx} ${RWROUNDS_SRC}
                    $<TARGET_OBJECTS:ocr_arts_objects>)
     target_include_directories(rwrounds_arts_${sfx} PRIVATE
