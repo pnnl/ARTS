@@ -1057,11 +1057,17 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     struct arts_msg_rdzv_push_cts_packet_s cts;
     arts_fill_packet_header(&cts.header, sizeof(cts), MSG_RDZV_PUSH_CTS);
     cts.push_cookie = pack->push_cookie;
-    if (!arts_net_rdzv_local(landing, pack->size, &cts.landing.addr,
-                             &cts.landing.key)) {
+    /* A packed wire struct puts its members at whatever offset the layout
+     * lands on, so their addresses cannot serve as aligned out-params; the
+     * advertisement is collected in naturally aligned locals and copied in. */
+    uint64_t adv_addr = 0;
+    uint64_t adv_key = 0;
+    if (!arts_net_rdzv_local(landing, pack->size, &adv_addr, &adv_key)) {
       ARTS_ERROR("push rendezvous: landing is not fabric-registered — "
                  "one-sided payloads require the registered pool");
     }
+    cts.landing.addr = adv_addr;
+    cts.landing.key = adv_key;
     cts.landing.txid = arts_net_rdzv_txid_next();
     cts.landing.cookie = (uint64_t)(uintptr_t)landing;
     arts_transport_send_async((int)packet->rank, (char *)&cts, sizeof(cts));
