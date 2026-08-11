@@ -20,6 +20,16 @@ class Status(StrEnum):
     SKIPPED = "skipped"
 
 
+def modern_key(key: str) -> str:
+    """A recorded cell key, under today's version names.
+
+    Track files carry the version by its name at the time of writing, and the
+    optimized version was once named "hinted"; a reader matching old records
+    against freshly expanded cells has to speak one language.
+    """
+    return key.replace(":hinted@", ":optimized@")
+
+
 @dataclass(frozen=True)
 class Cell:
     """One measured run: a configuration, an application version, a geometry."""

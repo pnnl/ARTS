@@ -257,6 +257,28 @@ def test_scaling_takes_the_best_wall_of_completed_cells_only(tmp_path):
     assert rows[0]["walls"] == {1: 8.0, 2: 5.0}  # repeats collapse to best
 
 
+def test_a_pre_rename_track_still_lands_on_its_cell(tmp_path):
+    # The optimized version was once named "hinted": its value in a saved
+    # manifest parses through the alias, and an old track key still lands on
+    # the freshly keyed cell instead of spawning a stub twin.
+    from artsrun.model.catalog import Version
+
+    cell = _cell("arts_val_wb")
+    cell = Cell(entry=cell.entry,
+                app=cell.app.model_copy(update={"version": Version.OPTIMIZED}),
+                nodes=1, repeat=1, binary=cell.binary, args=cell.args,
+                timeout_s=cell.timeout_s)
+    assert cell.key == "app:optimized@1n/arts_val_wb#1"
+    _write(tmp_path, [cell])
+    state = RunState(tmp_path)
+    _track(tmp_path, [{"t": 1.0, "event": "finished",
+                       "cell": "app:hinted@1n/arts_val_wb#1", "status": "ok",
+                       "rc": 0, "wall_s": 2.0, "note": "", "scalar": "1.0"}])
+    state.refresh()
+    assert len(state.order) == 1
+    assert state.views[cell.key].status is Status.OK
+
+
 # --- log tailing ----------------------------------------------------------
 
 

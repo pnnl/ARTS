@@ -30,7 +30,7 @@ from artsrun.render import write_configs, write_counter_config
 from artsrun.run.manifest import write_manifest
 from artsrun.run.plan import expand
 from artsrun.run.scheduler import Scheduler, WallCache
-from artsrun.run.types import CellResult, Skipped, Status
+from artsrun.run.types import CellResult, Skipped, Status, modern_key
 
 
 @dataclass
@@ -284,8 +284,9 @@ def recorded_results(run_dir: Path, cells: list) -> list[CellResult]:
             row = json.loads(line)
         except ValueError:
             continue
-        if row.get("event") == "finished" and row.get("cell") in by_key:
-            rows[row["cell"]] = row  # a later attempt supersedes an earlier one
+        key = modern_key(row.get("cell", ""))
+        if row.get("event") == "finished" and key in by_key:
+            rows[key] = row  # a later attempt supersedes an earlier one
     out = []
     for key, row in rows.items():
         cell = by_key[key]

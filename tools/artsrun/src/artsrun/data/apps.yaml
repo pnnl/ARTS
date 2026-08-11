@@ -13,7 +13,7 @@
 # layout decides most of it: apps/kernels/ and apps/examples/ are
 # microbenchmarks, apps/<name>/ is an application.
 #
-# Versions: every application has `asborn`.  `hinted` exists where the
+# Versions: every application has `asborn`.  `optimized` exists where the
 # source carries a placement hint layer (built as <binary>_opt), and
 # `restructured` where the task/data decomposition was redesigned and
 # registered as its own target — the answer to a scaling problem that
@@ -58,7 +58,7 @@ apps:
     expect_args: ['--ds', '50', '--ts', '10', '--fi', '{repo}/scratch/cholesky_input.mat']
     args: ['--ds', '5000', '--ts', '100', '--fi', '{repo}/scratch/cholesky_perf5k.mat']
     fixtures: ['{repo}/scratch/cholesky_perf5k.mat']
-    hinted: true
+    optimized: true
 
   cholesky_blas:
     binary: cholesky_blas
@@ -69,7 +69,7 @@ apps:
     tolerance: 1e-09
     args: ['--ds', '7500', '--ts', '100', '--fi', '{repo}/scratch/cholesky_perf7k5.mat']
     fixtures: ['{repo}/scratch/cholesky_perf7k5.mat']
-    hinted: true
+    optimized: true
 
   CoMD_intel_chandra:
     binary: CoMD_intel_chandra
@@ -182,7 +182,7 @@ apps:
     expect: '55'
     expect_args: ['10']
     args: ['33']
-    hinted: true
+    optimized: true
 
   globalsum_cgNoShim:
     binary: globalsum_cgNoShim
@@ -292,7 +292,7 @@ apps:
     expect: '2.97878e-06'
     expect_args: ['4', '1']
     args: ['5', '512']
-    hinted: true
+    optimized: true
 
   LCS_all_db_distributed:
     binary: LCS_all_db_distributed
@@ -304,7 +304,7 @@ apps:
     expect: '523'
     expect_args: ['1024', '512', '16']
     args: ['65536', '1024', '48']
-    hinted: true
+    optimized: true
 
   LCS_distributed_ST:
     binary: LCS_distributed_ST
@@ -347,7 +347,7 @@ apps:
     expect: '710400'
     expect_args: ['--nx', '4', '--ny', '4', '--nz', '4', '--num_tsteps', '2', '--num_objects', '1']
     args: ['--nx', '16', '--ny', '16', '--nz', '16', '--npx', '8', '--npy', '8', '--npz', '8', '--num_tsteps', '12', '--num_objects', '1']
-    hinted: true
+    optimized: true
 
   miniAMR_intel_bryan:
     binary: miniAMR_intel_bryan
@@ -439,7 +439,7 @@ apps:
     expect: '4'
     expect_args: ['6', '2']
     args: ['15', '8']
-    hinted: true
+    optimized: true
 
   p2p:
     binary: p2p
@@ -451,7 +451,7 @@ apps:
     expect: '228'
     expect_args: ['2', '10', '30', '5']
     args: ['128', '256', '100', '1400']
-    hinted: true
+    optimized: true
 
   printf:
     binary: printf
@@ -554,7 +554,7 @@ apps:
     scalar_kind: int
     args: ['{repo}/datasets/sar-huge/Data.bin', '{repo}/datasets/sar-huge/PlatformPosition.bin', '{repo}/datasets/sar-huge/PulseTransmissionTime.bin', '{repo}/scratch/sar_detects.txt', '{repo}/third_party/ocr-apps/apps/sar/ocr/problem_size_scaling/Parameter2.txt']
     fixtures: ['{repo}/datasets/sar-huge/Data.bin', '{repo}/datasets/sar-huge/PlatformPosition.bin', '{repo}/datasets/sar-huge/PulseTransmissionTime.bin']
-    hinted: true
+    optimized: true
 
   smithwaterman:
     binary: smithwaterman
@@ -730,7 +730,7 @@ apps:
     expect: '21'
     expect_args: []
     args: ['96']
-    hinted: true
+    optimized: true
     multinode_timeout: 40
 
   testlibs:
@@ -756,7 +756,7 @@ apps:
     expect: '1074'
     expect_args: ['5']
     args: []
-    hinted: true
+    optimized: true
 
   xeonNumaSize:
     binary: xeonNumaSize
@@ -806,7 +806,7 @@ apps:
     expect: '6523'
     expect_args: []
     args: []
-    hinted: true
+    optimized: true
     default_enabled: false
     timeout: 120
 
@@ -820,7 +820,7 @@ apps:
     expect: '1991'
     expect_args: []
     args: []
-    hinted: true
+    optimized: true
     default_enabled: false
 
   sar_small:
@@ -833,7 +833,7 @@ apps:
     expect: '458'
     expect_args: []
     args: []
-    hinted: true
+    optimized: true
     default_enabled: false
 
   sar_tiny:
@@ -846,7 +846,7 @@ apps:
     expect: '12'
     expect_args: []
     args: []
-    hinted: true
+    optimized: true
     default_enabled: false
 
   XSBench_intel_sharedDB:

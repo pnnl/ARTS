@@ -36,7 +36,7 @@ artsrun profile list | show X | validate | fields
 artsrun profile new junction2 --from junction   # copy, then $EDITOR
 artsrun profile set junction2 workers=31 slurm.budget=16
 artsrun benchset list | show X | new Y --from X | edit Y
-artsrun benchset set paper-main nqueens --args "12 4" --versions asborn,hinted
+artsrun benchset set paper-main nqueens --args "12 4" --versions asborn,optimized
 artsrun config render -p bentley -n 4    # inspect a rendered configuration
 artsrun run -p bentley -b paper-main --dry-run
 artsrun run -p junction -b paper-main --detach
@@ -134,10 +134,12 @@ end-of-run `results.csv` / `report.json` / `summary.txt`. The live view is a
 pure reader of the first four, which is why it can attach to any campaign
 from anywhere.
 
-Each application offers up to three versions: **as-born** (as
-published), **hinted** (its placement hint layer compiled in), and
-**restructured** (its decomposition redesigned as a separate target,
-for the cases hints could not fix).
+Each application offers up to three versions: **as-born** (as published,
+including whatever hints its authors already gave it), **optimized** (the
+same code structure with EDT/DB placement hints added or changed — as
+statically optimized as hints alone can make it), and **restructured**
+(the decomposition itself redesigned as a separate target, for the cases
+hints could not fix).
 
 A benchset carries only its deltas: anything it omits falls through to the
 catalog, so a campaign that changes one application's arguments is a two-line

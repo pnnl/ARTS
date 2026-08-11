@@ -411,7 +411,7 @@ class BenchsetPanel(VerticalScroll):
 
         with Horizontal(classes="bench-row head"):
             yield Label("", classes="bench-name")
-            for column in ("as-born", "hinted", "restructured"):
+            for column in ("as-born", "optimized", "restructured"):
                 yield Label(column, classes="bench-col-head")
             yield Label("arguments", classes="bench-args-head")
 
@@ -435,7 +435,7 @@ class BenchsetPanel(VerticalScroll):
             picked = self.benchset.versions_for(app) if enabled else []
             with Horizontal(classes="bench-row"):
                 yield Label(app.name, classes="bench-name")
-                for version in (Version.ASBORN, Version.HINTED, Version.RESTRUCTURED):
+                for version in (Version.ASBORN, Version.OPTIMIZED, Version.RESTRUCTURED):
                     if version not in app.own_versions:
                         yield Static("·", classes="bench-cell blank")
                     else:

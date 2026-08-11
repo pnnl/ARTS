@@ -54,9 +54,9 @@ def test_wrf_is_not_selectable():
 def test_binary_names_follow_the_build_convention():
     plane = load_plane()
     arts = plane.entry("arts_val_wb")
-    assert arts.binary("nqueens", hinted=False) == "nqueens_arts_ocr_val_wb"
-    assert arts.binary("nqueens", hinted=True) == "nqueens_opt_arts_ocr_val_wb"
-    assert plane.entry("xsocr").binary("nqueens", hinted=False) == "nqueens_xsocr"
+    assert arts.binary("nqueens", optimized=False) == "nqueens_arts_ocr_val_wb"
+    assert arts.binary("nqueens", optimized=True) == "nqueens_opt_arts_ocr_val_wb"
+    assert plane.entry("xsocr").binary("nqueens", optimized=False) == "nqueens_xsocr"
     assert plane.entry("ocrvx").kind is RuntimeKind.OCRVX
 
 
@@ -79,17 +79,31 @@ def test_a_restructured_version_resolves_to_the_rewrite_target():
     assert stem == catalog.apps[named.restructured_as].binary
 
 
-def test_hinted_version_resolves_to_the_opt_target():
+def test_optimized_version_resolves_to_the_opt_target():
     catalog = load_catalog()
-    _, stem = catalog.resolve("nqueens", Version.HINTED)
+    _, stem = catalog.resolve("nqueens", Version.OPTIMIZED)
     assert stem.endswith("_opt")
 
 
-def test_hinted_is_refused_where_the_source_has_no_hint_layer():
+def test_optimized_is_refused_where_the_source_has_no_hint_layer():
     catalog = load_catalog()
-    assert not catalog.apps["graph500"].hinted
+    assert not catalog.apps["graph500"].optimized
     with pytest.raises(KeyError):
-        catalog.resolve("graph500", Version.HINTED)
+        catalog.resolve("graph500", Version.OPTIMIZED)
+
+
+def test_the_old_hinted_name_still_parses_as_optimized():
+    # The version was recorded as "hinted" before the rename; selections and
+    # benchsets written under that name must replay unchanged.
+    assert Version("hinted") is Version.OPTIMIZED
+    selection = Selection.model_validate({
+        "profile": "p", "benchset": "b", "entries": ["arts_val_wb"],
+        "apps": {"nqueens": ["hinted"]}, "node_counts": [1],
+    })
+    assert selection.apps["nqueens"] == [Version.OPTIMIZED]
+    bench = Benchset.model_validate(
+        {"name": "b", "apps": {"nqueens": {"versions": ["hinted"]}}})
+    assert bench.apps["nqueens"].versions == [Version.OPTIMIZED]
 
 
 # --- profile --------------------------------------------------------------
@@ -166,10 +180,10 @@ def test_a_version_an_application_lacks_is_dropped_and_said_out_loud(capsys):
     # the campaign running as though it had measured it.
     catalog = load_catalog()
     bs = Benchset(name="o", apps={"graph500": BenchsetEntry(
-        versions=[Version.ASBORN, Version.HINTED])})
+        versions=[Version.ASBORN, Version.OPTIMIZED])})
     got = bs.resolve(catalog)
     assert [a.key for a in got] == ["graph500:asborn"]
-    assert "no hinted version" in capsys.readouterr().err
+    assert "no optimized version" in capsys.readouterr().err
 
 
 # --- selection ------------------------------------------------------------
@@ -187,7 +201,7 @@ def test_selection_rejects_a_node_count_outside_the_profile_sweep():
 def test_cell_count_is_the_product_of_the_three_surfaces():
     sel = Selection(
         profile="t", benchset="b", entries=["arts_val_wb", "xsocr"],
-        apps={"nqueens": [Version.ASBORN, Version.HINTED]},
+        apps={"nqueens": [Version.ASBORN, Version.OPTIMIZED]},
         node_counts=[1, 2], repeats=3,
     )
     assert sel.cell_count == 2 * 2 * 2 * 3

@@ -43,9 +43,29 @@ class Kind(StrEnum):
 
 
 class Version(StrEnum):
+    """One program's answers to the same problem, in increasing order of how
+    much of it was rewritten.
+
+    ASBORN is the application as published — including whatever hints its
+    authors already gave it, which is why "hinted" was the wrong name for the
+    next step.  OPTIMIZED changes no code structure: it only adds or changes
+    placement hints on EDTs and DBs, statically optimized as far as hints
+    alone can carry the program.  RESTRUCTURED redesigns the decomposition
+    itself, as a separate target shown in the row of the application it
+    re-implements.
+    """
+
     ASBORN = "asborn"
-    HINTED = "hinted"
+    OPTIMIZED = "optimized"
     RESTRUCTURED = "restructured"
+
+    @classmethod
+    def _missing_(cls, value):
+        # The optimized version was recorded as "hinted" before the rename;
+        # selections and benchsets written under that name still resolve.
+        if value == "hinted":
+            return cls.OPTIMIZED
+        return None
 
 
 class ScalarKind(StrEnum):
@@ -79,7 +99,7 @@ class AppEntry(BaseModel):
     args: list[str] = Field(default_factory=list)
     args_by_nodes: dict[int, list[str]] = Field(default_factory=dict)
 
-    hinted: bool = False
+    optimized: bool = False
     restructured_as: str | None = None
     restructured_from: str | None = None
 
@@ -115,8 +135,8 @@ class AppEntry(BaseModel):
         order of how much of it was rewritten.
         """
         v = [Version.ASBORN]
-        if self.hinted:
-            v.append(Version.HINTED)
+        if self.optimized:
+            v.append(Version.OPTIMIZED)
         if self.restructured_as:
             v.append(Version.RESTRUCTURED)
         return v
@@ -157,9 +177,10 @@ class Catalog(BaseModel):
                 raise KeyError(f"{name} has no restructured version")
             other = self.apps[app.restructured_as]
             return other, other.binary
-        if version is Version.HINTED:
-            if not app.hinted:
-                raise KeyError(f"{name} has no hint layer")
+        if version is Version.OPTIMIZED:
+            if not app.optimized:
+                raise KeyError(f"{name} has no optimized version: its source "
+                               "carries no hint layer")
             return app, f"{app.binary}_opt"
         return app, app.binary
 

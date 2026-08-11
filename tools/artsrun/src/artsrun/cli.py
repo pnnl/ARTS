@@ -52,7 +52,7 @@ def _split(value: str | None) -> list[str]:
 
 
 def _parse_apps(spec: str | None, catalog, benchset) -> dict[str, list[Version]]:
-    """`--apps quicksort,nqueens:hinted,fft:asborn+restructured` -> versions."""
+    """`--apps quicksort,nqueens:optimized,fft:asborn+restructured` -> versions."""
     if not spec:
         return {
             a.name: benchset.versions_for(a)
@@ -167,7 +167,7 @@ def show_apps(
     # The binary usually repeats the name; showing it only when it differs
     # keeps the version columns from being squeezed out of the table.
     table.add_column("binary", no_wrap=True)
-    for column in ("as-born", "hinted", "restructured"):
+    for column in ("as-born", "optimized", "restructured"):
         table.add_column(column, justify="center", no_wrap=True)
     table.add_column("args", max_width=36, overflow="ellipsis")
 
@@ -192,15 +192,16 @@ def show_apps(
                      else "[dim]micro[/dim]")
             table.add_row(
                 name, label, entry.cls.value, binary,
-                mark(Version.ASBORN), mark(Version.HINTED),
+                mark(Version.ASBORN), mark(Version.OPTIMIZED),
                 mark(Version.RESTRUCTURED),
                 " ".join(entry.args) or "[dim]none[/dim]",
             )
     console.print(table)
     console.print(
-        "[dim]as-born = the application as published · hinted = its placement "
-        "hint layer compiled in · restructured = its decomposition redesigned "
-        "as a separate target[/dim]"
+        "[dim]as-born = the application as published, its own hints included "
+        "· optimized = structure untouched, EDT/DB placement hints added or "
+        "changed as far as hints alone can carry it · restructured = its "
+        "decomposition redesigned as a separate target[/dim]"
     )
     console.print(
         "[dim]app = a benchmark with a provenance, what a result is claimed "
@@ -507,7 +508,7 @@ def _binary_of_cell(run_dir: Path, slug: str) -> Path | None:
         candidate = (
             build_dir.expanduser().resolve()
             / "benchmarks" / "apps"
-            / entry.binary(app_row.binary, hinted=False)
+            / entry.binary(app_row.binary, optimized=False)
         )
     except Exception:
         return None
@@ -840,7 +841,7 @@ def benchset_set(
     app_name: str = typer.Argument(..., metavar="APP"),
     args: str = typer.Option(None, "--args", help="override the calibration"),
     versions: str = typer.Option(None, "--versions",
-                                 help="asborn,hinted,restructured"),
+                                 help="asborn,optimized,restructured"),
     enabled: bool = typer.Option(None, "--enable/--disable"),
 ) -> None:
     """Change one application's entry in a benchmark set."""

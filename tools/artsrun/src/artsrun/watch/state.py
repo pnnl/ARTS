@@ -18,7 +18,7 @@ from pathlib import Path
 
 from artsrun.check import Group, Verdict, close, vote
 from artsrun.run.manifest import Manifest
-from artsrun.run.types import Cell, CellResult, Status
+from artsrun.run.types import Cell, CellResult, Status, modern_key
 
 _KEY = re.compile(r"^(?P<app>[^@]+)@(?P<nodes>\d+)n/(?P<entry>[^#]+)#(?P<rep>\d+)$")
 
@@ -198,7 +198,7 @@ class RunState:
         return events
 
     def _apply(self, row: dict) -> None:
-        key = row.get("cell", "")
+        key = modern_key(row.get("cell", ""))
         if not key:
             return
         view = self.views.get(key)

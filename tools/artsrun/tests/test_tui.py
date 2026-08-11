@@ -86,7 +86,7 @@ def test_a_version_the_application_lacks_is_absent_not_unchecked():
     async def check(app, pilot):
         bench = app.query_one("#bench", BenchsetPanel)
         idents = {t.ident for t in bench.toggles}
-        return ("graph500:hinted" in idents, "nqueens:hinted" in idents,
+        return ("graph500:optimized" in idents, "nqueens:optimized" in idents,
                 len(bench.query(".bench-cell.blank")))
 
     has_absent, has_present, blanks = drive(check)
