@@ -125,6 +125,17 @@ class Profile(BaseModel):
                 f"slurm.budget={self.slurm.budget} is below the widest node "
                 f"count ({self.max_nodes}); that cell could never be submitted"
             )
+        if self.provider == "verbs":
+            # The runtime requires RDM endpoints; the verbs core provider
+            # offers only connection-oriented MSG endpoints, so RDM exists
+            # solely as the layered stack — and fi_getinfo treats a lone core
+            # name as excluding utility layering, so bare "verbs" can never
+            # match.  The layered name is the unit, stated explicitly so its
+            # presence is a user decision rather than a silent rewrite.
+            raise ValueError(
+                "provider=verbs can never match: name the layered stack "
+                "explicitly — provider=verbs;ofi_rxm"
+            )
         if any(n < 1 for n in self.nodes):
             raise ValueError("node counts must be >= 1")
         return self

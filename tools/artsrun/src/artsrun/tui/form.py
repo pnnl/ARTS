@@ -41,9 +41,11 @@ PROFILE_FIELDS: list[FieldSpec] = [
               example="300"),
 
     FieldSpec("provider", "provider", "choice",
-              "data plane: tcp anywhere, verbs on InfiniBand. auto lets the "
-              "runtime pick, which prefers tcp",
-              choices=("auto", "tcp", "verbs"), none_choice="auto",
+              "data plane: tcp anywhere, verbs;ofi_rxm on InfiniBand (one "
+              "unit — the runtime needs RDM endpoints, which verbs offers "
+              "only through the rxm layer, so bare verbs never matches). "
+              "auto lets the runtime pick, which prefers tcp",
+              choices=("auto", "tcp", "verbs;ofi_rxm"), none_choice="auto",
               optional=True, section="transport"),
     FieldSpec("net_interface", "interface", "text",
               "IP providers only (tcp): binds the source address to this "
