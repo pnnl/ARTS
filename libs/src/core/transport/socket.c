@@ -209,9 +209,21 @@ bool arts_transport_set_ip(struct arts_config_s *config) {
 
   // SLURM: use SLURM_PROCID for rank (srun sets this per task)
   // IP matching fails when all nodes resolve to the same address (e.g., WSL2)
-  char *slurm_proc_id = getenv("SLURM_PROCID");
-  if (slurm_proc_id) {
-    arts_global_rank_id = (unsigned int)strtol(slurm_proc_id, NULL, 10);
+  char *task_rank = getenv("SLURM_PROCID");
+  if (task_rank) {
+    arts_global_rank_id = (unsigned int)strtol(task_rank, NULL, 10);
+    /* One rank per node is the launch contract: the routing table has one
+     * row per host and every rank binds the same listen-port set, so a
+     * launcher that starts more tasks than nodes hands the extras a rank
+     * with no table row — and any same-host pair a guaranteed port
+     * collision.  Fail with the contract spelled out instead of indexing
+     * the table out of bounds. */
+    if (arts_global_rank_id >= config->table_length) {
+      ARTS_ERROR("task rank %u exceeds the %u-node routing table — the "
+                 "launcher must start exactly one task per node "
+                 "(--ntasks-per-node=1)",
+                 arts_global_rank_id, config->table_length);
+    }
     config->my_rank = arts_global_rank_id;
     arts_global_rank_count = config->table_length;
     return true;
