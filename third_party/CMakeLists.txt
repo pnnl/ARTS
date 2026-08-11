@@ -504,7 +504,7 @@ if(ARTS_TRANSPORT_OFI)
         # Provider allowlist.  With a STATIC libfabric.a every enabled
         # provider's external libraries become link-time dependencies of every
         # consuming binary, so providers auto-enabled by configure probing the
-        # build host (cxi, xpmem, psm, ...) break the final link on any
+        # build host (cxi, psm, ...) break the final link on any
         # cluster that ships their headers.  --enable-only inverts the
         # default: nothing builds unless named here, which makes the build
         # deterministic on every host.  verbs exposes RDM endpoints only as
@@ -512,6 +512,12 @@ if(ARTS_TRANSPORT_OFI)
         # InfiniBand host silently downgrades to tcp.
         --enable-only --enable-tcp --enable-rxm
         --enable-verbs=${RDMA_CORE_INSTALL_DIR}
+        # --enable-only governs providers (FI_PROVIDER_SETUP entries) only.
+        # xpmem and io_uring are standalone feature toggles whose default-on
+        # host probes append to the global LIBS, so each must be pinned off
+        # explicitly or a host that ships their headers changes the
+        # artifact's link requirements.
+        --disable-xpmem --without-uring
         CC=${CMAKE_C_COMPILER}
     BUILD_COMMAND make -j${CMAKE_BUILD_PARALLEL_LEVEL}
     INSTALL_COMMAND make install
