@@ -411,8 +411,10 @@ static unsigned int arts_counters_at_level(unsigned int level) {
  * because the run still reports success. */
 static FILE *arts_open_counter_file(const char *output_folder,
                                     const char *filename) {
-  struct stat st = {0};
-  if (stat(output_folder, &st) == -1 && mkdir(output_folder, 0755) == -1) {
+  /* Ranks dumping into one shared folder all attempt the mkdir; EEXIST is
+   * another creator's success, and probing with stat first would open a
+   * window in which the loser mistakes that success for a failure. */
+  if (mkdir(output_folder, 0755) == -1 && errno != EEXIST) {
     ARTS_WARN("counters: cannot create %s: %s — no counters written",
               output_folder, strerror(errno));
     return NULL;

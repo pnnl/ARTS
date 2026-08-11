@@ -427,9 +427,10 @@ void arts_object_write_node(const char *output_folder, unsigned int node_id,
 
   /* Only the final path component is created; a folder whose parents are
    * absent is diagnosed rather than swallowed, since the alternative is a run
-   * that measured nothing and still reported success. */
-  struct stat st = {0};
-  if (stat(output_folder, &st) == -1 && mkdir(output_folder, 0755) == -1) {
+   * that measured nothing and still reported success.  Ranks sharing the
+   * folder all attempt the mkdir — EEXIST is another creator's success, not
+   * a failure. */
+  if (mkdir(output_folder, 0755) == -1 && errno != EEXIST) {
     ARTS_WARN("counters: cannot create %s: %s — no per-object tables written",
               output_folder, strerror(errno));
     return;
