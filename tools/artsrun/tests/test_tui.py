@@ -213,6 +213,25 @@ def test_a_split_cell_fits_both_of_its_toggles():
         assert need <= avail, f"{labels} needs {need} columns, cell has {avail}"
 
 
+def test_every_save_button_survives_its_own_dropdown_refresh():
+    # Saving refreshes the dropdown with set_options(), which clears the
+    # Select to its blank sentinel before the saver restores the value; that
+    # transient Changed is processed after the restore, so the handler must
+    # judge the event's value, not the widget's current state.
+    async def check(app, pilot):
+        alive = []
+        for tab, button in (("4", "#counter-save"), ("2", "#profile-save"),
+                            ("3", "#bench-save")):
+            await pilot.press(tab)
+            await pilot.pause()
+            await pilot.click(button)
+            await pilot.pause()
+            alive.append(app.is_running)
+        return alive
+
+    assert drive(check) == [True, True, True]
+
+
 def test_a_fresh_checkout_opens_on_unsaved_defaults(tmp_path, monkeypatch):
     # No profiles, no benchsets, no counter sets — the screens open anyway:
     # an unsaved single-node local profile, the catalog's own roster, no

@@ -188,7 +188,15 @@ class ArtsRunApp(App):
     # built, so both handlers ignore a change to what is already loaded.
     @on(Select.Changed, "#profile-select")
     def _profile_changed(self, event: Select.Changed) -> None:
-        if event.value and str(event.value) != self.profile.name:
+        # set_options() clears a Select to its blank sentinel before the
+        # saver restores the value, and that transient Changed is processed
+        # AFTER the restore — so neither the widget's current state nor the
+        # sentinel's truthiness (it is a truthy object) can stand guard.
+        # Every value these dropdowns hold is a string; the sentinel is not.
+        # Same guard on every dropdown below.
+        if not isinstance(event.value, str):
+            return
+        if str(event.value) != self.profile.name:
             self.query_one("#profile", ProfilePanel).reload(str(event.value))
             self.profile = self.query_one("#profile", ProfilePanel).profile
             self._refresh_size()
@@ -207,7 +215,8 @@ class ArtsRunApp(App):
 
     @on(Select.Changed, "#resume-select")
     def _resume_picked(self, event: Select.Changed) -> None:
-        self.query_one("#resume-button", Button).disabled = not event.value
+        self.query_one("#resume-button", Button).disabled = \
+            not isinstance(event.value, str)
 
     @on(Button.Pressed, "#resume-button")
     def _resume_pressed(self) -> None:
@@ -236,13 +245,17 @@ class ArtsRunApp(App):
     # -- benchset editing --------------------------------------------------
     @on(Select.Changed, "#bench-select")
     def _benchset_changed(self, event: Select.Changed) -> None:
-        if event.value and str(event.value) != self.benchset.name:
+        if not isinstance(event.value, str):
+            return
+        if str(event.value) != self.benchset.name:
             self._reload_benchset(str(event.value))
 
     # -- counter set editing -----------------------------------------------
     @on(Select.Changed, "#counter-select")
     def _counterset_changed(self, event: Select.Changed) -> None:
-        if event.value and str(event.value) != self.counterset.name:
+        if not isinstance(event.value, str):
+            return
+        if str(event.value) != self.counterset.name:
             self._reload_counterset(str(event.value))
 
     @on(Button.Pressed, "#counter-save")
