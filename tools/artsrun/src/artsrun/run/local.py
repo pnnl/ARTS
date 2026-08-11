@@ -48,6 +48,9 @@ class LocalBackend:
         self.log_dir = log_dir
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.capacity = 1
+        # submit() blocks for the whole run, so a start can only be announced
+        # from inside it; whoever drives the backend hangs a callback here.
+        self.notify = lambda kind, result: None
         # The cell in progress, so a stop from another thread can end it.
         # submit() blocks for the whole run, so there is nowhere else to reach
         # the process from.
@@ -73,6 +76,10 @@ class LocalBackend:
                 stderr=subprocess.STDOUT,
             )
             self._current = proc
+            self.notify("started", CellResult(
+                cell=cell, status=Status.RUNNING, log_path=log_path,
+                extra={"pid": str(proc.pid)},
+            ))
             try:
                 proc.wait()
             finally:

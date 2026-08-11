@@ -103,6 +103,10 @@ class Scheduler:
         self.done: list[CellResult] = []
         self.on_event = on_event or (lambda kind, result: None)
         self.poll_interval_s = poll_interval_s
+        # A synchronous backend is mid-submit when a cell starts, so the only
+        # road its start announcement has runs through the backend itself.
+        if hasattr(backend, "notify"):
+            backend.notify = self.on_event
 
     @property
     def used(self) -> int:
@@ -155,11 +159,15 @@ class Scheduler:
     def _reap(self) -> bool:
         finished = False
         for result in list(self.in_flight):
+            was = result.status
             updated = self.backend.poll(result)
             if updated.ran or updated.status is Status.SKIPPED:
                 self.in_flight.remove(result)
                 self._finish(updated)
                 finished = True
+            elif (updated.status is Status.RUNNING
+                  and was is not Status.RUNNING):
+                self.on_event("running", updated)
         return finished
 
     @property

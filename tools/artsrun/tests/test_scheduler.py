@@ -114,20 +114,94 @@ def test_a_slurm_job_asks_for_the_width_it_will_use(tmp_path):
     # The job owns the node outright; --cpus-per-task only keeps a cgroup task
     # plugin from narrowing the step to one core, so it follows workers+progress.
     from artsrun.model.profile import Profile
-    from artsrun.run.slurm import SlurmBackend
+    from artsrun.run.slurm import job_script, sbatch_argv
 
     profile = Profile.model_validate({
         "name": "t", "launcher": "slurm", "nodes": [1, 2],
         "workers": 63, "progress": 1, "ports": [25000],
         "slurm": {"budget": 2},
     })
-    backend = SlurmBackend(profile, tmp_path)
     cell = _cell(2)
-    # Build the argv the way submit() does, without submitting.
     assert profile.threads_per_node == 64
-    script = backend._script(cell)
+    argv = sbatch_argv(cell, profile, tmp_path / "cell.log")
+    assert "--cpus-per-task=64" in argv
+    script = job_script(cell, profile)
     assert "--ntasks-per-node=1" in script
     assert f"-N {cell.nodes}" in script
+
+
+def test_a_synchronous_backend_announces_a_start_through_notify(tmp_path):
+    # submit() blocks for the whole cell, so the only road a start
+    # announcement has runs through the backend; the scheduler hangs its own
+    # event callback there.
+    events = []
+
+    class Blocking(FakeBackend):
+        notify = staticmethod(lambda kind, result: None)
+
+        def submit(self, cell):
+            self.notify("started", CellResult(cell=cell, status=Status.RUNNING))
+            return CellResult(cell=cell, status=Status.OK, wall_s=0.01)
+
+    backend = Blocking(capacity=1)
+    sched = Scheduler(backend, [_cell(1)], _cache(tmp_path),
+                      on_event=lambda kind, r: events.append(kind),
+                      poll_interval_s=0)
+    sched.run()
+    assert events == ["started", "finished"]
+
+
+def test_a_queued_job_reports_the_moment_it_starts_running(tmp_path):
+    # An asynchronous backend answers polls; the submitted->running edge is
+    # the scheduler's to notice, and it must be reported once, not per poll.
+    events = []
+
+    class Queued(FakeBackend):
+        def __init__(self):
+            super().__init__(capacity=1)
+            self.polls = 0
+
+        def poll(self, result):
+            self.polls += 1
+            result.status = (Status.SUBMITTED if self.polls == 1 else
+                             Status.RUNNING if self.polls <= 3 else Status.OK)
+            result.wall_s = 0.01
+            return result
+
+    sched = Scheduler(Queued(), [_cell(1)], _cache(tmp_path),
+                      on_event=lambda kind, r: events.append(kind),
+                      poll_interval_s=0)
+    sched.run()
+    assert events == ["submitted", "running", "finished"]
+
+
+def test_local_submit_announces_pid_and_logs_the_command(tmp_path):
+    import shutil
+
+    from artsrun.model.profile import Profile
+    from artsrun.run.local import LocalBackend
+
+    profile = Profile.model_validate({
+        "name": "t", "launcher": "local", "nodes": [1],
+        "workers": 1, "progress": 0,
+    })
+    binary = tmp_path / "echo_copy"
+    shutil.copy("/bin/echo", binary)
+    binary.chmod(0o755)
+    cell = Cell(
+        entry=_cell(1).entry, app=_cell(1).app, nodes=1, repeat=1,
+        binary=binary, args=["hello"], timeout_s=5,
+    )
+    backend = LocalBackend(profile, tmp_path / "cells")
+    events = []
+    backend.notify = lambda kind, result: events.append((kind, result))
+    result = backend.submit(cell)
+    assert result.status is Status.OK
+    assert [kind for kind, _ in events] == ["started"]
+    assert events[0][1].extra.get("pid", "").isdigit()
+    log = (tmp_path / "cells" / cell.log_name).read_text()
+    assert log.startswith("$ ")
+    assert "hello" in log
 
 
 def test_a_stop_is_noticed_between_cells_not_after_the_last_one():

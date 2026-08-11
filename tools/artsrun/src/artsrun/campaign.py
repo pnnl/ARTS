@@ -27,6 +27,7 @@ from artsrun.model.profile import Launcher, Profile
 from artsrun.model.selection import Selection
 from artsrun.paths import default_build_dir, logs_root, wall_cache_path
 from artsrun.render import write_configs, write_counter_config
+from artsrun.run.manifest import write_manifest
 from artsrun.run.plan import expand
 from artsrun.run.scheduler import Scheduler, WallCache
 from artsrun.run.types import CellResult, Skipped, Status
@@ -91,10 +92,12 @@ class Campaign:
     # -- phases ------------------------------------------------------------
     def build_plan(self, *, on_line=None) -> BuildPlan:
         check_build_dir(self.build_dir)
+        self.counters_cfg = None
         if self.counterset and self.counterset.enabled:
             # Written next to the run so the file the build was configured
             # against is the one the results can be read back through.
             wanted = write_counter_config(self.counterset, self.run_dir / "cfg")
+            self.counters_cfg = wanted
             differing = counter_mismatch(self.build_dir, self.counterset)
             if differing:
                 configure_counters(self.build_dir, wanted, on_line=on_line)
@@ -151,7 +154,9 @@ class Campaign:
 
     # -- execution ---------------------------------------------------------
     def run(self, *, on_line=None, resume: bool = False,
-            retry_failed: bool = True) -> dict:
+            retry_failed: bool = True, announce_cells: bool = True) -> dict:
+        """`announce_cells` is for line-mode consumers: a caller showing the
+        live table already says everything a per-cell line would."""
         self.run_dir.mkdir(parents=True, exist_ok=True)
         say = on_line or (lambda _msg: None)
 
@@ -164,6 +169,12 @@ class Campaign:
         build(plan, on_line=lambda line: say(line))
 
         cells, skipped = self.cells()
+        # Written before anything runs, and over the whole campaign even on a
+        # continuation: the manifest describes what was asked, and what a
+        # watcher shows as pending is exactly what has no track event yet.
+        write_manifest(self.run_dir, cells, skipped, self.profile,
+                       self.build_dir,
+                       counters_cfg=getattr(self, "counters_cfg", None))
         # A continuation keeps what the interrupted run measured and runs the
         # rest into the same directory, so one report describes both halves.
         carried: list[CellResult] = []
@@ -185,7 +196,13 @@ class Campaign:
         track = (self.run_dir / "track.jsonl").open("a", encoding="utf-8")
 
         def on_event(kind: str, result: CellResult) -> None:
-            track.write(json.dumps({
+            if kind == "finished":
+                # Judged now rather than at the end, so the status the track
+                # records is the final one: a run that exited cleanly but
+                # never printed its completion marker is already a failure
+                # here, and the scalar rides along for anyone voting live.
+                check.apply_to(result)
+            row = {
                 "t": time.time(),
                 "event": kind,
                 "cell": result.cell.key,
@@ -193,9 +210,14 @@ class Campaign:
                 "rc": result.rc,
                 "wall_s": round(result.wall_s, 3),
                 "note": result.note,
-            }) + "\n")
+            }
+            if result.scalar is not None:
+                row["scalar"] = result.scalar
+            if result.extra:
+                row["extra"] = dict(result.extra)
+            track.write(json.dumps(row) + "\n")
             track.flush()
-            if kind == "finished":
+            if kind == "finished" and announce_cells:
                 say(f"[{result.status.value}] {result.cell.key} "
                     f"({result.wall_s:.1f}s)")
 
@@ -219,7 +241,9 @@ class Campaign:
                 f"{scheduler.unreached} never started")
 
         results = carried + results
-        for r in results:
+        # Fresh results were judged as they finished; a carried one is rebuilt
+        # from an earlier track, whose status may predate finish-time judging.
+        for r in carried:
             check.apply_to(r)
         groups = check.vote([r for r in results if r.status is not Status.SKIPPED])
 

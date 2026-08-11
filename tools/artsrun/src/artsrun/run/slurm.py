@@ -37,6 +37,49 @@ class SlurmError(RuntimeError):
     pass
 
 
+def job_script(cell: Cell, profile: Profile) -> str:
+    """The batch script one cell runs as, byte for byte."""
+    argv = build_command(cell, profile)
+    env = build_env(cell, profile)
+    exports = "\n".join(f"export {k}={v}" for k, v in sorted(env.items()))
+    return (
+        "#!/bin/bash\n"
+        f"cd {scratch_dir()}\n"
+        f"{exports}\n"
+        # srun carries the step onto the job's own nodes; the timeout is
+        # kept inside the job as well so a wedged run dies on its own
+        # budget instead of the queue's.
+        f"exec timeout -k 1 {cell.timeout_s} srun "
+        f"--ntasks-per-node=1 -N {cell.nodes} {render(argv)}\n"
+    )
+
+
+def sbatch_argv(cell: Cell, profile: Profile, log_path: Path) -> list[str]:
+    """The submission command one cell goes out under."""
+    settings = profile.slurm
+    cmd = [
+        "sbatch",
+        "--parsable",
+        "--exclusive",
+        f"--nodes={cell.nodes}",
+        "--ntasks-per-node=1",
+        f"--job-name=arts-{cell.app.name}-{cell.entry.key}-{cell.nodes}n",
+        f"--output={log_path}",
+        f"--time={max(2, (cell.timeout_s + 59) // 60 + 2)}",
+    ]
+    # The job already owns the node; this only keeps the step's affinity
+    # from being narrowed to a single core where a cgroup task plugin
+    # would otherwise do that, so it follows the run's own width.
+    cmd.append(f"--cpus-per-task={profile.threads_per_node}")
+    if settings.partition:
+        cmd.append(f"--partition={settings.partition}")
+    if settings.account:
+        cmd.append(f"--account={settings.account}")
+    if settings.qos:
+        cmd.append(f"--qos={settings.qos}")
+    return cmd + list(settings.extra_sbatch)
+
+
 class SlurmBackend:
     def __init__(self, profile: Profile, log_dir: Path):
         if profile.slurm is None:
@@ -53,47 +96,12 @@ class SlurmBackend:
         return cell.nodes
 
     # -- submission --------------------------------------------------------
-    def _script(self, cell: Cell) -> str:
-        argv = build_command(cell, self.profile)
-        env = build_env(cell, self.profile)
-        exports = "\n".join(f"export {k}={v}" for k, v in sorted(env.items()))
-        return (
-            "#!/bin/bash\n"
-            f"cd {scratch_dir()}\n"
-            f"{exports}\n"
-            # srun carries the step onto the job's own nodes; the timeout is
-            # kept inside the job as well so a wedged run dies on its own
-            # budget instead of the queue's.
-            f"exec timeout -k 1 {cell.timeout_s} srun "
-            f"--ntasks-per-node=1 -N {cell.nodes} {render(argv)}\n"
-        )
-
     def submit(self, cell: Cell) -> CellResult:
         log_path = self.log_dir / cell.log_name
-        cmd = [
-            "sbatch",
-            "--parsable",
-            "--exclusive",
-            f"--nodes={cell.nodes}",
-            "--ntasks-per-node=1",
-            f"--job-name=arts-{cell.app.name}-{cell.entry.key}-{cell.nodes}n",
-            f"--output={log_path}",
-            f"--time={max(2, (cell.timeout_s + 59) // 60 + 2)}",
-        ]
-        # The job already owns the node; this only keeps the step's affinity
-        # from being narrowed to a single core where a cgroup task plugin
-        # would otherwise do that, so it follows the run's own width.
-        cmd.append(f"--cpus-per-task={self.profile.threads_per_node}")
-        if self.settings.partition:
-            cmd.append(f"--partition={self.settings.partition}")
-        if self.settings.account:
-            cmd.append(f"--account={self.settings.account}")
-        if self.settings.qos:
-            cmd.append(f"--qos={self.settings.qos}")
-        cmd += self.settings.extra_sbatch
-
         proc = subprocess.run(
-            cmd, input=self._script(cell), capture_output=True, text=True, check=False
+            sbatch_argv(cell, self.profile, log_path),
+            input=job_script(cell, self.profile),
+            capture_output=True, text=True, check=False,
         )
         if proc.returncode != 0:
             return CellResult(

@@ -77,7 +77,7 @@ def _as_number(value: str, kind: ScalarKind) -> float | None:
         return None
 
 
-def _close(a: str, b: str, kind: ScalarKind, tol: float) -> bool:
+def close(a: str, b: str, kind: ScalarKind, tol: float) -> bool:
     x, y = _as_number(a, kind), _as_number(b, kind)
     if x is None or y is None:
         return a == b
@@ -120,7 +120,7 @@ def vote(results: list[CellResult]) -> list[Group]:
         clusters: list[list[CellResult]] = []
         for r in voters:
             for cluster in clusters:
-                if _close(cluster[0].scalar, r.scalar, app.scalar_kind, app.tolerance):
+                if close(cluster[0].scalar, r.scalar, app.scalar_kind, app.tolerance):
                     cluster.append(r)
                     break
             else:
@@ -148,7 +148,7 @@ def vote(results: list[CellResult]) -> list[Group]:
         args = group.results[0].cell.args
         pinned = bool(app.expect) and list(app.expect_args) == list(args)
         if pinned and group.consensus is not None:
-            if not _close(app.expect, group.consensus, app.scalar_kind, app.tolerance):
+            if not close(app.expect, group.consensus, app.scalar_kind, app.tolerance):
                 for key, verdict in group.verdicts.items():
                     if verdict is Verdict.OK:
                         group.verdicts[key] = Verdict.EXPECT_FAIL
