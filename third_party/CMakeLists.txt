@@ -524,6 +524,13 @@ if(ARTS_TRANSPORT_OFI)
   # consumers configure cleanly on a fresh build tree.
   file(MAKE_DIRECTORY ${OFI_PREFIX}/include)
 
+  # libatomic enters through the already-resolved link item instead of the
+  # bare name libfabric's pkgconfig records: a host whose libatomic ships only
+  # as the runtime SONAME offers the linker no `-latomic` to resolve, and an
+  # unresolvable name breaks every consumer that inherits this interface.
+  set(OFI_LINK_INTERFACE rt ${ARTS_ATOMIC_LINK} pthread ${CMAKE_DL_LIBS}
+      ${RDMA_VERBS_LINK_SET} ${HWLOC_LIB_A})
+
   add_library(arts::libfabric STATIC IMPORTED GLOBAL)
   set_target_properties(arts::libfabric PROPERTIES
     IMPORTED_LOCATION ${OFI_PREFIX}/lib/libfabric.a
@@ -537,7 +544,7 @@ if(ARTS_TRANSPORT_OFI)
     # provider-init objects (fi_getinfo & friends) fails with "undefined
     # reference to dlclose / shm_open".  The verbs provider's userspace stack
     # and (when its probe engaged) hwloc are back-resolved the same way.
-    INTERFACE_LINK_LIBRARIES "rt;atomic;pthread;${CMAKE_DL_LIBS};${RDMA_VERBS_LINK_SET};${HWLOC_LIB_A}")
+    INTERFACE_LINK_LIBRARIES "${OFI_LINK_INTERFACE}")
   add_dependencies(arts::libfabric libfabric_ep)
 endif()
 

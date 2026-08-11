@@ -105,8 +105,25 @@ if(NOT ATOMIC_LIBRARY)
             "Path to libatomic" FORCE)
     endif()
 endif()
+# ARTS_ATOMIC_LINK is the single link item every consumer must use: the
+# resolved path when there is one, the bare `-latomic` name when only the
+# toolchain's own library directory (which find_library() does not search)
+# carries libatomic, and empty when the platform needs no libatomic at all.
+# A name the linker cannot resolve fails every link that inherits it, so the
+# bare name is never emitted without probing that the linker accepts it.
 if(ATOMIC_LIBRARY)
-    set(CMAKE_REQUIRED_LIBRARIES "${ATOMIC_LIBRARY}" ${CMAKE_REQUIRED_LIBRARIES})
+    set(ARTS_ATOMIC_LINK "${ATOMIC_LIBRARY}")
+else()
+    include(CheckLinkerFlag)
+    check_linker_flag(C "-latomic" ARTS_HAVE_LATOMIC_FLAG)
+    if(ARTS_HAVE_LATOMIC_FLAG)
+        set(ARTS_ATOMIC_LINK "atomic")
+    else()
+        set(ARTS_ATOMIC_LINK "")
+    endif()
+endif()
+if(ARTS_ATOMIC_LINK)
+    set(CMAKE_REQUIRED_LIBRARIES "${ARTS_ATOMIC_LINK}" ${CMAKE_REQUIRED_LIBRARIES})
 endif()
 check_c_source_compiles("
   #include <stdint.h>
@@ -131,8 +148,8 @@ endif()
 add_compile_definitions(ARTS_HAVE_DWCAS)
 # Make libatomic available to all targets that may emit 16-byte atomic
 # libcalls (lockfree_pool.h users).
-if(ATOMIC_LIBRARY)
-    link_libraries(${ATOMIC_LIBRARY})
+if(ARTS_ATOMIC_LINK)
+    link_libraries(${ARTS_ATOMIC_LINK})
 endif()
 
 # Set global properties for all targets
