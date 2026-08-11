@@ -213,6 +213,50 @@ def test_a_split_cell_fits_both_of_its_toggles():
         assert need <= avail, f"{labels} needs {need} columns, cell has {avail}"
 
 
+def test_with_no_profiles_the_screens_open_on_an_unsaved_local_one(
+    tmp_path, monkeypatch,
+):
+    # A fresh checkout has no profiles; the screens open anyway, and Save on
+    # the Profile tab writes the machine's first one.
+    from artsrun import store
+
+    monkeypatch.setattr("artsrun.store.profiles_dir",
+                        lambda: tmp_path / "profiles")
+
+    async def main():
+        app = ArtsRunApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            panel = app.query_one("#profile", ProfilePanel)
+            before = store.list_profiles()
+            saved = panel.save(as_new=False)
+            return (app.profile.name, app.profile.nodes, before,
+                    saved is not None, store.list_profiles())
+
+    name, nodes, before, saved, after = asyncio.run(main())
+    assert name == "local"
+    assert nodes == [1]
+    assert before == []
+    assert saved
+    assert after == ["local"]
+
+
+def test_a_machine_with_no_profiles_can_bootstrap_one():
+    # `profile new` without --from is the one path that starts from nothing —
+    # a fresh checkout has no profile to copy, so the blank starting point
+    # must satisfy everything a Profile requires.
+    from artsrun.model.profile import Launcher, Profile
+    from artsrun.tui import form
+
+    profile = Profile.model_validate(
+        form.values_to_profile_data("fresh", form.blank_values())
+    )
+    assert profile.launcher is Launcher.LOCAL
+    assert profile.nodes == [1]
+    assert profile.port_count == 1
+    assert profile.ports == []  # local claims its own block
+
+
 # --- profile editing ------------------------------------------------------
 def _profiles_dir(tmp):
     import os

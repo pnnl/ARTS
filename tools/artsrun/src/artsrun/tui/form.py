@@ -224,10 +224,17 @@ def values_to_profile_data(name: str, values: dict[str, Any]) -> dict:
 
 
 def blank_values() -> dict[str, Any]:
-    """A new profile's starting point: a single-node local run."""
+    """A new profile's starting point: a single-node local run.
+
+    Everything a Profile requires is present, because this is the one path
+    that starts from nothing — a machine with no profiles yet has no
+    ``--from`` to copy.
+    """
     return {
         "launcher": "local",
+        "nodes": [1],
         "workers": "4", "progress": "1",
+        "port_count": "1",
         "repeats": "1", "cell_timeout_s": "300",
         "provider": "", "net_interface": "", "route_table_size": "16",
         "regpool_slab_mb": "", "ports": "", "hosts": "",

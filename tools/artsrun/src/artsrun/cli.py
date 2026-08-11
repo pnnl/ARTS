@@ -597,7 +597,10 @@ def attribute_cmd(
 def profile_list() -> None:
     names = store.list_profiles()
     if not names:
-        console.print(f"[dim]no profiles in {store.profiles_dir()}[/dim]")
+        console.print(
+            f"[dim]no profiles in {store.profiles_dir()} — create one with: "
+            "artsrun profile new <name>[/dim]"
+        )
         return
     for name in names:
         try:

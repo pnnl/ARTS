@@ -51,11 +51,19 @@ class ArtsRunApp(App):
         self.plane = load_plane()
         self.catalog = load_catalog()
         profiles = store.list_profiles()
-        if not profiles:
-            raise SystemExit(
-                f"no profiles in {store.profiles_dir()}; write one first"
+        if profiles:
+            self.profile = store.load_profile(profile or profiles[0])
+        else:
+            # A fresh checkout has no profiles — they are one machine's own
+            # untracked settings.  The screens open anyway, on an unsaved
+            # single-node local profile; Save on the Profile tab writes it.
+            from artsrun.model.profile import Profile
+            from artsrun.tui import form
+
+            self.profile = Profile.model_validate(
+                form.values_to_profile_data(profile or "local",
+                                            form.blank_values())
             )
-        self.profile = store.load_profile(profile or profiles[0])
         benchsets = store.list_benchsets()
         self.benchset = (
             store.load_benchset(benchset or benchsets[0])
@@ -372,6 +380,11 @@ class ArtsRunApp(App):
         selection = self.build_selection(announce=True)
         if selection is None:
             return
+        if self.profile.name not in store.list_profiles():
+            # The campaign itself runs off the screen; only replaying or
+            # resuming it later needs the profile to exist on disk.
+            self.notify("profile is not saved — replaying or resuming this "
+                        "run later needs it on disk", severity="warning")
         self.query_one(TabbedContent).active = "tab-run"
         self._show_log()
         self._set_running(True)

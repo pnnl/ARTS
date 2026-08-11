@@ -111,6 +111,11 @@ class ProfilePanel(VerticalScroll):
     # -- layout ------------------------------------------------------------
     def compose(self) -> ComposeResult:
         names = store.list_profiles()
+        if self.profile.name not in names:
+            # The bootstrap profile of a machine with none saved yet: it is
+            # on the screen but not on disk, and the dropdown must say so
+            # rather than refuse a value it does not know.
+            names = [self.profile.name, *names]
         yield Static("[b]Node profile[/b]  [dim]edit and save, or start a new "
                      "one from this[/dim]", classes="panel-head")
         with Horizontal(id="profile-bar"):
@@ -279,7 +284,11 @@ class ProfilePanel(VerticalScroll):
         return profile
 
     def revert(self) -> None:
-        self.profile = store.load_profile(self.profile.name)
+        try:
+            self.profile = store.load_profile(self.profile.name)
+        except store.NotFound:
+            self.status("nothing saved to revert to", error=True)
+            return
         self.query_one("#profile-name", Input).value = self.profile.name
         self._fill(form.profile_to_values(self.profile))
         self._refresh_nodes()
@@ -289,6 +298,9 @@ class ProfilePanel(VerticalScroll):
 
     def on_mount(self) -> None:
         self.apply_launcher()
+        if self.profile.name not in store.list_profiles():
+            self.status("not saved yet — adjust this machine's settings and "
+                        "Save to write its first profile")
 
     def reload(self, name: str) -> None:
         self.profile = store.load_profile(name)

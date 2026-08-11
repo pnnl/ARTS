@@ -26,6 +26,15 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 `pyproject.toml` (`uv pip compile tools/artsrun/pyproject.toml -o
 requirements.txt`); regenerate it when a dependency changes.
 
+Profiles are a machine's own untracked settings, so a fresh checkout has
+none. The screens still open — on an unsaved single-node local profile;
+adjust it on the Profile tab and Save writes the machine's first one. The
+same bootstrap exists on the command line:
+
+```bash
+artsrun profile new <machine>     # single-node local defaults, opens $EDITOR
+```
+
 ## Use
 
 ```bash
