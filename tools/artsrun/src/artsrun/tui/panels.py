@@ -410,8 +410,14 @@ class BenchsetPanel(VerticalScroll):
             "an empty box means the catalog's own calibration[/dim]",
             classes="panel-head",
         )
+        names = store.list_benchsets()
+        if self.benchset.name not in names:
+            # A machine with no saved benchsets runs on the catalog's own
+            # defaults; the dropdown carries that unsaved name rather than
+            # refuse a value it does not know.
+            names = [self.benchset.name, *names]
         with Horizontal(id="bench-bar"):
-            yield Select([(n, n) for n in store.list_benchsets()],
+            yield Select([(n, n) for n in names],
                          value=self.benchset.name, id="bench-select",
                          allow_blank=False)
             yield Input(value=self.benchset.name, placeholder="name",
@@ -492,7 +498,11 @@ class BenchsetPanel(VerticalScroll):
         The rows come from the catalog, so a benchset changes which boxes are
         ticked and what the argument fields hold, never which rows exist.
         """
-        self.benchset = store.load_benchset(name)
+        try:
+            self.benchset = store.load_benchset(name)
+        except store.NotFound:
+            self.status("nothing saved to reload", error=True)
+            return
         self.query_one("#bench-name-input", Input).value = self.benchset.name
         for app in self.catalog.rows:
             enabled = self.benchset.is_enabled(app)
@@ -623,11 +633,15 @@ class CounterPanel(VerticalScroll):
             "needs a reconfigure and a full rebuild · a = all/none[/dim]",
             classes="panel-head",
         )
+        names = store.list_countersets()
+        if self.counterset.name not in names:
+            # The set in use may not be on disk — a fresh checkout runs on
+            # the built-in "none" — and the dropdown carries that name
+            # rather than refuse a value it does not know.
+            names = [self.counterset.name, *names]
         with Horizontal(id="counter-bar"):
-            yield Select([(n, n) for n in store.list_countersets()] or [("none", "none")],
-                         value=(self.counterset.name
-                                if self.counterset.name in store.list_countersets()
-                                else Select.BLANK),
+            yield Select([(n, n) for n in names],
+                         value=self.counterset.name,
                          id="counter-select", allow_blank=True)
             yield Input(value=self.counterset.name, placeholder="name",
                         id="counter-name")

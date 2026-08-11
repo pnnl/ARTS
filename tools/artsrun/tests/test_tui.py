@@ -213,15 +213,15 @@ def test_a_split_cell_fits_both_of_its_toggles():
         assert need <= avail, f"{labels} needs {need} columns, cell has {avail}"
 
 
-def test_with_no_profiles_the_screens_open_on_an_unsaved_local_one(
-    tmp_path, monkeypatch,
-):
-    # A fresh checkout has no profiles; the screens open anyway, and Save on
-    # the Profile tab writes the machine's first one.
+def test_a_fresh_checkout_opens_on_unsaved_defaults(tmp_path, monkeypatch):
+    # No profiles, no benchsets, no counter sets — the screens open anyway:
+    # an unsaved single-node local profile, the catalog's own roster, no
+    # counters.  Save on the Profile tab writes the machine's first file.
     from artsrun import store
 
-    monkeypatch.setattr("artsrun.store.profiles_dir",
-                        lambda: tmp_path / "profiles")
+    for surface in ("profiles_dir", "benchsets_dir", "countersets_dir"):
+        monkeypatch.setattr(f"artsrun.store.{surface}",
+                            lambda s=surface: tmp_path / s)
 
     async def main():
         app = ArtsRunApp()
@@ -230,12 +230,13 @@ def test_with_no_profiles_the_screens_open_on_an_unsaved_local_one(
             panel = app.query_one("#profile", ProfilePanel)
             before = store.list_profiles()
             saved = panel.save(as_new=False)
-            return (app.profile.name, app.profile.nodes, before,
-                    saved is not None, store.list_profiles())
+            return (app.profile.name, app.profile.nodes, app.benchset.name,
+                    before, saved is not None, store.list_profiles())
 
-    name, nodes, before, saved, after = asyncio.run(main())
+    name, nodes, benchset, before, saved, after = asyncio.run(main())
     assert name == "local"
     assert nodes == [1]
+    assert benchset == "catalog-default"
     assert before == []
     assert saved
     assert after == ["local"]
