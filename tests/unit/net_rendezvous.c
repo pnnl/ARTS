@@ -141,14 +141,19 @@ int main(void) {
   int failures = 0;
 
   /* --- (1) txid allocation ------------------------------------------- */
+  /* Receiver-allocated and paired in the allocator's own table, so a txid
+   * needs no rank bits — and it must fit the narrowest immediate a real
+   * fabric grants (InfiniBand write-with-imm carries 4 bytes). */
   uint64_t t1 = arts_net_rdzv_txid_next();
   uint64_t t2 = arts_net_rdzv_txid_next();
-  if (t1 == 0 || t2 == 0 || t1 == t2 || (t1 >> 48) != arts_global_rank_id) {
+  if (t1 == 0 || t2 == 0 || t1 == t2 || t1 > 0xFFFFFFFFULL ||
+      t2 > 0xFFFFFFFFULL) {
     fprintf(stderr, "FAIL net_rendezvous: txid allocation (t1=%llx t2=%llx)\n",
             (unsigned long long)t1, (unsigned long long)t2);
     ++failures;
   } else {
-    printf("PASS net_rendezvous: txid allocation (nonzero, unique, rank bits)\n");
+    printf("PASS net_rendezvous: txid allocation (nonzero, unique, "
+           "32-bit immediate safe)\n");
   }
 
   /* --- (2) landing advertisement -------------------------------------- */

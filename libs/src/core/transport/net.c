@@ -595,8 +595,12 @@ static struct net_pending_s *g_pending_tail; /* FIFO tail (newest)              
  * ordering assumed: the metadata packet (fi_send, dispatched to a handler that
  * registers an expectation) and the payload write completion (imm == txid).
  * Whichever lands first parks in this table; the second one fires the
- * expectation callback.  Keyed by txid — (rank<<48)|counter, collision-free
- * across ranks and unique per transfer.
+ * expectation callback.  Keyed by txid.  A txid is allocated by the rank
+ * whose table pairs it — the receiver advertises the landing buffer and the
+ * txid together — so uniqueness is a local property, and a 32-bit value
+ * suffices: it must only be unique among this rank's in-flight transfers,
+ * and it fits the narrowest immediate a real fabric grants (InfiniBand
+ * write-with-imm carries 4 bytes).
  *
  * An entry is either an EXPECTATION (cb != NULL; metadata arrived first) or an
  * ARRIVAL MARKER (cb == NULL; data arrived first).  Entries are short-lived:
@@ -623,9 +627,8 @@ static _Atomic uint64_t g_rdzv_txid_ctr = 1;
 static _Atomic uint64_t g_rdzv_arrived_count;
 
 static inline unsigned net_rdzv_bucket(uint64_t txid) {
-  /* Counter bits dominate; fold the rank bits in so two ranks' streams don't
-   * strobe the same buckets. */
-  return (unsigned)((txid ^ (txid >> 48)) & (ARTS_NET_RDZV_BUCKETS - 1));
+  /* The low bits are a local counter, already uniform across buckets. */
+  return (unsigned)(txid & (ARTS_NET_RDZV_BUCKETS - 1));
 }
 
 /* Unlink and return the entry for txid, or NULL.  Caller holds g_rdzv_lock. */
@@ -660,9 +663,10 @@ static void net_rdzv_insert_locked(uint64_t txid, void (*cb)(void *),
 uint64_t arts_net_rdzv_txid_next(void) {
   uint64_t ctr =
       atomic_fetch_add_explicit(&g_rdzv_txid_ctr, 1, memory_order_relaxed);
-  /* 48 bits of counter under 16 bits of rank; the counter cannot wrap within
-   * any realistic run (2^48 transfers), so txids never collide or hit 0. */
-  return ((uint64_t)arts_global_rank_id << 48) | (ctr & 0xFFFFFFFFFFFFULL);
+  /* [1, 2^32-1]: never the wire sentinel 0, and a wrap collision would need
+   * one transfer to stay in flight across 2^32-2 subsequent allocations by
+   * this same rank — its landing buffer alone forbids that. */
+  return 1u + (uint32_t)(ctr % 0xFFFFFFFFULL);
 }
 
 void arts_net_rdzv_expect(uint64_t txid, void (*on_data)(void *), void *arg) {
@@ -1167,6 +1171,23 @@ void arts_net_init(const char *provider, const char *fabric_domain,
 
   int rc = fi_getinfo(FI_VERSION(FI_MAJOR_VERSION, FI_MINOR_VERSION), NULL, NULL,
                       0, hints, &g_net.info);
+  if ((rc != 0 || g_net.info == NULL) && provider_pinned) {
+    /* A layering provider can deliver remote-write completions without
+     * advertising FI_RMA_EVENT: rxm forwards the core provider's
+     * FI_REMOTE_WRITE completion — immediate included — yet never names the
+     * bit in its caps, so a capability filter refuses a stack that in fact
+     * provides the event.  Ask again without the bit, on the pinned path
+     * only: a provider that does advertise it (tcp) keeps being asked, since
+     * there the request is what arms remote events. */
+    hints->caps &= ~(uint64_t)FI_RMA_EVENT;
+    rc = fi_getinfo(FI_VERSION(FI_MAJOR_VERSION, FI_MINOR_VERSION), NULL, NULL,
+                    0, hints, &g_net.info);
+    if (rc == 0 && g_net.info != NULL) {
+      ARTS_INFO("arts_net: provider %s matched without FI_RMA_EVENT; relying "
+                "on its layered remote-write completion delivery",
+                provider);
+    }
+  }
   if ((rc != 0 || g_net.info == NULL) && tcp_first) {
     /* tcp-first probe found nothing usable on this host — retry without a
      * provider constraint and take fi_getinfo's own pick. */
@@ -1188,13 +1209,13 @@ void arts_net_init(const char *provider, const char *fabric_domain,
   g_net.max_msg = g_net.info->ep_attr->max_msg_size;
   g_net.tx_order = g_net.info->tx_attr->msg_order;
 
-  /* The rendezvous immediate is a full 64-bit txid ((rank<<48)|counter); a
-   * provider with a narrower immediate would silently truncate it and pair
-   * the wrong transfers.  Fail loudly — a compact-txid scheme is a deliberate
-   * port, not a silent degradation.  (The tcp provider grants 8.) */
-  if (g_net.info->domain_attr->cq_data_size < sizeof(uint64_t)) {
-    ARTS_ERROR("arts_net: provider cq_data_size %zu < 8 — 64-bit rendezvous "
-               "txids need a full-width immediate",
+  /* The rendezvous txid is receiver-allocated and 32-bit by design, sized to
+   * the narrowest immediate a real fabric grants (InfiniBand write-with-imm
+   * carries 4 bytes; tcp grants 8).  A provider below even that would
+   * silently truncate the immediate and pair the wrong transfers. */
+  if (g_net.info->domain_attr->cq_data_size < sizeof(uint32_t)) {
+    ARTS_ERROR("arts_net: provider cq_data_size %zu < 4 — rendezvous txids "
+               "need at least a 32-bit immediate",
                g_net.info->domain_attr->cq_data_size);
   }
 
