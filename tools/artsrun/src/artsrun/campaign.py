@@ -16,7 +16,7 @@ from pathlib import Path
 
 from artsrun import check, report
 from artsrun.build import (
-    BuildPlan, build, check_build_dir, configure_counters, counter_mismatch,
+    BuildPlan, build, configure_counters, counter_mismatch, ensure_build_dir,
     plan_targets,
 )
 from artsrun.model.benchset import Benchset
@@ -89,9 +89,20 @@ class Campaign:
             counterset=counterset,
         )
 
+    def _build_prefix(self) -> list[str]:
+        """Build work runs where the artifacts will run: inside a one-node
+        job when the launcher is a scheduler, on this machine otherwise."""
+        if self.profile.launcher is Launcher.SLURM:
+            from artsrun.run.slurm import srun_build_prefix
+
+            return srun_build_prefix(self.profile)
+        return []
+
     # -- phases ------------------------------------------------------------
-    def build_plan(self, *, on_line=None) -> BuildPlan:
-        check_build_dir(self.build_dir)
+    def build_plan(self, *, on_line=None, bootstrap: bool = False) -> BuildPlan:
+        prefix = self._build_prefix()
+        ensure_build_dir(self.build_dir, bootstrap=bootstrap, on_line=on_line,
+                         prefix=prefix)
         self.counters_cfg = None
         if self.counterset and self.counterset.enabled:
             # Written next to the run so the file the build was configured
@@ -100,7 +111,8 @@ class Campaign:
             self.counters_cfg = wanted
             differing = counter_mismatch(self.build_dir, self.counterset)
             if differing:
-                configure_counters(self.build_dir, wanted, on_line=on_line)
+                configure_counters(self.build_dir, wanted, on_line=on_line,
+                                   prefix=prefix)
         return plan_targets(
             self.selection, self.plane, self.catalog, self.benchset, self.build_dir
         )
@@ -164,9 +176,10 @@ class Campaign:
             json.dumps(self.selection.model_dump(mode="json"), indent=2)
         )
 
-        plan = self.build_plan(on_line=say)
+        plan = self.build_plan(on_line=say, bootstrap=True)
         say(f"building {len(plan.targets)} targets in {self.build_dir}")
-        build(plan, on_line=lambda line: say(line))
+        build(plan, on_line=lambda line: say(line),
+              prefix=self._build_prefix())
 
         cells, skipped = self.cells()
         # Written before anything runs, and over the whole campaign even on a

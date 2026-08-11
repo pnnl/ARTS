@@ -175,6 +175,24 @@ def test_a_queued_job_reports_the_moment_it_starts_running(tmp_path):
     assert events == ["submitted", "running", "finished"]
 
 
+def test_build_work_on_slurm_runs_inside_a_one_node_job():
+    # The login node is not where a configure and a full build belong; the
+    # cpu width is derived from the same budget a run occupies.
+    from artsrun.model.profile import Profile
+    from artsrun.run.slurm import srun_build_prefix
+
+    profile = Profile.model_validate({
+        "name": "t", "launcher": "slurm", "nodes": [1, 2],
+        "workers": 63, "progress": 1, "ports": [25000],
+        "slurm": {"budget": 2, "partition": "pbatch"},
+    })
+    prefix = srun_build_prefix(profile)
+    assert prefix[:5] == ["srun", "-N", "1", "-n", "1"]
+    assert "--exclusive" in prefix
+    assert "--cpus-per-task=64" in prefix
+    assert "--partition=pbatch" in prefix
+
+
 def test_local_submit_announces_pid_and_logs_the_command(tmp_path):
     import shutil
 

@@ -37,6 +37,30 @@ class SlurmError(RuntimeError):
     pass
 
 
+def srun_build_prefix(profile: Profile) -> list[str]:
+    """Run build work inside its own one-node job.
+
+    On a cluster the login node is not where a configure and a full build
+    belong — and a compute node is also the environment the artifacts will
+    run in.  One exclusive node; the cpu width is derived from the same
+    workers+progress budget a run occupies, which is what keeps a cgroup
+    task plugin from narrowing the step.
+    """
+    settings = profile.slurm
+    cmd = [
+        "srun", "-N", "1", "-n", "1", "--exclusive",
+        f"--cpus-per-task={profile.threads_per_node}",
+        "--job-name=arts-build",
+    ]
+    if settings.partition:
+        cmd.append(f"--partition={settings.partition}")
+    if settings.account:
+        cmd.append(f"--account={settings.account}")
+    if settings.qos:
+        cmd.append(f"--qos={settings.qos}")
+    return cmd
+
+
 def job_script(cell: Cell, profile: Profile) -> str:
     """The batch script one cell runs as, byte for byte."""
     argv = build_command(cell, profile)

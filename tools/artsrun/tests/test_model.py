@@ -92,6 +92,42 @@ def test_optimized_is_refused_where_the_source_has_no_hint_layer():
         catalog.resolve("graph500", Version.OPTIMIZED)
 
 
+def test_a_real_run_configures_a_missing_build_tree(tmp_path, monkeypatch):
+    # The experiment tree is fully determined (Release, benchmarks on), so a
+    # missing one is a first run, not an error to hand back to the user.
+    from artsrun import build as build_mod
+
+    calls = {}
+    tree = tmp_path / "bt"
+
+    class FakeProc:
+        stdout = iter(())
+
+        def wait(self):
+            return 0
+
+    def fake_popen(cmd, **_kw):
+        calls["cmd"] = cmd
+        tree.mkdir(parents=True, exist_ok=True)
+        (tree / "build.ninja").write_text("")
+        return FakeProc()
+
+    monkeypatch.setattr(build_mod.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(build_mod.shutil, "which", lambda _n: "/usr/bin/cmake")
+    build_mod.ensure_build_dir(tree, bootstrap=True)
+    assert "-GNinja" in calls["cmd"]
+    assert f"-B{tree}" in calls["cmd"]
+    assert "-DCMAKE_BUILD_TYPE=Release" in calls["cmd"]
+
+
+def test_a_dry_run_configures_nothing(tmp_path):
+    from artsrun import build as build_mod
+
+    with pytest.raises(build_mod.BuildError, match="real run configures"):
+        build_mod.ensure_build_dir(tmp_path / "bt", bootstrap=False)
+    assert not (tmp_path / "bt").exists()
+
+
 def test_the_old_hinted_name_still_parses_as_optimized():
     # The version was recorded as "hinted" before the rename; selections and
     # benchsets written under that name must replay unchanged.

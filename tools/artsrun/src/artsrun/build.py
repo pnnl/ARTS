@@ -118,7 +118,8 @@ def counter_mismatch(build_dir: Path, counterset) -> list[str]:
     )
 
 
-def configure_counters(build_dir: Path, wanted: Path, *, on_line=None) -> None:
+def configure_counters(build_dir: Path, wanted: Path, *, on_line=None,
+                       prefix: list[str] | None = None) -> None:
     """Point an existing tree at a counter configuration and reconfigure it.
 
     Counter selection is compiled in, so making a tree match is a build step
@@ -133,7 +134,8 @@ def configure_counters(build_dir: Path, wanted: Path, *, on_line=None) -> None:
         raise BuildError("cmake not found on PATH")
     say(f"counters changed — reconfiguring {build_dir} (this rebuilds everything)")
     proc = subprocess.run(
-        ["cmake", "-B", str(build_dir), f"-DARTS_COUNTER_CONFIG={wanted}"],
+        [*(prefix or []), "cmake", "-B", str(build_dir),
+         f"-DARTS_COUNTER_CONFIG={wanted}"],
         capture_output=True, text=True,
     )
     for line in proc.stdout.splitlines():
@@ -146,13 +148,46 @@ def configure_counters(build_dir: Path, wanted: Path, *, on_line=None) -> None:
         )
 
 
-def check_build_dir(build_dir: Path) -> None:
-    """Fail early, and say what to run, rather than reconfiguring silently."""
+def ensure_build_dir(build_dir: Path, *, bootstrap: bool = False,
+                     on_line=None, prefix: list[str] | None = None) -> None:
+    """Configure a tree that never was; verify one that already is.
+
+    The experiment tree is fully determined — Release, benchmarks on — so a
+    missing one is a first run rather than an error, and the configure is
+    simply run.  A tree that EXISTS is only verified, never reconfigured
+    behind its owner's back: a Debug or no-benchmark tree is somebody's
+    deliberate configuration, and the counter reconfigure elsewhere changes
+    exactly one option for the same reason.  A dry run configures nothing —
+    dry means dry — and reports what a real run would do instead.
+    """
     if not (build_dir / "build.ninja").is_file():
-        raise BuildError(
-            f"{build_dir} is not a configured Ninja build tree. Configure it with:\n"
-            f"  cmake -GNinja -B{build_dir} -DCMAKE_BUILD_TYPE=Release"
+        if not bootstrap:
+            raise BuildError(
+                f"{build_dir} is not a configured build tree; a real run "
+                f"configures it first (Release, benchmarks on)"
+            )
+        if shutil.which("cmake") is None:
+            raise BuildError("cmake not found on PATH")
+        from artsrun.paths import repo_root
+
+        say = on_line or (lambda _msg: None)
+        say(f"{build_dir} does not exist yet — configuring it "
+            "(the first build also compiles the vendored dependencies)")
+        proc = subprocess.Popen(
+            [*(prefix or []), "cmake", "-S", str(repo_root()), "-GNinja",
+             f"-B{build_dir}", "-DCMAKE_BUILD_TYPE=Release"],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1,
         )
+        tail: list[str] = []
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            line = line.rstrip("\n")
+            tail.append(line)
+            del tail[:-25]
+            say(line)
+        if proc.wait() != 0:
+            raise BuildError("configure failed:\n" + "\n".join(tail))
     if (_cache_value(build_dir, "ARTS_BUILD_BENCHMARKS") or "ON") == "OFF":
         raise BuildError(
             f"{build_dir} was configured with ARTS_BUILD_BENCHMARKS=OFF; the "
@@ -210,7 +245,8 @@ def plan_targets(
     return BuildPlan(build_dir=build_dir, targets=targets, missing=missing)
 
 
-def build(plan: BuildPlan, *, jobs: int | None = None, on_line=None) -> None:
+def build(plan: BuildPlan, *, jobs: int | None = None, on_line=None,
+          prefix: list[str] | None = None) -> None:
     """Compile the whole plan in a single ninja invocation."""
     if not plan.ok:
         raise BuildError(
@@ -220,7 +256,7 @@ def build(plan: BuildPlan, *, jobs: int | None = None, on_line=None) -> None:
         )
     if shutil.which("ninja") is None:
         raise BuildError("ninja not found on PATH")
-    cmd = ["ninja", "-C", str(plan.build_dir)]
+    cmd = [*(prefix or []), "ninja", "-C", str(plan.build_dir)]
     if jobs:
         cmd += ["-j", str(jobs)]
     cmd += plan.targets
