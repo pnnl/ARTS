@@ -747,7 +747,14 @@ else()
     message(FATAL_ERROR "hwloc v${HWLOC_VERSION} < 2.0 — v2+ required")
 endif()
 
-add_compile_definitions(ARTS_LOG_LEVEL=${ARTS_LOG_LEVEL})
+# Build-wide level, overridable per target by setting the target property of
+# the same name.  A directory definition cannot be dropped by the targets that
+# inherit it, so the override has to be expressed inside the definition itself
+# — appending a second -D would leave both on the command line, where the
+# outcome rests on their relative order and the preprocessor reports a
+# redefinition.  The emptiness test cannot be a boolean one: 0 is a level.
+add_compile_definitions(
+    ARTS_LOG_LEVEL=$<IF:$<STREQUAL:$<TARGET_PROPERTY:ARTS_LOG_LEVEL>,>,${ARTS_LOG_LEVEL},$<TARGET_PROPERTY:ARTS_LOG_LEVEL>>)
 message(STATUS "Log level: ${ARTS_LOG_LEVEL} (0=ERROR, 1=+WARN, 2=+INFO, 3=+DEBUG)")
 
 set(COUNTER_CONFIG_FILE "${ARTS_COUNTER_CONFIG}")

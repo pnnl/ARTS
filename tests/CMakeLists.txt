@@ -378,6 +378,12 @@ function(register_pure_unit_test test_name)
     )
 endfunction()
 
+# Raise or lower one target's log level off the build-wide default; the
+# top-level ARTS_LOG_LEVEL definition reads this property back per target.
+function(set_test_log_level test_name level)
+    set_target_properties(${test_name} PROPERTIES ARTS_LOG_LEVEL ${level})
+endfunction()
+
 # --- Single-node tests ---
 
 # EDT tests
@@ -532,7 +538,8 @@ if(ARTS_TRANSPORT_OFI AND ARTS_MALLOC STREQUAL "mimalloc")
     target_include_directories(net_selfsend PRIVATE
         ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR}
         ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
-    target_compile_definitions(net_selfsend PRIVATE ARTS_TRANSPORT_OFI=1 ARTS_LOG_LEVEL=2)
+    target_compile_definitions(net_selfsend PRIVATE ARTS_TRANSPORT_OFI=1)
+    set_test_log_level(net_selfsend 2)
     target_link_libraries(net_selfsend PRIVATE
         Threads::Threads mimalloc-static arts::libfabric ${RT_LIBRARY})
     register_pure_unit_test(net_selfsend TIMEOUT 60)
@@ -545,7 +552,8 @@ if(ARTS_TRANSPORT_OFI AND ARTS_MALLOC STREQUAL "mimalloc")
     target_include_directories(net_rendezvous PRIVATE
         ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR}
         ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
-    target_compile_definitions(net_rendezvous PRIVATE ARTS_TRANSPORT_OFI=1 ARTS_LOG_LEVEL=2)
+    target_compile_definitions(net_rendezvous PRIVATE ARTS_TRANSPORT_OFI=1)
+    set_test_log_level(net_rendezvous 2)
     target_link_libraries(net_rendezvous PRIVATE
         Threads::Threads mimalloc-static arts::libfabric ${RT_LIBRARY})
     register_pure_unit_test(net_rendezvous TIMEOUT 60)
@@ -558,7 +566,8 @@ if(ARTS_TRANSPORT_OFI AND ARTS_MALLOC STREQUAL "mimalloc")
     target_include_directories(net_src_bind PRIVATE
         ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR}
         ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
-    target_compile_definitions(net_src_bind PRIVATE ARTS_TRANSPORT_OFI=1 ARTS_LOG_LEVEL=2)
+    target_compile_definitions(net_src_bind PRIVATE ARTS_TRANSPORT_OFI=1)
+    set_test_log_level(net_src_bind 2)
     target_link_libraries(net_src_bind PRIVATE
         Threads::Threads mimalloc-static arts::libfabric ${RT_LIBRARY})
     register_pure_unit_test(net_src_bind TIMEOUT 60)

@@ -21,7 +21,9 @@
  * libc-backed shims.  FI_PROVIDER=tcp is pinned by the test's environment.
  */
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>

@@ -31,7 +31,9 @@
  * #include a runtime .c directly); externs are stubbed locally.
  */
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #include <arpa/inet.h>
 #include <dlfcn.h>
 #include <errno.h>

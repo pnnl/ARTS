@@ -43,7 +43,9 @@
  * with exposes_runtime_bug=true.  We do NOT weaken the test to hide it.
  */
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>

@@ -20,7 +20,9 @@
  *
  * #include's stdio_forward.c for the static reader-thread body.
  */
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #define ARTS_SYSTEM_PRINT_H
 #define ARTS_WARN(...) ((void)0)
 #include "../../libs/src/core/transport/stdio_forward.c"

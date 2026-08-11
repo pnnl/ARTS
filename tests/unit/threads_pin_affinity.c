@@ -25,7 +25,9 @@
 /// runtime_single, all configs (protocol-agnostic; affinity behavior is
 /// config).
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #include "arts.h"
 #include "arts/runtime_state.h"
 

@@ -19,7 +19,9 @@
  *
  * #include's stdio_forward.c only for cluster symmetry (public API used here).
  */
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #define ARTS_SYSTEM_PRINT_H
 #define ARTS_WARN(...) ((void)0)
 #include "../../libs/src/core/transport/stdio_forward.c"

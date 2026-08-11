@@ -19,7 +19,9 @@
  * IP provider guaranteed present in CI.
  */
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <stdatomic.h>

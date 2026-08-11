@@ -32,8 +32,12 @@ extern "C" {
  * it directly to lay out arts_db_s and must not depend on this header. */
 #include "arts/rank_bitset.h"
 
-/* arts_home_grantreq_node_s and arts_home_grantreq_queue_s are defined in
- * coherence.h (included above), where arts_db_s embeds the queue. */
+/* Declared, not defined, here: only the protocol arms that run a home request
+ * queue define the struct (arts_db_s embeds it) before including this header,
+ * and only they call these entry points.  Without the declaration the tag
+ * would be scoped to each parameter list below, never matching the real
+ * definition. */
+struct arts_home_grantreq_queue_s;
 
 void arts_home_grantreq_queue_init(struct arts_home_grantreq_queue_s *q);
 void arts_home_grantreq_queue_destroy(struct arts_home_grantreq_queue_s *q);

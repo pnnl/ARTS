@@ -33,7 +33,9 @@
  * but until then the SIGSEGV is the observable property.
  */
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #include <ifaddrs.h>
 #include <netinet/in.h>
 #include <stdbool.h>
