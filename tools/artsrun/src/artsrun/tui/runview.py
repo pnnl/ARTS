@@ -27,6 +27,7 @@ _STATUS_STYLE = {
     Status.PENDING: ("pending", "dim"),
     Status.SUBMITTED: ("queued", "yellow"),
     Status.RUNNING: ("running", "bold yellow"),
+    Status.ENDING: ("ending", "dim yellow"),
     Status.OK: ("ok", "green"),
     Status.FAIL: ("fail", "bold red"),
     Status.TIMEOUT: ("timeout", "bold red"),
@@ -59,6 +60,9 @@ def _fmt_wall(view: CellView) -> Text:
         text = f"{int(seconds) // 60}:{int(seconds) % 60:04.1f}"
     else:
         text = f"{seconds:.1f}s"
+    if view.status is Status.ENDING:
+        # Frozen where the drain began — nothing is computing any more.
+        return Text(text, style="dim yellow")
     if view.active:
         return Text(text, style="yellow")
     return Text(text)
@@ -502,7 +506,8 @@ class RunView(Vertical):
         text.append(state.run_dir.name, style="bold")
         text.append(f" · {state.launcher or '?'}", style="dim")
         for status in (Status.PENDING, Status.SUBMITTED, Status.RUNNING,
-                       Status.OK, Status.FAIL, Status.TIMEOUT, Status.SKIPPED):
+                       Status.ENDING, Status.OK, Status.FAIL, Status.TIMEOUT,
+                       Status.SKIPPED):
             n = counts.get(status.value, 0)
             if not n:
                 continue

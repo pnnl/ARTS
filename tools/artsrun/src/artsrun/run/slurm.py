@@ -37,19 +37,23 @@ class SlurmError(RuntimeError):
     pass
 
 
+# A compile is not a measurement: it asks for a handful of cpus it can get
+# anywhere in the queue, instead of holding a whole node hostage.
+BUILD_CPUS = 8
+
+
 def srun_build_prefix(profile: Profile) -> list[str]:
-    """Run build work inside its own one-node job.
+    """Run build work inside a small job of its own.
 
     On a cluster the login node is not where a configure and a full build
     belong — and a compute node is also the environment the artifacts will
-    run in.  One exclusive node; the cpu width is derived from the same
-    workers+progress budget a run occupies, which is what keeps a cgroup
-    task plugin from narrowing the step.
+    run in.  The job is deliberately narrow (one task, a few cpus, nothing
+    exclusive) so it slots into whatever gap the scheduler has.
     """
     settings = profile.slurm
     cmd = [
-        "srun", "-N", "1", "-n", "1", "--exclusive",
-        f"--cpus-per-task={profile.threads_per_node}",
+        "srun", "-n", "1",
+        f"--cpus-per-task={BUILD_CPUS}",
         "--job-name=arts-build",
     ]
     if settings.partition:
@@ -115,6 +119,7 @@ class SlurmBackend:
         self.capacity = self.settings.budget
         self._jobs: dict[str, CellResult] = {}
         self._submitted_at: dict[str, float] = {}
+        self._running_at: dict[str, float] = {}
 
     def cost(self, cell: Cell) -> int:
         return cell.nodes
@@ -180,12 +185,23 @@ class SlurmBackend:
         if state in ("PENDING", "CONFIGURING"):
             result.status = Status.SUBMITTED
             return result
-        if state in ("RUNNING", "COMPLETING", "RESIZING", "SUSPENDED"):
+        if state in ("RUNNING", "RESIZING", "SUSPENDED"):
+            self._running_at.setdefault(job_id, time.monotonic())
             result.status = Status.RUNNING
+            return result
+        if state == "COMPLETING":
+            # The program is over; the scheduler is tearing the job down.
+            self._running_at.setdefault(job_id, time.monotonic())
+            result.status = Status.ENDING
             return result
         result.status = _FINAL.get(state, Status.FAIL)
         result.rc = rc
-        result.wall_s = time.monotonic() - self._submitted_at.get(job_id, time.monotonic())
+        # Queue wait is not runtime: the wall runs from the moment the job
+        # was seen running (submission only when it never was).
+        now = time.monotonic()
+        started = self._running_at.pop(
+            job_id, self._submitted_at.get(job_id, now))
+        result.wall_s = now - started
         if state == "UNKNOWN":
             result.note = "job left the queue with no accounting record"
         self._jobs.pop(job_id, None)

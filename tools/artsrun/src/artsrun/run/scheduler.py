@@ -165,9 +165,11 @@ class Scheduler:
                 self.in_flight.remove(result)
                 self._finish(updated)
                 finished = True
-            elif (updated.status is Status.RUNNING
-                  and was is not Status.RUNNING):
-                self.on_event("running", updated)
+            elif (updated.status is not was
+                  and updated.status in (Status.RUNNING, Status.ENDING)):
+                self.on_event(
+                    "running" if updated.status is Status.RUNNING
+                    else "ending", updated)
         return finished
 
     @property

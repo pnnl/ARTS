@@ -178,8 +178,15 @@ class Campaign:
 
         plan = self.build_plan(on_line=say, bootstrap=True)
         say(f"building {len(plan.targets)} targets in {self.build_dir}")
-        build(plan, on_line=lambda line: say(line),
-              prefix=self._build_prefix())
+        prefix = self._build_prefix()
+        jobs = None
+        if prefix:
+            # ninja sizes itself to the node it lands on; inside a narrow
+            # job it must size itself to the slot instead.
+            from artsrun.run.slurm import BUILD_CPUS
+
+            jobs = BUILD_CPUS
+        build(plan, on_line=lambda line: say(line), prefix=prefix, jobs=jobs)
 
         cells, skipped = self.cells()
         # Written before anything runs, and over the whole campaign even on a

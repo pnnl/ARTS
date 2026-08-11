@@ -41,9 +41,9 @@ the vendored dependencies, so it is long) and every later run reuses it.
 Dry runs configure nothing, and an existing tree is only verified — a
 Debug or no-benchmark tree is somebody's deliberate configuration and is
 reported, not replaced. Under a Slurm profile, every piece of build work —
-the first configure, a counter reconfigure, the ninja pass — runs inside
-its own exclusive one-node job rather than on the login node, with the
-cpu width derived from the profile's workers + progress.
+the first configure, a counter reconfigure, the ninja pass — runs inside a
+small job of its own rather than on the login node: one task, a few cpus,
+nothing exclusive, so it slots into whatever gap the queue has.
 
 ## Use
 

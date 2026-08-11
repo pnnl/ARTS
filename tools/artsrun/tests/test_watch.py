@@ -257,6 +257,26 @@ def test_scaling_takes_the_best_wall_of_completed_cells_only(tmp_path):
     assert rows[0]["walls"] == {1: 8.0, 2: 5.0}  # repeats collapse to best
 
 
+def test_a_draining_cell_freezes_its_clock_where_the_run_ended(tmp_path):
+    # Slurm's COMPLETING means nothing is computing any more; the elapsed
+    # figure stops at the drain's start instead of counting teardown time.
+    cell = _cell("arts_val_wb")
+    _write(tmp_path, [cell])
+    state = RunState(tmp_path)
+    _track(tmp_path, [
+        {"t": 100.0, "event": "running", "cell": cell.key,
+         "status": "running", "rc": 0, "wall_s": 0, "note": ""},
+        {"t": 160.0, "event": "ending", "cell": cell.key,
+         "status": "ending", "rc": 0, "wall_s": 0, "note": ""},
+    ])
+    state.refresh()
+    view = state.views[cell.key]
+    assert view.status is Status.ENDING
+    assert view.elapsed_s == 60.0  # frozen, no matter when we look
+    assert view.active
+    assert not state.finished
+
+
 def test_a_pre_rename_track_still_lands_on_its_cell(tmp_path):
     # The optimized version was once named "hinted": its value in a saved
     # manifest parses through the alias, and an old track key still lands on

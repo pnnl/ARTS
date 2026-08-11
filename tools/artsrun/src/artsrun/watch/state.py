@@ -54,6 +54,7 @@ class CellView:
     note: str = ""
     extra: dict[str, str] = field(default_factory=dict)
     started_at: float | None = None
+    ending_at: float | None = None
     finished_at: float | None = None
     verdict: Verdict | None = None
     consensus: str | None = None
@@ -61,18 +62,23 @@ class CellView:
     @property
     def elapsed_s(self) -> float:
         """Wall time so far: the recorded figure once there is one, the clock
-        against the start while the cell is still out."""
+        against the start while the cell is still out — and frozen where the
+        drain began once nothing is computing any more."""
         if self.wall_s:
             return self.wall_s
         if self.started_at is None:
             return 0.0
         if self.status in (Status.SUBMITTED, Status.RUNNING):
             return time.time() - self.started_at
+        if self.status is Status.ENDING:
+            return max(0.0, (self.ending_at or self.started_at)
+                       - self.started_at)
         return 0.0
 
     @property
     def active(self) -> bool:
-        return self.status in (Status.SUBMITTED, Status.RUNNING)
+        return self.status in (Status.SUBMITTED, Status.RUNNING,
+                               Status.ENDING)
 
 
 def _from_manifest(manifest: Manifest, cell: Cell) -> CellView:
@@ -219,6 +225,10 @@ class RunState:
         elif event == "running":
             view.status = Status.RUNNING
             view.started_at = view.started_at or when
+        elif event == "ending":
+            view.status = Status.ENDING
+            view.started_at = view.started_at or when
+            view.ending_at = when
         elif event == "finished":
             try:
                 view.status = Status(row.get("status", ""))

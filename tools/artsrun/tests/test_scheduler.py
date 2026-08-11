@@ -175,11 +175,36 @@ def test_a_queued_job_reports_the_moment_it_starts_running(tmp_path):
     assert events == ["submitted", "running", "finished"]
 
 
-def test_build_work_on_slurm_runs_inside_a_one_node_job():
-    # The login node is not where a configure and a full build belong; the
-    # cpu width is derived from the same budget a run occupies.
+def test_a_draining_job_is_reported_as_ending_not_running(tmp_path):
+    # COMPLETING means the program is over and the scheduler is tearing the
+    # job down; the edge is reported once so a watcher can stop its clock.
+    events = []
+
+    class Draining(FakeBackend):
+        def __init__(self):
+            super().__init__(capacity=1)
+            self.polls = 0
+
+        def poll(self, result):
+            self.polls += 1
+            result.status = (Status.RUNNING if self.polls == 1 else
+                             Status.ENDING if self.polls <= 3 else Status.OK)
+            result.wall_s = 0.01
+            return result
+
+    sched = Scheduler(Draining(), [_cell(1)], _cache(tmp_path),
+                      on_event=lambda kind, r: events.append(kind),
+                      poll_interval_s=0)
+    sched.run()
+    assert events == ["submitted", "running", "ending", "finished"]
+
+
+def test_build_work_on_slurm_rides_a_small_job_not_a_node():
+    # The login node is not where a configure and a full build belong, but a
+    # compile is not a measurement either: it asks for a few cpus it can get
+    # anywhere in the queue, never an exclusive node.
     from artsrun.model.profile import Profile
-    from artsrun.run.slurm import srun_build_prefix
+    from artsrun.run.slurm import BUILD_CPUS, srun_build_prefix
 
     profile = Profile.model_validate({
         "name": "t", "launcher": "slurm", "nodes": [1, 2],
@@ -187,9 +212,9 @@ def test_build_work_on_slurm_runs_inside_a_one_node_job():
         "slurm": {"budget": 2, "partition": "pbatch"},
     })
     prefix = srun_build_prefix(profile)
-    assert prefix[:5] == ["srun", "-N", "1", "-n", "1"]
-    assert "--exclusive" in prefix
-    assert "--cpus-per-task=64" in prefix
+    assert prefix[:3] == ["srun", "-n", "1"]
+    assert "--exclusive" not in prefix
+    assert f"--cpus-per-task={BUILD_CPUS}" in prefix
     assert "--partition=pbatch" in prefix
 
 

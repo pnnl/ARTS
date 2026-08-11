@@ -14,6 +14,9 @@ class Status(StrEnum):
     PENDING = "pending"
     SUBMITTED = "submitted"
     RUNNING = "running"
+    # The program is over but the scheduler is still tearing the job down
+    # (Slurm's COMPLETING); nothing is computing, so no clock should run.
+    ENDING = "ending"
     OK = "ok"
     FAIL = "fail"
     TIMEOUT = "timeout"
