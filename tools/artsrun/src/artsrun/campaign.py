@@ -179,13 +179,9 @@ class Campaign:
         plan = self.build_plan(on_line=say, bootstrap=True)
         say(f"building {len(plan.targets)} targets in {self.build_dir}")
         prefix = self._build_prefix()
-        jobs = None
-        if prefix:
-            # ninja sizes itself to the node it lands on; inside a narrow
-            # job it must size itself to the slot instead.
-            from artsrun.run.slurm import BUILD_CPUS
-
-            jobs = BUILD_CPUS
+        # ninja sizes itself to the node it lands on; inside a narrow job it
+        # must size itself to the slot instead.
+        jobs = self.profile.slurm.build_cpus if prefix else None
         build(plan, on_line=lambda line: say(line), prefix=prefix, jobs=jobs)
 
         cells, skipped = self.cells()
@@ -207,6 +203,16 @@ class Campaign:
             carried = keep
             done = {r.cell.key for r in keep}
             cells = [c for c in cells if c.key not in done]
+            if self.profile.launcher is Launcher.SLURM:
+                # Jobs an earlier submitter left in the queue are not lost
+                # work but work in flight: resubmitting them would run every
+                # such cell twice.  They finish on their own and a later
+                # look collects their markers.
+                still_out = queued_cells(self.run_dir, cells)
+                if still_out:
+                    cells = [c for c in cells if c.key not in still_out]
+                    say(f"{len(still_out)} cells still in the queue — "
+                        "left to finish on their own")
             again = len(earlier) - len(keep)
             say(f"continuing: {len(keep)} cells already measured"
                 + (f", {again} being retried" if again else ""))
@@ -294,19 +300,18 @@ def recorded_results(run_dir: Path, cells: list) -> list[CellResult]:
     each earlier cell comes back as the result it was -- scalar included, since
     that is extracted from the log rather than remembered.
     """
-    track = run_dir / "track.jsonl"
-    if not track.is_file():
-        return []
     by_key = {c.key: c for c in cells}
     rows: dict[str, dict] = {}
-    for line in track.read_text(errors="replace").splitlines():
-        try:
-            row = json.loads(line)
-        except ValueError:
-            continue
-        key = modern_key(row.get("cell", ""))
-        if row.get("event") == "finished" and key in by_key:
-            rows[key] = row  # a later attempt supersedes an earlier one
+    track = run_dir / "track.jsonl"
+    if track.is_file():
+        for line in track.read_text(errors="replace").splitlines():
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            key = modern_key(row.get("cell", ""))
+            if row.get("event") == "finished" and key in by_key:
+                rows[key] = row  # a later attempt supersedes an earlier one
     out = []
     for key, row in rows.items():
         cell = by_key[key]
@@ -321,7 +326,87 @@ def recorded_results(run_dir: Path, cells: list) -> list[CellResult]:
             log_path=log if log.is_file() else None,
             note=row.get("note", ""),
         ))
+    # A fire-and-forget job finishes whether or not anyone recorded it: its
+    # own marker on the shared filesystem carries the outcome the track never
+    # saw, because the process that would have written the track was gone.
+    from artsrun.run.slurm import marker_path, read_marker
+
+    seen = {r.cell.key for r in out}
+    for cell in cells:
+        if cell.key in seen:
+            continue
+        marker = read_marker(marker_path(run_dir / "cells", cell))
+        if marker is None:
+            continue
+        rc, wall = marker
+        status = (Status.TIMEOUT if rc in (124, 137)
+                  else Status.OK if rc == 0 else Status.FAIL)
+        log = run_dir / "cells" / cell.log_name
+        out.append(CellResult(
+            cell=cell, status=status, rc=rc, wall_s=wall,
+            log_path=log if log.is_file() else None,
+        ))
     return out
+
+
+def queued_cells(run_dir: Path, cells: list) -> set[str]:
+    """Cells whose submitted job is still in Slurm's queue.
+
+    The track records each submission's job id; one squeue call says which
+    of those jobs are still alive.  Anything alive must not be resubmitted.
+    """
+    from artsrun.run.slurm import alive_jobs
+
+    track = run_dir / "track.jsonl"
+    if not track.is_file():
+        return set()
+    wanted = {c.key for c in cells}
+    by_key: dict[str, str] = {}
+    for line in track.read_text(errors="replace").splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        key = modern_key(row.get("cell", ""))
+        job_id = (row.get("extra") or {}).get("job_id")
+        if row.get("event") == "submitted" and key in wanted and job_id:
+            by_key[key] = job_id  # a later submission supersedes
+    alive = alive_jobs(sorted(set(by_key.values())))
+    return {key for key, job_id in by_key.items() if job_id in alive}
+
+
+def reconcile(run_dir: Path) -> dict | None:
+    """Rebuild a campaign's report purely from its run directory.
+
+    A fire-and-forget campaign may outlive its submitter; what remains is
+    the manifest (what was asked) and the markers and logs (what happened).
+    That is enough to vote, so it is enough to report.
+    """
+    from artsrun.model.plane import load_plane
+    from artsrun.run.manifest import Manifest
+
+    manifest = Manifest.load(run_dir)
+    saved = run_dir / "selection.yaml"
+    if manifest is None or not saved.is_file():
+        return None
+    selection = Selection.model_validate(json.loads(saved.read_text()))
+    results = recorded_results(run_dir, manifest.cells)
+    for r in results:
+        check.apply_to(r)
+    groups = check.vote([r for r in results if r.status is not Status.SKIPPED])
+    report.write_results_csv(results, run_dir / "results.csv")
+    report.write_report_json(results, groups, manifest.skipped, selection,
+                             run_dir / "report.json")
+    summary = report.write_summary(results, groups, manifest.skipped,
+                                   selection, load_plane(),
+                                   run_dir / "summary.txt")
+    return {
+        "run_dir": run_dir,
+        "results": results,
+        "groups": groups,
+        "skipped": manifest.skipped,
+        "summary": summary,
+    }
 
 
 def summarize_skips(skipped: list[Skipped]) -> dict[str, int]:

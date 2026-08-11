@@ -27,7 +27,7 @@ def _profile(launcher: str = "local") -> Profile:
     }
     if launcher == "slurm":
         data["ports"] = [25000]
-        data["slurm"] = {"budget": 2}
+        data["slurm"] = {}
     return Profile.model_validate(data)
 
 
@@ -297,6 +297,29 @@ def test_a_pre_rename_track_still_lands_on_its_cell(tmp_path):
     state.refresh()
     assert len(state.order) == 1
     assert state.views[cell.key].status is Status.OK
+
+
+def test_a_marker_finishes_a_cell_nobody_was_watching(tmp_path):
+    # A fire-and-forget job ends after its submitter died: no finished event
+    # was ever recorded, but the job wrote its own marker, and a reattached
+    # view folds it in — scalar judged from the log, vote included.
+    cell = _cell("arts_val_wb")
+    _write(tmp_path, [cell], launcher="slurm")
+    (tmp_path / "cells").mkdir()
+    (tmp_path / "cells" / cell.log_name).write_text("RESULT = 4.25\n")
+    state = RunState(tmp_path)
+    _track(tmp_path, [{"t": 1.0, "event": "submitted", "cell": cell.key,
+                       "status": "submitted", "rc": 0, "wall_s": 0,
+                       "note": "", "extra": {"job_id": "77"}}])
+    (tmp_path / "cells" / f"{cell.slug}.rc").write_text("0 100.5 112.25\n")
+    state._marker_sweep_at = 0.0
+    assert state.refresh()
+    view = state.views[cell.key]
+    assert view.status is Status.OK
+    assert view.wall_s == 11.75
+    assert view.scalar == "4.25"
+    assert view.verdict is not None
+    assert state.finished
 
 
 # --- log tailing ----------------------------------------------------------

@@ -1,9 +1,13 @@
-"""Submit each cell as its own node-exclusive Slurm job.
+"""Submit each cell as its own node-exclusive Slurm job, all at once.
 
 There is no long-lived allocation: a cell gets exactly the nodes it needs and
 nothing else runs on them, so a runtime only ever observes the nodes of its own
-job.  Concurrency comes from the scheduler's node budget, not from packing
-several runs into one allocation.
+job.  Every job is submitted up front — scheduling is Slurm's whole purpose,
+so no admission budget stands between the campaign and the queue — and each
+job writes its own outcome marker on the shared filesystem as it ends.  The
+submitting process is thereby optional: a login node may die with the queue
+full, and any later look at the run directory reconstructs what happened
+from the markers alone.
 """
 
 from __future__ import annotations
@@ -37,11 +41,6 @@ class SlurmError(RuntimeError):
     pass
 
 
-# A compile is not a measurement: it asks for a handful of cpus it can get
-# anywhere in the queue, instead of holding a whole node hostage.
-BUILD_CPUS = 8
-
-
 def srun_build_prefix(profile: Profile) -> list[str]:
     """Run build work inside a small job of its own.
 
@@ -53,11 +52,12 @@ def srun_build_prefix(profile: Profile) -> list[str]:
     settings = profile.slurm
     cmd = [
         "srun", "-n", "1",
-        f"--cpus-per-task={BUILD_CPUS}",
+        f"--cpus-per-task={settings.build_cpus}",
         "--job-name=arts-build",
     ]
-    if settings.partition:
-        cmd.append(f"--partition={settings.partition}")
+    partition = settings.build_partition or settings.partition
+    if partition:
+        cmd.append(f"--partition={partition}")
     if settings.account:
         cmd.append(f"--account={settings.account}")
     if settings.qos:
@@ -65,8 +65,41 @@ def srun_build_prefix(profile: Profile) -> list[str]:
     return cmd
 
 
-def job_script(cell: Cell, profile: Profile) -> str:
-    """The batch script one cell runs as, byte for byte."""
+def alive_jobs(job_ids: list[str]) -> set[str]:
+    """The subset squeue still knows — queued or running."""
+    if not job_ids:
+        return set()
+    proc = subprocess.run(
+        ["squeue", "-h", "-j", ",".join(job_ids), "-o", "%i"],
+        capture_output=True, text=True, check=False,
+    )
+    return {line.strip() for line in proc.stdout.splitlines() if line.strip()}
+
+
+def marker_path(log_dir: Path, cell: Cell) -> Path:
+    """Where a cell's job records its own outcome."""
+    return log_dir / f"{cell.slug}.rc"
+
+
+def read_marker(path: Path) -> tuple[int, float] | None:
+    """(exit status, wall seconds) a job recorded for itself, if it has."""
+    try:
+        parts = path.read_text().split()
+        rc, start, end = int(parts[0]), float(parts[1]), float(parts[2])
+    except (OSError, IndexError, ValueError):
+        return None
+    return rc, max(0.0, end - start)
+
+
+def job_script(cell: Cell, profile: Profile, marker: Path) -> str:
+    """The batch script one cell runs as, byte for byte.
+
+    The job records its own outcome — exit status and the run's own start
+    and end stamps — because the process that submitted it may be gone by
+    the time it ends: the marker on the shared filesystem is what any later
+    look at the run reconstructs the result from.  The write lands under a
+    temporary name first, so a reader never sees half a marker.
+    """
     argv = build_command(cell, profile)
     env = build_env(cell, profile)
     exports = "\n".join(f"export {k}={v}" for k, v in sorted(env.items()))
@@ -74,11 +107,16 @@ def job_script(cell: Cell, profile: Profile) -> str:
         "#!/bin/bash\n"
         f"cd {scratch_dir()}\n"
         f"{exports}\n"
+        's=$(date +%s.%N)\n'
         # srun carries the step onto the job's own nodes; the timeout is
         # kept inside the job as well so a wedged run dies on its own
         # budget instead of the queue's.
-        f"exec timeout -k 1 {cell.timeout_s} srun "
+        f"timeout -k 1 {cell.timeout_s} srun "
         f"--ntasks-per-node=1 -N {cell.nodes} {render(argv)}\n"
+        "rc=$?\n"
+        f'echo "$rc $s $(date +%s.%N)" > {marker}.tmp\n'
+        f"mv {marker}.tmp {marker}\n"
+        "exit $rc\n"
     )
 
 
@@ -109,6 +147,10 @@ def sbatch_argv(cell: Cell, profile: Profile, log_path: Path) -> list[str]:
 
 
 class SlurmBackend:
+    # Scheduling a full queue is Slurm's job, not this process's: every cell
+    # is admitted immediately, and nothing here meters the cluster.
+    UNBOUNDED = 1 << 30
+
     def __init__(self, profile: Profile, log_dir: Path):
         if profile.slurm is None:
             raise SlurmError("profile has no slurm section")
@@ -116,7 +158,7 @@ class SlurmBackend:
         self.settings = profile.slurm
         self.log_dir = log_dir
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        self.capacity = self.settings.budget
+        self.capacity = self.UNBOUNDED
         self._jobs: dict[str, CellResult] = {}
         self._submitted_at: dict[str, float] = {}
         self._running_at: dict[str, float] = {}
@@ -129,7 +171,8 @@ class SlurmBackend:
         log_path = self.log_dir / cell.log_name
         proc = subprocess.run(
             sbatch_argv(cell, self.profile, log_path),
-            input=job_script(cell, self.profile),
+            input=job_script(cell, self.profile,
+                             marker_path(self.log_dir, cell)),
             capture_output=True, text=True, check=False,
         )
         if proc.returncode != 0:
@@ -181,6 +224,21 @@ class SlurmBackend:
         job_id = result.extra.get("job_id")
         if not job_id:
             return result
+        # The job's own marker is the authority on how it ended — written by
+        # the job, so it exists whether or not anyone was watching, and it
+        # carries the run's own wall rather than the queue's.
+        marker = read_marker(marker_path(self.log_dir, result.cell))
+        if marker is not None:
+            rc, wall = marker
+            result.rc = rc
+            result.wall_s = wall
+            # timeout(1) reports 124 for a TERM expiry and 137 when the -k
+            # escalation had to kill.
+            result.status = (Status.TIMEOUT if rc in (124, 137)
+                             else Status.OK if rc == 0 else Status.FAIL)
+            self._jobs.pop(job_id, None)
+            self._running_at.pop(job_id, None)
+            return result
         state, rc = self._state(job_id)
         if state in ("PENDING", "CONFIGURING"):
             result.status = Status.SUBMITTED
@@ -196,8 +254,10 @@ class SlurmBackend:
             return result
         result.status = _FINAL.get(state, Status.FAIL)
         result.rc = rc
-        # Queue wait is not runtime: the wall runs from the moment the job
-        # was seen running (submission only when it never was).
+        # Final in the accounting but no marker: the script never reached
+        # its last lines (a node failure, an external scancel).  Queue wait
+        # is not runtime, so the wall runs from the moment the job was seen
+        # running — submission only when it never was.
         now = time.monotonic()
         started = self._running_at.pop(
             job_id, self._submitted_at.get(job_id, now))
@@ -207,9 +267,17 @@ class SlurmBackend:
         self._jobs.pop(job_id, None)
         return result
 
-    def shutdown(self) -> None:
-        """Cancel anything still queued so an interrupted campaign leaves no
-        jobs behind."""
+    def abort(self) -> None:
+        """An explicit stop cancels what is still out — and only an explicit
+        stop: someone asked for the campaign to end, queue included."""
         for job_id in list(self._jobs):
             subprocess.run(["scancel", job_id], capture_output=True, check=False)
         self._jobs.clear()
+
+    def shutdown(self) -> None:
+        """Leave the queue alone.
+
+        The submitted jobs do not belong to this process's lifetime: each
+        writes its own outcome marker, so a campaign whose submitter died —
+        or merely finished — is completed by Slurm and reconstructed from
+        the run directory."""

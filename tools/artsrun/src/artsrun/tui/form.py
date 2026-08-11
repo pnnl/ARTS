@@ -13,7 +13,7 @@ from typing import Any
 
 @dataclass(frozen=True)
 class FieldSpec:
-    key: str                       # dotted for nested values ("slurm.budget")
+    key: str                       # dotted for nested values ("slurm.partition")
     label: str
     kind: str                      # text|int|float|bool|choice|int_list|str_list
     help: str = ""
@@ -94,15 +94,20 @@ PROFILE_FIELDS: list[FieldSpec] = [
               "let a crashing rank write a core file for post-mortem "
               "debugging, at the cost of disk on a bad run", section="flags"),
 
-    FieldSpec("slurm.budget", "node budget", "int",
-              "nodes kept in flight at once; must be >= the widest node count "
-              "or that cell can never be submitted. 1 = strictly serial",
-              example="32", optional=True, section="slurm"),
     FieldSpec("slurm.partition", "partition", "text",
-              "which set of nodes to submit to — clusters group their nodes "
-              "into partitions with their own hardware and time limits "
+              "which set of nodes the cells run on — clusters group their "
+              "nodes into partitions with their own hardware and time limits "
               "(empty = the cluster's default)",
-              example="compute", optional=True, section="slurm"),
+              example="pbatch", optional=True, section="slurm"),
+    FieldSpec("slurm.build_partition", "build partition", "text",
+              "where build work runs, when that differs from the cells — "
+              "a debug partition takes a small compile job sooner "
+              "(empty = same as partition)",
+              example="pdebug", optional=True, section="slurm"),
+    FieldSpec("slurm.build_cpus", "build cpus", "int",
+              "cpus the build job asks for — small enough to slot into any "
+              "gap in the queue, and ninja is sized to match (empty = 8)",
+              example="8", optional=True, section="slurm"),
     FieldSpec("slurm.account", "account", "text",
               "the project the node-hours are charged to, for users who "
               "belong to more than one (empty = the default account)",
@@ -239,7 +244,7 @@ def blank_values() -> dict[str, Any]:
         "provider": "", "net_interface": "", "route_table_size": "16",
         "regpool_slab_mb": "", "ports": "", "hosts": "",
         "pin": True, "core_dump": False,
-        "slurm.budget": "", "slurm.partition": "",
+        "slurm.partition": "", "slurm.build_partition": "", "slurm.build_cpus": "",
         "slurm.account": "", "slurm.qos": "", "slurm.poll_interval_s": "",
     }
 

@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from artsrun.check import Group, Verdict, close, vote
+from artsrun.check import Group, Verdict, apply_to, close, vote
 from artsrun.run.manifest import Manifest
 from artsrun.run.types import Cell, CellResult, Status, modern_key
 
@@ -139,6 +139,7 @@ class RunState:
         self.counters_cfg: Path | None = None
         self.manifest: Manifest | None = None
         self._track_pos = 0
+        self._marker_sweep_at = 0.0
         self.refresh()
 
     @property
@@ -268,6 +269,44 @@ class RunState:
             view.consensus = group.consensus if group else None
             view.verdict = _cell_verdict(result, group)
 
+    def _reconcile_markers(self) -> bool:
+        """Outcomes the jobs recorded for themselves, folded in for cells
+        nobody was watching when they ended.
+
+        A fire-and-forget campaign's submitter may be long gone by the time
+        a job finishes; its marker on the shared filesystem is the finish
+        line, and reading it here is what makes a reattached view whole.
+        Swept at a gentle pace — every outstanding cell costs one stat on a
+        filesystem that may be networked.
+        """
+        now = time.time()
+        if now - self._marker_sweep_at < 5.0:
+            return False
+        self._marker_sweep_at = now
+        from artsrun.run.slurm import marker_path, read_marker
+
+        changed = False
+        for key in self.order:
+            view = self.views[key]
+            if view.cell is None or not view.active:
+                continue
+            marker = read_marker(marker_path(self.log_dir, view.cell))
+            if marker is None:
+                continue
+            rc, wall = marker
+            status = (Status.TIMEOUT if rc in (124, 137)
+                      else Status.OK if rc == 0 else Status.FAIL)
+            result = CellResult(cell=view.cell, status=status, rc=rc,
+                                wall_s=wall, log_path=view.log_path)
+            apply_to(result)
+            view.status = result.status
+            view.rc = rc
+            view.wall_s = wall
+            view.scalar = result.scalar
+            view.note = result.note or view.note
+            changed = True
+        return changed
+
     # -- the one entry point ------------------------------------------------
     def refresh(self) -> bool:
         """Fold in whatever the disk has gained; True if anything changed."""
@@ -275,9 +314,11 @@ class RunState:
         events = self._new_events()
         for row in events:
             self._apply(row)
-        if any(row.get("event") in ("finished", "skipped") for row in events):
+        reconciled = self._reconcile_markers()
+        if reconciled or any(row.get("event") in ("finished", "skipped")
+                             for row in events):
             self._revote()
-        return changed or bool(events)
+        return changed or reconciled or bool(events)
 
     # -- summaries ---------------------------------------------------------
     def counts(self) -> dict[str, int]:

@@ -423,18 +423,39 @@ def watch_cmd(
 
 @app.command("report")
 def report_cmd(run: str = typer.Argument(None, help="run id (default: latest)")) -> None:
-    """Reprint a finished campaign's summary."""
+    """Print a campaign's summary, rebuilding it from the run directory
+    when the campaign outlived its submitter."""
     root = logs_root()
     if run:
         run_dir = root / run
+        if not run_dir.is_dir():
+            _fail(f"no run directory {run_dir}")
     else:
-        candidates = sorted(p for p in root.glob("*") if (p / "summary.txt").is_file())
+        candidates = sorted(p for p in root.glob("*")
+                            if (p / "selection.yaml").is_file())
         if not candidates:
-            _fail(f"no completed runs under {root}")
+            _fail(f"no runs under {root}")
         run_dir = candidates[-1]
+
     summary = run_dir / "summary.txt"
-    if not summary.is_file():
-        _fail(f"no summary in {run_dir}")
+    track = run_dir / "track.jsonl"
+    # The summary written at a campaign's end is definitive only while
+    # nothing happened after it; fire-and-forget jobs finish on their own
+    # schedule, so a stale or absent summary is recomputed from the disk.
+    stale = (not summary.is_file()
+             or (track.is_file()
+                 and track.stat().st_mtime > summary.stat().st_mtime))
+    if stale:
+        from artsrun.campaign import reconcile
+
+        outcome = reconcile(run_dir)
+        if outcome is None and not summary.is_file():
+            _fail(f"{run_dir} has no manifest to reconcile from and no "
+                  "summary")
+        if outcome is not None:
+            console.print(outcome["summary"])
+            console.print(f"\nrun directory: {run_dir}")
+            return
     console.print(summary.read_text())
     console.print(f"\nrun directory: {run_dir}")
 
@@ -657,7 +678,7 @@ def profile_edit(name: str) -> None:
 def profile_set(
     name: str,
     assignments: list[str] = typer.Argument(
-        ..., help="key=value, e.g. workers=31 launcher=slurm slurm.budget=16"
+        ..., help="key=value, e.g. workers=31 launcher=slurm slurm.partition=pbatch"
     ),
 ) -> None:
     """Change fields of a profile without opening an editor."""

@@ -9,6 +9,11 @@ which packs the same budget more tightly.
 A budget of one node makes the campaign strictly serial, so no separate serial
 mode exists; it also makes that ordering pointless, and there the queue runs
 narrowest first instead so the cheapest evidence arrives first.
+
+A backend backed by a real scheduler declares an unbounded capacity: metering
+Slurm's queue from here would only duplicate, badly, the thing Slurm is for.
+Admission then degenerates to submitting everything at once, and this loop's
+remaining job is to watch the outcomes come back.
 """
 
 from __future__ import annotations

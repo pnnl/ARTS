@@ -170,22 +170,17 @@ def test_remote_profile_requires_ports():
         )
 
 
-def test_slurm_budget_below_the_widest_cell_is_refused():
-    # A cell occupies its whole node count at once, so a smaller budget never
-    # admits the widest one — it would sit in the queue forever.
-    with pytest.raises(ValidationError, match="below the widest node count"):
-        Profile.model_validate(_local(
-            launcher="slurm", nodes=[4, 8], ports=[25000],
-            slurm={"budget": 4},
-        ))
-
-
-def test_a_budget_equal_to_the_widest_cell_is_enough():
+def test_slurm_needs_no_budget_and_defaults_its_build_slot():
+    # Scheduling the queue is Slurm's whole purpose: every cell is submitted
+    # up front, so a profile carries no admission budget — only where the
+    # cells and the build work go, and how wide the build slot is.
     profile = Profile.model_validate(_local(
         launcher="slurm", nodes=[1, 2, 4, 8], ports=[25000],
-        slurm={"budget": 8},
+        slurm={"partition": "pbatch", "build_partition": "pdebug"},
     ))
-    assert profile.slurm.budget == profile.max_nodes
+    assert profile.slurm.partition == "pbatch"
+    assert profile.slurm.build_partition == "pdebug"
+    assert profile.slurm.build_cpus == 8
 
 
 # --- benchset -------------------------------------------------------------
@@ -269,14 +264,14 @@ def test_a_remote_port_list_must_match_the_connection_count():
     with pytest.raises(ValidationError, match="must name exactly that many"):
         Profile.model_validate(_local(
             launcher="slurm", ports=[25000], port_count=2,
-            slurm={"budget": 2},
+            slurm={},
         ))
 
 
 def test_a_matching_port_list_is_accepted():
     profile = Profile.model_validate(_local(
         launcher="slurm", ports=[25000, 25001], port_count=2,
-        slurm={"budget": 2},
+        slurm={},
     ))
     assert len(profile.ports) == profile.port_count
 
@@ -424,6 +419,7 @@ def test_a_continuation_carries_the_earlier_results_into_the_report(tmp_path):
         def __init__(self, key):
             self.key = key
             self.log_name = f"{key}.log"
+            self.slug = key
 
     cells = [FakeCell("a"), FakeCell("b"), FakeCell("c")]
     _track(tmp_path, [
@@ -445,6 +441,7 @@ def test_a_later_attempt_supersedes_the_earlier_one(tmp_path):
         def __init__(self, key):
             self.key = key
             self.log_name = f"{key}.log"
+            self.slug = key
 
     _track(tmp_path, [
         {"event": "finished", "cell": "a", "status": "fail", "rc": 1},

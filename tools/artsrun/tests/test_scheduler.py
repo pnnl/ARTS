@@ -119,15 +119,18 @@ def test_a_slurm_job_asks_for_the_width_it_will_use(tmp_path):
     profile = Profile.model_validate({
         "name": "t", "launcher": "slurm", "nodes": [1, 2],
         "workers": 63, "progress": 1, "ports": [25000],
-        "slurm": {"budget": 2},
+        "slurm": {},
     })
     cell = _cell(2)
     assert profile.threads_per_node == 64
     argv = sbatch_argv(cell, profile, tmp_path / "cell.log")
     assert "--cpus-per-task=64" in argv
-    script = job_script(cell, profile)
+    script = job_script(cell, profile, tmp_path / "cell.rc")
     assert "--ntasks-per-node=1" in script
     assert f"-N {cell.nodes}" in script
+    # The job records its own outcome: the submitter may be gone by then.
+    assert str(tmp_path / "cell.rc") in script
+    assert ".tmp" in script  # written aside, then moved — never half a marker
 
 
 def test_a_synchronous_backend_announces_a_start_through_notify(tmp_path):
@@ -199,23 +202,82 @@ def test_a_draining_job_is_reported_as_ending_not_running(tmp_path):
     assert events == ["submitted", "running", "ending", "finished"]
 
 
+def test_a_marker_is_the_authority_on_how_a_job_ended(tmp_path):
+    # The job records its own outcome; the poll believes the marker without
+    # asking the queue, so a dead controller cannot hide a finished cell.
+    from artsrun.model.profile import Profile
+    from artsrun.run.slurm import SlurmBackend
+
+    profile = Profile.model_validate({
+        "name": "t", "launcher": "slurm", "nodes": [1, 2],
+        "workers": 2, "progress": 1, "ports": [25000], "slurm": {},
+    })
+    backend = SlurmBackend(profile, tmp_path)
+    cell = _cell(2)
+    (tmp_path / f"{cell.slug}.rc").write_text("124 10.0 70.5\n")
+    result = CellResult(cell=cell, status=Status.SUBMITTED,
+                        extra={"job_id": "9"})
+    updated = backend.poll(result)
+    assert updated.status is Status.TIMEOUT
+    assert updated.rc == 124
+    assert updated.wall_s == 60.5
+
+
+def test_resume_never_resubmits_a_job_the_queue_still_holds(tmp_path, monkeypatch):
+    import json
+
+    from artsrun import campaign as campaign_mod
+
+    cells = [_cell(1, "a"), _cell(1, "b")]
+    rows = [
+        {"t": 1.0, "event": "submitted", "cell": cells[0].key,
+         "status": "submitted", "extra": {"job_id": "11"}},
+        {"t": 1.0, "event": "submitted", "cell": cells[1].key,
+         "status": "submitted", "extra": {"job_id": "12"}},
+    ]
+    (tmp_path / "track.jsonl").write_text(
+        "".join(json.dumps(r) + "\n" for r in rows))
+    monkeypatch.setattr("artsrun.run.slurm.alive_jobs",
+                        lambda ids: {"12"})
+    still = campaign_mod.queued_cells(tmp_path, cells)
+    assert still == {cells[1].key}
+
+
+def test_recorded_results_collect_markers_the_track_never_saw(tmp_path):
+    # The continuation and the after-the-fact report both read this: a job
+    # that finished with no process watching left only its marker behind.
+    from artsrun.campaign import recorded_results
+
+    cell = _cell(1)
+    (tmp_path / "cells").mkdir()
+    (tmp_path / "cells" / f"{cell.slug}.rc").write_text("0 5.0 8.5\n")
+    out = recorded_results(tmp_path, [cell])
+    assert len(out) == 1
+    assert out[0].status is Status.OK
+    assert out[0].wall_s == 3.5
+
+
 def test_build_work_on_slurm_rides_a_small_job_not_a_node():
     # The login node is not where a configure and a full build belong, but a
     # compile is not a measurement either: it asks for a few cpus it can get
     # anywhere in the queue, never an exclusive node.
     from artsrun.model.profile import Profile
-    from artsrun.run.slurm import BUILD_CPUS, srun_build_prefix
+    from artsrun.run.slurm import srun_build_prefix
 
     profile = Profile.model_validate({
         "name": "t", "launcher": "slurm", "nodes": [1, 2],
         "workers": 63, "progress": 1, "ports": [25000],
-        "slurm": {"budget": 2, "partition": "pbatch"},
+        "slurm": {"partition": "pbatch", "build_partition": "pdebug"},
     })
     prefix = srun_build_prefix(profile)
     assert prefix[:3] == ["srun", "-n", "1"]
     assert "--exclusive" not in prefix
-    assert f"--cpus-per-task={BUILD_CPUS}" in prefix
-    assert "--partition=pbatch" in prefix
+    assert "--cpus-per-task=8" in prefix        # the default build slot
+    assert "--partition=pdebug" in prefix       # build queues elsewhere
+
+    wider = profile.model_copy(deep=True)
+    wider.slurm.build_cpus = 16
+    assert "--cpus-per-task=16" in srun_build_prefix(wider)
 
 
 def test_local_submit_announces_pid_and_logs_the_command(tmp_path):

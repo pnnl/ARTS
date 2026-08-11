@@ -27,15 +27,21 @@ class SshSettings(BaseModel):
 
 
 class SlurmSettings(BaseModel):
-    """Submission parameters and the node budget the scheduler works against.
+    """Submission parameters.
 
-    Each cell is its own exclusive job, so a runtime only ever sees the nodes
-    of its own allocation.  `budget` caps the nodes this campaign keeps in
-    flight at once; setting it to 1 makes the campaign strictly serial.
+    Each cell is its own exclusive job, submitted up front — scheduling the
+    queue is Slurm's whole purpose, so no budget of ours meters it, and the
+    campaign survives the submitting login node because every job records
+    its own outcome.
     """
 
-    budget: int = Field(ge=1)
     partition: str | None = None
+    # Build work may queue elsewhere than the cells: a debug partition takes
+    # a small compile job sooner than the batch partition takes a node.
+    build_partition: str | None = None
+    # A compile is not a measurement — it asks for a handful of cpus it can
+    # get anywhere in the queue, never an exclusive node.
+    build_cpus: int = Field(default=8, ge=1)
     account: str | None = None
     qos: str | None = None
     extra_sbatch: list[str] = Field(default_factory=list)
@@ -118,13 +124,6 @@ class Profile(BaseModel):
                 )
         if self.launcher is Launcher.SLURM and self.slurm is None:
             raise ValueError("launcher=slurm requires a slurm section")
-        if self.slurm and self.slurm.budget < self.max_nodes:
-            # A cell occupies its whole node count at once, so a budget below
-            # the widest one never admits that cell at all.
-            raise ValueError(
-                f"slurm.budget={self.slurm.budget} is below the widest node "
-                f"count ({self.max_nodes}); that cell could never be submitted"
-            )
         if self.provider == "verbs":
             # The runtime requires RDM endpoints; the verbs core provider
             # offers only connection-oriented MSG endpoints, so RDM exists

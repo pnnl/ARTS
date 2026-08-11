@@ -32,11 +32,12 @@ def describe_command(cell: Cell, profile: Profile, log_path: Path) -> dict:
     it carries — and both are part of what "the command" means there.
     """
     if profile.launcher is Launcher.SLURM:
-        from artsrun.run.slurm import job_script, sbatch_argv
+        from artsrun.run.slurm import job_script, marker_path, sbatch_argv
 
         return {
             "command": render(sbatch_argv(cell, profile, log_path)),
-            "script": job_script(cell, profile),
+            "script": job_script(cell, profile,
+                                 marker_path(log_path.parent, cell)),
         }
     return {
         "command": render(with_timeout(build_command(cell, profile),

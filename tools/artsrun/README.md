@@ -53,7 +53,7 @@ artsrun plane                            # the configuration plane
 artsrun apps -b paper-main               # the catalog, with each app's versions
 artsrun profile list | show X | validate | fields
 artsrun profile new junction2 --from junction   # copy, then $EDITOR
-artsrun profile set junction2 workers=31 slurm.budget=16
+artsrun profile set junction2 workers=31 slurm.partition=pbatch
 artsrun benchset list | show X | new Y --from X | edit Y
 artsrun benchset set paper-main nqueens --args "12 4" --versions asborn,optimized
 artsrun config render -p bentley -n 4    # inspect a rendered configuration
@@ -101,9 +101,9 @@ the same view to a running (or finished) campaign from any terminal; a
 again without touching the run.
 
 The **Profile** screen edits the settings themselves — launcher, workers and
-progress threads, provider, ports, hosts, Slurm budget — and saves under the
-same name or a new one; an invalid combination reports the one thing to fix
-and writes nothing. Node counts sit in *Run shape* as the list itself: `✕` removes one, the box
+progress threads, provider, ports, hosts, Slurm partitions — and saves under
+the same name or a new one; an invalid combination reports the one thing to
+fix and writes nothing. Node counts sit in *Run shape* as the list itself: `✕` removes one, the box
 at the end adds one. Removing changes the machine's shape (Save writes the
 list); unchecking changes only this campaign, so narrowing one run costs
 nothing and needs no save.
@@ -114,9 +114,20 @@ only the remote ones name the ports, and then the list must hold exactly that
 many. A local run's ranks share a machine, so the runtime claims its own block
 of `node_count × connections` instead.
 
-Both remote launchers declare how many nodes they may use, and both refuse a
-budget below the widest node count — over ssh the hosts must number exactly
-the budget, under Slurm the budget caps what is in flight at once.
+An ssh profile declares how many nodes it may use and must name exactly that
+many hosts. A Slurm profile declares no budget at all: **every cell is
+submitted up front** — scheduling the queue is Slurm's whole purpose — and
+each job writes its own outcome marker on the shared filesystem as it ends.
+The submitting login node is thereby optional: if it dies with the queue
+full, nothing is lost — `artsrun watch` and `artsrun report` reconstruct
+finished cells from the markers, and `--resume` resubmits only what neither
+finished nor still sits in the queue. Only an explicit stop cancels jobs;
+a dead process leaves the queue alone. Each job's `--time` comes from the
+cell's own timeout, so the backfill scheduler can slot short jobs early;
+the in-job `timeout -k` fires first, which is what lets even a timed-out
+cell write its marker. `slurm.build_partition` (e.g. a debug partition)
+and `slurm.build_cpus` (default 8) shape where and how wide build work
+queues.
 
 Only what a campaign actually decides is a field. The width a run occupies
 follows from workers + progress, so nothing else states a core count: a local
