@@ -76,6 +76,28 @@ Standard CMake variables also apply: `CMAKE_BUILD_TYPE` (`Debug` default, or `Re
 `CMAKE_INSTALL_PREFIX` (`./install` default), `CMAKE_CUDA_ARCHITECTURES` (see `ARTS_USE_LOCAL_CUDA_ARCHITECTURES`),
 and `CMAKE_LINKER_TYPE` (cmake ≥ 3.29; e.g. `-DCMAKE_LINKER_TYPE=MOLD` to pick a faster linker like mold/lld/gold).
 
+## Running
+
+An ARTS program reads its runtime configuration from `arts.cfg` in the
+working directory; the `ARTS_CONFIG` environment variable overrides the path:
+
+```bash
+ARTS_CONFIG=configs/local/test/1n.cfg ./my_program
+```
+
+Ready-to-run localhost shapes (single-node and 2/3/4-rank multinode) live in
+`configs/local/test/`, and `configs/example.cfg` is the annotated reference
+listing every recognized key. A `launcher=local` configuration spawns all
+ranks on this machine and claims its own ports; the remote launchers (`ssh`,
+and `slurm`/`lsf`, which are auto-detected from the scheduler's environment)
+must name `ports` in the configuration. The full walk-through — writing and
+linking a program, multi-node configurations, the complete key reference —
+is in the Sphinx guides: `docs/getting_started/quickstart.rst` and
+`docs/configuration/arts_cfg.rst`.
+
+Benchmarks and experiment campaigns are driven by `artsrun` rather than run
+by hand — see `tools/artsrun/README.md`.
+
 ## Repository Layout (selected paths)
 
 - `libs/core/` – Runtime sources: task scheduler, GUID tables, datablock manager, network transports, logging.

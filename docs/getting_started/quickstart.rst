@@ -102,11 +102,23 @@ benchmark harness use — names no ports at all: the ranks share a machine and s
 cannot share a port, and the spawning rank finds a free block for all of them.
 Setting ``ports`` there is a configure error.
 
-For SLURM clusters:
+On a SLURM cluster the launcher is detected from the scheduler's
+environment — ``SLURM_PROCID``/``SLURM_NNODES`` override whatever
+``launcher`` the config names — and the geometry follows the allocation:
+node count from ``SLURM_NNODES``, the node list from the step, and the
+per-rank thread count from ``SLURM_CPUS_PER_TASK``.  Only ``ports`` must
+still come from the config, for the same reason as with ssh:
+
+.. code-block:: ini
+
+   ports=25000
 
 .. code-block:: bash
 
-   srun -N 4 -n 4 -c 16 ./hello
+   srun --ntasks-per-node=1 -N 4 -c 16 ./hello
+
+One rank per node: the runtime refuses a step that starts more tasks than
+the allocation has nodes.
 
 Next Steps
 ----------

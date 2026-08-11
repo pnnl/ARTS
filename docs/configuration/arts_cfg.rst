@@ -25,8 +25,8 @@ Threading
      - Description
    * - ``worker_threads``
      - 4
-     - Worker threads per node.  For multi-node runs the actual worker
-       count is ``worker_threads``; sender/receiver threads are separate.
+     - Worker threads per node.  The progress thread(s) that drive the
+       network are separate — see ``progress_threads`` below.
    * - ``stack_size``
      - 0
      - Thread stack size in bytes (0 = OS default).
