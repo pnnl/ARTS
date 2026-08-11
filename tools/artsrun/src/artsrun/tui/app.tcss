@@ -127,18 +127,43 @@ HeaderIcon {
 }
 
 /* --- run --------------------------------------------------------------- */
+/* Every fixed row here is a row the live table does not get: the panel is a
+   single control row (a Vertical's default height would grab half the tab),
+   and the log only appears while it is the one thing worth watching (build,
+   dry run, failure). */
+#run {
+    height: auto;
+}
+
 #run-controls {
     height: auto;
+    align: left middle;
     padding: 0 1;
 }
 
+#run-controls Button {
+    height: 1;
+    border: none;
+    min-width: 14;
+    margin-right: 2;
+}
+
+#run-controls Select {
+    width: 44;
+}
+
 #run-size {
+    width: 1fr;
     padding: 0 1;
     color: $text-muted;
 }
 
-#run-log {
+#run-view {
     height: 1fr;
+}
+
+#run-log {
+    height: 12;
     border: round $panel-darken-2;
 }
 

@@ -234,6 +234,11 @@ def run_cmd(
     ),
     dry_run: bool = typer.Option(False, "--dry-run"),
     detach: bool = typer.Option(False, "--detach"),
+    plain: bool = typer.Option(
+        False, "--plain",
+        help="line output instead of the live table (the default when "
+             "stdout is not a terminal)",
+    ),
 ) -> None:
     """Build everything selected, then run it cell by cell."""
     from artsrun.campaign import Campaign
@@ -296,12 +301,51 @@ def run_cmd(
         _detach(sys.argv)
         return
 
-    result = campaign.run(
-        on_line=lambda line: console.print(line, highlight=False, markup=False),
-        resume=bool(resume), retry_failed=retry_failed,
+    if plain or not sys.stdout.isatty():
+        result = campaign.run(
+            on_line=lambda line: console.print(line, highlight=False,
+                                               markup=False),
+            resume=bool(resume), retry_failed=retry_failed,
+        )
+        console.print(result["summary"])
+        console.print(f"\nrun directory: {result['run_dir']}")
+        return
+
+    from artsrun.tui.runview import WatchApp
+
+    watch = WatchApp(
+        campaign.run_dir, campaign=campaign,
+        runner=lambda on_line: campaign.run(
+            on_line=on_line, resume=bool(resume), retry_failed=retry_failed,
+            announce_cells=False,
+        ),
     )
-    console.print(result["summary"])
-    console.print(f"\nrun directory: {result['run_dir']}")
+    watch.run()
+    if watch.running:
+        # The view was detached; the campaign belongs to this process and
+        # keeps going, its lines now landing on the plain console.
+        console.print(
+            f"view detached; campaign continues — reattach with: "
+            f"artsrun watch {campaign.run_dir.name}"
+        )
+        watch.line_sink = lambda line: console.print(
+            line, highlight=False, markup=False)
+        watch.join()
+    if watch.error is not None:
+        _fail(str(watch.error))
+    if watch.outcome is not None:
+        # The screen already showed every result and the live consensus;
+        # the console keeps only the pointer to the written record.
+        from artsrun.check import minority_report
+        from artsrun.run.types import Status
+
+        results = watch.outcome["results"]
+        ok = sum(1 for r in results if r.status is Status.OK)
+        minority = minority_report(watch.outcome["groups"])
+        verdict = (f"{len(minority)} group(s) disagree" if minority
+                   else "consensus clean")
+        console.print(f"finished: {ok}/{len(results)} ok · {verdict}")
+    console.print(f"run directory: {campaign.run_dir}")
 
 
 def _dry_run(campaign, selection: Selection) -> None:
@@ -352,6 +396,28 @@ def _detach(argv: list[str]) -> None:
     cmd = f"setsid nohup {shlex.join(inner)} </dev/null >>{shlex.quote(str(log))} 2>&1 &"
     subprocess.run(["bash", "-c", cmd], check=False, cwd=repo_root())
     console.print(f"detached; log: {log}")
+    console.print("[dim]watch it live with: artsrun watch[/dim]")
+
+
+@app.command("watch")
+def watch_cmd(
+    run: str = typer.Argument(None, help="run id (default: latest)"),
+) -> None:
+    """Attach a live view to a campaign — running, detached, or finished."""
+    root = logs_root()
+    if run:
+        run_dir = root / run
+        if not run_dir.is_dir():
+            _fail(f"no run directory {run_dir}")
+    else:
+        from artsrun.watch.state import latest_run_dir
+
+        run_dir = latest_run_dir(root)
+        if run_dir is None:
+            _fail(f"no runs under {root}")
+    from artsrun.tui.runview import WatchApp
+
+    WatchApp(run_dir).run()
 
 
 @app.command("report")

@@ -114,6 +114,17 @@ def test_an_empty_surface_blocks_the_campaign():
     assert drive(check) is None
 
 
+def test_the_run_log_stays_out_of_the_way_until_it_matters():
+    # The bottom box costs the table twelve rows, so it exists only while a
+    # build or a failure is the thing to watch.
+    from textual.widgets import RichLog
+
+    async def check(app, pilot):
+        return app.query_one("#run-log", RichLog).display
+
+    assert drive(check) is False
+
+
 def test_number_keys_switch_surfaces():
     async def check(app, pilot):
         from textual.widgets import TabbedContent

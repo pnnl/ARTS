@@ -40,6 +40,8 @@ artsrun benchset set paper-main nqueens --args "12 4" --versions asborn,hinted
 artsrun config render -p bentley -n 4    # inspect a rendered configuration
 artsrun run -p bentley -b paper-main --dry-run
 artsrun run -p junction -b paper-main --detach
+artsrun watch                             # live view of the latest campaign
+artsrun watch 20260811-220547             # …or of a named one
 artsrun report                            # reprint the latest summary
 
 artsrun counters --set perf --enabled     # what a counter set turns on
@@ -47,8 +49,37 @@ artsrun counterset list | show X | render X
 artsrun run -p bentley -b paper-main -c perf
 ```
 
-On the screens: `1`–`4` switch surfaces, `space` toggles, `a` is the shared
-all/none control for whichever surface is showing, `r` runs, `d` dry-runs.
+On the screens: `1`–`4` switch surfaces, `5` is the run tab, `space`
+toggles, `a` is the shared all/none control for whichever surface is
+showing, `r` runs, `d` dry-runs. The run tab is the live table with a
+single control row above it; build output appears below only while there is
+nothing else to watch and folds away when the table takes over (`l` brings
+it back).
+
+Running on a terminal opens the **live view** — one table row per cell (app,
+version, runtime, coherence axes, node count, repeat), recolored as cells
+queue, run, finish, and vote; `--plain` keeps the old line output. A click
+(or `enter`) opens the cell: the exact command it runs under (for Slurm, the
+sbatch call and the batch script), its environment, return code, a following
+tail of its log (stderr is merged into stdout; stdin is `/dev/null`), and
+buttons for the configurations behind the run — the rendered runtime
+configuration the cell was handed and, when counters are on, the counter
+file the build was configured against. While the pane is open it follows the
+cursor; `esc` closes it.
+Consensus is re-voted as results land, so a configuration that strays turns
+its row `DIFF` the moment it disagrees — not at the end of the campaign.
+The `scaling` button on the summary row (or `g`) swaps the table for the
+**strong-scaling reading** of this run — scaling belongs to the campaign it
+was measured in, so it lives on the same surface: best wall per node
+count for every (application, version, configuration), each wider cell
+carrying its speedup against the row's smallest measured node count and
+coloured by parallel efficiency — an anti-scaling row turns red the moment
+its wider run comes back slower. Because the screen already says all of
+this, the end of a campaign prints only a one-line verdict and the path to
+`summary.txt`; the full tables still land there. `artsrun watch` attaches
+the same view to a running (or finished) campaign from any terminal; a
+`--detach`ed campaign is watched the same way, and `d` detaches the view
+again without touching the run.
 
 The **Profile** screen edits the settings themselves — launcher, workers and
 progress threads, provider, ports, hosts, Slurm budget — and saves under the
@@ -94,6 +125,14 @@ override.
 | Counter selections | `experiments/countersets/*.yaml` (untracked) |
 | Counters the runtime defines | `src/artsrun/data/counters.yaml` (committed) |
 | Campaign output | `logs/exp/<timestamp>/` |
+
+A campaign directory holds `manifest.json` (every cell with the exact command
+it runs under — written before anything runs), `track.jsonl` (events as they
+happen: submitted / started / running / finished, with the final status and
+scalar), `selection.yaml` (replayable), per-cell logs under `cells/`, and the
+end-of-run `results.csv` / `report.json` / `summary.txt`. The live view is a
+pure reader of the first four, which is why it can attach to any campaign
+from anywhere.
 
 Each application offers up to three versions: **as-born** (as
 published), **hinted** (its placement hint layer compiled in), and

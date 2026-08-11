@@ -561,7 +561,9 @@ class RunPanel(Vertical):
     def compose(self) -> ComposeResult:
         from artsrun.campaign import past_runs
 
-        yield Static("[b]Run[/b]", classes="panel-head")
+        # One row for every control: each further fixed row here is a row the
+        # live table underneath does not get.
+        unfinished = [r for r in past_runs() if r.remaining]
         with Horizontal(id="run-controls"):
             yield Button("Build and run", id="run-button", variant="primary")
             yield Button("Dry run", id="dry-button")
@@ -570,15 +572,13 @@ class RunPanel(Vertical):
             stop = Button("Stop", id="stop-button", variant="error")
             stop.display = False
             yield stop
-        unfinished = [r for r in past_runs() if r.remaining]
-        with Horizontal(id="resume-controls"):
             yield Select(
                 [(r.label, r.run_id) for r in unfinished],
                 prompt="continue a past run…", id="resume-select",
                 allow_blank=True,
             )
             yield Button("Continue", id="resume-button", disabled=True)
-        yield Static("", id="run-size")
+            yield Static("", id="run-size")
 
     def refresh_runs(self) -> None:
         """Re-read what is resumable, after a campaign changes the answer."""

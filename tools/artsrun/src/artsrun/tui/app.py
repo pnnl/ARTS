@@ -22,6 +22,7 @@ from artsrun.tui.panels import (
     BenchsetPanel, CounterPanel, LauncherChanged, NodeListChanged,
     PlanePanel, ProfilePanel, RunPanel,
 )
+from artsrun.tui.runview import RunView
 
 
 class ArtsRunApp(App):
@@ -40,11 +41,13 @@ class ArtsRunApp(App):
         ("d", "dry_run", "dry run"),
         ("s", "stop", "stop"),
         ("c", "continue", "continue"),
+        ("l", "toggle_log", "log"),
         ("q", "quit", "quit"),
     ]
 
     def __init__(self, profile: str | None = None, benchset: str | None = None):
         super().__init__()
+        self._log_pinned = False
         self.plane = load_plane()
         self.catalog = load_catalog()
         profiles = store.list_profiles()
@@ -79,11 +82,40 @@ class ArtsRunApp(App):
             with TabPane("Run", id="tab-run"):
                 with Vertical():
                     yield RunPanel(id="run")
-                    yield RichLog(id="run-log", wrap=False, markup=False)
+                    yield RunView(id="run-view")
+                    # Shown only while it is the one thing worth watching —
+                    # the build, a dry run, a failure; the table's own space
+                    # the rest of the time.
+                    log = RichLog(id="run-log", wrap=False, markup=False)
+                    log.display = False
+                    yield log
         yield Footer()
 
     def on_mount(self) -> None:
         self._refresh_size()
+        # The Run tab shows the latest campaign until this session starts its
+        # own — the view is a pure reader, so a finished or detached run is
+        # as watchable as a live one.
+        from artsrun.paths import logs_root
+        from artsrun.watch.state import latest_run_dir
+
+        latest = latest_run_dir(logs_root())
+        if latest is not None:
+            self.query_one("#run-view", RunView).attach(latest)
+
+    # -- the run log: visible only while it is the thing to watch ----------
+    def _show_log(self) -> None:
+        self.query_one("#run-log", RichLog).display = True
+
+    def action_toggle_log(self) -> None:
+        log = self.query_one("#run-log", RichLog)
+        log.display = not log.display
+        self._log_pinned = log.display
+
+    @on(RunView.ManifestLoaded)
+    def _manifest_loaded(self) -> None:
+        if not self._log_pinned:
+            self.query_one("#run-log", RichLog).display = False
 
     # -- selection ---------------------------------------------------------
     def _missing(self) -> list[str]:
@@ -283,6 +315,7 @@ class ArtsRunApp(App):
         if selection is None:
             return
         self.query_one(TabbedContent).active = "tab-run"
+        self._show_log()
         self._dry_run(selection)
 
     def action_continue(self) -> None:
@@ -307,6 +340,7 @@ class ArtsRunApp(App):
             self.notify(str(exc), severity="error")
             return
         self.query_one(TabbedContent).active = "tab-run"
+        self._show_log()
         self._log(f"continuing {run_dir.name}")
         self._set_running(True)
         self._run_campaign(selection, run_dir=run_dir)
@@ -339,6 +373,7 @@ class ArtsRunApp(App):
         if selection is None:
             return
         self.query_one(TabbedContent).active = "tab-run"
+        self._show_log()
         self._set_running(True)
         self._run_campaign(selection)
 
@@ -403,14 +438,35 @@ class ArtsRunApp(App):
                 counterset=counters, run_dir=run_dir,
             )
             self._campaign = campaign
-            result = campaign.run(on_line=self._log, resume=run_dir is not None)
-            self._log("")
-            for line in result["summary"].splitlines():
-                self._log(line)
-            self._log(f"run directory: {result['run_dir']}")
+            self.call_from_thread(
+                lambda: self.query_one("#run-view", RunView).attach(
+                    campaign.run_dir)
+            )
+            result = campaign.run(on_line=self._log, resume=run_dir is not None,
+                                  announce_cells=False)
+            # The table above already carries every result and the live
+            # consensus; the log gets only what the table does not say.
+            from artsrun.check import minority_report
+
+            minority = minority_report(result["groups"])
+            verdict = (f"{len(minority)} group(s) disagree"
+                       if minority else "consensus clean")
+            self._log(f"finished — {verdict}")
+            self._log(f"summary: {result['run_dir']}/summary.txt")
+            self.call_from_thread(
+                lambda: self.notify(
+                    f"finished — {verdict}",
+                    severity="warning" if minority else "information",
+                )
+            )
         except Exception as exc:
             # Several of these carry the command that resolves them, over more
-            # than one line; collapsing them to one would cut it off.
+            # than one line; collapsing them to one would cut it off.  A
+            # folded log must not swallow them.
+            try:
+                self.call_from_thread(self._show_log)
+            except RuntimeError:
+                pass
             self._log("campaign failed:")
             for line in str(exc).splitlines():
                 self._log(f"  {line}")
