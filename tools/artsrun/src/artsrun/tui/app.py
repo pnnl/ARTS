@@ -317,6 +317,14 @@ class ArtsRunApp(App):
     def action_show(self, tab: str) -> None:
         self.query_one(TabbedContent).active = tab
 
+    def action_show_app_doc(self, name: str) -> None:
+        entry = self.catalog.apps.get(name)
+        if entry is None:
+            return
+        from artsrun.tui.docview import AppDocScreen
+
+        self.push_screen(AppDocScreen(entry))
+
     def action_toggle_all(self) -> None:
         """One control for both directions, on whichever surface is showing."""
         active = self.query_one(TabbedContent).active

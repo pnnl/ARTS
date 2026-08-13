@@ -452,7 +452,12 @@ class BenchsetPanel(VerticalScroll):
             enabled = self.benchset.is_enabled(app)
             picked = self.benchset.versions_for(app) if enabled else []
             with Horizontal(classes="bench-row"):
-                yield Label(app.name, classes="bench-name")
+                # The name opens the application's structural document —
+                # what the parameters mean and how they size the task graph.
+                yield Label(
+                    f"[@click=app.show_app_doc({app.name!r})]{app.name}[/]",
+                    classes="bench-name",
+                )
                 for version in (Version.ASBORN, Version.OPTIMIZED, Version.RESTRUCTURED):
                     if version not in app.own_versions:
                         yield Static("·", classes="bench-cell blank")

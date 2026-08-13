@@ -126,6 +126,28 @@ HeaderIcon {
     text-align: center;
 }
 
+/* --- application document ----------------------------------------------- */
+AppDocScreen {
+    align: center middle;
+    background: $background 60%;
+}
+
+#doc-box {
+    width: 90%;
+    height: 90%;
+    background: $surface;
+    border: round $primary;
+}
+
+#doc-head {
+    padding: 0 1;
+    background: $panel;
+}
+
+#doc-body {
+    padding: 0 1;
+}
+
 /* --- run --------------------------------------------------------------- */
 /* Every fixed row here is a row the live table does not get: the panel is a
    single control row (a Vertical's default height would grab half the tab),

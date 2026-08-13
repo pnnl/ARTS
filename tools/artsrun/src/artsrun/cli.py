@@ -154,11 +154,25 @@ def show_plane() -> None:
 
 @app.command("apps")
 def show_apps(
+    name: str = typer.Argument(None,
+                               help="One application: print its structural "
+                                    "document instead of the catalog table."),
     benchset: str = typer.Option(None, "--benchset", "-b"),
     enabled_only: bool = typer.Option(False, "--enabled"),
 ) -> None:
-    """Print the application catalog with its versions."""
+    """Print the application catalog, or one application's document."""
     catalog = load_catalog()
+    if name is not None:
+        if name not in catalog.apps:
+            close = [n for n in catalog.apps if name.lower() in n.lower()]
+            hint = f" — did you mean {', '.join(sorted(close))}?" if close else ""
+            _fail(f"unknown application '{name}'{hint}")
+        from rich.markdown import Markdown
+
+        from artsrun.docs import document
+
+        console.print(Markdown(document(catalog.apps[name])))
+        return
     bs = store.load_benchset(benchset) if benchset else store.default_benchset()
     table = Table(title="Applications", expand=False)
     table.add_column("app", no_wrap=True)
