@@ -270,27 +270,29 @@ if(EXISTS "${HWLOC_INSTALL_DIR}/lib/pkgconfig/hwloc.pc")
     endif()
 endif()
 
-# Parse hwloc private link dependencies from pkg-config (e.g. -ludev)
-set(HWLOC_PRIVATE_LIBS "")
+# The static archive's own private dependencies, as pkg-config records them.
+# Every discovery backend that would need a third-party library is disabled in
+# the configure flags above, so the set can name toolchain libraries only —
+# and those every consumer already links.  A name outside that set would have
+# to be resolved against the build host, which is precisely the dependence on
+# what a machine happens to carry that vendoring exists to remove, so it is a
+# configure error rather than a silent link item.
+set(HWLOC_TOOLCHAIN_PRIVATE_LIBS pthread m rt dl atomic c)
 set(HWLOC_PC_FILE "${HWLOC_INSTALL_DIR}/lib/pkgconfig/hwloc.pc")
 if(EXISTS "${HWLOC_PC_FILE}")
     file(READ "${HWLOC_PC_FILE}" _hwloc_pc)
     string(REGEX MATCH "Libs\\.private:([^\n]*)" _hwloc_privlibs "${_hwloc_pc}")
     if(_hwloc_privlibs)
-        set(_privlibs "${CMAKE_MATCH_1}")
-        string(STRIP "${_privlibs}" _privlibs)
-        # Extract -l flags, skip -lpthread (already linked via Threads::Threads)
-        string(REGEX MATCHALL "-l[^ ]+" _lib_flags "${_privlibs}")
+        string(REGEX MATCHALL "-l[^ ]+" _lib_flags "${CMAKE_MATCH_1}")
         foreach(_flag ${_lib_flags})
             string(REGEX REPLACE "^-l" "" _libname "${_flag}")
-            if(NOT _libname STREQUAL "pthread" AND NOT _libname STREQUAL "m")
-                find_library(_hwloc_dep_${_libname} NAMES ${_libname})
-                if(_hwloc_dep_${_libname})
-                    list(APPEND HWLOC_PRIVATE_LIBS ${_hwloc_dep_${_libname}})
-                    message(STATUS "  hwloc transitive dep: ${_libname} -> ${_hwloc_dep_${_libname}}")
-                else()
-                    message(STATUS "  hwloc transitive dep: ${_libname} (not found, skipping)")
-                endif()
+            if(NOT _libname IN_LIST HWLOC_TOOLCHAIN_PRIVATE_LIBS)
+                message(FATAL_ERROR
+                    "The vendored hwloc records a private dependency on "
+                    "'${_libname}', which is neither a toolchain library nor "
+                    "vendored here.  Linking it would resolve against the build "
+                    "host.  Disable the hwloc backend that pulls it in, or vendor "
+                    "the library and give it an imported target.")
             endif()
         endforeach()
     endif()
@@ -392,7 +394,6 @@ add_library(arts::hwloc ALIAS arts_hwloc)
 
 # Export variables to parent scope
 set(HWLOC_LIBRARIES ${HWLOC_LIBRARIES} PARENT_SCOPE)
-set(HWLOC_PRIVATE_LIBS ${HWLOC_PRIVATE_LIBS} PARENT_SCOPE)
 set(HWLOC_INCLUDE_DIRS ${HWLOC_INCLUDE_DIRS} PARENT_SCOPE)
 set(HWLOC_FOUND ${HWLOC_FOUND} PARENT_SCOPE)
 set(HWLOC_VERSION ${HWLOC_VERSION} PARENT_SCOPE)

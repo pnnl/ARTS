@@ -325,24 +325,35 @@ add_baseline_app(NAME hpcg_mpi_omp
 # SAR OpenMP baseline (requires crlibm from OCR libs)
 # ==========================================================================
 
-# SAR OMP needs both crlibm (extracted by the benchmarks/apps SAR tier into
-# ${CMAKE_BINARY_DIR}/benchmarks/apps/crlibm) AND a single-precision FFTW3
-# (fftwf_*) implementation.  crlibm is now reachable, but the only in-repo
-# fftw3.h/fftw3.c is an OCR-runtime-coupled shim (it #includes ocr.h), so it
-# cannot back a native OpenMP executable, and no standalone FFTW3 dev header
-# is installed on this box.  Skip until a real FFTW3 dev package is available.
+# SAR OMP needs crlibm (extracted by the benchmarks/apps SAR tier into
+# ${CMAKE_BINARY_DIR}/benchmarks/apps/crlibm) and a single-precision FFT under
+# the fftwf_* names its common.h declares.  The application tree carries that
+# implementation itself: the SAR datagen sources hold a standalone fftwf_*
+# shim, free of any runtime coupling (the OCR ports use their own copy, which
+# does depend on the OCR API and so cannot back a native OpenMP binary).
+# Compiling that shim in is what keeps this baseline reproducible — resolving
+# fftwf_* against a host FFTW3 would make both the existence of this target and
+# the numerics it produces a property of the build machine, and would compare
+# the OpenMP baseline against OCR ports running a different transform.
 set(CRLIBM_GEN_DIR "${CMAKE_BINARY_DIR}/benchmarks/apps/crlibm")
-if(EXISTS "/usr/include/fftw3.h" AND EXISTS "${CRLIBM_GEN_DIR}/crlibm.h" AND TARGET ocr_lib_crlibm)
+set(SAR_FFT_SHIM_DIR "${BASELINE_APPS_ROOT}/sar/datagen-tsml/src")
+if(EXISTS "${CRLIBM_GEN_DIR}/crlibm.h" AND TARGET ocr_lib_crlibm)
     add_baseline_app(NAME sar_omp
         DIR sar/omp/src
         SOURCES main.c common.c ccd.c cfar.c sinc.c sinc_interp.c backproj.c
                 downsample.c registration.c digspot.c inputs.c image_formation.c
         NEEDS_OMP
-        EXTRA_INCLUDES "${CRLIBM_GEN_DIR}"
-        EXTRA_LINK_LIBS m ocr_lib_crlibm fftw3f
+        EXTRA_INCLUDES "${CRLIBM_GEN_DIR}" "${SAR_FFT_SHIM_DIR}"
+        EXTRA_LINK_LIBS m ocr_lib_crlibm
     )
+    # Added after the fact because the helper resolves SOURCES against the
+    # application's own source directory, and this one lives elsewhere in the
+    # same application tree.
+    if(TARGET sar_omp)
+        target_sources(sar_omp PRIVATE "${SAR_FFT_SHIM_DIR}/fftw3.c")
+    endif()
 else()
-    message(STATUS "Skipping sar_omp: standalone FFTW3 (fftw3.h) not available")
+    message(STATUS "Skipping sar_omp: crlibm not available")
 endif()
 
 # ==========================================================================

@@ -204,7 +204,6 @@ if(ARTS_BUILD_STATIC)
         ${M_LIBRARY}
         ${ANL_LIBRARY}
         $<BUILD_INTERFACE:${HWLOC_LIBRARIES}>
-        ${HWLOC_PRIVATE_LIBS}
     )
 
     if(ARTS_ATOMIC_LIBRARY)
@@ -275,7 +274,6 @@ if(ARTS_BUILD_SHARED)
         ${M_LIBRARY}
         ${ANL_LIBRARY}
         $<BUILD_INTERFACE:${HWLOC_LIBRARIES}>
-        ${HWLOC_PRIVATE_LIBS}
     )
 
     # Hide hwloc symbols from shared library exports (GNU ld/lld)
@@ -525,7 +523,7 @@ if(ARTS_BUILD_BENCHMARKS AND ARTS_BUILD_STATIC)
         target_link_libraries(arts_static_${suffix} PUBLIC arts_interface)
         target_link_libraries(arts_static_${suffix} PRIVATE
             Threads::Threads ${RT_LIBRARY} ${M_LIBRARY} ${ANL_LIBRARY}
-            $<BUILD_INTERFACE:${HWLOC_LIBRARIES}> ${HWLOC_PRIVATE_LIBS})
+            $<BUILD_INTERFACE:${HWLOC_LIBRARIES}>)
         if(ARTS_ATOMIC_LIBRARY)
             target_link_libraries(arts_static_${suffix} PRIVATE ${ARTS_ATOMIC_LIBRARY})
         endif()
