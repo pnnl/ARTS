@@ -49,3 +49,6 @@ third_party/ocrPNNL/
 # Editable-install metadata for tools/artsrun
 *.egg-info/
 .pytest_cache/
+# uv's project lockfile — artsrun installs via requirements.txt / editable
+# pip, so a stray `uv run` must not leave a lock behind as tracked noise
+uv.lock
