@@ -151,6 +151,10 @@ set(HWLOC_DIST_VERSION "2.13.0")
 set(HWLOC_DIST_URL "https://download.open-mpi.org/release/hwloc/v2.13/hwloc-${HWLOC_DIST_VERSION}.tar.bz2")
 set(HWLOC_DIST_SHA256 "52e936afb6ebd80f171f763fcf14f7b1f5ce98b125af5dd2f328b873b1fd0dab")
 
+set(NUMACTL_DIST_VERSION "2.0.19")
+set(NUMACTL_DIST_URL "https://github.com/numactl/numactl/releases/download/v${NUMACTL_DIST_VERSION}/numactl-${NUMACTL_DIST_VERSION}.tar.gz")
+set(NUMACTL_DIST_SHA256 "f2672a0381cb59196e9c246bf8bcc43d5568bc457700a697f1a1df762b9af884")
+
 set(OFI_DIST_VERSION "2.6.0")
 set(OFI_DIST_URL "https://github.com/ofiwg/libfabric/releases/download/v${OFI_DIST_VERSION}/libfabric-${OFI_DIST_VERSION}.tar.bz2")
 set(OFI_DIST_SHA256 "1ee2ab6eb16462c0fe7a836f9df52b8f12309dfee3f3774aa93a86f521a8e8b1")
@@ -291,6 +295,100 @@ if(EXISTS "${HWLOC_PC_FILE}")
         endforeach()
     endif()
 endif()
+
+# Build libnuma from its vendored dist tarball (numactl project).  Same
+# rationale as hwloc: a header the compiler happens to find on one host is
+# a build that fails on the next, so the only numa.h and libnuma.a any
+# target may use are the ones built here.
+#
+# libnuma serves only the benchmark side -- xsocr's numa-alloc mem-platform,
+# ocr-vx through the shared OCR headers, and the xeonNumaSize app -- never
+# the ARTS runtime itself, which is also why the libarts bundle
+# (ARTS_VENDORED_ARCHIVES) excludes it.  So the whole section, including the
+# imported target those consumers link against, builds only alongside them.
+if(ARTS_BUILD_BENCHMARKS)
+    function(build_numactl)
+        arts_fetch_dist_tarball(NUMACTL_TARBALL
+            "numactl-${NUMACTL_DIST_VERSION}.tar.gz" "${NUMACTL_DIST_URL}" "${NUMACTL_DIST_SHA256}")
+
+        set(NUMACTL_SRC_DIR "${CMAKE_BINARY_DIR}/third_party/numactl-${NUMACTL_DIST_VERSION}")
+        if(NOT EXISTS "${NUMACTL_SRC_DIR}/configure")
+            message(STATUS "Extracting numactl ${NUMACTL_DIST_VERSION}")
+            file(ARCHIVE_EXTRACT INPUT "${NUMACTL_TARBALL}"
+                 DESTINATION "${CMAKE_BINARY_DIR}/third_party")
+        endif()
+
+        set(NUMACTL_BUILD_DIR "${CMAKE_BINARY_DIR}/third_party/numactl")
+        set(NUMACTL_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/numactl_install")
+        file(MAKE_DIRECTORY ${NUMACTL_BUILD_DIR})
+
+        message(STATUS "Configuring numactl with prefix: ${NUMACTL_INSTALL_DIR}")
+        execute_process(
+            COMMAND ${CMAKE_COMMAND} -E env CFLAGS=-fPIC ${NUMACTL_SRC_DIR}/configure
+                    --prefix=${NUMACTL_INSTALL_DIR}
+                    --enable-static
+                    --disable-shared
+            WORKING_DIRECTORY ${NUMACTL_BUILD_DIR}
+            RESULT_VARIABLE CONFIGURE_RESULT
+        )
+        if(NOT CONFIGURE_RESULT EQUAL 0)
+            message(FATAL_ERROR "Failed to configure numactl")
+        endif()
+
+        message(STATUS "Building numactl")
+        if(NOT CMAKE_BUILD_PARALLEL_LEVEL)
+            set(CMAKE_BUILD_PARALLEL_LEVEL 4)
+        endif()
+        execute_process(
+            COMMAND make -j${CMAKE_BUILD_PARALLEL_LEVEL}
+            WORKING_DIRECTORY ${NUMACTL_BUILD_DIR}
+            RESULT_VARIABLE BUILD_RESULT
+        )
+        if(NOT BUILD_RESULT EQUAL 0)
+            message(FATAL_ERROR "Failed to build numactl")
+        endif()
+
+        message(STATUS "Installing numactl to ${NUMACTL_INSTALL_DIR}")
+        execute_process(
+            COMMAND make install
+            WORKING_DIRECTORY ${NUMACTL_BUILD_DIR}
+            RESULT_VARIABLE INSTALL_RESULT
+        )
+        if(NOT INSTALL_RESULT EQUAL 0)
+            message(FATAL_ERROR "Failed to install numactl")
+        endif()
+    endfunction()
+
+    set(NUMACTL_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/numactl_install")
+    set(NUMA_LIB_A "${NUMACTL_INSTALL_DIR}/lib/libnuma.a")
+    set(NUMA_INCLUDE_PATH "${NUMACTL_INSTALL_DIR}/include/numa.h")
+
+    if(NOT (EXISTS ${NUMA_LIB_A} AND EXISTS ${NUMA_INCLUDE_PATH}))
+        build_numactl()
+    endif()
+
+    if(NOT EXISTS ${NUMA_LIB_A})
+        message(FATAL_ERROR "libnuma static library not found after build at ${NUMA_LIB_A}")
+    endif()
+
+    set(NUMA_INCLUDE_DIRS "${NUMACTL_INSTALL_DIR}/include")
+
+    add_library(arts_numa STATIC IMPORTED GLOBAL)
+    set_target_properties(arts_numa PROPERTIES
+        IMPORTED_LOCATION "${NUMA_LIB_A}"
+        INTERFACE_INCLUDE_DIRECTORIES "${NUMA_INCLUDE_DIRS}")
+    add_library(arts::numa ALIAS arts_numa)
+endif()
+
+# The vendored archive as a proper target: a consumer names arts::hwloc and
+# gets the vendored headers and private link deps with it, so no target can
+# reach a host hwloc through a bare -lhwloc or the compiler's default
+# include path again.
+add_library(arts_hwloc STATIC IMPORTED GLOBAL)
+set_target_properties(arts_hwloc PROPERTIES
+    IMPORTED_LOCATION "${HWLOC_LIB_A}"
+    INTERFACE_INCLUDE_DIRECTORIES "${HWLOC_INCLUDE_DIRS}")
+add_library(arts::hwloc ALIAS arts_hwloc)
 
 # Export variables to parent scope
 set(HWLOC_LIBRARIES ${HWLOC_LIBRARIES} PARENT_SCOPE)

@@ -36,6 +36,10 @@ target_include_directories(ocr_xsocr_objects PRIVATE
     ${OCR_ROOT}/src/inc
 )
 
+# The numa-alloc mem-platform includes <numa.h>; the vendored libnuma is the
+# only one any host is allowed to supply.
+target_link_libraries(ocr_xsocr_objects PRIVATE arts::numa)
+
 # Public OCR headers for consumers
 target_include_directories(ocr_xsocr_objects PUBLIC
     ${OCR_ROOT}/inc
@@ -106,11 +110,10 @@ else()
     message(WARNING "XSOCR: MPI not found — distributed comm-platform will not link")
 endif()
 
-# libnuma for distributed memory-platform (ENABLE_MEM_PLATFORM_NUMA_ALLOC)
-find_library(NUMA_LIB numa)
-if(NUMA_LIB)
-    target_link_libraries(ocr_xsocr_static PUBLIC ${NUMA_LIB})
-endif()
+# libnuma for distributed memory-platform (ENABLE_MEM_PLATFORM_NUMA_ALLOC).
+# Always the vendored build: a host libnuma found by probe would make the
+# compile and the link depend on what that machine has installed.
+target_link_libraries(ocr_xsocr_static PUBLIC arts::numa)
 
 # Check for librt (needed on older glibc)
 include(CheckLibraryExists)

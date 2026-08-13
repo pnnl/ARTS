@@ -163,8 +163,10 @@ if(ARTS_USE_CXL)
 endif()
 
 add_pure_unit_src(runtime_edt_event_layout PASS_REGEX "PASS runtime_edt_event_layout" TIMEOUT 60)
-# topology.c #includes <hwloc.h> and calls hwloc_* — link the system hwloc.
-add_pure_unit_src(topology_thread_mask SOURCES ${CMAKE_SOURCE_DIR}/libs/src/core/system/placement.c LIBS hwloc PASS_REGEX "PASS topology_thread_mask" TIMEOUT 60)
+# topology.c #includes <hwloc.h> and calls hwloc_* — the vendored hwloc
+# target carries the headers and the archive together; a host hwloc must
+# never satisfy either.
+add_pure_unit_src(topology_thread_mask SOURCES ${CMAKE_SOURCE_DIR}/libs/src/core/system/placement.c LIBS arts::hwloc PASS_REGEX "PASS topology_thread_mask" TIMEOUT 60)
 add_pure_unit_src(threads_worker_underflow PASS_REGEX "PASS threads_worker_underflow" TIMEOUT 60)
 add_pure_unit_src(signals_formatters PASS_REGEX "PASS signals_formatters" TIMEOUT 60)
 # T245 EXPOSES B132: expected to FAIL/crash under sanitizer (documents runtime bug, do not mask)

@@ -441,7 +441,7 @@ add_benchmark_app(NAME testlibs
 add_benchmark_app(NAME xeonNumaSize
     DIR examples/xeonNumaSize
     SOURCES numaHelpers.c actions.c utils.c xeonNumaSize.c myOcrHelpers.c
-    EXTRA_LINK_LIBS numa
+    EXTRA_LINK_LIBS arts::numa
 )
 
 # ==========================================================================

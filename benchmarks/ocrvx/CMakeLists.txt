@@ -49,6 +49,9 @@ target_link_libraries(ocr_vdm_mpi PUBLIC
     TBB::tbb
     TBB::tbbmalloc
     MPI::MPI_CXX
+    # This runtime reaches a header that includes <numa.h> through the shared
+    # OCR source tree; the vendored libnuma supplies it on every host.
+    arts::numa
     pthread
 )
 
