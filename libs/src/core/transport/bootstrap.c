@@ -38,8 +38,6 @@
 ******************************************************************************/
 #include "arts/transport/net.h"
 
-#ifdef ARTS_TRANSPORT_OFI
-
 #include <errno.h>
 #include <stdint.h>
 #include <string.h>
@@ -164,5 +162,3 @@ void arts_net_exchange_addresses(void) {
   ARTS_INFO("arts_net: address exchange complete (%u ranks, %u-byte addrs)", n,
             own_len);
 }
-
-#endif /* ARTS_TRANSPORT_OFI */

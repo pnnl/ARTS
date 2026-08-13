@@ -41,11 +41,11 @@
 
 /* libfabric (OFI) message transport core.
  *
- * The whole module is compiled only when the OFI transport is selected AND the
- * run is multinode (arts_global_rank_count > 1); a single-node run stays
- * entirely fabric-free (no fi_getinfo, no domain, no registration).  The
- * fabric is brought up alongside — and before — the registered slab pool so
- * the pool's slabs can register against the domain this module creates.
+ * The module is brought up only when the run is multinode
+ * (arts_global_rank_count > 1); a single-node run stays entirely fabric-free
+ * (no fi_getinfo, no domain, no registration).  Bring-up runs alongside — and
+ * before — the registered slab pool so the pool's slabs can register against
+ * the domain this module creates.
  *
  * Lifecycle (all on the main thread, before any worker/sender/receiver thread
  * is spawned):
@@ -80,16 +80,16 @@ extern "C" {
 #include "arts/transport/protocol.h"
 
 /* ==========================================================================
- * Public control-plane send API — available in EVERY build.
+ * Public control-plane send API.
  *
  * These are the sole names the rest of the runtime calls; the outbox that used
- * to back them is gone.  In a multinode OFI build a remote target rides the
- * fabric (arts_net_send_core); a self-addressed or out-of-range target is
+ * to back them is gone.  A remote target rides the fabric
+ * (arts_net_send_core); a self-addressed or out-of-range target is
  * warned-and-dropped, preserving the former outbox contract exactly (a caller
  * that wants same-rank delivery uses arts_transport_loopback_post, never these).
- * In a single-node run — or an OFI-off (single-node-only) build — every target
- * is self/out-of-range, so these degrade to the same warn-and-drop and the
- * fabric is never touched; only the self-loopback path carries traffic.
+ * In a single-node run every target is self/out-of-range, so these degrade to
+ * the same warn-and-drop and the fabric is never touched; only the
+ * self-loopback path carries traffic.
  * ========================================================================== */
 void arts_transport_send_async(int rank, char *message, unsigned int length);
 void arts_transport_send_payload_async(int rank, char *message,
@@ -115,10 +115,9 @@ bool arts_transport_loopback_drain(void);
 /* Free any self-sends still queued at teardown (quiescent: no dispatch). */
 void arts_loopback_cleanup(void);
 
-/* Control-plane sizing (meaningful in OFI builds; harmless constants
- * elsewhere).  Two multi-recv landing buffers of RECV_BUF_SIZE each catch all
- * two-sided traffic; the provider keeps landing messages into a buffer while
- * its free tail is >= MIN_MULTI_RECV, so the largest single fi_send message
+/* Control-plane sizing.  Two multi-recv landing buffers of RECV_BUF_SIZE each
+ * catch all two-sided traffic; the provider keeps landing messages into a
+ * buffer while its free tail is >= MIN_MULTI_RECV, so the largest fi_send
  * (MSG_MAX) must not exceed that headroom — the three-way invariant
  *     ARTS_NET_MSG_MAX <= ARTS_NET_MIN_MULTI_RECV <= ARTS_NET_RECV_BUF_SIZE
  * guarantees every accepted message lands whole.  This ceiling bounds ONLY
@@ -130,12 +129,11 @@ void arts_loopback_cleanup(void);
 #define ARTS_NET_MSG_MAX ARTS_NET_MIN_MULTI_RECV
 
 /* Bounded wait for accepted fabric sends to complete, so the shutdown-broadcast
- * frames leave this node before teardown.  No-op single-node / OFI-off. */
+ * frames leave this node before teardown.  No-op single-node. */
 void arts_net_drain_outstanding(unsigned int deadline_ms);
 
 /* ==========================================================================
- * Rendezvous one-sided data plane — available in EVERY build (inert stubs in
- * an OFI-off build, where no cross-rank transfer can exist).
+ * Rendezvous one-sided data plane.
  *
  * Bulk payloads move by fi_writedata PUT into a pre-registered landing buffer
  * the RECEIVER advertised: the landing side resolves a regpool pointer to a
@@ -158,8 +156,8 @@ void arts_net_drain_outstanding(unsigned int deadline_ms);
 uint64_t arts_net_rdzv_txid_next(void);
 
 /* Resolve a registered-pool pointer to its wire landing advertisement.  False
- * when `p` lies in no fabric-registered slab (single-node / OFI-off / regpool
- * without a domain) — the caller must then not attempt a rendezvous.  The
+ * when `p` lies in no fabric-registered slab (single-node / regpool without a
+ * domain) — the caller must then not attempt a rendezvous.  The
  * address semantics follow the negotiated mr_mode (virtual address under
  * FI_MR_VIRT_ADDR, else offset from the registered base). */
 bool arts_net_rdzv_local(const void *p, uint64_t len, uint64_t *raddr,
@@ -193,8 +191,6 @@ void arts_transport_send_pushed_payload(int rank,
 void arts_net_put_payload(int rank, uint64_t raddr, uint64_t rkey,
                           uint64_t txid, const void *src, uint64_t len,
                           void (*on_local_done)(void *), void *arg);
-
-#ifdef ARTS_TRANSPORT_OFI
 
 /* Upper bound on a serialized fabric (fi_getname) address blob. */
 #define ARTS_NET_ADDR_MAX 256u
@@ -303,8 +299,6 @@ unsigned arts_net_own_address(void *buf, unsigned buflen);
  * must equal rank i under FI_AV_TABLE — asserted). */
 void arts_net_av_insert_table(const void *addrs, unsigned addrlen,
                               unsigned count);
-
-#endif /* ARTS_TRANSPORT_OFI */
 
 #ifdef __cplusplus
 }

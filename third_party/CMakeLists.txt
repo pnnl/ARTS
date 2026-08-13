@@ -422,301 +422,299 @@ endif()
 # other targets). The tarball is extracted at configure time into a tree
 # private to this build directory; configure and make then run out of EP's
 # own binary dir, leaving the extracted source pristine.
-if(ARTS_TRANSPORT_OFI)
-  # The verbs provider's userspace stack (rdma-core: libibverbs + librdmacm +
-  # the per-NIC provider libraries) is vendored so the provider can be
-  # compiled in on every build host; at run time the provider simply reports
-  # no fabrics on machines without RDMA devices.  rdma-core builds with plain
-  # CMake from a git checkout (it bundles its own kernel ABI headers), so it
-  # is consumed as a pinned submodule.
-  #
-  # The build is walled off from the host: ENABLE_RESOLVE_NEIGH=0 drops the
-  # userspace neighbour-resolution path — and with it the libnl dependency —
-  # leaving device discovery and connection setup on their sysfs / kernel
-  # rdma_cm paths.  What that path serves is Ethernet UD address handles on
-  # kernels too old to resolve the destination MAC kernel-side; connected
-  # (RC) endpoints established through rdma_cm never enter it.
-  # PKG_CONFIG_LIBDIR points at an empty directory so optional host packages
-  # (systemd, udev) cannot alter what gets built.  INSTALL_RUNDIR must be a
-  # short absolute path: the daemon socket path is compiled into librdmacm
-  # and a deep build tree would overflow sockaddr_un's sun_path limit.
-  # Static consumers must pull hardware-provider objects explicitly
-  # (RDMA_STATIC_PROVIDERS in the consumer's CPPFLAGS) — without that a
-  # statically linked stack silently discovers zero devices.
-  set(RDMA_CORE_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/rdma-core_install")
+# The verbs provider's userspace stack (rdma-core: libibverbs + librdmacm +
+# the per-NIC provider libraries) is vendored so the provider can be
+# compiled in on every build host; at run time the provider simply reports
+# no fabrics on machines without RDMA devices.  rdma-core builds with plain
+# CMake from a git checkout (it bundles its own kernel ABI headers), so it
+# is consumed as a pinned submodule.
+#
+# The build is walled off from the host: ENABLE_RESOLVE_NEIGH=0 drops the
+# userspace neighbour-resolution path — and with it the libnl dependency —
+# leaving device discovery and connection setup on their sysfs / kernel
+# rdma_cm paths.  What that path serves is Ethernet UD address handles on
+# kernels too old to resolve the destination MAC kernel-side; connected
+# (RC) endpoints established through rdma_cm never enter it.
+# PKG_CONFIG_LIBDIR points at an empty directory so optional host packages
+# (systemd, udev) cannot alter what gets built.  INSTALL_RUNDIR must be a
+# short absolute path: the daemon socket path is compiled into librdmacm
+# and a deep build tree would overflow sockaddr_un's sun_path limit.
+# Static consumers must pull hardware-provider objects explicitly
+# (RDMA_STATIC_PROVIDERS in the consumer's CPPFLAGS) — without that a
+# statically linked stack silently discovers zero devices.
+set(RDMA_CORE_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/rdma-core_install")
 
-  function(build_rdma_core)
-    arts_init_submodule(third_party/rdma-core CMakeLists.txt)
-    set(RDMA_CORE_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/rdma-core")
-    set(RDMA_CORE_BUILD_DIR "${CMAKE_BINARY_DIR}/third_party/rdma-core")
-    set(RDMA_CORE_EMPTY_PKGCONFIG "${CMAKE_BINARY_DIR}/third_party/pkgconfig_empty")
-    file(MAKE_DIRECTORY ${RDMA_CORE_BUILD_DIR})
-    file(MAKE_DIRECTORY ${RDMA_CORE_EMPTY_PKGCONFIG})
+function(build_rdma_core)
+  arts_init_submodule(third_party/rdma-core CMakeLists.txt)
+  set(RDMA_CORE_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/rdma-core")
+  set(RDMA_CORE_BUILD_DIR "${CMAKE_BINARY_DIR}/third_party/rdma-core")
+  set(RDMA_CORE_EMPTY_PKGCONFIG "${CMAKE_BINARY_DIR}/third_party/pkgconfig_empty")
+  file(MAKE_DIRECTORY ${RDMA_CORE_BUILD_DIR})
+  file(MAKE_DIRECTORY ${RDMA_CORE_EMPTY_PKGCONFIG})
 
-    if(NOT CMAKE_BUILD_PARALLEL_LEVEL)
-      set(CMAKE_BUILD_PARALLEL_LEVEL 4)
-    endif()
-
-    message(STATUS "Configuring rdma-core with prefix: ${RDMA_CORE_INSTALL_DIR}")
-    execute_process(
-      COMMAND ${CMAKE_COMMAND} -E env
-          PKG_CONFIG_LIBDIR=${RDMA_CORE_EMPTY_PKGCONFIG}
-          ${CMAKE_COMMAND} -S ${RDMA_CORE_SRC_DIR} -B ${RDMA_CORE_BUILD_DIR}
-          -GNinja
-          -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
-          -DCMAKE_INSTALL_PREFIX=${RDMA_CORE_INSTALL_DIR}
-          -DCMAKE_INSTALL_LIBDIR=lib
-          -DCMAKE_INSTALL_RUNDIR=/var/run
-          # Absolute on purpose: the option is a CACHE PATH, and a relative
-          # value would be absolutized against the configuring process's
-          # working directory rather than the install prefix.
-          -DSYSUSERS_DIR=${RDMA_CORE_INSTALL_DIR}/etc/sysusers.d
-          -DCMAKE_POSITION_INDEPENDENT_CODE=ON
-          -DENABLE_STATIC=1
-          -DENABLE_RESOLVE_NEIGH=0
-          -DNO_MAN_PAGES=1
-          -DNO_PYVERBS=1
-          -DENABLE_VALGRIND=OFF
-      RESULT_VARIABLE CONFIGURE_RESULT
-    )
-    if(NOT CONFIGURE_RESULT EQUAL 0)
-      message(FATAL_ERROR "Failed to configure rdma-core")
-    endif()
-
-    message(STATUS "Building rdma-core")
-    execute_process(
-      COMMAND ${CMAKE_COMMAND} --build ${RDMA_CORE_BUILD_DIR}
-              -j${CMAKE_BUILD_PARALLEL_LEVEL}
-      RESULT_VARIABLE BUILD_RESULT
-    )
-    if(NOT BUILD_RESULT EQUAL 0)
-      message(FATAL_ERROR "Failed to build rdma-core")
-    endif()
-
-    message(STATUS "Installing rdma-core to ${RDMA_CORE_INSTALL_DIR}")
-    execute_process(
-      COMMAND ${CMAKE_COMMAND} --install ${RDMA_CORE_BUILD_DIR}
-      RESULT_VARIABLE INSTALL_RESULT
-    )
-    if(NOT INSTALL_RESULT EQUAL 0)
-      message(FATAL_ERROR "Failed to install rdma-core")
-    endif()
-
-    # A prefix that offers both .a and .so would let -l resolution pick the
-    # shared object; static consumers must only ever see the archives.
-    file(GLOB _rdma_shared "${RDMA_CORE_INSTALL_DIR}/lib/*.so*")
-    if(_rdma_shared)
-      file(REMOVE ${_rdma_shared})
-    endif()
-  endfunction()
-
-  if(NOT EXISTS "${RDMA_CORE_INSTALL_DIR}/lib/libibverbs.a")
-    build_rdma_core()
-  endif()
-
-  # Alias layout for probes that address the prefix through lib64/, and a
-  # second spelling for archives that must appear twice on one link line
-  # (deduplication keys on the path text).
-  if(NOT EXISTS "${RDMA_CORE_INSTALL_DIR}/lib64")
-    file(CREATE_LINK "lib" "${RDMA_CORE_INSTALL_DIR}/lib64" SYMBOLIC)
-  endif()
-
-  # Everything the statically linked verbs provider drags in, as pkg-config
-  # describes it (core libraries plus every hardware-provider archive, in
-  # link order).  The archives are mutually referential — the static provider
-  # table names the providers, the providers call back into the core — so
-  # consumers link the set as one group.
-  execute_process(
-    COMMAND ${CMAKE_COMMAND} -E env
-        PKG_CONFIG_LIBDIR=${RDMA_CORE_INSTALL_DIR}/lib/pkgconfig
-        pkg-config --static --libs libibverbs librdmacm
-    OUTPUT_VARIABLE RDMA_STATIC_LINK_LINE
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    RESULT_VARIABLE _rdma_pc_rc
-  )
-  if(NOT _rdma_pc_rc EQUAL 0)
-    message(FATAL_ERROR
-        "pkg-config could not describe the vendored rdma-core static link line")
-  endif()
-  separate_arguments(RDMA_STATIC_LINK_FLAGS UNIX_COMMAND "${RDMA_STATIC_LINK_LINE}")
-  set(RDMA_VERBS_LINK_SET
-      "-Wl,--start-group" ${RDMA_STATIC_LINK_FLAGS} "-Wl,--end-group")
-  # The same set for links that pass through libtool, which deduplicates
-  # bare -l flags (keeping the last occurrence) and hoists -Wl options in
-  # front of the libraries — both of which break a cyclic archive set.
-  # Absolute archive paths keep their relative order, and the one archive
-  # that must appear twice on the line uses a second spelling (the lib64
-  # alias) so text-keyed deduplication cannot collapse it.
-  # The same set once more as plain archive paths, deduplicated: a merge or an
-  # embed consumes each archive's members once, and the repetition the link
-  # line needs for a cyclic set has no meaning there.
-  set(RDMA_VERBS_LIBTOOL_LIBS "")
-  set(RDMA_VERBS_ARCHIVES "")
-  set(_rdma_seen_ibverbs FALSE)
-  foreach(_flag IN LISTS RDMA_STATIC_LINK_FLAGS)
-    if(_flag MATCHES "^-l(.+)$")
-      set(_name "${CMAKE_MATCH_1}")
-      if(_name STREQUAL "pthread" OR _name STREQUAL "m")
-        continue()
-      endif()
-      list(APPEND RDMA_VERBS_ARCHIVES "${RDMA_CORE_INSTALL_DIR}/lib/lib${_name}.a")
-      if(_name STREQUAL "ibverbs" AND _rdma_seen_ibverbs)
-        string(APPEND RDMA_VERBS_LIBTOOL_LIBS
-               " ${RDMA_CORE_INSTALL_DIR}/lib64/libibverbs.a")
-      else()
-        string(APPEND RDMA_VERBS_LIBTOOL_LIBS
-               " ${RDMA_CORE_INSTALL_DIR}/lib/lib${_name}.a")
-        if(_name STREQUAL "ibverbs")
-          set(_rdma_seen_ibverbs TRUE)
-        endif()
-      endif()
-    endif()
-  endforeach()
-  string(STRIP "${RDMA_VERBS_LIBTOOL_LIBS}" RDMA_VERBS_LIBTOOL_LIBS)
-  list(REMOVE_DUPLICATES RDMA_VERBS_ARCHIVES)
-
-  message(STATUS "Building libfabric ${OFI_DIST_VERSION} from vendored dist tarball")
-
-  arts_fetch_dist_tarball(OFI_TARBALL
-      "libfabric-${OFI_DIST_VERSION}.tar.bz2" "${OFI_DIST_URL}" "${OFI_DIST_SHA256}")
-
-  set(OFI_SRC_DIR "${CMAKE_BINARY_DIR}/libfabric-${OFI_DIST_VERSION}")
-  if(NOT EXISTS "${OFI_SRC_DIR}/configure")
-    message(STATUS "Extracting libfabric ${OFI_DIST_VERSION}")
-    file(ARCHIVE_EXTRACT INPUT "${OFI_TARBALL}" DESTINATION "${CMAKE_BINARY_DIR}")
-  endif()
-
-  # libfabric tags its exported symbols with ELF symbol versions
-  # (fi_getinfo@@FABRIC_1.9 and friends), and a version-tagged definition can
-  # only enter a shared object whose link declares the matching version node --
-  # otherwise the link fails with "version node not found".  A consumer that
-  # embeds the static archive cannot reuse libfabric's own script verbatim: its
-  # `local: *` would hide the consumer's own exports too.  Derive a
-  # declarations-only script -- the node names and their inheritance, none of
-  # the symbol bodies -- from the same source, so unmatched symbols keep the
-  # base version and stay exported, and a libfabric that adds a version node
-  # needs no second edit here.
-  set(OFI_VERSION_NODES_MAP
-      "${CMAKE_BINARY_DIR}/third_party/libfabric_version_nodes.map")
-  file(STRINGS "${OFI_SRC_DIR}/libfabric.map.in" _ofi_map_lines)
-  set(_ofi_nodes "")
-  foreach(_line IN LISTS _ofi_map_lines)
-    if(_line MATCHES "^([A-Za-z_][A-Za-z_0-9.]*)[ \t]*{")
-      string(APPEND _ofi_nodes "${CMAKE_MATCH_1} {")
-    elseif(_line MATCHES "^}[ \t]*([A-Za-z_][A-Za-z_0-9.]*)[ \t]*;")
-      string(APPEND _ofi_nodes "} ${CMAKE_MATCH_1};\n")
-    elseif(_line MATCHES "^}[ \t]*;")
-      string(APPEND _ofi_nodes "};\n")
-    endif()
-  endforeach()
-  if(NOT _ofi_nodes)
-    message(FATAL_ERROR
-        "No symbol-version nodes found in ${OFI_SRC_DIR}/libfabric.map.in")
-  endif()
-  file(WRITE "${OFI_VERSION_NODES_MAP}" "${_ofi_nodes}")
-
-  include(ExternalProject)
-  set(OFI_PREFIX "${CMAKE_BINARY_DIR}/libfabric")
-
-  # BUILD_COMMAND parallelism is bounded: an unbounded `make -j` spawns one
-  # job per source file with no ceiling, which can outstrip available
-  # cores/memory on a shared or resource-constrained build host.
   if(NOT CMAKE_BUILD_PARALLEL_LEVEL)
     set(CMAKE_BUILD_PARALLEL_LEVEL 4)
   endif()
-  ExternalProject_Add(libfabric_ep
-    DOWNLOAD_COMMAND ""
-    SOURCE_DIR ${OFI_SRC_DIR}
-    # --enable-verbs=<prefix> replaces auto-detection: the provider is always
-    # built, always against the vendored stack, so what a build host happens
-    # to have installed can no longer change the artifact.
-    # RDMA_STATIC_PROVIDERS makes the provider translation units reference
-    # every hardware provider so their objects survive static linking.  LIBS
-    # carries the static archive set (twice: the set is cyclic and configure
-    # probes plus bundled utilities link in a single pass without grouping).
-    # HWLOC_DIR pins the verbs provider's optional hwloc probe to the
-    # vendored hwloc so its outcome is a pure function of vendored inputs.
-    CONFIGURE_COMMAND ${CMAKE_COMMAND} -E env CFLAGS=-fPIC
-        CPPFLAGS=-DRDMA_STATIC_PROVIDERS=all
-        "LDFLAGS=-L${RDMA_CORE_INSTALL_DIR}/lib"
-        "LIBS=${RDMA_VERBS_LIBTOOL_LIBS} -lpthread -lm"
-        HWLOC_DIR=${HWLOC_INSTALL_DIR}
-        ${OFI_SRC_DIR}/configure
-        --prefix=${OFI_PREFIX} --enable-static --disable-shared
-        # Provider allowlist.  With a STATIC libfabric.a every enabled
-        # provider's external libraries become link-time dependencies of every
-        # consuming binary, so providers auto-enabled by configure probing the
-        # build host (cxi, psm, ...) break the final link on any
-        # cluster that ships their headers.  --enable-only inverts the
-        # default: nothing builds unless named here, which makes the build
-        # deterministic on every host.  verbs exposes RDM endpoints only as
-        # the verbs;ofi_rxm stack, so rxm must stay enabled or every
-        # InfiniBand host silently downgrades to tcp.
-        --enable-only --enable-tcp --enable-rxm
-        --enable-verbs=${RDMA_CORE_INSTALL_DIR}
-        # --enable-only governs providers (FI_PROVIDER_SETUP entries) only.
-        # xpmem and io_uring are standalone feature toggles whose default-on
-        # host probes append to the global LIBS, so each must be pinned off
-        # explicitly or a host that ships their headers changes the
-        # artifact's link requirements.
-        --disable-xpmem --without-uring
-        CC=${CMAKE_C_COMPILER}
-    BUILD_COMMAND make -j${CMAKE_BUILD_PARALLEL_LEVEL}
-    INSTALL_COMMAND make install
-    BUILD_BYPRODUCTS ${OFI_PREFIX}/lib/libfabric.a
+
+  message(STATUS "Configuring rdma-core with prefix: ${RDMA_CORE_INSTALL_DIR}")
+  execute_process(
+    COMMAND ${CMAKE_COMMAND} -E env
+        PKG_CONFIG_LIBDIR=${RDMA_CORE_EMPTY_PKGCONFIG}
+        ${CMAKE_COMMAND} -S ${RDMA_CORE_SRC_DIR} -B ${RDMA_CORE_BUILD_DIR}
+        -GNinja
+        -DCMAKE_BUILD_TYPE=Release
+        -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+        -DCMAKE_INSTALL_PREFIX=${RDMA_CORE_INSTALL_DIR}
+        -DCMAKE_INSTALL_LIBDIR=lib
+        -DCMAKE_INSTALL_RUNDIR=/var/run
+        # Absolute on purpose: the option is a CACHE PATH, and a relative
+        # value would be absolutized against the configuring process's
+        # working directory rather than the install prefix.
+        -DSYSUSERS_DIR=${RDMA_CORE_INSTALL_DIR}/etc/sysusers.d
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+        -DENABLE_STATIC=1
+        -DENABLE_RESOLVE_NEIGH=0
+        -DNO_MAN_PAGES=1
+        -DNO_PYVERBS=1
+        -DENABLE_VALGRIND=OFF
+    RESULT_VARIABLE CONFIGURE_RESULT
   )
-
-  # CMake validates INTERFACE_INCLUDE_DIRECTORIES at configure time, before
-  # the ExternalProject has run and created the install prefix; pre-create
-  # the (empty) include dir as a placeholder so target_link_libraries()
-  # consumers configure cleanly on a fresh build tree.
-  file(MAKE_DIRECTORY ${OFI_PREFIX}/include)
-
-  # libatomic enters through the already-resolved link item instead of the
-  # bare name libfabric's pkgconfig records: a host whose libatomic ships only
-  # as the runtime SONAME offers the linker no `-latomic` to resolve, and an
-  # unresolvable name breaks every consumer that inherits this interface.
-  set(OFI_LINK_INTERFACE rt ${ARTS_ATOMIC_LINK} pthread ${CMAKE_DL_LIBS}
-      ${RDMA_VERBS_LINK_SET} ${HWLOC_LIB_A})
-
-  add_library(arts::libfabric STATIC IMPORTED GLOBAL)
-  set_target_properties(arts::libfabric PROPERTIES
-    IMPORTED_LOCATION ${OFI_PREFIX}/lib/libfabric.a
-    INTERFACE_INCLUDE_DIRECTORIES ${OFI_PREFIX}/include
-    # Static libfabric's core + built-in providers reference dlopen/dlclose
-    # (provider load) and shm_open/shm_unlink (shm provider); its pkgconfig
-    # Libs.private is "-lrt -latomic -lpthread -ldl".  Declaring the full set as
-    # this imported target's usage requirement places them AFTER the archive on
-    # every consumer's link line, which single-pass static linking needs to
-    # back-resolve these references — otherwise a target that pulls the
-    # provider-init objects (fi_getinfo & friends) fails with "undefined
-    # reference to dlclose / shm_open".  The verbs provider's userspace stack
-    # and (when its probe engaged) hwloc are back-resolved the same way.
-    INTERFACE_LINK_LIBRARIES "${OFI_LINK_INTERFACE}")
-  add_dependencies(arts::libfabric libfabric_ep)
-
-  list(APPEND ARTS_VENDORED_ARCHIVES
-       "${OFI_PREFIX}/lib/libfabric.a" ${RDMA_VERBS_ARCHIVES})
-
-  # Bundling these into a library makes their symbols part of it; naming each
-  # archive here keeps them out of its dynamic exports, so nothing outside can
-  # bind to a vendored symbol and interpose on the library's own use of it.
-  set(ARTS_VENDORED_EXCLUDE_LIBS "")
-  foreach(_archive IN LISTS ARTS_VENDORED_ARCHIVES)
-    if(NOT _archive MATCHES "^\\$<")
-      get_filename_component(_archive_name "${_archive}" NAME)
-      list(APPEND ARTS_VENDORED_EXCLUDE_LIBS "${_archive_name}")
-    endif()
-  endforeach()
-  if(ARTS_MALLOC STREQUAL "mimalloc")
-    list(APPEND ARTS_VENDORED_EXCLUDE_LIBS "$<TARGET_FILE_NAME:mimalloc-static>")
+  if(NOT CONFIGURE_RESULT EQUAL 0)
+    message(FATAL_ERROR "Failed to configure rdma-core")
   endif()
 
-  set(ARTS_VENDORED_ARCHIVES ${ARTS_VENDORED_ARCHIVES} PARENT_SCOPE)
-  set(ARTS_VENDORED_EXCLUDE_LIBS ${ARTS_VENDORED_EXCLUDE_LIBS} PARENT_SCOPE)
-  set(OFI_VERSION_NODES_MAP ${OFI_VERSION_NODES_MAP} PARENT_SCOPE)
+  message(STATUS "Building rdma-core")
+  execute_process(
+    COMMAND ${CMAKE_COMMAND} --build ${RDMA_CORE_BUILD_DIR}
+            -j${CMAKE_BUILD_PARALLEL_LEVEL}
+    RESULT_VARIABLE BUILD_RESULT
+  )
+  if(NOT BUILD_RESULT EQUAL 0)
+    message(FATAL_ERROR "Failed to build rdma-core")
+  endif()
+
+  message(STATUS "Installing rdma-core to ${RDMA_CORE_INSTALL_DIR}")
+  execute_process(
+    COMMAND ${CMAKE_COMMAND} --install ${RDMA_CORE_BUILD_DIR}
+    RESULT_VARIABLE INSTALL_RESULT
+  )
+  if(NOT INSTALL_RESULT EQUAL 0)
+    message(FATAL_ERROR "Failed to install rdma-core")
+  endif()
+
+  # A prefix that offers both .a and .so would let -l resolution pick the
+  # shared object; static consumers must only ever see the archives.
+  file(GLOB _rdma_shared "${RDMA_CORE_INSTALL_DIR}/lib/*.so*")
+  if(_rdma_shared)
+    file(REMOVE ${_rdma_shared})
+  endif()
+endfunction()
+
+if(NOT EXISTS "${RDMA_CORE_INSTALL_DIR}/lib/libibverbs.a")
+  build_rdma_core()
 endif()
+
+# Alias layout for probes that address the prefix through lib64/, and a
+# second spelling for archives that must appear twice on one link line
+# (deduplication keys on the path text).
+if(NOT EXISTS "${RDMA_CORE_INSTALL_DIR}/lib64")
+  file(CREATE_LINK "lib" "${RDMA_CORE_INSTALL_DIR}/lib64" SYMBOLIC)
+endif()
+
+# Everything the statically linked verbs provider drags in, as pkg-config
+# describes it (core libraries plus every hardware-provider archive, in
+# link order).  The archives are mutually referential — the static provider
+# table names the providers, the providers call back into the core — so
+# consumers link the set as one group.
+execute_process(
+  COMMAND ${CMAKE_COMMAND} -E env
+      PKG_CONFIG_LIBDIR=${RDMA_CORE_INSTALL_DIR}/lib/pkgconfig
+      pkg-config --static --libs libibverbs librdmacm
+  OUTPUT_VARIABLE RDMA_STATIC_LINK_LINE
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+  RESULT_VARIABLE _rdma_pc_rc
+)
+if(NOT _rdma_pc_rc EQUAL 0)
+  message(FATAL_ERROR
+      "pkg-config could not describe the vendored rdma-core static link line")
+endif()
+separate_arguments(RDMA_STATIC_LINK_FLAGS UNIX_COMMAND "${RDMA_STATIC_LINK_LINE}")
+set(RDMA_VERBS_LINK_SET
+    "-Wl,--start-group" ${RDMA_STATIC_LINK_FLAGS} "-Wl,--end-group")
+# The same set for links that pass through libtool, which deduplicates
+# bare -l flags (keeping the last occurrence) and hoists -Wl options in
+# front of the libraries — both of which break a cyclic archive set.
+# Absolute archive paths keep their relative order, and the one archive
+# that must appear twice on the line uses a second spelling (the lib64
+# alias) so text-keyed deduplication cannot collapse it.
+# The same set once more as plain archive paths, deduplicated: a merge or an
+# embed consumes each archive's members once, and the repetition the link
+# line needs for a cyclic set has no meaning there.
+set(RDMA_VERBS_LIBTOOL_LIBS "")
+set(RDMA_VERBS_ARCHIVES "")
+set(_rdma_seen_ibverbs FALSE)
+foreach(_flag IN LISTS RDMA_STATIC_LINK_FLAGS)
+  if(_flag MATCHES "^-l(.+)$")
+    set(_name "${CMAKE_MATCH_1}")
+    if(_name STREQUAL "pthread" OR _name STREQUAL "m")
+      continue()
+    endif()
+    list(APPEND RDMA_VERBS_ARCHIVES "${RDMA_CORE_INSTALL_DIR}/lib/lib${_name}.a")
+    if(_name STREQUAL "ibverbs" AND _rdma_seen_ibverbs)
+      string(APPEND RDMA_VERBS_LIBTOOL_LIBS
+             " ${RDMA_CORE_INSTALL_DIR}/lib64/libibverbs.a")
+    else()
+      string(APPEND RDMA_VERBS_LIBTOOL_LIBS
+             " ${RDMA_CORE_INSTALL_DIR}/lib/lib${_name}.a")
+      if(_name STREQUAL "ibverbs")
+        set(_rdma_seen_ibverbs TRUE)
+      endif()
+    endif()
+  endif()
+endforeach()
+string(STRIP "${RDMA_VERBS_LIBTOOL_LIBS}" RDMA_VERBS_LIBTOOL_LIBS)
+list(REMOVE_DUPLICATES RDMA_VERBS_ARCHIVES)
+
+message(STATUS "Building libfabric ${OFI_DIST_VERSION} from vendored dist tarball")
+
+arts_fetch_dist_tarball(OFI_TARBALL
+    "libfabric-${OFI_DIST_VERSION}.tar.bz2" "${OFI_DIST_URL}" "${OFI_DIST_SHA256}")
+
+set(OFI_SRC_DIR "${CMAKE_BINARY_DIR}/libfabric-${OFI_DIST_VERSION}")
+if(NOT EXISTS "${OFI_SRC_DIR}/configure")
+  message(STATUS "Extracting libfabric ${OFI_DIST_VERSION}")
+  file(ARCHIVE_EXTRACT INPUT "${OFI_TARBALL}" DESTINATION "${CMAKE_BINARY_DIR}")
+endif()
+
+# libfabric tags its exported symbols with ELF symbol versions
+# (fi_getinfo@@FABRIC_1.9 and friends), and a version-tagged definition can
+# only enter a shared object whose link declares the matching version node --
+# otherwise the link fails with "version node not found".  A consumer that
+# embeds the static archive cannot reuse libfabric's own script verbatim: its
+# `local: *` would hide the consumer's own exports too.  Derive a
+# declarations-only script -- the node names and their inheritance, none of
+# the symbol bodies -- from the same source, so unmatched symbols keep the
+# base version and stay exported, and a libfabric that adds a version node
+# needs no second edit here.
+set(OFI_VERSION_NODES_MAP
+    "${CMAKE_BINARY_DIR}/third_party/libfabric_version_nodes.map")
+file(STRINGS "${OFI_SRC_DIR}/libfabric.map.in" _ofi_map_lines)
+set(_ofi_nodes "")
+foreach(_line IN LISTS _ofi_map_lines)
+  if(_line MATCHES "^([A-Za-z_][A-Za-z_0-9.]*)[ \t]*{")
+    string(APPEND _ofi_nodes "${CMAKE_MATCH_1} {")
+  elseif(_line MATCHES "^}[ \t]*([A-Za-z_][A-Za-z_0-9.]*)[ \t]*;")
+    string(APPEND _ofi_nodes "} ${CMAKE_MATCH_1};\n")
+  elseif(_line MATCHES "^}[ \t]*;")
+    string(APPEND _ofi_nodes "};\n")
+  endif()
+endforeach()
+if(NOT _ofi_nodes)
+  message(FATAL_ERROR
+      "No symbol-version nodes found in ${OFI_SRC_DIR}/libfabric.map.in")
+endif()
+file(WRITE "${OFI_VERSION_NODES_MAP}" "${_ofi_nodes}")
+
+include(ExternalProject)
+set(OFI_PREFIX "${CMAKE_BINARY_DIR}/libfabric")
+
+# BUILD_COMMAND parallelism is bounded: an unbounded `make -j` spawns one
+# job per source file with no ceiling, which can outstrip available
+# cores/memory on a shared or resource-constrained build host.
+if(NOT CMAKE_BUILD_PARALLEL_LEVEL)
+  set(CMAKE_BUILD_PARALLEL_LEVEL 4)
+endif()
+ExternalProject_Add(libfabric_ep
+  DOWNLOAD_COMMAND ""
+  SOURCE_DIR ${OFI_SRC_DIR}
+  # --enable-verbs=<prefix> replaces auto-detection: the provider is always
+  # built, always against the vendored stack, so what a build host happens
+  # to have installed can no longer change the artifact.
+  # RDMA_STATIC_PROVIDERS makes the provider translation units reference
+  # every hardware provider so their objects survive static linking.  LIBS
+  # carries the static archive set (twice: the set is cyclic and configure
+  # probes plus bundled utilities link in a single pass without grouping).
+  # HWLOC_DIR pins the verbs provider's optional hwloc probe to the
+  # vendored hwloc so its outcome is a pure function of vendored inputs.
+  CONFIGURE_COMMAND ${CMAKE_COMMAND} -E env CFLAGS=-fPIC
+      CPPFLAGS=-DRDMA_STATIC_PROVIDERS=all
+      "LDFLAGS=-L${RDMA_CORE_INSTALL_DIR}/lib"
+      "LIBS=${RDMA_VERBS_LIBTOOL_LIBS} -lpthread -lm"
+      HWLOC_DIR=${HWLOC_INSTALL_DIR}
+      ${OFI_SRC_DIR}/configure
+      --prefix=${OFI_PREFIX} --enable-static --disable-shared
+      # Provider allowlist.  With a STATIC libfabric.a every enabled
+      # provider's external libraries become link-time dependencies of every
+      # consuming binary, so providers auto-enabled by configure probing the
+      # build host (cxi, psm, ...) break the final link on any
+      # cluster that ships their headers.  --enable-only inverts the
+      # default: nothing builds unless named here, which makes the build
+      # deterministic on every host.  verbs exposes RDM endpoints only as
+      # the verbs;ofi_rxm stack, so rxm must stay enabled or every
+      # InfiniBand host silently downgrades to tcp.
+      --enable-only --enable-tcp --enable-rxm
+      --enable-verbs=${RDMA_CORE_INSTALL_DIR}
+      # --enable-only governs providers (FI_PROVIDER_SETUP entries) only.
+      # xpmem and io_uring are standalone feature toggles whose default-on
+      # host probes append to the global LIBS, so each must be pinned off
+      # explicitly or a host that ships their headers changes the
+      # artifact's link requirements.
+      --disable-xpmem --without-uring
+      CC=${CMAKE_C_COMPILER}
+  BUILD_COMMAND make -j${CMAKE_BUILD_PARALLEL_LEVEL}
+  INSTALL_COMMAND make install
+  BUILD_BYPRODUCTS ${OFI_PREFIX}/lib/libfabric.a
+)
+
+# CMake validates INTERFACE_INCLUDE_DIRECTORIES at configure time, before
+# the ExternalProject has run and created the install prefix; pre-create
+# the (empty) include dir as a placeholder so target_link_libraries()
+# consumers configure cleanly on a fresh build tree.
+file(MAKE_DIRECTORY ${OFI_PREFIX}/include)
+
+# libatomic enters through the already-resolved link item instead of the
+# bare name libfabric's pkgconfig records: a host whose libatomic ships only
+# as the runtime SONAME offers the linker no `-latomic` to resolve, and an
+# unresolvable name breaks every consumer that inherits this interface.
+set(OFI_LINK_INTERFACE rt ${ARTS_ATOMIC_LINK} pthread ${CMAKE_DL_LIBS}
+    ${RDMA_VERBS_LINK_SET} ${HWLOC_LIB_A})
+
+add_library(arts::libfabric STATIC IMPORTED GLOBAL)
+set_target_properties(arts::libfabric PROPERTIES
+  IMPORTED_LOCATION ${OFI_PREFIX}/lib/libfabric.a
+  INTERFACE_INCLUDE_DIRECTORIES ${OFI_PREFIX}/include
+  # Static libfabric's core + built-in providers reference dlopen/dlclose
+  # (provider load) and shm_open/shm_unlink (shm provider); its pkgconfig
+  # Libs.private is "-lrt -latomic -lpthread -ldl".  Declaring the full set as
+  # this imported target's usage requirement places them AFTER the archive on
+  # every consumer's link line, which single-pass static linking needs to
+  # back-resolve these references — otherwise a target that pulls the
+  # provider-init objects (fi_getinfo & friends) fails with "undefined
+  # reference to dlclose / shm_open".  The verbs provider's userspace stack
+  # and (when its probe engaged) hwloc are back-resolved the same way.
+  INTERFACE_LINK_LIBRARIES "${OFI_LINK_INTERFACE}")
+add_dependencies(arts::libfabric libfabric_ep)
+
+list(APPEND ARTS_VENDORED_ARCHIVES
+     "${OFI_PREFIX}/lib/libfabric.a" ${RDMA_VERBS_ARCHIVES})
+
+# Bundling these into a library makes their symbols part of it; naming each
+# archive here keeps them out of its dynamic exports, so nothing outside can
+# bind to a vendored symbol and interpose on the library's own use of it.
+set(ARTS_VENDORED_EXCLUDE_LIBS "")
+foreach(_archive IN LISTS ARTS_VENDORED_ARCHIVES)
+  if(NOT _archive MATCHES "^\\$<")
+    get_filename_component(_archive_name "${_archive}" NAME)
+    list(APPEND ARTS_VENDORED_EXCLUDE_LIBS "${_archive_name}")
+  endif()
+endforeach()
+if(ARTS_MALLOC STREQUAL "mimalloc")
+  list(APPEND ARTS_VENDORED_EXCLUDE_LIBS "$<TARGET_FILE_NAME:mimalloc-static>")
+endif()
+
+set(ARTS_VENDORED_ARCHIVES ${ARTS_VENDORED_ARCHIVES} PARENT_SCOPE)
+set(ARTS_VENDORED_EXCLUDE_LIBS ${ARTS_VENDORED_EXCLUDE_LIBS} PARENT_SCOPE)
+set(OFI_VERSION_NODES_MAP ${OFI_VERSION_NODES_MAP} PARENT_SCOPE)
 
 # Build OpenBLAS (BLAS + LAPACK/LAPACKE, BSD-3) from the third_party/OpenBLAS
 # submodule for benchmark apps that call the standard CBLAS/LAPACKE C

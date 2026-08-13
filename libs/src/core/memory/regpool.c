@@ -95,10 +95,8 @@
 
 #include "arts/system/print.h" /* ARTS_ERROR — fail loudly on confinement loss */
 
-#ifdef ARTS_TRANSPORT_OFI
 #include <rdma/fabric.h>
 #include <rdma/fi_domain.h>
-#endif
 
 /* ------------------------------------------------------------------------- */
 /* The pool is meaningful only with an arena-capable allocator.  Without one   */
@@ -283,7 +281,6 @@ static bool regpool_map_slab(int node, size_t len, size_t align, void **out_base
 
   struct fid_mr *mr = NULL;
   uint64_t rkey = 0;
-#ifdef ARTS_TRANSPORT_OFI
   if (g_domain != NULL) {
     uint64_t requested_key =
         atomic_fetch_add_explicit(&g_mr_key_next, 1, memory_order_relaxed);
@@ -296,9 +293,6 @@ static bool regpool_map_slab(int node, size_t len, size_t align, void **out_base
     }
     rkey = fi_mr_key(mr);
   }
-#else
-  (void)g_domain;
-#endif
 
   *out_base = base;
   *out_mr = mr;
@@ -405,19 +399,15 @@ static bool regpool_grow_locked(int node) {
     ARTS_WARN("regpool: allocator refused to manage a %zu MiB slab "
               "(arena table full?)",
               want >> 20);
-#ifdef ARTS_TRANSPORT_OFI
     if (mr != NULL)
       fi_close(&mr->fid);
-#endif
     munmap(base, want);
     return false;
   }
 
   if (regpool_append(base, want, mr, rkey, node, false, arena) == NULL) {
-#ifdef ARTS_TRANSPORT_OFI
     if (mr != NULL)
       fi_close(&mr->fid);
-#endif
     /* Arena metadata now references this range; the OS reclaims it at exit. */
     return false;
   }
@@ -463,10 +453,8 @@ static void *regpool_alloc_direct(size_t size, size_t align, int node) {
   regpool_slab_t *s = regpool_publish_direct_locked(base, len, mr, rkey, node, NULL);
   pthread_mutex_unlock(&g_lock);
   if (s == NULL) {
-#ifdef ARTS_TRANSPORT_OFI
     if (mr != NULL)
       fi_close(&mr->fid);
-#endif
     munmap(base, len);
     return NULL;
   }
@@ -663,10 +651,8 @@ void arts_regpool_cleanup(void) {
      * again here. */
     if (atomic_load_explicit(&s->is_free, memory_order_relaxed))
       continue;
-#ifdef ARTS_TRANSPORT_OFI
     if (s->mr.mr != NULL)
       fi_close(&s->mr.mr->fid);
-#endif
     /* Direct slabs are the pool's own mappings and are unmapped here.  Arena
      * slabs are owned by the allocator's arena registry; the vendored allocator
      * exposes no public arena-unload, so unmapping one out from under it would
@@ -795,10 +781,8 @@ void arts_regpool_free(void *p) {
     pthread_mutex_unlock(&g_lock);
     return;
   }
-#ifdef ARTS_TRANSPORT_OFI
   if (s->mr.mr != NULL)
     fi_close(&s->mr.mr->fid);
-#endif
   munmap(s->mr.base, s->mr.len);
   /* Release: publish the tombstone only after the mapping is fully torn
    * down, so no lookup that observes it can resolve into memory that is no

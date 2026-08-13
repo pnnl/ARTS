@@ -531,14 +531,13 @@ endif()
 # stubbed dispatch symbol, so it must NOT link the ARTS library (that would
 # duplicate net.o / the dispatcher).  It links the real registered-pool object
 # (bounce-buffer path needs registered memory) + mimalloc + libfabric, and
-# builds only when the OFI transport is on AND the arena allocator is selected
-# (registered slabs require it).  No ARTS runtime, no ports -> a pure unit test.
-if(ARTS_TRANSPORT_OFI AND ARTS_MALLOC STREQUAL "mimalloc")
+# builds only when the arena allocator is selected (registered slabs require
+# it).  No ARTS runtime, no ports -> a pure unit test.
+if(ARTS_MALLOC STREQUAL "mimalloc")
     add_executable(net_selfsend unit/net_selfsend.c $<TARGET_OBJECTS:arts_regpool>)
     target_include_directories(net_selfsend PRIVATE
         ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR}
         ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
-    target_compile_definitions(net_selfsend PRIVATE ARTS_TRANSPORT_OFI=1)
     set_test_log_level(net_selfsend 2)
     target_link_libraries(net_selfsend PRIVATE
         Threads::Threads mimalloc-static arts::libfabric ${RT_LIBRARY})
@@ -552,7 +551,6 @@ if(ARTS_TRANSPORT_OFI AND ARTS_MALLOC STREQUAL "mimalloc")
     target_include_directories(net_rendezvous PRIVATE
         ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR}
         ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
-    target_compile_definitions(net_rendezvous PRIVATE ARTS_TRANSPORT_OFI=1)
     set_test_log_level(net_rendezvous 2)
     target_link_libraries(net_rendezvous PRIVATE
         Threads::Threads mimalloc-static arts::libfabric ${RT_LIBRARY})
@@ -566,7 +564,6 @@ if(ARTS_TRANSPORT_OFI AND ARTS_MALLOC STREQUAL "mimalloc")
     target_include_directories(net_src_bind PRIVATE
         ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR}
         ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
-    target_compile_definitions(net_src_bind PRIVATE ARTS_TRANSPORT_OFI=1)
     set_test_log_level(net_src_bind 2)
     target_link_libraries(net_src_bind PRIVATE
         Threads::Threads mimalloc-static arts::libfabric ${RT_LIBRARY})
@@ -576,15 +573,10 @@ endif()
 # net_addr_frame_bound — whitebox for the bootstrap address-frame length bound
 # (arts_net_addr_frame_ok in net.h).  Header-only: it exercises the pure
 # predicate, so it needs the internal include dir but no libfabric/runtime link.
-# Compiles in every build; the OFI predicate is under test only when the OFI
-# transport is on (otherwise the test reports SKIP).
 add_executable(net_addr_frame_bound unit/net_addr_frame_bound.c)
 target_include_directories(net_addr_frame_bound PRIVATE
     ${ARTS_PUBLIC_INCLUDE_DIR} ${ARTS_INTERNAL_INCLUDE_DIR}
     ${ARTS_BUILD_INTERNAL_INCLUDE_DIR})
-if(ARTS_TRANSPORT_OFI)
-    target_compile_definitions(net_addr_frame_bound PRIVATE ARTS_TRANSPORT_OFI=1)
-endif()
 target_link_libraries(net_addr_frame_bound PRIVATE Threads::Threads)
 register_pure_unit_test(net_addr_frame_bound)
 

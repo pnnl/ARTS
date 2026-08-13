@@ -55,19 +55,6 @@ int arts_rt(int argc, char **argv) {
   struct arts_config_s config;
   arts_config_load(&config);
 
-#ifndef ARTS_TRANSPORT_OFI
-  /* After the transport cutover all cross-rank traffic rides the libfabric
-   * (OFI) core; a build with the OFI transport compiled out is single-node
-   * only.  Fail cleanly rather than starting a multinode run with no data
-   * transport. */
-  if (config.table_length > 1) {
-    ARTS_ERROR("multinode run requested (%d nodes) but this build has the OFI "
-               "transport disabled (ARTS_TRANSPORT_OFI=OFF) — it is single-node "
-               "only.  Rebuild with -DARTS_TRANSPORT_OFI=ON for multinode.",
-               config.table_length);
-  }
-#endif
-
   arts_install_signal_handlers();
   /* Start the dedicated SIGTERM/SIGINT/SIGHUP/SIGALRM watcher thread BEFORE
    * any worker/sender/receiver thread is spawned, so the SIG_BLOCK mask is

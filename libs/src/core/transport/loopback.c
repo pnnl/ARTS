@@ -39,16 +39,13 @@
 
 /* Control-plane send facade + self-loopback.
  *
- * This translation unit is compiled in EVERY build (unlike net.c, whose fabric
- * body is #ifdef ARTS_TRANSPORT_OFI): it holds the public send names the rest of
- * the runtime calls, the outbound-size census, and the same-rank self-loopback
- * queue — none of which depend on the fabric being present.  A remote target is
- * forwarded to the fabric core (arts_net_send_core) when the OFI transport is
- * compiled in; single-node and OFI-off builds never present a remote target, so
- * those calls degrade to warn-and-drop and only the self-loopback carries
+ * This translation unit holds the public send names the rest of the runtime
+ * calls, the outbound-size census, and the same-rank self-loopback queue.  A
+ * remote target is forwarded to the fabric core (arts_net_send_core); a
+ * single-node run never presents one, so there only the self-loopback carries
  * traffic. */
 
-#include "arts/transport/net.h" /* public API + (OFI) arts_net_send_core */
+#include "arts/transport/net.h" /* public API + arts_net_send_core */
 
 #include <stdatomic.h>
 #include <string.h>
@@ -197,9 +194,7 @@ void arts_transport_send_async(int rank, char *message, unsigned int length) {
     return;
   }
   arts_net_msg_census(length);
-#ifdef ARTS_TRANSPORT_OFI
   arts_net_send_core(rank, message, length, NULL, 0, 0, NULL);
-#endif
 }
 
 void arts_transport_send_payload_async(int rank, char *message,
@@ -211,11 +206,7 @@ void arts_transport_send_payload_async(int rank, char *message,
   size_send_check(length);
   size_send_check(size);
   arts_net_msg_census((uint64_t)length + size);
-#ifdef ARTS_TRANSPORT_OFI
   arts_net_send_core(rank, message, length, payload, 0, size, NULL);
-#else
-  (void)payload;
-#endif
 }
 
 void arts_transport_send_payload_async_free(int rank, char *message,
@@ -228,11 +219,5 @@ void arts_transport_send_payload_async_free(int rank, char *message,
   size_send_check(length);
   size_send_check(size);
   arts_net_msg_census((uint64_t)length + size);
-#ifdef ARTS_TRANSPORT_OFI
   arts_net_send_core(rank, message, length, payload, offset, size, free_method);
-#else
-  (void)payload;
-  (void)offset;
-  (void)free_method;
-#endif
 }

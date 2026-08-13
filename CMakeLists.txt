@@ -180,8 +180,10 @@ include(CheckLanguage)
 include(CMakeDependentOption)
 
 # ── Library targets ────────────────────────────────────────────────────────
+# The static library is unconditional: it is the substrate every other artifact
+# is derived from (the benchmark variants, the OCR shim, the installed archive),
+# so only the shared object is a choice.
 option(ARTS_BUILD_SHARED "Build the shared library (libarts.so)" ON)
-option(ARTS_BUILD_STATIC "Build the static library (libarts.a)"  ON)
 
 # ── Optional components ────────────────────────────────────────────────────
 # examples/ predates the current public API and no longer builds against it.
@@ -205,9 +207,6 @@ option(ARTS_BUILD_BASELINES  "Build native OpenMP/MPI baseline implementations" 
 option(ARTS_BUILD_XSOCR      "Build the XSOCR reference runtime" ON)
 option(ARTS_BUILD_OCRVX      "Build the ocr-vx reference runtime" ON)
 option(ARTS_BUILD_DOCS       "Build documentation (requires Doxygen + Sphinx)" OFF)
-
-# ── Transport ──────────────────────────────────────────────────────────────
-option(ARTS_TRANSPORT_OFI "libfabric (OFI) transport" ON)
 
 # ── GPU / CUDA ─────────────────────────────────────────────────────────────
 # ARTS_USE_LOCAL_CUDA_ARCHITECTURES only applies when ARTS_USE_GPU=ON;
@@ -852,18 +851,16 @@ install(DIRECTORY libs/include/public/arts/
 )
 
 # Install library targets
-if(ARTS_BUILD_STATIC)
-    install(TARGETS arts_static
+install(TARGETS arts_static
+    EXPORT ARTSTargets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+)
+
+if(BUILD_CUDA_LIBRARY)
+    install(TARGETS arts_cuda_static
         EXPORT ARTSTargets
         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     )
-
-    if(BUILD_CUDA_LIBRARY)
-        install(TARGETS arts_cuda_static
-            EXPORT ARTSTargets
-            ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-        )
-    endif()
 endif()
 
 if(ARTS_BUILD_SHARED)
@@ -934,11 +931,7 @@ if(BUILD_CUDA_LIBRARY)
 else()
     message(STATUS "  CUDA Library:     OFF")
 endif()
-if(ARTS_TRANSPORT_OFI)
-    message(STATUS "  Network:          libfabric (OFI) / TCP bootstrap")
-else()
-    message(STATUS "  Network:          TCP")
-endif()
+message(STATUS "  Network:          libfabric (OFI) / TCP bootstrap")
 message(STATUS "  Hardware Topo:    hwloc v${HWLOC_VERSION} (source)")
 message(STATUS "")
 message(STATUS "Build options:")
@@ -950,13 +943,9 @@ if(ARTS_BUILD_SHARED)
 else()
     message(STATUS "  Shared library:  OFF")
 endif()
-if(ARTS_BUILD_STATIC)
-    message(STATUS "  Static library:  libarts.a (standard)")
-    if(BUILD_CUDA_LIBRARY)
-        message(STATUS "                   libarts_cuda.a (CUDA-enabled)")
-    endif()
-else()
-    message(STATUS "  Static library:  OFF")
+message(STATUS "  Static library:  libarts.a (standard)")
+if(BUILD_CUDA_LIBRARY)
+    message(STATUS "                   libarts_cuda.a (CUDA-enabled)")
 endif()
 message(STATUS "  Examples:        ${ARTS_BUILD_EXAMPLES}")
 message(STATUS "  Tests:           ${ARTS_BUILD_TESTS}")

@@ -54,8 +54,9 @@ include("${CMAKE_CURRENT_LIST_DIR}/ARTSTargets.cmake")
 # Set ARTS_FOUND
 set(ARTS_FOUND TRUE)
 
-# Provide information about available components
-set(ARTS_STATIC_AVAILABLE @ARTS_BUILD_STATIC@)
+# Provide information about available components.  The static library is
+# unconditional; only the shared object is a build choice.
+set(ARTS_STATIC_AVAILABLE TRUE)
 set(ARTS_SHARED_AVAILABLE @ARTS_BUILD_SHARED@)
 set(ARTS_CUDA_AVAILABLE @BUILD_CUDA_LIBRARY@)
 

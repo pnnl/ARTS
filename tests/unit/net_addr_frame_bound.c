@@ -54,7 +54,6 @@
 #include "arts/transport/net.h"
 
 int main(void) {
-#ifdef ARTS_TRANSPORT_OFI
   const unsigned NRANKS = 4;
   const unsigned OWN = 32; /* fixed provider address length for this run */
 
@@ -83,8 +82,4 @@ int main(void) {
   printf("PASS: address-frame bound rejects out-of-range rank and any length "
          "deviation\n");
   return 0;
-#else
-  printf("SKIP: OFI transport disabled — no bootstrap address exchange\n");
-  return 0;
-#endif
 }

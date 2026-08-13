@@ -43,7 +43,6 @@
 #include <assert.h>
 #include <stdint.h>
 #include <stdlib.h>
-#include <unistd.h> /* usleep (OFF-build progress arm idle sleep) */
 
 #include "arts/counter/Preamble.h"
 #include "arts/counter/counter.h"
@@ -113,17 +112,15 @@ void arts_runtime_node_init(struct arts_config_s *config) {
    * payload (arts_db_buf_alloc draws from it), so it is carved here — before
    * arts_thread_init spawns a single thread.
    *
-   * When the OFI transport is on AND the run is multinode, the fabric comes up
-   * FIRST so the pool can register its slabs against the domain net_init
-   * creates.  Receive resources are armed before this rank's fabric address is
-   * ever published, so no peer can target an unarmed endpoint: the pool is
-   * carved, RX landing buffers are posted, and only then does the one-shot
-   * fi-address exchange ride the already-established TCP mesh here on the main
-   * thread — before any network thread exists to contend for those sockets.
-   * A single-node run — or an OFI-off build — stays entirely fabric-free and
-   * carves the pool with a NULL (unregistered) domain, identical to the
-   * plain-malloc path. */
-#ifdef ARTS_TRANSPORT_OFI
+   * On a multinode run the fabric comes up FIRST so the pool can register its
+   * slabs against the domain net_init creates.  Receive resources are armed
+   * before this rank's fabric address is ever published, so no peer can target
+   * an unarmed endpoint: the pool is carved, RX landing buffers are posted, and
+   * only then does the one-shot fi-address exchange ride the
+   * already-established TCP mesh here on the main thread — before any network
+   * thread exists to contend for those sockets.  A single-node run stays
+   * entirely fabric-free and carves the pool with a NULL (unregistered)
+   * domain, identical to the plain-malloc path. */
   if (arts_global_rank_count > 1) {
     arts_net_init(config->provider, config->fabric_domain,
                   config->net_interface);
@@ -138,9 +135,7 @@ void arts_runtime_node_init(struct arts_config_s *config) {
      * surfaces as HUP, probed by the progress thread) and only the listeners
      * close. */
     arts_socket_sentinel_arm();
-  } else
-#endif
-  {
+  } else {
     if (!arts_regpool_init(NULL, regpool_slab_bytes, 0)) {
       ARTS_ERROR("arts_runtime_node_init: registered pool init failed");
     }
@@ -455,7 +450,6 @@ void arts_runtime_global_cleanup() {
   /* Socket server global arrays (safe to call even for single-node) */
   arts_socket_cleanup();
 
-#ifdef ARTS_TRANSPORT_OFI
   /* Fabric teardown is two-phase around the pool cleanup.  Phase 1 runs BEFORE
    * the pool is freed: refuse new sends, discard/reap in-flight txns (their
    * bounces return to the still-live pool) and close ep/cq/av while returning
@@ -464,7 +458,6 @@ void arts_runtime_global_cleanup() {
   if (arts_global_rank_count > 1) {
     arts_net_quiesce();
   }
-#endif
 
   /* Registered-slab pool: torn down last, after arts_clean_up_dbs (above)
    * has already released every DB payload buffer back to it — no thread is
@@ -472,14 +465,12 @@ void arts_runtime_global_cleanup() {
    * receiver thread has joined). */
   arts_regpool_cleanup();
 
-#ifdef ARTS_TRANSPORT_OFI
   /* Phase 2: the pool's slab MRs (backing both sends and the recv buffers) are
    * now closed, so the net module can close the domain and fabric — no memory
    * registration outlives its domain. */
   if (arts_global_rank_count > 1) {
     arts_net_teardown();
   }
-#endif
 }
 
 /*
@@ -746,7 +737,6 @@ int arts_runtime_loop() {
              arts_thread_info.thread_id, arts_thread_info.role);
   switch (arts_thread_info.role) {
   case ARTS_ROLE_PROGRESS: {
-#ifdef ARTS_TRANSPORT_OFI
     unsigned int sentinel_spin = 0;
     while (arts_thread_info.alive) {
       /* Multinode: the progress thread is the SOLE self-loopback drainer, so
@@ -776,15 +766,6 @@ int arts_runtime_loop() {
         arts_socket_sentinel_check();
       }
     }
-#else
-    /* Single-node-only build: no fabric, and no progress thread is ever
-     * spawned (the progress count is zeroed single-node) — nothing to do.  If a
-     * build ever did spawn one, sleep between wake checks so this arm can never
-     * become a core-eating busy spin. */
-    while (arts_thread_info.alive) {
-      usleep(1000);
-    }
-#endif
     break;
   }
   case ARTS_ROLE_WORKER:

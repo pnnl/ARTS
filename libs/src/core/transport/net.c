@@ -38,8 +38,6 @@
 ******************************************************************************/
 #include "arts/transport/net.h"
 
-#ifdef ARTS_TRANSPORT_OFI
-
 #include <ifaddrs.h>
 #include <netinet/in.h>
 #include <pthread.h>
@@ -1452,44 +1450,3 @@ void arts_net_drain_outstanding(unsigned int deadline_ms) {
     nanosleep(&ts, NULL);
   }
 }
-
-#else /* !ARTS_TRANSPORT_OFI — single-node-only build: the fabric is compiled
-       * out entirely, so no send ever leaves this process and there is nothing
-       * to drain.  The symbols still exist so the callers link; the rendezvous
-       * plane is inert (no cross-rank transfer can exist, and rdzv_local's
-       * false return keeps every caller on its local path). */
-
-void arts_net_drain_outstanding(unsigned int deadline_ms) { (void)deadline_ms; }
-
-uint64_t arts_net_rdzv_txid_next(void) { return 0; }
-
-bool arts_net_rdzv_local(const void *p, uint64_t len, uint64_t *raddr,
-                         uint64_t *rkey) {
-  (void)p;
-  (void)len;
-  (void)raddr;
-  (void)rkey;
-  return false;
-}
-
-void arts_net_rdzv_expect(uint64_t txid, void (*on_data)(void *), void *arg) {
-  (void)txid;
-  (void)on_data;
-  (void)arg;
-}
-
-void arts_net_put_payload(int rank, uint64_t raddr, uint64_t rkey,
-                          uint64_t txid, const void *src, uint64_t len,
-                          void (*on_local_done)(void *), void *arg) {
-  (void)rank;
-  (void)raddr;
-  (void)rkey;
-  (void)txid;
-  (void)src;
-  (void)len;
-  if (on_local_done != NULL) {
-    on_local_done(arg);
-  }
-}
-
-#endif /* ARTS_TRANSPORT_OFI */

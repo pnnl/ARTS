@@ -176,9 +176,7 @@ function(arts_embed_vendored_archives target)
     arts_depend_on_vendored(${target})
     # PRIVATE, not INTERFACE: the archive belongs inside the shared object, not
     # on the line of everything that links it.
-    if(ARTS_TRANSPORT_OFI)
-        target_link_libraries(${target} PRIVATE arts::libfabric)
-    endif()
+    target_link_libraries(${target} PRIVATE arts::libfabric)
     # Both options below are GNU ld / lld spellings, and ELF symbol versioning
     # is the problem only one of them solves.
     if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -191,18 +189,9 @@ function(arts_embed_vendored_archives target)
     # version-tagged definition needs its version node declared at this link,
     # which the derived script supplies without hiding anything of ours the way
     # libfabric's own script would.
-    if(ARTS_TRANSPORT_OFI)
-        target_link_options(${target} PRIVATE
-            "LINKER:--version-script=${OFI_VERSION_NODES_MAP}")
-    endif()
+    target_link_options(${target} PRIVATE
+        "LINKER:--version-script=${OFI_VERSION_NODES_MAP}")
 endfunction()
-
-# OFI (libfabric) transport availability, visible to every target in this
-# directory and its subdirectories (core/, graph/) so per-module OBJECT
-# libraries can gate fabric-header includes with #ifdef ARTS_TRANSPORT_OFI.
-if(ARTS_TRANSPORT_OFI)
-    add_compile_definitions(ARTS_TRANSPORT_OFI=1)
-endif()
 
 # No-hint placement policies, visible to every libarts compile in this
 # directory and its subdirectories (edt.c / db.c gate their no-hint branches
@@ -238,82 +227,78 @@ endif()
 # Standard ARTS Library (always built, no CUDA)
 #
 
-# Create static library if requested
-if(ARTS_BUILD_STATIC)
-    add_library(arts_static STATIC ${ARTS_MAIN_SOURCES})
+# The static library is the substrate every other artifact derives from.
+add_library(arts_static STATIC ${ARTS_MAIN_SOURCES})
 
-    target_include_directories(arts_static BEFORE PRIVATE
-        ${ARTS_BUILD_INTERNAL_INCLUDE_DIR}
-        ${ARTS_PUBLIC_INCLUDE_DIR}
-        ${ARTS_INTERNAL_INCLUDE_DIR}
-    )
+target_include_directories(arts_static BEFORE PRIVATE
+    ${ARTS_BUILD_INTERNAL_INCLUDE_DIR}
+    ${ARTS_PUBLIC_INCLUDE_DIR}
+    ${ARTS_INTERNAL_INCLUDE_DIR}
+)
 
-    # Add hwloc include directories if available
-    if(HWLOC_INCLUDE_DIRS)
-        target_include_directories(arts_static PRIVATE ${HWLOC_INCLUDE_DIRS})
-    endif()
-
-    # Add object library contents directly to avoid export issues
-    target_sources(arts_static PRIVATE
-        $<TARGET_OBJECTS:arts_gas>
-        $<TARGET_OBJECTS:arts_transport>
-        $<TARGET_OBJECTS:arts_counter>
-        $<TARGET_OBJECTS:arts_scheduler>
-        $<TARGET_OBJECTS:arts_compute>
-        $<TARGET_OBJECTS:arts_memory>
-        $<TARGET_OBJECTS:arts_sync>
-        $<TARGET_OBJECTS:arts_ooo>
-        $<TARGET_OBJECTS:arts_regpool>
-        $<TARGET_OBJECTS:arts_system>
-        $<TARGET_OBJECTS:arts_utils>
-        $<TARGET_OBJECTS:arts_graph>
-    )
-
-    target_link_libraries(arts_static PUBLIC arts_interface)
-
-    # Link external dependencies statically
-    target_link_libraries(arts_static PRIVATE
-        Threads::Threads
-        ${RT_LIBRARY}
-        ${M_LIBRARY}
-        ${ANL_LIBRARY}
-        $<BUILD_INTERFACE:${HWLOC_LIBRARIES}>
-    )
-
-    if(ARTS_ATOMIC_LIBRARY)
-        target_link_libraries(arts_static PRIVATE ${ARTS_ATOMIC_LIBRARY})
-    endif()
-
-    # Add macOS framework dependencies for hwloc
-    if(APPLE AND HWLOC_FOUND)
-        target_link_libraries(arts_static PRIVATE "-framework CoreFoundation" "-framework IOKit" "-framework OpenCL")
-    endif()
-
-    if(ARTS_USE_CXL)
-        target_link_libraries(arts_static PUBLIC arts_cxl_lib)
-    endif()
-
-    if(ARTS_TRANSPORT_OFI)
-        target_link_libraries(arts_static PRIVATE arts::libfabric)
-    endif()
-
-    arts_apply_protocol(arts_static ${ARTS_COHERENCE_ARM} ${ARTS_WRITE_POLICY} ${ARTS_RELEASE_POLICY})
-
-    # The vendored archives above stay on this target's PRIVATE link list even
-    # though the merge makes them redundant there: the entries carry the
-    # vendored include directories the sources in this directory compile
-    # against, and the toolchain libraries (dl, rt) that back-resolve the
-    # embedded objects on a consumer's line, which no merge can supply.
-    arts_bundle_vendored_archives(arts_static)
-
-    # Set library properties
-    set_target_properties(arts_static PROPERTIES
-        OUTPUT_NAME arts
-        VERSION ${PROJECT_VERSION}
-        SOVERSION ${PROJECT_VERSION_MAJOR}
-        EXPORT_NAME static
-    )
+# Add hwloc include directories if available
+if(HWLOC_INCLUDE_DIRS)
+    target_include_directories(arts_static PRIVATE ${HWLOC_INCLUDE_DIRS})
 endif()
+
+# Add object library contents directly to avoid export issues
+target_sources(arts_static PRIVATE
+    $<TARGET_OBJECTS:arts_gas>
+    $<TARGET_OBJECTS:arts_transport>
+    $<TARGET_OBJECTS:arts_counter>
+    $<TARGET_OBJECTS:arts_scheduler>
+    $<TARGET_OBJECTS:arts_compute>
+    $<TARGET_OBJECTS:arts_memory>
+    $<TARGET_OBJECTS:arts_sync>
+    $<TARGET_OBJECTS:arts_ooo>
+    $<TARGET_OBJECTS:arts_regpool>
+    $<TARGET_OBJECTS:arts_system>
+    $<TARGET_OBJECTS:arts_utils>
+    $<TARGET_OBJECTS:arts_graph>
+)
+
+target_link_libraries(arts_static PUBLIC arts_interface)
+
+# Link external dependencies statically
+target_link_libraries(arts_static PRIVATE
+    Threads::Threads
+    ${RT_LIBRARY}
+    ${M_LIBRARY}
+    ${ANL_LIBRARY}
+    $<BUILD_INTERFACE:${HWLOC_LIBRARIES}>
+)
+
+if(ARTS_ATOMIC_LIBRARY)
+    target_link_libraries(arts_static PRIVATE ${ARTS_ATOMIC_LIBRARY})
+endif()
+
+# Add macOS framework dependencies for hwloc
+if(APPLE AND HWLOC_FOUND)
+    target_link_libraries(arts_static PRIVATE "-framework CoreFoundation" "-framework IOKit" "-framework OpenCL")
+endif()
+
+if(ARTS_USE_CXL)
+    target_link_libraries(arts_static PUBLIC arts_cxl_lib)
+endif()
+
+target_link_libraries(arts_static PRIVATE arts::libfabric)
+
+arts_apply_protocol(arts_static ${ARTS_COHERENCE_ARM} ${ARTS_WRITE_POLICY} ${ARTS_RELEASE_POLICY})
+
+# The vendored archives above stay on this target's PRIVATE link list even
+# though the merge makes them redundant there: the entries carry the
+# vendored include directories the sources in this directory compile
+# against, and the toolchain libraries (dl, rt) that back-resolve the
+# embedded objects on a consumer's line, which no merge can supply.
+arts_bundle_vendored_archives(arts_static)
+
+# Set library properties
+set_target_properties(arts_static PROPERTIES
+    OUTPUT_NAME arts
+    VERSION ${PROJECT_VERSION}
+    SOVERSION ${PROJECT_VERSION_MAJOR}
+    EXPORT_NAME static
+)
 
 # Create shared library if requested
 if(ARTS_BUILD_SHARED)
@@ -388,76 +373,73 @@ endif()
 #
 
 if(BUILD_CUDA_LIBRARY)
-    # Create static CUDA library if requested
-    if(ARTS_BUILD_STATIC)
-        add_library(arts_cuda_static STATIC ${ARTS_MAIN_SOURCES})
+    add_library(arts_cuda_static STATIC ${ARTS_MAIN_SOURCES})
 
-        target_include_directories(arts_cuda_static BEFORE PRIVATE
-            ${ARTS_BUILD_INTERNAL_INCLUDE_DIR}
-            ${ARTS_PUBLIC_INCLUDE_DIR}
-            ${ARTS_INTERNAL_INCLUDE_DIR}
-        )
+    target_include_directories(arts_cuda_static BEFORE PRIVATE
+        ${ARTS_BUILD_INTERNAL_INCLUDE_DIR}
+        ${ARTS_PUBLIC_INCLUDE_DIR}
+        ${ARTS_INTERNAL_INCLUDE_DIR}
+    )
 
-        # Add hwloc include directories if available
-        if(HWLOC_INCLUDE_DIRS)
-            target_include_directories(arts_cuda_static PRIVATE ${HWLOC_INCLUDE_DIRS})
-        endif()
-
-        # Add object library contents directly to avoid export issues
-        target_sources(arts_cuda_static PRIVATE
-            $<TARGET_OBJECTS:arts_gas>
-            $<TARGET_OBJECTS:arts_transport>
-            $<TARGET_OBJECTS:arts_counter>
-            $<TARGET_OBJECTS:arts_scheduler_gpu>
-            $<TARGET_OBJECTS:arts_compute_gpu>
-            $<TARGET_OBJECTS:arts_memory_gpu>
-            $<TARGET_OBJECTS:arts_sync>
-            $<TARGET_OBJECTS:arts_ooo>
-            $<TARGET_OBJECTS:arts_regpool>
-            $<TARGET_OBJECTS:arts_system>
-            $<TARGET_OBJECTS:arts_utils>
-            $<TARGET_OBJECTS:arts_gpu>
-            $<TARGET_OBJECTS:arts_graph>
-        )
-
-        target_link_libraries(arts_cuda_static PUBLIC arts_interface)
-
-        # Add CUDA compile definition for this target
-        target_compile_definitions(arts_cuda_static PRIVATE ARTS_USE_GPU)
-
-        # Link external dependencies and CUDA libraries
-        target_link_libraries(arts_cuda_static PRIVATE
-            Threads::Threads
-            ${RT_LIBRARY}
-            ${M_LIBRARY}
-            ${ANL_LIBRARY}
-            $<BUILD_INTERFACE:${HWLOC_LIBRARIES}>
-            CUDA::cudart
-            CUDA::cuda_driver
-            CUDA::cublas
-        )
-
-        if(ARTS_ATOMIC_LIBRARY)
-            target_link_libraries(arts_cuda_static PRIVATE ${ARTS_ATOMIC_LIBRARY})
-        endif()
-
-        # Add macOS framework dependencies for hwloc
-        if(APPLE AND HWLOC_FOUND)
-            target_link_libraries(arts_cuda_static PRIVATE "-framework CoreFoundation" "-framework IOKit" "-framework OpenCL")
-        endif()
-
-        arts_bundle_vendored_archives(arts_cuda_static)
-
-        arts_apply_protocol(arts_cuda_static ${ARTS_COHERENCE_ARM} ${ARTS_WRITE_POLICY} ${ARTS_RELEASE_POLICY})
-
-        # Set library properties
-        set_target_properties(arts_cuda_static PROPERTIES
-            OUTPUT_NAME arts_cuda
-            VERSION ${PROJECT_VERSION}
-            SOVERSION ${PROJECT_VERSION_MAJOR}
-            EXPORT_NAME cuda_static
-        )
+    # Add hwloc include directories if available
+    if(HWLOC_INCLUDE_DIRS)
+        target_include_directories(arts_cuda_static PRIVATE ${HWLOC_INCLUDE_DIRS})
     endif()
+
+    # Add object library contents directly to avoid export issues
+    target_sources(arts_cuda_static PRIVATE
+        $<TARGET_OBJECTS:arts_gas>
+        $<TARGET_OBJECTS:arts_transport>
+        $<TARGET_OBJECTS:arts_counter>
+        $<TARGET_OBJECTS:arts_scheduler_gpu>
+        $<TARGET_OBJECTS:arts_compute_gpu>
+        $<TARGET_OBJECTS:arts_memory_gpu>
+        $<TARGET_OBJECTS:arts_sync>
+        $<TARGET_OBJECTS:arts_ooo>
+        $<TARGET_OBJECTS:arts_regpool>
+        $<TARGET_OBJECTS:arts_system>
+        $<TARGET_OBJECTS:arts_utils>
+        $<TARGET_OBJECTS:arts_gpu>
+        $<TARGET_OBJECTS:arts_graph>
+    )
+
+    target_link_libraries(arts_cuda_static PUBLIC arts_interface)
+
+    # Add CUDA compile definition for this target
+    target_compile_definitions(arts_cuda_static PRIVATE ARTS_USE_GPU)
+
+    # Link external dependencies and CUDA libraries
+    target_link_libraries(arts_cuda_static PRIVATE
+        Threads::Threads
+        ${RT_LIBRARY}
+        ${M_LIBRARY}
+        ${ANL_LIBRARY}
+        $<BUILD_INTERFACE:${HWLOC_LIBRARIES}>
+        CUDA::cudart
+        CUDA::cuda_driver
+        CUDA::cublas
+    )
+
+    if(ARTS_ATOMIC_LIBRARY)
+        target_link_libraries(arts_cuda_static PRIVATE ${ARTS_ATOMIC_LIBRARY})
+    endif()
+
+    # Add macOS framework dependencies for hwloc
+    if(APPLE AND HWLOC_FOUND)
+        target_link_libraries(arts_cuda_static PRIVATE "-framework CoreFoundation" "-framework IOKit" "-framework OpenCL")
+    endif()
+
+    arts_bundle_vendored_archives(arts_cuda_static)
+
+    arts_apply_protocol(arts_cuda_static ${ARTS_COHERENCE_ARM} ${ARTS_WRITE_POLICY} ${ARTS_RELEASE_POLICY})
+
+    # Set library properties
+    set_target_properties(arts_cuda_static PROPERTIES
+        OUTPUT_NAME arts_cuda
+        VERSION ${PROJECT_VERSION}
+        SOVERSION ${PROJECT_VERSION_MAJOR}
+        EXPORT_NAME cuda_static
+    )
 
     # Create shared CUDA library if requested
     if(ARTS_BUILD_SHARED)
@@ -536,7 +518,7 @@ endif()
 # sources are gathered from the CPU object-lib targets (their compiled objects
 # cannot be reused — each variant needs its own protocol defines), the coherence
 # MODEL TUs are swapped for this variant's, and the defines are applied per-target.
-if(ARTS_BUILD_BENCHMARKS AND ARTS_BUILD_STATIC)
+if(ARTS_BUILD_BENCHMARKS)
     set(_ARTS_VARIANT_OBJLIBS
         arts_compute arts_memory arts_sync arts_ooo arts_regpool arts_scheduler
         arts_transport arts_gas arts_system arts_utils arts_counter arts_graph)
@@ -586,11 +568,9 @@ if(ARTS_BUILD_BENCHMARKS AND ARTS_BUILD_STATIC)
         if(ARTS_MALLOC STREQUAL "mimalloc")
             target_link_libraries(arts_static_${suffix} PRIVATE mimalloc-static)
         endif()
-        if(ARTS_TRANSPORT_OFI)
-            # regpool.c (gathered from arts_regpool) includes fabric headers and
-            # the static lib resolves fi_* symbols from libfabric.
-            target_link_libraries(arts_static_${suffix} PRIVATE arts::libfabric)
-        endif()
+        # regpool.c (gathered from arts_regpool) includes fabric headers and
+        # the static lib resolves fi_* symbols from libfabric.
+        target_link_libraries(arts_static_${suffix} PRIVATE arts::libfabric)
         arts_apply_protocol(arts_static_${suffix} "${arm}" "${write_policy}"
                             "${release_policy}" "${combining}")
     endfunction()
@@ -619,16 +599,12 @@ endif()
 # (include dirs) to its compilation unit without introducing a link dep.
 if(ARTS_MALLOC STREQUAL "mimalloc")
     target_link_libraries(arts_utils PRIVATE mimalloc-static)
-    if(ARTS_BUILD_STATIC)
-        target_link_libraries(arts_static PRIVATE mimalloc-static)
-    endif()
+    target_link_libraries(arts_static PRIVATE mimalloc-static)
     if(ARTS_BUILD_SHARED)
         target_link_libraries(arts_shared PRIVATE mimalloc-static)
     endif()
     if(BUILD_CUDA_LIBRARY)
-        if(ARTS_BUILD_STATIC)
-            target_link_libraries(arts_cuda_static PRIVATE mimalloc-static)
-        endif()
+        target_link_libraries(arts_cuda_static PRIVATE mimalloc-static)
         if(ARTS_BUILD_SHARED)
             target_link_libraries(arts_cuda_shared PRIVATE mimalloc-static)
         endif()
@@ -645,20 +621,13 @@ if(ARTS_BUILD_SHARED)
     endif()
 endif()
 
-if(ARTS_BUILD_STATIC)
-    if(NOT TARGET ARTS::arts)
-        add_library(ARTS::arts ALIAS arts_static)
-    endif()
-    add_library(ARTS::static ALIAS arts_static)
-    if(BUILD_CUDA_LIBRARY)
-        if(NOT TARGET ARTS::arts_cuda)
-            add_library(ARTS::arts_cuda ALIAS arts_cuda_static)
-        endif()
-        add_library(ARTS::cuda_static ALIAS arts_cuda_static)
-    endif()
+if(NOT TARGET ARTS::arts)
+    add_library(ARTS::arts ALIAS arts_static)
 endif()
-
-# Ensure at least one library type is built
-if(NOT ARTS_BUILD_STATIC AND NOT ARTS_BUILD_SHARED)
-    message(FATAL_ERROR "At least one of ARTS_BUILD_STATIC or ARTS_BUILD_SHARED must be enabled")
+add_library(ARTS::static ALIAS arts_static)
+if(BUILD_CUDA_LIBRARY)
+    if(NOT TARGET ARTS::arts_cuda)
+        add_library(ARTS::arts_cuda ALIAS arts_cuda_static)
+    endif()
+    add_library(ARTS::cuda_static ALIAS arts_cuda_static)
 endif()

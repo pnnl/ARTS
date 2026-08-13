@@ -61,10 +61,9 @@ All options are set with ``-D<NAME>=<VALUE>`` on the cmake line.
      - Description
    * - ``ARTS_BUILD_SHARED``
      - ON
-     - Build the shared library ``libarts.so``.
-   * - ``ARTS_BUILD_STATIC``
-     - ON
-     - Build the static library ``libarts.a``.
+     - Build the shared library ``libarts.so`` alongside ``libarts.a``.  The
+       static library is unconditional — it is the substrate the benchmark
+       variants, the OCR shim and the installed archive derive from.
    * - ``ARTS_BUILD_EXAMPLES``
      - OFF (forced)
      - **Deprecated** — ``examples/`` predates the current public API and
