@@ -107,8 +107,8 @@ void arts_transport_setup(struct arts_config_s *config) {
 }
 
 /* ===== Generic push rendezvous ==============================================
- * Sender side: a bulk payload the receiver did not ask for (EDT/event moves,
- * DB_MODE_PTR satisfies) whose wire total would breach the control ceiling.
+ * Sender side: a bulk payload the receiver did not ask for (EDT/event
+ * moves) whose wire total would breach the control ceiling.
  * RTS announces the size; the target allocates a plain registered landing and
  * replies CTS; the sender PUTs, patches {rdzv_txid, rdzv_cookie(, rdzv_size)}
  * into the retained control packet by message type, and sends it; the target
@@ -186,13 +186,6 @@ static void rdzv_push_landed_cb(void *arg) {
   rh->size = total; /* the handlers derive the blob size from header.size */
   /* Strip the pairing marks so the re-entry takes the inline arm. */
   switch (rh->message_type) {
-  case MSG_EDT_SATISFY_SLOT: {
-    struct arts_msg_edt_satisfy_slot_packet_s *sp =
-        (struct arts_msg_edt_satisfy_slot_packet_s *)rebuilt;
-    sp->rdzv_txid = 0;
-    sp->rdzv_cookie = 0;
-    break;
-  }
   case MSG_EDT_CREATE:
   case MSG_EVENT_CREATE: {
     struct arts_msg_memory_move_packet_s *mp =
@@ -260,36 +253,13 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     struct arts_msg_edt_satisfy_slot_packet_s *pack =
         (struct arts_msg_edt_satisfy_slot_packet_s *)(packet);
     /* RX is at the EDT's home — route straight into the OoO engine, same as
-     * arts_edt_satisfy_slot's home==self branch.  DB_MODE_PTR carries an inline
-     * payload right after the header (size > 0); other modes deliver a
-     * GUID/value reference only (size == 0).  The single mode-discriminated
-     * OOO_EDT_SATISFY_SLOT kind lays the PTR inline payload immediately after
-     * the args struct so the deferred payload reconstructs it; the handler
-     * branches on mode to locate it. */
-    if (pack->rdzv_txid != 0) {
-      /* Oversized DB_MODE_PTR payload traveling by push rendezvous: pair this
-       * packet with the write completion, then re-enter with the landed bytes
-       * rebuilt inline. */
-      rdzv_push_expect(packet, (unsigned int)sizeof(*pack), pack->rdzv_txid,
-                       pack->rdzv_cookie, pack->size);
-      break;
-    }
-    uint32_t payload = (pack->mode == DB_MODE_PTR) ? pack->size : 0u;
-    uint32_t asz =
-        (uint32_t)sizeof(struct arts_ooo_args_edt_satisfy_s) + payload;
-    char *buf = (char *)arts_malloc(asz);
-    struct arts_ooo_args_edt_satisfy_s *a =
-        (struct arts_ooo_args_edt_satisfy_s *)buf;
-    a->edt_guid = pack->edt;
-    a->data_guid = pack->db;
-    a->slot = pack->slot;
-    a->mode = pack->mode;
-    a->size = payload;
-    if (payload > 0) {
-      memcpy(buf + sizeof(*a), (void *)(pack + 1), payload);
-    }
-    arts_ooo_dispatch_or_defer_guid(pack->edt, OOO_EDT_SATISFY_SLOT, buf, asz);
-    arts_free(buf);
+     * arts_edt_satisfy_slot's home==self branch. */
+    struct arts_ooo_args_edt_satisfy_s a = {.edt_guid = pack->edt,
+                                            .data_guid = pack->db,
+                                            .slot = pack->slot,
+                                            .mode = pack->mode};
+    arts_ooo_dispatch_or_defer_guid(pack->edt, OOO_EDT_SATISFY_SLOT, &a,
+                                    sizeof(a));
     break;
   }
   case MSG_EVENT_SATISFY_SLOT: {
@@ -1085,13 +1055,6 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
      * completion. */
     struct arts_msg_header_s *hdr = (struct arts_msg_header_s *)(ctx + 1);
     switch (hdr->message_type) {
-    case MSG_EDT_SATISFY_SLOT: {
-      struct arts_msg_edt_satisfy_slot_packet_s *sp =
-          (struct arts_msg_edt_satisfy_slot_packet_s *)hdr;
-      sp->rdzv_txid = pack->landing.txid;
-      sp->rdzv_cookie = pack->landing.cookie;
-      break;
-    }
     case MSG_EDT_CREATE:
     case MSG_EVENT_CREATE: {
       struct arts_msg_memory_move_packet_s *mp =

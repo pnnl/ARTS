@@ -39,9 +39,8 @@
  * protocol.h §4 documents a pad-field invariant: "Pad-fields exist to keep the
  * trailing payload on an 8-byte boundary ... the payload starts at sizeof() —
  * that offset must be 8-aligned."  The payload-carrying structs are
- * OWNERSHIP_RESPONSE, PUBLISH, SNAPSHOT_RESPONSE, EDT_SATISFY_SLOT (for
- * DB_MODE_PTR), and — in EXCL builds — LOCK_GRANT, LOCK_RELEASE, and (EXCL+OWNER
- * only) LOCK_DELIVER.  This TU checks that sizeof() of each is a multiple of 8
+ * OWNERSHIP_RESPONSE, PUBLISH, SNAPSHOT_RESPONSE, and — in EXCL builds —
+ * LOCK_GRANT, LOCK_RELEASE, and (EXCL+OWNER only) LOCK_DELIVER.  This TU checks that sizeof() of each is a multiple of 8
  * at runtime (the invariant spans a pad field whose width is itself derived
  * from other fields, so it is not expressible as a single `_Static_assert`).
  * All payload-carrying structs currently HOLD the invariant — the check exists
@@ -164,7 +163,7 @@ _Static_assert(sizeof(struct arts_msg_memory_move_packet_s) == 48,
                "memory_move sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_add_dependence_packet_s) == 40,
                "add_dependence sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_edt_satisfy_slot_packet_s) == 64,
+_Static_assert(sizeof(struct arts_msg_edt_satisfy_slot_packet_s) == 40,
                "edt_satisfy_slot sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_event_satisfy_slot_packet_s) == 36,
                "event_satisfy_slot sizeof drifted");
@@ -258,8 +257,6 @@ int main(void) {
        sizeof(struct arts_msg_grant_response_packet_s), 1},
       {"PUBLISH", sizeof(struct arts_msg_publish_packet_s), 1},
       {"SNAPSHOT_RESPONSE", sizeof(struct arts_msg_snapshot_response_packet_s),
-       1},
-      {"EDT_SATISFY_SLOT", sizeof(struct arts_msg_edt_satisfy_slot_packet_s),
        1},
 #ifdef ARTS_PROTOCOL_EXCL
       {"EXCL_GRANT", sizeof(struct arts_msg_excl_grant_packet_s), 1},

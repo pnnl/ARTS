@@ -285,7 +285,7 @@ void arts_event_destroy(arts_guid_t guid) {
  * for non-CHANNEL it is e->simple.data. */
 static void event_signal_one(struct arts_event_dep_s *d, arts_guid_t data) {
   if (d->kind == ARTS_GUID_EDT) {
-    arts_edt_satisfy_slot(d->target, d->slot, data, d->mode, NULL, 0);
+    arts_edt_satisfy_slot(d->target, d->slot, data, d->mode);
   } else if (d->kind == ARTS_GUID_EVENT) {
     arts_event_satisfy_slot(d->target, data, d->slot);
   }
@@ -521,7 +521,7 @@ void arts_handler_event_add_dependence(void *item, void *vargs) {
   if (atomic_load_explicit(&event->simple.fired, memory_order_acquire)) {
     arts_guid_t data = event->simple.data;
     if (dest_type == ARTS_GUID_EDT) {
-      arts_edt_satisfy_slot(destination, slot, data, access_mode, NULL, 0);
+      arts_edt_satisfy_slot(destination, slot, data, access_mode);
     } else if (dest_type == ARTS_GUID_EVENT) {
       arts_event_satisfy_slot(destination, data, slot);
     }
@@ -568,7 +568,7 @@ void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
   if (access_mode == DB_MODE_VAL) {
     arts_guid_kind_t dest_type = arts_guid_get_kind(destination);
     if (dest_type == ARTS_GUID_EDT) {
-      arts_edt_satisfy_slot(destination, slot, source, DB_MODE_VAL, NULL, 0);
+      arts_edt_satisfy_slot(destination, slot, source, DB_MODE_VAL);
     } else if (dest_type == ARTS_GUID_EVENT) {
       arts_event_satisfy_slot(destination, source, slot);
     }
@@ -579,7 +579,7 @@ void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
   if (source == NULL_GUID) {
     arts_guid_kind_t dest_type = arts_guid_get_kind(destination);
     if (dest_type == ARTS_GUID_EDT) {
-      arts_edt_satisfy_slot(destination, slot, NULL_GUID, access_mode, NULL, 0);
+      arts_edt_satisfy_slot(destination, slot, NULL_GUID, access_mode);
     } else if (dest_type == ARTS_GUID_EVENT) {
       arts_event_satisfy_slot(destination, NULL_GUID, slot);
     }
@@ -592,7 +592,7 @@ void arts_add_dependence(arts_guid_t source, arts_guid_t destination,
   if (source_type == ARTS_GUID_DB) {
     arts_guid_kind_t dest_type = arts_guid_get_kind(destination);
     if (dest_type == ARTS_GUID_EDT) {
-      arts_edt_satisfy_slot(destination, slot, source, access_mode, NULL, 0);
+      arts_edt_satisfy_slot(destination, slot, source, access_mode);
     } else if (dest_type == ARTS_GUID_EVENT) {
       arts_event_satisfy_slot(destination, source, slot);
     }

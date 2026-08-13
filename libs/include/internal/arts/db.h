@@ -54,25 +54,26 @@ extern "C" {
 
 extern const char *const arts_type_name[];
 
-/* Internal-only access modes used by runtime dispatch.  These are NOT
- * part of the public arts_db_access_mode_t enum (see arts.h) but reuse
- * the same underlying integer type so they can be stored in
- * arts_edt_dep_t.mode.  Reserved range starts at DB_MODE_INTERNAL_BASE
- * to avoid collision with public values. */
-#define DB_MODE_INTERNAL_BASE 64
-enum {
-  DB_MODE_PTR = DB_MODE_INTERNAL_BASE, /**< Copied pointer buffer slice. */
-  DB_MODE_LC_SYNC,                     /**< GPU LC \-> CPU synchronous copy. */
-  DB_MODE_LC_NO_COPY, /**< Allocate on GPU, no host \-> GPU copy. */
-  DB_MODE_MEMSET,     /**< GPU zero-initialization. */
-};
+/* Internal-only access modes used by GPU dispatch, in the reserved range
+ * arts.h anchors with DB_MODE_INTERNAL_BASE.  Each constant is cast to the
+ * public type so it can be stored in arts_edt_dep_t.mode and compared
+ * against it same-type; a cast integer constant expression remains valid in
+ * case labels.  A GPU-less build has no producer or consumer of these, so
+ * they do not exist there at all. */
+#ifdef ARTS_USE_GPU
+/** GPU LC -> CPU synchronous copy. */
+#define DB_MODE_LC_SYNC ((arts_db_access_mode_t)(DB_MODE_INTERNAL_BASE + 0))
+/** Allocate on GPU, no host -> GPU copy. */
+#define DB_MODE_LC_NO_COPY ((arts_db_access_mode_t)(DB_MODE_INTERNAL_BASE + 1))
+/** GPU zero-initialization. */
+#define DB_MODE_MEMSET ((arts_db_access_mode_t)(DB_MODE_INTERNAL_BASE + 2))
+#endif
 
 #define DB_MODE_NAME                                                           \
   const char *const db_mode_name[] = {"DB_MODE_NULL", "DB_MODE_RO",            \
                                       "DB_MODE_RW", "DB_MODE_VAL"};            \
   const char *const db_mode_internal_name[] = {                                \
-      "DB_MODE_PTR", "DB_MODE_LC_SYNC", "DB_MODE_LC_NO_COPY",                  \
-      "DB_MODE_MEMSET"}
+      "DB_MODE_LC_SYNC", "DB_MODE_LC_NO_COPY", "DB_MODE_MEMSET"}
 
 #define GET_DB_MODE_NAME(x)                                                    \
   ((x) >= DB_MODE_INTERNAL_BASE                                                \

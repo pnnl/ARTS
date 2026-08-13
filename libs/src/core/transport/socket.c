@@ -124,7 +124,7 @@ bool arts_transport_set_ip(struct arts_config_s *config) {
   // Always initialize ip_list - it's used by arts_transport_setup_outgoing()
   ip_list = (char *)arts_malloc(100 * sizeof(char) * config->table_length);
   bool result;
-  for (int i = 0; i < config->table_length; i++) {
+  for (int i = 0; i < (int)config->table_length; i++) {
     result = hostname_to_ip(config->table[i].ip_address,
                             ip_list + ((ptrdiff_t)100 * i));
     // result = hostname_to_ip("www.google.com", ip_list+100*i);
@@ -179,7 +179,7 @@ bool arts_transport_set_ip(struct arts_config_s *config) {
           inet_ntop(AF_INET, &iface_addr, iface_ip, sizeof(iface_ip));
           ARTS_INFO("net_interface=%s: remapping IPs (%s -> %s)",
                     config->net_interface, local_default_ip, iface_ip);
-          for (int i = 0; i < config->table_length; i++) {
+          for (int i = 0; i < (int)config->table_length; i++) {
             struct in_addr addr;
             char old_ip[100];
             inet_pton(AF_INET, ip_list + ((ptrdiff_t)100 * i), &addr);
@@ -249,7 +249,7 @@ bool arts_transport_set_ip(struct arts_config_s *config) {
         sa = (struct sockaddr_in *)ifa->ifa_addr;
         inet_ntop(AF_INET, &sa->sin_addr, addr, 100);
 
-        for (int i = 0; i < config->table_length && !found; i++) {
+        for (int i = 0; i < (int)config->table_length && !found; i++) {
           if (strcmp(addr, ip_list + ((ptrdiff_t)100 * i)) == 0) {
             found = true;
             config->my_rank = i;
@@ -262,7 +262,7 @@ bool arts_transport_set_ip(struct arts_config_s *config) {
         inet_ntop(AF_INET6, &sa6->sin6_addr, addr, 100);
         ;
 
-        for (int i = 0; i < config->table_length && !found; i++) {
+        for (int i = 0; i < (int)config->table_length && !found; i++) {
           if (strcmp(addr, ip_list + ((ptrdiff_t)100 * i)) == 0) {
             found = true;
             config->my_rank = i;
@@ -668,11 +668,11 @@ bool arts_transport_setup_incoming() {
   arts_free(local_server_addr);
 
   FD_ZERO(&read_set);
-  for (i = 0; i < arts_global_message_table->table_length; i++) {
+  for (i = 0; i < (int)arts_global_message_table->table_length; i++) {
     if (arts_global_message_table->my_rank ==
         arts_global_message_table->table[i].rank) {
       for (j = 0; j < count; j++) {
-        for (int z = 0; z < ports; z++) {
+        for (int z = 0; z < (int)ports; z++) {
           s_length = sizeof(struct sockaddr_in);
 
           // Poll with timeout before blocking accept — prevents indefinite
@@ -703,7 +703,7 @@ bool arts_transport_setup_incoming() {
         }
       }
     } else {
-      for (int z = 0; z < ports; z++) {
+      for (int z = 0; z < (int)ports; z++) {
         if (!arts_transport_connect(i, z)) {
           ARTS_INFO("Could not create initial connection");
           return false;
@@ -735,7 +735,7 @@ void arts_transport_setup_outgoing() {
     ARTS_INFO("arts_transport_setup_outgoing: node %d ip_list='%s' port=%u", i,
               ip_list + ((ptrdiff_t)100 * i), target_ports[0]);
 
-    for (j = 0; j < ports; j++) {
+    for (j = 0; j < (int)ports; j++) {
       remote_socket_send_list[(i * ports) + j] = arts_get_socket_outgoing(
           remote_server_send_list + ((size_t)i * ports) + j, target_ports[j],
           inet_addr(ip_list + ((ptrdiff_t)100 * i)));

@@ -78,9 +78,7 @@ extern "C" {
 enum arts_ooo_kind {
   /* ===== Model-agnostic — always active (all Cat B) ===== */
   OOO_EVENT_SATISFY_SLOT, /* → arts_handler_event_satisfy_slot */
-  OOO_EDT_SATISFY_SLOT, /* → arts_handler_edt_satisfy_slot (mode-discriminated;
-                           DB_MODE_PTR carries an inline payload trailing the
-                           args struct) */
+  OOO_EDT_SATISFY_SLOT,     /* → arts_handler_edt_satisfy_slot */
   OOO_EVENT_ADD_DEPENDENCE, /* → arts_handler_event_add_dependence */
   /* Lifecycle destroy replay kinds (before-create wire reorder): a DESTROY that
    * reaches home ahead of the object's CREATE defers here and replays once the
@@ -194,12 +192,8 @@ static inline void *arts_ooo_payload_args(struct arts_ooo_payload_s *p) {
  * against the now-installed target (re-issuing the entry, so the install
  * race / fire-and-linger logic stays in one place). */
 
-/* EDT satisfy args (OOO_EDT_SATISFY_SLOT) — mode-discriminated.  For
- * mode == DB_MODE_PTR the inline payload (size bytes) trails this struct in the
- * blob (args_size == sizeof(this) + size); for all other modes size == 0 and no
- * payload trails (a GUID/value reference only).  The handler locates the
- * trailing payload exactly as the satisfy core already branches on mode, so one
- * kind covers both the reference and the inline-payload delivery. */
+/* EDT satisfy args (OOO_EDT_SATISFY_SLOT) — a GUID/value reference only,
+ * fixed size. */
 struct arts_ooo_args_edt_satisfy_s {
   arts_guid_t
       edt_guid; /* re-signal target (may differ from the deferred-on
@@ -207,7 +201,6 @@ struct arts_ooo_args_edt_satisfy_s {
   arts_guid_t data_guid;
   uint32_t slot;
   arts_db_access_mode_t mode;
-  uint32_t size; /* DB_MODE_PTR inline-payload byte count (0 otherwise) */
 };
 
 struct arts_ooo_args_event_satisfy_s {

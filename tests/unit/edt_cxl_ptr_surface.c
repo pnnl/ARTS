@@ -86,7 +86,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   /* Satisfy with the CXL GUID and ptr==NULL: route 1 must surface the
    * shared-segment payload pointer onto the consumer's dep slot. */
-  arts_edt_satisfy_slot(c, 0, db, DB_MODE_RO, NULL, 0);
+  arts_edt_satisfy_slot(c, 0, db, DB_MODE_RO);
 }
 
 int main(int argc, char **argv) {

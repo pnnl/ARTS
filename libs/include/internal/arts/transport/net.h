@@ -170,7 +170,7 @@ bool arts_net_rdzv_local(const void *p, uint64_t len, uint64_t *raddr,
 void arts_net_rdzv_expect(uint64_t txid, void (*on_data)(void *), void *arg);
 
 /* Generic push rendezvous — sender side.  Used when a bulk payload must reach
- * a peer that did not ask for it (EDT/event moves, DB_MODE_PTR satisfies) and
+ * a peer that did not ask for it (EDT/event moves) and
  * the wire total would exceed the control ceiling: sends RDZV_PUSH_RTS(size),
  * and on the peer's CTS PUTs the payload into the advertised landing, patches
  * {rdzv_txid, rdzv_cookie(, rdzv_size)} into the retained control packet by

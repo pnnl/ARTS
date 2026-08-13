@@ -81,8 +81,7 @@ void writer_ew(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
    * runnable immediately, and it must not acquire a DB this EDT still holds
    * for writing. */
   arts_db_release(depv[0].guid, DB_MODE_RW);
-  arts_edt_satisfy_slot((arts_guid_t)paramv[0], 1, NULL_GUID, DB_MODE_NULL,
-                        NULL, 0);
+  arts_edt_satisfy_slot((arts_guid_t)paramv[0], 1, NULL_GUID, DB_MODE_NULL);
 }
 
 void reader_after_ew(uint32_t paramc, const uint64_t *paramv, uint32_t depc,

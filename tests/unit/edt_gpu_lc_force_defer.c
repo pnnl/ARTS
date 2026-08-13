@@ -4,11 +4,10 @@
  *
  * When a satisfy is issued from inside a GPU wrapper EDT that still has pending
  * invalidations (current_edt->invalidate_count > 0), arts_edt_satisfy_slot must
- * NOT apply the satisfy immediately.  Instead it force-defers: a DB_MODE_PTR
- * satisfy dispatch-or-defers on the TARGET (the inline payload rides in the
- * args blob), while every NON-PTR mode is force-pushed onto the wrapper's OWN
- * slot so the re-signal of the target replays only after the wrapper's
- * invalidations drain.  This test exercises that non-PTR push-on-wrapper path.
+ * NOT apply the satisfy immediately.  Instead it force-pushes the satisfy
+ * onto the wrapper's OWN slot so the re-signal of the target replays only
+ * after the wrapper's invalidations drain.  This test exercises that
+ * push-on-wrapper path.
  *
  * config_specific: requires ARTS_USE_GPU.  The whole body is guarded; a non-GPU
  * build self-skips (prints SKIP, exits 0) so the test compiles and passes in
@@ -52,7 +51,7 @@ __attribute__((unused)) void producer_kernel(uint32_t paramc,
   arts_guid_t consumer = (arts_guid_t)paramv[0];
   /* Non-PTR satisfy issued from inside the wrapper with pending invalidations:
    * route 2 force-defers this onto the wrapper's own slot. */
-  arts_edt_satisfy_slot(consumer, 0, depv[0].guid, DB_MODE_RO, NULL, 0);
+  arts_edt_satisfy_slot(consumer, 0, depv[0].guid, DB_MODE_RO);
 }
 
 void consumer(uint32_t paramc, const uint64_t *paramv, uint32_t depc,

@@ -994,10 +994,6 @@ set_tests_properties(edt_sentinel_single_fire PROPERTIES PASS_REGULAR_EXPRESSION
 add_arts_test(edt_satisfy_out_of_range)
 register_single_node_test(edt_satisfy_out_of_range TIMEOUT 30)
 
-add_arts_test(edt_ptr_null_payload)
-register_single_node_test(edt_ptr_null_payload TIMEOUT 30)
-set_tests_properties(edt_ptr_null_payload PROPERTIES PASS_REGULAR_EXPRESSION "PASS edt_ptr_null_payload|SKIP edt_ptr_null_payload")
-
 add_arts_test(edt_destroy_vs_satisfy)
 register_single_node_test(edt_destroy_vs_satisfy TIMEOUT 30)
 set_tests_properties(edt_destroy_vs_satisfy PROPERTIES PASS_REGULAR_EXPRESSION "PASS edt_destroy_vs_satisfy|SKIP edt_destroy_vs_satisfy")
@@ -1024,13 +1020,6 @@ foreach(_v 2n 3n 4n 2n_io)
     set_tests_properties(edt_remote_create_race_${_v} PROPERTIES
         PASS_REGULAR_EXPRESSION "PASS edt_remote_create_race|SKIP edt_remote_create_race")
 endforeach()
-
-# edt_crossrank_ptr_payload: PTR payload over the wire when nranks>1; runs (PASSes) on 1n too.
-add_arts_test(edt_crossrank_ptr_payload)
-register_single_node_test(edt_crossrank_ptr_payload TIMEOUT 30)
-register_multinode_test(edt_crossrank_ptr_payload TIMEOUT 60)
-set_tests_properties(edt_crossrank_ptr_payload PROPERTIES PASS_REGULAR_EXPRESSION "PASS edt_crossrank_ptr_payload|SKIP edt_crossrank_ptr_payload")
-set_tests_properties(edt_crossrank_ptr_payload_2n PROPERTIES PASS_REGULAR_EXPRESSION "PASS edt_crossrank_ptr_payload|SKIP edt_crossrank_ptr_payload")
 
 add_arts_test(edt_signal_alias)
 register_single_node_test(edt_signal_alias TIMEOUT 30)
@@ -1096,12 +1085,6 @@ add_arts_test(edt_register_cb_deleter)
 register_single_node_test(edt_register_cb_deleter TIMEOUT 30)
 set_tests_properties(edt_register_cb_deleter PROPERTIES
     PASS_REGULAR_EXPRESSION "PASS edt_register_cb_deleter|SKIP")
-
-# T142 — arts_edt_satisfy_slot / arts_event_add_dependence direct (DB_MODE_PTR).
-add_arts_test(edt_satisfy_slot_direct)
-register_single_node_test(edt_satisfy_slot_direct TIMEOUT 30)
-set_tests_properties(edt_satisfy_slot_direct PROPERTIES
-    PASS_REGULAR_EXPRESSION "PASS edt_satisfy_slot_direct|SKIP")
 
 # T143 — DB_MODE_VAL raw-uint64 dep delivered to depv[slot].
 add_arts_test(edt_db_mode_val)

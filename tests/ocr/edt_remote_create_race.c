@@ -118,7 +118,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   /* (1) Reordered-ahead remote satisfy: deliver the VAL dep before the create.
    * It queues OoO on W's RESERVED slot. */
-  arts_edt_satisfy_slot(mguid, 0, NULL_GUID, DB_MODE_VAL, NULL, 0);
+  arts_edt_satisfy_slot(mguid, 0, NULL_GUID, DB_MODE_VAL);
   /* Wire the counter dep (slot 1, RW) — delivered when the EDT installs. */
   arts_add_dependence(cdb, mguid, 1, DB_MODE_RW);
 

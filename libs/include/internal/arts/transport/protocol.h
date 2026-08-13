@@ -185,27 +185,14 @@ struct ARTS_PACKED arts_msg_add_dependence_packet_s {
   arts_db_access_mode_t mode;
 };
 
+/* A satisfy carries a GUID/value reference only — fixed size, no trailing
+ * payload, single-shot at the receiver. */
 struct ARTS_PACKED arts_msg_edt_satisfy_slot_packet_s {
   struct arts_msg_header_s header;
   arts_guid_t edt;
   arts_guid_t db;
   uint32_t slot;
   arts_db_access_mode_t mode;
-  /* Inline payload byte count following the header (DB_MODE_PTR delivery);
-   * zero when the satisfy carries only a GUID/value reference, or when the
-   * payload traveled by rendezvous PUT (rdzv_txid != 0; `size` then counts
-   * the LANDED bytes and nothing trails the header). */
-  unsigned int size;
-  /* Pad so sizeof() (where the trailing inline payload begins) is 8-aligned:
-   * 16-byte header + 8 + 8 + 4 + 4 + 4 = 44, +4 -> 48 (+16 rdzv = 64).  Keeps
-   * the payload's wire offset 8-aligned. */
-  uint32_t pad;
-  /* Oversized DB_MODE_PTR payloads (control-ceiling breakers) travel by the
-   * generic push rendezvous: the sender PUT `size` bytes into the landing the
-   * target advertised (rdzv_cookie = target's landing handle, echoed from
-   * RDZV_PUSH_CTS); this packet pairs with the write completion by txid. */
-  uint64_t rdzv_txid;
-  uint64_t rdzv_cookie;
 };
 
 struct ARTS_PACKED arts_msg_event_satisfy_slot_packet_s {
@@ -476,9 +463,9 @@ struct ARTS_PACKED arts_msg_grant_confirm_packet_s {
   uint64_t version;
 };
 
-/* ===== Generic push rendezvous (satisfy / memory-move oversize payloads) ====
+/* ===== Generic push rendezvous (memory-move oversize payloads) =============
  * A sender that holds a bulk payload the receiver did not ask for (EDT/event
- * moves, DB_MODE_PTR satisfies) cannot PUT until the receiver advertises a
+ * moves) cannot PUT until the receiver advertises a
  * landing.  RTS carries the byte count and the sender's opaque continuation
  * handle; CTS echoes it with a fresh landing (a plain registered-pool
  * allocation on the target, named by landing.cookie); the sender then PUTs

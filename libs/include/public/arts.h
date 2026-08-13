@@ -106,13 +106,16 @@ typedef enum {
  */
 typedef enum {
   DB_MODE_NULL = 0, /**< Unset / placeholder. */
-  DB_MODE_RO,       /**< Read-Only (shared readers, no publish). */
-  DB_MODE_RW,       /**< Read-Write (per-node exclusive, OCR RW semantics). */
-  DB_MODE_VAL,      /**< Dependency carries a raw uint64 value (not a GUID). */
-  /* Values >= DB_MODE_INTERNAL_BASE are reserved for runtime-internal
-   * dispatch (PTR slices, GPU LC sync/alloc, GPU memset).  They never
-   * appear in user-facing arts_add_dependence() arguments and are not
-   * part of the public API surface. */
+  DB_MODE_RO = 1,   /**< Read-Only (shared readers, no publish). */
+  DB_MODE_RW = 2,   /**< Read-Write (per-node exclusive, OCR RW semantics). */
+  DB_MODE_VAL = 3,  /**< Dependency carries a raw uint64 value (not a GUID). */
+  /** Values >= this are reserved for runtime-internal dispatch (GPU LC
+   * sync/alloc, GPU memset).  They never appear in user-facing
+   * arts_add_dependence() arguments.  The enumerator itself only anchors
+   * the reserved range inside the type's value range, so storing an
+   * internal mode in an arts_db_access_mode_t object is well-defined in
+   * C++ translation units as well. */
+  DB_MODE_INTERNAL_BASE = 64,
 } arts_db_access_mode_t;
 
 /**
@@ -765,18 +768,15 @@ void arts_event_satisfy_slot(arts_guid_t event_guid, arts_guid_t data_guid,
  * Writes @p data_guid / @p mode into @p edt_guid's @p slot and decrements its
  * pending-dependency count, scheduling the EDT once the last dependency
  * lands.  Home-routed: the home rank's handler does the work (forwarded via
- * MSG_EDT_SATISFY_SLOT when @p edt_guid is remote).  @p ptr / @p size carry an
- * inline payload for @c DB_MODE_PTR delivery (otherwise NULL / 0).
+ * MSG_EDT_SATISFY_SLOT when @p edt_guid is remote).
  */
 void arts_edt_satisfy_slot(arts_guid_t edt_guid, uint32_t slot,
-                           arts_guid_t data_guid, arts_db_access_mode_t mode,
-                           void *ptr, unsigned int size);
+                           arts_guid_t data_guid, arts_db_access_mode_t mode);
 
 /** Deprecated alias of @c arts_edt_satisfy_slot (backward-compat). */
 static inline void arts_signal_edt(arts_guid_t edt_guid, uint32_t slot,
-                                   arts_guid_t db, arts_db_access_mode_t mode,
-                                   void *ptr, unsigned int size) {
-  arts_edt_satisfy_slot(edt_guid, slot, db, mode, ptr, size);
+                                   arts_guid_t db, arts_db_access_mode_t mode) {
+  arts_edt_satisfy_slot(edt_guid, slot, db, mode);
 }
 
 /**

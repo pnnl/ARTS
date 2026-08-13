@@ -152,7 +152,7 @@ void arts_thread_main_join() {
   {
     const long join_deadline_ns = 1500L * 1000000L;  /* 1.5 s */
     const long cancel_deadline_ns = 500L * 1000000L; /* 0.5 s */
-    for (int i = 1; i < arts_node_info.total_thread_count; i++) {
+    for (unsigned int i = 1; i < arts_node_info.total_thread_count; i++) {
       struct timespec deadline;
       (void)clock_gettime(CLOCK_REALTIME, &deadline);
       deadline.tv_nsec += join_deadline_ns;
@@ -164,7 +164,7 @@ void arts_thread_main_join() {
       if (rc == 0) {
         continue;
       }
-      ARTS_INFO("arts_thread_main_join: thread %d did not join within "
+      ARTS_INFO("arts_thread_main_join: thread %u did not join within "
                 "%ld ms (rc=%d), cancelling",
                 i, join_deadline_ns / 1000000L, rc);
       pthread_cancel(node_thread_list[i]);
@@ -176,7 +176,7 @@ void arts_thread_main_join() {
       }
       rc = pthread_timedjoin_np(node_thread_list[i], NULL, &deadline);
       if (rc != 0) {
-        ARTS_INFO("arts_thread_main_join: thread %d did not join after "
+        ARTS_INFO("arts_thread_main_join: thread %u did not join after "
                   "cancel (rc=%d); leaking and continuing",
                   i, rc);
       }

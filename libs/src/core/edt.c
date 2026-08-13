@@ -480,33 +480,15 @@ void *arts_get_depv(void *edt_ptr) {
  * handler does not duplicate it.
  */
 
-/* Defer a satisfy on `edt_guid`'s slot (dispatch-or-defer), mode-discriminated.
- * For DB_MODE_PTR the inline payload (size bytes) is copied into the args blob
- * right after the args struct; all other modes carry a GUID/value reference
- * only (size == 0, no trailing payload).  The buffer is freed here —
- * dispatch_or_defer makes its own copy.  One helper covers both deliveries (the
- * handler / satisfy core branch on mode), so there is no separate PTR kind. */
+/* Defer a satisfy on `edt_guid`'s slot (dispatch-or-defer).  A satisfy
+ * carries a GUID/value reference only, so the args are fixed-size —
+ * dispatch_or_defer makes its own copy. */
 static void edt_defer_satisfy(arts_guid_t edt_guid, arts_guid_t data_guid,
-                              uint32_t slot, arts_db_access_mode_t mode,
-                              void *ptr, unsigned int size) {
-  /* An inline payload rides only when a real source pointer accompanies it; a
-   * NULL source carries no bytes so the delivered slot pointer is a defined
-   * NULL rather than a buffer of undefined contents. */
-  uint32_t payload = (mode == DB_MODE_PTR && ptr != NULL) ? size : 0u;
-  uint32_t asz = (uint32_t)sizeof(struct arts_ooo_args_edt_satisfy_s) + payload;
-  char *buf = (char *)arts_malloc(asz);
-  struct arts_ooo_args_edt_satisfy_s *a =
-      (struct arts_ooo_args_edt_satisfy_s *)buf;
-  a->edt_guid = edt_guid;
-  a->data_guid = data_guid;
-  a->slot = slot;
-  a->mode = mode;
-  a->size = payload;
-  if (payload > 0 && ptr != NULL) {
-    memcpy(buf + sizeof(*a), ptr, payload);
-  }
-  arts_ooo_dispatch_or_defer_guid(edt_guid, OOO_EDT_SATISFY_SLOT, buf, asz);
-  arts_free(buf);
+                              uint32_t slot, arts_db_access_mode_t mode) {
+  struct arts_ooo_args_edt_satisfy_s a = {
+      .edt_guid = edt_guid, .data_guid = data_guid, .slot = slot, .mode = mode};
+  arts_ooo_dispatch_or_defer_guid(edt_guid, OOO_EDT_SATISFY_SLOT, &a,
+                                  sizeof(a));
 }
 
 /* Pure core — apply a satisfy to an already-acquired, valid EDT.  No lookup /
@@ -514,8 +496,8 @@ static void edt_defer_satisfy(arts_guid_t edt_guid, arts_guid_t data_guid,
  * dispatch_or_defer) guarantees `edt` is live.  Writes depv[slot], decrements
  * depc_needed, and schedules the EDT when the last dependency lands. */
 static void edt_apply_satisfy(struct arts_edt_s *edt, uint32_t slot,
-                              arts_guid_t data_guid, arts_db_access_mode_t mode,
-                              void *ptr, unsigned int size) {
+                              arts_guid_t data_guid,
+                              arts_db_access_mode_t mode) {
   arts_edt_dep_t *edt_dep = (arts_edt_dep_t *)arts_get_depv(edt);
   /* (uint32_t)-1 is the "no specific slot" sentinel used by control
    * dependences (registered with slot -1): they decrement readiness without
@@ -531,16 +513,15 @@ static void edt_apply_satisfy(struct arts_edt_s *edt, uint32_t slot,
   }
   if (writes_slot) {
     edt_dep[slot].guid = data_guid;
-    /* An inline payload is only valid when a real source pointer accompanies
-     * it.  A NULL source surfaces as a NULL slot pointer rather than a buffer
-     * of undefined bytes, so the consumer never reads uninitialized memory. */
-    if (mode == DB_MODE_PTR && size > 0 && ptr != NULL) {
-      void *copy = arts_malloc(size);
-      memcpy(copy, ptr, size);
-      edt_dep[slot].ptr = copy;
-    } else {
-      edt_dep[slot].ptr = ptr;
+    void *ptr = NULL;
+#ifdef ARTS_USE_CXL
+    /* CXL GUID encodes the pointer directly — surface it on the dep slot so
+     * that the prep_dbs/release_dbs flush helpers see the right pointer. */
+    if (mode != DB_MODE_VAL && arts_guid_is_cxl(data_guid)) {
+      ptr = (void *)((struct arts_db_s *)arts_cxl_get_ptr(data_guid) + 1);
     }
+#endif
+    edt_dep[slot].ptr = ptr;
     if (mode != DB_MODE_NULL) {
       edt_dep[slot].mode = mode;
     }
@@ -556,17 +537,11 @@ static void edt_apply_satisfy(struct arts_edt_s *edt, uint32_t slot,
   }
 }
 
-/* Home-routed handler (OOO_EDT_SATISFY_SLOT): item is the installed EDT.
- * Mode-discriminated — for DB_MODE_PTR the inline payload (a->size bytes)
- * trails the args struct; all other modes carry a GUID/value reference only
- * (size == 0).  The satisfy core copies the payload exactly when mode ==
- * DB_MODE_PTR. */
+/* Home-routed handler (OOO_EDT_SATISFY_SLOT): item is the installed EDT. */
 void arts_handler_edt_satisfy_slot(void *item, void *vargs) {
   struct arts_ooo_args_edt_satisfy_s *a =
       (struct arts_ooo_args_edt_satisfy_s *)vargs;
-  void *ptr = (a->mode == DB_MODE_PTR && a->size > 0) ? (void *)(a + 1) : NULL;
-  edt_apply_satisfy((struct arts_edt_s *)item, a->slot, a->data_guid, a->mode,
-                    ptr, a->size);
+  edt_apply_satisfy((struct arts_edt_s *)item, a->slot, a->data_guid, a->mode);
 }
 
 /* arts_edt_satisfy_slot — OCR-standard API: supply depv[slot] on an EDT.
@@ -579,75 +554,48 @@ void arts_handler_edt_satisfy_slot(void *item, void *vargs) {
  * this entry only routes.  arts_signal_edt is a deprecated alias of the same
  * signature. */
 void arts_edt_satisfy_slot(arts_guid_t edt_guid, uint32_t slot,
-                           arts_guid_t data_guid, arts_db_access_mode_t mode,
-                           void *ptr, unsigned int size) {
+                           arts_guid_t data_guid, arts_db_access_mode_t mode) {
   TIME_EDT_SIGNAL_START();
   INCREMENT_NUM_EDT_SIGNAL_BY(1);
 
-  /* An inline payload is meaningful only with a real source pointer to copy
-   * from. A NULL source carries no bytes, so normalize the size to zero on
-   * every routing path; the slot then receives a defined NULL rather than a
-   * buffer of undefined contents. */
-  if (ptr == NULL) {
-    size = 0;
-  }
-
-#ifdef ARTS_USE_CXL
-  /* CXL GUID encodes the pointer directly — surface it on the dep slot so
-   * that the prep_dbs/release_dbs flush helpers see the right pointer. */
-  if (ptr == NULL && mode != DB_MODE_PTR && mode != DB_MODE_VAL &&
-      arts_guid_is_cxl(data_guid)) {
-    ptr = (void *)((struct arts_db_s *)arts_cxl_get_ptr(data_guid) + 1);
-  }
-#endif
-
   if (current_edt && current_edt->invalidate_count > 0) {
     /* GPU LC: hold the satisfy until the GPU wrapper EDT's invalidations
-     * drain. DB_MODE_PTR dispatch-or-defers on the target (the inline payload
-     * rides in the args blob); every other mode force-pushes on the wrapper's
-     * slot so the re-signal of this EDT replays only after the wrapper's
-     * invalidations drain. */
-    if (mode == DB_MODE_PTR) {
-      edt_defer_satisfy(edt_guid, data_guid, slot, mode, ptr, size);
-    } else {
-      struct arts_ooo_args_edt_satisfy_s a = {.edt_guid = edt_guid,
-                                              .data_guid = data_guid,
-                                              .slot = slot,
-                                              .mode = mode,
-                                              .size = 0};
-      arts_ooo_push_guid(current_edt->guid, OOO_EDT_SATISFY_SLOT, &a,
-                         sizeof(a));
-    }
+     * drain — force-push on the wrapper's slot so the re-signal of this EDT
+     * replays only after the wrapper's invalidations drain. */
+    struct arts_ooo_args_edt_satisfy_s a = {.edt_guid = edt_guid,
+                                            .data_guid = data_guid,
+                                            .slot = slot,
+                                            .mode = mode};
+    arts_ooo_push_guid(current_edt->guid, OOO_EDT_SATISFY_SLOT, &a, sizeof(a));
   } else if (arts_guid_get_rank(edt_guid) == arts_global_rank_id) {
-    /* Local home: acquire-or-defer; the handler supplies the dep slot.  The
-     * mode-discriminated helper handles the DB_MODE_PTR inline payload. */
-    edt_defer_satisfy(edt_guid, data_guid, slot, mode, ptr, size);
+    /* Local home: acquire-or-defer; the handler supplies the dep slot. */
+    edt_defer_satisfy(edt_guid, data_guid, slot, mode);
   } else {
-    /* Remote home: one satisfy message carries mode + (DB_MODE_PTR) payload.
-     */
-    arts_send_edt_satisfy_slot(edt_guid, data_guid, slot, mode, ptr, size);
+    /* Remote home: the satisfy message carries the reference. */
+    arts_send_edt_satisfy_slot(edt_guid, data_guid, slot, mode);
   }
   TIME_EDT_SIGNAL_STOP();
 }
 
+#ifdef ARTS_USE_GPU
 void arts_lc_sync(arts_guid_t edt_guid, uint32_t slot, arts_guid_t data_guid) {
-  arts_edt_satisfy_slot(edt_guid, slot, data_guid,
-                        (arts_db_access_mode_t)DB_MODE_LC_SYNC, NULL, 0);
+  arts_edt_satisfy_slot(edt_guid, slot, data_guid, DB_MODE_LC_SYNC);
 }
 
 void arts_gpu_signal_edt_memset(arts_guid_t edt_guid, uint32_t slot,
                                 arts_guid_t data_guid) {
-  arts_db_access_mode_t mode = (arts_db_access_mode_t)DB_MODE_MEMSET;
+  arts_db_access_mode_t mode = DB_MODE_MEMSET;
   arts_shared_ptr_t dh = arts_route_table_lookup_db(data_guid);
   struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(dh);
   if (db && db->db_type == ARTS_DB_GPU) {
-    mode = (arts_db_access_mode_t)DB_MODE_LC_NO_COPY;
+    mode = DB_MODE_LC_NO_COPY;
   }
   if (db) {
     arts_shared_release(&dh);
   }
-  arts_edt_satisfy_slot(edt_guid, slot, data_guid, mode, NULL, 0);
+  arts_edt_satisfy_slot(edt_guid, slot, data_guid, mode);
 }
+#endif /* ARTS_USE_GPU */
 
 void arts_send_memory_move(unsigned int rank, arts_guid_t guid, void *ptr,
                            unsigned int mem_size, unsigned message_type,
@@ -760,8 +708,7 @@ void arts_handler_edt_create(void *ptr) {
 }
 
 void arts_send_edt_satisfy_slot(arts_guid_t edt, arts_guid_t db, uint32_t slot,
-                                arts_db_access_mode_t mode, void *ptr,
-                                unsigned int size) {
+                                arts_db_access_mode_t mode) {
   unsigned int rank = arts_guid_get_rank(edt);
   if (rank == arts_global_rank_id) {
     /* EDT GUID claims a local home but may have migrated — resolve the
@@ -772,66 +719,12 @@ void arts_send_edt_satisfy_slot(arts_guid_t edt, arts_guid_t db, uint32_t slot,
       "Remote Signal from DB[Guid:%lu] to EDT[Guid:%lu, Slot:%d, Rank:%u]", db,
       edt, slot, rank);
 
-  if (size == 0) {
-    /* Reference-only satisfy (GUID / value / NULL): fixed-size header on the
-     * stack, no trailing payload. */
-    struct arts_msg_edt_satisfy_slot_packet_s packet;
-    packet.edt = edt;
-    packet.db = db;
-    packet.slot = slot;
-    packet.mode = mode;
-    packet.size = 0;
-    packet.pad = 0;
-    packet.rdzv_txid = 0;
-    packet.rdzv_cookie = 0;
-    arts_fill_packet_header(&packet.header, sizeof(packet),
-                            MSG_EDT_SATISFY_SLOT);
-    arts_transport_send_async((int)rank, (char *)&packet, sizeof(packet));
-    return;
-  }
-
-  uint64_t total = sizeof(struct arts_msg_edt_satisfy_slot_packet_s) + size;
-  if (total > ARTS_NET_MSG_MAX) {
-    /* Oversized DB_MODE_PTR payload: the wire total would breach the
-     * control-plane ceiling, so the payload travels by the generic push
-     * rendezvous (RTS -> landing -> one-sided PUT -> this packet, paired by
-     * txid at the target).  The bytes are staged into an owned copy because
-     * the caller's pointer is only guaranteed for the duration of this call,
-     * while the PUT fires an RTT later. */
-    struct arts_msg_edt_satisfy_slot_packet_s packet;
-    packet.edt = edt;
-    packet.db = db;
-    packet.slot = slot;
-    packet.mode = mode;
-    packet.size = size;
-    packet.pad = 0;
-    packet.rdzv_txid = 0;   /* patched by the push CTS leg */
-    packet.rdzv_cookie = 0;
-    arts_fill_packet_header(&packet.header, sizeof(packet),
-                            MSG_EDT_SATISFY_SLOT);
-    char *copy = (char *)arts_malloc((size_t)size);
-    memcpy(copy, ptr, size);
-    arts_transport_send_pushed_payload((int)rank, &packet.header,
-                                       sizeof(packet), copy, size, arts_free);
-    return;
-  }
-
-  /* DB_MODE_PTR delivery within the ceiling: header + inline payload copied
-   * contiguously so the receiver materializes the data without a follow-up
-   * fetch. */
-  char *buf = (char *)arts_malloc((size_t)total);
-  struct arts_msg_edt_satisfy_slot_packet_s *packet =
-      (struct arts_msg_edt_satisfy_slot_packet_s *)buf;
-  packet->edt = edt;
-  packet->db = db;
-  packet->slot = slot;
-  packet->mode = mode;
-  packet->size = size;
-  packet->pad = 0;
-  packet->rdzv_txid = 0;
-  packet->rdzv_cookie = 0;
-  arts_fill_packet_header(&packet->header, total, MSG_EDT_SATISFY_SLOT);
-  memcpy(buf + sizeof(*packet), ptr, size);
-  arts_transport_send_async((int)rank, buf, (unsigned int)total);
-  arts_free(buf);
+  struct arts_msg_edt_satisfy_slot_packet_s packet;
+  packet.edt = edt;
+  packet.db = db;
+  packet.slot = slot;
+  packet.mode = mode;
+  arts_fill_packet_header(&packet.header, sizeof(packet),
+                          MSG_EDT_SATISFY_SLOT);
+  arts_transport_send_async((int)rank, (char *)&packet, sizeof(packet));
 }

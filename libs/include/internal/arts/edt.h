@@ -61,10 +61,7 @@ void (*arts_edt_get_deleter(void))(void *);
  * header (arts.h); internal TUs that call it include that.  Not re-declared
  * here to avoid a redundant declaration. */
 
-/* OoO replay handlers (g_ooo_table) — operate on the acquired EDT.
- * arts_handler_edt_satisfy_slot is mode-discriminated: DB_MODE_PTR carries an
- * inline payload trailing the args struct, every other mode a reference only.
- */
+/* OoO replay handlers (g_ooo_table) — operate on the acquired EDT. */
 void arts_handler_edt_satisfy_slot(void *item, void *args);
 void arts_handler_edt_destroy(void *item, void *args);
 
@@ -83,8 +80,7 @@ void arts_handler_edt_create(void *ptr);
  */
 void arts_send_edt_destroy(unsigned int home_rank, arts_guid_t guid);
 void arts_send_edt_satisfy_slot(arts_guid_t edt, arts_guid_t db, uint32_t slot,
-                                arts_db_access_mode_t mode, void *ptr,
-                                unsigned int size);
+                                arts_db_access_mode_t mode);
 
 /* Per-worker EDT-execution context (current_edt, owned-finish-events list,
  * created-DB tracking, ctx save/restore) is declared in arts/edt_context.h. */

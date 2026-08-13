@@ -108,8 +108,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       target, 2, pv, 2, &(arts_edt_hint_t){.rank = 0, .finish_event = fe});
 
   /* Route both deps THROUGH the deprecated alias to prove equivalence. */
-  arts_signal_edt(e, 0, ddb, DB_MODE_RO, NULL, 0);
-  arts_signal_edt(e, 1, (arts_guid_t)VAL_MAGIC, DB_MODE_VAL, NULL, 0);
+  arts_signal_edt(e, 0, ddb, DB_MODE_RO);
+  arts_signal_edt(e, 1, (arts_guid_t)VAL_MAGIC, DB_MODE_VAL);
 
   arts_guid_t coll =
       arts_edt_create(collector, 2, pv, 1, &(arts_edt_hint_t){.rank = 0});

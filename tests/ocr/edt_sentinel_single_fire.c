@@ -142,8 +142,8 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   {
     arts_guid_t b = arts_guid_reserve(ARTS_GUID_EDT, 0);
     /* Pre-queue the two VAL satisfies and the RW dep against the RESERVED b. */
-    arts_edt_satisfy_slot(b, 1, NULL_GUID, DB_MODE_VAL, NULL, 0);
-    arts_edt_satisfy_slot(b, 2, NULL_GUID, DB_MODE_VAL, NULL, 0);
+    arts_edt_satisfy_slot(b, 1, NULL_GUID, DB_MODE_VAL);
+    arts_edt_satisfy_slot(b, 2, NULL_GUID, DB_MODE_VAL);
     arts_add_dependence(ctr, b, 0, DB_MODE_RW);
     /* Now create with the pre-reserved GUID; depc=3. */
     arts_edt_create(fire_b, 1, pv, 3,
@@ -161,7 +161,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
                     &(arts_edt_hint_t){.guid = cg, .finish_event = fe});
     /* Trailing satisfy that drives readiness to 0 after the sentinel removal.
      */
-    arts_edt_satisfy_slot(cg, 1, NULL_GUID, DB_MODE_VAL, NULL, 0);
+    arts_edt_satisfy_slot(cg, 1, NULL_GUID, DB_MODE_VAL);
   }
 
   /* Collector gated on the finish scope: created last, depends on fe firing. */

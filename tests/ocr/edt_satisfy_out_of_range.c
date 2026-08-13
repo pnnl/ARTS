@@ -85,7 +85,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   /* Out-of-range satisfy: slot 5 >= depc (2).  A correct runtime ignores it; a
    * buggy one decrements depc_needed and, with slot 0 already in, fires
    * `doomed` before slot 1 (db1) lands. */
-  arts_edt_satisfy_slot(d, 5, NULL_GUID, DB_MODE_VAL, NULL, 0);
+  arts_edt_satisfy_slot(d, 5, NULL_GUID, DB_MODE_VAL);
 }
 
 int main(int argc, char **argv) {

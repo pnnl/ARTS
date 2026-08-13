@@ -751,7 +751,7 @@ arts_guid_t arts_db_copy_to_new_type(arts_guid_t old_guid,
 static void acquire_one_dep(struct arts_edt_s *edt, arts_edt_dep_t *depv,
                             uint32_t i) {
   arts_db_access_mode_t access_mode = depv[i].mode;
-  int owner = (int)arts_guid_get_rank(depv[i].guid);
+  unsigned int owner = arts_guid_get_rank(depv[i].guid);
   arts_guid_kind_t guid_type = arts_guid_get_kind(depv[i].guid);
 
   if (guid_type != ARTS_GUID_DB) {
@@ -765,7 +765,7 @@ static void acquire_one_dep(struct arts_edt_s *edt, arts_edt_dep_t *depv,
     INCREMENT_NUM_DB_ACQUIRE_WRITE_BY(1);
   }
 
-  ARTS_INFO("Acquiring DB[Guid:%lu, GuidType:%u, AccessMode:%u, Owner:%d, "
+  ARTS_INFO("Acquiring DB[Guid:%lu, GuidType:%u, AccessMode:%u, Owner:%u, "
             "Rank:%u] in EDT[Id:%lu, Guid:%lu, Slot:%u]",
             depv[i].guid, guid_type, access_mode, owner, arts_global_rank_id,
             edt->arts_id, edt->guid, i);
@@ -1347,7 +1347,6 @@ void prep_dbs(unsigned int depc, arts_edt_dep_t *depv, bool gpu) {
  *     work; route through the coherent release entry points
  *     (arts_db_release_ro / arts_db_release_rw).  Non-coherent pinned
  *     subtypes have no DB-level coherence — release is a no-op.
- *   - DB_MODE_PTR: free the malloc'd copy buffer.
  *   - ARTS_DB_GPU subtype (GPU build, non-LC_SYNC mode): release the GPU-LC
  *     reader lock — pure intra-rank multi-device coordination.
  *   - ARTS_DB_CXL subtype: producer-flush and return.
@@ -1442,7 +1441,7 @@ static void release_one_dep(arts_edt_dep_t *dep, bool gpu) {
    *
    * Reaching this point means the dep is for a non-coherent pinned subtype
    * (ARTS_DB_PIN, ARTS_DB_GPU_PIN, ARTS_DB_GPU, ARTS_DB_CXL) or a special
-   * access mode (PTR, VALUE, LC_*, MEMSET) — none of which carry DB-level
+   * access mode (VALUE, LC_*, MEMSET) — none of which carry DB-level
    * coherence. */
   arts_db_types_t db_subtype = ARTS_DB;
   if (dep->guid != NULL_GUID && dep->ptr) {
@@ -1463,11 +1462,7 @@ static void release_one_dep(arts_edt_dep_t *dep, bool gpu) {
   }
 #endif
 
-  if (access_mode == DB_MODE_PTR) {
-    if (dep->ptr) {
-      arts_free(dep->ptr);
-    }
-  } else if (!gpu && db_subtype == ARTS_DB_GPU) {
+  if (!gpu && db_subtype == ARTS_DB_GPU) {
     if (dep->ptr) {
       struct arts_db_s *db = ((struct arts_db_s *)dep->ptr) - 1;
       arts_reader_unlock(&db->reader);
@@ -1565,7 +1560,7 @@ void arts_db_release(arts_guid_t guid, arts_db_access_mode_t mode) {
     return;
   }
   arts_edt_dep_t *depv = (arts_edt_dep_t *)arts_get_depv(current_edt);
-  for (int i = 0; i < current_edt->depc; i++) {
+  for (uint32_t i = 0; i < current_edt->depc; i++) {
     if (depv[i].guid != guid) {
       continue;
     }

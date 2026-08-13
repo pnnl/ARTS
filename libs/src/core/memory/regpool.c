@@ -506,7 +506,7 @@ static void *regpool_sweep_arenas(size_t size, size_t align, bool zero,
       continue;
     if (s->arena == NULL || s->arena == refused)
       continue;
-    if (node_filter >= 0 && s->mr.numa_node != (unsigned)node_filter)
+    if (node_filter >= 0 && s->mr.numa_node != node_filter)
       continue;
     if (!regpool_thread_bind(s->arena, (int)s->mr.numa_node))
       return NULL;
@@ -721,7 +721,7 @@ static void *regpool_alloc_common(size_t size, size_t align, bool zero) {
       if (atomic_load_explicit(&s->is_free, memory_order_acquire))
         continue;
       total += s->mr.len;
-      if (!s->is_direct && s->mr.numa_node == (unsigned)node) {
+      if (!s->is_direct && s->mr.numa_node == node) {
         node_total += s->mr.len;
         node_slabs++;
       }
