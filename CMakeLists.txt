@@ -197,6 +197,13 @@ if(ARTS_BUILD_EXAMPLES)
 endif()
 option(ARTS_BUILD_TESTS      "Build test programs (enables ctest)"             ON)
 option(ARTS_BUILD_BENCHMARKS "Build OCR benchmark apps (XSOCR + ARTS + ocrvx)" ON)
+# The native (non-OCR) OpenMP/MPI implementations predate the current
+# experiment driver and sit outside its catalog/consensus surface; they are
+# an explicit opt-in so the default build carries no extra link surface.
+option(ARTS_BUILD_BASELINES  "Build native OpenMP/MPI baseline implementations" OFF)
+# The reference runtimes are individually optional under ARTS_BUILD_BENCHMARKS.
+option(ARTS_BUILD_XSOCR      "Build the XSOCR reference runtime" ON)
+option(ARTS_BUILD_OCRVX      "Build the ocr-vx reference runtime" ON)
 option(ARTS_BUILD_DOCS       "Build documentation (requires Doxygen + Sphinx)" OFF)
 
 # ── Transport ──────────────────────────────────────────────────────────────
@@ -954,6 +961,9 @@ endif()
 message(STATUS "  Examples:        ${ARTS_BUILD_EXAMPLES}")
 message(STATUS "  Tests:           ${ARTS_BUILD_TESTS}")
 message(STATUS "  Benchmarks:      ${ARTS_BUILD_BENCHMARKS}")
+message(STATUS "  Baselines:       ${ARTS_BUILD_BASELINES}")
+message(STATUS "  XSOCR:           ${ARTS_BUILD_XSOCR}")
+message(STATUS "  OCRVX:           ${ARTS_BUILD_OCRVX}")
 message(STATUS "")
 message(STATUS "Installation paths:")
 message(STATUS "  Libraries:       ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}")

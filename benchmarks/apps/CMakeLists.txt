@@ -276,20 +276,22 @@ function(add_benchmark_app)
             set(_flavor_define "")
         endif()
 
-        # --- XSOCR variant ---
-        add_executable(${_app}_xsocr ${ABS_SOURCES} ${LIB_OBJECTS})
-        target_include_directories(${_app}_xsocr PRIVATE ${COMMON_INCLUDES})
-        target_compile_definitions(${_app}_xsocr PRIVATE ${COMMON_DEFINES} ${_flavor_define})
-        target_link_libraries(${_app}_xsocr PRIVATE ocr_xsocr_static pthread ${APP_EXTRA_LINK_LIBS})
-        # Non-PIE: OCR's distributed mode serializes function pointers as raw
-        # addresses across MPI ranks.  With PIE + ASLR each rank gets a
-        # different base address and deserialized funcPtrs become invalid.
-        target_link_options(${_app}_xsocr PRIVATE -no-pie -fno-pie)
-        set_target_properties(${_app}_xsocr PROPERTIES
-            C_STANDARD 11 C_EXTENSIONS ON
-            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-        )
-        target_compile_options(${_app}_xsocr PRIVATE ${BENCH_C_OPT} -w)
+        # --- XSOCR variant (only when the ocr_xsocr_static target exists) ---
+        if(TARGET ocr_xsocr_static)
+            add_executable(${_app}_xsocr ${ABS_SOURCES} ${LIB_OBJECTS})
+            target_include_directories(${_app}_xsocr PRIVATE ${COMMON_INCLUDES})
+            target_compile_definitions(${_app}_xsocr PRIVATE ${COMMON_DEFINES} ${_flavor_define})
+            target_link_libraries(${_app}_xsocr PRIVATE ocr_xsocr_static pthread ${APP_EXTRA_LINK_LIBS})
+            # Non-PIE: OCR's distributed mode serializes function pointers as raw
+            # addresses across MPI ranks.  With PIE + ASLR each rank gets a
+            # different base address and deserialized funcPtrs become invalid.
+            target_link_options(${_app}_xsocr PRIVATE -no-pie -fno-pie)
+            set_target_properties(${_app}_xsocr PROPERTIES
+                C_STANDARD 11 C_EXTENSIONS ON
+                RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+            )
+            target_compile_options(${_app}_xsocr PRIVATE ${BENCH_C_OPT} -w)
+        endif()
 
         # --- ARTS variants (one per coherence configuration) ---
         foreach(sfx ${ARTS_VARIANT_SUFFIXES})
@@ -855,7 +857,9 @@ add_benchmark_app(NAME LCS_distributed_ST
     EXTRA_LINK_LIBS m
 )
 # LCS uses bare "inline" (C11 = no external def) → fails at -O0; force GNU89 semantics
-target_compile_options(LCS_distributed_ST_xsocr PRIVATE -fgnu89-inline)
+if(TARGET LCS_distributed_ST_xsocr)
+    target_compile_options(LCS_distributed_ST_xsocr PRIVATE -fgnu89-inline)
+endif()
 foreach(sfx ${ARTS_VARIANT_SUFFIXES})
     target_compile_options(LCS_distributed_ST_arts_${sfx} PRIVATE -fgnu89-inline)
 endforeach()
@@ -869,7 +873,9 @@ add_benchmark_app(NAME LCS_shared
     LIBS reduction timer
     EXTRA_LINK_LIBS m
 )
-target_compile_options(LCS_shared_xsocr PRIVATE -fgnu89-inline)
+if(TARGET LCS_shared_xsocr)
+    target_compile_options(LCS_shared_xsocr PRIVATE -fgnu89-inline)
+endif()
 foreach(sfx ${ARTS_VARIANT_SUFFIXES})
     target_compile_options(LCS_shared_arts_${sfx} PRIVATE -fgnu89-inline)
 endforeach()
@@ -1258,9 +1264,11 @@ if(HAS_CRLIBM)
         # the executable.  Without this the link fails with "undefined
         # reference to image_0/platform_0/pulse_0/...". */
         foreach(_sa sar_${sar_size} sar_${sar_size}_opt)
-            target_link_libraries(${_sa}_xsocr PRIVATE
-                ${SAR_DATA_${sar_size}_OBJECTS})
-            add_dependencies(${_sa}_xsocr sar_data_${sar_size}_objs)
+            if(TARGET ${_sa}_xsocr)
+                target_link_libraries(${_sa}_xsocr PRIVATE
+                    ${SAR_DATA_${sar_size}_OBJECTS})
+                add_dependencies(${_sa}_xsocr sar_data_${sar_size}_objs)
+            endif()
             foreach(sfx ${ARTS_VARIANT_SUFFIXES})
                 target_link_libraries(${_sa}_arts_${sfx} PRIVATE
                     ${SAR_DATA_${sar_size}_OBJECTS})
@@ -1341,15 +1349,17 @@ add_benchmark_app(NAME uts
 # ==========================================================================
 set(RSS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/release_sync_stress.c")
 
-add_executable(release_sync_stress_xsocr ${RSS_SRC})
-target_include_directories(release_sync_stress_xsocr PRIVATE
-    ${OCR_LIBS_ROOT}/macros/macros ${BENCH_OCR_OPTIONS_DIR})
-target_compile_definitions(release_sync_stress_xsocr PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
-target_link_libraries(release_sync_stress_xsocr PRIVATE ocr_xsocr_static pthread)
-target_link_options(release_sync_stress_xsocr PRIVATE -no-pie -fno-pie)
-set_target_properties(release_sync_stress_xsocr PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-target_compile_options(release_sync_stress_xsocr PRIVATE ${BENCH_C_OPT} -w)
+if(TARGET ocr_xsocr_static)
+    add_executable(release_sync_stress_xsocr ${RSS_SRC})
+    target_include_directories(release_sync_stress_xsocr PRIVATE
+        ${OCR_LIBS_ROOT}/macros/macros ${BENCH_OCR_OPTIONS_DIR})
+    target_compile_definitions(release_sync_stress_xsocr PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
+    target_link_libraries(release_sync_stress_xsocr PRIVATE ocr_xsocr_static pthread)
+    target_link_options(release_sync_stress_xsocr PRIVATE -no-pie -fno-pie)
+    set_target_properties(release_sync_stress_xsocr PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    target_compile_options(release_sync_stress_xsocr PRIVATE ${BENCH_C_OPT} -w)
+endif()
 
 foreach(sfx ${ARTS_VARIANT_SUFFIXES})
     add_executable(release_sync_stress_arts_${sfx} ${RSS_SRC}
@@ -1388,15 +1398,17 @@ endif()
 # ==========================================================================
 set(DBCM_SRC "${CMAKE_CURRENT_SOURCE_DIR}/dbcreate_matrix.c")
 
-add_executable(dbcreate_matrix_xsocr ${DBCM_SRC})
-target_include_directories(dbcreate_matrix_xsocr PRIVATE
-    ${OCR_LIBS_ROOT}/macros/macros ${BENCH_OCR_OPTIONS_DIR})
-target_compile_definitions(dbcreate_matrix_xsocr PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
-target_link_libraries(dbcreate_matrix_xsocr PRIVATE ocr_xsocr_static pthread)
-target_link_options(dbcreate_matrix_xsocr PRIVATE -no-pie -fno-pie)
-set_target_properties(dbcreate_matrix_xsocr PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-target_compile_options(dbcreate_matrix_xsocr PRIVATE ${BENCH_C_OPT} -w)
+if(TARGET ocr_xsocr_static)
+    add_executable(dbcreate_matrix_xsocr ${DBCM_SRC})
+    target_include_directories(dbcreate_matrix_xsocr PRIVATE
+        ${OCR_LIBS_ROOT}/macros/macros ${BENCH_OCR_OPTIONS_DIR})
+    target_compile_definitions(dbcreate_matrix_xsocr PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
+    target_link_libraries(dbcreate_matrix_xsocr PRIVATE ocr_xsocr_static pthread)
+    target_link_options(dbcreate_matrix_xsocr PRIVATE -no-pie -fno-pie)
+    set_target_properties(dbcreate_matrix_xsocr PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    target_compile_options(dbcreate_matrix_xsocr PRIVATE ${BENCH_C_OPT} -w)
+endif()
 
 foreach(sfx ${ARTS_VARIANT_SUFFIXES})
     add_executable(dbcreate_matrix_arts_${sfx} ${DBCM_SRC}
@@ -1444,15 +1456,17 @@ add_custom_target(benchmark_apps DEPENDS benchmark_arts)
 # ==========================================================================
 set(RWMIX_SRC "${CMAKE_CURRENT_SOURCE_DIR}/rwmix.c")
 
-add_executable(rwmix_xsocr ${RWMIX_SRC})
-target_include_directories(rwmix_xsocr PRIVATE
-    ${OCR_LIBS_ROOT}/macros/macros ${BENCH_OCR_OPTIONS_DIR})
-target_compile_definitions(rwmix_xsocr PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
-target_link_libraries(rwmix_xsocr PRIVATE ocr_xsocr_static pthread)
-target_link_options(rwmix_xsocr PRIVATE -no-pie -fno-pie)
-set_target_properties(rwmix_xsocr PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-target_compile_options(rwmix_xsocr PRIVATE ${BENCH_C_OPT} -w)
+if(TARGET ocr_xsocr_static)
+    add_executable(rwmix_xsocr ${RWMIX_SRC})
+    target_include_directories(rwmix_xsocr PRIVATE
+        ${OCR_LIBS_ROOT}/macros/macros ${BENCH_OCR_OPTIONS_DIR})
+    target_compile_definitions(rwmix_xsocr PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
+    target_link_libraries(rwmix_xsocr PRIVATE ocr_xsocr_static pthread)
+    target_link_options(rwmix_xsocr PRIVATE -no-pie -fno-pie)
+    set_target_properties(rwmix_xsocr PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    target_compile_options(rwmix_xsocr PRIVATE ${BENCH_C_OPT} -w)
+endif()
 
 foreach(sfx ${ARTS_VARIANT_SUFFIXES})
     add_executable(rwmix_arts_${sfx} ${RWMIX_SRC}
@@ -1489,15 +1503,17 @@ endif()
 # ==========================================================================
 set(RWROUNDS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/rwrounds.c")
 
-add_executable(rwrounds_xsocr ${RWROUNDS_SRC})
-target_include_directories(rwrounds_xsocr PRIVATE
-    ${OCR_LIBS_ROOT}/macros/macros ${BENCH_OCR_OPTIONS_DIR})
-target_compile_definitions(rwrounds_xsocr PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
-target_link_libraries(rwrounds_xsocr PRIVATE ocr_xsocr_static pthread)
-target_link_options(rwrounds_xsocr PRIVATE -no-pie -fno-pie)
-set_target_properties(rwrounds_xsocr PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-target_compile_options(rwrounds_xsocr PRIVATE ${BENCH_C_OPT} -w)
+if(TARGET ocr_xsocr_static)
+    add_executable(rwrounds_xsocr ${RWROUNDS_SRC})
+    target_include_directories(rwrounds_xsocr PRIVATE
+        ${OCR_LIBS_ROOT}/macros/macros ${BENCH_OCR_OPTIONS_DIR})
+    target_compile_definitions(rwrounds_xsocr PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
+    target_link_libraries(rwrounds_xsocr PRIVATE ocr_xsocr_static pthread)
+    target_link_options(rwrounds_xsocr PRIVATE -no-pie -fno-pie)
+    set_target_properties(rwrounds_xsocr PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    target_compile_options(rwrounds_xsocr PRIVATE ${BENCH_C_OPT} -w)
+endif()
 
 foreach(sfx ${ARTS_VARIANT_SUFFIXES})
     add_executable(rwrounds_arts_${sfx} ${RWROUNDS_SRC}
