@@ -304,11 +304,13 @@ set(HPCG_SOURCES
     WriteProblem.cpp YAML_Doc.cpp YAML_Element.cpp
     finalize.cpp init.cpp main.cpp mytimer.cpp)
 
+# HPCG_NO_OPENMP guards every <omp.h> include and every `#pragma omp` in this
+# source tree, so this variant compiles to pure MPI: it neither needs OpenMP
+# on the link line nor has a reason to be skipped on a host without one.
 add_baseline_app(NAME hpcg_mpi
     DIR hpcg/baseline/mpi/sandia/hpcg-3.0/src
     SOURCES ${HPCG_SOURCES}
     LANGUAGE CXX
-    NEEDS_OMP
     NEEDS_MPI
     EXTRA_DEFINES HPCG_NO_OPENMP
 )

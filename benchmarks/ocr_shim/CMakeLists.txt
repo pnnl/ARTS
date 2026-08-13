@@ -1,6 +1,7 @@
 # OCR-to-ARTS compatibility shim
 # Implements OCR API functions using ARTS v2 primitives
-# Output: ocr_arts_static (static library containing the shim)
+# Output: ocr_arts_objects — apps combine these objects with the coherence
+# variant they link (arts_static_<suffix>), so no library target exists here
 
 set(OCR_ROOT "${CMAKE_SOURCE_DIR}/third_party/ocr/ocr")
 
@@ -54,7 +55,3 @@ target_include_directories(ocr_arts_objects PRIVATE
     ${CMAKE_SOURCE_DIR}/libs/include/internal
 )
 
-# Static library
-add_library(ocr_arts_static STATIC $<TARGET_OBJECTS:ocr_arts_objects>)
-target_include_directories(ocr_arts_static PUBLIC ${OCR_ROOT}/inc)
-target_link_libraries(ocr_arts_static PUBLIC arts_static pthread)

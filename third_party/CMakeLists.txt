@@ -308,77 +308,58 @@ endif()
 # the ARTS runtime itself, which is also why the libarts bundle
 # (ARTS_VENDORED_ARCHIVES) excludes it.  So the whole section, including the
 # imported target those consumers link against, builds only alongside them.
+#
+# Within that bound it is built on demand rather than while configuring: the
+# work is an ExternalProject held out of the default target, so the archive
+# is produced when something that links arts::numa is built and at no other
+# time.  A dependency added to an imported target is followed in the target's
+# place, so each consumer picks the build up through the link edge it already
+# declares and nothing has to name the external project.  Downloading is part
+# of the same on-demand step, and a tarball already staged next to this file
+# under the pinned hash is used as it is -- a host without network access
+# stages it by hand exactly as before.
 if(ARTS_BUILD_BENCHMARKS)
-    function(build_numactl)
-        arts_fetch_dist_tarball(NUMACTL_TARBALL
-            "numactl-${NUMACTL_DIST_VERSION}.tar.gz" "${NUMACTL_DIST_URL}" "${NUMACTL_DIST_SHA256}")
-
-        set(NUMACTL_SRC_DIR "${CMAKE_BINARY_DIR}/third_party/numactl-${NUMACTL_DIST_VERSION}")
-        if(NOT EXISTS "${NUMACTL_SRC_DIR}/configure")
-            message(STATUS "Extracting numactl ${NUMACTL_DIST_VERSION}")
-            file(ARCHIVE_EXTRACT INPUT "${NUMACTL_TARBALL}"
-                 DESTINATION "${CMAKE_BINARY_DIR}/third_party")
-        endif()
-
-        set(NUMACTL_BUILD_DIR "${CMAKE_BINARY_DIR}/third_party/numactl")
-        set(NUMACTL_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/numactl_install")
-        file(MAKE_DIRECTORY ${NUMACTL_BUILD_DIR})
-
-        message(STATUS "Configuring numactl with prefix: ${NUMACTL_INSTALL_DIR}")
-        execute_process(
-            COMMAND ${CMAKE_COMMAND} -E env CFLAGS=-fPIC ${NUMACTL_SRC_DIR}/configure
-                    --prefix=${NUMACTL_INSTALL_DIR}
-                    --enable-static
-                    --disable-shared
-            WORKING_DIRECTORY ${NUMACTL_BUILD_DIR}
-            RESULT_VARIABLE CONFIGURE_RESULT
-        )
-        if(NOT CONFIGURE_RESULT EQUAL 0)
-            message(FATAL_ERROR "Failed to configure numactl")
-        endif()
-
-        message(STATUS "Building numactl")
-        if(NOT CMAKE_BUILD_PARALLEL_LEVEL)
-            set(CMAKE_BUILD_PARALLEL_LEVEL 4)
-        endif()
-        execute_process(
-            COMMAND make -j${CMAKE_BUILD_PARALLEL_LEVEL}
-            WORKING_DIRECTORY ${NUMACTL_BUILD_DIR}
-            RESULT_VARIABLE BUILD_RESULT
-        )
-        if(NOT BUILD_RESULT EQUAL 0)
-            message(FATAL_ERROR "Failed to build numactl")
-        endif()
-
-        message(STATUS "Installing numactl to ${NUMACTL_INSTALL_DIR}")
-        execute_process(
-            COMMAND make install
-            WORKING_DIRECTORY ${NUMACTL_BUILD_DIR}
-            RESULT_VARIABLE INSTALL_RESULT
-        )
-        if(NOT INSTALL_RESULT EQUAL 0)
-            message(FATAL_ERROR "Failed to install numactl")
-        endif()
-    endfunction()
+    include(ExternalProject)
 
     set(NUMACTL_INSTALL_DIR "${CMAKE_BINARY_DIR}/third_party/numactl_install")
     set(NUMA_LIB_A "${NUMACTL_INSTALL_DIR}/lib/libnuma.a")
-    set(NUMA_INCLUDE_PATH "${NUMACTL_INSTALL_DIR}/include/numa.h")
-
-    if(NOT (EXISTS ${NUMA_LIB_A} AND EXISTS ${NUMA_INCLUDE_PATH}))
-        build_numactl()
-    endif()
-
-    if(NOT EXISTS ${NUMA_LIB_A})
-        message(FATAL_ERROR "libnuma static library not found after build at ${NUMA_LIB_A}")
-    endif()
-
     set(NUMA_INCLUDE_DIRS "${NUMACTL_INSTALL_DIR}/include")
+
+    if(NOT CMAKE_BUILD_PARALLEL_LEVEL)
+        set(CMAKE_BUILD_PARALLEL_LEVEL 4)
+    endif()
+
+    ExternalProject_Add(numactl_ep
+        URL "${NUMACTL_DIST_URL}"
+        URL_HASH "SHA256=${NUMACTL_DIST_SHA256}"
+        DOWNLOAD_DIR "${CMAKE_CURRENT_SOURCE_DIR}"
+        DOWNLOAD_NO_PROGRESS 1
+        # Extraction keeps the dist tree's own relative timestamps, so make
+        # never invokes the maintainer rules that would regenerate configure
+        # (and would require the autotools chain after all).
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        PREFIX "${CMAKE_BINARY_DIR}/third_party/numactl_ep"
+        CONFIGURE_COMMAND ${CMAKE_COMMAND} -E env CFLAGS=-fPIC
+            <SOURCE_DIR>/configure
+            --prefix=${NUMACTL_INSTALL_DIR}
+            --enable-static
+            --disable-shared
+        BUILD_COMMAND make -j${CMAKE_BUILD_PARALLEL_LEVEL}
+        INSTALL_COMMAND make install
+        BUILD_BYPRODUCTS ${NUMA_LIB_A}
+        EXCLUDE_FROM_ALL TRUE
+        LOG_CONFIGURE 1 LOG_BUILD 1 LOG_INSTALL 1
+    )
+
+    # CMake validates INTERFACE_INCLUDE_DIRECTORIES while configuring, before
+    # the external project has created its prefix.
+    file(MAKE_DIRECTORY ${NUMA_INCLUDE_DIRS})
 
     add_library(arts_numa STATIC IMPORTED GLOBAL)
     set_target_properties(arts_numa PROPERTIES
         IMPORTED_LOCATION "${NUMA_LIB_A}"
         INTERFACE_INCLUDE_DIRECTORIES "${NUMA_INCLUDE_DIRS}")
+    add_dependencies(arts_numa numactl_ep)
     add_library(arts::numa ALIAS arts_numa)
 endif()
 
@@ -724,6 +705,10 @@ set(OFI_VERSION_NODES_MAP ${OFI_VERSION_NODES_MAP} PARENT_SCOPE)
 # its own thread pool.  The submodule tree is shared by every build directory
 # and OpenBLAS's make build writes artifacts into its source tree, so each
 # build directory builds from a private copy.
+#
+# Its one consumer is the tiled Cholesky whose kernels are CBLAS/LAPACKE
+# calls, so the external project stays out of the default target: building it
+# is a consequence of building that application, not of building the tree.
 if(ARTS_BUILD_BENCHMARKS)
   # The benchmark sources every configuration of this tree consumes: the OCR
   # headers (the shim and every app compile against them), the applications
@@ -755,6 +740,7 @@ if(ARTS_BUILD_BENCHMARKS)
     INSTALL_COMMAND make PREFIX=${OPENBLAS_PREFIX} NO_SHARED=1 install
     LOG_BUILD 1 LOG_INSTALL 1
     BUILD_BYPRODUCTS ${OPENBLAS_PREFIX}/lib/libopenblas.a
+    EXCLUDE_FROM_ALL TRUE
   )
 
   file(MAKE_DIRECTORY ${OPENBLAS_PREFIX}/include)

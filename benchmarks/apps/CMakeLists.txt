@@ -1314,26 +1314,26 @@ add_benchmark_app(NAME stream
     DIR stream/ocr
     SOURCES stream.c
     EXTRA_DEFINES STREAM_ARRAY_SIZE=1000 NUM_THREADS=2 NTIMES=3
-    EXTRA_LINK_LIBS pthread m
+    EXTRA_LINK_LIBS m
 )
 
 add_benchmark_app(NAME stream_dist
     DIR stream/ocr
     SOURCES stream_dist.c
     EXTRA_DEFINES STREAM_ARRAY_SIZE=1000 NUM_THREADS=2 NTIMES=3
-    EXTRA_LINK_LIBS pthread m
+    EXTRA_LINK_LIBS m
 )
 
 add_benchmark_app(NAME stream_org
     DIR stream/ocr
     SOURCES stream_org.c
-    EXTRA_LINK_LIBS pthread m
+    EXTRA_LINK_LIBS m
 )
 
 add_benchmark_app(NAME stream_sa
     DIR stream/ocr
     SOURCES stream_sa.c
-    EXTRA_LINK_LIBS pthread m
+    EXTRA_LINK_LIBS m
 )
 
 add_benchmark_app(NAME uts
