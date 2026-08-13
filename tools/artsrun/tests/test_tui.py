@@ -574,7 +574,10 @@ def test_the_provider_offers_only_what_the_transport_builds():
     options, provider = drive(check)
     assert provider is None            # "auto" means unset
     if options is not None:
-        assert options == ["auto", "tcp", "verbs"]
+        # verbs;ofi_rxm is ONE unit: the runtime needs RDM endpoints, which
+        # the MSG-only verbs core provider offers only through the rxm layer,
+        # so a bare "verbs" can never match and is not offered.
+        assert options == ["auto", "tcp", "verbs;ofi_rxm"]
 
 
 def test_optional_fields_show_an_example_without_setting_it():

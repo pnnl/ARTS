@@ -23,8 +23,9 @@ from artsrun.run.types import Cell, Skipped
 def _missing_inputs(app: ResolvedApp) -> list[str]:
     """Declared inputs the application needs that this machine does not have.
 
-    Some inputs are too expensive to regenerate on every host and are staged
-    onto it instead.  A cell whose input is absent has nothing to measure, and
+    Cheap deterministic fixtures are synthesized on the spot (fixtures.stage);
+    the rest are too expensive to regenerate on every host and are staged onto
+    it instead.  A cell whose input is absent has nothing to measure, and
     running it would report a failure of the runtime for what is a property of
     the machine — so it is dropped the way a structurally ineligible cell is.
 
@@ -32,10 +33,16 @@ def _missing_inputs(app: ResolvedApp) -> list[str]:
     application is handed the paths it writes as well as the ones it reads,
     and only the catalog knows which is which.
     """
-    return [f for f in app.fixtures if not Path(f).exists()]
+    from artsrun.fixtures import stage
+
+    return stage(app.fixtures)
 
 
 def _ineligible(entry: SelectionEntry, app: ResolvedApp, nodes: int) -> str | None:
+    # Belt over the selection surfaces' braces: a replayed selection.yaml can
+    # predate the catalog marking an application unsupported.
+    if app.unsupported:
+        return f"application is unsupported: {app.unsupported}"
     if nodes > 1 and app.multinode_skip:
         return f"application cannot run multinode: {app.multinode_skip}"
     if entry.kind is RuntimeKind.OCRVX and app.ocrvx_skip:

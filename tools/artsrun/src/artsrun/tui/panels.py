@@ -458,6 +458,26 @@ class BenchsetPanel(VerticalScroll):
                     f"[@click=app.show_app_doc({app.name!r})]{app.name}[/]",
                     classes="bench-name",
                 )
+                if app.unsupported:
+                    # The row stays visible — the document and the reason are
+                    # the point — but its boxes cannot be taken: the program
+                    # needs semantics the runtime does not implement.
+                    for version in (Version.ASBORN, Version.OPTIMIZED,
+                                    Version.RESTRUCTURED):
+                        if version not in app.own_versions:
+                            yield Static("·", classes="bench-cell blank")
+                        else:
+                            with Horizontal(classes="bench-cell"):
+                                box = Toggle("", f"{app.name}:{version.value}",
+                                             value=False,
+                                             classes="app-toggle unsupported")
+                                box.disabled = True
+                                yield box
+                    box = Input(value="", placeholder=app.unsupported,
+                                id=f"a-{app.name}", classes="bench-args")
+                    box.disabled = True
+                    yield box
+                    continue
                 for version in (Version.ASBORN, Version.OPTIMIZED, Version.RESTRUCTURED):
                     if version not in app.own_versions:
                         yield Static("·", classes="bench-cell blank")
@@ -482,7 +502,10 @@ class BenchsetPanel(VerticalScroll):
 
     @property
     def toggles(self) -> list[Toggle]:
-        return list(self.query(".app-toggle").results(Toggle))
+        # Unsupported rows draw a box but never a choice: the shared
+        # all/none control and the selection reader skip them alike.
+        return [t for t in self.query(".app-toggle").results(Toggle)
+                if not t.disabled]
 
     def selected(self) -> dict[str, list[Version]]:
         out: dict[str, list[Version]] = {}

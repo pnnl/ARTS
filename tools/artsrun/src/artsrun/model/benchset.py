@@ -38,6 +38,7 @@ class ResolvedApp(BaseModel):
     extra_scalars: dict[str, str] = Field(default_factory=dict)
     args: list[str] = Field(default_factory=list)
     args_by_nodes: dict[int, list[str]] = Field(default_factory=dict)
+    unsupported: str | None = None
     multinode_skip: str | None = None
     ocrvx_skip: bool = False
     fixtures: list[str] = Field(default_factory=list)
@@ -71,6 +72,10 @@ class Benchset(BaseModel):
         campaign rather than the whole catalog with three entries annotated.
         A benchset that lists none defers to the catalog's own defaults.
         """
+        if app.unsupported:
+            # Not a roster choice: the application needs semantics the
+            # runtime does not implement, so no benchset can turn it on.
+            return False
         entry = self.apps.get(app.name)
         if entry is not None and entry.enabled is not None:
             return entry.enabled
@@ -135,6 +140,7 @@ class Benchset(BaseModel):
                         extra_scalars=source.extra_scalars,
                         args=args,
                         args_by_nodes=args_by_nodes,
+                        unsupported=app.unsupported,
                         multinode_skip=source.multinode_skip,
                         ocrvx_skip=source.ocrvx_skip,
                         fixtures=source.fixtures,

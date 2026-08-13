@@ -64,6 +64,8 @@ def _parse_apps(spec: str | None, catalog, benchset) -> dict[str, list[Version]]
         name, _, versions = item.partition(":")
         if name not in catalog.apps:
             _fail(f"unknown application: {name}")
+        if catalog.apps[name].unsupported:
+            _fail(f"{name} cannot be selected: {catalog.apps[name].unsupported}")
         if versions:
             try:
                 picked = [Version(v) for v in versions.split("+")]
@@ -200,6 +202,8 @@ def show_apps(
             on = bs.is_enabled(entry)
             versions = entry.own_versions
             mark = lambda v: "[green]✓[/green]" if v in versions else "[dim]·[/dim]"  # noqa: E731
+            if entry.unsupported:
+                mark = lambda v: "[dim]✗[/dim]"  # noqa: E731
             name = entry.name if on else f"[dim]{entry.name}[/dim]"
             binary = entry.binary if entry.binary != entry.name else "[dim]·[/dim]"
             label = ("app" if kind is Kind.APPLICATION

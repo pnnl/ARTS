@@ -104,6 +104,10 @@ class AppEntry(BaseModel):
     restructured_from: str | None = None
 
     default_enabled: bool = True
+    # An application whose correctness depends on semantics the runtime
+    # deliberately does not implement.  It stays a visible row — the doc and
+    # the reason are the point — but it cannot be selected or run.
+    unsupported: str | None = None
     multinode_skip: str | None = None
     ocrvx_skip: bool = False
     fixtures: list[str] = Field(default_factory=list)

@@ -75,10 +75,19 @@ apps:
     binary: CoMD_intel_chandra
     class: task
     provenance: 'CoMD (ExMatEx); Intel OCR port'
+    # Atom migration mutates two cells through EW dependences, whose
+    # exclusive-write guarantee this runtime maps onto per-node RW; the
+    # sibling ports cover the same physics (CoMD_sdsc serial-redistribute,
+    # CoMD_intel_chandra_tiled message-passing) without needing EW.
+    unsupported: 'needs exclusive-write (EW) semantics the runtime does not implement'
+    default_enabled: false
     marker: 'Initial energy'
     scalar_re: 'Initial energy\s*:\s*([\-+0-9.eE]+)'
     tolerance: 0.0001
-    args: ['-x', '60', '-y', '60', '-z', '60', '-N', '6', '-n', '1']
+    # -n 1 (a print/reduction every step) was only ever a workaround for the
+    # port's terminate-on-period-multiples bug, now fixed — the default
+    # period stands.
+    args: ['-x', '60', '-y', '60', '-z', '60', '-N', '6']
 
   CoMD_intel_chandra_tiled:
     binary: CoMD_intel_chandra_tiled
@@ -106,6 +115,10 @@ apps:
     binary: CoMD_sdsc2
     class: task
     provenance: 'CoMD (ExMatEx); OCR port by SDSC (P. Cicotti)'
+    # Same EW dependence as CoMD_intel_chandra: per-cell atom migration
+    # needs one-EDT-at-a-time exclusivity the runtime does not provide.
+    unsupported: 'needs exclusive-write (EW) semantics the runtime does not implement'
+    default_enabled: false
     marker: 'Final energy'
     scalar_re: 'Final energy\s*:\s*([\-+0-9.eE]+)'
     tolerance: 0.0001
@@ -280,6 +293,8 @@ apps:
     marker: 'final deviation'
     scalar_re: 'final deviation:\s*([\-+0-9.eE]+)'
     tolerance: 0.0001
+    expect: '0.001279'
+    expect_args: ['1', '1', '1', '16', '5']
     args: ['8', '4', '4', '64', '10']
 
   hpgmg:
@@ -364,7 +379,11 @@ apps:
     marker: 'Done'
     scalar_re: 'ts 2 CHECKSUM sum\s+([\-+0-9.eE]+)'
     tolerance: 1e-06
-    args: ['--nx', '12', '--ny', '12', '--nz', '12', '--init_x', '2', '--init_y', '2', '--init_z', '2', '--num_tsteps', '10', '--num_refine', '1', '--npx', '2', '--npy', '2', '--npz', '2']
+    # The scalar line (`ts 2 CHECKSUM sum`) is printed only when
+    # --report_diffusion is on AND the timestep is a checksum step
+    # (ts % checksum_freq == 0) — without these two flags the cell can never
+    # match its own scalar_re.
+    args: ['--nx', '12', '--ny', '12', '--nz', '12', '--init_x', '2', '--init_y', '2', '--init_z', '2', '--num_tsteps', '10', '--num_refine', '1', '--npx', '2', '--npy', '2', '--npz', '2', '--report_diffusion', '1', '--checksum_freq', '2']
 
   multigen:
     binary: multigen
@@ -397,10 +416,15 @@ apps:
     class: spmd
     provenance: 'Nekbone (Nek5000 proxy)'
     marker: 'FinalEDT'
-    scalar_re: 'CGstep0_stop> rnorminit(?:\^2)?\s*=\s*([0-9.eE+-]+)'
+    # The final residual is the one printed value that observes the CG loop
+    # (matvec, halo, reductions); the initial residual is computed before it
+    # and stays as a secondary scalar.
+    scalar_re: 'CGloop_stop> rnormfinal(?:\^2)?\s*=\s*([0-9.eE+-]+)'
     tolerance: 1e-09
-    expect: '1.90095144672794E+00'
+    expect: '7.46766248469994E-01'
     expect_args: ['1', '1', '1', '1', '1', '1', '2', '1']
+    extra_scalars:
+      rnorminit: 'CGstep0_stop> rnorminit(?:\^2)?\s*=\s*([0-9.eE+-]+)'
     args: ['8', '4', '4', '4', '4', '4', '12', '50']
 
   npb_cg:
@@ -859,4 +883,10 @@ apps:
     expect: '100'
     expect_args: ['-s', 'small', '-g', '10', '-l', '100']
     args: ['-s', 'small', '-g', '10', '-l', '100']
+    # This port really pins its ranks: without -p every rank lands on node 0
+    # regardless of the run's node count, so multinode cells must scale -p.
+    args_by_nodes:
+      2: ['-s', 'small', '-g', '10', '-l', '100', '-p', '2']
+      4: ['-s', 'small', '-g', '10', '-l', '100', '-p', '4']
+      8: ['-s', 'small', '-g', '10', '-l', '100', '-p', '8']
     default_enabled: false
