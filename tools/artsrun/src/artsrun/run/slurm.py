@@ -17,6 +17,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from artsrun.model.plane import RuntimeKind
 from artsrun.model.profile import Profile
 from artsrun.paths import scratch_dir
 from artsrun.run.command import build_command, build_env, render
@@ -91,6 +92,22 @@ def read_marker(path: Path) -> tuple[int, float] | None:
     return rc, max(0.0, end - start)
 
 
+def _launch(cell: Cell, profile: Profile) -> str:
+    """The line that actually starts the cell's ranks, once, on the job's own nodes.
+
+    ARTS has no rank launcher of its own, so srun is what spawns the one
+    process per node the job needs.  The MPI-kind runtimes already carry
+    their own launcher in build_command's output (mpirun, which reads the
+    Slurm allocation from its environment natively), so wrapping that in
+    srun a second time would start a copy of mpirun on every node, each one
+    spawning its own full set of ranks.
+    """
+    argv = build_command(cell, profile)
+    if cell.entry.kind is RuntimeKind.ARTS:
+        return f"srun --ntasks-per-node=1 -N {cell.nodes} {render(argv)}"
+    return render(argv)
+
+
 def job_script(cell: Cell, profile: Profile, marker: Path) -> str:
     """The batch script one cell runs as, byte for byte.
 
@@ -100,7 +117,7 @@ def job_script(cell: Cell, profile: Profile, marker: Path) -> str:
     look at the run reconstructs the result from.  The write lands under a
     temporary name first, so a reader never sees half a marker.
     """
-    argv = build_command(cell, profile)
+    launch = _launch(cell, profile)
     env = build_env(cell, profile)
     exports = "\n".join(f"export {k}={v}" for k, v in sorted(env.items()))
     return (
@@ -108,11 +125,9 @@ def job_script(cell: Cell, profile: Profile, marker: Path) -> str:
         f"cd {scratch_dir()}\n"
         f"{exports}\n"
         's=$(date +%s.%N)\n'
-        # srun carries the step onto the job's own nodes; the timeout is
-        # kept inside the job as well so a wedged run dies on its own
+        # The timeout is kept inside the job so a wedged run dies on its own
         # budget instead of the queue's.
-        f"timeout -k 1 {cell.timeout_s} srun "
-        f"--ntasks-per-node=1 -N {cell.nodes} {render(argv)}\n"
+        f"timeout -k 1 {cell.timeout_s} {launch}\n"
         "rc=$?\n"
         f'echo "$rc $s $(date +%s.%N)" > {marker}.tmp\n'
         f"mv {marker}.tmp {marker}\n"
