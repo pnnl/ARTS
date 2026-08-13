@@ -288,6 +288,11 @@ static bool regpool_map_slab(int node, size_t len, size_t align, void **out_base
                        FI_SEND | FI_RECV | FI_READ | FI_WRITE | FI_REMOTE_WRITE,
                        0, requested_key, 0, &mr, NULL);
     if (rc != 0) {
+      /* Distinguishable from the mmap failure above: the mapping existed but
+       * the fabric refused to pin it — on providers that lock pages this is
+       * typically the locked-memory limit (RLIMIT_MEMLOCK), not RAM. */
+      ARTS_WARN("regpool: fi_mr_reg(%zu MiB) failed: %s", len >> 20,
+                fi_strerror((int)-rc));
       munmap(base, len);
       return false;
     }
@@ -353,33 +358,60 @@ static regpool_slab_t *regpool_publish_direct_locked(void *base, size_t len,
   return regpool_append(base, len, mr, rkey, node, true, arena);
 }
 
+/* What the machine can still give a pinned slab: MemAvailable, with a
+ * fixed fraction held back so the pool never races the rest of the process
+ * (and the OS) to the last page.  A registration faults every page in, so
+ * sizing a pinned slab past this turns a clean refusal into the OOM
+ * killer.  0 on any parse trouble — the caller treats that as "no clamp
+ * beyond the doubling itself". */
+static size_t regpool_mem_available(void) {
+  FILE *f = fopen("/proc/meminfo", "r");
+  if (f == NULL)
+    return 0;
+  char line[128];
+  size_t kb = 0;
+  while (fgets(line, sizeof(line), f) != NULL) {
+    if (sscanf(line, "MemAvailable: %zu kB", &kb) == 1)
+      break;
+  }
+  fclose(f);
+  return (kb >> 4) * 15 * 1024; /* 15/16 of it, in bytes */
+}
+
 /* Create one arena slab for `node` and publish it as the node's current arena.
  * Caller holds g_lock. */
 static bool regpool_grow_locked(int node) {
   void *base;
   struct fid_mr *mr;
   uint64_t rkey;
-  /* Exponential slab sizing (capped): the arena table is a bounded process
-   * resource, so per-grow slab size doubles until the cap — total capacity
-   * then scales with the cap times the table size rather than the base slab
-   * times the table size.
+  /* Exponential slab sizing, uncapped: the arena table is a bounded process
+   * resource, so per-grow slab size doubles without a fixed ceiling — the
+   * table then bounds the ADDRESS REACH at base << table-size, which no
+   * machine approaches, instead of bounding the pool's total capacity.
    *
    * The doubling STARTS at the configured slab size (the caller's choice is
-   * respected — the first grow is exactly one configured slab); only the CAP
-   * differs by registration mode.  An unregistered slab (no fabric domain)
-   * is a plain anonymous mapping whose pages materialize on first touch, so
-   * a large slab costs address space, not memory — let the doubling run
-   * high to keep the arena count small.  A registered slab is pinned in
-   * full by the registration itself, so its ceiling stays conservative. */
+   * respected — the first grow is exactly one configured slab).  What limits
+   * a single slab is the machine, not a constant: a pinned slab is clamped
+   * to what is available RIGHT NOW (a registration faults every page in, so
+   * asking past that invites the OOM killer rather than a clean refusal),
+   * and any map/registration failure retries at half the size down to the
+   * base slab — the pool absorbs whatever memory remains, in shrinking
+   * pieces, and reports failure only when even one base slab does not fit. */
   unsigned grows = g_node_grow_count[node];
   const bool pinned = (g_domain != NULL);
   size_t want = g_slab_bytes;
-  const size_t cap = pinned ? ((size_t)1024 * 1024 * 1024)
-                            : ((size_t)8 * 1024 * 1024 * 1024);
-  while (grows-- > 0 && want < cap)
+  while (grows-- > 0 && want < ((size_t)1 << 46))
     want <<= 1;
-  if (!regpool_map_slab(node, want, REGPOOL_BASE_ALIGN, &base, &mr, &rkey))
-    return false;
+  if (pinned) {
+    size_t avail = regpool_mem_available();
+    while (avail != 0 && want > avail && want > g_slab_bytes)
+      want >>= 1;
+  }
+  while (!regpool_map_slab(node, want, REGPOOL_BASE_ALIGN, &base, &mr, &rkey)) {
+    if (want <= g_slab_bytes)
+      return false;
+    want >>= 1;
+  }
 
   /* Hand the pinned range to an exclusive arena.  is_committed=true (the
    * mapping is accessible — committed by mmap; individual pages are
