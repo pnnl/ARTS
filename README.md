@@ -56,6 +56,9 @@ All options are set on the cmake line with `-D<NAME>=<VALUE>`, e.g.
 | `ARTS_BUILD_EXAMPLES` | `OFF` (forced) | **Deprecated** — `examples/` predates the current public API and does not build; enabling is a configure error until the examples are modernized. See `tests/ocr/` and `benchmarks/` for working usage. |
 | `ARTS_BUILD_TESTS` | `ON` | Build the test programs and register them with ctest. |
 | `ARTS_BUILD_BENCHMARKS` | `ON` | Build the OCR benchmark apps (XSOCR + ARTS + ocrvx backends). |
+| `ARTS_BUILD_XSOCR` | `ON` | Build the XSOCR reference runtime and its `*_xsocr` app variants (needs a host MPI). |
+| `ARTS_BUILD_OCRVX` | `ON` | Build the ocr-vx reference runtime and its `*_ocrvx` app variants (needs a host MPI). |
+| `ARTS_BUILD_BASELINES` | `OFF` | Build the native (non-OCR) OpenMP/MPI baseline implementations — outside the experiment driver's catalog, explicit opt-in. |
 | `ARTS_BUILD_DOCS` | `OFF` | Build the Doxygen + Sphinx documentation. |
 | `ARTS_USE_GPU` | `OFF` | Enable CUDA GPU support (builds `libarts_cuda`). |
 | `ARTS_USE_LOCAL_CUDA_ARCHITECTURES` | `ON` | When GPU is on, auto-detect the local GPU's CUDA architecture via `nvidia-smi`. Only meaningful with `ARTS_USE_GPU=ON`; pair with the stock `CMAKE_CUDA_ARCHITECTURES` (e.g. `-DCMAKE_CUDA_ARCHITECTURES="80;86"`) to set SM targets by hand. |

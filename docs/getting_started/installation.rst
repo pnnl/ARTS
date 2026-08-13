@@ -76,6 +76,18 @@ All options are set with ``-D<NAME>=<VALUE>`` on the cmake line.
    * - ``ARTS_BUILD_BENCHMARKS``
      - ON
      - Build the OCR benchmark apps (XSOCR + ARTS + ocrvx).
+   * - ``ARTS_BUILD_XSOCR``
+     - ON
+     - Build the XSOCR reference runtime and its ``*_xsocr`` app variants
+       (needs a host MPI).
+   * - ``ARTS_BUILD_OCRVX``
+     - ON
+     - Build the ocr-vx reference runtime and its ``*_ocrvx`` app variants
+       (needs a host MPI).
+   * - ``ARTS_BUILD_BASELINES``
+     - OFF
+     - Build the native (non-OCR) OpenMP/MPI baseline implementations —
+       outside the experiment driver's catalog, explicit opt-in.
    * - ``ARTS_BUILD_DOCS``
      - OFF
      - Build the Doxygen + Sphinx documentation.
