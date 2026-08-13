@@ -252,7 +252,10 @@ def build(plan: BuildPlan, *, jobs: int | None = None, on_line=None,
         raise BuildError(
             "the build tree has no target for: " + ", ".join(plan.missing[:10])
             + ("…" if len(plan.missing) > 10 else "")
-            + "\n(an application in the catalog is not registered in CMake)"
+            + "\n(either the application is not registered in CMake, or the "
+            "tree skipped its runtime — e.g. the xsocr/ocrvx references are "
+            "skipped on a host without MPI; the configure summary's "
+            "References line says which)"
         )
     if shutil.which("ninja") is None:
         raise BuildError("ninja not found on PATH")

@@ -2,6 +2,18 @@
 #
 # All 147 source files are globbed; ocr-config.h #ifdef guards ensure
 # only the x86-relevant modules compile to non-empty objects.
+#
+# MPI is host infrastructure, like the compiler: never vendored, never
+# required for ARTS itself.  ocr-config.h unconditionally enables the MPI
+# comm-platform (ENABLE_COMM_PLATFORM_MPI) for this reference build, so
+# without host MPI headers there is no reduced-but-working XSOCR — it is
+# this reference runtime or nothing.  Probe before touching any target in
+# this file and skip the whole reference cleanly when the host has none.
+find_package(MPI COMPONENTS C)
+if(NOT MPI_C_FOUND)
+    message(STATUS "Skipping the XSOCR reference runtime (ocr_xsocr_static) and every *_xsocr app variant: no MPI found on this host. Provide an MPI with mpicc/mpicxx (e.g. on CMAKE_PREFIX_PATH) to enable them.")
+    return()
+endif()
 
 set(OCR_ROOT "${CMAKE_SOURCE_DIR}/third_party/ocr/ocr")
 
@@ -100,15 +112,10 @@ add_library(ocr_xsocr_static STATIC $<TARGET_OBJECTS:ocr_xsocr_objects>)
 target_include_directories(ocr_xsocr_static PUBLIC ${OCR_ROOT}/inc)
 target_link_libraries(ocr_xsocr_static PUBLIC pthread)
 
-# MPI support for distributed (HC_DIST) policy domain
-find_package(MPI COMPONENTS C)
-if(MPI_C_FOUND)
-    target_include_directories(ocr_xsocr_objects PRIVATE ${MPI_C_INCLUDE_DIRS})
-    target_link_libraries(ocr_xsocr_static PUBLIC MPI::MPI_C)
-    message(STATUS "XSOCR: MPI found — distributed (HC_DIST) comm-platform enabled")
-else()
-    message(WARNING "XSOCR: MPI not found — distributed comm-platform will not link")
-endif()
+# MPI support for the distributed (HC_DIST) policy domain — the probe at the
+# top of this file already guarantees MPI_C_FOUND here.
+target_include_directories(ocr_xsocr_objects PRIVATE ${MPI_C_INCLUDE_DIRS})
+target_link_libraries(ocr_xsocr_static PUBLIC MPI::MPI_C)
 
 # libnuma for distributed memory-platform (ENABLE_MEM_PLATFORM_NUMA_ALLOC).
 # Always the vendored build: a host libnuma found by probe would make the

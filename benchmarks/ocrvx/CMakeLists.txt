@@ -1,5 +1,22 @@
 # OCR-VX distributed MPI runtime (ocr_vdm_mpi)
 # Only built when ARTS_BUILD_BENCHMARKS=ON.
+#
+# MPI is host infrastructure, like the compiler: never vendored, never
+# required for ARTS itself.  ocr-vx is a *reference* runtime that happens to
+# be built on MPI, so probe for it before touching anything else in this
+# file (including the vendored-TBB setup below) and skip the whole reference
+# cleanly when the host has none.
+find_package(MPI COMPONENTS CXX)
+if(NOT MPI_CXX_FOUND)
+    message(STATUS "Skipping the ocr-vx reference runtime (ocr_vdm_mpi) and every *_ocrvx app variant: no MPI found on this host. Provide an MPI with mpicc/mpicxx (e.g. on CMAKE_PREFIX_PATH) to enable them.")
+    return()
+endif()
+
+# Past the probe, so a host that skips this reference never fetches the two
+# submodules only it consumes: this runtime's own sources, and the TBB its
+# task layer is built on.
+arts_init_submodule(third_party/ocr-vx build_one/CMakeLists.txt)
+arts_init_submodule(third_party/tbb CMakeLists.txt)
 
 # oneTBB: build from the bundled submodule, as static archives so no consumer
 # carries a libtbb/libtbbmalloc soname that a host copy on the loader path
@@ -20,8 +37,6 @@ function(arts_add_vendored_tbb)
                      EXCLUDE_FROM_ALL)
 endfunction()
 arts_add_vendored_tbb()
-
-find_package(MPI COMPONENTS CXX REQUIRED)
 
 set(OCRVX_ROOT "${CMAKE_SOURCE_DIR}/third_party/ocr-vx")
 

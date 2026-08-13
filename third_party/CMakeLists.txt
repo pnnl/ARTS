@@ -725,13 +725,15 @@ set(OFI_VERSION_NODES_MAP ${OFI_VERSION_NODES_MAP} PARENT_SCOPE)
 # and OpenBLAS's make build writes artifacts into its source tree, so each
 # build directory builds from a private copy.
 if(ARTS_BUILD_BENCHMARKS)
-  # Everything the benchmark tree consumes (reference runtimes, benchmark
-  # apps, and their support libraries), ensured here where the other
-  # third-party sources are set up rather than at each consumer.
+  # The benchmark sources every configuration of this tree consumes: the OCR
+  # headers (the shim and every app compile against them), the applications
+  # themselves, and OpenBLAS.  Fetching a submodule costs network and disk and
+  # fails outright where neither is available, so a submodule whose consumer
+  # is conditional is ensured at that consumer instead -- ocr-vx and TBB are
+  # fetched in benchmarks/ocrvx, which alone knows whether the host has the
+  # MPI that reference runtime is built on.
   arts_init_submodule(third_party/ocr ocr/inc/ocr.h)
   arts_init_submodule(third_party/ocr-apps apps)
-  arts_init_submodule(third_party/ocr-vx build_one/CMakeLists.txt)
-  arts_init_submodule(third_party/tbb CMakeLists.txt)
   arts_init_submodule(third_party/OpenBLAS Makefile)
 
   include(ExternalProject)
