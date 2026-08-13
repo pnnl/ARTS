@@ -197,7 +197,10 @@ if(ARTS_BUILD_EXAMPLES)
         "public API and does not build. The sources are kept for reference "
         "until modernized; see tests/ocr/ and benchmarks/ for working usage.")
 endif()
-option(ARTS_BUILD_TESTS      "Build test programs (enables ctest)"             ON)
+# OFF by default: tests link the static archive (hermetic — see
+# tests/CMakeLists.txt), so a full test tree costs real disk and link time
+# that a benchmark/experiment build never uses.  Validation builds opt in.
+option(ARTS_BUILD_TESTS      "Build test programs (enables ctest)"             OFF)
 option(ARTS_BUILD_BENCHMARKS "Build OCR benchmark apps (XSOCR + ARTS + ocrvx)" ON)
 # The native (non-OCR) OpenMP/MPI implementations predate the current
 # experiment driver and sit outside its catalog/consensus surface; they are

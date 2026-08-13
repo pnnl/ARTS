@@ -70,8 +70,11 @@ All options are set with ``-D<NAME>=<VALUE>`` on the cmake line.
        does not build; enabling is a configure error until the examples are
        modernized.  See ``tests/ocr/`` and ``benchmarks/`` for working usage.
    * - ``ARTS_BUILD_TESTS``
-     - ON
-     - Build the test programs (registers them with ctest).
+     - OFF
+     - Build the test programs (registers them with ctest).  Off by
+       default: tests statically link the runtime (hermetic), so a full
+       test tree costs real disk and link time — turn it on for
+       validation builds.
    * - ``ARTS_BUILD_BENCHMARKS``
      - ON
      - Build the OCR benchmark apps (XSOCR + ARTS + ocrvx).
@@ -165,13 +168,13 @@ GPU Build
 Verifying the Build
 -------------------
 
-After building, run the single-node test suite as a smoke check (the
-``examples/`` tree is deprecated and excluded from the build — see the
-option table above):
+Configure with ``-DARTS_BUILD_TESTS=ON`` and run the single-node test
+suite as a smoke check (the ``examples/`` tree is deprecated and excluded
+from the build — see the option table above):
 
 .. code-block:: bash
 
-   cd build
+   cmake .. -DARTS_BUILD_TESTS=ON && ninja
    ctest -L single_node --output-on-failure
 
 Every test should report ``Passed``.

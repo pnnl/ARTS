@@ -188,14 +188,11 @@ function(add_arts_test test_name)
     # Link with runtime libraries
     target_link_libraries(${test_name} PRIVATE Threads::Threads ${RT_LIBRARY} ${M_LIBRARY} ${ANL_LIBRARY})
 
-    # Use the appropriate ARTS library based on availability
-    if(TARGET arts_shared)
-        target_link_libraries(${test_name} PRIVATE arts_shared)
-    elseif(TARGET arts_static)
-        target_link_libraries(${test_name} PRIVATE arts_static)
-    else()
-        message(FATAL_ERROR "No ARTS library target found")
-    endif()
+    # Tests link the static archive, like the benchmarks: the runtime under
+    # test is the build tree's by construction, with no dynamic resolution
+    # point an environment (LD_LIBRARY_PATH) could redirect to another copy
+    # at run time.
+    target_link_libraries(${test_name} PRIVATE arts_static)
 endfunction()
 
 # Create test executables
@@ -249,10 +246,8 @@ if(BUILD_CUDA_LIBRARY)
             CUDA::cublas
         )
 
-        # Use the CUDA-enabled ARTS library
-        if(TARGET arts_cuda_shared)
-            target_link_libraries(${test_name} PRIVATE arts_cuda_shared)
-        elseif(TARGET arts_cuda_static)
+        # Same static-only rule as the C tests.
+        if(TARGET arts_cuda_static)
             target_link_libraries(${test_name} PRIVATE arts_cuda_static)
         else()
             message(FATAL_ERROR "No CUDA ARTS library target found")
