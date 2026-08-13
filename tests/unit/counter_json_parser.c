@@ -9,7 +9,7 @@
  * `arts_json_find_object_end` / `arts_json_parse_u_int64` /
  * `arts_json_parse_capture_history`).  Those are all `static` in
  * libs/src/core/counter/counter.c, so this TU compiles the real source in-place
- * via  #include "counter.c"  (the same idiom used by tests/unit/*_gpu.cu which
+ * via  #include "counter.c"  (the same idiom the unit gpu tests use to
  * #include edt.c).  We supply libc-backed shims for the runtime symbols
  * counter.c links against (arts_malloc/free/calloc, the atomics, array-list,
  * transport) and the two runtime globals/objects (arts_node_info,

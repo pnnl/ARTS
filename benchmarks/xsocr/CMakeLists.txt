@@ -34,11 +34,7 @@ set_target_properties(ocr_xsocr_objects PROPERTIES
 target_compile_options(ocr_xsocr_objects PRIVATE
     ${BENCH_C_OPT}
     -Wall
-    -Wno-unused-variable
-    -Wno-unused-but-set-variable
-    -Wno-unused-function
-    -Wno-sign-compare
-    -Wno-maybe-uninitialized
+    ${ARTS_WNO_UNUSED}
 )
 
 # ocr-config.h lives in this directory

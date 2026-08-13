@@ -25,7 +25,7 @@
  * GUID has been pre-created by the caller.  ocr-vx defines and honors the
  * same bit (0x8) in its ocr-types.h; keep a fallback for older trees. */
 #ifndef EDT_PROP_OEVT_VALID
-#define EDT_PROP_OEVT_VALID ((u16)0x8)
+#define EDT_PROP_OEVT_VALID ((u16) 0x8)
 #endif
 
 #endif /* OCR_APP_COMPAT_H */

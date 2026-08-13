@@ -59,34 +59,49 @@ static inline uint64_t get_route_table_key(uint64_t x, unsigned int shift) {
   switch (shift) {
   case 10:
     hash *= 1021;
+    /* fall through */
   case 11:
     hash *= 2039;
+    /* fall through */
   case 12:
     hash *= 4093;
+    /* fall through */
   case 13:
     hash *= 8191;
+    /* fall through */
   case 14:
     hash *= 16381;
+    /* fall through */
   case 15:
     hash *= 32749;
+    /* fall through */
   case 16:
     hash *= 65521;
+    /* fall through */
   case 17:
     hash *= 131071;
+    /* fall through */
   case 18:
     hash *= 262139;
+    /* fall through */
   case 19:
     hash *= 524287;
+    /* fall through */
   case 20:
     hash *= 1048573;
+    /* fall through */
   case 21:
     hash *= 2097143;
+    /* fall through */
   case 22:
     hash *= 4194301;
+    /* fall through */
   case 31:
     hash *= 2147483647;
+    /* fall through */
   case 32:
     hash *= 4294967291;
+    /* fall through */
   default:
     break;
   }

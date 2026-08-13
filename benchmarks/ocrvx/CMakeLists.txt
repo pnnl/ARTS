@@ -65,10 +65,6 @@ target_include_directories(ocr_vdm_mpi PUBLIC
     ${OCRVX_ROOT}/include/distributed
 )
 
-target_compile_options(ocr_vdm_mpi PRIVATE
-    -w   # suppress warnings from third-party code
-)
-
 target_link_libraries(ocr_vdm_mpi PUBLIC
     TBB::tbb
     TBB::tbbmalloc

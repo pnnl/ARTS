@@ -60,7 +60,7 @@ function(add_baseline_app)
     add_executable(${APP_NAME} ${ABS_SOURCES})
     target_include_directories(${APP_NAME} PRIVATE ${APP_DIR} ${SRC_DIR} ${APP_EXTRA_INCLUDES})
     target_compile_definitions(${APP_NAME} PRIVATE ${APP_EXTRA_DEFINES})
-    target_compile_options(${APP_NAME} PRIVATE ${BENCH_C_OPT} -w)
+    target_compile_options(${APP_NAME} PRIVATE ${BENCH_C_OPT})
     set_target_properties(${APP_NAME} PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
     )
@@ -234,7 +234,7 @@ target_sources(Stencil2D_mpi PRIVATE
 )
 
 # SNAP uses old MPI_Comm-as-int convention, incompatible with Open MPI 5.
-# Downgrade type errors to warnings (then suppressed by -w).
+# Downgrade those type errors to warnings so the build completes.
 add_baseline_app(NAME SNAP_mpi_omp
     DIR SNAP/baseline/mpi-omp/doe-original-intel-cport/snap-c
     SOURCES snap_main.c control.c data.c dealloc.c dim1_sweep.c dim3_sweep.c

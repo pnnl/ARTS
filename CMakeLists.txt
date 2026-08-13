@@ -542,15 +542,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     # Common debug flags
     add_compile_options(
         -O0 -g3 -Wall -Wextra
-        -Wno-unused -Wno-unused-parameter -Wno-unused-variable
-        -Wno-unused-function -Wno-unused-value -Wno-sign-compare
-        -Wno-implicit-fallthrough
     )
-
-    # Compiler-specific flags
-    if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
-        add_compile_options(-Wno-stringop-truncation)
-    endif()
 
     # Sanitizers (C/CXX only — CUDA excluded to avoid ASan shadow memory
     # conflicting with the CUDA driver's virtual address space mapping)
@@ -574,6 +566,18 @@ else()
     message(STATUS "Configuring Release build")
     add_compile_options(-march=native -mtune=native)
 endif()
+
+# The unused-* family is suppressed tree-wide: it flags dead locals and
+# ignored I/O return values, never a wrong computation, and at this volume
+# it drowns the classes that do.  -Wunused covers the group's members;
+# unused-parameter and unused-result live outside the group and are named
+# separately.  Targets that pass their own -Wall must re-append this list
+# AFTER it (a later -Wall re-enables the group).
+set(ARTS_WNO_UNUSED
+    $<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:-Wno-unused>
+    $<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:-Wno-unused-parameter>
+    $<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:-Wno-unused-result>)
+add_compile_options(${ARTS_WNO_UNUSED})
 
 # CUDA support detection (only when GPU support is requested)
 set(CUDA_AVAILABLE OFF)

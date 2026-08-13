@@ -187,8 +187,11 @@ function(build_hwloc)
     # references depend on what the build host has installed — the GL
     # backend alone pulls in X11/NVCtrl.  Disabling them keeps the link
     # surface identical on every host.
+    # Documentation is never consumed from an embedded build, and generating
+    # it costs a full doxygen run on any host that happens to have doxygen.
     COMMAND ${CMAKE_COMMAND} -E env CFLAGS=-fPIC ${HWLOC_SRC_DIR}/configure
             --prefix=${HWLOC_INSTALL_DIR}
+            --disable-doxygen
             --disable-rsmi
             --disable-cuda
             --disable-nvml
@@ -224,8 +227,12 @@ function(build_hwloc)
 
     # Install hwloc to build directory
     message(STATUS "Installing hwloc to ${HWLOC_INSTALL_DIR}")
+    # A dist tarball carries prebuilt manuals and installs them whatever
+    # --disable-doxygen says, one install line per API page.  Emptying their
+    # target directories makes automake skip those rules; the library,
+    # headers and hwloc.pc are unaffected.
     execute_process(
-        COMMAND make install
+        COMMAND make install man3dir= pdfdir=
         WORKING_DIRECTORY ${HWLOC_BUILD_DIR}
         RESULT_VARIABLE INSTALL_RESULT
     )

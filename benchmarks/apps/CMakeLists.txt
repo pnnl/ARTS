@@ -48,7 +48,7 @@ target_include_directories(ocr_lib_reduction PRIVATE
 )
 # target_link_libraries(ocr_lib_reduction PRIVATE ocr_xsocr_static)
 set_target_properties(ocr_lib_reduction PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
-target_compile_options(ocr_lib_reduction PRIVATE ${BENCH_C_OPT} -w)
+target_compile_options(ocr_lib_reduction PRIVATE ${BENCH_C_OPT})
 target_compile_definitions(ocr_lib_reduction PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
 target_include_directories(ocr_lib_reduction PRIVATE ${BENCH_OCR_OPTIONS_DIR})
 
@@ -65,7 +65,7 @@ target_include_directories(ocr_lib_reductionEager PRIVATE
 )
 # target_link_libraries(ocr_lib_reductionEager PRIVATE ocr_xsocr_static)
 set_target_properties(ocr_lib_reductionEager PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
-target_compile_options(ocr_lib_reductionEager PRIVATE ${BENCH_C_OPT} -w)
+target_compile_options(ocr_lib_reductionEager PRIVATE ${BENCH_C_OPT})
 target_compile_definitions(ocr_lib_reductionEager PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
 target_include_directories(ocr_lib_reductionEager PRIVATE ${BENCH_OCR_OPTIONS_DIR})
 
@@ -81,7 +81,7 @@ target_include_directories(ocr_lib_timer PRIVATE
 )
 # target_link_libraries(ocr_lib_timer PRIVATE ocr_xsocr_static)
 set_target_properties(ocr_lib_timer PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
-target_compile_options(ocr_lib_timer PRIVATE ${BENCH_C_OPT} -w)
+target_compile_options(ocr_lib_timer PRIVATE ${BENCH_C_OPT})
 target_compile_definitions(ocr_lib_timer PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
 target_include_directories(ocr_lib_timer PRIVATE ${BENCH_OCR_OPTIONS_DIR})
 
@@ -97,7 +97,7 @@ target_include_directories(ocr_lib_reduction_v1 PRIVATE
 )
 # target_link_libraries(ocr_lib_reduction_v1 PRIVATE ocr_xsocr_static)
 set_target_properties(ocr_lib_reduction_v1 PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
-target_compile_options(ocr_lib_reduction_v1 PRIVATE ${BENCH_C_OPT} -w)
+target_compile_options(ocr_lib_reduction_v1 PRIVATE ${BENCH_C_OPT})
 target_compile_definitions(ocr_lib_reduction_v1 PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
 target_include_directories(ocr_lib_reduction_v1 PRIVATE ${BENCH_OCR_OPTIONS_DIR})
 
@@ -113,7 +113,7 @@ target_include_directories(ocr_lib_ocrAppUtils PRIVATE
 )
 # target_link_libraries(ocr_lib_ocrAppUtils PRIVATE ocr_xsocr_static)
 set_target_properties(ocr_lib_ocrAppUtils PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
-target_compile_options(ocr_lib_ocrAppUtils PRIVATE ${BENCH_C_OPT} -w)
+target_compile_options(ocr_lib_ocrAppUtils PRIVATE ${BENCH_C_OPT})
 target_compile_definitions(ocr_lib_ocrAppUtils PRIVATE ${OCR_EXT_DEFINES} ${BENCH_OCR_TYPE_DEFINE})
 target_include_directories(ocr_lib_ocrAppUtils PRIVATE ${BENCH_OCR_OPTIONS_DIR})
 
@@ -134,7 +134,7 @@ target_include_directories(ocr_lib_reduction_ocrvx PRIVATE
     ${OCRVX_OCR_INC}
 )
 set_target_properties(ocr_lib_reduction_ocrvx PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
-target_compile_options(ocr_lib_reduction_ocrvx PRIVATE ${BENCH_C_OPT} -w
+target_compile_options(ocr_lib_reduction_ocrvx PRIVATE ${BENCH_C_OPT}
     "-include" "${OCRVX_COMPAT_H}")
 target_compile_definitions(ocr_lib_reduction_ocrvx PRIVATE ${OCR_EXT_DEFINES} "OCR_TYPE_H=vdm.h")
 
@@ -149,7 +149,7 @@ target_include_directories(ocr_lib_reductionEager_ocrvx PRIVATE
     ${OCRVX_OCR_INC}
 )
 set_target_properties(ocr_lib_reductionEager_ocrvx PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
-target_compile_options(ocr_lib_reductionEager_ocrvx PRIVATE ${BENCH_C_OPT} -w
+target_compile_options(ocr_lib_reductionEager_ocrvx PRIVATE ${BENCH_C_OPT}
     "-include" "${OCRVX_COMPAT_H}")
 target_compile_definitions(ocr_lib_reductionEager_ocrvx PRIVATE ${OCR_EXT_DEFINES} "OCR_TYPE_H=vdm.h")
 
@@ -163,7 +163,7 @@ target_include_directories(ocr_lib_timer_ocrvx PRIVATE
     ${OCRVX_OCR_INC}
 )
 set_target_properties(ocr_lib_timer_ocrvx PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
-target_compile_options(ocr_lib_timer_ocrvx PRIVATE ${BENCH_C_OPT} -w
+target_compile_options(ocr_lib_timer_ocrvx PRIVATE ${BENCH_C_OPT}
     "-include" "${OCRVX_COMPAT_H}")
 target_compile_definitions(ocr_lib_timer_ocrvx PRIVATE ${OCR_EXT_DEFINES} "OCR_TYPE_H=vdm.h")
 
@@ -177,7 +177,7 @@ target_include_directories(ocr_lib_reduction_v1_ocrvx PRIVATE
     ${OCRVX_OCR_INC}
 )
 set_target_properties(ocr_lib_reduction_v1_ocrvx PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
-target_compile_options(ocr_lib_reduction_v1_ocrvx PRIVATE ${BENCH_C_OPT} -w
+target_compile_options(ocr_lib_reduction_v1_ocrvx PRIVATE ${BENCH_C_OPT}
     "-include" "${OCRVX_COMPAT_H}")
 target_compile_definitions(ocr_lib_reduction_v1_ocrvx PRIVATE ${OCR_EXT_DEFINES} "OCR_TYPE_H=vdm.h")
 
@@ -191,7 +191,7 @@ target_include_directories(ocr_lib_ocrAppUtils_ocrvx PRIVATE
     ${OCRVX_OCR_INC}
 )
 set_target_properties(ocr_lib_ocrAppUtils_ocrvx PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
-target_compile_options(ocr_lib_ocrAppUtils_ocrvx PRIVATE ${BENCH_C_OPT} -w
+target_compile_options(ocr_lib_ocrAppUtils_ocrvx PRIVATE ${BENCH_C_OPT}
     "-include" "${OCRVX_COMPAT_H}")
 target_compile_definitions(ocr_lib_ocrAppUtils_ocrvx PRIVATE ${OCR_EXT_DEFINES} "OCR_TYPE_H=vdm.h")
 
@@ -290,7 +290,7 @@ function(add_benchmark_app)
                 C_STANDARD 11 C_EXTENSIONS ON
                 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
             )
-            target_compile_options(${_app}_xsocr PRIVATE ${BENCH_C_OPT} -w)
+            target_compile_options(${_app}_xsocr PRIVATE ${BENCH_C_OPT})
         endif()
 
         # --- ARTS variants (one per coherence configuration) ---
@@ -307,7 +307,7 @@ function(add_benchmark_app)
             set_target_properties(${_app}_arts_${sfx} PROPERTIES
                 C_STANDARD 11 C_EXTENSIONS ON
                 RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-            target_compile_options(${_app}_arts_${sfx} PRIVATE ${BENCH_C_OPT} -w)
+            target_compile_options(${_app}_arts_${sfx} PRIVATE ${BENCH_C_OPT})
             set_property(GLOBAL APPEND PROPERTY BENCHMARK_ARTS_TARGETS ${_app}_arts_${sfx})
         endforeach()
 
@@ -350,7 +350,7 @@ function(add_benchmark_app)
                     C_STANDARD 11 C_EXTENSIONS ON
                     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
                 )
-                target_compile_options(${_app}_ocrvx PRIVATE ${BENCH_C_OPT} -w
+                target_compile_options(${_app}_ocrvx PRIVATE ${BENCH_C_OPT}
                     "-include" "${OCRVX_COMPAT_H}")
             endif()
         endif()
@@ -1020,7 +1020,7 @@ if(EXISTS "${CRLIBM_DIR}/crlibm.h")
     target_include_directories(ocr_lib_crlibm PUBLIC ${CRLIBM_DIR})
     set_target_properties(ocr_lib_crlibm PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
     target_compile_definitions(ocr_lib_crlibm PRIVATE HAVE_CONFIG_H)
-    target_compile_options(ocr_lib_crlibm PRIVATE ${BENCH_C_OPT} -w)
+    target_compile_options(ocr_lib_crlibm PRIVATE ${BENCH_C_OPT})
     # crlibm needs scs_lib
     set(SCS_DIR "${CRLIBM_DIR}/scs_lib")
     if(EXISTS "${SCS_DIR}")
@@ -1050,7 +1050,7 @@ if(HAS_CRLIBM)
     )
     target_include_directories(sar_datagen PRIVATE ${DATAGEN_SRC_DIR})
     target_compile_definitions(sar_datagen PRIVATE RAG_ADD_ERROR=1)
-    target_compile_options(sar_datagen PRIVATE -O2 -w -fopenmp)
+    target_compile_options(sar_datagen PRIVATE -O2 -fopenmp)
     target_link_libraries(sar_datagen PRIVATE m gomp)
     set_target_properties(sar_datagen PROPERTIES
         C_STANDARD 99 C_EXTENSIONS ON
@@ -1068,7 +1068,7 @@ if(HAS_CRLIBM)
         ${SAR_SRC_DIR}
     )
     target_compile_definitions(sar_dataImage PRIVATE RAG)
-    target_compile_options(sar_dataImage PRIVATE -O2 -w)
+    target_compile_options(sar_dataImage PRIVATE -O2)
     target_link_libraries(sar_dataImage PRIVATE m)
     set_target_properties(sar_dataImage PROPERTIES
         C_STANDARD 99 C_EXTENSIONS ON
@@ -1175,7 +1175,7 @@ if(HAS_CRLIBM)
                 message(STATUS "SAR: ${sar_size}/${_name}.o missing — will compile from .c (one-time)")
                 add_custom_command(
                     OUTPUT "${_build_o}"
-                    COMMAND ${CMAKE_C_COMPILER} -std=c11 -O0 -w -c
+                    COMMAND ${CMAKE_C_COMPILER} -std=c11 -O0 -c
                         -o "${_build_o}" "${_prebuilt_dir}/${_name}.c"
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
                         "${_build_o}" "${_prebuilt_dir}/${_name}.o"
@@ -1313,7 +1313,10 @@ endif()
 add_benchmark_app(NAME stream
     DIR stream/ocr
     SOURCES stream.c
-    EXTRA_DEFINES STREAM_ARRAY_SIZE=1000 NUM_THREADS=2 NTIMES=3
+    # No NTIMES here: stream.c hardcodes it unconditionally, so a -D value
+    # never took effect — its measured scalar (a[0] after NTIMES sweeps)
+    # was always the source default's.
+    EXTRA_DEFINES STREAM_ARRAY_SIZE=1000 NUM_THREADS=2
     EXTRA_LINK_LIBS m
 )
 
@@ -1358,7 +1361,7 @@ if(TARGET ocr_xsocr_static)
     target_link_options(release_sync_stress_xsocr PRIVATE -no-pie -fno-pie)
     set_target_properties(release_sync_stress_xsocr PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-    target_compile_options(release_sync_stress_xsocr PRIVATE ${BENCH_C_OPT} -w)
+    target_compile_options(release_sync_stress_xsocr PRIVATE ${BENCH_C_OPT})
 endif()
 
 foreach(sfx ${ARTS_VARIANT_SUFFIXES})
@@ -1371,7 +1374,7 @@ foreach(sfx ${ARTS_VARIANT_SUFFIXES})
     target_link_options(release_sync_stress_arts_${sfx} PRIVATE -no-pie -fno-pie)
     set_target_properties(release_sync_stress_arts_${sfx} PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-    target_compile_options(release_sync_stress_arts_${sfx} PRIVATE ${BENCH_C_OPT} -w)
+    target_compile_options(release_sync_stress_arts_${sfx} PRIVATE ${BENCH_C_OPT})
 endforeach()
 
 if(TARGET ocr_vdm_mpi)
@@ -1384,7 +1387,7 @@ if(TARGET ocr_vdm_mpi)
     target_link_options(release_sync_stress_ocrvx PRIVATE -no-pie -fno-pie)
     set_target_properties(release_sync_stress_ocrvx PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-    target_compile_options(release_sync_stress_ocrvx PRIVATE ${BENCH_C_OPT} -w
+    target_compile_options(release_sync_stress_ocrvx PRIVATE ${BENCH_C_OPT}
         "-include" "${OCRVX_COMPAT_H}")
 endif()
 
@@ -1407,7 +1410,7 @@ if(TARGET ocr_xsocr_static)
     target_link_options(dbcreate_matrix_xsocr PRIVATE -no-pie -fno-pie)
     set_target_properties(dbcreate_matrix_xsocr PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-    target_compile_options(dbcreate_matrix_xsocr PRIVATE ${BENCH_C_OPT} -w)
+    target_compile_options(dbcreate_matrix_xsocr PRIVATE ${BENCH_C_OPT})
 endif()
 
 foreach(sfx ${ARTS_VARIANT_SUFFIXES})
@@ -1420,7 +1423,7 @@ foreach(sfx ${ARTS_VARIANT_SUFFIXES})
     target_link_options(dbcreate_matrix_arts_${sfx} PRIVATE -no-pie -fno-pie)
     set_target_properties(dbcreate_matrix_arts_${sfx} PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-    target_compile_options(dbcreate_matrix_arts_${sfx} PRIVATE ${BENCH_C_OPT} -w)
+    target_compile_options(dbcreate_matrix_arts_${sfx} PRIVATE ${BENCH_C_OPT})
 endforeach()
 
 if(TARGET ocr_vdm_mpi)
@@ -1433,7 +1436,7 @@ if(TARGET ocr_vdm_mpi)
     target_link_options(dbcreate_matrix_ocrvx PRIVATE -no-pie -fno-pie)
     set_target_properties(dbcreate_matrix_ocrvx PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-    target_compile_options(dbcreate_matrix_ocrvx PRIVATE ${BENCH_C_OPT} -w
+    target_compile_options(dbcreate_matrix_ocrvx PRIVATE ${BENCH_C_OPT}
         "-include" "${OCRVX_COMPAT_H}")
 endif()
 
@@ -1465,7 +1468,7 @@ if(TARGET ocr_xsocr_static)
     target_link_options(rwmix_xsocr PRIVATE -no-pie -fno-pie)
     set_target_properties(rwmix_xsocr PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-    target_compile_options(rwmix_xsocr PRIVATE ${BENCH_C_OPT} -w)
+    target_compile_options(rwmix_xsocr PRIVATE ${BENCH_C_OPT})
 endif()
 
 foreach(sfx ${ARTS_VARIANT_SUFFIXES})
@@ -1478,7 +1481,7 @@ foreach(sfx ${ARTS_VARIANT_SUFFIXES})
     target_link_options(rwmix_arts_${sfx} PRIVATE -no-pie -fno-pie)
     set_target_properties(rwmix_arts_${sfx} PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-    target_compile_options(rwmix_arts_${sfx} PRIVATE ${BENCH_C_OPT} -w)
+    target_compile_options(rwmix_arts_${sfx} PRIVATE ${BENCH_C_OPT})
 endforeach()
 
 if(TARGET ocr_vdm_mpi)
@@ -1491,7 +1494,7 @@ if(TARGET ocr_vdm_mpi)
     target_link_options(rwmix_ocrvx PRIVATE -no-pie -fno-pie)
     set_target_properties(rwmix_ocrvx PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-    target_compile_options(rwmix_ocrvx PRIVATE ${BENCH_C_OPT} -w
+    target_compile_options(rwmix_ocrvx PRIVATE ${BENCH_C_OPT}
         "-include" "${OCRVX_COMPAT_H}")
 endif()
 
@@ -1512,7 +1515,7 @@ if(TARGET ocr_xsocr_static)
     target_link_options(rwrounds_xsocr PRIVATE -no-pie -fno-pie)
     set_target_properties(rwrounds_xsocr PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-    target_compile_options(rwrounds_xsocr PRIVATE ${BENCH_C_OPT} -w)
+    target_compile_options(rwrounds_xsocr PRIVATE ${BENCH_C_OPT})
 endif()
 
 foreach(sfx ${ARTS_VARIANT_SUFFIXES})
@@ -1525,7 +1528,7 @@ foreach(sfx ${ARTS_VARIANT_SUFFIXES})
     target_link_options(rwrounds_arts_${sfx} PRIVATE -no-pie -fno-pie)
     set_target_properties(rwrounds_arts_${sfx} PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-    target_compile_options(rwrounds_arts_${sfx} PRIVATE ${BENCH_C_OPT} -w)
+    target_compile_options(rwrounds_arts_${sfx} PRIVATE ${BENCH_C_OPT})
 endforeach()
 
 if(TARGET ocr_vdm_mpi)
@@ -1538,7 +1541,7 @@ if(TARGET ocr_vdm_mpi)
     target_link_options(rwrounds_ocrvx PRIVATE -no-pie -fno-pie)
     set_target_properties(rwrounds_ocrvx PROPERTIES C_STANDARD 11 C_EXTENSIONS ON
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-    target_compile_options(rwrounds_ocrvx PRIVATE ${BENCH_C_OPT} -w
+    target_compile_options(rwrounds_ocrvx PRIVATE ${BENCH_C_OPT}
         "-include" "${OCRVX_COMPAT_H}")
 endif()
 

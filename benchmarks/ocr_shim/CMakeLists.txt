@@ -17,9 +17,7 @@ set_target_properties(ocr_arts_objects PROPERTIES
 target_compile_options(ocr_arts_objects PRIVATE
     ${BENCH_C_OPT}
     -Wall
-    -Wno-unused-variable
-    -Wno-unused-function
-    -Wno-sign-compare
+    ${ARTS_WNO_UNUSED}
 )
 
 # OCR extension defines (must come before OCR headers)
