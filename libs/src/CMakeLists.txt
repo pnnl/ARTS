@@ -123,6 +123,80 @@ function(arts_apply_protocol target arm write_policy release_policy)
     endif()
 endfunction()
 
+# --- Vendored dependencies inside the installed libraries --------------------
+# An application links the runtime and nothing else: `-larts` alone must
+# resolve, from either the archive or the shared object.  The vendored
+# dependencies are therefore part of the artifact rather than part of a
+# consumer's link line, which also makes the artifact's behaviour independent
+# of whatever the consumer's host happens to offer under the same names.
+#
+# Ordering: the archives are produced by an ExternalProject and a subdirectory
+# target.  A link edge already implies both, but the archive merge below runs
+# as a POST_BUILD step whose inputs the build system cannot see, so each is
+# named explicitly.
+function(arts_depend_on_vendored target)
+    if(TARGET libfabric_ep)
+        add_dependencies(${target} libfabric_ep)
+    endif()
+    if(TARGET mimalloc-static)
+        add_dependencies(${target} mimalloc-static)
+    endif()
+endfunction()
+
+# Folds the vendored archives into <target>'s own archive and localizes their
+# symbols, so a consumer that links its own copy of one of them keeps it.  The
+# static-library rule recreates the archive from its objects before POST_BUILD
+# runs, so the merge starts from the same inputs on every build instead of
+# compounding -- and the archive holds exactly this target's own objects at that
+# moment, which is what the script reads its keep-global allowlist from.
+function(arts_bundle_vendored_archives target)
+    if(NOT ARTS_VENDORED_ARCHIVES)
+        return()
+    endif()
+    arts_depend_on_vendored(${target})
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND}
+            -DMERGE_AR=${CMAKE_AR}
+            -DMERGE_RANLIB=${CMAKE_RANLIB}
+            -DMERGE_NM=${CMAKE_NM}
+            -DMERGE_LD=${CMAKE_LINKER}
+            -DMERGE_OBJCOPY=${CMAKE_OBJCOPY}
+            -DMERGE_ARCHIVE=$<TARGET_FILE:${target}>
+            -P ${PROJECT_SOURCE_DIR}/cmake/MergeStaticArchives.cmake
+            -- ${ARTS_VENDORED_ARCHIVES}
+        COMMENT "Bundling vendored archives into $<TARGET_FILE_NAME:${target}>"
+        VERBATIM)
+endfunction()
+
+# Embeds the same archives in a shared <target> and keeps their symbols out of
+# its dynamic exports: a vendored symbol that stays exported can be interposed
+# by a copy in the executable, which would split a library's state between two
+# instances of itself.
+function(arts_embed_vendored_archives target)
+    arts_depend_on_vendored(${target})
+    # PRIVATE, not INTERFACE: the archive belongs inside the shared object, not
+    # on the line of everything that links it.
+    if(ARTS_TRANSPORT_OFI)
+        target_link_libraries(${target} PRIVATE arts::libfabric)
+    endif()
+    # Both options below are GNU ld / lld spellings, and ELF symbol versioning
+    # is the problem only one of them solves.
+    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        return()
+    endif()
+    foreach(name IN LISTS ARTS_VENDORED_EXCLUDE_LIBS)
+        target_link_options(${target} PRIVATE "LINKER:--exclude-libs,${name}")
+    endforeach()
+    # libfabric's symbols are version-tagged (fi_getinfo@@FABRIC_1.x) and a
+    # version-tagged definition needs its version node declared at this link,
+    # which the derived script supplies without hiding anything of ours the way
+    # libfabric's own script would.
+    if(ARTS_TRANSPORT_OFI)
+        target_link_options(${target} PRIVATE
+            "LINKER:--version-script=${OFI_VERSION_NODES_MAP}")
+    endif()
+endfunction()
+
 # OFI (libfabric) transport availability, visible to every target in this
 # directory and its subdirectories (core/, graph/) so per-module OBJECT
 # libraries can gate fabric-header includes with #ifdef ARTS_TRANSPORT_OFI.
@@ -225,6 +299,13 @@ if(ARTS_BUILD_STATIC)
 
     arts_apply_protocol(arts_static ${ARTS_COHERENCE_ARM} ${ARTS_WRITE_POLICY} ${ARTS_RELEASE_POLICY})
 
+    # The vendored archives above stay on this target's PRIVATE link list even
+    # though the merge makes them redundant there: the entries carry the
+    # vendored include directories the sources in this directory compile
+    # against, and the toolchain libraries (dl, rt) that back-resolve the
+    # embedded objects on a consumer's line, which no merge can supply.
+    arts_bundle_vendored_archives(arts_static)
+
     # Set library properties
     set_target_properties(arts_static PROPERTIES
         OUTPUT_NAME arts
@@ -276,12 +357,7 @@ if(ARTS_BUILD_SHARED)
         $<BUILD_INTERFACE:${HWLOC_LIBRARIES}>
     )
 
-    # Hide hwloc symbols from shared library exports (GNU ld/lld)
-    if(HWLOC_FOUND AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        target_link_options(arts_shared PRIVATE
-            "LINKER:--exclude-libs,libhwloc.a"
-        )
-    endif()
+    arts_embed_vendored_archives(arts_shared)
 
     if(ARTS_ATOMIC_LIBRARY)
         target_link_libraries(arts_shared PRIVATE ${ARTS_ATOMIC_LIBRARY})
@@ -294,23 +370,6 @@ if(ARTS_BUILD_SHARED)
 
     if(ARTS_USE_CXL)
         target_link_libraries(arts_shared PUBLIC arts_cxl_lib)
-    endif()
-
-    if(ARTS_TRANSPORT_OFI)
-        # INTERFACE, not PRIVATE: do NOT embed the static libfabric archive into
-        # libarts.so.  libfabric applies ELF symbol versioning (FABRIC_1.x);
-        # statically pulling a versioned symbol into a shared object fails to
-        # link ("version node not found ... failed to set dynamic section
-        # sizes") because libfabric's version script is not applied here.
-        # Leaving the fi_* symbols undefined in libarts.so (shared objects allow
-        # that) and having every consumer (each links arts_shared) pull the
-        # archive resolves them at the executable link — the same way the static
-        # arts library already propagates libfabric to its consumers.
-        target_link_libraries(arts_shared INTERFACE arts::libfabric)
-        # Still needed at compile time for the fabric headers in this dir's TUs
-        # (main.c); PRIVATE include-only, no link edge into the .so.
-        target_include_directories(arts_shared PRIVATE
-            $<TARGET_PROPERTY:arts::libfabric,INTERFACE_INCLUDE_DIRECTORIES>)
     endif()
 
     arts_apply_protocol(arts_shared ${ARTS_COHERENCE_ARM} ${ARTS_WRITE_POLICY} ${ARTS_RELEASE_POLICY})
@@ -387,6 +446,8 @@ if(BUILD_CUDA_LIBRARY)
             target_link_libraries(arts_cuda_static PRIVATE "-framework CoreFoundation" "-framework IOKit" "-framework OpenCL")
         endif()
 
+        arts_bundle_vendored_archives(arts_cuda_static)
+
         arts_apply_protocol(arts_cuda_static ${ARTS_COHERENCE_ARM} ${ARTS_WRITE_POLICY} ${ARTS_RELEASE_POLICY})
 
         # Set library properties
@@ -447,12 +508,7 @@ if(BUILD_CUDA_LIBRARY)
             CUDA::cublas
         )
 
-        # Hide hwloc symbols from shared library exports (GNU ld/lld)
-        if(HWLOC_FOUND AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
-            target_link_options(arts_cuda_shared PRIVATE
-                "LINKER:--exclude-libs,libhwloc.a"
-            )
-        endif()
+        arts_embed_vendored_archives(arts_cuda_shared)
 
         if(ARTS_ATOMIC_LIBRARY)
             target_link_libraries(arts_cuda_shared PRIVATE ${ARTS_ATOMIC_LIBRARY})

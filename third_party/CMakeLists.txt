@@ -398,6 +398,14 @@ set(HWLOC_INCLUDE_DIRS ${HWLOC_INCLUDE_DIRS} PARENT_SCOPE)
 set(HWLOC_FOUND ${HWLOC_FOUND} PARENT_SCOPE)
 set(HWLOC_VERSION ${HWLOC_VERSION} PARENT_SCOPE)
 
+# Every vendored archive the runtime itself needs, collected as the library
+# targets are configured and exported at the end of this file.  The static
+# library folds them into its own archive and the shared library embeds them,
+# so a consumer names the runtime alone.  A dependency that only a benchmark
+# or a reference runtime uses (numa, TBB, OpenBLAS) does not belong here: the
+# runtime never calls it, and bundling it would put it on every consumer.
+set(ARTS_VENDORED_ARCHIVES "${HWLOC_LIB_A}")
+
 if(ARTS_MALLOC STREQUAL "mimalloc")
   arts_init_submodule(third_party/mimalloc CMakeLists.txt)
   set(MI_BUILD_SHARED OFF CACHE BOOL "" FORCE)
@@ -406,6 +414,7 @@ if(ARTS_MALLOC STREQUAL "mimalloc")
   set(MI_BUILD_TESTS  OFF CACHE BOOL "" FORCE)
   set(MI_OVERRIDE     OFF CACHE BOOL "" FORCE)  # we call mi_* explicitly, no malloc override
   add_subdirectory(mimalloc EXCLUDE_FROM_ALL)
+  list(APPEND ARTS_VENDORED_ARCHIVES "$<TARGET_FILE:mimalloc-static>")
 endif()
 
 # Build libfabric (OFI) from its vendored dist tarball, driven through CMake's
@@ -539,7 +548,11 @@ if(ARTS_TRANSPORT_OFI)
   # Absolute archive paths keep their relative order, and the one archive
   # that must appear twice on the line uses a second spelling (the lib64
   # alias) so text-keyed deduplication cannot collapse it.
+  # The same set once more as plain archive paths, deduplicated: a merge or an
+  # embed consumes each archive's members once, and the repetition the link
+  # line needs for a cyclic set has no meaning there.
   set(RDMA_VERBS_LIBTOOL_LIBS "")
+  set(RDMA_VERBS_ARCHIVES "")
   set(_rdma_seen_ibverbs FALSE)
   foreach(_flag IN LISTS RDMA_STATIC_LINK_FLAGS)
     if(_flag MATCHES "^-l(.+)$")
@@ -547,6 +560,7 @@ if(ARTS_TRANSPORT_OFI)
       if(_name STREQUAL "pthread" OR _name STREQUAL "m")
         continue()
       endif()
+      list(APPEND RDMA_VERBS_ARCHIVES "${RDMA_CORE_INSTALL_DIR}/lib/lib${_name}.a")
       if(_name STREQUAL "ibverbs" AND _rdma_seen_ibverbs)
         string(APPEND RDMA_VERBS_LIBTOOL_LIBS
                " ${RDMA_CORE_INSTALL_DIR}/lib64/libibverbs.a")
@@ -560,6 +574,7 @@ if(ARTS_TRANSPORT_OFI)
     endif()
   endforeach()
   string(STRIP "${RDMA_VERBS_LIBTOOL_LIBS}" RDMA_VERBS_LIBTOOL_LIBS)
+  list(REMOVE_DUPLICATES RDMA_VERBS_ARCHIVES)
 
   message(STATUS "Building libfabric ${OFI_DIST_VERSION} from vendored dist tarball")
 
@@ -571,6 +586,35 @@ if(ARTS_TRANSPORT_OFI)
     message(STATUS "Extracting libfabric ${OFI_DIST_VERSION}")
     file(ARCHIVE_EXTRACT INPUT "${OFI_TARBALL}" DESTINATION "${CMAKE_BINARY_DIR}")
   endif()
+
+  # libfabric tags its exported symbols with ELF symbol versions
+  # (fi_getinfo@@FABRIC_1.9 and friends), and a version-tagged definition can
+  # only enter a shared object whose link declares the matching version node --
+  # otherwise the link fails with "version node not found".  A consumer that
+  # embeds the static archive cannot reuse libfabric's own script verbatim: its
+  # `local: *` would hide the consumer's own exports too.  Derive a
+  # declarations-only script -- the node names and their inheritance, none of
+  # the symbol bodies -- from the same source, so unmatched symbols keep the
+  # base version and stay exported, and a libfabric that adds a version node
+  # needs no second edit here.
+  set(OFI_VERSION_NODES_MAP
+      "${CMAKE_BINARY_DIR}/third_party/libfabric_version_nodes.map")
+  file(STRINGS "${OFI_SRC_DIR}/libfabric.map.in" _ofi_map_lines)
+  set(_ofi_nodes "")
+  foreach(_line IN LISTS _ofi_map_lines)
+    if(_line MATCHES "^([A-Za-z_][A-Za-z_0-9.]*)[ \t]*{")
+      string(APPEND _ofi_nodes "${CMAKE_MATCH_1} {")
+    elseif(_line MATCHES "^}[ \t]*([A-Za-z_][A-Za-z_0-9.]*)[ \t]*;")
+      string(APPEND _ofi_nodes "} ${CMAKE_MATCH_1};\n")
+    elseif(_line MATCHES "^}[ \t]*;")
+      string(APPEND _ofi_nodes "};\n")
+    endif()
+  endforeach()
+  if(NOT _ofi_nodes)
+    message(FATAL_ERROR
+        "No symbol-version nodes found in ${OFI_SRC_DIR}/libfabric.map.in")
+  endif()
+  file(WRITE "${OFI_VERSION_NODES_MAP}" "${_ofi_nodes}")
 
   include(ExternalProject)
   set(OFI_PREFIX "${CMAKE_BINARY_DIR}/libfabric")
@@ -651,6 +695,27 @@ if(ARTS_TRANSPORT_OFI)
     # and (when its probe engaged) hwloc are back-resolved the same way.
     INTERFACE_LINK_LIBRARIES "${OFI_LINK_INTERFACE}")
   add_dependencies(arts::libfabric libfabric_ep)
+
+  list(APPEND ARTS_VENDORED_ARCHIVES
+       "${OFI_PREFIX}/lib/libfabric.a" ${RDMA_VERBS_ARCHIVES})
+
+  # Bundling these into a library makes their symbols part of it; naming each
+  # archive here keeps them out of its dynamic exports, so nothing outside can
+  # bind to a vendored symbol and interpose on the library's own use of it.
+  set(ARTS_VENDORED_EXCLUDE_LIBS "")
+  foreach(_archive IN LISTS ARTS_VENDORED_ARCHIVES)
+    if(NOT _archive MATCHES "^\\$<")
+      get_filename_component(_archive_name "${_archive}" NAME)
+      list(APPEND ARTS_VENDORED_EXCLUDE_LIBS "${_archive_name}")
+    endif()
+  endforeach()
+  if(ARTS_MALLOC STREQUAL "mimalloc")
+    list(APPEND ARTS_VENDORED_EXCLUDE_LIBS "$<TARGET_FILE_NAME:mimalloc-static>")
+  endif()
+
+  set(ARTS_VENDORED_ARCHIVES ${ARTS_VENDORED_ARCHIVES} PARENT_SCOPE)
+  set(ARTS_VENDORED_EXCLUDE_LIBS ${ARTS_VENDORED_EXCLUDE_LIBS} PARENT_SCOPE)
+  set(OFI_VERSION_NODES_MAP ${OFI_VERSION_NODES_MAP} PARENT_SCOPE)
 endif()
 
 # Build OpenBLAS (BLAS + LAPACK/LAPACKE, BSD-3) from the third_party/OpenBLAS
