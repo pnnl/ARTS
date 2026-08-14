@@ -115,6 +115,27 @@ extern uint64_t max_global_guid_thread;
 
 static inline arts_route_table_t *arts_get_route_table(arts_guid_t guid) {
   uint64_t key = ARTS_GUID_GET_KEY(guid);
+  if (ARTS_GUID_GET_TYPE(guid) == ARTS_GUID_DB && arts_db_seq_budget) {
+    /* DB keys are [szhint | seq]; the creating rank is arithmetic on seq
+     * (slice width = arts_db_seq_budget), so the local/remote decision is a
+     * pure function of the key — identical on every thread, install and
+     * lookup alike.  Self-created keys (reserved-range members included:
+     * both reserve paths claim from this rank's own slice) spread
+     * chunk-granular over the local per-thread tables; foreign creators and
+     * the startup top region sit outside the slice and take the shared
+     * remote shards, exactly as they did under the flat-key partition.
+     * While arts_db_seq_budget is still 0 (the pre-parallel window) every
+     * DB key falls through to the legacy path, whose keys_per_thread gate
+     * is also still 0 — same remote-shard answer, so the decision for any
+     * key is stable across the flip. */
+    uint64_t seq = key & ARTS_GUID_DB_SEQ_MASK;
+    if (seq / arts_db_seq_budget == arts_global_rank_id) {
+      return arts_node_info
+          .route_table[(seq >> ARTS_GUID_DB_CHUNK_BITS) % num_tables];
+    }
+    return arts_node_info
+        .remote_route_table[key & (ARTS_REMOTE_ROUTE_SHARDS - 1)];
+  }
   if (keys_per_thread) {
     uint64_t global_thread = (key / keys_per_thread);
     if (min_global_guid_thread <= global_thread &&

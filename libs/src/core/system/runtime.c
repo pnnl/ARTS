@@ -443,6 +443,7 @@ void arts_runtime_global_cleanup() {
   }
   arts_free(arts_node_info.keys);
   arts_free(arts_node_info.global_guid_thread_id);
+  arts_guid_generator_cleanup();
 
   /* Network outbound queues and sequence tracking arrays */
   arts_transport_cleanup();

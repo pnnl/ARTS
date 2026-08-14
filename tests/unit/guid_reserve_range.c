@@ -1,28 +1,23 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * guid_reserve_range — pure-unit coverage of arts_guid_reserve_range,
- * arts_guid_reserve_range_hash and the labeled-vs-auto collision-avoidance
- * invariant (census 18-gas obligations 11 & 12; suspected bug B046).
+ * guid_reserve_range — pure-unit coverage of arts_guid_reserve_range and the
+ * labeled-vs-auto collision-avoidance invariant.
  *
  * Properties:
  *
- *   1. ROUND_ROBIN reserve_range clears EVERY per-rank counter of this thread
- *      to base+stride, so a subsequent AUTO arts_guid_reserve (which advances
- *      a single per-(rank,kind) counter) cannot mint a key inside the labeled
- *      span — the documented cure for a real collision bug.  We reserve a
- *      distributed range, expand it via from_index, then auto-reserve on every
- *      rank and assert NO auto GUID equals any labeled GUID.
+ *   1. A ROUND_ROBIN reserve_range claims the SAME span [base, base+stride)
+ *      on every home's counter, so a subsequent AUTO mint (which leases a
+ *      chunk from the same shared counter) can never produce a key inside
+ *      the labeled span.  We reserve a distributed range, expand it via
+ *      from_index, then auto-mint on every rank and assert NO auto GUID
+ *      equals any labeled GUID.
  *
- *   2. reserve_range_hash returns a hash-ALIGNED start (key % hash_size == 0)
- *      while still leaving `size` usable contiguous GUIDs.
+ *   2. A single-rank reserve_range claims `size` CONSECUTIVE seqs in one
+ *      fetch-add on the shared counter — contiguity holds and later mints
+ *      land strictly above the range.
  *
- *   3. reserve_range_hash with hash_size == 0 is SAFE, contrary to suspected
- *      bug B046.  B046 predicted a modulo-by-zero on hash_size == 0, but the
- *      alignment loop is `for (i = 0; i < hash_size; i++)` — its body (the only
- *      site of `% hash_size`) never runs when hash_size == 0, so the modulo is
- *      never reached.  The function simply returns the unaligned start.  This
- *      test pins that the call does NOT trap and yields a valid start GUID,
- *      documenting B046 as a FALSE POSITIVE (loop-guarded).
+ *   3. DB range members inherit the range's exact szhint bits (the sentinel),
+ *      and index_from round-trips every member.
  *
  * No runtime: guid.c is #include'd with libc-backed shims.
  */
@@ -31,7 +26,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/wait.h>
 #include <unistd.h>
 
 unsigned int arts_global_rank_id = 0;
@@ -48,6 +42,18 @@ void *arts_calloc_aligned(size_t n, size_t s, size_t a) {
   return p;
 }
 void arts_free(void *p) { free(p); }
+
+/* Wait-free counter primitives for the DB seq allocator (libc-free unit
+ * pattern: mirror the atomics.c definitions verbatim). */
+uint64_t arts_atomic_fetch_add_u64(volatile uint64_t *d, uint64_t v) {
+  return __sync_fetch_and_add(d, v);
+}
+uint64_t arts_atomic_cswap_u64(volatile uint64_t *d, uint64_t o, uint64_t n) {
+  return __sync_val_compare_and_swap(d, o, n);
+}
+uint64_t arts_atomic_read_u64(const volatile uint64_t *d) {
+  return __atomic_load_n(d, __ATOMIC_ACQUIRE);
+}
 
 #include "../../libs/src/core/gas/guid.c"
 
@@ -83,6 +89,22 @@ static void generator_reset(uint64_t key_budget) {
   max_global_guid_thread = 1;
   keys_per_thread = key_budget;
   global_guid_on = 0;
+
+  /* DB seq allocator (mirrors set_guid_generator_after_parallel_start). */
+  arts_db_seq_budget =
+      ((ARTS_GUID_DB_SEQ_MASK + 1) - ARTS_GUID_DB_STARTUP_RESERVE) /
+      arts_global_rank_count;
+  db_seq_creator_base = arts_db_seq_budget * arts_global_rank_id;
+  if (db_seq_next) {
+    free((void *)db_seq_next);
+  }
+  db_seq_next = (volatile uint64_t *)malloc(sizeof(uint64_t) *
+                                            arts_global_rank_count);
+  for (unsigned r = 0; r < arts_global_rank_count; r++) {
+    db_seq_next[r] = db_seq_creator_base + 1;
+  }
+  free(t_db_cursor);
+  t_db_cursor = NULL;
 }
 
 static void generator_free(void) {
@@ -93,6 +115,10 @@ static void generator_free(void) {
   }
   free(arts_node_info.global_guid_thread_id);
   arts_node_info.global_guid_thread_id = NULL;
+  free((void *)db_seq_next);
+  db_seq_next = NULL;
+  free(t_db_cursor);
+  t_db_cursor = NULL;
 }
 
 int main(void) {
@@ -114,7 +140,7 @@ int main(void) {
     labeled[i] = arts_guid_from_index(dist, i);
   }
 
-  /* now auto-reserve on EVERY rank; none may collide with a labeled GUID */
+  /* now auto-mint on EVERY rank; none may collide with a labeled GUID */
   for (unsigned r = 0; r < arts_global_rank_count; r++) {
     for (int k = 0; k < 8; k++) {
       arts_guid_t auto_g = arts_guid_create_for_rank(r, ARTS_GUID_DB);
@@ -126,54 +152,40 @@ int main(void) {
     }
   }
 
-  /* ---- 2. hash-aligned start. ---- */
+  /* ---- 2. single-rank range: contiguous, exclusive. ---- */
   generator_reset(1u << 20);
-  const unsigned HSZ = 16;
   const unsigned NEED = 8;
-  arts_guid_t hstart = arts_guid_reserve_range_hash(ARTS_GUID_DB, NEED, 0, HSZ);
-  if (hstart == NULL_GUID) {
-    FAIL("reserve_range_hash returned NULL_GUID\n");
+  arts_guid_t rstart = arts_guid_reserve_range(ARTS_GUID_DB, NEED, 2);
+  if (rstart == NULL_GUID) {
+    FAIL("single-rank reserve_range returned NULL_GUID\n");
   }
-  if (ARTS_GUID_GET_KEY(hstart) % HSZ != 0) {
-    FAIL("reserve_range_hash start not aligned: key=%lu hsz=%u\n",
-         (unsigned long)ARTS_GUID_GET_KEY(hstart), HSZ);
-  }
-  /* the `NEED` GUIDs past the aligned start must be distinct & contiguous */
   for (unsigned i = 1; i < NEED; i++) {
-    if (arts_guid_get_key(hstart + i) != arts_guid_get_key(hstart) + i) {
-      FAIL("hash range not contiguous at %u\n", i);
+    if (arts_guid_get_key(arts_guid_from_index(rstart, i)) !=
+        arts_guid_get_key(rstart) + i) {
+      FAIL("range not contiguous at %u\n", i);
     }
+  }
+  /* a later mint on the same home must land strictly above the range */
+  arts_guid_t after = arts_guid_create_for_rank(2, ARTS_GUID_DB);
+  if (ARTS_GUID_DB_GET_SEQ(ARTS_GUID_GET_KEY(after)) <
+      ARTS_GUID_DB_GET_SEQ(ARTS_GUID_GET_KEY(rstart)) + NEED) {
+    FAIL("auto mint landed inside the reserved single-rank range\n");
   }
 
-  /* ---- 3. hash_size == 0 is SAFE (B046 false positive — loop-guarded). ---- *
-   * Run in a forked child so that, if a future refactor ever DID introduce a
-   * raw `% hash_size`, the resulting SIGFPE wouldn't take the whole test down
-   * — instead it would surface as a child-trap and flip this assertion. */
-  pid_t pid = fork();
-  if (pid == 0) {
-    generator_reset(1u << 20);
-    arts_guid_t s = arts_guid_reserve_range_hash(ARTS_GUID_DB, 4, 0, 0);
-    /* Must return a valid (non-NULL) start without trapping. */
-    _exit(s == NULL_GUID ? 2 : 0);
-  } else if (pid > 0) {
-    int st = 0;
-    (void)waitpid(pid, &st, 0);
-    if (WIFSIGNALED(st)) {
-      FAIL("hash_size==0 TRAPPED (signal %d) — B046 is no longer a false "
-           "positive; a raw modulo-by-zero was introduced.\n",
-           WTERMSIG(st));
+  /* ---- 3. szhint inheritance + index_from round-trip. ---- */
+  for (unsigned i = 0; i < NEED; i++) {
+    arts_guid_t g = arts_guid_from_index(rstart, i);
+    if (ARTS_GUID_DB_GET_SZHINT(ARTS_GUID_GET_KEY(g)) !=
+        ARTS_GUID_DB_SZHINT_NONE) {
+      FAIL("range member %u lost the sentinel szhint\n", i);
     }
-    if (!WIFEXITED(st) || WEXITSTATUS(st) != 0) {
-      FAIL("hash_size==0 child failed (status %d): expected a valid start, "
-           "no trap.\n",
-           st);
+    if (arts_guid_index_from(rstart, g) != (int)i) {
+      FAIL("index_from round-trip broke at %u\n", i);
     }
-  } else {
-    FAIL("fork failed\n");
   }
 
   generator_free();
   printf("PASS guid_reserve_range: labeled-vs-auto collision-free, "
-         "hash-aligned start, hash_size==0 SAFE (B046 false positive)\n");
+         "contiguous single-rank claim, sentinel inheritance + round-trip\n");
   return 0;
 }

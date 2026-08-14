@@ -352,6 +352,12 @@ void arts_handler_db_snapshot_response(void *item_v, void *args_v) {
   arts_guid_t edt_guid = a->edt_guid;
   uint32_t slot = a->slot;
 
+  /* Every response kind carries the server's descriptor size; a hinted
+   * first touch may reach any of them with the size still unlearned. */
+  if (cache->db_size == 0 && a->db_size > 0) {
+    cache->db_size = a->db_size;
+  }
+
   if (a->data_present == 2) {
     /* Size-only CTS: the server holds data but our request carried no landing
      * (first touch — db_size unknown).  Learn the size and re-issue the

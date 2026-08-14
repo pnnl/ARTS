@@ -215,6 +215,21 @@ counters:
     unit: count
     help: 'Size-only CTS replies — the rendezvous leg that makes a size-unknown first touch cost two requests'
 
+  NUM_GRANT_SIZE_CTS:
+    group: 'Migrating grant'
+    unit: count
+    help: 'Size-only CTS fallbacks on the grant plane — with the GUID size hint, only sentinel GUIDs take this leg'
+
+  NUM_EXCL_SIZE_CTS:
+    group: 'Exclusion arm'
+    unit: count
+    help: 'Size-only CTS fallbacks on the exclusion plane — with the GUID size hint, only sentinel GUIDs take this leg'
+
+  NUM_INV_SIZE_CTS:
+    group: 'Invalidation arm'
+    unit: count
+    help: 'Size-only CTS fallbacks on the invalidation plane — with the GUID size hint, only sentinel GUIDs take this leg'
+
   NUM_RO_COMBINE_WINDOW:
     group: 'Validation arm'
     unit: count

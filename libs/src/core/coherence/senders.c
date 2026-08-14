@@ -165,13 +165,15 @@ void arts_send_db_snapshot_request(struct arts_db_cache_s *cache,
   INCREMENT_NUM_SNAPSHOT_REQUEST_BY(1);
   arts_guid_t db_guid = cache->db_guid;
   unsigned int home_rank = arts_guid_get_rank(db_guid);
-  /* Advertise a fresh snapshot landing when the size is known; a size-unknown
-   * first touch sends landing-less (txid 0) and the server answers a
-   * size-only CTS response, whose handler re-enters this sender.  The
-   * rendezvous plane exists only when a peer could PUT (multi-rank run). */
+  /* Advertise a fresh snapshot landing sized by the exact size when known,
+   * else by the GUID's szhint bound — so even a first touch usually carries
+   * a landing and the size-only CTS round survives only as the sentinel
+   * fallback (whose handler re-enters this sender).  The rendezvous plane
+   * exists only when a peer could PUT (multi-rank run). */
   struct arts_rdzv_landing_s rdzv = {0, 0, 0, 0};
-  if (cache->db_size > 0 && arts_global_rank_count > 1) {
-    (void)arts_db_buf_landing_alloc(cache, cache->db_size, &rdzv);
+  uint64_t fetch_size = arts_db_first_fetch_size(cache);
+  if (fetch_size > 0 && arts_global_rank_count > 1) {
+    (void)arts_db_buf_landing_alloc(cache, fetch_size, &rdzv);
   }
   struct arts_msg_snapshot_request_packet_s p;
   arts_fill_packet_header(&p.header, sizeof(p), MSG_DB_SNAPSHOT_REQUEST);

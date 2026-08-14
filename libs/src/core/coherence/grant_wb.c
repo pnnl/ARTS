@@ -98,6 +98,13 @@ void arts_handler_db_grant_response(void *payload, size_t size) {
   }
   struct arts_db_cache_s *cache = &db->cache;
 
+  /* A hinted first touch may reach its first grant with the size still
+   * unlearned (no CTS leg ran); the response's data_size is the sender's
+   * descriptor size, valid payload or not. */
+  if (cache->db_size == 0 && hdr->data_size > 0) {
+    cache->db_size = hdr->data_size;
+  }
+
   /* Wire layout: header | map (count pairs, inline).  The buffer payload does
    * not trail on the wire — it travels one-sided into our advertised landing
    * (a same-rank self-transfer still trails it inline). */

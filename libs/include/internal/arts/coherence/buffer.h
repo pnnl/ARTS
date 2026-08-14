@@ -156,6 +156,19 @@ void arts_db_buf_ref_release_cb(void *arg);
 void arts_db_buf_write_inplace(struct arts_db_cache_s *cache, const void *data,
                                uint64_t db_size);
 
+/* First-touch stable-buffer materialization from a size BOUND: allocates and
+ * zero-fills at `capacity` WITHOUT recording `cache->db_size` — the size is
+ * only ever declared by a wire-carried exact value, never by a locally
+ * decoded bound (a bound recorded as the size would later be sent as an
+ * exact wire length).  Established buffers are left untouched. */
+void arts_db_buf_prepare_inplace(struct arts_db_cache_s *cache,
+                                 uint64_t capacity);
+
+/* Size to allocate/advertise for this rank's FIRST fetch of a DB: the known
+ * exact size, else the GUID's szhint bound, else 0 (= no landing; the
+ * size-CTS round remains as the sentinel fallback). */
+uint64_t arts_db_first_fetch_size(const struct arts_db_cache_s *cache);
+
 #ifdef __cplusplus
 }
 #endif

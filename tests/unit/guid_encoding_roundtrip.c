@@ -55,6 +55,18 @@ void *arts_calloc_aligned(size_t n, size_t s, size_t a) {
 }
 void arts_free(void *p) { free(p); }
 
+/* Wait-free counter primitives for the DB seq allocator (libc-free unit
+ * pattern: mirror the atomics.c definitions verbatim). */
+uint64_t arts_atomic_fetch_add_u64(volatile uint64_t *d, uint64_t v) {
+  return __sync_fetch_and_add(d, v);
+}
+uint64_t arts_atomic_cswap_u64(volatile uint64_t *d, uint64_t o, uint64_t n) {
+  return __sync_val_compare_and_swap(d, o, n);
+}
+uint64_t arts_atomic_read_u64(const volatile uint64_t *d) {
+  return __atomic_load_n(d, __ATOMIC_ACQUIRE);
+}
+
 #include "../../libs/src/core/gas/guid.c"
 
 struct arts_runtime_shared_s arts_node_info;
@@ -94,6 +106,22 @@ static void generator_reset(uint64_t key_budget) {
   max_global_guid_thread = 1;
   keys_per_thread = key_budget;
   global_guid_on = 0;
+
+  /* DB seq allocator (mirrors set_guid_generator_after_parallel_start). */
+  arts_db_seq_budget =
+      ((ARTS_GUID_DB_SEQ_MASK + 1) - ARTS_GUID_DB_STARTUP_RESERVE) /
+      arts_global_rank_count;
+  db_seq_creator_base = arts_db_seq_budget * arts_global_rank_id;
+  if (db_seq_next) {
+    free((void *)db_seq_next);
+  }
+  db_seq_next = (volatile uint64_t *)malloc(sizeof(uint64_t) *
+                                            arts_global_rank_count);
+  for (unsigned r = 0; r < arts_global_rank_count; r++) {
+    db_seq_next[r] = db_seq_creator_base + 1;
+  }
+  free(t_db_cursor);
+  t_db_cursor = NULL;
 }
 
 int main(void) {
@@ -182,13 +210,13 @@ int main(void) {
     FAIL("DB and EVENT GUID aliased\n");
   }
 
-  /* ---- Test 5: exhaustion is a HARD ERROR (forked child). ---- */
+  /* ---- Test 5: exhaustion is a HARD ERROR (forked children). ---- */
   pid_t pid = fork();
   if (pid == 0) {
-    /* child: a tiny budget so the next mint overflows → ARTS_ERROR → abort */
+    /* child: shrink the DB slice so the first chunk lease overflows it —
+     * the claim's returned-base bound check must abort, never wrap. */
     generator_reset(4);
-    /* counters start at 1; budget 4: value+count < keys_per_thread guards.
-     * Mint until it must error. */
+    arts_db_seq_budget = 4;
     for (int i = 0; i < 100; i++) {
       (void)arts_guid_create_for_rank(0, ARTS_GUID_DB);
     }
@@ -198,10 +226,81 @@ int main(void) {
     int st = 0;
     (void)waitpid(pid, &st, 0);
     if (!WIFEXITED(st) || WEXITSTATUS(st) == 0) {
-      FAIL("exhaustion did not hard-error (child exit status %d)\n", st);
+      FAIL("DB exhaustion did not hard-error (child exit status %d)\n", st);
     }
   } else {
     FAIL("fork failed\n");
+  }
+  pid = fork();
+  if (pid == 0) {
+    /* child: flat-kind path — a tiny keys_per_thread budget must abort. */
+    generator_reset(4);
+    for (int i = 0; i < 100; i++) {
+      (void)arts_guid_create_for_rank(0, ARTS_GUID_EDT);
+    }
+    _exit(0);
+  } else if (pid > 0) {
+    int st = 0;
+    (void)waitpid(pid, &st, 0);
+    if (!WIFEXITED(st) || WEXITSTATUS(st) == 0) {
+      FAIL("flat-kind exhaustion did not hard-error (status %d)\n", st);
+    }
+  } else {
+    FAIL("fork failed\n");
+  }
+
+  /* ---- Test 6: szhint encode/decode — bound covers, sentinel unreachable. */
+  {
+    uint64_t probes[] = {0,    1,    63,   64,   65,   2047, 2048,
+                         2049, 4095, 4096, 4097, 65536};
+    for (unsigned i = 0; i < sizeof(probes) / sizeof(probes[0]); i++) {
+      uint64_t sz = probes[i];
+      uint64_t hint = arts_db_szhint_encode(sz);
+      if (hint == ARTS_GUID_DB_SZHINT_NONE) {
+        FAIL("szhint encode hit the sentinel for size %lu\n",
+             (unsigned long)sz);
+      }
+      arts_guid_t g = arts_db_guid_stamp_szhint(
+          ARTS_GUID_MAKE(ARTS_GUID_DB, 1, 12345), sz);
+      uint64_t bound = arts_db_szhint_bound(g);
+      if (bound < sz) {
+        FAIL("szhint bound %lu < size %lu\n", (unsigned long)bound,
+             (unsigned long)sz);
+      }
+      if (sz >= 4096 && bound > sz + sz / 32 + 64) {
+        FAIL("szhint overshoot too large: size %lu bound %lu\n",
+             (unsigned long)sz, (unsigned long)bound);
+      }
+      if (ARTS_GUID_DB_GET_SEQ(ARTS_GUID_GET_KEY(g)) != 12345) {
+        FAIL("stamp disturbed the seq field\n");
+      }
+    }
+    /* power sweep to the 4TB edge: bound covers up to the encodable max,
+     * beyond it the sentinel (bound 0) takes over. */
+    for (uint64_t sz = 64; sz <= ((uint64_t)4 << 40); sz <<= 1) {
+      uint64_t hint = arts_db_szhint_encode(sz);
+      arts_guid_t g = arts_db_guid_stamp_szhint(
+          ARTS_GUID_MAKE(ARTS_GUID_DB, 1, 7), sz);
+      uint64_t bound = arts_db_szhint_bound(g);
+      if (hint != ARTS_GUID_DB_SZHINT_NONE && bound < sz) {
+        FAIL("power sweep: bound %lu < size %lu\n", (unsigned long)bound,
+             (unsigned long)sz);
+      }
+      if (hint == ARTS_GUID_DB_SZHINT_NONE && bound != 0) {
+        FAIL("sentinel decoded a nonzero bound\n");
+      }
+      arts_guid_t gm1 = arts_db_guid_stamp_szhint(
+          ARTS_GUID_MAKE(ARTS_GUID_DB, 1, 7), sz - 1);
+      if (arts_db_szhint_bound(gm1) != 0 && arts_db_szhint_bound(gm1) < sz - 1) {
+        FAIL("power-1 sweep: bound < size at %lu\n", (unsigned long)(sz - 1));
+      }
+    }
+    /* the all-ones sentinel value itself decodes to 0 */
+    arts_guid_t s_g = ARTS_GUID_MAKE(
+        ARTS_GUID_DB, 1, ARTS_GUID_DB_KEY(ARTS_GUID_DB_SZHINT_NONE, 7));
+    if (arts_db_szhint_bound(s_g) != 0) {
+      FAIL("explicit sentinel decoded nonzero\n");
+    }
   }
 
   /* free the final reset's allocations so LSan sees a clean exit */
@@ -212,6 +311,6 @@ int main(void) {
   free(arts_node_info.global_guid_thread_id);
 
   printf("PASS guid_encoding_roundtrip: field round-trip, range inverse, "
-         "counter disjoint, exhaustion hard-errors\n");
+         "counter disjoint, exhaustion hard-errors, szhint bound-covers\n");
   return 0;
 }

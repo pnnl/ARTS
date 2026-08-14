@@ -124,6 +124,12 @@ extern "C" {
   X(NUM_SNAPSHOT_REQUEST)                                                      \
   X(NUM_SNAPSHOT_HEADER_ONLY)                                                  \
   X(NUM_SNAPSHOT_SIZE_CTS)                                                     \
+  /* Size-only CTS fallbacks on the other planes: with the GUID size hint    \
+   * these count only sentinel GUIDs (pre-reserved ranges, oversize), so a   \
+   * nonzero steady rate is the hint NOT covering a workload. */             \
+  X(NUM_GRANT_SIZE_CTS)                                                        \
+  X(NUM_EXCL_SIZE_CTS)                                                         \
+  X(NUM_INV_SIZE_CTS)                                                          \
   X(NUM_RO_COMBINE_WINDOW)                                                     \
   X(NUM_RO_COMBINE_JOINED)                                                     \
   /* Num/Time: invalidation arm — one round per RW release, its multicast    \

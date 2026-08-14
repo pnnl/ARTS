@@ -485,7 +485,8 @@ static bool lock_owner_request_landing(struct arts_db_cache_s *cache,
                                       arts_db_access_mode_t mode,
                                       struct arts_rdzv_landing_s *out) {
   *out = (struct arts_rdzv_landing_s){0, 0, 0, 0};
-  if (cache->db_size == 0 || arts_global_rank_count <= 1) {
+  uint64_t fetch_size = arts_db_first_fetch_size(cache);
+  if (fetch_size == 0 || arts_global_rank_count <= 1) {
     return false;
   }
   if (mode == DB_MODE_RO) {
@@ -493,7 +494,7 @@ static bool lock_owner_request_landing(struct arts_db_cache_s *cache,
      * failure do not advertise a partially-filled landing — re-zero it and
      * report no landing, exactly as the RW path does on rdzv-registration
      * failure. */
-    if (arts_db_buf_landing_alloc(cache, cache->db_size, out) == NULL) {
+    if (arts_db_buf_landing_alloc(cache, fetch_size, out) == NULL) {
       *out = (struct arts_rdzv_landing_s){0, 0, 0, 0};
       return false;
     }
@@ -502,14 +503,16 @@ static bool lock_owner_request_landing(struct arts_db_cache_s *cache,
   arts_shared_ptr_t h = arts_db_buf_acquire(cache);
   struct arts_db_buffer_s *buf = (struct arts_db_buffer_s *)arts_shared_get(h);
   if (buf == NULL) {
-    /* First touch: allocate the one stable buffer (zero-filled; the migration
-     * PUT fully overwrites it before any drained waiter reads). */
-    arts_db_buf_write_inplace(cache, NULL, cache->db_size);
+    /* First touch: materialize the one stable buffer (zero-filled; the
+     * migration PUT fully overwrites it before any drained waiter reads).
+     * fetch_size may be the GUID bound — an ALLOCATION size only; the DB's
+     * size is declared exclusively by the wire (prepare never records it). */
+    arts_db_buf_prepare_inplace(cache, fetch_size);
     h = arts_db_buf_acquire(cache);
     buf = (struct arts_db_buffer_s *)arts_shared_get(h);
   }
   if (buf == NULL ||
-      !arts_net_rdzv_local(buf->data, cache->db_size, &out->addr, &out->key)) {
+      !arts_net_rdzv_local(buf->data, fetch_size, &out->addr, &out->key)) {
     arts_db_buf_release(&h);
     *out = (struct arts_rdzv_landing_s){0, 0, 0, 0};
     return false;
@@ -552,6 +555,7 @@ void arts_send_db_excl_request(struct arts_db_cache_s *cache,
 /* LOCK_CTS sender (home → first-touch requester) + requester-side body. */
 void arts_send_db_excl_cts(unsigned int requester_rank, arts_guid_t db_guid,
                            uint64_t db_size, uint32_t mode) {
+  INCREMENT_NUM_EXCL_SIZE_CTS_BY(1);
   struct arts_msg_excl_cts_packet_s p;
   arts_fill_packet_header(&p.header, sizeof(p), MSG_DB_EXCL_CTS);
   p.header.rank = arts_global_rank_id;
@@ -627,7 +631,8 @@ void arts_send_db_excl_deliver(unsigned int target_rank, arts_guid_t db_guid,
   p.db_guid = db_guid;
   p.mode = mode;
   p.pad = 0;
-  p.data_size = 0;
+  /* Always the DB's size; payload presence is rdzv_txid / trailing bytes. */
+  p.data_size = data_size;
   p.rdzv_txid = 0;
   p.rdzv_cookie = (rdzv != NULL) ? rdzv->cookie : 0;
   if (target_rank == arts_global_rank_id) {
@@ -643,7 +648,7 @@ void arts_send_db_excl_deliver(unsigned int target_rank, arts_guid_t db_guid,
       }
       arts_shared_release(&h);
     }
-    uint64_t ds = (src != NULL) ? data_size : 0;
+    uint64_t ds = (src != NULL) ? data_size : 0; /* trailing bytes only */
     uint64_t total = sizeof(p) + ds;
     p.header.size = total;
     p.data_size = ds;
@@ -909,6 +914,11 @@ void arts_handler_db_excl_deliver(void *payload, size_t size) {
     arts_db_rdzv_discard_landing(p->rdzv_txid, p->rdzv_cookie);
     arts_shared_release(&db_h);
     return;
+  }
+
+  /* Hinted first touch: the size may still be unlearned here. */
+  if (db->cache.db_size == 0 && p->data_size > 0) {
+    db->cache.db_size = p->data_size;
   }
 
   if (p->rdzv_txid != 0) {

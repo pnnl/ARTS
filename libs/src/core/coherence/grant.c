@@ -219,7 +219,13 @@ void arts_db_send_grant_response(struct arts_db_cache_s *cache) {
   }
 
   uint64_t version = (buf != NULL) ? buf->version : 0;
-  uint64_t data_size = (buf != NULL) ? cache->db_size : 0;
+  /* data_size carries the DB's size ALWAYS (descriptor state — known even
+   * when no buffer exists yet): a hinted first-touch requester may have
+   * skipped the size CTS, and a data-less grant is its only chance to learn
+   * the exact size before its release publishes one.  Payload presence is
+   * signaled by rdzv_txid (wire) / trailing bytes (self), never by
+   * data_size. */
+  uint64_t payload_size = (buf != NULL) ? cache->db_size : 0;
   struct arts_msg_grant_response_packet_s hdr;
   arts_fill_packet_header(&hdr.header, sizeof(hdr) + map_size,
                           MSG_DB_GRANT_RESPONSE);
@@ -239,16 +245,16 @@ void arts_db_send_grant_response(struct arts_db_cache_s *cache) {
       arts_db_buf_landing_recycle(
           cache, (struct arts_db_buffer_s *)(uintptr_t)rdzv.cookie);
     }
-    uint64_t total = sizeof(hdr) + map_size + data_size;
+    uint64_t total = sizeof(hdr) + map_size + payload_size;
     hdr.header.size = total;
-    hdr.data_size = data_size;
+    hdr.data_size = cache->db_size;
     hdr.rdzv_txid = 0;
     hdr.rdzv_cookie = 0;
     char *pkt = (char *)arts_malloc((size_t)total);
     memcpy(pkt, &hdr, sizeof(hdr));
     memcpy(pkt + sizeof(hdr), map_buf, map_size);
-    if (buf != NULL && data_size > 0) {
-      memcpy(pkt + sizeof(hdr) + map_size, buf->data, (size_t)data_size);
+    if (buf != NULL && payload_size > 0) {
+      memcpy(pkt + sizeof(hdr) + map_size, buf->data, (size_t)payload_size);
     }
     arts_free(map_buf);
     if (buf != NULL) {
@@ -259,24 +265,25 @@ void arts_db_send_grant_response(struct arts_db_cache_s *cache) {
     return;
   }
 
-  if (buf != NULL && data_size > 0 && rdzv.txid != 0) {
+  if (buf != NULL && payload_size > 0 && rdzv.txid != 0) {
     /* One-sided ship: PUT straight from the live buffer into the new owner's
      * landing — zero copy at the source.  The strong buffer ref transfers to
      * the PUT's local completion, keeping the bytes valid until the fabric no
      * longer reads them (the protocol additionally keeps this cache's buffer
      * slot untouched until the new owner CONFIRMs, but the ref makes the
      * lifetime explicit rather than assumed). */
-    hdr.data_size = data_size;
+    hdr.data_size = cache->db_size;
     hdr.rdzv_txid = rdzv.txid;
     hdr.rdzv_cookie = rdzv.cookie;
     arts_net_put_payload((int)new_owner, rdzv.addr, rdzv.key, rdzv.txid,
-                         buf->data, data_size, arts_db_buf_ref_release_cb,
+                         buf->data, payload_size, arts_db_buf_ref_release_cb,
                          (void *)buf_h);
     buf_h = NULL; /* transferred to the PUT completion */
   } else {
     /* Data-less transfer (sentinel DB / pre-publication).  Echo the unused
-     * landing (if any) so the requester recycles it. */
-    hdr.data_size = 0;
+     * landing (if any) so the requester recycles it; data_size still tells
+     * the new owner the DB's exact size. */
+    hdr.data_size = cache->db_size;
     hdr.rdzv_txid = 0;
     hdr.rdzv_cookie = rdzv.cookie;
     if (buf != NULL) {
@@ -354,15 +361,18 @@ void arts_handler_db_grant_request(void *item_v, void *args_v) {
 void arts_send_db_grant_request(struct arts_db_cache_s *cache) {
   arts_guid_t db_guid = cache->db_guid;
   unsigned int home_rank = arts_guid_get_rank(db_guid);
-  /* Advertise a fresh transfer landing when the size is known; a size-unknown
-   * first touch sends landing-less (txid 0) and home answers OWNERSHIP_CTS,
-   * whose handler re-enters this sender with cache->db_size learned.  The
-   * rendezvous plane exists only when a peer could PUT (multi-rank run): a
-   * single-rank run has no fabric, every transfer is a same-rank inline
-   * dispatch, and the registered pool carries no MRs to advertise. */
+  /* Advertise a fresh transfer landing sized by the exact size when known,
+   * else by the GUID's szhint bound — a first touch usually carries a
+   * landing already, and home's OWNERSHIP_CTS round survives only as the
+   * sentinel fallback (its handler re-enters this sender with
+   * cache->db_size learned).  The rendezvous plane exists only when a peer
+   * could PUT (multi-rank run): a single-rank run has no fabric, every
+   * transfer is a same-rank inline dispatch, and the registered pool
+   * carries no MRs to advertise. */
   struct arts_rdzv_landing_s rdzv = {0, 0, 0, 0};
-  if (cache->db_size > 0 && arts_global_rank_count > 1) {
-    (void)arts_db_buf_landing_alloc(cache, cache->db_size, &rdzv);
+  uint64_t fetch_size = arts_db_first_fetch_size(cache);
+  if (fetch_size > 0 && arts_global_rank_count > 1) {
+    (void)arts_db_buf_landing_alloc(cache, fetch_size, &rdzv);
   }
   struct arts_msg_grant_request_packet_s p;
   arts_fill_packet_header(&p.header, sizeof(p), MSG_DB_GRANT_REQUEST);
@@ -396,6 +406,7 @@ void arts_send_db_grant_request(struct arts_db_cache_s *cache) {
  * landing; the coalescing flag stays held (same round continuing). */
 void arts_send_db_grant_cts(unsigned int requester_rank,
                                 arts_guid_t db_guid, uint64_t db_size) {
+  INCREMENT_NUM_GRANT_SIZE_CTS_BY(1);
   struct arts_msg_grant_cts_packet_s p;
   arts_fill_packet_header(&p.header, sizeof(p), MSG_DB_GRANT_CTS);
   p.header.rank = arts_global_rank_id;

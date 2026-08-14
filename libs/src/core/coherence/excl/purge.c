@@ -83,7 +83,9 @@ static void lock_home_grant(struct arts_db_s *db, struct arts_db_cache_s *cache,
   arts_shared_ptr_t buf_h = arts_db_buf_acquire(cache);
   struct arts_db_buffer_s *buf =
       (struct arts_db_buffer_s *)arts_shared_get(buf_h);
-  uint64_t data_size = buf ? cache->db_size : 0;
+  /* The size is descriptor state — known even before any payload exists;
+   * the grant carries it so a hinted (CTS-skipping) first touch learns it. */
+  uint64_t data_size = cache->db_size;
   /* The grant carries the home buffer's own version.  No separate counter is
    * needed: home commits (RW publish installs) are sequentialized by the
    * protocol (RW single-owner inter-node + ACK-gated release), so buf->version
@@ -145,7 +147,8 @@ void arts_send_db_excl_grant(unsigned int requester_rank, arts_guid_t db_guid,
   p.mode = (uint32_t)mode;
   p.pad = 0;
   p.version = version;
-  p.data_size = 0;
+  /* Always the DB's size; payload presence is rdzv_txid / trailing bytes. */
+  p.data_size = data_size;
   p.rdzv_txid = 0;
   p.rdzv_cookie = (req_rdzv != NULL) ? req_rdzv->cookie : 0;
   if (pub != NULL) {
@@ -168,7 +171,6 @@ void arts_send_db_excl_grant(unsigned int requester_rank, arts_guid_t db_guid,
     if (src != NULL) {
       arts_db_buf_release(&src_h);
     }
-    p.data_size = 0;
     p.header.size = sizeof(p);
     arts_handler_db_excl_grant(&p, sizeof(p));
     return;
@@ -467,20 +469,23 @@ void arts_db_create_install_home_buffer(struct arts_db_cache_s *cache,
 static bool lock_stable_landing(struct arts_db_cache_s *cache,
                                 struct arts_rdzv_landing_s *out) {
   *out = (struct arts_rdzv_landing_s){0, 0, 0, 0};
-  if (cache->db_size == 0 || arts_global_rank_count <= 1) {
+  uint64_t fetch_size = arts_db_first_fetch_size(cache);
+  if (fetch_size == 0 || arts_global_rank_count <= 1) {
     return false;
   }
   arts_shared_ptr_t h = arts_db_buf_acquire(cache);
   struct arts_db_buffer_s *buf = (struct arts_db_buffer_s *)arts_shared_get(h);
   if (buf == NULL) {
-    /* First touch: allocate the one stable buffer (zero-filled — the grant
-     * PUT fully overwrites it before any drained waiter reads). */
-    arts_db_buf_write_inplace(cache, NULL, cache->db_size);
+    /* First touch: materialize the one stable buffer (zero-filled — the
+     * grant PUT fully overwrites it before any drained waiter reads).
+     * fetch_size may be the GUID bound — an ALLOCATION size only; the DB's
+     * size is declared exclusively by the wire (prepare never records it). */
+    arts_db_buf_prepare_inplace(cache, fetch_size);
     h = arts_db_buf_acquire(cache);
     buf = (struct arts_db_buffer_s *)arts_shared_get(h);
   }
   if (buf == NULL ||
-      !arts_net_rdzv_local(buf->data, cache->db_size, &out->addr, &out->key)) {
+      !arts_net_rdzv_local(buf->data, fetch_size, &out->addr, &out->key)) {
     arts_db_buf_release(&h);
     return false;
   }
@@ -524,6 +529,7 @@ void arts_send_db_excl_request(struct arts_db_cache_s *cache,
 /* LOCK_CTS sender (home → first-touch requester) + requester-side body. */
 void arts_send_db_excl_cts(unsigned int requester_rank, arts_guid_t db_guid,
                            uint64_t db_size, uint32_t mode) {
+  INCREMENT_NUM_EXCL_SIZE_CTS_BY(1);
   struct arts_msg_excl_cts_packet_s p;
   arts_fill_packet_header(&p.header, sizeof(p), MSG_DB_EXCL_CTS);
   p.header.rank = arts_global_rank_id;
@@ -754,6 +760,11 @@ void arts_handler_db_excl_grant(void *payload, size_t size) {
     return;
   }
   struct arts_db_cache_s *cache = &db->cache;
+
+  /* Hinted first touch: the size may still be unlearned here. */
+  if (cache->db_size == 0 && p->data_size > 0) {
+    cache->db_size = p->data_size;
+  }
 
   struct arts_rdzv_landing_s pub = {p->pub.addr, p->pub.key, p->pub.txid,
                                    p->pub.cookie};

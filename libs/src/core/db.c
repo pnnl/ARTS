@@ -434,7 +434,9 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
             arts_route_table_install(ptr, guid, arts_global_rank_id, true);
           }
         } else {
-          guid = arts_guid_create_for_rank(arts_global_rank_id, ARTS_GUID_DB);
+          guid = arts_db_guid_stamp_szhint(
+              arts_guid_create_for_rank(arts_global_rank_id, ARTS_GUID_DB),
+              len);
           db_create_in_place(guid, ptr, len, db_size, db_type);
           if (current_edt && !no_acquire &&
               !arts_db_creator_skip_hold(db_type)) {
@@ -504,7 +506,8 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
      * auto-GUID on the home rank's key counter. */
     guid = (pre_guid != NULL_GUID)
                ? pre_guid
-               : arts_guid_create_for_rank(rank, ARTS_GUID_DB);
+               : arts_db_guid_stamp_szhint(
+                     arts_guid_create_for_rank(rank, ARTS_GUID_DB), len);
     if (db_type == ARTS_DB) {
       /* For ARTS_DB, ask the home rank to install a coherent cache_s
        * via DB_CREATE_COHERENT.  The home handler
@@ -721,6 +724,7 @@ arts_guid_t arts_db_copy_to_new_type(arts_guid_t old_guid,
         arts_db_cache_common_destroy_pre(&db_res->cache);  /* buffer-NULL */
         arts_db_cache_common_destroy_post(&db_res->cache); /* snapshot+home */
       }
+      new_guid = arts_db_guid_stamp_szhint(new_guid, db_res->cache.db_size);
       db_res->cache.db_guid = new_guid;
       db_res->db_type = new_type;
       /* Move the single cb to new_guid (see arts_db_rename_with_guid): one

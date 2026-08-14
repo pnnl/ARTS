@@ -53,7 +53,10 @@
 ///
 /// The test spawns many reserver EDTs per rank (more than workers, so the
 /// scheduler spreads them across every worker thread) that each reserve a batch
-/// of same-kind GUIDs on their own rank, writing them into a per-rank array DB.
+/// of GUIDs on their own rank (alternating EVENT — the flat per-thread key
+/// partition this regression was written for — and DB, whose keys come from
+/// the chunk-leased per-creator seq slices), writing them into a per-rank
+/// array DB.
 /// A checker EDT then asserts global per-rank uniqueness.  Overlapping key
 /// blocks (the past bug) would surface as duplicates here.
 ///
@@ -82,7 +85,12 @@ static void reserver_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     return;
   }
   for (unsigned int i = 0; i < GUIDS_PER_RESERVER; i++) {
-    arts_guid_t g = arts_guid_reserve(ARTS_GUID_DB, me);
+    /* Alternate kinds so BOTH allocators stay pinned: EVENT exercises the
+     * flat per-thread key partition (the original divisor-coupling bug
+     * class), DB exercises the chunk-leased seq slices.  Kind bits keep the
+     * two value sets disjoint, so the uniqueness sweep needs no change. */
+    arts_guid_kind_t kind = (i & 1u) ? ARTS_GUID_EVENT : ARTS_GUID_DB;
+    arts_guid_t g = arts_guid_reserve(kind, me);
     slots[base + i] = (uint64_t)g;
   }
 }

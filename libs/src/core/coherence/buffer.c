@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "arts/gas/guid.h" /* arts_db_szhint_bound */
 #include "arts/memory/regpool.h"
 #include "arts/system/print.h"  /* ARTS_ERROR (unadvertisable landing) */
 #include "arts/transport/net.h" /* arts_net_rdzv_local / _txid_next */
@@ -208,6 +209,50 @@ arts_db_buf_install_landed(struct arts_db_cache_s *cache, uint64_t new_version,
 void arts_db_buf_ref_release_cb(void *arg) {
   arts_shared_ptr_t h = (arts_shared_ptr_t)arg;
   arts_shared_release(&h);
+}
+
+uint64_t arts_db_first_fetch_size(const struct arts_db_cache_s *cache) {
+  /* The exact size once this rank has learned it (from any wire-carried
+   * declaration), else the GUID's encoded upper bound — good enough to size
+   * a first-fetch landing, so the size-discovery round becomes the sentinel
+   * fallback rather than every cold acquire's first leg.  0 = advertise no
+   * landing (sentinel GUID or genuinely empty DB). */
+  return cache->db_size ? cache->db_size
+                        : arts_db_szhint_bound(cache->db_guid);
+}
+
+void arts_db_buf_prepare_inplace(struct arts_db_cache_s *cache,
+                                 uint64_t capacity) {
+  /* First-touch variant that sizes the ALLOCATION without declaring the
+   * DB's size: `cache->db_size` only ever records a wire-derived exact
+   * value, so a requester materializing its stable buffer from a GUID size
+   * BOUND must not let the bound become the size — a bound recorded there
+   * would later travel as an exact wire length (an over-long PUT into a
+   * peer's exactly-sized landing).  The buffer may be larger than the size
+   * the wire later declares; nothing reads a buffer's length (size lives
+   * solely in the descriptor).  Same install-if-absent discipline as
+   * write_inplace's first touch; an established buffer is left as is. */
+  arts_shared_ptr_t h = arts_db_buf_acquire(cache);
+  if (arts_shared_get(h) != NULL) {
+    arts_shared_release(&h);
+    return;
+  }
+  struct arts_db_buffer_s *nb = arts_db_buf_alloc(cache, capacity);
+  if (nb == NULL) {
+    return; /* OOM — caller decides how to surface. */
+  }
+  nb->owner_cache = cache;
+  nb->version = 0;
+  if (capacity > 0) {
+    memset(nb->data, 0, (size_t)capacity);
+  }
+  arts_shared_ptr_t cb = arts_shared_make(nb, buffer_deleter);
+  nb->cb = cb;
+  if (!arts_atomic_shared_compare_exchange(&cache->buffer, NULL, cb)) {
+    /* Lost the install race: adopt the winner (both first images are
+     * zero-identical). */
+    arts_shared_release(&cb);
+  }
 }
 
 void arts_db_buf_write_inplace(struct arts_db_cache_s *cache, const void *data,

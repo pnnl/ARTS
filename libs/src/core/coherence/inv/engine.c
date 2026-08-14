@@ -684,6 +684,10 @@ void arts_handler_db_inv_deliver(void *payload, size_t size) {
     arts_shared_release(&db_h);
     return;
   }
+  /* Hinted first touch: the size may still be unlearned here. */
+  if (db->cache.db_size == 0 && p->data_size > 0) {
+    db->cache.db_size = p->data_size;
+  }
   if (p->rdzv_txid != 0) {
     struct inv_landed_ctx_s *ctx =
         (struct inv_landed_ctx_s *)arts_malloc(sizeof(*ctx));
@@ -755,6 +759,7 @@ void arts_handler_db_inv_invalidate_ack(struct arts_db_s *db,
 
 void arts_send_db_inv_cts(unsigned int requester_rank, arts_guid_t db_guid,
                           uint64_t db_size, arts_db_access_mode_t mode) {
+  INCREMENT_NUM_INV_SIZE_CTS_BY(1);
   struct arts_msg_inv_cts_packet_s p;
   arts_fill_packet_header(&p.header, sizeof(p), MSG_DB_INV_CTS);
   p.header.rank = arts_global_rank_id;
@@ -820,8 +825,9 @@ void arts_send_db_inv_request(struct arts_db_cache_s *cache,
   struct arts_rdzv_landing_s rdzv = {0, 0, 0, 0};
   /* A FRESH landing per fetch: reception isolation when a read reply and an
    * ownership transfer are in flight together (each PUT lands in its own
-   * buffer, installed or recycled at commit).  txid==0 = first touch (db_size
-   * unknown): the home answers MSI_CTS and the fetch re-issues.
+   * buffer, installed or recycled at commit).  Sized by the exact size when
+   * known, else the GUID's szhint bound; txid==0 survives only as the
+   * sentinel fallback (the home answers MSI_CTS and the fetch re-issues).
    *
    * Being the home rank does NOT excuse a requester from advertising one.
    * Under HOME the home answers from its own canonical buffer and the landing
@@ -829,8 +835,9 @@ void arts_send_db_inv_request(struct arts_db_cache_s *cache,
    * reads are served by a remote holder and need somewhere to land.  Skipping
    * the allocation there silently produced a data-less reply, leaving the
    * reader on whatever stale copy it already had. */
-  if (cache->db_size != 0 && arts_global_rank_count > 1) {
-    (void)arts_db_buf_landing_alloc(cache, cache->db_size, &rdzv);
+  uint64_t fetch_size = arts_db_first_fetch_size(cache);
+  if (fetch_size != 0 && arts_global_rank_count > 1) {
+    (void)arts_db_buf_landing_alloc(cache, fetch_size, &rdzv);
   }
   if (home_rank == arts_global_rank_id) {
     /* Self-send: route through the OoO engine so before-create reorders
@@ -866,7 +873,10 @@ void arts_send_db_inv_deliver(unsigned int requester_rank,
   arts_fill_packet_header(&p.header, sizeof(p), MSG_DB_INV_DELIVER);
   p.header.rank = arts_global_rank_id;
   p.db_guid = cache->db_guid;
-  p.data_size = 0;
+  /* Always the DB's size (descriptor state): a hinted first touch skipped
+   * the size CTS, so even a data-less reply must teach the exact size.
+   * Payload presence is signaled by rdzv_txid alone. */
+  p.data_size = cache->db_size;
   p.rdzv_txid = 0;
   p.rdzv_cookie = (rdzv != NULL) ? rdzv->cookie : 0;
   /* Serve from the CURRENT install; the ref pins the bytes across the PUT

@@ -284,7 +284,8 @@ struct ARTS_PACKED arts_msg_grant_response_packet_s {
   uint32_t map_entry_count; /* arts_msg_rank_version_pair_s entries that
                                follow the header */
   uint32_t pad;
-  uint64_t data_size;   /* payload bytes PUT into the landing (0 = none) */
+  uint64_t data_size;   /* the DB's size (descriptor state, always set);
+                           payload presence = rdzv_txid / trailing bytes */
   uint64_t rdzv_txid;   /* write-completion pairing id (0 = no PUT) */
   uint64_t rdzv_cookie; /* requester's landing handle, echoed verbatim */
   /* followed by:
@@ -515,8 +516,11 @@ struct ARTS_PACKED arts_msg_excl_grant_packet_s {
   uint64_t version; /* monotone round counter; buf_install rejects stale */
   /* Grant payload travels by PUT into the requester's landing:
    * rdzv_txid != 0 pairs this packet with the write completion, rdzv_cookie
-   * echoes the requester's landing handle, data_size counts the landed
-   * bytes.  txid == 0 = data-less grant (sentinel / nothing published). */
+   * echoes the requester's landing handle.  data_size is the DB's size
+   * (descriptor state, ALWAYS set — a hinted first touch skips the size CTS
+   * and learns the exact size from whichever reply completes it); payload
+   * presence is signaled by rdzv_txid / trailing bytes, never by data_size.
+   * txid == 0 = data-less grant (sentinel / nothing published). */
   uint64_t data_size;
   uint64_t rdzv_txid;
   uint64_t rdzv_cookie;
