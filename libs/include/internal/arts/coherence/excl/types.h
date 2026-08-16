@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * RWLOCK protocol cache/db layout.
+ * EXCL protocol cache/db layout.
  *
  * Selected by arts/coherence/types.h when ARTS_PROTOCOL_EXCL is defined.
- * The RWLOCK protocol uses a single lock_state word on the home rank to
+ * The EXCL protocol uses a single lock_state word on the home rank to
  * serialize all access-mode transitions.  There is no ownership transfer
  * (no invalidate push, no PUBLISH_AND_TRANSFER); the home simply grants
  * or queues each requester and the requester publishes (RW) or returns
@@ -22,8 +22,8 @@ extern "C" {
 #include "arts/rank_bitset.h"
 #include <stdint.h>
 
-/* ── HOME cache_state ────────────────────────────────────────────────────
- * Per-rank single 64-bit coherence word (HOME placement only).
+/* ── PURGE cache_state ────────────────────────────────────────────────────
+ * Per-rank single 64-bit coherence word (PURGE release policy only).
  * Layout: [ rw_state:2 (63..62) | ro_state:2 (61..60) |
  *           rw_count:30 (59..30) | ro_count:30 (29..0) ]
  *
@@ -33,7 +33,7 @@ extern "C" {
  * Every transition — including the acquire's count++ — happens inside ONE
  * cache_compute_next CAS (see arbiters.c for why that atomicity is
  * load-bearing).  (GRANT,GRANT) is unreachable: home never grants both to the
- * same rank in HOME. */
+ * same rank in PURGE. */
 #ifdef ARTS_RELEASE_PURGE
 #define CACHE_ST_IDLE 0u
 #define CACHE_ST_REQ 1u
@@ -50,8 +50,8 @@ extern "C" {
    ((uint64_t)(rc) & CACHE_CNT_MASK))
 #endif /* ARTS_RELEASE_PURGE */
 
-/* ── OWNER cache_state ─────────────────────────────────────────────────────
- * Per-rank (owner) single 64-bit coherence word (OWNER placement only).
+/* ── RETAIN cache_state ─────────────────────────────────────────────────────
+ * Per-rank (owner) single 64-bit coherence word (RETAIN release policy only).
  * Layout (MSB→LSB):
  *   [ spare:1 (63) | owner:1 (62) | rw_st:2 (61..60) | ro_st:2 (59..58) |
  *     migrate_target:14 (57..44) | wc:22 (43..22) | rc:22 (21..0) ]
@@ -67,8 +67,8 @@ extern "C" {
  * with the wc 0-edge in cache_owner_compute_next (REL_RW path), so migration
  * needs no split-decrement or separate flag.
  *
- * Note: under OWNER the home does NOT hold canonical data — the current owner
- * (owner-bit set) does.  home.cache.buffer is unused by the RWLOCK-OWNER path. */
+ * Note: under RETAIN the home does NOT hold canonical data — the current owner
+ * (owner-bit set) does.  home.cache.buffer is unused by the EXCL RETAIN path. */
 #ifdef ARTS_RELEASE_RETAIN
 #define CACHE_ST_IDLE 0u
 #define CACHE_ST_REQ 1u
@@ -227,10 +227,10 @@ extern "C" {
    ((uint64_t)((r) & LOCK_STATE_R_MASK) << LOCK_STATE_R_SHIFT))
 #endif /* ARTS_RELEASE_RETAIN */
 
-/* ── home lock_state transition ops + grant codes (HOME) ────────────────
+/* ── home lock_state transition ops + grant codes (PURGE) ────────────────
  * excl_compute_next(cur, op, &grant) is the home arbiter, a pure function of
  * the single lock_state word run inside a CAS-retry loop.  Exposed here (not
- * just in home.c) so the acquire/release handlers can run the SAME arbiter
+ * just in purge.c) so the acquire/release handlers can run the SAME arbiter
  * LOCALLY when home == self — a local hit runs the handler logic directly, with
  * no wire / loopback round (HPC: a local op must not touch the network layer).
  */
@@ -245,9 +245,9 @@ extern "C" {
 uint64_t excl_compute_next(uint64_t cur, int op, uint32_t *out_grant);
 #endif /* ARTS_RELEASE_PURGE */
 
-/* ── home lock_state transition ops + action codes (OWNER) ────────────────
- * lock_owner_compute_next(cur, op, &action) is the OWNER home arbiter.
- * Same CAS-retry pattern as HOME's excl_compute_next. */
+/* ── home lock_state transition ops + action codes (RETAIN) ────────────────
+ * lock_owner_compute_next(cur, op, &action) is the RETAIN home arbiter.
+ * Same CAS-retry pattern as PURGE's excl_compute_next. */
 #ifdef ARTS_RELEASE_RETAIN
 #define LOCK_OP_RW_ACQ 0
 #define LOCK_OP_RO_ACQ 1
@@ -273,7 +273,7 @@ uint64_t lock_owner_compute_next(uint64_t cur, int op, unsigned int new_owner,
                                 uint32_t *out_action);
 #endif /* ARTS_RELEASE_RETAIN */
 
-/* ── cache_state transition ops + actions (HOME) ────────────────────────
+/* ── cache_state transition ops + actions (PURGE) ────────────────────────
  * cache_compute_next(cur, op, &action) is the cache-side analogue of the home's
  * excl_compute_next: a pure function of the current word, run inside a
  * CAS-retry loop.  The ACQ_* ops carry the count++ AND the request/join
@@ -298,13 +298,13 @@ uint64_t lock_owner_compute_next(uint64_t cur, int op, unsigned int new_owner,
 #define CACHE_ACT_REL_RW 7     /* send RW RELEASE (publish, ACK-gated) */
 #define CACHE_ACT_REL_RO 8     /* send RO RELEASE (notify) */
 
-/* Defined in arbiters.c (included by home.c); exposed non-static for the
+/* Defined in arbiters.c (included by purge.c); exposed non-static for the
  * cache-state model test (mirrors excl_compute_next's exposure). */
 uint64_t cache_compute_next(uint64_t cur, int op, uint32_t *out_action);
 #endif /* ARTS_RELEASE_PURGE */
 
-/* ── cache_state transition ops + actions (OWNER) ─────────────────────────
- * cache_owner_compute_next(cur, op, &action) is the OWNER owner-cache arbiter. */
+/* ── cache_state transition ops + actions (RETAIN) ─────────────────────────
+ * cache_owner_compute_next(cur, op, &action) is the RETAIN owner-cache arbiter. */
 #ifdef ARTS_RELEASE_RETAIN
 #define CACHE_OP_ACQ_RW 0
 #define CACHE_OP_ACQ_RO 1
@@ -328,18 +328,18 @@ uint64_t cache_owner_compute_next(uint64_t cur, int op, uint32_t *out_action);
 #endif /* ARTS_RELEASE_RETAIN */
 
 /* Pending waiter (parked EDT dep slot) used in both ro_pending and rw_pending.
- * Same shape as RCU's RW waiter for consistency. */
+ * Same shape as VAL's RW waiter for consistency. */
 struct arts_db_excl_waiter_s {
   arts_lf_link_t link; /* FIRST — required by arts_lf_stack_t */
   arts_guid_t edt_guid;
   unsigned int slot;
 };
 
-/* arts_home_grantreq_node_s and arts_home_grantreq_queue_s are defined in
- * coherence/types_common.h (via rcu/types.h when RCU) — but for RWLOCK
- * they are defined in rcu/types.h only when RCU.  The RWLOCK build defines
- * its own arts_home_grantreq_queue_s here, matching the Vyukov MPSC shape
- * used by rcu/types.h so the same home.h declarations apply. */
+/* arts_home_grantreq_node_s and arts_home_grantreq_queue_s are declared in
+ * coherence/types_common.h and defined in coherence/val/types.h for VAL.
+ * The EXCL build defines its own arts_home_grantreq_queue_s here, matching
+ * the Vyukov MPSC shape used by coherence/val/types.h so the same
+ * directory.h declarations apply. */
 #ifdef __cplusplus
 struct arts_home_grantreq_node_s {
   struct arts_home_grantreq_node_s *next;
@@ -366,23 +366,23 @@ struct arts_home_grantreq_queue_s {
 };
 #endif
 
-/* Per-rank DB cache for the RWLOCK protocol.
- * The layout is shared between HOME and OWNER; OWNER adds ro_serve (the list
- * of reader ranks the owner must serve during the RO phase).  HOME omits it
- * so sizeof(arts_db_cache_s) is unchanged in HOME builds. */
+/* Per-rank DB cache for the EXCL protocol.
+ * The layout is shared between PURGE and RETAIN; RETAIN adds ro_serve (the list
+ * of reader ranks the owner must serve during the RO phase).  PURGE omits it
+ * so sizeof(arts_db_cache_s) is unchanged in PURGE builds. */
 #ifdef __cplusplus
 struct arts_db_cache_s {
   uint64_t cache_state; /* single coherence word — see CACHE_* */
   /* Single stable backing store: allocated once (first grant/create), written
    * in place by arts_db_buf_write_inplace on every later grant/publish, freed
    * only at destroy.  The address never moves, so DBs holding internal
-   * self-pointers stay valid.  Under OWNER, data stays with the owner; the
+   * self-pointers stay valid.  Under RETAIN, data stays with the owner; the
    * home-rank cache.buffer is unused by the coherence path. */
   arts_atomic_shared_ptr_t buffer;
   arts_lockfree_pool_t
       buf_freelist; /* per-DB recycled-buffer pool (push on deleter, pull on
                        install); unbounded, drained at cache destroy */
-  arts_lf_stack_t pending_snapshot; /* unused by RWLOCK; kept for common_init */
+  arts_lf_stack_t pending_snapshot; /* unused by EXCL; kept for common_init */
   arts_lf_stack_t ro_pending;       /* parked RO EDT waiters on this rank */
   arts_lf_stack_t rw_pending;       /* parked RW EDT waiters on this rank */
 #ifdef ARTS_RELEASE_RETAIN
@@ -415,7 +415,7 @@ struct arts_db_cache_s {
   arts_lf_stack_t ro_pending;
   arts_lf_stack_t rw_pending;
 #ifdef ARTS_RELEASE_RETAIN
-  arts_lf_stack_t ro_serve; /* RO-phase serve list (owner only; OWNER only) */
+  arts_lf_stack_t ro_serve; /* RO-phase serve list (owner only; RETAIN only) */
   struct arts_rdzv_landing_s migrate_rdzv; /* pending migrate target landing */
 #else
   struct arts_rdzv_landing_s home_pub_rdzv; /* grant's publish landing */
@@ -425,7 +425,7 @@ struct arts_db_cache_s {
 };
 #endif
 
-/** Internal DataBlock descriptor (RWLOCK protocol).
+/** Internal DataBlock descriptor (EXCL protocol).
  *
  *  The per-rank coherence cache (struct arts_db_cache_s) is embedded by value
  *  as the FIRST member: the cb object the route_table wraps is the db_s, and
@@ -448,7 +448,7 @@ struct arts_db_s {
   struct arts_home_grantreq_queue_s rw_waiters; /* Vyukov MPSC, pop-one */
   arts_lf_stack_t ro_waiters;                  /* Treiber, XCHG drain */
   struct arts_rank_bitset_s cached_ranks;      /* destroy fan-out roster */
-  /* GPU staging fields (full arts_db_s alloc; unused on the CPU RWLOCK path). */
+  /* GPU staging fields (full arts_db_s alloc; unused on the CPU EXCL path). */
   volatile unsigned int reader;
   volatile unsigned int writer;
   volatile unsigned int version;

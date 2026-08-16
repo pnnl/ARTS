@@ -1,28 +1,28 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * RWLOCK protocol shared home-side infrastructure.
+ * EXCL protocol shared home-side infrastructure.
  *
  * Defines: arts_home_grantreq_queue_{init,push,pop,peek,empty,destroy},
  *          arts_rank_bitset_{init,set,for_each,destroy},
  *          arts_db_home_init, arts_db_home_teardown,
  *          arts_handler_db_destroy.
  *
- * This TU contains only the shared pieces that both the HOME and OWNER placement
+ * This TU contains only the shared pieces that both the PURGE and RETAIN release-policy
  * variants need: the home ownership-request FIFO, the rank bitset, the
  * home-directory lifecycle, and the DB-destroy fan-out handler.  Timing-
  * specific arbiters (excl_compute_next, cache_compute_next) and all
- * acquire/release handler/sender bodies live in the per-placement TU (home.c
- * or owner.c).
+ * acquire/release handler/sender bodies live in the per-release-policy TU (purge.c
+ * or retain.c).
  *
- * The grantreq queue and rank_bitset bodies are verbatim from rcu/home.c
- * (same Vyukov MPSC + bit-packed bitset shapes; RWLOCK reuses the same struct
- * definitions from lock/types.h).
+ * The grantreq queue and rank_bitset bodies are verbatim from val/directory.c
+ * (same Vyukov MPSC + bit-packed bitset shapes; EXCL reuses the same struct
+ * definitions from excl/types.h).
  *
- * Compiled only for ARTS_COHERENCE_PROTOCOL=RWLOCK.
+ * Compiled only for ARTS_COHERENCE_PROTOCOL=EXCL.
  */
 
-/* lock/types.h must precede home.h: it defines arts_home_grantreq_node_s and
- * arts_home_grantreq_queue_s for the RWLOCK build (home.h declares functions
+/* excl/types.h must precede directory.h: it defines arts_home_grantreq_node_s and
+ * arts_home_grantreq_queue_s for the EXCL build (directory.h declares functions
  * that take these types by pointer, and coherence.h embeds them in
  * arts_db_s). */
 #include "arts/coherence/excl/types.h"
@@ -250,7 +250,7 @@ void arts_db_home_teardown(struct arts_db_s *db) {
 }
 
 /* ===== arts_handler_db_destroy =========================================
- * OOO_DB_DESTROY Cat-B body for the RWLOCK protocol.  Fan-out DESTROY_NOTIFY
+ * OOO_DB_DESTROY Cat-B body for the EXCL protocol.  Fan-out DESTROY_NOTIFY
  * to every rank in cached_ranks (the destroy roster), wake parked waiters,
  * then detach the route-table slot. */
 void arts_handler_db_destroy(void *item_v, void *args_v) {

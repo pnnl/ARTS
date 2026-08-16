@@ -1,11 +1,11 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * OWNER protocol translation unit: defines the OWNER-specific
+ * WB write-policy translation unit: defines the WB-specific
  * arts_handler_db_* / arts_db_* bodies directly (CMake links exactly this TU
- * for an RCU+OWNER build) plus the OWNER-only wire handlers/senders.
- * Compiled only for ARTS_COHERENCE_PROTOCOL=RCU with
+ * for a VAL+WB build) plus the WB-only wire handlers/senders.
+ * Compiled only for ARTS_COHERENCE_PROTOCOL=VAL with
  * ARTS_WRITE_POLICY=WB (selected in libs/src/core/CMakeLists.txt).
- * Contains NO protocol/placement preprocessor logic.
+ * Contains NO protocol/write-policy preprocessor logic.
  */
 #include <stdbool.h>
 #include <stdint.h>
@@ -27,12 +27,12 @@
 #include "arts/utils/atomics.h" /* arts_atomic_* */
 #include "arts/utils/malloc.h"  /* arts_malloc / arts_free (transfer sender) */
 
-/* ===== 8-case acquire dispatch (OWNER arm) ==========================
- * Whole arts_handler_db_acquire body for the OWNER build.  Diverges from HOME
- * only on the RO-has-local-data predicate (OWNER: is_owner — the home rank does
+/* ===== 8-case acquire dispatch (WB arm) ==========================
+ * Whole arts_handler_db_acquire body for the WB build.  Diverges from WT
+ * only on the RO-has-local-data predicate (WB: is_owner — the home rank does
  * NOT hold the canonical copy; only the current owner has an installed buffer,
  * so a home-but-not-owner rank goes through acquire_remote_ro and home forwards
- * to the owner via REDIRECT_RO). */
+ * to the owner via SNAPSHOT_REDIRECT). */
 void arts_handler_db_acquire(void *item, void *args) {
   struct arts_db_s *db = (struct arts_db_s *)item;
   struct arts_ooo_args_db_acquire_s *a =
@@ -71,19 +71,19 @@ void arts_handler_db_acquire(void *item, void *args) {
     return;
   }
   arts_db_acquire_remote_rw(cache, edt->guid,
-                            slot); /* parks (OWNERSHIP_REQUEST) */
+                            slot); /* parks (GRANT_REQUEST) */
 }
 
 bool arts_db_acquire_is_serialized(arts_db_access_mode_t mode) {
   return mode == DB_MODE_RW;
 }
 
-/* ===== release_rw (OWNER arm) =======================================
- * The OWNER protocol drops the buffer ref BEFORE decrementing writer_count, so
+/* ===== release_rw (WB arm) =======================================
+ * The WB write policy drops the buffer ref BEFORE decrementing writer_count, so
  * the slot's cache-hold is the only ref that can keep the buffer alive past
  * writer_count==0 (a concurrent teardown then frees it via the cb deleter with
- * no dangling local ref).  In the HOME placement this window does not exist
- * (local_transfer_now restores the sentinel); the OWNER placement has no sentinel
+ * no dangling local ref).  In the WT write policy this window does not exist
+ * (local_transfer_now restores the sentinel); the WB write policy has no sentinel
  * restoration, so it must close the window by releasing the ref before exposing
  * writer_count==0. */
 void arts_db_release_rw(struct arts_db_cache_s *cache) {
@@ -118,19 +118,19 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
    * ships the transfer; the (int) cast is defensive. */
   int rest = (int)arts_atomic_sub(&cache->writer_count, 1); /* post value */
   if (rest == 0) {
-    /* If an INVALIDATE_NOTICE already published a transfer target while writers
+    /* If a GRANT_INVALIDATE already published a transfer target while writers
      * were live, this (last) releaser is the unique actor that ships
-     * TRANSFER_OWNERSHIP — sentinel invariant, no flag.  Identical for home and
+     * GRANT_RESPONSE — sentinel invariant, no flag.  Identical for home and
      * non-home owners.  Otherwise no transfer is pending: home retains
-     * ownership until a future OWNERSHIP_REQUEST; a non-home owner quiesces. */
+     * ownership until a future GRANT_REQUEST; a non-home owner quiesces. */
     if (cache->incoming_new_owner != ARTS_NO_PENDING_OWNER) {
       arts_db_send_grant_response(cache);
     }
   }
 }
 
-/* ===== cache_s lifecycle (OWNER: pending_rw + dedup map + sentinel) =
- * Construct: the OWNER placement's field-init (the Vyukov MPSC pending_rw queue +
+/* ===== cache_s lifecycle (WB: pending_rw + dedup map + sentinel) =
+ * Construct: the WB write policy's field-init (the Vyukov MPSC pending_rw queue +
  * the owner-side dedup map [allocated on demand] + the transfer sentinel) runs
  * BEFORE arts_db_cache_common_init.  Destruct order: buffer-NULL (pre) →
  * pending_rw destroy → snapshot drain + home teardown (post). */
@@ -138,7 +138,7 @@ void arts_db_cache_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
                         uint64_t db_size, arts_db_init_kind_t kind,
                         unsigned int creator_rank) {
   arts_pending_rw_queue_init(&c->pending_rw);
-  /* Lazy owner-side fields: dedup map allocated lazily on first ownership
+  /* WB owner-side fields: dedup map allocated lazily on first ownership
    * grant; incoming_new_owner starts at the sentinel (no transfer pending). */
   c->cached_version = NULL;
   c->incoming_new_owner = ARTS_NO_PENDING_OWNER;
@@ -192,11 +192,11 @@ void arts_handler_db_snapshot_request(void *item_v, void *args_v) {
   arts_guid_t edt_guid = a->edt_guid;
   uint32_t slot = a->slot;
 
-  /* Lazy home-side RO routing.
+  /* WB home-side RO routing.
    *
-   * Under the OWNER placement home does not hold the canonical data copy — the
+   * Under the WB write policy home does not hold the canonical data copy — the
    * current owner does.  Home's job is to redirect the requester to the owner
-   * (via REDIRECT_RO) so the owner can send DATA_RESPONSE directly,
+   * (via SNAPSHOT_REDIRECT) so the owner can send SNAPSHOT_RESPONSE directly,
    * applying the owner-side cached_version dedup.
    *
    * Record the requester in the cached-ranks set, then redirect to the current
@@ -240,7 +240,7 @@ static void owner_destroy_fanout_cb(unsigned int rank, void *ctx) {
  * acquired the home db_s and pinned a ref across this call (cache is its FIRST
  * member).  Order: roster fan-out, then
  * arts_route_table_set_destroyed LAST (parked waiter at destroy = UB, cleaned
- * up by the refcount-0 destructor).  Lazy roster source = rw_holder
+ * up by the refcount-0 destructor).  WB roster source = rw_holder
  * (current RW owner) + the RO cached-ranks bit-set + the queued ownership
  * requesters. */
 void arts_handler_db_destroy(void *item_v, void *args_v) {
@@ -252,7 +252,7 @@ void arts_handler_db_destroy(void *item_v, void *args_v) {
     return;
   }
   unsigned int self = arts_global_rank_id;
-  /* Lazy: notify the current RW owner first (rw_holder, not the cached-ranks
+  /* WB: notify the current RW owner first (rw_holder, not the cached-ranks
    * bit-set), then the RO cached-ranks bit-set, then the queued requesters. */
   {
     unsigned int holder =
@@ -316,7 +316,7 @@ void arts_handler_db_snapshot_redirect(void *item_v, void *args_v) {
     return;
   }
   /* Invariant: cached_version is created at ownership-install
-   * (TRANSFER_OWNERSHIP, retained permanently thereafter).  The INITIAL
+   * (GRANT_RESPONSE, retained permanently thereafter).  The INITIAL
    * owner (the creator, which never received a transfer) has no map yet, so
    * lazily create it on its first served REDIRECT — otherwise the producer-on-
    * home + RO-consumers-elsewhere DAG would be served no-data (NULL/stale).
@@ -373,7 +373,7 @@ void arts_send_db_snapshot_redirect(unsigned int owner_rank,
   p.rdzv.cookie = fwd.cookie;
   if (owner_rank == arts_global_rank_id) {
     /* Self-send: mirror the wire RX dispatcher's Cat-C lookup-acquire.  HIT
-     * serves DATA_RESPONSE from the ref-pinned owner-side db_s; MISS (DB
+     * serves SNAPSHOT_RESPONSE from the ref-pinned owner-side db_s; MISS (DB
      * destroyed / not yet installed) sends DESTROY_NOTIFY to the requester so
      * its parked RO waiter wakes and observes DB_DESTROYED. */
     struct arts_db_snapshot_redirect_args_s args = {
@@ -396,7 +396,7 @@ void arts_send_db_snapshot_redirect(unsigned int owner_rank,
   arts_transport_send_async((int)owner_rank, (char *)&p, sizeof(p));
 }
 
-/* Case-D leaf: the OWNER placement defers the home-buffer install to the
+/* Case-D leaf: the WB write policy defers the home-buffer install to the
  * creator's first release_rw (PUBLISH / GRANT path); nothing to do at
  * create. */
 void arts_db_create_install_home_buffer(struct arts_db_cache_s *cache,

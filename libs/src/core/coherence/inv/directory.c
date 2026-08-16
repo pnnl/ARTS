@@ -1,29 +1,29 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * MSI protocol shared home-side infrastructure.
+ * INV protocol shared home-side infrastructure.
  *
  * Defines: arts_home_grantreq_queue_{init,push,pop,peek,empty,destroy},
  *          arts_rank_bitset_{init,set,for_each,destroy},
  *          arts_db_home_init, arts_db_home_teardown.
  *
- * arts_handler_db_destroy lives in the placement TU (home.c): it fans out over
+ * arts_handler_db_destroy lives in engine.c: it fans out over
  * the wire, and this TU must stay linkable standalone (pure queue/bitset/
  * lifecycle) for the whitebox unit tests.
  *
- * This TU carries the pieces shared by any future placement variant: the home
- * request FIFO, the rank bitset, the home-directory lifecycle, and the
- * DB-destroy fan-out handler.  The arbiters and all handler/sender bodies
- * live in the placement TU (home.c).
+ * This TU carries the pieces shared by both write-policy variants: the home
+ * request FIFO, the rank bitset, and the home-directory lifecycle.  The
+ * arbiters live in arbiters.c, and the handler/sender bodies live in the
+ * write-policy TU (wt.c or wb.c) plus the shared engine.c.
  *
- * The grantreq queue and rank_bitset bodies are verbatim from rcu/home.c
- * (same Vyukov MPSC + bit-packed bitset shapes; MSI reuses the same struct
- * shapes from msi/types.h).
+ * The grantreq queue and rank_bitset bodies are verbatim from val/directory.c
+ * (same Vyukov MPSC + bit-packed bitset shapes; INV reuses the same struct
+ * shapes from inv/types.h).
  *
- * Compiled only for ARTS_COHERENCE_PROTOCOL=MSI.
+ * Compiled only for ARTS_COHERENCE_PROTOCOL=INV.
  */
 
-/* msi/types.h must precede home.h: it defines arts_home_grantreq_node_s and
- * arts_home_grantreq_queue_s for the MSI build. */
+/* inv/types.h must precede directory.h: it defines arts_home_grantreq_node_s and
+ * arts_home_grantreq_queue_s for the INV build. */
 #include "arts/coherence/inv/types.h"
 
 #include <stdatomic.h>

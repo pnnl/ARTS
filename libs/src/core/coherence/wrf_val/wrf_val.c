@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * WRF_RCU protocol translation unit: defines the WRF_RCU (DB-WRF)-specific
+ * WRF_VAL protocol translation unit: defines the WRF_VAL (DB-WRF)-specific
  * arts_handler_db_* / arts_db_* bodies directly (CMake links exactly this TU
- * for a WRF_RCU build) plus the WRF_RCU-only wire handlers/senders.
- * Compiled only for the DB_WRF x RCU configuration (arm WRF_RCU; selected in
+ * for a WRF_VAL build) plus the WRF_VAL-only wire handlers/senders.
+ * Compiled only for the DB_WRF x VAL configuration (arm WRF_VAL; selected in
  * libs/src/core/CMakeLists.txt). Contains NO model/protocol preprocessor
  * logic.
  */
@@ -29,13 +29,13 @@
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h" /* pairing ctx */  /* arts_atomic_* */
 
-/* ===== 8-case acquire dispatch (WRF_RCU arm) ==========================
- * Whole arts_handler_db_acquire body for the WRF_RCU build.  Home holds the
+/* ===== 8-case acquire dispatch (WRF_VAL arm) ==========================
+ * Whole arts_handler_db_acquire body for the WRF_VAL build.  Home holds the
  * canonical buffer (maintained by sync PUBLISH from every non-home writer).
  * RW and RO are unified — non-home acquires go through acquire_remote_ro in
  * both modes so the EDT parks (no list registration) and is woken by
- * DATA_RESPONSE once home delivers its current buffer.  There is no
- * OWNERSHIP_REQUEST / INVALIDATE / GRANT round, no per-cache pending_rw queue.
+ * SNAPSHOT_RESPONSE once home delivers its current buffer.  There is no
+ * GRANT_REQUEST / INVALIDATE / GRANT round, no per-cache pending_rw queue.
  *
  * RW acquires bump writer_count BEFORE parking (or before acquire_local on
  * home).  release_rw balances this decrement; without the bump, release_rw's
@@ -58,16 +58,16 @@ void arts_handler_db_acquire(void *item, void *args) {
     arts_db_acquire_resolved(edt, slot);
     return;
   }
-  arts_db_acquire_remote_ro(cache, edt->guid, slot); /* parks (GET_DATA) */
+  arts_db_acquire_remote_ro(cache, edt->guid, slot); /* parks (SNAPSHOT_REQUEST) */
 }
 
 bool arts_db_acquire_is_serialized(arts_db_access_mode_t mode) {
   (void)mode;
-  return false; /* WRF_RCU: no ownership round; nothing is serialized */
+  return false; /* WRF_VAL: no ownership round; nothing is serialized */
 }
 
-/* ===== release_rw (WRF_RCU arm) =======================================
- * WRF_RCU drops its buffer ref in the tail (after the PUBLISH
+/* ===== release_rw (WRF_VAL arm) =======================================
+ * WRF_VAL drops its buffer ref in the tail (after the PUBLISH
  * reads buf->data).  Every non-home write must be pushed back to home
  * synchronously so home stays canonical before any subsequent acquire can see
  * fresh data; home itself needs no PUBLISH.  R3 (rest > 0, non-home) and
@@ -87,7 +87,7 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
     new_version = arts_atomic_read_u64(&buf->version);
   }
   (void)arts_atomic_sub(&cache->writer_count,
-                        1); /* WRF_RCU: rest is not consulted */
+                        1); /* WRF_VAL: rest is not consulted */
   bool is_home = (arts_guid_get_rank(cache->db_guid) == arts_global_rank_id);
   if (!is_home && buf != NULL) {
     /* buf_h (held until after this call) pins buf->data for the whole round —
@@ -101,8 +101,8 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
   }
 }
 
-/* ===== cache_s lifecycle (WRF_RCU: no pending_rw queue) ===============
- * The WRF_RCU cache struct omits the pending_rw field entirely, so there is no
+/* ===== cache_s lifecycle (WRF_VAL: no pending_rw queue) ===============
+ * The WRF_VAL cache struct omits the pending_rw field entirely, so there is no
  * protocol field-init / field-destroy: the wrapper just calls the
  * shared common steps (construct: common; destruct: buffer-NULL → snapshot
  * drain + home teardown).
@@ -121,11 +121,11 @@ void arts_db_cache_destructor(struct arts_db_cache_s *cache) {
   arts_db_cache_common_destroy_post(cache); /* snapshot drain → home teardown */
 }
 
-/* ===== home-directory lifecycle (WRF_RCU: only cached_version) ===== */
+/* ===== home-directory lifecycle (WRF_VAL: only cached_version) ===== */
 
 void arts_db_home_init(struct arts_db_s *db, unsigned int rw_holder,
                        unsigned int nranks) {
-  /* WRF_RCU: no exclusive owner — rw_holder is unused. */
+  /* WRF_VAL: no exclusive owner — rw_holder is unused. */
   (void)rw_holder;
   db->cached_version = arts_rank_u64_map_create(nranks);
 }
@@ -138,9 +138,9 @@ void arts_db_home_teardown(struct arts_db_s *db) {
   /* No free: home fields are inlined in the arts_db_s. */
 }
 
-/* ===== GET_DATA reply (home.cached_version atomic-monotonic) ===== */
+/* ===== SNAPSHOT_REQUEST reply (home.cached_version atomic-monotonic) ===== */
 
-/* update_cached_version_max: the GET_DATA reply path.  Decide send-with-
+/* update_cached_version_max: the SNAPSHOT_REQUEST reply path.  Decide send-with-
  * data vs send-no-data based on the home watermark, then advance the
  * watermark.  Under single-threaded handler dispatch the "atomic
  * CAS-loop" the design plan specifies collapses to a plain compare/
@@ -186,7 +186,7 @@ static void update_cached_version_max(struct arts_db_cache_s *cache,
 /* Cat-B pure body (OoO g_ooo_table[OOO_DB_SNAPSHOT_REQUEST]): the OoO engine
  * has already acquired the home db_s and pinned a ref across this call (cache
  * is its FIRST member), so there is no lookup / NULL-check / defer here.  The
- * WRF_RCU serves from home's canonical buffer with cached_version dedup. */
+ * WRF_VAL serves from home's canonical buffer with cached_version dedup. */
 void arts_handler_db_snapshot_request(void *item_v, void *args_v) {
   struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
   struct arts_ooo_args_db_snapshot_request_s *a =
@@ -205,7 +205,7 @@ void arts_handler_db_snapshot_request(void *item_v, void *args_v) {
      *       the creator's first PUBLISH has not landed; we have a
      *       cache but no buffer (stub install per OCR pattern).
      * Both cases: respond with version=0, NULL data.  The requester's
-     * handle_data_response will deliver ptr=NULL to the parked RO waiter
+     * arts_handler_db_snapshot_response will deliver ptr=NULL to the parked RO waiter
      * (per spec, "value is undefined" before any writer publishes).
      * NOT a destroy condition -- the precheck above (destroy_state) is
      * authoritative for that. */
@@ -227,7 +227,7 @@ void arts_handler_db_snapshot_request(void *item_v, void *args_v) {
  * its FIRST member); the dispatcher copies the trailing data payload into the
  * args blob after arts_ooo_args_db_publish_s and this body reads it back from
  * (char *)a + sizeof(*a).  A PUBLISH that races ahead of DB_CREATE defers and
- * re-issues on the install's drain.  WRF_RCU uses PUBLISH_NORMAL only (no
+ * re-issues on the install's drain.  WRF_VAL uses PUBLISH_NORMAL only (no
  * exclusive owner to transfer to), so the WB_AND_TRANSFER ownership-chain
  * relay is moot. */
 /* Rendezvous continuation for a committed publish: the dirty bytes have
@@ -321,8 +321,8 @@ void arts_handler_db_publish(void *item_v, void *args_v) {
  * acquired the home db_s and pinned a ref across this call (cache is its FIRST
  * member).  Order: roster fan-out, then arts_route_table_set_destroyed LAST (a
  * waiter left parked at destroy = UB, freed by the refcount-0 destructor).
- * The WRF_RCU roster source is
- * home->cached_version (same as the HOME placement); WRF_RCU has no
+ * The WRF_VAL roster source is
+ * home->cached_version (same as the WT write policy); WRF_VAL has no
  * pending_rw queue, so no grantreq drain. */
 void arts_handler_db_destroy(void *item_v, void *args_v) {
   struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
@@ -360,7 +360,7 @@ void arts_handler_db_destroy(void *item_v, void *args_v) {
   arts_db_pub_flight_abandon(cache);
 }
 
-/* Case-D leaf: WRF_RCU has no exclusive owner — no rw_holder to publish
+/* Case-D leaf: WRF_VAL has no exclusive owner — no rw_holder to publish
  * (no-op). */
 void arts_db_create_publish_holder(struct arts_db_s *db,
                                    unsigned int creator_rank) {
@@ -368,17 +368,17 @@ void arts_db_create_publish_holder(struct arts_db_s *db,
   (void)creator_rank;
 }
 
-/* WRF_RCU has no exclusive-ownership protocol (no OWNERSHIP_REQUEST, no
- * INVALIDATE_NOTICE — its dispatcher fatals on both wire messages), so its
+/* WRF_VAL has no exclusive-ownership protocol (no GRANT_REQUEST, no
+ * GRANT_INVALIDATE — its dispatcher fatals on both wire messages), so its
  * ooo_kind enum omits OOO_DB_GRANT_REQUEST and OOO_DB_GRANT_INVALIDATE
- * entirely.  The WRF_RCU build therefore defines no
+ * entirely.  The WRF_VAL build therefore defines no
  * arts_handler_db_grant_request / _grant_invalidate body — the real
- * bodies live in coherence/grant.c / each arm's own placement TU, which
- * WRF_RCU does not compile. */
+ * bodies live in coherence/grant.c / each arm's own write-policy TU, which
+ * WRF_VAL does not compile. */
 
-/* ===== create-time home buffer (WRF_RCU: home is canonical) =========== */
+/* ===== create-time home buffer (WRF_VAL: home is canonical) =========== */
 
-/* Case-D leaf: the WRF_RCU home holds the canonical copy; there is no
+/* Case-D leaf: the WRF_VAL home holds the canonical copy; there is no
  * creator PUBLISH to wait for, so publish a version-1 zero buffer
  * immediately.  Without it the first home RW acquire (acquire_local) hands the
  * EDT a NULL payload. */

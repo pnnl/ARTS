@@ -60,9 +60,9 @@ extern "C" {
 
 #include "arts/coherence/types_common.h"
 
-/* Protocol-specific cache/db layout.  WRF_RCU carries no ownership grant or RW
- * waiter queue (writer_count is a pure ref count); RCU carries the
- * ownership-cache shape, with the HOME/OWNER placement split made inside the
+/* Protocol-specific cache/db layout.  WRF_VAL carries no ownership grant or RW
+ * waiter queue (writer_count is a pure ref count); VAL carries the
+ * ownership-cache shape, with the WT/WB write-policy split made inside the
  * header via ARTS_WRITE_POLICY_WB. */
 #if defined(ARTS_PROTOCOL_EXCL)
 #include "arts/coherence/excl/types.h"
@@ -97,7 +97,7 @@ static inline uint64_t arts_db_total_size(const struct arts_db_s *db) {
   return sizeof(struct arts_db_s) + db->cache.db_size;
 }
 
-/* Footprint of a non-home / OWNER / creator-remote DB stub: the cache prefix +
+/* Footprint of a non-home / WB / creator-remote DB stub: the cache prefix +
  * db_type + home_initialized, stopping before the home-directory queues/maps
  * (which only the GUID home rank ever touches).  home_initialized MUST be in
  * bounds: the cache destructor reads it on EVERY free to decide whether to tear
@@ -108,7 +108,7 @@ static inline uint64_t arts_db_total_size(const struct arts_db_s *db) {
  * arts_db_s) instead.
  * The stub ends at the first home-directory field after home_initialized
  * (protocol-dependent: rw_holder for the ownership protocols, cached_version
- * for WRF_RCU). */
+ * for WRF_VAL). */
 static inline uint64_t arts_db_cache_stub_size(void) {
 #if defined(ARTS_PROTOCOL_WRF_VAL)
   return offsetof(struct arts_db_s, cached_version);

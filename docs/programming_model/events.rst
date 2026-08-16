@@ -159,7 +159,7 @@ manually.
 Minimal Example
 ---------------
 
-A two-producer fan-in (after ``tests/event_basic.c``): the dependent
+A two-producer fan-in (after ``tests/ocr/event_basic.c``): the dependent
 EDT runs only after both satisfies arrive.
 
 .. code-block:: c

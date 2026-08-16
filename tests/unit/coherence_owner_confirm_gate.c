@@ -38,7 +38,7 @@
 ******************************************************************************/
 
 /// @file coherence_owner_confirm_gate.c
-/// @brief Exploit + regression for the OWNER ownership-confirm gate.
+/// @brief Exploit + regression for the WB ownership-confirm gate.
 ///
 /// Reproduces the stale-RO window: when ownership transfers home(0)->W, the
 /// home updates rw_holder only at INSTALL_ACK, after W has already run its RW
@@ -59,7 +59,7 @@
 /// Config-agnostic: runs under configs/local/{1n,2n,3n,4n,2n_io}.cfg.  The
 /// 2n_io config (multiple sender/receiver threads -> wire reorder) is the one
 /// that exposes the race.  On 1n there is no transfer and the test passes
-/// trivially.  RELAXED has no ownership transfer -> SKIP.
+/// trivially.  WRF_VAL has no ownership transfer -> SKIP.
 /// A stranded waiter is caught by the ctest TIMEOUT (no in-test watchdog).
 
 #include "arts.h"
@@ -120,7 +120,7 @@ void main_edt(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   arts_printf("=== coherence_owner_confirm_gate ===\n");
 
 #ifdef ARTS_PROTOCOL_WRF_VAL
-  arts_printf("SKIP: RELAXED has no ownership transfer\n");
+  arts_printf("SKIP: WRF_VAL has no ownership transfer\n");
   arts_shutdown();
   return;
 #endif

@@ -107,15 +107,15 @@ void arts_db_cache_destructor(struct arts_db_cache_s *cache);
 
 /*--- Acquire path --------------------------------------------------------
  *
- * Implements the 8-case dispatcher (HOME × OWNER × {RO, RW}), the remote
- * acquire helpers (OWNERSHIP_REQUEST for RW, GET_DATA for RO), the
- * GRANT/DATA_RESPONSE-side drain routines, and the OWNER first-touch cache_s
+ * Implements the 8-case dispatcher (WT × WB × {RO, RW}), the remote
+ * acquire helpers (GRANT_REQUEST for RW, SNAPSHOT_REQUEST for RO), the
+ * GRANT/SNAPSHOT_RESPONSE-side drain routines, and the WB first-touch cache_s
  * allocation for foreign ranks.
  *
  * Result enum, returned by the remote acquire helpers
  * (arts_db_acquire_remote_ro / arts_db_acquire_remote_rw): OK means data was
  * resolved synchronously into dep->ptr; PARK means the EDT was parked on the
- * coherence protocol and a later wake (DATA_RESPONSE / GRANT / TRANSFER) will
+ * coherence protocol and a later wake (SNAPSHOT_RESPONSE / GRANT / TRANSFER) will
  * deliver it.  The acquire handler itself (arts_handler_db_acquire, below) is a
  * void self-accounting body: a synchronous resolve calls
  * arts_db_acquire_resolved (count the dep + advance the RW cursor); a remote
@@ -155,9 +155,9 @@ void mark_edt_secured_by_guid(arts_guid_t edt_guid, unsigned int slot);
 
 /* Per-protocol classification used by the arts_db_acquire_all driver: returns
  * true for deps that take exclusive ownership through the home directory and
- * must be GUID-serialized (HOME/OWNER RW). RO is never serialized; WRF_RCU
+ * must be GUID-serialized (WT/WB RW). RO is never serialized; WRF_VAL
  * serializes nothing (every acquire is a home snapshot). Defined in
- * each arm's own placement TU. */
+ * each arm's own write-policy TU. */
 bool arts_db_acquire_is_serialized(arts_db_access_mode_t mode);
 
 /*--- Release path --------------------------------------------------------
@@ -213,8 +213,8 @@ struct arts_db_pub_rendezvous_s {
 void arts_db_publish_sync(struct arts_db_cache_s *cache, uint64_t version);
 
 /* Block on a stack-local semaphore until the matching PUBLISH_ACK posts it
- * (pointer identity); returns early if teardown begins.  Used by the HOME and
- * WRF_RCU release-tail bodies. */
+ * (pointer identity); returns early if teardown begins.  Used by the WT and
+ * WRF_VAL release-tail bodies. */
 void await_publish_ack(sem_t *cv);
 
 /* Wake every waiter parked on the cache's publish flight (destroy paths and
@@ -235,7 +235,7 @@ void arts_db_debug_quiescence_check(void);
 void *arts_db_acquire_local(struct arts_db_cache_s *cache);
 
 /* Fire SNAPSHOT_REQUEST (edt_guid + slot) to home and PARK.  Shared by the
- * RCU/WRF_RCU acquire bodies (not RWLOCK, which uses LOCK_REQUEST). */
+ * VAL/WRF_VAL acquire bodies (not EXCL, which uses EXCL_REQUEST). */
 #if !defined(ARTS_PROTOCOL_EXCL) && !defined(ARTS_PROTOCOL_INV)
 arts_db_acquire_result_t
 arts_db_acquire_remote_ro(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
@@ -248,7 +248,7 @@ void mark_edt_ready_by_guid(arts_guid_t edt_guid, unsigned int slot);
 
 /* Drain the snapshot reorder buffer in one atomic_exchange (monotonic version
  * guarantees a full drain is always correct).  Called from the install paths
- * (GRANT / TRANSFER_OWNERSHIP / DATA_RESPONSE case 2). */
+ * (GRANT / GRANT_RESPONSE / SNAPSHOT_RESPONSE case 2). */
 void arts_db_drain_pending_snapshot(struct arts_db_cache_s *cache);
 
 /* RO request combining rides the validation family's snapshot pull path; the
@@ -292,9 +292,9 @@ void arts_db_cache_common_destroy_pre(struct arts_db_cache_s *cache);
 void arts_db_cache_common_destroy_post(struct arts_db_cache_s *cache);
 
 /* Case-D (arts_handler_db_create) per-protocol leaf functions.
- * publish_holder: HOME/OWNER store creator_rank as the home rw_holder, WRF_RCU
- * no-op; install_home_buffer: WRF_RCU installs a version-1 zero buffer (home
- * is always canonical), HOME/OWNER defer the install to the creator's first
+ * publish_holder: WT/WB store creator_rank as the home rw_holder, WRF_VAL
+ * no-op; install_home_buffer: WRF_VAL installs a version-1 zero buffer (home
+ * is always canonical), WT/WB defer the install to the creator's first
  * PUBLISH (no-op here).  Defined once per protocol TU. */
 void arts_db_create_publish_holder(struct arts_db_s *db,
                                    unsigned int creator_rank);
@@ -302,31 +302,31 @@ void arts_db_create_install_home_buffer(struct arts_db_cache_s *cache,
                                         uint64_t db_size);
 
 #if defined(ARTS_PROTOCOL_VAL) || defined(ARTS_PROTOCOL_INV)
-/* Single-owner ownership machinery of the RCU protocol
- * (defined in coherence/<proto>/grant.c).  Called by the HOME/OWNER
+/* Single-owner ownership machinery shared by every grant-bearing arm (VAL,
+ * INV) (defined in coherence/grant.c).  Called by the WT/WB
  * arts_handler_db_acquire bodies; the RO-path predicate is the only divergence
- * between HOME and OWNER, so it stays inline in each protocol's handler.
+ * between WT and WB, so it stays inline in each protocol's handler.
  *
  * arts_db_acquire_remote_rw: the remote-RW acquire path.  Pushes a
- * pending_rw waiter and kicks an OWNERSHIP_REQUEST if none is in flight —
+ * pending_rw waiter and kicks a GRANT_REQUEST if none is in flight —
  * returns PARK. */
 arts_db_acquire_result_t
 arts_db_acquire_remote_rw(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
                           unsigned int slot);
 
-/* Per-protocol ownership-round seams (defined in coherence/home.c and
- * coherence/owner.c, called from the OWNERSHIP_REQUEST / RELEASE_OWNERSHIP
- * handlers).  start: the HOME placement INVALIDATEs the current holder; the
- * OWNER protocol pops the FIFO target + starts the invalidate round.  return:
- * the HOME placement advances the chain; the OWNER placement never receives
- * RELEASE_OWNERSHIP (no-op). */
+/* Per-write-policy ownership-round seams (defined in coherence/grant_wt.c and
+ * coherence/grant_wb.c, called from the GRANT_REQUEST handler).  start: the
+ * WT write policy INVALIDATEs the current holder; the WB write policy pops
+ * the FIFO target + starts the invalidate round.  return: the WT write policy
+ * advances the chain; the WB write policy has no separate release message
+ * (no-op). */
 void arts_db_start_grant_round(struct arts_db_cache_s *cache,
                                    struct arts_db_s *db,
                                    unsigned int requester);
 #endif /* shared grant plane */
 
 #if defined(ARTS_PROTOCOL_VAL) || defined(ARTS_PROTOCOL_INV)
-/* arts_db_acquire_rw_local_fast: the case-2/6 RW local fast path (RCU).
+/* arts_db_acquire_rw_local_fast: the case-2/6 RW local fast path (VAL).
  * CAS-increments writer_count "if positive"; on success writes dep->ptr
  * (acquire_local) and returns true; returns false when writer_count went to 0
  * (ownership invalidated) so the caller falls through to

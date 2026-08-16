@@ -2,16 +2,9 @@
  *
  * 8-byte head CAS Treiber LIFO (header-only, inline).
  *
- * Differs from the legacy `arts/utils/lockfree_stack.h` (tagged-pointer
- * ABA defense, separate impl file): this variant assumes the caller
- * upholds the "no re-entry into the same stack" invariant documented
- * below, which is sufficient for ABA-freedom without packed counters.
- * Used by the event subsystem rewrite — event->deps, etc.
- *
- * Kept as a separate header (lockfree_lifo.h) because the API names —
- * arts_lf_stack_t / arts_lf_link_t — are distinct from the legacy
- * arts_lockfree_stack_t / arts_lockfree_stack_node_t in lockfree_stack.h.
- * Both can coexist in arts/utils/.
+ * ABA-freedom comes from the caller upholding the "no re-entry into the same
+ * stack" invariant documented below, not from a packed tag counter — which is
+ * why the head is a plain pointer and the whole structure is inlineable.
  */
 
 #ifndef ARTS_UTILS_LOCKFREE_LIFO_H

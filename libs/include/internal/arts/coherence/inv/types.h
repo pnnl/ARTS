@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * MSI protocol (write-invalidate) type layouts.  Two placement arms share this
+ * INV protocol (write-invalidate) type layouts.  Two write-policy arms share this
  * header; the build selects exactly one.
  *
- * ── HOME ──────────────────────────────────────────────────────────────
+ * ── WT ──────────────────────────────────────────────────────────────
  * Cache side: ONE 64-bit word carries the whole per-rank protocol state,
  * INCLUDING the parked-waiter chain heads:
  *
@@ -38,7 +38,7 @@
  * The canonical home version is the installed buffer's version
  * (cache.buffer->version); there is no separate version field.
  *
- * ── OWNER ───────────────────────────────────────────────────────────────
+ * ── WB ───────────────────────────────────────────────────────────────
  * The canonical copy lives at the owner and moves owner → owner by
  * migration only; the home is a pure directory that never holds bytes.
  * There is NO publish and no publish ack — that is the only thing this
@@ -68,7 +68,7 @@
  *
  *   rw   ∈ {IDLE, REQ, GRANT}.  GRANT doubles as the ownership bit and
  *          outlives any individual writer: only the migrate CAS clears it.
- *   ro   ∈ {IDLE, REQ, REQ_KILL, VALID} — same reader plane as HOME.
+ *   ro   ∈ {IDLE, REQ, REQ_KILL, VALID} — same reader plane as WT.
  *   unc  = ownership is installed but the directory flip has not been
  *          confirmed.  While it is set no local writer may run and NO store
  *          may happen; ownership may not migrate on.  Without it a new owner
@@ -83,7 +83,7 @@
  *          issues a fetch, cleared by the CAS the reply lands in, and no new
  *          fetch may open while it is set — so at most one read reply is ever
  *          in flight per rank and a landing reply always belongs to the
- *          unique open fetch.  The OWNERSHIP request lane is independent of
+ *          unique open fetch.  The GRANT request lane is independent of
  *          this bit: reader and writer requests never wait on each other.
  *   wc / wq = local writers holding the DB / queued behind a closed door or
  *          an unconfirmed install.  A counter owns its own chain: wq owns
@@ -397,7 +397,7 @@ struct arts_db_cache_s {
   arts_lf_stack_t pending_rw;
   struct arts_db_inv_waiter_pool_s waiters; /* reader chain-node pool */
   /* Ownership-request coalescing: only the actor that CASes 0->1 sends
-   * OWNERSHIP_REQUEST; same-node RW acquires piggyback and are picked up by
+   * GRANT_REQUEST; same-node RW acquires piggyback and are picked up by
    * the transfer's drain. */
   volatile unsigned int grant_req_in_flight;
   /* Set while a transfer has installed the buffer here but the home has not
@@ -412,7 +412,7 @@ struct arts_db_cache_s {
    * actor drives writer_count to exactly 0 reads this field and ships. */
   unsigned int incoming_new_owner;
   struct arts_rdzv_landing_s incoming_new_owner_rdzv;
-  /* Always NULL in this arm.  MSI's sharer plane deliberately carries no
+  /* Always NULL in this arm.  INV's sharer plane deliberately carries no
    * version ledger — a dedup watermark on it would stop the plane being
    * write-driven — but the shared transfer helper reads this field to decide
    * whether a map travels with ownership, and NULL selects its empty branch. */
@@ -443,7 +443,7 @@ struct arts_db_cache_s {
 };
 #endif
 
-/** Internal DataBlock descriptor (MSI protocol).
+/** Internal DataBlock descriptor (INV protocol).
  *
  *  The per-rank coherence cache is embedded by value as the FIRST member.
  *  Non-home ranks allocate a cache-only footprint
@@ -455,8 +455,8 @@ struct arts_db_cache_s {
  *      / pending_install_owner), identical to every other grant-bearing arm and
  *      driven by coherence/grant.c;
  *    - the invalidation round (dir_state / roster / pub_queue), which is what
- *      makes this arm MSI.
- *  Both placements carry exactly these fields; the placement decides only
+ *      makes this arm INV.
+ *  Both write policies carry exactly these fields; the write policy decides only
  *  whether a release's publish entry carries payload. */
 struct arts_db_s {
   struct arts_db_cache_s cache; /**< FIRST — coherence state. */
@@ -469,7 +469,7 @@ struct arts_db_s {
   arts_db_atomic_uint_t invalidate_in_flight;  /* transfer-round baton */
   unsigned int pending_install_owner; /* baton-holder-written transfer target */
 
-  /* ---- invalidation round (home side; MSI's own) ---- */
+  /* ---- invalidation round (home side; INV's own) ---- */
 #ifdef __cplusplus
   uint64_t dir_state;
   bool opening_pending;
@@ -486,7 +486,7 @@ struct arts_db_s {
    * version-conditional install then rejects the newer copy while its state
    * machine still marks it valid: a reader left on bytes from a write window
    * that has already closed.  Advanced only under the round claim; read by the
-   * serve path at any time.  (Under OWNER the home holds no bytes and the
+   * serve path at any time.  (Under WB the home holds no bytes and the
    * field idles — there the owner's own buffer version IS the axis, because
    * ownership migration carries it.) */
 #ifdef __cplusplus
@@ -499,7 +499,7 @@ struct arts_db_s {
   struct arts_rank_bitset_s roster;        /* copy roster (INV targets) */
   struct arts_rank_bitset_s cached_ranks;  /* destroy fan-out roster */
 
-  /* GPU staging fields (full arts_db_s alloc; unused on the CPU MSI path). */
+  /* GPU staging fields (full arts_db_s alloc; unused on the CPU INV path). */
   volatile unsigned int reader;
   volatile unsigned int writer;
   volatile unsigned int version;
@@ -508,7 +508,7 @@ struct arts_db_s {
 
 /* ── pure arbiters (CAS-retry loop bodies; see arbiters.c) ──────────────── */
 /* Both arbiters are pure functions of one word, run inside a CAS-retry loop,
- * and are identical under both placements: the reader word decides fetch /
+ * and are identical under both write policies: the reader word decides fetch /
  * park / publish / invalidate, and the directory word decides round mutual
  * exclusion and ack accounting.  Neither knows anything about ownership —
  * that is the grant plane's, and it does not live in a word. */
@@ -545,7 +545,7 @@ uint64_t inv_cache_compute_next(uint64_t cur, int op, uint32_t self_idx,
 uint64_t inv_dir_compute_next(uint64_t cur, int op, unsigned int arg,
                               uint32_t *out_action);
 
-/* ── shared machinery the placement TUs call (msi/directory.c) ──────────── */
+/* ── shared machinery the write-policy TUs call (inv/directory.c) ──────────── */
 /* Reader chain-node pool: a node is written before the word CAS that links it
  * and read only by the committer that grabbed the chain. */
 uint32_t inv_waiter_alloc(struct arts_db_cache_s *c);

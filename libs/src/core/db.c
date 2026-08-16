@@ -90,7 +90,7 @@ DB_MODE_NAME;
  *
  * For coherent ARTS_DB datablocks this is cache->buffer->data (the
  * canonical payload installed by arts_db_buf_install at create time or
- * by GRANT/DATA_RESPONSE on sharer ranks).  For all other subtypes it
+ * by GRANT/SNAPSHOT_RESPONSE on sharer ranks).  For all other subtypes it
  * is the legacy (db+1) pointer.
  *
  * Returns NULL if `db` itself is NULL or if a coherent ARTS_DB has no
@@ -137,9 +137,9 @@ static void arts_db_auto_acquire(struct arts_db_s *db) {
 }
 
 /* arts_db_creator_skip_hold — should the coherent (ARTS_DB) creator EDT be kept
- * OFF created_db_list?  Under the RWLOCK protocol the creator takes no implicit
+ * OFF created_db_list?  Under the EXCL protocol the creator takes no implicit
  * lock: the home rank is the sole arbiter and zero-inits the buffer at create
- * time, and a writer only ever holds the lock via a granted LOCK_REQUEST (which
+ * time, and a writer only ever holds the lock via a granted EXCL_REQUEST (which
  * bumps the per-rank cache_state rw_count + sets rw_state=GRANT).  A
  * create-time stub has neither, so registering the creator on created_db_list
  * would make the EDT epilogue (arts_release_created_dbs -> release_one_created
@@ -158,7 +158,7 @@ static void arts_db_auto_acquire(struct arts_db_s *db) {
 static inline bool arts_db_creator_skip_hold(arts_db_types_t db_type) {
   /* No protocol skips the creator hold any more: arts_db_create defaults to an
    * RW acquire for every coherent DB, and each protocol seeds that hold at
-   * create time (single-owner: writer_count=2; RWLOCK: cache_state RW-GRANT +
+   * create time (single-owner: writer_count=2; EXCL: cache_state RW-GRANT +
    * lock_state w=1).  The matching release (explicit or EDT-epilogue
    * auto-release) drives it back, so the creator is tracked like any holder. */
   (void)db_type;
@@ -390,7 +390,7 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
              * for NO_ACQUIRE. */
 #if defined(ARTS_PROTOCOL_EXCL)
 #if defined(ARTS_RELEASE_RETAIN)
-            /* OWNER placement: data lives with the owner, not the home — with no creator
+            /* RETAIN release policy: data lives with the owner, not the home — with no creator
              * hold there is no owner unless we make one.  This rank (the GUID
              * home, where a local create runs) becomes the IDLE data owner: it
              * holds the zero-init buffer (installed by db_create_in_place) with
@@ -407,7 +407,7 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
                 LOCK_MAKE(LOCK_PHASE_IDLE, arts_global_rank_id, 0u, 0u),
                 memory_order_relaxed);
 #else  /* ARTS_RELEASE_PURGE */
-            /* HOME placement: the home holds the canonical buffer; undo the create-time
+            /* PURGE release policy: the home holds the canonical buffer; undo the create-time
              * creator RW seed → free lock, so the first acquirer is granted
              * rather than blocked behind a hold no EDT will ever release. */
             atomic_store_explicit(&((struct arts_db_s *)ptr)->cache.cache_state,
@@ -453,7 +453,7 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
              * for NO_ACQUIRE. */
 #if defined(ARTS_PROTOCOL_EXCL)
 #if defined(ARTS_RELEASE_RETAIN)
-            /* OWNER placement: data lives with the owner, not the home — with no creator
+            /* RETAIN release policy: data lives with the owner, not the home — with no creator
              * hold there is no owner unless we make one.  This rank (the GUID
              * home, where a local create runs) becomes the IDLE data owner: it
              * holds the zero-init buffer (installed by db_create_in_place) with
@@ -470,7 +470,7 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
                 LOCK_MAKE(LOCK_PHASE_IDLE, arts_global_rank_id, 0u, 0u),
                 memory_order_relaxed);
 #else  /* ARTS_RELEASE_PURGE */
-            /* HOME placement: the home holds the canonical buffer; undo the create-time
+            /* PURGE release policy: the home holds the canonical buffer; undo the create-time
              * creator RW seed → free lock, so the first acquirer is granted
              * rather than blocked behind a hold no EDT will ever release. */
             atomic_store_explicit(&((struct arts_db_s *)ptr)->cache.cache_state,
@@ -516,20 +516,20 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
        *
        * Also stub-install a creator-side cache_s on this (non-home)
        * rank via arts_db_cache_stub_install.  This is necessary so
-       * that home's first INVALIDATE_NOTICE (sent to
-       * rw_holder = creator_rank when a foreign OWNERSHIP_REQUEST arrives)
+       * that home's first GRANT_INVALIDATE (sent to
+       * rw_holder = creator_rank when a foreign GRANT_REQUEST arrives)
        * finds a cache_s on this rank to drop the sentinel and trigger
        * invalidate_transfer.  Without it, home's invalidation goes to a
        * phantom holder and the first foreign acquirer stalls forever. */
       /* Use ARTS_DB_INIT_CREATOR_REMOTE (writer_count = 2: sentinel +
-       * creator EDT) so that the home-side INVALIDATE_NOTICE round-trip
-       * works correctly.  When a foreign OWNERSHIP_REQUEST arrives at home,
-       * home sends INVALIDATE_NOTICE to rw_holder = creator; creator's
+       * creator EDT) so that the home-side GRANT_INVALIDATE round-trip
+       * works correctly.  When a foreign GRANT_REQUEST arrives at home,
+       * home sends GRANT_INVALIDATE to rw_holder = creator; creator's
        * fetch_sub takes wc 2 -> 1 (no transfer yet -- creator EDT may
        * still be using the buffer).  Creator EDT release_rw drops wc
        * 1 -> 0, triggering R4 PUBLISH_AND_TRANSFER with the creator's
        * data.  wc = 1 (the implementer's earlier choice) was wrong: it
-       * would trigger the transfer immediately on INVALIDATE_NOTICE
+       * would trigger the transfer immediately on GRANT_INVALIDATE
        * while the creator EDT was still writing.
        *
        * The cache is built privately (CREATOR_REMOTE init -> wc = 2) and
@@ -544,7 +544,7 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
       if (no_acquire) {
         /* NO_ACQUIRE: do NOT stub-install a creator-side cache_s.  The
          * home is the sole idle owner; first consumer EDT triggers a
-         * normal OWNERSHIP_REQUEST to acquire ownership.  Wire only carries
+         * normal GRANT_REQUEST to acquire ownership.  Wire only carries
          * metadata (no payload bytes). */
         arts_send_db_create_coherent(rank, guid, len, ARTS_DB_PROP_NO_ACQUIRE,
                                      (uint16_t)db_type);
@@ -827,7 +827,7 @@ static void acquire_one_dep(struct arts_edt_s *edt, arts_edt_dep_t *depv,
     cache = &db_temp->cache;
     cache_owner_h = &db_temp_h;
   } else if (db_temp == NULL && owner != arts_global_rank_id) {
-    /* db_size=0 means "size learned on first GRANT/DATA_RESPONSE
+    /* db_size=0 means "size learned on first GRANT/SNAPSHOT_RESPONSE
      * install_buffer".  Round-robin home is encoded in the GUID, so all
      * ranks agree. */
     stub_h = arts_db_cache_stub_install(depv[i].guid, /*db_size=*/0);
@@ -1079,7 +1079,7 @@ static void flush_resume_list(void) {
  * dep that PARKS (its grant is not local) leaves the cursor put and we return —
  * the matching async grant re-enters here (rw_secure) to continue.  Driving the
  * walk as a LOOP (not the handler re-firing recursively) keeps the stack O(1)
- * however many serialized deps resolve in a row — required for RWLOCK, where RW
+ * however many serialized deps resolve in a row — required for EXCL, where RW
  * AND RO are both serialized so an EDT can have very many serialized deps. */
 static void rw_fire_from_cursor(struct arts_edt_s *edt) {
   arts_edt_dep_t *depv = (arts_edt_dep_t *)arts_get_depv(edt);
@@ -1250,7 +1250,7 @@ void arts_db_acquire_all(struct arts_edt_s *edt) {
     acquire_one_dep(edt, depv, i);
   }
 
-  /* Pass 2: fire the serialized (RW) deps from the cursor (no-op under WRF_RCU).
+  /* Pass 2: fire the serialized (RW) deps from the cursor (no-op under WRF_VAL).
    */
   rw_fire_from_cursor(edt);
 

@@ -69,12 +69,6 @@ void arts_thread_main_join(void);
 void arts_enter_shutdown_state(bool initiator);
 void arts_handler_shutdown(void);
 
-/* Local lifecycle controls (runtime-state mutators, not introspection).
- *   arts_stop_local_worker — retire only the calling worker thread.
- *   arts_stop_local_node   — stop the whole local runtime. */
-void arts_stop_local_worker(void);
-void arts_stop_local_node(void);
-
 /* Architectural spin-wait hint for idle poll loops (x86 `pause` / arm `yield`;
  * compiler barrier elsewhere).  Cuts the pipeline/power cost of a busy-poll
  * and forces re-reads of polled memory each iteration. */

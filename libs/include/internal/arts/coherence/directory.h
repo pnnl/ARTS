@@ -4,7 +4,7 @@
  *
  * Concurrency model:
  *   - pending_rw queue: Vyukov MPSC.  Multi-producer (any handler thread
- * enqueues on OWNERSHIP_REQUEST); single-consumer in time (the unique actor
+ * enqueues on GRANT_REQUEST); single-consumer in time (the unique actor
  * holding the invalidate_in_flight = 1 baton).  Lock-free queue ops.
  *   - cached_version map: per-slot atomic.  Each rank slot is an independent
  *     _Atomic(uint64_t) accessed via atomic load/store and CAS-loop
@@ -83,7 +83,7 @@ bool arts_rank_u64_map_advance(struct arts_rank_to_u64_map_s *m,
 /*--- rank bit-set ----------------------------------------------------
  *
  * Bit-packed atomic rank bit-set, sized to the cluster's rank count.  Used
- * only in OWNER builds — the HOME placement reuses the per-rank version map
+ * only in WB builds — the WT write policy reuses the per-rank version map
  * for the same purpose (set membership = nonzero entry).  The struct
  * arts_rank_bitset_s definition lives in rank_bitset.h (included
  * directly by coherence_types.h, which embeds it by value in
@@ -114,13 +114,13 @@ void arts_db_home_init(struct arts_db_s *db, unsigned int rw_holder,
  * Does NOT free the descriptor (the fields live inside the arts_db_s). */
 void arts_db_home_teardown(struct arts_db_s *db);
 
-/*--- cached_version map serialization (defined in coherence/owner.c) -
+/*--- cached_version map serialization (defined in coherence/rank_u64_map.c) -
  *
- * Used to piggyback the owner-side dedup map onto TRANSFER_OWNERSHIP
- * messages so the new owner can continue skipping redundant DATA_RESPONSE
- * sends without re-learning which ranks already hold a fresh copy.  Only the
- * OWNER protocol TU defines these; the declarations are unconditional so this
- * header carries no coherence-model preprocessor logic.
+ * Used to piggyback the owner-side dedup map onto GRANT_RESPONSE
+ * messages so the new owner can continue skipping redundant SNAPSHOT_RESPONSE
+ * sends without re-learning which ranks already hold a fresh copy.
+ * Protocol-agnostic (every build links rank_u64_map.c); the declarations are
+ * unconditional so this header carries no coherence-model preprocessor logic.
  *
  * Wire layout (in out buffer, starting at byte 0):
  *   uint32_t count;        number of non-zero (rank, version) pairs

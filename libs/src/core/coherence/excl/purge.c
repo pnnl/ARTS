@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * RWLOCK protocol, HOME placement.
+ * EXCL protocol, PURGE release policy.
  *
  * The home holds the canonical payload, so it both arbitrates and serves: a
  * write grant leaves the home carrying the bytes, and a reader phase is fanned
@@ -11,17 +11,17 @@
  * to travel anyway.  A rank's next write therefore re-requests from the home and
  * receives the payload again.
  *
- * That is the whole difference from the OWNER placement, where the payload stays
+ * That is the whole difference from the RETAIN release policy, where the payload stays
  * with the last writer and a release with nothing pending sends nothing at all.
  *
  * Compiled only for ARTS_COHERENCE_PROTOCOL=EXCL + ARTS_RELEASE_POLICY=PURGE;
- * the placement variant is a link-time file choice, so this TU contains no
- * placement preprocessor guards.
+ * the release-policy variant is a link-time file choice, so this TU contains no
+ * release-policy preprocessor guards.
  */
 
-/* lock/types.h must precede all other coherence headers: it defines
- * arts_db_cache_s, arts_db_s, LOCK_HELD_*, arts_db_excl_waiter_s, and the
- * arts_home_grantreq_queue_s for the RWLOCK build (coherence.h and handlers.h
+/* excl/types.h must precede all other coherence headers: it defines
+ * arts_db_cache_s, arts_db_s, arts_db_excl_waiter_s, and the
+ * arts_home_grantreq_queue_s for the EXCL build (coherence.h and handlers.h
  * declare functions that take these types by pointer). */
 #include "arts/counter/object_counter.h"
 #include "arts/coherence/excl/types.h"
@@ -52,9 +52,9 @@
 #include "arts/utils/malloc.h"
 
 /* ===== RO waiter node (rank-granular RO queue entry) ===================
- * Mirrors the definition in home.c (both TUs include lock/types.h which does
+ * Mirrors the definition in retain.c (both TUs include excl/types.h which does
  * not define this node — it is a file-local type used only by home-side grant
- * and teardown logic in home.c, and by arts_send_db_excl_grant here which
+ * and teardown logic in this TU, and by arts_send_db_excl_grant here which
  * calls arts_handler_db_excl_grant as a local-hit self-send). */
 struct arts_lock_ro_node_s {
   arts_lf_link_t link; /* FIRST */
@@ -166,7 +166,7 @@ void arts_send_db_excl_grant(unsigned int requester_rank, arts_guid_t db_guid,
      * a packet and back into the same buffer would be pure waste.  Emit a
      * data-less self-grant: the handler skips the in-place install and runs the
      * grant commit (cache-state transition + waiter drain) against the live
-     * buffer.  The requester's advertised landing goes unused — for RWLOCK it is
+     * buffer.  The requester's advertised landing goes unused — for EXCL it is
      * the stable buffer itself, so there is nothing to recycle. */
     if (src != NULL) {
       arts_db_buf_release(&src_h);
@@ -184,7 +184,7 @@ void arts_send_db_excl_grant(unsigned int requester_rank, arts_guid_t db_guid,
     return;
   }
   /* One-sided grant: PUT straight from the home buffer into the requester's
-   * stable-buffer landing (RWLOCK's fixed-address install), pairing packet and
+   * stable-buffer landing (EXCL's fixed-address install), pairing packet and
    * write completion by txid.  The strong ref transfers to the PUT's local
    * completion, so a concurrent publish recycling the buffer cannot free
    * the bytes mid-read. */
@@ -366,14 +366,14 @@ void arts_handler_db_excl_release(void *item_v, void *args_v) {
 }
 
 /* ===== arts_db_acquire_is_serialized ===================================
- * RWLOCK: both RW and RO are blocking locks — both are GUID-serialized so
+ * EXCL: both RW and RO are blocking locks — both are GUID-serialized so
  * the engine acquires them in a global order (deadlock-free lock ordering). */
 bool arts_db_acquire_is_serialized(arts_db_access_mode_t mode) {
   return mode == DB_MODE_RW || mode == DB_MODE_RO;
 }
 
 /* ===== arts_db_cache_init ==============================================
- * Initialize the per-rank cache for the RWLOCK protocol.  For RWLOCK, the home-rank
+ * Initialize the per-rank cache for the EXCL protocol.  For EXCL, the home-rank
  * lock_state and the per-cache cache_state single word are the coherence state;
  * arts_db_cache_common_init handles the shared fields (db_guid, db_size,
  * pending_snapshot, home-directory init).
@@ -436,7 +436,7 @@ void arts_db_cache_destructor(struct arts_db_cache_s *cache) {
 }
 
 /* ===== arts_db_create_publish_holder ====================================
- * RWLOCK home init: nothing to publish for the holder field — RWLOCK tracks
+ * EXCL home init: nothing to publish for the holder field — EXCL tracks
  * mode via lock_state, not rw_holder.  The creator becomes the first RW
  * holder via the normal acquire/self-grant chain, so there is nothing to
  * publish at create. */
@@ -447,10 +447,10 @@ void arts_db_create_publish_holder(struct arts_db_s *db,
 }
 
 /* ===== arts_db_create_install_home_buffer ================================
- * RWLOCK home init: install the zero-init home buffer at creation time so the
+ * EXCL home init: install the zero-init home buffer at creation time so the
  * home always holds the canonical backing store.  The first GRANT carries
  * this data (empty / zero at first) to the requester; the requester's first
- * RW release sends back the updated contents via LOCK_RELEASE publish. */
+ * RW release sends back the updated contents via EXCL_RELEASE publish. */
 void arts_db_create_install_home_buffer(struct arts_db_cache_s *cache,
                                         uint64_t db_size) {
   if (db_size > 0) {
@@ -462,7 +462,7 @@ void arts_db_create_install_home_buffer(struct arts_db_cache_s *cache,
  * Send MSG_DB_EXCL_REQUEST to the home rank.  Self-send (home == this rank)
  * dispatches through the OoO engine (HIT runs inline; MISS defers until the
  * home db_s is installed).  Remote send goes via the transport. */
-/* Materialize this rank's stable buffer (RWLOCK's fixed-address backing store)
+/* Materialize this rank's stable buffer (EXCL's fixed-address backing store)
  * and advertise it as the grant landing: the grant PUT installs IN PLACE,
  * preserving the address across the DB's whole lifetime.  A fresh txid is
  * drawn per request (each request is served by at most one grant). */
@@ -526,7 +526,7 @@ void arts_send_db_excl_request(struct arts_db_cache_s *cache,
   arts_transport_send_async((int)home_rank, (char *)&p, sizeof(p));
 }
 
-/* LOCK_CTS sender (home → first-touch requester) + requester-side body. */
+/* EXCL_CTS sender (home → first-touch requester) + requester-side body. */
 void arts_send_db_excl_cts(unsigned int requester_rank, arts_guid_t db_guid,
                            uint64_t db_size, uint32_t mode) {
   INCREMENT_NUM_EXCL_SIZE_CTS_BY(1);
@@ -723,7 +723,7 @@ static void lock_grant_commit(arts_shared_ptr_t db_h, arts_guid_t db_guid,
 }
 
 /* Rendezvous continuation: the grant bytes have fully landed IN PLACE in this
- * rank's stable buffer (RWLOCK's fixed-address install; no local holder exists
+ * rank's stable buffer (EXCL's fixed-address install; no local holder exists
  * while a grant is in flight — the global lock excluded us).  Nothing to
  * install; run the commit. */
 struct lock_grant_landed_ctx_s {
@@ -754,7 +754,7 @@ void arts_handler_db_excl_grant(void *payload, size_t size) {
   struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(db_h);
   if (db == NULL) {
     /* Destroyed mid-flight: still consume any pairing so the txid table stays
-     * leak-free (RWLOCK landings are in-place, cookie 0 — nothing to free). */
+     * leak-free (EXCL landings are in-place, cookie 0 — nothing to free). */
     arts_db_rdzv_discard_landing(p->rdzv_txid, p->rdzv_cookie);
     arts_shared_release(&db_h);
     return;
@@ -792,7 +792,7 @@ void arts_handler_db_excl_grant(void *payload, size_t size) {
 }
 
 /* ===== arts_send_db_excl_release ========================================
- * Send LOCK_RELEASE to the home.  RW carries publish data, version, and cv
+ * Send EXCL_RELEASE to the home.  RW carries publish data, version, and cv
  * (the releaser's stack-local sem_t address so home can echo it in the ACK);
  * RO carries none and passes version=0 / cv=0.
  * Self-send (home == this rank) routes through the OoO engine so reordering
@@ -870,7 +870,7 @@ void arts_send_db_excl_release(unsigned int home_rank, arts_guid_t db_guid,
  * CAS the next phase onto an already-IDLE word — no overwrite).
  *
  * RW → synchronous publish: ship buf->data with a stack-local sem_t cv
- *      token; home echoes it in LOCK_RELEASE_ACK and await_publish_ack
+ *      token; home echoes it in EXCL_RELEASE_ACK and await_publish_ack
  *      returns only after the post (no lost update across TCP; self-send posts
  *      inline and returns at once).
  * RO → data-less fire-and-forget notify. */

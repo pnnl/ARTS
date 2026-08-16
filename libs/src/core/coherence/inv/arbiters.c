@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * MSI pure state-transition arbiters: inv_cache_compute_next (reader plane)
+ * INV pure state-transition arbiters: inv_cache_compute_next (reader plane)
  * and inv_dir_compute_next (invalidation round).
  *
  * Two pure functions of one packed 64-bit word each, both run inside a
@@ -10,12 +10,12 @@
  * split-decision race (decide on one population, act on another) is
  * unrepresentable.
  *
- * Both are identical under either placement.  Neither knows about ownership:
+ * Both are identical under either write policy.  Neither knows about ownership:
  * write ownership is the migrating sentinel grant (coherence/grant.c), which
  * lives in plain counters rather than a packed word, so neither arbiter
  * carries rw state or a writer count.
  *
- * The placement TU #includes this file to get its private copy; the whitebox
+ * engine.c #includes this file to get its private copy; the whitebox
  * unit tests also #include it directly.  NOT listed in CMakeLists.txt as a
  * standalone TU.
  */

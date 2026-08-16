@@ -38,8 +38,8 @@
  ******************************************************************************/
 #include "arts/transport/dispatcher.h"
 
-#include <assert.h>    /* OWNER-placement INVALIDATE direct-call invariant assert */
-#include <semaphore.h> /* sem_post (LOCK_RELEASE_ACK inline wake) */
+#include <assert.h>    /* WB-write-policy INVALIDATE direct-call invariant assert */
+#include <semaphore.h> /* sem_post (EXCL_RELEASE_ACK inline wake) */
 #include <string.h> /* memcpy (PUBLISH inline-payload copy into OoO args) */
 #include <unistd.h>
 
@@ -198,26 +198,26 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     break;
   }
   /* ===== coherence wire-message dispatch =============
-   * Three handlers (GRANT / PUBLISH / DATA_RESPONSE) carry trailing
+   * Three handlers (GRANT / PUBLISH / SNAPSHOT_RESPONSE) carry trailing
    * payload right after sizeof(struct ...); pass that pointer + size as
    * the data/data_size arguments.
    *
-   * OWNERSHIP_REQUEST / RELEASE_OWNERSHIP: shared between the HOME and OWNER
-   * protocols (both use per-DB exclusive ownership), but WRF_RCU has
-   * no such concept.  Fatal in WRF_RCU builds to catch binary mode mismatch.
-   * INVALIDATE_NOTICE is handled in its own three-model block below (HOME =
-   * Cat-B defer; OWNER = direct, never deferred).
+   * GRANT_REQUEST: shared between the WT and WB write policies (both use
+   * the migrating grant), but WRF_VAL has no such concept.  Fatal in
+   * WRF_VAL builds to catch binary mode mismatch.
+   * GRANT_INVALIDATE is handled in its own three-model block below (WT =
+   * Cat-B defer; WB = direct, never deferred).
    */
 #if defined(ARTS_PROTOCOL_WRF_VAL) || defined(ARTS_PROTOCOL_EXCL)
   case MSG_DB_GRANT_REQUEST: {
-    ARTS_ERROR("WRF_RCU/RWLOCK build received exclusivity message type %d from rank "
+    ARTS_ERROR("WRF_VAL/EXCL build received exclusivity message type %d from rank "
                "%u — this protocol has no migrating grant; binary mode mismatch?",
                packet->message_type, packet->rank);
     break;
   }
-#else  /* RCU HOME and OWNER: full handlers */
+#else  /* VAL WT and WB: full handlers */
   case MSG_DB_GRANT_REQUEST: {
-    ARTS_DEBUG("Coh OWNERSHIP_REQUEST Received");
+    ARTS_DEBUG("Coh GRANT_REQUEST Received");
     struct arts_msg_grant_request_packet_s *pack =
         (struct arts_msg_grant_request_packet_s *)(packet);
     struct arts_ooo_args_db_grant_request_s args = {
@@ -233,26 +233,26 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     break;
   }
 #endif /* ARTS_PROTOCOL_WRF_VAL */
-  /* INVALIDATE_NOTICE — protocol-split.
-   *   HOME/OWNER: NOT deferred.  Home publishes the invalidate target
+  /* GRANT_INVALIDATE — protocol-split.
+   *   WT/WB: NOT deferred.  Home publishes the invalidate target
    *           (rw_holder) only after that rank's cache install — the CONFIRM
-   *           owner-swap (post-install in both placements) or the DB_CREATE on the
+   *           owner-swap (post-install in both write policies) or the DB_CREATE on the
    *           creator — so the target's cache is provably already installed
    * when INVALIDATE arrives.  Call the pure handler body directly with the
    *           looked-up cache.  (The before-install GRANT/INVALIDATE reorder
-   *           that once forced HOME through the OoO engine is gone: HOME no
+   *           that once forced WT through the OoO engine is gone: WT no
    *           longer flips rw_holder before install.)
-   *   WRF_RCU: no ownership transfer (caught by the fatal group above). */
+   *   WRF_VAL: no ownership transfer (caught by the fatal group above). */
 #if defined(ARTS_PROTOCOL_WRF_VAL) || defined(ARTS_PROTOCOL_EXCL)
   case MSG_DB_GRANT_INVALIDATE: {
-    ARTS_ERROR("WRF_RCU/RWLOCK build received INVALIDATE from rank %u — "
+    ARTS_ERROR("WRF_VAL/EXCL build received INVALIDATE from rank %u — "
                "this protocol has no migrating grant; binary mode mismatch?",
                packet->rank);
     break;
   }
-#else /* every grant-bearing arm (RCU, MSI) shares the direct-call body */
+#else /* every grant-bearing arm (VAL, INV) shares the direct-call body */
   case MSG_DB_GRANT_INVALIDATE: {
-    ARTS_DEBUG("Coh INVALIDATE_NOTICE Received");
+    ARTS_DEBUG("Coh GRANT_INVALIDATE Received");
     struct arts_msg_grant_invalidate_packet_s *pack =
         (struct arts_msg_grant_invalidate_packet_s *)(packet);
     struct arts_ooo_args_db_grant_invalidate_s args = {
@@ -283,14 +283,14 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
 #if defined(ARTS_PROTOCOL_EXCL) || defined(ARTS_PROTOCOL_INV)
   case MSG_DB_SNAPSHOT_REQUEST:
   case MSG_DB_SNAPSHOT_RESPONSE: {
-    ARTS_ERROR("RWLOCK build received snapshot message type %d from rank %u — "
-               "RWLOCK has no RO snapshot protocol; binary mode mismatch?",
+    ARTS_ERROR("EXCL/INV build received snapshot message type %d from rank %u — "
+               "this protocol has no RO snapshot round; binary mode mismatch?",
                packet->message_type, packet->rank);
     break;
   }
-#else  /* RCU/WRF_RCU: snapshot handlers */
+#else  /* VAL/WRF_VAL: snapshot handlers */
   case MSG_DB_SNAPSHOT_REQUEST: {
-    ARTS_DEBUG("Coh GET_DATA Received");
+    ARTS_DEBUG("Coh SNAPSHOT_REQUEST Received");
     struct arts_msg_snapshot_request_packet_s *pack =
         (struct arts_msg_snapshot_request_packet_s *)(packet);
     struct arts_ooo_args_db_snapshot_request_s args = {
@@ -308,7 +308,7 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     break;
   }
   case MSG_DB_SNAPSHOT_RESPONSE: {
-    ARTS_DEBUG("Coh DATA_RESPONSE Received");
+    ARTS_DEBUG("Coh SNAPSHOT_RESPONSE Received");
     struct arts_msg_snapshot_response_packet_s *pack =
         (struct arts_msg_snapshot_response_packet_s *)(packet);
     /* No inline payload rides the wire anymore (the snapshot payload travels
@@ -374,29 +374,30 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     arts_shared_release(&h);
     break;
   }
-  /* OWNERSHIP_RESPONSE: the single ownership-transfer wire message.  HOME =
-   * GRANT (buffer payload); OWNER = TRANSFER_OWNERSHIP (map + buffer); WRF_RCU
-   * has no ownership transfer and fatals to catch a binary mode mismatch. */
+  /* GRANT_RESPONSE: the single ownership-transfer wire message.  One
+   * converged layout carries the map (WT: map_entry_count=0) plus buffer;
+   * WRF_VAL has no ownership transfer and fatals to catch a binary mode
+   * mismatch. */
 #if defined(ARTS_PROTOCOL_WRF_VAL) || defined(ARTS_PROTOCOL_EXCL)
   case MSG_DB_GRANT_RESPONSE:
   case MSG_DB_GRANT_CTS: {
-    ARTS_ERROR("WRF_RCU/RWLOCK build received ownership-transfer message type %d "
+    ARTS_ERROR("WRF_VAL/EXCL build received ownership-transfer message type %d "
                "from rank %u — this protocol has no migrating grant; binary "
                "mode mismatch?",
                packet->message_type, packet->rank);
     break;
   }
-#else  /* RCU HOME and OWNER: one converged layout */
+#else  /* VAL WT and WB: one converged layout */
   case MSG_DB_GRANT_RESPONSE: {
-    ARTS_DEBUG("Coh OWNERSHIP_RESPONSE Received");
+    ARTS_DEBUG("Coh GRANT_RESPONSE Received");
     /* The (small) serialized map immediately follows the header; the buffer
      * payload travels one-sided and pairs by rdzv_txid inside the handler.
-     * Both placements share the OWNER-style layout (HOME: map_entry_count=0). */
+     * Both write policies share the WB-style layout (WT: map_entry_count=0). */
     arts_handler_db_grant_response((void *)packet, (size_t)packet->size);
     break;
   }
   case MSG_DB_GRANT_CTS: {
-    ARTS_DEBUG("Coh OWNERSHIP_CTS Received");
+    ARTS_DEBUG("Coh GRANT_CTS Received");
     struct arts_msg_grant_cts_packet_s *pack =
         (struct arts_msg_grant_cts_packet_s *)(packet);
     /* Cat-C lookup-acquire-or-drop: HIT learns db_size + re-issues the
@@ -411,8 +412,8 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     break;
   }
 #endif /* model dispatch for MSG_DB_GRANT_RESPONSE */
-  /* PUBLISH + PUBLISH_ACK: used by the HOME placement and WRF_RCU
-   * (sync release publish).  Fatal in the OWNER placement — OWNER uses
+  /* PUBLISH + PUBLISH_ACK: used by the WT write policy and WRF_VAL
+   * (sync release publish).  Fatal in the WB write policy — WB uses
    * async transfer, not synchronous publish. */
 /* The CTS leg exists only when a publish carries payload — i.e. under WT
  * (and EXCL's purge policy).  INV's WB publish is control-only, so it never
@@ -420,13 +421,13 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
 #if (defined(ARTS_PROTOCOL_EXCL) && defined(ARTS_RELEASE_RETAIN)) ||          \
     (!defined(ARTS_PROTOCOL_EXCL) && defined(ARTS_WRITE_POLICY_WB))
   case MSG_DB_PUBLISH_CTS: {
-    ARTS_ERROR("OWNER-placement build received PUBLISH_CTS from rank %u — no "
+    ARTS_ERROR("WB-write-policy build received PUBLISH_CTS from rank %u — no "
                "synchronous publish exists; binary mode mismatch?",
                packet->rank);
     break;
   }
 #else
-  /* PUBLISH_CTS is valid under EVERY non-OWNER placement: the ownership
+  /* PUBLISH_CTS is valid under EVERY non-WB write policy: the ownership
    * protocols' and the lossy multi-writer protocol's dirty-publish
    * announce leg, and the exclusive-lock protocol's landing-less RW release
    * (a creator-seeded hold that never received a grant). */
@@ -450,9 +451,9 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     break;
   }
 #endif /* PUBLISH_CTS placement dispatch */
-/* Every arm that publishes at a release: HOME placements (payload write-through)
- * and MSI under either placement (its release always asks the home for an
- * invalidation round, carrying payload only under HOME). */
+/* Every arm that publishes at a release: WT write policies (payload write-through)
+ * and INV under either write policy (its release always asks the home for an
+ * invalidation round, carrying payload only under WT). */
 #if defined(ARTS_PROTOCOL_EXCL) ||                                           \
     (defined(ARTS_WRITE_POLICY_WB) && !defined(ARTS_PROTOCOL_INV))
   case MSG_DB_PUBLISH:
@@ -554,16 +555,16 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
                                     sizeof(args));
     break;
   }
-  /* The versioned-snapshot redirect: RCU's read path under OWNER, where the home
- * holds no bytes and forwards the read to the owner.  MSI has its own reader
- * plane (MSI_REDIRECT) and RWLOCK its own FORWARD, so both are excluded. */
+  /* The versioned-snapshot redirect: VAL's read path under WB, where the home
+ * holds no bytes and forwards the read to the owner.  INV has its own reader
+ * plane (INV_REDIRECT) and EXCL its own FORWARD, so both are excluded. */
 #if defined(ARTS_WRITE_POLICY_WB) && !defined(ARTS_PROTOCOL_EXCL) &&         \
     !defined(ARTS_PROTOCOL_INV)
   case MSG_DB_SNAPSHOT_REDIRECT: {
-    ARTS_DEBUG("Lazy REDIRECT_RO Received");
+    ARTS_DEBUG("Coh SNAPSHOT_REDIRECT Received");
     struct arts_msg_snapshot_redirect_packet_s *pack =
         (struct arts_msg_snapshot_redirect_packet_s *)(packet);
-    /* Cat-C lookup-acquire-or-{DESTROY_NOTIFY}: HIT serves DATA_RESPONSE from
+    /* Cat-C lookup-acquire-or-{DESTROY_NOTIFY}: HIT serves SNAPSHOT_RESPONSE from
      * the ref-pinned owner-side db_s; MISS (DB destroyed / not yet installed on
      * this rank) sends DESTROY_NOTIFY to the requester so its parked RO waiter
      * wakes and observes DB_DESTROYED rather than hanging. */
@@ -594,15 +595,15 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
                packet->rank);
     break;
   }
-#endif /* RCU + OWNER snapshot redirect */
+#endif /* VAL + WB snapshot redirect */
 
-/* CONFIRM_ACK is the OWNER placement's confirm gate: a new owner may not run
+/* CONFIRM_ACK is the WB write policy's confirm gate: a new owner may not run
  * until the home has published the directory flip.  Every grant-bearing arm
- * needs it under OWNER — the gate belongs to the placement, not the protocol. */
+ * needs it under WB — the gate belongs to the write policy, not the protocol. */
 #if defined(ARTS_WRITE_POLICY_WB) && !defined(ARTS_PROTOCOL_EXCL) &&         \
     !defined(ARTS_PROTOCOL_WRF_VAL)
   case MSG_DB_GRANT_CONFIRM_ACK: {
-    ARTS_DEBUG("Lazy CONFIRM_ACK Received");
+    ARTS_DEBUG("Coh GRANT_CONFIRM_ACK Received");
     struct arts_msg_grant_confirm_ack_packet_s *pack =
         (struct arts_msg_grant_confirm_ack_packet_s *)(packet);
     /* Cat-C lookup-acquire-or-drop: HIT runs the confirm_ack body on the
@@ -618,30 +619,30 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
   }
 #else
   case MSG_DB_GRANT_CONFIRM_ACK: {
-    ARTS_ERROR("this build received OWNERSHIP_CONFIRM_ACK from rank %u — it "
-               "has no OWNER-placement confirm gate; binary mode mismatch?",
+    ARTS_ERROR("this build received GRANT_CONFIRM_ACK from rank %u — it "
+               "has no WB-write-policy confirm gate; binary mode mismatch?",
                packet->rank);
     break;
   }
-#endif /* OWNER-placement confirm gate */
-  /* OWNERSHIP_CONFIRM: both placements (new owner C → home A flips rw_holder +
-   * advances the round).  OWNER additionally replies with CONFIRM_ACK; HOME's
+#endif /* WB-write-policy confirm gate */
+  /* GRANT_CONFIRM: both write policies (new owner C → home A flips rw_holder +
+   * advances the round).  WB additionally replies with CONFIRM_ACK; WT's
    * home handler does not (the new owner already drained at
-   * OWNERSHIP_RESPONSE). WRF_RCU has no ownership transfer and fatals. */
+   * GRANT_RESPONSE). WRF_VAL has no ownership transfer and fatals. */
 #if defined(ARTS_PROTOCOL_WRF_VAL) || defined(ARTS_PROTOCOL_EXCL)
   case MSG_DB_GRANT_CONFIRM: {
-    ARTS_ERROR("WRF_RCU/RWLOCK build received OWNERSHIP_CONFIRM from rank %u — "
+    ARTS_ERROR("WRF_VAL/EXCL build received GRANT_CONFIRM from rank %u — "
                "this protocol has no migrating grant; binary mode mismatch?",
                packet->rank);
     break;
   }
-#else /* RCU */
+#else /* VAL */
   case MSG_DB_GRANT_CONFIRM: {
-    ARTS_DEBUG("Coh CONFIRM Received");
+    ARTS_DEBUG("Coh GRANT_CONFIRM Received");
     struct arts_msg_grant_confirm_packet_s *pack =
         (struct arts_msg_grant_confirm_packet_s *)(packet);
     /* Cat-C lookup-acquire-or-drop: HIT advances the transfer round on the
-     * ref-pinned home db_s; MISS (DB destroyed) silently drops.  HOME's
+     * ref-pinned home db_s; MISS (DB destroyed) silently drops.  WT's
      * handler reads pending_install_owner and ignores args, so pass NULL. */
     arts_shared_ptr_t h = arts_route_table_lookup_db(pack->db_guid);
     struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(h);
@@ -659,16 +660,16 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     arts_shared_release(&h);
     break;
   }
-#endif /* OWNERSHIP_CONFIRM model dispatch */
-  /* RWLOCK has its own REQUEST wire (both placements) and placement-specific grant/
-   * release messages.  The legacy coherence cases are excluded from RWLOCK builds
+#endif /* GRANT_CONFIRM model dispatch */
+  /* EXCL has its own REQUEST wire (both release policies) and policy-specific grant/
+   * release messages.  The legacy coherence cases are excluded from EXCL builds
    * (each is already guarded above). */
 #ifdef ARTS_PROTOCOL_EXCL
-  /* MSG_DB_EXCL_REQUEST is shared: both HOME and OWNER home-dispatch vian OoO
+  /* MSG_DB_EXCL_REQUEST is shared: both PURGE and RETAIN home-dispatch vian OoO
    * (a REQUEST can arrive before the home db_s is installed on a remote-create
    * stub-install path). */
   case MSG_DB_EXCL_REQUEST: {
-    ARTS_DEBUG("Coh LOCK_REQUEST Received");
+    ARTS_DEBUG("Coh EXCL_REQUEST Received");
     struct arts_msg_excl_request_packet_s *pack =
         (struct arts_msg_excl_request_packet_s *)(packet);
     struct arts_ooo_args_db_excl_request_s args = {
@@ -685,7 +686,7 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     break;
   }
   case MSG_DB_EXCL_CTS: {
-    ARTS_DEBUG("Coh LOCK_CTS Received");
+    ARTS_DEBUG("Coh EXCL_CTS Received");
     struct arts_msg_excl_cts_packet_s *pack =
         (struct arts_msg_excl_cts_packet_s *)(packet);
     /* Cat-C lookup-acquire-or-drop: HIT learns db_size + re-issues the
@@ -699,9 +700,9 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     break;
   }
 #ifdef ARTS_RELEASE_PURGE
-  /* HOME-only: synchronous grant/release/release-ack round-trip. */
+  /* PURGE-only: synchronous grant/release/release-ack round-trip. */
   case MSG_DB_EXCL_GRANT: {
-    ARTS_DEBUG("Coh LOCK_GRANT Received");
+    ARTS_DEBUG("Coh EXCL_GRANT Received");
     /* Cat-C: the grant receiver always sent its own REQUEST first, so its cache
      * exists.  Payload (data) follows the header in the contiguous buffer; the
      * handler parses it from the full packet. */
@@ -709,7 +710,7 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     break;
   }
   case MSG_DB_EXCL_RELEASE: {
-    ARTS_DEBUG("Coh LOCK_RELEASE Received");
+    ARTS_DEBUG("Coh EXCL_RELEASE Received");
     struct arts_msg_excl_release_packet_s *pack =
         (struct arts_msg_excl_release_packet_s *)(packet);
     /* Control-only: a dirty RW release PUT its bytes into the grant's home
@@ -725,7 +726,7 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
         .rdzv_cookie = pack->rdzv_cookie,
         .data_inline = 0,
     };
-    /* A home slot can be absent for two distinct reasons, and a LOCK_RELEASE
+    /* A home slot can be absent for two distinct reasons, and an EXCL_RELEASE
      * must treat them oppositely:
      *   - post-destroy (gen > 0): a concurrent (legal) destroy detached the slot
      *     while this holder still owed its release.  The DB is gone, so there is
@@ -763,7 +764,7 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     break;
   }
   case MSG_DB_EXCL_RELEASE_ACK: {
-    ARTS_DEBUG("Coh LOCK_RELEASE_ACK Received");
+    ARTS_DEBUG("Coh EXCL_RELEASE_ACK Received");
     struct arts_msg_excl_release_ack_packet_s *pack =
         (struct arts_msg_excl_release_ack_packet_s *)(packet);
     /* Cat-C SPECIAL — pointer-identity sem_post on cv directly.  The wake
@@ -779,40 +780,40 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
   }
 #endif /* ARTS_RELEASE_PURGE */
 #ifdef ARTS_RELEASE_RETAIN
-  /* OWNER-only: async migration/serve protocol.
+  /* RETAIN-only: async migration/serve protocol.
    * All four are Cat-C (direct): their target is always installed by the time
    * the message arrives — FORWARD/DELIVER targets a cache built at acquire;
    * CONFIRM/RORET reach home only after home sent FORWARD, so home db_s exists.
    */
   case MSG_DB_EXCL_FORWARD: {
-    ARTS_DEBUG("Coh LOCK_FORWARD Received");
+    ARTS_DEBUG("Coh EXCL_FORWARD Received");
     arts_handler_db_excl_forward((void *)packet);
     break;
   }
   case MSG_DB_EXCL_DELIVER: {
-    ARTS_DEBUG("Coh LOCK_DELIVER Received");
+    ARTS_DEBUG("Coh EXCL_DELIVER Received");
     arts_handler_db_excl_deliver((void *)packet, (size_t)packet->size);
     break;
   }
   case MSG_DB_EXCL_CONFIRM: {
-    ARTS_DEBUG("Coh LOCK_CONFIRM Received");
+    ARTS_DEBUG("Coh EXCL_CONFIRM Received");
     arts_handler_db_excl_confirm((void *)packet);
     break;
   }
   case MSG_DB_EXCL_RORET: {
-    ARTS_DEBUG("Coh LOCK_RORET Received");
+    ARTS_DEBUG("Coh EXCL_RORET Received");
     arts_handler_db_excl_roret((void *)packet);
     break;
   }
 #endif /* ARTS_RELEASE_RETAIN */
 #endif /* ARTS_PROTOCOL_EXCL */
 #ifdef ARTS_PROTOCOL_INV
-  /* MSI wire arm.  REQUEST is Cat-B (a message can reach home before the home
+  /* INV wire arm.  REQUEST is Cat-B (a message can reach home before the home
    * db_s installs on a remote-create stub-install path); the rest are Cat-C
    * with per-message MISS actions that must never strand a round, a blocked
    * releaser, or a parked requester. */
   case MSG_DB_INV_REQUEST: {
-    ARTS_DEBUG("Coh MSI_REQUEST Received");
+    ARTS_DEBUG("Coh INV_REQUEST Received");
     struct arts_msg_inv_request_packet_s *pack =
         (struct arts_msg_inv_request_packet_s *)(packet);
     struct arts_ooo_args_db_inv_request_s args = {
@@ -835,7 +836,7 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     break;
   }
   case MSG_DB_INV_CTS: {
-    ARTS_DEBUG("Coh MSI_CTS Received");
+    ARTS_DEBUG("Coh INV_CTS Received");
     struct arts_msg_inv_cts_packet_s *pack =
         (struct arts_msg_inv_cts_packet_s *)(packet);
     /* Cat-C lookup-acquire-or-drop: HIT learns db_size + re-issues the
@@ -849,14 +850,14 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     break;
   }
   case MSG_DB_INV_DELIVER: {
-    ARTS_DEBUG("Coh MSI_DELIVER Received");
+    ARTS_DEBUG("Coh INV_DELIVER Received");
     /* Cat-C: the receiver sent its own REQUEST first, so its cache exists;
      * a destroyed cache discards the landing inside the handler. */
     arts_handler_db_inv_deliver((void *)packet, (size_t)packet->size);
     break;
   }
   case MSG_DB_INV_INVALIDATE: {
-    ARTS_DEBUG("Coh MSI_INVALIDATE Received");
+    ARTS_DEBUG("Coh INV_INVALIDATE Received");
     struct arts_msg_inv_invalidate_packet_s *pack =
         (struct arts_msg_inv_invalidate_packet_s *)(packet);
     /* Cat-C; MISS (cache already destroyed) MUST still ack — the round's
@@ -873,7 +874,7 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     break;
   }
   case MSG_DB_INV_INVALIDATE_ACK: {
-    ARTS_DEBUG("Coh MSI_INVALIDATE_ACK Received");
+    ARTS_DEBUG("Coh INV_INVALIDATE_ACK Received");
     struct arts_msg_inv_invalidate_ack_packet_s *pack =
         (struct arts_msg_inv_invalidate_ack_packet_s *)(packet);
     /* Cat-C at home; a MISS means the DB was destroyed with a round open —
@@ -891,7 +892,7 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
    * to the rank the directory names.  Cat-B: the forward can outrun the
    * holder's own DB_CREATE on a remote-create path. */
   case MSG_DB_INV_REDIRECT: {
-    ARTS_DEBUG("Coh MSI_REDIRECT Received");
+    ARTS_DEBUG("Coh INV_REDIRECT Received");
     struct arts_msg_inv_redirect_packet_s *pack =
         (struct arts_msg_inv_redirect_packet_s *)(packet);
     struct arts_ooo_args_db_inv_redirect_s args = {

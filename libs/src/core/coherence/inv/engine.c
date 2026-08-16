@@ -1,24 +1,24 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * The MSI engine — everything both placements run identically.
+ * The INV engine — everything both write policies run identically.
  *
  * The reader plane (waiter pool, chain serve, fetch install) and the
  * invalidation round (claim, roster snapshot, multicast, ack accounting,
  * close) live here, along with the cache lifecycle and the wire senders.  What
- * is left to the placement TUs is exactly three decisions, because those are
+ * is left to the write-policy TUs is exactly three decisions, because those are
  * the only three that "where do the canonical bytes live" actually changes:
  *
- *   - an RO acquire: served locally (HOME, at the home rank) or redirected to
- *     the current grant holder (OWNER);
- *   - a release: publishes the payload to the home (HOME) or publishes control
- *     only (OWNER) — the round itself is identical either way;
- *   - a read request at the home: answered from the home's buffer (HOME) or
- *     forwarded to the holder (OWNER).
+ *   - an RO acquire: served locally (WT, at the home rank) or redirected to
+ *     the current grant holder (WB);
+ *   - a release: publishes the payload to the home (WT) or publishes control
+ *     only (WB) — the round itself is identical either way;
+ *   - a read request at the home: answered from the home's buffer (WT) or
+ *     forwarded to the holder (WB).
  *
  * Write ownership is not here at all: it is the migrating sentinel grant
- * (coherence/grant.c plus its placement half), shared with RCU.
+ * (coherence/grant.c plus its write-policy half), shared with VAL.
  *
- * Compiled only for ARTS_COHERENCE_PROTOCOL=MSI.
+ * Compiled only for ARTS_COHERENCE_PROTOCOL=INV.
  */
 #include "arts/coherence/inv/types.h"
 
@@ -220,7 +220,7 @@ void arts_db_cache_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
   c->grant_unconfirmed = 0u;
   c->incoming_new_owner = ARTS_NO_PENDING_OWNER;
   c->incoming_new_owner_rdzv = (struct arts_rdzv_landing_s){0, 0, 0, 0};
-  /* MSI's sharer plane carries no version ledger by construction; NULL selects
+  /* INV's sharer plane carries no version ledger by construction; NULL selects
    * the shared transfer helper's empty-map branch. */
   c->cached_version = NULL;
   arts_db_cache_common_init(c, db_guid, db_size, kind, creator_rank);
@@ -314,7 +314,7 @@ void arts_handler_db_destroy(void *item_v, void *args_v) {
 }
 
 /* ===== the invalidation round ===========================================
- * MSI's whole identity, and the only thing this arm adds to the shared grant.
+ * INV's whole identity, and the only thing this arm adds to the shared grant.
  *
  * A release does not return until every copy of the data block it just wrote
  * is dead.  The home serializes that with one claim bit: claim -> drain the
@@ -397,9 +397,9 @@ void inv_home_round_try_open(struct arts_db_s *db) {
        * can be in a batch — payload publishes are globally serialized (one
        * flight per rank, the releaser blocks on this round's ACK, and the
        * write right migrates only after) — which the stamp's monotonicity
-       * check enforces loudly.  Under OWNER placement no entry carries data
+       * check enforces loudly.  Under WB no entry carries data
        * and the round is pure control, which is the only difference between
-       * the two placements' releases. */
+       * the two write policies' releases. */
       uint64_t maxv = 0;
       for (struct arts_db_inv_pub_s *e = entries; e != NULL;
            e = (struct arts_db_inv_pub_s *)(uintptr_t)atomic_load_explicit(
@@ -408,7 +408,7 @@ void inv_home_round_try_open(struct arts_db_s *db) {
           maxv = e->vnew;
         }
         if (e->rdzv.addr == 0) {
-          continue; /* data-less entry (same-rank release / OWNER placement) */
+          continue; /* data-less entry (same-rank release / WB) */
         }
         arts_db_buf_bump_inplace(cache, e->vnew);
         e->rdzv.addr = 0; /* consumed */
@@ -439,7 +439,7 @@ void inv_home_round_try_open(struct arts_db_s *db) {
       /* Roster snapshot (per-word XCHG) with the grant holder excluded — it is
        * the writer, its copy is the newest by definition.  The home rank is
        * excluded ONLY where the home's own buffer is the canonical copy: under
-       * HOME it is, and this round just installed into it; under OWNER the home
+       * WT it is, and this round just installed into it; under WB the home
        * holds no canonical bytes, so a reader copy that happens to live on the
        * home rank is as stale as any other and must be invalidated like one.
        * Arm the count BEFORE the multicast. */
@@ -448,7 +448,7 @@ void inv_home_round_try_open(struct arts_db_s *db) {
        * The justification for skipping a rank is "its copy is the newest by
        * definition", and that is true of a releaser; `rw_holder` may still
        * name the previous generation, because the home flips it only at the
-       * CONFIRM, well after the new owner has installed and (under HOME, which
+       * CONFIRM, well after the new owner has installed and (under WT, which
        * has no confirm gate) already run and released.  Excluding by
        * `rw_holder` therefore skipped exactly the ex-holder that this round
        * exists to retire. */
@@ -815,7 +815,7 @@ void arts_send_db_inv_invalidate(unsigned int sharer_rank,
                                  arts_guid_t db_guid) {
   INCREMENT_NUM_INVALIDATE_SENT_BY(1);
   if (sharer_rank == arts_global_rank_id) {
-    /* Local hit: run the retirement inline.  Reachable under OWNER, where the
+    /* Local hit: run the retirement inline.  Reachable under WB, where the
      * home holds no canonical copy and is therefore an ordinary sharer — its
      * own copy has to be retired like everyone else's.  A MISS still owes the
      * round its ack, which the handler body sends. */
@@ -865,11 +865,11 @@ void arts_send_db_inv_request(struct arts_db_cache_s *cache,
    * ownership transfer are in flight together (each PUT lands in its own
    * buffer, installed or recycled at commit).  Sized by the exact size when
    * known, else the GUID's szhint bound; txid==0 survives only as the
-   * sentinel fallback (the home answers MSI_CTS and the fetch re-issues).
+   * sentinel fallback (the home answers INV_CTS and the fetch re-issues).
    *
    * Being the home rank does NOT excuse a requester from advertising one.
-   * Under HOME the home answers from its own canonical buffer and the landing
-   * simply goes unused; under OWNER the home holds no bytes at all, so its own
+   * Under WT the home answers from its own canonical buffer and the landing
+   * simply goes unused; under WB the home holds no bytes at all, so its own
    * reads are served by a remote holder and need somewhere to land.  Skipping
    * the allocation there silently produced a data-less reply, leaving the
    * reader on whatever stale copy it already had. */
@@ -972,9 +972,9 @@ void arts_send_db_inv_deliver(unsigned int requester_rank,
 /* The ex-holder keeps the bytes it wrote, so from the flip onward it is a
  * sharer: the new owner's first release must invalidate it like any other.
  *
- * Under HOME the home rank is exempt — its buffer IS the canonical copy, kept
+ * Under WT the home rank is exempt — its buffer IS the canonical copy, kept
  * current by every release's publish, so it is never stale and never a target.
- * Under OWNER nothing is exempt: the home holds no canonical bytes, so a copy
+ * Under WB nothing is exempt: the home holds no canonical bytes, so a copy
  * that happens to sit on the home rank goes stale exactly like any other and
  * must be registered. */
 void arts_db_grant_note_ex_holder(struct arts_db_s *db, unsigned int rank) {

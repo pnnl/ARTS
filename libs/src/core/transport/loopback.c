@@ -150,8 +150,8 @@ void arts_loopback_cleanup(void) {
 /* ===== Outbound census + guards =========================================== */
 
 /* Outbound message size census: one switch-free arithmetic bucket on the total
- * wire size (header + payload), taken at the async send entry points — the
- * population distribution a future eager/rendezvous threshold decision needs. */
+ * wire size (header + payload), taken at the async send entry points.  A
+ * diagnostic distribution only — no transport decision branches on size. */
 static inline void arts_net_msg_census(uint64_t total_size) {
   if (total_size <= 64) {
     INCREMENT_NET_MSG_LE64_BY(1);

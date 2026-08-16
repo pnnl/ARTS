@@ -525,10 +525,6 @@ void arts_socket_cleanup() {
   arts_free(local_socket_receive);
 }
 
-unsigned int arts_transport_get_my_rank() {
-  return arts_global_message_table->my_rank;
-}
-
 static inline bool arts_transport_connect(int rank, unsigned int port) {
 
   if (!remote_connection_alive[(rank * ports) + port]) {

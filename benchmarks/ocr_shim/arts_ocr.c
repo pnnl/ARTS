@@ -145,8 +145,8 @@ ocr_copy_paramv_safe(uint64_t *dst, const u64 *src, u32 paramc) {
  *              children's down-edges and delivers it to the locally-
  *              registered dependent for that generation.
  *
- * Re-arm: hpcg reuses the SAME labeled redEvtGuid across every CG phase of
- * every timestep, so the event must support an unbounded number of
+ * Re-arm: a client reusing one labeled event GUID across the phases of an
+ * iterative reduction, so the event must support an unbounded number of
  * generations.  Each contributor maintains a node-local generation counter
  * (its k-th satisfy == generation k); because every contributor takes part
  * in every reduction exactly once, the same generation number denotes the

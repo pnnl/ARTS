@@ -44,7 +44,6 @@ extern "C" {
 #include "arts/defs.h"
 #include "arts/utils/lockfree_lifo.h"  /* arts_lf_stack_t / arts_lf_link_t */
 #include "arts/utils/lockfree_pool.h"  /* arts_lockfree_pool_t (buf_freelist) */
-#include "arts/utils/lockfree_stack.h" /* arts_lockfree_stack_t */
 #include "arts/utils/mpsc.h"           /* arts_mpsc_t */
 #include "arts/utils/shared.h"         /* arts_shared_ptr_t (buffer cb) */
 #include <stdbool.h>

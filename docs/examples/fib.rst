@@ -107,7 +107,7 @@ Running
 .. code-block:: bash
 
    cd build/examples/cpu
-   cp ../../sample_configs/arts.cfg .
+   cp ../../configs/local/test/1n.cfg ./arts.cfg
    ./fib 30
 
 Multi-node:

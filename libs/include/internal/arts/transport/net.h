@@ -121,9 +121,9 @@ void arts_loopback_cleanup(void);
  * (MSG_MAX) must not exceed that headroom — the three-way invariant
  *     ARTS_NET_MSG_MAX <= ARTS_NET_MIN_MULTI_RECV <= ARTS_NET_RECV_BUF_SIZE
  * guarantees every accepted message lands whole.  This ceiling bounds ONLY
- * control traffic: bulk payloads travel one-sided (arts_net_put_payload /
- * the push rendezvous), which it does not bound — senders holding a payload
- * whose wire total would exceed MSG_MAX must take the rendezvous path. */
+ * control traffic: bulk DB payloads travel one-sided (arts_net_put_payload)
+ * at EVERY size, never through this control path, so MSG_MAX never applies
+ * to payload. */
 #define ARTS_NET_RECV_BUF_SIZE ((size_t)4 * 1024 * 1024)
 #define ARTS_NET_MIN_MULTI_RECV (ARTS_NET_RECV_BUF_SIZE / 2)
 #define ARTS_NET_MSG_MAX ARTS_NET_MIN_MULTI_RECV

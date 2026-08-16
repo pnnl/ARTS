@@ -1,17 +1,18 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * MSI protocol, OWNER placement.
+ * INV protocol, WB write policy.
  *
- * OWNER means the canonical payload stays with whoever wrote it last and moves
+ * WB means the canonical payload stays with whoever wrote it last and moves
  * only on demand, so the home holds no bytes at all.  That single fact is this
  * file: an RO acquire never reads a local home buffer, a release publishes
  * control only (the round still runs — the invalidation IS what makes this
- * MSI), and a read request at the home is redirected to the current grant
+ * INV), and a read request at the home is redirected to the current grant
  * holder, which serves the requester directly.
  *
- * Everything else — the reader plane, the invalidation round, the cache and
- * directory lifecycles, the senders — is in msi/directory.c, and write
- * ownership is the shared migrating grant (coherence/grant.c).
+ * Everything else — the reader plane, the invalidation round, the cache
+ * lifecycle, the senders — is in engine.c; the home request FIFO and
+ * directory lifecycle are in directory.c.  Write ownership is the shared
+ * migrating grant (coherence/grant.c).
  *
  * The redirect is a retry, never a park: a rank that no longer holds the bytes
  * bounces the request back through the home, and each pass re-resolves against
@@ -77,7 +78,7 @@ void arts_handler_db_acquire(void *item, void *args) {
      * previous owner, and a reader registered in that window is redirected to
      * that rank's retained (now stale) copy.  The CONFIRM_ACK opens the gate
      * and drains whatever parked behind it. */
-    /* KNOWN NARROW WINDOW (Dekker inventory, 2026-08-15): reading the gate
+    /* KNOWN NARROW WINDOW: reading the gate
      * before the count admits {pre-install gate 0, post-install count} — an
      * RW that runs before the directory flip.  The count-first variant was
      * attempted and reverted: a transient bump inside the unconfirmed
@@ -154,10 +155,10 @@ void arts_handler_db_acquire(void *item, void *args) {
   }
 }
 
-/* ===== release_rw (OWNER placement) =====================================
- * The HOME arm with one argument changed: the payload does not travel to the
+/* ===== release_rw (WB write policy) =====================================
+ * The WT arm with one argument changed: the payload does not travel to the
  * home, because the home never serves it.  The round still runs — that is what
- * makes this MSI and not RCU — so the release still returns only once every
+ * makes this INV and not VAL — so the release still returns only once every
  * stale copy is dead, and the count is still dropped only after the round
  * acks, which is what orders any ownership transfer behind it.
  */
@@ -213,7 +214,7 @@ void arts_handler_db_inv_request(void *item_v, void *args_v) {
   }
   if (a->mode != DB_MODE_RO) {
     /* There is no write branch: RW acquires go through the shared grant's
-     * OWNERSHIP_REQUEST.  This handler serves readers only. */
+     * GRANT_REQUEST.  This handler serves readers only. */
     return;
   }
   /* Roster bit BEFORE the serve/redirect departs. */

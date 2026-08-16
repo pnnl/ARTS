@@ -8,12 +8,12 @@
  *
  * Lookup discipline.  Two handler categories, both lookup-then-operate but
  * differing on the MISS action:
- *   - Cat-B (deferrable home-side: OWNERSHIP_REQUEST / GET_DATA / PUBLISH /
+ *   - Cat-B (deferrable home-side: GRANT_REQUEST / SNAPSHOT_REQUEST / PUBLISH /
  * DESTROY): the wire dispatcher routes through the OoO engine, which acquires
  * the home db_s (ref-pinned) and hands a pure (item, args) body the live cache
  *     on a HIT, or DEFERS the args and replays them once DB_CREATE installs.
- *   - Cat-C (non-deferrable: DATA_RESPONSE / DESTROY_NOTIFY / PUBLISH_ACK /
- *     RELEASE_OWNERSHIP / REDIRECT_RO / CONFIRM / CONFIRM_ACK): the wire
+ *   - Cat-C (non-deferrable: SNAPSHOT_RESPONSE / DESTROY_NOTIFY / PUBLISH_ACK /
+ *     SNAPSHOT_REDIRECT / CONFIRM / CONFIRM_ACK): the wire
  * dispatcher (and the matching self-send shortcut) does the ref-pinned
  *     lookup-acquire; on a HIT it calls the pure (item, args) body, and on a
  *     MISS it applies that handler's exact miss-action (silent drop,
@@ -57,24 +57,24 @@
 
 /* ===== Home-side handlers ========================================== */
 
-/* arts_handler_db_grant_request lives in coherence/grant.c (RCU
- * only — WRF_RCU has no OWNERSHIP_REQUEST / GRANT round). */
+/* arts_handler_db_grant_request lives in coherence/grant.c (VAL
+ * only — WRF_VAL has no GRANT_REQUEST / GRANT round). */
 
-/* arts_handler_db_snapshot_request (GET_DATA) is protocol-specific —
- * HOME/WRF_RCU serve from home's canonical buffer (dedup), OWNER records the
+/* arts_handler_db_snapshot_request (SNAPSHOT_REQUEST) is protocol-specific —
+ * WT/WRF_VAL serve from home's canonical buffer (dedup), WB records the
  * sharer + REDIRECTs to the owner — so its whole body lives in
- * each arm's own placement TU. */
+ * each arm's own write-policy TU. */
 
-/* arts_handler_db_publish (+_ack) is protocol-specific — HOME/WRF_RCU install
- * + ACK (pure: ownership transfer is a separate owner→owner OWNERSHIP_RESPONSE
- * ship), OWNER has no synchronous publish (no-op fillers preserve the
+/* arts_handler_db_publish (+_ack) is protocol-specific — WT/WRF_VAL install
+ * + ACK (pure: ownership transfer is a separate owner→owner GRANT_RESPONSE
+ * ship), WB has no synchronous publish (no-op fillers preserve the
  * OoO-table / link parity) — so their whole bodies live in
- * each arm's own placement TU. */
+ * each arm's own write-policy TU. */
 
 /* arts_handler_db_destroy is protocol-specific — the roster fan-out source
- * differs (HOME/WRF_RCU walk home->cached_version; OWNER walks rw_holder +
+ * differs (WT/WRF_VAL walk home->cached_version; WB walks rw_holder +
  * cached_ranks + pending_rw) — so its whole body lives in
- * each arm's own placement TU.  All three skeletons run the roster fan-out,
+ * each arm's own write-policy TU.  All three skeletons run the roster fan-out,
  * then arts_route_table_set_destroyed; any waiter left parked at destroy time
  * (UB per OCR) is cleaned up by the refcount-0 cache destructor. */
 
@@ -86,7 +86,7 @@
  * Mirrors the local-create path: under a single-writer lock the unreleased hold
  * deadlocks every future writer; the ownership protocols collapse the seed to
  * the sentinel (writer_count = 1).  Idempotent and safe to call on every create
- * path (fresh install and OWNER-stub coalesce). */
+ * path (fresh install and WB-stub coalesce). */
 static inline void db_create_no_acquire_idle(struct arts_db_s *db,
                                              bool no_acquire) {
   if (!no_acquire) {
@@ -94,7 +94,7 @@ static inline void db_create_no_acquire_idle(struct arts_db_s *db,
   }
 #if defined(ARTS_PROTOCOL_EXCL)
 #if defined(ARTS_RELEASE_RETAIN)
-  /* OWNER: data lives with the owner, not the home.  With no creator hold there
+  /* RETAIN: data lives with the owner, not the home.  With no creator hold there
    * is no owner unless we make one — so the home rank (this rank; the create
    * handler runs only on the GUID home, see the assert in
    * arts_handler_db_create) becomes the IDLE data owner: it holds the zero-init
@@ -110,8 +110,8 @@ static inline void db_create_no_acquire_idle(struct arts_db_s *db,
                         LOCK_MAKE(LOCK_PHASE_IDLE, arts_global_rank_id, 0u, 0u),
                         memory_order_relaxed);
 #else  /* ARTS_RELEASE_PURGE */
-  /* HOME: the home holds the canonical buffer and grants from it; the creator
-   * is a non-owner.  Idle both words (the first LOCK_REQUEST is granted, not
+  /* PURGE: the home holds the canonical buffer and grants from it; the creator
+   * is a non-owner.  Idle both words (the first EXCL_REQUEST is granted, not
    * blocked behind the unreleased creator hold). */
   atomic_store_explicit(&db->cache.cache_state, 0ULL, memory_order_relaxed);
   atomic_store_explicit(&db->lock_state, 0ULL, memory_order_relaxed);
@@ -196,8 +196,8 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
    * buffer here.  cache->buffer stays NULL with version 0 -- "metadata
    * only" state.  The first PUBLISH from the creator's release_rw
    * installs the buffer at home (version 1+, with the creator's
-   * payload).  Cross-rank GET_DATA before that point is served as a
-   * no-payload DATA_RESPONSE (handle_get_data); the requesting rank
+   * payload).  Cross-rank SNAPSHOT_REQUEST before that point is served as a
+   * no-payload SNAPSHOT_RESPONSE (arts_handler_db_snapshot_request); the requesting rank
    * sees ptr=NULL (per OCR spec ch2:832-839 "value of the created data
    * block is undefined" -- ARTS interprets this as "before any writer
    * has published, no data exists; reading is application's
@@ -209,18 +209,18 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
   if (no_acquire) {
     /* Home is the idle RW owner from creation — identical to a locally created
      * DB that has already been released by its creator.  HOME_RECV (rw_holder =
-     * creator) would route the first INVALIDATE_NOTICE to a creator that holds
+     * creator) would route the first GRANT_INVALIDATE to a creator that holds
      * no cache — a phantom holder — and the acquire would stall forever.
      *
      * CREATOR_HOME sets writer_count = sentinel(1) + creator_hold(1) = 2, but
      * NO_ACQUIRE means no EDT will ever release the creator hold.  Decrement to
-     * 1 (sentinel only) so the first OWNERSHIP_REQUEST's INVALIDATE-to-self
+     * 1 (sentinel only) so the first GRANT_REQUEST's INVALIDATE-to-self
      * drives writer_count to 0, triggering advance_chain and the GRANT. */
     arts_db_cache_init(&stub->cache, db_guid, db_size,
                        ARTS_DB_INIT_CREATOR_HOME, creator_rank);
     /* Collapse the create-time creator hold to the idle/sentinel state:
-     * RCU drop writer_count 2 -> 1 (sentinel only); RWLOCK frees the
-     * lock+cache state so the first OWNERSHIP_REQUEST / LOCK_REQUEST is granted
+     * VAL drops writer_count 2 -> 1 (sentinel only); EXCL frees the
+     * lock+cache state so the first GRANT_REQUEST / EXCL_REQUEST is granted
      * rather than blocked behind a hold no EDT will ever release. */
     db_create_no_acquire_idle(stub, no_acquire);
     if (db_size > 0) {
@@ -230,8 +230,8 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
   } else {
     arts_db_cache_init(&stub->cache, db_guid, db_size, ARTS_DB_INIT_HOME_RECV,
                        creator_rank);
-    /* Case-D leaf: WRF_RCU installs a version-1 zero buffer now (home is
-     * canonical, no creator publish to wait for); HOME/OWNER defer the
+    /* Case-D leaf: WRF_VAL installs a version-1 zero buffer now (home is
+     * canonical, no creator publish to wait for); WT/WB defer the
      * install to the creator's first PUBLISH (no-op here). */
     arts_db_create_install_home_buffer(&stub->cache, db_size);
   }
@@ -301,11 +301,11 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
 
 /* ===== Sharer-side response handlers =============================== */
 
-/* The HOME GRANT handler arts_handler_db_grant_response lives in
- * coherence/home.c; OWNER's TRANSFER_OWNERSHIP overload lives in
- * coherence/owner.c; WRF_RCU has no ownership transfer (dispatcher fatals). */
+/* The WT GRANT_RESPONSE handler arts_handler_db_grant_response lives in
+ * coherence/grant_wt.c; WB's overload lives in
+ * coherence/grant_wb.c; WRF_VAL has no ownership transfer (dispatcher fatals). */
 
-/* Cat-C pure body (DATA_RESPONSE).  The wire dispatcher / self-send shortcut
+/* Cat-C pure body (SNAPSHOT_RESPONSE).  The wire dispatcher / self-send shortcut
  * has already looked the home db_s up with a held ref and passes it as item_v
  * (cache is its FIRST member, offset 0, so item_v IS the cache).  No
  * lookup/NULL-check here — the dispatcher's MISS branch SILENTLY DROPS (this
@@ -320,7 +320,7 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
  *   3. NO_DATA + a->version > buf->version : the with-data reply was
  *      reordered behind us — push self onto pending_snapshot (a future
  *      case-2 install drains us) + re-check (race recovery).
- * Shared verbatim by HOME/OWNER/WRF_RCU (WRF_RCU routes RW through here too). */
+ * Shared verbatim by WT/WB/WRF_VAL (WRF_VAL routes RW through here too). */
 /* Consume an in-flight rendezvous whose receiver-side object is gone: the
  * metadata packet arrived for a destroyed target, so nobody will ever expect
  * the txid — register a discard continuation that returns the landing's
@@ -347,7 +347,7 @@ void arts_db_rdzv_discard_landing(uint64_t txid, uint64_t cookie) {
 }
 
 #if !defined(ARTS_PROTOCOL_EXCL) && !defined(ARTS_PROTOCOL_INV)
-/* Rendezvous continuation for a data-bearing DATA_RESPONSE: the snapshot
+/* Rendezvous continuation for a data-bearing SNAPSHOT_RESPONSE: the snapshot
  * payload has fully landed in our advertised landing ("imm seen => landing
  * valid").  Install it without a copy (version-conditional; a stale landing
  * recycles), drain the reorder buffer, and resume the parked EDT.  Fires on
@@ -497,9 +497,9 @@ void arts_handler_db_snapshot_response(void *item_v, void *args_v) {
 }
 #endif /* !ARTS_PROTOCOL_EXCL */
 
-/* arts_handler_db_grant_invalidate (INVALIDATE_NOTICE) lives per protocol:
- * coherence/home.c (commutative signed counter) and coherence/owner.c
- * (publish-target-then-withdraw).  WRF_RCU never sends INVALIDATE (dispatcher
+/* arts_handler_db_grant_invalidate (GRANT_INVALIDATE) lives per write policy:
+ * coherence/grant_wt.c (commutative signed counter) and coherence/grant_wb.c
+ * (publish-target-then-withdraw).  WRF_VAL never sends INVALIDATE (dispatcher
  * fatals). */
 
 /* arts_handler_db_publish_ack is the shared flight-completion body, defined
@@ -535,5 +535,5 @@ void arts_handler_db_cache_destroy(void *item_v, void *args_v) {
 #endif
 }
 
-/* The OWNER REDIRECT_RO handler arts_handler_db_snapshot_redirect lives in
- * coherence/owner.c (owner-side, REDIRECT only exists under OWNER). */
+/* The WB SNAPSHOT_REDIRECT handler arts_handler_db_snapshot_redirect lives in
+ * coherence/val/wb.c (owner-side, REDIRECT only exists under WB). */

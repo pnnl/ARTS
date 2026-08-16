@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * RWLOCK protocol, OWNER placement.
+ * EXCL protocol, RETAIN release policy.
  *
  * The home holds no bytes — only a directory (current owner, phase, waiter
  * queues).  The payload stays with the last read--write holder and moves
@@ -17,13 +17,13 @@
  * being served from a second copy — which is what phase exclusion means.
  *
  * Compiled only for ARTS_COHERENCE_PROTOCOL=EXCL + ARTS_RELEASE_POLICY=RETAIN;
- * the placement variant is a link-time file choice, so this TU contains no
- * placement preprocessor guards.
+ * the release-policy variant is a link-time file choice, so this TU contains no
+ * release-policy preprocessor guards.
  */
 
-/* lock/types.h must precede all other coherence headers: it defines
- * arts_db_cache_s, arts_db_s, the CACHE_ and LOCK_ macros, the OWNER arbiter
- * prototypes, and arts_db_excl_waiter_s for the RWLOCK build. */
+/* excl/types.h must precede all other coherence headers: it defines
+ * arts_db_cache_s, arts_db_s, the CACHE_ and LOCK_ macros, the RETAIN arbiter
+ * prototypes, and arts_db_excl_waiter_s for the EXCL build. */
 #include "arts/counter/object_counter.h"
 #include "arts/coherence/excl/types.h"
 
@@ -111,7 +111,7 @@ uint64_t cache_owner_compute_next(uint64_t cur, int op, uint32_t *out_action) {
       /* owner fast-path: this rank holds the data → grant locally, no home
        * round-trip.  OCR intra-node model: once a node holds the grant, ALL
        * local RW/RO acquires are immediate — there is NO intra-node exclusion
-       * (the RWLOCK serializes only inter-node, at the home), and a pending
+       * (the EXCL protocol serializes only inter-node, at the home), and a pending
        * migration does not block local serving.  The migration ships once wc
        * and rc both reach 0 (the release 0-edge). */
       rws = CACHE_ST_GRANT;
@@ -156,7 +156,7 @@ uint64_t cache_owner_compute_next(uint64_t cur, int op, uint32_t *out_action) {
       if (mt != ARTS_LOCK_NO_TARGET) {
         /* 0-edge with a pending migration: clear owner-bit + migrate_target in
          * the SAME next-state (single CAS) and signal the ship.  This is the
-         * RWLOCK-OWNER analogue of RCU's 0-edge transfer, but a single CAS — no
+         * EXCL RETAIN analogue of VAL's 0-edge transfer, but a single CAS — no
          * split-decrement, no separate in-flight flag. */
         own = 0u;
         mt = ARTS_LOCK_NO_TARGET;
@@ -201,14 +201,14 @@ uint64_t cache_owner_compute_next(uint64_t cur, int op, uint32_t *out_action) {
 }
 
 /* ===== arts_db_acquire_is_serialized ===================================
- * RWLOCK: both RW and RO are blocking locks — both are GUID-serialized so the
+ * EXCL: both RW and RO are blocking locks — both are GUID-serialized so the
  * engine acquires them in a global order (deadlock-free lock ordering). */
 bool arts_db_acquire_is_serialized(arts_db_access_mode_t mode) {
   return mode == DB_MODE_RW || mode == DB_MODE_RO;
 }
 
 /* ===== arts_db_cache_init ==============================================
- * Initialize the per-rank cache for the RWLOCK-OWNER protocol.
+ * Initialize the per-rank cache for the EXCL RETAIN protocol.
  *
  * Creator hold: arts_db_create defaults to an RW acquire (OCR contract; only
  * ARTS_DB_PROP_NO_ACQUIRE skips it).  The creator is the first data owner, so
@@ -552,7 +552,7 @@ void arts_send_db_excl_request(struct arts_db_cache_s *cache,
   arts_transport_send_async((int)home_rank, (char *)&p, sizeof(p));
 }
 
-/* LOCK_CTS sender (home → first-touch requester) + requester-side body. */
+/* EXCL_CTS sender (home → first-touch requester) + requester-side body. */
 void arts_send_db_excl_cts(unsigned int requester_rank, arts_guid_t db_guid,
                            uint64_t db_size, uint32_t mode) {
   INCREMENT_NUM_EXCL_SIZE_CTS_BY(1);
@@ -718,7 +718,7 @@ void arts_send_db_excl_roret(unsigned int home_rank, arts_guid_t db_guid) {
  * pre-pinned home db_s; args is {edt, db_guid, slot}; mode is read from
  * depv[slot].mode.
  *
- * Two-CAS acquire (the HOME RWLOCK discipline, OWNER arbiter):
+ * Two-CAS acquire (the PURGE EXCL discipline, RETAIN arbiter):
  *   cas1  count++ ONLY (fetch_add), BEFORE the push, so a waiter present in a
  *         queue is already counted → a drained waiter cannot be released out
  *         from under by a concurrent holder (no premature grant release).
@@ -1235,8 +1235,8 @@ uint64_t lock_owner_compute_next(uint64_t cur, int op, unsigned int new_owner,
 /* ===== RO waiter node (home-side held-RO queue entry) ==================
  * Held-RO readers (an RO REQUEST that arrived during the RW phase) wait in
  * db->ro_waiters until the RW→RO flip drains them.  Same shape as the
- * file-local node in home.c / home.c (ro_waiters is the Treiber db->ro_waiters
- * those TUs also use); the SERVE_ONE path serves the requester directly and
+ * file-local node in purge.c (ro_waiters is the Treiber db->ro_waiters
+ * that TU also uses); the SERVE_ONE path serves the requester directly and
  * never touches this queue, so the only producers/consumers are the home
  * REQUEST hold-push and the CONFIRM SERVE_ALL drain. */
 struct arts_lock_ro_node_s {

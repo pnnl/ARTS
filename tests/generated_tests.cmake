@@ -52,7 +52,6 @@ function(add_pure_unit_src name)
     endif()
 endfunction()
 
-add_pure_unit_src(lockfree_stack_aba SOURCES ${CMAKE_SOURCE_DIR}/libs/src/core/utils/lockfree_stack.c ${CMAKE_SOURCE_DIR}/libs/src/core/utils/atomics.c PASS_REGEX "PASS lockfree_stack_aba" TIMEOUT 60)
 add_pure_unit_src(lf_lifo_pop_one PASS_REGEX "PASS lf_lifo_pop_one" TIMEOUT 60)
 add_pure_unit_src(lf_lifo_drain PASS_REGEX "PASS lf_lifo_drain" TIMEOUT 60)
 add_pure_unit_src(lf_lifo_layout PASS_REGEX "PASS lf_lifo_layout" TIMEOUT 60)
@@ -244,7 +243,7 @@ set_tests_properties(db_acquire_replay_local PROPERTIES PASS_REGULAR_EXPRESSION 
 add_arts_test(db_release_alias_slot)
 register_single_node_test(db_release_alias_slot TIMEOUT 30)
 
-# both single + multinode meaningful (remote homes force the OWNERSHIP_REQUEST/GRANT double-fire path)
+# both single + multinode meaningful (remote homes force the GRANT_REQUEST/GRANT double-fire path)
 add_arts_test(db_rw_secure_double_fire)
 register_single_node_test(db_rw_secure_double_fire TIMEOUT 60)
 register_multinode_test(db_rw_secure_double_fire TIMEOUT 60)
@@ -427,8 +426,8 @@ add_arts_test(grant_sticky)
 register_single_node_test(grant_sticky TIMEOUT 60)
 set_tests_properties(grant_sticky PROPERTIES PASS_REGULAR_EXPRESSION "PASS grant_sticky|SKIP grant_sticky")
 
-# grant_ex_holder_sharer: after a lease moves, the ex-holder must be retired
-# by the new owner's rounds.  2+ ranks (the lease has to leave the reader).
+# grant_ex_holder_sharer: after a grant moves, the ex-holder must be retired
+# by the new owner's rounds.  2+ ranks (the grant has to leave the reader).
 add_arts_test(grant_ex_holder_sharer)
 register_multinode_test(grant_ex_holder_sharer TIMEOUT 120)
 set_tests_properties(grant_ex_holder_sharer_2n PROPERTIES PASS_REGULAR_EXPRESSION "PASS grant_ex_holder_sharer|SKIP grant_ex_holder_sharer")
@@ -516,12 +515,12 @@ add_arts_test(snapshot_response_3case)
 register_single_node_test(snapshot_response_3case TIMEOUT 120)
 register_multinode_test(snapshot_response_3case TIMEOUT 120)
 
-# T109 EXPOSES B017/B018. HOME + WRF_VAL; self-skips under OWNER/EXCL.
+# T109 EXPOSES B017/B018. WT + WRF_VAL; self-skips under WB/EXCL.
 add_arts_test(publish_ack_post_on_miss)
 register_single_node_test(publish_ack_post_on_miss TIMEOUT 120)
 register_multinode_test(publish_ack_post_on_miss TIMEOUT 120)
 
-# T110 EXPOSES B018 (LOCK_RELEASE_ACK). EXCL only; self-skips elsewhere.
+# T110 EXPOSES B018 (EXCL_RELEASE_ACK). EXCL only; self-skips elsewhere.
 add_arts_test(excl_release_ack_post_on_miss)
 register_single_node_test(excl_release_ack_post_on_miss TIMEOUT 120)
 register_multinode_test(excl_release_ack_post_on_miss TIMEOUT 120)
@@ -547,7 +546,7 @@ register_multinode_test(cat_c_ref_balance TIMEOUT 120)
 set_tests_properties(cat_c_ref_balance PROPERTIES PASS_REGULAR_EXPRESSION "PASS: cat_c_ref_balance|SKIP cat_c_ref_balance")
 set_tests_properties(cat_c_ref_balance_2n PROPERTIES PASS_REGULAR_EXPRESSION "PASS: cat_c_ref_balance|SKIP cat_c_ref_balance")
 
-# T116 EXPOSES B017 (await_publish_ack under shutdown). HOME + WRF_VAL; self-skips under OWNER/EXCL.
+# T116 EXPOSES B017 (await_publish_ack under shutdown). WT + WRF_VAL; self-skips under WB/EXCL.
 # Normally PASSES (prints token before shutdown). 1n + multinode.
 add_arts_test(await_publish_ack_shutdown)
 register_single_node_test(await_publish_ack_shutdown TIMEOUT 120)
@@ -677,7 +676,7 @@ foreach(_v 2n 3n 4n 2n_io)
         PASS_REGULAR_EXPRESSION "PASS: dispatcher_miss_drop_refpin|SKIP dispatcher_miss_drop_refpin_${_v}")
 endforeach()
 
-# dispatcher_redirect_miss_reflect: OWNER-only; self-skips elsewhere. multinode.
+# dispatcher_redirect_miss_reflect: WB-only; self-skips elsewhere. multinode.
 add_arts_test(dispatcher_redirect_miss_reflect)
 register_multinode_test(dispatcher_redirect_miss_reflect TIMEOUT 120)
 foreach(_v 2n 3n 4n 2n_io)

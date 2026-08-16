@@ -53,10 +53,6 @@ struct arts_deque_s;
  * exists, so this is a no-op. */
 void arts_deque_select(unsigned int type);
 
-struct arts_deque_s *arts_deque_list_new(unsigned int list_size,
-                                         unsigned int deque_size);
-struct arts_deque_s *arts_deque_list_get_deque(struct arts_deque_s *deque_list,
-                                               unsigned int position);
 struct arts_deque_s *arts_deque_new(unsigned int size);
 void arts_deque_delete(struct arts_deque_s *deque);
 bool arts_deque_push_front(struct arts_deque_s *deque, void *item,

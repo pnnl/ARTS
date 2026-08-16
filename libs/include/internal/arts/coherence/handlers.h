@@ -12,13 +12,13 @@
  * the pending_rw/pending_snapshot queues).
  *
  * Drop discipline — two categories:
- *   Cat-B (deferrable: OWNERSHIP_REQUEST / GET_DATA / PUBLISH / DESTROY /
- *     OWNERSHIP_INVALIDATE): the wire dispatcher routes through
+ *   Cat-B (deferrable: GRANT_REQUEST / SNAPSHOT_REQUEST / PUBLISH / DESTROY /
+ *     GRANT_INVALIDATE): the wire dispatcher routes through
  *     arts_ooo_dispatch_or_defer_guid, which acquires the home db_s
  *     ref-pinned and hands the pure (item, args) body a live cache on
  *     HIT, or defers the args for replay once DB_CREATE installs.
- *   Cat-C (non-deferrable: DATA_RESPONSE / DESTROY_NOTIFY / PUBLISH_ACK /
- *     RELEASE_OWNERSHIP / REDIRECT_RO / CONFIRM / CONFIRM_ACK): the wire
+ *   Cat-C (non-deferrable: SNAPSHOT_RESPONSE / DESTROY_NOTIFY / PUBLISH_ACK /
+ *     SNAPSHOT_REDIRECT / CONFIRM / CONFIRM_ACK): the wire
  * dispatcher (and the matching self-send shortcut) does a ref-pinned lookup via
  *     arts_route_table_lookup_db; on HIT it calls the pure (item, args)
  *     body, on MISS it applies the handler's exact miss-action (silent
@@ -39,7 +39,7 @@ extern "C" {
 
 #include "arts/transport/protocol.h"
 
-/* Forward declaration for OWNER handler parameters. */
+/* Forward declaration for WB handler parameters. */
 struct arts_db_cache_s;
 
 /* ===== Cat-C handler args ============================================
@@ -113,10 +113,10 @@ struct arts_db_grant_response_ack_args_s {
 /* Cat-B pure body (OoO g_ooo_table[OOO_DB_GRANT_REQUEST]): item_v is the
  * home db_s the engine acquired (cache is its first member); args_v is an
  * arts_ooo_args_db_grant_request_s.  The wire dispatcher decodes
- * OWNERSHIP_REQUEST into those args and routes through
+ * GRANT_REQUEST into those args and routes through
  * arts_ooo_dispatch_or_defer_guid.  Defined for the release-consistency family
- * (coherence/grant.c) where OWNERSHIP_REQUEST exists; WRF_RCU provides a
- * no-op body (coherence/wrf_val.c) — WRF_RCU never enqueues this kind. */
+ * (coherence/grant.c) where GRANT_REQUEST exists; WRF_VAL provides a
+ * no-op body (coherence/wrf_val.c) — WRF_VAL never enqueues this kind. */
 void arts_handler_db_grant_request(void *item_v, void *args_v);
 /* Cat-B pure body (OoO g_ooo_table[OOO_DB_SNAPSHOT_REQUEST]): item_v is the
  * home db_s the engine acquired (cache is its first member); args_v is an
@@ -139,11 +139,11 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p);
 
 /* ===== Sharer-side (response) handlers =============================== */
 
-/* OWNERSHIP_RESPONSE at new owner C: payload = full contiguous wire buffer
- * (header + map + data); size is total bytes.  One signature for both placements —
- * HOME drains + runs immediately, OWNER defers the RW drain to CONFIRM_ACK. */
+/* GRANT_RESPONSE at new owner C: payload = full contiguous wire buffer
+ * (header + map + data); size is total bytes.  One signature for both write policies —
+ * WT drains + runs immediately, WB defers the RW drain to CONFIRM_ACK. */
 void arts_handler_db_grant_response(void *payload, size_t size);
-/* Cat-C pure body (DATA_RESPONSE): item_v is the db_s the dispatcher acquired
+/* Cat-C pure body (SNAPSHOT_RESPONSE): item_v is the db_s the dispatcher acquired
  * (cache is its first member); args_v is an
  * arts_db_snapshot_response_args_s.  NOT OoO-deferrable — the dispatcher
  * looks the cache up with a held ref and, on a MISS (DB destroyed / slot
@@ -158,10 +158,10 @@ void arts_db_rdzv_discard_landing(uint64_t txid, uint64_t cookie);
 /* Pure (cache, args) body: item_v is the db_s (cache is its first member);
  * args_v is an arts_ooo_args_db_grant_invalidate_s.  The wire dispatcher /
  * self-send looks the cache up and calls this body DIRECTLY — no OoO defer.  In
- * both placements the home publishes the invalidate target (rw_holder) only at the
+ * both write policies the home publishes the invalidate target (rw_holder) only at the
  * post-install CONFIRM owner-swap, so the cache is provably installed when
- * INVALIDATE arrives.  Eager/OWNER define the real body (sentinel withdrawal /
- * transfer trigger); WRF_RCU provides a no-op body (WRF_RCU never receives
+ * INVALIDATE arrives.  WT/WB define the real body (sentinel withdrawal /
+ * transfer trigger); WRF_VAL provides a no-op body (WRF_VAL never receives
  * INVALIDATE). */
 void arts_handler_db_grant_invalidate(void *item_v, void *args_v);
 /* Cat-C pure body (PUBLISH_ACK): item_v is the releaser-rank db_s the
@@ -177,10 +177,10 @@ void arts_handler_db_publish_ack(void *item_v, void *args_v);
  * on a MISS (already torn down on this rank), SILENTLY DROPS (idempotent). */
 void arts_handler_db_cache_destroy(void *item_v, void *args_v);
 
-/* ===== Lazy-only handlers ============================================== */
+/* ===== WB-only handlers ============================================== */
 
 #if defined(ARTS_WRITE_POLICY_WB) && !defined(ARTS_PROTOCOL_INV)
-/* Cat-C pure body (REDIRECT_RO, owner side): item_v is the db_s the dispatcher
+/* Cat-C pure body (SNAPSHOT_REDIRECT, owner side): item_v is the db_s the dispatcher
  * acquired (cache is its first member); args_v is an
  * arts_db_snapshot_redirect_args_s.  NOT OoO-deferrable — the dispatcher
  * looks the cache up with a held ref and, on a MISS (DB destroyed / not yet
@@ -190,37 +190,37 @@ void arts_handler_db_snapshot_redirect(void *item_v, void *args_v);
 #endif /* ARTS_WRITE_POLICY_WB && !ARTS_PROTOCOL_INV */
 
 #if defined(ARTS_PROTOCOL_VAL) || defined(ARTS_PROTOCOL_INV)
-/* Cat-C pure body (CONFIRM, home side; both placements): item_v is the db_s the
+/* Cat-C pure body (CONFIRM, home side; both write policies): item_v is the db_s the
  * dispatcher acquired (cache is its first member); args_v is unused (the new
  * owner is read from db->pending_install_owner).  NOT OoO-deferrable — the
  * dispatcher looks the cache up with a held ref and, on a MISS (DB destroyed),
  * SILENTLY DROPS.  Records the new rw_holder, then starts the next transfer
- * round or releases the invalidate_in_flight baton.  OWNER additionally replies
- * with CONFIRM_ACK; HOME does not (the new owner already drained at
- * OWNERSHIP_RESPONSE). */
+ * round or releases the invalidate_in_flight baton.  WB additionally replies
+ * with CONFIRM_ACK; WT does not (the new owner already drained at
+ * GRANT_RESPONSE). */
 void arts_handler_db_grant_confirm(void *item_v, void *args_v);
 
 /* Send CONFIRM from new owner C back to home A once the ownership transfer is
- * complete (both placements; home flips rw_holder + advances the round). */
+ * complete (both write policies; home flips rw_holder + advances the round). */
 void arts_send_db_grant_confirm(unsigned int home_rank, arts_guid_t db_guid,
                                     uint64_t version);
 #endif /* shared grant plane */
 
 /* ===== Sender helpers ================================================ */
 
-/* Send OWNERSHIP_REQUEST to the DB's home (the home FIFO orders
+/* Send GRANT_REQUEST to the DB's home (the home FIFO orders
  * rank-by-rank).  When the requester knows db_size a fresh transfer landing
  * is allocated and advertised in the request; a size-unknown first touch
- * sends landing-less (txid 0) and home answers OWNERSHIP_CTS, whose handler
+ * sends landing-less (txid 0) and home answers GRANT_CTS, whose handler
  * re-issues through this sender with the landing attached. */
 void arts_send_db_grant_request(struct arts_db_cache_s *cache);
-/* Cat-C pure body (OWNERSHIP_CTS at the requester): item_v is the db_s the
- * dispatcher acquired; args_v is the OWNERSHIP_CTS packet.  Learns db_size
- * and re-issues the in-flight OWNERSHIP_REQUEST with a landing (the
+/* Cat-C pure body (GRANT_CTS at the requester): item_v is the db_s the
+ * dispatcher acquired; args_v is the GRANT_CTS packet.  Learns db_size
+ * and re-issues the in-flight GRANT_REQUEST with a landing (the
  * coalescing flag stays held — this is the same round continuing).  MISS
  * (DB destroyed) silently drops. */
 void arts_handler_db_grant_cts(void *item_v, void *args_v);
-/* OWNERSHIP_CTS sender: home → first-touch requester (db_size reply). */
+/* GRANT_CTS sender: home → first-touch requester (db_size reply). */
 void arts_send_db_grant_cts(unsigned int requester_rank,
                                 arts_guid_t db_guid, uint64_t db_size);
 /* cv: address of the releaser's stack-local publish rendezvous
@@ -258,13 +258,13 @@ void arts_send_db_create_return(unsigned int creator_rank,
 void arts_send_db_grant_invalidate(
     unsigned int owner_rank, arts_guid_t db_guid, unsigned int new_owner_rank,
     const struct arts_rdzv_landing_s *new_owner_rdzv);
-/* Send SNAPSHOT_REQUEST (GET_DATA) to the DB's home, advertising a fresh
+/* Send SNAPSHOT_REQUEST to the DB's home, advertising a fresh
  * snapshot landing when db_size is known (multi-rank runs); a size-unknown
  * first touch sends landing-less and the server answers a size-only CTS
  * response (data_present == 2), whose handler re-enters this sender. */
 void arts_send_db_snapshot_request(struct arts_db_cache_s *cache,
                                    arts_guid_t edt_guid, uint32_t slot);
-/* Send DATA_RESPONSE.  kind (-> wire data_present): 0 = no data moved (a
+/* Send SNAPSHOT_RESPONSE.  kind (-> wire data_present): 0 = no data moved (a
  * non-NULL landing's cookie is echoed so the requester recycles it), 1 =
  * payload (PUT from src_h's buffer into `landing`; src_h — a strong buffer
  * ref — is CONSUMED: transferred to the PUT's local completion, or released
@@ -283,8 +283,8 @@ void arts_send_db_destroy(unsigned int home_rank, arts_guid_t db_guid);
 void arts_send_db_cache_destroy(unsigned int sharer_rank, arts_guid_t db_guid);
 
 #ifdef ARTS_WRITE_POLICY_WB
-/* Send REDIRECT_RO from home to the current owner, asking the owner to
- * serve DATA_RESPONSE or a no-data response directly to requester_rank. */
+/* Send SNAPSHOT_REDIRECT from home to the current owner, asking the owner to
+ * serve SNAPSHOT_RESPONSE or a no-data response directly to requester_rank. */
 void arts_send_db_snapshot_redirect(unsigned int owner_rank,
                                     arts_guid_t db_guid,
                                     unsigned int requester_rank,
@@ -305,7 +305,7 @@ void arts_send_db_grant_confirm_ack(
  * dispatcher acquired (cache is its first member); args_v is the
  * CONFIRM_ACK packet (its new_owner_rank carries the piggybacked invalidate
  * target, or ARTS_NO_PENDING_OWNER for a plain ack). Drains the parked RW
- * waiters that the TRANSFER handler deferred, clears the gate, applies the
+ * waiters that the GRANT_RESPONSE handler deferred, clears the gate, applies the
  * piggybacked invalidate effect (publish incoming_new_owner + withdraw the
  * sentinel), and removes the drain guard (the relocated 0-edge ship-check). NOT
  * OoO-deferrable — the dispatcher looks the cache up with a held ref and, on a
@@ -313,29 +313,29 @@ void arts_send_db_grant_confirm_ack(
  * destroy fan-out instead). */
 void arts_handler_db_grant_confirm_ack(void *item_v, void *args_v);
 
-/* Kick a new INVALIDATE_NOTICE round: read rw_holder, send notice to
- * holder carrying new_owner as the TRANSFER_OWNERSHIP target. */
+/* Kick a new GRANT_INVALIDATE round: read rw_holder, send notice to
+ * holder carrying new_owner as the GRANT_RESPONSE target. */
 void arts_db_owner_start_invalidate_round(
     struct arts_db_cache_s *cache, unsigned int new_owner,
     const struct arts_rdzv_landing_s *new_owner_rdzv);
 #endif /* ARTS_WRITE_POLICY_WB */
 
 #if defined(ARTS_PROTOCOL_VAL) || defined(ARTS_PROTOCOL_INV)
-/* Shared owner→owner transfer ship (defined in coherence/<proto>/grant.c):
- * ship the current buffer (+ serialized owner-side map for OWNER, empty map for
- * HOME) to cache->incoming_new_owner via the OWNERSHIP_RESPONSE wire,
+/* Shared owner→owner transfer ship (defined in coherence/grant.c):
+ * ship the current buffer (+ serialized owner-side map for WB, empty map for
+ * WT) to cache->incoming_new_owner via the GRANT_RESPONSE wire,
  * re-arming incoming_new_owner to the sentinel before sending.  Called on the
- * 0-edge of release_rw / the INVALIDATE handler (both placements) and the OWNER
- * CONFIRM_ACK / HOME OWNERSHIP_RESPONSE drain-guard removal. */
+ * 0-edge of release_rw / the INVALIDATE handler (both write policies) and the WB
+ * CONFIRM_ACK / WT GRANT_RESPONSE drain-guard removal. */
 void arts_db_send_grant_response(struct arts_db_cache_s *cache);
 #endif /* shared grant plane */
 
 #ifdef ARTS_PROTOCOL_INV
-/* ===== MSI protocol handlers / senders ================================= */
+/* ===== INV protocol handlers / senders ================================= */
 
 struct arts_msg_inv_cts_packet_s;
 
-/* Cat-B bodies @home.  Both placements run the same set; what differs is what
+/* Cat-B bodies @home.  Both write policies run the same set; what differs is what
  * a read request is answered WITH (the home's own bytes, or a redirect to the
  * current grant holder) and whether a publish carries payload. */
 void arts_handler_db_inv_request(void *item_v, void *args_v);
@@ -375,7 +375,7 @@ void arts_send_db_inv_invalidate_ack(unsigned int home_rank,
 #endif /* ARTS_PROTOCOL_INV */
 
 #ifdef ARTS_PROTOCOL_EXCL
-/* ===== RWLOCK protocol handlers ======================================== */
+/* ===== EXCL protocol handlers ======================================== */
 
 /* Cat-B pure body (OoO g_ooo_table[OOO_DB_EXCL_REQUEST]) @home: item_v is the
  * home db_s the engine acquired (cache is its first member); args_v is an
@@ -397,23 +397,23 @@ void arts_handler_db_excl_grant(void *payload, size_t size);
 /* NOTE: arts_handler_db_acquire is NOT re-declared here.  It is already
  * declared protocol-agnostically in coherence.h as void
  * arts_handler_db_acquire(void *item, void *args) and serves as both the
- * engine's acquire_one_dep body and the OOO_DB_ACQUIRE replay.  RWLOCK only
- * *defines* it (lock/acquire.c). */
+ * engine's acquire_one_dep body and the OOO_DB_ACQUIRE replay.  EXCL only
+ * *defines* it (coherence/excl/purge.c and coherence/excl/retain.c). */
 
-/* ===== RWLOCK senders =================================================== */
-/* Send LOCK_REQUEST to the home, advertising this rank's grant/deliver
- * landing: the stable buffer for RW (in-place install is RWLOCK's fixed-address
- * contract), a FRESH landing for an OWNER RO serve (a stale RO grant racing a
+/* ===== EXCL senders =================================================== */
+/* Send EXCL_REQUEST to the home, advertising this rank's grant/deliver
+ * landing: the stable buffer for RW (in-place install is EXCL's fixed-address
+ * contract), a FRESH landing for a RETAIN RO serve (a stale RO grant racing a
  * newer owner install must not clobber the stable buffer — the ro_return arm
  * discards it).  Size-unknown first touch sends landing-less; home answers
- * LOCK_CTS and the handler re-enters this sender. */
+ * EXCL_CTS and the handler re-enters this sender. */
 void arts_send_db_excl_request(struct arts_db_cache_s *cache,
                                arts_db_access_mode_t mode);
-/* Cat-C pure body (LOCK_CTS at the requester): item_v is the db_s; args_v is
- * the LOCK_CTS packet.  Learns db_size and re-issues the request (echoed
+/* Cat-C pure body (EXCL_CTS at the requester): item_v is the db_s; args_v is
+ * the EXCL_CTS packet.  Learns db_size and re-issues the request (echoed
  * mode) with a landing. */
 void arts_handler_db_excl_cts(void *item_v, void *args_v);
-/* LOCK_CTS sender: home → first-touch requester (db_size + echoed mode). */
+/* EXCL_CTS sender: home → first-touch requester (db_size + echoed mode). */
 void arts_send_db_excl_cts(unsigned int requester_rank, arts_guid_t db_guid,
                            uint64_t db_size, uint32_t mode);
 /* arts_send_db_excl_grant: version is the monotone round counter.  The grant
@@ -427,7 +427,7 @@ void arts_send_db_excl_grant(unsigned int requester_rank, arts_guid_t db_guid,
                              arts_shared_ptr_t src_h, uint64_t data_size);
 /* arts_send_db_excl_release: cv is the releaser's stack-local sem_t address
  * (RW only; 0 for RO); version is the monotone counter (RW only; 0 for RO).
- * Home echoes cv in the LOCK_RELEASE_ACK to unblock the releaser.  A remote
+ * Home echoes cv in the EXCL_RELEASE_ACK to unblock the releaser.  A remote
  * RW release PUTs the dirty bytes into the grant's `pub` landing first and
  * echoes {rdzv_txid, rdzv_cookie} here; `data` rides inline only same-rank. */
 void arts_send_db_excl_release(unsigned int home_rank, arts_guid_t db_guid,
@@ -442,7 +442,7 @@ void arts_send_db_excl_release_ack(unsigned int releaser_rank,
                                    arts_guid_t db_guid, uint64_t cv);
 
 #ifdef ARTS_WRITE_POLICY_WB
-/* ===== RWLOCK-OWNER handlers (Cat-C direct dispatch; stubs until Tasks 5-6) = */
+/* ===== EXCL RETAIN handlers (Cat-C direct dispatch) = */
 
 /* arts_handler_db_excl_forward: Cat-C @owner.  item_v is the full wire packet
  * (arts_msg_excl_forward_packet_s *); the handler looks up the db_s internally
@@ -469,7 +469,7 @@ void arts_handler_db_excl_confirm(void *item_v);
  * packet->rank = the returning reader. */
 void arts_handler_db_excl_roret(void *item_v);
 
-/* ===== RWLOCK-OWNER senders (stubs until Tasks 5-6) ========================= */
+/* ===== EXCL RETAIN senders ========================= */
 
 /* arts_send_db_excl_forward: home → current owner.  mode=DB_MODE_RW requests
  * migration to target rank; mode=DB_MODE_RO requests serving one RO reader. */
@@ -477,7 +477,7 @@ void arts_send_db_excl_forward(unsigned int owner_rank, arts_guid_t db_guid,
                                uint32_t mode, uint32_t target,
                                const struct arts_rdzv_landing_s *target_rdzv);
 
-/* arts_send_db_excl_deliver: owner → target.  Versionless (RWLOCK serialization
+/* arts_send_db_excl_deliver: owner → target.  Versionless (EXCL serialization
  * guarantees ordering).  The payload PUTs into the target's forwarded landing
  * (rdzv); src_h — a strong ref on the owner buffer — is CONSUMED. */
 void arts_send_db_excl_deliver(unsigned int target_rank, arts_guid_t db_guid,

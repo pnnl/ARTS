@@ -1,16 +1,16 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * RWLOCK protocol pure state-transition arbiters (HOME placement only).
+ * EXCL protocol pure state-transition arbiters (PURGE release policy only).
  *
  * Defines: excl_compute_next, cache_compute_next.
  *
- * These arbiters use the HOME single-word layouts (lock_state with
+ * These arbiters use the PURGE single-word layouts (lock_state with
  * [state_bit|w|r] and cache_state with [rw_st|ro_st|wc|rc]).  They are
- * HOME-only and compiled only when ARTS_RELEASE_PURGE is defined.  The OWNER
+ * PURGE-only and compiled only when ARTS_RELEASE_PURGE is defined.  The RETAIN
  * arbiters (lock_owner_compute_next, cache_owner_compute_next) use a different
- * word layout and live in owner.c.
+ * word layout and live in retain.c.
  *
- * home.c #includes this file to get its private copy of the arbiters.
+ * purge.c #includes this file to get its private copy of the arbiters.
  * The whitebox unit test (tests/unit/excl_compute_next.c) also #includes
  * this file directly for standalone testing of the pure functions.
  *

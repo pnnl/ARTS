@@ -24,7 +24,7 @@ Every ARTS program consists of three parts:
    void my_task(uint32_t paramc, const uint64_t *paramv,
                 uint32_t depc, arts_edt_dep_t depv[]) {
        arts_printf("Hello from node %u, worker %u!\n",
-                   arts_get_current_node(), arts_get_current_worker());
+                   arts_get_current_rank(), arts_get_current_worker());
        arts_shutdown();
    }
 

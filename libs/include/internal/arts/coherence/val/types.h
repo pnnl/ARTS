@@ -27,11 +27,11 @@ extern "C" {
 #endif
 
 /**
- * @file rcu/types.h
- * @brief RCU (Multi-Reader, Node-Exclusive-Writer) cache/db layout.
+ * @file val/types.h
+ * @brief VAL (Multi-Reader, Node-Exclusive-Writer) cache/db layout.
  *
  * Selected by arts/coherence/types.h when ARTS_PROTOCOL_WRF_VAL is NOT defined.
- * The HOME vs OWNER placement variant is chosen here by ARTS_WRITE_POLICY_WB.  The
+ * The WT vs WB write-policy variant is chosen here by ARTS_WRITE_POLICY_WB.  The
  * protocol-agnostic pieces (buffer, snapshot waiter, defines, container_of)
  * come from types_common.h; the of_cache/total_size/stub_size helpers live in
  * the dispatcher (types.h), after this header defines cache + db_s.
@@ -51,9 +51,9 @@ extern "C" {
  * the directory state needed for ownership transfer and dedup.  The MPSC
  * queues are defined inline below (needed for struct embedding in arts_db_s).
  *
- * Vyukov MPSC queue node carrying a requester rank (home OWNERSHIP_REQUEST
+ * Vyukov MPSC queue node carrying a requester rank (home GRANT_REQUEST
  * queue). The embedded `next` pointer is owned by the queue (push/pop manage
- * it). Producers are foreign-rank OWNERSHIP_REQUEST handlers; the single
+ * it). Producers are foreign-rank GRANT_REQUEST handlers; the single
  * consumer is the home-side dispatcher holding the invalidate_in_flight baton.
  */
 #ifdef __cplusplus
@@ -116,30 +116,30 @@ struct arts_db_cache_s {
   arts_guid_t db_guid;
   uint64_t db_size;
   /* New owner rank for the next ownership transfer, published by this round's
-   * INVALIDATE_NOTICE handler BEFORE it withdraws the sentinel.  Sentinel
+   * GRANT_INVALIDATE handler BEFORE it withdraws the sentinel.  Sentinel
    * ARTS_NO_PENDING_OWNER == no transfer pending.  The publish-before-
    * sentinel-withdraw ordering makes a separate transfer_pending flag
    * redundant: whichever actor drives writer_count to 0 (the INVALIDATE, or the
    * last release_rw) reads this field — a non-sentinel value names the target,
    * so that actor fires the commit-PROCEED to it and ships the transfer
-   * (TRANSFER_OWNERSHIP in OWNER, PUBLISH_AND_TRANSFER/local in HOME). Single
+   * (GRANT_RESPONSE in WB, PUBLISH_AND_TRANSFER/local in WT). Single
    * writer per round (home baton gate), so no atomic needed.  Shared by both
-   * placements (HOME's INVALIDATE now carries new_owner too). */
+   * write policies (WT's INVALIDATE now carries new_owner too). */
   unsigned int incoming_new_owner;
   /* The pending new owner's transfer landing, published together with (and
    * under the same single-writer / publish-before-withdraw discipline as)
    * incoming_new_owner: the 0-edge actor PUTs the transfer payload here. */
   struct arts_rdzv_landing_s incoming_new_owner_rdzv;
 #ifdef ARTS_WRITE_POLICY_WB
-  /* Lazy: owner-side dedup map.  Allocated lazily on first ownership; preserved
-   * across ownership transfer (TRANSFER_OWNERSHIP serializes it). */
+  /* WB: owner-side dedup map.  Allocated lazily on first ownership; preserved
+   * across ownership transfer (GRANT_RESPONSE serializes it). */
   struct arts_rank_to_u64_map_s *cached_version;
-  /* Lazy per-cache RW exclusivity machinery.  RW OWNERSHIP_REQUEST coalescing
-   * flag — only the actor that CASes false->true sends OWNERSHIP_REQUEST;
+  /* WB per-cache RW exclusivity machinery.  RW GRANT_REQUEST coalescing
+   * flag — only the actor that CASes false->true sends GRANT_REQUEST;
    * same-node RW EDTs piggyback on the in-flight one and are picked up by
    * GRANT's drain. */
   volatile unsigned int grant_req_in_flight;
-  /* Set (1) when a TRANSFER_OWNERSHIP installs the buffer on this rank but home
+  /* Set (1) when a GRANT_RESPONSE installs the buffer on this rank but home
    * has not yet flipped rw_holder to us; cleared (0) when home's CONFIRM
    * arrives. While set, this rank holds the data + ownership sentinel for
    * accounting but must NOT run RW EDTs (their writes would be observable
@@ -149,20 +149,20 @@ struct arts_db_cache_s {
   /* Treiber stack of RW waiters parked on this rank (order-free drain-all). */
   arts_lf_stack_t pending_rw;
 #else
-  /* Eager: the PUBLISH ACK rendezvous is a stack-local sem_t created per
+  /* WT: the PUBLISH ACK rendezvous is a stack-local sem_t created per
    * release_rw, matched by pointer identity (the &sem address rides the
    * PUBLISH packet and is echoed verbatim in the ACK).  Multiple concurrent
    * releases each get their own sem — no per-cache seq state. */
-  /* Eager per-cache RW exclusivity machinery.  RW OWNERSHIP_REQUEST coalescing
-   * flag — only the actor that CASes false->true sends OWNERSHIP_REQUEST;
+  /* WT per-cache RW exclusivity machinery.  RW GRANT_REQUEST coalescing
+   * flag — only the actor that CASes false->true sends GRANT_REQUEST;
    * same-node RW EDTs piggyback on the in-flight one and are picked up by
    * GRANT's drain. */
   volatile unsigned int grant_req_in_flight;
-  /* Owner-side dedup map.  HOME never creates it (always NULL): home serves RO
-   * via GET_DATA with the home->cached_version watermark, so the HOME
+  /* Owner-side dedup map.  WT never creates it (always NULL): home serves RO
+   * via SNAPSHOT_REQUEST with the home->cached_version watermark, so the WT
    * owner→owner transfer ships an EMPTY map.  The field exists so the shared
-   * arts_db_send_grant_response (coherence/val/grant.c) compiles for
-   * both placements (it gates the map build on this being non-NULL). */
+   * arts_db_send_grant_response (coherence/grant.c) compiles for
+   * both write policies (it gates the map build on this being non-NULL). */
   struct arts_rank_to_u64_map_s *cached_version;
   /* Treiber stack of RW waiters parked on this rank (order-free drain-all). */
   arts_lf_stack_t pending_rw;
@@ -224,7 +224,7 @@ struct arts_db_s {
                                      (arts_db_cache_stub_size()) still covers it
                                      — every coherence lookup/free reads it. */
   /* Home-directory metadata — present only on the rank that is the GUID home
-   * for this DB.  Non-home / OWNER / creator-remote ranks allocate a cache-only
+   * for this DB.  Non-home / WB / creator-remote ranks allocate a cache-only
    * footprint of arts_db_cache_stub_size() bytes: it ends at the first home-arm
    * field below (rw_holder), so it INCLUDES home_initialized but omits every
    * home-arm field.  home_initialized MUST stay in bounds: the cache destructor
@@ -240,15 +240,15 @@ struct arts_db_s {
   struct arts_rank_bitset_s
       cached_ranks; /* RO cached-rank roster, destroy fan-out */
   unsigned int pending_install_owner; /* baton-holder-written transfer target */
-#else                                 /* HOME */
+#else                                 /* WT */
   arts_db_atomic_uint_t rw_holder;
   struct arts_home_grantreq_queue_s pending_rw; /* embedded Vyukov MPSC */
   arts_db_atomic_uint_t invalidate_in_flight;
-  /* Eager uses cached_version as both the RO dedup watermark (GET_DATA
+  /* WT uses cached_version as both the RO dedup watermark (SNAPSHOT_REQUEST
    * reply) AND its destroy roster (no cached_ranks bit-set). */
   struct arts_rank_to_u64_map_s *cached_version;
   /* Baton-holder-written transfer target (CONFIRM-driven advance, same as
-   * OWNER). */
+   * WB). */
   unsigned int pending_install_owner;
 #endif
   /* GPU staging locks / version stamps (GPU DB path; full arts_db_s alloc). */

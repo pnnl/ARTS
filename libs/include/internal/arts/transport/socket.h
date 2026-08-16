@@ -63,7 +63,6 @@ void arts_transport_set_config(struct arts_config_s *config);
 bool arts_transport_select_local_ports(struct arts_config_s *config);
 void arts_transport_setup_outgoing();
 bool arts_transport_setup_incoming();
-unsigned int arts_transport_get_my_rank();
 /* Convert the bootstrap TCP mesh into zero-traffic liveness sentinels once the
  * fi-address exchange has finished: every established connection stays open
  * (connection lifetime doubles as peer liveness — orderly close and process

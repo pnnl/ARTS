@@ -2,7 +2,6 @@
  *
  * pure_unit test for the child arg-vector construction inside
  *   void arts_launcher_local_startup_processes(struct arts_launcher_s *)
- * (libs/src/core/transport/launcher.c:406-413).
  *
  * The builder is NOT a standalone function — it is inlined in a routine that
  * also readlink()s /proc/self/exe, fork()s and execv()s, so it cannot be
@@ -34,7 +33,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Verbatim mirror of launcher.c:406-413 (arg-vector build), parameterized so
+/* Verbatim mirror of arts_launcher_local_startup_processes's arg-vector build, parameterized so
  * we can drive it with arbitrary (argc, argv, self_exe).  Uses libc malloc in
  * place of arts_malloc (identical semantics for this test; arts_malloc aborts
  * on OOM, irrelevant here).  Returns the built vector AND the new_argc via

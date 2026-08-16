@@ -60,12 +60,6 @@ unsigned int arts_global_rank_id;
 unsigned int arts_global_rank_count;
 unsigned int arts_global_master_rank_id;
 
-/* Local lifecycle controls (moved here from the former utils/introspect.c:
- * they mutate runtime state, so they belong with the thread/shutdown logic,
- * not with read-only introspection). */
-void arts_stop_local_worker(void) { arts_thread_info.alive = false; }
-
-void arts_stop_local_node(void) { arts_runtime_stop(); }
 struct arts_config_s *g_config;
 
 struct thread_mask_s *mask;

@@ -13,7 +13,8 @@
  *      receives the exact GUID the producer passed to arts_edt_set_result.
  *   2) NULL-result default: a producer that never calls arts_edt_set_result
  *      still fires its output_event, delivering NULL_GUID.
- *   3) Release-before-satisfy ordering (the load-bearing stencil2d fix): when
+ *   3) Release-before-satisfy ordering (load-bearing for any consumer wired
+ *      through an output event): when
  *      the producer registers a DB as its result and the consumer acquires that
  *      DB RO via the output-event dependency, the consumer must observe the
  *      producer's writes — the output event fires only after the producer's DB

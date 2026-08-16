@@ -15,17 +15,17 @@
  *
  * Nothing here is protocol-specific: what a release does BESIDES decrementing
  * the count (publish the payload to home, run an invalidation round, both, or
- * neither) belongs to the arm, not to the grant.  WRF_RCU is the one arm that
+ * neither) belongs to the arm, not to the grant.  WRF_VAL is the one arm that
  * does not link this TU — it has no grant at all, keeping the canonical buffer
  * at home via a synchronous PUBLISH on every release.
  *
- * Placement-divergent steps are delegated to seams the arm defines
- * (arts_db_start_grant_round, and the OWNERSHIP_RESPONSE / CONFIRM
- * handlers, where HOME drains immediately and OWNER gates on CONFIRM_ACK).
+ * Write-policy-divergent steps are delegated to seams the arm defines
+ * (arts_db_start_grant_round, and the GRANT_RESPONSE / CONFIRM
+ * handlers, where WT drains immediately and WB gates on CONFIRM_ACK).
  * One ARTS_WRITE_POLICY_WB guard remains here: the INVALIDATE self-send is a
- * direct call under OWNER and an OoO defer under HOME.
+ * direct call under WB and an OoO defer under WT.
  */
-#include <assert.h> /* OWNER INVALIDATE direct-call invariant assert */
+#include <assert.h> /* WB INVALIDATE direct-call invariant assert */
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -50,8 +50,8 @@
 #include "arts/counter/Preamble.h"
 
 /* ===== Case 2/6: RW local fast path ================================
- * Shared by the HOME and OWNER arts_handler_db_acquire bodies
- * (coherence/home.c / coherence/owner.c).  CAS-increments writer_count "if
+ * Shared by the WT and WB arts_handler_db_acquire bodies
+ * (coherence/val/wt.c / coherence/val/wb.c).  CAS-increments writer_count "if
  * positive"; on success writes dep->ptr (acquire_local) and returns true;
  * returns false when writer_count went to 0 (ownership invalidated) so the
  * caller falls through to arts_db_acquire_remote_rw. */
@@ -105,7 +105,7 @@ arts_db_acquire_remote_rw(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
   arts_object_acquire(true);
   arts_pending_rw_queue_push(&cache->pending_rw, w);
 
-  /* Kick OWNERSHIP_REQUEST if no one else has — GRANT is what eventually
+  /* Kick GRANT_REQUEST if no one else has — GRANT is what eventually
    * triggers our drain in FIFO order.  One request per round, so this counts
    * grants that had to move rather than waiters. */
   if (arts_atomic_cswap(&cache->grant_req_in_flight, 0, 1) == 0) {
@@ -115,15 +115,15 @@ arts_db_acquire_remote_rw(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
   return ARTS_DB_ACQUIRE_PARK;
 }
 
-/* The arts_handler_db_acquire 8-case body lives per-protocol in
- * coherence/home.c and coherence/owner.c — the two builds differ only on the
- * RO-has-local-data predicate (HOME: is_home||is_owner; OWNER: is_owner), which
+/* The arts_handler_db_acquire 8-case body lives per-write-policy in
+ * coherence/val/wt.c and coherence/val/wb.c — the two builds differ only on the
+ * RO-has-local-data predicate (WT: is_home||is_owner; WB: is_owner), which
  * the C-preprocessor seam forbids in a shared TU.  Both call the shared
  * arts_db_acquire_rw_local_fast / arts_db_acquire_remote_rw above and
  * arts_db_acquire_remote_ro (coherence/coherence.c).
  */
 
-/* ===== GRANT drain (called from coherence/home.c and coherence/owner.c) === */
+/* ===== GRANT drain (called from coherence/val/wt.c and coherence/val/wb.c) === */
 
 /* Drain callback context for the RW MPSC pop loop. */
 struct rw_drain_ctx_s {
@@ -154,13 +154,13 @@ void arts_db_drain_pending_rw_after_grant(struct arts_db_cache_s *cache,
   arts_pending_rw_queue_drain(&cache->pending_rw, rw_drain_cb, &ctx);
 }
 
-/* ===== Shared owner→owner transfer ship (HOME + OWNER) =============
+/* ===== Shared owner→owner transfer ship (WT + WB) =============
  * Ship the current buffer to cache->incoming_new_owner via the
- * OWNERSHIP_RESPONSE wire, re-arming incoming_new_owner to the sentinel BEFORE
+ * GRANT_RESPONSE wire, re-arming incoming_new_owner to the sentinel BEFORE
  * the send (a self-transfer dispatches the new owner's install inline, which
  * can recursively republish incoming_new_owner for the next round; clearing it
- * up front leaves that fresh publish intact).  OWNER serializes its owner-side
- * dedup map; HOME has no owner-side map (cached_version == NULL) and emits
+ * up front leaves that fresh publish intact).  WB serializes its owner-side
+ * dedup map; WT has no owner-side map (cached_version == NULL) and emits
  * an empty map (count=0): the receiver unconditionally reconstructs map_size >=
  * 8, so an omitted header would underflow data_size and corrupt the install. */
 void arts_db_send_grant_response(struct arts_db_cache_s *cache) {
@@ -297,23 +297,23 @@ void arts_db_send_grant_response(struct arts_db_cache_s *cache) {
                                          arts_free);
 }
 
-/* ===== Home-side ownership handlers (RCU; moved from handlers.c) =====
- * OWNERSHIP_REQUEST / RELEASE_OWNERSHIP exist only under RCU (WRF_RCU routes
- * all acquires through GET_DATA / DATA_RESPONSE), so these handlers are
- * compiled only for RCU.  The home-directory machinery they touch
- * (pending_rw, invalidate_in_flight, rw_holder) is shared by both protocols;
- * the point where HOME and OWNER diverge is delegated to per-protocol seams in
- * coherence/home.c / coherence/owner.c. */
+/* ===== Home-side ownership handlers (VAL; moved from handlers.c) =====
+ * GRANT_REQUEST exists only under VAL (WRF_VAL routes
+ * all acquires through SNAPSHOT_REQUEST / SNAPSHOT_RESPONSE), so these handlers are
+ * compiled only for VAL.  The home-directory machinery they touch
+ * (pending_rw, invalidate_in_flight, rw_holder) is shared by both write policies;
+ * the point where WT and WB diverge is delegated to per-write-policy seams in
+ * coherence/val/wt.c / coherence/val/wb.c. */
 
 /* Cat-B pure body (OoO g_ooo_table[OOO_DB_GRANT_REQUEST]): the OoO engine
  * has already acquired the home db_s for db_guid and pinned a ref across this
  * call, so there is no lookup / NULL-check / defer here.  cache is the FIRST
  * member of arts_db_s (offset 0), so the slot object the engine hands us IS the
- * cache.  The wire dispatcher decodes OWNERSHIP_REQUEST into the args struct
+ * cache.  The wire dispatcher decodes GRANT_REQUEST into the args struct
  * and routes through the engine via OOO_DB_GRANT_REQUEST; a missing home
  * db_s defers the args and re-issues this body once DB_CREATE installs and
- * drains.  (WRF_RCU never enqueues this kind — coherence/wrf_val.c provides a
- * no-op definition that satisfies the single g_ooo_table slot in the WRF_RCU
+ * drains.  (WRF_VAL never enqueues this kind — coherence/wrf_val.c provides a
+ * no-op definition that satisfies the single g_ooo_table slot in the WRF_VAL
  * build.) */
 void arts_handler_db_grant_request(void *item_v, void *args_v) {
   struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
@@ -336,10 +336,10 @@ void arts_handler_db_grant_request(void *item_v, void *args_v) {
   arts_home_grantreq_queue_push(&db->pending_rw, requester, &a->rdzv);
   arts_sched_fuzz_point(); /* widen the push<->baton-CAS window */
 
-  /* Active-directory invariant: AT MOST ONE INVALIDATE_NOTICE in flight
+  /* Active-directory invariant: AT MOST ONE GRANT_INVALIDATE in flight
    * to the current rw_holder per ownership-transfer round.  CAS 0->1
    * gates the dispatch — only the thread that flips the bit sends.
-   * Concurrent OWNERSHIP_REQUESTs whose CAS loses simply piggyback on the
+   * Concurrent GRANT_REQUESTs whose CAS loses simply piggyback on the
    * outstanding round; their requester is queued in pending_rw and is served by
    * the next CONFIRM-driven round.  The baton is held across the INVALIDATE →
    * owner→owner transfer → CONFIRM round-trip and cleared in the CONFIRM
@@ -351,16 +351,16 @@ void arts_handler_db_grant_request(void *item_v, void *args_v) {
           memory_order_acquire)) {
     return; /* another round is in flight; requester stays queued */
   }
-  /* Baton won: the HOME placement INVALIDATEs the current rw_holder; the OWNER
-   * protocol pops the FIFO transfer target, publishes pending_install_owner,
+  /* Baton won: the WT write policy INVALIDATEs the current rw_holder; the WB
+   * write policy pops the FIFO transfer target, publishes pending_install_owner,
    * and starts the invalidate round. */
   arts_db_start_grant_round(cache, db, requester);
 }
 
-/* ===== Ownership wire senders (RCU; moved from coherence/senders.c) =====
- * OWNERSHIP_REQUEST / INVALIDATE_NOTICE exist only under RCU.  Ownership now
+/* ===== Ownership wire senders (VAL; moved from coherence/senders.c) =====
+ * GRANT_REQUEST / GRANT_INVALIDATE exist only under VAL.  Ownership
  * transfers owner→owner (arts_db_send_grant_response); there is no
- * RELEASE_OWNERSHIP message.  Self-sends dispatch the matching handler inline.
+ * separate release message.  Self-sends dispatch the matching handler inline.
  */
 
 void arts_send_db_grant_request(struct arts_db_cache_s *cache) {
@@ -368,7 +368,7 @@ void arts_send_db_grant_request(struct arts_db_cache_s *cache) {
   unsigned int home_rank = arts_guid_get_rank(db_guid);
   /* Advertise a fresh transfer landing sized by the exact size when known,
    * else by the GUID's szhint bound — a first touch usually carries a
-   * landing already, and home's OWNERSHIP_CTS round survives only as the
+   * landing already, and home's GRANT_CTS round survives only as the
    * sentinel fallback (its handler re-enters this sender with
    * cache->db_size learned).  The rendezvous plane exists only when a peer
    * could PUT (multi-rank run): a single-rank run has no fabric, every
@@ -400,7 +400,7 @@ void arts_send_db_grant_request(struct arts_db_cache_s *cache) {
   p.rdzv.cookie = rdzv.cookie;
   if (home_rank == arts_global_rank_id) {
     /* Self-send: route through the OoO engine exactly as the wire RX
-     * dispatcher does — HIT runs the OWNERSHIP_REQUEST body inline, MISS defers
+     * dispatcher does — HIT runs the GRANT_REQUEST body inline, MISS defers
      * the args and replays once the home db_s is installed + drained.  (The
      * handler is now a pure (item, args) body; it no longer does its own
      * lookup-or-defer, so the inline shortcut must enter through
@@ -417,7 +417,7 @@ void arts_send_db_grant_request(struct arts_db_cache_s *cache) {
   arts_transport_send_async((int)home_rank, (char *)&p, sizeof(p));
 }
 
-/* OWNERSHIP_CTS sender (home → first-touch requester) + requester-side body.
+/* GRANT_CTS sender (home → first-touch requester) + requester-side body.
  * The requester learns db_size and re-issues the in-flight request with a
  * landing; the coalescing flag stays held (same round continuing). */
 void arts_send_db_grant_cts(unsigned int requester_rank,
@@ -474,12 +474,12 @@ void arts_send_db_grant_invalidate(
      *
      * The home publishes the invalidate target (rw_holder) only AFTER that
      * rank's cache install — the post-install CONFIRM owner-swap (true for BOTH
-     * placements now) or the DB_CREATE on the creator — so an INVALIDATE always
+     * write policies now) or the DB_CREATE on the creator — so an INVALIDATE always
      * targets an already-installed cache; the before-install reorder that once
-     * forced HOME through the OoO engine is gone.
+     * forced WT through the OoO engine is gone.
      *
      * Direct (non-deferred) self-dispatch is also safe in the new_owner==home
-     * self-CONFIRM chain: OWNERSHIP_RESPONSE installs a sentinel(+1)+guard(+1)
+     * self-CONFIRM chain: GRANT_RESPONSE installs a sentinel(+1)+guard(+1)
      * on writer_count, then self-sends CONFIRM, whose drain loop self-sends
      * THIS INVALIDATE inline.  Because the guard +1 is still present at that
      * point, this inline -1 cannot drive writer_count to the 0-edge

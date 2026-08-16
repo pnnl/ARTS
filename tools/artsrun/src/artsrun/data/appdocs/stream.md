@@ -23,8 +23,8 @@ recurrence natively for every thread's final `a[]`. `finalize` also prints an
 thread's best (minimum) per-iteration wall time; that figure is a separate
 diagnostic, not what the harness validates, and (see Placement) its inputs
 are unreliable at multinode. The catalog lists a restructured twin,
-`stream_dist`, that redecomposes the same benchmark; it is a separate
-uncommitted rewrite and is not documented here. With near-zero arithmetic per
+`stream_dist`, that redecomposes the same benchmark and is a live, separately
+registered target with its own arguments and pinned answer. With near-zero arithmetic per
 element and DBs churned on every step, the program is a data-movement
 (memory-bandwidth) probe locally — and, once EDTs and DBs spread across
 ranks, a data-*migration* probe instead (Placement).

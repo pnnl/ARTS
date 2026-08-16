@@ -28,14 +28,14 @@ extern "C" {
 
 /**
  * @file wrf_val/types.h
- * @brief WRF_RCU (Multi-Reader, Multi-Writer / DB-WRF) cache/db layout.
+ * @brief WRF_VAL (Multi-Reader, Multi-Writer / DB-WRF) cache/db layout.
  *
  * Selected by arts/coherence/types.h when ARTS_PROTOCOL_WRF_VAL is defined.
- * WRF_RCU carries no ownership grant and no RW waiter queue: writer_count is a
+ * WRF_VAL carries no ownership grant and no RW waiter queue: writer_count is a
  * pure ref count and same-DB write-write conflicts are app-ordered (DB-WRF), so
  * there are no rw_waiter / pending_rw / home_grantreq structures here.  The RO
  * snapshot reorder-buffer (cache.pending_snapshot) is still present — under
- * WRF_RCU it parks all modes.  The protocol-agnostic pieces come from
+ * WRF_VAL it parks all modes.  The protocol-agnostic pieces come from
  * types_common.h; the of_cache/total_size/stub_size helpers live in the
  * dispatcher (types.h), after this header defines cache + db_s.
  *
@@ -51,12 +51,12 @@ extern "C" {
 /*--- Per-rank DB cache ---------------------------------------------------
  * Every rank that has acquired or hosts a given DB has one of these.
  *
- *   writer_count   pure ref count under WRF_RCU (no node-exclusive ownership).
+ *   writer_count   pure ref count under WRF_VAL (no node-exclusive ownership).
  *   buffer         currently-installed buffer, an atomic shared_ptr slot;
  *                  readers acquire via acquire_buf's acquire-and-validate load.
  *   pending_snapshot  Treiber stack of snapshot-response reorder-buffer
  *                  waiters (case-3 push only; drained whole on next install).
- *                  Parks all modes under WRF_RCU (no ownership / pending_rw).
+ *                  Parks all modes under WRF_VAL (no ownership / pending_rw).
  *
  * The single home-directory field (cached_version) is NOT here — it is
  * inlined in the wrapping struct arts_db_s, after this cache + db_type, and
@@ -75,7 +75,7 @@ struct arts_db_cache_s {
    * original guid argument has been lost in the call chain. */
   arts_guid_t db_guid;
   uint64_t db_size;
-  /* WRF_RCU: writer_count is a pure ref count.  The PUBLISH ACK rendezvous is
+  /* WRF_VAL: writer_count is a pure ref count.  The PUBLISH ACK rendezvous is
    * a stack-local sem_t created per release_rw, matched by pointer identity
    * (the &sem address rides the PUBLISH packet and is echoed in the ACK) —
    * no per-cache seq state. */

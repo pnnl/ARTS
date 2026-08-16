@@ -809,7 +809,9 @@ if(ARTS_BUILD_DOCS)
     set(DOXYGEN_INPUT_DIRS
         "${CMAKE_SOURCE_DIR}/libs/include/public/arts.h \
          ${CMAKE_SOURCE_DIR}/libs/include/public/arts/graph.h \
-         ${CMAKE_SOURCE_DIR}/libs/include/internal/arts/runtime/rt.h \
+         ${CMAKE_SOURCE_DIR}/libs/include/public/arts/gpu.h \
+         ${CMAKE_SOURCE_DIR}/libs/include/internal/arts/runtime_types.h \
+         ${CMAKE_SOURCE_DIR}/libs/include/internal/arts/coherence/types_common.h \
          ${CMAKE_SOURCE_DIR}/libs/include/internal/arts/gas/guid.h \
          ${CMAKE_SOURCE_DIR}/libs/include/internal/arts/defs.h"
     )

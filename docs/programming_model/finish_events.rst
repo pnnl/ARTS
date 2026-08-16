@@ -100,7 +100,7 @@ Minimal Example
 ---------------
 
 A fork-join over ``NUM_TASKS`` workers (after
-``tests/counter_smoke.c``):
+``tests/ocr/counter_smoke.c``):
 
 .. code-block:: c
 

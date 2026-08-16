@@ -1,16 +1,17 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * MSI protocol, HOME placement.
+ * INV protocol, WT write policy.
  *
- * HOME means the canonical payload comes back to the data block's home rank at
+ * WT means the canonical payload comes back to the data block's home rank at
  * every release, so the home can serve readers from it.  That single fact is
  * this file: an RO acquire on the home rank reads the home buffer directly, a
  * release publishes its payload along with the round request, and a read
  * request at the home is answered from the home's own bytes.
  *
- * Everything else — the reader plane, the invalidation round, the cache and
- * directory lifecycles, the senders — is in msi/directory.c, and write
- * ownership is the shared migrating grant.
+ * Everything else — the reader plane, the invalidation round, the cache
+ * lifecycle, the senders — is in engine.c; the home request FIFO and
+ * directory lifecycle are in directory.c.  Write ownership is the shared
+ * migrating grant.
  */
 #include "arts/counter/object_counter.h"
 #include "arts/coherence/inv/types.h"
@@ -36,7 +37,7 @@
  * The two planes are answered independently, because they are independent:
  * a read never waits on a writer and a write never waits on a reader.
  *
- *   RO — served from the home (HOME placement puts current bytes there).  A
+ *   RO — served from the home (WT write policy puts current bytes there).  A
  *        rank holding a VALID copy short-circuits to a pure load; otherwise it
  *        joins or opens the single in-flight fetch.
  *   RW — the migrating sentinel grant, verbatim from the shared plane: bump
@@ -172,14 +173,14 @@ void arts_handler_db_acquire(void *item, void *args) {
   }
 }
 
-/* ===== release_rw (HOME placement) ======================================
+/* ===== release_rw (WT write policy) ======================================
  * Identical in shape to every other grant-bearing arm: bump the version,
  * publish, drop the count, and on the 0-edge ship the grant onward.  Two
  * things distinguish this arm, and only these two:
  *
- *   - HOME placement means the publish carries the payload, so the home holds
+ *   - WT write policy means the publish carries the payload, so the home holds
  *     current bytes and can serve readers from them;
- *   - MSI means the home does not acknowledge that publish until it has run an
+ *   - INV means the home does not acknowledge that publish until it has run an
  *     invalidation round over the sharer roster and collected every ack.  The
  *     release therefore returns only when no stale copy of this data block
  *     exists anywhere.
@@ -227,7 +228,7 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
   }
 }
 
-/* arts_db_release_ro: the shared no-op body in coherence.c applies — an MSI
+/* arts_db_release_ro: the shared no-op body in coherence.c applies — an INV
  * read release touches no protocol state (a valid copy persists; the EDT's
  * buffer ref is dropped by the dep-release path). */
 
@@ -301,7 +302,7 @@ void arts_handler_db_inv_request(void *item_v, void *args_v) {
     return;
   }
   /* There is no write branch: RW acquires go through the shared grant's
-   * OWNERSHIP_REQUEST, which the home answers by naming the next holder and
+   * GRANT_REQUEST, which the home answers by naming the next holder and
    * revoking the current one.  This handler serves readers only. */
 }
 

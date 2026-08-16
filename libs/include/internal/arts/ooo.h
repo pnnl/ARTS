@@ -69,9 +69,9 @@ extern "C" {
  * arts_handler_ prefix stripped and upper-cased (kind ↔ handler 1:1), e.g.
  * arts_handler_event_add_dependence → OOO_EVENT_ADD_DEPENDENCE.
  *
- * The model-specific DB-coherence kinds are preprocessor-selected: RCU builds
+ * The model-specific DB-coherence kinds are preprocessor-selected: VAL builds
  * define ARTS_PROTOCOL_VAL plus exactly one of ARTS_WRITE_POLICY_{WT,WB};
- * WRF_RCU builds define ARTS_PROTOCOL_WRF_VAL alone.  Each build's enum
+ * WRF_VAL builds define ARTS_PROTOCOL_WRF_VAL alone.  Each build's enum
  * (and the mirroring g_ooo_table) carries only that model's OOO_DB_* kinds.
  * OOO_KIND_COUNT is therefore per-model — sound because every TU in one build
  * sees the same model define. */
@@ -105,7 +105,7 @@ enum arts_ooo_kind {
                      local dep; pushed by arts_db_acquire_all's per-dep 3-way)
                    */
   OOO_DB_EXCL_REQUEST, /* → arts_handler_db_excl_request @ home */
-/* NO OOO_DB_EXCL_RELEASE: the OWNER placement has no synchronous publish release; the
+/* NO OOO_DB_EXCL_RELEASE: the RETAIN release policy has no synchronous publish release; the
  * DELIVER/CONFIRM/RORET messages are all direct-dispatched (Cat-C, target
  * provably installed by the time these messages arrive). */
 #elif defined(ARTS_PROTOCOL_INV)
@@ -114,18 +114,18 @@ enum arts_ooo_kind {
                    */
   /* The migrating grant, shared with every other grant-bearing arm. */
   OOO_DB_GRANT_REQUEST, /* → arts_handler_db_grant_request @ home */
-  /* MSI's own: the reader fetch, and (HOME placement only) the release that
+  /* INV's own: the reader fetch, and (WT write policy only) the release that
    * carries payload to the home. */
   OOO_DB_INV_REQUEST, /* → arts_handler_db_inv_request @ home (RO fetch) */
-  /* Every release asks the home for its invalidation round.  Under HOME the
+  /* Every release asks the home for its invalidation round.  Under WT the
    * request carries the payload (the home installs it and serves readers from
-   * it); under OWNER it is pure control.  That is the ONLY difference between
-   * the two placements' releases. */
+   * it); under WB it is pure control.  That is the ONLY difference between
+   * the two write policies' releases. */
   OOO_DB_PUBLISH, /* → arts_handler_db_publish @ home */
 #ifdef ARTS_WRITE_POLICY_WB
   OOO_DB_INV_REDIRECT, /* → arts_handler_db_inv_redirect @ the grant holder */
 #endif
-/* OWNERSHIP_INVALIDATE / RESPONSE / CONFIRM, and DELIVER / INVALIDATE /
+/* GRANT_INVALIDATE / RESPONSE / CONFIRM, and DELIVER / INVALIDATE /
  * INV_ACK / CTS, are Cat-C: their targets are either provably installed (the
  * home names a holder only after that rank installed; a requester pinned its
  * cache when it sent the request; home for the acks) or the MISS action is
@@ -137,9 +137,9 @@ enum arts_ooo_kind {
                    */
   OOO_DB_SNAPSHOT_REQUEST,  /* → arts_handler_db_snapshot_request @ home */
   OOO_DB_GRANT_REQUEST, /* → arts_handler_db_grant_request @ home */
-  /* NO OOO_DB_GRANT_INVALIDATE — the HOME placement no longer defers
+  /* NO OOO_DB_GRANT_INVALIDATE — the WT write policy no longer defers
    * INVALIDATE: rw_holder is flipped only at the post-install CONFIRM (same as
-   * OWNER), so the target is provably installed when INVALIDATE arrives and the
+   * WB), so the target is provably installed when INVALIDATE arrives and the
    * dispatcher/self-send call the body directly. */
   OOO_DB_PUBLISH, /* → arts_handler_db_publish @ home */
 #elif defined(ARTS_WRITE_POLICY_WB)
@@ -148,11 +148,11 @@ enum arts_ooo_kind {
                    */
   OOO_DB_SNAPSHOT_REQUEST,  /* → arts_handler_db_snapshot_request @ home */
   OOO_DB_GRANT_REQUEST, /* → arts_handler_db_grant_request @ home */
-/* NO OOO_DB_GRANT_INVALIDATE — the OWNER placement never defers INVALIDATE
+/* NO OOO_DB_GRANT_INVALIDATE — the WB write policy never defers INVALIDATE
  * (home publishes the target rw_holder only after that rank's cache install,
  * so the target is provably installed; the dispatcher/self-send call the body
  * directly).
- * NO OOO_DB_PUBLISH — the OWNER placement has no synchronous publish (the
+ * NO OOO_DB_PUBLISH — the WB write policy has no synchronous publish (the
  * dispatcher fatals on the PUBLISH wire message). */
 #elif defined(ARTS_PROTOCOL_WRF_VAL)
   OOO_DB_ACQUIRE, /* → arts_db_acquire_replay_dep (re-attempts the one deferred
@@ -224,8 +224,8 @@ struct arts_ooo_args_db_acquire_s {
 
 /* Coherence replay args — re-issue the wire handler once the home db_s/cache
  * is installed.  First-class fields are reconstructed into a stack packet by
- * the handler.  The home FIFO records only the requester rank (RCU
- * order ownership rank-by-rank). */
+ * the handler.  The home FIFO records only the requester rank (VAL
+ * orders ownership rank-by-rank). */
 struct arts_ooo_args_db_grant_request_s {
   unsigned int requester;
   arts_guid_t db_guid;
@@ -267,15 +267,15 @@ struct arts_ooo_args_db_publish_s {
 
 /* DB ownership invalidate: carries the fields the wire
  * arts_msg_grant_invalidate_packet_s delivers (db_guid + new_owner_rank).
- * The HOME placement ignores new_owner_rank; the OWNER placement uses it as the
- * TRANSFER_OWNERSHIP target. */
+ * The WT write policy ignores new_owner_rank; the WB write policy uses it as the
+ * GRANT_RESPONSE target. */
 struct arts_ooo_args_db_grant_invalidate_s {
   arts_guid_t db_guid;
   unsigned int new_owner_rank;
   struct arts_rdzv_landing_s new_owner_rdzv; /* transfer landing at new owner */
 };
 
-/* MSI protocol OoO args (OOO_DB_INV_REQUEST / OOO_DB_MSI_PUBLISH). */
+/* INV protocol OoO args (OOO_DB_INV_REQUEST / OOO_DB_PUBLISH). */
 struct arts_ooo_args_db_inv_request_s {
   unsigned int requester; /* subject of the request — NOT the wire sender: a
                              holder may re-send a read request on the reader's
@@ -283,7 +283,7 @@ struct arts_ooo_args_db_inv_request_s {
   arts_guid_t db_guid;
   arts_db_access_mode_t mode;      /* DB_MODE_RO or DB_MODE_RW */
   struct arts_rdzv_landing_s rdzv; /* deliver/grant landing; txid==0 = first
-                                      touch (home replies MSI_CTS) */
+                                      touch (home replies INV_CTS) */
 };
 
 #if defined(ARTS_PROTOCOL_INV) && defined(ARTS_WRITE_POLICY_WB)
@@ -307,20 +307,20 @@ struct arts_ooo_args_edt_destroy_s {
   arts_guid_t guid;
 };
 
-/* RWLOCK protocol OoO args (OOO_DB_EXCL_REQUEST / OOO_DB_EXCL_RELEASE). */
+/* EXCL protocol OoO args (OOO_DB_EXCL_REQUEST / OOO_DB_EXCL_RELEASE). */
 struct arts_ooo_args_db_excl_request_s {
   unsigned int requester; /* rank that sent MSG_DB_EXCL_REQUEST */
   arts_guid_t db_guid;
   arts_db_access_mode_t mode; /* DB_MODE_RO or DB_MODE_RW */
   struct arts_rdzv_landing_s rdzv; /* requester's grant/deliver landing */
 };
-/* LOCK_RELEASE: inline publish payload of data_size bytes trails this
+/* EXCL_RELEASE: inline publish payload of data_size bytes trails this
  * header (data_size == 0 for RO releases).
  * cv: RW only — releaser's stack-local sem_t address; forwarded verbatim in
- * the LOCK_RELEASE_ACK so the releaser wakes by pointer identity.  0 for RO.
+ * the EXCL_RELEASE_ACK so the releaser wakes by pointer identity.  0 for RO.
  * version: monotone round counter bumped by the releaser; home's buf_install
  * rejects stale overwrites when a reordered/duplicate RELEASE races a newer
- * one (same guard as the RCU publish path). */
+ * one (same guard as the VAL publish path). */
 struct arts_ooo_args_db_excl_release_s {
   unsigned int releaser; /* rank that sent MSG_DB_EXCL_RELEASE */
   arts_guid_t db_guid;

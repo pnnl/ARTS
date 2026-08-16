@@ -2,9 +2,9 @@
  *
  * cached_version dense map — owner-side per-rank dedup of the version each
  * rank last received.  Protocol-agnostic: every build links it (the ownership
- * protocols use it for DATA_RESPONSE dedup; WRF_RCU uses it to skip redundant
- * sends), so it lives in its own TU rather than the ownership-only home.c (the
- * home OWNERSHIP_REQUEST FIFO, which WRF_RCU does not link).
+ * protocols use it for SNAPSHOT_RESPONSE dedup; WRF_VAL uses it to skip redundant
+ * sends), so it lives in its own TU rather than the ownership-only val/directory.c (the
+ * home GRANT_REQUEST FIFO, which WRF_VAL does not link).
  *
  * Concurrency: each rank slot is an independent _Atomic(uint64_t) accessed via
  * atomic load/store and a CAS-loop monotonic-max for advance.  No cross-slot
@@ -72,7 +72,7 @@ bool arts_rank_u64_map_advance(struct arts_rank_to_u64_map_s *m,
 }
 
 /* ===== serialize / deserialize (ownership-transfer wire payload) =====
- * Shared by both RCU placements (the owner→owner OWNERSHIP_RESPONSE carries the
+ * Shared by both VAL write policies (the owner→owner GRANT_RESPONSE carries the
  * owner-side map).  Layout: count(u32) + pad(u32) + count pairs. */
 size_t arts_rank_u64_map_serialize(const struct arts_rank_to_u64_map_s *m,
                                    void *out) {

@@ -223,23 +223,6 @@ void *arts_deque_pop_back(struct arts_deque_s *deque) {
   return NULL;
 }
 
-struct arts_deque_s *arts_deque_list_new(unsigned int list_size,
-                                         unsigned int deque_size) {
-  struct arts_deque_s *deque_list = (struct arts_deque_s *)arts_calloc_aligned(
-      list_size, sizeof(struct arts_deque_s), 64);
-  unsigned int i = 0;
-  for (i = 0; i < list_size; i++) {
-    arts_deque_new_init(&deque_list[i], deque_size);
-  }
-
-  return deque_list;
-}
-
-struct arts_deque_s *arts_deque_list_get_deque(struct arts_deque_s *deque_list,
-                                               unsigned int position) {
-  return deque_list + position;
-}
-
 /*
  * Only one deque implementation exists (the Chase-Lev work-stealing deque
  * above), so selection is a no-op kept for the scheduler's call contract.

@@ -125,6 +125,16 @@ All options are set with ``-D<NAME>=<VALUE>`` on the cmake line.
      - Release policy, live in EXCL — ``PURGE`` (copy and permission return
        to the home when the last local user finishes) or ``RETAIN`` (keep
        both until another node asks; the home recalls on demand).
+   * - ``ARTS_RO_REQUEST_COMBINING``
+     - OFF
+     - Combine concurrent same-DB remote RO acquires into a single
+       in-flight snapshot request per DB (VAL pull path; no effect under
+       EXCL).
+   * - ``ARTS_MALLOC``
+     - mimalloc
+     - General allocator — ``mimalloc`` (default; vendored static, the
+       only multinode-capable choice) or ``system`` (libc malloc;
+       single-node / sanitizer builds only).
    * - ``ARTS_DEFAULT_DB_KIND``
      - ARTS_DB
      - Default DB storage kind the ``ARTS_DB_DEFAULT`` macro expands to:
@@ -138,6 +148,27 @@ All options are set with ``-D<NAME>=<VALUE>`` on the cmake line.
    * - ``ARTS_CXL_LIB_DIR``
      - (empty)
      - Path to ``arts_cxl_lib`` (required when ``ARTS_USE_CXL=ON``).
+   * - ``ARTS_NOHINT_EDT_PLACEMENT``
+     - ROUNDROBIN
+     - Where an EDT created with no placement preference (NULL hint, or
+       hint rank ``ARTS_HINT_ANY_RANK``) lands — ``ROUNDROBIN`` (default)
+       or ``CREATOR``.
+   * - ``ARTS_NOHINT_DB_HOME``
+     - CREATOR
+     - Where a DB created with no placement preference (NULL hint) is
+       homed — ``CREATOR`` (default; first-touch, home stays on the
+       creating rank) or ``ROUNDROBIN``.  An explicit hint rank or
+       pre-reserved GUID always wins.
+   * - ``ARTS_SHIM_NOHINT_DB_HOME``
+     - CREATOR
+     - No-hint DB home policy for the OCR shim's ``ocrDbCreate`` —
+       ``CREATOR`` (default; defers to ``ARTS_NOHINT_DB_HOME``) or
+       ``ROUNDROBIN`` (its own counter, independent of the runtime policy).
+   * - ``ARTS_SHIM_NOHINT_EDT_PLACE``
+     - ROUNDROBIN
+     - No-hint EDT placement policy for the OCR shim's ``ocrEdtCreate`` —
+       ``ROUNDROBIN`` (default; defers to ``ARTS_NOHINT_EDT_PLACEMENT``) or
+       ``CREATOR`` (pin to the calling rank).
    * - ``ARTS_LOG_LEVEL``
      - 3 / 1
      - Log verbosity (3 in Debug, 1 otherwise): 0=ERROR … 3=DEBUG.
@@ -149,6 +180,12 @@ All options are set with ``-D<NAME>=<VALUE>`` on the cmake line.
      - OFF
      - ThreadSanitizer in Debug builds (excludes CUDA; mutually exclusive with
        ``ARTS_USE_SANS``).
+   * - ``ARTS_SEQUENCE_NUMBERS``
+     - OFF
+     - Per-message wire sequence-number drop/reorder diagnostic (per-send
+       lock + per-recv check). Changes the wire header layout — every rank
+       in a run must build with the same setting. Hot-path; enable only to
+       debug transport ordering.
    * - ``ARTS_COUNTER_CONFIG``
      - configs/counters.cfg
      - Counter configuration file parsed into introspection macros.

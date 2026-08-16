@@ -72,7 +72,7 @@
 
 /* Protocol-agnostic cache_s field init.  The per-protocol arts_db_cache_init
  * wrapper (coherence/<protocol>.c) runs its protocol-specific field-init
- * (HOME/OWNER pending_rw queue + OWNER dedup-map/sentinel; WRF_RCU none) BEFORE
+ * (WT/WB pending_rw queue + WB dedup-map/sentinel; WRF_VAL none) BEFORE
  * calling this, so the Vyukov MPSC stub is wired before any push could land. */
 void arts_db_cache_common_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
                                uint64_t db_size, arts_db_init_kind_t kind,
@@ -109,7 +109,7 @@ void arts_db_cache_common_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
     arts_db_home_init(db_self, self, n);
     db_self->home_initialized = true;
 #if !defined(ARTS_PROTOCOL_EXCL)
-    /* RCU/WRF_RCU: writer_count tracks ownership (sentinel + creator). */
+    /* VAL/WRF_VAL: writer_count tracks ownership (sentinel + creator). */
     c->writer_count = 2;
 #endif
   } else if (kind == ARTS_DB_INIT_CREATOR_REMOTE) {
@@ -117,9 +117,9 @@ void arts_db_cache_common_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
     c->writer_count = 2;
 #endif
   }
-  /* Eager/WRF_RCU PUBLISH ACK rendezvous is a stack-local sem_t per
+  /* WT/WRF_VAL PUBLISH ACK rendezvous is a stack-local sem_t per
    * release_rw (pointer-identity match) — no per-cache seq fields to
-   * initialize.  Lazy owner-side fields (dedup map + transfer sentinel) are
+   * initialize.  WB owner-side fields (dedup map + transfer sentinel) are
    * armed by the protocol init hook above. */
 }
 
@@ -296,7 +296,7 @@ void *arts_db_acquire_local(struct arts_db_cache_s *cache) {
 
 /* Case 2/6 (RW local fast path) and Case 4/8 (remote-RW path) live in
  * coherence/grant.c — they touch the OCR-model home-directory cache fields
- * (pending_rw, grant_req_in_flight) that the WRF_RCU cache layout does not
+ * (pending_rw, grant_req_in_flight) that the WRF_VAL cache layout does not
  * have. */
 
 /* ===== Case 7: remote-RO / remote-snapshot path =================== */
@@ -467,9 +467,9 @@ arts_db_acquire_remote_ro(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
 #endif /* !ARTS_PROTOCOL_EXCL */
 
 /* The 8-case acquire dispatcher arts_handler_db_acquire is protocol-specific:
- * HOME and OWNER define it in coherence/grant.c-backed
- * each arm's own placement TU (single-owner OWNERSHIP_REQUEST / GRANT path,
- * differing only on the RO-has-local-data predicate); WRF_RCU defines its
+ * WT and WB define it in coherence/grant.c-backed
+ * each arm's own write-policy TU (single-owner GRANT_REQUEST / GRANT path,
+ * differing only on the RO-has-local-data predicate); WRF_VAL defines its
  * unified home-canonical body in coherence/wrf_val.c.  The shared remote-RO
  * path (arts_db_acquire_remote_ro) and the local-buffer fast read
  * (arts_db_acquire_local) above are reused by all three.
@@ -479,7 +479,7 @@ arts_db_acquire_remote_ro(struct arts_db_cache_s *cache, arts_guid_t edt_guid,
  * guarantees every parked node's target_version <= the buffer version that
  * triggers the drain, so a full drain (no partial pop) is always correct
  * (plan: "install 시 전체 drain").  Called from the case-2 install path, the
- * GRANT install, the OWNER TRANSFER_OWNERSHIP install, and destroy fan-out. */
+ * GRANT install, the WB GRANT_RESPONSE install, and destroy fan-out. */
 void arts_db_drain_pending_snapshot(struct arts_db_cache_s *cache) {
   arts_lf_link_t *node = arts_lf_stack_drain(&cache->pending_snapshot);
   while (node != NULL) {
@@ -488,7 +488,7 @@ void arts_db_drain_pending_snapshot(struct arts_db_cache_s *cache) {
     arts_lf_link_t *next =
         atomic_load_explicit(&node->next, memory_order_relaxed);
     if (w->serve != NULL) {
-      /* Deferred remote serve (home parked a GET_DATA while it had no buffer
+      /* Deferred remote serve (home parked a SNAPSHOT_REQUEST while it had no buffer
        * yet): re-issue against the now-installed buffer.  The callback must
        * not retain w past its return. */
       w->serve(cache, w);
@@ -512,8 +512,8 @@ void arts_db_drain_pending_snapshot(struct arts_db_cache_s *cache) {
 /* ===== publish ACK wait (shared coherence service) =================
  *
  * Synchronous PUBLISH with a stack-local semaphore matched by pointer
- * identity.  Called by the HOME and WRF_RCU release-tail bodies (the OWNER
- * tail uses TRANSFER_OWNERSHIP and never waits on a PUBLISH_ACK).  Declared
+ * identity.  Called by the WT and WRF_VAL release-tail bodies (the WB
+ * tail uses GRANT_RESPONSE and never waits on a PUBLISH_ACK).  Declared
  * in coherence/coherence.h so the protocol TUs can invoke it. */
 void await_publish_ack(sem_t *cv) {
   /* Block on the stack-local semaphore until arts_handler_db_publish_ack
@@ -545,8 +545,8 @@ void await_publish_ack(sem_t *cv) {
 
 /* ===== publish flight machine (write-combining publish) ============
  *
- * Compiled by every arm that publishes at a release.  Under HOME that is the
- * payload write-through; under OWNER only MSI publishes at all, and its
+ * Compiled by every arm that publishes at a release.  Under WT that is the
+ * payload write-through; under WB only INV publishes at all, and its
  * publish is control-only — the round request.
  *
  * At most ONE publish is in flight per (DB, rank).  Every releaser registers
@@ -897,10 +897,11 @@ void arts_handler_db_publish_ack(void *item_v, void *args_v) {
 
 #if !defined(ARTS_PROTOCOL_EXCL)
 void arts_db_release_ro(struct arts_db_cache_s *cache) {
-  /* RO release is a no-op for RCU/WRF_RCU: the EDT's buf ref is dropped
+  /* RO release is a no-op for VAL/WRF_VAL: the EDT's buf ref is dropped
    * by release_one_dep's DIST branch via release_buf (matching the
    * acquire_buf in mark_edt_ready_by_guid / acquire_local).
-   * RWLOCK defines its own arts_db_release_ro in coherence/excl/release.c. */
+   * EXCL defines its own arts_db_release_ro in coherence/excl/purge.c and
+   * coherence/excl/retain.c. */
   (void)cache;
 }
 #endif /* !ARTS_PROTOCOL_EXCL */

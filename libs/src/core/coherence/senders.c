@@ -4,7 +4,7 @@
  *
  * Each arts_send_db_* helper fills a wire packet (header + body) and either
  * dispatches the matching handler inline (when the destination is the local
- * rank — arts_transport_send_async drops self-sends, and the HOME placement
+ * rank — arts_transport_send_async drops self-sends, and the coherence protocol
  * uses uniform "send to home" semantics including home == self) or hands the
  * packet to the transport layer; bulk payloads travel one-sided into
  * receiver-advertised rendezvous landings, never on the control plane.
@@ -13,7 +13,7 @@
  * transfer helpers live in coherence_handlers.c.
  *
  * Single-node note: arts_transport_send_async drops messages whose
- * destination is the local rank (self_send_check rejects).  The HOME protocol
+ * destination is the local rank (self_send_check rejects).  The coherence protocol
  * uses uniform "send to home" semantics including home == self, so we dispatch
  * handlers directly when rank == self instead of going over the network.
  */
@@ -40,11 +40,10 @@
 
 /* ===== Sender helpers ============================================== */
 
-/* arts_send_db_grant_request / _return / _invalidate and the
- * OWNERSHIP_RESPONSE sender live in the protocol TUs (HOME and OWNER only): the
- * request / return / invalidate senders in coherence/grant.c, the
- * OWNERSHIP_RESPONSE sender in coherence/home.c (GRANT) and coherence/owner.c
- * (TRANSFER_OWNERSHIP).  WRF_RCU has no exclusive-ownership wire messages. */
+/* arts_send_db_grant_request / _cts / _invalidate / _confirm and the
+ * GRANT_RESPONSE sender (arts_db_send_grant_response) all live in
+ * coherence/grant.c, shared by WT and WB.  WRF_VAL has no
+ * exclusive-ownership wire messages. */
 
 #if !defined(ARTS_PROTOCOL_EXCL)
 void arts_send_db_publish(unsigned int home_rank, arts_guid_t db_guid,
@@ -60,7 +59,7 @@ void arts_send_db_publish(unsigned int home_rank, arts_guid_t db_guid,
   p.data_size = data_size;
   p.rdzv_txid = rdzv_txid;
   p.rdzv_cookie = rdzv_cookie;
-/* The OoO kind exists only in arms that publish at a release; RCU under OWNER
+/* The OoO kind exists only in arms that publish at a release; VAL under WB
  * publishes nothing, so its local-hit branch is compiled out with it. */
 #if !defined(ARTS_WRITE_POLICY_WB) || defined(ARTS_PROTOCOL_INV)
   /* Local hit: the home is this rank, so there is nothing to put on the wire.
@@ -128,7 +127,7 @@ void arts_send_db_publish_cts(unsigned int releaser_rank, arts_guid_t db_guid,
 }
 
 /* PUBLISH_ACK is the reply to a synchronous PUBLISH round, which only the
- * the HOME placement and WRF_RCU use (the OWNER placement transfers ownership
+ * the WT write policy and WRF_VAL use (the WB write policy transfers ownership
  * owner→owner without a synchronous publish, so it never sends or receives
  * PUBLISH_ACK and its dispatcher fatals on the wire message). */
 #if !defined(ARTS_PROTOCOL_EXCL) &&                                          \
@@ -212,8 +211,8 @@ void arts_send_db_create_return(unsigned int creator_rank,
 }
 #endif /* !ARTS_WRITE_POLICY_WB && !ARTS_PROTOCOL_EXCL */
 
-/* The versioned-snapshot read path: RCU and WRF_RCU only.  MSI's readers hold
- * durable copies and fetch with MSI_REQUEST instead. */
+/* The versioned-snapshot read path: VAL and WRF_VAL only.  INV's readers hold
+ * durable copies and fetch with INV_REQUEST instead. */
 #if !defined(ARTS_PROTOCOL_EXCL) && !defined(ARTS_PROTOCOL_INV)
 /* One request on the wire per parked reader (or per combining window). */
 void arts_send_db_snapshot_request(struct arts_db_cache_s *cache,
@@ -400,9 +399,9 @@ void arts_send_db_cache_destroy(unsigned int sharer_rank, arts_guid_t db_guid) {
 }
 
 #ifdef ARTS_PROTOCOL_EXCL
-/* arts_send_db_excl_release_ack — LOCK_RELEASE_ACK: home → RW releaser.
+/* arts_send_db_excl_release_ack — EXCL_RELEASE_ACK: home → RW releaser.
  *
- * Mirrors arts_send_db_publish_ack (RCU HOME): forwards cv verbatim so
+ * Mirrors arts_send_db_publish_ack (VAL WT): forwards cv verbatim so
  * the releaser's await_publish_ack unblocks by pointer-identity sem_post.
  *
  * Cat-C SPECIAL self-send: posts the sem even when db==NULL (home cache
@@ -432,6 +431,6 @@ void arts_send_db_excl_release_ack(unsigned int releaser_rank,
 }
 #endif /* ARTS_PROTOCOL_EXCL */
 
-/* The OWNER-only senders (CONFIRM, CONFIRM_ACK, REDIRECT_RO) live in
- * coherence/owner.c alongside their handlers; the RCU OWNERSHIP_RESPONSE
- * senders live in coherence/home.c / coherence/owner.c. */
+/* The WB-only senders (CONFIRM_ACK, SNAPSHOT_REDIRECT) live in
+ * coherence/grant_wb.c and coherence/val/wb.c alongside their handlers;
+ * the VAL GRANT_RESPONSE senders live in coherence/grant.c (shared by WT and WB). */

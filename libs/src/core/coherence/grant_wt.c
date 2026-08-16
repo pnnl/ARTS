@@ -1,19 +1,19 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * The HOME placement's half of the migrating sentinel grant.
+ * The WT write policy's half of the migrating sentinel grant.
  *
  * coherence/grant.c holds what every grant-bearing arm shares (the sentinel,
  * the home FIFO, the transfer baton, the owner->owner ship).  This TU holds
- * what the HOME placement decides on top of it: a new owner installs, drains,
+ * what the WT write policy decides on top of it: a new owner installs, drains,
  * and RUNS immediately — there is no confirm gate, because the home serves
  * reads, so no reader can be sent to a stale copy while the directory catches
- * up.  (The OWNER placement gates on CONFIRM_ACK for exactly that reason; see
+ * up.  (The WB write policy gates on CONFIRM_ACK for exactly that reason; see
  * its own TU.)
  *
- * Nothing here is protocol-specific — RCU and MSI link this same TU.  What a
+ * Nothing here is protocol-specific — VAL and INV link this same TU.  What a
  * transfer means for the ex-holder's copy IS protocol-specific, so it is a
- * seam: arts_db_grant_note_ex_holder.  RCU has nothing to do (its readers
- * re-check a version at every acquire, so a retained copy is harmless); MSI
+ * seam: arts_db_grant_note_ex_holder.  VAL has nothing to do (its readers
+ * re-check a version at every acquire, so a retained copy is harmless); INV
  * must register the ex-holder as a sharer, or the new owner's first release
  * would leave a live copy uninvalidated.
  */
@@ -39,8 +39,8 @@
 #include "arts/counter/Preamble.h"
 
 /* ===== Ownership-round seams (called from coherence/grant.c) ==
- * family→protocol: the ownership-family OWNERSHIP_REQUEST / RELEASE_OWNERSHIP
- * handlers delegate the HOME/OWNER-divergent steps here. */
+ * family→protocol: the ownership-family GRANT_REQUEST handler
+ * delegates the WT/WB-divergent steps here. */
 
 void arts_db_start_grant_round(struct arts_db_cache_s *cache,
                                    struct arts_db_s *db,
@@ -48,10 +48,10 @@ void arts_db_start_grant_round(struct arts_db_cache_s *cache,
   (void)requester;
   /* Pop the OLDEST requester (FIFO) to be the transfer target, publish it as
    * pending_install_owner, and INVALIDATE the current holder carrying the new
-   * owner so the holder ships the owner→owner OWNERSHIP_RESPONSE directly.
+   * owner so the holder ships the owner→owner GRANT_RESPONSE directly.
    * pending_install_owner is written only by the baton holder (single writer),
-   * so no atomic.  Structurally identical to the OWNER start round; the HOME /
-   * OWNER divergence is only the drain point in the response/confirm handlers.
+   * so no atomic.  Structurally identical to the WB start round; the WT /
+   * WB divergence is only the drain point in the response/confirm handlers.
    */
   unsigned int next_owner;
   struct arts_rdzv_landing_s next_rdzv;
@@ -85,7 +85,7 @@ void arts_db_start_grant_round(struct arts_db_cache_s *cache,
   unsigned int current_owner =
       atomic_load_explicit(&db->rw_holder, memory_order_acquire);
   /* Credit the outgoing holder as a sharer HERE, not at the CONFIRM: it keeps
-   * the bytes it wrote, and under HOME the incoming owner runs the moment it
+   * the bytes it wrote, and under WT the incoming owner runs the moment it
    * installs — there is no confirm gate — so it can close a release round
    * before the home ever processes the CONFIRM.  A roster credited only then
    * would miss that round, leaving the ex-holder on bytes from a write window
@@ -97,13 +97,13 @@ void arts_db_start_grant_round(struct arts_db_cache_s *cache,
                                     &next_rdzv);
 }
 
-/* ===== Eager OWNERSHIP_RESPONSE handler (new owner C) ================ */
+/* ===== WT GRANT_RESPONSE handler (new owner C) ================ */
 
-/* HOME converged onto the OWNER owner→owner transfer, with the CRITICAL
- * divergence: HOME drains pending_rw + runs its RW EDTs IMMEDIATELY here (no
+/* WT converged onto the WB owner→owner transfer, with the CRITICAL
+ * divergence: WT drains pending_rw + runs its RW EDTs IMMEDIATELY here (no
  * CONFIRM_ACK gate — home serves RO, so there is no stale-RO window to close),
  * then sends CONFIRM to home (flips rw_holder + advances the next round). */
-/* Post-install tail of the OWNERSHIP_RESPONSE (GRANT) handler — everything
+/* Post-install tail of the GRANT_RESPONSE (GRANT) handler — everything
  * that must run only once the transferred bytes are in place.  db_h is the
  * caller's pin on the db_s; consumed (released) here. */
 static void home_response_commit(arts_shared_ptr_t db_h, arts_guid_t db_guid,
@@ -118,7 +118,7 @@ static void home_response_commit(arts_shared_ptr_t db_h, arts_guid_t db_guid,
   arts_atomic_add(&cache->writer_count, 2u);
   cache->grant_req_in_flight = 0;
 
-  /* HOME drains + runs NOW (no confirm-ack gate): home serves RO so there is
+  /* WT drains + runs NOW (no confirm-ack gate): home serves RO so there is
    * no stale-RO window.  Then tell home we installed (CONFIRM), which flips
    * rw_holder + advances the next round. */
   arts_db_drain_pending_rw_after_grant(cache, version, /*has_next=*/false);
@@ -198,7 +198,7 @@ void arts_handler_db_grant_response(void *payload, size_t size) {
     cache->db_size = hdr->data_size;
   }
 
-  /* Wire layout: header | map (count pairs, inline).  HOME ignores the map
+  /* Wire layout: header | map (count pairs, inline).  WT ignores the map
    * (it dedups RO via home->cached_version), but parses past it. */
   char *map_start = (char *)payload + sizeof(*hdr);
   size_t map_size =
@@ -238,14 +238,14 @@ void arts_handler_db_grant_response(void *payload, size_t size) {
   home_response_commit(db_h, db_guid, hdr->version); /* releases db_h */
 }
 
-/* ===== Eager CONFIRM handler (home A) =============================== */
+/* ===== WT CONFIRM handler (home A) =============================== */
 
 /* Cat-C pure body (CONFIRM, home side).  The wire dispatcher / self-send
  * shortcut has already looked the home db_s up with a held ref and passes it as
  * item_v (cache is its FIRST member).  args_v is unused — the new owner is read
- * from db->pending_install_owner (published by the baton holder).  HOME does
+ * from db->pending_install_owner (published by the baton holder).  WT does
  * NOT send CONFIRM_ACK (the new owner already drained + ran at
- * OWNERSHIP_RESPONSE); it only flips rw_holder + advances the next round. */
+ * GRANT_RESPONSE); it only flips rw_holder + advances the next round. */
 void arts_handler_db_grant_confirm(void *item_v, void *args_v) {
   (void)args_v;
   struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
@@ -261,7 +261,7 @@ void arts_handler_db_grant_confirm(void *item_v, void *args_v) {
   arts_db_grant_note_ex_holder(db, prev_holder);
 
   /* Drain-or-release retry loop: start the next transfer round if there are
-   * pending_rw requests, otherwise release the baton (same loop as OWNER, minus
+   * pending_rw requests, otherwise release the baton (same loop as WB, minus
    * the CONFIRM_ACK send). */
   while (1) {
     unsigned int next_owner;
@@ -295,15 +295,15 @@ void arts_handler_db_grant_confirm(void *item_v, void *args_v) {
   }
 }
 
-/* ===== Eager INVALIDATE_NOTICE handler (pure body) =================== */
+/* ===== WT GRANT_INVALIDATE handler (pure body) =================== */
 
 /* Pure (cache, args) body.  The wire dispatcher / self-send shortcut has
  * already looked the cache up (the target is rw_holder, published only at the
  * post-install CONFIRM owner-swap, so the cache is provably installed when
  * INVALIDATE arrives) and passes the db_s as item_v — cache is its FIRST member
  * (offset 0).  No OoO defer is needed (and none exists for this kind anymore):
- * since rw_holder flips post-install in both placements, the before-install
- * GRANT/INVALIDATE reorder that once forced HOME through the engine cannot
+ * since rw_holder flips post-install in both write policies, the before-install
+ * GRANT/INVALIDATE reorder that once forced WT through the engine cannot
  * occur.  GRANT(+sentinel) strictly precedes INVALIDATE(-1); the install guard
  * (+2) keeps writer_count non-negative even if the next round's INVALIDATE
  * lands mid-install on another receiver thread. */
@@ -314,13 +314,13 @@ void arts_handler_db_grant_invalidate(void *item_v, void *args_v) {
   /* Publish the transfer target BEFORE withdrawing the sentinel: whichever
    * actor drives writer_count to 0 (this handler, or a concurrent last
    * release_rw) then reads the same new_owner and PROCEEDs it.  Same
-   * store-before-decrement discipline the OWNER arm uses for incoming_new_owner;
-   * the HOME INVALIDATE carries new_owner (home embeds the FIFO front),
-   * making the HOME and OWNER transfer paths structurally identical. */
+   * store-before-decrement discipline the WB arm uses for incoming_new_owner;
+   * the WT INVALIDATE carries new_owner (home embeds the FIFO front),
+   * making the WT and WB transfer paths structurally identical. */
   cache->incoming_new_owner_rdzv = a->new_owner_rdzv;
   cache->incoming_new_owner = a->new_owner_rank;
   /* Sentinel withdrawal (writer_count -= 1).  Home's invalidate_in_flight gate
-   * sends AT MOST ONE INVALIDATE_NOTICE to this rank per transfer round, after
+   * sends AT MOST ONE GRANT_INVALIDATE to this rank per transfer round, after
    * rw_holder has been advanced to a rank that already holds the sentinel (+1).
    * The decrement that drives writer_count to 0 is the unique actor that
    * performs the ownership transfer; while local writers are still active
@@ -342,6 +342,6 @@ void arts_handler_db_grant_invalidate(void *item_v, void *args_v) {
   }
 }
 
-/* Case-D leaf: the HOME placement defers the home-buffer install to the
+/* Case-D leaf: the WT write policy defers the home-buffer install to the
  * creator's first release_rw (PUBLISH / GRANT path); nothing to do at
  * create. */

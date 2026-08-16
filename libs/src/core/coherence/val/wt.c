@@ -1,11 +1,11 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * HOME protocol translation unit: defines the HOME-specific
+ * WT write-policy translation unit: defines the WT-specific
  * arts_handler_db_* / arts_db_* bodies directly (CMake links exactly this TU
- * for an RCU+HOME build) plus the HOME-only wire handlers/senders.
- * Compiled only for ARTS_COHERENCE_PROTOCOL=RCU with
+ * for a VAL+WT build) plus the WT-only wire handlers/senders.
+ * Compiled only for ARTS_COHERENCE_PROTOCOL=VAL with
  * ARTS_WRITE_POLICY=WT (selected in libs/src/core/CMakeLists.txt).
- * Contains NO protocol/placement preprocessor logic.
+ * Contains NO protocol/write-policy preprocessor logic.
  */
 #include <semaphore.h>
 #include <stdbool.h>
@@ -114,20 +114,20 @@ void arts_handler_db_acquire(void *item, void *args) {
     return;
   }
   arts_db_acquire_remote_rw(cache, edt->guid,
-                            slot); /* parks (OWNERSHIP_REQUEST) */
+                            slot); /* parks (GRANT_REQUEST) */
 }
 
 bool arts_db_acquire_is_serialized(arts_db_access_mode_t mode) {
   return mode == DB_MODE_RW;
 }
 
-/* ===== release_rw (HOME arm) ========================================
- * The HOME protocol keeps home's RO copy fresh with a pure synchronous
+/* ===== release_rw (WT arm) ========================================
+ * The WT write policy keeps home's RO copy fresh with a pure synchronous
  * PUBLISH on every non-home release (home owners already hold the canonical
  * buffer).  Ownership transfer is a SEPARATE owner→owner ship
  * (arts_db_send_grant_response), fired on the 0-edge when a transfer target
- * is pending — structurally identical to the OWNER arm.  The drain-now /
- * confirm-ack divergence lives only in the OWNERSHIP_RESPONSE / CONFIRM
+ * is pending — structurally identical to the WB arm.  The drain-now /
+ * confirm-ack divergence lives only in the GRANT_RESPONSE / CONFIRM
  * handlers, not here. */
 void arts_db_release_rw(struct arts_db_cache_s *cache) {
   /* Defensive: writer_count==0 means our acquire never bumped ownership (e.g. a
@@ -157,7 +157,7 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
      * version bump above. */
     arts_db_publish_sync(cache, new_version);
   }
-  /* Eager: release buffer ref after the publish (which reads buf->data). */
+  /* WT: release buffer ref after the publish (which reads buf->data). */
   if (buf != NULL) {
     arts_db_buf_release(&buf_h);
   }
@@ -174,8 +174,8 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
   }
 }
 
-/* ===== cache_s lifecycle (HOME: pending_rw Vyukov MPSC) =============
- * Construct: the HOME placement's field-init (the Vyukov MPSC pending_rw queue
+/* ===== cache_s lifecycle (WT: pending_rw Vyukov MPSC) =============
+ * Construct: the WT write policy's field-init (the Vyukov MPSC pending_rw queue
  * — cannot
  * be zero-initialized, head/tail must point at the embedded stub) runs BEFORE
  * arts_db_cache_common_init so the queue is wired before any push could land.
@@ -191,7 +191,7 @@ void arts_db_cache_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
    * it. */
   c->incoming_new_owner = ARTS_NO_PENDING_OWNER;
   c->incoming_new_owner_rdzv = (struct arts_rdzv_landing_s){0, 0, 0, 0};
-  /* HOME has no owner-side dedup map (home serves RO via GET_DATA): the
+  /* WT has no owner-side dedup map (home serves RO via SNAPSHOT_REQUEST): the
    * owner→owner transfer always ships an empty map.  NULL so the shared ship
    * helper's map-build gate takes its empty-map branch. */
   c->cached_version = NULL;
@@ -227,15 +227,15 @@ void arts_db_home_teardown(struct arts_db_s *db) {
   /* No free: home fields are inlined in the arts_db_s. */
 }
 
-/* ===== GET_DATA reply (home.cached_version atomic-monotonic) ===== */
+/* ===== SNAPSHOT_REQUEST reply (home.cached_version atomic-monotonic) ===== */
 
-/* update_cached_version_max: the GET_DATA reply path.  Decide send-with-
+/* update_cached_version_max: the SNAPSHOT_REQUEST reply path.  Decide send-with-
  * data vs send-no-data based on the home watermark, then advance the
  * watermark.  Under single-threaded handler dispatch the "atomic
  * CAS-loop" the design plan specifies collapses to a plain compare/
  * advance — but we keep the helper signature so future MPMC upgrades
  * are localized. */
-/* GET_DATA reply path: decide CTS / no-data / one-sided-data from the home
+/* SNAPSHOT_REQUEST reply path: decide CTS / no-data / one-sided-data from the home
  * watermark and the requester's landing, then advance the watermark only when
  * payload actually moves.  Consumes master_h (the pinned canonical buffer). */
 static void update_cached_version_max(struct arts_db_cache_s *cache,
@@ -273,7 +273,7 @@ static void update_cached_version_max(struct arts_db_cache_s *cache,
                                  master_h);
 }
 
-/* Deferred GET_DATA serve (snapshot-waiter `serve` arm): the request arrived
+/* Deferred SNAPSHOT_REQUEST serve (snapshot-waiter `serve` arm): the request arrived
  * at home before the creator's first PUBLISH installed a buffer, and the
  * install's drain now re-issues it.  Runs the same serve tail as the request
  * handler.  The waiter is freed by the drain after this returns. */
@@ -394,7 +394,7 @@ void arts_handler_db_snapshot_request(void *item_v, void *args_v) {
  * ACK-exactly-once: the body acks (cv != 0) only when it runs (cache live).  A
  * deferred PUBLISH does NOT ack on the defer — the single PUBLISH_ACK is
  * sent on the drain replay.  Pure: it only installs (version-guarded) + acks;
- * ownership transfer is a separate owner→owner OWNERSHIP_RESPONSE ship. */
+ * ownership transfer is a separate owner→owner GRANT_RESPONSE ship. */
 /* Rendezvous continuation for a committed publish: the dirty bytes have
  * fully landed IN PLACE in the stable home buffer; publication is the version
  * stamp alone (release-store, sequenced after the {commit packet, write
@@ -419,7 +419,7 @@ static void pub_landed_cb(void *arg) {
      * so its own next acquire dedups to no-data. */
     arts_rank_u64_map_advance(db->cached_version, ctx->releaser, ctx->version);
     /* First-publish publication (bump from version 0): wake home-parked RO
-     * acquires and re-issue home-parked GET_DATA serves. */
+     * acquires and re-issue home-parked SNAPSHOT_REQUEST serves. */
     arts_db_drain_pending_snapshot(&db->cache);
   }
   arts_send_db_publish_ack(ctx->releaser, ctx->db_guid, ctx->cv, ctx->version,
@@ -491,7 +491,7 @@ void arts_handler_db_publish(void *item_v, void *args_v) {
  * arts_route_table_set_destroyed LAST (detach the slot cb + drop the install
  * ref); a waiter left parked at destroy (UB) is cleaned up by the destructor detaches the slot cb + drops the install
  * ref; the cb deleter frees the cache once outstanding lookup refs drain.  A
- * second DESTROY_REQ finds the slot absent and is a no-op.  Eager roster
+ * second DESTROY_REQ finds the slot absent and is a no-op.  WT roster
  * source = home->cached_version + the queued ownership requesters. */
 void arts_handler_db_destroy(void *item_v, void *args_v) {
   struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
@@ -502,7 +502,7 @@ void arts_handler_db_destroy(void *item_v, void *args_v) {
     return;
   }
   unsigned int self = arts_global_rank_id;
-  /* Eager: use home->cached_version as the readers roster, then the queued
+  /* WT: use home->cached_version as the readers roster, then the queued
    * ownership requesters. */
   {
     unsigned int n = arts_global_rank_count;

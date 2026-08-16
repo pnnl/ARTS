@@ -107,7 +107,7 @@ ninja -C build
 ninja -C build install
 ```
 
-The public headers (`arts.h`, `arts/graph.h`, `arts/gpu.h`, `arts/array_db.h`)
+The public headers (`arts.h`, `arts/graph.h`, `arts/gpu.h`)
 and the `libarts` static/shared libraries are installed under the prefix, along
 with a CMake package config so downstream projects can `find_package(ARTS)`.
 
@@ -125,7 +125,7 @@ with defaults lives in [README.md](README.md#build-options); the most common are
 | `ARTS_WRITE_POLICY` | `WB` | Write policy at release granularity — `WT` (write-through: payload flushed to the block's home at every release; home serves reads) or `WB` (default; write-back: payload stays with the last writer, directory forwards on demand). Live in INV/VAL; EXCL requires WB. |
 | `ARTS_RELEASE_POLICY` | `RETAIN` | What a node does with its write grant when the last local user finishes — `PURGE` (hand copy and permission back to the home) or `RETAIN` (default; keep both until another node asks). Live in EXCL; INV/VAL require RETAIN. |
 | `ARTS_USE_GPU` | `OFF` | Enable CUDA GPU support. |
-| `ARTS_BUILD_TESTS` | `ON` | Build the ctest suite. |
+| `ARTS_BUILD_TESTS` | `OFF` | Build the ctest suite. |
 | `ARTS_BUILD_BENCHMARKS` | `ON` | Build the OCR benchmark apps (needs MPI). |
 | `ARTS_USE_SANS` | `OFF` | ASan + UBSan + LSan in Debug builds. |
 | `ARTS_USE_TSAN` | `OFF` | ThreadSanitizer in Debug builds (mutually exclusive with `ARTS_USE_SANS`). |
@@ -173,7 +173,7 @@ ctest --test-dir build -R edt_create_basic                  # one test by name
 ```
 
 Each test sets its own `ARTS_CONFIG` to point at the matching cfg under
-`configs/local/laptop/`, so no config files are copied into the build directory.
+`configs/local/test/`, so no config files are copied into the build directory.
 
 Configuration
 =============
@@ -182,14 +182,13 @@ An ARTS program reads its runtime configuration from `arts.cfg` in the working
 directory (or the file named by the `ARTS_CONFIG` environment variable).
 Templates live under `configs/`:
 
-- `configs/local/laptop/{1n,2n,3n,4n,2n_io}.cfg` — localhost, 14-thread budget
-- `configs/local/server/{1n,2n,4n,8n,16n,2n_io,4n_io,8n_io}.cfg` — localhost, 48-thread budget
-- `configs/local/gpu/{1n,2n}.cfg` — GPU-enabled
-- `configs/mpi/laptop/{1n,2n,3n,4n}.cfg` — MPI launcher (xsocr), 14-thread
-- `configs/mpi/server/{1n,2n,4n,8n,16n}.cfg` — MPI launcher (xsocr), 48-thread
+- `configs/local/test/{1n,2n,2n_io,3n,4n}.cfg` — localhost, the ctest shapes
+- `configs/local/bentley/{1n,1n_sc,2n_sc,4n_sc,8n_sc}.cfg` — localhost, the perf shapes for the current host
+- `configs/local/gpu/1n.cfg` — GPU-enabled
+- `configs/mpi/bentley/{1n,1n_sc,2n_sc,4n_sc,8n_sc}.cfg` — MPI launcher (xsocr), the perf shapes for the current host
 
-The values most often changed are the launcher, the worker/sender/receiver
-thread counts, and the GPU count.
+The values most often changed are the launcher, the `worker_threads`/
+`progress_threads` counts, and the GPU count.
 
 Contributors
 ============

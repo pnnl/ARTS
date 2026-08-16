@@ -2,9 +2,8 @@
  *
  * pure_unit test for the SSH launcher command-string construction inside
  *   void arts_launcher_ssh_startup_processes(struct arts_launcher_s *)
- * (libs/src/core/transport/launcher.c:131-303).
  *
- * Target bug B110 (final_length OOB write, launcher.c:287), now FIXED.
+ * Target bug: the command builder's final_length OOB write, now FIXED.
  * -----------------------------------------------------------------------
  * The builder used to accumulate the RAW return values of snprintf (the number
  * of bytes that WOULD have been written, NOT the truncated count).  Once the
@@ -16,8 +15,8 @@
  * A long CWD (getcwd into cwd[1024]) and/or many/long argv tokens drive the sum
  * over 4096.
  *
- * The fix introduces a bounded-append helper `arts_cmd_appendf` (launcher.c:
- * 105-129) that every append now goes through.  It:
+ * The fix introduces a bounded-append helper `arts_cmd_appendf` that every
+ * append now goes through.  It:
  *   - returns immediately (clamping *length to buf_size-1) once *length has
  *     already reached buf_size, so no further write happens past the end;
  *   - bounds each vsnprintf by `remaining = buf_size - *length` (never
@@ -26,9 +25,9 @@
  * With *length always <= buf_size-1, the terminating `command[final_length]`
  * is in bounds even when the composed string is truncated.
  *
- * Quoting (B111): the builder interpolates cwd/argv raw; the WHOLE command is
- * single-quoted once by arts_shell_quote() for the outer `sh -c` (launcher.c:
- * 291), which is the runtime's quoting strategy.  The builder under test is the
+ * Quoting: the builder interpolates cwd/argv raw; the WHOLE command is
+ * single-quoted once by arts_shell_quote() for the outer `sh -c`, which is
+ * the runtime's quoting strategy.  The builder under test is the
  * inner, pre-quote string; this test asserts the builder is overflow-safe and
  * produces the expected pre-quote bytes (the outer layer handles shell safety).
  *
@@ -61,9 +60,9 @@
 #define COMMAND_SIZE 4096 /* matches launcher.c `char command[4096];` */
 
 /* ------------------------------------------------------------------ *
- * Verbatim mirror of launcher.c arts_cmd_appendf (lines 105-129):    *
- * bounded printf-append that clamps *length so the buffer stays       *
- * null-terminatable at buf[*length].                                  *
+ * Verbatim mirror of arts_cmd_appendf: bounded printf-append that     *
+ * clamps *length so the buffer stays null-terminatable at             *
+ * buf[*length].                                                       *
  * ------------------------------------------------------------------ */
 static void arts_cmd_appendf(char *buf, size_t buf_size, size_t *length,
                              const char *fmt, ...) {
@@ -92,8 +91,8 @@ static void arts_cmd_appendf(char *buf, size_t buf_size, size_t *length,
 }
 
 /* ------------------------------------------------------------------ *
- * Verbatim mirror of launcher.c launch-mode command build (self_exe  *
- * present, lines ~232-257), now routed through arts_cmd_appendf.      *
+ * Verbatim mirror of the launch-mode command build (self_exe present), *
+ * now routed through arts_cmd_appendf.                                 *
  * Writes into `command` (caller-owned, COMMAND_SIZE bytes) and returns *
  * the accumulated final_length — clamped to COMMAND_SIZE-1, so the    *
  * runtime's `command[final_length]='\0'` is always in bounds.         *
@@ -114,8 +113,8 @@ static size_t build_launch_command(char *command, const char *cwd,
   return final_length;
 }
 
-/* Verbatim mirror of the kill_mode basename branch (launcher.c:207-209),
- * routed through arts_cmd_appendf. */
+/* Verbatim mirror of the kill_mode basename branch, routed through
+ * arts_cmd_appendf. */
 static size_t build_kill_command(char *command, const char *binary_name) {
   size_t final_length = 0;
   arts_cmd_appendf(command, COMMAND_SIZE, &final_length, "pkill %s",
@@ -133,7 +132,7 @@ static int g_fail = 0;
 
 int main(void) {
   /* ============================================================ *
-   * B110 — overflow safety of the bounded-append builder.        *
+   * Overflow safety of the bounded-append builder.                *
    * Construct an argv whose untruncated total would far exceed   *
    * COMMAND_SIZE.  The fixed builder must clamp final_length to  *
    * COMMAND_SIZE-1 so the terminating write is in bounds, and    *
@@ -168,14 +167,14 @@ int main(void) {
     char command[COMMAND_SIZE];
     size_t fl = build_launch_command(command, cwd, self_exe, 1, NTOK + 1, argv);
 
-    printf("INFO B110: accumulated final_length=%zu, COMMAND_SIZE=%d\n", fl,
+    printf("INFO: accumulated final_length=%zu, COMMAND_SIZE=%d\n", fl,
            COMMAND_SIZE);
 
     /* Property 1: final_length is clamped within the buffer. */
     if (fl >= (size_t)COMMAND_SIZE) {
-      REPORT("B110: final_length=%zu not clamped below COMMAND_SIZE=%d — the "
+      REPORT("final_length=%zu not clamped below COMMAND_SIZE=%d — the "
              "bounded-append discipline failed, `command[final_length]='\\0'` "
-             "would write OUT OF BOUNDS (launcher.c:287).",
+             "would write OUT OF BOUNDS.",
              fl, COMMAND_SIZE);
     }
 
@@ -185,7 +184,7 @@ int main(void) {
     /* Property 3: the result is a valid null-terminated string no longer than
      * the buffer. */
     if (strlen(command) >= (size_t)COMMAND_SIZE) {
-      REPORT("B110: produced string is not bounded by COMMAND_SIZE");
+      REPORT("produced string is not bounded by COMMAND_SIZE");
     }
 
 #ifdef ARTS_T192_TRIGGER_OOB
@@ -198,7 +197,7 @@ int main(void) {
       size_t real_fl =
           build_launch_command(heap_cmd, cwd, self_exe, 1, NTOK + 1, argv);
       if (real_fl >= (size_t)COMMAND_SIZE) {
-        REPORT("B110: heap-buffer terminating index real_fl=%zu out of bounds",
+        REPORT("heap-buffer terminating index real_fl=%zu out of bounds",
                real_fl);
       } else {
         heap_cmd[real_fl] = '\0'; /* in bounds with the fix */
@@ -209,7 +208,7 @@ int main(void) {
   }
 
   /* ============================================================ *
-   * B111 — quoting boundary.  The builder interpolates cwd raw    *
+   * Quoting boundary.  The builder interpolates cwd raw           *
    * into `cd %s && `; the OUTER layer (arts_shell_quote) single-  *
    * quotes the whole command for `sh -c`.  Verify the builder     *
    * produces the expected pre-quote prefix exactly and remains    *
@@ -222,7 +221,7 @@ int main(void) {
     char *argv[1] = {(char *)self_exe};
     size_t fl = build_launch_command(command, cwd, self_exe, 2, 1, argv);
     if (fl >= (size_t)COMMAND_SIZE) {
-      REPORT("B111: builder overflowed on space-bearing cwd");
+      REPORT("builder overflowed on space-bearing cwd");
     }
     command[fl] = '\0';
 
@@ -232,14 +231,14 @@ int main(void) {
      * pre-quote bytes the outer quoter then wraps. */
     const char *prefix = "cd /home/user/my project && ";
     if (strncmp(command, prefix, strlen(prefix)) != 0) {
-      REPORT("B111: builder did not emit the expected pre-quote prefix `%s`; "
+      REPORT("builder did not emit the expected pre-quote prefix `%s`; "
              "got `%.*s`",
              prefix, (int)strlen(prefix), command);
     }
   }
 
   /* ============================================================ *
-   * B112 — kill_mode pkill command is overflow-safe + correctly  *
+   * kill_mode pkill command is overflow-safe + correctly          *
    * formed for a long basename.  The basename branch emits        *
    * `pkill <basename>`; verify it is bounded and well-formed.     *
    * ============================================================ */
@@ -248,13 +247,13 @@ int main(void) {
     const char *long_name = "arts_really_long_binary_name_exe"; /* 32 chars */
     size_t fl = build_kill_command(command, long_name);
     if (fl >= (size_t)COMMAND_SIZE) {
-      REPORT("B112: kill command overflowed");
+      REPORT("kill command overflowed");
     }
     command[fl] = '\0';
 
     const char *expect = "pkill arts_really_long_binary_name_exe";
     if (strcmp(command, expect) != 0) {
-      REPORT("B112: kill command malformed; got `%s` expected `%s`", command,
+      REPORT("kill command malformed; got `%s` expected `%s`", command,
              expect);
     }
   }
@@ -265,7 +264,7 @@ int main(void) {
             "not hold — see messages above)\n");
     return 1;
   }
-  printf("PASS launcher_ssh_command_build (B110 overflow-safe; builder "
+  printf("PASS launcher_ssh_command_build (overflow-safe; builder "
          "produces bounded, well-formed pre-quote commands)\n");
   return 0;
 }

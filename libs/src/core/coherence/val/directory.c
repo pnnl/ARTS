@@ -1,15 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * Home-side coherence state implementations.  See coherence_home.h.
+ * Home-side coherence state implementations.  See directory.h.
  *
- * Consolidates the ownership-protocol home-side state (RCU;
- * not linked under WRF_RCU, which carries no ownership grant):
- *   - home OWNERSHIP_REQUEST FIFO (grantreq Vyukov MPSC queue) + home-directory
+ * Consolidates the ownership-protocol home-side state (VAL;
+ * not linked under WRF_VAL, which carries no ownership grant):
+ *   - home GRANT_REQUEST FIFO (grantreq Vyukov MPSC queue) + home-directory
  *     init/teardown
  *   - the per-cache pending_rw Treiber stack (cache-side RW waiter chain)
- *   - the bit-packed atomic rank bit-set (OWNER destroy fan-out roster)
+ *   - the bit-packed atomic rank bit-set (WB destroy fan-out roster)
  * The protocol-agnostic cached_version dense map moved to rank_u64_map.c
- * (linked into every build, including WRF_RCU).
+ * (linked into every build, including WRF_VAL).
  */
 
 #include "arts/coherence/directory.h"
@@ -177,8 +177,8 @@ void arts_home_grantreq_queue_destroy(struct arts_home_grantreq_queue_s *q) {
 
 /*--- rank bit-set ----------------------------------------------------
  *
- * Bit-packed atomic rank bit-set.  See coherence_home.h / rank_bitset.h.
- * Used only in OWNER builds — the HOME placement reuses the per-rank version
+ * Bit-packed atomic rank bit-set.  See directory.h / rank_bitset.h.
+ * Used only in WB builds — the WT write policy reuses the per-rank version
  * map for the same purpose (set membership = nonzero entry). */
 
 void arts_rank_bitset_init(struct arts_rank_bitset_s *r, unsigned int nranks) {

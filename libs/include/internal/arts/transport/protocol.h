@@ -76,24 +76,24 @@ enum arts_msg_type {
    * MSG_EVENT_DESTROY / MSG_DB_DESTROY; OoO-deferred on before-create
    * reorder).  Sequential append, no gaps. */
   MSG_EDT_DESTROY,
-  /* OWNER-placement-only coherence messages.  Only sent/received when both
-   * ranks are compiled with the OWNER placement.  Sequential append,
+  /* WB-write-policy-only coherence messages.  Only sent/received when both
+   * ranks are compiled with the WB write policy.  Sequential append,
    * no gaps. */
   MSG_DB_SNAPSHOT_REDIRECT,
-  /* Lazy-protocol-only: new owner C → home A, "I have installed the transferred
+  /* WB-write-policy-only: new owner C → home A, "I have installed the transferred
    * DB." Home reacts by flipping rw_holder to C and replying with CONFIRM_ACK.
    * Sequential append, no gaps. */
   MSG_DB_GRANT_CONFIRM,
-  /* Lazy-protocol-only: home A → new owner C, "the directory now names you; you
+  /* WB-write-policy-only: home A → new owner C, "the directory now names you; you
    * may run your RW EDT." Acknowledges that home has flipped rw_holder to C (in
    * reaction to C's CONFIRM). Gates C's RW execution so its write becomes
    * observable only after the directory reflects C (no stale-RO window).
    * Sequential append, no gaps. */
   MSG_DB_GRANT_CONFIRM_ACK,
 
-  /* RWLOCK-protocol coherence messages (REQUEST / GRANT / RELEASE / RELEASE_ACK).
-   * Only sent/received in ARTS_COHERENCE_PROTOCOL=RWLOCK builds; the
-   * dispatcher's RWLOCK cases are #ifdef-guarded.  Sequential append, no gaps. */
+  /* EXCL-protocol coherence messages (REQUEST / GRANT / RELEASE / RELEASE_ACK).
+   * Only sent/received in ARTS_COHERENCE_PROTOCOL=EXCL builds; the
+   * dispatcher's EXCL cases are #ifdef-guarded.  Sequential append, no gaps. */
   MSG_DB_EXCL_REQUEST,
   MSG_DB_EXCL_GRANT,
   MSG_DB_EXCL_RELEASE,
@@ -102,7 +102,7 @@ enum arts_msg_type {
    * so lock_home_grant cannot run before the new data is at home.  RO
    * releases are fire-and-forget and never send this message. */
   MSG_DB_EXCL_RELEASE_ACK,
-  /* RWLOCK-OWNER-only messages (FORWARD / DELIVER / CONFIRM / RORET).
+  /* EXCL RETAIN-only messages (FORWARD / DELIVER / CONFIRM / RORET).
    * Used only in ARTS_COHERENCE_PROTOCOL=EXCL + ARTS_RELEASE_POLICY=RETAIN
    * builds.  Sequential append, no gaps. */
   MSG_DB_EXCL_FORWARD, /* home → current owner: serve RO reader or migrate RW */
@@ -121,14 +121,14 @@ enum arts_msg_type {
                            publish the releaser announced (PUBLISH with
                            data_size>0, txid==0); the releaser PUTs then sends
                            the final PUBLISH carrying the txid. */
-  MSG_DB_EXCL_CTS,      /* RWLOCK home → requester: db_size for a first-touch
-                           LOCK_REQUEST that carried no landing. */
+  MSG_DB_EXCL_CTS,      /* EXCL home → requester: db_size for a first-touch
+                           EXCL_REQUEST that carried no landing. */
 
-  /* MSI-protocol coherence messages.  Only sent/received in
-   * ARTS_COHERENCE_PROTOCOL=MSI builds; the dispatcher's MSI cases are
+  /* INV-protocol coherence messages.  Only sent/received in
+   * ARTS_COHERENCE_PROTOCOL=INV builds; the dispatcher's INV cases are
    * #ifdef-guarded.  Sequential append, no gaps. */
   MSG_DB_INV_REQUEST, /* requester → home: RO fetch (write acquires use the
-                         shared OWNERSHIP_REQUEST) */
+                         shared GRANT_REQUEST) */
   MSG_DB_INV_CTS,     /* home → requester: db_size for a first-touch REQUEST
                          that carried no landing */
   MSG_DB_INV_DELIVER, /* server → requester: RO copy (payload by PUT).  The
@@ -137,7 +137,7 @@ enum arts_msg_type {
                          versionless: only an INVALIDATE retires a copy. */
   MSG_DB_INV_INVALIDATE,     /* home → sharer: retire the copy ({guid} only) */
   MSG_DB_INV_INVALIDATE_ACK, /* sharer → home: round ack ({guid} only) */
-  MSG_DB_INV_REDIRECT, /* home → current grant holder (OWNER placement only):
+  MSG_DB_INV_REDIRECT, /* home → current grant holder (WB write policy only):
                           serve this reader from your bytes, or bounce the
                           request back if you no longer have them */
 
@@ -240,13 +240,13 @@ struct ARTS_PACKED arts_msg_grant_request_packet_s {
   arts_guid_t db_guid;
   /* Requester's landing for the incoming owner→owner transfer payload.
    * txid==0 = the requester does not yet know db_size (first touch): home
-   * answers OWNERSHIP_CTS instead of enqueueing, unless the DB itself is a
+   * answers GRANT_CTS instead of enqueueing, unless the DB itself is a
    * sentinel (db_size==0 at home), which transfers data-less. */
   struct arts_msg_rdzv_landing_s rdzv;
 };
 
-/* OWNERSHIP_CTS — home → requester: the db_size a first-touch RW requester
- * needs to allocate its landing; the requester re-issues OWNERSHIP_REQUEST
+/* GRANT_CTS — home → requester: the db_size a first-touch RW requester
+ * needs to allocate its landing; the requester re-issues GRANT_REQUEST
  * with the landing attached.  The original landing-less request was NOT
  * enqueued (home only ever queues requests that carry a landing or target a
  * sentinel DB). */
@@ -256,13 +256,13 @@ struct ARTS_PACKED arts_msg_grant_cts_packet_s {
   uint64_t db_size;
 };
 
-/* OWNERSHIP_RESPONSE — the single ownership-transfer wire message, ONE layout
- * for both placements: a serialized cached_version map (map_entry_count pairs)
+/* GRANT_RESPONSE — the single ownership-transfer wire message, ONE layout
+ * for both write policies: a serialized cached_version map (map_entry_count pairs)
  * rides INLINE after the header; the buffer payload does NOT ride the wire —
  * it travels one-sided (the old owner PUTs it into the landing the requester
- * advertised in its OWNERSHIP_REQUEST) and this packet pairs with that write
- * completion by rdzv_txid.  HOME sends map_entry_count=0 (it dedups RO via
- * home's cached_version, not an owner-side map), OWNER serializes its
+ * advertised in its GRANT_REQUEST) and this packet pairs with that write
+ * completion by rdzv_txid.  WT sends map_entry_count=0 (it dedups RO via
+ * home's cached_version, not an owner-side map), WB serializes its
  * owner-side map.
  *
  *   rdzv_txid != 0 : `data_size` payload bytes were PUT into the requester's
@@ -339,36 +339,36 @@ struct ARTS_PACKED arts_msg_publish_ack_packet_s {
   uint64_t credit_txid;
 };
 
-/* INVALIDATE_NOTICE: body = db_guid(8) + new_owner_rank(4) + pad(4) = 16.
+/* GRANT_INVALIDATE: body = db_guid(8) + new_owner_rank(4) + pad(4) = 16.
  * Total = 44 + 16 = 60 (not 8-aligned; add pad4[] → 64).
- * Both placements set new_owner_rank so the current holder knows where to ship the
- * owner→owner OWNERSHIP_RESPONSE without a round-trip to home. */
+ * Both write policies set new_owner_rank so the current holder knows where to ship the
+ * owner→owner GRANT_RESPONSE without a round-trip to home. */
 struct ARTS_PACKED arts_msg_grant_invalidate_packet_s {
   struct arts_msg_header_s header;
   arts_guid_t db_guid;
   uint32_t new_owner_rank;
   uint8_t pad[4];
-  /* The NEW owner's landing (from its queued OWNERSHIP_REQUEST), forwarded so
+  /* The NEW owner's landing (from its queued GRANT_REQUEST), forwarded so
    * the current holder can PUT the transfer payload without a home
    * round-trip.  txid==0 = sentinel DB round (data-less transfer). */
   struct arts_msg_rdzv_landing_s new_owner_rdzv;
 };
 
-/* OWNERSHIP_CONFIRM_ACK: home → new owner C. Body = db_guid(8). No version: C
- * already holds its installed version. OWNER-only by use (HOME never sends it);
+/* GRANT_CONFIRM_ACK: home → new owner C. Body = db_guid(8). No version: C
+ * already holds its installed version. WB-only by use (WT never sends it);
  * the struct is unconditional. */
 struct ARTS_PACKED arts_msg_grant_confirm_ack_packet_s {
   struct arts_msg_header_s header;
   arts_guid_t db_guid;
-  /* Lazy: the CONFIRM_ACK that advances the round piggybacks the next
+  /* WB: the CONFIRM_ACK that advances the round piggybacks the next
    * transfer target so the new owner's handler applies the INVALIDATE effect
    * (publish incoming_new_owner + withdraw the sentinel) in the same message,
    * eliminating the separate INVALIDATE and its CONFIRM_ACK↔INVALIDATE reorder
    * window.  ARTS_NO_PENDING_OWNER ⇒ plain ack, no piggybacked invalidate.
-   * Mirrors INVALIDATE_NOTICE's new_owner_rank field. */
+   * Mirrors GRANT_INVALIDATE's new_owner_rank field. */
   uint32_t new_owner_rank;
   uint8_t pad[4];
-  /* Piggybacked next-owner landing (mirrors INVALIDATE_NOTICE's field). */
+  /* Piggybacked next-owner landing (mirrors GRANT_INVALIDATE's field). */
   struct arts_msg_rdzv_landing_s new_owner_rdzv;
 };
 
@@ -384,7 +384,7 @@ struct ARTS_PACKED arts_msg_snapshot_request_packet_s {
   struct arts_msg_rdzv_landing_s rdzv;
 };
 
-/* DATA_RESPONSE — the snapshot payload does NOT ride the wire; it is PUT into
+/* SNAPSHOT_RESPONSE — the snapshot payload does NOT ride the wire; it is PUT into
  * the landing the requester advertised.  Echoes the parked EDT (edt_guid +
  * slot) back so the requester's response handler resumes it directly — no
  * acquire-time list registration (the reorder-buffer design).
@@ -432,13 +432,13 @@ struct ARTS_PACKED arts_msg_cache_destroy_packet_s {
   arts_guid_t db_guid;
 };
 
-/* ===== OWNER-placement-only wire packets ====================================
- * Sent only between ranks compiled with the OWNER placement.
+/* ===== WB-write-policy-only wire packets ====================================
+ * Sent only between ranks compiled with the WB write policy.
  * A rank compiled with a different protocol that receives these messages fatals
  * immediately (see dispatcher.c). */
 
-/* REDIRECT_RO — home forwards an RO grant request to the current owner.
- * The owner will send data directly to requester_rank using DATA_RESPONSE,
+/* SNAPSHOT_REDIRECT — home forwards an RO grant request to the current owner.
+ * The owner will send data directly to requester_rank using SNAPSHOT_RESPONSE,
  * PUTting the payload into the forwarded requester landing. */
 struct ARTS_PACKED arts_msg_snapshot_redirect_packet_s {
   struct arts_msg_header_s header;
@@ -450,8 +450,8 @@ struct ARTS_PACKED arts_msg_snapshot_redirect_packet_s {
   struct arts_msg_rdzv_landing_s rdzv;
 };
 
-/* TRANSFER_OWNERSHIP — owner sends data + version + reader-map to new owner.
- * Followed by:
+/* GRANT_RESPONSE's reader-map trailer — owner sends data + version + reader-map
+ * to new owner.  Followed by:
  *   arts_msg_rank_version_pair_s pairs[map_entry_count];
  *   uint8_t                         data[db_size];
  */
@@ -461,7 +461,7 @@ struct ARTS_PACKED arts_msg_rank_version_pair_s {
   uint64_t version;
 };
 
-/* OWNERSHIP_CONFIRM — new owner C confirms installation of the transferred DB
+/* GRANT_CONFIRM — new owner C confirms installation of the transferred DB
  * to home A. Carries a fresh version number so home can track the RW round. */
 struct ARTS_PACKED arts_msg_grant_confirm_packet_s {
   struct arts_msg_header_s header;
@@ -487,12 +487,12 @@ struct ARTS_PACKED arts_msg_excl_request_packet_s {
   uint32_t pad;
   /* requester rank = header.rank; no edt_guid/slot (rank-granular). */
   /* Requester's landing for the grant/deliver payload.  txid==0 = requester
-   * does not yet know db_size (first touch): home answers LOCK_CTS and the
+   * does not yet know db_size (first touch): home answers EXCL_CTS and the
    * requester re-issues with a landing (sentinel DBs grant data-less). */
   struct arts_msg_rdzv_landing_s rdzv;
 };
 
-/* LOCK_CTS — home → requester: db_size for a first-touch LOCK_REQUEST that
+/* EXCL_CTS — home → requester: db_size for a first-touch EXCL_REQUEST that
  * carried no landing.  Echoes the mode so the requester re-issues the same
  * request.  The landing-less request was NOT queued/granted. */
 struct ARTS_PACKED arts_msg_excl_cts_packet_s {
@@ -521,7 +521,7 @@ struct ARTS_PACKED arts_msg_excl_grant_packet_s {
   uint64_t rdzv_cookie;
   /* Home's landing for THIS grant's eventual RW release publish (grants and
    * releases pair 1:1): the releaser PUTs its dirty bytes here and echoes
-   * {txid, cookie} in LOCK_RELEASE.  txid==0 for RO grants / sentinel DBs. */
+   * {txid, cookie} in EXCL_RELEASE.  txid==0 for RO grants / sentinel DBs. */
   struct arts_msg_rdzv_landing_s pub;
 };
 
@@ -541,8 +541,8 @@ struct ARTS_PACKED arts_msg_excl_release_packet_s {
   uint64_t rdzv_cookie;
 };
 
-/* LOCK_RELEASE_ACK: home → RW releaser after installing publish.  Carries
- * cv verbatim from the LOCK_RELEASE so the releaser wakes by pointer identity.
+/* EXCL_RELEASE_ACK: home → RW releaser after installing publish.  Carries
+ * cv verbatim from the EXCL_RELEASE so the releaser wakes by pointer identity.
  */
 struct ARTS_PACKED arts_msg_excl_release_ack_packet_s {
   struct arts_msg_header_s header;
@@ -550,13 +550,13 @@ struct ARTS_PACKED arts_msg_excl_release_ack_packet_s {
   uint64_t cv; /* releaser's sem_t address, forwarded verbatim from RELEASE */
 };
 
-/* ===== RWLOCK-OWNER-only wire packets ========================================
- * Sent only between ranks compiled with RWLOCK+OWNER.  Members unconditional;
- * structs inside the ARTS_PROTOCOL_EXCL guard so they share the RWLOCK types. */
+/* ===== EXCL RETAIN-only wire packets ========================================
+ * Sent only between ranks compiled with EXCL+RETAIN.  Members unconditional;
+ * structs inside the ARTS_PROTOCOL_EXCL guard so they share the EXCL types. */
 #ifdef ARTS_RELEASE_RETAIN
-/* LOCK_FORWARD: home → current owner.  mode=DB_MODE_RW → migrate ownership to
+/* EXCL_FORWARD: home → current owner.  mode=DB_MODE_RW → migrate ownership to
  * target; mode=DB_MODE_RO → serve one RO reader at target.  Forwards the
- * target's landing (from its LOCK_REQUEST) so the owner can PUT directly. */
+ * target's landing (from its EXCL_REQUEST) so the owner can PUT directly. */
 struct ARTS_PACKED arts_msg_excl_forward_packet_s {
   struct arts_msg_header_s header;
   arts_guid_t db_guid;
@@ -565,10 +565,10 @@ struct ARTS_PACKED arts_msg_excl_forward_packet_s {
   struct arts_msg_rdzv_landing_s rdzv; /* target's landing, forwarded */
 };
 
-/* LOCK_DELIVER: owner → target.  The DB data travels by PUT into the target's
+/* EXCL_DELIVER: owner → target.  The DB data travels by PUT into the target's
  * landing; this packet pairs with the write completion by rdzv_txid
  * (rdzv_cookie echoes the target's landing handle, data_size counts the
- * landed bytes; txid==0 = data-less deliver).  NO version field — RWLOCK uses
+ * landed bytes; txid==0 = data-less deliver).  NO version field — EXCL uses
  * versionless buffer-install (exclusive-lock serialization guarantees no
  * stale write can race). */
 struct ARTS_PACKED arts_msg_excl_deliver_packet_s {
@@ -581,7 +581,7 @@ struct ARTS_PACKED arts_msg_excl_deliver_packet_s {
   uint64_t rdzv_cookie;
 };
 
-/* LOCK_CONFIRM / LOCK_RORET share one struct: both are data-less
+/* EXCL_CONFIRM / EXCL_RORET share one struct: both are data-less
  * db_guid-only messages (new-owner→home confirm, and reader→home RO release).
  */
 struct ARTS_PACKED arts_msg_excl_confirm_packet_s {
@@ -591,20 +591,20 @@ struct ARTS_PACKED arts_msg_excl_confirm_packet_s {
 #endif /* ARTS_RELEASE_RETAIN */
 #endif /* ARTS_PROTOCOL_EXCL */
 
-/* ===== MSI wire packets ======================================================
- * Sent only between ranks compiled with ARTS_COHERENCE_PROTOCOL=MSI.
+/* ===== INV wire packets ======================================================
+ * Sent only between ranks compiled with ARTS_COHERENCE_PROTOCOL=INV.
  * Members unconditional; structs guarded so they can share host-side types. */
 #ifdef ARTS_PROTOCOL_INV
 /* A read request names its subject explicitly rather than relying on the
- * header's sender: under the OWNER placement a holder that cannot serve
+ * header's sender: under the WB write policy a holder that cannot serve
  * re-sends the request on the reader's behalf, so the two differ. */
 struct ARTS_PACKED arts_msg_inv_request_packet_s {
   struct arts_msg_header_s header;
   arts_guid_t db_guid;
-  uint32_t mode; /* arts_db_access_mode_t — RO; writes use OWNERSHIP_REQUEST */
+  uint32_t mode; /* arts_db_access_mode_t — RO; writes use GRANT_REQUEST */
   uint32_t requester;
   /* Requester's landing for the deliver payload.  txid==0 = the requester does
-   * not yet know db_size (first touch): the home answers MSI_CTS and the
+   * not yet know db_size (first touch): the home answers INV_CTS and the
    * requester re-issues with a landing. */
   struct arts_msg_rdzv_landing_s rdzv;
 };
@@ -638,7 +638,7 @@ struct ARTS_PACKED arts_msg_inv_invalidate_ack_packet_s {
   arts_guid_t db_guid;
 };
 
-/* OWNER placement only: the home forwards a read it cannot answer. */
+/* WB write policy only: the home forwards a read it cannot answer. */
 struct ARTS_PACKED arts_msg_inv_redirect_packet_s {
   struct arts_msg_header_s header;
   arts_guid_t db_guid;

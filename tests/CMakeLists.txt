@@ -128,7 +128,6 @@ set(TEST_PROGRAMS
     # --- Multinode (built here, registered below) ---
     multinode_stdout_forward
     # --- Pure unit tests (no ARTS runtime) ---
-    lockfree_stack_test
     coherence_buffer_test
     config_ports_contract
     port_block_relocation
@@ -496,7 +495,6 @@ set_tests_properties(term_sigsegv PROPERTIES
     PASS_REGULAR_EXPRESSION "\\[ARTS\\] Crashed: SIGSEGV")
 
 # --- Pure unit tests (no ARTS runtime) ---
-register_pure_unit_test(lockfree_stack_test)
 register_pure_unit_test(coherence_buffer_test TIMEOUT 60)
 # Forks to probe the ARTS_ERROR death paths of the port contract; loads cfgs
 # only, so it binds nothing and needs no runtime.
