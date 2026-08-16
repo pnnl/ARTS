@@ -137,12 +137,14 @@ void arts_db_home_teardown(struct arts_db_s *db);
 size_t arts_rank_u64_map_serialize(const struct arts_rank_to_u64_map_s *m,
                                    void *out);
 
-/* Build a fresh map from the wire-format buffer produced by
- * arts_rank_u64_map_serialize.  `nranks` sizes the new map's slot array.
- * `size` is the byte length of the buffer (used for bounds assertions in
- * debug builds only; pass the actual received length). */
-struct arts_rank_to_u64_map_s *
-arts_rank_u64_map_deserialize(const void *in, size_t size, unsigned int nranks);
+/* Overwrite `m`'s slots from the wire-format buffer produced by
+ * arts_rank_u64_map_serialize: slots the image names take its values, the
+ * rest are cleared, and the map object itself is never replaced (see the
+ * definition for why the ledger is loaded in place).  `size` is the byte
+ * length of the buffer (bounds assertions in debug builds only; pass the
+ * actual received length). */
+void arts_rank_u64_map_load(struct arts_rank_to_u64_map_s *m, const void *in,
+                            size_t size);
 
 #ifdef __cplusplus
 }

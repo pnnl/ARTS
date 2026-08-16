@@ -42,8 +42,8 @@
 ///
 /// Under OWNER, arts_handler_db_grant_confirm (home A) pops the NEXT queued
 /// requester and piggybacks it into CONFIRM_ACK (new_owner_rank field).  The
-/// new owner C, on arts_handler_db_grant_confirm_ack, opens its gate
-/// (grant_unconfirmed=0), drains its deferred RW waiters, and applies the
+/// new owner C, on arts_handler_db_grant_confirm_ack, opens its gate (clears
+/// ARTS_GRANT_UNCONFIRMED from writer_count), drains its deferred RW waiters, and applies the
 /// piggybacked INVALIDATE effect (publish incoming_new_owner + sentinel
 /// withdrawal under the +1 drain guard) so the round ADVANCES to the queued
 /// requester via the merged ack — NOT a standalone INVALIDATE.  This merge is

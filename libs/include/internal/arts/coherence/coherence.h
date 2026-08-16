@@ -326,11 +326,16 @@ void arts_db_start_grant_round(struct arts_db_cache_s *cache,
 #endif /* shared grant plane */
 
 #if defined(ARTS_PROTOCOL_VAL) || defined(ARTS_PROTOCOL_INV)
-/* arts_db_acquire_rw_local_fast: the case-2/6 RW local fast path (VAL).
+/* arts_db_acquire_rw_local_fast: the case-2/6 RW local fast path.
  * CAS-increments writer_count "if positive"; on success writes dep->ptr
- * (acquire_local) and returns true; returns false when writer_count went to 0
- * (ownership invalidated) so the caller falls through to
- * arts_db_acquire_remote_rw. */
+ * (acquire_local) and returns true.  The CAS is the whole admission test, not
+ * a commit behind one: writer_count carries both "this rank holds the grant"
+ * (positive) and "the home has published the directory flip"
+ * (ARTS_GRANT_UNCONFIRMED clear), so callers must NOT pre-test either fact —
+ * a separate load cannot be atomic with the take, and a grant lost and
+ * re-granted in between would read like one never lost.  Returns false for a
+ * count of 0 (no grant) and for an unconfirmed hold alike, so the caller falls
+ * through to arts_db_acquire_remote_rw, which parks. */
 bool arts_db_acquire_rw_local_fast(struct arts_db_cache_s *cache,
                                    arts_edt_dep_t *dep);
 

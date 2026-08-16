@@ -63,6 +63,23 @@ extern "C" {
  */
 #define ARTS_NO_PENDING_OWNER ((unsigned int)-1)
 
+/* Sign bit of arts_db_cache_s.writer_count: this rank holds the grant, but the
+ * home has not yet published the directory flip naming it.  The two facts a
+ * write turn needs — held, and confirmed — share ONE word so that the
+ * turn-taking CAS is itself the test; separate fields cannot be read atomically
+ * with each other nor with the CAS, which leaves a hold that is lost and
+ * re-granted between the reads indistinguishable from one that was never lost.
+ * With the bit set the word reads back negative, which the fast path's
+ * `(int)wc <= 0` rejection already refuses.
+ *
+ * Set and cleared by ADD/SUB of this value rather than by masking: it is its
+ * own negation mod 2^32, so either direction toggles it exactly whatever the
+ * low bits hold, and it commutes with the ±1 that the sentinel, the drain and
+ * every local writer apply.  A word carrying it can never be exactly 0, so the
+ * ownership-transfer zero edge cannot be crossed while a hold is unconfirmed.
+ * Arms with no migrating grant (EXCL, WRF_VAL) never set it. */
+#define ARTS_GRANT_UNCONFIRMED 0x80000000u
+
 /* In-memory rendezvous landing descriptor — the coherence-side mirror of the
  * packed wire struct arts_msg_rdzv_landing_s (protocol.h): where a payload
  * sender may fi_writedata, keyed for pairing.  txid == 0 means "no landing"

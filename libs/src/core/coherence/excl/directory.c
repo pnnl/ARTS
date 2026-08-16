@@ -224,7 +224,7 @@ void arts_db_home_init(struct arts_db_s *db, unsigned int rw_holder,
    * FORWARD routes to.  This differs from HOME, where the creator's RELEASE
    * drives a seeded w=1 back to 0. */
   atomic_store_explicit(&db->lock_state,
-                        LOCK_MAKE(LOCK_PHASE_IDLE, rw_holder, 0u, 0u),
+                        LOCK_MAKE(EXCL_PHASE_IDLE, rw_holder, 0u, 0u),
                         memory_order_relaxed);
 #endif
   arts_home_grantreq_queue_init(&db->rw_waiters);

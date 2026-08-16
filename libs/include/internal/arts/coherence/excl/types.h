@@ -12,8 +12,8 @@
  * @note Internal header.  User code should include @c arts.h.
  */
 
-#ifndef ARTS_COHERENCE_LOCK_TYPES_H
-#define ARTS_COHERENCE_LOCK_TYPES_H
+#ifndef ARTS_COHERENCE_EXCL_TYPES_H
+#define ARTS_COHERENCE_EXCL_TYPES_H
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -59,7 +59,7 @@ extern "C" {
  *   owner-bit  = 1 when this node holds data ownership (fast-path RW/RO).
  *   rw_st/ro_st ∈ {IDLE=0, REQ=1, GRANT=2} — local RW/RO protocol state.
  *   migrate_target = 14-bit rank of the next RW owner (set by home FORWARD);
- *                    ARTS_LOCK_NO_TARGET (0x3FFF) = no pending migration.
+ *                    ARTS_EXCL_NO_TARGET (0x3FFF) = no pending migration.
  *   wc/rc      = #RW/#RO EDTs on this rank acquired-not-released (local EDT
  *                count; 22 bits → ≥4 M concurrent EDTs, well above any limit).
  *
@@ -128,13 +128,13 @@ extern "C" {
  * first RO acquire fixes ro_st to GRANT via the owner fast-path, or to REQ via
  * a home request, and later RO acquires join that state), so a single flag
  * suffices. */
-#define CACHE_OWNER_LEASED_SHIFT 63
-#define CACHE_OWNER_LEASED_MASK ((uint64_t)1ULL << CACHE_OWNER_LEASED_SHIFT)
-#define CACHE_LEASED(s) (((s) & CACHE_OWNER_LEASED_MASK) != 0u)
+#define CACHE_OWNER_GRANTED_SHIFT 63
+#define CACHE_OWNER_LEASED_MASK ((uint64_t)1ULL << CACHE_OWNER_GRANTED_SHIFT)
+#define CACHE_GRANTED(s) (((s) & CACHE_OWNER_LEASED_MASK) != 0u)
 
 /* Constructor (all fields). */
 #define CACHE_MAKE(rws, ros, wc, rc)                                           \
-  CACHE_MAKE_FULL(0u, (rws), (ros), ARTS_LOCK_NO_TARGET, (wc), (rc))
+  CACHE_MAKE_FULL(0u, (rws), (ros), ARTS_EXCL_NO_TARGET, (wc), (rc))
 
 /* CACHE_MAKE_FULL: full constructor including owner-bit and migrate_target. */
 #define CACHE_MAKE_FULL(own, rws, ros, mt, wc, rc)                             \
@@ -146,7 +146,7 @@ extern "C" {
    ((uint64_t)((rc) & CACHE_OWNER_RC_MASK) << CACHE_OWNER_RC_SHIFT))
 
 /* Sentinel for "no pending migration target". */
-#define ARTS_LOCK_NO_TARGET                                                    \
+#define ARTS_EXCL_NO_TARGET                                                    \
   ((uint32_t)((1u << CACHE_OWNER_MT_BITS) - 1)) /* 0x3FFF */
 #endif                                         /* ARTS_RELEASE_RETAIN */
 
@@ -154,26 +154,26 @@ extern "C" {
  * Layout: [ state_bit:1 (62) | w:31 (61..31) | r:31 (30..0) ]
  *
  * state_bit is meaningful only when w>0 && r>0:
- *   LOCK_PHASE_BIT_RW (0) = RW phase held / RO waiters queued
- *   LOCK_PHASE_BIT_RO (1) = RO phase held / RW waiters queued
+ *   EXCL_PHASE_BIT_RW (0) = RW phase held / RO waiters queued
+ *   EXCL_PHASE_BIT_RO (1) = RO phase held / RW waiters queued
  * When w==0 || r==0 the state_bit is normalized to 0.
  * w = #RW participant ranks; r = #RO participant ranks. */
 #ifdef ARTS_RELEASE_PURGE
-#define LOCK_STATE_R_BITS 31
-#define LOCK_STATE_W_BITS 31
-#define LOCK_STATE_R_MASK ((uint64_t)0x7fffffffULL)
-#define LOCK_STATE_W_MASK ((uint64_t)0x7fffffffULL)
-#define LOCK_STATE_R(s) ((uint32_t)((s) & LOCK_STATE_R_MASK))
-#define LOCK_STATE_W(s)                                                        \
-  ((uint32_t)(((s) >> LOCK_STATE_R_BITS) & LOCK_STATE_W_MASK))
-#define LOCK_STATE_BIT(s)                                                      \
-  ((uint32_t)(((s) >> (LOCK_STATE_R_BITS + LOCK_STATE_W_BITS)) & 0x1ULL))
+#define EXCL_STATE_R_BITS 31
+#define EXCL_STATE_W_BITS 31
+#define EXCL_STATE_R_MASK ((uint64_t)0x7fffffffULL)
+#define EXCL_STATE_W_MASK ((uint64_t)0x7fffffffULL)
+#define EXCL_STATE_R(s) ((uint32_t)((s) & EXCL_STATE_R_MASK))
+#define EXCL_STATE_W(s)                                                        \
+  ((uint32_t)(((s) >> EXCL_STATE_R_BITS) & EXCL_STATE_W_MASK))
+#define EXCL_STATE_BIT(s)                                                      \
+  ((uint32_t)(((s) >> (EXCL_STATE_R_BITS + EXCL_STATE_W_BITS)) & 0x1ULL))
 #define LOCK_MAKE_STATE(bit, w, r)                                             \
-  (((uint64_t)((bit) & 0x1ULL) << (LOCK_STATE_R_BITS + LOCK_STATE_W_BITS)) |   \
-   (((uint64_t)(w) & LOCK_STATE_W_MASK) << LOCK_STATE_R_BITS) |                \
-   ((uint64_t)(r) & LOCK_STATE_R_MASK))
-#define LOCK_PHASE_BIT_RW 0u
-#define LOCK_PHASE_BIT_RO 1u
+  (((uint64_t)((bit) & 0x1ULL) << (EXCL_STATE_R_BITS + EXCL_STATE_W_BITS)) |   \
+   (((uint64_t)(w) & EXCL_STATE_W_MASK) << EXCL_STATE_R_BITS) |                \
+   ((uint64_t)(r) & EXCL_STATE_R_MASK))
+#define EXCL_PHASE_BIT_RW 0u
+#define EXCL_PHASE_BIT_RO 1u
 #endif /* ARTS_RELEASE_PURGE */
 
 /* ── OWNER home lock_state ─────────────────────────────────────────────────
@@ -190,41 +190,41 @@ extern "C" {
  *            of distinct reader ranks under network reorder (commutative ±1
  *            accounting tolerates this). */
 #ifdef ARTS_RELEASE_RETAIN
-#define LOCK_STATE_R_BITS 24
-#define LOCK_STATE_W_BITS 24
-#define LOCK_STATE_OWNER_BITS 14 /* = ARTS_GUID_RANK_BITS */
-#define LOCK_STATE_PHASE_BITS 2
+#define EXCL_STATE_R_BITS 24
+#define EXCL_STATE_W_BITS 24
+#define EXCL_STATE_OWNER_BITS 14 /* = ARTS_GUID_RANK_BITS */
+#define EXCL_STATE_PHASE_BITS 2
 
-#define LOCK_STATE_R_SHIFT 0
-#define LOCK_STATE_W_SHIFT (LOCK_STATE_R_SHIFT + LOCK_STATE_R_BITS)     /* 24 */
-#define LOCK_STATE_OWNER_SHIFT (LOCK_STATE_W_SHIFT + LOCK_STATE_W_BITS) /* 48 */
-#define LOCK_STATE_PHASE_SHIFT                                                  \
-  (LOCK_STATE_OWNER_SHIFT + LOCK_STATE_OWNER_BITS) /* 62 */
+#define EXCL_STATE_R_SHIFT 0
+#define EXCL_STATE_W_SHIFT (EXCL_STATE_R_SHIFT + EXCL_STATE_R_BITS)     /* 24 */
+#define EXCL_STATE_OWNER_SHIFT (EXCL_STATE_W_SHIFT + EXCL_STATE_W_BITS) /* 48 */
+#define EXCL_STATE_PHASE_SHIFT                                                  \
+  (EXCL_STATE_OWNER_SHIFT + EXCL_STATE_OWNER_BITS) /* 62 */
 
-#define LOCK_STATE_R_MASK ((uint64_t)((1ULL << LOCK_STATE_R_BITS) - 1))
-#define LOCK_STATE_W_MASK ((uint64_t)((1ULL << LOCK_STATE_W_BITS) - 1))
-#define LOCK_STATE_OWNER_MASK ((uint64_t)((1ULL << LOCK_STATE_OWNER_BITS) - 1))
-#define LOCK_STATE_PHASE_MASK ((uint64_t)0x3ULL)
+#define EXCL_STATE_R_MASK ((uint64_t)((1ULL << EXCL_STATE_R_BITS) - 1))
+#define EXCL_STATE_W_MASK ((uint64_t)((1ULL << EXCL_STATE_W_BITS) - 1))
+#define EXCL_STATE_OWNER_MASK ((uint64_t)((1ULL << EXCL_STATE_OWNER_BITS) - 1))
+#define EXCL_STATE_PHASE_MASK ((uint64_t)0x3ULL)
 
 /* Phase constants. */
-#define LOCK_PHASE_IDLE 0u
-#define LOCK_PHASE_RW 1u
-#define LOCK_PHASE_RO 2u
+#define EXCL_PHASE_IDLE 0u
+#define EXCL_PHASE_RW 1u
+#define EXCL_PHASE_RO 2u
 
 /* Getters. */
-#define LOCK_R(s) ((uint32_t)(((s) >> LOCK_STATE_R_SHIFT) & LOCK_STATE_R_MASK))
-#define LOCK_W(s) ((uint32_t)(((s) >> LOCK_STATE_W_SHIFT) & LOCK_STATE_W_MASK))
+#define LOCK_R(s) ((uint32_t)(((s) >> EXCL_STATE_R_SHIFT) & EXCL_STATE_R_MASK))
+#define LOCK_W(s) ((uint32_t)(((s) >> EXCL_STATE_W_SHIFT) & EXCL_STATE_W_MASK))
 #define LOCK_OWNER(s)                                                          \
-  ((uint32_t)(((s) >> LOCK_STATE_OWNER_SHIFT) & LOCK_STATE_OWNER_MASK))
+  ((uint32_t)(((s) >> EXCL_STATE_OWNER_SHIFT) & EXCL_STATE_OWNER_MASK))
 #define LOCK_PHASE(s)                                                          \
-  ((uint32_t)(((s) >> LOCK_STATE_PHASE_SHIFT) & LOCK_STATE_PHASE_MASK))
+  ((uint32_t)(((s) >> EXCL_STATE_PHASE_SHIFT) & EXCL_STATE_PHASE_MASK))
 
 /* Constructor. */
 #define LOCK_MAKE(phase, owner, w, r)                                          \
-  (((uint64_t)((phase) & LOCK_STATE_PHASE_MASK) << LOCK_STATE_PHASE_SHIFT) |     \
-   ((uint64_t)((owner) & LOCK_STATE_OWNER_MASK) << LOCK_STATE_OWNER_SHIFT) |     \
-   ((uint64_t)((w) & LOCK_STATE_W_MASK) << LOCK_STATE_W_SHIFT) |                 \
-   ((uint64_t)((r) & LOCK_STATE_R_MASK) << LOCK_STATE_R_SHIFT))
+  (((uint64_t)((phase) & EXCL_STATE_PHASE_MASK) << EXCL_STATE_PHASE_SHIFT) |     \
+   ((uint64_t)((owner) & EXCL_STATE_OWNER_MASK) << EXCL_STATE_OWNER_SHIFT) |     \
+   ((uint64_t)((w) & EXCL_STATE_W_MASK) << EXCL_STATE_W_SHIFT) |                 \
+   ((uint64_t)((r) & EXCL_STATE_R_MASK) << EXCL_STATE_R_SHIFT))
 #endif /* ARTS_RELEASE_RETAIN */
 
 /* ── home lock_state transition ops + grant codes (PURGE) ────────────────
@@ -235,10 +235,10 @@ extern "C" {
  * no wire / loopback round (HPC: a local op must not touch the network layer).
  */
 #ifdef ARTS_RELEASE_PURGE
-#define LOCK_OP_RW_ACQ 0
-#define LOCK_OP_RO_ACQ 1
-#define LOCK_OP_RW_REL 2
-#define LOCK_OP_RO_REL 3
+#define EXCL_OP_RW_ACQ 0
+#define EXCL_OP_RO_ACQ 1
+#define EXCL_OP_RW_REL 2
+#define EXCL_OP_RO_REL 3
 #define LOCK_GRANT_NONE 0
 #define LOCK_GRANT_ONE_RW 1
 #define LOCK_GRANT_ALL_RO 2
@@ -249,22 +249,22 @@ uint64_t excl_compute_next(uint64_t cur, int op, uint32_t *out_grant);
  * lock_owner_compute_next(cur, op, &action) is the RETAIN home arbiter.
  * Same CAS-retry pattern as PURGE's excl_compute_next. */
 #ifdef ARTS_RELEASE_RETAIN
-#define LOCK_OP_RW_ACQ 0
-#define LOCK_OP_RO_ACQ 1
-#define LOCK_OP_CONFIRM 2 /* new owner confirms migration complete */
-#define LOCK_OP_RO_RET 3  /* reader returns RO (r--) */
+#define EXCL_OP_RW_ACQ 0
+#define EXCL_OP_RO_ACQ 1
+#define EXCL_OP_CONFIRM 2 /* new owner confirms migration complete */
+#define EXCL_OP_RO_RET 3  /* reader returns RO (r--) */
 
-#define LOCK_ACTION_NONE 0
-#define LOCK_ACTION_FORWARD_MIGRATE                                            \
+#define EXCL_ACTION_NONE 0
+#define EXCL_ACTION_FORWARD_MIGRATE                                            \
   1 /* home→owner: FORWARD(migrate→target)                                 \
      */
-#define LOCK_ACTION_FORWARD_SERVE_ONE                                          \
+#define EXCL_ACTION_FORWARD_SERVE_ONE                                          \
   2 /* home→owner: FORWARD(serve→1 reader) */
-#define LOCK_ACTION_FORWARD_SERVE_ALL                                          \
+#define EXCL_ACTION_FORWARD_SERVE_ALL                                          \
   3 /* home→owner: FORWARD(serve→held RO)                                  \
      */
 /* Home arbiter — pure function of the single lock_state word, run in a
- * CAS-retry loop.  new_owner is read only by LOCK_OP_CONFIRM (sets owner in the
+ * CAS-retry loop.  new_owner is read only by EXCL_OP_CONFIRM (sets owner in the
  * same word as w--/phase); ignored by the other ops.  The FORWARD recipient is
  * OWNER() of the returned word; the migrate target / served reader(s) are
  * resolved by the caller from rw_waiters/ro_waiters (a pure arbiter cannot peek
@@ -459,4 +459,4 @@ struct arts_db_s {
 }
 #endif
 
-#endif /* ARTS_COHERENCE_LOCK_TYPES_H */
+#endif /* ARTS_COHERENCE_EXCL_TYPES_H */

@@ -120,7 +120,7 @@ void arts_handler_db_acquire(void *item, void *args) {
    * covers reads too: it has the newest bytes by definition. */
   uint64_t peek =
       atomic_load_explicit(&cache->cache_state, memory_order_acquire);
-  if (MSI_CACHE_RO(peek) == MSI_RO_VALID ||
+  if (INV_CACHE_RO(peek) == INV_RO_VALID ||
       (int)arts_atomic_read(&cache->writer_count) > 0) {
     /* A durable copy answers with no message and no CAS — still an acquire
      * served locally, so it belongs in the same census the other arms feed
@@ -142,8 +142,8 @@ void arts_handler_db_acquire(void *item, void *args) {
   uint64_t cur, next;
   do {
     cur = atomic_load_explicit(&cache->cache_state, memory_order_acquire);
-    node->next = MSI_CACHE_HEAD_RO(cur);
-    next = inv_cache_compute_next(cur, MSI_CACHE_OP_ACQ_RO, idx, &act);
+    node->next = INV_CACHE_HEAD_RO(cur);
+    next = inv_cache_compute_next(cur, INV_CACHE_OP_ACQ_RO, idx, &act);
     if (next == cur) {
       break; /* copy turned valid mid-retry: no word write */
     }
@@ -152,14 +152,14 @@ void arts_handler_db_acquire(void *item, void *args) {
                                                   memory_order_acquire));
 
   switch (act) {
-  case MSI_CACHE_ACT_SELF_SERVE:
+  case INV_CACHE_ACT_SELF_SERVE:
     /* The copy turned valid while we were deciding — served from here. */
     INCREMENT_NUM_DB_ACQUIRE_LOCAL_HIT_BY(1);
     arts_object_acquire(false);
     inv_waiter_free(cache, idx);
     mark_edt_ready_by_guid(edt->guid, slot);
     break;
-  case MSI_CACHE_ACT_SEND_RO:
+  case INV_CACHE_ACT_SEND_RO:
     INCREMENT_NUM_DB_ACQUIRE_REMOTE_BY(1);
     arts_object_acquire(true);
     arts_send_db_inv_request(cache, DB_MODE_RO);

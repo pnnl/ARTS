@@ -42,14 +42,17 @@ void arts_handler_db_acquire(void *item, void *args) {
   struct arts_db_cache_s *cache = &db->cache;
   arts_edt_dep_t *dep = &((arts_edt_dep_t *)arts_get_depv(edt))[slot];
   arts_db_access_mode_t mode = dep->mode;
-  /* writer_count is non-negative (post-install rw_holder flip + install guard),
-   * so > 0 means owner; the (int) cast is defensive.  An unsigned compare would
-   * be equivalent here — both reduce to "owner iff count != 0". */
-  bool is_owner = ((int)arts_atomic_read(&cache->writer_count) > 0);
+  /* A NON-ZERO writer_count means this rank holds the grant and therefore the
+   * canonical buffer — an install the home has not confirmed yet included,
+   * which ARTS_GRANT_UNCONFIRMED makes negative rather than zero.  Reading in
+   * that window is safe precisely because no RW EDT can have run here: the
+   * bytes are exactly the ones the transfer delivered.  A zero count is the
+   * only state in which this rank's copy may be stale. */
+  bool has_canonical_copy = (arts_atomic_read(&cache->writer_count) != 0u);
 
   if (mode == DB_MODE_RO) {
-    if (is_owner) { /* OWNER RO predicate (only the owner holds the canonical
-                       copy) */
+    if (has_canonical_copy) { /* WB RO predicate (only a grant holder has the
+                                 canonical copy; home holds no bytes) */
       dep->ptr = arts_db_acquire_local(cache);
       arts_db_acquire_resolved(edt, slot);
       return;
@@ -57,16 +60,14 @@ void arts_handler_db_acquire(void *item, void *args) {
     arts_db_acquire_remote_ro(cache, edt->guid, slot); /* parks (SNAPSHOT) */
     return;
   }
-  /* RW */
-  /* Gate: a TRANSFER installed our buffer + sentinel but home has not confirmed
-   * the rw_holder flip yet. Running now would make this write observable before
-   * the directory names us (the stale-RO window), so a fresh RW acquire parks
-   * until CONFIRM_ACK drains it. grant_req_in_flight is held by the
-   * in-flight round, so acquire_remote_rw parks without issuing a duplicate
-   * request. */
-  bool can_run_rw =
-      is_owner && (arts_atomic_read(&cache->grant_unconfirmed) == 0);
-  if (can_run_rw && arts_db_acquire_rw_local_fast(cache, dep)) {
+  /* RW: the fast path's CAS is the whole test.  It takes a turn only against a
+   * grant this rank holds AND the home has already confirmed, in one atom — an
+   * install whose rw_holder flip is still unpublished reads back negative and
+   * is refused, because writing now would be observable while the directory
+   * names the previous owner (the stale-RO window).  Everything else parks;
+   * grant_req_in_flight is held by the in-flight round, so acquire_remote_rw
+   * parks without issuing a duplicate request, and CONFIRM_ACK drains it. */
+  if (arts_db_acquire_rw_local_fast(cache, dep)) {
     arts_db_acquire_resolved(edt, slot); /* data here, writer_count bumped */
     return;
   }
@@ -138,12 +139,14 @@ void arts_db_cache_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
                         uint64_t db_size, arts_db_init_kind_t kind,
                         unsigned int creator_rank) {
   arts_pending_rw_queue_init(&c->pending_rw);
-  /* WB owner-side fields: dedup map allocated lazily on first ownership
-   * grant; incoming_new_owner starts at the sentinel (no transfer pending). */
-  c->cached_version = NULL;
+  /* WB owner-side fields.  The dedup ledger is allocated HERE, once, rather
+   * than on first use: its readers hold no reference to it, so a ledger that
+   * could be created (or replaced) later would have to carry a lifetime
+   * protocol to be read safely.  Allocated with the cache and freed with it,
+   * a reader can only ever meet the live object. */
+  c->cached_version = arts_rank_u64_map_create(arts_global_rank_count);
   c->incoming_new_owner = ARTS_NO_PENDING_OWNER;
   c->incoming_new_owner_rdzv = (struct arts_rdzv_landing_s){0, 0, 0, 0};
-  c->grant_unconfirmed = 0u;
   arts_db_cache_common_init(c, db_guid, db_size, kind, creator_rank);
 }
 
@@ -153,14 +156,8 @@ void arts_db_cache_destructor(struct arts_db_cache_s *cache) {
   }
   arts_db_cache_common_destroy_pre(cache); /* buffer-NULL FIRST */
   arts_pending_rw_queue_destroy(&cache->pending_rw);
-  /* Owner-side dedup map is allocated lazily on the first served REDIRECT (and
-   * retained, never transferred away, for a producer-on-home + remote-RO DAG),
-   * so the initial owner that is never the target of an ownership transfer must
-   * free it here — otherwise it leaks for the DB's whole lifetime. */
-  if (cache->cached_version != NULL) {
-    arts_rank_u64_map_destroy(cache->cached_version);
-    cache->cached_version = NULL;
-  }
+  arts_rank_u64_map_destroy(cache->cached_version);
+  cache->cached_version = NULL;
   arts_db_cache_common_destroy_post(cache); /* snapshot drain → home teardown */
 }
 
@@ -307,24 +304,17 @@ void arts_handler_db_snapshot_redirect(void *item_v, void *args_v) {
   struct arts_db_buffer_s *buf =
       (struct arts_db_buffer_s *)arts_shared_get(buf_h);
   if (buf == NULL) {
-    /* No buffer installed yet (pre-publication or sentinel DB).  Respond
-     * version=0, no data — the requester's RO waiter fires with undefined
-     * content (per spec); its unused landing is echoed for recycling. */
+    /* A grant holder of a SIZED block always holds its buffer — every create
+     * seeds the initial holder's, and a transfer either carries the payload or
+     * hands the requester its own advertised landing as storage — so the only
+     * block that reaches here is a zero-sized one, whose defined value is the
+     * NULL pointer the requester's waiter then sees.  Respond version=0, no
+     * data; the unused landing is echoed for recycling. */
     arts_send_db_snapshot_response(requester, a->db_guid, /*version=*/0,
                                    edt_guid, slot, /*kind=*/0, cache->db_size,
                                    &a->rdzv, NULL);
     return;
   }
-  /* Invariant: cached_version is created at ownership-install
-   * (GRANT_RESPONSE, retained permanently thereafter).  The INITIAL
-   * owner (the creator, which never received a transfer) has no map yet, so
-   * lazily create it on its first served REDIRECT — otherwise the producer-on-
-   * home + RO-consumers-elsewhere DAG would be served no-data (NULL/stale).
-   * Single-actor here (the redirect handler runs on the network thread). */
-  if (cache->cached_version == NULL) {
-    cache->cached_version = arts_rank_u64_map_create(arts_global_rank_count);
-  }
-
   uint64_t cur_v = buf->version;
   uint64_t known_v =
       arts_rank_u64_map_get(cache->cached_version, requester);

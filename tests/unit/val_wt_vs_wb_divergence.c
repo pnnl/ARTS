@@ -46,9 +46,9 @@
 ///   - HOME: arts_handler_db_grant_response drains pending_rw + runs the
 ///     newly-granted RW EDT IMMEDIATELY at the OWNERSHIP_RESPONSE (no stale-RO
 ///     window; home serves RO synchronously).
-///   - OWNER: the same RESPONSE only installs the buffer + sentinel and sets
-///     grant_unconfirmed=1; the RW drain is DEFERRED to the CONFIRM_ACK
-///     round, and a fresh RW acquire during that window must PARK.
+///   - OWNER: the same RESPONSE only installs the buffer + sentinel, marked
+///     ARTS_GRANT_UNCONFIRMED in writer_count; the RW drain is DEFERRED to the
+///     CONFIRM_ACK round, and a fresh RW acquire during that window must PARK.
 /// Both paths MUST produce identical externally-observable results.  This test
 /// pins the contrast as ONE scenario built and run under each placement (each
 /// build dir defines exactly one of ARTS_WRITE_POLICY_WT / ARTS_WRITE_POLICY_WB) and

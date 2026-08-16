@@ -400,11 +400,11 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
             atomic_store_explicit(&((struct arts_db_s *)ptr)->cache.cache_state,
                                   CACHE_MAKE_FULL(1u, CACHE_ST_IDLE,
                                                   CACHE_ST_IDLE,
-                                                  ARTS_LOCK_NO_TARGET, 0u, 0u),
+                                                  ARTS_EXCL_NO_TARGET, 0u, 0u),
                                   memory_order_relaxed);
             atomic_store_explicit(
                 &((struct arts_db_s *)ptr)->lock_state,
-                LOCK_MAKE(LOCK_PHASE_IDLE, arts_global_rank_id, 0u, 0u),
+                LOCK_MAKE(EXCL_PHASE_IDLE, arts_global_rank_id, 0u, 0u),
                 memory_order_relaxed);
 #else  /* ARTS_RELEASE_PURGE */
             /* PURGE release policy: the home holds the canonical buffer; undo the create-time
@@ -463,11 +463,11 @@ arts_guid_t arts_db_create(void **addr, uint64_t len, arts_db_types_t db_type,
             atomic_store_explicit(&((struct arts_db_s *)ptr)->cache.cache_state,
                                   CACHE_MAKE_FULL(1u, CACHE_ST_IDLE,
                                                   CACHE_ST_IDLE,
-                                                  ARTS_LOCK_NO_TARGET, 0u, 0u),
+                                                  ARTS_EXCL_NO_TARGET, 0u, 0u),
                                   memory_order_relaxed);
             atomic_store_explicit(
                 &((struct arts_db_s *)ptr)->lock_state,
-                LOCK_MAKE(LOCK_PHASE_IDLE, arts_global_rank_id, 0u, 0u),
+                LOCK_MAKE(EXCL_PHASE_IDLE, arts_global_rank_id, 0u, 0u),
                 memory_order_relaxed);
 #else  /* ARTS_RELEASE_PURGE */
             /* PURGE release policy: the home holds the canonical buffer; undo the create-time

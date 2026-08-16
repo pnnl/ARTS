@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * T054 — rank_u64_map serialize/deserialize round-trip + robustness
+ * T054 — rank_u64_map serialize/load round-trip + robustness
  * (B032: deserialize trusts wire count → OOB read; B034: no NULL/OOB guards).
  *
  * Wire layout: count(u32) + pad(u32) + count * {rank(u32), pad(u32), ver(u64)}.
@@ -64,8 +64,11 @@ static int check_roundtrip(void) {
     return 1;
   }
 
-  struct arts_rank_to_u64_map_s *m2 =
-      arts_rank_u64_map_deserialize(buf, len, NRANKS);
+  struct arts_rank_to_u64_map_s *m2 = arts_rank_u64_map_create(NRANKS);
+  /* Seed a slot the image does not name: a load must leave the sender's view
+   * exactly, so this value has to be cleared rather than survive. */
+  arts_rank_u64_map_set(m2, 5, 55);
+  arts_rank_u64_map_load(m2, buf, len);
   int rc = 0;
   for (unsigned int r = 0; r < NRANKS; r++) {
     uint64_t want = (r == 1) ? 11 : (r == 4) ? 44 : (r == 7) ? 77 : 0;
@@ -92,8 +95,8 @@ static int check_empty(void) {
                   *(const uint32_t *)buf);
     return 1;
   }
-  struct arts_rank_to_u64_map_s *m2 =
-      arts_rank_u64_map_deserialize(buf, len, NRANKS);
+  struct arts_rank_to_u64_map_s *m2 = arts_rank_u64_map_create(NRANKS);
+  arts_rank_u64_map_load(m2, buf, len);
   int rc = 0;
   for (unsigned int r = 0; r < NRANKS; r++) {
     if (arts_rank_u64_map_get(m2, r) != 0) {
@@ -122,8 +125,8 @@ static int check_worst_case(void) {
     arts_rank_u64_map_destroy(m);
     return 1;
   }
-  struct arts_rank_to_u64_map_s *m2 =
-      arts_rank_u64_map_deserialize(buf, len, NRANKS);
+  struct arts_rank_to_u64_map_s *m2 = arts_rank_u64_map_create(NRANKS);
+  arts_rank_u64_map_load(m2, buf, len);
   int rc = 0;
   for (unsigned int r = 0; r < NRANKS; r++) {
     if (arts_rank_u64_map_get(m2, r) != (uint64_t)(r + 1) * 1000) {
@@ -155,8 +158,8 @@ static int check_oob_rank_dropped(void) {
   e[1].rank = NRANKS + 5;
   e[1].pad = 0;
   e[1].version = 99;
-  struct arts_rank_to_u64_map_s *m =
-      arts_rank_u64_map_deserialize(buf, sizeof(buf), NRANKS);
+  struct arts_rank_to_u64_map_s *m = arts_rank_u64_map_create(NRANKS);
+  arts_rank_u64_map_load(m, buf, sizeof(buf));
   int rc = 0;
   if (arts_rank_u64_map_get(m, 3) != 33) {
     rc = 1;
@@ -191,8 +194,8 @@ static int probe_inflated_count_oob(void) {
   e[0].pad = 0;
   e[0].version = 1;
   /* If deserialize honored `size` this would be safe; it does not (B032). */
-  struct arts_rank_to_u64_map_s *m =
-      arts_rank_u64_map_deserialize(buf, cap, NRANKS);
+  struct arts_rank_to_u64_map_s *m = arts_rank_u64_map_create(NRANKS);
+  arts_rank_u64_map_load(m, buf, cap);
   /* Reaching here means no OOB read tripped (e.g. non-ASan build read junk
    * harmlessly).  Consume the result so the call is not optimized away. */
   volatile uint64_t sink = arts_rank_u64_map_get(m, 0);

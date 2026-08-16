@@ -120,11 +120,7 @@ void arts_handler_db_grant_response(void *payload, size_t size) {
    * after dispatch) — harmless ahead of the install: the map is only consulted
    * once this rank serves REDIRECTs, which requires the ownership this round
    * is still delivering. */
-  if (cache->cached_version != NULL) {
-    arts_rank_u64_map_destroy(cache->cached_version);
-  }
-  cache->cached_version = arts_rank_u64_map_deserialize(
-      map_start, map_size, arts_global_rank_count);
+  arts_rank_u64_map_load(cache->cached_version, map_start, map_size);
 
   if (hdr->rdzv_txid != 0) {
     /* Payload travels one-sided: pair this packet with the write completion
@@ -140,11 +136,19 @@ void arts_handler_db_grant_response(void *payload, size_t size) {
     return;
   }
 
-  /* No PUT: recycle the unused landing (echoed for a data-less transfer),
-   * install any inline same-rank payload, and commit. */
+  /* No PUT.  The grant still arrives, so this rank must end with storage of
+   * the DB's declared size — an acquire that completes owes its EDT an
+   * addressable pointer, and "nobody has written the block" is a statement
+   * about its contents.  A landing was advertised exactly when this rank
+   * wanted payload, so it is the storage to use: adopt it when the cache has
+   * none, recycle it when the cache already holds a buffer (its bytes are at
+   * least as good as the silence that just arrived).  Then install any inline
+   * same-rank payload and commit. */
   if (hdr->rdzv_cookie != 0) {
-    arts_db_buf_landing_recycle(
-        cache, (struct arts_db_buffer_s *)(uintptr_t)hdr->rdzv_cookie);
+    (void)arts_db_buf_adopt_landing(
+        cache, hdr->version,
+        (struct arts_db_buffer_s *)(uintptr_t)hdr->rdzv_cookie,
+        cache->db_size);
   }
   char *data_start = map_start + map_size;
   size_t data_size = size - sizeof(*hdr) - map_size;
@@ -165,28 +169,27 @@ static void owner_response_commit(arts_shared_ptr_t db_h, arts_guid_t db_guid,
   struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(db_h);
   struct arts_db_cache_s *cache = &db->cache;
 
-  /* ADD the ownership sentinel (+1) PLUS a transient DRAIN GUARD (+1) in a
-   * single atomic op (jump 0->2, no intermediate 1 a racing INVALIDATE could
-   * catch at 0) — the same scheme the WT GRANT uses.  The guard keeps
-   * writer_count >= 1 across the per-waiter +1 drain below, so a commutative
-   * INVALIDATE(-1) cannot zero the count mid-drain and ship the transfer before
-   * this rank's parked writers are counted+scheduled; the 0-crossing is
-   * deferred to guard-removal (after the drain).  Jumping to 2 also makes a
-   * fresh local RW acquire take the fast path (cswap +1) instead of parking, so
-   * the drain sees exactly the pre-TRANSFER waiter set.  An absolute swap(1)
-   * would clobber a racing INVALIDATE's decrement and lose the transfer
-   * (distributed hang). */
-  /* Gate this rank's RW execution until home confirms the rw_holder flip. Set
-   * the flag BEFORE the writer_count bump (plain store ordered before the
-   * atomic RMW, same discipline as incoming_new_owner vs the INVALIDATE sub): a
-   * worker doing a fresh RW acquire reads writer_count then the gate, so any
-   * observer of the bumped count must also observe the gate. */
-  cache->grant_unconfirmed = 1u;
-  /* Sentinel (+1) + drain guard (+1), single op (0->2). The guard is held until
-   * the CONFIRM_ACK handler, so a next-round INVALIDATE racing ahead of
-   * CONFIRM_ACK cannot zero the count and ship before this rank has used its
-   * ownership. */
-  arts_atomic_add(&cache->writer_count, 2u);
+  /* Install the grant and gate it in ONE atomic publication:
+   *   +1  ownership sentinel — this rank holds the grant;
+   *   +1  transient DRAIN GUARD, released by the CONFIRM_ACK handler;
+   *   ARTS_GRANT_UNCONFIRMED — the home has not flipped rw_holder to us yet,
+   *       so this rank holds the data and the sentinel for accounting but no
+   *       RW EDT may run: its stores would be observable while the directory
+   *       still names the previous owner, and a reader registered in that
+   *       window is redirected to that rank's retained, now stale copy.
+   *
+   * One RMW rather than a flag store plus a count bump is what makes the
+   * acquire fast path's CAS a COMPLETE test — there is no instant at which the
+   * word says "runnable" while the confirmation says otherwise, and no pair of
+   * loads a lose-and-regain round trip can slip between.
+   *
+   * The jump also never passes through a value a racing INVALIDATE(-1) could
+   * catch at 0: with the marker set the word cannot be exactly 0 at all, and
+   * after CONFIRM_ACK clears it the guard still holds the count off the zero
+   * edge across the per-waiter +1 drain, so the transfer cannot ship before
+   * this rank's parked writers are counted and scheduled.  An absolute swap
+   * would clobber such a decrement and lose the transfer (distributed hang). */
+  arts_atomic_add(&cache->writer_count, 2u + ARTS_GRANT_UNCONFIRMED);
 
   /* RW drain is DEFERRED to the CONFIRM_ACK handler (home has not flipped
    * rw_holder to us yet). The snapshot + OoO drains stay: a parked RO waiter
@@ -328,10 +331,10 @@ void arts_handler_db_grant_confirm(void *item_v, void *args_v) {
 
 /* Cat-C pure body (CONFIRM_ACK, new-owner side). Home has flipped
  * rw_holder to this rank; it is now safe for this rank's RW EDTs to run and
- * make their writes observable. Drain the RW waiters deferred at TRANSFER,
- * clear the gate, apply the piggybacked invalidate effect (if the round
- * advanced — see arts_handler_db_grant_confirm), and remove the drain
- * guard (the relocated 0-edge ship-check).
+ * make their writes observable. Clear ARTS_GRANT_UNCONFIRMED from the count,
+ * drain the RW waiters deferred at TRANSFER, apply the piggybacked invalidate
+ * effect (if the round advanced — see arts_handler_db_grant_confirm), and
+ * remove the drain guard (the relocated 0-edge ship-check).
  *
  * args_v is the CONFIRM_ACK packet: its new_owner_rank carries the next
  * transfer target when the round advanced, or ARTS_NO_PENDING_OWNER for a
@@ -344,9 +347,14 @@ void arts_handler_db_grant_confirm_ack(void *item_v, void *args_v) {
   struct arts_msg_grant_confirm_ack_packet_s *p =
       (struct arts_msg_grant_confirm_ack_packet_s *)args_v;
 
-  /* Open the gate: fresh RW acquires may now take the fast path, and the
-   * coalescing flag is released so a future round can re-issue. */
-  cache->grant_unconfirmed = 0u;
+  /* Open the gate: home has flipped rw_holder to this rank, so the hold it
+   * already owns becomes runnable and fresh RW acquires may take the fast
+   * path.  Clearing the marker is an atomic SUB of ARTS_GRANT_UNCONFIRMED, not
+   * a masking store: it is exact mod 2^32 whatever the low bits hold and it
+   * commutes with any concurrent ±1, so the count underneath survives
+   * untouched.  The coalescing flag is released so a future round can
+   * re-issue. */
+  arts_atomic_sub(&cache->writer_count, ARTS_GRANT_UNCONFIRMED);
   cache->grant_req_in_flight = 0u;
 
   /* Drain the RW waiters that the GRANT_RESPONSE handler deferred (this is the work
@@ -445,14 +453,15 @@ void arts_db_start_grant_round(struct arts_db_cache_s *cache,
  * handed in IS the cache.
  *
  * When this INVALIDATE arrives the ownership sentinel (+1) is already
- * installed: the post-install rw_holder flip (CONFIRM-driven) advances
- * rw_holder to a rank only after its GRANT install, so home sends this notice
- * strictly after that install — GRANT(+sentinel) precedes INVALIDATE(-1), they
- * never reorder.  The install's sentinel+guard (+2) further holds writer_count
- * >= 0 against the next round's INVALIDATE on another receiver thread.
- * writer_count is therefore non-negative; only the decrement that drives it
- * from a positive value to EXACTLY 0 ships the owner->owner transfer, and the
- * (int) cast is defensive. */
+ * installed and CONFIRMED: the post-install rw_holder flip is CONFIRM-driven,
+ * so home names a rank as holder only after its GRANT install, and targets it
+ * only after that — GRANT(+sentinel) precedes INVALIDATE(-1), they never
+ * reorder.  The count is therefore a positive one here, and the decrement that
+ * drives it from positive to EXACTLY 0 ships the owner->owner transfer.
+ *
+ * Should this ever land inside the unconfirmed window instead, the marker
+ * makes the word negative and the -1 cannot produce 0, so no transfer is
+ * shipped early; the guard removal at CONFIRM_ACK owns the edge either way. */
 void arts_handler_db_grant_invalidate(void *item_v, void *args_v) {
   struct arts_db_cache_s *cache = &((struct arts_db_s *)item_v)->cache;
   struct arts_ooo_args_db_grant_invalidate_s *a =
@@ -472,14 +481,11 @@ void arts_handler_db_grant_invalidate(void *item_v, void *args_v) {
    * gate), so there is no concurrent writer to incoming_new_owner. */
   cache->incoming_new_owner_rdzv = a->new_owner_rdzv;
   cache->incoming_new_owner = a->new_owner_rank;
-  /* Ship ONLY on the positive->0 edge (writer_count is non-negative; see the
-   * handler header). */
+  /* Ship ONLY on the exact 0 edge (see the handler header). */
   int rest = (int)arts_atomic_sub(&cache->writer_count, 1);
   if (rest != 0) {
-    /* rest > 0: local writers still active — the last release_rw, seeing
-     * rest==0 with incoming_new_owner already published, ships instead.  (The
-     * (int) cast is defensive: the post-install flip + install guard keep the
-     * count non-negative, so rest < 0 does not occur.) */
+    /* Local writers still active — the last release_rw, seeing rest==0 with
+     * incoming_new_owner already published, ships instead. */
     return;
   }
   /* rest == 0: we are the unique transfer actor. */

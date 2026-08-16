@@ -75,16 +75,16 @@
  * before the word CAS that links it and read only by the committer that
  * grabbed the chain. */
 
-#define MSI_WAITER_NCHUNKS                                                     \
-  ((uint32_t)(((uint64_t)MSI_WAITER_IDX_MAX + 1u) / MSI_WAITER_CHUNK_CAP))
-#define MSI_FREE_IDX(h) ((uint32_t)((h) & MSI_CACHE_HEAD_MASK))
-#define MSI_FREE_TAG(h) ((uint32_t)((h) >> MSI_CACHE_HEAD_BITS))
-#define MSI_FREE_MAKE(tag, idx)                                                \
-  ((uint32_t)((((tag) & 0x3FFFu) << MSI_CACHE_HEAD_BITS) |                     \
-              ((idx) & MSI_CACHE_HEAD_MASK)))
+#define INV_WAITER_NCHUNKS                                                     \
+  ((uint32_t)(((uint64_t)INV_WAITER_IDX_MAX + 1u) / INV_WAITER_CHUNK_CAP))
+#define INV_FREE_IDX(h) ((uint32_t)((h) & INV_CACHE_HEAD_MASK))
+#define INV_FREE_TAG(h) ((uint32_t)((h) >> INV_CACHE_HEAD_BITS))
+#define INV_FREE_MAKE(tag, idx)                                                \
+  ((uint32_t)((((tag) & 0x3FFFu) << INV_CACHE_HEAD_BITS) |                     \
+              ((idx) & INV_CACHE_HEAD_MASK)))
 
 struct inv_waiter_dir_s {
-  _Atomic(struct arts_db_inv_waiter_s *) chunk[MSI_WAITER_NCHUNKS];
+  _Atomic(struct arts_db_inv_waiter_s *) chunk[INV_WAITER_NCHUNKS];
 };
 
 static struct inv_waiter_dir_s *inv_waiter_dir(struct arts_db_cache_s *c) {
@@ -109,20 +109,20 @@ struct arts_db_inv_waiter_s *inv_waiter_ptr(struct arts_db_cache_s *c,
                                                    uint32_t idx) {
   struct inv_waiter_dir_s *dir = inv_waiter_dir(c);
   struct arts_db_inv_waiter_s *chunk = atomic_load_explicit(
-      &dir->chunk[idx / MSI_WAITER_CHUNK_CAP], memory_order_acquire);
-  return &chunk[idx % MSI_WAITER_CHUNK_CAP];
+      &dir->chunk[idx / INV_WAITER_CHUNK_CAP], memory_order_acquire);
+  return &chunk[idx % INV_WAITER_CHUNK_CAP];
 }
 
 uint32_t inv_waiter_alloc(struct arts_db_cache_s *c) {
   for (;;) {
     uint32_t h =
         atomic_load_explicit(&c->waiters.free_head, memory_order_acquire);
-    uint32_t idx = MSI_FREE_IDX(h);
+    uint32_t idx = INV_FREE_IDX(h);
     if (idx == 0u) {
       break; /* free list empty: bump-allocate */
     }
     uint32_t next = inv_waiter_ptr(c, idx)->next;
-    uint32_t nh = MSI_FREE_MAKE(MSI_FREE_TAG(h) + 1u, next);
+    uint32_t nh = INV_FREE_MAKE(INV_FREE_TAG(h) + 1u, next);
     if (atomic_compare_exchange_weak_explicit(&c->waiters.free_head, &h, nh,
                                               memory_order_acq_rel,
                                               memory_order_acquire)) {
@@ -131,17 +131,17 @@ uint32_t inv_waiter_alloc(struct arts_db_cache_s *c) {
   }
   uint32_t idx =
       atomic_fetch_add_explicit(&c->waiters.next_fresh, 1u, memory_order_acq_rel);
-  if (idx > (uint32_t)MSI_WAITER_IDX_MAX) {
+  if (idx > (uint32_t)INV_WAITER_IDX_MAX) {
     ARTS_ERROR("inv: parked-waiter pool exhausted (index space)");
   }
   struct inv_waiter_dir_s *dir = inv_waiter_dir(c);
   _Atomic(struct arts_db_inv_waiter_s *) *slot =
-      &dir->chunk[idx / MSI_WAITER_CHUNK_CAP];
+      &dir->chunk[idx / INV_WAITER_CHUNK_CAP];
   struct arts_db_inv_waiter_s *chunk =
       atomic_load_explicit(slot, memory_order_acquire);
   if (chunk == NULL) {
     struct arts_db_inv_waiter_s *fresh = (struct arts_db_inv_waiter_s *)
-        arts_calloc(MSI_WAITER_CHUNK_CAP, sizeof(*fresh));
+        arts_calloc(INV_WAITER_CHUNK_CAP, sizeof(*fresh));
     struct arts_db_inv_waiter_s *expect = NULL;
     if (!atomic_compare_exchange_strong_explicit(slot, &expect, fresh,
                                                  memory_order_acq_rel,
@@ -157,8 +157,8 @@ void inv_waiter_free(struct arts_db_cache_s *c, uint32_t idx) {
   for (;;) {
     uint32_t h =
         atomic_load_explicit(&c->waiters.free_head, memory_order_acquire);
-    node->next = MSI_FREE_IDX(h);
-    uint32_t nh = MSI_FREE_MAKE(MSI_FREE_TAG(h) + 1u, idx);
+    node->next = INV_FREE_IDX(h);
+    uint32_t nh = INV_FREE_MAKE(INV_FREE_TAG(h) + 1u, idx);
     if (atomic_compare_exchange_weak_explicit(&c->waiters.free_head, &h, nh,
                                               memory_order_acq_rel,
                                               memory_order_acquire)) {
@@ -205,7 +205,7 @@ void arts_db_cache_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
   bool creator = (kind == ARTS_DB_INIT_CREATOR_HOME ||
                   kind == ARTS_DB_INIT_CREATOR_REMOTE);
   if (creator) {
-    seed = MSI_CACHE_MAKE(MSI_RO_VALID, 0u, 0u);
+    seed = INV_CACHE_MAKE(INV_RO_VALID, 0u, 0u);
   }
   atomic_store_explicit(&c->cache_state, seed, memory_order_relaxed);
   atomic_store_explicit(&c->waiters.chunks, (uintptr_t)0, memory_order_relaxed);
@@ -217,7 +217,6 @@ void arts_db_cache_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
   c->writer_count = creator ? 2u : 0u;
   arts_pending_rw_queue_init(&c->pending_rw);
   c->grant_req_in_flight = 0u;
-  c->grant_unconfirmed = 0u;
   c->incoming_new_owner = ARTS_NO_PENDING_OWNER;
   c->incoming_new_owner_rdzv = (struct arts_rdzv_landing_s){0, 0, 0, 0};
   /* INV's sharer plane carries no version ledger by construction; NULL selects
@@ -360,7 +359,7 @@ static void inv_home_round_close(struct arts_db_s *db,
   uint64_t cur, next;
   do {
     cur = atomic_load_explicit(&db->dir_state, memory_order_acquire);
-    next = inv_dir_compute_next(cur, MSI_DIR_OP_ROUND_CLOSE, 0u, &act);
+    next = inv_dir_compute_next(cur, INV_DIR_OP_ROUND_CLOSE, 0u, &act);
   } while (!atomic_compare_exchange_weak_explicit(&db->dir_state, &cur, next,
                                                   memory_order_acq_rel,
                                                   memory_order_acquire));
@@ -373,7 +372,7 @@ void inv_home_round_try_open(struct arts_db_s *db) {
     uint64_t cur, next;
     do {
       cur = atomic_load_explicit(&db->dir_state, memory_order_acquire);
-      next = inv_dir_compute_next(cur, MSI_DIR_OP_ROUND_CLAIM, 0u, &act);
+      next = inv_dir_compute_next(cur, INV_DIR_OP_ROUND_CLAIM, 0u, &act);
       if (next == cur) {
         return; /* a round is already open; its closer re-arms */
       }
@@ -511,7 +510,7 @@ void inv_home_round_try_open(struct arts_db_s *db) {
       uint32_t aact;
       do {
         cur = atomic_load_explicit(&db->dir_state, memory_order_acquire);
-        next = inv_dir_compute_next(cur, MSI_DIR_OP_ACKS_ARM, ntargets, &aact);
+        next = inv_dir_compute_next(cur, INV_DIR_OP_ACKS_ARM, ntargets, &aact);
       } while (!atomic_compare_exchange_weak_explicit(
           &db->dir_state, &cur, next, memory_order_acq_rel,
           memory_order_acquire));
@@ -659,27 +658,27 @@ static void inv_deliver_commit(arts_shared_ptr_t db_h, uint64_t version,
   uint64_t cur, next;
   do {
     cur = atomic_load_explicit(&cache->cache_state, memory_order_acquire);
-    next = inv_cache_compute_next(cur, MSI_CACHE_OP_DELIVER, 0u, &act);
+    next = inv_cache_compute_next(cur, INV_CACHE_OP_DELIVER, 0u, &act);
     if (next == cur) {
       break; /* DROP: superseded (an ownership install's version won) */
     }
   } while (!atomic_compare_exchange_weak_explicit(&cache->cache_state, &cur,
                                                   next, memory_order_acq_rel,
                                                   memory_order_acquire));
-  if (act == MSI_CACHE_ACT_PUBLISH || act == MSI_CACHE_ACT_PUBLISH_KILL) {
-    inv_serve_chain(cache, MSI_CACHE_HEAD_RO(cur), /*serialized=*/false);
+  if (act == INV_CACHE_ACT_PUBLISH || act == INV_CACHE_ACT_PUBLISH_KILL) {
+    inv_serve_chain(cache, INV_CACHE_HEAD_RO(cur), /*serialized=*/false);
   }
-  if (act == MSI_CACHE_ACT_PUBLISH_KILL) {
+  if (act == INV_CACHE_ACT_PUBLISH_KILL) {
     uint32_t pact;
     do {
       cur = atomic_load_explicit(&cache->cache_state, memory_order_acquire);
       /* The owed ack blocks the round chain, so nothing can retire the
        * transient valid copy before this purge. */
-      if (MSI_CACHE_RO(cur) != MSI_RO_VALID) {
+      if (INV_CACHE_RO(cur) != INV_RO_VALID) {
         ARTS_ERROR("inv: reserved purge found ro=%u (drifted)",
-                   MSI_CACHE_RO(cur));
+                   INV_CACHE_RO(cur));
       }
-      next = inv_cache_compute_next(cur, MSI_CACHE_OP_KILL_PURGE, 0u, &pact);
+      next = inv_cache_compute_next(cur, INV_CACHE_OP_KILL_PURGE, 0u, &pact);
     } while (!atomic_compare_exchange_weak_explicit(
         &cache->cache_state, &cur, next, memory_order_acq_rel,
         memory_order_acquire));
@@ -737,10 +736,17 @@ void arts_handler_db_inv_deliver(void *payload, size_t size) {
     arts_net_rdzv_expect(p->rdzv_txid, inv_landed_cb, ctx);
     return;
   }
-  /* Data-less reply: an advertised-but-unused landing recycles. */
+  /* Data-less reply.  The commit below turns this rank's copy VALID and
+   * durable, so every later read is answered from it with no message at all —
+   * which makes storage here mandatory, not optional: a sized block whose
+   * cache holds no buffer would answer those reads with a NULL pointer
+   * forever.  The advertised landing is that storage; adopt it when the cache
+   * has none and return it to the pool when the cache already has one. */
   if (p->rdzv_cookie != 0) {
-    arts_db_buf_landing_recycle(
-        &db->cache, (struct arts_db_buffer_s *)(uintptr_t)p->rdzv_cookie);
+    (void)arts_db_buf_adopt_landing(
+        &db->cache, p->version,
+        (struct arts_db_buffer_s *)(uintptr_t)p->rdzv_cookie,
+        db->cache.db_size);
   }
   inv_deliver_commit(db_h, p->version, NULL, 0u);
 }
@@ -753,15 +759,17 @@ void arts_handler_db_inv_invalidate(struct arts_db_s *db) {
   do {
     cur = atomic_load_explicit(&cache->cache_state, memory_order_acquire);
     /* An invalidate can never hit the grant holder: the round snapshot
-     * self-excludes it and rounds serialize. */
-    if ((int)arts_atomic_read(&cache->writer_count) > 0) {
+     * self-excludes it and rounds serialize.  Tested against the whole word,
+     * so a hold still carrying ARTS_GRANT_UNCONFIRMED (negative, not zero)
+     * counts as a holder here too. */
+    if (arts_atomic_read(&cache->writer_count) != 0u) {
       ARTS_ERROR("inv: invalidate hit the grant holder");
     }
-    next = inv_cache_compute_next(cur, MSI_CACHE_OP_INVALIDATE, 0u, &act);
+    next = inv_cache_compute_next(cur, INV_CACHE_OP_INVALIDATE, 0u, &act);
   } while (!atomic_compare_exchange_weak_explicit(&cache->cache_state, &cur,
                                                   next, memory_order_acq_rel,
                                                   memory_order_acquire));
-  if (act == MSI_CACHE_ACT_PURGE_ACK || act == MSI_CACHE_ACT_NOOP_ACK) {
+  if (act == INV_CACHE_ACT_PURGE_ACK || act == INV_CACHE_ACT_NOOP_ACK) {
     arts_send_db_inv_invalidate_ack(home_rank, cache->db_guid);
   }
   /* KILL_MARKED: the ack is owed — the doomed DELIVER fires it after its
@@ -776,11 +784,11 @@ void arts_handler_db_inv_invalidate_ack(struct arts_db_s *db,
   uint64_t cur, next;
   do {
     cur = atomic_load_explicit(&db->dir_state, memory_order_acquire);
-    next = inv_dir_compute_next(cur, MSI_DIR_OP_ACK_DEC, 0u, &act);
+    next = inv_dir_compute_next(cur, INV_DIR_OP_ACK_DEC, 0u, &act);
   } while (!atomic_compare_exchange_weak_explicit(&db->dir_state, &cur, next,
                                                   memory_order_acq_rel,
                                                   memory_order_acquire));
-  if (act == MSI_DIR_ACT_CLOSE) {
+  if (act == INV_DIR_ACT_CLOSE) {
     struct arts_db_inv_pub_s *entries = db->round_entries;
     db->round_entries = NULL;
     inv_home_round_close(db, entries);
@@ -936,17 +944,26 @@ void arts_send_db_inv_deliver(unsigned int requester_rank,
   p.version = (src != NULL) ? arts_atomic_read_u64(&src->version) : 0u;
 #endif
   if (requester_rank == arts_global_rank_id) {
-    /* Self-serve: the requester's cache IS this cache — the bytes are already
-     * where they need to be, so no payload moves and the reply is dispatched
-     * inline.  Reachable whenever the server and the reader are the same rank
-     * (a single-rank run, or a home that also holds the grant). */
-    if (src != NULL) {
+    /* Self-serve: the requester's cache IS this cache, so no payload moves and
+     * the reply is dispatched inline.  Reachable whenever the server and the
+     * reader are the same rank (a single-rank run, or a home that also holds
+     * the grant).  With a buffer present the bytes are already where they need
+     * to be and the landing goes back to the pool; with none, the reply is
+     * about to mark this rank's copy VALID for a sized block, so the landing
+     * becomes that copy's storage instead. */
+    bool have_bytes = (src != NULL);
+    if (have_bytes) {
       arts_db_buf_release(&src_h);
     }
     if (rdzv != NULL && rdzv->cookie != 0) {
-      arts_db_buf_landing_recycle(cache,
-                                  (struct arts_db_buffer_s *)(uintptr_t)
-                                      rdzv->cookie);
+      struct arts_db_buffer_s *landing =
+          (struct arts_db_buffer_s *)(uintptr_t)rdzv->cookie;
+      if (have_bytes) {
+        arts_db_buf_landing_recycle(cache, landing);
+      } else {
+        (void)arts_db_buf_adopt_landing(cache, p.version, landing,
+                                        cache->db_size);
+      }
       p.rdzv_cookie = 0;
     }
     arts_handler_db_inv_deliver(&p, sizeof(p));

@@ -170,6 +170,10 @@ void mark_edt_ready_by_guid(arts_guid_t edt_guid, unsigned int slot) {
       arts_shared_ptr_t buf_h = arts_db_buf_acquire(cache);
       struct arts_db_buffer_s *buf =
           (struct arts_db_buffer_s *)arts_shared_get(buf_h);
+      /* A resolved acquire owes the EDT storage of the DB's declared size.
+       * data == NULL therefore means db_size == 0 (a sentinel block, whose
+       * defined value is NULL) or the DB was destroyed under a pending
+       * acquire, which the programming model leaves undefined. */
       void *data = buf ? buf->data : NULL;
       /* Idempotent slot claim.  Two delivery paths can wake the SAME
        * (edt, slot) — e.g. a snapshot_response case-2 drain racing a direct
@@ -410,8 +414,9 @@ void arts_db_ro_combine_on_terminal(struct arts_db_cache_s *cache,
 }
 void arts_db_ro_combine_grant_drain(struct arts_db_cache_s *cache) {
   /* Ownership-arrival drain: called from the transfer-commit body while its
-   * sentinel/guard holds writer_count >= 1, so ownership cannot ship out from
-   * under the walk.  Every waiter here parked before this drain, and the
+   * sentinel/guard holds writer_count away from zero, so ownership cannot ship
+   * out from under the walk (only the decrement that lands on exactly 0 ships,
+   * and under WB the unconfirmed marker keeps the word off 0 outright).  Every waiter here parked before this drain, and the
    * transferred buffer contains every release completed before the transfer
    * (the ownership chain linearizes all writers), so resuming against it is
    * correct for any park time — unlike a snapshot install, which is only a

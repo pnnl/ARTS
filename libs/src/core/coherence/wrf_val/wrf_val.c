@@ -199,16 +199,13 @@ void arts_handler_db_snapshot_request(void *item_v, void *args_v) {
   struct arts_db_buffer_s *master =
       (struct arts_db_buffer_s *)arts_shared_get(master_h);
   if (master == NULL) {
-    /* Two cases produce master==NULL post-precheck:
-     *   (a) Sentinel DB (db_size==0): no buffer is ever installed.
-     *   (b) HOME_RECV pre-PUBLISH: cross-rank create has happened but
-     *       the creator's first PUBLISH has not landed; we have a
-     *       cache but no buffer (stub install per OCR pattern).
-     * Both cases: respond with version=0, NULL data.  The requester's
-     * arts_handler_db_snapshot_response will deliver ptr=NULL to the parked RO waiter
-     * (per spec, "value is undefined" before any writer publishes).
-     * NOT a destroy condition -- the precheck above (destroy_state) is
-     * authoritative for that. */
+    /* Home-canonical: every sized block gets its version-1 zero buffer at
+     * create (arts_db_create_install_home_buffer below), so the only block
+     * that reaches here is a zero-sized one — respond version=0, NULL data,
+     * which is that block's defined value.  A sized block never resolves to a
+     * NULL pointer: "nobody has published yet" bears on its contents, not on
+     * whether it has storage.  NOT a destroy condition -- the precheck above
+     * (destroy_state) is authoritative for that. */
     arts_send_db_snapshot_response(requester, cache->db_guid, /*version=*/0,
                                    edt_guid, slot, /*kind=*/0, cache->db_size,
                                    &a->rdzv, NULL);

@@ -110,6 +110,9 @@ set(TEST_PROGRAMS
     utility_api
     multinode_edt
     edt_create_oversize_guard
+    db_no_acquire_remote_first_touch
+    db_first_touch_matrix
+    db_acquire_release_semantics
     finish_event_mn_termination
     multinode_event
     multinode_coherence
@@ -753,6 +756,9 @@ set_tests_properties(finish_event_stress_2n PROPERTIES
 # --- Multi-node tests ---
 
 register_multinode_test(multinode_edt)
+register_multinode_test(db_no_acquire_remote_first_touch TIMEOUT 60)
+register_multinode_test(db_first_touch_matrix TIMEOUT 120)
+register_multinode_test(db_acquire_release_semantics TIMEOUT 120)
 # The guard aborts the run by design, so the message is the verdict and
 # the exit status is not; one node shape states it as well as four.
 register_multinode_test(edt_create_oversize_guard VARIANTS 2n TIMEOUT 60)

@@ -221,11 +221,20 @@ void arts_handler_db_grant_response(void *payload, size_t size) {
     return;
   }
 
-  /* No PUT: recycle the unused landing (echoed back for a data-less
-   * transfer), install any inline same-rank payload, and commit. */
+  /* No PUT.  The grant still arrives, so this rank must end with storage of
+   * the DB's declared size — an acquire that completes owes its EDT an
+   * addressable pointer, and "nobody has written the block" is a statement
+   * about its contents.  A landing was advertised exactly when this rank
+   * wanted payload (the home rank asks for the permission alone and echoes no
+   * cookie, because it already holds the canonical buffer), so it is the
+   * storage to use: adopt it when the cache has none, recycle it when the
+   * cache already holds a buffer.  Then install any inline same-rank payload
+   * and commit. */
   if (hdr->rdzv_cookie != 0) {
-    arts_db_buf_landing_recycle(
-        cache, (struct arts_db_buffer_s *)(uintptr_t)hdr->rdzv_cookie);
+    (void)arts_db_buf_adopt_landing(
+        cache, hdr->version,
+        (struct arts_db_buffer_s *)(uintptr_t)hdr->rdzv_cookie,
+        cache->db_size);
   }
   char *data_start = map_start + map_size;
   size_t data_size = size - sizeof(*hdr) - map_size;

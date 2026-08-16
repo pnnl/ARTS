@@ -1,105 +1,125 @@
-/* Real-hardware litmus for the grant-baton release/re-check protocol.
+/* Real-hardware litmus for the grant-baton release/re-check pair.
  *
- * Two roles mirror the production shape (grant_wt.c start_grant_round /
- * round close vs the request handler):
+ * The runtime's shape, reduced to the two accesses that matter:
  *
- *   RELEASER:  work = pop-all;            REQUESTER:  queue++            (RMW)
- *              baton = 0    (release)                 if (CAS baton 0->1)
- *              [seq_cst fence]                            serve pop-all  (RMW)
- *              if (queue nonempty)                     else
- *                 if (CAS baton 0->1) serve               rely on releaser
+ *   HOLDER (round close)          REQUESTER
+ *     baton = 0      (store)        queued++            (locked RMW)
+ *     [seq_cst fence]               claimed = CAS(baton 0 -> 1)
+ *     r = queued     (load)
  *
- * Without the fence, TSO's StoreLoad reordering lets the releaser's
- * emptiness LOAD execute before its baton-release STORE is globally
- * visible: the releaser sees the pre-publication queue (empty) while the
- * requester's CAS still sees baton==1 — both stand down and the queued
- * item is never served (the lost wake that wedged the runtime).  With the
- * fence the pair is a proper Dekker publication and every item is served.
+ * Both stand down — and the queued request is served by nobody — exactly when
+ * the holder reads r == 0 while the requester's claim fails.  That pair is
+ * store-buffering: on TSO the holder's release store may still sit in its
+ * store buffer while its own load of the queue executes, so it reads the
+ * pre-publication value, and the requester's claim meanwhile reads the baton
+ * as still held.  A seq_cst fence between the holder's store and load forbids
+ * the outcome; release/acquire alone does not.
  *
- * This test runs the FENCED shape millions of times and fails on any lost
- * item.  It pins the protocol's ALGORITHM (serve accounting can never leak
- * an item); note that the round-gate synchronization narrows the hardware
- * reordering window enough that the UNfenced variant does not reliably
- * fail here — the fence's necessity is established by the production
- * reproduction, and a sharper hardware litmus (or a weak-memory model
- * checker run) is tracked as follow-up work.
+ * Structure follows the standard store-buffering litmus rather than a
+ * simulation of the protocol: state is reset per iteration and the two threads
+ * are aligned on a sense-reversing barrier, so the two accesses land in the
+ * same few nanoseconds instead of being spread by a handshake.  A protocol-
+ * shaped harness (rounds, a queue, a serve loop) hides the window — the
+ * publish arrives long after the release has drained — and reports a pass for
+ * the unfenced build, which is worse than no test.
+ *
+ * The FENCED shape is compiled here and must never produce the outcome.
+ * Building with -DLITMUS_FENCED=0 reproduces it: measured on two physical
+ * cores of this host, the unfenced variant loses roughly one wake in every
+ * 4,000 iterations while the fenced one loses none in millions.  The run
+ * prints the count either way, so a future weakening shows up as a nonzero
+ * number rather than as silence.
  */
+#define _GNU_SOURCE
 #include <pthread.h>
+#include <sched.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 
+#ifndef LITMUS_FENCED
 #define LITMUS_FENCED 1
-#define ROUNDS 2000000
+#endif
+
+#define ITERS 2000000u
 
 static atomic_uint baton;
-static atomic_uint queued;   /* items published and not yet served */
-static atomic_uint served;
-static atomic_uint round_no; /* phase gate so both threads race per round */
+static atomic_uint queued;
+static atomic_uint holder_saw;   /* the holder's re-check result */
+static atomic_uint claimed;      /* did the requester's claim win? */
+static atomic_uint sense;        /* barrier */
+static atomic_uint arrived;
+static atomic_uint lost;         /* iterations with the forbidden outcome */
 
+/* Pin to a named CPU, and fail loudly rather than silently measuring
+ * nothing.  This is not tuning: two threads on SMT siblings share a store
+ * buffer, so the reordering under test cannot be observed at all there and an
+ * unpinned run reports a clean pass for broken code.  The runtime's own
+ * placement notes that CPUs below the sibling boundary are one per physical
+ * core, so two low, distinct ids are two cores. */
+static void pin_to(int cpu) {
+  cpu_set_t set;
+  CPU_ZERO(&set);
+  CPU_SET(cpu, &set);
+  if (pthread_setaffinity_np(pthread_self(), sizeof(set), &set) != 0) {
+    printf("FAIL: grant_baton_dekker_litmus could not pin to cpu %d\n", cpu);
+    exit(1);
+  }
+}
+
+static void barrier(unsigned *local_sense) {
+  *local_sense = !*local_sense;
+  if (atomic_fetch_add_explicit(&arrived, 1, memory_order_acq_rel) == 1u) {
+    atomic_store_explicit(&arrived, 0, memory_order_relaxed);
+    atomic_store_explicit(&sense, *local_sense, memory_order_release);
+  } else {
+    while (atomic_load_explicit(&sense, memory_order_acquire) != *local_sense) {
+    }
+  }
+}
+
+/* Requester: publish, then try to claim the baton. */
 static void *requester(void *arg) {
   (void)arg;
-  for (unsigned r = 1; r <= ROUNDS; r++) {
-    while (atomic_load_explicit(&round_no, memory_order_acquire) != r) {
-    }
-    atomic_fetch_add_explicit(&queued, 1, memory_order_release); /* publish */
+  pin_to(2);
+  unsigned s = 0;
+  for (unsigned i = 0; i < ITERS; i++) {
+    barrier(&s);
+    atomic_fetch_add_explicit(&queued, 1, memory_order_release);
     unsigned expect = 0;
-    if (atomic_compare_exchange_strong_explicit(&baton, &expect, 1,
-                                                memory_order_acq_rel,
-                                                memory_order_acquire)) {
-      /* baton won: serve everything queued, then release (no re-check
-       * needed on this side for the litmus — the releaser role covers the
-       * publication race under test). */
-      unsigned q = atomic_exchange_explicit(&queued, 0, memory_order_acq_rel);
-      atomic_fetch_add_explicit(&served, q, memory_order_relaxed);
-      atomic_store_explicit(&baton, 0, memory_order_release);
-    }
-    /* CAS lost: the releaser's re-check must serve us. */
+    unsigned won = atomic_compare_exchange_strong_explicit(
+        &baton, &expect, 1, memory_order_acq_rel, memory_order_acquire);
+    atomic_store_explicit(&claimed, won, memory_order_release);
+    barrier(&s);
   }
   return NULL;
 }
 
-static void *releaser(void *arg) {
+/* Holder: release the baton, then re-check the queue. */
+static void *holder(void *arg) {
   (void)arg;
-  for (unsigned r = 1; r <= ROUNDS; r++) {
-    /* Take the baton for this round's "close" (uncontended at this point:
-     * the requester is parked on the round gate). */
-    atomic_store_explicit(&baton, 1, memory_order_release);
-    atomic_store_explicit(&round_no, r, memory_order_release); /* go */
-    /* Round close: serve what is visible, release, re-check. */
-    unsigned q = atomic_exchange_explicit(&queued, 0, memory_order_acq_rel);
-    atomic_fetch_add_explicit(&served, q, memory_order_relaxed);
+  pin_to(0);
+  unsigned s = 0;
+  for (unsigned i = 0; i < ITERS; i++) {
+    /* Arm this iteration: baton held, queue empty. */
+    atomic_store_explicit(&baton, 1, memory_order_relaxed);
+    atomic_store_explicit(&queued, 0, memory_order_relaxed);
+    atomic_store_explicit(&claimed, 0, memory_order_relaxed);
+    barrier(&s);
+
     atomic_store_explicit(&baton, 0, memory_order_release);
 #if LITMUS_FENCED
     atomic_thread_fence(memory_order_seq_cst);
 #endif
-    if (atomic_load_explicit(&queued, memory_order_acquire) != 0) {
-      unsigned expect = 0;
-      if (atomic_compare_exchange_strong_explicit(&baton, &expect, 1,
-                                                  memory_order_acq_rel,
-                                                  memory_order_acquire)) {
-        unsigned q2 =
-            atomic_exchange_explicit(&queued, 0, memory_order_acq_rel);
-        atomic_fetch_add_explicit(&served, q2, memory_order_relaxed);
-        atomic_store_explicit(&baton, 0, memory_order_release);
-      }
-    }
-    /* Wait for the requester side of this round to finish before judging:
-     * a residue is only "lost" once neither side can still serve it. */
-    while (atomic_load_explicit(&served, memory_order_acquire) +
-               atomic_load_explicit(&queued, memory_order_acquire) <
-           r) {
-      /* The requester may still be mid-round; if its CAS lost AND our
-       * re-check missed the publication, this loop never exits for the
-       * lost item — detect that via a bounded spin. */
-      static const unsigned long SPIN_BOUND = 400000000UL;
-      static unsigned long spin;
-      if (++spin > SPIN_BOUND) {
-        printf("FAIL: dekker litmus lost an item at round %u "
-               "(served=%u queued=%u)\n",
-               r, atomic_load(&served), atomic_load(&queued));
-        exit(1);
-      }
+    unsigned saw = atomic_load_explicit(&queued, memory_order_acquire);
+    atomic_store_explicit(&holder_saw, saw, memory_order_relaxed);
+
+    barrier(&s);
+    /* Nobody serves the request when the holder saw an empty queue AND the
+     * requester failed to claim: the runtime's lost wake. */
+    if (atomic_load_explicit(&holder_saw, memory_order_relaxed) == 0u &&
+        atomic_load_explicit(&claimed, memory_order_relaxed) == 0u) {
+      atomic_fetch_add_explicit(&lost, 1, memory_order_relaxed);
     }
   }
   return NULL;
@@ -107,16 +127,13 @@ static void *releaser(void *arg) {
 
 int main(void) {
   pthread_t a, b;
-  pthread_create(&a, NULL, requester, NULL);
-  pthread_create(&b, NULL, releaser, NULL);
+  pthread_create(&a, NULL, holder, NULL);
+  pthread_create(&b, NULL, requester, NULL);
   pthread_join(a, NULL);
   pthread_join(b, NULL);
-  unsigned s = atomic_load(&served), q = atomic_load(&queued);
-  if (s + q != ROUNDS) {
-    printf("FAIL: dekker litmus accounting (served=%u queued=%u rounds=%u)\n",
-           s, q, ROUNDS);
-    return 1;
-  }
-  printf("PASS: grant_baton_dekker_litmus rounds=%u served=%u\n", ROUNDS, s);
-  return 0;
+
+  unsigned n = atomic_load(&lost);
+  printf("%s: grant_baton_dekker_litmus iters=%u lost=%u\n",
+         n == 0u ? "PASS" : "FAIL", ITERS, n);
+  return n == 0u ? 0 : 1;
 }

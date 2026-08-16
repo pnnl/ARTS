@@ -66,8 +66,8 @@ static void chk(const char *name, uint32_t in_bit, uint32_t in_w, uint32_t in_r,
   uint64_t cur = LOCK_MAKE_STATE(in_bit, in_w, in_r);
   uint32_t grant = 0xffffffff;
   uint64_t next = excl_compute_next(cur, op, &grant);
-  uint32_t nw = LOCK_STATE_W(next), nr = LOCK_STATE_R(next),
-           nb = LOCK_STATE_BIT(next);
+  uint32_t nw = EXCL_STATE_W(next), nr = EXCL_STATE_R(next),
+           nb = EXCL_STATE_BIT(next);
   g_checks++;
   if (nw != ex_w || nr != ex_r || nb != ex_bit || grant != ex_grant) {
     (void)fprintf(
@@ -81,8 +81,8 @@ static void chk(const char *name, uint32_t in_bit, uint32_t in_w, uint32_t in_r,
 }
 
 int main(void) {
-  const uint32_t RW = LOCK_PHASE_BIT_RW; /* 0 */
-  const uint32_t RO = LOCK_PHASE_BIT_RO; /* 1 */
+  const uint32_t RW = EXCL_PHASE_BIT_RW; /* 0 */
+  const uint32_t RO = EXCL_PHASE_BIT_RO; /* 1 */
 
   /* ===== RW_ACQ ===== */
   /* none -> rw : w0 r0 => w1 r0, grant ONE_RW, bit normalized 0 (r==0). */

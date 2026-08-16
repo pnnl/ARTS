@@ -28,16 +28,16 @@
  * lock_state word and an op code; returns the next state word and sets
  * *out_grant to one of the LOCK_GRANT_* codes.
  *
- * op codes: LOCK_OP_RW_ACQ / LOCK_OP_RO_ACQ / LOCK_OP_RW_REL / LOCK_OP_RO_REL
+ * op codes: EXCL_OP_RW_ACQ / EXCL_OP_RO_ACQ / EXCL_OP_RW_REL / EXCL_OP_RO_REL
  * grant codes: LOCK_GRANT_NONE / LOCK_GRANT_ONE_RW / LOCK_GRANT_ALL_RO
  */
 uint64_t excl_compute_next(uint64_t cur, int op, uint32_t *out_grant) {
-  uint32_t w = LOCK_STATE_W(cur);
-  uint32_t r = LOCK_STATE_R(cur);
-  uint32_t bit = LOCK_STATE_BIT(cur);
+  uint32_t w = EXCL_STATE_W(cur);
+  uint32_t r = EXCL_STATE_R(cur);
+  uint32_t bit = EXCL_STATE_BIT(cur);
   uint32_t grant = LOCK_GRANT_NONE;
   switch (op) {
-  case LOCK_OP_RW_ACQ:
+  case EXCL_OP_RW_ACQ:
     /* w+1.  none->rw (w==0 && r==0) grants one RW.  A NEW RW participant
      * (w:0->1) arriving while readers hold the lock (w==0 && r>0) means the RO
      * phase is held and this RW parks → state_bit=RO.  If this rank is ALREADY
@@ -48,26 +48,26 @@ uint64_t excl_compute_next(uint64_t cur, int op, uint32_t *out_grant) {
     if (w == 0 && r == 0) {
       grant = LOCK_GRANT_ONE_RW; /* none -> rw */
     } else if (w == 0 && r > 0) {
-      bit = LOCK_PHASE_BIT_RO; /* RO held (w was 0), RW waits */
+      bit = EXCL_PHASE_BIT_RO; /* RO held (w was 0), RW waits */
     }
     /* else w>0 (rw->rw): bit unchanged, no grant — the held writer serves it.
      */
     w += 1;
     break;
-  case LOCK_OP_RO_ACQ:
+  case EXCL_OP_RO_ACQ:
     /* r+1.  none->ro / ro->ro drains all RO (D7: new RO grants immediately even
      * with RW waiting); if w>0 (RW held) the RO parks (state_bit=RW). */
     if (w == 0) {
       grant = LOCK_GRANT_ALL_RO; /* none->ro or ro->ro */
-      bit = LOCK_PHASE_BIT_RO;
-    } else if (bit == LOCK_PHASE_BIT_RO && r > 0) {
+      bit = EXCL_PHASE_BIT_RO;
+    } else if (bit == EXCL_PHASE_BIT_RO && r > 0) {
       grant = LOCK_GRANT_ALL_RO; /* RO phase extends (D7) */
     } else {
-      bit = LOCK_PHASE_BIT_RW; /* RW held, RO waits */
+      bit = EXCL_PHASE_BIT_RW; /* RW held, RO waits */
     }
     r += 1;
     break;
-  case LOCK_OP_RW_REL:
+  case EXCL_OP_RW_REL:
     /* w-1.  w-1>0 grants next writer (D6); w-1==0 && r>0 flips to RO + drains;
      * w-1==0 && r==0 -> none. */
     w -= 1;
@@ -75,15 +75,15 @@ uint64_t excl_compute_next(uint64_t cur, int op, uint32_t *out_grant) {
       grant = LOCK_GRANT_ONE_RW; /* rw->rw */
     } else if (r > 0) {
       grant = LOCK_GRANT_ALL_RO; /* rw->ro */
-      bit = LOCK_PHASE_BIT_RO;
+      bit = EXCL_PHASE_BIT_RO;
     }
     break;
-  case LOCK_OP_RO_REL:
+  case EXCL_OP_RO_REL:
     /* r-1.  r-1==0 && w>0 flips to RW + grants one; else nothing. */
     r -= 1;
     if (r == 0 && w > 0) {
       grant = LOCK_GRANT_ONE_RW; /* ro->rw */
-      bit = LOCK_PHASE_BIT_RW;
+      bit = EXCL_PHASE_BIT_RW;
     }
     break;
   default:

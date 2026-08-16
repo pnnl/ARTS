@@ -14,6 +14,7 @@
 
 #include "arts/coherence/buffer.h"
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -232,6 +233,39 @@ void arts_db_buf_landing_recycle(struct arts_db_cache_s *cache,
   b->cb = NULL;
   b->owner_cache = cache;
   arts_lf_pool_release(&cache->buf_freelist, &b->pool_link);
+}
+
+bool arts_db_buf_adopt_landing(struct arts_db_cache_s *cache, uint64_t version,
+                               struct arts_db_buffer_s *landing,
+                               uint64_t db_size) {
+  if (landing == NULL) {
+    return false;
+  }
+  if (db_size == 0) {
+    /* A zero-sized block has no storage to hold: NULL is its defined value. */
+    arts_db_buf_landing_recycle(cache, landing);
+    return false;
+  }
+  landing->owner_cache = cache;
+  landing->version = version;
+  /* The landing may be recycled memory, so its bytes are arbitrary.  Every
+   * other path that materializes a never-written block hands out zeroes; match
+   * it, so "contents undefined" cannot mean "another block's contents". */
+  memset(landing->data, 0, (size_t)db_size);
+  arts_shared_ptr_t cb = arts_shared_make(landing, buffer_deleter);
+  landing->cb = cb;
+  /* Install-if-absent, NOT the version-conditional publish: this landing
+   * carries no data, so it may only ever fill a hole.  A buffer already in the
+   * slot holds real bytes at some version — replacing it, at any version,
+   * would destroy them. */
+  if (!arts_atomic_shared_compare_exchange(&cache->buffer, NULL, cb)) {
+    arts_shared_release(&cb); /* last ref: the deleter recycles the landing */
+    return false;
+  }
+  if (cache->db_size == 0) {
+    cache->db_size = db_size;
+  }
+  return true;
 }
 
 struct arts_db_buffer_s *

@@ -153,13 +153,13 @@ uint64_t cache_owner_compute_next(uint64_t cur, int op, uint32_t *out_action) {
      * grant and the migration ships at the rc 0-edge instead. */
     if (wc == 0u && rc == 0u) {
       rws = CACHE_ST_IDLE;
-      if (mt != ARTS_LOCK_NO_TARGET) {
+      if (mt != ARTS_EXCL_NO_TARGET) {
         /* 0-edge with a pending migration: clear owner-bit + migrate_target in
          * the SAME next-state (single CAS) and signal the ship.  This is the
          * EXCL RETAIN analogue of VAL's 0-edge transfer, but a single CAS — no
          * split-decrement, no separate in-flight flag. */
         own = 0u;
-        mt = ARTS_LOCK_NO_TARGET;
+        mt = ARTS_EXCL_NO_TARGET;
         act = CACHE_ACT_MIGRATE;
       } else {
         /* sticky: keep ownership + data, no wire traffic. */
@@ -185,7 +185,7 @@ uint64_t cache_owner_compute_next(uint64_t cur, int op, uint32_t *out_action) {
     break;
   }
   *out_action = act;
-  /* Preserve the ro_granted flag (spare bit 63 — see CACHE_LEASED) across every
+  /* Preserve the ro_granted flag (spare bit 63 — see CACHE_GRANTED) across every
    * transition EXCEPT the RO release 0-edge, which fully relinquishes the RO
    * grant and clears it.  The flag is SET by the DELIVER(RO) handler when a
    * lent RO copy is actually received (a borrower owes exactly one RO_RETURN) —
@@ -225,12 +225,12 @@ void arts_db_cache_init(struct arts_db_cache_s *c, arts_guid_t db_guid,
     /* Creator holds RW and is the data owner: owner=1, rw_st=GRANT, wc=1,
      * ro_st=IDLE, rc=0, migrate_target=NO_TARGET (no pending migration). */
     seed = CACHE_MAKE_FULL(1u, CACHE_ST_GRANT, CACHE_ST_IDLE,
-                           ARTS_LOCK_NO_TARGET, 1u, 0u);
+                           ARTS_EXCL_NO_TARGET, 1u, 0u);
   } else {
     /* Non-creator cache stub: not owner, all state IDLE, counts 0,
      * migrate_target=NO_TARGET. */
     seed = CACHE_MAKE_FULL(0u, CACHE_ST_IDLE, CACHE_ST_IDLE,
-                           ARTS_LOCK_NO_TARGET, 0u, 0u);
+                           ARTS_EXCL_NO_TARGET, 0u, 0u);
   }
   atomic_store_explicit(&c->cache_state, seed, memory_order_relaxed);
   arts_lf_stack_init(&c->ro_pending);
@@ -295,7 +295,7 @@ void arts_db_create_publish_holder(struct arts_db_s *db,
    * Single coalesce-path store (the route slot is freshly promoted), no CAS
    * needed. */
   atomic_store_explicit(&db->lock_state,
-                        LOCK_MAKE(LOCK_PHASE_IDLE, creator_rank, 0u, 0u),
+                        LOCK_MAKE(EXCL_PHASE_IDLE, creator_rank, 0u, 0u),
                         memory_order_release);
 }
 
@@ -374,7 +374,7 @@ static void owner_try_execute(struct arts_db_cache_s *cache) {
      * this — its wc==0 && rc==0 gate is strictly stronger, and additionally
      * catches a reader that joined under a write grant, which is counted in rc
      * while ro_st stays IDLE. */
-    if (mt == ARTS_LOCK_NO_TARGET || CACHE_OWNER(cur) == 0u ||
+    if (mt == ARTS_EXCL_NO_TARGET || CACHE_OWNER(cur) == 0u ||
         (CACHE_RO_ST(cur) == CACHE_ST_GRANT && CACHE_RO_CNT(cur) != 0u)) {
       break; /* no eligible migration (or a live standalone RO grant) */
     }
@@ -383,7 +383,7 @@ static void owner_try_execute(struct arts_db_cache_s *cache) {
        * rw_st=GRANT, clear migrate_target in one CAS, then drain rw_pending and
        * CONFIRM home.  (No data ship.)  Does NOT require wc==0. */
       uint64_t next = CACHE_MAKE_FULL(1u, CACHE_ST_GRANT, CACHE_RO_ST(cur),
-                                      ARTS_LOCK_NO_TARGET, CACHE_RW_CNT(cur),
+                                      ARTS_EXCL_NO_TARGET, CACHE_RW_CNT(cur),
                                       CACHE_RO_CNT(cur)) |
                       (cur & CACHE_OWNER_LEASED_MASK); /* preserve ro_granted */
       if (atomic_compare_exchange_weak_explicit(&cache->cache_state, &cur, next,
@@ -416,7 +416,7 @@ static void owner_try_execute(struct arts_db_cache_s *cache) {
     }
     uint64_t next =
         CACHE_MAKE_FULL(0u, CACHE_ST_IDLE, CACHE_RO_ST(cur),
-                        ARTS_LOCK_NO_TARGET, 0u, CACHE_RO_CNT(cur)) |
+                        ARTS_EXCL_NO_TARGET, 0u, CACHE_RO_CNT(cur)) |
         (cur & CACHE_OWNER_LEASED_MASK); /* preserve ro_granted */
     if (atomic_compare_exchange_weak_explicit(&cache->cache_state, &cur, next,
                                               memory_order_acq_rel,
@@ -1074,7 +1074,7 @@ static void lock_deliver_commit(arts_shared_ptr_t db_h, arts_guid_t db_guid,
 void arts_db_release_rw(struct arts_db_cache_s *cache) {
   uint32_t act;
   uint64_t cur, next;
-  uint32_t target = ARTS_LOCK_NO_TARGET;
+  uint32_t target = ARTS_EXCL_NO_TARGET;
   do {
     cur = atomic_load_explicit(&cache->cache_state, memory_order_acquire);
     if (CACHE_RW_CNT(cur) == 0u) {
@@ -1120,7 +1120,7 @@ void arts_db_release_ro(struct arts_db_cache_s *cache) {
                                                   next, memory_order_acq_rel,
                                                   memory_order_acquire));
   if (act == CACHE_ACT_REL_RO) {
-    /* rc 0-edge.  The RO_RETURN decision keys off ro_granted (CACHE_LEASED of
+    /* rc 0-edge.  The RO_RETURN decision keys off ro_granted (CACHE_GRANTED of
      * the pre-CAS state that committed), NOT the owner-bit: a home-COUNTED RO
      * grant (one that arrived via DELIVER(RO)) owes the home a RO_RETURN to
      * balance its r, even if this rank is now the owner (a held reader that was
@@ -1130,7 +1130,7 @@ void arts_db_release_ro(struct arts_db_cache_s *cache) {
      * home) sends none. Independently, if this rank is still the owner, drive
      * any pending RO serve / migration now that the local readers have drained.
      */
-    bool granted = CACHE_LEASED(cur);
+    bool granted = CACHE_GRANTED(cur);
     if (granted) {
       arts_send_db_excl_roret(arts_guid_get_rank(cache->db_guid),
                               cache->db_guid);
@@ -1168,47 +1168,47 @@ uint64_t lock_owner_compute_next(uint64_t cur, int op, unsigned int new_owner,
   uint32_t owner = LOCK_OWNER(cur);
   uint32_t w = LOCK_W(cur);
   uint32_t r = LOCK_R(cur);
-  uint32_t action = LOCK_ACTION_NONE;
+  uint32_t action = EXCL_ACTION_NONE;
   switch (op) {
-  case LOCK_OP_RW_ACQ:
+  case EXCL_OP_RW_ACQ:
     w += 1;
-    if (phase == LOCK_PHASE_IDLE) {
-      phase = LOCK_PHASE_RW;
-      action = LOCK_ACTION_FORWARD_MIGRATE;
+    if (phase == EXCL_PHASE_IDLE) {
+      phase = EXCL_PHASE_RW;
+      action = EXCL_ACTION_FORWARD_MIGRATE;
     }
     /* phase==RW: queue only (next migrate at CONFIRM).
      * phase==RO: hold (r unaffected here — the RW parks in rw_waiters). */
     break;
-  case LOCK_OP_RO_ACQ:
+  case EXCL_OP_RO_ACQ:
     r += 1;
-    if (phase == LOCK_PHASE_RO) {
-      action = LOCK_ACTION_FORWARD_SERVE_ONE;
-    } else if (phase == LOCK_PHASE_IDLE) {
-      phase = LOCK_PHASE_RO;
-      action = LOCK_ACTION_FORWARD_SERVE_ONE;
+    if (phase == EXCL_PHASE_RO) {
+      action = EXCL_ACTION_FORWARD_SERVE_ONE;
+    } else if (phase == EXCL_PHASE_IDLE) {
+      phase = EXCL_PHASE_RO;
+      action = EXCL_ACTION_FORWARD_SERVE_ONE;
     }
     /* phase==RW: held in ro_waiters by the caller; no action. */
     break;
-  case LOCK_OP_CONFIRM:
+  case EXCL_OP_CONFIRM:
     w -= 1;
     owner = new_owner;
     if (w > 0u) {
-      action = LOCK_ACTION_FORWARD_MIGRATE; /* RW chain */
+      action = EXCL_ACTION_FORWARD_MIGRATE; /* RW chain */
     } else if (r > 0u) {
-      phase = LOCK_PHASE_RO;
-      action = LOCK_ACTION_FORWARD_SERVE_ALL; /* RW → RO flip */
+      phase = EXCL_PHASE_RO;
+      action = EXCL_ACTION_FORWARD_SERVE_ALL; /* RW → RO flip */
     } else {
-      phase = LOCK_PHASE_IDLE;
+      phase = EXCL_PHASE_IDLE;
     }
     break;
-  case LOCK_OP_RO_RET:
+  case EXCL_OP_RO_RET:
     r -= 1;
     if (r == 0u) {
       if (w > 0u) {
-        phase = LOCK_PHASE_RW;
-        action = LOCK_ACTION_FORWARD_MIGRATE; /* RO → RW flip */
+        phase = EXCL_PHASE_RW;
+        action = EXCL_ACTION_FORWARD_MIGRATE; /* RO → RW flip */
       } else {
-        phase = LOCK_PHASE_IDLE;
+        phase = EXCL_PHASE_IDLE;
       }
     }
     break;
@@ -1252,7 +1252,7 @@ struct arts_lock_ro_node_s {
 static void lock_owner_home_forward(struct arts_db_s *db, uint32_t action,
                                    uint64_t word) {
   unsigned int owner = LOCK_OWNER(word);
-  if (action == LOCK_ACTION_FORWARD_MIGRATE) {
+  if (action == EXCL_ACTION_FORWARD_MIGRATE) {
     /* peek, not pop: the requester stays queued until its own CONFIRM pops it,
      * which is what makes "queue front == the rank that will CONFIRM" hold. */
     unsigned int target;
@@ -1261,7 +1261,7 @@ static void lock_owner_home_forward(struct arts_db_s *db, uint32_t action,
       arts_send_db_excl_forward(owner, db->cache.db_guid, (uint32_t)DB_MODE_RW,
                                 target, &target_rdzv);
     }
-  } else if (action == LOCK_ACTION_FORWARD_SERVE_ALL) {
+  } else if (action == EXCL_ACTION_FORWARD_SERVE_ALL) {
     /* RW → RO flip: drain every held RO waiter and FORWARD-serve each
      * UNCONDITIONALLY (the fixed single-target packet, same shape as
      * SERVE_ONE). No owner identity tracking here: a rank that is (or was) the
@@ -1321,7 +1321,7 @@ void arts_handler_db_excl_request(void *item_v, void *args_v) {
     arts_home_grantreq_queue_push(&db->rw_waiters, requester, &a->rdzv);
     do {
       cur = atomic_load_explicit(&db->lock_state, memory_order_acquire);
-      next = lock_owner_compute_next(cur, LOCK_OP_RW_ACQ, /*new_owner=*/0u,
+      next = lock_owner_compute_next(cur, EXCL_OP_RW_ACQ, /*new_owner=*/0u,
                                     &action);
     } while (!atomic_compare_exchange_weak_explicit(&db->lock_state, &cur, next,
                                                     memory_order_acq_rel,
@@ -1342,7 +1342,7 @@ void arts_handler_db_excl_request(void *item_v, void *args_v) {
     arts_lf_stack_push(&db->ro_waiters, &n->link);
     do {
       cur = atomic_load_explicit(&db->lock_state, memory_order_acquire);
-      next = lock_owner_compute_next(cur, LOCK_OP_RO_ACQ, /*new_owner=*/0u,
+      next = lock_owner_compute_next(cur, EXCL_OP_RO_ACQ, /*new_owner=*/0u,
                                     &action);
     } while (!atomic_compare_exchange_weak_explicit(&db->lock_state, &cur, next,
                                                     memory_order_acq_rel,
@@ -1352,8 +1352,8 @@ void arts_handler_db_excl_request(void *item_v, void *args_v) {
      * reader a concurrent request pushed; XCHG drain partitions are disjoint).
      * RW phase (NONE): leave the node held; the RW→RO flip's SERVE_ALL drains
      * it. */
-    if (action == LOCK_ACTION_FORWARD_SERVE_ONE) {
-      lock_owner_home_forward(db, LOCK_ACTION_FORWARD_SERVE_ALL, next);
+    if (action == EXCL_ACTION_FORWARD_SERVE_ONE) {
+      lock_owner_home_forward(db, EXCL_ACTION_FORWARD_SERVE_ALL, next);
     }
   }
 }
@@ -1403,7 +1403,7 @@ void arts_handler_db_excl_confirm(void *item_v) {
   uint64_t cur, next;
   do {
     cur = atomic_load_explicit(&db->lock_state, memory_order_acquire);
-    next = lock_owner_compute_next(cur, LOCK_OP_CONFIRM, new_owner, &action);
+    next = lock_owner_compute_next(cur, EXCL_OP_CONFIRM, new_owner, &action);
   } while (!atomic_compare_exchange_weak_explicit(
       &db->lock_state, &cur, next, memory_order_acq_rel, memory_order_acquire));
   lock_owner_home_forward(db, action, next);
@@ -1443,7 +1443,7 @@ void arts_handler_db_excl_roret(void *item_v) {
       return;
     }
     next =
-        lock_owner_compute_next(cur, LOCK_OP_RO_RET, /*new_owner=*/0u, &action);
+        lock_owner_compute_next(cur, EXCL_OP_RO_RET, /*new_owner=*/0u, &action);
   } while (!atomic_compare_exchange_weak_explicit(
       &db->lock_state, &cur, next, memory_order_acq_rel, memory_order_acquire));
   lock_owner_home_forward(db, action, next);

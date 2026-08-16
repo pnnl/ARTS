@@ -72,22 +72,20 @@ void arts_handler_db_acquire(void *item, void *args) {
   arts_db_access_mode_t mode = dep->mode;
 
   if (mode != DB_MODE_RO) {
-    /* RW: the shared grant.  writer_count > 0 IS "this rank holds it" — but an
-     * install whose directory flip the home has not yet published may NOT run:
-     * its stores would be observable while the directory still names the
-     * previous owner, and a reader registered in that window is redirected to
-     * that rank's retained (now stale) copy.  The CONFIRM_ACK opens the gate
-     * and drains whatever parked behind it. */
-    /* KNOWN NARROW WINDOW: reading the gate
-     * before the count admits {pre-install gate 0, post-install count} — an
-     * RW that runs before the directory flip.  The count-first variant was
-     * attempted and reverted: a transient bump inside the unconfirmed
-     * window lets sibling acquires and the request plane observe ownership
-     * this rank does not yet hold, which wedges the transfer chain.  The
-     * correct closure needs the install to publish gate+count as one
-     * atom; tracked as follow-up, not fixed by reordering the reads. */
-    if (arts_atomic_read(&cache->grant_unconfirmed) == 0 &&
-        arts_db_acquire_rw_local_fast(cache, dep)) {
+    /* RW: the shared grant.  A positive writer_count IS "this rank holds it",
+     * and an install whose directory flip the home has not yet published may
+     * NOT run: its stores would be observable while the directory still names
+     * the previous owner, and a reader registered in that window is redirected
+     * to that rank's retained (now stale) copy.
+     *
+     * Both facts live in the one word — ARTS_GRANT_UNCONFIRMED makes such an
+     * install read back negative — so the fast path's CAS is the entire test
+     * and needs no pre-read here.  That is what closes the window: two
+     * separate loads cannot be taken atomically with each other nor with the
+     * CAS, so a grant lost and re-granted between them reads exactly like one
+     * never lost.  A rank that may not run parks instead, and the CONFIRM_ACK
+     * drains whatever accumulated behind it. */
+    if (arts_db_acquire_rw_local_fast(cache, dep)) {
       arts_db_acquire_resolved(edt, slot);
       return;
     }
@@ -98,12 +96,13 @@ void arts_handler_db_acquire(void *item, void *args) {
   /* Covering-copy fast path: pure loads, no CAS, no node.  A rank holding a
    * CONFIRMED grant covers reads too — it has the newest bytes by definition.
    * An unconfirmed install does not: until the home publishes the flip, the
-   * bytes here are not yet the ones the directory points readers at. */
+   * bytes here are not yet the ones the directory points readers at.  The
+   * SIGNED test is what draws that line: ARTS_GRANT_UNCONFIRMED puts such an
+   * install below zero, so "> 0" already means "held and confirmed". */
   uint64_t peek =
       atomic_load_explicit(&cache->cache_state, memory_order_acquire);
-  if (MSI_CACHE_RO(peek) == MSI_RO_VALID ||
-      ((int)arts_atomic_read(&cache->writer_count) > 0 &&
-       arts_atomic_read(&cache->grant_unconfirmed) == 0)) {
+  if (INV_CACHE_RO(peek) == INV_RO_VALID ||
+      (int)arts_atomic_read(&cache->writer_count) > 0) {
     /* A durable copy answers with no message and no CAS — still an
      * acquire served locally, so it belongs in the same census the
      * other arms feed through arts_db_acquire_local. */
@@ -124,8 +123,8 @@ void arts_handler_db_acquire(void *item, void *args) {
   uint64_t cur, next;
   do {
     cur = atomic_load_explicit(&cache->cache_state, memory_order_acquire);
-    node->next = MSI_CACHE_HEAD_RO(cur);
-    next = inv_cache_compute_next(cur, MSI_CACHE_OP_ACQ_RO, idx, &act);
+    node->next = INV_CACHE_HEAD_RO(cur);
+    next = inv_cache_compute_next(cur, INV_CACHE_OP_ACQ_RO, idx, &act);
     if (next == cur) {
       break; /* copy turned valid mid-retry: no word write */
     }
@@ -134,14 +133,14 @@ void arts_handler_db_acquire(void *item, void *args) {
                                                   memory_order_acquire));
 
   switch (act) {
-  case MSI_CACHE_ACT_SELF_SERVE:
+  case INV_CACHE_ACT_SELF_SERVE:
     /* The copy turned valid while we were deciding — served from here. */
     INCREMENT_NUM_DB_ACQUIRE_LOCAL_HIT_BY(1);
     arts_object_acquire(false);
     inv_waiter_free(cache, idx);
     mark_edt_ready_by_guid(edt->guid, slot);
     break;
-  case MSI_CACHE_ACT_SEND_RO:
+  case INV_CACHE_ACT_SEND_RO:
     INCREMENT_NUM_DB_ACQUIRE_REMOTE_BY(1);
     arts_object_acquire(true);
     arts_send_db_inv_request(cache, DB_MODE_RO);

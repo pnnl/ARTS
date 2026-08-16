@@ -45,6 +45,7 @@
 extern "C" {
 #endif
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -120,9 +121,29 @@ arts_db_buf_landing_alloc(struct arts_db_cache_s *cache, uint64_t db_size,
                           struct arts_rdzv_landing_s *out);
 
 /* Return a never-installed landing to the per-DB free-list (the payload did
- * not move: dedup'd response, unused advertisement, self-transfer). */
+ * not move: dedup'd response, unused advertisement, self-transfer).  Correct
+ * only where the requester provably already holds storage — an acquire that
+ * completes owes its EDT a pointer of the DB's declared size, so a landing
+ * recycled by a rank that has no buffer for a SIZED block loses that
+ * guarantee.  Where the reply's silence means "the sender had no bytes
+ * either", use arts_db_buf_adopt_landing instead. */
 void arts_db_buf_landing_recycle(struct arts_db_cache_s *cache,
                                  struct arts_db_buffer_s *b);
+
+/* Make an unused landing this cache's buffer IF the cache has none, zero-filled
+ * and stamped `version`; recycle it otherwise.  Returns whether it was adopted.
+ *
+ * This is the answer to a reply that grants access but carries no payload
+ * because the SENDER held none: the block has a declared size, so its holder is
+ * entitled to storage of that size whatever its contents, and the landing the
+ * requester already allocated is exactly that storage.  The install is
+ * unconditional-if-absent rather than version-conditional precisely because
+ * these bytes are not data: they may fill a hole but must never displace a
+ * buffer that holds a real payload, at any version.  db_size == 0 (a sentinel
+ * block) adopts nothing — NULL is its defined value. */
+bool arts_db_buf_adopt_landing(struct arts_db_cache_s *cache, uint64_t version,
+                               struct arts_db_buffer_s *landing,
+                               uint64_t db_size);
 
 /* Install a PUT-landed buffer carrying `new_version` at cache.buffer — the
  * no-copy twin of arts_db_buf_install (the payload bytes are already in

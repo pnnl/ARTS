@@ -191,7 +191,7 @@ void arts_db_home_init(struct arts_db_s *db, unsigned int rw_holder,
   db->pending_install_owner = 0;
 
   /* Round plane: no round open, no acks outstanding. */
-  atomic_store_explicit(&db->dir_state, MSI_DIR_MAKE(0u, 0u),
+  atomic_store_explicit(&db->dir_state, INV_DIR_MAKE(0u, 0u),
                         memory_order_relaxed);
   atomic_store_explicit(&db->opening_pending, false, memory_order_relaxed);
   atomic_store_explicit(&db->hver, 1u, memory_order_relaxed);

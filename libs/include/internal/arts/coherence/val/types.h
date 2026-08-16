@@ -90,8 +90,12 @@ struct arts_home_grantreq_queue_s {
  * cache is the runtime's coherence-protocol state: ownership, the live
  * buffer, parked waiters, and destroy lifecycle.
  *
- *   writer_count   flat ownership counter.  > 0 ⇒ this rank holds RW
- *                  ownership; 0 ⇒ invalidated.
+ *   writer_count   ownership counter AND confirmation state in one word.
+ *                  > 0 ⇒ this rank holds RW ownership the home already names;
+ *                  0 ⇒ invalidated; < 0 (ARTS_GRANT_UNCONFIRMED set) ⇒ held
+ *                  but the directory flip is not yet published, so the data is
+ *                  here and readable while no RW EDT may run.  Reading the
+ *                  sign is what makes the turn-taking CAS a complete test.
  *   buffer         currently-installed buffer, an atomic shared_ptr slot;
  *                  readers acquire via acquire_buf's acquire-and-validate load.
  *   pending_snapshot  Treiber stack of snapshot-response reorder-buffer
@@ -139,13 +143,6 @@ struct arts_db_cache_s {
    * same-node RW EDTs piggyback on the in-flight one and are picked up by
    * GRANT's drain. */
   volatile unsigned int grant_req_in_flight;
-  /* Set (1) when a GRANT_RESPONSE installs the buffer on this rank but home
-   * has not yet flipped rw_holder to us; cleared (0) when home's CONFIRM
-   * arrives. While set, this rank holds the data + ownership sentinel for
-   * accounting but must NOT run RW EDTs (their writes would be observable
-   * before the directory names us — the stale-RO window). Gates both parked and
-   * fresh RW acquires. */
-  volatile unsigned int grant_unconfirmed;
   /* Treiber stack of RW waiters parked on this rank (order-free drain-all). */
   arts_lf_stack_t pending_rw;
 #else

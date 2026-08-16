@@ -104,10 +104,10 @@ static inline void db_create_no_acquire_idle(struct arts_db_s *db,
    * the idle directory naming this rank as owner. */
   atomic_store_explicit(&db->cache.cache_state,
                         CACHE_MAKE_FULL(1u, CACHE_ST_IDLE, CACHE_ST_IDLE,
-                                        ARTS_LOCK_NO_TARGET, 0u, 0u),
+                                        ARTS_EXCL_NO_TARGET, 0u, 0u),
                         memory_order_relaxed);
   atomic_store_explicit(&db->lock_state,
-                        LOCK_MAKE(LOCK_PHASE_IDLE, arts_global_rank_id, 0u, 0u),
+                        LOCK_MAKE(EXCL_PHASE_IDLE, arts_global_rank_id, 0u, 0u),
                         memory_order_relaxed);
 #else  /* ARTS_RELEASE_PURGE */
   /* PURGE: the home holds the canonical buffer and grants from it; the creator
@@ -192,16 +192,16 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
   /* No existing entry -- allocate the db_s stub (cache embedded), install in
    * route_table.
    *
-   * Lazy buffer install (OCR pattern): HOME_RECV does NOT install a
-   * buffer here.  cache->buffer stays NULL with version 0 -- "metadata
-   * only" state.  The first PUBLISH from the creator's release_rw
-   * installs the buffer at home (version 1+, with the creator's
-   * payload).  Cross-rank SNAPSHOT_REQUEST before that point is served as a
-   * no-payload SNAPSHOT_RESPONSE (arts_handler_db_snapshot_request); the requesting rank
-   * sees ptr=NULL (per OCR spec ch2:832-839 "value of the created data
-   * block is undefined" -- ARTS interprets this as "before any writer
-   * has published, no data exists; reading is application's
-   * responsibility"). */
+   * Whether the home installs a buffer here is the arm's decision
+   * (arts_db_create_install_home_buffer): an arm whose home holds the
+   * canonical copy installs one now, an arm whose payload lives with its
+   * owner leaves the home metadata-only.  Either way a read that arrives
+   * before the block has been published does NOT resolve to a NULL pointer —
+   * the arm holds it (on the snapshot reorder buffer, until the first publish
+   * drains it) or routes it to the rank that does hold the bytes.  What is
+   * undefined before the first publish is the block's CONTENTS (OCR ch2:
+   * "value of the created data block is undefined"), never whether it has
+   * storage. */
   struct arts_db_s *stub = (struct arts_db_s *)arts_malloc_aligned(
       sizeof(struct arts_db_s), ARTS_CACHE_LINE_SIZE);
   memset(stub, 0, sizeof(struct arts_db_s));
@@ -428,10 +428,18 @@ void arts_handler_db_snapshot_response(void *item_v, void *args_v) {
     return;
   }
 
-  /* No PUT consumed the advertised landing: recycle it.  Covers a no-data
-   * reply (dedup'd / nothing published) AND a same-rank inline serve (an OWNER
-   * REDIRECT that resolved back onto the requester) — in both the echoed
-   * cookie names our own untouched buffer. */
+  /* No PUT consumed the advertised landing: recycle it — this rank keeps the
+   * storage it already has, and installing a fresh empty buffer over a current
+   * one would destroy live data.  Recycling is safe because both no-PUT cases
+   * leave this rank with a buffer already:
+   *   - a no-data reply is the server's dedup verdict (known_v >= cur_v), and
+   *     the ledger credits a rank only where bytes actually reached it (a
+   *     serve that PUT, or the rank's own publish), so the credit IS the
+   *     proof that this cache holds a buffer;
+   *   - a same-rank inline serve read that buffer to answer itself.
+   * The one reply carrying neither data nor a credit — version 0, "nothing
+   * published" — cannot name a sized block: every arm holds or redirects a
+   * pre-publication read rather than answering it empty. */
   if (a->rdzv_cookie != 0) {
     arts_db_buf_landing_recycle(
         cache, (struct arts_db_buffer_s *)(uintptr_t)a->rdzv_cookie);

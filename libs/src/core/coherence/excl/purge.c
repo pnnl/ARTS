@@ -232,7 +232,7 @@ void arts_handler_db_excl_request(void *item_v, void *args_v) {
                        requester); /* destroy fan-out roster */
 
   /* (2) read -> compute next -> CAS retry on contention. */
-  int op = (mode == DB_MODE_RW) ? LOCK_OP_RW_ACQ : LOCK_OP_RO_ACQ;
+  int op = (mode == DB_MODE_RW) ? EXCL_OP_RW_ACQ : EXCL_OP_RO_ACQ;
   uint32_t grant;
   uint64_t cur, next;
   do {
@@ -253,7 +253,7 @@ void arts_handler_db_excl_request(void *item_v, void *args_v) {
 static void lock_release_commit(struct arts_db_s *db,
                                 struct arts_db_cache_s *cache,
                                 arts_db_access_mode_t mode) {
-  int op = (mode == DB_MODE_RW) ? LOCK_OP_RW_REL : LOCK_OP_RO_REL;
+  int op = (mode == DB_MODE_RW) ? EXCL_OP_RW_REL : EXCL_OP_RO_REL;
   uint32_t grant;
   uint64_t cur, next;
   do {

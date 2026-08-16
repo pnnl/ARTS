@@ -50,12 +50,12 @@ int main(void) {
 #include <string.h>
 
 /* ── word-packing arithmetic (compile-time pins) ───────────────────────── */
-_Static_assert(MSI_CACHE_RO_SHIFT + MSI_CACHE_ST_BITS == 64,
+_Static_assert(INV_CACHE_RO_SHIFT + INV_CACHE_ST_BITS == 64,
                "cache word must pack to exactly 64 bits");
-_Static_assert(MSI_CACHE_HEAD_RO_SHIFT == 0 && MSI_CACHE_INFLIGHT_SHIFT == 61 &&
-                   MSI_CACHE_RO_SHIFT == 62,
+_Static_assert(INV_CACHE_HEAD_RO_SHIFT == 0 && INV_CACHE_INFLIGHT_SHIFT == 61 &&
+                   INV_CACHE_RO_SHIFT == 62,
                "cache word field shifts drifted");
-_Static_assert(MSI_DIR_ROUND_SHIFT == 63 && MSI_DIR_ACKS_SHIFT == 49,
+_Static_assert(INV_DIR_ROUND_SHIFT == 63 && INV_DIR_ACKS_SHIFT == 49,
                "dir word field shifts drifted");
 
 #include "core/coherence/inv/arbiters.c"
@@ -99,78 +99,78 @@ int main(void) {
   /* A covering copy is served with NO word change: this is the property that
    * makes a read on a valid copy wait-free. */
   {
-    uint64_t w = MSI_CACHE_MAKE(MSI_RO_VALID, 0u, 0u);
+    uint64_t w = INV_CACHE_MAKE(INV_RO_VALID, 0u, 0u);
     expect_cache("valid copy read is a no-op self-serve", w,
-                 MSI_CACHE_OP_ACQ_RO, ME, w, MSI_CACHE_ACT_SELF_SERVE);
+                 INV_CACHE_OP_ACQ_RO, ME, w, INV_CACHE_ACT_SELF_SERVE);
   }
 
   /* No copy, no fetch: open one AND park in the same transition. */
   expect_cache("first read opens the fetch and parks",
-               MSI_CACHE_MAKE(MSI_RO_IDLE, 0u, 0u), MSI_CACHE_OP_ACQ_RO, ME,
-               MSI_CACHE_MAKE(MSI_RO_REQ, 1u, ME), MSI_CACHE_ACT_SEND_RO);
+               INV_CACHE_MAKE(INV_RO_IDLE, 0u, 0u), INV_CACHE_OP_ACQ_RO, ME,
+               INV_CACHE_MAKE(INV_RO_REQ, 1u, ME), INV_CACHE_ACT_SEND_RO);
 
   /* A fetch is open: join it — same CAS, head replaced, no second message. */
   expect_cache("second read joins the open fetch",
-               MSI_CACHE_MAKE(MSI_RO_REQ, 1u, OTH), MSI_CACHE_OP_ACQ_RO, ME,
-               MSI_CACHE_MAKE(MSI_RO_REQ, 1u, ME), MSI_CACHE_ACT_PARK);
+               INV_CACHE_MAKE(INV_RO_REQ, 1u, OTH), INV_CACHE_OP_ACQ_RO, ME,
+               INV_CACHE_MAKE(INV_RO_REQ, 1u, ME), INV_CACHE_ACT_PARK);
 
   /* A kill-marked fetch is still joinable: its reply serves the cohort once
    * before the reserved purge, so nobody is stranded. */
   expect_cache("read joins a kill-marked fetch",
-               MSI_CACHE_MAKE(MSI_RO_REQ_KILL, 1u, OTH), MSI_CACHE_OP_ACQ_RO,
-               ME, MSI_CACHE_MAKE(MSI_RO_REQ_KILL, 1u, ME),
-               MSI_CACHE_ACT_PARK);
+               INV_CACHE_MAKE(INV_RO_REQ_KILL, 1u, OTH), INV_CACHE_OP_ACQ_RO,
+               ME, INV_CACHE_MAKE(INV_RO_REQ_KILL, 1u, ME),
+               INV_CACHE_ACT_PARK);
 
   /* The reply publishes and grabs the whole chain in one atom. */
   expect_cache("reply publishes and grabs the chain",
-               MSI_CACHE_MAKE(MSI_RO_REQ, 1u, ME), MSI_CACHE_OP_DELIVER, 0u,
-               MSI_CACHE_MAKE(MSI_RO_VALID, 0u, 0u), MSI_CACHE_ACT_PUBLISH);
+               INV_CACHE_MAKE(INV_RO_REQ, 1u, ME), INV_CACHE_OP_DELIVER, 0u,
+               INV_CACHE_MAKE(INV_RO_VALID, 0u, 0u), INV_CACHE_ACT_PUBLISH);
 
   /* A doomed reply serves its cohort, then owes the purge + ack. */
   expect_cache("kill-marked reply serves once, then purges",
-               MSI_CACHE_MAKE(MSI_RO_REQ_KILL, 1u, ME), MSI_CACHE_OP_DELIVER,
-               0u, MSI_CACHE_MAKE(MSI_RO_VALID, 0u, 0u),
-               MSI_CACHE_ACT_PUBLISH_KILL);
+               INV_CACHE_MAKE(INV_RO_REQ_KILL, 1u, ME), INV_CACHE_OP_DELIVER,
+               0u, INV_CACHE_MAKE(INV_RO_VALID, 0u, 0u),
+               INV_CACHE_ACT_PUBLISH_KILL);
 
   /* A reply with no fetch open is an orphan. */
-  expect_cache("orphan reply drops", MSI_CACHE_MAKE(MSI_RO_IDLE, 0u, 0u),
-               MSI_CACHE_OP_DELIVER, 0u, MSI_CACHE_MAKE(MSI_RO_IDLE, 0u, 0u),
-               MSI_CACHE_ACT_DROP);
+  expect_cache("orphan reply drops", INV_CACHE_MAKE(INV_RO_IDLE, 0u, 0u),
+               INV_CACHE_OP_DELIVER, 0u, INV_CACHE_MAKE(INV_RO_IDLE, 0u, 0u),
+               INV_CACHE_ACT_DROP);
 
   /* Invalidate: retire a copy, mark a fetch, or be idempotent. */
   expect_cache("invalidate retires a valid copy",
-               MSI_CACHE_MAKE(MSI_RO_VALID, 0u, 0u), MSI_CACHE_OP_INVALIDATE,
-               0u, MSI_CACHE_MAKE(MSI_RO_IDLE, 0u, 0u),
-               MSI_CACHE_ACT_PURGE_ACK);
+               INV_CACHE_MAKE(INV_RO_VALID, 0u, 0u), INV_CACHE_OP_INVALIDATE,
+               0u, INV_CACHE_MAKE(INV_RO_IDLE, 0u, 0u),
+               INV_CACHE_ACT_PURGE_ACK);
   expect_cache("invalidate marks an open fetch",
-               MSI_CACHE_MAKE(MSI_RO_REQ, 1u, ME), MSI_CACHE_OP_INVALIDATE, 0u,
-               MSI_CACHE_MAKE(MSI_RO_REQ_KILL, 1u, ME),
-               MSI_CACHE_ACT_KILL_MARKED);
+               INV_CACHE_MAKE(INV_RO_REQ, 1u, ME), INV_CACHE_OP_INVALIDATE, 0u,
+               INV_CACHE_MAKE(INV_RO_REQ_KILL, 1u, ME),
+               INV_CACHE_ACT_KILL_MARKED);
   expect_cache("invalidate on nothing is idempotent",
-               MSI_CACHE_MAKE(MSI_RO_IDLE, 0u, 0u), MSI_CACHE_OP_INVALIDATE,
-               0u, MSI_CACHE_MAKE(MSI_RO_IDLE, 0u, 0u),
-               MSI_CACHE_ACT_NOOP_ACK);
+               INV_CACHE_MAKE(INV_RO_IDLE, 0u, 0u), INV_CACHE_OP_INVALIDATE,
+               0u, INV_CACHE_MAKE(INV_RO_IDLE, 0u, 0u),
+               INV_CACHE_ACT_NOOP_ACK);
   expect_cache("the reserved purge retires the served copy",
-               MSI_CACHE_MAKE(MSI_RO_VALID, 0u, 0u), MSI_CACHE_OP_KILL_PURGE,
-               0u, MSI_CACHE_MAKE(MSI_RO_IDLE, 0u, 0u), MSI_CACHE_ACT_NONE);
+               INV_CACHE_MAKE(INV_RO_VALID, 0u, 0u), INV_CACHE_OP_KILL_PURGE,
+               0u, INV_CACHE_MAKE(INV_RO_IDLE, 0u, 0u), INV_CACHE_ACT_NONE);
 
   /* ---- invalidation round ---------------------------------------------- */
 
-  expect_dir("an idle directory admits a round", MSI_DIR_MAKE(0u, 0u),
-             MSI_DIR_OP_ROUND_CLAIM, 0u, MSI_DIR_MAKE(1u, 0u),
-             MSI_DIR_ACT_CLAIMED);
-  expect_dir("a busy directory refuses a second round", MSI_DIR_MAKE(1u, 3u),
-             MSI_DIR_OP_ROUND_CLAIM, 0u, MSI_DIR_MAKE(1u, 3u),
-             MSI_DIR_ACT_NONE);
-  expect_dir("arming sets the snapshot size", MSI_DIR_MAKE(1u, 0u),
-             MSI_DIR_OP_ACKS_ARM, 5u, MSI_DIR_MAKE(1u, 5u), MSI_DIR_ACT_NONE);
-  expect_dir("a non-final ack just decrements", MSI_DIR_MAKE(1u, 5u),
-             MSI_DIR_OP_ACK_DEC, 0u, MSI_DIR_MAKE(1u, 4u), MSI_DIR_ACT_NONE);
-  expect_dir("the last ack closes, and only it", MSI_DIR_MAKE(1u, 1u),
-             MSI_DIR_OP_ACK_DEC, 0u, MSI_DIR_MAKE(1u, 0u), MSI_DIR_ACT_CLOSE);
-  expect_dir("close drops the claim and nothing else", MSI_DIR_MAKE(1u, 0u),
-             MSI_DIR_OP_ROUND_CLOSE, 0u, MSI_DIR_MAKE(0u, 0u),
-             MSI_DIR_ACT_NONE);
+  expect_dir("an idle directory admits a round", INV_DIR_MAKE(0u, 0u),
+             INV_DIR_OP_ROUND_CLAIM, 0u, INV_DIR_MAKE(1u, 0u),
+             INV_DIR_ACT_CLAIMED);
+  expect_dir("a busy directory refuses a second round", INV_DIR_MAKE(1u, 3u),
+             INV_DIR_OP_ROUND_CLAIM, 0u, INV_DIR_MAKE(1u, 3u),
+             INV_DIR_ACT_NONE);
+  expect_dir("arming sets the snapshot size", INV_DIR_MAKE(1u, 0u),
+             INV_DIR_OP_ACKS_ARM, 5u, INV_DIR_MAKE(1u, 5u), INV_DIR_ACT_NONE);
+  expect_dir("a non-final ack just decrements", INV_DIR_MAKE(1u, 5u),
+             INV_DIR_OP_ACK_DEC, 0u, INV_DIR_MAKE(1u, 4u), INV_DIR_ACT_NONE);
+  expect_dir("the last ack closes, and only it", INV_DIR_MAKE(1u, 1u),
+             INV_DIR_OP_ACK_DEC, 0u, INV_DIR_MAKE(1u, 0u), INV_DIR_ACT_CLOSE);
+  expect_dir("close drops the claim and nothing else", INV_DIR_MAKE(1u, 0u),
+             INV_DIR_OP_ROUND_CLOSE, 0u, INV_DIR_MAKE(0u, 0u),
+             INV_DIR_ACT_NONE);
 
   if (g_fail) {
     return 1;

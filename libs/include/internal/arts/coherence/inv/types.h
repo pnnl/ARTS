@@ -135,8 +135,8 @@
  *   W7 at most one read reply in flight per rank
  *   W8 an ownership install's base is >= the slot's current stamp
  */
-#ifndef ARTS_COHERENCE_MSI_TYPES_H
-#define ARTS_COHERENCE_MSI_TYPES_H
+#ifndef ARTS_COHERENCE_INV_TYPES_H
+#define ARTS_COHERENCE_INV_TYPES_H
 
 #include "arts/coherence/types_common.h"
 #include "arts/rank_bitset.h"
@@ -187,34 +187,34 @@ extern "C" {
  * the publishing CAS.  Nothing reads it to decide whether a copy is still
  * valid — only the arrival of an INVALIDATE decides that.
  */
-#define MSI_CACHE_HEAD_BITS 18
-#define MSI_CACHE_ST_BITS 2
-#define MSI_CACHE_FLAG_BITS 1
+#define INV_CACHE_HEAD_BITS 18
+#define INV_CACHE_ST_BITS 2
+#define INV_CACHE_FLAG_BITS 1
 
-#define MSI_CACHE_HEAD_RO_SHIFT 0
-#define MSI_CACHE_INFLIGHT_SHIFT 61
-#define MSI_CACHE_RO_SHIFT (MSI_CACHE_INFLIGHT_SHIFT + MSI_CACHE_FLAG_BITS)
+#define INV_CACHE_HEAD_RO_SHIFT 0
+#define INV_CACHE_INFLIGHT_SHIFT 61
+#define INV_CACHE_RO_SHIFT (INV_CACHE_INFLIGHT_SHIFT + INV_CACHE_FLAG_BITS)
 
-#define MSI_CACHE_HEAD_MASK ((uint64_t)((1ULL << MSI_CACHE_HEAD_BITS) - 1))
-#define MSI_CACHE_ST_MASK ((uint64_t)0x3ULL)
-#define MSI_CACHE_FLAG_MASK ((uint64_t)0x1ULL)
+#define INV_CACHE_HEAD_MASK ((uint64_t)((1ULL << INV_CACHE_HEAD_BITS) - 1))
+#define INV_CACHE_ST_MASK ((uint64_t)0x3ULL)
+#define INV_CACHE_FLAG_MASK ((uint64_t)0x1ULL)
 
 /* ro values */
-#define MSI_RO_IDLE 0u
-#define MSI_RO_REQ 1u
-#define MSI_RO_REQ_KILL 2u /* in-flight fetch marked by an INVALIDATE */
-#define MSI_RO_VALID 3u
+#define INV_RO_IDLE 0u
+#define INV_RO_REQ 1u
+#define INV_RO_REQ_KILL 2u /* in-flight fetch marked by an INVALIDATE */
+#define INV_RO_VALID 3u
 
-#define MSI_CACHE_RO(s)                                                        \
-  ((uint32_t)(((s) >> MSI_CACHE_RO_SHIFT) & MSI_CACHE_ST_MASK))
-#define MSI_CACHE_INFLIGHT(s)                                                  \
-  ((uint32_t)(((s) >> MSI_CACHE_INFLIGHT_SHIFT) & MSI_CACHE_FLAG_MASK))
-#define MSI_CACHE_HEAD_RO(s)                                                   \
-  ((uint32_t)(((s) >> MSI_CACHE_HEAD_RO_SHIFT) & MSI_CACHE_HEAD_MASK))
-#define MSI_CACHE_MAKE(ro, inflight, hro)                                      \
-  ((((uint64_t)(ro) & MSI_CACHE_ST_MASK) << MSI_CACHE_RO_SHIFT) |              \
-   (((uint64_t)(inflight) & MSI_CACHE_FLAG_MASK) << MSI_CACHE_INFLIGHT_SHIFT) |\
-   (((uint64_t)(hro) & MSI_CACHE_HEAD_MASK) << MSI_CACHE_HEAD_RO_SHIFT))
+#define INV_CACHE_RO(s)                                                        \
+  ((uint32_t)(((s) >> INV_CACHE_RO_SHIFT) & INV_CACHE_ST_MASK))
+#define INV_CACHE_INFLIGHT(s)                                                  \
+  ((uint32_t)(((s) >> INV_CACHE_INFLIGHT_SHIFT) & INV_CACHE_FLAG_MASK))
+#define INV_CACHE_HEAD_RO(s)                                                   \
+  ((uint32_t)(((s) >> INV_CACHE_HEAD_RO_SHIFT) & INV_CACHE_HEAD_MASK))
+#define INV_CACHE_MAKE(ro, inflight, hro)                                      \
+  ((((uint64_t)(ro) & INV_CACHE_ST_MASK) << INV_CACHE_RO_SHIFT) |              \
+   (((uint64_t)(inflight) & INV_CACHE_FLAG_MASK) << INV_CACHE_INFLIGHT_SHIFT) |\
+   (((uint64_t)(hro) & INV_CACHE_HEAD_MASK) << INV_CACHE_HEAD_RO_SHIFT))
 
 /* ── directory word: the invalidation round, and only the round ──────────
  * Identical under both placements.
@@ -228,41 +228,41 @@ extern "C" {
  * in flight are NOT here: they are the grant plane's rw_holder / pending_rw /
  * invalidate_in_flight, shared with every other migrating-grant arm.
  */
-#define MSI_DIR_ACKS_BITS 14
-#define MSI_DIR_FLAG_BITS 1
+#define INV_DIR_ACKS_BITS 14
+#define INV_DIR_FLAG_BITS 1
 
-#define MSI_DIR_ACKS_SHIFT 49
-#define MSI_DIR_ROUND_SHIFT (MSI_DIR_ACKS_SHIFT + MSI_DIR_ACKS_BITS)
+#define INV_DIR_ACKS_SHIFT 49
+#define INV_DIR_ROUND_SHIFT (INV_DIR_ACKS_SHIFT + INV_DIR_ACKS_BITS)
 
-#define MSI_DIR_ACKS_MASK ((uint64_t)((1ULL << MSI_DIR_ACKS_BITS) - 1))
-#define MSI_DIR_FLAG_MASK ((uint64_t)0x1ULL)
+#define INV_DIR_ACKS_MASK ((uint64_t)((1ULL << INV_DIR_ACKS_BITS) - 1))
+#define INV_DIR_FLAG_MASK ((uint64_t)0x1ULL)
 
-#define MSI_DIR_ROUND_OPEN(s)                                                  \
-  ((uint32_t)(((s) >> MSI_DIR_ROUND_SHIFT) & MSI_DIR_FLAG_MASK))
-#define MSI_DIR_ACKS(s)                                                        \
-  ((uint32_t)(((s) >> MSI_DIR_ACKS_SHIFT) & MSI_DIR_ACKS_MASK))
-#define MSI_DIR_MAKE(open, acks)                                               \
-  ((((uint64_t)(open) & MSI_DIR_FLAG_MASK) << MSI_DIR_ROUND_SHIFT) |           \
-   (((uint64_t)(acks) & MSI_DIR_ACKS_MASK) << MSI_DIR_ACKS_SHIFT))
+#define INV_DIR_ROUND_OPEN(s)                                                  \
+  ((uint32_t)(((s) >> INV_DIR_ROUND_SHIFT) & INV_DIR_FLAG_MASK))
+#define INV_DIR_ACKS(s)                                                        \
+  ((uint32_t)(((s) >> INV_DIR_ACKS_SHIFT) & INV_DIR_ACKS_MASK))
+#define INV_DIR_MAKE(open, acks)                                               \
+  ((((uint64_t)(open) & INV_DIR_FLAG_MASK) << INV_DIR_ROUND_SHIFT) |           \
+   (((uint64_t)(acks) & INV_DIR_ACKS_MASK) << INV_DIR_ACKS_SHIFT))
 
 #ifndef __cplusplus
-_Static_assert(MSI_CACHE_RO_SHIFT + MSI_CACHE_ST_BITS == 64,
+_Static_assert(INV_CACHE_RO_SHIFT + INV_CACHE_ST_BITS == 64,
                "cache word must pack to exactly 64 bits");
-_Static_assert(MSI_DIR_ROUND_SHIFT + MSI_DIR_FLAG_BITS == 64,
+_Static_assert(INV_DIR_ROUND_SHIFT + INV_DIR_FLAG_BITS == 64,
                "directory word must pack to exactly 64 bits");
-_Static_assert(MSI_RO_VALID <= MSI_CACHE_ST_MASK,
+_Static_assert(INV_RO_VALID <= INV_CACHE_ST_MASK,
                "reader state encodings must fit the 2-bit field");
-#define MSI_CACHE_PIN_ MSI_CACHE_MAKE(MSI_RO_REQ_KILL, 1u, 0x1ABCDu)
-_Static_assert(MSI_CACHE_RO(MSI_CACHE_PIN_) == MSI_RO_REQ_KILL &&
-                   MSI_CACHE_INFLIGHT(MSI_CACHE_PIN_) == 1u &&
-                   MSI_CACHE_HEAD_RO(MSI_CACHE_PIN_) == 0x1ABCDu,
+#define INV_CACHE_PIN_ INV_CACHE_MAKE(INV_RO_REQ_KILL, 1u, 0x1ABCDu)
+_Static_assert(INV_CACHE_RO(INV_CACHE_PIN_) == INV_RO_REQ_KILL &&
+                   INV_CACHE_INFLIGHT(INV_CACHE_PIN_) == 1u &&
+                   INV_CACHE_HEAD_RO(INV_CACHE_PIN_) == 0x1ABCDu,
                "cache word field round-trip");
-#undef MSI_CACHE_PIN_
-#define MSI_DIR_PIN_ MSI_DIR_MAKE(1u, 0x2AAAu)
-_Static_assert(MSI_DIR_ROUND_OPEN(MSI_DIR_PIN_) == 1u &&
-                   MSI_DIR_ACKS(MSI_DIR_PIN_) == 0x2AAAu,
+#undef INV_CACHE_PIN_
+#define INV_DIR_PIN_ INV_DIR_MAKE(1u, 0x2AAAu)
+_Static_assert(INV_DIR_ROUND_OPEN(INV_DIR_PIN_) == 1u &&
+                   INV_DIR_ACKS(INV_DIR_PIN_) == 0x2AAAu,
                "directory word field round-trip");
-#undef MSI_DIR_PIN_
+#undef INV_DIR_PIN_
 #endif /* __cplusplus */
 
 /* ── parked waiter (chain node, index-addressed) ────────────────────────── */
@@ -277,8 +277,8 @@ struct arts_db_inv_waiter_s {
   arts_guid_t edt_guid;  /* parked EDT (guid-addressed idempotent serve) */
 };
 
-#define MSI_WAITER_CHUNK_CAP 256u /* nodes per pool chunk (chunked growth) */
-#define MSI_WAITER_IDX_MAX MSI_CACHE_HEAD_MASK
+#define INV_WAITER_CHUNK_CAP 256u /* nodes per pool chunk (chunked growth) */
+#define INV_WAITER_IDX_MAX INV_CACHE_HEAD_MASK
 
 struct arts_db_inv_waiter_pool_s {
 #ifdef __cplusplus
@@ -340,7 +340,10 @@ struct arts_home_grantreq_queue_s {
  * plain fields shared with every other grant-bearing arm: writer_count carries
  * local writers plus a +1 sentinel while this rank holds the grant, so
  * writer_count > 0 IS "this rank may write".  Nothing withdraws the sentinel
- * except an INVALIDATE, which is what makes the grant sticky.
+ * except an INVALIDATE, which is what makes the grant sticky.  Under WB the
+ * same word also carries ARTS_GRANT_UNCONFIRMED, so "may write" additionally
+ * means the home has published the directory flip; the negative value it
+ * produces is why the signed test is the predicate and not a convenience.
  *
  * The version axis is the buffer's own version field, bumped by each release.
  * A second, publication-numbering counter would be redundant: no home-issued
@@ -355,7 +358,6 @@ struct arts_db_cache_s {
   arts_lf_stack_t pending_rw;
   struct arts_db_inv_waiter_pool_s waiters;
   unsigned int grant_req_in_flight;
-  unsigned int grant_unconfirmed;
   unsigned int incoming_new_owner;
   struct arts_rdzv_landing_s incoming_new_owner_rdzv;
   struct arts_rank_to_u64_map_s *cached_version;
@@ -385,7 +387,7 @@ struct arts_db_cache_s {
 };
 #else
 struct arts_db_cache_s {
-  _Atomic uint64_t cache_state; /* reader plane — see MSI_CACHE_* */
+  _Atomic uint64_t cache_state; /* reader plane — see INV_CACHE_* */
   /* Local writers + the ownership sentinel.  A CAS-loop "increment if > 0"
    * is the whole RW fast path: > 0 means this rank holds the grant. */
   volatile unsigned int writer_count;
@@ -400,12 +402,6 @@ struct arts_db_cache_s {
    * GRANT_REQUEST; same-node RW acquires piggyback and are picked up by
    * the transfer's drain. */
   volatile unsigned int grant_req_in_flight;
-  /* Set while a transfer has installed the buffer here but the home has not
-   * yet flipped rw_holder to us.  This rank holds data and sentinel for
-   * accounting but must NOT run RW EDTs: their writes would be observable
-   * before the directory names us, and a reader registered afterwards could
-   * still be served the previous owner's retained copy. */
-  volatile unsigned int grant_unconfirmed;
   /* Next transfer target, published by the INVALIDATE handler BEFORE it
    * withdraws the sentinel.  ARTS_NO_PENDING_OWNER = none pending.  Publishing
    * before the withdrawal is what makes a separate flag redundant: whichever
@@ -474,7 +470,7 @@ struct arts_db_s {
   uint64_t dir_state;
   bool opening_pending;
 #else
-  _Atomic uint64_t dir_state;   /* round_open + acks — see MSI_DIR_* */
+  _Atomic uint64_t dir_state;   /* round_open + acks — see INV_DIR_* */
   _Atomic bool opening_pending; /* round re-arm latch (XCHG carry) */
 #endif
   /* The home's canonical publication axis, advanced to each round's highest
@@ -514,33 +510,33 @@ struct arts_db_s {
  * that is the grant plane's, and it does not live in a word. */
 
 /* arg: ACQ_RO takes the parking node's pool index; the rest ignore it. */
-#define MSI_CACHE_OP_ACQ_RO 0
-#define MSI_CACHE_OP_DELIVER 1    /* a read reply landed (publish attempt) */
-#define MSI_CACHE_OP_INVALIDATE 2
-#define MSI_CACHE_OP_KILL_PURGE 3 /* reserved invalidate after the kill serve */
+#define INV_CACHE_OP_ACQ_RO 0
+#define INV_CACHE_OP_DELIVER 1    /* a read reply landed (publish attempt) */
+#define INV_CACHE_OP_INVALIDATE 2
+#define INV_CACHE_OP_KILL_PURGE 3 /* reserved invalidate after the kill serve */
 
-#define MSI_CACHE_ACT_NONE 0
-#define MSI_CACHE_ACT_SELF_SERVE 1   /* covering VALID copy: pure load, run */
-#define MSI_CACHE_ACT_SEND_RO 2      /* opened the fetch: park + send */
-#define MSI_CACHE_ACT_PARK 3         /* chained onto the in-flight fetch */
-#define MSI_CACHE_ACT_PUBLISH 4      /* installed: serve the grabbed chain */
-#define MSI_CACHE_ACT_PUBLISH_KILL 5 /* + reserved purge + owed ack after */
-#define MSI_CACHE_ACT_DROP 6         /* superseded reply: discard */
-#define MSI_CACHE_ACT_PURGE_ACK 7    /* INVALIDATE on VALID: purged, ack */
-#define MSI_CACHE_ACT_KILL_MARKED 8  /* INVALIDATE on REQ: ack owed */
-#define MSI_CACHE_ACT_NOOP_ACK 9     /* INVALIDATE idempotent: ack */
+#define INV_CACHE_ACT_NONE 0
+#define INV_CACHE_ACT_SELF_SERVE 1   /* covering VALID copy: pure load, run */
+#define INV_CACHE_ACT_SEND_RO 2      /* opened the fetch: park + send */
+#define INV_CACHE_ACT_PARK 3         /* chained onto the in-flight fetch */
+#define INV_CACHE_ACT_PUBLISH 4      /* installed: serve the grabbed chain */
+#define INV_CACHE_ACT_PUBLISH_KILL 5 /* + reserved purge + owed ack after */
+#define INV_CACHE_ACT_DROP 6         /* superseded reply: discard */
+#define INV_CACHE_ACT_PURGE_ACK 7    /* INVALIDATE on VALID: purged, ack */
+#define INV_CACHE_ACT_KILL_MARKED 8  /* INVALIDATE on REQ: ack owed */
+#define INV_CACHE_ACT_NOOP_ACK 9     /* INVALIDATE idempotent: ack */
 
 uint64_t inv_cache_compute_next(uint64_t cur, int op, uint32_t self_idx,
                                 uint32_t *out_action);
 
-#define MSI_DIR_OP_ROUND_CLAIM 0 /* open an invalidation round */
-#define MSI_DIR_OP_ACKS_ARM 1    /* under the claim: arm the ack count */
-#define MSI_DIR_OP_ACK_DEC 2
-#define MSI_DIR_OP_ROUND_CLOSE 3
+#define INV_DIR_OP_ROUND_CLAIM 0 /* open an invalidation round */
+#define INV_DIR_OP_ACKS_ARM 1    /* under the claim: arm the ack count */
+#define INV_DIR_OP_ACK_DEC 2
+#define INV_DIR_OP_ROUND_CLOSE 3
 
-#define MSI_DIR_ACT_NONE 0
-#define MSI_DIR_ACT_CLAIMED 1
-#define MSI_DIR_ACT_CLOSE 2 /* acks reached 0 with the round open */
+#define INV_DIR_ACT_NONE 0
+#define INV_DIR_ACT_CLAIMED 1
+#define INV_DIR_ACT_CLOSE 2 /* acks reached 0 with the round open */
 
 uint64_t inv_dir_compute_next(uint64_t cur, int op, unsigned int arg,
                               uint32_t *out_action);
@@ -563,4 +559,4 @@ void inv_home_round_try_open(struct arts_db_s *db);
 }
 #endif
 
-#endif /* ARTS_COHERENCE_MSI_TYPES_H */
+#endif /* ARTS_COHERENCE_INV_TYPES_H */

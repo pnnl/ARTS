@@ -96,11 +96,23 @@ size_t arts_rank_u64_map_serialize(const struct arts_rank_to_u64_map_s *m,
   return (sizeof(uint32_t) * 2) + ((size_t)n * sizeof(*entries));
 }
 
-struct arts_rank_to_u64_map_s *
-arts_rank_u64_map_deserialize(const void *in, size_t size,
-                              unsigned int nranks) {
+void arts_rank_u64_map_load(struct arts_rank_to_u64_map_s *m, const void *in,
+                            size_t size) {
   (void)size; /* used by debug assertions; production ignores it */
-  struct arts_rank_to_u64_map_s *m = arts_rank_u64_map_create(nranks);
+  if (m == NULL) {
+    return;
+  }
+  /* Loading into the LIVE map rather than swapping a fresh one in is what
+   * keeps this ledger readable without a lifetime protocol: the slot array is
+   * fixed at rank-count and every slot is independently atomic, so a reader
+   * concurrent with a load observes some mix of old and new per-rank values
+   * and never a freed array.  A slot the wire image omits is cleared, so the
+   * result is the sender's view exactly, as a whole-map replacement was; a
+   * reader that catches the cleared instant reads "nothing known", which only
+   * costs a payload send that was already legal to make. */
+  for (unsigned int r = 0; r < m->nranks; r++) {
+    atomic_store_explicit(&m->slots[r], 0, memory_order_release);
+  }
   const uint32_t *count_field = (const uint32_t *)in;
   uint32_t n = count_field[0];
   const struct arts_msg_rank_version_pair_s *entries =
@@ -109,5 +121,4 @@ arts_rank_u64_map_deserialize(const void *in, size_t size,
   for (uint32_t i = 0; i < n; i++) {
     arts_rank_u64_map_set(m, (unsigned int)entries[i].rank, entries[i].version);
   }
-  return m;
 }

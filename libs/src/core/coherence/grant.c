@@ -52,27 +52,39 @@
 /* ===== Case 2/6: RW local fast path ================================
  * Shared by the WT and WB arts_handler_db_acquire bodies
  * (coherence/val/wt.c / coherence/val/wb.c).  CAS-increments writer_count "if
- * positive"; on success writes dep->ptr (acquire_local) and returns true;
- * returns false when writer_count went to 0 (ownership invalidated) so the
- * caller falls through to arts_db_acquire_remote_rw. */
+ * runnable"; on success writes dep->ptr (acquire_local) and returns true;
+ * returns false when this rank may not take a write turn, so the caller falls
+ * through to arts_db_acquire_remote_rw. */
 bool arts_db_acquire_rw_local_fast(struct arts_db_cache_s *cache,
                                    arts_edt_dep_t *dep) {
-  /* CAS-loop "increment if owner": never bump from <= 0 (0 == invalidated).
-   * writer_count is non-negative by construction: the post-install rw_holder
-   * flip (CONFIRM-driven, both placements) guarantees an INVALIDATE never reaches
-   * a rank before its GRANT install, so GRANT(+sentinel) strictly precedes
-   * INVALIDATE(-1); the install's sentinel+guard (+2) further holds the count
-   * >= 0 if the next round's INVALIDATE lands mid-install on another receiver
-   * thread.  The (int) cast is therefore defensive — with a non-negative count
-   * `<= 0` reduces to `== 0` (not owner). */
+  /* The CAS below is the WHOLE test, not a commit behind one.  writer_count
+   * carries both facts a fresh write turn needs — a positive count IS "this
+   * rank holds the grant", and ARTS_GRANT_UNCONFIRMED makes an install whose
+   * directory flip the home has not yet published read back negative — so a
+   * turn is taken only if, AT THE INSTANT THE CAS COMMITS, the word is a
+   * positive count.  Testing the two facts as separate loads cannot achieve
+   * this: a grant lost and re-granted (unconfirmed) between them is
+   * indistinguishable from one never lost, and the turn lands on an install
+   * that may not run.  Here that interleaving changes the word, the CAS fails,
+   * and the loop re-reads.  The predicate is a property of the VALUE, not of
+   * its identity, so the value's reuse (ABA) is harmless.
+   *
+   * `(int)wc <= 0` therefore rejects two distinct states: 0 (no grant — never
+   * held, or invalidated) and negative (held but unconfirmed, where a write
+   * would be observable while the directory still names the previous owner and
+   * a reader is redirected to that rank's retained, now stale copy).  Both go
+   * remote-RW, which parks; the in-flight round's drain wakes them. */
   while (1) {
     unsigned int wc = arts_atomic_read(&cache->writer_count);
     if ((int)wc <= 0) {
-      return false; /* not owner (incl. transient negative) — go remote-RW. */
+      return false; /* no grant, or one not yet confirmed — go remote-RW. */
     }
     if (arts_atomic_cswap(&cache->writer_count, wc, wc + 1) == wc) {
-      /* writer_count bumped.  acquire_local NULL is fine (sentinel /
-       * version-0); release_rw will decrement the matching bump. */
+      /* writer_count bumped; release_rw decrements the matching bump.
+       * acquire_local may only come back NULL for a zero-sized (sentinel)
+       * block: holding the grant on a SIZED block means holding its buffer,
+       * and a buffer installed but never published is present at version 0,
+       * not absent. */
       /* A write turn taken on a grant this rank already held: the round trip
        * the sticky grant removed. */
       INCREMENT_NUM_GRANT_LOCAL_REUSE_BY(1);
@@ -136,9 +148,10 @@ static void rw_drain_cb(arts_guid_t edt_guid, unsigned int slot, void *vctx) {
   arts_atomic_add(&ctx->cache->writer_count, 1);
   /* Advance the RW cursor first (position-idempotent; never schedules), THEN
    * deliver data (may schedule + let another worker run/free the EDT).
-   * Sentinel DBs (db_size==0) have cache->buffer==NULL by design;
-   * mark_edt_ready_by_guid handles that cleanly (depv[slot].ptr=NULL, still
-   * accounts the dep). */
+   * A waiter woken here is being handed the write turn, so it must find
+   * storage of the DB's declared size; the one buffer-less case is a
+   * zero-sized (sentinel) block, whose defined value is the NULL pointer
+   * mark_edt_ready_by_guid then stamps (still accounting the dep). */
   mark_edt_secured_by_guid(edt_guid, slot);
   mark_edt_ready_by_guid(edt_guid, slot);
 }
@@ -239,12 +252,23 @@ void arts_db_send_grant_response(struct arts_db_cache_s *cache) {
   hdr.pad = 0;
 
   if (new_owner == arts_global_rank_id) {
-    /* Self-transfer: no wire, no RDMA.  The landing this rank advertised in
-     * its own request is unused — recycle it — and the handler runs inline on
-     * a contiguous same-rank buffer (map + data trailing). */
+    /* Self-transfer: no wire, no RDMA.  Ex-owner and new owner are the same
+     * cache, so the landing this rank advertised in its own request carries
+     * nothing it does not already have — unless there is nothing to have.
+     * With a buffer present the bytes are already in place and the landing
+     * goes back to the pool; with none, this rank is about to take the write
+     * turn on a sized block, so the landing BECOMES its storage (nothing else
+     * on this path would give it any).  The handler then runs inline on a
+     * contiguous same-rank buffer (map + data trailing). */
     if (rdzv.cookie != 0) {
-      arts_db_buf_landing_recycle(
-          cache, (struct arts_db_buffer_s *)(uintptr_t)rdzv.cookie);
+      struct arts_db_buffer_s *landing =
+          (struct arts_db_buffer_s *)(uintptr_t)rdzv.cookie;
+      if (buf != NULL) {
+        arts_db_buf_landing_recycle(cache, landing);
+      } else {
+        (void)arts_db_buf_adopt_landing(cache, version, landing,
+                                        cache->db_size);
+      }
     }
     uint64_t total = sizeof(hdr) + map_size + payload_size;
     hdr.header.size = total;
@@ -281,9 +305,11 @@ void arts_db_send_grant_response(struct arts_db_cache_s *cache) {
                          (void *)buf_h);
     buf_h = NULL; /* transferred to the PUT completion */
   } else {
-    /* Data-less transfer (sentinel DB / pre-publication).  Echo the unused
-     * landing (if any) so the requester recycles it; data_size still tells
-     * the new owner the DB's exact size. */
+    /* Nothing to ship: this ex-owner holds no buffer, or the block is
+     * zero-sized.  Echo the advertised landing (if any) back — for a sized
+     * block it is the new owner's only storage, and the receiving handler
+     * adopts it rather than returning it to the pool; data_size tells that
+     * handler the exact size either way. */
     hdr.data_size = cache->db_size;
     hdr.rdzv_txid = 0;
     hdr.rdzv_cookie = rdzv.cookie;
@@ -375,6 +401,15 @@ void arts_send_db_grant_request(struct arts_db_cache_s *cache) {
    * transfer is a same-rank inline dispatch, and the registered pool
    * carries no MRs to advertise. */
   struct arts_rdzv_landing_s rdzv = {0, 0, 0, 0};
+  /* Under write-back the landing is advertised unconditionally, even though a
+   * transfer of a DB nobody has published yet carries no bytes: whether the
+   * current owner HAS bytes is remote state, so the only way to know before
+   * asking is to ask — a round trip added to every acquire to save one pooled
+   * buffer on the rare pre-publication path.  A transfer that ships no data
+   * echoes the advertisement back, and the requester keeps it as this block's
+   * storage (it is entitled to a pointer of the declared size whether or not
+   * anyone has written the block) or returns it to the pool when it already
+   * holds a buffer. */
 #ifdef ARTS_WRITE_POLICY_WT
   /* The write-through home already holds the newest bytes (every release
    * published them), so its own request needs the PERMISSION only: no
