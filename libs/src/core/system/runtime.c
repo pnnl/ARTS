@@ -36,6 +36,7 @@
 ** WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the  **
 ** License for the specific language governing permissions and limitations   **
 ******************************************************************************/
+#include "arts/coherence/coherence.h" /* terminal quiescence sweep */
 #include "arts/runtime_state.h"
 #include "arts/utils/malloc.h"
 #include "arts/utils/random.h"
@@ -371,6 +372,10 @@ void arts_runtime_global_cleanup() {
   // Write object counter output (per-arts_id tracking)
   arts_object_write_node(arts_node_info.counter_folder, arts_global_rank_id,
                          tc);
+  /* Every runtime thread has joined: coherence wait-structures must be
+   * empty now.  Reports (does not abort); compiled out below DEBUG log
+   * level — see the check's definition. */
+  arts_db_debug_quiescence_check();
   /* Final-teardown fast path: every runtime thread has joined and the process
    * is about to exit, so running each leftover object's destructor only moves
    * bookkeeping inside heaps and pools that are themselves released wholesale

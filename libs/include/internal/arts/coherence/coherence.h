@@ -201,21 +201,34 @@ struct arts_db_pub_rendezvous_s {
   struct arts_rdzv_landing_s landing;
 };
 
-/* Synchronous dirty/data-less publish round to the DB's home (HOME-placement
- * ownership protocols + the lossy multi-writer protocol).  Same-rank and
- * data-less rounds are a single announce+ACK; a remote dirty round runs
- * announce -> home landing (PUBLISH_CTS) -> one-sided PUT -> commit -> ACK.
- * The caller must hold a strong ref on the buffer backing `data` across the
- * call (the ACK follows the target-side write completion, which implies the
- * fabric has fully drained the source).  Blocks the calling worker; returns
- * early only on shutdown. */
-void arts_db_publish_sync(struct arts_db_cache_s *cache, uint64_t version,
-                            const void *data, uint64_t data_size);
+/* Synchronous publish to the DB's home (HOME-placement ownership protocols +
+ * the lossy multi-writer protocol).  Registers the caller as a version-covered
+ * waiter on the cache's publish flight: at most one publish is in flight per
+ * (DB, rank), the flight ships the cache buffer's CURRENT bytes under its
+ * current version, and releases that land mid-flight coalesce into at most
+ * one trailing flight.  Returns once a publish covering `version` is ACKed
+ * (the source-lifetime pin is the flight's own buffer ref, released at the
+ * PUT's local completion).  Blocks the calling worker; returns early only on
+ * shutdown. */
+void arts_db_publish_sync(struct arts_db_cache_s *cache, uint64_t version);
 
 /* Block on a stack-local semaphore until the matching PUBLISH_ACK posts it
  * (pointer identity); returns early if teardown begins.  Used by the HOME and
  * WRF_RCU release-tail bodies. */
 void await_publish_ack(sem_t *cv);
+
+/* Wake every waiter parked on the cache's publish flight (destroy paths and
+ * teardown: the cache-keyed ACK completion cannot reach a withdrawn slot's
+ * stack, and a parked waiter's buffer ref keeps the descriptor alive, so no
+ * destructor can do it).  Publishing arms only. */
+void arts_db_pub_flight_abandon(struct arts_db_cache_s *cache);
+
+/* Debug-only one-shot teardown-time invariant check over every live DB (see
+ * the definition): prints QUIESCENCE-DEBUG markers for wait-structures that
+ * should be empty once all runtime threads have joined.  Compiled out below
+ * ARTS_LOG_LEVEL DEBUG — the call is always legal, the walk only exists
+ * where its messages do. */
+void arts_db_debug_quiescence_check(void);
 
 /* Take the EDT's strong buffer ref and return buf->data (NULL when no buffer is
  * installed).  Used by the per-protocol acquire bodies. */

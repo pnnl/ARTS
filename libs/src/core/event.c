@@ -393,6 +393,12 @@ static void try_drain_channel(struct arts_event_s *e, arts_guid_t event_guid) {
       atomic_fetch_sub_explicit(&e->channel.nb_deps, 1u, memory_order_acq_rel);
     }
     atomic_store_explicit(&e->channel.draining, 0, memory_order_release);
+    /* Dekker publication: the token-release store must be globally visible
+     * BEFORE the outer-while's fire-condition re-loads, or a satisfier that
+     * pushed and then saw draining==1 is missed by both sides — a plain
+     * release-store followed by loads permits exactly that StoreLoad
+     * reordering. */
+    atomic_thread_fence(memory_order_seq_cst);
     /* Outer-while will re-check the fire condition for missed pushes. */
   }
 }

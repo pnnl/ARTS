@@ -148,6 +148,27 @@ extern "C" {
    * to queue at the home: the reader/writer serialization its philosophy    \
    * pays for. */                                                            \
   X(NUM_EXCL_QUEUE_WAIT)                                                       \
+  /* Num: write-through publish flight machine.  These count the RARE        \
+   * transitions a green suite cannot prove exercised — a campaign where one \
+   * stays zero ran no coverage of that path, not a healthy path.  FLIGHT =  \
+   * payload/control flights launched; JOIN = releases coalesced into an     \
+   * open flight (the write-combining win); TRAILING = relaunches for        \
+   * waiters the ACK left uncovered; CTS_FALLBACK = credit-less announce     \
+   * legs (steady nonzero = the credit teachers are not covering a           \
+   * workload); ABANDON = parked publish waiters woken by a destroy/teardown \
+   * path instead of an ACK. */                                              \
+  X(NUM_PUB_FLIGHT)                                                            \
+  X(NUM_PUB_FLIGHT_JOIN)                                                       \
+  X(NUM_PUB_FLIGHT_TRAILING)                                                   \
+  X(NUM_PUB_CTS_FALLBACK)                                                      \
+  X(NUM_PUB_FLIGHT_ABANDON)                                                    \
+  /* Num: grant plane rare paths.  BATON_RECLAIM = a releasing claimant      \
+   * found the queue non-empty on its post-release re-check and re-claimed   \
+   * (the lost-wake window the re-check loop exists to close); HOME_DATALESS \
+   * = an ownership grant INTO the write-through home, which moves the       \
+   * permission with no payload (the home already holds the newest bytes). */\
+  X(NUM_GRANT_BATON_RECLAIM)                                                   \
+  X(NUM_GRANT_HOME_DATALESS)                                                   \
   /* Object counters — per arts_id tracking */                                 \
   X(OBJ_NUM_EDT)                                                               \
   X(OBJ_TIME_EDT_EXEC)                                                         \

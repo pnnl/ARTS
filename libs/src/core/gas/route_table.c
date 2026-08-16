@@ -384,15 +384,19 @@ bool arts_route_table_set_destroyed(arts_guid_t key) {
   if (item == NULL) {
     return false;
   }
+  /* Tombstone order: bump the install-epoch BEFORE detaching the value.  A
+   * reader distinguishes post-destroy from pre-create as "value absent AND
+   * gen > 0"; detaching first opens a window where it reads {absent, gen 0}
+   * and mis-defers a post-destroy message forever.  The bump stands even
+   * when the slot was never installed here (the exchange finds NULL): a
+   * destroy notice for this GUID still ends a generation — later arrivals
+   * for it are stale until a fresh create installs, and install never
+   * consults gen.  Bumping only on destroy (never on install) encodes
+   * "install of the same round = gen unchanged -> replay" vs "destroy =
+   * new generation -> drop a stale cross-generation payload". */
+  __atomic_fetch_add(&item->gen, 1, __ATOMIC_ACQ_REL);
   arts_shared_ptr_t old = arts_atomic_shared_exchange(&item->value, NULL);
   if (old) {
-    /* A real generation just ended.  Bump the install-epoch BEFORE releasing
-     * `old` so any drain that replays a deferred payload after this point reads
-     * a generation strictly greater than what was snapshotted while the prior
-     * generation was live.  Bumping only on destroy (never on install) encodes
-     * "install of the same round = gen unchanged → replay" vs "destroy = new
-     * generation → drop a stale cross-generation payload". */
-    __atomic_fetch_add(&item->gen, 1, __ATOMIC_ACQ_REL);
     arts_shared_release(&old);
     return true;
   }

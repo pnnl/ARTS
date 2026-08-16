@@ -156,6 +156,11 @@ void arts_db_buf_ref_release_cb(void *arg);
 void arts_db_buf_write_inplace(struct arts_db_cache_s *cache, const void *data,
                                uint64_t db_size);
 
+/* In-place publish commit: version-stamp the stable buffer (bytes already
+ * landed).  Hard-errors on a non-increasing version — the single-flight
+ * publish discipline makes that unreachable in a legal run. */
+void arts_db_buf_bump_inplace(struct arts_db_cache_s *cache, uint64_t version);
+
 /* First-touch stable-buffer materialization from a size BOUND: allocates and
  * zero-fills at `capacity` WITHOUT recording `cache->db_size` — the size is
  * only ever declared by a wire-carried exact value, never by a locally

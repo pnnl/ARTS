@@ -50,15 +50,18 @@
 #include "arts/counter/object_counter.h"
 #include "arts/db.h"
 #include "arts/edt.h"
+#include "arts/gas/guid.h" /* GUID kind extraction (quiescence debug check) */
 #include "arts/gas/route_table.h"
 #include "arts/memory/regpool.h"
 #include "arts/ooo.h"
 #include "arts/runtime_state.h"
 #include "arts/runtime_types.h"
 #include "arts/system/print.h"
+#include "arts/system/schedfuzz.h"
 #include "arts/system/threads.h"
 #include "arts/transport/net.h" /* arts_net_put_payload */
 #include "arts/utils/atomics.h"
+#include "arts/utils/lockfree_lifo.h" /* publish flight waiter stack */
 #include "arts/utils/malloc.h"
 #include "arts/utils/shared.h"
 #include "arts/counter/Preamble.h"
@@ -535,79 +538,360 @@ void await_publish_ack(sem_t *cv) {
 
 /* arts_db_release_rw is protocol-specific (the version bump is shared, but the
  * pre-decrement buffer-ref drop and the post-decrement transfer/publish
- * decision differ per protocol), so its whole body lives in
- * each arm's own placement TU.  Eager and WRF_RCU call arts_db_publish_sync
- * below for the synchronous-PUBLISH rendezvous. */
+ * decision differ per protocol), so its whole body lives in each arm's own
+ * placement TU.  VAL+WT, WRF_VAL, and INV under either write policy call
+ * arts_db_publish_sync below for the synchronous-PUBLISH rendezvous (INV's
+ * publish doubles as its invalidation-round request). */
 
-/* Compiled by every arm that publishes at a release.  Under HOME that is the
+/* ===== publish flight machine (write-combining publish) ============
+ *
+ * Compiled by every arm that publishes at a release.  Under HOME that is the
  * payload write-through; under OWNER only MSI publishes at all, and its
- * publish is control-only — the round request. */
+ * publish is control-only — the round request.
+ *
+ * At most ONE publish is in flight per (DB, rank).  Every releaser registers
+ * as a version-covered waiter, then either claims the flight (CAS 0->FLYING)
+ * or joins it (CAS ->|DIRTY).  A flight ships the cache buffer's CURRENT
+ * bytes stamped with the buffer's current version, so the covering ACK wakes
+ * every waiter at or below that version and releases that landed mid-flight
+ * coalesce into at most one trailing flight — the write-side twin of the RO
+ * request-combining window.  The ACK doubles as the credit teacher: it
+ * carries the home's next in-place credit {stable-buffer addr, rkey, txid},
+ * consumed 1:1 by the next payload flight, so the steady state is one PUT +
+ * one commit + one blocked wait, announce-free. */
 #if !defined(ARTS_PROTOCOL_EXCL) &&                                          \
     (!defined(ARTS_WRITE_POLICY_WB) || defined(ARTS_PROTOCOL_INV))
-void arts_db_publish_sync(struct arts_db_cache_s *cache, uint64_t version,
-                            const void *data, uint64_t data_size) {
+
+#define ARTS_PUB_FLYING 1u
+#define ARTS_PUB_DIRTY 2u
+
+struct arts_db_pub_waiter_s {
+  arts_lf_link_t link; /* FIRST — Treiber membership */
+  uint64_t version;    /* wake once a publish >= this version is ACKed */
+  sem_t sem;
+};
+
+/* Does this rank's publish carry payload?  Write-through owners ship bytes; a
+ * home-resident releaser's buffer IS the canonical copy (its publish is the
+ * ordering round alone), and the write-back invalidation arm publishes
+ * control only. */
+static bool pub_flight_carries_payload(struct arts_db_cache_s *cache) {
+#if defined(ARTS_PROTOCOL_INV) && defined(ARTS_WRITE_POLICY_WB)
+  (void)cache;
+  return false;
+#else
+  return arts_guid_get_rank(cache->db_guid) != arts_global_rank_id;
+#endif
+}
+
+/* Drive ONE publish flight from the cache's current buffer state.  The caller
+ * holds the FLYING claim.  may_block separates the two calling contexts: a
+ * claiming releaser (worker thread — may run the credit-less announce/CTS
+ * leg, which blocks) vs a completing ACK (progress thread — the ACK that
+ * launched it just refilled the credit, so needing to block there means the
+ * refill chain is broken and fails loudly). */
+static struct arts_db_pub_waiter_s *
+pub_flight_drive(struct arts_db_cache_s *cache, bool may_block,
+                 uint64_t fallback_version) {
+  INCREMENT_NUM_PUB_FLIGHT_BY(1);
+  arts_shared_ptr_t buf_h = arts_db_buf_acquire(cache);
+  struct arts_db_buffer_s *buf =
+      (struct arts_db_buffer_s *)arts_shared_get(buf_h);
+  /* The stamp is the buffer's CURRENT version (covers every registered
+   * waiter); a buffer-less cache (a data-less DB, or a control-only release
+   * before any payload existed) flies under the caller's version instead —
+   * its waiters all registered at that same version source. */
+  uint64_t version =
+      (buf != NULL) ? arts_atomic_read_u64(&buf->version) : fallback_version;
   unsigned int home_rank = arts_guid_get_rank(cache->db_guid);
-  /* The rendezvous lives on the HEAP, not the releaser's stack: the shutdown
-   * escape in await_publish_ack can abandon the wait while a CTS/ACK reply
-   * is still in flight, and that reply writes the landing fields through the
-   * echoed cv before posting.  A heap block deliberately LEAKED on the
-   * shutdown escape keeps that late write inside live memory (a bounded,
-   * teardown-only leak); a popped stack frame would be corrupted. */
+  /* A claiming releaser gates on ITS OWN flight, not merely on a covering
+   * ACK: a claim won after the claimer's registered waiter was already
+   * covered (the claim-after-covered race) would otherwise launch a flight
+   * nobody waits for, and the release's 0-edge — the ownership ship — could
+   * overtake the still-flying PUT, letting the next owner's publish
+   * interleave with this one.  The gate node is a waiter at the flight's own
+   * stamp, so exactly this flight's ACK (or an abandon) releases it.  A
+   * trailing relaunch needs no gate: its uncovered waiters are blocked
+   * releasers, so the 0-edge cannot fire until its ACK lands. */
+  struct arts_db_pub_waiter_s *gate = NULL;
+  if (may_block) {
+    gate = (struct arts_db_pub_waiter_s *)arts_malloc(sizeof(*gate));
+    gate->version = version;
+    sem_init(&gate->sem, 0, 0);
+    arts_lf_stack_push(&cache->pub_waiters, &gate->link);
+  }
+  if (!pub_flight_carries_payload(cache) || buf == NULL) {
+    if (buf == NULL && pub_flight_carries_payload(cache)) {
+      ARTS_ERROR("coherence: payload publish flight with no local buffer");
+    }
+    arts_db_buf_release(&buf_h);
+    arts_send_db_publish(home_rank, cache->db_guid, version, /*cv=*/0,
+                           /*data=*/NULL, /*data_size=*/0, /*rdzv_txid=*/0,
+                           /*rdzv_cookie=*/0);
+    return gate;
+  }
+  /* Payload flight: consume the credit.  The acquire exchange pairs with the
+   * refill's release-store; addr/rkey are stable across refills (one DB has
+   * one stable buffer), so reading them after the exchange is safe.  The
+   * strong buffer ref transfers to the PUT's local completion — the source-
+   * lifetime gate outlives even a shutdown-escaped waiter. */
+  uint64_t txid =
+      __atomic_exchange_n(&cache->home_pub_txid, 0, __ATOMIC_ACQUIRE);
+  if (txid != 0) {
+    arts_net_put_payload((int)home_rank,
+                         __atomic_load_n(&cache->home_pub_addr,
+                                         __ATOMIC_RELAXED),
+                         __atomic_load_n(&cache->home_pub_rkey,
+                                         __ATOMIC_RELAXED),
+                         txid, buf->data, cache->db_size,
+                         arts_db_buf_ref_release_cb, (void *)buf_h);
+    arts_send_db_publish(home_rank, cache->db_guid, version, /*cv=*/0,
+                           /*data=*/NULL, cache->db_size, txid,
+                           /*rdzv_cookie=*/0);
+    return gate;
+  }
+  if (!may_block) {
+    /* No credit on a progress-thread relaunch: the refill chain breaks only
+     * when the home died mid-flight (its MISS ACK carries no credit).
+     * Abandon instead of aborting — the waiters wake unpublished, and the
+     * destroy fan-out (or each waiter's own recheck) retires the cache. */
+    arts_db_buf_release(&buf_h);
+    arts_db_pub_flight_abandon(cache);
+    __atomic_store_n(&cache->pub_flight, 0u, __ATOMIC_RELEASE);
+    return NULL;
+  }
+  INCREMENT_NUM_PUB_CTS_FALLBACK_BY(1);
+  /* Credit-less first flight: announce -> blocked CTS wait -> PUT -> commit.
+   * The rendezvous lives on the HEAP: the shutdown escape can abandon the
+   * wait while the CTS reply is still in flight, and that reply writes the
+   * landing fields through the echoed cv before posting.  A heap block
+   * deliberately LEAKED on the escape keeps that late write inside live
+   * memory (a bounded, teardown-only leak); a popped stack frame would be
+   * corrupted. */
   struct arts_db_pub_rendezvous_s *wr =
       (struct arts_db_pub_rendezvous_s *)arts_malloc(sizeof(*wr));
   sem_init(&wr->sem, 0, 0);
   wr->landing = (struct arts_rdzv_landing_s){0, 0, 0, 0};
-  if (home_rank == arts_global_rank_id || data == NULL || data_size == 0) {
-    /* Same-rank round (the payload rides inline through the OoO args copy —
-     * no wire, no RDMA) or a data-less ordering round: single announce+ACK. */
-    arts_send_db_publish(home_rank, cache->db_guid, version,
-                           (uint64_t)(uintptr_t)wr, data, data_size,
-                           /*rdzv_txid=*/0, /*rdzv_cookie=*/0);
-    await_publish_ack(&wr->sem);
-    if (arts_atomic_read(&arts_node_info.shutdown_state) != 0) {
-      return; /* possible shutdown escape: a late ACK may still post — leak */
-    }
-    sem_destroy(&wr->sem);
-    arts_free(wr);
-    return;
-  }
-  /* Remote dirty round: announce (data_size, txid 0) -> home allocates a
-   * fresh landing and replies PUBLISH_CTS -> PUT the dirty bytes -> commit
-   * (same packet layout, txid set) -> home pairs {commit, write completion},
-   * installs the landing, ACKs. */
   arts_send_db_publish(home_rank, cache->db_guid, version,
-                         (uint64_t)(uintptr_t)wr, /*data=*/NULL, data_size,
-                         /*rdzv_txid=*/0, /*rdzv_cookie=*/0);
+                         (uint64_t)(uintptr_t)wr, /*data=*/NULL,
+                         cache->db_size, /*rdzv_txid=*/0, /*rdzv_cookie=*/0);
   await_publish_ack(&wr->sem); /* CTS wake — or the shutdown escape */
   if (wr->landing.txid == 0) {
-    /* Shutdown escape before the CTS landed: no landing to PUT into; the
-     * round is abandoned with the runtime (never a silent data drop in a
-     * live run — the CTS wake always carries a landing).  Leak wr: the late
-     * CTS may still write/post through the echoed cv.
+    /* Shutdown escape before the CTS landed: the flight is abandoned with
+     * the runtime (a live run's CTS wake always carries a landing).
      *
-     * This read of wr->landing.txid is UNSYNCHRONIZED on this escape path —
+     * This read of wr->landing.txid is UNSYNCHRONIZED on the escape path —
      * sem_timedwait returned via the shutdown timeout, not a real post, so
-     * there is no happens-before edge against a CTS reply that races in
-     * concurrently.  That is precisely why wr must be leaked here rather than
-     * freed: freeing it and letting the racing write land afterward would be
-     * a use-after-free.  Do not "tighten" this into an immediate free. */
-    return;
+     * there is no happens-before edge against a CTS reply racing in.  That
+     * is precisely why wr must be leaked rather than freed: freeing it and
+     * letting the racing write land afterward would be a use-after-free.
+     * The buffer ref is ours to drop — nothing read the bytes. */
+    arts_db_buf_release(&buf_h);
+    return gate;
   }
-  /* Source lifetime: the caller's buffer ref pins `data` across the PUT; the
-   * ACK below follows the target-side write completion, which implies the
-   * fabric has fully drained the source — no per-PUT completion hook needed. */
   arts_net_put_payload((int)home_rank, wr->landing.addr, wr->landing.key,
-                       wr->landing.txid, data, data_size,
-                       /*on_local_done=*/NULL, NULL);
-  arts_send_db_publish(home_rank, cache->db_guid, version,
-                         (uint64_t)(uintptr_t)wr, /*data=*/NULL, data_size,
-                         wr->landing.txid, wr->landing.cookie);
-  await_publish_ack(&wr->sem); /* install ACK */
-  if (arts_atomic_read(&arts_node_info.shutdown_state) != 0) {
-    return; /* possible shutdown escape — leak (late ACK may post) */
-  }
+                       wr->landing.txid, buf->data, cache->db_size,
+                       arts_db_buf_ref_release_cb, (void *)buf_h);
+  arts_send_db_publish(home_rank, cache->db_guid, version, /*cv=*/0,
+                         /*data=*/NULL, cache->db_size, wr->landing.txid,
+                         wr->landing.cookie);
+  /* The commit carries cv 0 — the final ACK completes the FLIGHT, not this
+   * rendezvous.  The CTS was the only writer through wr, so it dies here. */
   sem_destroy(&wr->sem);
   arts_free(wr);
+  return gate;
+}
+
+/* Abandon the cache's publish flight: wake EVERY parked waiter without a
+ * covering publish.  Called on the destroy paths (fan-out receiver and home
+ * destroy body, AFTER the route slot is withdrawn) and as a teardown
+ * backstop: the ACK completion is cache-KEYED, so once the route slot is
+ * NULL a still-flying ACK MISSes and can never reach this stack again — and
+ * a parked waiter holds a buffer ref that keeps the descriptor (and this
+ * stack) alive, so waiting for the destructor would deadlock.  Racing an ACK
+ * drain is safe: the Treiber drain hands each node to exactly one drainer.
+ * Nodes are freed by their woken owners. */
+void arts_db_pub_flight_abandon(struct arts_db_cache_s *cache) {
+  INCREMENT_NUM_PUB_FLIGHT_ABANDON_BY(1);
+  arts_lf_link_t *n =
+      (arts_lf_link_t *)__atomic_exchange_n(&cache->pub_parked, NULL,
+                                            __ATOMIC_ACQ_REL);
+  arts_lf_link_t *fresh = arts_lf_stack_drain(&cache->pub_waiters);
+  if (n == NULL) {
+    n = fresh;
+  } else if (fresh != NULL) {
+    arts_lf_link_t *tail = n;
+    for (arts_lf_link_t *t; (t = (arts_lf_link_t *)atomic_load_explicit(
+                                 &tail->next, memory_order_relaxed)) != NULL;
+         tail = t) {
+    }
+    atomic_store_explicit(&tail->next, fresh, memory_order_relaxed);
+  }
+  while (n != NULL) {
+    arts_lf_link_t *next = atomic_load_explicit(&n->next, memory_order_relaxed);
+    sem_post(&((struct arts_db_pub_waiter_s *)n)->sem);
+    n = next;
+  }
+}
+
+void arts_db_publish_sync(struct arts_db_cache_s *cache, uint64_t version) {
+  /* The waiter node lives on the HEAP for the same reason the CTS rendezvous
+   * does: a shutdown-escaped waiter leaks its node, and a late completion
+   * drain may still post into it — posting into leaked live memory is safe,
+   * freeing under the poster is not. */
+  struct arts_db_pub_waiter_s *w =
+      (struct arts_db_pub_waiter_s *)arts_malloc(sizeof(*w));
+  w->version = version;
+  sem_init(&w->sem, 0, 0);
+  arts_lf_stack_push(&cache->pub_waiters, &w->link);
+  arts_sched_fuzz_point(); /* widen the push<->flight-claim window */
+  struct arts_db_pub_waiter_s *gate = NULL;
+  for (;;) {
+    unsigned int f = __atomic_load_n(&cache->pub_flight, __ATOMIC_RELAXED);
+    if (f == 0u) {
+      unsigned int expected = 0u;
+      if (__atomic_compare_exchange_n(&cache->pub_flight, &expected,
+                                      ARTS_PUB_FLYING, false, __ATOMIC_ACQ_REL,
+                                      __ATOMIC_RELAXED)) {
+        gate = pub_flight_drive(cache, /*may_block=*/true, version);
+        break;
+      }
+    } else if (__atomic_compare_exchange_n(&cache->pub_flight, &f,
+                                           f | ARTS_PUB_DIRTY, false,
+                                           __ATOMIC_ACQ_REL,
+                                           __ATOMIC_RELAXED)) {
+      INCREMENT_NUM_PUB_FLIGHT_JOIN_BY(1);
+      break;
+    }
+  }
+  /* Push-then-recheck against a concurrent destroy: once the route slot is
+   * withdrawn the cache-keyed ACK completion can no longer find this cache,
+   * so a waiter registered around that instant must self-abandon. */
+  {
+    arts_shared_ptr_t dh = arts_route_table_lookup_db(cache->db_guid);
+    bool destroyed = (arts_shared_get(dh) == NULL);
+    arts_shared_release(&dh);
+    if (destroyed) {
+      arts_db_pub_flight_abandon(cache);
+    }
+  }
+  await_publish_ack(&w->sem);
+  if (arts_atomic_read(&arts_node_info.shutdown_state) != 0) {
+    return; /* possible shutdown escape: a late drain may still post — leak
+             * w (and the gate, which stays parked) */
+  }
+  sem_destroy(&w->sem);
+  arts_free(w);
+  if (gate != NULL) {
+    await_publish_ack(&gate->sem);
+    if (arts_atomic_read(&arts_node_info.shutdown_state) != 0) {
+      return; /* shutdown escape — leak the gate */
+    }
+    sem_destroy(&gate->sem);
+    arts_free(gate);
+  }
+}
+
+/* Cat-C pure body (PUBLISH_ACK), shared by every publishing arm.  cv != 0 is
+ * the pointer-identity sem-post plane (the CTS-leg announce; cache-
+ * independent, posted on both HIT and MISS).  cv == 0 is flight completion:
+ * record the refilled credit, wake every waiter the ACKed version covers,
+ * and either relaunch (uncovered waiters remain — their releases landed
+ * after the flight's version stamp) or land the flight.  A DIRTY bit set
+ * after the drain forces a re-examination before landing, so a waiter
+ * registered mid-completion is never stranded. */
+void arts_handler_db_publish_ack(void *item_v, void *args_v) {
+  struct arts_db_publish_ack_args_s *a =
+      (struct arts_db_publish_ack_args_s *)args_v;
+  if (a->cv != 0) {
+    sem_post((sem_t *)(uintptr_t)a->cv);
+    return;
+  }
+  struct arts_db_s *db = (struct arts_db_s *)item_v;
+  if (db == NULL) {
+    /* Destroyed while a flight was outstanding: the program failed to order
+     * the destroy after its releases (contract violation).  The waiters
+     * unblock through the shutdown escape. */
+    return;
+  }
+  struct arts_db_cache_s *cache = &db->cache;
+  if (a->credit_txid != 0) {
+    /* Relaxed stores: two teachers (ACK refill, CREATE_RETURN) may overlap,
+     * but every teacher writes the same {addr, rkey} — one DB has ONE stable
+     * buffer — so the only ordering that matters is the txid release-store
+     * publishing the triple to the consuming exchange. */
+    __atomic_store_n(&cache->home_pub_addr, a->credit_addr, __ATOMIC_RELAXED);
+    __atomic_store_n(&cache->home_pub_rkey, a->credit_rkey, __ATOMIC_RELAXED);
+    __atomic_store_n(&cache->home_pub_txid, a->credit_txid, __ATOMIC_RELEASE);
+  }
+  for (;;) {
+    /* Waiters parked by the previous completion first, then everything that
+     * queued since.  Parked nodes are re-examined only here — under the
+     * FLYING claim exactly one completion runs at a time, so the parked
+     * field needs no synchronization. */
+    arts_lf_link_t *chain =
+        (arts_lf_link_t *)__atomic_exchange_n(&cache->pub_parked, NULL,
+                                              __ATOMIC_ACQ_REL);
+    arts_lf_link_t *fresh = arts_lf_stack_drain(&cache->pub_waiters);
+    if (chain == NULL) {
+      chain = fresh;
+    } else if (fresh != NULL) {
+      arts_lf_link_t *tail = chain;
+      for (arts_lf_link_t *n; (n = (arts_lf_link_t *)atomic_load_explicit(
+                                   &tail->next, memory_order_relaxed)) != NULL;
+           tail = n) {
+      }
+      atomic_store_explicit(&tail->next, fresh, memory_order_relaxed);
+    }
+    arts_lf_link_t *uncovered = NULL;
+    while (chain != NULL) {
+      arts_lf_link_t *next =
+          (arts_lf_link_t *)atomic_load_explicit(&chain->next,
+                                                 memory_order_relaxed);
+      struct arts_db_pub_waiter_s *w = (struct arts_db_pub_waiter_s *)chain;
+      if (w->version <= a->version) {
+        sem_post(&w->sem);
+      } else {
+        atomic_store_explicit(&chain->next, uncovered, memory_order_relaxed);
+        uncovered = chain;
+      }
+      chain = next;
+    }
+    if (uncovered != NULL) {
+      /* Releases landed after the flight's stamp: keep the claim (dropping
+       * any DIRTY — this drain subsumes it) and fly again; the buffer's
+       * current version now covers every parked waiter. */
+      __atomic_store_n(&cache->pub_parked, (void *)uncovered,
+                       __ATOMIC_RELEASE);
+      __atomic_store_n(&cache->pub_flight, ARTS_PUB_FLYING, __ATOMIC_RELEASE);
+      INCREMENT_NUM_PUB_FLIGHT_TRAILING_BY(1);
+      (void)pub_flight_drive(cache, /*may_block=*/false, a->version);
+      /* Park-then-recheck against a concurrent destroy: once the route slot
+       * is withdrawn no future ACK can find this cache, so nodes parked
+       * around that instant must be self-abandoned (the drain hands each
+       * node to exactly one drainer). */
+      {
+        arts_shared_ptr_t dh = arts_route_table_lookup_db(cache->db_guid);
+        bool destroyed = (arts_shared_get(dh) == NULL);
+        arts_shared_release(&dh);
+        if (destroyed) {
+          arts_db_pub_flight_abandon(cache);
+        }
+      }
+      return;
+    }
+    unsigned int expected = ARTS_PUB_FLYING;
+    if (__atomic_compare_exchange_n(&cache->pub_flight, &expected, 0u, false,
+                                    __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+      return; /* flight landed */
+    }
+    /* DIRTY raced in after the drain: consume it and re-examine.  The word
+     * stays in {FLYING, FLYING|DIRTY} for the whole completion (only a
+     * completion clears FLYING, and only one runs), so a plain store is
+     * enough — a DIRTY overwritten here is re-covered by the loop's next
+     * drain. */
+    __atomic_store_n(&cache->pub_flight, ARTS_PUB_FLYING, __ATOMIC_RELEASE);
+  }
 }
 #endif /* !ARTS_WRITE_POLICY_WB && !ARTS_PROTOCOL_EXCL */
 
@@ -670,10 +954,98 @@ void arts_db_cache_common_destroy_pre(struct arts_db_cache_s *cache) {
 /* Steps 3b+4: drain+free the snapshot reorder buffer (a Treiber stack), then
  * tear down the inlined home-directory sub-resources.  Runs AFTER the protocol
  * field-destroy (pending_rw in HOME and OWNER builds). */
+/* Debug-only terminal-quiescence check.  Runs once, after every runtime
+ * thread has joined and before teardown frees the caches: at that point
+ * every coherence wait-structure must be empty — a survivor is a lost wake
+ * that the run's own success criteria may have masked (a reader that never
+ * ran, a release that never completed).  Violations print a QUIESCENCE-DEBUG
+ * marker; the stress suites turn that marker into a test failure.  Signal-
+ * driven shutdowns legitimately strand waiters mid-flight, which is why
+ * this reports rather than aborts.
+ *
+ * The walk exists only to produce diagnostic messages, so it is gated on
+ * the log level that compiles those messages: below DEBUG the whole check
+ * is compiled out — its cost (a full route-table scan at teardown) never
+ * lands in a measurement build. */
+void arts_db_debug_quiescence_check(void) {
+#if ARTS_LOG_LEVEL >= 3
+  extern uint64_t num_tables;
+  unsigned int viol = 0;
+  arts_route_table_t *tables[ARTS_REMOTE_ROUTE_SHARDS + 64];
+  unsigned int nt = 0;
+  for (uint64_t i = 0; i < num_tables && nt < 64; i++) {
+    tables[nt++] = arts_node_info.route_table[i];
+  }
+  for (unsigned int i = 0; i < ARTS_REMOTE_ROUTE_SHARDS; i++) {
+    tables[nt++] = arts_node_info.remote_route_table[i];
+  }
+  for (unsigned int t = 0; t < nt; t++) {
+    if (tables[t] == NULL) {
+      continue;
+    }
+    arts_route_table_iterator_t iter;
+    arts_reset_route_table_iterator(&iter, tables[t]);
+    for (arts_route_item_t *item = arts_route_table_iterate(&iter);
+         item != NULL; item = arts_route_table_iterate(&iter)) {
+      if (ARTS_GUID_GET_TYPE(item->key) != ARTS_GUID_DB) {
+        continue;
+      }
+      arts_shared_ptr_t h = arts_atomic_shared_load(&item->value);
+      struct arts_db_s *db = (struct arts_db_s *)(h ? arts_shared_get(h)
+                                                    : NULL);
+      if (db != NULL && db->db_type == ARTS_DB) {
+        struct arts_db_cache_s *c = &db->cache;
+#if !defined(ARTS_PROTOCOL_EXCL) &&                                          \
+    (!defined(ARTS_WRITE_POLICY_WB) || defined(ARTS_PROTOCOL_INV))
+        if (!arts_lf_stack_empty(&c->pub_waiters) ||
+            __atomic_load_n(&c->pub_parked, __ATOMIC_ACQUIRE) != NULL) {
+          ARTS_DEBUG("QUIESCENCE-DEBUG: guid %lu has parked publish "
+                     "waiters at teardown",
+                     (unsigned long)c->db_guid);
+          viol++;
+        }
+#endif
+#if defined(ARTS_PROTOCOL_VAL) || defined(ARTS_PROTOCOL_INV)
+        if (!arts_lf_stack_empty(&c->pending_rw)) {
+          ARTS_DEBUG("QUIESCENCE-DEBUG: guid %lu has parked RW waiters at "
+                     "teardown",
+                     (unsigned long)c->db_guid);
+          viol++;
+        }
+        if (db->home_initialized) {
+          bool baton = atomic_load_explicit(&db->invalidate_in_flight,
+                                            memory_order_acquire) != 0;
+          bool queued = !arts_home_grantreq_queue_empty(&db->pending_rw);
+          if (baton || queued) {
+            ARTS_DEBUG("QUIESCENCE-DEBUG: guid %lu home directory not "
+                       "quiescent (baton=%d queued=%d)",
+                       (unsigned long)c->db_guid, baton ? 1 : 0,
+                       queued ? 1 : 0);
+            viol++;
+          }
+        }
+#endif
+      }
+      if (h) {
+        arts_shared_release(&h);
+      }
+    }
+  }
+  if (viol != 0) {
+    ARTS_DEBUG("QUIESCENCE-DEBUG: %u violation(s)", viol);
+  }
+#endif /* ARTS_LOG_LEVEL >= 3 */
+}
+
 void arts_db_cache_common_destroy_post(struct arts_db_cache_s *cache) {
   if (cache == NULL) {
     return;
   }
+#if !defined(ARTS_PROTOCOL_EXCL) &&                                          \
+    (!defined(ARTS_WRITE_POLICY_WB) || defined(ARTS_PROTOCOL_INV))
+  /* Teardown backstop; the destroy handlers already abandoned the flight. */
+  arts_db_pub_flight_abandon(cache);
+#endif
   {
     arts_lf_link_t *n = arts_lf_stack_drain(&cache->pending_snapshot);
     while (n != NULL) {

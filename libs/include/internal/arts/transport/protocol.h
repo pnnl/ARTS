@@ -144,6 +144,10 @@ enum arts_msg_type {
                           serve this reader from your bytes, or bounce the
                           request back if you no longer have them */
 
+  MSG_DB_CREATE_RETURN, /* home -> remote creator, after the home-side
+                         * install: the DB's stable home buffer as a durable
+                         * publish credit.  Pure hint (Cat-C lookup-or-drop
+                         * at the creator). */
   MSG_COUNT, /* sentinel — keep last; used for array sizing */
 };
 
@@ -331,7 +335,16 @@ struct ARTS_PACKED arts_msg_publish_cts_packet_s {
 struct ARTS_PACKED arts_msg_publish_ack_packet_s {
   struct arts_msg_header_s header;
   arts_guid_t db_guid;
-  uint64_t cv; /* releaser's sem_t address, forwarded verbatim from PUBLISH */
+  uint64_t cv; /* releaser's sem_t address, forwarded verbatim from PUBLISH
+                * (legacy/control legs; 0 under the WT flight path, whose
+                * ACK is cache-keyed by db_guid instead) */
+  uint64_t version; /* highest version this ACK covers (WT flight path) */
+  /* Next publish credit: the DB's stable home buffer + a receiver-minted
+   * txid.  Every WT ACK refills it, so the legacy CTS leg's final ACK is
+   * what delivers a rank's FIRST durable credit.  Zero under WB/control. */
+  uint64_t credit_addr;
+  uint64_t credit_rkey;
+  uint64_t credit_txid;
 };
 
 /* INVALIDATE_NOTICE: body = db_guid(8) + new_owner_rank(4) + pad(4) = 16.
@@ -462,6 +475,16 @@ struct ARTS_PACKED arts_msg_grant_confirm_packet_s {
   struct arts_msg_header_s header;
   arts_guid_t db_guid;
   uint64_t version;
+};
+
+/* CREATE_RETURN — see the enum comment.  The credit triple mirrors the
+ * publish-ACK refill fields. */
+struct ARTS_PACKED arts_msg_db_create_return_packet_s {
+  struct arts_msg_header_s header;
+  arts_guid_t db_guid;
+  uint64_t credit_addr;
+  uint64_t credit_rkey;
+  uint64_t credit_txid;
 };
 
 /* ===== Generic push rendezvous (memory-move oversize payloads) =============

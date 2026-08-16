@@ -36,11 +36,13 @@
 #include "arts/coherence/handlers.h"
 #include "arts/db.h"
 #include "arts/edt.h"
+#include "arts/gas/guid.h" /* creator slice arithmetic */
 #include "arts/gas/route_table.h"
 #include "arts/memory/regpool.h"
 #include "arts/ooo.h"
 #include "arts/runtime_state.h"
 #include "arts/system/identity.h"
+#include "arts/system/print.h" /* ARTS_ERROR */
 #include "arts/transport/net.h"
 #include "arts/transport/protocol.h"
 #include "arts/utils/atomics.h"
@@ -130,9 +132,7 @@ uint32_t inv_waiter_alloc(struct arts_db_cache_s *c) {
   uint32_t idx =
       atomic_fetch_add_explicit(&c->waiters.next_fresh, 1u, memory_order_acq_rel);
   if (idx > (uint32_t)MSI_WAITER_IDX_MAX) {
-    (void)fprintf(stderr,
-                  "arts msi: parked-waiter pool exhausted (index space)\n");
-    abort();
+    ARTS_ERROR("inv: parked-waiter pool exhausted (index space)");
   }
   struct inv_waiter_dir_s *dir = inv_waiter_dir(c);
   _Atomic(struct arts_db_inv_waiter_s *) *slot =
@@ -246,16 +246,27 @@ void arts_db_create_publish_holder(struct arts_db_s *db,
 
 void arts_db_create_install_home_buffer(struct arts_db_cache_s *cache,
                                         uint64_t db_size) {
-  /* Metadata-only home until the creator's first publish: a creator-held
-   * create has NO published state yet, and a read acquire that is
-   * event-ordered after the creator's writes (write -> add_dependence ->
-   * release) must observe the release-published bytes — a zero serve here
-   * would be a serve-before-publication.  Pre-publication read serves hold
-   * on pending_snapshot and the first install drains them.  (The NO_ACQUIRE
-   * create path zero-installs in the shared create flow instead: with no
-   * creator hold, creation itself is the publication.) */
+#ifdef ARTS_WRITE_POLICY_WT
+  /* The write-through home owns ONE stable buffer for the DB's whole
+   * lifetime, installed here at version 0 — "allocated, never published".
+   * Publishes land in it one-sided and in place; the round's version bump
+   * from zero is the publication edge that drains pre-publication holds.
+   * A read acquire event-ordered after the creator's writes must observe
+   * the release-published bytes, so version 0 must serve exactly like the
+   * old buffer-absent state — every serve/park predicate keys on it. */
+  if (db_size > 0) {
+    arts_db_buf_install(cache, /*new_version=*/0, /*data_payload=*/NULL,
+                        db_size);
+  }
+#else
+  /* Metadata-only home until the creator's first publish: the write-back
+   * home holds routing and permission, never payload.  Pre-publication read
+   * serves hold on pending_snapshot and the first install drains them.
+   * (The NO_ACQUIRE create path zero-installs in the shared create flow
+   * instead: with no creator hold, creation itself is the publication.) */
   (void)cache;
   (void)db_size;
+#endif
 }
 
 void arts_handler_db_destroy(void *item_v, void *args_v) {
@@ -281,11 +292,25 @@ void arts_handler_db_destroy(void *item_v, void *args_v) {
       }
     }
   }
+  /* The creator may hold an in-place publish credit taught at create
+   * (CREATE_RETURN) without ever having published or read, so neither the
+   * sharer roster nor the queue can name it.  A credit holder must join the
+   * teardown roster (the receiver drops duplicates), or a labeled-GUID reuse
+   * would find the stale credit still armed. */
+  if (arts_db_seq_budget != 0) {
+    uint64_t slice = ARTS_GUID_DB_GET_SEQ(a->db_guid) / arts_db_seq_budget;
+    if (slice < (uint64_t)arts_global_rank_count &&
+        (unsigned int)slice != self) {
+      arts_send_db_cache_destroy((unsigned int)slice, a->db_guid);
+    }
+  }
   /* No pending_rw drain: the grant request queue is single-consumer (the
    * transfer baton's holder), and a legitimately destroyed DB has no
    * outstanding acquires — draining here would be a second, unsynchronized
    * consumer. */
   (void)arts_route_table_set_destroyed(a->db_guid);
+  /* After the slot withdrawal — see arts_db_pub_flight_abandon. */
+  arts_db_pub_flight_abandon(cache);
 }
 
 /* ===== the invalidation round ===========================================
@@ -317,9 +342,18 @@ static void inv_home_round_close(struct arts_db_s *db,
     struct arts_db_inv_pub_s *e = entries;
     entries = (struct arts_db_inv_pub_s *)(uintptr_t)atomic_load_explicit(
         &e->link.next, memory_order_relaxed);
-    if (e->cv != 0u) {
-      arts_send_db_publish_ack(e->releaser_rank, cache->db_guid, e->cv);
-    }
+    /* Unconditional: a flight-plane entry carries cv 0 and completes through
+     * the releaser cache's waiter drain. */
+#ifdef ARTS_WRITE_POLICY_WT
+    /* Write-through commits land in the stable buffer, so the ACK refills
+     * the releaser's in-place credit. */
+    arts_send_db_publish_ack(e->releaser_rank, cache->db_guid, e->cv, e->vnew,
+                               cache);
+#else
+    /* Write-back releases carry no payload — nothing to credit. */
+    arts_send_db_publish_ack(e->releaser_rank, cache->db_guid, e->cv, e->vnew,
+                               /*home_cache=*/NULL);
+#endif
     arts_free(e);
   }
   uint32_t act;
@@ -357,20 +391,15 @@ void inv_home_round_try_open(struct arts_db_s *db) {
       /* Empty round: the claim raced past work another opener consumed. */
       inv_home_round_close(db, NULL);
     } else {
-      /* Single install point: only the batch's highest-version entry that
-       * carries data publishes (the conditional install rejects the rest);
-       * non-max landings recycle here, and their wakes still fire at close.
-       * Under OWNER placement no entry carries data and this loop is a no-op —
-       * the round is pure control, which is the only difference between the
-       * two placements' releases. */
-      struct arts_db_inv_pub_s *maxe = NULL;
-      for (struct arts_db_inv_pub_s *e = entries; e != NULL;
-           e = (struct arts_db_inv_pub_s *)(uintptr_t)atomic_load_explicit(
-               &e->link.next, memory_order_relaxed)) {
-        if (e->rdzv.addr != 0 && (maxe == NULL || e->vnew > maxe->vnew)) {
-          maxe = e;
-        }
-      }
+      /* Single publication point: a data entry's bytes already landed IN
+       * PLACE in the stable buffer (the commit-leg pairing gates the queue),
+       * so publishing is the version stamp alone.  At most one data entry
+       * can be in a batch — payload publishes are globally serialized (one
+       * flight per rank, the releaser blocks on this round's ACK, and the
+       * write right migrates only after) — which the stamp's monotonicity
+       * check enforces loudly.  Under OWNER placement no entry carries data
+       * and the round is pure control, which is the only difference between
+       * the two placements' releases. */
       uint64_t maxv = 0;
       for (struct arts_db_inv_pub_s *e = entries; e != NULL;
            e = (struct arts_db_inv_pub_s *)(uintptr_t)atomic_load_explicit(
@@ -381,14 +410,7 @@ void inv_home_round_try_open(struct arts_db_s *db) {
         if (e->rdzv.addr == 0) {
           continue; /* data-less entry (same-rank release / OWNER placement) */
         }
-        struct arts_db_buffer_s *landing =
-            (struct arts_db_buffer_s *)(uintptr_t)e->rdzv.cookie;
-        if (e == maxe) {
-          (void)arts_db_buf_install_landed(cache, e->vnew, landing,
-                                           cache->db_size);
-        } else {
-          arts_db_buf_landing_recycle(cache, landing);
-        }
+        arts_db_buf_bump_inplace(cache, e->vnew);
         e->rdzv.addr = 0; /* consumed */
       }
       /* Advance the publication axis over the WHOLE batch, data-less entries
@@ -401,10 +423,14 @@ void inv_home_round_try_open(struct arts_db_s *db) {
       }
       /* First publication wakes the pre-publication read holds (readers
        * event-ordered after the creator's writes must see released bytes,
-       * never the never-published zero state). */
+       * never the never-published zero state).  Published = an installed
+       * buffer whose version has been bumped past the create-time zero. */
       {
         arts_shared_ptr_t pub_h = arts_db_buf_acquire(cache);
-        bool pub = (arts_shared_get(pub_h) != NULL);
+        struct arts_db_buffer_s *pb =
+            (struct arts_db_buffer_s *)arts_shared_get(pub_h);
+        bool pub = (pb != NULL &&
+                    __atomic_load_n(&pb->version, __ATOMIC_ACQUIRE) > 0);
         arts_db_buf_release(&pub_h);
         if (pub) {
           arts_db_drain_pending_snapshot(cache);
@@ -478,8 +504,7 @@ void inv_home_round_try_open(struct arts_db_s *db) {
             /* Rank counts beyond the stack window would need a heap list; the
              * rank field is 14-bit but deployments here are far smaller — fail
              * loudly rather than silently truncate a round. */
-            (void)fprintf(stderr, "arts msi: round target overflow\n");
-            abort();
+            ARTS_ERROR("inv: round target overflow");
           }
         }
       }
@@ -523,15 +548,12 @@ static void inv_pub_landed_cb(void *arg) {
   struct inv_pub_landed_ctx_s *ctx = (struct inv_pub_landed_ctx_s *)arg;
   struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(ctx->db_h);
   if (db == NULL) {
-    /* Destroyed mid-pairing: free the landing's storage, never strand the
-     * blocked releaser. */
+    /* Destroyed mid-pairing: nothing to reclaim (the bytes landed in the
+     * stable buffer, which died with the cache) — never strand the blocked
+     * releaser. */
     struct arts_db_inv_pub_s *e = ctx->entry;
-    if (e->rdzv.cookie != 0) {
-      arts_regpool_free((void *)(uintptr_t)e->rdzv.cookie);
-    }
-    if (e->cv != 0) {
-      arts_send_db_publish_ack(e->releaser_rank, ctx->db_guid, e->cv);
-    }
+    arts_send_db_publish_ack(e->releaser_rank, ctx->db_guid, e->cv, e->vnew,
+                               /*home_cache=*/NULL);
     arts_free(e);
     arts_shared_release(&ctx->db_h);
     arts_free(ctx);
@@ -549,10 +571,29 @@ void arts_handler_db_publish(void *item_v, void *args_v) {
       (struct arts_ooo_args_db_publish_s *)args_v;
   struct arts_db_cache_s *cache = &db->cache;
   if (a->data_size != 0 && a->data_inline == 0 && a->rdzv_txid == 0) {
-    /* Announce leg: hand the releaser a fresh home landing; nothing queues
-     * yet — the commit leg (paired with the PUT completion) does. */
-    struct arts_rdzv_landing_s landing;
-    (void)arts_db_buf_landing_alloc(cache, a->data_size, &landing);
+    /* Announce leg: advertise the STABLE buffer as the landing (the PUT
+     * lands in place; bytes ahead of their round can only mix NEWER data
+     * into unordered readers' copies, which the memory model permits — a
+     * durable reader copy stays valid until its INVALIDATE regardless) and
+     * mint the pairing txid.  Nothing is allocated; the round's install
+     * point is a version stamp. */
+    if (a->data_size > cache->db_size) {
+      ARTS_ERROR("coherence: publish announce of %llu bytes exceeds the "
+                 "DB's %llu-byte stable buffer",
+                 (unsigned long long)a->data_size,
+                 (unsigned long long)cache->db_size);
+    }
+    struct arts_rdzv_landing_s landing = {0, 0, 0, 0};
+    arts_shared_ptr_t mh = arts_db_buf_acquire(cache);
+    struct arts_db_buffer_s *master =
+        (struct arts_db_buffer_s *)arts_shared_get(mh);
+    if (master == NULL ||
+        !arts_net_rdzv_local(master->data, cache->db_size, &landing.addr,
+                             &landing.key)) {
+      ARTS_ERROR("coherence: publish announce found no stable home buffer");
+    }
+    landing.txid = arts_net_rdzv_txid_next();
+    arts_db_buf_release(&mh);
     arts_send_db_publish_cts(a->releaser, a->db_guid, &landing, a->cv);
     return;
   }
@@ -563,19 +604,19 @@ void arts_handler_db_publish(void *item_v, void *args_v) {
   e->cv = a->cv;
   e->rdzv = (struct arts_rdzv_landing_s){0, 0, 0, 0};
   if (a->data_inline != 0) {
-    /* Same-rank publication: copy the inline payload into a pool buffer so
-     * the round's single install point treats it like a landed one. */
-    struct arts_db_buffer_s *b = arts_db_buf_alloc(cache, cache->db_size);
-    memcpy(b->data, (const char *)a + sizeof(*a), a->data_size);
-    e->rdzv.addr = 1u; /* data marker */
-    e->rdzv.cookie = (uint64_t)(uintptr_t)b;
-  } else if (a->rdzv_txid != 0) {
+    /* A home-resident releaser's buffer IS the canonical copy — its publish
+     * is the data-less round request; an inline payload reaching this arm
+     * means the release path regressed. */
+    ARTS_ERROR("coherence: inline same-rank publish is unreachable under a "
+               "home-canonical write-through release path");
+  }
+  if (a->rdzv_txid != 0) {
     /* Commit leg: the entry may only queue once the one-sided payload has
-     * fully landed — pair {commit, PUT completion} (either arrival order)
-     * and enqueue from the pairing continuation.  Queueing on the control
-     * packet alone would let the round install a torn landing. */
-    e->rdzv.addr = 1u;
-    e->rdzv.cookie = a->rdzv_cookie;
+     * fully landed in place — pair {commit, PUT completion} (either arrival
+     * order) and enqueue from the pairing continuation.  Queueing on the
+     * control packet alone would let the round stamp a torn landing as
+     * published. */
+    e->rdzv.addr = 1u; /* data marker: this entry's round bumps the stamp */
     struct inv_pub_landed_ctx_s *ctx =
         (struct inv_pub_landed_ctx_s *)arts_malloc(sizeof(*ctx));
     ctx->db_h = arts_route_table_lookup_db(a->db_guid);
@@ -635,10 +676,8 @@ static void inv_deliver_commit(arts_shared_ptr_t db_h, uint64_t version,
       /* The owed ack blocks the round chain, so nothing can retire the
        * transient valid copy before this purge. */
       if (MSI_CACHE_RO(cur) != MSI_RO_VALID) {
-        (void)fprintf(stderr,
-                      "arts msi: reserved purge found ro=%u (drifted)\n",
-                      MSI_CACHE_RO(cur));
-        abort();
+        ARTS_ERROR("inv: reserved purge found ro=%u (drifted)",
+                   MSI_CACHE_RO(cur));
       }
       next = inv_cache_compute_next(cur, MSI_CACHE_OP_KILL_PURGE, 0u, &pact);
     } while (!atomic_compare_exchange_weak_explicit(
@@ -716,8 +755,7 @@ void arts_handler_db_inv_invalidate(struct arts_db_s *db) {
     /* An invalidate can never hit the grant holder: the round snapshot
      * self-excludes it and rounds serialize. */
     if ((int)arts_atomic_read(&cache->writer_count) > 0) {
-      (void)fprintf(stderr, "arts msi: invalidate hit the grant holder\n");
-      abort();
+      ARTS_ERROR("inv: invalidate hit the grant holder");
     }
     next = inv_cache_compute_next(cur, MSI_CACHE_OP_INVALIDATE, 0u, &act);
   } while (!atomic_compare_exchange_weak_explicit(&cache->cache_state, &cur,
@@ -948,16 +986,5 @@ void arts_db_grant_note_ex_holder(struct arts_db_s *db, unsigned int rank) {
   (void)arts_rank_bitset_set(&db->roster, rank);
 }
 
-/* Cat-C pure body (PUBLISH_ACK).  Cache-independent pointer-identity sem post
- * on a->cv (the releaser's heap rendezvous, valid on this rank — the ack always
- * returns to the sender), so item_v is unused.  The dispatcher posts on BOTH a
- * HIT and a MISS, so a torn-down home never strands a blocked releaser. */
-void arts_handler_db_publish_ack(void *item_v, void *args_v) {
-  (void)item_v;
-  struct arts_db_publish_ack_args_s *a =
-      (struct arts_db_publish_ack_args_s *)args_v;
-  sem_t *s = (sem_t *)(uintptr_t)a->cv;
-  if (s != NULL) {
-    sem_post(s);
-  }
-}
+/* arts_handler_db_publish_ack — shared flight-completion body, defined once in
+ * coherence/coherence.c for every publishing arm. */

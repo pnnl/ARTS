@@ -161,6 +161,46 @@ struct arts_db_buffer_s *arts_db_buf_install(struct arts_db_cache_s *cache,
   return buf_publish(cache, new_buf, new_version);
 }
 
+/* In-place publish commit: stamp the stable buffer with the published
+ * version.  The bytes are already in place ("imm seen => landing valid"
+ * precedes this call); the release-store pairs with the serve side's
+ * acquire-loads.  The single-flight publish discipline makes a
+ * non-increasing version unreachable — hard-error rather than retreat
+ * (this is NOT buf_publish: the shared install path keeps its documented
+ * stale-retreat contract for the grant plane). */
+void arts_db_buf_bump_inplace(struct arts_db_cache_s *cache,
+                              uint64_t version) {
+  arts_shared_ptr_t h = arts_db_buf_acquire(cache);
+  struct arts_db_buffer_s *buf = (struct arts_db_buffer_s *)arts_shared_get(h);
+  if (buf == NULL) {
+    ARTS_ERROR("coherence: publish commit with no stable buffer installed");
+  }
+  uint64_t cur = __atomic_load_n(&buf->version, __ATOMIC_ACQUIRE);
+  if (version < cur) {
+#ifdef ARTS_PROTOCOL_WRF_VAL
+    /* The lossy multi-writer model has no migrating write right: two ranks'
+     * publishes may reach the home in either order (the program owes the
+     * ordering; a violation is defined-lossy).  A stale commit retreats —
+     * the newer stamp and whichever bytes landed last stand. */
+    arts_db_buf_release(&h);
+    return;
+#else
+    /* Publishes to one home are serialized (one flight per rank, and the
+     * write right migrates only between flights), so a version below the
+     * buffer's is not reordering — it is corruption. */
+    ARTS_ERROR("coherence: publish commit version regressed (%llu < %llu)",
+               (unsigned long long)version, (unsigned long long)cur);
+#endif
+  }
+  if (version > cur) {
+    /* An equal version is an idempotent republish: a releaser whose waiter
+     * was covered while it raced for the flight claim ships the same bytes
+     * under the same stamp — the ACK matters, the stamp is a no-op. */
+    __atomic_store_n(&buf->version, version, __ATOMIC_RELEASE);
+  }
+  arts_db_buf_release(&h);
+}
+
 /* ===== Rendezvous landing lifecycle (see buffer.h) ======================= */
 
 struct arts_db_buffer_s *

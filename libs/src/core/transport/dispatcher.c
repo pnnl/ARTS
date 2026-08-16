@@ -583,7 +583,8 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
 #if defined(ARTS_PROTOCOL_EXCL) ||                                           \
     (defined(ARTS_WRITE_POLICY_WB) && !defined(ARTS_PROTOCOL_INV))
   case MSG_DB_PUBLISH:
-  case MSG_DB_PUBLISH_ACK: {
+  case MSG_DB_PUBLISH_ACK:
+  case MSG_DB_CREATE_RETURN: {
     ARTS_ERROR("this build received publish message type %d from rank %u — "
                "its releases publish nothing; binary mode mismatch?",
                packet->message_type, packet->rank);
@@ -614,17 +615,43 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     ARTS_DEBUG("Coh PUBLISH_ACK Received");
     struct arts_msg_publish_ack_packet_s *pack =
         (struct arts_msg_publish_ack_packet_s *)(packet);
-    /* Cat-C SPECIAL — sem-post on BOTH HIT and MISS.  The wake is a
-     * cache-independent pointer-identity sem-post on cv (the releaser's
-     * stack-local sem_t); a torn-down home cache must NOT drop the ACK or the
-     * blocked releaser hangs.  The body ignores item_v (the post needs only
-     * cv), so call it unconditionally — db may be NULL on a MISS and the body
-     * never dereferences it.  Still take the ref handle so the lookup-acquire
-     * pattern is uniform with the other Cat-C handlers. */
-    struct arts_db_publish_ack_args_s args = {.cv = pack->cv};
+    /* Cat-C SPECIAL — call the body on BOTH HIT and MISS.  A nonzero cv is a
+     * cache-independent pointer-identity sem-post (the releaser's heap
+     * rendezvous); a torn-down cache must NOT drop that ACK or the blocked
+     * releaser hangs.  cv == 0 is flight completion, which needs the live
+     * releaser-side cache — the body tolerates a MISS (destroy while a
+     * publish is outstanding is an ordering violation by the program; the
+     * escaped waiters unblock through the shutdown path). */
+    struct arts_db_publish_ack_args_s args = {.cv = pack->cv,
+                                              .version = pack->version,
+                                              .credit_addr = pack->credit_addr,
+                                              .credit_rkey = pack->credit_rkey,
+                                              .credit_txid = pack->credit_txid};
     arts_shared_ptr_t h = arts_route_table_lookup_db(pack->db_guid);
     struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(h);
     arts_handler_db_publish_ack(db, &args);
+    arts_shared_release(&h);
+    break;
+  }
+  case MSG_DB_CREATE_RETURN: {
+    ARTS_DEBUG("Coh CREATE_RETURN Received");
+    struct arts_msg_db_create_return_packet_s *pack =
+        (struct arts_msg_db_create_return_packet_s *)(packet);
+    /* Cat-C lookup-or-drop: record the creator's first publish credit.  The
+     * creator always installed its descriptor before sending the create this
+     * answers, so a MISS means the DB is already destroyed — the credit dies
+     * with it (a credit is a hint, never a precondition). */
+    arts_shared_ptr_t h = arts_route_table_lookup_db(pack->db_guid);
+    struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(h);
+    if (db != NULL && pack->credit_txid != 0) {
+      struct arts_db_cache_s *cache = &db->cache;
+      __atomic_store_n(&cache->home_pub_addr, pack->credit_addr,
+                       __ATOMIC_RELAXED);
+      __atomic_store_n(&cache->home_pub_rkey, pack->credit_rkey,
+                       __ATOMIC_RELAXED);
+      __atomic_store_n(&cache->home_pub_txid, pack->credit_txid,
+                       __ATOMIC_RELEASE);
+    }
     arts_shared_release(&h);
     break;
   }
@@ -869,8 +896,9 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
     /* Cat-C SPECIAL — pointer-identity sem_post on cv directly.  The wake
      * is cache-independent: a torn-down home cache must NOT drop the ACK or
      * the blocked releaser hangs (await_publish_ack would spin forever).
-     * arts_handler_db_publish_ack is not linked in the RWLOCK build (it
-     * lives in RCU/WRF_RCU TUs), so inline the sem_post here. */
+     * arts_handler_db_publish_ack is not linked in the exclusion build (it
+     * is compiled only in the publishing arms), so inline the sem_post
+     * here. */
     if (pack->cv != 0) {
       sem_post((sem_t *)(uintptr_t)pack->cv);
     }

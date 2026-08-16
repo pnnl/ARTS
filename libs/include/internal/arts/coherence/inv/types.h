@@ -361,6 +361,27 @@ struct arts_db_cache_s {
   struct arts_rank_to_u64_map_s *cached_version;
   arts_guid_t db_guid;
   uint64_t db_size;
+
+  /* WT publish write-combining — the write-side twin of the RO combining
+   * window below.  pub_flight is the one-word flight state ({FLYING,DIRTY}:
+   * claim and join are each one CAS); pub_waiters holds heap {sem, version}
+   * nodes for every releaser blocked until a covering publish is ACKed
+   * (heap for the same reason the publish rendezvous is — a shutdown-
+   * escaped waiter leaks its node and a late drain may still post into
+   * it).  home_pub_* is the durable publish credit: the home's stable
+   * buffer plus a receiver-minted txid, refilled by every publish ACK;
+   * txid is the presence flag (0 = none), written last with release
+   * order so a reader that sees it sees the whole triple. */
+  volatile unsigned int pub_flight;
+  arts_lf_stack_t pub_waiters;
+  /* Waiters drained by a completing flight but not covered by its version:
+   * held here (plain field — touched only by the flight owner, and only one
+   * flight is in flight) until the trailing flight's ACK re-examines them.
+   * Non-NULL implies the flight word is FLYING. */
+  void *pub_parked;
+  uint64_t home_pub_addr;
+  uint64_t home_pub_rkey;
+  volatile uint64_t home_pub_txid;
 };
 #else
 struct arts_db_cache_s {
@@ -398,6 +419,27 @@ struct arts_db_cache_s {
   struct arts_rank_to_u64_map_s *cached_version;
   arts_guid_t db_guid;
   uint64_t db_size;
+
+  /* WT publish write-combining — the write-side twin of the RO combining
+   * window below.  pub_flight is the one-word flight state ({FLYING,DIRTY}:
+   * claim and join are each one CAS); pub_waiters holds heap {sem, version}
+   * nodes for every releaser blocked until a covering publish is ACKed
+   * (heap for the same reason the publish rendezvous is — a shutdown-
+   * escaped waiter leaks its node and a late drain may still post into
+   * it).  home_pub_* is the durable publish credit: the home's stable
+   * buffer plus a receiver-minted txid, refilled by every publish ACK;
+   * txid is the presence flag (0 = none), written last with release
+   * order so a reader that sees it sees the whole triple. */
+  volatile unsigned int pub_flight;
+  arts_lf_stack_t pub_waiters;
+  /* Waiters drained by a completing flight but not covered by its version:
+   * held here (plain field — touched only by the flight owner, and only one
+   * flight is in flight) until the trailing flight's ACK re-examines them.
+   * Non-NULL implies the flight word is FLYING. */
+  void *pub_parked;
+  uint64_t home_pub_addr;
+  uint64_t home_pub_rkey;
+  volatile uint64_t home_pub_txid;
 };
 #endif
 

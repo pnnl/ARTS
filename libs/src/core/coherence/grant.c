@@ -42,6 +42,7 @@
 #include "arts/ooo.h"
 #include "arts/runtime_state.h"
 #include "arts/runtime_types.h"
+#include "arts/system/schedfuzz.h"
 #include "arts/system/threads.h"     /* arts_global_rank_id */
 #include "arts/transport/net.h"   /* arts_transport_send_async */
 #include "arts/transport/protocol.h" /* arts_fill_packet_header, MSG_* */
@@ -321,15 +322,19 @@ void arts_handler_db_grant_request(void *item_v, void *args_v) {
   unsigned int requester = a->requester;
 
   struct arts_db_s *db = arts_db_of_cache(cache);
-  if (a->rdzv.txid == 0 && cache->db_size > 0 && arts_global_rank_count > 1) {
+  if (a->rdzv.txid == 0 && requester != arts_global_rank_id &&
+      cache->db_size > 0 && arts_global_rank_count > 1) {
     /* First-touch request without a landing: the requester did not know
      * db_size.  Answer with the size (CTS) and do NOT enqueue — home only
      * queues requests that carry a landing (or target a sentinel DB, whose
-     * transfers are data-less).  The requester re-issues with a landing. */
+     * transfers are data-less).  The requester re-issues with a landing.
+     * The home's OWN landing-less request is not a size probe: it wants the
+     * permission without payload and queues like any other. */
     arts_send_db_grant_cts(requester, cache->db_guid, cache->db_size);
     return;
   }
   arts_home_grantreq_queue_push(&db->pending_rw, requester, &a->rdzv);
+  arts_sched_fuzz_point(); /* widen the push<->baton-CAS window */
 
   /* Active-directory invariant: AT MOST ONE INVALIDATE_NOTICE in flight
    * to the current rw_holder per ownership-transfer round.  CAS 0->1
@@ -370,9 +375,20 @@ void arts_send_db_grant_request(struct arts_db_cache_s *cache) {
    * transfer is a same-rank inline dispatch, and the registered pool
    * carries no MRs to advertise. */
   struct arts_rdzv_landing_s rdzv = {0, 0, 0, 0};
+#ifdef ARTS_WRITE_POLICY_WT
+  /* The write-through home already holds the newest bytes (every release
+   * published them), so its own request needs the PERMISSION only: no
+   * landing, and the ex-owner's transfer takes the data-less arm.  The
+   * stable home buffer is never re-installed through the grant plane. */
+  bool wants_payload = (home_rank != arts_global_rank_id);
+#else
+  bool wants_payload = true;
+#endif
   uint64_t fetch_size = arts_db_first_fetch_size(cache);
-  if (fetch_size > 0 && arts_global_rank_count > 1) {
+  if (wants_payload && fetch_size > 0 && arts_global_rank_count > 1) {
     (void)arts_db_buf_landing_alloc(cache, fetch_size, &rdzv);
+  } else if (!wants_payload) {
+    INCREMENT_NUM_GRANT_HOME_DATALESS_BY(1);
   }
   struct arts_msg_grant_request_packet_s p;
   arts_fill_packet_header(&p.header, sizeof(p), MSG_DB_GRANT_REQUEST);

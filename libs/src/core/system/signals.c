@@ -223,9 +223,7 @@ static void *arts_signal_watcher_main(void *arg) {
     if (rc != 0) {
       /* sigwait should not normally fail; if it does, bail to avoid a
        * tight error loop. */
-      (void)fprintf(stderr,
-                    "[ARTS] signal watcher: sigwait failed (rc=%d), exiting\n",
-                    rc);
+      ARTS_WARN("signal watcher: sigwait failed (rc=%d), exiting", rc);
       break;
     }
     if (atomic_load(&arts_signal_watcher_stop)) {
@@ -238,10 +236,8 @@ static void *arts_signal_watcher_main(void *arg) {
 
     hits++;
     if (hits == 1) {
-      (void)fprintf(stderr,
-                    "\n[ARTS] signal watcher: caught %d on rank %u, "
-                    "initiating graceful shutdown\n",
-                    sig, arts_global_rank_id);
+      ARTS_WARN("signal watcher: caught %d, initiating graceful shutdown",
+                sig);
       /* Now safe to call non-async-signal-safe code: we are in a normal
        * thread context.  Broadcast SHUTDOWN_MSG to peers and stop our
        * own workers; main thread's arts_thread_main_join will return,
@@ -249,9 +245,7 @@ static void *arts_signal_watcher_main(void *arg) {
       arts_enter_shutdown_state(true);
       /* Stay in the loop: a second signal forces exit. */
     } else {
-      (void)fprintf(stderr,
-                    "\n[ARTS] signal watcher: second signal %d, forcing exit\n",
-                    sig);
+      ARTS_WARN("signal watcher: second signal %d, forcing exit", sig);
       _exit(128 + sig);
     }
   }
@@ -276,8 +270,8 @@ void arts_install_signal_watcher_thread(void) {
 
   if (pthread_create(&arts_signal_watcher, NULL, arts_signal_watcher_main,
                      NULL) != 0) {
-    (void)fprintf(stderr, "[ARTS] signal watcher: pthread_create failed; "
-                          "falling back to sigaction handlers\n");
+    ARTS_WARN("signal watcher: pthread_create failed; "
+              "falling back to sigaction handlers");
     /* Unblock so the legacy sigaction handler can still fire. */
     pthread_sigmask(SIG_UNBLOCK, &block_set, NULL);
     atomic_store(&arts_signal_watcher_started, false);

@@ -124,8 +124,10 @@ _Static_assert(MSG_DB_INV_INVALIDATE_ACK == 40,
                "ordinal MSG_DB_INV_INVALIDATE_ACK drifted");
 _Static_assert(MSG_DB_INV_REDIRECT == 41,
                "ordinal MSG_DB_INV_REDIRECT drifted");
-_Static_assert(MSG_COUNT == 42,
-               "MSG_COUNT drifted (wire-compat: must be 42 in all configs)");
+_Static_assert(MSG_DB_CREATE_RETURN == 42,
+               "MSG_DB_CREATE_RETURN ordinal moved");
+_Static_assert(MSG_COUNT == 43,
+               "MSG_COUNT drifted (wire-compat: must be 43 in all configs)");
 
 /* ===== (2) header layout — read before the message type is known. ===== */
 _Static_assert(offsetof(struct arts_msg_header_s, message_type) == 0,
@@ -177,8 +179,10 @@ _Static_assert(sizeof(struct arts_msg_grant_response_packet_s) == 64,
                "ownership_response sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_publish_packet_s) == 64,
                "publish sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_publish_ack_packet_s) == 32,
+_Static_assert(sizeof(struct arts_msg_publish_ack_packet_s) == 64,
                "publish_ack sizeof drifted");
+_Static_assert(sizeof(struct arts_msg_db_create_return_packet_s) == 48,
+               "db_create_return sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_grant_invalidate_packet_s) == 64,
                "ownership_invalidate sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_grant_confirm_ack_packet_s) == 64,

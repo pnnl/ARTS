@@ -79,7 +79,12 @@ void arts_handler_db_acquire(void *item, void *args) {
      * snapshot reorder buffer and let the install's drain resume us. */
     if (cache->db_size != 0) {
       arts_shared_ptr_t buf_h = arts_db_buf_acquire(cache);
-      bool published = (arts_shared_get(buf_h) != NULL);
+      struct arts_db_buffer_s *pb =
+          (struct arts_db_buffer_s *)arts_shared_get(buf_h);
+      /* Published = version bumped past the create-time zero; the stable
+       * buffer itself exists from create. */
+      bool published =
+          (pb != NULL && __atomic_load_n(&pb->version, __ATOMIC_ACQUIRE) > 0);
       arts_db_buf_release(&buf_h);
       if (!published) {
         struct arts_db_snapshot_waiter_s *w =
@@ -91,10 +96,12 @@ void arts_handler_db_acquire(void *item, void *args) {
         w->requester = arts_global_rank_id;
         w->rdzv = (struct arts_rdzv_landing_s){0, 0, 0, 0};
         arts_lf_stack_push(&cache->pending_snapshot, &w->link);
-        /* Race recovery: an install may have landed between the read and the
-         * push — drain (our own node included) so nobody parks forever. */
+        /* Race recovery: a publication may have landed between the read and
+         * the push — drain (our own node included) so nobody parks forever. */
         buf_h = arts_db_buf_acquire(cache);
-        published = (arts_shared_get(buf_h) != NULL);
+        pb = (struct arts_db_buffer_s *)arts_shared_get(buf_h);
+        published = (pb != NULL &&
+                     __atomic_load_n(&pb->version, __ATOMIC_ACQUIRE) > 0);
         arts_db_buf_release(&buf_h);
         if (published) {
           arts_db_drain_pending_snapshot(cache);
@@ -204,8 +211,7 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
    * still runs: it is what retires the remote copies. */
   if (buf != NULL) {
     TIME_INVALIDATE_ROUND_START();
-    arts_db_publish_sync(cache, new_version, is_home ? NULL : buf->data,
-                         is_home ? 0u : cache->db_size);
+    arts_db_publish_sync(cache, new_version);
     TIME_INVALIDATE_ROUND_STOP();
   }
   if (buf != NULL) {
@@ -257,7 +263,10 @@ void arts_handler_db_inv_request(void *item_v, void *args_v) {
   if (a->mode == DB_MODE_RO) {
     if (cache->db_size != 0) {
       arts_shared_ptr_t buf_h = arts_db_buf_acquire(cache);
-      bool published = (arts_shared_get(buf_h) != NULL);
+      struct arts_db_buffer_s *pb =
+          (struct arts_db_buffer_s *)arts_shared_get(buf_h);
+      bool published =
+          (pb != NULL && __atomic_load_n(&pb->version, __ATOMIC_ACQUIRE) > 0);
       arts_db_buf_release(&buf_h);
       if (!published) {
         /* Pre-publication hold: no release has published this DB yet, and a
@@ -275,7 +284,9 @@ void arts_handler_db_inv_request(void *item_v, void *args_v) {
         w->rdzv = a->rdzv;
         arts_lf_stack_push(&cache->pending_snapshot, &w->link);
         buf_h = arts_db_buf_acquire(cache);
-        published = (arts_shared_get(buf_h) != NULL);
+        pb = (struct arts_db_buffer_s *)arts_shared_get(buf_h);
+        published = (pb != NULL &&
+                     __atomic_load_n(&pb->version, __ATOMIC_ACQUIRE) > 0);
         arts_db_buf_release(&buf_h);
         if (published) {
           arts_db_drain_pending_snapshot(cache);

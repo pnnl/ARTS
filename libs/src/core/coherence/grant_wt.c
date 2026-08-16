@@ -30,11 +30,13 @@
 #include "arts/ooo.h"
 #include "arts/runtime_state.h"
 #include "arts/runtime_types.h"
+#include "arts/system/schedfuzz.h"
 #include "arts/system/threads.h"
 #include "arts/transport/net.h"
 #include "arts/transport/protocol.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
+#include "arts/counter/Preamble.h"
 
 /* ===== Ownership-round seams (called from coherence/grant.c) ==
  * family→protocol: the ownership-family OWNERSHIP_REQUEST / RELEASE_OWNERSHIP
@@ -53,11 +55,31 @@ void arts_db_start_grant_round(struct arts_db_cache_s *cache,
    */
   unsigned int next_owner;
   struct arts_rdzv_landing_s next_rdzv;
-  if (!arts_home_grantreq_queue_pop(&db->pending_rw, &next_owner, &next_rdzv)) {
-    /* Defensive: we just pushed, so empty is impossible under correct usage.
-     * Release the baton and return. */
+  while (!arts_home_grantreq_queue_pop(&db->pending_rw, &next_owner,
+                                       &next_rdzv)) {
+    /* Empty despite our own push: an earlier round already served it (rounds
+     * can complete between the push and this claim).  Release the baton with
+     * the SAME re-check discipline as the round close: a requester that
+     * pushed and lost the baton race while we held it would otherwise stay
+     * queued forever with no baton holder to serve it. */
+    arts_sched_fuzz_point(); /* widen the pop-empty<->release window */
     atomic_store_explicit(&db->invalidate_in_flight, 0u, memory_order_release);
-    return;
+    /* Dekker-style publication: the baton-release store must be globally
+     * visible BEFORE the emptiness re-check loads, or a requester that
+     * pushed and lost its baton CAS inside the window is missed — a plain
+     * release-store followed by loads permits exactly that StoreLoad
+     * reordering. */
+    atomic_thread_fence(memory_order_seq_cst);
+    if (arts_home_grantreq_queue_empty(&db->pending_rw)) {
+      return;
+    }
+    unsigned int expected = 0u;
+    if (!atomic_compare_exchange_strong_explicit(
+            &db->invalidate_in_flight, &expected, 1u, memory_order_acq_rel,
+            memory_order_acquire)) {
+      return; /* another claimant owns the queue now */
+    }
+    INCREMENT_NUM_GRANT_BATON_RECLAIM_BY(1);
   }
   db->pending_install_owner = next_owner;
   unsigned int current_owner =
@@ -252,7 +274,14 @@ void arts_handler_db_grant_confirm(void *item_v, void *args_v) {
                                         &next_rdzv);
       return;
     }
+    arts_sched_fuzz_point(); /* widen the pop-empty<->release window */
     atomic_store_explicit(&db->invalidate_in_flight, 0u, memory_order_release);
+    /* Dekker-style publication: the baton-release store must be globally
+     * visible BEFORE the emptiness re-check loads, or a requester that
+     * pushed and lost its baton CAS inside the window is missed — a plain
+     * release-store followed by loads permits exactly that StoreLoad
+     * reordering. */
+    atomic_thread_fence(memory_order_seq_cst);
     if (arts_home_grantreq_queue_empty(&db->pending_rw)) {
       return;
     }
@@ -262,6 +291,7 @@ void arts_handler_db_grant_confirm(void *item_v, void *args_v) {
             memory_order_acquire)) {
       return;
     }
+    INCREMENT_NUM_GRANT_BATON_RECLAIM_BY(1);
   }
 }
 

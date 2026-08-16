@@ -275,6 +275,41 @@ counters:
     unit: count
     help: 'Turns that could not be granted on arrival and queued'
 
+  NUM_PUB_FLIGHT:
+    group: 'Publish flight'
+    unit: count
+    help: 'Publish flights launched (payload or control)'
+
+  NUM_PUB_FLIGHT_JOIN:
+    group: 'Publish flight'
+    unit: count
+    help: 'Releases coalesced into an already-open flight'
+
+  NUM_PUB_FLIGHT_TRAILING:
+    group: 'Publish flight'
+    unit: count
+    help: 'Trailing relaunches for waiters an ACK left uncovered'
+
+  NUM_PUB_CTS_FALLBACK:
+    group: 'Publish flight'
+    unit: count
+    help: 'Credit-less announce legs (credit teachers not covering)'
+
+  NUM_PUB_FLIGHT_ABANDON:
+    group: 'Publish flight'
+    unit: count
+    help: 'Parked publish waiters woken by destroy/teardown, not an ACK'
+
+  NUM_GRANT_BATON_RECLAIM:
+    group: 'Write grant'
+    unit: count
+    help: 'Post-release re-check found queued work and re-claimed the baton'
+
+  NUM_GRANT_HOME_DATALESS:
+    group: 'Write grant'
+    unit: count
+    help: 'Ownership grants into the WT home (permission only, no payload)'
+
   OBJ_NUM_EDT:
     group: 'Per-object'
     unit: count

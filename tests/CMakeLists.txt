@@ -934,6 +934,11 @@ set(_writer_ro_cases
     coherence_writer_ro_overlap_2n_io)
 foreach(_t IN LISTS _writer_ro_cases)
     set_property(TEST ${_t} APPEND PROPERTY LABELS "coherence_stress")
+    # A wait-structure that survives to teardown is a lost wake this run's
+    # own pass criteria may have masked — the runtime prints the marker,
+    # the stress oracles turn it into a failure.
+    set_property(TEST ${_t} APPEND PROPERTY
+        FAIL_REGULAR_EXPRESSION "QUIESCENCE-DEBUG:")
     # A protocol that ends the run early (spurious shutdown) would exit 0 with
     # nothing verified — require the end-of-run scalar, and fail on any
     # acquirer's violation report.

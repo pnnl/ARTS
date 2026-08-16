@@ -36,6 +36,7 @@
 #include "arts/transport/protocol.h"
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h"
+#include "arts/counter/Preamble.h"
 
 /* Rendezvous continuation state for a transfer whose payload travels
  * one-sided: the packet and the write completion may arrive in either order,
@@ -285,6 +286,12 @@ void arts_handler_db_grant_confirm(void *item_v, void *args_v) {
   while (1) {
     /* Release the baton. */
     atomic_store_explicit(&db->invalidate_in_flight, 0u, memory_order_release);
+    /* Dekker-style publication: the baton-release store must be globally
+     * visible BEFORE the emptiness re-check loads, or a requester that
+     * pushed and lost its baton CAS inside the window is missed — a plain
+     * release-store followed by loads permits exactly that StoreLoad
+     * reordering. */
+    atomic_thread_fence(memory_order_seq_cst);
     /* Re-check for a freshly-enqueued requester that raced the baton
      * release.  If the queue is still empty, we're done. */
     if (arts_home_grantreq_queue_empty(&db->pending_rw)) {
@@ -299,6 +306,7 @@ void arts_handler_db_grant_confirm(void *item_v, void *args_v) {
        * that thread will drain the queue. */
       return;
     }
+    INCREMENT_NUM_GRANT_BATON_RECLAIM_BY(1);
     /* Re-acquired the baton: pop the racer and start a fresh round.  This path
      * starts AFTER the just-confirmed owner is already running (no in-flight
      * CONFIRM_ACK to piggyback on), so it issues a STANDALONE INVALIDATE to the
@@ -394,11 +402,30 @@ void arts_db_start_grant_round(struct arts_db_cache_s *cache,
    * writer invariant), so no atomic needed. */
   unsigned int next_owner;
   struct arts_rdzv_landing_s next_rdzv;
-  if (!arts_home_grantreq_queue_pop(&db->pending_rw, &next_owner, &next_rdzv)) {
-    /* Defensive: we just pushed, so empty is impossible under correct
-     * usage.  Release the baton and return. */
+  while (!arts_home_grantreq_queue_pop(&db->pending_rw, &next_owner,
+                                       &next_rdzv)) {
+    /* Empty despite our own push: an earlier round already served it (rounds
+     * can complete between the push and this claim).  Release the baton with
+     * the SAME re-check discipline as the round close: a requester that
+     * pushed and lost the baton race while we held it would otherwise stay
+     * queued forever with no baton holder to serve it. */
     atomic_store_explicit(&db->invalidate_in_flight, 0u, memory_order_release);
-    return;
+    /* Dekker-style publication: the baton-release store must be globally
+     * visible BEFORE the emptiness re-check loads, or a requester that
+     * pushed and lost its baton CAS inside the window is missed — a plain
+     * release-store followed by loads permits exactly that StoreLoad
+     * reordering. */
+    atomic_thread_fence(memory_order_seq_cst);
+    if (arts_home_grantreq_queue_empty(&db->pending_rw)) {
+      return;
+    }
+    unsigned int expected = 0u;
+    if (!atomic_compare_exchange_strong_explicit(
+            &db->invalidate_in_flight, &expected, 1u, memory_order_acq_rel,
+            memory_order_acquire)) {
+      return; /* another claimant owns the queue now */
+    }
+    INCREMENT_NUM_GRANT_BATON_RECLAIM_BY(1);
   }
   db->pending_install_owner = next_owner;
   arts_db_owner_start_invalidate_round(cache, next_owner, &next_rdzv);

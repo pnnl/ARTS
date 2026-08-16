@@ -154,7 +154,15 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
     bool buf_absent = (arts_shared_get(buf_h) == NULL);
     arts_db_buf_release(&buf_h);
     if (buf_absent && db_size > 0) {
-      arts_db_buf_install(cache, 1, NULL, db_size);
+      /* Same seam as the fresh-stub path below: the coalesce winner must end
+       * in the identical buffer state, or the arm's publication predicate
+       * (buffer presence / version zero) reads differently depending on who
+       * won an internal race. */
+      if (no_acquire) {
+        arts_db_buf_install(cache, 1, NULL, db_size);
+      } else {
+        arts_db_create_install_home_buffer(cache, db_size);
+      }
     }
     if (cache->db_size == 0) {
       cache->db_size = db_size;
@@ -166,6 +174,12 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
       arts_db_create_publish_holder(db, creator_rank);
     }
     db_create_no_acquire_idle(db, no_acquire);
+#if (!defined(ARTS_PROTOCOL_EXCL) && defined(ARTS_WRITE_POLICY_WT)) ||        \
+    defined(ARTS_PROTOCOL_WRF_VAL)
+    if (!no_acquire) {
+      arts_send_db_create_return(creator_rank, cache);
+    }
+#endif
     arts_shared_release(&existing_h);
     return;
   }
@@ -225,6 +239,23 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
   if (arts_route_table_install_if_absent(stub, db_guid, arts_global_rank_id,
                                          /*used=*/true)) {
     arts_ooo_drain_guid(db_guid);
+#if (!defined(ARTS_PROTOCOL_EXCL) && defined(ARTS_WRITE_POLICY_WT)) ||        \
+    defined(ARTS_PROTOCOL_WRF_VAL)
+    /* Off the critical path: the credit flies while the creator EDT is still
+     * writing, so a create -> write -> release sequence publishes with no
+     * announce round.  A NO_ACQUIRE creator never publishes — no credit.
+     * Re-acquire through the route table rather than using the raw stub
+     * pointer: the drain above can run a deferred DESTROY that frees the
+     * stub, and a dead slot must not advertise a recycled buffer. */
+    if (!no_acquire) {
+      arts_shared_ptr_t live_h = arts_route_table_lookup_db(db_guid);
+      struct arts_db_s *live = (struct arts_db_s *)arts_shared_get(live_h);
+      if (live != NULL) {
+        arts_send_db_create_return(creator_rank, &live->cache);
+      }
+      arts_shared_release(&live_h);
+    }
+#endif
     return;
   }
 
@@ -239,7 +270,12 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
     bool buf_absent = (arts_shared_get(buf_h) == NULL);
     arts_db_buf_release(&buf_h);
     if (buf_absent && db_size > 0) {
-      arts_db_buf_install(cache, 1, NULL, db_size);
+      /* Same seam as the fresh-stub path — see the coalesce branch above. */
+      if (no_acquire) {
+        arts_db_buf_install(cache, 1, NULL, db_size);
+      } else {
+        arts_db_create_install_home_buffer(cache, db_size);
+      }
     }
     if (cache->db_size == 0) {
       cache->db_size = db_size;
@@ -251,6 +287,12 @@ void arts_handler_db_create(struct arts_msg_db_create_coherent_packet_s *p) {
       arts_db_create_publish_holder(db, creator_rank);
     }
     db_create_no_acquire_idle(db, no_acquire);
+#if (!defined(ARTS_PROTOCOL_EXCL) && defined(ARTS_WRITE_POLICY_WT)) ||        \
+    defined(ARTS_PROTOCOL_WRF_VAL)
+    if (!no_acquire) {
+      arts_send_db_create_return(creator_rank, cache);
+    }
+#endif
   }
   if (winner != NULL) {
     arts_shared_release(&winner_h);
@@ -460,10 +502,10 @@ void arts_handler_db_snapshot_response(void *item_v, void *args_v) {
  * (publish-target-then-withdraw).  WRF_RCU never sends INVALIDATE (dispatcher
  * fatals). */
 
-/* arts_handler_db_publish_ack is protocol-specific — HOME/WRF_RCU post the
- * releaser's stack-local sem_t (pointer identity), OWNER has no synchronous
- * publish (no-op filler for OoO-table / link parity) — so its whole body
- * lives in each arm's own placement TU. */
+/* arts_handler_db_publish_ack is the shared flight-completion body, defined
+ * ONCE in coherence/coherence.c for every publishing arm (gated
+ * !EXCL && (!WB || INV)); the exclusion arm has no synchronous publish and
+ * its dispatcher fatals on the message. */
 
 /* Cat-C pure body (DESTROY_NOTIFY).  The wire dispatcher / self-send shortcut
  * has already looked the cache up with a held ref and passes the db_s as item_v
@@ -477,10 +519,20 @@ void arts_handler_db_snapshot_response(void *item_v, void *args_v) {
  * still has a pending dependence on is undefined per OCR (ocrDbDestroy: the
  * user ensures the DB is not in use), so no parked-EDT wake is attempted. */
 void arts_handler_db_cache_destroy(void *item_v, void *args_v) {
-  (void)item_v;
   struct arts_db_cache_destroy_args_s *a =
       (struct arts_db_cache_destroy_args_s *)args_v;
   (void)arts_route_table_set_destroyed(a->db_guid);
+#if !defined(ARTS_PROTOCOL_EXCL) &&                                          \
+    (!defined(ARTS_WRITE_POLICY_WB) || defined(ARTS_PROTOCOL_INV))
+  /* AFTER the slot withdrawal, so a releaser registering concurrently either
+   * lands in this drain or sees the NULL slot on its own recheck.  The
+   * dispatcher's held ref keeps the cache alive across the drain. */
+  if (item_v != NULL) {
+    arts_db_pub_flight_abandon(&((struct arts_db_s *)item_v)->cache);
+  }
+#else
+  (void)item_v;
+#endif
 }
 
 /* The OWNER REDIRECT_RO handler arts_handler_db_snapshot_redirect lives in

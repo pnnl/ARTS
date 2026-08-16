@@ -16,6 +16,7 @@
 #include "arts/coherence/coherence.h"
 #include "arts/coherence/handlers.h"
 #include "arts/coherence/directory.h"
+#include "arts/gas/guid.h" /* creator slice arithmetic */
 #include "arts/gas/route_table.h" /* pairing-window descriptor pin */
 #include "arts/db.h"
 #include "arts/edt.h" /* arts_edt_dep_t (acquire body) */
@@ -23,6 +24,7 @@
 #include "arts/runtime_state.h"
 #include "arts/transport/net.h" /* arts_net_rdzv_expect */
 #include "arts/runtime_types.h"
+#include "arts/system/print.h"   /* ARTS_ERROR */
 #include "arts/system/threads.h" /* arts_global_rank_id */
 #include "arts/utils/atomics.h"
 #include "arts/utils/malloc.h" /* pairing ctx */  /* arts_atomic_* */
@@ -91,7 +93,7 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
     /* buf_h (held until after this call) pins buf->data for the whole round —
      * the sync helper's ACK follows the target-side write completion, which
      * implies the fabric has fully drained the source. */
-    arts_db_publish_sync(cache, new_version, buf->data, cache->db_size);
+    arts_db_publish_sync(cache, new_version);
   }
   /* Release the buffer ref held for the version-bump and PUBLISH read. */
   if (buf != NULL) {
@@ -212,7 +214,9 @@ void arts_handler_db_snapshot_request(void *item_v, void *args_v) {
                                    &a->rdzv, NULL);
     return;
   }
-  uint64_t master_v = master->version;
+  /* Acquire pairs with the publish commit's release-store version stamp: a
+   * serve must never stamp a version whose bytes it cannot yet see. */
+  uint64_t master_v = __atomic_load_n(&master->version, __ATOMIC_ACQUIRE);
   /* master_h transfers into the reply path (consumed there). */
   update_cached_version_max(cache, requester, master_v, master_h, edt_guid, slot,
                        &a->rdzv);
@@ -227,15 +231,15 @@ void arts_handler_db_snapshot_request(void *item_v, void *args_v) {
  * exclusive owner to transfer to), so the WB_AND_TRANSFER ownership-chain
  * relay is moot. */
 /* Rendezvous continuation for a committed publish: the dirty bytes have
- * fully landed in the home landing; install them without a copy and ACK the
- * blocked releaser.  The ACK fires even if the DB was destroyed while the
- * pairing was outstanding — a torn-down home cache must never strand the
- * blocked releaser (the PUBLISH_ACK-on-MISS rule). */
+ * fully landed IN PLACE in the stable home buffer; publication is the version
+ * stamp alone (release-store, sequenced after the {commit packet, write
+ * completion} pairing — "landing valid" precedes the stamp).  The ACK fires
+ * even if the DB was destroyed while the pairing was outstanding — a
+ * torn-down home cache must never strand the blocked releaser (the
+ * PUBLISH_ACK-on-MISS rule). */
 struct pub_landed_ctx_s {
   arts_shared_ptr_t db_h;
-  struct arts_db_buffer_s *landing;
   uint64_t version;
-  uint64_t data_size;
   unsigned int releaser;
   arts_guid_t db_guid;
   uint64_t cv;
@@ -245,19 +249,13 @@ static void pub_landed_cb(void *arg) {
   struct pub_landed_ctx_s *ctx = (struct pub_landed_ctx_s *)arg;
   struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(ctx->db_h);
   if (db != NULL) {
-    arts_db_buf_install_landed(&db->cache, ctx->version, ctx->landing,
-                               ctx->data_size);
+    arts_db_buf_bump_inplace(&db->cache, ctx->version);
     /* The releaser holds the version it just published — credit the ledger
      * so its own next acquire dedups to no-data. */
     arts_rank_u64_map_advance(db->cached_version, ctx->releaser, ctx->version);
-  } else {
-    /* Destroyed mid-round (app UB): the cache's recycle pool is gone — return
-     * the landing's storage straight to the registered pool. */
-    arts_regpool_free(ctx->landing);
   }
-  if (ctx->cv != 0) {
-    arts_send_db_publish_ack(ctx->releaser, ctx->db_guid, ctx->cv);
-  }
+  arts_send_db_publish_ack(ctx->releaser, ctx->db_guid, ctx->cv, ctx->version,
+                             db != NULL ? &db->cache : NULL);
   arts_shared_release(&ctx->db_h);
   arts_free(ctx);
 }
@@ -269,62 +267,54 @@ void arts_handler_db_publish(void *item_v, void *args_v) {
 
   if (a->data_size == 0) {
     /* Data-less ordering round (sentinel DB): install nothing, ACK. */
-    if (a->cv != 0) {
-      arts_send_db_publish_ack(a->releaser, a->db_guid, a->cv);
-    }
+    arts_send_db_publish_ack(a->releaser, a->db_guid, a->cv, a->version,
+                               cache);
     return;
   }
   if (a->data_inline != 0) {
-    /* Same-rank publish: the payload trails the args blob.  Monotonic:
-     * buf_install ignores a stale (lower/equal version) publish. */
-    arts_db_buf_install(cache, a->version, (const void *)((char *)a + sizeof(*a)),
-                        a->data_size);
-    /* The releaser holds the version it just published — credit the ledger
-     * so its own next acquire dedups to no-data. */
-    arts_rank_u64_map_advance(arts_db_of_cache(cache)->cached_version,
-                              a->releaser, a->version);
-    if (a->cv != 0) {
-      arts_send_db_publish_ack(a->releaser, a->db_guid, a->cv);
-    }
-    return;
+    /* A home-resident writer mutates the stable buffer directly and its
+     * release publishes nothing over this plane — an inline publish reaching
+     * this arm means the release path regressed. */
+    ARTS_ERROR("coherence: inline same-rank publish is unreachable under a "
+               "home-canonical write-through release path");
   }
   if (a->rdzv_txid == 0) {
-    /* Announce: the releaser holds a->data_size dirty bytes.  Allocate a
-     * fresh home landing for them and hand it back (PUBLISH_CTS); nothing
-     * installs yet — the commit leg pairs with the write completion. */
-    struct arts_rdzv_landing_s landing;
-    (void)arts_db_buf_landing_alloc(cache, a->data_size, &landing);
+    /* Announce: the releaser holds a->data_size dirty bytes and no home
+     * address yet.  Advertise the STABLE buffer as the landing (the PUT lands
+     * in place; a concurrent snapshot serve may ship a torn old/new word mix,
+     * which the memory model already permits for unordered readers) and mint
+     * the pairing txid.  Nothing is allocated; nothing installs at commit. */
+    if (a->data_size > cache->db_size) {
+      ARTS_ERROR("coherence: publish announce of %llu bytes exceeds the "
+                 "DB's %llu-byte stable buffer",
+                 (unsigned long long)a->data_size,
+                 (unsigned long long)cache->db_size);
+    }
+    struct arts_rdzv_landing_s landing = {0, 0, 0, 0};
+    arts_shared_ptr_t mh = arts_db_buf_acquire(cache);
+    struct arts_db_buffer_s *master =
+        (struct arts_db_buffer_s *)arts_shared_get(mh);
+    if (master == NULL ||
+        !arts_net_rdzv_local(master->data, cache->db_size, &landing.addr,
+                             &landing.key)) {
+      ARTS_ERROR("coherence: publish announce found no stable home buffer");
+    }
+    landing.txid = arts_net_rdzv_txid_next();
+    arts_db_buf_release(&mh);
     arts_send_db_publish_cts(a->releaser, a->db_guid, &landing, a->cv);
     return;
   }
-  /* Commit: the dirty bytes were PUT into our landing (named by the echoed
-   * cookie).  Pair with the write completion — either arrival order — then
-   * install the landing without a copy (version-conditional; stale retreats
-   * recycle) and ACK the blocked releaser. */
+  /* Commit: the dirty bytes were PUT in place into the stable buffer.  Pair
+   * with the write completion — either arrival order — then stamp the
+   * version and ACK the blocked releaser. */
   struct pub_landed_ctx_s *ctx =
       (struct pub_landed_ctx_s *)arts_malloc(sizeof(*ctx));
   ctx->db_h = arts_route_table_lookup_db(cache->db_guid);
-  ctx->landing = (struct arts_db_buffer_s *)(uintptr_t)a->rdzv_cookie;
   ctx->version = a->version;
-  ctx->data_size = a->data_size;
   ctx->releaser = a->releaser;
   ctx->db_guid = a->db_guid;
   ctx->cv = a->cv;
   arts_net_rdzv_expect(a->rdzv_txid, pub_landed_cb, ctx);
-}
-
-/* Cat-C pure body (PUBLISH_ACK).  Cache-independent pointer-identity sem-post
- * on a->cv (the releaser's stack-local sem_t, valid on this rank), so item_v is
- * unused.  The dispatcher posts on BOTH a HIT (this body) and a MISS so a
- * torn-down home cache never strands the blocked releaser. */
-void arts_handler_db_publish_ack(void *item_v, void *args_v) {
-  (void)item_v;
-  struct arts_db_publish_ack_args_s *a =
-      (struct arts_db_publish_ack_args_s *)args_v;
-  sem_t *s = (sem_t *)(uintptr_t)a->cv;
-  if (s != NULL) {
-    sem_post(s);
-  }
 }
 
 /* Cat-B pure body (OoO g_ooo_table[OOO_DB_DESTROY]): the OoO engine has already
@@ -352,7 +342,22 @@ void arts_handler_db_destroy(void *item_v, void *args_v) {
       arts_send_db_cache_destroy(r, a->db_guid);
     }
   }
+  /* The creator may hold an in-place publish credit taught at create
+   * (CREATE_RETURN) without ever having published, so the version ledger
+   * cannot name it.  A credit holder must join the teardown roster, or a
+   * labeled-GUID reuse would find the stale credit still armed against a
+   * buffer that no longer exists. */
+  if (arts_db_seq_budget != 0) {
+    uint64_t slice = ARTS_GUID_DB_GET_SEQ(a->db_guid) / arts_db_seq_budget;
+    if (slice < (uint64_t)arts_global_rank_count &&
+        (unsigned int)slice != self &&
+        arts_rank_u64_map_get(db->cached_version, (unsigned int)slice) == 0) {
+      arts_send_db_cache_destroy((unsigned int)slice, a->db_guid);
+    }
+  }
   (void)arts_route_table_set_destroyed(a->db_guid);
+  /* After the slot withdrawal — see arts_db_pub_flight_abandon. */
+  arts_db_pub_flight_abandon(cache);
 }
 
 /* Case-D leaf: WRF_RCU has no exclusive owner — no rw_holder to publish

@@ -119,6 +119,10 @@ add_pure_unit_src(socket_helpers LIBS ${CMAKE_DL_LIBS} PASS_REGEX "PASS socket_h
 # (SEQUENCENUMBERS is an optional SEQ-header ABI variant supplied by the build dir
 #  when enabled; not forced here so the default wire layout is exercised.)
 add_pure_unit_src(protocol_abi_asserts TIMEOUT 60)
+# Real-hardware Dekker litmus for the grant-baton release/re-check pair: the
+# fenced shape must never lose an item; a weakened fence turns the runtime's
+# 0.2% wedge back into a deterministic failure here.
+add_pure_unit_src(grant_baton_dekker_litmus PASS_REGEX "PASS: grant_baton_dekker_litmus" TIMEOUT 120)
 # T184 VERIFIES B070 fix: dispatcher now floors header.size >= sizeof(packet)
 add_pure_unit_src(dispatcher_payload_size_underflow TIMEOUT 60)
 add_pure_unit_src(launcher_shell_quote PASS_REGEX "PASS launcher_shell_quote" TIMEOUT 60)

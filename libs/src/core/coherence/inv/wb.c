@@ -77,6 +77,14 @@ void arts_handler_db_acquire(void *item, void *args) {
      * previous owner, and a reader registered in that window is redirected to
      * that rank's retained (now stale) copy.  The CONFIRM_ACK opens the gate
      * and drains whatever parked behind it. */
+    /* KNOWN NARROW WINDOW (Dekker inventory, 2026-08-15): reading the gate
+     * before the count admits {pre-install gate 0, post-install count} — an
+     * RW that runs before the directory flip.  The count-first variant was
+     * attempted and reverted: a transient bump inside the unconfirmed
+     * window lets sibling acquires and the request plane observe ownership
+     * this rank does not yet hold, which wedges the transfer chain.  The
+     * correct closure needs the install to publish gate+count as one
+     * atom; tracked as follow-up, not fixed by reordering the reads. */
     if (arts_atomic_read(&cache->grant_unconfirmed) == 0 &&
         arts_db_acquire_rw_local_fast(cache, dep)) {
       arts_db_acquire_resolved(edt, slot);
@@ -172,7 +180,7 @@ void arts_db_release_rw(struct arts_db_cache_s *cache) {
   /* Control-only publish: ask the home for this release's invalidation round
    * and block until every ack is in.  No bytes move. */
   TIME_INVALIDATE_ROUND_START();
-  arts_db_publish_sync(cache, new_version, /*data=*/NULL, /*data_size=*/0);
+  arts_db_publish_sync(cache, new_version);
   TIME_INVALIDATE_ROUND_STOP();
 
   int rest = (int)arts_atomic_sub(&cache->writer_count, 1); /* post value */

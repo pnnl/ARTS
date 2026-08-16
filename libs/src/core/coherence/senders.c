@@ -134,18 +134,44 @@ void arts_send_db_publish_cts(unsigned int releaser_rank, arts_guid_t db_guid,
 #if !defined(ARTS_PROTOCOL_EXCL) &&                                          \
     (!defined(ARTS_WRITE_POLICY_WB) || defined(ARTS_PROTOCOL_INV))
 void arts_send_db_publish_ack(unsigned int releaser_rank, arts_guid_t db_guid,
-                                uint64_t cv) {
+                                uint64_t cv, uint64_t version,
+                                struct arts_db_cache_s *home_cache) {
   struct arts_msg_publish_ack_packet_s p;
   arts_fill_packet_header(&p.header, sizeof(p), MSG_DB_PUBLISH_ACK);
   p.header.rank = arts_global_rank_id;
   p.db_guid = db_guid;
   p.cv = cv;
+  p.version = version;
+  p.credit_addr = 0;
+  p.credit_rkey = 0;
+  p.credit_txid = 0;
+  /* Mint the releaser's next in-place publish credit: the stable buffer's
+   * wire advertisement plus a fresh pairing txid.  Receiver-minted by the
+   * rendezvous contract (the pairing table is local to this rank).  No
+   * expectation is registered at issue time — the commit packet registers the
+   * pairing on arrival — so an unused credit is only a burned counter value.
+   * A self-rank releaser never PUTs to itself: no credit. */
+  if (home_cache != NULL && home_cache->db_size > 0 &&
+      releaser_rank != arts_global_rank_id && arts_global_rank_count > 1) {
+    arts_shared_ptr_t mh = arts_db_buf_acquire(home_cache);
+    struct arts_db_buffer_s *master =
+        (struct arts_db_buffer_s *)arts_shared_get(mh);
+    if (master != NULL &&
+        arts_net_rdzv_local(master->data, home_cache->db_size, &p.credit_addr,
+                            &p.credit_rkey)) {
+      p.credit_txid = arts_net_rdzv_txid_next();
+    }
+    arts_db_buf_release(&mh);
+  }
   if (releaser_rank == arts_global_rank_id) {
-    /* Self-send: mirror the wire RX dispatcher's Cat-C lookup-acquire.  The
-     * wake is a cache-independent pointer-identity sem-post on cv; the body
-     * ignores item_v, so call it unconditionally (db may be NULL — a missing
-     * home cache must still post the sem, else the blocked releaser hangs). */
-    struct arts_db_publish_ack_args_s args = {.cv = cv};
+    /* Self-send: mirror the wire RX dispatcher's Cat-C lookup-acquire.  Call
+     * the body unconditionally (db may be NULL — a missing cache must still
+     * post a nonzero cv, else the blocked releaser hangs). */
+    struct arts_db_publish_ack_args_s args = {.cv = cv,
+                                              .version = version,
+                                              .credit_addr = p.credit_addr,
+                                              .credit_rkey = p.credit_rkey,
+                                              .credit_txid = p.credit_txid};
     arts_shared_ptr_t h = arts_route_table_lookup_db(db_guid);
     struct arts_db_s *db = (struct arts_db_s *)arts_shared_get(h);
     arts_handler_db_publish_ack(db, &args);
@@ -153,6 +179,36 @@ void arts_send_db_publish_ack(unsigned int releaser_rank, arts_guid_t db_guid,
     return;
   }
   arts_transport_send_async((int)releaser_rank, (char *)&p, sizeof(p));
+}
+
+void arts_send_db_create_return(unsigned int creator_rank,
+                                struct arts_db_cache_s *home_cache) {
+  if (creator_rank == arts_global_rank_id || arts_global_rank_count <= 1 ||
+      home_cache->db_size == 0) {
+    return;
+  }
+  struct arts_msg_db_create_return_packet_s p;
+  arts_fill_packet_header(&p.header, sizeof(p), MSG_DB_CREATE_RETURN);
+  p.header.rank = arts_global_rank_id;
+  p.db_guid = home_cache->db_guid;
+  p.credit_addr = 0;
+  p.credit_rkey = 0;
+  p.credit_txid = 0;
+  arts_shared_ptr_t mh = arts_db_buf_acquire(home_cache);
+  struct arts_db_buffer_s *master =
+      (struct arts_db_buffer_s *)arts_shared_get(mh);
+  bool ok = (master != NULL &&
+             arts_net_rdzv_local(master->data, home_cache->db_size,
+                                 &p.credit_addr, &p.credit_rkey));
+  arts_db_buf_release(&mh);
+  if (!ok) {
+    return;
+  }
+  /* No expectation is registered at issue time (the commit packet registers
+   * the pairing on arrival), so a credit superseded by an ACK refill before
+   * its first use is only a burned counter value. */
+  p.credit_txid = arts_net_rdzv_txid_next();
+  arts_transport_send_async((int)creator_rank, (char *)&p, sizeof(p));
 }
 #endif /* !ARTS_WRITE_POLICY_WB && !ARTS_PROTOCOL_EXCL */
 
@@ -354,7 +410,8 @@ void arts_send_db_cache_destroy(unsigned int sharer_rank, arts_guid_t db_guid) {
  *
  * The sem_post inline (rather than calling arts_handler_db_publish_ack)
  * avoids a cross-protocol link dependency: arts_handler_db_publish_ack is
- * defined only in RCU/WRF_RCU TUs, not in the RWLOCK build. */
+ * compiled only in the publishing arms (!EXCL && (!WB || INV)), never in
+ * the exclusion build. */
 void arts_send_db_excl_release_ack(unsigned int releaser_rank,
                                    arts_guid_t db_guid, uint64_t cv) {
   struct arts_msg_excl_release_ack_packet_s p;

@@ -76,11 +76,19 @@ struct arts_db_cache_destroy_args_s {
   arts_guid_t db_guid;
 };
 
-/* arts_handler_db_publish_ack body args.  The body is cache-independent
- * (pointer-identity sem-post on cv); the dispatcher posts on both HIT and MISS
- * so a torn-down cache never strands the blocked releaser. */
+/* arts_handler_db_publish_ack body args.  Two wake planes coexist: cv != 0 is
+ * the pointer-identity sem-post (legacy announce leg / control-only rounds —
+ * cache-independent, posted on both HIT and MISS so a torn-down cache never
+ * strands the blocked releaser); cv == 0 is the flight-completion plane (the
+ * body drains the releaser cache's version-covered waiter stack).  version is
+ * the published version the ACK covers; the credit triple is the home's next
+ * in-place publish credit (txid == 0 = none issued). */
 struct arts_db_publish_ack_args_s {
-  uint64_t cv; /* releaser's stack-local sem_t address */
+  uint64_t cv; /* releaser's heap rendezvous sem_t address, or 0 */
+  uint64_t version;
+  uint64_t credit_addr;
+  uint64_t credit_rkey;
+  uint64_t credit_txid;
 };
 
 #ifdef ARTS_WRITE_POLICY_WB
@@ -156,11 +164,12 @@ void arts_db_rdzv_discard_landing(uint64_t txid, uint64_t cookie);
  * transfer trigger); WRF_RCU provides a no-op body (WRF_RCU never receives
  * INVALIDATE). */
 void arts_handler_db_grant_invalidate(void *item_v, void *args_v);
-/* Cat-C pure body (PUBLISH_ACK): item_v is the db_s the dispatcher acquired
- * (unused — the wake is a cache-independent pointer-identity sem-post on
- * args->cv); args_v is an arts_db_publish_ack_args_s.  NOT
- * OoO-deferrable.  The dispatcher posts the sem on BOTH a HIT (via this body)
- * and a MISS so a torn-down home cache never strands the blocked releaser. */
+/* Cat-C pure body (PUBLISH_ACK): item_v is the releaser-rank db_s the
+ * dispatcher acquired; args_v is an arts_db_publish_ack_args_s.  NOT
+ * OoO-deferrable.  cv != 0 wakes the pointer-identity sem (cache-independent
+ * — posted on BOTH HIT and MISS so a torn-down cache never strands the
+ * blocked releaser); cv == 0 runs flight completion on the cache (credit
+ * record, covered-waiter drain, trailing-flight decision). */
 void arts_handler_db_publish_ack(void *item_v, void *args_v);
 /* Cat-C pure body (DESTROY_NOTIFY): item_v is the db_s the dispatcher acquired
  * (cache is its first member); args_v is an arts_db_cache_destroy_args_s.
@@ -229,8 +238,19 @@ void arts_send_db_publish(unsigned int home_rank, arts_guid_t db_guid,
 void arts_send_db_publish_cts(unsigned int releaser_rank, arts_guid_t db_guid,
                                 const struct arts_rdzv_landing_s *landing,
                                 uint64_t cv);
+/* home_cache non-NULL mints and attaches the next publish credit for
+ * releaser_rank (stable-buffer {addr, rkey} + a fresh rdzv txid); NULL (or a
+ * data-less / self-rank / single-rank ACK) sends a zero credit. */
 void arts_send_db_publish_ack(unsigned int releaser_rank, arts_guid_t db_guid,
-                                uint64_t cv);
+                                uint64_t cv, uint64_t version,
+                                struct arts_db_cache_s *home_cache);
+/* CREATE_RETURN — home -> remote creator after the home-side install: the
+ * creator's FIRST publish credit, so create -> write -> release needs no
+ * announce round.  Fire-and-forget hint; minting nothing (self-rank,
+ * single-rank, data-less DB) sends nothing and leaves the creator on the
+ * announce leg. */
+void arts_send_db_create_return(unsigned int creator_rank,
+                                struct arts_db_cache_s *home_cache);
 /* new_owner_rank: rank home selected as next owner; new_owner_rdzv: that
  * rank's transfer landing (from its queued request), forwarded so the current
  * holder can PUT the transfer payload directly (NULL = zero landing —
