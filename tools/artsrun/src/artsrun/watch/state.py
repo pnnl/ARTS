@@ -50,6 +50,7 @@ class CellView:
     status: Status = Status.PENDING
     rc: int | None = None
     wall_s: float = 0.0
+    e2e_s: float | None = None
     scalar: str | None = None
     note: str = ""
     extra: dict[str, str] = field(default_factory=dict)
@@ -237,6 +238,8 @@ class RunState:
                 view.status = Status.FAIL
             view.rc = int(row.get("rc", 0))
             view.wall_s = float(row.get("wall_s", 0.0))
+            raw_e2e = row.get("e2e_s")
+            view.e2e_s = float(raw_e2e) if raw_e2e is not None else None
             view.scalar = row.get("scalar")
             view.finished_at = when
         elif event == "skipped":
@@ -302,6 +305,7 @@ class RunState:
             view.status = result.status
             view.rc = rc
             view.wall_s = wall
+            view.e2e_s = result.e2e_s
             view.scalar = result.scalar
             view.note = result.note or view.note
             changed = True

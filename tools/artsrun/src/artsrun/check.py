@@ -42,6 +42,23 @@ def extract(text: str, marker: str, scalar_re: str) -> tuple[bool, str | None]:
     return True, "MATCHED"
 
 
+_E2E_RE = re.compile(r"^\[E2E\]\s+(\d+)\s*$", re.M)
+
+
+def extract_e2e(text: str) -> float | None:
+    """Seconds spanned by the runtime's own end-to-end marker, if printed.
+
+    The marker is rank 0's span from application start to shutdown
+    recognition, so it excludes runtime init and teardown by construction.
+    The last match wins: anything an application itself echoes earlier
+    cannot shadow the runtime's stamp at exit.
+    """
+    matches = _E2E_RE.findall(text)
+    if not matches:
+        return None
+    return int(matches[-1]) / 1e9
+
+
 def extract_extra(text: str, patterns: dict[str, str]) -> dict[str, str]:
     out = {}
     for name, pattern in patterns.items():
@@ -61,6 +78,7 @@ def apply_to(result: CellResult) -> CellResult:
     text = result.log_path.read_text(errors="replace")
     completed, scalar = extract(text, result.cell.app.marker, result.cell.app.scalar_re)
     result.scalar = scalar
+    result.e2e_s = extract_e2e(text)
     result.extra.update(extract_extra(text, result.cell.app.extra_scalars))
     if result.status is Status.OK and not completed:
         result.status = Status.FAIL

@@ -54,6 +54,22 @@ def test_a_pattern_without_a_group_is_a_completion_assertion():
 
 
 # --- voting ---------------------------------------------------------------
+def test_e2e_marker_is_parsed_in_seconds():
+    from artsrun.check import extract_e2e
+    assert extract_e2e("noise\n[E2E] 1500000000\n") == 1.5
+
+
+def test_e2e_last_marker_wins_and_absence_is_none():
+    from artsrun.check import extract_e2e
+    assert extract_e2e("[E2E] 1000000000\n[E2E] 2000000000\n") == 2.0
+    assert extract_e2e("no marker here\n") is None
+
+
+def test_e2e_marker_must_stand_alone_on_its_line():
+    from artsrun.check import extract_e2e
+    assert extract_e2e("app says [E2E] 5 things\n") is None
+
+
 def test_unanimous_results_all_pass():
     app = _app()
     groups = vote([_result(k, "1.0", app) for k in ("a", "b", "c")])

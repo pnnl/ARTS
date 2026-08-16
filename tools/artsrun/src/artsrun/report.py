@@ -18,7 +18,7 @@ from artsrun.run.types import CellResult, Skipped, Status
 
 RESULT_COLUMNS = [
     "app", "version", "nodes", "entry", "kind", "repeat",
-    "status", "rc", "wall_s", "scalar", "note", "log",
+    "status", "rc", "wall_s", "e2e_s", "scalar", "note", "log",
 ]
 
 # Display metadata for runtime series, carried into the report so a later
@@ -63,6 +63,7 @@ def _row(r: CellResult) -> dict:
         "status": r.status.value,
         "rc": r.rc,
         "wall_s": round(r.wall_s, 3),
+        "e2e_s": round(r.e2e_s, 3) if r.e2e_s is not None else "",
         "scalar": r.scalar or "",
         "note": r.note,
         "log": str(r.log_path) if r.log_path else "",
@@ -130,9 +131,14 @@ def consensus_table(groups: list[Group], plane: Plane, entries: list[str]) -> Ta
 
 
 def scaling_table(results: list[CellResult], entries: list[str]) -> Table:
-    """Wall time per node count, one row per (application, configuration)."""
+    """Measured time per node count, one row per (application, configuration).
+
+    The runtime's own end-to-end stamp (init and teardown excluded) is the
+    measurement; process wall is the fallback for a run that predates the
+    marker or never reached shutdown recognition.
+    """
     node_counts = sorted({r.cell.nodes for r in results})
-    table = Table(title="Strong scaling (wall seconds)", expand=False)
+    table = Table(title="Strong scaling (e2e seconds)", expand=False)
     table.add_column("app", style="bold")
     table.add_column("configuration")
     for n in node_counts:
@@ -142,10 +148,11 @@ def scaling_table(results: list[CellResult], entries: list[str]) -> Table:
     for r in results:
         if r.status is not Status.OK:
             continue
+        measured = r.e2e_s if r.e2e_s is not None else r.wall_s
         key = (r.cell.app.key, r.cell.entry.key)
         walls = by_key.setdefault(key, {})
         # Repeats collapse to their best observation.
-        walls[r.cell.nodes] = min(walls.get(r.cell.nodes, r.wall_s), r.wall_s)
+        walls[r.cell.nodes] = min(walls.get(r.cell.nodes, measured), measured)
 
     for (app_key, entry_key) in sorted(by_key):
         walls = by_key[(app_key, entry_key)]

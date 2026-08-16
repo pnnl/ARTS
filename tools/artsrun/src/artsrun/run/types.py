@@ -70,6 +70,7 @@ class CellResult:
     status: Status
     rc: int = 0
     wall_s: float = 0.0
+    e2e_s: float | None = None
     log_path: Path | None = None
     scalar: str | None = None
     extra: dict[str, str] = field(default_factory=dict)

@@ -110,6 +110,11 @@ def build_command(cell: Cell, profile: Profile) -> list[str]:
 
 def build_env(cell: Cell, profile: Profile) -> dict[str, str]:
     env = dict(cell.env)
+    # All three runtimes carry the same env-gated end-to-end stamp — rank 0
+    # prints "[E2E] <ns>" spanning application start to shutdown recognition
+    # (runtime init and teardown excluded on both ends) — so every cell asks
+    # for it and the log parse turns it into the cell's measured time.
+    env["ARTS_E2E_MARKER"] = "1"
     if cell.entry.kind is RuntimeKind.ARTS and cell.cfg:
         env["ARTS_CONFIG"] = str(cell.cfg)
     elif cell.entry.kind is RuntimeKind.OCRVX:

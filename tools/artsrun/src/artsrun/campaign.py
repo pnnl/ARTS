@@ -237,6 +237,8 @@ class Campaign:
                 "wall_s": round(result.wall_s, 3),
                 "note": result.note,
             }
+            if result.e2e_s is not None:
+                row["e2e_s"] = round(result.e2e_s, 3)
             if result.scalar is not None:
                 row["scalar"] = result.scalar
             if result.extra:
@@ -244,8 +246,10 @@ class Campaign:
             track.write(json.dumps(row) + "\n")
             track.flush()
             if kind == "finished" and announce_cells:
-                say(f"[{result.status.value}] {result.cell.key} "
-                    f"({result.wall_s:.1f}s)")
+                timing = (f"{result.e2e_s:.1f}s e2e, {result.wall_s:.1f}s wall"
+                          if result.e2e_s is not None
+                          else f"{result.wall_s:.1f}s")
+                say(f"[{result.status.value}] {result.cell.key} ({timing})")
 
         backend = self.backend()
         self._backend = backend
