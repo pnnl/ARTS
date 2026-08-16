@@ -108,6 +108,19 @@ def build_command(cell: Cell, profile: Profile) -> list[str]:
     return [binary, *cell.args]
 
 
+def with_post_verify(argv: list[str], cell: Cell) -> list[str]:
+    """Chain the application's declared verifier behind the run.
+
+    `&&` keeps both exit statuses honest: the binary's failure propagates
+    untouched, and a verifier failure fails the cell the same way.  The
+    shell runs in the cell's working directory, where the run's output
+    files land."""
+    hook = cell.app.post_verify
+    if not hook:
+        return argv
+    return ["sh", "-c", f"{render(argv)} && {{ {hook} ; }}"]
+
+
 def build_env(cell: Cell, profile: Profile) -> dict[str, str]:
     env = dict(cell.env)
     # All three runtimes carry the same env-gated end-to-end stamp — rank 0

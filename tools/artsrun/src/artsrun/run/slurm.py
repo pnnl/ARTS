@@ -20,7 +20,7 @@ from pathlib import Path
 from artsrun.model.plane import RuntimeKind
 from artsrun.model.profile import Profile
 from artsrun.paths import scratch_dir
-from artsrun.run.command import build_command, build_env, render
+from artsrun.run.command import build_command, build_env, render, with_post_verify
 from artsrun.run.types import Cell, CellResult, Status
 
 _JOB_ID = re.compile(r"(\d+)")
@@ -102,7 +102,7 @@ def _launch(cell: Cell, profile: Profile) -> str:
     srun a second time would start a copy of mpirun on every node, each one
     spawning its own full set of ranks.
     """
-    argv = build_command(cell, profile)
+    argv = with_post_verify(build_command(cell, profile), cell)
     if cell.entry.kind is RuntimeKind.ARTS:
         return f"srun --ntasks-per-node=1 -N {cell.nodes} {render(argv)}"
     return render(argv)

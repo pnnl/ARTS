@@ -30,8 +30,7 @@ data-movement stress at the same time.
 | `--ds` | matrix size (rows = cols); `t = ds/ts` tiles per dimension | required | ✓ `getopt_long` in `mainEdt`, `atoi` |
 | `--ts` | tile size (each tile is `ts×ts` doubles) | required | ✓ same |
 | `--fi` | input matrix, whitespace-separated text, read via `fscanf` | none (alternative to `--fib`) | ✓; **no size validation** — see below |
-| `--fib` | input matrix, raw row-major doubles, `mmap`ed | none | ✓; strictly validates file size `== ds²·8` bytes, aborts cleanly on mismatch |
-| `--convert <in> <out>` | rewrite a `--fi`-style text matrix into `--fib` binary, then exit | n/a | ✓ standalone utility mode — builds no DAG |
+| `--fib` | input matrix as the tile-stream binary (`convertData`'s output: lower-triangular tiles in `(i, j≤i)` order, `ts²` doubles each, host order) | none | ✓; strictly validates file size `== t(t+1)/2·ts²·8` bytes, aborts cleanly on mismatch; streams tiles straight into their datablocks — no whole-matrix host buffer |
 | `--ps` | print a status line per kernel EDT to stdout | `0` (off) | ✓ `atoi`; pure stdout verbosity, no DAG effect |
 | `--ol` | output selection 0–5 (stdout / text file / binary file / both / binary+timing-CSV) | `2` (binary file `cholesky.out`) | ✓ `atoi`; consumed only by `wrap_up_task`, no DAG-shape effect |
 
@@ -45,8 +44,13 @@ this is multinode-safe by construction.
 numbers than `ds²` leaves the tail of the (unzeroed) `malloc`'d matrix as
 garbage with no error; a *longer* file silently has its extra numbers
 ignored. The binary (`--fib`) reader is the opposite: `fstat` must match
-`ds²·8` bytes exactly, else the run aborts with a clean message before
-building any EDTs. The catalog uses `--fi`, the unvalidated path.
+the tile stream's exact byte count, else the run aborts with a clean
+message before building any EDTs — and because the tile size shapes the
+stream, a `.bin` baked for one `ts` is rejected under another. The catalog
+uses `--fi` for the correctness cell and the tile stream for the perf
+cells; the standalone `convertData`/`convertOut` tools (built as
+`cholesky_convertData`/`cholesky_convertOut`) convert a text matrix into
+the stream and the binary result file back into text.
 
 ## Structure
 

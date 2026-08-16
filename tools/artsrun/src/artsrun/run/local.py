@@ -13,7 +13,8 @@ from pathlib import Path
 
 from artsrun.model.profile import Profile
 from artsrun.paths import scratch_dir
-from artsrun.run.command import build_command, build_env, render, with_timeout
+from artsrun.run.command import (build_command, build_env, render,
+                                 with_post_verify, with_timeout)
 from artsrun.run.types import Cell, CellResult, Status
 
 TIMEOUT_RC = 124
@@ -60,7 +61,9 @@ class LocalBackend:
         return 1
 
     def submit(self, cell: Cell) -> CellResult:
-        argv = with_timeout(build_command(cell, self.profile), cell.timeout_s)
+        argv = with_timeout(
+            with_post_verify(build_command(cell, self.profile), cell),
+            cell.timeout_s)
         env = os.environ.copy()
         env.update(build_env(cell, self.profile))
         log_path = self.log_dir / cell.log_name

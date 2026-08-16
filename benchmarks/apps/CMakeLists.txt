@@ -490,6 +490,17 @@ add_benchmark_app(NAME cholesky
     OPTIMIZED_PLACEMENT
 )
 
+# The app tree's standalone input/output converters — plain host C, no OCR.
+# convertData turns a whitespace-text matrix into the tile-stream binary the
+# app's --fib path (and the TG build) reads; convertOut turns the app's
+# binary result file back into readable text.
+add_executable(cholesky_convertData
+    "${OCR_APPS_ROOT}/cholesky/ocr/convertData.c")
+add_executable(cholesky_convertOut
+    "${OCR_APPS_ROOT}/cholesky/ocr/convertOut.c")
+set_target_properties(cholesky_convertData cholesky_convertOut PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+
 # Tiled Cholesky whose per-tile kernels are the standard CBLAS/LAPACKE calls
 # (dpotrf/dtrsm/dsyrk/dgemm), served by the third_party OpenBLAS submodule.
 add_benchmark_app(NAME cholesky_blas
@@ -911,7 +922,12 @@ add_benchmark_app(NAME LCS_all_db_distributed
 
 set(SAR_ROOT "${OCR_APPS_ROOT}/sar")
 set(SAR_SRC_DIR "${SAR_ROOT}/ocr/src")
-set(SAR_DATASETS_DIR "${SAR_ROOT}/datasets")
+# Embedded-size datagen output lives in the BUILD tree: these bytes exist
+# only to be assembled into the sar_<size> binaries (compile-time data), so
+# they are build material with build-tree lifecycle — never generated into
+# the application submodule.  Runtime-input datasets (sar-huge) live under
+# the repo datasets/ root instead.
+set(SAR_DATASETS_DIR "${CMAKE_CURRENT_BINARY_DIR}/sar_datasets")
 set(CRLIBM_PKG_DIR "${OCR_LIBS_ROOT}/crlibm-1.0beta5")
 set(CRLIBM_TARBALL "${CRLIBM_PKG_DIR}/tar/crlibm-1.0beta5.tgz")
 set(CRLIBM_DIR "${CMAKE_CURRENT_BINARY_DIR}/crlibm")
@@ -1127,9 +1143,9 @@ if(HAS_CRLIBM)
         set(_ocr_size_dir "${SAR_ROOT}/ocr/${sar_size}")
         set(_data_build_dir "${CMAKE_CURRENT_BINARY_DIR}/sar_data/${sar_size}")
         set(_datasets_dir "${SAR_DATASETS_DIR}/${sar_size}")
-        set(_prebuilt_dir "${_datasets_dir}/x86")
 
         file(MAKE_DIRECTORY "${_data_build_dir}")
+        file(MAKE_DIRECTORY "${_datasets_dir}")
 
         set(_data_names Data PlatformPosition PulseTransmissionTime)
         set(_data_objects "")
@@ -1161,51 +1177,26 @@ if(HAS_CRLIBM)
         foreach(_name ${_data_names})
             set(_build_o "${_data_build_dir}/${_name}.o")
 
-            if(EXISTS "${_prebuilt_dir}/${_name}.o")
-                # Case 1: Pre-built .o exists → copy to build directory
-                add_custom_command(
-                    OUTPUT "${_build_o}"
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        "${_prebuilt_dir}/${_name}.o" "${_build_o}"
-                    DEPENDS "${_prebuilt_dir}/${_name}.o"
-                    COMMENT "SAR: Copying pre-built ${sar_size}/${_name}.o"
-                )
-            elseif(EXISTS "${_prebuilt_dir}/${_name}.c")
-                # Case 2: .c exists but .o missing → compile once, cache to datasets dir
-                message(STATUS "SAR: ${sar_size}/${_name}.o missing — will compile from .c (one-time)")
-                add_custom_command(
-                    OUTPUT "${_build_o}"
-                    COMMAND ${CMAKE_C_COMPILER} -std=c11 -O0 -c
-                        -o "${_build_o}" "${_prebuilt_dir}/${_name}.c"
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        "${_build_o}" "${_prebuilt_dir}/${_name}.o"
-                    DEPENDS "${_prebuilt_dir}/${_name}.c"
-                    COMMENT "SAR: Compiling ${sar_size}/${_name}.c → .o (one-time, caching to datasets dir)..."
-                )
-            else()
-                # Case 3: No prebuilt files → emit .S via .incbin and
-                # assemble.  This path uses ~0 KB of compiler memory
-                # because the assembler embeds the bytes directly,
-                # bypassing the cc1 OOM that sar_dataImage's gigantic
-                # C-source output triggers on medium/large datasets.
-                set(_build_S "${_data_build_dir}/${_name}.S")
-                add_custom_command(
-                    OUTPUT "${_build_S}"
-                    COMMAND sh "${_sar_incbin_script}"
+            # Emit .S via .incbin and assemble: the assembler embeds the
+            # bytes in O(1) memory, bypassing the cc1 OOM that a giant
+            # C-array source triggers on the medium/large datasets.
+            set(_build_S "${_data_build_dir}/${_name}.S")
+            add_custom_command(
+                OUTPUT "${_build_S}"
+                COMMAND sh "${_sar_incbin_script}"
+                    "${_datasets_dir}/${_name}.bin"
+                    "${_build_S}"
+                    "${_sym_prefix_${_name}}"
+                DEPENDS "${_sar_incbin_script}"
                         "${_datasets_dir}/${_name}.bin"
-                        "${_build_S}"
-                        "${_sym_prefix_${_name}}"
-                    DEPENDS "${_sar_incbin_script}"
-                            "${_datasets_dir}/${_name}.bin"
-                    COMMENT "SAR: Generating ${sar_size}/${_name}.S (.incbin wrapper)..."
-                )
-                add_custom_command(
-                    OUTPUT "${_build_o}"
-                    COMMAND ${CMAKE_C_COMPILER} -c -o "${_build_o}" "${_build_S}"
-                    DEPENDS "${_build_S}"
-                    COMMENT "SAR: Assembling ${sar_size}/${_name}.S → .o..."
-                )
-            endif()
+                COMMENT "SAR: Generating ${sar_size}/${_name}.S (.incbin wrapper)..."
+            )
+            add_custom_command(
+                OUTPUT "${_build_o}"
+                COMMAND ${CMAKE_C_COMPILER} -c -o "${_build_o}" "${_build_S}"
+                DEPENDS "${_build_S}"
+                COMMENT "SAR: Assembling ${sar_size}/${_name}.S -> .o..."
+            )
 
             list(APPEND _data_objects "${_build_o}")
         endforeach()

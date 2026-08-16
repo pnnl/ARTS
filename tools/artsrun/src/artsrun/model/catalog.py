@@ -103,6 +103,13 @@ class AppEntry(BaseModel):
     restructured_as: str | None = None
     restructured_from: str | None = None
 
+    # Optional post-run verifier: a shell command run in the cell's working
+    # directory after the binary exits 0 (chained with &&, so its exit status
+    # fails the cell through the ordinary rc plumbing).  {repo} expands like
+    # every other catalog path.  Declarative on purpose: each application
+    # registers a command, not code.
+    post_verify: str | None = None
+
     default_enabled: bool = True
     # An application whose correctness depends on semantics the runtime
     # deliberately does not implement.  It stays a visible row — the doc and

@@ -29,9 +29,9 @@ apps:
     scalar_re: 'BASICIO_CHK\s+(\d+)'
     scalar_kind: int
     expect: '1'
-    expect_args: ['0', '10', '{repo}/scratch/basicIO_test.dat']
-    args: ['0', '10', '{repo}/scratch/basicIO_test.dat']
-    fixtures: ['{repo}/scratch/basicIO_test.dat']
+    expect_args: ['0', '10', '{repo}/datasets/basicIO/basicIO_test.dat']
+    args: ['0', '10', '{repo}/datasets/basicIO/basicIO_test.dat']
+    fixtures: ['{repo}/datasets/basicIO/basicIO_test.dat']
     default_enabled: false
 
   cache_offset:
@@ -55,9 +55,12 @@ apps:
     scalar_re: 'CHOLESKY trace\s*=\s*([0-9.eE+-]+)'
     tolerance: 1e-09
     expect: '50'
-    expect_args: ['--ds', '50', '--ts', '10', '--fi', '{repo}/scratch/cholesky_input.mat']
-    args: ['--ds', '5000', '--ts', '100', '--fi', '{repo}/scratch/cholesky_perf5k.mat']
-    fixtures: ['{repo}/scratch/cholesky_perf5k.mat']
+    expect_args: ['--ds', '50', '--ts', '10', '--fi', '{repo}/datasets/cholesky/cholesky_input.mat']
+    # Perf input rides the tile-stream binary: parsing 25M text numbers is an
+    # arm-neutral constant, but it still pads every cell's absolute time.
+    # The tile size is part of the stream layout, hence part of the name.
+    args: ['--ds', '5000', '--ts', '100', '--fib', '{repo}/datasets/cholesky/cholesky_perf5k_ts100.bin']
+    fixtures: ['{repo}/datasets/cholesky/cholesky_input.mat', '{repo}/datasets/cholesky/cholesky_perf5k_ts100.bin']
     optimized: true
 
   cholesky_blas:
@@ -67,8 +70,10 @@ apps:
     marker: 'CHOLESKY trace'
     scalar_re: 'CHOLESKY trace\s*=\s*([0-9.eE+-]+)'
     tolerance: 1e-09
-    args: ['--ds', '7500', '--ts', '100', '--fi', '{repo}/scratch/cholesky_perf7k5.mat']
-    fixtures: ['{repo}/scratch/cholesky_perf7k5.mat']
+    # The BLAS port has no tile-stream reader (separate source); it stays on
+    # the text path.
+    args: ['--ds', '7500', '--ts', '100', '--fi', '{repo}/datasets/cholesky/cholesky_perf7k5.mat']
+    fixtures: ['{repo}/datasets/cholesky/cholesky_perf7k5.mat']
     optimized: true
 
   CoMD_intel_chandra:

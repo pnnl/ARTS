@@ -39,6 +39,7 @@ class ResolvedApp(BaseModel):
     args: list[str] = Field(default_factory=list)
     args_by_nodes: dict[int, list[str]] = Field(default_factory=dict)
     unsupported: str | None = None
+    post_verify: str | None = None
     multinode_skip: str | None = None
     ocrvx_skip: bool = False
     fixtures: list[str] = Field(default_factory=list)
@@ -141,6 +142,7 @@ class Benchset(BaseModel):
                         args=args,
                         args_by_nodes=args_by_nodes,
                         unsupported=app.unsupported,
+                        post_verify=source.post_verify,
                         multinode_skip=source.multinode_skip,
                         ocrvx_skip=source.ocrvx_skip,
                         fixtures=source.fixtures,
