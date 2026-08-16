@@ -123,9 +123,6 @@ enum arts_msg_type {
                            the final PUBLISH carrying the txid. */
   MSG_DB_EXCL_CTS,      /* RWLOCK home → requester: db_size for a first-touch
                            LOCK_REQUEST that carried no landing. */
-  MSG_RDZV_PUSH_RTS,    /* generic push (satisfy/memory-move) sender → target:
-                           "size bytes incoming, advertise me a landing". */
-  MSG_RDZV_PUSH_CTS,    /* target → sender: the landing for that push. */
 
   /* MSI-protocol coherence messages.  Only sent/received in
    * ARTS_COHERENCE_PROTOCOL=MSI builds; the dispatcher's MSI cases are
@@ -167,18 +164,13 @@ struct ARTS_PACKED arts_msg_guid_only_packet_s {
   arts_guid_t guid;
 };
 
-/* EDT/EVENT memory move (MSG_EDT_CREATE / MSG_EVENT_CREATE): the object blob
- * either trails the header inline (wire total within the control ceiling) or
- * travels by the generic push rendezvous — rdzv_txid pairs the packet with
- * the write completion, rdzv_cookie names the target-local landing (echoed
- * from RDZV_PUSH_CTS), rdzv_size counts the landed bytes (the inline case
- * derives the size from header.size instead and leaves these 0). */
-struct ARTS_PACKED arts_msg_memory_move_packet_s {
+/* Object blob move (MSG_EDT_CREATE / MSG_EVENT_CREATE): the serialized object
+ * trails the header inline, and the receiver derives its length from
+ * header.size.  Control messages are two-sided at every size — the provider
+ * tiers them internally — so there is no landing to name here. */
+struct ARTS_PACKED arts_msg_object_blob_packet_s {
   struct arts_msg_header_s header;
   arts_guid_t guid;
-  uint64_t rdzv_txid;
-  uint64_t rdzv_cookie;
-  uint64_t rdzv_size;
 };
 
 struct ARTS_PACKED arts_msg_add_dependence_packet_s {
@@ -485,26 +477,6 @@ struct ARTS_PACKED arts_msg_db_create_return_packet_s {
   uint64_t credit_addr;
   uint64_t credit_rkey;
   uint64_t credit_txid;
-};
-
-/* ===== Generic push rendezvous (memory-move oversize payloads) =============
- * A sender that holds a bulk payload the receiver did not ask for (EDT/event
- * moves) cannot PUT until the receiver advertises a
- * landing.  RTS carries the byte count and the sender's opaque continuation
- * handle; CTS echoes it with a fresh landing (a plain registered-pool
- * allocation on the target, named by landing.cookie); the sender then PUTs
- * and sends the original message with {rdzv_txid, rdzv_cookie} instead of an
- * inline payload. */
-struct ARTS_PACKED arts_msg_rdzv_push_rts_packet_s {
-  struct arts_msg_header_s header;
-  uint64_t size;        /* payload bytes the sender wants to PUT */
-  uint64_t push_cookie; /* sender-local continuation handle, echoed in CTS */
-};
-
-struct ARTS_PACKED arts_msg_rdzv_push_cts_packet_s {
-  struct arts_msg_header_s header;
-  uint64_t push_cookie; /* echoed verbatim from the RTS */
-  struct arts_msg_rdzv_landing_s landing;
 };
 
 #ifdef ARTS_PROTOCOL_EXCL

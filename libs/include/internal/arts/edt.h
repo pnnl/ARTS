@@ -66,9 +66,10 @@ void arts_handler_edt_satisfy_slot(void *item, void *args);
 void arts_handler_edt_destroy(void *item, void *args);
 
 /* Cross-rank wire TX/RX for EDT create + slot satisfy.
- * arts_send_memory_move is the generic create-marshaller (also used by the
- * event-create path), so it lives here and is declared for that caller. */
-void arts_send_memory_move(unsigned int rank, arts_guid_t guid, void *ptr,
+ * arts_send_object_blob ships a serialized object (EDT or event) to a rank as
+ * one two-sided message; the event-create path shares it, so it is declared
+ * here for that caller. */
+void arts_send_object_blob(unsigned int rank, arts_guid_t guid, void *ptr,
                            unsigned int mem_size, unsigned message_type,
                            void (*free_method)(void *));
 void arts_handler_edt_create(void *ptr);

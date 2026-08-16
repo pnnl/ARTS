@@ -169,20 +169,6 @@ bool arts_net_rdzv_local(const void *p, uint64_t len, uint64_t *raddr,
  * one expectation per txid. */
 void arts_net_rdzv_expect(uint64_t txid, void (*on_data)(void *), void *arg);
 
-/* Generic push rendezvous — sender side.  Used when a bulk payload must reach
- * a peer that did not ask for it (EDT/event moves) and
- * the wire total would exceed the control ceiling: sends RDZV_PUSH_RTS(size),
- * and on the peer's CTS PUTs the payload into the advertised landing, patches
- * {rdzv_txid, rdzv_cookie(, rdzv_size)} into the retained control packet by
- * message type, and sends it.  `free_method` (may be NULL) releases `payload`
- * once the PUT's local completion fires.  Defined in dispatcher.c with the
- * matching RX sides. */
-void arts_transport_send_pushed_payload(int rank,
-                                        const struct arts_msg_header_s *packet,
-                                        unsigned int packet_len, char *payload,
-                                        uint64_t size,
-                                        void (*free_method)(void *));
-
 /* One-sided PUT of `len` bytes from the registered buffer `src` into the
  * peer's advertised landing {raddr, rkey}, delivering `txid` as the immediate.
  * `on_local_done(arg)` runs once the provider no longer reads `src` (local

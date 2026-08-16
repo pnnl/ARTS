@@ -109,6 +109,7 @@ set(TEST_PROGRAMS
     record_dep_at
     utility_api
     multinode_edt
+    edt_create_oversize_guard
     finish_event_mn_termination
     multinode_event
     multinode_coherence
@@ -754,6 +755,11 @@ set_tests_properties(finish_event_stress_2n PROPERTIES
 # --- Multi-node tests ---
 
 register_multinode_test(multinode_edt)
+# The guard aborts the run by design, so the message is the verdict and
+# the exit status is not; one node shape states it as well as four.
+register_multinode_test(edt_create_oversize_guard VARIANTS 2n TIMEOUT 60)
+set_tests_properties(edt_create_oversize_guard_2n PROPERTIES
+    PASS_REGULAR_EXPRESSION "over the [0-9]+-byte control-message bound")
 register_multinode_test(finish_event_mn_termination)
 register_multinode_test(multinode_event)
 register_multinode_test(active_message_db ARGS 64)

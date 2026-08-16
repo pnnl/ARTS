@@ -113,21 +113,19 @@ _Static_assert(MSG_DB_GRANT_CTS == 31,
 _Static_assert(MSG_DB_PUBLISH_CTS == 32,
                "ordinal MSG_DB_PUBLISH_CTS drifted");
 _Static_assert(MSG_DB_EXCL_CTS == 33, "ordinal MSG_DB_EXCL_CTS drifted");
-_Static_assert(MSG_RDZV_PUSH_RTS == 34, "ordinal MSG_RDZV_PUSH_RTS drifted");
-_Static_assert(MSG_RDZV_PUSH_CTS == 35, "ordinal MSG_RDZV_PUSH_CTS drifted");
-_Static_assert(MSG_DB_INV_REQUEST == 36, "ordinal MSG_DB_INV_REQUEST drifted");
-_Static_assert(MSG_DB_INV_CTS == 37, "ordinal MSG_DB_INV_CTS drifted");
-_Static_assert(MSG_DB_INV_DELIVER == 38, "ordinal MSG_DB_INV_DELIVER drifted");
-_Static_assert(MSG_DB_INV_INVALIDATE == 39,
+_Static_assert(MSG_DB_INV_REQUEST == 34, "ordinal MSG_DB_INV_REQUEST drifted");
+_Static_assert(MSG_DB_INV_CTS == 35, "ordinal MSG_DB_INV_CTS drifted");
+_Static_assert(MSG_DB_INV_DELIVER == 36, "ordinal MSG_DB_INV_DELIVER drifted");
+_Static_assert(MSG_DB_INV_INVALIDATE == 37,
                "ordinal MSG_DB_INV_INVALIDATE drifted");
-_Static_assert(MSG_DB_INV_INVALIDATE_ACK == 40,
+_Static_assert(MSG_DB_INV_INVALIDATE_ACK == 38,
                "ordinal MSG_DB_INV_INVALIDATE_ACK drifted");
-_Static_assert(MSG_DB_INV_REDIRECT == 41,
+_Static_assert(MSG_DB_INV_REDIRECT == 39,
                "ordinal MSG_DB_INV_REDIRECT drifted");
-_Static_assert(MSG_DB_CREATE_RETURN == 42,
+_Static_assert(MSG_DB_CREATE_RETURN == 40,
                "MSG_DB_CREATE_RETURN ordinal moved");
-_Static_assert(MSG_COUNT == 43,
-               "MSG_COUNT drifted (wire-compat: must be 43 in all configs)");
+_Static_assert(MSG_COUNT == 41,
+               "MSG_COUNT drifted (wire-compat: must be 41 in all configs)");
 
 /* ===== (2) header layout — read before the message type is known. ===== */
 _Static_assert(offsetof(struct arts_msg_header_s, message_type) == 0,
@@ -161,8 +159,8 @@ _Static_assert(sizeof(struct arts_msg_header_s) == 16, "header size drifted");
 #ifndef SEQUENCENUMBERS
 _Static_assert(sizeof(struct arts_msg_guid_only_packet_s) == 24,
                "guid_only sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_memory_move_packet_s) == 48,
-               "memory_move sizeof drifted");
+_Static_assert(sizeof(struct arts_msg_object_blob_packet_s) == 24,
+               "object_blob sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_add_dependence_packet_s) == 40,
                "add_dependence sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_edt_satisfy_slot_packet_s) == 40,
@@ -207,10 +205,6 @@ _Static_assert(sizeof(struct arts_msg_grant_cts_packet_s) == 32,
                "ownership_cts sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_publish_cts_packet_s) == 64,
                "publish_cts sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_rdzv_push_rts_packet_s) == 32,
-               "rdzv_push_rts sizeof drifted");
-_Static_assert(sizeof(struct arts_msg_rdzv_push_cts_packet_s) == 56,
-               "rdzv_push_cts sizeof drifted");
 _Static_assert(sizeof(struct arts_msg_grant_confirm_packet_s) == 32,
                "ownership_confirm sizeof drifted");
 #ifdef ARTS_PROTOCOL_EXCL

@@ -242,9 +242,20 @@ bool arts_edt_create_core(struct arts_edt_s *edt, arts_guid_kind_t guid_kind,
             (void *)func_ptr);
 
   if (rank != arts_global_rank_id) {
-    /* Remote EDT: serialise and send to the target node. */
+    /* Remote EDT: serialise and send to the target node.  A task's
+     * serialized form is the one control message whose size the PROGRAM
+     * chooses, so the bound is stated here, where the counts that set it are
+     * in scope — the transport's own ceiling would report only bytes. */
+    uint64_t wire_total =
+        sizeof(struct arts_msg_object_blob_packet_s) + arts_edt_total_size(edt);
+    if (wire_total > ARTS_NET_MSG_MAX) {
+      ARTS_ERROR("EDT[Guid:%lu] paramc=%u depc=%u serializes to %llu bytes, "
+                 "over the %llu-byte control-message bound",
+                 *guid, paramc, depc, (unsigned long long)wire_total,
+                 (unsigned long long)ARTS_NET_MSG_MAX);
+    }
     ARTS_INFO("EDT[Guid:%lu] remote move to rank %u", *guid, rank);
-    arts_send_memory_move(rank, *guid, (void *)edt,
+    arts_send_object_blob(rank, *guid, (void *)edt,
                           (unsigned int)arts_edt_total_size(edt),
                           MSG_EDT_CREATE, arts_free);
   } else {
@@ -597,40 +608,25 @@ void arts_gpu_signal_edt_memset(arts_guid_t edt_guid, uint32_t slot,
 }
 #endif /* ARTS_USE_GPU */
 
-void arts_send_memory_move(unsigned int rank, arts_guid_t guid, void *ptr,
+void arts_send_object_blob(unsigned int rank, arts_guid_t guid, void *ptr,
                            unsigned int mem_size, unsigned message_type,
                            void (*free_method)(void *)) {
   TIME_REMOTE_MOVE_START();
-  struct arts_msg_memory_move_packet_s packet;
+  struct arts_msg_object_blob_packet_s packet;
   packet.guid = guid;
-  packet.rdzv_txid = 0;
-  packet.rdzv_cookie = 0;
-  packet.rdzv_size = 0;
-  uint64_t total = sizeof(packet) + mem_size;
-  if (total > ARTS_NET_MSG_MAX) {
-    /* Oversized object blob: travels by the generic push rendezvous (the
-     * caller's completion-gated free_method transfers to the PUT's local
-     * completion — no staging copy needed). */
-    arts_fill_packet_header(&packet.header, sizeof(packet), message_type);
-    arts_transport_send_pushed_payload((int)rank, &packet.header,
-                                       sizeof(packet), (char *)ptr, mem_size,
-                                       free_method);
-  } else {
-    arts_fill_packet_header(&packet.header, total, message_type);
-    arts_transport_send_payload_async_free((int)rank, (char *)&packet,
-                                           sizeof(packet), (char *)ptr, 0,
-                                           mem_size, free_method);
-  }
-  /* route_table slot now persists; Lifecycle redesign is follow-up work. */
-  (void)guid;
+  arts_fill_packet_header(&packet.header, sizeof(packet) + mem_size,
+                          message_type);
+  arts_transport_send_payload_async_free((int)rank, (char *)&packet,
+                                         sizeof(packet), (char *)ptr, 0,
+                                         mem_size, free_method);
   TIME_REMOTE_MOVE_STOP();
 }
 
 void arts_handler_edt_create(void *ptr) {
-  struct arts_msg_memory_move_packet_s *packet =
-      (struct arts_msg_memory_move_packet_s *)ptr;
+  struct arts_msg_object_blob_packet_s *packet =
+      (struct arts_msg_object_blob_packet_s *)ptr;
   uint64_t size =
-      packet->header.size - sizeof(struct arts_msg_memory_move_packet_s);
+      packet->header.size - sizeof(struct arts_msg_object_blob_packet_s);
   struct arts_edt_s *edt =
       (struct arts_edt_s *)arts_malloc_aligned(size, ARTS_CACHE_LINE_SIZE);
 

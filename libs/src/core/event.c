@@ -211,7 +211,7 @@ static bool event_install(arts_guid_t *guid, const arts_event_hint_t *h_in) {
   if (*guid == NULL_GUID) {
     *guid = arts_guid_create_for_rank(rank, ARTS_GUID_EVENT);
   }
-  arts_send_memory_move(rank, *guid, event, sizeof(*event), MSG_EVENT_CREATE,
+  arts_send_object_blob(rank, *guid, event, sizeof(*event), MSG_EVENT_CREATE,
                         arts_event_deleter);
   return true;
 }
@@ -634,10 +634,10 @@ void arts_send_event_add_dependence(arts_guid_t source, arts_guid_t destination,
 }
 
 void arts_handler_event_create(void *ptr) {
-  struct arts_msg_memory_move_packet_s *packet =
-      (struct arts_msg_memory_move_packet_s *)ptr;
+  struct arts_msg_object_blob_packet_s *packet =
+      (struct arts_msg_object_blob_packet_s *)ptr;
   uint64_t size =
-      packet->header.size - sizeof(struct arts_msg_memory_move_packet_s);
+      packet->header.size - sizeof(struct arts_msg_object_blob_packet_s);
 
   struct arts_event_s *mem_packet =
       (struct arts_event_s *)arts_malloc_aligned(size, ARTS_CACHE_LINE_SIZE);

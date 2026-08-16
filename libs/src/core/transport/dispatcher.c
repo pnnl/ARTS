@@ -106,119 +106,6 @@ void arts_transport_setup(struct arts_config_s *config) {
 #endif
 }
 
-/* ===== Generic push rendezvous ==============================================
- * Sender side: a bulk payload the receiver did not ask for (EDT/event
- * moves) whose wire total would breach the control ceiling.
- * RTS announces the size; the target allocates a plain registered landing and
- * replies CTS; the sender PUTs, patches {rdzv_txid, rdzv_cookie(, rdzv_size)}
- * into the retained control packet by message type, and sends it; the target
- * pairs {packet, write completion} and re-enters the normal handler with the
- * landed bytes. */
-
-struct rdzv_push_ctx_s {
-  int rank;
-  char *payload;
-  uint64_t size;
-  void (*free_method)(void *);
-  unsigned int packet_len;
-  /* packet bytes follow inline */
-};
-
-/* PUT local-completion hook: run the caller's completion-gated free. */
-static void rdzv_push_src_done(void *arg) {
-  struct rdzv_push_ctx_s *ctx = (struct rdzv_push_ctx_s *)arg;
-  if (ctx->free_method != NULL) {
-    ctx->free_method(ctx->payload);
-  }
-  arts_free(ctx);
-}
-
-void arts_transport_send_pushed_payload(int rank,
-                                        const struct arts_msg_header_s *packet,
-                                        unsigned int packet_len, char *payload,
-                                        uint64_t size,
-                                        void (*free_method)(void *)) {
-  /* Mirror the public wrappers' self/out-of-range warn-drop BEFORE retaining
-   * state: a dropped RTS would otherwise strand the ctx and the payload (the
-   * completion-gated free only runs on the CTS round-trip). */
-  if ((unsigned int)rank == arts_global_rank_id ||
-      (unsigned int)rank >= arts_global_rank_count) {
-    ARTS_WARN("Cannot push to rank %u (self=%u, total=%u)", (unsigned int)rank,
-              arts_global_rank_id, arts_global_rank_count);
-    if (free_method != NULL) {
-      free_method(payload);
-    }
-    return;
-  }
-  struct rdzv_push_ctx_s *ctx = (struct rdzv_push_ctx_s *)arts_malloc(
-      sizeof(struct rdzv_push_ctx_s) + packet_len);
-  ctx->rank = rank;
-  ctx->payload = payload;
-  ctx->size = size;
-  ctx->free_method = free_method;
-  ctx->packet_len = packet_len;
-  memcpy(ctx + 1, packet, packet_len);
-  struct arts_msg_rdzv_push_rts_packet_s rts;
-  arts_fill_packet_header(&rts.header, sizeof(rts), MSG_RDZV_PUSH_RTS);
-  rts.size = size;
-  rts.push_cookie = (uint64_t)(uintptr_t)ctx;
-  arts_transport_send_async(rank, (char *)&rts, sizeof(rts));
-}
-
-/* Target-side continuation: the pushed bytes fully landed; rebuild the
- * contiguous (packet + payload) image the normal handlers expect, dispatch
- * it, and free the landing. */
-struct rdzv_push_landed_ctx_s {
-  char *landing;
-  uint64_t size;
-  unsigned int packet_len;
-  /* control-packet bytes follow inline */
-};
-
-static void rdzv_push_landed_cb(void *arg) {
-  struct rdzv_push_landed_ctx_s *ctx = (struct rdzv_push_landed_ctx_s *)arg;
-  struct arts_msg_header_s *hdr = (struct arts_msg_header_s *)(ctx + 1);
-  uint64_t total = (uint64_t)ctx->packet_len + ctx->size;
-  char *rebuilt = (char *)arts_malloc((size_t)total);
-  memcpy(rebuilt, hdr, ctx->packet_len);
-  memcpy(rebuilt + ctx->packet_len, ctx->landing, (size_t)ctx->size);
-  struct arts_msg_header_s *rh = (struct arts_msg_header_s *)rebuilt;
-  rh->size = total; /* the handlers derive the blob size from header.size */
-  /* Strip the pairing marks so the re-entry takes the inline arm. */
-  switch (rh->message_type) {
-  case MSG_EDT_CREATE:
-  case MSG_EVENT_CREATE: {
-    struct arts_msg_memory_move_packet_s *mp =
-        (struct arts_msg_memory_move_packet_s *)rebuilt;
-    mp->rdzv_txid = 0;
-    mp->rdzv_cookie = 0;
-    mp->rdzv_size = 0;
-    break;
-  }
-  default:
-    ARTS_ERROR("push rendezvous: unsupported pushed message type %u",
-               rh->message_type);
-  }
-  arts_transport_dispatch_body(rh);
-  arts_free(rebuilt);
-  arts_regpool_free(ctx->landing);
-  arts_free(ctx);
-}
-
-/* Register the pairing for a pushed message's payload; the packet bytes are
- * retained in the ctx (the wire buffer is freed after dispatch). */
-static void rdzv_push_expect(const struct arts_msg_header_s *packet,
-                             unsigned int packet_len, uint64_t txid,
-                             uint64_t cookie, uint64_t size) {
-  struct rdzv_push_landed_ctx_s *ctx = (struct rdzv_push_landed_ctx_s *)
-      arts_malloc(sizeof(struct rdzv_push_landed_ctx_s) + packet_len);
-  ctx->landing = (char *)(uintptr_t)cookie;
-  ctx->size = size;
-  ctx->packet_len = packet_len;
-  memcpy(ctx + 1, packet, packet_len);
-  arts_net_rdzv_expect(txid, rdzv_push_landed_cb, ctx);
-}
-
 void arts_transport_dispatch_packet(struct arts_msg_header_s *packet) {
 #ifdef SEQUENCENUMBERS
   /* Wire-ordering check — wire RX entry only.  A self-loopback packet never
@@ -292,25 +179,11 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
   }
   case MSG_EDT_CREATE: {
     ARTS_DEBUG("EDT Create Received");
-    struct arts_msg_memory_move_packet_s *pack =
-        (struct arts_msg_memory_move_packet_s *)(packet);
-    if (pack->rdzv_txid != 0) {
-      rdzv_push_expect(packet, (unsigned int)sizeof(*pack), pack->rdzv_txid,
-                       pack->rdzv_cookie, pack->rdzv_size);
-      break;
-    }
     arts_handler_edt_create(packet);
     break;
   }
   case MSG_EVENT_CREATE: {
     ARTS_DEBUG("Event Move Received");
-    struct arts_msg_memory_move_packet_s *pack =
-        (struct arts_msg_memory_move_packet_s *)(packet);
-    if (pack->rdzv_txid != 0) {
-      rdzv_push_expect(packet, (unsigned int)sizeof(*pack), pack->rdzv_txid,
-                       pack->rdzv_cookie, pack->rdzv_size);
-      break;
-    }
     arts_handler_event_create(packet);
     break;
   }
@@ -1043,71 +916,6 @@ void arts_transport_dispatch_body(struct arts_msg_header_s *packet) {
   }
 #endif /* ARTS_WRITE_POLICY_WB */
 #endif /* ARTS_PROTOCOL_INV */
-  case MSG_RDZV_PUSH_RTS: {
-    ARTS_DEBUG("RDZV_PUSH_RTS Received");
-    struct arts_msg_rdzv_push_rts_packet_s *pack =
-        (struct arts_msg_rdzv_push_rts_packet_s *)(packet);
-    /* Allocate a plain registered landing for the incoming push and hand it
-     * back.  Fail-loud if it cannot be advertised (one-sided delivery needs
-     * the registered pool). */
-    char *landing =
-        (char *)arts_regpool_alloc_aligned((size_t)pack->size, 64);
-    struct arts_msg_rdzv_push_cts_packet_s cts;
-    arts_fill_packet_header(&cts.header, sizeof(cts), MSG_RDZV_PUSH_CTS);
-    cts.push_cookie = pack->push_cookie;
-    /* A packed wire struct puts its members at whatever offset the layout
-     * lands on, so their addresses cannot serve as aligned out-params; the
-     * advertisement is collected in naturally aligned locals and copied in. */
-    uint64_t adv_addr = 0;
-    uint64_t adv_key = 0;
-    if (!arts_net_rdzv_local(landing, pack->size, &adv_addr, &adv_key)) {
-      ARTS_ERROR("push rendezvous: landing is not fabric-registered — "
-                 "one-sided payloads require the registered pool");
-    }
-    cts.landing.addr = adv_addr;
-    cts.landing.key = adv_key;
-    cts.landing.txid = arts_net_rdzv_txid_next();
-    cts.landing.cookie = (uint64_t)(uintptr_t)landing;
-    arts_transport_send_async((int)packet->rank, (char *)&cts, sizeof(cts));
-    break;
-  }
-  case MSG_RDZV_PUSH_CTS: {
-    ARTS_DEBUG("RDZV_PUSH_CTS Received");
-    struct arts_msg_rdzv_push_cts_packet_s *pack =
-        (struct arts_msg_rdzv_push_cts_packet_s *)(packet);
-    struct rdzv_push_ctx_s *ctx =
-        (struct rdzv_push_ctx_s *)(uintptr_t)pack->push_cookie;
-    /* PUT the retained payload into the granted landing, then send the
-     * retained control packet with the pairing marks patched in by message
-     * type.  The payload's completion-gated free rides the PUT's local
-     * completion. */
-    struct arts_msg_header_s *hdr = (struct arts_msg_header_s *)(ctx + 1);
-    switch (hdr->message_type) {
-    case MSG_EDT_CREATE:
-    case MSG_EVENT_CREATE: {
-      struct arts_msg_memory_move_packet_s *mp =
-          (struct arts_msg_memory_move_packet_s *)hdr;
-      mp->rdzv_txid = pack->landing.txid;
-      mp->rdzv_cookie = pack->landing.cookie;
-      mp->rdzv_size = ctx->size;
-      break;
-    }
-    default:
-      ARTS_ERROR("push rendezvous: unsupported pushed message type %u",
-                 hdr->message_type);
-    }
-    /* Send the control packet BEFORE posting the PUT: send_async copies the
-     * bytes synchronously, while the PUT's local completion — which frees ctx
-     * (and hdr inside it) — can fire as early as the submit's own
-     * backpressure reap.  Packet/completion ordering is irrelevant (the
-     * target pairs by txid in either order). */
-    int target_rank = ctx->rank;
-    arts_transport_send_async(target_rank, (char *)hdr, ctx->packet_len);
-    arts_net_put_payload(target_rank, pack->landing.addr, pack->landing.key,
-                         pack->landing.txid, ctx->payload, ctx->size,
-                         rdzv_push_src_done, ctx);
-    break;
-  }
   default: {
     ARTS_INFO("Unknown Packet %d %d %d", packet->message_type, packet->size,
               packet->rank);
