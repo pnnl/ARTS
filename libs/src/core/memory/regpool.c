@@ -127,6 +127,18 @@
 #define REGPOOL_BASE_ALIGN ((size_t)2 * 1024 * 1024)
 /* Allocator arena minimum; smaller slabs are rejected by the arena manager. */
 #define REGPOOL_MIN_SLAB ((size_t)32 * 1024 * 1024)
+/* Slab-size granule and ceiling, mirroring the vendored allocator's arena
+ * geometry: a managed range is trimmed to 32 MiB slices, and one range
+ * consumes one global arena-table slot per 16 GiB (a larger range is split
+ * into that many sub-arenas, each holding its own slot).  Sizing slabs on
+ * the granule loses nothing to trimming, and capping them at exactly the
+ * per-slot maximum makes every grow cost exactly one slot — the table, not
+ * the machine, is the scarce resource, and the pool's reach is free slots
+ * times the cap on any machine.  Drift against the vendored allocator
+ * surfaces as trimming waste or sub-arena splitting, both visible in the
+ * pool-state dump on an exhausted allocation. */
+#define REGPOOL_SLAB_GRANULE ((size_t)32 * 1024 * 1024)
+#define REGPOOL_SLAB_CAP ((size_t)16 * 1024 * 1024 * 1024)
 /* Payload alignment floor (matches the DB/CXL 64-byte payload invariant). */
 #define REGPOOL_ALIGN_FLOOR ((size_t)64)
 
@@ -358,12 +370,14 @@ static regpool_slab_t *regpool_publish_direct_locked(void *base, size_t len,
   return regpool_append(base, len, mr, rkey, node, true, arena);
 }
 
-/* What the machine can still give a pinned slab: MemAvailable, with a
- * fixed fraction held back so the pool never races the rest of the process
- * (and the OS) to the last page.  A registration faults every page in, so
- * sizing a pinned slab past this turns a clean refusal into the OOM
- * killer.  0 on any parse trouble — the caller treats that as "no clamp
- * beyond the doubling itself". */
+/* What the machine can still give a new slab: MemAvailable, with a fixed
+ * fraction held back so the pool never races the rest of the process (and
+ * the OS) to the last page.  A registration faults every page in, so sizing
+ * past this turns a clean refusal into the OOM killer; an unregistered slab
+ * is clamped by the same number because availability is a property of the
+ * machine, not of whether the range will be registered.  0 on any parse
+ * trouble — the caller treats that as "no clamp beyond the doubling
+ * itself". */
 static size_t regpool_mem_available(void) {
   FILE *f = fopen("/proc/meminfo", "r");
   if (f == NULL)
@@ -384,33 +398,46 @@ static bool regpool_grow_locked(int node) {
   void *base;
   struct fid_mr *mr;
   uint64_t rkey;
-  /* Exponential slab sizing, uncapped: the arena table is a bounded process
-   * resource, so per-grow slab size doubles without a fixed ceiling — the
-   * table then bounds the ADDRESS REACH at base << table-size, which no
-   * machine approaches, instead of bounding the pool's total capacity.
+  /* Exponential slab sizing with a ceiling.  The size doubles from the
+   * configured slab — the first grow is exactly one configured slab — up to
+   * REGPOOL_SLAB_CAP, then stays there.  The ceiling exists because the
+   * allocator's arena table is a bounded GLOBAL process resource, shared
+   * with the default heap that backs the runtime's ordinary allocations:
+   * one managed range costs one table slot per REGPOOL_SLAB_CAP of length
+   * whatever size is offered, so capped grows cost exactly one slot each,
+   * and the pool's reach is the table's free slots times the cap on any
+   * machine — the table, not a machine-derived constant, is where growth
+   * ends, and it ends loudly.
    *
-   * The doubling STARTS at the configured slab size (the caller's choice is
-   * respected — the first grow is exactly one configured slab).  What limits
-   * a single slab is the machine, not a constant: a pinned slab is clamped
-   * to what is available RIGHT NOW (a registration faults every page in, so
-   * asking past that invites the OOM killer rather than a clean refusal),
-   * and any map/registration failure retries at half the size down to the
-   * base slab — the pool absorbs whatever memory remains, in shrinking
-   * pieces, and reports failure only when even one base slab does not fit. */
+   * The size is further clamped to what the machine has right now,
+   * registered or not: an overcommitting kernel happily grants a mapping
+   * far beyond physical memory, and a registration faults every page in.
+   * A map or registration failure retries at half the size; failure is
+   * reported only when even one base slab cannot be obtained.  Every
+   * candidate size stays a granule multiple by construction (base and cap
+   * are granule-aligned, sizes move by doubling and halving between them,
+   * and every descent is floored at the base slab), which
+   * regpool_map_slab's tail trim and the allocator's slice geometry both
+   * rely on. */
   unsigned grows = g_node_grow_count[node];
-  const bool pinned = (g_domain != NULL);
   size_t want = g_slab_bytes;
-  while (grows-- > 0 && want < ((size_t)1 << 46))
+  while (grows-- > 0 && want < REGPOOL_SLAB_CAP)
     want <<= 1;
-  if (pinned) {
+  if (want > REGPOOL_SLAB_CAP)
+    want = REGPOOL_SLAB_CAP;
+  {
     size_t avail = regpool_mem_available();
     while (avail != 0 && want > avail && want > g_slab_bytes)
       want >>= 1;
+    if (want < g_slab_bytes)
+      want = g_slab_bytes;
   }
   while (!regpool_map_slab(node, want, REGPOOL_BASE_ALIGN, &base, &mr, &rkey)) {
     if (want <= g_slab_bytes)
       return false;
     want >>= 1;
+    if (want < g_slab_bytes)
+      want = g_slab_bytes;
   }
 
   /* Hand the pinned range to an exclusive arena.  is_committed=true (the
@@ -424,12 +451,17 @@ static bool regpool_grow_locked(int node) {
    * it (registration only pins; the NUMA bind only sets policy).  Declaring
    * this lets the allocator's zeroed-allocation path skip the redundant
    * memset on first-touch blocks and clear only recycled ones. */
+  /* No retry on refusal: the range is granule-sized and at most one slot's
+   * worth, so nothing about it can be "too big" — the only refusal left is
+   * an exhausted global arena table, which no smaller size cures.  That is
+   * the pool's genuine end of reach, reported loudly here and fatally at
+   * the allocation that finds every node unable to grow. */
   mi_arena_id_t arena = NULL;
   if (!mi_manage_os_memory_ex(base, want, /*is_committed=*/true,
                               /*is_pinned=*/true, /*is_zero=*/true, node,
                               /*exclusive=*/true, &arena)) {
-    ARTS_WARN("regpool: allocator refused to manage a %zu MiB slab "
-              "(arena table full?)",
+    ARTS_WARN("regpool: allocator refused a %zu MiB slab — global arena "
+              "table exhausted; no further growth is possible at any size",
               want >> 20);
     if (mr != NULL)
       fi_close(&mr->fid);
@@ -649,9 +681,15 @@ bool arts_regpool_init(struct fid_domain *domain_or_null, size_t slab_bytes,
   if (numa_nodes > REGPOOL_MAX_NODES)
     numa_nodes = REGPOOL_MAX_NODES;
 
-  size_t slab = align_up_sz(slab_bytes, REGPOOL_BASE_ALIGN);
+  /* The configured slab is carried on the allocator's slice granule, and no
+   * single slab exceeds one table slot's worth — see REGPOOL_SLAB_GRANULE /
+   * REGPOOL_SLAB_CAP.  A machine that must reach the table's full extent
+   * with fewer ladder steps raises the configured slab, not the cap. */
+  size_t slab = align_up_sz(slab_bytes, REGPOOL_SLAB_GRANULE);
   if (slab < REGPOOL_MIN_SLAB)
     slab = REGPOOL_MIN_SLAB;
+  if (slab > REGPOOL_SLAB_CAP)
+    slab = REGPOOL_SLAB_CAP;
 
   g_domain = domain_or_null;
   g_slab_bytes = slab;
