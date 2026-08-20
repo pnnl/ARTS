@@ -1545,17 +1545,19 @@ static void release_one_created(arts_guid_t guid, arts_db_access_mode_t mode) {
  * epilogue (release_dbs / arts_release_created_dbs) skips it cleanly.
  */
 void arts_db_release(arts_guid_t guid, arts_db_access_mode_t mode) {
-  /* Path 1: created_db_list (DBs this EDT created) */
-  arts_array_list_t *list = arts_get_created_db_list();
-  if (list) {
-    uint64_t count = arts_length_array_list(list);
-    for (uint64_t i = count; i > 0; i--) {
-      arts_guid_t *g = (arts_guid_t *)arts_get_from_array_list(list, i - 1);
-      if (*g == guid) {
-        *g = NULL_GUID;
-        release_one_created(guid, mode);
-        return;
-      }
+  /* Path 1: created_db_list (DBs this EDT created).  Scanned from the back
+   * because the common shape is create-then-release, and REMOVED on a match
+   * rather than blanked: the list has to track what is still HELD, not what was
+   * ever created, or a release that finds nothing walks every entry the EDT
+   * ever made and d releases cost d^2. */
+  arts_vector_t *list = arts_get_created_db_list();
+  uint64_t count = arts_vector_count(list);
+  for (uint64_t i = count; i > 0; i--) {
+    arts_guid_t *g = (arts_guid_t *)arts_vector_at(list, i - 1);
+    if (*g == guid) {
+      arts_vector_swap_remove(list, i - 1);
+      release_one_created(guid, mode);
+      return;
     }
   }
 
@@ -1585,17 +1587,18 @@ void arts_db_release(arts_guid_t guid, arts_db_access_mode_t mode) {
  * released by arts_db_release.
  */
 void arts_release_created_dbs(void) {
-  arts_array_list_t *list = arts_get_created_db_list();
-  if (!list) {
-    return;
-  }
-  uint64_t count = arts_length_array_list(list);
-  for (uint64_t i = 0; i < count; i++) {
-    arts_guid_t *guid = (arts_guid_t *)arts_get_from_array_list(list, i);
-    if (*guid == NULL_GUID) {
-      continue;
-    }
-    release_one_created(*guid, DB_MODE_RW);
+  /* Epilogue: whatever is still on the list was never released.  Drain from
+   * the back so each removal is the cheap case and the walk stays linear.
+   * The trip count is taken ONCE: a release must not grow this list, and a
+   * bounded loop turns that contract violation into a leftover entry the
+   * next EDT's start reports, rather than a livelock here. */
+  arts_vector_t *list = arts_get_created_db_list();
+  for (uint64_t remaining = arts_vector_count(list); remaining > 0;
+       remaining--) {
+    uint64_t last = arts_vector_count(list) - 1;
+    arts_guid_t g = *(arts_guid_t *)arts_vector_at(list, last);
+    arts_vector_swap_remove(list, last);
+    release_one_created(g, DB_MODE_RW);
   }
 }
 

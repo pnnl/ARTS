@@ -28,6 +28,7 @@
  * documented contract so a future guard change is caught).
  */
 #include "arts.h"
+#include "arts/utils/vector.h"
 
 #include "arts/edt_context.h" /* arts_track_created_db, register, get list */
 #include "arts/utils/array_list.h"
@@ -50,8 +51,8 @@ void probe(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   if (p) {
     ((uint64_t *)p)[0] = 7;
   }
-  arts_array_list_t *list = arts_get_created_db_list();
-  uint64_t base = list ? arts_length_array_list(list) : 0;
+  arts_vector_t *list = arts_get_created_db_list();
+  uint64_t base = list ? arts_vector_count(list) : 0;
   if (list == NULL || base == 0) {
     arts_printf("FAIL ctx_null_guards: created_db_list not populated\n");
     g_failed = 1;
@@ -62,7 +63,7 @@ void probe(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
 
   /* (1) track has NO NULL guard: appends a NULL_GUID entry -> length +1. */
   arts_track_created_db(NULL_GUID);
-  uint64_t after_track = arts_length_array_list(arts_get_created_db_list());
+  uint64_t after_track = arts_vector_count(arts_get_created_db_list());
   if (after_track != base + 1) {
     arts_printf("FAIL ctx_null_guards: arts_track_created_db(NULL) did not "
                 "append (len %llu -> %llu, expected +1) — guard added?\n",
@@ -78,7 +79,7 @@ void probe(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
    * we can pin is that the call returns harmlessly and does not perturb the
    * created_db_list. */
   arts_owned_finish_register(NULL_GUID);
-  uint64_t after_reg = arts_length_array_list(arts_get_created_db_list());
+  uint64_t after_reg = arts_vector_count(arts_get_created_db_list());
   if (after_reg != after_track) {
     arts_printf(
         "FAIL ctx_null_guards: register(NULL) perturbed created_db_list "
@@ -95,7 +96,7 @@ void probe(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   void *p2 = NULL;
   arts_guid_t db2 =
       arts_db_create(&p2, sizeof(uint64_t), ARTS_DB, ARTS_DB_PROP_NONE, NULL);
-  uint64_t after_real = arts_length_array_list(arts_get_created_db_list());
+  uint64_t after_real = arts_vector_count(arts_get_created_db_list());
   if (after_real != after_reg + 1) {
     arts_printf("FAIL ctx_null_guards: real DB create after NULL-guard probes "
                 "did not track (%llu -> %llu)\n",

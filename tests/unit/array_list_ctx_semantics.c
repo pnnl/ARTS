@@ -1,23 +1,22 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * T150 — array_list reset/push-after-reset semantics that edt_context.c relies
- * on (libs/src/core/utils/array_list.c).  Pure unit test: the array_list is
+ * T150 — array_list reset/push-after-reset semantics
+ * (libs/src/core/utils/array_list.c).  Pure unit test: the array_list is
  * single-owner / not thread-safe by contract, so no runtime is needed (libc
  * shims back arts_malloc/arts_free).
  *
- * edt_context.c uses array_list as the backing store for created_db_list and
- * owned_finish_list, and depends on these exact semantics:
+ * The container's remaining users are append-then-iterate lists that reuse
+ * one allocation across rounds (the GPU stream's per-cycle new-EDT list is
+ * the live reset caller; the counter capture lists append only), and they
+ * depend on these exact semantics:
  *
- *   1. arts_set_thread_local_edt_info RESETS created_db_list at every EDT run
- *      start instead of reallocating: arts_reset_array_list must set length->0
- *      WHILE KEEPING the backing storage (head segment pointer unchanged).
- *      This is what makes the per-EDT reset O(1) and what makes
- *      arts_edt_ctx_restore's single-delete-assumption sound (at most one list
- *      object ever exists per thread-local).
+ *   1. arts_reset_array_list sets length -> 0 WHILE KEEPING the backing
+ *      storage (head segment pointer unchanged) — the per-round reset is
+ *      O(1) and never reallocates.
  *
- *   2. arts_track_created_db / arts_owned_finish_register PUSH after a reset
- * and expect the indices to restart at 0,1,2,... and the values to read back
- *      exactly — the segments are reused, not appended to stale data.
+ *   2. A PUSH after a reset restarts the indices at 0,1,2,... and the values
+ *      read back exactly — the segments are reused, not appended to stale
+ *      data.
  *
  *   3. Reset is idempotent and a freshly-created list is already length 0.
  *

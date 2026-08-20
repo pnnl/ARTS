@@ -1046,6 +1046,10 @@ set_tests_properties(edt_size_offsets PROPERTIES PASS_REGULAR_EXPRESSION "PASS e
 # array_list_ctx_semantics: compiles array_list.c directly (libc arts_malloc/arts_free shims),
 # no ARTS runtime/library link.
 add_pure_unit_src(array_list_ctx_semantics SOURCES ${CMAKE_SOURCE_DIR}/libs/src/core/utils/array_list.c PASS_REGEX "PASS array_list_ctx_semantics" TIMEOUT 30)
+# vector_basic: #includes vector.c directly (libc shims); pins the contracts
+# the per-worker EDT-context lists lean on (lazy alloc, doubling, swap-remove,
+# clear-keeps-block, free-keeps-sentinel).
+add_pure_unit_src(vector_basic PASS_REGEX "PASS vector_basic" TIMEOUT 30)
 # event_drain_simple_idempotent: header-only (arts/utils/lockfree_lifo.h); no library link.
 add_pure_unit_src(event_drain_simple_idempotent PASS_REGEX "PASS event_drain_simple_idempotent" TIMEOUT 30)
 

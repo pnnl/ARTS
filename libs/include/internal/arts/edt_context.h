@@ -42,9 +42,9 @@
 extern "C" {
 #endif
 
-#include "arts/defs.h"             /* ARTS_THREAD_LOCAL */
-#include "arts/runtime_types.h"    /* arts_guid_t, struct arts_edt_s */
-#include "arts/utils/array_list.h" /* arts_array_list_t */
+#include "arts/defs.h"          /* ARTS_THREAD_LOCAL */
+#include "arts/runtime_types.h" /* arts_guid_t, struct arts_edt_s */
+#include "arts/utils/vector.h"  /* arts_vector_t (per-worker lists) */
 
 /*
  * Per-worker EDT-execution context.
@@ -66,8 +66,9 @@ extern ARTS_THREAD_LOCAL struct arts_edt_s *current_edt;
 typedef struct {
   arts_guid_t current_edt_guid;
   struct arts_edt_s *current_edt;
-  void *created_db_list;
-  void *owned_finish_list;
+  /* Both lists saved by value — each vector owns its block. */
+  arts_vector_t created_db_list;
+  arts_vector_t owned_finish_list;
 } arts_edt_ctx_t;
 
 /* Run-start / run-end context management (called from the EDT run path). */
@@ -79,7 +80,7 @@ void arts_cleanup_edt_tls(void);
 
 /* Created-DB tracking on the current worker (auto-acquire / release path). */
 void arts_track_created_db(arts_guid_t guid);
-arts_array_list_t *arts_get_created_db_list(void);
+arts_vector_t *arts_get_created_db_list(void);
 
 /* Finish-event owned-list: register creator-token, consume on wait, cleanup. */
 void arts_owned_finish_register(arts_guid_t fe_guid);

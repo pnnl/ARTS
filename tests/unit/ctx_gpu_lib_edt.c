@@ -15,10 +15,11 @@
  * (CPU) libarts.  Pattern mirrors the protocol-macro self-skip idiom.
  *
  * What the real body pins inside a lib EDT body (where current_edt is the lib
- * EDT and the worker's created_db_list is freshly reset by set):
+ * EDT and the worker's created_db_list starts empty — the previous EDT's
+ * epilogue drained it):
  *   1. A DB created inside the lib body is tracked into THIS lib EDT's context
- *      (created_db_list length == 1 after one create — set reset it, track
- *      appended it).
+ *      (created_db_list length == 1 after one create — the epilogue left it
+ *      empty, track appended exactly one).
  *   2. arts_current_finish_event()/current_edt are non-NULL inside the lib body
  *      (the lib EDT context is established by set before the body runs).
  *   3. The lib body writes a sentinel into a counter DB (RW dep); a successor
@@ -46,7 +47,7 @@ int main(void) {
 
 #include "arts/edt_context.h" /* current_edt, arts_get_created_db_list */
 #include "arts/gpu.h"
-#include "arts/utils/array_list.h"
+#include "arts/utils/vector.h"
 
 #include <stdint.h>
 
@@ -67,18 +68,19 @@ void lib_body(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     g_failed = 1;
   }
 
-  /* (1) a DB created here is tracked into the lib EDT's reset context: the
-   * worker's created_db_list was reset by set, so exactly this one entry. */
+  /* (1) a DB created here is tracked into the lib EDT's context: the previous
+   * EDT's epilogue drained the worker's created_db_list, so exactly this one
+   * entry. */
   void *np = NULL;
   arts_guid_t ndb =
       arts_db_create(&np, sizeof(int), ARTS_DB, ARTS_DB_PROP_NONE, NULL);
   if (np) {
     ((int *)np)[0] = 0xBEEF;
   }
-  arts_array_list_t *list = arts_get_created_db_list();
-  if (list == NULL || arts_length_array_list(list) != 1) {
+  arts_vector_t *list = arts_get_created_db_list();
+  if (arts_vector_count(list) != 1) {
     arts_printf("FAIL ctx_gpu_lib_edt: lib-body created_db_list length != 1 "
-                "(set did not reset / track did not append)\n");
+                "(epilogue did not drain / track did not append)\n");
     g_failed = 1;
   }
   /* Leave ndb to the worker-side epilogue arts_release_created_dbs (do NOT

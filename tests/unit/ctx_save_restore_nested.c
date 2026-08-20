@@ -14,14 +14,15 @@
  *   1. After each arts_event_wait returns, the outer EDT's identity
  *      (current_edt + current_edt_guid mirror) is intact — exactly the
  *      orchestrator EDT, never NULL or a nested EDT.
- *   2. The orchestrator's own created_db_list pointer is unchanged across the
- *      wait (the nested run's list is deleted by restore; the saved outer list
- *      pointer comes back identically) and its length is unchanged — the
- *      orchestrator's created-DB set is not corrupted by nested DB creation.
+ *   2. The orchestrator's created_db_list STORAGE is unchanged across the
+ *      wait: save moves the vector out by value and restore brings the same
+ *      block back, so the data pointer, the length, and the tracked entry are
+ *      identical — the nested run's list (freed by restore) never replaced or
+ *      touched the outer's.
  *   3. No per-wait growth: repeating arts_event_wait MANY times over nested
- *      DB-creating EDTs must not grow the orchestrator's created_db_list length
- *      (restore's single-delete-assumption means at most one nested list exists
- *      at restore; the outer list is byte-for-byte the same object each time).
+ *      DB-creating EDTs must not grow the orchestrator's created_db_list —
+ *      nested creations land on the nested level's own list, never the saved
+ *      outer one.
  *
  * A stranded waiter (broken finish-scope drain) surfaces as a ctest TIMEOUT.
  * On any invariant violation the test prints FAIL and arts_shutdown()s; the
@@ -32,6 +33,7 @@
  * guards against its regression by asserting no growth).
  */
 #include "arts.h"
+#include "arts/utils/vector.h"
 
 #include "arts/edt_context.h"   /* current_edt, arts_get_created_db_list */
 #include "arts/runtime_state.h" /* arts_thread_info.current_edt_guid */
@@ -89,9 +91,13 @@ void orchestrator(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
   if (op) {
     ((uint64_t *)op)[0] = 1;
   }
-  arts_array_list_t *outer_list0 = arts_get_created_db_list();
-  uint64_t outer_len0 = outer_list0 ? arts_length_array_list(outer_list0) : 0;
-  if (outer_list0 == NULL || outer_len0 == 0) {
+  /* Snapshot the STORAGE, not the container address: the getter returns a
+   * fixed thread-local, so only the data pointer (what save/restore actually
+   * moves) can witness a swap. */
+  arts_vector_t *outer_list0 = arts_get_created_db_list();
+  void *outer_data0 = outer_list0->data;
+  uint64_t outer_len0 = arts_vector_count(outer_list0);
+  if (outer_data0 == NULL || outer_len0 == 0) {
     arts_printf("FAIL ctx_save_restore_nested: created_db_list not populated "
                 "by orchestrator DB create\n");
     g_failed = 1;
@@ -99,7 +105,10 @@ void orchestrator(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
     arts_shutdown();
     return;
   }
-  arts_db_release(odb, DB_MODE_RW);
+  /* Deliberately still HELD across the waves.  The property under test is that
+   * a nested execution neither grows nor corrupts the outer EDT's created-DB
+   * list, and releasing first would leave nothing on it to observe: the list
+   * tracks what is still held, so a released entry is gone from it. */
 
   for (int w = 0; w < WAVES; w++) {
     arts_event_hint_t fh = ARTS_EVENT_HINT_FINISH;
@@ -125,18 +134,19 @@ void orchestrator(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       return;
     }
 
-    /* (2)+(3) outer created_db_list is the same object, same length — nested
-     * DB creation did not corrupt or grow it. */
-    arts_array_list_t *outer_list = arts_get_created_db_list();
-    uint64_t outer_len = outer_list ? arts_length_array_list(outer_list) : 0;
-    if (outer_list != outer_list0) {
-      arts_printf("FAIL ctx_save_restore_nested: created_db_list pointer "
+    /* (2)+(3) outer created_db_list came back with the SAME storage, same
+     * length, same tracked entry — restore adopted the saved block and nested
+     * creation neither replaced, grew, nor corrupted it. */
+    arts_vector_t *outer_list = arts_get_created_db_list();
+    if (outer_list->data != outer_data0) {
+      arts_printf("FAIL ctx_save_restore_nested: created_db_list storage "
                   "changed after wait %d (%p -> %p)\n",
-                  w, (void *)outer_list0, (void *)outer_list);
+                  w, outer_data0, outer_list->data);
       g_failed = 1;
       arts_shutdown();
       return;
     }
+    uint64_t outer_len = arts_vector_count(outer_list);
     if (outer_len != outer_len0) {
       arts_printf("FAIL ctx_save_restore_nested: created_db_list grew across "
                   "wait %d (%llu -> %llu)\n",
@@ -146,8 +156,18 @@ void orchestrator(uint32_t paramc, const uint64_t *paramv, uint32_t depc,
       arts_shutdown();
       return;
     }
+    arts_guid_t *tracked = (arts_guid_t *)arts_vector_at(outer_list, 0);
+    if (tracked == NULL || *tracked != odb) {
+      arts_printf("FAIL ctx_save_restore_nested: outer tracked entry "
+                  "corrupted after wait %d\n",
+                  w);
+      g_failed = 1;
+      arts_shutdown();
+      return;
+    }
   }
 
+  arts_db_release(odb, DB_MODE_RW);
   arts_printf("PASS ctx_save_restore_nested: outer ctx intact + no list growth "
               "across %d nested waits\n",
               WAVES);
